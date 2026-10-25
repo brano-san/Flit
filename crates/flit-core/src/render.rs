@@ -54,6 +54,7 @@ pub mod kind {
     pub const IMAGE: u32 = 2;
     pub const THUMB: u32 = 3;
     pub const PREVIEW: u32 = 4;
+    pub const SHADOW: u32 = 5;
 }
 
 #[repr(C)]
@@ -115,6 +116,10 @@ impl DrawList {
 
     pub fn outline(&mut self, r: Rect, color: Color, radius: f32, width: f32) {
         self.push(r.snap(), [0.0; 4], color, radius, width, kind::SOLID);
+    }
+
+    pub fn shadow(&mut self, r: Rect, color: Color, radius: f32, blur: f32) {
+        self.push(r.inset(-blur, -blur).snap(), [0.0; 4], color, radius, blur, kind::SHADOW);
     }
 
     pub fn glyph(&mut self, r: Rect, uv: [f32; 4], color: Color) {

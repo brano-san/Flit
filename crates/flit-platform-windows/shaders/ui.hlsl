@@ -70,8 +70,14 @@ float4 ps_main(PSIn i) : SV_Target {
     }
     float r = i.params.x;
     float border = i.params.y;
-    if (r <= 0 && border <= 0) return i.color;
     float2 half_size = i.size * 0.5;
+    if (i.kind == 5) {
+        float2 shape = max(half_size - border, 0);
+        float d = rounded_box(i.local - half_size, shape, min(r, min(shape.x, shape.y)));
+        float a = 1 - smoothstep(-border, border, d);
+        return i.color * (a * a);
+    }
+    if (r <= 0 && border <= 0) return i.color;
     float d = rounded_box(i.local - half_size, half_size, min(r, min(half_size.x, half_size.y)));
     float a = saturate(0.5 - d);
     if (border > 0) a *= saturate(0.5 + d + border);

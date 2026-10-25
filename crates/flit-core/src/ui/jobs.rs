@@ -695,7 +695,7 @@ impl App {
         let (s4, s6, s12) = (self.s(4.0), self.s(6.0), self.s(12.0));
         let s = |v: f32| (v * self.scale).round();
         let p = self.jobs.r.panel;
-        g.dl.round_rect(Rect::new(p.x - s4, p.y, p.w + 2.0 * s4, p.h + s6 + s4), self.shadow(), s6 + s4);
+        g.dl.shadow(Rect::new(p.x, p.y + s4, p.w, p.h), self.shadow(), s6, s12);
         g.dl.round_rect(p, t.bg, s6);
         g.dl.outline(p, t.input_border, s6, 1.0);
         let m = g.metrics(bold);
@@ -777,7 +777,7 @@ impl App {
             let menu = self.jobs.r.menu.clone();
             if let (Some(first), Some(last)) = (menu.first(), menu.last()) {
                 let bg = Rect::new(first.x, first.y, first.w, last.bottom() - first.y);
-                g.dl.round_rect(Rect::new(bg.x - s4, bg.y, bg.w + 2.0 * s4, bg.h + s4 + s6), self.shadow(), s6);
+                g.dl.shadow(Rect::new(bg.x, bg.y + s4, bg.w, bg.h), self.shadow(), s6, s4 * 3.0);
                 g.dl.round_rect(bg, t.bg, s4);
                 g.dl.outline(bg, t.input_border, s4, 1.0);
                 for (k, (r, label)) in menu.iter().zip(items).enumerate() {
@@ -798,7 +798,7 @@ impl App {
         let (w, h) = self.size;
         g.dl.rect(Rect::new(0.0, 0.0, w, h), if self.dark { Color::rgba(0x00000070) } else { Color::rgba(0x00000040) });
         let d = self.jobs.r.dialog;
-        g.dl.round_rect(Rect::new(d.x - s8, d.y - s4, d.w + 2.0 * s8, d.h + s8 + s8), self.shadow(), s8 + s8);
+        g.dl.shadow(Rect::new(d.x, d.y + s8, d.w, d.h), self.shadow(), s8, s(24.0));
         g.dl.round_rect(d, t.bg, s8);
         g.dl.outline(d, t.input_border, s8, 1.0);
         let offset = self.utc_offset_min;

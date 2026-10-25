@@ -425,6 +425,12 @@ fn every_dialog_draws_inside_its_frame_with_buttons_below_the_rows() {
         let last = *f.rows.last().unwrap();
         assert!(f.rows.iter().all(|r| r.w > 0.0 && r.x >= 0.0 && r.right() <= 1000.0));
         assert!(f.button_rects.iter().all(|b| b.y >= last.bottom() && b.bottom() <= 700.0));
+        for (c, row) in f.controls.iter().zip(&f.rows) {
+            if let Control::Flags { items, spots, .. } = c {
+                assert_eq!(spots.len(), items.len(), "dialog {k}");
+                assert!(spots.iter().all(|s| s.x >= row.x && s.right() <= row.right() && s.bottom() <= row.bottom()), "dialog {k}: {spots:?} outside {row:?}");
+            }
+        }
         key(&mut app, Key::Escape, NO);
         assert!(app.jobs.form.is_none());
     }

@@ -325,7 +325,7 @@ impl App {
         let shadow = if self.dark { Color::rgba(0x00000090) } else { Color::rgba(0x00000030) };
         let Some(p) = &mut self.nav.palette else { return };
         let r = p.rect;
-        g.dl.round_rect(Rect::new(r.x - s4, r.y, r.w + 2.0 * s4, r.h + s6 + s4), shadow, s6 + s4);
+        g.dl.shadow(Rect::new(r.x, r.y + s4, r.w, r.h), shadow, s6, s12);
         g.dl.round_rect(r, t.bg, s6);
         g.dl.outline(r, t.input_border, s6, 1.0);
         let fr = p.field_rect;
