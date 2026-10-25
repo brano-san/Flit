@@ -59,19 +59,23 @@ pub fn tab_glyph(loc: &Location) -> &'static str {
     match loc.path().kind() {
         PathKind::Computer => G_COMPUTER,
         PathKind::RecycleBin => G_BIN,
+        PathKind::Home => super::sidebar::G_HOME,
         PathKind::Unix if loc.is_root() => G_LINUX,
         _ if loc.is_root() => G_DRIVE,
         _ => G_FOLDER,
     }
 }
 
+fn full_name(t: &Tab) -> String {
+    match t.location().path().kind() {
+        PathKind::Computer | PathKind::RecycleBin | PathKind::Home => t.title(),
+        _ => t.location().display().into_owned(),
+    }
+}
+
 impl App {
     pub fn window_title(&self) -> String {
-        let t = self.tab();
-        match t.location().path().kind() {
-            PathKind::Computer | PathKind::RecycleBin => format!("{} — Flit", t.title()),
-            _ => format!("{} — Flit", t.location().display()),
-        }
+        format!("{} — Flit", full_name(self.tab()))
     }
 
     pub fn session(&self) -> WindowSession {
@@ -282,7 +286,7 @@ impl App {
     pub(super) fn draw_tab_tip<B: TextBackend>(&mut self, g: &mut Gfx<B>, th: &Theme) {
         let Some((i, None)) = self.strip.tip else { return };
         let (Some(t), Some(&(r, _))) = (self.tabs.get(i), self.layout.tabs.get(i)) else { return };
-        let text = t.location().display().into_owned();
+        let text = full_name(t);
         let font = self.ui_font(12.0);
         let m = g.metrics(font);
         let (pad, h) = (self.s(8.0), self.s(26.0));
