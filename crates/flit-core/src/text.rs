@@ -1,6 +1,7 @@
 use crate::atlas::{Atlas, Slot};
 use crate::hash::{self, FxHashMap};
 use crate::render::{Color, DrawList, Rect};
+use crate::thumbs::ThumbAtlas;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum FontFamily {
@@ -111,6 +112,7 @@ pub struct Gfx<B: TextBackend> {
     metrics: FxHashMap<FontStyle, FontMetrics>,
     scratch: GlyphBitmap,
     pub atlas_reset: bool,
+    pub thumbs: ThumbAtlas,
 }
 
 impl<B: TextBackend> Gfx<B> {
@@ -126,12 +128,14 @@ impl<B: TextBackend> Gfx<B> {
             metrics: Default::default(),
             scratch: GlyphBitmap::default(),
             atlas_reset: false,
+            thumbs: ThumbAtlas::default(),
         }
     }
 
     pub fn begin(&mut self, clear: Color) {
         self.dl.reset(clear);
         self.atlas_reset = false;
+        self.thumbs.begin_frame();
         if self.shapes.len() > MAX_SHAPES {
             self.shapes.clear();
         }
@@ -213,6 +217,10 @@ impl<B: TextBackend> Gfx<B> {
     pub fn add_image(&mut self, key: u64, w: u32, h: u32, rgba: Vec<u8>) {
         debug_assert_eq!(rgba.len(), (w * h * 4) as usize);
         self.images.insert(key, Image { w, h, rgba, slot: None });
+    }
+
+    pub fn thumb(&mut self, key: u64, r: Rect, alpha: u8) -> bool {
+        self.thumbs.draw(&mut self.dl, key, r, alpha)
     }
 
     pub fn image(&mut self, key: u64, r: Rect) -> bool {

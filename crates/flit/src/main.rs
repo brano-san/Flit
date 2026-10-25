@@ -5,6 +5,7 @@ mod metrics;
 mod places;
 mod search_client;
 mod state;
+mod thumbs;
 
 use flit_core::name;
 use flit_core::open::parse_args;

@@ -1,4 +1,5 @@
 use crate::walk_index::Handle;
+use flit_core::desktop_ini::DesktopIni;
 use flit_core::listing::{attr, Meta};
 use flit_core::path::PathKind;
 use flit_core::{FsError, FsErrorKind, FsPath, ListingBuilder};
@@ -240,6 +241,10 @@ impl Fs for NtFs {
             let _ = CloseHandle(h);
         }
         result
+    }
+
+    fn desktop_ini(&self, dir: &FsPath) -> Option<DesktopIni> {
+        crate::shell::desktop_ini(dir)
     }
 
     fn seek_penalty(&self, path: &FsPath) -> Option<bool> {
