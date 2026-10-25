@@ -57,7 +57,7 @@ fn command(label: &str, keys: &str, checked: bool) -> MenuItem {
 
 fn flit_menu(t: &TempDir, inline: bool) -> ShellMenu {
     let menu = vec![command("Open", "Enter", false), MenuItem::Separator, MenuItem::Submenu { label: "Sort by".into(), items: vec![command("Name", "", true)] }, command("R&D", "", false)];
-    ShellMenu { dir: t.path(""), items: vec![t.path("a.txt")], x: 0.0, y: 0.0, extended: false, menu, inline }
+    ShellMenu { dir: t.path(""), items: vec![t.path("a.txt")], x: 0.0, y: 0.0, extended: false, menu, inline, shell: true }
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn bench_menu_prepare() {
         std::fs::write(t.0.join(format!("f{k}.txt")), "x").unwrap();
     }
     let flit: Vec<MenuItem> = (0..16).map(|k| if k % 5 == 4 { MenuItem::Separator } else { command(&format!("Item {k}"), "Ctrl+Shift+C", false) }).collect();
-    let shell_menu = |k: usize, inline: bool| ShellMenu { dir: t.path(""), items: vec![t.path(&format!("f{k}.txt"))], x: 0.0, y: 0.0, extended: false, menu: flit.clone(), inline };
+    let shell_menu = |k: usize, inline: bool| ShellMenu { dir: t.path(""), items: vec![t.path(&format!("f{k}.txt"))], x: 0.0, y: 0.0, extended: false, menu: flit.clone(), inline, shell: true };
     let report = |label: &str, mut ms: Vec<f64>| {
         let first = ms[0];
         ms.sort_by(f64::total_cmp);
@@ -145,11 +145,11 @@ fn bench_menu_prepare() {
 fn item_and_background_menus_offer_the_verbs_flit_takes_over() {
     let t = TempDir::new("verbs");
     std::fs::write(t.0.join("a.txt"), "x").unwrap();
-    let items = verbs(&ShellMenu { dir: t.path(""), items: vec![t.path("a.txt")], x: 0.0, y: 0.0, extended: false, menu: Vec::new(), inline: false });
+    let items = verbs(&ShellMenu { dir: t.path(""), items: vec![t.path("a.txt")], x: 0.0, y: 0.0, extended: false, menu: Vec::new(), inline: false, shell: true });
     for v in ["copy", "cut", "delete", "rename", "properties"] {
         assert!(items.iter().any(|i| i == v), "{v} missing from {items:?}");
     }
-    let background = verbs(&ShellMenu { dir: t.path(""), items: Vec::new(), x: 0.0, y: 0.0, extended: false, menu: Vec::new(), inline: false });
+    let background = verbs(&ShellMenu { dir: t.path(""), items: Vec::new(), x: 0.0, y: 0.0, extended: false, menu: Vec::new(), inline: false, shell: true });
     assert!(background.iter().any(|v| v == "properties"), "{background:?}");
     assert!(SHELL_VERBS.iter().all(|v| v.chars().all(|c| c.is_ascii_lowercase())));
 }

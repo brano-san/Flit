@@ -207,7 +207,7 @@ pub(crate) fn prewarm() {
             crate::com_sta();
             let Some(exe) = std::env::current_exe().ok().and_then(|p| FsPath::parse(p.to_str()?)) else { return };
             let Some(dir) = exe.parent() else { return };
-            let menu = |dir: &FsPath, items: Vec<FsPath>| ShellMenu { dir: dir.clone(), items, x: 0.0, y: 0.0, extended: false, menu: Vec::new(), inline: false };
+            let menu = |dir: &FsPath, items: Vec<FsPath>| ShellMenu { dir: dir.clone(), items, x: 0.0, y: 0.0, extended: false, menu: Vec::new(), inline: false, shell: true };
             for m in [menu(&dir, vec![exe.clone()]), menu(&dir, Vec::new()), menu(&dir, vec![dir.clone()])] {
                 if let Ok((_, hmenu)) = unsafe { query(HWND::default(), &m) } {
                     let _ = unsafe { DestroyMenu(hmenu) };
@@ -275,6 +275,9 @@ unsafe fn fill(hwnd: HWND, m: &ShellMenu, hmenu: HMENU) -> Result<Active, Platfo
     let mut active = Active { more: None, menu: None };
     let mut next = FLIT_FIRST;
     append(hmenu, &m.menu, &mut next).map_err(err)?;
+    if !m.shell {
+        return Ok(active);
+    }
     let ours = GetMenuItemCount(Some(hmenu));
     if ours > 0 {
         AppendMenuW(hmenu, MF_SEPARATOR, 0, None).map_err(err)?;

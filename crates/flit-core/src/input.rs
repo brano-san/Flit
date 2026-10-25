@@ -68,6 +68,7 @@ pub enum CursorIcon {
     Text,
     Hand,
     ResizeHorizontal,
+    Scroll,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

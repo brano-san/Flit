@@ -15,18 +15,25 @@ pub fn size(out: &mut impl Write, bytes: u64) {
     let _ = if v < 100.0 { write!(out, "{v:.1} {}", UNITS[u]) } else { write!(out, "{v:.0} {}", UNITS[u]) };
 }
 
+fn local_secs(ticks: i64, offset_min: i32) -> i64 {
+    ticks / 10_000_000 - 11_644_473_600 + offset_min as i64 * 60
+}
+
+pub fn local_days(ticks: i64, offset_min: i32) -> i64 {
+    local_secs(ticks, offset_min).div_euclid(86_400)
+}
+
 pub fn datetime(out: &mut impl Write, ticks: i64, offset_min: i32) {
     if ticks <= 0 {
         return;
     }
-    let secs = ticks / 10_000_000 - 11_644_473_600 + offset_min as i64 * 60;
-    let days = secs.div_euclid(86_400);
+    let secs = local_secs(ticks, offset_min);
     let rem = secs.rem_euclid(86_400);
-    let (y, m, d) = civil_from_days(days);
+    let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
     let _ = write!(out, "{y:04}-{m:02}-{d:02} {:02}:{:02}", rem / 3600, rem % 3600 / 60);
 }
 
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
+pub fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);

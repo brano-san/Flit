@@ -55,7 +55,7 @@ fn diffs_keep_order_and_indices() {
 fn modified_moves_row_under_size_sort() {
     let s = snap(&["aa", "b", "cccc"]);
     let mut v = DirView::new(s);
-    let view = ViewSpec { sort: SortSpec { field: SortField::Size, descending: false }, show_hidden: false };
+    let view = ViewSpec { sort: SortSpec { field: SortField::Size, descending: false, ..Default::default() }, show_hidden: false, ..Default::default() };
     let mut order = Vec::new();
     sort::sort(v.listing(), &v.snap.keys, view, &mut order);
     let n = v.listing().len();
@@ -68,7 +68,7 @@ fn modified_moves_row_under_size_sort() {
 #[test]
 fn merge_after_concurrent_changes() {
     let mut v = DirView::new(snap(&["a", "c"]));
-    let view = ViewSpec { sort: SortSpec { field: SortField::Name, descending: true }, show_hidden: false };
+    let view = ViewSpec { sort: SortSpec { field: SortField::Name, descending: true, ..Default::default() }, show_hidden: false, ..Default::default() };
     let mut order = Vec::new();
     sort::sort(v.listing(), &v.snap.keys, view, &mut order);
     v.apply(&change(ChangeKind::Added, "b", 1));
@@ -104,7 +104,7 @@ fn entries_that_turn_invisible_lose_selection_and_focus() {
 fn batched_diffs_match_a_full_sort() {
     let names: Vec<String> = (0..300).map(|i| format!("f{i:03}")).collect();
     let mut v = DirView::new(snap(&names.iter().map(String::as_str).collect::<Vec<_>>()));
-    let by_size = ViewSpec { sort: SortSpec { field: SortField::Size, descending: true }, show_hidden: false };
+    let by_size = ViewSpec { sort: SortSpec { field: SortField::Size, descending: true, ..Default::default() }, show_hidden: false, ..Default::default() };
     let mut order = Vec::new();
     sort::sort(v.listing(), &v.snap.keys, by_size, &mut order);
     v.merge_order(order, by_size, names.len());

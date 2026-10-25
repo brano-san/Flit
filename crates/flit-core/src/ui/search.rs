@@ -112,6 +112,7 @@ pub(super) struct SearchView {
     pending_click: Option<(f32, bool)>,
     gen: u64,
     sort: SearchSort,
+    pub(super) group_folder: bool,
     total: u64,
     done: bool,
     rows: FxHashMap<u64, SearchRow>,
@@ -224,6 +225,17 @@ impl App {
     pub(super) fn search_paste(&mut self, text: &str) {
         self.search.edit.insert(text.lines().next().unwrap_or(""));
         self.search_query(Instant::now());
+    }
+
+    pub(super) fn toggle_search_groups(&mut self) {
+        let s = &mut self.search;
+        s.group_folder = !s.group_folder;
+        if s.group_folder {
+            s.sort = SearchSort { key: SearchKey::Folder, descending: false };
+        }
+        if s.gen > 0 {
+            self.search_query(Instant::now());
+        }
     }
 
     fn search_query(&mut self, now: Instant) {
@@ -496,10 +508,15 @@ impl App {
         let was = std::mem::take(&mut self.search.drag);
         let pressed = std::mem::take(&mut self.search.pressed);
         self.dirty = true;
+        let h = self.search_hit(x, y);
+        if button == MouseButton::Right && matches!(h, SHit::Header(_) | SHit::Row(_) | SHit::Empty) {
+            let menu = self.build_search_menu();
+            self.flit_menu(x, y, menu);
+            return true;
+        }
         if button != MouseButton::Left || matches!(was, SDrag::Thumb(_)) {
             return true;
         }
-        let h = self.search_hit(x, y);
         if h != pressed {
             return true;
         }
@@ -507,6 +524,7 @@ impl App {
             SHit::Back => self.close_search(),
             SHit::Header(c) => {
                 let key = COLUMNS[c].1;
+                self.search.group_folder &= key == SearchKey::Folder;
                 let s = &mut self.search.sort;
                 *s = SearchSort { key, descending: s.key == key && !s.descending };
                 self.search_query(Instant::now());
@@ -620,7 +638,14 @@ impl App {
             let name_x = ir.right() + self.s(8.0);
             let color = if r.meta.attrs & attr::HIDDEN != 0 { t.text_dim } else { t.text };
             g.text(name_x, ty, &name::display(&r.name), font, color, sl.cols[0].right() - name_x - pad);
-            g.text(sl.cols[1].x + pad, ty, &name::display(&r.dir), font, t.text_dim, sl.cols[1].w - 2.0 * pad);
+            let run_start = row == 0 || s.rows.get(&(row - 1)).is_none_or(|p| p.dir != r.dir);
+            if !s.group_folder || run_start {
+                let folder_color = if s.group_folder { t.text } else { t.text_dim };
+                g.text(sl.cols[1].x + pad, ty, &name::display(&r.dir), font, folder_color, sl.cols[1].w - 2.0 * pad);
+            }
+            if s.group_folder && run_start && row > first {
+                g.dl.rect(Rect::new(sl.list.x + self.s(4.0), y, sl.list.w - self.s(8.0), 1.0), t.separator);
+            }
             if !is_dir {
                 let mut sz = bumpalo::collections::String::new_in(arena);
                 format::size(&mut sz, r.meta.size);

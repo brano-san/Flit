@@ -2,7 +2,7 @@ use super::actions::{chord_text, ACTIONS};
 use super::App;
 use crate::location::Location;
 use crate::path::PathKind;
-use crate::sort::SortField;
+use crate::sort::{DateUnit, Folders, GroupField, SortField};
 use std::time::Instant;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -18,12 +18,45 @@ pub(super) enum Cmd {
     NewItem(usize),
 }
 
-const SORTS: [(SortField, &str, &str); 4] = [
+const SORTS: [(SortField, &str, &str); 5] = [
     (SortField::Name, "view.sort.name", "Name"),
     (SortField::Modified, "view.sort.modified", "Date modified"),
+    (SortField::Created, "view.sort.created", "Date created"),
     (SortField::Type, "view.sort.type", "Type"),
     (SortField::Size, "view.sort.size", "Size"),
 ];
+
+const BIN_SORTS: [(SortField, &str, &str); 4] = [
+    (SortField::Name, "view.sort.name", "Name"),
+    (SortField::Origin, "view.sort.origin", "Original location"),
+    (SortField::Modified, "view.sort.modified", "Date deleted"),
+    (SortField::Size, "view.sort.size", "Size"),
+];
+
+const FOLDERS: [(Folders, &str, &str); 3] = [
+    (Folders::First, "view.sort.folders_first", "Show folders first"),
+    (Folders::Last, "view.sort.files_first", "Show files first"),
+    (Folders::Mixed, "view.sort.mixed", "Mix files and folders"),
+];
+
+const GROUPS: [(GroupField, &str, &str); 6] = [
+    (GroupField::None, "view.group.none", "None"),
+    (GroupField::Name, "view.group.name", "Name"),
+    (GroupField::Modified, "view.group.modified", "Date modified"),
+    (GroupField::Created, "view.group.created", "Date created"),
+    (GroupField::Type, "view.group.type", "Type"),
+    (GroupField::Size, "view.group.size", "Size"),
+];
+
+const BIN_GROUPS: [(GroupField, &str, &str); 5] = [
+    (GroupField::None, "view.group.none", "None"),
+    (GroupField::Name, "view.group.name", "Name"),
+    (GroupField::Origin, "view.group.origin", "Original location"),
+    (GroupField::Modified, "view.group.modified", "Date deleted"),
+    (GroupField::Size, "view.group.size", "Size"),
+];
+
+const UNITS: [(DateUnit, &str, &str); 3] = [(DateUnit::Year, "view.group.year", "Year"), (DateUnit::Month, "view.group.month", "Month"), (DateUnit::Day, "view.group.day", "Day")];
 
 fn keys_of(id: &str) -> String {
     ACTIONS.iter().find(|a| a.id == id).and_then(|a| a.keys.first()).map(chord_text).unwrap_or_default()
@@ -59,6 +92,16 @@ impl Menu<'_> {
         self.command(Cmd::Action(id), label, keys_of(id), false);
     }
 
+    fn check(&mut self, id: &'static str, label: &str, checked: bool) {
+        self.command(Cmd::Action(id), label, String::new(), checked);
+    }
+
+    fn choices<T: PartialEq>(&mut self, items: &[(T, &'static str, &'static str)], current: T) {
+        for (v, id, label) in items {
+            self.check(id, label, *v == current);
+        }
+    }
+
     fn separator(&mut self) {
         if self.items.last().is_some_and(|i| *i != MenuItem::Separator) {
             self.items.push(MenuItem::Separator);
@@ -84,16 +127,58 @@ impl App {
         }
     }
 
-    pub(super) fn build_menu(&mut self, on_items: bool) -> Vec<MenuItem> {
+    fn collect(&mut self, fill: impl FnOnce(&Self, &mut Menu)) -> Vec<MenuItem> {
         let mut m = Menu { hidden: &self.menu_hidden, items: Vec::new(), cmds: Vec::new() };
-        if on_items {
-            self.item_menu(&mut m);
-        } else {
-            self.folder_menu(&mut m);
-        }
+        fill(self, &mut m);
         let (items, cmds) = (trimmed(m.items), m.cmds);
         self.menu = cmds;
         items
+    }
+
+    pub(super) fn build_menu(&mut self, on_items: bool) -> Vec<MenuItem> {
+        self.collect(|a, m| if on_items { a.item_menu(m) } else { a.folder_menu(m) })
+    }
+
+    pub(super) fn build_header_menu(&mut self) -> Vec<MenuItem> {
+        self.collect(|a, m| {
+            let cols = a.tab().columns;
+            for &c in a.column_kinds().iter().skip(1) {
+                m.check(c.toggle_id(), c.title(), cols.shown(c));
+            }
+            m.separator();
+            m.action("view.columns.fit", "Size all columns to fit");
+            m.check("view.columns.autofit", "Always size columns to fit", a.prefs.auto_fit);
+        })
+    }
+
+    pub(super) fn build_search_menu(&mut self) -> Vec<MenuItem> {
+        self.collect(|a, m| m.check("search.group_folder", "Group by folder", a.search.group_folder))
+    }
+
+    fn view_menus(&self, m: &mut Menu) {
+        let t = self.tab();
+        let in_bin = t.view_loc.is_recycle_bin();
+        let (sort, group) = (t.view_spec.sort, t.view_spec.group);
+        m.submenu("Sort by", |m| {
+            m.choices(if in_bin { &BIN_SORTS[..] } else { &SORTS[..] }, sort.field);
+            m.separator();
+            m.check("view.sort.ascending", "Ascending", !sort.descending);
+            m.check("view.sort.descending", "Descending", sort.descending);
+            m.separator();
+            m.choices(&FOLDERS, sort.folders);
+        });
+        m.submenu("Group by", |m| {
+            m.choices(if in_bin { &BIN_GROUPS[..] } else { &GROUPS[..] }, group.field);
+            if group.field != GroupField::None {
+                m.separator();
+                m.check("view.group.ascending", "Ascending", !group.descending);
+                m.check("view.group.descending", "Descending", group.descending);
+            }
+            if group.field.is_date() {
+                m.separator();
+                m.choices(&UNITS, group.unit);
+            }
+        });
     }
 
     fn item_menu(&self, m: &mut Menu) {
@@ -142,16 +227,12 @@ impl App {
     fn folder_menu(&self, m: &mut Menu) {
         let t = self.tab();
         let files = t.view_loc.path().kind() != PathKind::Computer;
-        let sort = t.view_spec.sort;
-        m.submenu("Sort by", |m| {
-            for (field, id, label) in SORTS {
-                m.command(Cmd::Action(id), label, String::new(), sort.field == field);
-            }
-            m.separator();
-            m.command(Cmd::Action("view.sort.reverse"), "Descending", String::new(), sort.descending);
-        });
+        self.view_menus(m);
         m.action("nav.refresh", "Refresh");
         m.separator();
+        if t.view_loc.is_recycle_bin() {
+            return;
+        }
         if files {
             if m.shown("file.new_item") {
                 m.submenu("New", |m| {

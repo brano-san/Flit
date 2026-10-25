@@ -34,7 +34,7 @@ const BIN_ONLY: &str = "Items in the Recycle Bin can only be restored or deleted
 const OPEN_BIN: &str = "Open the Recycle Bin to restore items";
 const MAX_TERMINALS: usize = 5;
 const RUNNABLE: [&[u8]; 4] = [b"exe", b"com", b"bat", b"cmd"];
-const TIMER_SLACK: Duration = Duration::from_millis(16);
+pub(super) const TIMER_SLACK: Duration = Duration::from_millis(16);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct NewTemplate {
@@ -53,6 +53,7 @@ pub struct ShellMenu {
     pub extended: bool,
     pub menu: Vec<super::MenuItem>,
     pub inline: bool,
+    pub shell: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -642,15 +643,19 @@ impl App {
         let t = self.tab();
         let row = t.view.as_ref().and_then(|v| v.focus.filter(|&f| v.is_selected(f)).and_then(|f| v.row_of(f)));
         let (x, y) = match row {
-            Some(r) => (list.x + self.s(48.0), (list.y + (r as f32 + 1.0) * rh - t.scroll).clamp(list.y, list.bottom())),
+            Some(r) => (list.x + self.s(48.0), (t.row_y(r, list.y, rh) + rh).clamp(list.y, list.bottom())),
             None => (list.x + self.s(48.0), list.y + self.s(8.0)),
         };
         self.shell_menu(x, y, row.is_some(), false);
     }
 
     fn shell_menu(&mut self, x: f32, y: f32, on_items: bool, extended: bool) {
-        if self.in_bin() {
+        if self.in_bin() && on_items {
             return self.status(BIN_ONLY);
+        }
+        if self.in_bin() {
+            let menu = self.build_menu(false);
+            return self.flit_menu(x, y, menu);
         }
         let t = self.tab();
         let Some(dir) = t.view_loc.to_windows() else { return self.status("This folder cannot be used by Windows shell operations") };
@@ -664,7 +669,7 @@ impl App {
         };
         let inline = self.shell_items_inline || extended;
         let menu = self.build_menu(on_items);
-        self.effects.push(Effect::ShellMenu(ShellMenu { dir, items, x, y, extended, menu, inline }));
+        self.effects.push(Effect::ShellMenu(ShellMenu { dir, items, x, y, extended, menu, inline, shell: true }));
     }
 
     pub(super) fn shell_verb(&mut self, verb: &str) {
@@ -967,7 +972,8 @@ impl App {
         if button == MouseButton::Right && self.drag == Drag::None && self.ops.rename.is_none() {
             match self.hit(x, y) {
                 Hit::Row(_) => self.shell_menu(x, y, true, self.mods.shift),
-                Hit::ListEmpty => self.shell_menu(x, y, false, self.mods.shift),
+                Hit::ListEmpty | Hit::Group(_) => self.shell_menu(x, y, false, self.mods.shift),
+                Hit::Header(_) | Hit::ColSep(_) => self.header_menu(x, y),
                 _ => {}
             }
         }
@@ -984,8 +990,12 @@ impl App {
         v.focus = Some(i);
         if p.slow {
             self.ops.slow = Some(Slow { tab, gen: v.snap().gen, idx: i, at: now + wait });
-            self.effects.push(Effect::Timer(wait));
+            self.arm_timer(now, now + wait);
         }
+    }
+
+    pub(super) fn ops_idle(&self) -> bool {
+        self.ops.rename.is_none() && self.ops.press.is_none() && self.ops.dropping.is_none()
     }
 
     pub(super) fn ops_timer_cancel(&mut self) {
@@ -995,7 +1005,7 @@ impl App {
     pub(super) fn ops_timer(&mut self, now: Instant) {
         let Some(s) = self.ops.slow.take() else { return };
         if now + TIMER_SLACK < s.at {
-            self.effects.push(Effect::Timer(s.at - now));
+            self.arm_timer(now, s.at);
             self.ops.slow = Some(s);
             return;
         }
@@ -1090,7 +1100,7 @@ impl App {
                     here()
                 }
             }
-            Hit::ListEmpty | Hit::Track | Hit::Thumb => here(),
+            Hit::ListEmpty | Hit::Group(_) | Hit::Track | Hit::Thumb => here(),
             Hit::Tab(i) | Hit::TabClose(i) => into(self.tabs.get(i)?.location(), Spot::Tab(i)),
             Hit::Crumb(i) => into(&t.crumbs.get(i)?.1, Spot::Crumb(i)),
             Hit::Side(i) | Hit::SidePin(i) => into(&self.nav.sidebar.items.get(i)?.loc, Spot::Side(i)),
@@ -1206,7 +1216,7 @@ impl App {
         let (list, rh) = (l.list, l.row_h);
         match self.drop_spot() {
             Some(Spot::Row(row)) => {
-                let y = (list.y + row as f32 * rh - self.tab().scroll).round();
+                let y = self.tab().row_y(row, list.y, rh);
                 let r = Rect::new(list.x + self.s(4.0), y + 1.0, list.w - self.s(8.0), rh - 2.0);
                 g.dl.set_clip(Some(list));
                 g.dl.round_rect(r, th.selection, self.s(4.0));
@@ -1228,8 +1238,8 @@ impl App {
         };
         let l = &self.layout;
         let (list, col, rh) = (l.list, l.cols[0], l.row_h);
-        let y = (list.y + row as f32 * rh - self.tab().scroll).round();
-        let x0 = col.x + self.s(10.0) + self.s(ICON) + self.s(4.0);
+        let y = self.tab().row_y(row, list.y, rh);
+        let x0 = self.icon_x() + self.s(ICON) + self.s(4.0);
         let rect = Rect::new(x0, y + 1.0, (col.right() - self.s(4.0) - x0).max(self.s(60.0)), rh - 2.0);
         let font = self.ui_font(13.0);
         let m = g.metrics(font);

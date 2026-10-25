@@ -339,7 +339,7 @@ fn actions_before_the_new_listing_target_the_shown_folder() {
 #[test]
 fn hidden_entries_leave_the_selection() {
     let shown = ViewSpec { show_hidden: true, ..Default::default() };
-    let mut app = App::new(Persisted { path: loc(r"C:\x"), view: shown, ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 600), t0());
+    let mut app = App::new(Persisted { path: loc(r"C:\x"), show_hidden: true, ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 600), t0());
     publish(&mut app, shown, true, &[(".git", attr::DIR | attr::HIDDEN), ("a.txt", 0), ("b.txt", 0)]);
     key(&mut app, Key::Char('A'), CTRL);
     assert_eq!(app.tab().view.as_ref().unwrap().selected_count(), 3);

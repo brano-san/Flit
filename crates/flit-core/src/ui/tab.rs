@@ -1,4 +1,5 @@
 use super::field::Field;
+use super::details::{Columns, LayoutMode};
 use super::{Effect, LoadStats};
 use crate::input::Mods;
 use crate::listing::{attr, DirChange, DirSnapshot};
@@ -7,7 +8,7 @@ use crate::name;
 use crate::nav::History;
 use crate::provider::{GenToken, ProviderRequest, SnapshotSlot, TabId};
 use crate::recycle;
-use crate::sort::{CaseMode, SortField, SortSpec, ViewSpec};
+use crate::sort::{CaseMode, GroupField, GroupSpec, SortField, SortSpec, ViewSpec};
 use crate::view::DirView;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -31,6 +32,9 @@ pub struct Tab {
     pub(super) slot: Arc<SnapshotSlot>,
     pub(super) watching: Option<ProviderId>,
     pub(super) view_spec: ViewSpec,
+    pub(super) columns: Columns,
+    pub(super) mode: LayoutMode,
+    pub(super) fit_pending: bool,
     pub(super) loading: Option<Loading>,
     pub(super) view: Option<DirView>,
     pub(super) view_loc: Location,
@@ -57,6 +61,9 @@ impl Tab {
             slot: Arc::default(),
             watching: None,
             view_spec,
+            columns: Columns::default(),
+            mode: LayoutMode::default(),
+            fit_pending: false,
             loading: None,
             view: None,
             error: None,
@@ -92,6 +99,9 @@ impl Tab {
         }
         if self.view_spec.sort.field == SortField::Origin && !loc.is_recycle_bin() {
             self.view_spec.sort = SortSpec::default();
+        }
+        if self.view_spec.group.field == GroupField::Origin && !loc.is_recycle_bin() {
+            self.view_spec.group = GroupSpec::default();
         }
         let provider = loc.provider();
         if let Some(old) = self.watching.take().filter(|p| *p != provider) {
@@ -207,12 +217,21 @@ impl Tab {
         self.view.as_ref().map_or(0, |v| v.rows().len())
     }
 
-    pub(super) fn max_scroll(&self, row_h: f32, list_h: f32) -> f32 {
-        (self.rows() as f32 * row_h - list_h).max(0.0)
+    pub(super) fn lines(&self) -> usize {
+        self.view.as_ref().map_or(0, |v| v.lines())
     }
 
-    pub(super) fn row_range(&self, row_h: f32, list_h: f32) -> (usize, usize) {
-        let n = self.rows();
+    pub(super) fn row_y(&self, row: usize, list_y: f32, row_h: f32) -> f32 {
+        let line = self.view.as_ref().map_or(row, |v| v.line_of_row(row));
+        (list_y + line as f32 * row_h - self.scroll).round()
+    }
+
+    pub(super) fn max_scroll(&self, row_h: f32, list_h: f32) -> f32 {
+        (self.lines() as f32 * row_h - list_h).max(0.0)
+    }
+
+    pub(super) fn line_range(&self, row_h: f32, list_h: f32) -> (usize, usize) {
+        let n = self.lines();
         let rh = row_h.max(1.0);
         let first = (self.scroll / rh).floor() as usize;
         let last = ((self.scroll + list_h) / rh).ceil() as usize;
@@ -220,8 +239,8 @@ impl Tab {
     }
 
     pub(super) fn reveal_focus(&mut self, center: bool, row_h: f32, list_h: f32) {
-        let Some(row) = self.view.as_ref().and_then(|v| v.focus.and_then(|f| v.row_of(f))) else { return };
-        let (top, bottom) = (row as f32 * row_h, (row + 1) as f32 * row_h);
+        let Some(line) = self.view.as_ref().and_then(|v| v.focus.and_then(|f| v.row_of(f)).map(|r| v.line_of_row(r))) else { return };
+        let (top, bottom) = (line as f32 * row_h, (line + 1) as f32 * row_h);
         let mut s = self.scroll_target;
         if center && (top < s || bottom > s + list_h) {
             s = top - (list_h - row_h) / 2.0;

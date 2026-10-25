@@ -1,10 +1,26 @@
 use crate::filter::NameFilter;
 use crate::hash::{self, FxHashMap};
 use crate::listing::{attr, ChangeKind, DirChange, DirSnapshot, Listing, Meta};
-use crate::sort::{self, ViewSpec};
+use crate::sort::{self, GroupField, ViewSpec};
 use smallvec::SmallVec;
 use std::borrow::Borrow;
 use std::sync::Arc;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Group {
+    pub first: u32,
+    pub start: u32,
+    pub line: u32,
+    pub count: u32,
+    pub collapsed: bool,
+    pub id: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Line {
+    Header(usize),
+    Row(usize),
+}
 
 pub struct DirView {
     snap: Arc<DirSnapshot>,
@@ -14,11 +30,16 @@ pub struct DirView {
     pub anchor: Option<u32>,
     names: Option<FxHashMap<u64, SmallVec<[u32; 1]>>>,
     filter: Option<NameFilter>,
+    groups: Vec<Group>,
+    collapsed: Vec<u64>,
+    shown: Option<Vec<u32>>,
 }
 
 impl DirView {
     pub fn new(snap: Arc<DirSnapshot>) -> Self {
-        Self { snap, sel: Vec::new(), sel_count: 0, focus: None, anchor: None, names: None, filter: None }
+        let mut v = Self { snap, sel: Vec::new(), sel_count: 0, focus: None, anchor: None, names: None, filter: None, groups: Vec::new(), collapsed: Vec::new(), shown: None };
+        v.regroup();
+        v
     }
 
     pub fn snap(&self) -> &Arc<DirSnapshot> {
@@ -28,16 +49,112 @@ impl DirView {
     pub fn replace(&mut self, snap: Arc<DirSnapshot>) {
         self.snap = snap;
         self.names = None;
-        self.refilter();
+        self.rows_changed();
         self.prune();
     }
 
     #[inline]
     pub fn rows(&self) -> &[u32] {
+        match &self.shown {
+            Some(s) => s,
+            None => self.base_rows(),
+        }
+    }
+
+    #[inline]
+    pub fn base_rows(&self) -> &[u32] {
         match &self.filter {
             Some(f) => f.rows(),
             None => &self.snap.order,
         }
+    }
+
+    pub fn groups(&self) -> &[Group] {
+        &self.groups
+    }
+
+    pub fn lines(&self) -> usize {
+        self.rows().len() + self.groups.len()
+    }
+
+    pub fn line(&self, n: usize) -> Option<Line> {
+        if n >= self.lines() {
+            return None;
+        }
+        if self.groups.is_empty() {
+            return Some(Line::Row(n));
+        }
+        let g = self.groups.partition_point(|gr| gr.line as usize <= n) - 1;
+        let gr = &self.groups[g];
+        Some(match n - gr.line as usize {
+            0 => Line::Header(g),
+            k => Line::Row(gr.start as usize + k - 1),
+        })
+    }
+
+    pub fn line_of_row(&self, r: usize) -> usize {
+        r + self.groups.partition_point(|gr| gr.start as usize <= r)
+    }
+
+    pub fn row_at_line(&self, n: usize) -> usize {
+        match self.line(n) {
+            Some(Line::Row(r)) => r,
+            Some(Line::Header(g)) => self.groups[g].start as usize,
+            None => self.rows().len(),
+        }
+    }
+
+    pub fn toggle_group(&mut self, g: usize) {
+        let Some(id) = self.groups.get(g).map(|gr| gr.id) else { return };
+        match self.collapsed.iter().position(|&c| c == id) {
+            Some(k) => {
+                self.collapsed.swap_remove(k);
+            }
+            None => self.collapsed.push(id),
+        }
+        self.regroup();
+        self.prune();
+    }
+
+    fn regroup(&mut self) {
+        self.groups.clear();
+        self.shown = None;
+        let view = self.snap.view;
+        let field = view.group.field;
+        if field == GroupField::None {
+            return;
+        }
+        let l = &self.snap.listing;
+        let base = match &self.filter {
+            Some(f) => f.rows(),
+            None => &self.snap.order,
+        };
+        let fold = !self.collapsed.is_empty();
+        let mut shown = Vec::new();
+        let mut r = 0;
+        while r < base.len() {
+            let first = base[r];
+            let (key, bytes) = (sort::group_key(l, first, &view).0, sort::group_bytes(l, first, field));
+            let same = |&i: &u32| sort::group_key(l, i, &view).0 == key && sort::group_bytes(l, i, field).eq_ignore_ascii_case(bytes);
+            let end = r + 1 + base[r + 1..].partition_point(same);
+            let id = sort::group_id(l, first, &view);
+            let collapsed = fold && self.collapsed.contains(&id);
+            let start = if fold { shown.len() } else { r };
+            if fold && !collapsed {
+                shown.extend_from_slice(&base[r..end]);
+            }
+            let line = (start + self.groups.len()) as u32;
+            self.groups.push(Group { first, start: start as u32, line, count: (end - r) as u32, collapsed, id });
+            r = end;
+        }
+        if fold {
+            self.shown = Some(shown);
+        }
+    }
+
+    fn rows_changed(&mut self) {
+        self.refilter();
+        self.regroup();
     }
 
     #[inline]
@@ -47,7 +164,7 @@ impl DirView {
 
     pub fn row_of(&self, i: u32) -> Option<usize> {
         let s = &self.snap;
-        match sort::find_row(&s.listing, &s.keys, s.view.sort, self.rows(), i) {
+        match sort::find_row(&s.listing, &s.keys, &s.view, self.rows(), i) {
             Some(r) => Some(r),
             None => self.rows().iter().position(|&p| p == i),
         }
@@ -69,8 +186,11 @@ impl DirView {
     }
 
     pub(crate) fn is_visible(&self, i: u32) -> bool {
-        self.snap.listing.entries.get(i as usize).is_some_and(|e| sort::visible(e, self.snap.view.show_hidden))
+        let (l, v) = (&self.snap.listing, &self.snap.view);
+        (i as usize) < l.len()
+            && sort::visible(l, i, v)
             && self.filter.as_ref().is_none_or(|f| f.matched(i))
+            && (self.groups.is_empty() || self.collapsed.is_empty() || !self.collapsed.contains(&sort::group_id(l, i, v)))
     }
 
     #[inline]
@@ -104,6 +224,14 @@ impl DirView {
         for r in 0..self.rows().len() {
             let i = self.rows()[r];
             self.set_selected(i, true);
+        }
+    }
+
+    pub fn invert_selection(&mut self) {
+        for r in 0..self.rows().len() {
+            let i = self.rows()[r];
+            let on = !self.is_selected(i);
+            self.set_selected(i, on);
         }
     }
 
@@ -149,13 +277,13 @@ impl DirView {
 
     fn update(&mut self, i: u32, meta: Meta) {
         let snap = Arc::make_mut(&mut self.snap);
-        let row = sort::find_row(&snap.listing, &snap.keys, snap.view.sort, &snap.order, i).or_else(|| snap.order.iter().position(|&p| p == i));
+        let row = sort::find_row(&snap.listing, &snap.keys, &snap.view, &snap.order, i).or_else(|| snap.order.iter().position(|&p| p == i));
         if let Some(r) = row {
             snap.order.remove(r);
         }
         snap.listing.set_meta(i, meta);
-        if sort::visible(&snap.listing.entries[i as usize], snap.view.show_hidden) {
-            let p = sort::insert_pos(&snap.listing, &snap.keys, snap.view.sort, &snap.order, i);
+        if sort::visible(&snap.listing, i, &snap.view) {
+            let p = sort::insert_pos(&snap.listing, &snap.keys, &snap.view, &snap.order, i);
             snap.order.insert(p, i);
         }
     }
@@ -198,26 +326,26 @@ impl DirView {
         }
         if !touched.is_empty() {
             self.reorder(touched);
-            self.refilter();
+            self.rows_changed();
             self.prune();
         }
     }
 
     fn reorder(&mut self, mut touched: Vec<u32>) {
         let snap = Arc::make_mut(&mut self.snap);
-        let (l, k, spec, show_hidden) = (&snap.listing, &snap.keys, snap.view.sort, snap.view.show_hidden);
+        let (l, k, view) = (&snap.listing, &snap.keys, snap.view);
         let mut moved = vec![false; l.len()];
         for &i in &touched {
             moved[i as usize] = true;
         }
         snap.order.retain(|&i| !moved[i as usize]);
-        touched.retain(|&i| sort::visible(&l.entries[i as usize], show_hidden));
-        touched.sort_unstable_by(|&a, &b| sort::cmp(l, k, spec, a, b));
+        touched.retain(|&i| sort::visible(l, i, &view));
+        touched.sort_unstable_by(|&a, &b| sort::cmp(l, k, &view, a, b));
         touched.dedup();
         let mut order = Vec::with_capacity(snap.order.len() + touched.len());
         let mut rest = &snap.order[..];
         for &i in &touched {
-            let p = rest.partition_point(|&o| sort::cmp(l, k, spec, o, i).is_lt());
+            let p = rest.partition_point(|&o| sort::cmp(l, k, &view, o, i).is_lt());
             order.extend_from_slice(&rest[..p]);
             order.push(i);
             rest = &rest[p..];
@@ -235,14 +363,18 @@ impl DirView {
         m.size = size;
         m.attrs |= attr::SIZE_KNOWN;
         self.update(i, m);
-        self.refilter();
+        self.rows_changed();
+        self.prune();
     }
 
     pub fn merge_order(&mut self, mut order: Vec<u32>, view: ViewSpec, base_len: usize) {
+        if view.group != self.snap.view.group {
+            self.collapsed.clear();
+        }
         let snap = Arc::make_mut(&mut self.snap);
         let l = &snap.listing;
-        order.retain(|&i| sort::visible(&l.entries[i as usize], view.show_hidden));
-        let sorted = order.windows(2).all(|w| sort::cmp(l, &snap.keys, view.sort, w[0], w[1]).is_lt());
+        order.retain(|&i| sort::visible(l, i, &view));
+        let sorted = order.windows(2).all(|w| sort::cmp(l, &snap.keys, &view, w[0], w[1]).is_lt());
         snap.order = order;
         snap.view = view;
         if sorted {
@@ -252,7 +384,7 @@ impl DirView {
             sort::sort(&snap.listing, &snap.keys, view, &mut o);
             snap.order = o;
         }
-        self.refilter();
+        self.rows_changed();
         self.prune();
     }
 
@@ -264,7 +396,7 @@ impl DirView {
                 f.seed_from(p, &self.snap.listing);
             }
         }
-        self.refilter();
+        self.rows_changed();
         self.prune();
     }
 

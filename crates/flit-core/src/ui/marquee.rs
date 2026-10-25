@@ -18,7 +18,7 @@ pub(super) struct Marquee {
 
 impl App {
     pub(super) fn marquee_column(&self, x: f32) -> bool {
-        x >= self.layout.cols[1].x
+        self.layout.cols.first().is_some_and(|c| x >= c.right())
     }
 
     pub(super) fn marquee_base(&self) -> Vec<u32> {
@@ -73,20 +73,21 @@ impl App {
         for &i in &m.base {
             v.set_selected(i, true);
         }
-        let n = v.rows().len();
-        if n == 0 || bottom < 0.0 || top >= n as f32 * rh {
+        let (n, lines) = (v.rows().len(), v.lines());
+        if n == 0 || bottom < 0.0 || top >= lines as f32 * rh {
             return;
         }
         let rh = rh.max(1.0);
-        let (first, last) = ((top.max(0.0) / rh) as usize, ((bottom / rh) as usize).min(n - 1));
-        for row in first..=last {
+        let (first, last) = (v.row_at_line((top.max(0.0) / rh) as usize), v.row_at_line((bottom / rh) as usize + 1));
+        for row in first..last.min(n) {
             let i = v.rows()[row];
             let on = !(m.toggle && v.is_selected(i));
             v.set_selected(i, on);
         }
-        let row_at = |y: f32| ((y.max(0.0) / rh) as usize).min(n - 1);
-        v.anchor = Some(v.rows()[row_at(m.start.1)]);
-        v.focus = Some(v.rows()[row_at(end)]);
+        let row_at = |y: f32| v.rows()[v.row_at_line((y.max(0.0) / rh) as usize).min(n - 1)];
+        let (anchor, focus) = (row_at(m.start.1), row_at(end));
+        v.anchor = Some(anchor);
+        v.focus = Some(focus);
     }
 
     pub(super) fn marquee_autoscroll(&mut self, dt: f32) -> bool {

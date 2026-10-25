@@ -1,4 +1,5 @@
 pub mod edit;
+mod details;
 mod ops;
 mod search;
 mod tab;
@@ -15,6 +16,7 @@ pub mod sidebar;
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchSort};
 pub use sidebar::{Drive, KnownFolder, NavState, Places};
+pub use details::{folder_key, Columns, FolderView, FolderViews, LayoutMode, ViewPrefs};
 pub use jobs::JobState;
 pub use menu::MenuItem;
 pub use tab::Tab;
@@ -30,9 +32,10 @@ use crate::path::{FsPath, PathKind};
 use crate::provider::{ProviderEvent, ProviderRequest, Resolve, TabId};
 use crate::recycle;
 use crate::render::{Color, Rect};
-use crate::sort::{CaseMode, SortField, SortSpec, ViewSpec};
+use crate::sort::{CaseMode, GroupField, SortField, ViewSpec};
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::{self, Theme};
+use crate::view::Line;
 use bumpalo::Bump;
 use edit::{EditAction, LineEdit};
 use std::fmt::Write as _;
@@ -86,9 +89,10 @@ pub enum Column {
     Size,
     Origin,
     Deleted,
+    Created,
 }
 
-pub const COLUMNS: [Column; 4] = [Column::Name, Column::Modified, Column::Type, Column::Size];
+pub const COLUMNS: [Column; 5] = [Column::Name, Column::Modified, Column::Created, Column::Type, Column::Size];
 pub const BIN_COLUMNS: [Column; 4] = [Column::Name, Column::Origin, Column::Deleted, Column::Size];
 
 impl Column {
@@ -96,6 +100,7 @@ impl Column {
         match self {
             Column::Name => "Name",
             Column::Modified => "Date modified",
+            Column::Created => "Date created",
             Column::Type => "Type",
             Column::Size => "Size",
             Column::Origin => "Original location",
@@ -106,6 +111,7 @@ impl Column {
         match self {
             Column::Name => SortField::Name,
             Column::Modified | Column::Deleted => SortField::Modified,
+            Column::Created => SortField::Created,
             Column::Type => SortField::Type,
             Column::Size => SortField::Size,
             Column::Origin => SortField::Origin,
@@ -180,16 +186,18 @@ enum IconState {
     Failed,
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Persisted {
     pub path: Location,
-    pub view: ViewSpec,
-    pub col_w: [f32; 3],
+    pub show_hidden: bool,
+    pub view: FolderView,
+    pub prefs: ViewPrefs,
+    pub folders: FolderViews,
 }
 
 impl Default for Persisted {
     fn default() -> Self {
-        Self { path: Location::computer(), view: ViewSpec::default(), col_w: [150.0, 140.0, 90.0] }
+        Self { path: Location::computer(), show_hidden: false, view: FolderView::default(), prefs: ViewPrefs::default(), folders: FolderViews::default() }
     }
 }
 
@@ -221,6 +229,7 @@ enum Hit {
     Header(usize),
     ColSep(usize),
     Row(usize),
+    Group(usize),
     ListEmpty,
     Track,
     Thumb,
@@ -253,7 +262,7 @@ enum Hit {
 enum Drag {
     None,
     Thumb { grab: f32 },
-    ColSep { col: usize, start_x: f32, start_w: f32 },
+    ColSep { col: Column, start_x: f32, start_w: f32 },
     EditSelect,
     Splitter { start_x: f32, start_w: f32 },
     PinMove { from: usize, to: usize },
@@ -271,7 +280,8 @@ struct Layout {
     address: Rect,
     ops_button: Rect,
     header: Rect,
-    cols: [Rect; 4],
+    columns: Vec<Column>,
+    cols: Vec<Rect>,
     list: Rect,
     track: Rect,
     thumb: Rect,
@@ -292,6 +302,8 @@ pub struct App {
     pub conflict_default: Option<Resolve>,
     pub shell_items_inline: bool,
     pub menu_hidden: Vec<&'static str>,
+    pub prefs: ViewPrefs,
+    folders: FolderViews,
     menu: Vec<menu::Cmd>,
     focused_at: Option<Instant>,
     dark: bool,
@@ -304,7 +316,7 @@ pub struct App {
     cur: usize,
     next_tab: TabId,
     next_gen: u64,
-    col_w: [f32; 3],
+    timer_at: Option<Instant>,
 
     focus: Focus,
     edit: LineEdit,
@@ -330,6 +342,7 @@ pub struct App {
     marquee: Option<marquee::Marquee>,
     search: search::SearchView,
     jobs: jobs::Jobs,
+    details: details::Details,
 }
 
 impl App {
@@ -344,6 +357,8 @@ impl App {
             conflict_default: None,
             shell_items_inline: false,
             menu_hidden: Vec::new(),
+            prefs: state.prefs,
+            folders: state.folders,
             menu: Vec::new(),
             focused_at: None,
             dark,
@@ -355,7 +370,7 @@ impl App {
             cur: 0,
             next_tab: tab_base + 1,
             next_gen: 0,
-            col_w: state.col_w,
+            timer_at: None,
             focus: Focus::List,
             edit: LineEdit::default(),
             editing: false,
@@ -378,12 +393,13 @@ impl App {
             marquee: None,
             search: Default::default(),
             jobs: Default::default(),
+            details: Default::default(),
         };
         let mut start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
         let total = start.len();
         start.truncate(MAX_ROUTES);
         for r in start {
-            app.add_tab(r, state.view, now);
+            app.add_tab(r, state.view, state.show_hidden, now);
         }
         app.report_dropped(total);
         app.layout();
@@ -405,7 +421,7 @@ impl App {
 
     pub fn persisted(&self) -> Persisted {
         let t = self.tab();
-        Persisted { path: t.location().clone(), view: t.view_spec, col_w: self.col_w }
+        Persisted { path: t.location().clone(), show_hidden: t.view_spec.show_hidden, view: t.folder_view(), prefs: self.prefs.clone(), folders: self.folders.clone() }
     }
 
     pub fn tab(&self) -> &Tab {
@@ -445,8 +461,9 @@ impl App {
 
     pub fn visible_rows(&self) -> (u64, u32, u32) {
         let t = self.tab();
-        let (a, b) = t.row_range(self.layout.row_h, self.layout.list.h);
-        (t.gen, a as u32, b as u32)
+        let (a, b) = t.line_range(self.layout.row_h, self.layout.list.h);
+        let rows = |n: usize| t.view.as_ref().map_or(0, |v| v.row_at_line(n)) as u32;
+        (t.gen, rows(a), rows(b))
     }
 
     pub fn ime_area(&self) -> Option<Rect> {
@@ -455,10 +472,6 @@ impl App {
 
     fn s(&self, v: f32) -> f32 {
         (v * self.scale).round()
-    }
-
-    fn columns(&self) -> [Column; 4] {
-        if self.tab().view_loc.is_recycle_bin() { BIN_COLUMNS } else { COLUMNS }
     }
 
     fn theme(&self) -> &'static Theme {
@@ -508,14 +521,12 @@ impl App {
                 let first = it.next().unwrap();
                 self.route_here(first, now);
                 for r in it {
-                    let view = self.tab().view_spec;
-                    self.add_tab(r, view, now);
+                    self.add_tab_like_current(r, now);
                 }
             }
             OpenTarget::NewTab | OpenTarget::Default => {
                 for r in routes {
-                    let view = self.tab().view_spec;
-                    self.add_tab(r, view, now);
+                    self.add_tab_like_current(r, now);
                 }
             }
         }
@@ -524,10 +535,9 @@ impl App {
     }
 
     fn route_here(&mut self, r: Route, now: Instant) {
-        let gen = self.gen();
-        let case = self.case;
         let (rh, lh) = (self.layout.row_h, self.layout.list.h);
-        let t = &mut self.tabs[self.cur];
+        let k = self.cur;
+        let t = &mut self.tabs[k];
         if !t.history.go(r.folder) {
             let current = t.gen;
             if let (Some(name), Some(v)) = (&r.select, t.view.as_mut().filter(|v| v.snap().gen == current)) {
@@ -541,18 +551,24 @@ impl App {
                 }
             }
         }
-        t.load(gen, r.select, case, now, &mut self.effects);
+        self.load_tab(k, r.select, now);
         self.after_tab_change();
     }
 
-    fn add_tab(&mut self, r: Route, view: ViewSpec, now: Instant) {
+    fn add_tab_like_current(&mut self, r: Route, now: Instant) {
+        let t = self.tab();
+        let (view, show_hidden) = (t.folder_view(), t.view_spec.show_hidden);
+        self.add_tab(r, view, show_hidden, now);
+    }
+
+    fn add_tab(&mut self, r: Route, view: FolderView, show_hidden: bool, now: Instant) {
         let id = self.next_tab;
         self.next_tab += 1;
-        let gen = self.gen();
-        let mut t = Tab::new(id, r.folder, view);
-        t.load(gen, r.select, self.case, now, &mut self.effects);
+        let mut t = Tab::new(id, r.folder, ViewSpec { show_hidden, ..ViewSpec::default() });
+        t.set_folder_view(view);
         self.tabs.push(t);
         self.cur = self.tabs.len() - 1;
+        self.load_tab(self.cur, r.select, now);
         self.after_tab_change();
     }
 
@@ -599,14 +615,13 @@ impl App {
     }
 
     fn go_history(&mut self, forward: bool, now: Instant) {
-        let gen = self.gen();
-        let case = self.case;
-        let t = &mut self.tabs[self.cur];
+        let k = self.cur;
+        let t = &mut self.tabs[k];
         let from = t.location().clone();
         let moved = if forward { t.history.forward().is_some() } else { t.history.back().is_some() };
         if moved {
             let select = (from.parent().as_ref() == Some(t.location())).then(|| from.file_name().to_vec());
-            t.load(gen, select, case, now, &mut self.effects);
+            self.load_tab(k, select, now);
             self.after_tab_change();
         }
     }
@@ -616,10 +631,8 @@ impl App {
     }
 
     fn reload(&mut self, k: usize, now: Instant) {
-        let gen = self.gen();
-        let t = &mut self.tabs[k];
-        let select = t.focused_name();
-        t.load(gen, select, self.case, now, &mut self.effects);
+        let select = self.tabs[k].focused_name();
+        self.load_tab(k, select, now);
         self.dirty |= k == self.cur;
     }
 
@@ -659,9 +672,14 @@ impl App {
         let mut visible = false;
         for k in 0..self.tabs.len() {
             let Some(snap) = self.tabs[k].slot.take() else { continue };
+            self.sync_spec(k);
+            let loaded = snap.done && snap.gen == self.tabs[k].gen;
             let resort = self.tabs[k].on_snapshot(snap);
             if resort {
                 self.resort(k);
+            }
+            if loaded {
+                self.on_loaded(k);
             }
             visible |= k == self.cur;
         }
@@ -755,6 +773,7 @@ impl App {
     }
 
     fn resort(&mut self, k: usize) {
+        self.sync_spec(k);
         let t = &self.tabs[k];
         if let Some(v) = &t.view {
             self.effects.push(Effect::Resort { tab: t.id, gen: t.gen, snap: v.snap().clone(), view: t.view_spec });
@@ -765,6 +784,8 @@ impl App {
         let (w, h) = self.size;
         let (cx, filter_h) = self.content_origin();
         let ops_button = self.ops_button_visible();
+        let (kinds, widths) = (self.column_kinds(), self.tab().columns);
+        let status_bar = self.prefs.status_bar || self.tab().error.is_some();
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
         let l = &mut self.layout;
@@ -797,15 +818,23 @@ impl App {
         l.ops_button = if ops_button { Rect::new(right + s(4.0), l.nav[0].y, s(NAV_W), l.nav[0].h) } else { Rect::default() };
         l.address = Rect::new(ax, l.toolbar.y + s(5.0), (right - s(12.0) - ax).max(s(40.0)), s(TOOL_H - 10.0));
         l.header = Rect::new(cx, l.toolbar.bottom() + filter_h, w - cx, s(HEADER_H));
-        l.status = Rect::new(0.0, h - s(STATUS_H), w, s(STATUS_H));
+        let status_h = if status_bar { s(STATUS_H) } else { 0.0 };
+        l.status = Rect::new(0.0, h - status_h, w, status_h);
+        if !status_bar {
+            l.sizes = Rect::default();
+            l.bin = Default::default();
+        }
         l.list = Rect::new(cx, l.header.bottom(), (w - cx - s(SCROLLBAR_W)).max(0.0), (l.status.y - l.header.bottom()).max(0.0));
         l.track = Rect::new(l.list.right(), l.list.y, s(SCROLLBAR_W), l.list.h);
-        let fixed: f32 = self.col_w.iter().map(|&c| s(c)).sum();
+        l.columns.clear();
+        l.columns.extend(kinds.iter().copied().filter(|&c| widths.shown(c)));
+        let fixed: f32 = l.columns.iter().skip(1).map(|&c| s(widths.width(c))).sum();
         let name_w = (l.list.w - fixed).max(s(NAME_MIN_W));
         let mut x = cx;
-        for (i, r) in l.cols.iter_mut().enumerate() {
-            let cw = if i == 0 { name_w } else { s(self.col_w[i - 1]) };
-            *r = Rect::new(x, l.header.y, cw, l.header.h);
+        l.cols.clear();
+        for &c in &l.columns {
+            let cw = if c == Column::Name { name_w } else { s(widths.width(c)) };
+            l.cols.push(Rect::new(x, l.header.y, cw, l.header.h));
             x += cw;
         }
         let (rh, lh) = (l.row_h, l.list.h);
@@ -816,7 +845,7 @@ impl App {
         let max_scroll = t.max_scroll(rh, lh);
         t.scroll_target = t.scroll_target.clamp(0.0, max_scroll);
         t.scroll = t.scroll.clamp(0.0, max_scroll);
-        let content = t.rows() as f32 * rh;
+        let content = t.lines() as f32 * rh;
         l.thumb = if content > lh {
             let th = (l.track.h * lh / content).max(s(24.0)).min(l.track.h);
             let ty = l.track.y + (l.track.h - th) * (t.scroll / max_scroll);
@@ -869,10 +898,8 @@ impl App {
         }
         if l.header.contains(x, y) {
             let grip = self.s(4.0);
-            for i in 1..4 {
-                if (x - l.cols[i].x).abs() <= grip {
-                    return Hit::ColSep(i);
-                }
+            if let Some(i) = (1..l.cols.len()).find(|&i| (x - l.cols[i].x).abs() <= grip) {
+                return Hit::ColSep(i);
             }
             return l.cols.iter().position(|r| r.contains(x, y)).map_or(Hit::None, Hit::Header);
         }
@@ -882,8 +909,12 @@ impl App {
         }
         if l.list.contains(x, y) {
             let t = self.tab();
-            let row = ((y - l.list.y + t.scroll) / l.row_h).floor() as usize;
-            return if row < t.rows() { Hit::Row(row) } else { Hit::ListEmpty };
+            let line = ((y - l.list.y + t.scroll) / l.row_h).floor() as usize;
+            return match t.view.as_ref().and_then(|v| v.line(line)) {
+                Some(Line::Row(r)) => Hit::Row(r),
+                Some(Line::Header(g)) => Hit::Group(g),
+                None => Hit::ListEmpty,
+            };
         }
         if l.sizes.contains(x, y) {
             return Hit::Sizes;
@@ -928,10 +959,12 @@ impl App {
                 self.mods = Mods::default();
                 self.focused_at = f.then_some(now);
                 self.ops_timer_cancel();
+                self.end_autoscroll();
                 self.dirty = true;
             }
-            Event::MouseMove { x, y } => self.mouse_move(*x, *y),
+            Event::MouseMove { x, y } => self.mouse_move(*x, *y, now),
             Event::MouseLeave => {
+                self.hover_pick(Hit::None, now);
                 if self.hover != Hit::None {
                     self.hover = Hit::None;
                     self.dirty = true;
@@ -973,7 +1006,11 @@ impl App {
             Event::ShellVerb(verb) => self.shell_verb(verb),
             Event::MenuCommand(k) => self.menu_command(*k, now),
             Event::DevicesChanged => self.effects.push(Effect::RefreshPlaces),
-            Event::Timer => self.ops_timer(now),
+            Event::Timer => {
+                self.timer_at = None;
+                self.ops_timer(now);
+                self.hover_timer(now);
+            }
             Event::ClipboardChanged(seq) => self.clipboard_changed(*seq),
         }
     }
@@ -985,8 +1022,8 @@ impl App {
         }
     }
 
-    fn mouse_move(&mut self, x: f32, y: f32) {
-        if self.ops_mouse_move(x, y) || self.marquee_move(x, y) {
+    fn mouse_move(&mut self, x: f32, y: f32, now: Instant) {
+        if self.autoscroll_move(y) || self.ops_mouse_move(x, y) || self.marquee_move(x, y) {
             return;
         }
         let (rh, lh) = (self.layout.row_h, self.layout.list.h);
@@ -1002,13 +1039,7 @@ impl App {
                 self.dirty = true;
                 return;
             }
-            Drag::ColSep { col, start_x, start_w } => {
-                let w = (start_w - (x - start_x) / self.scale).clamp(40.0, 600.0);
-                self.col_w[col - 1] = w.round();
-                self.layout();
-                self.dirty = true;
-                return;
-            }
+            Drag::ColSep { col, start_x, start_w } => return self.set_column_width(col, start_w - (x - start_x) / self.scale),
             Drag::EditSelect => {
                 self.pending_edit = Some((x, true));
                 self.dirty = true;
@@ -1029,6 +1060,7 @@ impl App {
             _ => CursorIcon::Default,
         };
         self.set_cursor(cursor);
+        self.hover_pick(h, now);
         if h != self.hover {
             self.hover = h;
             self.dirty = true;
@@ -1037,7 +1069,7 @@ impl App {
 
     fn mouse_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8, now: Instant) {
         self.dirty = true;
-        if self.jobs_mouse_down(self.hit(x, y)) || self.ops_mouse_down(x, y, button, clicks) {
+        if self.jobs_mouse_down(self.hit(x, y)) || self.autoscroll_down(self.hit(x, y), y, button) || self.ops_mouse_down(x, y, button, clicks) {
             return;
         }
         let h = self.hit(x, y);
@@ -1070,7 +1102,9 @@ impl App {
             }
             Hit::Row(row) => {
                 self.focus = Focus::List;
-                if button == MouseButton::Left && clicks == 1 && !self.mods.shift && self.marquee_column(x) {
+                if button == MouseButton::Left && self.on_checkbox(x) {
+                    self.toggle_row(row);
+                } else if button == MouseButton::Left && clicks == 1 && !self.mods.shift && self.marquee_column(x) {
                     let base = self.marquee_base();
                     self.click_row(row, button, clicks, now);
                     self.arm_marquee(x, y, self.mods.ctrl, base);
@@ -1097,12 +1131,19 @@ impl App {
                 let t = self.tab_mut();
                 t.scroll_target = (t.scroll_target + dir * lh).clamp(0.0, t.max_scroll(rh, lh));
             }
-            Hit::ColSep(col) => self.drag = Drag::ColSep { col, start_x: x, start_w: self.col_w[col - 1] },
+            Hit::Group(_) => self.focus = Focus::List,
+            Hit::ColSep(i) => {
+                let col = self.layout.columns[i];
+                self.drag = Drag::ColSep { col, start_x: x, start_w: self.tab().columns.width(col) };
+            }
             _ => {}
         }
     }
 
     fn mouse_up(&mut self, x: f32, y: f32, button: MouseButton, now: Instant) {
+        if self.autoscroll_up(button) {
+            return;
+        }
         self.ops_mouse_up(x, y, button, now);
         self.end_marquee();
         let was = std::mem::replace(&mut self.drag, Drag::None);
@@ -1133,14 +1174,8 @@ impl App {
                     self.navigate(p, now);
                 }
             }
-            Hit::Header(c) => {
-                let field = self.columns()[c].field();
-                let t = self.tab_mut();
-                let s = &mut t.view_spec.sort;
-                *s = if s.field == field { SortSpec { field, descending: !s.descending } } else { SortSpec { field, descending: false } };
-                let k = self.cur;
-                self.resort(k);
-            }
+            Hit::Header(c) => self.sort_column(self.layout.columns[c].field()),
+            Hit::Group(g) => self.toggle_group(g),
             Hit::Sizes => self.compute_dir_sizes(),
             Hit::Bin(k) => self.bin_button(k),
             Hit::Side(i) => self.open_side_item(i, self.mods.ctrl, now),
@@ -1330,6 +1365,7 @@ impl App {
         let mut animating = self.tab_mut().apply_diffs(DIFF_BUDGET);
         self.ops_frame(now);
         animating |= self.marquee_autoscroll(dt);
+        animating |= self.autoscroll_step(dt);
 
         let t = self.tab_mut();
         let diff = t.scroll_target - t.scroll;
@@ -1342,6 +1378,8 @@ impl App {
         self.layout();
 
         let mut arena = std::mem::take(&mut self.arena);
+        arena.reset();
+        self.fit_columns(g, &arena);
         let th = self.theme();
         for _ in 0..2 {
             arena.reset();
@@ -1360,7 +1398,9 @@ impl App {
                 self.draw_sidebar(g, th);
             } else {
                 self.draw_toolbar(g, th);
-                self.draw_status(g, &arena, th);
+                if self.layout.status.h > 0.0 {
+                    self.draw_status(g, &arena, th);
+                }
                 self.draw_nav(g, th);
             }
             self.draw_jobs(g, th);
@@ -1531,7 +1571,7 @@ impl App {
         let baseline = (l.header.y + (l.header.h + m.ascent - m.descent) / 2.0).round();
         let pad = self.s(10.0);
         let sort = self.tab().view_spec.sort;
-        for (i, col) in self.columns().iter().enumerate() {
+        for (i, col) in l.columns.iter().enumerate() {
             let r = l.cols[i];
             if self.hover == Hit::Header(i) {
                 g.dl.rect(r, t.button_hover);
@@ -1551,22 +1591,24 @@ impl App {
 
     fn draw_list<B: TextBackend>(&mut self, g: &mut Gfx<B>, arena: &Bump, t: &Theme) {
         let l = &self.layout;
-        let (list, cols, rh) = (l.list, l.cols, l.row_h);
+        let (list, rh) = (l.list, l.row_h);
         let font = self.ui_font(13.0);
         let m = g.metrics(font);
         let text_dy = ((rh + m.ascent - m.descent) / 2.0).round();
         let pad = self.s(10.0);
         let icon_px = self.s(ICON);
+        let icon_x = self.icon_x();
         let list_focused = self.active && self.focus == Focus::List;
-        let columns = self.columns();
         let tab = &self.tabs[self.cur];
         let in_bin = tab.view_loc.is_recycle_bin();
-        let (first, last) = tab.row_range(rh, list.h);
+        let (first, last) = tab.line_range(rh, list.h);
         g.dl.set_clip(Some(list));
         let mut requests: Vec<IconRequest> = Vec::new();
         let mut type_requests: Vec<Vec<u8>> = Vec::new();
         if let Some(v) = &tab.view {
-            if v.rows().is_empty() && v.snap().done && v.snap().error.is_none() {
+            if let Some(e) = v.snap().error.as_ref().filter(|_| v.total_rows() == 0) {
+                self.draw_unavailable(g, t, list, e);
+            } else if v.rows().is_empty() && v.groups().is_empty() && v.snap().done {
                 let msg = if v.is_filtered() {
                     "No items match the filter."
                 } else if in_bin {
@@ -1582,10 +1624,26 @@ impl App {
             let in_root = loc.path().kind() == PathKind::Computer;
             let listing = v.listing();
             let cut = self.cut_names();
-            for row in first..last {
+            let want_types = !in_root && (l.columns.contains(&Column::Type) || v.snap().view.group.field == GroupField::Type);
+            let mut want_type = |i: u32| {
+                let folded = listing.ext(i).to_ascii_lowercase();
+                if want_types && !listing.entries[i as usize].is_dir() && !self.type_names.contains_key(&folded) && !type_requests.contains(&folded) {
+                    type_requests.push(folded);
+                }
+            };
+            for line in first..last {
+                let y = (list.y + line as f32 * rh - tab.scroll).round();
+                let row = match v.line(line) {
+                    Some(Line::Row(r)) => r,
+                    Some(Line::Header(k)) => {
+                        want_type(v.groups()[k].first);
+                        self.draw_group_line(g, arena, t, v, k, y);
+                        continue;
+                    }
+                    None => break,
+                };
                 let i = v.rows()[row];
                 let e = listing.entries[i as usize];
-                let y = (list.y + row as f32 * rh - tab.scroll).round();
                 let rr = Rect::new(list.x + self.s(4.0), y + 1.0, list.w - self.s(8.0), rh - 2.0);
                 if v.is_selected(i) {
                     g.dl.round_rect(rr, if list_focused { t.selection } else { t.selection_inactive }, self.s(4.0));
@@ -1595,12 +1653,15 @@ impl App {
                 if list_focused && v.focus == Some(i) {
                     g.dl.outline(rr, t.focus_ring, self.s(4.0), 1.0);
                 }
+                if self.prefs.checkboxes {
+                    self.draw_checkbox(g, t, y, v.is_selected(i));
+                }
 
                 let name = listing.name(i);
                 let faded = e.attrs & attr::HIDDEN != 0 || cut.is_some_and(|c| c.contains(name));
                 let dir_key = if in_bin { recycle::origin(listing, i) } else { shell_dir.as_ref().map_or(&b""[..], |d| d.as_bytes()) };
                 let (key, kind) = icon_key(name, listing.ext(i), &e, icon_px as u32, dir_key);
-                let ir = Rect::new(cols[0].x + pad, y + ((rh - icon_px) / 2.0).round(), icon_px, icon_px);
+                let ir = Rect::new(icon_x, y + ((rh - icon_px) / 2.0).round(), icon_px, icon_px);
                 if !g.image_alpha(key, ir, if faded { 0x70 } else { 0xFF }) {
                     let glyph = if e.attrs & attr::VOLUME != 0 { G_DRIVE } else if e.is_dir() { G_FOLDER } else { G_FILE };
                     let color = if e.is_dir() { t.accent.alpha(0xB0) } else { t.text_dim.alpha(0x90) };
@@ -1619,56 +1680,13 @@ impl App {
                 let ty = y + text_dy;
                 let name_x = ir.right() + self.s(8.0);
                 let name_color = if faded { t.text_dim } else { t.text };
-                g.text(name_x, ty, &name::display(name), font, name_color, cols[0].right() - name_x - pad);
-
-                for (c, col) in columns.iter().enumerate().skip(1) {
-                    let r = cols[c];
-                    match col {
-                        Column::Modified | Column::Deleted => {
-                            let mut s = bumpalo::collections::String::new_in(arena);
-                            format::datetime(&mut s, e.modified, self.utc_offset_min);
-                            g.text(r.x + pad, ty, &s, font, t.text_dim, r.w - 2.0 * pad);
-                        }
-                        Column::Origin => {
-                            g.text(r.x + pad, ty, &name::display(recycle::origin(listing, i)), font, t.text_dim, r.w - 2.0 * pad);
-                        }
-                        Column::Type => {
-                            let type_text: &str = if e.attrs & attr::VOLUME != 0 {
-                                "Drive"
-                            } else if e.is_dir() {
-                                "File folder"
-                            } else {
-                                let ext = listing.ext(i);
-                                let folded = ext.to_ascii_lowercase();
-                                match self.type_names.get(&folded) {
-                                    Some(Some(n)) if !n.is_empty() => arena.alloc_str(n),
-                                    known => {
-                                        if known.is_none() && !in_root && !type_requests.contains(&folded) {
-                                            type_requests.push(folded);
-                                        }
-                                        let mut s = bumpalo::collections::String::new_in(arena);
-                                        if ext.is_empty() {
-                                            s.push_str("File");
-                                        } else {
-                                            let _ = write!(s, "{} File", name::display(ext).to_uppercase());
-                                        }
-                                        s.into_bump_str()
-                                    }
-                                }
-                            };
-                            g.text(r.x + pad, ty, type_text, font, t.text_dim, r.w - 2.0 * pad);
-                        }
-                        Column::Size => {
-                            if !e.is_dir() || e.attrs & (attr::SIZE_KNOWN | attr::VOLUME) != 0 {
-                                let mut s = bumpalo::collections::String::new_in(arena);
-                                format::size(&mut s, e.size);
-                                let w = g.measure(&s, font);
-                                let x = (r.right() - pad - w).max(r.x + pad);
-                                g.text(x, ty, &s, font, t.text_dim, r.w - 2.0 * pad);
-                            }
-                        }
-                        Column::Name => {}
-                    }
+                g.text(name_x, ty, &self.shown_name(listing, i), font, name_color, l.cols[0].right() - name_x - pad);
+                want_type(i);
+                for (c, &col) in l.columns.iter().enumerate().skip(1) {
+                    let r = l.cols[c];
+                    let s = self.cell_text(arena, listing, i, col);
+                    let x = if col == Column::Size { (r.right() - pad - g.measure(s, font)).max(r.x + pad) } else { r.x + pad };
+                    g.text(x, ty, s, font, t.text_dim, r.w - 2.0 * pad);
                 }
             }
         }
@@ -1704,12 +1722,7 @@ impl App {
             s.push_str(err);
             color = t.error;
         } else if let Some(v) = tab.view.as_ref().filter(|v| v.snap().gen == tab.gen) {
-            let (n, total) = (v.rows().len(), v.total_rows());
-            if v.is_filtered() {
-                let _ = write!(s, "{n} of {total} {}", if total == 1 { "item" } else { "items" });
-            } else {
-                let _ = write!(s, "{n} {}", if n == 1 { "item" } else { "items" });
-            }
+            self.count_text(&mut s, v);
             let k = v.selected_count();
             if k > 0 {
                 let _ = write!(s, "    {k} selected");

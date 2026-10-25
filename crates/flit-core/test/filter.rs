@@ -92,7 +92,7 @@ fn diffs_resorts_and_sizes_respect_the_filter() {
     assert_eq!(rows(&v), ["a0", "a1"]);
     v.apply(&DirChange { kind: ChangeKind::Modified, name: "a0".into(), meta: Some(Meta { attrs: attr::HIDDEN, ..Default::default() }) });
     assert_eq!(rows(&v), ["a1"]);
-    let by_size = ViewSpec { sort: SortSpec { field: SortField::Size, descending: true }, show_hidden: true };
+    let by_size = ViewSpec { sort: SortSpec { field: SortField::Size, descending: true, ..Default::default() }, show_hidden: true, ..Default::default() };
     let mut order = Vec::new();
     sort::sort(v.listing(), &v.snap().keys, by_size, &mut order);
     let base = v.listing().len();

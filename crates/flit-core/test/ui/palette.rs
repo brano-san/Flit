@@ -23,7 +23,7 @@ fn substrings_beat_fuzzy_matches_and_word_starts_win() {
 #[test]
 fn matches_rank_registered_titles() {
     assert_eq!(matches(""), (0..ACTIONS.len()).collect::<Vec<_>>());
-    assert_eq!(titles("sort size"), ["Sort by size"]);
+    assert_eq!(titles("sort size")[0], "Sort by size");
     assert_eq!(titles("refresh")[0], "Refresh");
     assert_eq!(titles("pin")[0], "Pin or unpin the current folder");
     assert_eq!(titles("filter")[0], "Filter items in this folder");

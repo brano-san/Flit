@@ -1,9 +1,9 @@
 use super::sidebar::KnownFolder;
-use super::{App, Effect, Route};
+use super::{App, Column, Effect, Route};
 use crate::input::{Key, Mods};
 use crate::location::Location;
 use crate::open::OpenTarget;
-use crate::sort::{SortField, SortSpec};
+use crate::sort::{DateUnit, Folders, GroupField, SortField};
 use std::time::Instant;
 
 const MAX_CLOSED: usize = 32;
@@ -73,19 +73,57 @@ pub static ACTIONS: &[Action] = &[
     Action::new("window.new", "New window", &[ctrl(Key::Char('N'))], |a, _| a.new_window_here()),
     Action::new("view.filter", "Filter items in this folder", &[ctrl(Key::Char('F'))], |a, _| a.open_filter()),
     Action::new("search.open", "Search all drives", &[ctrl(Key::Char('E')), ctrl_shift(Key::Char('F'))], |a, _| a.open_search()),
+    Action::new("search.group_folder", "Group search results by folder", &[], |a, _| a.toggle_search_groups()),
     Action::new("view.hidden", "Show or hide hidden files", &[ctrl(Key::Char('H'))], |a, _| a.toggle_hidden()),
     Action::new("view.sort.name", "Sort by name", &[], |a, _| a.sort_by(SortField::Name)),
     Action::new("view.sort.modified", "Sort by date modified", &[], |a, _| a.sort_by(SortField::Modified)),
     Action::new("view.sort.type", "Sort by type", &[], |a, _| a.sort_by(SortField::Type)),
     Action::new("view.sort.size", "Sort by size", &[], |a, _| a.sort_by(SortField::Size)),
     Action::new("view.sort.origin", "Sort by original location", &[], |a, _| a.sort_by(SortField::Origin)),
-    Action::new("view.sort.reverse", "Reverse sort order", &[], |a, _| a.reverse_sort()),
+    Action::new("view.sort.created", "Sort by date created", &[], |a, _| a.sort_by(SortField::Created)),
+    Action::new("view.sort.reverse", "Reverse sort order", &[], |a, _| a.set_descending(None)),
+    Action::new("view.sort.ascending", "Sort in ascending order", &[], |a, _| a.set_descending(Some(false))),
+    Action::new("view.sort.descending", "Sort in descending order", &[], |a, _| a.set_descending(Some(true))),
+    Action::new("view.sort.folders_first", "Show folders before files", &[], |a, _| a.set_folders(Folders::First)),
+    Action::new("view.sort.files_first", "Show files before folders", &[], |a, _| a.set_folders(Folders::Last)),
+    Action::new("view.sort.mixed", "Mix files and folders when sorting", &[], |a, _| a.set_folders(Folders::Mixed)),
+    Action::new("view.group.none", "No grouping", &[], |a, _| a.group_by(GroupField::None)),
+    Action::new("view.group.name", "Group by name", &[], |a, _| a.group_by(GroupField::Name)),
+    Action::new("view.group.type", "Group by type", &[], |a, _| a.group_by(GroupField::Type)),
+    Action::new("view.group.size", "Group by size", &[], |a, _| a.group_by(GroupField::Size)),
+    Action::new("view.group.modified", "Group by date modified", &[], |a, _| a.group_by(GroupField::Modified)),
+    Action::new("view.group.created", "Group by date created", &[], |a, _| a.group_by(GroupField::Created)),
+    Action::new("view.group.origin", "Group by original location", &[], |a, _| a.group_by(GroupField::Origin)),
+    Action::new("view.group.ascending", "Show groups in ascending order", &[], |a, _| a.set_group_descending(false)),
+    Action::new("view.group.descending", "Show groups in descending order", &[], |a, _| a.set_group_descending(true)),
+    Action::new("view.group.year", "Group dates by year", &[], |a, _| a.set_date_unit(DateUnit::Year)),
+    Action::new("view.group.month", "Group dates by month", &[], |a, _| a.set_date_unit(DateUnit::Month)),
+    Action::new("view.group.day", "Group dates by day", &[], |a, _| a.set_date_unit(DateUnit::Day)),
+    Action::new("view.columns.fit", "Size all columns to fit", &[ctrl(Key::Char('+'))], |a, _| a.request_fit()),
+    Action::new("view.columns.autofit", "Always size columns to fit", &[], |a, _| a.toggle_auto_fit()),
+    Action::new("view.column.modified", "Show or hide the Date modified column", &[], |a, _| a.toggle_column(Column::Modified)),
+    Action::new("view.column.created", "Show or hide the Date created column", &[], |a, _| a.toggle_column(Column::Created)),
+    Action::new("view.column.type", "Show or hide the Type column", &[], |a, _| a.toggle_column(Column::Type)),
+    Action::new("view.column.size", "Show or hide the Size column", &[], |a, _| a.toggle_column(Column::Size)),
+    Action::new("view.column.origin", "Show or hide the Original location column", &[], |a, _| a.toggle_column(Column::Origin)),
+    Action::new("view.column.deleted", "Show or hide the Date deleted column", &[], |a, _| a.toggle_column(Column::Deleted)),
+    Action::new("view.dotfiles", "Show or hide dotfiles", &[], |a, _| a.toggle_pref(|p| &mut p.show_dotfiles)),
+    Action::new("view.system", "Show or hide protected operating system files", &[], |a, _| a.toggle_pref(|p| &mut p.show_system)),
+    Action::new("view.extensions", "Show or hide file name extensions", &[], |a, _| a.toggle_pref(|p| &mut p.show_extensions)),
+    Action::new("view.status_bar", "Show or hide the status bar", &[], |a, _| a.toggle_pref(|p| &mut p.status_bar)),
+    Action::new("view.item_count", "Count files and folders separately", &[], |a, _| a.toggle_pref(|p| &mut p.split_count)),
+    Action::new("view.checkboxes", "Show or hide item check boxes", &[], |a, _| a.toggle_pref(|p| &mut p.checkboxes)),
+    Action::new("view.hover_select", "Select items by hovering", &[], |a, _| a.toggle_pref(|p| &mut p.hover_select)),
+    Action::new("view.auto_sizes", "Calculate folder sizes automatically", &[], |a, _| a.toggle_pref(|p| &mut p.auto_sizes)),
+    Action::new("view.same_for_all", "Use the same view for all folders", &[], |a, _| a.toggle_pref(|p| &mut p.same_for_all)),
+    Action::new("view.set_default", "Use this view for folders without their own", &[], |a, _| a.set_default_view()),
     Action::new("view.sizes", "Calculate folder sizes", &[ctrl_shift(Key::Char('S'))], |a, _| a.compute_dir_sizes()),
     Action::new("sidebar.toggle", "Show or hide the sidebar", &[ctrl(Key::Char('B'))], |a, _| a.toggle_sidebar()),
     Action::new("sidebar.focus", "Switch focus between sidebar and list", &[key(Key::F(6))], |a, _| a.cycle_sidebar_focus()),
     Action::new("sidebar.pin", "Pin or unpin the current folder", &[ctrl(Key::Char('D'))], |a, _| a.pin_current()),
     Action::new("select.all", "Select all", &[ctrl(Key::Char('A'))], |a, _| a.select_all()),
-    Action::new("select.none", "Clear selection", &[key(Key::Escape)], |a, _| a.clear_selection()),
+    Action::new("select.none", "Clear selection", &[key(Key::Escape), ctrl_shift(Key::Char('A'))], |a, _| a.clear_selection()),
+    Action::new("select.invert", "Invert selection", &[ctrl(Key::Char('I'))], |a, _| a.invert_selection()),
     Action::new("item.open", "Open selected items", &[key(Key::Enter)], |a, now| a.open_selection(now)),
     Action::new("item.open_tab", "Open the selected folders in new tabs", &[], |a, now| a.open_folders_in(OpenTarget::NewTab, now)),
     Action::new("item.open_window", "Open the selected folders in a new window", &[], |a, now| a.open_folders_in(OpenTarget::NewWindow, now)),
@@ -212,22 +250,6 @@ impl App {
         self.resort(k);
     }
 
-    fn sort_by(&mut self, field: SortField) {
-        let k = self.cur;
-        let s = &mut self.tab_mut().view_spec.sort;
-        if s.field != field {
-            *s = SortSpec { field, descending: false };
-            self.resort(k);
-        }
-    }
-
-    fn reverse_sort(&mut self) {
-        let k = self.cur;
-        let s = &mut self.tab_mut().view_spec.sort;
-        s.descending = !s.descending;
-        self.resort(k);
-    }
-
     fn select_all(&mut self) {
         if let Some(v) = &mut self.tab_mut().view {
             v.select_all();
@@ -237,6 +259,12 @@ impl App {
     fn clear_selection(&mut self) {
         if let Some(v) = &mut self.tab_mut().view {
             v.clear_selection();
+        }
+    }
+
+    fn invert_selection(&mut self) {
+        if let Some(v) = &mut self.tab_mut().view {
+            v.invert_selection();
         }
     }
 }
