@@ -1,6 +1,7 @@
 use super::*;
 use crate::listing::{ChangeKind, DirChange, Listing, Meta};
 use crate::open::parse_args;
+use crate::provider::GenToken;
 use crate::sort::{self, SortKeys};
 use crate::text::tests::Mono;
 
@@ -13,16 +14,41 @@ fn loc(s: &str) -> Location {
 }
 
 fn snapshot(gen: u64, path: &FsPath, items: &[(&str, bool)]) -> Arc<DirSnapshot> {
+    let items: Vec<(&str, u32)> = items.iter().map(|&(n, dir)| (n, if dir { attr::DIR } else { 0 })).collect();
+    snapshot_with(gen, path, ViewSpec::default(), true, &items)
+}
+
+fn snapshot_with(gen: u64, path: &FsPath, view: ViewSpec, done: bool, items: &[(&str, u32)]) -> Arc<DirSnapshot> {
     let mut listing = Listing::default();
     let mut keys = SortKeys::new(CaseMode::Insensitive);
-    for &(n, dir) in items {
-        let i = listing.push(n.as_bytes(), Meta { attrs: if dir { attr::DIR } else { 0 }, size: 10, ..Default::default() });
+    for &(n, attrs) in items {
+        let i = listing.push(n.as_bytes(), Meta { attrs, size: 10, ..Default::default() });
         keys.push(listing.name(i));
     }
-    let view = ViewSpec::default();
     let mut order = Vec::new();
     sort::sort(&listing, &keys, view, &mut order);
-    Arc::new(DirSnapshot { gen, path: path.clone(), listing, keys, order, view, done: true, error: None, elapsed: Duration::from_millis(1) })
+    Arc::new(DirSnapshot { gen, path: path.clone(), listing, keys, order, view, done, error: None, elapsed: Duration::from_millis(1) })
+}
+
+fn publish(app: &mut App, view: ViewSpec, done: bool, items: &[(&str, u32)]) {
+    let t = app.tab();
+    t.slot.publish(snapshot_with(t.gen, t.location().path(), view, done, items));
+    app.poll();
+}
+
+fn trashed(app: &mut App) -> Option<Vec<FsPath>> {
+    app.drain_effects().find_map(|e| match e {
+        Effect::Provider { req: ProviderRequest::Op { op: FileOp::Trash(p), .. }, .. } => Some(p),
+        _ => None,
+    })
+}
+
+fn resort_now(app: &mut App) {
+    let job = app.drain_effects().find_map(|e| if let Effect::Resort { tab, gen, view, snap } = e { Some((tab, gen, view, snap)) } else { None });
+    let (tab, gen, view, snap) = job.expect("resort requested");
+    let mut order = Vec::new();
+    sort::sort(&snap.listing, &snap.keys, view, &mut order);
+    app.on_resorted(tab, gen, view, snap.listing.len(), order);
 }
 
 fn deliver(app: &mut App, items: &[(&str, bool)]) {
@@ -179,13 +205,24 @@ fn address_bar_edit_and_submit() {
         app.on_event(&Event::Char(c), t0());
     }
     key(&mut app, Key::Enter, NO);
+    run_opens(&mut app);
     assert_eq!(listed(&mut app), [(1, loc(r"D:\data"))]);
-    key(&mut app, Key::Char('L'), CTRL);
-    for c in r"\\wsl.localhost\Ubuntu\home".chars() {
-        app.on_event(&Event::Char(c), t0());
+    for (typed, expected) in [(r"\\wsl.localhost\Ubuntu\home", "wsl://Ubuntu/home"), ("shell:Downloads", r"C:\Users\u\Downloads")] {
+        key(&mut app, Key::Char('L'), CTRL);
+        for c in typed.chars() {
+            app.on_event(&Event::Char(c), t0());
+        }
+        key(&mut app, Key::Enter, NO);
+        run_opens(&mut app);
+        assert_eq!(listed(&mut app), [(1, loc(expected))]);
     }
-    key(&mut app, Key::Enter, NO);
-    assert_eq!(listed(&mut app), [(1, loc("wsl://Ubuntu/home"))]);
+}
+
+fn run_opens(app: &mut App) {
+    let opens: Vec<Open> = app.drain_effects().filter_map(|e| if let Effect::Open(o) = e { Some(o) } else { None }).collect();
+    for o in opens {
+        app.open(&o, &|s| s.eq_ignore_ascii_case("shell:Downloads").then(|| loc(r"C:\Users\u\Downloads")), t0());
+    }
 }
 
 #[test]
@@ -271,4 +308,144 @@ fn background_tab_diff_overflow_rescans() {
     app.on_provider_event(ProviderEvent::Changes { tab: id, gen, changes: vec![change; MAX_PENDING_DIFFS + 1] }, t0());
     assert!(app.tabs()[0].pending_diffs.is_empty());
     assert_eq!(listed(&mut app), [(id, loc(r"C:\a"))]);
+}
+
+const CTRL_SHIFT: Mods = Mods { ctrl: true, shift: true, alt: false };
+
+#[test]
+fn actions_before_the_new_listing_target_the_shown_folder() {
+    let mut app = app_at(r"C:\work");
+    deliver(&mut app, &[("src", true), ("a.txt", false)]);
+    key(&mut app, Key::Down, NO);
+    key(&mut app, Key::Enter, NO);
+    deliver(&mut app, &[("main.rs", false), ("sub", true)]);
+    key(&mut app, Key::End, NO);
+    app.drain_effects().for_each(drop);
+    key(&mut app, Key::Up, Mods { alt: true, ..NO });
+    assert_eq!(listed(&mut app), [(1, loc(r"C:\work"))]);
+    key(&mut app, Key::Delete, NO);
+    assert_eq!(trashed(&mut app).unwrap(), [FsPath::parse(r"C:\work\src\main.rs").unwrap()]);
+    key(&mut app, Key::Char('C'), CTRL_SHIFT);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::SetClipboard(s) if s == r"C:\work\src\main.rs")));
+    key(&mut app, Key::Char('S'), CTRL_SHIFT);
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::DirSizes { .. }, .. })));
+    let (id, gen) = (app.tab().id, app.tab().gen);
+    app.on_provider_event(ProviderEvent::DirSize { tab: id, gen, idx: 0, size: 99 }, t0());
+    assert_ne!(app.tab().view.as_ref().unwrap().listing().entries[0].size, 99);
+    key(&mut app, Key::Enter, NO);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } if path == FsPath::parse(r"C:\work\src\main.rs").unwrap())));
+}
+
+#[test]
+fn hidden_entries_leave_the_selection() {
+    let shown = ViewSpec { show_hidden: true, ..Default::default() };
+    let mut app = App::new(Persisted { path: loc(r"C:\x"), view: shown, ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 600), t0());
+    publish(&mut app, shown, true, &[(".git", attr::DIR | attr::HIDDEN), ("a.txt", 0), ("b.txt", 0)]);
+    key(&mut app, Key::Char('A'), CTRL);
+    assert_eq!(app.tab().view.as_ref().unwrap().selected_count(), 3);
+    app.drain_effects().for_each(drop);
+    key(&mut app, Key::Char('H'), CTRL);
+    resort_now(&mut app);
+    assert_eq!(selected_names(&app), ["a.txt", "b.txt"]);
+    assert_eq!(app.tab().view.as_ref().unwrap().selected_count(), 2);
+    key(&mut app, Key::Delete, NO);
+    assert_eq!(trashed(&mut app).unwrap(), [FsPath::parse(r"C:\x\a.txt").unwrap(), FsPath::parse(r"C:\x\b.txt").unwrap()]);
+}
+
+#[test]
+fn pending_select_scans_partial_snapshots_and_skips_invisible() {
+    let mut app = app_at(r"C:\a");
+    let args = |a: &[&str]| a.iter().map(|s| s.as_bytes().to_vec()).collect::<Vec<_>>();
+    app.open(&parse_args(&args(&[r"/select,C:\y\b.txt"]), None), &|_| None, t0());
+    publish(&mut app, ViewSpec::default(), false, &[("a.txt", 0)]);
+    assert!(selected_names(&app).is_empty());
+    publish(&mut app, ViewSpec::default(), false, &[("a.txt", 0), ("b.txt", 0)]);
+    assert_eq!(selected_names(&app), ["b.txt"]);
+    app.open(&parse_args(&args(&[r"/select,C:\z\.git"]), None), &|_| None, t0());
+    publish(&mut app, ViewSpec::default(), true, &[(".git", attr::DIR | attr::HIDDEN), ("x", 0)]);
+    let v = app.tab().view.as_ref().unwrap();
+    assert_eq!((v.selected_count(), v.focus), (0, None));
+}
+
+#[test]
+fn delete_needs_a_visible_selection() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false)]);
+    key(&mut app, Key::Down, NO);
+    key(&mut app, Key::Escape, NO);
+    assert!(app.tab().view.as_ref().unwrap().focus.is_some());
+    app.drain_effects().for_each(drop);
+    key(&mut app, Key::Delete, NO);
+    assert_eq!(trashed(&mut app), None);
+}
+
+#[test]
+fn altgr_characters_reach_type_ahead() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("zz", false), ("ąb", false)]);
+    let altgr = Mods { ctrl: true, shift: false, alt: true };
+    key(&mut app, Key::Char('A'), altgr);
+    assert!(selected_names(&app).is_empty());
+    app.on_event(&Event::Char('ą'), t0());
+    assert_eq!(selected_names(&app), ["ąb"]);
+    key(&mut app, Key::Char('Z'), CTRL);
+    app.on_event(&Event::Char('z'), t0());
+    assert_eq!(selected_names(&app), ["ąb"]);
+}
+
+#[test]
+fn trash_on_unwatched_locations_reloads() {
+    let start = [r"wsl://Ubuntu/home", r"\\srv\share\d", r"C:\x"].map(|p| Route { folder: loc(p), select: None }).to_vec();
+    let mut app = App::new(Persisted::default(), start, 0, false, 1.0, (1000, 600), t0());
+    app.drain_effects().for_each(drop);
+    for (id, path, reloads) in [(1, "wsl://Ubuntu/home", true), (2, r"\\srv\share\d", true), (3, r"C:\x", false)] {
+        app.on_provider_event(ProviderEvent::OpDone { tab: id, error: None }, t0());
+        assert_eq!(listed(&mut app), if reloads { vec![(id, loc(path))] } else { vec![] });
+    }
+}
+
+#[test]
+fn open_caps_the_number_of_routes() {
+    let mut app = app_at(r"C:\a");
+    let paths = (0..100).map(|i| format!(r"C:\d{i}").into_bytes()).collect();
+    app.open(&Open { paths, target: OpenTarget::NewTab, ..Default::default() }, &|_| None, t0());
+    assert_eq!(app.tabs().len(), 1 + MAX_ROUTES);
+    deliver(&mut app, &[("f", false)]);
+    assert!(app.tab().error.as_deref().is_some_and(|e| e.contains("100")));
+    let start = (0..40).map(|i| Route { folder: loc(&format!(r"C:\s{i}")), select: None }).collect();
+    let app = App::new(Persisted::default(), start, 0, false, 1.0, (1000, 600), t0());
+    assert_eq!(app.tabs().len(), MAX_ROUTES);
+    assert!(app.tab().error.is_some());
+}
+
+#[test]
+fn atlas_overflow_mid_frame_redraws_before_presenting() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false)]);
+    let mut clean = Gfx::new(Mono, 1024);
+    app.frame(&mut clean, t0());
+    let glyphs = clean.uploads.rects.len() as u32;
+    let size = (64..).find(|s| (s / 7) * (s / 9) >= 2 * glyphs).unwrap();
+    let mut g = Gfx::new(Mono, size);
+    g.begin(Color::default());
+    let filler: String = (0..(size / 7) * (size / 9) - glyphs / 2).map(|i| char::from_u32(0x4E00 + i).unwrap()).collect();
+    g.text(0.0, 0.0, &filler, FontStyle::new(FontFamily::Ui, 99.0, false), Color::default(), f32::INFINITY);
+    assert!(!g.atlas_reset);
+    assert!(!app.frame(&mut g, t0()), "nothing left to redraw");
+    assert!(!g.atlas_reset);
+    assert_eq!(g.dl.instances.len(), clean.dl.instances.len());
+}
+
+#[test]
+fn shutdown_cancels_jobs_and_stops_watches() {
+    let start = vec![Route { folder: loc(r"C:\a"), select: None }, Route { folder: loc("wsl://Debian/"), select: None }];
+    let mut app = App::new(Persisted::default(), start, 0, false, 1.0, (1000, 600), t0());
+    app.drain_effects().for_each(drop);
+    let tokens: Vec<(GenToken, u64)> = app.tabs().iter().map(|t| (t.cancel.clone(), t.gen)).collect();
+    assert!(tokens.iter().all(|(c, g)| c.is_current(*g)));
+    app.shutdown();
+    let fx: Vec<Effect> = app.drain_effects().collect();
+    assert!(fx.iter().any(|e| matches!(e, Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Watch { tab: 1, path: None, .. } })));
+    assert!(fx.iter().any(|e| matches!(e, Effect::Provider { provider: ProviderId::Wsl(d), req: ProviderRequest::Watch { tab: 2, path: None, .. } } if d == "Debian")));
+    assert!(tokens.iter().all(|(c, g)| !c.is_current(*g)));
 }

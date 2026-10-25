@@ -43,6 +43,14 @@ impl Platform for Linux {
     fn known_folder(_: &str) -> Option<Location> {
         None
     }
+
+    fn fatal_error(message: &str) {
+        eprintln!("flit: {message}");
+    }
+
+    fn refresh_period() -> Option<std::time::Duration> {
+        None
+    }
 }
 
 pub struct LinuxWindows;
@@ -205,7 +213,7 @@ impl SingleInstance for DbusInstance {
     fn acquire(_: &Open) -> Instance<Self> {
         Instance::Primary(DbusInstance)
     }
-    fn listen(self, _: Sender<Open>, _: Wake) {}
+    fn listen(self, _: OpenSink, _: Wake) {}
 }
 
 pub struct WalkIndex;

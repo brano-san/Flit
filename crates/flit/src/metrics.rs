@@ -5,18 +5,23 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 const SETTLE_FRAMES: u32 = 30;
-const SCROLL_FRAMES: u32 = 240;
+const FALLBACK_PERIOD: Duration = Duration::from_micros(16_667);
+const SCROLL_TIME: Duration = Duration::from_secs(2);
+const GOLDEN_FRACTION: f64 = 0.618_033_988_749_895;
 
 pub enum Step {
     None,
     Inject(Event),
+    InjectAfter(Duration, Event),
     Finish,
 }
 
 enum Phase {
     Loading,
+    Warm(u32),
+    Reloading(Instant),
     Settle(u32),
-    Scroll(u32),
+    Scroll,
     Sort,
     Done,
 }
@@ -24,15 +29,23 @@ enum Phase {
 pub struct Metrics {
     out: PathBuf,
     started: Instant,
+    refresh: Option<Duration>,
     phase: Phase,
     first_frame: Option<f64>,
     first_rows: Option<f64>,
     full: Option<f64>,
+    first_rows_worker: Option<f64>,
+    full_worker: Option<f64>,
     entries: usize,
     frame_ends: Vec<Instant>,
+    scroll_from: usize,
+    scroll_rows: usize,
+    software_frames: u32,
     cpu: Vec<f32>,
     latencies: Vec<f64>,
-    pending_input: Option<Instant>,
+    injected_at: Option<Instant>,
+    injection_pending: bool,
+    injections: u32,
     sort: Option<f64>,
 }
 
@@ -48,22 +61,39 @@ fn percentile(v: &mut [f64], p: f64) -> f64 {
     v[((v.len() - 1) as f64 * p).round() as usize]
 }
 
+fn key(key: Key, ctrl: bool) -> Event {
+    Event::Key { key, mods: Mods { ctrl, ..Mods::default() }, pressed: true }
+}
+
 impl Metrics {
-    pub fn new(out: PathBuf, started: Instant) -> Self {
+    pub fn new(out: PathBuf, started: Instant, refresh: Option<Duration>) -> Self {
         Self {
             out,
             started,
+            refresh,
             phase: Phase::Loading,
             first_frame: None,
             first_rows: None,
             full: None,
+            first_rows_worker: None,
+            full_worker: None,
             entries: 0,
             frame_ends: Vec::new(),
+            scroll_from: 0,
+            scroll_rows: 0,
+            software_frames: 0,
             cpu: Vec::new(),
             latencies: Vec::new(),
-            pending_input: None,
+            injected_at: None,
+            injection_pending: false,
+            injections: 0,
             sort: None,
         }
+    }
+
+    pub fn on_injected(&mut self, at: Instant) {
+        self.injected_at = Some(at);
+        self.injection_pending = false;
     }
 
     pub fn on_sorted(&mut self, sort_ms: f64) {
@@ -73,40 +103,73 @@ impl Metrics {
         }
     }
 
-    pub fn after_frame(&mut self, app: &App, cpu_ms: f32, now: Instant) -> Step {
+    fn period(&self) -> Duration {
+        self.refresh.unwrap_or(FALLBACK_PERIOD)
+    }
+
+    pub fn after_frame(&mut self, app: &App, software: bool, cpu_ms: f32, now: Instant) -> Step {
         self.first_frame.get_or_insert_with(|| ms(now - self.started));
-        if let Some(t) = self.pending_input.take() {
+        if let Some(t) = self.injected_at.take() {
             self.latencies.push(ms(now - t));
         }
+        let stats = app.tab().stats;
         match self.phase {
             Phase::Loading => {
-                let s = app.tab().stats;
-                if let Some(done) = s.done {
-                    self.first_rows = s.first.map(ms);
-                    self.full = Some(ms(done));
-                    self.entries = s.entries;
+                if stats.done.is_some() {
+                    self.phase = Phase::Warm(SETTLE_FRAMES);
+                }
+                Step::None
+            }
+            Phase::Warm(0) => {
+                self.phase = Phase::Reloading(now);
+                Step::Inject(key(Key::F(5), false))
+            }
+            Phase::Warm(n) => {
+                self.phase = Phase::Warm(n - 1);
+                Step::None
+            }
+            Phase::Reloading(at) => {
+                if self.first_rows.is_none() && stats.first.is_some() && stats.entries > 0 {
+                    self.first_rows = Some(ms(now - at));
+                }
+                if let Some(done) = stats.done {
+                    self.first_rows_worker = stats.first.map(ms);
+                    self.full_worker = Some(ms(done));
+                    self.full = Some(ms(now - at));
+                    self.entries = stats.entries;
                     self.phase = Phase::Settle(SETTLE_FRAMES);
                 }
                 Step::None
             }
             Phase::Settle(0) => {
-                self.phase = Phase::Scroll(SCROLL_FRAMES);
+                self.phase = Phase::Scroll;
+                self.scroll_from = app.visible_rows().1 as usize;
                 Step::None
             }
             Phase::Settle(n) => {
                 self.phase = Phase::Settle(n - 1);
                 Step::None
             }
-            Phase::Scroll(0) => {
-                self.phase = Phase::Sort;
-                Step::Inject(Event::Key { key: Key::Char('H'), mods: Mods { ctrl: true, ..Mods::default() }, pressed: true })
-            }
-            Phase::Scroll(n) => {
+            Phase::Scroll => {
                 self.frame_ends.push(now);
                 self.cpu.push(cpu_ms);
-                self.pending_input = Some(now);
-                self.phase = Phase::Scroll(n - 1);
-                Step::Inject(Event::Wheel { dx: 0.0, dy: -1.0 })
+                self.software_frames += software as u32;
+                if self.injection_pending {
+                    return Step::None;
+                }
+                let (_, first, last) = app.visible_rows();
+                let rows = app.tab().rows();
+                if last as usize >= rows {
+                    self.scroll_rows = rows.saturating_sub(self.scroll_from);
+                    self.phase = Phase::Sort;
+                    return Step::Inject(key(Key::Char('H'), true));
+                }
+                self.injection_pending = true;
+                self.injections += 1;
+                let page = last.saturating_sub(first).saturating_sub(1).max(1) as f64;
+                let step = page.max(rows as f64 * self.period().as_secs_f64() / SCROLL_TIME.as_secs_f64());
+                let offset = (self.injections as f64 * GOLDEN_FRACTION).fract();
+                Step::InjectAfter(self.period().mul_f64(offset), Event::Wheel { dx: 0.0, dy: -(step / 3.0) as f32 })
             }
             Phase::Sort => Step::None,
             Phase::Done => {
@@ -118,7 +181,8 @@ impl Metrics {
 
     fn write(&self) {
         let intervals: Vec<f64> = self.frame_ends.windows(2).map(|w| ms(w[1] - w[0])).collect();
-        let period = percentile(&mut intervals.clone(), 0.5);
+        let scroll_ms = self.frame_ends.first().zip(self.frame_ends.last()).map_or(0.0, |(a, b)| ms(*b - *a));
+        let period = ms(self.period());
         let dropped = intervals.iter().filter(|&&i| i > period * 1.5).count();
         let mut cpu: Vec<f64> = self.cpu.iter().map(|&c| c as f64).collect();
         let mut lat = self.latencies.clone();
@@ -126,13 +190,20 @@ impl Metrics {
         let mut s = String::new();
         let _ = write!(
             s,
-            "{{\"entries\":{},\"start_to_first_frame_ms\":{},\"first_rows_ms\":{},\"full_listing_ms\":{},\"scroll_frames\":{},\"frame_period_ms\":{:.2},\"dropped_frames\":{},\"frame_cpu_p50_ms\":{:.2},\"frame_cpu_p99_ms\":{:.2},\"input_to_frame_p50_ms\":{:.2},\"input_to_frame_max_ms\":{:.2},\"sort_ms\":{}}}",
+            "{{\"entries\":{},\"start_to_first_frame_ms\":{},\"first_rows_ms\":{},\"full_listing_ms\":{},\"first_rows_worker_ms\":{},\"full_listing_worker_ms\":{},\"scroll_rows\":{},\"scroll_frames\":{},\"scroll_ms\":{:.2},\"software_frames\":{},\"frame_period_ms\":{:.2},\"refresh_from_display\":{},\"frame_interval_p50_ms\":{:.2},\"dropped_frames\":{},\"frame_cpu_p50_ms\":{:.2},\"frame_cpu_p99_ms\":{:.2},\"input_to_frame_p50_ms\":{:.2},\"input_to_frame_max_ms\":{:.2},\"sort_ms\":{}}}",
             self.entries,
             opt(self.first_frame),
             opt(self.first_rows),
             opt(self.full),
+            opt(self.first_rows_worker),
+            opt(self.full_worker),
+            self.scroll_rows,
             intervals.len(),
+            scroll_ms,
+            self.software_frames,
             period,
+            self.refresh.is_some(),
+            percentile(&mut intervals.clone(), 0.5),
             dropped,
             percentile(&mut cpu, 0.5),
             percentile(&mut cpu, 0.99),

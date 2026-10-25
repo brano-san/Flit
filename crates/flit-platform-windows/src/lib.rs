@@ -20,13 +20,14 @@ use flit_core::{FsPath, Location};
 use flit_platform::{IndexSource, Platform, PlatformError, Service};
 use flit_search::index::{Checkpoint, IndexSink};
 use flit_search::proto::VolumeInfo;
-use windows::core::{w, PWSTR};
+use windows::core::{w, PCWSTR, PWSTR};
+use windows::Win32::Foundation::HWND;
+use windows::Win32::Graphics::Dwm::{DwmGetCompositionTimingInfo, DWM_TIMING_INFO};
 use windows::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE};
 use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 use windows::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
 use windows::Win32::UI::Shell::{IShellItem, SHCreateItemFromParsingName, SIGDN_FILESYSPATH};
-
-pub type LocalProvider = flit_platform::LocalProvider<NtFs, DirWatcher, ShellCom>;
+use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
 
 pub(crate) fn err(e: windows::core::Error) -> PlatformError {
     PlatformError::new(e.code().0 as i64, e.message())
@@ -112,10 +113,24 @@ impl Platform for Windows {
         com_sta();
         let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
         unsafe {
-            let item: IShellItem = SHCreateItemFromParsingName(windows::core::PCWSTR(wide.as_ptr()), None).ok()?;
+            let item: IShellItem = SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None).ok()?;
             let path = take_pwstr(item.GetDisplayName(SIGDN_FILESYSPATH).ok()?)?;
             FsPath::from_utf16(&path).map(Location::from_local)
         }
+    }
+
+    fn fatal_error(message: &str) {
+        let text: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
+        unsafe {
+            MessageBoxW(None, PCWSTR(text.as_ptr()), w!("Flit"), MB_ICONERROR | MB_OK);
+        }
+    }
+
+    fn refresh_period() -> Option<std::time::Duration> {
+        let mut info = DWM_TIMING_INFO { cbSize: size_of::<DWM_TIMING_INFO>() as u32, ..Default::default() };
+        unsafe { DwmGetCompositionTimingInfo(HWND::default(), &mut info) }.ok()?;
+        let rate = info.rateRefresh;
+        (rate.uiNumerator > 0 && rate.uiDenominator > 0).then(|| std::time::Duration::from_secs_f64(rate.uiDenominator as f64 / rate.uiNumerator as f64))
     }
 }
 

@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 const VERSION: u32 = 2;
+const MIN_COL_W: f32 = 24.0;
+const MAX_COL_W: f32 = 4000.0;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Saved {
@@ -16,6 +18,17 @@ pub struct Saved {
 impl Saved {
     pub fn new(persisted: Persisted, placement: Option<Placement>) -> Self {
         Self { version: VERSION, persisted, placement: placement.map(|p| (p.x, p.y, p.width, p.height, p.maximized)) }
+    }
+
+    fn sanitized(mut self) -> Self {
+        let defaults = Persisted::default().col_w;
+        for (w, d) in self.persisted.col_w.iter_mut().zip(defaults) {
+            if !(w.is_finite() && (MIN_COL_W..=MAX_COL_W).contains(w)) {
+                *w = d;
+            }
+        }
+        self.placement = self.placement.filter(|&(_, _, w, h, _)| w > 0 && h > 0);
+        self
     }
 
     pub fn placement(&self) -> Option<Placement> {
@@ -32,6 +45,7 @@ pub fn load<P: Platform>() -> Saved {
         .and_then(|f| std::fs::read(f).ok())
         .and_then(|b| postcard::from_bytes::<Saved>(&b).ok())
         .filter(|s| s.version == VERSION)
+        .map(Saved::sanitized)
         .unwrap_or_else(|| Saved::new(Persisted { path: Location::from_local(P::home()), ..Default::default() }, None))
 }
 
@@ -41,8 +55,12 @@ pub fn save<P: Platform>(s: &Saved) {
     if let Some(dir) = f.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let tmp = f.with_extension("tmp");
+    let tmp = f.with_extension(format!("{}.tmp", std::process::id()));
     if std::fs::write(&tmp, bytes).is_ok() {
         let _ = std::fs::rename(&tmp, &f);
     }
 }
+
+#[cfg(test)]
+#[path = "../test/state.rs"]
+mod tests;

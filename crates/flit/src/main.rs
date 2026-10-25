@@ -62,6 +62,7 @@ fn main() {
     }
     let cwd = std::env::current_dir().ok().map(|d| wtf8(d.as_os_str()));
     let open = parse_args(&args, cwd);
+    let mut standalone = None;
     let instance = match metrics {
         Some(_) => None,
         None => match <P as Platform>::Instance::acquire(&open) {
@@ -73,15 +74,23 @@ fn main() {
             }
             Instance::Primary(i) => Some(i),
             Instance::Standalone(e) => {
-                eprintln!("flit: running without single-instance forwarding: {e}");
+                standalone = Some(e);
                 None
             }
         },
     };
     init_logging();
+    let headless = metrics.is_some();
+    if let Some(e) = standalone {
+        tracing::warn!("running without single-instance forwarding: {e}");
+    }
     if let Err(e) = app::run::<P>(open, instance, metrics, started) {
         tracing::error!("{e}");
-        eprintln!("flit: {e}");
+        if headless {
+            eprintln!("flit: {e}");
+        } else {
+            <P as Platform>::fatal_error(&format!("Flit could not start: {e}"));
+        }
         std::process::exit(1);
     }
 }

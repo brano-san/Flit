@@ -3,9 +3,11 @@ use crate::window::{FrameSync, Win32Window};
 use flit_core::atlas::Slot;
 use flit_core::render::{DrawList, Instance};
 use flit_platform::{PlatformError, RenderError, Renderer, Window};
+use std::cell::Cell;
 use std::rc::Rc;
-use windows::core::{Interface, PCSTR};
-use windows::Win32::Foundation::{HANDLE, HMODULE};
+use std::thread::ThreadId;
+use windows::core::{Interface, HRESULT, PCSTR};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, HMODULE};
 use windows::Win32::Graphics::Direct3D::*;
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::DirectComposition::*;
@@ -24,7 +26,7 @@ struct Globals {
 }
 
 #[derive(Clone)]
-pub struct D3dDevice {
+struct Gpu {
     device: ID3D11Device,
     ctx: ID3D11DeviceContext,
     vs: ID3D11VertexShader,
@@ -33,13 +35,29 @@ pub struct D3dDevice {
     sampler: ID3D11SamplerState,
     blend: ID3D11BlendState,
     raster: ID3D11RasterizerState,
+}
+
+pub struct D3dDevice {
+    gpu: Gpu,
+    render_thread: Cell<Option<ThreadId>>,
     pub warp: bool,
 }
 
 unsafe impl Send for D3dDevice {}
 
+struct Waitable(HANDLE);
+
+impl Drop for Waitable {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseHandle(self.0);
+        }
+    }
+}
+
 pub struct D3dRenderer {
-    dev: D3dDevice,
+    dev: Gpu,
+    waitable: Waitable,
     swap: IDXGISwapChain2,
     _dcomp: IDCompositionDevice,
     _target: IDCompositionTarget,
@@ -140,7 +158,7 @@ impl D3dDevice {
             let rd = D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_NONE, DepthClipEnable: true.into(), ..Default::default() };
             let mut raster = None;
             device.CreateRasterizerState(&rd, Some(&mut raster)).map_err(err)?;
-            Ok(Self {
+            let gpu = Gpu {
                 device,
                 ctx,
                 vs: vs.unwrap(),
@@ -149,10 +167,24 @@ impl D3dDevice {
                 sampler: sampler.unwrap(),
                 blend: blend.unwrap(),
                 raster: raster.unwrap(),
-                warp,
-            })
+            };
+            Ok(Self { gpu, render_thread: Cell::new(None), warp })
         }
     }
+
+    fn bind_to_current_thread(&self) -> Result<(), PlatformError> {
+        let me = std::thread::current().id();
+        let owner = *self.render_thread.get().get_or_insert(me);
+        self.render_thread.set(Some(owner));
+        if owner != me {
+            return Err(PlatformError::new(-1, "the graphics device already renders on another thread"));
+        }
+        Ok(())
+    }
+}
+
+fn device_lost(code: HRESULT) -> bool {
+    code == DXGI_ERROR_DEVICE_REMOVED || code == DXGI_ERROR_DEVICE_RESET || code == DXGI_ERROR_DEVICE_HUNG
 }
 
 impl D3dRenderer {
@@ -164,6 +196,70 @@ impl D3dRenderer {
             self.dev.ctx.Unmap(buf, 0);
         }
         Ok(())
+    }
+
+    fn classify(&self, e: PlatformError) -> RenderError {
+        if device_lost(HRESULT(e.code as i32)) || unsafe { self.dev.device.GetDeviceRemovedReason() }.is_err() {
+            RenderError::DeviceLost
+        } else {
+            RenderError::Other(e)
+        }
+    }
+
+    fn draw(&mut self, list: &DrawList) -> Result<(), PlatformError> {
+        unsafe {
+            let waitable = self.sync.waitable.get();
+            if !self.sync.waited.replace(false) && !waitable.is_invalid() {
+                WaitForSingleObjectEx(waitable, 100, true);
+            }
+            if self.rtv.is_none() {
+                let back: ID3D11Texture2D = self.swap.GetBuffer(0).map_err(err)?;
+                let mut rtv = None;
+                self.dev.device.CreateRenderTargetView(&back, None, Some(&mut rtv)).map_err(err)?;
+                self.rtv = rtv;
+            }
+            let n = list.instances.len();
+            if n > self.capacity {
+                self.capacity = n.next_power_of_two();
+                self.instances = buffer(&self.dev.device, self.capacity * size_of::<Instance>(), D3D11_BIND_VERTEX_BUFFER)?;
+            }
+            if n > 0 {
+                self.write(&self.instances, &list.instances)?;
+            }
+            let (w, h) = self.size;
+            self.write(&self.globals, &[Globals { viewport: [w as f32, h as f32], text_contrast: 0.5, _pad: 0.0 }])?;
+
+            let d = &self.dev;
+            let ctx = &d.ctx;
+            ctx.OMSetRenderTargets(Some(std::slice::from_ref(&self.rtv)), None);
+            ctx.ClearRenderTargetView(self.rtv.as_ref().unwrap(), &list.clear.to_f32());
+            ctx.RSSetViewports(Some(&[D3D11_VIEWPORT { Width: w as f32, Height: h as f32, MaxDepth: 1.0, ..Default::default() }]));
+            ctx.RSSetState(&d.raster);
+            ctx.OMSetBlendState(&d.blend, None, u32::MAX);
+            ctx.IASetInputLayout(&d.layout);
+            ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+            let stride = size_of::<Instance>() as u32;
+            ctx.IASetVertexBuffers(0, 1, Some(&Some(self.instances.clone())), Some(&stride), Some(&0));
+            ctx.VSSetShader(&d.vs, None);
+            ctx.VSSetConstantBuffers(0, Some(&[Some(self.globals.clone())]));
+            ctx.PSSetShader(&d.ps, None);
+            ctx.PSSetConstantBuffers(0, Some(&[Some(self.globals.clone())]));
+            ctx.PSSetShaderResources(0, Some(&[Some(self.atlas_srv.clone())]));
+            ctx.PSSetSamplers(0, Some(&[Some(d.sampler.clone())]));
+            if n > 0 {
+                ctx.DrawInstanced(4, n as u32, 0, 0);
+            }
+            self.swap.Present(1, DXGI_PRESENT(0)).ok().map_err(err)
+        }
+    }
+}
+
+impl Drop for D3dRenderer {
+    fn drop(&mut self) {
+        if self.sync.waitable.get() == self.waitable.0 {
+            self.sync.waitable.set(HANDLE::default());
+            self.sync.waited.set(false);
+        }
     }
 }
 
@@ -177,7 +273,8 @@ impl Renderer for D3dRenderer {
 
     fn new(dev: &D3dDevice, window: &Win32Window, atlas_size: u32) -> Result<Self, PlatformError> {
         let _span = tracing::info_span!("renderer_new", warp = dev.warp).entered();
-        let device = &dev.device;
+        dev.bind_to_current_thread()?;
+        let device = &dev.gpu.device;
         unsafe {
             let dxgi: IDXGIDevice = device.cast().map_err(err)?;
             let factory: IDXGIFactory2 = dxgi.GetAdapter().map_err(err)?.GetParent().map_err(err)?;
@@ -197,8 +294,7 @@ impl Renderer for D3dRenderer {
             };
             let swap: IDXGISwapChain2 = factory.CreateSwapChainForComposition(device, &desc, None).map_err(err)?.cast().map_err(err)?;
             swap.SetMaximumFrameLatency(1).map_err(err)?;
-            window.sync.waitable.set(swap.GetFrameLatencyWaitableObject());
-            window.sync.waited.set(false);
+            let waitable = Waitable(swap.GetFrameLatencyWaitableObject());
 
             let dcomp: IDCompositionDevice = DCompositionCreateDevice(&dxgi).map_err(err)?;
             let target = dcomp.CreateTargetForHwnd(window.hwnd(), true).map_err(err)?;
@@ -226,9 +322,12 @@ impl Renderer for D3dRenderer {
             let atlas = atlas.unwrap();
             device.CreateShaderResourceView(&atlas, None, Some(&mut srv)).map_err(err)?;
 
+            window.sync.waitable.set(waitable.0);
+            window.sync.waited.set(false);
             tracing::info!(warp = dev.warp, "renderer ready");
             Ok(Self {
-                dev: dev.clone(),
+                dev: dev.gpu.clone(),
+                waitable,
                 swap,
                 _dcomp: dcomp,
                 _target: target,
@@ -270,54 +369,6 @@ impl Renderer for D3dRenderer {
 
     fn render(&mut self, list: &DrawList) -> Result<(), RenderError> {
         let _span = tracing::trace_span!("render", n = list.instances.len()).entered();
-        let fail = |e| RenderError::Other(err(e));
-        unsafe {
-            let waitable = self.sync.waitable.get();
-            if !self.sync.waited.replace(false) && waitable != HANDLE::default() {
-                WaitForSingleObjectEx(waitable, 100, true);
-            }
-            if self.rtv.is_none() {
-                let back: ID3D11Texture2D = self.swap.GetBuffer(0).map_err(fail)?;
-                let mut rtv = None;
-                self.dev.device.CreateRenderTargetView(&back, None, Some(&mut rtv)).map_err(fail)?;
-                self.rtv = rtv;
-            }
-            let n = list.instances.len();
-            if n > self.capacity {
-                self.capacity = n.next_power_of_two();
-                self.instances = buffer(&self.dev.device, self.capacity * size_of::<Instance>(), D3D11_BIND_VERTEX_BUFFER).map_err(RenderError::Other)?;
-            }
-            if n > 0 {
-                self.write(&self.instances, &list.instances).map_err(RenderError::Other)?;
-            }
-            let (w, h) = self.size;
-            self.write(&self.globals, &[Globals { viewport: [w as f32, h as f32], text_contrast: 0.5, _pad: 0.0 }]).map_err(RenderError::Other)?;
-
-            let d = &self.dev;
-            let ctx = &d.ctx;
-            ctx.OMSetRenderTargets(Some(std::slice::from_ref(&self.rtv)), None);
-            ctx.ClearRenderTargetView(self.rtv.as_ref().unwrap(), &list.clear.to_f32());
-            ctx.RSSetViewports(Some(&[D3D11_VIEWPORT { Width: w as f32, Height: h as f32, MaxDepth: 1.0, ..Default::default() }]));
-            ctx.RSSetState(&d.raster);
-            ctx.OMSetBlendState(&d.blend, None, u32::MAX);
-            ctx.IASetInputLayout(&d.layout);
-            ctx.IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-            let stride = size_of::<Instance>() as u32;
-            ctx.IASetVertexBuffers(0, 1, Some(&Some(self.instances.clone())), Some(&stride), Some(&0));
-            ctx.VSSetShader(&d.vs, None);
-            ctx.VSSetConstantBuffers(0, Some(&[Some(self.globals.clone())]));
-            ctx.PSSetShader(&d.ps, None);
-            ctx.PSSetConstantBuffers(0, Some(&[Some(self.globals.clone())]));
-            ctx.PSSetShaderResources(0, Some(&[Some(self.atlas_srv.clone())]));
-            ctx.PSSetSamplers(0, Some(&[Some(d.sampler.clone())]));
-            if n > 0 {
-                ctx.DrawInstanced(4, n as u32, 0, 0);
-            }
-            let hr = self.swap.Present(1, DXGI_PRESENT(0));
-            if hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET {
-                return Err(RenderError::DeviceLost);
-            }
-            hr.ok().map_err(fail)
-        }
+        self.draw(list).map_err(|e| self.classify(e))
     }
 }

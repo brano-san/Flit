@@ -17,6 +17,8 @@ pub use flit_core::text::TextBackend as Text;
 
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
+pub type OpenSink = Arc<std::sync::Mutex<Option<Sender<Open>>>>;
+
 #[derive(Debug, Clone)]
 pub struct PlatformError {
     pub code: i64,
@@ -148,7 +150,7 @@ pub enum Instance<S> {
 
 pub trait SingleInstance: Sized + Send + 'static {
     fn acquire(open: &Open) -> Instance<Self>;
-    fn listen(self, opens: Sender<Open>, wake: Wake);
+    fn listen(self, opens: OpenSink, wake: Wake);
 }
 
 pub trait IndexSource: Sized + Send {
@@ -180,4 +182,6 @@ pub trait Platform: 'static {
     fn state_dir() -> Option<std::path::PathBuf>;
     fn home() -> FsPath;
     fn known_folder(name: &str) -> Option<Location>;
+    fn fatal_error(message: &str);
+    fn refresh_period() -> Option<std::time::Duration>;
 }

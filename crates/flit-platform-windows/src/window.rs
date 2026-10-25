@@ -14,7 +14,7 @@ use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_D
 use windows::Win32::Graphics::Gdi::{ScreenToClient, ValidateRect};
 use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
 use windows::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow, GetSystemMetricsForDpi, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::Input::Ime::{ImmGetContext, ImmReleaseContext, ImmSetCompositionWindow, CFS_POINT, COMPOSITIONFORM};
@@ -184,15 +184,14 @@ impl Window for Win32Window {
             OpenClipboard(Some(self.hwnd())).ok()?;
             let text = (|| {
                 let h = GetClipboardData(CF_UNICODETEXT.0 as u32).ok()?;
+                let units = GlobalSize(HGLOBAL(h.0)) / 2;
                 let p = GlobalLock(HGLOBAL(h.0)) as *const u16;
                 if p.is_null() {
                     return None;
                 }
-                let mut n = 0;
-                while *p.add(n) != 0 {
-                    n += 1;
-                }
-                let s = String::from_utf16_lossy(std::slice::from_raw_parts(p, n));
+                let all = std::slice::from_raw_parts(p, units);
+                let n = all.iter().position(|&c| c == 0).unwrap_or(units);
+                let s = String::from_utf16_lossy(&all[..n]);
                 let _ = GlobalUnlock(HGLOBAL(h.0));
                 Some(s)
             })();
@@ -210,10 +209,13 @@ impl Window for Win32Window {
             let _ = EmptyClipboard();
             if let Ok(h) = GlobalAlloc(GMEM_MOVEABLE, w.len() * 2) {
                 let p = GlobalLock(h) as *mut u16;
-                if !p.is_null() {
+                let owned_by_clipboard = !p.is_null() && {
                     std::ptr::copy_nonoverlapping(w.as_ptr(), p, w.len());
                     let _ = GlobalUnlock(h);
-                    let _ = SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(h.0)));
+                    SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(h.0))).is_ok()
+                };
+                if !owned_by_clipboard {
+                    let _ = GlobalFree(Some(h));
                 }
             }
             let _ = CloseClipboard();
@@ -509,7 +511,7 @@ unsafe fn pump(msg: &mut MSG) -> bool {
 unsafe fn message_loop<H: WindowHandler<Win32>>(sh: &Shared<H>) -> Result<(), PlatformError> {
     let mut msg = MSG::default();
     loop {
-        if !pump(&mut msg) {
+        if !pump(&mut msg) && sh.nodes().is_empty() {
             return Ok(());
         }
         let dirty: Vec<Rc<Node<H>>> = sh.nodes().into_iter().filter(|n| n.window.redraw.get()).collect();
@@ -530,7 +532,7 @@ unsafe fn message_loop<H: WindowHandler<Win32>>(sh: &Shared<H>) -> Result<(), Pl
                     n.window.sync.waited.set(true);
                 }
             }
-            if !pump(&mut msg) {
+            if !pump(&mut msg) && sh.nodes().is_empty() {
                 return Ok(());
             }
         }
@@ -601,7 +603,9 @@ unsafe extern "system" fn wndproc<H: WindowHandler<Win32>>(hwnd: HWND, msg: u32,
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
         return DefWindowProcW(hwnd, msg, wp, lp);
     }
-    match handle(&*ptr, hwnd, msg, wp, lp) {
+    Rc::increment_strong_count(ptr);
+    let node = Rc::from_raw(ptr);
+    match handle(&node, hwnd, msg, wp, lp) {
         Some(r) => r,
         None => DefWindowProcW(hwnd, msg, wp, lp),
     }
@@ -824,6 +828,12 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
         }
         WM_DESTROY_REQUEST => {
             let _ = DestroyWindow(hwnd);
+            Some(LRESULT(0))
+        }
+        WM_ENDSESSION => {
+            if wp.0 != 0 {
+                let _ = DestroyWindow(hwnd);
+            }
             Some(LRESULT(0))
         }
         WM_DESTROY => {

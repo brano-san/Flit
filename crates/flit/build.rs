@@ -4,5 +4,6 @@ fn main() {
             println!("cargo:rustc-link-arg-bins=/DELAYLOAD:{dll}.dll");
         }
         println!("cargo:rustc-link-arg-bins=delayimp.lib");
+        println!("cargo:rustc-link-arg-bins=/IGNORE:4199");
     }
 }

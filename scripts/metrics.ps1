@@ -5,9 +5,9 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 $root = Split-Path -Parent $PSScriptRoot
 $runs = 3
-$timeoutMs = 60000
+$timeoutMs = 300000
 $folders = @('flat_10k', 'flat_100k')
-$keys = @('entries', 'start_to_first_frame_ms', 'first_rows_ms', 'full_listing_ms', 'scroll_frames', 'frame_period_ms', 'dropped_frames', 'frame_cpu_p50_ms', 'frame_cpu_p99_ms', 'input_to_frame_p50_ms', 'input_to_frame_max_ms', 'sort_ms')
+$keys = @('entries', 'start_to_first_frame_ms', 'first_rows_ms', 'full_listing_ms', 'first_rows_worker_ms', 'full_listing_worker_ms', 'scroll_rows', 'scroll_frames', 'scroll_ms', 'software_frames', 'frame_period_ms', 'frame_interval_p50_ms', 'dropped_frames', 'frame_cpu_p50_ms', 'frame_cpu_p99_ms', 'input_to_frame_p50_ms', 'input_to_frame_max_ms', 'sort_ms')
 $flit = Join-Path $root 'target\release\flit.exe'
 $gen = Join-Path $root 'target\release\flit-gen.exe'
 $testdata = Join-Path $root 'target\testdata'
@@ -113,8 +113,8 @@ $r100 = $results['flat_100k']
 $rows = @(
     @('Start -> first frame (10k)', '< 150 ms', $r10, 'start_to_first_frame_ms', 'lt', 150),
     @('Start -> first frame (100k)', '< 150 ms', $r100, 'start_to_first_frame_ms', 'lt', 150),
-    @('10k first rows', '< 16 ms', $r10, 'first_rows_ms', 'lt', 16),
-    @('10k full listing', '< 50 ms', $r10, 'full_listing_ms', 'lt', 50),
+    @('10k first rows on screen', '< 16 ms', $r10, 'first_rows_ms', 'lt', 16),
+    @('10k full listing on screen', '< 50 ms', $r10, 'full_listing_ms', 'lt', 50),
     @('10k scroll dropped frames', '0', $r10, 'dropped_frames', 'eq', 0),
     @('100k scroll dropped frames', '0', $r100, 'dropped_frames', 'eq', 0)
 )

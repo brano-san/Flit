@@ -12,11 +12,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const TYPE_AHEAD_RESET: Duration = Duration::from_millis(1000);
+const DIFF_CHUNK: usize = 256;
 
 pub(super) struct Loading {
     pub gen: u64,
     pub since: Instant,
     pub select: Option<Vec<u8>>,
+    scanned: u32,
 }
 
 pub struct Tab {
@@ -29,6 +31,7 @@ pub struct Tab {
     pub(super) view_spec: ViewSpec,
     pub(super) loading: Option<Loading>,
     pub(super) view: Option<DirView>,
+    pub(super) view_loc: Location,
     pub(super) error: Option<String>,
     pub(super) pending_diffs: VecDeque<DirChange>,
     pub(super) crumbs: Vec<(String, Location)>,
@@ -44,6 +47,7 @@ impl Tab {
     pub(super) fn new(id: TabId, at: Location, view_spec: ViewSpec) -> Self {
         Self {
             id,
+            view_loc: at.clone(),
             history: History::new(at),
             gen: 0,
             cancel: GenToken::default(),
@@ -84,7 +88,7 @@ impl Tab {
             fx.push(Effect::Provider { provider: old, req: ProviderRequest::Watch { tab: self.id, gen, path: None } });
         }
         self.watching = Some(provider.clone());
-        self.loading = Some(Loading { gen, since: now, select });
+        self.loading = Some(Loading { gen, since: now, select, scanned: 0 });
         self.pending_diffs.clear();
         self.error = None;
         self.crumbs = loc.crumbs();
@@ -112,44 +116,57 @@ impl Tab {
             self.stats.first = Some(snap.elapsed);
         }
         self.stats.entries = snap.listing.len();
-        self.error = snap.error.as_ref().map(|e| e.to_string());
+        if let Some(e) = &snap.error {
+            self.error = Some(e.to_string());
+        }
         let done = snap.done;
         let stale_view = snap.view != self.view_spec;
         match &mut self.view {
             Some(v) if v.snap().gen == snap.gen => v.replace(snap),
             _ => {
                 self.view = Some(DirView::new(snap));
+                self.view_loc = self.location().clone();
                 self.scroll = 0.0;
                 self.scroll_target = 0.0;
             }
         }
-        if let Some(name) = self.loading.as_ref().and_then(|l| l.select.clone()) {
-            let v = self.view.as_mut().unwrap();
-            if let Some(i) = v.find(&name) {
-                v.clear_selection();
-                v.focus = Some(i);
-                v.anchor = Some(i);
-                v.set_selected(i, true);
-                self.loading.as_mut().unwrap().select = None;
-                self.reveal_pending = true;
+        let v = self.view.as_mut().unwrap();
+        if let Some(l) = self.loading.as_mut() {
+            if let Some(name) = &l.select {
+                let listing = v.listing();
+                let found = (l.scanned..listing.len() as u32).find(|&i| listing.name(i) == name.as_slice() && v.is_visible(i));
+                l.scanned = listing.len() as u32;
+                if let Some(i) = found {
+                    v.clear_selection();
+                    v.focus = Some(i);
+                    v.anchor = Some(i);
+                    v.set_selected(i, true);
+                    l.select = None;
+                    self.reveal_pending = true;
+                }
             }
         }
         if done {
-            self.stats.done = Some(self.view.as_ref().unwrap().snap().elapsed);
+            self.stats.done = Some(v.snap().elapsed);
             self.loading = None;
         }
         done && stale_view
     }
 
-    pub(super) fn apply_diffs(&mut self, max: usize) -> bool {
-        let ready = self.loading.is_none() && self.view.as_ref().is_some_and(|v| v.snap().done);
-        if !ready {
+    pub(super) fn apply_diffs(&mut self, budget: Duration) -> bool {
+        let Some(v) = self.view.as_mut().filter(|v| v.snap().done) else { return false };
+        if self.loading.is_some() || self.pending_diffs.is_empty() {
             return false;
         }
-        for _ in 0..max.min(self.pending_diffs.len()) {
-            let c = self.pending_diffs.pop_front().unwrap();
-            self.view.as_mut().unwrap().apply(&c);
-        }
+        let (start, pending) = (Instant::now(), &mut self.pending_diffs);
+        let mut n = 0;
+        v.apply_all(std::iter::from_fn(|| {
+            n += 1;
+            if n % DIFF_CHUNK == 0 && start.elapsed() >= budget {
+                return None;
+            }
+            pending.pop_front()
+        }));
         !self.pending_diffs.is_empty()
     }
 
@@ -159,7 +176,7 @@ impl Tab {
     }
 
     pub(super) fn entry_location(&self, i: u32) -> Location {
-        self.location().join(self.view.as_ref().unwrap().listing().name(i))
+        self.view_loc.join(self.view.as_ref().unwrap().listing().name(i))
     }
 
     pub(super) fn selection(&self) -> Vec<u32> {
@@ -171,7 +188,7 @@ impl Tab {
         sel
     }
 
-    pub(super) fn rows(&self) -> usize {
+    pub fn rows(&self) -> usize {
         self.view.as_ref().map_or(0, |v| v.rows().len())
     }
 

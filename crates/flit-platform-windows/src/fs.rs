@@ -2,6 +2,7 @@ use flit_core::listing::{attr, Meta};
 use flit_core::path::PathKind;
 use flit_core::{FsError, FsErrorKind, FsPath, ListingBuilder};
 use flit_platform::Fs;
+use std::mem::offset_of;
 use windows::core::PCWSTR;
 use windows::Wdk::Storage::FileSystem::{NtQueryDirectoryFile, FileIdBothDirectoryInformation, FILE_ID_BOTH_DIR_INFORMATION};
 use windows::Win32::Foundation::*;
@@ -39,7 +40,9 @@ pub(crate) fn open_dir(dir: &FsPath, access: u32, overlapped: bool) -> Result<HA
     }
 }
 
-pub(crate) fn map_attrs(a: u32) -> u32 {
+const REPARSE_TAG_NAME_SURROGATE: u32 = 0x2000_0000;
+
+pub(crate) fn map_attrs(a: u32, reparse_tag: u32) -> u32 {
     let mut out = 0;
     if a & FILE_ATTRIBUTE_DIRECTORY.0 != 0 {
         out |= attr::DIR;
@@ -53,7 +56,7 @@ pub(crate) fn map_attrs(a: u32) -> u32 {
     if a & FILE_ATTRIBUTE_READONLY.0 != 0 {
         out |= attr::READONLY;
     }
-    if a & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+    if a & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 && reparse_tag & REPARSE_TAG_NAME_SURROGATE != 0 {
         out |= attr::LINK;
     }
     out
@@ -104,17 +107,21 @@ impl Fs for NtFs {
             let base = buf.as_ptr() as *const u8;
             let mut off = 0usize;
             loop {
-                let e = unsafe { &*(base.add(off) as *const FILE_ID_BOTH_DIR_INFORMATION) };
-                let name = unsafe { std::slice::from_raw_parts(e.FileName.as_ptr(), e.FileNameLength as usize / 2) };
+                let e = unsafe { base.add(off) } as *const FILE_ID_BOTH_DIR_INFORMATION;
+                let (next, name, meta) = unsafe {
+                    let name_at = base.add(off + offset_of!(FILE_ID_BOTH_DIR_INFORMATION, FileName)) as *const u16;
+                    let name = std::slice::from_raw_parts(name_at, (*e).FileNameLength as usize / 2);
+                    let attrs = map_attrs((*e).FileAttributes, (*e).EaSize);
+                    ((*e).NextEntryOffset, name, Meta { size: (*e).EndOfFile as u64, modified: (*e).LastWriteTime, created: (*e).CreationTime, attrs })
+                };
                 let dots = name == [b'.' as u16] || name == [b'.' as u16, b'.' as u16];
                 if !dots {
-                    let meta = Meta { size: e.EndOfFile as u64, modified: e.LastWriteTime, created: e.CreationTime, attrs: map_attrs(e.FileAttributes) };
                     out.push_utf16(name, meta);
                 }
-                if e.NextEntryOffset == 0 {
+                if next == 0 {
                     break;
                 }
-                off += e.NextEntryOffset as usize;
+                off += next as usize;
             }
             if !out.batch_done() {
                 break Ok(());
@@ -152,3 +159,7 @@ impl Fs for NtFs {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../test/fs.rs"]
+mod tests;

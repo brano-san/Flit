@@ -1,15 +1,17 @@
 use crate::{com_sta, err};
 use flit_core::ui::{Bitmap, IconKind, IconRequest};
+use flit_core::path::PathKind;
 use flit_core::FsPath;
 use flit_platform::{PlatformError, Shell, Trash};
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::SIZE;
+use windows::Win32::Foundation::{HWND, SIZE};
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL};
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
+use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Controls::{IImageList, ILD_TRANSPARENT};
 use windows::Win32::UI::Shell::*;
-use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO, SW_SHOWNORMAL};
+use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetForegroundWindow, GetIconInfo, GetWindowThreadProcessId, HICON, ICONINFO, SW_SHOWNORMAL};
 
 pub struct ShellCom {
     lists: Vec<(u32, IImageList)>,
@@ -17,6 +19,15 @@ pub struct ShellCom {
 
 fn wide(p: &FsPath) -> Vec<u16> {
     p.to_wide(false)
+}
+
+fn owner_window() -> Option<HWND> {
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        (!hwnd.is_invalid() && pid == GetCurrentProcessId()).then_some(hwnd)
+    }
 }
 
 fn shell_addressable(p: &FsPath) -> Result<(), PlatformError> {
@@ -56,6 +67,36 @@ fn bgra_to_rgba(px: &mut [u8], premultiply: bool) {
             }
         }
     }
+}
+
+fn box_span(i: u32, dst: u32, src: u32) -> (u32, u32) {
+    let start = i * src / dst;
+    (start, ((i + 1) * src / dst).max(start + 1))
+}
+
+pub(crate) fn fit(b: Bitmap, size: u32) -> Bitmap {
+    let (size, longest) = (size.max(1), b.width.max(b.height));
+    if longest <= size {
+        return b;
+    }
+    let (dw, dh) = ((b.width * size / longest).max(1), (b.height * size / longest).max(1));
+    let mut rgba = Vec::with_capacity((dw * dh * 4) as usize);
+    for dy in 0..dh {
+        let (y0, y1) = box_span(dy, dh, b.height);
+        for dx in 0..dw {
+            let (x0, x1) = box_span(dx, dw, b.width);
+            let mut sum = [0u32; 4];
+            for y in y0..y1 {
+                let row = ((y * b.width + x0) * 4) as usize..((y * b.width + x1) * 4) as usize;
+                for px in b.rgba[row].chunks_exact(4) {
+                    sum.iter_mut().zip(px).for_each(|(s, &v)| *s += v as u32);
+                }
+            }
+            let n = (x1 - x0) * (y1 - y0);
+            rgba.extend(sum.map(|s| ((s + n / 2) / n) as u8));
+        }
+    }
+    Bitmap { width: dw, height: dh, rgba }
 }
 
 unsafe fn icon_bitmap(icon: HICON) -> Option<Bitmap> {
@@ -106,7 +147,7 @@ impl ShellCom {
         }
         let list = self.list_for(size)?;
         let icon = unsafe { list.GetIcon(info.iIcon, ILD_TRANSPARENT.0) }.ok()?;
-        unsafe { icon_bitmap(icon) }
+        unsafe { icon_bitmap(icon) }.map(|b| fit(b, size))
     }
 
     fn item_icon(&self, path: &FsPath, size: u32) -> Option<Bitmap> {
@@ -118,7 +159,7 @@ impl ShellCom {
             let _ = DeleteObject(HGDIOBJ(hbm.0));
             let (width, height, mut rgba) = bits?;
             bgra_to_rgba(&mut rgba, false);
-            Some(Bitmap { width, height, rgba })
+            Some(fit(Bitmap { width, height, rgba }, size))
         }
     }
 }
@@ -161,10 +202,13 @@ impl Shell for ShellCom {
     fn open(&mut self, path: &FsPath) -> Result<(), PlatformError> {
         shell_addressable(path)?;
         let file = wide(path);
+        let dir = path.parent().filter(|p| p.kind() != PathKind::Computer).map(|p| wide(&p));
         let mut info = SHELLEXECUTEINFOW {
             cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
             fMask: SEE_MASK_NOASYNC | SEE_MASK_FLAG_LOG_USAGE,
+            hwnd: owner_window().unwrap_or_default(),
             lpFile: PCWSTR(file.as_ptr()),
+            lpDirectory: dir.as_ref().map_or(PCWSTR::null(), |d| PCWSTR(d.as_ptr())),
             nShow: SW_SHOWNORMAL.0,
             ..Default::default()
         };
@@ -178,6 +222,9 @@ impl Trash for ShellCom {
         unsafe {
             let op: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL).map_err(err)?;
             op.SetOperationFlags(FOF_ALLOWUNDO | FOFX_ADDUNDORECORD | FOFX_RECYCLEONDELETE).map_err(err)?;
+            if let Some(owner) = owner_window() {
+                op.SetOwnerWindow(owner).map_err(err)?;
+            }
             for p in paths {
                 let w = wide(p);
                 let item: IShellItem = SHCreateItemFromParsingName(PCWSTR(w.as_ptr()), None).map_err(err)?;
@@ -191,3 +238,7 @@ impl Trash for ShellCom {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../test/shell.rs"]
+mod tests;

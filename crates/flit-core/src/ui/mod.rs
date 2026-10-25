@@ -35,10 +35,11 @@ const NAME_MIN_W: f32 = 120.0;
 const TAB_MAX_W: f32 = 220.0;
 const TAB_MIN_W: f32 = 72.0;
 
-const MAX_DIFFS_PER_FRAME: usize = 256;
+const DIFF_BUDGET: Duration = Duration::from_millis(4);
 const MAX_PENDING_DIFFS: usize = 1 << 16;
 const SCROLL_TAU: f32 = 0.045;
 const MAX_OPEN: usize = 16;
+const MAX_ROUTES: usize = 32;
 
 const PER_FILE_ICON_EXT: [&[u8]; 6] = [b"exe", b"ico", b"lnk", b"url", b"cur", b"ani"];
 
@@ -131,6 +132,7 @@ pub enum Effect {
     Cursor(CursorIcon),
     Title(String),
     NewWindow(Vec<Route>),
+    Open(Open),
 }
 
 pub enum IconResult {
@@ -289,12 +291,27 @@ impl App {
             last_frame: None,
             dirty: true,
         };
-        let start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
+        let mut start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
+        let total = start.len();
+        start.truncate(MAX_ROUTES);
         for r in start {
             app.add_tab(r, state.view, now);
         }
+        app.report_dropped(total);
         app.layout();
         app
+    }
+
+    fn report_dropped(&mut self, total: usize) {
+        if total > MAX_ROUTES {
+            self.tab_mut().error = Some(format!("Opened the first {MAX_ROUTES} of {total} locations"));
+        }
+    }
+
+    pub fn shutdown(&mut self) {
+        for t in &mut self.tabs {
+            t.shutdown(&mut self.effects);
+        }
     }
 
     pub fn persisted(&self) -> Persisted {
@@ -324,6 +341,10 @@ impl App {
 
     pub fn drain_effects(&mut self) -> std::vec::Drain<'_, Effect> {
         self.effects.drain(..)
+    }
+
+    pub fn has_effects(&self) -> bool {
+        !self.effects.is_empty()
     }
 
     pub fn set_maximized(&mut self, m: bool) {
@@ -366,6 +387,12 @@ impl App {
 
     pub fn open(&mut self, cmd: &Open, shell_folder: &dyn Fn(&str) -> Option<Location>, now: Instant) {
         let (routes, errors) = open::routes(cmd, shell_folder);
+        let target = if cmd.target == OpenTarget::Default { self.open_target } else { cmd.target };
+        self.dispatch(routes, target, now);
+        self.show_open_errors(&errors);
+    }
+
+    pub fn show_open_errors(&mut self, errors: &[ResolveError]) {
         if let Some(e) = errors.first() {
             self.tab_mut().error = Some(match e {
                 ResolveError::UnknownShellLocation(s) => format!("Cannot open {s} in Flit"),
@@ -373,14 +400,14 @@ impl App {
             });
             self.dirty = true;
         }
-        let target = if cmd.target == OpenTarget::Default { self.open_target } else { cmd.target };
-        self.dispatch(routes, target, now);
     }
 
-    pub fn dispatch(&mut self, routes: Vec<Route>, target: OpenTarget, now: Instant) {
+    pub fn dispatch(&mut self, mut routes: Vec<Route>, target: OpenTarget, now: Instant) {
         if routes.is_empty() {
             return;
         }
+        let total = routes.len();
+        routes.truncate(MAX_ROUTES);
         match target {
             OpenTarget::NewWindow => self.effects.push(Effect::NewWindow(routes)),
             OpenTarget::CurrentTab => {
@@ -399,6 +426,7 @@ impl App {
                 }
             }
         }
+        self.report_dropped(total);
         self.dirty = true;
     }
 
@@ -408,8 +436,9 @@ impl App {
         let (rh, lh) = (self.layout.row_h, self.layout.list.h);
         let t = &mut self.tabs[self.cur];
         if !t.history.go(r.folder) {
-            if let (Some(name), Some(v)) = (&r.select, &mut t.view) {
-                if let Some(i) = v.find(name) {
+            let current = t.gen;
+            if let (Some(name), Some(v)) = (&r.select, t.view.as_mut().filter(|v| v.snap().gen == current)) {
+                if let Some(i) = v.find(name).filter(|&i| v.is_visible(i)) {
                     v.clear_selection();
                     v.set_selected(i, true);
                     v.focus = Some(i);
@@ -489,12 +518,15 @@ impl App {
     }
 
     pub fn refresh(&mut self, now: Instant) {
+        self.reload(self.cur, now);
+    }
+
+    fn reload(&mut self, k: usize, now: Instant) {
         let gen = self.gen();
-        let case = self.case;
-        let t = &mut self.tabs[self.cur];
+        let t = &mut self.tabs[k];
         let select = t.focused_name();
-        t.load(gen, select, case, now, &mut self.effects);
-        self.dirty = true;
+        t.load(gen, select, self.case, now, &mut self.effects);
+        self.dirty |= k == self.cur;
     }
 
     fn open_entry(&mut self, i: u32, now: Instant) {
@@ -504,7 +536,7 @@ impl App {
         if e.is_dir() {
             self.navigate(loc, now);
         } else {
-            self.effects.push(Effect::Provider { provider: loc.provider(), req: ProviderRequest::Open { path: loc.path().clone() } });
+            self.effects.push(Effect::Provider { provider: loc.provider(), req: ProviderRequest::Open { tab: t.id, path: loc.path().clone() } });
         }
     }
 
@@ -552,26 +584,28 @@ impl App {
             }
             ProviderEvent::Rescan { tab, gen } => {
                 if let Some(k) = tab_of(&self.tabs, tab, gen) {
-                    let g = self.gen();
-                    let t = &mut self.tabs[k];
-                    let select = t.focused_name();
-                    t.load(g, select, self.case, now, &mut self.effects);
-                    self.dirty |= k == self.cur;
+                    self.reload(k, now);
                 }
             }
             ProviderEvent::DirSize { tab, gen, idx, size } => {
                 if let Some(k) = tab_of(&self.tabs, tab, gen) {
-                    if let Some(v) = &mut self.tabs[k].view {
+                    if let Some(v) = self.tabs[k].view.as_mut().filter(|v| v.snap().gen == gen) {
                         v.set_dir_size(idx, size);
                     }
                     self.dirty |= k == self.cur;
                 }
             }
-            ProviderEvent::OpDone { error: Some(message), .. } | ProviderEvent::Error { message } => {
-                self.tab_mut().error = Some(message);
-                self.dirty = true;
+            ProviderEvent::OpDone { tab, error: Some(message) } => {
+                let k = self.tabs.iter().position(|t| t.id == tab).unwrap_or(self.cur);
+                self.tabs[k].error = Some(message);
+                self.dirty |= k == self.cur;
             }
-            ProviderEvent::OpDone { error: None, .. } => {}
+            ProviderEvent::OpDone { tab, error: None } => {
+                let unwatched = |l: &Location| matches!(l, Location::Wsl { .. }) || l.path().kind() == PathKind::Unc;
+                if let Some(k) = self.tabs.iter().position(|t| t.id == tab && unwatched(t.location())) {
+                    self.reload(k, now);
+                }
+            }
         }
     }
 
@@ -1073,7 +1107,7 @@ impl App {
             self.edit.insert(c.encode_utf8(&mut b));
             return;
         }
-        if self.mods.ctrl || self.mods.alt {
+        if self.mods.ctrl != self.mods.alt {
             return;
         }
         let (rh, lh) = (self.layout.row_h, self.layout.list.h);
@@ -1108,11 +1142,15 @@ impl App {
         if Location::parse(&self.edit.text).as_ref() == Some(self.current_location()) {
             return self.refresh(now);
         }
-        self.open(&cmd, &|_| None, now);
+        self.effects.push(Effect::Open(cmd));
+        self.dirty = true;
     }
 
     fn compute_dir_sizes(&mut self) {
         let t = self.tab();
+        if t.view.as_ref().is_none_or(|v| v.snap().gen != t.gen) {
+            return;
+        }
         let items = t.size_items();
         if items.is_empty() {
             return;
@@ -1135,13 +1173,11 @@ impl App {
 
     fn trash_selection(&mut self) {
         let t = self.tab();
-        if t.location().path().kind() == PathKind::Computer {
-            return;
-        }
-        let paths: Vec<FsPath> = t.selection().iter().map(|&i| t.entry_location(i).path().clone()).collect();
+        let Some(v) = t.view.as_ref().filter(|_| t.view_loc.path().kind() != PathKind::Computer) else { return };
+        let paths: Vec<FsPath> = v.selected().map(|i| t.entry_location(i).path().clone()).collect();
         if !paths.is_empty() {
-            let provider = t.location().provider();
-            self.effects.push(Effect::Provider { provider, req: ProviderRequest::Op { id: 0, op: FileOp::Trash(paths) } });
+            let provider = t.view_loc.provider();
+            self.effects.push(Effect::Provider { provider, req: ProviderRequest::Op { tab: t.id, op: FileOp::Trash(paths) } });
         }
     }
 
@@ -1151,7 +1187,7 @@ impl App {
         self.last_frame = Some(now);
         self.poll();
         self.dirty = false;
-        let mut animating = self.tab_mut().apply_diffs(MAX_DIFFS_PER_FRAME);
+        let mut animating = self.tab_mut().apply_diffs(DIFF_BUDGET);
 
         let t = self.tab_mut();
         let diff = t.scroll_target - t.scroll;
@@ -1164,14 +1200,19 @@ impl App {
         self.layout();
 
         let mut arena = std::mem::take(&mut self.arena);
-        arena.reset();
         let th = self.theme();
-        g.begin(th.bg);
-        self.draw_list(g, &arena, th);
-        self.draw_header(g, th);
-        self.draw_title(g, th);
-        self.draw_toolbar(g, th);
-        self.draw_status(g, &arena, th);
+        for _ in 0..2 {
+            arena.reset();
+            g.begin(th.bg);
+            self.draw_list(g, &arena, th);
+            self.draw_header(g, th);
+            self.draw_title(g, th);
+            self.draw_toolbar(g, th);
+            self.draw_status(g, &arena, th);
+            if !g.atlas_reset {
+                break;
+            }
+        }
         self.arena = arena;
 
         let t = self.tab();
@@ -1362,7 +1403,7 @@ impl App {
                 let w = g.measure(msg, font);
                 g.text(list.x + (list.w - w) / 2.0, list.y + self.s(40.0), msg, font, t.text_dim, f32::INFINITY);
             }
-            let loc = tab.location();
+            let loc = &tab.view_loc;
             let shell_dir = loc.to_windows();
             let in_root = loc.path().kind() == PathKind::Computer;
             let listing = v.listing();
@@ -1528,4 +1569,5 @@ pub fn icon_key(name: &[u8], ext: &[u8], e: &crate::listing::Entry, size: u32, d
 }
 
 #[cfg(test)]
+#[path = "../../test/ui.rs"]
 mod tests;

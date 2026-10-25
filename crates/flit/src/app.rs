@@ -12,7 +12,7 @@ use flit_platform::*;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 const ATLAS: u32 = 2048;
@@ -24,7 +24,6 @@ const TAB_STRIDE: TabId = 1 << 32;
 type Ws<P> = <P as Platform>::WindowSystem;
 type Win<P> = <Ws<P> as WindowSystem>::Window;
 type Device<P> = <<P as Platform>::Renderer as Renderer>::Device;
-type Local<P> = LocalProvider<<P as Platform>::Fs, <P as Platform>::Watcher, <P as Platform>::Shell>;
 
 #[derive(Default)]
 struct Visible {
@@ -117,6 +116,7 @@ struct WinState<P: Platform> {
     gfx: Gfx<P::Text>,
     renderer: Option<P::Renderer>,
     software: bool,
+    device_gen: u64,
     visible: Arc<Visible>,
 }
 
@@ -125,9 +125,10 @@ struct Handler<P: Platform> {
     pending: VecDeque<App>,
     next_base: TabId,
     active: Option<WindowId>,
-    local: Local<P>,
+    local: LocalProvider,
     events: Receiver<ProviderEvent>,
     opens: Receiver<Open>,
+    sink: OpenSink,
     queued_opens: Vec<Open>,
     shell: Sender<ShellJob>,
     sorter: Sender<SortJob>,
@@ -138,6 +139,9 @@ struct Handler<P: Platform> {
     hw: Option<Device<P>>,
     sw: Option<Device<P>>,
     gpu_pending: usize,
+    injection: Option<(Instant, Event)>,
+    wake: Wake,
+    device_gen: u64,
 }
 
 impl<P: Platform> Handler<P> {
@@ -218,6 +222,11 @@ impl<P: Platform> Handler<P> {
                 }
                 Effect::Cursor(c) => window.set_cursor(c),
                 Effect::Title(t) => window.set_title(&t),
+                Effect::Open(cmd) => {
+                    if let Some(st) = self.windows.get_mut(&id) {
+                        st.app.open(&cmd, &P::known_folder, Instant::now());
+                    }
+                }
                 Effect::NewWindow(routes) => {
                     let persisted = self.saved.persisted.clone();
                     let app = self.new_app(routes, persisted);
@@ -225,6 +234,9 @@ impl<P: Platform> Handler<P> {
                     window.open_window(WindowOptions { title: "Flit".into(), placement: None, dark: window.is_dark_mode() });
                 }
             }
+        }
+        if self.windows.get(&id).is_some_and(|st| st.app.has_effects()) {
+            return self.flush(window);
         }
         if let Some(st) = self.windows.get_mut(&id) {
             if let Some(area) = st.app.ime_area() {
@@ -241,7 +253,7 @@ impl<P: Platform> Handler<P> {
         while let Ok(ev) = self.events.try_recv() {
             let target = match &ev {
                 ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } => self.window_of_tab(*tab),
-                ProviderEvent::OpDone { .. } | ProviderEvent::Error { .. } => self.active,
+                ProviderEvent::OpDone { tab, .. } => self.window_of_tab(*tab).or(self.active),
             };
             if let Some(st) = target.and_then(|id| self.windows.get_mut(&id)) {
                 st.app.on_provider_event(ev, now);
@@ -270,6 +282,18 @@ impl<P: Platform> Handler<P> {
             }
         }
         self.queued_opens.extend(self.opens.try_iter());
+    }
+
+    fn inject_due(&mut self, window: &Win<P>) {
+        let due = self.injection.as_ref().is_some_and(|(at, _)| Instant::now() >= *at);
+        let (Some(st), true) = (self.windows.get_mut(&window.id()), due) else { return };
+        let Some((_, ev)) = self.injection.take() else { return };
+        let now = Instant::now();
+        st.app.on_event(&ev, now);
+        if let Some(m) = &mut self.metrics {
+            m.on_injected(now);
+        }
+        window.request_redraw();
     }
 
     fn apply_opens(&mut self, window: &Win<P>) {
@@ -308,6 +332,7 @@ impl<P: Platform> Handler<P> {
                     st.gfx.reset_atlas();
                     st.renderer = Some(r);
                     st.software = software;
+                    st.device_gen = self.device_gen;
                 }
                 Err(e) => {
                     tracing::error!("renderer: {e}");
@@ -329,15 +354,18 @@ impl<P: Platform> Handler<P> {
         st.gfx.uploads.clear();
         let lost = matches!(renderer.render(&st.gfx.dl), Err(RenderError::DeviceLost));
         if lost {
-            let software = st.software;
+            let (software, stale) = (st.software, st.device_gen != self.device_gen);
             st.renderer = None;
-            if software {
-                self.sw = None;
-            } else {
-                self.hw = P::Renderer::device(false).map_err(|e| tracing::error!("graphics device: {e}")).ok();
-            }
-            if self.hw.is_none() && self.sw.is_none() {
-                self.sw = P::Renderer::device(true).map_err(|e| tracing::error!("software device: {e}")).ok();
+            if !stale {
+                self.device_gen += 1;
+                if software {
+                    self.sw = None;
+                } else {
+                    self.hw = P::Renderer::device(false).map_err(|e| tracing::error!("graphics device: {e}")).ok();
+                }
+                if self.hw.is_none() && self.sw.is_none() {
+                    self.sw = P::Renderer::device(true).map_err(|e| tracing::error!("software device: {e}")).ok();
+                }
             }
             window.request_redraw();
             return;
@@ -352,9 +380,17 @@ impl<P: Platform> Handler<P> {
         }
         if let Some(m) = &mut self.metrics {
             let cpu = (now - t).as_secs_f32() * 1e3;
-            match m.after_frame(&st.app, cpu, now) {
+            match m.after_frame(&st.app, st.software, cpu, now) {
                 Step::None => {}
                 Step::Inject(ev) => st.app.on_event(&ev, now),
+                Step::InjectAfter(delay, ev) => {
+                    self.injection = Some((now + delay, ev));
+                    let wake = self.wake.clone();
+                    let _ = spawn("flit-metrics-input", move || {
+                        std::thread::sleep(delay);
+                        wake();
+                    });
+                }
                 Step::Finish => {
                     self.metrics = None;
                     window.close();
@@ -391,9 +427,10 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         app.set_maximized(window.is_maximized());
         window.set_title(&format!("{} — Flit", app.tab().title()));
         let id = window.id();
-        self.windows.insert(id, WinState { app, gfx: Gfx::new(text, ATLAS), renderer: None, software: false, visible: Arc::default() });
+        self.windows.insert(id, WinState { app, gfx: Gfx::new(text, ATLAS), renderer: None, software: false, device_gen: 0, visible: Arc::default() });
         self.active = Some(id);
         self.flush(window);
+        self.apply_opens(window);
         window.request_redraw();
     }
 
@@ -423,6 +460,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
 
     fn woken(&mut self, window: &Win<P>) {
         self.drain();
+        self.inject_due(window);
         self.poll_gpu(false);
         if self.hw.is_some() && self.windows.get(&window.id()).is_some_and(|st| st.software) {
             window.request_redraw();
@@ -436,16 +474,29 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
 
     fn destroyed(&mut self, window: &Win<P>) {
         let id = window.id();
-        if let Some(st) = self.windows.remove(&id) {
-            for t in st.app.tabs() {
-                self.local.submit(ProviderRequest::Watch { tab: t.id, gen: 0, path: None });
+        if let Some(mut st) = self.windows.remove(&id) {
+            if self.windows.is_empty() {
+                self.saved = Saved::new(st.app.persisted(), Some(window.placement()));
+            }
+            st.app.shutdown();
+            for e in st.app.drain_effects().collect::<Vec<_>>() {
+                if let Effect::Provider { provider, req } = e {
+                    self.submit(provider, req);
+                }
             }
         }
         if self.active == Some(id) {
             self.active = self.windows.keys().next().copied();
         }
         if self.windows.is_empty() {
-            state::save::<P>(&self.saved);
+            let tx = self.sink.lock().unwrap_or_else(|e| e.into_inner()).take();
+            self.queued_opens.extend(self.opens.try_iter());
+            if self.queued_opens.is_empty() {
+                state::save::<P>(&self.saved);
+            } else {
+                *self.sink.lock().unwrap_or_else(|e| e.into_inner()) = tx;
+                window.open_window(WindowOptions { title: "Flit".into(), placement: self.saved.placement(), dark: window.is_dark_mode() });
+            }
         }
     }
 }
@@ -466,13 +517,14 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         }
     })?;
     let (events_tx, events) = unbounded();
-    let local = Local::<P>::new(P::fs(), FS_THREADS, events_tx, wake.clone())?;
+    let local = LocalProvider::new::<_, P::Watcher, P::Shell>(P::fs(), FS_THREADS, events_tx, wake.clone())?;
     let (opens_tx, opens) = unbounded();
+    let sink: OpenSink = Arc::new(Mutex::new(Some(opens_tx)));
     if let Some(i) = instance {
-        i.listen(opens_tx, wake.clone());
+        i.listen(sink.clone(), wake.clone());
     }
-    let (shell, sorter, done) = start_workers::<P>(wake)?;
-    let routes = if open.is_empty() { Vec::new() } else { open::routes(&open, &P::known_folder).0 };
+    let (shell, sorter, done) = start_workers::<P>(wake.clone())?;
+    let (routes, errors) = if open.is_empty() { Default::default() } else { open::routes(&open, &P::known_folder) };
     let new_window = open.target == OpenTarget::NewWindow;
     let mut h = Handler::<P> {
         windows: HashMap::new(),
@@ -482,18 +534,23 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         local,
         events,
         opens,
+        sink,
         queued_opens: Vec::new(),
         shell,
         sorter,
         done,
         saved: saved.clone(),
-        metrics: metrics.map(|m| Metrics::new(m, started)),
+        metrics: metrics.map(|m| Metrics::new(m, started, P::refresh_period())),
+        injection: None,
+        wake,
         gpu,
         hw: None,
         sw: None,
         gpu_pending: 2,
+        device_gen: 0,
     };
-    let first = h.new_app(routes, saved.persisted.clone());
+    let mut first = h.new_app(routes, saved.persisted.clone());
+    first.show_open_errors(&errors);
     h.pending.push_back(first);
     let placement = if new_window { None } else { saved.placement() };
     ws.run(WindowOptions { title: "Flit".into(), placement, dark: P::dark_mode() }, h)

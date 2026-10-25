@@ -87,7 +87,7 @@ impl LineEdit {
     }
 
     pub fn move_to(&mut self, pos: usize, extend: bool) {
-        self.caret = pos.min(self.text.len());
+        self.caret = (0..=pos.min(self.text.len())).rev().find(|&p| self.text.is_char_boundary(p)).unwrap_or(0);
         if !extend {
             self.anchor = self.caret;
         }
@@ -95,6 +95,7 @@ impl LineEdit {
 
     pub fn key(&mut self, key: Key, m: Mods) -> EditAction {
         let c = self.caret;
+        let shortcut = m.ctrl && !m.alt;
         match key {
             Key::Left => {
                 let to = if !m.shift && !self.selection().is_empty() {
@@ -133,14 +134,14 @@ impl LineEdit {
                 }
                 return EditAction::Changed;
             }
-            Key::Char('A') if m.ctrl => self.select_all(),
-            Key::Char('C') if m.ctrl => return EditAction::Copy(self.text[self.selection()].to_owned()),
-            Key::Char('X') if m.ctrl => {
+            Key::Char('A') if shortcut => self.select_all(),
+            Key::Char('C') if shortcut => return EditAction::Copy(self.text[self.selection()].to_owned()),
+            Key::Char('X') if shortcut => {
                 let s = self.text[self.selection()].to_owned();
                 self.take_selection();
                 return EditAction::Copy(s);
             }
-            Key::Char('V') if m.ctrl => return EditAction::Paste,
+            Key::Char('V') if shortcut => return EditAction::Paste,
             Key::Enter => return EditAction::Submit,
             Key::Escape => return EditAction::Cancel,
             _ => {}
@@ -150,45 +151,5 @@ impl LineEdit {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const NONE: Mods = Mods { ctrl: false, shift: false, alt: false };
-    const CTRL: Mods = Mods { ctrl: true, shift: false, alt: false };
-    const SHIFT: Mods = Mods { ctrl: false, shift: true, alt: false };
-
-    #[test]
-    fn typing_and_deleting() {
-        let mut e = LineEdit::default();
-        e.set(r"C:\Users");
-        e.insert(r"\Пётр");
-        assert_eq!(e.text, r"C:\Users\Пётр");
-        e.key(Key::Backspace, NONE);
-        assert_eq!(e.text, r"C:\Users\Пёт");
-        e.key(Key::Backspace, CTRL);
-        assert_eq!(e.text, r"C:\Users\");
-        e.key(Key::Home, NONE);
-        e.key(Key::Delete, NONE);
-        assert_eq!(e.text, r":\Users\");
-    }
-
-    #[test]
-    fn selection_and_words() {
-        let mut e = LineEdit::default();
-        e.set(r"C:\Program Files\App");
-        e.key(Key::Left, CTRL);
-        assert_eq!(e.caret, 17);
-        e.key(Key::Left, CTRL);
-        assert_eq!(e.caret, 11);
-        e.key(Key::End, SHIFT);
-        assert_eq!(&e.text[e.selection()], r"Files\App");
-        assert_eq!(e.key(Key::Char('X'), CTRL), EditAction::Copy(r"Files\App".into()));
-        assert_eq!(e.text, r"C:\Program ");
-        e.select_all();
-        e.insert("D:\n");
-        assert_eq!(e.text, "D:", "control chars dropped");
-        e.key(Key::Home, NONE);
-        e.key(Key::Right, CTRL);
-        assert_eq!(e.caret, 2);
-    }
-}
+#[path = "../../test/ui/edit.rs"]
+mod tests;

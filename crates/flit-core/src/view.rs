@@ -2,6 +2,7 @@ use crate::hash::{self, FxHashMap};
 use crate::listing::{attr, ChangeKind, DirChange, DirSnapshot, Listing, Meta};
 use crate::sort::{self, ViewSpec};
 use smallvec::SmallVec;
+use std::borrow::Borrow;
 use std::sync::Arc;
 
 pub struct DirView {
@@ -25,9 +26,7 @@ impl DirView {
     pub fn replace(&mut self, snap: Arc<DirSnapshot>) {
         self.snap = snap;
         self.names = None;
-        let n = self.snap.listing.len() as u32;
-        self.focus = self.focus.filter(|&f| f < n);
-        self.anchor = self.anchor.filter(|&f| f < n);
+        self.prune();
     }
 
     #[inline]
@@ -61,6 +60,10 @@ impl DirView {
             m
         });
         names.get(&hash::hash(name))?.iter().copied().find(|&i| l.name(i) == name)
+    }
+
+    pub(crate) fn is_visible(&self, i: u32) -> bool {
+        self.snap.listing.entries.get(i as usize).is_some_and(|e| sort::visible(e, self.snap.view.show_hidden))
     }
 
     #[inline]
@@ -109,10 +112,14 @@ impl DirView {
         self.sel_count
     }
 
-    pub fn selected(&self) -> impl Iterator<Item = u32> + '_ {
+    fn marked(&self) -> impl Iterator<Item = u32> + '_ {
         self.sel.iter().enumerate().flat_map(|(w, &bits)| {
             (0..64).filter(move |b| bits >> b & 1 != 0).map(move |b| (w * 64 + b) as u32)
         })
+    }
+
+    pub fn selected(&self) -> impl Iterator<Item = u32> + '_ {
+        self.marked().filter(|&i| self.is_visible(i))
     }
 
     pub fn selected_size(&self) -> u64 {
@@ -120,57 +127,95 @@ impl DirView {
         self.selected().map(|i| &l.entries[i as usize]).filter(|e| !e.is_dir() || e.attrs & attr::SIZE_KNOWN != 0).map(|e| e.size).sum()
     }
 
-    fn remove_row(snap: &mut DirSnapshot, i: u32) {
-        let row = sort::find_row(&snap.listing, &snap.keys, snap.view.sort, &snap.order, i)
-            .or_else(|| snap.order.iter().position(|&p| p == i));
-        if let Some(r) = row {
-            snap.order.remove(r);
+    fn prune(&mut self) {
+        let gone: Vec<u32> = self.marked().chain(self.focus).chain(self.anchor).filter(|&i| !self.is_visible(i)).collect();
+        for i in gone {
+            self.set_selected(i, false);
+            if self.focus == Some(i) {
+                self.focus = None;
+            }
+            if self.anchor == Some(i) {
+                self.anchor = None;
+            }
         }
     }
 
-    fn insert_row(snap: &mut DirSnapshot, i: u32) {
+    fn update(&mut self, i: u32, meta: Meta) {
+        let snap = Arc::make_mut(&mut self.snap);
+        let row = sort::find_row(&snap.listing, &snap.keys, snap.view.sort, &snap.order, i).or_else(|| snap.order.iter().position(|&p| p == i));
+        if let Some(r) = row {
+            snap.order.remove(r);
+        }
+        snap.listing.set_meta(i, meta);
         if sort::visible(&snap.listing.entries[i as usize], snap.view.show_hidden) {
             let p = sort::insert_pos(&snap.listing, &snap.keys, snap.view.sort, &snap.order, i);
             snap.order.insert(p, i);
         }
     }
 
-    fn update(&mut self, i: u32, meta: Meta) {
-        let snap = Arc::make_mut(&mut self.snap);
-        Self::remove_row(snap, i);
-        snap.listing.set_meta(i, meta);
-        Self::insert_row(snap, i);
+    pub fn apply(&mut self, c: &DirChange) {
+        self.apply_all([c]);
     }
 
-    pub fn apply(&mut self, c: &DirChange) {
-        let existing = self.find(&c.name);
-        match (&c.kind, existing) {
-            (ChangeKind::Removed, Some(i)) => {
-                let snap = Arc::make_mut(&mut self.snap);
-                Self::remove_row(snap, i);
-                snap.listing.entries[i as usize].attrs |= attr::DELETED;
-                if let Some(m) = &mut self.names {
-                    if let Some(v) = m.get_mut(&hash::hash(c.name.as_slice())) {
+    pub(crate) fn apply_all<C: Borrow<DirChange>>(&mut self, changes: impl IntoIterator<Item = C>) {
+        let mut touched = Vec::new();
+        for c in changes {
+            let c = c.borrow();
+            let existing = self.find(&c.name);
+            if existing.is_none() && c.kind == ChangeKind::Removed {
+                continue;
+            }
+            let snap = Arc::make_mut(&mut self.snap);
+            let i = match existing {
+                Some(i) if c.kind == ChangeKind::Removed => {
+                    snap.listing.entries[i as usize].attrs |= attr::DELETED;
+                    if let Some(v) = self.names.as_mut().and_then(|m| m.get_mut(&hash::hash(c.name.as_slice()))) {
                         v.retain(|&mut x| x != i);
                     }
+                    i
                 }
-                self.set_selected(i, false);
-                if self.focus == Some(i) {
-                    self.focus = None;
+                Some(i) => {
+                    snap.listing.set_meta(i, c.meta.unwrap_or_default());
+                    i
                 }
-            }
-            (ChangeKind::Removed, None) => {}
-            (_, Some(i)) => self.update(i, c.meta.unwrap_or_default()),
-            (_, None) => {
-                let snap = Arc::make_mut(&mut self.snap);
-                let i = snap.listing.push(&c.name, c.meta.unwrap_or_default());
-                snap.keys.push(snap.listing.name(i));
-                Self::insert_row(snap, i);
-                if let Some(m) = &mut self.names {
-                    m.entry(hash::hash(c.name.as_slice())).or_default().push(i);
+                None => {
+                    let i = snap.listing.push(&c.name, c.meta.unwrap_or_default());
+                    snap.keys.push(snap.listing.name(i));
+                    if let Some(m) = &mut self.names {
+                        m.entry(hash::hash(c.name.as_slice())).or_default().push(i);
+                    }
+                    i
                 }
-            }
+            };
+            touched.push(i);
         }
+        if !touched.is_empty() {
+            self.reorder(touched);
+            self.prune();
+        }
+    }
+
+    fn reorder(&mut self, mut touched: Vec<u32>) {
+        let snap = Arc::make_mut(&mut self.snap);
+        let (l, k, spec, show_hidden) = (&snap.listing, &snap.keys, snap.view.sort, snap.view.show_hidden);
+        let mut moved = vec![false; l.len()];
+        for &i in &touched {
+            moved[i as usize] = true;
+        }
+        snap.order.retain(|&i| !moved[i as usize]);
+        touched.retain(|&i| sort::visible(&l.entries[i as usize], show_hidden));
+        touched.sort_unstable_by(|&a, &b| sort::cmp(l, k, spec, a, b));
+        touched.dedup();
+        let mut order = Vec::with_capacity(snap.order.len() + touched.len());
+        let mut rest = &snap.order[..];
+        for &i in &touched {
+            let p = rest.partition_point(|&o| sort::cmp(l, k, spec, o, i).is_lt());
+            order.extend_from_slice(&rest[..p]);
+            order.push(i);
+            rest = &rest[p..];
+        }
+        order.extend_from_slice(rest);
+        snap.order = order;
     }
 
     pub fn set_dir_size(&mut self, i: u32, size: u64) {
@@ -188,112 +233,20 @@ impl DirView {
         let snap = Arc::make_mut(&mut self.snap);
         let l = &snap.listing;
         order.retain(|&i| sort::visible(&l.entries[i as usize], view.show_hidden));
+        let sorted = order.windows(2).all(|w| sort::cmp(l, &snap.keys, view.sort, w[0], w[1]).is_lt());
         snap.order = order;
         snap.view = view;
-        for i in base_len as u32..snap.listing.len() as u32 {
-            Self::insert_row(snap, i);
-        }
-        let s = &*snap;
-        let sorted = s.order.windows(2).all(|w| sort::cmp(&s.listing, &s.keys, view.sort, w[0], w[1]).is_lt());
-        if !sorted {
+        if sorted {
+            self.reorder((base_len as u32..self.snap.listing.len() as u32).collect());
+        } else {
             let mut o = std::mem::take(&mut snap.order);
             sort::sort(&snap.listing, &snap.keys, view, &mut o);
             snap.order = o;
         }
+        self.prune();
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::path::FsPath;
-    use crate::sort::{CaseMode, SortField, SortKeys, SortSpec};
-    use std::time::Duration;
-
-    pub(crate) fn snap(names: &[&str]) -> Arc<DirSnapshot> {
-        let mut listing = Listing::default();
-        let mut keys = SortKeys::new(CaseMode::Insensitive);
-        for n in names {
-            let i = listing.push(n.as_bytes(), Meta { size: n.len() as u64, ..Default::default() });
-            keys.push(listing.name(i));
-        }
-        let view = ViewSpec::default();
-        let mut order = Vec::new();
-        sort::sort(&listing, &keys, view, &mut order);
-        Arc::new(DirSnapshot {
-            gen: 1,
-            path: FsPath::parse("C:\\t").unwrap(),
-            listing,
-            keys,
-            order,
-            view,
-            done: true,
-            error: None,
-            elapsed: Duration::ZERO,
-        })
-    }
-
-    fn rows(v: &DirView) -> Vec<String> {
-        v.rows().iter().map(|&i| String::from_utf8_lossy(v.listing().name(i)).into_owned()).collect()
-    }
-
-    fn change(kind: ChangeKind, name: &str, size: u64) -> DirChange {
-        DirChange { kind, name: name.into(), meta: Some(Meta { size, ..Default::default() }) }
-    }
-
-    #[test]
-    fn diffs_keep_order_and_indices() {
-        let mut v = DirView::new(snap(&["b", "d", "f"]));
-        v.set_selected(1, true);
-        v.apply(&change(ChangeKind::Added, "a", 1));
-        v.apply(&change(ChangeKind::Added, "e", 1));
-        v.apply(&change(ChangeKind::Removed, "b", 0));
-        v.apply(&change(ChangeKind::Removed, "zzz", 0));
-        v.apply(&change(ChangeKind::Added, "e", 7));
-        assert_eq!(rows(&v), ["a", "d", "e", "f"]);
-        assert!(v.is_selected(1), "index of 'd' is stable");
-        assert_eq!(v.listing().len(), 5, "tombstone kept");
-        assert_eq!(v.listing().entries[4].size, 7);
-        assert_eq!(v.find(b"b"), None);
-        assert_eq!(v.row_of(1), Some(1));
-    }
-
-    #[test]
-    fn modified_moves_row_under_size_sort() {
-        let s = snap(&["aa", "b", "cccc"]);
-        let mut v = DirView::new(s);
-        let view = ViewSpec { sort: SortSpec { field: SortField::Size, descending: false }, show_hidden: false };
-        let mut order = Vec::new();
-        sort::sort(v.listing(), &v.snap.keys, view, &mut order);
-        let n = v.listing().len();
-        v.merge_order(order, view, n);
-        assert_eq!(rows(&v), ["b", "aa", "cccc"]);
-        v.apply(&change(ChangeKind::Modified, "b", 100));
-        assert_eq!(rows(&v), ["aa", "cccc", "b"]);
-    }
-
-    #[test]
-    fn merge_after_concurrent_changes() {
-        let mut v = DirView::new(snap(&["a", "c"]));
-        let view = ViewSpec { sort: SortSpec { field: SortField::Name, descending: true }, show_hidden: false };
-        let mut order = Vec::new();
-        sort::sort(v.listing(), &v.snap.keys, view, &mut order);
-        v.apply(&change(ChangeKind::Added, "b", 1));
-        v.apply(&change(ChangeKind::Removed, "c", 0));
-        v.merge_order(order, view, 2);
-        assert_eq!(rows(&v), ["b", "a"]);
-    }
-
-    #[test]
-    fn selection_ops() {
-        let mut v = DirView::new(snap(&["a", "b", "c", "d"]));
-        v.select_rows(3, 1);
-        assert_eq!(v.selected().collect::<Vec<_>>(), [1, 2, 3]);
-        assert_eq!(v.selected_size(), 3);
-        v.select_all();
-        assert_eq!(v.selected_count(), 4);
-        v.set_selected(0, false);
-        v.set_selected(200, false);
-        assert_eq!(v.selected_count(), 3);
-    }
-}
+#[path = "../test/view.rs"]
+mod tests;
