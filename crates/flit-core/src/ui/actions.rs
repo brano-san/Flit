@@ -87,6 +87,9 @@ pub static ACTIONS: &[Action] = &[
     Action::new("select.all", "Select all", &[ctrl(Key::Char('A'))], |a, _| a.select_all()),
     Action::new("select.none", "Clear selection", &[key(Key::Escape)], |a, _| a.clear_selection()),
     Action::new("item.open", "Open selected items", &[key(Key::Enter)], |a, now| a.open_selection(now)),
+    Action::new("item.open_tab", "Open the selected folders in new tabs", &[], |a, now| a.open_folders_in(OpenTarget::NewTab, now)),
+    Action::new("item.open_window", "Open the selected folders in a new window", &[], |a, now| a.open_folders_in(OpenTarget::NewWindow, now)),
+    Action::new("item.pin", "Pin or unpin the selected folders", &[], |a, _| a.pin_selection()),
     Action::new("item.copy_path", "Copy path", &[ctrl_shift(Key::Char('C'))], |a, _| a.copy_paths(false)),
     Action::new("item.copy_quoted_path", "Copy path in quotes", &[ctrl_alt(Key::Char('C'))], |a, _| a.copy_paths(true)),
     Action::new("app.terminal", "Open in terminal", &[ctrl(Key::Char('`'))], |a, _| a.open_terminal(false)),
@@ -105,6 +108,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("file.new_item", "New item", &[ctrl_shift(Key::Char('I'))], |a, _| a.new_item_dialog()),
     Action::new("file.new_folder_with_selection", "New folder with the selected items", &[], |a, _| a.new_folder_with_selection()),
     Action::new("file.new_stream", "New alternate data stream", &[], |a, _| a.new_stream()),
+    Action::new("file.shortcut", "Create shortcuts to the selected items", &[], |a, _| a.create_shortcuts()),
     Action::new("file.flatten", "Flatten folder: move files from all subfolders into it", &[], |a, _| a.flatten_selection()),
     Action::new("ops.show", "Show or hide file operations", &[], |a, _| a.toggle_jobs()),
     Action::new("ops.clear", "Clear completed file operations", &[], |a, _| a.clear_completed()),
@@ -185,6 +189,14 @@ impl App {
     fn new_window_here(&mut self) {
         let folder = self.current_location().clone();
         self.effects.push(Effect::NewWindow(vec![Route { folder, select: None }]));
+    }
+
+    fn open_folders_in(&mut self, target: OpenTarget, now: Instant) {
+        let routes: Vec<Route> = self.selected_folders().into_iter().map(|folder| Route { folder, select: None }).collect();
+        if routes.is_empty() {
+            return self.status("Select the folders to open");
+        }
+        self.dispatch(routes, target, now);
     }
 
     fn go_known(&mut self, k: KnownFolder, now: Instant) {

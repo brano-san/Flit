@@ -294,11 +294,33 @@ impl App {
             }
             None => pinned.push(loc),
         }
-        let list = pinned.clone();
+        self.pins_changed();
+    }
+
+    fn pins_changed(&mut self) {
+        let list = self.nav.sidebar.state.pinned.clone();
         self.nav.sidebar.rebuild();
         self.effects.push(Effect::Pinned(list));
         self.layout();
         self.dirty = true;
+    }
+
+    pub(super) fn pin_selection(&mut self) {
+        let folders = self.selected_folders();
+        if folders.is_empty() {
+            return self.status("Select the folders to pin");
+        }
+        let pinned = &mut self.nav.sidebar.state.pinned;
+        if folders.iter().all(|l| pinned.contains(l)) {
+            pinned.retain(|l| !folders.contains(l));
+        } else {
+            for l in folders {
+                if !pinned.contains(&l) {
+                    pinned.push(l);
+                }
+            }
+        }
+        self.pins_changed();
     }
 
     pub(super) fn pin_current(&mut self) {
@@ -337,10 +359,7 @@ impl App {
         }
         let loc = pinned.remove(from);
         pinned.insert(target.min(pinned.len()), loc);
-        let list = pinned.clone();
-        self.nav.sidebar.rebuild();
-        self.effects.push(Effect::Pinned(list));
-        self.layout();
+        self.pins_changed();
     }
 
     pub(super) fn open_side_item(&mut self, i: usize, new_tab: bool, now: Instant) {

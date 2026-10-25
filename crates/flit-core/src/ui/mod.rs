@@ -7,6 +7,7 @@ mod field;
 mod filter;
 mod jobs;
 mod marquee;
+mod menu;
 mod nav;
 pub mod palette;
 pub mod sidebar;
@@ -15,6 +16,7 @@ pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchSort};
 pub use sidebar::{Drive, KnownFolder, NavState, Places};
 pub use jobs::JobState;
+pub use menu::MenuItem;
 pub use tab::Tab;
 
 use crate::fmt as format;
@@ -288,6 +290,9 @@ pub struct App {
     pub warn_extension_change: bool,
     pub ops_button_always: bool,
     pub conflict_default: Option<Resolve>,
+    pub shell_items_inline: bool,
+    pub menu_hidden: Vec<&'static str>,
+    menu: Vec<menu::Cmd>,
     focused_at: Option<Instant>,
     dark: bool,
     scale: f32,
@@ -337,6 +342,9 @@ impl App {
             warn_extension_change: true,
             ops_button_always: false,
             conflict_default: None,
+            shell_items_inline: false,
+            menu_hidden: Vec::new(),
+            menu: Vec::new(),
             focused_at: None,
             dark,
             scale,
@@ -963,6 +971,7 @@ impl App {
             }
             Event::CloseRequested => self.effects.push(Effect::Window(WindowCmd::Close)),
             Event::ShellVerb(verb) => self.shell_verb(verb),
+            Event::MenuCommand(k) => self.menu_command(*k, now),
             Event::DevicesChanged => self.effects.push(Effect::RefreshPlaces),
             Event::Timer => self.ops_timer(now),
             Event::ClipboardChanged(seq) => self.clipboard_changed(*seq),

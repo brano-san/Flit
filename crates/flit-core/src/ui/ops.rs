@@ -50,6 +50,8 @@ pub struct ShellMenu {
     pub x: f32,
     pub y: f32,
     pub extended: bool,
+    pub menu: Vec<super::MenuItem>,
+    pub inline: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -501,6 +503,17 @@ impl App {
         self.start_op(FileOp::NewFolder { dir, name }, Origin::Fresh, Then::Fill(paths));
     }
 
+    pub fn create_shortcuts(&mut self) {
+        let items = self.selected_items();
+        if items.is_empty() {
+            return self.status("Select the items to create shortcuts to");
+        }
+        match (self.item_paths(&items), self.shell_dir()) {
+            (Ok(items), Ok(dest)) => self.start_op(FileOp::Link { items, dest }, Origin::Fresh, Then::Select),
+            (Err(e), _) | (_, Err(e)) => self.status(e),
+        }
+    }
+
     pub fn new_item_dialog(&mut self) {
         if let Err(e) = self.shell_dir() {
             return self.status(e);
@@ -621,10 +634,10 @@ impl App {
             Some(r) => (list.x + self.s(48.0), (list.y + (r as f32 + 1.0) * rh - t.scroll).clamp(list.y, list.bottom())),
             None => (list.x + self.s(48.0), list.y + self.s(8.0)),
         };
-        self.shell_menu(x, y, row.is_some());
+        self.shell_menu(x, y, row.is_some(), false);
     }
 
-    fn shell_menu(&mut self, x: f32, y: f32, on_items: bool) {
+    fn shell_menu(&mut self, x: f32, y: f32, on_items: bool, extended: bool) {
         if self.in_bin() {
             return self.status(BIN_ONLY);
         }
@@ -638,8 +651,9 @@ impl App {
             Ok(p) => p,
             Err(e) => return self.status(e),
         };
-        let extended = self.mods.shift;
-        self.effects.push(Effect::ShellMenu(ShellMenu { dir, items, x, y, extended }));
+        let inline = self.shell_items_inline || extended;
+        let menu = self.build_menu(on_items);
+        self.effects.push(Effect::ShellMenu(ShellMenu { dir, items, x, y, extended, menu, inline }));
     }
 
     pub(super) fn shell_verb(&mut self, verb: &str) {
@@ -941,8 +955,8 @@ impl App {
         }
         if button == MouseButton::Right && self.drag == Drag::None && self.ops.rename.is_none() {
             match self.hit(x, y) {
-                Hit::Row(_) => self.shell_menu(x, y, true),
-                Hit::ListEmpty => self.shell_menu(x, y, false),
+                Hit::Row(_) => self.shell_menu(x, y, true, self.mods.shift),
+                Hit::ListEmpty => self.shell_menu(x, y, false, self.mods.shift),
                 _ => {}
             }
         }

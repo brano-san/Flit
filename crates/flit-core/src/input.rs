@@ -56,6 +56,7 @@ pub enum Event {
     DroppedFiles(Vec<FsPath>),
     CloseRequested,
     ShellVerb(String),
+    MenuCommand(usize),
     DevicesChanged,
     Timer,
     ClipboardChanged(u32),
