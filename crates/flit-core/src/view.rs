@@ -367,6 +367,22 @@ impl DirView {
         self.prune();
     }
 
+    pub fn set_tags(&mut self, changes: &[(u32, u32)]) {
+        let snap = Arc::make_mut(&mut self.snap);
+        let touched: Vec<u32> = changes.iter().filter(|&&(i, m)| snap.listing.entries.get(i as usize).is_some_and(|e| e.tags != m)).map(|&(i, _)| i).collect();
+        for &(i, m) in changes {
+            if (i as usize) < snap.listing.len() {
+                snap.listing.set_tags(i, m);
+            }
+        }
+        let v = snap.view;
+        if !touched.is_empty() && (v.sort.field == sort::SortField::Tag || v.group.field == GroupField::Tag) {
+            self.reorder(touched);
+            self.rows_changed();
+            self.prune();
+        }
+    }
+
     pub fn merge_order(&mut self, mut order: Vec<u32>, view: ViewSpec, base_len: usize) {
         if view.group != self.snap.view.group {
             self.collapsed.clear();

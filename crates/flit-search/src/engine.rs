@@ -93,6 +93,7 @@ impl<'q> Prepared<'q> {
                 Filter::Ext(list) => !v.is_dir(i) && list.iter().any(|e| e.as_slice() == v.ext(i)),
                 Filter::Size(lo, hi) => !v.is_dir(i) && (*lo..*hi).contains(&v.sizes[k_]),
                 Filter::Modified(lo, hi) => (*lo..*hi).contains(&v.modified[k_]),
+                Filter::Tag(_) => false,
             };
             if ok == t.negate {
                 return false;

@@ -86,6 +86,7 @@ impl App {
         match (button, h) {
             (MouseButton::Left, Hit::PaletteOutside) => self.close_palette(),
             (MouseButton::Middle, Hit::Side(i)) => self.open_side_item(i, true, now),
+            (MouseButton::Right, Hit::Side(_) | Hit::SideEmpty) => self.side_menu(h, x, y),
             (MouseButton::Left, Hit::Splitter) => self.begin_splitter_drag(x),
             (MouseButton::Left, Hit::FilterField) => self.filter_click(x, clicks),
             (MouseButton::Left, Hit::PaletteField) => self.palette_click(x, clicks),

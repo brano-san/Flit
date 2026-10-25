@@ -726,7 +726,7 @@ impl App {
     }
 
     fn draw_icon<B: TextBackend>(&mut self, g: &mut Gfx<B>, s: &Subject, r: Rect) {
-        let e = s.entry.unwrap_or(Entry { size: 0, modified: 0, created: 0, name_off: 0, attrs: attr::DIR, name_len: 0, ext_len: 0 });
+        let e = s.entry.unwrap_or(Entry { size: 0, modified: 0, created: 0, name_off: 0, attrs: attr::DIR, name_len: 0, ext_len: 0, tags: 0 });
         let name = s.path.as_ref().map(|p| p.file_name().to_vec()).unwrap_or_default();
         let (key, kind) = icon_key(&name, &s.ext, &e, r.w as u32, &s.dir_key, self.icon_epoch);
         if g.image(key, r) {

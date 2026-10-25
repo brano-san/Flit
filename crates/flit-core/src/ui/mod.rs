@@ -16,6 +16,7 @@ mod nav;
 pub mod palette;
 mod preview_pane;
 pub mod sidebar;
+mod tags;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchSort};
@@ -40,6 +41,7 @@ use crate::provider::{ProviderEvent, ProviderRequest, Resolve, TabId};
 use crate::recycle;
 use crate::render::{Color, Rect};
 use crate::sort::{CaseMode, GroupField, SortField, ViewSpec};
+use crate::tags::TagRequest;
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::{self, Theme};
 use crate::thumbs;
@@ -99,9 +101,10 @@ pub enum Column {
     Origin,
     Deleted,
     Created,
+    Tag,
 }
 
-pub const COLUMNS: [Column; 5] = [Column::Name, Column::Modified, Column::Created, Column::Type, Column::Size];
+pub const COLUMNS: [Column; 6] = [Column::Name, Column::Modified, Column::Created, Column::Type, Column::Size, Column::Tag];
 pub const BIN_COLUMNS: [Column; 4] = [Column::Name, Column::Origin, Column::Deleted, Column::Size];
 
 impl Column {
@@ -114,6 +117,7 @@ impl Column {
             Column::Size => "Size",
             Column::Origin => "Original location",
             Column::Deleted => "Date deleted",
+            Column::Tag => "Tags",
         }
     }
     fn field(self) -> SortField {
@@ -124,6 +128,7 @@ impl Column {
             Column::Type => SortField::Type,
             Column::Size => SortField::Size,
             Column::Origin => SortField::Origin,
+            Column::Tag => SortField::Tag,
         }
     }
 }
@@ -188,6 +193,7 @@ pub enum Effect {
     QuickView(FsPath),
     Host(HostCmd),
     Timer(Duration),
+    Tags(TagRequest),
 }
 
 pub enum IconResult {
@@ -370,6 +376,7 @@ pub struct App {
     search: search::SearchView,
     jobs: jobs::Jobs,
     details: details::Details,
+    tag_fixes: Vec<(FsPath, u32, Instant)>,
     preview: preview_pane::PreviewPane,
 }
 
@@ -425,6 +432,7 @@ impl App {
             search: Default::default(),
             jobs: Default::default(),
             details: Default::default(),
+            tag_fixes: Vec::new(),
             preview: Default::default(),
         };
         let mut start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
@@ -1432,6 +1440,7 @@ impl App {
         self.poll();
         self.dirty = false;
         let mut animating = self.tab_mut().apply_diffs(DIFF_BUDGET);
+        self.apply_tag_fixes(now);
         self.ops_frame(now);
         animating |= self.marquee_autoscroll(dt);
         animating |= self.autoscroll_step(dt);
@@ -1764,9 +1773,7 @@ impl App {
 
                 let ty = baseline(p.name);
                 let name_color = if faded { t.text_dim } else { t.text };
-                let shown = self.shown_name(listing, i);
-                let name_x = if p.center { p.name.x + ((p.name.w - g.measure(&shown, font)) / 2.0).max(0.0).round() } else { p.name.x };
-                g.text(name_x, ty, &shown, font, name_color, p.name.right() - name_x);
+                self.draw_name(g, &p, &self.shown_name(listing, i), e.tags, font, name_color);
                 want_type(i);
                 match mode {
                     LayoutMode::Details => {

@@ -856,7 +856,7 @@ fn the_folder_icon_command_asks_for_an_icon_location_and_writes_it_for_the_selec
     assert_eq!(icon_location(r"icons\a.ico"), None);
     use crate::listing::{attr, Entry};
     use crate::ui::{icon_key, IconKind};
-    let dir = |attrs| Entry { size: 0, modified: 0, created: 0, name_off: 0, attrs, name_len: 0, ext_len: 0 };
+    let dir = |attrs| Entry { size: 0, modified: 0, created: 0, name_off: 0, attrs, name_len: 0, ext_len: 0, tags: 0 };
     let custom = |epoch| icon_key(b"photos", b"", &dir(attr::DIR | attr::READONLY), 16, br"C:\x", epoch);
     assert_eq!(custom(0).1, IconKind::CustomFolder);
     assert_ne!(custom(0).0, custom(1).0);

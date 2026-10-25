@@ -87,7 +87,7 @@ impl Saved {
 
     fn head(&self) -> Head {
         let (p, v) = (&self.persisted, &self.persisted.view);
-        let sort = if v.sort.field == SortField::Created { SortField::Name } else { v.sort.field };
+        let sort = if matches!(v.sort.field, SortField::Created | SortField::Tag) { SortField::Name } else { v.sort.field };
         Head { version: self.version, path: p.path.clone(), sort, descending: v.sort.descending, show_hidden: p.show_hidden, col_w: STAGE_ONE_COLUMNS.map(|c| v.columns.width(c)), placement: self.placement }
     }
 

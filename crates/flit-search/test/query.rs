@@ -84,6 +84,41 @@ fn glob_matches_whole_names() {
 }
 
 #[test]
+fn tag_terms_with_and_and_not() {
+    let q = parse("tag:Work AND NOT tag:\"Long name\" !tag:done report NOT NOT x \"AND\"", clock()).unwrap();
+    let shapes: Vec<(bool, String)> = q
+        .terms
+        .iter()
+        .map(|t| match &t.filter {
+            Filter::Tag(n) => (t.negate, format!("tag={n}")),
+            Filter::Match(_, Pattern::Text(s)) => (t.negate, String::from_utf8_lossy(s).into_owned()),
+            other => (t.negate, format!("{other:?}")),
+        })
+        .collect();
+    let want = [(false, "tag=Work"), (true, "tag=Long name"), (true, "tag=done"), (false, "report"), (false, "x"), (false, "and")];
+    assert_eq!(shapes, want.map(|(n, s)| (n, s.to_owned())));
+    assert!(q.has_tags() && !parse("tags", clock()).unwrap().has_tags());
+    assert!(matches!(one("TAG:").filter, Filter::Tag(n) if n.is_empty()));
+    let Filter::Match(_, Pattern::Text(t)) = one("\"tag:x\"").filter else { panic!() };
+    assert_eq!(t, b"tag:x");
+}
+
+#[test]
+fn plain_records_match_like_the_index() {
+    let q = parse("rep*.pdf !draft ext:pdf size:<1mb path:docs tag:Work !tag:Old", clock()).unwrap();
+    let e = |name: &'static str, path: &'static str, size: u64| Plain { name: name.as_bytes(), lower_name: name.as_bytes(), path: path.as_bytes(), lower_path: path.as_bytes(), size, modified: 0, dir: false };
+    let work = |t: &str| t == "Work";
+    assert!(q.matches(&e("report.pdf", r"c:\docs\report.pdf", 10), &work));
+    assert!(!q.matches(&e("report-draft.pdf", r"c:\docs\report-draft.pdf", 10), &work));
+    assert!(!q.matches(&e("report.pdf", r"c:\docs\report.pdf", 2 << 20), &work));
+    assert!(!q.matches(&e("report.pdf", r"c:\other\report.pdf", 10), &work));
+    assert!(!q.matches(&e("report.pdf", r"c:\docs\report.pdf", 10), &|t: &str| t == "Old" || t == "Work"));
+    let dir = Plain { dir: true, ..e("x.pdf", r"c:\x.pdf", 0) };
+    assert!(!parse("ext:pdf", clock()).unwrap().matches(&dir, &work));
+    assert!(parse("regex:^X\\.", clock()).unwrap().matches(&e("x.pdf", "x.pdf", 0), &work));
+}
+
+#[test]
 fn driver_is_the_longest_positive_name_literal() {
     let q = parse("ab !longer_negated path:longest_in_path f*abcd?x ext:rs", clock()).unwrap();
     assert_eq!(q.driver().map(|(k, l)| (k, l.to_vec())), Some((3, b"abcd".to_vec())));

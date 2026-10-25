@@ -18,6 +18,7 @@ mod prevhost;
 mod recycle;
 mod service;
 mod shell;
+mod tags;
 mod walk_index;
 mod watcher;
 mod window;
@@ -168,6 +169,14 @@ impl Platform for Windows {
 
     fn elevated() -> bool {
         instance::elevated()
+    }
+
+    fn file_key(path: &FsPath) -> Option<flit_core::tags::FileKey> {
+        tags::file_key(path)
+    }
+
+    fn resolve_files(keys: &[flit_core::tags::FileKey]) -> Vec<flit_platform::Resolved> {
+        tags::resolve_files(keys)
     }
 }
 
