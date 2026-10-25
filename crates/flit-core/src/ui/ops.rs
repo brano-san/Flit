@@ -36,6 +36,7 @@ const DRAG_START: f32 = 4.0;
 const MAX_NAME_UNITS: usize = 255;
 const RESERVED: [&str; 4] = ["CON", "PRN", "AUX", "NUL"];
 const BIN_ONLY: &str = "Items in the Recycle Bin can only be restored or deleted";
+const STREAMS_VIEW_ONLY: &str = "Alternate data streams are shown for viewing only";
 const OPEN_BIN: &str = "Open the Recycle Bin to restore items";
 const MAX_TERMINALS: usize = 5;
 const RUNNABLE: [&[u8]; 4] = [b"exe", b"com", b"bat", b"cmd"];
@@ -303,6 +304,9 @@ impl App {
             return Err(BIN_ONLY);
         }
         let t = self.tab();
+        if t.view.as_ref().is_some_and(|v| items.iter().any(|&i| v.listing().entries[i as usize].attrs & attr::STREAM != 0)) {
+            return Err(STREAMS_VIEW_ONLY);
+        }
         items.iter().map(|&i| t.entry_location(i).to_windows()).collect::<Option<Vec<_>>>().ok_or("Some names cannot be used by Windows shell operations")
     }
 
@@ -854,6 +858,10 @@ impl App {
     fn begin_rename(&mut self, idx: u32, batch: bool) {
         let t = &mut self.tabs[self.cur];
         let Some(v) = t.view.as_mut() else { return };
+        if v.listing().entries[idx as usize].attrs & attr::STREAM != 0 {
+            t.error = Some(STREAMS_VIEW_ONLY.into());
+            return;
+        }
         let Ok(name) = std::str::from_utf8(v.listing().name(idx)) else {
             t.error = Some("This name cannot be edited in Flit".into());
             return;

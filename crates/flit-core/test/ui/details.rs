@@ -361,3 +361,34 @@ fn alternate_data_streams_show_only_after_the_toggle_which_relists_every_tab() {
     assert!(!app.tab().view_spec.show_streams);
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::List { .. }, .. })), "turning them off only filters");
 }
+
+#[test]
+fn alternate_data_stream_rows_are_never_handed_to_file_operations() {
+    let mut app = app_at(r"C:\a");
+    run(&mut app, "view.streams");
+    let t = app.tab();
+    let mut listing = Listing::default();
+    let mut keys = SortKeys::new(CaseMode::Insensitive);
+    for (name, attrs) in [("a.txt", 0), ("a.txt:Zone.Identifier", crate::listing::attr::STREAM)] {
+        let i = listing.push(name.as_bytes(), Meta { attrs, ..Default::default() });
+        keys.push(listing.name(i));
+    }
+    let view = t.view_spec;
+    let mut order = Vec::new();
+    sort::sort(&listing, &keys, view, &mut order);
+    let snap = DirSnapshot { gen: t.gen, path: t.location().path().clone(), listing, keys, order, view, done: true, error: None, elapsed: Duration::ZERO };
+    t.slot.publish(Arc::new(snap));
+    app.poll();
+    frame(&mut app);
+    app.drain_effects().for_each(drop);
+    let v = app.tab_mut().view.as_mut().unwrap();
+    v.clear_selection();
+    v.set_selected(1, true);
+    v.focus = Some(1);
+    for id in ["item.trash", "item.delete", "file.copy", "file.cut", "file.rename"] {
+        app.tab_mut().error = None;
+        run(&mut app, id);
+        assert!(!app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Op { .. }, .. } | Effect::SetClipboardFiles { .. })), "{id}");
+        assert_eq!(app.tab().error.as_deref(), Some("Alternate data streams are shown for viewing only"), "{id}");
+    }
+}

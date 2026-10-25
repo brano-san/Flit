@@ -11,6 +11,7 @@ fn all_messages() -> Vec<Message> {
     vec![
         Message::Query { gen: 7, text: "ext:rs отчёт 🎉".into(), sort },
         Message::QueryDone { gen: 7, total: 1_234_567 },
+        Message::Groups { gen: 7, starts: vec![0, 3, 1_000_000] },
         Message::GetRows { gen: 7, from: 100, to: 160 },
         Message::Rows { gen: 7, from: 100, entries, dirs: vec![br"C:\".to_vec(), b"/tmp/\xFF\xFE".to_vec()] },
         Message::IndexStatus {

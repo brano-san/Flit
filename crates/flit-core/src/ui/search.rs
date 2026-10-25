@@ -429,10 +429,8 @@ impl App {
                 }
             }
             SearchEvent::Groups { gen, starts } if gen == s.gen => {
-                s.groups = starts;
-                if s.groups.first() != Some(&0) {
-                    s.groups.clear();
-                }
+                let ordered = starts.first() == Some(&0) && starts.windows(2).all(|w| w[0] < w[1]) && starts.last().is_some_and(|&l| l < s.total);
+                s.groups = if ordered { starts } else { Vec::new() };
             }
             SearchEvent::Status { backend, volumes, note } => {
                 s.backend = backend;

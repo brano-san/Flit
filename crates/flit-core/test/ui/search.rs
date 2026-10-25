@@ -232,6 +232,12 @@ fn grouped_results_get_a_header_line_per_folder() {
     assert_eq!((0..6).map(|l| s.line_at(l)).collect::<Vec<_>>(), [SLine::Header(0), SLine::Row(0), SLine::Row(1), SLine::Header(1), SLine::Row(2), SLine::Row(3)]);
     assert_eq!((0..4).map(|r| s.line_of_row(r)).collect::<Vec<_>>(), [1, 2, 4, 5]);
     assert_eq!(s.group_len(1), 2);
+    for starts in [vec![1, 2], vec![0, 3, 2], vec![0, 2, 2], vec![0, 4]] {
+        app.on_search_event(SearchEvent::Groups { gen, starts: starts.clone() }, t0());
+        assert!(app.search.groups.is_empty(), "{starts:?} must be ascending from the first row and inside the results");
+        app.on_search_event(SearchEvent::Groups { gen, starts: vec![0, 2] }, t0());
+        assert_eq!(app.search.groups, [0, 2]);
+    }
     frame(&mut app);
     let l = app.search_layout();
     let y = l.list.y + l.row_h * 3.5;
@@ -239,8 +245,6 @@ fn grouped_results_get_a_header_line_per_folder() {
     app.on_event(&Event::MouseDown { x: l.list.x + 50.0, y, button: MouseButton::Left, clicks: 2 }, t0());
     assert!(!app.search_active());
     assert_eq!(app.tab().location(), &Location::parse(r"C:\two").unwrap());
-    app.on_search_event(SearchEvent::Groups { gen, starts: vec![1, 2] }, t0());
-    assert!(app.search.groups.is_empty(), "group starts must begin at the first row");
 }
 
 #[test]
