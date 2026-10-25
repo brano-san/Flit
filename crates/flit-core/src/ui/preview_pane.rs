@@ -174,6 +174,18 @@ pub(super) struct PreviewPane {
     r: Rects,
 }
 
+impl PreviewPane {
+    fn held(&self) -> usize {
+        let image = self.image.as_ref().map_or(0, |b| b.rgba.len() * 2);
+        let doc = match &self.content {
+            Content::Doc(d) => d.text.len() + d.runs.len() * size_of::<Run>() + d.paras.len() * size_of::<preview::Para>(),
+            _ => 0,
+        };
+        let lay = self.doc.as_ref().map_or(0, |l| l.lines.len() * size_of::<VLine>() + l.pieces.len() * size_of::<Piece>());
+        image + doc + lay
+    }
+}
+
 fn ui(px: f32, sc: f32, bold: bool) -> FontStyle {
     FontStyle::new(FontFamily::Ui, px * sc, bold)
 }
@@ -659,7 +671,7 @@ impl App {
         p.scroll = p.scroll.clamp(0.0, (extent - r.body.h).max(0.0));
         if !matches!(p.content, Content::Loading | Content::Empty | Content::Handler) {
             if let Some(t) = p.requested.take() {
-                tracing::info!("preview drawn {:.1} ms after selection", t.elapsed().as_secs_f64() * 1e3);
+                tracing::info!("preview drawn {:.1} ms after selection, {} KB held", t.elapsed().as_secs_f64() * 1e3, p.held() / 1024);
             }
         }
         if details {
