@@ -171,3 +171,7 @@ impl Service for WinService {
         body()
     }
 }
+
+#[cfg(test)]
+#[path = "../test/bench.rs"]
+mod bench;
