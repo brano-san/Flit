@@ -2,10 +2,12 @@ use super::*;
 use flit_core::attr;
 use std::sync::Mutex;
 
+type Step = Result<Option<Vec<(u64, &'static str)>>, String>;
+
 #[derive(Clone, Default)]
 struct Script {
     scans: Arc<Mutex<u32>>,
-    changes: Arc<Mutex<Vec<Result<Option<Vec<(u64, &'static str)>>, String>>>>,
+    changes: Arc<Mutex<Vec<Step>>>,
 }
 
 struct Fake(Script);

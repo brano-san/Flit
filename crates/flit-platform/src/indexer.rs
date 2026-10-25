@@ -74,7 +74,7 @@ impl<'a> Feed<'a> {
     }
 
     fn tick(&mut self) {
-        if (self.ops.len() + self.private.as_ref().map_or(0, |v| v.pending())) % CHECK_EVERY == 0 && Instant::now() >= self.next {
+        if (self.ops.len() + self.private.as_ref().map_or(0, |v| v.pending())).is_multiple_of(CHECK_EVERY) && Instant::now() >= self.next {
             self.flush(VolumeState::Scanning { progress: self.progress });
         }
     }

@@ -370,7 +370,7 @@ fn read_mft<S: IndexSink>(volume: HANDLE, sink: &mut S) -> Result<Vec<Meta>, Pla
     let vd = volume_data(volume)?;
     let cluster = vd.BytesPerCluster as u64;
     let rec_size = vd.BytesPerFileRecordSegment as usize;
-    if cluster == 0 || rec_size < 2 * SECTOR_STRIDE || rec_size % SECTOR_STRIDE != 0 || vd.MftStartLcn <= 0 {
+    if cluster == 0 || rec_size < 2 * SECTOR_STRIDE || !rec_size.is_multiple_of(SECTOR_STRIDE) || vd.MftStartLcn <= 0 {
         return Err(PlatformError::new(-1, "unexpected NTFS geometry"));
     }
     let count = (vd.MftValidDataLength.max(0) as u64 / rec_size as u64) as usize;

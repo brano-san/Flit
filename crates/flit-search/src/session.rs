@@ -113,10 +113,8 @@ impl Session {
         }
         let shared = self.shared.clone();
         let engine = shared.read();
-        if version != engine.version {
-            if self.run(&engine, latest, out) {
-                self.send_rows(&engine, gen, 0, FIRST_PAGE, out);
-            }
+        if version != engine.version && self.run(&engine, latest, out) {
+            self.send_rows(&engine, gen, 0, FIRST_PAGE, out);
         }
     }
 
