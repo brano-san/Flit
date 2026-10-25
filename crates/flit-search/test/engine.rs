@@ -174,3 +174,49 @@ fn visibility_hides_entries_of_unlistable_folders() {
     assert_eq!((everything, visible), (8, 6), "the empty query is filtered too");
     assert_eq!(e.search_as(&all, sort, Some(&Deny("nothing")), &|| false).unwrap().total, everything);
 }
+
+#[test]
+#[ignore]
+fn bench_folder_scoped_queries_and_groups() {
+    let mut v = VolumeIndex::new("C:", b"C:\\", b'\\');
+    put(&mut v, 5, 5, ".", 0, 0, true);
+    let (tops, subs, files) = (100u64, 100u64, 100u64);
+    for t in 0..tops {
+        put(&mut v, 10 + t, 5, &format!("top {t}"), 0, 1, true);
+        for s in 0..subs {
+            let sid = 1_000 + t * subs + s;
+            put(&mut v, sid, 10 + t, &format!("sub {s}"), 0, 1, true);
+            for f in 0..files {
+                let name = if f % 25 == 0 { format!("report {f}.txt") } else { format!("file {f}.dat") };
+                put(&mut v, 10_000_000 + sid * files + f, sid, &name, f, 1, false);
+            }
+        }
+    }
+    v.commit();
+    let e = Engine { volumes: vec![v], version: 1 };
+    let ms = |t: std::time::Instant| t.elapsed().as_secs_f64() * 1e3;
+    let median = |text: &str, key: SortKey| {
+        let q = parse(text, clock()).unwrap();
+        let mut times = Vec::new();
+        let mut total = 0;
+        for _ in 0..7 {
+            let t = std::time::Instant::now();
+            let mut rs = e.search(&q, Sort { key, descending: false }, &|| false).unwrap();
+            let _ = e.rows(&mut rs, 0, 64);
+            total = rs.total;
+            times.push(ms(t));
+        }
+        times.sort_by(f64::total_cmp);
+        (total, times[3])
+    };
+    eprintln!("BENCH synthetic index of {} entries", e.total());
+    for text in ["report", r#"report path:"C:\top 42\""#, r#"path:"C:\top 42\""#, r#"path:"C:\top 42\sub 7\""#] {
+        let (total, t) = median(text, SortKey::Name);
+        eprintln!("BENCH {text:?}: {total} results, query and first page {t:.1} ms");
+    }
+    let q = parse(r#"path:"C:\top 42\""#, clock()).unwrap();
+    let mut rs = e.search(&q, Sort { key: SortKey::Path, descending: false }, &|| false).unwrap();
+    let t = std::time::Instant::now();
+    let starts = e.groups(&mut rs).unwrap();
+    eprintln!("BENCH folder groups of {} results: {} groups in {:.1} ms", rs.total, starts.len(), ms(t));
+}

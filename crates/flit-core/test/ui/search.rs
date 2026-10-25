@@ -271,3 +271,29 @@ fn past_queries_are_offered_while_the_field_is_empty() {
     app.run_action("search.clear_history", t0());
     assert!(app.search_history().is_empty());
 }
+
+#[test]
+#[ignore]
+fn bench_grouped_search_frames() {
+    let mut app = App::new(Persisted { path: Location::parse(r"C:\x").unwrap(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1400, 900), t0());
+    let mut gfx = Gfx::new(Mono, 2048);
+    app.open_search();
+    app.run_action("search.group_folder", t0());
+    let gen = gen_of(&app);
+    let total = 100_000u64;
+    app.on_search_event(SearchEvent::Done { gen, total }, t0());
+    app.on_search_event(SearchEvent::Groups { gen, starts: (0..total).step_by(7).collect() }, t0());
+    let rows = |from: u64| (from..from + 64).map(|k| row(&format!("f{k}.txt"), &format!(r"C:\data\d{}", k / 7), false)).collect::<Vec<_>>();
+    let mut times = Vec::new();
+    for k in 0..200u64 {
+        let from = (k * 487) % (total - 64);
+        app.search.scroll = app.search.line_of_row(from) as f64 * app.layout.row_h as f64;
+        app.on_search_event(SearchEvent::Rows { gen, from, rows: rows(from) }, t0());
+        let t = Instant::now();
+        app.frame(&mut gfx, t0());
+        times.push(t.elapsed());
+    }
+    times.sort();
+    let ms = |d: Duration| d.as_secs_f64() * 1e3;
+    eprintln!("BENCH grouped search results, {total} rows in {} folders: frame median {:.3} ms p99 {:.3} ms", total.div_ceil(7), ms(times[100]), ms(times[197]));
+}

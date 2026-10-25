@@ -72,3 +72,67 @@ fn hits_know_whether_they_are_inside_a_folder() {
     assert!(!hit(r"C:\Database").within(br"c:\data"));
     assert!(hit(r"C:\Data").within(br"c:\"));
 }
+
+fn median_ms(mut v: Vec<f64>) -> f64 {
+    v.sort_by(f64::total_cmp);
+    v[v.len() / 2]
+}
+
+#[test]
+#[ignore]
+fn bench_live_walk() {
+    use crate::search_client::SearchClient;
+    use flit_core::ui::{SearchEvent, SearchRequest, SearchScope, SearchSource};
+    let files: Vec<String> = (0..400).flat_map(|d| (0..50).map(move |f| format!("d{}/s{d}/f{f:02}-{d}.txt", d / 20))).collect();
+    let refs: Vec<&str> = files.iter().map(String::as_str).collect();
+    let dir = Scratch::new("findbench", &refs);
+    let root = dir.path();
+    for text in ["", "f07", "ext:md"] {
+        let times: Vec<f64> = (0..5)
+            .map(|_| {
+                let t = std::time::Instant::now();
+                let f = run(&root, text, &|| true);
+                assert_eq!(f.folders, 421);
+                t.elapsed().as_secs_f64() * 1e3
+            })
+            .collect();
+        let hits = run(&root, text, &|| true).hits.len();
+        eprintln!("BENCH walk 20 000 files in 421 folders for {text:?}: {hits} hits, median {:.1} ms", median_ms(times));
+    }
+    let windows = FsPath::parse(r"C:\Windows\System32").unwrap();
+    for pass in ["cold", "warm"] {
+        let t = std::time::Instant::now();
+        let f = run(&windows, "kernel32", &|| true);
+        eprintln!("BENCH walk C:\\Windows\\System32 ({pass}) for \"kernel32\": {} hits in {} folders, {:.0} ms", f.hits.len(), f.folders, t.elapsed().as_secs_f64() * 1e3);
+    }
+    let mut client = SearchClient::start::<crate::P>(std::sync::Arc::new(|| {}), 0, flit_core::tags::TagCell::default()).unwrap();
+    let mut gen = 0;
+    for (label, folder, text) in [("20 000 files", root.clone(), "f07"), (r"C:\Windows", FsPath::parse(r"C:\Windows").unwrap(), "kernel32")] {
+        let folder = flit_core::Location::from_local(folder);
+        let (mut firsts, mut dones, mut hits) = (Vec::new(), Vec::new(), 0);
+        for _ in 0..5 {
+            gen += 1;
+            let t = std::time::Instant::now();
+            client.submit(1, SearchRequest::Query { gen, text: text.into(), sort: SearchSort::default(), scope: SearchScope::Walk(folder.clone()) });
+            let mut first = None;
+            loop {
+                let (_, ev) = client.events.recv_timeout(std::time::Duration::from_secs(60)).unwrap();
+                if let SearchEvent::Found { gen: g, total, done, source: SearchSource::Walk, .. } = ev {
+                    if g != gen {
+                        continue;
+                    }
+                    if total > 0 {
+                        first.get_or_insert(t.elapsed().as_secs_f64() * 1e3);
+                    }
+                    if done {
+                        hits = total;
+                        break;
+                    }
+                }
+            }
+            firsts.push(first.unwrap_or(f64::NAN));
+            dones.push(t.elapsed().as_secs_f64() * 1e3);
+        }
+        eprintln!("BENCH folder search of {label} for {text:?} through the search thread: {hits} hits, first results median {:.1} ms, finished median {:.1} ms", median_ms(firsts), median_ms(dones));
+    }
+}

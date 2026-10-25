@@ -200,6 +200,7 @@ fn tooltips_name_the_button_and_its_shortcut_after_a_delay() {
     assert_eq!(app.toolbar_tip(), None);
     app.on_event(&Event::Timer, t0 + TIP_DELAY + Duration::from_millis(20));
     assert_eq!(app.toolbar_tip().as_deref(), Some("Copy (Ctrl+C)"));
+    frame(&mut app);
     let r = button(&app, "menu.layout");
     app.on_event(&Event::MouseMove { x: r.x + 4.0, y: r.y + 4.0 }, t0 + Duration::from_secs(1));
     assert_eq!(app.toolbar_tip().as_deref(), Some("Layout"), "the next tip shows at once");
@@ -299,4 +300,38 @@ fn saved_states_drop_unknown_and_repeated_buttons() {
     let st = st.sanitized();
     assert_eq!(st.sets[0], [b("file.copy"), ToolItem::Separator]);
     assert_eq!(st.sets[1].len(), MAX_ITEMS);
+}
+
+#[test]
+#[ignore]
+fn bench_toolbar_frames() {
+    let names: Vec<String> = (0..10_000).map(|k| format!("file {k:05}.txt")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut app = app_in(r"C:\x", (1400, 900), &refs);
+    let mut gfx = Gfx::new(Mono, 1024);
+    let ms = |d: Duration| d.as_secs_f64() * 1e3;
+    let mut hover_frames = |app: &mut App, y: f32| {
+        let mut times = Vec::new();
+        for k in 0..400 {
+            app.on_event(&Event::MouseMove { x: 20.0 + (k % 60) as f32 * 9.0, y }, Instant::now());
+            let t = Instant::now();
+            app.frame(&mut gfx, Instant::now());
+            times.push(t.elapsed());
+        }
+        times.sort();
+        (ms(times[200]), ms(times[396]))
+    };
+    let y = app.layout.commands.y + 10.0;
+    let (on50, on99) = hover_frames(&mut app, y);
+    let (list50, list99) = hover_frames(&mut app, 400.0);
+    app.toggle_toolbar();
+    let (off50, off99) = hover_frames(&mut app, 400.0);
+    app.toggle_toolbar();
+    eprintln!("BENCH frames over the toolbar median {on50:.3} ms p99 {on99:.3} ms; over the list with the toolbar {list50:.3} / {list99:.3} ms, without it {off50:.3} / {off99:.3} ms");
+    frame(&mut app);
+    let r = button(&app, "menu.layout");
+    let t = Instant::now();
+    click_at(&mut app, r.x + 4.0, r.y + 4.0, MouseButton::Left);
+    app.frame(&mut gfx, Instant::now());
+    eprintln!("BENCH Layout flyout, click to finished frame {:.3} ms", ms(t.elapsed()));
 }
