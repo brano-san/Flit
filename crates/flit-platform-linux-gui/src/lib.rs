@@ -19,12 +19,8 @@ use flit_core::text::{FontMetrics, FontStyle, GlyphBitmap, GlyphKey, ShapedGlyph
 use flit_core::{FsPath, Location};
 use flit_platform::{Platform, PlatformError, RenderError, Renderer, Window};
 use flit_platform_linux::{DbusInstance, FreedesktopShell, Inotify, LinuxFs, Systemd, WalkIndex};
-use glow::HasContext;
-use glutin::config::ConfigTemplateBuilder;
-use glutin::context::{ContextApi, ContextAttributesBuilder, NotCurrentGlContext, PossiblyCurrentContext, PossiblyCurrentGlContext, Version};
-use glutin::display::{Display, DisplayApiPreference, GlDisplay};
-use glutin::surface::{GlSurface, Surface, SurfaceAttributesBuilder, SwapInterval, WindowSurface};
-use std::num::NonZeroU32;
+use flit_core::ui::Bitmap;
+use gl::{GlDevice, GlRenderer};
 use std::path::PathBuf;
 use std::sync::Arc;
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -42,7 +38,7 @@ fn xdg_dir(var: &str, fallback: &str) -> Option<PathBuf> {
 
 impl Platform for Linux {
     type WindowSystem = LinuxWindows;
-    type Renderer = StandInRenderer;
+    type Renderer = LinuxRenderer;
     type Text = StandInText;
     type Fs = LinuxFs;
     type Watcher = Inotify;
@@ -129,77 +125,54 @@ impl TextBackend for StandInText {
     }
 }
 
-pub struct StandInDevice;
-
-pub struct StandInRenderer {
+pub struct LinuxRenderer {
+    gl: GlRenderer,
     window: Arc<dyn winit::window::Window>,
-    surface: Surface<WindowSurface>,
-    context: PossiblyCurrentContext,
-    gl: glow::Context,
 }
 
-fn gl_error(e: impl std::fmt::Display) -> PlatformError {
-    PlatformError::new(-1, format!("OpenGL ES: {e}"))
+fn handle_error(e: impl std::fmt::Display) -> PlatformError {
+    PlatformError::new(-1, format!("window handle: {e}"))
 }
 
-fn extent(v: u32) -> NonZeroU32 {
-    NonZeroU32::new(v).unwrap_or(NonZeroU32::MIN)
-}
-
-thread_local! {
-    static GL_DISPLAY: std::cell::OnceCell<Display> = const { std::cell::OnceCell::new() };
-}
-
-impl Renderer for StandInRenderer {
+impl Renderer for LinuxRenderer {
     type Window = LinuxWindow;
-    type Device = StandInDevice;
+    type Device = GlDevice;
 
-    fn device(software: bool) -> Result<StandInDevice, PlatformError> {
-        match software {
-            true => Err(PlatformError::unsupported("software OpenGL ES")),
-            false => Ok(StandInDevice),
+    fn device(software: bool) -> Result<GlDevice, PlatformError> {
+        if software {
+            return Err(PlatformError::new(-1, "OpenGL ES has no separate software device, Mesa picks the driver for the display"));
         }
+        let display = window::display().ok_or_else(|| PlatformError::new(-1, "no display connection"))?;
+        GlDevice::new(display.display_handle().map_err(handle_error)?.as_raw())
     }
 
-    fn new(_: &StandInDevice, window: &LinuxWindow, _: u32) -> Result<Self, PlatformError> {
+    fn new(device: &GlDevice, window: &LinuxWindow, atlas_size: u32) -> Result<Self, PlatformError> {
         let raw = window.winit().clone();
-        let display = GL_DISPLAY.with(|d| match d.get() {
-            Some(display) => Ok(display.clone()),
-            None => {
-                let owned = window::display().ok_or_else(|| gl_error("no display connection"))?;
-                let handle = owned.display_handle().map_err(gl_error)?.as_raw();
-                let display = unsafe { Display::new(handle, DisplayApiPreference::Egl) }.map_err(gl_error)?;
-                Ok::<_, PlatformError>(d.get_or_init(|| display).clone())
-            }
-        })?;
-        let config = unsafe { display.find_configs(ConfigTemplateBuilder::new().with_alpha_size(8).build()) }.map_err(gl_error)?.next().ok_or_else(|| gl_error("no matching config"))?;
-        let (w, h) = window.size();
-        let surface_attrs = SurfaceAttributesBuilder::<WindowSurface>::new().build(raw.window_handle().map_err(gl_error)?.as_raw(), extent(w), extent(h));
-        let surface = unsafe { display.create_window_surface(&config, &surface_attrs) }.map_err(gl_error)?;
-        let context_attrs = ContextAttributesBuilder::new().with_context_api(ContextApi::Gles(Some(Version::new(3, 0)))).build(None);
-        let context = unsafe { display.create_context(&config, &context_attrs) }.map_err(gl_error)?.make_current(&surface).map_err(gl_error)?;
-        let interval = if window.is_wayland() { SwapInterval::DontWait } else { SwapInterval::Wait(NonZeroU32::MIN) };
-        if let Err(e) = surface.set_swap_interval(&context, interval) {
-            tracing::warn!("swap interval: {e}");
+        let gl = GlRenderer::new(device, raw.window_handle().map_err(handle_error)?.as_raw(), window.size(), atlas_size)?;
+        if let Err(e) = gl.set_swap_interval(if window.is_wayland() { 0 } else { 1 }) {
+            tracing::warn!("swap interval: {e:?}");
         }
-        let gl = unsafe { glow::Context::from_loader_function_cstr(|s| display.get_proc_address(s)) };
-        Ok(Self { window: raw, surface, context, gl })
+        Ok(Self { gl, window: raw })
     }
 
     fn resize(&mut self, width: u32, height: u32) {
-        self.surface.resize(&self.context, extent(width), extent(height));
+        self.gl.resize(width, height);
     }
 
-    fn upload(&mut self, _: Slot, _: &[u8]) {}
+    fn upload(&mut self, slot: Slot, rgba: &[u8]) {
+        self.gl.upload(slot, rgba);
+    }
+
+    fn upload_thumb(&mut self, slot: Slot, rgba: &[u8]) {
+        self.gl.upload_thumb(slot, rgba);
+    }
+
+    fn upload_preview(&mut self, image: Option<&Bitmap>) {
+        self.gl.upload_preview(image);
+    }
 
     fn render(&mut self, list: &DrawList) -> Result<(), RenderError> {
-        self.context.make_current(&self.surface).map_err(|e| RenderError::Other(gl_error(e)))?;
-        let [r, g, b, a] = list.clear.0.to_be_bytes().map(|c| c as f32 / 255.0);
-        unsafe {
-            self.gl.clear_color(r, g, b, a);
-            self.gl.clear(glow::COLOR_BUFFER_BIT);
-        }
         self.window.pre_present_notify();
-        self.surface.swap_buffers(&self.context).map_err(|e| RenderError::Other(gl_error(e)))
+        self.gl.render(list)
     }
 }
