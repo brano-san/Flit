@@ -43,8 +43,8 @@ impl State {
     }
 
     fn stop(&mut self, key: usize) {
-        if !self.slots.get_mut(&key).is_some_and(Watch::cancel) {
-            self.close(key);
+        if let Some(w) = self.slots.get_mut(&key) {
+            w.cancel();
         }
     }
 
@@ -138,9 +138,11 @@ impl Watch {
         unsafe { ReadDirectoryChangesExW(self.dir, self.buf.as_mut_ptr() as _, BUFFER as u32, false, filter, None, Some(&mut *self.ov), None, ReadDirectoryNotifyExtendedInformation).is_ok() }
     }
 
-    fn cancel(&mut self) -> bool {
+    fn cancel(&mut self) {
         self.closing = true;
-        unsafe { CancelIoEx(self.dir, Some(&*self.ov)).is_ok() }
+        unsafe {
+            let _ = CancelIoEx(self.dir, Some(&*self.ov));
+        }
     }
 
     fn bytes(&self, len: usize) -> &[u8] {
