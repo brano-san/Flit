@@ -237,6 +237,52 @@ fn columns_layout_arrows_go_to_the_parent_and_into_folders() {
     assert_eq!(focused(&app).unwrap(), "inner", "going up selects the folder we came from");
 }
 
+fn serve_pane(app: &mut App, effects: &[Effect], path: &str, names: &[&str]) -> bool {
+    let Some((gen, out, view)) = effects.iter().find_map(|e| match e {
+        Effect::Provider { req: ProviderRequest::List { tab: 0, gen, path: p, view, out, .. }, .. } if *p == *loc(path).path() => Some((*gen, out.clone(), *view)),
+        _ => None,
+    }) else {
+        return false;
+    };
+    let mut listing = Listing::default();
+    let mut keys = SortKeys::new(CaseMode::Insensitive);
+    for n in names {
+        let i = listing.push(n.as_bytes(), Meta { attrs: if n.contains('.') { 0 } else { attr::DIR }, ..Default::default() });
+        keys.push(listing.name(i));
+    }
+    let mut order = Vec::new();
+    sort::sort(&listing, &keys, view, &mut order);
+    out.publish(Arc::new(DirSnapshot { gen, path: loc(path).path().clone(), listing, keys, order, view, done: true, error: None, elapsed: Duration::ZERO }));
+    app.poll();
+    frame(app);
+    true
+}
+
+#[test]
+fn columns_show_parent_panes_that_reuse_the_old_listing_and_navigate_on_click() {
+    let mut app = app_at(r"C:\x\sub");
+    deliver(&mut app, &["inner", "z.txt"]);
+    key(&mut app, Key::Char('4'), CTRL_SHIFT);
+    let effects: Vec<Effect> = app.drain_effects().collect();
+    assert_eq!(app.layout.panes.len(), 2);
+    assert!(serve_pane(&mut app, &effects, r"C:\x", &["other", "sub"]));
+    assert!(app.layout.list.x > app.layout.panes[1].right() - 1.0);
+    let other = app.layout.panes[1];
+    assert_eq!(app.hit(other.x + 40.0, other.y + app.layout.row_h * 0.5), Hit::Pane(1, Some(0)));
+    key(&mut app, Key::Down, NO);
+    key(&mut app, Key::Right, NO);
+    let effects: Vec<Effect> = app.drain_effects().collect();
+    deliver(&mut app, &["deep.txt"]);
+    assert!(!serve_pane(&mut app, &effects, r"C:\x\sub", &[]), "the listing of C:\\x\\sub moves into a pane");
+    let t = app.tab();
+    assert_eq!(t.panes.iter().map(|p| p.loc.clone()).collect::<Vec<_>>(), [loc(r"C:\x"), loc(r"C:\x\sub")]);
+    assert!(t.panes.iter().all(|p| p.view.is_some()));
+    let pane = app.layout.panes[0];
+    let y = pane.y + app.layout.row_h * 0.5;
+    click(&mut app, (pane.x + 40.0, y));
+    assert_eq!(app.current_location(), &loc(r"C:\x\other"));
+}
+
 #[test]
 fn adaptive_shows_media_folders_as_a_grid_and_keeps_its_first_choice_while_loading() {
     let mut app = app_at(r"C:\pics");

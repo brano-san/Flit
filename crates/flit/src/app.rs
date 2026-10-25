@@ -37,9 +37,10 @@ struct Visible {
 
 impl Visible {
     fn wants(&self, req: &IconRequest) -> bool {
-        req.gen == self.gen.load(Ordering::Relaxed)
-            && req.row + ICON_MARGIN >= self.first.load(Ordering::Relaxed)
-            && req.row <= self.last.load(Ordering::Relaxed) + ICON_MARGIN
+        req.gen == 0
+            || req.gen == self.gen.load(Ordering::Relaxed)
+                && req.row + ICON_MARGIN >= self.first.load(Ordering::Relaxed)
+                && req.row <= self.last.load(Ordering::Relaxed) + ICON_MARGIN
     }
 }
 

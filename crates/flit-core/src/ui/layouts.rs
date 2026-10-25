@@ -1,3 +1,4 @@
+use super::columns::{pane_depth, COLUMN_W};
 use super::details::{folder_key, CHECK, CHECK_GAP};
 use super::flow::{Flow, FlowParams};
 use super::{App, Hit, Tab, ROW_H, SCROLLBAR_W};
@@ -141,6 +142,7 @@ impl App {
 
     pub(super) fn layout_look(&mut self) {
         let (mode, level) = self.shown_look();
+        let depth = if mode == LayoutMode::Columns { pane_depth(&self.tab().view_loc) } else { 0 };
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
         let l = &mut self.layout;
@@ -160,6 +162,11 @@ impl App {
         let bar = s(SCROLLBAR_W);
         let across = mode == LayoutMode::List;
         let avail = (bottom - top).max(0.0);
+        let cw = s(COLUMN_W[level.min(COLUMN_W.len() - 1)]);
+        let panes = depth.min((((w - bar) / cw).floor() as usize).saturating_sub(1));
+        l.panes.clear();
+        l.panes.extend((0..panes).map(|k| Rect::new(x + k as f32 * cw, top, cw, avail)));
+        let (x, w) = (x + panes as f32 * cw, w - panes as f32 * cw);
         if across {
             l.list = Rect::new(x, top, w, (avail - bar).max(0.0));
             l.track = Rect::new(x, l.list.bottom(), w, bar.min(avail));

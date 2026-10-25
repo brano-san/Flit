@@ -1,3 +1,4 @@
+use super::columns::Pane;
 use super::field::Field;
 use super::details::Columns;
 use super::layouts::{LayoutMode, Sizes};
@@ -51,6 +52,7 @@ pub struct Tab {
     type_ahead: String,
     type_ahead_at: Option<Instant>,
     pub(super) filter: Option<Field>,
+    pub(super) panes: Vec<Pane>,
 }
 
 impl Tab {
@@ -81,6 +83,7 @@ impl Tab {
             type_ahead: String::new(),
             type_ahead_at: None,
             filter: None,
+            panes: Vec::new(),
         }
     }
 

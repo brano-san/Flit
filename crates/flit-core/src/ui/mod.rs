@@ -1,4 +1,5 @@
 pub mod edit;
+mod columns;
 mod details;
 mod ops;
 mod search;
@@ -235,6 +236,7 @@ enum Hit {
     ColSep(usize),
     Row(usize),
     Group(usize),
+    Pane(usize, Option<usize>),
     ListEmpty,
     Track,
     Thumb,
@@ -298,6 +300,7 @@ struct Layout {
     mode: LayoutMode,
     icon: f32,
     flow: flow::FlowParams,
+    panes: Vec<Rect>,
 }
 
 pub struct App {
@@ -683,6 +686,9 @@ impl App {
             self.sync_spec(k);
             let current = snap.gen == self.tabs[k].gen;
             let (loaded, fresh) = (snap.done && current, current && self.tabs[k].view.as_ref().is_none_or(|v| v.snap().gen != snap.gen));
+            if fresh && self.tabs[k].look == LayoutMode::Columns {
+                self.keep_as_pane(k);
+            }
             let resort = self.tabs[k].on_snapshot(snap);
             if fresh || loaded {
                 self.settle_look(k, fresh, loaded);
@@ -695,6 +701,7 @@ impl App {
             }
             visible |= k == self.cur;
         }
+        visible |= self.poll_panes();
         self.dirty |= visible;
         visible
     }
@@ -871,6 +878,7 @@ impl App {
                 Rect::new(tr.x + (tr.w - tw) * frac, tr.y + s(3.0), tw, tr.h - s(6.0))
             }
         };
+        self.sync_panes();
         self.layout_nav();
         self.layout_jobs();
     }
@@ -924,6 +932,9 @@ impl App {
         if l.track.contains(x, y) {
             let th = l.thumb;
             return if y >= th.y && y < th.bottom() && th.h > 0.0 { Hit::Thumb } else { Hit::Track };
+        }
+        if let Some(i) = l.panes.iter().position(|r| r.contains(x, y)) {
+            return self.pane_hit(i, y);
         }
         if l.list.contains(x, y) {
             return self.list_hit(x, y);
@@ -985,7 +996,7 @@ impl App {
             Event::MouseDown { x, y, button, clicks } => self.mouse_down(*x, *y, *button, *clicks, now),
             Event::MouseUp { x, y, button } => self.mouse_up(*x, *y, *button, now),
             Event::Wheel { dy, .. } => {
-                if self.jobs_wheel(*dy) || self.nav_wheel(*dy) {
+                if self.jobs_wheel(*dy) || self.nav_wheel(*dy) || self.pane_wheel(*dy) {
                     return;
                 }
                 if self.mods.ctrl {
@@ -1194,6 +1205,7 @@ impl App {
             }
             Hit::Header(c) => self.sort_column(self.layout.columns[c].field()),
             Hit::Group(g) => self.toggle_group(g),
+            Hit::Pane(i, Some(row)) => self.open_pane_row(i, row, now),
             Hit::Sizes => self.compute_dir_sizes(),
             Hit::Bin(k) => self.bin_button(k),
             Hit::Side(i) => self.open_side_item(i, self.mods.ctrl, now),
@@ -1399,6 +1411,7 @@ impl App {
                 self.draw_search(g, &arena, th);
             } else {
                 self.draw_list(g, &arena, th);
+                self.draw_panes(g, th);
                 self.draw_marquee(g, th);
                 self.draw_ops(g, th);
                 self.draw_header(g, th);
@@ -1678,9 +1691,7 @@ impl App {
                 let (key, kind) = icon_key(name, listing.ext(i), &e, icon_px as u32, dir_key);
                 let ir = p.icon;
                 if !g.image_alpha(key, ir, if faded { 0x70 } else { 0xFF }) {
-                    let glyph = if e.attrs & attr::VOLUME != 0 { G_DRIVE } else if e.is_dir() { G_FOLDER } else { G_FILE };
-                    let color = if e.is_dir() { t.accent.alpha(0xB0) } else { t.text_dim.alpha(0x90) };
-                    centered(g, ir, glyph, FontStyle::new(FontFamily::Icons, icon_px * 0.85, false), color);
+                    icon_glyph(g, t, &e, ir);
                     let wanted = !self.icons.contains_key(&key) && !requests.iter().any(|r| r.key == key);
                     let path = match (wanted, in_bin) {
                         (false, _) => None,
@@ -1720,10 +1731,7 @@ impl App {
             }
         }
         g.dl.set_clip(None);
-        for r in requests {
-            self.icons.insert(r.key, IconState::Pending);
-            self.effects.push(Effect::Icon(r));
-        }
+        self.request_icons(requests);
         for ext in type_requests {
             if !self.type_names.contains_key(&ext) {
                 self.type_names.insert(ext.clone(), None);
@@ -1793,6 +1801,21 @@ impl App {
         let rw = g.measure(&right, font);
         g.text(x - self.s(12.0) - rw, baseline, &right, font, t.text_dim.alpha(0xA0), f32::INFINITY);
     }
+}
+
+impl App {
+    fn request_icons(&mut self, requests: Vec<IconRequest>) {
+        for r in requests {
+            self.icons.insert(r.key, IconState::Pending);
+            self.effects.push(Effect::Icon(r));
+        }
+    }
+}
+
+fn icon_glyph<B: TextBackend>(g: &mut Gfx<B>, t: &Theme, e: &crate::listing::Entry, ir: Rect) {
+    let glyph = if e.attrs & attr::VOLUME != 0 { G_DRIVE } else if e.is_dir() { G_FOLDER } else { G_FILE };
+    let color = if e.is_dir() { t.accent.alpha(0xB0) } else { t.text_dim.alpha(0x90) };
+    centered(g, ir, glyph, FontStyle::new(FontFamily::Icons, ir.h * 0.85, false), color);
 }
 
 fn centered<B: TextBackend>(g: &mut Gfx<B>, r: Rect, s: &str, font: FontStyle, color: Color) {
