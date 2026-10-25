@@ -11,3 +11,9 @@ flit-core.workspace = true
 flit-platform.workspace = true
 flit-platform-linux.workspace = true
 libc.workspace = true
+harfrust = "0.15"
+swash = { version = "0.2.10", default-features = false, features = ["std", "render"] }
+unicode-bidi = { version = "0.3.18", default-features = false, features = ["hardcoded-data", "std"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+serde_json.workspace = true
