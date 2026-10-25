@@ -138,9 +138,21 @@ impl Settings {
         self.send(Job::Write(self.text()));
     }
 
-    pub fn adopt(&mut self, doc: &Doc, values: Vec<Value>) {
-        self.unknown = doc.unknown.clone();
+    pub fn set_values(&mut self, values: Vec<Value>) {
+        let limit = cache_limit(&values);
+        if !self.values.is_empty() && limit != cache_limit(&self.values) {
+            if let Some(mb) = limit {
+                self.send(Job::CacheLimit(mb));
+            }
+        }
         self.values = values;
+    }
+
+    pub fn adopt(&mut self, doc: &Doc, values: Vec<Value>) {
+        if !doc.broken {
+            self.unknown = doc.unknown.clone();
+        }
+        self.set_values(values);
         if doc.broken {
             self.send(Job::Backup);
         }

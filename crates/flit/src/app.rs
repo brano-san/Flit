@@ -537,13 +537,7 @@ impl<P: Platform> Handler<P> {
         for app in &mut self.pending {
             app.apply_settings(&changed);
         }
-        let limit = settings::cache_limit(&values);
-        if limit != settings::cache_limit(&self.settings.values) {
-            if let Some(mb) = limit {
-                self.settings.send(Job::CacheLimit(mb));
-            }
-        }
-        self.settings.values = values;
+        self.settings.set_values(values);
         self.settings.save();
         (self.wake)();
     }
@@ -594,21 +588,14 @@ impl<P: Platform> Handler<P> {
 
     fn reload_settings(&mut self, id: WindowId, text: &str) {
         let doc = flit_core::ui::settings::parse(text);
-        if doc.broken {
-            self.settings.send(Job::Backup);
-            return self.status(id, doc.problems.join("; "));
+        let Some(st) = self.windows.get_mut(&id) else { return };
+        st.app.apply_doc(&doc);
+        let values = st.app.setting_values();
+        let all: Vec<(usize, Value)> = values.iter().cloned().enumerate().collect();
+        for app in self.windows.iter_mut().filter(|(w, _)| **w != id).map(|(_, st)| &mut st.app).chain(self.pending.iter_mut()) {
+            app.apply_settings(&all);
         }
-        for (w, st) in self.windows.iter_mut() {
-            if *w == id {
-                st.app.apply_doc(&doc);
-            } else {
-                st.app.apply_settings(&doc.values);
-            }
-        }
-        if let Some(st) = self.windows.get(&id) {
-            let values = st.app.setting_values();
-            self.settings.adopt(&doc, values);
-        }
+        self.settings.adopt(&doc, values);
         (self.wake)();
     }
 

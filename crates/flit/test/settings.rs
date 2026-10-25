@@ -100,6 +100,8 @@ fn unknown_keys_survive_a_rewrite_and_cache_limits_are_read() {
     s.adopt(&doc, settings::defaults().to_vec());
     assert!(s.text().contains("\"theme.name\": \"Storm\""));
     assert_eq!(cache_limit(&s.values), Some(500));
+    s.adopt(&settings::parse("{ broken"), settings::defaults().to_vec());
+    assert!(s.text().contains("\"theme.name\": \"Storm\""), "a broken file does not drop the unknown keys read before");
     s.finish();
     assert_eq!(thumb_cache_mb(&settings::parse("{\"advanced.thumb_cache_mb\": 1}")), None, "out of range values do not reach the cache");
 }
