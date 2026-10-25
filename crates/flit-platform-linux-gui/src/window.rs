@@ -7,8 +7,8 @@ use flit_platform::{Placement, PlatformError, Waker, Window, WindowHandler, Wind
 use std::cell::{Cell, RefCell};
 use std::ffi::CStr;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::data_transfer::{DataTransferSendBuilder, TypeHint};
@@ -30,16 +30,54 @@ const COMPACT_SIZE: (f64, f64) = (560.0, 380.0);
 const RESIZE_BORDER: f32 = 5.0;
 const X11_KEYBOARD_LIBRARY: &CStr = c"libxkbcommon-x11.so.0";
 
+const DARK_UNKNOWN: u8 = 0;
+const DARK_NO: u8 = 1;
+const DARK_YES: u8 = 2;
+
 static DISPLAY: OnceLock<OwnedDisplayHandle> = OnceLock::new();
+static PROXY: OnceLock<EventLoopProxy> = OnceLock::new();
+static PREFERRED_DARK: AtomicU8 = AtomicU8::new(DARK_UNKNOWN);
+static THEME_CHANGED: AtomicBool = AtomicBool::new(false);
+static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+static PASTED: Mutex<Vec<(WindowId, String)>> = Mutex::new(Vec::new());
 
 pub(crate) fn display() -> Option<OwnedDisplayHandle> {
     DISPLAY.get().cloned()
 }
 
+pub(crate) fn preferred_dark() -> Option<bool> {
+    match PREFERRED_DARK.load(Ordering::Acquire) {
+        DARK_UNKNOWN => None,
+        v => Some(v == DARK_YES),
+    }
+}
+
+fn wake_loop() {
+    if let Some(proxy) = PROXY.get() {
+        proxy.wake_up();
+    }
+}
+
+fn watch_desktop() {
+    crate::shell::dark_preference(|dark| {
+        PREFERRED_DARK.store(if dark { DARK_YES } else { DARK_NO }, Ordering::Release);
+        THEME_CHANGED.store(true, Ordering::Release);
+        wake_loop();
+    });
+    let shutdown = crate::instance::on_shutdown_signal(|signal| {
+        tracing::info!("signal {signal}, saving the session");
+        SHUTDOWN.store(true, Ordering::Release);
+        wake_loop();
+    });
+    if let Err(e) = shutdown {
+        tracing::warn!("cannot handle shutdown signals: {e}");
+    }
+}
+
 enum Command {
     Open(WindowOptions),
     Close(WindowId),
-    Paste,
+    Paste(WindowId),
     Copy(String),
 }
 
@@ -181,7 +219,7 @@ impl Window for LinuxWindow {
     }
 
     fn clipboard_text(&self) -> Option<String> {
-        self.push(Command::Paste);
+        self.push(Command::Paste(self.id));
         None
     }
 
@@ -198,7 +236,7 @@ impl Window for LinuxWindow {
     }
 
     fn is_dark_mode(&self) -> bool {
-        self.raw.theme().map_or_else(crate::dark_mode_from_env, |t| t == Theme::Dark)
+        preferred_dark().or_else(|| self.raw.theme().map(|t| t == Theme::Dark)).unwrap_or(false)
     }
 
     fn set_clipboard_files(&self, paths: &[FsPath], _cut: bool) {
@@ -282,6 +320,8 @@ impl WindowSystem for LinuxWindows {
         }
         let event_loop = EventLoop::new().map_err(|e| PlatformError::new(-1, format!("cannot connect to the display server: {e}")))?;
         let _ = DISPLAY.set(event_loop.owned_display_handle());
+        let _ = PROXY.set(event_loop.create_proxy());
+        watch_desktop();
         Ok(Self { event_loop, pending: Arc::default() })
     }
 
@@ -328,7 +368,13 @@ fn enable_ime(raw: &dyn winit::window::Window) {
     }
 }
 
-fn paste(el: &dyn ActiveEventLoop) {
+fn background(name: &str, work: impl FnOnce() + Send + 'static) {
+    if let Err(e) = std::thread::Builder::new().name(name.into()).spawn(work) {
+        tracing::warn!("cannot start {name}: {e}");
+    }
+}
+
+fn paste(el: &dyn ActiveEventLoop, window: WindowId) {
     match el.clipboard() {
         Ok(Some(id)) => {
             if let Err(e) = el.fetch_data_transfer(id, &TypeHint::Plaintext) {
@@ -336,14 +382,27 @@ fn paste(el: &dyn ActiveEventLoop) {
             }
         }
         Ok(None) => {}
-        Err(e) => tracing::warn!("cannot read the clipboard: {e}"),
+        Err(e) => {
+            tracing::debug!("winit cannot read the clipboard ({e}), asking a helper program");
+            background("flit-paste", move || {
+                if let Some(text) = crate::shell::clipboard_text() {
+                    PASTED.lock().unwrap_or_else(|e| e.into_inner()).push((window, text));
+                    wake_loop();
+                }
+            });
+        }
     }
 }
 
 fn copy(el: &dyn ActiveEventLoop, text: String) {
-    let data = DataTransferSendBuilder::new(text).with_type(TypeHint::Plaintext, |text: &String, _| Some(text.clone())).build();
+    let data = DataTransferSendBuilder::new(text.clone()).with_type(TypeHint::Plaintext, |text: &String, _| Some(text.clone())).build();
     if let Err(e) = el.set_clipboard(data) {
-        tracing::warn!("cannot set the clipboard: {e}");
+        tracing::debug!("winit cannot set the clipboard ({e}), asking a helper program");
+        background("flit-copy", move || {
+            if !crate::shell::set_clipboard_text(&text) {
+                tracing::warn!("cannot set the clipboard: no wl-copy, xclip or xsel");
+            }
+        });
     }
 }
 
@@ -361,7 +420,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                 match command {
                     Command::Open(opts) => self.open(el, opts),
                     Command::Close(id) => self.close(id),
-                    Command::Paste => paste(el),
+                    Command::Paste(id) => paste(el, id),
                     Command::Copy(text) => copy(el, text),
                 }
             }
@@ -505,6 +564,24 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
         self.pending.store(false, Ordering::Release);
         for node in &self.nodes {
             self.handler.woken(&node.window);
+        }
+        if THEME_CHANGED.swap(false, Ordering::AcqRel) {
+            let dark = preferred_dark().unwrap_or(false);
+            for node in &self.nodes {
+                self.handler.event(&node.window, Event::ThemeChanged { dark });
+            }
+        }
+        let pasted = std::mem::take(&mut *PASTED.lock().unwrap_or_else(|e| e.into_inner()));
+        for (id, text) in pasted {
+            if let Some(node) = self.nodes.iter().find(|n| n.window.id == id) {
+                self.handler.event(&node.window, Event::Pasted(text));
+            }
+        }
+        if SHUTDOWN.swap(false, Ordering::AcqRel) {
+            for node in &self.nodes {
+                self.handler.event(&node.window, Event::SessionEnding);
+                node.window.close();
+            }
         }
         self.settle(el);
     }

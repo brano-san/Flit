@@ -10,6 +10,8 @@ license.workspace = true
 flit-core.workspace = true
 flit-platform.workspace = true
 flit-platform-linux.workspace = true
+flit-proto.workspace = true
+crossbeam-channel.workspace = true
 libc.workspace = true
 glutin = { version = "0.32", default-features = false, features = ["egl", "wayland", "x11"] }
 glow = "0.18"

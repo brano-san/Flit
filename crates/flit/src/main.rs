@@ -13,7 +13,10 @@ mod state;
 mod tags;
 mod thumbs;
 
+#[cfg(not(target_os = "linux"))]
 use flit_core::open::parse_args;
+#[cfg(target_os = "linux")]
+use flit_platform_linux_gui::instance::parse_args;
 use flit_platform::{Instance, Platform, SingleInstance};
 use std::ffi::OsStr;
 use std::path::PathBuf;

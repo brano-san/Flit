@@ -1,29 +1,33 @@
 #![cfg(target_os = "linux")]
 
 mod fonts;
-mod fs;
+pub mod fs;
 mod gl;
 mod input;
-mod instance;
-mod places;
-mod shell;
+pub mod instance;
+pub mod places;
+pub mod shell;
 mod text;
 mod window;
-mod xdg;
+pub mod xdg;
 
-pub use window::{LinuxWaker, LinuxWindow, LinuxWindows};
+#[cfg(test)]
+#[path = "../test/temp.rs"]
+mod temp;
 
 #[cfg(test)]
 #[path = "../test/frame.rs"]
 mod frame;
 
+pub use window::{LinuxWaker, LinuxWindow, LinuxWindows};
+
 use flit_core::atlas::Slot;
 use flit_core::render::DrawList;
 use flit_core::text::{FontMetrics, FontStyle, GlyphBitmap, GlyphKey, ShapedGlyph, ShapedText, TextBackend};
+use flit_core::ui::Bitmap;
 use flit_core::{FsPath, Location};
 use flit_platform::{Platform, PlatformError, RenderError, Renderer, Window};
-use flit_platform_linux::{DbusInstance, FreedesktopShell, Inotify, LinuxFs, Systemd, WalkIndex};
-use flit_core::ui::Bitmap;
+use flit_platform_linux::{Systemd, WalkIndex};
 use gl::{GlDevice, GlRenderer};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -31,23 +35,14 @@ use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 pub struct Linux;
 
-pub(crate) fn dark_mode_from_env() -> bool {
-    std::env::var("GTK_THEME").is_ok_and(|t| t.to_ascii_lowercase().contains("dark"))
-}
-
-fn xdg_dir(var: &str, fallback: &str) -> Option<PathBuf> {
-    let base = std::env::var_os(var).map(PathBuf::from).filter(|p| p.is_absolute());
-    base.or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(fallback))).map(|d| d.join("flit"))
-}
-
 impl Platform for Linux {
     type WindowSystem = LinuxWindows;
     type Renderer = LinuxRenderer;
     type Text = StandInText;
-    type Fs = LinuxFs;
-    type Watcher = Inotify;
-    type Shell = FreedesktopShell;
-    type Instance = DbusInstance;
+    type Fs = fs::LinuxGuiFs;
+    type Watcher = fs::LinuxGuiWatcher;
+    type Shell = shell::LinuxShell;
+    type Instance = instance::SocketInstance;
     type IndexSource = WalkIndex;
     type Service = Systemd;
     type FallbackIndex = WalkIndex;
@@ -56,8 +51,8 @@ impl Platform for Linux {
         Ok(StandInText::default())
     }
 
-    fn fs() -> LinuxFs {
-        LinuxFs
+    fn fs() -> fs::LinuxGuiFs {
+        fs::LinuxGuiFs
     }
 
     fn utc_offset_minutes() -> i32 {
@@ -70,27 +65,39 @@ impl Platform for Linux {
     }
 
     fn dark_mode() -> bool {
-        dark_mode_from_env()
+        window::preferred_dark().unwrap_or(false)
     }
 
     fn caps() -> flit_core::caps::Caps {
         flit_core::caps::Caps { unix_paths: true }
     }
 
+    fn recycle_bin() -> bool {
+        true
+    }
+
     fn state_dir() -> Option<PathBuf> {
-        xdg_dir("XDG_STATE_HOME", ".local/state")
+        xdg::state_dir()
     }
 
     fn cache_dir() -> Option<PathBuf> {
-        xdg_dir("XDG_CACHE_HOME", ".cache")
+        xdg::cache_dir()
+    }
+
+    fn config_dir() -> Option<PathBuf> {
+        xdg::config_dir()
     }
 
     fn home() -> FsPath {
-        std::env::var("HOME").ok().and_then(|h| FsPath::parse(&h)).unwrap_or_else(|| FsPath::parse("/").unwrap())
+        xdg::home().and_then(|h| xdg::fs_path(&h)).unwrap_or_else(|| FsPath::parse("/").unwrap())
     }
 
-    fn known_folder(_: &str) -> Option<Location> {
-        None
+    fn known_folder(name: &str) -> Option<Location> {
+        xdg::known_folder(name)
+    }
+
+    fn templates() -> Vec<flit_core::ui::NewTemplate> {
+        xdg::templates()
     }
 
     fn fatal_error(message: &str) {
@@ -102,14 +109,17 @@ impl Platform for Linux {
     }
 
     fn drives() -> Vec<flit_core::ui::Drive> {
-        Vec::new()
+        places::drives()
     }
 
     fn wsl_distros() -> Vec<String> {
         Vec::new()
     }
-}
 
+    fn watch_wsl(changed: Box<dyn Fn() + Send>) {
+        places::watch_mounts(changed)
+    }
+}
 const STAND_IN_FONTS: [&str; 3] = ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"];
 
 fn stand_in_fonts() -> &'static [Option<Vec<u8>>] {
