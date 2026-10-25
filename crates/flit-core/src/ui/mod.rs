@@ -740,11 +740,11 @@ impl App {
         }
         let e = t.view.as_ref().unwrap().listing().entries[i as usize];
         let loc = t.entry_location(i);
-        if !e.is_dir() && self.open_archived(&loc, now) {
+        if !e.is_dir() && self.open_archived(&loc) {
             return;
         }
         let t = self.tab();
-        if e.is_dir() || crate::library::is_library(loc.path()) {
+        if e.is_dir() || self.browses_as_folder(loc.file_name()) || crate::library::is_library(loc.path()) {
             let target = if self.folders_in_new_tab { OpenTarget::NewTab } else { OpenTarget::CurrentTab };
             self.dispatch(vec![Route { folder: loc, select: None }], target, now);
         } else {

@@ -229,6 +229,35 @@ fn archives_open_as_folders_and_files_inside_open_from_a_temporary_copy() {
 }
 
 #[test]
+fn archives_open_like_folders_in_new_tabs_when_asked() {
+    let mut app = app_at(r"C:\browse");
+    app.folders_in_new_tab = true;
+    deliver(&mut app, &[("a.zip", FILE), ("b.7z", FILE)]);
+    select(&mut app, &["a.zip"]);
+    key(&mut app, Key::Enter, NO);
+    assert_eq!((app.tabs().len(), app.current_location()), (2, &Location::parse(r"C:\browse\a.zip").unwrap()));
+    let mut app = app_at(r"C:\browse");
+    deliver(&mut app, &[("a.zip", FILE), ("b.7z", FILE)]);
+    select(&mut app, &["a.zip", "b.7z"]);
+    key(&mut app, Key::Enter, NO);
+    let opened: Vec<_> = app.tabs().iter().map(|t| t.location().clone()).collect();
+    assert_eq!(opened[1..], [Location::parse(r"C:\browse\a.zip").unwrap(), Location::parse(r"C:\browse\b.7z").unwrap()]);
+}
+
+#[test]
+fn the_preview_pane_asks_for_nothing_inside_an_archive() {
+    let mut app = app_at(r"C:\pv\a.zip");
+    app.set_pane_state(crate::ui::PaneState { visible: true, ..Default::default() });
+    deliver(&mut app, &[("readme.txt", PACKED), ("docs", DIR | PACKED)]);
+    let mut g = crate::text::Gfx::new(crate::text::tests::Mono, 1024);
+    for name in ["readme.txt", "docs"] {
+        select(&mut app, &[name]);
+        app.frame(&mut g, t0());
+        assert!(!app.drain_effects().any(|e| matches!(e, Effect::Preview(_))));
+    }
+}
+
+#[test]
 fn inside_an_archive_cut_and_rename_are_refused_and_the_menu_is_flits_own() {
     let mut app = app_at(r"C:\menu\a.zip\docs");
     deliver(&mut app, &[("x.txt", PACKED)]);

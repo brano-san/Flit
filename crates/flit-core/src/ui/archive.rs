@@ -366,16 +366,16 @@ impl App {
         }
     }
 
-    pub(super) fn open_archived(&mut self, loc: &Location, now: Instant) -> bool {
-        if self.archive_view().is_some() {
-            self.start_op(FileOp::Archive(ArchiveOp::Open { item: loc.path().clone() }), Origin::Fresh, Then::Launch);
-            return true;
-        }
-        if archive::browsable(loc.file_name()).is_none() {
+    pub(super) fn open_archived(&mut self, loc: &Location) -> bool {
+        if self.archive_view().is_none() {
             return false;
         }
-        self.navigate(loc.clone(), now);
+        self.start_op(FileOp::Archive(ArchiveOp::Open { item: loc.path().clone() }), Origin::Fresh, Then::Launch);
         true
+    }
+
+    pub(super) fn browses_as_folder(&self, name: &[u8]) -> bool {
+        self.archive_view().is_none() && archive::browsable(name).is_some()
     }
 
     fn password_retry(op: &FileOp, done: &[(FsPath, FsPath)], then: &Then) -> Option<(FsPath, Retry)> {

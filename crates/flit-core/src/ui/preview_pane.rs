@@ -557,6 +557,7 @@ impl App {
             return;
         }
         let gen = self.gen();
+        let archived = self.archive_view().is_some();
         let p = &mut self.preview;
         p.key = key;
         p.gen = gen;
@@ -576,6 +577,10 @@ impl App {
         p.subject = subject.clone();
         let Some(s) = subject.filter(|s| s.many.is_none() && s.drive.is_none()) else { return };
         let Some(path) = s.path else { return };
+        if archived {
+            p.content = Content::Basic(Some("Inside an archive: extract it to preview".into()));
+            return;
+        }
         let side = p.r.body.w.max(p.r.body.h) * 2.0;
         let px = (side as u32).clamp(256, IMAGE_PX);
         p.content = Content::Loading;
