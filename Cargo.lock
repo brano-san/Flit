@@ -468,6 +468,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "flit-platform-linux-gui"
+version = "0.1.0"
+dependencies = [
+ "flit-core",
+ "flit-platform",
+ "flit-platform-linux",
+ "libc",
+]
+
+[[package]]
 name = "flit-platform-windows"
 version = "0.1.0"
 dependencies = [

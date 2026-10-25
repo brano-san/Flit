@@ -1,0 +1,13 @@
+[package]
+name = "flit-platform-linux-gui"
+description = "Linux desktop platform for Flit: Wayland and X11 window, OpenGL ES drawing, text, places and freedesktop integration"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+flit-core.workspace = true
+flit-platform.workspace = true
+flit-platform-linux.workspace = true
+libc.workspace = true

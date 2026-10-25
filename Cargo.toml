@@ -8,6 +8,7 @@ members = [
     "crates/flit-archive",
     "crates/flit-platform-windows",
     "crates/flit-platform-linux",
+    "crates/flit-platform-linux-gui",
     "crates/flit",
     "crates/flit-indexd",
     "tools/flit-gen",
@@ -27,6 +28,7 @@ flit-platform = { path = "crates/flit-platform" }
 flit-archive = { path = "crates/flit-archive" }
 flit-platform-windows = { path = "crates/flit-platform-windows" }
 flit-platform-linux = { path = "crates/flit-platform-linux" }
+flit-platform-linux-gui = { path = "crates/flit-platform-linux-gui" }
 
 crossbeam-channel = "0.5"
 arc-swap = "1.7"
