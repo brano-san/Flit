@@ -1,10 +1,11 @@
 use super::sidebar::{KnownFolder, PlaceCmd, G_HOME};
+use super::tags::G_TAG;
 use super::{centered, App, Effect, Hit, Route, G_DRIVE, G_FILE, G_FOLDER};
 use crate::fmt as format;
 use crate::location::Location;
 use crate::open::OpenTarget;
 use crate::path::FsPath;
-use crate::render::Rect;
+use crate::render::{Color, Rect};
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::Theme;
 use std::time::Instant;
@@ -22,16 +23,18 @@ const G_WARNING: &str = "\u{E7BA}";
 pub enum Widget {
     QuickAccess,
     Drives,
+    Tags,
     Recent,
 }
 
 impl Widget {
-    pub const ALL: [Widget; 3] = [Widget::QuickAccess, Widget::Drives, Widget::Recent];
+    pub const ALL: [Widget; 4] = [Widget::QuickAccess, Widget::Drives, Widget::Tags, Widget::Recent];
 
     pub fn title(self) -> &'static str {
         match self {
             Widget::QuickAccess => "Quick access",
             Widget::Drives => "Drives",
+            Widget::Tags => "Tags",
             Widget::Recent => "Recent files",
         }
     }
@@ -40,6 +43,7 @@ impl Widget {
         match self {
             Widget::QuickAccess => "quick_access",
             Widget::Drives => "drives",
+            Widget::Tags => "tags",
             Widget::Recent => "recent",
         }
     }
@@ -57,6 +61,7 @@ pub struct Recent {
 pub(super) enum Card {
     Folder { label: String, loc: Location },
     Drive(usize),
+    Tag(usize),
     Recent(usize),
 }
 
@@ -147,7 +152,7 @@ impl App {
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
         let shown: Vec<Widget> = Widget::ALL.into_iter().filter(|&w| self.widget_shown(w)).collect();
-        let (drives, recent_off, on_home) = (self.nav.sidebar.places.drives.len(), self.nav.sidebar.places.recent_off, self.on_home());
+        let (drives, tags, recent_off, on_home) = (self.nav.sidebar.places.drives.len(), self.nav.sidebar.tags.defs.len(), self.nav.sidebar.places.recent_off, self.on_home());
         let h = &mut self.nav.home;
         h.area = area;
         h.cards.clear();
@@ -173,6 +178,11 @@ impl App {
             match widget {
                 Widget::QuickAccess => grid(&mut h.cards, &mut y, std::mem::take(&mut folders), FOLDER_CARD),
                 Widget::Drives => grid(&mut h.cards, &mut y, (0..drives).map(Card::Drive).collect(), DRIVE_CARD),
+                Widget::Tags if tags == 0 => {
+                    h.notes.push((Rect::new(x0, y, w, s(NOTE_H)), "No tags yet: Edit tags in the menu of a file adds one", false));
+                    y += s(NOTE_H);
+                }
+                Widget::Tags => grid(&mut h.cards, &mut y, (0..tags).map(Card::Tag).collect(), FOLDER_CARD),
                 Widget::Recent => {
                     if recent_off {
                         h.notes.push((Rect::new(x0, y, w, s(NOTE_H)), "Windows does not keep a list of recent files: it is turned off in Settings, Personalization, Start", true));
@@ -217,11 +227,22 @@ impl App {
         Some(match &self.nav.home.cards.get(i)?.1 {
             Card::Folder { loc, .. } => loc.clone(),
             Card::Drive(d) => Location::Local(p.drives.get(*d)?.path.clone()),
+            Card::Tag(_) => return None,
             Card::Recent(r) => Location::from_local(p.recent.get(*r)?.target.clone()),
         })
     }
 
+    fn card_tag(&self, i: usize) -> Option<usize> {
+        match self.nav.home.cards.get(i)?.1 {
+            Card::Tag(k) => Some(k),
+            _ => None,
+        }
+    }
+
     pub(super) fn open_home_item(&mut self, i: usize, new_tab: bool, now: Instant) {
+        if let Some(k) = self.card_tag(i) {
+            return self.show_tag(k);
+        }
         let Some(loc) = self.card_location(i) else { return };
         let file = matches!(self.nav.home.cards[i].1, Card::Recent(r) if !self.nav.sidebar.places.recent[r].dir);
         let target = if new_tab { OpenTarget::NewTab } else { OpenTarget::CurrentTab };
@@ -233,6 +254,10 @@ impl App {
 
     pub(super) fn home_menu(&mut self, x: f32, y: f32, h: Hit) {
         let Hit::HomeItem(i) = h else { return self.home_page_menu(x, y) };
+        if let Some(k) = self.card_tag(i) {
+            let menu = self.build_tag_menu(Some(k));
+            return self.flit_menu(x, y, menu);
+        }
         let Some(loc) = self.card_location(i) else { return };
         let Card::Recent(r) = self.nav.home.cards[i].1 else { return self.place_menu(x, y, loc, |_, _| {}) };
         if self.nav.sidebar.places.recent[r].dir {
@@ -323,6 +348,12 @@ impl App {
                         format::size(&mut text, d.total);
                         g.text(tx, r.bottom() - s6 - ms.descent, &text, small, t.text_dim, tw);
                     }
+                }
+                Card::Tag(k) => {
+                    let Some(tag) = self.nav.sidebar.tags.defs.get(*k) else { continue };
+                    g.dl.round_rect(*r, if hovered { t.button_hover } else { t.chrome }, s6);
+                    centered(g, Rect::new(r.x + s4, r.y, s40, r.h), G_TAG, big_icons, Color::rgb(tag.color));
+                    g.text(r.x + s40 + s8, mid(*r, m), &tag.name, font, t.text, r.w - s40 - s12);
                 }
                 Card::Recent(k) => {
                     let Some(e) = places.recent.get(*k) else { continue };

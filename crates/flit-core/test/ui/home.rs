@@ -38,6 +38,7 @@ fn cards(app: &App) -> Vec<String> {
     app.nav.home.cards.iter().map(|(_, c)| match c {
         Card::Folder { label, .. } => format!("folder {label}"),
         Card::Drive(d) => format!("drive {d}"),
+        Card::Tag(k) => format!("tag {}", app.nav.sidebar.tags.defs[*k].name),
         Card::Recent(r) => format!("recent {}", app.nav.sidebar.places.recent[*r].name),
     }).collect()
 }
@@ -119,7 +120,7 @@ fn widgets_toggle_from_the_page_menu_and_are_remembered() {
     click(empty, &mut app, MouseButton::Right);
     let menu = menu_of(&mut app);
     assert!(!menu.shell);
-    assert_eq!(labels(&menu.menu), ["Quick access *", "Drives *", "Recent files *", "Clear recent files"]);
+    assert_eq!(labels(&menu.menu), ["Quick access *", "Drives *", "Tags *", "Recent files *", "Clear recent files"]);
     run(&mut app, &menu, "Drives");
     assert!(!cards(&app).iter().any(|c| c.starts_with("drive")));
     assert_eq!(app.nav_prefs().widgets_off, ["drives"]);
@@ -155,6 +156,26 @@ fn recent_entries_hide_in_flit_until_they_are_used_again() {
     let p = app.nav_prefs();
     assert_eq!(p.recent_cleared, 400);
     assert!(p.recent_hidden.is_empty());
+}
+
+#[test]
+fn tag_cards_show_their_items_and_offer_the_tag_menu() {
+    let mut app = home_app();
+    assert!(app.nav.home.notes.iter().any(|n| n.1.starts_with("No tags yet")));
+    let mut store = crate::tags::TagStore { tags: Vec::new(), files: crate::hash::FxHashMap::default() };
+    store.add("Work", crate::tags::COLORS[1].1).unwrap();
+    store.add("Long name", crate::tags::COLORS[2].1).unwrap();
+    app.set_tags(Arc::new(crate::tags::Tags::new(1, &store, &crate::hash::FxHashMap::default())));
+    assert_eq!(cards(&app).iter().filter(|c| c.starts_with("tag")).collect::<Vec<_>>(), ["tag Work", "tag Long name"]);
+    click(card_rect(&app, "Long name"), &mut app, MouseButton::Right);
+    let menu = menu_of(&mut app);
+    assert!(!menu.shell);
+    assert_eq!(labels(&menu.menu), ["Show items with this tag", "Open all tagged items", "New tag", "Manage tags"]);
+    click(card_rect(&app, "Long name"), &mut app, MouseButton::Left);
+    let query = app.drain_effects().find_map(|e| if let Effect::Search(crate::ui::SearchRequest::Query { text, .. }) = e { Some(text) } else { None });
+    assert_eq!(query.as_deref(), Some("tag:\"Long name\""));
+    assert!(app.run_action("home.tags", Instant::now()));
+    assert!(!cards(&app).iter().any(|c| c.starts_with("tag")));
 }
 
 #[test]
