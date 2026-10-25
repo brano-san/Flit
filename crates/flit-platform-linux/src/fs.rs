@@ -14,15 +14,22 @@ const BATCH: usize = 1024;
 const EPOCH_GAP_SECS: i64 = 11_644_473_600;
 const STATX_BASIC_STATS: u32 = 0x7ff;
 const STATX_BTIME: u32 = 0x800;
+const STATX_ATTR_MOUNT_ROOT: u64 = 0x2000;
 const DT_DIR: u8 = 4;
 const DT_LNK: u8 = 10;
 
 #[repr(C)]
-#[derive(Default, Clone, Copy)]
-struct Stamp {
-    sec: i64,
-    nsec: u32,
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Stamp {
+    pub sec: i64,
+    pub nsec: u32,
     _reserved: i32,
+}
+
+impl Stamp {
+    pub fn new(sec: i64, nsec: u32) -> Self {
+        Self { sec, nsec, _reserved: 0 }
+    }
 }
 
 #[repr(C)]
@@ -30,23 +37,59 @@ struct Stamp {
 struct Statx {
     mask: u32,
     _blksize: u32,
-    _attributes: u64,
+    attributes: u64,
     _nlink: u32,
-    _uid: u32,
-    _gid: u32,
+    uid: u32,
+    gid: u32,
     mode: u16,
     _spare0: u16,
-    _ino: u64,
+    ino: u64,
     size: u64,
     _blocks: u64,
-    _attributes_mask: u64,
-    _atime: Stamp,
+    attributes_mask: u64,
+    atime: Stamp,
     btime: Stamp,
     _ctime: Stamp,
     mtime: Stamp,
     _rdev: [u32; 2],
-    _dev: [u32; 2],
+    dev: [u32; 2],
     _spare2: [u64; 14],
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Node {
+    pub mode: u32,
+    pub uid: u32,
+    pub gid: u32,
+    pub size: u64,
+    pub dev: u64,
+    pub ino: u64,
+    pub atime: Stamp,
+    pub mtime: Stamp,
+    pub btime: i64,
+    pub mount_root: Option<bool>,
+}
+
+impl Node {
+    pub fn kind(&self) -> u32 {
+        self.mode & libc::S_IFMT
+    }
+
+    pub fn is_dir(&self) -> bool {
+        self.kind() == libc::S_IFDIR
+    }
+
+    pub fn is_link(&self) -> bool {
+        self.kind() == libc::S_IFLNK
+    }
+
+    pub fn mounted_on(&self, parent_dev: u64) -> bool {
+        self.mount_root.unwrap_or(self.dev != parent_dev)
+    }
+
+    pub fn meta(&self, name: &[u8]) -> Meta {
+        to_meta(name, self, || false)
+    }
 }
 
 static NO_STATX: AtomicBool = AtomicBool::new(false);
@@ -70,25 +113,23 @@ pub fn fs_error(e: &io::Error) -> FsError {
     FsError { kind, code: code as i64 }
 }
 
-fn cstring(p: &Path) -> io::Result<CString> {
-    CString::new(p.as_os_str().as_bytes()).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))
+pub fn cstring(p: &[u8]) -> io::Result<CString> {
+    CString::new(p).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))
 }
 
-struct Raw {
-    mode: u32,
-    size: u64,
-    mtime: i64,
-    btime: i64,
+fn dev_of(major: u32, minor: u32) -> u64 {
+    (major as u64) << 32 | minor as u64
 }
 
-fn statx_at(dir: libc::c_int, name: &CStr, follow: bool) -> io::Result<Raw> {
+pub fn node_at(dir: libc::c_int, name: &CStr, follow: bool) -> io::Result<Node> {
     let nofollow = if follow { 0 } else { libc::AT_SYMLINK_NOFOLLOW };
     if !NO_STATX.load(Ordering::Relaxed) {
         let mut sx = Statx::default();
         let r = unsafe { libc::syscall(libc::SYS_statx, dir, name.as_ptr(), nofollow, STATX_BASIC_STATS | STATX_BTIME, &mut sx as *mut Statx) };
         if r == 0 {
             let btime = if sx.mask & STATX_BTIME != 0 { filetime(sx.btime.sec, sx.btime.nsec as i64) } else { 0 };
-            return Ok(Raw { mode: sx.mode as u32, size: sx.size, mtime: filetime(sx.mtime.sec, sx.mtime.nsec as i64), btime });
+            let mount_root = (sx.attributes_mask & STATX_ATTR_MOUNT_ROOT != 0).then_some(sx.attributes & STATX_ATTR_MOUNT_ROOT != 0);
+            return Ok(Node { mode: sx.mode as u32, uid: sx.uid, gid: sx.gid, size: sx.size, dev: dev_of(sx.dev[0], sx.dev[1]), ino: sx.ino, atime: sx.atime, mtime: sx.mtime, btime, mount_root });
         }
         let e = io::Error::last_os_error();
         if e.raw_os_error() != Some(libc::ENOSYS) {
@@ -100,36 +141,43 @@ fn statx_at(dir: libc::c_int, name: &CStr, follow: bool) -> io::Result<Raw> {
     if unsafe { libc::fstatat(dir, name.as_ptr(), &mut st, nofollow) } != 0 {
         return Err(io::Error::last_os_error());
     }
-    Ok(Raw { mode: st.st_mode, size: st.st_size as u64, mtime: filetime(st.st_mtime, st.st_mtime_nsec), btime: 0 })
+    Ok(Node {
+        mode: st.st_mode,
+        uid: st.st_uid,
+        gid: st.st_gid,
+        size: st.st_size as u64,
+        dev: dev_of(libc::major(st.st_dev), libc::minor(st.st_dev)),
+        ino: st.st_ino,
+        atime: Stamp::new(st.st_atime, st.st_atime_nsec as u32),
+        mtime: Stamp::new(st.st_mtime, st.st_mtime_nsec as u32),
+        btime: 0,
+        mount_root: None,
+    })
 }
 
-fn is_dir(mode: u32) -> bool {
-    mode & libc::S_IFMT == libc::S_IFDIR
-}
-
-fn to_meta(name: &[u8], raw: &Raw, target_dir: impl FnOnce() -> bool) -> Meta {
+fn to_meta(name: &[u8], node: &Node, target_dir: impl FnOnce() -> bool) -> Meta {
     let mut attrs = 0;
-    if raw.mode & libc::S_IFMT == libc::S_IFLNK {
+    if node.is_link() {
         attrs |= attr::LINK;
         if target_dir() {
             attrs |= attr::DIR;
         }
-    } else if is_dir(raw.mode) {
+    } else if node.is_dir() {
         attrs |= attr::DIR;
     }
     if name.first() == Some(&b'.') {
         attrs |= attr::HIDDEN;
     }
-    if raw.mode & 0o222 == 0 {
+    if node.mode & 0o222 == 0 {
         attrs |= attr::READONLY;
     }
-    Meta { size: raw.size, modified: raw.mtime, created: raw.btime, attrs }
+    Meta { size: node.size, modified: filetime(node.mtime.sec, node.mtime.nsec as i64), created: node.btime, attrs }
 }
 
 fn entry_meta(dir: libc::c_int, name: &CStr, d_type: u8) -> Meta {
     let bytes = name.to_bytes();
-    match statx_at(dir, name, false) {
-        Ok(raw) => to_meta(bytes, &raw, || statx_at(dir, name, true).is_ok_and(|t| is_dir(t.mode))),
+    match node_at(dir, name, false) {
+        Ok(node) => to_meta(bytes, &node, || node_at(dir, name, true).is_ok_and(|t| t.is_dir())),
         Err(_) => {
             let attrs = match d_type {
                 DT_DIR => attr::DIR,
@@ -142,26 +190,36 @@ fn entry_meta(dir: libc::c_int, name: &CStr, d_type: u8) -> Meta {
 }
 
 pub fn stat_path(path: &Path) -> io::Result<Meta> {
-    let c = cstring(path)?;
-    let raw = statx_at(libc::AT_FDCWD, &c, false)?;
+    let c = cstring(path.as_os_str().as_bytes())?;
+    let node = node_at(libc::AT_FDCWD, &c, false)?;
     let name = path.file_name().map_or(&b""[..], |n| n.as_bytes());
-    Ok(to_meta(name, &raw, || statx_at(libc::AT_FDCWD, &c, true).is_ok_and(|t| is_dir(t.mode))))
+    Ok(to_meta(name, &node, || node_at(libc::AT_FDCWD, &c, true).is_ok_and(|t| t.is_dir())))
 }
 
-fn open_dir(path: &Path) -> io::Result<OwnedFd> {
-    let c = cstring(path)?;
-    let fd = unsafe { libc::open(c.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) };
+fn owned(fd: libc::c_int) -> io::Result<OwnedFd> {
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
-pub fn scan(dir: &Path, mut each: impl FnMut(&[u8], Meta) -> bool) -> io::Result<()> {
-    let fd = open_dir(dir)?;
+pub fn open_dir(path: &Path) -> io::Result<OwnedFd> {
+    let c = cstring(path.as_os_str().as_bytes())?;
+    owned(unsafe { libc::open(c.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) })
+}
+
+pub fn open_dir_at(dir: libc::c_int, name: &CStr) -> io::Result<OwnedFd> {
+    owned(unsafe { libc::openat(dir, name.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) })
+}
+
+pub fn open_at(dir: libc::c_int, name: &CStr, flags: libc::c_int, mode: libc::mode_t) -> io::Result<OwnedFd> {
+    owned(unsafe { libc::openat(dir, name.as_ptr(), flags | libc::O_NOFOLLOW | libc::O_CLOEXEC, mode as libc::c_uint) })
+}
+
+pub fn dents(fd: libc::c_int, mut each: impl FnMut(&CStr, u8) -> bool) -> io::Result<()> {
     let mut buf = vec![0u8; DENTS_BUFFER];
     loop {
-        let n = unsafe { libc::syscall(libc::SYS_getdents64, fd.as_raw_fd(), buf.as_mut_ptr(), buf.len()) };
+        let n = unsafe { libc::syscall(libc::SYS_getdents64, fd, buf.as_mut_ptr(), buf.len()) };
         if n < 0 {
             return Err(io::Error::last_os_error());
         }
@@ -180,11 +238,25 @@ pub fn scan(dir: &Path, mut each: impl FnMut(&[u8], Meta) -> bool) -> io::Result
             if matches!(name.to_bytes(), b"." | b"..") {
                 continue;
             }
-            if !each(name.to_bytes(), entry_meta(fd.as_raw_fd(), name, d_type)) {
+            if !each(name, d_type) {
                 return Ok(());
             }
         }
     }
+}
+
+pub fn names(fd: libc::c_int) -> io::Result<Vec<CString>> {
+    let mut out = Vec::new();
+    dents(fd, |name, _| {
+        out.push(name.to_owned());
+        true
+    })?;
+    Ok(out)
+}
+
+pub fn scan(dir: &Path, mut each: impl FnMut(&[u8], Meta) -> bool) -> io::Result<()> {
+    let fd = open_dir(dir)?;
+    dents(fd.as_raw_fd(), |name, d_type| each(name.to_bytes(), entry_meta(fd.as_raw_fd(), name, d_type)))
 }
 
 pub fn tree_size(root: &Path, keep_going: &dyn Fn() -> bool) -> u64 {

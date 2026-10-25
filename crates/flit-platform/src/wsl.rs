@@ -1,16 +1,19 @@
 use crate::local::{snapshot, via_unc, PARTIAL_COST_FACTOR, PARTIAL_EVERY};
-use crate::{PlatformError, Provider, Wake};
+use crate::{FileOps, PlatformError, Provider, Shell, Wake, CANCELLED};
 use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
 use flit_core::listing::Listing;
-use flit_core::provider::{FileOp, GenToken, OpId, OpReport, SnapshotSlot};
+use flit_core::path::PathKind;
+use flit_core::provider::{FileOp, GenToken, OpCtl, OpId, OpReport, Resolve, SnapshotSlot};
 use flit_core::sort::{SortKeys, ViewSpec};
-use flit_core::{FsError, FsErrorKind, FsPath, ProviderEvent, ProviderRequest, TabId};
-use flit_proto::provider::{Event, ReqId, Request, VERSION};
+use flit_core::{FsError, FsErrorKind, FsPath, Location, ProviderEvent, ProviderRequest, TabId};
+use flit_proto::provider::{agent_runs, check_conflict, check_report, Event, ReqId, Request, VERSION};
 use flit_proto::transport::{read_frame, read_hello, write_frame, Hello, ProtoError, Protocol};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read, Write};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+const CANCEL_POLL: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Copy)]
 pub struct AgentImage {
@@ -36,6 +39,33 @@ pub trait AgentLauncher: Send + 'static {
     fn deliver(&self) -> io::Result<()>;
 }
 
+pub type ClipboardFiles = Result<(Vec<FsPath>, bool), PlatformError>;
+
+#[derive(Clone, Copy)]
+pub struct Clipboard {
+    pub files: fn() -> ClipboardFiles,
+    pub clear: fn(),
+}
+
+impl Clipboard {
+    pub fn of<S: Shell + FileOps>() -> Self {
+        Self {
+            files: || S::new()?.clipboard_files(),
+            clear: || {
+                if let Ok(mut s) = S::new() {
+                    s.clear_clipboard();
+                }
+            },
+        }
+    }
+}
+
+impl Default for Clipboard {
+    fn default() -> Self {
+        Self { files: || Err(PlatformError::unsupported("clipboard")), clear: || {} }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Timing {
     pub hello: Duration,
@@ -58,6 +88,7 @@ enum Msg {
     Hello(u64, Result<String, ProtoError>),
     Event(u64, Event),
     Lost(u64, String),
+    Answer(ReqId, Option<Resolve>, bool),
     Quit,
 }
 
@@ -116,10 +147,19 @@ impl ListState {
     }
 }
 
+struct OpState {
+    tab: TabId,
+    op: OpId,
+    request: FileOp,
+    ctl: OpCtl,
+    cancelled: bool,
+    clear: bool,
+}
+
 enum Pending {
     List(Box<ListState>),
     Sizes { tab: TabId, gen: u64, cancel: GenToken, wanted: HashSet<u32> },
-    Op { tab: TabId, op: OpId, request: FileOp },
+    Op(OpState),
 }
 
 struct Ctl {
@@ -130,10 +170,12 @@ struct Ctl {
     wake: Wake,
     tx: Sender<Msg>,
     timing: Timing,
+    clipboard: Clipboard,
     state: State,
     conns: u64,
     next_id: ReqId,
     queue: Vec<ProviderRequest>,
+    clears: HashSet<OpId>,
     pending: HashMap<ReqId, Pending>,
     watches: HashMap<TabId, (u64, ReqId)>,
     crashes: VecDeque<Instant>,
@@ -145,7 +187,7 @@ pub struct WslProvider {
 }
 
 impl WslProvider {
-    pub fn new(distro: String, launcher: Option<Box<dyn AgentLauncher>>, local: Arc<dyn Provider>, events: Sender<ProviderEvent>, wake: Wake, timing: Timing) -> Result<Self, PlatformError> {
+    pub fn new(distro: String, launcher: Option<Box<dyn AgentLauncher>>, local: Arc<dyn Provider>, events: Sender<ProviderEvent>, wake: Wake, timing: Timing, clipboard: Clipboard) -> Result<Self, PlatformError> {
         let (tx, rx) = unbounded();
         let name = format!("flit-wsl-{distro}");
         let present = launcher.is_some();
@@ -157,10 +199,12 @@ impl WslProvider {
             wake,
             tx: tx.clone(),
             timing,
+            clipboard,
             state: if present { State::Idle } else { State::Simplified },
             conns: 0,
             next_id: 0,
             queue: Vec::new(),
+            clears: HashSet::new(),
             pending: HashMap::new(),
             watches: HashMap::new(),
             crashes: VecDeque::new(),
@@ -187,8 +231,16 @@ fn hello(build: &str) -> Hello {
     Hello { build: build.to_owned(), ..Hello::new(Protocol::Provider, VERSION) }
 }
 
+fn linux(op: &FileOp) -> bool {
+    op.all_paths(|p| p.kind() == PathKind::Unix && flit_core::archive::split(p).is_none())
+}
+
 fn starts_agent(req: &ProviderRequest) -> bool {
-    matches!(req, ProviderRequest::List { .. } | ProviderRequest::DirSizes { .. } | ProviderRequest::Op { op: FileOp::Trash(_), .. })
+    match req {
+        ProviderRequest::List { .. } | ProviderRequest::DirSizes { .. } => true,
+        ProviderRequest::Op { op, .. } => agent_runs(op) && linux(op),
+        _ => false,
+    }
 }
 
 fn for_agent(req: &ProviderRequest) -> bool {
@@ -197,6 +249,10 @@ fn for_agent(req: &ProviderRequest) -> bool {
         _ => false,
     };
     !archived && (starts_agent(req) || matches!(req, ProviderRequest::Watch { .. }))
+}
+
+fn windows_form(req: &ProviderRequest) -> bool {
+    matches!(req, ProviderRequest::Op { op, .. } if !op.all_paths(|p| p.kind() == PathKind::Unix))
 }
 
 fn read_events(id: u64, mut output: Box<dyn Read + Send>, ours: Hello, tx: Sender<Msg>) {
@@ -243,6 +299,11 @@ impl Ctl {
                         self.crashed(&why);
                     }
                 }
+                Ok(Msg::Answer(id, choice, all)) => {
+                    if matches!(self.pending.get(&id), Some(Pending::Op(_))) {
+                        self.send(Request::Answer { id, choice, all });
+                    }
+                }
                 Err(RecvTimeoutError::Timeout) => self.timer(),
                 Ok(Msg::Quit) | Err(RecvTimeoutError::Disconnected) => return self.quit(),
             }
@@ -259,15 +320,42 @@ impl Ctl {
         self.watches.is_empty() && self.pending.is_empty()
     }
 
+    fn watching_ops(&self) -> bool {
+        self.pending.values().any(|p| matches!(p, Pending::Op(o) if !o.cancelled))
+    }
+
     fn deadline(&self) -> Option<Instant> {
-        match &self.state {
+        let poll = self.watching_ops().then(|| Instant::now() + CANCEL_POLL);
+        let state = match &self.state {
             State::Starting { deadline, .. } => Some(*deadline),
             State::Ready(_) if self.idle() => Some(self.busy_at + self.timing.idle),
             _ => None,
+        };
+        match (poll, state) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    fn poll_cancels(&mut self) {
+        let newly: Vec<ReqId> = self
+            .pending
+            .iter_mut()
+            .filter_map(|(&id, p)| match p {
+                Pending::Op(o) if !o.cancelled && o.ctl.is_cancelled() => {
+                    o.cancelled = true;
+                    Some(id)
+                }
+                _ => None,
+            })
+            .collect();
+        for id in newly {
+            self.send(Request::Cancel { id });
         }
     }
 
     fn timer(&mut self) {
+        self.poll_cancels();
         let now = Instant::now();
         match std::mem::replace(&mut self.state, State::Idle) {
             State::Starting { conn, deadline, .. } if now >= deadline => {
@@ -307,7 +395,45 @@ impl Ctl {
         }
     }
 
+    fn paste(&mut self, tab: TabId, id: OpId, dest: FsPath, ctl: OpCtl) -> Option<ProviderRequest> {
+        let (items, cut) = match (self.clipboard.files)() {
+            Ok(files) => files,
+            Err(e) => {
+                self.emit(ProviderEvent::OpDone { tab, id, error: Some(e.message), report: None });
+                return None;
+            }
+        };
+        let inside: Option<Vec<FsPath>> = items
+            .into_iter()
+            .map(|p| match Location::from_local(p) {
+                Location::Wsl { distro, path } if distro.eq_ignore_ascii_case(&self.distro) && flit_core::archive::split(&path).is_none() => Some(path),
+                _ => None,
+            })
+            .collect();
+        let Some(items) = inside else {
+            self.fallback(ProviderRequest::Op { tab, id, op: FileOp::Paste { dest }, ctl });
+            return None;
+        };
+        let op = if cut {
+            self.clears.insert(id);
+            FileOp::Move { items: items.into_iter().filter(|i| i.parent().as_ref() != Some(&dest)).collect(), dest }
+        } else {
+            FileOp::Copy { items, dest }
+        };
+        Some(ProviderRequest::Op { tab, id, op, ctl })
+    }
+
     fn request(&mut self, req: ProviderRequest) {
+        if windows_form(&req) {
+            return self.local.submit(req);
+        }
+        let req = match req {
+            ProviderRequest::Op { tab, id, op: FileOp::Paste { dest }, ctl } if !matches!(self.state, State::Simplified) => match self.paste(tab, id, dest, ctl) {
+                Some(req) => req,
+                None => return,
+            },
+            req => req,
+        };
         if matches!(self.state, State::Simplified) || !for_agent(&req) {
             return self.fallback(req);
         }
@@ -437,10 +563,15 @@ impl Ctl {
                 self.pending.insert(id, Pending::Sizes { tab, gen, cancel, wanted: items.iter().map(|(i, _)| *i).collect() });
                 self.send(Request::DirSizes { id, dir, items });
             }
-            ProviderRequest::Op { tab, id: op, op: FileOp::Trash(paths), .. } => {
+            ProviderRequest::Op { tab, id: op, op: request, ctl } if agent_runs(&request) => {
+                let clear = self.clears.remove(&op);
+                if ctl.is_cancelled() {
+                    return self.emit(ProviderEvent::OpDone { tab, id: op, error: Some(CANCELLED.into()), report: Some(OpReport { op: request, items: Vec::new() }) });
+                }
                 let id = self.id();
-                self.pending.insert(id, Pending::Op { tab, op, request: FileOp::Trash(paths.clone()) });
-                self.send(Request::Op { id, op: FileOp::Trash(paths) });
+                let policy = ctl.policy();
+                self.pending.insert(id, Pending::Op(OpState { tab, op, request: request.clone(), ctl, cancelled: false, clear }));
+                self.send(Request::Op { id, op: request, policy });
             }
             other => self.fallback(other),
         }
@@ -453,6 +584,36 @@ impl Ctl {
 
     fn watcher(&self, id: ReqId) -> Option<(TabId, u64)> {
         self.watches.iter().find(|(_, (_, w))| *w == id).map(|(&tab, &(gen, _))| (tab, gen))
+    }
+
+    fn ask(&mut self, id: ReqId, conflict: flit_core::provider::Conflict) {
+        let Some(Pending::Op(o)) = self.pending.get(&id) else { return };
+        if let Err(e) = check_conflict(&o.request, &conflict) {
+            return self.crashed(&e.to_string());
+        }
+        let (tab, op, ctl, events, wake, tx) = (o.tab, o.op, o.ctl.clone(), self.events.clone(), self.wake.clone(), self.tx.clone());
+        let asked = std::thread::Builder::new().name(format!("flit-wsl-ask-{op}")).spawn(move || {
+            let choice = ctl.resolve(|| {
+                let _ = events.send(ProviderEvent::OpConflict { tab, id: op, conflict });
+                wake();
+            });
+            let _ = tx.send(Msg::Answer(id, choice, ctl.policy().is_some()));
+        });
+        if asked.is_err() {
+            self.send(Request::Answer { id, choice: None, all: false });
+        }
+    }
+
+    fn finished(&mut self, id: ReqId, error: Option<String>, items: Vec<(FsPath, FsPath)>) {
+        let Some(Pending::Op(o)) = self.pending.remove(&id) else { return };
+        if let Err(e) = check_report(&o.request, &items) {
+            self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error: Some(format!("The connection to {} was lost", self.distro)), report: None });
+            return self.crashed(&e.to_string());
+        }
+        if o.clear && error.is_none() {
+            (self.clipboard.clear)();
+        }
+        self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error, report: Some(OpReport { op: o.request, items }) });
     }
 
     fn event(&mut self, ev: Event) {
@@ -496,11 +657,13 @@ impl Ctl {
                     self.emit(ProviderEvent::DirSize { tab, gen, idx, size });
                 }
             }
-            Event::OpDone { id, error } => {
-                if let Some(Pending::Op { tab, op, request }) = self.pending.remove(&id) {
-                    self.emit(ProviderEvent::OpDone { tab, id: op, error, report: Some(OpReport { op: request, items: Vec::new() }) });
+            Event::OpProgress { id, progress } => {
+                if let Some(Pending::Op(o)) = self.pending.get(&id) {
+                    self.emit(ProviderEvent::OpProgress { tab: o.tab, id: o.op, progress });
                 }
             }
+            Event::OpConflict { id, conflict } => self.ask(id, conflict),
+            Event::OpDone { id, error, items } => self.finished(id, error, items),
             Event::Stat { .. } => {}
         }
     }
@@ -514,10 +677,14 @@ impl Ctl {
         for (_, p) in std::mem::take(&mut self.pending) {
             match p {
                 Pending::List(l) => l.finish(Some(FsError { kind: FsErrorKind::Unavailable, code: 0 }), &self.wake),
-                Pending::Op { tab, op, .. } => self.emit(ProviderEvent::OpDone { tab, id: op, error: Some(lost.clone()), report: None }),
+                Pending::Op(o) => {
+                    o.ctl.answer(Resolve::Skip, false);
+                    self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error: Some(lost.clone()), report: None });
+                }
                 Pending::Sizes { .. } => {}
             }
         }
+        self.clears.clear();
         for (tab, _) in std::mem::take(&mut self.watches) {
             self.emit(ProviderEvent::OpDone { tab, id: 0, error: Some(format!("{lost}: this folder no longer updates. Press F5 to reload it.")), report: None });
         }

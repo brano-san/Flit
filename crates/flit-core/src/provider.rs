@@ -111,6 +111,10 @@ impl Launch {
 }
 
 impl FileOp {
+    pub fn all_paths(&self, f: impl Fn(&FsPath) -> bool) -> bool {
+        self.map_paths(|p| f(p).then(|| p.clone())).is_some()
+    }
+
     pub fn map_paths(&self, f: impl Fn(&FsPath) -> Option<FsPath>) -> Option<FileOp> {
         let all = |v: &[FsPath]| v.iter().map(&f).collect::<Option<Vec<_>>>();
         let pairs = |v: &[(FsPath, FsPath)]| v.iter().map(|(a, b)| Some((f(a)?, f(b)?))).collect::<Option<Vec<_>>>();
@@ -136,14 +140,14 @@ impl FileOp {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Resolve {
     KeepBoth,
     Replace,
     Skip,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Conflict {
     pub source: FsPath,
     pub target: FsPath,
@@ -151,7 +155,7 @@ pub struct Conflict {
     pub to: Meta,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Stage {
     #[default]
     Preparing,
@@ -159,7 +163,7 @@ pub enum Stage {
     Running,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct OpProgress {
     pub stage: Stage,
     pub bytes: u64,
@@ -203,6 +207,10 @@ impl OpCtl {
 
     pub fn is_cancelled(&self) -> bool {
         self.0.cancelled.load(Ordering::Acquire)
+    }
+
+    pub fn policy(&self) -> Option<Resolve> {
+        self.lock().policy
     }
 
     pub fn answer(&self, choice: Resolve, all: bool) {
