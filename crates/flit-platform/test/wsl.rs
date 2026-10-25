@@ -1,6 +1,6 @@
 use super::*;
 use flit_core::listing::{ChangeKind, DirChange};
-use flit_core::provider::{OpCtl, Template};
+use flit_core::provider::{Conflict, OpCtl, OpProgress, Resolve, Template};
 use flit_core::sort::CaseMode;
 use flit_core::Meta;
 use flit_proto::listing::EntryBatch;
@@ -111,9 +111,13 @@ struct Setup {
 }
 
 fn setup(fake: Fake, timing: Timing) -> Setup {
+    setup_with(fake, timing, Clipboard::default())
+}
+
+fn setup_with(fake: Fake, timing: Timing, clipboard: Clipboard) -> Setup {
     let (tx, events) = unbounded();
     let local = Arc::new(Recorder::default());
-    let wsl = WslProvider::new("Ubuntu".into(), Some(Box::new(fake.clone())), local.clone(), tx, Arc::new(|| {}), timing).unwrap();
+    let wsl = WslProvider::new("Ubuntu".into(), Some(Box::new(fake.clone())), local.clone(), tx, Arc::new(|| {}), timing, clipboard).unwrap();
     Setup { wsl, fake, local, events }
 }
 
@@ -330,7 +334,7 @@ fn dropping_the_provider_stops_its_agent() {
 fn trash_goes_to_the_agent_and_the_rest_to_the_share() {
     let fake = Fake::new(|req| {
         Some(match req {
-            Request::Op { id, .. } => vec![Event::OpDone { id: *id, error: Some("nope".into()) }],
+            Request::Op { id, .. } => vec![Event::OpDone { id: *id, error: Some("nope".into()), items: Vec::new() }],
             Request::DirSizes { id, items, .. } => items.iter().map(|(idx, _)| Event::DirSize { id: *id, idx: *idx, size: 5 }).chain([Event::DirSize { id: *id, idx: 99, size: 1 }]).collect(),
             _ => Vec::new(),
         })
@@ -357,7 +361,7 @@ fn trash_goes_to_the_agent_and_the_rest_to_the_share() {
 fn without_an_agent_everything_uses_the_share() {
     let (tx, events) = unbounded();
     let local = Arc::new(Recorder::default());
-    let wsl = WslProvider::new("Ubuntu".into(), None, local.clone(), tx, Arc::new(|| {}), Timing::default()).unwrap();
+    let wsl = WslProvider::new("Ubuntu".into(), None, local.clone(), tx, Arc::new(|| {}), Timing::default(), Clipboard::default()).unwrap();
     let l = list(&wsl, 1, 1, "/home");
     until("share", || local.0.lock().unwrap().len() == 2);
     assert!(events.try_recv().is_err());
@@ -372,4 +376,109 @@ fn simplified_mode_reports_unmappable_operations() {
     s.wsl.submit(ProviderRequest::Op { tab: 3, id: 5, op: FileOp::Trash(vec![FsPath::parse_bytes(b"/tmp/bad\xFF").unwrap()]), ctl: OpCtl::default() });
     let done = event(&s.events, |e| if let ProviderEvent::OpDone { tab: 3, id: 5, error, .. } = e { error } else { None });
     assert_eq!(done, UNMAPPABLE);
+}
+
+fn op_events(req: &Request) -> Option<Vec<Event>> {
+    let progress = OpProgress { items: 1, total_items: 2, ..OpProgress::default() };
+    let conflict = Conflict { source: unix("/src/a"), target: unix("/dst/a"), from: Meta::default(), to: Meta::default() };
+    Some(match req {
+        Request::Op { id, .. } => vec![Event::OpProgress { id: *id, progress }, Event::OpConflict { id: *id, conflict }],
+        Request::Answer { id, choice: Some(Resolve::Replace), all: true } => vec![Event::OpDone { id: *id, error: None, items: vec![(unix("/src/a"), unix("/dst/a"))] }],
+        Request::Cancel { id } => vec![Event::OpDone { id: *id, error: Some(CANCELLED.into()), items: Vec::new() }],
+        _ => Vec::new(),
+    })
+}
+
+fn copy() -> FileOp {
+    FileOp::Copy { items: vec![unix("/src/a")], dest: unix("/dst") }
+}
+
+#[test]
+fn operations_run_on_the_agent_with_progress_and_conflicts() {
+    let s = setup(Fake::new(op_events), Timing::default());
+    let ctl = OpCtl::default();
+    s.wsl.submit(ProviderRequest::Op { tab: 1, id: 4, op: copy(), ctl: ctl.clone() });
+    let progress = event(&s.events, |e| if let ProviderEvent::OpProgress { tab: 1, id: 4, progress } = e { Some(progress) } else { None });
+    assert_eq!((progress.items, progress.total_items), (1, 2));
+    let conflict = event(&s.events, |e| if let ProviderEvent::OpConflict { tab: 1, id: 4, conflict } = e { Some(conflict) } else { None });
+    assert_eq!(conflict.target, unix("/dst/a"));
+    ctl.answer(Resolve::Replace, true);
+    let done = event(&s.events, |e| if let ProviderEvent::OpDone { tab: 1, id: 4, error, report } = e { Some((error, report)) } else { None });
+    assert_eq!(done, (None, Some(OpReport { op: copy(), items: vec![(unix("/src/a"), unix("/dst/a"))] })));
+    assert_eq!(ctl.policy(), Some(Resolve::Replace));
+    assert!(matches!(&s.fake.seen()[..], [Request::Op { id: 1, policy: None, .. }, Request::Answer { id: 1, choice: Some(Resolve::Replace), all: true }]));
+    assert!(s.local.0.lock().unwrap().is_empty());
+}
+
+#[test]
+fn cancelling_an_operation_reaches_the_agent() {
+    let s = setup(Fake::new(|req| if matches!(req, Request::Op { .. }) { Some(Vec::new()) } else { op_events(req) }), Timing::default());
+    let ctl = OpCtl::new(Some(Resolve::Skip));
+    s.wsl.submit(ProviderRequest::Op { tab: 1, id: 5, op: copy(), ctl: ctl.clone() });
+    until("op", || s.fake.seen().iter().any(|r| matches!(r, Request::Op { policy: Some(Resolve::Skip), .. })));
+    ctl.cancel();
+    let error = event(&s.events, |e| if let ProviderEvent::OpDone { id: 5, error, .. } = e { Some(error) } else { None });
+    assert_eq!(error.as_deref(), Some(CANCELLED));
+    assert!(s.fake.seen().contains(&Request::Cancel { id: 1 }));
+}
+
+#[test]
+fn reports_outside_the_operation_drop_the_connection() {
+    let fake = Fake::new(|req| {
+        Some(match req {
+            Request::Op { id, .. } => vec![Event::OpDone { id: *id, error: None, items: vec![(unix("/src/a"), unix("/etc/passwd"))] }],
+            _ => Vec::new(),
+        })
+    });
+    let s = setup(fake, Timing::default());
+    s.wsl.submit(ProviderRequest::Op { tab: 1, id: 6, op: copy(), ctl: OpCtl::default() });
+    let done = event(&s.events, |e| if let ProviderEvent::OpDone { id: 6, error, report, .. } = e { Some((error, report)) } else { None });
+    assert_eq!(done, (Some("The connection to Ubuntu was lost".into()), None));
+    until("stop", || s.fake.stops.load(Ordering::SeqCst) == 1);
+}
+
+static CLEARED: AtomicUsize = AtomicUsize::new(0);
+
+fn cut_inside() -> Result<(Vec<FsPath>, bool), PlatformError> {
+    Ok((vec![FsPath::parse(r"\\wsl.localhost\Ubuntu\src\a").unwrap(), FsPath::parse(r"\\wsl$\ubuntu\src\b").unwrap(), FsPath::parse(r"\\wsl.localhost\Ubuntu\dst\c").unwrap()], true))
+}
+
+fn copied_from_windows() -> Result<(Vec<FsPath>, bool), PlatformError> {
+    Ok((vec![FsPath::parse(r"\\wsl.localhost\Ubuntu\src\a").unwrap(), FsPath::parse(r"C:\x").unwrap()], false))
+}
+
+#[test]
+fn paste_inside_the_distro_runs_on_the_agent_and_clears_a_cut() {
+    let fake = Fake::new(|req| {
+        Some(match req {
+            Request::Op { id, .. } => vec![Event::OpDone { id: *id, error: None, items: vec![(unix("/src/a"), unix("/dst/a"))] }],
+            _ => Vec::new(),
+        })
+    });
+    let clear = || {
+        CLEARED.fetch_add(1, Ordering::SeqCst);
+    };
+    let s = setup_with(fake, Timing::default(), Clipboard { files: cut_inside, clear });
+    s.wsl.submit(ProviderRequest::Op { tab: 1, id: 7, op: FileOp::Paste { dest: unix("/dst") }, ctl: OpCtl::default() });
+    let report = event(&s.events, |e| if let ProviderEvent::OpDone { id: 7, report, .. } = e { report } else { None });
+    assert_eq!(report.op, FileOp::Move { items: vec![unix("/src/a"), unix("/src/b")], dest: unix("/dst") });
+    assert_eq!(CLEARED.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn paste_from_outside_the_distro_goes_to_the_share() {
+    let s = setup_with(Fake::new(op_events), Timing::default(), Clipboard { files: copied_from_windows, clear: || {} });
+    s.wsl.submit(ProviderRequest::Op { tab: 1, id: 8, op: FileOp::Paste { dest: unix("/dst") }, ctl: OpCtl::default() });
+    until("share", || s.local.0.lock().unwrap().len() == 1);
+    assert!(matches!(&s.local.0.lock().unwrap()[0], ProviderRequest::Op { id: 8, op: FileOp::Paste { dest }, .. } if dest.as_bytes() == br"\\wsl.localhost\Ubuntu\dst"));
+    assert_eq!(s.fake.launches.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn windows_form_operations_skip_the_agent() {
+    let s = setup(Fake::new(op_events), Timing::default());
+    let op = FileOp::Delete(vec![FsPath::parse(r"\\wsl.localhost\Ubuntu\tmp\a").unwrap()]);
+    s.wsl.submit(ProviderRequest::Op { tab: 1, id: 9, op: op.clone(), ctl: OpCtl::default() });
+    until("share", || s.local.0.lock().unwrap().len() == 1);
+    assert!(matches!(&s.local.0.lock().unwrap()[0], ProviderRequest::Op { id: 9, op: o, .. } if *o == op));
 }

@@ -4,7 +4,7 @@ mod wsl;
 
 pub use indexer::{root_of, start_indexer};
 pub use local::{via_unc, LocalProvider, CANCELLED};
-pub use wsl::{AgentImage, AgentImages, AgentLauncher, AgentProcess, Timing, WslProvider, UNMAPPABLE};
+pub use wsl::{AgentImage, AgentImages, AgentLauncher, AgentProcess, Clipboard, Timing, WslProvider, UNMAPPABLE};
 
 use crossbeam_channel::Sender;
 use flit_core::atlas::Slot;

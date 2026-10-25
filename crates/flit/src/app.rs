@@ -413,7 +413,7 @@ impl<P: Platform> Handler<P> {
         let distro = known.iter().find(|d| d.eq_ignore_ascii_case(&distro)).cloned().unwrap_or(distro);
         if !self.wsl.contains_key(&distro) {
             let launcher = P::wsl_launcher(&distro, &agents::AGENTS);
-            match WslProvider::new(distro.clone(), launcher, self.local.clone(), self.events_tx.clone(), self.wake.clone(), Timing::default()) {
+            match WslProvider::new(distro.clone(), launcher, self.local.clone(), self.events_tx.clone(), self.wake.clone(), Timing::default(), Clipboard::of::<P::Shell>()) {
                 Ok(p) => {
                     self.wsl.insert(distro.clone(), p);
                 }

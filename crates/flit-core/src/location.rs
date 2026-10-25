@@ -123,6 +123,13 @@ impl Location {
         FsPath::parse_exact(b).map(Self::from_local)
     }
 
+    pub fn on(provider: &ProviderId, path: FsPath) -> Self {
+        match provider {
+            ProviderId::Wsl(distro) if path.kind() == PathKind::Unix => Location::Wsl { distro: distro.clone(), path },
+            _ => Self::from_local(path),
+        }
+    }
+
     pub fn from_local(p: FsPath) -> Self {
         if let Some((server, share, rest)) = p.unc_parts() {
             if WSL_HOSTS.iter().any(|h| server.eq_ignore_ascii_case(h)) {

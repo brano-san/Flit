@@ -1,18 +1,20 @@
 use crate::fs::{dir_sizes, fs_error, host, scan, stat_path};
 use crate::inotify::{Notice, Notify};
+use crate::ops;
 use crate::trash::Trash;
 use crossbeam_channel::{unbounded, Sender};
-use flit_core::provider::FileOp;
+use flit_core::provider::{FileOp, OpCtl};
 use flit_core::{FsError, FsErrorKind, FsPath};
+use flit_platform::Job;
 use flit_proto::listing::{check_name, EntryBatch};
 use flit_proto::provider::{Event, ReqId, Request, VERSION};
 use flit_proto::transport::{encode, read_frame, read_hello, Hello, ProtoError, Protocol};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::io::{self, BufWriter, Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 const BATCH_EVERY: Duration = Duration::from_millis(16);
@@ -27,12 +29,17 @@ pub fn hello(build: String) -> Hello {
 struct Ctx {
     events: Sender<Event>,
     cancelled: Arc<Mutex<HashSet<ReqId>>>,
+    ops: Arc<Mutex<HashMap<ReqId, OpCtl>>>,
     trash: Arc<Option<Trash>>,
 }
 
 impl Ctx {
     fn send(&self, ev: Event) {
         let _ = self.events.send(ev);
+    }
+
+    fn ops(&self) -> MutexGuard<'_, HashMap<ReqId, OpCtl>> {
+        self.ops.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     fn is_cancelled(&self, id: ReqId) -> bool {
@@ -106,33 +113,29 @@ fn sizes(ctx: &Ctx, id: ReqId, dir: &FsPath, items: Vec<(u32, Vec<u8>)>) {
     ctx.finish(id);
 }
 
-fn trash_all(trash: Option<&Trash>, paths: &[FsPath]) -> Option<String> {
-    let Some(trash) = trash else { return Some("The Trash folder is unknown: neither XDG_DATA_HOME nor HOME is set".into()) };
-    let failures: Vec<String> = paths
-        .iter()
-        .filter_map(|p| {
-            let path = host(p).ok_or_else(|| io::Error::from_raw_os_error(libc::EINVAL)).and_then(|h| trash.trash(h).map(drop));
-            path.err().map(|e| format!("Cannot move {} to the Trash: {e}", p.display()))
-        })
-        .collect();
-    match failures.len() {
-        0 => None,
-        1 => failures.into_iter().next(),
-        n => Some(format!("{n} items failed. {}", failures[0])),
-    }
+fn op(ctx: &Ctx, id: ReqId, op: &FileOp, ctl: OpCtl) {
+    let (progress, conflict) = (ctx.events.clone(), ctx.events.clone());
+    let job = Job::new(
+        ctl,
+        Box::new(move |p| {
+            let _ = progress.send(Event::OpProgress { id, progress: p });
+        }),
+        Box::new(move |c| {
+            let _ = conflict.send(Event::OpConflict { id, conflict: c });
+        }),
+    );
+    let out = ops::run(op, &job, ctx.trash.as_ref().as_ref());
+    ctx.ops().remove(&id);
+    ctx.send(Event::OpDone { id, error: out.error.map(|e| e.message), items: out.items });
 }
 
-fn op(ctx: &Ctx, id: ReqId, op: &FileOp) {
-    let error = match op {
-        FileOp::Trash(paths) => trash_all(ctx.trash.as_ref().as_ref(), paths),
-        _ => Some("The Linux agent does not run this operation".into()),
-    };
-    ctx.send(Event::OpDone { id, error });
-}
-
-fn spawn(name: &str, body: impl FnOnce() + Send + 'static) {
-    if let Err(e) = std::thread::Builder::new().name(name.into()).spawn(body) {
-        eprintln!("flit-wsl-agent: cannot start {name}: {e}");
+fn spawn(name: &str, body: impl FnOnce() + Send + 'static) -> bool {
+    match std::thread::Builder::new().name(name.into()).spawn(body) {
+        Ok(_) => true,
+        Err(e) => {
+            eprintln!("flit-wsl-agent: cannot start {name}: {e}");
+            false
+        }
     }
 }
 
@@ -155,7 +158,7 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static, build: S
     let theirs = ours.clone();
     spawn("flit-agent-out", move || write_loop(output, theirs, rx));
     read_hello(&mut input, &ours)?;
-    let ctx = Ctx { events, cancelled: Arc::default(), trash: Arc::new(trash) };
+    let ctx = Ctx { events, cancelled: Arc::default(), ops: Arc::default(), trash: Arc::new(trash) };
     let sink = ctx.events.clone();
     let notify = Notify::new(move |id, notice| {
         let _ = sink.send(match notice {
@@ -175,19 +178,35 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static, build: S
         let c = ctx.clone();
         match req {
             Request::Shutdown => return Ok(()),
-            Request::Cancel { id } => {
-                if !notify.as_ref().is_some_and(|n| n.unwatch(&id)) {
-                    ctx.cancel(id);
-                }
-            }
+            Request::Cancel { id } => match ctx.ops().get(&id) {
+                Some(ctl) => ctl.cancel(),
+                None if notify.as_ref().is_some_and(|n| n.unwatch(&id)) => {}
+                None => ctx.cancel(id),
+            },
+            Request::Answer { id, choice, all } => match (ctx.ops().get(&id), choice) {
+                (Some(ctl), Some(choice)) => ctl.answer(choice, all),
+                (Some(ctl), None) => ctl.cancel(),
+                (None, _) => {}
+            },
             Request::Watch { id, path } => watch(notify.as_ref(), id, &path),
             Request::Stat { id, path } => {
                 let result = host(&path).map_or(Err(UNAVAILABLE), |p| stat_path(p).map_err(|e| fs_error(&e)));
                 ctx.send(Event::Stat { id, result });
             }
-            Request::List { id, path } => spawn("flit-agent-list", move || list(&c, id, &path)),
-            Request::DirSizes { id, dir, items } => spawn("flit-agent-sizes", move || sizes(&c, id, &dir, items)),
-            Request::Op { id, op: o } => spawn("flit-agent-op", move || op(&c, id, &o)),
+            Request::List { id, path } => {
+                spawn("flit-agent-list", move || list(&c, id, &path));
+            }
+            Request::DirSizes { id, dir, items } => {
+                spawn("flit-agent-sizes", move || sizes(&c, id, &dir, items));
+            }
+            Request::Op { id, op: o, policy } => {
+                let ctl = OpCtl::new(policy);
+                ctx.ops().insert(id, ctl.clone());
+                if !spawn("flit-agent-op", move || op(&c, id, &o, ctl)) {
+                    ctx.ops().remove(&id);
+                    ctx.send(Event::OpDone { id, error: Some("The Linux agent cannot start another operation".into()), items: Vec::new() });
+                }
+            }
         }
     }
 }

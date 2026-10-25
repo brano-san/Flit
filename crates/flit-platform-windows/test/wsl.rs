@@ -3,10 +3,10 @@ use crate::fs::NtFs;
 use crate::watcher::DirWatcher;
 use crossbeam_channel::{unbounded, Receiver};
 use flit_core::listing::ListingBuilder;
-use flit_core::provider::{GenToken, SnapshotSlot};
+use flit_core::provider::{FileOp, GenToken, OpCtl, Resolve, SnapshotSlot};
 use flit_core::sort::{CaseMode, ViewSpec};
 use flit_core::{FsPath, ProviderEvent, ProviderRequest};
-use flit_platform::{Fs, Provider, Timing, Watcher, WslProvider};
+use flit_platform::{Clipboard, Fs, Job, Provider, Timing, Watcher, WslProvider};
 use flit_proto::transport::{read_hello, write_frame, Hello, Protocol};
 use std::sync::{Arc, Mutex};
 
@@ -64,8 +64,108 @@ impl Provider for Nothing {
 fn provider() -> (WslProvider, Receiver<ProviderEvent>, Arc<Nothing>) {
     let (tx, rx) = unbounded();
     let local = Arc::new(Nothing::default());
-    let p = WslProvider::new(distro(), Some(Box::new(WslLauncher::new(&distro(), image()))), local.clone(), tx, Arc::new(|| {}), Timing::default()).unwrap();
+    let p = WslProvider::new(distro(), Some(Box::new(WslLauncher::new(&distro(), image()))), local.clone(), tx, Arc::new(|| {}), Timing::default(), Clipboard::default()).unwrap();
     (p, rx, local)
+}
+
+fn agent_op(p: &WslProvider, rx: &Receiver<ProviderEvent>, op: FileOp) -> (Duration, Vec<(FsPath, FsPath)>) {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let t = Instant::now();
+    p.submit(ProviderRequest::Op { tab: 1, id, op, ctl: OpCtl::new(Some(Resolve::Replace)) });
+    loop {
+        if let ProviderEvent::OpDone { id: done, error, report, .. } = rx.recv_timeout(Duration::from_secs(120)).expect("agent op") {
+            if done == id {
+                assert_eq!(error, None);
+                return (t.elapsed(), report.map(|r| r.items).unwrap_or_default());
+            }
+        }
+    }
+}
+
+fn share_op(op: FileOp) -> Duration {
+    let t = Instant::now();
+    let out = crate::engine::run(&op, &Job::detached(Resolve::Replace));
+    assert!(out.error.is_none() && out.rest.is_none(), "{:?}", out.error.map(|e| e.message));
+    t.elapsed()
+}
+
+fn ux(p: &str) -> FsPath {
+    FsPath::parse(p).unwrap()
+}
+
+fn unc(p: &str) -> FsPath {
+    FsPath::parse(&format!(r"\\wsl.localhost\{}{}", distro(), p.replace('/', "\\"))).unwrap()
+}
+
+#[test]
+#[ignore]
+fn real_agent_copies_renames_and_deletes_names_windows_cannot_hold() {
+    let dir = LinuxDir::new("ops-e2e", 0);
+    run(&format!(r"cd {0} && mkdir src && printf x > 'src/a:b' && printf y > src/$(printf 'bad\377') && ln -s /etc src/link && mkdir dst", dir.0));
+    let (p, rx, local) = provider();
+    let at = |rel: &str| ux(&format!("{}/{rel}", dir.0));
+    agent_op(&p, &rx, FileOp::Copy { items: vec![at("src")], dest: at("dst") });
+    assert_eq!(run(&format!(r"cd {}/dst/src && ls -A | wc -l && readlink link", dir.0)).split_whitespace().collect::<Vec<_>>(), ["3", "/etc"]);
+    agent_op(&p, &rx, FileOp::Rename { item: at("dst/src/a:b"), name: b"c?d".to_vec() });
+    assert_eq!(run(&format!(r"cat '{}/dst/src/c?d'", dir.0)), "x");
+    agent_op(&p, &rx, FileOp::Delete(vec![at("dst/src")]));
+    assert_eq!(run(&format!("ls -A {}/dst | wc -l; test -e /etc/hostname && echo kept", dir.0)).split_whitespace().collect::<Vec<_>>(), ["0", "kept"]);
+    assert!(local.0.lock().unwrap().is_empty(), "nothing went through \\\\wsl.localhost: {:?}", local.0.lock().unwrap());
+}
+
+#[test]
+#[ignore]
+fn bench_wsl_operations_agent_vs_share() {
+    const OPS_RUNS: usize = 3;
+    let dir = LinuxDir::new("bench-ops", 0);
+    let d = dir.0.clone();
+    run(&format!("cd {d} && mkdir small && cd small && i=0; while [ $i -lt 1000 ]; do head -c 1024 /dev/urandom > f-$i; i=$((i+1)); done"));
+    run(&format!("head -c 268435456 /dev/urandom > {d}/big"));
+    run(&format!("cd {d} && mkdir tenk && cd tenk && i=0; while [ $i -lt 10000 ]; do : > f-$i; i=$((i+1)); done"));
+    let (p, rx, local) = provider();
+    list(&p, 1, &d, false);
+    let mut rows: Vec<(String, Vec<Duration>, Vec<Duration>)> = Vec::new();
+    let mut record = |label: &str, agent: Duration, share: Duration| match rows.iter_mut().find(|r| r.0 == label) {
+        Some(r) => {
+            r.1.push(agent);
+            r.2.push(share);
+        }
+        None => rows.push((label.to_owned(), vec![agent], vec![share])),
+    };
+    for k in 0..OPS_RUNS {
+        let mut timings = [[Duration::ZERO; 2]; 8];
+        for (side, agent) in [true, false].into_iter().enumerate() {
+            let tag = format!("{k}{}", if agent { "a" } else { "s" });
+            run(&format!("mkdir {d}/c{tag} {d}/m{tag} {d}/b{tag} {d}/bm{tag}"));
+            let small: Vec<String> = (0..1000).map(|i| format!("{d}/c{tag}/small/f-{i}")).collect();
+            let ops = [
+                FileOp::Copy { items: vec![ux(&format!("{d}/small"))], dest: ux(&format!("{d}/c{tag}")) },
+                FileOp::Move { items: small.iter().map(|s| ux(s)).collect(), dest: ux(&format!("{d}/m{tag}")) },
+                FileOp::Delete(vec![ux(&format!("{d}/m{tag}"))]),
+                FileOp::Copy { items: vec![ux(&format!("{d}/big"))], dest: ux(&format!("{d}/b{tag}")) },
+                FileOp::Move { items: vec![ux(&format!("{d}/b{tag}/big"))], dest: ux(&format!("{d}/bm{tag}")) },
+                FileOp::Delete(vec![ux(&format!("{d}/bm{tag}/big"))]),
+                FileOp::Rename { item: ux(&format!("{d}/tenk")), name: b"tenk2".to_vec() },
+                FileOp::Rename { item: ux(&format!("{d}/tenk2")), name: b"tenk".to_vec() },
+            ];
+            for (i, op) in ops.into_iter().enumerate() {
+                timings[i][side] = if agent { agent_op(&p, &rx, op).0 } else { share_op(op.map_paths(|p| Some(unc(&String::from_utf8_lossy(p.as_bytes())))).unwrap()) };
+            }
+            assert_eq!(run(&format!("ls {d}/c{tag}/small | wc -l; ls {d}/m{tag} 2>/dev/null | wc -l; ls {d}/bm{tag} | wc -l; ls {d}/tenk | wc -l")).split_whitespace().collect::<Vec<_>>(), ["0", "0", "0", "10000"]);
+            run(&format!("rm -rf {d}/c{tag} {d}/b{tag} {d}/bm{tag}"));
+        }
+        let labels = ["copy 1000 x 1 KB", "move 1000 x 1 KB", "delete 1000 x 1 KB", "copy 256 MB", "move 256 MB", "delete 256 MB", "rename 10k folder", "rename 10k folder back"];
+        labels.iter().zip(timings).for_each(|(l, [a, s])| record(l, a, s));
+    }
+    let ms = |mut v: Vec<Duration>| {
+        v.sort();
+        v[v.len() / 2].as_secs_f64() * 1e3
+    };
+    for (label, agent, share) in rows {
+        eprintln!("BENCH {label:<26} agent {:>10.1} ms   9P {:>10.1} ms", ms(agent), ms(share));
+    }
+    assert!(local.0.lock().unwrap().is_empty());
 }
 
 fn list(p: &WslProvider, gen: u64, dir: &str, watch: bool) -> (usize, Duration) {
