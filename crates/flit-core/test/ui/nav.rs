@@ -5,7 +5,7 @@ use crate::path::FsPath;
 use crate::provider::{FileOp, ProviderEvent, ProviderRequest, TabId};
 use crate::sort::{self, CaseMode, SortKeys};
 use crate::text::tests::Mono;
-use crate::ui::{Drive, Effect, KnownFolder, Persisted, Places};
+use crate::ui::{Drag, Drive, Effect, KnownFolder, Persisted, Places};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -250,6 +250,26 @@ fn pinning_from_keyboard_and_hover_button() {
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Pinned(p) if p.len() == 1)));
     app.set_pinned(vec![loc(r"D:\shared")]);
     assert_eq!(app.nav.sidebar.items[0].label, "shared");
+}
+
+#[test]
+fn pinned_folders_reorder_by_drag() {
+    let mut app = app_at(r"C:\x");
+    app.set_pinned(vec![loc(r"C:\a"), loc(r"C:\b"), loc(r"C:\c")]);
+    app.drain_effects().for_each(drop);
+    let (first, third) = (app.nav.sidebar.rects[0], app.nav.sidebar.rects[2]);
+    let x = first.x + 20.0;
+    app.on_event(&Event::MouseDown { x, y: first.y + 5.0, button: MouseButton::Left, clicks: 1 }, t0());
+    app.on_event(&Event::MouseMove { x, y: first.y + 7.0 }, t0());
+    assert_eq!(app.drag, Drag::None, "a small jitter is still a click");
+    app.on_event(&Event::MouseMove { x, y: third.bottom() - 2.0 }, t0());
+    assert_eq!(app.drag, Drag::PinMove { from: 0, to: 3 });
+    app.frame(&mut Gfx::new(Mono, 1024), t0());
+    app.on_event(&Event::MouseUp { x, y: third.bottom() - 2.0, button: MouseButton::Left }, t0());
+    assert_eq!(app.nav_state().pinned, [loc(r"C:\b"), loc(r"C:\c"), loc(r"C:\a")]);
+    let fx: Vec<Effect> = app.drain_effects().collect();
+    assert!(fx.iter().any(|e| matches!(e, Effect::Pinned(p) if p.len() == 3)));
+    assert!(!fx.iter().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::List { .. }, .. })), "dropping does not navigate");
 }
 
 #[test]

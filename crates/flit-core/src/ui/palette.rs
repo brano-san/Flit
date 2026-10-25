@@ -36,18 +36,12 @@ pub fn score(query: &str, title: &str) -> Option<u32> {
         return Some(3000 - p.min(999) as u32 + if word { 1000 } else { 0 });
     }
     let chars: Vec<char> = t.chars().collect();
-    let (mut score, mut pos, mut last) = (1000u32, 0usize, None);
+    let word_start = |i: usize| i == 0 || chars[i - 1] == ' ';
+    let (mut score, mut next) = (1000u32, 0usize);
     for qc in q.chars().filter(|c| !c.is_whitespace()) {
-        let found = (pos..chars.len()).find(|&i| chars[i] == qc)?;
-        if found == 0 || chars[found - 1] == ' ' {
-            score += 20;
-        }
-        if last == Some(found.wrapping_sub(1)) {
-            score += 10;
-        }
-        score = score.saturating_sub((found - pos) as u32);
-        last = Some(found);
-        pos = found + 1;
+        let found = (next..chars.len()).find(|&i| chars[i] == qc && ((i == next && next > 0) || word_start(i)))?;
+        score = (score + if found == next { 10 } else { 0 }).saturating_sub((found - next) as u32);
+        next = found + 1;
     }
     Some(score.min(1999))
 }

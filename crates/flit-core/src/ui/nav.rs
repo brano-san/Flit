@@ -68,7 +68,7 @@ impl App {
         false
     }
 
-    pub(super) fn nav_mouse_down(&mut self, h: Hit, x: f32, button: MouseButton, clicks: u8, now: Instant) -> bool {
+    pub(super) fn nav_mouse_down(&mut self, h: Hit, (x, y): (f32, f32), button: MouseButton, clicks: u8, now: Instant) -> bool {
         let palette_hit = matches!(h, Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside);
         if self.nav.palette.is_some() && !palette_hit {
             self.close_palette();
@@ -89,7 +89,10 @@ impl App {
             (MouseButton::Left, Hit::Splitter) => self.begin_splitter_drag(x),
             (MouseButton::Left, Hit::FilterField) => self.filter_click(x, clicks),
             (MouseButton::Left, Hit::PaletteField) => self.palette_click(x, clicks),
-            (MouseButton::Left, Hit::Side(_) | Hit::SidePin(_) | Hit::FilterClose | Hit::PaletteRow(_)) => self.pressed = h,
+            (MouseButton::Left, Hit::Side(_) | Hit::SidePin(_) | Hit::FilterClose | Hit::PaletteRow(_)) => {
+                self.pressed = h;
+                self.nav.sidebar.press_y = y;
+            }
             (_, Hit::PaletteOutside) => self.close_palette(),
             _ => {}
         }

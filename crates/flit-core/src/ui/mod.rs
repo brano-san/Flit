@@ -220,6 +220,7 @@ enum Drag {
     ColSep { col: usize, start_x: f32, start_w: f32 },
     EditSelect,
     Splitter { start_x: f32, start_w: f32 },
+    PinMove { from: usize, to: usize },
 }
 
 #[derive(Default)]
@@ -913,7 +914,11 @@ impl App {
                 return;
             }
             Drag::Splitter { start_x, start_w } => return self.drag_splitter(x, start_x, start_w),
+            Drag::PinMove { from, .. } => return self.drag_pin(from, y),
             Drag::None => {}
+        }
+        if self.start_pin_drag(y) {
+            return;
         }
         let h = self.hit(x, y);
         let cursor = match h {
@@ -932,7 +937,7 @@ impl App {
     fn mouse_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8, now: Instant) {
         self.dirty = true;
         let h = self.hit(x, y);
-        if self.nav_mouse_down(h, x, button, clicks, now) {
+        if self.nav_mouse_down(h, (x, y), button, clicks, now) {
             return;
         }
         match (button, h) {
@@ -987,6 +992,9 @@ impl App {
         let was = std::mem::replace(&mut self.drag, Drag::None);
         let pressed = std::mem::replace(&mut self.pressed, Hit::None);
         self.dirty = true;
+        if let Drag::PinMove { from, to } = was {
+            return self.drop_pin(from, to);
+        }
         if button != MouseButton::Left || was != Drag::None {
             return;
         }

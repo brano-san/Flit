@@ -7,11 +7,15 @@ fn titles(q: &str) -> Vec<&'static str> {
 #[test]
 fn substrings_beat_fuzzy_matches_and_word_starts_win() {
     assert_eq!(score("", "Anything"), Some(0));
-    assert!(score("tab", "New tab").unwrap() > score("ntb", "New tab").unwrap());
+    assert!(score("tab", "New tab").unwrap() > score("nt", "New tab").unwrap());
     assert!(score("new", "New tab").unwrap() > score("ew", "New tab").unwrap());
     assert!(score("tab", "New tab").unwrap() > 2000);
-    assert!(score("ntb", "New tab").unwrap() < 2000);
-    assert!(score("nt", "New tab").unwrap() > score("nb", "New tab").unwrap());
+    assert!(score("nt", "New tab").unwrap() < 2000);
+    assert!(score("netab", "New tab").unwrap() > score("nt", "New tab").unwrap());
+    assert_eq!(score("ntb", "New tab"), None, "fuzzy letters must start a word or follow the previous match");
+    assert_eq!(score("sel", "Clear selection"), Some(3994));
+    assert_eq!(score("so", "Clear selection"), None);
+    assert!(score("so", "Show or hide hidden files").is_some());
     assert_eq!(score("xyz", "New tab"), None);
     assert_eq!(score("  NEW TAB ", "New tab"), score("new tab", "New tab"));
 }

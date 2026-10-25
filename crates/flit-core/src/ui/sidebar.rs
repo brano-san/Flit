@@ -163,6 +163,7 @@ pub(super) struct Sidebar {
     scroll: f32,
     content_h: f32,
     pub cursor: usize,
+    pub press_y: f32,
 }
 
 fn pinned_label(loc: &Location) -> String {
@@ -302,6 +303,37 @@ impl App {
         if let Some(loc) = self.nav.sidebar.items.get(i).map(|it| it.loc.clone()) {
             self.toggle_pin(loc);
         }
+    }
+
+    pub(super) fn start_pin_drag(&mut self, y: f32) -> bool {
+        let Hit::Side(i) = self.pressed else { return false };
+        let sb = &self.nav.sidebar;
+        if sb.items.get(i).is_none_or(|it| it.section != Section::Pinned) || (y - sb.press_y).abs() < self.s(5.0) {
+            return false;
+        }
+        self.drag_pin(i, y);
+        true
+    }
+
+    pub(super) fn drag_pin(&mut self, from: usize, y: f32) {
+        let sb = &self.nav.sidebar;
+        let to = sb.rects.iter().take(sb.state.pinned.len()).filter(|r| r.y + r.h / 2.0 < y).count();
+        self.drag = Drag::PinMove { from, to };
+        self.dirty = true;
+    }
+
+    pub(super) fn drop_pin(&mut self, from: usize, to: usize) {
+        let pinned = &mut self.nav.sidebar.state.pinned;
+        let target = if to > from { to - 1 } else { to };
+        if from >= pinned.len() || target == from {
+            return;
+        }
+        let loc = pinned.remove(from);
+        pinned.insert(target.min(pinned.len()), loc);
+        let list = pinned.clone();
+        self.nav.sidebar.rebuild();
+        self.effects.push(Effect::Pinned(list));
+        self.layout();
     }
 
     pub(super) fn open_side_item(&mut self, i: usize, new_tab: bool, now: Instant) {
@@ -499,6 +531,11 @@ impl App {
                 let glyph = if sb.is_pinned(&it.loc) { G_UNPIN } else { G_PIN };
                 centered(g, pin_r, glyph, pin_font, t.text_dim);
             }
+        }
+        if let Drag::PinMove { to, .. } = self.drag {
+            let n = sb.state.pinned.len().min(sb.rects.len());
+            let y = sb.rects.get(to).filter(|_| to < n).map_or_else(|| sb.rects[n.saturating_sub(1)].bottom(), |r| r.y);
+            g.dl.rect(Rect::new(area.x + s8, y - 1.0, area.w - 2.0 * s8, self.s(2.0)), t.accent);
         }
         g.dl.set_clip(None);
     }
