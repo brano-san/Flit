@@ -13,6 +13,8 @@ mod instance;
 mod mft;
 mod pipe;
 mod places;
+mod preview;
+mod prevhost;
 mod recycle;
 mod service;
 mod shell;

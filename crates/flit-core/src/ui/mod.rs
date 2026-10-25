@@ -14,6 +14,7 @@ mod marquee;
 mod menu;
 mod nav;
 pub mod palette;
+mod preview_pane;
 pub mod sidebar;
 mod address;
 mod tabbar;
@@ -25,6 +26,7 @@ pub use sidebar::{Drive, KnownFolder, NavState, Places};
 pub use details::{folder_key, Columns, FolderView, FolderViews, ViewPrefs, THUMB_CACHE_MB};
 pub use layouts::{adaptive_layout, has_thumbnail, is_media, LayoutMode, Sizes, LAYOUTS};
 pub use jobs::JobState;
+pub use preview_pane::PaneState;
 pub use menu::MenuItem;
 pub use tab::Tab;
 pub use address::Typed;
@@ -38,6 +40,7 @@ use crate::location::{Location, ProviderId};
 use crate::name;
 use crate::open::{self, Open, OpenTarget, ResolveError, Route};
 use crate::path::{FsPath, PathKind};
+use crate::preview::{HostCmd, PreviewRequest};
 use crate::provider::{ProviderEvent, ProviderRequest, Resolve, TabId};
 use crate::recycle;
 use crate::render::{Color, Rect};
@@ -192,6 +195,9 @@ pub enum Effect {
     Pinned(Vec<Location>),
     RefreshPlaces,
     Search(SearchRequest),
+    Preview(PreviewRequest),
+    QuickView(FsPath),
+    Host(HostCmd),
     Timer(Duration),
     MoveTab { tab: MovedTab, at: Option<(f32, f32)>, last: bool },
     RestoreSession,
@@ -256,6 +262,7 @@ enum Hit {
     Row(usize),
     Group(usize),
     Pane(usize, Option<usize>),
+    Preview(preview_pane::PaneHit),
     ListEmpty,
     Track,
     Thumb,
@@ -297,6 +304,7 @@ enum Drag {
     EditSelect,
     Splitter { start_x: f32, start_w: f32 },
     PinMove { from: usize, to: usize },
+    Preview { hit: preview_pane::PaneHit, start: f32, size: f32 },
     Marquee,
     Tab { origin: usize, x: f32, y: f32, moved: bool, torn: bool },
 }
@@ -327,6 +335,7 @@ struct Layout {
     icon: f32,
     flow: flow::FlowParams,
     panes: Vec<Rect>,
+    bottom: f32,
 }
 
 pub struct App {
@@ -390,6 +399,7 @@ pub struct App {
     strip: tabbar::Strip,
     addr: address::Address,
     tag_fixes: Vec<(FsPath, u32, Instant)>,
+    preview: preview_pane::PreviewPane,
 }
 
 impl App {
@@ -451,6 +461,7 @@ impl App {
             strip: Default::default(),
             addr: Default::default(),
             tag_fixes: Vec::new(),
+            preview: Default::default(),
         };
         let mut start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
         let total = start.len();
@@ -935,6 +946,7 @@ impl App {
             l.sizes = Rect::default();
             l.bin = Default::default();
         }
+        self.layout_preview();
         self.layout_look();
         let l = &mut self.layout;
         l.columns.clear();
@@ -980,7 +992,7 @@ impl App {
         if let Some(h) = self.jobs_hit(x, y) {
             return h;
         }
-        if let Some(h) = self.address_hit(x, y).or_else(|| self.nav_hit(x, y)) {
+        if let Some(h) = self.address_hit(x, y).or_else(|| self.nav_hit(x, y)).or_else(|| self.preview_hit(x, y)) {
             return h;
         }
         let l = &self.layout;
@@ -1095,7 +1107,7 @@ impl App {
             Event::MouseDown { x, y, button, clicks } => self.mouse_down(*x, *y, *button, *clicks, now),
             Event::MouseUp { x, y, button } => self.mouse_up(*x, *y, *button, now),
             Event::Wheel { dy, .. } => {
-                if self.jobs_wheel(*dy) || self.nav_wheel(*dy) || self.pane_wheel(*dy) || self.strip_wheel(*dy) {
+                if self.jobs_wheel(*dy) || self.nav_wheel(*dy) || self.pane_wheel(*dy) || self.preview_wheel(*dy) || self.strip_wheel(*dy) {
                     return;
                 }
                 if self.mods.ctrl {
@@ -1140,6 +1152,7 @@ impl App {
             }
             Event::ClipboardChanged(seq) => self.clipboard_changed(*seq),
             Event::SessionEnding => {}
+            Event::Hosted(ev) => self.on_hosted(ev.clone()),
         }
     }
 
@@ -1176,6 +1189,7 @@ impl App {
             Drag::Splitter { start_x, start_w } => return self.drag_splitter(x, start_x, start_w),
             Drag::PinMove { from, .. } => return self.drag_pin(from, y),
             Drag::Tab { .. } => return self.drag_tab(x, y),
+            Drag::Preview { hit, start, size } => return self.preview_drag(hit, x, y, start, size),
             Drag::Marquee | Drag::None => {}
         }
         if self.start_pin_drag(y) {
@@ -1186,6 +1200,7 @@ impl App {
             Hit::ColSep(_) | Hit::Splitter => CursorIcon::ResizeHorizontal,
             Hit::Address if self.editing => CursorIcon::Text,
             Hit::FilterField | Hit::PaletteField => CursorIcon::Text,
+            Hit::Preview(preview_pane::PaneHit::Split) => self.preview_cursor(),
             _ => CursorIcon::Default,
         };
         self.set_cursor(cursor);
@@ -1266,6 +1281,7 @@ impl App {
                 t.scroll_target = (t.scroll_target + dir * len).clamp(0.0, max);
             }
             Hit::Group(_) => self.focus = Focus::List,
+            Hit::Preview(p) => self.preview_mouse_down(p, x, y),
             Hit::ColSep(i) => {
                 let col = self.layout.columns[i];
                 self.drag = Drag::ColSep { col, start_x: x, start_w: self.tab().columns.width(col) };
@@ -1315,6 +1331,7 @@ impl App {
             Hit::Header(c) => self.sort_column(self.layout.columns[c].field()),
             Hit::Group(g) => self.toggle_group(g),
             Hit::Pane(i, Some(row)) => self.open_pane_row(i, row, now),
+            Hit::Preview(p) => self.preview_click(p),
             Hit::Sizes => self.compute_dir_sizes(),
             Hit::Bin(k) => self.bin_button(k),
             Hit::Side(i) => self.open_side_item(i, self.mods.ctrl, now),
@@ -1439,6 +1456,9 @@ impl App {
         if self.mods.ctrl != self.mods.alt {
             return;
         }
+        if c == ' ' && !self.tab().typing(now) {
+            return self.quick_view();
+        }
         if self.tab_mut().type_ahead(c, now) {
             self.reveal_focus(false);
         }
@@ -1520,6 +1540,7 @@ impl App {
             t.scroll = t.scroll_target;
         }
         self.layout();
+        self.sync_preview(now);
 
         let mut arena = std::mem::take(&mut self.arena);
         arena.reset();
@@ -1533,6 +1554,7 @@ impl App {
             } else {
                 self.draw_list(g, &arena, th);
                 self.draw_panes(g, th);
+                self.draw_preview(g, th);
                 self.draw_marquee(g, th);
                 self.draw_ops(g, th);
                 self.draw_header(g, th);

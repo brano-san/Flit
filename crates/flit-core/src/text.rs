@@ -7,6 +7,7 @@ use crate::thumbs::ThumbAtlas;
 pub enum FontFamily {
     Ui,
     Icons,
+    Mono,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

@@ -84,6 +84,7 @@ pub struct DWriteText {
     collection: IDWriteFontCollection,
     ui_family: PCWSTR,
     icon_family: PCWSTR,
+    mono_family: PCWSTR,
     formats: FxHashMap<FontStyle, IDWriteTextFormat>,
     primary: FxHashMap<(FontFamily, bool), Option<DWRITE_FONT_METRICS>>,
     faces: Vec<IDWriteFontFace>,
@@ -106,6 +107,7 @@ impl DWriteText {
             };
             let ui_family = if has(w!("Segoe UI Variable Text")) { w!("Segoe UI Variable Text") } else { w!("Segoe UI") };
             let icon_family = if has(w!("Segoe Fluent Icons")) { w!("Segoe Fluent Icons") } else { w!("Segoe MDL2 Assets") };
+            let mono_family = if has(w!("Cascadia Mono")) { w!("Cascadia Mono") } else { w!("Consolas") };
             let collector = ComObject::new(Collector { runs: RefCell::default() });
             let renderer: IDWriteTextRenderer = collector.to_interface();
             Ok(Self {
@@ -113,6 +115,7 @@ impl DWriteText {
                 collection,
                 ui_family,
                 icon_family,
+                mono_family,
                 formats: FxHashMap::default(),
                 primary: FxHashMap::default(),
                 faces: Vec::new(),
@@ -128,6 +131,7 @@ impl DWriteText {
         match f {
             FontFamily::Ui => self.ui_family,
             FontFamily::Icons => self.icon_family,
+            FontFamily::Mono => self.mono_family,
         }
     }
 

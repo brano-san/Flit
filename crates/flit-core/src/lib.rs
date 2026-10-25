@@ -10,6 +10,7 @@ pub mod name;
 pub mod nav;
 pub mod open;
 pub mod path;
+pub mod preview;
 pub mod provider;
 pub mod recycle;
 pub mod render;

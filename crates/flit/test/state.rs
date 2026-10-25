@@ -107,3 +107,16 @@ fn corrupted_nav_state_falls_back() {
     bytes.extend([0xFF, 0xFF, 0xFF]);
     assert_eq!(Saved::decode(&bytes).unwrap().nav, NavState::default());
 }
+
+#[test]
+fn pane_state_rides_last_and_older_files_keep_the_default() {
+    let pane = PaneState { visible: true, details: true, right_w: 410.0, bottom_h: 300.0, volume: 0.25 };
+    let s = Saved::new(Persisted::default(), None).with_pane(pane);
+    let bytes = s.encode().unwrap();
+    assert_eq!(Saved::decode(&bytes).unwrap().pane, pane);
+    let older = Saved::new(Persisted::default(), None).encode().unwrap();
+    let without = &older[..older.len() - postcard::to_stdvec(&PaneState::default()).unwrap().len()];
+    assert_eq!(Saved::decode(without).unwrap().pane, PaneState::default());
+    let broken = Saved { pane: PaneState { right_w: -1.0, volume: f32::NAN, ..pane }, ..s }.sanitized();
+    assert_eq!((broken.pane.right_w, broken.pane.volume), (PaneState::default().right_w, PaneState::default().volume));
+}

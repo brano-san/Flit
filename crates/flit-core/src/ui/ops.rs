@@ -1159,7 +1159,7 @@ impl App {
             Hit::SideEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose => None,
             Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside => None,
             Hit::OpsButton | Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsClear | Hit::OpsCancel(_) | Hit::OpsMore(_) | Hit::OpsMenu(_) => None,
-            Hit::Dialog | Hit::DialogButton(_) | Hit::DialogCheck | Hit::Modal => None,
+            Hit::Dialog | Hit::DialogButton(_) | Hit::DialogCheck | Hit::Modal | Hit::Preview(_) => None,
             _ if self.layout.status.contains(x, y) => None,
             _ => Some(Target::Reveal),
         }
