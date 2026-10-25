@@ -393,6 +393,7 @@ impl<H: WindowHandler<Win32>> Shared<H> {
         node.window.dpi.set(GetDpiForWindow(hwnd));
         apply_dark(hwnd, opts.dark);
         crate::dragdrop::register(hwnd, Rc::as_ptr(&node) as *const (), drag_thunk::<H>);
+        crate::context_menu::prewarm();
         let _ = SetWindowPos(hwnd, None, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         update_size(&node.window);
         self.nodes.borrow_mut().push(node.clone());
