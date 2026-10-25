@@ -1742,7 +1742,7 @@ impl App {
                     let path = match (wanted, in_bin) {
                         (false, _) => None,
                         (true, true) => recycle::recycled(listing, i),
-                        (true, false) => shell_dir.as_ref().map(|d| d.join(name)),
+                        (true, false) => loc.join(name).to_windows(),
                     };
                     if let Some(path) = path {
                         requests.push(IconRequest { key, kind, path, size: icon_px as u32, gen: tab.gen, row: row as u32 });

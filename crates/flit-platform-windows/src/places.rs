@@ -75,34 +75,42 @@ pub fn watch_lxss(changed: Box<dyn Fn() + Send>) {
     }
 }
 
-pub fn wsl_distros() -> Vec<String> {
+fn lxss() -> Vec<(String, Option<FsPath>)> {
     let mut key = HKEY::default();
-    let mut out = Vec::new();
+    let mut out: Vec<(String, Option<FsPath>)> = Vec::new();
     unsafe {
         if RegOpenKeyExW(HKEY_CURRENT_USER, LXSS, None, KEY_READ, &mut key).is_err() {
             return out;
         }
+        let key = Key(key);
         for index in 0.. {
             let mut sub = [0u16; 256];
             let mut len = sub.len() as u32;
-            if RegEnumKeyExW(key, index, Some(PWSTR(sub.as_mut_ptr())), &mut len, None, None, None, None).is_err() {
+            if RegEnumKeyExW(key.0, index, Some(PWSTR(sub.as_mut_ptr())), &mut len, None, None, None, None).is_err() {
                 break;
             }
-            let mut name = [0u16; 256];
-            let mut size = (name.len() * 2) as u32;
-            let read = RegGetValueW(key, PCWSTR(sub.as_ptr()), w!("DistributionName"), RRF_RT_REG_SZ, None, Some(name.as_mut_ptr() as _), Some(&mut size));
+            let text = |value: PCWSTR| {
+                let mut buf = [0u16; 1024];
+                let mut size = (buf.len() * 2) as u32;
+                RegGetValueW(key.0, PCWSTR(sub.as_ptr()), value, RRF_RT_REG_SZ, None, Some(buf.as_mut_ptr() as _), Some(&mut size)).is_ok().then(|| wide_str(&buf))
+            };
             let (mut state, mut state_size) = (INSTALLED, 4u32);
-            let _ = RegGetValueW(key, PCWSTR(sub.as_ptr()), w!("State"), RRF_RT_REG_DWORD, None, Some(&mut state as *mut u32 as _), Some(&mut state_size));
-            if read.is_ok() && state == INSTALLED {
-                let distro = wide_str(&name);
-                if valid_distro(&distro) && !out.contains(&distro) {
-                    out.push(distro);
-                }
+            let _ = RegGetValueW(key.0, PCWSTR(sub.as_ptr()), w!("State"), RRF_RT_REG_DWORD, None, Some(&mut state as *mut u32 as _), Some(&mut state_size));
+            match text(w!("DistributionName")) {
+                Some(distro) if state == INSTALLED && valid_distro(&distro) && !out.iter().any(|(d, _)| *d == distro) => out.push((distro, text(w!("ShortcutPath")).and_then(|p| FsPath::parse(&p)))),
+                _ => {}
             }
         }
-        let _ = RegCloseKey(key);
     }
     out
+}
+
+pub fn wsl_distros() -> Vec<String> {
+    lxss().into_iter().map(|(distro, _)| distro).collect()
+}
+
+pub fn wsl_shortcut(distro: &str) -> Option<FsPath> {
+    lxss().into_iter().find(|(d, _)| d.eq_ignore_ascii_case(distro))?.1
 }
 
 struct Key(HKEY);

@@ -190,7 +190,11 @@ impl Shell for ShellCom {
         match req.kind {
             IconKind::Type => self.generic_icon(&req.path, false, req.size),
             IconKind::Folder => self.generic_icon(&req.path, true, req.size),
-            IconKind::File | IconKind::Volume => self.item_image(&req.path, req.size, SIIGBF_ICONONLY).or_else(|| self.generic_icon(&req.path, false, req.size)),
+            IconKind::Volume => match Location::from_local(req.path.clone()) {
+                Location::Wsl { distro, .. } => crate::places::wsl_shortcut(&distro).and_then(|lnk| self.item_image(&lnk, req.size, SIIGBF_ICONONLY)),
+                _ => self.item_image(&req.path, req.size, SIIGBF_ICONONLY).or_else(|| self.generic_icon(&req.path, false, req.size)),
+            },
+            IconKind::File => self.item_image(&req.path, req.size, SIIGBF_ICONONLY).or_else(|| self.generic_icon(&req.path, false, req.size)),
             IconKind::CustomFolder => desktop_ini(&req.path)
                 .filter(|ini| ini.icon)
                 .and_then(|_| self.item_image(&req.path, req.size, SIIGBF_ICONONLY))

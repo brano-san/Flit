@@ -123,6 +123,16 @@ fn thumbnails_of_images_fit_the_requested_size_and_other_files_have_none() {
 }
 
 #[test]
+fn distro_icons_come_from_their_start_menu_shortcut() {
+    let mut shell = ShellCom::new().unwrap();
+    let req = |distro: &str| IconRequest { key: 0, kind: IconKind::Volume, path: p(&format!(r"\\wsl.localhost\{distro}\")), size: 32, gen: 0, row: 0 };
+    assert!(shell.icon(&req("flit-no-such-distro")).is_none());
+    let shortcut = |d: &String| crate::places::wsl_shortcut(d).is_some_and(|l| std::path::Path::new(&*l.display()).exists());
+    for distro in crate::places::wsl_distros().iter().filter(|d| shortcut(d)) {
+        assert!(shell.icon(&req(distro)).is_some_and(|b| b.width <= 32 && b.height <= 32), "{distro}");    }
+}
+
+#[test]
 fn shell_icons_match_requested_size() {
     let mut shell = ShellCom::new().unwrap();
     for size in [16, 56, 100, 300] {
