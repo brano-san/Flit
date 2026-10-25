@@ -112,6 +112,7 @@ pub trait Window {
         None
     }
     fn toggle_fullscreen(&self) {}
+    fn set_dark(&self, _dark: bool) {}
     fn set_compact(&self, _on: Option<bool>) {}
     fn host(&self, _cmd: HostCmd) {}
     fn share(&self, _paths: Vec<FsPath>) {}

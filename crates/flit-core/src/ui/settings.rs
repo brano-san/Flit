@@ -10,6 +10,7 @@ use crate::open::OpenTarget;
 use crate::provider::Resolve;
 use crate::sort::{DateUnit, Folders, GroupField, SortField};
 use crate::tags::{self, Tag, TagRequest, MAX_TAGS};
+use crate::theme::{Area, Mode};
 use serde_json::{Map, Value as Json};
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -61,6 +62,13 @@ pub enum Kind {
     Number { min: i64, max: i64, step: i64, unit: &'static str, get: fn(&App) -> i64, set: fn(&mut App, i64) },
     Paths(fn(&App) -> Vec<Location>, fn(&mut App, Vec<Location>)),
     Text(fn(&App) -> String, fn(&mut App, String)),
+    Pick(Picker, fn(&App) -> String, fn(&mut App, String)),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Picker {
+    Color,
+    Font,
 }
 
 pub struct Setting {
@@ -86,6 +94,10 @@ const fn toggle(id: &'static str, page: Page, title: &'static str, help: &'stati
 
 const fn choice(id: &'static str, page: Page, title: &'static str, help: &'static str, choices: Choices, get: fn(&App) -> usize, set: fn(&mut App, usize)) -> Setting {
     Setting { id, page, title, help, kind: Kind::Choice(choices, get, set) }
+}
+
+const fn pick(id: &'static str, picker: Picker, title: &'static str, help: &'static str, get: fn(&App) -> String, set: fn(&mut App, String)) -> Setting {
+    Setting { id, page: Page::Appearance, title, help, kind: Kind::Pick(picker, get, set) }
 }
 
 fn pos<T: PartialEq>(all: &[T], v: &T) -> usize {
@@ -136,6 +148,11 @@ const SPLITS: [SplitDir; 2] = [SplitDir::Vertical, SplitDir::Horizontal];
 const SPLIT_CHOICES: Choices = &[("vertical", "Side by side"), ("horizontal", "One above the other")];
 const ARCHIVES: [Format; 4] = Format::WRITABLE;
 const ARCHIVE_CHOICES: Choices = &[("zip", "ZIP"), ("7z", "7z"), ("tar", "TAR"), ("gz", "GZip")];
+const THEMES: [Mode; 3] = [Mode::System, Mode::Light, Mode::Dark];
+const THEME_CHOICES: Choices = &[("system", "As in Windows"), ("light", "Light"), ("dark", "Dark")];
+const OPS_CHOICES: Choices = &[("during", "Only while operations run"), ("always", "Always")];
+const COUNT_CHOICES: Choices = &[("total", "Total: 12 items"), ("separate", "Apart: 3 folders, 9 files")];
+const AREA_HELP: &str = "Default follows the background color; text on a custom color adjusts to stay readable";
 pub const LOG_LEVEL: &str = "advanced.log_level";
 pub const LOG_DEFAULT: usize = 3;
 const LOG_CHOICES: Choices = &[("off", "Nothing"), ("error", "Errors"), ("warn", "Errors and warnings"), ("info", "Errors, warnings and timings"), ("debug", "Everything, for troubleshooting")];
@@ -170,11 +187,23 @@ pub static SETTINGS: &[Setting] = &[
     toggle("general.menu_terminal", Page::General, "Show «Open in terminal» in the context menu", "For folders and the folder background", |a| shown_in_menu(a, "app.terminal"), |a, on| show_in_menu(a, "app.terminal", on)),
     toggle("general.menu_tags", Page::General, "Show «Edit tags» in the context menu", "For items on local NTFS drives", |a| shown_in_menu(a, "tags.edit"), |a, on| show_in_menu(a, "tags.edit", on)),
     toggle("general.menu_compress", Page::General, "Show «Compress» and «Extract» in the context menu", "Archive commands for the selected items", |a| shown_in_menu(a, "archive.menu"), |a, on| show_in_menu(a, "archive.menu", on)),
+    choice("appearance.theme", Page::Appearance, "Theme", "Ctrl+Alt+T switches between light and dark", THEME_CHOICES, |a| pos(&THEMES, &a.look.mode), |a, i| a.set_theme_mode(THEMES[i])),
+    pick("appearance.background", Picker::Color, "Background color", "A preset has a light and a dark shade; a custom color decides between light and dark text itself, and accents adjust to stay readable", |a| a.look.background.key(), |a, v| a.set_background(&v)),
+    pick("appearance.font", Picker::Font, "Interface font", "For all text, file names included; code in the preview pane stays monospace, and a font that is not installed falls back to the default", |a| a.look.font.clone(), |a, v| a.set_ui_font(&v)),
     toggle("appearance.toolbar", Page::Appearance, "Show the toolbar", "The command bar under the address bar; Ctrl+Shift+B switches it too", |a| a.toolbar.state.visible, |a, on| {
         if a.toolbar.state.visible != on {
             a.toggle_toolbar();
         }
     }),
+    toggle("appearance.tab_actions", Page::Appearance, "Show the Tab actions button", "Left of the window buttons: new tab and window, panes, mini window and full screen", |a| a.tab_actions_button, |a, on| a.tab_actions_button = on),
+    choice("appearance.ops_button", Page::Appearance, "Show the file operations button", "Right of the address bar; after a failed operation it stays until you open it", OPS_CHOICES, |a| usize::from(a.ops_button_always), |a, i| a.ops_button_always = i == 1),
+    toggle("appearance.status_bar", Page::Appearance, "Show the status bar", "Messages still show it; folder sizes are Ctrl+Alt+S, Recycle Bin and archive name commands are in the command palette", |a| a.prefs.status_bar, |a, on| a.set_pref(|p| &mut p.status_bar, on)),
+    choice("appearance.item_count", Page::Appearance, "Item count", "How the status bar counts the items of a folder", COUNT_CHOICES, |a| usize::from(a.prefs.split_count), |a, i| a.set_pref(|p| &mut p.split_count, i == 1)),
+    pick("appearance.color_address", Picker::Color, "Address bar color", AREA_HELP, |a| a.look.areas[Area::Address as usize].key(), |a, v| a.set_area_color(Area::Address, &v)),
+    pick("appearance.color_toolbar", Picker::Color, "Toolbar color", AREA_HELP, |a| a.look.areas[Area::Toolbar as usize].key(), |a, v| a.set_area_color(Area::Toolbar, &v)),
+    pick("appearance.color_sidebar", Picker::Color, "Sidebar color", AREA_HELP, |a| a.look.areas[Area::Sidebar as usize].key(), |a, v| a.set_area_color(Area::Sidebar, &v)),
+    pick("appearance.color_files", Picker::Color, "File area color", AREA_HELP, |a| a.look.areas[Area::Files as usize].key(), |a, v| a.set_area_color(Area::Files, &v)),
+    pick("appearance.color_pane", Picker::Color, "Info pane color", AREA_HELP, |a| a.look.areas[Area::Pane as usize].key(), |a, v| a.set_area_color(Area::Pane, &v)),
     toggle("files.show_hidden", Page::Files, "Show hidden files and folders", "Applies to all tabs; Ctrl+H still switches the current tab", |a| a.show_hidden, |a, on| a.set_show_hidden(on)),
     toggle("files.dotfiles", Page::Files, "Show files whose names start with a dot", "Dotfiles from Linux and development tools", |a| a.prefs.show_dotfiles, |a, on| a.set_pref(|p| &mut p.show_dotfiles, on)),
     toggle("files.system", Page::Files, "Show protected operating system files", "Hidden system files such as desktop.ini and pagefile.sys", |a| a.prefs.show_system, |a, on| a.set_pref(|p| &mut p.show_system, on)),
@@ -238,7 +267,7 @@ impl Setting {
             Kind::Choice(_, get, _) => Value::Choice(get(a)),
             Kind::Number { get, .. } => Value::Number(get(a)),
             Kind::Paths(get, _) => Value::Paths(get(a)),
-            Kind::Text(get, _) => Value::Text(get(a)),
+            Kind::Text(get, _) | Kind::Pick(_, get, _) => Value::Text(get(a)),
         }
     }
 
@@ -249,6 +278,7 @@ impl Setting {
             (Kind::Number { min, max, set, .. }, Value::Number(n)) if (min..=max).contains(&n) => set(a, n),
             (Kind::Paths(_, set), Value::Paths(p)) if p.len() <= MAX_PATHS => set(a, p),
             (Kind::Text(_, set), Value::Text(t)) if t.len() <= MAX_TEXT => set(a, t),
+            (Kind::Pick(picker, _, set), Value::Text(t)) if picker.accepts(&t) => set(a, t),
             _ => return false,
         }
         true
@@ -275,16 +305,20 @@ impl Setting {
                 items.iter().map(|p| p.as_str().and_then(parse_path)).collect::<Option<Vec<_>>>().map(Value::Paths)
             }
             Kind::Text(..) => j.as_str().filter(|t| t.len() <= MAX_TEXT).map(|t| Value::Text(t.to_owned())),
+            Kind::Pick(picker, ..) => j.as_str().filter(|t| picker.accepts(t)).map(|t| Value::Text(t.to_owned())),
         }
     }
 
     pub fn words(&self) -> String {
         let mut s = format!("{} {} {}", self.title, self.help, self.page.title());
-        if let Kind::Choice(c, ..) = self.kind {
-            for (_, label) in c {
-                s.push(' ');
-                s.push_str(label);
-            }
+        let labels: Vec<&str> = match self.kind {
+            Kind::Choice(c, ..) => c.iter().map(|c| c.1).collect(),
+            Kind::Pick(Picker::Color, ..) => crate::theme::PRESETS.iter().map(|p| p.label).collect(),
+            _ => Vec::new(),
+        };
+        for label in labels {
+            s.push(' ');
+            s.push_str(label);
         }
         s.to_lowercase()
     }

@@ -295,6 +295,10 @@ impl Window for Win32Window {
         crate::dark_mode()
     }
 
+    fn set_dark(&self, dark: bool) {
+        apply_dark(self.hwnd(), dark);
+    }
+
     fn set_clipboard_files(&self, paths: &[FsPath], cut: bool) {
         crate::clipboard::write_files(self.hwnd(), paths, cut);
     }
@@ -954,9 +958,7 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
         }
         WM_SETTINGCHANGE => {
             if lp.0 != 0 && PCWSTR(lp.0 as *const u16).to_string().is_ok_and(|v| v == "ImmersiveColorSet") {
-                let dark = crate::dark_mode();
-                apply_dark(hwnd, dark);
-                s.send(Event::ThemeChanged { dark });
+                s.send(Event::ThemeChanged { dark: crate::dark_mode() });
             }
             None
         }
