@@ -573,9 +573,6 @@ impl App {
             return;
         }
         self.dirty = true;
-        if let Some(t) = p.requested.take() {
-            tracing::debug!("preview ready in {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
-        }
         let (content, bitmap, hosted) = match data {
             PreviewData::Doc(d) => (Content::Doc(d), None, None),
             PreviewData::Image(b) => (Content::Image, Some(b), None),
@@ -599,7 +596,10 @@ impl App {
     pub(super) fn on_hosted(&mut self, ev: HostEvent) {
         let p = &mut self.preview;
         match ev {
-            HostEvent::Ready { gen, ms } if gen == p.host.gen => tracing::debug!("hosted preview ready in {ms} ms"),
+            HostEvent::Ready { gen, ms } if gen == p.host.gen => {
+                let total = p.requested.take().map_or(0.0, |t| t.elapsed().as_secs_f64() * 1e3);
+                tracing::info!("hosted preview shown {total:.1} ms after selection, {ms} ms in the handler");
+            }
             HostEvent::Failed { gen, message } if gen == p.host.gen => {
                 let media = !p.host.handler;
                 p.host = Host::default();
@@ -657,6 +657,11 @@ impl App {
         let p = &mut self.preview;
         p.extent = extent;
         p.scroll = p.scroll.clamp(0.0, (extent - r.body.h).max(0.0));
+        if !matches!(p.content, Content::Loading | Content::Empty | Content::Handler) {
+            if let Some(t) = p.requested.take() {
+                tracing::info!("preview drawn {:.1} ms after selection", t.elapsed().as_secs_f64() * 1e3);
+            }
+        }
         if details {
             let b = r.button;
             let c = if self.hover == Hit::Preview(PaneHit::Properties) { t.button_hover } else { t.input_bg };

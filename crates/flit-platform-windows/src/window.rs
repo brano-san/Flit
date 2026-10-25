@@ -1,4 +1,6 @@
 use crate::context_menu::{ShellUi, WM_SHELL_UI};
+use crate::prevhost::WM_HOSTED;
+use flit_core::preview::HostCmd;
 use crate::err;
 use flit_core::input::{CursorIcon, Event, HitArea, Key, Mods, MouseButton};
 use flit_core::render::Rect;
@@ -250,6 +252,10 @@ impl Window for Win32Window {
 
     fn set_timer(&self, ms: u32) {
         unsafe { SetTimer(Some(self.hwnd()), TIMER_ID, ms, None) };
+    }
+
+    fn host(&self, cmd: HostCmd) {
+        crate::prevhost::command(self.hwnd(), cmd);
     }
 }
 
@@ -856,6 +862,12 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
             }
             Some(LRESULT(0))
         }
+        WM_HOSTED => {
+            for ev in crate::prevhost::take(hwnd) {
+                s.send(Event::Hosted(ev));
+            }
+            Some(LRESULT(0))
+        }
         WM_IME_STARTCOMPOSITION => {
             let a = w.ime_area.get();
             let himc = ImmGetContext(hwnd);
@@ -880,6 +892,7 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
         }
         WM_DESTROY => {
             crate::dragdrop::revoke(hwnd);
+            crate::prevhost::forget(hwnd);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             s.shared().destroyed(hwnd);
             Some(LRESULT(0))

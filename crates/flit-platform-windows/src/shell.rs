@@ -1,6 +1,7 @@
 use crate::fileops::{is_dir, std_path};
 use crate::{com_sta, err};
 use flit_core::desktop_ini::DesktopIni;
+use flit_core::preview::PropGroup;
 use flit_core::ui::{Bitmap, IconKind, IconRequest};
 use flit_core::path::PathKind;
 use flit_core::provider::Launch;
@@ -240,6 +241,30 @@ impl Shell for ShellCom {
 
     fn shortcut_folder(&mut self, link: &FsPath) -> Option<FsPath> {
         unsafe { link_target(link) }.filter(is_dir)
+    }
+
+    fn link_target(&mut self, link: &FsPath) -> Option<FsPath> {
+        unsafe { link_target(link) }
+    }
+
+    fn preview_image(&mut self, path: &FsPath, max: u32) -> Option<Bitmap> {
+        crate::preview::decode_image(path, max)
+    }
+
+    fn poster(&mut self, path: &FsPath, size: u32) -> Option<Bitmap> {
+        self.item_image(path, size, SIIGBF_THUMBNAILONLY)
+    }
+
+    fn properties(&mut self, path: &FsPath) -> Vec<PropGroup> {
+        crate::preview::properties(path)
+    }
+
+    fn preview_handler(&mut self, ext: &[u8]) -> Option<String> {
+        crate::preview::handler(ext)
+    }
+
+    fn quick_view(&mut self, path: &FsPath) -> bool {
+        crate::preview::quick_view(path)
     }
 }
 
