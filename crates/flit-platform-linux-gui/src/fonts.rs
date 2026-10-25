@@ -92,11 +92,7 @@ impl Resolved {
 }
 
 pub fn cache_file() -> Option<PathBuf> {
-    let base = match std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from) {
-        Some(p) if p.is_absolute() => p,
-        _ => PathBuf::from(std::env::var_os("HOME")?).join(".cache"),
-    };
-    Some(base.join("flit").join("fonts"))
+    Some(crate::xdg::cache_dir()?.join("fonts"))
 }
 
 pub fn load_cache(path: &Path) -> Option<Resolved> {
