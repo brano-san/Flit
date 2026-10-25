@@ -581,3 +581,93 @@ fn bench_thumbnails() {
     rate("own raw cache read 256 (warm OS cache)", (t.elapsed(), raws.len()));
     eprintln!("      own raw cache: {:.1} KB per thumbnail", total as f64 / raws.len() as f64 / 1e3);
 }
+
+fn text_file(d: &Dir, rel: &str, mb: usize) -> FsPath {
+    use std::io::Write;
+    const WORDS: [&str; 16] = ["alpha", "file", "manager", "archive", "1024", "beta", "x", "flit", "gamma", "delta", "2026", "rust", "omega", "z", "speed", "data"];
+    let mut seed = 0x2545_F491_4F6C_DD1Du64;
+    let mut chunk = Vec::with_capacity(1 << 20);
+    let mut f = std::io::BufWriter::new(std::fs::File::create(d.0.join(rel)).unwrap());
+    for _ in 0..mb {
+        chunk.clear();
+        while chunk.len() < 1 << 20 {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            chunk.extend_from_slice(WORDS[(seed % 16) as usize].as_bytes());
+            chunk.push(if seed % 11 == 0 { b'\n' } else { b' ' });
+        }
+        f.write_all(&chunk[..1 << 20]).unwrap();
+    }
+    d.path(rel)
+}
+
+fn throughput(label: &str, bytes: u64, runs: usize, mut setup: impl FnMut(usize) -> FileOp, sh: &mut ShellCom) {
+    let times: Vec<Duration> = (0..runs)
+        .map(|k| {
+            let op = setup(k);
+            let t = Instant::now();
+            ok(run(sh, &op));
+            t.elapsed()
+        })
+        .collect();
+    let best = *times.iter().min().unwrap();
+    report(label, times);
+    eprintln!("      {label}: {:.0} MB/s at best", bytes as f64 / 1e6 / best.as_secs_f64());
+}
+
+#[test]
+#[ignore]
+fn bench_archives() {
+    use flit_core::archive::{ArchiveOp, Compression, Format, Place};
+    use flit_core::digest::HashKind;
+    let d = Dir::temp("archives");
+    let mut sh = ShellCom::new().unwrap();
+    let compress = |items: Vec<FsPath>, archive: FsPath, format: Format| FileOp::Archive(ArchiveOp::Compress { items, archive, options: Compression { format, level: format.default_level(), ..Default::default() } });
+    let extract = |archive: &FsPath, dest: FsPath| FileOp::Archive(ArchiveOp::Extract { archives: vec![archive.clone()], dest: Some(dest), place: Place::Here });
+
+    let many = tree(&d, "10k", 10_000, 16);
+    let zip10k = d.path("10k.zip");
+    ok(run(&mut sh, &compress(vec![many], zip10k.clone(), Format::Zip)));
+    let _ = std::fs::remove_dir_all(d.0.join("10k"));
+    let inner = zip10k.join(b"10k");
+    measure("list 10k-entry ZIP, index built each time", RUNS, |_| flit_archive::forget(&zip10k), |_| assert_eq!(count(&NtFs, &inner), 10_000));
+    measure("list 10k-entry ZIP, index cached", RUNS, |_| (), |_| assert_eq!(count(&NtFs, &inner), 10_000));
+
+    let small = tree(&d, "1k", 1000, 1024);
+    for (format, ext) in [(Format::Zip, "zip"), (Format::SevenZ, "7z")] {
+        throughput(&format!("compress 1000 files 1 KB to {ext}"), 1000 * 1024, 5, |k| compress(vec![small.clone()], d.path(&format!("small{k}.{ext}")), format), &mut sh);
+        let archive = d.path(&format!("small0.{ext}"));
+        throughput(&format!("extract 1000 files 1 KB from {ext}"), 1000 * 1024, 5, |k| extract(&archive, fresh(&d, &format!("small_{ext}_{k}"))), &mut sh);
+    }
+
+    let big = text_file(&d, "big.txt", 256);
+    let size = 256u64 << 20;
+    for (format, ext, runs) in [(Format::Zip, "zip", 3), (Format::SevenZ, "7z", 1)] {
+        throughput(&format!("compress 1 file 256 MB to {ext}"), size, runs, |k| compress(vec![big.clone()], d.path(&format!("big{k}.{ext}")), format), &mut sh);
+        let archive = d.path(&format!("big0.{ext}"));
+        let packed = std::fs::metadata(d.0.join(format!("big0.{ext}"))).unwrap().len();
+        eprintln!("      256 MB of words packed into {:.1} MB of {ext}", packed as f64 / 1e6);
+        throughput(&format!("extract 1 file 256 MB from {ext}"), size, runs, |k| extract(&archive, fresh(&d, &format!("big_{ext}_{k}"))), &mut sh);
+        for k in 0..runs {
+            let _ = std::fs::remove_dir_all(d.0.join(format!("big_{ext}_{k}")));
+            let _ = std::fs::remove_file(d.0.join(format!("big{k}.{ext}")));
+        }
+    }
+    let _ = std::fs::remove_file(d.0.join("big.txt"));
+
+    let hashed = big_file(&d, "hash.bin", 512);
+    let job = flit_platform::Job::detached(flit_core::provider::Resolve::Skip);
+    for (label, kinds) in [("hash 512 MB with all six algorithms", &HashKind::ALL[..]), ("hash 512 MB with SHA-256 only", &HashKind::ALL[3..4])] {
+        let times: Vec<Duration> = (0..3)
+            .map(|_| {
+                let t = Instant::now();
+                assert_eq!(NtFs.hash(&hashed, kinds, &job).unwrap().len(), kinds.len());
+                t.elapsed()
+            })
+            .collect();
+        let best = *times.iter().min().unwrap();
+        report(label, times);
+        eprintln!("      {label}: {:.0} MB/s at best", 512.0 * 1.048_576 / best.as_secs_f64());
+    }
+}

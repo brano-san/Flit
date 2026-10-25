@@ -358,6 +358,29 @@ fn rar_archives_are_listed_and_extracted() {
     assert_eq!(t.read("out/b.txt"), b"beta!");
 }
 
+#[test]
+fn opening_an_entry_extracts_it_alone_to_a_fresh_temporary_folder() {
+    let t = Temp::new("open");
+    let items = sample(&t);
+    let archive = t.fs("a.zip");
+    compress(items, archive.clone(), Format::Zip, None);
+    let item = archive.join("Документы".as_bytes()).join("отчёт.txt".as_bytes());
+    let first = run(FileOp::Archive(ArchiveOp::Open { item: item.clone() }), Resolve::Skip);
+    let second = run(FileOp::Archive(ArchiveOp::Open { item: item.clone() }), Resolve::Skip);
+    assert!(first.error.is_none() && second.error.is_none(), "{:?}", first.error);
+    let (from, to) = first.items[0].clone();
+    assert_eq!((from, first.items.len()), (item, 1));
+    assert_ne!(to, second.items[0].1);
+    let opened = std_path(&to);
+    assert_eq!(fs::read(&opened).unwrap(), "квартальный отчёт".as_bytes());
+    assert_eq!(fs::read_dir(opened.parent().unwrap()).unwrap().count(), 1);
+    for (_, to) in first.items.iter().chain(&second.items) {
+        let _ = fs::remove_dir_all(std_path(to).parent().unwrap());
+    }
+    let outside = run(FileOp::Archive(ArchiveOp::Open { item: archive }), Resolve::Skip);
+    assert!(outside.error.is_some());
+}
+
 #[cfg(windows)]
 #[test]
 fn unreadable_files_are_skipped_on_request() {

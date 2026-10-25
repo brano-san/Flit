@@ -16,6 +16,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 const BOMB_RATIO: u64 = 10_000;
 const BOMB_FLOOR: u64 = 1 << 30;
 const CHUNK: usize = 256 * 1024;
+const DIRECT: u64= 1 << 20;
 
 pub type Pairs = Vec<(FsPath, FsPath)>;
 pub type Outcome = Result<Pairs, (Pairs, PlatformError)>;
@@ -90,6 +91,7 @@ struct Out<'a> {
     free: u64,
     written: u64,
     skipped: Vec<String>,
+    made: HashSet<PathBuf>,
 }
 
 impl Out<'_> {
@@ -115,11 +117,14 @@ impl Out<'_> {
         Ok(())
     }
 
-    fn prepare(&mut self, item: &Item, rel: &str) -> Result<Option<PathBuf>, PlatformError> {
+    fn prepare(&mut self, item: &Item, rel: &str) -> Result<Option<(PathBuf, bool)>, PlatformError> {
         let (rel, dest, dest_fs) = self.dest(rel);
         let parent = dest.parent().map(Path::to_path_buf).unwrap_or_else(|| self.target.clone());
-        fs::create_dir_all(&parent).map_err(io_error)?;
-        let Some(existing) = meta_of(&dest) else { return Ok(Some(dest)) };
+        if !self.made.contains(&parent) {
+            fs::create_dir_all(&parent).map_err(io_error)?;
+            self.made.insert(parent.clone());
+        }
+        let Some(existing) = meta_of(&dest) else { return Ok(Some((dest, true))) };
         if existing.attrs & attr::DIR != 0 {
             self.skipped.push(rel);
             return Ok(None);
@@ -127,13 +132,13 @@ impl Out<'_> {
         let from = Meta { size: item.size, modified: item.modified, created: 0, attrs: 0 };
         let source = self.archive.join(item.path.as_bytes());
         match self.job.resolve(Conflict { source, target: dest_fs, from, to: existing }) {
-            Some(Resolve::Replace) => Ok(Some(dest)),
+            Some(Resolve::Replace) => Ok(Some((dest, false))),
             Some(Resolve::KeepBoth) => {
                 let name = numbered(&parent, dest.file_name().and_then(|n| n.to_str()).unwrap_or("file"), false);
                 if !rel.contains('/') {
                     self.renamed.insert(rel, name.clone());
                 }
-                Ok(Some(parent.join(name)))
+                Ok(Some((parent.join(name), false)))
             }
             Some(Resolve::Skip) => {
                 self.job.update(|p| {
@@ -151,7 +156,7 @@ impl Out<'_> {
     }
 
     fn commit(&self, part: &Path, dest: &Path, result: Result<(), PlatformError>) -> Result<(), PlatformError> {
-        let result = result.and_then(|()| fs::rename(part, dest).map_err(io_error));
+        let result = result.and_then(|()| if part == dest { Ok(()) } else { fs::rename(part, dest).map_err(io_error) });
         if result.is_err() {
             let _ = fs::remove_file(part);
         }
@@ -161,8 +166,8 @@ impl Out<'_> {
     }
 
     fn file(&mut self, item: &Item, rel: &str, declared: bool, reader: &mut dyn Read) -> Result<(), PlatformError> {
-        let Some(dest) = self.prepare(item, rel)? else { return Ok(()) };
-        let part = Self::part(&dest);
+        let Some((dest, fresh)) = self.prepare(item, rel)? else { return Ok(()) };
+        let part = if fresh && declared && item.size <= DIRECT { dest.clone() } else { Self::part(&dest) };
         let result = self.write(&part, item, declared, reader);
         self.commit(&part, &dest, result)
     }
@@ -321,7 +326,7 @@ fn rar(plan: &Plan<'_>, out: &mut Out<'_>, by_ordinal: &HashMap<usize, (usize, &
             Some(&(i, rel)) if !plan.index.items[i].dir => {
                 let item = &plan.index.items[i];
                 match out.prepare(item, rel)? {
-                    Some(dest) => {
+                    Some((dest, _)) => {
                         let part = Out::part(&dest);
                         let (next, result) = match header.extract_to(&part) {
                             Ok(next) => (next, File::options().write(true).open(&part).map(|f| stamp(&f, item.modified)).map_err(io_error)),
@@ -383,7 +388,7 @@ fn run(plan: &Plan<'_>, job: &Job, env: &Env<'_>) -> Result<Created, (Created, P
         plan.steps.iter().map(|(_, rel)| first(rel).to_owned()).filter(|r| seen.insert(fold(r))).collect()
     };
     let fresh: Vec<&String> = roots.iter().filter(|r| !target.join(r).exists()).collect();
-    let mut out = Out { job, target: target.clone(), target_fs: plan.target.clone(), archive: plan.archive, renamed: HashMap::new(), cap, free, written: 0, skipped: Vec::new() };
+    let mut out = Out { job, target: target.clone(), target_fs: plan.target.clone(), archive: plan.archive, renamed: HashMap::new(), cap, free, written: 0, skipped: Vec::new(), made: HashSet::new() };
     let result = fs::create_dir_all(&target).map_err(io_error).and_then(|()| stream(plan, &mut out, archive::password(plan.archive).as_ref()));
     let mut created: Vec<(String, String)> = fresh.iter().filter(|r| target.join(r).exists()).map(|r| ((*r).clone(), (*r).clone())).collect();
     created.extend(out.renamed.iter().filter(|(_, new)| target.join(new).exists()).map(|(old, new)| (old.clone(), new.clone())));
