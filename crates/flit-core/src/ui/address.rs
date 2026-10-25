@@ -333,6 +333,10 @@ impl App {
         None
     }
 
+    pub(super) fn suggesting(&self) -> bool {
+        self.editing && !self.addr.rects.is_empty()
+    }
+
     pub(super) fn pick_suggestion(&mut self, k: usize) {
         if let Some((text, _)) = self.addr.items.get(k).cloned() {
             self.edit.set(&text);
