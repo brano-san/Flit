@@ -296,6 +296,7 @@ impl<P: Platform> Handler<P> {
         let mut app = App::new(persisted, routes, base, P::dark_mode(), 1.0, (1100, 720), Instant::now());
         app.utc_offset_min = P::utc_offset_minutes();
         app.double_click = P::double_click_time();
+        app.caps = P::caps();
         if base == 0 && P::elevated() {
             app.status("Flit runs as administrator, so Windows blocks files dragged in from other programs");
         }
@@ -1032,7 +1033,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     if let Some(i) = instance {
         i.listen(sink.clone(), wake.clone());
     }
-    let thumb_cache: Cache = P::state_dir().map(|d| Arc::new(Mutex::new(ThumbCache::new(d.join("thumbs"), saved.persisted.prefs.thumb_cache_mb))));
+    let thumb_cache: Cache = P::cache_dir().map(|d| Arc::new(Mutex::new(ThumbCache::new(d.join("thumbs"), saved.persisted.prefs.thumb_cache_mb))));
     let (shell, thumbs, sorter, previews, done) = start_workers::<P>(wake.clone(), thumb_cache.clone())?;
     let tags = TagWorker::start::<P>(local.tags().clone(), wake.clone())?;
     let about = About { os: String::new(), file: settings_file.as_deref().and_then(|f| FsPath::parse(&f.to_string_lossy())), cache_bytes: None };

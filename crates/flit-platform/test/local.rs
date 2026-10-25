@@ -412,9 +412,33 @@ fn hash_requests_answer_on_their_own_thread() {
     let provider = LocalProvider::new::<_, NoWatch, NoShell>(fs(), 1, tx, Arc::new(|| {})).unwrap();
     provider.submit(ProviderRequest::Hash { tab: 4, id: 9, file: p(r"C:\r\a.txt"), kinds: vec![HashKind::Sha256], ctl: OpCtl::default() });
     match rx.recv_timeout(Duration::from_secs(5)).unwrap() {
-        ProviderEvent::Hashed { tab: 4, id: 9, result: Err(e) } => assert!(e.contains("not supported"), "{e}"),
+        ProviderEvent::Hashed { tab: 4, id: 9, result: Err(e) } => assert!(!e.is_empty() && !e.contains("not supported"), "the default hash reads the file: {e}"),
         e => panic!("{e:?}"),
     }
     let Some(ProviderRequest::Hash { file, .. }) = via_unc("Ubuntu", ProviderRequest::Hash { tab: 1, id: 2, file: FsPath::parse("/home/a.iso").unwrap(), kinds: Vec::new(), ctl: OpCtl::default() }) else { panic!() };
     assert_eq!(file.display(), r"\\wsl.localhost\Ubuntu\home\a.iso");
+}
+
+struct MountFs;
+impl Fs for MountFs {
+    fn read_dir(&self, _: &FsPath, _: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+        Ok(())
+    }
+    fn seek_penalty(&self, _: &FsPath) -> Option<bool> {
+        None
+    }
+    fn volume_key(&self, path: &FsPath) -> Vec<u8> {
+        if path.as_bytes().starts_with(b"/media/usb") { b"usb".to_vec() } else { b"root".to_vec() }
+    }
+}
+
+#[test]
+fn transfer_queues_follow_the_volume_key() {
+    let mv = |from: &str, to: &str| FileOp::Move { items: vec![p(from)], dest: p(to) };
+    assert_eq!(transfer_volume(&MountFs, &FileOp::Copy { items: vec![p("/home/a")], dest: p("/media/usb/x") }), Some(b"usb".to_vec()));
+    assert_eq!(transfer_volume(&MountFs, &mv("/home/a", "/tmp")), None, "a move inside one volume is a rename");
+    assert_eq!(transfer_volume(&MountFs, &mv("/home/a", "/media/usb")), Some(b"usb".to_vec()));
+    let mem = fs();
+    assert_eq!(transfer_volume(&mem, &FileOp::Copy { items: vec![p(r"E:\a")], dest: p(r"C:\x") }), Some(br"c:\".to_vec()));
+    assert_eq!(transfer_volume(&mem, &mv(r"C:\a", r"c:\b")), None);
 }

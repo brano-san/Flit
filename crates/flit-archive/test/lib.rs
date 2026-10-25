@@ -4,6 +4,7 @@ use flit_core::provider::Resolve;
 use flit_core::sort::CaseMode;
 use std::fs;
 use std::io::Read;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -396,4 +397,24 @@ fn unreadable_files_are_skipped_on_request() {
         let listed = names(&archive.join(b"dir")).unwrap();
         assert_eq!(listed.iter().map(|(n, ..)| n.as_str()).collect::<Vec<_>>(), ["free.txt"], "{ext}");
     }
+}
+
+#[test]
+fn os_error_codes_map_on_this_system() {
+    let missing = std::fs::File::open(std::env::temp_dir().join("flit-archive-no-such-file")).unwrap_err();
+    assert_eq!(fs_error(io_error(missing)).kind, FsErrorKind::NotFound);
+    assert_eq!(fs_error(PlatformError::new(PASSWORD_CODE, "x")).kind, FsErrorKind::AccessDenied);
+    assert_eq!(fs_error(PlatformError::new(-1, "x")).kind, FsErrorKind::Other);
+    #[cfg(unix)]
+    assert_eq!(fs_error(PlatformError::new(13, "x")).kind, FsErrorKind::AccessDenied);
+    #[cfg(windows)]
+    assert_eq!(fs_error(PlatformError::new(5, "x")).kind, FsErrorKind::AccessDenied);
+}
+
+#[cfg(unix)]
+#[test]
+fn std_path_keeps_non_utf8_bytes() {
+    use std::os::unix::ffi::OsStrExt;
+    let p = FsPath::parse_bytes(b"/tmp/caf\xe9").unwrap();
+    assert_eq!(std_path(&p).as_os_str().as_bytes(), b"/tmp/caf\xe9");
 }

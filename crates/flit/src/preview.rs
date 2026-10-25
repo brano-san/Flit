@@ -2,21 +2,9 @@ use flit_core::preview::{self, FolderSummary, Kind, PreviewData, PreviewRequest,
 use flit_core::FsPath;
 use flit_platform::Shell;
 use std::io::Read;
-use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
 
-#[cfg(windows)]
-pub(crate) fn std_path(p: &FsPath) -> PathBuf {
-    use std::os::windows::ffi::OsStringExt;
-    let mut w = p.to_wide(true);
-    w.pop();
-    PathBuf::from(std::ffi::OsString::from_wide(&w))
-}
-
-#[cfg(not(windows))]
-pub(crate) fn std_path(p: &FsPath) -> PathBuf {
-    PathBuf::from(p.display().into_owned())
-}
+pub(crate) use flit_platform::std_path;
 
 #[cfg(windows)]
 fn hidden(m: &std::fs::Metadata, _: &str) -> bool {

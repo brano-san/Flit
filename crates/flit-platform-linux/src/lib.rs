@@ -51,6 +51,9 @@ impl Platform for Linux {
     fn dark_mode() -> bool {
         false
     }
+    fn caps() -> flit_core::caps::Caps {
+        flit_core::caps::Caps { unix_paths: true }
+    }
     fn state_dir() -> Option<std::path::PathBuf> {
         std::env::var_os("XDG_STATE_HOME").map(Into::into)
     }

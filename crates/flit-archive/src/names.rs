@@ -102,16 +102,21 @@ fn reserved(c: &str) -> bool {
     (base.starts_with("COM") || base.starts_with("LPT")) && base.get(3..).is_some_and(digit)
 }
 
-pub fn safe_component(c: &str) -> bool {
-    !c.is_empty() && c != "." && c != ".." && c.len() <= 255 && !c.ends_with(['.', ' ']) && !c.chars().any(|ch| (ch as u32) < 0x20 || matches!(ch, '<' | '>' | ':' | '"' | '|' | '?' | '*' | '/' | '\\')) && !reserved(c)
+pub fn safe_component(c: &str, windows: bool) -> bool {
+    let plain = !c.is_empty() && c != "." && c != ".." && c.len() <= 255 && !c.chars().any(|ch| (ch as u32) < 0x20 || matches!(ch, '/' | '\\'));
+    plain && (!windows || (!c.ends_with(['.', ' ']) && !c.contains(['<', '>', ':', '"', '|', '?', '*']) && !reserved(c)))
 }
 
 pub fn safe_path(path: &str) -> Option<String> {
+    safe_path_for(path, cfg!(windows))
+}
+
+pub fn safe_path_for(path: &str, windows: bool) -> Option<String> {
     if path.starts_with(['/', '\\']) {
         return None;
     }
     let parts: Vec<&str> = path.split(['/', '\\']).filter(|c| !c.is_empty() && *c != ".").collect();
-    (!parts.is_empty() && parts.iter().all(|c| safe_component(c))).then(|| parts.join("/"))
+    (!parts.is_empty() && parts.iter().all(|c| safe_component(c, windows))).then(|| parts.join("/"))
 }
 
 #[cfg(test)]

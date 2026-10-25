@@ -1,7 +1,9 @@
+mod digest;
 mod indexer;
 mod local;
 mod wsl;
 
+pub use digest::hash_file;
 pub use indexer::{root_of, start_indexer};
 pub use local::{via_unc, LocalProvider, CANCELLED};
 pub use wsl::{AgentImage, AgentImages, AgentLauncher, AgentProcess, Clipboard, Timing, WslProvider, UNMAPPABLE};
@@ -170,9 +172,26 @@ pub trait Fs: Send + Sync + 'static {
     fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, u64) + Sync)) {
         local::dir_sizes(self, dir, items, keep_going, report)
     }
-    fn hash(&self, _file: &FsPath, _kinds: &[HashKind], _job: &Job) -> Result<Vec<String>, PlatformError> {
-        Err(PlatformError::unsupported("file hashes"))
+    fn hash(&self, file: &FsPath, kinds: &[HashKind], job: &Job) -> Result<Vec<String>, PlatformError> {
+        hash_file(file, kinds, job)
     }
+    fn volume_key(&self, path: &FsPath) -> Vec<u8> {
+        path.root_bytes().to_ascii_lowercase()
+    }
+}
+
+#[cfg(windows)]
+pub fn std_path(p: &FsPath) -> std::path::PathBuf {
+    use std::os::windows::ffi::OsStringExt;
+    let mut w = p.to_wide(true);
+    w.pop();
+    std::path::PathBuf::from(std::ffi::OsString::from_wide(&w))
+}
+
+#[cfg(unix)]
+pub fn std_path(p: &FsPath) -> std::path::PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    std::path::PathBuf::from(std::ffi::OsStr::from_bytes(p.as_bytes()))
 }
 
 pub trait Watcher: Sized + Send + 'static {
@@ -336,6 +355,15 @@ pub trait Platform: 'static {
     fn utc_offset_minutes() -> i32;
     fn dark_mode() -> bool;
     fn state_dir() -> Option<std::path::PathBuf>;
+    fn cache_dir() -> Option<std::path::PathBuf> {
+        Self::state_dir()
+    }
+    fn caps() -> flit_core::caps::Caps {
+        flit_core::caps::Caps::default()
+    }
+    fn recycle_bin() -> bool {
+        false
+    }
     fn home() -> FsPath;
     fn known_folder(name: &str) -> Option<Location>;
     fn fatal_error(message: &str);

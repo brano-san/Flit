@@ -28,7 +28,7 @@ pub struct PlacesWorker {
 }
 
 fn is_dir(p: &FsPath) -> bool {
-    std::fs::metadata(&*p.display()).is_ok_and(|m| m.is_dir())
+    std::fs::metadata(flit_platform::std_path(p)).is_ok_and(|m| m.is_dir())
 }
 
 impl PlacesWorker {
@@ -142,5 +142,5 @@ fn collect<P: Platform>() -> Places {
             Some((k, P::known_folder(k.shell_name()).or_else(home)?))
         })
         .collect();
-    Places { folders, drives: P::drives(), wsl: P::wsl_distros(), recycle_bin: cfg!(windows), ..Default::default() }
+    Places { folders, drives: P::drives(), wsl: P::wsl_distros(), recycle_bin: P::recycle_bin(), ..Default::default() }
 }

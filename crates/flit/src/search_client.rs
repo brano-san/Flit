@@ -67,8 +67,8 @@ impl SearchClient {
 fn index_text(text: &str, scope: &SearchScope) -> String {
     match scope {
         SearchScope::Indexed(folder) => {
-            let shown = folder.path().display();
-            format!("{text} path:\"{}\\\"", shown.trim_end_matches('\\'))
+            let (shown, sep) = (folder.path().display(), folder.path().sep() as char);
+            format!("{text} path:\"{}{sep}\"", shown.trim_end_matches(sep))
         }
         _ => text.to_owned(),
     }
@@ -294,7 +294,7 @@ impl<P: Platform> Worker<P> {
             None => {
                 let shared = SharedIndex::new();
                 let source = P::FallbackIndex::new().map_err(|e| e.message)?;
-                start_indexer(source, shared.clone(), P::state_dir().map(|d| d.join("search"))).map_err(|e| e.message)?;
+                start_indexer(source, shared.clone(), P::cache_dir().map(|d| d.join("search"))).map_err(|e| e.message)?;
                 self.local = Some(shared.clone());
                 shared
             }

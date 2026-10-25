@@ -43,12 +43,25 @@ fn western_and_asian_names_are_recognized() {
 #[test]
 fn unsafe_entry_names_are_rejected() {
     for bad in ["../evil.txt", "a/../../evil", "/etc/passwd", "\\\\server\\share\\x", "C:/Windows/x.dll", "c:x", "file.txt:stream", "CON", "dir/nul.txt", "COM1.log", "LPT9", "COM¹", "aux .txt", "trailing.", "space ", "a/b./c", "ctl\u{1}x", "q?.txt", "", "./", "a/<b>"] {
-        assert_eq!(safe_path(bad), None, "{bad:?}");
+        assert_eq!(safe_path_for(bad, true), None, "{bad:?}");
     }
-    assert_eq!(safe_path("dir/sub/file.txt").as_deref(), Some("dir/sub/file.txt"));
-    assert_eq!(safe_path("./dir//file.txt").as_deref(), Some("dir/file.txt"));
-    assert_eq!(safe_path("dir\\file.txt").as_deref(), Some("dir/file.txt"));
-    assert_eq!(safe_path("console.txt").as_deref(), Some("console.txt"));
-    assert_eq!(safe_path("COM10").as_deref(), Some("COM10"));
-    assert_eq!(safe_path(".hidden").as_deref(), Some(".hidden"));
+    for windows in [true, false] {
+        assert_eq!(safe_path_for("dir/sub/file.txt", windows).as_deref(), Some("dir/sub/file.txt"));
+        assert_eq!(safe_path_for("./dir//file.txt", windows).as_deref(), Some("dir/file.txt"));
+        assert_eq!(safe_path_for("dir\\file.txt", windows).as_deref(), Some("dir/file.txt"));
+        assert_eq!(safe_path_for("console.txt", windows).as_deref(), Some("console.txt"));
+        assert_eq!(safe_path_for("COM10", windows).as_deref(), Some("COM10"));
+        assert_eq!(safe_path_for(".hidden", windows).as_deref(), Some(".hidden"));
+    }
+    assert_eq!(safe_path("dir/file.txt"), safe_path_for("dir/file.txt", cfg!(windows)));
+}
+
+#[test]
+fn unix_extraction_allows_names_windows_forbids() {
+    for fine in ["file.txt:stream", "CON", "dir/nul.txt", "aux .txt", "trailing.", "space ", "q?.txt", "a/<b>", "c:x"] {
+        assert_eq!(safe_path_for(fine, false).as_deref(), Some(fine), "{fine:?}");
+    }
+    for bad in ["../evil.txt", "a/../../evil", "/etc/passwd", "\\\\server\\share\\x", "ctl\u{1}x", "", "./", &"x".repeat(256)] {
+        assert_eq!(safe_path_for(bad, false), None, "{bad:?}");
+    }
 }

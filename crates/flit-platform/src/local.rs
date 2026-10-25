@@ -117,11 +117,8 @@ impl Gate {
     }
 }
 
-fn volume(p: &FsPath) -> Vec<u8> {
-    p.root_bytes().to_ascii_lowercase()
-}
-
-fn transfer_volume(op: &FileOp) -> Option<Vec<u8>> {
+fn transfer_volume(fs: &dyn Fs, op: &FileOp) -> Option<Vec<u8>> {
+    let volume = |p: &FsPath| fs.volume_key(p);
     let crosses = |a: &FsPath, b: &FsPath| volume(a) != volume(b);
     match op {
         FileOp::Copy { dest, .. } => Some(volume(dest)),
@@ -224,7 +221,7 @@ impl LocalProvider {
         })?;
         let (ops, ops_rx) = unbounded::<OpMsg>();
         let busy = Arc::new(AtomicUsize::new(0));
-        let (gate, running) = (Arc::new(Gate::default()), busy.clone());
+        let (gate, running, ops_fs) = (Arc::new(Gate::default()), busy.clone(), fs.clone());
         spawn("flit-shell-ops".into(), move || {
             let mut sh = S::new();
             for OpMsg { tab, id, op, ctl } in ops_rx {
@@ -249,9 +246,9 @@ impl LocalProvider {
                     continue;
                 }
                 running.fetch_add(1, Ordering::AcqRel);
-                let (gate, running, failed) = (gate.clone(), running.clone(), reply.clone());
+                let (gate, running, failed, fs) = (gate.clone(), running.clone(), reply.clone(), ops_fs.clone());
                 let started = spawn(format!("flit-op-{id}"), move || {
-                    let turn = transfer_volume(&op).map(|key| gate.enter(key, &job));
+                    let turn = transfer_volume(&*fs, &op).map(|key| gate.enter(key, &job));
                     let result = match (turn.as_ref().is_some_and(Option::is_none), S::new()) {
                         (true, _) => (Some(CANCELLED.into()), Some(OpReport { op, items: Vec::new() })),
                         (false, Ok(mut sh)) => perform(&mut sh, op, cut, &job),

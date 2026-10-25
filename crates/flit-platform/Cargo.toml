@@ -13,3 +13,7 @@ crossbeam-channel.workspace = true
 rayon.workspace = true
 flit-proto.workspace = true
 tracing.workspace = true
+crc32fast.workspace = true
+md-5.workspace = true
+sha1.workspace = true
+sha2.workspace = true

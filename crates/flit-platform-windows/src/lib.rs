@@ -124,6 +124,10 @@ impl Platform for Windows {
         dark_mode()
     }
 
+    fn recycle_bin() -> bool {
+        true
+    }
+
     fn state_dir() -> Option<std::path::PathBuf> {
         std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("Flit"))
     }

@@ -124,3 +124,16 @@ fn walk_scopes_stream_found_events_and_serve_rows() {
     assert!(matches!(&events.try_iter().map(|(_, e)| e).collect::<Vec<_>>()[..], [SearchEvent::Rows { from: 1, rows, .. }] if rows.len() == 1));
     assert!(!w.hits[&3].running());
 }
+
+#[test]
+fn unix_folders_scope_queries_with_slashes() {
+    let scoped = |folder: &str| {
+        let q = SearchRequest::Query { gen: 1, text: "x".into(), sort: SearchSort::default(), scope: SearchScope::Indexed(flit_core::Location::parse(folder).unwrap()) };
+        match to_message(&q) {
+            Some(Message::Query { text, .. }) => text,
+            other => panic!("{other:?}"),
+        }
+    };
+    assert_eq!(scoped("/home/jo doe"), r#"x path:"/home/jo doe/""#);
+    assert_eq!(scoped("/"), r#"x path:"/""#);
+}

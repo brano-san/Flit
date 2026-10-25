@@ -13,7 +13,7 @@ use flit_core::provider::FileOp;
 use flit_platform::{Job, OpOutcome, PlatformError};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -22,18 +22,7 @@ pub struct Env<'a> {
     pub free_space: &'a dyn Fn(&Path) -> Option<u64>,
 }
 
-#[cfg(windows)]
-pub fn std_path(p: &FsPath) -> PathBuf {
-    use std::os::windows::ffi::OsStringExt;
-    let mut w = p.to_wide(true);
-    w.pop();
-    PathBuf::from(std::ffi::OsString::from_wide(&w))
-}
-
-#[cfg(not(windows))]
-pub fn std_path(p: &FsPath) -> PathBuf {
-    PathBuf::from(p.display().into_owned())
-}
+pub use flit_platform::std_path;
 
 pub(crate) fn io_error(e: std::io::Error) -> PlatformError {
     PlatformError::new(e.raw_os_error().map_or(-1, i64::from), e.to_string())
@@ -56,10 +45,11 @@ pub fn inside(path: &FsPath) -> bool {
 }
 
 fn fs_error(e: PlatformError) -> FsError {
-    let kind = match e.code {
-        PASSWORD_CODE => FsErrorKind::AccessDenied,
-        2 | 3 => FsErrorKind::NotFound,
-        5 => FsErrorKind::AccessDenied,
+    let os = i32::try_from(e.code).map(|c| std::io::Error::from_raw_os_error(c).kind());
+    let kind = match os {
+        _ if e.code == PASSWORD_CODE => FsErrorKind::AccessDenied,
+        Ok(std::io::ErrorKind::NotFound) => FsErrorKind::NotFound,
+        Ok(std::io::ErrorKind::PermissionDenied) => FsErrorKind::AccessDenied,
         _ => FsErrorKind::Other,
     };
     FsError { kind, code: e.code }
