@@ -436,7 +436,7 @@ impl App {
                 None => self.status("Enter the full path of a folder, or Home"),
             },
             SettingPick::Export | SettingPick::Import => match FsPath::parse(text.trim_matches('"')).filter(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim)) {
-                Some(path) if pick == SettingPick::Export => self.effects.push(Effect::Settings(SettingsCmd::Export { path, text: self.export_text() })),
+                Some(path) if pick == SettingPick::Export => self.effects.push(Effect::Settings(SettingsCmd::Export { path, text: self.export_text(), replace: false })),
                 Some(path) => self.effects.push(Effect::Settings(SettingsCmd::Import(path))),
                 None => self.status("Enter the full path of a file"),
             },

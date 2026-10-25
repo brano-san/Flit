@@ -526,7 +526,7 @@ impl<P: Platform> Handler<P> {
                 Effect::Library(op) => self.places.library(op),
                 Effect::Timer(d) => window.set_timer(d.as_millis().clamp(1, u32::MAX as u128) as u32),
                 Effect::Tags(req) => self.tags.submit(Some(id), req),
-                Effect::Settings(SettingsCmd::Export { path, text }) => self.settings.send(Job::Export(crate::preview::std_path(&path), text)),
+                Effect::Settings(SettingsCmd::Export { path, text, replace }) => self.settings.send(Job::Export(crate::preview::std_path(&path), text, replace)),
                 Effect::Settings(SettingsCmd::Import(path)) => self.settings.send(Job::Import(crate::preview::std_path(&path))),
                 Effect::Settings(SettingsCmd::CacheSize) => self.settings.send(Job::CacheSize),
             }
@@ -592,6 +592,11 @@ impl<P: Platform> Handler<P> {
                 settings::Reply::Imported(Err(e)) => self.status(id, format!("Cannot read the settings file: {e}")),
                 settings::Reply::Exported(Ok(path)) => self.status(id, format!("Exported the settings and tags to {}", path.display())),
                 settings::Reply::Exported(Err(e)) => self.status(id, format!("Cannot export the settings: {e}")),
+                settings::Reply::ExportExists { path, size, modified } => {
+                    if let (Some(st), Some(path)) = (self.windows.get_mut(&id), FsPath::parse(&path.to_string_lossy())) {
+                        st.app.ask_replace_export(path, size, modified);
+                    }
+                }
             }
         }
     }

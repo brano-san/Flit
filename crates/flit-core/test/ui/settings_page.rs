@@ -239,7 +239,7 @@ fn advanced_page_exports_imports_resets_and_clears_the_cache() {
     assert!(fx.iter().any(|e| matches!(e, Effect::ClearThumbnails)) && fx.iter().any(|e| matches!(e, Effect::Settings(SettingsCmd::CacheSize))));
     press(&mut a, Btn::Export);
     key(&mut a, Key::Enter, NO);
-    let (path, text) = a.drain_effects().find_map(|e| if let Effect::Settings(SettingsCmd::Export { path, text }) = e { Some((path, text)) } else { None }).expect("export");
+    let (path, text) = a.drain_effects().find_map(|e| if let Effect::Settings(SettingsCmd::Export { path, text, replace: false }) = e { Some((path, text)) } else { None }).expect("export");
     assert_eq!(path, FsPath::parse(r"C:\x\flit-settings.json").unwrap());
     assert!(text.contains("\"tags\": [{\"color\":\"#") && text.contains("\"name\":\"Work\""), "{text}");
     press(&mut a, Btn::Import);
@@ -254,6 +254,25 @@ fn advanced_page_exports_imports_resets_and_clears_the_cache() {
     assert!(a.settings_lines().contains(&"Thumbnail cache in use: 3.0 MB".to_owned()));
     press(&mut a, Btn::OpenFile);
     assert!(a.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } if path.display().ends_with("settings.json"))));
+}
+
+#[test]
+fn exporting_over_an_existing_file_asks_first_and_cancel_writes_nothing() {
+    let mut a = app();
+    a.open_settings(Some(Page::Advanced));
+    let path = FsPath::parse(r"C:\x\notes.txt").unwrap();
+    a.ask_replace_export(path.clone(), 1500, 0);
+    assert_eq!(a.asking(), Some("replace"));
+    assert_eq!(a.dialog_buttons(), ["Replace", "Cancel"]);
+    a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    a.drain_effects().for_each(drop);
+    key(&mut a, Key::Escape, NO);
+    assert_eq!(a.asking(), None);
+    assert!(a.settings_open(), "the dialog answers before the settings window");
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::Settings(SettingsCmd::Export { .. }))), "Cancel writes nothing");
+    a.ask_replace_export(path.clone(), 1500, 0);
+    key(&mut a, Key::Enter, NO);
+    assert!(a.drain_effects().any(|e| matches!(e, Effect::Settings(SettingsCmd::Export { path: p, replace: true, .. }) if p == path)), "Replace writes over the file");
 }
 
 #[test]

@@ -38,6 +38,7 @@ const UNREADABLE_BUTTONS: [&str; 2] = ["Skip", "Cancel"];
 const CONFIRM_BUTTONS: [&str; 2] = ["Delete", "Cancel"];
 const RESTORE_ALL_BUTTONS: [&str; 2] = ["Restore", "Cancel"];
 const RESTORE_BUTTONS: [&str; 2] = ["Restore", "Not now"];
+const REPLACE_BUTTONS: [&str; 2] = ["Replace", "Cancel"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum JobState {
@@ -149,6 +150,7 @@ pub(super) enum Ask {
     Conflict { id: OpId, conflict: Conflict },
     Confirm(FileOp),
     Restore,
+    ReplaceExport { path: FsPath, existing: crate::listing::Meta },
 }
 
 impl Ask {
@@ -363,6 +365,13 @@ impl App {
         self.dirty = true;
     }
 
+    pub fn ask_replace_export(&mut self, path: FsPath, size: u64, modified: i64) {
+        self.jobs.asks.push_back(Ask::ReplaceExport { path, existing: crate::listing::Meta { size, modified, ..Default::default() } });
+        self.jobs.sel = 0;
+        self.layout();
+        self.dirty = true;
+    }
+
     pub fn offer_restore(&mut self) {
         self.jobs.asks.push_back(Ask::Restore);
         self.jobs.sel = 0;
@@ -384,6 +393,7 @@ impl App {
             Some(Ask::Conflict { .. }) => Some("conflict"),
             Some(Ask::Confirm(_)) => Some("confirm"),
             Some(Ask::Restore) => Some("restore"),
+            Some(Ask::ReplaceExport { .. }) => Some("replace"),
             None => self.jobs.form.as_ref().map(|f| f.kind.name()),
         }
     }
@@ -466,7 +476,11 @@ impl App {
             Ask::Confirm(FileOp::Trash(items)) if button == 0 && self.jobs.all && !items.first().is_some_and(|p| p.kind() == crate::path::PathKind::Unix) => self.start_confirmed(FileOp::Delete(items)),
             Ask::Confirm(op) if button == 0 => self.start_confirmed(op),
             Ask::Restore if button == 0 => self.effects.push(super::Effect::RestoreSession),
-            Ask::Confirm(_) | Ask::Restore => {}
+            Ask::ReplaceExport { path, .. } if button == 0 => {
+                let text = self.export_text();
+                self.effects.push(super::Effect::Settings(super::SettingsCmd::Export { path, text, replace: true }));
+            }
+            Ask::Confirm(_) | Ask::Restore | Ask::ReplaceExport { .. } => {}
         }
         self.jobs.all = false;
         self.jobs.sel = self.jobs.asks.front().map_or(0, Ask::first_button);
@@ -481,6 +495,7 @@ impl App {
             Some(Ask::Confirm(FileOp::Restore(_))) => &RESTORE_ALL_BUTTONS,
             Some(Ask::Confirm(_)) => &CONFIRM_BUTTONS,
             Some(Ask::Restore) => &RESTORE_BUTTONS,
+            Some(Ask::ReplaceExport { .. }) => &REPLACE_BUTTONS,
             None => &[],
         }
     }
@@ -559,7 +574,7 @@ impl App {
             let (buttons, dh) = match ask {
                 Ask::Conflict { .. } => (labels, s(236.0)),
                 _ if checked => (labels, s(208.0)),
-                Ask::Confirm(_) | Ask::Restore => (labels, s(168.0)),
+                Ask::Confirm(_) | Ask::Restore | Ask::ReplaceExport { .. } => (labels, s(168.0)),
             };
             let dw = s(DIALOG_W).min(w - s(32.0));
             let d = Rect::new(((w - dw) / 2.0).round(), ((h - dh) / 2.0).round().max(s(40.0)), dw, dh);
@@ -837,6 +852,7 @@ impl App {
                 };
                 (title.into(), vec![text, note.into()])
             }
+            Some(Ask::ReplaceExport { path, existing }) => (format!("Replace {}?", quoted(path)), vec![format!("The settings export would write over this file in {}.", path.parent().map(|p| quoted(&p)).unwrap_or_default()), meta_line("Existing", existing, offset, &self.style)]),
             Some(Ask::Restore) => ("Restore the previous session?".into(), vec!["Flit did not close properly last time.".into(), "Restore reopens the windows and tabs that were open.".into()]),
             None => return,
         };

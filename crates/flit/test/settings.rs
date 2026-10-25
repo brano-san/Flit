@@ -58,7 +58,7 @@ fn edits_from_outside_are_reported_once_and_broken_files_are_backed_up() {
     jobs.send(Job::Backup).unwrap();
     jobs.send(Job::Write("{\"fresh\": 1}".into())).unwrap();
     let export = d.0.join("out").join("flit-settings.json");
-    jobs.send(Job::Export(export.clone(), "{\"tags\": []}".into())).unwrap();
+    jobs.send(Job::Export(export.clone(), "{\"tags\": []}".into(), false)).unwrap();
     jobs.send(Job::Import(export.clone())).unwrap();
     jobs.send(Job::Import(d.0.join("missing.json"))).unwrap();
     assert!(matches!(reply(&replies), Reply::Exported(Ok(p)) if p == export));
@@ -69,6 +69,19 @@ fn edits_from_outside_are_reported_once_and_broken_files_are_backed_up() {
     assert!(replies.try_recv().is_err(), "the second check saw nothing new");
     assert_eq!(std::fs::read_to_string(d.0.join("settings.broken.json")).unwrap(), "{ broken");
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "{\"fresh\": 1}");
+}
+
+#[test]
+fn export_writes_a_new_file_but_asks_before_replacing_and_refuses_folders() {
+    let d = temp("export");
+    let to = d.0.join("out.json");
+    assert!(matches!(export(to.clone(), "one", false), Reply::Exported(Ok(p)) if p == to));
+    assert_eq!(std::fs::read_to_string(&to).unwrap(), "one");
+    assert!(matches!(export(to.clone(), "two", false), Reply::ExportExists { size: 3, modified, .. } if modified > 0));
+    assert_eq!(std::fs::read_to_string(&to).unwrap(), "one", "an existing file is not touched without an answer");
+    assert!(matches!(export(to.clone(), "two", true), Reply::Exported(Ok(_))));
+    assert_eq!(std::fs::read_to_string(&to).unwrap(), "two");
+    assert!(matches!(export(d.0.clone(), "three", true), Reply::Exported(Err(e)) if e.ends_with("is a folder")));
 }
 
 #[test]

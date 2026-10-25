@@ -224,7 +224,7 @@ pub enum Effect {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsCmd {
-    Export { path: FsPath, text: String },
+    Export { path: FsPath, text: String, replace: bool },
     Import(FsPath),
     CacheSize,
 }

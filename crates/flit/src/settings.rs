@@ -12,7 +12,7 @@ pub enum Job {
     Write(String),
     Backup,
     Check,
-    Export(PathBuf, String),
+    Export(PathBuf, String, bool),
     Import(PathBuf),
     CacheSize,
     CacheLimit(u32),
@@ -23,6 +23,7 @@ pub enum Reply {
     Changed(String),
     Imported(Result<String, String>),
     Exported(Result<PathBuf, String>),
+    ExportExists { path: PathBuf, size: u64, modified: i64 },
     CacheUsed(u64),
 }
 
@@ -43,6 +44,17 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, path).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
     })
+}
+
+fn export(to: PathBuf, text: &str, replace: bool) -> Reply {
+    match std::fs::metadata(&to) {
+        Ok(m) if m.is_dir() => Reply::Exported(Err(format!("{} is a folder", to.display()))),
+        Ok(m) if !replace => {
+            let modified = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| (d.as_secs() as i64 + 11_644_473_600) * 10_000_000 + i64::from(d.subsec_nanos() / 100));
+            Reply::ExportExists { path: to, size: m.len(), modified }
+        }
+        _ => Reply::Exported(write_atomic(&to, text.as_bytes()).map(|_| to).map_err(|e| e.to_string())),
+    }
 }
 
 fn backup_path(path: &Path) -> PathBuf {
@@ -82,7 +94,7 @@ fn work(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>>, first: Str
                         reply(Reply::Changed(text));
                     }
                 }
-                Job::Export(to, text) => reply(Reply::Exported(write_atomic(&to, text.as_bytes()).map(|_| to).map_err(|e| e.to_string()))),
+                Job::Export(to, text, replace) => reply(export(to, &text, replace)),
                 Job::Import(from) => reply(Reply::Imported(std::fs::read_to_string(&from).map_err(|e| e.to_string()))),
                 Job::CacheSize => {
                     if let Some(c) = &cache {
