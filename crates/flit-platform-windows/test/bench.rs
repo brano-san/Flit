@@ -75,6 +75,10 @@ fn ok(out: flit_platform::OpOutcome) {
     assert!(out.error.is_none(), "{:?}", out.error);
 }
 
+fn run(sh: &mut ShellCom, op: &FileOp) -> flit_platform::OpOutcome {
+    sh.file_op(op, &flit_platform::Job::detached(flit_core::provider::Resolve::KeepBoth))
+}
+
 fn count(fs: &NtFs, dir: &FsPath) -> usize {
     let mut go = |_: &ListingBuilder<'_>| true;
     let mut b = ListingBuilder::new(CaseMode::Insensitive, &mut go);
@@ -181,35 +185,35 @@ fn bench_file_ops() {
     let mut sh = ShellCom::new().unwrap();
     std::fs::create_dir(c.0.join("dst")).unwrap();
     std::fs::create_dir(other.0.join("dst")).unwrap();
-    measure("copy 1 file 4 KB same volume", RUNS, |k| c.file(&format!("c{k}.txt"), 4096), |f| ok(sh.file_op(&FileOp::Copy { items: vec![f], dest: c.path("dst") })));
-    measure("copy 1 file 4 KB other volume", RUNS, |k| c.file(&format!("x{k}.txt"), 4096), |f| ok(sh.file_op(&FileOp::Copy { items: vec![f], dest: other.path("dst") })));
-    measure("duplicate 1 file in place", RUNS, |k| c.file(&format!("dup{k}.txt"), 4096), |f| ok(sh.file_op(&FileOp::Copy { items: vec![f], dest: c.path("") })));
-    measure("copy 20 files 4 KB", 5, |k| (0..20).map(|i| c.file(&format!("m{k}_{i}.txt"), 4096)).collect::<Vec<_>>(), |items| ok(sh.file_op(&FileOp::Copy { items, dest: c.path("dst") })));
+    measure("copy 1 file 4 KB same volume", RUNS, |k| c.file(&format!("c{k}.txt"), 4096), |f| ok(run(&mut sh, &FileOp::Copy { items: vec![f], dest: c.path("dst") })));
+    measure("copy 1 file 4 KB other volume", RUNS, |k| c.file(&format!("x{k}.txt"), 4096), |f| ok(run(&mut sh, &FileOp::Copy { items: vec![f], dest: other.path("dst") })));
+    measure("duplicate 1 file in place", RUNS, |k| c.file(&format!("dup{k}.txt"), 4096), |f| ok(run(&mut sh, &FileOp::Copy { items: vec![f], dest: c.path("") })));
+    measure("copy 20 files 4 KB", 5, |k| (0..20).map(|i| c.file(&format!("m{k}_{i}.txt"), 4096)).collect::<Vec<_>>(), |items| ok(run(&mut sh, &FileOp::Copy { items, dest: c.path("dst") })));
     measure("copy folder 50 files", 5, |k| {
         std::fs::create_dir(c.0.join(format!("tree{k}"))).unwrap();
         (0..50).for_each(|i| drop(c.file(&format!("tree{k}/f{i}"), 1024)));
         c.path(&format!("tree{k}"))
-    }, |f| ok(sh.file_op(&FileOp::Copy { items: vec![f], dest: c.path("dst") })));
-    measure("move 1 file same volume", RUNS, |k| c.file(&format!("mv{k}.txt"), 4096), |f| ok(sh.file_op(&FileOp::Move { items: vec![f], dest: c.path("dst") })));
-    measure("move 1 file other volume", RUNS, |k| c.file(&format!("xv{k}.txt"), 4096), |f| ok(sh.file_op(&FileOp::Move { items: vec![f], dest: other.path("dst") })));
-    measure("rename 1 file", RUNS, |k| c.file(&format!("rn{k}.txt"), 10), |f| ok(sh.file_op(&FileOp::Rename { item: f, name: format!("renamed{}.txt", rand_tag()).into_bytes() })));
-    measure("new folder", RUNS, |k| format!("nf{k}"), |n| ok(sh.file_op(&FileOp::NewFolder { dir: c.path(""), name: n.into_bytes() })));
-    measure("shortcut 1 file", RUNS, |k| c.file(&format!("ln{k}.txt"), 10), |f| ok(sh.file_op(&FileOp::Link { items: vec![f], dest: c.path("dst") })));
+    }, |f| ok(run(&mut sh, &FileOp::Copy { items: vec![f], dest: c.path("dst") })));
+    measure("move 1 file same volume", RUNS, |k| c.file(&format!("mv{k}.txt"), 4096), |f| ok(run(&mut sh, &FileOp::Move { items: vec![f], dest: c.path("dst") })));
+    measure("move 1 file other volume", RUNS, |k| c.file(&format!("xv{k}.txt"), 4096), |f| ok(run(&mut sh, &FileOp::Move { items: vec![f], dest: other.path("dst") })));
+    measure("rename 1 file", RUNS, |k| c.file(&format!("rn{k}.txt"), 10), |f| ok(run(&mut sh, &FileOp::Rename { item: f, name: format!("renamed{}.txt", rand_tag()).into_bytes() })));
+    measure("new folder", RUNS, |k| format!("nf{k}"), |n| ok(run(&mut sh, &FileOp::NewFolder { dir: c.path(""), name: n.into_bytes() })));
+    measure("shortcut 1 file", RUNS, |k| c.file(&format!("ln{k}.txt"), 10), |f| ok(run(&mut sh, &FileOp::Link { items: vec![f], dest: c.path("dst") })));
     let mut recycled = Vec::new();
     measure("trash 1 file", RUNS, |k| c.file(&format!("tr{k}.txt"), 4096), |f| {
-        let out = sh.file_op(&FileOp::Trash(vec![f]));
+        let out = run(&mut sh, &FileOp::Trash(vec![f]));
         assert!(out.error.is_none(), "{:?}", out.error);
         recycled.extend(out.items);
     });
     measure("trash 20 files", 3, |k| (0..20).map(|i| c.file(&format!("t{k}_{i}.txt"), 4096)).collect::<Vec<_>>(), |items| {
-        let out = sh.file_op(&FileOp::Trash(items));
+        let out = run(&mut sh, &FileOp::Trash(items));
         assert!(out.error.is_none(), "{:?}", out.error);
         recycled.extend(out.items);
     });
     let bin = recycle_bin_len();
     eprintln!("      recycle bin holds {bin} items");
     let pairs: Vec<(FsPath, FsPath)> = recycled.iter().map(|(from, to)| (to.clone(), from.clone())).collect();
-    measure("restore 1 file from recycle bin", pairs.len(), |k| pairs[k].clone(), |p| ok(sh.file_op(&FileOp::Restore(vec![p]))));
+    measure("restore 1 file from recycle bin", pairs.len(), |k| pairs[k].clone(), |p| ok(run(&mut sh, &FileOp::Restore(vec![p]))));
 }
 
 #[test]
@@ -250,12 +254,12 @@ fn bench_new_items() {
     let mut sh = ShellCom::new().unwrap();
     let template = d.file("template.docx", 20_000);
     let new = |name: String, template| FileOp::NewFile { dir: d.path(""), name: name.into_bytes(), template };
-    measure("new empty file", RUNS, |k| new(format!("e{k}.txt"), Template::Empty), |op| ok(sh.file_op(&op)));
-    measure("new file from 22-byte data", RUNS, |k| new(format!("z{k}.zip"), Template::Data(vec![0x50; 22])), |op| ok(sh.file_op(&op)));
-    measure("new file from 20 KB template file", RUNS, |k| new(format!("t{k}.docx"), Template::Copy(template.clone())), |op| ok(sh.file_op(&op)));
-    measure("new alternate data stream", RUNS, |k| d.file(&format!("s{k}.txt"), 10), |f| ok(sh.file_op(&FileOp::NewStream { item: f, name: b"meta".to_vec() })));
+    measure("new empty file", RUNS, |k| new(format!("e{k}.txt"), Template::Empty), |op| ok(run(&mut sh, &op)));
+    measure("new file from 22-byte data", RUNS, |k| new(format!("z{k}.zip"), Template::Data(vec![0x50; 22])), |op| ok(run(&mut sh, &op)));
+    measure("new file from 20 KB template file", RUNS, |k| new(format!("t{k}.docx"), Template::Copy(template.clone())), |op| ok(run(&mut sh, &op)));
+    measure("new alternate data stream", RUNS, |k| d.file(&format!("s{k}.txt"), 10), |f| ok(run(&mut sh, &FileOp::NewStream { item: f, name: b"meta".to_vec() })));
     std::fs::create_dir(d.0.join("target")).unwrap();
-    let links = sh.file_op(&FileOp::Link { items: vec![d.path("target"), template.clone()], dest: d.path("") }).items;
+    let links = run(&mut sh, &FileOp::Link { items: vec![d.path("target"), template.clone()], dest: d.path("") }).items;
     let (to_folder, to_file) = (links[0].1.clone(), links[1].1.clone());
     measure(".lnk to a folder resolved", RUNS, |_| to_folder.clone(), |l| assert_eq!(sh.shortcut_folder(&l), Some(d.path("target"))));
     measure(".lnk to a file resolved", RUNS, |_| to_file.clone(), |l| assert_eq!(sh.shortcut_folder(&l), None));
@@ -268,8 +272,58 @@ fn bench_new_items() {
             std::fs::create_dir(d.0.join(&dir)).unwrap();
             let new_names = flit_core::ui::batch_names("Trip", &items, |_| false);
             names.iter().zip(new_names).map(|(old, new)| (d.file(&format!("{dir}/{}", String::from_utf8_lossy(old)), 10), d.path(&format!("{dir}/{}", String::from_utf8_lossy(&new))))).collect::<Vec<_>>()
-        }, |pairs| ok(sh.file_op(&FileOp::MoveTo(pairs))));
+        }, |pairs| ok(run(&mut sh, &FileOp::MoveTo(pairs))));
     }
+}
+
+fn tree(d: &Dir, rel: &str, files: usize, bytes: usize) -> FsPath {
+    std::fs::create_dir_all(d.0.join(rel)).unwrap();
+    (0..files).for_each(|i| drop(d.file(&format!("{rel}/f{i:04}.txt"), bytes)));
+    d.path(rel)
+}
+
+fn big_file(d: &Dir, rel: &str, mb: usize) -> FsPath {
+    use std::io::Write;
+    let mut f = std::fs::File::create(d.0.join(rel)).unwrap();
+    let chunk: Vec<u8> = (0..8 << 20).map(|i| (i * 31 % 251) as u8).collect();
+    (0..mb / 8).for_each(|_| f.write_all(&chunk).unwrap());
+    d.path(rel)
+}
+
+fn fresh(d: &Dir, rel: &str) -> FsPath {
+    let _ = std::fs::remove_dir_all(d.0.join(rel));
+    std::fs::create_dir_all(d.0.join(rel)).unwrap();
+    d.path(rel)
+}
+
+#[test]
+#[ignore]
+fn bench_engine() {
+    let c = Dir::temp("engine");
+    let other = Dir::other_volume("engine");
+    let mut sh = ShellCom::new().unwrap();
+    let mut go = |op: FileOp| ok(run(&mut sh, &op));
+    let folder50 = tree(&c, "src50", 50, 1024);
+    measure("copy folder of 50 files 1 KB", 5, |k| (folder50.clone(), fresh(&c, &format!("d50_{k}"))), |(f, dest)| go(FileOp::Copy { items: vec![f], dest }));
+    let folder1000 = tree(&c, "src1000", 1000, 1024);
+    measure("copy folder of 1000 files 1 KB", 5, |k| (folder1000.clone(), fresh(&c, &format!("d1000_{k}"))), |(f, dest)| go(FileOp::Copy { items: vec![f], dest }));
+    let loose: Vec<FsPath> = (0..1000).map(|i| c.file(&format!("src1000/f{i:04}.txt"), 1024)).collect();
+    measure("copy 1000 selected files 1 KB", 5, |k| (loose.clone(), fresh(&c, &format!("l1000_{k}"))), |(items, dest)| go(FileOp::Copy { items, dest }));
+    let big = big_file(&c, "big.bin", 512);
+    measure("copy 1 file 512 MB", 3, |_| fresh(&c, "bigdest"), |dest| go(FileOp::Copy { items: vec![big.clone()], dest }));
+    let _ = std::fs::remove_dir_all(c.0.join("bigdest"));
+    let _ = std::fs::remove_file(c.0.join("big.bin"));
+    measure("move folder of 50 files same volume", 5, |k| (tree(&c, &format!("mv50_{k}"), 50, 1024), fresh(&c, &format!("mvd50_{k}"))), |(f, dest)| go(FileOp::Move { items: vec![f], dest }));
+    if c.0.components().next() != other.0.components().next() {
+        measure("move folder of 50 files other volume", 5, |k| (tree(&c, &format!("xv50_{k}"), 50, 1024), fresh(&other, &format!("xvd50_{k}"))), |(f, dest)| go(FileOp::Move { items: vec![f], dest }));
+        measure("move folder of 1000 files other volume", 3, |k| (tree(&c, &format!("xv1000_{k}"), 1000, 1024), fresh(&other, &format!("xvd1000_{k}"))), |(f, dest)| go(FileOp::Move { items: vec![f], dest }));
+    } else {
+        eprintln!("      skipped cross-volume moves: {} and {} share a volume", c.0.display(), other.0.display());
+    }
+    measure("batch rename 1000 files", 5, |k| {
+        let dir = tree(&c, &format!("ren{k}"), 1000, 10);
+        (0..1000).map(|i| (dir.join(format!("f{i:04}.txt").as_bytes()), dir.join(format!("Trip ({}).txt", i + 1).as_bytes()))).collect::<Vec<_>>()
+    }, |pairs| go(FileOp::MoveTo(pairs)));
 }
 
 fn rand_tag() -> u128 {

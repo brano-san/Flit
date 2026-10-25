@@ -1,6 +1,7 @@
 use super::*;
 use crate::OpOutcome;
 use flit_core::listing::Meta;
+use flit_core::provider::OpProgress;
 use flit_core::ui::{Bitmap, IconRequest};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -49,7 +50,7 @@ impl Shell for NoShell {
     }
 }
 impl FileOps for NoShell {
-    fn file_op(&mut self, op: &FileOp) -> OpOutcome {
+    fn file_op(&mut self, op: &FileOp, _: &Job) -> OpOutcome {
         let items = match op {
             FileOp::Trash(v) => v.iter().map(|p| (p.clone(), p.clone())).collect(),
             _ => Vec::new(),
@@ -96,7 +97,7 @@ fn list_streams_sorted_snapshots_and_sizes() {
     provider.submit(ProviderRequest::Open { tab: 4, path: p(r"C:\r\a.txt") });
     assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { tab: 4, id: 0, error: Some(_), report: None }));
     let trash = FileOp::Trash(vec![p(r"C:\r\c")]);
-    provider.submit(ProviderRequest::Op { tab: 9, id: 3, op: trash.clone() });
+    provider.submit(ProviderRequest::Op { tab: 9, id: 3, op: trash.clone(), ctl: OpCtl::default() });
     let report = Some(OpReport { op: trash, items: vec![(p(r"C:\r\c"), p(r"C:\r\c"))] });
     assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { tab: 9, id: 3, error: None, report });
 }
@@ -119,7 +120,7 @@ impl Shell for BusyShell {
     }
 }
 impl FileOps for BusyShell {
-    fn file_op(&mut self, _: &FileOp) -> OpOutcome {
+    fn file_op(&mut self, _: &FileOp, _: &Job) -> OpOutcome {
         while !RELEASE_OP.load(Ordering::Acquire) {
             std::thread::sleep(Duration::from_millis(1));
         }
@@ -135,11 +136,63 @@ impl FileOps for BusyShell {
 fn open_is_not_queued_behind_a_running_op() {
     let (tx, rx) = unbounded();
     let provider = LocalProvider::new::<_, NoWatch, BusyShell>(fs(), 1, tx, Arc::new(|| {})).unwrap();
-    provider.submit(ProviderRequest::Op { tab: 1, id: 5, op: FileOp::Copy { items: vec![p(r"C:\r\a.txt")], dest: p(r"C:\r\sub") } });
+    provider.submit(ProviderRequest::Op { tab: 1, id: 5, op: FileOp::Copy { items: vec![p(r"C:\r\a.txt")], dest: p(r"C:\r\sub") }, ctl: OpCtl::default() });
     provider.submit(ProviderRequest::Open { tab: 2, path: p(r"C:\r\b.txt") });
     assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { tab: 2, id: 0, error: Some(_), report: None }));
     RELEASE_OP.store(true, Ordering::Release);
     assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { tab: 1, id: 5, error: None, report: Some(_) }));
+}
+
+static RELEASE_C: AtomicBool = AtomicBool::new(false);
+
+struct GateShell;
+impl Shell for GateShell {
+    fn new() -> Result<Self, PlatformError> {
+        Ok(GateShell)
+    }
+    fn icon(&mut self, _: &IconRequest) -> Option<Bitmap> {
+        None
+    }
+    fn type_name(&mut self, _: &[u8]) -> Option<String> {
+        None
+    }
+    fn open(&mut self, _: &FsPath) -> Result<(), PlatformError> {
+        Ok(())
+    }
+}
+impl FileOps for GateShell {
+    fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome {
+        job.update(|p| p.stage = Stage::Running);
+        while matches!(op, FileOp::Copy { dest, .. } if dest.as_bytes()[0] == b'C') && !RELEASE_C.load(Ordering::Acquire) {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        OpOutcome::default()
+    }
+    fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
+        Err(PlatformError::new(-1, "empty"))
+    }
+    fn clear_clipboard(&mut self) {}
+}
+
+#[test]
+fn transfers_to_one_volume_queue_and_others_run_alongside() {
+    let (tx, rx) = unbounded();
+    let provider = LocalProvider::new::<_, NoWatch, GateShell>(fs(), 1, tx, Arc::new(|| {})).unwrap();
+    let copy = |dest: &str| FileOp::Copy { items: vec![p(r"E:\a.txt")], dest: p(dest) };
+    let waiting = OpCtl::default();
+    provider.submit(ProviderRequest::Op { tab: 1, id: 1, op: copy(r"C:\x"), ctl: OpCtl::default() });
+    let next = || rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(matches!(next(), ProviderEvent::OpProgress { id: 1, progress: OpProgress { stage: Stage::Running, .. }, .. }));
+    provider.submit(ProviderRequest::Op { tab: 1, id: 2, op: copy(r"c:\y"), ctl: waiting.clone() });
+    assert!(matches!(next(), ProviderEvent::OpProgress { id: 2, progress: OpProgress { stage: Stage::Queued, .. }, .. }));
+    provider.submit(ProviderRequest::Op { tab: 1, id: 3, op: copy(r"D:\z"), ctl: OpCtl::default() });
+    assert!(matches!(next(), ProviderEvent::OpProgress { id: 3, progress: OpProgress { stage: Stage::Running, .. }, .. }));
+    assert!(matches!(next(), ProviderEvent::OpDone { id: 3, error: None, .. }));
+    waiting.cancel();
+    assert!(matches!(next(), ProviderEvent::OpDone { id: 2, error: Some(e), .. } if e == CANCELLED));
+    RELEASE_C.store(true, Ordering::Release);
+    assert!(matches!(next(), ProviderEvent::OpDone { id: 1, error: None, .. }));
+    provider.wait_idle(Duration::from_secs(5));
 }
 
 #[derive(Default)]
@@ -151,7 +204,7 @@ struct Clip {
 }
 
 impl FileOps for Clip {
-    fn file_op(&mut self, op: &FileOp) -> OpOutcome {
+    fn file_op(&mut self, op: &FileOp, _: &Job) -> OpOutcome {
         self.ran.push(op.clone());
         let items = match op {
             FileOp::Copy { items, dest } | FileOp::Move { items, dest } => items.iter().map(|i| (i.clone(), dest.join(i.file_name()))).collect(),
@@ -258,8 +311,8 @@ fn wsl_requests_map_to_unc() {
 #[test]
 fn unmappable_wsl_paths_never_reach_win32() {
     let bad = FsPath::parse_bytes(b"/tmp/\xFF").unwrap();
-    assert!(via_unc("Ubuntu", ProviderRequest::Op { tab: 1, id: 1, op: FileOp::Trash(vec![bad.clone()]) }).is_none());
-    let renamed = via_unc("Ubuntu", ProviderRequest::Op { tab: 1, id: 2, op: FileOp::Rename { item: FsPath::parse("/home/a:b").unwrap(), name: b"c".to_vec() } });
+    assert!(via_unc("Ubuntu", ProviderRequest::Op { tab: 1, id: 1, op: FileOp::Trash(vec![bad.clone()]), ctl: OpCtl::default() }).is_none());
+    let renamed = via_unc("Ubuntu", ProviderRequest::Op { tab: 1, id: 2, op: FileOp::Rename { item: FsPath::parse("/home/a:b").unwrap(), name: b"c".to_vec() }, ctl: OpCtl::default() });
     assert!(matches!(renamed, Some(ProviderRequest::Op { op: FileOp::Rename { item, .. }, .. }) if item.display() == "\\\\wsl.localhost\\Ubuntu\\home\\a\u{F03A}b"));
     let out = Arc::new(SnapshotSlot::default());
     let req = ProviderRequest::List { tab: 1, gen: 3, path: bad, view: ViewSpec::default(), case: CaseMode::Sensitive, out: out.clone(), cancel: GenToken::default() };
@@ -290,7 +343,7 @@ impl Shell for LinkShell {
     }
 }
 impl FileOps for LinkShell {
-    fn file_op(&mut self, _: &FileOp) -> OpOutcome {
+    fn file_op(&mut self, _: &FileOp, _: &Job) -> OpOutcome {
         OpOutcome::default()
     }
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {

@@ -15,7 +15,7 @@ fn shortcuts_resolve_only_to_existing_folders() {
     std::fs::write(root.join("f.txt"), "x").unwrap();
     let at = |rel: &str| p(root.join(rel).to_str().unwrap());
     let mut sh = ShellCom::new().unwrap();
-    let out = sh.file_op(&FileOp::Link { items: vec![at("target"), at("f.txt")], dest: at("") });
+    let out = sh.file_op(&FileOp::Link { items: vec![at("target"), at("f.txt")], dest: at("") }, &flit_platform::Job::detached(flit_core::provider::Resolve::Skip));
     let [(_, to_folder), (_, to_file)] = out.items.try_into().unwrap();
     assert_eq!(sh.shortcut_folder(&to_folder), Some(at("target")));
     assert_eq!(sh.shortcut_folder(&to_file), None);

@@ -491,6 +491,9 @@ fn delete_in_the_bin_purges_and_the_bin_commands_restore_or_empty() {
     select(&mut app, &["report.txt"]);
     for m in [NO, SHIFT] {
         key(&mut app, Key::Delete, m);
+        assert_eq!(app.asking(), Some("confirm"));
+        assert!(op_list(&mut app).is_empty(), "nothing is purged before the confirmation");
+        key(&mut app, Key::Enter, NO);
         assert_eq!(op_list(&mut app), [FileOp::Purge(pairs(&[BIN_REPORT]))]);
     }
     assert!(app.run_action("bin.restore", t0()));
@@ -502,6 +505,10 @@ fn delete_in_the_bin_purges_and_the_bin_commands_restore_or_empty() {
     app.run_action("bin.restore_all", t0());
     assert_eq!(op_list(&mut app), [FileOp::Restore(pairs(&[BIN_REPORT, BIN_OLD]))]);
     app.run_action("bin.empty", t0());
+    key(&mut app, Key::Escape, NO);
+    assert!(app.asking().is_none() && op_list(&mut app).is_empty(), "a declined confirmation deletes nothing");
+    app.run_action("bin.empty", t0());
+    key(&mut app, Key::Enter, NO);
     let [(id, op)] = ops(&mut app).try_into().unwrap();
     assert_eq!(op, FileOp::EmptyBin);
     done(&mut app, id, op, &[]);
@@ -521,6 +528,9 @@ fn the_status_bar_buttons_and_headers_of_the_bin_work_with_the_mouse() {
         let at = (buttons[k].x + 4.0, buttons[k].y + 4.0);
         press(&mut app, at, MouseButton::Left, NO);
         release(&mut app, at, MouseButton::Left);
+        if want == FileOp::EmptyBin {
+            key(&mut app, Key::Enter, NO);
+        }
         assert_eq!(op_list(&mut app), [want]);
     }
     let origin = app.layout.cols[1];
@@ -538,6 +548,10 @@ fn shift_delete_deletes_permanently_without_an_undo_step() {
     deliver(&mut app, &[("a.txt", false)]);
     select(&mut app, &["a.txt"]);
     key(&mut app, Key::Delete, SHIFT);
+    key(&mut app, Key::Escape, NO);
+    assert!(ops(&mut app).is_empty() && app.asking().is_none());
+    key(&mut app, Key::Delete, SHIFT);
+    key(&mut app, Key::Enter, NO);
     let [(id, op)] = ops(&mut app).try_into().unwrap();
     assert_eq!(op, FileOp::Delete(vec![p(r"C:\x\a.txt")]));
     done(&mut app, id, op, &[(r"C:\x\a.txt", r"C:\x\a.txt")]);
@@ -548,6 +562,7 @@ fn shift_delete_deletes_permanently_without_an_undo_step() {
     assert!(ops(&mut app).is_empty());
     assert_eq!(app.tab().error.as_deref(), Some(OPEN_BIN));
     app.run_action("bin.empty", t0());
+    key(&mut app, Key::Enter, NO);
     assert_eq!(op_list(&mut app), [FileOp::EmptyBin], "the bin can be emptied from anywhere");
 }
 
