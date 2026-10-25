@@ -559,7 +559,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         done,
         saved: saved.clone(),
         metrics: metrics.map(|m| Metrics::new(m, started, P::refresh_period())),
-        places: PlacesWorker::start::<P>(wake.clone()),
+        places: PlacesWorker::new::<P>(wake.clone()),
         injection: None,
         wake,
         gpu,

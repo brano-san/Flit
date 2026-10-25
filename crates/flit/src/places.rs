@@ -8,14 +8,14 @@ pub struct PlacesWorker {
     requests: Sender<()>,
     results: Receiver<Places>,
     current: Arc<Places>,
-    started: bool,
+    pending: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl PlacesWorker {
-    pub fn start<P: Platform>(wake: Wake) -> Self {
+    pub fn new<P: Platform>(wake: Wake) -> Self {
         let (requests, jobs) = unbounded::<()>();
         let (done, results) = unbounded();
-        let spawned = std::thread::Builder::new().name("flit-places".into()).spawn(move || {
+        let run = move || {
             while jobs.recv().is_ok() {
                 while jobs.try_recv().is_ok() {}
                 if done.send(collect::<P>()).is_err() {
@@ -23,18 +23,16 @@ impl PlacesWorker {
                 }
                 wake();
             }
-        });
-        if let Err(e) = spawned {
-            tracing::warn!("cannot start flit-places: {e}");
-        }
-        Self { requests, results, current: Arc::default(), started: false }
+        };
+        Self { requests, results, current: Arc::default(), pending: Some(Box::new(run)) }
     }
 
     pub fn start_once(&mut self) {
-        if !self.started {
-            self.started = true;
-            self.refresh();
+        let Some(run) = self.pending.take() else { return };
+        if let Err(e) = std::thread::Builder::new().name("flit-places".into()).spawn(run) {
+            tracing::warn!("cannot start flit-places: {e}");
         }
+        self.refresh();
     }
 
     pub fn refresh(&self) {
