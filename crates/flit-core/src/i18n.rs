@@ -323,7 +323,7 @@ pub fn localize(msg: &str) -> Cow<'_, str> {
 fn errors() -> &'static [S] {
     static ERRORS: std::sync::OnceLock<Vec<S>> = std::sync::OnceLock::new();
     ERRORS.get_or_init(|| {
-        let mut v: Vec<S> = S::ALL.into_iter().filter(|s| s.key().starts_with("errors.")).collect();
+        let mut v: Vec<S> = S::ALL.into_iter().filter(|s| s.key().starts_with("errors")).collect();
         v.sort_by_key(|s| std::cmp::Reverse(literal_len(s.en())));
         v
     })

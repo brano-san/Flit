@@ -118,7 +118,7 @@ fn language_codes() {
 #[test]
 fn english_errors_are_shown_in_the_chosen_language() {
     set_lang(Lang::Ru);
-    for s in S::ALL.into_iter().filter(|s| s.key().starts_with("errors.")) {
+    for s in S::ALL.into_iter().filter(|s| s.key().starts_with("errors")) {
         let names = placeholders(s.en());
         let sample: Vec<(String, String)> = names.iter().map(|n| (n.to_string(), format!("<{n}7>"))).collect();
         let args: Vec<(&str, &dyn Display)> = sample.iter().map(|(n, v)| (n.as_str(), v as &dyn Display)).collect();
@@ -127,6 +127,6 @@ fn english_errors_are_shown_in_the_chosen_language() {
     }
     assert_eq!(localize("C:\\some\\path"), "C:\\some\\path");
     set_lang(Lang::En);
-    let any = S::ALL.into_iter().find(|s| s.key().starts_with("errors.")).unwrap();
+    let any = S::ALL.into_iter().find(|s| s.key().starts_with("errors")).unwrap();
     assert_eq!(localize(any.en()), any.en());
 }
