@@ -6,6 +6,7 @@ mod fs;
 mod instance;
 mod mft;
 mod pipe;
+mod service;
 mod shell;
 mod walk_index;
 mod watcher;
@@ -149,7 +150,7 @@ impl Service for WinService {
         PIPE_NAME.into()
     }
     fn run(body: fn() -> Result<(), PlatformError>) -> Result<(), PlatformError> {
-        body()
+        service::run(body)
     }
     fn connect() -> Result<PipeConn, PlatformError> {
         pipe::connect_to(&Self::endpoint())
