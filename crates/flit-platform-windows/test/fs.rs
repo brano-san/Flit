@@ -128,3 +128,22 @@ fn listing_a_file_reports_that_it_is_not_a_folder() {
     let err = NtFs.read_dir(&fs_path(&t.0.join("missing")), &mut b).unwrap_err();
     assert_eq!(err.kind, FsErrorKind::NotFound);
 }
+
+#[test]
+fn alternate_data_streams_are_listed_only_on_request() {
+    let t = Temp::new("streams");
+    t.file("a.txt", 3);
+    t.dir("sub");
+    std::fs::write(t.0.join("a.txt:meta"), b"12345").unwrap();
+    let list = |streams: bool| {
+        let mut go = |_: &ListingBuilder<'_>| true;
+        let mut b = ListingBuilder::new(flit_core::sort::CaseMode::Insensitive, &mut go).with_streams(streams);
+        NtFs.read_dir(&fs_path(&t.0), &mut b).unwrap();
+        let l = b.listing;
+        let mut out: Vec<(String, u64, bool)> = (0..l.len() as u32).map(|i| (String::from_utf8_lossy(l.name(i)).into_owned(), l.entries[i as usize].size, l.entries[i as usize].attrs & attr::STREAM != 0)).collect();
+        out.sort();
+        out
+    };
+    assert_eq!(list(false), [("a.txt".to_owned(), 3, false), ("sub".to_owned(), 0, false)]);
+    assert_eq!(list(true), [("a.txt".to_owned(), 3, false), ("a.txt:meta".to_owned(), 5, true), ("sub".to_owned(), 0, false)]);
+}

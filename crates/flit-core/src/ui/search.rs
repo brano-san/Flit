@@ -472,7 +472,8 @@ impl App {
 
     fn search_scope(&self) -> SearchScope {
         let Some(Within::Folder(folder)) = self.search.within.clone() else { return SearchScope::All };
-        let ready = drive_id(&folder).is_some_and(|d| self.search.volumes.iter().any(|v| v.id.eq_ignore_ascii_case(&d) && v.state == IndexState::Ready));
+        let archived = crate::archive::split(folder.path()).is_some();
+        let ready = !archived && drive_id(&folder).is_some_and(|d| self.search.volumes.iter().any(|v| v.id.eq_ignore_ascii_case(&d) && v.state == IndexState::Ready));
         if ready {
             SearchScope::Indexed(folder)
         } else {

@@ -339,3 +339,25 @@ fn search_results_can_be_grouped_by_folder() {
     let menu = app.build_search_menu(true);
     assert_eq!(commands(&menu), [("Open file location".to_owned(), false), ("Group by folder".to_owned(), true)]);
 }
+
+#[test]
+fn alternate_data_streams_show_only_after_the_toggle_which_relists_every_tab() {
+    let mut l = Listing::default();
+    l.push(b"a.txt", Meta::default());
+    l.push(b"a.txt:meta", Meta { attrs: crate::listing::attr::STREAM, ..Default::default() });
+    let shown = |v: &sort::ViewSpec| (0..2).filter(|&i| sort::visible(&l, i, v)).count();
+    assert_eq!(shown(&sort::ViewSpec::default()), 1);
+    assert_eq!(shown(&sort::ViewSpec { show_streams: true, ..Default::default() }), 2);
+    let mut app = app_at(r"C:\a");
+    deliver(&mut app, &[("a.txt", 1, false)]);
+    run(&mut app, "view.streams");
+    assert!(app.prefs.show_streams && app.tab().view_spec.show_streams);
+    let relisted = app.drain_effects().find_map(|e| match e {
+        Effect::Provider { req: ProviderRequest::List { view, .. }, .. } => Some(view),
+        _ => None,
+    });
+    assert!(relisted.is_some_and(|v| v.show_streams), "turning streams on lists the folder again with streams");
+    run(&mut app, "view.streams");
+    assert!(!app.tab().view_spec.show_streams);
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::List { .. }, .. })), "turning them off only filters");
+}

@@ -111,7 +111,7 @@ enum Done {
 }
 
 fn tools(app: &App) -> Tools {
-    Tools { toolbar: app.toolbar_state(), searches: app.search_history().to_vec() }
+    Tools { toolbar: app.toolbar_state(), searches: app.search_history().to_vec(), streams: false }
 }
 
 fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> Result<(), PlatformError> {

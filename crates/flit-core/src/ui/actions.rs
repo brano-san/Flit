@@ -147,6 +147,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("view.extensions", "Show or hide file name extensions", &[], |a, _| a.toggle_pref(|p| &mut p.show_extensions)),
     Action::new("view.status_bar", "Show or hide the status bar", &[], |a, _| a.toggle_pref(|p| &mut p.status_bar)),
     Action::new("view.item_count", "Count files and folders separately", &[], |a, _| a.toggle_pref(|p| &mut p.split_count)),
+    Action::new("view.streams", "Show or hide alternate data streams", &[], |a, now| a.toggle_streams(now)),
     Action::new("view.checkboxes", "Show or hide item check boxes", &[], |a, _| a.toggle_pref(|p| &mut p.checkboxes)),
     Action::new("view.hover_select", "Select items by hovering", &[], |a, _| a.toggle_pref(|p| &mut p.hover_select)),
     Action::new("view.auto_sizes", "Calculate folder sizes automatically", &[], |a, _| a.toggle_pref(|p| &mut p.auto_sizes)),

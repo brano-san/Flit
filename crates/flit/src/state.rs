@@ -44,6 +44,7 @@ struct LayoutRecord {
 pub struct Tools {
     pub toolbar: ToolbarState,
     pub searches: Vec<String>,
+    pub streams: bool,
 }
 
 impl Tools {
@@ -156,6 +157,7 @@ impl Saved {
         if let Some((archive, tail)) = rest.and_then(|t| postcard::take_from_bytes::<Defaults>(t).ok()) {
             p.archive = archive.sanitized();
             if let Ok((tools, _)) = postcard::take_from_bytes::<Tools>(tail) {
+                p.prefs.show_streams = tools.streams;
                 saved.tools = tools;
             }
         }
@@ -181,7 +183,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&self.pane).ok()?);
         bytes.extend(postcard::to_stdvec(&self.side).ok()?);
         bytes.extend(postcard::to_stdvec(&p.archive.clone().sanitized()).ok()?);
-        bytes.extend(postcard::to_stdvec(&self.tools).ok()?);
+        bytes.extend(postcard::to_stdvec(&Tools { streams: p.prefs.show_streams, ..self.tools.clone() }).ok()?);
         Some(bytes)
     }
 

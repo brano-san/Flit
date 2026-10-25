@@ -191,6 +191,11 @@ fn f3_searches_the_folder_live_or_through_a_ready_index_and_the_chip_widens_it()
     assert_eq!(scope_of(&mut app), Some(SearchScope::Indexed(here)));
     key(&mut app, Key::Char('E'), CTRL);
     assert_eq!(scope_of(&mut app), Some(SearchScope::All));
+    app.close_search();
+    let zip = Location::parse(r"C:\x\pack.zip\docs").unwrap();
+    app.navigate(zip.clone(), t0());
+    key(&mut app, Key::F(3), NO);
+    assert_eq!(scope_of(&mut app), Some(SearchScope::Walk(zip)), "the index does not reach inside archives");
 }
 
 #[test]

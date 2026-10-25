@@ -120,7 +120,7 @@ fn sidebar_and_home_preferences_ride_sixth_after_the_pane_so_older_files_still_l
     assert_eq!(postcard::from_bytes::<PaneState>(tail).unwrap(), pane, "the pane stays the fifth record");
     let older = Saved::decode(master_layout).unwrap();
     assert_eq!((older.pane, &older.side), (pane, &NavPrefs::default()));
-    assert_eq!(older.persisted, s.persisted);
+    assert_eq!(older.persisted, Persisted { prefs: ViewPrefs { show_streams: false, ..s.persisted.prefs.clone() }, ..s.persisted.clone() });
 }
 
 #[test]
@@ -174,20 +174,21 @@ fn toolbar_and_search_history_ride_eighth_so_files_from_master_still_load() {
     use flit_core::ui::{Show, ToolItem, ToolbarState, MAX_HISTORY};
     let mut toolbar = ToolbarState { visible: false, ..Default::default() };
     toolbar.sets[0] = vec![ToolItem::Button("nav.refresh".into(), Show::Both), ToolItem::Separator];
-    let tools = Tools { toolbar, searches: vec!["report".into(), "ext:pdf".into()] };
+    let tools = Tools { toolbar, searches: vec!["report".into(), "ext:pdf".into()], streams: true };
     let mut persisted = Persisted::default();
     persisted.archive.open_after = true;
+    persisted.prefs.show_streams = true;
     let s = Saved::new(persisted, None).with_tools(tools.clone());
     let bytes = s.encode().unwrap();
     let back = Saved::decode(&bytes).unwrap();
-    assert_eq!((&back.tools, &back.persisted.archive), (&tools, &s.persisted.archive));
+    assert_eq!((&back.tools, &back.persisted.archive, back.persisted.prefs.show_streams), (&tools, &s.persisted.archive, true));
     let stored = postcard::to_stdvec(&tools).unwrap();
     assert!(bytes.ends_with(&stored));
     let master = &bytes[..bytes.len() - stored.len()];
     let older = Saved::decode(master).unwrap();
     assert_eq!(older.tools, Tools::default());
     assert!(older.tools.toolbar.visible);
-    assert_eq!(older.persisted, s.persisted);
+    assert_eq!(older.persisted, Persisted { prefs: ViewPrefs { show_streams: false, ..s.persisted.prefs.clone() }, ..s.persisted.clone() });
     let mut junk = tools;
     junk.toolbar.sets[1].push(ToolItem::Button("gone.button".into(), Show::Icon));
     junk.searches = (0..100).map(|k| format!("q{k}")).collect();
