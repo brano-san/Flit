@@ -63,6 +63,8 @@ pub enum PaneHit {
     Play,
     Seek,
     Volume,
+    Tag(usize),
+    NewTag,
     Body,
 }
 
@@ -172,6 +174,7 @@ pub(super) struct PreviewPane {
     peeked: bool,
     requested: Option<Instant>,
     r: Rects,
+    chips: Vec<(Rect, PaneHit)>,
 }
 
 impl PreviewPane {
@@ -432,7 +435,7 @@ impl App {
             _ if r.play.contains(x, y) => PaneHit::Play,
             _ if r.seek.contains(x, y) => PaneHit::Seek,
             _ if r.volume.contains(x, y) => PaneHit::Volume,
-            _ => PaneHit::Body,
+            _ => self.preview.chips.iter().find(|c| c.0.contains(x, y) && r.body.contains(x, y)).map_or(PaneHit::Body, |c| c.1),
         };
         Some(Hit::Preview(h))
     }
@@ -496,6 +499,8 @@ impl App {
                 self.layout();
             }
             PaneHit::Properties => self.properties(),
+            PaneHit::Tag(k) => self.toggle_tag(k),
+            PaneHit::NewTag => self.new_tag(true),
             PaneHit::Play => {
                 let p = &mut self.preview;
                 p.media.playing = !p.media.playing;
@@ -795,6 +800,7 @@ impl App {
         for (label, value) in &rows {
             self.field(g, &mut y, label, value, t);
         }
+        self.tag_row(g, &s, &mut y, t);
         let groups = match &self.preview.content {
             Content::Props(groups) => groups.clone(),
             Content::Loading => {
@@ -813,6 +819,49 @@ impl App {
             }
         }
         y
+    }
+
+    fn tag_row<B: TextBackend>(&mut self, g: &mut Gfx<B>, s: &Subject, y: &mut f32, t: &Theme) {
+        self.preview.chips.clear();
+        if (s.entry.is_none() && s.many.is_none()) || self.tab().view_loc.path().kind() != PathKind::Drive {
+            return;
+        }
+        let b = self.preview.r.body;
+        let (font, label) = (self.ui_font(12.0), self.ui_font(12.5));
+        let (lm, fm) = (g.metrics(label), g.metrics(font));
+        let (h, pad, dot, gap) = (self.s(22.0), self.s(8.0), self.s(8.0), self.s(6.0));
+        let lw = (b.w * 0.38).round().min(self.s(140.0));
+        let top = b.y + *y - self.preview.scroll;
+        g.text(b.x, (top + (self.s(ROW) + lm.ascent - lm.descent) / 2.0).round(), "Tags", label, t.text_dim, lw - self.s(8.0));
+        let (any, all) = self.selection_tags();
+        let chips: Vec<(PaneHit, String, Option<Color>)> = self.tag_defs().iter().enumerate().map(|(k, d)| (PaneHit::Tag(k), d.name.clone(), Some(Color::rgb(d.color)))).chain([(PaneHit::NewTag, "+ New tag".to_owned(), None)]).collect();
+        let (left, mut x, mut row) = (b.x + lw, b.x + lw, top + ((self.s(ROW) - h) / 2.0).round());
+        for (hit, name, color) in chips {
+            let mark = if color.is_some() { dot + gap } else { 0.0 };
+            let w = (2.0 * pad + mark + g.measure(&name, font)).round().min(b.right() - left);
+            if x + w > b.right() && x > left {
+                (x, row) = (left, row + h + self.s(4.0));
+            }
+            let r = Rect::new(x, row, w, h);
+            let bit = |mask: u32| matches!(hit, PaneHit::Tag(k) if mask & (1 << k) != 0);
+            let fill = if bit(all) { Some(t.selection) } else if self.hover == Hit::Preview(hit) { Some(t.button_hover) } else { None };
+            if let Some(c) = fill {
+                g.dl.round_rect(r, c, h / 2.0);
+            }
+            g.dl.outline(r, t.input_border, h / 2.0, 1.0);
+            if let Some(c) = color {
+                let d = Rect::new(r.x + pad, r.y + ((h - dot) / 2.0).round(), dot, dot);
+                if bit(any) {
+                    g.dl.round_rect(d, c, dot / 2.0);
+                } else {
+                    g.dl.outline(d, c, dot / 2.0, 1.0);
+                }
+            }
+            g.text(r.x + pad + mark, (r.y + (h + fm.ascent - fm.descent) / 2.0).round(), &name, font, if bit(any) { t.text } else { t.text_dim }, w - 2.0 * pad - mark);
+            self.preview.chips.push((r, hit));
+            x += w + self.s(4.0);
+        }
+        *y += row + h - top + self.s(6.0);
     }
 
     fn draw_preview_body<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) -> f32 {

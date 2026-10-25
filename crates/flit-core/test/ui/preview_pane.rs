@@ -209,3 +209,33 @@ fn documents_wrap_to_the_pane_width() {
     assert_eq!(lay.lines.len(), 2);
     assert!(lay.lines[0].h > 0.0 && lay.height > lay.lines[1].y);
 }
+
+#[test]
+fn details_tab_shows_and_edits_the_selection_tags() {
+    use crate::tags::{TagRequest, TagStore, Tags, COLORS};
+    let mut a = app((1200, 700));
+    let mut store = TagStore { tags: Vec::new(), files: Default::default() };
+    store.add("Work", COLORS[0].1).unwrap();
+    store.add("Old", COLORS[1].1).unwrap();
+    a.set_tags(Arc::new(Tags::new(1, &store, &Default::default())));
+    a.set_pane_state(PaneState { visible: true, details: true, ..Default::default() });
+    select(&mut a, "a.rs");
+    frame(&mut a);
+    let chips: Vec<PaneHit> = a.preview.chips.iter().map(|c| c.1).collect();
+    assert_eq!(chips, [PaneHit::Tag(0), PaneHit::Tag(1), PaneHit::NewTag]);
+    a.drain_effects().for_each(drop);
+    let click = |a: &mut App, k: usize| {
+        let r = a.preview.chips[k].0;
+        a.on_event(&Event::MouseDown { x: r.x + 4.0, y: r.y + 4.0, button: crate::input::MouseButton::Left, clicks: 1 }, Instant::now());
+        a.on_event(&Event::MouseUp { x: r.x + 4.0, y: r.y + 4.0, button: crate::input::MouseButton::Left }, Instant::now());
+    };
+    click(&mut a, 1);
+    let set: Vec<TagRequest> = a.drain_effects().filter_map(|e| if let Effect::Tags(r) = e { Some(r) } else { None }).collect();
+    assert_eq!(set, [TagRequest::Set { items: vec![FsPath::parse(r"C:\work\a.rs").unwrap()], tag: 1, on: true }]);
+    click(&mut a, 2);
+    assert!(a.nav.palette.is_some());
+    a.nav.palette = None;
+    a.tab_mut().view.as_mut().unwrap().clear_selection();
+    frame(&mut a);
+    assert!(a.preview.chips.is_empty());
+}
