@@ -325,8 +325,13 @@ dependencies = [
 name = "flit-search"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "flit-core",
  "flit-proto",
+ "memchr",
+ "postcard",
+ "rayon",
+ "regex",
  "serde",
 ]
 
