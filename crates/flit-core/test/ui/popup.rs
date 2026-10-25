@@ -104,7 +104,7 @@ fn draws_labels_keys_checks_and_arrows() {
     let mut v = MenuView::new(&sample(), 10.0, 10.0, screen(), 1.0, &mut g);
     v.key(Key::Down);
     g.begin(Color::default());
-    v.draw(&mut g, theme::get(false), Color::rgba(0x00000030));
+    v.draw(&mut g, &theme::LIGHT, Color::rgba(0x00000030));
     let glyphs = g.dl.instances.iter().filter(|i| i.kind == crate::render::kind::GLYPH).count();
     let letters = "Open".len() + "Sort by".len() - 1 + "Paste".len() + "Ctrl+V".len() + 2;
     assert_eq!(glyphs, letters);

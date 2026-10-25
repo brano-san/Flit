@@ -7,7 +7,7 @@ use super::{centered, App, Effect, Hit, SettingsCmd, G_CLOSE};
 use crate::input::{Key, Mods, MouseButton};
 use crate::location::{Location, ProviderId};
 use crate::open::{OpenTarget, Route};
-use crate::path::{FsPath, PathKind};
+use crate::path::FsPath;
 use crate::provider::{Launch, ProviderRequest};
 use crate::render::{Color, Rect};
 use crate::tags;
