@@ -1,5 +1,7 @@
+mod indexer;
 mod local;
 
+pub use indexer::{root_of, start_indexer};
 pub use local::{via_unc, LocalProvider};
 
 use crossbeam_channel::Sender;
@@ -154,14 +156,25 @@ pub trait SingleInstance: Sized + Send + 'static {
 }
 
 pub trait IndexSource: Sized + Send {
+    fn new() -> Result<Self, PlatformError>;
     fn volumes(&self) -> Result<Vec<VolumeInfo>, PlatformError>;
     fn scan<S: IndexSink>(&mut self, volume: &str, sink: &mut S) -> Result<Checkpoint, PlatformError>;
-    fn changes<S: IndexSink>(&mut self, volume: &str, from: Checkpoint, sink: &mut S) -> Result<Checkpoint, PlatformError>;
+    fn changes<S: IndexSink>(&mut self, volume: &str, from: Checkpoint, sink: &mut S) -> Result<Option<Checkpoint>, PlatformError>;
 }
 
+pub trait Duplex: std::io::Read + std::io::Write + Send + Sized + 'static {
+    fn try_clone(&self) -> std::io::Result<Self>;
+    fn set_read_timeout(&mut self, timeout: Option<std::time::Duration>);
+}
+
+pub type OnClient<C> = Arc<dyn Fn(C) + Send + Sync>;
+
 pub trait Service {
+    type Conn: Duplex;
     fn endpoint() -> String;
     fn run(body: fn() -> Result<(), PlatformError>) -> Result<(), PlatformError>;
+    fn connect() -> Result<Self::Conn, PlatformError>;
+    fn listen(max_clients: usize, on_client: OnClient<Self::Conn>) -> Result<(), PlatformError>;
 }
 
 pub trait Platform: 'static {
@@ -174,6 +187,7 @@ pub trait Platform: 'static {
     type Instance: SingleInstance;
     type IndexSource: IndexSource;
     type Service: Service;
+    type FallbackIndex: IndexSource + 'static;
 
     fn text() -> Result<Self::Text, PlatformError>;
     fn fs() -> Self::Fs;

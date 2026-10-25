@@ -21,6 +21,7 @@ impl Platform for Linux {
     type Instance = DbusInstance;
     type IndexSource = WalkIndex;
     type Service = Systemd;
+    type FallbackIndex = WalkIndex;
 
     fn text() -> Result<SwashText, PlatformError> {
         Ok(SwashText)
@@ -219,24 +220,58 @@ impl SingleInstance for DbusInstance {
 pub struct WalkIndex;
 
 impl IndexSource for WalkIndex {
+    fn new() -> Result<Self, PlatformError> {
+        Ok(WalkIndex)
+    }
     fn volumes(&self) -> Result<Vec<VolumeInfo>, PlatformError> {
         Ok(Vec::new())
     }
     fn scan<S: IndexSink>(&mut self, _: &str, _: &mut S) -> Result<Checkpoint, PlatformError> {
         Err(PlatformError::unsupported("index scan"))
     }
-    fn changes<S: IndexSink>(&mut self, _: &str, _: Checkpoint, _: &mut S) -> Result<Checkpoint, PlatformError> {
+    fn changes<S: IndexSink>(&mut self, _: &str, _: Checkpoint, _: &mut S) -> Result<Option<Checkpoint>, PlatformError> {
         Err(PlatformError::unsupported("index changes"))
     }
 }
 
 pub struct Systemd;
 
+pub struct NoConn;
+
+impl std::io::Read for NoConn {
+    fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+}
+
+impl std::io::Write for NoConn {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Duplex for NoConn {
+    fn try_clone(&self) -> std::io::Result<Self> {
+        Ok(NoConn)
+    }
+    fn set_read_timeout(&mut self, _: Option<std::time::Duration>) {}
+}
+
 impl Service for Systemd {
+    type Conn = NoConn;
     fn endpoint() -> String {
         "/run/flit/indexd.sock".into()
     }
     fn run(body: fn() -> Result<(), PlatformError>) -> Result<(), PlatformError> {
         body()
+    }
+    fn connect() -> Result<NoConn, PlatformError> {
+        Err(PlatformError::unsupported("index service socket"))
+    }
+    fn listen(_: usize, _: OnClient<NoConn>) -> Result<(), PlatformError> {
+        Err(PlatformError::unsupported("index service socket"))
     }
 }

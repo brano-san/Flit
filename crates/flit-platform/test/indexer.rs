@@ -1,0 +1,92 @@
+use super::*;
+use flit_core::attr;
+use std::sync::Mutex;
+
+#[derive(Clone, Default)]
+struct Script {
+    scans: Arc<Mutex<u32>>,
+    changes: Arc<Mutex<Vec<Result<Option<Vec<(u64, &'static str)>>, String>>>>,
+}
+
+struct Fake(Script);
+
+impl IndexSource for Fake {
+    fn new() -> Result<Self, PlatformError> {
+        Ok(Fake(Script::default()))
+    }
+    fn volumes(&self) -> Result<Vec<VolumeInfo>, PlatformError> {
+        Ok(vec![VolumeInfo { id: "T:".into(), label: String::new(), file_system: "TEST".into(), files: 0, state: VolumeState::Scanning { progress: 0.0 } }])
+    }
+    fn scan<S: IndexSink>(&mut self, _: &str, sink: &mut S) -> Result<Checkpoint, PlatformError> {
+        let n = {
+            let mut s = self.0.scans.lock().unwrap();
+            *s += 1;
+            *s
+        };
+        sink.upsert(&IndexRecord { id: 5, parent: 5, name: b".", size: 0, modified: 0, attrs: attr::DIR });
+        for k in 0..10 {
+            let name = format!("scan{n}-{k}.txt");
+            sink.upsert(&IndexRecord { id: 100 + k, parent: 5, name: name.as_bytes(), size: k, modified: 0, attrs: 0 });
+            sink.progress(k + 1, 10);
+        }
+        Ok(Checkpoint { journal: n as u64, next: 0 })
+    }
+    fn changes<S: IndexSink>(&mut self, _: &str, from: Checkpoint, sink: &mut S) -> Result<Option<Checkpoint>, PlatformError> {
+        let step = { self.0.changes.lock().unwrap().pop() };
+        match step {
+            None => Ok(Some(from)),
+            Some(Err(e)) => Err(PlatformError::new(5, e)),
+            Some(Ok(None)) => Ok(None),
+            Some(Ok(Some(items))) => {
+                for (id, name) in items {
+                    if name.is_empty() {
+                        sink.remove(id);
+                    } else {
+                        sink.upsert(&IndexRecord { id, parent: 5, name: name.as_bytes(), size: 1, modified: 0, attrs: 0 });
+                    }
+                }
+                Ok(Some(Checkpoint { next: from.next + 1, ..from }))
+            }
+        }
+    }
+}
+
+fn wait_until(what: &str, mut f: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !f() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn names(shared: &SharedIndex) -> Vec<String> {
+    let e = shared.read();
+    let v = &e.volumes[0];
+    let mut out: Vec<String> = (0..v.len() as u32).filter(|&i| v.listed(i)).map(|i| String::from_utf8_lossy(v.name(i)).into_owned()).collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn scans_applies_changes_and_rescans() {
+    let script = Script::default();
+    script.changes.lock().unwrap().extend([Ok(None), Ok(Some(vec![(100, ""), (500, "added.txt")]))]);
+    let shared = SharedIndex::new();
+    start_indexer(Fake(script.clone()), shared.clone()).unwrap();
+    wait_until("the first scan", || shared.status().1.first().is_some_and(|v| v.state == VolumeState::Ready));
+    assert_eq!(shared.status().1[0].files, 10);
+    wait_until("the change batch", || names(&shared).contains(&"added.txt".to_string()));
+    assert!(!names(&shared).contains(&"scan1-0.txt".to_string()));
+    wait_until("the rescan", || *script.scans.lock().unwrap() == 2 && names(&shared).iter().all(|n| n.starts_with("scan2")));
+    assert_eq!(names(&shared).len(), 10);
+    assert_eq!(shared.read().volumes.len(), 1);
+    script.changes.lock().unwrap().push(Err("volume went away".into()));
+    wait_until("the error state", || matches!(&shared.status().1[0].state, VolumeState::Error(m) if m == "volume went away"));
+}
+
+#[test]
+fn volume_ids_map_to_roots() {
+    assert_eq!(root_of("C:"), (br"C:\".to_vec(), b'\\'));
+    assert_eq!(root_of(r"D:\data\tree"), (br"D:\data\tree".to_vec(), b'\\'));
+    assert_eq!(root_of("/home/u"), (b"/home/u".to_vec(), b'/'));
+}
