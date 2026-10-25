@@ -28,6 +28,7 @@ mod tags;
 mod split;
 mod describe;
 mod toolbar;
+mod popup;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource, MAX_HISTORY};
@@ -38,6 +39,7 @@ pub use layouts::{adaptive_layout, has_thumbnail, is_media, LayoutMode, Sizes, L
 pub use jobs::JobState;
 pub use preview_pane::PaneState;
 pub use menu::MenuItem;
+pub use popup::{MenuOutcome, MenuView};
 pub use tab::Tab;
 pub use toolbar::{Show, ToolContext, ToolItem, ToolbarState, CONTEXTS};
 pub use address::Typed;
@@ -383,6 +385,7 @@ struct Layout {
 pub struct App {
     pub utc_offset_min: i32,
     pub case: CaseMode,
+    pub caps: crate::caps::Caps,
     pub open_target: OpenTarget,
     pub double_click: Duration,
     pub warn_extension_change: bool,
@@ -468,6 +471,7 @@ impl App {
         let mut app = Self {
             utc_offset_min: 0,
             case: CaseMode::Insensitive,
+            caps: crate::caps::Caps::default(),
             open_target: OpenTarget::NewTab,
             double_click: Duration::from_millis(500),
             warn_extension_change: true,
@@ -1262,6 +1266,7 @@ impl App {
                 }
             }
             Event::Char(c) => self.char_input(*c, now),
+            Event::Pasted(text) => self.on_paste(text),
             Event::DroppedFiles(paths) => {
                 let routes: Vec<Route> = paths
                     .iter()

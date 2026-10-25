@@ -52,6 +52,7 @@ pub enum Event {
     MouseLeave,
     Key { key: Key, mods: Mods, pressed: bool },
     Char(char),
+    Pasted(String),
     Focus(bool),
     ThemeChanged { dark: bool },
     DroppedFiles(Vec<FsPath>),

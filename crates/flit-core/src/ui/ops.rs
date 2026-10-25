@@ -207,7 +207,7 @@ pub fn validate_name(text: &str, windows: bool) -> Result<String, &'static str> 
     } else if name.contains(['/', '\0']) {
         return Err("A name cannot contain a slash");
     }
-    if name.encode_utf16().count() > MAX_NAME_UNITS {
+    if (if windows { name.encode_utf16().count() } else { name.len() }) > MAX_NAME_UNITS {
         return Err("The name is too long");
     }
     Ok(name.to_owned())
@@ -255,8 +255,15 @@ pub fn batch_names(base: &str, items: &[(&[u8], bool)], taken: impl Fn(&[u8]) ->
         .collect()
 }
 
-pub fn same_volume(a: &FsPath, b: &FsPath) -> bool {
-    a.kind() == b.kind() && a.root_bytes().eq_ignore_ascii_case(b.root_bytes())
+pub fn same_volume(a: &FsPath, b: &FsPath, drives: &[super::Drive]) -> bool {
+    if a.kind() != b.kind() {
+        return false;
+    }
+    if a.kind() != PathKind::Unix {
+        return a.root_bytes().eq_ignore_ascii_case(b.root_bytes());
+    }
+    let mount = |p: &FsPath| drives.iter().map(|d| &d.path).filter(|m| m.kind() == PathKind::Unix && (p.same(m) || p.is_inside(m))).max_by_key(|m| m.as_bytes().len()).map(FsPath::as_bytes);
+    mount(a) == mount(b)
 }
 
 pub fn choose_effect(allowed: u32, m: Mods, same_volume: bool) -> u32 {
@@ -306,7 +313,7 @@ fn in_distro(op: &FileOp) -> Option<(String, FileOp)> {
     Some((distro.into_inner()?, linux))
 }
 
-pub fn route(provider: ProviderId, op: FileOp) -> Option<(ProviderId, FileOp)> {
+pub fn route(provider: ProviderId, op: FileOp, unix_local: bool) -> Option<(ProviderId, FileOp)> {
     let unix = |p: &FsPath| p.kind() == PathKind::Unix;
     if op.all_paths(|p| !unix(p)) {
         return Some(match in_distro(&op) {
@@ -314,16 +321,12 @@ pub fn route(provider: ProviderId, op: FileOp) -> Option<(ProviderId, FileOp)> {
             None => (ProviderId::Local, op),
         });
     }
-    (matches!(provider, ProviderId::Wsl(_)) && op.all_paths(unix)).then_some((provider, op))
+    ((unix_local || matches!(provider, ProviderId::Wsl(_))) && op.all_paths(unix)).then_some((provider, op))
 }
 
 fn same_location(a: &Location, b: &Location) -> bool {
-    a.to_bytes().eq_ignore_ascii_case(&b.to_bytes())
-}
-
-fn inside(path: &FsPath, folder: &FsPath) -> bool {
-    let (p, f) = (path.as_bytes(), folder.as_bytes());
-    p.len() > f.len() && p[..f.len()].eq_ignore_ascii_case(f) && (folder.is_root() || p[f.len()] == folder.sep())
+    let (x, y) = (a.to_bytes(), b.to_bytes());
+    if a.path().case_sensitive() { x == y } else { x.eq_ignore_ascii_case(&y) }
 }
 
 impl App {
@@ -376,7 +379,7 @@ impl App {
     }
 
     fn start_op_on(&mut self, provider: ProviderId, tab: TabId, op: FileOp, origin: Origin, then: Then) {
-        let Some((provider, op)) = route(provider, op) else { return self.status(MIXED_PATHS) };
+        let Some((provider, op)) = route(provider, op, self.caps.unix_paths) else { return self.status(MIXED_PATHS) };
         self.ops.next_id += 1;
         let id = self.ops.next_id;
         let ctl = OpCtl::new(self.conflict_default);
@@ -710,7 +713,7 @@ impl App {
                 Some((icon, index)) => self.start_op(FileOp::FolderIcon { folder, icon, index }, Origin::Fresh, Then::Nothing),
                 None => self.status("Enter the full path of an icon, program or library, optionally followed by a comma and the icon index"),
             },
-            Pick::Shortcut(dest) => match FsPath::parse(text.trim_matches('"')).filter(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim)) {
+            Pick::Shortcut(dest) => match self.caps.native_path(text) {
                 Some(target) => self.start_op(FileOp::Link { items: vec![target], dest }, Origin::Fresh, Then::Rename),
                 None => self.status("Enter the full path of the file or folder the shortcut points to"),
             },
@@ -994,7 +997,7 @@ impl App {
         let Some(v) = t.view.as_ref().filter(|v| t.id == r.tab && v.snap().gen == r.gen) else { return true };
         let old = v.listing().name(r.idx).to_vec();
         let is_dir = v.listing().entries[r.idx as usize].is_dir();
-        let windows = !matches!(t.view_loc, Location::Wsl { .. });
+        let windows = t.view_loc.path().kind() != PathKind::Unix;
         let name = match validate_name(&r.edit.text, windows) {
             Ok(n) => n,
             Err(e) => {
@@ -1313,13 +1316,13 @@ impl App {
             Some(Target::Pin) if d.paths.is_empty() => NONE,
             Some(Target::Pin) => [LINK, COPY, MOVE].into_iter().find(|e| allowed & e != 0).unwrap_or(NONE),
             Some(Target::Into { dest, .. }) => {
-                if d.paths.is_empty() || d.paths.iter().any(|p| p.as_bytes().eq_ignore_ascii_case(dest.as_bytes()) || inside(dest, p)) {
+                if d.paths.is_empty() || d.paths.iter().any(|p| p.same(dest) || dest.is_inside(p)) {
                     NONE
                 } else if archive::split(dest).is_some() {
                     allowed & COPY
                 } else {
-                    let e = choose_effect(allowed, m, d.paths.iter().all(|p| same_volume(p, dest)));
-                    let all_here = d.paths.iter().all(|p| p.parent().is_some_and(|q| q.as_bytes().eq_ignore_ascii_case(dest.as_bytes())));
+                    let e = choose_effect(allowed, m, d.paths.iter().all(|p| same_volume(p, dest, &self.nav.sidebar.places.drives)));
+                    let all_here = d.paths.iter().all(|p| p.parent().is_some_and(|q| q.same(dest)));
                     if e == MOVE && all_here {
                         NONE
                     } else {

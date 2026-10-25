@@ -123,10 +123,6 @@ fn without_ext(name: &str) -> &str {
     &name[..name.len() - cut]
 }
 
-fn absolute(text: &str) -> Option<FsPath> {
-    FsPath::parse(text.trim().trim_matches('"')).filter(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim))
-}
-
 fn kept(mut f: Form, note: &str) -> Option<Form> {
     f.say(note, true);
     Some(f)
@@ -224,7 +220,7 @@ impl App {
         let Kind::Compress { items, dir, single } = &f.kind else { return None };
         let (items, dir, single) = (items.clone(), dir.clone(), *single);
         let format = Format::WRITABLE[f.choice(C_FORMAT).min(Format::WRITABLE.len() - 1)];
-        let mut name = match validate_name(f.text(C_NAME), true) {
+        let mut name = match validate_name(f.text(C_NAME), dir.kind() != PathKind::Unix) {
             Ok(n) => n,
             Err(e) => return kept(f, e),
         };
@@ -319,7 +315,7 @@ impl App {
     fn submit_extract(&mut self, f: Form) -> Option<Form> {
         let Kind::Extract { archives, entries } = &f.kind else { return None };
         let (archives, entries) = (archives.clone(), entries.clone());
-        let Some(dest) = absolute(f.text(E_DEST)) else { return kept(f, "Enter the full path of the destination folder") };
+        let Some(dest) = self.caps.native_path(f.text(E_DEST)) else { return kept(f, "Enter the full path of the destination folder") };
         let text = dest.display().into_owned();
         let p = &mut self.archive.prefs;
         p.history.retain(|h| !h.eq_ignore_ascii_case(&text));
@@ -568,7 +564,7 @@ impl App {
         if text.is_empty() {
             return f.say("Click a value to copy it", false);
         }
-        if let Some(other) = absolute(&text) {
+        if let Some(other) = self.caps.native_path(&text) {
             let (id, ctl) = self.hash_file(other.clone(), h.kinds.clone());
             h.run = Some(Run { id, ctl, other: Some(other) });
             f.progress = Some(0.0);

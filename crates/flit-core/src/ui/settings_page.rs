@@ -6,7 +6,7 @@ use super::settings::{self, Kind, Page, Value, SETTINGS};
 use super::{centered, App, Effect, Hit, SettingsCmd, G_CLOSE};
 use crate::input::{Key, Mods, MouseButton};
 use crate::location::ProviderId;
-use crate::path::{FsPath, PathKind};
+use crate::path::FsPath;
 use crate::provider::ProviderRequest;
 use crate::render::{Color, Rect};
 use crate::tags;
@@ -401,7 +401,7 @@ impl App {
     }
 
     fn export_default(&self) -> String {
-        let here = self.tab().view_loc.to_windows().filter(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim));
+        let here = self.tab().view_loc.to_windows().filter(|p| self.caps.is_native(p));
         here.map(|p| p.join(EXPORT_NAME.as_bytes()).display().into_owned()).unwrap_or_default()
     }
 
@@ -435,7 +435,7 @@ impl App {
                 Some(loc) => self.add_path(i, loc),
                 None => self.status("Enter the full path of a folder, or Home"),
             },
-            SettingPick::Export | SettingPick::Import => match FsPath::parse(text.trim_matches('"')).filter(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim)) {
+            SettingPick::Export | SettingPick::Import => match self.caps.native_path(text) {
                 Some(path) if pick == SettingPick::Export => self.effects.push(Effect::Settings(SettingsCmd::Export { path, text: self.export_text(), replace: false })),
                 Some(path) => self.effects.push(Effect::Settings(SettingsCmd::Import(path))),
                 None => self.status("Enter the full path of a file"),

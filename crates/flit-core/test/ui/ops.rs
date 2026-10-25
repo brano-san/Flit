@@ -3,7 +3,7 @@ use crate::listing::{ChangeKind, DirChange, DirSnapshot, Listing, Meta};
 use crate::provider::ProviderEvent;
 use crate::sort::{self, CaseMode, SortKeys, ViewSpec};
 use crate::text::tests::Mono;
-use crate::ui::Persisted;
+use crate::ui::{Drive, Persisted};
 use std::sync::Arc;
 
 const NO: Mods = Mods { ctrl: false, shift: false, alt: false };
@@ -144,10 +144,48 @@ fn drop_effects_follow_explorer_rules() {
     assert_eq!(choose_effect(all, CTRL_SHIFT, true), LINK);
     assert_eq!(choose_effect(COPY, NO, true), COPY);
     assert_eq!(choose_effect(COPY, SHIFT, true), NONE);
-    assert!(same_volume(&p(r"C:\a"), &p(r"c:\b\c")));
-    assert!(!same_volume(&p(r"C:\a"), &p(r"D:\a")));
-    assert!(same_volume(&p(r"\\srv\share\a"), &p(r"\\SRV\Share\b")));
-    assert!(!same_volume(&p(r"\\srv\one\a"), &p(r"\\srv\two\a")));
+    assert!(same_volume(&p(r"C:\a"), &p(r"c:\b\c"), &[]));
+    assert!(!same_volume(&p(r"C:\a"), &p(r"D:\a"), &[]));
+    assert!(same_volume(&p(r"\\srv\share\a"), &p(r"\\SRV\Share\b"), &[]));
+    assert!(!same_volume(&p(r"\\srv\one\a"), &p(r"\\srv\two\a"), &[]));
+}
+
+#[test]
+fn unix_volumes_come_from_the_mount_list() {
+    let drive = |path: &str| Drive { path: p(path), label: String::new(), total: 0, free: 0, removable: false };
+    let mounts = [drive("/"), drive("/home"), drive("/media/u/USB"), drive(r"C:\")];
+    assert!(same_volume(&p("/home/a"), &p("/home/b/c"), &mounts));
+    assert!(!same_volume(&p("/home/a"), &p("/media/u/USB/x"), &mounts));
+    assert!(!same_volume(&p("/etc"), &p("/home"), &mounts));
+    assert!(same_volume(&p("/etc"), &p("/usr/lib"), &mounts));
+    assert!(!same_volume(&p("/media/u/usb/x"), &p("/media/u/USB/x"), &mounts), "mount points are case-sensitive");
+    assert!(same_volume(&p("/a"), &p("/b"), &[]), "without a mount list everything is one volume");
+    assert!(!same_volume(&p("/a"), &p(r"C:\a"), &mounts));
+}
+
+#[test]
+fn unix_names_allow_windows_characters_and_count_bytes() {
+    assert_eq!(validate_name("a:b?.txt ", false), Ok("a:b?.txt".into()));
+    assert_eq!(validate_name("CON", false), Ok("CON".into()));
+    assert_eq!(validate_name("trailing.", false), Ok("trailing.".into()));
+    let cyrillic = "я".repeat(128);
+    assert!(validate_name(&cyrillic, true).is_ok(), "128 UTF-16 units fit on Windows");
+    assert_eq!(validate_name(&cyrillic, false), Err("The name is too long"), "256 bytes do not fit on Linux");
+    assert!(validate_name(&"x".repeat(255), false).is_ok());
+}
+
+#[test]
+fn renaming_on_a_unix_path_uses_unix_name_rules() {
+    let mut app = app_at("/home/u");
+    app.caps = crate::caps::Caps { unix_paths: true };
+    deliver(&mut app, &[("a.txt", false)]);
+    select(&mut app, &["a.txt"]);
+    key(&mut app, Key::F(2), NO);
+    key(&mut app, Key::Char('A'), CTRL);
+    typed(&mut app, "x:y.txt");
+    key(&mut app, Key::Enter, NO);
+    let [(_, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::Rename { item: p("/home/u/a.txt"), name: b"x:y.txt".to_vec() });
 }
 
 #[test]
@@ -331,11 +369,11 @@ fn confirmed_wsl_trash_can_delete_permanently_through_the_agent() {
 fn operations_inside_one_distro_are_routed_to_its_agent() {
     let local = ProviderId::Local;
     let copy = FileOp::Copy { items: vec![p("\\\\wsl.localhost\\Ubuntu\\home\\a\u{F03A}b")], dest: p(r"\\wsl$\ubuntu\tmp") };
-    assert_eq!(route(local.clone(), copy), Some((ubuntu(), FileOp::Copy { items: vec![p("/home/a:b")], dest: p("/tmp") })));
+    assert_eq!(route(local.clone(), copy, false), Some((ubuntu(), FileOp::Copy { items: vec![p("/home/a:b")], dest: p("/tmp") })));
     let rename = FileOp::Rename { item: p(r"\\wsl.localhost\Ubuntu\home\a"), name: "x\u{F03A}y".as_bytes().to_vec() };
-    assert_eq!(route(local.clone(), rename), Some((ubuntu(), FileOp::Rename { item: p("/home/a"), name: b"x:y".to_vec() })));
+    assert_eq!(route(local.clone(), rename, false), Some((ubuntu(), FileOp::Rename { item: p("/home/a"), name: b"x:y".to_vec() })));
     let paste = FileOp::Paste { dest: p(r"\\wsl.localhost\Ubuntu\") };
-    assert_eq!(route(local.clone(), paste), Some((ubuntu(), FileOp::Paste { dest: p("/") })));
+    assert_eq!(route(local.clone(), paste, false), Some((ubuntu(), FileOp::Paste { dest: p("/") })));
     for stays in [
         FileOp::Copy { items: vec![p(r"C:\a")], dest: p(r"\\wsl.localhost\Ubuntu\tmp") },
         FileOp::Move { items: vec![p(r"\\wsl.localhost\Debian\a")], dest: p(r"\\wsl.localhost\Ubuntu\tmp") },
@@ -343,12 +381,14 @@ fn operations_inside_one_distro_are_routed_to_its_agent() {
         FileOp::Flatten(vec![p(r"\\wsl.localhost\Ubuntu\tmp")]),
         FileOp::EmptyBin,
     ] {
-        assert_eq!(route(local.clone(), stays.clone()), Some((local.clone(), stays)));
+        assert_eq!(route(local.clone(), stays.clone(), false), Some((local.clone(), stays)));
     }
     let back = FileOp::Trash(vec![p(r"\\wsl.localhost\Ubuntu\tmp\a")]);
-    assert_eq!(route(ubuntu(), back), Some((ubuntu(), FileOp::Trash(vec![p("/tmp/a")]))), "a step recorded from a share report is routed by its paths");
-    assert_eq!(route(local.clone(), FileOp::Delete(vec![p("/etc")])), None, "Linux paths never go to Windows");
-    assert_eq!(route(ubuntu(), FileOp::Copy { items: vec![p("/a")], dest: p(r"C:\b") }), None);
+    assert_eq!(route(ubuntu(), back, false), Some((ubuntu(), FileOp::Trash(vec![p("/tmp/a")]))), "a step recorded from a share report is routed by its paths");
+    assert_eq!(route(local.clone(), FileOp::Delete(vec![p("/etc")]), false), None, "Linux paths never go to Windows");
+    assert_eq!(route(ubuntu(), FileOp::Copy { items: vec![p("/a")], dest: p(r"C:\b") }, false), None);
+    assert_eq!(route(local.clone(), FileOp::Delete(vec![p("/etc")]), true), Some((local.clone(), FileOp::Delete(vec![p("/etc")]))), "a Linux build runs Linux paths locally");
+    assert_eq!(route(local.clone(), FileOp::Copy { items: vec![p("/a")], dest: p(r"C:\b") }, true), None);
 }
 
 #[test]
@@ -1189,4 +1229,30 @@ fn restore_all_from_the_sidebar_lists_the_bin_first_when_it_is_not_open() {
     assert_eq!(app.tab().error.as_deref(), Some("The Recycle Bin is empty"));
     app.run_action("bin.restore", t0());
     assert_eq!(app.tab().error.as_deref(), Some("Open the Recycle Bin to restore items"));
+}
+
+#[test]
+fn pasted_text_arrives_as_an_event() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false)]);
+    select(&mut app, &["a.txt"]);
+    key(&mut app, Key::F(2), NO);
+    key(&mut app, Key::Char('A'), CTRL);
+    app.on_event(&Event::Pasted("b.txt\nsecond line".into()), t0());
+    assert_eq!(app.rename_text(), Some("b.txt"));
+}
+
+#[test]
+fn typed_paths_follow_the_platform_caps() {
+    let mut app = app_at("/home/u");
+    deliver(&mut app, &[("a.txt", false)]);
+    select(&mut app, &["a.txt"]);
+    app.submit_pick(Pick::Shortcut(p("/home/u")), "/etc/hosts");
+    assert!(ops(&mut app).is_empty(), "Windows caps refuse a Unix target");
+    app.caps = crate::caps::Caps { unix_paths: true };
+    app.submit_pick(Pick::Shortcut(p("/home/u")), " /etc/hosts ");
+    let [(_, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::Link { items: vec![p("/etc/hosts")], dest: p("/home/u") });
+    app.submit_pick(Pick::Shortcut(p("/home/u")), r"C:\x");
+    assert!(ops(&mut app).is_empty(), "Unix caps refuse a drive path");
 }

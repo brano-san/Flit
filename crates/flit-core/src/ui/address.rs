@@ -130,7 +130,7 @@ impl App {
 
     pub(super) fn run_typed(&mut self, text: &str) {
         let (program, args) = split_command(text);
-        let dir = self.current_location().to_windows().filter(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim));
+        let dir = self.current_location().to_windows().filter(|p| self.caps.is_native(p));
         self.launch(Launch::Run { program, args, dir });
     }
 
