@@ -243,7 +243,16 @@ impl SearchView {
         if !self.grouped() {
             return SLine::Row(line);
         }
-        let k = self.groups.iter().enumerate().collect::<Vec<_>>().partition_point(|(k, &g)| g + *k as u64 <= line).saturating_sub(1);
+        let (mut lo, mut hi) = (0, self.groups.len());
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            if self.groups[mid] + mid as u64 <= line {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        let k = lo.saturating_sub(1);
         if self.groups[k] + k as u64 == line {
             SLine::Header(k)
         } else {

@@ -354,6 +354,11 @@ impl App {
         }
     }
 
+    pub(super) fn flyout_hit(&self, x: f32, y: f32) -> Option<Hit> {
+        self.toolbar.fly.as_ref()?;
+        self.toolbar_hit(x, y)
+    }
+
     pub(super) fn toolbar_hit(&self, x: f32, y: f32) -> Option<Hit> {
         let tb = &self.toolbar;
         if let Some(f) = &tb.fly {

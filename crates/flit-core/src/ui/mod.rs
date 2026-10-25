@@ -1020,10 +1020,10 @@ impl App {
     }
 
     fn hit(&self, x: f32, y: f32) -> Hit {
-        if let Some(h) = self.jobs_hit(x, y).or_else(|| self.toolbar_hit(x, y)) {
+        if let Some(h) = self.jobs_hit(x, y).or_else(|| self.flyout_hit(x, y)) {
             return h;
         }
-        if let Some(h) = self.address_hit(x, y).or_else(|| self.nav_hit(x, y)).or_else(|| self.preview_hit(x, y)) {
+        if let Some(h) = self.address_hit(x, y).or_else(|| self.nav_hit(x, y)).or_else(|| self.preview_hit(x, y)).or_else(|| self.toolbar_hit(x, y)) {
             return h;
         }
         let l = &self.layout;

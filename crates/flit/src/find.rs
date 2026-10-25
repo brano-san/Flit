@@ -121,4 +121,4 @@ pub fn walk<F: Fs>(fs: &F, root: &FsPath, query: &Query, keep_going: KeepGoing<'
 
 #[cfg(test)]
 #[path = "../test/find.rs"]
-mod tests;
+pub(crate) mod tests;
