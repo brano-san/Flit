@@ -1543,7 +1543,7 @@ impl App {
                 }
 
                 let name = listing.name(i);
-                let faded = cut.is_some_and(|c| c.contains(name));
+                let faded = e.attrs & attr::HIDDEN != 0 || cut.is_some_and(|c| c.contains(name));
                 let dir_key = if in_bin { recycle::origin(listing, i) } else { shell_dir.as_ref().map_or(&b""[..], |d| d.as_bytes()) };
                 let (key, kind) = icon_key(name, listing.ext(i), &e, icon_px as u32, dir_key);
                 let ir = Rect::new(cols[0].x + pad, y + ((rh - icon_px) / 2.0).round(), icon_px, icon_px);
@@ -1564,7 +1564,7 @@ impl App {
 
                 let ty = y + text_dy;
                 let name_x = ir.right() + self.s(8.0);
-                let name_color = if faded || e.attrs & attr::HIDDEN != 0 { t.text_dim } else { t.text };
+                let name_color = if faded { t.text_dim } else { t.text };
                 g.text(name_x, ty, &name::display(name), font, name_color, cols[0].right() - name_x - pad);
 
                 for (c, col) in columns.iter().enumerate().skip(1) {
