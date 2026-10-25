@@ -4,6 +4,7 @@ pub mod filter;
 pub mod fmt;
 pub mod hash;
 pub mod input;
+pub mod library;
 pub mod listing;
 pub mod location;
 pub mod name;

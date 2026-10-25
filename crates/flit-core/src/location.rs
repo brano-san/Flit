@@ -62,6 +62,14 @@ impl Location {
         self.path().kind() == PathKind::RecycleBin
     }
 
+    pub fn home_page() -> Self {
+        Location::Local(FsPath::home_page())
+    }
+
+    pub fn is_home_page(&self) -> bool {
+        self.path().kind() == PathKind::Home
+    }
+
     pub fn provider(&self) -> ProviderId {
         match self {
             Location::Local(_) => ProviderId::Local,
@@ -132,7 +140,7 @@ impl Location {
 
     pub fn to_windows(&self) -> Option<FsPath> {
         match self {
-            Location::Local(p) if p.kind() == PathKind::RecycleBin => None,
+            Location::Local(p) if matches!(p.kind(), PathKind::RecycleBin | PathKind::Home) => None,
             Location::Local(p) => Some(p.clone()),
             Location::Wsl { distro, path } => {
                 let mut b = format!(r"\\wsl.localhost\{distro}").into_bytes();

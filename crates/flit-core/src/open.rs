@@ -111,6 +111,8 @@ const THIS_PC: [&str; 5] = [
 
 const RECYCLE_BIN: [&str; 3] = ["shell:RecycleBinFolder", "::{645FF040-5081-101B-9F08-00AA002F954E}", "shell:::{645FF040-5081-101B-9F08-00AA002F954E}"];
 
+const HOME: [&str; 2] = [crate::path::HOME_SHELL, "::{f874310e-b6b7-47dc-bc84-b9e6b38f5903}"];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResolveError {
     UnknownShellLocation(String),
@@ -125,6 +127,9 @@ pub fn resolve(raw: &[u8], cwd: Option<&[u8]>, shell_folder: &dyn Fn(&str) -> Op
     }
     if RECYCLE_BIN.iter().any(|t| text.eq_ignore_ascii_case(t)) {
         return Ok(Location::recycle_bin());
+    }
+    if HOME.iter().any(|t| text.eq_ignore_ascii_case(t)) {
+        return Ok(Location::home_page());
     }
     if strip_prefix_ci(raw, b"shell:").is_some() || raw.starts_with(b"::{") {
         return shell_folder(&text).ok_or_else(|| ResolveError::UnknownShellLocation(text.into_owned()));
