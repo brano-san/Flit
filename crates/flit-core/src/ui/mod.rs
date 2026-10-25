@@ -1529,7 +1529,7 @@ impl App {
                 }
 
                 let name = listing.name(i);
-                let dir_key = shell_dir.as_ref().map_or(&b""[..], |d| d.as_bytes());
+                let dir_key = if in_bin { recycle::origin(listing, i) } else { shell_dir.as_ref().map_or(&b""[..], |d| d.as_bytes()) };
                 let (key, kind) = icon_key(name, listing.ext(i), &e, icon_px as u32, dir_key);
                 let ir = Rect::new(cols[0].x + pad, y + ((rh - icon_px) / 2.0).round(), icon_px, icon_px);
                 if !g.image(key, ir) {
