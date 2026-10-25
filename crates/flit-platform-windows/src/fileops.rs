@@ -1,3 +1,4 @@
+use crate::recycle::{self, info_file};
 use crate::shell::{owner_window, shell_addressable, ShellCom};
 use crate::{clipboard, err, take_pwstr};
 use flit_core::provider::FileOp;
@@ -12,7 +13,7 @@ use windows::Win32::Foundation::ERROR_NOT_SAME_DEVICE;
 use windows::Win32::Storage::FileSystem::{CopyFile2, CreateDirectoryW, DeleteFileW, GetFileAttributesW, MoveFileExW, COPYFILE2_EXTENDED_PARAMETERS, COPY_FILE_FAIL_IF_EXISTS, FILE_ATTRIBUTE_DIRECTORY, INVALID_FILE_ATTRIBUTES, MOVEFILE_COPY_ALLOWED, MOVE_FILE_FLAGS};
 use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_ALL, CLSCTX_INPROC_SERVER};
 use windows::Win32::UI::Shell::*;
-use windows::Win32::UI::WindowsAndMessaging::{CreatePopupMenu, DestroyMenu, SW_SHOWNORMAL};
+use windows::Win32::UI::WindowsAndMessaging::{CreatePopupMenu, DestroyMenu, MessageBoxW, IDYES, MB_ICONWARNING, MB_YESNO, SW_SHOWNORMAL};
 use windows_core::{implement, ComObject, Ref};
 
 #[implement(IFileOperationProgressSink)]
@@ -119,7 +120,9 @@ impl IFileOperationProgressSink_Impl for Sink_Impl {
 
 fn check_names(op: &FileOp) -> Result<(), PlatformError> {
     let paths: Vec<&FsPath> = match op {
-        FileOp::Trash(v) => v.iter().collect(),
+        FileOp::Trash(v) | FileOp::Delete(v) => v.iter().collect(),
+        FileOp::Purge(pairs) => pairs.iter().map(|(r, _)| r).collect(),
+        FileOp::EmptyBin => Vec::new(),
         FileOp::Copy { items, dest } | FileOp::Move { items, dest } | FileOp::Link { items, dest } => items.iter().chain([dest]).collect(),
         FileOp::Rename { item, .. } => vec![item],
         FileOp::NewFolder { dir, .. } => vec![dir],
@@ -137,7 +140,7 @@ fn check_names(op: &FileOp) -> Result<(), PlatformError> {
 
 fn sources(op: &FileOp) -> Option<Vec<FsPath>> {
     match op {
-        FileOp::Trash(v) | FileOp::Copy { items: v, .. } | FileOp::Move { items: v, .. } => Some(v.clone()),
+        FileOp::Trash(v) | FileOp::Delete(v) | FileOp::Copy { items: v, .. } | FileOp::Move { items: v, .. } => Some(v.clone()),
         FileOp::MoveTo(pairs) => Some(pairs.iter().map(|(a, _)| a.clone()).collect()),
         FileOp::Rename { item, .. } => Some(vec![item.clone()]),
         _ => None,
@@ -211,7 +214,7 @@ fn parent_and_name(p: &FsPath) -> Result<(IShellItem, Vec<u16>), PlatformError> 
 
 unsafe fn queue(fo: &IFileOperation, op: &FileOp) -> Result<(), PlatformError> {
     match op {
-        FileOp::Trash(paths) => {
+        FileOp::Trash(paths) | FileOp::Delete(paths) => {
             for p in paths {
                 fo.DeleteItem(&shell_item(p)?, None).map_err(err)?;
             }
@@ -242,7 +245,7 @@ unsafe fn queue(fo: &IFileOperation, op: &FileOp) -> Result<(), PlatformError> {
             let name = wide_name(name);
             fo.NewItem(&shell_item(dir)?, FILE_ATTRIBUTE_DIRECTORY.0, PCWSTR(name.as_ptr()), PCWSTR::null(), None).map_err(err)?;
         }
-        FileOp::Link { .. } | FileOp::Restore(_) | FileOp::Paste { .. } => return Err(PlatformError::new(-1, "not a file operation")),
+        FileOp::Link { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::Purge(_) | FileOp::EmptyBin => return Err(PlatformError::new(-1, "not a file operation")),
     }
     Ok(())
 }
@@ -250,7 +253,7 @@ unsafe fn queue(fo: &IFileOperation, op: &FileOp) -> Result<(), PlatformError> {
 const QUIET_ENTRIES: usize = 500;
 const QUIET_BYTES: u64 = 16 << 20;
 
-fn std_path(p: &FsPath) -> PathBuf {
+pub(crate) fn std_path(p: &FsPath) -> PathBuf {
     let mut w = p.to_wide(true);
     w.pop();
     PathBuf::from(OsString::from_wide(&w))
@@ -281,6 +284,7 @@ fn duplicates(items: &[FsPath], dest: &FsPath) -> bool {
 fn flags(op: &FileOp) -> FILEOPERATION_FLAGS {
     let flags = match op {
         FileOp::Trash(_) => FOF_ALLOWUNDO | FOFX_ADDUNDORECORD | FOFX_RECYCLEONDELETE,
+        FileOp::Delete(_) => FILEOPERATION_FLAGS(0),
         FileOp::NewFolder { .. } => FOF_ALLOWUNDO | FOF_RENAMEONCOLLISION,
         FileOp::Copy { items, dest } if duplicates(items, dest) => FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR | FOF_RENAMEONCOLLISION,
         _ => FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR,
@@ -289,7 +293,7 @@ fn flags(op: &FileOp) -> FILEOPERATION_FLAGS {
 }
 
 fn cancelled(op: &FileOp) -> PlatformError {
-    let what = if matches!(op, FileOp::Trash(_)) { "Deletion" } else { "The operation" };
+    let what = if matches!(op, FileOp::Trash(_) | FileOp::Delete(_) | FileOp::Purge(_) | FileOp::EmptyBin) { "Deletion" } else { "The operation" };
     PlatformError::new(-1, format!("{what} was cancelled"))
 }
 
@@ -371,12 +375,6 @@ fn copy_file(from: &FsPath, to: &FsPath) -> bool {
     }
     notify(SHCNE_CREATE, to, None);
     true
-}
-
-fn info_file(recycled: &FsPath) -> Option<FsPath> {
-    let id = recycled.file_name().strip_prefix(b"$R")?;
-    let bin = recycled.parent()?;
-    bin.parent()?.file_name().eq_ignore_ascii_case(b"$Recycle.Bin").then(|| bin.join(&[&b"$I"[..], id].concat()))
 }
 
 fn direct_restore(recycled: &FsPath, original: &FsPath) -> bool {
@@ -471,6 +469,41 @@ unsafe fn make_links(items: &[FsPath], dest: &FsPath) -> OpOutcome {
     out
 }
 
+windows_core::link!("shell32.dll" "system" fn SHUpdateRecycleBinIcon());
+
+fn confirm(title: &str, text: &str) -> bool {
+    let (title, text): (Vec<u16>, Vec<u16>) = (title.encode_utf16().chain(Some(0)).collect(), text.encode_utf16().chain(Some(0)).collect());
+    unsafe { MessageBoxW(owner_window(), PCWSTR(text.as_ptr()), PCWSTR(title.as_ptr()), MB_YESNO | MB_ICONWARNING) == IDYES }
+}
+
+fn these(n: usize, one: impl FnOnce() -> String) -> String {
+    if n == 1 { one() } else { format!("these {n} items") }
+}
+
+fn purge(op: &FileOp, pairs: &[(FsPath, FsPath)]) -> OpOutcome {
+    let what = these(pairs.len(), || format!("\"{}\"", flit_core::name::display(pairs[0].1.file_name())));
+    if !confirm("Delete permanently", &format!("Are you sure you want to permanently delete {what}?")) {
+        return OpOutcome { items: Vec::new(), error: Some(cancelled(op)) };
+    }
+    let out = recycle::purge(pairs);
+    unsafe { SHUpdateRecycleBinIcon() };
+    out
+}
+
+fn empty_bin(op: &FileOp) -> OpOutcome {
+    let roots = recycle::roots();
+    let n = recycle::count(&roots);
+    if n == 0 {
+        return OpOutcome { items: Vec::new(), error: Some(PlatformError::new(-1, "The Recycle Bin is already empty")) };
+    }
+    if !confirm("Empty Recycle Bin", &format!("Are you sure you want to permanently delete {}?", these(n, || "this item".into()))) {
+        return OpOutcome { items: Vec::new(), error: Some(cancelled(op)) };
+    }
+    let out = recycle::empty(&roots);
+    unsafe { SHUpdateRecycleBinIcon() };
+    out
+}
+
 impl FileOps for ShellCom {
     fn file_op(&mut self, op: &FileOp) -> OpOutcome {
         if let Err(e) = check_names(op) {
@@ -478,6 +511,8 @@ impl FileOps for ShellCom {
         }
         match op {
             FileOp::Link { items, dest } => unsafe { make_links(items, dest) },
+            FileOp::Purge(pairs) => purge(op, pairs),
+            FileOp::EmptyBin => empty_bin(op),
             _ => {
                 let (mut items, rest) = direct(op);
                 let out = match rest {

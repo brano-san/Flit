@@ -6,7 +6,8 @@ use crate::location::{Location, ProviderId};
 use crate::name;
 use crate::nav::History;
 use crate::provider::{GenToken, ProviderRequest, SnapshotSlot, TabId};
-use crate::sort::{CaseMode, ViewSpec};
+use crate::recycle;
+use crate::sort::{CaseMode, SortField, SortSpec, ViewSpec};
 use crate::view::DirView;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -88,6 +89,9 @@ impl Tab {
         let loc = self.location().clone();
         if loc != self.view_loc {
             self.reset_filter();
+        }
+        if self.view_spec.sort.field == SortField::Origin && !loc.is_recycle_bin() {
+            self.view_spec.sort = SortSpec::default();
         }
         let provider = loc.provider();
         if let Some(old) = self.watching.take().filter(|p| *p != provider) {
@@ -183,7 +187,11 @@ impl Tab {
     }
 
     pub(super) fn entry_location(&self, i: u32) -> Location {
-        self.view_loc.join(self.view.as_ref().unwrap().listing().name(i))
+        let l = self.view.as_ref().unwrap().listing();
+        match self.view_loc.is_recycle_bin() {
+            true => recycle::original(l, i).map_or_else(|| self.view_loc.clone(), Location::from_local),
+            false => self.view_loc.join(l.name(i)),
+        }
     }
 
     pub(super) fn selection(&self) -> Vec<u32> {

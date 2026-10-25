@@ -109,6 +109,8 @@ const THIS_PC: [&str; 5] = [
     "::{52205fd8-5dfb-447d-801a-d0b52f2e83e1}",
 ];
 
+const RECYCLE_BIN: [&str; 3] = ["shell:RecycleBinFolder", "::{645FF040-5081-101B-9F08-00AA002F954E}", "shell:::{645FF040-5081-101B-9F08-00AA002F954E}"];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ResolveError {
     UnknownShellLocation(String),
@@ -120,6 +122,9 @@ pub fn resolve(raw: &[u8], cwd: Option<&[u8]>, shell_folder: &dyn Fn(&str) -> Op
     let text = name::display(raw);
     if THIS_PC.iter().any(|t| text.eq_ignore_ascii_case(t)) {
         return Ok(Location::computer());
+    }
+    if RECYCLE_BIN.iter().any(|t| text.eq_ignore_ascii_case(t)) {
+        return Ok(Location::recycle_bin());
     }
     if strip_prefix_ci(raw, b"shell:").is_some() || raw.starts_with(b"::{") {
         return shell_folder(&text).ok_or_else(|| ResolveError::UnknownShellLocation(text.into_owned()));

@@ -57,7 +57,9 @@ fn resolution() {
     assert_eq!(r(r"..\other").unwrap(), Location::parse(r"D:\other").unwrap());
     assert_eq!(r("::{20d04fe0-3aea-1069-a2d8-08002b30309d}").unwrap(), Location::computer());
     assert_eq!(r("shell:downloads").unwrap(), Location::parse(r"C:\Users\u\Downloads").unwrap());
-    assert!(matches!(r("shell:RecycleBinFolder"), Err(ResolveError::UnknownShellLocation(_))));
+    assert_eq!(r("shell:RecycleBinFolder").unwrap(), Location::recycle_bin());
+    assert_eq!(r("::{645ff040-5081-101b-9f08-00aa002f954e}").unwrap(), Location::recycle_bin());
+    assert!(matches!(r("shell:Fonts"), Err(ResolveError::UnknownShellLocation(_))));
     assert_eq!(r("file:///C:/My%20Files/x").unwrap(), Location::parse(r"C:\My Files\x").unwrap());
     assert!(r("file:///C:/Docs/%00x").is_err());
     assert_eq!(r(r"\\wsl$\Ubuntu\etc").unwrap(), Location::parse("wsl://Ubuntu/etc").unwrap());

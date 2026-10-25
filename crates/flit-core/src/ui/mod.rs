@@ -24,6 +24,7 @@ use crate::name;
 use crate::open::{self, Open, OpenTarget, ResolveError, Route};
 use crate::path::{FsPath, PathKind};
 use crate::provider::{ProviderEvent, ProviderRequest, TabId};
+use crate::recycle;
 use crate::render::{Color, Rect};
 use crate::sort::{CaseMode, SortField, SortSpec, ViewSpec};
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
@@ -71,15 +72,20 @@ const G_FOLDER: &str = "\u{E8B7}";
 const G_FILE: &str = "\u{E7C3}";
 const G_DRIVE: &str = "\u{EDA2}";
 
+const BIN_BUTTONS: [&str; 3] = ["Restore", "Restore all", "Empty Recycle Bin"];
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Column {
     Name,
     Modified,
     Type,
     Size,
+    Origin,
+    Deleted,
 }
 
 pub const COLUMNS: [Column; 4] = [Column::Name, Column::Modified, Column::Type, Column::Size];
+pub const BIN_COLUMNS: [Column; 4] = [Column::Name, Column::Origin, Column::Deleted, Column::Size];
 
 impl Column {
     fn title(self) -> &'static str {
@@ -88,14 +94,17 @@ impl Column {
             Column::Modified => "Date modified",
             Column::Type => "Type",
             Column::Size => "Size",
+            Column::Origin => "Original location",
+            Column::Deleted => "Date deleted",
         }
     }
     fn field(self) -> SortField {
         match self {
             Column::Name => SortField::Name,
-            Column::Modified => SortField::Modified,
+            Column::Modified | Column::Deleted => SortField::Modified,
             Column::Type => SortField::Type,
             Column::Size => SortField::Size,
+            Column::Origin => SortField::Origin,
         }
     }
 }
@@ -211,6 +220,7 @@ enum Hit {
     Track,
     Thumb,
     Sizes,
+    Bin(usize),
     Side(usize),
     SidePin(usize),
     SideEmpty,
@@ -250,6 +260,7 @@ struct Layout {
     thumb: Rect,
     status: Rect,
     sizes: Rect,
+    bin: [Rect; 3],
     crumbs: Vec<Rect>,
     row_h: f32,
 }
@@ -408,6 +419,10 @@ impl App {
 
     fn s(&self, v: f32) -> f32 {
         (v * self.scale).round()
+    }
+
+    fn columns(&self) -> [Column; 4] {
+        if self.tab().view_loc.is_recycle_bin() { BIN_COLUMNS } else { COLUMNS }
     }
 
     fn theme(&self) -> &'static Theme {
@@ -574,6 +589,11 @@ impl App {
 
     fn open_entry(&mut self, i: u32, now: Instant) {
         let t = self.tab();
+        if t.view_loc.is_recycle_bin() {
+            let name = name::display(t.view.as_ref().unwrap().listing().name(i)).into_owned();
+            self.tab_mut().error = Some(format!("\"{name}\" is in the Recycle Bin. Restore it to open it."));
+            return;
+        }
         let e = t.view.as_ref().unwrap().listing().entries[i as usize];
         let loc = t.entry_location(i);
         if e.is_dir() {
@@ -815,6 +835,9 @@ impl App {
         if l.sizes.contains(x, y) {
             return Hit::Sizes;
         }
+        if let Some(k) = l.bin.iter().position(|r| r.contains(x, y)) {
+            return Hit::Bin(k);
+        }
         Hit::None
     }
 
@@ -1053,7 +1076,7 @@ impl App {
                 }
             }
             Hit::Header(c) => {
-                let field = COLUMNS[c].field();
+                let field = self.columns()[c].field();
                 let t = self.tab_mut();
                 let s = &mut t.view_spec.sort;
                 *s = if s.field == field { SortSpec { field, descending: !s.descending } } else { SortSpec { field, descending: false } };
@@ -1061,6 +1084,7 @@ impl App {
                 self.resort(k);
             }
             Hit::Sizes => self.compute_dir_sizes(),
+            Hit::Bin(k) => self.bin_button(k),
             Hit::Side(i) => self.open_side_item(i, self.mods.ctrl, now),
             Hit::SidePin(i) => self.toggle_pin_item(i),
             Hit::FilterClose => self.close_filter(),
@@ -1219,7 +1243,7 @@ impl App {
 
     fn compute_dir_sizes(&mut self) {
         let t = self.tab();
-        if t.view.as_ref().is_none_or(|v| v.snap().gen != t.gen) {
+        if t.view.as_ref().is_none_or(|v| v.snap().gen != t.gen) || t.view_loc.is_recycle_bin() {
             return;
         }
         let items = t.size_items();
@@ -1440,7 +1464,7 @@ impl App {
         let baseline = (l.header.y + (l.header.h + m.ascent - m.descent) / 2.0).round();
         let pad = self.s(10.0);
         let sort = self.tab().view_spec.sort;
-        for (i, col) in COLUMNS.iter().enumerate() {
+        for (i, col) in self.columns().iter().enumerate() {
             let r = l.cols[i];
             if self.hover == Hit::Header(i) {
                 g.dl.rect(r, t.button_hover);
@@ -1467,14 +1491,22 @@ impl App {
         let pad = self.s(10.0);
         let icon_px = self.s(ICON);
         let list_focused = self.active && self.focus == Focus::List;
+        let columns = self.columns();
         let tab = &self.tabs[self.cur];
+        let in_bin = tab.view_loc.is_recycle_bin();
         let (first, last) = tab.row_range(rh, list.h);
         g.dl.set_clip(Some(list));
         let mut requests: Vec<IconRequest> = Vec::new();
         let mut type_requests: Vec<Vec<u8>> = Vec::new();
         if let Some(v) = &tab.view {
             if v.rows().is_empty() && v.snap().done && v.snap().error.is_none() {
-                let msg = if v.is_filtered() { "No items match the filter." } else { "This folder is empty." };
+                let msg = if v.is_filtered() {
+                    "No items match the filter."
+                } else if in_bin {
+                    "The Recycle Bin is empty."
+                } else {
+                    "This folder is empty."
+                };
                 let w = g.measure(msg, font);
                 g.text(list.x + (list.w - w) / 2.0, list.y + self.s(40.0), msg, font, t.text_dim, f32::INFINITY);
             }
@@ -1505,8 +1537,13 @@ impl App {
                     let color = if e.is_dir() { t.accent.alpha(0xB0) } else { t.text_dim.alpha(0x90) };
                     centered(g, ir, glyph, FontStyle::new(FontFamily::Icons, icon_px * 0.85, false), color);
                     let wanted = !self.icons.contains_key(&key) && !requests.iter().any(|r| r.key == key);
-                    if let (true, Some(dir)) = (wanted, &shell_dir) {
-                        requests.push(IconRequest { key, kind, path: dir.join(name), size: icon_px as u32, gen: tab.gen, row: row as u32 });
+                    let path = match (wanted, in_bin) {
+                        (false, _) => None,
+                        (true, true) => recycle::recycled(listing, i),
+                        (true, false) => shell_dir.as_ref().map(|d| d.join(name)),
+                    };
+                    if let Some(path) = path {
+                        requests.push(IconRequest { key, kind, path, size: icon_px as u32, gen: tab.gen, row: row as u32 });
                     }
                 }
 
@@ -1515,41 +1552,54 @@ impl App {
                 let name_color = if e.attrs & attr::HIDDEN != 0 { t.text_dim } else { t.text };
                 g.text(name_x, ty, &name::display(name), font, name_color, cols[0].right() - name_x - pad);
 
-                let mut s = bumpalo::collections::String::new_in(arena);
-                format::datetime(&mut s, e.modified, self.utc_offset_min);
-                g.text(cols[1].x + pad, ty, &s, font, t.text_dim, cols[1].w - 2.0 * pad);
-
-                let type_text: &str = if e.attrs & attr::VOLUME != 0 {
-                    "Drive"
-                } else if e.is_dir() {
-                    "File folder"
-                } else {
-                    let ext = listing.ext(i);
-                    let folded = ext.to_ascii_lowercase();
-                    match self.type_names.get(&folded) {
-                        Some(Some(n)) if !n.is_empty() => arena.alloc_str(n),
-                        known => {
-                            if known.is_none() && !in_root && !type_requests.contains(&folded) {
-                                type_requests.push(folded);
-                            }
+                for (c, col) in columns.iter().enumerate().skip(1) {
+                    let r = cols[c];
+                    match col {
+                        Column::Modified | Column::Deleted => {
                             let mut s = bumpalo::collections::String::new_in(arena);
-                            if ext.is_empty() {
-                                s.push_str("File");
-                            } else {
-                                let _ = write!(s, "{} File", name::display(ext).to_uppercase());
-                            }
-                            s.into_bump_str()
+                            format::datetime(&mut s, e.modified, self.utc_offset_min);
+                            g.text(r.x + pad, ty, &s, font, t.text_dim, r.w - 2.0 * pad);
                         }
+                        Column::Origin => {
+                            g.text(r.x + pad, ty, &name::display(recycle::origin(listing, i)), font, t.text_dim, r.w - 2.0 * pad);
+                        }
+                        Column::Type => {
+                            let type_text: &str = if e.attrs & attr::VOLUME != 0 {
+                                "Drive"
+                            } else if e.is_dir() {
+                                "File folder"
+                            } else {
+                                let ext = listing.ext(i);
+                                let folded = ext.to_ascii_lowercase();
+                                match self.type_names.get(&folded) {
+                                    Some(Some(n)) if !n.is_empty() => arena.alloc_str(n),
+                                    known => {
+                                        if known.is_none() && !in_root && !type_requests.contains(&folded) {
+                                            type_requests.push(folded);
+                                        }
+                                        let mut s = bumpalo::collections::String::new_in(arena);
+                                        if ext.is_empty() {
+                                            s.push_str("File");
+                                        } else {
+                                            let _ = write!(s, "{} File", name::display(ext).to_uppercase());
+                                        }
+                                        s.into_bump_str()
+                                    }
+                                }
+                            };
+                            g.text(r.x + pad, ty, type_text, font, t.text_dim, r.w - 2.0 * pad);
+                        }
+                        Column::Size => {
+                            if !e.is_dir() || e.attrs & (attr::SIZE_KNOWN | attr::VOLUME) != 0 {
+                                let mut s = bumpalo::collections::String::new_in(arena);
+                                format::size(&mut s, e.size);
+                                let w = g.measure(&s, font);
+                                let x = (r.right() - pad - w).max(r.x + pad);
+                                g.text(x, ty, &s, font, t.text_dim, r.w - 2.0 * pad);
+                            }
+                        }
+                        Column::Name => {}
                     }
-                };
-                g.text(cols[2].x + pad, ty, type_text, font, t.text_dim, cols[2].w - 2.0 * pad);
-
-                if !e.is_dir() || e.attrs & (attr::SIZE_KNOWN | attr::VOLUME) != 0 {
-                    let mut s = bumpalo::collections::String::new_in(arena);
-                    format::size(&mut s, e.size);
-                    let w = g.measure(&s, font);
-                    let x = (cols[3].right() - pad - w).max(cols[3].x + pad);
-                    g.text(x, ty, &s, font, t.text_dim, cols[3].w - 2.0 * pad);
                 }
             }
         }
@@ -1612,16 +1662,25 @@ impl App {
         if let (Some(first), Some(done)) = (tab.stats.first, tab.stats.done) {
             let _ = write!(right, "{:.1} ms first · {:.1} ms all", first.as_secs_f64() * 1e3, done.as_secs_f64() * 1e3);
         }
-        let label = "Folder sizes";
-        let sw = g.measure(label, font) + self.s(16.0);
-        let sr = Rect::new(r.right() - pad - sw, r.y + self.s(2.0), sw, r.h - self.s(4.0));
-        self.layout.sizes = sr;
-        if self.hover == Hit::Sizes {
-            g.dl.round_rect(sr, t.button_hover, self.s(3.0));
+        let in_bin = tab.view_loc.is_recycle_bin();
+        let labels: &[&str] = if in_bin { &BIN_BUTTONS } else { &["Folder sizes"] };
+        let mut buttons = [Rect::default(); 3];
+        let mut x = r.right() - pad;
+        for (k, label) in labels.iter().enumerate().rev() {
+            let w = g.measure(label, font) + self.s(16.0);
+            x -= w;
+            let br = Rect::new(x, r.y + self.s(2.0), w, r.h - self.s(4.0));
+            buttons[k] = br;
+            if self.hover == if in_bin { Hit::Bin(k) } else { Hit::Sizes } {
+                g.dl.round_rect(br, t.button_hover, self.s(3.0));
+            }
+            g.text(br.x + self.s(8.0), baseline, label, font, t.text_dim, f32::INFINITY);
+            x -= self.s(4.0);
         }
-        g.text(sr.x + self.s(8.0), baseline, label, font, t.text_dim, f32::INFINITY);
+        self.layout.sizes = if in_bin { Rect::default() } else { buttons[0] };
+        self.layout.bin = if in_bin { buttons } else { Default::default() };
         let rw = g.measure(&right, font);
-        g.text(sr.x - self.s(16.0) - rw, baseline, &right, font, t.text_dim.alpha(0xA0), f32::INFINITY);
+        g.text(x - self.s(12.0) - rw, baseline, &right, font, t.text_dim.alpha(0xA0), f32::INFINITY);
     }
 }
 

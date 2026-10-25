@@ -5,6 +5,7 @@ use crate::listing::attr;
 use crate::location::{Location, ProviderId};
 use crate::path::{FsPath, PathKind};
 use crate::provider::{FileOp, OpId, OpReport, ProviderRequest, TabId};
+use crate::recycle;
 use crate::render::Rect;
 use crate::text::{Gfx, TextBackend};
 use crate::theme::Theme;
@@ -25,6 +26,8 @@ const REVEAL_FOR: Duration = Duration::from_secs(10);
 const DRAG_START: f32 = 4.0;
 const MAX_NAME_UNITS: usize = 255;
 const RESERVED: [&str; 4] = ["CON", "PRN", "AUX", "NUL"];
+const BIN_ONLY: &str = "Items in the Recycle Bin can only be restored or deleted";
+const OPEN_BIN: &str = "Open the Recycle Bin to restore items";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShellMenu {
@@ -88,6 +91,7 @@ struct Press {
 enum Target {
     Reveal,
     Into { dest: FsPath, row: Option<usize> },
+    Trash(Option<usize>),
 }
 
 struct Dropping {
@@ -188,15 +192,24 @@ impl App {
         self.dirty = true;
     }
 
+    fn in_bin(&self) -> bool {
+        self.tab().view_loc.is_recycle_bin()
+    }
+
     fn shell_dir(&self) -> Result<FsPath, &'static str> {
         let loc = &self.tab().view_loc;
-        if loc.path().kind() == PathKind::Computer {
-            return Err("Files cannot be placed in This PC");
+        match loc.path().kind() {
+            PathKind::Computer => return Err("Files cannot be placed in This PC"),
+            PathKind::RecycleBin => return Err("Files cannot be placed in the Recycle Bin"),
+            _ => {}
         }
         loc.to_windows().ok_or("This folder cannot be used by Windows shell operations")
     }
 
     fn item_paths(&self, items: &[u32]) -> Result<Vec<FsPath>, &'static str> {
+        if self.in_bin() {
+            return Err(BIN_ONLY);
+        }
         let t = self.tab();
         items.iter().map(|&i| t.entry_location(i).to_windows()).collect::<Option<Vec<_>>>().ok_or("Some names cannot be used by Windows shell operations")
     }
@@ -216,14 +229,76 @@ impl App {
         self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Op { tab, id, op } });
     }
 
-    pub fn trash_selection(&mut self) {
+    fn delete_with(&mut self, op: fn(Vec<FsPath>) -> FileOp) {
+        if self.in_bin() {
+            return self.purge_selection();
+        }
         let items = self.selected_items();
         if items.is_empty() {
             return;
         }
         match self.item_paths(&items) {
-            Ok(paths) => self.start_op(FileOp::Trash(paths), Origin::Fresh, Then::Nothing),
+            Ok(paths) => self.start_op(op(paths), Origin::Fresh, Then::Nothing),
             Err(e) => self.status(e),
+        }
+    }
+
+    pub fn trash_selection(&mut self) {
+        self.delete_with(FileOp::Trash);
+    }
+
+    pub fn delete_selection(&mut self) {
+        self.delete_with(FileOp::Delete);
+    }
+
+    fn bin_pairs(&self, items: impl Iterator<Item = u32>) -> Vec<(FsPath, FsPath)> {
+        let Some(v) = &self.tab().view else { return Vec::new() };
+        let l = v.listing();
+        items.filter_map(|i| Some((recycle::recycled(l, i)?, recycle::original(l, i)?))).collect()
+    }
+
+    fn purge_selection(&mut self) {
+        let pairs = self.bin_pairs(self.selected_items().into_iter());
+        if !pairs.is_empty() {
+            self.start_op(FileOp::Purge(pairs), Origin::Fresh, Then::Nothing);
+        }
+    }
+
+    fn restore(&mut self, all: bool) {
+        if !self.in_bin() {
+            return self.status(OPEN_BIN);
+        }
+        let pairs = match (all, &self.tab().view) {
+            (true, Some(v)) => {
+                let l = v.listing();
+                self.bin_pairs((0..l.len() as u32).filter(|&i| l.entries[i as usize].attrs & attr::DELETED == 0))
+            }
+            _ => self.bin_pairs(self.selected_items().into_iter()),
+        };
+        match pairs.is_empty() {
+            true if all => self.status("The Recycle Bin is empty"),
+            true => self.status("Select the items to restore"),
+            false => self.start_op(FileOp::Restore(pairs), Origin::Fresh, Then::Nothing),
+        }
+    }
+
+    pub fn restore_selection(&mut self) {
+        self.restore(false);
+    }
+
+    pub fn restore_all(&mut self) {
+        self.restore(true);
+    }
+
+    pub fn empty_bin(&mut self) {
+        self.start_op(FileOp::EmptyBin, Origin::Fresh, Then::Nothing);
+    }
+
+    pub(super) fn bin_button(&mut self, k: usize) {
+        match k {
+            0 => self.restore_selection(),
+            1 => self.restore_all(),
+            _ => self.empty_bin(),
         }
     }
 
@@ -325,6 +400,9 @@ impl App {
     }
 
     fn shell_menu(&mut self, x: f32, y: f32, on_items: bool) {
+        if self.in_bin() {
+            return self.status(BIN_ONLY);
+        }
         let t = self.tab();
         let Some(dir) = t.view_loc.to_windows() else { return self.status("This folder cannot be used by Windows shell operations") };
         let items: Vec<u32> = match (&t.view, on_items) {
@@ -432,7 +510,7 @@ impl App {
 
     pub fn rename_focused(&mut self) {
         let t = self.tab();
-        let Some(v) = t.view.as_ref().filter(|_| t.view_loc.path().kind() != PathKind::Computer) else { return };
+        let Some(v) = t.view.as_ref().filter(|_| !matches!(t.view_loc.path().kind(), PathKind::Computer | PathKind::RecycleBin)) else { return };
         let target = v.focus.filter(|&f| v.is_visible(f)).or_else(|| if v.selected_count() == 1 { v.selected().next() } else { None });
         if let Some(i) = target {
             self.begin_rename(i);
@@ -631,6 +709,7 @@ impl App {
                 let Some(d) = self.ops.dropping.take() else { return drop_effect::NONE };
                 match d.target {
                     Some(Target::Reveal) if effect != drop_effect::NONE => self.on_event(&Event::DroppedFiles(d.paths), now),
+                    Some(Target::Trash(_)) if effect != drop_effect::NONE => self.start_op(FileOp::Trash(d.paths), Origin::Fresh, Then::Nothing),
                     Some(Target::Into { dest, .. }) => {
                         let (items, dest) = (d.paths, dest);
                         let op = match effect {
@@ -650,8 +729,14 @@ impl App {
 
     fn drop_target(&self, x: f32, y: f32) -> Option<Target> {
         let t = self.tab();
-        let here = || self.shell_dir().ok().map(|dest| Target::Into { dest, row: None });
+        let in_bin = self.in_bin();
+        let here = || match in_bin {
+            true => Some(Target::Trash(None)),
+            false => self.shell_dir().ok().map(|dest| Target::Into { dest, row: None }),
+        };
         match self.hit(x, y) {
+            Hit::Row(_) if in_bin => here(),
+            Hit::Side(i) if self.nav.sidebar.items.get(i).is_some_and(|it| it.loc.is_recycle_bin()) => Some(Target::Trash(Some(i))),
             Hit::Row(row) => {
                 let v = t.view.as_ref()?;
                 let i = *v.rows().get(row)?;
@@ -662,7 +747,7 @@ impl App {
                 }
             }
             Hit::ListEmpty | Hit::Track | Hit::Thumb => here(),
-            Hit::Header(_) | Hit::ColSep(_) | Hit::Sizes => None,
+            Hit::Header(_) | Hit::ColSep(_) | Hit::Sizes | Hit::Bin(_) => None,
             Hit::Side(_) | Hit::SidePin(_) | Hit::SideEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose => None,
             Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside => None,
             _ if self.layout.status.contains(x, y) => None,
@@ -677,6 +762,8 @@ impl App {
         let effect = match &target {
             None => NONE,
             Some(Target::Reveal) => [COPY, LINK].into_iter().find(|e| allowed & e != 0).unwrap_or(NONE),
+            Some(Target::Trash(_)) if d.paths.is_empty() || d.paths.iter().any(recycle::in_bin) => NONE,
+            Some(Target::Trash(_)) => allowed & MOVE,
             Some(Target::Into { dest, .. }) => {
                 if d.paths.is_empty() || d.paths.iter().any(|p| p.as_bytes().eq_ignore_ascii_case(dest.as_bytes()) || inside(dest, p)) {
                     NONE
@@ -701,6 +788,14 @@ impl App {
     pub fn drop_highlight(&self) -> Option<Option<usize>> {
         match &self.ops.dropping {
             Some(Dropping { target: Some(Target::Into { row, .. }), effect, .. }) if *effect != drop_effect::NONE => Some(*row),
+            Some(Dropping { target: Some(Target::Trash(None)), effect, .. }) if *effect != drop_effect::NONE => Some(None),
+            _ => None,
+        }
+    }
+
+    pub fn side_drop_highlight(&self) -> Option<usize> {
+        match &self.ops.dropping {
+            Some(Dropping { target: Some(Target::Trash(side)), effect, .. }) if *effect != drop_effect::NONE => *side,
             _ => None,
         }
     }

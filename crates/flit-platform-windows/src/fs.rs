@@ -19,7 +19,7 @@ use windows::Win32::System::Ioctl::{PropertyStandardQuery, StorageDeviceSeekPena
 use windows::Win32::System::IO::{DeviceIoControl, IO_STATUS_BLOCK};
 
 const BUFFER: usize = 64 * 1024;
-const DRIVE_FIXED: u32 = 3;
+pub(crate) const DRIVE_FIXED: u32 = 3;
 
 pub struct NtFs;
 
@@ -98,15 +98,18 @@ thread_local! {
     static SCAN_BUFFER: RefCell<Vec<u64>> = RefCell::new(vec![0; BUFFER / 8]);
 }
 
-fn open_child(parent: &Handle, name: &[u16]) -> Option<Handle> {
+pub(crate) fn open_relative(parent: &Handle, name: &[u16], access: u32, options: u32) -> Option<Handle> {
     let bytes = (name.len() * 2) as u16;
     let object = UNICODE_STRING { Length: bytes, MaximumLength: bytes, Buffer: PWSTR(name.as_ptr() as *mut u16) };
     let attrs = OBJECT_ATTRIBUTES { Length: size_of::<OBJECT_ATTRIBUTES>() as u32, RootDirectory: parent.0, ObjectName: &object, Attributes: OBJ_CASE_INSENSITIVE, ..Default::default() };
     let (mut h, mut iosb) = (HANDLE::default(), IO_STATUS_BLOCK::default());
     let share = (FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE).0;
-    let options = FILE_DIRECTORY_FILE.0 | FILE_SYNCHRONOUS_IO_NONALERT.0 | FILE_OPEN_FOR_BACKUP_INTENT.0;
-    let st = unsafe { NtOpenFile(&mut h, FILE_LIST_DIRECTORY.0 | SYNCHRONIZE.0, &attrs, &mut iosb, share, options) };
+    let st = unsafe { NtOpenFile(&mut h, access | SYNCHRONIZE.0, &attrs, &mut iosb, share, options | FILE_SYNCHRONOUS_IO_NONALERT.0) };
     st.is_ok().then(|| Handle(h))
+}
+
+fn open_child(parent: &Handle, name: &[u16]) -> Option<Handle> {
+    open_relative(parent, name, FILE_LIST_DIRECTORY.0, FILE_DIRECTORY_FILE.0 | FILE_OPEN_FOR_BACKUP_INTENT.0)
 }
 
 fn scan(dir: &Handle, keep_going: &dyn Fn() -> bool, mut subdir: impl FnMut(&[u16])) -> u64 {
@@ -192,8 +195,10 @@ impl Tree<'_> {
 
 impl Fs for NtFs {
     fn read_dir(&self, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
-        if dir.kind() == PathKind::Computer {
-            return volumes(out);
+        match dir.kind() {
+            PathKind::Computer => return volumes(out),
+            PathKind::RecycleBin => return crate::recycle::list(&crate::recycle::roots(), out),
+            _ => {}
         }
         let h = open_dir(dir, FILE_LIST_DIRECTORY.0, false)?;
         let mut buf = vec![0u64; BUFFER / 8];

@@ -98,3 +98,18 @@ fn oversized_roots_are_rejected() {
     assert_eq!(ok.file_name(), b"dir");
     assert_eq!(ok.unc_parts().unwrap().0.len(), 1000);
 }
+
+#[test]
+fn recycle_bin() {
+    use crate::location::Location;
+    let bin = FsPath::recycle_bin();
+    for s in ["shell:RecycleBinFolder", "SHELL:recyclebinfolder", "Recycle Bin"] {
+        assert_eq!(p(s), bin, "{s}");
+    }
+    assert_eq!((bin.display(), bin.parent(), bin.kind()), ("Recycle Bin".into(), None, PathKind::RecycleBin));
+    assert_eq!(bin.crumbs().into_iter().map(|(l, _)| l).collect::<Vec<_>>(), ["Recycle Bin"]);
+    let loc = Location::recycle_bin();
+    assert!(loc.is_recycle_bin() && !Location::computer().is_recycle_bin());
+    assert_eq!(loc.to_windows(), None, "the bin is not a folder the shell can paste into");
+    assert_eq!(Location::parse_bytes(&loc.to_bytes()), Some(loc));
+}

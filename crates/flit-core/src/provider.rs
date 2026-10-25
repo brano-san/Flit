@@ -52,6 +52,9 @@ pub enum FileOp {
     MoveTo(Vec<(FsPath, FsPath)>),
     Restore(Vec<(FsPath, FsPath)>),
     Paste { dest: FsPath },
+    Delete(Vec<FsPath>),
+    Purge(Vec<(FsPath, FsPath)>),
+    EmptyBin,
 }
 
 impl FileOp {
@@ -68,6 +71,9 @@ impl FileOp {
             FileOp::MoveTo(v) => FileOp::MoveTo(pairs(v)?),
             FileOp::Restore(v) => FileOp::Restore(pairs(v)?),
             FileOp::Paste { dest } => FileOp::Paste { dest: f(dest)? },
+            FileOp::Delete(v) => FileOp::Delete(all(v)?),
+            FileOp::Purge(v) => FileOp::Purge(pairs(v)?),
+            FileOp::EmptyBin => FileOp::EmptyBin,
         })
     }
 }

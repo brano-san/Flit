@@ -25,6 +25,7 @@ const G_PICTURES: &str = "\u{E8B9}";
 const G_MUSIC: &str = "\u{E8D6}";
 const G_VIDEOS: &str = "\u{E714}";
 const G_LINUX: &str = "\u{E756}";
+const G_RECYCLE_BIN: &str = "\u{E74D}";
 const G_PIN: &str = "\u{E718}";
 const G_UNPIN: &str = "\u{E77A}";
 
@@ -92,6 +93,7 @@ pub struct Places {
     pub folders: Vec<(KnownFolder, Location)>,
     pub drives: Vec<Drive>,
     pub wsl: Vec<String>,
+    pub recycle_bin: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -188,6 +190,10 @@ impl Sidebar {
             .collect();
         let p = &self.places;
         items.extend(p.folders.iter().map(|(k, l)| Item { section: Section::Folders, label: k.label().to_owned(), glyph: k.glyph(), loc: l.clone(), usage: None }));
+        if p.recycle_bin {
+            let label = crate::path::RECYCLE_BIN_LABEL.to_owned();
+            items.push(Item { section: Section::Folders, label, glyph: G_RECYCLE_BIN, loc: Location::recycle_bin(), usage: None });
+        }
         items.extend(p.drives.iter().map(|d| Item {
             section: Section::Drives,
             label: d.label.clone(),
@@ -488,6 +494,7 @@ impl App {
         let (s4, s8, s12, s36) = (self.s(4.0), self.s(8.0), self.s(12.0), self.s(36.0));
         let here = self.tabs[self.cur].location();
         let focused = self.active && self.focus == Focus::Sidebar;
+        let drop = self.side_drop_highlight();
         for &(r, section) in &sb.headers {
             let baseline = (r.y + (r.h + ms.ascent - ms.descent) / 2.0 + self.s(3.0)).round();
             g.text(r.x + s8, baseline, section.title(), small, t.text_dim, r.w - s8);
@@ -502,12 +509,14 @@ impl App {
             }
             let hovered = matches!(self.hover, Hit::Side(k) | Hit::SidePin(k) if k == i);
             let row = Rect::new(r.x, r.y + 1.0, r.w, r.h - 2.0);
-            if it.loc == *here {
+            if it.loc == *here || drop == Some(i) {
                 g.dl.round_rect(row, t.selection, s4);
             } else if hovered {
                 g.dl.round_rect(row, t.button_hover, s4);
             }
-            if focused && sb.cursor == i {
+            if drop == Some(i) {
+                g.dl.outline(row, t.accent, s4, self.s(1.0).max(1.0));
+            } else if focused && sb.cursor == i {
                 g.dl.outline(row, t.focus_ring, s4, 1.0);
             }
             let text_h = self.s(ROW_H);

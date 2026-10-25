@@ -1,6 +1,7 @@
 use crate::fs::{map_attrs, open_dir};
 use crossbeam_channel::Sender;
 use flit_core::listing::{ChangeKind, DirChange, Meta};
+use flit_core::path::PathKind;
 use flit_core::{name, FsPath, ProviderEvent, TabId};
 use flit_platform::{PlatformError, Wake, Watcher};
 use std::collections::HashMap;
@@ -28,7 +29,7 @@ pub struct DirWatcher {
 #[derive(Default)]
 struct State {
     slots: HashMap<usize, Watch>,
-    by_tab: HashMap<TabId, usize>,
+    by_tab: HashMap<TabId, Vec<usize>>,
     latest: HashMap<TabId, (u64, bool)>,
     last_key: usize,
 }
@@ -49,7 +50,7 @@ impl State {
     }
 
     fn stop_tab(&mut self, tab: TabId) {
-        if let Some(k) = self.by_tab.remove(&tab) {
+        for k in self.by_tab.remove(&tab).unwrap_or_default() {
             self.stop(k);
         }
     }
@@ -75,7 +76,16 @@ impl Watcher for DirWatcher {
     }
 
     fn watch(&mut self, tab: TabId, gen: u64, dir: Option<&FsPath>) {
-        let rank = (gen, dir.is_none());
+        match dir {
+            Some(d) if d.kind() == PathKind::RecycleBin => self.watch_all(tab, gen, Some(&crate::recycle::roots()), true),
+            _ => self.watch_all(tab, gen, dir.map(std::slice::from_ref), false),
+        }
+    }
+}
+
+impl DirWatcher {
+    pub(crate) fn watch_all(&mut self, tab: TabId, gen: u64, dirs: Option<&[FsPath]>, rescan: bool) {
+        let rank = (gen, dirs.is_none());
         {
             let mut st = lock(&self.state);
             if st.latest.get(&tab).is_some_and(|&newest| newest > rank) {
@@ -84,24 +94,32 @@ impl Watcher for DirWatcher {
             st.latest.insert(tab, rank);
             st.stop_tab(tab);
         }
-        let Some(dir) = dir else { return };
-        let Ok(h) = open_dir(dir, FILE_LIST_DIRECTORY.0, true) else { return };
+        let Some(dirs) = dirs else { return };
+        let opened: Vec<(&FsPath, HANDLE)> = dirs.iter().filter_map(|d| Some((d, open_dir(d, FILE_LIST_DIRECTORY.0, true).ok()?))).collect();
         let mut st = lock(&self.state);
-        st.last_key += 1;
-        let key = st.last_key;
         let current = st.latest.get(&tab) == Some(&rank);
-        if !current || unsafe { CreateIoCompletionPort(h, Some(self.port.0), key, 0) }.is_err() {
-            unsafe {
-                let _ = CloseHandle(h);
-            }
-            return;
+        if current {
+            st.stop_tab(tab);
         }
-        st.stop_tab(tab);
-        st.slots.insert(key, Watch { tab, gen, path: dir.clone(), dir: h, ov: Box::default(), buf: vec![0u64; BUFFER / 8], closing: false });
-        if st.slots.get_mut(&key).is_some_and(Watch::issue) {
-            st.by_tab.insert(tab, key);
-        } else {
-            st.close(key);
+        let mut keys = Vec::new();
+        for (path, h) in opened {
+            st.last_key += 1;
+            let key = st.last_key;
+            if !current || unsafe { CreateIoCompletionPort(h, Some(self.port.0), key, 0) }.is_err() {
+                unsafe {
+                    let _ = CloseHandle(h);
+                }
+                continue;
+            }
+            st.slots.insert(key, Watch { tab, gen, path: path.clone(), dir: h, ov: Box::default(), buf: vec![0u64; BUFFER / 8], closing: false, rescan });
+            if st.slots.get_mut(&key).is_some_and(Watch::issue) {
+                keys.push(key);
+            } else {
+                st.close(key);
+            }
+        }
+        if !keys.is_empty() {
+            st.by_tab.insert(tab, keys);
         }
     }
 }
@@ -122,6 +140,7 @@ struct Watch {
     ov: Box<OVERLAPPED>,
     buf: Vec<u64>,
     closing: bool,
+    rescan: bool,
 }
 
 unsafe impl Send for Watch {}
@@ -271,9 +290,12 @@ fn run(port: HANDLE, state: &Mutex<State>, events: Sender<ProviderEvent>, wake: 
             continue;
         }
         let (tab, gen) = (w.tab, w.gen);
-        let found = (ok && n > 0).then(|| (notices(w.bytes(n as usize)), w.path.clone()));
+        let found = (ok && n > 0 && !w.rescan).then(|| (notices(w.bytes(n as usize)), w.path.clone()));
         if !ok || !w.issue() {
-            st.by_tab.retain(|_, v| *v != key);
+            st.by_tab.retain(|_, v| {
+                v.retain(|k| *k != key);
+                !v.is_empty()
+            });
             st.close(key);
         }
         drop(st);

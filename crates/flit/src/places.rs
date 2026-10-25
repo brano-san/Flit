@@ -58,5 +58,5 @@ fn collect<P: Platform>() -> Places {
             Some((k, P::known_folder(k.shell_name()).or_else(home)?))
         })
         .collect();
-    Places { folders, drives: P::drives(), wsl: P::wsl_distros() }
+    Places { folders, drives: P::drives(), wsl: P::wsl_distros(), recycle_bin: cfg!(windows) }
 }

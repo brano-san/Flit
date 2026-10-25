@@ -413,3 +413,168 @@ fn dropping_on_the_title_bar_reveals_the_file_like_before() {
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::List { path, .. }, .. } if path == p(r"D:\docs"))));
     assert_eq!(app.current_location(), &Location::parse(r"D:\docs").unwrap());
 }
+
+const BIN_REPORT: (&str, &str) = (r"C:\$Recycle.Bin\S-1\$RAB12CD.txt", r"C:\Users\u\Docs\report.txt");
+const BIN_OLD: (&str, &str) = (r"D:\$Recycle.Bin\S-1\$R000001", r"D:\old");
+
+fn deliver_bin(app: &mut App, items: &[(&str, &str)]) {
+    let t = app.tab();
+    let mut go = |_: &crate::listing::ListingBuilder<'_>| true;
+    let mut b = crate::listing::ListingBuilder::new(CaseMode::Insensitive, &mut go);
+    for &(recycled, original) in items {
+        let o = p(original);
+        let name: Vec<u16> = String::from_utf8_lossy(o.file_name()).encode_utf16().collect();
+        let attrs = if original.ends_with("old") { attr::DIR } else { 0 } | attr::SIZE_KNOWN;
+        recycle::push(&mut b, &name, Meta { attrs, size: 5, modified: 7, created: 7 }, &p(recycled), &o.parent().unwrap());
+    }
+    let (listing, keys) = (std::mem::take(&mut b.listing), std::mem::replace(&mut b.keys, SortKeys::new(CaseMode::Insensitive)));
+    let view = t.view_spec;
+    let mut order = Vec::new();
+    sort::sort(&listing, &keys, view, &mut order);
+    let snap = DirSnapshot { gen: t.gen, path: t.location().path().clone(), listing, keys, order, view, done: true, error: None, elapsed: Duration::ZERO };
+    t.slot.publish(Arc::new(snap));
+    app.poll();
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, t0());
+    app.drain_effects().for_each(drop);
+}
+
+fn pairs(items: &[(&str, &str)]) -> Vec<(FsPath, FsPath)> {
+    items.iter().map(|&(r, o)| (p(r), p(o))).collect()
+}
+
+fn bin_app() -> App {
+    let mut app = app_at("shell:RecycleBinFolder");
+    deliver_bin(&mut app, &[BIN_REPORT, BIN_OLD]);
+    app
+}
+
+fn op_list(app: &mut App) -> Vec<FileOp> {
+    ops(app).into_iter().map(|(_, op)| op).collect()
+}
+
+#[test]
+fn the_recycle_bin_shows_where_items_came_from_and_refuses_ordinary_file_commands() {
+    let mut app = bin_app();
+    assert_eq!(app.columns(), super::super::BIN_COLUMNS);
+    assert_eq!(app.tab().crumbs.iter().map(|(l, _)| l.as_str()).collect::<Vec<_>>(), ["Recycle Bin"]);
+    let v = app.tab().view.as_ref().unwrap();
+    let names: Vec<&[u8]> = v.rows().iter().map(|&i| v.listing().name(i)).collect();
+    assert_eq!(names, [&b"old"[..], b"report.txt"]);
+    let report = v.rows()[1];
+    assert_eq!(app.tab().entry_location(report), Location::parse(BIN_REPORT.1).unwrap());
+    select(&mut app, &["report.txt"]);
+    key(&mut app, Key::Enter, NO);
+    assert!(app.drain_effects().all(|e| !matches!(e, Effect::Provider { req: ProviderRequest::Open { .. } | ProviderRequest::List { .. }, .. })));
+    assert_eq!(app.tab().error.as_deref(), Some("\"report.txt\" is in the Recycle Bin. Restore it to open it."));
+    for (k, m) in [(Key::Char('C'), CTRL), (Key::Char('X'), CTRL), (Key::Enter, ALT), (Key::F(10), SHIFT)] {
+        key(&mut app, k, m);
+        assert!(app.drain_effects().all(|e| !matches!(e, Effect::SetClipboardFiles { .. } | Effect::Properties(_) | Effect::ShellMenu(_))));
+        assert_eq!(app.tab().error.as_deref(), Some(BIN_ONLY));
+    }
+    for (k, m) in [(Key::Char('V'), CTRL), (Key::Char('N'), CTRL_SHIFT)] {
+        key(&mut app, k, m);
+        assert!(ops(&mut app).is_empty());
+        assert_eq!(app.tab().error.as_deref(), Some("Files cannot be placed in the Recycle Bin"));
+    }
+    key(&mut app, Key::F(2), NO);
+    assert!(!app.is_renaming());
+    let row = row_xy(&app, 1);
+    press(&mut app, row, MouseButton::Left, NO);
+    app.on_event(&Event::MouseMove { x: row.0 + 40.0, y: row.1 + 40.0 }, t0());
+    assert!(app.drain_effects().all(|e| !matches!(e, Effect::StartDrag(_))), "bin items are not dragged out as files");
+}
+
+#[test]
+fn delete_in_the_bin_purges_and_the_bin_commands_restore_or_empty() {
+    let mut app = bin_app();
+    select(&mut app, &["report.txt"]);
+    for m in [NO, SHIFT] {
+        key(&mut app, Key::Delete, m);
+        assert_eq!(op_list(&mut app), [FileOp::Purge(pairs(&[BIN_REPORT]))]);
+    }
+    assert!(app.run_action("bin.restore", t0()));
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::Restore(pairs(&[BIN_REPORT])));
+    done(&mut app, id, op, &[BIN_REPORT]);
+    key(&mut app, Key::Char('Z'), CTRL);
+    assert_eq!(op_list(&mut app), [FileOp::Trash(vec![p(BIN_REPORT.1)])], "a restore is undone by recycling again");
+    app.run_action("bin.restore_all", t0());
+    assert_eq!(op_list(&mut app), [FileOp::Restore(pairs(&[BIN_REPORT, BIN_OLD]))]);
+    app.run_action("bin.empty", t0());
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::EmptyBin);
+    done(&mut app, id, op, &[]);
+    select(&mut app, &[]);
+    app.run_action("bin.restore", t0());
+    assert!(ops(&mut app).is_empty());
+    assert_eq!(app.tab().error.as_deref(), Some("Select the items to restore"));
+}
+
+#[test]
+fn the_status_bar_buttons_and_headers_of_the_bin_work_with_the_mouse() {
+    let mut app = bin_app();
+    select(&mut app, &["old"]);
+    let buttons = app.layout.bin;
+    assert!(buttons.iter().all(|r| r.w > 0.0) && app.layout.sizes.w == 0.0);
+    for (k, want) in [(0, FileOp::Restore(pairs(&[BIN_OLD]))), (1, FileOp::Restore(pairs(&[BIN_REPORT, BIN_OLD]))), (2, FileOp::EmptyBin)] {
+        let at = (buttons[k].x + 4.0, buttons[k].y + 4.0);
+        press(&mut app, at, MouseButton::Left, NO);
+        release(&mut app, at, MouseButton::Left);
+        assert_eq!(op_list(&mut app), [want]);
+    }
+    let origin = app.layout.cols[1];
+    let at = (origin.x + 20.0, origin.y + origin.h / 2.0);
+    press(&mut app, at, MouseButton::Left, NO);
+    release(&mut app, at, MouseButton::Left);
+    assert_eq!(app.tab().view_spec.sort.field, crate::sort::SortField::Origin);
+    app.navigate(Location::parse(r"C:\x").unwrap(), t0());
+    assert_eq!(app.tab().view_spec.sort, crate::sort::SortSpec::default(), "the bin-only sort does not follow the tab out of the bin");
+}
+
+#[test]
+fn shift_delete_deletes_permanently_without_an_undo_step() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false)]);
+    select(&mut app, &["a.txt"]);
+    key(&mut app, Key::Delete, SHIFT);
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::Delete(vec![p(r"C:\x\a.txt")]));
+    done(&mut app, id, op, &[(r"C:\x\a.txt", r"C:\x\a.txt")]);
+    key(&mut app, Key::Char('Z'), CTRL);
+    assert!(ops(&mut app).is_empty());
+    assert_eq!(app.tab().error.as_deref(), Some("Nothing to undo"));
+    app.run_action("bin.restore", t0());
+    assert!(ops(&mut app).is_empty());
+    assert_eq!(app.tab().error.as_deref(), Some(OPEN_BIN));
+    app.run_action("bin.empty", t0());
+    assert_eq!(op_list(&mut app), [FileOp::EmptyBin], "the bin can be emptied from anywhere");
+}
+
+#[test]
+fn files_dropped_on_the_recycle_bin_are_trashed() {
+    use drop_effect::*;
+    let mut app = app_at(r"C:\x");
+    app.set_places(Arc::new(crate::ui::Places { recycle_bin: true, ..Default::default() }));
+    deliver(&mut app, &[("a.txt", false)]);
+    let k = app.nav.sidebar.items.iter().position(|it| it.loc.is_recycle_bin()).unwrap();
+    let r = app.nav.sidebar.rects[k];
+    let at = (r.x + 40.0, r.y + r.h / 2.0);
+    let all = COPY | MOVE | LINK;
+    let enter = |app: &mut App, paths: Vec<FsPath>, at: (f32, f32)| app.drag(&DragEvent::Enter { paths, x: at.0, y: at.1, mods: CTRL, allowed: all }, t0());
+    assert_eq!(enter(&mut app, vec![p(r"D:\in\f.txt")], at), MOVE);
+    assert_eq!((app.side_drop_highlight(), app.drop_highlight()), (Some(k), None));
+    assert_eq!(app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: NO, allowed: all }, t0()), MOVE);
+    assert_eq!(op_list(&mut app), [FileOp::Trash(vec![p(r"D:\in\f.txt")])]);
+    assert_eq!(enter(&mut app, vec![p(BIN_REPORT.0)], at), NONE, "what is already in the bin stays there");
+    app.drag(&DragEvent::Leave, t0());
+    assert_eq!(app.drag(&DragEvent::Enter { paths: vec![p(r"D:\in\f.txt")], x: at.0, y: at.1, mods: NO, allowed: COPY }, t0()), NONE);
+    app.drag(&DragEvent::Leave, t0());
+
+    let mut app = bin_app();
+    let row = row_xy(&app, 0);
+    assert_eq!(enter(&mut app, vec![p(r"C:\y\g.txt")], row), MOVE, "a drop on a folder in the bin trashes instead of moving into it");
+    assert_eq!(app.drop_highlight(), Some(None));
+    app.drag(&DragEvent::Drop { x: row.0, y: row.1, mods: NO, allowed: all }, t0());
+    assert_eq!(op_list(&mut app), [FileOp::Trash(vec![p(r"C:\y\g.txt")])]);
+}

@@ -37,7 +37,7 @@ pub fn inverse(report: &OpReport) -> Option<Step> {
             }
             FileOp::Restore(recycled)
         }
-        FileOp::Paste { .. } => return None,
+        FileOp::Paste { .. } | FileOp::Delete(_) | FileOp::Purge(_) | FileOp::EmptyBin => return None,
     }))
 }
 

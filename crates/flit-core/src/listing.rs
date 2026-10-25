@@ -73,6 +73,12 @@ impl Listing {
         let e = &self.entries[i as usize];
         &self.names[e.name_off as usize..e.name_off as usize + e.name_len as usize]
     }
+    pub fn tail(&self, i: u32) -> &[u8] {
+        let e = &self.entries[i as usize];
+        let start = e.name_off as usize + e.name_len as usize;
+        let end = self.entries.get(i as usize + 1).map_or(self.names.len(), |next| next.name_off as usize);
+        &self.names[start..end.max(start)]
+    }
     #[inline]
     pub fn ext(&self, i: u32) -> &[u8] {
         let n = self.name(i);

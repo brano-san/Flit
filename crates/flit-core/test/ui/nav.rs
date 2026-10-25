@@ -95,6 +95,7 @@ fn places() -> Arc<Places> {
             Drive { path: FsPath::parse(r"E:\").unwrap(), label: "USB Drive (E:)".into(), total: 0, free: 0 },
         ],
         wsl: vec!["Ubuntu".into()],
+        recycle_bin: true,
     })
 }
 
@@ -206,9 +207,9 @@ fn sidebar_lists_places_and_opens_items() {
     let mut app = app_at(r"C:\x");
     app.set_places(places());
     let labels: Vec<&str> = app.nav.sidebar.items.iter().map(|it| it.label.as_str()).collect();
-    assert_eq!(labels, ["Home", "Downloads", "Local Disk (C:)", "USB Drive (E:)", "Ubuntu"]);
-    assert_eq!(app.nav.sidebar.items[2].usage, Some(0.75));
-    assert_eq!(app.nav.sidebar.items[3].usage, None);
+    assert_eq!(labels, ["Home", "Downloads", "Recycle Bin", "Local Disk (C:)", "USB Drive (E:)", "Ubuntu"]);
+    assert_eq!(app.nav.sidebar.items[3].usage, Some(0.75));
+    assert_eq!(app.nav.sidebar.items[4].usage, None);
     assert!(app.layout.list.x >= app.nav.sidebar.rect.right() - 1.0);
     app.drain_effects().for_each(drop);
     let r = side_rect(&app, "Downloads");

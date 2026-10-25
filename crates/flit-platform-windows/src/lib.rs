@@ -12,6 +12,7 @@ mod instance;
 mod mft;
 mod pipe;
 mod places;
+mod recycle;
 mod service;
 mod shell;
 mod walk_index;

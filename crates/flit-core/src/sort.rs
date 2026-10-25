@@ -1,5 +1,5 @@
 use crate::listing::{attr, Entry, Listing};
-use crate::name;
+use crate::{name, recycle};
 use std::cmp::Ordering;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash, serde::Serialize, serde::Deserialize)]
@@ -9,6 +9,7 @@ pub enum SortField {
     Modified,
     Type,
     Size,
+    Origin,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash, serde::Serialize, serde::Deserialize)]
@@ -161,6 +162,7 @@ pub fn cmp(l: &Listing, k: &SortKeys, spec: SortSpec, a: u32, b: u32) -> Orderin
         SortField::Size => ea.size.cmp(&eb.size),
         SortField::Modified => ea.modified.cmp(&eb.modified),
         SortField::Type => ext_cmp(l.ext(a), l.ext(b)),
+        SortField::Origin => ext_cmp(recycle::origin(l, a), recycle::origin(l, b)),
     }
     .then_with(|| k.cmp(a, b))
     .then_with(|| l.name(a).cmp(l.name(b)));
@@ -209,8 +211,13 @@ pub fn sort(l: &Listing, k: &SortKeys, view: ViewSpec, out: &mut Vec<u32>) {
                 SortField::Size => e.size,
                 SortField::Modified => e.modified as u64 ^ (1 << 63),
                 SortField::Type => ext_prefix(l.ext(i)),
+                SortField::Origin => ext_prefix(recycle::origin(l, i)),
             };
-            let exact = spec.field != SortField::Type || l.ext(i).len() <= 8;
+            let exact = match spec.field {
+                SortField::Type => l.ext(i).len() <= 8,
+                SortField::Origin => recycle::origin(l, i).len() <= 8,
+                _ => true,
+            };
             let name2 = inv(key_word(k.key(i), 8));
             Item { group: !e.is_dir() as u16, exact, idx: i, primary: inv(primary), name: inv(k.prefix[i as usize]), name2 }
         })
