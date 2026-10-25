@@ -3,12 +3,14 @@ use crate::places::PlacesWorker;
 use crate::search_client::SearchClient;
 use crate::session::{self, Files, Session, Writer};
 use crate::state::{self, Saved};
+use crate::tags::{self, TagWorker};
 use crate::thumbs::ThumbCache;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use flit_core::input::Event;
 use flit_core::listing::DirSnapshot;
 use flit_core::open::{self, Open, OpenTarget, Route};
 use flit_core::sort::{self, ViewSpec};
+use flit_core::tags::TagRequest;
 use flit_core::text::Gfx;
 use flit_core::ui::{App, DragEvent, Effect, IconRequest, IconResult, MovedTab, Persisted, Startup, Typed, WindowCmd, WindowSession};
 use flit_core::{Location, ProviderEvent, ProviderId, ProviderRequest, TabId};
@@ -27,6 +29,10 @@ const THUMB_THREADS: usize = 3;
 const ICON_MARGIN: u32 = 32;
 const TAB_STRIDE: TabId = 1 << 32;
 const TORN_GRAB: (f32, f32) = (60.0, 18.0);
+
+mod agents {
+    include!(concat!(env!("OUT_DIR"), "/wsl_agent.rs"));
+}
 
 type Ws<P> = <P as Platform>::WindowSystem;
 type Win<P> = <Ws<P> as WindowSystem>::Window;
@@ -178,7 +184,10 @@ struct Handler<P: Platform> {
     pending: VecDeque<App>,
     next_base: TabId,
     active: Option<WindowId>,
-    local: LocalProvider,
+    local: Arc<LocalProvider>,
+    wsl: HashMap<String, WslProvider>,
+    distros: Option<Vec<String>>,
+    events_tx: Sender<ProviderEvent>,
     events: Receiver<ProviderEvent>,
     opens: Receiver<Open>,
     sink: OpenSink,
@@ -208,6 +217,7 @@ struct Handler<P: Platform> {
     ending: bool,
     timing: bool,
     requested: Option<Instant>,
+    tags: TagWorker,
 }
 
 impl<P: Platform> Handler<P> {
@@ -238,6 +248,7 @@ impl<P: Platform> Handler<P> {
         app.set_nav_state(self.saved.nav.clone());
         app.set_places(self.places.current());
         app.share_typed(self.typed.clone());
+        app.set_tags(self.tags.current());
         let fx: Vec<Effect> = app.drain_effects().collect();
         for e in fx {
             if let Effect::Provider { provider, req } = e {
@@ -327,10 +338,22 @@ impl<P: Platform> Handler<P> {
         }
     }
 
-    fn submit(&self, provider: ProviderId, req: ProviderRequest) {
-        match provider {
-            ProviderId::Local => self.local.submit(req),
-            ProviderId::Wsl(distro) => match via_unc(&distro, req) {
+    fn submit(&mut self, provider: ProviderId, req: ProviderRequest) {
+        let ProviderId::Wsl(distro) = provider else { return self.local.submit(req) };
+        let known = self.distros.get_or_insert_with(P::wsl_distros);
+        let distro = known.iter().find(|d| d.eq_ignore_ascii_case(&distro)).cloned().unwrap_or(distro);
+        if !self.wsl.contains_key(&distro) {
+            let launcher = P::wsl_launcher(&distro, &agents::AGENTS);
+            match WslProvider::new(distro.clone(), launcher, self.local.clone(), self.events_tx.clone(), self.wake.clone(), Timing::default()) {
+                Ok(p) => {
+                    self.wsl.insert(distro.clone(), p);
+                }
+                Err(e) => tracing::warn!("{e}"),
+            }
+        }
+        match self.wsl.get(&distro) {
+            Some(p) => p.submit(req),
+            None => match via_unc(&distro, req) {
                 Some(req) => self.local.submit(req),
                 None => tracing::warn!("path is not reachable through \\\\wsl.localhost\\{distro}"),
             },
@@ -419,6 +442,7 @@ impl<P: Platform> Handler<P> {
                 }
                 Effect::RefreshPlaces => self.places.refresh(),
                 Effect::Timer(d) => window.set_timer(d.as_millis().clamp(1, u32::MAX as u128) as u32),
+                Effect::Tags(req) => self.tags.submit(Some(id), req),
             }
         }
         if self.windows.get(&id).is_some_and(|st| st.app.has_effects()) {
@@ -441,7 +465,7 @@ impl<P: Platform> Handler<P> {
             let target = match &ev {
                 ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } => self.window_of_tab(*tab),
                 ProviderEvent::OpDone { tab, .. } => self.window_of_tab(*tab).or(self.active),
-                ProviderEvent::Navigate { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } => self.window_of_tab(*tab),
+                ProviderEvent::Navigate { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } | ProviderEvent::Status { tab, .. } => self.window_of_tab(*tab),
             };
             if let Some(st) = target.and_then(|id| self.windows.get_mut(&id)) {
                 st.app.on_provider_event(ev, now);
@@ -474,15 +498,34 @@ impl<P: Platform> Handler<P> {
                 }
             }
         }
-        self.queued_opens.extend(self.opens.try_iter());
+        self.take_opens();
+        while let Ok((window, ev)) = self.tags.events.try_recv() {
+            let wanted = |id: &WindowId| window.is_none_or(|w| w == *id);
+            for (_, st) in self.windows.iter_mut().filter(|(id, _)| wanted(id)) {
+                st.app.on_tags(ev.clone(), now);
+            }
+            for app in self.pending.iter_mut().filter(|_| window.is_none()) {
+                app.on_tags(ev.clone(), now);
+            }
+        }
         while let Ok((window, ev)) = self.search.events.try_recv() {
             if let Some(st) = self.windows.get_mut(&window) {
                 st.app.on_search_event(ev, now);
             }
         }
         if let Some(places) = self.places.poll() {
+            self.distros = Some(places.wsl.clone());
             for st in self.windows.values_mut() {
                 st.app.set_places(places.clone());
+            }
+        }
+    }
+
+    fn take_opens(&mut self) {
+        for o in self.opens.try_iter() {
+            match &o.tag {
+                Some(name) => self.tags.submit(self.active, TagRequest::Command { name: name.clone(), items: tags::command_items::<P>(&o) }),
+                None => self.queued_opens.push(o),
             }
         }
     }
@@ -729,7 +772,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         }
         if self.windows.is_empty() {
             let tx = self.sink.lock().unwrap_or_else(|e| e.into_inner()).take();
-            self.queued_opens.extend(self.opens.try_iter());
+            self.take_opens();
             if self.queued_opens.is_empty() {
                 state::save::<P>(&self.saved);
                 self.final_session(last.filter(|_| !self.ending));
@@ -760,7 +803,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         }
     })?;
     let (events_tx, events) = unbounded();
-    let local = LocalProvider::new::<_, P::Watcher, P::Shell>(P::fs(), FS_THREADS, events_tx, wake.clone())?;
+    let local = Arc::new(LocalProvider::new::<_, P::Watcher, P::Shell>(P::fs(), FS_THREADS, events_tx.clone(), wake.clone())?);
     let (opens_tx, opens) = unbounded();
     let sink: OpenSink = Arc::new(Mutex::new(Some(opens_tx)));
     if let Some(i) = instance {
@@ -768,7 +811,8 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     }
     let thumb_cache: Cache = P::state_dir().map(|d| Arc::new(Mutex::new(ThumbCache::new(d.join("thumbs"), saved.persisted.prefs.thumb_cache_mb))));
     let (shell, thumbs, sorter, done) = start_workers::<P>(wake.clone(), thumb_cache.clone())?;
-    let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes())?;
+    let tags = TagWorker::start::<P>(local.tags().clone(), wake.clone())?;
+    let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes(), local.tags().clone())?;
     let (routes, errors) = if open.is_empty() { Default::default() } else { open::routes(&open, &P::known_folder) };
     let new_window = open.target == OpenTarget::NewWindow;
     let files = if metrics.is_none() { Files::of::<P>() } else { None };
@@ -791,6 +835,9 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         next_base: 0,
         active: None,
         local,
+        wsl: HashMap::new(),
+        distros: None,
+        events_tx,
         events,
         opens,
         sink,
@@ -820,6 +867,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         ending: false,
         timing: std::env::var_os("FLIT_TIMING").is_some(),
         requested: Some(started),
+        tags,
     };
     let (mut first, placement) = match &first_window {
         Some((ws, placement)) => (h.restored_app(ws), *placement),

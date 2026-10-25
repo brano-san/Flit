@@ -25,6 +25,7 @@ pub enum Filter {
     Ext(Vec<Vec<u8>>),
     Size(u64, u64),
     Modified(i64, i64),
+    Tag(String),
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +81,46 @@ impl Query {
     pub fn needs_path(&self) -> bool {
         self.terms.iter().any(|t| matches!(t.filter, Filter::Match(Scope::Path, _)))
     }
+
+    pub fn has_tags(&self) -> bool {
+        self.terms.iter().any(|t| matches!(t.filter, Filter::Tag(_)))
+    }
+
+    pub fn matches(&self, e: &Plain<'_>, has_tag: &dyn Fn(&str) -> bool) -> bool {
+        let text = |p: &Pattern, lower: &[u8], original: &[u8]| match p {
+            Pattern::Text(t) => memchr::memmem::find(lower, t).is_some(),
+            Pattern::Glob(g) => glob(g, lower),
+            Pattern::Regex(re) => re.is_match(original),
+        };
+        self.terms.iter().all(|t| {
+            let ok = match &t.filter {
+                Filter::Match(Scope::Name, p) => text(p, e.lower_name, e.name),
+                Filter::Match(Scope::Path, p) => text(p, e.lower_path, e.path),
+                Filter::Ext(list) => !e.dir && list.iter().any(|x| x.as_slice() == plain_ext(e.lower_name)),
+                Filter::Size(lo, hi) => !e.dir && (*lo..*hi).contains(&e.size),
+                Filter::Modified(lo, hi) => (*lo..*hi).contains(&e.modified),
+                Filter::Tag(name) => has_tag(name),
+            };
+            ok != t.negate
+        })
+    }
+}
+
+pub struct Plain<'a> {
+    pub name: &'a [u8],
+    pub lower_name: &'a [u8],
+    pub path: &'a [u8],
+    pub lower_path: &'a [u8],
+    pub size: u64,
+    pub modified: i64,
+    pub dir: bool,
+}
+
+fn plain_ext(lower_name: &[u8]) -> &[u8] {
+    match memchr::memrchr(b'.', lower_name) {
+        Some(p) if p + 1 < lower_name.len() => &lower_name[p + 1..],
+        _ => &[],
+    }
 }
 
 fn tokens(text: &str) -> Vec<(String, bool)> {
@@ -114,9 +155,17 @@ fn strip_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
 
 pub fn parse(text: &str, clock: Clock) -> Result<Query, String> {
     let mut terms = Vec::new();
+    let mut not = false;
     for (tok, literal) in tokens(text) {
-        if let Some(t) = term(&tok, literal, clock)? {
-            terms.push(t);
+        match tok.as_str() {
+            "AND" if !literal => continue,
+            "NOT" if !literal => not = !not,
+            _ => {
+                if let Some(mut t) = term(&tok, literal, clock)? {
+                    t.negate ^= std::mem::take(&mut not);
+                    terms.push(t);
+                }
+            }
         }
     }
     Ok(Query { terms })
@@ -149,7 +198,7 @@ fn term(tok: &str, literal: bool, clock: Clock) -> Result<Option<Term>, String> 
                 let (lo, hi) = interval(v, &|x| date_value(x, clock)).ok_or_else(|| format!("invalid date: {v}"))?;
                 Some(Filter::Modified(lo.clamp(i64::MIN as i128, i64::MAX as i128) as i64, hi.clamp(i64::MIN as i128, i64::MAX as i128) as i64))
             } else {
-                None
+                strip_ci(s, "tag:").map(|v| Filter::Tag(v.trim().to_owned()))
             };
             if let Some(filter) = filter {
                 return Ok(Some(Term { negate, filter }));

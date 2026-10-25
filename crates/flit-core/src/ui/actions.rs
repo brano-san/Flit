@@ -1,4 +1,5 @@
 use super::sidebar::KnownFolder;
+use super::tags::TagPick;
 use super::{App, Column, Effect, LayoutMode, Route, WindowCmd};
 use crate::input::{Key, Mods};
 use crate::location::Location;
@@ -91,6 +92,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("view.sort.size", "Sort by size", &[], |a, _| a.sort_by(SortField::Size)),
     Action::new("view.sort.origin", "Sort by original location", &[], |a, _| a.sort_by(SortField::Origin)),
     Action::new("view.sort.created", "Sort by date created", &[], |a, _| a.sort_by(SortField::Created)),
+    Action::new("view.sort.tag", "Sort by tags", &[], |a, _| a.sort_by(SortField::Tag)),
     Action::new("view.sort.reverse", "Reverse sort order", &[], |a, _| a.set_descending(None)),
     Action::new("view.sort.ascending", "Sort in ascending order", &[], |a, _| a.set_descending(Some(false))),
     Action::new("view.sort.descending", "Sort in descending order", &[], |a, _| a.set_descending(Some(true))),
@@ -104,6 +106,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("view.group.modified", "Group by date modified", &[], |a, _| a.group_by(GroupField::Modified)),
     Action::new("view.group.created", "Group by date created", &[], |a, _| a.group_by(GroupField::Created)),
     Action::new("view.group.origin", "Group by original location", &[], |a, _| a.group_by(GroupField::Origin)),
+    Action::new("view.group.tag", "Group by tags", &[], |a, _| a.group_by(GroupField::Tag)),
     Action::new("view.group.ascending", "Show groups in ascending order", &[], |a, _| a.set_group_descending(false)),
     Action::new("view.group.descending", "Show groups in descending order", &[], |a, _| a.set_group_descending(true)),
     Action::new("view.group.year", "Group dates by year", &[], |a, _| a.set_date_unit(DateUnit::Year)),
@@ -127,6 +130,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("view.column.size", "Show or hide the Size column", &[], |a, _| a.toggle_column(Column::Size)),
     Action::new("view.column.origin", "Show or hide the Original location column", &[], |a, _| a.toggle_column(Column::Origin)),
     Action::new("view.column.deleted", "Show or hide the Date deleted column", &[], |a, _| a.toggle_column(Column::Deleted)),
+    Action::new("view.column.tag", "Show or hide the Tags column", &[], |a, _| a.toggle_column(Column::Tag)),
     Action::new("view.dotfiles", "Show or hide dotfiles", &[], |a, _| a.toggle_pref(|p| &mut p.show_dotfiles)),
     Action::new("view.system", "Show or hide protected operating system files", &[], |a, _| a.toggle_pref(|p| &mut p.show_system)),
     Action::new("view.extensions", "Show or hide file name extensions", &[], |a, _| a.toggle_pref(|p| &mut p.show_extensions)),
@@ -148,6 +152,10 @@ pub static ACTIONS: &[Action] = &[
     Action::new("item.open_tab", "Open the selected folders in new tabs", &[ctrl(Key::Enter)], |a, now| a.open_folders_in(OpenTarget::NewTab, now)),
     Action::new("item.open_window", "Open the selected folders in a new window", &[ctrl_alt(Key::Enter)], |a, now| a.open_folders_in(OpenTarget::NewWindow, now)),
     Action::new("item.pin", "Pin or unpin the selected folders", &[], |a, _| a.pin_selection()),
+    Action::new("tags.new", "New tag for the selected items", &[], |a, _| a.new_tag(true)),
+    Action::new("tags.remove", "Remove all tags from the selected items", &[], |a, _| a.remove_tags()),
+    Action::new("tags.manage", "Manage tags: rename, recolor or delete", &[], |a, _| a.open_tag_pick(TagPick::Manage, "")),
+    Action::new("tags.open_all", "Open all items with a tag", &[], |a, _| a.open_tag_pick(TagPick::OpenAll, "")),
     Action::new("item.copy_path", "Copy path", &[ctrl_shift(Key::Char('C'))], |a, _| a.copy_paths(false)),
     Action::new("item.copy_quoted_path", "Copy path in quotes", &[ctrl_alt(Key::Char('C'))], |a, _| a.copy_paths(true)),
     Action::new("app.terminal", "Open in terminal", &[ctrl(Key::Char('`'))], |a, _| a.open_terminal(false)),

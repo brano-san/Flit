@@ -1,9 +1,12 @@
 use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
-use flit_core::ui::{IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow};
+use flit_core::tags::TagCell;
+use flit_core::ui::{IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchSort};
 use flit_platform::{start_indexer, Duplex, IndexSource, Platform, PlatformError, Service, Wake, WindowId};
 use flit_proto::transport::{handshake, read_frame_limited, write_frame, Hello, Protocol, MAX_FRAME};
+use flit_search::engine::MAX_ROWS;
 use flit_search::proto::{Message, Sort, SortKey, VolumeInfo, VolumeState, VERSION};
-use flit_search::session::{Session, SharedIndex};
+use flit_search::query::{self, Clock, Query};
+use flit_search::session::{Session, SharedIndex, FIRST_PAGE};
 use std::collections::HashMap;
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -31,10 +34,10 @@ pub struct SearchClient {
 }
 
 impl SearchClient {
-    pub fn start<P: Platform>(wake: Wake, utc_offset_min: i32) -> Result<Self, PlatformError> {
+    pub fn start<P: Platform>(wake: Wake, utc_offset_min: i32, tags: TagCell) -> Result<Self, PlatformError> {
         let (tx, rx) = unbounded();
         let (out, events) = unbounded();
-        let worker = Worker::<P> { rx, me: tx.clone(), out, wake, utc_offset_min, remote_failed: None, local: None, links: HashMap::new(), last_query: HashMap::new(), latests: HashMap::new() };
+        let worker = Worker::<P> { rx, me: tx.clone(), out, wake, utc_offset_min, remote_failed: None, local: None, links: HashMap::new(), last_query: HashMap::new(), latests: HashMap::new(), tags, tag_hits: HashMap::new() };
         std::thread::Builder::new()
             .name("flit-search".into())
             .spawn(move || worker.run())
@@ -99,6 +102,14 @@ pub fn to_event(msg: Message, backend: SearchBackend, note: &Option<String>) -> 
     })
 }
 
+struct TagHits {
+    gen: u64,
+    query: Query,
+    sort: SearchSort,
+    version: u64,
+    rows: Vec<SearchRow>,
+}
+
 enum Link<C> {
     Remote { conn: C, alive: Arc<AtomicBool> },
     Local { session: Session, latest: Arc<AtomicU64> },
@@ -115,6 +126,8 @@ struct Worker<P: Platform> {
     links: HashMap<WindowId, Link<Conn<P>>>,
     last_query: HashMap<WindowId, SearchRequest>,
     latests: HashMap<WindowId, Arc<AtomicU64>>,
+    tags: TagCell,
+    tag_hits: HashMap<WindowId, TagHits>,
 }
 
 fn connect<P: Platform>() -> Result<Conn<P>, String> {
@@ -163,6 +176,7 @@ impl<P: Platform> Worker<P> {
                 Ok(Cmd::Lost(window, why)) => self.lost(window, why),
                 Ok(Cmd::Forget(window)) => {
                     self.drop_link(window);
+                    self.tag_hits.remove(&window);
                     self.last_query.remove(&window);
                     self.latests.remove(&window);
                 }
@@ -236,6 +250,9 @@ impl<P: Platform> Worker<P> {
         if matches!(req, SearchRequest::Query { .. }) {
             self.last_query.insert(window, req.clone());
         }
+        if self.tag_request(window, &req) {
+            return;
+        }
         if req == SearchRequest::Close {
             if let Some(Link::Local { session, .. }) = self.links.get_mut(&window) {
                 *session = Session::new(self.local.clone().unwrap_or_default(), self.utc_offset_min);
@@ -266,6 +283,53 @@ impl<P: Platform> Worker<P> {
         }
     }
 
+    fn tag_request(&mut self, window: WindowId, req: &SearchRequest) -> bool {
+        match req {
+            SearchRequest::Query { gen, text, sort } => match query::parse(text, Clock::system(self.utc_offset_min)) {
+                Ok(q) if q.has_tags() => {
+                    self.run_tags(window, *gen, q, *sort);
+                    true
+                }
+                _ => {
+                    self.tag_hits.remove(&window);
+                    false
+                }
+            },
+            SearchRequest::Rows { gen, from, to } => {
+                let Some(h) = self.tag_hits.get(&window).filter(|h| h.gen == *gen) else { return false };
+                let end = (*to).min(from.saturating_add(MAX_ROWS)).min(h.rows.len() as u64);
+                let rows = h.rows.get(*from as usize..end as usize).unwrap_or_default().to_vec();
+                if !rows.is_empty() {
+                    self.send(window, SearchEvent::Rows { gen: *gen, from: *from, rows });
+                }
+                true
+            }
+            SearchRequest::Close => {
+                self.tag_hits.remove(&window);
+                false
+            }
+        }
+    }
+
+    fn run_tags(&mut self, window: WindowId, gen: u64, query: Query, sort: SearchSort) {
+        let tags = self.tags.get();
+        match crate::tags::search(&tags, &query, sort) {
+            Ok(rows) => {
+                let first: Vec<SearchRow> = rows.iter().take(FIRST_PAGE as usize).cloned().collect();
+                self.send(window, SearchEvent::Done { gen, total: rows.len() as u64 });
+                if !first.is_empty() {
+                    self.send(window, SearchEvent::Rows { gen, from: 0, rows: first });
+                }
+                self.tag_hits.insert(window, TagHits { gen, query, sort, version: tags.version, rows });
+            }
+            Err(message) => {
+                self.tag_hits.remove(&window);
+                self.send(window, SearchEvent::Error { message });
+                self.send(window, SearchEvent::Done { gen, total: 0 });
+            }
+        }
+    }
+
     fn lost(&mut self, window: WindowId, why: String) {
         if !matches!(self.links.get(&window), Some(Link::Remote { .. })) {
             return;
@@ -281,6 +345,12 @@ impl<P: Platform> Worker<P> {
     }
 
     fn tick(&mut self) {
+        let version = self.tags.get().version;
+        let current = |w: &WindowId, gen: u64| self.latests.get(w).is_some_and(|l| l.load(Ordering::Acquire) == gen);
+        let stale: Vec<(WindowId, u64, Query, SearchSort)> = self.tag_hits.iter().filter(|(w, h)| h.version != version && current(w, h.gen)).map(|(w, h)| (*w, h.gen, h.query.clone(), h.sort)).collect();
+        for (window, gen, query, sort) in stale {
+            self.run_tags(window, gen, query, sort);
+        }
         let note = self.remote_failed.clone();
         let mut sent = false;
         for (&window, link) in self.links.iter_mut() {

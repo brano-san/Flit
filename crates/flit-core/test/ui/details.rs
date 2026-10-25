@@ -197,7 +197,7 @@ fn the_header_menu_shows_hides_and_fits_columns_and_the_bin_keeps_its_own() {
     click(&mut app, h.x + 20.0, h.y + h.h / 2.0, MouseButton::Right);
     let menu = menu_of(&mut app);
     assert!(!menu.shell && menu.items.is_empty());
-    let want = [("Date modified", true), ("Date created", false), ("Type", true), ("Size", true), ("Size all columns to fit", false), ("Always size columns to fit", false)];
+    let want = [("Date modified", true), ("Date created", false), ("Type", true), ("Size", true), ("Tags", false), ("Size all columns to fit", false), ("Always size columns to fit", false)];
     assert_eq!(commands(&menu.menu), want.map(|(l, c)| (l.to_owned(), c)));
     app.on_event(&Event::MenuCommand(1), Instant::now());
     assert_eq!(app.columns(), [Column::Name, Column::Modified, Column::Created, Column::Type, Column::Size]);

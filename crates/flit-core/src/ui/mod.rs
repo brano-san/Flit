@@ -17,6 +17,7 @@ pub mod palette;
 pub mod sidebar;
 mod address;
 mod tabbar;
+mod tags;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchSort};
@@ -41,6 +42,7 @@ use crate::provider::{ProviderEvent, ProviderRequest, Resolve, TabId};
 use crate::recycle;
 use crate::render::{Color, Rect};
 use crate::sort::{CaseMode, GroupField, SortField, ViewSpec};
+use crate::tags::TagRequest;
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::{self, Theme};
 use crate::thumbs;
@@ -100,9 +102,10 @@ pub enum Column {
     Origin,
     Deleted,
     Created,
+    Tag,
 }
 
-pub const COLUMNS: [Column; 5] = [Column::Name, Column::Modified, Column::Created, Column::Type, Column::Size];
+pub const COLUMNS: [Column; 6] = [Column::Name, Column::Modified, Column::Created, Column::Type, Column::Size, Column::Tag];
 pub const BIN_COLUMNS: [Column; 4] = [Column::Name, Column::Origin, Column::Deleted, Column::Size];
 
 impl Column {
@@ -115,6 +118,7 @@ impl Column {
             Column::Size => "Size",
             Column::Origin => "Original location",
             Column::Deleted => "Date deleted",
+            Column::Tag => "Tags",
         }
     }
     fn field(self) -> SortField {
@@ -125,6 +129,7 @@ impl Column {
             Column::Type => SortField::Type,
             Column::Size => SortField::Size,
             Column::Origin => SortField::Origin,
+            Column::Tag => SortField::Tag,
         }
     }
 }
@@ -190,6 +195,7 @@ pub enum Effect {
     Timer(Duration),
     MoveTab { tab: MovedTab, at: Option<(f32, f32)>, last: bool },
     RestoreSession,
+    Tags(TagRequest),
 }
 
 pub enum IconResult {
@@ -383,6 +389,7 @@ pub struct App {
     details: details::Details,
     strip: tabbar::Strip,
     addr: address::Address,
+    tag_fixes: Vec<(FsPath, u32, Instant)>,
 }
 
 impl App {
@@ -443,6 +450,7 @@ impl App {
             details: Default::default(),
             strip: Default::default(),
             addr: Default::default(),
+            tag_fixes: Vec::new(),
         };
         let mut start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
         let total = start.len();
@@ -571,6 +579,7 @@ impl App {
         }
         let total = routes.len();
         routes.truncate(MAX_ROUTES);
+        routes.iter_mut().for_each(|r| r.folder.canonicalize(&self.nav.sidebar.places.wsl));
         match target {
             OpenTarget::NewWindow => self.effects.push(Effect::NewWindow(routes)),
             OpenTarget::CurrentTab => {
@@ -793,6 +802,14 @@ impl App {
             ProviderEvent::Navigate { tab, path } => {
                 if self.tab().id == tab {
                     self.navigate(Location::from_local(path), now);
+                }
+            }
+            ProviderEvent::Status { tab, gen, text } => {
+                if let Some(k) = tab_of(&self.tabs, tab, gen) {
+                    if let Some(l) = self.tabs[k].loading.as_mut() {
+                        l.note = Some(text);
+                        self.dirty |= k == self.cur;
+                    }
                 }
             }
         }
@@ -1489,6 +1506,7 @@ impl App {
         self.poll();
         self.dirty = false;
         let mut animating = self.tab_mut().apply_diffs(DIFF_BUDGET);
+        self.apply_tag_fixes(now);
         self.ops_frame(now);
         animating |= self.marquee_autoscroll(dt);
         animating |= self.autoscroll_step(dt);
@@ -1842,7 +1860,7 @@ impl App {
                     let path = match (wanted, in_bin) {
                         (false, _) => None,
                         (true, true) => recycle::recycled(listing, i),
-                        (true, false) => shell_dir.as_ref().map(|d| d.join(name)),
+                        (true, false) => loc.join(name).to_windows(),
                     };
                     if let Some(path) = path {
                         requests.push(IconRequest { key, kind, path, size: icon_px as u32, gen: tab.gen, row: row as u32 });
@@ -1851,9 +1869,7 @@ impl App {
 
                 let ty = baseline(p.name);
                 let name_color = if faded { t.text_dim } else { t.text };
-                let shown = self.shown_name(listing, i);
-                let name_x = if p.center { p.name.x + ((p.name.w - g.measure(&shown, font)) / 2.0).max(0.0).round() } else { p.name.x };
-                g.text(name_x, ty, &shown, font, name_color, p.name.right() - name_x);
+                self.draw_name(g, &p, &self.shown_name(listing, i), e.tags, font, name_color);
                 want_type(i);
                 match mode {
                     LayoutMode::Details => {
@@ -1922,8 +1938,8 @@ impl App {
             if !v.snap().done {
                 s.push_str("    Loading…");
             }
-        } else if tab.loading.is_some() {
-            s.push_str("Loading…");
+        } else if let Some(l) = &tab.loading {
+            s.push_str(l.note.as_deref().unwrap_or("Loading…"));
         }
         g.text(r.x + pad, baseline, &s, font, color, r.w / 2.0);
 

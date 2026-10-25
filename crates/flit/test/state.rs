@@ -51,6 +51,9 @@ fn folder_views_and_preferences_survive_a_restart_and_created_sorts_by_name_for_
     persisted.folders.put(folder_key(&loc(r"C:\Other")), FolderView::default());
     let s = Saved::new(persisted, None);
     assert_eq!(s.head().sort, SortField::Name);
+    let mut tagged = s.clone();
+    tagged.persisted.view.sort.field = SortField::Tag;
+    assert_eq!(tagged.head().sort, SortField::Name, "older builds do not know tag sorting");
     let back = Saved::decode(&s.encode().unwrap()).unwrap().sanitized();
     assert_eq!(back.persisted.view.sort.field, SortField::Created);
     assert_eq!(back.persisted.prefs, s.persisted.prefs);

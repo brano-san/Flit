@@ -160,8 +160,8 @@ impl App {
                 let (key, kind) = icon_key(name, listing.ext(idx), &e, icon_px as u32, dir.as_ref().map_or(&b""[..], |d| d.as_bytes()), self.icon_epoch);
                 if !g.image(key, ir) {
                     icon_glyph(g, th, &e, ir);
-                    if let Some(path) = dir.as_ref().filter(|_| !self.icons.contains_key(&key) && !requests.iter().any(|q| q.key == key)) {
-                        requests.push(IconRequest { key, kind, path: path.join(name), size: icon_px as u32, gen: 0, row: 0 });
+                    if let Some(path) = (!self.icons.contains_key(&key) && !requests.iter().any(|q| q.key == key)).then(|| p.loc.join(name).to_windows()).flatten() {
+                        requests.push(IconRequest { key, kind, path, size: icon_px as u32, gen: 0, row: 0 });
                     }
                 }
                 let x = ir.right() + s8;

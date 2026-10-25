@@ -1,8 +1,10 @@
 mod indexer;
 mod local;
+mod wsl;
 
 pub use indexer::{root_of, start_indexer};
 pub use local::{via_unc, LocalProvider, CANCELLED};
+pub use wsl::{AgentImage, AgentImages, AgentLauncher, AgentProcess, Timing, WslProvider, UNMAPPABLE};
 
 use crossbeam_channel::Sender;
 use flit_core::atlas::Slot;
@@ -11,7 +13,8 @@ use flit_core::input::{CursorIcon, Event, HitArea};
 use flit_core::render::{DrawList, Rect};
 use flit_core::ui::{Bitmap, DragEvent, IconRequest, NewTemplate, ShellMenu};
 use flit_core::provider::{Conflict, FileOp, Launch, OpCtl, OpProgress, Resolve, Stage};
-use flit_core::{FsError, FsPath, ListingBuilder, Location, Open, ProviderEvent, ProviderRequest, TabId};
+use flit_core::tags::FileKey;
+use flit_core::{FsError, FsPath, ListingBuilder, Location, Meta, Open, ProviderEvent, ProviderRequest, TabId};
 use flit_search::index::{Checkpoint, IndexSink};
 use flit_search::proto::VolumeInfo;
 use std::fmt;
@@ -22,6 +25,13 @@ pub use flit_core::text::TextBackend as Text;
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
 pub type OpenSink = Arc<std::sync::Mutex<Option<Sender<Open>>>>;
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Resolved {
+    Found(FsPath, Meta),
+    Gone,
+    Unavailable,
+}
 
 #[derive(Debug, Clone)]
 pub struct PlatformError {
@@ -314,5 +324,15 @@ pub trait Platform: 'static {
     }
     fn elevated() -> bool {
         false
+    }
+    fn watch_wsl(_changed: Box<dyn Fn() + Send>) {}
+    fn wsl_launcher(_distro: &str, _images: &AgentImages) -> Option<Box<dyn AgentLauncher>> {
+        None
+    }
+    fn file_key(_path: &FsPath) -> Option<FileKey> {
+        None
+    }
+    fn resolve_files(keys: &[FileKey]) -> Vec<Resolved> {
+        keys.iter().map(|_| Resolved::Unavailable).collect()
     }
 }

@@ -185,6 +185,17 @@ fn frame_draws_and_requests_icons() {
 }
 
 #[test]
+fn this_pc_asks_for_distro_icons_by_their_share_root() {
+    let mut app = App::new(Persisted { path: Location::computer(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 600), t0());
+    publish(&mut app, ViewSpec::default(), true, &[("C:", attr::DIR | attr::VOLUME), ("Ubuntu-22.04", attr::DIR | attr::VOLUME)]);
+    app.drain_effects().for_each(drop);
+    app.frame(&mut Gfx::new(Mono, 1024), t0());
+    let mut asked: Vec<(Vec<u8>, IconKind)> = app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { Some((r.path.as_bytes().to_vec(), r.kind)) } else { None }).collect();
+    asked.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(asked, [(br"C:\".to_vec(), IconKind::Volume), (br"\\wsl.localhost\Ubuntu-22.04\".to_vec(), IconKind::Volume)]);
+}
+
+#[test]
 fn caption_hit_test() {
     let app = app_at(r"C:\x");
     let l = &app.layout;

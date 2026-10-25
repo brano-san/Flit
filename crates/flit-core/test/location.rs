@@ -63,3 +63,36 @@ fn serde_roundtrip_and_validation() {
     let forged = postcard::to_allocvec(&b"relative\\x".to_vec()).unwrap();
     assert!(postcard::from_bytes::<FsPath>(&forged).is_err());
 }
+
+#[test]
+fn distro_names_are_restricted() {
+    for ok in ["Ubuntu-22.04", "a", "kali_linux", "x.y-z", &"d".repeat(64)] {
+        assert!(valid_distro(ok), "{ok}");
+        assert_eq!(Location::parse(&format!("wsl://{ok}/etc")).unwrap(), wsl(ok, b"/etc"));
+    }
+    for bad in ["", ".", "..", "a b", "a\\b", "Убунту", "a:b", "a%b", &"d".repeat(65)] {
+        assert!(!valid_distro(bad), "{bad}");
+        assert!(Location::parse_exact(format!("wsl://{bad}/etc").as_bytes()).is_none(), "{bad}");
+    }
+    assert!(matches!(Location::parse(r"\\wsl$\..\x").unwrap(), Location::Local(_)));
+    assert!(matches!(Location::parse(r"\\wsl.localhost\a b\x").unwrap(), Location::Local(_)));
+}
+
+#[test]
+fn distro_spelling_follows_the_registry() {
+    let known = ["Ubuntu-22.04".to_owned()];
+    let mut loc = Location::parse(r"\\wsl$\ubuntu-22.04\etc").unwrap();
+    loc.canonicalize(&known);
+    assert_eq!(loc, wsl("Ubuntu-22.04", b"/etc"));
+    let mut other = Location::parse("wsl://Debian/").unwrap();
+    other.canonicalize(&known);
+    assert_eq!(other, wsl("Debian", b"/"));
+}
+
+#[test]
+fn this_pc_rows_open_drives_and_distros() {
+    let pc = Location::computer();
+    assert_eq!(pc.join(b"C:"), Location::parse(r"C:\").unwrap());
+    assert_eq!(pc.join(b"Ubuntu-22.04"), wsl("Ubuntu-22.04", b"/"));
+    assert_eq!(pc.join(b"a b"), pc);
+}

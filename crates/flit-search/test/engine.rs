@@ -68,6 +68,8 @@ fn filters_and_sorts_across_volumes() {
     assert_eq!(names(&e, "path:projects\\src", SortKey::Name, false), [r"C:\Projects\src\main.rs", r"C:\Projects\src\Report.TXT", r"C:\Projects\src"]);
     assert_eq!(names(&e, "src\\m", SortKey::Name, false), [r"C:\Projects\src\main.rs"]);
     assert_eq!(names(&e, "path:regex:^d:.*\\.bak$", SortKey::Name, false), [r"D:\backup\report.bak"]);
+    assert!(names(&e, "report tag:Work", SortKey::Name, false).is_empty(), "the index knows no tags");
+    assert_eq!(names(&e, "report NOT tag:Work", SortKey::Name, false).len(), 3);
     assert_eq!(names(&e, r"regex:^r\w+\.txt$", SortKey::Name, false), [r"C:\Projects\src\Report.TXT"]);
     assert_eq!(names(&e, "size:>0 notes", SortKey::Name, false), [r"C:\notes"]);
     assert!(names(&e, "ext:", SortKey::Name, false).contains(&r"C:\notes".to_string()));

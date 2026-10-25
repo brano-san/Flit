@@ -16,9 +16,11 @@ mod places;
 mod recycle;
 mod service;
 mod shell;
+mod tags;
 mod walk_index;
 mod watcher;
 mod window;
+mod wsl;
 
 pub use d3d::{D3dDevice, D3dRenderer};
 pub use dwrite::DWriteText;
@@ -30,6 +32,7 @@ pub use shell::ShellCom;
 pub use walk_index::WalkIndex;
 pub use watcher::DirWatcher;
 pub use window::{Win32, Win32Waker, Win32Window};
+pub use wsl::{native_arm64, WslLauncher};
 
 use flit_core::{FsPath, Location};
 use flit_platform::{OnClient, Platform, PlatformError, Service};
@@ -166,6 +169,22 @@ impl Platform for Windows {
 
     fn elevated() -> bool {
         instance::elevated()
+    }
+
+    fn watch_wsl(changed: Box<dyn Fn() + Send>) {
+        places::watch_lxss(changed)
+    }
+
+    fn wsl_launcher(distro: &str, images: &flit_platform::AgentImages) -> Option<Box<dyn flit_platform::AgentLauncher>> {
+        wsl::launcher(distro, images)
+    }
+
+    fn file_key(path: &FsPath) -> Option<flit_core::tags::FileKey> {
+        tags::file_key(path)
+    }
+
+    fn resolve_files(keys: &[flit_core::tags::FileKey]) -> Vec<flit_platform::Resolved> {
+        tags::resolve_files(keys)
     }
 }
 
