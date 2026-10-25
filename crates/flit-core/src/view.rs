@@ -1,3 +1,4 @@
+use crate::filter::NameFilter;
 use crate::hash::{self, FxHashMap};
 use crate::listing::{attr, ChangeKind, DirChange, DirSnapshot, Listing, Meta};
 use crate::sort::{self, ViewSpec};
@@ -12,11 +13,12 @@ pub struct DirView {
     pub focus: Option<u32>,
     pub anchor: Option<u32>,
     names: Option<FxHashMap<u64, SmallVec<[u32; 1]>>>,
+    filter: Option<NameFilter>,
 }
 
 impl DirView {
     pub fn new(snap: Arc<DirSnapshot>) -> Self {
-        Self { snap, sel: Vec::new(), sel_count: 0, focus: None, anchor: None, names: None }
+        Self { snap, sel: Vec::new(), sel_count: 0, focus: None, anchor: None, names: None, filter: None }
     }
 
     pub fn snap(&self) -> &Arc<DirSnapshot> {
@@ -26,12 +28,16 @@ impl DirView {
     pub fn replace(&mut self, snap: Arc<DirSnapshot>) {
         self.snap = snap;
         self.names = None;
+        self.refilter();
         self.prune();
     }
 
     #[inline]
     pub fn rows(&self) -> &[u32] {
-        &self.snap.order
+        match &self.filter {
+            Some(f) => f.rows(),
+            None => &self.snap.order,
+        }
     }
 
     #[inline]
@@ -41,9 +47,9 @@ impl DirView {
 
     pub fn row_of(&self, i: u32) -> Option<usize> {
         let s = &self.snap;
-        match sort::find_row(&s.listing, &s.keys, s.view.sort, &s.order, i) {
+        match sort::find_row(&s.listing, &s.keys, s.view.sort, self.rows(), i) {
             Some(r) => Some(r),
-            None => s.order.iter().position(|&p| p == i),
+            None => self.rows().iter().position(|&p| p == i),
         }
     }
 
@@ -64,6 +70,7 @@ impl DirView {
 
     pub(crate) fn is_visible(&self, i: u32) -> bool {
         self.snap.listing.entries.get(i as usize).is_some_and(|e| sort::visible(e, self.snap.view.show_hidden))
+            && self.filter.as_ref().is_none_or(|f| f.matched(i))
     }
 
     #[inline]
@@ -191,6 +198,7 @@ impl DirView {
         }
         if !touched.is_empty() {
             self.reorder(touched);
+            self.refilter();
             self.prune();
         }
     }
@@ -227,6 +235,7 @@ impl DirView {
         m.size = size;
         m.attrs |= attr::SIZE_KNOWN;
         self.update(i, m);
+        self.refilter();
     }
 
     pub fn merge_order(&mut self, mut order: Vec<u32>, view: ViewSpec, base_len: usize) {
@@ -243,7 +252,34 @@ impl DirView {
             sort::sort(&snap.listing, &snap.keys, view, &mut o);
             snap.order = o;
         }
+        self.refilter();
         self.prune();
+    }
+
+    pub fn set_filter(&mut self, text: &str) {
+        let prev = self.filter.take();
+        self.filter = NameFilter::new(text);
+        if let (Some(f), Some(p)) = (&mut self.filter, &prev) {
+            if f.narrows(p) {
+                f.seed_from(p, &self.snap.listing);
+            }
+        }
+        self.refilter();
+        self.prune();
+    }
+
+    pub fn is_filtered(&self) -> bool {
+        self.filter.is_some()
+    }
+
+    pub fn total_rows(&self) -> usize {
+        self.snap.order.len()
+    }
+
+    fn refilter(&mut self) {
+        if let Some(f) = &mut self.filter {
+            f.sync(&self.snap.listing, &self.snap.order);
+        }
     }
 }
 

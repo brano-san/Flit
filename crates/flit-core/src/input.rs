@@ -54,6 +54,7 @@ pub enum Event {
     ThemeChanged { dark: bool },
     DroppedFiles(Vec<FsPath>),
     CloseRequested,
+    DevicesChanged,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

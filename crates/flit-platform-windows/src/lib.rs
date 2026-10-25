@@ -4,6 +4,7 @@ mod d3d;
 mod dwrite;
 mod fs;
 mod instance;
+mod places;
 mod shell;
 mod watcher;
 mod window;
@@ -131,6 +132,14 @@ impl Platform for Windows {
         unsafe { DwmGetCompositionTimingInfo(HWND::default(), &mut info) }.ok()?;
         let rate = info.rateRefresh;
         (rate.uiNumerator > 0 && rate.uiDenominator > 0).then(|| std::time::Duration::from_secs_f64(rate.uiDenominator as f64 / rate.uiNumerator as f64))
+    }
+
+    fn drives() -> Vec<flit_core::ui::Drive> {
+        places::drives()
+    }
+
+    fn wsl_distros() -> Vec<String> {
+        places::wsl_distros()
     }
 }
 

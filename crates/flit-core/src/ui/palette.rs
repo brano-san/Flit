@@ -1,0 +1,252 @@
+use super::actions::{keys_text, ACTIONS};
+use super::edit::EditAction;
+use super::field::{Field, FieldKey};
+use super::{App, Effect, Hit};
+use crate::input::{Key, Mods};
+use crate::render::{Color, Rect};
+use crate::text::{Gfx, TextBackend};
+use crate::theme::Theme;
+use std::cmp::Reverse;
+use std::time::Instant;
+
+const WIDTH: f32 = 560.0;
+const ROW_H: f32 = 30.0;
+const FIELD_H: f32 = 32.0;
+const MAX_ROWS: usize = 12;
+
+pub(super) struct Palette {
+    field: Field,
+    pub matches: Vec<usize>,
+    keys: Vec<String>,
+    pub sel: usize,
+    first: usize,
+    rect: Rect,
+    field_rect: Rect,
+    pub rows: Vec<Rect>,
+}
+
+pub fn score(query: &str, title: &str) -> Option<u32> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return Some(0);
+    }
+    let t = title.to_lowercase();
+    if let Some(p) = t.find(&q) {
+        let word = p == 0 || t.as_bytes()[p - 1] == b' ';
+        return Some(3000 - p.min(999) as u32 + if word { 1000 } else { 0 });
+    }
+    let chars: Vec<char> = t.chars().collect();
+    let (mut score, mut pos, mut last) = (1000u32, 0usize, None);
+    for qc in q.chars().filter(|c| !c.is_whitespace()) {
+        let found = (pos..chars.len()).find(|&i| chars[i] == qc)?;
+        if found == 0 || chars[found - 1] == ' ' {
+            score += 20;
+        }
+        if last == Some(found.wrapping_sub(1)) {
+            score += 10;
+        }
+        score = score.saturating_sub((found - pos) as u32);
+        last = Some(found);
+        pos = found + 1;
+    }
+    Some(score.min(1999))
+}
+
+pub fn matches(query: &str) -> Vec<usize> {
+    let mut scored: Vec<(u32, usize)> = ACTIONS.iter().enumerate().filter_map(|(i, a)| score(query, a.title).map(|s| (s, i))).collect();
+    scored.sort_by_key(|&(s, i)| (Reverse(s), i));
+    scored.into_iter().map(|(_, i)| i).collect()
+}
+
+impl Palette {
+    fn new() -> Self {
+        Self {
+            field: Field::default(),
+            matches: matches(""),
+            keys: ACTIONS.iter().map(keys_text).collect(),
+            sel: 0,
+            first: 0,
+            rect: Rect::default(),
+            field_rect: Rect::default(),
+            rows: Vec::new(),
+        }
+    }
+
+    fn refresh(&mut self) {
+        self.matches = matches(self.field.text());
+        self.sel = 0;
+        self.first = 0;
+    }
+
+    fn select(&mut self, to: isize) {
+        let n = self.matches.len() as isize;
+        if n == 0 {
+            return;
+        }
+        self.sel = to.rem_euclid(n) as usize;
+        if self.sel < self.first {
+            self.first = self.sel;
+        } else if self.sel >= self.first + MAX_ROWS {
+            self.first = self.sel + 1 - MAX_ROWS;
+        }
+    }
+
+    fn scroll(&mut self, rows: isize) {
+        let max = self.matches.len().saturating_sub(MAX_ROWS) as isize;
+        self.first = (self.first as isize + rows).clamp(0, max) as usize;
+    }
+}
+
+impl App {
+    pub(super) fn open_palette(&mut self) {
+        if self.nav.palette.take().is_none() {
+            if self.editing {
+                self.cancel_edit();
+            }
+            self.nav.palette = Some(Palette::new());
+        }
+        self.layout();
+        self.dirty = true;
+    }
+
+    pub(super) fn close_palette(&mut self) {
+        self.nav.palette = None;
+        self.dirty = true;
+    }
+
+    pub(super) fn run_palette_item(&mut self, index: usize, now: Instant) {
+        let Some(&id) = self.nav.palette.as_ref().and_then(|p| p.matches.get(index)) else { return };
+        self.close_palette();
+        (ACTIONS[id].run)(self, now);
+    }
+
+    pub(super) fn palette_key(&mut self, key: Key, m: Mods, now: Instant) -> bool {
+        let Some(p) = &mut self.nav.palette else { return false };
+        let page = MAX_ROWS as isize;
+        match key {
+            Key::Escape => self.close_palette(),
+            Key::Char('P') if m.ctrl && m.shift => self.close_palette(),
+            Key::Enter => {
+                let sel = p.sel;
+                self.run_palette_item(sel, now);
+            }
+            Key::Up => p.select(p.sel as isize - 1),
+            Key::Down => p.select(p.sel as isize + 1),
+            Key::PageUp => p.select((p.sel as isize - page).max(0)),
+            Key::PageDown => p.select((p.sel as isize + page).min(p.matches.len() as isize - 1)),
+            _ => {
+                if let FieldKey::Edited { changed, action } = p.field.key(key, m) {
+                    if changed {
+                        p.refresh();
+                    }
+                    match action {
+                        EditAction::Copy(s) => self.effects.push(Effect::SetClipboard(s)),
+                        EditAction::Paste => self.effects.push(Effect::Paste),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        self.layout();
+        true
+    }
+
+    pub(super) fn palette_insert(&mut self, s: &str) -> bool {
+        let Some(p) = &mut self.nav.palette else { return false };
+        p.field.insert(s);
+        p.refresh();
+        self.layout();
+        true
+    }
+
+    pub(super) fn palette_field(&self) -> Option<Rect> {
+        self.nav.palette.as_ref().map(|p| p.field_rect)
+    }
+
+    pub(super) fn palette_click(&mut self, x: f32, clicks: u8) {
+        if let Some(p) = &mut self.nav.palette {
+            p.field.click(x, clicks);
+        }
+    }
+
+    pub(super) fn palette_wheel(&mut self, dy: f32) {
+        if let Some(p) = &mut self.nav.palette {
+            p.scroll(-(dy * 3.0).round() as isize);
+            self.layout();
+        }
+    }
+
+    pub(super) fn layout_palette(&mut self, top: f32) {
+        let (w, sc) = (self.size.0, self.scale);
+        let s = |v: f32| (v * sc).round();
+        let Some(p) = &mut self.nav.palette else { return };
+        let pw = s(WIDTH).min(w - s(32.0)).max(s(120.0));
+        let x = ((w - pw) / 2.0).round();
+        let y = top + s(4.0);
+        p.field_rect = Rect::new(x + s(8.0), y + s(8.0), pw - s(16.0), s(FIELD_H));
+        p.rows.clear();
+        let mut ry = p.field_rect.bottom() + s(6.0);
+        for _ in p.first..p.matches.len().min(p.first + MAX_ROWS) {
+            p.rows.push(Rect::new(x + s(6.0), ry, pw - s(12.0), s(ROW_H)));
+            ry += s(ROW_H);
+        }
+        if p.matches.is_empty() {
+            ry += s(ROW_H);
+        }
+        p.rect = Rect::new(x, y, pw, ry + s(6.0) - y);
+    }
+
+    pub(super) fn palette_hit(&self, x: f32, y: f32) -> Option<Hit> {
+        let p = self.nav.palette.as_ref()?;
+        if self.layout.title.contains(x, y) {
+            return None;
+        }
+        if !p.rect.contains(x, y) {
+            return Some(Hit::PaletteOutside);
+        }
+        if p.field_rect.contains(x, y) {
+            return Some(Hit::PaletteField);
+        }
+        Some(p.rows.iter().position(|r| r.contains(x, y)).map_or(Hit::PaletteBox, |i| Hit::PaletteRow(p.first + i)))
+    }
+
+    pub(super) fn draw_palette<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
+        let (font, small) = (self.ui_font(13.0), self.ui_font(12.0));
+        let (s4, s6, s12, row_h) = (self.s(4.0), self.s(6.0), self.s(12.0), self.s(ROW_H));
+        let (scale, active, hover) = (self.scale, self.active, self.hover);
+        let shadow = if self.dark { Color::rgba(0x00000090) } else { Color::rgba(0x00000030) };
+        let Some(p) = &mut self.nav.palette else { return };
+        let r = p.rect;
+        g.dl.round_rect(Rect::new(r.x - s4, r.y, r.w + 2.0 * s4, r.h + s6 + s4), shadow, s6 + s4);
+        g.dl.round_rect(r, t.bg, s6);
+        g.dl.outline(r, t.input_border, s6, 1.0);
+        let fr = p.field_rect;
+        g.dl.round_rect(fr, t.input_bg, s4);
+        g.dl.outline(fr, t.accent, s4, scale.round().max(1.0));
+        let inner = Rect::new(fr.x + s12, fr.y, fr.w - 2.0 * s12, fr.h);
+        p.field.draw(g, t, inner, font, active, "Type a command", scale);
+        let m = g.metrics(font);
+        for (k, &row) in p.rows.iter().enumerate() {
+            let i = p.first + k;
+            let a = &ACTIONS[p.matches[i]];
+            if i == p.sel {
+                g.dl.round_rect(row, t.selection, s4);
+            } else if hover == Hit::PaletteRow(i) {
+                g.dl.round_rect(row, t.hover, s4);
+            }
+            let baseline = (row.y + (row.h + m.ascent - m.descent) / 2.0).round();
+            let keys = &p.keys[p.matches[i]];
+            let kw = if keys.is_empty() { 0.0 } else { g.measure(keys, small) };
+            g.text(row.right() - s12 - kw, baseline, keys, small, t.text_dim, f32::INFINITY);
+            g.text(row.x + s12, baseline, a.title, font, t.text, row.w - 3.0 * s12 - kw);
+        }
+        if p.matches.is_empty() {
+            let baseline = (fr.bottom() + s6 + (row_h + m.ascent - m.descent) / 2.0).round();
+            g.text(r.x + s12 + s6, baseline, "No matching commands", font, t.text_dim, r.w - 2.0 * s12);
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "../../test/ui/palette.rs"]
+mod tests;

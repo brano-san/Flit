@@ -51,6 +51,14 @@ impl Platform for Linux {
     fn refresh_period() -> Option<std::time::Duration> {
         None
     }
+
+    fn drives() -> Vec<flit_core::ui::Drive> {
+        Vec::new()
+    }
+
+    fn wsl_distros() -> Vec<String> {
+        Vec::new()
+    }
 }
 
 pub struct LinuxWindows;

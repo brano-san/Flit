@@ -184,4 +184,6 @@ pub trait Platform: 'static {
     fn known_folder(name: &str) -> Option<Location>;
     fn fatal_error(message: &str);
     fn refresh_period() -> Option<std::time::Duration>;
+    fn drives() -> Vec<flit_core::ui::Drive>;
+    fn wsl_distros() -> Vec<String>;
 }

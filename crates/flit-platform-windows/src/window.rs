@@ -841,6 +841,10 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
             s.shared().destroyed(hwnd);
             Some(LRESULT(0))
         }
+        WM_DEVICECHANGE if matches!(wp.0 as u32, DBT_DEVICEARRIVAL | DBT_DEVICEREMOVECOMPLETE) => {
+            s.send(Event::DevicesChanged);
+            None
+        }
         _ => None,
     }
 }
