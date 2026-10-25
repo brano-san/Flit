@@ -6,7 +6,7 @@ use crate::hash::FxHashSet;
 use crate::input::{CursorIcon, Event, Key, Mods, MouseButton};
 use crate::listing::attr;
 use crate::location::{Location, ProviderId};
-use crate::path::{FsPath, PathKind};
+use crate::path::{FsPath, PathKind, RECYCLE_BIN_LABEL};
 use crate::provider::{FileOp, Launch, OpCtl, OpId, OpReport, ProviderRequest, TabId, Template};
 use crate::recycle;
 use crate::render::Rect;
@@ -26,6 +26,7 @@ pub const SHELL_VERBS: [&str; 6] = ["rename", "copy", "cut", "paste", "delete", 
 
 const NEW_FOLDER: &str = "New folder";
 const REVEAL_FOR: Duration = Duration::from_secs(10);
+const SPRING_DELAY: Duration = Duration::from_millis(1300);
 const DRAG_START: f32 = 4.0;
 const MAX_NAME_UNITS: usize = 255;
 const RESERVED: [&str; 4] = ["CON", "PRN", "AUX", "NUL"];
@@ -122,18 +123,28 @@ struct Press {
     slow: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Spot {
+    List,
+    Row(usize),
+    Tab(usize),
+    Crumb(usize),
+    Side(usize),
+}
+
 #[derive(Clone, PartialEq, Debug)]
 enum Target {
     Reveal,
-    Into { dest: FsPath, row: Option<usize> },
-    Trash(Option<usize>),
-    Run { program: FsPath, row: usize },
+    Into { dest: FsPath, spot: Spot },
+    Trash(Spot),
+    Run { program: FsPath, spot: Spot },
 }
 
 struct Dropping {
     paths: Vec<FsPath>,
     target: Option<Target>,
     effect: u32,
+    spring: Option<(Spot, Instant)>,
 }
 
 #[derive(Default)]
@@ -1018,10 +1029,13 @@ impl App {
         self.dirty = true;
         match ev {
             DragEvent::Enter { paths, x, y, mods, allowed } => {
-                self.ops.dropping = Some(Dropping { paths: paths.clone(), target: None, effect: drop_effect::NONE });
+                self.ops.dropping = Some(Dropping { paths: paths.clone(), target: None, effect: drop_effect::NONE, spring: None });
                 self.drag_over(*x, *y, *mods, *allowed)
             }
-            DragEvent::Over { x, y, mods, allowed } => self.drag_over(*x, *y, *mods, *allowed),
+            DragEvent::Over { x, y, mods, allowed } => {
+                self.spring_load(*x, *y, now);
+                self.drag_over(*x, *y, *mods, *allowed)
+            }
             DragEvent::Leave => {
                 self.ops.dropping = None;
                 drop_effect::NONE
@@ -1056,29 +1070,32 @@ impl App {
 
     fn drop_target(&self, x: f32, y: f32) -> Option<Target> {
         let t = self.tab();
-        let in_bin = self.in_bin();
-        let here = || match in_bin {
-            true => Some(Target::Trash(None)),
-            false => self.shell_dir().ok().map(|dest| Target::Into { dest, row: None }),
+        let into = |loc: &Location, spot: Spot| match loc.path().kind() {
+            PathKind::RecycleBin => Some(Target::Trash(spot)),
+            PathKind::Computer => None,
+            _ => loc.to_windows().map(|dest| Target::Into { dest, spot }),
         };
+        let here = || into(&t.view_loc, Spot::List);
         match self.hit(x, y) {
-            Hit::Row(_) if in_bin => here(),
-            Hit::Side(i) if self.nav.sidebar.items.get(i).is_some_and(|it| it.loc.is_recycle_bin()) => Some(Target::Trash(Some(i))),
+            Hit::Row(_) if self.in_bin() => here(),
             Hit::Row(row) => {
                 let v = t.view.as_ref()?;
                 let i = *v.rows().get(row)?;
                 let runnable = RUNNABLE.iter().any(|e| v.listing().ext(i).eq_ignore_ascii_case(e));
                 if v.listing().entries[i as usize].is_dir() {
-                    t.entry_location(i).to_windows().map(|dest| Target::Into { dest, row: Some(row) })
+                    into(&t.entry_location(i), Spot::Row(row))
                 } else if runnable {
-                    t.entry_location(i).to_windows().map(|program| Target::Run { program, row })
+                    t.entry_location(i).to_windows().map(|program| Target::Run { program, spot: Spot::Row(row) })
                 } else {
                     here()
                 }
             }
             Hit::ListEmpty | Hit::Track | Hit::Thumb => here(),
+            Hit::Tab(i) | Hit::TabClose(i) => into(self.tabs.get(i)?.location(), Spot::Tab(i)),
+            Hit::Crumb(i) => into(&t.crumbs.get(i)?.1, Spot::Crumb(i)),
+            Hit::Side(i) | Hit::SidePin(i) => into(&self.nav.sidebar.items.get(i)?.loc, Spot::Side(i)),
             Hit::Header(_) | Hit::ColSep(_) | Hit::Sizes | Hit::Bin(_) => None,
-            Hit::Side(_) | Hit::SidePin(_) | Hit::SideEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose => None,
+            Hit::SideEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose => None,
             Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside => None,
             Hit::OpsButton | Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsClear | Hit::OpsCancel(_) | Hit::OpsMore(_) | Hit::OpsMenu(_) => None,
             Hit::Dialog | Hit::DialogButton(_) | Hit::DialogCheck | Hit::Modal => None,
@@ -1119,20 +1136,65 @@ impl App {
         effect
     }
 
-    pub fn drop_highlight(&self) -> Option<Option<usize>> {
-        match &self.ops.dropping {
-            Some(Dropping { target: Some(Target::Into { row, .. }), effect, .. }) if *effect != drop_effect::NONE => Some(*row),
-            Some(Dropping { target: Some(Target::Run { row, .. }), effect, .. }) if *effect != drop_effect::NONE => Some(Some(*row)),
-            Some(Dropping { target: Some(Target::Trash(None)), effect, .. }) if *effect != drop_effect::NONE => Some(None),
+    fn spring_spot(&self, x: f32, y: f32) -> Option<Spot> {
+        let t = self.tab();
+        match self.hit(x, y) {
+            Hit::Tab(i) | Hit::TabClose(i) if i != self.cur => Some(Spot::Tab(i)),
+            Hit::Crumb(i) if i + 1 < t.crumbs.len() => Some(Spot::Crumb(i)),
+            Hit::Row(row) if !self.in_bin() => {
+                let v = t.view.as_ref()?;
+                v.listing().entries[*v.rows().get(row)? as usize].is_dir().then_some(Spot::Row(row))
+            }
             _ => None,
         }
     }
 
-    pub fn side_drop_highlight(&self) -> Option<usize> {
-        match &self.ops.dropping {
-            Some(Dropping { target: Some(Target::Trash(side)), effect, .. }) if *effect != drop_effect::NONE => *side,
-            _ => None,
+    fn spring_load(&mut self, x: f32, y: f32, now: Instant) {
+        let spot = self.spring_spot(x, y);
+        let Some(d) = &mut self.ops.dropping else { return };
+        let due = match (spot, d.spring) {
+            (Some(s), Some((held, since))) if s == held => now.duration_since(since) >= SPRING_DELAY,
+            _ => {
+                d.spring = spot.map(|s| (s, now));
+                false
+            }
+        };
+        if !due {
+            return;
         }
+        d.spring = None;
+        let t = self.tab();
+        let folder = match spot {
+            Some(Spot::Tab(i)) => return self.select_tab(i),
+            Some(Spot::Crumb(i)) => t.crumbs.get(i).map(|c| c.1.clone()),
+            Some(Spot::Row(row)) => t.view.as_ref().and_then(|v| v.rows().get(row).map(|&i| t.entry_location(i))),
+            _ => None,
+        };
+        if let Some(folder) = folder {
+            self.navigate(folder, now);
+        }
+    }
+
+    pub fn drop_spot(&self) -> Option<Spot> {
+        let d = self.ops.dropping.as_ref().filter(|d| d.effect != drop_effect::NONE)?;
+        match d.target.as_ref()? {
+            Target::Into { spot, .. } | Target::Run { spot, .. } | Target::Trash(spot) => Some(*spot),
+            Target::Reveal => None,
+        }
+    }
+
+    pub fn drop_caption(&self) -> Option<(String, String)> {
+        let d = self.ops.dropping.as_ref().filter(|d| d.effect != drop_effect::NONE)?;
+        let name = |p: &FsPath| crate::name::display(p.file_name()).into_owned();
+        let (verb, target) = match d.target.as_ref()? {
+            Target::Into { dest, .. } if d.effect == drop_effect::COPY => ("Copy to %1", name(dest)),
+            Target::Into { dest, .. } if d.effect == drop_effect::LINK => ("Create link in %1", name(dest)),
+            Target::Into { dest, .. } => ("Move to %1", name(dest)),
+            Target::Trash(_) => ("Move to %1", RECYCLE_BIN_LABEL.to_owned()),
+            Target::Run { program, .. } => ("Open with %1", name(program)),
+            Target::Reveal => return None,
+        };
+        Some((verb.to_owned(), target))
     }
 
     pub(super) fn rename_ime_area(&self) -> Option<Rect> {
@@ -1142,8 +1204,8 @@ impl App {
     pub(super) fn draw_ops<B: TextBackend>(&mut self, g: &mut Gfx<B>, th: &Theme) {
         let l = &self.layout;
         let (list, rh) = (l.list, l.row_h);
-        match self.drop_highlight() {
-            Some(Some(row)) => {
+        match self.drop_spot() {
+            Some(Spot::Row(row)) => {
                 let y = (list.y + row as f32 * rh - self.tab().scroll).round();
                 let r = Rect::new(list.x + self.s(4.0), y + 1.0, list.w - self.s(8.0), rh - 2.0);
                 g.dl.set_clip(Some(list));
@@ -1151,8 +1213,8 @@ impl App {
                 g.dl.outline(r, th.accent, self.s(4.0), self.s(1.0).max(1.0));
                 g.dl.set_clip(None);
             }
-            Some(None) => g.dl.outline(list.inset(1.0, 1.0), th.accent, self.s(4.0), self.s(2.0).max(1.0)),
-            None => {}
+            Some(Spot::List) => g.dl.outline(list.inset(1.0, 1.0), th.accent, self.s(4.0), self.s(2.0).max(1.0)),
+            _ => {}
         }
         self.draw_rename(g, th);
     }

@@ -378,15 +378,15 @@ fn drops_copy_or_move_by_volume_and_modifiers() {
     let all = COPY | MOVE | LINK;
     let enter = |app: &mut App, paths: Vec<FsPath>, at: (f32, f32), mods: Mods| app.drag(&DragEvent::Enter { paths, x: at.0, y: at.1, mods, allowed: all }, t0());
     assert_eq!(enter(&mut app, vec![p(r"D:\in\f.txt")], empty, NO), COPY);
-    assert_eq!(app.drop_highlight(), Some(None));
+    assert_eq!(app.drop_spot(), Some(Spot::List));
     assert_eq!(app.drag(&DragEvent::Over { x: empty.0, y: empty.1, mods: SHIFT, allowed: all }, t0()), MOVE);
     assert_eq!(app.drag(&DragEvent::Drop { x: empty.0, y: empty.1, mods: SHIFT, allowed: all }, t0()), MOVE);
     assert_eq!(ops(&mut app).into_iter().map(|(_, op)| op).collect::<Vec<_>>(), [FileOp::Move { items: vec![p(r"D:\in\f.txt")], dest: p(r"C:\x") }]);
-    assert_eq!(app.drop_highlight(), None);
+    assert_eq!(app.drop_spot(), None);
 
     let sub = row_xy(&app, 0);
     assert_eq!(enter(&mut app, vec![p(r"C:\y\g.txt")], sub, NO), MOVE);
-    assert_eq!(app.drop_highlight(), Some(Some(0)));
+    assert_eq!(app.drop_spot(), Some(Spot::Row(0)));
     assert_eq!(app.drag(&DragEvent::Drop { x: sub.0, y: sub.1, mods: CTRL, allowed: all }, t0()), COPY);
     assert_eq!(ops(&mut app).into_iter().map(|(_, op)| op).collect::<Vec<_>>(), [FileOp::Copy { items: vec![p(r"C:\y\g.txt")], dest: p(r"C:\x\sub") }]);
 
@@ -408,10 +408,93 @@ fn dropping_on_the_title_bar_reveals_the_file_like_before() {
     let title = (app.layout.new_tab.right() + 40.0, 10.0);
     let all = drop_effect::COPY | drop_effect::MOVE;
     assert_eq!(app.drag(&DragEvent::Enter { paths: vec![p(r"D:\docs\r.txt")], x: title.0, y: title.1, mods: NO, allowed: all }, t0()), drop_effect::COPY);
-    assert_eq!(app.drop_highlight(), None);
+    assert_eq!(app.drop_spot(), None);
     app.drag(&DragEvent::Drop { x: title.0, y: title.1, mods: NO, allowed: all }, t0());
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::List { path, .. }, .. } if path == p(r"D:\docs"))));
     assert_eq!(app.current_location(), &Location::parse(r"D:\docs").unwrap());
+}
+
+fn two_tabs() -> App {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("sub", true), ("a.txt", false)]);
+    app.dispatch(vec![crate::open::Route { folder: Location::parse(r"D:\docs").unwrap(), select: None }], crate::open::OpenTarget::NewTab, t0());
+    app.select_tab(0);
+    app.set_pinned(vec![Location::parse(r"E:\pinned").unwrap()]);
+    app.frame(&mut Gfx::new(Mono, 1024), t0());
+    app.drain_effects().for_each(drop);
+    app
+}
+
+fn center(r: Rect) -> (f32, f32) {
+    (r.x + r.w / 2.0, r.y + r.h / 2.0)
+}
+
+type Dropped = (u32, Option<Spot>, Option<(String, String)>, Vec<FileOp>);
+
+fn drop_on(app: &mut App, at: (f32, f32), paths: &[&str]) -> Dropped {
+    let all = drop_effect::COPY | drop_effect::MOVE | drop_effect::LINK;
+    let paths = paths.iter().map(|s| p(s)).collect();
+    let effect = app.drag(&DragEvent::Enter { paths, x: at.0, y: at.1, mods: NO, allowed: all }, t0());
+    let (spot, caption) = (app.drop_spot(), app.drop_caption());
+    app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: NO, allowed: all }, t0());
+    (effect, spot, caption, op_list(app))
+}
+
+#[test]
+fn tabs_crumbs_and_sidebar_items_take_drops_into_their_folders() {
+    use drop_effect::*;
+    let mut app = two_tabs();
+    let caption = |verb: &str, name: &str| Some((verb.to_owned(), name.to_owned()));
+    let tab = center(app.layout.tabs[1].0);
+    assert_eq!(drop_on(&mut app, tab, &[r"C:\y\g.txt"]), (COPY, Some(Spot::Tab(1)), caption("Copy to %1", "docs"), vec![FileOp::Copy { items: vec![p(r"C:\y\g.txt")], dest: p(r"D:\docs") }]));
+    assert_eq!(app.current_location(), &Location::parse(r"C:\x").unwrap(), "a drop on a tab does not switch to it");
+    let crumbs = app.layout.crumbs.clone();
+    assert_eq!(app.tab().crumbs.len(), 3);
+    let (_, spot, caption_c, ops) = drop_on(&mut app, center(crumbs[1]), &[r"C:\y\g.txt"]);
+    assert_eq!((spot, caption_c.map(|c| c.0), ops), (Some(Spot::Crumb(1)), Some("Move to %1".to_owned()), vec![FileOp::Move { items: vec![p(r"C:\y\g.txt")], dest: p(r"C:\") }]));
+    assert_eq!(drop_on(&mut app, center(crumbs[0]), &[r"C:\y\g.txt"]).0, NONE, "nothing can be placed in This PC");
+    let k = app.nav.sidebar.items.iter().position(|it| it.loc == Location::parse(r"E:\pinned").unwrap()).unwrap();
+    let side = center(app.nav.sidebar.rects[k]);
+    assert_eq!(drop_on(&mut app, side, &[r"C:\y\g.txt"]), (COPY, Some(Spot::Side(k)), caption("Copy to %1", "pinned"), vec![FileOp::Copy { items: vec![p(r"C:\y\g.txt")], dest: p(r"E:\pinned") }]));
+    let row = row_xy(&app, 1);
+    assert_eq!(drop_on(&mut app, row, &[r"D:\in\f.txt"]).2, caption("Copy to %1", "x"), "a file row stands for its folder");
+    assert_eq!(app.drop_caption(), None);
+}
+
+#[test]
+fn hovering_a_folder_tab_or_crumb_while_dragging_opens_it() {
+    let mut app = two_tabs();
+    let all = drop_effect::COPY | drop_effect::MOVE;
+    let start = t0();
+    let at = |app: &mut App, xy: (f32, f32), ms: u64| app.drag(&DragEvent::Over { x: xy.0, y: xy.1, mods: NO, allowed: all }, start + Duration::from_millis(ms));
+    let sub = row_xy(&app, 0);
+    app.drag(&DragEvent::Enter { paths: vec![p(r"D:\in\f.txt")], x: sub.0, y: sub.1, mods: NO, allowed: all }, start);
+    at(&mut app, sub, 0);
+    at(&mut app, sub, 1200);
+    assert_eq!(app.current_location(), &Location::parse(r"C:\x").unwrap());
+    at(&mut app, sub, 1350);
+    assert_eq!(app.current_location(), &Location::parse(r"C:\x\sub").unwrap(), "the folder under the cursor opens and the drag goes on");
+    deliver(&mut app, &[("deeper", true)]);
+    app.frame(&mut Gfx::new(Mono, 1024), t0());
+    let crumb = center(app.layout.crumbs[1]);
+    at(&mut app, crumb, 1400);
+    at(&mut app, sub, 2000);
+    at(&mut app, crumb, 2100);
+    at(&mut app, crumb, 3300);
+    assert_eq!(app.current_location(), &Location::parse(r"C:\x\sub").unwrap(), "leaving the spot restarts the wait");
+    at(&mut app, crumb, 3450);
+    assert_eq!(app.current_location(), &Location::parse(r"C:\").unwrap());
+    let tab = center(app.layout.tabs[1].0);
+    at(&mut app, tab, 3500);
+    at(&mut app, tab, 4900);
+    assert_eq!(app.cur, 1);
+    app.select_tab(0);
+    deliver(&mut app, &[("folder", true)]);
+    let row = row_xy(&app, 0);
+    at(&mut app, row, 5000);
+    app.drag(&DragEvent::Drop { x: row.0, y: row.1, mods: NO, allowed: all }, start + Duration::from_millis(9000));
+    assert_eq!(app.current_location(), &Location::parse(r"C:\").unwrap(), "a drop never springs");
+    assert_eq!(op_list(&mut app), [FileOp::Copy { items: vec![p(r"D:\in\f.txt")], dest: p(r"C:\folder") }]);
 }
 
 const BIN_REPORT: (&str, &str) = (r"C:\$Recycle.Bin\S-1\$RAB12CD.txt", r"C:\Users\u\Docs\report.txt");
@@ -578,7 +661,7 @@ fn files_dropped_on_the_recycle_bin_are_trashed() {
     let all = COPY | MOVE | LINK;
     let enter = |app: &mut App, paths: Vec<FsPath>, at: (f32, f32)| app.drag(&DragEvent::Enter { paths, x: at.0, y: at.1, mods: CTRL, allowed: all }, t0());
     assert_eq!(enter(&mut app, vec![p(r"D:\in\f.txt")], at), MOVE);
-    assert_eq!((app.side_drop_highlight(), app.drop_highlight()), (Some(k), None));
+    assert_eq!(app.drop_spot(), Some(Spot::Side(k)));
     assert_eq!(app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: NO, allowed: all }, t0()), MOVE);
     assert_eq!(op_list(&mut app), [FileOp::Trash(vec![p(r"D:\in\f.txt")])]);
     assert_eq!(enter(&mut app, vec![p(BIN_REPORT.0)], at), NONE, "what is already in the bin stays there");
@@ -589,7 +672,7 @@ fn files_dropped_on_the_recycle_bin_are_trashed() {
     let mut app = bin_app();
     let row = row_xy(&app, 0);
     assert_eq!(enter(&mut app, vec![p(r"C:\y\g.txt")], row), MOVE, "a drop on a folder in the bin trashes instead of moving into it");
-    assert_eq!(app.drop_highlight(), Some(None));
+    assert_eq!(app.drop_spot(), Some(Spot::List));
     app.drag(&DragEvent::Drop { x: row.0, y: row.1, mods: NO, allowed: all }, t0());
     assert_eq!(op_list(&mut app), [FileOp::Trash(vec![p(r"C:\y\g.txt")])]);
 }
@@ -893,7 +976,7 @@ fn files_dropped_on_a_program_are_passed_to_it() {
     let (tool, cmd, txt) = (row_xy(&app, 2), row_xy(&app, 1), row_xy(&app, 0));
     let files = vec![p(r"D:\in\f.txt"), p(r"D:\in\g.txt")];
     assert_eq!(enter(&mut app, files.clone(), tool), COPY);
-    assert_eq!(app.drop_highlight(), Some(Some(2)));
+    assert_eq!(app.drop_spot(), Some(Spot::Row(2)));
     assert_eq!(app.drag(&DragEvent::Drop { x: tool.0, y: tool.1, mods: NO, allowed: all }, t0()), COPY);
     assert_eq!(launches(&mut app), [Launch::With { program: p(r"C:\x\tool.exe"), args: files.clone() }]);
     assert!(ops(&mut app).is_empty());
@@ -902,7 +985,7 @@ fn files_dropped_on_a_program_are_passed_to_it() {
     assert_eq!(enter(&mut app, vec![p(r"C:\x\tool.exe")], tool), NONE, "a program is not dropped on itself");
     app.drag(&DragEvent::Leave, t0());
     assert_eq!(enter(&mut app, files, txt), COPY);
-    assert_eq!(app.drop_highlight(), Some(None), "other files still drop into the folder");
+    assert_eq!(app.drop_spot(), Some(Spot::List), "other files still drop into the folder");
 }
 
 #[test]

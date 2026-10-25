@@ -12,7 +12,7 @@ mod nav;
 pub mod palette;
 pub mod sidebar;
 
-pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, SHELL_VERBS};
+pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchSort};
 pub use sidebar::{Drive, KnownFolder, NavState, Places};
 pub use jobs::JobState;
@@ -1385,6 +1385,7 @@ impl App {
         let font = self.ui_font(12.5);
         let m = g.metrics(font);
         let close_font = self.icon_font(8.0);
+        let drop = self.drop_spot();
         for (i, &(r, c)) in l.tabs.iter().enumerate() {
             let active = i == self.cur;
             let hovered = matches!(self.hover, Hit::Tab(k) | Hit::TabClose(k) if k == i);
@@ -1392,6 +1393,11 @@ impl App {
                 g.dl.round_rect(Rect::new(r.x, r.y, r.w, r.h + self.s(8.0)), t.bg, self.s(6.0));
             } else if hovered {
                 g.dl.round_rect(r.inset(0.0, self.s(2.0)), t.button_hover, self.s(6.0));
+            }
+            if drop == Some(Spot::Tab(i)) {
+                let target = r.inset(0.0, self.s(2.0));
+                g.dl.round_rect(target, t.selection, self.s(6.0));
+                g.dl.outline(target, t.accent, self.s(6.0), self.s(1.0).max(1.0));
             }
             let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
             let label = self.tabs[i].title();
@@ -1491,6 +1497,7 @@ impl App {
             first += 1;
         }
         let (s1, s3, s6) = (self.s(1.0), self.s(3.0), self.s(6.0));
+        let drop = self.drop_spot();
         let rects = &mut self.layout.crumbs;
         rects.clear();
         rects.resize(crumbs.len(), Rect::default());
@@ -1499,7 +1506,10 @@ impl App {
             let w = widths[i];
             let cr = Rect::new(x, inner.y + s3, w, inner.h - s6);
             rects[i] = cr;
-            if self.hover == Hit::Crumb(i) {
+            if drop == Some(Spot::Crumb(i)) {
+                g.dl.round_rect(cr, t.selection, s3);
+                g.dl.outline(cr, t.accent, s3, s1.max(1.0));
+            } else if self.hover == Hit::Crumb(i) {
                 g.dl.round_rect(cr, t.button_hover, s3);
             }
             let last = i + 1 == crumbs.len();

@@ -514,7 +514,10 @@ impl App {
         let (s4, s8, s12, s36) = (self.s(4.0), self.s(8.0), self.s(12.0), self.s(36.0));
         let here = self.tabs[self.cur].location();
         let focused = self.active && self.focus == Focus::Sidebar;
-        let drop = self.side_drop_highlight();
+        let drop = match self.drop_spot() {
+            Some(super::Spot::Side(i)) => Some(i),
+            _ => None,
+        };
         for &(r, section) in &sb.headers {
             let baseline = (r.y + (r.h + ms.ascent - ms.descent) / 2.0 + self.s(3.0)).round();
             g.text(r.x + s8, baseline, section.title(), small, t.text_dim, r.w - s8);
