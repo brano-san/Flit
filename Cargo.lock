@@ -288,8 +288,10 @@ version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
  "flit-core",
+ "flit-proto",
  "flit-search",
  "rayon",
+ "tracing",
 ]
 
 [[package]]
@@ -299,7 +301,9 @@ dependencies = [
  "crossbeam-channel",
  "flit-core",
  "flit-platform",
+ "flit-proto",
  "flit-search",
+ "libc",
 ]
 
 [[package]]
