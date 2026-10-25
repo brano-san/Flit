@@ -1,7 +1,7 @@
-use crate::{Fs, PlatformError, Provider, Shell, Trash, Wake, Watcher};
+use crate::{FileOps, Fs, PlatformError, Provider, Shell, Wake, Watcher};
 use crossbeam_channel::{bounded, unbounded, Sender};
 use flit_core::listing::{attr, DirSnapshot, Listing, ListingBuilder};
-use flit_core::provider::{FileOp, GenToken, SnapshotSlot};
+use flit_core::provider::{FileOp, GenToken, OpId, OpReport, SnapshotSlot};
 use flit_core::sort::{self, CaseMode, SortKeys, ViewSpec};
 use flit_core::{FsError, FsErrorKind, FsPath, Location, ProviderEvent, ProviderRequest, TabId};
 use rayon::prelude::*;
@@ -38,7 +38,7 @@ enum WatchCmd {
 
 enum ShellJob {
     Open(TabId, FsPath),
-    Op(TabId, FileOp),
+    Op(TabId, OpId, FileOp),
 }
 
 pub struct LocalProvider {
@@ -54,7 +54,7 @@ fn spawn(name: String, body: impl FnOnce() + Send + 'static) -> Result<(), Platf
 }
 
 impl LocalProvider {
-    pub fn new<F: Fs, W: Watcher, S: Shell + Trash + 'static>(fs: F, threads: usize, events: Sender<ProviderEvent>, wake: Wake) -> Result<Self, PlatformError> {
+    pub fn new<F: Fs, W: Watcher, S: Shell + FileOps + 'static>(fs: F, threads: usize, events: Sender<ProviderEvent>, wake: Wake) -> Result<Self, PlatformError> {
         let fs = Arc::new(fs);
         let mut watcher = W::new(events.clone(), wake.clone())?;
         let (watch, watch_rx) = unbounded::<WatchCmd>();
@@ -91,16 +91,17 @@ impl LocalProvider {
         spawn("flit-shell-ops".into(), move || {
             let mut sh = S::new();
             for job in shell_rx {
-                let result = match &mut sh {
-                    Ok(sh) => match &job {
-                        ShellJob::Open(_, p) => sh.open(p),
-                        ShellJob::Op(_, FileOp::Trash(paths)) => sh.trash(paths),
+                let ev = match (&mut sh, job) {
+                    (Ok(sh), ShellJob::Open(tab, p)) => match sh.open(&p) {
+                        Ok(()) => continue,
+                        Err(e) => ProviderEvent::OpDone { tab, id: 0, error: Some(e.to_string()), report: None },
                     },
-                    Err(e) => Err(e.clone()),
-                };
-                let ev = match (job, result) {
-                    (ShellJob::Op(tab, _), r) | (ShellJob::Open(tab, _), r @ Err(_)) => ProviderEvent::OpDone { tab, error: r.err().map(|e| e.to_string()) },
-                    (ShellJob::Open(..), Ok(())) => continue,
+                    (Ok(sh), ShellJob::Op(tab, id, op)) => {
+                        let (error, report) = run_op(sh, op);
+                        ProviderEvent::OpDone { tab, id, error, report }
+                    }
+                    (Err(e), ShellJob::Open(tab, _)) => ProviderEvent::OpDone { tab, id: 0, error: Some(e.to_string()), report: None },
+                    (Err(e), ShellJob::Op(tab, id, _)) => ProviderEvent::OpDone { tab, id, error: Some(e.to_string()), report: None },
                 };
                 let _ = events.send(ev);
                 wake();
@@ -127,10 +128,33 @@ impl Provider for LocalProvider {
                 pending.remove(&tab);
                 self.watch.send(WatchCmd::Stop { tab, gen }).map_err(drop)
             }
-            ProviderRequest::Op { tab, op } => self.shell.send(ShellJob::Op(tab, op)).map_err(drop),
+            ProviderRequest::Op { tab, id, op } => self.shell.send(ShellJob::Op(tab, id, op)).map_err(drop),
             ProviderRequest::Open { tab, path } => self.shell.send(ShellJob::Open(tab, path)).map_err(drop),
         };
     }
+}
+
+fn same_dir(item: &FsPath, dir: &FsPath) -> bool {
+    item.parent().is_some_and(|p| p.as_bytes().eq_ignore_ascii_case(dir.as_bytes()))
+}
+
+fn run_op<S: FileOps>(sh: &mut S, op: FileOp) -> (Option<String>, Option<OpReport>) {
+    let (op, cut) = match op {
+        FileOp::Paste { dest } => match sh.clipboard_files() {
+            Ok((items, true)) => (FileOp::Move { items: items.into_iter().filter(|i| !same_dir(i, &dest)).collect(), dest }, true),
+            Ok((items, false)) => (FileOp::Copy { items, dest }, false),
+            Err(e) => return (Some(e.to_string()), None),
+        },
+        op => (op, false),
+    };
+    if matches!(&op, FileOp::Move { items, .. } if items.is_empty()) {
+        return (None, Some(OpReport { op, items: Vec::new() }));
+    }
+    let out = sh.file_op(&op);
+    if cut && out.error.is_none() {
+        sh.clear_clipboard();
+    }
+    (out.error.map(|e| e.to_string()), Some(OpReport { op, items: out.items }))
 }
 
 fn run_list<F: Fs>(fs: &F, job: ListJob, watch: &Sender<WatchCmd>, wake: &Wake) {
@@ -247,7 +271,7 @@ pub fn via_unc(distro: &str, req: ProviderRequest) -> Option<ProviderRequest> {
         },
         ProviderRequest::Watch { tab, gen, path } => ProviderRequest::Watch { tab, gen, path: path.and_then(|p| unc(&p)) },
         ProviderRequest::DirSizes { tab, gen, dir, items, cancel } => ProviderRequest::DirSizes { tab, gen, dir: unc(&dir)?, items, cancel },
-        ProviderRequest::Op { tab, op: FileOp::Trash(paths) } => ProviderRequest::Op { tab, op: FileOp::Trash(paths.iter().map(unc).collect::<Option<_>>()?) },
+        ProviderRequest::Op { tab, id, op } => ProviderRequest::Op { tab, id, op: op.map_paths(unc)? },
         ProviderRequest::Open { tab, path } => ProviderRequest::Open { tab, path: unc(&path)? },
     })
 }

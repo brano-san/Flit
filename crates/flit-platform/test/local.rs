@@ -1,4 +1,5 @@
 use super::*;
+use crate::OpOutcome;
 use flit_core::listing::Meta;
 use flit_core::ui::{Bitmap, IconRequest};
 use std::collections::HashMap;
@@ -46,10 +47,18 @@ impl Shell for NoShell {
         Err(PlatformError::new(5, "denied"))
     }
 }
-impl Trash for NoShell {
-    fn trash(&mut self, _: &[FsPath]) -> Result<(), PlatformError> {
-        Ok(())
+impl FileOps for NoShell {
+    fn file_op(&mut self, op: &FileOp) -> OpOutcome {
+        let items = match op {
+            FileOp::Trash(v) => v.iter().map(|p| (p.clone(), p.clone())).collect(),
+            _ => Vec::new(),
+        };
+        OpOutcome { items, error: None }
     }
+    fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
+        Err(PlatformError::new(-1, "empty"))
+    }
+    fn clear_clipboard(&mut self) {}
 }
 
 fn p(s: &str) -> FsPath {
@@ -84,9 +93,61 @@ fn list_streams_sorted_snapshots_and_sizes() {
     provider.submit(ProviderRequest::DirSizes { tab: 1, gen: 3, dir: p(r"C:\r"), items: vec![(1, b"sub".to_vec())], cancel: cancel.clone() });
     assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::DirSize { tab: 1, gen: 3, idx: 1, size: 120 });
     provider.submit(ProviderRequest::Open { tab: 4, path: p(r"C:\r\a.txt") });
-    assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { tab: 4, error: Some(_) }));
-    provider.submit(ProviderRequest::Op { tab: 9, op: FileOp::Trash(vec![p(r"C:\r\c")]) });
-    assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { tab: 9, error: None });
+    assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { tab: 4, id: 0, error: Some(_), report: None }));
+    let trash = FileOp::Trash(vec![p(r"C:\r\c")]);
+    provider.submit(ProviderRequest::Op { tab: 9, id: 3, op: trash.clone() });
+    let report = Some(OpReport { op: trash, items: vec![(p(r"C:\r\c"), p(r"C:\r\c"))] });
+    assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { tab: 9, id: 3, error: None, report });
+}
+
+#[derive(Default)]
+struct Clip {
+    files: Vec<FsPath>,
+    cut: bool,
+    ran: Vec<FileOp>,
+    cleared: bool,
+}
+
+impl FileOps for Clip {
+    fn file_op(&mut self, op: &FileOp) -> OpOutcome {
+        self.ran.push(op.clone());
+        let items = match op {
+            FileOp::Copy { items, dest } | FileOp::Move { items, dest } => items.iter().map(|i| (i.clone(), dest.join(i.file_name()))).collect(),
+            _ => Vec::new(),
+        };
+        OpOutcome { items, error: None }
+    }
+    fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
+        if self.files.is_empty() {
+            return Err(PlatformError::new(-1, "no files"));
+        }
+        Ok((self.files.clone(), self.cut))
+    }
+    fn clear_clipboard(&mut self) {
+        self.cleared = true;
+    }
+}
+
+#[test]
+fn paste_resolves_the_clipboard_into_copy_or_move() {
+    let files = vec![p(r"C:\a\x.txt"), p(r"C:\B\y.txt")];
+    let mut cut = Clip { files: files.clone(), cut: true, ..Default::default() };
+    let (error, report) = run_op(&mut cut, FileOp::Paste { dest: p(r"C:\b") });
+    let moved = FileOp::Move { items: vec![p(r"C:\a\x.txt")], dest: p(r"C:\b") };
+    assert_eq!((error, report), (None, Some(OpReport { op: moved.clone(), items: vec![(p(r"C:\a\x.txt"), p(r"C:\b\x.txt"))] })));
+    assert_eq!((cut.ran, cut.cleared), (vec![moved], true));
+
+    let mut copy = Clip { files: files.clone(), ..Default::default() };
+    let (_, report) = run_op(&mut copy, FileOp::Paste { dest: p(r"C:\b") });
+    assert_eq!(report.unwrap().op, FileOp::Copy { items: files, dest: p(r"C:\b") });
+    assert!(!copy.cleared);
+
+    let mut here = Clip { files: vec![p(r"C:\b\z")], cut: true, ..Default::default() };
+    let (error, report) = run_op(&mut here, FileOp::Paste { dest: p(r"C:\b") });
+    assert!(error.is_none() && report.unwrap().items.is_empty() && here.ran.is_empty());
+
+    let (error, report) = run_op(&mut Clip::default(), FileOp::Paste { dest: p(r"C:\b") });
+    assert_eq!((error.as_deref().map(|e| e.contains("no files")), report), (Some(true), None));
 }
 
 static LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -155,7 +216,9 @@ fn wsl_requests_map_to_unc() {
 #[test]
 fn unmappable_wsl_paths_never_reach_win32() {
     let bad = FsPath::parse_bytes(b"/tmp/\xFF").unwrap();
-    assert!(via_unc("Ubuntu", ProviderRequest::Op { tab: 1, op: FileOp::Trash(vec![bad.clone()]) }).is_none());
+    assert!(via_unc("Ubuntu", ProviderRequest::Op { tab: 1, id: 1, op: FileOp::Trash(vec![bad.clone()]) }).is_none());
+    let renamed = via_unc("Ubuntu", ProviderRequest::Op { tab: 1, id: 2, op: FileOp::Rename { item: FsPath::parse("/home/a:b").unwrap(), name: b"c".to_vec() } });
+    assert!(matches!(renamed, Some(ProviderRequest::Op { op: FileOp::Rename { item, .. }, .. }) if item.display() == "\\\\wsl.localhost\\Ubuntu\\home\\a\u{F03A}b"));
     let out = Arc::new(SnapshotSlot::default());
     let req = ProviderRequest::List { tab: 1, gen: 3, path: bad, view: ViewSpec::default(), case: CaseMode::Sensitive, out: out.clone(), cancel: GenToken::default() };
     assert!(via_unc("Ubuntu", req).is_none());

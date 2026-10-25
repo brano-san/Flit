@@ -37,6 +37,7 @@ pub enum Key {
     BrowserBack,
     BrowserForward,
     Other,
+    Apps,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -54,6 +55,7 @@ pub enum Event {
     ThemeChanged { dark: bool },
     DroppedFiles(Vec<FsPath>),
     CloseRequested,
+    ShellVerb(String),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

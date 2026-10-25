@@ -1,7 +1,11 @@
 #![cfg(windows)]
 
+mod clipboard;
+mod context_menu;
 mod d3d;
+mod dragdrop;
 mod dwrite;
+mod fileops;
 mod fs;
 mod instance;
 mod shell;

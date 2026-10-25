@@ -2,12 +2,11 @@ use crate::{com_sta, err};
 use flit_core::ui::{Bitmap, IconKind, IconRequest};
 use flit_core::path::PathKind;
 use flit_core::FsPath;
-use flit_platform::{PlatformError, Shell, Trash};
+use flit_platform::{PlatformError, Shell};
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, SIZE};
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL};
-use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Controls::{IImageList, ILD_TRANSPARENT};
 use windows::Win32::UI::Shell::*;
@@ -21,7 +20,7 @@ fn wide(p: &FsPath) -> Vec<u16> {
     p.to_wide(false)
 }
 
-fn owner_window() -> Option<HWND> {
+pub(crate) fn owner_window() -> Option<HWND> {
     unsafe {
         let hwnd = GetForegroundWindow();
         let mut pid = 0u32;
@@ -30,7 +29,7 @@ fn owner_window() -> Option<HWND> {
     }
 }
 
-fn shell_addressable(p: &FsPath) -> Result<(), PlatformError> {
+pub(crate) fn shell_addressable(p: &FsPath) -> Result<(), PlatformError> {
     if p.components().any(|c| c.ends_with(b".") || c.ends_with(b" ")) {
         return Err(PlatformError::new(-1, format!("{} cannot be handled by the Windows shell: a name ends with a dot or a space", p.display())));
     }
@@ -213,29 +212,6 @@ impl Shell for ShellCom {
             ..Default::default()
         };
         unsafe { ShellExecuteExW(&mut info) }.map_err(err)
-    }
-}
-
-impl Trash for ShellCom {
-    fn trash(&mut self, paths: &[FsPath]) -> Result<(), PlatformError> {
-        paths.iter().try_for_each(shell_addressable)?;
-        unsafe {
-            let op: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL).map_err(err)?;
-            op.SetOperationFlags(FOF_ALLOWUNDO | FOFX_ADDUNDORECORD | FOFX_RECYCLEONDELETE).map_err(err)?;
-            if let Some(owner) = owner_window() {
-                op.SetOwnerWindow(owner).map_err(err)?;
-            }
-            for p in paths {
-                let w = wide(p);
-                let item: IShellItem = SHCreateItemFromParsingName(PCWSTR(w.as_ptr()), None).map_err(err)?;
-                op.DeleteItem(&item, None).map_err(err)?;
-            }
-            op.PerformOperations().map_err(err)?;
-            if op.GetAnyOperationsAborted().map_err(err)?.as_bool() {
-                return Err(PlatformError::new(-1, "Deletion was cancelled"));
-            }
-            Ok(())
-        }
     }
 }
 

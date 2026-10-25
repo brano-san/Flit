@@ -1,6 +1,8 @@
 pub mod edit;
+mod ops;
 mod tab;
 
+pub use ops::{base_name_len, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, ShellMenu, SHELL_VERBS};
 pub use tab::Tab;
 
 use crate::fmt as format;
@@ -11,7 +13,7 @@ use crate::location::{Location, ProviderId};
 use crate::name;
 use crate::open::{self, Open, OpenTarget, ResolveError, Route};
 use crate::path::{FsPath, PathKind};
-use crate::provider::{FileOp, ProviderEvent, ProviderRequest, TabId};
+use crate::provider::{ProviderEvent, ProviderRequest, TabId};
 use crate::render::{Color, Rect};
 use crate::sort::{CaseMode, SortField, SortSpec, ViewSpec};
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
@@ -133,6 +135,10 @@ pub enum Effect {
     Title(String),
     NewWindow(Vec<Route>),
     Open(Open),
+    SetClipboardFiles { paths: Vec<FsPath>, cut: bool },
+    ShellMenu(ShellMenu),
+    Properties(Vec<FsPath>),
+    StartDrag(Vec<FsPath>),
 }
 
 pub enum IconResult {
@@ -255,6 +261,7 @@ pub struct App {
     arena: Bump,
     last_frame: Option<Instant>,
     dirty: bool,
+    ops: ops::Ops,
 }
 
 impl App {
@@ -290,6 +297,7 @@ impl App {
             arena: Bump::new(),
             last_frame: None,
             dirty: true,
+            ops: ops::Ops::default(),
         };
         let mut start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
         let total = start.len();
@@ -361,7 +369,7 @@ impl App {
     }
 
     pub fn ime_area(&self) -> Option<Rect> {
-        self.editing.then_some(self.layout.address)
+        self.editing.then_some(self.layout.address).or(self.rename_ime_area())
     }
 
     fn s(&self, v: f32) -> f32 {
@@ -595,17 +603,7 @@ impl App {
                     self.dirty |= k == self.cur;
                 }
             }
-            ProviderEvent::OpDone { tab, error: Some(message) } => {
-                let k = self.tabs.iter().position(|t| t.id == tab).unwrap_or(self.cur);
-                self.tabs[k].error = Some(message);
-                self.dirty |= k == self.cur;
-            }
-            ProviderEvent::OpDone { tab, error: None } => {
-                let unwatched = |l: &Location| matches!(l, Location::Wsl { .. }) || l.path().kind() == PathKind::Unc;
-                if let Some(k) = self.tabs.iter().position(|t| t.id == tab && unwatched(t.location())) {
-                    self.reload(k, now);
-                }
-            }
+            ProviderEvent::OpDone { tab, id, error, report } => self.op_done(tab, id, error, report, now),
         }
     }
 
@@ -640,6 +638,9 @@ impl App {
     }
 
     pub fn on_paste(&mut self, text: &str) {
+        if self.ops_paste(text) {
+            return;
+        }
         if self.editing {
             self.edit.insert(text.lines().next().unwrap_or(""));
             self.dirty = true;
@@ -839,6 +840,7 @@ impl App {
                 self.dispatch(routes, OpenTarget::CurrentTab, now);
             }
             Event::CloseRequested => self.effects.push(Effect::Window(WindowCmd::Close)),
+            Event::ShellVerb(verb) => self.shell_verb(verb),
         }
     }
 
@@ -850,6 +852,9 @@ impl App {
     }
 
     fn mouse_move(&mut self, x: f32, y: f32) {
+        if self.ops_mouse_move(x, y) {
+            return;
+        }
         let (rh, lh) = (self.layout.row_h, self.layout.list.h);
         match self.drag {
             Drag::Thumb { grab } => {
@@ -892,6 +897,9 @@ impl App {
 
     fn mouse_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8, now: Instant) {
         self.dirty = true;
+        if self.ops_mouse_down(x, y, button, clicks) {
+            return;
+        }
         let h = self.hit(x, y);
         match (button, h) {
             (MouseButton::Back, _) => return self.go_history(false, now),
@@ -919,7 +927,9 @@ impl App {
             }
             Hit::Row(row) => {
                 self.focus = Focus::List;
-                self.click_row(row, button, clicks, now);
+                if !self.press_row(row, button, clicks, x, y) {
+                    self.click_row(row, button, clicks, now);
+                }
             }
             Hit::ListEmpty => {
                 self.focus = Focus::List;
@@ -942,6 +952,7 @@ impl App {
     }
 
     fn mouse_up(&mut self, x: f32, y: f32, button: MouseButton, now: Instant) {
+        self.ops_mouse_up(x, y, button);
         let was = std::mem::replace(&mut self.drag, Drag::None);
         let pressed = std::mem::replace(&mut self.pressed, Hit::None);
         self.dirty = true;
@@ -1024,6 +1035,9 @@ impl App {
 
     fn key(&mut self, key: Key, m: Mods, now: Instant) {
         self.dirty = true;
+        if self.ops_key(key, m) {
+            return;
+        }
         if self.editing {
             match self.edit.key(key, m) {
                 EditAction::Submit => self.submit_edit(now),
@@ -1102,6 +1116,9 @@ impl App {
             return;
         }
         self.dirty = true;
+        if self.ops_char(c) {
+            return;
+        }
         if self.editing {
             let mut b = [0; 4];
             self.edit.insert(c.encode_utf8(&mut b));
@@ -1171,16 +1188,6 @@ impl App {
         self.effects.push(Effect::SetClipboard(text));
     }
 
-    fn trash_selection(&mut self) {
-        let t = self.tab();
-        let Some(v) = t.view.as_ref().filter(|_| t.view_loc.path().kind() != PathKind::Computer) else { return };
-        let paths: Vec<FsPath> = v.selected().map(|i| t.entry_location(i).path().clone()).collect();
-        if !paths.is_empty() {
-            let provider = t.view_loc.provider();
-            self.effects.push(Effect::Provider { provider, req: ProviderRequest::Op { tab: t.id, op: FileOp::Trash(paths) } });
-        }
-    }
-
     pub fn frame<B: TextBackend>(&mut self, g: &mut Gfx<B>, now: Instant) -> bool {
         let _span = tracing::trace_span!("ui_frame").entered();
         let dt = self.last_frame.map_or(0.0, |t| now.duration_since(t).as_secs_f32()).min(0.1);
@@ -1188,6 +1195,7 @@ impl App {
         self.poll();
         self.dirty = false;
         let mut animating = self.tab_mut().apply_diffs(DIFF_BUDGET);
+        self.ops_frame(now);
 
         let t = self.tab_mut();
         let diff = t.scroll_target - t.scroll;
@@ -1205,6 +1213,7 @@ impl App {
             arena.reset();
             g.begin(th.bg);
             self.draw_list(g, &arena, th);
+            self.draw_ops(g, th);
             self.draw_header(g, th);
             self.draw_title(g, th);
             self.draw_toolbar(g, th);

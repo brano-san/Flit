@@ -6,7 +6,7 @@ use flit_core::listing::DirSnapshot;
 use flit_core::open::{self, Open, OpenTarget, Route};
 use flit_core::sort::{self, ViewSpec};
 use flit_core::text::Gfx;
-use flit_core::ui::{App, Effect, IconRequest, IconResult, Persisted, WindowCmd};
+use flit_core::ui::{App, DragEvent, Effect, IconRequest, IconResult, Persisted, WindowCmd};
 use flit_core::{Location, ProviderEvent, ProviderId, ProviderRequest, TabId};
 use flit_platform::*;
 use std::collections::{HashMap, VecDeque};
@@ -233,6 +233,10 @@ impl<P: Platform> Handler<P> {
                     self.pending.push_back(app);
                     window.open_window(WindowOptions { title: "Flit".into(), placement: None, dark: window.is_dark_mode() });
                 }
+                Effect::SetClipboardFiles { paths, cut } => window.set_clipboard_files(&paths, cut),
+                Effect::ShellMenu(menu) => window.shell_menu(menu),
+                Effect::Properties(paths) => window.properties(paths),
+                Effect::StartDrag(paths) => window.start_drag(paths),
             }
         }
         if self.windows.get(&id).is_some_and(|st| st.app.has_effects()) {
@@ -470,6 +474,13 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
             st.app.poll();
         }
         self.flush(window);
+    }
+
+    fn drag(&mut self, window: &Win<P>, event: DragEvent) -> u32 {
+        let Some(st) = self.windows.get_mut(&window.id()) else { return 0 };
+        let effect = st.app.drag(&event, Instant::now());
+        self.flush(window);
+        effect
     }
 
     fn destroyed(&mut self, window: &Win<P>) {

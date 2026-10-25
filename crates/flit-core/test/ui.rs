@@ -1,7 +1,7 @@
 use super::*;
 use crate::listing::{ChangeKind, DirChange, Listing, Meta};
 use crate::open::parse_args;
-use crate::provider::GenToken;
+use crate::provider::{FileOp, GenToken};
 use crate::sort::{self, SortKeys};
 use crate::text::tests::Mono;
 
@@ -399,7 +399,7 @@ fn trash_on_unwatched_locations_reloads() {
     let mut app = App::new(Persisted::default(), start, 0, false, 1.0, (1000, 600), t0());
     app.drain_effects().for_each(drop);
     for (id, path, reloads) in [(1, "wsl://Ubuntu/home", true), (2, r"\\srv\share\d", true), (3, r"C:\x", false)] {
-        app.on_provider_event(ProviderEvent::OpDone { tab: id, error: None }, t0());
+        app.on_provider_event(ProviderEvent::OpDone { tab: id, id: 0, error: None, report: None }, t0());
         assert_eq!(listed(&mut app), if reloads { vec![(id, loc(path))] } else { vec![] });
     }
 }
