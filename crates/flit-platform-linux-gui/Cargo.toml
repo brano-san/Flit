@@ -14,6 +14,7 @@ libc.workspace = true
 glutin = { version = "0.32", default-features = false, features = ["egl", "wayland", "x11"] }
 glow = "0.18"
 raw-window-handle = "0.6"
+swash = "0.2"
 tracing.workspace = true
 winit = { version = "=0.31.0-beta.4", default-features = false, features = ["wayland", "wayland-dlopen", "x11"] }
 

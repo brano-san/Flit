@@ -49,7 +49,7 @@ impl Platform for Linux {
     type FallbackIndex = WalkIndex;
 
     fn text() -> Result<StandInText, PlatformError> {
-        Ok(StandInText)
+        Ok(StandInText::default())
     }
 
     fn fs() -> LinuxFs {
@@ -106,22 +106,70 @@ impl Platform for Linux {
     }
 }
 
-pub struct StandInText;
+const STAND_IN_FONTS: [&str; 3] = ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"];
+
+fn stand_in_fonts() -> &'static [Option<Vec<u8>>] {
+    static FONTS: std::sync::OnceLock<Vec<Option<Vec<u8>>>> = std::sync::OnceLock::new();
+    FONTS.get_or_init(|| STAND_IN_FONTS.iter().map(|p| std::fs::read(p).ok()).collect())
+}
+
+#[derive(Default)]
+pub struct StandInText {
+    scaler: swash::scale::ScaleContext,
+}
+
+impl StandInText {
+    fn font(index: u16) -> Option<swash::FontRef<'static>> {
+        stand_in_fonts().get(index as usize)?.as_deref().and_then(|data| swash::FontRef::from_index(data, 0))
+    }
+
+    fn face(style: FontStyle) -> u16 {
+        match (style.family, style.bold) {
+            (flit_core::text::FontFamily::Mono, _) => 2,
+            (_, true) => 1,
+            _ => 0,
+        }
+    }
+}
 
 impl TextBackend for StandInText {
     fn shape(&mut self, text: &str, style: FontStyle, out: &mut ShapedText) {
-        let advance = style.px() * 0.55;
+        let face = Self::face(style);
         out.glyphs.clear();
-        out.glyphs.extend(text.char_indices().enumerate().map(|(i, (at, _))| ShapedGlyph { font: 0, id: 0, x: i as f32 * advance, y: 0.0, cluster: at as u32 }));
-        out.width = out.glyphs.len() as f32 * advance;
+        let mut x = 0.0;
+        if let Some(font) = Self::font(face) {
+            let (charmap, metrics) = (font.charmap(), font.glyph_metrics(&[]).scale(style.px()));
+            for (at, c) in text.char_indices() {
+                let id = charmap.map(c);
+                out.glyphs.push(ShapedGlyph { font: face, id, x, y: 0.0, cluster: at as u32 });
+                x += metrics.advance_width(id);
+            }
+        }
+        out.width = x;
     }
 
-    fn rasterize(&mut self, _: GlyphKey, _: &mut GlyphBitmap) -> bool {
-        false
+    fn rasterize(&mut self, key: GlyphKey, out: &mut GlyphBitmap) -> bool {
+        use swash::scale::{Render, Source};
+        let Some(font) = Self::font(key.font) else { return false };
+        let mut scaler = self.scaler.builder(font).size(key.size_q as f32 / 4.0).hint(false).build();
+        let offset = swash::zeno::Vector::new(key.subpx as f32 / 4.0, 0.0);
+        let Some(image) = Render::new(&[Source::Outline]).format(swash::zeno::Format::Alpha).offset(offset).render(&mut scaler, key.id) else { return false };
+        out.left = image.placement.left;
+        out.top = image.placement.top;
+        out.width = image.placement.width;
+        out.height = image.placement.height;
+        out.data.extend_from_slice(&image.data);
+        true
     }
 
     fn metrics(&mut self, style: FontStyle) -> FontMetrics {
-        FontMetrics { ascent: style.px() * 0.8, descent: style.px() * 0.2 }
+        match Self::font(Self::face(style)) {
+            Some(font) => {
+                let m = font.metrics(&[]).scale(style.px());
+                FontMetrics { ascent: m.ascent, descent: m.descent }
+            }
+            None => FontMetrics { ascent: style.px() * 0.8, descent: style.px() * 0.2 },
+        }
     }
 }
 
