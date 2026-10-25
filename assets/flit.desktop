@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Flit
+GenericName=File Manager
+Comment=Very fast file manager
+Exec=flit %U
+Icon=flit
+Terminal=false
+Categories=System;FileTools;FileManager;Utility;Core;
+MimeType=inode/directory;
+StartupWMClass=flit

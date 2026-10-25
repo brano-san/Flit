@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+<defs>
+<linearGradient id="b" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5B30CC"/><stop offset="1" stop-color="#3B1F9C"/></linearGradient>
+<linearGradient id="f" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#E08EF2"/><stop offset="1" stop-color="#9A5BF2"/></linearGradient>
+<linearGradient id="w" gradientUnits="userSpaceOnUse" x1="0" y1="70" x2="0" y2="150"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#D9C4FF"/></linearGradient>
+<clipPath id="k"><path d="M52 40 H112 Q120 40 126 48 L136 60 H204 Q224 60 224 80 V196 Q224 216 204 216 H52 Q32 216 32 196 V60 Q32 40 52 40 Z"/></clipPath>
+</defs>
+<path d="M52 40 H112 Q120 40 126 48 L136 60 H204 Q224 60 224 80 V196 Q224 216 204 216 H52 Q32 216 32 196 V60 Q32 40 52 40 Z" fill="url(#b)"/>
+<g clip-path="url(#k)">
+<path d="M16 116 C 100 116 160 100 244 36 V260 H16 Z" fill="url(#w)"/>
+<path d="M16 156 C 104 156 166 138 244 78 V260 H16 Z" fill="url(#f)"/>
+</g>
+</svg>

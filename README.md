@@ -45,7 +45,7 @@ Flit — очень быстрый файловый менеджер для Wind
 
 - Windows 11; Windows 10 версии 1709 и новее должна работать (нижнюю границу задаёт `ReadDirectoryChangesExW`), но на Windows 10 Flit пока не проверялся.
 - Rust stable 1.87 или новее (`rust-version` в `Cargo.toml`), MSVC-тулчейн (`x86_64-pc-windows-msvc`, как в CI).
-- Собирать нужно на Windows: `build.rs` компилирует HLSL-шейдер через системную `d3dcompiler_47.dll`. Windows SDK отдельно ставить не нужно, кросс-компиляция с Linux не поддерживается.
+- Собирать нужно на Windows: `build.rs` компилирует HLSL-шейдер через системную `d3dcompiler_47.dll`. Windows SDK отдельно ставить не нужно, кросс-компиляция с Linux не поддерживается. Иконку `assets/icon/flit.ico` в `flit.exe` встраивает `crates/flit/build.rs`: он сам собирает из неё файл ресурсов `.res` и передаёт его компоновщику, поэтому `rc.exe` не нужен.
 
 ## Сборка
 
@@ -413,6 +413,8 @@ crates/
   flit-platform-linux/        заглушки
   flit/                       приложение flit.exe
   flit-indexd/                служба индексации: канал \\.\pipe\flit-indexd, консольный режим, служба Windows
+assets/icon/                  иконка: flit.ico (16–256, встраивается в flit.exe), flit.svg, flit-small.svg, hicolor/ с PNG 16–512 и SVG для Linux
+assets/flit.desktop           ярлык приложения для Linux (Icon=flit)
 tools/flit-gen/               генератор тестовых папок
 scripts/metrics.ps1           прогон метрик, пишет docs/metrics.md
 docs/                         design/external-open.md, design/wsl.md, metrics.md
