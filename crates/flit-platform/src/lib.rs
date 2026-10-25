@@ -152,6 +152,9 @@ pub trait Watcher: Sized + Send + 'static {
 pub trait Shell: Sized {
     fn new() -> Result<Self, PlatformError>;
     fn icon(&mut self, req: &IconRequest) -> Option<Bitmap>;
+    fn thumbnail(&mut self, _req: &IconRequest) -> Option<Bitmap> {
+        None
+    }
     fn type_name(&mut self, ext: &[u8]) -> Option<String>;
     fn open(&mut self, path: &FsPath) -> Result<(), PlatformError>;
     fn launch(&mut self, _launch: &Launch) -> Result<(), PlatformError> {

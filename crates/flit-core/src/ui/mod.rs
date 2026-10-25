@@ -131,7 +131,9 @@ pub enum IconKind {
     Type,
     File,
     Folder,
+    CustomFolder,
     Volume,
+    Thumbnail,
 }
 
 #[derive(Clone, Debug)]

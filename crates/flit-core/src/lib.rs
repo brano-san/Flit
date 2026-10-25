@@ -1,4 +1,5 @@
 pub mod atlas;
+pub mod desktop_ini;
 pub mod filter;
 pub mod fmt;
 pub mod hash;
