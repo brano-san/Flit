@@ -364,3 +364,65 @@ fn sizes_dates_scrolling_and_menus_follow_their_settings() {
     a.menu_hidden.push("item.open_tab");
     assert!(!has(&a.build_menu(true), "Open in new tab"));
 }
+
+#[test]
+#[ignore]
+fn bench_settings_window() {
+    let ms = |d: Duration| d.as_secs_f64() * 1e3;
+    let mut a = App::new(Persisted::default(), Vec::new(), 0, false, 1.0, (1400, 900), Instant::now());
+    a.set_tags(tags_of(&["Work", "Home", "Old"]));
+    let mut gfx = Gfx::new(Mono, 1024);
+    a.frame(&mut gfx, Instant::now());
+    let t = Instant::now();
+    key(&mut a, Key::Char(','), CTRL);
+    a.frame(&mut gfx, Instant::now());
+    let open = t.elapsed();
+    let mut typing = Vec::new();
+    for _ in 0..20 {
+        for c in "thumbnail".chars() {
+            let t = Instant::now();
+            a.on_event(&Event::Char(c), Instant::now());
+            a.frame(&mut gfx, Instant::now());
+            typing.push(t.elapsed());
+        }
+        key(&mut a, Key::Escape, NO);
+    }
+    typing.sort();
+    let mut frames = Vec::new();
+    for k in 0..400 {
+        a.on_event(&Event::MouseMove { x: 500.0 + (k % 40) as f32 * 15.0, y: 120.0 + (k % 60) as f32 * 12.0 }, Instant::now());
+        let t = Instant::now();
+        a.frame(&mut gfx, Instant::now());
+        frames.push(t.elapsed());
+    }
+    frames.sort();
+    let text = settings::render(settings::defaults(), &Default::default(), None);
+    let t = Instant::now();
+    for _ in 0..1000 {
+        std::hint::black_box(settings::parse(&text));
+    }
+    let parse = t.elapsed() / 1000;
+    let doc = settings::parse(&text);
+    let t = Instant::now();
+    for _ in 0..1000 {
+        a.apply_doc(&doc);
+    }
+    let apply = t.elapsed() / 1000;
+    let t = Instant::now();
+    for _ in 0..10_000 {
+        std::hint::black_box(a.setting_values());
+    }
+    let values = t.elapsed() / 10_000;
+    eprintln!(
+        "BENCH settings: Ctrl+, to finished frame {:.3} ms; keystroke in search to finished frame median {:.3} ms max {:.3} ms; hover frames median {:.3} ms p99 {:.3} ms; parse {} B file {:.1} us, apply {:.1} us, read all values {:.2} us",
+        ms(open),
+        ms(typing[typing.len() / 2]),
+        ms(*typing.last().unwrap()),
+        ms(frames[200]),
+        ms(frames[396]),
+        text.len(),
+        parse.as_secs_f64() * 1e6,
+        apply.as_secs_f64() * 1e6,
+        values.as_secs_f64() * 1e6
+    );
+}

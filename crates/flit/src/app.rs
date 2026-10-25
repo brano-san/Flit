@@ -552,9 +552,13 @@ impl<P: Platform> Handler<P> {
         let id = window.id();
         while let Ok(reply) = self.settings.replies.try_recv() {
             match reply {
-                settings::Reply::About(os) => {
+                settings::Reply::System { os, dates } => {
                     self.about.os = os;
                     self.share_about();
+                    for app in self.windows.values_mut().map(|st| &mut st.app).chain(self.pending.iter_mut()) {
+                        app.set_date_patterns(dates.0.clone(), dates.1.clone());
+                    }
+                    self.dates = dates;
                 }
                 settings::Reply::CacheUsed(bytes) => {
                     self.about.cache_bytes = Some(bytes);
@@ -1069,7 +1073,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         requested: Some(started),
         tags,
         settings,
-        dates: P::date_patterns(),
+        dates: ("yyyy-MM-dd".into(), "HH:mm".into()),
         about,
     };
     let (mut first, placement) = match &first_window {

@@ -407,9 +407,10 @@ impl App {
     }
 
     pub fn apply_doc(&mut self, doc: &Doc) {
-        let defaults = defaults();
         let mut values = doc.values.clone();
-        values.extend(doc.bad.iter().map(|&i| (i, defaults[i].clone())));
+        if !doc.bad.is_empty() {
+            values.extend(doc.bad.iter().map(|&i| (i, defaults()[i].clone())));
+        }
         self.apply_settings(&values);
         self.report_problems(&doc.problems);
     }
@@ -426,12 +427,6 @@ impl App {
         let values: Vec<(usize, Value)> = defaults().iter().cloned().enumerate().collect();
         self.apply_settings(&values);
         self.status("All settings are back to their defaults");
-    }
-
-    pub fn reset_setting(&mut self, i: usize) {
-        if let Some(v) = defaults().get(i) {
-            self.apply_settings(&[(i, v.clone())]);
-        }
     }
 
     pub fn export_text(&self) -> String {
@@ -489,8 +484,11 @@ impl App {
     }
 
     pub fn set_date_patterns(&mut self, date: String, time: String) {
-        self.style.system = (date, time);
-        self.dirty = true;
+        let system = (date, time);
+        if self.style.system != system {
+            self.style.system = system;
+            self.dirty |= self.style.dates == DateFormat::System;
+        }
     }
 
     pub fn set_clock(&mut self, ticks: i64) {

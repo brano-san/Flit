@@ -470,7 +470,7 @@ impl App {
             select_previous: true,
             show_flatten: false,
             confirm_delete: ConfirmDelete::default(),
-            style: format::Style::default(),
+            style: format::Style { system: ("yyyy-MM-dd".into(), "HH:mm".into()), ..Default::default() },
             show_hidden: state.show_hidden,
             startup_pages: match &state.startup {
                 Startup::Folders(pages) => pages.clone(),

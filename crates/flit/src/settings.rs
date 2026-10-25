@@ -19,7 +19,7 @@ pub enum Job {
 }
 
 pub enum Reply {
-    About(String),
+    System { os: String, dates: (String, String) },
     Changed(String),
     Imported(Result<String, String>),
     Exported(Result<PathBuf, String>),
@@ -116,7 +116,7 @@ impl Settings {
         let thread = std::thread::Builder::new()
             .name("flit-settings".into())
             .spawn(move || {
-                let _ = tx.send(Reply::About(P::os_version()));
+                let _ = tx.send(Reply::System { os: P::os_version(), dates: P::date_patterns() });
                 wake();
                 work(path, cache, first, rx, tx, wake)
             })
