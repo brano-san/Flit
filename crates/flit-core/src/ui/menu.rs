@@ -12,12 +12,13 @@ pub enum MenuItem {
     Separator,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) enum Cmd {
     Action(&'static str),
     NewItem(usize),
     Go(usize),
     Jump(isize),
+    Place(super::sidebar::PlaceCmd),
     ToggleTag(usize),
     ShowTag(usize),
     OpenTagged(usize),
@@ -85,7 +86,7 @@ fn trimmed(mut items: Vec<MenuItem>) -> Vec<MenuItem> {
     items
 }
 
-struct Menu<'a> {
+pub(super) struct Menu<'a> {
     hidden: &'a [&'static str],
     items: Vec<MenuItem>,
     cmds: Vec<Cmd>,
@@ -96,6 +97,10 @@ impl Menu<'_> {
         !self.hidden.contains(&id)
     }
 
+    pub(super) fn place(&mut self, label: &str, cmd: super::sidebar::PlaceCmd, checked: bool) {
+        self.command(Cmd::Place(cmd), label, String::new(), checked);
+    }
+
     fn command(&mut self, cmd: Cmd, label: &str, keys: String, checked: bool) {
         if matches!(cmd, Cmd::Action(id) if !self.shown(id)) {
             return;
@@ -104,7 +109,7 @@ impl Menu<'_> {
         self.cmds.push(cmd);
     }
 
-    fn action(&mut self, id: &'static str, label: &str) {
+    pub(super) fn action(&mut self, id: &'static str, label: &str) {
         self.command(Cmd::Action(id), label, keys_of(id), false);
     }
 
@@ -118,13 +123,13 @@ impl Menu<'_> {
         }
     }
 
-    fn separator(&mut self) {
+    pub(super) fn separator(&mut self) {
         if self.items.last().is_some_and(|i| *i != MenuItem::Separator) {
             self.items.push(MenuItem::Separator);
         }
     }
 
-    fn submenu(&mut self, label: &str, fill: impl FnOnce(&mut Self)) {
+    pub(super) fn submenu(&mut self, label: &str, fill: impl FnOnce(&mut Self)) {
         let outer = std::mem::take(&mut self.items);
         fill(self);
         let items = trimmed(std::mem::replace(&mut self.items, outer));
@@ -143,7 +148,7 @@ impl App {
         }
     }
 
-    fn collect(&mut self, fill: impl FnOnce(&Self, &mut Menu)) -> Vec<MenuItem> {
+    pub(super) fn collect(&mut self, fill: impl FnOnce(&Self, &mut Menu)) -> Vec<MenuItem> {
         let mut m = Menu { hidden: &self.menu_hidden, items: Vec::new(), cmds: Vec::new() };
         fill(self, &mut m);
         let (items, cmds) = (trimmed(m.items), m.cmds);
@@ -363,13 +368,14 @@ impl App {
     }
 
     pub(super) fn menu_command(&mut self, k: usize, now: Instant) {
-        match self.menu.get(k).copied() {
+        match self.menu.get(k).cloned() {
             Some(Cmd::Action(id)) => {
                 self.run_action(id, now);
             }
             Some(Cmd::NewItem(n)) => self.new_item(n),
             Some(Cmd::Go(k)) => self.go_target(k, now),
             Some(Cmd::Jump(n)) => self.jump_history(n, now),
+            Some(Cmd::Place(c)) => self.place_command(c, now),
             Some(Cmd::ToggleTag(k)) => self.toggle_tag(k),
             Some(Cmd::ShowTag(k)) => self.show_tag(k),
             Some(Cmd::OpenTagged(k)) => self.open_all_tagged(k, now),

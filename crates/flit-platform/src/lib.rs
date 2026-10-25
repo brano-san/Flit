@@ -340,6 +340,15 @@ pub trait Platform: 'static {
     fn templates() -> Vec<NewTemplate> {
         Vec::new()
     }
+    fn libraries() -> Vec<flit_core::library::Library> {
+        Vec::new()
+    }
+    fn library(_op: &flit_core::library::LibraryOp) -> Result<(), PlatformError> {
+        Err(PlatformError::new(-1, "libraries are not available on this system"))
+    }
+    fn recent(_limit: usize) -> (Vec<flit_core::ui::Recent>, bool) {
+        (Vec::new(), false)
+    }
     fn double_click_time() -> std::time::Duration {
         std::time::Duration::from_millis(500)
     }

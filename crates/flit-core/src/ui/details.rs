@@ -333,6 +333,7 @@ impl App {
         self.sync_spec(k);
         let case = self.case;
         self.tabs[k].load(gen, select, case, now, &mut self.effects);
+        self.place_loaded(k);
     }
 
     pub(super) fn sync_spec(&mut self, k: usize) {

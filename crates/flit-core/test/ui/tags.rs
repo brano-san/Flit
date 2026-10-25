@@ -200,6 +200,7 @@ fn sidebar_tags_search_and_open_their_items() {
     app.close_search();
     let r = app.nav.sidebar.rects[first];
     app.on_event(&Event::MouseDown { x: r.x + 5.0, y: r.y + 5.0, button: MouseButton::Right, clicks: 1 }, Instant::now());
+    app.on_event(&Event::MouseUp { x: r.x + 5.0, y: r.y + 5.0, button: MouseButton::Right }, Instant::now());
     let mut all = Vec::new();
     labels(&menu(&mut app).menu, &mut all);
     assert_eq!(all, ["Show items with this tag", "Open all tagged items", "New tag", "Manage tags"]);

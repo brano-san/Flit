@@ -8,7 +8,9 @@ pub mod actions;
 mod field;
 mod filter;
 mod flow;
+mod home;
 mod jobs;
+mod libraries;
 mod layouts;
 mod marquee;
 mod menu;
@@ -22,7 +24,8 @@ mod tags;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchSort};
-pub use sidebar::{Drive, KnownFolder, NavState, Places};
+pub use sidebar::{Drive, KnownFolder, NavPrefs, NavState, Places, Section};
+pub use home::{Recent, Widget};
 pub use details::{folder_key, Columns, FolderView, FolderViews, ViewPrefs, THUMB_CACHE_MB};
 pub use layouts::{adaptive_layout, has_thumbnail, is_media, LayoutMode, Sizes, LAYOUTS};
 pub use jobs::JobState;
@@ -193,6 +196,8 @@ pub enum Effect {
     Properties(Vec<FsPath>),
     StartDrag(Vec<FsPath>),
     Pinned(Vec<Location>),
+    PinFolders(Vec<FsPath>),
+    Library(crate::library::LibraryOp),
     RefreshPlaces,
     Search(SearchRequest),
     Preview(PreviewRequest),
@@ -271,6 +276,10 @@ enum Hit {
     Side(usize),
     SidePin(usize),
     SideEmpty,
+    SideHeader(Section),
+    HomeItem(usize),
+    HomeEmpty,
+    HomeButton,
     Splitter,
     FilterField,
     FilterClose,
@@ -318,6 +327,7 @@ struct Layout {
     caption: [Rect; 3],
     toolbar: Rect,
     nav: [Rect; 4],
+    home: Rect,
     address: Rect,
     ops_button: Rect,
     header: Rect,
@@ -724,7 +734,7 @@ impl App {
         }
         let e = t.view.as_ref().unwrap().listing().entries[i as usize];
         let loc = t.entry_location(i);
-        if e.is_dir() {
+        if e.is_dir() || crate::library::is_library(loc.path()) {
             let target = if self.folders_in_new_tab { OpenTarget::NewTab } else { OpenTarget::CurrentTab };
             self.dispatch(vec![Route { folder: loc, select: None }], target, now);
         } else {
@@ -935,7 +945,8 @@ impl App {
         for (i, r) in l.nav.iter_mut().enumerate() {
             *r = Rect::new(s(6.0) + i as f32 * s(NAV_W), l.toolbar.y + s(4.0), s(NAV_W), s(TOOL_H - 8.0));
         }
-        let ax = l.nav[3].right() + s(8.0);
+        l.home = Rect::new(l.nav[3].right(), l.nav[3].y, s(NAV_W), l.nav[3].h);
+        let ax = l.home.right() + s(8.0);
         let right = if ops_button { w - s(10.0) - s(NAV_W) } else { w };
         l.ops_button = if ops_button { Rect::new(right + s(4.0), l.nav[0].y, s(NAV_W), l.nav[0].h) } else { Rect::default() };
         l.address = Rect::new(ax, l.toolbar.y + s(5.0), (right - s(12.0) - ax).max(s(40.0)), s(TOOL_H - 10.0));
@@ -1019,6 +1030,9 @@ impl App {
         if l.toolbar.contains(x, y) {
             if let Some(i) = l.nav.iter().position(|r| r.contains(x, y)) {
                 return Hit::Nav(i);
+            }
+            if l.home.contains(x, y) {
+                return Hit::HomeButton;
             }
             if l.address.contains(x, y) {
                 if !self.editing {
@@ -1336,6 +1350,9 @@ impl App {
             Hit::Bin(k) => self.bin_button(k),
             Hit::Side(i) => self.open_side_item(i, self.mods.ctrl, now),
             Hit::SidePin(i) => self.toggle_pin_item(i),
+            Hit::SideHeader(s) => self.toggle_section(s),
+            Hit::HomeItem(i) => self.open_home_item(i, self.mods.ctrl, now),
+            Hit::HomeButton => self.go_home_page(self.mods.ctrl, now),
             Hit::FilterClose => self.close_filter(),
             Hit::PaletteRow(i) => self.run_palette_item(i, now),
             Hit::TabActions => self.tab_actions_menu(),
@@ -1468,7 +1485,7 @@ impl App {
         self.editing = true;
         self.focus = Focus::Address;
         let loc = self.current_location();
-        let text = if loc.path().kind() == PathKind::Computer { String::new() } else { loc.display().into_owned() };
+        let text = if matches!(loc.path().kind(), PathKind::Computer | PathKind::Home) { String::new() } else { loc.display().into_owned() };
         self.edit.set(&text);
         self.edit.select_all();
         self.edit_scroll = 0.0;
@@ -1499,7 +1516,7 @@ impl App {
 
     fn compute_dir_sizes(&mut self) {
         let t = self.tab();
-        if t.view.as_ref().is_none_or(|v| v.snap().gen != t.gen) || t.view_loc.is_recycle_bin() {
+        if t.view.as_ref().is_none_or(|v| v.snap().gen != t.gen) || t.view_loc.is_recycle_bin() || crate::library::is_library(t.view_loc.path()) {
             return;
         }
         let items = t.size_items();
@@ -1551,6 +1568,8 @@ impl App {
             g.begin(th.bg);
             if self.search.active {
                 self.draw_search(g, &arena, th);
+            } else if self.on_home() {
+                self.draw_home(g, th);
             } else {
                 self.draw_list(g, &arena, th);
                 self.draw_panes(g, th);
@@ -1666,6 +1685,11 @@ impl App {
             let color = if enabled[i] { t.text } else { t.text_dim.alpha(0x70) };
             centered(g, r, glyph, icons, color);
         }
+        if self.hover == Hit::HomeButton {
+            let c = if self.pressed == Hit::HomeButton { t.button_pressed } else { t.button_hover };
+            g.dl.round_rect(l.home.inset(self.s(2.0), 0.0), c, self.s(4.0));
+        }
+        centered(g, l.home, sidebar::G_HOME, icons, if self.on_home() { t.accent } else { t.text });
         self.draw_address(g, t);
         self.draw_ops_button(g, t);
     }
@@ -1826,6 +1850,7 @@ impl App {
             }
             let loc = &tab.view_loc;
             let shell_dir = loc.to_windows();
+            let in_library = crate::library::is_library(loc.path());
             let in_root = loc.path().kind() == PathKind::Computer;
             let listing = v.listing();
             let cut = self.cut_names();
@@ -1865,13 +1890,15 @@ impl App {
 
                 let name = listing.name(i);
                 let faded = e.attrs & attr::HIDDEN != 0 || cut.is_some_and(|c| c.contains(name));
-                let dir_key = if in_bin { recycle::origin(listing, i) } else { shell_dir.as_ref().map_or(&b""[..], |d| d.as_bytes()) };
+                let row_dir = if in_library { FsPath::parse_exact(crate::library::folder(listing, i)) } else { None };
+                let dir = row_dir.as_ref().or(shell_dir.as_ref());
+                let dir_key = if in_bin { recycle::origin(listing, i) } else { dir.map_or(&b""[..], |d| d.as_bytes()) };
                 let (key, kind) = icon_key(name, listing.ext(i), &e, icon_px as u32, dir_key, self.icon_epoch);
                 let ir = p.icon;
                 let alpha = if faded { 0x70 } else { 0xFF };
                 let thumb = (want_thumbs && !e.is_dir() && has_thumbnail(listing.ext(i))).then(|| hash::hash(&("thumb", dir_key, name, e.modified, e.size, thumb_px)));
                 let thumbed = thumb.is_some_and(|k| g.thumb(k, ir, alpha));
-                if let (Some(k), false, Some(d)) = (thumb, thumbed, shell_dir.as_ref()) {
+                if let (Some(k), false, Some(d)) = (thumb, thumbed, dir) {
                     if !self.thumbs.contains_key(&k) && !thumb_requests.iter().any(|r| r.key == k) {
                         thumb_requests.push(IconRequest { key: k, kind: IconKind::Thumbnail, path: d.join(name), size: thumb_px, gen: tab.gen, row: row as u32 });
                     }
@@ -1882,7 +1909,7 @@ impl App {
                     let path = match (wanted, in_bin) {
                         (false, _) => None,
                         (true, true) => recycle::recycled(listing, i),
-                        (true, false) => loc.join(name).to_windows(),
+                        (true, false) => row_dir.as_ref().map_or_else(|| loc.join(name).to_windows(), |d| Some(d.join(name))),
                     };
                     if let Some(path) = path {
                         requests.push(IconRequest { key, kind, path, size: icon_px as u32, gen: tab.gen, row: row as u32 });
@@ -1946,7 +1973,7 @@ impl App {
         if let Some(err) = &tab.error {
             s.push_str(err);
             color = t.error;
-        } else if let Some(v) = tab.view.as_ref().filter(|v| v.snap().gen == tab.gen) {
+        } else if let Some(v) = tab.view.as_ref().filter(|v| v.snap().gen == tab.gen && !tab.location().is_home_page()) {
             self.count_text(&mut s, v);
             let k = v.selected_count();
             if k > 0 {

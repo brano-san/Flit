@@ -15,7 +15,7 @@ use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBU
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Controls::{IImageList, ILD_TRANSPARENT};
 use windows::Win32::UI::Shell::*;
-use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetForegroundWindow, GetIconInfo, GetWindowThreadProcessId, HICON, ICONINFO, SW_SHOWNORMAL};
+use windows::Win32::UI::WindowsAndMessaging::{CreatePopupMenu, DestroyIcon, DestroyMenu, GetForegroundWindow, GetIconInfo, GetWindowThreadProcessId, HICON, ICONINFO, SW_SHOWNORMAL};
 
 pub struct ShellCom {
     lists: Vec<(u32, IImageList)>,
@@ -303,7 +303,6 @@ pub(crate) fn commands(launch: &Launch, terminal: Option<&str>) -> Vec<Command> 
             vec![Command { program: text(program), args, dir: program.parent().map(|d| text(&d)), admin: false }]
         }
         Launch::Run { program, args, dir } => vec![Command { program: program.clone(), args: args.clone(), dir: dir.as_ref().map(text), admin: false }],
-        Launch::Eject(_) => Vec::new(),
         Launch::Terminal { dirs, admin } => match terminal {
             Some(wt) => {
                 let tab = |d: &FsPath| match Location::from_local(d.clone()) {
@@ -320,6 +319,21 @@ pub(crate) fn commands(launch: &Launch, terminal: Option<&str>) -> Vec<Command> 
                 })
                 .collect(),
         },
+        Launch::Eject(_) => Vec::new(),
+    }
+}
+
+fn eject(drive: &FsPath) -> Result<(), PlatformError> {
+    com_sta();
+    let hwnd = owner_window().unwrap_or_default();
+    let menu: IContextMenu = crate::context_menu::Pidls::parse(std::slice::from_ref(drive))?.ui_object(hwnd)?;
+    unsafe {
+        let popup = CreatePopupMenu().map_err(err)?;
+        let queried = menu.QueryContextMenu(popup, 0, 1, 0x7FFF, CMF_NORMAL);
+        let info = CMINVOKECOMMANDINFO { cbSize: size_of::<CMINVOKECOMMANDINFO>() as u32, hwnd, lpVerb: windows::core::s!("eject"), nShow: SW_SHOWNORMAL.0, ..Default::default() };
+        let result = queried.ok().and_then(|_| menu.InvokeCommand(&info)).map_err(err);
+        let _ = DestroyMenu(popup);
+        result
     }
 }
 
@@ -346,20 +360,6 @@ fn execute(c: &Command) -> Result<(), PlatformError> {
         Err(e) if e.code() == ERROR_CANCELLED.to_hresult() => Ok(()),
         r => r.map_err(err),
     }
-}
-
-fn eject(drive: &FsPath) -> Result<(), PlatformError> {
-    let file = wide(drive);
-    let mut info = SHELLEXECUTEINFOW {
-        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
-        fMask: SEE_MASK_NOASYNC | SEE_MASK_INVOKEIDLIST,
-        hwnd: owner_window().unwrap_or_default(),
-        lpVerb: w!("eject"),
-        lpFile: PCWSTR(file.as_ptr()),
-        nShow: SW_SHOWNORMAL.0,
-        ..Default::default()
-    };
-    unsafe { ShellExecuteExW(&mut info) }.map_err(err)
 }
 
 pub(crate) unsafe fn link_target(link: &FsPath) -> Option<FsPath> {

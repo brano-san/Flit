@@ -384,7 +384,7 @@ impl App {
         let s = |v: f32| (v * sc).round();
         let st = self.preview.state;
         let (w, h) = self.size;
-        let shown = st.visible && !self.search.active;
+        let shown = st.visible && !self.search.active && !self.on_home();
         let l = &mut self.layout;
         l.bottom = l.status.y;
         let r = &mut self.preview.r;
@@ -549,7 +549,7 @@ impl App {
     }
 
     pub(super) fn sync_preview(&mut self, now: Instant) {
-        let shown = self.preview.state.visible && !self.search.active;
+        let shown = self.preview.state.visible && !self.search.active && !self.on_home();
         let subject = if shown { self.subject() } else { None };
         let details = self.preview.state.details;
         let key = subject.as_ref().map_or(0, |s| s.key(details));
