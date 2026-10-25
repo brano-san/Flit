@@ -44,6 +44,35 @@ impl History {
         self.back.push(std::mem::replace(&mut self.cur, next));
         Some(&self.cur)
     }
+
+    pub fn back_list(&self) -> &[Location] {
+        &self.back
+    }
+
+    pub fn forward_list(&self) -> &[Location] {
+        &self.fwd
+    }
+
+    pub fn jump(&mut self, n: isize) -> bool {
+        let room = if n < 0 { self.back.len() } else { self.fwd.len() };
+        if n == 0 || n.unsigned_abs() > room {
+            return false;
+        }
+        for _ in 0..n.unsigned_abs() {
+            if n < 0 { self.back() } else { self.forward() };
+        }
+        true
+    }
+
+    pub fn replace(&mut self, to: Location) {
+        self.cur = to;
+    }
+
+    pub fn retract(&mut self) -> bool {
+        let Some(prev) = self.back.pop() else { return false };
+        self.cur = prev;
+        true
+    }
 }
 
 #[cfg(test)]

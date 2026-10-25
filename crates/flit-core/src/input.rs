@@ -61,6 +61,7 @@ pub enum Event {
     DevicesChanged,
     Timer,
     ClipboardChanged(u32),
+    SessionEnding,
     Hosted(crate::preview::HostEvent),
 }
 

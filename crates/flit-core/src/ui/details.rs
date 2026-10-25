@@ -615,8 +615,9 @@ impl App {
             FsErrorKind::NotADirectory => "This location is not a folder",
             FsErrorKind::Unavailable => "This location is not available",
             FsErrorKind::Other => "This folder cannot be opened",
+            FsErrorKind::NoMedia => "There is no disc or memory card in this drive",
         };
-        let detail = format!("{e}. Press F5 to try again.");
+        let detail = if e.kind == FsErrorKind::NoMedia { format!("{e}. Insert one and press F5, or eject the drive.") } else { format!("{e}. Press F5 to try again.") };
         let (big, small) = (self.ui_font(16.0), self.ui_font(13.0));
         let y = list.y + self.s(48.0);
         centered(g, Rect::new(list.x, y, list.w, self.s(32.0)), G_WARNING, self.icon_font(24.0), th.error);
@@ -624,6 +625,7 @@ impl App {
             let w = g.measure(text, font).min(list.w);
             g.text(list.x + (list.w - w) / 2.0, y + self.s(56.0 + 24.0 * k as f32), text, font, color, list.w);
         }
+        self.draw_eject(g, th);
     }
 
     pub(super) fn count_text(&self, s: &mut impl std::fmt::Write, v: &DirView) {
@@ -715,6 +717,10 @@ impl App {
         if self.details.autoscroll.take().is_some() {
             self.set_cursor(CursorIcon::Default);
         }
+    }
+
+    pub(super) fn autoscrolling(&self) -> bool {
+        self.details.autoscroll.is_some()
     }
 
     pub(super) fn autoscroll_down(&mut self, h: Hit, along: f32, button: MouseButton) -> bool {

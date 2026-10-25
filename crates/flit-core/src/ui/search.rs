@@ -179,7 +179,7 @@ impl App {
         if self.search.active {
             self.search.active = false;
             self.search.drag = SDrag::None;
-            self.effects.push(Effect::Title(format!("{} — Flit", self.tab().title())));
+            self.effects.push(Effect::Title(self.window_title()));
             self.set_cursor(CursorIcon::Default);
             self.dirty = true;
         }
@@ -464,6 +464,12 @@ impl App {
         }
     }
 
+    pub(super) fn reveal_search_focus(&mut self, now: Instant) {
+        if let Some(row) = self.search.focus {
+            self.reveal_search_row(row, now);
+        }
+    }
+
     fn reveal_search_row(&mut self, row: u64, now: Instant) {
         let Some(loc) = self.search_row_location(row) else { return };
         let Some(folder) = loc.parent() else { return };
@@ -529,7 +535,7 @@ impl App {
         self.dirty = true;
         let h = self.search_hit(x, y);
         if button == MouseButton::Right && matches!(h, SHit::Header(_) | SHit::Row(_) | SHit::Empty) {
-            let menu = self.build_search_menu();
+            let menu = self.build_search_menu(matches!(h, SHit::Row(_)));
             self.flit_menu(x, y, menu);
             return true;
         }

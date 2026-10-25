@@ -302,6 +302,7 @@ pub(crate) fn commands(launch: &Launch, terminal: Option<&str>) -> Vec<Command> 
             let args = args.iter().map(|a| quote_path(&text(a))).collect::<Vec<_>>().join(" ");
             vec![Command { program: text(program), args, dir: program.parent().map(|d| text(&d)), admin: false }]
         }
+        Launch::Run { program, args, dir } => vec![Command { program: program.clone(), args: args.clone(), dir: dir.as_ref().map(text), admin: false }],
         Launch::Terminal { dirs, admin } => match terminal {
             Some(wt) => {
                 let tab = |d: &FsPath| match Location::from_local(d.clone()) {

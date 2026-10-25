@@ -633,7 +633,7 @@ impl App {
         if p.host.gen == 0 {
             return;
         }
-        let covered = self.nav.palette.is_some() || self.jobs.open || self.jobs.modal() || self.search.active;
+        let covered = self.nav.palette.is_some() || self.jobs.open || self.jobs.modal() || self.search.active || self.suggesting();
         let want = match () {
             _ if covered || p.r.pane.w <= 0.0 || p.state.details => None,
             _ if p.host.handler => Some(p.r.body),

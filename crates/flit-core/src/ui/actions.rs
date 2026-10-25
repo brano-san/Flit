@@ -1,7 +1,7 @@
 use super::home::Widget;
 use super::sidebar::KnownFolder;
 use super::tags::TagPick;
-use super::{App, Column, Effect, LayoutMode, Route};
+use super::{App, Column, Effect, LayoutMode, Route, WindowCmd};
 use crate::archive::{Format, Place};
 use crate::input::{Key, Mods};
 use crate::library::LibraryOp;
@@ -78,12 +78,22 @@ pub static ACTIONS: &[Action] = &[
     Action::new("tab.new", "New tab", &[ctrl(Key::Char('T'))], |a, now| a.new_tab_here(now)),
     Action::new("tab.close", "Close tab", &[ctrl(Key::Char('W')), ctrl(Key::F(4))], |a, _| a.close_tab(a.cur)),
     Action::new("tab.reopen", "Reopen closed tab", &[ctrl_shift(Key::Char('T'))], |a, now| a.reopen_tab(now)),
+    Action::new("tab.close_all", "Close all tabs", &[ctrl_shift(Key::Char('W'))], |a, _| a.close_all_tabs()),
+    Action::new("tab.close_others", "Close other tabs", &[], |a, _| a.close_tabs(|i, cur| i == cur)),
+    Action::new("tab.close_left", "Close tabs to the left", &[], |a, _| a.close_tabs(|i, cur| i >= cur)),
+    Action::new("tab.close_right", "Close tabs to the right", &[], |a, _| a.close_tabs(|i, cur| i <= cur)),
+    Action::new("tab.move_to_window", "Move tab to a new window", &[], |a, _| a.move_tab_to_window()),
     Action::new("tab.next", "Next tab", &[ctrl(Key::Tab)], |a, _| a.select_tab((a.cur + 1) % a.tabs.len())),
     Action::new("tab.previous", "Previous tab", &[ctrl_shift(Key::Tab)], |a, _| a.select_tab((a.cur + a.tabs.len() - 1) % a.tabs.len())),
     Action::new("window.new", "New window", &[ctrl(Key::Char('N'))], |a, _| a.new_window_here()),
+    Action::new("window.fullscreen", "Full screen", &[key(Key::F(11))], |a, _| a.effects.push(Effect::Window(WindowCmd::Fullscreen))),
+    Action::new("window.compact", "Mini window on top of other windows", &[key(Key::F(12))], |a, _| a.effects.push(Effect::Window(WindowCmd::Compact(None)))),
+    Action::new("window.compact_on", "Enter the mini window", &[ctrl_alt(Key::Up)], |a, _| a.effects.push(Effect::Window(WindowCmd::Compact(Some(true))))),
+    Action::new("window.compact_off", "Leave the mini window", &[ctrl_alt(Key::Down)], |a, _| a.effects.push(Effect::Window(WindowCmd::Compact(Some(false))))),
     Action::new("view.filter", "Filter items in this folder", &[ctrl(Key::Char('F'))], |a, _| a.open_filter()),
     Action::new("search.open", "Search all drives", &[ctrl(Key::Char('E')), ctrl_shift(Key::Char('F'))], |a, _| a.open_search()),
     Action::new("search.group_folder", "Group search results by folder", &[], |a, _| a.toggle_search_groups()),
+    Action::new("search.reveal", "Open the location of the found item", &[], |a, now| a.reveal_search_focus(now)),
     Action::new("view.hidden", "Show or hide hidden files", &[ctrl(Key::Char('H'))], |a, _| a.toggle_hidden()),
     Action::new("view.sort.name", "Sort by name", &[], |a, _| a.sort_by(SortField::Name)),
     Action::new("view.sort.modified", "Sort by date modified", &[], |a, _| a.sort_by(SortField::Modified)),
@@ -162,8 +172,8 @@ pub static ACTIONS: &[Action] = &[
     Action::new("select.none", "Clear selection", &[key(Key::Escape), ctrl_shift(Key::Char('A'))], |a, _| a.clear_selection()),
     Action::new("select.invert", "Invert selection", &[ctrl(Key::Char('I'))], |a, _| a.invert_selection()),
     Action::new("item.open", "Open selected items", &[key(Key::Enter)], |a, now| a.open_selection(now)),
-    Action::new("item.open_tab", "Open the selected folders in new tabs", &[], |a, now| a.open_folders_in(OpenTarget::NewTab, now)),
-    Action::new("item.open_window", "Open the selected folders in a new window", &[], |a, now| a.open_folders_in(OpenTarget::NewWindow, now)),
+    Action::new("item.open_tab", "Open the selected folders in new tabs", &[ctrl(Key::Enter)], |a, now| a.open_folders_in(OpenTarget::NewTab, now)),
+    Action::new("item.open_window", "Open the selected folders in a new window", &[ctrl_alt(Key::Enter)], |a, now| a.open_folders_in(OpenTarget::NewWindow, now)),
     Action::new("item.pin", "Pin or unpin the selected folders", &[], |a, _| a.pin_selection()),
     Action::new("tags.new", "New tag for the selected items", &[], |a, _| a.new_tag(true)),
     Action::new("tags.remove", "Remove all tags from the selected items", &[], |a, _| a.remove_tags()),

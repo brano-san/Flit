@@ -1,6 +1,7 @@
 use crate::metrics::{Metrics, Step};
 use crate::places::{PlacesWorker, Reply};
 use crate::search_client::SearchClient;
+use crate::session::{self, Files, Session, Writer};
 use crate::state::{self, Saved};
 use crate::tags::{self, TagWorker};
 use crate::thumbs::ThumbCache;
@@ -12,7 +13,7 @@ use flit_core::preview::{PreviewData, PreviewRequest};
 use flit_core::sort::{self, ViewSpec};
 use flit_core::tags::TagRequest;
 use flit_core::text::Gfx;
-use flit_core::ui::{App, DragEvent, Effect, IconRequest, IconResult, Persisted, WindowCmd};
+use flit_core::ui::{App, DragEvent, Effect, IconRequest, IconResult, MovedTab, Persisted, Startup, Typed, WindowCmd, WindowSession};
 use flit_core::{FsPath, Location, ProviderEvent, ProviderId, ProviderRequest, TabId};
 use flit_platform::*;
 use std::collections::{HashMap, VecDeque};
@@ -29,6 +30,7 @@ const THUMB_THREADS: usize = 3;
 const PREVIEW_THREADS: usize = 2;
 const ICON_MARGIN: u32 = 32;
 const TAB_STRIDE: TabId = 1 << 32;
+const TORN_GRAB: (f32, f32) = (60.0, 18.0);
 
 mod agents {
     include!(concat!(env!("OUT_DIR"), "/wsl_agent.rs"));
@@ -201,6 +203,9 @@ struct WinState<P: Platform> {
     software: bool,
     device_gen: u64,
     visible: Arc<Visible>,
+    session_rev: u64,
+    placement: Option<Placement>,
+    born: Option<Instant>,
     preview_rev: u64,
 }
 
@@ -234,6 +239,15 @@ struct Handler<P: Platform> {
     device_gen: u64,
     search: SearchClient,
     places: PlacesWorker,
+    files: Option<Files>,
+    writer: Option<Writer>,
+    crashed: Option<Session>,
+    typed: Typed,
+    queued_windows: VecDeque<(WindowSession, Option<Placement>)>,
+    raise: Option<WindowId>,
+    ending: bool,
+    timing: bool,
+    requested: Option<Instant>,
     tags: TagWorker,
 }
 
@@ -266,6 +280,7 @@ impl<P: Platform> Handler<P> {
         app.set_nav_prefs(self.saved.side.clone());
         app.set_pane_state(self.saved.pane);
         app.set_places(self.places.current());
+        app.share_typed(self.typed.clone());
         app.set_tags(self.tags.current());
         let fx: Vec<Effect> = app.drain_effects().collect();
         for e in fx {
@@ -274,6 +289,89 @@ impl<P: Platform> Handler<P> {
             }
         }
         app
+    }
+
+    fn restored_app(&mut self, ws: &WindowSession) -> App {
+        let cur = ws.cur.min(ws.tabs.len().saturating_sub(1));
+        let routes = ws.tabs.get(cur).map(|l| vec![Route { folder: l.clone(), select: None }]).unwrap_or_default();
+        let mut app = self.new_app(routes, self.saved.persisted.clone());
+        app.restore_tabs(&ws.tabs, cur);
+        app
+    }
+
+    fn open_next(&mut self, window: &Win<P>) {
+        let Some((ws, placement)) = self.queued_windows.pop_front() else { return };
+        self.requested = Some(Instant::now());
+        let app = self.restored_app(&ws);
+        self.pending.push_back(app);
+        window.open_window(WindowOptions { title: "Flit".into(), placement, dark: window.is_dark_mode() });
+    }
+
+    fn move_tab(&mut self, window: &Win<P>, tab: MovedTab, at: Option<(f32, f32)>, last: bool) {
+        let (id, now) = (window.id(), Instant::now());
+        let target = at.and_then(|(x, y)| window.window_at(x, y)).filter(|(t, ..)| *t != id && self.windows.contains_key(t));
+        if let Some((t, x, y)) = target {
+            if let Some(st) = self.windows.get_mut(&t) {
+                st.app.insert_tab(tab, Some((x, y)), now);
+            }
+            self.raise = Some(t);
+            if last && !self.windows.get(&id).is_some_and(|s| s.app.ops_pending()) {
+                window.close();
+            }
+            return (self.wake)();
+        }
+        if last {
+            if let Some(st) = self.windows.get_mut(&id) {
+                st.app.adopt_tab(tab, now);
+            }
+            return;
+        }
+        let placement = at.map(|(x, y)| {
+            let ((sx, sy), p, s) = (window.to_screen(x, y), window.placement(), window.scale());
+            Placement { x: sx - (TORN_GRAB.0 * s) as i32, y: sy - (TORN_GRAB.1 * s) as i32, width: p.width, height: p.height, maximized: false }
+        });
+        self.requested = Some(now);
+        if let Some(st) = self.windows.get(&id) {
+            self.saved.side = st.app.nav_prefs();
+        }
+        let mut app = self.new_app(vec![Route { folder: tab.location().clone(), select: None }], self.saved.persisted.clone());
+        app.adopt_tab(tab, now);
+        self.pending.push_back(app);
+        window.open_window(WindowOptions { title: "Flit".into(), placement, dark: window.is_dark_mode() });
+    }
+
+    fn session(&self) -> Session {
+        let mut ids: Vec<WindowId> = self.windows.keys().copied().collect();
+        ids.sort_unstable();
+        let windows = ids.iter().map(|id| (self.windows[id].app.session(), self.windows[id].placement)).collect();
+        Session::new(windows, self.typed.lock().unwrap_or_else(|e| e.into_inner()).clone())
+    }
+
+    fn note_session(&mut self, window: &Win<P>) {
+        let Some(st) = self.windows.get_mut(&window.id()).filter(|_| self.writer.is_some() && !self.ending) else { return };
+        let rev = st.app.session_rev();
+        if rev == st.session_rev {
+            return;
+        }
+        st.session_rev = rev;
+        st.placement = Some(window.placement());
+        let s = self.session();
+        if let Some(w) = &self.writer {
+            w.send(s);
+        }
+    }
+
+    fn final_session(&mut self, s: Option<Session>) {
+        if let Some(w) = &mut self.writer {
+            w.finish();
+        }
+        self.writer = None;
+        if let Some(f) = &self.files {
+            if let Some(s) = s {
+                session::write(&f.session, &s);
+            }
+            f.unmark();
+        }
     }
 
     fn submit(&mut self, provider: ProviderId, req: ProviderRequest) {
@@ -337,6 +435,15 @@ impl<P: Platform> Handler<P> {
                 }
                 Effect::Window(WindowCmd::Minimize) => window.minimize(),
                 Effect::Window(WindowCmd::ToggleMaximize) => window.toggle_maximize(),
+                Effect::Window(WindowCmd::Fullscreen) => window.toggle_fullscreen(),
+                Effect::Window(WindowCmd::Compact(on)) => window.set_compact(on),
+                Effect::MoveTab { tab, at, last } => self.move_tab(window, tab, at, last),
+                Effect::RestoreSession => {
+                    if let Some(s) = self.crashed.take() {
+                        self.queued_windows.extend(s.windows());
+                        self.open_next(window);
+                    }
+                }
                 Effect::Window(WindowCmd::Close) => {
                     if let Some(st) = self.windows.get(&id) {
                         self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state()).with_pane(st.app.pane_state()).with_side(st.app.nav_prefs());
@@ -359,6 +466,7 @@ impl<P: Platform> Handler<P> {
                 }
                 Effect::Host(cmd) => window.host(cmd),
                 Effect::NewWindow(routes) => {
+                    self.requested = Some(Instant::now());
                     if let Some(st) = self.windows.get(&id) {
                         self.saved.side = st.app.nav_prefs();
                     }
@@ -396,6 +504,7 @@ impl<P: Platform> Handler<P> {
                 window.request_redraw();
             }
         }
+        self.note_session(window);
     }
 
     fn drain(&mut self) {
@@ -591,6 +700,9 @@ impl<P: Platform> Handler<P> {
             window.request_redraw();
             return;
         }
+        if let Some(b) = st.born.take() {
+            eprintln!("window ready in {:.1} ms with {} tabs", b.elapsed().as_secs_f64() * 1e3, st.app.tabs().len());
+        }
         let (gen, first, last) = st.app.visible_rows();
         st.visible.gen.store(gen, Ordering::Relaxed);
         st.visible.first.store(first, Ordering::Relaxed);
@@ -647,12 +759,15 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         app.on_event(&Event::Resized { width, height }, now);
         app.on_event(&Event::ThemeChanged { dark: window.is_dark_mode() }, now);
         app.set_maximized(window.is_maximized());
-        window.set_title(&format!("{} — Flit", app.tab().title()));
+        window.set_title(&app.window_title());
         let id = window.id();
-        self.windows.insert(id, WinState { app, gfx: Gfx::new(text, ATLAS), renderer: None, software: false, device_gen: 0, visible: Arc::default(), preview_rev: u64::MAX });
+        let born = self.requested.take().filter(|_| self.timing);
+        let st = WinState { app, gfx: Gfx::new(text, ATLAS), renderer: None, software: false, device_gen: 0, visible: Arc::default(), session_rev: 0, placement: Some(window.placement()), born, preview_rev: u64::MAX };
+        self.windows.insert(id, st);
         self.active = Some(id);
         self.flush(window);
         self.apply_opens(window);
+        self.open_next(window);
         window.request_redraw();
     }
 
@@ -661,12 +776,21 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         if event == Event::Focus(true) {
             self.active = Some(id);
         }
+        if event == Event::SessionEnding && !self.ending {
+            if let Some(st) = self.windows.get_mut(&id) {
+                st.placement = Some(window.placement());
+            }
+            let s = self.session();
+            self.final_session(Some(s));
+            self.ending = true;
+        }
         let Some(st) = self.windows.get_mut(&id) else { return };
         if let Event::Resized { width, height } = event {
             if let Some(r) = &mut st.renderer {
                 r.resize(width, height);
             }
             st.app.set_maximized(window.is_maximized());
+            st.placement = Some(window.placement());
         }
         st.app.on_event(&event, Instant::now());
         self.flush(window);
@@ -681,6 +805,10 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
     }
 
     fn woken(&mut self, window: &Win<P>) {
+        if self.raise == Some(window.id()) {
+            self.raise = None;
+            window.activate();
+        }
         self.drain();
         self.inject_due(window);
         self.poll_gpu(false);
@@ -703,9 +831,11 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
 
     fn destroyed(&mut self, window: &Win<P>) {
         let id = window.id();
+        let mut last = None;
         if let Some(mut st) = self.windows.remove(&id) {
             if self.windows.is_empty() {
                 self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state()).with_pane(st.app.pane_state()).with_side(st.app.nav_prefs());
+                last = Some(Session::new(vec![(st.app.session(), Some(window.placement()))], self.typed.lock().unwrap_or_else(|e| e.into_inner()).clone()));
             }
             st.app.shutdown();
             for e in st.app.drain_effects().collect::<Vec<_>>() {
@@ -723,11 +853,14 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
             self.take_opens();
             if self.queued_opens.is_empty() {
                 state::save::<P>(&self.saved);
+                self.final_session(last.filter(|_| !self.ending));
                 self.local.wait_idle(OPS_GRACE);
             } else {
                 *self.sink.lock().unwrap_or_else(|e| e.into_inner()) = tx;
                 window.open_window(WindowOptions { title: "Flit".into(), placement: self.saved.placement(), dark: window.is_dark_mode() });
             }
+        } else if let Some(w) = self.writer.as_ref().filter(|_| !self.ending) {
+            w.send(self.session());
         }
     }
 }
@@ -760,6 +893,20 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes(), local.tags().clone())?;
     let (routes, errors) = if open.is_empty() { Default::default() } else { open::routes(&open, &P::known_folder) };
     let new_window = open.target == OpenTarget::NewWindow;
+    let files = if metrics.is_none() { Files::of::<P>() } else { None };
+    let crashed = files.as_ref().is_some_and(Files::crashed);
+    let previous = files.as_ref().and_then(|f| session::load(&f.session));
+    if let Some(f) = &files {
+        f.mark();
+    }
+    let typed: Typed = Arc::new(Mutex::new(previous.as_ref().map(|s| s.typed.clone()).unwrap_or_default()));
+    let mut restore: VecDeque<(WindowSession, Option<Placement>)> = match &saved.persisted.startup {
+        _ if !open.is_empty() || crashed => VecDeque::new(),
+        Startup::Continue => previous.iter().flat_map(Session::windows).collect(),
+        Startup::NewTab => VecDeque::from([(WindowSession { tabs: vec![Location::home_page()], cur: 0 }, None)]),
+        Startup::Folders(tabs) => VecDeque::from([(WindowSession { tabs: tabs.clone(), cur: 0 }, None)]),
+    };
+    let first_window = restore.pop_front().filter(|(w, _)| !w.tabs.is_empty());
     let mut h = Handler::<P> {
         windows: HashMap::new(),
         pending: VecDeque::new(),
@@ -790,11 +937,28 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         gpu_pending: 2,
         device_gen: 0,
         search,
+        writer: files.as_ref().map(|f| Writer::start(f.session.clone())),
+        files,
+        crashed: previous.filter(|_| crashed),
+        typed,
+        queued_windows: restore,
+        raise: None,
+        ending: false,
+        timing: std::env::var_os("FLIT_TIMING").is_some(),
+        requested: Some(started),
         tags,
     };
-    let mut first = h.new_app(routes, saved.persisted.clone());
-    first.show_open_errors(&errors);
+    let (mut first, placement) = match &first_window {
+        Some((ws, placement)) => (h.restored_app(ws), *placement),
+        None => {
+            let mut app = h.new_app(routes, saved.persisted.clone());
+            app.show_open_errors(&errors);
+            (app, if new_window { None } else { saved.placement() })
+        }
+    };
+    if h.crashed.is_some() {
+        first.offer_restore();
+    }
     h.pending.push_back(first);
-    let placement = if new_window { None } else { saved.placement() };
     ws.run(WindowOptions { title: "Flit".into(), placement, dark: P::dark_mode() }, h)
 }

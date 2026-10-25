@@ -4,6 +4,7 @@ mod app;
 mod metrics;
 mod places;
 mod preview;
+mod session;
 mod search_client;
 mod state;
 mod tags;

@@ -140,6 +140,7 @@ pub enum FsErrorKind {
     NotADirectory,
     Unavailable,
     Other,
+    NoMedia,
 }
 
 impl fmt::Display for FsError {
@@ -153,6 +154,7 @@ impl fmt::Display for FsError {
             FsErrorKind::NotADirectory => "Not a folder",
             FsErrorKind::Unavailable => "Location is not available",
             FsErrorKind::Other => "Error",
+            FsErrorKind::NoMedia => "No media in the drive",
         };
         write!(f, "{what} (0x{:08X})", self.code as u32)
     }

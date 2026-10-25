@@ -116,3 +116,15 @@ fn cancelled_walk_stops_early() {
     let cancelled = calls.load(Ordering::Relaxed);
     assert!(cancelled * 4 < full, "{cancelled} checks after cancel vs {full} for the full walk");
 }
+
+#[test]
+fn listing_a_file_reports_that_it_is_not_a_folder() {
+    let t = Temp::new("notdir");
+    t.file("plain.txt", 3);
+    let mut go = |_: &ListingBuilder<'_>| true;
+    let mut b = ListingBuilder::new(flit_core::sort::CaseMode::Insensitive, &mut go);
+    let err = NtFs.read_dir(&fs_path(&t.0.join("plain.txt")), &mut b).unwrap_err();
+    assert_eq!(err.kind, FsErrorKind::NotADirectory);
+    let err = NtFs.read_dir(&fs_path(&t.0.join("missing")), &mut b).unwrap_err();
+    assert_eq!(err.kind, FsErrorKind::NotFound);
+}
