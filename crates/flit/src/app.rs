@@ -227,6 +227,7 @@ struct WinState<P: Platform> {
     placement: Option<Placement>,
     born: Option<Instant>,
     preview_rev: u64,
+    dark: Option<bool>,
 }
 
 struct Handler<P: Platform> {
@@ -529,6 +530,14 @@ impl<P: Platform> Handler<P> {
                 Effect::Settings(SettingsCmd::Export { path, text, replace }) => self.settings.send(Job::Export(crate::preview::std_path(&path), text, replace)),
                 Effect::Settings(SettingsCmd::Import(path)) => self.settings.send(Job::Import(crate::preview::std_path(&path))),
                 Effect::Settings(SettingsCmd::CacheSize) => self.settings.send(Job::CacheSize),
+                Effect::Settings(SettingsCmd::Fonts) => {
+                    if let Some(st) = self.windows.get_mut(&id) {
+                        let t = Instant::now();
+                        let fonts = st.gfx.text.families();
+                        tracing::debug!("{} font families in {:.2} ms", fonts.len(), t.elapsed().as_secs_f64() * 1e3);
+                        st.app.set_fonts(fonts);
+                    }
+                }
             }
         }
         self.sync_settings(id);
@@ -798,6 +807,10 @@ impl<P: Platform> Handler<P> {
             }
         }
         let Some(st) = self.windows.get_mut(&id) else { return };
+        if st.dark != Some(st.app.is_dark()) {
+            st.dark = Some(st.app.is_dark());
+            window.set_dark(st.app.is_dark());
+        }
         st.app.set_clock(filetime_now());
         let t = Instant::now();
         let animating = st.app.frame(&mut st.gfx, t);
@@ -899,7 +912,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         window.set_title(&app.window_title());
         let id = window.id();
         let born = self.requested.take();
-        let st = WinState { app, gfx: Gfx::new(text, ATLAS), renderer: None, software: false, device_gen: 0, visible: Arc::default(), session_rev: 0, placement: Some(window.placement()), born, preview_rev: u64::MAX };
+        let st = WinState { app, gfx: Gfx::new(text, ATLAS), renderer: None, software: false, device_gen: 0, visible: Arc::default(), session_rev: 0, placement: Some(window.placement()), born, preview_rev: u64::MAX, dark: None };
         self.windows.insert(id, st);
         self.active = Some(id);
         self.flush(window);
@@ -1129,6 +1142,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     if h.crashed.is_some() {
         first.offer_restore();
     }
+    let dark = first.is_dark();
     h.pending.push_back(first);
-    ws.run(WindowOptions { title: "Flit".into(), placement, dark: P::dark_mode() }, h)
+    ws.run(WindowOptions { title: "Flit".into(), placement, dark }, h)
 }

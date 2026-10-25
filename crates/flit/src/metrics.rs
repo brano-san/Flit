@@ -9,6 +9,8 @@ const FALLBACK_PERIOD: Duration = Duration::from_micros(16_667);
 const SCROLL_TIME: Duration = Duration::from_secs(2);
 const GOLDEN_FRACTION: f64 = 0.618_033_988_749_895;
 const SETTINGS_SEARCH: &str = "thumbnail";
+const THEME_SWITCHES: u32 = 8;
+const SETTINGS_CLOSE: u32 = 2;
 
 pub enum Step {
     None,
@@ -26,6 +28,7 @@ enum Phase {
     Sort,
     Done,
     Settings(usize),
+    Theme(u32),
 }
 
 pub struct Metrics {
@@ -54,6 +57,7 @@ pub struct Metrics {
     split_ready: Option<f64>,
     settings_mark: Option<Instant>,
     settings_input: Vec<(f64, f64)>,
+    theme_switch: Vec<(f64, f64)>,
 }
 
 fn ms(d: Duration) -> f64 {
@@ -104,6 +108,7 @@ impl Metrics {
             split_ready: None,
             settings_mark: None,
             settings_input: Vec::new(),
+            theme_switch: Vec::new(),
         }
     }
 
@@ -212,13 +217,29 @@ impl Metrics {
                         self.settings_mark = Some(now);
                         Step::Inject(Event::Char(c))
                     }
-                    None => {
-                        self.write();
-                        Step::Finish
-                    }
+                    None => self.switch_theme(0, now),
                 }
             }
+            Phase::Theme(n) => {
+                if let Some(t) = self.settings_mark.take() {
+                    self.theme_switch.push((ms(now - t), cpu_ms as f64));
+                }
+                if n < SETTINGS_CLOSE + THEME_SWITCHES {
+                    return self.switch_theme(n + 1, now);
+                }
+                self.write();
+                Step::Finish
+            }
         }
+    }
+
+    fn switch_theme(&mut self, n: u32, now: Instant) -> Step {
+        self.phase = Phase::Theme(n);
+        if n < SETTINGS_CLOSE {
+            return Step::Inject(key(Key::Escape, false));
+        }
+        self.settings_mark = Some(now);
+        Step::Inject(Event::Key { key: Key::Char('T'), mods: Mods { ctrl: true, alt: true, shift: false }, pressed: true })
     }
 
     fn write(&self) {
@@ -232,10 +253,12 @@ impl Metrics {
         let open = self.settings_input.first().copied();
         let mut search: Vec<f64> = self.settings_input.iter().skip(1).map(|s| s.0).collect();
         let mut search_cpu: Vec<f64> = self.settings_input.iter().skip(1).map(|s| s.1).collect();
+        let mut theme: Vec<f64> = self.theme_switch.iter().map(|s| s.0).collect();
+        let mut theme_cpu: Vec<f64> = self.theme_switch.iter().map(|s| s.1).collect();
         let mut s = String::new();
         let _ = write!(
             s,
-            "{{\"entries\":{},\"start_to_first_frame_ms\":{},\"first_rows_ms\":{},\"full_listing_ms\":{},\"first_rows_worker_ms\":{},\"full_listing_worker_ms\":{},\"scroll_rows\":{},\"scroll_frames\":{},\"scroll_ms\":{:.2},\"software_frames\":{},\"frame_period_ms\":{:.2},\"refresh_from_display\":{},\"frame_interval_p50_ms\":{:.2},\"dropped_frames\":{},\"frame_cpu_p50_ms\":{:.2},\"frame_cpu_p99_ms\":{:.2},\"input_to_frame_p50_ms\":{:.2},\"input_to_frame_max_ms\":{:.2},\"sort_ms\":{},\"panes\":{},\"split_ready_ms\":{},\"settings_open_ms\":{},\"settings_open_cpu_ms\":{},\"settings_search_p50_ms\":{:.2},\"settings_search_cpu_p50_ms\":{:.2}}}",
+            "{{\"entries\":{},\"start_to_first_frame_ms\":{},\"first_rows_ms\":{},\"full_listing_ms\":{},\"first_rows_worker_ms\":{},\"full_listing_worker_ms\":{},\"scroll_rows\":{},\"scroll_frames\":{},\"scroll_ms\":{:.2},\"software_frames\":{},\"frame_period_ms\":{:.2},\"refresh_from_display\":{},\"frame_interval_p50_ms\":{:.2},\"dropped_frames\":{},\"frame_cpu_p50_ms\":{:.2},\"frame_cpu_p99_ms\":{:.2},\"input_to_frame_p50_ms\":{:.2},\"input_to_frame_max_ms\":{:.2},\"sort_ms\":{},\"panes\":{},\"split_ready_ms\":{},\"settings_open_ms\":{},\"settings_open_cpu_ms\":{},\"settings_search_p50_ms\":{:.2},\"settings_search_cpu_p50_ms\":{:.2},\"theme_switch_p50_ms\":{:.2},\"theme_switch_cpu_p50_ms\":{:.2}}}",
             self.entries,
             opt(self.first_frame),
             opt(self.first_rows),
@@ -261,6 +284,8 @@ impl Metrics {
             opt(open.map(|o| o.1)),
             percentile(&mut search, 0.5),
             percentile(&mut search_cpu, 0.5),
+            percentile(&mut theme, 0.5),
+            percentile(&mut theme_cpu, 0.5),
         );
         let _ = std::fs::write(&self.out, s);
     }

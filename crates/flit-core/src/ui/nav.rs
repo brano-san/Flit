@@ -6,8 +6,6 @@ use super::{App, Focus, Hit};
 use crate::input::{Key, Mods, MouseButton};
 use crate::location::Location;
 use crate::render::Rect;
-use crate::text::{Gfx, TextBackend};
-use crate::theme::Theme;
 use std::time::Instant;
 
 #[derive(Default)]
@@ -100,11 +98,6 @@ impl App {
         }
         self.dirty = true;
         true
-    }
-
-    pub(super) fn draw_nav<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
-        self.draw_sidebar(g, t);
-        self.draw_filter(g, t);
     }
 }
 

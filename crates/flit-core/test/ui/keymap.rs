@@ -1,7 +1,7 @@
 use super::*;
 use crate::input::Event;
 use crate::location::Location;
-use crate::ui::actions::{alt, ctrl, ctrl_shift, key, shift};
+use crate::ui::actions::{alt, ctrl, ctrl_alt, ctrl_shift, key, shift};
 use crate::ui::settings::{self, Value, SETTINGS};
 use crate::ui::{MenuItem, Persisted};
 use serde_json::json;
@@ -86,6 +86,23 @@ fn the_file_keeps_unknown_ids_reports_bad_entries_and_resets_clashes() {
     assert_eq!(parse(&out), Some((k, Vec::new())));
     assert_eq!(parse(&json!({})).map(|(k, _)| k), Some(defaults()));
     assert!(parse(&json!(["Ctrl+C"])).is_none());
+}
+
+#[test]
+fn commands_added_by_later_stages_take_part_in_remapping_and_clashes() {
+    let toggle = at("theme.toggle");
+    assert_eq!(defaults().owner(ctrl_alt(Key::Char('T'))), Some(toggle));
+    for id in ["theme.light", "theme.dark", "theme.system", "help.docs"] {
+        assert!(index(id).is_some(), "{id}");
+    }
+    let (k, problems) = parse(&json!({"file.copy": ["Ctrl+Alt+T"], "theme.light": ["Ctrl+Alt+L"]})).unwrap();
+    assert_eq!(k.keys(toggle), [ctrl_alt(Key::Char('T'))]);
+    assert_eq!(k.keys(at("file.copy")), [ctrl(Key::Char('C'))]);
+    assert!(problems.iter().any(|p| p.contains("Ctrl+Alt+T was given to both file.copy and theme.toggle") || p.contains("Ctrl+Alt+T was given to both theme.toggle and file.copy")), "{problems:?}");
+    let mut a = app();
+    a.edit_keys(|m| m.assign(at("theme.light"), None, ctrl_alt(Key::Char('T'))));
+    assert!(a.keymap().keys(toggle).is_empty(), "taking Ctrl+Alt+T leaves the theme toggle without a shortcut");
+    assert_eq!(a.keymap().owner(ctrl_alt(Key::Char('T'))), Some(at("theme.light")));
 }
 
 #[test]

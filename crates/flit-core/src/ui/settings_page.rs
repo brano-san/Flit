@@ -3,7 +3,7 @@ use super::edit::EditAction;
 use super::field::{Field, FieldKey};
 use super::menu::Cmd;
 use super::palette::{Palette, Pick};
-use super::settings::{self, Kind, Page, Value, SETTINGS};
+use super::settings::{self, Kind, Page, Picker, Value, SETTINGS};
 use super::{centered, App, Effect, Hit, SettingsCmd, G_CLOSE};
 use crate::input::{Key, Mods, MouseButton};
 use crate::location::{Location, ProviderId};
@@ -207,6 +207,8 @@ pub(super) enum SettingPick {
     Reset,
     ResetKeys,
     Capture { action: usize, old: Option<Chord>, chord: Option<Chord> },
+    Color(usize),
+    Font(usize),
 }
 
 impl SettingPick {
@@ -219,6 +221,8 @@ impl SettingPick {
             SettingPick::Reset => "Reset all settings?",
             SettingPick::ResetKeys => "Restore the default shortcuts?",
             SettingPick::Capture { .. } => "Press the keys of the new shortcut",
+            SettingPick::Color(_) => "A color as #RRGGBB, for example #1D2533",
+            SettingPick::Font(_) => "Type to filter the installed fonts",
         }
     }
 
@@ -229,11 +233,13 @@ impl SettingPick {
             SettingPick::Export => "Enter writes the file",
             SettingPick::Import => "Enter reads the file and applies it",
             SettingPick::Reset | SettingPick::ResetKeys | SettingPick::Capture { .. } => "",
+            SettingPick::Color(_) => "Enter applies the color",
+            SettingPick::Font(_) => "No matching fonts",
         }
     }
 
     pub(super) fn is_input(&self) -> bool {
-        !matches!(self, SettingPick::Reset | SettingPick::ResetKeys | SettingPick::Capture { .. })
+        !matches!(self, SettingPick::Reset | SettingPick::ResetKeys | SettingPick::Capture { .. } | SettingPick::Font(_))
     }
 }
 
@@ -429,6 +435,12 @@ impl App {
     }
 
     pub(super) fn choose_setting(&mut self, i: usize, choice: usize) {
+        if matches!(SETTINGS[i].kind, Kind::Pick(..)) {
+            if self.choose_color(i, choice) {
+                self.layout();
+            }
+            return;
+        }
         self.change_setting(i, Value::Choice(choice));
     }
 
@@ -517,6 +529,7 @@ impl App {
             SettingPick::Reset if id == 0 => self.reset_settings(),
             SettingPick::ResetKeys if id == 0 => self.restore_all_keys(),
             SettingPick::Capture { action, old, chord } => self.capture_choose(action, old, chord, id),
+            SettingPick::Font(i) => self.choose_font(i, id),
             _ => {}
         }
     }
@@ -541,6 +554,8 @@ impl App {
     pub(super) fn setting_input(&mut self, pick: SettingPick, text: &str) {
         match pick {
             SettingPick::Text(i) => self.change_setting(i, Value::Text(text.to_owned())),
+            SettingPick::Color(i) if Picker::Color.accepts(text) => self.change_setting(i, Value::Text(text.to_owned())),
+            SettingPick::Color(_) => self.status("Enter a color as # and six hexadecimal digits, for example #1D2533"),
             SettingPick::AddPath(i) => match settings::parse_path(text) {
                 Some(loc) => self.add_path(i, loc),
                 None => self.status("Enter the full path of a folder, or Home"),
@@ -550,7 +565,7 @@ impl App {
                 Some(path) => self.effects.push(Effect::Settings(SettingsCmd::Import(path))),
                 None => self.status("Enter the full path of a file"),
             },
-            SettingPick::Reset | SettingPick::ResetKeys | SettingPick::Capture { .. } => {}
+            SettingPick::Reset | SettingPick::ResetKeys | SettingPick::Capture { .. } | SettingPick::Font(_) => {}
         }
     }
 
@@ -559,10 +574,7 @@ impl App {
             self.setting_lines(i, out);
         }
         match page {
-            Page::Appearance => {
-                out.push(Line::Buttons(None, &[Btn::CustomizeToolbar]));
-                out.push(Line::Note("Flit follows the light or dark theme of Windows. Themes, colors and fonts come in a later version."));
-            }
+            Page::Appearance => out.push(Line::Buttons(None, &[Btn::CustomizeToolbar])),
             Page::Tags => {
                 if self.tag_defs().is_empty() {
                     out.push(Line::Note("There are no tags yet."));
@@ -730,7 +742,7 @@ impl App {
                         _ => h(SHit::Line(k)),
                     }
                 }
-                Kind::Choice(..) | Kind::Text(..) if control_rect(r, s).contains(x, y) => h(SHit::Control(k)),
+                Kind::Choice(..) | Kind::Text(..) | Kind::Pick(..) if control_rect(r, s).contains(x, y) => h(SHit::Control(k)),
                 _ => h(SHit::Line(k)),
             },
             Line::Path(..) if remove_rect(r, s).contains(x, y) => h(SHit::Remove(k)),
@@ -827,21 +839,30 @@ impl App {
         self.layout();
     }
 
-    fn activate_setting(&mut self, i: usize, at: Option<(f32, f32)>) {
+    pub(super) fn activate_setting(&mut self, i: usize, at: Option<(f32, f32)>) {
         match (SETTINGS[i].kind, SETTINGS[i].get(self)) {
             (Kind::Toggle(..), Value::Bool(b)) => self.change_setting(i, Value::Bool(!b)),
             (Kind::Choice(choices, ..), Value::Choice(cur)) => {
                 let entries = choices.iter().enumerate().map(|(k, (_, label))| ((*label).to_owned(), Cmd::Setting(i, k), k == cur)).collect();
                 let items = self.list_menu(entries);
-                let k = self.settings.as_ref().and_then(|ui| ui.lines.iter().position(|l| *l == Line::Setting(i)));
-                let r = k.and_then(|k| self.settings.as_ref().map(|ui| control_rect(ui.rects[k], |v| (v * self.scale).round())));
-                let (x, y) = r.map(|r| (r.x, r.bottom())).or(at).unwrap_or_default();
+                let (x, y) = self.menu_spot(i, at);
                 self.flit_menu(x, y, items);
             }
+            (Kind::Pick(Picker::Color, ..), _) => {
+                let (x, y) = self.menu_spot(i, at);
+                self.color_menu(i, x, y);
+            }
+            (Kind::Pick(Picker::Font, ..), _) => self.pick_font(i),
             (Kind::Text(..), Value::Text(t)) => self.open_pick(Palette::new(Pick::Setting(SettingPick::Text(i)), Vec::new(), &t)),
             (Kind::Paths(..), _) => self.open_pick(Palette::new(Pick::Setting(SettingPick::AddPath(i)), Vec::new(), "")),
             _ => {}
         }
+    }
+
+    fn menu_spot(&self, i: usize, at: Option<(f32, f32)>) -> (f32, f32) {
+        let k = self.settings.as_ref().and_then(|ui| ui.lines.iter().position(|l| *l == Line::Setting(i)));
+        let r = k.and_then(|k| self.settings.as_ref().map(|ui| control_rect(ui.rects[k], |v| (v * self.scale).round())));
+        r.map(|r| (r.x, r.bottom())).or(at).unwrap_or_default()
     }
 
     fn step_setting(&mut self, i: usize, up: bool) {
@@ -1062,6 +1083,7 @@ impl App {
             (Kind::Number { unit, .. }, Value::Number(n)) => format!("{n} {unit}"),
             (Kind::Text(..), Value::Text(t)) => t,
             (Kind::Paths(..), Value::Paths(p)) => format!("{} pages", p.len()),
+            (Kind::Pick(..), _) => self.pick_text(i).unwrap_or_default(),
             _ => String::new(),
         }
     }
@@ -1167,11 +1189,18 @@ impl App {
                                 g.dl.round_rect(Rect::new(sw.x + s4, sw.y + (sw.h - knob) / 2.0, knob, knob), t.text_dim, knob / 2.0);
                             }
                         }
-                        (Kind::Choice(..) | Kind::Text(..), _) => {
+                        (Kind::Choice(..) | Kind::Text(..) | Kind::Pick(..), _) => {
                             let c = control_rect(r, s);
                             g.dl.round_rect(c, if hover == Hit::Settings(SHit::Control(k)) { t.button_hover } else { t.input_bg }, s4);
                             g.dl.outline(c, t.input_border, s4, 1.0);
-                            g.text(c.x + s(10.0), mid(c, mf), &value, font, t.text, c.w - s(40.0));
+                            let mut tx = c.x + s(10.0);
+                            if let Some(color) = self.swatch(*i) {
+                                let sw = Rect::new(tx, c.y + (c.h - s(16.0)) / 2.0, s(16.0), s(16.0));
+                                g.dl.round_rect(sw, color, s4);
+                                g.dl.outline(sw, t.input_border, s4, 1.0);
+                                tx = sw.right() + s(8.0);
+                            }
+                            g.text(tx, mid(c, mf), &value, font, t.text, c.right() - s(30.0) - tx);
                             centered(g, Rect::new(c.right() - s(30.0), c.y, s(24.0), c.h), G_DOWN, icons, t.text_dim);
                         }
                         (Kind::Number { .. }, _) => {
