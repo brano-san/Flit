@@ -1,4 +1,5 @@
 pub mod atlas;
+pub mod desktop_ini;
 pub mod filter;
 pub mod fmt;
 pub mod hash;
@@ -16,6 +17,7 @@ pub mod sort;
 pub mod tags;
 pub mod text;
 pub mod theme;
+pub mod thumbs;
 pub mod ui;
 pub mod undo;
 pub mod view;

@@ -52,6 +52,7 @@ pub mod kind {
     pub const SOLID: u32 = 0;
     pub const GLYPH: u32 = 1;
     pub const IMAGE: u32 = 2;
+    pub const THUMB: u32 = 3;
 }
 
 #[repr(C)]
@@ -121,6 +122,10 @@ impl DrawList {
 
     pub fn image(&mut self, r: Rect, uv: [f32; 4], alpha: u8) {
         self.push(r, uv, Color(0xFFFF_FFFF).alpha(alpha), 0.0, 0.0, kind::IMAGE);
+    }
+
+    pub fn thumb(&mut self, r: Rect, uv: [f32; 4], alpha: u8) {
+        self.push(r, uv, Color(0xFFFF_FFFF).alpha(alpha), 0.0, 0.0, kind::THUMB);
     }
 }
 

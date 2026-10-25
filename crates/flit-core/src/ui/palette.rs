@@ -22,6 +22,7 @@ pub(super) enum Pick {
     NewItem,
     Shortcut(FsPath),
     Stream(FsPath),
+    FolderIcon(FsPath),
     Tags(TagPick),
 }
 
@@ -32,6 +33,7 @@ impl Pick {
             Pick::NewItem => "Type to filter the kinds of new items",
             Pick::Shortcut(_) => "Full path of the shortcut target",
             Pick::Stream(_) => "Name of the new alternate data stream",
+            Pick::FolderIcon(_) => "Full path of an icon, program or library, then optionally a comma and the icon index",
             Pick::Tags(t) => t.placeholder(),
         }
     }
@@ -42,12 +44,13 @@ impl Pick {
             Pick::NewItem => "No matching kinds of items",
             Pick::Shortcut(_) => "Enter creates the shortcut in this folder",
             Pick::Stream(_) => "Enter creates the stream",
+            Pick::FolderIcon(_) => "Enter writes the icon into desktop.ini of the folder",
             Pick::Tags(t) => t.empty(),
         }
     }
 
     fn is_input(&self) -> bool {
-        matches!(self, Pick::Shortcut(_) | Pick::Stream(_)) || matches!(self, Pick::Tags(t) if t.is_input())
+        matches!(self, Pick::Shortcut(_) | Pick::Stream(_) | Pick::FolderIcon(_)) || matches!(self, Pick::Tags(t) if t.is_input())
     }
 }
 

@@ -75,6 +75,53 @@ fn fit_box_filters_premultiplied_pixels() {
     assert_eq!(quarter.rgba, vec![50, 25, 0, 50]);
 }
 
+pub(crate) fn write_jpeg(path: &std::path::Path, width: u32, height: u32, seed: u32) {
+    use windows::Win32::Graphics::Imaging::*;
+    let name: Vec<u16> = path.as_os_str().to_string_lossy().encode_utf16().chain(Some(0)).collect();
+    let mut px = vec![0u8; (width * height * 3) as usize];
+    for (k, p) in px.chunks_exact_mut(3).enumerate() {
+        let (x, y) = (k as u32 % width, k as u32 / width);
+        let n = (x.wrapping_mul(7919) ^ y.wrapping_mul(104_729) ^ seed.wrapping_mul(2_654_435_761)).wrapping_mul(2_246_822_519) >> 27;
+        p.copy_from_slice(&[(x * 255 / width) as u8 ^ n as u8, (y * 255 / height) as u8, (seed * 37) as u8 ^ (n as u8) << 2]);
+    }
+    com_sta();
+    unsafe {
+        let wic: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).unwrap();
+        let stream = wic.CreateStream().unwrap();
+        stream.InitializeFromFilename(PCWSTR(name.as_ptr()), 0x4000_0000).unwrap();
+        let enc = wic.CreateEncoder(&GUID_ContainerFormatJpeg, std::ptr::null()).unwrap();
+        enc.Initialize(&stream, WICBitmapEncoderNoCache).unwrap();
+        let (mut frame, mut props) = (None, None);
+        enc.CreateNewFrame(&mut frame, &mut props).unwrap();
+        let frame = frame.unwrap();
+        frame.Initialize(props.as_ref()).unwrap();
+        frame.SetSize(width, height).unwrap();
+        let mut format = GUID_WICPixelFormat24bppBGR;
+        frame.SetPixelFormat(&mut format).unwrap();
+        frame.WritePixels(height, width * 3, &px).unwrap();
+        frame.Commit().unwrap();
+        enc.Commit().unwrap();
+    }
+}
+
+#[test]
+fn thumbnails_of_images_fit_the_requested_size_and_other_files_have_none() {
+    let root = std::env::temp_dir().join(format!("flit-shell-thumb-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let mut shell = ShellCom::new().unwrap();
+    write_jpeg(&root.join("photo.jpg"), 320, 200, 1);
+    std::fs::write(root.join("notes.txt"), "x").unwrap();
+    let req = |name: &str, size| IconRequest { key: 0, kind: IconKind::Thumbnail, path: p(root.join(name).to_str().unwrap()), size, gen: 0, row: 0 };
+    for size in [64, 200] {
+        let b = shell.thumbnail(&req("photo.jpg", size)).expect("jpeg thumbnail");
+        assert!(b.width <= size && b.height <= size && b.width.max(b.height) >= size * 9 / 10, "{size}: {}x{}", b.width, b.height);
+        assert!(b.rgba.chunks_exact(4).all(|p| p[3] == 255), "opaque");
+    }
+    assert!(shell.thumbnail(&req("notes.txt", 64)).is_none());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn shell_icons_match_requested_size() {
     let mut shell = ShellCom::new().unwrap();

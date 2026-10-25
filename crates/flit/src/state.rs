@@ -1,5 +1,5 @@
 use flit_core::sort::SortField;
-use flit_core::ui::{Column, FolderView, FolderViews, NavState, Persisted, ViewPrefs};
+use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavState, Persisted, Sizes, ViewPrefs};
 use flit_core::Location;
 use flit_platform::{Placement, Platform};
 use serde::{Deserialize, Serialize};
@@ -28,6 +28,29 @@ struct ViewRecord {
     folders: Vec<(u64, FolderView)>,
 }
 
+type Look = (LayoutMode, Sizes);
+
+#[derive(Serialize, Deserialize)]
+struct LayoutRecord {
+    view: Look,
+    defaults: Look,
+    folders: Vec<Look>,
+    thumbnails: bool,
+    thumb_cache_mb: u32,
+}
+
+fn look(v: &FolderView) -> Look {
+    (v.layout, v.sizes)
+}
+
+fn with_look(v: FolderView, (layout, sizes): Look) -> FolderView {
+    FolderView { layout, sizes, ..v }
+}
+
+fn legacy(v: FolderView) -> FolderView {
+    FolderView { layout: LayoutMode::Details, ..v }
+}
+
 #[derive(Clone, Debug)]
 pub struct Saved {
     version: u32,
@@ -49,7 +72,7 @@ impl Saved {
     fn sanitized(mut self) -> Self {
         let p = &mut self.persisted;
         p.view = p.view.sanitized();
-        p.prefs.defaults = p.prefs.defaults.sanitized();
+        p.prefs = p.prefs.clone().sanitized();
         self.placement = self.placement.filter(|&(_, _, w, h, _)| w > 0 && h > 0);
         self.nav = self.nav.sanitized();
         self
@@ -76,18 +99,35 @@ impl Saved {
         let mut saved = Self::from_head(head);
         let Ok((nav, tail)) = postcard::take_from_bytes::<NavState>(tail) else { return Some(saved) };
         saved.nav = nav;
-        if let Ok(r) = postcard::from_bytes::<ViewRecord>(tail) {
-            let p = &mut saved.persisted;
-            (p.view, p.prefs, p.folders) = (r.view, r.prefs, FolderViews::from_entries(r.folders));
+        let Ok((mut r, tail)) = postcard::take_from_bytes::<ViewRecord>(tail) else { return Some(saved) };
+        if let Ok(l) = postcard::from_bytes::<LayoutRecord>(tail) {
+            (r.view, r.prefs.defaults) = (with_look(r.view, l.view), with_look(r.prefs.defaults, l.defaults));
+            (r.prefs.thumbnails, r.prefs.thumb_cache_mb) = (l.thumbnails, l.thumb_cache_mb);
+            if l.folders.len() == r.folders.len() {
+                r.folders.iter_mut().zip(l.folders).for_each(|((_, v), lk)| *v = with_look(*v, lk));
+            }
         }
+        let p = &mut saved.persisted;
+        (p.view, p.prefs, p.folders) = (r.view, r.prefs, FolderViews::from_entries(r.folders));
         Some(saved)
     }
 
     fn encode(&self) -> Option<Vec<u8>> {
         let p = &self.persisted;
+        let folders = p.folders.entries();
+        let prefs = ViewPrefs { defaults: legacy(p.prefs.defaults), ..p.prefs.clone() };
+        let layouts = LayoutRecord {
+            view: look(&p.view),
+            defaults: look(&p.prefs.defaults),
+            folders: folders.iter().map(|(_, v)| look(v)).collect(),
+            thumbnails: p.prefs.thumbnails,
+            thumb_cache_mb: p.prefs.thumb_cache_mb,
+        };
+        let views = ViewRecord { view: legacy(p.view), prefs, folders: folders.into_iter().map(|(k, v)| (k, legacy(v))).collect() };
         let mut bytes = postcard::to_stdvec(&self.head()).ok()?;
         bytes.extend(postcard::to_stdvec(&self.nav).ok()?);
-        bytes.extend(postcard::to_stdvec(&ViewRecord { view: p.view, prefs: p.prefs.clone(), folders: p.folders.entries() }).ok()?);
+        bytes.extend(postcard::to_stdvec(&views).ok()?);
+        bytes.extend(postcard::to_stdvec(&layouts).ok()?);
         Some(bytes)
     }
 

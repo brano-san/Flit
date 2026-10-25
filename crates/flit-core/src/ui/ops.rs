@@ -1,7 +1,7 @@
 use super::actions::{keys_text, ACTIONS};
 use super::edit::{EditAction, LineEdit};
 use super::palette::{Palette, Pick};
-use super::{App, Drag, Effect, Focus, Hit, ICON};
+use super::{App, Drag, Effect, Focus, Hit};
 use crate::hash::FxHashSet;
 use crate::input::{CursorIcon, Event, Key, Mods, MouseButton};
 use crate::listing::attr;
@@ -188,6 +188,12 @@ pub fn validate_name(text: &str, windows: bool) -> Result<String, &'static str> 
         return Err("The name is too long");
     }
     Ok(name.to_owned())
+}
+
+pub fn icon_location(text: &str) -> Option<(FsPath, i32)> {
+    let text = text.trim();
+    let (path, index) = text.rsplit_once(',').and_then(|(p, i)| Some((p.trim(), i.trim().parse().ok()?))).unwrap_or((text, 0));
+    FsPath::parse(path.trim_matches('"')).filter(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim)).map(|p| (p, index))
 }
 
 pub fn unique_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
@@ -566,8 +572,24 @@ impl App {
         }
     }
 
+    pub fn ask_folder_icon(&mut self) {
+        let folder = self.rename_target().filter(|&i| self.tab().view.as_ref().is_some_and(|v| v.listing().entries[i as usize].is_dir()));
+        let path = match folder {
+            Some(i) => self.item_paths(&[i]).map(|mut p| p.remove(0)),
+            None => self.shell_dir(),
+        };
+        match path {
+            Ok(folder) => self.open_pick(Palette::new(Pick::FolderIcon(folder), Vec::new(), "")),
+            Err(e) => self.status(e),
+        }
+    }
+
     pub(super) fn submit_pick(&mut self, pick: Pick, text: &str) {
         match pick {
+            Pick::FolderIcon(folder) => match icon_location(text) {
+                Some((icon, index)) => self.start_op(FileOp::FolderIcon { folder, icon, index }, Origin::Fresh, Then::Nothing),
+                None => self.status("Enter the full path of an icon, program or library, optionally followed by a comma and the icon index"),
+            },
             Pick::Shortcut(dest) => match FsPath::parse(text.trim_matches('"')).filter(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim)) {
                 Some(target) => self.start_op(FileOp::Link { items: vec![target], dest }, Origin::Fresh, Then::Rename),
                 None => self.status("Enter the full path of the file or folder the shortcut points to"),
@@ -640,11 +662,11 @@ impl App {
     }
 
     pub fn context_menu(&mut self) {
-        let (rh, list) = (self.layout.row_h, self.layout.list);
+        let list = self.layout.list;
         let t = self.tab();
         let row = t.view.as_ref().and_then(|v| v.focus.filter(|&f| v.is_selected(f)).and_then(|f| v.row_of(f)));
-        let (x, y) = match row {
-            Some(r) => (list.x + self.s(48.0), (t.row_y(r, list.y, rh) + rh).clamp(list.y, list.bottom())),
+        let (x, y) = match row.and_then(|r| self.row_rect(r)) {
+            Some(c) => ((c.x + self.s(48.0).min(c.w / 2.0)).clamp(list.x, list.right()), c.bottom().clamp(list.y, list.bottom())),
             None => (list.x + self.s(48.0), list.y + self.s(8.0)),
         };
         self.shell_menu(x, y, row.is_some(), false);
@@ -712,6 +734,11 @@ impl App {
             self.tabs[k].error = Some(format!("Created the stream {}:{}", item.display(), crate::name::display(name)));
             self.dirty |= k == self.cur;
         }
+        if let (FileOp::FolderIcon { folder, .. }, None) = (&report.op, &error) {
+            self.icon_epoch += 1;
+            self.tabs[k.unwrap_or(self.cur)].error = Some(format!("Changed the icon of {}", folder.display()));
+            self.dirty = true;
+        }
         let Some(k) = k.filter(|_| p.then != Then::Nothing && !matches!(report.op, FileOp::Trash(_))) else { return };
         let dir = self.tabs[k].view_loc.clone();
         let names: Vec<Vec<u8>> = match &p.then {
@@ -743,7 +770,6 @@ impl App {
         self.ops.reveal.retain(|r| r.until > now);
         let cur = self.tab().id;
         let Some(k) = self.ops.reveal.iter().position(|r| r.tab == cur) else { return };
-        let (rh, lh) = (self.layout.row_h, self.layout.list.h);
         let App { ops, tabs, cur, .. } = self;
         let (r, t) = (&mut ops.reveal[k], &mut tabs[*cur]);
         if !same_location(&r.dir, &t.view_loc) {
@@ -769,11 +795,11 @@ impl App {
         }
         v.focus = Some(first);
         v.anchor = Some(first);
-        t.reveal_focus(false, rh, lh);
         let rename = r.rename;
         if r.names.is_empty() {
             ops.reveal.swap_remove(k);
         }
+        self.reveal_focus(false);
         self.dirty = true;
         if rename {
             self.begin_rename(first, false);
@@ -793,7 +819,6 @@ impl App {
     }
 
     fn begin_rename(&mut self, idx: u32, batch: bool) {
-        let (rh, lh) = (self.layout.row_h, self.layout.list.h);
         let t = &mut self.tabs[self.cur];
         let Some(v) = t.view.as_mut() else { return };
         let Ok(name) = std::str::from_utf8(v.listing().name(idx)) else {
@@ -811,9 +836,10 @@ impl App {
         v.focus = Some(idx);
         v.anchor = Some(idx);
         let gen = v.snap().gen;
-        t.reveal_focus(false, rh, lh);
         t.error = None;
-        self.ops.rename = Some(Rename { tab: t.id, gen, idx, edit, scroll: 0.0, rect: Rect::default(), click: None, selecting: false, batch, confirmed: None });
+        let tab = t.id;
+        self.reveal_focus(false);
+        self.ops.rename = Some(Rename { tab, gen, idx, edit, scroll: 0.0, rect: Rect::default(), click: None, selecting: false, batch, confirmed: None });
         self.ops.slow = None;
         self.editing = false;
         self.focus = Focus::List;
@@ -1026,7 +1052,7 @@ impl App {
         }
         let m = self.mods;
         let settled = self.focused_at.is_none_or(|t| now.duration_since(t) >= self.double_click);
-        let on_name = self.layout.cols.first().is_some_and(|c| x < c.right());
+        let on_name = self.on_name(x, y, row);
         let Some(v) = &mut self.tabs[self.cur].view else { return false };
         let Some(&i) = v.rows().get(row) else { return false };
         let deferred = !m.ctrl && !m.shift && v.is_selected(i);
@@ -1216,12 +1242,10 @@ impl App {
     }
 
     pub(super) fn draw_ops<B: TextBackend>(&mut self, g: &mut Gfx<B>, th: &Theme) {
-        let l = &self.layout;
-        let (list, rh) = (l.list, l.row_h);
+        let list = self.layout.list;
         match self.drop_spot() {
             Some(Spot::Row(row)) => {
-                let y = self.tab().row_y(row, list.y, rh);
-                let r = Rect::new(list.x + self.s(4.0), y + 1.0, list.w - self.s(8.0), rh - 2.0);
+                let Some(r) = self.row_rect(row).map(|c| self.item_parts(c).body) else { return self.draw_rename(g, th) };
                 g.dl.set_clip(Some(list));
                 g.dl.round_rect(r, th.selection, self.s(4.0));
                 g.dl.outline(r, th.accent, self.s(4.0), self.s(1.0).max(1.0));
@@ -1240,14 +1264,11 @@ impl App {
         }) else {
             return;
         };
-        let l = &self.layout;
-        let (list, col, rh) = (l.list, l.cols[0], l.row_h);
-        let y = self.tab().row_y(row, list.y, rh);
-        let x0 = self.icon_x() + self.s(ICON) + self.s(4.0);
-        let rect = Rect::new(x0, y + 1.0, (col.right() - self.s(4.0) - x0).max(self.s(60.0)), rh - 2.0);
+        let list = self.layout.list;
+        let Some(rect) = self.row_rect(row).map(|c| self.name_edit_rect(c)) else { return };
         let font = self.ui_font(13.0);
         let m = g.metrics(font);
-        let baseline = (y + (rh + m.ascent - m.descent) / 2.0).round();
+        let baseline = (rect.y + (rect.h + m.ascent - m.descent) / 2.0).round();
         let (pad, radius, caret_w, inset) = (self.s(4.0), self.s(3.0), self.s(1.0).max(1.0), self.s(3.0));
         let Some(r) = self.ops.rename.as_mut() else { return };
         r.rect = rect;

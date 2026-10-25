@@ -551,3 +551,70 @@ fn bench_tags() {
     measure("read_dir 100k files, 10k tagged", RUNS, |_| (), |_| assert_eq!(listed(Some(tags.clone())), keys.len()));
     measure(&format!("resolve {} FRNs to paths", keys.len()), 5, |_| (), |_| assert!(crate::tags::resolve_files(&keys).iter().all(|r| matches!(r, flit_platform::Resolved::Found(..)))));
 }
+
+fn thumbnails_of(paths: &[FsPath], threads: usize, size: u32) -> (Duration, usize) {
+    let t = Instant::now();
+    let chunks: Vec<Vec<FsPath>> = (0..threads).map(|k| paths.iter().skip(k).step_by(threads).cloned().collect()).collect();
+    let made: usize = std::thread::scope(|s| {
+        let handles: Vec<_> = chunks
+            .into_iter()
+            .map(|chunk| {
+                s.spawn(move || {
+                    let mut sh = ShellCom::new().unwrap();
+                    chunk.into_iter().filter(|p| sh.thumbnail(&IconRequest { key: 0, kind: IconKind::Thumbnail, path: p.clone(), size, gen: 0, row: 0 }).is_some()).count()
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).sum()
+    });
+    (t.elapsed(), made)
+}
+
+#[test]
+#[ignore]
+fn bench_thumbnails() {
+    const N: usize = 300;
+    let d = Dir::temp("thumbs");
+    let sets: Vec<Vec<FsPath>> = ["a", "b"]
+        .iter()
+        .map(|set| {
+            (0..N)
+                .map(|k| {
+                    let name = format!("{set}_{k:04}.jpg");
+                    crate::shell::tests::write_jpeg(&d.0.join(&name), 320, 240, k as u32 + if *set == "a" { 0 } else { 10_000 });
+                    d.path(&name)
+                })
+                .collect()
+        })
+        .collect();
+    let bytes: u64 = std::fs::read_dir(&d.0).unwrap().filter_map(|e| e.ok()?.metadata().ok()).map(|m| m.len()).sum();
+    eprintln!("      {} generated JPEG 320x240, {:.1} MB", 2 * N, bytes as f64 / 1e6);
+    let rate = |label: &str, (t, made): (Duration, usize)| {
+        eprintln!("BENCH {label:<44} {made} in {:>8.1} ms   {:>7.0} per s   {:>6.2} ms each", t.as_secs_f64() * 1e3, made as f64 / t.as_secs_f64(), t.as_secs_f64() * 1e3 / made.max(1) as f64);
+    };
+    let half = N / 2;
+    for (size, part) in [(128, 0), (256, half)] {
+        let (a, b) = (&sets[0][part..part + half], &sets[1][part..part + half]);
+        rate(&format!("thumbnail {size} first time, 1 thread"), thumbnails_of(a, 1, size));
+        rate(&format!("thumbnail {size} first time, 4 threads"), thumbnails_of(b, 4, size));
+        rate(&format!("thumbnail {size} cached, 1 thread"), thumbnails_of(a, 1, size));
+        rate(&format!("thumbnail {size} cached, 4 threads"), thumbnails_of(b, 4, size));
+    }
+    let mut sh = ShellCom::new().unwrap();
+    let cache = d.0.join("raw");
+    std::fs::create_dir_all(&cache).unwrap();
+    let raws: Vec<PathBuf> = sets[0][half..]
+        .iter()
+        .enumerate()
+        .map(|(k, p)| {
+            let b = sh.thumbnail(&IconRequest { key: 0, kind: IconKind::Thumbnail, path: p.clone(), size: 256, gen: 0, row: 0 }).unwrap();
+            let f = cache.join(format!("{k}.raw"));
+            std::fs::write(&f, &b.rgba).unwrap();
+            f
+        })
+        .collect();
+    let t = Instant::now();
+    let total: usize = raws.iter().map(|f| std::fs::read(f).unwrap().len()).sum();
+    rate("own raw cache read 256 (warm OS cache)", (t.elapsed(), raws.len()));
+    eprintln!("      own raw cache: {:.1} KB per thumbnail", total as f64 / raws.len() as f64 / 1e3);
+}

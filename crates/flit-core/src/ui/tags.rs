@@ -1,3 +1,4 @@
+use super::layouts::Parts;
 use super::palette::{Palette, Pick};
 use super::{App, Effect, Route, MAX_OPEN};
 use crate::listing::attr;
@@ -263,20 +264,18 @@ impl App {
         self.tag_defs().get(sort::first_tag(mask) as usize).map(|t| Color::rgb(t.color))
     }
 
-    pub(super) fn draw_name<B: TextBackend>(&self, g: &mut Gfx<B>, r: Rect, text: &str, mask: u32, font: FontStyle, color: Color) {
-        let m = g.metrics(font);
-        let baseline = r.y + ((r.h + m.ascent - m.descent) / 2.0).round();
+    pub(super) fn draw_name<B: TextBackend>(&self, g: &mut Gfx<B>, p: &Parts, text: &str, mask: u32, font: FontStyle, color: Color) {
+        let (r, m) = (p.name, g.metrics(font));
+        let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
         let marks = || tags::bits(mask).filter_map(|k| self.tag_defs().get(k)).take(MAX_MARKS);
         let count = if mask == 0 { 0 } else { marks().count() };
         let (d, gap) = (self.s(MARK), self.s(MARK_GAP));
         let reserve = if count == 0 { 0.0 } else { count as f32 * (d + gap) + gap };
-        let w = g.text(r.x, baseline, text, font, color, (r.w - reserve).max(0.0));
-        if count == 0 {
-            return;
-        }
+        let x = if p.center { r.x + ((r.w - reserve - g.measure(text, font)) / 2.0).max(0.0).round() } else { r.x };
+        let w = g.text(x, baseline, text, font, color, (r.right() - x - reserve).max(0.0));
         let y = r.y + ((r.h - d) / 2.0).round();
         for (k, t) in marks().enumerate() {
-            g.dl.round_rect(Rect::new((r.x + w + 2.0 * gap + k as f32 * (d + gap)).round(), y, d, d), Color::rgb(t.color), d / 2.0);
+            g.dl.round_rect(Rect::new((x + w + 2.0 * gap + k as f32 * (d + gap)).round(), y, d, d), Color::rgb(t.color), d / 2.0);
         }
     }
 }

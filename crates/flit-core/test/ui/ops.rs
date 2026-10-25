@@ -850,6 +850,35 @@ fn the_new_item_dialog_creates_files_from_templates_folders_and_shortcuts() {
 }
 
 #[test]
+fn the_folder_icon_command_asks_for_an_icon_location_and_writes_it_for_the_selected_folder() {
+    assert_eq!(icon_location(r#" "C:\Windows\System32\imageres.dll" , -113 "#), Some((p(r"C:\Windows\System32\imageres.dll"), -113)));
+    assert_eq!(icon_location(r"C:\i\a,b.ico"), Some((p(r"C:\i\a,b.ico"), 0)));
+    assert_eq!(icon_location(r"icons\a.ico"), None);
+    use crate::listing::{attr, Entry};
+    use crate::ui::{icon_key, IconKind};
+    let dir = |attrs| Entry { size: 0, modified: 0, created: 0, name_off: 0, attrs, name_len: 0, ext_len: 0, tags: 0 };
+    let custom = |epoch| icon_key(b"photos", b"", &dir(attr::DIR | attr::READONLY), 16, br"C:\x", epoch);
+    assert_eq!(custom(0).1, IconKind::CustomFolder);
+    assert_ne!(custom(0).0, custom(1).0);
+    assert_eq!(icon_key(b"photos", b"", &dir(attr::DIR), 16, br"C:\x", 0).1, IconKind::Folder);
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("photos", true), ("a.txt", false)]);
+    select(&mut app, &["photos"]);
+    app.run_action("file.folder_icon", t0());
+    assert_eq!(app.nav.palette.as_ref().unwrap().pick, Pick::FolderIcon(p(r"C:\x\photos")));
+    typed(&mut app, r"C:\i\cam.ico,2");
+    key(&mut app, Key::Enter, NO);
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::FolderIcon { folder: p(r"C:\x\photos"), icon: p(r"C:\i\cam.ico"), index: 2 });
+    let epoch = app.icon_epoch;
+    done(&mut app, id, op, &[(r"C:\x\photos", r"C:\i\cam.ico")]);
+    assert_eq!((app.icon_epoch, app.tab().error.as_deref()), (epoch + 1, Some(r"Changed the icon of C:\x\photos")));
+    select(&mut app, &["a.txt"]);
+    app.run_action("file.folder_icon", t0());
+    assert_eq!(app.nav.palette.as_ref().unwrap().pick, Pick::FolderIcon(p(r"C:\x")), "without a selected folder the current one changes");
+}
+
+#[test]
 fn a_new_folder_with_the_selection_takes_the_items_and_is_renamed() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &[("New folder", true), ("a.txt", false), ("b.txt", false)]);
