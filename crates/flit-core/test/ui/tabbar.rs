@@ -192,7 +192,7 @@ fn restored_tabs_stay_asleep_until_shown() {
     assert!(listed(&mut app).is_empty());
     assert_eq!(app.tabs[0].gen, 0);
     assert_eq!(app.tabs[2].title(), "c");
-    assert_eq!(app.session(), WindowSession { tabs: vec![loc(r"C:\a"), loc(r"C:\b"), loc(r"C:\c")], cur: 1 });
+    assert_eq!(app.session(), WindowSession { tabs: vec![loc(r"C:\a"), loc(r"C:\b"), loc(r"C:\c")], cur: 1, splits: vec![None, None, None] });
     key(&mut app, Key::Char('3'), CTRL);
     assert_eq!(listed(&mut app), [r"C:\c"]);
     assert_eq!(app.window_title(), r"C:\c — Flit");
@@ -296,7 +296,7 @@ fn tab_actions_button_follows_its_flag() {
     assert!(r.w > 0.0 && r.right() <= app.layout.caption[0].x);
     ev(&mut app, Event::MouseDown { x: r.x + 5.0, y: r.y + 5.0, button: MouseButton::Left, clicks: 1 });
     ev(&mut app, Event::MouseUp { x: r.x + 5.0, y: r.y + 5.0, button: MouseButton::Left });
-    assert_eq!(menu_labels(&mut app), ["New tab", "New window", "Move tab to a new window", "Mini window", "Full screen", "Close all tabs"]);
+    assert_eq!(menu_labels(&mut app), ["New tab", "New window", "Move tab to a new window", "Mini window", "Full screen", "Split vertically", "Split horizontally", "Open new tabs with two panes", "Close all tabs"]);
     app.tab_actions_button = false;
     app.layout();
     assert_eq!(app.layout.actions.w, 0.0);

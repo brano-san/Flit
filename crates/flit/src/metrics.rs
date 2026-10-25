@@ -47,6 +47,9 @@ pub struct Metrics {
     injection_pending: bool,
     injections: u32,
     sort: Option<f64>,
+    split: bool,
+    split_at: Option<Instant>,
+    split_ready: Option<f64>,
 }
 
 fn ms(d: Duration) -> f64 {
@@ -59,6 +62,10 @@ fn percentile(v: &mut [f64], p: f64) -> f64 {
     }
     v.sort_by(f64::total_cmp);
     v[((v.len() - 1) as f64 * p).round() as usize]
+}
+
+pub fn dual_at_start() -> bool {
+    std::env::var("FLIT_METRICS_SPLIT").is_ok_and(|s| s == "start")
 }
 
 fn key(key: Key, ctrl: bool) -> Event {
@@ -88,6 +95,9 @@ impl Metrics {
             injection_pending: false,
             injections: 0,
             sort: None,
+            split: std::env::var_os("FLIT_METRICS_SPLIT").is_some(),
+            split_at: dual_at_start().then_some(started),
+            split_ready: None,
         }
     }
 
@@ -115,9 +125,18 @@ impl Metrics {
         let stats = app.tab().stats;
         match self.phase {
             Phase::Loading => {
-                if stats.done.is_some() {
-                    self.phase = Phase::Warm(SETTLE_FRAMES);
+                if stats.done.is_none() {
+                    return Step::None;
                 }
+                if self.split && self.split_at.is_none() {
+                    self.split_at = Some(now);
+                    return Step::Inject(Event::Key { key: Key::Char('V'), mods: Mods { shift: true, alt: true, ctrl: false }, pressed: true });
+                }
+                if app.other_pane().is_some_and(|t| t.stats.done.is_none()) {
+                    return Step::None;
+                }
+                self.split_ready = self.split_at.filter(|_| app.other_pane().is_some()).map(|at| ms(now - at));
+                self.phase = Phase::Warm(SETTLE_FRAMES);
                 Step::None
             }
             Phase::Warm(0) => {
@@ -190,7 +209,7 @@ impl Metrics {
         let mut s = String::new();
         let _ = write!(
             s,
-            "{{\"entries\":{},\"start_to_first_frame_ms\":{},\"first_rows_ms\":{},\"full_listing_ms\":{},\"first_rows_worker_ms\":{},\"full_listing_worker_ms\":{},\"scroll_rows\":{},\"scroll_frames\":{},\"scroll_ms\":{:.2},\"software_frames\":{},\"frame_period_ms\":{:.2},\"refresh_from_display\":{},\"frame_interval_p50_ms\":{:.2},\"dropped_frames\":{},\"frame_cpu_p50_ms\":{:.2},\"frame_cpu_p99_ms\":{:.2},\"input_to_frame_p50_ms\":{:.2},\"input_to_frame_max_ms\":{:.2},\"sort_ms\":{}}}",
+            "{{\"entries\":{},\"start_to_first_frame_ms\":{},\"first_rows_ms\":{},\"full_listing_ms\":{},\"first_rows_worker_ms\":{},\"full_listing_worker_ms\":{},\"scroll_rows\":{},\"scroll_frames\":{},\"scroll_ms\":{:.2},\"software_frames\":{},\"frame_period_ms\":{:.2},\"refresh_from_display\":{},\"frame_interval_p50_ms\":{:.2},\"dropped_frames\":{},\"frame_cpu_p50_ms\":{:.2},\"frame_cpu_p99_ms\":{:.2},\"input_to_frame_p50_ms\":{:.2},\"input_to_frame_max_ms\":{:.2},\"sort_ms\":{},\"panes\":{},\"split_ready_ms\":{}}}",
             self.entries,
             opt(self.first_frame),
             opt(self.first_rows),
@@ -210,6 +229,8 @@ impl Metrics {
             percentile(&mut lat, 0.5),
             lat.iter().copied().fold(0.0, f64::max),
             opt(self.sort),
+            if self.split { 2 } else { 1 },
+            opt(self.split_ready),
         );
         let _ = std::fs::write(&self.out, s);
     }

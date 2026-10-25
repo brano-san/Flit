@@ -23,6 +23,8 @@ pub mod sidebar;
 mod address;
 mod tabbar;
 mod tags;
+mod split;
+mod describe;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchSort};
@@ -36,6 +38,7 @@ pub use menu::MenuItem;
 pub use tab::Tab;
 pub use address::Typed;
 pub use tabbar::{MovedTab, Startup, WindowSession};
+pub use split::{SplitDir, SplitPrefs, SplitSession};
 
 use crate::fmt as format;
 use crate::hash::{self, FxHashMap};
@@ -231,12 +234,13 @@ pub struct Persisted {
     pub prefs: ViewPrefs,
     pub folders: FolderViews,
     pub archive: crate::archive::Defaults,
+    pub split: SplitPrefs,
     pub startup: Startup,
 }
 
 impl Default for Persisted {
     fn default() -> Self {
-        Self { path: Location::computer(), show_hidden: false, view: FolderView::default(), prefs: ViewPrefs::default(), folders: FolderViews::default(), archive: Default::default(), startup: Startup::default() }
+        Self { path: Location::computer(), show_hidden: false, view: FolderView::default(), prefs: ViewPrefs::default(), folders: FolderViews::default(), archive: Default::default(), split: SplitPrefs::default(), startup: Startup::default() }
     }
 }
 
@@ -307,6 +311,7 @@ enum Hit {
     CrumbOverflow,
     Suggestion(usize),
     Eject,
+    PaneSplit,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -320,9 +325,10 @@ enum Drag {
     Preview { hit: preview_pane::PaneHit, start: f32, size: f32 },
     Marquee,
     Tab { origin: usize, x: f32, y: f32, moved: bool, torn: bool },
+    PaneSplit { start: f32, ratio: f32 },
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Layout {
     title: Rect,
     tabs: Vec<(Rect, Rect)>,
@@ -350,6 +356,9 @@ struct Layout {
     flow: flow::FlowParams,
     panes: Vec<Rect>,
     bottom: f32,
+    pane: Rect,
+    content: Rect,
+    splitter: Rect,
 }
 
 pub struct App {
@@ -366,6 +375,7 @@ pub struct App {
     pub tab_actions_button: bool,
     pub folders_in_new_tab: bool,
     pub double_click_up: bool,
+    pub split_prefs: SplitPrefs,
     pub prefs: ViewPrefs,
     folders: FolderViews,
     menu: Vec<menu::Cmd>,
@@ -415,6 +425,7 @@ pub struct App {
     addr: address::Address,
     tag_fixes: Vec<(FsPath, u32, Instant)>,
     preview: preview_pane::PreviewPane,
+    alt: split::Alt,
 }
 
 impl App {
@@ -433,6 +444,7 @@ impl App {
             tab_actions_button: true,
             folders_in_new_tab: false,
             double_click_up: true,
+            split_prefs: state.split,
             prefs: state.prefs,
             folders: state.folders,
             menu: Vec::new(),
@@ -478,6 +490,7 @@ impl App {
             addr: Default::default(),
             tag_fixes: Vec::new(),
             preview: Default::default(),
+            alt: Default::default(),
         };
         let mut start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
         let total = start.len();
@@ -505,7 +518,7 @@ impl App {
 
     pub fn persisted(&self) -> Persisted {
         let t = self.tab();
-        Persisted { path: t.location().clone(), show_hidden: t.view_spec.show_hidden, view: t.folder_view(), prefs: self.prefs.clone(), folders: self.folders.clone(), archive: self.archive.prefs.clone(), startup: Startup::default() }
+        Persisted { path: t.location().clone(), show_hidden: t.view_spec.show_hidden, view: t.folder_view(), prefs: self.prefs.clone(), folders: self.folders.clone(), archive: self.archive.prefs.clone(), split: self.split_prefs, startup: Startup::default() }
     }
 
     pub fn tab(&self) -> &Tab {
@@ -660,6 +673,7 @@ impl App {
         self.tabs.push(t);
         self.cur = self.tabs.len() - 1;
         self.load_tab(self.cur, r.select, now);
+        self.dual_new_tab(now);
         self.after_tab_change();
     }
 
@@ -774,35 +788,46 @@ impl App {
     pub fn poll(&mut self) -> bool {
         let mut visible = false;
         for k in 0..self.tabs.len() {
-            let Some(snap) = self.tabs[k].slot.take() else { continue };
-            if self.redirect(k, &snap) {
-                continue;
+            visible |= self.poll_tab(k);
+            if self.tabs[k].split.is_some() {
+                visible |= self.on_other_at(k, |a| a.poll_tab(k));
             }
-            self.sync_spec(k);
-            let current = snap.gen == self.tabs[k].gen;
-            let (loaded, fresh) = (snap.done && current, current && self.tabs[k].view.as_ref().is_none_or(|v| v.snap().gen != snap.gen));
-            if fresh && self.tabs[k].look == LayoutMode::Columns {
-                self.keep_as_pane(k);
-            }
-            let resort = self.tabs[k].on_snapshot(snap);
-            if fresh || loaded {
-                self.settle_look(k, fresh, loaded);
-            }
-            if resort {
-                self.resort(k);
-            }
-            if loaded {
-                self.on_loaded(k);
-            }
-            visible |= k == self.cur;
         }
+        self.poll_bin();
         visible |= self.poll_panes();
         visible |= self.poll_address();
         self.dirty |= visible;
         visible
     }
 
+    fn poll_tab(&mut self, k: usize) -> bool {
+        let Some(snap) = self.tabs[k].slot.take() else { return false };
+        if self.redirect(k, &snap) {
+            return false;
+        }
+        self.sync_spec(k);
+        let current = snap.gen == self.tabs[k].gen;
+        let (loaded, fresh) = (snap.done && current, current && self.tabs[k].view.as_ref().is_none_or(|v| v.snap().gen != snap.gen));
+        if fresh && self.tabs[k].look == LayoutMode::Columns {
+            self.keep_as_pane(k);
+        }
+        let resort = self.tabs[k].on_snapshot(snap);
+        if fresh || loaded {
+            self.settle_look(k, fresh, loaded);
+        }
+        if resort {
+            self.resort(k);
+        }
+        if loaded {
+            self.on_loaded(k);
+        }
+        k == self.cur
+    }
+
     pub fn on_provider_event(&mut self, ev: ProviderEvent, now: Instant) {
+        if let Some(k) = self.inactive_of_event(&ev) {
+            return self.on_other_at(k, |a| a.on_provider_event(ev, now));
+        }
         let tab_of = |tabs: &[Tab], id: TabId, gen: u64| tabs.iter().position(|t| t.id == id && t.gen == gen);
         match ev {
             ProviderEvent::Changes { tab, gen, changes } => {
@@ -848,6 +873,9 @@ impl App {
     }
 
     pub fn on_resorted(&mut self, tab: TabId, gen: u64, view: ViewSpec, base_len: usize, order: Vec<u32>) {
+        if let Some(k) = self.inactive_of(tab) {
+            return self.on_other_at(k, |a| a.on_resorted(tab, gen, view, base_len, order));
+        }
         if let Some(k) = self.tabs.iter().position(|t| t.id == tab && t.gen == gen && t.view_spec == view) {
             if let Some(v) = &mut self.tabs[k].view {
                 v.merge_order(order, view, base_len);
@@ -924,9 +952,8 @@ impl App {
 
     fn layout(&mut self) {
         let (w, h) = self.size;
-        let (cx, filter_h) = self.content_origin();
+        let cx = self.sidebar_width();
         let ops_button = self.ops_button_visible();
-        let (kinds, widths) = (self.column_kinds(), self.tab().columns);
         let status_bar = self.prefs.status_bar || self.tab().error.is_some();
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
@@ -961,7 +988,7 @@ impl App {
         let right = if ops_button { w - s(10.0) - s(NAV_W) } else { w };
         l.ops_button = if ops_button { Rect::new(right + s(4.0), l.nav[0].y, s(NAV_W), l.nav[0].h) } else { Rect::default() };
         l.address = Rect::new(ax, l.toolbar.y + s(5.0), (right - s(12.0) - ax).max(s(40.0)), s(TOOL_H - 10.0));
-        l.header = Rect::new(cx, l.toolbar.bottom() + filter_h, w - cx, s(HEADER_H));
+        l.header = Rect::new(cx, l.toolbar.bottom(), w - cx, s(HEADER_H));
         let status_h = if status_bar { s(STATUS_H) } else { 0.0 };
         l.status = Rect::new(0.0, h - status_h, w, status_h);
         if !status_bar {
@@ -969,13 +996,34 @@ impl App {
             l.bin = Default::default();
         }
         self.layout_preview();
+        let l = &self.layout;
+        let area = Rect::new(l.header.x, l.toolbar.bottom(), l.header.w, (l.bottom - l.toolbar.bottom()).max(0.0));
+        let (mine, theirs) = self.split_areas(area);
+        if let Some(r) = theirs {
+            self.layout_other(r);
+        }
+        self.layout_pane(mine);
+        self.layout_nav();
+        self.layout_jobs();
+        self.layout_address();
+    }
+
+    fn layout_pane(&mut self, area: Rect) {
+        let filter_h = self.filter_bar_h();
+        let (kinds, widths) = (self.column_kinds(), self.tab().columns);
+        let sc = self.scale;
+        let s = |v: f32| (v * sc).round();
+        let l = &mut self.layout;
+        l.pane = area;
+        l.header = Rect::new(area.x, area.y + filter_h, area.w, s(HEADER_H));
+        l.bottom = area.bottom();
         self.layout_look();
         let l = &mut self.layout;
         l.columns.clear();
         l.columns.extend(kinds.iter().copied().filter(|&c| widths.shown(c)));
         let fixed: f32 = l.columns.iter().skip(1).map(|&c| s(widths.width(c))).sum();
         let name_w = (l.list.w - fixed).max(s(NAME_MIN_W));
-        let mut x = cx;
+        let mut x = l.header.x;
         l.cols.clear();
         for &c in &l.columns {
             let cw = if c == Column::Name { name_w } else { s(widths.width(c)) };
@@ -1005,9 +1053,8 @@ impl App {
             }
         };
         self.sync_panes();
-        self.layout_nav();
-        self.layout_jobs();
-        self.layout_address();
+        self.layout_filter(area.x, area.y);
+        self.layout_home();
     }
 
     fn hit(&self, x: f32, y: f32) -> Hit {
@@ -1054,6 +1101,9 @@ impl App {
                 return Hit::Address;
             }
             return Hit::None;
+        }
+        if self.on_splitter(x, y) {
+            return Hit::PaneSplit;
         }
         if l.header.contains(x, y) {
             let grip = self.s(4.0);
@@ -1132,7 +1182,7 @@ impl App {
             Event::MouseDown { x, y, button, clicks } => self.mouse_down(*x, *y, *button, *clicks, now),
             Event::MouseUp { x, y, button } => self.mouse_up(*x, *y, *button, now),
             Event::Wheel { dy, .. } => {
-                if self.jobs_wheel(*dy) || self.nav_wheel(*dy) || self.pane_wheel(*dy) || self.preview_wheel(*dy) || self.strip_wheel(*dy) {
+                if self.wheel_other(ev, now) || self.jobs_wheel(*dy) || self.nav_wheel(*dy) || self.pane_wheel(*dy) || self.preview_wheel(*dy) || self.strip_wheel(*dy) {
                     return;
                 }
                 if self.mods.ctrl {
@@ -1215,6 +1265,7 @@ impl App {
             Drag::PinMove { from, .. } => return self.drag_pin(from, y),
             Drag::Tab { .. } => return self.drag_tab(x, y),
             Drag::Preview { hit, start, size } => return self.preview_drag(hit, x, y, start, size),
+            Drag::PaneSplit { start, ratio } => return self.drag_pane_split(x, y, start, ratio),
             Drag::Marquee | Drag::None => {}
         }
         if self.start_pin_drag(y) {
@@ -1226,6 +1277,7 @@ impl App {
             Hit::Address if self.editing => CursorIcon::Text,
             Hit::FilterField | Hit::PaletteField => CursorIcon::Text,
             Hit::Preview(preview_pane::PaneHit::Split) => self.preview_cursor(),
+            Hit::PaneSplit => self.split_cursor(),
             _ => CursorIcon::Default,
         };
         self.set_cursor(cursor);
@@ -1238,7 +1290,11 @@ impl App {
 
     fn mouse_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8, now: Instant) {
         self.dirty = true;
-        if self.form_down(x, y, clicks) || self.jobs_mouse_down(self.hit(x, y)) || self.strip_mouse_down(self.hit(x, y), button, clicks, now) || self.autoscroll_down(self.hit(x, y), self.along_of(x, y), button) || self.ops_mouse_down(x, y, button, clicks) {
+        if self.form_down(x, y, clicks) {
+            return;
+        }
+        self.pane_press(x, y);
+        if self.jobs_mouse_down(self.hit(x, y)) || self.strip_mouse_down(self.hit(x, y), button, clicks, now) || self.autoscroll_down(self.hit(x, y), self.along_of(x, y), button) || self.ops_mouse_down(x, y, button, clicks) {
             return;
         }
         let h = self.hit(x, y);
@@ -1311,6 +1367,7 @@ impl App {
                 let col = self.layout.columns[i];
                 self.drag = Drag::ColSep { col, start_x: x, start_w: self.tab().columns.width(col) };
             }
+            Hit::PaneSplit if button == MouseButton::Left => self.begin_pane_split(x, y, clicks),
             _ => {}
         }
     }
@@ -1327,6 +1384,9 @@ impl App {
         self.dirty = true;
         if let Drag::PinMove { from, to } = was {
             return self.drop_pin(from, to);
+        }
+        if let Drag::PaneSplit { .. } = was {
+            self.strip.rev += 1;
         }
         if let Drag::Tab { torn: true, .. } = was {
             return self.tear_off(x, y);
@@ -1558,36 +1618,34 @@ impl App {
         self.ops_frame(now);
         animating |= self.marquee_autoscroll(dt);
         animating |= self.autoscroll_step(dt);
-
-        let t = self.tab_mut();
-        let diff = t.scroll_target - t.scroll;
-        if diff.abs() > 0.5 {
-            t.scroll += diff * (1.0 - (-dt / SCROLL_TAU).exp()).max(0.15);
-            animating = true;
-        } else {
-            t.scroll = t.scroll_target;
-        }
+        animating |= self.scroll_step(dt);
+        animating |= self.step_other(dt);
         self.layout();
         self.sync_preview(now);
 
         let mut arena = std::mem::take(&mut self.arena);
         arena.reset();
         self.fit_columns(g, &arena);
+        self.fit_other(g, &arena);
         let th = self.theme();
         for _ in 0..2 {
             arena.reset();
             g.begin(th.bg);
             if self.search.active {
                 self.draw_search(g, &arena, th);
-            } else if self.on_home() {
-                self.draw_home(g, th);
             } else {
-                self.draw_list(g, &arena, th);
-                self.draw_panes(g, th);
-                self.draw_preview(g, th);
-                self.draw_marquee(g, th);
-                self.draw_ops(g, th);
-                self.draw_header(g, th);
+                self.draw_other(g, &arena, th);
+                if self.on_home() {
+                    self.draw_home(g, th);
+                } else {
+                    self.draw_list(g, &arena, th);
+                    self.draw_panes(g, th);
+                    self.draw_preview(g, th);
+                    self.draw_marquee(g, th);
+                    self.draw_ops(g, th);
+                    self.draw_header(g, th);
+                }
+                self.draw_split(g, th);
             }
             self.draw_title(g, th);
             if self.search.active {
@@ -1616,6 +1674,17 @@ impl App {
             }
         }
         animating || g.atlas_reset
+    }
+
+    fn scroll_step(&mut self, dt: f32) -> bool {
+        let t = self.tab_mut();
+        let diff = t.scroll_target - t.scroll;
+        if diff.abs() > 0.5 {
+            t.scroll += diff * (1.0 - (-dt / SCROLL_TAU).exp()).max(0.15);
+            return true;
+        }
+        t.scroll = t.scroll_target;
+        false
     }
 
     fn draw_title<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {

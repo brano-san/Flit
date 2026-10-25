@@ -124,7 +124,7 @@ fn widgets_toggle_from_the_page_menu_and_are_remembered() {
     click(empty, &mut app, MouseButton::Right);
     let menu = menu_of(&mut app);
     assert!(!menu.shell);
-    assert_eq!(labels(&menu.menu), ["Quick access *", "Drives *", "Tags *", "Recent files *", "Clear recent files"]);
+    assert_eq!(labels(&menu.menu), ["Split vertically", "Split horizontally", "Quick access *", "Drives *", "Tags *", "Recent files *", "Clear recent files"]);
     run(&mut app, &menu, "Drives");
     assert!(!cards(&app).iter().any(|c| c.starts_with("drive")));
     assert_eq!(app.nav_prefs().widgets_off, ["drives"]);

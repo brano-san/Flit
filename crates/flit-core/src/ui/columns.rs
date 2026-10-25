@@ -1,4 +1,4 @@
-use super::{icon_glyph, icon_key, App, Effect, Hit, IconRequest, Route};
+use super::{icon_glyph, icon_key, App, Effect, Hit, IconRequest, Route, Tab};
 use crate::listing::attr;
 use crate::location::Location;
 use crate::open::OpenTarget;
@@ -78,7 +78,8 @@ impl App {
     pub(super) fn poll_panes(&mut self) -> bool {
         let mut shown = false;
         for (k, t) in self.tabs.iter_mut().enumerate() {
-            for p in &mut t.panes {
+            let Tab { panes, split, .. } = t;
+            for p in panes.iter_mut().chain(split.iter_mut().flat_map(|s| s.other.panes.iter_mut())) {
                 let Some(snap) = p.slot.take().filter(|s| s.gen == p.gen) else { continue };
                 match &mut p.view {
                     Some(v) if v.snap().gen == snap.gen => v.replace(snap),

@@ -111,7 +111,7 @@ fn sidebar_and_home_preferences_ride_sixth_after_the_pane_so_older_files_still_l
     let bytes = s.encode().unwrap();
     let back = Saved::decode(&bytes).unwrap().sanitized();
     assert_eq!((back.pane, &back.side), (pane, &side));
-    let trailing = postcard::to_stdvec(&side).unwrap().len() + postcard::to_stdvec(&s.persisted.archive).unwrap().len();
+    let trailing = postcard::to_stdvec(&side).unwrap().len() + postcard::to_stdvec(&s.persisted.archive).unwrap().len() + postcard::to_stdvec(&SplitPrefs::default()).unwrap().len();
     let master_layout = &bytes[..bytes.len() - trailing];
     let (_, tail) = postcard::take_from_bytes::<Head>(master_layout).unwrap();
     let (_, tail) = postcard::take_from_bytes::<NavState>(tail).unwrap();
@@ -136,7 +136,7 @@ fn corrupted_nav_state_falls_back() {
 }
 
 #[test]
-fn archive_defaults_ride_last_and_never_keep_a_password() {
+fn archive_defaults_ride_seventh_and_never_keep_a_password() {
     use flit_core::archive::{Compression, Defaults, Format, Secret};
     use flit_core::digest::HashKind;
     let mut persisted = Persisted::default();
@@ -148,7 +148,7 @@ fn archive_defaults_ride_last_and_never_keep_a_password() {
     let want = Defaults { compression: Compression { password: None, ..s.persisted.archive.compression.clone() }, ..s.persisted.archive.clone() };
     assert_eq!(back.persisted.archive, want);
     assert_eq!(back.persisted.prefs, s.persisted.prefs);
-    let stored = postcard::to_stdvec(&want).unwrap();
+    let stored = [postcard::to_stdvec(&want).unwrap(), postcard::to_stdvec(&SplitPrefs::default()).unwrap()].concat();
     assert!(bytes.ends_with(&stored));
     let without = &bytes[..bytes.len() - stored.len()];
     assert_eq!(Saved::decode(without).unwrap().persisted.archive, Defaults::default());
@@ -161,9 +161,34 @@ fn pane_state_rides_after_layouts_and_older_files_keep_the_default() {
     let bytes = s.encode().unwrap();
     assert_eq!(Saved::decode(&bytes).unwrap().pane, pane);
     let older = Saved::new(Persisted::default(), None).encode().unwrap();
-    let trailing = [postcard::to_stdvec(&PaneState::default()), postcard::to_stdvec(&NavPrefs::default()), postcard::to_stdvec(&Defaults::default())].map(|b| b.unwrap().len()).iter().sum::<usize>();
+    let trailing = [postcard::to_stdvec(&PaneState::default()), postcard::to_stdvec(&NavPrefs::default()), postcard::to_stdvec(&Defaults::default()), postcard::to_stdvec(&SplitPrefs::default())].map(|b| b.unwrap().len()).iter().sum::<usize>();
     let without = &older[..older.len() - trailing];
     assert_eq!(Saved::decode(without).unwrap().pane, PaneState::default());
     let broken = Saved { pane: PaneState { right_w: -1.0, volume: f32::NAN, ..pane }, ..s }.sanitized();
     assert_eq!((broken.pane.right_w, broken.pane.volume), (PaneState::default().right_w, PaneState::default().volume));
+}
+
+#[test]
+fn dual_pane_preferences_ride_eighth_so_files_from_master_still_load() {
+    use flit_core::ui::SplitDir;
+    let persisted = Persisted { split: SplitPrefs { dual: true, dir: SplitDir::Horizontal }, ..Default::default() };
+    let s = Saved::new(persisted, None).with_pane(PaneState { visible: true, ..Default::default() });
+    let bytes = s.encode().unwrap();
+    let back = Saved::decode(&bytes).unwrap();
+    assert_eq!(back.persisted.split, s.persisted.split);
+    let stored = postcard::to_stdvec(&s.persisted.split).unwrap();
+    assert!(bytes.ends_with(&stored));
+    let master = &bytes[..bytes.len() - stored.len()];
+    let (_, tail) = postcard::take_from_bytes::<Head>(master).unwrap();
+    let (_, tail) = postcard::take_from_bytes::<NavState>(tail).unwrap();
+    let (_, tail) = postcard::take_from_bytes::<ViewRecord>(tail).unwrap();
+    let (_, tail) = postcard::take_from_bytes::<LayoutRecord>(tail).unwrap();
+    let (_, tail) = postcard::take_from_bytes::<PaneState>(tail).unwrap();
+    let (_, tail) = postcard::take_from_bytes::<NavPrefs>(tail).unwrap();
+    let (_, tail) = postcard::take_from_bytes::<Defaults>(tail).unwrap();
+    assert!(tail.is_empty(), "master writes seven records");
+    let older = Saved::decode(master).unwrap();
+    assert_eq!(older.persisted.split, SplitPrefs::default());
+    assert_eq!(older.pane, s.pane);
+    assert_eq!(older.persisted.archive, s.persisted.archive);
 }

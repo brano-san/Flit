@@ -41,18 +41,33 @@ type Win<P> = <Ws<P> as WindowSystem>::Window;
 type Device<P> = <<P as Platform>::Renderer as Renderer>::Device;
 
 #[derive(Default)]
-struct Visible {
+struct Rows {
     gen: AtomicU64,
     first: AtomicU32,
     last: AtomicU32,
 }
 
+impl Rows {
+    fn wants(&self, req: &IconRequest) -> bool {
+        req.gen == self.gen.load(Ordering::Relaxed) && req.row + ICON_MARGIN >= self.first.load(Ordering::Relaxed) && req.row <= self.last.load(Ordering::Relaxed) + ICON_MARGIN
+    }
+
+    fn store(&self, (gen, first, last): (u64, u32, u32)) {
+        self.gen.store(gen, Ordering::Relaxed);
+        self.first.store(first, Ordering::Relaxed);
+        self.last.store(last, Ordering::Relaxed);
+    }
+}
+
+#[derive(Default)]
+struct Visible {
+    pane: Rows,
+    other: Rows,
+}
+
 impl Visible {
     fn wants(&self, req: &IconRequest) -> bool {
-        req.gen == 0
-            || req.gen == self.gen.load(Ordering::Relaxed)
-                && req.row + ICON_MARGIN >= self.first.load(Ordering::Relaxed)
-                && req.row <= self.last.load(Ordering::Relaxed) + ICON_MARGIN
+        req.gen == 0 || self.pane.wants(req) || self.other.wants(req)
     }
 }
 
@@ -296,6 +311,7 @@ impl<P: Platform> Handler<P> {
         let routes = ws.tabs.get(cur).map(|l| vec![Route { folder: l.clone(), select: None }]).unwrap_or_default();
         let mut app = self.new_app(routes, self.saved.persisted.clone());
         app.restore_tabs(&ws.tabs, cur);
+        app.restore_splits(&ws.splits);
         app
     }
 
@@ -703,10 +719,8 @@ impl<P: Platform> Handler<P> {
         if let Some(b) = st.born.take() {
             eprintln!("window ready in {:.1} ms with {} tabs", b.elapsed().as_secs_f64() * 1e3, st.app.tabs().len());
         }
-        let (gen, first, last) = st.app.visible_rows();
-        st.visible.gen.store(gen, Ordering::Relaxed);
-        st.visible.first.store(first, Ordering::Relaxed);
-        st.visible.last.store(last, Ordering::Relaxed);
+        st.visible.pane.store(st.app.visible_rows());
+        st.visible.other.store(st.app.other_visible_rows().unwrap_or((u64::MAX, 0, 0)));
         self.places.start_once();
         let now = Instant::now();
         if animating {
@@ -868,7 +882,8 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
 use flit_core::input::HitArea;
 
 pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Option<PathBuf>, started: Instant) -> Result<(), PlatformError> {
-    let saved = state::load::<P>();
+    let mut saved = state::load::<P>();
+    saved.persisted.split.dual |= metrics.is_some() && crate::metrics::dual_at_start();
     let ws = Ws::<P>::new()?;
     let waker = ws.waker();
     let wake: Wake = Arc::new(move || waker.wake());
@@ -903,8 +918,8 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let mut restore: VecDeque<(WindowSession, Option<Placement>)> = match &saved.persisted.startup {
         _ if !open.is_empty() || crashed => VecDeque::new(),
         Startup::Continue => previous.iter().flat_map(Session::windows).collect(),
-        Startup::NewTab => VecDeque::from([(WindowSession { tabs: vec![Location::home_page()], cur: 0 }, None)]),
-        Startup::Folders(tabs) => VecDeque::from([(WindowSession { tabs: tabs.clone(), cur: 0 }, None)]),
+        Startup::NewTab => VecDeque::from([(WindowSession { tabs: vec![Location::home_page()], cur: 0, ..Default::default() }, None)]),
+        Startup::Folders(tabs) => VecDeque::from([(WindowSession { tabs: tabs.clone(), cur: 0, ..Default::default() }, None)]),
     };
     let first_window = restore.pop_front().filter(|(w, _)| !w.tabs.is_empty());
     let mut h = Handler::<P> {

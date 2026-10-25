@@ -1,5 +1,5 @@
 use crossbeam_channel::{unbounded, Sender};
-use flit_core::ui::WindowSession;
+use flit_core::ui::{SplitSession, WindowSession};
 use flit_platform::{Placement, Platform};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -27,11 +27,20 @@ impl Session {
     }
 
     fn decode(bytes: &[u8]) -> Option<Self> {
-        postcard::from_bytes::<Self>(bytes).ok().filter(|s| s.version == VERSION)
+        let (mut s, tail) = postcard::take_from_bytes::<Self>(bytes).ok().filter(|(s, _)| s.version == VERSION)?;
+        if let Ok((splits, _)) = postcard::take_from_bytes::<Vec<Vec<Option<SplitSession>>>>(tail) {
+            if splits.len() == s.windows.len() {
+                s.windows.iter_mut().zip(splits).for_each(|((w, _), panes)| w.splits = panes);
+            }
+        }
+        Some(s)
     }
 
     fn encode(&self) -> Option<Vec<u8>> {
-        postcard::to_stdvec(self).ok()
+        let mut bytes = postcard::to_stdvec(self).ok()?;
+        let splits: Vec<&Vec<Option<SplitSession>>> = self.windows.iter().map(|(w, _)| &w.splits).collect();
+        bytes.extend(postcard::to_stdvec(&splits).ok()?);
+        Some(bytes)
     }
 }
 

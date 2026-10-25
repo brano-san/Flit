@@ -495,12 +495,11 @@ impl App {
 
     pub(super) fn set_encoding(&mut self, archive: &FsPath, id: usize, now: Instant) {
         archive::choose_encoding(archive, id.checked_sub(1).and_then(|i| Encoding::ALL.get(i).copied()));
-        for k in 0..self.tabs.len() {
-            let inside = self.tabs[k].view_loc.to_windows().is_some_and(|p| archive::splits(&p).iter().any(|(a, _)| a == archive));
-            if inside {
-                self.reload(k, now);
+        self.each_pane(|a, k| {
+            if a.tabs[k].view_loc.to_windows().is_some_and(|p| archive::splits(&p).iter().any(|(z, _)| z == archive)) {
+                a.reload(k, now);
             }
-        }
+        });
     }
 
     pub fn hashes_dialog(&mut self) {

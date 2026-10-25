@@ -28,18 +28,18 @@ impl App {
     pub(super) fn places_changed(&mut self, old: &Places, now: Instant) {
         let new = self.nav.sidebar.places.clone();
         let folders = |p: &Places, path: &FsPath| p.libraries.iter().find(|l| l.path == *path).map(|l| (l.folders.clone(), l.name.clone()));
-        for k in 0..self.tabs.len() {
-            let path = self.tabs[k].location().path().clone();
+        self.each_pane(|a, k| {
+            let path = a.tabs[k].location().path().clone();
             if !library::is_library(&path) {
-                continue;
+                return;
             }
             let (before, after) = (folders(old, &path), folders(&new, &path));
             if before.as_ref().map(|b| &b.0) != after.as_ref().map(|a| &a.0) && before.is_some() {
-                self.reload(k, now);
+                a.reload(k, now);
             } else if before != after {
-                self.library_crumbs(k);
+                a.library_crumbs(k);
             }
-        }
+        });
         if let Some(Pick::Library(lib)) = self.nav.palette.as_ref().map(|p| p.pick.clone()) {
             let sel = self.nav.palette.as_ref().map_or(0, |p| p.sel);
             self.nav.palette = Some(self.library_palette(lib));

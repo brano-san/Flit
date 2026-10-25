@@ -16,7 +16,7 @@ fn temp(tag: &str) -> Temp {
 }
 
 fn window(paths: &[&str], cur: usize) -> WindowSession {
-    WindowSession { tabs: paths.iter().map(|p| Location::parse(p).unwrap()).collect(), cur }
+    WindowSession { tabs: paths.iter().map(|p| Location::parse(p).unwrap()).collect(), cur, ..Default::default() }
 }
 
 #[test]
@@ -50,4 +50,20 @@ fn the_writer_keeps_the_latest_session_and_the_marker_tells_a_crash() {
     files.unmark();
     assert!(!files.crashed());
     assert!(load(&d.0.join("missing.bin")).is_none());
+}
+
+#[test]
+fn panes_ride_after_the_session_so_older_files_load_with_one_pane() {
+    use flit_core::ui::{SplitDir, SplitSession};
+    let mut w = window(&[r"C:\a", r"C:\b"], 1);
+    w.splits = vec![None, Some(SplitSession { other: Location::parse(r"D:\x").unwrap(), dir: SplitDir::Horizontal, ratio: 0.3, second: true })];
+    let s = Session::new(vec![(w.clone(), None), (window(&[r"E:\"], 0), None)], Vec::new());
+    let bytes = s.encode().unwrap();
+    let back = Session::decode(&bytes).unwrap();
+    assert_eq!(back.windows().next().unwrap().0, w);
+    let older = postcard::to_stdvec(&s).unwrap();
+    assert!(bytes.starts_with(&older) && bytes.len() > older.len());
+    let old = Session::decode(&older).unwrap();
+    assert_eq!(old.windows().next().unwrap().0, window(&[r"C:\a", r"C:\b"], 1));
+    assert_eq!(postcard::from_bytes::<Session>(&bytes).unwrap().windows().next().unwrap().0.tabs, w.tabs, "older builds read the tabs and skip the panes");
 }

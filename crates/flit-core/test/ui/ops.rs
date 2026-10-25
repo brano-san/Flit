@@ -525,8 +525,7 @@ fn hovering_a_folder_tab_or_crumb_while_dragging_opens_it() {
 const BIN_REPORT: (&str, &str) = (r"C:\$Recycle.Bin\S-1\$RAB12CD.txt", r"C:\Users\u\Docs\report.txt");
 const BIN_OLD: (&str, &str) = (r"D:\$Recycle.Bin\S-1\$R000001", r"D:\old");
 
-fn deliver_bin(app: &mut App, items: &[(&str, &str)]) {
-    let t = app.tab();
+fn bin_listing(items: &[(&str, &str)]) -> (Listing, SortKeys) {
     let mut go = |_: &crate::listing::ListingBuilder<'_>| true;
     let mut b = crate::listing::ListingBuilder::new(CaseMode::Insensitive, &mut go);
     for &(recycled, original) in items {
@@ -535,7 +534,12 @@ fn deliver_bin(app: &mut App, items: &[(&str, &str)]) {
         let attrs = if original.ends_with("old") { attr::DIR } else { 0 } | attr::SIZE_KNOWN;
         recycle::push(&mut b, &name, Meta { attrs, size: 5, modified: 7, created: 7 }, &p(recycled), &o.parent().unwrap());
     }
-    let (listing, keys) = (std::mem::take(&mut b.listing), std::mem::replace(&mut b.keys, SortKeys::new(CaseMode::Insensitive)));
+    (std::mem::take(&mut b.listing), std::mem::replace(&mut b.keys, SortKeys::new(CaseMode::Insensitive)))
+}
+
+fn deliver_bin(app: &mut App, items: &[(&str, &str)]) {
+    let t = app.tab();
+    let (listing, keys) = bin_listing(items);
     let view = t.view_spec;
     let mut order = Vec::new();
     sort::sort(&listing, &keys, view, &mut order);
@@ -1054,4 +1058,34 @@ fn a_shortcut_to_a_folder_opens_in_flit() {
     assert_eq!(app.current_location(), &Location::parse(r"C:\x").unwrap());
     app.on_provider_event(ProviderEvent::Navigate { tab, path: p(r"D:\docs") }, t0());
     assert_eq!(app.current_location(), &Location::parse(r"D:\docs").unwrap());
+}
+
+#[test]
+fn restore_all_from_the_sidebar_lists_the_bin_first_when_it_is_not_open() {
+    let mut app = app_at(r"C:\work");
+    app.drain_effects().for_each(drop);
+    assert!(app.run_action("bin.restore_all", t0()));
+    let (gen, out, path) = app
+        .drain_effects()
+        .find_map(|e| if let Effect::Provider { req: ProviderRequest::List { gen, out, path, .. }, .. } = e { Some((gen, out, path)) } else { None })
+        .expect("the bin is listed");
+    assert_eq!(path, *Location::recycle_bin().path());
+    assert!(app.tab().error.is_none());
+    let (listing, keys) = bin_listing(&[BIN_REPORT, BIN_OLD]);
+    let snap = |done: bool, listing: Listing, keys: SortKeys| Arc::new(DirSnapshot { gen, path: path.clone(), order: (0..listing.len() as u32).collect(), listing, keys, view: ViewSpec::default(), done, error: None, elapsed: Duration::ZERO });
+    out.publish(snap(false, Listing::default(), SortKeys::new(CaseMode::Insensitive)));
+    app.poll();
+    assert!(op_list(&mut app).is_empty(), "a partial listing restores nothing");
+    out.publish(snap(true, listing, keys));
+    app.poll();
+    assert_eq!(op_list(&mut app), [FileOp::Restore(pairs(&[BIN_REPORT, BIN_OLD]))]);
+    app.poll();
+    assert!(op_list(&mut app).is_empty());
+    app.run_action("bin.restore_all", t0());
+    let (gen, out) = app.drain_effects().find_map(|e| if let Effect::Provider { req: ProviderRequest::List { gen, out, .. }, .. } = e { Some((gen, out)) } else { None }).unwrap();
+    out.publish(Arc::new(DirSnapshot { gen, path: path.clone(), listing: Listing::default(), keys: SortKeys::new(CaseMode::Insensitive), order: Vec::new(), view: ViewSpec::default(), done: true, error: None, elapsed: Duration::ZERO }));
+    app.poll();
+    assert_eq!(app.tab().error.as_deref(), Some("The Recycle Bin is empty"));
+    app.run_action("bin.restore", t0());
+    assert_eq!(app.tab().error.as_deref(), Some("Open the Recycle Bin to restore items"));
 }

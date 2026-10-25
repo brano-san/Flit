@@ -11,12 +11,14 @@ use crate::input::{CursorIcon, Event, Key, Mods, MouseButton};
 use crate::listing::attr;
 use crate::location::{Location, ProviderId};
 use crate::path::{FsPath, PathKind, RECYCLE_BIN_LABEL};
-use crate::provider::{FileOp, Launch, OpCtl, OpId, OpReport, ProviderRequest, TabId, Template};
+use crate::provider::{FileOp, GenToken, Launch, OpCtl, OpId, OpReport, ProviderRequest, SnapshotSlot, TabId, Template};
 use crate::recycle;
 use crate::render::Rect;
+use crate::sort::ViewSpec;
 use crate::text::{Gfx, TextBackend};
 use crate::theme::Theme;
 use crate::undo::{Journal, Origin, Step};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub mod drop_effect {
@@ -152,7 +154,7 @@ enum Target {
     Pin,
 }
 
-struct Dropping {
+pub(super) struct Dropping {
     paths: Vec<FsPath>,
     target: Option<Target>,
     effect: u32,
@@ -167,9 +169,16 @@ pub(super) struct Ops {
     reveal: Vec<Reveal>,
     rename: Option<Rename>,
     press: Option<Press>,
-    dropping: Option<Dropping>,
+    pub(super) dropping: Option<Dropping>,
     slow: Option<Slow>,
     cut: Option<Cut>,
+    bin: Option<BinProbe>,
+}
+
+struct BinProbe {
+    gen: u64,
+    slot: Arc<SnapshotSlot>,
+    cancel: GenToken,
 }
 
 pub fn validate_name(text: &str, windows: bool) -> Result<String, &'static str> {
@@ -406,7 +415,7 @@ impl App {
 
     fn restore(&mut self, all: bool) {
         if !self.in_bin() {
-            return self.status(OPEN_BIN);
+            return if all { self.probe_bin() } else { self.status(OPEN_BIN) };
         }
         let pairs = match (all, &self.tab().view) {
             (true, Some(v)) => {
@@ -418,6 +427,29 @@ impl App {
         match pairs.is_empty() {
             true if all => self.status("The Recycle Bin is empty"),
             true => self.status("Select the items to restore"),
+            false => self.start_op(FileOp::Restore(pairs), Origin::Fresh, Then::Nothing),
+        }
+    }
+
+    fn probe_bin(&mut self) {
+        let (gen, bin) = (self.gen(), Location::recycle_bin());
+        let probe = BinProbe { gen, slot: Arc::default(), cancel: GenToken::default() };
+        probe.cancel.set(gen);
+        let req = ProviderRequest::List { tab: 0, gen, path: bin.path().clone(), view: ViewSpec::default(), case: self.case, out: probe.slot.clone(), cancel: probe.cancel.clone() };
+        self.effects.push(Effect::Provider { provider: bin.provider(), req });
+        if let Some(old) = self.ops.bin.replace(probe) {
+            old.cancel.set(u64::MAX);
+        }
+    }
+
+    pub(super) fn poll_bin(&mut self) {
+        let Some(p) = &self.ops.bin else { return };
+        let Some(snap) = p.slot.take().filter(|s| s.gen == p.gen && s.done) else { return };
+        self.ops.bin = None;
+        let l = &snap.listing;
+        let pairs: Vec<(FsPath, FsPath)> = (0..l.len() as u32).filter(|&i| l.entries[i as usize].attrs & attr::DELETED == 0).filter_map(|i| Some((recycle::recycled(l, i)?, recycle::original(l, i)?))).collect();
+        match pairs.is_empty() {
+            true => self.status("The Recycle Bin is empty"),
             false => self.start_op(FileOp::Restore(pairs), Origin::Fresh, Then::Nothing),
         }
     }
@@ -1104,6 +1136,7 @@ impl App {
 
     pub fn drag(&mut self, ev: &DragEvent, now: Instant) -> u32 {
         self.dirty = true;
+        self.drag_pane(ev);
         match ev {
             DragEvent::Enter { paths, x, y, mods, allowed } => {
                 self.ops.dropping = Some(Dropping { paths: paths.clone(), target: None, effect: drop_effect::NONE, spring: None });
@@ -1181,7 +1214,7 @@ impl App {
             Hit::Header(_) | Hit::ColSep(_) | Hit::Sizes | Hit::Bin(_) => None,
             Hit::SideHeader(Section::Pinned) => Some(Target::Pin),
             Hit::SideHeader(_) | Hit::HomeItem(_) | Hit::HomeEmpty | Hit::HomeButton => None,
-            Hit::SideEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose => None,
+            Hit::SideEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose | Hit::PaneSplit => None,
             Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside => None,
             Hit::OpsButton | Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsClear | Hit::OpsCancel(_) | Hit::OpsMore(_) | Hit::OpsMenu(_) => None,
             Hit::Dialog | Hit::DialogButton(_) | Hit::DialogCheck | Hit::Form(_) | Hit::Modal | Hit::Preview(_) => None,

@@ -1,6 +1,6 @@
 use flit_core::archive::Defaults;
 use flit_core::sort::SortField;
-use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavPrefs, NavState, PaneState, Persisted, Sizes, ViewPrefs};
+use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavPrefs, NavState, PaneState, Persisted, Sizes, SplitPrefs, ViewPrefs};
 use flit_core::Location;
 use flit_platform::{Placement, Platform};
 use serde::{Deserialize, Serialize};
@@ -132,8 +132,11 @@ impl Saved {
         }
         let p = &mut saved.persisted;
         (p.view, p.prefs, p.folders) = (r.view, r.prefs, FolderViews::from_entries(r.folders));
-        if let Some((archive, _)) = rest.and_then(|t| postcard::take_from_bytes::<Defaults>(t).ok()) {
+        if let Some((archive, tail)) = rest.and_then(|t| postcard::take_from_bytes::<Defaults>(t).ok()) {
             p.archive = archive.sanitized();
+            if let Ok((split, _)) = postcard::take_from_bytes::<SplitPrefs>(tail) {
+                p.split = split;
+            }
         }
         Some(saved)
     }
@@ -157,6 +160,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&self.pane).ok()?);
         bytes.extend(postcard::to_stdvec(&self.side).ok()?);
         bytes.extend(postcard::to_stdvec(&p.archive.clone().sanitized()).ok()?);
+        bytes.extend(postcard::to_stdvec(&p.split).ok()?);
         Some(bytes)
     }
 

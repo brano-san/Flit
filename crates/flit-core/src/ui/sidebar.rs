@@ -1,7 +1,8 @@
 use super::home::{Recent, Widget};
 use super::menu::Menu;
 use super::tags::G_TAG;
-use super::{centered, App, Drag, Effect, Focus, Hit, Route, ShellMenu, G_DRIVE, G_FOLDER};
+use super::{centered, App, Drag, Effect, Focus, Hit, IconKind, IconRequest, Route, ShellMenu, G_DRIVE, G_FOLDER};
+use crate::hash;
 use crate::input::{Key, Mods};
 use crate::library::{self, Library, LibraryOp};
 use crate::location::{Location, ProviderId};
@@ -230,6 +231,7 @@ pub(super) enum PlaceCmd {
     Widget(Widget),
     Forget(FsPath),
     ClearRecent,
+    Pane(Location, Option<super::SplitDir>),
 }
 
 #[derive(Clone, Debug)]
@@ -600,6 +602,7 @@ impl App {
             PlaceCmd::Widget(w) => self.toggle_widget(w),
             PlaceCmd::Forget(path) => self.forget_recent(path),
             PlaceCmd::ClearRecent => self.clear_recent(),
+            PlaceCmd::Pane(loc, dir) => self.open_in_pane(loc, dir, now),
         }
     }
 
@@ -610,6 +613,7 @@ impl App {
             m.place("Open", PlaceCmd::Open(loc.clone(), OpenTarget::CurrentTab), false);
             m.place("Open in new tab", PlaceCmd::Open(loc.clone(), OpenTarget::NewTab), false);
             m.place("Open in new window", PlaceCmd::Open(loc.clone(), OpenTarget::NewWindow), false);
+            a.place_pane_items(m, &loc);
             m.separator();
             if let Some(p) = &path {
                 m.place("Copy path", PlaceCmd::CopyPath(loc.clone()), false);
@@ -637,9 +641,7 @@ impl App {
                 m.place("Library locations", PlaceCmd::Library(loc.path().clone()), false);
             }
             if loc.is_recycle_bin() {
-                if a.tab().view_loc.is_recycle_bin() {
-                    m.place("Restore all items", PlaceCmd::RestoreAll, false);
-                }
+                m.place("Restore all items", PlaceCmd::RestoreAll, false);
                 m.place("Empty Recycle Bin", PlaceCmd::EmptyBin, false);
             }
             extra(a, m);
@@ -875,6 +877,7 @@ impl App {
             let baseline = (r.y + (r.h + ms.ascent - ms.descent) / 2.0).round();
             g.text(r.x + s12, baseline, "Ctrl+D pins the current folder", small, t.text_dim.alpha(0xA0), r.w - s12);
         }
+        let mut requests: Vec<IconRequest> = Vec::new();
         for (i, (it, &r)) in sb.items.iter().zip(&sb.rects).enumerate() {
             if r.bottom() < area.y || r.y > area.bottom() {
                 continue;
@@ -898,7 +901,9 @@ impl App {
                 None => t.accent,
             };
             if compact {
-                centered(g, r, it.glyph, icons, color);
+                if !self.distro_icon(g, it, r, &mut requests) {
+                    centered(g, r, it.glyph, icons, color);
+                }
                 if let Some(used) = it.usage {
                     let bar = Rect::new(r.x + s8, r.bottom() - self.s(5.0), (r.w - 2.0 * s8).max(0.0), self.s(3.0));
                     g.dl.round_rect(bar, t.separator, bar.h / 2.0);
@@ -909,7 +914,9 @@ impl App {
             }
             let text_h = self.s(ROW_H);
             let icon_r = Rect::new(r.x + s4, r.y, self.s(28.0), text_h);
-            centered(g, icon_r, it.glyph, icons, color);
+            if !self.distro_icon(g, it, icon_r, &mut requests) {
+                centered(g, icon_r, it.glyph, icons, color);
+            }
             let baseline = (r.y + (text_h + m.ascent - m.descent) / 2.0).round();
             let pin_r = sb.pin_rect(Rect::new(r.x, r.y, r.w, text_h), self.scale);
             let text_right = if hovered && tag.is_none() { pin_r.x - s4 } else { r.right() - s8 };
@@ -935,6 +942,21 @@ impl App {
             g.dl.rect(Rect::new(area.x + s8, y - 1.0, area.w - 2.0 * s8, self.s(2.0)), t.accent);
         }
         g.dl.set_clip(None);
+        self.request_icons(requests);
+    }
+
+    fn distro_icon<B: TextBackend>(&self, g: &mut Gfx<B>, it: &Item, r: Rect, requests: &mut Vec<IconRequest>) -> bool {
+        let Location::Wsl { distro, .. } = &it.loc else { return false };
+        let Some(path) = it.loc.to_windows().filter(|_| it.section == Section::Wsl) else { return false };
+        let px = self.s(16.0);
+        let key = hash::hash(&("vol", distro.as_bytes(), px as u32));
+        if g.image(key, Rect::new((r.x + (r.w - px) / 2.0).round(), (r.y + (r.h - px) / 2.0).round(), px, px)) {
+            return true;
+        }
+        if !self.icons.contains_key(&key) && !requests.iter().any(|q| q.key == key) {
+            requests.push(IconRequest { key, kind: IconKind::Volume, path, size: px as u32, gen: 0, row: 0 });
+        }
+        false
     }
 }
 

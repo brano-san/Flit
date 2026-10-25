@@ -429,13 +429,13 @@ impl App {
         let sizes = self.prefs.auto_sizes;
         let p = f(&mut self.prefs);
         *p = !*p;
-        for k in 0..self.tabs.len() {
-            let before = self.tabs[k].view_spec;
-            self.sync_spec(k);
-            if self.tabs[k].view_spec != before {
-                self.resort(k);
+        self.each_pane(|a, k| {
+            let before = a.tabs[k].view_spec;
+            a.sync_spec(k);
+            if a.tabs[k].view_spec != before {
+                a.resort(k);
             }
-        }
+        });
         if self.prefs.auto_sizes && !sizes {
             self.compute_dir_sizes();
         }
