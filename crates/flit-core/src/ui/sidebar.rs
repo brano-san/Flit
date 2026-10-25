@@ -1,9 +1,13 @@
+use super::home::{Recent, Widget};
+use super::menu::Menu;
 use super::tags::G_TAG;
-use super::{centered, App, Drag, Effect, Focus, Hit, Route, G_DRIVE, G_FOLDER};
+use super::{centered, App, Drag, Effect, Focus, Hit, Route, ShellMenu, G_DRIVE, G_FOLDER};
 use crate::input::{Key, Mods};
-use crate::location::Location;
+use crate::library::{self, Library, LibraryOp};
+use crate::location::{Location, ProviderId};
 use crate::open::OpenTarget;
 use crate::path::{FsPath, PathKind};
+use crate::provider::{Launch, ProviderRequest};
 use crate::render::{Color, Rect};
 use crate::tags::Tags;
 use crate::text::{Gfx, TextBackend};
@@ -14,12 +18,16 @@ use std::time::Instant;
 
 pub const SIDEBAR_MIN_W: f32 = 160.0;
 pub const SIDEBAR_MAX_W: f32 = 480.0;
+const COMPACT_W: f32 = 48.0;
 const ROW_H: f32 = 28.0;
+const COMPACT_ROW_H: f32 = 32.0;
 const DRIVE_H: f32 = 38.0;
 const HEADER_H: f32 = 28.0;
+const COMPACT_HEADER_H: f32 = 12.0;
 const PIN_W: f32 = 22.0;
+const MAX_LIST: usize = 256;
 
-const G_HOME: &str = "\u{E80F}";
+pub(super) const G_HOME: &str = "\u{E80F}";
 const G_DESKTOP: &str = "\u{E7F4}";
 const G_DOWNLOADS: &str = "\u{E896}";
 const G_DOCUMENTS: &str = "\u{E8A5}";
@@ -28,8 +36,11 @@ const G_MUSIC: &str = "\u{E8D6}";
 const G_VIDEOS: &str = "\u{E714}";
 const G_LINUX: &str = "\u{E756}";
 const G_RECYCLE_BIN: &str = "\u{E74D}";
+const G_LIBRARY: &str = "\u{E8F1}";
 const G_PIN: &str = "\u{E718}";
 const G_UNPIN: &str = "\u{E77A}";
+const G_EXPANDED: &str = "\u{E70D}";
+const G_COLLAPSED: &str = "\u{E76C}";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum KnownFolder {
@@ -88,6 +99,7 @@ pub struct Drive {
     pub label: String,
     pub total: u64,
     pub free: u64,
+    pub removable: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -97,6 +109,9 @@ pub struct Places {
     pub wsl: Vec<String>,
     pub recycle_bin: bool,
     pub templates: Vec<super::NewTemplate>,
+    pub libraries: Vec<Library>,
+    pub recent: Vec<Recent>,
+    pub recent_off: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -127,25 +142,94 @@ impl NavState {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct NavPrefs {
+    pub compact: bool,
+    pub collapsed: Vec<String>,
+    pub hidden: Vec<String>,
+    pub widgets_off: Vec<String>,
+    pub recent_hidden: Vec<(FsPath, i64)>,
+    pub recent_cleared: i64,
+}
+
+impl NavPrefs {
+    pub fn sanitized(mut self) -> Self {
+        for v in [&mut self.collapsed, &mut self.hidden, &mut self.widgets_off] {
+            v.truncate(MAX_LIST);
+        }
+        let n = self.recent_hidden.len();
+        self.recent_hidden.drain(..n.saturating_sub(MAX_LIST));
+        self
+    }
+}
+
+fn toggle(list: &mut Vec<String>, id: &str) {
+    match list.iter().position(|s| s == id) {
+        Some(i) => {
+            list.remove(i);
+        }
+        None => list.push(id.to_owned()),
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Section {
+pub enum Section {
     Pinned,
     Folders,
+    Libraries,
     Drives,
     Wsl,
     Tags,
 }
 
 impl Section {
-    fn title(self) -> &'static str {
+    pub const ALL: [Section; 6] = [Section::Pinned, Section::Folders, Section::Libraries, Section::Drives, Section::Wsl, Section::Tags];
+
+    pub fn title(self) -> &'static str {
         match self {
             Section::Pinned => "Pinned",
             Section::Folders => "Folders",
+            Section::Libraries => "Libraries",
             Section::Drives => "Drives",
             Section::Wsl => "WSL",
             Section::Tags => "Tags",
         }
     }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Section::Pinned => "pinned",
+            Section::Folders => "folders",
+            Section::Libraries => "libraries",
+            Section::Drives => "drives",
+            Section::Wsl => "wsl",
+            Section::Tags => "tags",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum PlaceCmd {
+    Open(Location, OpenTarget),
+    OpenFile(FsPath),
+    Reveal(FsPath),
+    CopyPath(Location),
+    Terminal(FsPath),
+    Pin(Location),
+    MovePin(Location, isize),
+    Eject(FsPath),
+    Properties(FsPath),
+    Collapse(Section),
+    Hide(Section),
+    Compact,
+    NewLibrary,
+    RestoreLibraries,
+    Library(FsPath),
+    EmptyBin,
+    RestoreAll,
+    Widget(Widget),
+    Forget(FsPath),
+    ClearRecent,
 }
 
 #[derive(Clone, Debug)]
@@ -160,11 +244,12 @@ pub(super) struct Item {
 #[derive(Default)]
 pub(super) struct Sidebar {
     pub state: NavState,
+    pub prefs: NavPrefs,
     pub places: Arc<Places>,
     pub items: Vec<Item>,
     pub rects: Vec<Rect>,
-    headers: Vec<(Rect, Section)>,
-    hint: Option<Rect>,
+    pub headers: Vec<(Rect, Section)>,
+    pub hint: Option<Rect>,
     pub rect: Rect,
     pub splitter: Rect,
     scroll: f32,
@@ -181,6 +266,8 @@ fn pinned_label(loc: &Location) -> String {
 fn pinned_glyph(loc: &Location) -> &'static str {
     match loc {
         Location::Wsl { path, .. } if path.is_root() => G_LINUX,
+        _ if library::is_library(loc.path()) => G_LIBRARY,
+        _ if loc.is_home_page() => G_HOME,
         _ if loc.path().kind() == PathKind::Computer || (loc.is_root() && loc.path().kind() == PathKind::Drive) => G_DRIVE,
         _ => G_FOLDER,
     }
@@ -188,18 +275,20 @@ fn pinned_glyph(loc: &Location) -> &'static str {
 
 impl Sidebar {
     fn rebuild(&mut self) {
+        let p = self.places.clone();
+        let library_name = |l: &Location| p.libraries.iter().find(|lib| lib.path == *l.path()).map(|lib| lib.name.clone());
         let mut items: Vec<Item> = self
             .state
             .pinned
             .iter()
-            .map(|l| Item { section: Section::Pinned, label: pinned_label(l), glyph: pinned_glyph(l), loc: l.clone(), usage: None })
+            .map(|l| Item { section: Section::Pinned, label: library_name(l).unwrap_or_else(|| pinned_label(l)), glyph: pinned_glyph(l), loc: l.clone(), usage: None })
             .collect();
-        let p = &self.places;
         items.extend(p.folders.iter().map(|(k, l)| Item { section: Section::Folders, label: k.label().to_owned(), glyph: k.glyph(), loc: l.clone(), usage: None }));
         if p.recycle_bin {
             let label = crate::path::RECYCLE_BIN_LABEL.to_owned();
             items.push(Item { section: Section::Folders, label, glyph: G_RECYCLE_BIN, loc: Location::recycle_bin(), usage: None });
         }
+        items.extend(p.libraries.iter().map(|l| Item { section: Section::Libraries, label: l.name.clone(), glyph: G_LIBRARY, loc: Location::Local(l.path.clone()), usage: None }));
         items.extend(p.drives.iter().map(|d| Item {
             section: Section::Drives,
             label: d.label.clone(),
@@ -212,6 +301,7 @@ impl Sidebar {
             Some(Item { section: Section::Wsl, label: d.clone(), glyph: G_LINUX, loc, usage: None })
         }));
         items.extend(self.tags.defs.iter().map(|t| Item { section: Section::Tags, label: t.name.clone(), glyph: G_TAG, loc: Location::computer(), usage: None }));
+        items.retain(|it| !self.is_collapsed(it.section) && !self.is_hidden(it.section));
         self.items = items;
         self.cursor = self.cursor.min(self.items.len().saturating_sub(1));
     }
@@ -221,20 +311,45 @@ impl Sidebar {
         (self.items.get(i)?.section == Section::Tags).then(|| i - first)
     }
 
-    fn is_pinned(&self, loc: &Location) -> bool {
+    pub fn is_pinned(&self, loc: &Location) -> bool {
         self.state.pinned.contains(loc)
+    }
+
+    pub fn is_collapsed(&self, s: Section) -> bool {
+        self.prefs.collapsed.iter().any(|c| c == s.id())
+    }
+
+    pub fn is_hidden(&self, s: Section) -> bool {
+        self.prefs.hidden.iter().any(|c| c == s.id())
+    }
+
+    fn has_items(&self, s: Section) -> bool {
+        let p = &self.places;
+        match s {
+            Section::Pinned => true,
+            Section::Folders => !p.folders.is_empty() || p.recycle_bin,
+            Section::Libraries => !p.libraries.is_empty(),
+            Section::Drives => !p.drives.is_empty(),
+            Section::Wsl => !p.wsl.is_empty(),
+            Section::Tags => !self.tags.defs.is_empty(),
+        }
     }
 
     pub fn pin_rect(&self, r: Rect, scale: f32) -> Rect {
         let w = (PIN_W * scale).round();
         Rect::new(r.right() - w - (4.0 * scale).round(), r.y + ((r.h - w) / 2.0).round(), w, w)
     }
+
+    pub fn library(&self, path: &FsPath) -> Option<&Library> {
+        self.places.libraries.iter().find(|l| l.path == *path)
+    }
 }
 
 impl App {
     pub fn set_places(&mut self, places: Arc<Places>) {
-        self.nav.sidebar.places = places;
+        let old = std::mem::replace(&mut self.nav.sidebar.places, places);
         self.nav.sidebar.rebuild();
+        self.places_changed(&old, Instant::now());
         self.layout();
         self.dirty = true;
     }
@@ -266,12 +381,27 @@ impl App {
         self.dirty = true;
     }
 
+    pub fn nav_prefs(&self) -> NavPrefs {
+        self.nav.sidebar.prefs.clone()
+    }
+
+    pub fn set_nav_prefs(&mut self, prefs: NavPrefs) {
+        self.nav.sidebar.prefs = prefs.sanitized();
+        self.nav_prefs_changed();
+    }
+
+    fn nav_prefs_changed(&mut self) {
+        self.nav.sidebar.rebuild();
+        self.layout();
+        self.dirty = true;
+    }
+
     pub(super) fn sidebar_width(&self) -> f32 {
         let st = &self.nav.sidebar.state;
-        if st.sidebar {
-            self.s(st.sidebar_w).min((self.size.0 / 2.0).round())
-        } else {
-            0.0
+        match (st.sidebar, self.nav.sidebar.prefs.compact) {
+            (false, _) => 0.0,
+            (true, true) => self.s(COMPACT_W),
+            (true, false) => self.s(st.sidebar_w).min((self.size.0 / 2.0).round()),
         }
     }
 
@@ -283,6 +413,29 @@ impl App {
         }
         self.layout();
         self.dirty = true;
+    }
+
+    pub(super) fn toggle_compact(&mut self) {
+        let p = &mut self.nav.sidebar.prefs;
+        p.compact = !p.compact;
+        self.nav_prefs_changed();
+    }
+
+    pub(super) fn toggle_section(&mut self, s: Section) {
+        toggle(&mut self.nav.sidebar.prefs.collapsed, s.id());
+        self.nav_prefs_changed();
+    }
+
+    pub(super) fn toggle_section_shown(&mut self, s: Section) {
+        toggle(&mut self.nav.sidebar.prefs.hidden, s.id());
+        self.nav_prefs_changed();
+    }
+
+    pub(super) fn show_all_sections(&mut self) {
+        let p = &mut self.nav.sidebar.prefs;
+        p.hidden.clear();
+        p.collapsed.clear();
+        self.nav_prefs_changed();
     }
 
     pub(super) fn cycle_sidebar_focus(&mut self) {
@@ -313,6 +466,31 @@ impl App {
             None => pinned.push(loc),
         }
         self.pins_changed();
+    }
+
+    pub fn pin_locations(&mut self, locs: Vec<Location>) {
+        let pinned = &mut self.nav.sidebar.state.pinned;
+        let before = pinned.len();
+        for l in locs {
+            if !pinned.contains(&l) {
+                pinned.push(l);
+            }
+        }
+        if pinned.len() == before {
+            return self.status("Only folders that are not pinned yet can be pinned");
+        }
+        self.pins_changed();
+    }
+
+    fn move_pin(&mut self, loc: Location, by: isize) {
+        let pinned = &mut self.nav.sidebar.state.pinned;
+        let Some(i) = pinned.iter().position(|l| *l == loc) else { return };
+        let to = (i as isize + by).clamp(0, pinned.len() as isize - 1) as usize;
+        if to != i {
+            let l = pinned.remove(i);
+            pinned.insert(to, l);
+            self.pins_changed();
+        }
     }
 
     fn pins_changed(&mut self) {
@@ -393,39 +571,171 @@ impl App {
         self.nav.sidebar.places.folders.iter().find(|(f, _)| *f == k).map(|(_, l)| l.clone())
     }
 
+    pub(super) fn place_command(&mut self, c: PlaceCmd, now: Instant) {
+        let tab = self.tab().id;
+        let launch = |launch| Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch } };
+        match c {
+            PlaceCmd::Open(folder, target) => self.dispatch(vec![Route { folder, select: None }], target, now),
+            PlaceCmd::OpenFile(path) => self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Open { tab, path } }),
+            PlaceCmd::Reveal(path) => {
+                let item = Location::from_local(path);
+                if let Some(folder) = item.parent() {
+                    self.dispatch(vec![Route { select: Some(item.file_name().to_vec()), folder }], OpenTarget::CurrentTab, now);
+                }
+            }
+            PlaceCmd::CopyPath(loc) => self.effects.push(Effect::SetClipboard(loc.display().into_owned())),
+            PlaceCmd::Terminal(dir) => self.effects.push(launch(Launch::Terminal { dirs: vec![dir], admin: false })),
+            PlaceCmd::Pin(loc) => self.toggle_pin(loc),
+            PlaceCmd::MovePin(loc, by) => self.move_pin(loc, by),
+            PlaceCmd::Eject(drive) => self.effects.push(launch(Launch::Eject(drive))),
+            PlaceCmd::Properties(path) => self.effects.push(Effect::Properties(vec![path])),
+            PlaceCmd::Collapse(s) => self.toggle_section(s),
+            PlaceCmd::Hide(s) => self.toggle_section_shown(s),
+            PlaceCmd::Compact => self.toggle_compact(),
+            PlaceCmd::NewLibrary => self.ask_new_library(),
+            PlaceCmd::RestoreLibraries => self.effects.push(Effect::Library(LibraryOp::RestoreDefaults)),
+            PlaceCmd::Library(path) => self.library_dialog(path),
+            PlaceCmd::EmptyBin => self.empty_bin(),
+            PlaceCmd::RestoreAll => self.restore_all(),
+            PlaceCmd::Widget(w) => self.toggle_widget(w),
+            PlaceCmd::Forget(path) => self.forget_recent(path),
+            PlaceCmd::ClearRecent => self.clear_recent(),
+        }
+    }
+
+    pub(super) fn place_menu(&mut self, x: f32, y: f32, loc: Location, extra: impl FnOnce(&Self, &mut Menu)) {
+        let path = loc.to_windows();
+        let lib = library::is_library(loc.path());
+        let menu = self.collect(|a, m| {
+            m.place("Open", PlaceCmd::Open(loc.clone(), OpenTarget::CurrentTab), false);
+            m.place("Open in new tab", PlaceCmd::Open(loc.clone(), OpenTarget::NewTab), false);
+            m.place("Open in new window", PlaceCmd::Open(loc.clone(), OpenTarget::NewWindow), false);
+            m.separator();
+            if let Some(p) = &path {
+                m.place("Copy path", PlaceCmd::CopyPath(loc.clone()), false);
+                if !lib {
+                    m.place("Open in terminal", PlaceCmd::Terminal(p.clone()), false);
+                }
+            }
+            m.separator();
+            let pinned = &a.nav.sidebar.state.pinned;
+            if !loc.is_recycle_bin() {
+                m.place(if pinned.contains(&loc) { "Unpin from sidebar" } else { "Pin to sidebar" }, PlaceCmd::Pin(loc.clone()), false);
+            }
+            if let Some(i) = pinned.iter().position(|l| *l == loc) {
+                if i > 0 {
+                    m.place("Move up", PlaceCmd::MovePin(loc.clone(), -1), false);
+                }
+                if i + 1 < pinned.len() {
+                    m.place("Move down", PlaceCmd::MovePin(loc.clone(), 1), false);
+                }
+            }
+            if a.nav.sidebar.places.drives.iter().any(|d| d.removable && d.path == *loc.path()) {
+                m.place("Eject", PlaceCmd::Eject(loc.path().clone()), false);
+            }
+            if lib {
+                m.place("Library locations", PlaceCmd::Library(loc.path().clone()), false);
+            }
+            if loc.is_recycle_bin() {
+                if a.tab().view_loc.is_recycle_bin() {
+                    m.place("Restore all items", PlaceCmd::RestoreAll, false);
+                }
+                m.place("Empty Recycle Bin", PlaceCmd::EmptyBin, false);
+            }
+            extra(a, m);
+            m.separator();
+            if let Some(p) = &path {
+                m.place("Properties", PlaceCmd::Properties(p.clone()), false);
+            }
+        });
+        self.show_place_menu(x, y, path, menu);
+    }
+
+    pub(super) fn show_place_menu(&mut self, x: f32, y: f32, path: Option<FsPath>, menu: Vec<super::MenuItem>) {
+        let Some(p) = path else { return self.flit_menu(x, y, menu) };
+        let shift = self.mods.shift;
+        let dir = p.parent().unwrap_or_else(FsPath::computer);
+        self.effects.push(Effect::ShellMenu(ShellMenu { dir, items: vec![p], x, y, extended: shift, menu, inline: self.shell_items_inline || shift, shell: true }));
+    }
+
+    fn section_menu(&mut self, x: f32, y: f32, section: Option<Section>) {
+        let menu = self.collect(|a, m| {
+            let sb = &a.nav.sidebar;
+            if let Some(s) = section {
+                m.place(if sb.is_collapsed(s) { "Expand" } else { "Collapse" }, PlaceCmd::Collapse(s), false);
+                m.place("Hide this section", PlaceCmd::Hide(s), false);
+                m.separator();
+            }
+            if section == Some(Section::Tags) {
+                m.action("tags.new", "New tag");
+                m.action("tags.manage", "Manage tags");
+                m.separator();
+            }
+            if section.is_none_or(|s| s == Section::Libraries) {
+                m.place("New library", PlaceCmd::NewLibrary, false);
+                m.place("Restore default libraries", PlaceCmd::RestoreLibraries, false);
+                m.separator();
+            }
+            m.submenu("Sections", |m| {
+                for s in Section::ALL {
+                    m.place(s.title(), PlaceCmd::Hide(s), !sb.is_hidden(s));
+                }
+            });
+            m.place("Compact sidebar", PlaceCmd::Compact, sb.prefs.compact);
+        });
+        self.flit_menu(x, y, menu);
+    }
+
+    pub(super) fn side_menu(&mut self, x: f32, y: f32, h: Hit) {
+        match h {
+            Hit::Side(i) | Hit::SidePin(i) => {
+                if let Some(k) = self.nav.sidebar.tag_of(i) {
+                    let menu = self.build_tag_menu(Some(k));
+                    return self.flit_menu(x, y, menu);
+                }
+                if let Some(loc) = self.nav.sidebar.items.get(i).map(|it| it.loc.clone()) {
+                    self.place_menu(x, y, loc, |_, _| {});
+                }
+            }
+            Hit::SideHeader(s) => self.section_menu(x, y, Some(s)),
+            _ => self.section_menu(x, y, None),
+        }
+    }
+
     pub(super) fn layout_sidebar(&mut self, top: f32, bottom: f32) {
         let width = self.sidebar_width();
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
         let sb = &mut self.nav.sidebar;
+        let compact = sb.prefs.compact;
         sb.rect = Rect::new(0.0, top, width, (bottom - top).max(0.0));
-        sb.splitter = if width > 0.0 { Rect::new(width - s(3.0), top, s(6.0), sb.rect.h) } else { Rect::default() };
+        sb.splitter = if width > 0.0 && !compact { Rect::new(width - s(3.0), top, s(6.0), sb.rect.h) } else { Rect::default() };
         sb.rects.clear();
         sb.headers.clear();
         sb.hint = None;
         if width <= 0.0 {
             return;
         }
-        let x = s(6.0);
-        let w = (width - s(12.0)).max(0.0);
+        let (x, w) = if compact { (s(4.0), (width - s(8.0)).max(0.0)) } else { (s(6.0), (width - s(12.0)).max(0.0)) };
+        let (header_h, row_h) = if compact { (s(COMPACT_HEADER_H), s(COMPACT_ROW_H)) } else { (s(HEADER_H), s(ROW_H)) };
         let mut y = s(4.0);
-        for section in [Section::Pinned, Section::Folders, Section::Drives, Section::Wsl, Section::Tags] {
-            let count = sb.items.iter().filter(|it| it.section == section).count();
-            if count == 0 && section != Section::Pinned {
+        for section in Section::ALL {
+            if sb.is_hidden(section) || !sb.has_items(section) {
                 continue;
             }
-            sb.headers.push((Rect::new(x, y, w, s(HEADER_H)), section));
-            y += s(HEADER_H);
-            if count == 0 {
-                sb.hint = Some(Rect::new(x, y, w, s(ROW_H)));
-                y += s(ROW_H);
+            sb.headers.push((Rect::new(x, y, w, header_h), section));
+            y += header_h;
+            let count = sb.items.iter().filter(|it| it.section == section).count();
+            if count == 0 && section == Section::Pinned && !compact && !sb.is_collapsed(section) {
+                sb.hint = Some(Rect::new(x, y, w, row_h));
+                y += row_h;
             }
             for it in sb.items.iter().filter(|it| it.section == section) {
-                let h = if it.usage.is_some() { s(DRIVE_H) } else { s(ROW_H) };
+                let h = if it.usage.is_some() && !compact { s(DRIVE_H) } else { row_h };
                 sb.rects.push(Rect::new(x, y, w, h));
                 y += h;
             }
-            y += s(6.0);
+            y += if compact { s(2.0) } else { s(6.0) };
         }
         sb.content_h = y;
         sb.scroll = sb.scroll.clamp(0.0, (sb.content_h - sb.rect.h).max(0.0));
@@ -448,9 +758,12 @@ impl App {
         }
         for (i, r) in sb.rects.iter().enumerate() {
             if r.contains(x, y) {
-                let pin = sb.pin_rect(*r, self.scale).contains(x, y) && sb.tag_of(i).is_none();
+                let pin = !sb.prefs.compact && sb.pin_rect(*r, self.scale).contains(x, y) && sb.tag_of(i).is_none();
                 return Some(if pin { Hit::SidePin(i) } else { Hit::Side(i) });
             }
+        }
+        if let Some(&(_, s)) = sb.headers.iter().find(|(r, _)| r.contains(x, y)) {
+            return Some(Hit::SideHeader(s));
         }
         Some(Hit::SideEmpty)
     }
@@ -516,24 +829,13 @@ impl App {
         true
     }
 
-    pub(super) fn side_menu(&mut self, h: Hit, x: f32, y: f32) {
-        let sb = &self.nav.sidebar;
-        let tag = match h {
-            Hit::Side(i) => sb.tag_of(i),
-            _ => None,
-        };
-        if tag.is_some() || sb.headers.iter().any(|(r, s)| *s == Section::Tags && r.contains(x, y)) {
-            let menu = self.build_tag_menu(tag);
-            self.flit_menu(x, y, menu);
-        }
-    }
-
     pub(super) fn draw_sidebar<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
         let sb = &self.nav.sidebar;
         let area = sb.rect;
         if area.w <= 0.0 {
             return;
         }
+        let compact = sb.prefs.compact;
         g.dl.rect(area, t.chrome);
         let line = if matches!(self.hover, Hit::Splitter) || matches!(self.drag, Drag::Splitter { .. }) { t.accent } else { t.separator };
         g.dl.rect(Rect::new(area.right() - 1.0, area.y, 1.0, area.h), line);
@@ -542,18 +844,32 @@ impl App {
         let small = self.ui_font(12.0);
         let icons = self.icon_font(14.0);
         let pin_font = self.icon_font(11.0);
+        let chevron = self.icon_font(8.0);
         let m = g.metrics(font);
         let ms = g.metrics(small);
         let (s4, s8, s12, s36) = (self.s(4.0), self.s(8.0), self.s(12.0), self.s(36.0));
         let here = self.tabs[self.cur].location();
         let focused = self.active && self.focus == Focus::Sidebar;
-        let drop = match self.drop_spot() {
-            Some(super::Spot::Side(i)) => Some(i),
-            _ => None,
+        let (drop, drop_header) = match self.drop_spot() {
+            Some(super::Spot::Side(i)) => (Some(i), None),
+            Some(super::Spot::SideHeader(s)) => (None, Some(s)),
+            _ => (None, None),
         };
         for &(r, section) in &sb.headers {
+            if drop_header == Some(section) {
+                g.dl.round_rect(r, t.selection, s4);
+                g.dl.outline(r, t.accent, s4, self.s(1.0).max(1.0));
+            } else if self.hover == Hit::SideHeader(section) {
+                g.dl.round_rect(r, t.button_hover, s4);
+            }
+            if compact {
+                g.dl.rect(Rect::new(r.x + s8, (r.y + r.h / 2.0).round(), r.w - 2.0 * s8, 1.0), t.separator);
+                continue;
+            }
             let baseline = (r.y + (r.h + ms.ascent - ms.descent) / 2.0 + self.s(3.0)).round();
-            g.text(r.x + s8, baseline, section.title(), small, t.text_dim, r.w - s8);
+            g.text(r.x + s8, baseline, section.title(), small, t.text_dim, r.w - s8 - s12 - s8);
+            let glyph = if sb.is_collapsed(section) { G_COLLAPSED } else { G_EXPANDED };
+            centered(g, Rect::new(r.right() - s12 - s8, r.y + self.s(3.0), s12 + s4, r.h), glyph, chevron, t.text_dim);
         }
         if let Some(r) = sb.hint {
             let baseline = (r.y + (r.h + ms.ascent - ms.descent) / 2.0).round();
@@ -576,13 +892,23 @@ impl App {
             } else if focused && sb.cursor == i {
                 g.dl.outline(row, t.focus_ring, s4, 1.0);
             }
-            let text_h = self.s(ROW_H);
-            let icon_r = Rect::new(r.x + s4, r.y, self.s(28.0), text_h);
             let color = match tag {
                 Some(tag) => Color::rgb(tag.color),
                 None if it.section == Section::Drives || it.section == Section::Wsl => t.text_dim,
                 None => t.accent,
             };
+            if compact {
+                centered(g, r, it.glyph, icons, color);
+                if let Some(used) = it.usage {
+                    let bar = Rect::new(r.x + s8, r.bottom() - self.s(5.0), (r.w - 2.0 * s8).max(0.0), self.s(3.0));
+                    g.dl.round_rect(bar, t.separator, bar.h / 2.0);
+                    let fill = if used >= 0.9 { t.error } else { t.accent };
+                    g.dl.round_rect(Rect::new(bar.x, bar.y, (bar.w * used.clamp(0.0, 1.0)).max(bar.h), bar.h), fill, bar.h / 2.0);
+                }
+                continue;
+            }
+            let text_h = self.s(ROW_H);
+            let icon_r = Rect::new(r.x + s4, r.y, self.s(28.0), text_h);
             centered(g, icon_r, it.glyph, icons, color);
             let baseline = (r.y + (text_h + m.ascent - m.descent) / 2.0).round();
             let pin_r = sb.pin_rect(Rect::new(r.x, r.y, r.w, text_h), self.scale);

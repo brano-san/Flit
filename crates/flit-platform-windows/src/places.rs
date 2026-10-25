@@ -1,16 +1,18 @@
 use flit_core::provider::Template;
-use flit_core::ui::{Drive, NewTemplate};
+use flit_core::ui::{Drive, NewTemplate, Recent};
 use flit_core::location::valid_distro;
 use flit_core::FsPath;
-use std::path::PathBuf;
-use windows::core::{w, PCWSTR, PWSTR};
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+use windows::core::{w, Interface, PCWSTR, PWSTR};
 use windows::Win32::Foundation::ERROR_NO_MORE_ITEMS;
-use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW};
+use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW, FILE_ATTRIBUTE_DIRECTORY, WIN32_FIND_DATAW};
+use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_INPROC_SERVER, STGM_READ};
 use windows::Win32::System::Registry::{
     RegCloseKey, RegEnumKeyExW, RegGetValueW, RegNotifyChangeKeyValue, RegOpenKeyExW, HKEY, HKEY_CLASSES_ROOT, HKEY_CURRENT_USER, KEY_NOTIFY, KEY_READ, REG_NOTIFY_CHANGE_LAST_SET, REG_NOTIFY_CHANGE_NAME, REG_ROUTINE_FLAGS, RRF_RT_ANY,
     RRF_RT_REG_BINARY, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
 };
-use windows::Win32::UI::Shell::{AssocQueryStringW, SHLoadIndirectString, ASSOCF_NONE, ASSOCSTR_FRIENDLYDOCNAME};
+use windows::Win32::UI::Shell::{AssocQueryStringW, IShellLinkW, SHGetKnownFolderPath, SHLoadIndirectString, ShellLink, ASSOCF_NONE, ASSOCSTR_FRIENDLYDOCNAME, FOLDERID_Recent, KF_FLAG_DEFAULT};
 
 const DRIVE_REMOVABLE: u32 = 2;
 const DRIVE_FIXED: u32 = 3;
@@ -51,9 +53,64 @@ pub fn drives() -> Vec<Drive> {
                 .to_owned(),
             };
             let path = FsPath::parse(&format!("{letter}:\\"))?;
-            Some(Drive { path, label: format!("{name} ({letter}:)"), total, free })
+            Some(Drive { path, label: format!("{name} ({letter}:)"), total, free, removable: matches!(kind, DRIVE_REMOVABLE | DRIVE_CDROM) })
         })
         .collect()
+}
+
+fn dword(sub: &str, name: &str) -> Option<u32> {
+    let mut v = 0u32;
+    query(HKEY_CURRENT_USER, Some(sub), Some(name), RRF_RT_REG_DWORD, Some((&mut v as *mut u32).cast()), 4)?;
+    Some(v)
+}
+
+pub fn recent_off() -> bool {
+    dword(r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "Start_TrackDocs") == Some(0) || dword(r"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer", "NoRecentDocsHistory") == Some(1)
+}
+
+fn ticks(t: SystemTime) -> i64 {
+    t.duration_since(UNIX_EPOCH).map_or(0, |d| (d.as_nanos() / 100) as i64 + 116_444_736_000_000_000)
+}
+
+fn shortcut(link: &Path) -> Option<(FsPath, bool)> {
+    let wide: Vec<u16> = link.as_os_str().to_string_lossy().encode_utf16().chain(Some(0)).collect();
+    let mut buf = [0u16; 1024];
+    let mut found = WIN32_FIND_DATAW::default();
+    unsafe {
+        let sl: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+        sl.cast::<IPersistFile>().ok()?.Load(PCWSTR(wide.as_ptr()), STGM_READ).ok()?;
+        sl.GetPath(&mut buf, &mut found, 0).ok()?;
+    }
+    let n = buf.iter().position(|&c| c == 0)?;
+    Some((FsPath::from_utf16(&buf[..n])?, found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY.0 != 0))
+}
+
+pub fn recent_files(dir: &Path, limit: usize) -> Vec<Recent> {
+    crate::com_sta();
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let is_link = |p: &Path| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("lnk"));
+    let mut links: Vec<(SystemTime, PathBuf)> = entries.filter_map(|e| e.ok()).filter(|e| is_link(&e.path())).filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path()))).collect();
+    links.sort_by_key(|l| std::cmp::Reverse(l.0));
+    let mut out: Vec<Recent> = Vec::with_capacity(limit);
+    for (at, link) in links {
+        if out.len() == limit {
+            break;
+        }
+        let Some((target, dir)) = shortcut(&link) else { continue };
+        if out.iter().any(|r| r.target == target) {
+            continue;
+        }
+        let name = flit_core::name::display(target.file_name()).into_owned();
+        out.push(Recent { name, target, dir, at: ticks(at) });
+    }
+    out
+}
+
+pub fn recent(limit: usize) -> (Vec<Recent>, bool) {
+    crate::com_sta();
+    let dir = unsafe { SHGetKnownFolderPath(&FOLDERID_Recent, KF_FLAG_DEFAULT, None) }.ok().and_then(|p| unsafe { crate::take_pwstr(p) });
+    let files = dir.map(|w| recent_files(Path::new(&String::from_utf16_lossy(&w)), limit)).unwrap_or_default();
+    (files, recent_off())
 }
 
 const LXSS: PCWSTR = w!(r"Software\Microsoft\Windows\CurrentVersion\Lxss");
@@ -215,3 +272,7 @@ pub fn templates() -> Vec<NewTemplate> {
     out.sort_by_cached_key(|t: &NewTemplate| t.label.to_lowercase());
     out
 }
+
+#[cfg(test)]
+#[path = "../test/places.rs"]
+mod tests;

@@ -1,5 +1,5 @@
 use crate::metrics::{Metrics, Step};
-use crate::places::PlacesWorker;
+use crate::places::{PlacesWorker, Reply};
 use crate::search_client::SearchClient;
 use crate::state::{self, Saved};
 use crate::tags::{self, TagWorker};
@@ -263,6 +263,7 @@ impl<P: Platform> Handler<P> {
             app.status("Flit runs as administrator, so Windows blocks files dragged in from other programs");
         }
         app.set_nav_state(self.saved.nav.clone());
+        app.set_nav_prefs(self.saved.side.clone());
         app.set_pane_state(self.saved.pane);
         app.set_places(self.places.current());
         app.set_tags(self.tags.current());
@@ -338,7 +339,7 @@ impl<P: Platform> Handler<P> {
                 Effect::Window(WindowCmd::ToggleMaximize) => window.toggle_maximize(),
                 Effect::Window(WindowCmd::Close) => {
                     if let Some(st) = self.windows.get(&id) {
-                        self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state()).with_pane(st.app.pane_state());
+                        self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state()).with_pane(st.app.pane_state()).with_side(st.app.nav_prefs());
                     }
                     window.close();
                 }
@@ -358,6 +359,9 @@ impl<P: Platform> Handler<P> {
                 }
                 Effect::Host(cmd) => window.host(cmd),
                 Effect::NewWindow(routes) => {
+                    if let Some(st) = self.windows.get(&id) {
+                        self.saved.side = st.app.nav_prefs();
+                    }
                     let persisted = self.saved.persisted.clone();
                     let app = self.new_app(routes, persisted);
                     self.pending.push_back(app);
@@ -375,6 +379,8 @@ impl<P: Platform> Handler<P> {
                     (self.wake)();
                 }
                 Effect::RefreshPlaces => self.places.refresh(),
+                Effect::PinFolders(paths) => self.places.pin(paths),
+                Effect::Library(op) => self.places.library(op),
                 Effect::Timer(d) => window.set_timer(d.as_millis().clamp(1, u32::MAX as u128) as u32),
                 Effect::Tags(req) => self.tags.submit(Some(id), req),
             }
@@ -456,10 +462,24 @@ impl<P: Platform> Handler<P> {
                 st.app.on_search_event(ev, now);
             }
         }
-        if let Some(places) = self.places.poll() {
-            self.distros = Some(places.wsl.clone());
-            for st in self.windows.values_mut() {
-                st.app.set_places(places.clone());
+        for reply in self.places.poll() {
+            match reply {
+                Reply::Places(places) => {
+                    self.distros = Some(places.wsl.clone());
+                    for st in self.windows.values_mut() {
+                        st.app.set_places(places.clone());
+                    }
+                }
+                Reply::Failed(message) => {
+                    if let Some(st) = self.active.and_then(|id| self.windows.get_mut(&id)) {
+                        st.app.library_failed(&message);
+                    }
+                }
+                Reply::Pin(folders) => {
+                    if let Some(st) = self.active.and_then(|id| self.windows.get_mut(&id)) {
+                        st.app.pin_locations(folders);
+                    }
+                }
             }
         }
     }
@@ -685,7 +705,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         let id = window.id();
         if let Some(mut st) = self.windows.remove(&id) {
             if self.windows.is_empty() {
-                self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state()).with_pane(st.app.pane_state());
+                self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state()).with_pane(st.app.pane_state()).with_side(st.app.nav_prefs());
             }
             st.app.shutdown();
             for e in st.app.drain_effects().collect::<Vec<_>>() {

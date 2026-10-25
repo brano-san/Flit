@@ -24,6 +24,9 @@ pub(super) enum Pick {
     Stream(FsPath),
     FolderIcon(FsPath),
     Encoding(FsPath),
+    NewLibrary,
+    Library(FsPath),
+    LibraryAdd(FsPath),
     Tags(TagPick),
 }
 
@@ -36,6 +39,9 @@ impl Pick {
             Pick::Shortcut(_) => "Full path of the shortcut target",
             Pick::Stream(_) => "Name of the new alternate data stream",
             Pick::FolderIcon(_) => "Full path of an icon, program or library, then optionally a comma and the icon index",
+            Pick::NewLibrary => "Name of the new library",
+            Pick::Library(_) => "Enter makes a folder the default save location, Delete removes it from the library",
+            Pick::LibraryAdd(_) => "Full path of the folder to include in the library",
             Pick::Tags(t) => t.placeholder(),
         }
     }
@@ -48,12 +54,15 @@ impl Pick {
             Pick::Shortcut(_) => "Enter creates the shortcut in this folder",
             Pick::Stream(_) => "Enter creates the stream",
             Pick::FolderIcon(_) => "Enter writes the icon into desktop.ini of the folder",
+            Pick::NewLibrary => "Enter creates the library in the Libraries folder",
+            Pick::Library(_) => "No matching folders",
+            Pick::LibraryAdd(_) => "Enter adds the folder to the library",
             Pick::Tags(t) => t.empty(),
         }
     }
 
     fn is_input(&self) -> bool {
-        matches!(self, Pick::Shortcut(_) | Pick::Stream(_) | Pick::FolderIcon(_)) || matches!(self, Pick::Tags(t) if t.is_input())
+        matches!(self, Pick::Shortcut(_) | Pick::Stream(_) | Pick::FolderIcon(_) | Pick::NewLibrary | Pick::LibraryAdd(_)) || matches!(self, Pick::Tags(t) if t.is_input())
     }
 }
 
@@ -62,7 +71,8 @@ pub(super) struct Palette {
     pub titles: Vec<String>,
     field: Field,
     pub matches: Vec<usize>,
-    keys: Vec<String>,
+    pub keys: Vec<String>,
+    ids: Vec<usize>,
     pub sel: usize,
     first: usize,
     rect: Rect,
@@ -103,16 +113,20 @@ pub fn matches(query: &str) -> Vec<usize> {
 
 impl Palette {
     pub(super) fn new(pick: Pick, items: Vec<(String, String)>, text: &str) -> Self {
-        let (titles, keys) = items.into_iter().unzip();
-        let mut p = Self { pick, titles, field: Field::default(), matches: Vec::new(), keys, sel: 0, first: 0, rect: Rect::default(), field_rect: Rect::default(), rows: Vec::new() };
+        let (titles, keys): (Vec<String>, Vec<String>) = items.into_iter().unzip();
+        let ids = (0..titles.len()).collect();
+        let mut p = Self { pick, titles, field: Field::default(), matches: Vec::new(), keys, ids, sel: 0, first: 0, rect: Rect::default(), field_rect: Rect::default(), rows: Vec::new() };
         p.field.edit.set(text);
         p.field.edit.select_all();
         p.refresh();
         p
     }
 
-    fn commands() -> Self {
-        Self::new(Pick::Commands, ACTIONS.iter().map(|a| (a.title.to_owned(), keys_text(a))).collect(), "")
+    fn commands(app: &App) -> Self {
+        let ids: Vec<usize> = (0..ACTIONS.len()).filter(|&i| app.available(ACTIONS[i].id)).collect();
+        let mut p = Self::new(Pick::Commands, ids.iter().map(|&i| (ACTIONS[i].title.to_owned(), keys_text(&ACTIONS[i]))).collect(), "");
+        p.ids = ids;
+        p
     }
 
     fn refresh(&mut self) {
@@ -142,7 +156,7 @@ impl Palette {
 
 impl App {
     pub(super) fn open_palette(&mut self) {
-        self.open_pick(Palette::commands());
+        self.open_pick(Palette::commands(self));
     }
 
     pub(super) fn open_pick(&mut self, p: Palette) {
@@ -174,14 +188,27 @@ impl App {
             return;
         };
         match p.pick {
-            Pick::Commands => (ACTIONS[id].run)(self, now),
+            Pick::Commands => (ACTIONS[p.ids[id]].run)(self, now),
             Pick::Encoding(archive) => self.set_encoding(&archive, id, now),
+            Pick::Library(lib) => self.library_row(lib, &p.titles[id], false),
             Pick::Tags(t) => self.tag_choose(t, id, now),
             _ => self.new_item(id),
         }
     }
 
+    fn remove_palette_item(&mut self) -> bool {
+        let Some(p) = self.nav.palette.take_if(|p| matches!(p.pick, Pick::Library(_))) else { return false };
+        if let (Pick::Library(lib), Some(&id)) = (p.pick, p.matches.get(p.sel)) {
+            self.library_row(lib, &p.titles[id], true);
+        }
+        true
+    }
+
     pub(super) fn palette_key(&mut self, key: Key, m: Mods, now: Instant) -> bool {
+        if key == Key::Delete && self.remove_palette_item() {
+            self.layout();
+            return true;
+        }
         let Some(p) = &mut self.nav.palette else { return false };
         let page = MAX_ROWS as isize;
         match key {

@@ -202,6 +202,7 @@ impl Fs for NtFs {
         match dir.kind() {
             PathKind::Computer => return volumes(out),
             PathKind::RecycleBin => return crate::recycle::list(&crate::recycle::roots(), out),
+            _ if flit_core::library::is_library(dir) => return crate::library::list(dir, out),
             _ => {}
         }
         if let Some(listed) = flit_archive::read_dir(dir, out, <crate::Windows as flit_platform::Platform>::utc_offset_minutes()) {

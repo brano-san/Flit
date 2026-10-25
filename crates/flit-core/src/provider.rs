@@ -94,6 +94,7 @@ pub enum FileOp {
 pub enum Launch {
     Terminal { dirs: Vec<FsPath>, admin: bool },
     With { program: FsPath, args: Vec<FsPath> },
+    Eject(FsPath),
 }
 
 impl Launch {
@@ -102,6 +103,7 @@ impl Launch {
         Some(match self {
             Launch::Terminal { dirs, admin } => Launch::Terminal { dirs: all(dirs)?, admin: *admin },
             Launch::With { program, args } => Launch::With { program: f(program)?, args: all(args)? },
+            Launch::Eject(drive) => Launch::Eject(f(drive)?),
         })
     }
 }

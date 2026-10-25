@@ -78,6 +78,7 @@ impl Watcher for DirWatcher {
     fn watch(&mut self, tab: TabId, gen: u64, dir: Option<&FsPath>) {
         match dir {
             Some(d) if d.kind() == PathKind::RecycleBin => self.watch_all(tab, gen, Some(&crate::recycle::roots()), true),
+            Some(d) if flit_core::library::is_library(d) => self.watch_all(tab, gen, Some(&crate::library::folders(d)), true),
             _ => self.watch_all(tab, gen, dir.map(std::slice::from_ref), false),
         }
     }

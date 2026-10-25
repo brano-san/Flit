@@ -1,6 +1,6 @@
 use flit_core::archive::Defaults;
 use flit_core::sort::SortField;
-use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavState, PaneState, Persisted, Sizes, ViewPrefs};
+use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavPrefs, NavState, PaneState, Persisted, Sizes, ViewPrefs};
 use flit_core::Location;
 use flit_platform::{Placement, Platform};
 use serde::{Deserialize, Serialize};
@@ -59,11 +59,12 @@ pub struct Saved {
     placement: Option<Bounds>,
     pub nav: NavState,
     pub pane: PaneState,
+    pub side: NavPrefs,
 }
 
 impl Saved {
     pub fn new(persisted: Persisted, placement: Option<Placement>) -> Self {
-        Self { version: VERSION, persisted, placement: placement.map(|p| (p.x, p.y, p.width, p.height, p.maximized)), nav: NavState::default(), pane: PaneState::default() }
+        Self { version: VERSION, persisted, placement: placement.map(|p| (p.x, p.y, p.width, p.height, p.maximized)), nav: NavState::default(), pane: PaneState::default(), side: NavPrefs::default() }
     }
 
     pub fn with_nav(mut self, nav: NavState) -> Self {
@@ -76,6 +77,11 @@ impl Saved {
         self
     }
 
+    pub fn with_side(mut self, side: NavPrefs) -> Self {
+        self.side = side;
+        self
+    }
+
     fn sanitized(mut self) -> Self {
         let p = &mut self.persisted;
         p.view = p.view.sanitized();
@@ -83,6 +89,7 @@ impl Saved {
         self.placement = self.placement.filter(|&(_, _, w, h, _)| w > 0 && h > 0);
         self.nav = self.nav.sanitized();
         self.pane = self.pane.sanitized();
+        self.side = self.side.sanitized();
         self
     }
 
@@ -99,7 +106,7 @@ impl Saved {
             view.columns.widths[c as usize] = w;
         }
         let persisted = Persisted { path: h.path, show_hidden: h.show_hidden, view, ..Default::default() };
-        Self { version: h.version, persisted, placement: h.placement, nav: NavState::default(), pane: PaneState::default() }
+        Self { version: h.version, persisted, placement: h.placement, nav: NavState::default(), pane: PaneState::default(), side: NavPrefs::default() }
     }
 
     fn decode(bytes: &[u8]) -> Option<Self> {
@@ -117,7 +124,10 @@ impl Saved {
             }
             if let Ok((pane, tail)) = postcard::take_from_bytes::<PaneState>(tail) {
                 saved.pane = pane;
-                rest = Some(tail);
+                if let Ok((side, tail)) = postcard::take_from_bytes::<NavPrefs>(tail) {
+                    saved.side = side;
+                    rest = Some(tail);
+                }
             }
         }
         let p = &mut saved.persisted;
@@ -145,6 +155,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&views).ok()?);
         bytes.extend(postcard::to_stdvec(&layouts).ok()?);
         bytes.extend(postcard::to_stdvec(&self.pane).ok()?);
+        bytes.extend(postcard::to_stdvec(&self.side).ok()?);
         bytes.extend(postcard::to_stdvec(&p.archive.clone().sanitized()).ok()?);
         Some(bytes)
     }
