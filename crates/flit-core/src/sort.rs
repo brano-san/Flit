@@ -13,6 +13,7 @@ pub enum SortField {
     Size,
     Origin,
     Created,
+    Tag,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash, serde::Serialize, serde::Deserialize)]
@@ -40,6 +41,7 @@ pub enum GroupField {
     Modified,
     Created,
     Origin,
+    Tag,
 }
 
 impl GroupField {
@@ -238,6 +240,15 @@ pub fn date_unit_value(ticks: i64, v: &ViewSpec) -> Option<i64> {
     })
 }
 
+pub fn first_tag(mask: u32) -> u64 {
+    if mask == 0 { 32 } else { mask.trailing_zeros() as u64 }
+}
+
+#[inline]
+fn tag_key(mask: u32) -> u64 {
+    (!mask).reverse_bits() as u64
+}
+
 fn date_key(ticks: i64, v: &ViewSpec) -> u64 {
     date_unit_value(ticks, v).map_or(0, |n| n as u64 ^ (1 << 63))
 }
@@ -253,6 +264,7 @@ pub fn group_key(l: &Listing, i: u32, v: &ViewSpec) -> (u64, bool) {
         GroupField::Modified => (date_key(e.modified, v), true),
         GroupField::Created => (date_key(e.created, v), true),
         GroupField::Origin => (ext_prefix(recycle::origin(l, i)), recycle::origin(l, i).len() <= 8),
+        GroupField::Tag => (first_tag(e.tags), true),
     }
 }
 
@@ -312,6 +324,7 @@ fn item_cmp(l: &Listing, k: &SortKeys, spec: SortSpec, a: u32, b: u32) -> Orderi
         SortField::Created => ea.created.cmp(&eb.created),
         SortField::Type => ext_cmp(l.ext(a), l.ext(b)),
         SortField::Origin => ext_cmp(recycle::origin(l, a), recycle::origin(l, b)),
+        SortField::Tag => tag_key(ea.tags).cmp(&tag_key(eb.tags)),
     }
     .then_with(|| k.cmp(a, b))
     .then_with(|| l.name(a).cmp(l.name(b)));
@@ -365,6 +378,7 @@ pub fn sort(l: &Listing, k: &SortKeys, view: ViewSpec, out: &mut Vec<u32>) {
                 SortField::Created => e.created as u64 ^ (1 << 63),
                 SortField::Type => ext_prefix(l.ext(i)),
                 SortField::Origin => ext_prefix(recycle::origin(l, i)),
+                SortField::Tag => tag_key(e.tags),
             };
             let exact = match spec.field {
                 SortField::Type => l.ext(i).len() <= 8,

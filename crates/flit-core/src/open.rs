@@ -18,6 +18,7 @@ pub struct Open {
     pub select: Vec<Vec<u8>>,
     pub target: OpenTarget,
     pub cwd: Option<Vec<u8>>,
+    pub tag: Option<String>,
 }
 
 impl Open {
@@ -41,6 +42,11 @@ fn unquote(b: &[u8]) -> &[u8] {
 }
 
 pub fn parse_args(args: &[Vec<u8>], cwd: Option<Vec<u8>>) -> Open {
+    if let Some(k) = args.iter().position(|a| eq_ci(a, "-tag")) {
+        let name = args.get(k + 1).map(|n| name::display(unquote(n)).into_owned());
+        let paths = args.iter().skip(k + 2).map(|a| unquote(a).to_vec()).filter(|a| !a.is_empty()).collect();
+        return Open { paths, cwd, tag: Some(name.unwrap_or_default()), ..Default::default() };
+    }
     let mut open = Open { cwd, ..Default::default() };
     let mut dangling: Option<bool> = None;
     for arg in args {

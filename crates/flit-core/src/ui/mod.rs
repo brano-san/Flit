@@ -16,7 +16,9 @@ mod marquee;
 mod menu;
 mod nav;
 pub mod palette;
+mod preview_pane;
 pub mod sidebar;
+mod tags;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchSort};
@@ -24,6 +26,7 @@ pub use sidebar::{Drive, KnownFolder, NavState, Places};
 pub use details::{folder_key, Columns, FolderView, FolderViews, ViewPrefs, THUMB_CACHE_MB};
 pub use layouts::{adaptive_layout, has_thumbnail, is_media, LayoutMode, Sizes, LAYOUTS};
 pub use jobs::JobState;
+pub use preview_pane::PaneState;
 pub use menu::MenuItem;
 pub use tab::Tab;
 
@@ -35,10 +38,12 @@ use crate::location::{Location, ProviderId};
 use crate::name;
 use crate::open::{self, Open, OpenTarget, ResolveError, Route};
 use crate::path::{FsPath, PathKind};
+use crate::preview::{HostCmd, PreviewRequest};
 use crate::provider::{ProviderEvent, ProviderRequest, Resolve, TabId};
 use crate::recycle;
 use crate::render::{Color, Rect};
 use crate::sort::{CaseMode, GroupField, SortField, ViewSpec};
+use crate::tags::TagRequest;
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::{self, Theme};
 use crate::thumbs;
@@ -98,9 +103,10 @@ pub enum Column {
     Origin,
     Deleted,
     Created,
+    Tag,
 }
 
-pub const COLUMNS: [Column; 5] = [Column::Name, Column::Modified, Column::Created, Column::Type, Column::Size];
+pub const COLUMNS: [Column; 6] = [Column::Name, Column::Modified, Column::Created, Column::Type, Column::Size, Column::Tag];
 pub const BIN_COLUMNS: [Column; 4] = [Column::Name, Column::Origin, Column::Deleted, Column::Size];
 
 impl Column {
@@ -113,6 +119,7 @@ impl Column {
             Column::Size => "Size",
             Column::Origin => "Original location",
             Column::Deleted => "Date deleted",
+            Column::Tag => "Tags",
         }
     }
     fn field(self) -> SortField {
@@ -123,6 +130,7 @@ impl Column {
             Column::Type => SortField::Type,
             Column::Size => SortField::Size,
             Column::Origin => SortField::Origin,
+            Column::Tag => SortField::Tag,
         }
     }
 }
@@ -183,7 +191,11 @@ pub enum Effect {
     Pinned(Vec<Location>),
     RefreshPlaces,
     Search(SearchRequest),
+    Preview(PreviewRequest),
+    QuickView(FsPath),
+    Host(HostCmd),
     Timer(Duration),
+    Tags(TagRequest),
 }
 
 pub enum IconResult {
@@ -244,6 +256,7 @@ enum Hit {
     Row(usize),
     Group(usize),
     Pane(usize, Option<usize>),
+    Preview(preview_pane::PaneHit),
     ListEmpty,
     Track,
     Thumb,
@@ -281,6 +294,7 @@ enum Drag {
     EditSelect,
     Splitter { start_x: f32, start_w: f32 },
     PinMove { from: usize, to: usize },
+    Preview { hit: preview_pane::PaneHit, start: f32, size: f32 },
     Marquee,
 }
 
@@ -309,6 +323,7 @@ struct Layout {
     icon: f32,
     flow: flow::FlowParams,
     panes: Vec<Rect>,
+    bottom: f32,
 }
 
 pub struct App {
@@ -366,6 +381,8 @@ pub struct App {
     jobs: jobs::Jobs,
     details: details::Details,
     archive: archive::ArchiveUi,
+    tag_fixes: Vec<(FsPath, u32, Instant)>,
+    preview: preview_pane::PreviewPane,
 }
 
 impl App {
@@ -421,6 +438,8 @@ impl App {
             jobs: Default::default(),
             details: Default::default(),
             archive: archive::ArchiveUi::new(state.archive),
+            tag_fixes: Vec::new(),
+            preview: Default::default(),
         };
         let mut start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
         let total = start.len();
@@ -541,6 +560,7 @@ impl App {
         }
         let total = routes.len();
         routes.truncate(MAX_ROUTES);
+        routes.iter_mut().for_each(|r| r.folder.canonicalize(&self.nav.sidebar.places.wsl));
         match target {
             OpenTarget::NewWindow => self.effects.push(Effect::NewWindow(routes)),
             OpenTarget::CurrentTab => {
@@ -758,6 +778,14 @@ impl App {
                 }
             }
             ProviderEvent::Hashed { id, result, .. } => self.hashed(id, result),
+            ProviderEvent::Status { tab, gen, text } => {
+                if let Some(k) = tab_of(&self.tabs, tab, gen) {
+                    if let Some(l) = self.tabs[k].loading.as_mut() {
+                        l.note = Some(text);
+                        self.dirty |= k == self.cur;
+                    }
+                }
+            }
         }
     }
 
@@ -880,6 +908,7 @@ impl App {
             l.sizes = Rect::default();
             l.bin = Default::default();
         }
+        self.layout_preview();
         self.layout_look();
         let l = &mut self.layout;
         l.columns.clear();
@@ -924,7 +953,7 @@ impl App {
         if let Some(h) = self.jobs_hit(x, y) {
             return h;
         }
-        if let Some(h) = self.nav_hit(x, y) {
+        if let Some(h) = self.nav_hit(x, y).or_else(|| self.preview_hit(x, y)) {
             return h;
         }
         let l = &self.layout;
@@ -1033,7 +1062,7 @@ impl App {
             Event::MouseDown { x, y, button, clicks } => self.mouse_down(*x, *y, *button, *clicks, now),
             Event::MouseUp { x, y, button } => self.mouse_up(*x, *y, *button, now),
             Event::Wheel { dy, .. } => {
-                if self.jobs_wheel(*dy) || self.nav_wheel(*dy) || self.pane_wheel(*dy) {
+                if self.jobs_wheel(*dy) || self.nav_wheel(*dy) || self.pane_wheel(*dy) || self.preview_wheel(*dy) {
                     return;
                 }
                 if self.mods.ctrl {
@@ -1075,6 +1104,7 @@ impl App {
                 self.hover_timer(now);
             }
             Event::ClipboardChanged(seq) => self.clipboard_changed(*seq),
+            Event::Hosted(ev) => self.on_hosted(ev.clone()),
         }
     }
 
@@ -1109,6 +1139,7 @@ impl App {
             }
             Drag::Splitter { start_x, start_w } => return self.drag_splitter(x, start_x, start_w),
             Drag::PinMove { from, .. } => return self.drag_pin(from, y),
+            Drag::Preview { hit, start, size } => return self.preview_drag(hit, x, y, start, size),
             Drag::Marquee | Drag::None => {}
         }
         if self.start_pin_drag(y) {
@@ -1119,6 +1150,7 @@ impl App {
             Hit::ColSep(_) | Hit::Splitter => CursorIcon::ResizeHorizontal,
             Hit::Address if self.editing => CursorIcon::Text,
             Hit::FilterField | Hit::PaletteField => CursorIcon::Text,
+            Hit::Preview(preview_pane::PaneHit::Split) => self.preview_cursor(),
             _ => CursorIcon::Default,
         };
         self.set_cursor(cursor);
@@ -1198,6 +1230,7 @@ impl App {
                 t.scroll_target = (t.scroll_target + dir * len).clamp(0.0, max);
             }
             Hit::Group(_) => self.focus = Focus::List,
+            Hit::Preview(p) => self.preview_mouse_down(p, x, y),
             Hit::ColSep(i) => {
                 let col = self.layout.columns[i];
                 self.drag = Drag::ColSep { col, start_x: x, start_w: self.tab().columns.width(col) };
@@ -1244,6 +1277,7 @@ impl App {
             Hit::Group(g) => self.toggle_group(g),
             Hit::Pane(i, Some(row)) => self.open_pane_row(i, row, now),
             Hit::Sizes => self.sizes_button(),
+            Hit::Preview(p) => self.preview_click(p),
             Hit::Bin(k) => self.bin_button(k),
             Hit::Side(i) => self.open_side_item(i, self.mods.ctrl, now),
             Hit::SidePin(i) => self.toggle_pin_item(i),
@@ -1360,6 +1394,9 @@ impl App {
         if self.mods.ctrl != self.mods.alt {
             return;
         }
+        if c == ' ' && !self.tab().typing(now) {
+            return self.quick_view();
+        }
         if self.tab_mut().type_ahead(c, now) {
             self.reveal_focus(false);
         }
@@ -1423,6 +1460,7 @@ impl App {
         self.poll();
         self.dirty = false;
         let mut animating = self.tab_mut().apply_diffs(DIFF_BUDGET);
+        self.apply_tag_fixes(now);
         self.ops_frame(now);
         animating |= self.marquee_autoscroll(dt);
         animating |= self.autoscroll_step(dt);
@@ -1436,6 +1474,7 @@ impl App {
             t.scroll = t.scroll_target;
         }
         self.layout();
+        self.sync_preview(now);
 
         let mut arena = std::mem::take(&mut self.arena);
         arena.reset();
@@ -1449,6 +1488,7 @@ impl App {
             } else {
                 self.draw_list(g, &arena, th);
                 self.draw_panes(g, th);
+                self.draw_preview(g, th);
                 self.draw_marquee(g, th);
                 self.draw_ops(g, th);
                 self.draw_header(g, th);
@@ -1744,7 +1784,7 @@ impl App {
                     let path = match (wanted, in_bin) {
                         (false, _) => None,
                         (true, true) => recycle::recycled(listing, i),
-                        (true, false) => shell_dir.as_ref().map(|d| d.join(name)),
+                        (true, false) => loc.join(name).to_windows(),
                     };
                     if let Some(path) = path {
                         requests.push(IconRequest { key, kind, path, size: icon_px as u32, gen: tab.gen, row: row as u32 });
@@ -1753,9 +1793,7 @@ impl App {
 
                 let ty = baseline(p.name);
                 let name_color = if faded { t.text_dim } else { t.text };
-                let shown = self.shown_name(listing, i);
-                let name_x = if p.center { p.name.x + ((p.name.w - g.measure(&shown, font)) / 2.0).max(0.0).round() } else { p.name.x };
-                g.text(name_x, ty, &shown, font, name_color, p.name.right() - name_x);
+                self.draw_name(g, &p, &self.shown_name(listing, i), e.tags, font, name_color);
                 want_type(i);
                 match mode {
                     LayoutMode::Details => {
@@ -1829,8 +1867,8 @@ impl App {
             if !v.snap().done {
                 s.push_str("    Loading…");
             }
-        } else if tab.loading.is_some() {
-            s.push_str("Loading…");
+        } else if let Some(l) = &tab.loading {
+            s.push_str(l.note.as_deref().unwrap_or("Loading…"));
         }
         g.text(r.x + pad, baseline, &s, font, color, r.w / 2.0);
 

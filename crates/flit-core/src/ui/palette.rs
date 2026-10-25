@@ -1,6 +1,7 @@
 use super::actions::{keys_text, ACTIONS};
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
+use super::tags::TagPick;
 use super::{App, Effect, Hit};
 use crate::input::{Key, Mods};
 use crate::path::FsPath;
@@ -23,6 +24,7 @@ pub(super) enum Pick {
     Stream(FsPath),
     FolderIcon(FsPath),
     Encoding(FsPath),
+    Tags(TagPick),
 }
 
 impl Pick {
@@ -34,6 +36,7 @@ impl Pick {
             Pick::Shortcut(_) => "Full path of the shortcut target",
             Pick::Stream(_) => "Name of the new alternate data stream",
             Pick::FolderIcon(_) => "Full path of an icon, program or library, then optionally a comma and the icon index",
+            Pick::Tags(t) => t.placeholder(),
         }
     }
 
@@ -45,11 +48,12 @@ impl Pick {
             Pick::Shortcut(_) => "Enter creates the shortcut in this folder",
             Pick::Stream(_) => "Enter creates the stream",
             Pick::FolderIcon(_) => "Enter writes the icon into desktop.ini of the folder",
+            Pick::Tags(t) => t.empty(),
         }
     }
 
     fn is_input(&self) -> bool {
-        matches!(self, Pick::Shortcut(_) | Pick::Stream(_) | Pick::FolderIcon(_))
+        matches!(self, Pick::Shortcut(_) | Pick::Stream(_) | Pick::FolderIcon(_)) || matches!(self, Pick::Tags(t) if t.is_input())
     }
 }
 
@@ -172,6 +176,7 @@ impl App {
         match p.pick {
             Pick::Commands => (ACTIONS[id].run)(self, now),
             Pick::Encoding(archive) => self.set_encoding(&archive, id, now),
+            Pick::Tags(t) => self.tag_choose(t, id, now),
             _ => self.new_item(id),
         }
     }

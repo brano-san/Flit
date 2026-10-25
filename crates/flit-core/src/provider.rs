@@ -258,6 +258,7 @@ pub enum ProviderEvent {
     OpConflict { tab: TabId, id: OpId, conflict: Conflict },
     Navigate { tab: TabId, path: FsPath },
     Hashed { tab: TabId, id: OpId, result: Result<Vec<String>, String> },
+    Status { tab: TabId, gen: u64, text: String },
 }
 
 #[cfg(test)]

@@ -309,12 +309,16 @@ impl App {
     }
 
     fn start_op_for(&mut self, tab: TabId, op: FileOp, origin: Origin, then: Then) {
+        self.start_op_on(ProviderId::Local, tab, op, origin, then);
+    }
+
+    fn start_op_on(&mut self, provider: ProviderId, tab: TabId, op: FileOp, origin: Origin, then: Then) {
         self.ops.next_id += 1;
         let id = self.ops.next_id;
         let ctl = OpCtl::new(self.conflict_default);
         self.track_job(id, &op, &ctl);
         self.ops.pending.push(Pending { id, tab, origin, then, ctl: ctl.clone() });
-        self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Op { tab, id, op, ctl } });
+        self.effects.push(Effect::Provider { provider, req: ProviderRequest::Op { tab, id, op, ctl } });
     }
 
     pub(super) fn start_confirmed(&mut self, op: FileOp) {
@@ -338,6 +342,11 @@ impl App {
         let items = self.selected_items();
         if items.is_empty() {
             return;
+        }
+        let t = self.tab();
+        if let (false, Location::Wsl { .. }) = (permanent, &t.view_loc) {
+            let paths = items.iter().map(|&i| t.entry_location(i).path().clone()).collect();
+            return self.start_op_on(t.view_loc.provider(), t.id, FileOp::Trash(paths), Origin::Fresh, Then::Nothing);
         }
         match self.item_paths(&items) {
             Ok(paths) if permanent => self.ask_confirm(FileOp::Delete(paths)),
@@ -604,6 +613,7 @@ impl App {
                 Ok(name) => self.start_op(FileOp::NewStream { item, name: name.into_bytes() }, Origin::Fresh, Then::Nothing),
                 Err(e) => self.status(e),
             },
+            Pick::Tags(t) => self.tag_input(t, text),
             Pick::Commands | Pick::NewItem | Pick::Encoding(_) => {}
         }
     }
@@ -725,6 +735,9 @@ impl App {
         let unwatched = |l: &Location| matches!(l, Location::Wsl { .. }) || l.path().kind() == PathKind::Unc || archive::split(l.path()).is_some();
         if let Some(k) = k.filter(|&k| (error.is_none() || any_done) && unwatched(self.tabs[k].location())) {
             self.reload(k, now);
+        }
+        if let Some(r) = &report {
+            self.tags_moved(r);
         }
         let (Some(report), Some(p)) = (report, pending) else { return };
         self.ops.journal.record(p.origin, &report);
@@ -1143,7 +1156,7 @@ impl App {
             Hit::SideEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose => None,
             Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside => None,
             Hit::OpsButton | Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsClear | Hit::OpsCancel(_) | Hit::OpsMore(_) | Hit::OpsMenu(_) => None,
-            Hit::Dialog | Hit::DialogButton(_) | Hit::DialogCheck | Hit::Form(_) | Hit::Modal => None,
+            Hit::Dialog | Hit::DialogButton(_) | Hit::DialogCheck | Hit::Form(_) | Hit::Modal | Hit::Preview(_) => None,
             _ if self.layout.status.contains(x, y) => None,
             _ => Some(Target::Reveal),
         }

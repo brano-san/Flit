@@ -179,6 +179,34 @@ fn bench_shell_metadata() {
 
 #[test]
 #[ignore]
+fn bench_preview_loaders() {
+    let d = Dir::temp("preview");
+    let _sh = ShellCom::new().unwrap();
+    let jpegs: Vec<FsPath> = (0..RUNS as u32)
+        .map(|k| {
+            crate::shell::tests::write_jpeg(&d.0.join(format!("p{k}.jpg")), 4000, 3000, k);
+            d.path(&format!("p{k}.jpg"))
+        })
+        .collect();
+    let mut bytes = 0;
+    measure("decode 4000x3000 jpeg to 1600 px", jpegs.len(), |k| jpegs[k].clone(), |p| {
+        bytes = crate::preview::decode_image(&p, 1600).unwrap().rgba.len();
+    });
+    eprintln!("      bitmap held: {} KB", bytes / 1024);
+    measure("decode 4000x3000 jpeg to 640 px", jpegs.len(), |k| jpegs[k].clone(), |p| {
+        assert!(crate::preview::decode_image(&p, 640).is_some());
+    });
+    measure("shell property groups (jpeg)", jpegs.len(), |k| jpegs[k].clone(), |p| {
+        assert!(!crate::preview::properties(&p).is_empty());
+    });
+    let exts = ["pdf", "txt", "docx", "mp4", "html", "zip", "md", "xlsx"];
+    measure("preview handler lookup (per extension)", exts.len(), |k| exts[k].as_bytes(), |e| {
+        crate::preview::handler(e);
+    });
+}
+
+#[test]
+#[ignore]
 fn bench_file_ops() {
     let c = Dir::temp("ops");
     let other = Dir::other_volume("ops");
@@ -513,6 +541,43 @@ fn bench_recycle_bin_listing() {
         measure(&format!("read_dir bin root ({} entries)", 2 * n), RUNS, |_| (), |_| assert_eq!(count(&NtFs, &roots[0]), 2 * n));
         measure(&format!("recycle bin list {n} items"), RUNS, |_| (), |_| assert_eq!(crate::recycle::count(&roots), n));
     }
+}
+
+#[test]
+#[ignore]
+fn bench_tags() {
+    use flit_core::hash::FxHashMap;
+    use flit_core::tags::{FileKey, TagStore, Tags};
+    let d = Dir::temp("tags");
+    let n = 100_000;
+    for i in 0..n {
+        std::fs::write(d.0.join(format!("f{i:06}.txt")), b"").unwrap();
+    }
+    let tagged: Vec<FsPath> = (0..n).step_by(10).map(|i| d.path(&format!("f{i:06}.txt"))).collect();
+    let t = Instant::now();
+    let keys: Vec<FileKey> = tagged.iter().map(|p| crate::tags::file_key(p).expect("the temp folder is on NTFS")).collect();
+    report(&format!("file_key for {} files", keys.len()), vec![t.elapsed()]);
+    let mut store = TagStore::default();
+    for (k, p) in keys.iter().zip(&tagged) {
+        store.update(*k, p.clone(), |_| 1);
+    }
+    let tags = Arc::new(Tags::new(1, &store, &FxHashMap::default()));
+    let probe: Vec<FileKey> = (0..n as u64).map(|i| FileKey { volume: keys[0].volume, id: keys[(i % keys.len() as u64) as usize].id ^ (i & 1) }).collect();
+    measure("Tags::mask for 100k entries", RUNS, |_| (), |_| assert!(probe.iter().map(|k| tags.mask(*k)).filter(|&m| m != 0).count() >= keys.len()));
+    let dir = d.path("");
+    let listed = |tags: Option<Arc<Tags>>| {
+        let mut go = |_: &ListingBuilder<'_>| true;
+        let b = ListingBuilder::new(CaseMode::Insensitive, &mut go);
+        let mut b = match tags {
+            Some(t) => b.with_tags(t),
+            None => b,
+        };
+        NtFs.read_dir(&dir, &mut b).unwrap();
+        b.listing.entries.iter().filter(|e| e.tags != 0).count()
+    };
+    measure("read_dir 100k files without tags", RUNS, |_| (), |_| assert_eq!(listed(None), 0));
+    measure("read_dir 100k files, 10k tagged", RUNS, |_| (), |_| assert_eq!(listed(Some(tags.clone())), keys.len()));
+    measure(&format!("resolve {} FRNs to paths", keys.len()), 5, |_| (), |_| assert!(crate::tags::resolve_files(&keys).iter().all(|r| matches!(r, flit_platform::Resolved::Found(..)))));
 }
 
 fn thumbnails_of(paths: &[FsPath], threads: usize, size: u32) -> (Duration, usize) {

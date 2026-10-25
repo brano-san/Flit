@@ -1,8 +1,10 @@
 use crate::name;
 use crate::path::FsPath;
 use crate::sort::{CaseMode, SortKeys, ViewSpec};
+use crate::tags::{FileKey, Tags};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
 pub mod attr {
@@ -35,6 +37,7 @@ pub struct Entry {
     pub attrs: u32,
     pub name_len: u16,
     pub ext_len: u16,
+    pub tags: u32,
 }
 
 impl Entry {
@@ -98,6 +101,7 @@ impl Listing {
             attrs: meta.attrs,
             name_len: len as u16,
             ext_len: ext_len as u16,
+            tags: 0,
         });
         (self.entries.len() - 1) as u32
     }
@@ -116,6 +120,10 @@ impl Listing {
 
     pub fn set_meta(&mut self, i: u32, m: Meta) {
         self.entries[i as usize].set_meta(m);
+    }
+
+    pub fn set_tags(&mut self, i: u32, mask: u32) {
+        self.entries[i as usize].tags = mask;
     }
 }
 
@@ -154,17 +162,41 @@ pub struct ListingBuilder<'a> {
     pub listing: Listing,
     pub keys: SortKeys,
     on_batch: Option<&'a mut dyn FnMut(&ListingBuilder<'_>) -> bool>,
+    tags: Option<Arc<Tags>>,
+    volume: Option<u32>,
 }
 
 impl<'a> ListingBuilder<'a> {
     pub fn new(case: CaseMode, on_batch: &'a mut dyn FnMut(&ListingBuilder<'_>) -> bool) -> Self {
-        Self { listing: Listing::default(), keys: SortKeys::new(case), on_batch: Some(on_batch) }
+        Self { listing: Listing::default(), keys: SortKeys::new(case), on_batch: Some(on_batch), tags: None, volume: None }
+    }
+
+    pub fn with_tags(mut self, tags: Arc<Tags>) -> Self {
+        self.tags = tags.any().then_some(tags);
+        self
+    }
+
+    pub fn wants_ids(&self) -> bool {
+        self.tags.is_some()
+    }
+
+    pub fn set_volume(&mut self, volume: u32) {
+        self.volume = self.tags.as_ref().filter(|t| t.has_volume(volume)).map(|_| volume);
     }
 
     #[inline]
     pub fn push_utf16(&mut self, name: &[u16], meta: Meta) {
         let i = self.listing.push_utf16(name, meta);
         self.keys.push(self.listing.name(i));
+    }
+
+    #[inline]
+    pub fn push_utf16_id(&mut self, name: &[u16], meta: Meta, id: u64) {
+        self.push_utf16(name, meta);
+        if let (Some(t), Some(volume)) = (&self.tags, self.volume) {
+            let i = self.listing.len() as u32 - 1;
+            self.listing.set_tags(i, t.mask(FileKey { volume, id }));
+        }
     }
 
     #[inline]

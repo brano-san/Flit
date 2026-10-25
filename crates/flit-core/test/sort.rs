@@ -108,6 +108,7 @@ fn synthetic(n: u64) -> (Listing, SortKeys) {
         let modified = if r.is_multiple_of(11) { 0 } else { MAR_15_2024 + (r % 900) as i64 * DAY - DAY / 2 };
         let created = MAR_15_2024 - (r % 400) as i64 * DAY;
         let idx = l.push(name.as_bytes(), Meta { size: SIZES[(r % 8) as usize], modified, created, attrs });
+        l.set_tags(idx, [0, 0, 1, 2, 3, 4, 6, 1 << 31][(r % 8) as usize]);
         k.push(l.name(idx));
     }
     (l, k)
@@ -116,8 +117,8 @@ fn synthetic(n: u64) -> (Listing, SortKeys) {
 #[test]
 fn fast_sort_matches_comparator() {
     let (l, k) = synthetic(3000);
-    let groups = [GroupField::None, GroupField::Name, GroupField::Type, GroupField::Size, GroupField::Modified, GroupField::Created];
-    for field in [SortField::Name, SortField::Size, SortField::Modified, SortField::Created, SortField::Type] {
+    let groups = [GroupField::None, GroupField::Name, GroupField::Type, GroupField::Size, GroupField::Modified, GroupField::Created, GroupField::Tag];
+    for field in [SortField::Name, SortField::Size, SortField::Modified, SortField::Created, SortField::Type, SortField::Tag] {
         for (descending, folders) in [(false, Folders::First), (true, Folders::First), (false, Folders::Last), (true, Folders::Mixed)] {
             for (g, &group) in groups.iter().enumerate() {
                 let unit = [DateUnit::Year, DateUnit::Month, DateUnit::Day][g % 3];
@@ -221,6 +222,24 @@ fn group_keys_follow_name_type_size_and_local_dates() {
     assert_eq!(date_unit_value(0, &v), None);
     v.group.unit = DateUnit::Year;
     assert_eq!(date_unit_value(l.entries[1].modified, &v), Some(2024));
+}
+
+#[test]
+fn tags_sort_by_first_tag_and_group_untagged_last() {
+    let (mut l, k) = listing(&[("a", 0, false), ("b", 0, false), ("c", 0, false), ("d", 0, false), ("e", 0, false)]);
+    for (i, m) in [0b100, 0, 0b011, 0b010, 0b001].into_iter().enumerate() {
+        l.set_tags(i as u32, m);
+    }
+    let mut o = Vec::new();
+    let mut v = ViewSpec { sort: SortSpec { field: SortField::Tag, ..Default::default() }, ..Default::default() };
+    sort(&l, &k, v, &mut o);
+    assert_eq!(names(&l, &o), ["c", "e", "d", "a", "b"]);
+    v.sort.descending = true;
+    sort(&l, &k, v, &mut o);
+    assert_eq!(names(&l, &o), ["b", "a", "d", "e", "c"]);
+    v.group.field = GroupField::Tag;
+    assert_eq!((0..5).map(|i| group_key(&l, i, &v).0).collect::<Vec<_>>(), [2, 32, 0, 1, 0]);
+    assert_eq!((first_tag(0), first_tag(1 << 31)), (32, 31));
 }
 
 #[test]

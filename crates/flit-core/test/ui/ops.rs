@@ -270,6 +270,31 @@ fn rename_in_wsl_escapes_windows_characters() {
 }
 
 #[test]
+fn trash_in_wsl_goes_to_the_distro_with_linux_paths() {
+    let mut app = app_at("wsl://Ubuntu/home");
+    deliver(&mut app, &[("a:b", false), ("c", true)]);
+    select(&mut app, &["a:b", "c"]);
+    key(&mut app, Key::Delete, NO);
+    let sent: Vec<_> = app.drain_effects().filter_map(|e| if let Effect::Provider { provider, req: ProviderRequest::Op { op, .. } } = e { Some((provider, op)) } else { None }).collect();
+    assert_eq!(sent, [(ProviderId::Wsl("Ubuntu".into()), FileOp::Trash(vec![p("/home/a:b"), p("/home/c")]))]);
+    select(&mut app, &["c"]);
+    key(&mut app, Key::Delete, SHIFT);
+    assert!(app.jobs.modal());
+}
+
+#[test]
+fn starting_note_replaces_loading_until_the_listing_arrives() {
+    let mut app = app_at("wsl://Ubuntu/home");
+    let (tab, gen) = (app.tab().id, app.tab().gen);
+    app.on_provider_event(ProviderEvent::Status { tab, gen: gen + 1, text: "stale".into() }, t0());
+    assert_eq!(app.tab().loading.as_ref().unwrap().note, None);
+    app.on_provider_event(ProviderEvent::Status { tab, gen, text: "Starting Ubuntu…".into() }, t0());
+    assert_eq!(app.tab().loading.as_ref().unwrap().note.as_deref(), Some("Starting Ubuntu…"));
+    deliver(&mut app, &[("a", false)]);
+    assert!(app.tab().loading.is_none());
+}
+
+#[test]
 fn new_folder_picks_a_free_name_and_starts_renaming_it() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &[("New folder", true), ("new folder (2)", true), ("a.txt", false)]);
@@ -856,7 +881,7 @@ fn the_folder_icon_command_asks_for_an_icon_location_and_writes_it_for_the_selec
     assert_eq!(icon_location(r"icons\a.ico"), None);
     use crate::listing::{attr, Entry};
     use crate::ui::{icon_key, IconKind};
-    let dir = |attrs| Entry { size: 0, modified: 0, created: 0, name_off: 0, attrs, name_len: 0, ext_len: 0 };
+    let dir = |attrs| Entry { size: 0, modified: 0, created: 0, name_off: 0, attrs, name_len: 0, ext_len: 0, tags: 0 };
     let custom = |epoch| icon_key(b"photos", b"", &dir(attr::DIR | attr::READONLY), 16, br"C:\x", epoch);
     assert_eq!(custom(0).1, IconKind::CustomFolder);
     assert_ne!(custom(0).0, custom(1).0);

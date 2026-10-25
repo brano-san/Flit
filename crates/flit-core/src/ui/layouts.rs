@@ -157,7 +157,7 @@ impl App {
         if mode != LayoutMode::Details {
             l.header.h = 0.0;
         }
-        let (top, bottom) = (l.header.bottom(), l.status.y);
+        let (top, bottom) = (l.header.bottom(), l.bottom);
         let (x, w) = (l.header.x, l.header.w);
         let bar = s(SCROLLBAR_W);
         let across = mode == LayoutMode::List;

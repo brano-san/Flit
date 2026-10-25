@@ -2,15 +2,18 @@ use crate::metrics::{Metrics, Step};
 use crate::places::PlacesWorker;
 use crate::search_client::SearchClient;
 use crate::state::{self, Saved};
+use crate::tags::{self, TagWorker};
 use crate::thumbs::ThumbCache;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use flit_core::input::Event;
 use flit_core::listing::DirSnapshot;
 use flit_core::open::{self, Open, OpenTarget, Route};
+use flit_core::preview::{PreviewData, PreviewRequest};
 use flit_core::sort::{self, ViewSpec};
+use flit_core::tags::TagRequest;
 use flit_core::text::Gfx;
 use flit_core::ui::{App, DragEvent, Effect, IconRequest, IconResult, Persisted, WindowCmd};
-use flit_core::{Location, ProviderEvent, ProviderId, ProviderRequest, TabId};
+use flit_core::{FsPath, Location, ProviderEvent, ProviderId, ProviderRequest, TabId};
 use flit_platform::*;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -23,8 +26,13 @@ const OPS_GRACE: Duration = Duration::from_secs(2);
 const FS_THREADS: usize = 4;
 const SHELL_THREADS: usize = 2;
 const THUMB_THREADS: usize = 3;
+const PREVIEW_THREADS: usize = 2;
 const ICON_MARGIN: u32 = 32;
 const TAB_STRIDE: TabId = 1 << 32;
+
+mod agents {
+    include!(concat!(env!("OUT_DIR"), "/wsl_agent.rs"));
+}
 
 type Ws<P> = <P as Platform>::WindowSystem;
 type Win<P> = <Ws<P> as WindowSystem>::Window;
@@ -86,21 +94,48 @@ struct SortJob {
     view: ViewSpec,
 }
 
+enum PreviewJob {
+    Load { window: WindowId, req: PreviewRequest },
+    QuickView { window: WindowId, path: FsPath },
+}
+
 enum Done {
     Icon { window: WindowId, key: u64, result: IconResult },
     Thumb { window: WindowId, key: u64, result: IconResult },
     TypeName(Vec<u8>, Option<String>),
     Sorted { window: WindowId, tab: TabId, gen: u64, view: ViewSpec, base_len: usize, order: Vec<u32>, ms: f64 },
+    Preview { window: WindowId, gen: u64, data: PreviewData },
+    QuickView { window: WindowId, shown: bool },
 }
 
 fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> Result<(), PlatformError> {
     std::thread::Builder::new().name(name.into()).spawn(f).map(drop).map_err(|e| PlatformError::new(-1, format!("cannot start {name}: {e}")))
 }
 
-type Workers = (Sender<ShellJob>, Sender<ThumbJob>, Sender<SortJob>, Receiver<Done>);
+type Workers = (Sender<ShellJob>, Sender<ThumbJob>, Sender<SortJob>, Sender<PreviewJob>, Receiver<Done>);
 
 fn start_workers<P: Platform>(wake: Wake, cache: Cache) -> Result<Workers, PlatformError> {
     let (done_tx, done) = unbounded();
+    let (preview_tx, preview_rx) = unbounded::<PreviewJob>();
+    for k in 0..PREVIEW_THREADS {
+        let (rx, tx, wake) = (preview_rx.clone(), done_tx.clone(), wake.clone());
+        spawn(&format!("flit-preview-{k}"), move || {
+            let Ok(mut shell) = P::Shell::new() else { return };
+            for job in rx {
+                let done = match job {
+                    PreviewJob::Load { window, req } => match crate::preview::load(&mut shell, &req) {
+                        Some(data) => Done::Preview { window, gen: req.gen, data },
+                        None => continue,
+                    },
+                    PreviewJob::QuickView { window, path } => Done::QuickView { window, shown: shell.quick_view(&path) },
+                };
+                if tx.send(done).is_err() {
+                    return;
+                }
+                wake();
+            }
+        })?;
+    }
     let (thumb_tx, thumb_rx) = unbounded::<ThumbJob>();
     for k in 0..THUMB_THREADS {
         let (rx, tx, wake, cache) = (thumb_rx.clone(), done_tx.clone(), wake.clone(), cache.clone());
@@ -156,7 +191,7 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache) -> Result<Workers, Platf
             wake();
         }
     })?;
-    Ok((shell_tx, thumb_tx, sort_tx, done))
+    Ok((shell_tx, thumb_tx, sort_tx, preview_tx, done))
 }
 
 struct WinState<P: Platform> {
@@ -166,6 +201,7 @@ struct WinState<P: Platform> {
     software: bool,
     device_gen: u64,
     visible: Arc<Visible>,
+    preview_rev: u64,
 }
 
 struct Handler<P: Platform> {
@@ -173,7 +209,10 @@ struct Handler<P: Platform> {
     pending: VecDeque<App>,
     next_base: TabId,
     active: Option<WindowId>,
-    local: LocalProvider,
+    local: Arc<LocalProvider>,
+    wsl: HashMap<String, WslProvider>,
+    distros: Option<Vec<String>>,
+    events_tx: Sender<ProviderEvent>,
     events: Receiver<ProviderEvent>,
     opens: Receiver<Open>,
     sink: OpenSink,
@@ -182,6 +221,7 @@ struct Handler<P: Platform> {
     thumbs: Sender<ThumbJob>,
     thumb_cache: Cache,
     sorter: Sender<SortJob>,
+    previews: Sender<PreviewJob>,
     done: Receiver<Done>,
     saved: Saved,
     metrics: Option<Metrics>,
@@ -194,6 +234,7 @@ struct Handler<P: Platform> {
     device_gen: u64,
     search: SearchClient,
     places: PlacesWorker,
+    tags: TagWorker,
 }
 
 impl<P: Platform> Handler<P> {
@@ -222,7 +263,9 @@ impl<P: Platform> Handler<P> {
             app.status("Flit runs as administrator, so Windows blocks files dragged in from other programs");
         }
         app.set_nav_state(self.saved.nav.clone());
+        app.set_pane_state(self.saved.pane);
         app.set_places(self.places.current());
+        app.set_tags(self.tags.current());
         let fx: Vec<Effect> = app.drain_effects().collect();
         for e in fx {
             if let Effect::Provider { provider, req } = e {
@@ -232,10 +275,22 @@ impl<P: Platform> Handler<P> {
         app
     }
 
-    fn submit(&self, provider: ProviderId, req: ProviderRequest) {
-        match provider {
-            ProviderId::Local => self.local.submit(req),
-            ProviderId::Wsl(distro) => match via_unc(&distro, req) {
+    fn submit(&mut self, provider: ProviderId, req: ProviderRequest) {
+        let ProviderId::Wsl(distro) = provider else { return self.local.submit(req) };
+        let known = self.distros.get_or_insert_with(P::wsl_distros);
+        let distro = known.iter().find(|d| d.eq_ignore_ascii_case(&distro)).cloned().unwrap_or(distro);
+        if !self.wsl.contains_key(&distro) {
+            let launcher = P::wsl_launcher(&distro, &agents::AGENTS);
+            match WslProvider::new(distro.clone(), launcher, self.local.clone(), self.events_tx.clone(), self.wake.clone(), Timing::default()) {
+                Ok(p) => {
+                    self.wsl.insert(distro.clone(), p);
+                }
+                Err(e) => tracing::warn!("{e}"),
+            }
+        }
+        match self.wsl.get(&distro) {
+            Some(p) => p.submit(req),
+            None => match via_unc(&distro, req) {
                 Some(req) => self.local.submit(req),
                 None => tracing::warn!("path is not reachable through \\\\wsl.localhost\\{distro}"),
             },
@@ -283,7 +338,7 @@ impl<P: Platform> Handler<P> {
                 Effect::Window(WindowCmd::ToggleMaximize) => window.toggle_maximize(),
                 Effect::Window(WindowCmd::Close) => {
                     if let Some(st) = self.windows.get(&id) {
-                        self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state());
+                        self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state()).with_pane(st.app.pane_state());
                     }
                     window.close();
                 }
@@ -295,6 +350,13 @@ impl<P: Platform> Handler<P> {
                     }
                 }
                 Effect::Search(req) => self.search.submit(id, req),
+                Effect::Preview(req) => {
+                    let _ = self.previews.send(PreviewJob::Load { window: id, req });
+                }
+                Effect::QuickView(path) => {
+                    let _ = self.previews.send(PreviewJob::QuickView { window: id, path });
+                }
+                Effect::Host(cmd) => window.host(cmd),
                 Effect::NewWindow(routes) => {
                     let persisted = self.saved.persisted.clone();
                     let app = self.new_app(routes, persisted);
@@ -314,6 +376,7 @@ impl<P: Platform> Handler<P> {
                 }
                 Effect::RefreshPlaces => self.places.refresh(),
                 Effect::Timer(d) => window.set_timer(d.as_millis().clamp(1, u32::MAX as u128) as u32),
+                Effect::Tags(req) => self.tags.submit(Some(id), req),
             }
         }
         if self.windows.get(&id).is_some_and(|st| st.app.has_effects()) {
@@ -335,7 +398,7 @@ impl<P: Platform> Handler<P> {
             let target = match &ev {
                 ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } => self.window_of_tab(*tab),
                 ProviderEvent::OpDone { tab, .. } => self.window_of_tab(*tab).or(self.active),
-                ProviderEvent::Navigate { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } | ProviderEvent::Hashed { tab, .. } => self.window_of_tab(*tab),
+                ProviderEvent::Navigate { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } | ProviderEvent::Hashed { tab, .. } | ProviderEvent::Status { tab, .. } => self.window_of_tab(*tab),
             };
             if let Some(st) = target.and_then(|id| self.windows.get_mut(&id)) {
                 st.app.on_provider_event(ev, now);
@@ -358,6 +421,16 @@ impl<P: Platform> Handler<P> {
                         st.app.on_type_name(ext.clone(), name.clone());
                     }
                 }
+                Done::Preview { window, gen, data } => {
+                    if let Some(st) = self.windows.get_mut(&window) {
+                        st.app.on_preview(gen, data);
+                    }
+                }
+                Done::QuickView { window, shown } => {
+                    if let Some(st) = self.windows.get_mut(&window) {
+                        st.app.on_quick_view(shown);
+                    }
+                }
                 Done::Sorted { window, tab, gen, view, base_len, order, ms } => {
                     if let Some(st) = self.windows.get_mut(&window) {
                         st.app.on_resorted(tab, gen, view, base_len, order);
@@ -368,15 +441,34 @@ impl<P: Platform> Handler<P> {
                 }
             }
         }
-        self.queued_opens.extend(self.opens.try_iter());
+        self.take_opens();
+        while let Ok((window, ev)) = self.tags.events.try_recv() {
+            let wanted = |id: &WindowId| window.is_none_or(|w| w == *id);
+            for (_, st) in self.windows.iter_mut().filter(|(id, _)| wanted(id)) {
+                st.app.on_tags(ev.clone(), now);
+            }
+            for app in self.pending.iter_mut().filter(|_| window.is_none()) {
+                app.on_tags(ev.clone(), now);
+            }
+        }
         while let Ok((window, ev)) = self.search.events.try_recv() {
             if let Some(st) = self.windows.get_mut(&window) {
                 st.app.on_search_event(ev, now);
             }
         }
         if let Some(places) = self.places.poll() {
+            self.distros = Some(places.wsl.clone());
             for st in self.windows.values_mut() {
                 st.app.set_places(places.clone());
+            }
+        }
+    }
+
+    fn take_opens(&mut self) {
+        for o in self.opens.try_iter() {
+            match &o.tag {
+                Some(name) => self.tags.submit(self.active, TagRequest::Command { name: name.clone(), items: tags::command_items::<P>(&o) }),
+                None => self.queued_opens.push(o),
             }
         }
     }
@@ -428,6 +520,7 @@ impl<P: Platform> Handler<P> {
                 Ok(r) => {
                     st.gfx.reset_atlas();
                     st.gfx.thumbs.clear();
+                    st.preview_rev = u64::MAX;
                     st.renderer = Some(r);
                     st.software = software;
                     st.device_gen = self.device_gen;
@@ -455,6 +548,11 @@ impl<P: Platform> Handler<P> {
             renderer.upload_thumb(slot, &thumbs.data[off..off + (slot.w * slot.h * 4) as usize]);
         }
         thumbs.clear();
+        let (rev, image) = st.app.preview_image();
+        if rev != st.preview_rev {
+            renderer.upload_preview(image);
+            st.preview_rev = rev;
+        }
         let lost = matches!(renderer.render(&st.gfx.dl), Err(RenderError::DeviceLost));
         if lost {
             let (software, stale) = (st.software, st.device_gen != self.device_gen);
@@ -531,7 +629,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         app.set_maximized(window.is_maximized());
         window.set_title(&format!("{} — Flit", app.tab().title()));
         let id = window.id();
-        self.windows.insert(id, WinState { app, gfx: Gfx::new(text, ATLAS), renderer: None, software: false, device_gen: 0, visible: Arc::default() });
+        self.windows.insert(id, WinState { app, gfx: Gfx::new(text, ATLAS), renderer: None, software: false, device_gen: 0, visible: Arc::default(), preview_rev: u64::MAX });
         self.active = Some(id);
         self.flush(window);
         self.apply_opens(window);
@@ -587,7 +685,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         let id = window.id();
         if let Some(mut st) = self.windows.remove(&id) {
             if self.windows.is_empty() {
-                self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state());
+                self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state()).with_pane(st.app.pane_state());
             }
             st.app.shutdown();
             for e in st.app.drain_effects().collect::<Vec<_>>() {
@@ -602,7 +700,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         }
         if self.windows.is_empty() {
             let tx = self.sink.lock().unwrap_or_else(|e| e.into_inner()).take();
-            self.queued_opens.extend(self.opens.try_iter());
+            self.take_opens();
             if self.queued_opens.is_empty() {
                 state::save::<P>(&self.saved);
                 self.local.wait_idle(OPS_GRACE);
@@ -630,15 +728,16 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         }
     })?;
     let (events_tx, events) = unbounded();
-    let local = LocalProvider::new::<_, P::Watcher, P::Shell>(P::fs(), FS_THREADS, events_tx, wake.clone())?;
+    let local = Arc::new(LocalProvider::new::<_, P::Watcher, P::Shell>(P::fs(), FS_THREADS, events_tx.clone(), wake.clone())?);
     let (opens_tx, opens) = unbounded();
     let sink: OpenSink = Arc::new(Mutex::new(Some(opens_tx)));
     if let Some(i) = instance {
         i.listen(sink.clone(), wake.clone());
     }
     let thumb_cache: Cache = P::state_dir().map(|d| Arc::new(Mutex::new(ThumbCache::new(d.join("thumbs"), saved.persisted.prefs.thumb_cache_mb))));
-    let (shell, thumbs, sorter, done) = start_workers::<P>(wake.clone(), thumb_cache.clone())?;
-    let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes())?;
+    let (shell, thumbs, sorter, previews, done) = start_workers::<P>(wake.clone(), thumb_cache.clone())?;
+    let tags = TagWorker::start::<P>(local.tags().clone(), wake.clone())?;
+    let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes(), local.tags().clone())?;
     let (routes, errors) = if open.is_empty() { Default::default() } else { open::routes(&open, &P::known_folder) };
     let new_window = open.target == OpenTarget::NewWindow;
     let mut h = Handler::<P> {
@@ -647,6 +746,9 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         next_base: 0,
         active: None,
         local,
+        wsl: HashMap::new(),
+        distros: None,
+        events_tx,
         events,
         opens,
         sink,
@@ -655,6 +757,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         thumbs,
         thumb_cache,
         sorter,
+        previews,
         done,
         saved: saved.clone(),
         metrics: metrics.map(|m| Metrics::new(m, started, P::refresh_period())),
@@ -667,6 +770,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         gpu_pending: 2,
         device_gen: 0,
         search,
+        tags,
     };
     let mut first = h.new_app(routes, saved.persisted.clone());
     first.show_open_errors(&errors);

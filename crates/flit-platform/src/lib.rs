@@ -1,18 +1,22 @@
 mod indexer;
 mod local;
+mod wsl;
 
 pub use indexer::{root_of, start_indexer};
 pub use local::{via_unc, LocalProvider, CANCELLED};
+pub use wsl::{AgentImage, AgentImages, AgentLauncher, AgentProcess, Timing, WslProvider, UNMAPPABLE};
 
 use crossbeam_channel::Sender;
 use flit_core::atlas::Slot;
 use flit_core::desktop_ini::DesktopIni;
 use flit_core::input::{CursorIcon, Event, HitArea};
+use flit_core::preview::{HostCmd, PropGroup};
 use flit_core::render::{DrawList, Rect};
 use flit_core::ui::{Bitmap, DragEvent, IconRequest, NewTemplate, ShellMenu};
 use flit_core::digest::HashKind;
 use flit_core::provider::{Conflict, FileOp, Launch, OpCtl, OpProgress, Resolve, Stage};
-use flit_core::{FsError, FsPath, ListingBuilder, Location, Open, ProviderEvent, ProviderRequest, TabId};
+use flit_core::tags::FileKey;
+use flit_core::{FsError, FsPath, ListingBuilder, Location, Meta, Open, ProviderEvent, ProviderRequest, TabId};
 use flit_search::index::{Checkpoint, IndexSink};
 use flit_search::proto::VolumeInfo;
 use std::fmt;
@@ -23,6 +27,13 @@ pub use flit_core::text::TextBackend as Text;
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
 pub type OpenSink = Arc<std::sync::Mutex<Option<Sender<Open>>>>;
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Resolved {
+    Found(FsPath, Meta),
+    Gone,
+    Unavailable,
+}
 
 #[derive(Debug, Clone)]
 pub struct PlatformError {
@@ -92,6 +103,7 @@ pub trait Window {
     fn properties(&self, paths: Vec<FsPath>);
     fn start_drag(&self, paths: Vec<FsPath>);
     fn set_timer(&self, ms: u32);
+    fn host(&self, _cmd: HostCmd) {}
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -132,6 +144,7 @@ pub trait Renderer: Sized {
     fn resize(&mut self, width: u32, height: u32);
     fn upload(&mut self, slot: Slot, rgba: &[u8]);
     fn upload_thumb(&mut self, _slot: Slot, _rgba: &[u8]) {}
+    fn upload_preview(&mut self, _image: Option<&Bitmap>) {}
     fn render(&mut self, list: &DrawList) -> Result<(), RenderError>;
 }
 
@@ -171,6 +184,24 @@ pub trait Shell: Sized {
     }
     fn shortcut_folder(&mut self, _link: &FsPath) -> Option<FsPath> {
         None
+    }
+    fn link_target(&mut self, _link: &FsPath) -> Option<FsPath> {
+        None
+    }
+    fn preview_image(&mut self, _path: &FsPath, _max: u32) -> Option<Bitmap> {
+        None
+    }
+    fn poster(&mut self, _path: &FsPath, _size: u32) -> Option<Bitmap> {
+        None
+    }
+    fn properties(&mut self, _path: &FsPath) -> Vec<PropGroup> {
+        Vec::new()
+    }
+    fn preview_handler(&mut self, _ext: &[u8]) -> Option<String> {
+        None
+    }
+    fn quick_view(&mut self, _path: &FsPath) -> bool {
+        false
     }
 }
 
@@ -310,5 +341,15 @@ pub trait Platform: 'static {
     }
     fn elevated() -> bool {
         false
+    }
+    fn watch_wsl(_changed: Box<dyn Fn() + Send>) {}
+    fn wsl_launcher(_distro: &str, _images: &AgentImages) -> Option<Box<dyn AgentLauncher>> {
+        None
+    }
+    fn file_key(_path: &FsPath) -> Option<FileKey> {
+        None
+    }
+    fn resolve_files(keys: &[FileKey]) -> Vec<Resolved> {
+        keys.iter().map(|_| Resolved::Unavailable).collect()
     }
 }

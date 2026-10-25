@@ -47,6 +47,16 @@ fn explorer_forms() {
 }
 
 #[test]
+fn tag_argument_takes_a_name_and_files() {
+    let o = parse_args(&args(&["-Tag", "\"Long name\"", "a.txt", r"C:\b c.txt", "/select,x"]), Some(b"C:\\w".to_vec()));
+    assert_eq!(o.tag.as_deref(), Some("Long name"));
+    assert_eq!(strs(&o.paths), ["a.txt", r"C:\b c.txt", "/select,x"]);
+    assert!(o.select.is_empty() && o.cwd.is_some());
+    assert_eq!(parse_args(&args(&["--new-tab", "-TAG"]), None).tag.as_deref(), Some(""));
+    assert_eq!(parse_args(&args(&["tag", "-Tagged"]), None).tag, None);
+}
+
+#[test]
 fn resolution() {
     let none = |_: &str| None;
     let shell = |n: &str| (n.eq_ignore_ascii_case("shell:Downloads")).then(|| Location::parse(r"C:\Users\u\Downloads").unwrap());
@@ -113,7 +123,7 @@ fn select_routes_to_parent() {
 
 #[test]
 fn open_serializes() {
-    let o = Open { paths: vec![b"C:\\x".to_vec(), vec![0xED, 0xA0, 0x80]], select: vec![b"/tmp/a:b".to_vec()], target: OpenTarget::NewTab, cwd: Some(b"C:\\".to_vec()) };
+    let o = Open { paths: vec![b"C:\\x".to_vec(), vec![0xED, 0xA0, 0x80]], select: vec![b"/tmp/a:b".to_vec()], target: OpenTarget::NewTab, cwd: Some(b"C:\\".to_vec()), tag: Some("Work".into()) };
     let bytes = postcard::to_allocvec(&o).unwrap();
     assert_eq!(postcard::from_bytes::<Open>(&bytes).unwrap(), o);
 }
