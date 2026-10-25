@@ -1,0 +1,13 @@
+[preset]
+gold = "Золотой"
+orange = "Оранжевый"
+red = "Красный"
+rose = "Розовый"
+violet = "Фиолетовый"
+blue = "Синий"
+seafoam = "Морская волна"
+green = "Зелёный"
+grey = "Серый"
+overcast = "Пасмурный"
+storm = "Грозовой"
+camouflage = "Камуфляж"
