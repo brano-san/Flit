@@ -1,11 +1,12 @@
 use std::ffi::{OsStr, OsString};
-use std::fs::{self, DirBuilder, OpenOptions};
-use std::io::{self, Write};
+use std::fs::{self, DirBuilder, File, OpenOptions};
+use std::io::{self, Read, Write};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 use std::path::{Path, PathBuf};
 
 const STICKY: u32 = 0o1000;
+const MAX_INFO: u64 = 64 << 10;
 
 pub struct Trash {
     home: PathBuf,
@@ -39,6 +40,29 @@ fn private_dirs(p: &Path) -> io::Result<()> {
 
 pub fn percent_encode(path: &[u8]) -> String {
     path.iter().map(|&b| if b.is_ascii_alphanumeric() || b"-_.~/".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
+}
+
+pub fn percent_decode(s: &[u8]) -> Vec<u8> {
+    let hex = |b: Option<&u8>| b.and_then(|&b| (b as char).to_digit(16)).map(|d| d as u8);
+    let mut out = Vec::with_capacity(s.len());
+    let mut i = 0;
+    while i < s.len() {
+        match (s[i], hex(s.get(i + 1)), hex(s.get(i + 2))) {
+            (b'%', Some(high), Some(low)) => {
+                out.push(high << 4 | low);
+                i += 3;
+            }
+            (b, ..) => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+fn invalid(what: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, what.to_owned())
 }
 
 pub fn local_time(secs: i64) -> String {
@@ -83,6 +107,38 @@ impl Trash {
             return Ok((per_user, relative));
         }
         Ok((top.join(format!(".Trash-{}", self.uid)), relative))
+    }
+
+    fn base_of(&self, dir: &Path) -> Option<PathBuf> {
+        if dir == self.home {
+            return self.home.parent().map(Path::to_path_buf);
+        }
+        let name = dir.file_name()?.as_bytes();
+        let uid = self.uid.to_string();
+        let parent = dir.parent()?;
+        if name == format!(".Trash-{uid}").as_bytes() {
+            return Some(parent.to_path_buf());
+        }
+        if name == uid.as_bytes() && parent.file_name()? == ".Trash" {
+            return parent.parent().map(Path::to_path_buf);
+        }
+        None
+    }
+
+    pub fn entry(&self, trashed: &Path) -> io::Result<(PathBuf, PathBuf)> {
+        let not_trashed = || invalid("the item is not in a Trash folder Flit knows");
+        let name = trashed.file_name().ok_or_else(not_trashed)?;
+        let files = trashed.parent().filter(|f| f.file_name() == Some(OsStr::new("files"))).ok_or_else(not_trashed)?;
+        let dir = files.parent().ok_or_else(not_trashed)?;
+        let base = self.base_of(dir).ok_or_else(not_trashed)?;
+        let mut info_name = name.to_os_string();
+        info_name.push(".trashinfo");
+        let info = dir.join("info").join(info_name);
+        let mut text = Vec::new();
+        File::open(&info)?.take(MAX_INFO).read_to_end(&mut text)?;
+        let path = text.split(|&b| b == b'\n').find_map(|l| l.strip_prefix(b"Path=")).ok_or_else(|| invalid("the Trash entry has no Path line"))?;
+        let original = PathBuf::from(OsString::from_vec(percent_decode(path.trim_ascii_end())));
+        Ok((info, if original.is_absolute() { original } else { base.join(original) }))
     }
 
     pub fn trash(&self, path: &Path) -> io::Result<PathBuf> {

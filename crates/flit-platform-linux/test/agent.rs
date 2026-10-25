@@ -139,21 +139,68 @@ fn folder_sizes_refuse_forged_names() {
     assert_eq!(got, [(3, 1024), (4, 0), (5, 0)]);
 }
 
+impl Client {
+    fn op(&mut self, id: ReqId, op: FileOp) {
+        self.send(Request::Op { id, op, policy: None });
+    }
+
+    fn done(&self, id: ReqId) -> (Option<String>, Vec<(FsPath, FsPath)>) {
+        loop {
+            match self.next() {
+                Event::OpProgress { id: got, .. } if got == id => {}
+                Event::OpDone { id: got, error, items } if got == id => return (error, items),
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+    }
+}
+
 #[test]
-fn trash_operation_moves_to_the_freedesktop_trash() {
+fn trash_operation_moves_to_the_freedesktop_trash_and_back() {
     let t = Temp::new("agent-trash");
     let victim = t.file("victim", 3);
     let mut c = Client::start(Some(Trash::new(t.path().join("data/Trash"), unsafe { libc::getuid() })));
-    c.send(Request::Op { id: 1, op: FileOp::Trash(vec![fs_path(&victim)]) });
-    assert_eq!(c.next(), Event::OpDone { id: 1, error: None });
+    c.op(1, FileOp::Trash(vec![fs_path(&victim)]));
+    let trashed = fs_path(&t.path().join("data/Trash/files/victim"));
+    assert_eq!(c.done(1), (None, vec![(fs_path(&victim), trashed.clone())]));
     assert!(!victim.exists());
-    assert!(t.path().join("data/Trash/files/victim").exists());
-    c.send(Request::Op { id: 2, op: FileOp::Trash(vec![fs_path(&t.path().join("gone")), fs_path(&t.path().join("gone2"))]) });
-    let Event::OpDone { id: 2, error: Some(e) } = c.next() else { panic!() };
-    assert!(e.starts_with("2 items failed. Cannot move"), "{e}");
-    c.send(Request::Op { id: 3, op: FileOp::Delete(vec![fs_path(&t.path().join("data"))]) });
-    assert!(matches!(c.next(), Event::OpDone { id: 3, error: Some(_) }));
-    assert!(t.path().join("data").exists());
+    c.op(2, FileOp::Trash(vec![fs_path(&t.path().join("gone")), fs_path(&t.path().join("gone2"))]));
+    let (Some(e), items) = c.done(2) else { panic!() };
+    assert!(e.starts_with("2 items failed. Cannot move") && items.is_empty(), "{e}");
+    c.op(3, FileOp::Restore(vec![(trashed.clone(), fs_path(&victim))]));
+    assert_eq!(c.done(3), (None, vec![(trashed, fs_path(&victim))]));
+    assert!(victim.exists());
+    c.op(4, FileOp::Delete(vec![fs_path(&t.path().join("data"))]));
+    assert_eq!(c.done(4).0, None);
+    assert!(!t.path().join("data").exists());
+}
+
+#[test]
+fn conflicts_are_asked_over_the_channel_and_cancel_stops_the_operation() {
+    let t = Temp::new("agent-ask");
+    t.file("a", 1);
+    std::fs::create_dir(t.path().join("dst")).unwrap();
+    t.file("dst/a", 2);
+    let mut c = Client::start(None);
+    let copy = FileOp::Copy { items: vec![fs_path(&t.path().join("a"))], dest: fs_path(&t.path().join("dst")) };
+    c.op(1, copy.clone());
+    let conflict = loop {
+        match c.next() {
+            Event::OpProgress { .. } => {}
+            Event::OpConflict { id: 1, conflict } => break conflict,
+            other => panic!("unexpected {other:?}"),
+        }
+    };
+    assert_eq!((conflict.target, conflict.to.size), (fs_path(&t.path().join("dst/a")), 2));
+    c.send(Request::Answer { id: 1, choice: Some(flit_core::provider::Resolve::KeepBoth), all: false });
+    assert_eq!(c.done(1), (None, vec![(fs_path(&t.path().join("a")), fs_path(&t.path().join("dst/a (2)")))]));
+    c.op(2, copy);
+    while !matches!(c.next(), Event::OpConflict { id: 2, .. }) {}
+    c.send(Request::Cancel { id: 2 });
+    let (error, items) = c.done(2);
+    assert_eq!((error.as_deref(), items), (Some(flit_platform::CANCELLED), Vec::new()));
+    c.send(Request::Op { id: 3, op: FileOp::Copy { items: vec![fs_path(&t.path().join("a"))], dest: fs_path(&t.path().join("dst")) }, policy: Some(flit_core::provider::Resolve::Skip) });
+    assert_eq!(c.done(3), (None, Vec::new()), "a policy answers without asking");
 }
 
 #[test]

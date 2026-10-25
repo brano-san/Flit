@@ -3,6 +3,7 @@
 pub mod agent;
 mod fs;
 mod inotify;
+mod ops;
 mod trash;
 
 #[cfg(test)]
@@ -20,7 +21,6 @@ use flit_core::render::{DrawList, Rect};
 use flit_core::text::{FontMetrics, FontStyle, GlyphBitmap, GlyphKey, ShapedText, TextBackend};
 use flit_core::ui::{Bitmap, IconRequest, ShellMenu};
 use flit_core::{FsPath, Location, Open};
-use std::os::unix::ffi::OsStrExt;
 use flit_platform::*;
 use flit_search::index::{Checkpoint, IndexSink};
 use flit_search::proto::VolumeInfo;
@@ -222,22 +222,8 @@ impl Shell for FreedesktopShell {
 }
 
 impl FileOps for FreedesktopShell {
-    fn file_op(&mut self, op: &FileOp, _: &Job) -> OpOutcome {
-        let FileOp::Trash(paths) = op else {
-            return OpOutcome { items: Vec::new(), error: Some(PlatformError::unsupported("file operations")) };
-        };
-        let Some(trash) = Trash::from_env() else {
-            return OpOutcome { items: Vec::new(), error: Some(PlatformError::new(-1, "The Trash folder is unknown: neither XDG_DATA_HOME nor HOME is set")) };
-        };
-        let mut out = OpOutcome::default();
-        for p in paths {
-            match host(p).map(|h| trash.trash(h)) {
-                Some(Ok(to)) => out.items.push((p.clone(), FsPath::parse_bytes(to.as_os_str().as_bytes()).unwrap_or_else(|| p.clone()))),
-                Some(Err(e)) => out.error = Some(PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("Cannot move {} to the Trash: {e}", p.display()))),
-                None => out.error = Some(PlatformError::new(-1, format!("{} is not a Linux path", p.display()))),
-            }
-        }
-        out
+    fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome {
+        ops::run(op, job, Trash::from_env().as_ref())
     }
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
         Err(PlatformError::unsupported("clipboard"))
