@@ -932,7 +932,7 @@ impl App {
         let top = self.layout.title.bottom();
         g.dl.rect(Rect::new(0.0, top, w, h - top), if self.dark { Color::rgba(0x00000070) } else { Color::rgba(0x00000040) });
         let p = ui.panel;
-        g.dl.round_rect(Rect::new(p.x - s8, p.y - s4, p.w + 2.0 * s8, p.h + s8 + s8), if self.dark { Color::rgba(0x00000090) } else { Color::rgba(0x00000030) }, s8 + s8);
+        g.dl.shadow(Rect::new(p.x, p.y + s8, p.w, p.h), if self.dark { Color::rgba(0x00000090) } else { Color::rgba(0x00000030) }, s8, s(24.0));
         g.dl.round_rect(p, t.bg, s8);
         g.dl.outline(p, t.input_border, s8, 1.0);
         let nav_w = ui.list.x - p.x;

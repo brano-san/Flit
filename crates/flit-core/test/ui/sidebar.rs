@@ -162,7 +162,7 @@ fn item_menus_offer_place_commands() {
     let m = menu(&mut app);
     assert!(m.shell, "items keep Show more options");
     assert_eq!(m.items, [FsPath::parse(r"E:\").unwrap()]);
-    assert_eq!(labels(&m.menu), ["Open", "Open in new tab", "Open in new window", "Copy path", "Open in terminal", "Pin to sidebar", "Eject", "Properties"]);
+    assert_eq!(labels(&m.menu), ["Open", "Open in new tab", "Open in new window", "Split vertically", "Split horizontally", "Copy path", "Open in terminal", "Pin to sidebar", "Eject", "Properties"]);
     run(&mut app, &m, "Eject");
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Launch { launch: Launch::Eject(d), .. }, .. } if d == FsPath::parse(r"E:\").unwrap())));
     click(app.nav.sidebar.rects[0], &mut app, MouseButton::Right);
@@ -179,7 +179,7 @@ fn item_menus_offer_place_commands() {
     click(app.nav.sidebar.rects[bin], &mut app, MouseButton::Right);
     let m = menu(&mut app);
     assert!(!m.shell);
-    assert_eq!(labels(&m.menu), ["Open", "Open in new tab", "Open in new window", "Empty Recycle Bin"]);
+    assert_eq!(labels(&m.menu), ["Open", "Open in new tab", "Open in new window", "Split vertically", "Split horizontally", "Restore all items", "Empty Recycle Bin"]);
 }
 
 #[test]
@@ -215,4 +215,14 @@ fn nav_prefs_are_sanitized() {
     assert_eq!(p.collapsed.len(), MAX_LIST);
     assert_eq!(p.recent_hidden.len(), MAX_LIST);
     assert_eq!(p.recent_hidden[0].1, 1000 - MAX_LIST as i64, "the newest are kept");
+}
+
+#[test]
+fn distros_in_the_sidebar_show_their_own_icons() {
+    let mut app = app_with_places();
+    app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    let asked: Vec<(Vec<u8>, IconKind)> = app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { Some((r.path.as_bytes().to_vec(), r.kind)) } else { None }).collect();
+    assert!(asked.contains(&(br"\\wsl.localhost\Debian\".to_vec(), IconKind::Volume)), "{asked:?}");
+    app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::Icon(r) if r.kind == IconKind::Volume)), "a pending icon is asked once");
 }

@@ -338,7 +338,7 @@ fn actions_before_the_new_listing_target_the_shown_folder() {
     assert_eq!(trashed(&mut app).unwrap(), [FsPath::parse(r"C:\work\src\main.rs").unwrap()]);
     key(&mut app, Key::Char('C'), CTRL_SHIFT);
     assert!(app.drain_effects().any(|e| matches!(e, Effect::SetClipboard(s) if s == r"C:\work\src\main.rs")));
-    key(&mut app, Key::Char('S'), CTRL_SHIFT);
+    key(&mut app, Key::Char('S'), Mods { ctrl: true, shift: false, alt: true });
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::DirSizes { .. }, .. })));
     let (id, gen) = (app.tab().id, app.tab().gen);
     app.on_provider_event(ProviderEvent::DirSize { tab: id, gen, idx: 0, size: 99 }, t0());

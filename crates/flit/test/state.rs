@@ -111,7 +111,7 @@ fn sidebar_and_home_preferences_ride_sixth_after_the_pane_so_older_files_still_l
     let bytes = s.encode().unwrap();
     let back = Saved::decode(&bytes).unwrap().sanitized();
     assert_eq!((back.pane, &back.side), (pane, &side));
-    let trailing = postcard::to_stdvec(&side).unwrap().len() + postcard::to_stdvec(&s.persisted.archive).unwrap().len() + postcard::to_stdvec(&s.tools).unwrap().len();
+    let trailing = postcard::to_stdvec(&side).unwrap().len() + postcard::to_stdvec(&s.persisted.archive).unwrap().len() + postcard::to_stdvec(&s.tools).unwrap().len() + postcard::to_stdvec(&SplitPrefs::default()).unwrap().len();
     let master_layout = &bytes[..bytes.len() - trailing];
     let (_, tail) = postcard::take_from_bytes::<Head>(master_layout).unwrap();
     let (_, tail) = postcard::take_from_bytes::<NavState>(tail).unwrap();
@@ -136,7 +136,7 @@ fn corrupted_nav_state_falls_back() {
 }
 
 #[test]
-fn archive_defaults_ride_last_and_never_keep_a_password() {
+fn archive_defaults_ride_seventh_and_never_keep_a_password() {
     use flit_core::archive::{Compression, Defaults, Format, Secret};
     use flit_core::digest::HashKind;
     let mut persisted = Persisted::default();
@@ -149,7 +149,7 @@ fn archive_defaults_ride_last_and_never_keep_a_password() {
     assert_eq!(back.persisted.archive, want);
     assert_eq!(back.persisted.prefs, s.persisted.prefs);
     let stored = postcard::to_stdvec(&want).unwrap();
-    let bytes = &bytes[..bytes.len() - postcard::to_stdvec(&Tools::default()).unwrap().len()];
+    let bytes = &bytes[..bytes.len() - postcard::to_stdvec(&Tools::default()).unwrap().len() - postcard::to_stdvec(&SplitPrefs::default()).unwrap().len()];
     assert!(bytes.ends_with(&stored));
     let without = &bytes[..bytes.len() - stored.len()];
     assert_eq!(Saved::decode(without).unwrap().persisted.archive, Defaults::default());
@@ -162,11 +162,45 @@ fn pane_state_rides_after_layouts_and_older_files_keep_the_default() {
     let bytes = s.encode().unwrap();
     assert_eq!(Saved::decode(&bytes).unwrap().pane, pane);
     let older = Saved::new(Persisted::default(), None).encode().unwrap();
-    let trailing = [postcard::to_stdvec(&PaneState::default()), postcard::to_stdvec(&NavPrefs::default()), postcard::to_stdvec(&Defaults::default()), postcard::to_stdvec(&Tools::default())].map(|b| b.unwrap().len()).iter().sum::<usize>();
+    let trailing = [postcard::to_stdvec(&PaneState::default()), postcard::to_stdvec(&NavPrefs::default()), postcard::to_stdvec(&Defaults::default()), postcard::to_stdvec(&Tools::default()), postcard::to_stdvec(&SplitPrefs::default())].map(|b| b.unwrap().len()).iter().sum::<usize>();
     let without = &older[..older.len() - trailing];
     assert_eq!(Saved::decode(without).unwrap().pane, PaneState::default());
     let broken = Saved { pane: PaneState { right_w: -1.0, volume: f32::NAN, ..pane }, ..s }.sanitized();
     assert_eq!((broken.pane.right_w, broken.pane.volume), (PaneState::default().right_w, PaneState::default().volume));
+}
+
+#[test]
+fn dual_pane_preferences_ride_ninth_so_files_from_master_still_load() {
+    use flit_core::ui::{Show, SplitDir, ToolItem, ToolbarState};
+    let mut toolbar = ToolbarState::default();
+    toolbar.sets[0] = vec![ToolItem::Button("nav.refresh".into(), Show::Icon)];
+    let tools = Tools { toolbar, searches: vec!["ext:txt".into()], streams: true };
+    let mut persisted = Persisted { split: SplitPrefs { dual: true, dir: SplitDir::Horizontal }, ..Default::default() };
+    persisted.archive.open_after = true;
+    persisted.prefs.show_streams = true;
+    let nav = NavState { pinned: vec![loc(r"C:\work")], sidebar_w: 280.0, sidebar: true };
+    let side = NavPrefs { compact: true, ..Default::default() };
+    let pane = PaneState { visible: true, ..Default::default() };
+    let s = Saved::new(persisted, None).with_nav(nav.clone()).with_pane(pane).with_side(side.clone()).with_tools(tools.clone());
+    let bytes = s.encode().unwrap();
+    let back = Saved::decode(&bytes).unwrap();
+    assert_eq!((&back.persisted, &back.nav, back.pane, &back.side, &back.tools), (&s.persisted, &nav, pane, &side, &tools));
+    let stored = postcard::to_stdvec(&s.persisted.split).unwrap();
+    assert!(bytes.ends_with(&stored));
+    let master = &bytes[..bytes.len() - stored.len()];
+    let (_, tail) = postcard::take_from_bytes::<Head>(master).unwrap();
+    let (_, tail) = postcard::take_from_bytes::<NavState>(tail).unwrap();
+    let (_, tail) = postcard::take_from_bytes::<ViewRecord>(tail).unwrap();
+    let (_, tail) = postcard::take_from_bytes::<LayoutRecord>(tail).unwrap();
+    let (_, tail) = postcard::take_from_bytes::<PaneState>(tail).unwrap();
+    let (_, tail) = postcard::take_from_bytes::<NavPrefs>(tail).unwrap();
+    let (_, tail) = postcard::take_from_bytes::<Defaults>(tail).unwrap();
+    let (_, tail) = postcard::take_from_bytes::<Tools>(tail).unwrap();
+    assert!(tail.is_empty(), "master writes eight records");
+    let older = Saved::decode(master).unwrap();
+    assert_eq!(older.persisted.split, SplitPrefs::default());
+    assert_eq!((older.pane, &older.side, &older.tools), (pane, &side, &tools));
+    assert_eq!(older.persisted, Persisted { split: SplitPrefs::default(), ..s.persisted.clone() });
 }
 
 #[test]
@@ -182,6 +216,7 @@ fn toolbar_and_search_history_ride_eighth_so_files_from_master_still_load() {
     let bytes = s.encode().unwrap();
     let back = Saved::decode(&bytes).unwrap();
     assert_eq!((&back.tools, &back.persisted.archive, back.persisted.prefs.show_streams), (&tools, &s.persisted.archive, true));
+    let bytes = &bytes[..bytes.len() - postcard::to_stdvec(&SplitPrefs::default()).unwrap().len()];
     let stored = postcard::to_stdvec(&tools).unwrap();
     assert!(bytes.ends_with(&stored));
     let master = &bytes[..bytes.len() - stored.len()];

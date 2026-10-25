@@ -1219,7 +1219,7 @@ impl App {
         let h = s6 * 2.0 + row_h * (recent.len() + 1) as f32;
         let panel = Rect::new(x, y, w, h);
         let shadow = self.shadow();
-        g.dl.round_rect(Rect::new(panel.x - s4, panel.y, panel.w + 2.0 * s4, panel.h + s6 + s4), shadow, s6 + s4);
+        g.dl.shadow(Rect::new(panel.x, panel.y + s4, panel.w, panel.h), shadow, s6, s6 * 2.0);
         g.dl.round_rect(panel, t.bg, s6);
         g.dl.outline(panel, t.input_border, s6, 1.0);
         let small = self.ui_font(12.0);

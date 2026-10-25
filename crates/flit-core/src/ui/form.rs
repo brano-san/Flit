@@ -15,6 +15,7 @@ const LABEL_W: f32 = 170.0;
 const BUTTON_W: f32 = 112.0;
 const BUTTON_H: f32 = 32.0;
 const NOTE_H: f32 = 34.0;
+const FLAGS_PER_LINE: usize = 4;
 
 const G_CHECK: &str = "\u{E73E}";
 const G_LEFT: &str = "\u{E76B}";
@@ -61,8 +62,17 @@ impl Control {
     }
 
     fn height(&self) -> f32 {
-        if matches!(self, Control::Value { .. }) { VALUE_ROW } else { ROW }
+        match self {
+            Control::Value { .. } => VALUE_ROW,
+            Control::Flags { items, .. } => ROW * flag_grid(items.len()).0 as f32,
+            _ => ROW,
+        }
     }
+}
+
+fn flag_grid(n: usize) -> (usize, usize) {
+    let lines = n.div_ceil(FLAGS_PER_LINE).max(1);
+    (lines, n.div_ceil(lines).max(1))
 }
 
 pub(super) struct Form {
@@ -338,7 +348,7 @@ impl App {
         let Some(f) = &mut self.jobs.form else { return };
         g.dl.rect(Rect::new(0.0, 0.0, w, h), if dark { Color::rgba(0x00000070) } else { Color::rgba(0x00000040) });
         let d = f.rect;
-        g.dl.round_rect(Rect::new(d.x - s8, d.y - s4, d.w + 2.0 * s8, d.h + s8 + s8), shadow, s8 + s8);
+        g.dl.shadow(Rect::new(d.x, d.y + s8, d.w, d.h), shadow, s8, s(24.0));
         g.dl.round_rect(d, t.bg, s8);
         g.dl.outline(d, t.input_border, s8, 1.0);
         let mb = g.metrics(bold);
@@ -375,20 +385,23 @@ impl App {
                     g.text(bx.right() + s8, mid(row), label, font, t.text, row.right() - bx.right() - s8);
                 }
                 Control::Flags { label, items, cur, spots } => {
-                    g.text(row.x, mid(row), label, font, t.text, s(LABEL_W) - s8);
-                    let mut x = lx;
+                    let line_h = s(ROW);
+                    g.text(row.x, mid(Rect::new(row.x, row.y, row.w, line_h)), label, font, t.text, s(LABEL_W) - s8);
+                    let cols = flag_grid(items.len()).1;
+                    let cw = ((row.right() - lx) / cols as f32).floor();
                     spots.clear();
                     for (i, (name, on)) in items.iter().enumerate() {
-                        let tw = g.measure(name, small);
-                        let spot = Rect::new(x, row.y + s(4.0), s(22.0) + tw + s(6.0), row.h - s(8.0));
-                        let bx = Rect::new(x, row.y + (row.h - s(16.0)) / 2.0, s(16.0), s(16.0));
+                        let cell = Rect::new(lx + (i % cols) as f32 * cw, row.y + (i / cols) as f32 * line_h, cw, line_h);
+                        let room = (cw - s(27.0)).max(0.0);
+                        let tw = g.measure(name, small).min(room);
+                        let spot = Rect::new(cell.x, cell.y + s(4.0), s(22.0) + tw + s(6.0), cell.h - s(8.0));
+                        let bx = Rect::new(cell.x, cell.y + (cell.h - s(16.0)) / 2.0, s(16.0), s(16.0));
                         draw_box(g, t, bx, *on, focused && i == *cur, icons, s4, sc);
-                        g.text(bx.right() + s(5.0), mid(row), name, small, t.text, f32::INFINITY);
+                        g.text(bx.right() + s(5.0), mid(cell), name, small, t.text, room);
                         if focused && i == *cur {
                             g.dl.rect(Rect::new(bx.right() + s(5.0), spot.bottom() - s(2.0), tw, s(1.0).max(1.0)), t.accent);
                         }
                         spots.push(spot);
-                        x = spot.right() + s(6.0);
                     }
                 }
                 Control::Value { label, value } => {

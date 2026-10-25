@@ -1,4 +1,5 @@
 use super::actions::{keys_text, ACTIONS};
+use super::describe::description;
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
 use super::settings_page::SettingPick;
@@ -80,6 +81,7 @@ pub(super) struct Palette {
     field: Field,
     pub matches: Vec<usize>,
     pub keys: Vec<String>,
+    descs: Vec<&'static str>,
     ids: Vec<usize>,
     pub sel: usize,
     first: usize,
@@ -109,21 +111,27 @@ pub fn score(query: &str, title: &str) -> Option<u32> {
     Some(score.min(1999))
 }
 
-fn rank<'a>(query: &str, titles: impl Iterator<Item = &'a str>) -> Vec<usize> {
-    let mut scored: Vec<(u32, usize)> = titles.enumerate().filter_map(|(i, t)| score(query, t).map(|s| (s, i))).collect();
+fn described(query: &str, desc: &str) -> Option<u32> {
+    let d = desc.to_lowercase();
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    (!words.is_empty() && words.iter().all(|w| d.contains(w.as_str()))).then_some(500)
+}
+
+fn rank<'a>(query: &str, items: impl Iterator<Item = (&'a str, &'a str)>) -> Vec<usize> {
+    let mut scored: Vec<(u32, usize)> = items.enumerate().filter_map(|(i, (t, d))| score(query, t).or_else(|| described(query, d)).map(|s| (s, i))).collect();
     scored.sort_by_key(|&(s, i)| (Reverse(s), i));
     scored.into_iter().map(|(_, i)| i).collect()
 }
 
 pub fn matches(query: &str) -> Vec<usize> {
-    rank(query, ACTIONS.iter().map(|a| a.title))
+    rank(query, ACTIONS.iter().map(|a| (a.title, description(a.id))))
 }
 
 impl Palette {
     pub(super) fn new(pick: Pick, items: Vec<(String, String)>, text: &str) -> Self {
         let (titles, keys): (Vec<String>, Vec<String>) = items.into_iter().unzip();
         let ids = (0..titles.len()).collect();
-        let mut p = Self { pick, titles, field: Field::default(), matches: Vec::new(), keys, ids, sel: 0, first: 0, rect: Rect::default(), field_rect: Rect::default(), rows: Vec::new() };
+        let mut p = Self { pick, titles, field: Field::default(), matches: Vec::new(), keys, descs: Vec::new(), ids, sel: 0, first: 0, rect: Rect::default(), field_rect: Rect::default(), rows: Vec::new() };
         p.field.edit.set(text);
         p.field.edit.select_all();
         p.refresh();
@@ -133,12 +141,15 @@ impl Palette {
     fn commands(app: &App) -> Self {
         let ids: Vec<usize> = (0..ACTIONS.len()).filter(|&i| app.available(ACTIONS[i].id)).collect();
         let mut p = Self::new(Pick::Commands, ids.iter().map(|&i| (ACTIONS[i].title.to_owned(), keys_text(&ACTIONS[i]))).collect(), "");
+        p.descs = ids.iter().map(|&i| description(ACTIONS[i].id)).collect();
         p.ids = ids;
+        p.refresh();
         p
     }
 
     fn refresh(&mut self) {
-        self.matches = if self.pick.is_input() { Vec::new() } else { rank(self.field.text(), self.titles.iter().map(String::as_str)) };
+        let descs = self.descs.iter().copied().chain(std::iter::repeat(""));
+        self.matches = if self.pick.is_input() { Vec::new() } else { rank(self.field.text(), self.titles.iter().map(String::as_str).zip(descs)) };
         self.sel = 0;
         self.first = 0;
     }
@@ -319,7 +330,7 @@ impl App {
         let shadow = if self.dark { Color::rgba(0x00000090) } else { Color::rgba(0x00000030) };
         let Some(p) = &mut self.nav.palette else { return };
         let r = p.rect;
-        g.dl.round_rect(Rect::new(r.x - s4, r.y, r.w + 2.0 * s4, r.h + s6 + s4), shadow, s6 + s4);
+        g.dl.shadow(Rect::new(r.x, r.y + s4, r.w, r.h), shadow, s6, s12);
         g.dl.round_rect(r, t.bg, s6);
         g.dl.outline(r, t.input_border, s6, 1.0);
         let fr = p.field_rect;

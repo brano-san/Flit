@@ -12,9 +12,15 @@ use std::sync::Arc;
 
 const NO: Mods = Mods { ctrl: false, shift: false, alt: false };
 const CTRL_SHIFT: Mods = Mods { ctrl: true, shift: true, alt: false };
+const ALT_SHIFT: Mods = Mods { ctrl: false, shift: true, alt: true };
 
 fn app_in(path: &str, size: (u32, u32), items: &[&str]) -> App {
     let mut app = App::new(Persisted { path: Location::parse(path).unwrap(), ..Default::default() }, Vec::new(), 0, false, 1.0, size, Instant::now());
+    load(&mut app, items);
+    app
+}
+
+fn load(app: &mut App, items: &[&str]) {
     let t = app.tab();
     let mut listing = Listing::default();
     let mut keys = SortKeys::new(CaseMode::Insensitive);
@@ -27,9 +33,8 @@ fn app_in(path: &str, size: (u32, u32), items: &[&str]) -> App {
     let snap = DirSnapshot { gen: t.gen, path: t.location().path().clone(), listing, keys, order, view: ViewSpec::default(), done: true, error: None, elapsed: Duration::ZERO };
     t.slot.publish(Arc::new(snap));
     app.poll();
-    frame(&mut app);
+    frame(app);
     app.drain_effects().for_each(drop);
-    app
 }
 
 fn app_at(path: &str, items: &[&str]) -> App {
@@ -276,6 +281,50 @@ fn recycle_bin_this_pc_and_the_home_page_get_their_own_sets() {
     app.navigate(Location::home_page(), Instant::now());
     frame(&mut app);
     assert_eq!(app.layout.commands.h, 0.0);
+}
+
+#[test]
+fn with_two_panes_the_toolbar_follows_the_active_pane_and_both_panes_start_below_it() {
+    let now = Instant::now();
+    let keypress = |app: &mut App, key: Key, mods: Mods| app.on_event(&Event::Key { key, mods, pressed: true }, now);
+    let mut app = app_at(r"C:\x", &["a.txt", "d.txt"]);
+    keypress(&mut app, Key::Char('V'), ALT_SHIFT);
+    app.on_event(&Event::Key { key: Key::Char('V'), mods: NO, pressed: false }, now);
+    app.navigate(Location::parse(r"C:\y").unwrap(), now);
+    load(&mut app, &["b.zip", "c.txt"]);
+    let below = app.layout.commands.bottom();
+    assert!(app.layout.commands.h > 0.0);
+    assert_eq!((app.layout.pane.y, app.alt.layout.pane.y), (below, below), "both panes start under the toolbar row");
+    select(&mut app, "b.zip");
+    assert!(ids(&app).contains(&"menu.extract".to_owned()));
+    press(&mut app, "menu.sort");
+    let m = menu_of(&mut app);
+    choose(&mut app, &m, "Size");
+    assert_eq!(app.tab().view_spec.sort.field, crate::sort::SortField::Size);
+    assert_eq!(app.other_pane().unwrap().view_spec.sort.field, crate::sort::SortField::Name);
+    keypress(&mut app, Key::Right, CTRL_SHIFT);
+    frame(&mut app);
+    assert_eq!(app.tab().location(), &Location::parse(r"C:\x").unwrap());
+    assert!(!ids(&app).contains(&"menu.extract".to_owned()), "the Extract group follows the focus");
+    press(&mut app, "menu.select");
+    let m = menu_of(&mut app);
+    choose(&mut app, &m, "Select all");
+    assert_eq!(app.tab().view.as_ref().unwrap().selected_count(), 2);
+    assert_eq!(app.other_pane().unwrap().view.as_ref().unwrap().selected_count(), 1, "the other pane keeps its selection");
+    app.navigate(Location::recycle_bin(), now);
+    load(&mut app, &[]);
+    assert_eq!(&ids(&app)[..3], ["bin.restore", "bin.restore_all", "bin.empty"]);
+    keypress(&mut app, Key::Right, CTRL_SHIFT);
+    frame(&mut app);
+    assert_eq!(ids(&app)[0], "menu.new");
+    keypress(&mut app, Key::F(3), NO);
+    assert_eq!(app.search_folder(), Some(&Location::parse(r"C:\y").unwrap()), "F3 searches the active pane's folder");
+    app.close_search();
+    app.navigate(Location::home_page(), now);
+    frame(&mut app);
+    assert!(app.layout.commands.h > 0.0, "the row stays while the other pane shows a folder");
+    assert!(ids(&app).is_empty(), "the Home page gets no buttons");
+    assert_eq!((app.layout.pane.y, app.alt.layout.pane.y), (app.layout.commands.bottom(), app.layout.commands.bottom()));
 }
 
 #[test]

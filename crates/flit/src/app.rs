@@ -42,18 +42,33 @@ type Win<P> = <Ws<P> as WindowSystem>::Window;
 type Device<P> = <<P as Platform>::Renderer as Renderer>::Device;
 
 #[derive(Default)]
-struct Visible {
+struct Rows {
     gen: AtomicU64,
     first: AtomicU32,
     last: AtomicU32,
 }
 
+impl Rows {
+    fn wants(&self, req: &IconRequest) -> bool {
+        req.gen == self.gen.load(Ordering::Relaxed) && req.row + ICON_MARGIN >= self.first.load(Ordering::Relaxed) && req.row <= self.last.load(Ordering::Relaxed) + ICON_MARGIN
+    }
+
+    fn store(&self, (gen, first, last): (u64, u32, u32)) {
+        self.gen.store(gen, Ordering::Relaxed);
+        self.first.store(first, Ordering::Relaxed);
+        self.last.store(last, Ordering::Relaxed);
+    }
+}
+
+#[derive(Default)]
+struct Visible {
+    pane: Rows,
+    other: Rows,
+}
+
 impl Visible {
     fn wants(&self, req: &IconRequest) -> bool {
-        req.gen == 0
-            || req.gen == self.gen.load(Ordering::Relaxed)
-                && req.row + ICON_MARGIN >= self.first.load(Ordering::Relaxed)
-                && req.row <= self.last.load(Ordering::Relaxed) + ICON_MARGIN
+        req.gen == 0 || self.pane.wants(req) || self.other.wants(req)
     }
 }
 
@@ -312,6 +327,7 @@ impl<P: Platform> Handler<P> {
         let routes = ws.tabs.get(cur).map(|l| vec![Route { folder: l.clone(), select: None }]).unwrap_or_default();
         let mut app = self.new_app(routes, self.saved.persisted.clone());
         app.restore_tabs(&ws.tabs, cur);
+        app.restore_splits(&ws.splits);
         app
     }
 
@@ -805,10 +821,8 @@ impl<P: Platform> Handler<P> {
         if let Some(b) = st.born.take() {
             eprintln!("window ready in {:.1} ms with {} tabs", b.elapsed().as_secs_f64() * 1e3, st.app.tabs().len());
         }
-        let (gen, first, last) = st.app.visible_rows();
-        st.visible.gen.store(gen, Ordering::Relaxed);
-        st.visible.first.store(first, Ordering::Relaxed);
-        st.visible.last.store(last, Ordering::Relaxed);
+        st.visible.pane.store(st.app.visible_rows());
+        st.visible.other.store(st.app.other_visible_rows().unwrap_or((u64::MAX, 0, 0)));
         self.places.start_once();
         let now = Instant::now();
         if animating {
@@ -981,12 +995,19 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let mut saved = state::load::<P>();
     let settings_file = settings::file::<P>();
     let settings_text = settings_file.as_deref().and_then(settings::read);
-    let doc = settings_text.as_deref().map(flit_core::ui::settings::parse).unwrap_or_default();
+    let mut doc = settings_text.as_deref().map(flit_core::ui::settings::parse).unwrap_or_default();
     if let Some(startup) = doc.startup() {
         saved.persisted.startup = startup;
     }
     if let Some(mb) = settings::thumb_cache_mb(&doc) {
         saved.persisted.prefs.thumb_cache_mb = mb;
+    }
+    if let Some(Value::Bool(dual)) = doc.value("general.dual_pane") {
+        saved.persisted.split.dual = *dual;
+    }
+    if metrics.is_some() && crate::metrics::dual_at_start() {
+        saved.persisted.split.dual = true;
+        doc.values.retain(|(i, _)| flit_core::ui::SETTINGS[*i].id != "general.dual_pane");
     }
     let ws = Ws::<P>::new()?;
     let waker = ws.waker();
@@ -1010,7 +1031,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let (shell, thumbs, sorter, previews, done) = start_workers::<P>(wake.clone(), thumb_cache.clone())?;
     let tags = TagWorker::start::<P>(local.tags().clone(), wake.clone())?;
     let about = About { os: String::new(), file: settings_file.as_deref().and_then(|f| FsPath::parse(&f.to_string_lossy())), cache_bytes: None };
-    let settings = Settings::start::<P>(settings_file, settings_text, thumb_cache.clone(), wake.clone());
+    let settings = Settings::start::<P>(settings_file.filter(|_| metrics.is_none()), settings_text, thumb_cache.clone(), wake.clone());
     let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes(), local.tags().clone())?;
     let (routes, errors) = if open.is_empty() { Default::default() } else { open::routes(&open, &P::known_folder) };
     let new_window = open.target == OpenTarget::NewWindow;
@@ -1024,8 +1045,8 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let mut restore: VecDeque<(WindowSession, Option<Placement>)> = match &saved.persisted.startup {
         _ if !open.is_empty() || crashed => VecDeque::new(),
         Startup::Continue => previous.iter().flat_map(Session::windows).collect(),
-        Startup::NewTab => VecDeque::from([(WindowSession { tabs: vec![Location::home_page()], cur: 0 }, None)]),
-        Startup::Folders(tabs) => VecDeque::from([(WindowSession { tabs: tabs.clone(), cur: 0 }, None)]),
+        Startup::NewTab => VecDeque::from([(WindowSession { tabs: vec![Location::home_page()], cur: 0, ..Default::default() }, None)]),
+        Startup::Folders(tabs) => VecDeque::from([(WindowSession { tabs: tabs.clone(), cur: 0, ..Default::default() }, None)]),
     };
     let first_window = restore.pop_front().filter(|(w, _)| !w.tabs.is_empty());
     let mut h = Handler::<P> {

@@ -116,7 +116,7 @@ impl Menu<'_> {
         self.command(Cmd::Action(id), label, keys_of(id), false);
     }
 
-    fn check(&mut self, id: &'static str, label: &str, checked: bool) {
+    pub(super) fn check(&mut self, id: &'static str, label: &str, checked: bool) {
         self.command(Cmd::Action(id), label, String::new(), checked);
     }
 
@@ -221,6 +221,7 @@ impl App {
             m.separator();
             m.action("window.compact", "Mini window");
             m.action("window.fullscreen", "Full screen");
+            a.tab_pane_items(m);
             m.separator();
             m.action("tab.close_all", "Close all tabs");
             m.separator();
@@ -363,6 +364,9 @@ impl App {
         if !folders.is_empty() {
             m.action("item.open_tab", "Open in new tab");
             m.action("item.open_window", "Open in new window");
+            if m.shown("pane.menu") {
+                self.item_pane_items(m);
+            }
         }
         m.separator();
         if files {
@@ -460,6 +464,9 @@ impl App {
         self.view_menus(m);
         m.action("nav.refresh", "Refresh");
         m.separator();
+        if m.shown("pane.menu") {
+            self.here_pane_items(m);
+        }
         if t.view_loc.is_recycle_bin() {
             return;
         }

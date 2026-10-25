@@ -1,7 +1,7 @@
 use super::home::Widget;
 use super::layouts::LAYOUTS;
 use super::tabbar::Startup;
-use super::{App, Column, Effect, Persisted};
+use super::{App, Column, Effect, Persisted, SplitDir};
 use crate::archive::Format;
 use crate::fmt::DateFormat;
 use crate::location::Location;
@@ -132,6 +132,8 @@ const GROUPS: [GroupField; 7] = [GroupField::None, GroupField::Name, GroupField:
 const GROUP_CHOICES: Choices = &[("none", "No grouping"), ("name", "Name"), ("modified", "Date modified"), ("created", "Date created"), ("size", "Size"), ("type", "Type"), ("tags", "Tags")];
 const UNITS_OF_DATE: [DateUnit; 3] = [DateUnit::Year, DateUnit::Month, DateUnit::Day];
 const DATE_UNIT_CHOICES: Choices = &[("year", "Year"), ("month", "Month"), ("day", "Day")];
+const SPLITS: [SplitDir; 2] = [SplitDir::Vertical, SplitDir::Horizontal];
+const SPLIT_CHOICES: Choices = &[("vertical", "Side by side"), ("horizontal", "One above the other")];
 const ARCHIVES: [Format; 4] = Format::WRITABLE;
 const ARCHIVE_CHOICES: Choices = &[("zip", "ZIP"), ("7z", "7z"), ("tar", "TAR"), ("gz", "GZip")];
 
@@ -144,6 +146,8 @@ pub static SETTINGS: &[Setting] = &[
     Setting { id: "general.startup_pages", page: Page::General, title: "Pages to open at startup", help: "Used when Flit starts with specific pages: folders or the Home page, each in its own tab", kind: Kind::Paths(|a| a.startup_pages.clone(), |a, v| a.set_startup_pages(v)) },
     toggle("general.open_in_running", Page::General, "Open folders from other apps in a new tab", "When off, a folder opened from another app or the command line gets a new window of the running Flit", |a| a.open_target != OpenTarget::NewWindow, |a, on| a.open_target = if on { OpenTarget::NewTab } else { OpenTarget::NewWindow }),
     toggle("general.switch_to_new_tab", Page::General, "Switch to newly opened tabs", "When off, folders opened in new tabs from the list, the sidebar or the Home page open in the background", |a| a.switch_to_new_tab, |a, on| a.switch_to_new_tab = on),
+    toggle("general.dual_pane", Page::General, "Open new tabs with two panes", "New tabs show a second pane next to the first; Ctrl+Shift+S switches the pane of the current tab", |a| a.split_prefs.dual, |a, on| a.split_prefs.dual = on),
+    choice("general.split_direction", Page::General, "Where new panes open", "For new tabs with two panes and for Ctrl+Shift+S", SPLIT_CHOICES, |a| pos(&SPLITS, &a.split_prefs.dir), |a, i| a.split_prefs.dir = SPLITS[i]),
     toggle("general.smooth_scroll", Page::General, "Smooth scrolling", "Animate scrolling of the file list instead of jumping", |a| a.smooth_scroll, |a, on| a.smooth_scroll = on),
     toggle("general.tab_wheel_reversed", Page::General, "Reverse the mouse wheel over tabs", "Scrolling down over the tab strip switches to the previous tab instead of the next", |a| a.tab_wheel_reversed, |a, on| a.tab_wheel_reversed = on),
     choice("general.date_format", Page::General, "Date format", "How dates are shown in the list, search results, the preview pane and dialogs", DATE_CHOICES, |a| pos(&DATES, &a.style.dates), |a, i| a.set_style(|s| s.dates = DATES[i])),
@@ -158,6 +162,7 @@ pub static SETTINGS: &[Setting] = &[
     toggle("general.menu_shortcut", Page::General, "Show «Create shortcut» in the context menu", "Creates shortcuts next to the selected items", |a| shown_in_menu(a, "file.shortcut"), |a, on| show_in_menu(a, "file.shortcut", on)),
     toggle("general.menu_new_folder_with_selection", Page::General, "Show «New folder with selection» in the context menu", "Moves the selected items into a new folder", |a| shown_in_menu(a, "file.new_folder_with_selection"), |a, on| show_in_menu(a, "file.new_folder_with_selection", on)),
     toggle("general.menu_stream", Page::General, "Show «New alternate data stream» in the context menu", "For a single selected file", |a| shown_in_menu(a, "file.new_stream"), |a, on| show_in_menu(a, "file.new_stream", on)),
+    toggle("general.menu_panes", Page::General, "Show pane commands in the context menu", "«Open in other pane», «Open in new pane» and «Close pane»", |a| shown_in_menu(a, "pane.menu"), |a, on| show_in_menu(a, "pane.menu", on)),
     toggle("general.menu_pin", Page::General, "Show «Pin to sidebar» in the context menu", "For folders", |a| shown_in_menu(a, "item.pin"), |a, on| show_in_menu(a, "item.pin", on)),
     toggle("general.menu_terminal", Page::General, "Show «Open in terminal» in the context menu", "For folders and the folder background", |a| shown_in_menu(a, "app.terminal"), |a, on| show_in_menu(a, "app.terminal", on)),
     toggle("general.menu_tags", Page::General, "Show «Edit tags» in the context menu", "For items on local NTFS drives", |a| shown_in_menu(a, "tags.edit"), |a, on| show_in_menu(a, "tags.edit", on)),

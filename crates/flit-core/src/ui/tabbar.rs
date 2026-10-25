@@ -30,6 +30,8 @@ pub enum Startup {
 pub struct WindowSession {
     pub tabs: Vec<Location>,
     pub cur: usize,
+    #[serde(skip)]
+    pub splits: Vec<Option<super::SplitSession>>,
 }
 
 pub struct MovedTab(Box<Tab>);
@@ -49,7 +51,7 @@ impl fmt::Debug for MovedTab {
 #[derive(Default)]
 pub(super) struct Strip {
     pub rev: u64,
-    pointer: Option<(f32, f32)>,
+    pub pointer: Option<(f32, f32)>,
     wheel: f32,
     tip: Option<(usize, Option<Instant>)>,
 }
@@ -78,7 +80,7 @@ impl App {
     }
 
     pub fn session(&self) -> WindowSession {
-        WindowSession { tabs: self.tabs.iter().map(|t| t.location().clone()).collect(), cur: self.cur }
+        WindowSession { tabs: self.tabs.iter().map(|t| t.location().clone()).collect(), cur: self.cur, splits: self.split_sessions() }
     }
 
     pub fn session_rev(&self) -> u64 {
@@ -120,6 +122,7 @@ impl App {
             self.move_tab(self.tab_slot(x));
         }
         self.reload(self.cur, now);
+        self.adopt_split(now);
         self.after_tab_change();
     }
 
@@ -137,6 +140,7 @@ impl App {
         if self.tab().gen == 0 {
             self.load_tab(self.cur, None, Instant::now());
         }
+        self.wake_other();
     }
 
     fn tab_slot(&self, x: f32) -> usize {

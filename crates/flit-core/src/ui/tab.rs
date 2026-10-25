@@ -56,6 +56,7 @@ pub struct Tab {
     type_ahead_at: Option<Instant>,
     pub(super) filter: Option<Field>,
     pub(super) panes: Vec<Pane>,
+    pub(super) split: Option<Box<super::split::Split>>,
 }
 
 impl Tab {
@@ -87,6 +88,7 @@ impl Tab {
             type_ahead_at: None,
             filter: None,
             panes: Vec::new(),
+            split: None,
         }
     }
 
@@ -144,6 +146,9 @@ impl Tab {
         self.cancel.set(u64::MAX);
         if let Some(p) = self.watching.take() {
             fx.push(Effect::Provider { provider: p, req: ProviderRequest::Watch { tab: self.id, gen: self.gen, path: None } });
+        }
+        if let Some(s) = &mut self.split {
+            s.other.shutdown(fx);
         }
     }
 

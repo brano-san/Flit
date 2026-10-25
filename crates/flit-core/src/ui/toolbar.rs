@@ -268,6 +268,9 @@ impl App {
     }
 
     pub fn toolbar_items(&self) -> Vec<ToolItem> {
+        if self.tab().view_loc.is_home_page() {
+            return Vec::new();
+        }
         let mut items = self.toolbar.state.sets[self.tool_context().index()].clone();
         let extract = ToolItem::Button("menu.extract".into(), Show::Both);
         if self.toolbar.archive && !items.contains(&extract) {
@@ -285,7 +288,7 @@ impl App {
     }
 
     pub(super) fn toolbar_h(&self) -> f32 {
-        if self.toolbar.state.visible && !self.search.active && !self.tab().view_loc.is_home_page() {
+        if self.toolbar.state.visible && !self.search.active && (self.split_shown() || !self.tab().view_loc.is_home_page()) {
             self.s(BAR_H)
         } else {
             0.0
@@ -726,7 +729,7 @@ impl App {
         }
         f.rect = Rect::new(x, y, w, ry + s6 - y);
         let r = f.rect;
-        g.dl.round_rect(Rect::new(r.x - s4, r.y, r.w + 2.0 * s4, r.h + s6 + s4), self.shadow(), s6 + s4);
+        g.dl.shadow(Rect::new(r.x, r.y + s4, r.w, r.h), self.shadow(), s6, s6 * 2.0);
         g.dl.round_rect(r, t.bg, s6);
         g.dl.outline(r, t.input_border, s6, 1.0);
         let baseline = |r: Rect| (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
@@ -789,7 +792,7 @@ impl App {
         let w = g.measure(&text, font) + 2.0 * pad;
         let x = anchor.x.min(self.size.0 - w - self.s(4.0)).max(self.s(4.0));
         let r = Rect::new(x, anchor.bottom() + self.s(6.0), w, h);
-        g.dl.round_rect(Rect::new(r.x - 1.0, r.y, r.w + 2.0, r.h + self.s(2.0)), self.shadow(), self.s(5.0));
+        g.dl.shadow(Rect::new(r.x, r.y + self.s(1.0), r.w, r.h), self.shadow(), self.s(4.0), self.s(4.0));
         g.dl.round_rect(r, t.chrome, self.s(4.0));
         g.dl.outline(r, t.input_border, self.s(4.0), 1.0);
         g.text(r.x + pad, (r.y + (r.h + m.ascent - m.descent) / 2.0).round(), &text, font, t.text, f32::INFINITY);

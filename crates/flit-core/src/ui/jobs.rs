@@ -36,6 +36,7 @@ const G_CHECK: &str = "\u{E73E}";
 const CONFLICT_BUTTONS: [&str; 4] = ["Replace", "Keep both", "Skip", "Cancel"];
 const UNREADABLE_BUTTONS: [&str; 2] = ["Skip", "Cancel"];
 const CONFIRM_BUTTONS: [&str; 2] = ["Delete", "Cancel"];
+const RESTORE_ALL_BUTTONS: [&str; 2] = ["Restore", "Cancel"];
 const RESTORE_BUTTONS: [&str; 2] = ["Restore", "Not now"];
 
 #[derive(Clone, Debug, PartialEq)]
@@ -270,6 +271,8 @@ fn confirm_text(op: &FileOp) -> (&'static str, String) {
         FileOp::Trash(items) => ("Move to the Recycle Bin?", format!("These {} items will be moved to the Recycle Bin.", items.len())),
         FileOp::Delete(items) => ("Delete permanently?", names(items.iter().collect())),
         FileOp::Purge(pairs) => ("Delete permanently?", names(pairs.iter().map(|(_, original)| original).collect())),
+        FileOp::Restore(pairs) if pairs.len() == 1 => ("Restore all items?", format!("{} will go back to where it was deleted from.", quoted(&pairs[0].1))),
+        FileOp::Restore(pairs) => ("Restore all items?", format!("All {} items in the Recycle Bin will go back to where they were deleted from.", pairs.len())),
         _ => ("Empty the Recycle Bin?", "All items in the Recycle Bin will be deleted permanently.".into()),
     }
 }
@@ -471,10 +474,11 @@ impl App {
         self.dirty = true;
     }
 
-    fn dialog_buttons(&self) -> &'static [&'static str] {
+    pub(super) fn dialog_buttons(&self) -> &'static [&'static str] {
         match self.jobs.asks.front() {
             Some(a) if a.unreadable() => &UNREADABLE_BUTTONS,
             Some(Ask::Conflict { .. }) => &CONFLICT_BUTTONS,
+            Some(Ask::Confirm(FileOp::Restore(_))) => &RESTORE_ALL_BUTTONS,
             Some(Ask::Confirm(_)) => &CONFIRM_BUTTONS,
             Some(Ask::Restore) => &RESTORE_BUTTONS,
             None => &[],
@@ -703,7 +707,7 @@ impl App {
         let (s4, s6, s12) = (self.s(4.0), self.s(6.0), self.s(12.0));
         let s = |v: f32| (v * self.scale).round();
         let p = self.jobs.r.panel;
-        g.dl.round_rect(Rect::new(p.x - s4, p.y, p.w + 2.0 * s4, p.h + s6 + s4), self.shadow(), s6 + s4);
+        g.dl.shadow(Rect::new(p.x, p.y + s4, p.w, p.h), self.shadow(), s6, s12);
         g.dl.round_rect(p, t.bg, s6);
         g.dl.outline(p, t.input_border, s6, 1.0);
         let m = g.metrics(bold);
@@ -785,7 +789,7 @@ impl App {
             let menu = self.jobs.r.menu.clone();
             if let (Some(first), Some(last)) = (menu.first(), menu.last()) {
                 let bg = Rect::new(first.x, first.y, first.w, last.bottom() - first.y);
-                g.dl.round_rect(Rect::new(bg.x - s4, bg.y, bg.w + 2.0 * s4, bg.h + s4 + s6), self.shadow(), s6);
+                g.dl.shadow(Rect::new(bg.x, bg.y + s4, bg.w, bg.h), self.shadow(), s6, s4 * 3.0);
                 g.dl.round_rect(bg, t.bg, s4);
                 g.dl.outline(bg, t.input_border, s4, 1.0);
                 for (k, (r, label)) in menu.iter().zip(items).enumerate() {
@@ -806,7 +810,7 @@ impl App {
         let (w, h) = self.size;
         g.dl.rect(Rect::new(0.0, 0.0, w, h), if self.dark { Color::rgba(0x00000070) } else { Color::rgba(0x00000040) });
         let d = self.jobs.r.dialog;
-        g.dl.round_rect(Rect::new(d.x - s8, d.y - s4, d.w + 2.0 * s8, d.h + s8 + s8), self.shadow(), s8 + s8);
+        g.dl.shadow(Rect::new(d.x, d.y + s8, d.w, d.h), self.shadow(), s8, s(24.0));
         g.dl.round_rect(d, t.bg, s8);
         g.dl.outline(d, t.input_border, s8, 1.0);
         let offset = self.utc_offset_min;
@@ -826,7 +830,11 @@ impl App {
             }
             Some(Ask::Confirm(op)) => {
                 let (title, text) = confirm_text(op);
-                let note = if matches!(op, FileOp::Trash(_)) { "The Recycle Bin keeps them until it is emptied." } else { "This cannot be undone." };
+                let note = match op {
+                    FileOp::Trash(_) => "The Recycle Bin keeps them until it is emptied.",
+                    FileOp::Restore(_) => "Ctrl+Z sends them back to the Recycle Bin.",
+                    _ => "This cannot be undone.",
+                };
                 (title.into(), vec![text, note.into()])
             }
             Some(Ask::Restore) => ("Restore the previous session?".into(), vec!["Flit did not close properly last time.".into(), "Restore reopens the windows and tabs that were open.".into()]),

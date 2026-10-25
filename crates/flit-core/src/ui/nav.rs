@@ -20,16 +20,10 @@ pub(super) struct Nav {
 }
 
 impl App {
-    pub(super) fn content_origin(&self) -> (f32, f32) {
-        (self.sidebar_width(), self.filter_bar_h())
-    }
-
     pub(super) fn layout_nav(&mut self) {
-        let (top, bottom, x) = (self.layout.commands.bottom(), self.layout.status.y, self.layout.header.x);
+        let (top, bottom) = (self.layout.commands.bottom(), self.layout.status.y);
         self.layout_sidebar(top, bottom);
-        self.layout_filter(x, top);
         self.layout_palette(self.layout.title.bottom());
-        self.layout_home();
     }
 
     pub(super) fn nav_hit(&self, x: f32, y: f32) -> Option<Hit> {

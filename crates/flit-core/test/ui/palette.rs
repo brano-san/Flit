@@ -29,3 +29,15 @@ fn matches_rank_registered_titles() {
     assert_eq!(titles("filter")[0], "Filter items in this folder");
     assert!(titles("qqq").is_empty());
 }
+
+#[test]
+fn commands_are_found_by_words_of_their_descriptions() {
+    assert!(ACTIONS.iter().all(|a| !super::super::describe::description(a.id).is_empty()), "every command has a description");
+    let dual = titles("dual pane");
+    assert_eq!(dual[0], "Toggle dual pane", "a title match ranks first");
+    assert!(dual.contains(&"Split vertically: open this folder in a pane on the right"));
+    assert!(titles("trash").contains(&"Move to Recycle Bin"));
+    assert!(titles("unzip").contains(&"Extract here"));
+    assert!(titles("checksum").contains(&"Hashes…"));
+    assert!(titles("trash qqq").is_empty(), "every word must match");
+}

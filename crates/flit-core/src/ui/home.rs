@@ -146,7 +146,7 @@ impl App {
 
     pub(super) fn layout_home(&mut self) {
         let l = &self.layout;
-        let area = Rect::new(l.header.x, l.header.y, l.header.w, (l.status.y - l.header.y).max(0.0));
+        let area = Rect::new(l.header.x, l.header.y, l.header.w, (l.bottom - l.header.y).max(0.0));
         let mut folders = if self.on_home() && self.widget_shown(Widget::QuickAccess) { self.folder_cards() } else { Vec::new() };
         let recent: Vec<usize> = self.recent_items().map(|(i, _)| i).collect();
         let sc = self.scale;
@@ -283,6 +283,7 @@ impl App {
 
     fn home_page_menu(&mut self, x: f32, y: f32) {
         let menu = self.collect(|a, m| {
+            a.here_pane_items(m);
             for w in Widget::ALL {
                 m.place(w.title(), PlaceCmd::Widget(w), a.widget_shown(w));
             }
