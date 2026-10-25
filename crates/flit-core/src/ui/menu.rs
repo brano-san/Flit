@@ -1,5 +1,5 @@
 use super::actions::{chord_text, ACTIONS};
-use super::App;
+use super::{App, LayoutMode};
 use crate::location::Location;
 use crate::path::PathKind;
 use crate::sort::{DateUnit, Folders, GroupField, SortField};
@@ -54,6 +54,15 @@ const BIN_GROUPS: [(GroupField, &str, &str); 5] = [
     (GroupField::Origin, "view.group.origin", "Original location"),
     (GroupField::Modified, "view.group.modified", "Date deleted"),
     (GroupField::Size, "view.group.size", "Size"),
+];
+
+const LAYOUT_CHOICES: [(LayoutMode, &str); 6] = [
+    (LayoutMode::Details, "view.layout.details"),
+    (LayoutMode::List, "view.layout.list"),
+    (LayoutMode::Cards, "view.layout.cards"),
+    (LayoutMode::Columns, "view.layout.columns"),
+    (LayoutMode::Grid, "view.layout.grid"),
+    (LayoutMode::Adaptive, "view.layout.adaptive"),
 ];
 
 const UNITS: [(DateUnit, &str, &str); 3] = [(DateUnit::Year, "view.group.year", "Year"), (DateUnit::Month, "view.group.month", "Month"), (DateUnit::Day, "view.group.day", "Day")];
@@ -159,6 +168,14 @@ impl App {
         let t = self.tab();
         let in_bin = t.view_loc.is_recycle_bin();
         let (sort, group) = (t.view_spec.sort, t.view_spec.group);
+        m.submenu("Layout", |m| {
+            for (mode, id) in LAYOUT_CHOICES {
+                m.command(Cmd::Action(id), mode.title(), keys_of(id), mode == t.mode);
+            }
+            m.separator();
+            m.action("view.size.larger", "Larger items");
+            m.action("view.size.smaller", "Smaller items");
+        });
         m.submenu("Sort by", |m| {
             m.choices(if in_bin { &BIN_SORTS[..] } else { &SORTS[..] }, sort.field);
             m.separator();

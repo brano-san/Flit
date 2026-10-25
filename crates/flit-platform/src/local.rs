@@ -1,5 +1,6 @@
 use crate::{FileOps, Fs, Job, PlatformError, Provider, Shell, Wake, Watcher};
 use crossbeam_channel::{bounded, unbounded, Sender};
+use flit_core::desktop_ini::FolderKind;
 use flit_core::listing::{attr, DirSnapshot, Listing, ListingBuilder};
 use flit_core::provider::{FileOp, GenToken, Launch, OpCtl, OpId, OpReport, SnapshotSlot, Stage};
 use flit_core::sort::{self, CaseMode, SortKeys, ViewSpec};
@@ -370,6 +371,9 @@ fn list<F: Fs>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: CaseMode, 
         return;
     }
     let start = Instant::now();
+    if out.wants_kind(gen) {
+        out.set_kind(gen, fs.desktop_ini(path).map_or(FolderKind::Unknown, |d| d.kind));
+    }
     let mut next_partial = start;
     let mut on_batch = |b: &ListingBuilder<'_>| {
         if !cancel.is_current(gen) {

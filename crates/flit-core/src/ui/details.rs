@@ -1,3 +1,4 @@
+use super::layouts::{LayoutMode, Sizes};
 use super::ops::TIMER_SLACK;
 use super::{centered, App, Column, Drag, Effect, Hit, MenuItem, ShellMenu, Tab, BIN_COLUMNS, COLUMNS, G_CHEVRON, G_FILE, G_FOLDER, G_SORT_DOWN};
 use crate::fmt as format;
@@ -27,8 +28,9 @@ pub const MAX_COL_W: f32 = 600.0;
 const HOVER_SELECT: Duration = Duration::from_millis(600);
 const AUTOSCROLL_DEAD: f32 = 12.0;
 const AUTOSCROLL_RATE: f32 = 8.0;
-const CHECK: f32 = 14.0;
-const CHECK_GAP: f32 = 8.0;
+pub(super) const CHECK: f32 = 14.0;
+pub(super) const CHECK_GAP: f32 = 8.0;
+pub const THUMB_CACHE_MB: (u32, u32, u32) = (100, 500, 5000);
 const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const SIZE_GROUPS: [&str; 8] = [
     "Folders",
@@ -45,12 +47,6 @@ const G_FONT: &str = "\u{E8D2}";
 const G_PACKAGE: &str = "\u{E7B8}";
 const G_CHECK: &str = "\u{E73E}";
 const G_WARNING: &str = "\u{E7BA}";
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum LayoutMode {
-    #[default]
-    Details,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Columns {
@@ -91,11 +87,14 @@ pub struct FolderView {
     pub sort: SortSpec,
     pub group: GroupSpec,
     pub columns: Columns,
+    #[serde(skip)]
+    pub sizes: Sizes,
 }
 
 impl FolderView {
     pub fn sanitized(mut self) -> Self {
         self.columns = self.columns.sanitized();
+        self.sizes = self.sizes.sanitized();
         self
     }
 }
@@ -113,6 +112,26 @@ pub struct ViewPrefs {
     pub split_count: bool,
     pub checkboxes: bool,
     pub hover_select: bool,
+    #[serde(skip, default = "yes")]
+    pub thumbnails: bool,
+    #[serde(skip, default = "thumb_cache_mb")]
+    pub thumb_cache_mb: u32,
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn thumb_cache_mb() -> u32 {
+    THUMB_CACHE_MB.1
+}
+
+impl ViewPrefs {
+    pub fn sanitized(mut self) -> Self {
+        self.defaults = self.defaults.sanitized();
+        self.thumb_cache_mb = self.thumb_cache_mb.clamp(THUMB_CACHE_MB.0, THUMB_CACHE_MB.2);
+        self
+    }
 }
 
 impl Default for ViewPrefs {
@@ -129,6 +148,8 @@ impl Default for ViewPrefs {
             split_count: false,
             checkboxes: false,
             hover_select: false,
+            thumbnails: true,
+            thumb_cache_mb: THUMB_CACHE_MB.1,
         }
     }
 }
@@ -252,11 +273,12 @@ impl Column {
 
 impl Tab {
     pub(super) fn folder_view(&self) -> FolderView {
-        FolderView { layout: self.mode, sort: self.view_spec.sort, group: self.view_spec.group, columns: self.columns }
+        FolderView { layout: self.mode, sort: self.view_spec.sort, group: self.view_spec.group, columns: self.columns, sizes: self.sizes }
     }
 
     pub(super) fn set_folder_view(&mut self, f: FolderView) {
         self.mode = f.layout;
+        self.sizes = f.sizes;
         self.view_spec.sort = f.sort;
         self.view_spec.group = f.group;
         self.columns = f.columns;
@@ -292,14 +314,15 @@ impl App {
         &self.folders
     }
 
-    pub(super) fn view_for(&self, loc: &Location) -> FolderView {
-        self.folders.get(folder_key(loc)).unwrap_or(self.prefs.defaults)
+    fn view_for(&self, t: &Tab) -> FolderView {
+        let inherited = if t.mode == LayoutMode::Columns { t.folder_view() } else { self.prefs.defaults };
+        self.folders.get(folder_key(t.location())).unwrap_or(inherited)
     }
 
     pub(super) fn load_tab(&mut self, k: usize, select: Option<Vec<u8>>, now: Instant) {
         let gen = self.gen();
         if !self.prefs.same_for_all {
-            let fv = self.view_for(self.tabs[k].location());
+            let fv = self.view_for(&self.tabs[k]);
             self.tabs[k].set_folder_view(fv);
         }
         self.sync_spec(k);
@@ -322,7 +345,7 @@ impl App {
         }
     }
 
-    fn change_view(&mut self, f: impl FnOnce(&mut Tab)) {
+    pub(super) fn change_view(&mut self, f: impl FnOnce(&mut Tab)) {
         let k = self.cur;
         let before = self.tabs[k].view_spec;
         f(&mut self.tabs[k]);
@@ -426,13 +449,13 @@ impl App {
         }
         let (font, hfont) = (self.ui_font(13.0), self.ui_font(12.0));
         let (pad, glyph) = (self.s(10.0), self.s(20.0));
+        let lines = self.visible_lines(&self.flow());
         let t = &self.tabs[k];
         let Some(v) = &t.view else { return };
-        let (first, last) = t.line_range(self.layout.row_h, self.layout.list.h);
         let mut widths = t.columns.widths;
         for &c in self.layout.columns.iter().filter(|&&c| c != Column::Name) {
             let mut w = g.measure(c.title(), hfont) + glyph;
-            for line in first..last {
+            for line in lines.clone() {
                 if let Some(Line::Row(r)) = v.line(line) {
                     w = w.max(g.measure(self.cell_text(arena, v.listing(), v.rows()[r], c), font));
                 }
@@ -533,27 +556,28 @@ impl App {
         }
     }
 
-    pub(super) fn draw_group_line<B: TextBackend>(&self, g: &mut Gfx<B>, arena: &Bump, th: &Theme, v: &DirView, k: usize, y: f32) {
-        let l = &self.layout;
-        let (list, rh, gr) = (l.list, l.row_h, v.groups()[k]);
+    pub(super) fn draw_group_line<B: TextBackend>(&self, g: &mut Gfx<B>, arena: &Bump, th: &Theme, v: &DirView, k: usize, r: Rect) {
+        let gr = v.groups()[k];
+        let (y, rh, right) = (r.y, r.h, r.right());
         if self.hover == Hit::Group(k) && self.drag == Drag::None {
-            g.dl.round_rect(Rect::new(list.x + self.s(4.0), y + 1.0, list.w - self.s(8.0), rh - 2.0), th.hover, self.s(4.0));
+            g.dl.round_rect(r.inset(self.s(4.0), 1.0), th.hover, self.s(4.0));
         }
-        let x0 = l.cols.first().map_or(list.x, |c| c.x) + self.s(10.0);
+        let x0 = r.x + self.s(10.0);
         centered(g, Rect::new(x0, y, self.s(16.0), rh), if gr.collapsed { G_CHEVRON } else { G_SORT_DOWN }, self.icon_font(8.0), th.text_dim);
         centered(g, Rect::new(x0 + self.s(20.0), y, self.s(16.0), rh), Self::group_glyph(v, &gr), self.icon_font(12.0), th.accent.alpha(0xB0));
         let bold = FontStyle::new(FontFamily::Ui, 13.0 * self.scale, true);
         let m = g.metrics(bold);
         let baseline = (y + (rh + m.ascent - m.descent) / 2.0).round();
         let tx = x0 + self.s(44.0);
-        let w = g.text(tx, baseline, self.group_label(arena, v, &gr), bold, th.text, list.right() - tx - self.s(80.0));
+        let room = right - tx;
+        let w = g.text(tx, baseline, self.group_label(arena, v, &gr), bold, th.text, (room - self.s(80.0)).max(room * 0.6));
         let mut count = bumpalo::collections::String::new_in(arena);
         let _ = write!(count, "{}", gr.count);
         let cx = tx + w + self.s(8.0);
         let cw = g.text(cx, baseline, &count, self.ui_font(12.0), th.text_dim, f32::INFINITY);
         let sx = cx + cw + self.s(10.0);
-        if sx < list.right() - self.s(12.0) {
-            g.dl.rect(Rect::new(sx, (y + rh / 2.0).round(), list.right() - self.s(12.0) - sx, 1.0), th.separator);
+        if sx < right - self.s(12.0) {
+            g.dl.rect(Rect::new(sx, (y + rh / 2.0).round(), right - self.s(12.0) - sx, 1.0), th.separator);
         }
     }
 
@@ -603,19 +627,7 @@ impl App {
         };
     }
 
-    pub(super) fn icon_x(&self) -> f32 {
-        let x = self.layout.cols.first().map_or(self.layout.list.x, |c| c.x) + self.s(10.0);
-        if self.prefs.checkboxes { x + self.s(CHECK + CHECK_GAP) } else { x }
-    }
-
-    pub(super) fn on_checkbox(&self, x: f32) -> bool {
-        let x0 = self.layout.cols.first().map_or(self.layout.list.x, |c| c.x);
-        self.prefs.checkboxes && x >= x0 && x < x0 + self.s(10.0 + CHECK + CHECK_GAP / 2.0)
-    }
-
-    pub(super) fn draw_checkbox<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme, y: f32, on: bool) {
-        let box_px = self.s(CHECK);
-        let r = Rect::new(self.layout.cols[0].x + self.s(10.0), y + ((self.layout.row_h - box_px) / 2.0).round(), box_px, box_px);
+    pub(super) fn draw_checkbox<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme, r: Rect, on: bool) {
         if on {
             g.dl.round_rect(r, th.accent, self.s(3.0));
             centered(g, r, G_CHECK, self.icon_font(9.0), th.bg);
@@ -693,7 +705,7 @@ impl App {
         }
     }
 
-    pub(super) fn autoscroll_down(&mut self, h: Hit, y: f32, button: MouseButton) -> bool {
+    pub(super) fn autoscroll_down(&mut self, h: Hit, along: f32, button: MouseButton) -> bool {
         if self.details.autoscroll.is_some() {
             self.end_autoscroll();
             self.details.swallow = Some(button);
@@ -702,16 +714,16 @@ impl App {
         if button != MouseButton::Middle || !matches!(h, Hit::Row(_) | Hit::ListEmpty | Hit::Group(_)) {
             return false;
         }
-        self.details.autoscroll = Some(Autoscroll { anchor: y, y, moved: false });
+        self.details.autoscroll = Some(Autoscroll { anchor: along, y: along, moved: false });
         self.set_cursor(CursorIcon::Scroll);
         true
     }
 
-    pub(super) fn autoscroll_move(&mut self, y: f32) -> bool {
+    pub(super) fn autoscroll_move(&mut self, along: f32) -> bool {
         let dead = self.s(AUTOSCROLL_DEAD);
         let Some(a) = &mut self.details.autoscroll else { return false };
-        a.y = y;
-        a.moved |= (y - a.anchor).abs() > dead;
+        a.y = along;
+        a.moved |= (along - a.anchor).abs() > dead;
         self.dirty = true;
         true
     }
@@ -735,9 +747,9 @@ impl App {
         if off.abs() <= dead {
             return false;
         }
-        let (rh, lh) = (self.layout.row_h, self.layout.list.h);
+        let max = self.max_scroll();
         let t = self.tab_mut();
-        let (max, was) = (t.max_scroll(rh, lh), t.scroll);
+        let was = t.scroll;
         t.scroll = (t.scroll + (off - dead * off.signum()) * AUTOSCROLL_RATE * dt).clamp(0.0, max);
         t.scroll_target = t.scroll;
         t.scroll != was || dt == 0.0

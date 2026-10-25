@@ -1,5 +1,5 @@
 use super::sidebar::KnownFolder;
-use super::{App, Column, Effect, Route};
+use super::{App, Column, Effect, LayoutMode, Route};
 use crate::input::{Key, Mods};
 use crate::location::Location;
 use crate::open::OpenTarget;
@@ -99,7 +99,15 @@ pub static ACTIONS: &[Action] = &[
     Action::new("view.group.year", "Group dates by year", &[], |a, _| a.set_date_unit(DateUnit::Year)),
     Action::new("view.group.month", "Group dates by month", &[], |a, _| a.set_date_unit(DateUnit::Month)),
     Action::new("view.group.day", "Group dates by day", &[], |a, _| a.set_date_unit(DateUnit::Day)),
-    Action::new("view.columns.fit", "Size all columns to fit", &[ctrl(Key::Char('+'))], |a, _| a.request_fit()),
+    Action::new("view.layout.details", "Details layout", &[ctrl_shift(Key::Char('1'))], |a, _| a.set_layout(LayoutMode::Details)),
+    Action::new("view.layout.list", "List layout", &[ctrl_shift(Key::Char('2'))], |a, _| a.set_layout(LayoutMode::List)),
+    Action::new("view.layout.cards", "Cards layout", &[ctrl_shift(Key::Char('3'))], |a, _| a.set_layout(LayoutMode::Cards)),
+    Action::new("view.layout.columns", "Columns layout", &[ctrl_shift(Key::Char('4'))], |a, _| a.set_layout(LayoutMode::Columns)),
+    Action::new("view.layout.grid", "Grid layout", &[ctrl_shift(Key::Char('5'))], |a, _| a.set_layout(LayoutMode::Grid)),
+    Action::new("view.layout.adaptive", "Adaptive layout", &[ctrl_shift(Key::Char('6'))], |a, _| a.set_layout(LayoutMode::Adaptive)),
+    Action::new("view.size.larger", "Larger items", &[ctrl(Key::Char('+')), ctrl_shift(Key::Char('+'))], |a, _| a.resize_items(1)),
+    Action::new("view.size.smaller", "Smaller items", &[ctrl(Key::Char('-'))], |a, _| a.resize_items(-1)),
+    Action::new("view.columns.fit", "Size all columns to fit", &[ctrl(Key::NumPlus)], |a, _| a.request_fit()),
     Action::new("view.columns.autofit", "Always size columns to fit", &[], |a, _| a.toggle_auto_fit()),
     Action::new("view.column.modified", "Show or hide the Date modified column", &[], |a, _| a.toggle_column(Column::Modified)),
     Action::new("view.column.created", "Show or hide the Date created column", &[], |a, _| a.toggle_column(Column::Created)),
@@ -171,6 +179,7 @@ pub fn chord_text(c: &Chord) -> String {
     match c.key {
         Key::Char(ch) => s.push(ch),
         Key::F(n) => s.push_str(&format!("F{n}")),
+        Key::NumPlus => s.push_str("Num+"),
         k => s.push_str(match k {
             Key::Up => "Up",
             Key::Down => "Down",
