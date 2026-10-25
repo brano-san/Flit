@@ -1,4 +1,3 @@
-use super::actions::{keys_text, ACTIONS};
 use super::edit::{EditAction, LineEdit};
 use super::palette::{Palette, Pick};
 use super::sidebar::Section;
@@ -617,7 +616,7 @@ impl App {
         if let Err(e) = self.shell_dir() {
             return self.status(e);
         }
-        let folder_keys = ACTIONS.iter().find(|a| a.id == "file.new_folder").map(keys_text).unwrap_or_default();
+        let folder_keys = self.keymap.text_of("file.new_folder");
         let mut items = vec![("Folder".to_owned(), folder_keys), ("Shortcut".to_owned(), String::new())];
         items.extend(self.nav.sidebar.places.templates.iter().map(|t| (t.label.clone(), t.ext.clone())));
         self.open_pick(Palette::new(Pick::NewItem, items, ""));

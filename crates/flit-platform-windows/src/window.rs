@@ -723,6 +723,7 @@ fn map_key(vk: u16) -> Key {
         VK_ESCAPE => Key::Escape,
         VK_BACK => Key::Backspace,
         VK_DELETE => Key::Delete,
+        VK_INSERT => Key::Insert,
         VK_TAB => Key::Tab,
         VK_SPACE => Key::Space,
         VK_BROWSER_BACK => Key::BrowserBack,

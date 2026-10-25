@@ -75,7 +75,7 @@ impl App {
             self.close_palette();
         }
         if !matches!(button, MouseButton::Left | MouseButton::Middle | MouseButton::Right) {
-            return false;
+            return palette_hit;
         }
         let ours = palette_hit || matches!(h, Hit::Side(_) | Hit::SidePin(_) | Hit::SideEmpty | Hit::SideHeader(_) | Hit::SideSettings | Hit::HomeItem(_) | Hit::HomeEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose);
         if !ours {

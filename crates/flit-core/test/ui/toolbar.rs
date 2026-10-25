@@ -205,6 +205,9 @@ fn tooltips_name_the_button_and_its_shortcut_after_a_delay() {
     assert_eq!(app.toolbar_tip(), None);
     app.on_event(&Event::Timer, t0 + TIP_DELAY + Duration::from_millis(20));
     assert_eq!(app.toolbar_tip().as_deref(), Some("Copy (Ctrl+C)"));
+    let copy = crate::ui::actions::index("file.copy").unwrap();
+    app.edit_keys(|k| k.assign(copy, Some(crate::ui::actions::ctrl(Key::Char('C'))), crate::ui::actions::ctrl(Key::Insert)));
+    assert_eq!(app.toolbar_tip().as_deref(), Some("Copy (Ctrl+Ins)"), "the tooltip shows the user's shortcut");
     frame(&mut app);
     let r = button(&app, "menu.layout");
     app.on_event(&Event::MouseMove { x: r.x + 4.0, y: r.y + 4.0 }, t0 + Duration::from_secs(1));
