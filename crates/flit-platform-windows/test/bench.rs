@@ -337,3 +337,19 @@ fn bench_drag_setup() {
         let _ = helper.InitializeFromWindow(None, Some(&POINT { x: 0, y: 0 }), &obj);
     });
 }
+
+#[test]
+#[ignore]
+fn bench_recycle_bin_listing() {
+    use crate::recycle::tests::{info_bytes, FakeBin};
+    for n in [1_000, 10_000] {
+        let bin = FakeBin::new(&format!("bench{n}"));
+        for k in 0..n {
+            std::fs::write(bin.root.join(format!("$R{k:06}.txt")), b"x").unwrap();
+            std::fs::write(bin.root.join(format!("$I{k:06}.txt")), info_bytes(2, 1, 1, &format!(r"C:\Users\me\Documents\file {k}.txt"))).unwrap();
+        }
+        let roots = [bin.path()];
+        measure(&format!("read_dir bin root ({} entries)", 2 * n), RUNS, |_| (), |_| assert_eq!(count(&NtFs, &roots[0]), 2 * n));
+        measure(&format!("recycle bin list {n} items"), RUNS, |_| (), |_| assert_eq!(crate::recycle::count(&roots), n));
+    }
+}

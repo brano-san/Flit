@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Duration;
 
 fn record(action: FILE_ACTION, name: &str, size: i64, next: u32) -> Vec<u8> {
     let wide: Vec<u16> = name.encode_utf16().collect();
@@ -92,4 +93,64 @@ fn armed_before_watch_returns_and_resolves_short_names() {
     w.watch(1, 1, None);
     drop(w);
     let _ = std::fs::remove_dir_all(&root);
+}
+
+fn temp_dir(tag: &str) -> (std::path::PathBuf, FsPath) {
+    let root = std::env::temp_dir().join(format!("flit-watch-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let path = FsPath::parse(root.to_str().unwrap()).unwrap();
+    (root, path)
+}
+
+#[test]
+fn a_stopped_watch_lives_until_its_queued_completion_is_dequeued() {
+    let (root, dir) = temp_dir("stop");
+    let port = unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, None, 0, 1) }.unwrap();
+    let h = open_dir(&dir, FILE_LIST_DIRECTORY.0, true).unwrap();
+    let key = 7;
+    unsafe { CreateIoCompletionPort(h, Some(port), key, 0) }.unwrap();
+    let mut st = State::default();
+    st.slots.insert(key, Watch { tab: 1, gen: 1, path: dir, dir: h, ov: Box::default(), buf: vec![0u64; BUFFER / 8], closing: false, rescan: false });
+    assert!(st.slots.get_mut(&key).unwrap().issue());
+    std::fs::write(root.join("x"), b"1").unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    st.stop(key);
+    assert!(st.slots.contains_key(&key), "the buffer and OVERLAPPED stay alive while the completion is still queued");
+    let (mut n, mut got, mut ov) = (0u32, 0usize, std::ptr::null_mut::<OVERLAPPED>());
+    let ok = unsafe { GetQueuedCompletionStatus(port, &mut n, &mut got, &mut ov, 5000) }.is_ok();
+    assert_eq!(got, key);
+    assert_eq!(ov as *const OVERLAPPED, &*st.slots[&key].ov as *const OVERLAPPED);
+    if ok && n > 0 {
+        assert!(notices(st.slots[&key].bytes(n as usize)).iter().any(|x| x.name == [b'x' as u16]));
+    }
+    st.close(key);
+    assert!(st.slots.is_empty());
+    unsafe {
+        let _ = CloseHandle(port);
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+fn next_event(rx: &crossbeam_channel::Receiver<ProviderEvent>) -> ProviderEvent {
+    rx.recv_timeout(Duration::from_secs(5)).expect("no watcher event")
+}
+
+#[test]
+fn bin_watches_cover_every_root_and_only_ask_for_a_rescan() {
+    let ((a, pa), (b, pb)) = (temp_dir("bin-a"), temp_dir("bin-b"));
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let mut w = DirWatcher::new(tx, Arc::new(|| {})).unwrap();
+    w.watch_all(3, 9, Some(&[pa, pb, FsPath::parse(r"C:\no-such-flit-dir").unwrap()]), true);
+    assert_eq!(lock(&w.state).by_tab[&3].len(), 2);
+    std::fs::write(b.join("$Rx"), b"1").unwrap();
+    assert!(matches!(next_event(&rx), ProviderEvent::Rescan { tab: 3, gen: 9 }));
+    while rx.recv_timeout(Duration::from_millis(200)).is_ok() {}
+    std::fs::write(a.join("$Iy"), b"1").unwrap();
+    assert!(matches!(next_event(&rx), ProviderEvent::Rescan { tab: 3, gen: 9 }));
+    w.watch(3, 9, None);
+    assert!(!lock(&w.state).by_tab.contains_key(&3));
+    drop(w);
+    let _ = std::fs::remove_dir_all(&a);
+    let _ = std::fs::remove_dir_all(&b);
 }

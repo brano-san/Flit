@@ -243,3 +243,13 @@ fn collisions_leave_the_rest_to_the_shell_engine() {
     let trash = FileOp::Trash(vec![c]);
     assert_eq!(direct(&trash), (Vec::new(), Some(trash.clone())));
 }
+
+#[test]
+fn permanent_deletion_neither_recycles_nor_skips_the_windows_confirmation() {
+    let t = TempDir::new("flags");
+    let a = t.file("a.txt", "x");
+    let delete = flags(&FileOp::Delete(vec![a.clone()]));
+    assert_eq!(delete.0 & (FOF_ALLOWUNDO.0 | FOFX_RECYCLEONDELETE.0 | FOF_NOCONFIRMATION.0), 0);
+    assert_ne!(flags(&FileOp::Trash(vec![a.clone()])).0 & FOFX_RECYCLEONDELETE.0, 0);
+    assert_eq!(cancelled(&FileOp::Delete(vec![a])).to_string(), cancelled(&FileOp::EmptyBin).to_string());
+}

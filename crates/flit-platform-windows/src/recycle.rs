@@ -7,6 +7,8 @@ use flit_core::recycle::{self as bin, BIN_FOLDER};
 use flit_core::sort::CaseMode;
 use flit_core::{name, FsError, FsPath, ListingBuilder};
 use flit_platform::{Fs, OpOutcome, PlatformError};
+use rayon::prelude::*;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::os::windows::fs::MetadataExt;
 use windows::core::PCWSTR;
@@ -65,24 +67,36 @@ fn entries(root: &FsPath) -> Option<Listing> {
     Some(b.listing)
 }
 
-fn read_info(dir: &Handle, name: &[u8], buf: &mut [u8]) -> Option<Info> {
+thread_local! {
+    static INFO_BUFFER: RefCell<Vec<u8>> = RefCell::new(vec![0; MAX_INFO]);
+}
+
+fn read_info(dir: &Handle, name: &[u8]) -> Option<Info> {
     let mut wide = Vec::with_capacity(name.len());
     name::to_utf16(name, &mut wide);
     let h = open_relative(dir, &wide, FILE_READ_DATA.0, FILE_NON_DIRECTORY_FILE.0)?;
-    let mut n = 0u32;
-    unsafe { ReadFile(h.0, Some(buf), Some(&mut n), None) }.ok()?;
-    parse_info(&buf[..n as usize])
+    INFO_BUFFER.with_borrow_mut(|buf| {
+        let mut n = 0u32;
+        unsafe { ReadFile(h.0, Some(buf), Some(&mut n), None) }.ok()?;
+        parse_info(&buf[..n as usize])
+    })
 }
 
 pub(crate) fn list(roots: &[FsPath], out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
-    let mut buf = vec![0u8; MAX_INFO];
     for root in roots {
         let (Some(l), Ok(dir)) = (entries(root), open_dir(root, FILE_LIST_DIRECTORY.0, false).map(Handle)) else { continue };
         let payloads: HashMap<&[u8], u32> = (0..l.len() as u32).filter_map(|i| Some((l.name(i).strip_prefix(b"$R")?, l.entries[i as usize].attrs))).collect();
-        for i in 0..l.len() as u32 {
-            let Some(id) = l.name(i).strip_prefix(b"$I") else { continue };
-            let Some(&attrs) = payloads.get(id) else { continue };
-            let Some(info) = read_info(&dir, l.name(i), &mut buf) else { continue };
+        let items: Vec<(&[u8], u32, u32)> = (0..l.len() as u32).filter_map(|i| {
+            let id = l.name(i).strip_prefix(b"$I")?;
+            Some((id, i, *payloads.get(id)?))
+        }).collect();
+        let read = |&(_, i, _): &(&[u8], u32, u32)| read_info(&dir, l.name(i));
+        let infos: Vec<Option<Info>> = match NtFs.seek_penalty(root) {
+            Some(true) => items.iter().map(read).collect(),
+            _ => items.par_iter().map(read).collect(),
+        };
+        for ((id, _, attrs), info) in items.into_iter().zip(infos) {
+            let Some(info) = info else { continue };
             let name = info.path.rsplit(|&c| c == b'\\' as u16).next().unwrap_or_default();
             let Some(origin) = FsPath::from_utf16(&info.path).and_then(|p| p.parent()) else { continue };
             let recycled = root.join(&[&b"$R"[..], id].concat());
@@ -166,4 +180,4 @@ pub(crate) fn empty(roots: &[FsPath]) -> OpOutcome {
 
 #[cfg(test)]
 #[path = "../test/recycle.rs"]
-mod tests;
+pub(crate) mod tests;
