@@ -6,6 +6,7 @@ pub mod desktop_ini;
 pub mod filter;
 pub mod fmt;
 pub mod hash;
+pub mod i18n;
 pub mod input;
 pub mod library;
 pub mod listing;

@@ -1,3 +1,4 @@
+use crate::i18n::S;
 use crate::render::Color;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -96,28 +97,28 @@ impl Mode {
 
 pub struct Preset {
     pub id: &'static str,
-    pub label: &'static str,
+    pub label: S,
     light: u32,
     dark: u32,
 }
 
-const fn preset(id: &'static str, label: &'static str, light: u32, dark: u32) -> Preset {
+const fn preset(id: &'static str, label: S, light: u32, dark: u32) -> Preset {
     Preset { id, label, light, dark }
 }
 
 pub static PRESETS: [Preset; 12] = [
-    preset("gold", "Gold", 0xFBF1D3, 0x2E2812),
-    preset("orange", "Orange", 0xFCE8D8, 0x33220F),
-    preset("red", "Red", 0xFBE1DE, 0x361818),
-    preset("rose", "Rose", 0xFAE3EE, 0x341A27),
-    preset("violet", "Violet", 0xEDE6F9, 0x261F38),
-    preset("blue", "Blue", 0xE0ECFA, 0x142439),
-    preset("seafoam", "Seafoam", 0xDCF2EE, 0x0F2C29),
-    preset("green", "Green", 0xE2F1DE, 0x16291A),
-    preset("grey", "Grey", 0xECECEC, 0x2A2A2A),
-    preset("overcast", "Overcast", 0xE3E7EB, 0x262C31),
-    preset("storm", "Storm", 0xD9DFE8, 0x1D2533),
-    preset("camouflage", "Camouflage", 0xE5E8D6, 0x252A19),
+    preset("gold", S::ThemePresetGold, 0xFBF1D3, 0x2E2812),
+    preset("orange", S::ThemePresetOrange, 0xFCE8D8, 0x33220F),
+    preset("red", S::ThemePresetRed, 0xFBE1DE, 0x361818),
+    preset("rose", S::ThemePresetRose, 0xFAE3EE, 0x341A27),
+    preset("violet", S::ThemePresetViolet, 0xEDE6F9, 0x261F38),
+    preset("blue", S::ThemePresetBlue, 0xE0ECFA, 0x142439),
+    preset("seafoam", S::ThemePresetSeafoam, 0xDCF2EE, 0x0F2C29),
+    preset("green", S::ThemePresetGreen, 0xE2F1DE, 0x16291A),
+    preset("grey", S::ThemePresetGrey, 0xECECEC, 0x2A2A2A),
+    preset("overcast", S::ThemePresetOvercast, 0xE3E7EB, 0x262C31),
+    preset("storm", S::ThemePresetStorm, 0xD9DFE8, 0x1D2533),
+    preset("camouflage", S::ThemePresetCamouflage, 0xE5E8D6, 0x252A19),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -151,7 +152,7 @@ impl Tint {
     pub fn label(self) -> String {
         match self {
             Tint::Default => String::new(),
-            Tint::Preset(i) => PRESETS[i].label.to_owned(),
+            Tint::Preset(i) => PRESETS[i].label.t().to_owned(),
             Tint::Custom(rgb) => format!("#{rgb:06X}"),
         }
     }

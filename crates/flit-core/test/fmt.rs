@@ -64,3 +64,25 @@ fn application_dates_are_relative_to_today() {
     assert_eq!(s(|o| datetime_in(o, ticks(UNIX), 0, &unknown)), "25 Oct 2026");
     assert_eq!(s(|o| datetime_in(o, ticks(UNIX), 0, &Style::default())), "2026-10-25 01:31");
 }
+
+#[test]
+fn russian_sizes_and_dates() {
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+    assert_eq!(s(|o| size(o, 1023)), "1023 Б");
+    assert_eq!(s(|o| size(o, 1536)), "1,5 КБ");
+    assert_eq!(s(|o| size_in(o, 1500, true)), "1,5 кБ");
+    assert_eq!(s(|o| size(o, 150 * 1024 * 1024)), "150 МБ");
+    assert_eq!(s(|o| picture(o, "dddd, d MMMM yyyy", UNIX)), "воскресенье, 25 октября 2026");
+    assert_eq!(s(|o| picture(o, "MMMM yyyy", UNIX)), "Октябрь 2026");
+    assert_eq!(s(|o| picture(o, "ddd dd.MM.yy", UNIX)), "Вс 25.10.26");
+    let today = local_days(ticks(UNIX), 0);
+    let style = Style { dates: DateFormat::Application, today: Some(today), ..Default::default() };
+    let at = |days: i64| s(|o| datetime_in(o, ticks(UNIX - days * 86_400), 0, &style));
+    assert_eq!(at(0), "Сегодня 01:31");
+    assert_eq!(at(1), "Вчера 01:31");
+    assert_eq!(at(3), "Четверг 01:31");
+    assert_eq!(at(30), "25 сен 01:31");
+    assert_eq!(at(400), "20 сен 2025");
+    assert_eq!(month_name(5), "Май");
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+}

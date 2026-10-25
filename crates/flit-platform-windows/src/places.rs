@@ -167,6 +167,17 @@ pub fn date_patterns() -> (String, String) {
     (read("sShortDate", "yyyy-MM-dd"), read("sShortTime", "HH:mm"))
 }
 
+pub fn ui_language() -> String {
+    const LANG_RUSSIAN: u16 = 0x19;
+    const LANG_ENGLISH: u16 = 0x09;
+    let id = unsafe { windows::Win32::Globalization::GetUserDefaultUILanguage() };
+    match id & 0x3FF {
+        LANG_RUSSIAN => "ru".into(),
+        LANG_ENGLISH => "en".into(),
+        _ => String::new(),
+    }
+}
+
 pub fn os_version() -> String {
     const KEY: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
     let build = string(HKEY_LOCAL_MACHINE, Some(KEY), Some("CurrentBuildNumber")).unwrap_or_default();

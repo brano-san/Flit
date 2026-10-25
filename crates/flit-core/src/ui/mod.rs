@@ -415,6 +415,8 @@ pub struct App {
     pub startup_pages: Vec<Location>,
     pub about: About,
     pub log_level: usize,
+    pub language: usize,
+    shown_lang: crate::i18n::Lang,
     pub split_prefs: SplitPrefs,
     pub prefs: ViewPrefs,
     folders: FolderViews,
@@ -507,6 +509,8 @@ impl App {
             startup: state.startup,
             about: About::default(),
             log_level: settings::LOG_DEFAULT,
+            language: 0,
+            shown_lang: crate::i18n::lang(),
             split_prefs: state.split,
             prefs: state.prefs,
             folders: state.folders,
@@ -925,7 +929,7 @@ impl App {
                     self.dirty |= k == self.cur;
                 }
             }
-            ProviderEvent::OpDone { tab, id, error, report } => self.op_done(tab, id, error, report, now),
+            ProviderEvent::OpDone { tab, id, error, report } => self.op_done(tab, id, error.map(|e| crate::i18n::localize(&e).into_owned()), report, now),
             ProviderEvent::OpProgress { id, progress, .. } => self.job_progress(id, progress, now),
             ProviderEvent::OpConflict { id, conflict, .. } => self.job_conflict(id, conflict),
             ProviderEvent::Navigate { tab, path } => {
@@ -933,11 +937,11 @@ impl App {
                     self.navigate(Location::from_local(path), now);
                 }
             }
-            ProviderEvent::Hashed { id, result, .. } => self.hashed(id, result),
+            ProviderEvent::Hashed { id, result, .. } => self.hashed(id, result.map_err(|e| crate::i18n::localize(&e).into_owned())),
             ProviderEvent::Status { tab, gen, text } => {
                 if let Some(k) = tab_of(&self.tabs, tab, gen) {
                     if let Some(l) = self.tabs[k].loading.as_mut() {
-                        l.note = Some(text);
+                        l.note = Some(crate::i18n::localize(&text).into_owned());
                         self.dirty |= k == self.cur;
                     }
                 }

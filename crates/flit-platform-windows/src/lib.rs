@@ -200,6 +200,10 @@ impl Platform for Windows {
         places::os_version()
     }
 
+    fn ui_language() -> String {
+        places::ui_language()
+    }
+
     fn watch_wsl(changed: Box<dyn Fn() + Send>) {
         places::watch_lxss(changed)
     }

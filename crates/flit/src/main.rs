@@ -77,6 +77,9 @@ fn main() {
     };
     logs::init(<P as Platform>::state_dir().map(|d| d.join("logs")), std::env::var_os("FLIT_LOG").is_some());
     tracing::info!("Flit {} started, process {}", env!("CARGO_PKG_VERSION"), std::process::id());
+    let system = flit_core::i18n::Lang::from_code(&<P as Platform>::ui_language()).unwrap_or_default();
+    flit_core::i18n::set_system_lang(system);
+    flit_core::i18n::set_lang(system);
     let headless = metrics.is_some();
     if let Some(e) = standalone {
         tracing::warn!("running without single-instance forwarding: {e}");

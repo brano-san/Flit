@@ -31,7 +31,7 @@ fn every_setting_has_a_unique_id_a_title_a_description_and_a_page() {
             Page::Tags | Page::About => "",
         };
         assert_eq!(s.id.split('.').next(), Some(prefix), "the id of {} starts with its page", s.id);
-        assert!(!s.title.is_empty() && !s.help.is_empty(), "{}", s.id);
+        assert!(!s.title.t().is_empty() && !s.help.t().is_empty(), "{}", s.id);
         assert!(Page::ALL.contains(&s.page));
         if let Kind::Choice(c, ..) = s.kind {
             let keys: HashSet<_> = c.iter().map(|c| c.0).collect();
@@ -117,7 +117,7 @@ fn unknown_keys_stay_and_bad_values_fall_back_to_defaults_with_a_note() {
     assert!(a.show_hidden && a.style.decimal);
     assert_eq!(get(&a, "layout.default_layout"), defaults()[index("layout.default_layout").unwrap()]);
     let note = a.tab().error.clone().unwrap();
-    assert!(note.contains("advanced.thumb_cache_mb") && note.contains("1 more problems"), "{note}");
+    assert!(note.contains("advanced.thumb_cache_mb") && note.contains("1 more problem"), "{note}");
     let out = render(&a.setting_values(), &doc.unknown, None);
     let again = parse(&out);
     assert_eq!(again.unknown, doc.unknown);
@@ -157,7 +157,7 @@ fn export_carries_tags_and_import_creates_and_recolors_them() {
     assert_eq!(b.style.dates, DateFormat::Application);
     let created: Vec<_> = b.drain_effects().filter_map(|e| if let Effect::Tags(TagRequest::Create { name, color, .. }) = e { Some((name, color)) } else { None }).collect();
     assert_eq!(created, [("Work".to_owned(), COLORS[2].1)]);
-    assert!(b.tab().error.as_deref().is_some_and(|e| e.starts_with("Imported 2 settings and 1 tags")));
+    assert!(b.tab().error.as_deref().is_some_and(|e| e.starts_with("Imported 2 settings and 1 tag")));
     b.import_settings("not json");
     assert!(b.tab().error.as_deref().is_some_and(|e| e.contains("not valid JSON")));
 }
@@ -190,7 +190,7 @@ fn startup_comes_from_the_file_with_its_pages() {
 
 #[test]
 fn text_settings_round_trip_with_a_length_limit() {
-    static NOTE: Setting = Setting { id: "test.note", page: Page::Advanced, title: "Note", help: "A text setting", kind: Kind::Text(|a| a.about.os.clone(), |a, t| a.about.os = t) };
+    static NOTE: Setting = Setting { id: "test.note", page: Page::Advanced, title: crate::i18n::S::SettingsTitleGeneralLanguage, help: crate::i18n::S::SettingsHelpGeneralLanguage, kind: Kind::Text(|a| a.about.os.clone(), |a, t| a.about.os = t) };
     let mut a = app();
     assert!(NOTE.set(&mut a, Value::Text("hello".into())));
     assert_eq!(NOTE.get(&a), Value::Text("hello".into()));

@@ -93,7 +93,7 @@ impl App {
             _ => Tint::Default,
         };
         let mut entries = vec![("Default".to_owned(), Cmd::Setting(i, 0), cur == Tint::Default)];
-        entries.extend(PRESETS.iter().enumerate().map(|(k, p)| (p.label.to_owned(), Cmd::Setting(i, k + 1), cur == Tint::Preset(k))));
+        entries.extend(PRESETS.iter().enumerate().map(|(k, p)| (p.label.t().to_owned(), Cmd::Setting(i, k + 1), cur == Tint::Preset(k))));
         entries.push(("Custom color…".to_owned(), Cmd::Setting(i, PRESETS.len() + 1), matches!(cur, Tint::Custom(_))));
         let items = self.list_menu(entries);
         self.flit_menu(x, y, items);

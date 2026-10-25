@@ -1031,6 +1031,9 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let settings_file = settings::file::<P>();
     let settings_text = settings_file.as_deref().and_then(settings::read);
     let mut doc = settings_text.as_deref().map(flit_core::ui::settings::parse).unwrap_or_default();
+    if let Some(Value::Choice(i)) = doc.value(flit_core::ui::settings::LANGUAGE) {
+        flit_core::i18n::set_lang(flit_core::ui::settings::language_of(*i));
+    }
     if let Some(startup) = doc.startup() {
         saved.persisted.startup = startup;
     }

@@ -1,5 +1,5 @@
 use crate::name;
-use crate::path::{FsPath, PathKind, COMPUTER_LABEL};
+use crate::path::{FsPath, PathKind};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
@@ -215,7 +215,7 @@ impl Location {
         let mut cur = Some(self.clone());
         while let Some(loc) = cur {
             let label = match &loc {
-                Location::Local(p) if p.kind() == PathKind::Computer => COMPUTER_LABEL.to_owned(),
+                Location::Local(p) if p.kind() == PathKind::Computer => crate::i18n::S::PathComputer.t().to_owned(),
                 Location::Wsl { distro, path } if path.is_root() => format!("{distro} (WSL)"),
                 _ => name::display(loc.file_name()).into_owned(),
             };

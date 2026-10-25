@@ -26,6 +26,7 @@ features = [
     "Wdk_Foundation",
     "Wdk_Storage_FileSystem",
     "Win32_Foundation",
+    "Win32_Globalization",
     "Win32_Graphics_Direct3D",
     "Win32_Graphics_Direct3D11",
     "Win32_Graphics_DirectComposition",

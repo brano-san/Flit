@@ -843,7 +843,7 @@ impl App {
         match (SETTINGS[i].kind, SETTINGS[i].get(self)) {
             (Kind::Toggle(..), Value::Bool(b)) => self.change_setting(i, Value::Bool(!b)),
             (Kind::Choice(choices, ..), Value::Choice(cur)) => {
-                let entries = choices.iter().enumerate().map(|(k, (_, label))| ((*label).to_owned(), Cmd::Setting(i, k), k == cur)).collect();
+                let entries = choices.iter().enumerate().map(|(k, (_, label))| (label.t().to_owned(), Cmd::Setting(i, k), k == cur)).collect();
                 let items = self.list_menu(entries);
                 let (x, y) = self.menu_spot(i, at);
                 self.flit_menu(x, y, items);
@@ -1079,7 +1079,7 @@ impl App {
 
     fn setting_value_text(&self, i: usize) -> String {
         match (SETTINGS[i].kind, SETTINGS[i].get(self)) {
-            (Kind::Choice(c, ..), Value::Choice(k)) => c.get(k).map_or("", |c| c.1).to_owned(),
+            (Kind::Choice(c, ..), Value::Choice(k)) => c.get(k).map_or("", |c| c.1.t()).to_owned(),
             (Kind::Number { unit, .. }, Value::Number(n)) => format!("{n} {unit}"),
             (Kind::Text(..), Value::Text(t)) => t,
             (Kind::Paths(..), Value::Paths(p)) => format!("{} pages", p.len()),
@@ -1172,8 +1172,8 @@ impl App {
                     let set = &SETTINGS[*i];
                     let text_w = r.w - s(PAD) * 3.0 - s(CONTROL_W);
                     let ty = r.y + s(10.0) + mf.ascent;
-                    g.text(r.x + s(PAD), ty.round(), set.title, font, t.text, text_w);
-                    g.text(r.x + s(PAD), (ty + s(20.0)).round(), set.help, small, t.text_dim, text_w);
+                    g.text(r.x + s(PAD), ty.round(), set.title.t(), font, t.text, text_w);
+                    g.text(r.x + s(PAD), (ty + s(20.0)).round(), set.help.t(), small, t.text_dim, text_w);
                     let value = self.setting_value_text(*i);
                     match (set.kind, set.get(self)) {
                         (Kind::Toggle(..), Value::Bool(on)) => {
@@ -1245,7 +1245,7 @@ impl App {
                     let a = &ACTIONS[*i];
                     let chips = button_rects(line, r, s);
                     let room = chips.first().map_or(r.right(), |c| c.x) - r.x - s(PAD) * 2.0;
-                    let tw = g.text(r.x + s(PAD), mid(r, mf), a.title, font, t.text, room);
+                    let tw = g.text(r.x + s(PAD), mid(r, mf), a.title.t(), font, t.text, room);
                     g.text(r.x + s(PAD) + tw + s(10.0), mid(r, ms), a.id, small, t.text_dim, room - tw - s(10.0));
                     let keys = self.keymap.keys(*i);
                     for (b, chip) in chips.into_iter().enumerate() {

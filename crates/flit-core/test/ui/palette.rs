@@ -1,7 +1,7 @@
 use super::*;
 
 fn titles(q: &str) -> Vec<&'static str> {
-    matches(q).into_iter().map(|i| ACTIONS[i].title).collect()
+    matches(q).into_iter().map(|i| ACTIONS[i].title.t()).collect()
 }
 
 #[test]

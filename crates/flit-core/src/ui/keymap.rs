@@ -1,5 +1,6 @@
 use super::actions::{chord_text, index, Chord, ACTIONS};
-use super::describe::description;
+use super::describe::{description, description_en};
+use crate::i18n::{self, Lang};
 use super::palette::{Palette, Pick};
 use super::settings_page::SettingPick;
 use super::App;
@@ -14,7 +15,7 @@ pub struct Keymap {
     custom: Vec<Option<Vec<Chord>>>,
     unknown: Map<String, Json>,
     owners: FxHashMap<Chord, usize>,
-    words: OnceLock<Vec<String>>,
+    words: [OnceLock<Vec<String>>; 2],
 }
 
 impl PartialEq for Keymap {
@@ -27,7 +28,7 @@ impl Eq for Keymap {}
 
 impl Keymap {
     fn new(custom: Vec<Option<Vec<Chord>>>, unknown: Map<String, Json>) -> Self {
-        let mut k = Self { custom, unknown, owners: FxHashMap::default(), words: OnceLock::new() };
+        let mut k = Self { custom, unknown, owners: FxHashMap::default(), words: Default::default() };
         k.reindex();
         k
     }
@@ -41,11 +42,21 @@ impl Keymap {
             }
         }
         self.owners = owners;
-        self.words = OnceLock::new();
+        self.words = Default::default();
     }
 
     pub fn words(&self, i: usize) -> &str {
-        let all = self.words.get_or_init(|| ACTIONS.iter().enumerate().map(|(k, a)| format!("{} {} {} {}", a.title, a.id, description(a.id), self.text(k)).to_lowercase()).collect());
+        let l = i18n::lang();
+        let all = self.words[l as usize].get_or_init(|| {
+            ACTIONS
+                .iter()
+                .enumerate()
+                .map(|(k, a)| {
+                    let local = if l == Lang::En { String::new() } else { format!(" {} {}", a.title.t(), description(a.id)) };
+                    format!("{} {} {} {}{local}", a.title.en(), a.id, description_en(a.id), self.text(k)).to_lowercase()
+                })
+                .collect()
+        });
         &all[i]
     }
 

@@ -1,7 +1,30 @@
+use crate::i18n::{self, S};
 use std::fmt::Write;
 
-const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-const DAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTHS: [S; 12] = [S::FormatMonthJanuary, S::FormatMonthFebruary, S::FormatMonthMarch, S::FormatMonthApril, S::FormatMonthMay, S::FormatMonthJune, S::FormatMonthJuly, S::FormatMonthAugust, S::FormatMonthSeptember, S::FormatMonthOctober, S::FormatMonthNovember, S::FormatMonthDecember];
+const MONTHS_OF: [S; 12] = [S::FormatMonthOfJanuary, S::FormatMonthOfFebruary, S::FormatMonthOfMarch, S::FormatMonthOfApril, S::FormatMonthOfMay, S::FormatMonthOfJune, S::FormatMonthOfJuly, S::FormatMonthOfAugust, S::FormatMonthOfSeptember, S::FormatMonthOfOctober, S::FormatMonthOfNovember, S::FormatMonthOfDecember];
+const MONTHS_SHORT: [S; 12] = [S::FormatMonthShortJan, S::FormatMonthShortFeb, S::FormatMonthShortMar, S::FormatMonthShortApr, S::FormatMonthShortMay, S::FormatMonthShortJun, S::FormatMonthShortJul, S::FormatMonthShortAug, S::FormatMonthShortSep, S::FormatMonthShortOct, S::FormatMonthShortNov, S::FormatMonthShortDec];
+const DAYS: [S; 7] = [S::FormatDaySunday, S::FormatDayMonday, S::FormatDayTuesday, S::FormatDayWednesday, S::FormatDayThursday, S::FormatDayFriday, S::FormatDaySaturday];
+const DAYS_SHORT: [S; 7] = [S::FormatDayShortSun, S::FormatDayShortMon, S::FormatDayShortTue, S::FormatDayShortWed, S::FormatDayShortThu, S::FormatDayShortFri, S::FormatDayShortSat];
+const UNITS: [S; 6] = [S::FormatSizeB, S::FormatSizeKb, S::FormatSizeMb, S::FormatSizeGb, S::FormatSizeTb, S::FormatSizePb];
+
+pub fn month_name(m: u32) -> &'static str {
+    MONTHS[(m as usize).clamp(1, 12) - 1].t()
+}
+
+fn weekday(day: i64) -> usize {
+    (day + 4).rem_euclid(7) as usize
+}
+
+fn capitalized(out: &mut impl Write, s: &str) {
+    let mut chars = s.chars();
+    if let Some(c) = chars.next() {
+        for u in c.to_uppercase() {
+            let _ = out.write_char(u);
+        }
+        let _ = out.write_str(chars.as_str());
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum DateFormat {
@@ -24,18 +47,20 @@ pub fn size(out: &mut impl Write, bytes: u64) {
 }
 
 pub fn size_in(out: &mut impl Write, bytes: u64, decimal: bool) {
-    let (base, units) = if decimal { (1000.0, ["B", "kB", "MB", "GB", "TB", "PB"]) } else { (1024.0, ["B", "KB", "MB", "GB", "TB", "PB"]) };
+    let base = if decimal { 1000.0 } else { 1024.0 };
     if (bytes as f64) < base {
-        let _ = write!(out, "{bytes} B");
+        let _ = write!(out, "{bytes} {}", S::FormatSizeB.t());
         return;
     }
     let mut v = bytes as f64;
     let mut u = 0;
-    while v >= base && u < units.len() - 1 {
+    while v >= base && u < UNITS.len() - 1 {
         v /= base;
         u += 1;
     }
-    let _ = if v < 100.0 { write!(out, "{v:.1} {}", units[u]) } else { write!(out, "{v:.0} {}", units[u]) };
+    i18n::decimal(out, v, if v < 100.0 { 1 } else { 0 });
+    let unit = if decimal && u == 1 { S::FormatSizeKbDecimal } else { UNITS[u] };
+    let _ = write!(out, " {}", unit.t());
 }
 
 fn local_secs(ticks: i64, offset_min: i32) -> i64 {
@@ -77,11 +102,14 @@ fn friendly(out: &mut impl Write, secs: i64, today: Option<i64>) {
     let rem = secs.rem_euclid(86_400);
     let (hh, mm) = (rem / 3600, rem % 3600 / 60);
     let (y, m, d) = civil_from_days(day);
-    let month = &MONTHS[m as usize - 1][..3];
+    let month = MONTHS_SHORT[m as usize - 1].t();
     let _ = match today.map(|t| t - day) {
-        Some(0) => write!(out, "Today {hh:02}:{mm:02}"),
-        Some(1) => write!(out, "Yesterday {hh:02}:{mm:02}"),
-        Some(2..=6) => write!(out, "{} {hh:02}:{mm:02}", DAYS[(day + 4).rem_euclid(7) as usize]),
+        Some(0) => write!(out, "{} {hh:02}:{mm:02}", S::FormatDateToday.t()),
+        Some(1) => write!(out, "{} {hh:02}:{mm:02}", S::FormatDateYesterday.t()),
+        Some(2..=6) => {
+            capitalized(out, DAYS[weekday(day)].t());
+            write!(out, " {hh:02}:{mm:02}")
+        }
         Some(_) if today.is_some_and(|t| civil_from_days(t).0 == y) => write!(out, "{d} {month} {hh:02}:{mm:02}"),
         _ => write!(out, "{d} {month} {y}"),
     };
@@ -93,6 +121,7 @@ pub fn picture(out: &mut impl Write, pattern: &str, secs: i64) {
     let (y, m, d) = civil_from_days(day);
     let (h, min, s) = (rem / 3600, rem % 3600 / 60, rem % 60);
     let chars: Vec<char> = pattern.chars().collect();
+    let with_day = has_day_number(&chars);
     let mut i = 0;
     while i < chars.len() {
         let c = chars[i];
@@ -118,12 +147,13 @@ pub fn picture(out: &mut impl Write, pattern: &str, secs: i64) {
         let _ = match (c, n) {
             ('d', 1) => write!(out, "{d}"),
             ('d', 2) => write!(out, "{d:02}"),
-            ('d', 3) => out.write_str(&DAYS[(day + 4).rem_euclid(7) as usize][..3]),
-            ('d', _) => out.write_str(DAYS[(day + 4).rem_euclid(7) as usize]),
+            ('d', 3) => out.write_str(DAYS_SHORT[weekday(day)].t()),
+            ('d', _) => out.write_str(DAYS[weekday(day)].t()),
             ('M', 1) => write!(out, "{m}"),
             ('M', 2) => write!(out, "{m:02}"),
-            ('M', 3) => out.write_str(&MONTHS[m as usize - 1][..3]),
-            ('M', _) => out.write_str(MONTHS[m as usize - 1]),
+            ('M', 3) => out.write_str(MONTHS_SHORT[m as usize - 1].t()),
+            ('M', _) if with_day => out.write_str(MONTHS_OF[m as usize - 1].t()),
+            ('M', _) => out.write_str(MONTHS[m as usize - 1].t()),
             ('y', 1) => write!(out, "{}", y.rem_euclid(100)),
             ('y', 2) => write!(out, "{:02}", y.rem_euclid(100)),
             ('y', _) => write!(out, "{y:04}"),
@@ -135,12 +165,35 @@ pub fn picture(out: &mut impl Write, pattern: &str, secs: i64) {
             ('m', _) => write!(out, "{min:02}"),
             ('s', 1) => write!(out, "{s}"),
             ('s', _) => write!(out, "{s:02}"),
-            ('t', 1) => out.write_str(if h < 12 { "A" } else { "P" }),
-            ('t', _) => out.write_str(if h < 12 { "AM" } else { "PM" }),
+            ('t', 1) => out.write_str(meridiem(h).get(..1).unwrap_or_default()),
+            ('t', _) => out.write_str(meridiem(h)),
             ('g', _) => Ok(()),
             _ => (0..n).try_for_each(|_| out.write_char(c)),
         };
     }
+}
+
+fn meridiem(h: i64) -> &'static str {
+    if h < 12 { S::FormatDateAm.t() } else { S::FormatDatePm.t() }
+}
+
+fn has_day_number(chars: &[char]) -> bool {
+    let mut quoted = false;
+    let mut run = 0;
+    for &c in chars.iter().chain(std::iter::once(&' ')) {
+        if c == '\'' {
+            quoted = !quoted;
+        }
+        if c == 'd' && !quoted {
+            run += 1;
+            continue;
+        }
+        if (1..=2).contains(&run) {
+            return true;
+        }
+        run = 0;
+    }
+    false
 }
 
 pub fn civil_from_days(z: i64) -> (i64, u32, u32) {

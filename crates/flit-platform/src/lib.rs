@@ -395,6 +395,9 @@ pub trait Platform: 'static {
     fn os_version() -> String {
         std::env::consts::OS.to_owned()
     }
+    fn ui_language() -> String {
+        String::new()
+    }
     fn watch_wsl(_changed: Box<dyn Fn() + Send>) {}
     fn wsl_launcher(_distro: &str, _images: &AgentImages) -> Option<Box<dyn AgentLauncher>> {
         None

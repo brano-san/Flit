@@ -328,7 +328,7 @@ impl App {
         self.dirty = true;
     }
 
-    fn search_title(&self) -> String {
+    pub(super) fn search_title(&self) -> String {
         match &self.search.within {
             Some(w) => format!("Search in {} — Flit", w.name()),
             None => "Search — Flit".into(),

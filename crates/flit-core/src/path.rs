@@ -1,3 +1,4 @@
+use crate::i18n::{Lang, S};
 use crate::name;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -26,6 +27,12 @@ pub const RECYCLE_BIN_SHELL: &str = "shell:RecycleBinFolder";
 pub const HOME_LABEL: &str = "Home";
 pub const HOME_SHELL: &str = "shell:::{f874310e-b6b7-47dc-bc84-b9e6b38f5903}";
 const UNIX_HOST: bool = cfg!(unix);
+
+pub fn is_label(input: &[u8], label: S) -> bool {
+    let Ok(text) = std::str::from_utf8(input) else { return false };
+    let text = text.trim().to_lowercase();
+    Lang::ALL.iter().any(|&l| label.in_lang(l).to_lowercase() == text)
+}
 
 impl FsPath {
     pub fn computer() -> Self {
@@ -62,10 +69,10 @@ impl FsPath {
         if input.contains(&0) {
             return None;
         }
-        if input.is_empty() || input.eq_ignore_ascii_case(COMPUTER_LABEL.as_bytes()) {
+        if input.is_empty() || is_label(input, S::PathComputer) {
             return Some(Self::computer());
         }
-        if input.eq_ignore_ascii_case(RECYCLE_BIN_SHELL.as_bytes()) || input.eq_ignore_ascii_case(RECYCLE_BIN_LABEL.as_bytes()) {
+        if input.eq_ignore_ascii_case(RECYCLE_BIN_SHELL.as_bytes()) || is_label(input, S::PathRecycleBin) {
             return Some(Self::recycle_bin());
         }
         if input.eq_ignore_ascii_case(HOME_SHELL.as_bytes()) {
@@ -164,9 +171,9 @@ impl FsPath {
 
     pub fn display(&self) -> Cow<'_, str> {
         match self.kind {
-            PathKind::Computer => Cow::Borrowed(COMPUTER_LABEL),
-            PathKind::RecycleBin => Cow::Borrowed(RECYCLE_BIN_LABEL),
-            PathKind::Home => Cow::Borrowed(HOME_LABEL),
+            PathKind::Computer => Cow::Borrowed(S::PathComputer.t()),
+            PathKind::RecycleBin => Cow::Borrowed(S::PathRecycleBin.t()),
+            PathKind::Home => Cow::Borrowed(S::PathHome.t()),
             _ => name::display(&self.s),
         }
     }
@@ -221,9 +228,9 @@ impl FsPath {
 
     fn root_label(&self) -> &[u8] {
         match self.kind {
-            PathKind::Computer => COMPUTER_LABEL.as_bytes(),
-            PathKind::RecycleBin => RECYCLE_BIN_LABEL.as_bytes(),
-            PathKind::Home => HOME_LABEL.as_bytes(),
+            PathKind::Computer => S::PathComputer.t().as_bytes(),
+            PathKind::RecycleBin => S::PathRecycleBin.t().as_bytes(),
+            PathKind::Home => S::PathHome.t().as_bytes(),
             PathKind::Unix => b"/",
             _ => &self.s[..self.root as usize - 1],
         }

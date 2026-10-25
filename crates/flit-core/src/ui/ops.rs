@@ -330,7 +330,8 @@ fn same_location(a: &Location, b: &Location) -> bool {
 
 impl App {
     pub fn status(&mut self, msg: impl Into<String>) {
-        self.tab_mut().error = Some(msg.into());
+        let msg = msg.into();
+        self.tab_mut().error = Some(crate::i18n::localize(&msg).into_owned());
         self.dirty = true;
     }
 
