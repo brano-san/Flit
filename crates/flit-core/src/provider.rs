@@ -1,10 +1,10 @@
-use crate::listing::{DirChange, DirSnapshot};
+use crate::listing::{DirChange, DirSnapshot, Meta};
 use crate::path::FsPath;
 use crate::sort::{CaseMode, ViewSpec};
 use arc_swap::ArcSwapOption;
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 
 pub type TabId = u64;
 
@@ -64,6 +64,7 @@ pub enum FileOp {
     Delete(Vec<FsPath>),
     Purge(Vec<(FsPath, FsPath)>),
     EmptyBin,
+    Flatten(Vec<FsPath>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,7 +102,105 @@ impl FileOp {
             FileOp::Delete(v) => FileOp::Delete(all(v)?),
             FileOp::Purge(v) => FileOp::Purge(pairs(v)?),
             FileOp::EmptyBin => FileOp::EmptyBin,
+            FileOp::Flatten(v) => FileOp::Flatten(all(v)?),
         })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Resolve {
+    KeepBoth,
+    Replace,
+    Skip,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Conflict {
+    pub source: FsPath,
+    pub target: FsPath,
+    pub from: Meta,
+    pub to: Meta,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Stage {
+    #[default]
+    Preparing,
+    Queued,
+    Running,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OpProgress {
+    pub stage: Stage,
+    pub bytes: u64,
+    pub total_bytes: u64,
+    pub items: u64,
+    pub total_items: u64,
+}
+
+#[derive(Default, Debug)]
+struct Answer {
+    policy: Option<Resolve>,
+    given: Option<(Resolve, bool)>,
+}
+
+#[derive(Default, Debug)]
+struct Control {
+    cancelled: AtomicBool,
+    answer: Mutex<Answer>,
+    changed: Condvar,
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct OpCtl(Arc<Control>);
+
+impl OpCtl {
+    pub fn new(policy: Option<Resolve>) -> Self {
+        let ctl = Self::default();
+        ctl.lock().policy = policy;
+        ctl
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Answer> {
+        self.0.answer.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn cancel(&self) {
+        self.0.cancelled.store(true, Ordering::Release);
+        let _held = self.lock();
+        self.0.changed.notify_all();
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.cancelled.load(Ordering::Acquire)
+    }
+
+    pub fn answer(&self, choice: Resolve, all: bool) {
+        self.lock().given = Some((choice, all));
+        self.0.changed.notify_all();
+    }
+
+    pub fn resolve(&self, ask: impl FnOnce()) -> Option<Resolve> {
+        let mut a = self.lock();
+        if let Some(p) = a.policy {
+            return Some(p);
+        }
+        a.given = None;
+        drop(a);
+        if self.is_cancelled() {
+            return None;
+        }
+        ask();
+        let mut a = self.lock();
+        while a.given.is_none() && !self.is_cancelled() {
+            a = self.0.changed.wait(a).unwrap_or_else(|e| e.into_inner());
+        }
+        let (choice, all) = a.given.take().filter(|_| !self.is_cancelled())?;
+        if all {
+            a.policy = Some(choice);
+        }
+        Some(choice)
     }
 }
 
@@ -118,7 +217,7 @@ pub enum ProviderRequest {
     List { tab: TabId, gen: u64, path: FsPath, view: ViewSpec, case: CaseMode, out: Arc<SnapshotSlot>, cancel: GenToken },
     Watch { tab: TabId, gen: u64, path: Option<FsPath> },
     DirSizes { tab: TabId, gen: u64, dir: FsPath, items: Vec<(u32, Vec<u8>)>, cancel: GenToken },
-    Op { tab: TabId, id: OpId, op: FileOp },
+    Op { tab: TabId, id: OpId, op: FileOp, ctl: OpCtl },
     Open { tab: TabId, path: FsPath },
     Launch { tab: TabId, launch: Launch },
 }
@@ -129,6 +228,8 @@ pub enum ProviderEvent {
     Rescan { tab: TabId, gen: u64 },
     DirSize { tab: TabId, gen: u64, idx: u32, size: u64 },
     OpDone { tab: TabId, id: OpId, error: Option<String>, report: Option<OpReport> },
+    OpProgress { tab: TabId, id: OpId, progress: OpProgress },
+    OpConflict { tab: TabId, id: OpId, conflict: Conflict },
     Navigate { tab: TabId, path: FsPath },
 }
 

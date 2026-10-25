@@ -5,6 +5,7 @@ mod tab;
 pub mod actions;
 mod field;
 mod filter;
+mod jobs;
 mod marquee;
 mod nav;
 pub mod palette;
@@ -13,6 +14,7 @@ pub mod sidebar;
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchSort};
 pub use sidebar::{Drive, KnownFolder, NavState, Places};
+pub use jobs::JobState;
 pub use tab::Tab;
 
 use crate::fmt as format;
@@ -23,7 +25,7 @@ use crate::location::{Location, ProviderId};
 use crate::name;
 use crate::open::{self, Open, OpenTarget, ResolveError, Route};
 use crate::path::{FsPath, PathKind};
-use crate::provider::{ProviderEvent, ProviderRequest, TabId};
+use crate::provider::{ProviderEvent, ProviderRequest, Resolve, TabId};
 use crate::recycle;
 use crate::render::{Color, Rect};
 use crate::sort::{CaseMode, SortField, SortSpec, ViewSpec};
@@ -232,6 +234,17 @@ enum Hit {
     PaletteField,
     PaletteBox,
     PaletteOutside,
+    OpsButton,
+    OpsPanel,
+    OpsRow(usize),
+    OpsClear,
+    OpsCancel(usize),
+    OpsMore(usize),
+    OpsMenu(usize),
+    Dialog,
+    DialogButton(usize),
+    DialogCheck,
+    Modal,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -254,6 +267,7 @@ struct Layout {
     toolbar: Rect,
     nav: [Rect; 4],
     address: Rect,
+    ops_button: Rect,
     header: Rect,
     cols: [Rect; 4],
     list: Rect,
@@ -272,6 +286,8 @@ pub struct App {
     pub open_target: OpenTarget,
     pub double_click: Duration,
     pub warn_extension_change: bool,
+    pub ops_button_always: bool,
+    pub conflict_default: Option<Resolve>,
     focused_at: Option<Instant>,
     dark: bool,
     scale: f32,
@@ -308,6 +324,7 @@ pub struct App {
     nav: nav::Nav,
     marquee: Option<marquee::Marquee>,
     search: search::SearchView,
+    jobs: jobs::Jobs,
 }
 
 impl App {
@@ -318,6 +335,8 @@ impl App {
             open_target: OpenTarget::NewTab,
             double_click: Duration::from_millis(500),
             warn_extension_change: true,
+            ops_button_always: false,
+            conflict_default: None,
             focused_at: None,
             dark,
             scale,
@@ -350,6 +369,7 @@ impl App {
             nav: nav::Nav::default(),
             marquee: None,
             search: Default::default(),
+            jobs: Default::default(),
         };
         let mut start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
         let total = start.len();
@@ -372,6 +392,7 @@ impl App {
         for t in &mut self.tabs {
             t.shutdown(&mut self.effects);
         }
+        self.cancel_ops();
     }
 
     pub fn persisted(&self) -> Persisted {
@@ -666,6 +687,8 @@ impl App {
                 }
             }
             ProviderEvent::OpDone { tab, id, error, report } => self.op_done(tab, id, error, report, now),
+            ProviderEvent::OpProgress { id, progress, .. } => self.job_progress(id, progress, now),
+            ProviderEvent::OpConflict { id, conflict, .. } => self.job_conflict(id, conflict),
             ProviderEvent::Navigate { tab, path } => {
                 if self.tab().id == tab {
                     self.navigate(Location::from_local(path), now);
@@ -705,6 +728,9 @@ impl App {
     }
 
     pub fn on_paste(&mut self, text: &str) {
+        if self.jobs.modal() {
+            return;
+        }
         if self.search.active {
             return self.search_paste(text);
         }
@@ -730,6 +756,7 @@ impl App {
     fn layout(&mut self) {
         let (w, h) = self.size;
         let (cx, filter_h) = self.content_origin();
+        let ops_button = self.ops_button_visible();
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
         let l = &mut self.layout;
@@ -758,7 +785,9 @@ impl App {
             *r = Rect::new(s(6.0) + i as f32 * s(NAV_W), l.toolbar.y + s(4.0), s(NAV_W), s(TOOL_H - 8.0));
         }
         let ax = l.nav[3].right() + s(8.0);
-        l.address = Rect::new(ax, l.toolbar.y + s(5.0), (w - s(12.0) - ax).max(s(40.0)), s(TOOL_H - 10.0));
+        let right = if ops_button { w - s(10.0) - s(NAV_W) } else { w };
+        l.ops_button = if ops_button { Rect::new(right + s(4.0), l.nav[0].y, s(NAV_W), l.nav[0].h) } else { Rect::default() };
+        l.address = Rect::new(ax, l.toolbar.y + s(5.0), (right - s(12.0) - ax).max(s(40.0)), s(TOOL_H - 10.0));
         l.header = Rect::new(cx, l.toolbar.bottom() + filter_h, w - cx, s(HEADER_H));
         l.status = Rect::new(0.0, h - s(STATUS_H), w, s(STATUS_H));
         l.list = Rect::new(cx, l.header.bottom(), (w - cx - s(SCROLLBAR_W)).max(0.0), (l.status.y - l.header.bottom()).max(0.0));
@@ -788,9 +817,13 @@ impl App {
             Rect::default()
         };
         self.layout_nav();
+        self.layout_jobs();
     }
 
     fn hit(&self, x: f32, y: f32) -> Hit {
+        if let Some(h) = self.jobs_hit(x, y) {
+            return h;
+        }
         if let Some(h) = self.nav_hit(x, y) {
             return h;
         }
@@ -864,7 +897,7 @@ impl App {
     }
 
     pub fn on_event(&mut self, ev: &Event, now: Instant) {
-        if self.search.active && self.search_event(ev, now) {
+        if self.search.active && !self.jobs.modal() && self.search_event(ev, now) {
             return;
         }
         match ev {
@@ -899,7 +932,7 @@ impl App {
             Event::MouseDown { x, y, button, clicks } => self.mouse_down(*x, *y, *button, *clicks, now),
             Event::MouseUp { x, y, button } => self.mouse_up(*x, *y, *button, now),
             Event::Wheel { dy, .. } => {
-                if self.nav_wheel(*dy) {
+                if self.jobs_wheel(*dy) || self.nav_wheel(*dy) {
                     return;
                 }
                 let (rh, lh) = (self.layout.row_h, self.layout.list.h);
@@ -995,7 +1028,7 @@ impl App {
 
     fn mouse_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8, now: Instant) {
         self.dirty = true;
-        if self.ops_mouse_down(x, y, button, clicks) {
+        if self.jobs_mouse_down(self.hit(x, y)) || self.ops_mouse_down(x, y, button, clicks) {
             return;
         }
         let h = self.hit(x, y);
@@ -1073,7 +1106,7 @@ impl App {
             return;
         }
         let h = self.hit(x, y);
-        if h != pressed {
+        if h != pressed || self.jobs_click(h, now) {
             return;
         }
         match h {
@@ -1153,7 +1186,7 @@ impl App {
 
     fn key(&mut self, key: Key, m: Mods, now: Instant) {
         self.dirty = true;
-        if self.ops_key(key, m) {
+        if self.jobs_key(key, m) || self.ops_key(key, m) {
             return;
         }
         if self.editing {
@@ -1207,7 +1240,7 @@ impl App {
             return;
         }
         self.dirty = true;
-        if self.ops_char(c) {
+        if self.jobs.modal() || self.ops_char(c) {
             return;
         }
         if self.editing {
@@ -1321,6 +1354,7 @@ impl App {
                 self.draw_status(g, &arena, th);
                 self.draw_nav(g, th);
             }
+            self.draw_jobs(g, th);
             if !g.atlas_reset {
                 break;
             }
@@ -1397,6 +1431,7 @@ impl App {
             centered(g, r, glyph, icons, color);
         }
         self.draw_address(g, t);
+        self.draw_ops_button(g, t);
     }
 
     fn draw_address<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {

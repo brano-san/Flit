@@ -25,7 +25,7 @@ pub fn inverse(report: &OpReport) -> Option<Step> {
     let created = || FileOp::Trash(items.iter().map(|(_, to)| to.clone()).collect());
     Some(Step::Run(match &report.op {
         FileOp::Copy { .. } | FileOp::Link { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::Restore(_) => created(),
-        FileOp::Move { .. } | FileOp::MoveTo(_) => FileOp::MoveTo(items.iter().map(|(from, to)| (to.clone(), from.clone())).collect()),
+        FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Flatten(_) => FileOp::MoveTo(items.iter().map(|(from, to)| (to.clone(), from.clone())).collect()),
         FileOp::Rename { .. } => {
             let (old, new) = &items[0];
             FileOp::Rename { item: new.clone(), name: old.file_name().to_vec() }

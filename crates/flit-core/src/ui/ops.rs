@@ -7,7 +7,7 @@ use crate::input::{CursorIcon, Event, Key, Mods, MouseButton};
 use crate::listing::attr;
 use crate::location::{Location, ProviderId};
 use crate::path::{FsPath, PathKind};
-use crate::provider::{FileOp, Launch, OpId, OpReport, ProviderRequest, TabId, Template};
+use crate::provider::{FileOp, Launch, OpCtl, OpId, OpReport, ProviderRequest, TabId, Template};
 use crate::recycle;
 use crate::render::Rect;
 use crate::text::{Gfx, TextBackend};
@@ -74,6 +74,7 @@ struct Pending {
     tab: TabId,
     origin: Origin,
     then: Then,
+    ctl: OpCtl,
 }
 
 struct Slow {
@@ -287,11 +288,27 @@ impl App {
     fn start_op_for(&mut self, tab: TabId, op: FileOp, origin: Origin, then: Then) {
         self.ops.next_id += 1;
         let id = self.ops.next_id;
-        self.ops.pending.push(Pending { id, tab, origin, then });
-        self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Op { tab, id, op } });
+        let ctl = OpCtl::new(self.conflict_default);
+        self.track_job(id, &op, &ctl);
+        self.ops.pending.push(Pending { id, tab, origin, then, ctl: ctl.clone() });
+        self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Op { tab, id, op, ctl } });
     }
 
-    fn delete_with(&mut self, op: fn(Vec<FsPath>) -> FileOp) {
+    pub(super) fn start_confirmed(&mut self, op: FileOp) {
+        self.start_op(op, Origin::Fresh, Then::Nothing);
+    }
+
+    pub(super) fn op_ctl(&self, id: OpId) -> Option<OpCtl> {
+        self.ops.pending.iter().find(|p| p.id == id).map(|p| p.ctl.clone())
+    }
+
+    pub(super) fn cancel_ops(&mut self) {
+        for p in &self.ops.pending {
+            p.ctl.cancel();
+        }
+    }
+
+    fn delete_with(&mut self, permanent: bool) {
         if self.in_bin() {
             return self.purge_selection();
         }
@@ -300,17 +317,32 @@ impl App {
             return;
         }
         match self.item_paths(&items) {
-            Ok(paths) => self.start_op(op(paths), Origin::Fresh, Then::Nothing),
+            Ok(paths) if permanent => self.ask_confirm(FileOp::Delete(paths)),
+            Ok(paths) => self.start_op(FileOp::Trash(paths), Origin::Fresh, Then::Nothing),
             Err(e) => self.status(e),
         }
     }
 
     pub fn trash_selection(&mut self) {
-        self.delete_with(FileOp::Trash);
+        self.delete_with(false);
     }
 
     pub fn delete_selection(&mut self) {
-        self.delete_with(FileOp::Delete);
+        self.delete_with(true);
+    }
+
+    pub fn flatten_selection(&mut self) {
+        let items: Vec<u32> = match &self.tab().view {
+            Some(v) => self.selected_items().into_iter().filter(|&i| v.listing().entries[i as usize].is_dir()).collect(),
+            None => Vec::new(),
+        };
+        if items.is_empty() {
+            return self.status("Select the folders to flatten");
+        }
+        match self.item_paths(&items) {
+            Ok(dirs) => self.start_op(FileOp::Flatten(dirs), Origin::Fresh, Then::Nothing),
+            Err(e) => self.status(e),
+        }
     }
 
     fn bin_pairs(&self, items: impl Iterator<Item = u32>) -> Vec<(FsPath, FsPath)> {
@@ -322,7 +354,7 @@ impl App {
     fn purge_selection(&mut self) {
         let pairs = self.bin_pairs(self.selected_items().into_iter());
         if !pairs.is_empty() {
-            self.start_op(FileOp::Purge(pairs), Origin::Fresh, Then::Nothing);
+            self.ask_confirm(FileOp::Purge(pairs));
         }
     }
 
@@ -353,7 +385,7 @@ impl App {
     }
 
     pub fn empty_bin(&mut self) {
-        self.start_op(FileOp::EmptyBin, Origin::Fresh, Then::Nothing);
+        self.ask_confirm(FileOp::EmptyBin);
     }
 
     pub(super) fn bin_button(&mut self, k: usize) {
@@ -623,6 +655,7 @@ impl App {
     }
 
     pub(super) fn op_done(&mut self, tab: TabId, id: OpId, error: Option<String>, report: Option<OpReport>, now: Instant) {
+        self.job_done(id, error.as_deref(), now);
         let pending = self.ops.pending.iter().position(|p| p.id == id && p.tab == tab).map(|k| self.ops.pending.swap_remove(k));
         let k = self.tabs.iter().position(|t| t.id == tab);
         if let Some(message) = &error {
@@ -1033,6 +1066,8 @@ impl App {
             Hit::Header(_) | Hit::ColSep(_) | Hit::Sizes | Hit::Bin(_) => None,
             Hit::Side(_) | Hit::SidePin(_) | Hit::SideEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose => None,
             Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside => None,
+            Hit::OpsButton | Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsClear | Hit::OpsCancel(_) | Hit::OpsMore(_) | Hit::OpsMenu(_) => None,
+            Hit::Dialog | Hit::DialogButton(_) | Hit::DialogCheck | Hit::Modal => None,
             _ if self.layout.status.contains(x, y) => None,
             _ => Some(Target::Reveal),
         }

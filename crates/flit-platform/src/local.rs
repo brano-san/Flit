@@ -1,16 +1,18 @@
-use crate::{FileOps, Fs, PlatformError, Provider, Shell, Wake, Watcher};
+use crate::{FileOps, Fs, Job, PlatformError, Provider, Shell, Wake, Watcher};
 use crossbeam_channel::{bounded, unbounded, Sender};
 use flit_core::listing::{attr, DirSnapshot, Listing, ListingBuilder};
-use flit_core::provider::{FileOp, GenToken, Launch, OpId, OpReport, SnapshotSlot};
+use flit_core::provider::{FileOp, GenToken, Launch, OpCtl, OpId, OpReport, SnapshotSlot, Stage};
 use flit_core::sort::{self, CaseMode, SortKeys, ViewSpec};
 use flit_core::{FsError, FsErrorKind, FsPath, Location, ProviderEvent, ProviderRequest, TabId};
 use rayon::prelude::*;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 const PARTIAL_EVERY: Duration = Duration::from_millis(16);
 const PARTIAL_COST_FACTOR: u32 = 4;
+const QUEUE_POLL: Duration = Duration::from_millis(50);
 
 struct ListJob {
     tab: TabId,
@@ -36,6 +38,90 @@ enum ShellJob {
     Launch(Launch),
 }
 
+struct OpMsg {
+    tab: TabId,
+    id: OpId,
+    op: FileOp,
+    ctl: OpCtl,
+}
+
+#[derive(Clone)]
+struct Reply {
+    tab: TabId,
+    id: OpId,
+    events: Sender<ProviderEvent>,
+    wake: Wake,
+}
+
+impl Reply {
+    fn send(&self, ev: ProviderEvent) {
+        let _ = self.events.send(ev);
+        (self.wake)();
+    }
+
+    fn done(&self, (error, report): (Option<String>, Option<OpReport>)) {
+        self.send(ProviderEvent::OpDone { tab: self.tab, id: self.id, error, report });
+    }
+
+    fn job(&self, ctl: OpCtl) -> Job {
+        let (p, c) = (self.clone(), self.clone());
+        Job::new(ctl, Box::new(move |progress| p.send(ProviderEvent::OpProgress { tab: p.tab, id: p.id, progress })), Box::new(move |conflict| c.send(ProviderEvent::OpConflict { tab: c.tab, id: c.id, conflict })))
+    }
+}
+
+#[derive(Default)]
+struct Gate {
+    busy: Mutex<HashSet<Vec<u8>>>,
+    freed: Condvar,
+}
+
+struct Turn<'a> {
+    gate: &'a Gate,
+    key: Vec<u8>,
+}
+
+impl Drop for Turn<'_> {
+    fn drop(&mut self) {
+        self.gate.busy.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.key);
+        self.gate.freed.notify_all();
+    }
+}
+
+impl Gate {
+    fn enter(&self, key: Vec<u8>, job: &Job) -> Option<Turn<'_>> {
+        let mut busy = self.busy.lock().unwrap_or_else(|e| e.into_inner());
+        while busy.contains(&key) {
+            if job.cancelled() {
+                return None;
+            }
+            if job.progress().stage != Stage::Queued {
+                job.update(|p| p.stage = Stage::Queued);
+            }
+            busy = self.freed.wait_timeout(busy, QUEUE_POLL).unwrap_or_else(|e| e.into_inner()).0;
+        }
+        busy.insert(key.clone());
+        Some(Turn { gate: self, key })
+    }
+}
+
+fn volume(p: &FsPath) -> Vec<u8> {
+    p.root_bytes().to_ascii_lowercase()
+}
+
+fn transfer_volume(op: &FileOp) -> Option<Vec<u8>> {
+    let crosses = |a: &FsPath, b: &FsPath| volume(a) != volume(b);
+    match op {
+        FileOp::Copy { dest, .. } => Some(volume(dest)),
+        FileOp::Move { items, dest } if items.iter().any(|i| crosses(i, dest)) => Some(volume(dest)),
+        FileOp::MoveTo(pairs) if pairs.iter().any(|(a, b)| crosses(a, b)) => pairs.first().map(|(_, b)| volume(b)),
+        _ => None,
+    }
+}
+
+fn quick(op: &FileOp) -> bool {
+    matches!(op, FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::NewStream { .. } | FileOp::Link { .. } | FileOp::Restore(_))
+}
+
 enum WatchCmd {
     Arm { tab: TabId, gen: u64, path: FsPath, cancel: GenToken, armed: Sender<()> },
     Stop { tab: TabId, gen: u64 },
@@ -44,10 +130,11 @@ enum WatchCmd {
 pub struct LocalProvider {
     jobs: Sender<ListJob>,
     sizes: Sender<SizesJob>,
-    ops: Sender<(TabId, OpId, FileOp)>,
+    ops: Sender<OpMsg>,
     shell: Sender<(TabId, ShellJob)>,
     watch: Sender<WatchCmd>,
     pending_watch: Mutex<HashMap<TabId, (u64, FsPath)>>,
+    busy: Arc<AtomicUsize>,
 }
 
 fn spawn(name: String, body: impl FnOnce() + Send + 'static) -> Result<(), PlatformError> {
@@ -102,21 +189,62 @@ impl LocalProvider {
                 open_wake();
             }
         })?;
-        let (ops, ops_rx) = unbounded::<(TabId, OpId, FileOp)>();
+        let (ops, ops_rx) = unbounded::<OpMsg>();
+        let busy = Arc::new(AtomicUsize::new(0));
+        let (gate, running) = (Arc::new(Gate::default()), busy.clone());
         spawn("flit-shell-ops".into(), move || {
             let mut sh = S::new();
-            for (tab, id, op) in ops_rx {
-                let (error, report) = match &mut sh {
-                    Ok(sh) => run_op(sh, op),
-                    Err(e) => (Some(e.to_string()), None),
+            for OpMsg { tab, id, op, ctl } in ops_rx {
+                let reply = Reply { tab, id, events: events.clone(), wake: wake.clone() };
+                let sh = match &mut sh {
+                    Ok(sh) => sh,
+                    Err(e) => {
+                        reply.done((Some(e.to_string()), None));
+                        continue;
+                    }
                 };
-                let _ = events.send(ProviderEvent::OpDone { tab, id, error, report });
-                wake();
+                let (op, cut) = match resolve_paste(sh, op) {
+                    Ok(resolved) => resolved,
+                    Err(e) => {
+                        reply.done((Some(e), None));
+                        continue;
+                    }
+                };
+                let job = reply.job(ctl);
+                if quick(&op) {
+                    reply.done(perform(sh, op, cut, &job));
+                    continue;
+                }
+                running.fetch_add(1, Ordering::AcqRel);
+                let (gate, running, failed) = (gate.clone(), running.clone(), reply.clone());
+                let started = spawn(format!("flit-op-{id}"), move || {
+                    let turn = transfer_volume(&op).map(|key| gate.enter(key, &job));
+                    let result = match (turn.as_ref().is_some_and(Option::is_none), S::new()) {
+                        (true, _) => (Some(CANCELLED.into()), Some(OpReport { op, items: Vec::new() })),
+                        (false, Ok(mut sh)) => perform(&mut sh, op, cut, &job),
+                        (false, Err(e)) => (Some(e.to_string()), None),
+                    };
+                    drop(turn);
+                    reply.done(result);
+                    running.fetch_sub(1, Ordering::AcqRel);
+                });
+                if let Err(e) = started {
+                    failed.done((Some(e.to_string()), None));
+                }
             }
         })?;
-        Ok(Self { jobs, sizes, ops, shell, watch, pending_watch: Mutex::default() })
+        Ok(Self { jobs, sizes, ops, shell, watch, pending_watch: Mutex::default(), busy })
+    }
+
+    pub fn wait_idle(&self, limit: Duration) {
+        let end = Instant::now() + limit;
+        while self.busy.load(Ordering::Acquire) > 0 && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 }
+
+pub const CANCELLED: &str = "The operation was cancelled";
 
 fn is_shortcut(p: &FsPath) -> bool {
     let b = p.as_bytes();
@@ -151,7 +279,7 @@ impl Provider for LocalProvider {
                 pending.remove(&tab);
                 self.watch.send(WatchCmd::Stop { tab, gen }).map_err(drop)
             }
-            ProviderRequest::Op { tab, id, op } => self.ops.send((tab, id, op)).map_err(drop),
+            ProviderRequest::Op { tab, id, op, ctl } => self.ops.send(OpMsg { tab, id, op, ctl }).map_err(drop),
             ProviderRequest::Open { tab, path } => self.shell.send((tab, ShellJob::Open(path))).map_err(drop),
             ProviderRequest::Launch { tab, launch } => self.shell.send((tab, ShellJob::Launch(launch))).map_err(drop),
         };
@@ -162,23 +290,33 @@ fn same_dir(item: &FsPath, dir: &FsPath) -> bool {
     item.parent().is_some_and(|p| p.as_bytes().eq_ignore_ascii_case(dir.as_bytes()))
 }
 
-fn run_op<S: FileOps>(sh: &mut S, op: FileOp) -> (Option<String>, Option<OpReport>) {
-    let (op, cut) = match op {
-        FileOp::Paste { dest } => match sh.clipboard_files() {
-            Ok((items, true)) => (FileOp::Move { items: items.into_iter().filter(|i| !same_dir(i, &dest)).collect(), dest }, true),
-            Ok((items, false)) => (FileOp::Copy { items, dest }, false),
-            Err(e) => return (Some(e.to_string()), None),
+fn resolve_paste<S: FileOps>(sh: &mut S, op: FileOp) -> Result<(FileOp, bool), String> {
+    Ok(match op {
+        FileOp::Paste { dest } => match sh.clipboard_files().map_err(|e| e.to_string())? {
+            (items, true) => (FileOp::Move { items: items.into_iter().filter(|i| !same_dir(i, &dest)).collect(), dest }, true),
+            (items, false) => (FileOp::Copy { items, dest }, false),
         },
         op => (op, false),
-    };
+    })
+}
+
+fn perform<S: FileOps>(sh: &mut S, op: FileOp, cut: bool, job: &Job) -> (Option<String>, Option<OpReport>) {
     if matches!(&op, FileOp::Move { items, .. } if items.is_empty()) {
         return (None, Some(OpReport { op, items: Vec::new() }));
     }
-    let out = sh.file_op(&op);
+    let out = sh.file_op(&op, job);
     if cut && out.error.is_none() {
         sh.clear_clipboard();
     }
     (out.error.map(|e| e.to_string()), Some(OpReport { op, items: out.items }))
+}
+
+#[cfg(test)]
+fn run_op<S: FileOps>(sh: &mut S, op: FileOp) -> (Option<String>, Option<OpReport>) {
+    match resolve_paste(sh, op) {
+        Ok((op, cut)) => perform(sh, op, cut, &Job::detached(flit_core::provider::Resolve::Skip)),
+        Err(e) => (Some(e), None),
+    }
 }
 
 fn run_list<F: Fs>(fs: &F, job: ListJob, watch: &Sender<WatchCmd>, wake: &Wake) {
@@ -300,7 +438,7 @@ pub fn via_unc(distro: &str, req: ProviderRequest) -> Option<ProviderRequest> {
         },
         ProviderRequest::Watch { tab, gen, path } => ProviderRequest::Watch { tab, gen, path: path.and_then(|p| unc(&p)) },
         ProviderRequest::DirSizes { tab, gen, dir, items, cancel } => ProviderRequest::DirSizes { tab, gen, dir: unc(&dir)?, items, cancel },
-        ProviderRequest::Op { tab, id, op } => ProviderRequest::Op { tab, id, op: op.map_paths(unc)? },
+        ProviderRequest::Op { tab, id, op, ctl } => ProviderRequest::Op { tab, id, op: op.map_paths(unc)?, ctl },
         ProviderRequest::Open { tab, path } => ProviderRequest::Open { tab, path: unc(&path)? },
         ProviderRequest::Launch { tab, launch } => ProviderRequest::Launch { tab, launch: launch.map_paths(unc)? },
     })

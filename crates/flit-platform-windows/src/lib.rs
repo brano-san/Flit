@@ -6,6 +6,7 @@ mod context_menu;
 mod d3d;
 mod dragdrop;
 mod dwrite;
+mod engine;
 mod fileops;
 mod fs;
 mod instance;

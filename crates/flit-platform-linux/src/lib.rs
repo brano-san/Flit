@@ -227,7 +227,7 @@ impl Shell for FreedesktopShell {
 }
 
 impl FileOps for FreedesktopShell {
-    fn file_op(&mut self, _: &FileOp) -> OpOutcome {
+    fn file_op(&mut self, _: &FileOp, _: &Job) -> OpOutcome {
         OpOutcome { items: Vec::new(), error: Some(PlatformError::unsupported("file operations")) }
     }
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {

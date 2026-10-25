@@ -121,7 +121,7 @@ impl FsPath {
         &self.s
     }
 
-    pub(crate) fn root_bytes(&self) -> &[u8] {
+    pub fn root_bytes(&self) -> &[u8] {
         &self.s[..self.root as usize]
     }
 

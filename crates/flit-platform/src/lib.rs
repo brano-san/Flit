@@ -2,14 +2,14 @@ mod indexer;
 mod local;
 
 pub use indexer::{root_of, start_indexer};
-pub use local::{via_unc, LocalProvider};
+pub use local::{via_unc, LocalProvider, CANCELLED};
 
 use crossbeam_channel::Sender;
 use flit_core::atlas::Slot;
 use flit_core::input::{CursorIcon, Event, HitArea};
 use flit_core::render::{DrawList, Rect};
 use flit_core::ui::{Bitmap, DragEvent, IconRequest, NewTemplate, ShellMenu};
-use flit_core::provider::{FileOp, Launch};
+use flit_core::provider::{Conflict, FileOp, Launch, OpCtl, OpProgress, Resolve, Stage};
 use flit_core::{FsError, FsPath, ListingBuilder, Location, Open, ProviderEvent, ProviderRequest, TabId};
 use flit_search::index::{Checkpoint, IndexSink};
 use flit_search::proto::VolumeInfo;
@@ -162,8 +162,65 @@ pub struct OpOutcome {
     pub error: Option<PlatformError>,
 }
 
+const PROGRESS_EVERY: std::time::Duration = std::time::Duration::from_millis(33);
+
+type Sink<T> = Box<dyn Fn(T) + Send + Sync>;
+
+#[derive(Default)]
+struct Shown {
+    progress: OpProgress,
+    sent: Option<(std::time::Instant, Stage)>,
+}
+
+struct JobState {
+    ctl: OpCtl,
+    progress: Sink<OpProgress>,
+    conflict: Sink<Conflict>,
+    now: std::sync::Mutex<Shown>,
+}
+
+#[derive(Clone)]
+pub struct Job(Arc<JobState>);
+
+impl Job {
+    pub fn new(ctl: OpCtl, progress: Sink<OpProgress>, conflict: Sink<Conflict>) -> Self {
+        Self(Arc::new(JobState { ctl, progress, conflict, now: Default::default() }))
+    }
+
+    pub fn detached(policy: Resolve) -> Self {
+        Self::new(OpCtl::new(Some(policy)), Box::new(|_| {}), Box::new(|_| {}))
+    }
+
+    pub fn ctl(&self) -> &OpCtl {
+        &self.0.ctl
+    }
+
+    pub fn cancelled(&self) -> bool {
+        self.0.ctl.is_cancelled()
+    }
+
+    pub fn progress(&self) -> OpProgress {
+        self.0.now.lock().unwrap_or_else(|e| e.into_inner()).progress
+    }
+
+    pub fn update(&self, f: impl FnOnce(&mut OpProgress)) {
+        let mut now = self.0.now.lock().unwrap_or_else(|e| e.into_inner());
+        f(&mut now.progress);
+        let (t, p) = (std::time::Instant::now(), now.progress);
+        if now.sent.is_none_or(|(at, stage)| stage != p.stage || t.duration_since(at) >= PROGRESS_EVERY) {
+            now.sent = Some((t, p.stage));
+            drop(now);
+            (self.0.progress)(p);
+        }
+    }
+
+    pub fn resolve(&self, c: Conflict) -> Option<Resolve> {
+        self.0.ctl.resolve(|| (self.0.conflict)(c))
+    }
+}
+
 pub trait FileOps {
-    fn file_op(&mut self, op: &FileOp) -> OpOutcome;
+    fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome;
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError>;
     fn clear_clipboard(&mut self);
 }

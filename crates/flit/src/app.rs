@@ -15,9 +15,10 @@ use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const ATLAS: u32 = 2048;
+const OPS_GRACE: Duration = Duration::from_secs(2);
 const FS_THREADS: usize = 4;
 const SHELL_THREADS: usize = 2;
 const ICON_MARGIN: u32 = 32;
@@ -278,7 +279,7 @@ impl<P: Platform> Handler<P> {
             let target = match &ev {
                 ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } => self.window_of_tab(*tab),
                 ProviderEvent::OpDone { tab, .. } => self.window_of_tab(*tab).or(self.active),
-                ProviderEvent::Navigate { tab, .. } => self.window_of_tab(*tab),
+                ProviderEvent::Navigate { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } => self.window_of_tab(*tab),
             };
             if let Some(st) = target.and_then(|id| self.windows.get_mut(&id)) {
                 st.app.on_provider_event(ev, now);
@@ -537,6 +538,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
             self.queued_opens.extend(self.opens.try_iter());
             if self.queued_opens.is_empty() {
                 state::save::<P>(&self.saved);
+                self.local.wait_idle(OPS_GRACE);
             } else {
                 *self.sink.lock().unwrap_or_else(|e| e.into_inner()) = tx;
                 window.open_window(WindowOptions { title: "Flit".into(), placement: self.saved.placement(), dark: window.is_dark_mode() });
