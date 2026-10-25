@@ -58,6 +58,7 @@ enum Msg {
     Hello(u64, Result<String, ProtoError>),
     Event(u64, Event),
     Lost(u64, String),
+    Quit,
 }
 
 struct Conn {
@@ -176,6 +177,12 @@ impl Provider for WslProvider {
     }
 }
 
+impl Drop for WslProvider {
+    fn drop(&mut self) {
+        let _ = self.tx.send(Msg::Quit);
+    }
+}
+
 fn hello(build: &str) -> Hello {
     Hello { build: build.to_owned(), ..Hello::new(Protocol::Provider, VERSION) }
 }
@@ -233,8 +240,14 @@ impl Ctl {
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => self.timer(),
-                Err(RecvTimeoutError::Disconnected) => return,
+                Ok(Msg::Quit) | Err(RecvTimeoutError::Disconnected) => return self.quit(),
             }
+        }
+    }
+
+    fn quit(self) {
+        if let State::Starting { conn, .. } | State::Ready(conn) = self.state {
+            conn.end(Duration::ZERO);
         }
     }
 

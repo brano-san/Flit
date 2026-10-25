@@ -308,6 +308,15 @@ fn an_idle_agent_stops_and_starts_again_on_demand() {
 }
 
 #[test]
+fn dropping_the_provider_stops_its_agent() {
+    let s = setup(Fake::new(lister), Timing::default());
+    finished(&list(&s.wsl, 1, 1, "/"));
+    let stops = s.fake.stops.clone();
+    drop(s);
+    until("stop", || stops.load(Ordering::SeqCst) == 1);
+}
+
+#[test]
 fn trash_goes_to_the_agent_and_the_rest_to_the_share() {
     let fake = Fake::new(|req| {
         Some(match req {
