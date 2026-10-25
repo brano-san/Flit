@@ -1,7 +1,7 @@
 use super::columns::{pane_depth, COLUMN_W};
 use super::details::{folder_key, CHECK, CHECK_GAP};
 use super::flow::{Flow, FlowParams};
-use super::{App, Hit, Tab, ROW_H, SCROLLBAR_W};
+use super::{App, Effect, Hit, Tab, ROW_H, SCROLLBAR_W};
 use crate::desktop_ini::FolderKind;
 use crate::input::{Key, Mods};
 use crate::render::Rect;
@@ -450,6 +450,12 @@ impl App {
             self.tab_mut().reveal_pending = true;
             self.change_view(|t| t.sizes.0[look.slot()] = level);
         }
+    }
+
+    pub(super) fn clear_thumbnails(&mut self) {
+        self.thumbs.clear();
+        self.effects.push(Effect::ClearThumbnails);
+        self.status("The thumbnail cache was cleared");
     }
 
     pub(super) fn settle_look(&mut self, k: usize, fresh: bool, done: bool) {

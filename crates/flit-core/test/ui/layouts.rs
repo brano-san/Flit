@@ -6,7 +6,8 @@ use crate::provider::ProviderRequest;
 use crate::sort::{self, CaseMode, SortKeys};
 use crate::text::tests::Mono;
 use crate::text::Gfx;
-use crate::ui::{Effect, Persisted};
+use crate::render::kind;
+use crate::ui::{Bitmap, Effect, IconKind, IconRequest, IconResult, Persisted};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -325,4 +326,33 @@ fn adaptive_is_refused_while_all_folders_share_one_view() {
 fn sizes_fall_back_per_layout_when_out_of_range() {
     assert_eq!(Sizes([9, 0, 4, 2, 11]).sanitized(), Sizes([1, 0, 1, 2, 11]));
     assert!(is_media(b"JPG") && is_media(b"mkv") && !is_media(b"pdf") && has_thumbnail(b"pdf") && !has_thumbnail(b"txt"));
+}
+
+fn thumbs_asked(app: &mut App) -> Vec<IconRequest> {
+    app.drain_effects().filter_map(|e| if let Effect::Thumbnail(r) = e { Some(r) } else { None }).collect()
+}
+
+fn thumb_quads(gfx: &Gfx<Mono>) -> usize {
+    gfx.dl.instances.iter().filter(|q| q.kind == kind::THUMB).count()
+}
+
+#[test]
+fn grid_asks_for_each_thumbnail_once_and_draws_it_while_details_never_asks() {
+    let mut app = app_at(r"C:\pics");
+    let mut gfx = Gfx::new(Mono, 1024);
+    deliver(&mut app, &["a.jpg", "b.txt", "c"]);
+    app.frame(&mut gfx, Instant::now());
+    assert!(thumbs_asked(&mut app).is_empty());
+    key(&mut app, Key::Char('5'), CTRL_SHIFT);
+    app.frame(&mut gfx, Instant::now());
+    let asked = thumbs_asked(&mut app);
+    assert_eq!(asked.len(), 1);
+    assert!(asked[0].kind == IconKind::Thumbnail && asked[0].path == *loc(r"C:\pics\a.jpg").path());
+    app.on_thumb(&mut gfx, asked[0].key, IconResult::Ready(Bitmap { width: 40, height: 30, rgba: vec![255; 4800] }));
+    app.frame(&mut gfx, Instant::now());
+    assert!(thumbs_asked(&mut app).is_empty());
+    assert_eq!((thumb_quads(&gfx), gfx.thumbs.uploads.rects.len()), (1, 1));
+    app.run_action("view.thumbnails", Instant::now());
+    app.frame(&mut gfx, Instant::now());
+    assert_eq!(thumb_quads(&gfx), 0, "the toggle turns thumbnails off");
 }

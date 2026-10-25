@@ -107,6 +107,8 @@ pub static ACTIONS: &[Action] = &[
     Action::new("view.layout.adaptive", "Adaptive layout", &[ctrl_shift(Key::Char('6'))], |a, _| a.set_layout(LayoutMode::Adaptive)),
     Action::new("view.size.larger", "Larger items", &[ctrl(Key::Char('+')), ctrl_shift(Key::Char('+'))], |a, _| a.resize_items(1)),
     Action::new("view.size.smaller", "Smaller items", &[ctrl(Key::Char('-'))], |a, _| a.resize_items(-1)),
+    Action::new("view.thumbnails", "Show thumbnails in the Grid and Cards layouts", &[], |a, _| a.toggle_pref(|p| &mut p.thumbnails)),
+    Action::new("view.thumbnails.clear", "Clear the thumbnail cache", &[], |a, _| a.clear_thumbnails()),
     Action::new("view.columns.fit", "Size all columns to fit", &[ctrl(Key::NumPlus)], |a, _| a.request_fit()),
     Action::new("view.columns.autofit", "Always size columns to fit", &[], |a, _| a.toggle_auto_fit()),
     Action::new("view.column.modified", "Show or hide the Date modified column", &[], |a, _| a.toggle_column(Column::Modified)),

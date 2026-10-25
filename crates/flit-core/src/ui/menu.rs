@@ -175,6 +175,8 @@ impl App {
             m.separator();
             m.action("view.size.larger", "Larger items");
             m.action("view.size.smaller", "Smaller items");
+            m.separator();
+            m.check("view.thumbnails", "Show thumbnails", self.prefs.thumbnails);
         });
         m.submenu("Sort by", |m| {
             m.choices(if in_bin { &BIN_SORTS[..] } else { &SORTS[..] }, sort.field);

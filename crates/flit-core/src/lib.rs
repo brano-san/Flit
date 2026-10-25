@@ -16,6 +16,7 @@ pub mod render;
 pub mod sort;
 pub mod text;
 pub mod theme;
+pub mod thumbs;
 pub mod ui;
 pub mod undo;
 pub mod view;

@@ -130,6 +130,7 @@ pub trait Renderer: Sized {
     fn new(device: &Self::Device, window: &Self::Window, atlas_size: u32) -> Result<Self, PlatformError>;
     fn resize(&mut self, width: u32, height: u32);
     fn upload(&mut self, slot: Slot, rgba: &[u8]);
+    fn upload_thumb(&mut self, _slot: Slot, _rgba: &[u8]) {}
     fn render(&mut self, list: &DrawList) -> Result<(), RenderError>;
 }
 

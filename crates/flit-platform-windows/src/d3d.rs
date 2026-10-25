@@ -2,6 +2,7 @@ use crate::err;
 use crate::window::{FrameSync, Win32Window};
 use flit_core::atlas::Slot;
 use flit_core::render::{DrawList, Instance};
+use flit_core::thumbs::THUMB_ATLAS;
 use flit_platform::{PlatformError, RenderError, Renderer, Window};
 use std::cell::Cell;
 use std::rc::Rc;
@@ -68,8 +69,37 @@ pub struct D3dRenderer {
     globals: ID3D11Buffer,
     atlas: ID3D11Texture2D,
     atlas_srv: ID3D11ShaderResourceView,
+    thumbs: Option<(ID3D11Texture2D, ID3D11ShaderResourceView)>,
     size: (u32, u32),
     sync: Rc<FrameSync>,
+}
+
+fn texture(device: &ID3D11Device, size: u32) -> Result<(ID3D11Texture2D, ID3D11ShaderResourceView), PlatformError> {
+    let desc = D3D11_TEXTURE2D_DESC {
+        Width: size,
+        Height: size,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_DEFAULT,
+        BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+        ..Default::default()
+    };
+    let (mut tex, mut srv) = (None, None);
+    unsafe {
+        device.CreateTexture2D(&desc, None, Some(&mut tex)).map_err(err)?;
+        let tex = tex.unwrap();
+        device.CreateShaderResourceView(&tex, None, Some(&mut srv)).map_err(err)?;
+        Ok((tex, srv.unwrap()))
+    }
+}
+
+fn update(ctx: &ID3D11DeviceContext, tex: &ID3D11Texture2D, slot: Slot, rgba: &[u8]) {
+    let b = D3D11_BOX { left: slot.x, top: slot.y, front: 0, right: slot.x + slot.w, bottom: slot.y + slot.h, back: 1 };
+    unsafe {
+        ctx.UpdateSubresource(tex, 0, Some(&b), rgba.as_ptr().cast(), slot.w * 4, 0);
+    }
 }
 
 const SWAP_FLAGS: DXGI_SWAP_CHAIN_FLAG = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
@@ -244,7 +274,7 @@ impl D3dRenderer {
             ctx.VSSetConstantBuffers(0, Some(&[Some(self.globals.clone())]));
             ctx.PSSetShader(&d.ps, None);
             ctx.PSSetConstantBuffers(0, Some(&[Some(self.globals.clone())]));
-            ctx.PSSetShaderResources(0, Some(&[Some(self.atlas_srv.clone())]));
+            ctx.PSSetShaderResources(0, Some(&[Some(self.atlas_srv.clone()), self.thumbs.as_ref().map(|t| t.1.clone())]));
             ctx.PSSetSamplers(0, Some(&[Some(d.sampler.clone())]));
             if n > 0 {
                 ctx.DrawInstanced(4, n as u32, 0, 0);
@@ -306,21 +336,7 @@ impl Renderer for D3dRenderer {
             let capacity = 16 * 1024;
             let instances = buffer(device, capacity * size_of::<Instance>(), D3D11_BIND_VERTEX_BUFFER)?;
             let globals = buffer(device, size_of::<Globals>(), D3D11_BIND_CONSTANT_BUFFER)?;
-            let tex_desc = D3D11_TEXTURE2D_DESC {
-                Width: atlas_size,
-                Height: atlas_size,
-                MipLevels: 1,
-                ArraySize: 1,
-                Format: DXGI_FORMAT_R8G8B8A8_UNORM,
-                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: D3D11_USAGE_DEFAULT,
-                BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
-                ..Default::default()
-            };
-            let (mut atlas, mut srv) = (None, None);
-            device.CreateTexture2D(&tex_desc, None, Some(&mut atlas)).map_err(err)?;
-            let atlas = atlas.unwrap();
-            device.CreateShaderResourceView(&atlas, None, Some(&mut srv)).map_err(err)?;
+            let (atlas, atlas_srv) = texture(device, atlas_size)?;
 
             window.sync.waitable.set(waitable.0);
             window.sync.waited.set(false);
@@ -337,7 +353,8 @@ impl Renderer for D3dRenderer {
                 capacity,
                 globals,
                 atlas,
-                atlas_srv: srv.unwrap(),
+                atlas_srv,
+                thumbs: None,
                 size: (w.max(1), h.max(1)),
                 sync: window.sync.clone(),
             })
@@ -361,9 +378,18 @@ impl Renderer for D3dRenderer {
     }
 
     fn upload(&mut self, slot: Slot, rgba: &[u8]) {
-        let b = D3D11_BOX { left: slot.x, top: slot.y, front: 0, right: slot.x + slot.w, bottom: slot.y + slot.h, back: 1 };
-        unsafe {
-            self.dev.ctx.UpdateSubresource(&self.atlas, 0, Some(&b), rgba.as_ptr().cast(), slot.w * 4, 0);
+        update(&self.dev.ctx, &self.atlas, slot, rgba);
+    }
+
+    fn upload_thumb(&mut self, slot: Slot, rgba: &[u8]) {
+        if self.thumbs.is_none() {
+            match texture(&self.dev.device, THUMB_ATLAS) {
+                Ok(t) => self.thumbs = Some(t),
+                Err(e) => return tracing::warn!("thumbnail texture: {e}"),
+            }
+        }
+        if let Some((tex, _)) = &self.thumbs {
+            update(&self.dev.ctx, tex, slot, rgba);
         }
     }
 

@@ -39,6 +39,7 @@ use crate::render::{Color, Rect};
 use crate::sort::{CaseMode, GroupField, SortField, ViewSpec};
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::{self, Theme};
+use crate::thumbs;
 use crate::view::Line;
 use bumpalo::Bump;
 use edit::{EditAction, LineEdit};
@@ -63,6 +64,7 @@ const DIFF_BUDGET: Duration = Duration::from_millis(4);
 const MAX_PENDING_DIFFS: usize = 1 << 16;
 const SCROLL_TAU: f32 = 0.045;
 const MAX_OPEN: usize = 16;
+const MAX_THUMB_STATES: usize = 1 << 16;
 const MAX_ROUTES: usize = 32;
 
 const PER_FILE_ICON_EXT: [&[u8]; 6] = [b"exe", b"ico", b"lnk", b"url", b"cur", b"ani"];
@@ -162,6 +164,8 @@ pub enum Effect {
     Provider { provider: ProviderId, req: ProviderRequest },
     Resort { tab: TabId, gen: u64, snap: Arc<DirSnapshot>, view: ViewSpec },
     Icon(IconRequest),
+    Thumbnail(IconRequest),
+    ClearThumbnails,
     TypeName(Vec<u8>),
     SetClipboard(String),
     Paste,
@@ -341,6 +345,7 @@ pub struct App {
     cursor: CursorIcon,
 
     icons: FxHashMap<u64, IconState>,
+    thumbs: FxHashMap<u64, IconState>,
     type_names: FxHashMap<Vec<u8>, Option<String>>,
     adaptive: FxHashMap<u64, LayoutMode>,
 
@@ -394,6 +399,7 @@ impl App {
             pending_edit: None,
             cursor: CursorIcon::Default,
             icons: FxHashMap::default(),
+            thumbs: FxHashMap::default(),
             type_names: FxHashMap::default(),
             adaptive: FxHashMap::default(),
             layout: Layout::default(),
@@ -762,6 +768,24 @@ impl App {
             }
             IconResult::Skipped => {
                 self.icons.remove(&key);
+            }
+        }
+        self.dirty = true;
+    }
+
+    pub fn on_thumb<B: TextBackend>(&mut self, gfx: &mut Gfx<B>, key: u64, result: IconResult) {
+        match result {
+            IconResult::Ready(bm) if gfx.thumbs.insert(key, bm.width, bm.height, &bm.rgba) => {
+                self.thumbs.remove(&key);
+            }
+            IconResult::Ready(_) | IconResult::Failed => {
+                if self.thumbs.len() >= MAX_THUMB_STATES {
+                    self.thumbs.retain(|_, s| *s == IconState::Pending);
+                }
+                self.thumbs.insert(key, IconState::Failed);
+            }
+            IconResult::Skipped => {
+                self.thumbs.remove(&key);
             }
         }
         self.dirty = true;
@@ -1631,7 +1655,10 @@ impl App {
         let lines = self.visible_lines(&f);
         g.dl.set_clip(Some(list));
         let mut requests: Vec<IconRequest> = Vec::new();
+        let mut thumb_requests: Vec<IconRequest> = Vec::new();
         let mut type_requests: Vec<Vec<u8>> = Vec::new();
+        let want_thumbs = self.prefs.thumbnails && matches!(mode, LayoutMode::Grid | LayoutMode::Cards) && !in_bin;
+        let thumb_px = thumbs::class_px(icon_px as u32);
         if let Some(v) = &tab.view {
             if let Some(e) = v.snap().error.as_ref().filter(|_| v.total_rows() == 0) {
                 self.draw_unavailable(g, t, list, e);
@@ -1690,7 +1717,15 @@ impl App {
                 let dir_key = if in_bin { recycle::origin(listing, i) } else { shell_dir.as_ref().map_or(&b""[..], |d| d.as_bytes()) };
                 let (key, kind) = icon_key(name, listing.ext(i), &e, icon_px as u32, dir_key);
                 let ir = p.icon;
-                if !g.image_alpha(key, ir, if faded { 0x70 } else { 0xFF }) {
+                let alpha = if faded { 0x70 } else { 0xFF };
+                let thumb = (want_thumbs && !e.is_dir() && has_thumbnail(listing.ext(i))).then(|| hash::hash(&("thumb", dir_key, name, e.modified, e.size, thumb_px)));
+                let thumbed = thumb.is_some_and(|k| g.thumb(k, ir, alpha));
+                if let (Some(k), false, Some(d)) = (thumb, thumbed, shell_dir.as_ref()) {
+                    if !self.thumbs.contains_key(&k) && !thumb_requests.iter().any(|r| r.key == k) {
+                        thumb_requests.push(IconRequest { key: k, kind: IconKind::Thumbnail, path: d.join(name), size: thumb_px, gen: tab.gen, row: row as u32 });
+                    }
+                }
+                if !thumbed && !g.image_alpha(key, ir, alpha) {
                     icon_glyph(g, t, &e, ir);
                     let wanted = !self.icons.contains_key(&key) && !requests.iter().any(|r| r.key == key);
                     let path = match (wanted, in_bin) {
@@ -1732,6 +1767,10 @@ impl App {
         }
         g.dl.set_clip(None);
         self.request_icons(requests);
+        for r in thumb_requests {
+            self.thumbs.insert(r.key, IconState::Pending);
+            self.effects.push(Effect::Thumbnail(r));
+        }
         for ext in type_requests {
             if !self.type_names.contains_key(&ext) {
                 self.type_names.insert(ext.clone(), None);
