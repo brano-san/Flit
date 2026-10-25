@@ -17,14 +17,18 @@ pub(super) enum Cmd {
     Action(&'static str),
     NewItem(usize),
     Place(super::sidebar::PlaceCmd),
+    ToggleTag(usize),
+    ShowTag(usize),
+    OpenTagged(usize),
 }
 
-const SORTS: [(SortField, &str, &str); 5] = [
+const SORTS: [(SortField, &str, &str); 6] = [
     (SortField::Name, "view.sort.name", "Name"),
     (SortField::Modified, "view.sort.modified", "Date modified"),
     (SortField::Created, "view.sort.created", "Date created"),
     (SortField::Type, "view.sort.type", "Type"),
     (SortField::Size, "view.sort.size", "Size"),
+    (SortField::Tag, "view.sort.tag", "Tags"),
 ];
 
 const BIN_SORTS: [(SortField, &str, &str); 4] = [
@@ -40,13 +44,14 @@ const FOLDERS: [(Folders, &str, &str); 3] = [
     (Folders::Mixed, "view.sort.mixed", "Mix files and folders"),
 ];
 
-const GROUPS: [(GroupField, &str, &str); 6] = [
+const GROUPS: [(GroupField, &str, &str); 7] = [
     (GroupField::None, "view.group.none", "None"),
     (GroupField::Name, "view.group.name", "Name"),
     (GroupField::Modified, "view.group.modified", "Date modified"),
     (GroupField::Created, "view.group.created", "Date created"),
     (GroupField::Type, "view.group.type", "Type"),
     (GroupField::Size, "view.group.size", "Size"),
+    (GroupField::Tag, "view.group.tag", "Tags"),
 ];
 
 const BIN_GROUPS: [(GroupField, &str, &str); 5] = [
@@ -102,7 +107,7 @@ impl Menu<'_> {
         self.cmds.push(cmd);
     }
 
-    fn action(&mut self, id: &'static str, label: &str) {
+    pub(super) fn action(&mut self, id: &'static str, label: &str) {
         self.command(Cmd::Action(id), label, keys_of(id), false);
     }
 
@@ -162,6 +167,18 @@ impl App {
             m.separator();
             m.action("view.columns.fit", "Size all columns to fit");
             m.check("view.columns.autofit", "Always size columns to fit", a.prefs.auto_fit);
+        })
+    }
+
+    pub(super) fn build_tag_menu(&mut self, tag: Option<usize>) -> Vec<MenuItem> {
+        self.collect(|_, m| {
+            if let Some(k) = tag {
+                m.command(Cmd::ShowTag(k), "Show items with this tag", String::new(), false);
+                m.command(Cmd::OpenTagged(k), "Open all tagged items", String::new(), false);
+                m.separator();
+            }
+            m.action("tags.new", "New tag");
+            m.action("tags.manage", "Manage tags");
         })
     }
 
@@ -235,6 +252,19 @@ impl App {
             let pinned = folders.iter().all(|l| self.nav.sidebar.state.pinned.contains(l));
             m.action("item.pin", if pinned { "Unpin from sidebar" } else { "Pin to sidebar" });
         }
+        if t.view_loc.path().kind() == PathKind::Drive {
+            let (any, all) = self.selection_tags();
+            m.submenu("Edit tags", |m| {
+                for (k, tag) in self.tag_defs().iter().enumerate() {
+                    m.command(Cmd::ToggleTag(k), &tag.name, String::new(), all & (1 << k) != 0);
+                }
+                m.separator();
+                m.action("tags.new", "New tag");
+                if any != 0 {
+                    m.action("tags.remove", "Remove tags");
+                }
+            });
+        }
         if files {
             m.action("file.new_folder_with_selection", "New folder with selection");
             if count == 1 && folders.is_empty() {
@@ -289,6 +319,9 @@ impl App {
             }
             Some(Cmd::NewItem(n)) => self.new_item(n),
             Some(Cmd::Place(c)) => self.place_command(c, now),
+            Some(Cmd::ToggleTag(k)) => self.toggle_tag(k),
+            Some(Cmd::ShowTag(k)) => self.show_tag(k),
+            Some(Cmd::OpenTagged(k)) => self.open_all_tagged(k, now),
             None => {}
         }
     }

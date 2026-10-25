@@ -120,7 +120,7 @@ fn sections_collapse_hide_and_come_back() {
     click(header(&app, Section::Wsl), &mut app, MouseButton::Right);
     let m = menu(&mut app);
     assert!(!m.shell);
-    assert_eq!(labels(&m.menu), ["Collapse", "Hide this section", "Pinned *", "Folders *", "Libraries *", "Drives *", "WSL *", "Compact sidebar"]);
+    assert_eq!(labels(&m.menu), ["Collapse", "Hide this section", "Pinned *", "Folders *", "Libraries *", "Drives *", "WSL *", "Tags *", "Compact sidebar"]);
     run(&mut app, &m, "Hide this section");
     assert!(!app.nav.sidebar.headers.iter().any(|h| h.1 == Section::Wsl));
     assert_eq!(side_labels(&app), ["a", "b", "Recycle Bin"]);

@@ -1,5 +1,6 @@
 use super::home::{Recent, Widget};
 use super::menu::Menu;
+use super::tags::G_TAG;
 use super::{centered, App, Drag, Effect, Focus, Hit, Route, ShellMenu, G_DRIVE, G_FOLDER};
 use crate::input::{Key, Mods};
 use crate::library::{self, Library, LibraryOp};
@@ -7,7 +8,8 @@ use crate::location::{Location, ProviderId};
 use crate::open::OpenTarget;
 use crate::path::{FsPath, PathKind};
 use crate::provider::{Launch, ProviderRequest};
-use crate::render::Rect;
+use crate::render::{Color, Rect};
+use crate::tags::Tags;
 use crate::text::{Gfx, TextBackend};
 use crate::theme::Theme;
 use serde::{Deserialize, Serialize};
@@ -177,10 +179,11 @@ pub enum Section {
     Libraries,
     Drives,
     Wsl,
+    Tags,
 }
 
 impl Section {
-    pub const ALL: [Section; 5] = [Section::Pinned, Section::Folders, Section::Libraries, Section::Drives, Section::Wsl];
+    pub const ALL: [Section; 6] = [Section::Pinned, Section::Folders, Section::Libraries, Section::Drives, Section::Wsl, Section::Tags];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -189,6 +192,7 @@ impl Section {
             Section::Libraries => "Libraries",
             Section::Drives => "Drives",
             Section::Wsl => "WSL",
+            Section::Tags => "Tags",
         }
     }
 
@@ -199,6 +203,7 @@ impl Section {
             Section::Libraries => "libraries",
             Section::Drives => "drives",
             Section::Wsl => "wsl",
+            Section::Tags => "tags",
         }
     }
 }
@@ -251,6 +256,7 @@ pub(super) struct Sidebar {
     content_h: f32,
     pub cursor: usize,
     pub press_y: f32,
+    pub tags: Arc<Tags>,
 }
 
 fn pinned_label(loc: &Location) -> String {
@@ -294,9 +300,15 @@ impl Sidebar {
             let loc = Location::parse(&format!("wsl://{d}/"))?;
             Some(Item { section: Section::Wsl, label: d.clone(), glyph: G_LINUX, loc, usage: None })
         }));
+        items.extend(self.tags.defs.iter().map(|t| Item { section: Section::Tags, label: t.name.clone(), glyph: G_TAG, loc: Location::computer(), usage: None }));
         items.retain(|it| !self.is_collapsed(it.section) && !self.is_hidden(it.section));
         self.items = items;
         self.cursor = self.cursor.min(self.items.len().saturating_sub(1));
+    }
+
+    pub fn tag_of(&self, i: usize) -> Option<usize> {
+        let first = self.items.iter().position(|it| it.section == Section::Tags)?;
+        (self.items.get(i)?.section == Section::Tags).then(|| i - first)
     }
 
     pub fn is_pinned(&self, loc: &Location) -> bool {
@@ -319,6 +331,7 @@ impl Sidebar {
             Section::Libraries => !p.libraries.is_empty(),
             Section::Drives => !p.drives.is_empty(),
             Section::Wsl => !p.wsl.is_empty(),
+            Section::Tags => !self.tags.defs.is_empty(),
         }
     }
 
@@ -337,6 +350,13 @@ impl App {
         let old = std::mem::replace(&mut self.nav.sidebar.places, places);
         self.nav.sidebar.rebuild();
         self.places_changed(&old, Instant::now());
+        self.layout();
+        self.dirty = true;
+    }
+
+    pub fn set_tags(&mut self, tags: Arc<Tags>) {
+        self.nav.sidebar.tags = tags;
+        self.nav.sidebar.rebuild();
         self.layout();
         self.dirty = true;
     }
@@ -429,7 +449,7 @@ impl App {
             self.focus = Focus::Sidebar;
             let here = self.current_location().clone();
             let sb = &mut self.nav.sidebar;
-            if let Some(i) = sb.items.iter().position(|it| it.loc == here) {
+            if let Some(i) = sb.items.iter().position(|it| it.loc == here && it.section != Section::Tags) {
                 sb.cursor = i;
             }
             self.reveal_side_cursor();
@@ -539,6 +559,9 @@ impl App {
     }
 
     pub(super) fn open_side_item(&mut self, i: usize, new_tab: bool, now: Instant) {
+        if let Some(k) = self.nav.sidebar.tag_of(i) {
+            return self.show_tag(k);
+        }
         let Some(folder) = self.nav.sidebar.items.get(i).map(|it| it.loc.clone()) else { return };
         let target = if new_tab { OpenTarget::NewTab } else { OpenTarget::CurrentTab };
         self.dispatch(vec![Route { folder, select: None }], target, now);
@@ -643,6 +666,11 @@ impl App {
                 m.place("Hide this section", PlaceCmd::Hide(s), false);
                 m.separator();
             }
+            if section == Some(Section::Tags) {
+                m.action("tags.new", "New tag");
+                m.action("tags.manage", "Manage tags");
+                m.separator();
+            }
             if section.is_none_or(|s| s == Section::Libraries) {
                 m.place("New library", PlaceCmd::NewLibrary, false);
                 m.place("Restore default libraries", PlaceCmd::RestoreLibraries, false);
@@ -661,6 +689,10 @@ impl App {
     pub(super) fn side_menu(&mut self, x: f32, y: f32, h: Hit) {
         match h {
             Hit::Side(i) | Hit::SidePin(i) => {
+                if let Some(k) = self.nav.sidebar.tag_of(i) {
+                    let menu = self.build_tag_menu(Some(k));
+                    return self.flit_menu(x, y, menu);
+                }
                 if let Some(loc) = self.nav.sidebar.items.get(i).map(|it| it.loc.clone()) {
                     self.place_menu(x, y, loc, |_, _| {});
                 }
@@ -726,7 +758,7 @@ impl App {
         }
         for (i, r) in sb.rects.iter().enumerate() {
             if r.contains(x, y) {
-                let pin = !sb.prefs.compact && sb.pin_rect(*r, self.scale).contains(x, y);
+                let pin = !sb.prefs.compact && sb.pin_rect(*r, self.scale).contains(x, y) && sb.tag_of(i).is_none();
                 return Some(if pin { Hit::SidePin(i) } else { Hit::Side(i) });
             }
         }
@@ -849,7 +881,8 @@ impl App {
             }
             let hovered = matches!(self.hover, Hit::Side(k) | Hit::SidePin(k) if k == i);
             let row = Rect::new(r.x, r.y + 1.0, r.w, r.h - 2.0);
-            if it.loc == *here || drop == Some(i) {
+            let tag = sb.tag_of(i).and_then(|k| sb.tags.defs.get(k));
+            if (it.loc == *here && tag.is_none()) || drop == Some(i) {
                 g.dl.round_rect(row, t.selection, s4);
             } else if hovered {
                 g.dl.round_rect(row, t.button_hover, s4);
@@ -859,7 +892,11 @@ impl App {
             } else if focused && sb.cursor == i {
                 g.dl.outline(row, t.focus_ring, s4, 1.0);
             }
-            let color = if it.section == Section::Drives || it.section == Section::Wsl { t.text_dim } else { t.accent };
+            let color = match tag {
+                Some(tag) => Color::rgb(tag.color),
+                None if it.section == Section::Drives || it.section == Section::Wsl => t.text_dim,
+                None => t.accent,
+            };
             if compact {
                 centered(g, r, it.glyph, icons, color);
                 if let Some(used) = it.usage {
@@ -875,7 +912,7 @@ impl App {
             centered(g, icon_r, it.glyph, icons, color);
             let baseline = (r.y + (text_h + m.ascent - m.descent) / 2.0).round();
             let pin_r = sb.pin_rect(Rect::new(r.x, r.y, r.w, text_h), self.scale);
-            let text_right = if hovered { pin_r.x - s4 } else { r.right() - s8 };
+            let text_right = if hovered && tag.is_none() { pin_r.x - s4 } else { r.right() - s8 };
             g.text(r.x + s36, baseline, &it.label, font, t.text, text_right - r.x - s36);
             if let Some(used) = it.usage {
                 let bar = Rect::new(r.x + s36, r.y + text_h - self.s(2.0), (r.right() - s12 - r.x - s36).max(0.0), self.s(4.0));
@@ -883,7 +920,7 @@ impl App {
                 let fill = if used >= 0.9 { t.error } else { t.accent };
                 g.dl.round_rect(Rect::new(bar.x, bar.y, (bar.w * used.clamp(0.0, 1.0)).max(bar.h), bar.h), fill, bar.h / 2.0);
             }
-            if hovered {
+            if hovered && tag.is_none() {
                 if self.hover == Hit::SidePin(i) {
                     g.dl.round_rect(pin_r, t.button_hover, s4);
                 }

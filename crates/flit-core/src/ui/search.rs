@@ -20,7 +20,7 @@ pub const PAGE: u64 = 64;
 const KEEP_ROWS: usize = 4096;
 const KEEP_AROUND: u64 = 2048;
 const G_SEARCH: &str = "\u{E721}";
-const PLACEHOLDER: &str = "Search all files: words, *.ext, ext:, size:, dm:, path:, regex:";
+const PLACEHOLDER: &str = "Search all files: words, *.ext, ext:, size:, dm:, path:, regex:, tag:";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum SearchKey {
@@ -226,6 +226,15 @@ impl App {
             _ => return,
         }
         self.dirty |= self.search.active;
+    }
+
+    pub(super) fn search_for(&mut self, text: &str) {
+        self.search.edit.set(text);
+        let fresh = self.search.gen == 0;
+        self.open_search();
+        if !fresh {
+            self.search_query(Instant::now());
+        }
     }
 
     pub(super) fn search_paste(&mut self, text: &str) {
@@ -637,7 +646,7 @@ impl App {
             let is_dir = r.meta.attrs & attr::DIR != 0;
             let ext_at = if is_dir { r.name.len() } else { r.name.len() - name::ext_len(&r.name) };
             let ext = &r.name[ext_at..];
-            let entry = Entry { size: 0, modified: 0, created: 0, name_off: 0, attrs: r.meta.attrs, name_len: 0, ext_len: 0 };
+            let entry = Entry { size: 0, modified: 0, created: 0, name_off: 0, attrs: r.meta.attrs, name_len: 0, ext_len: 0, tags: 0 };
             let (key, _) = icon_key(&r.name, ext, &entry, icon_px as u32, &r.dir, self.icon_epoch);
             let ir = Rect::new(sl.cols[0].x + pad, y + ((rh - icon_px) / 2.0).round(), icon_px, icon_px);
             if !g.image(key, ir) {
@@ -725,12 +734,14 @@ impl App {
         }
         g.text(status.x + pad, baseline, &left, font, color, status.w / 2.0 - pad);
         let mut right = bumpalo::collections::String::new_in(arena);
+        let tagged = crate::tags::has_tag_term(&s.edit.text);
         right.push_str(match s.backend {
+            _ if tagged => "Tagged files",
             SearchBackend::Connecting => "Connecting to the index",
             SearchBackend::Service => "Index service",
             SearchBackend::Fallback => "Local index (flit-indexd unavailable)",
         });
-        for v in &s.volumes {
+        for v in s.volumes.iter().filter(|_| !tagged) {
             let label = if v.id.is_empty() { "index" } else { &v.id };
             let _ = match &v.state {
                 IndexState::Ready => write!(right, " · {label} {} files", thousands(v.files)),
@@ -738,7 +749,7 @@ impl App {
                 IndexState::Error(e) => write!(right, " · {label} error: {e}"),
             };
         }
-        let rcolor = if s.backend == SearchBackend::Fallback { t.error } else { t.text_dim };
+        let rcolor = if s.backend == SearchBackend::Fallback && !tagged { t.error } else { t.text_dim };
         let rw = g.measure(&right, font).min(status.w / 2.0 - pad);
         g.text(status.right() - pad - rw, baseline, &right, font, rcolor, status.w / 2.0 - pad);
     }

@@ -66,6 +66,21 @@ fn modified_moves_row_under_size_sort() {
 }
 
 #[test]
+fn new_tags_move_rows_only_when_the_view_uses_them() {
+    let mut v = DirView::new(snap(&["a", "b", "c"]));
+    v.set_tags(&[(2, 1), (9, 1)]);
+    assert_eq!((rows(&v), v.listing().entries[2].tags), (vec!["a".to_owned(), "b".into(), "c".into()], 1));
+    let view = ViewSpec { sort: SortSpec { field: SortField::Tag, ..Default::default() }, ..Default::default() };
+    let mut order = Vec::new();
+    sort::sort(v.listing(), &v.snap.keys, view, &mut order);
+    let n = v.listing().len();
+    v.merge_order(order, view, n);
+    assert_eq!(rows(&v), ["c", "a", "b"]);
+    v.set_tags(&[(1, 0b10), (2, 0)]);
+    assert_eq!(rows(&v), ["b", "a", "c"]);
+}
+
+#[test]
 fn merge_after_concurrent_changes() {
     let mut v = DirView::new(snap(&["a", "c"]));
     let view = ViewSpec { sort: SortSpec { field: SortField::Name, descending: true, ..Default::default() }, show_hidden: false, ..Default::default() };

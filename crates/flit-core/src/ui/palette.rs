@@ -1,6 +1,7 @@
 use super::actions::{keys_text, ACTIONS};
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
+use super::tags::TagPick;
 use super::{App, Effect, Hit};
 use crate::input::{Key, Mods};
 use crate::path::FsPath;
@@ -25,6 +26,7 @@ pub(super) enum Pick {
     NewLibrary,
     Library(FsPath),
     LibraryAdd(FsPath),
+    Tags(TagPick),
 }
 
 impl Pick {
@@ -38,6 +40,7 @@ impl Pick {
             Pick::NewLibrary => "Name of the new library",
             Pick::Library(_) => "Enter makes a folder the default save location, Delete removes it from the library",
             Pick::LibraryAdd(_) => "Full path of the folder to include in the library",
+            Pick::Tags(t) => t.placeholder(),
         }
     }
 
@@ -51,11 +54,12 @@ impl Pick {
             Pick::NewLibrary => "Enter creates the library in the Libraries folder",
             Pick::Library(_) => "No matching folders",
             Pick::LibraryAdd(_) => "Enter adds the folder to the library",
+            Pick::Tags(t) => t.empty(),
         }
     }
 
     fn is_input(&self) -> bool {
-        matches!(self, Pick::Shortcut(_) | Pick::Stream(_) | Pick::FolderIcon(_) | Pick::NewLibrary | Pick::LibraryAdd(_))
+        matches!(self, Pick::Shortcut(_) | Pick::Stream(_) | Pick::FolderIcon(_) | Pick::NewLibrary | Pick::LibraryAdd(_)) || matches!(self, Pick::Tags(t) if t.is_input())
     }
 }
 
@@ -183,6 +187,7 @@ impl App {
         match p.pick {
             Pick::Commands => (ACTIONS[p.ids[id]].run)(self, now),
             Pick::Library(lib) => self.library_row(lib, &p.titles[id], false),
+            Pick::Tags(t) => self.tag_choose(t, id, now),
             _ => self.new_item(id),
         }
     }

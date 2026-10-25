@@ -203,6 +203,9 @@ impl Fs for NtFs {
             _ => {}
         }
         let h = open_dir(dir, FILE_LIST_DIRECTORY.0, false)?;
+        if let Some(v) = (out.wants_ids() && dir.kind() == PathKind::Drive).then(|| crate::tags::volume_serial(h)).flatten() {
+            out.set_volume(v);
+        }
         let mut buf = vec![0u64; BUFFER / 8];
         let mut first = true;
         let result = loop {
@@ -219,15 +222,15 @@ impl Fs for NtFs {
             let mut off = 0usize;
             loop {
                 let e = unsafe { base.add(off) } as *const FILE_ID_BOTH_DIR_INFORMATION;
-                let (next, name, meta) = unsafe {
+                let (next, name, meta, id) = unsafe {
                     let name_at = base.add(off + offset_of!(FILE_ID_BOTH_DIR_INFORMATION, FileName)) as *const u16;
                     let name = std::slice::from_raw_parts(name_at, (*e).FileNameLength as usize / 2);
                     let attrs = map_attrs((*e).FileAttributes, (*e).EaSize);
-                    ((*e).NextEntryOffset, name, Meta { size: (*e).EndOfFile as u64, modified: (*e).LastWriteTime, created: (*e).CreationTime, attrs })
+                    ((*e).NextEntryOffset, name, Meta { size: (*e).EndOfFile as u64, modified: (*e).LastWriteTime, created: (*e).CreationTime, attrs }, (*e).FileId as u64)
                 };
                 let dots = name == [b'.' as u16] || name == [b'.' as u16, b'.' as u16];
                 if !dots {
-                    out.push_utf16(name, meta);
+                    out.push_utf16_id(name, meta, id);
                 }
                 if next == 0 {
                     break;
