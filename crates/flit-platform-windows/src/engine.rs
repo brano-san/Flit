@@ -157,6 +157,12 @@ fn remove_dir(p: &FsPath) -> windows::core::Result<()> {
     }
 }
 
+fn free_space(dir: &FsPath) -> Option<u64> {
+    let mut free = 0u64;
+    unsafe { GetDiskFreeSpaceExW(PCWSTR(wide(dir).as_ptr()), Some(&mut free as *mut u64), None, None) }.ok()?;
+    Some(free)
+}
+
 fn make_parents(p: &FsPath) -> bool {
     p.parent().is_some_and(|dir| std::fs::create_dir_all(crate::fileops::std_path(&dir)).is_ok())
 }
@@ -262,6 +268,17 @@ impl<'a> Engine<'a> {
         total.entries += t.entries;
         total.bytes += t.bytes;
         !t.links
+    }
+
+    pub(crate) fn room(&mut self, dest: &FsPath, need: u64) -> bool {
+        let Some(free) = free_space(dest).filter(|&free| free < need) else { return true };
+        let mut msg = format!("There is not enough free space in {}: the items need ", dest.display());
+        flit_core::fmt::size(&mut msg, need);
+        msg.push_str(", but only ");
+        flit_core::fmt::size(&mut msg, free);
+        msg.push_str(" is free");
+        self.note(msg);
+        false
     }
 
     fn ask(&self, src: &FsPath, from: Meta, dst: &FsPath) -> Option<Resolve> {
@@ -439,6 +456,9 @@ impl<'a> Engine<'a> {
         let metas = self.stat_all(items);
         let mut total = Tally::default();
         let native: Vec<bool> = items.iter().zip(&metas).map(|(p, m)| m.is_none_or(|m| self.measure(p, &m, true, &mut total))).collect();
+        if !self.room(dest, total.bytes) {
+            return None;
+        }
         self.running(total);
         self.touch(Some(dest.clone()));
         let mut shell = Vec::new();
@@ -470,7 +490,14 @@ impl<'a> Engine<'a> {
         let metas = self.stat_all(&froms);
         let mut total = Tally::default();
         let across = |(f, t): &(FsPath, FsPath)| !f.root_bytes().eq_ignore_ascii_case(t.root_bytes());
-        let native: Vec<bool> = pairs.iter().zip(&metas).map(|(pair, m)| m.is_none_or(|m| self.measure(&pair.0, &m, across(pair), &mut total))).collect();
+        let mut far = Tally::default();
+        let native: Vec<bool> = pairs.iter().zip(&metas).map(|(pair, m)| m.is_none_or(|m| if across(pair) { self.measure(&pair.0, &m, true, &mut far) } else { self.measure(&pair.0, &m, false, &mut total) })).collect();
+        let far_dest = pairs.iter().find(|p| across(p)).and_then(|(_, to)| to.parent());
+        if far_dest.is_some_and(|d| !self.room(&d, far.bytes)) {
+            return None;
+        }
+        total.entries += far.entries;
+        total.bytes += far.bytes;
         self.running(total);
         let mut shell = Vec::new();
         for (k, (from, to)) in pairs.iter().enumerate() {

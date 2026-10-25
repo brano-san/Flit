@@ -283,6 +283,9 @@ fn copies_trees_natively_and_names_duplicates_like_explorer() {
     let into_itself = run(&mut sh, &FileOp::Copy { items: vec![t.path("src")], dest: t.path(r"src\sub") });
     assert!(into_itself.items.is_empty() && into_itself.error.unwrap().message.contains("inside the source folder"));
     assert!(!t.has(r"src\sub\src"));
+
+    let mut engine = engine::Engine::new(&job);
+    assert!(engine.room(&t.path("dst"), 1) && !engine.room(&t.path("dst"), u64::MAX), "a copy larger than the free space is refused before it starts");
 }
 
 #[test]
