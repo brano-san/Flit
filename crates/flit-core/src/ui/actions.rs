@@ -42,6 +42,10 @@ pub const fn shift(k: Key) -> Chord {
     chord(k, false, true, false)
 }
 
+pub const fn alt_shift(k: Key) -> Chord {
+    chord(k, false, true, true)
+}
+
 pub struct Action {
     pub id: &'static str,
     pub title: &'static str,
@@ -164,6 +168,11 @@ pub static ACTIONS: &[Action] = &[
     Action::new("edit.undo", "Undo", &[ctrl(Key::Char('Z'))], |a, _| a.undo()),
     Action::new("edit.redo", "Redo", &[ctrl(Key::Char('Y'))], |a, _| a.redo()),
     Action::new("item.properties", "Properties", &[alt(Key::Enter)], |a, _| a.properties()),
+    Action::new("view.pane", "Show or hide the info and preview pane", &[ctrl_alt(Key::Char('I'))], |a, _| a.toggle_preview_pane()),
+    Action::new("view.pane.preview", "Show the Preview tab of the pane", &[alt(Key::Char('P'))], |a, _| a.show_preview_tab(false)),
+    Action::new("view.pane.details", "Show the Details tab of the pane", &[alt_shift(Key::Char('P'))], |a, _| a.show_preview_tab(true)),
+    Action::new("item.quick_view", "Quick view", &[], |a, _| a.quick_view()),
+    Action::new("preview.play", "Play or pause the previewed media", &[], |a, _| a.play_preview()),
     Action::new("item.context_menu", "Show context menu", &[shift(Key::F(10)), key(Key::Apps)], |a, _| a.context_menu()),
 ];
 

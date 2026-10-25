@@ -8,6 +8,7 @@ use crossbeam_channel::Sender;
 use flit_core::atlas::Slot;
 use flit_core::desktop_ini::DesktopIni;
 use flit_core::input::{CursorIcon, Event, HitArea};
+use flit_core::preview::{HostCmd, PropGroup};
 use flit_core::render::{DrawList, Rect};
 use flit_core::ui::{Bitmap, DragEvent, IconRequest, NewTemplate, ShellMenu};
 use flit_core::provider::{Conflict, FileOp, Launch, OpCtl, OpProgress, Resolve, Stage};
@@ -91,6 +92,7 @@ pub trait Window {
     fn properties(&self, paths: Vec<FsPath>);
     fn start_drag(&self, paths: Vec<FsPath>);
     fn set_timer(&self, ms: u32);
+    fn host(&self, _cmd: HostCmd) {}
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -131,6 +133,7 @@ pub trait Renderer: Sized {
     fn resize(&mut self, width: u32, height: u32);
     fn upload(&mut self, slot: Slot, rgba: &[u8]);
     fn upload_thumb(&mut self, _slot: Slot, _rgba: &[u8]) {}
+    fn upload_preview(&mut self, _image: Option<&Bitmap>) {}
     fn render(&mut self, list: &DrawList) -> Result<(), RenderError>;
 }
 
@@ -167,6 +170,24 @@ pub trait Shell: Sized {
     }
     fn shortcut_folder(&mut self, _link: &FsPath) -> Option<FsPath> {
         None
+    }
+    fn link_target(&mut self, _link: &FsPath) -> Option<FsPath> {
+        None
+    }
+    fn preview_image(&mut self, _path: &FsPath, _max: u32) -> Option<Bitmap> {
+        None
+    }
+    fn poster(&mut self, _path: &FsPath, _size: u32) -> Option<Bitmap> {
+        None
+    }
+    fn properties(&mut self, _path: &FsPath) -> Vec<PropGroup> {
+        Vec::new()
+    }
+    fn preview_handler(&mut self, _ext: &[u8]) -> Option<String> {
+        None
+    }
+    fn quick_view(&mut self, _path: &FsPath) -> bool {
+        false
     }
 }
 

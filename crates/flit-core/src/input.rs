@@ -61,6 +61,7 @@ pub enum Event {
     DevicesChanged,
     Timer,
     ClipboardChanged(u32),
+    Hosted(crate::preview::HostEvent),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -69,6 +70,7 @@ pub enum CursorIcon {
     Text,
     Hand,
     ResizeHorizontal,
+    ResizeVertical,
     Scroll,
 }
 

@@ -122,7 +122,7 @@ impl App {
     }
 
     pub(super) fn layout_filter(&mut self, x: f32, top: f32) {
-        let (w, h) = (self.size.0 - x, self.filter_bar_h());
+        let (w, h) = (self.layout.header.right() - x, self.filter_bar_h());
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
         let r = &mut self.nav.filter;

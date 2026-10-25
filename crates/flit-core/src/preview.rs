@@ -5,6 +5,7 @@ use crate::hash::FxHashMap;
 use crate::name;
 use crate::path::FsPath;
 use crate::provider::GenToken;
+use crate::render::Rect;
 use crate::ui::Bitmap;
 use std::ops::Range;
 use syntax::{Syntax, SYNTAXES};
@@ -21,11 +22,11 @@ pub const MAX_PROPS: usize = 120;
 
 const IMAGES: &[&str] = &["jpg", "jpeg", "jpe", "jfif", "png", "gif", "bmp", "dib", "tif", "tiff", "ico", "webp", "heic", "heif", "avif", "jxr", "wdp", "dds", "jxl"];
 const AUDIO: &[&str] = &["mp3", "wav", "wma", "flac", "m4a", "aac", "ogg", "oga", "opus", "aif", "aiff", "amr", "ac3"];
-const VIDEO: &[&str] = &["mp4", "m4v", "mov", "wmv", "avi", "mkv", "webm", "mpg", "mpeg", "3gp", "3g2", "ts", "m2ts", "mts", "asf"];
+const VIDEO: &[&str] = &["mp4", "m4v", "mov", "wmv", "avi", "mkv", "webm", "mpg", "mpeg", "3gp", "3g2", "m2ts", "mts", "asf"];
 const TEXT: &[&str] = &["txt", "log", "csv", "tsv", "nfo", "diz", "srt", "vtt", "lst", "text", "readme", "gitignore", "gitattributes"];
 const MARKDOWN: &[&str] = &["md", "markdown", "mdown", "mkd", "mdx"];
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Kind {
     Folder,
     Image,
@@ -411,6 +412,35 @@ pub struct PreviewRequest {
     pub size: u64,
     pub details: bool,
     pub px: u32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Hosted {
+    Handler(String),
+    Media { video: bool },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MediaCmd {
+    Play,
+    Pause,
+    Seek(f64),
+    Volume(f32),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum HostCmd {
+    Show { gen: u64, what: Hosted, path: FsPath, rect: Option<Rect>, volume: f32, bg: u32 },
+    Place(Option<Rect>),
+    Media(MediaCmd),
+    Close,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum HostEvent {
+    Ready { gen: u64, ms: u32 },
+    Failed { gen: u64, message: String },
+    Media { gen: u64, position: f64, duration: f64, playing: bool },
 }
 
 #[cfg(test)]

@@ -259,7 +259,7 @@ fn load_cursor(c: CursorIcon) -> HCURSOR {
         CursorIcon::Text => IDC_IBEAM,
         CursorIcon::Hand => IDC_HAND,
         CursorIcon::ResizeHorizontal => IDC_SIZEWE,
-        CursorIcon::Scroll => IDC_SIZENS,
+        CursorIcon::ResizeVertical | CursorIcon::Scroll => IDC_SIZENS,
     };
     unsafe { LoadCursorW(None, id).unwrap_or_default() }
 }
