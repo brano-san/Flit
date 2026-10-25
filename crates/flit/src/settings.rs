@@ -28,7 +28,7 @@ pub enum Reply {
 }
 
 pub fn file<P: Platform>() -> Option<PathBuf> {
-    P::state_dir().map(|d| d.join("settings.json"))
+    P::config_dir().map(|d| d.join("settings.json"))
 }
 
 pub fn read(path: &Path) -> Option<String> {

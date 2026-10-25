@@ -1,12 +1,16 @@
 #![cfg(target_os = "linux")]
 
 mod fonts;
-mod fs;
+pub mod fs;
 mod gl;
 mod input;
-mod instance;
-mod places;
-mod shell;
+pub mod instance;
+pub mod places;
+pub mod shell;
 mod text;
 mod window;
-mod xdg;
+pub mod xdg;
+
+#[cfg(test)]
+#[path = "../test/temp.rs"]
+mod temp;
