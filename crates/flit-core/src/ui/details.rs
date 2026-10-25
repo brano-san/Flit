@@ -603,8 +603,9 @@ impl App {
             FsErrorKind::NotADirectory => "This location is not a folder",
             FsErrorKind::Unavailable => "This location is not available",
             FsErrorKind::Other => "This folder cannot be opened",
+            FsErrorKind::NoMedia => "There is no disc or memory card in this drive",
         };
-        let detail = format!("{e}. Press F5 to try again.");
+        let detail = if e.kind == FsErrorKind::NoMedia { format!("{e}. Insert one and press F5, or eject the drive.") } else { format!("{e}. Press F5 to try again.") };
         let (big, small) = (self.ui_font(16.0), self.ui_font(13.0));
         let y = list.y + self.s(48.0);
         centered(g, Rect::new(list.x, y, list.w, self.s(32.0)), G_WARNING, self.icon_font(24.0), th.error);

@@ -235,6 +235,9 @@ impl Shell for ShellCom {
     }
 
     fn launch(&mut self, launch: &Launch) -> Result<(), PlatformError> {
+        if let Launch::Eject(drive) = launch {
+            return eject(drive);
+        }
         commands(launch, windows_terminal().as_deref()).iter().try_for_each(execute)
     }
 
@@ -270,6 +273,8 @@ pub(crate) fn commands(launch: &Launch, terminal: Option<&str>) -> Vec<Command> 
             let args = args.iter().map(|a| quote_path(&text(a))).collect::<Vec<_>>().join(" ");
             vec![Command { program: text(program), args, dir: program.parent().map(|d| text(&d)), admin: false }]
         }
+        Launch::Run { program, args, dir } => vec![Command { program: program.clone(), args: args.clone(), dir: dir.as_ref().map(text), admin: false }],
+        Launch::Eject(_) => Vec::new(),
         Launch::Terminal { dirs, admin } => match terminal {
             Some(wt) => {
                 let tab = |d: &FsPath| match Location::from_local(d.clone()) {
@@ -312,6 +317,20 @@ fn execute(c: &Command) -> Result<(), PlatformError> {
         Err(e) if e.code() == ERROR_CANCELLED.to_hresult() => Ok(()),
         r => r.map_err(err),
     }
+}
+
+fn eject(drive: &FsPath) -> Result<(), PlatformError> {
+    let file = wide(drive);
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOASYNC | SEE_MASK_INVOKEIDLIST,
+        hwnd: owner_window().unwrap_or_default(),
+        lpVerb: w!("eject"),
+        lpFile: PCWSTR(file.as_ptr()),
+        nShow: SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+    unsafe { ShellExecuteExW(&mut info) }.map_err(err)
 }
 
 pub(crate) unsafe fn link_target(link: &FsPath) -> Option<FsPath> {
