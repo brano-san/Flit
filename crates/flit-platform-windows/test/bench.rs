@@ -427,6 +427,78 @@ fn bench_drag_setup() {
     });
 }
 
+fn timed<T>(label: &str, f: impl FnOnce() -> T) -> T {
+    let t = Instant::now();
+    let out = f();
+    eprintln!("BENCH {label:<52} {:>9.3} ms", t.elapsed().as_secs_f64() * 1000.0);
+    out
+}
+
+#[test]
+#[ignore]
+fn bench_first_drag() {
+    use windows::core::w;
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+    use windows::Win32::System::Ole::{OleInitialize, DROPEFFECT_MOVE};
+    use windows::Win32::UI::Shell::{IDragSourceHelper, IDropTargetHelper, CLSID_DragDropHelper};
+    use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, WINDOW_EX_STYLE, WS_OVERLAPPEDWINDOW};
+    let d = Dir::temp("firstdrag");
+    std::fs::create_dir(d.0.join("dst")).unwrap();
+    let wallpaper = Path::new(r"C:\Windows\Web\Wallpaper\Windows\img0.jpg");
+    let picture = wallpaper.exists().then(|| {
+        std::fs::copy(wallpaper, d.0.join("photo.jpg")).unwrap();
+        d.path("photo.jpg")
+    });
+    let files: Vec<FsPath> = (0..4).map(|k| d.file(&format!("f{k}.txt"), 10)).collect();
+    timed("OleInitialize", || unsafe { OleInitialize(None).unwrap() });
+    let target: IDropTargetHelper = timed("CoCreateInstance(DragDropHelper) first", || unsafe { CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER).unwrap() });
+    let hwnd = unsafe { CreateWindowExW(WINDOW_EX_STYLE(0), w!("STATIC"), w!("flit-bench"), WS_OVERLAPPEDWINDOW, 0, 0, 200, 200, None, None, None, None).unwrap() };
+    let data = |f: &FsPath| -> IDataObject { Pidls::parse(std::slice::from_ref(f)).unwrap().ui_object(hwnd).unwrap() };
+    let source_image = |label: &str, obj: &IDataObject| {
+        timed(label, || unsafe {
+            let helper: IDragSourceHelper = CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER).unwrap();
+            let _ = helper.InitializeFromWindow(Some(hwnd), Some(&POINT { x: 8, y: 8 }), obj);
+        })
+    };
+    let target_enter = |label: &str, obj: &IDataObject| {
+        timed(label, || unsafe {
+            let _ = target.DragEnter(hwnd, obj, &POINT { x: -4000, y: -4000 }, DROPEFFECT_MOVE);
+            let _ = target.DragLeave();
+        })
+    };
+    let first = timed("data object first", || data(&files[0]));
+    timed("data object second", || drop(data(&files[1])));
+    source_image("drag image (txt) first", &first);
+    source_image("drag image (txt) second", &data(&files[1]));
+    if let Some(pic) = &picture {
+        source_image("drag image (jpg) first", &data(pic));
+        source_image("drag image (jpg) second", &data(pic));
+    }
+    timed("CF_HDROP paths first", || crate::dragdrop::data_paths(&first));
+    target_enter("drop target helper DragEnter+Leave first", &first);
+    target_enter("drop target helper DragEnter+Leave second", &data(&files[2]));
+    let mv = |k: usize| {
+        let (item, dest) = (files[k].clone(), d.path("dst"));
+        std::thread::spawn(move || {
+            let t = Instant::now();
+            let mut sh = ShellCom::new().unwrap();
+            let ready = t.elapsed();
+            ok(run(&mut sh, &FileOp::Move { items: vec![item], dest }));
+            (ready, t.elapsed())
+        })
+        .join()
+        .unwrap()
+    };
+    for label in ["first", "second"] {
+        let (ready, all) = mv(if label == "first" { 0 } else { 1 });
+        eprintln!("BENCH engine move {label:<41} {:>9.3} ms (ShellCom::new {:.3} ms)", all.as_secs_f64() * 1000.0, ready.as_secs_f64() * 1000.0);
+    }
+    unsafe {
+        let _ = DestroyWindow(hwnd);
+    }
+}
+
 #[test]
 #[ignore]
 fn bench_recycle_bin_listing() {

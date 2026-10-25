@@ -509,11 +509,11 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         self.flush(window);
     }
 
-    fn drag(&mut self, window: &Win<P>, event: DragEvent) -> u32 {
-        let Some(st) = self.windows.get_mut(&window.id()) else { return 0 };
-        let effect = st.app.drag(&event, Instant::now());
+    fn drag(&mut self, window: &Win<P>, event: DragEvent) -> DropReply {
+        let Some(st) = self.windows.get_mut(&window.id()) else { return DropReply::default() };
+        let reply = DropReply { effect: st.app.drag(&event, Instant::now()), caption: st.app.drop_caption() };
         self.flush(window);
-        effect
+        reply
     }
 
     fn destroyed(&mut self, window: &Win<P>) {

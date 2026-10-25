@@ -58,14 +58,21 @@ pub(crate) unsafe fn global_bytes(h: HGLOBAL) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-unsafe fn put(format: u32, bytes: &[u8]) -> bool {
-    let Ok(h) = GlobalAlloc(GMEM_MOVEABLE, bytes.len()) else { return false };
+pub(crate) unsafe fn global(bytes: &[u8]) -> Option<HGLOBAL> {
+    let h = GlobalAlloc(GMEM_MOVEABLE, bytes.len()).ok()?;
     let p = GlobalLock(h) as *mut u8;
-    let owned_by_clipboard = !p.is_null() && {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
-        let _ = GlobalUnlock(h);
-        SetClipboardData(format, Some(HANDLE(h.0))).is_ok()
-    };
+    if p.is_null() {
+        let _ = GlobalFree(Some(h));
+        return None;
+    }
+    std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
+    let _ = GlobalUnlock(h);
+    Some(h)
+}
+
+unsafe fn put(format: u32, bytes: &[u8]) -> bool {
+    let Some(h) = global(bytes) else { return false };
+    let owned_by_clipboard = SetClipboardData(format, Some(HANDLE(h.0))).is_ok();
     if !owned_by_clipboard {
         let _ = GlobalFree(Some(h));
     }

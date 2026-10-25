@@ -92,6 +92,12 @@ pub trait Window {
     fn set_timer(&self, ms: u32);
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DropReply {
+    pub effect: u32,
+    pub caption: Option<(String, String)>,
+}
+
 pub trait WindowHandler<W: WindowSystem> {
     fn created(&mut self, window: &W::Window);
     fn event(&mut self, window: &W::Window, event: Event);
@@ -99,7 +105,7 @@ pub trait WindowHandler<W: WindowSystem> {
     fn redraw(&mut self, window: &W::Window);
     fn woken(&mut self, window: &W::Window);
     fn destroyed(&mut self, window: &W::Window);
-    fn drag(&mut self, window: &W::Window, event: DragEvent) -> u32;
+    fn drag(&mut self, window: &W::Window, event: DragEvent) -> DropReply;
 }
 
 pub trait WindowSystem: Sized + 'static {

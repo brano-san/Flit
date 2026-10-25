@@ -4,7 +4,7 @@ use flit_core::input::{CursorIcon, Event, HitArea, Key, Mods, MouseButton};
 use flit_core::render::Rect;
 use flit_core::ui::{DragEvent, ShellMenu};
 use flit_core::FsPath;
-use flit_platform::{Placement, PlatformError, Waker, Window, WindowHandler, WindowId, WindowOptions, WindowSystem};
+use flit_platform::{DropReply, Placement, PlatformError, Waker, Window, WindowHandler, WindowId, WindowOptions, WindowSystem};
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -305,17 +305,17 @@ impl<H: WindowHandler<Win32>> Node<H> {
         self.shared().handler.try_borrow_mut().map_or(HitArea::Client, |mut h| h.hit_test(&self.window, x, y))
     }
 
-    fn drag(&self, ev: DragEvent) -> u32 {
+    fn drag(&self, ev: DragEvent) -> DropReply {
         if !self.ready.get() {
-            return 0;
+            return DropReply::default();
         }
         let sh = self.shared();
-        let effect = sh.handler.try_borrow_mut().map_or(0, |mut h| h.drag(&self.window, ev));
+        let reply = sh.handler.try_borrow_mut().map_or_else(|_| DropReply::default(), |mut h| h.drag(&self.window, ev));
         sh.flush();
         if self.window.redraw.get() {
             self.redraw_now();
         }
-        effect
+        reply
     }
 
     fn redraw_now(&self) {
@@ -397,7 +397,6 @@ impl<H: WindowHandler<Win32>> Shared<H> {
         }
         node.window.dpi.set(GetDpiForWindow(hwnd));
         apply_dark(hwnd, opts.dark);
-        crate::dragdrop::register(hwnd, Rc::as_ptr(&node) as *const (), drag_thunk::<H>);
         let _ = AddClipboardFormatListener(hwnd);
         crate::context_menu::prewarm();
         let _ = SetWindowPos(hwnd, None, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
@@ -410,6 +409,7 @@ impl<H: WindowHandler<Win32>> Shared<H> {
         self.flush();
         node.redraw_now();
         let _ = ShowWindow(hwnd, if maximized { SW_SHOWMAXIMIZED } else { SW_SHOW });
+        crate::dragdrop::register(hwnd, Rc::as_ptr(&node) as *const (), drag_thunk::<H>);
         Ok(())
     }
 
@@ -525,7 +525,7 @@ impl WindowSystem for Win32 {
     }
 }
 
-unsafe fn drag_thunk<H: WindowHandler<Win32>>(node: *const (), ev: DragEvent) -> u32 {
+unsafe fn drag_thunk<H: WindowHandler<Win32>>(node: *const (), ev: DragEvent) -> DropReply {
     (*(node as *const Node<H>)).drag(ev)
 }
 
