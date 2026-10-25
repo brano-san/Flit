@@ -10,6 +10,7 @@ mod engine;
 mod fileops;
 mod fs;
 mod instance;
+mod library;
 mod mft;
 mod pipe;
 mod places;
@@ -22,6 +23,7 @@ mod tags;
 mod walk_index;
 mod watcher;
 mod window;
+mod winsearch;
 mod wsl;
 
 pub use d3d::{D3dDevice, D3dRenderer};
@@ -165,6 +167,18 @@ impl Platform for Windows {
         places::templates()
     }
 
+    fn libraries() -> Vec<flit_core::library::Library> {
+        library::libraries()
+    }
+
+    fn library(op: &flit_core::library::LibraryOp) -> Result<(), PlatformError> {
+        library::apply(op)
+    }
+
+    fn recent(limit: usize) -> (Vec<flit_core::ui::Recent>, bool) {
+        places::recent(limit)
+    }
+
     fn double_click_time() -> std::time::Duration {
         std::time::Duration::from_millis(unsafe { GetDoubleClickTime() }.into())
     }
@@ -183,6 +197,10 @@ impl Platform for Windows {
 
     fn file_key(path: &FsPath) -> Option<flit_core::tags::FileKey> {
         tags::file_key(path)
+    }
+
+    fn shell_search(folder: Option<&FsPath>, query: &str, keep_going: &dyn Fn() -> bool, found: &mut dyn FnMut(FsPath, flit_core::Meta)) -> Result<(), PlatformError> {
+        winsearch::search(folder, query, keep_going, found)
     }
 
     fn resolve_files(keys: &[flit_core::tags::FileKey]) -> Vec<flit_platform::Resolved> {

@@ -4,13 +4,15 @@ use super::details::Columns;
 use super::layouts::{LayoutMode, Sizes};
 use super::{Effect, LoadStats};
 use crate::input::Mods;
-use crate::listing::{attr, DirChange, DirSnapshot};
+use crate::library;
+use crate::listing::{attr, DirChange, DirSnapshot, Listing};
 use crate::location::{Location, ProviderId};
 use crate::name;
 use crate::nav::History;
+use crate::path::FsPath;
 use crate::provider::{GenToken, ProviderRequest, SnapshotSlot, TabId};
 use crate::recycle;
-use crate::sort::{CaseMode, GroupField, GroupSpec, SortField, SortSpec, ViewSpec};
+use crate::sort::{CaseMode, GroupField, GroupSpec, SortField, SortKeys, SortSpec, ViewSpec};
 use crate::view::DirView;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -123,6 +125,11 @@ impl Tab {
         self.crumbs = loc.crumbs();
         self.stats = LoadStats::default();
         let path = loc.path().clone();
+        if loc.is_home_page() {
+            fx.push(Effect::Provider { provider, req: ProviderRequest::Watch { tab: self.id, gen, path: None } });
+            let empty = DirSnapshot { gen, path, listing: Listing::default(), keys: SortKeys::new(case), order: Vec::new(), view: self.view_spec, done: true, error: None, elapsed: Duration::ZERO };
+            return self.slot.publish(Arc::new(empty));
+        }
         if self.mode == LayoutMode::Adaptive {
             self.slot.ask_kind(gen);
         }
@@ -212,8 +219,13 @@ impl Tab {
         let l = self.view.as_ref().unwrap().listing();
         match self.view_loc.is_recycle_bin() {
             true => recycle::original(l, i).map_or_else(|| self.view_loc.clone(), Location::from_local),
-            false => self.view_loc.join(l.name(i)),
+            false => self.entry_dir(i).join(l.name(i)),
         }
+    }
+
+    pub(super) fn entry_dir(&self, i: u32) -> Location {
+        let folder = self.view.as_ref().filter(|_| library::is_library(self.view_loc.path())).and_then(|v| FsPath::parse_exact(library::folder(v.listing(), i)));
+        folder.map_or_else(|| self.view_loc.clone(), Location::from_local)
     }
 
     pub(super) fn selection(&self) -> Vec<u32> {

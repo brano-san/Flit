@@ -91,6 +91,8 @@ pub enum FileOp {
 pub enum Launch {
     Terminal { dirs: Vec<FsPath>, admin: bool },
     With { program: FsPath, args: Vec<FsPath> },
+    Run { program: String, args: String, dir: Option<FsPath> },
+    Eject(FsPath),
 }
 
 impl Launch {
@@ -99,6 +101,8 @@ impl Launch {
         Some(match self {
             Launch::Terminal { dirs, admin } => Launch::Terminal { dirs: all(dirs)?, admin: *admin },
             Launch::With { program, args } => Launch::With { program: f(program)?, args: all(args)? },
+            Launch::Run { program, args, dir } => Launch::Run { program: program.clone(), args: args.clone(), dir: dir.as_ref().map(&f).unwrap_or(None) },
+            Launch::Eject(drive) => Launch::Eject(f(drive)?),
         })
     }
 }

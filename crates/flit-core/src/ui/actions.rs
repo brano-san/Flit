@@ -1,8 +1,11 @@
+use super::home::Widget;
 use super::sidebar::KnownFolder;
 use super::tags::TagPick;
-use super::{App, Column, Effect, LayoutMode, Route};
+use super::{App, Column, Effect, LayoutMode, Route, WindowCmd};
 use crate::input::{Key, Mods};
+use crate::library::LibraryOp;
 use crate::location::Location;
+use crate::path::PathKind;
 use crate::open::OpenTarget;
 use crate::sort::{DateUnit, Folders, GroupField, SortField};
 use std::time::Instant;
@@ -68,18 +71,30 @@ pub static ACTIONS: &[Action] = &[
     Action::new("nav.refresh", "Refresh", &[key(Key::F(5)), ctrl(Key::Char('R'))], |a, now| a.refresh(now)),
     Action::new("nav.address", "Focus the address bar", &[ctrl(Key::Char('L')), alt(Key::Char('D')), key(Key::F(4))], |a, _| a.begin_edit()),
     Action::new("nav.home", "Go to the home folder", &[], |a, now| a.go_known(KnownFolder::Home, now)),
+    Action::new("nav.home_page", "Go to the Home page", &[], |a, now| a.go_home_page(false, now)),
     Action::new("nav.computer", "Go to This PC", &[], |a, now| a.navigate(Location::computer(), now)),
     Action::new("nav.recycle_bin", "Go to the Recycle Bin", &[], |a, now| a.navigate(Location::recycle_bin(), now)),
     Action::new("tab.new", "New tab", &[ctrl(Key::Char('T'))], |a, now| a.new_tab_here(now)),
     Action::new("tab.close", "Close tab", &[ctrl(Key::Char('W')), ctrl(Key::F(4))], |a, _| a.close_tab(a.cur)),
     Action::new("tab.reopen", "Reopen closed tab", &[ctrl_shift(Key::Char('T'))], |a, now| a.reopen_tab(now)),
+    Action::new("tab.close_all", "Close all tabs", &[ctrl_shift(Key::Char('W'))], |a, _| a.close_all_tabs()),
+    Action::new("tab.close_others", "Close other tabs", &[], |a, _| a.close_tabs(|i, cur| i == cur)),
+    Action::new("tab.close_left", "Close tabs to the left", &[], |a, _| a.close_tabs(|i, cur| i >= cur)),
+    Action::new("tab.close_right", "Close tabs to the right", &[], |a, _| a.close_tabs(|i, cur| i <= cur)),
+    Action::new("tab.move_to_window", "Move tab to a new window", &[], |a, _| a.move_tab_to_window()),
     Action::new("tab.next", "Next tab", &[ctrl(Key::Tab)], |a, _| a.select_tab((a.cur + 1) % a.tabs.len())),
     Action::new("tab.previous", "Previous tab", &[ctrl_shift(Key::Tab)], |a, _| a.select_tab((a.cur + a.tabs.len() - 1) % a.tabs.len())),
     Action::new("window.new", "New window", &[ctrl(Key::Char('N'))], |a, _| a.new_window_here()),
+    Action::new("window.fullscreen", "Full screen", &[key(Key::F(11))], |a, _| a.effects.push(Effect::Window(WindowCmd::Fullscreen))),
+    Action::new("window.compact", "Mini window on top of other windows", &[key(Key::F(12))], |a, _| a.effects.push(Effect::Window(WindowCmd::Compact(None)))),
+    Action::new("window.compact_on", "Enter the mini window", &[ctrl_alt(Key::Up)], |a, _| a.effects.push(Effect::Window(WindowCmd::Compact(Some(true))))),
+    Action::new("window.compact_off", "Leave the mini window", &[ctrl_alt(Key::Down)], |a, _| a.effects.push(Effect::Window(WindowCmd::Compact(Some(false))))),
     Action::new("view.filter", "Filter items in this folder", &[ctrl(Key::Char('F'))], |a, _| a.open_filter()),
     Action::new("search.open", "Search all drives", &[ctrl(Key::Char('E')), ctrl_shift(Key::Char('F'))], |a, _| a.open_search()),
     Action::new("search.group_folder", "Group search results by folder", &[], |a, _| a.toggle_search_groups()),
     Action::new("search.folder", "Search this folder and its subfolders", &[key(Key::F(3))], |a, _| a.open_folder_search()),
+    Action::new("search.clear_history", "Clear the history of searches", &[], |a, _| a.clear_search_history()),
+    Action::new("search.reveal", "Open the location of the found item", &[], |a, now| a.reveal_search_focus(now)),
     Action::new("view.hidden", "Show or hide hidden files", &[ctrl(Key::Char('H'))], |a, _| a.toggle_hidden()),
     Action::new("view.sort.name", "Sort by name", &[], |a, _| a.sort_by(SortField::Name)),
     Action::new("view.sort.modified", "Sort by date modified", &[], |a, _| a.sort_by(SortField::Modified)),
@@ -143,12 +158,26 @@ pub static ACTIONS: &[Action] = &[
     Action::new("toolbar.toggle", "Show or hide the toolbar", &[ctrl_shift(Key::Char('B'))], |a, _| a.toggle_toolbar()),
     Action::new("toolbar.customize", "Customize the toolbar", &[], |a, _| a.customize_toolbar()),
     Action::new("toolbar.reset", "Reset the toolbar to defaults", &[], |a, _| a.reset_toolbar()),
+    Action::new("sidebar.compact", "Switch between the full and the compact sidebar", &[], |a, _| a.toggle_compact()),
+    Action::new("sidebar.sections", "Show and expand all sidebar sections", &[], |a, _| a.show_all_sections()),
+    Action::new("home.quick_access", "Show or hide Quick access on the Home page", &[], |a, _| a.toggle_widget(Widget::QuickAccess)),
+    Action::new("home.drives", "Show or hide Drives on the Home page", &[], |a, _| a.toggle_widget(Widget::Drives)),
+    Action::new("home.tags", "Show or hide Tags on the Home page", &[], |a, _| a.toggle_widget(Widget::Tags)),
+    Action::new("home.recent","Show or hide Recent files on the Home page", &[], |a, _| a.toggle_widget(Widget::Recent)),
+    Action::new("home.clear_recent", "Clear the list of recent files on the Home page", &[], |a, _| a.clear_recent()),
+    Action::new("libraries.new", "New library", &[], |a, _| a.ask_new_library()),
+    Action::new("libraries.restore", "Restore the default libraries", &[], |a, _| a.effects.push(Effect::Library(LibraryOp::RestoreDefaults))),
+    Action::new("library.locations", "Choose the folders of this library", &[], |a, _| {
+        if let Some(lib) = a.current_library() {
+            a.library_dialog(lib);
+        }
+    }),
     Action::new("select.all", "Select all", &[ctrl(Key::Char('A'))], |a, _| a.select_all()),
     Action::new("select.none", "Clear selection", &[key(Key::Escape), ctrl_shift(Key::Char('A'))], |a, _| a.clear_selection()),
     Action::new("select.invert", "Invert selection", &[ctrl(Key::Char('I'))], |a, _| a.invert_selection()),
     Action::new("item.open", "Open selected items", &[key(Key::Enter)], |a, now| a.open_selection(now)),
-    Action::new("item.open_tab", "Open the selected folders in new tabs", &[], |a, now| a.open_folders_in(OpenTarget::NewTab, now)),
-    Action::new("item.open_window", "Open the selected folders in a new window", &[], |a, now| a.open_folders_in(OpenTarget::NewWindow, now)),
+    Action::new("item.open_tab", "Open the selected folders in new tabs", &[ctrl(Key::Enter)], |a, now| a.open_folders_in(OpenTarget::NewTab, now)),
+    Action::new("item.open_window", "Open the selected folders in a new window", &[ctrl_alt(Key::Enter)], |a, now| a.open_folders_in(OpenTarget::NewWindow, now)),
     Action::new("item.pin", "Pin or unpin the selected folders", &[], |a, _| a.pin_selection()),
     Action::new("tags.new", "New tag for the selected items", &[], |a, _| a.new_tag(true)),
     Action::new("tags.remove", "Remove all tags from the selected items", &[], |a, _| a.remove_tags()),
@@ -243,6 +272,25 @@ impl App {
         self.dirty = true;
         (a.run)(self, now);
         true
+    }
+
+    pub fn available(&self, id: &str) -> bool {
+        let kind = self.current_location().path().kind();
+        let (home, bin, library) = (kind == PathKind::Home, kind == PathKind::RecycleBin, self.current_library().is_some());
+        let no_files = home || bin || kind == PathKind::Computer;
+        match id.split('.').next().unwrap_or_default() {
+            _ if id.ends_with("origin") || id == "view.column.deleted" => bin,
+            "bin" => bin,
+            "home" => home,
+            "library" => library,
+            "search" if id == "search.group_folder" => self.search.active,
+            "search" if id == "search.folder" => !no_files,
+            "search" if id == "search.clear_history" => !self.search_history().is_empty(),
+            "file" => !no_files,
+            "view" | "select" | "item" => !home,
+            "app" => !(no_files || library),
+            _ => !(id == "nav.up" && self.current_location().parent().is_none()),
+        }
     }
 
     pub(super) fn remember_closed(&mut self, loc: Location) {

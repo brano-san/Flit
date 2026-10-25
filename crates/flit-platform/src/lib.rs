@@ -102,7 +102,16 @@ pub trait Window {
     fn properties(&self, paths: Vec<FsPath>);
     fn start_drag(&self, paths: Vec<FsPath>);
     fn set_timer(&self, ms: u32);
+    fn to_screen(&self, x: f32, y: f32) -> (i32, i32) {
+        (x as i32, y as i32)
+    }
+    fn window_at(&self, _x: f32, _y: f32) -> Option<(WindowId, f32, f32)> {
+        None
+    }
+    fn toggle_fullscreen(&self) {}
+    fn set_compact(&self, _on: Option<bool>) {}
     fn host(&self, _cmd: HostCmd) {}
+    fn share(&self, _paths: Vec<FsPath>) {}
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -332,6 +341,15 @@ pub trait Platform: 'static {
     fn templates() -> Vec<NewTemplate> {
         Vec::new()
     }
+    fn libraries() -> Vec<flit_core::library::Library> {
+        Vec::new()
+    }
+    fn library(_op: &flit_core::library::LibraryOp) -> Result<(), PlatformError> {
+        Err(PlatformError::new(-1, "libraries are not available on this system"))
+    }
+    fn recent(_limit: usize) -> (Vec<flit_core::ui::Recent>, bool) {
+        (Vec::new(), false)
+    }
     fn double_click_time() -> std::time::Duration {
         std::time::Duration::from_millis(500)
     }
@@ -347,5 +365,8 @@ pub trait Platform: 'static {
     }
     fn resolve_files(keys: &[FileKey]) -> Vec<Resolved> {
         keys.iter().map(|_| Resolved::Unavailable).collect()
+    }
+    fn shell_search(_folder: Option<&FsPath>, _query: &str, _keep_going: &dyn Fn() -> bool, _found: &mut dyn FnMut(FsPath, flit_core::Meta)) -> Result<(), PlatformError> {
+        Err(PlatformError::new(-1, "Windows Search is not available on this system"))
     }
 }

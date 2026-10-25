@@ -29,7 +29,8 @@ pub(crate) fn fs_error(code: WIN32_ERROR) -> FsError {
         ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND | ERROR_INVALID_NAME | ERROR_BAD_PATHNAME => FsErrorKind::NotFound,
         ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION => FsErrorKind::AccessDenied,
         ERROR_DIRECTORY => FsErrorKind::NotADirectory,
-        ERROR_NOT_READY | ERROR_BAD_NETPATH | ERROR_BAD_NET_NAME | ERROR_NETNAME_DELETED | ERROR_UNEXP_NET_ERR | ERROR_DEV_NOT_EXIST | ERROR_NO_MEDIA_IN_DRIVE => FsErrorKind::Unavailable,
+        ERROR_NOT_READY | ERROR_NO_MEDIA_IN_DRIVE => FsErrorKind::NoMedia,
+        ERROR_BAD_NETPATH | ERROR_BAD_NET_NAME | ERROR_NETNAME_DELETED | ERROR_UNEXP_NET_ERR | ERROR_DEV_NOT_EXIST => FsErrorKind::Unavailable,
         _ => FsErrorKind::Other,
     };
     FsError { kind, code: code.0 as i64 }
@@ -202,6 +203,7 @@ impl Fs for NtFs {
         match dir.kind() {
             PathKind::Computer => return volumes(out),
             PathKind::RecycleBin => return crate::recycle::list(&crate::recycle::roots(), out),
+            _ if flit_core::library::is_library(dir) => return crate::library::list(dir, out),
             _ => {}
         }
         let h = open_dir(dir, FILE_LIST_DIRECTORY.0, false)?;
@@ -217,7 +219,7 @@ impl Fs for NtFs {
                 break Ok(());
             }
             if st.is_err() {
-                break Err(nt_error(st));
+                break Err(if first && st == STATUS_INVALID_PARAMETER { fs_error(ERROR_DIRECTORY) } else { nt_error(st) });
             }
             first = false;
             let base = buf.as_ptr() as *const u8;

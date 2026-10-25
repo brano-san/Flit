@@ -384,7 +384,7 @@ impl App {
         let s = |v: f32| (v * sc).round();
         let st = self.preview.state;
         let (w, h) = self.size;
-        let shown = st.visible && !self.search.active;
+        let shown = st.visible && !self.search.active && !self.on_home();
         let l = &mut self.layout;
         l.bottom = l.status.y;
         let r = &mut self.preview.r;
@@ -549,7 +549,7 @@ impl App {
     }
 
     pub(super) fn sync_preview(&mut self, now: Instant) {
-        let shown = self.preview.state.visible && !self.search.active;
+        let shown = self.preview.state.visible && !self.search.active && !self.on_home();
         let subject = if shown { self.subject() } else { None };
         let details = self.preview.state.details;
         let key = subject.as_ref().map_or(0, |s| s.key(details));
@@ -633,7 +633,7 @@ impl App {
         if p.host.gen == 0 {
             return;
         }
-        let covered = self.nav.palette.is_some() || self.jobs.open || self.jobs.modal() || self.search.active;
+        let covered = self.nav.palette.is_some() || self.jobs.open || self.jobs.modal() || self.search.active || self.suggesting();
         let want = match () {
             _ if covered || p.r.pane.w <= 0.0 || p.state.details => None,
             _ if p.host.handler => Some(p.r.body),

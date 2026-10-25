@@ -9,7 +9,7 @@ use crate::name;
 use crate::open::{OpenTarget, Route};
 use crate::path::PathKind;
 use crate::provider::ProviderRequest;
-use crate::render::{Color, Rect};
+use crate::render::Rect;
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::Theme;
 use bumpalo::Bump;
@@ -128,6 +128,21 @@ enum SHit {
     Thumb,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+enum Within {
+    Folder(Location),
+    Library { name: String, filter: String },
+}
+
+impl Within {
+    fn name(&self) -> String {
+        match self {
+            Within::Folder(f) => name::display(f.file_name()).trim_end_matches('\\').to_owned(),
+            Within::Library { name, .. } => name.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum SLine {
     Header(usize),
@@ -151,8 +166,8 @@ pub(super) struct SearchView {
     gen: u64,
     sort: SearchSort,
     pub(super) group_folder: bool,
-    folder: Option<Location>,
-    home: Option<Location>,
+    within: Option<Within>,
+    home: Option<Within>,
     total: u64,
     done: bool,
     rows: FxHashMap<u64, SearchRow>,
@@ -261,21 +276,33 @@ impl SearchView {
 
 impl App {
     pub fn open_search(&mut self) {
-        self.open_scoped(None);
+        let lib = self.library_within();
+        self.open_scoped(lib);
     }
 
     pub fn open_folder_search(&mut self) {
         let loc = self.current_location().clone();
-        let usable = !loc.is_recycle_bin() && loc.path().kind() != PathKind::Computer;
-        let folder = usable.then_some(loc);
-        self.search.home = folder.clone().or(self.search.home.take());
-        self.open_scoped(folder);
+        let usable = matches!(loc.path().kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim | PathKind::Unix);
+        let within = self.library_within().or_else(|| usable.then_some(Within::Folder(loc)));
+        if within.is_some() {
+            self.search.home = within.clone();
+        }
+        self.open_scoped(within);
     }
 
-    fn open_scoped(&mut self, folder: Option<Location>) {
+    fn library_within(&self) -> Option<Within> {
+        let lib = self.current_library().and_then(|p| self.nav.sidebar.library(&p).cloned())?;
+        let filter = crate::library::search_scope(&lib.folders)?;
+        Some(Within::Library { name: lib.name, filter })
+    }
+
+    fn open_scoped(&mut self, within: Option<Within>) {
+        if within.is_some() {
+            self.search.home = within.clone();
+        }
         let s = &mut self.search;
-        let requery = s.gen == 0 || s.folder != folder;
-        s.folder = folder;
+        let requery = s.gen == 0 || s.within != within;
+        s.within = within;
         if !s.active {
             s.active = true;
             s.drag = SDrag::None;
@@ -293,8 +320,8 @@ impl App {
     }
 
     fn search_title(&self) -> String {
-        match &self.search.folder {
-            Some(f) => format!("Search in {} — Flit", name::display(f.file_name()).trim_end_matches('\\')),
+        match &self.search.within {
+            Some(w) => format!("Search in {} — Flit", w.name()),
             None => "Search — Flit".into(),
         }
     }
@@ -304,7 +331,7 @@ impl App {
             self.remember_query();
             self.search.active = false;
             self.search.drag = SDrag::None;
-            self.effects.push(Effect::Title(format!("{} — Flit", self.tab().title())));
+            self.effects.push(Effect::Title(self.window_title()));
             self.set_cursor(CursorIcon::Default);
             self.dirty = true;
         }
@@ -319,7 +346,10 @@ impl App {
     }
 
     pub fn search_folder(&self) -> Option<&Location> {
-        self.search.folder.as_ref()
+        match &self.search.within {
+            Some(Within::Folder(f)) => Some(f),
+            _ => None,
+        }
     }
 
     pub fn search_history(&self) -> &[String] {
@@ -408,7 +438,7 @@ impl App {
 
     pub(super) fn search_for(&mut self, text: &str) {
         self.search.edit.set(text);
-        let fresh = self.search.gen == 0 || self.search.folder.is_some();
+        let fresh = self.search.gen == 0 || self.search.within != self.library_within();
         self.open_search();
         if !fresh {
             self.search_query(Instant::now());
@@ -432,7 +462,7 @@ impl App {
     }
 
     fn search_scope(&self) -> SearchScope {
-        let Some(folder) = self.search.folder.clone() else { return SearchScope::All };
+        let Some(Within::Folder(folder)) = self.search.within.clone() else { return SearchScope::All };
         let ready = drive_id(&folder).is_some_and(|d| self.search.volumes.iter().any(|v| v.id.eq_ignore_ascii_case(&d) && v.state == IndexState::Ready));
         if ready {
             SearchScope::Indexed(folder)
@@ -463,19 +493,23 @@ impl App {
             s.recent_open = true;
         }
         s.recent_sel = None;
-        self.effects.push(Effect::Search(SearchRequest::Query { gen: s.gen, text: s.edit.text.clone(), sort: s.sort, scope }));
+        let text = match &s.within {
+            Some(Within::Library { filter, .. }) => format!("{filter} {}", s.edit.text),
+            _ => s.edit.text.clone(),
+        };
+        self.effects.push(Effect::Search(SearchRequest::Query { gen: s.gen, text, sort: s.sort, scope }));
         self.dirty = true;
     }
 
     fn toggle_scope(&mut self) {
-        let folder = match self.search.folder {
+        let within = match self.search.within {
             Some(_) => None,
             None => self.search.home.clone(),
         };
-        if folder.is_none() && self.search.folder.is_none() {
+        if within.is_none() && self.search.within.is_none() {
             return;
         }
-        self.search.folder = folder;
+        self.search.within = within;
         self.effects.push(Effect::Title(self.search_title()));
         self.search_query(Instant::now());
     }
@@ -660,14 +694,14 @@ impl App {
                 return true;
             }
             (Key::Char('E'), true, false) if !m.shift => {
-                if self.search.folder.is_some() {
-                    self.open_search();
+                if self.search.within.is_some() {
+                    self.open_scoped(None);
                 }
                 self.search.edit.select_all();
                 return true;
             }
             (Key::F(3), false, false) => {
-                if self.search.folder.is_none() && self.search.home.is_some() {
+                if self.search.within.is_none() && self.search.home.is_some() {
                     self.toggle_scope();
                 }
                 self.search.edit.select_all();
@@ -750,6 +784,12 @@ impl App {
         }
     }
 
+    pub(super) fn reveal_search_focus(&mut self, now: Instant) {
+        if let Some(row) = self.search.focus {
+            self.reveal_search_row(row, now);
+        }
+    }
+
     fn reveal_search_row(&mut self, row: u64, now: Instant) {
         let Some(loc) = self.search_row_location(row) else { return };
         let Some(folder) = loc.parent() else { return };
@@ -827,7 +867,7 @@ impl App {
         self.dirty = true;
         let h = self.search_hit(x, y);
         if button == MouseButton::Right && matches!(h, SHit::Header(_) | SHit::Row(_) | SHit::Group(_) | SHit::Empty) {
-            let menu = self.build_search_menu();
+            let menu = self.build_search_menu(matches!(h, SHit::Row(_)));
             self.flit_menu(x, y, menu);
             return true;
         }
@@ -1013,7 +1053,7 @@ impl App {
         }
     }
 
-    fn draw_search_group<B: TextBackend>(&mut self, g: &mut Gfx<B>, arena: &Bump, t: &Theme, k: usize, r: Rect) {
+    fn draw_search_group<B: TextBackend>(&self, g: &mut Gfx<B>, arena: &Bump, t: &Theme, k: usize, r: Rect) {
         let s = &self.search;
         let font = FontStyle::new(FontFamily::Ui, 12.5 * self.scale, true);
         let m = g.metrics(font);
@@ -1108,8 +1148,8 @@ impl App {
         let small = self.ui_font(12.0);
         let m = g.metrics(font);
         let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
-        let label = match &self.search.folder {
-            Some(f) => format!("In {}", name::display(f.file_name()).trim_end_matches('\\')),
+        let label = match &self.search.within {
+            Some(w) => format!("In {}", w.name()),
             None if self.search.home.is_some() => "All drives".to_owned(),
             None => String::new(),
         };
@@ -1170,7 +1210,7 @@ impl App {
         let y = field.bottom() + s4;
         let h = s6 * 2.0 + row_h * (recent.len() + 1) as f32;
         let panel = Rect::new(x, y, w, h);
-        let shadow = if self.dark { Color::rgba(0x00000090) } else { Color::rgba(0x00000030) };
+        let shadow = self.shadow();
         g.dl.round_rect(Rect::new(panel.x - s4, panel.y, panel.w + 2.0 * s4, panel.h + s6 + s4), shadow, s6 + s4);
         g.dl.round_rect(panel, t.bg, s6);
         g.dl.outline(panel, t.input_border, s6, 1.0);

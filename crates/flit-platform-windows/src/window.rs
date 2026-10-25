@@ -15,7 +15,7 @@ use std::sync::Arc;
 use windows::core::{w, BOOL, PCWSTR};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
-use windows::Win32::Graphics::Gdi::{ScreenToClient, ValidateRect};
+use windows::Win32::Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, MonitorFromWindow, ScreenToClient, ValidateRect, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::System::DataExchange::{AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, SetClipboardData};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
@@ -31,6 +31,19 @@ const WM_WAKE: u32 = WM_APP + 1;
 const WM_DESTROY_REQUEST: u32 = WM_APP + 2;
 const WM_OPEN_WINDOW: u32 = WM_APP + 3;
 const TIMER_ID: usize = 1;
+const COMPACT: (f32, f32) = (560.0, 380.0);
+
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum Mode {
+    #[default]
+    Normal,
+    Full,
+    Compact,
+}
+
+thread_local! {
+    static OPEN: RefCell<Vec<(isize, WindowId)>> = const { RefCell::new(Vec::new()) };
+}
 
 #[derive(Default)]
 pub(crate) struct FrameSync {
@@ -50,6 +63,8 @@ pub struct Win32Window {
     nc_tracking: Cell<bool>,
     high_surrogate: Cell<u16>,
     ime_area: Cell<Rect>,
+    mode: Cell<Mode>,
+    restore: Cell<Option<(WINDOWPLACEMENT, isize)>>,
     pub(crate) sync: Rc<FrameSync>,
 }
 
@@ -67,12 +82,52 @@ impl Win32Window {
             nc_tracking: Cell::new(false),
             high_surrogate: Cell::new(0),
             ime_area: Cell::new(Rect::default()),
+            mode: Cell::new(Mode::Normal),
+            restore: Cell::new(None),
             sync: Rc::new(FrameSync::default()),
         }
     }
 
     pub(crate) fn hwnd(&self) -> HWND {
         self.hwnd.get()
+    }
+
+    fn leave_mode(&self) {
+        let Some((wp, style)) = self.restore.take() else { return };
+        self.mode.set(Mode::Normal);
+        let h = self.hwnd();
+        unsafe {
+            SetWindowLongPtrW(h, GWL_STYLE, style);
+            let _ = SetWindowPos(h, Some(HWND_NOTOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+            let _ = SetWindowPlacement(h, &wp);
+        }
+    }
+
+    fn enter_mode(&self, mode: Mode) {
+        self.leave_mode();
+        let h = self.hwnd();
+        unsafe {
+            let mut wp = WINDOWPLACEMENT { length: size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
+            let _ = GetWindowPlacement(h, &mut wp);
+            let style = GetWindowLongPtrW(h, GWL_STYLE);
+            self.restore.set(Some((wp, style)));
+            self.mode.set(mode);
+            if mode == Mode::Full {
+                let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+                let _ = GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mut mi);
+                let r = mi.rcMonitor;
+                SetWindowLongPtrW(h, GWL_STYLE, style & !(WS_OVERLAPPEDWINDOW.0 as isize));
+                let _ = SetWindowPos(h, Some(HWND_TOP), r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
+                return;
+            }
+            if IsZoomed(h).as_bool() {
+                let _ = ShowWindow(h, SW_RESTORE);
+            }
+            let mut r = RECT::default();
+            let _ = GetWindowRect(h, &mut r);
+            let sc = self.scale();
+            let _ = SetWindowPos(h, Some(HWND_TOPMOST), r.left, r.top, (COMPACT.0 * sc) as i32, (COMPACT.1 * sc) as i32, SWP_NOOWNERZORDER);
+        }
     }
 
     fn post(&self, msg: u32, wp: usize) {
@@ -156,6 +211,9 @@ impl Window for Win32Window {
     }
 
     fn toggle_maximize(&self) {
+        if self.mode.get() != Mode::Normal {
+            return self.leave_mode();
+        }
         let cmd = if self.is_maximized() { SC_RESTORE } else { SC_MAXIMIZE };
         self.post(WM_SYSCOMMAND, cmd as usize);
     }
@@ -170,8 +228,11 @@ impl Window for Win32Window {
 
     fn placement(&self) -> Placement {
         let mut wp = WINDOWPLACEMENT { length: size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
-        unsafe {
-            let _ = GetWindowPlacement(self.hwnd(), &mut wp);
+        match self.restore.get() {
+            Some((saved, _)) => wp = saved,
+            None => unsafe {
+                let _ = GetWindowPlacement(self.hwnd(), &mut wp);
+            },
         }
         let r = wp.rcNormalPosition;
         Placement {
@@ -242,6 +303,10 @@ impl Window for Win32Window {
         crate::context_menu::request(self.hwnd(), ShellUi::Menu(menu));
     }
 
+    fn share(&self, paths: Vec<FsPath>) {
+        crate::context_menu::request(self.hwnd(), ShellUi::Share(paths));
+    }
+
     fn properties(&self, paths: Vec<FsPath>) {
         crate::context_menu::request(self.hwnd(), ShellUi::Properties(paths));
     }
@@ -252,6 +317,42 @@ impl Window for Win32Window {
 
     fn set_timer(&self, ms: u32) {
         unsafe { SetTimer(Some(self.hwnd()), TIMER_ID, ms, None) };
+    }
+
+    fn to_screen(&self, x: f32, y: f32) -> (i32, i32) {
+        let mut p = POINT { x: x as i32, y: y as i32 };
+        unsafe {
+            let _ = ClientToScreen(self.hwnd(), &mut p);
+        }
+        (p.x, p.y)
+    }
+
+    fn window_at(&self, x: f32, y: f32) -> Option<(WindowId, f32, f32)> {
+        let (sx, sy) = self.to_screen(x, y);
+        unsafe {
+            let root = GetAncestor(WindowFromPoint(POINT { x: sx, y: sy }), GA_ROOT);
+            let id = OPEN.with_borrow(|open| open.iter().find(|(h, _)| *h == root.0 as isize).map(|&(_, id)| id))?;
+            let mut p = POINT { x: sx, y: sy };
+            let _ = ScreenToClient(root, &mut p);
+            Some((id, p.x as f32, p.y as f32))
+        }
+    }
+
+    fn toggle_fullscreen(&self) {
+        if self.mode.get() == Mode::Full {
+            self.leave_mode();
+        } else {
+            self.enter_mode(Mode::Full);
+        }
+    }
+
+    fn set_compact(&self, on: Option<bool>) {
+        let compact = self.mode.get() == Mode::Compact;
+        match on.unwrap_or(!compact) {
+            true if !compact => self.enter_mode(Mode::Compact),
+            false if compact => self.leave_mode(),
+            _ => {}
+        }
     }
 
     fn host(&self, cmd: HostCmd) {
@@ -391,6 +492,7 @@ impl<H: WindowHandler<Win32>> Shared<H> {
             Some(Rc::as_ptr(&node) as *const _),
         )
         .map_err(err)?;
+        OPEN.with_borrow_mut(|open| open.push((hwnd.0 as isize, id)));
         let mut maximized = false;
         if let Some(p) = opts.placement.filter(|p| p.width > 100 && p.height > 100) {
             let wp = WINDOWPLACEMENT {
@@ -684,7 +786,7 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
             let top = p.rgrc[0].top;
             let r = DefWindowProcW(hwnd, msg, wp, lp);
             p.rgrc[0].top = top;
-            if IsZoomed(hwnd).as_bool() {
+            if IsZoomed(hwnd).as_bool() && w.mode.get() != Mode::Full {
                 p.rgrc[0].top += frame_thickness(w.dpi.get());
             }
             Some(r)
@@ -695,7 +797,7 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
                 return Some(def);
             }
             let (x, y) = screen_xy();
-            if !IsZoomed(hwnd).as_bool() && y < frame_thickness(w.dpi.get()) as f32 / 2.0 {
+            if !IsZoomed(hwnd).as_bool() && w.mode.get() != Mode::Full && y < frame_thickness(w.dpi.get()) as f32 / 2.0 {
                 return Some(LRESULT(HTTOP as isize));
             }
             let area = s.hit_test(x, y);
@@ -886,12 +988,14 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
         }
         WM_ENDSESSION => {
             if wp.0 != 0 {
+                s.send(Event::SessionEnding);
                 let _ = DestroyWindow(hwnd);
             }
             Some(LRESULT(0))
         }
         WM_DESTROY => {
             crate::dragdrop::revoke(hwnd);
+            OPEN.with_borrow_mut(|open| open.retain(|(h, _)| *h != hwnd.0 as isize));
             crate::prevhost::forget(hwnd);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             s.shared().destroyed(hwnd);

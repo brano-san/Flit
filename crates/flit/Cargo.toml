@@ -15,6 +15,7 @@ flit-platform.workspace = true
 flit-proto.workspace = true
 flit-search.workspace = true
 crossbeam-channel.workspace = true
+rayon.workspace = true
 mimalloc.workspace = true
 serde.workspace = true
 postcard.workspace = true

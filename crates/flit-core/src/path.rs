@@ -10,6 +10,7 @@ pub enum PathKind {
     Verbatim,
     Unix,
     RecycleBin,
+    Home,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -22,6 +23,8 @@ pub struct FsPath {
 pub const COMPUTER_LABEL: &str = "This PC";
 pub const RECYCLE_BIN_LABEL: &str = "Recycle Bin";
 pub const RECYCLE_BIN_SHELL: &str = "shell:RecycleBinFolder";
+pub const HOME_LABEL: &str = "Home";
+pub const HOME_SHELL: &str = "shell:::{f874310e-b6b7-47dc-bc84-b9e6b38f5903}";
 
 impl FsPath {
     pub fn computer() -> Self {
@@ -30,6 +33,10 @@ impl FsPath {
 
     pub fn recycle_bin() -> Self {
         Self { s: RECYCLE_BIN_SHELL.as_bytes().to_vec(), root: RECYCLE_BIN_SHELL.len() as u16, kind: PathKind::RecycleBin }
+    }
+
+    pub fn home_page() -> Self {
+        Self { s: HOME_SHELL.as_bytes().to_vec(), root: HOME_SHELL.len() as u16, kind: PathKind::Home }
     }
 
     pub fn parse(input: &str) -> Option<Self> {
@@ -55,6 +62,9 @@ impl FsPath {
         }
         if input.eq_ignore_ascii_case(RECYCLE_BIN_SHELL.as_bytes()) || input.eq_ignore_ascii_case(RECYCLE_BIN_LABEL.as_bytes()) {
             return Some(Self::recycle_bin());
+        }
+        if input.eq_ignore_ascii_case(HOME_SHELL.as_bytes()) {
+            return Some(Self::home_page());
         }
         if input[0] == b'/' && input.get(1) != Some(&b'/') {
             return Self::with_segments(b"/".to_vec(), PathKind::Unix, b'/', &input[1..]);
@@ -137,6 +147,7 @@ impl FsPath {
         match self.kind {
             PathKind::Computer => Cow::Borrowed(COMPUTER_LABEL),
             PathKind::RecycleBin => Cow::Borrowed(RECYCLE_BIN_LABEL),
+            PathKind::Home => Cow::Borrowed(HOME_LABEL),
             _ => name::display(&self.s),
         }
     }
@@ -149,7 +160,7 @@ impl FsPath {
     }
 
     pub fn join(&self, child: &[u8]) -> Self {
-        if matches!(self.kind, PathKind::Computer | PathKind::RecycleBin) {
+        if matches!(self.kind, PathKind::Computer | PathKind::RecycleBin | PathKind::Home) {
             let mut b = child.to_vec();
             b.push(b'\\');
             return Self::parse_bytes(&b).unwrap_or_else(Self::computer);
@@ -172,7 +183,7 @@ impl FsPath {
 
     pub fn parent(&self) -> Option<Self> {
         match self.kind {
-            PathKind::Computer | PathKind::RecycleBin => None,
+            PathKind::Computer | PathKind::RecycleBin | PathKind::Home => None,
             PathKind::Unix => self.parent_in_root(),
             _ => self.parent_in_root().or_else(|| Some(Self::computer())),
         }
@@ -191,6 +202,7 @@ impl FsPath {
         match self.kind {
             PathKind::Computer => COMPUTER_LABEL.as_bytes(),
             PathKind::RecycleBin => RECYCLE_BIN_LABEL.as_bytes(),
+            PathKind::Home => HOME_LABEL.as_bytes(),
             PathKind::Unix => b"/",
             _ => &self.s[..self.root as usize - 1],
         }

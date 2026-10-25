@@ -268,7 +268,7 @@ impl App {
     }
 
     pub(super) fn toolbar_h(&self) -> f32 {
-        if self.toolbar.state.visible && !self.search.active {
+        if self.toolbar.state.visible && !self.search.active && !self.tab().view_loc.is_home_page() {
             self.s(BAR_H)
         } else {
             0.0
@@ -590,7 +590,7 @@ impl App {
         g.dl.rect(Rect::new(row.x, row.bottom() - 1.0, row.w, 1.0), t.separator);
         let (font, icons, chevron) = (self.ui_font(12.5), self.icon_font(13.0), self.icon_font(7.0));
         let m = g.metrics(font);
-        let (pad, gap, icon_w, sep_w) = (self.s(PAD), self.s(6.0), self.s(ICON_W), self.s(SEP_W));
+        let (pad, icon_w, sep_w) = (self.s(PAD), self.s(ICON_W), self.s(SEP_W));
         let bh = self.s(BUTTON_H);
         let items = self.toolbar_items().to_vec();
         let width = |g: &mut Gfx<B>, item: &ToolItem| match item {
@@ -672,14 +672,6 @@ impl App {
     pub(super) fn draw_toolbar_popups<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
         self.draw_fly(g, t);
         self.draw_tip(g, t);
-    }
-
-    fn shadow(&self) -> Color {
-        if self.dark {
-            Color::rgba(0x00000090)
-        } else {
-            Color::rgba(0x00000030)
-        }
     }
 
     fn draw_fly<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {

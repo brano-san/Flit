@@ -8,7 +8,9 @@ pub mod actions;
 mod field;
 mod filter;
 mod flow;
+mod home;
 mod jobs;
+mod libraries;
 mod layouts;
 mod marquee;
 mod menu;
@@ -16,12 +18,15 @@ mod nav;
 pub mod palette;
 mod preview_pane;
 pub mod sidebar;
+mod address;
+mod tabbar;
 mod tags;
 mod toolbar;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
-pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchSort};
-pub use sidebar::{Drive, KnownFolder, NavState, Places};
+pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource, MAX_HISTORY};
+pub use sidebar::{Drive, KnownFolder, NavPrefs, NavState, Places, Section};
+pub use home::{Recent, Widget};
 pub use details::{folder_key, Columns, FolderView, FolderViews, ViewPrefs, THUMB_CACHE_MB};
 pub use layouts::{adaptive_layout, has_thumbnail, is_media, LayoutMode, Sizes, LAYOUTS};
 pub use jobs::JobState;
@@ -29,6 +34,8 @@ pub use preview_pane::PaneState;
 pub use menu::MenuItem;
 pub use tab::Tab;
 pub use toolbar::{Show, ToolContext, ToolItem, ToolbarState, CONTEXTS};
+pub use address::Typed;
+pub use tabbar::{MovedTab, Startup, WindowSession};
 
 use crate::fmt as format;
 use crate::hash::{self, FxHashMap};
@@ -140,6 +147,8 @@ pub enum WindowCmd {
     Minimize,
     ToggleMaximize,
     Close,
+    Fullscreen,
+    Compact(Option<bool>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -189,12 +198,16 @@ pub enum Effect {
     Properties(Vec<FsPath>),
     StartDrag(Vec<FsPath>),
     Pinned(Vec<Location>),
+    PinFolders(Vec<FsPath>),
+    Library(crate::library::LibraryOp),
     RefreshPlaces,
     Search(SearchRequest),
     Preview(PreviewRequest),
     QuickView(FsPath),
     Host(HostCmd),
     Timer(Duration),
+    MoveTab { tab: MovedTab, at: Option<(f32, f32)>, last: bool },
+    RestoreSession,
     Tags(TagRequest),
     Share(Vec<FsPath>),
 }
@@ -218,11 +231,12 @@ pub struct Persisted {
     pub view: FolderView,
     pub prefs: ViewPrefs,
     pub folders: FolderViews,
+    pub startup: Startup,
 }
 
 impl Default for Persisted {
     fn default() -> Self {
-        Self { path: Location::computer(), show_hidden: false, view: FolderView::default(), prefs: ViewPrefs::default(), folders: FolderViews::default() }
+        Self { path: Location::computer(), show_hidden: false, view: FolderView::default(), prefs: ViewPrefs::default(), folders: FolderViews::default(), startup: Startup::default() }
     }
 }
 
@@ -266,6 +280,10 @@ enum Hit {
     Side(usize),
     SidePin(usize),
     SideEmpty,
+    SideHeader(Section),
+    HomeItem(usize),
+    HomeEmpty,
+    HomeButton,
     Splitter,
     FilterField,
     FilterClose,
@@ -284,6 +302,11 @@ enum Hit {
     DialogButton(usize),
     DialogCheck,
     Modal,
+    TabActions,
+    CrumbMenu(usize),
+    CrumbOverflow,
+    Suggestion(usize),
+    Eject,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -296,6 +319,7 @@ enum Drag {
     PinMove { from: usize, to: usize },
     Preview { hit: preview_pane::PaneHit, start: f32, size: f32 },
     Marquee,
+    Tab { origin: usize, x: f32, y: f32, moved: bool, torn: bool },
 }
 
 #[derive(Default)]
@@ -303,10 +327,12 @@ struct Layout {
     title: Rect,
     tabs: Vec<(Rect, Rect)>,
     new_tab: Rect,
+    actions: Rect,
     caption: [Rect; 3],
     toolbar: Rect,
     commands: Rect,
     nav: [Rect; 4],
+    home: Rect,
     address: Rect,
     ops_button: Rect,
     header: Rect,
@@ -337,6 +363,10 @@ pub struct App {
     pub conflict_default: Option<Resolve>,
     pub shell_items_inline: bool,
     pub menu_hidden: Vec<&'static str>,
+    pub tab_wheel_reversed: bool,
+    pub tab_actions_button: bool,
+    pub folders_in_new_tab: bool,
+    pub double_click_up: bool,
     pub prefs: ViewPrefs,
     folders: FolderViews,
     menu: Vec<menu::Cmd>,
@@ -381,6 +411,8 @@ pub struct App {
     search: search::SearchView,
     jobs: jobs::Jobs,
     details: details::Details,
+    strip: tabbar::Strip,
+    addr: address::Address,
     tag_fixes: Vec<(FsPath, u32, Instant)>,
     preview: preview_pane::PreviewPane,
     toolbar: toolbar::Toolbar,
@@ -398,6 +430,10 @@ impl App {
             conflict_default: None,
             shell_items_inline: false,
             menu_hidden: Vec::new(),
+            tab_wheel_reversed: false,
+            tab_actions_button: true,
+            folders_in_new_tab: false,
+            double_click_up: true,
             prefs: state.prefs,
             folders: state.folders,
             menu: Vec::new(),
@@ -438,6 +474,8 @@ impl App {
             search: Default::default(),
             jobs: Default::default(),
             details: Default::default(),
+            strip: Default::default(),
+            addr: Default::default(),
             tag_fixes: Vec::new(),
             preview: Default::default(),
             toolbar: Default::default(),
@@ -468,7 +506,7 @@ impl App {
 
     pub fn persisted(&self) -> Persisted {
         let t = self.tab();
-        Persisted { path: t.location().clone(), show_hidden: t.view_spec.show_hidden, view: t.folder_view(), prefs: self.prefs.clone(), folders: self.folders.clone() }
+        Persisted { path: t.location().clone(), show_hidden: t.view_spec.show_hidden, view: t.folder_view(), prefs: self.prefs.clone(), folders: self.folders.clone(), startup: Startup::default() }
     }
 
     pub fn tab(&self) -> &Tab {
@@ -541,7 +579,15 @@ impl App {
     pub fn open(&mut self, cmd: &Open, shell_folder: &dyn Fn(&str) -> Option<Location>, now: Instant) {
         let (routes, errors) = open::routes(cmd, shell_folder);
         let target = if cmd.target == OpenTarget::Default { self.open_target } else { cmd.target };
+        let typed = self.addr.pending.take();
+        if let Some(text) = typed.as_ref().filter(|_| routes.is_empty() && matches!(errors.first(), Some(ResolveError::Invalid(_)))) {
+            return self.run_typed(text);
+        }
+        let watched = !routes.is_empty();
         self.dispatch(routes, target, now);
+        if let Some(text) = typed.filter(|_| watched) {
+            self.watch_typed(text);
+        }
         self.show_open_errors(&errors);
     }
 
@@ -621,7 +667,8 @@ impl App {
     fn after_tab_change(&mut self) {
         self.editing = false;
         self.focus = Focus::List;
-        self.effects.push(Effect::Title(format!("{} — Flit", self.tab().title())));
+        self.wake_tab();
+        self.effects.push(Effect::Title(self.window_title()));
         self.dirty = true;
     }
 
@@ -661,11 +708,14 @@ impl App {
     }
 
     fn go_history(&mut self, forward: bool, now: Instant) {
+        self.jump_history(if forward { 1 } else { -1 }, now);
+    }
+
+    fn jump_history(&mut self, n: isize, now: Instant) {
         let k = self.cur;
         let t = &mut self.tabs[k];
         let from = t.location().clone();
-        let moved = if forward { t.history.forward().is_some() } else { t.history.back().is_some() };
-        if moved {
+        if t.history.jump(n) {
             let select = (from.parent().as_ref() == Some(t.location())).then(|| from.file_name().to_vec());
             self.load_tab(k, select, now);
             self.after_tab_change();
@@ -691,8 +741,9 @@ impl App {
         }
         let e = t.view.as_ref().unwrap().listing().entries[i as usize];
         let loc = t.entry_location(i);
-        if e.is_dir() {
-            self.navigate(loc, now);
+        if e.is_dir() || crate::library::is_library(loc.path()) {
+            let target = if self.folders_in_new_tab { OpenTarget::NewTab } else { OpenTarget::CurrentTab };
+            self.dispatch(vec![Route { folder: loc, select: None }], target, now);
         } else {
             self.effects.push(Effect::Provider { provider: loc.provider(), req: ProviderRequest::Open { tab: t.id, path: loc.path().clone() } });
         }
@@ -702,6 +753,9 @@ impl App {
         let t = self.tab();
         let Some(v) = &t.view else { return };
         let is_dir = |i: u32| v.listing().entries[i as usize].is_dir();
+        if v.selected_count() > 1 && !t.view_loc.is_recycle_bin() {
+            return self.open_many(now);
+        }
         if let Some(f) = v.focus.filter(|&f| is_dir(f)) {
             return self.open_entry(f, now);
         }
@@ -718,6 +772,9 @@ impl App {
         let mut visible = false;
         for k in 0..self.tabs.len() {
             let Some(snap) = self.tabs[k].slot.take() else { continue };
+            if self.redirect(k, &snap) {
+                continue;
+            }
             self.sync_spec(k);
             let current = snap.gen == self.tabs[k].gen;
             let (loaded, fresh) = (snap.done && current, current && self.tabs[k].view.as_ref().is_none_or(|v| v.snap().gen != snap.gen));
@@ -737,6 +794,7 @@ impl App {
             visible |= k == self.cur;
         }
         visible |= self.poll_panes();
+        visible |= self.poll_address();
         self.dirty |= visible;
         visible
     }
@@ -879,7 +937,8 @@ impl App {
         let n = self.tabs.len().max(1) as f32;
         let x0 = s(8.0);
         let add_w = s(32.0);
-        let avail = (l.caption[0].x - s(48.0) - x0 - add_w).max(0.0);
+        l.actions = if self.tab_actions_button { Rect::new(l.caption[0].x - s(44.0), s(4.0), s(36.0), s(28.0)) } else { Rect::default() };
+        let avail = (l.caption[0].x - s(48.0) - l.actions.w - x0 - add_w).max(0.0);
         let tw = (avail / n).clamp(s(TAB_MIN_W), s(TAB_MAX_W));
         l.tabs.clear();
         for i in 0..self.tabs.len() {
@@ -894,7 +953,8 @@ impl App {
         for (i, r) in l.nav.iter_mut().enumerate() {
             *r = Rect::new(s(6.0) + i as f32 * s(NAV_W), l.toolbar.y + s(4.0), s(NAV_W), s(TOOL_H - 8.0));
         }
-        let ax = l.nav[3].right() + s(8.0);
+        l.home = Rect::new(l.nav[3].right(), l.nav[3].y, s(NAV_W), l.nav[3].h);
+        let ax = l.home.right() + s(8.0);
         let right = if ops_button { w - s(10.0) - s(NAV_W) } else { w };
         l.ops_button = if ops_button { Rect::new(right + s(4.0), l.nav[0].y, s(NAV_W), l.nav[0].h) } else { Rect::default() };
         l.address = Rect::new(ax, l.toolbar.y + s(5.0), (right - s(12.0) - ax).max(s(40.0)), s(TOOL_H - 10.0));
@@ -945,19 +1005,23 @@ impl App {
         self.sync_panes();
         self.layout_nav();
         self.layout_jobs();
+        self.layout_address();
     }
 
     fn hit(&self, x: f32, y: f32) -> Hit {
         if let Some(h) = self.jobs_hit(x, y).or_else(|| self.toolbar_hit(x, y)) {
             return h;
         }
-        if let Some(h) = self.nav_hit(x, y).or_else(|| self.preview_hit(x, y)) {
+        if let Some(h) = self.address_hit(x, y).or_else(|| self.nav_hit(x, y)).or_else(|| self.preview_hit(x, y)) {
             return h;
         }
         let l = &self.layout;
         if l.title.contains(x, y) {
             if let Some(i) = l.caption.iter().position(|r| r.contains(x, y)) {
                 return Hit::Caption(i);
+            }
+            if l.actions.contains(x, y) {
+                return Hit::TabActions;
             }
             for (i, (r, c)) in l.tabs.iter().enumerate() {
                 if c.contains(x, y) {
@@ -975,6 +1039,9 @@ impl App {
         if l.toolbar.contains(x, y) {
             if let Some(i) = l.nav.iter().position(|r| r.contains(x, y)) {
                 return Hit::Nav(i);
+            }
+            if l.home.contains(x, y) {
+                return Hit::HomeButton;
             }
             if l.address.contains(x, y) {
                 if !self.editing {
@@ -999,6 +1066,9 @@ impl App {
         }
         if let Some(i) = l.panes.iter().position(|r| r.contains(x, y)) {
             return self.pane_hit(i, y);
+        }
+        if self.eject_rect().is_some_and(|r| r.contains(x, y)) {
+            return Hit::Eject;
         }
         if l.list.contains(x, y) {
             return self.list_hit(x, y);
@@ -1060,7 +1130,7 @@ impl App {
             Event::MouseDown { x, y, button, clicks } => self.mouse_down(*x, *y, *button, *clicks, now),
             Event::MouseUp { x, y, button } => self.mouse_up(*x, *y, *button, now),
             Event::Wheel { dy, .. } => {
-                if self.jobs_wheel(*dy) || self.nav_wheel(*dy) || self.pane_wheel(*dy) || self.preview_wheel(*dy) {
+                if self.jobs_wheel(*dy) || self.nav_wheel(*dy) || self.pane_wheel(*dy) || self.preview_wheel(*dy) || self.strip_wheel(*dy) {
                     return;
                 }
                 if self.mods.ctrl {
@@ -1101,8 +1171,11 @@ impl App {
                 self.ops_timer(now);
                 self.hover_timer(now);
                 self.toolbar_timer(now);
+                self.history_timer(now);
+                self.tip_timer(now);
             }
             Event::ClipboardChanged(seq) => self.clipboard_changed(*seq),
+            Event::SessionEnding => {}
             Event::Hosted(ev) => self.on_hosted(ev.clone()),
         }
     }
@@ -1115,6 +1188,7 @@ impl App {
     }
 
     fn mouse_move(&mut self, x: f32, y: f32, now: Instant) {
+        self.strip_pointer(x, y, now);
         if self.toolbar_mouse_move(x) || self.autoscroll_move(self.along_of(x, y)) || self.ops_mouse_move(x, y) || self.marquee_move(x, y) {
             return;
         }
@@ -1138,6 +1212,7 @@ impl App {
             }
             Drag::Splitter { start_x, start_w } => return self.drag_splitter(x, start_x, start_w),
             Drag::PinMove { from, .. } => return self.drag_pin(from, y),
+            Drag::Tab { .. } => return self.drag_tab(x, y),
             Drag::Preview { hit, start, size } => return self.preview_drag(hit, x, y, start, size),
             Drag::Marquee | Drag::None => {}
         }
@@ -1163,7 +1238,7 @@ impl App {
 
     fn mouse_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8, now: Instant) {
         self.dirty = true;
-        if self.jobs_mouse_down(self.hit(x, y)) || self.autoscroll_down(self.hit(x, y), self.along_of(x, y), button) || self.ops_mouse_down(x, y, button, clicks) {
+        if self.jobs_mouse_down(self.hit(x, y)) || self.strip_mouse_down(self.hit(x, y), button, clicks, now) || self.autoscroll_down(self.hit(x, y), self.along_of(x, y), button) || self.ops_mouse_down(x, y, button, clicks) {
             return;
         }
         let h = self.hit(x, y);
@@ -1182,7 +1257,8 @@ impl App {
             self.cancel_edit();
         }
         match h {
-            Hit::Tab(i) => self.select_tab(i),
+            Hit::Tab(i) => self.press_tab(i, x, y, button),
+            Hit::Nav(i @ 0..=1) if button == MouseButton::Left => self.arm_history_press(i, now),
             Hit::Address => {
                 if !self.editing {
                     self.begin_edit();
@@ -1244,12 +1320,16 @@ impl App {
             return;
         }
         self.ops_mouse_up(x, y, button, now);
+        self.strip_mouse_up(x, y, button);
         self.end_marquee();
         let was = std::mem::replace(&mut self.drag, Drag::None);
         let pressed = std::mem::replace(&mut self.pressed, Hit::None);
         self.dirty = true;
         if let Drag::PinMove { from, to } = was {
             return self.drop_pin(from, to);
+        }
+        if let Drag::Tab { torn: true, .. } = was {
+            return self.tear_off(x, y);
         }
         if self.toolbar_mouse_up(x, y, button) || button != MouseButton::Left || was != Drag::None {
             return;
@@ -1281,9 +1361,16 @@ impl App {
             Hit::Bin(k) => self.bin_button(k),
             Hit::Side(i) => self.open_side_item(i, self.mods.ctrl, now),
             Hit::SidePin(i) => self.toggle_pin_item(i),
+            Hit::SideHeader(s) => self.toggle_section(s),
+            Hit::HomeItem(i) => self.open_home_item(i, self.mods.ctrl, now),
+            Hit::HomeButton => self.go_home_page(self.mods.ctrl, now),
             Hit::FilterClose => self.close_filter(),
             Hit::PaletteRow(i) => self.run_palette_item(i, now),
             Hit::Tool(t) => self.toolbar_click(t, now),
+            Hit::TabActions => self.tab_actions_menu(),
+            Hit::CrumbMenu(i) => self.crumb_menu(i),
+            Hit::CrumbOverflow => self.overflow_menu(),
+            Hit::Eject => self.eject(),
             _ => {}
         }
     }
@@ -1328,10 +1415,13 @@ impl App {
 
     fn key(&mut self, key: Key, m: Mods, now: Instant) {
         self.dirty = true;
-        if self.toolbar_key(key) || self.jobs_key(key, m) || self.ops_key(key, m) {
+        if self.toolbar_key(key) || self.jobs_key(key, m) || self.ops_key(key, m) || self.strip_key(key) {
             return;
         }
         if self.editing {
+            if self.address_key(key, m) {
+                return;
+            }
             match self.edit.key(key, m) {
                 EditAction::Submit => self.submit_edit(now),
                 EditAction::Cancel => self.cancel_edit(),
@@ -1407,10 +1497,11 @@ impl App {
         self.editing = true;
         self.focus = Focus::Address;
         let loc = self.current_location();
-        let text = if loc.path().kind() == PathKind::Computer { String::new() } else { loc.display().into_owned() };
+        let text = if matches!(loc.path().kind(), PathKind::Computer | PathKind::Home) { String::new() } else { loc.display().into_owned() };
         self.edit.set(&text);
         self.edit.select_all();
         self.edit_scroll = 0.0;
+        self.addr.seen = None;
         self.dirty = true;
     }
 
@@ -1425,6 +1516,9 @@ impl App {
         let cwd = self.current_location().to_windows().map(|p| p.as_bytes().to_vec());
         let cmd = Open { paths: vec![self.edit.text.as_bytes().to_vec()], target: OpenTarget::CurrentTab, cwd, ..Default::default() };
         self.cancel_edit();
+        if self.typed_address() {
+            return;
+        }
         if Location::parse(&self.edit.text).as_ref() == Some(self.current_location()) {
             return self.refresh(now);
         }
@@ -1434,7 +1528,7 @@ impl App {
 
     fn compute_dir_sizes(&mut self) {
         let t = self.tab();
-        if t.view.as_ref().is_none_or(|v| v.snap().gen != t.gen) || t.view_loc.is_recycle_bin() {
+        if t.view.as_ref().is_none_or(|v| v.snap().gen != t.gen) || t.view_loc.is_recycle_bin() || crate::library::is_library(t.view_loc.path()) {
             return;
         }
         let items = t.size_items();
@@ -1486,6 +1580,8 @@ impl App {
             g.begin(th.bg);
             if self.search.active {
                 self.draw_search(g, &arena, th);
+            } else if self.on_home() {
+                self.draw_home(g, th);
             } else {
                 self.draw_list(g, &arena, th);
                 self.draw_panes(g, th);
@@ -1506,7 +1602,9 @@ impl App {
                 }
                 self.draw_nav(g, th);
                 self.draw_toolbar_popups(g, th);
+                self.draw_suggestions(g, th);
             }
+            self.draw_tab_tip(g, th);
             self.draw_jobs(g, th);
             if !g.atlas_reset {
                 break;
@@ -1545,8 +1643,11 @@ impl App {
             }
             let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
             let label = self.tabs[i].title();
-            let color = if active { t.text } else { t.text_dim };
-            g.text(r.x + self.s(12.0), baseline, &label, font, color, c.x - r.x - self.s(16.0));
+            let torn = active && matches!(self.drag, Drag::Tab { torn: true, .. });
+            let color = if torn { t.text_dim.alpha(0x60) } else if active { t.text } else { t.text_dim };
+            let icon = Rect::new(r.x + self.s(10.0), r.y + (r.h - self.s(16.0)) / 2.0, self.s(16.0), self.s(16.0));
+            centered(g, icon, tabbar::tab_glyph(self.tabs[i].location()), self.icon_font(12.0), if torn { color } else { t.accent.alpha(0xC0) });
+            g.text(icon.right() + self.s(6.0), baseline, &label, font, color, c.x - icon.right() - self.s(10.0));
             if active || hovered {
                 if self.hover == Hit::TabClose(i) {
                     g.dl.round_rect(c, t.button_hover, self.s(4.0));
@@ -1554,10 +1655,19 @@ impl App {
                 centered(g, c, G_CLOSE, close_font, t.text_dim);
             }
         }
-        if self.hover == Hit::NewTab {
+        if drop == Some(Spot::NewTab) {
+            g.dl.round_rect(l.new_tab, t.selection, self.s(4.0));
+            g.dl.outline(l.new_tab, t.accent, self.s(4.0), self.s(1.0).max(1.0));
+        } else if self.hover == Hit::NewTab {
             g.dl.round_rect(l.new_tab, t.button_hover, self.s(4.0));
         }
         centered(g, l.new_tab, G_ADD, self.icon_font(10.0), t.text_dim);
+        if l.actions.w > 0.0 {
+            if self.hover == Hit::TabActions {
+                g.dl.round_rect(l.actions, t.button_hover, self.s(4.0));
+            }
+            centered(g, l.actions, tabbar::G_TAB_ACTIONS, self.icon_font(12.0), t.text_dim);
+        }
 
         let caption_icons = self.icon_font(10.0);
         let max_glyph = if self.maximized { G_RESTORE } else { G_MAX };
@@ -1589,6 +1699,11 @@ impl App {
             let color = if enabled[i] { t.text } else { t.text_dim.alpha(0x70) };
             centered(g, r, glyph, icons, color);
         }
+        if self.hover == Hit::HomeButton {
+            let c = if self.pressed == Hit::HomeButton { t.button_pressed } else { t.button_hover };
+            g.dl.round_rect(l.home.inset(self.s(2.0), 0.0), c, self.s(4.0));
+        }
+        centered(g, l.home, sidebar::G_HOME, icons, if self.on_home() { t.accent } else { t.text });
         self.draw_address(g, t);
         self.draw_ops_button(g, t);
     }
@@ -1636,17 +1751,32 @@ impl App {
         let chev_w = g.measure(G_CHEVRON, chevron) + 2.0 * gap;
         let crumbs = &self.tabs[self.cur].crumbs;
         let widths: Vec<f32> = crumbs.iter().map(|(label, _)| g.measure(label, font) + 2.0 * gap).collect();
+        let ov_w = g.measure(address::OVERFLOW, font) + 2.0 * gap;
+        let n = widths.len();
+        let fits = |first: usize| widths[first..].iter().sum::<f32>() + chev_w * (n - first) as f32 + if first > 0 { ov_w } else { 0.0 } <= inner.w;
         let mut first = 0;
-        while first + 1 < widths.len() && widths[first..].iter().sum::<f32>() + chev_w * (widths.len() - first - 1) as f32 > inner.w {
+        while first + 1 < n && !fits(first) {
             first += 1;
         }
         let (s1, s3, s6) = (self.s(1.0), self.s(3.0), self.s(6.0));
         let drop = self.drop_spot();
         let rects = &mut self.layout.crumbs;
         rects.clear();
-        rects.resize(crumbs.len(), Rect::default());
+        rects.resize(n, Rect::default());
+        self.addr.chevrons.clear();
+        self.addr.chevrons.resize(n, Rect::default());
         let mut x = inner.x - gap;
-        for i in first..crumbs.len() {
+        self.addr.overflow = Rect::default();
+        if first > 0 {
+            let r = Rect::new(x, inner.y + s3, ov_w, inner.h - s6);
+            if self.hover == Hit::CrumbOverflow {
+                g.dl.round_rect(r, t.button_hover, s3);
+            }
+            g.text(x + gap, baseline, address::OVERFLOW, font, t.text_dim, f32::INFINITY);
+            self.addr.overflow = r;
+            x += ov_w;
+        }
+        for i in first..n {
             let w = widths[i];
             let cr = Rect::new(x, inner.y + s3, w, inner.h - s6);
             rects[i] = cr;
@@ -1656,13 +1786,16 @@ impl App {
             } else if self.hover == Hit::Crumb(i) {
                 g.dl.round_rect(cr, t.button_hover, s3);
             }
-            let last = i + 1 == crumbs.len();
+            let last = i + 1 == n;
             g.text(x + gap, baseline, &crumbs[i].0, font, if last { t.text } else { t.text_dim }, inner.right() - x);
             x += w;
-            if !last {
-                g.text(x + gap, baseline - s1, G_CHEVRON, chevron, t.text_dim, f32::INFINITY);
-                x += chev_w;
+            let chev = Rect::new(x, inner.y + s3, chev_w, inner.h - s6);
+            if self.hover == Hit::CrumbMenu(i) {
+                g.dl.round_rect(chev, t.button_hover, s3);
             }
+            g.text(x + gap, baseline - s1, G_CHEVRON, chevron, t.text_dim, f32::INFINITY);
+            self.addr.chevrons[i] = chev;
+            x += chev_w;
         }
     }
 
@@ -1731,6 +1864,7 @@ impl App {
             }
             let loc = &tab.view_loc;
             let shell_dir = loc.to_windows();
+            let in_library = crate::library::is_library(loc.path());
             let in_root = loc.path().kind() == PathKind::Computer;
             let listing = v.listing();
             let cut = self.cut_names();
@@ -1770,13 +1904,15 @@ impl App {
 
                 let name = listing.name(i);
                 let faded = e.attrs & attr::HIDDEN != 0 || cut.is_some_and(|c| c.contains(name));
-                let dir_key = if in_bin { recycle::origin(listing, i) } else { shell_dir.as_ref().map_or(&b""[..], |d| d.as_bytes()) };
+                let row_dir = if in_library { FsPath::parse_exact(crate::library::folder(listing, i)) } else { None };
+                let dir = row_dir.as_ref().or(shell_dir.as_ref());
+                let dir_key = if in_bin { recycle::origin(listing, i) } else { dir.map_or(&b""[..], |d| d.as_bytes()) };
                 let (key, kind) = icon_key(name, listing.ext(i), &e, icon_px as u32, dir_key, self.icon_epoch);
                 let ir = p.icon;
                 let alpha = if faded { 0x70 } else { 0xFF };
                 let thumb = (want_thumbs && !e.is_dir() && has_thumbnail(listing.ext(i))).then(|| hash::hash(&("thumb", dir_key, name, e.modified, e.size, thumb_px)));
                 let thumbed = thumb.is_some_and(|k| g.thumb(k, ir, alpha));
-                if let (Some(k), false, Some(d)) = (thumb, thumbed, shell_dir.as_ref()) {
+                if let (Some(k), false, Some(d)) = (thumb, thumbed, dir) {
                     if !self.thumbs.contains_key(&k) && !thumb_requests.iter().any(|r| r.key == k) {
                         thumb_requests.push(IconRequest { key: k, kind: IconKind::Thumbnail, path: d.join(name), size: thumb_px, gen: tab.gen, row: row as u32 });
                     }
@@ -1787,7 +1923,7 @@ impl App {
                     let path = match (wanted, in_bin) {
                         (false, _) => None,
                         (true, true) => recycle::recycled(listing, i),
-                        (true, false) => loc.join(name).to_windows(),
+                        (true, false) => row_dir.as_ref().map_or_else(|| loc.join(name).to_windows(), |d| Some(d.join(name))),
                     };
                     if let Some(path) = path {
                         requests.push(IconRequest { key, kind, path, size: icon_px as u32, gen: tab.gen, row: row as u32 });
@@ -1851,7 +1987,7 @@ impl App {
         if let Some(err) = &tab.error {
             s.push_str(err);
             color = t.error;
-        } else if let Some(v) = tab.view.as_ref().filter(|v| v.snap().gen == tab.gen) {
+        } else if let Some(v) = tab.view.as_ref().filter(|v| v.snap().gen == tab.gen && !tab.location().is_home_page()) {
             self.count_text(&mut s, v);
             let k = v.selected_count();
             if k > 0 {

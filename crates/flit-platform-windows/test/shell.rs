@@ -46,6 +46,16 @@ fn dropped_files_become_quoted_program_arguments() {
     assert_eq!(quote_path(""), r#""""#);
 }
 
+#[test]
+fn typed_commands_run_as_typed_and_eject_needs_no_command() {
+    let run = Launch::Run { program: "notepad".into(), args: r#""a b.txt" -x"#.into(), dir: Some(p(r"C:\work")) };
+    let expected = Command { program: "notepad".into(), args: r#""a b.txt" -x"#.into(), dir: Some(r"C:\work".into()), admin: false };
+    assert_eq!(commands(&run, None), [expected]);
+    let url = Launch::Run { program: "https://example.com".into(), args: String::new(), dir: None };
+    assert_eq!(commands(&url, None).first().map(|c| (c.program.as_str(), c.dir.is_none())), Some(("https://example.com", true)));
+    assert!(commands(&Launch::Eject(p(r"E:\")), None).is_empty());
+}
+
 fn solid(size: u32, px: [u8; 4]) -> Bitmap {
     Bitmap { width: size, height: size, rgba: px.repeat((size * size) as usize) }
 }

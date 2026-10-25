@@ -125,3 +125,14 @@ fn driver_is_the_longest_positive_name_literal() {
     assert!(parse("ext:rs size:>1", clock()).unwrap().driver().is_none());
     assert!(parse("path:x", clock()).unwrap().needs_path());
 }
+
+#[test]
+fn dollar_and_foreign_properties_go_to_windows_search() {
+    assert_eq!(shell_query("$ kind:music  "), Some("kind:music".into()));
+    assert_eq!(shell_query("report author:Ann"), Some("report author:Ann".into()));
+    assert_eq!(shell_query("System.Size:>1MB"), Some("System.Size:>1MB".into()));
+    assert_eq!(shell_query("!kind:folder"), Some("!kind:folder".into()));
+    for own in ["ext:txt size:>1mb", "path:docs dm:today", "tag:red", r"C:\Users", "c:foo", "\"kind:music\"", "kind:", "plain words"] {
+        assert_eq!(shell_query(own), None, "{own}");
+    }
+}

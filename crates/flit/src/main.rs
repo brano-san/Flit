@@ -1,9 +1,11 @@
 #![cfg_attr(not(test), windows_subsystem = "windows")]
 
 mod app;
+mod find;
 mod metrics;
 mod places;
 mod preview;
+mod session;
 mod search_client;
 mod state;
 mod tags;

@@ -1,8 +1,11 @@
 use super::actions::{keys_text, ACTIONS};
 use super::edit::{EditAction, LineEdit};
 use super::palette::{Palette, Pick};
-use super::{App, Drag, Effect, Focus, Hit};
+use super::sidebar::Section;
+use super::{App, Drag, Effect, Focus, Hit, Route};
+use crate::library;
 use crate::hash::FxHashSet;
+use crate::open::OpenTarget;
 use crate::input::{CursorIcon, Event, Key, Mods, MouseButton};
 use crate::listing::attr;
 use crate::location::{Location, ProviderId};
@@ -27,6 +30,7 @@ pub const SHELL_VERBS: [&str; 6] = ["rename", "copy", "cut", "paste", "delete", 
 const NEW_FOLDER: &str = "New folder";
 const REVEAL_FOR: Duration = Duration::from_secs(10);
 const SPRING_DELAY: Duration = Duration::from_millis(1300);
+const SECTION_SPRING_DELAY: Duration = Duration::from_millis(500);
 const DRAG_START: f32 = 4.0;
 const MAX_NAME_UNITS: usize = 255;
 const RESERVED: [&str; 4] = ["CON", "PRN", "AUX", "NUL"];
@@ -131,14 +135,18 @@ pub enum Spot {
     Tab(usize),
     Crumb(usize),
     Side(usize),
+    NewTab,
+    SideHeader(Section),
 }
 
 #[derive(Clone, PartialEq, Debug)]
 enum Target {
     Reveal,
+    NewTab,
     Into { dest: FsPath, spot: Spot },
     Trash(Spot),
     Run { program: FsPath, spot: Spot },
+    Pin,
 }
 
 struct Dropping {
@@ -275,11 +283,13 @@ impl App {
         self.tab().view_loc.is_recycle_bin()
     }
 
-    fn shell_dir(&self) -> Result<FsPath, &'static str> {
+    pub(super) fn shell_dir(&self) -> Result<FsPath, &'static str> {
         let loc = &self.tab().view_loc;
         match loc.path().kind() {
             PathKind::Computer => return Err("Files cannot be placed in This PC"),
             PathKind::RecycleBin => return Err("Files cannot be placed in the Recycle Bin"),
+            PathKind::Home => return Err("Files cannot be placed on the Home page"),
+            _ if library::is_library(loc.path()) => return self.library_save(loc.path()).ok_or("This library has no folder to save into"),
             _ => {}
         }
         loc.to_windows().ok_or("This folder cannot be used by Windows shell operations")
@@ -330,6 +340,10 @@ impl App {
         for p in &self.ops.pending {
             p.ctl.cancel();
         }
+    }
+
+    pub fn ops_pending(&self) -> bool {
+        !self.ops.pending.is_empty()
     }
 
     fn delete_with(&mut self, permanent: bool) {
@@ -607,8 +621,9 @@ impl App {
                 Ok(name) => self.start_op(FileOp::NewStream { item, name: name.into_bytes() }, Origin::Fresh, Then::Nothing),
                 Err(e) => self.status(e),
             },
+            p @ (Pick::NewLibrary | Pick::LibraryAdd(_)) => self.submit_library(p, text),
             Pick::Tags(t) => self.tag_input(t, text),
-            Pick::Commands | Pick::NewItem => {}
+            Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Toolbar(_) => {}
         }
     }
 
@@ -898,7 +913,8 @@ impl App {
             self.status(msg);
             return false;
         }
-        let (item, target) = (t.view_loc.join(&old).to_windows(), t.view_loc.join(name.as_bytes()).to_windows());
+        let dir = t.entry_dir(r.idx);
+        let (item, target) = (dir.join(&old).to_windows(), dir.join(name.as_bytes()).to_windows());
         let (Some(item), Some(target)) = (item, target) else {
             self.status("This name cannot be used by Windows shell operations");
             return true;
@@ -916,8 +932,9 @@ impl App {
         let taken: FxHashSet<Vec<u8>> = (0..l.len() as u32).filter(live).filter(|&i| !v.is_selected(i)).map(|i| l.name(i).to_ascii_lowercase()).collect();
         let items: Vec<(&[u8], bool)> = v.rows().iter().filter(|&&i| v.is_selected(i)).map(|&i| (l.name(i), l.entries[i as usize].is_dir())).collect();
         let names = batch_names(base, &items, |n| taken.contains(n));
-        let renamed = items.iter().zip(&names).filter(|((old, _), new)| *old != new.as_slice());
-        let pairs: Option<Vec<(FsPath, FsPath)>> = renamed.map(|((old, _), new)| Some((t.view_loc.join(old).to_windows()?, t.view_loc.join(new).to_windows()?))).collect();
+        let dirs: Vec<Location> = v.rows().iter().filter(|&&i| v.is_selected(i)).map(|&i| t.entry_dir(i)).collect();
+        let renamed = items.iter().zip(&names).zip(&dirs).filter(|(((old, _), new), _)| *old != new.as_slice());
+        let pairs: Option<Vec<(FsPath, FsPath)>> = renamed.map(|(((old, _), new), dir)| Some((dir.join(old).to_windows()?, dir.join(new).to_windows()?))).collect();
         match pairs {
             Some(p) if p.is_empty() => {}
             Some(p) => {
@@ -1013,6 +1030,8 @@ impl App {
                 Hit::Row(_) => self.shell_menu(x, y, true, self.mods.shift),
                 Hit::ListEmpty | Hit::Group(_) => self.shell_menu(x, y, false, self.mods.shift),
                 Hit::Header(_) | Hit::ColSep(_) => self.header_menu(x, y),
+                h @ (Hit::Side(_) | Hit::SidePin(_) | Hit::SideHeader(_) | Hit::SideEmpty) => self.side_menu(x, y, h),
+                h @ (Hit::HomeItem(_) | Hit::HomeEmpty) => self.home_menu(x, y, h),
                 _ => {}
             }
         }
@@ -1094,7 +1113,12 @@ impl App {
                 let Some(d) = self.ops.dropping.take() else { return drop_effect::NONE };
                 match d.target {
                     Some(Target::Reveal) if effect != drop_effect::NONE => self.on_event(&Event::DroppedFiles(d.paths), now),
+                    Some(Target::NewTab) if effect != drop_effect::NONE => {
+                        let routes = d.paths.into_iter().map(|p| Route { folder: Location::from_local(p), select: None }).collect();
+                        self.dispatch(routes, OpenTarget::NewTab, now);
+                    }
                     Some(Target::Trash(_)) if effect != drop_effect::NONE => self.start_op(FileOp::Trash(d.paths), Origin::Fresh, Then::Nothing),
+                    Some(Target::Pin) if effect != drop_effect::NONE => self.effects.push(Effect::PinFolders(d.paths)),
                     Some(Target::Run { program, .. }) if effect != drop_effect::NONE => {
                         let tab = self.tab().id;
                         let launch = Launch::With { program, args: d.paths };
@@ -1122,6 +1146,7 @@ impl App {
         let into = |loc: &Location, spot: Spot| match loc.path().kind() {
             PathKind::RecycleBin => Some(Target::Trash(spot)),
             PathKind::Computer => None,
+            _ if library::is_library(loc.path()) => self.library_save(loc.path()).map(|dest| Target::Into { dest, spot }),
             _ => loc.to_windows().map(|dest| Target::Into { dest, spot }),
         };
         let here = || into(&t.view_loc, Spot::List);
@@ -1143,7 +1168,10 @@ impl App {
             Hit::Tab(i) | Hit::TabClose(i) => into(self.tabs.get(i)?.location(), Spot::Tab(i)),
             Hit::Crumb(i) => into(&t.crumbs.get(i)?.1, Spot::Crumb(i)),
             Hit::Side(i) | Hit::SidePin(i) => into(&self.nav.sidebar.items.get(i)?.loc, Spot::Side(i)),
+            Hit::NewTab => Some(Target::NewTab),
             Hit::Header(_) | Hit::ColSep(_) | Hit::Sizes | Hit::Bin(_) => None,
+            Hit::SideHeader(Section::Pinned) => Some(Target::Pin),
+            Hit::SideHeader(_) | Hit::HomeItem(_) | Hit::HomeEmpty | Hit::HomeButton => None,
             Hit::SideEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose => None,
             Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside => None,
             Hit::OpsButton | Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsClear | Hit::OpsCancel(_) | Hit::OpsMore(_) | Hit::OpsMenu(_) => None,
@@ -1159,11 +1187,13 @@ impl App {
         let Some(d) = &self.ops.dropping else { return NONE };
         let effect = match &target {
             None => NONE,
-            Some(Target::Reveal) => [COPY, LINK].into_iter().find(|e| allowed & e != 0).unwrap_or(NONE),
+            Some(Target::Reveal | Target::NewTab) => [COPY, LINK].into_iter().find(|e| allowed & e != 0).unwrap_or(NONE),
             Some(Target::Trash(_)) if d.paths.is_empty() || d.paths.iter().any(recycle::in_bin) => NONE,
             Some(Target::Trash(_)) => allowed & MOVE,
             Some(Target::Run { program, .. }) if d.paths.is_empty() || d.paths.contains(program) => NONE,
             Some(Target::Run { .. }) => [COPY, LINK, MOVE].into_iter().find(|e| allowed & e != 0).unwrap_or(NONE),
+            Some(Target::Pin) if d.paths.is_empty() => NONE,
+            Some(Target::Pin) => [LINK, COPY, MOVE].into_iter().find(|e| allowed & e != 0).unwrap_or(NONE),
             Some(Target::Into { dest, .. }) => {
                 if d.paths.is_empty() || d.paths.iter().any(|p| p.as_bytes().eq_ignore_ascii_case(dest.as_bytes()) || inside(dest, p)) {
                     NONE
@@ -1194,6 +1224,7 @@ impl App {
                 let v = t.view.as_ref()?;
                 v.listing().entries[*v.rows().get(row)? as usize].is_dir().then_some(Spot::Row(row))
             }
+            Hit::SideHeader(s) if self.nav.sidebar.is_collapsed(s) => Some(Spot::SideHeader(s)),
             _ => None,
         }
     }
@@ -1202,7 +1233,7 @@ impl App {
         let spot = self.spring_spot(x, y);
         let Some(d) = &mut self.ops.dropping else { return };
         let due = match (spot, d.spring) {
-            (Some(s), Some((held, since))) if s == held => now.duration_since(since) >= SPRING_DELAY,
+            (Some(s), Some((held, since))) if s == held => now.duration_since(since) >= if matches!(s, Spot::SideHeader(_)) { SECTION_SPRING_DELAY } else { SPRING_DELAY },
             _ => {
                 d.spring = spot.map(|s| (s, now));
                 false
@@ -1215,6 +1246,7 @@ impl App {
         let t = self.tab();
         let folder = match spot {
             Some(Spot::Tab(i)) => return self.select_tab(i),
+            Some(Spot::SideHeader(s)) => return self.toggle_section(s),
             Some(Spot::Crumb(i)) => t.crumbs.get(i).map(|c| c.1.clone()),
             Some(Spot::Row(row)) => t.view.as_ref().and_then(|v| v.rows().get(row).map(|&i| t.entry_location(i))),
             _ => None,
@@ -1228,6 +1260,8 @@ impl App {
         let d = self.ops.dropping.as_ref().filter(|d| d.effect != drop_effect::NONE)?;
         match d.target.as_ref()? {
             Target::Into { spot, .. } | Target::Run { spot, .. } | Target::Trash(spot) => Some(*spot),
+            Target::NewTab => Some(Spot::NewTab),
+            Target::Pin => Some(Spot::SideHeader(Section::Pinned)),
             Target::Reveal => None,
         }
     }
@@ -1241,6 +1275,9 @@ impl App {
             Target::Into { dest, .. } => ("Move to %1", name(dest)),
             Target::Trash(_) => ("Move to %1", RECYCLE_BIN_LABEL.to_owned()),
             Target::Run { program, .. } => ("Open with %1", name(program)),
+            Target::NewTab if d.paths.len() == 1 => ("Open %1 in a new tab", name(&d.paths[0])),
+            Target::NewTab => ("Open in new tabs", String::new()),
+            Target::Pin => ("Pin to %1", "Sidebar".to_owned()),
             Target::Reveal => return None,
         };
         Some((verb.to_owned(), target))
