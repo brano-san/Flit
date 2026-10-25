@@ -94,6 +94,10 @@ fn home_is_its_own_location_with_widgets_and_no_listing() {
     let (r, _) = app.nav.home.cards[0];
     assert_eq!(app.hit(r.x + 2.0, r.y + 2.0), Hit::HomeItem(0));
     assert_eq!(Location::parse("shell:::{F874310E-B6B7-47DC-BC84-B9E6B38F5903}"), Some(Location::home_page()));
+    let full = app.nav.home.area;
+    app.set_pane_state(crate::ui::PaneState { visible: true, ..Default::default() });
+    app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    assert_eq!(app.nav.home.area, full, "the info pane stays out of the Home page");
     app.begin_edit();
     assert_eq!(app.edit.text, "");
 }

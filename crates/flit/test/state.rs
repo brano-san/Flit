@@ -97,7 +97,7 @@ fn out_of_range_sizes_and_cache_limits_fall_back() {
 }
 
 #[test]
-fn sidebar_and_home_preferences_ride_last_so_older_files_still_load() {
+fn sidebar_and_home_preferences_ride_sixth_after_the_pane_so_older_files_still_load() {
     let side = NavPrefs {
         compact: true,
         collapsed: vec!["drives".into()],
@@ -106,14 +106,20 @@ fn sidebar_and_home_preferences_ride_last_so_older_files_still_load() {
         recent_hidden: vec![(flit_core::FsPath::parse(r"C:\a.txt").unwrap(), 42)],
         recent_cleared: 7,
     };
-    let s = Saved::new(Persisted::default(), None).with_side(side.clone());
+    let pane = PaneState { visible: true, details: true, right_w: 410.0, bottom_h: 300.0, volume: 0.25 };
+    let s = Saved::new(Persisted::default(), None).with_pane(pane).with_side(side.clone());
     let bytes = s.encode().unwrap();
-    assert_eq!(Saved::decode(&bytes).unwrap().sanitized().side, side);
-    let without = Saved::new(Persisted::default(), None).encode().unwrap();
-    let older = &without[..without.len() - postcard::to_stdvec(&NavPrefs::default()).unwrap().len()];
-    let back = Saved::decode(older).unwrap();
-    assert_eq!(back.side, NavPrefs::default());
-    assert_eq!(back.persisted, s.persisted);
+    let back = Saved::decode(&bytes).unwrap().sanitized();
+    assert_eq!((back.pane, &back.side), (pane, &side));
+    let master_layout = &bytes[..bytes.len() - postcard::to_stdvec(&side).unwrap().len()];
+    let (_, tail) = postcard::take_from_bytes::<Head>(master_layout).unwrap();
+    let (_, tail) = postcard::take_from_bytes::<NavState>(tail).unwrap();
+    let (_, tail) = postcard::take_from_bytes::<ViewRecord>(tail).unwrap();
+    let (_, tail) = postcard::take_from_bytes::<LayoutRecord>(tail).unwrap();
+    assert_eq!(postcard::from_bytes::<PaneState>(tail).unwrap(), pane, "the pane stays the fifth record");
+    let older = Saved::decode(master_layout).unwrap();
+    assert_eq!((older.pane, &older.side), (pane, &NavPrefs::default()));
+    assert_eq!(older.persisted, s.persisted);
 }
 
 #[test]
@@ -126,4 +132,18 @@ fn corrupted_nav_state_falls_back() {
     let mut bytes = postcard::to_stdvec(&s.head()).unwrap();
     bytes.extend([0xFF, 0xFF, 0xFF]);
     assert_eq!(Saved::decode(&bytes).unwrap().nav, NavState::default());
+}
+
+#[test]
+fn pane_state_rides_last_and_older_files_keep_the_default() {
+    let pane = PaneState { visible: true, details: true, right_w: 410.0, bottom_h: 300.0, volume: 0.25 };
+    let s = Saved::new(Persisted::default(), None).with_pane(pane);
+    let bytes = s.encode().unwrap();
+    assert_eq!(Saved::decode(&bytes).unwrap().pane, pane);
+    let older = Saved::new(Persisted::default(), None).encode().unwrap();
+    let trailing = postcard::to_stdvec(&PaneState::default()).unwrap().len() + postcard::to_stdvec(&NavPrefs::default()).unwrap().len();
+    let without = &older[..older.len() - trailing];
+    assert_eq!(Saved::decode(without).unwrap().pane, PaneState::default());
+    let broken = Saved { pane: PaneState { right_w: -1.0, volume: f32::NAN, ..pane }, ..s }.sanitized();
+    assert_eq!((broken.pane.right_w, broken.pane.volume), (PaneState::default().right_w, PaneState::default().volume));
 }

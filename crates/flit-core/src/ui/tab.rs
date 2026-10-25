@@ -253,6 +253,10 @@ impl Tab {
         self.focus_row(row, m);
     }
 
+    pub(super) fn typing(&self, now: Instant) -> bool {
+        self.type_ahead_at.is_some_and(|t| now.duration_since(t) <= TYPE_AHEAD_RESET)
+    }
+
     pub(super) fn type_ahead(&mut self, c: char, now: Instant) -> bool {
         if self.type_ahead_at.is_some_and(|t| now.duration_since(t) > TYPE_AHEAD_RESET) {
             self.type_ahead.clear();

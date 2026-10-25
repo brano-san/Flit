@@ -179,6 +179,34 @@ fn bench_shell_metadata() {
 
 #[test]
 #[ignore]
+fn bench_preview_loaders() {
+    let d = Dir::temp("preview");
+    let _sh = ShellCom::new().unwrap();
+    let jpegs: Vec<FsPath> = (0..RUNS as u32)
+        .map(|k| {
+            crate::shell::tests::write_jpeg(&d.0.join(format!("p{k}.jpg")), 4000, 3000, k);
+            d.path(&format!("p{k}.jpg"))
+        })
+        .collect();
+    let mut bytes = 0;
+    measure("decode 4000x3000 jpeg to 1600 px", jpegs.len(), |k| jpegs[k].clone(), |p| {
+        bytes = crate::preview::decode_image(&p, 1600).unwrap().rgba.len();
+    });
+    eprintln!("      bitmap held: {} KB", bytes / 1024);
+    measure("decode 4000x3000 jpeg to 640 px", jpegs.len(), |k| jpegs[k].clone(), |p| {
+        assert!(crate::preview::decode_image(&p, 640).is_some());
+    });
+    measure("shell property groups (jpeg)", jpegs.len(), |k| jpegs[k].clone(), |p| {
+        assert!(!crate::preview::properties(&p).is_empty());
+    });
+    let exts = ["pdf", "txt", "docx", "mp4", "html", "zip", "md", "xlsx"];
+    measure("preview handler lookup (per extension)", exts.len(), |k| exts[k].as_bytes(), |e| {
+        crate::preview::handler(e);
+    });
+}
+
+#[test]
+#[ignore]
 fn bench_file_ops() {
     let c = Dir::temp("ops");
     let other = Dir::other_volume("ops");

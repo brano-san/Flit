@@ -3,6 +3,7 @@ use crate::window::{FrameSync, Win32Window};
 use flit_core::atlas::Slot;
 use flit_core::render::{DrawList, Instance};
 use flit_core::thumbs::THUMB_ATLAS;
+use flit_core::ui::Bitmap;
 use flit_platform::{PlatformError, RenderError, Renderer, Window};
 use std::cell::Cell;
 use std::rc::Rc;
@@ -70,6 +71,7 @@ pub struct D3dRenderer {
     atlas: ID3D11Texture2D,
     atlas_srv: ID3D11ShaderResourceView,
     thumbs: Option<(ID3D11Texture2D, ID3D11ShaderResourceView)>,
+    preview: Option<ID3D11ShaderResourceView>,
     size: (u32, u32),
     sync: Rc<FrameSync>,
 }
@@ -274,7 +276,7 @@ impl D3dRenderer {
             ctx.VSSetConstantBuffers(0, Some(&[Some(self.globals.clone())]));
             ctx.PSSetShader(&d.ps, None);
             ctx.PSSetConstantBuffers(0, Some(&[Some(self.globals.clone())]));
-            ctx.PSSetShaderResources(0, Some(&[Some(self.atlas_srv.clone()), self.thumbs.as_ref().map(|t| t.1.clone())]));
+            ctx.PSSetShaderResources(0, Some(&[Some(self.atlas_srv.clone()), self.thumbs.as_ref().map(|t| t.1.clone()), self.preview.clone()]));
             ctx.PSSetSamplers(0, Some(&[Some(d.sampler.clone())]));
             if n > 0 {
                 ctx.DrawInstanced(4, n as u32, 0, 0);
@@ -327,7 +329,7 @@ impl Renderer for D3dRenderer {
             let waitable = Waitable(swap.GetFrameLatencyWaitableObject());
 
             let dcomp: IDCompositionDevice = DCompositionCreateDevice(&dxgi).map_err(err)?;
-            let target = dcomp.CreateTargetForHwnd(window.hwnd(), true).map_err(err)?;
+            let target = dcomp.CreateTargetForHwnd(window.hwnd(), false).map_err(err)?;
             let visual = dcomp.CreateVisual().map_err(err)?;
             visual.SetContent(&swap).map_err(err)?;
             target.SetRoot(&visual).map_err(err)?;
@@ -355,6 +357,7 @@ impl Renderer for D3dRenderer {
                 atlas,
                 atlas_srv,
                 thumbs: None,
+                preview: None,
                 size: (w.max(1), h.max(1)),
                 sync: window.sync.clone(),
             })
@@ -391,6 +394,29 @@ impl Renderer for D3dRenderer {
         if let Some((tex, _)) = &self.thumbs {
             update(&self.dev.ctx, tex, slot, rgba);
         }
+    }
+
+    fn upload_preview(&mut self, image: Option<&Bitmap>) {
+        self.preview = image.and_then(|b| {
+            let desc = D3D11_TEXTURE2D_DESC {
+                Width: b.width,
+                Height: b.height,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_IMMUTABLE,
+                BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+                ..Default::default()
+            };
+            let data = D3D11_SUBRESOURCE_DATA { pSysMem: b.rgba.as_ptr().cast(), SysMemPitch: b.width * 4, SysMemSlicePitch: 0 };
+            let (mut tex, mut srv) = (None, None);
+            unsafe {
+                self.dev.device.CreateTexture2D(&desc, Some(&data), Some(&mut tex)).map_err(|e| tracing::warn!("preview texture: {e}")).ok()?;
+                self.dev.device.CreateShaderResourceView(tex.as_ref()?, None, Some(&mut srv)).ok()?;
+            }
+            srv
+        });
     }
 
     fn render(&mut self, list: &DrawList) -> Result<(), RenderError> {
