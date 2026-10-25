@@ -332,6 +332,42 @@ fn thumbs_asked(app: &mut App) -> Vec<IconRequest> {
     app.drain_effects().filter_map(|e| if let Effect::Thumbnail(r) = e { Some(r) } else { None }).collect()
 }
 
+fn ms(d: Duration) -> f64 {
+    d.as_secs_f64() * 1e3
+}
+
+#[test]
+#[ignore]
+fn bench_layouts_on_100k() {
+    let mut app = app_at(r"C:\big");
+    let mut gfx = Gfx::new(Mono, 1024);
+    publish(&mut app, &files(100_000, "jpg"), true);
+    app.frame(&mut gfx, Instant::now());
+    for (digit, mode) in [('2', LayoutMode::List), ('3', LayoutMode::Cards), ('4', LayoutMode::Columns), ('5', LayoutMode::Grid), ('6', LayoutMode::Adaptive), ('1', LayoutMode::Details)] {
+        let t = Instant::now();
+        key(&mut app, Key::Char(digit), CTRL_SHIFT);
+        app.frame(&mut gfx, Instant::now());
+        eprintln!("BENCH switch to {:<9} on 100k entries, key to finished frame {:>7.3} ms", mode.title(), ms(t.elapsed()));
+        let _ = app.drain_effects().count();
+    }
+    key(&mut app, Key::Char('5'), CTRL_SHIFT);
+    let fake = Bitmap { width: 128, height: 96, rgba: vec![200; 128 * 96 * 4] };
+    let mut times = Vec::new();
+    for _ in 0..600 {
+        for r in thumbs_asked(&mut app) {
+            app.on_thumb(&mut gfx, r.key, IconResult::Ready(fake.clone()));
+        }
+        gfx.thumbs.uploads.clear();
+        app.on_event(&Event::Wheel { dx: 0.0, dy: -1.0 }, Instant::now());
+        let t = Instant::now();
+        app.frame(&mut gfx, Instant::now());
+        times.push(t.elapsed());
+    }
+    times.sort();
+    let at = |q: f64| ms(times[((times.len() - 1) as f64 * q) as usize]);
+    eprintln!("BENCH Grid scroll over 100k thumbnails, frame CPU  median {:.3} ms  p99 {:.3} ms  max {:.3} ms  ({} thumbnails in the atlas, {} quads, {} on screen, scrolled to {})", at(0.5), at(0.99), at(1.0), gfx.thumbs.len(), gfx.dl.instances.len(), thumb_quads(&gfx), app.tab().scroll);
+}
+
 fn thumb_quads(gfx: &Gfx<Mono>) -> usize {
     gfx.dl.instances.iter().filter(|q| q.kind == kind::THUMB).count()
 }

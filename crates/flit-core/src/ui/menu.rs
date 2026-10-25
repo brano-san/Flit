@@ -238,6 +238,9 @@ impl App {
             if !folders.is_empty() {
                 m.action("app.terminal", "Open in terminal");
             }
+            if count == 1 && folders.len() == 1 {
+                m.action("file.folder_icon", "Change icon");
+            }
         }
         m.separator();
         m.action("item.properties", "Properties");

@@ -79,10 +79,11 @@ fn item_menu_lists_flit_commands_with_their_shortcuts() {
     assert!(tidy(&file.menu));
     let folder = right_click(&mut app, Some(FOLDER), false);
     let labels = commands(&folder.menu);
-    for want in ["Open in new tab", "Open in new window", "Paste\tCtrl+Shift+V", "Pin to sidebar", "Open in terminal\tCtrl+`"] {
+    for want in ["Open in new tab", "Open in new window", "Paste\tCtrl+Shift+V", "Pin to sidebar", "Open in terminal\tCtrl+`", "Change icon"] {
         assert!(labels.iter().any(|l| l == want), "{want} missing from {labels:?}");
     }
     assert!(!labels.iter().any(|l| l.starts_with("New alternate")), "{labels:?}");
+    assert!(!commands(&file.menu).iter().any(|l| l == "Change icon"));
 }
 
 #[test]
