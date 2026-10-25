@@ -223,7 +223,7 @@ fn job_title(op: &FileOp) -> Option<String> {
         FileOp::Restore(pairs) => format!("Restoring {}", if pairs.len() == 1 { quoted(&pairs[0].1) } else { format!("{} items", pairs.len()) }),
         FileOp::Purge(pairs) => format!("Deleting {} from the Recycle Bin", if pairs.len() == 1 { quoted(&pairs[0].1) } else { format!("{} items", pairs.len()) }),
         FileOp::EmptyBin => "Emptying the Recycle Bin".into(),
-        FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::NewStream { .. } | FileOp::Link { .. } => return None,
+        FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::NewStream { .. } | FileOp::Link { .. } | FileOp::FolderIcon { .. } => return None,
     })
 }
 

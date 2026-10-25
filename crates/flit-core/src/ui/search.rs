@@ -628,7 +628,7 @@ impl App {
             let ext_at = if is_dir { r.name.len() } else { r.name.len() - name::ext_len(&r.name) };
             let ext = &r.name[ext_at..];
             let entry = Entry { size: 0, modified: 0, created: 0, name_off: 0, attrs: r.meta.attrs, name_len: 0, ext_len: 0 };
-            let (key, _) = icon_key(&r.name, ext, &entry, icon_px as u32, &r.dir);
+            let (key, _) = icon_key(&r.name, ext, &entry, icon_px as u32, &r.dir, self.icon_epoch);
             let ir = Rect::new(sl.cols[0].x + pad, y + ((rh - icon_px) / 2.0).round(), icon_px, icon_px);
             if !g.image(key, ir) {
                 let (glyph, color) = if is_dir { (G_FOLDER, t.accent.alpha(0xB0)) } else { (G_FILE, t.text_dim.alpha(0x90)) };

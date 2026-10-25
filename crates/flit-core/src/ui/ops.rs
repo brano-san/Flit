@@ -190,6 +190,12 @@ pub fn validate_name(text: &str, windows: bool) -> Result<String, &'static str> 
     Ok(name.to_owned())
 }
 
+pub fn icon_location(text: &str) -> Option<(FsPath, i32)> {
+    let text = text.trim();
+    let (path, index) = text.rsplit_once(',').and_then(|(p, i)| Some((p.trim(), i.trim().parse().ok()?))).unwrap_or((text, 0));
+    FsPath::parse(path.trim_matches('"')).filter(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim)).map(|p| (p, index))
+}
+
 pub fn unique_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
     (1..).map(|k| if k == 1 { base.to_owned() } else { format!("{base} ({k})") }).find(|n| !taken(n)).unwrap()
 }
@@ -566,8 +572,24 @@ impl App {
         }
     }
 
+    pub fn ask_folder_icon(&mut self) {
+        let folder = self.rename_target().filter(|&i| self.tab().view.as_ref().is_some_and(|v| v.listing().entries[i as usize].is_dir()));
+        let path = match folder {
+            Some(i) => self.item_paths(&[i]).map(|mut p| p.remove(0)),
+            None => self.shell_dir(),
+        };
+        match path {
+            Ok(folder) => self.open_pick(Palette::new(Pick::FolderIcon(folder), Vec::new(), "")),
+            Err(e) => self.status(e),
+        }
+    }
+
     pub(super) fn submit_pick(&mut self, pick: Pick, text: &str) {
         match pick {
+            Pick::FolderIcon(folder) => match icon_location(text) {
+                Some((icon, index)) => self.start_op(FileOp::FolderIcon { folder, icon, index }, Origin::Fresh, Then::Nothing),
+                None => self.status("Enter the full path of an icon, program or library, optionally followed by a comma and the icon index"),
+            },
             Pick::Shortcut(dest) => match FsPath::parse(text.trim_matches('"')).filter(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim)) {
                 Some(target) => self.start_op(FileOp::Link { items: vec![target], dest }, Origin::Fresh, Then::Rename),
                 None => self.status("Enter the full path of the file or folder the shortcut points to"),
@@ -707,6 +729,11 @@ impl App {
         if let (FileOp::NewStream { item, name }, Some(k), None) = (&report.op, k, &error) {
             self.tabs[k].error = Some(format!("Created the stream {}:{}", item.display(), crate::name::display(name)));
             self.dirty |= k == self.cur;
+        }
+        if let (FileOp::FolderIcon { folder, .. }, None) = (&report.op, &error) {
+            self.icon_epoch += 1;
+            self.tabs[k.unwrap_or(self.cur)].error = Some(format!("Changed the icon of {}", folder.display()));
+            self.dirty = true;
         }
         let Some(k) = k.filter(|_| p.then != Then::Nothing && !matches!(report.op, FileOp::Trash(_))) else { return };
         let dir = self.tabs[k].view_loc.clone();

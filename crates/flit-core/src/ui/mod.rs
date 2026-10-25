@@ -346,6 +346,7 @@ pub struct App {
 
     icons: FxHashMap<u64, IconState>,
     thumbs: FxHashMap<u64, IconState>,
+    icon_epoch: u64,
     type_names: FxHashMap<Vec<u8>, Option<String>>,
     adaptive: FxHashMap<u64, LayoutMode>,
 
@@ -400,6 +401,7 @@ impl App {
             cursor: CursorIcon::Default,
             icons: FxHashMap::default(),
             thumbs: FxHashMap::default(),
+            icon_epoch: 0,
             type_names: FxHashMap::default(),
             adaptive: FxHashMap::default(),
             layout: Layout::default(),
@@ -1715,7 +1717,7 @@ impl App {
                 let name = listing.name(i);
                 let faded = e.attrs & attr::HIDDEN != 0 || cut.is_some_and(|c| c.contains(name));
                 let dir_key = if in_bin { recycle::origin(listing, i) } else { shell_dir.as_ref().map_or(&b""[..], |d| d.as_bytes()) };
-                let (key, kind) = icon_key(name, listing.ext(i), &e, icon_px as u32, dir_key);
+                let (key, kind) = icon_key(name, listing.ext(i), &e, icon_px as u32, dir_key, self.icon_epoch);
                 let ir = p.icon;
                 let alpha = if faded { 0x70 } else { 0xFF };
                 let thumb = (want_thumbs && !e.is_dir() && has_thumbnail(listing.ext(i))).then(|| hash::hash(&("thumb", dir_key, name, e.modified, e.size, thumb_px)));
@@ -1865,9 +1867,12 @@ fn centered<B: TextBackend>(g: &mut Gfx<B>, r: Rect, s: &str, font: FontStyle, c
     g.text(x, y, s, font, color, f32::INFINITY);
 }
 
-pub fn icon_key(name: &[u8], ext: &[u8], e: &crate::listing::Entry, size: u32, dir: &[u8]) -> (u64, IconKind) {
+pub fn icon_key(name: &[u8], ext: &[u8], e: &crate::listing::Entry, size: u32, dir: &[u8], epoch: u64) -> (u64, IconKind) {
     if e.attrs & attr::VOLUME != 0 {
         return (hash::hash(&("vol", name, size)), IconKind::Volume);
+    }
+    if e.is_dir() && e.attrs & (attr::READONLY | attr::SYSTEM) != 0 {
+        return (hash::hash(&("custom", dir, name, e.modified, e.attrs, size, epoch)), IconKind::CustomFolder);
     }
     if e.is_dir() {
         return (hash::hash(&("dir", size)), IconKind::Folder);

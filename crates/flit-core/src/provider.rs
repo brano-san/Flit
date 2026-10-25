@@ -84,6 +84,7 @@ pub enum FileOp {
     Purge(Vec<(FsPath, FsPath)>),
     EmptyBin,
     Flatten(Vec<FsPath>),
+    FolderIcon { folder: FsPath, icon: FsPath, index: i32 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -122,6 +123,7 @@ impl FileOp {
             FileOp::Purge(v) => FileOp::Purge(pairs(v)?),
             FileOp::EmptyBin => FileOp::EmptyBin,
             FileOp::Flatten(v) => FileOp::Flatten(all(v)?),
+            FileOp::FolderIcon { folder, icon, index } => FileOp::FolderIcon { folder: f(folder)?, icon: f(icon)?, index: *index },
         })
     }
 }

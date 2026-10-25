@@ -157,7 +157,7 @@ impl App {
                     g.dl.round_rect(cell.inset(s4, 1.0), th.hover, s4);
                 }
                 let ir = Rect::new(cell.x + s10, cell.y + ((rh - icon_px) / 2.0).round(), icon_px, icon_px);
-                let (key, kind) = icon_key(name, listing.ext(idx), &e, icon_px as u32, dir.as_ref().map_or(&b""[..], |d| d.as_bytes()));
+                let (key, kind) = icon_key(name, listing.ext(idx), &e, icon_px as u32, dir.as_ref().map_or(&b""[..], |d| d.as_bytes()), self.icon_epoch);
                 if !g.image(key, ir) {
                     icon_glyph(g, th, &e, ir);
                     if let Some(path) = dir.as_ref().filter(|_| !self.icons.contains_key(&key) && !requests.iter().any(|q| q.key == key)) {

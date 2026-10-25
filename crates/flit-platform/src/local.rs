@@ -120,7 +120,7 @@ fn transfer_volume(op: &FileOp) -> Option<Vec<u8>> {
 }
 
 fn quick(op: &FileOp) -> bool {
-    matches!(op, FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::NewStream { .. } | FileOp::Link { .. } | FileOp::Restore(_))
+    matches!(op, FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::NewStream { .. } | FileOp::Link { .. } | FileOp::Restore(_) | FileOp::FolderIcon { .. })
 }
 
 enum WatchCmd {

@@ -156,6 +156,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("file.new_item", "New item", &[ctrl_shift(Key::Char('I'))], |a, _| a.new_item_dialog()),
     Action::new("file.new_folder_with_selection", "New folder with the selected items", &[], |a, _| a.new_folder_with_selection()),
     Action::new("file.new_stream", "New alternate data stream", &[], |a, _| a.new_stream()),
+    Action::new("file.folder_icon", "Change the folder icon", &[], |a, _| a.ask_folder_icon()),
     Action::new("file.shortcut", "Create shortcuts to the selected items", &[], |a, _| a.create_shortcuts()),
     Action::new("file.flatten", "Flatten folder: move files from all subfolders into it", &[], |a, _| a.flatten_selection()),
     Action::new("ops.show", "Show or hide file operations", &[], |a, _| a.toggle_jobs()),
