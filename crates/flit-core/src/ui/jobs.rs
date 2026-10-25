@@ -36,6 +36,7 @@ const G_CHECK: &str = "\u{E73E}";
 const CONFLICT_BUTTONS: [&str; 4] = ["Replace", "Keep both", "Skip", "Cancel"];
 const UNREADABLE_BUTTONS: [&str; 2] = ["Skip", "Cancel"];
 const CONFIRM_BUTTONS: [&str; 2] = ["Delete", "Cancel"];
+const RESTORE_ALL_BUTTONS: [&str; 2] = ["Restore", "Cancel"];
 const RESTORE_BUTTONS: [&str; 2] = ["Restore", "Not now"];
 
 #[derive(Clone, Debug, PartialEq)]
@@ -268,6 +269,8 @@ fn confirm_text(op: &FileOp) -> (&'static str, String) {
     match op {
         FileOp::Delete(items) => ("Delete permanently?", names(items.iter().collect())),
         FileOp::Purge(pairs) => ("Delete permanently?", names(pairs.iter().map(|(_, original)| original).collect())),
+        FileOp::Restore(pairs) if pairs.len() == 1 => ("Restore all items?", format!("{} will go back to where it was deleted from.", quoted(&pairs[0].1))),
+        FileOp::Restore(pairs) => ("Restore all items?", format!("All {} items in the Recycle Bin will go back to where they were deleted from.", pairs.len())),
         _ => ("Empty the Recycle Bin?", "All items in the Recycle Bin will be deleted permanently.".into()),
     }
 }
@@ -461,10 +464,11 @@ impl App {
         self.dirty = true;
     }
 
-    fn dialog_buttons(&self) -> &'static [&'static str] {
+    pub(super) fn dialog_buttons(&self) -> &'static [&'static str] {
         match self.jobs.asks.front() {
             Some(a) if a.unreadable() => &UNREADABLE_BUTTONS,
             Some(Ask::Conflict { .. }) => &CONFLICT_BUTTONS,
+            Some(Ask::Confirm(FileOp::Restore(_))) => &RESTORE_ALL_BUTTONS,
             Some(Ask::Confirm(_)) => &CONFIRM_BUTTONS,
             Some(Ask::Restore) => &RESTORE_BUTTONS,
             None => &[],
@@ -814,7 +818,8 @@ impl App {
             }
             Some(Ask::Confirm(op)) => {
                 let (title, text) = confirm_text(op);
-                (title.into(), vec![text, "This cannot be undone.".into()])
+                let note = if matches!(op, FileOp::Restore(_)) { "Ctrl+Z sends them back to the Recycle Bin." } else { "This cannot be undone." };
+                (title.into(), vec![text, note.into()])
             }
             Some(Ask::Restore) => ("Restore the previous session?".into(), vec!["Flit did not close properly last time.".into(), "Restore reopens the windows and tabs that were open.".into()]),
             None => return,

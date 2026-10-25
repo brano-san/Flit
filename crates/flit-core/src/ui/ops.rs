@@ -427,6 +427,7 @@ impl App {
         match pairs.is_empty() {
             true if all => self.status("The Recycle Bin is empty"),
             true => self.status("Select the items to restore"),
+            false if all => self.ask_confirm(FileOp::Restore(pairs)),
             false => self.start_op(FileOp::Restore(pairs), Origin::Fresh, Then::Nothing),
         }
     }
@@ -450,7 +451,7 @@ impl App {
         let pairs: Vec<(FsPath, FsPath)> = (0..l.len() as u32).filter(|&i| l.entries[i as usize].attrs & attr::DELETED == 0).filter_map(|i| Some((recycle::recycled(l, i)?, recycle::original(l, i)?))).collect();
         match pairs.is_empty() {
             true => self.status("The Recycle Bin is empty"),
-            false => self.start_op(FileOp::Restore(pairs), Origin::Fresh, Then::Nothing),
+            false => self.ask_confirm(FileOp::Restore(pairs)),
         }
     }
 

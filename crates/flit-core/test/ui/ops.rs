@@ -615,7 +615,16 @@ fn delete_in_the_bin_purges_and_the_bin_commands_restore_or_empty() {
     key(&mut app, Key::Char('Z'), CTRL);
     assert_eq!(op_list(&mut app), [FileOp::Trash(vec![p(BIN_REPORT.1)])], "a restore is undone by recycling again");
     app.run_action("bin.restore_all", t0());
+    assert_eq!(app.asking(), Some("confirm"));
+    assert!(op_list(&mut app).is_empty(), "nothing is restored before the confirmation");
+    key(&mut app, Key::Escape, NO);
+    assert!(app.asking().is_none() && op_list(&mut app).is_empty(), "a declined confirmation restores nothing");
+    app.run_action("bin.restore_all", t0());
+    key(&mut app, Key::Enter, NO);
     assert_eq!(op_list(&mut app), [FileOp::Restore(pairs(&[BIN_REPORT, BIN_OLD]))]);
+    app.run_action("bin.restore", t0());
+    assert!(app.asking().is_none(), "restoring the selection does not ask");
+    op_list(&mut app);
     app.run_action("bin.empty", t0());
     key(&mut app, Key::Escape, NO);
     assert!(app.asking().is_none() && op_list(&mut app).is_empty(), "a declined confirmation deletes nothing");
@@ -640,7 +649,8 @@ fn the_status_bar_buttons_and_headers_of_the_bin_work_with_the_mouse() {
         let at = (buttons[k].x + 4.0, buttons[k].y + 4.0);
         press(&mut app, at, MouseButton::Left, NO);
         release(&mut app, at, MouseButton::Left);
-        if want == FileOp::EmptyBin {
+        if k > 0 {
+            assert_eq!(app.asking(), Some("confirm"));
             key(&mut app, Key::Enter, NO);
         }
         assert_eq!(op_list(&mut app), [want]);
@@ -1078,6 +1088,12 @@ fn restore_all_from_the_sidebar_lists_the_bin_first_when_it_is_not_open() {
     assert!(op_list(&mut app).is_empty(), "a partial listing restores nothing");
     out.publish(snap(true, listing, keys));
     app.poll();
+    assert_eq!(app.asking(), Some("confirm"));
+    assert!(op_list(&mut app).is_empty(), "the bin is read first, then the restore is confirmed");
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, t0());
+    assert_eq!(app.dialog_buttons(), ["Restore", "Cancel"]);
+    key(&mut app, Key::Enter, NO);
     assert_eq!(op_list(&mut app), [FileOp::Restore(pairs(&[BIN_REPORT, BIN_OLD]))]);
     app.poll();
     assert!(op_list(&mut app).is_empty());
