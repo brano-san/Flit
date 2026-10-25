@@ -43,7 +43,7 @@ fn main() {
         }
         println!("cargo:rustc-link-arg-bins=delayimp.lib");
         println!("cargo:rustc-link-arg-bins=/IGNORE:4199");
-        let ico = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icon/flit.ico");
+        let ico = Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../assets/icon/flit.ico");
         println!("cargo:rerun-if-changed={}", ico.display());
         let res = Path::new(&std::env::var("OUT_DIR").unwrap()).join("flit.res");
         std::fs::write(&res, icon_res(&std::fs::read(&ico).unwrap())).unwrap();
