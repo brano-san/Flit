@@ -1,4 +1,5 @@
 pub mod atlas;
+pub mod filter;
 pub mod fmt;
 pub mod hash;
 pub mod input;
@@ -14,6 +15,7 @@ pub mod sort;
 pub mod text;
 pub mod theme;
 pub mod ui;
+pub mod undo;
 pub mod view;
 
 pub use listing::{attr, DirChange, DirSnapshot, Entry, FsError, FsErrorKind, Listing, ListingBuilder, Meta};

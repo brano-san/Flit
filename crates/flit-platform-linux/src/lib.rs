@@ -1,9 +1,10 @@
 use crossbeam_channel::Sender;
 use flit_core::atlas::Slot;
 use flit_core::input::CursorIcon;
+use flit_core::provider::FileOp;
 use flit_core::render::{DrawList, Rect};
 use flit_core::text::{FontMetrics, FontStyle, GlyphBitmap, GlyphKey, ShapedText, TextBackend};
-use flit_core::ui::{Bitmap, IconRequest};
+use flit_core::ui::{Bitmap, IconRequest, ShellMenu};
 use flit_core::{FsError, FsErrorKind, FsPath, ListingBuilder, Location, Open, ProviderEvent, TabId};
 use flit_platform::*;
 use flit_search::index::{Checkpoint, IndexSink};
@@ -51,6 +52,14 @@ impl Platform for Linux {
 
     fn refresh_period() -> Option<std::time::Duration> {
         None
+    }
+
+    fn drives() -> Vec<flit_core::ui::Drive> {
+        Vec::new()
+    }
+
+    fn wsl_distros() -> Vec<String> {
+        Vec::new()
     }
 }
 
@@ -115,6 +124,18 @@ impl Window for LinuxWindow {
         todo!()
     }
     fn is_dark_mode(&self) -> bool {
+        todo!()
+    }
+    fn set_clipboard_files(&self, _: &[FsPath], _: bool) {
+        todo!()
+    }
+    fn shell_menu(&self, _: ShellMenu) {
+        todo!()
+    }
+    fn properties(&self, _: Vec<FsPath>) {
+        todo!()
+    }
+    fn start_drag(&self, _: Vec<FsPath>) {
         todo!()
     }
 }
@@ -202,10 +223,14 @@ impl Shell for FreedesktopShell {
     }
 }
 
-impl Trash for FreedesktopShell {
-    fn trash(&mut self, _: &[FsPath]) -> Result<(), PlatformError> {
-        Err(PlatformError::unsupported("trash"))
+impl FileOps for FreedesktopShell {
+    fn file_op(&mut self, _: &FileOp) -> OpOutcome {
+        OpOutcome { items: Vec::new(), error: Some(PlatformError::unsupported("file operations")) }
     }
+    fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
+        Err(PlatformError::unsupported("clipboard"))
+    }
+    fn clear_clipboard(&mut self) {}
 }
 
 pub struct DbusInstance;

@@ -441,6 +441,10 @@ impl App {
     }
 
     fn search_mouse_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8, now: Instant) -> bool {
+        if self.sidebar_hit(x, y).is_some() {
+            self.close_search();
+            return false;
+        }
         if self.layout.title.contains(x, y) {
             if matches!(self.hit(x, y), Hit::Tab(_) | Hit::TabClose(_) | Hit::NewTab) {
                 self.close_search();

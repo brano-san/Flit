@@ -1,6 +1,8 @@
+use crate::context_menu::{ShellUi, WM_SHELL_UI};
 use crate::err;
 use flit_core::input::{CursorIcon, Event, HitArea, Key, Mods, MouseButton};
 use flit_core::render::Rect;
+use flit_core::ui::{DragEvent, ShellMenu};
 use flit_core::FsPath;
 use flit_platform::{Placement, PlatformError, Waker, Window, WindowHandler, WindowId, WindowOptions, WindowSystem};
 use std::cell::{Cell, RefCell};
@@ -21,7 +23,6 @@ use windows::Win32::UI::Input::Ime::{ImmGetContext, ImmReleaseContext, ImmSetCom
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::System::Threading::WaitForSingleObjectEx;
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
-use windows::Win32::UI::Shell::{DragAcceptFiles, DragFinish, DragQueryFileW, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 const WM_WAKE: u32 = WM_APP + 1;
@@ -229,6 +230,22 @@ impl Window for Win32Window {
     fn is_dark_mode(&self) -> bool {
         crate::dark_mode()
     }
+
+    fn set_clipboard_files(&self, paths: &[FsPath], cut: bool) {
+        crate::clipboard::write_files(self.hwnd(), paths, cut);
+    }
+
+    fn shell_menu(&self, menu: ShellMenu) {
+        crate::context_menu::request(self.hwnd(), ShellUi::Menu(menu));
+    }
+
+    fn properties(&self, paths: Vec<FsPath>) {
+        crate::context_menu::request(self.hwnd(), ShellUi::Properties(paths));
+    }
+
+    fn start_drag(&self, paths: Vec<FsPath>) {
+        crate::context_menu::request(self.hwnd(), ShellUi::Drag(paths));
+    }
 }
 
 fn load_cursor(c: CursorIcon) -> HCURSOR {
@@ -281,6 +298,19 @@ impl<H: WindowHandler<Win32>> Node<H> {
             return HitArea::Client;
         }
         self.shared().handler.try_borrow_mut().map_or(HitArea::Client, |mut h| h.hit_test(&self.window, x, y))
+    }
+
+    fn drag(&self, ev: DragEvent) -> u32 {
+        if !self.ready.get() {
+            return 0;
+        }
+        let sh = self.shared();
+        let effect = sh.handler.try_borrow_mut().map_or(0, |mut h| h.drag(&self.window, ev));
+        sh.flush();
+        if self.window.redraw.get() {
+            self.redraw_now();
+        }
+        effect
     }
 
     fn redraw_now(&self) {
@@ -362,7 +392,7 @@ impl<H: WindowHandler<Win32>> Shared<H> {
         }
         node.window.dpi.set(GetDpiForWindow(hwnd));
         apply_dark(hwnd, opts.dark);
-        DragAcceptFiles(hwnd, true);
+        crate::dragdrop::register(hwnd, Rc::as_ptr(&node) as *const (), drag_thunk::<H>);
         let _ = SetWindowPos(hwnd, None, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         update_size(&node.window);
         self.nodes.borrow_mut().push(node.clone());
@@ -488,6 +518,10 @@ impl WindowSystem for Win32 {
     }
 }
 
+unsafe fn drag_thunk<H: WindowHandler<Win32>>(node: *const (), ev: DragEvent) -> u32 {
+    (*(node as *const Node<H>)).drag(ev)
+}
+
 unsafe fn update_size(w: &Win32Window) -> bool {
     let mut rc = RECT::default();
     let _ = GetClientRect(w.hwnd(), &mut rc);
@@ -577,6 +611,7 @@ fn map_key(vk: u16) -> Key {
         VK_SPACE => Key::Space,
         VK_BROWSER_BACK => Key::BrowserBack,
         VK_BROWSER_FORWARD => Key::BrowserForward,
+        VK_APPS => Key::Apps,
         _ if (VK_F1.0..=VK_F24.0).contains(&vk.0) => Key::F((vk.0 - VK_F1.0 + 1) as u8),
         _ if (b'A' as u16..=b'Z' as u16).contains(&vk.0) || (b'0' as u16..=b'9' as u16).contains(&vk.0) => Key::Char(vk.0 as u8 as char),
         _ => Key::Other,
@@ -613,6 +648,9 @@ unsafe extern "system" fn wndproc<H: WindowHandler<Win32>>(hwnd: HWND, msg: u32,
 
 unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
     let w = &s.window;
+    if let Some(r) = crate::context_menu::forward(msg, wp, lp) {
+        return Some(r);
+    }
     let client_xy = || {
         let p = lparam_point(lp);
         (p.x as f32, p.y as f32)
@@ -800,18 +838,10 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
             }
             None
         }
-        WM_DROPFILES => {
-            let drop = HDROP(wp.0 as _);
-            let n = DragQueryFileW(drop, u32::MAX, None);
-            let mut paths = Vec::new();
-            for i in 0..n {
-                let len = DragQueryFileW(drop, i, None) as usize;
-                let mut buf = vec![0u16; len + 1];
-                DragQueryFileW(drop, i, Some(&mut buf));
-                paths.extend(FsPath::from_utf16(&buf[..len]));
+        WM_SHELL_UI => {
+            for req in crate::context_menu::take(hwnd) {
+                crate::context_menu::run(hwnd, req, &|ev| s.send(ev));
             }
-            DragFinish(drop);
-            s.send(Event::DroppedFiles(paths));
             Some(LRESULT(0))
         }
         WM_IME_STARTCOMPOSITION => {
@@ -837,9 +867,14 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
             Some(LRESULT(0))
         }
         WM_DESTROY => {
+            crate::dragdrop::revoke(hwnd);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             s.shared().destroyed(hwnd);
             Some(LRESULT(0))
+        }
+        WM_DEVICECHANGE if matches!(wp.0 as u32, DBT_DEVICEARRIVAL | DBT_DEVICEREMOVECOMPLETE) => {
+            s.send(Event::DevicesChanged);
+            None
         }
         _ => None,
     }

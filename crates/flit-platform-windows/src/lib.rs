@@ -1,12 +1,17 @@
 #![cfg(windows)]
 
 mod access;
+mod clipboard;
+mod context_menu;
 mod d3d;
+mod dragdrop;
 mod dwrite;
+mod fileops;
 mod fs;
 mod instance;
 mod mft;
 mod pipe;
+mod places;
 mod service;
 mod shell;
 mod walk_index;
@@ -138,6 +143,14 @@ impl Platform for Windows {
         unsafe { DwmGetCompositionTimingInfo(HWND::default(), &mut info) }.ok()?;
         let rate = info.rateRefresh;
         (rate.uiNumerator > 0 && rate.uiDenominator > 0).then(|| std::time::Duration::from_secs_f64(rate.uiDenominator as f64 / rate.uiNumerator as f64))
+    }
+
+    fn drives() -> Vec<flit_core::ui::Drive> {
+        places::drives()
+    }
+
+    fn wsl_distros() -> Vec<String> {
+        places::wsl_distros()
     }
 }
 

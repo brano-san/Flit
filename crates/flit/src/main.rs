@@ -2,6 +2,7 @@
 
 mod app;
 mod metrics;
+mod places;
 mod search_client;
 mod state;
 

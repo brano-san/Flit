@@ -8,7 +8,8 @@ use crossbeam_channel::Sender;
 use flit_core::atlas::Slot;
 use flit_core::input::{CursorIcon, Event, HitArea};
 use flit_core::render::{DrawList, Rect};
-use flit_core::ui::{Bitmap, IconRequest};
+use flit_core::ui::{Bitmap, DragEvent, IconRequest, ShellMenu};
+use flit_core::provider::FileOp;
 use flit_core::{FsError, FsPath, ListingBuilder, Location, Open, ProviderEvent, ProviderRequest, TabId};
 use flit_search::index::{Checkpoint, IndexSink};
 use flit_search::proto::VolumeInfo;
@@ -84,6 +85,10 @@ pub trait Window {
     fn set_clipboard_text(&self, text: &str);
     fn set_ime_area(&self, area: Rect);
     fn is_dark_mode(&self) -> bool;
+    fn set_clipboard_files(&self, paths: &[FsPath], cut: bool);
+    fn shell_menu(&self, menu: ShellMenu);
+    fn properties(&self, paths: Vec<FsPath>);
+    fn start_drag(&self, paths: Vec<FsPath>);
 }
 
 pub trait WindowHandler<W: WindowSystem> {
@@ -93,6 +98,7 @@ pub trait WindowHandler<W: WindowSystem> {
     fn redraw(&mut self, window: &W::Window);
     fn woken(&mut self, window: &W::Window);
     fn destroyed(&mut self, window: &W::Window);
+    fn drag(&mut self, window: &W::Window, event: DragEvent) -> u32;
 }
 
 pub trait WindowSystem: Sized + 'static {
@@ -140,8 +146,16 @@ pub trait Shell: Sized {
     fn open(&mut self, path: &FsPath) -> Result<(), PlatformError>;
 }
 
-pub trait Trash {
-    fn trash(&mut self, paths: &[FsPath]) -> Result<(), PlatformError>;
+#[derive(Debug, Default)]
+pub struct OpOutcome {
+    pub items: Vec<(FsPath, FsPath)>,
+    pub error: Option<PlatformError>,
+}
+
+pub trait FileOps {
+    fn file_op(&mut self, op: &FileOp) -> OpOutcome;
+    fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError>;
+    fn clear_clipboard(&mut self);
 }
 
 pub enum Instance<S> {
@@ -186,7 +200,7 @@ pub trait Platform: 'static {
     type Text: Text;
     type Fs: Fs;
     type Watcher: Watcher;
-    type Shell: Shell + Trash;
+    type Shell: Shell + FileOps;
     type Instance: SingleInstance;
     type IndexSource: IndexSource;
     type Service: Service;
@@ -201,4 +215,6 @@ pub trait Platform: 'static {
     fn known_folder(name: &str) -> Option<Location>;
     fn fatal_error(message: &str);
     fn refresh_period() -> Option<std::time::Duration>;
+    fn drives() -> Vec<flit_core::ui::Drive>;
+    fn wsl_distros() -> Vec<String>;
 }
