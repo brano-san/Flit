@@ -10,7 +10,7 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::os::windows::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
-use windows::core::{s, Interface, HRESULT, PCWSTR};
+use windows::core::{s, Interface, HRESULT, PCWSTR, PWSTR};
 use windows::Win32::Foundation::ERROR_CANCELLED;
 use windows::Win32::Storage::FileSystem::{CopyFile2, CreateDirectoryW, DeleteFileW, GetFileAttributesW, MoveFileExW, COPYFILE2_EXTENDED_PARAMETERS, COPY_FILE_FAIL_IF_EXISTS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, INVALID_FILE_ATTRIBUTES, MOVE_FILE_FLAGS};
 use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_ALL, CLSCTX_INPROC_SERVER};
@@ -141,6 +141,7 @@ fn check_names(op: &FileOp) -> Result<(), PlatformError> {
         FileOp::Rename { item, .. } => vec![item],
         FileOp::NewFolder { dir, .. } | FileOp::NewFile { dir, .. } => vec![dir],
         FileOp::NewStream { item, .. } => vec![item],
+        FileOp::FolderIcon { folder, icon, .. } => vec![folder, icon],
         FileOp::MoveTo(pairs) | FileOp::Restore(pairs) => pairs.iter().flat_map(|(a, b)| [a, b]).collect(),
         FileOp::Paste { dest } => vec![dest],
     };
@@ -268,7 +269,7 @@ unsafe fn queue(fo: &IFileOperation, op: &FileOp) -> Result<(), PlatformError> {
             };
             fo.NewItem(&shell_item(dir)?, FILE_ATTRIBUTE_NORMAL.0, PCWSTR(name.as_ptr()), source.as_ref().map_or(PCWSTR::null(), |s| PCWSTR(s.as_ptr())), None).map_err(err)?;
         }
-        FileOp::Link { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } | FileOp::Flatten(_) => return Err(PlatformError::new(-1, "not a file operation")),
+        FileOp::Link { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } | FileOp::Flatten(_) | FileOp::FolderIcon { .. } => return Err(PlatformError::new(-1, "not a file operation")),
     }
     Ok(())
 }
@@ -400,6 +401,15 @@ fn new_stream(item: &FsPath, name: &[u8]) -> OpOutcome {
     }
 }
 
+fn folder_icon(folder: &FsPath, icon: &FsPath, index: i32) -> OpOutcome {
+    let (dir, mut file) = (folder.to_wide(false), icon.to_wide(false));
+    let mut fcs = SHFOLDERCUSTOMSETTINGS { dwSize: size_of::<SHFOLDERCUSTOMSETTINGS>() as u32, dwMask: FCSM_ICONFILE, pszIconFile: PWSTR(file.as_mut_ptr()), iIconIndex: index, ..Default::default() };
+    match unsafe { SHGetSetFolderCustomSettings(&mut fcs, PCWSTR(dir.as_ptr()), FCS_FORCEWRITE) } {
+        Ok(()) => OpOutcome { items: vec![(folder.clone(), icon.clone())], error: None },
+        Err(e) => OpOutcome { items: Vec::new(), error: Some(err(e)) },
+    }
+}
+
 fn direct_restore(recycled: &FsPath, original: &FsPath) -> bool {
     let Some(info) = info_file(recycled) else { return false };
     if !direct_move(recycled, original) {
@@ -504,6 +514,7 @@ impl FileOps for ShellCom {
         match op {
             FileOp::Link { items, dest } => unsafe { make_links(items, dest) },
             FileOp::NewStream { item, name } => new_stream(item, name),
+            FileOp::FolderIcon { folder, icon, index } => folder_icon(folder, icon, *index),
             FileOp::Purge(pairs) => purge(pairs),
             FileOp::EmptyBin => empty_bin(),
             op if engine::native(op) => {

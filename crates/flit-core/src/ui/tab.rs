@@ -1,5 +1,7 @@
+use super::columns::Pane;
 use super::field::Field;
-use super::details::{Columns, LayoutMode};
+use super::details::Columns;
+use super::layouts::{LayoutMode, Sizes};
 use super::{Effect, LoadStats};
 use crate::input::Mods;
 use crate::listing::{attr, DirChange, DirSnapshot};
@@ -35,6 +37,8 @@ pub struct Tab {
     pub(super) view_spec: ViewSpec,
     pub(super) columns: Columns,
     pub(super) mode: LayoutMode,
+    pub(super) look: LayoutMode,
+    pub(super) sizes: Sizes,
     pub(super) fit_pending: bool,
     pub(super) loading: Option<Loading>,
     pub(super) view: Option<DirView>,
@@ -49,6 +53,7 @@ pub struct Tab {
     type_ahead: String,
     type_ahead_at: Option<Instant>,
     pub(super) filter: Option<Field>,
+    pub(super) panes: Vec<Pane>,
 }
 
 impl Tab {
@@ -64,6 +69,8 @@ impl Tab {
             view_spec,
             columns: Columns::default(),
             mode: LayoutMode::default(),
+            look: LayoutMode::default(),
+            sizes: Sizes::default(),
             fit_pending: false,
             loading: None,
             view: None,
@@ -77,6 +84,7 @@ impl Tab {
             type_ahead: String::new(),
             type_ahead_at: None,
             filter: None,
+            panes: Vec::new(),
         }
     }
 
@@ -115,6 +123,9 @@ impl Tab {
         self.crumbs = loc.crumbs();
         self.stats = LoadStats::default();
         let path = loc.path().clone();
+        if self.mode == LayoutMode::Adaptive {
+            self.slot.ask_kind(gen);
+        }
         fx.push(Effect::Provider { provider: provider.clone(), req: ProviderRequest::Watch { tab: self.id, gen, path: Some(path.clone()) } });
         fx.push(Effect::Provider {
             provider,
@@ -218,44 +229,8 @@ impl Tab {
         self.view.as_ref().map_or(0, |v| v.rows().len())
     }
 
-    pub(super) fn lines(&self) -> usize {
-        self.view.as_ref().map_or(0, |v| v.lines())
-    }
-
-    pub(super) fn row_y(&self, row: usize, list_y: f32, row_h: f32) -> f32 {
-        let line = self.view.as_ref().map_or(row, |v| v.line_of_row(row));
-        (list_y + line as f32 * row_h - self.scroll).round()
-    }
-
-    pub(super) fn max_scroll(&self, row_h: f32, list_h: f32) -> f32 {
-        (self.lines() as f32 * row_h - list_h).max(0.0)
-    }
-
-    pub(super) fn line_range(&self, row_h: f32, list_h: f32) -> (usize, usize) {
-        let n = self.lines();
-        let rh = row_h.max(1.0);
-        let first = (self.scroll / rh).floor() as usize;
-        let last = ((self.scroll + list_h) / rh).ceil() as usize;
-        (first.min(n), last.min(n))
-    }
-
-    pub(super) fn reveal_focus(&mut self, center: bool, row_h: f32, list_h: f32) {
-        let Some(line) = self.view.as_ref().and_then(|v| v.focus.and_then(|f| v.row_of(f)).map(|r| v.line_of_row(r))) else { return };
-        let (top, bottom) = (line as f32 * row_h, (line + 1) as f32 * row_h);
-        let mut s = self.scroll_target;
-        if center && (top < s || bottom > s + list_h) {
-            s = top - (list_h - row_h) / 2.0;
-        } else if top < s {
-            s = top;
-        } else if bottom > s + list_h {
-            s = bottom - list_h;
-        }
-        self.scroll_target = s.clamp(0.0, self.max_scroll(row_h, list_h));
-        self.scroll = self.scroll_target;
-    }
-
     pub(super) fn move_focus(&mut self, delta: isize, m: Mods) {
-        let Some(v) = &mut self.view else { return };
+        let Some(v) = &self.view else { return };
         let n = v.rows().len();
         if n == 0 {
             return;
@@ -263,19 +238,7 @@ impl Tab {
         let cur = v.focus.and_then(|f| v.row_of(f)).map(|r| r as isize);
         let base = cur.unwrap_or(if delta < 0 { n as isize } else { -1 });
         let row = base.saturating_add(delta).clamp(0, n as isize - 1) as usize;
-        let i = v.rows()[row];
-        if m.shift {
-            let anchor_row = v.anchor.and_then(|a| v.row_of(a)).unwrap_or(row);
-            if !m.ctrl {
-                v.clear_selection();
-            }
-            v.select_rows(anchor_row, row);
-        } else if !m.ctrl {
-            v.clear_selection();
-            v.set_selected(i, true);
-            v.anchor = Some(i);
-        }
-        v.focus = Some(i);
+        self.focus_row(row, m);
     }
 
     pub(super) fn type_ahead(&mut self, c: char, now: Instant) -> bool {

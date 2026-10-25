@@ -1,5 +1,6 @@
-use crate::fileops::is_dir;
+use crate::fileops::{is_dir, std_path};
 use crate::{com_sta, err};
+use flit_core::desktop_ini::DesktopIni;
 use flit_core::ui::{Bitmap, IconKind, IconRequest};
 use flit_core::path::PathKind;
 use flit_core::provider::Launch;
@@ -30,6 +31,10 @@ pub(crate) fn owner_window() -> Option<HWND> {
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
         (!hwnd.is_invalid() && pid == GetCurrentProcessId()).then_some(hwnd)
     }
+}
+
+pub(crate) fn desktop_ini(dir: &FsPath) -> Option<DesktopIni> {
+    std::fs::read(std_path(&dir.join(b"desktop.ini"))).ok().map(|b| flit_core::desktop_ini::parse(&b))
 }
 
 pub(crate) fn shell_addressable(p: &FsPath) -> Result<(), PlatformError> {
@@ -152,14 +157,17 @@ impl ShellCom {
         unsafe { icon_bitmap(icon) }.map(|b| fit(b, size))
     }
 
-    fn item_icon(&self, path: &FsPath, size: u32) -> Option<Bitmap> {
+    fn item_image(&self, path: &FsPath, size: u32, flags: SIIGBF) -> Option<Bitmap> {
         let w = wide(path);
         unsafe {
             let factory: IShellItemImageFactory = SHCreateItemFromParsingName(PCWSTR(w.as_ptr()), None).ok()?;
-            let hbm = factory.GetImage(SIZE { cx: size as i32, cy: size as i32 }, SIIGBF_ICONONLY).ok()?;
+            let hbm = factory.GetImage(SIZE { cx: size as i32, cy: size as i32 }, flags).ok()?;
             let bits = dib_bits(hbm);
             let _ = DeleteObject(HGDIOBJ(hbm.0));
             let (width, height, mut rgba) = bits?;
+            if !rgba.chunks_exact(4).any(|p| p[3] != 0) {
+                rgba.chunks_exact_mut(4).for_each(|p| p[3] = 255);
+            }
             bgra_to_rgba(&mut rgba, false);
             Some(fit(Bitmap { width, height, rgba }, size))
         }
@@ -182,8 +190,17 @@ impl Shell for ShellCom {
         match req.kind {
             IconKind::Type => self.generic_icon(&req.path, false, req.size),
             IconKind::Folder => self.generic_icon(&req.path, true, req.size),
-            IconKind::File | IconKind::Volume => self.item_icon(&req.path, req.size).or_else(|| self.generic_icon(&req.path, false, req.size)),
+            IconKind::File | IconKind::Volume => self.item_image(&req.path, req.size, SIIGBF_ICONONLY).or_else(|| self.generic_icon(&req.path, false, req.size)),
+            IconKind::CustomFolder => desktop_ini(&req.path)
+                .filter(|ini| ini.icon)
+                .and_then(|_| self.item_image(&req.path, req.size, SIIGBF_ICONONLY))
+                .or_else(|| self.generic_icon(&req.path, true, req.size)),
+            IconKind::Thumbnail => self.thumbnail(req),
         }
+    }
+
+    fn thumbnail(&mut self, req: &IconRequest) -> Option<Bitmap> {
+        self.item_image(&req.path, req.size, SIIGBF_THUMBNAILONLY)
     }
 
     fn type_name(&mut self, ext: &[u8]) -> Option<String> {
@@ -308,4 +325,4 @@ pub(crate) unsafe fn link_target(link: &FsPath) -> Option<FsPath> {
 
 #[cfg(test)]
 #[path = "../test/shell.rs"]
-mod tests;
+pub(crate) mod tests;

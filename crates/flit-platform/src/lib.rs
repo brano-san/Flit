@@ -8,6 +8,7 @@ pub use wsl::{AgentImage, AgentImages, AgentLauncher, AgentProcess, Timing, WslP
 
 use crossbeam_channel::Sender;
 use flit_core::atlas::Slot;
+use flit_core::desktop_ini::DesktopIni;
 use flit_core::input::{CursorIcon, Event, HitArea};
 use flit_core::render::{DrawList, Rect};
 use flit_core::ui::{Bitmap, DragEvent, IconRequest, NewTemplate, ShellMenu};
@@ -131,6 +132,7 @@ pub trait Renderer: Sized {
     fn new(device: &Self::Device, window: &Self::Window, atlas_size: u32) -> Result<Self, PlatformError>;
     fn resize(&mut self, width: u32, height: u32);
     fn upload(&mut self, slot: Slot, rgba: &[u8]);
+    fn upload_thumb(&mut self, _slot: Slot, _rgba: &[u8]) {}
     fn render(&mut self, list: &DrawList) -> Result<(), RenderError>;
 }
 
@@ -141,6 +143,9 @@ pub trait Provider: Send + Sync + 'static {
 pub trait Fs: Send + Sync + 'static {
     fn read_dir(&self, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError>;
     fn seek_penalty(&self, path: &FsPath) -> Option<bool>;
+    fn desktop_ini(&self, _dir: &FsPath) -> Option<DesktopIni> {
+        None
+    }
     fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, u64) + Sync)) {
         local::dir_sizes(self, dir, items, keep_going, report)
     }
@@ -154,6 +159,9 @@ pub trait Watcher: Sized + Send + 'static {
 pub trait Shell: Sized {
     fn new() -> Result<Self, PlatformError>;
     fn icon(&mut self, req: &IconRequest) -> Option<Bitmap>;
+    fn thumbnail(&mut self, _req: &IconRequest) -> Option<Bitmap> {
+        None
+    }
     fn type_name(&mut self, ext: &[u8]) -> Option<String>;
     fn open(&mut self, path: &FsPath) -> Result<(), PlatformError>;
     fn launch(&mut self, _launch: &Launch) -> Result<(), PlatformError> {

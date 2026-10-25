@@ -41,6 +41,7 @@ PSIn vs_main(VSIn i) {
 }
 
 Texture2D atlas : register(t0);
+Texture2D thumbs : register(t1);
 SamplerState samp : register(s0);
 
 float rounded_box(float2 p, float2 half_size, float r) {
@@ -59,6 +60,9 @@ float4 ps_main(PSIn i) : SV_Target {
     }
     if (i.kind == 2) {
         return atlas.Sample(samp, i.uv) * i.color.a;
+    }
+    if (i.kind == 3) {
+        return thumbs.Sample(samp, i.uv) * i.color.a;
     }
     float r = i.params.x;
     float border = i.params.y;

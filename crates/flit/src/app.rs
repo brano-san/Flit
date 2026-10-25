@@ -2,6 +2,7 @@ use crate::metrics::{Metrics, Step};
 use crate::places::PlacesWorker;
 use crate::search_client::SearchClient;
 use crate::state::{self, Saved};
+use crate::thumbs::ThumbCache;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use flit_core::input::Event;
 use flit_core::listing::DirSnapshot;
@@ -21,6 +22,7 @@ const ATLAS: u32 = 2048;
 const OPS_GRACE: Duration = Duration::from_secs(2);
 const FS_THREADS: usize = 4;
 const SHELL_THREADS: usize = 2;
+const THUMB_THREADS: usize = 3;
 const ICON_MARGIN: u32 = 32;
 const TAB_STRIDE: TabId = 1 << 32;
 
@@ -41,15 +43,43 @@ struct Visible {
 
 impl Visible {
     fn wants(&self, req: &IconRequest) -> bool {
-        req.gen == self.gen.load(Ordering::Relaxed)
-            && req.row + ICON_MARGIN >= self.first.load(Ordering::Relaxed)
-            && req.row <= self.last.load(Ordering::Relaxed) + ICON_MARGIN
+        req.gen == 0
+            || req.gen == self.gen.load(Ordering::Relaxed)
+                && req.row + ICON_MARGIN >= self.first.load(Ordering::Relaxed)
+                && req.row <= self.last.load(Ordering::Relaxed) + ICON_MARGIN
     }
 }
 
 enum ShellJob {
     Icon { window: WindowId, req: IconRequest, visible: Arc<Visible> },
     TypeName(Vec<u8>),
+}
+
+struct ThumbJob {
+    window: WindowId,
+    req: IconRequest,
+    visible: Arc<Visible>,
+}
+
+type Cache = Option<Arc<Mutex<ThumbCache>>>;
+
+fn locked(c: &Mutex<ThumbCache>) -> std::sync::MutexGuard<'_, ThumbCache> {
+    c.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn thumbnail<S: Shell>(shell: &mut S, cache: Option<&Mutex<ThumbCache>>, req: &IconRequest) -> IconResult {
+    if let Some(b) = cache.and_then(|c| locked(c).get(req.key)) {
+        return IconResult::Ready(b);
+    }
+    match shell.thumbnail(req) {
+        Some(b) => {
+            if let Some(c) = cache {
+                locked(c).put(req.key, &b);
+            }
+            IconResult::Ready(b)
+        }
+        None => IconResult::Failed,
+    }
 }
 
 struct SortJob {
@@ -62,6 +92,7 @@ struct SortJob {
 
 enum Done {
     Icon { window: WindowId, key: u64, result: IconResult },
+    Thumb { window: WindowId, key: u64, result: IconResult },
     TypeName(Vec<u8>, Option<String>),
     Sorted { window: WindowId, tab: TabId, gen: u64, view: ViewSpec, base_len: usize, order: Vec<u32>, ms: f64 },
 }
@@ -70,10 +101,24 @@ fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> Result<(), PlatformEr
     std::thread::Builder::new().name(name.into()).spawn(f).map(drop).map_err(|e| PlatformError::new(-1, format!("cannot start {name}: {e}")))
 }
 
-type Workers = (Sender<ShellJob>, Sender<SortJob>, Receiver<Done>);
+type Workers = (Sender<ShellJob>, Sender<ThumbJob>, Sender<SortJob>, Receiver<Done>);
 
-fn start_workers<P: Platform>(wake: Wake) -> Result<Workers, PlatformError> {
+fn start_workers<P: Platform>(wake: Wake, cache: Cache) -> Result<Workers, PlatformError> {
     let (done_tx, done) = unbounded();
+    let (thumb_tx, thumb_rx) = unbounded::<ThumbJob>();
+    for k in 0..THUMB_THREADS {
+        let (rx, tx, wake, cache) = (thumb_rx.clone(), done_tx.clone(), wake.clone(), cache.clone());
+        spawn(&format!("flit-thumb-{k}"), move || {
+            let Ok(mut shell) = P::Shell::new() else { return };
+            for ThumbJob { window, req, visible } in rx {
+                let result = if visible.wants(&req) { thumbnail(&mut shell, cache.as_deref(), &req) } else { IconResult::Skipped };
+                if tx.send(Done::Thumb { window, key: req.key, result }).is_err() {
+                    return;
+                }
+                wake();
+            }
+        })?;
+    }
     let (shell_tx, shell_rx) = unbounded::<ShellJob>();
     for k in 0..SHELL_THREADS {
         let (rx, tx, wake) = (shell_rx.clone(), done_tx.clone(), wake.clone());
@@ -115,7 +160,7 @@ fn start_workers<P: Platform>(wake: Wake) -> Result<Workers, PlatformError> {
             wake();
         }
     })?;
-    Ok((shell_tx, sort_tx, done))
+    Ok((shell_tx, thumb_tx, sort_tx, done))
 }
 
 struct WinState<P: Platform> {
@@ -141,6 +186,8 @@ struct Handler<P: Platform> {
     sink: OpenSink,
     queued_opens: Vec<Open>,
     shell: Sender<ShellJob>,
+    thumbs: Sender<ThumbJob>,
+    thumb_cache: Cache,
     sorter: Sender<SortJob>,
     done: Receiver<Done>,
     saved: Saved,
@@ -233,6 +280,15 @@ impl<P: Platform> Handler<P> {
                     let visible = self.windows[&id].visible.clone();
                     let _ = self.shell.send(ShellJob::Icon { window: id, req, visible });
                 }
+                Effect::Thumbnail(req) => {
+                    let visible = self.windows[&id].visible.clone();
+                    let _ = self.thumbs.send(ThumbJob { window: id, req, visible });
+                }
+                Effect::ClearThumbnails => {
+                    if let Some(c) = &self.thumb_cache {
+                        locked(c).clear();
+                    }
+                }
                 Effect::TypeName(ext) => {
                     let _ = self.shell.send(ShellJob::TypeName(ext));
                 }
@@ -311,6 +367,11 @@ impl<P: Platform> Handler<P> {
                         st.app.on_icon(&mut st.gfx, key, result);
                     }
                 }
+                Done::Thumb { window, key, result } => {
+                    if let Some(st) = self.windows.get_mut(&window) {
+                        st.app.on_thumb(&mut st.gfx, key, result);
+                    }
+                }
                 Done::TypeName(ext, name) => {
                     for st in self.windows.values_mut() {
                         st.app.on_type_name(ext.clone(), name.clone());
@@ -386,6 +447,7 @@ impl<P: Platform> Handler<P> {
             match P::Renderer::new(dev, window, ATLAS) {
                 Ok(r) => {
                     st.gfx.reset_atlas();
+                    st.gfx.thumbs.clear();
                     st.renderer = Some(r);
                     st.software = software;
                     st.device_gen = self.device_gen;
@@ -408,6 +470,11 @@ impl<P: Platform> Handler<P> {
             renderer.upload(slot, &st.gfx.uploads.data[off..off + len]);
         }
         st.gfx.uploads.clear();
+        let thumbs = &mut st.gfx.thumbs.uploads;
+        for &(slot, off) in &thumbs.rects {
+            renderer.upload_thumb(slot, &thumbs.data[off..off + (slot.w * slot.h * 4) as usize]);
+        }
+        thumbs.clear();
         let lost = matches!(renderer.render(&st.gfx.dl), Err(RenderError::DeviceLost));
         if lost {
             let (software, stale) = (st.software, st.device_gen != self.device_gen);
@@ -589,7 +656,8 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     if let Some(i) = instance {
         i.listen(sink.clone(), wake.clone());
     }
-    let (shell, sorter, done) = start_workers::<P>(wake.clone())?;
+    let thumb_cache: Cache = P::state_dir().map(|d| Arc::new(Mutex::new(ThumbCache::new(d.join("thumbs"), saved.persisted.prefs.thumb_cache_mb))));
+    let (shell, thumbs, sorter, done) = start_workers::<P>(wake.clone(), thumb_cache.clone())?;
     let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes())?;
     let (routes, errors) = if open.is_empty() { Default::default() } else { open::routes(&open, &P::known_folder) };
     let new_window = open.target == OpenTarget::NewWindow;
@@ -607,6 +675,8 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         sink,
         queued_opens: Vec::new(),
         shell,
+        thumbs,
+        thumb_cache,
         sorter,
         done,
         saved: saved.clone(),
