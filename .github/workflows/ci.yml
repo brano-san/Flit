@@ -15,6 +15,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+          targets: x86_64-unknown-linux-musl
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --release
       - run: cargo test --workspace
@@ -27,7 +28,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace
-      - run: cargo test -p flit-core -p flit-search -p flit-platform -p flit-proto
+      - run: cargo test -p flit-core -p flit-search -p flit-platform -p flit-proto -p flit-platform-linux
 
   deps-isolation:
     runs-on: ubuntu-latest
