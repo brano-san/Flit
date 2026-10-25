@@ -21,7 +21,15 @@ fn every_setting_has_a_unique_id_a_title_a_description_and_a_page() {
     let mut seen = HashSet::new();
     for s in SETTINGS {
         assert!(seen.insert(s.id), "duplicate id {}", s.id);
-        assert!(["general", "files", "layout", "advanced"].contains(&s.id.split('.').next().unwrap()), "{}", s.id);
+        let prefix = match s.page {
+            Page::General => "general",
+            Page::Appearance => "appearance",
+            Page::Files => "files",
+            Page::Layout => "layout",
+            Page::Advanced => "advanced",
+            Page::Tags | Page::About => "",
+        };
+        assert_eq!(s.id.split('.').next(), Some(prefix), "the id of {} starts with its page", s.id);
         assert!(!s.title.is_empty() && !s.help.is_empty(), "{}", s.id);
         assert!(Page::ALL.contains(&s.page));
         if let Kind::Choice(c, ..) = s.kind {

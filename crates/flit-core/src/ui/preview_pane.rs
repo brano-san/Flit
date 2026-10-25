@@ -392,7 +392,7 @@ impl App {
         if !shown {
             return;
         }
-        let (x0, top, bottom) = (l.header.x, l.toolbar.bottom(), l.status.y);
+        let (x0, top, bottom) = (l.header.x, l.commands.bottom(), l.status.y);
         let (room_w, room_h) = ((w - x0).max(0.0), (bottom - top).max(0.0));
         if w >= h {
             let pw = s(st.right_w).min((room_w * 0.7).round());

@@ -385,6 +385,7 @@ dependencies = [
  "flit-search",
  "mimalloc",
  "postcard",
+ "rayon",
  "serde",
  "serde_json",
  "tracing",

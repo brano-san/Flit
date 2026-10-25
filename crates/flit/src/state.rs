@@ -1,6 +1,6 @@
 use flit_core::archive::Defaults;
 use flit_core::sort::SortField;
-use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavPrefs, NavState, PaneState, Persisted, Sizes, ViewPrefs};
+use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavPrefs, NavState, PaneState, Persisted, Sizes, ToolbarState, ViewPrefs, MAX_HISTORY};
 use flit_core::Location;
 use flit_platform::{Placement, Platform};
 use serde::{Deserialize, Serialize};
@@ -40,6 +40,21 @@ struct LayoutRecord {
     thumb_cache_mb: u32,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct Tools {
+    pub toolbar: ToolbarState,
+    pub searches: Vec<String>,
+    pub streams: bool,
+}
+
+impl Tools {
+    fn sanitized(mut self) -> Self {
+        self.toolbar = self.toolbar.sanitized();
+        self.searches.truncate(MAX_HISTORY);
+        self
+    }
+}
+
 fn look(v: &FolderView) -> Look {
     (v.layout, v.sizes)
 }
@@ -60,11 +75,12 @@ pub struct Saved {
     pub nav: NavState,
     pub pane: PaneState,
     pub side: NavPrefs,
+    pub tools: Tools,
 }
 
 impl Saved {
     pub fn new(persisted: Persisted, placement: Option<Placement>) -> Self {
-        Self { version: VERSION, persisted, placement: placement.map(|p| (p.x, p.y, p.width, p.height, p.maximized)), nav: NavState::default(), pane: PaneState::default(), side: NavPrefs::default() }
+        Self { version: VERSION, persisted, placement: placement.map(|p| (p.x, p.y, p.width, p.height, p.maximized)), nav: NavState::default(), pane: PaneState::default(), side: NavPrefs::default(), tools: Tools::default() }
     }
 
     pub fn with_nav(mut self, nav: NavState) -> Self {
@@ -82,6 +98,11 @@ impl Saved {
         self
     }
 
+    pub fn with_tools(mut self, tools: Tools) -> Self {
+        self.tools = tools;
+        self
+    }
+
     fn sanitized(mut self) -> Self {
         let p = &mut self.persisted;
         p.view = p.view.sanitized();
@@ -90,6 +111,7 @@ impl Saved {
         self.nav = self.nav.sanitized();
         self.pane = self.pane.sanitized();
         self.side = self.side.sanitized();
+        self.tools = self.tools.sanitized();
         self
     }
 
@@ -106,7 +128,7 @@ impl Saved {
             view.columns.widths[c as usize] = w;
         }
         let persisted = Persisted { path: h.path, show_hidden: h.show_hidden, view, ..Default::default() };
-        Self { version: h.version, persisted, placement: h.placement, nav: NavState::default(), pane: PaneState::default(), side: NavPrefs::default() }
+        Self { version: h.version, persisted, placement: h.placement, nav: NavState::default(), pane: PaneState::default(), side: NavPrefs::default(), tools: Tools::default() }
     }
 
     fn decode(bytes: &[u8]) -> Option<Self> {
@@ -132,8 +154,12 @@ impl Saved {
         }
         let p = &mut saved.persisted;
         (p.view, p.prefs, p.folders) = (r.view, r.prefs, FolderViews::from_entries(r.folders));
-        if let Some((archive, _)) = rest.and_then(|t| postcard::take_from_bytes::<Defaults>(t).ok()) {
+        if let Some((archive, tail)) = rest.and_then(|t| postcard::take_from_bytes::<Defaults>(t).ok()) {
             p.archive = archive.sanitized();
+            if let Ok((tools, _)) = postcard::take_from_bytes::<Tools>(tail) {
+                p.prefs.show_streams = tools.streams;
+                saved.tools = tools;
+            }
         }
         Some(saved)
     }
@@ -157,6 +183,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&self.pane).ok()?);
         bytes.extend(postcard::to_stdvec(&self.side).ok()?);
         bytes.extend(postcard::to_stdvec(&p.archive.clone().sanitized()).ok()?);
+        bytes.extend(postcard::to_stdvec(&Tools { streams: p.prefs.show_streams, ..self.tools.clone() }).ok()?);
         Some(bytes)
     }
 

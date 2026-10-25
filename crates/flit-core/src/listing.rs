@@ -16,6 +16,7 @@ pub mod attr {
     pub const VOLUME: u32 = 1 << 5;
     pub const SIZE_KNOWN: u32 = 1 << 6;
     pub const ARCHIVED: u32 = 1 << 7;
+    pub const STREAM: u32 = 1 << 8;
     pub const DELETED: u32 = 1 << 31;
 }
 
@@ -166,11 +167,21 @@ pub struct ListingBuilder<'a> {
     on_batch: Option<&'a mut dyn FnMut(&ListingBuilder<'_>) -> bool>,
     tags: Option<Arc<Tags>>,
     volume: Option<u32>,
+    streams: bool,
 }
 
 impl<'a> ListingBuilder<'a> {
     pub fn new(case: CaseMode, on_batch: &'a mut dyn FnMut(&ListingBuilder<'_>) -> bool) -> Self {
-        Self { listing: Listing::default(), keys: SortKeys::new(case), on_batch: Some(on_batch), tags: None, volume: None }
+        Self { listing: Listing::default(), keys: SortKeys::new(case), on_batch: Some(on_batch), tags: None, volume: None, streams: false }
+    }
+
+    pub fn with_streams(mut self, on: bool) -> Self {
+        self.streams = on;
+        self
+    }
+
+    pub fn wants_streams(&self) -> bool {
+        self.streams
     }
 
     pub fn with_tags(mut self, tags: Arc<Tags>) -> Self {

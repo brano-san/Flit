@@ -72,6 +72,32 @@ pub(crate) fn map_attrs(a: u32, reparse_tag: u32) -> u32 {
     out
 }
 
+fn push_streams(dir: &FsPath, name: &[u16], file: Meta, out: &mut ListingBuilder<'_>) {
+    let mut path = dir.to_wide(true);
+    path.pop();
+    if path.last() != Some(&(b'\\' as u16)) {
+        path.push(b'\\' as u16);
+    }
+    path.extend_from_slice(name);
+    path.push(0);
+    let mut data = WIN32_FIND_STREAM_DATA::default();
+    let Ok(h) = (unsafe { FindFirstStreamW(PCWSTR(path.as_ptr()), FindStreamInfoStandard, &mut data as *mut _ as *mut _, None) }) else { return };
+    loop {
+        let full = &data.cStreamName[..data.cStreamName.iter().position(|&c| c == 0).unwrap_or(data.cStreamName.len())];
+        let stream = full.strip_prefix(&[b':' as u16]).and_then(|s| s.strip_suffix(&":$DATA".encode_utf16().collect::<Vec<u16>>()[..])).unwrap_or_default();
+        if !stream.is_empty() {
+            let shown: Vec<u16> = name.iter().copied().chain(Some(b':' as u16)).chain(stream.iter().copied()).collect();
+            out.push_utf16(&shown, Meta { size: data.StreamSize as u64, attrs: (file.attrs & !attr::LINK) | attr::STREAM, ..file });
+        }
+        if unsafe { FindNextStreamW(h, &mut data as *mut _ as *mut _) }.is_err() {
+            break;
+        }
+    }
+    unsafe {
+        let _ = FindClose(h);
+    }
+}
+
 fn volumes(out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
     let mask = unsafe { GetLogicalDrives() };
     for i in 0..26u8 {
@@ -238,6 +264,9 @@ impl Fs for NtFs {
                 let dots = name == [b'.' as u16] || name == [b'.' as u16, b'.' as u16];
                 if !dots {
                     out.push_utf16_id(name, meta, id);
+                    if out.wants_streams() && meta.attrs & attr::DIR == 0 {
+                        push_streams(dir, name, meta, out);
+                    }
                 }
                 if next == 0 {
                     break;

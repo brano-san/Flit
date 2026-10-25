@@ -303,6 +303,10 @@ impl Window for Win32Window {
         crate::context_menu::request(self.hwnd(), ShellUi::Menu(menu));
     }
 
+    fn share(&self, paths: Vec<FsPath>) {
+        crate::context_menu::request(self.hwnd(), ShellUi::Share(paths));
+    }
+
     fn properties(&self, paths: Vec<FsPath>) {
         crate::context_menu::request(self.hwnd(), ShellUi::Properties(paths));
     }

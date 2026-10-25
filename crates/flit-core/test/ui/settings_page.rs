@@ -282,6 +282,30 @@ fn about_page_shows_versions_and_libraries() {
 }
 
 #[test]
+fn appearance_page_hides_the_toolbar_and_opens_its_customization() {
+    let mut a = listed(&[("a.txt", false)]);
+    a.open_settings(Some(Page::Appearance));
+    assert_eq!(a.settings_lines()[..2], ["appearance.toolbar", "Customize the toolbar…"]);
+    let k = line(&mut a, "appearance.toolbar");
+    let at = center(switch_rect(rect(&a, k), s));
+    click_at(&mut a, at);
+    assert!(!a.toolbar.state.visible);
+    ui_focus(&mut a, k);
+    key(&mut a, Key::Right, NO);
+    assert!(a.toolbar.state.visible);
+    let l = ui(&a).lines[1].clone();
+    let r = button_rects(&l, rect(&a, 1), s)[0];
+    click_at(&mut a, center(r));
+    assert!(matches!(a.nav.palette.as_ref().map(|p| &p.pick), Some(Pick::Toolbar(_))), "the customization layer opens over the settings");
+    key(&mut a, Key::Escape, NO);
+    assert!(a.settings_open());
+    a.drain_effects().for_each(drop);
+    assert!(SETTINGS[index("files.streams").unwrap()].set(&mut a, Value::Bool(true)));
+    assert!(a.prefs.show_streams);
+    assert!(a.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::List { .. }, .. })), "showing streams reads the folder again");
+}
+
+#[test]
 fn the_window_draws_at_any_size_in_both_themes() {
     for (size, dark) in [((1100, 720), false), ((1100, 720), true), ((360, 260), false), ((2560, 1400), true)] {
         let mut a = app();

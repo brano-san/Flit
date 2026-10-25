@@ -72,6 +72,7 @@ pub struct ViewSpec {
     pub show_hidden: bool,
     pub show_system: bool,
     pub hide_dotfiles: bool,
+    pub show_streams: bool,
     pub utc_offset_min: i32,
 }
 
@@ -203,6 +204,7 @@ pub fn visible(l: &Listing, i: u32, v: &ViewSpec) -> bool {
     a & attr::DELETED == 0
         && (a & attr::HIDDEN == 0 || (v.show_hidden && (v.show_system || a & attr::SYSTEM == 0)))
         && !(v.hide_dotfiles && l.name(i).first() == Some(&b'.'))
+        && (a & attr::STREAM == 0 || v.show_streams)
 }
 
 fn initial(name: &[u8]) -> u64 {

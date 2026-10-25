@@ -69,6 +69,7 @@ pub(super) enum Btn {
     Import,
     Reset,
     CopyAbout,
+    CustomizeToolbar,
     Rename,
     Recolor,
     Delete,
@@ -87,6 +88,7 @@ impl Btn {
             Btn::Import => "Import settings…",
             Btn::Reset => "Reset all settings",
             Btn::CopyAbout => "Copy version info",
+            Btn::CustomizeToolbar => "Customize the toolbar…",
             Btn::Rename => "Rename",
             Btn::Recolor => "Color",
             Btn::Delete => "Delete",
@@ -447,7 +449,10 @@ impl App {
             self.setting_lines(i, out);
         }
         match page {
-            Page::Appearance => out.push(Line::Note("Flit follows the light or dark theme of Windows. Themes, colors and fonts come in a later version.")),
+            Page::Appearance => {
+                out.push(Line::Buttons(None, &[Btn::CustomizeToolbar]));
+                out.push(Line::Note("Flit follows the light or dark theme of Windows. Themes, colors and fonts come in a later version."));
+            }
             Page::Tags => {
                 if self.tag_defs().is_empty() {
                     out.push(Line::Note("There are no tags yet."));
@@ -489,6 +494,7 @@ impl App {
                 self.setting_lines(i, out);
             }
             let extra: &[&'static [Btn]] = match page {
+                Page::Appearance => &[&[Btn::CustomizeToolbar]],
                 Page::Tags => &[&[Btn::NewTag]],
                 Page::Advanced => &[&[Btn::ClearCache], FILE_BUTTONS, &[Btn::Reset]],
                 Page::About => &[&[Btn::CopyAbout]],
@@ -747,6 +753,7 @@ impl App {
             (Btn::Export, ..) => self.ask_export_settings(),
             (Btn::Import, ..) => self.ask_import_settings(),
             (Btn::Reset, ..) => self.ask_reset_settings(),
+            (Btn::CustomizeToolbar, ..) => self.customize_toolbar(),
             (Btn::CopyAbout, ..) => {
                 let text = format!("Flit {}\r\n{}", env!("CARGO_PKG_VERSION"), self.about.os);
                 self.effects.push(Effect::SetClipboard(text));

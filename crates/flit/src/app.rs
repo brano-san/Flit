@@ -3,7 +3,7 @@ use crate::places::{PlacesWorker, Reply};
 use crate::search_client::SearchClient;
 use crate::session::{self, Files, Session, Writer};
 use crate::settings::{self, Job, Settings};
-use crate::state::{self, Saved};
+use crate::state::{self, Saved, Tools};
 use crate::tags::{self, TagWorker};
 use crate::thumbs::ThumbCache;
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -109,6 +109,10 @@ enum Done {
     Sorted { window: WindowId, tab: TabId, gen: u64, view: ViewSpec, base_len: usize, order: Vec<u32>, ms: f64 },
     Preview { window: WindowId, gen: u64, data: PreviewData },
     QuickView { window: WindowId, shown: bool },
+}
+
+fn tools(app: &App) -> Tools {
+    Tools { toolbar: app.toolbar_state(), searches: app.search_history().to_vec(), streams: false }
 }
 
 fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> Result<(), PlatformError> {
@@ -283,6 +287,8 @@ impl<P: Platform> Handler<P> {
         app.set_nav_state(self.saved.nav.clone());
         app.set_nav_prefs(self.saved.side.clone());
         app.set_pane_state(self.saved.pane);
+        app.set_toolbar_state(self.saved.tools.toolbar.clone());
+        app.set_search_history(self.saved.tools.searches.clone());
         app.set_places(self.places.current());
         app.share_typed(self.typed.clone());
         app.set_tags(self.tags.current());
@@ -343,6 +349,7 @@ impl<P: Platform> Handler<P> {
         self.requested = Some(now);
         if let Some(st) = self.windows.get(&id) {
             self.saved.side = st.app.nav_prefs();
+            self.saved.tools = tools(&st.app);
         }
         let mut app = self.new_app(vec![Route { folder: tab.location().clone(), select: None }], self.saved.persisted.clone());
         app.adopt_tab(tab, now);
@@ -456,7 +463,7 @@ impl<P: Platform> Handler<P> {
                 }
                 Effect::Window(WindowCmd::Close) => {
                     if let Some(st) = self.windows.get(&id) {
-                        self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state()).with_pane(st.app.pane_state()).with_side(st.app.nav_prefs());
+                        self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state()).with_pane(st.app.pane_state()).with_side(st.app.nav_prefs()).with_tools(tools(&st.app));
                     }
                     window.close();
                 }
@@ -479,6 +486,7 @@ impl<P: Platform> Handler<P> {
                     self.requested = Some(Instant::now());
                     if let Some(st) = self.windows.get(&id) {
                         self.saved.side = st.app.nav_prefs();
+                        self.saved.tools = tools(&st.app);
                     }
                     let persisted = self.saved.persisted.clone();
                     let app = self.new_app(routes, persisted);
@@ -488,6 +496,7 @@ impl<P: Platform> Handler<P> {
                 Effect::SetClipboardFiles { paths, cut } => window.set_clipboard_files(&paths, cut),
                 Effect::ShellMenu(menu) => window.shell_menu(menu),
                 Effect::Properties(paths) => window.properties(paths),
+                Effect::Share(paths) => window.share(paths),
                 Effect::StartDrag(paths) => window.start_drag(paths),
                 Effect::Pinned(pinned) => {
                     for (_, st) in self.windows.iter_mut().filter(|(w, _)| **w != id) {
@@ -929,7 +938,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         let mut last = None;
         if let Some(mut st) = self.windows.remove(&id) {
             if self.windows.is_empty() {
-                self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state()).with_pane(st.app.pane_state()).with_side(st.app.nav_prefs());
+                self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state()).with_pane(st.app.pane_state()).with_side(st.app.nav_prefs()).with_tools(tools(&st.app));
                 last = Some(Session::new(vec![(st.app.session(), Some(window.placement()))], self.typed.lock().unwrap_or_else(|e| e.into_inner()).clone()));
             }
             st.app.shutdown();

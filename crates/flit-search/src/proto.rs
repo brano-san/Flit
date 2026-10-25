@@ -1,7 +1,7 @@
 use flit_proto::listing::EntryBatch;
 use serde::{Deserialize, Serialize};
 
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortKey {
@@ -38,6 +38,7 @@ pub struct VolumeInfo {
 pub enum Message {
     Query { gen: u64, text: String, sort: Sort },
     QueryDone { gen: u64, total: u64 },
+    Groups { gen: u64, starts: Vec<u64> },
     GetRows { gen: u64, from: u64, to: u64 },
     Rows { gen: u64, from: u64, entries: EntryBatch, dirs: Vec<Vec<u8>> },
     IndexStatus { volumes: Vec<VolumeInfo> },

@@ -162,9 +162,19 @@ pub static SETTINGS: &[Setting] = &[
     toggle("general.menu_terminal", Page::General, "Show «Open in terminal» in the context menu", "For folders and the folder background", |a| shown_in_menu(a, "app.terminal"), |a, on| show_in_menu(a, "app.terminal", on)),
     toggle("general.menu_tags", Page::General, "Show «Edit tags» in the context menu", "For items on local NTFS drives", |a| shown_in_menu(a, "tags.edit"), |a, on| show_in_menu(a, "tags.edit", on)),
     toggle("general.menu_compress", Page::General, "Show «Compress» and «Extract» in the context menu", "Archive commands for the selected items", |a| shown_in_menu(a, "archive.menu"), |a, on| show_in_menu(a, "archive.menu", on)),
+    toggle("appearance.toolbar", Page::Appearance, "Show the toolbar", "The command bar under the address bar; Ctrl+Shift+B switches it too", |a| a.toolbar.state.visible, |a, on| {
+        if a.toolbar.state.visible != on {
+            a.toggle_toolbar();
+        }
+    }),
     toggle("files.show_hidden", Page::Files, "Show hidden files and folders", "Applies to all tabs; Ctrl+H still switches the current tab", |a| a.show_hidden, |a, on| a.set_show_hidden(on)),
     toggle("files.dotfiles", Page::Files, "Show files whose names start with a dot", "Dotfiles from Linux and development tools", |a| a.prefs.show_dotfiles, |a, on| a.set_pref(|p| &mut p.show_dotfiles, on)),
     toggle("files.system", Page::Files, "Show protected operating system files", "Hidden system files such as desktop.ini and pagefile.sys", |a| a.prefs.show_system, |a, on| a.set_pref(|p| &mut p.show_system, on)),
+    toggle("files.streams", Page::Files, "Show alternate data streams", "NTFS streams of files appear as «name:stream» rows, for viewing only", |a| a.prefs.show_streams, |a, on| {
+        if a.prefs.show_streams != on {
+            a.toggle_streams(Instant::now());
+        }
+    }),
     toggle("files.extensions", Page::Files, "Show file name extensions", "When off, extensions of all files are hidden", |a| a.prefs.show_extensions, |a, on| a.set_pref(|p| &mut p.show_extensions, on)),
     toggle("files.thumbnails", Page::Files, "Show thumbnails", "Pictures and videos in the Grid and Cards layouts", |a| a.prefs.thumbnails, |a, on| a.set_pref(|p| &mut p.thumbnails, on)),
     toggle("files.checkboxes", Page::Files, "Show check boxes to select items", "A check box on every row toggles it without clearing the selection", |a| a.prefs.checkboxes, |a, on| a.set_pref(|p| &mut p.checkboxes, on)),

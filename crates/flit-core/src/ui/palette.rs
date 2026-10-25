@@ -3,6 +3,7 @@ use super::edit::EditAction;
 use super::field::{Field, FieldKey};
 use super::settings_page::SettingPick;
 use super::tags::TagPick;
+use super::toolbar::ToolPick;
 use super::{App, Effect, Hit};
 use crate::input::{Key, Mods};
 use crate::path::FsPath;
@@ -30,6 +31,7 @@ pub(super) enum Pick {
     LibraryAdd(FsPath),
     Tags(TagPick),
     Setting(SettingPick),
+    Toolbar(ToolPick),
 }
 
 impl Pick {
@@ -46,6 +48,7 @@ impl Pick {
             Pick::LibraryAdd(_) => "Full path of the folder to include in the library",
             Pick::Tags(t) => t.placeholder(),
             Pick::Setting(p) => p.placeholder(),
+            Pick::Toolbar(t) => t.placeholder(),
         }
     }
 
@@ -62,6 +65,7 @@ impl Pick {
             Pick::LibraryAdd(_) => "Enter adds the folder to the library",
             Pick::Tags(t) => t.empty(),
             Pick::Setting(p) => p.empty(),
+            Pick::Toolbar(_) => "No matching buttons",
         }
     }
 
@@ -152,6 +156,10 @@ impl Palette {
         }
     }
 
+    pub(super) fn select_row(&mut self, k: usize) {
+        self.select(k.min(self.matches.len().saturating_sub(1)) as isize);
+    }
+
     fn scroll(&mut self, rows: isize) {
         let max = self.matches.len().saturating_sub(MAX_ROWS) as isize;
         self.first = (self.first as isize + rows).clamp(0, max) as usize;
@@ -197,6 +205,7 @@ impl App {
             Pick::Library(lib) => self.library_row(lib, &p.titles[id], false),
             Pick::Tags(t) => self.tag_choose(t, id, now),
             Pick::Setting(p) => self.setting_choose(p, id),
+            Pick::Toolbar(t) => self.tool_choose(t, id),
             _ => self.new_item(id),
         }
     }

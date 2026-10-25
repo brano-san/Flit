@@ -128,8 +128,13 @@ impl Session {
             Ok(q) => engine.search_as(q, c.sort, self.access.as_deref(), &cancel),
             Err(_) => None,
         };
-        match &c.set {
-            Some(set) => out(Message::QueryDone { gen, total: set.total }),
+        match &mut c.set {
+            Some(set) => {
+                out(Message::QueryDone { gen, total: set.total });
+                if let Some(starts) = engine.groups(set) {
+                    out(Message::Groups { gen, starts });
+                }
+            }
             None if c.query.is_err() => out(Message::QueryDone { gen, total: 0 }),
             None => return false,
         }
