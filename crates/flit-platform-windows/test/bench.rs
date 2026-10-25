@@ -204,6 +204,7 @@ fn bench_file_ops() {
     measure("trash 20 files", 3, |k| (0..20).map(|i| c.file(&format!("t{k}_{i}.txt"), 4096)).collect::<Vec<_>>(), |items| {
         let out = sh.file_op(&FileOp::Trash(items));
         assert!(out.error.is_none(), "{:?}", out.error);
+        recycled.extend(out.items);
     });
     let bin = recycle_bin_len();
     eprintln!("      recycle bin holds {bin} items");
@@ -255,4 +256,84 @@ fn recycle_bin_len() -> usize {
             n += 1;
         }
     }
+}
+
+fn query_menu(menu: IContextMenu) {
+    unsafe {
+        let h = CreatePopupMenu().unwrap();
+        let _ = menu.QueryContextMenu(h, 0, 1, 0x7FFF, CMF_NORMAL);
+        let _ = DestroyMenu(h);
+    }
+}
+
+fn file_menu(f: &FsPath) -> IContextMenu {
+    Pidls::parse(std::slice::from_ref(f)).unwrap().ui_object(HWND::default()).unwrap()
+}
+
+fn background_menu(dir: &FsPath) -> IContextMenu {
+    let folder = Pidls::parse(std::slice::from_ref(dir)).unwrap().folder().unwrap();
+    unsafe { folder.CreateViewObject(HWND::default()).unwrap() }
+}
+
+#[test]
+#[ignore]
+fn bench_context_menu_cold_background() {
+    crate::com_sta();
+    let d = Dir::temp("bg");
+    measure("context menu build+query (background)", RUNS, |_| d.path(""), |p| query_menu(background_menu(&p)));
+}
+
+#[test]
+#[ignore]
+fn bench_context_menu_after_prewarm() {
+    let d = Dir::temp("warm");
+    let files: Vec<FsPath> = (0..RUNS).map(|k| d.file(&format!("f{k}.txt"), 10)).collect();
+    let (warm_file, warm_dir) = (d.file("warm.txt", 1), d.path(""));
+    let t = Instant::now();
+    std::thread::spawn(move || {
+        crate::com_sta();
+        query_menu(file_menu(&warm_file));
+        query_menu(background_menu(&warm_dir));
+    })
+    .join()
+    .unwrap();
+    eprintln!("BENCH prewarm on another thread took {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+    crate::com_sta();
+    measure("context menu (file) after prewarm", RUNS, |k| files[k].clone(), |f| query_menu(file_menu(&f)));
+    measure("context menu (background) after prewarm", RUNS, |_| d.path(""), |p| query_menu(background_menu(&p)));
+}
+
+#[test]
+#[ignore]
+fn bench_context_menu_breakdown() {
+    use windows::Win32::UI::Shell::{CMF_ASYNCVERBSTATE, CMF_CANRENAME, CMF_ITEMMENU};
+    crate::com_sta();
+    let d = Dir::temp("brk");
+    let files: Vec<FsPath> = (0..RUNS * 4).map(|k| d.file(&format!("f{k}.txt"), 10)).collect();
+    query_menu(file_menu(&files[0]));
+    measure("GetUIObjectOf(IContextMenu) only", RUNS, |k| files[k].clone(), |f| drop(file_menu(&f)));
+    for (n, (label, flags)) in [("query + ASYNCVERBSTATE", CMF_NORMAL | CMF_CANRENAME | CMF_ITEMMENU | CMF_ASYNCVERBSTATE), ("query flit flags", CMF_NORMAL | CMF_CANRENAME | CMF_ITEMMENU), ("query + ASYNCVERBSTATE again", CMF_NORMAL | CMF_CANRENAME | CMF_ITEMMENU | CMF_ASYNCVERBSTATE)].into_iter().enumerate() {
+        measure(label, RUNS, |k| file_menu(&files[RUNS * (n + 1) - RUNS + k]), |m| unsafe {
+            let h = CreatePopupMenu().unwrap();
+            let _ = m.QueryContextMenu(h, 0, 1, 0x7FFF, flags);
+            let _ = DestroyMenu(h);
+        });
+    }
+}
+
+#[test]
+#[ignore]
+fn bench_drag_setup() {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+    use windows::Win32::System::Ole::OleInitialize;
+    use windows::Win32::UI::Shell::{IDragSourceHelper, CLSID_DragDropHelper};
+    unsafe { OleInitialize(None).unwrap() };
+    let d = Dir::temp("drag");
+    let files: Vec<FsPath> = (0..RUNS * 2).map(|k| d.file(&format!("f{k}.txt"), 10)).collect();
+    let data = |f: &FsPath| -> IDataObject { Pidls::parse(std::slice::from_ref(f)).unwrap().ui_object(HWND::default()).unwrap() };
+    measure("drag image InitializeFromWindow", RUNS, |k| data(&files[k]), |obj| unsafe {
+        let helper: IDragSourceHelper = CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER).unwrap();
+        let _ = helper.InitializeFromWindow(None, Some(&POINT { x: 0, y: 0 }), &obj);
+    });
 }

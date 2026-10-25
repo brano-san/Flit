@@ -5,6 +5,8 @@ use flit_core::ui::{ShellMenu, SHELL_VERBS};
 use flit_core::FsPath;
 use flit_platform::PlatformError;
 use std::cell::RefCell;
+use std::sync::Once;
+use std::time::Duration;
 use windows::core::{Interface, PCSTR, PCWSTR, PSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::ClientToScreen;
@@ -20,6 +22,7 @@ const FIRST_ID: u32 = 1;
 const LAST_ID: u32 = 0x7FFF;
 const CMIC_MASK_UNICODE: u32 = 0x4000;
 const THIS_PC: &str = "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
+const PREWARM_DELAY: Duration = Duration::from_millis(500);
 
 pub(crate) enum ShellUi {
     Menu(ShellMenu),
@@ -98,7 +101,7 @@ impl Pidls {
         }
     }
 
-    fn folder(&self) -> Result<IShellFolder, PlatformError> {
+    pub(crate) fn folder(&self) -> Result<IShellFolder, PlatformError> {
         unsafe {
             let desktop = SHGetDesktopFolder().map_err(err)?;
             if ILGetSize(Some(self.first())) <= 2 {
@@ -147,10 +150,10 @@ fn key_down(vk: i32) -> bool {
     unsafe { GetKeyState(vk) < 0 }
 }
 
-unsafe fn show_menu(hwnd: HWND, m: &ShellMenu, send: &dyn Fn(Event)) -> Result<(), PlatformError> {
+unsafe fn query(hwnd: HWND, m: &ShellMenu) -> Result<(IContextMenu, HMENU), PlatformError> {
     let menu = build(hwnd, m)?;
     let hmenu = CreatePopupMenu().map_err(err)?;
-    let mut flags = CMF_NORMAL | CMF_CANRENAME;
+    let mut flags = CMF_NORMAL | CMF_CANRENAME | CMF_ASYNCVERBSTATE;
     if m.extended {
         flags |= CMF_EXTENDEDVERBS;
     }
@@ -162,6 +165,32 @@ unsafe fn show_menu(hwnd: HWND, m: &ShellMenu, send: &dyn Fn(Event)) -> Result<(
         let _ = DestroyMenu(hmenu);
         return Err(err(queried.into()));
     }
+    Ok((menu, hmenu))
+}
+
+pub(crate) fn prewarm() {
+    static STARTED: Once = Once::new();
+    STARTED.call_once(|| {
+        let warm = || {
+            std::thread::sleep(PREWARM_DELAY);
+            crate::com_sta();
+            let Some(exe) = std::env::current_exe().ok().and_then(|p| FsPath::parse(p.to_str()?)) else { return };
+            let Some(dir) = exe.parent() else { return };
+            let menu = |dir: &FsPath, items: Vec<FsPath>| ShellMenu { dir: dir.clone(), items, x: 0.0, y: 0.0, extended: false };
+            for m in [menu(&dir, vec![exe.clone()]), menu(&dir, Vec::new()), menu(&dir, vec![dir.clone()])] {
+                if let Ok((_, hmenu)) = unsafe { query(HWND::default(), &m) } {
+                    let _ = unsafe { DestroyMenu(hmenu) };
+                }
+            }
+        };
+        if let Err(e) = std::thread::Builder::new().name("flit-shell-warm".into()).spawn(warm) {
+            tracing::warn!("shell warm-up: {e}");
+        }
+    });
+}
+
+unsafe fn show_menu(hwnd: HWND, m: &ShellMenu, send: &dyn Fn(Event)) -> Result<(), PlatformError> {
+    let (menu, hmenu) = query(hwnd, m)?;
     let mut pt = POINT { x: m.x as i32, y: m.y as i32 };
     let _ = ClientToScreen(hwnd, &mut pt);
     ACTIVE.set(Some((menu.cast().ok(), menu.cast().ok())));
