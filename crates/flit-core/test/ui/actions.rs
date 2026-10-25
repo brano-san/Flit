@@ -45,11 +45,18 @@ fn shortcuts_of_other_features_are_registered() {
         (alt(Key::Enter), "item.properties"),
         (shift(Key::F(10)), "item.context_menu"),
         (key(Key::Apps), "item.context_menu"),
+        (ctrl_shift(Key::Char('V')), "file.paste_into"),
+        (ctrl_shift(Key::Char('I')), "file.new_item"),
+        (ctrl_alt(Key::Char('C')), "item.copy_quoted_path"),
+        (ctrl(Key::Char('`')), "app.terminal"),
+        (ctrl_shift(Key::Char('`')), "app.terminal_admin"),
     ];
     for (c, id) in file_ops {
         assert_eq!(find(c.key, c.mods).map(|a| a.id), Some(id), "{}", chord_text(&c));
     }
     assert_eq!(chord_text(&key(Key::Apps)), "Menu");
+    assert_eq!(chord_text(&ctrl_shift(Key::Char('`'))), "Ctrl+Shift+`");
+    assert_eq!(chord_text(&ctrl_alt(Key::Char('C'))), "Ctrl+Alt+C");
 }
 
 #[test]

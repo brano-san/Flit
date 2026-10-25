@@ -8,8 +8,8 @@ use crossbeam_channel::Sender;
 use flit_core::atlas::Slot;
 use flit_core::input::{CursorIcon, Event, HitArea};
 use flit_core::render::{DrawList, Rect};
-use flit_core::ui::{Bitmap, DragEvent, IconRequest, ShellMenu};
-use flit_core::provider::FileOp;
+use flit_core::ui::{Bitmap, DragEvent, IconRequest, NewTemplate, ShellMenu};
+use flit_core::provider::{FileOp, Launch};
 use flit_core::{FsError, FsPath, ListingBuilder, Location, Open, ProviderEvent, ProviderRequest, TabId};
 use flit_search::index::{Checkpoint, IndexSink};
 use flit_search::proto::VolumeInfo;
@@ -89,6 +89,7 @@ pub trait Window {
     fn shell_menu(&self, menu: ShellMenu);
     fn properties(&self, paths: Vec<FsPath>);
     fn start_drag(&self, paths: Vec<FsPath>);
+    fn set_timer(&self, ms: u32);
 }
 
 pub trait WindowHandler<W: WindowSystem> {
@@ -147,6 +148,12 @@ pub trait Shell: Sized {
     fn icon(&mut self, req: &IconRequest) -> Option<Bitmap>;
     fn type_name(&mut self, ext: &[u8]) -> Option<String>;
     fn open(&mut self, path: &FsPath) -> Result<(), PlatformError>;
+    fn launch(&mut self, _launch: &Launch) -> Result<(), PlatformError> {
+        Err(PlatformError::unsupported("launching programs"))
+    }
+    fn shortcut_folder(&mut self, _link: &FsPath) -> Option<FsPath> {
+        None
+    }
 }
 
 #[derive(Debug, Default)]
@@ -220,4 +227,13 @@ pub trait Platform: 'static {
     fn refresh_period() -> Option<std::time::Duration>;
     fn drives() -> Vec<flit_core::ui::Drive>;
     fn wsl_distros() -> Vec<String>;
+    fn templates() -> Vec<NewTemplate> {
+        Vec::new()
+    }
+    fn double_click_time() -> std::time::Duration {
+        std::time::Duration::from_millis(500)
+    }
+    fn elevated() -> bool {
+        false
+    }
 }

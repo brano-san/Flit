@@ -38,6 +38,7 @@ use windows::Win32::Graphics::Dwm::{DwmGetCompositionTimingInfo, DWM_TIMING_INFO
 use windows::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE};
 use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 use windows::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
+use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
 use windows::Win32::UI::Shell::{IShellItem, SHCreateItemFromParsingName, SIGDN_FILESYSPATH};
 use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
 
@@ -152,6 +153,18 @@ impl Platform for Windows {
 
     fn wsl_distros() -> Vec<String> {
         places::wsl_distros()
+    }
+
+    fn templates() -> Vec<flit_core::ui::NewTemplate> {
+        places::templates()
+    }
+
+    fn double_click_time() -> std::time::Duration {
+        std::time::Duration::from_millis(unsafe { GetDoubleClickTime() }.into())
+    }
+
+    fn elevated() -> bool {
+        instance::elevated()
     }
 }
 

@@ -578,3 +578,328 @@ fn files_dropped_on_the_recycle_bin_are_trashed() {
     app.drag(&DragEvent::Drop { x: row.0, y: row.1, mods: NO, allowed: all }, t0());
     assert_eq!(op_list(&mut app), [FileOp::Trash(vec![p(r"C:\y\g.txt")])]);
 }
+
+const CTRL_ALT: Mods = Mods { ctrl: true, shift: false, alt: true };
+
+fn launches(app: &mut App) -> Vec<Launch> {
+    app.drain_effects()
+        .filter_map(|e| match e {
+            Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { launch, .. } } => Some(launch),
+            _ => None,
+        })
+        .collect()
+}
+
+fn copied(app: &mut App) -> Option<String> {
+    app.drain_effects().find_map(|e| if let Effect::SetClipboard(s) = e { Some(s) } else { None })
+}
+
+fn with_templates(app: &mut App) {
+    let t = |label: &str, ext: &str, template| NewTemplate { label: label.into(), ext: ext.into(), stem: format!("New {label}"), template };
+    let templates = vec![t("Text Document", ".txt", Template::Empty), t("Compressed (zipped) Folder", ".zip", Template::Data(vec![0x50, 0x4B, 5, 6]))];
+    app.set_places(Arc::new(crate::ui::Places { templates, ..Default::default() }));
+}
+
+#[test]
+fn batch_names_keep_extensions_and_skip_taken_names() {
+    let items: [(&[u8], bool); 3] = [(b"a.jpg", false), (b"b.PNG", false), (b"dir.v2", true)];
+    let names = batch_names("Trip", &items, |n| n == b"trip (2).png");
+    assert_eq!(names, [b"Trip (1).jpg".to_vec(), b"Trip (3).PNG".to_vec(), b"Trip (4)".to_vec()]);
+    assert!(changes_extension("a.txt", "a.md"));
+    assert!(changes_extension("README", "README.md"));
+    assert!(changes_extension("a.txt", "a"));
+    assert!(!changes_extension("a.txt", "b.TXT"));
+    assert!(!changes_extension(".gitignore", ".npmignore"));
+}
+
+#[test]
+fn f2_with_several_items_selected_renames_them_all_with_numbers() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.jpg", false), ("b.png", false), ("c", true), ("Trip (2).jpg", false)]);
+    select(&mut app, &["c", "a.jpg", "b.png"]);
+    key(&mut app, Key::F(2), NO);
+    assert_eq!(app.rename_text(), Some("b.png"));
+    assert_eq!(selected(&app).len(), 3, "the selection stays while several items are renamed");
+    typed(&mut app, "Trip");
+    key(&mut app, Key::Enter, NO);
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    let pairs = [(r"C:\x\c", r"C:\x\Trip (1)"), (r"C:\x\a.jpg", r"C:\x\Trip (3).jpg"), (r"C:\x\b.png", r"C:\x\Trip (4).png")];
+    assert_eq!(op, FileOp::MoveTo(pairs.iter().map(|&(a, b)| (p(a), p(b))).collect()));
+    done(&mut app, id, op, &pairs);
+    key(&mut app, Key::Char('Z'), CTRL);
+    assert_eq!(op_list(&mut app), [FileOp::MoveTo(pairs.iter().map(|&(a, b)| (p(b), p(a))).collect())], "one undo step brings all names back");
+}
+
+#[test]
+fn changing_the_extension_needs_a_second_enter() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("notes.txt", false), ("src", true)]);
+    let rename = |app: &mut App, name: &str, text: &str| {
+        select(app, &[name]);
+        key(app, Key::F(2), NO);
+        key(app, Key::Char('A'), CTRL);
+        typed(app, text);
+        key(app, Key::Enter, NO);
+    };
+    rename(&mut app, "notes.txt", "notes.md");
+    assert!(app.is_renaming() && ops(&mut app).is_empty());
+    assert!(app.tab().error.as_deref().is_some_and(|e| e.contains("extension")));
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(op_list(&mut app), [FileOp::Rename { item: p(r"C:\x\notes.txt"), name: b"notes.md".to_vec() }]);
+    rename(&mut app, "notes.txt", "draft.TXT");
+    assert_eq!(op_list(&mut app), [FileOp::Rename { item: p(r"C:\x\notes.txt"), name: b"draft.TXT".to_vec() }]);
+    rename(&mut app, "notes.txt", "notes");
+    assert!(app.is_renaming(), "dropping the extension warns too");
+    key(&mut app, Key::Escape, NO);
+    assert!(!app.is_renaming() && ops(&mut app).is_empty());
+    app.warn_extension_change = false;
+    rename(&mut app, "notes.txt", "notes.log");
+    assert_eq!(op_list(&mut app), [FileOp::Rename { item: p(r"C:\x\notes.txt"), name: b"notes.log".to_vec() }]);
+    app.warn_extension_change = true;
+    rename(&mut app, "src", "src.old");
+    assert_eq!(op_list(&mut app), [FileOp::Rename { item: p(r"C:\x\src"), name: b"src.old".to_vec() }], "folders have no extension");
+}
+
+#[test]
+fn a_slow_second_click_renames_and_a_double_click_still_opens() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false), ("b.txt", false)]);
+    let start = t0();
+    app.on_event(&Event::Focus(true), start);
+    let at = row_xy(&app, 0);
+    let click = |app: &mut App, now: Instant, clicks: u8| {
+        app.on_event(&Event::MouseDown { x: at.0, y: at.1, button: MouseButton::Left, clicks }, now);
+        app.on_event(&Event::MouseUp { x: at.0, y: at.1, button: MouseButton::Left }, now);
+    };
+    let armed = |app: &mut App| app.drain_effects().any(|e| matches!(e, Effect::Timer(d) if d == Duration::from_millis(500)));
+    click(&mut app, start + Duration::from_millis(100), 1);
+    assert!(!armed(&mut app), "the first click selects");
+    click(&mut app, start + Duration::from_millis(200), 1);
+    assert!(!armed(&mut app), "a click right after the window got focus does not rename");
+    let t = start + Duration::from_secs(3);
+    click(&mut app, t, 1);
+    assert!(armed(&mut app));
+    app.on_event(&Event::Timer, t + Duration::from_millis(100));
+    assert!(!app.is_renaming());
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Timer(d) if d == Duration::from_millis(400))), "an early timer is armed again");
+    app.on_event(&Event::Timer, t + Duration::from_millis(500));
+    assert_eq!(app.rename_text(), Some("a.txt"));
+    key(&mut app, Key::Escape, NO);
+    let other = (app.layout.cols[1].x + 4.0, at.1);
+    let t = t + Duration::from_secs(3);
+    app.on_event(&Event::MouseDown { x: other.0, y: other.1, button: MouseButton::Left, clicks: 1 }, t);
+    app.on_event(&Event::MouseUp { x: other.0, y: other.1, button: MouseButton::Left }, t);
+    assert!(!armed(&mut app), "a click outside the name column does not rename");
+
+    let t = t + Duration::from_secs(3);
+    click(&mut app, t, 1);
+    assert!(armed(&mut app));
+    click(&mut app, t + Duration::from_millis(150), 2);
+    app.on_event(&Event::Timer, t + Duration::from_secs(1));
+    assert!(!app.is_renaming());
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } if path == p(r"C:\x\a.txt"))));
+}
+
+#[test]
+fn the_new_item_dialog_creates_files_from_templates_folders_and_shortcuts() {
+    let mut app = app_at(r"C:\x");
+    with_templates(&mut app);
+    deliver(&mut app, &[("New Text Document.txt", false), ("a.txt", false)]);
+    key(&mut app, Key::Char('I'), CTRL_SHIFT);
+    let pick = app.nav.palette.as_ref().unwrap();
+    assert_eq!(pick.pick, Pick::NewItem);
+    assert_eq!(pick.titles, ["Folder", "Shortcut", "Text Document", "Compressed (zipped) Folder"]);
+    typed(&mut app, "text");
+    key(&mut app, Key::Enter, NO);
+    assert!(app.nav.palette.is_none());
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::NewFile { dir: p(r"C:\x"), name: b"New Text Document (2).txt".to_vec(), template: Template::Empty });
+    done(&mut app, id, op, &[(r"C:\x\New Text Document (2).txt", r"C:\x\New Text Document (2).txt")]);
+    change(&mut app, ChangeKind::Added, "New Text Document (2).txt", false);
+    assert_eq!(app.rename_text(), Some("New Text Document (2).txt"));
+    key(&mut app, Key::Escape, NO);
+    key(&mut app, Key::Char('Z'), CTRL);
+    assert_eq!(op_list(&mut app), [FileOp::Trash(vec![p(r"C:\x\New Text Document (2).txt")])]);
+
+    key(&mut app, Key::Char('I'), CTRL_SHIFT);
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(op_list(&mut app), [FileOp::NewFolder { dir: p(r"C:\x"), name: b"New folder".to_vec() }]);
+
+    select(&mut app, &["a.txt"]);
+    key(&mut app, Key::Char('I'), CTRL_SHIFT);
+    typed(&mut app, "shortcut");
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(app.nav.palette.as_ref().unwrap().pick, Pick::Shortcut(p(r"C:\x")));
+    key(&mut app, Key::Enter, NO);
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::Link { items: vec![p(r"C:\x\a.txt")], dest: p(r"C:\x") }, "the target starts as the selected item");
+    done(&mut app, id, op, &[(r"C:\x\a.txt", r"C:\x\a.txt - Shortcut.lnk")]);
+    change(&mut app, ChangeKind::Added, "a.txt - Shortcut.lnk", false);
+    assert_eq!(app.rename_text(), Some("a.txt - Shortcut.lnk"));
+    key(&mut app, Key::Escape, NO);
+
+    key(&mut app, Key::Char('I'), CTRL_SHIFT);
+    typed(&mut app, "shortcut");
+    key(&mut app, Key::Enter, NO);
+    typed(&mut app, r"relative\path");
+    key(&mut app, Key::Enter, NO);
+    assert!(ops(&mut app).is_empty());
+    assert!(app.tab().error.as_deref().is_some_and(|e| e.contains("full path")));
+
+    let mut app = app_at("This PC");
+    key(&mut app, Key::Char('I'), CTRL_SHIFT);
+    assert!(app.nav.palette.is_none());
+}
+
+#[test]
+fn a_new_folder_with_the_selection_takes_the_items_and_is_renamed() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("New folder", true), ("a.txt", false), ("b.txt", false)]);
+    assert!(app.run_action("file.new_folder_with_selection", t0()));
+    assert!(ops(&mut app).is_empty());
+    assert_eq!(app.tab().error.as_deref(), Some("Select the items to put into a new folder"));
+    select(&mut app, &["a.txt", "b.txt"]);
+    app.run_action("file.new_folder_with_selection", t0());
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::NewFolder { dir: p(r"C:\x"), name: b"New folder (2)".to_vec() });
+    done(&mut app, id, op, &[(r"C:\x\New folder (2)", r"C:\x\New folder (2)")]);
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::Move { items: vec![p(r"C:\x\a.txt"), p(r"C:\x\b.txt")], dest: p(r"C:\x\New folder (2)") });
+    change(&mut app, ChangeKind::Added, "New folder (2)", true);
+    assert!(!app.is_renaming(), "the folder is renamed once the items are inside");
+    done(&mut app, id, op, &[(r"C:\x\a.txt", r"C:\x\New folder (2)\a.txt"), (r"C:\x\b.txt", r"C:\x\New folder (2)\b.txt")]);
+    change(&mut app, ChangeKind::Removed, "a.txt", false);
+    assert_eq!(app.rename_text(), Some("New folder (2)"));
+    assert_eq!(app.undo_depth(), (2, 0));
+    key(&mut app, Key::Escape, NO);
+    key(&mut app, Key::Char('Z'), CTRL);
+    assert_eq!(op_list(&mut app), [FileOp::MoveTo(vec![(p(r"C:\x\New folder (2)\a.txt"), p(r"C:\x\a.txt")), (p(r"C:\x\New folder (2)\b.txt"), p(r"C:\x\b.txt"))])]);
+}
+
+#[test]
+fn a_new_stream_asks_for_its_name_and_reports_the_result() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false)]);
+    app.run_action("file.new_stream", t0());
+    assert!(app.nav.palette.is_none());
+    assert_eq!(app.tab().error.as_deref(), Some("Select a file to add a stream to"));
+    select(&mut app, &["a.txt"]);
+    app.run_action("file.new_stream", t0());
+    assert_eq!(app.nav.palette.as_ref().unwrap().pick, Pick::Stream(p(r"C:\x\a.txt")));
+    typed(&mut app, "bad:name");
+    key(&mut app, Key::Enter, NO);
+    assert!(ops(&mut app).is_empty() && app.nav.palette.is_none());
+    app.run_action("file.new_stream", t0());
+    typed(&mut app, "meta");
+    key(&mut app, Key::Enter, NO);
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::NewStream { item: p(r"C:\x\a.txt"), name: b"meta".to_vec() });
+    done(&mut app, id, op, &[(r"C:\x\a.txt", r"C:\x\a.txt")]);
+    assert_eq!(app.tab().error.as_deref(), Some(r"Created the stream C:\x\a.txt:meta"));
+    assert_eq!(app.undo_depth(), (0, 0));
+}
+
+#[test]
+fn paste_into_the_selected_folder_and_copy_paths_in_quotes() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("sub", true), ("a.txt", false)]);
+    for names in [&[][..], &["a.txt"], &["sub", "a.txt"]] {
+        select(&mut app, names);
+        key(&mut app, Key::Char('V'), CTRL_SHIFT);
+        assert!(ops(&mut app).is_empty());
+        assert_eq!(app.tab().error.as_deref(), Some("Select one folder to paste into"));
+    }
+    select(&mut app, &["sub"]);
+    key(&mut app, Key::Char('V'), CTRL_SHIFT);
+    assert_eq!(op_list(&mut app), [FileOp::Paste { dest: p(r"C:\x\sub") }]);
+    key(&mut app, Key::Char('C'), CTRL_ALT);
+    assert_eq!(copied(&mut app).as_deref(), Some(r#""C:\x\sub""#));
+    select(&mut app, &["sub", "a.txt"]);
+    key(&mut app, Key::Char('C'), CTRL_ALT);
+    assert_eq!(copied(&mut app).as_deref(), Some("\"C:\\x\\sub\"\r\n\"C:\\x\\a.txt\""));
+    select(&mut app, &[]);
+    key(&mut app, Key::Char('C'), CTRL_ALT);
+    assert_eq!(copied(&mut app).as_deref(), Some(r#""C:\x""#), "with nothing selected the folder itself is copied");
+    key(&mut app, Key::Char('C'), CTRL_SHIFT);
+    assert_eq!(copied(&mut app).as_deref(), Some(r"C:\x"));
+}
+
+#[test]
+fn cut_items_stay_dimmed_until_the_clipboard_changes() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false), ("b.txt", false)]);
+    select(&mut app, &["a.txt"]);
+    key(&mut app, Key::Char('X'), CTRL);
+    assert!(app.is_cut(b"a.txt") && !app.is_cut(b"b.txt"));
+    app.on_event(&Event::ClipboardChanged(7), t0());
+    app.on_event(&Event::ClipboardChanged(7), t0());
+    assert!(app.is_cut(b"a.txt"), "the first change is the cut itself");
+    app.frame(&mut Gfx::new(Mono, 1024), t0());
+    app.on_event(&Event::ClipboardChanged(8), t0());
+    assert!(!app.is_cut(b"a.txt"));
+    key(&mut app, Key::Char('X'), CTRL);
+    key(&mut app, Key::Char('C'), CTRL);
+    assert!(!app.is_cut(b"a.txt"), "copying replaces the cut");
+}
+
+#[test]
+fn the_terminal_opens_the_folder_or_up_to_five_selected_folders() {
+    let mut app = app_at(r"C:\x");
+    let dirs = ["d1", "d2", "d3", "d4", "d5", "d6", "d7"];
+    let mut items: Vec<(&str, bool)> = dirs.iter().map(|&d| (d, true)).collect();
+    items.push(("a.txt", false));
+    deliver(&mut app, &items);
+    key(&mut app, Key::Char('`'), CTRL);
+    assert_eq!(launches(&mut app), [Launch::Terminal { dirs: vec![p(r"C:\x")], admin: false }]);
+    select(&mut app, &["a.txt"]);
+    key(&mut app, Key::Char('`'), CTRL_SHIFT);
+    assert_eq!(launches(&mut app), [Launch::Terminal { dirs: vec![p(r"C:\x")], admin: true }]);
+    let mut all = dirs.to_vec();
+    all.push("a.txt");
+    select(&mut app, &all);
+    key(&mut app, Key::Char('`'), CTRL);
+    let first: Vec<FsPath> = dirs[..5].iter().map(|d| p(&format!(r"C:\x\{d}"))).collect();
+    assert_eq!(launches(&mut app), [Launch::Terminal { dirs: first, admin: false }]);
+    assert_eq!(app.tab().error.as_deref(), Some("Opened the first 5 of 7 folders in the terminal"));
+    let mut app = app_at("This PC");
+    deliver(&mut app, &[("C:", true)]);
+    key(&mut app, Key::Char('`'), CTRL);
+    assert!(launches(&mut app).is_empty());
+    assert_eq!(app.tab().error.as_deref(), Some("This location cannot be opened in a terminal"));
+}
+
+#[test]
+fn files_dropped_on_a_program_are_passed_to_it() {
+    use drop_effect::*;
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false), ("run.CMD", false), ("tool.exe", false)]);
+    let all = COPY | MOVE | LINK;
+    let enter = |app: &mut App, paths: Vec<FsPath>, at: (f32, f32)| app.drag(&DragEvent::Enter { paths, x: at.0, y: at.1, mods: NO, allowed: all }, t0());
+    let (tool, cmd, txt) = (row_xy(&app, 2), row_xy(&app, 1), row_xy(&app, 0));
+    let files = vec![p(r"D:\in\f.txt"), p(r"D:\in\g.txt")];
+    assert_eq!(enter(&mut app, files.clone(), tool), COPY);
+    assert_eq!(app.drop_highlight(), Some(Some(2)));
+    assert_eq!(app.drag(&DragEvent::Drop { x: tool.0, y: tool.1, mods: NO, allowed: all }, t0()), COPY);
+    assert_eq!(launches(&mut app), [Launch::With { program: p(r"C:\x\tool.exe"), args: files.clone() }]);
+    assert!(ops(&mut app).is_empty());
+    assert_eq!(enter(&mut app, files.clone(), cmd), COPY, "scripts take dropped files too");
+    app.drag(&DragEvent::Leave, t0());
+    assert_eq!(enter(&mut app, vec![p(r"C:\x\tool.exe")], tool), NONE, "a program is not dropped on itself");
+    app.drag(&DragEvent::Leave, t0());
+    assert_eq!(enter(&mut app, files, txt), COPY);
+    assert_eq!(app.drop_highlight(), Some(None), "other files still drop into the folder");
+}
+
+#[test]
+fn a_shortcut_to_a_folder_opens_in_flit() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("docs.lnk", false)]);
+    select(&mut app, &["docs.lnk"]);
+    key(&mut app, Key::Enter, NO);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } if path == p(r"C:\x\docs.lnk"))));
+    let tab = app.tab().id;
+    app.on_provider_event(ProviderEvent::Navigate { tab: tab + 9, path: p(r"E:\") }, t0());
+    assert_eq!(app.current_location(), &Location::parse(r"C:\x").unwrap());
+    app.on_provider_event(ProviderEvent::Navigate { tab, path: p(r"D:\docs") }, t0());
+    assert_eq!(app.current_location(), &Location::parse(r"D:\docs").unwrap());
+}

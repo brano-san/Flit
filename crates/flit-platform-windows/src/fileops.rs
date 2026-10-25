@@ -1,16 +1,17 @@
 use crate::recycle::{self, info_file};
 use crate::shell::{owner_window, shell_addressable, ShellCom};
 use crate::{clipboard, err, take_pwstr};
-use flit_core::provider::FileOp;
+use flit_core::provider::{FileOp, Template};
 use flit_core::FsPath;
 use flit_platform::{FileOps, OpOutcome, PlatformError};
 use std::cell::RefCell;
 use std::ffi::OsString;
+use std::io::Write;
 use std::os::windows::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 use windows::core::{s, Interface, HRESULT, PCWSTR};
 use windows::Win32::Foundation::ERROR_NOT_SAME_DEVICE;
-use windows::Win32::Storage::FileSystem::{CopyFile2, CreateDirectoryW, DeleteFileW, GetFileAttributesW, MoveFileExW, COPYFILE2_EXTENDED_PARAMETERS, COPY_FILE_FAIL_IF_EXISTS, FILE_ATTRIBUTE_DIRECTORY, INVALID_FILE_ATTRIBUTES, MOVEFILE_COPY_ALLOWED, MOVE_FILE_FLAGS};
+use windows::Win32::Storage::FileSystem::{CopyFile2, CreateDirectoryW, DeleteFileW, GetFileAttributesW, MoveFileExW, COPYFILE2_EXTENDED_PARAMETERS, COPY_FILE_FAIL_IF_EXISTS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, INVALID_FILE_ATTRIBUTES, MOVEFILE_COPY_ALLOWED, MOVE_FILE_FLAGS};
 use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_ALL, CLSCTX_INPROC_SERVER};
 use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::{CreatePopupMenu, DestroyMenu, MessageBoxW, IDYES, MB_ICONWARNING, MB_YESNO, SW_SHOWNORMAL};
@@ -125,13 +126,14 @@ fn check_names(op: &FileOp) -> Result<(), PlatformError> {
         FileOp::EmptyBin => Vec::new(),
         FileOp::Copy { items, dest } | FileOp::Move { items, dest } | FileOp::Link { items, dest } => items.iter().chain([dest]).collect(),
         FileOp::Rename { item, .. } => vec![item],
-        FileOp::NewFolder { dir, .. } => vec![dir],
+        FileOp::NewFolder { dir, .. } | FileOp::NewFile { dir, .. } => vec![dir],
+        FileOp::NewStream { item, .. } => vec![item],
         FileOp::MoveTo(pairs) | FileOp::Restore(pairs) => pairs.iter().flat_map(|(a, b)| [a, b]).collect(),
         FileOp::Paste { dest } => vec![dest],
     };
     paths.into_iter().try_for_each(shell_addressable)?;
     match op {
-        FileOp::Rename { name, .. } | FileOp::NewFolder { name, .. } if name.ends_with(b".") || name.ends_with(b" ") || name.is_empty() => {
+        FileOp::Rename { name, .. } | FileOp::NewFolder { name, .. } | FileOp::NewFile { name, .. } if name.ends_with(b".") || name.ends_with(b" ") || name.is_empty() => {
             Err(PlatformError::new(-1, "A name cannot be empty or end with a dot or a space"))
         }
         _ => Ok(()),
@@ -245,7 +247,15 @@ unsafe fn queue(fo: &IFileOperation, op: &FileOp) -> Result<(), PlatformError> {
             let name = wide_name(name);
             fo.NewItem(&shell_item(dir)?, FILE_ATTRIBUTE_DIRECTORY.0, PCWSTR(name.as_ptr()), PCWSTR::null(), None).map_err(err)?;
         }
-        FileOp::Link { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::Purge(_) | FileOp::EmptyBin => return Err(PlatformError::new(-1, "not a file operation")),
+        FileOp::NewFile { dir, name, template } => {
+            let name = wide_name(name);
+            let source = match template {
+                Template::Copy(file) => Some(wide_name(file.file_name())),
+                _ => None,
+            };
+            fo.NewItem(&shell_item(dir)?, FILE_ATTRIBUTE_NORMAL.0, PCWSTR(name.as_ptr()), source.as_ref().map_or(PCWSTR::null(), |s| PCWSTR(s.as_ptr())), None).map_err(err)?;
+        }
+        FileOp::Link { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } => return Err(PlatformError::new(-1, "not a file operation")),
     }
     Ok(())
 }
@@ -285,7 +295,7 @@ fn flags(op: &FileOp) -> FILEOPERATION_FLAGS {
     let flags = match op {
         FileOp::Trash(_) => FOF_ALLOWUNDO | FOFX_ADDUNDORECORD | FOFX_RECYCLEONDELETE,
         FileOp::Delete(_) => FILEOPERATION_FLAGS(0),
-        FileOp::NewFolder { .. } => FOF_ALLOWUNDO | FOF_RENAMEONCOLLISION,
+        FileOp::NewFolder { .. } | FileOp::NewFile { .. } => FOF_ALLOWUNDO | FOF_RENAMEONCOLLISION,
         FileOp::Copy { items, dest } if duplicates(items, dest) => FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR | FOF_RENAMEONCOLLISION,
         _ => FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR,
     };
@@ -326,7 +336,7 @@ fn exists(p: &FsPath) -> bool {
     unsafe { GetFileAttributesW(PCWSTR(p.to_wide(true).as_ptr())) != INVALID_FILE_ATTRIBUTES }
 }
 
-fn is_dir(p: &FsPath) -> bool {
+pub(crate) fn is_dir(p: &FsPath) -> bool {
     let attrs = unsafe { GetFileAttributesW(PCWSTR(p.to_wide(true).as_ptr())) };
     attrs != INVALID_FILE_ATTRIBUTES && attrs & FILE_ATTRIBUTE_DIRECTORY.0 != 0
 }
@@ -377,6 +387,31 @@ fn copy_file(from: &FsPath, to: &FsPath) -> bool {
     true
 }
 
+fn create_new(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    std::fs::File::create_new(path)?.write_all(data)
+}
+
+fn new_file(path: &FsPath, template: &Template) -> bool {
+    let (src, dst) = match template {
+        Template::Empty => return create_new(&std_path(path), &[]).is_ok(),
+        Template::Data(data) => return create_new(&std_path(path), data).is_ok(),
+        Template::Copy(file) => (file.to_wide(true), path.to_wide(true)),
+    };
+    let params = COPYFILE2_EXTENDED_PARAMETERS { dwSize: size_of::<COPYFILE2_EXTENDED_PARAMETERS>() as u32, dwCopyFlags: COPY_FILE_FAIL_IF_EXISTS, ..Default::default() };
+    unsafe { CopyFile2(PCWSTR(src.as_ptr()), PCWSTR(dst.as_ptr()), Some(&params)) }.is_ok() && std::fs::File::options().write(true).open(std_path(path)).and_then(|f| f.set_modified(std::time::SystemTime::now())).is_ok()
+}
+
+fn new_stream(item: &FsPath, name: &[u8]) -> OpOutcome {
+    let mut w = item.to_wide(true);
+    w.pop();
+    w.push(u16::from(b':'));
+    flit_core::name::to_utf16(name, &mut w);
+    match create_new(Path::new(&OsString::from_wide(&w)), &[]) {
+        Ok(()) => OpOutcome { items: vec![(item.clone(), item.clone())], error: None },
+        Err(e) => OpOutcome { items: Vec::new(), error: Some(PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("Cannot create the stream: {e}"))) },
+    }
+}
+
 fn direct_restore(recycled: &FsPath, original: &FsPath) -> bool {
     let Some(info) = info_file(recycled) else { return false };
     if !direct_move(recycled, original, || false) {
@@ -406,6 +441,14 @@ fn direct(op: &FileOp) -> (Vec<(FsPath, FsPath)>, Option<FileOp>) {
                 return (Vec::new(), Some(op.clone()));
             }
             notify(SHCNE_MKDIR, &path, None);
+            return (vec![(path.clone(), path)], None);
+        }
+        FileOp::NewFile { dir, name, template } => {
+            let path = dir.join(name);
+            if !new_file(&path, template) {
+                return (Vec::new(), Some(op.clone()));
+            }
+            notify(SHCNE_CREATE, &path, None);
             return (vec![(path.clone(), path)], None);
         }
         _ => return (Vec::new(), Some(op.clone())),
@@ -449,6 +492,9 @@ unsafe fn make_links(items: &[FsPath], dest: &FsPath) -> OpOutcome {
     let mut out = OpOutcome::default();
     for target in items {
         let made = (|| {
+            if !exists(target) {
+                return Err(PlatformError::new(-1, format!("{} does not exist", target.display())));
+            }
             let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).map_err(err)?;
             link.SetPath(PCWSTR(target.to_wide(false).as_ptr())).map_err(err)?;
             if let Some(dir) = target.parent() {
@@ -511,6 +557,7 @@ impl FileOps for ShellCom {
         }
         match op {
             FileOp::Link { items, dest } => unsafe { make_links(items, dest) },
+            FileOp::NewStream { item, name } => new_stream(item, name),
             FileOp::Purge(pairs) => purge(op, pairs),
             FileOp::EmptyBin => empty_bin(op),
             _ => {

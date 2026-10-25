@@ -1,10 +1,13 @@
+use crate::fileops::is_dir;
 use crate::{com_sta, err};
 use flit_core::ui::{Bitmap, IconKind, IconRequest};
 use flit_core::path::PathKind;
-use flit_core::FsPath;
+use flit_core::provider::Launch;
+use flit_core::{FsPath, Location};
 use flit_platform::{PlatformError, Shell};
-use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{HWND, SIZE};
+use windows::core::{w, Interface, PCWSTR};
+use windows::Win32::Foundation::{ERROR_CANCELLED, HWND, SIZE};
+use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_INPROC_SERVER, STGM_READ};
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL};
 use windows::Win32::System::Threading::GetCurrentProcessId;
@@ -213,6 +216,94 @@ impl Shell for ShellCom {
         };
         unsafe { ShellExecuteExW(&mut info) }.map_err(err)
     }
+
+    fn launch(&mut self, launch: &Launch) -> Result<(), PlatformError> {
+        commands(launch, windows_terminal().as_deref()).iter().try_for_each(execute)
+    }
+
+    fn shortcut_folder(&mut self, link: &FsPath) -> Option<FsPath> {
+        unsafe { link_target(link) }.filter(is_dir)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct Command {
+    pub program: String,
+    pub args: String,
+    pub dir: Option<String>,
+    pub admin: bool,
+}
+
+fn quote_path(s: &str) -> String {
+    if !s.is_empty() && !s.contains([' ', '\t']) {
+        return s.to_owned();
+    }
+    let trailing = s.len() - s.trim_end_matches('\\').len();
+    format!("\"{s}{}\"", "\\".repeat(trailing))
+}
+
+fn wsl_args(distro: &str, path: &str) -> String {
+    format!("-d {} --cd {}", quote_path(distro), quote_path(path))
+}
+
+pub(crate) fn commands(launch: &Launch, terminal: Option<&str>) -> Vec<Command> {
+    let text = |p: &FsPath| p.display().into_owned();
+    match launch {
+        Launch::With { program, args } => {
+            let args = args.iter().map(|a| quote_path(&text(a))).collect::<Vec<_>>().join(" ");
+            vec![Command { program: text(program), args, dir: program.parent().map(|d| text(&d)), admin: false }]
+        }
+        Launch::Terminal { dirs, admin } => match terminal {
+            Some(wt) => {
+                let tab = |d: &FsPath| match Location::from_local(d.clone()) {
+                    Location::Wsl { distro, path } => format!("new-tab wsl.exe {}", wsl_args(&distro, &text(&path).replace(';', r"\;"))),
+                    _ => format!("new-tab -d {}", quote_path(&text(d).replace(';', r"\;"))),
+                };
+                vec![Command { program: wt.to_owned(), args: dirs.iter().map(tab).collect::<Vec<_>>().join(" ; "), dir: None, admin: *admin }]
+            }
+            None => dirs
+                .iter()
+                .map(|d| match Location::from_local(d.clone()) {
+                    Location::Wsl { distro, path } => Command { program: "wsl.exe".into(), args: wsl_args(&distro, &text(&path)), dir: None, admin: *admin },
+                    _ => Command { program: "cmd.exe".into(), args: format!("/k pushd \"{}\"", text(d)), dir: None, admin: *admin },
+                })
+                .collect(),
+        },
+    }
+}
+
+fn windows_terminal() -> Option<String> {
+    let wt = std::path::Path::new(&std::env::var_os("LOCALAPPDATA")?).join(r"Microsoft\WindowsApps\wt.exe");
+    std::fs::symlink_metadata(&wt).is_ok().then(|| wt.to_string_lossy().into_owned())
+}
+
+fn execute(c: &Command) -> Result<(), PlatformError> {
+    let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    let (file, args, dir) = (wide(&c.program), wide(&c.args), c.dir.as_deref().map(wide));
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOASYNC,
+        hwnd: owner_window().unwrap_or_default(),
+        lpVerb: if c.admin { w!("runas") } else { PCWSTR::null() },
+        lpFile: PCWSTR(file.as_ptr()),
+        lpParameters: PCWSTR(args.as_ptr()),
+        lpDirectory: dir.as_ref().map_or(PCWSTR::null(), |d| PCWSTR(d.as_ptr())),
+        nShow: SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+    match unsafe { ShellExecuteExW(&mut info) } {
+        Err(e) if e.code() == ERROR_CANCELLED.to_hresult() => Ok(()),
+        r => r.map_err(err),
+    }
+}
+
+pub(crate) unsafe fn link_target(link: &FsPath) -> Option<FsPath> {
+    let sl: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+    sl.cast::<IPersistFile>().ok()?.Load(PCWSTR(wide(link).as_ptr()), STGM_READ).ok()?;
+    let mut buf = [0u16; 1024];
+    sl.GetPath(&mut buf, std::ptr::null_mut(), 0).ok()?;
+    let n = buf.iter().position(|&c| c == 0)?;
+    FsPath::from_utf16(&buf[..n])
 }
 
 #[cfg(test)]

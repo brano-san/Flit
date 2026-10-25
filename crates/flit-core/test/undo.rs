@@ -25,6 +25,10 @@ fn every_operation_has_its_inverse() {
     assert_eq!(inverse(&restore), Some(Step::Run(FileOp::Trash(vec![p(r"C:\a\x")]))));
     let link = report(FileOp::Link { items: vec![p(r"C:\a\x")], dest: p(r"C:\b") }, &[(r"C:\a\x", r"C:\b\x - Shortcut.lnk")]);
     assert_eq!(inverse(&link), Some(Step::Run(FileOp::Trash(vec![p(r"C:\b\x - Shortcut.lnk")]))));
+    let file = report(FileOp::NewFile { dir: p(r"C:\a"), name: b"New.txt".to_vec(), template: crate::provider::Template::Empty }, &[(r"C:\a\New.txt", r"C:\a\New.txt")]);
+    assert_eq!(inverse(&file), Some(Step::Run(FileOp::Trash(vec![p(r"C:\a\New.txt")]))));
+    let stream = report(FileOp::NewStream { item: p(r"C:\a\x"), name: b"s".to_vec() }, &[(r"C:\a\x", r"C:\a\x")]);
+    assert_eq!(inverse(&stream), None, "streams are not in the Recycle Bin, so creating one is not undone");
 }
 
 #[test]

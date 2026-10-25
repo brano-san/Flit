@@ -1,7 +1,7 @@
 use crate::{FileOps, Fs, PlatformError, Provider, Shell, Wake, Watcher};
 use crossbeam_channel::{bounded, unbounded, Sender};
 use flit_core::listing::{attr, DirSnapshot, Listing, ListingBuilder};
-use flit_core::provider::{FileOp, GenToken, OpId, OpReport, SnapshotSlot};
+use flit_core::provider::{FileOp, GenToken, Launch, OpId, OpReport, SnapshotSlot};
 use flit_core::sort::{self, CaseMode, SortKeys, ViewSpec};
 use flit_core::{FsError, FsErrorKind, FsPath, Location, ProviderEvent, ProviderRequest, TabId};
 use rayon::prelude::*;
@@ -31,6 +31,11 @@ struct SizesJob {
     cancel: GenToken,
 }
 
+enum ShellJob {
+    Open(FsPath),
+    Launch(Launch),
+}
+
 enum WatchCmd {
     Arm { tab: TabId, gen: u64, path: FsPath, cancel: GenToken, armed: Sender<()> },
     Stop { tab: TabId, gen: u64 },
@@ -40,7 +45,7 @@ pub struct LocalProvider {
     jobs: Sender<ListJob>,
     sizes: Sender<SizesJob>,
     ops: Sender<(TabId, OpId, FileOp)>,
-    opens: Sender<(TabId, FsPath)>,
+    shell: Sender<(TabId, ShellJob)>,
     watch: Sender<WatchCmd>,
     pending_watch: Mutex<HashMap<TabId, (u64, FsPath)>>,
 }
@@ -83,19 +88,17 @@ impl LocalProvider {
                 run_sizes(&*sizes_fs, job, &sizes_events, &sizes_wake);
             }
         })?;
-        let (opens, opens_rx) = unbounded::<(TabId, FsPath)>();
+        let (shell, shell_rx) = unbounded::<(TabId, ShellJob)>();
         let (open_events, open_wake) = (events.clone(), wake.clone());
         spawn("flit-shell-open".into(), move || {
             let mut sh = S::new();
-            for (tab, p) in opens_rx {
-                let error = match &mut sh {
-                    Ok(sh) => match sh.open(&p) {
-                        Ok(()) => continue,
-                        Err(e) => e.to_string(),
-                    },
-                    Err(e) => e.to_string(),
+            for (tab, job) in shell_rx {
+                let event = match sh.as_mut().map_err(|e| e.clone()).and_then(|sh| run_shell(sh, job)) {
+                    Ok(None) => continue,
+                    Ok(Some(path)) => ProviderEvent::Navigate { tab, path },
+                    Err(e) => ProviderEvent::OpDone { tab, id: 0, error: Some(e.to_string()), report: None },
                 };
-                let _ = open_events.send(ProviderEvent::OpDone { tab, id: 0, error: Some(error), report: None });
+                let _ = open_events.send(event);
                 open_wake();
             }
         })?;
@@ -111,7 +114,23 @@ impl LocalProvider {
                 wake();
             }
         })?;
-        Ok(Self { jobs, sizes, ops, opens, watch, pending_watch: Mutex::default() })
+        Ok(Self { jobs, sizes, ops, shell, watch, pending_watch: Mutex::default() })
+    }
+}
+
+fn is_shortcut(p: &FsPath) -> bool {
+    let b = p.as_bytes();
+    b.len() > 4 && b[b.len() - 4..].eq_ignore_ascii_case(b".lnk")
+}
+
+fn run_shell<S: Shell>(sh: &mut S, job: ShellJob) -> Result<Option<FsPath>, PlatformError> {
+    match job {
+        ShellJob::Open(p) if is_shortcut(&p) => match sh.shortcut_folder(&p) {
+            Some(dir) => Ok(Some(dir)),
+            None => sh.open(&p).map(|()| None),
+        },
+        ShellJob::Open(p) => sh.open(&p).map(|()| None),
+        ShellJob::Launch(l) => sh.launch(&l).map(|()| None),
     }
 }
 
@@ -133,7 +152,8 @@ impl Provider for LocalProvider {
                 self.watch.send(WatchCmd::Stop { tab, gen }).map_err(drop)
             }
             ProviderRequest::Op { tab, id, op } => self.ops.send((tab, id, op)).map_err(drop),
-            ProviderRequest::Open { tab, path } => self.opens.send((tab, path)).map_err(drop),
+            ProviderRequest::Open { tab, path } => self.shell.send((tab, ShellJob::Open(path))).map_err(drop),
+            ProviderRequest::Launch { tab, launch } => self.shell.send((tab, ShellJob::Launch(launch))).map_err(drop),
         };
     }
 }
@@ -282,6 +302,7 @@ pub fn via_unc(distro: &str, req: ProviderRequest) -> Option<ProviderRequest> {
         ProviderRequest::DirSizes { tab, gen, dir, items, cancel } => ProviderRequest::DirSizes { tab, gen, dir: unc(&dir)?, items, cancel },
         ProviderRequest::Op { tab, id, op } => ProviderRequest::Op { tab, id, op: op.map_paths(unc)? },
         ProviderRequest::Open { tab, path } => ProviderRequest::Open { tab, path: unc(&path)? },
+        ProviderRequest::Launch { tab, launch } => ProviderRequest::Launch { tab, launch: launch.map_paths(unc)? },
     })
 }
 

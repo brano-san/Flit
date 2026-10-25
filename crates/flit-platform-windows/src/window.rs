@@ -14,7 +14,7 @@ use windows::core::{w, BOOL, PCWSTR};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows::Win32::Graphics::Gdi::{ScreenToClient, ValidateRect};
-use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData};
+use windows::Win32::System::DataExchange::{AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard, SetClipboardData};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
@@ -28,6 +28,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 const WM_WAKE: u32 = WM_APP + 1;
 const WM_DESTROY_REQUEST: u32 = WM_APP + 2;
 const WM_OPEN_WINDOW: u32 = WM_APP + 3;
+const TIMER_ID: usize = 1;
 
 #[derive(Default)]
 pub(crate) struct FrameSync {
@@ -246,6 +247,10 @@ impl Window for Win32Window {
     fn start_drag(&self, paths: Vec<FsPath>) {
         crate::context_menu::request(self.hwnd(), ShellUi::Drag(paths));
     }
+
+    fn set_timer(&self, ms: u32) {
+        unsafe { SetTimer(Some(self.hwnd()), TIMER_ID, ms, None) };
+    }
 }
 
 fn load_cursor(c: CursorIcon) -> HCURSOR {
@@ -393,6 +398,7 @@ impl<H: WindowHandler<Win32>> Shared<H> {
         node.window.dpi.set(GetDpiForWindow(hwnd));
         apply_dark(hwnd, opts.dark);
         crate::dragdrop::register(hwnd, Rc::as_ptr(&node) as *const (), drag_thunk::<H>);
+        let _ = AddClipboardFormatListener(hwnd);
         crate::context_menu::prewarm();
         let _ = SetWindowPos(hwnd, None, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         update_size(&node.window);
@@ -613,6 +619,7 @@ fn map_key(vk: u16) -> Key {
         VK_BROWSER_BACK => Key::BrowserBack,
         VK_BROWSER_FORWARD => Key::BrowserForward,
         VK_APPS => Key::Apps,
+        VK_OEM_3 => Key::Char('`'),
         _ if (VK_F1.0..=VK_F24.0).contains(&vk.0) => Key::F((vk.0 - VK_F1.0 + 1) as u8),
         _ if (b'A' as u16..=b'Z' as u16).contains(&vk.0) || (b'0' as u16..=b'9' as u16).contains(&vk.0) => Key::Char(vk.0 as u8 as char),
         _ => Key::Other,
@@ -876,6 +883,15 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
         WM_DEVICECHANGE if matches!(wp.0 as u32, DBT_DEVICEARRIVAL | DBT_DEVICEREMOVECOMPLETE) => {
             s.send(Event::DevicesChanged);
             None
+        }
+        WM_TIMER if wp.0 == TIMER_ID => {
+            let _ = KillTimer(Some(hwnd), TIMER_ID);
+            s.send(Event::Timer);
+            Some(LRESULT(0))
+        }
+        WM_CLIPBOARDUPDATE => {
+            s.send(Event::ClipboardChanged(GetClipboardSequenceNumber()));
+            Some(LRESULT(0))
         }
         _ => None,
     }

@@ -216,6 +216,10 @@ impl<B: TextBackend> Gfx<B> {
     }
 
     pub fn image(&mut self, key: u64, r: Rect) -> bool {
+        self.image_alpha(key, r, 255)
+    }
+
+    pub fn image_alpha(&mut self, key: u64, r: Rect, alpha: u8) -> bool {
         let Some(img) = self.images.get_mut(&key) else { return false };
         let slot = match img.slot {
             Some(s) => s,
@@ -234,7 +238,7 @@ impl<B: TextBackend> Gfx<B> {
             }
         };
         let uv = uv(slot, self.atlas.size());
-        self.dl.image(r, uv, 255);
+        self.dl.image(r, uv, alpha);
         true
     }
 }

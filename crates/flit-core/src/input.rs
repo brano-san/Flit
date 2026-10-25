@@ -57,6 +57,8 @@ pub enum Event {
     CloseRequested,
     ShellVerb(String),
     DevicesChanged,
+    Timer,
+    ClipboardChanged(u32),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

@@ -42,6 +42,13 @@ impl GenToken {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Template {
+    Empty,
+    Copy(FsPath),
+    Data(Vec<u8>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum FileOp {
     Trash(Vec<FsPath>),
     Copy { items: Vec<FsPath>, dest: FsPath },
@@ -49,12 +56,30 @@ pub enum FileOp {
     Link { items: Vec<FsPath>, dest: FsPath },
     Rename { item: FsPath, name: Vec<u8> },
     NewFolder { dir: FsPath, name: Vec<u8> },
+    NewFile { dir: FsPath, name: Vec<u8>, template: Template },
+    NewStream { item: FsPath, name: Vec<u8> },
     MoveTo(Vec<(FsPath, FsPath)>),
     Restore(Vec<(FsPath, FsPath)>),
     Paste { dest: FsPath },
     Delete(Vec<FsPath>),
     Purge(Vec<(FsPath, FsPath)>),
     EmptyBin,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Launch {
+    Terminal { dirs: Vec<FsPath>, admin: bool },
+    With { program: FsPath, args: Vec<FsPath> },
+}
+
+impl Launch {
+    pub fn map_paths(&self, f: impl Fn(&FsPath) -> Option<FsPath>) -> Option<Launch> {
+        let all = |v: &[FsPath]| v.iter().map(&f).collect::<Option<Vec<_>>>();
+        Some(match self {
+            Launch::Terminal { dirs, admin } => Launch::Terminal { dirs: all(dirs)?, admin: *admin },
+            Launch::With { program, args } => Launch::With { program: f(program)?, args: all(args)? },
+        })
+    }
 }
 
 impl FileOp {
@@ -68,6 +93,8 @@ impl FileOp {
             FileOp::Link { items, dest } => FileOp::Link { items: all(items)?, dest: f(dest)? },
             FileOp::Rename { item, name } => FileOp::Rename { item: f(item)?, name: name.clone() },
             FileOp::NewFolder { dir, name } => FileOp::NewFolder { dir: f(dir)?, name: name.clone() },
+            FileOp::NewFile { dir, name, template } => FileOp::NewFile { dir: f(dir)?, name: name.clone(), template: template.clone() },
+            FileOp::NewStream { item, name } => FileOp::NewStream { item: f(item)?, name: name.clone() },
             FileOp::MoveTo(v) => FileOp::MoveTo(pairs(v)?),
             FileOp::Restore(v) => FileOp::Restore(pairs(v)?),
             FileOp::Paste { dest } => FileOp::Paste { dest: f(dest)? },
@@ -93,6 +120,7 @@ pub enum ProviderRequest {
     DirSizes { tab: TabId, gen: u64, dir: FsPath, items: Vec<(u32, Vec<u8>)>, cancel: GenToken },
     Op { tab: TabId, id: OpId, op: FileOp },
     Open { tab: TabId, path: FsPath },
+    Launch { tab: TabId, launch: Launch },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,6 +129,7 @@ pub enum ProviderEvent {
     Rescan { tab: TabId, gen: u64 },
     DirSize { tab: TabId, gen: u64, idx: u32, size: u64 },
     OpDone { tab: TabId, id: OpId, error: Option<String>, report: Option<OpReport> },
+    Navigate { tab: TabId, path: FsPath },
 }
 
 #[cfg(test)]

@@ -169,6 +169,10 @@ impl<P: Platform> Handler<P> {
         self.next_base += TAB_STRIDE;
         let mut app = App::new(persisted, routes, base, P::dark_mode(), 1.0, (1100, 720), Instant::now());
         app.utc_offset_min = P::utc_offset_minutes();
+        app.double_click = P::double_click_time();
+        if base == 0 && P::elevated() {
+            app.status("Flit runs as administrator, so Windows blocks files dragged in from other programs");
+        }
         app.set_nav_state(self.saved.nav.clone());
         app.set_places(self.places.current());
         let fx: Vec<Effect> = app.drain_effects().collect();
@@ -252,6 +256,7 @@ impl<P: Platform> Handler<P> {
                     (self.wake)();
                 }
                 Effect::RefreshPlaces => self.places.refresh(),
+                Effect::Timer(d) => window.set_timer(d.as_millis().clamp(1, u32::MAX as u128) as u32),
             }
         }
         if self.windows.get(&id).is_some_and(|st| st.app.has_effects()) {
@@ -273,6 +278,7 @@ impl<P: Platform> Handler<P> {
             let target = match &ev {
                 ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } => self.window_of_tab(*tab),
                 ProviderEvent::OpDone { tab, .. } => self.window_of_tab(*tab).or(self.active),
+                ProviderEvent::Navigate { tab, .. } => self.window_of_tab(*tab),
             };
             if let Some(st) = target.and_then(|id| self.windows.get_mut(&id)) {
                 st.app.on_provider_event(ev, now);

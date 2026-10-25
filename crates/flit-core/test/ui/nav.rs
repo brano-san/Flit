@@ -96,6 +96,7 @@ fn places() -> Arc<Places> {
         ],
         wsl: vec!["Ubuntu".into()],
         recycle_bin: true,
+        templates: Vec::new(),
     })
 }
 

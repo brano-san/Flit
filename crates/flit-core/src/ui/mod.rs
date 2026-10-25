@@ -10,7 +10,7 @@ mod nav;
 pub mod palette;
 pub mod sidebar;
 
-pub use ops::{base_name_len, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, ShellMenu, SHELL_VERBS};
+pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchSort};
 pub use sidebar::{Drive, KnownFolder, NavState, Places};
 pub use tab::Tab;
@@ -161,6 +161,7 @@ pub enum Effect {
     Pinned(Vec<Location>),
     RefreshPlaces,
     Search(SearchRequest),
+    Timer(Duration),
 }
 
 pub enum IconResult {
@@ -269,6 +270,9 @@ pub struct App {
     pub utc_offset_min: i32,
     pub case: CaseMode,
     pub open_target: OpenTarget,
+    pub double_click: Duration,
+    pub warn_extension_change: bool,
+    focused_at: Option<Instant>,
     dark: bool,
     scale: f32,
     size: (f32, f32),
@@ -312,6 +316,9 @@ impl App {
             utc_offset_min: 0,
             case: CaseMode::Insensitive,
             open_target: OpenTarget::NewTab,
+            double_click: Duration::from_millis(500),
+            warn_extension_change: true,
+            focused_at: None,
             dark,
             scale,
             size: (size.0 as f32, size.1 as f32),
@@ -659,6 +666,11 @@ impl App {
                 }
             }
             ProviderEvent::OpDone { tab, id, error, report } => self.op_done(tab, id, error, report, now),
+            ProviderEvent::Navigate { tab, path } => {
+                if self.tab().id == tab {
+                    self.navigate(Location::from_local(path), now);
+                }
+            }
         }
     }
 
@@ -873,6 +885,8 @@ impl App {
             Event::Focus(f) => {
                 self.active = *f;
                 self.mods = Mods::default();
+                self.focused_at = f.then_some(now);
+                self.ops_timer_cancel();
                 self.dirty = true;
             }
             Event::MouseMove { x, y } => self.mouse_move(*x, *y),
@@ -917,6 +931,8 @@ impl App {
             Event::CloseRequested => self.effects.push(Effect::Window(WindowCmd::Close)),
             Event::ShellVerb(verb) => self.shell_verb(verb),
             Event::DevicesChanged => self.effects.push(Effect::RefreshPlaces),
+            Event::Timer => self.ops_timer(now),
+            Event::ClipboardChanged(seq) => self.clipboard_changed(*seq),
         }
     }
 
@@ -1016,7 +1032,7 @@ impl App {
                     let base = self.marquee_base();
                     self.click_row(row, button, clicks, now);
                     self.arm_marquee(x, y, self.mods.ctrl, base);
-                } else if !self.press_row(row, button, clicks, x, y) {
+                } else if !self.press_row(row, button, clicks, x, y, now) {
                     self.click_row(row, button, clicks, now);
                 }
             }
@@ -1045,7 +1061,7 @@ impl App {
     }
 
     fn mouse_up(&mut self, x: f32, y: f32, button: MouseButton, now: Instant) {
-        self.ops_mouse_up(x, y, button);
+        self.ops_mouse_up(x, y, button, now);
         self.end_marquee();
         let was = std::mem::replace(&mut self.drag, Drag::None);
         let pressed = std::mem::replace(&mut self.pressed, Hit::None);
@@ -1255,14 +1271,11 @@ impl App {
         self.effects.push(Effect::Provider { provider: loc.provider(), req });
     }
 
-    fn copy_paths(&mut self) {
+    fn copy_paths(&mut self, quoted: bool) {
         let t = self.tab();
-        let sel = t.selection();
-        let text = if sel.is_empty() {
-            t.location().display().into_owned()
-        } else {
-            sel.iter().map(|&i| t.entry_location(i).display().into_owned()).collect::<Vec<_>>().join("\r\n")
-        };
+        let quote = |l: &Location| if quoted { format!("\"{}\"", l.display()) } else { l.display().into_owned() };
+        let sel: Vec<u32> = t.view.as_ref().map(|v| v.selected().collect()).unwrap_or_default();
+        let text = if sel.is_empty() { quote(t.location()) } else { sel.iter().map(|&i| quote(&t.entry_location(i))).collect::<Vec<_>>().join("\r\n") };
         self.effects.push(Effect::SetClipboard(text));
     }
 
@@ -1514,6 +1527,7 @@ impl App {
             let shell_dir = loc.to_windows();
             let in_root = loc.path().kind() == PathKind::Computer;
             let listing = v.listing();
+            let cut = self.cut_names();
             for row in first..last {
                 let i = v.rows()[row];
                 let e = listing.entries[i as usize];
@@ -1529,10 +1543,11 @@ impl App {
                 }
 
                 let name = listing.name(i);
+                let faded = cut.is_some_and(|c| c.contains(name));
                 let dir_key = if in_bin { recycle::origin(listing, i) } else { shell_dir.as_ref().map_or(&b""[..], |d| d.as_bytes()) };
                 let (key, kind) = icon_key(name, listing.ext(i), &e, icon_px as u32, dir_key);
                 let ir = Rect::new(cols[0].x + pad, y + ((rh - icon_px) / 2.0).round(), icon_px, icon_px);
-                if !g.image(key, ir) {
+                if !g.image_alpha(key, ir, if faded { 0x70 } else { 0xFF }) {
                     let glyph = if e.attrs & attr::VOLUME != 0 { G_DRIVE } else if e.is_dir() { G_FOLDER } else { G_FILE };
                     let color = if e.is_dir() { t.accent.alpha(0xB0) } else { t.text_dim.alpha(0x90) };
                     centered(g, ir, glyph, FontStyle::new(FontFamily::Icons, icon_px * 0.85, false), color);
@@ -1549,7 +1564,7 @@ impl App {
 
                 let ty = y + text_dy;
                 let name_x = ir.right() + self.s(8.0);
-                let name_color = if e.attrs & attr::HIDDEN != 0 { t.text_dim } else { t.text };
+                let name_color = if faded || e.attrs & attr::HIDDEN != 0 { t.text_dim } else { t.text };
                 g.text(name_x, ty, &name::display(name), font, name_color, cols[0].right() - name_x - pad);
 
                 for (c, col) in columns.iter().enumerate().skip(1) {

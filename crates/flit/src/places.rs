@@ -16,12 +16,26 @@ impl PlacesWorker {
         let (requests, jobs) = unbounded::<()>();
         let (done, results) = unbounded();
         let run = move || {
+            let send = |places: Places| {
+                let sent = done.send(places).is_ok();
+                wake();
+                sent
+            };
+            let mut templates = None;
             while jobs.recv().is_ok() {
                 while jobs.try_recv().is_ok() {}
-                if done.send(collect::<P>()).is_err() {
+                let mut places = collect::<P>();
+                places.templates = templates.clone().unwrap_or_default();
+                if !send(places.clone()) {
                     return;
                 }
-                wake();
+                if templates.is_none() {
+                    places.templates = P::templates();
+                    templates = Some(places.templates.clone());
+                    if !send(places) {
+                        return;
+                    }
+                }
             }
         };
         Self { requests, results, current: Arc::default(), pending: Some(Box::new(run)) }
@@ -58,5 +72,5 @@ fn collect<P: Platform>() -> Places {
             Some((k, P::known_folder(k.shell_name()).or_else(home)?))
         })
         .collect();
-    Places { folders, drives: P::drives(), wsl: P::wsl_distros(), recycle_bin: cfg!(windows) }
+    Places { folders, drives: P::drives(), wsl: P::wsl_distros(), recycle_bin: cfg!(windows), templates: Vec::new() }
 }

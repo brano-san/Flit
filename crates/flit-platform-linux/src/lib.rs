@@ -138,6 +138,9 @@ impl Window for LinuxWindow {
     fn start_drag(&self, _: Vec<FsPath>) {
         todo!()
     }
+    fn set_timer(&self, _: u32) {
+        todo!()
+    }
 }
 
 impl WindowSystem for LinuxWindows {

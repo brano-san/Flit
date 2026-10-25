@@ -34,6 +34,10 @@ pub const fn alt(k: Key) -> Chord {
     chord(k, false, false, true)
 }
 
+pub const fn ctrl_alt(k: Key) -> Chord {
+    chord(k, true, false, true)
+}
+
 pub const fn shift(k: Key) -> Chord {
     chord(k, false, true, false)
 }
@@ -83,7 +87,10 @@ pub static ACTIONS: &[Action] = &[
     Action::new("select.all", "Select all", &[ctrl(Key::Char('A'))], |a, _| a.select_all()),
     Action::new("select.none", "Clear selection", &[key(Key::Escape)], |a, _| a.clear_selection()),
     Action::new("item.open", "Open selected items", &[key(Key::Enter)], |a, now| a.open_selection(now)),
-    Action::new("item.copy_path", "Copy path", &[ctrl_shift(Key::Char('C'))], |a, _| a.copy_paths()),
+    Action::new("item.copy_path", "Copy path", &[ctrl_shift(Key::Char('C'))], |a, _| a.copy_paths(false)),
+    Action::new("item.copy_quoted_path", "Copy path in quotes", &[ctrl_alt(Key::Char('C'))], |a, _| a.copy_paths(true)),
+    Action::new("app.terminal", "Open in terminal", &[ctrl(Key::Char('`'))], |a, _| a.open_terminal(false)),
+    Action::new("app.terminal_admin", "Open in terminal as administrator", &[ctrl_shift(Key::Char('`'))], |a, _| a.open_terminal(true)),
     Action::new("item.trash", "Move to Recycle Bin", &[key(Key::Delete)], |a, _| a.trash_selection()),
     Action::new("item.delete", "Delete permanently", &[shift(Key::Delete)], |a, _| a.delete_selection()),
     Action::new("bin.restore", "Restore selected items from the Recycle Bin", &[], |a, _| a.restore_selection()),
@@ -92,8 +99,12 @@ pub static ACTIONS: &[Action] = &[
     Action::new("file.copy", "Copy", &[ctrl(Key::Char('C'))], |a, _| a.copy_selection()),
     Action::new("file.cut", "Cut", &[ctrl(Key::Char('X'))], |a, _| a.cut_selection()),
     Action::new("file.paste", "Paste", &[ctrl(Key::Char('V'))], |a, _| a.paste()),
+    Action::new("file.paste_into", "Paste into the selected folder", &[ctrl_shift(Key::Char('V'))], |a, _| a.paste_into_selection()),
     Action::new("file.rename", "Rename", &[key(Key::F(2))], |a, _| a.rename_focused()),
     Action::new("file.new_folder", "New folder", &[ctrl_shift(Key::Char('N'))], |a, _| a.new_folder()),
+    Action::new("file.new_item", "New item", &[ctrl_shift(Key::Char('I'))], |a, _| a.new_item_dialog()),
+    Action::new("file.new_folder_with_selection", "New folder with the selected items", &[], |a, _| a.new_folder_with_selection()),
+    Action::new("file.new_stream", "New alternate data stream", &[], |a, _| a.new_stream()),
     Action::new("edit.undo", "Undo", &[ctrl(Key::Char('Z'))], |a, _| a.undo()),
     Action::new("edit.redo", "Redo", &[ctrl(Key::Char('Y'))], |a, _| a.redo()),
     Action::new("item.properties", "Properties", &[alt(Key::Enter)], |a, _| a.properties()),

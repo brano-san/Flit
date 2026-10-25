@@ -94,6 +94,7 @@ pub struct Places {
     pub drives: Vec<Drive>,
     pub wsl: Vec<String>,
     pub recycle_bin: bool,
+    pub templates: Vec<super::NewTemplate>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -155,7 +156,7 @@ pub(super) struct Item {
 #[derive(Default)]
 pub(super) struct Sidebar {
     pub state: NavState,
-    places: Arc<Places>,
+    pub places: Arc<Places>,
     pub items: Vec<Item>,
     pub rects: Vec<Rect>,
     headers: Vec<(Rect, Section)>,

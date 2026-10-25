@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hash, Hasher};
 
 #[derive(Default, Clone, Copy)]
@@ -51,6 +51,7 @@ impl Hasher for FxHasher {
 
 pub type FxBuild = BuildHasherDefault<FxHasher>;
 pub type FxHashMap<K, V> = HashMap<K, V, FxBuild>;
+pub type FxHashSet<K> = HashSet<K, FxBuild>;
 
 pub fn hash<T: Hash + ?Sized>(v: &T) -> u64 {
     let mut h = FxHasher::default();

@@ -1,10 +1,13 @@
+use super::actions::{keys_text, ACTIONS};
 use super::edit::{EditAction, LineEdit};
+use super::palette::{Palette, Pick};
 use super::{App, Drag, Effect, Focus, Hit, ICON};
+use crate::hash::FxHashSet;
 use crate::input::{CursorIcon, Event, Key, Mods, MouseButton};
 use crate::listing::attr;
 use crate::location::{Location, ProviderId};
 use crate::path::{FsPath, PathKind};
-use crate::provider::{FileOp, OpId, OpReport, ProviderRequest, TabId};
+use crate::provider::{FileOp, Launch, OpId, OpReport, ProviderRequest, TabId, Template};
 use crate::recycle;
 use crate::render::Rect;
 use crate::text::{Gfx, TextBackend};
@@ -28,6 +31,17 @@ const MAX_NAME_UNITS: usize = 255;
 const RESERVED: [&str; 4] = ["CON", "PRN", "AUX", "NUL"];
 const BIN_ONLY: &str = "Items in the Recycle Bin can only be restored or deleted";
 const OPEN_BIN: &str = "Open the Recycle Bin to restore items";
+const MAX_TERMINALS: usize = 5;
+const RUNNABLE: [&[u8]; 4] = [b"exe", b"com", b"bat", b"cmd"];
+const TIMER_SLACK: Duration = Duration::from_millis(16);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NewTemplate {
+    pub label: String,
+    pub ext: String,
+    pub stem: String,
+    pub template: Template,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShellMenu {
@@ -46,11 +60,13 @@ pub enum DragEvent {
     Drop { x: f32, y: f32, mods: Mods, allowed: u32 },
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 enum Then {
     Nothing,
     Select,
     Rename,
+    Fill(Vec<FsPath>),
+    Reveal(Vec<u8>),
 }
 
 struct Pending {
@@ -58,6 +74,19 @@ struct Pending {
     tab: TabId,
     origin: Origin,
     then: Then,
+}
+
+struct Slow {
+    tab: TabId,
+    gen: u64,
+    idx: u32,
+    at: Instant,
+}
+
+struct Cut {
+    dir: Location,
+    names: FxHashSet<Vec<u8>>,
+    seq: Option<u32>,
 }
 
 struct Reveal {
@@ -78,6 +107,8 @@ struct Rename {
     rect: Rect,
     click: Option<(f32, bool)>,
     selecting: bool,
+    batch: bool,
+    confirmed: Option<String>,
 }
 
 struct Press {
@@ -85,6 +116,7 @@ struct Press {
     x: f32,
     y: f32,
     deferred: bool,
+    slow: bool,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -92,6 +124,7 @@ enum Target {
     Reveal,
     Into { dest: FsPath, row: Option<usize> },
     Trash(Option<usize>),
+    Run { program: FsPath, row: usize },
 }
 
 struct Dropping {
@@ -109,6 +142,8 @@ pub(super) struct Ops {
     rename: Option<Rename>,
     press: Option<Press>,
     dropping: Option<Dropping>,
+    slow: Option<Slow>,
+    cut: Option<Cut>,
 }
 
 pub fn validate_name(text: &str, windows: bool) -> Result<String, &'static str> {
@@ -145,12 +180,35 @@ pub fn unique_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
 }
 
 pub fn base_name_len(name: &str, dir: bool) -> usize {
-    let ext = crate::name::ext_len(name.as_bytes());
+    name.len() - extension(name.as_bytes(), dir).len()
+}
+
+fn extension(name: &[u8], dir: bool) -> &[u8] {
+    let ext = crate::name::ext_len(name);
     if dir || ext == 0 || ext + 1 >= name.len() {
-        name.len()
+        b""
     } else {
-        name.len() - ext - 1
+        &name[name.len() - ext - 1..]
     }
+}
+
+pub fn changes_extension(old: &str, new: &str) -> bool {
+    !extension(old.as_bytes(), false).eq_ignore_ascii_case(extension(new.as_bytes(), false))
+}
+
+pub fn batch_names(base: &str, items: &[(&[u8], bool)], taken: impl Fn(&[u8]) -> bool) -> Vec<Vec<u8>> {
+    let mut k = 0;
+    items
+        .iter()
+        .map(|&(name, dir)| loop {
+            k += 1;
+            let mut n = format!("{base} ({k})").into_bytes();
+            n.extend_from_slice(extension(name, dir));
+            if !taken(&n.to_ascii_lowercase()) {
+                return n;
+            }
+        })
+        .collect()
 }
 
 pub fn same_volume(a: &FsPath, b: &FsPath) -> bool {
@@ -187,7 +245,7 @@ fn inside(path: &FsPath, folder: &FsPath) -> bool {
 }
 
 impl App {
-    fn status(&mut self, msg: impl Into<String>) {
+    pub fn status(&mut self, msg: impl Into<String>) {
         self.tab_mut().error = Some(msg.into());
         self.dirty = true;
     }
@@ -223,8 +281,12 @@ impl App {
     }
 
     fn start_op(&mut self, op: FileOp, origin: Origin, then: Then) {
+        self.start_op_for(self.tab().id, op, origin, then);
+    }
+
+    fn start_op_for(&mut self, tab: TabId, op: FileOp, origin: Origin, then: Then) {
         self.ops.next_id += 1;
-        let (id, tab) = (self.ops.next_id, self.tab().id);
+        let id = self.ops.next_id;
         self.ops.pending.push(Pending { id, tab, origin, then });
         self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Op { tab, id, op } });
     }
@@ -308,9 +370,34 @@ impl App {
             return;
         }
         match self.item_paths(&items) {
-            Ok(paths) => self.effects.push(Effect::SetClipboardFiles { paths, cut }),
+            Ok(paths) => {
+                let t = self.tab();
+                self.ops.cut = t.view.as_ref().filter(|_| cut).map(|v| Cut { dir: t.view_loc.clone(), names: items.iter().map(|&i| v.listing().name(i).to_vec()).collect(), seq: None });
+                self.effects.push(Effect::SetClipboardFiles { paths, cut });
+                self.dirty = true;
+            }
             Err(e) => self.status(e),
         }
+    }
+
+    pub(super) fn clipboard_changed(&mut self, seq: u32) {
+        let Some(c) = &mut self.ops.cut else { return };
+        match c.seq {
+            None => c.seq = Some(seq),
+            Some(s) if s != seq => {
+                self.ops.cut = None;
+                self.dirty = true;
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn cut_names(&self) -> Option<&FxHashSet<Vec<u8>>> {
+        self.ops.cut.as_ref().filter(|c| c.dir == self.tab().view_loc).map(|c| &c.names)
+    }
+
+    pub fn is_cut(&self, name: &[u8]) -> bool {
+        self.cut_names().is_some_and(|n| n.contains(name))
     }
 
     pub fn copy_selection(&mut self) {
@@ -328,7 +415,32 @@ impl App {
         }
     }
 
-    pub fn new_folder(&mut self) {
+    pub fn paste_into_selection(&mut self) {
+        let items = self.selected_items();
+        let is_dir = |i: u32| self.tab().view.as_ref().is_some_and(|v| v.listing().entries[i as usize].is_dir());
+        let dest = match items.as_slice() {
+            &[i] if is_dir(i) => self.item_paths(&[i]).ok().and_then(|mut p| p.pop()),
+            _ => None,
+        };
+        match dest {
+            Some(dest) => self.start_op(FileOp::Paste { dest }, Origin::Fresh, Then::Nothing),
+            None => self.status("Select one folder to paste into"),
+        }
+    }
+
+    fn free_name(&self, stem: &str, ext: &str) -> String {
+        let prefix = stem.to_ascii_lowercase().into_bytes();
+        let taken: FxHashSet<Vec<u8>> = match &self.tab().view {
+            Some(v) => {
+                let l = v.listing();
+                (0..l.len() as u32).filter(|&i| l.entries[i as usize].attrs & attr::DELETED == 0).map(|i| l.name(i).to_ascii_lowercase()).filter(|n| n.starts_with(&prefix)).collect()
+            }
+            None => FxHashSet::default(),
+        };
+        unique_name(stem, |n| taken.contains(format!("{n}{ext}").to_ascii_lowercase().as_bytes())) + ext
+    }
+
+    fn create(&mut self, op: impl FnOnce(FsPath, Vec<u8>) -> FileOp, stem: &str, ext: &str) {
         let dir = match self.shell_dir() {
             Ok(d) => d,
             Err(e) => return self.status(e),
@@ -336,18 +448,99 @@ impl App {
         if self.tab().filter.is_some() {
             self.close_filter();
         }
-        let mut taken = Vec::new();
-        if let Some(v) = &self.tab().view {
-            let l = v.listing();
-            for i in 0..l.len() as u32 {
-                let lower = l.name(i).to_ascii_lowercase();
-                if l.entries[i as usize].attrs & attr::DELETED == 0 && lower.starts_with(b"new folder") {
-                    taken.push(lower);
-                }
+        let name = self.free_name(stem, ext);
+        self.start_op(op(dir, name.into_bytes()), Origin::Fresh, Then::Rename);
+    }
+
+    pub fn new_folder(&mut self) {
+        self.create(|dir, name| FileOp::NewFolder { dir, name }, NEW_FOLDER, "");
+    }
+
+    pub fn new_folder_with_selection(&mut self) {
+        let items = self.selected_items();
+        if items.is_empty() {
+            return self.status("Select the items to put into a new folder");
+        }
+        let (paths, dir) = match (self.item_paths(&items), self.shell_dir()) {
+            (Ok(p), Ok(d)) => (p, d),
+            (Err(e), _) | (_, Err(e)) => return self.status(e),
+        };
+        let name = self.free_name(NEW_FOLDER, "").into_bytes();
+        self.start_op(FileOp::NewFolder { dir, name }, Origin::Fresh, Then::Fill(paths));
+    }
+
+    pub fn new_item_dialog(&mut self) {
+        if let Err(e) = self.shell_dir() {
+            return self.status(e);
+        }
+        let folder_keys = ACTIONS.iter().find(|a| a.id == "file.new_folder").map(keys_text).unwrap_or_default();
+        let mut items = vec![("Folder".to_owned(), folder_keys), ("Shortcut".to_owned(), String::new())];
+        items.extend(self.nav.sidebar.places.templates.iter().map(|t| (t.label.clone(), t.ext.clone())));
+        self.open_pick(Palette::new(Pick::NewItem, items, ""));
+    }
+
+    pub(super) fn new_item(&mut self, k: usize) {
+        match k {
+            0 => self.new_folder(),
+            1 => self.ask_shortcut(),
+            _ => {
+                let Some(t) = self.nav.sidebar.places.templates.get(k - 2).cloned() else { return };
+                self.create(|dir, name| FileOp::NewFile { dir, name, template: t.template }, &t.stem, &t.ext);
             }
         }
-        let name = unique_name(NEW_FOLDER, |n| taken.iter().any(|t| t.as_slice() == n.to_ascii_lowercase().as_bytes()));
-        self.start_op(FileOp::NewFolder { dir, name: name.into_bytes() }, Origin::Fresh, Then::Rename);
+    }
+
+    fn ask_shortcut(&mut self) {
+        let dir = match self.shell_dir() {
+            Ok(d) => d,
+            Err(e) => return self.status(e),
+        };
+        let t = self.tab();
+        let focused = t.view.as_ref().and_then(|v| v.focus.filter(|&f| v.is_selected(f)));
+        let target = focused.and_then(|i| t.entry_location(i).to_windows()).map(|p| p.display().into_owned()).unwrap_or_default();
+        self.open_pick(Palette::new(Pick::Shortcut(dir), Vec::new(), &target));
+    }
+
+    pub fn new_stream(&mut self) {
+        let Some(i) = self.rename_target() else { return self.status("Select a file to add a stream to") };
+        match self.item_paths(&[i]) {
+            Ok(mut p) => self.open_pick(Palette::new(Pick::Stream(p.remove(0)), Vec::new(), "")),
+            Err(e) => self.status(e),
+        }
+    }
+
+    pub(super) fn submit_pick(&mut self, pick: Pick, text: &str) {
+        match pick {
+            Pick::Shortcut(dest) => match FsPath::parse(text.trim_matches('"')).filter(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim)) {
+                Some(target) => self.start_op(FileOp::Link { items: vec![target], dest }, Origin::Fresh, Then::Rename),
+                None => self.status("Enter the full path of the file or folder the shortcut points to"),
+            },
+            Pick::Stream(item) => match validate_name(text, true) {
+                Ok(name) => self.start_op(FileOp::NewStream { item, name: name.into_bytes() }, Origin::Fresh, Then::Nothing),
+                Err(e) => self.status(e),
+            },
+            Pick::Commands | Pick::NewItem => {}
+        }
+    }
+
+    pub fn open_terminal(&mut self, admin: bool) {
+        let t = self.tab();
+        let folders: Vec<u32> = match &t.view {
+            Some(v) => self.selected_items().into_iter().filter(|&i| v.listing().entries[i as usize].is_dir()).collect(),
+            None => Vec::new(),
+        };
+        let dirs = match (folders.is_empty(), self.item_paths(&folders)) {
+            (false, Ok(paths)) => paths.into_iter().take(MAX_TERMINALS).collect(),
+            _ => match t.view_loc.to_windows().filter(|p| p.kind() != PathKind::Computer) {
+                Some(dir) => vec![dir],
+                None => return self.status("This location cannot be opened in a terminal"),
+            },
+        };
+        if folders.len() > MAX_TERMINALS {
+            self.status(format!("Opened the first {MAX_TERMINALS} of {} folders in the terminal", folders.len()));
+        }
+        let tab = self.tab().id;
+        self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch: Launch::Terminal { dirs, admin } } });
     }
 
     pub fn undo(&mut self) {
@@ -444,18 +637,30 @@ impl App {
         }
         let (Some(report), Some(p)) = (report, pending) else { return };
         self.ops.journal.record(p.origin, &report);
+        if let (Then::Fill(items), Some((_, folder))) = (&p.then, report.items.first()) {
+            let reveal = Then::Reveal(Location::from_local(folder.clone()).file_name().to_vec());
+            return self.start_op_for(tab, FileOp::Move { items: items.clone(), dest: folder.clone() }, Origin::Fresh, reveal);
+        }
+        if let (FileOp::NewStream { item, name }, Some(k), None) = (&report.op, k, &error) {
+            self.tabs[k].error = Some(format!("Created the stream {}:{}", item.display(), crate::name::display(name)));
+            self.dirty |= k == self.cur;
+        }
         let Some(k) = k.filter(|_| p.then != Then::Nothing && !matches!(report.op, FileOp::Trash(_))) else { return };
         let dir = self.tabs[k].view_loc.clone();
-        let names: Vec<Vec<u8>> = report
-            .items
-            .iter()
-            .map(|(_, to)| Location::from_local(to.clone()))
-            .filter(|to| to.parent().is_some_and(|p| same_location(&p, &dir)))
-            .map(|to| to.file_name().to_vec())
-            .collect();
+        let names: Vec<Vec<u8>> = match &p.then {
+            Then::Reveal(name) => vec![name.clone()],
+            _ => report
+                .items
+                .iter()
+                .map(|(_, to)| Location::from_local(to.clone()))
+                .filter(|to| to.parent().is_some_and(|p| same_location(&p, &dir)))
+                .map(|to| to.file_name().to_vec())
+                .collect(),
+        };
         if !names.is_empty() {
             self.ops.reveal.retain(|r| r.tab != tab);
-            self.ops.reveal.push(Reveal { tab, dir, names, rename: p.then == Then::Rename, started: false, until: now + REVEAL_FOR });
+            let rename = matches!(p.then, Then::Rename | Then::Reveal(_));
+            self.ops.reveal.push(Reveal { tab, dir, names, rename, started: false, until: now + REVEAL_FOR });
             self.dirty |= k == self.cur;
         }
     }
@@ -504,20 +709,23 @@ impl App {
         }
         self.dirty = true;
         if rename {
-            self.begin_rename(first);
+            self.begin_rename(first, false);
         }
+    }
+
+    fn rename_target(&self) -> Option<u32> {
+        let t = self.tab();
+        let v = t.view.as_ref().filter(|_| !matches!(t.view_loc.path().kind(), PathKind::Computer | PathKind::RecycleBin))?;
+        v.focus.filter(|&f| v.is_visible(f)).or_else(|| if v.selected_count() == 1 { v.selected().next() } else { None })
     }
 
     pub fn rename_focused(&mut self) {
-        let t = self.tab();
-        let Some(v) = t.view.as_ref().filter(|_| !matches!(t.view_loc.path().kind(), PathKind::Computer | PathKind::RecycleBin)) else { return };
-        let target = v.focus.filter(|&f| v.is_visible(f)).or_else(|| if v.selected_count() == 1 { v.selected().next() } else { None });
-        if let Some(i) = target {
-            self.begin_rename(i);
-        }
+        let Some(i) = self.rename_target() else { return };
+        let batch = self.tab().view.as_ref().is_some_and(|v| v.selected_count() > 1 && v.is_selected(i));
+        self.begin_rename(i, batch);
     }
 
-    fn begin_rename(&mut self, idx: u32) {
+    fn begin_rename(&mut self, idx: u32, batch: bool) {
         let (rh, lh) = (self.layout.row_h, self.layout.list.h);
         let t = &mut self.tabs[self.cur];
         let Some(v) = t.view.as_mut() else { return };
@@ -529,14 +737,17 @@ impl App {
         edit.set(name);
         edit.anchor = 0;
         edit.caret = base_name_len(name, v.listing().entries[idx as usize].is_dir());
-        v.clear_selection();
-        v.set_selected(idx, true);
+        if !batch {
+            v.clear_selection();
+            v.set_selected(idx, true);
+        }
         v.focus = Some(idx);
         v.anchor = Some(idx);
         let gen = v.snap().gen;
         t.reveal_focus(false, rh, lh);
         t.error = None;
-        self.ops.rename = Some(Rename { tab: t.id, gen, idx, edit, scroll: 0.0, rect: Rect::default(), click: None, selecting: false });
+        self.ops.rename = Some(Rename { tab: t.id, gen, idx, edit, scroll: 0.0, rect: Rect::default(), click: None, selecting: false, batch, confirmed: None });
+        self.ops.slow = None;
         self.editing = false;
         self.focus = Focus::List;
         self.dirty = true;
@@ -551,10 +762,11 @@ impl App {
     }
 
     fn commit_rename(&mut self) -> bool {
-        let Some(r) = self.ops.rename.take() else { return true };
+        let Some(mut r) = self.ops.rename.take() else { return true };
         let t = self.tab();
         let Some(v) = t.view.as_ref().filter(|v| t.id == r.tab && v.snap().gen == r.gen) else { return true };
         let old = v.listing().name(r.idx).to_vec();
+        let is_dir = v.listing().entries[r.idx as usize].is_dir();
         let windows = !matches!(t.view_loc, Location::Wsl { .. });
         let name = match validate_name(&r.edit.text, windows) {
             Ok(n) => n,
@@ -564,8 +776,25 @@ impl App {
                 return false;
             }
         };
+        if r.batch && v.selected_count() > 1 {
+            let ext = extension(&old, is_dir);
+            let base = match name.len().checked_sub(ext.len()) {
+                Some(n) if n > 0 && name.as_bytes()[n..].eq_ignore_ascii_case(ext) => &name[..n],
+                _ => &name,
+            };
+            self.batch_rename(base);
+            return true;
+        }
         if name.as_bytes() == old {
             return true;
+        }
+        let old_str = String::from_utf8_lossy(&old);
+        if !is_dir && self.warn_extension_change && r.confirmed.as_deref() != Some(&name) && changes_extension(&old_str, &name) {
+            let msg = format!("Changing the extension of \"{old_str}\" can make it unusable. Press Enter again to rename it, or Esc to cancel.");
+            r.confirmed = Some(name);
+            self.ops.rename = Some(r);
+            self.status(msg);
+            return false;
         }
         let (item, target) = (t.view_loc.join(&old).to_windows(), t.view_loc.join(name.as_bytes()).to_windows());
         let (Some(item), Some(target)) = (item, target) else {
@@ -577,7 +806,28 @@ impl App {
         true
     }
 
+    fn batch_rename(&mut self, base: &str) {
+        let t = self.tab();
+        let Some(v) = &t.view else { return };
+        let l = v.listing();
+        let live = |i: &u32| l.entries[*i as usize].attrs & attr::DELETED == 0;
+        let taken: FxHashSet<Vec<u8>> = (0..l.len() as u32).filter(live).filter(|&i| !v.is_selected(i)).map(|i| l.name(i).to_ascii_lowercase()).collect();
+        let items: Vec<(&[u8], bool)> = v.rows().iter().filter(|&&i| v.is_selected(i)).map(|&i| (l.name(i), l.entries[i as usize].is_dir())).collect();
+        let names = batch_names(base, &items, |n| taken.contains(n));
+        let renamed = items.iter().zip(&names).filter(|((old, _), new)| *old != new.as_slice());
+        let pairs: Option<Vec<(FsPath, FsPath)>> = renamed.map(|((old, _), new)| Some((t.view_loc.join(old).to_windows()?, t.view_loc.join(new).to_windows()?))).collect();
+        match pairs {
+            Some(p) if p.is_empty() => {}
+            Some(p) => {
+                self.tab_mut().error = None;
+                self.start_op(FileOp::MoveTo(p), Origin::Fresh, Then::Select);
+            }
+            None => self.status("Some names cannot be used by Windows shell operations"),
+        }
+    }
+
     pub(super) fn ops_key(&mut self, key: Key, m: Mods) -> bool {
+        self.ops.slow = None;
         let Some(action) = self.ops.rename.as_mut().map(|r| r.edit.key(key, m)) else { return false };
         match action {
             EditAction::Submit => {
@@ -607,6 +857,7 @@ impl App {
 
     pub(super) fn ops_mouse_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8) -> bool {
         self.ops.press = None;
+        self.ops.slow = None;
         let Some(r) = &mut self.ops.rename else { return false };
         if r.rect.contains(x, y) {
             if button == MouseButton::Left {
@@ -651,7 +902,7 @@ impl App {
         true
     }
 
-    pub(super) fn ops_mouse_up(&mut self, x: f32, y: f32, button: MouseButton) {
+    pub(super) fn ops_mouse_up(&mut self, x: f32, y: f32, button: MouseButton, now: Instant) {
         if let Some(r) = &mut self.ops.rename {
             r.selecting = false;
         }
@@ -666,21 +917,44 @@ impl App {
         if self.hit(x, y) != Hit::Row(p.row) {
             return;
         }
-        if let Some(v) = &mut self.tabs[self.cur].view {
-            if let Some(&i) = v.rows().get(p.row) {
-                v.clear_selection();
-                v.set_selected(i, true);
-                v.anchor = Some(i);
-                v.focus = Some(i);
-            }
+        let (tab, wait) = (self.tab().id, self.double_click);
+        let Some(v) = &mut self.tabs[self.cur].view else { return };
+        let Some(&i) = v.rows().get(p.row) else { return };
+        v.clear_selection();
+        v.set_selected(i, true);
+        v.anchor = Some(i);
+        v.focus = Some(i);
+        if p.slow {
+            self.ops.slow = Some(Slow { tab, gen: v.snap().gen, idx: i, at: now + wait });
+            self.effects.push(Effect::Timer(wait));
         }
     }
 
-    pub(super) fn press_row(&mut self, row: usize, button: MouseButton, clicks: u8, x: f32, y: f32) -> bool {
+    pub(super) fn ops_timer_cancel(&mut self) {
+        self.ops.slow = None;
+    }
+
+    pub(super) fn ops_timer(&mut self, now: Instant) {
+        let Some(s) = self.ops.slow.take() else { return };
+        if now + TIMER_SLACK < s.at {
+            self.effects.push(Effect::Timer(s.at - now));
+            self.ops.slow = Some(s);
+            return;
+        }
+        let t = self.tab();
+        let still = t.id == s.tab && t.view.as_ref().is_some_and(|v| v.snap().gen == s.gen && v.selected_count() == 1 && v.is_selected(s.idx));
+        if still && self.rename_target() == Some(s.idx) {
+            self.begin_rename(s.idx, false);
+        }
+    }
+
+    pub(super) fn press_row(&mut self, row: usize, button: MouseButton, clicks: u8, x: f32, y: f32, now: Instant) -> bool {
         if button != MouseButton::Left || clicks >= 2 {
             return false;
         }
         let m = self.mods;
+        let settled = self.focused_at.is_none_or(|t| now.duration_since(t) >= self.double_click);
+        let on_name = self.layout.cols.first().is_some_and(|c| x < c.right());
         let Some(v) = &mut self.tabs[self.cur].view else { return false };
         let Some(&i) = v.rows().get(row) else { return false };
         let deferred = !m.ctrl && !m.shift && v.is_selected(i);
@@ -688,7 +962,8 @@ impl App {
             v.focus = Some(i);
             v.anchor = Some(i);
         }
-        self.ops.press = Some(Press { row, x, y, deferred });
+        let slow = deferred && settled && on_name && v.selected_count() == 1;
+        self.ops.press = Some(Press { row, x, y, deferred, slow });
         deferred
     }
 
@@ -710,6 +985,11 @@ impl App {
                 match d.target {
                     Some(Target::Reveal) if effect != drop_effect::NONE => self.on_event(&Event::DroppedFiles(d.paths), now),
                     Some(Target::Trash(_)) if effect != drop_effect::NONE => self.start_op(FileOp::Trash(d.paths), Origin::Fresh, Then::Nothing),
+                    Some(Target::Run { program, .. }) if effect != drop_effect::NONE => {
+                        let tab = self.tab().id;
+                        let launch = Launch::With { program, args: d.paths };
+                        self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch } });
+                    }
                     Some(Target::Into { dest, .. }) => {
                         let (items, dest) = (d.paths, dest);
                         let op = match effect {
@@ -740,8 +1020,11 @@ impl App {
             Hit::Row(row) => {
                 let v = t.view.as_ref()?;
                 let i = *v.rows().get(row)?;
+                let runnable = RUNNABLE.iter().any(|e| v.listing().ext(i).eq_ignore_ascii_case(e));
                 if v.listing().entries[i as usize].is_dir() {
                     t.entry_location(i).to_windows().map(|dest| Target::Into { dest, row: Some(row) })
+                } else if runnable {
+                    t.entry_location(i).to_windows().map(|program| Target::Run { program, row })
                 } else {
                     here()
                 }
@@ -764,6 +1047,8 @@ impl App {
             Some(Target::Reveal) => [COPY, LINK].into_iter().find(|e| allowed & e != 0).unwrap_or(NONE),
             Some(Target::Trash(_)) if d.paths.is_empty() || d.paths.iter().any(recycle::in_bin) => NONE,
             Some(Target::Trash(_)) => allowed & MOVE,
+            Some(Target::Run { program, .. }) if d.paths.is_empty() || d.paths.contains(program) => NONE,
+            Some(Target::Run { .. }) => [COPY, LINK, MOVE].into_iter().find(|e| allowed & e != 0).unwrap_or(NONE),
             Some(Target::Into { dest, .. }) => {
                 if d.paths.is_empty() || d.paths.iter().any(|p| p.as_bytes().eq_ignore_ascii_case(dest.as_bytes()) || inside(dest, p)) {
                     NONE
@@ -788,6 +1073,7 @@ impl App {
     pub fn drop_highlight(&self) -> Option<Option<usize>> {
         match &self.ops.dropping {
             Some(Dropping { target: Some(Target::Into { row, .. }), effect, .. }) if *effect != drop_effect::NONE => Some(*row),
+            Some(Dropping { target: Some(Target::Run { row, .. }), effect, .. }) if *effect != drop_effect::NONE => Some(Some(*row)),
             Some(Dropping { target: Some(Target::Trash(None)), effect, .. }) if *effect != drop_effect::NONE => Some(None),
             _ => None,
         }

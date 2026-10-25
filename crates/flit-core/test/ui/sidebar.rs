@@ -13,7 +13,7 @@ fn drive(letter: char) -> Drive {
 fn pinned_items_get_labels_and_glyphs() {
     let mut sb = Sidebar::default();
     sb.state.pinned = vec![Location::computer(), loc("wsl://Debian/"), loc(r"C:\"), loc(r"C:\work\proj"), loc("wsl://Debian/home/u")];
-    sb.places = Arc::new(Places { folders: vec![(KnownFolder::Music, loc(r"C:\Users\u\Music"))], drives: vec![drive('C')], wsl: vec!["Debian".into()], recycle_bin: false });
+    sb.places = Arc::new(Places { folders: vec![(KnownFolder::Music, loc(r"C:\Users\u\Music"))], drives: vec![drive('C')], wsl: vec!["Debian".into()], recycle_bin: false, templates: Vec::new() });
     sb.rebuild();
     let got: Vec<(&str, &str, Section)> = sb.items.iter().map(|it| (it.label.as_str(), it.glyph, it.section)).collect();
     assert_eq!(

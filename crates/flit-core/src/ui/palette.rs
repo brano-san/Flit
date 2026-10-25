@@ -3,6 +3,7 @@ use super::edit::EditAction;
 use super::field::{Field, FieldKey};
 use super::{App, Effect, Hit};
 use crate::input::{Key, Mods};
+use crate::path::FsPath;
 use crate::render::{Color, Rect};
 use crate::text::{Gfx, TextBackend};
 use crate::theme::Theme;
@@ -14,7 +15,41 @@ const ROW_H: f32 = 30.0;
 const FIELD_H: f32 = 32.0;
 const MAX_ROWS: usize = 12;
 
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Pick {
+    Commands,
+    NewItem,
+    Shortcut(FsPath),
+    Stream(FsPath),
+}
+
+impl Pick {
+    fn placeholder(&self) -> &'static str {
+        match self {
+            Pick::Commands => "Type a command",
+            Pick::NewItem => "Type to filter the kinds of new items",
+            Pick::Shortcut(_) => "Full path of the shortcut target",
+            Pick::Stream(_) => "Name of the new alternate data stream",
+        }
+    }
+
+    fn empty(&self) -> &'static str {
+        match self {
+            Pick::Commands => "No matching commands",
+            Pick::NewItem => "No matching kinds of items",
+            Pick::Shortcut(_) => "Enter creates the shortcut in this folder",
+            Pick::Stream(_) => "Enter creates the stream",
+        }
+    }
+
+    fn is_input(&self) -> bool {
+        matches!(self, Pick::Shortcut(_) | Pick::Stream(_))
+    }
+}
+
 pub(super) struct Palette {
+    pub pick: Pick,
+    pub titles: Vec<String>,
     field: Field,
     pub matches: Vec<usize>,
     keys: Vec<String>,
@@ -46,28 +81,32 @@ pub fn score(query: &str, title: &str) -> Option<u32> {
     Some(score.min(1999))
 }
 
-pub fn matches(query: &str) -> Vec<usize> {
-    let mut scored: Vec<(u32, usize)> = ACTIONS.iter().enumerate().filter_map(|(i, a)| score(query, a.title).map(|s| (s, i))).collect();
+fn rank<'a>(query: &str, titles: impl Iterator<Item = &'a str>) -> Vec<usize> {
+    let mut scored: Vec<(u32, usize)> = titles.enumerate().filter_map(|(i, t)| score(query, t).map(|s| (s, i))).collect();
     scored.sort_by_key(|&(s, i)| (Reverse(s), i));
     scored.into_iter().map(|(_, i)| i).collect()
 }
 
+pub fn matches(query: &str) -> Vec<usize> {
+    rank(query, ACTIONS.iter().map(|a| a.title))
+}
+
 impl Palette {
-    fn new() -> Self {
-        Self {
-            field: Field::default(),
-            matches: matches(""),
-            keys: ACTIONS.iter().map(keys_text).collect(),
-            sel: 0,
-            first: 0,
-            rect: Rect::default(),
-            field_rect: Rect::default(),
-            rows: Vec::new(),
-        }
+    pub(super) fn new(pick: Pick, items: Vec<(String, String)>, text: &str) -> Self {
+        let (titles, keys) = items.into_iter().unzip();
+        let mut p = Self { pick, titles, field: Field::default(), matches: Vec::new(), keys, sel: 0, first: 0, rect: Rect::default(), field_rect: Rect::default(), rows: Vec::new() };
+        p.field.edit.set(text);
+        p.field.edit.select_all();
+        p.refresh();
+        p
+    }
+
+    fn commands() -> Self {
+        Self::new(Pick::Commands, ACTIONS.iter().map(|a| (a.title.to_owned(), keys_text(a))).collect(), "")
     }
 
     fn refresh(&mut self) {
-        self.matches = matches(self.field.text());
+        self.matches = if self.pick.is_input() { Vec::new() } else { rank(self.field.text(), self.titles.iter().map(String::as_str)) };
         self.sel = 0;
         self.first = 0;
     }
@@ -93,11 +132,17 @@ impl Palette {
 
 impl App {
     pub(super) fn open_palette(&mut self) {
-        if self.nav.palette.take().is_none() {
+        self.open_pick(Palette::commands());
+    }
+
+    pub(super) fn open_pick(&mut self, p: Palette) {
+        let same = self.nav.palette.as_ref().is_some_and(|open| open.pick == p.pick);
+        self.nav.palette = None;
+        if !same {
             if self.editing {
                 self.cancel_edit();
             }
-            self.nav.palette = Some(Palette::new());
+            self.nav.palette = Some(p);
         }
         self.layout();
         self.dirty = true;
@@ -109,9 +154,19 @@ impl App {
     }
 
     pub(super) fn run_palette_item(&mut self, index: usize, now: Instant) {
-        let Some(&id) = self.nav.palette.as_ref().and_then(|p| p.matches.get(index)) else { return };
-        self.close_palette();
-        (ACTIONS[id].run)(self, now);
+        let Some(p) = self.nav.palette.take() else { return };
+        self.dirty = true;
+        if p.pick.is_input() {
+            return self.submit_pick(p.pick, p.field.text().trim());
+        }
+        let Some(&id) = p.matches.get(index) else {
+            self.nav.palette = Some(p);
+            return;
+        };
+        match p.pick {
+            Pick::Commands => (ACTIONS[id].run)(self, now),
+            _ => self.new_item(id),
+        }
     }
 
     pub(super) fn palette_key(&mut self, key: Key, m: Mods, now: Instant) -> bool {
@@ -218,11 +273,10 @@ impl App {
         g.dl.round_rect(fr, t.input_bg, s4);
         g.dl.outline(fr, t.accent, s4, scale.round().max(1.0));
         let inner = Rect::new(fr.x + s12, fr.y, fr.w - 2.0 * s12, fr.h);
-        p.field.draw(g, t, inner, font, active, "Type a command", scale);
+        p.field.draw(g, t, inner, font, active, p.pick.placeholder(), scale);
         let m = g.metrics(font);
         for (k, &row) in p.rows.iter().enumerate() {
             let i = p.first + k;
-            let a = &ACTIONS[p.matches[i]];
             if i == p.sel {
                 g.dl.round_rect(row, t.selection, s4);
             } else if hover == Hit::PaletteRow(i) {
@@ -232,11 +286,11 @@ impl App {
             let keys = &p.keys[p.matches[i]];
             let kw = if keys.is_empty() { 0.0 } else { g.measure(keys, small) };
             g.text(row.right() - s12 - kw, baseline, keys, small, t.text_dim, f32::INFINITY);
-            g.text(row.x + s12, baseline, a.title, font, t.text, row.w - 3.0 * s12 - kw);
+            g.text(row.x + s12, baseline, &p.titles[p.matches[i]], font, t.text, row.w - 3.0 * s12 - kw);
         }
         if p.matches.is_empty() {
             let baseline = (fr.bottom() + s6 + (row_h + m.ascent - m.descent) / 2.0).round();
-            g.text(r.x + s12 + s6, baseline, "No matching commands", font, t.text_dim, r.w - 2.0 * s12);
+            g.text(r.x + s12 + s6, baseline, p.pick.empty(), font, t.text_dim, r.w - 2.0 * s12);
         }
     }
 }
