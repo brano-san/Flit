@@ -102,6 +102,9 @@ impl App {
     }
 
     pub(super) fn hand_to_explorer(&mut self, location: &str) -> String {
+        if location.contains('"') {
+            return format!("Cannot open {location} in Flit");
+        }
         tracing::info!("handing {location} to File Explorer");
         self.launch(Launch::Run { program: EXPLORER.into(), args: format!("\"{location}\""), dir: None });
         format!("Flit cannot show {location}, so it opens in File Explorer")

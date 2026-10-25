@@ -132,4 +132,7 @@ fn shell_folders_flit_cannot_show_go_to_file_explorer_with_a_note() {
     let known = crate::open::Open { paths: vec![b"shell:Downloads".to_vec()], ..Default::default() };
     app.open(&known, &|_| Location::parse(r"C:\Users\me\Downloads"), Instant::now());
     assert!(launched(&mut app).is_empty(), "folders with a file system path still open in Flit");
+    let smuggled = crate::open::Open { paths: vec![br#"shell:x" "C:\evil.exe"#.to_vec()], ..Default::default() };
+    app.open(&smuggled, &|_| None, Instant::now());
+    assert!(launched(&mut app).is_empty(), "a quote cannot add arguments to File Explorer");
 }
