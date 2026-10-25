@@ -620,7 +620,7 @@ impl App {
         match ev {
             HostEvent::Ready { gen, ms } if gen == p.host.gen => {
                 let total = p.requested.take().map_or(0.0, |t| t.elapsed().as_secs_f64() * 1e3);
-                tracing::info!("hosted preview shown {total:.1} ms after selection, {ms} ms in the handler");
+                tracing::debug!("hosted preview shown {total:.1} ms after selection, {ms} ms in the handler");
             }
             HostEvent::Failed { gen, message } if gen == p.host.gen => {
                 let media = !p.host.handler;
@@ -681,7 +681,7 @@ impl App {
         p.scroll = p.scroll.clamp(0.0, (extent - r.body.h).max(0.0));
         if !matches!(p.content, Content::Loading | Content::Empty | Content::Handler) {
             if let Some(t) = p.requested.take() {
-                tracing::info!("preview drawn {:.1} ms after selection, {} KB held", t.elapsed().as_secs_f64() * 1e3, p.held() / 1024);
+                tracing::debug!("preview drawn {:.1} ms after selection, {} KB held", t.elapsed().as_secs_f64() * 1e3, p.held() / 1024);
             }
         }
         if details {

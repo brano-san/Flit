@@ -692,14 +692,24 @@ impl App {
         }
     }
 
-    pub fn ask_folder_icon(&mut self) {
+    fn icon_folder(&self) -> Result<FsPath, &'static str> {
         let folder = self.rename_target().filter(|&i| self.tab().view.as_ref().is_some_and(|v| v.listing().entries[i as usize].is_dir()));
-        let path = match folder {
+        match folder {
             Some(i) => self.item_paths(&[i]).map(|mut p| p.remove(0)),
             None => self.shell_dir(),
-        };
-        match path {
+        }
+    }
+
+    pub fn ask_folder_icon(&mut self) {
+        match self.icon_folder() {
             Ok(folder) => self.open_pick(Palette::new(Pick::FolderIcon(folder), Vec::new(), "")),
+            Err(e) => self.status(e),
+        }
+    }
+
+    pub fn reset_folder_icon(&mut self) {
+        match self.icon_folder() {
+            Ok(folder) => self.start_op(FileOp::FolderIcon { folder, icon: None, index: 0 }, Origin::Fresh, Then::Nothing),
             Err(e) => self.status(e),
         }
     }
@@ -707,7 +717,7 @@ impl App {
     pub(super) fn submit_pick(&mut self, pick: Pick, text: &str) {
         match pick {
             Pick::FolderIcon(folder) => match icon_location(text) {
-                Some((icon, index)) => self.start_op(FileOp::FolderIcon { folder, icon, index }, Origin::Fresh, Then::Nothing),
+                Some((icon, index)) => self.start_op(FileOp::FolderIcon { folder, icon: Some(icon), index }, Origin::Fresh, Then::Nothing),
                 None => self.status("Enter the full path of an icon, program or library, optionally followed by a comma and the icon index"),
             },
             Pick::Shortcut(dest) => match FsPath::parse(text.trim_matches('"')).filter(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim)) {
@@ -864,9 +874,10 @@ impl App {
             self.tabs[k].error = Some(format!("Created the stream {}:{}", item.display(), crate::name::display(name)));
             self.dirty |= k == self.cur;
         }
-        if let (FileOp::FolderIcon { folder, .. }, None) = (&report.op, &error) {
+        if let (FileOp::FolderIcon { folder, icon, .. }, None) = (&report.op, &error) {
             self.icon_epoch += 1;
-            self.tabs[k.unwrap_or(self.cur)].error = Some(format!("Changed the icon of {}", folder.display()));
+            let done = if icon.is_some() { "Changed the icon of" } else { "Restored the default icon of" };
+            self.tabs[k.unwrap_or(self.cur)].error = Some(format!("{done} {}", folder.display()));
             self.dirty = true;
         }
         let Some(k) = k.filter(|_| p.then != Then::Nothing && !matches!(report.op, FileOp::Trash(_))) else { return };
@@ -936,7 +947,7 @@ impl App {
         }
     }
 
-    fn rename_target(&self) -> Option<u32> {
+    pub(super) fn rename_target(&self) -> Option<u32> {
         let t = self.tab();
         let v = t.view.as_ref().filter(|_| !matches!(t.view_loc.path().kind(), PathKind::Computer | PathKind::RecycleBin) && self.archive_view().is_none())?;
         v.focus.filter(|&f| v.is_visible(f)).or_else(|| if v.selected_count() == 1 { v.selected().next() } else { None })

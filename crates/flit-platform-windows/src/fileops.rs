@@ -141,7 +141,7 @@ fn check_names(op: &FileOp) -> Result<(), PlatformError> {
         FileOp::Rename { item, .. } => vec![item],
         FileOp::NewFolder { dir, .. } | FileOp::NewFile { dir, .. } => vec![dir],
         FileOp::NewStream { item, .. } => vec![item],
-        FileOp::FolderIcon { folder, icon, .. } => vec![folder, icon],
+        FileOp::FolderIcon { folder, icon, .. } => [folder].into_iter().chain(icon).collect(),
         FileOp::MoveTo(pairs) | FileOp::Restore(pairs) => pairs.iter().flat_map(|(a, b)| [a, b]).collect(),
         FileOp::Paste { dest } => vec![dest],
         FileOp::Archive(_) => Vec::new(),
@@ -402,11 +402,12 @@ fn new_stream(item: &FsPath, name: &[u8]) -> OpOutcome {
     }
 }
 
-fn folder_icon(folder: &FsPath, icon: &FsPath, index: i32) -> OpOutcome {
-    let (dir, mut file) = (folder.to_wide(false), icon.to_wide(false));
-    let mut fcs = SHFOLDERCUSTOMSETTINGS { dwSize: size_of::<SHFOLDERCUSTOMSETTINGS>() as u32, dwMask: FCSM_ICONFILE, pszIconFile: PWSTR(file.as_mut_ptr()), iIconIndex: index, ..Default::default() };
+fn folder_icon(folder: &FsPath, icon: Option<&FsPath>, index: i32) -> OpOutcome {
+    let (dir, mut file) = (folder.to_wide(false), icon.map(|i| i.to_wide(false)));
+    let icon_file = file.as_mut().map_or(PWSTR::null(), |f| PWSTR(f.as_mut_ptr()));
+    let mut fcs = SHFOLDERCUSTOMSETTINGS { dwSize: size_of::<SHFOLDERCUSTOMSETTINGS>() as u32, dwMask: FCSM_ICONFILE, pszIconFile: icon_file, iIconIndex: index, ..Default::default() };
     match unsafe { SHGetSetFolderCustomSettings(&mut fcs, PCWSTR(dir.as_ptr()), FCS_FORCEWRITE) } {
-        Ok(()) => OpOutcome { items: vec![(folder.clone(), icon.clone())], error: None },
+        Ok(()) => OpOutcome { items: vec![(folder.clone(), icon.unwrap_or(folder).clone())], error: None },
         Err(e) => OpOutcome { items: Vec::new(), error: Some(err(e)) },
     }
 }
@@ -527,7 +528,7 @@ impl FileOps for ShellCom {
         match op {
             FileOp::Link { items, dest } => unsafe { make_links(items, dest) },
             FileOp::NewStream { item, name } => new_stream(item, name),
-            FileOp::FolderIcon { folder, icon, index } => folder_icon(folder, icon, *index),
+            FileOp::FolderIcon { folder, icon, index } => folder_icon(folder, icon.as_ref(), *index),
             FileOp::Purge(pairs) => purge(pairs),
             FileOp::EmptyBin => empty_bin(),
             op if engine::native(op) => {

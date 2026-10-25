@@ -182,6 +182,14 @@ pub fn description(id: &str) -> &'static str {
         "settings.import" => "Load settings and tags from a JSON file, restore preferences",
         "settings.reset" => "Put every setting back to its default value, restore defaults, preferences",
         "file.share" => "Send the selected files with the Windows share window",
+        "file.folder_icon_reset" => "Remove the custom icon of the selected folder, default icon, desktop.ini",
+        "help.docs" => "Read the README with every feature and shortcut on GitHub, manual, F1",
+        "help.bug" => "Open a new GitHub issue about a problem, crash, error report",
+        "help.feature" => "Open a new GitHub issue with an idea, suggestion, wish",
+        "help.repository" => "Open the source code of Flit on GitHub, project page",
+        "help.privacy" => "What Flit keeps and sends: nothing leaves the computer, no telemetry",
+        "logs.file" => "Show flit.log with errors, warnings and timings in a text editor, diagnostics",
+        "logs.folder" => "Open the folder with the log files in a new tab, diagnostics",
         _ => "",
     }
 }

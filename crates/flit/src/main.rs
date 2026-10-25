@@ -2,6 +2,7 @@
 
 mod app;
 mod find;
+mod logs;
 mod metrics;
 mod places;
 mod preview;
@@ -43,19 +44,6 @@ fn wtf8(s: &OsStr) -> Vec<u8> {
     }
 }
 
-fn init_logging() {
-    #[cfg(feature = "profile")]
-    {
-        use tracing_subscriber::layer::SubscriberExt;
-        let _ = tracing::subscriber::set_global_default(tracing_subscriber::registry().with(tracing_tracy::TracyLayer::default()));
-        return;
-    }
-    #[allow(unreachable_code)]
-    if std::env::var_os("FLIT_LOG").is_some() {
-        let _ = tracing_subscriber::fmt().with_writer(std::io::stderr).try_init();
-    }
-}
-
 fn main() {
     let started = Instant::now();
     let mut args: Vec<Vec<u8>> = Vec::new();
@@ -87,19 +75,23 @@ fn main() {
             }
         },
     };
-    init_logging();
+    logs::init(<P as Platform>::state_dir().map(|d| d.join("logs")), std::env::var_os("FLIT_LOG").is_some());
+    tracing::info!("Flit {} started, process {}", env!("CARGO_PKG_VERSION"), std::process::id());
     let headless = metrics.is_some();
     if let Some(e) = standalone {
         tracing::warn!("running without single-instance forwarding: {e}");
     }
     if open.tag.is_some() {
         if let Err(e) = tags::run_command::<P>(&open) {
+            tracing::error!("cannot tag the files: {e}");
+            logs::flush();
             <P as Platform>::fatal_error(&format!("Flit could not tag the files: {e}"));
         }
-        return;
+        return logs::flush();
     }
     if let Err(e) = app::run::<P>(open, instance, metrics, started) {
-        tracing::error!("{e}");
+        tracing::error!("cannot start: {e}");
+        logs::flush();
         if headless {
             eprintln!("flit: {e}");
         } else {
@@ -107,4 +99,6 @@ fn main() {
         }
         std::process::exit(1);
     }
+    tracing::info!("Flit exits");
+    logs::flush();
 }

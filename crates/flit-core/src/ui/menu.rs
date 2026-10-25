@@ -2,6 +2,7 @@ use super::actions::{chord_text, ACTIONS};
 use super::toolbar::{Overflow, ToolMenu};
 use super::{App, LayoutMode};
 use crate::archive::{self, Format};
+use crate::listing::attr;
 use crate::location::Location;
 use crate::path::PathKind;
 use crate::sort::{DateUnit, Folders, GroupField, SortField};
@@ -418,6 +419,10 @@ impl App {
             }
             if count == 1 && folders.len() == 1 {
                 m.action("file.folder_icon", "Change icon");
+                let custom = attr::READONLY | attr::SYSTEM;
+                if self.rename_target().is_some_and(|i| v.listing().entries[i as usize].attrs & custom != 0) {
+                    m.action("file.folder_icon_reset", "Restore default icon");
+                }
             }
             if self.show_flatten && !folders.is_empty() && folders.len() == count {
                 m.action("file.flatten", "Flatten folder");
