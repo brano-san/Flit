@@ -5,6 +5,7 @@ use crate::location::Location;
 use crate::name;
 use crate::open::OpenTarget;
 use crate::path::FsPath;
+use crate::archive::ArchiveOp;
 use crate::provider::{Conflict, FileOp, OpCtl, OpId, OpProgress, Resolve, Stage};
 use crate::render::{Color, Rect};
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
@@ -223,6 +224,8 @@ fn job_title(op: &FileOp) -> Option<String> {
         FileOp::Restore(pairs) => format!("Restoring {}", if pairs.len() == 1 { quoted(&pairs[0].1) } else { format!("{} items", pairs.len()) }),
         FileOp::Purge(pairs) => format!("Deleting {} from the Recycle Bin", if pairs.len() == 1 { quoted(&pairs[0].1) } else { format!("{} items", pairs.len()) }),
         FileOp::EmptyBin => "Emptying the Recycle Bin".into(),
+        FileOp::Archive(ArchiveOp::Compress { items, archive, .. }) => format!("Compressing {} to {}", count(items), quoted(archive)),
+        FileOp::Archive(ArchiveOp::Extract { archives, .. }) => format!("Extracting {}", count(archives)),
         FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::NewStream { .. } | FileOp::Link { .. } => return None,
     })
 }
@@ -234,6 +237,8 @@ fn job_dest(op: &FileOp) -> Option<Location> {
         FileOp::Restore(pairs) => pairs.first()?.1.parent()?,
         FileOp::Flatten(dirs) => dirs.first()?.clone(),
         FileOp::Trash(_) => return Some(Location::recycle_bin()),
+        FileOp::Archive(ArchiveOp::Compress { archive, .. }) => archive.parent()?,
+        FileOp::Archive(ArchiveOp::Extract { archives, dest, .. }) => dest.clone().or_else(|| archives.first()?.parent())?,
         _ => return None,
     };
     Some(Location::from_local(path))

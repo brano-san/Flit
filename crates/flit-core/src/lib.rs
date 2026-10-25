@@ -1,4 +1,6 @@
+pub mod archive;
 pub mod atlas;
+pub mod digest;
 pub mod filter;
 pub mod fmt;
 pub mod hash;

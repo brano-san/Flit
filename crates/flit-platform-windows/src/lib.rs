@@ -4,6 +4,7 @@ mod access;
 mod clipboard;
 mod context_menu;
 mod d3d;
+mod digest;
 mod dragdrop;
 mod dwrite;
 mod engine;

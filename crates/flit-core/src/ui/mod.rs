@@ -1,4 +1,5 @@
 pub mod edit;
+mod archive;
 mod details;
 mod ops;
 mod search;
@@ -720,6 +721,7 @@ impl App {
                     self.navigate(Location::from_local(path), now);
                 }
             }
+            ProviderEvent::Hashed { id, result, .. } => self.hashed(id, result),
         }
     }
 

@@ -9,6 +9,7 @@ use flit_core::atlas::Slot;
 use flit_core::input::{CursorIcon, Event, HitArea};
 use flit_core::render::{DrawList, Rect};
 use flit_core::ui::{Bitmap, DragEvent, IconRequest, NewTemplate, ShellMenu};
+use flit_core::digest::HashKind;
 use flit_core::provider::{Conflict, FileOp, Launch, OpCtl, OpProgress, Resolve, Stage};
 use flit_core::{FsError, FsPath, ListingBuilder, Location, Open, ProviderEvent, ProviderRequest, TabId};
 use flit_search::index::{Checkpoint, IndexSink};
@@ -141,6 +142,9 @@ pub trait Fs: Send + Sync + 'static {
     fn seek_penalty(&self, path: &FsPath) -> Option<bool>;
     fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, u64) + Sync)) {
         local::dir_sizes(self, dir, items, keep_going, report)
+    }
+    fn hash(&self, _file: &FsPath, _kinds: &[HashKind], _job: &Job) -> Result<Vec<String>, PlatformError> {
+        Err(PlatformError::unsupported("file hashes"))
     }
 }
 

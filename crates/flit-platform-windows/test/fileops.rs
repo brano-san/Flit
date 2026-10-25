@@ -431,6 +431,34 @@ fn flatten_moves_nested_files_up_asks_on_collisions_and_undoes() {
 }
 
 #[test]
+fn archives_are_folders_for_listing_and_operations() {
+    use flit_core::archive::{ArchiveOp, Compression, Format, Place};
+    use flit_core::ListingBuilder;
+    use flit_platform::Fs;
+    let t = TempDir::new("archive");
+    std::fs::create_dir_all(t.0.join(r"src\docs")).unwrap();
+    t.file(r"src\docs\a.txt", "alpha");
+    t.file(r"src\b.txt", "beta");
+    let mut sh = ShellCom::new().unwrap();
+    let zip = t.path("pack.zip");
+    let options = Compression { format: Format::Zip, level: 6, ..Compression::default() };
+    let made = run(&mut sh, &FileOp::Archive(ArchiveOp::Compress { items: vec![t.path(r"src\docs"), t.path(r"src\b.txt")], archive: zip.clone(), options }));
+    assert_eq!(made.items, vec![(t.path(r"src\docs"), zip.clone())]);
+    let mut go = |_: &ListingBuilder<'_>| true;
+    let mut b = ListingBuilder::new(flit_core::sort::CaseMode::Sensitive, &mut go);
+    crate::NtFs.read_dir(&zip.join(b"docs"), &mut b).unwrap();
+    assert_eq!((b.listing.len(), b.listing.name(0), b.listing.entries[0].attrs & flit_core::listing::attr::ARCHIVED != 0), (1, &b"a.txt"[..], true));
+    let copied = run(&mut sh, &FileOp::Copy { items: vec![zip.join(b"docs").join(b"a.txt")], dest: t.path("out") });
+    assert!(copied.error.is_none(), "{:?}", copied.error);
+    assert_eq!(read(&t, r"out\a.txt"), "alpha");
+    let refused = run(&mut sh, &FileOp::Rename { item: zip.join(b"b.txt"), name: b"c.txt".to_vec() });
+    assert_eq!(refused.error.map(|e| e.message), Some(flit_core::archive::INSIDE.to_owned()));
+    let here = run(&mut sh, &FileOp::Archive(ArchiveOp::Extract { archives: vec![zip.clone()], dest: None, place: Place::OwnFolder }));
+    assert_eq!(here.items, vec![(zip.clone(), t.path("pack"))]);
+    assert_eq!(read(&t, r"pack\docs\a.txt"), "alpha");
+}
+
+#[test]
 fn renames_refuse_taken_names_but_change_case() {
     let t = TempDir::new("rename");
     let a = t.file("a.txt", "a");

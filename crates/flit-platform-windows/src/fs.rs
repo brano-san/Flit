@@ -200,6 +200,9 @@ impl Fs for NtFs {
             PathKind::RecycleBin => return crate::recycle::list(&crate::recycle::roots(), out),
             _ => {}
         }
+        if let Some(listed) = flit_archive::read_dir(dir, out, <crate::Windows as flit_platform::Platform>::utc_offset_minutes()) {
+            return listed;
+        }
         let h = open_dir(dir, FILE_LIST_DIRECTORY.0, false)?;
         let mut buf = vec![0u64; BUFFER / 8];
         let mut first = true;
@@ -240,6 +243,10 @@ impl Fs for NtFs {
             let _ = CloseHandle(h);
         }
         result
+    }
+
+    fn hash(&self, file: &FsPath, kinds: &[flit_core::digest::HashKind], job: &flit_platform::Job) -> Result<Vec<String>, flit_platform::PlatformError> {
+        crate::digest::hash_file(file, kinds, job)
     }
 
     fn seek_penalty(&self, path: &FsPath) -> Option<bool> {

@@ -13,6 +13,7 @@ pub mod attr {
     pub const LINK: u32 = 1 << 4;
     pub const VOLUME: u32 = 1 << 5;
     pub const SIZE_KNOWN: u32 = 1 << 6;
+    pub const ARCHIVED: u32 = 1 << 7;
     pub const DELETED: u32 = 1 << 31;
 }
 
