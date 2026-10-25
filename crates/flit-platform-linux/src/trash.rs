@@ -1,3 +1,6 @@
+use crate::fs::{filetime, scan};
+use flit_core::listing::{attr, Meta};
+use flit_core::{FsPath, ListingBuilder};
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -71,6 +74,36 @@ pub fn local_time(secs: i64) -> String {
     format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec)
 }
 
+pub fn trash_time(s: &[u8]) -> Option<i64> {
+    parse_local_time(s).map(|t| filetime(t, 0))
+}
+
+fn parse_local_time(s: &[u8]) -> Option<i64> {
+    let s = std::str::from_utf8(s).ok()?;
+    let num = |r: std::ops::Range<usize>| s.get(r)?.parse::<i32>().ok();
+    if s.len() < 19 || s.as_bytes()[4] != b'-' || s.as_bytes()[10] != b'T' {
+        return None;
+    }
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    tm.tm_year = num(0..4)? - 1900;
+    tm.tm_mon = num(5..7)? - 1;
+    tm.tm_mday = num(8..10)?;
+    tm.tm_hour = num(11..13)?;
+    tm.tm_min = num(14..16)?;
+    tm.tm_sec = num(17..19)?;
+    tm.tm_isdst = -1;
+    let t = unsafe { libc::mktime(&mut tm) };
+    (t != -1).then_some(t)
+}
+
+fn remove_any(p: &Path) -> io::Result<()> {
+    if fs::symlink_metadata(p)?.is_dir() {
+        fs::remove_dir_all(p)
+    } else {
+        fs::remove_file(p)
+    }
+}
+
 fn now_secs() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
@@ -126,6 +159,76 @@ impl Trash {
     }
 
     pub fn entry(&self, trashed: &Path) -> io::Result<(PathBuf, PathBuf)> {
+        self.record(trashed).map(|(info, original, _)| (info, original))
+    }
+
+    pub fn dirs(&self, tops: &[PathBuf]) -> Vec<PathBuf> {
+        let mut out = vec![self.home.clone()];
+        for top in tops {
+            for dir in [top.join(".Trash").join(self.uid.to_string()), top.join(format!(".Trash-{}", self.uid))] {
+                if !out.contains(&dir) && fs::symlink_metadata(dir.join("files")).is_ok_and(|m| m.is_dir()) {
+                    out.push(dir);
+                }
+            }
+        }
+        out
+    }
+
+    pub fn list(&self, dirs: &[PathBuf], out: &mut ListingBuilder<'_>) {
+        for dir in dirs {
+            let files = dir.join("files");
+            let mut found = Vec::new();
+            let _ = scan(&files, |name, meta| {
+                found.push((name.to_vec(), meta));
+                true
+            });
+            for (name, meta) in found {
+                let trashed = files.join(OsStr::from_bytes(&name));
+                let Ok((_, original, deleted)) = self.record(&trashed) else { continue };
+                let (Some(recycled), Some(origin), Some(shown)) = (FsPath::parse_exact(trashed.as_os_str().as_bytes()), original.parent().and_then(|p| FsPath::parse_exact(p.as_os_str().as_bytes())), original.file_name()) else { continue };
+                let folder = meta.attrs & attr::DIR != 0;
+                let attrs = meta.attrs & !attr::HIDDEN | if folder { 0 } else { attr::SIZE_KNOWN };
+                out.push(shown.as_bytes(), Meta { size: if folder { 0 } else { meta.size }, modified: deleted, created: deleted, attrs });
+                let names = &mut out.listing.names;
+                names.extend_from_slice(recycled.as_bytes());
+                names.push(0);
+                names.extend_from_slice(origin.as_bytes());
+            }
+            if !out.batch_done() {
+                return;
+            }
+        }
+    }
+
+    pub fn purge(&self, trashed: &Path) -> io::Result<()> {
+        let (info, _) = self.entry(trashed)?;
+        remove_any(trashed)?;
+        fs::remove_file(info)
+    }
+
+    pub fn empty(&self, dirs: &[PathBuf]) -> (Vec<PathBuf>, Option<io::Error>) {
+        let (mut removed, mut error) = (Vec::new(), None);
+        for dir in dirs {
+            let (files, info) = (dir.join("files"), dir.join("info"));
+            for entry in fs::read_dir(&files).into_iter().flatten().flatten() {
+                match remove_any(&entry.path()) {
+                    Ok(()) => removed.push(entry.path()),
+                    Err(e) => error = Some(e),
+                }
+            }
+            for entry in fs::read_dir(&info).into_iter().flatten().flatten() {
+                let name = entry.file_name();
+                let payload = name.as_bytes().strip_suffix(b".trashinfo").map(|n| files.join(OsStr::from_bytes(n)));
+                if payload.is_none_or(|p| fs::symlink_metadata(p).is_err()) {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+            let _ = fs::remove_file(dir.join("directorysizes"));
+        }
+        (removed, error)
+    }
+
+    fn record(&self, trashed: &Path) -> io::Result<(PathBuf, PathBuf, i64)> {
         let not_trashed = || invalid("the item is not in a Trash folder Flit knows");
         let name = trashed.file_name().ok_or_else(not_trashed)?;
         let files = trashed.parent().filter(|f| f.file_name() == Some(OsStr::new("files"))).ok_or_else(not_trashed)?;
@@ -138,7 +241,8 @@ impl Trash {
         File::open(&info)?.take(MAX_INFO).read_to_end(&mut text)?;
         let path = text.split(|&b| b == b'\n').find_map(|l| l.strip_prefix(b"Path=")).ok_or_else(|| invalid("the Trash entry has no Path line"))?;
         let original = PathBuf::from(OsString::from_vec(percent_decode(path.trim_ascii_end())));
-        Ok((info, if original.is_absolute() { original } else { base.join(original) }))
+        let deleted = text.split(|&b| b == b'\n').find_map(|l| l.strip_prefix(b"DeletionDate=")).and_then(|d| trash_time(d.trim_ascii())).unwrap_or(0);
+        Ok((info, if original.is_absolute() { original } else { base.join(original) }, deleted))
     }
 
     pub fn trash(&self, path: &Path) -> io::Result<PathBuf> {

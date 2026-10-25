@@ -78,3 +78,11 @@ fn other_devices_use_the_top_directory() {
     assert!(top.parent().is_none_or(|up| std::fs::symlink_metadata(up).unwrap().dev() != dev));
     assert!(victim.starts_with(&top));
 }
+
+#[test]
+fn deletion_dates_read_back_as_the_same_moment() {
+    let secs = 1_761_394_200;
+    assert_eq!(trash_time(local_time(secs).as_bytes()), Some(filetime(secs, 0)));
+    assert_eq!(trash_time(b"2026-13-45"), None);
+    assert_eq!(trash_time(b"garbage-not-a-date"), None);
+}

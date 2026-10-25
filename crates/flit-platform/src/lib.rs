@@ -359,6 +359,9 @@ pub trait Platform: 'static {
     fn cache_dir() -> Option<std::path::PathBuf> {
         Self::state_dir()
     }
+    fn config_dir() -> Option<std::path::PathBuf> {
+        Self::state_dir()
+    }
     fn caps() -> flit_core::caps::Caps {
         flit_core::caps::Caps::default()
     }
