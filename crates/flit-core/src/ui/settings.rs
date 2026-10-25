@@ -141,6 +141,9 @@ const SPLITS: [SplitDir; 2] = [SplitDir::Vertical, SplitDir::Horizontal];
 const SPLIT_CHOICES: Choices = &[("vertical", "Side by side"), ("horizontal", "One above the other")];
 const ARCHIVES: [Format; 4] = Format::WRITABLE;
 const ARCHIVE_CHOICES: Choices = &[("zip", "ZIP"), ("7z", "7z"), ("tar", "TAR"), ("gz", "GZip")];
+pub const LOG_LEVEL: &str = "advanced.log_level";
+pub const LOG_DEFAULT: usize = 3;
+const LOG_CHOICES: Choices = &[("off", "Nothing"), ("error", "Errors"), ("warn", "Errors and warnings"), ("info", "Errors, warnings and timings"), ("debug", "Everything, for troubleshooting")];
 
 pub static SETTINGS: &[Setting] = &[
     choice("general.startup", Page::General, "When Flit starts", "What the first window opens when Flit starts without folders on the command line", STARTUP, |a| match a.startup {
@@ -230,6 +233,7 @@ pub static SETTINGS: &[Setting] = &[
         help: "Thumbnails kept on disk in %LOCALAPPDATA%\\Flit\\thumbs; the oldest go first",
         kind: Kind::Number { min: super::THUMB_CACHE_MB.0 as i64, max: super::THUMB_CACHE_MB.2 as i64, step: 100, unit: "MB", get: |a| a.prefs.thumb_cache_mb as i64, set: |a, v| a.prefs.thumb_cache_mb = v as u32 },
     },
+    choice(LOG_LEVEL, Page::Advanced, "What the log file records", "%LOCALAPPDATA%\\Flit\\logs; never file contents or passwords", LOG_CHOICES, |a| a.log_level, |a, i| a.log_level = i),
     Setting { id: "keys", page: Page::Actions, title: "Keyboard shortcuts", help: "Shortcuts that differ from the defaults, by command id", kind: Kind::Keys(|a| a.keymap.clone(), |a, k| a.set_keymap(k)) },
 ];
 

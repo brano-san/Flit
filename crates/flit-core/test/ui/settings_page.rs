@@ -250,7 +250,7 @@ fn advanced_page_exports_imports_resets_and_clears_the_cache() {
     press(&mut a, Btn::Reset);
     key(&mut a, Key::Enter, NO);
     assert!(!a.single_click_files);
-    a.set_about(About { os: "Windows 11".into(), file: FsPath::parse(r"C:\Users\me\AppData\Local\Flit\settings.json"), cache_bytes: Some(3 << 20) });
+    a.set_about(About { os: "Windows 11".into(), file: FsPath::parse(r"C:\Users\me\AppData\Local\Flit\settings.json"), cache_bytes: Some(3 << 20), logs: None });
     assert!(a.settings_lines().contains(&"Thumbnail cache in use: 3.0 MB".to_owned()));
     press(&mut a, Btn::OpenFile);
     assert!(a.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } if path.display().ends_with("settings.json"))));
@@ -293,11 +293,35 @@ fn tags_page_lists_tags_and_runs_their_commands() {
 #[test]
 fn about_page_shows_versions_and_libraries() {
     let mut a = app();
-    a.set_about(About { os: "Windows 11 Pro 24H2 (build 26100.1)".into(), file: None, cache_bytes: None });
+    a.set_about(About { os: "Windows 11 Pro 24H2 (build 26100.1)".into(), file: None, cache_bytes: None, logs: None });
     a.open_settings(Some(Page::About));
     let lines = a.settings_lines();
     assert!(lines[0].starts_with("Version: Flit ") && lines[1] == "Windows: Windows 11 Pro 24H2 (build 26100.1)");
     assert!(lines.contains(&"serde_json: settings file".to_owned()));
+    assert_eq!(lines[3..7], ["Help", "Documentation | Report a bug | Request a feature", "GitHub repository | Privacy statement", NO_TELEMETRY]);
+    let k = ui(&a).lines.iter().position(|l| l.buttons().contains(&Btn::ReportBug)).unwrap();
+    let r = button_rects(&ui(&a).lines[k].clone(), rect(&a, k), s)[1];
+    a.drain_effects().for_each(drop);
+    click_at(&mut a, center(r));
+    let wanted = crate::provider::Launch::Run { program: "https://github.com/brano-san/Flit/issues/new?labels=bug".into(), args: String::new(), dir: None };
+    assert!(a.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Launch { launch, .. }, .. } if launch == wanted)));
+}
+
+#[test]
+fn advanced_page_groups_the_log_level_folder_and_buttons() {
+    let mut a = app();
+    a.set_about(About { logs: FsPath::parse(r"C:\Users\me\AppData\Local\Flit\logs"), ..Default::default() });
+    a.open_settings(Some(Page::Advanced));
+    let lines = a.settings_lines();
+    let at = lines.iter().position(|l| l == "Log file").expect("a Log file group");
+    assert_eq!(lines[at..], ["Log file", settings::LOG_LEVEL, r"Folder: C:\Users\me\AppData\Local\Flit\logs", "Open the log file | Open the log folder"]);
+    assert_eq!(lines.iter().filter(|l| *l == settings::LOG_LEVEL).count(), 1);
+    assert_eq!(a.log_level, settings::LOG_DEFAULT);
+    let k = ui(&a).lines.iter().position(|l| l.buttons().contains(&Btn::OpenLogs)).unwrap();
+    let r = button_rects(&ui(&a).lines[k].clone(), rect(&a, k), s)[1];
+    click_at(&mut a, center(r));
+    assert!(!a.settings_open(), "the folder opens in a tab the settings window would hide");
+    assert_eq!(a.current_location().display(), r"C:\Users\me\AppData\Local\Flit\logs");
 }
 
 #[test]

@@ -166,13 +166,16 @@ fn a_folder_icon_lands_in_desktop_ini_and_the_shell_draws_it() {
     std::fs::create_dir(t.0.join("photos")).unwrap();
     let (folder, icon) = (t.path("photos"), FsPath::parse(r"C:\Windows\System32\shell32.dll").unwrap());
     let mut sh = ShellCom::new().unwrap();
-    let out = run(&mut sh, &FileOp::FolderIcon { folder: folder.clone(), icon: icon.clone(), index: 3 });
+    let out = run(&mut sh, &FileOp::FolderIcon { folder: folder.clone(), icon: Some(icon.clone()), index: 3 });
     assert_eq!((out.error.map(|e| e.message), out.items), (None, vec![(folder.clone(), icon)]));
     assert!(crate::shell::desktop_ini(&folder).unwrap().icon);
     let attrs = std::fs::metadata(t.0.join("photos")).unwrap().file_attributes();
     assert_ne!(attrs & (FILE_ATTRIBUTE_READONLY.0 | FILE_ATTRIBUTE_SYSTEM.0), 0, "Explorer reads desktop.ini only in read-only or system folders");
     let req = IconRequest { key: 1, kind: IconKind::CustomFolder, path: folder.clone(), size: 32, gen: 0, row: 0 };
     assert!(sh.icon(&req).is_some_and(|b| b.width > 0 && b.rgba.chunks_exact(4).any(|p| p[3] != 0)));
+    let out = run(&mut sh, &FileOp::FolderIcon { folder: folder.clone(), icon: None, index: 0 });
+    assert_eq!((out.error.map(|e| e.message), out.items), (None, vec![(folder.clone(), folder.clone())]));
+    assert!(!crate::shell::desktop_ini(&folder).is_some_and(|d| d.icon), "restoring the default icon removes it from desktop.ini");
 }
 
 #[test]

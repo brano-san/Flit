@@ -430,6 +430,9 @@ fn list<F: Fs>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: CaseMode, 
     };
     let mut b = ListingBuilder::new(case, &mut on_batch).with_tags(tags).with_streams(view.show_streams);
     let result = fs.read_dir(path, &mut b);
+    if let Err(e) = &result {
+        tracing::warn!("cannot list {}: {e}", path.display());
+    }
     let listing = std::mem::take(&mut b.listing);
     let keys = std::mem::replace(&mut b.keys, SortKeys::new(case));
     drop(b);

@@ -993,13 +993,26 @@ fn the_folder_icon_command_asks_for_an_icon_location_and_writes_it_for_the_selec
     typed(&mut app, r"C:\i\cam.ico,2");
     key(&mut app, Key::Enter, NO);
     let [(id, op)] = ops(&mut app).try_into().unwrap();
-    assert_eq!(op, FileOp::FolderIcon { folder: p(r"C:\x\photos"), icon: p(r"C:\i\cam.ico"), index: 2 });
+    assert_eq!(op, FileOp::FolderIcon { folder: p(r"C:\x\photos"), icon: Some(p(r"C:\i\cam.ico")), index: 2 });
     let epoch = app.icon_epoch;
     done(&mut app, id, op, &[(r"C:\x\photos", r"C:\i\cam.ico")]);
     assert_eq!((app.icon_epoch, app.tab().error.as_deref()), (epoch + 1, Some(r"Changed the icon of C:\x\photos")));
     select(&mut app, &["a.txt"]);
     app.run_action("file.folder_icon", t0());
     assert_eq!(app.nav.palette.as_ref().unwrap().pick, Pick::FolderIcon(p(r"C:\x")), "without a selected folder the current one changes");
+}
+
+#[test]
+fn restoring_the_default_folder_icon_writes_through_the_same_operation_without_an_icon() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("photos", true)]);
+    select(&mut app, &["photos"]);
+    app.run_action("file.folder_icon_reset", t0());
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::FolderIcon { folder: p(r"C:\x\photos"), icon: None, index: 0 });
+    let epoch = app.icon_epoch;
+    done(&mut app, id, op, &[(r"C:\x\photos", r"C:\x\photos")]);
+    assert_eq!((app.icon_epoch, app.tab().error.as_deref()), (epoch + 1, Some(r"Restored the default icon of C:\x\photos")));
 }
 
 #[test]
