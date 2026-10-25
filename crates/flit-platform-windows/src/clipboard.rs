@@ -72,7 +72,7 @@ unsafe fn put(format: u32, bytes: &[u8]) -> bool {
     owned_by_clipboard
 }
 
-unsafe fn open(owner: Option<HWND>) -> Result<(), PlatformError> {
+pub(crate) unsafe fn open(owner: Option<HWND>) -> Result<(), PlatformError> {
     for attempt in 0..OPEN_ATTEMPTS {
         if OpenClipboard(owner).is_ok() {
             return Ok(());
@@ -87,7 +87,7 @@ unsafe fn open(owner: Option<HWND>) -> Result<(), PlatformError> {
 pub(crate) fn write_files(owner: HWND, paths: &[FsPath], cut: bool) -> bool {
     let effect = if cut { DROPEFFECT_MOVE.0 } else { DROPEFFECT_COPY.0 | DROPEFFECT_LINK.0 };
     unsafe {
-        if OpenClipboard(Some(owner)).is_err() {
+        if open(Some(owner)).is_err() {
             return false;
         }
         let ok = EmptyClipboard().is_ok() && put(CF_HDROP.0 as u32, &dropfiles(paths)) && put(drop_effect_format(), &effect.to_le_bytes());

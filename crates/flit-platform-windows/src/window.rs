@@ -14,7 +14,7 @@ use windows::core::{w, BOOL, PCWSTR};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows::Win32::Graphics::Gdi::{ScreenToClient, ValidateRect};
-use windows::Win32::System::DataExchange::{AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard, SetClipboardData};
+use windows::Win32::System::DataExchange::{AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, SetClipboardData};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
@@ -183,7 +183,7 @@ impl Window for Win32Window {
 
     fn clipboard_text(&self) -> Option<String> {
         unsafe {
-            OpenClipboard(Some(self.hwnd())).ok()?;
+            crate::clipboard::open(Some(self.hwnd())).ok()?;
             let text = (|| {
                 let h = GetClipboardData(CF_UNICODETEXT.0 as u32).ok()?;
                 let units = GlobalSize(HGLOBAL(h.0)) / 2;
@@ -205,7 +205,7 @@ impl Window for Win32Window {
     fn set_clipboard_text(&self, text: &str) {
         let w = wide(text);
         unsafe {
-            if OpenClipboard(Some(self.hwnd())).is_err() {
+            if crate::clipboard::open(Some(self.hwnd())).is_err() {
                 return;
             }
             let _ = EmptyClipboard();

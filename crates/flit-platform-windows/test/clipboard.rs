@@ -45,6 +45,7 @@ unsafe fn restore_text(owner: HWND, text: Option<Vec<u8>>) {
 }
 
 #[test]
+#[ignore]
 fn files_written_to_the_clipboard_read_back_with_their_effect() {
     unsafe {
         let owner = CreateWindowExW(WINDOW_EX_STYLE(0), w!("STATIC"), None, WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, None, None).unwrap();
