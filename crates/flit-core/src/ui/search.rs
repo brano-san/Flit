@@ -158,6 +158,7 @@ impl App {
             s.active = true;
             s.drag = SDrag::None;
             self.editing = false;
+            self.marquee = None;
             self.effects.push(Effect::Title("Search — Flit".into()));
             if s.gen == 0 {
                 self.search_query(Instant::now());
