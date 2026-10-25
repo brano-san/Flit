@@ -1,0 +1,70 @@
+use super::*;
+use crate::index::Order;
+
+fn sample() -> VolumeIndex {
+    let mut v = VolumeIndex::new("C:", br"C:\", b'\\');
+    v.upsert(&IndexRecord { id: 5, parent: 5, name: b".", size: 0, modified: 0, attrs: attr::DIR });
+    v.upsert(&IndexRecord { id: 10, parent: 5, name: "Документы".as_bytes(), size: 0, modified: 3, attrs: attr::DIR | attr::HIDDEN });
+    v.upsert(&IndexRecord { id: 11, parent: 10, name: b"report.pdf", size: 12345, modified: 7, attrs: attr::READONLY });
+    v.upsert(&IndexRecord { id: 12, parent: 5, name: b"gone.txt", size: 1, modified: 1, attrs: 0 });
+    v.upsert(&IndexRecord { id: 13, parent: 99, name: b"orphan.txt", size: 2, modified: 2, attrs: 0 });
+    v.commit();
+    v.remove(12);
+    v.commit();
+    v
+}
+
+fn rows(v: &VolumeIndex) -> Vec<(String, u64, i64, u32)> {
+    v.perms[Order::Path as usize]
+        .iter()
+        .map(|&i| {
+            let mut p = Vec::new();
+            v.path_into(i, false, &mut Vec::new(), &mut p);
+            (String::from_utf8(p).unwrap(), v.sizes[i as usize], v.modified[i as usize], v.attrs[i as usize] & KEPT_ATTRS)
+        })
+        .collect()
+}
+
+#[test]
+fn snapshots_round_trip_with_their_checkpoint() {
+    let v = sample();
+    let cp = Checkpoint { journal: 0x01D9_0000_1234, next: 987_654 };
+    let mut buf = Vec::new();
+    save(&v, cp, &mut buf);
+    let (back, got) = load(&buf).unwrap();
+    assert_eq!(got, cp);
+    assert_eq!((back.id.as_str(), back.root.as_slice(), back.sep), ("C:", br"C:\".as_slice(), b'\\'));
+    assert_eq!(back.live(), v.live());
+    assert_eq!(rows(&back), rows(&v));
+    assert!(back.lookup(12).is_none());
+    assert!(rows(&back).iter().any(|r| r.0 == r"C:\Документы\report.pdf" && r.1 == 12345));
+    assert_eq!(file_name("C:"), file_name("C:"));
+    assert_ne!(file_name("C:"), file_name("D:"));
+    assert!(file_name(r"D:\some\walk root").ends_with(".idx"));
+}
+
+#[test]
+fn damaged_snapshots_are_refused() {
+    let mut buf = Vec::new();
+    save(&sample(), Checkpoint::default(), &mut buf);
+    let mut flipped = buf.clone();
+    flipped[40] ^= 1;
+    assert!(load(&flipped).err().unwrap().contains("checksum"));
+    assert!(load(&buf[..buf.len() - 1]).is_err());
+    assert!(load(&buf[..10]).is_err());
+    assert!(load(b"").is_err());
+    let mut foreign = buf.clone();
+    foreign[0] = b'X';
+    assert!(load(&foreign).err().unwrap().contains("not a Flit"));
+    let mut lying = Vec::new();
+    lying.extend_from_slice(MAGIC);
+    lying.extend_from_slice(&VERSION.to_le_bytes());
+    lying.extend_from_slice(&[0; 16]);
+    put_bytes(&mut lying, b"C:");
+    put_bytes(&mut lying, br"C:\");
+    lying.push(b'\\');
+    lying.extend_from_slice(&u64::MAX.to_le_bytes());
+    let sum = fnv1a(&lying);
+    lying.extend_from_slice(&sum.to_le_bytes());
+    assert!(load(&lying).err().unwrap().contains("impossible"));
+}

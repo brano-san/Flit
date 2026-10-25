@@ -191,7 +191,7 @@ impl<P: Platform> Worker<P> {
             None => {
                 let shared = SharedIndex::new();
                 let source = P::FallbackIndex::new().map_err(|e| e.message)?;
-                start_indexer(source, shared.clone()).map_err(|e| e.message)?;
+                start_indexer(source, shared.clone(), P::state_dir().map(|d| d.join("search"))).map_err(|e| e.message)?;
                 self.local = Some(shared.clone());
                 shared
             }

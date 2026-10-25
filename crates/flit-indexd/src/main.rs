@@ -13,19 +13,22 @@ type P = flit_platform_linux::Linux;
 
 type S = <P as Platform>::Service;
 
-const USAGE: &str = "usage: flit-indexd [--console] [--walk [ROOT...]] [--query TEXT] [--version]
+const USAGE: &str = "usage: flit-indexd [--console] [--walk [ROOT...]] [--snapshots DIR] [--query TEXT] [--version]
 
   (no options)  run as the Windows service (started by the service control manager)
   --console     run in the foreground and print index progress
   --query TEXT  ask the running service and print the first results
   --walk        index by walking folders (no administrator rights needed) instead of the MFT;
-                without ROOTs every fixed drive is walked";
+                without ROOTs every fixed drive is walked
+  --snapshots DIR  keep index snapshots for fast restarts in DIR
+                (default: %LOCALAPPDATA%\\Flit\\indexd of the account the service runs as)";
 
 #[derive(Default)]
 struct Config {
     console: bool,
     walk: Option<Vec<String>>,
     query: Option<String>,
+    snapshots: Option<std::path::PathBuf>,
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -68,9 +71,10 @@ fn report(shared: Arc<SharedIndex>) {
 fn body() -> Result<(), PlatformError> {
     let cfg = CONFIG.get_or_init(Config::default);
     let shared = SharedIndex::new();
+    let snapshots = cfg.snapshots.clone().or_else(|| P::state_dir().map(|d| d.join("indexd")));
     match &cfg.walk {
-        Some(roots) => start_indexer(walk_source(roots)?, shared.clone())?,
-        None => start_indexer(<P as Platform>::IndexSource::new()?, shared.clone())?,
+        Some(roots) => start_indexer(walk_source(roots)?, shared.clone(), snapshots)?,
+        None => start_indexer(<P as Platform>::IndexSource::new()?, shared.clone(), snapshots)?,
     }
     if cfg.console {
         let s = shared.clone();
@@ -138,6 +142,7 @@ fn main() {
             "--console" => cfg.console = true,
             "--walk" => cfg.walk = Some(Vec::new()),
             "--query" => cfg.query = Some(args.next().unwrap_or_default()),
+            "--snapshots" => cfg.snapshots = args.next().map(Into::into),
             root if !root.starts_with("--") && cfg.walk.is_some() => cfg.walk.as_mut().unwrap().push(root.to_owned()),
             other => {
                 eprintln!("flit-indexd: unknown option {other}\n{USAGE}");

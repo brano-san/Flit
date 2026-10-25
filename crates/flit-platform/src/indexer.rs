@@ -2,6 +2,8 @@ use crate::{IndexSource, PlatformError};
 use flit_search::index::{Checkpoint, IndexRecord, IndexSink, VolumeIndex};
 use flit_search::proto::{VolumeInfo, VolumeState};
 use flit_search::session::SharedIndex;
+use flit_search::snapshot;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -10,6 +12,7 @@ const RETRY: Duration = Duration::from_secs(30);
 const FLUSH_MIN: Duration = Duration::from_millis(250);
 const FLUSH_COST_FACTOR: u32 = 4;
 const CHECK_EVERY: usize = 4096;
+const SAVE_EVERY: Duration = Duration::from_secs(300);
 
 pub fn root_of(id: &str) -> (Vec<u8>, u8) {
     let b = id.as_bytes();
@@ -38,11 +41,12 @@ struct Feed<'a> {
     names: Vec<u8>,
     next: Instant,
     progress: f32,
+    dirty: bool,
 }
 
 impl<'a> Feed<'a> {
     fn new(shared: &'a SharedIndex, info: VolumeInfo, private: Option<VolumeIndex>) -> Self {
-        Self { shared, info, private, ops: Vec::new(), names: Vec::new(), next: Instant::now(), progress: 0.0 }
+        Self { shared, info, private, ops: Vec::new(), names: Vec::new(), next: Instant::now(), progress: 0.0, dirty: false }
     }
 
     fn flush(&mut self, state: VolumeState) {
@@ -57,12 +61,10 @@ impl<'a> Feed<'a> {
                     }
                 }
                 let changed = v.commit();
+                self.dirty |= changed;
                 self.info.files = v.live() as u64;
                 e.version += changed as u64;
             }
-        }
-        if let Some(v) = &self.private {
-            self.info.files = v.live() as u64;
         }
         self.ops.clear();
         self.names.clear();
@@ -104,17 +106,17 @@ impl IndexSink for Feed<'_> {
     }
 }
 
-pub fn start_indexer<S: IndexSource + 'static>(source: S, shared: Arc<SharedIndex>) -> Result<(), PlatformError> {
+pub fn start_indexer<S: IndexSource + 'static>(source: S, shared: Arc<SharedIndex>, snapshots: Option<PathBuf>) -> Result<(), PlatformError> {
     std::thread::Builder::new()
         .name("flit-indexer".into())
-        .spawn(move || run(source, shared))
+        .spawn(move || run(source, shared, snapshots))
         .map(drop)
         .map_err(|e| PlatformError::new(-1, format!("cannot start the indexer: {e}")))
 }
 
 fn scan<S: IndexSource>(source: &mut S, shared: &SharedIndex, info: &VolumeInfo) -> Option<Checkpoint> {
-    let filled = shared.read().volumes.iter().any(|v| v.id == info.id && !v.is_empty());
-    let mut feed = Feed::new(shared, info.clone(), filled.then(|| empty_volume(&info.id)));
+    let live = shared.read().volumes.iter().find(|v| v.id == info.id && !v.is_empty()).map(|v| v.live() as u64);
+    let mut feed = Feed::new(shared, VolumeInfo { files: live.unwrap_or(0), ..info.clone() }, live.map(|_| empty_volume(&info.id)));
     feed.flush(VolumeState::Scanning { progress: 0.0 });
     match source.scan(&info.id, &mut feed) {
         Ok(cp) => {
@@ -138,7 +140,27 @@ fn scan<S: IndexSource>(source: &mut S, shared: &SharedIndex, info: &VolumeInfo)
     }
 }
 
-fn run<S: IndexSource>(mut source: S, owner: Arc<SharedIndex>) {
+fn load_snapshot(dir: &Path, id: &str) -> Option<(VolumeIndex, Checkpoint)> {
+    let bytes = std::fs::read(dir.join(snapshot::file_name(id))).ok()?;
+    let (v, cp) = snapshot::load(&bytes).ok()?;
+    (v.id == id && (v.root.clone(), v.sep) == root_of(id)).then_some((v, cp))
+}
+
+fn save_snapshot(dir: &Path, shared: &SharedIndex, id: &str, cp: Checkpoint) -> std::io::Result<()> {
+    let mut buf = Vec::new();
+    {
+        let e = shared.read();
+        let Some(v) = e.volumes.iter().find(|v| v.id == id) else { return Ok(()) };
+        snapshot::save(v, cp, &mut buf);
+    }
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join(snapshot::file_name(id));
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, &buf)?;
+    std::fs::rename(&tmp, &path)
+}
+
+fn run<S: IndexSource>(mut source: S, owner: Arc<SharedIndex>, snapshots: Option<PathBuf>) {
     let shared = &*owner;
     let volumes = match source.volumes() {
         Ok(v) => v,
@@ -158,14 +180,34 @@ fn run<S: IndexSource>(mut source: S, owner: Arc<SharedIndex>) {
     }
     let mut points: Vec<Option<Checkpoint>> = vec![None; volumes.len()];
     let mut retry_at = vec![Instant::now(); volumes.len()];
+    let mut dirty = vec![false; volumes.len()];
+    let mut saved_at = vec![Instant::now(); volumes.len()];
+    if let Some(dir) = &snapshots {
+        for (k, info) in volumes.iter().enumerate() {
+            let Some((v, cp)) = load_snapshot(dir, &info.id) else { continue };
+            let files = v.live() as u64;
+            {
+                let mut e = shared.write();
+                if let Some(slot) = e.volume_mut(&info.id) {
+                    *slot = v;
+                }
+                e.version += 1;
+            }
+            shared.set_volume(VolumeInfo { files, state: VolumeState::Ready, ..info.clone() });
+            points[k] = Some(cp);
+        }
+    }
     while Arc::strong_count(&owner) > 1 {
         for (k, info) in volumes.iter().enumerate() {
+            let mut fresh = false;
             match points[k] {
                 None if Instant::now() >= retry_at[k] => {
                     points[k] = scan(&mut source, shared, info);
                     if points[k].is_none() {
                         retry_at[k] = Instant::now() + RETRY;
                     }
+                    fresh = points[k].is_some();
+                    dirty[k] |= fresh;
                 }
                 None => {}
                 Some(cp) => {
@@ -175,6 +217,7 @@ fn run<S: IndexSource>(mut source: S, owner: Arc<SharedIndex>) {
                         Ok(next) => {
                             points[k] = next;
                             feed.flush(VolumeState::Ready);
+                            dirty[k] |= feed.dirty;
                         }
                         Err(e) => {
                             points[k] = None;
@@ -182,6 +225,12 @@ fn run<S: IndexSource>(mut source: S, owner: Arc<SharedIndex>) {
                             feed.flush(VolumeState::Error(e.message));
                         }
                     }
+                }
+            }
+            if let (Some(dir), Some(cp)) = (&snapshots, points[k]) {
+                if dirty[k] && (fresh || saved_at[k].elapsed() >= SAVE_EVERY) {
+                    dirty[k] = save_snapshot(dir, shared, &info.id, cp).is_err();
+                    saved_at[k] = Instant::now();
                 }
             }
         }

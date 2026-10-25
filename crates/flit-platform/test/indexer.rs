@@ -61,7 +61,7 @@ fn wait_until(what: &str, mut f: impl FnMut() -> bool) {
 
 fn names(shared: &SharedIndex) -> Vec<String> {
     let e = shared.read();
-    let v = &e.volumes[0];
+    let Some(v) = e.volumes.first() else { return Vec::new() };
     let mut out: Vec<String> = (0..v.len() as u32).filter(|&i| v.listed(i)).map(|i| String::from_utf8_lossy(v.name(i)).into_owned()).collect();
     out.sort();
     out
@@ -72,7 +72,7 @@ fn scans_applies_changes_and_rescans() {
     let script = Script::default();
     script.changes.lock().unwrap().extend([Ok(None), Ok(Some(vec![(100, ""), (500, "added.txt")]))]);
     let shared = SharedIndex::new();
-    start_indexer(Fake(script.clone()), shared.clone()).unwrap();
+    start_indexer(Fake(script.clone()), shared.clone(), None).unwrap();
     wait_until("the first scan", || shared.status().1.first().is_some_and(|v| v.state == VolumeState::Ready));
     assert_eq!(shared.status().1[0].files, 10);
     wait_until("the change batch", || names(&shared).contains(&"added.txt".to_string()));
@@ -82,6 +82,39 @@ fn scans_applies_changes_and_rescans() {
     assert_eq!(shared.read().volumes.len(), 1);
     script.changes.lock().unwrap().push(Err("volume went away".into()));
     wait_until("the error state", || matches!(&shared.status().1[0].state, VolumeState::Error(m) if m == "volume went away"));
+}
+
+#[test]
+fn snapshots_let_a_restart_resume_without_scanning() {
+    let dir = std::env::temp_dir().join(format!("flit-snapshots-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let file = dir.join(snapshot::file_name("T:"));
+    let first = Script::default();
+    let shared = SharedIndex::new();
+    start_indexer(Fake(first.clone()), shared.clone(), Some(dir.clone())).unwrap();
+    wait_until("the snapshot after the first scan", || file.exists());
+    let (_, cp) = snapshot::load(&std::fs::read(&file).unwrap()).unwrap();
+    assert_eq!(cp, Checkpoint { journal: 1, next: 0 });
+    drop(shared);
+    std::thread::sleep(POLL * 3);
+    let second = Script::default();
+    second.changes.lock().unwrap().push(Ok(Some(vec![(500, "after-restart.txt")])));
+    let shared = SharedIndex::new();
+    start_indexer(Fake(second.clone()), shared.clone(), Some(dir.clone())).unwrap();
+    wait_until("the resumed change", || names(&shared).contains(&"after-restart.txt".to_string()));
+    assert_eq!(*second.scans.lock().unwrap(), 0, "the snapshot replaces the scan");
+    assert!(names(&shared).contains(&"scan1-9.txt".to_string()));
+    assert_eq!(shared.status().1[0].state, VolumeState::Ready);
+    drop(shared);
+    std::thread::sleep(POLL * 3);
+    std::fs::write(&file, b"garbage").unwrap();
+    let third = Script::default();
+    let shared = SharedIndex::new();
+    start_indexer(Fake(third.clone()), shared.clone(), Some(dir.clone())).unwrap();
+    wait_until("a scan instead of the damaged snapshot", || *third.scans.lock().unwrap() == 1 && shared.status().1[0].state == VolumeState::Ready);
+    drop(shared);
+    std::thread::sleep(POLL * 3);
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
