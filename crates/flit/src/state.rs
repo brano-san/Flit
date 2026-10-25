@@ -1,3 +1,4 @@
+use flit_core::archive::Defaults;
 use flit_core::sort::SortField;
 use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavState, Persisted, Sizes, ViewPrefs};
 use flit_core::Location;
@@ -100,7 +101,8 @@ impl Saved {
         let Ok((nav, tail)) = postcard::take_from_bytes::<NavState>(tail) else { return Some(saved) };
         saved.nav = nav;
         let Ok((mut r, tail)) = postcard::take_from_bytes::<ViewRecord>(tail) else { return Some(saved) };
-        if let Ok(l) = postcard::from_bytes::<LayoutRecord>(tail) {
+        let (layouts, tail) = postcard::take_from_bytes::<LayoutRecord>(tail).map_or((None, &[][..]), |(l, t)| (Some(l), t));
+        if let Some(l) = layouts {
             (r.view, r.prefs.defaults) = (with_look(r.view, l.view), with_look(r.prefs.defaults, l.defaults));
             (r.prefs.thumbnails, r.prefs.thumb_cache_mb) = (l.thumbnails, l.thumb_cache_mb);
             if l.folders.len() == r.folders.len() {
@@ -109,6 +111,9 @@ impl Saved {
         }
         let p = &mut saved.persisted;
         (p.view, p.prefs, p.folders) = (r.view, r.prefs, FolderViews::from_entries(r.folders));
+        if let Ok((archive, _)) = postcard::take_from_bytes::<Defaults>(tail) {
+            p.archive = archive.sanitized();
+        }
         Some(saved)
     }
 
@@ -128,6 +133,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&self.nav).ok()?);
         bytes.extend(postcard::to_stdvec(&views).ok()?);
         bytes.extend(postcard::to_stdvec(&layouts).ok()?);
+        bytes.extend(postcard::to_stdvec(&p.archive.clone().sanitized()).ok()?);
         Some(bytes)
     }
 

@@ -7,9 +7,12 @@ use crate::theme::Theme;
 #[derive(Default, Debug)]
 pub(super) struct Field {
     pub edit: LineEdit,
+    pub secret: bool,
     scroll: f32,
     click: Option<f32>,
 }
+
+const MASK: char = '\u{2022}';
 
 pub(super) enum FieldKey {
     Ignored,
@@ -53,11 +56,16 @@ impl Field {
         let line_h = (m.ascent + m.descent + 4.0 * scale).min(inner.h);
         let line_y = (inner.y + (inner.h - line_h) / 2.0).round();
         g.dl.set_clip(Some(inner));
+        let shown: String = if self.secret { self.edit.text.chars().map(|_| MASK).collect() } else { self.edit.text.clone() };
         if let Some(x) = self.click.take() {
-            let pos = g.hit(&self.edit.text, font, x - inner.x + self.scroll);
+            let pos = g.hit(&shown, font, x - inner.x + self.scroll);
+            let text = &self.edit.text;
+            let pos = if self.secret { text.char_indices().nth(pos / MASK.len_utf8()).map_or(text.len(), |(i, _)| i) } else { pos };
             self.edit.move_to(pos, false);
         }
-        let caret_x = g.caret_x(&self.edit.text, font, self.edit.caret);
+        let text = &self.edit.text;
+        let to_shown = |b: usize| if self.secret { text[..b].chars().count() * MASK.len_utf8() } else { b };
+        let caret_x = g.caret_x(&shown, font, to_shown(self.edit.caret));
         if caret_x - self.scroll > inner.w {
             self.scroll = caret_x - inner.w;
         } else if caret_x < self.scroll {
@@ -69,11 +77,11 @@ impl Field {
         } else {
             let sel = self.edit.selection();
             if focused && !sel.is_empty() {
-                let a = g.caret_x(&self.edit.text, font, sel.start);
-                let b = g.caret_x(&self.edit.text, font, sel.end);
+                let a = g.caret_x(&shown, font, to_shown(sel.start));
+                let b = g.caret_x(&shown, font, to_shown(sel.end));
                 g.dl.rect(Rect::new(x0 + a, line_y, b - a, line_h), t.text_selection);
             }
-            g.text(x0, baseline, &self.edit.text, font, t.text, f32::INFINITY);
+            g.text(x0, baseline, &shown, font, t.text, f32::INFINITY);
         }
         if focused {
             g.dl.rect(Rect::new(x0 + caret_x, line_y, scale.round().max(1.0), line_h), t.text);

@@ -14,6 +14,8 @@ use flit_platform::{Job, OpOutcome, PlatformError};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct Env<'a> {
     pub utc_offset: i32,
@@ -129,6 +131,7 @@ pub fn file_op(op: &FileOp, job: &Job, env: &Env<'_>) -> Option<OpOutcome> {
     match op {
         FileOp::Archive(ArchiveOp::Compress { items, archive, options }) => Some(done(compress::compress(items, archive, options, job, env))),
         FileOp::Archive(ArchiveOp::Extract { archives, dest, place }) => Some(done(extract::archives(archives, dest.as_ref(), *place, job, env))),
+        FileOp::Archive(ArchiveOp::Open { item }) => Some(done(open(item, job, env))),
         FileOp::Copy { items, dest } => {
             if let Some((archive, inner)) = locate(dest) {
                 return Some(done(compress::add(items, &archive, &inner, job, env)));
@@ -139,6 +142,15 @@ pub fn file_op(op: &FileOp, job: &Job, env: &Env<'_>) -> Option<OpOutcome> {
         }
         op => paths_of(op).iter().any(inside).then(|| OpOutcome { items: Vec::new(), error: Some(PlatformError::new(-1, archive::INSIDE)) }),
     }
+}
+
+fn open(item: &FsPath, job: &Job, env: &Env<'_>) -> extract::Outcome {
+    static OPENED: AtomicU64 = AtomicU64::new(0);
+    let Some((archive, _)) = locate(item).filter(|(_, inner)| !inner.is_empty()) else { return Err((Vec::new(), PlatformError::new(2, "The item is not inside an archive"))) };
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis());
+    let dir = std::env::temp_dir().join("Flit").join(format!("{}-{stamp}-{}", std::process::id(), OPENED.fetch_add(1, Ordering::Relaxed)));
+    let dest = FsPath::parse(&dir.to_string_lossy()).ok_or_else(|| (Vec::new(), PlatformError::new(-1, "The temporary folder cannot be used")))?;
+    extract::entries(&archive, std::slice::from_ref(item), &dest, job, env)
 }
 
 pub fn forget(archive: &FsPath) {

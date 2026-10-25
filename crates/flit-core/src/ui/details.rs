@@ -582,6 +582,7 @@ impl App {
     }
 
     pub(super) fn on_loaded(&mut self, k: usize) {
+        self.archive_loaded(k);
         self.tabs[k].fit_pending |= self.prefs.auto_fit;
         if self.prefs.auto_sizes && k == self.cur {
             self.compute_dir_sizes();

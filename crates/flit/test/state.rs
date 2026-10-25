@@ -104,3 +104,22 @@ fn corrupted_nav_state_falls_back() {
     bytes.extend([0xFF, 0xFF, 0xFF]);
     assert_eq!(Saved::decode(&bytes).unwrap().nav, NavState::default());
 }
+
+#[test]
+fn archive_defaults_ride_last_and_never_keep_a_password() {
+    use flit_core::archive::{Compression, Defaults, Format, Secret};
+    use flit_core::digest::HashKind;
+    let mut persisted = Persisted::default();
+    let compression = Compression { format: Format::SevenZ, level: 9, threads: 4, password: Some(Secret("x".into())), ..Default::default() };
+    persisted.archive = Defaults { compression, history: vec![r"C:\out".into()], open_after: true, hashes: vec![HashKind::Sha512] };
+    let s = Saved::new(persisted, None);
+    let bytes = s.encode().unwrap();
+    let back = Saved::decode(&bytes).unwrap();
+    let want = Defaults { compression: Compression { password: None, ..s.persisted.archive.compression.clone() }, ..s.persisted.archive.clone() };
+    assert_eq!(back.persisted.archive, want);
+    assert_eq!(back.persisted.prefs, s.persisted.prefs);
+    let stored = postcard::to_stdvec(&want).unwrap();
+    assert!(bytes.ends_with(&stored));
+    let without = &bytes[..bytes.len() - stored.len()];
+    assert_eq!(Saved::decode(without).unwrap().persisted.archive, Defaults::default());
+}

@@ -1,3 +1,4 @@
+use crate::archive::ArchiveOp;
 use crate::provider::{FileOp, OpReport};
 
 const DEPTH: usize = 100;
@@ -24,6 +25,7 @@ pub fn inverse(report: &OpReport) -> Option<Step> {
     }
     let created = || FileOp::Trash(items.iter().map(|(_, to)| to.clone()).collect());
     Some(Step::Run(match &report.op {
+        FileOp::Archive(ArchiveOp::Open { .. }) => return None,
         FileOp::Copy { .. } | FileOp::Link { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::Restore(_) | FileOp::Archive(_) => created(),
         FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Flatten(_) => FileOp::MoveTo(items.iter().map(|(from, to)| (to.clone(), from.clone())).collect()),
         FileOp::Rename { .. } => {

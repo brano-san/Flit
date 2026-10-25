@@ -1,3 +1,4 @@
+use crate::digest::HashKind;
 use crate::listing::Meta;
 use crate::path::{FsPath, PathKind};
 use crate::provider::Conflict;
@@ -201,6 +202,7 @@ pub enum Place {
 pub enum ArchiveOp {
     Compress { items: Vec<FsPath>, archive: FsPath, options: Compression },
     Extract { archives: Vec<FsPath>, dest: Option<FsPath>, place: Place },
+    Open { item: FsPath },
 }
 
 impl ArchiveOp {
@@ -212,7 +214,42 @@ impl ArchiveOp {
                 Some(d) => Some(f(d)?),
                 None => None,
             }, place: *place },
+            ArchiveOp::Open { item } => ArchiveOp::Open { item: f(item)? },
         })
+    }
+}
+
+pub const HISTORY: usize = 10;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Defaults {
+    pub compression: Compression,
+    pub history: Vec<String>,
+    pub open_after: bool,
+    pub hashes: Vec<HashKind>,
+}
+
+impl Default for Defaults {
+    fn default() -> Self {
+        let compression = Compression { level: Format::Zip.default_level(), ..Default::default() };
+        Self { compression, history: Vec::new(), open_after: false, hashes: HashKind::ALL[..4].to_vec() }
+    }
+}
+
+impl Defaults {
+    pub fn sanitized(mut self) -> Self {
+        let c = &mut self.compression;
+        if !Format::WRITABLE.contains(&c.format) {
+            c.format = Format::Zip;
+        }
+        c.level = c.level.min(c.format.max_level());
+        c.password = None;
+        self.history.truncate(HISTORY);
+        self.hashes.dedup();
+        if self.hashes.is_empty() {
+            self.hashes = Defaults::default().hashes;
+        }
+        self
     }
 }
 

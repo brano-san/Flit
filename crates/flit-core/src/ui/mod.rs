@@ -8,6 +8,7 @@ mod tab;
 pub mod actions;
 mod field;
 mod filter;
+mod form;
 mod flow;
 mod jobs;
 mod layouts;
@@ -204,11 +205,12 @@ pub struct Persisted {
     pub view: FolderView,
     pub prefs: ViewPrefs,
     pub folders: FolderViews,
+    pub archive: crate::archive::Defaults,
 }
 
 impl Default for Persisted {
     fn default() -> Self {
-        Self { path: Location::computer(), show_hidden: false, view: FolderView::default(), prefs: ViewPrefs::default(), folders: FolderViews::default() }
+        Self { path: Location::computer(), show_hidden: false, view: FolderView::default(), prefs: ViewPrefs::default(), folders: FolderViews::default(), archive: Default::default() }
     }
 }
 
@@ -267,6 +269,7 @@ enum Hit {
     Dialog,
     DialogButton(usize),
     DialogCheck,
+    Form(usize),
     Modal,
 }
 
@@ -362,6 +365,7 @@ pub struct App {
     search: search::SearchView,
     jobs: jobs::Jobs,
     details: details::Details,
+    archive: archive::ArchiveUi,
 }
 
 impl App {
@@ -416,6 +420,7 @@ impl App {
             search: Default::default(),
             jobs: Default::default(),
             details: Default::default(),
+            archive: archive::ArchiveUi::new(state.archive),
         };
         let mut start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
         let total = start.len();
@@ -443,7 +448,7 @@ impl App {
 
     pub fn persisted(&self) -> Persisted {
         let t = self.tab();
-        Persisted { path: t.location().clone(), show_hidden: t.view_spec.show_hidden, view: t.folder_view(), prefs: self.prefs.clone(), folders: self.folders.clone() }
+        Persisted { path: t.location().clone(), show_hidden: t.view_spec.show_hidden, view: t.folder_view(), prefs: self.prefs.clone(), folders: self.folders.clone(), archive: self.archive.prefs.clone() }
     }
 
     pub fn tab(&self) -> &Tab {
@@ -665,6 +670,10 @@ impl App {
         }
         let e = t.view.as_ref().unwrap().listing().entries[i as usize];
         let loc = t.entry_location(i);
+        if !e.is_dir() && self.open_archived(&loc, now) {
+            return;
+        }
+        let t = self.tab();
         if e.is_dir() {
             self.navigate(loc, now);
         } else {
@@ -801,7 +810,7 @@ impl App {
     }
 
     pub fn on_paste(&mut self, text: &str) {
-        if self.jobs.modal() {
+        if self.form_insert(text) || self.jobs.modal() {
             return;
         }
         if self.search.active {
@@ -1122,7 +1131,7 @@ impl App {
 
     fn mouse_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8, now: Instant) {
         self.dirty = true;
-        if self.jobs_mouse_down(self.hit(x, y)) || self.autoscroll_down(self.hit(x, y), self.along_of(x, y), button) || self.ops_mouse_down(x, y, button, clicks) {
+        if self.form_down(x, y, clicks) || self.jobs_mouse_down(self.hit(x, y)) || self.autoscroll_down(self.hit(x, y), self.along_of(x, y), button) || self.ops_mouse_down(x, y, button, clicks) {
             return;
         }
         let h = self.hit(x, y);
@@ -1234,7 +1243,7 @@ impl App {
             Hit::Header(c) => self.sort_column(self.layout.columns[c].field()),
             Hit::Group(g) => self.toggle_group(g),
             Hit::Pane(i, Some(row)) => self.open_pane_row(i, row, now),
-            Hit::Sizes => self.compute_dir_sizes(),
+            Hit::Sizes => self.sizes_button(),
             Hit::Bin(k) => self.bin_button(k),
             Hit::Side(i) => self.open_side_item(i, self.mods.ctrl, now),
             Hit::SidePin(i) => self.toggle_pin_item(i),
@@ -1337,7 +1346,7 @@ impl App {
             return;
         }
         self.dirty = true;
-        if self.jobs.modal() || self.ops_char(c) {
+        if self.form_insert(c.encode_utf8(&mut [0; 4])) || self.jobs.modal() || self.ops_char(c) {
             return;
         }
         if self.editing {
@@ -1812,6 +1821,11 @@ impl App {
                     format::size(&mut s, size);
                 }
             }
+            if let Some(total) = self.unpacked_total() {
+                s.push_str("    ");
+                format::size(&mut s, total);
+                s.push_str(" unpacked");
+            }
             if !v.snap().done {
                 s.push_str("    Loading…");
             }
@@ -1825,7 +1839,9 @@ impl App {
             let _ = write!(right, "{:.1} ms first · {:.1} ms all", first.as_secs_f64() * 1e3, done.as_secs_f64() * 1e3);
         }
         let in_bin = tab.view_loc.is_recycle_bin();
-        let labels: &[&str] = if in_bin { &BIN_BUTTONS } else { &["Folder sizes"] };
+        let sizes = self.sizes_label();
+        let sizes = [sizes.as_str()];
+        let labels: &[&str] = if in_bin { &BIN_BUTTONS } else if sizes[0].is_empty() { &[] } else { &sizes };
         let mut buttons = [Rect::default(); 3];
         let mut x = r.right() - pad;
         for (k, label) in labels.iter().enumerate().rev() {
