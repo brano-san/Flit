@@ -514,3 +514,40 @@ fn bench_recycle_bin_listing() {
         measure(&format!("recycle bin list {n} items"), RUNS, |_| (), |_| assert_eq!(crate::recycle::count(&roots), n));
     }
 }
+
+#[test]
+#[ignore]
+fn bench_tags() {
+    use flit_core::hash::FxHashMap;
+    use flit_core::tags::{FileKey, TagStore, Tags};
+    let d = Dir::temp("tags");
+    let n = 100_000;
+    for i in 0..n {
+        std::fs::write(d.0.join(format!("f{i:06}.txt")), b"").unwrap();
+    }
+    let tagged: Vec<FsPath> = (0..n).step_by(10).map(|i| d.path(&format!("f{i:06}.txt"))).collect();
+    let t = Instant::now();
+    let keys: Vec<FileKey> = tagged.iter().map(|p| crate::tags::file_key(p).expect("the temp folder is on NTFS")).collect();
+    report(&format!("file_key for {} files", keys.len()), vec![t.elapsed()]);
+    let mut store = TagStore::default();
+    for (k, p) in keys.iter().zip(&tagged) {
+        store.update(*k, p.clone(), |_| 1);
+    }
+    let tags = Arc::new(Tags::new(1, &store, &FxHashMap::default()));
+    let probe: Vec<FileKey> = (0..n as u64).map(|i| FileKey { volume: keys[0].volume, id: keys[(i % keys.len() as u64) as usize].id ^ (i & 1) }).collect();
+    measure("Tags::mask for 100k entries", RUNS, |_| (), |_| assert!(probe.iter().map(|k| tags.mask(*k)).filter(|&m| m != 0).count() >= keys.len()));
+    let dir = d.path("");
+    let listed = |tags: Option<Arc<Tags>>| {
+        let mut go = |_: &ListingBuilder<'_>| true;
+        let b = ListingBuilder::new(CaseMode::Insensitive, &mut go);
+        let mut b = match tags {
+            Some(t) => b.with_tags(t),
+            None => b,
+        };
+        NtFs.read_dir(&dir, &mut b).unwrap();
+        b.listing.entries.iter().filter(|e| e.tags != 0).count()
+    };
+    measure("read_dir 100k files without tags", RUNS, |_| (), |_| assert_eq!(listed(None), 0));
+    measure("read_dir 100k files, 10k tagged", RUNS, |_| (), |_| assert_eq!(listed(Some(tags.clone())), keys.len()));
+    measure(&format!("resolve {} FRNs to paths", keys.len()), 5, |_| (), |_| assert!(crate::tags::resolve_files(&keys).iter().all(|r| matches!(r, flit_platform::Resolved::Found(..)))));
+}

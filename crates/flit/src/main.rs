@@ -5,6 +5,7 @@ mod metrics;
 mod places;
 mod search_client;
 mod state;
+mod tags;
 
 use flit_core::name;
 use flit_core::open::parse_args;
@@ -85,6 +86,12 @@ fn main() {
     let headless = metrics.is_some();
     if let Some(e) = standalone {
         tracing::warn!("running without single-instance forwarding: {e}");
+    }
+    if open.tag.is_some() {
+        if let Err(e) = tags::run_command::<P>(&open) {
+            <P as Platform>::fatal_error(&format!("Flit could not tag the files: {e}"));
+        }
+        return;
     }
     if let Err(e) = app::run::<P>(open, instance, metrics, started) {
         tracing::error!("{e}");

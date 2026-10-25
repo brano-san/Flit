@@ -297,7 +297,7 @@ fn cancelled_list_publishes_nothing() {
     let slot = SnapshotSlot::default();
     let cancel = GenToken::default();
     cancel.set(2);
-    list(&fs(), 1, &p(r"C:\r"), ViewSpec::default(), CaseMode::Insensitive, &slot, &cancel, &(Arc::new(|| {}) as Wake));
+    list(&fs(), 1, &p(r"C:\r"), ViewSpec::default(), CaseMode::Insensitive, Arc::default(), &slot, &cancel, &(Arc::new(|| {}) as Wake));
     assert!(slot.take().is_none());
 }
 

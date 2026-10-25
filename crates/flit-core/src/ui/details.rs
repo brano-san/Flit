@@ -66,11 +66,11 @@ impl Default for Columns {
 
 impl Columns {
     pub fn shown(&self, c: Column) -> bool {
-        c == Column::Name || self.hidden & (1 << c as u8) == 0
+        c == Column::Name || ((self.hidden >> c as u8) & 1 == 1) == (c == Column::Tag)
     }
 
     pub fn width(&self, c: Column) -> f32 {
-        self.widths[c as usize]
+        self.widths[c.slot()]
     }
 
     pub fn sanitized(mut self) -> Self {
@@ -80,7 +80,7 @@ impl Columns {
                 *w = dw;
             }
         }
-        self.hidden &= 0x7E;
+        self.hidden &= 0xFE;
         self
     }
 }
@@ -246,7 +246,12 @@ impl Column {
             Column::Size => "view.column.size",
             Column::Origin => "view.column.origin",
             Column::Deleted => "view.column.deleted",
+            Column::Tag => "view.column.tag",
         }
+    }
+
+    pub(super) fn slot(self) -> usize {
+        if self == Column::Tag { Column::Deleted as usize } else { self as usize }
     }
 }
 
@@ -381,7 +386,7 @@ impl App {
     }
 
     pub(super) fn set_column_width(&mut self, c: Column, w: f32) {
-        self.change_view(|t| t.columns.widths[c as usize] = w.clamp(MIN_COL_W, MAX_COL_W).round());
+        self.change_view(|t| t.columns.widths[c.slot()] = w.clamp(MIN_COL_W, MAX_COL_W).round());
     }
 
     pub(super) fn request_fit(&mut self) {
@@ -437,7 +442,7 @@ impl App {
                     w = w.max(g.measure(self.cell_text(arena, v.listing(), v.rows()[r], c), font));
                 }
             }
-            widths[c as usize] = ((w + 2.0 * pad) / self.scale).clamp(MIN_COL_W, MAX_COL_W).ceil();
+            widths[c.slot()] = ((w + 2.0 * pad) / self.scale).clamp(MIN_COL_W, MAX_COL_W).ceil();
         }
         self.change_view(|t| t.columns.widths = widths);
     }
@@ -489,6 +494,7 @@ impl App {
             Column::Modified | Column::Deleted => format::datetime(&mut s, e.modified, self.utc_offset_min),
             Column::Created => format::datetime(&mut s, e.created, self.utc_offset_min),
             Column::Origin => s.push_str(&name::display(recycle::origin(l, i))),
+            Column::Tag => self.tag_text(&mut s, e.tags),
             Column::Type => return self.type_text(arena, l, i),
             Column::Size => {
                 if !e.is_dir() || e.attrs & (attr::SIZE_KNOWN | attr::VOLUME) != 0 {
@@ -518,6 +524,7 @@ impl App {
                 [] => s.push_str("Unknown location"),
                 o => s.push_str(&name::display(o)),
             },
+            GroupField::Tag => s.push_str(self.tag_defs().get(sort::first_tag(e.tags) as usize).map_or("No tags", |t| t.name.as_str())),
         }
         s.into_bump_str()
     }
@@ -530,6 +537,7 @@ impl App {
             GroupField::Size => G_PACKAGE,
             GroupField::Modified | GroupField::Created => G_CALENDAR,
             GroupField::Origin | GroupField::None => G_FOLDER,
+            GroupField::Tag => super::tags::G_TAG,
         }
     }
 
@@ -541,7 +549,8 @@ impl App {
         }
         let x0 = l.cols.first().map_or(list.x, |c| c.x) + self.s(10.0);
         centered(g, Rect::new(x0, y, self.s(16.0), rh), if gr.collapsed { G_CHEVRON } else { G_SORT_DOWN }, self.icon_font(8.0), th.text_dim);
-        centered(g, Rect::new(x0 + self.s(20.0), y, self.s(16.0), rh), Self::group_glyph(v, &gr), self.icon_font(12.0), th.accent.alpha(0xB0));
+        let glyph_color = self.group_color(v, &gr).unwrap_or(th.accent.alpha(0xB0));
+        centered(g, Rect::new(x0 + self.s(20.0), y, self.s(16.0), rh), Self::group_glyph(v, &gr), self.icon_font(12.0), glyph_color);
         let bold = FontStyle::new(FontFamily::Ui, 13.0 * self.scale, true);
         let m = g.metrics(bold);
         let baseline = (y + (rh + m.ascent - m.descent) / 2.0).round();

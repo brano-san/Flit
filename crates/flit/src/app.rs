@@ -2,11 +2,13 @@ use crate::metrics::{Metrics, Step};
 use crate::places::PlacesWorker;
 use crate::search_client::SearchClient;
 use crate::state::{self, Saved};
+use crate::tags::{self, TagWorker};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use flit_core::input::Event;
 use flit_core::listing::DirSnapshot;
 use flit_core::open::{self, Open, OpenTarget, Route};
 use flit_core::sort::{self, ViewSpec};
+use flit_core::tags::TagRequest;
 use flit_core::text::Gfx;
 use flit_core::ui::{App, DragEvent, Effect, IconRequest, IconResult, Persisted, WindowCmd};
 use flit_core::{Location, ProviderEvent, ProviderId, ProviderRequest, TabId};
@@ -147,6 +149,7 @@ struct Handler<P: Platform> {
     device_gen: u64,
     search: SearchClient,
     places: PlacesWorker,
+    tags: TagWorker,
 }
 
 impl<P: Platform> Handler<P> {
@@ -176,6 +179,7 @@ impl<P: Platform> Handler<P> {
         }
         app.set_nav_state(self.saved.nav.clone());
         app.set_places(self.places.current());
+        app.set_tags(self.tags.current());
         let fx: Vec<Effect> = app.drain_effects().collect();
         for e in fx {
             if let Effect::Provider { provider, req } = e {
@@ -258,6 +262,7 @@ impl<P: Platform> Handler<P> {
                 }
                 Effect::RefreshPlaces => self.places.refresh(),
                 Effect::Timer(d) => window.set_timer(d.as_millis().clamp(1, u32::MAX as u128) as u32),
+                Effect::Tags(req) => self.tags.submit(Some(id), req),
             }
         }
         if self.windows.get(&id).is_some_and(|st| st.app.has_effects()) {
@@ -307,7 +312,16 @@ impl<P: Platform> Handler<P> {
                 }
             }
         }
-        self.queued_opens.extend(self.opens.try_iter());
+        self.take_opens();
+        while let Ok((window, ev)) = self.tags.events.try_recv() {
+            let wanted = |id: &WindowId| window.is_none_or(|w| w == *id);
+            for (_, st) in self.windows.iter_mut().filter(|(id, _)| wanted(id)) {
+                st.app.on_tags(ev.clone(), now);
+            }
+            for app in self.pending.iter_mut().filter(|_| window.is_none()) {
+                app.on_tags(ev.clone(), now);
+            }
+        }
         while let Ok((window, ev)) = self.search.events.try_recv() {
             if let Some(st) = self.windows.get_mut(&window) {
                 st.app.on_search_event(ev, now);
@@ -316,6 +330,15 @@ impl<P: Platform> Handler<P> {
         if let Some(places) = self.places.poll() {
             for st in self.windows.values_mut() {
                 st.app.set_places(places.clone());
+            }
+        }
+    }
+
+    fn take_opens(&mut self) {
+        for o in self.opens.try_iter() {
+            match &o.tag {
+                Some(name) => self.tags.submit(self.active, TagRequest::Command { name: name.clone(), items: tags::command_items::<P>(&o) }),
+                None => self.queued_opens.push(o),
             }
         }
     }
@@ -535,7 +558,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         }
         if self.windows.is_empty() {
             let tx = self.sink.lock().unwrap_or_else(|e| e.into_inner()).take();
-            self.queued_opens.extend(self.opens.try_iter());
+            self.take_opens();
             if self.queued_opens.is_empty() {
                 state::save::<P>(&self.saved);
                 self.local.wait_idle(OPS_GRACE);
@@ -570,7 +593,8 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         i.listen(sink.clone(), wake.clone());
     }
     let (shell, sorter, done) = start_workers::<P>(wake.clone())?;
-    let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes())?;
+    let tags = TagWorker::start::<P>(local.tags().clone(), wake.clone())?;
+    let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes(), local.tags().clone())?;
     let (routes, errors) = if open.is_empty() { Default::default() } else { open::routes(&open, &P::known_folder) };
     let new_window = open.target == OpenTarget::NewWindow;
     let mut h = Handler::<P> {
@@ -597,6 +621,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         gpu_pending: 2,
         device_gen: 0,
         search,
+        tags,
     };
     let mut first = h.new_app(routes, saved.persisted.clone());
     first.show_open_errors(&errors);

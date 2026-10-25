@@ -3,6 +3,7 @@ use crossbeam_channel::{bounded, unbounded, Sender};
 use flit_core::listing::{attr, DirSnapshot, Listing, ListingBuilder};
 use flit_core::provider::{FileOp, GenToken, Launch, OpCtl, OpId, OpReport, SnapshotSlot, Stage};
 use flit_core::sort::{self, CaseMode, SortKeys, ViewSpec};
+use flit_core::tags::{TagCell, Tags};
 use flit_core::{FsError, FsErrorKind, FsPath, Location, ProviderEvent, ProviderRequest, TabId};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -23,6 +24,7 @@ struct ListJob {
     out: Arc<SnapshotSlot>,
     cancel: GenToken,
     watch: Option<FsPath>,
+    tags: Arc<Tags>,
 }
 
 struct SizesJob {
@@ -135,6 +137,7 @@ pub struct LocalProvider {
     watch: Sender<WatchCmd>,
     pending_watch: Mutex<HashMap<TabId, (u64, FsPath)>>,
     busy: Arc<AtomicUsize>,
+    tags: TagCell,
 }
 
 fn spawn(name: String, body: impl FnOnce() + Send + 'static) -> Result<(), PlatformError> {
@@ -233,7 +236,11 @@ impl LocalProvider {
                 }
             }
         })?;
-        Ok(Self { jobs, sizes, ops, shell, watch, pending_watch: Mutex::default(), busy })
+        Ok(Self { jobs, sizes, ops, shell, watch, pending_watch: Mutex::default(), busy, tags: TagCell::default() })
+    }
+
+    pub fn tags(&self) -> &TagCell {
+        &self.tags
     }
 
     pub fn wait_idle(&self, limit: Duration) {
@@ -268,7 +275,7 @@ impl Provider for LocalProvider {
         let _ = match req {
             ProviderRequest::List { tab, gen, path, view, case, out, cancel } => {
                 let watch = pending.remove(&tab).filter(|(g, _)| *g == gen).map(|(_, p)| p);
-                self.jobs.send(ListJob { tab, gen, path, view, case, out, cancel, watch }).map_err(drop)
+                self.jobs.send(ListJob { tab, gen, path, view, case, out, cancel, watch, tags: self.tags.get() }).map_err(drop)
             }
             ProviderRequest::DirSizes { tab, gen, dir, items, cancel } => self.sizes.send(SizesJob { tab, gen, dir, items, cancel }).map_err(drop),
             ProviderRequest::Watch { tab, gen, path: Some(path) } => {
@@ -320,7 +327,7 @@ fn run_op<S: FileOps>(sh: &mut S, op: FileOp) -> (Option<String>, Option<OpRepor
 }
 
 fn run_list<F: Fs>(fs: &F, job: ListJob, watch: &Sender<WatchCmd>, wake: &Wake) {
-    let ListJob { tab, gen, path, view, case, out, cancel, watch: arm } = job;
+    let ListJob { tab, gen, path, view, case, out, cancel, watch: arm, tags } = job;
     if !cancel.is_current(gen) {
         return;
     }
@@ -330,7 +337,7 @@ fn run_list<F: Fs>(fs: &F, job: ListJob, watch: &Sender<WatchCmd>, wake: &Wake) 
             let _ = wait.recv();
         }
     }
-    list(fs, gen, &path, view, case, &out, &cancel, wake);
+    list(fs, gen, &path, view, case, tags, &out, &cancel, wake);
 }
 
 fn run_sizes<F: Fs>(fs: &F, job: SizesJob, events: &Sender<ProviderEvent>, wake: &Wake) {
@@ -365,7 +372,7 @@ fn snapshot(gen: u64, path: &FsPath, listing: Listing, keys: SortKeys, view: Vie
 }
 
 #[allow(clippy::too_many_arguments)]
-fn list<F: Fs>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: CaseMode, out: &SnapshotSlot, cancel: &GenToken, wake: &Wake) {
+fn list<F: Fs>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: CaseMode, tags: Arc<Tags>, out: &SnapshotSlot, cancel: &GenToken, wake: &Wake) {
     if !cancel.is_current(gen) {
         return;
     }
@@ -387,7 +394,7 @@ fn list<F: Fs>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: CaseMode, 
         }
         true
     };
-    let mut b = ListingBuilder::new(case, &mut on_batch);
+    let mut b = ListingBuilder::new(case, &mut on_batch).with_tags(tags);
     let result = fs.read_dir(path, &mut b);
     let listing = std::mem::take(&mut b.listing);
     let keys = std::mem::replace(&mut b.keys, SortKeys::new(case));
