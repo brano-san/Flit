@@ -335,6 +335,10 @@ impl App {
         }
     }
 
+    pub fn ops_pending(&self) -> bool {
+        !self.ops.pending.is_empty()
+    }
+
     fn delete_with(&mut self, permanent: bool) {
         if self.in_bin() {
             return self.purge_selection();

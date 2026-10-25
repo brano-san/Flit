@@ -282,7 +282,7 @@ impl<P: Platform> Handler<P> {
                 st.app.insert_tab(tab, Some((x, y)), now);
             }
             self.raise = Some(t);
-            if last {
+            if last && !self.windows.get(&id).is_some_and(|s| s.app.ops_pending()) {
                 window.close();
             }
             return (self.wake)();
