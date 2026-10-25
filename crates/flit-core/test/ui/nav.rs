@@ -5,6 +5,7 @@ use crate::path::FsPath;
 use crate::provider::{FileOp, ProviderEvent, ProviderRequest, TabId};
 use crate::sort::{self, CaseMode, SortKeys};
 use crate::text::tests::Mono;
+use crate::text::Gfx;
 use crate::ui::{Drag, Drive, Effect, KnownFolder, Persisted, Places};
 use std::sync::Arc;
 use std::time::Duration;

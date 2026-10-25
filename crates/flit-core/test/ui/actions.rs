@@ -26,7 +26,7 @@ fn chords_are_unique_and_printable() {
     assert_eq!(chord_text(&key(Key::F(5))), "F5");
     let refresh = ACTIONS.iter().find(|a| a.id == "nav.refresh").unwrap();
     assert_eq!(keys_text(refresh), "F5, Ctrl+R");
-    assert_eq!(find(Key::Char('T'), Mods { ctrl: true, shift: false, alt: true }).map(|a| a.id), None, "AltGr is not Ctrl");
+    assert_eq!(find(Key::Char('N'), Mods { ctrl: true, shift: false, alt: true }).map(|a| a.id), None, "AltGr is not Ctrl");
 }
 
 #[test]

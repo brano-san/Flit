@@ -68,6 +68,12 @@ pub trait TextBackend {
     fn shape(&mut self, text: &str, style: FontStyle, out: &mut ShapedText);
     fn rasterize(&mut self, key: GlyphKey, out: &mut GlyphBitmap) -> bool;
     fn metrics(&mut self, style: FontStyle) -> FontMetrics;
+    fn set_ui_family(&mut self, name: &str) -> bool {
+        name.is_empty()
+    }
+    fn families(&mut self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 #[derive(Default)]
@@ -114,6 +120,8 @@ pub struct Gfx<B: TextBackend> {
     scratch: GlyphBitmap,
     pub atlas_reset: bool,
     pub thumbs: ThumbAtlas,
+    ui_family: String,
+    ui_found: bool,
 }
 
 impl<B: TextBackend> Gfx<B> {
@@ -130,7 +138,19 @@ impl<B: TextBackend> Gfx<B> {
             scratch: GlyphBitmap::default(),
             atlas_reset: false,
             thumbs: ThumbAtlas::default(),
+            ui_family: String::new(),
+            ui_found: true,
         }
+    }
+
+    pub fn set_ui_family(&mut self, name: &str) -> bool {
+        if self.ui_family != name {
+            self.ui_found = self.text.set_ui_family(name);
+            self.ui_family = name.to_owned();
+            self.shapes.clear();
+            self.metrics.clear();
+        }
+        self.ui_found
     }
 
     pub fn begin(&mut self, clear: Color) {

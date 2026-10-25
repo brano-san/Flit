@@ -1,4 +1,5 @@
 pub mod edit;
+mod appearance;
 mod archive;
 mod columns;
 mod details;
@@ -61,7 +62,7 @@ use crate::render::{Color, Rect};
 use crate::sort::{CaseMode, GroupField, SortField, ViewSpec};
 use crate::tags::TagRequest;
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
-use crate::theme::{self, Theme};
+use crate::theme::{Area, Theme};
 use crate::thumbs;
 use crate::view::Line;
 use bumpalo::Bump;
@@ -227,6 +228,7 @@ pub enum SettingsCmd {
     Export { path: FsPath, text: String, replace: bool },
     Import(FsPath),
     CacheSize,
+    Fonts,
 }
 
 pub enum IconResult {
@@ -414,6 +416,7 @@ pub struct App {
     clicked_open: bool,
     menu: Vec<menu::Cmd>,
     focused_at: Option<Instant>,
+    pub look: appearance::Look,
     dark: bool,
     scale: f32,
     size: (f32, f32),
@@ -502,6 +505,7 @@ impl App {
             clicked_open: false,
             menu: Vec::new(),
             focused_at: None,
+            look: appearance::Look::new(dark),
             dark,
             scale,
             size: (size.0 as f32, size.1 as f32),
@@ -625,8 +629,8 @@ impl App {
         (v * self.scale).round()
     }
 
-    fn theme(&self) -> &'static Theme {
-        theme::get(self.dark)
+    fn theme(&self) -> &Theme {
+        &self.look.palette.base
     }
 
     fn ui_font(&self, px: f32) -> FontStyle {
@@ -1221,10 +1225,7 @@ impl App {
                 self.layout();
                 self.dirty = true;
             }
-            Event::ThemeChanged { dark } => {
-                self.dark = *dark;
-                self.dirty = true;
-            }
+            Event::ThemeChanged { dark } => self.set_system_dark(*dark),
             Event::Focus(f) => {
                 self.active = *f;
                 self.mods = Mods::default();
@@ -1720,37 +1721,40 @@ impl App {
         arena.reset();
         self.fit_columns(g, &arena);
         self.fit_other(g, &arena);
-        let th = self.theme();
+        self.look.font_missing = !g.set_ui_family(&self.look.font);
+        let palette = self.look.palette;
+        let (th, files) = (&palette.base, palette.area(Area::Files));
         for _ in 0..2 {
             arena.reset();
-            g.begin(th.bg);
+            g.begin(files.bg);
             if self.search.active {
                 self.draw_search(g, &arena, th);
             } else {
-                self.draw_other(g, &arena, th);
+                self.draw_other(g, &arena, files);
                 if self.on_home() {
-                    self.draw_home(g, th);
+                    self.draw_home(g, files);
                 } else {
-                    self.draw_list(g, &arena, th);
-                    self.draw_panes(g, th);
-                    self.draw_preview(g, th);
-                    self.draw_marquee(g, th);
-                    self.draw_ops(g, th);
-                    self.draw_header(g, th);
+                    self.draw_list(g, &arena, files);
+                    self.draw_panes(g, files);
+                    self.draw_preview(g, palette.area(Area::Pane));
+                    self.draw_marquee(g, files);
+                    self.draw_ops(g, files);
+                    self.draw_header(g, files);
                 }
-                self.draw_split(g, th);
+                self.draw_split(g, files);
             }
             self.draw_title(g, th);
             if self.search.active {
                 self.draw_search_bar(g, &arena, th);
-                self.draw_sidebar(g, th);
+                self.draw_sidebar(g, palette.area(Area::Sidebar));
             } else {
-                self.draw_toolbar(g, th);
-                self.draw_toolbar_row(g, th);
+                self.draw_toolbar(g, palette.area(Area::Toolbar));
+                self.draw_toolbar_row(g, palette.area(Area::Toolbar));
                 if self.layout.status.h > 0.0 {
                     self.draw_status(g, &arena, th);
                 }
-                self.draw_nav(g, th);
+                self.draw_sidebar(g, palette.area(Area::Sidebar));
+                self.draw_filter(g, files);
                 self.draw_toolbar_popups(g, th);
                 self.draw_suggestions(g, th);
             }
@@ -1870,7 +1874,8 @@ impl App {
             g.dl.round_rect(l.home.inset(self.s(2.0), 0.0), c, self.s(4.0));
         }
         centered(g, l.home, sidebar::G_HOME, icons, if self.on_home() { t.accent } else { t.text });
-        self.draw_address(g, t);
+        let address = *self.look.palette.area(Area::Address);
+        self.draw_address(g, &address);
         self.draw_ops_button(g, t);
     }
 

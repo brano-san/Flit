@@ -82,7 +82,8 @@ impl IDWriteTextRenderer_Impl for Collector_Impl {
 pub struct DWriteText {
     factory: IDWriteFactory2,
     collection: IDWriteFontCollection,
-    ui_family: PCWSTR,
+    default_ui: PCWSTR,
+    ui_family: Vec<u16>,
     icon_family: PCWSTR,
     mono_family: PCWSTR,
     formats: FxHashMap<FontStyle, IDWriteTextFormat>,
@@ -105,7 +106,7 @@ impl DWriteText {
                 let (mut i, mut exists) = (0u32, BOOL(0));
                 collection.FindFamilyName(name, &mut i, &mut exists).is_ok() && exists.as_bool()
             };
-            let ui_family = if has(w!("Segoe UI Variable Text")) { w!("Segoe UI Variable Text") } else { w!("Segoe UI") };
+            let default_ui = if has(w!("Segoe UI Variable Text")) { w!("Segoe UI Variable Text") } else { w!("Segoe UI") };
             let icon_family = if has(w!("Segoe Fluent Icons")) { w!("Segoe Fluent Icons") } else { w!("Segoe MDL2 Assets") };
             let mono_family = if has(w!("Cascadia Mono")) { w!("Cascadia Mono") } else { w!("Consolas") };
             let collector = ComObject::new(Collector { runs: RefCell::default() });
@@ -113,7 +114,8 @@ impl DWriteText {
             Ok(Self {
                 factory,
                 collection,
-                ui_family,
+                default_ui,
+                ui_family: default_ui.as_wide().iter().copied().chain([0]).collect(),
                 icon_family,
                 mono_family,
                 formats: FxHashMap::default(),
@@ -129,9 +131,27 @@ impl DWriteText {
 
     fn family(&self, f: FontFamily) -> PCWSTR {
         match f {
-            FontFamily::Ui => self.ui_family,
+            FontFamily::Ui => PCWSTR(self.ui_family.as_ptr()),
             FontFamily::Icons => self.icon_family,
             FontFamily::Mono => self.mono_family,
+        }
+    }
+
+    fn has_family(&self, name: PCWSTR) -> bool {
+        let (mut i, mut exists) = (0u32, BOOL(0));
+        unsafe { self.collection.FindFamilyName(name, &mut i, &mut exists).is_ok() && exists.as_bool() }
+    }
+
+    fn family_name(family: &IDWriteFontFamily) -> Option<String> {
+        unsafe {
+            let names = family.GetFamilyNames().ok()?;
+            let (mut i, mut exists) = (0u32, BOOL(0));
+            let _ = names.FindLocaleName(w!("en-us"), &mut i, &mut exists);
+            let i = if exists.as_bool() { i } else { 0 };
+            let len = names.GetStringLength(i).ok()? as usize;
+            let mut buf = vec![0u16; len + 1];
+            names.GetString(i, &mut buf).ok()?;
+            Some(String::from_utf16_lossy(&buf[..len]))
         }
     }
 
@@ -189,6 +209,23 @@ impl DWriteText {
 }
 
 impl TextBackend for DWriteText {
+    fn set_ui_family(&mut self, name: &str) -> bool {
+        let wide: Vec<u16> = name.encode_utf16().chain([0]).collect();
+        let found = !name.is_empty() && !name.contains(' ') && self.has_family(PCWSTR(wide.as_ptr()));
+        self.ui_family = if found { wide } else { unsafe { self.default_ui.as_wide() }.iter().copied().chain([0]).collect() };
+        self.formats.retain(|style, _| style.family != FontFamily::Ui);
+        self.primary.retain(|(family, _), _| *family != FontFamily::Ui);
+        found || name.is_empty()
+    }
+
+    fn families(&mut self) -> Vec<String> {
+        let n = unsafe { self.collection.GetFontFamilyCount() };
+        let mut out: Vec<String> = (0..n).filter_map(|i| unsafe { self.collection.GetFontFamily(i) }.ok()).filter_map(|f| Self::family_name(&f)).filter(|s| !s.is_empty()).collect();
+        out.sort_by_key(|s| s.to_lowercase());
+        out.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+        out
+    }
+
     fn shape(&mut self, text: &str, style: FontStyle, out: &mut ShapedText) {
         out.glyphs.clear();
         out.width = 0.0;
