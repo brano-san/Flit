@@ -301,6 +301,33 @@ fn cancelled_list_publishes_nothing() {
     assert!(slot.take().is_none());
 }
 
+struct IniFs(AtomicUsize);
+impl Fs for IniFs {
+    fn read_dir(&self, _: &FsPath, _: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+        Ok(())
+    }
+    fn seek_penalty(&self, _: &FsPath) -> Option<bool> {
+        None
+    }
+    fn desktop_ini(&self, _: &FsPath) -> Option<flit_core::desktop_ini::DesktopIni> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Some(flit_core::desktop_ini::DesktopIni { icon: false, kind: FolderKind::Videos })
+    }
+}
+
+#[test]
+fn desktop_ini_is_read_only_for_listings_that_ask_for_the_folder_kind() {
+    let fs = IniFs(AtomicUsize::new(0));
+    let (slot, cancel, wake) = (SnapshotSlot::default(), GenToken::default(), Arc::new(|| {}) as Wake);
+    cancel.set(4);
+    list(&fs, 4, &p(r"C:\v"), ViewSpec::default(), CaseMode::Insensitive, &slot, &cancel, &wake);
+    assert_eq!((fs.0.load(Ordering::SeqCst), slot.kind(4)), (0, FolderKind::Unknown));
+    slot.ask_kind(5);
+    cancel.set(5);
+    list(&fs, 5, &p(r"C:\v"), ViewSpec::default(), CaseMode::Insensitive, &slot, &cancel, &wake);
+    assert_eq!((fs.0.load(Ordering::SeqCst), slot.kind(5), slot.kind(4)), (1, FolderKind::Videos, FolderKind::Unknown));
+}
+
 #[test]
 fn wsl_requests_map_to_unc() {
     let req = via_unc("Ubuntu", ProviderRequest::Open { tab: 1, path: FsPath::parse("/home/a:b").unwrap() }).unwrap();

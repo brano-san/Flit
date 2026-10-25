@@ -79,10 +79,11 @@ fn item_menu_lists_flit_commands_with_their_shortcuts() {
     assert!(tidy(&file.menu));
     let folder = right_click(&mut app, Some(FOLDER), false);
     let labels = commands(&folder.menu);
-    for want in ["Open in new tab", "Open in new window", "Paste\tCtrl+Shift+V", "Pin to sidebar", "Open in terminal\tCtrl+`"] {
+    for want in ["Open in new tab", "Open in new window", "Paste\tCtrl+Shift+V", "Pin to sidebar", "Open in terminal\tCtrl+`", "Change icon"] {
         assert!(labels.iter().any(|l| l == want), "{want} missing from {labels:?}");
     }
     assert!(!labels.iter().any(|l| l.starts_with("New alternate")), "{labels:?}");
+    assert!(!commands(&file.menu).iter().any(|l| l == "Change icon"));
 }
 
 #[test]
@@ -119,11 +120,17 @@ fn background_menu_offers_sorting_new_items_paste_and_terminal() {
     let mut app = app_with(&[("a.txt", false)]);
     let menu = right_click(&mut app, None, false);
     assert!(menu.items.is_empty());
-    assert!(matches!(&menu.menu[0], MenuItem::Submenu { label, .. } if label == "Sort by"));
+    assert!(matches!(&menu.menu[0], MenuItem::Submenu { label, .. } if label == "Layout"));
+    assert!(matches!(&menu.menu[1], MenuItem::Submenu { label, .. } if label == "Sort by"));
     let labels = commands(&menu.menu);
-    for want in ["Name *", "Date modified", "Descending", "Refresh\tF5", "Folder\tCtrl+Shift+N", "Shortcut", "Paste\tCtrl+V", "Open in terminal\tCtrl+`", "Pin to sidebar\tCtrl+D", "Copy path\tCtrl+Shift+C", "Properties\tAlt+Enter"] {
+    for want in ["Details\tCtrl+Shift+1 *", "Grid\tCtrl+Shift+5", "Larger items\tCtrl++", "Name *", "Date modified", "Descending", "Refresh\tF5", "Folder\tCtrl+Shift+N", "Shortcut", "Paste\tCtrl+V", "Open in terminal\tCtrl+`", "Pin to sidebar\tCtrl+D", "Copy path\tCtrl+Shift+C", "Properties\tAlt+Enter"] {
         assert!(labels.iter().any(|l| l == want), "{want} missing from {labels:?}");
     }
+    run(&mut app, &menu, "Grid");
+    assert_eq!((app.tab().mode, app.layout.mode), (LayoutMode::Grid, LayoutMode::Grid));
+    let menu = right_click(&mut app, None, false);
+    assert!(commands(&menu.menu).iter().any(|l| l == "Grid\tCtrl+Shift+5 *"));
+    run(&mut app, &menu, "Details");
     run(&mut app, &menu, "Date modified");
     assert_eq!(app.tab().view_spec.sort.field, SortField::Modified);
     let menu = right_click(&mut app, None, false);

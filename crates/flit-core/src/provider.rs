@@ -1,5 +1,6 @@
 use crate::archive::ArchiveOp;
 use crate::digest::HashKind;
+use crate::desktop_ini::FolderKind;
 use crate::listing::{DirChange, DirSnapshot, Meta};
 use crate::path::FsPath;
 use crate::sort::{CaseMode, ViewSpec};
@@ -10,18 +11,36 @@ use std::sync::{Arc, Condvar, Mutex};
 
 pub type TabId = u64;
 
+const KIND_ASKED: u64 = 0xFF;
+
 #[derive(Default)]
-pub struct SnapshotSlot(ArcSwapOption<DirSnapshot>);
+pub struct SnapshotSlot {
+    snap: ArcSwapOption<DirSnapshot>,
+    kind: AtomicU64,
+}
 
 impl SnapshotSlot {
     pub fn publish(&self, snap: Arc<DirSnapshot>) {
-        self.0.rcu(|cur| match cur {
+        self.snap.rcu(|cur| match cur {
             Some(newer) if newer.gen > snap.gen => Some(newer.clone()),
             _ => Some(snap.clone()),
         });
     }
     pub fn take(&self) -> Option<Arc<DirSnapshot>> {
-        self.0.swap(None)
+        self.snap.swap(None)
+    }
+    pub fn ask_kind(&self, gen: u64) {
+        self.kind.store(gen << 8 | KIND_ASKED, Ordering::Release);
+    }
+    pub fn wants_kind(&self, gen: u64) -> bool {
+        self.kind.load(Ordering::Acquire) == gen << 8 | KIND_ASKED
+    }
+    pub fn set_kind(&self, gen: u64, kind: FolderKind) {
+        let _ = self.kind.compare_exchange(gen << 8 | KIND_ASKED, gen << 8 | kind as u64, Ordering::AcqRel, Ordering::Acquire);
+    }
+    pub fn kind(&self, gen: u64) -> FolderKind {
+        let v = self.kind.load(Ordering::Acquire);
+        if v >> 8 == gen && v & KIND_ASKED != KIND_ASKED { FolderKind::from_u8(v as u8) } else { FolderKind::Unknown }
     }
 }
 
@@ -68,6 +87,7 @@ pub enum FileOp {
     EmptyBin,
     Flatten(Vec<FsPath>),
     Archive(ArchiveOp),
+    FolderIcon { folder: FsPath, icon: FsPath, index: i32 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,6 +127,7 @@ impl FileOp {
             FileOp::EmptyBin => FileOp::EmptyBin,
             FileOp::Flatten(v) => FileOp::Flatten(all(v)?),
             FileOp::Archive(a) => FileOp::Archive(a.map_paths(&f)?),
+            FileOp::FolderIcon { folder, icon, index } => FileOp::FolderIcon { folder: f(folder)?, icon: f(icon)?, index: *index },
         })
     }
 }

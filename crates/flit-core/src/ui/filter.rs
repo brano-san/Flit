@@ -53,10 +53,8 @@ impl App {
     }
 
     pub(super) fn close_filter(&mut self) {
-        let (rh, lh) = (self.layout.row_h, self.layout.list.h);
-        let t = self.tab_mut();
-        t.reset_filter();
-        t.reveal_focus(true, rh, lh);
+        self.tab_mut().reset_filter();
+        self.reveal_focus(true);
         if self.focus == Focus::Filter {
             self.focus = Focus::List;
         }
@@ -81,11 +79,10 @@ impl App {
             Key::Escape => self.close_filter(),
             Key::Enter => {
                 self.focus = Focus::List;
-                let (rh, lh) = (self.layout.row_h, self.layout.list.h);
                 let t = self.tab_mut();
                 if t.view.as_ref().is_some_and(|v| v.focus.is_none()) {
                     t.move_focus(1, Mods::default());
-                    t.reveal_focus(false, rh, lh);
+                    self.reveal_focus(false);
                 }
             }
             Key::Up | Key::Down | Key::PageUp | Key::PageDown => {

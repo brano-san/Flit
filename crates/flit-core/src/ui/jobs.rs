@@ -226,7 +226,7 @@ fn job_title(op: &FileOp) -> Option<String> {
         FileOp::EmptyBin => "Emptying the Recycle Bin".into(),
         FileOp::Archive(ArchiveOp::Compress { items, archive, .. }) => format!("Compressing {} to {}", count(items), quoted(archive)),
         FileOp::Archive(ArchiveOp::Extract { archives, .. }) => format!("Extracting {}", count(archives)),
-        FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::NewStream { .. } | FileOp::Link { .. } => return None,
+        FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::NewStream { .. } | FileOp::Link { .. } | FileOp::FolderIcon { .. } => return None,
     })
 }
 

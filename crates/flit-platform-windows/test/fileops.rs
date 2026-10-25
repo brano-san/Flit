@@ -158,6 +158,24 @@ fn new_files_come_from_templates_and_streams_attach_to_files() {
 }
 
 #[test]
+fn a_folder_icon_lands_in_desktop_ini_and_the_shell_draws_it() {
+    use flit_core::ui::{IconKind, IconRequest};
+    use std::os::windows::fs::MetadataExt;
+    use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM};
+    let t = TempDir::new("folder-icon");
+    std::fs::create_dir(t.0.join("photos")).unwrap();
+    let (folder, icon) = (t.path("photos"), FsPath::parse(r"C:\Windows\System32\shell32.dll").unwrap());
+    let mut sh = ShellCom::new().unwrap();
+    let out = run(&mut sh, &FileOp::FolderIcon { folder: folder.clone(), icon: icon.clone(), index: 3 });
+    assert_eq!((out.error.map(|e| e.message), out.items), (None, vec![(folder.clone(), icon)]));
+    assert!(crate::shell::desktop_ini(&folder).unwrap().icon);
+    let attrs = std::fs::metadata(t.0.join("photos")).unwrap().file_attributes();
+    assert_ne!(attrs & (FILE_ATTRIBUTE_READONLY.0 | FILE_ATTRIBUTE_SYSTEM.0), 0, "Explorer reads desktop.ini only in read-only or system folders");
+    let req = IconRequest { key: 1, kind: IconKind::CustomFolder, path: folder.clone(), size: 32, gen: 0, row: 0 };
+    assert!(sh.icon(&req).is_some_and(|b| b.width > 0 && b.rgba.chunks_exact(4).any(|p| p[3] != 0)));
+}
+
+#[test]
 fn unaddressable_names_are_refused_before_the_shell_sees_them() {
     let t = TempDir::new("refuse");
     let mut sh = ShellCom::new().unwrap();

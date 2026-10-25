@@ -59,6 +59,41 @@ fn folder_views_and_preferences_survive_a_restart_and_created_sorts_by_name_for_
 }
 
 #[test]
+fn layouts_and_item_sizes_ride_in_their_own_record_so_older_builds_still_read_details() {
+    let mut persisted = Persisted::default();
+    persisted.view.layout = LayoutMode::Grid;
+    persisted.view.sizes = Sizes([0, 4, 3, 2, 11]);
+    persisted.prefs.defaults.layout = LayoutMode::Adaptive;
+    persisted.prefs.thumbnails = false;
+    persisted.prefs.thumb_cache_mb = 1200;
+    let pics = folder_key(&loc(r"C:\Pics"));
+    persisted.folders.put(folder_key(&loc(r"C:\Plain")), FolderView::default());
+    persisted.folders.put(pics, FolderView { layout: LayoutMode::Columns, sizes: Sizes([2, 1, 1, 4, 5]), ..Default::default() });
+    let s = Saved::new(persisted, None);
+    let bytes = s.encode().unwrap();
+    let back = Saved::decode(&bytes).unwrap().sanitized();
+    assert_eq!(back.persisted.view, s.persisted.view);
+    assert_eq!(back.persisted.prefs, s.persisted.prefs);
+    assert_eq!(back.persisted.folders.entries(), s.persisted.folders.entries());
+    let (_, tail) = postcard::take_from_bytes::<Head>(&bytes).unwrap();
+    let (_, tail) = postcard::take_from_bytes::<NavState>(tail).unwrap();
+    let old: ViewRecord = postcard::from_bytes(tail).unwrap();
+    assert_eq!((old.view.layout, old.prefs.defaults.layout), (LayoutMode::Details, LayoutMode::Details));
+    assert!(old.folders.iter().all(|(_, v)| v.layout == LayoutMode::Details));
+    assert_eq!(old.view.columns, s.persisted.view.columns);
+}
+
+#[test]
+fn out_of_range_sizes_and_cache_limits_fall_back() {
+    let mut s = Saved::new(Persisted::default(), None);
+    s.persisted.view.sizes = Sizes([7, 1, 9, 1, 40]);
+    s.persisted.prefs.thumb_cache_mb = 1;
+    let s = s.sanitized();
+    assert_eq!(s.persisted.view.sizes, Sizes([Sizes::default().0[0], 1, Sizes::default().0[2], 1, Sizes::default().0[4]]));
+    assert_eq!(s.persisted.prefs.thumb_cache_mb, flit_core::ui::THUMB_CACHE_MB.0);
+}
+
+#[test]
 fn corrupted_nav_state_falls_back() {
     let mut s = Saved::new(Persisted::default(), None);
     s.nav = NavState { pinned: vec![loc(r"C:\a"), loc(r"C:\b"), loc(r"C:\a")], sidebar_w: f32::INFINITY, sidebar: true };

@@ -1,4 +1,5 @@
 use crate::walk_index::Handle;
+use flit_core::desktop_ini::DesktopIni;
 use flit_core::listing::{attr, Meta};
 use flit_core::path::PathKind;
 use flit_core::{FsError, FsErrorKind, FsPath, ListingBuilder};
@@ -247,6 +248,10 @@ impl Fs for NtFs {
 
     fn hash(&self, file: &FsPath, kinds: &[flit_core::digest::HashKind], job: &flit_platform::Job) -> Result<Vec<String>, flit_platform::PlatformError> {
         crate::digest::hash_file(file, kinds, job)
+    }
+
+    fn desktop_ini(&self, dir: &FsPath) -> Option<DesktopIni> {
+        crate::shell::desktop_ini(dir)
     }
 
     fn seek_penalty(&self, path: &FsPath) -> Option<bool> {
