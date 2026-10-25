@@ -1,13 +1,25 @@
 [package]
 name = "flit-platform-linux"
-description = "Linux platform for Flit (stage 1: stubs so the workspace builds)"
+description = "Linux platform for Flit: Linux file listing, inotify, freedesktop trash and the WSL agent"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+agent = []
+
+[[bin]]
+name = "flit-wsl-agent"
+path = "src/bin/flit-wsl-agent.rs"
+required-features = ["agent"]
+
 [dependencies]
 flit-core.workspace = true
 flit-search.workspace = true
 flit-platform.workspace = true
+flit-proto.workspace = true
 crossbeam-channel.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true

@@ -5,7 +5,7 @@ use flit_core::provider::FileOp;
 use flit_core::{FsError, FsPath, Meta};
 use serde::{Deserialize, Serialize};
 
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 pub type ReqId = u64;
 
@@ -28,7 +28,7 @@ pub enum Event {
     Changes { id: ReqId, changes: Vec<DirChange> },
     Rescan { id: ReqId },
     DirSize { id: ReqId, idx: u32, size: u64 },
-    OpDone { id: ReqId, error: Option<FsError> },
+    OpDone { id: ReqId, error: Option<String> },
 }
 
 impl Event {

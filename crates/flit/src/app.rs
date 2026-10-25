@@ -30,6 +30,10 @@ const PREVIEW_THREADS: usize = 2;
 const ICON_MARGIN: u32 = 32;
 const TAB_STRIDE: TabId = 1 << 32;
 
+mod agents {
+    include!(concat!(env!("OUT_DIR"), "/wsl_agent.rs"));
+}
+
 type Ws<P> = <P as Platform>::WindowSystem;
 type Win<P> = <Ws<P> as WindowSystem>::Window;
 type Device<P> = <<P as Platform>::Renderer as Renderer>::Device;
@@ -205,7 +209,10 @@ struct Handler<P: Platform> {
     pending: VecDeque<App>,
     next_base: TabId,
     active: Option<WindowId>,
-    local: LocalProvider,
+    local: Arc<LocalProvider>,
+    wsl: HashMap<String, WslProvider>,
+    distros: Option<Vec<String>>,
+    events_tx: Sender<ProviderEvent>,
     events: Receiver<ProviderEvent>,
     opens: Receiver<Open>,
     sink: OpenSink,
@@ -268,10 +275,22 @@ impl<P: Platform> Handler<P> {
         app
     }
 
-    fn submit(&self, provider: ProviderId, req: ProviderRequest) {
-        match provider {
-            ProviderId::Local => self.local.submit(req),
-            ProviderId::Wsl(distro) => match via_unc(&distro, req) {
+    fn submit(&mut self, provider: ProviderId, req: ProviderRequest) {
+        let ProviderId::Wsl(distro) = provider else { return self.local.submit(req) };
+        let known = self.distros.get_or_insert_with(P::wsl_distros);
+        let distro = known.iter().find(|d| d.eq_ignore_ascii_case(&distro)).cloned().unwrap_or(distro);
+        if !self.wsl.contains_key(&distro) {
+            let launcher = P::wsl_launcher(&distro, &agents::AGENTS);
+            match WslProvider::new(distro.clone(), launcher, self.local.clone(), self.events_tx.clone(), self.wake.clone(), Timing::default()) {
+                Ok(p) => {
+                    self.wsl.insert(distro.clone(), p);
+                }
+                Err(e) => tracing::warn!("{e}"),
+            }
+        }
+        match self.wsl.get(&distro) {
+            Some(p) => p.submit(req),
+            None => match via_unc(&distro, req) {
                 Some(req) => self.local.submit(req),
                 None => tracing::warn!("path is not reachable through \\\\wsl.localhost\\{distro}"),
             },
@@ -379,7 +398,7 @@ impl<P: Platform> Handler<P> {
             let target = match &ev {
                 ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } => self.window_of_tab(*tab),
                 ProviderEvent::OpDone { tab, .. } => self.window_of_tab(*tab).or(self.active),
-                ProviderEvent::Navigate { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } => self.window_of_tab(*tab),
+                ProviderEvent::Navigate { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } | ProviderEvent::Status { tab, .. } => self.window_of_tab(*tab),
             };
             if let Some(st) = target.and_then(|id| self.windows.get_mut(&id)) {
                 st.app.on_provider_event(ev, now);
@@ -438,6 +457,7 @@ impl<P: Platform> Handler<P> {
             }
         }
         if let Some(places) = self.places.poll() {
+            self.distros = Some(places.wsl.clone());
             for st in self.windows.values_mut() {
                 st.app.set_places(places.clone());
             }
@@ -708,7 +728,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         }
     })?;
     let (events_tx, events) = unbounded();
-    let local = LocalProvider::new::<_, P::Watcher, P::Shell>(P::fs(), FS_THREADS, events_tx, wake.clone())?;
+    let local = Arc::new(LocalProvider::new::<_, P::Watcher, P::Shell>(P::fs(), FS_THREADS, events_tx.clone(), wake.clone())?);
     let (opens_tx, opens) = unbounded();
     let sink: OpenSink = Arc::new(Mutex::new(Some(opens_tx)));
     if let Some(i) = instance {
@@ -726,6 +746,9 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         next_base: 0,
         active: None,
         local,
+        wsl: HashMap::new(),
+        distros: None,
+        events_tx,
         events,
         opens,
         sink,

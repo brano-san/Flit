@@ -425,3 +425,13 @@ fn sidebar_frames_reuse_shaped_text() {
     app.frame(&mut g, t0());
     assert!(app.ime_area().is_some());
 }
+
+#[test]
+fn opened_wsl_folders_take_the_registry_spelling() {
+    let mut app = app_at(r"C:\x");
+    app.set_places(places());
+    app.drain_effects().for_each(drop);
+    app.dispatch(vec![crate::open::Route { folder: loc(r"\\wsl$\UBUNTU\etc"), select: None }], crate::open::OpenTarget::NewTab, t0());
+    assert_eq!(listed(&mut app), [(2, loc("wsl://Ubuntu/etc"))]);
+    assert_eq!(app.tab().location(), &loc("wsl://Ubuntu/etc"));
+}

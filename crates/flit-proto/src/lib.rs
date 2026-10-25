@@ -1,3 +1,4 @@
+pub mod build_id;
 pub mod instance;
 pub mod listing;
 pub mod provider;

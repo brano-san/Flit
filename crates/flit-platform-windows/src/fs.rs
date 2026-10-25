@@ -91,6 +91,9 @@ fn volumes(out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
         }
         out.push(&name, meta);
     }
+    for distro in crate::places::wsl_distros() {
+        out.push(distro.as_bytes(), Meta { attrs: attr::DIR | attr::VOLUME, ..Default::default() });
+    }
     out.batch_done();
     Ok(())
 }

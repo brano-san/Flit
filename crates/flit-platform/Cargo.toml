@@ -11,3 +11,5 @@ flit-core.workspace = true
 flit-search.workspace = true
 crossbeam-channel.workspace = true
 rayon.workspace = true
+flit-proto.workspace = true
+tracing.workspace = true

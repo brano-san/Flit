@@ -24,6 +24,7 @@ pub(super) struct Loading {
     pub since: Instant,
     pub select: Option<Vec<u8>>,
     scanned: u32,
+    pub note: Option<String>,
 }
 
 pub struct Tab {
@@ -116,7 +117,7 @@ impl Tab {
             fx.push(Effect::Provider { provider: old, req: ProviderRequest::Watch { tab: self.id, gen, path: None } });
         }
         self.watching = Some(provider.clone());
-        self.loading = Some(Loading { gen, since: now, select, scanned: 0 });
+        self.loading = Some(Loading { gen, since: now, select, scanned: 0, note: None });
         self.pending_diffs.clear();
         self.error = None;
         self.crumbs = loc.crumbs();
