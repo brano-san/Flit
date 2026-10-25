@@ -113,3 +113,36 @@ fn recycle_bin() {
     assert_eq!(loc.to_windows(), None, "the bin is not a folder the shell can paste into");
     assert_eq!(Location::parse_bytes(&loc.to_bytes()), Some(loc));
 }
+
+#[test]
+fn double_slash_is_unc_on_windows_and_root_on_unix() {
+    let unc = FsPath::parse_on(b"//srv/share/x", false).unwrap();
+    assert_eq!(unc.kind(), PathKind::Unc);
+    let unix = FsPath::parse_on(b"//srv/share/x", true).unwrap();
+    assert_eq!((unix.kind(), unix.as_bytes()), (PathKind::Unix, &b"/srv/share/x"[..]));
+    assert_eq!(FsPath::parse_on(b"//", true).unwrap().as_bytes(), b"/");
+    assert_eq!(FsPath::parse_on(br"\\srv\share", true).unwrap().kind(), PathKind::Unc);
+}
+
+#[test]
+fn case_follows_the_path_kind() {
+    assert!(p("/home/a").case_sensitive());
+    assert!(!p(r"C:\a").case_sensitive());
+    assert!(p(r"C:\Users").same(&p(r"c:\users")));
+    assert!(!p("/home/A").same(&p("/home/a")));
+    assert!(p("/home/a/b").is_inside(&p("/home/a")));
+    assert!(!p("/home/A/b").is_inside(&p("/home/a")));
+    assert!(!p("/home/ab").is_inside(&p("/home/a")));
+    assert!(!p("/home/a").is_inside(&p("/home/a")));
+    assert!(p("/x").is_inside(&p("/")));
+    assert!(p(r"c:\A\b").is_inside(&p(r"C:\a")));
+    assert!(p(r"C:\a").is_inside(&p(r"C:\")));
+}
+
+#[test]
+fn computer_joins_mount_points_and_drives() {
+    let c = FsPath::computer();
+    assert_eq!(c.join(b"/media/u/USB").as_bytes(), b"/media/u/USB");
+    assert_eq!(c.join(b"/").as_bytes(), b"/");
+    assert_eq!(c.join(b"C:").as_bytes(), br"C:\");
+}

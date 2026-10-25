@@ -25,6 +25,7 @@ pub const RECYCLE_BIN_LABEL: &str = "Recycle Bin";
 pub const RECYCLE_BIN_SHELL: &str = "shell:RecycleBinFolder";
 pub const HOME_LABEL: &str = "Home";
 pub const HOME_SHELL: &str = "shell:::{f874310e-b6b7-47dc-bc84-b9e6b38f5903}";
+const UNIX_HOST: bool = cfg!(unix);
 
 impl FsPath {
     pub fn computer() -> Self {
@@ -54,6 +55,10 @@ impl FsPath {
     }
 
     pub fn parse_exact(input: &[u8]) -> Option<Self> {
+        Self::parse_on(input, UNIX_HOST)
+    }
+
+    fn parse_on(input: &[u8], unix_host: bool) -> Option<Self> {
         if input.contains(&0) {
             return None;
         }
@@ -66,7 +71,7 @@ impl FsPath {
         if input.eq_ignore_ascii_case(HOME_SHELL.as_bytes()) {
             return Some(Self::home_page());
         }
-        if input[0] == b'/' && input.get(1) != Some(&b'/') {
+        if input[0] == b'/' && (unix_host || input.get(1) != Some(&b'/')) {
             return Self::with_segments(b"/".to_vec(), PathKind::Unix, b'/', &input[1..]);
         }
         let win: Vec<u8> = input.iter().map(|&c| if c == b'/' { b'\\' } else { c }).collect();
@@ -139,6 +144,20 @@ impl FsPath {
         self.s.len() == self.root as usize
     }
 
+    pub fn case_sensitive(&self) -> bool {
+        self.kind == PathKind::Unix
+    }
+
+    pub fn same(&self, other: &Self) -> bool {
+        if self.case_sensitive() { self.s == other.s } else { self.s.eq_ignore_ascii_case(&other.s) }
+    }
+
+    pub fn is_inside(&self, folder: &Self) -> bool {
+        let (p, f) = (&self.s, &folder.s);
+        let head = p.get(..f.len()).filter(|_| p.len() > f.len());
+        head.is_some_and(|h| if folder.case_sensitive() { h == f.as_slice() } else { h.eq_ignore_ascii_case(f) }) && (folder.is_root() || p[f.len()] == folder.sep())
+    }
+
     pub fn sep(&self) -> u8 {
         if self.kind == PathKind::Unix { b'/' } else { b'\\' }
     }
@@ -162,7 +181,9 @@ impl FsPath {
     pub fn join(&self, child: &[u8]) -> Self {
         if matches!(self.kind, PathKind::Computer | PathKind::RecycleBin | PathKind::Home) {
             let mut b = child.to_vec();
-            b.push(b'\\');
+            if child.first() != Some(&b'/') {
+                b.push(b'\\');
+            }
             return Self::parse_bytes(&b).unwrap_or_else(Self::computer);
         }
         let mut p = self.clone();

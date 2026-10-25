@@ -392,3 +392,11 @@ fn alternate_data_stream_rows_are_never_handed_to_file_operations() {
         assert_eq!(app.tab().error.as_deref(), Some("Alternate data streams are shown for viewing only"), "{id}");
     }
 }
+
+#[test]
+fn folder_views_are_keyed_by_case_only_on_unix_paths() {
+    let key = |s: &str| folder_key(&Location::parse(s).unwrap());
+    assert_eq!(key(r"C:\Users\A"), key(r"c:\users\a"));
+    assert_ne!(key("/home/A"), key("/home/a"));
+    assert_eq!(key("/home/a"), key("/home/a"));
+}

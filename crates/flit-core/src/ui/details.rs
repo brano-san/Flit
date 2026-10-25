@@ -235,7 +235,7 @@ impl std::fmt::Debug for FolderViews {
 pub fn folder_key(loc: &Location) -> u64 {
     let mut h = FxHasher::default();
     match loc {
-        Location::Local(p) => p.as_bytes().iter().for_each(|b| h.write_u8(b.to_ascii_lowercase())),
+        Location::Local(p) if !p.case_sensitive() => p.as_bytes().iter().for_each(|b| h.write_u8(b.to_ascii_lowercase())),
         _ => loc.to_bytes().iter().for_each(|&b| h.write_u8(b)),
     }
     h.finish()
