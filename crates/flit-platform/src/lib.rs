@@ -165,6 +165,9 @@ pub trait IndexSource: Sized + Send {
 pub trait Duplex: std::io::Read + std::io::Write + Send + Sized + 'static {
     fn try_clone(&self) -> std::io::Result<Self>;
     fn set_read_timeout(&mut self, timeout: Option<std::time::Duration>);
+    fn access(&self) -> std::io::Result<Option<Arc<dyn flit_search::engine::Visibility>>> {
+        Ok(None)
+    }
 }
 
 pub type OnClient<C> = Arc<dyn Fn(C) + Send + Sync>;

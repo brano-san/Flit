@@ -1,7 +1,9 @@
+use crate::access::TokenAccess;
 use crate::err;
 use crate::instance::{process_user_sid, user_sid};
 use crossbeam_channel::{bounded, Receiver};
 use flit_platform::{Duplex, OnClient, PlatformError};
+use flit_search::engine::Visibility;
 use std::io::{self, Read, Write};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -55,6 +57,10 @@ impl PipeConn {
 
     pub fn peer_sid(&self) -> Option<&str> {
         self.peer_sid.as_deref()
+    }
+
+    pub(crate) fn client_access(&self) -> io::Result<TokenAccess> {
+        TokenAccess::of_pipe_client(self.pipe.0)
     }
 
     fn io(&mut self, timeout: Option<Duration>, start: impl FnOnce(HANDLE, &mut OVERLAPPED) -> windows::core::Result<()>) -> io::Result<usize> {
@@ -118,6 +124,13 @@ impl Duplex for PipeConn {
 
     fn set_read_timeout(&mut self, timeout: Option<Duration>) {
         self.timeout = timeout;
+    }
+
+    fn access(&self) -> io::Result<Option<Arc<dyn Visibility>>> {
+        if user_sid().as_deref() != Some(SYSTEM_SID) {
+            return Ok(None);
+        }
+        Ok(Some(Arc::new(self.client_access()?)))
     }
 }
 

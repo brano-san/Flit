@@ -13,6 +13,10 @@ pub const MAX_ROWS: u64 = 1024;
 
 pub type Cancel<'a> = &'a (dyn Fn() -> bool + Sync);
 
+pub trait Visibility: Send + Sync {
+    fn can_list(&self, v: &VolumeIndex, dir: u32) -> bool;
+}
+
 #[derive(Default, Clone)]
 pub struct Engine {
     pub volumes: Vec<VolumeIndex>,
@@ -103,7 +107,8 @@ fn chunks(n: usize) -> Vec<(usize, usize)> {
     (0..n).step_by(size).map(|a| (a, (a + size).min(n))).collect()
 }
 
-fn scan(v: &VolumeIndex, p: &Prepared<'_>, cancel: Cancel<'_>) -> Option<Vec<u32>> {
+fn scan(v: &VolumeIndex, p: &Prepared<'_>, access: Option<&dyn Visibility>, cancel: Cancel<'_>) -> Option<Vec<u32>> {
+    let visible = |i: u32| access.is_none_or(|a| a.can_list(v, v.parents[i as usize]));
     let parts: Vec<Option<Vec<u32>>> = match &p.driver {
         Some((k, finder, exact)) => {
             let skip = exact.then_some(*k);
@@ -127,7 +132,7 @@ fn scan(v: &VolumeIndex, p: &Prepared<'_>, cancel: Cancel<'_>) -> Option<Vec<u32
                         }
                         last = s;
                         let e = v.seg_entry[a + s];
-                        if v.lower_off[e as usize] == starts[s] && v.listed(e) && p.matches(v, e, skip, sc) {
+                        if v.lower_off[e as usize] == starts[s] && v.listed(e) && p.matches(v, e, skip, sc) && visible(e) {
                             out.push(e);
                         }
                     }
@@ -141,7 +146,7 @@ fn scan(v: &VolumeIndex, p: &Prepared<'_>, cancel: Cancel<'_>) -> Option<Vec<u32
                 if cancel() {
                     return None;
                 }
-                Some((a as u32..b as u32).filter(|&i| v.listed(i) && p.matches(v, i, None, sc)).collect())
+                Some((a as u32..b as u32).filter(|&i| v.listed(i) && p.matches(v, i, None, sc) && visible(i)).collect())
             })
             .collect(),
     };
@@ -237,16 +242,20 @@ impl Engine {
     }
 
     pub fn search(&self, query: &Query, sort: Sort, cancel: Cancel<'_>) -> Option<ResultSet> {
+        self.search_as(query, sort, None, cancel)
+    }
+
+    pub fn search_as(&self, query: &Query, sort: Sort, access: Option<&dyn Visibility>, cancel: Cancel<'_>) -> Option<ResultSet> {
         let order = order_of(sort.key);
         let mut streams = Vec::new();
         let mut total = 0u64;
         let p = Prepared::new(query);
         for (vol, v) in self.volumes.iter().enumerate() {
-            let kind = if query.terms.is_empty() {
+            let kind = if query.terms.is_empty() && access.is_none() {
                 total += v.perms[order as usize].len() as u64;
                 Kind::Perm(None)
             } else {
-                let mut hits = scan(v, &p, cancel)?;
+                let mut hits = scan(v, &p, access, cancel)?;
                 total += hits.len() as u64;
                 if hits.len() <= SMALL {
                     let rank = &v.ranks[order as usize];

@@ -146,3 +146,29 @@ fn large_result_sets_walk_the_permutation() {
         }
     }
 }
+
+struct Deny(&'static str);
+
+impl Visibility for Deny {
+    fn can_list(&self, v: &VolumeIndex, dir: u32) -> bool {
+        dir == crate::index::NONE || v.name(dir) != self.0.as_bytes()
+    }
+}
+
+#[test]
+fn visibility_hides_entries_of_unlistable_folders() {
+    let e = sample();
+    let sort = Sort { key: SortKey::Name, descending: false };
+    let deny = Deny("src");
+    let q = parse("report", clock()).unwrap();
+    let mut rs = e.search_as(&q, sort, Some(&deny), &|| false).unwrap();
+    assert_eq!(rs.total, 2, "Report.TXT lives in the hidden folder");
+    let (batch, _) = e.rows(&mut rs, 0, 10);
+    let got: Vec<Vec<u8>> = batch.entries(true).unwrap().map(|(n, _)| n.to_vec()).collect();
+    assert_eq!(got, [b"report-old.txt".to_vec(), b"report.bak".to_vec()]);
+    let all = parse("", clock()).unwrap();
+    let everything = e.search(&all, sort, &|| false).unwrap().total;
+    let visible = e.search_as(&all, sort, Some(&deny), &|| false).unwrap().total;
+    assert_eq!((everything, visible), (8, 6), "the empty query is filtered too");
+    assert_eq!(e.search_as(&all, sort, Some(&Deny("nothing")), &|| false).unwrap().total, everything);
+}

@@ -20,12 +20,13 @@ pub fn serve<C: Duplex>(mut conn: C, shared: Arc<SharedIndex>, utc_offset_min: i
     let theirs = read_hello(&mut conn, &ours);
     write_frame(&mut conn, &ours)?;
     theirs?;
+    let access = conn.access()?;
     let latest = Arc::new(AtomicU64::new(0));
     let (tx, rx) = unbounded::<Message>();
     let mut writer = conn.try_clone()?;
     let worker_latest = latest.clone();
     let worker = std::thread::Builder::new().name("flit-indexd-session".into()).spawn(move || {
-        let mut session = Session::new(shared, utc_offset_min);
+        let mut session = Session::new(shared, utc_offset_min).with_access(access);
         let mut write = |m: Message| {
             let _ = write_frame(&mut writer, &m);
         };

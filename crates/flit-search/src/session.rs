@@ -1,4 +1,4 @@
-use crate::engine::{Engine, ResultSet};
+use crate::engine::{Engine, ResultSet, Visibility};
 use crate::proto::{Message, Sort, VolumeInfo};
 use crate::query::{self, Clock, Query};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -54,13 +54,19 @@ pub struct Session {
     shared: Arc<SharedIndex>,
     utc_offset_min: i32,
     current: Option<Current>,
+    access: Option<Arc<dyn Visibility>>,
     status_seen: u64,
     refreshed: Instant,
 }
 
 impl Session {
     pub fn new(shared: Arc<SharedIndex>, utc_offset_min: i32) -> Self {
-        Self { shared, utc_offset_min, current: None, status_seen: 0, refreshed: Instant::now() }
+        Self { shared, utc_offset_min, current: None, access: None, status_seen: 0, refreshed: Instant::now() }
+    }
+
+    pub fn with_access(mut self, access: Option<Arc<dyn Visibility>>) -> Self {
+        self.access = access;
+        self
     }
 
     pub fn handle(&mut self, msg: Message, latest: &AtomicU64, out: &mut dyn FnMut(Message)) {
@@ -121,7 +127,7 @@ impl Session {
         c.version = engine.version;
         let cancel = || latest.load(Ordering::Acquire) != gen;
         c.set = match &c.query {
-            Ok(q) => engine.search(q, c.sort, &cancel),
+            Ok(q) => engine.search_as(q, c.sort, self.access.as_deref(), &cancel),
             Err(_) => None,
         };
         match &c.set {

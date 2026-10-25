@@ -1,5 +1,6 @@
 #![cfg(windows)]
 
+mod access;
 mod d3d;
 mod dwrite;
 mod fs;
