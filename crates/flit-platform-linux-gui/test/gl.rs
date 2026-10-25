@@ -6,7 +6,7 @@ use std::time::Instant;
 const SIDE: u32 = 48;
 const ATLAS: u32 = 64;
 
-fn read(r: &GlRenderer) -> Vec<u8> {
+pub(crate) fn read(r: &GlRenderer) -> Vec<u8> {
     let (w, h) = r.size;
     let Target::Offscreen(fbo, _) = r.target else { panic!("offscreen only") };
     let gl = &r.shared.gl;

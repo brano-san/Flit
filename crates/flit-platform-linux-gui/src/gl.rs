@@ -487,4 +487,4 @@ impl Drop for GlRenderer {
 
 #[cfg(test)]
 #[path = "../test/gl.rs"]
-mod tests;
+pub(crate) mod tests;

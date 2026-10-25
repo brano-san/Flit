@@ -13,6 +13,10 @@ mod xdg;
 
 pub use window::{LinuxWaker, LinuxWindow, LinuxWindows};
 
+#[cfg(test)]
+#[path = "../test/frame.rs"]
+mod frame;
+
 use flit_core::atlas::Slot;
 use flit_core::render::DrawList;
 use flit_core::text::{FontMetrics, FontStyle, GlyphBitmap, GlyphKey, ShapedGlyph, ShapedText, TextBackend};
