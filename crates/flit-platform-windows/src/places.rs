@@ -1,5 +1,6 @@
 use flit_core::provider::Template;
 use flit_core::ui::{Drive, NewTemplate, Recent};
+use flit_core::location::valid_distro;
 use flit_core::FsPath;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -7,7 +8,10 @@ use windows::core::{w, Interface, PCWSTR, PWSTR};
 use windows::Win32::Foundation::ERROR_NO_MORE_ITEMS;
 use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW, FILE_ATTRIBUTE_DIRECTORY, WIN32_FIND_DATAW};
 use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_INPROC_SERVER, STGM_READ};
-use windows::Win32::System::Registry::{RegCloseKey, RegEnumKeyExW, RegGetValueW, RegOpenKeyExW, HKEY, HKEY_CLASSES_ROOT, HKEY_CURRENT_USER, KEY_READ, REG_ROUTINE_FLAGS, RRF_RT_ANY, RRF_RT_REG_BINARY, RRF_RT_REG_DWORD, RRF_RT_REG_SZ};
+use windows::Win32::System::Registry::{
+    RegCloseKey, RegEnumKeyExW, RegGetValueW, RegNotifyChangeKeyValue, RegOpenKeyExW, HKEY, HKEY_CLASSES_ROOT, HKEY_CURRENT_USER, KEY_NOTIFY, KEY_READ, REG_NOTIFY_CHANGE_LAST_SET, REG_NOTIFY_CHANGE_NAME, REG_ROUTINE_FLAGS, RRF_RT_ANY,
+    RRF_RT_REG_BINARY, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
+};
 use windows::Win32::UI::Shell::{AssocQueryStringW, IShellLinkW, SHGetKnownFolderPath, SHLoadIndirectString, ShellLink, ASSOCF_NONE, ASSOCSTR_FRIENDLYDOCNAME, FOLDERID_Recent, KF_FLAG_DEFAULT};
 
 const DRIVE_REMOVABLE: u32 = 2;
@@ -109,32 +113,61 @@ pub fn recent(limit: usize) -> (Vec<Recent>, bool) {
     (files, recent_off())
 }
 
-pub fn wsl_distros() -> Vec<String> {
+const LXSS: PCWSTR = w!(r"Software\Microsoft\Windows\CurrentVersion\Lxss");
+const INSTALLED: u32 = 1;
+
+pub fn watch_lxss(changed: Box<dyn Fn() + Send>) {
+    let watcher = move || {
+        let mut key = HKEY::default();
+        if unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, LXSS, None, KEY_NOTIFY, &mut key) }.is_err() {
+            return;
+        }
+        let key = Key(key);
+        while unsafe { RegNotifyChangeKeyValue(key.0, true, REG_NOTIFY_CHANGE_NAME | REG_NOTIFY_CHANGE_LAST_SET, None, false) }.is_ok() {
+            changed();
+        }
+    };
+    if let Err(e) = std::thread::Builder::new().name("flit-lxss-watch".into()).spawn(watcher) {
+        tracing::warn!("cannot watch the WSL distribution list: {e}");
+    }
+}
+
+fn lxss() -> Vec<(String, Option<FsPath>)> {
     let mut key = HKEY::default();
-    let mut out = Vec::new();
+    let mut out: Vec<(String, Option<FsPath>)> = Vec::new();
     unsafe {
-        if RegOpenKeyExW(HKEY_CURRENT_USER, w!(r"Software\Microsoft\Windows\CurrentVersion\Lxss"), None, KEY_READ, &mut key).is_err() {
+        if RegOpenKeyExW(HKEY_CURRENT_USER, LXSS, None, KEY_READ, &mut key).is_err() {
             return out;
         }
+        let key = Key(key);
         for index in 0.. {
             let mut sub = [0u16; 256];
             let mut len = sub.len() as u32;
-            if RegEnumKeyExW(key, index, Some(PWSTR(sub.as_mut_ptr())), &mut len, None, None, None, None).is_err() {
+            if RegEnumKeyExW(key.0, index, Some(PWSTR(sub.as_mut_ptr())), &mut len, None, None, None, None).is_err() {
                 break;
             }
-            let mut name = [0u16; 256];
-            let mut size = (name.len() * 2) as u32;
-            let read = RegGetValueW(key, PCWSTR(sub.as_ptr()), w!("DistributionName"), RRF_RT_REG_SZ, None, Some(name.as_mut_ptr() as _), Some(&mut size));
-            if read.is_ok() {
-                let distro = wide_str(&name);
-                if !distro.is_empty() && !out.contains(&distro) {
-                    out.push(distro);
-                }
+            let text = |value: PCWSTR| {
+                let mut buf = [0u16; 1024];
+                let mut size = (buf.len() * 2) as u32;
+                RegGetValueW(key.0, PCWSTR(sub.as_ptr()), value, RRF_RT_REG_SZ, None, Some(buf.as_mut_ptr() as _), Some(&mut size)).is_ok().then(|| wide_str(&buf))
+            };
+            let (mut state, mut state_size) = (INSTALLED, 4u32);
+            let _ = RegGetValueW(key.0, PCWSTR(sub.as_ptr()), w!("State"), RRF_RT_REG_DWORD, None, Some(&mut state as *mut u32 as _), Some(&mut state_size));
+            match text(w!("DistributionName")) {
+                Some(distro) if state == INSTALLED && valid_distro(&distro) && !out.iter().any(|(d, _)| *d == distro) => out.push((distro, text(w!("ShortcutPath")).and_then(|p| FsPath::parse(&p)))),
+                _ => {}
             }
         }
-        let _ = RegCloseKey(key);
     }
     out
+}
+
+pub fn wsl_distros() -> Vec<String> {
+    lxss().into_iter().map(|(distro, _)| distro).collect()
+}
+
+pub fn wsl_shortcut(distro: &str) -> Option<FsPath> {
+    lxss().into_iter().find(|(d, _)| d.eq_ignore_ascii_case(distro))?.1
 }
 
 struct Key(HKEY);

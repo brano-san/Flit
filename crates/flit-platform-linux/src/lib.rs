@@ -1,11 +1,26 @@
-use crossbeam_channel::Sender;
+#![cfg(target_os = "linux")]
+
+pub mod agent;
+mod fs;
+mod inotify;
+mod trash;
+
+#[cfg(test)]
+#[path = "../test/temp.rs"]
+mod temp;
+
+pub use fs::{host, LinuxFs};
+pub use inotify::Inotify;
+pub use trash::Trash;
+
 use flit_core::atlas::Slot;
 use flit_core::input::CursorIcon;
 use flit_core::provider::FileOp;
 use flit_core::render::{DrawList, Rect};
 use flit_core::text::{FontMetrics, FontStyle, GlyphBitmap, GlyphKey, ShapedText, TextBackend};
 use flit_core::ui::{Bitmap, IconRequest, ShellMenu};
-use flit_core::{FsError, FsErrorKind, FsPath, ListingBuilder, Location, Open, ProviderEvent, TabId};
+use flit_core::{FsPath, Location, Open};
+use std::os::unix::ffi::OsStrExt;
 use flit_platform::*;
 use flit_search::index::{Checkpoint, IndexSink};
 use flit_search::proto::VolumeInfo;
@@ -189,26 +204,6 @@ impl TextBackend for SwashText {
     }
 }
 
-pub struct LinuxFs;
-
-impl Fs for LinuxFs {
-    fn read_dir(&self, _: &FsPath, _: &mut ListingBuilder<'_>) -> Result<(), FsError> {
-        Err(FsError { kind: FsErrorKind::Unavailable, code: -1 })
-    }
-    fn seek_penalty(&self, _: &FsPath) -> Option<bool> {
-        None
-    }
-}
-
-pub struct Inotify;
-
-impl Watcher for Inotify {
-    fn new(_: Sender<ProviderEvent>, _: Wake) -> Result<Self, PlatformError> {
-        Ok(Inotify)
-    }
-    fn watch(&mut self, _: TabId, _: u64, _: Option<&FsPath>) {}
-}
-
 pub struct FreedesktopShell;
 
 impl Shell for FreedesktopShell {
@@ -227,8 +222,22 @@ impl Shell for FreedesktopShell {
 }
 
 impl FileOps for FreedesktopShell {
-    fn file_op(&mut self, _: &FileOp, _: &Job) -> OpOutcome {
-        OpOutcome { items: Vec::new(), error: Some(PlatformError::unsupported("file operations")) }
+    fn file_op(&mut self, op: &FileOp, _: &Job) -> OpOutcome {
+        let FileOp::Trash(paths) = op else {
+            return OpOutcome { items: Vec::new(), error: Some(PlatformError::unsupported("file operations")) };
+        };
+        let Some(trash) = Trash::from_env() else {
+            return OpOutcome { items: Vec::new(), error: Some(PlatformError::new(-1, "The Trash folder is unknown: neither XDG_DATA_HOME nor HOME is set")) };
+        };
+        let mut out = OpOutcome::default();
+        for p in paths {
+            match host(p).map(|h| trash.trash(h)) {
+                Some(Ok(to)) => out.items.push((p.clone(), FsPath::parse_bytes(to.as_os_str().as_bytes()).unwrap_or_else(|| p.clone()))),
+                Some(Err(e)) => out.error = Some(PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("Cannot move {} to the Trash: {e}", p.display()))),
+                None => out.error = Some(PlatformError::new(-1, format!("{} is not a Linux path", p.display()))),
+            }
+        }
+        out
     }
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
         Err(PlatformError::unsupported("clipboard"))

@@ -35,7 +35,11 @@ impl PlacesWorker {
     pub fn new<P: Platform>(wake: Wake) -> Self {
         let (requests, jobs) = unbounded::<Job>();
         let (done, results) = unbounded();
+        let again = requests.clone();
         let run = move || {
+            P::watch_wsl(Box::new(move || {
+                let _ = again.send(Job::Refresh);
+            }));
             let send = |reply: Reply| {
                 let sent = done.send(reply).is_ok();
                 wake();

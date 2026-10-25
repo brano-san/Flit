@@ -1,6 +1,13 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+#[path = "../flit-proto/src/build_id.rs"]
+mod build_id;
 
 const RT_ICON: u16 = 3;
+const AGENT_SOURCES: [&str; 8] = ["crates/flit-platform-linux", "crates/flit-proto", "crates/flit-core", "crates/flit-platform", "crates/flit-search", "Cargo.toml", "Cargo.lock", ".cargo/config.toml"];
+const AGENTS: [(&str, &str, &str); 2] = [("x64", "FLIT_WSL_AGENT_X64", "x86_64-unknown-linux-musl"), ("arm64", "FLIT_WSL_AGENT_ARM64", "aarch64-unknown-linux-musl")];
+const OUTER_BUILD_ENV: [&str; 6] = ["RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_BUILD_RUSTFLAGS", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_TARGET"];
 const RT_GROUP_ICON: u16 = 14;
 const MOVEABLE_DISCARDABLE: u16 = 0x1010;
 const MOVEABLE_PURE_DISCARDABLE: u16 = 0x1030;
@@ -36,7 +43,43 @@ fn icon_res(ico: &[u8]) -> Vec<u8> {
     res
 }
 
+fn build_agent(root: &Path, target: &str) -> Option<PathBuf> {
+    AGENT_SOURCES.iter().for_each(|s| println!("cargo:rerun-if-changed={}", root.join(s).display()));
+    let dir = std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from).join("wsl-agent");
+    let mut cargo = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+    cargo.current_dir(root).args(["build", "--quiet", "--locked", "-p", "flit-platform-linux", "--bin", "flit-wsl-agent", "--features", "agent", "--profile", "wsl-agent", "--target", target, "--target-dir"]).arg(&dir);
+    for v in OUTER_BUILD_ENV {
+        cargo.env_remove(v);
+    }
+    match cargo.status() {
+        Ok(s) if s.success() => Some(dir.join(target).join("wsl-agent").join("flit-wsl-agent")),
+        other => {
+            println!("cargo:warning=the WSL agent for {target} was not built ({other:?}), so WSL folders will open through \\\\wsl.localhost");
+            None
+        }
+    }
+}
+
+fn embed_agents() {
+    let root = Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..");
+    let windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
+    let mut code = String::from("pub const AGENTS: flit_platform::AgentImages = flit_platform::AgentImages {\n");
+    for (arch, var, target) in AGENTS {
+        println!("cargo:rerun-if-env-changed={var}");
+        let given = std::env::var_os(var).map(PathBuf::from);
+        given.iter().for_each(|p| println!("cargo:rerun-if-changed={}", p.display()));
+        let path = given.or_else(|| (windows && arch == "x64").then(|| build_agent(&root, target)).flatten());
+        match path.and_then(|p| Some((std::fs::read(&p).ok()?, p))) {
+            Some((bytes, p)) => code += &format!("    {arch}: Some(flit_platform::AgentImage {{ bytes: include_bytes!({:?}), build: {:?} }}),\n", p.display().to_string(), build_id::build_id(&bytes)),
+            None => code += &format!("    {arch}: None,\n"),
+        }
+    }
+    code += "};\n";
+    std::fs::write(Path::new(&std::env::var("OUT_DIR").unwrap()).join("wsl_agent.rs"), code).unwrap();
+}
+
 fn main() {
+    embed_agents();
     if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
         for dll in ["d3d11", "dcomp", "dwrite", "dwmapi", "imm32", "ole32", "oleaut32", "shell32", "combase"] {
             println!("cargo:rustc-link-arg-bins=/DELAYLOAD:{dll}.dll");

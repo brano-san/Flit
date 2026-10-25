@@ -19,6 +19,10 @@ pub enum ProviderId {
 pub const WSL_SCHEME: &str = "wsl://";
 const WSL_HOSTS: [&[u8]; 2] = [b"wsl.localhost", b"wsl$"];
 
+pub fn valid_distro(name: &str) -> bool {
+    (1..=64).contains(&name.len()) && name != "." && name != ".." && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
 fn wsl_escaped(b: u8) -> bool {
     matches!(b, 0x01..=0x1F | b'"' | b'*' | b':' | b'<' | b'>' | b'?' | b'\\' | b'|')
 }
@@ -77,6 +81,14 @@ impl Location {
         }
     }
 
+    pub fn canonicalize(&mut self, distros: &[String]) {
+        if let Location::Wsl { distro, .. } = self {
+            if let Some(known) = distros.iter().find(|d| d.eq_ignore_ascii_case(distro)) {
+                distro.clone_from(known);
+            }
+        }
+    }
+
     pub fn path(&self) -> &FsPath {
         match self {
             Location::Local(p) | Location::Wsl { path: p, .. } => p,
@@ -104,7 +116,7 @@ impl Location {
                 Some(i) => (&rest[..i], &rest[i..]),
                 None => (rest, &b"/"[..]),
             };
-            let distro = std::str::from_utf8(distro).ok().filter(|d| !d.is_empty() && !d.contains('\\'))?;
+            let distro = std::str::from_utf8(distro).ok().filter(|d| valid_distro(d))?;
             let path = FsPath::parse_exact(path).filter(|p| p.kind() == PathKind::Unix)?;
             return Some(Location::Wsl { distro: distro.to_owned(), path });
         }
@@ -114,7 +126,7 @@ impl Location {
     pub fn from_local(p: FsPath) -> Self {
         if let Some((server, share, rest)) = p.unc_parts() {
             if WSL_HOSTS.iter().any(|h| server.eq_ignore_ascii_case(h)) {
-                if let Ok(distro) = std::str::from_utf8(share) {
+                if let Some(distro) = std::str::from_utf8(share).ok().filter(|d| valid_distro(d)) {
                     let mut linux = b"/".to_vec();
                     for (i, c) in rest.split(|&c| c == b'\\').filter(|c| !c.is_empty()).enumerate() {
                         if i > 0 {
@@ -166,6 +178,9 @@ impl Location {
 
     pub fn join(&self, child: &[u8]) -> Self {
         match self {
+            Location::Local(p) if p.kind() == PathKind::Computer && std::str::from_utf8(child).is_ok_and(valid_distro) => {
+                Location::Wsl { distro: String::from_utf8_lossy(child).into_owned(), path: FsPath::parse("/").unwrap() }
+            }
             Location::Local(p) => Location::Local(p.join(child)),
             Location::Wsl { distro, path } => Location::Wsl { distro: distro.clone(), path: path.join(child) },
         }
