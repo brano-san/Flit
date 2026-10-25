@@ -192,7 +192,12 @@ fn hostile_names_never_leave_the_target() {
     entries.push((b"ok/fine.txt", b"fine", 0));
     t.write("evil.zip", &raw_zip(&entries));
     let listed = names(&t.fs("evil.zip/ok")).unwrap();
-    assert_eq!(listed.iter().map(|(n, ..)| n.as_str()).collect::<Vec<_>>(), ["fine.txt", "link"]);
+    let unix_only: &[&str] = if cfg!(windows) { &[] } else { &["CON", "file.txt:stream", "trailing. "] };
+    let mut want = [&["fine.txt", "link"][..], unix_only].concat();
+    want.sort();
+    let mut got: Vec<&str> = listed.iter().map(|(n, ..)| n.as_str()).collect();
+    got.sort();
+    assert_eq!(got, want);
     let out = extract(&t.fs("evil.zip"), &t.fs("x/target"), Place::Here);
     assert!(out.error.as_ref().is_some_and(|e| e.message.contains("unsafe names")), "{:?}", out.error);
     assert_eq!(t.read("x/target/ok/fine.txt"), b"fine");
@@ -208,7 +213,7 @@ fn hostile_names_never_leave_the_target() {
             }
         }
     }
-    assert_eq!(all.len(), 2, "{all:?}");
+    assert_eq!(all.len(), if cfg!(windows) { 2 } else { 6 }, "Linux also extracts C:/Windows/evil.dll as a folder named C: {all:?}");
 }
 
 #[test]
