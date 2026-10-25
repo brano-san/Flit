@@ -1,0 +1,13 @@
+[package]
+name = "flit-platform"
+description = "Flit platform traits and the OS-independent provider runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+flit-core.workspace = true
+flit-search.workspace = true
+crossbeam-channel.workspace = true
+rayon.workspace = true

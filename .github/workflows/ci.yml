@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --release
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace
+      - run: cargo test -p flit-core -p flit-search -p flit-platform -p flit-proto
+
+  deps-isolation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: |
+          status=0
+          for crate in flit-core flit-proto flit-search flit-platform; do
+            tree=$(cargo tree -p "$crate" -e normal,build --target all --prefix none)
+            if grep '^windows' <<< "$tree"; then
+              echo "::error::$crate depends on a windows crate"
+              status=1
+            else
+              echo "$crate: no windows crates"
+            fi
+          done
+          exit "$status"

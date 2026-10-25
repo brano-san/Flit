@@ -1,0 +1,7 @@
+[package]
+name = "flit-gen"
+description = "Generates Flit test folders: huge flat dirs, deep trees, long paths, Unicode and invalid UTF-16 names"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true

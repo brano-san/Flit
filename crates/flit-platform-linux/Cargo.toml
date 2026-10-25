@@ -1,0 +1,13 @@
+[package]
+name = "flit-platform-linux"
+description = "Linux platform for Flit (stage 1: stubs so the workspace builds)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+flit-core.workspace = true
+flit-search.workspace = true
+flit-platform.workspace = true
+crossbeam-channel.workspace = true

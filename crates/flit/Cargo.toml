@@ -1,0 +1,27 @@
+[package]
+name = "flit"
+description = "Flit file manager"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+profile = ["dep:tracing-tracy"]
+
+[dependencies]
+flit-core.workspace = true
+flit-platform.workspace = true
+crossbeam-channel.workspace = true
+mimalloc.workspace = true
+serde.workspace = true
+postcard.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-tracy = { workspace = true, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+flit-platform-windows.workspace = true
+
+[target.'cfg(not(windows))'.dependencies]
+flit-platform-linux.workspace = true

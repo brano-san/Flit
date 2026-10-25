@@ -1,0 +1,12 @@
+target/
+*.tmp
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+.vs/
+*.code-workspace
+.DS_Store
+Thumbs.db
+desktop.ini

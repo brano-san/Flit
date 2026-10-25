@@ -1,0 +1,18 @@
+[package]
+name = "flit-indexd"
+description = "Flit index service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+flit-platform.workspace = true
+flit-proto.workspace = true
+flit-search.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+flit-platform-windows.workspace = true
+
+[target.'cfg(not(windows))'.dependencies]
+flit-platform-linux.workspace = true

@@ -1,0 +1,52 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/flit-core",
+    "crates/flit-proto",
+    "crates/flit-search",
+    "crates/flit-platform",
+    "crates/flit-platform-windows",
+    "crates/flit-platform-linux",
+    "crates/flit",
+    "crates/flit-indexd",
+    "tools/flit-gen",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.87"
+
+[workspace.dependencies]
+flit-core = { path = "crates/flit-core" }
+flit-proto = { path = "crates/flit-proto" }
+flit-search = { path = "crates/flit-search" }
+flit-platform = { path = "crates/flit-platform" }
+flit-platform-windows = { path = "crates/flit-platform-windows" }
+flit-platform-linux = { path = "crates/flit-platform-linux" }
+
+crossbeam-channel = "0.5"
+arc-swap = "1.7"
+rayon = "1.10"
+bumpalo = { version = "3.16", features = ["collections"] }
+smallvec = "1.13"
+mimalloc = { version = "0.1", default-features = false }
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1.1", default-features = false, features = ["use-std"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
+tracing-tracy = "0.12"
+criterion = { version = "0.8", default-features = false }
+windows = "0.62"
+windows-core = "0.62"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+debug = "line-tables-only"
+
+[profile.bench]
+inherits = "release"

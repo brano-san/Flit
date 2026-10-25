@@ -1,0 +1,12 @@
+[package]
+name = "flit-proto"
+description = "Flit wire protocols (provider agent, single instance) and their shared transport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+flit-core.workspace = true
+serde.workspace = true
+postcard.workspace = true
