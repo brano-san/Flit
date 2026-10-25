@@ -3,7 +3,7 @@ use super::{centered, App, Hit, Route};
 use crate::archive::{self, ArchiveOp};
 use crate::fmt as format;
 use crate::input::{Key, Mods};
-use crate::location::Location;
+use crate::location::{Location, ProviderId};
 use crate::name;
 use crate::open::OpenTarget;
 use crate::path::FsPath;
@@ -147,7 +147,7 @@ impl Job {
 
 pub(super) enum Ask {
     Conflict { id: OpId, conflict: Conflict },
-    Confirm(FileOp),
+    Confirm(FileOp, ProviderId),
     Restore,
 }
 
@@ -247,18 +247,18 @@ fn job_title(op: &FileOp) -> Option<String> {
     })
 }
 
-fn job_dest(op: &FileOp) -> Option<Location> {
+fn job_dest(provider: &ProviderId, op: &FileOp) -> Option<Location> {
     let path = match op {
         FileOp::Copy { dest, .. } | FileOp::Move { dest, .. } | FileOp::Paste { dest } => dest.clone(),
         FileOp::MoveTo(pairs) => pairs.first()?.1.parent()?,
         FileOp::Restore(pairs) => pairs.first()?.1.parent()?,
         FileOp::Flatten(dirs) => dirs.first()?.clone(),
-        FileOp::Trash(_) => return Some(Location::recycle_bin()),
+        FileOp::Trash(_) if provider == &ProviderId::Local => return Some(Location::recycle_bin()),
         FileOp::Archive(ArchiveOp::Compress { archive, .. }) => archive.parent()?,
         FileOp::Archive(ArchiveOp::Extract { archives, dest, .. }) => dest.clone().or_else(|| archives.first()?.parent())?,
         _ => return None,
     };
-    Some(Location::from_local(path))
+    Some(Location::on(provider, path))
 }
 
 fn confirm_text(op: &FileOp) -> (&'static str, String) {
@@ -290,9 +290,12 @@ fn meta_line(label: &str, m: &crate::listing::Meta, offset: i32) -> String {
 }
 
 impl App {
-    pub(super) fn track_job(&mut self, id: OpId, op: &FileOp, ctl: &OpCtl) {
-        let Some(title) = job_title(op) else { return };
-        let job = Job { id, title, dest: job_dest(op), ctl: ctl.clone(), state: JobState::Running, progress: OpProgress::default(), asking: false, started: None, finished: None, mark: None, speed: 0.0, samples: VecDeque::new() };
+    pub(super) fn track_job(&mut self, id: OpId, provider: &ProviderId, op: &FileOp, ctl: &OpCtl) {
+        let Some(mut title) = job_title(op) else { return };
+        if let (FileOp::Trash(items), ProviderId::Wsl(_)) = (op, provider) {
+            title = format!("Moving {} to the Trash", count(items));
+        }
+        let job = Job { id, title, dest: job_dest(provider, op), ctl: ctl.clone(), state: JobState::Running, progress: OpProgress::default(), asking: false, started: None, finished: None, mark: None, speed: 0.0, samples: VecDeque::new() };
         if let Some(k) = self.jobs.list.iter().position(|j| j.state != JobState::Running).filter(|_| self.jobs.list.len() >= MAX_JOBS) {
             self.jobs.list.remove(k);
         }
@@ -348,7 +351,11 @@ impl App {
     }
 
     pub(super) fn ask_confirm(&mut self, op: FileOp) {
-        self.jobs.asks.push_back(Ask::Confirm(op));
+        self.ask_confirm_on(ProviderId::Local, op);
+    }
+
+    pub(super) fn ask_confirm_on(&mut self, provider: ProviderId, op: FileOp) {
+        self.jobs.asks.push_back(Ask::Confirm(op, provider));
         self.jobs.sel = 0;
         self.layout();
         self.dirty = true;
@@ -373,7 +380,7 @@ impl App {
         match self.jobs.asks.front() {
             Some(a) if a.unreadable() => Some("unreadable"),
             Some(Ask::Conflict { .. }) => Some("conflict"),
-            Some(Ask::Confirm(_)) => Some("confirm"),
+            Some(Ask::Confirm(..)) => Some("confirm"),
             Some(Ask::Restore) => Some("restore"),
             None => self.jobs.form.as_ref().map(|f| f.kind.name()),
         }
@@ -454,9 +461,9 @@ impl App {
                     j.asking = false;
                 }
             }
-            Ask::Confirm(op) if button == 0 => self.start_confirmed(op),
+            Ask::Confirm(op, provider) if button == 0 => self.start_confirmed(provider, op),
             Ask::Restore if button == 0 => self.effects.push(super::Effect::RestoreSession),
-            Ask::Confirm(_) | Ask::Restore => {}
+            Ask::Confirm(..) | Ask::Restore => {}
         }
         self.jobs.all = false;
         self.jobs.sel = self.jobs.asks.front().map_or(0, Ask::first_button);
@@ -468,8 +475,8 @@ impl App {
         match self.jobs.asks.front() {
             Some(a) if a.unreadable() => &UNREADABLE_BUTTONS,
             Some(Ask::Conflict { .. }) => &CONFLICT_BUTTONS,
-            Some(Ask::Confirm(FileOp::Restore(_))) => &RESTORE_ALL_BUTTONS,
-            Some(Ask::Confirm(_)) => &CONFIRM_BUTTONS,
+            Some(Ask::Confirm(FileOp::Restore(_), _)) => &RESTORE_ALL_BUTTONS,
+            Some(Ask::Confirm(..)) => &CONFIRM_BUTTONS,
             Some(Ask::Restore) => &RESTORE_BUTTONS,
             None => &[],
         }
@@ -547,7 +554,7 @@ impl App {
         if let Some(ask) = j.asks.front() {
             let (buttons, dh) = match ask {
                 Ask::Conflict { .. } => (labels, s(236.0)),
-                Ask::Confirm(_) | Ask::Restore => (labels, s(168.0)),
+                Ask::Confirm(..) | Ask::Restore => (labels, s(168.0)),
             };
             let dw = s(DIALOG_W).min(w - s(32.0));
             let d = Rect::new(((w - dw) / 2.0).round(), ((h - dh) / 2.0).round().max(s(40.0)), dw, dh);
@@ -816,7 +823,7 @@ impl App {
                 }
                 ("Replace or skip?".into(), lines)
             }
-            Some(Ask::Confirm(op)) => {
+            Some(Ask::Confirm(op, _)) => {
                 let (title, text) = confirm_text(op);
                 let note = if matches!(op, FileOp::Restore(_)) { "Ctrl+Z sends them back to the Recycle Bin." } else { "This cannot be undone." };
                 (title.into(), vec![text, note.into()])

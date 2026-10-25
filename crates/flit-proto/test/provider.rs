@@ -14,7 +14,10 @@ fn roundtrip_every_message() {
         Request::Stat { id: 2, path: unix(b"/") },
         Request::Watch { id: 3, path: unix("/tmp/отчёт".as_bytes()) },
         Request::DirSizes { id: 4, dir: unix(b"/var"), items: vec![(0, b"log".to_vec()), (7, b"\xFE".to_vec())] },
-        Request::Op { id: 5, op: FileOp::Trash(vec![unix(b"/tmp/a"), unix(b"/tmp/b:c")]) },
+        Request::Op { id: 5, op: FileOp::Trash(vec![unix(b"/tmp/a"), unix(b"/tmp/b:c")]), policy: None },
+        Request::Op { id: 6, op: FileOp::Copy { items: vec![unix(b"/tmp/\xFF")], dest: unix(b"/home") }, policy: Some(Resolve::Replace) },
+        Request::Answer { id: 6, choice: Some(Resolve::KeepBoth), all: true },
+        Request::Answer { id: 6, choice: None, all: false },
         Request::Cancel { id: 1 },
         Request::Shutdown,
     ];
@@ -34,7 +37,9 @@ fn roundtrip_every_message() {
         Event::Changes { id: 3, changes: vec![DirChange { kind: ChangeKind::Removed, name: b"x".to_vec(), meta: None }] },
         Event::Rescan { id: 3 },
         Event::DirSize { id: 4, idx: 7, size: u64::MAX },
-        Event::OpDone { id: 5, error: None },
+        Event::OpDone { id: 5, error: None, items: vec![(unix(b"/tmp/a"), unix(b"/home/u/.local/share/Trash/files/a"))] },
+        Event::OpProgress { id: 6, progress: OpProgress { stage: flit_core::provider::Stage::Running, bytes: 1, total_bytes: 2, items: 3, total_items: 4 } },
+        Event::OpConflict { id: 6, conflict: Conflict { source: unix(b"/tmp/\xFF"), target: unix(b"/home/\xFF"), from: Meta::default(), to: Meta { size: 5, ..Default::default() } } },
     ];
     for m in events {
         let mut buf = Vec::new();
@@ -69,4 +74,38 @@ fn hostile_events_rejected() {
     assert!(Event::Entries { id: 3, batch }.validate(true).is_err());
     assert!(change(b"ok", Some(Meta { attrs: flit_core::attr::DIR | flit_core::attr::HIDDEN, ..Default::default() })).validate(true).is_ok());
     assert!(Event::Rescan { id: 4 }.validate(true).is_ok());
+}
+
+#[test]
+fn reports_must_stay_inside_the_operation() {
+    let pairs = |v: &[(&str, &str)]| v.iter().map(|&(a, b)| (unix(a.as_bytes()), FsPath::parse(b).unwrap())).collect::<Vec<_>>();
+    let copy = FileOp::Copy { items: vec![unix(b"/home/u/a"), unix(b"/home/u/d")], dest: unix(b"/tmp/x") };
+    assert!(check_report(&copy, &pairs(&[("/home/u/a", "/tmp/x/a - Copy"), ("/home/u/d/inner", "/tmp/x/d/inner")])).is_ok());
+    assert!(check_report(&copy, &pairs(&[("/home/u/a", "/tmp/xy/a")])).is_err());
+    assert!(check_report(&copy, &pairs(&[("/home/u/ab", "/tmp/x/ab")])).is_err());
+    assert!(check_report(&copy, &pairs(&[("/home/u/a", r"C:\Windows")])).is_err());
+    let trash = FileOp::Trash(vec![unix(b"/tmp/a")]);
+    assert!(check_report(&trash, &pairs(&[("/tmp/a", "/home/u/.local/share/Trash/files/a.2")])).is_ok());
+    assert!(check_report(&trash, &pairs(&[("/tmp/a", "/home/u/.ssh")])).is_err());
+    let rename = FileOp::Rename { item: unix(b"/a/b"), name: b"c".to_vec() };
+    assert!(check_report(&rename, &pairs(&[("/a/b", "/a/c")])).is_ok());
+    assert!(check_report(&rename, &pairs(&[("/a/b", "/etc/c")])).is_err());
+    let root = FileOp::NewFolder { dir: unix(b"/"), name: b"n".to_vec() };
+    assert!(check_report(&root, &pairs(&[("/n", "/n")])).is_ok());
+    let restore = FileOp::Restore(vec![(unix(b"/h/Trash/files/a"), unix(b"/tmp/a"))]);
+    assert!(check_report(&restore, &pairs(&[("/h/Trash/files/a", "/tmp/a (2)")])).is_ok());
+    assert!(check_report(&FileOp::EmptyBin, &[]).is_ok());
+    assert!(check_report(&FileOp::EmptyBin, &pairs(&[("/a", "/b")])).is_err());
+}
+
+#[test]
+fn conflicts_must_name_the_operation_paths() {
+    let copy = FileOp::Copy { items: vec![unix(b"/s/a")], dest: unix(b"/d") };
+    let c = |s: &str, t: &str| Conflict { source: unix(s.as_bytes()), target: unix(t.as_bytes()), from: Meta::default(), to: Meta::default() };
+    assert!(check_conflict(&copy, &c("/s/a/x", "/d/a/x")).is_ok());
+    assert!(check_conflict(&copy, &c("/s/b", "/d/b")).is_err());
+    assert!(check_conflict(&copy, &c("/s/a", "/e/a")).is_err());
+    assert!(check_conflict(&FileOp::Delete(vec![unix(b"/s/a")]), &c("/s/a", "/s/a")).is_err());
+    let tomb = Event::OpConflict { id: 1, conflict: Conflict { to: Meta { attrs: flit_core::attr::DELETED, ..Default::default() }, ..c("/s/a", "/d/a") } };
+    assert!(tomb.validate(false).is_err());
 }

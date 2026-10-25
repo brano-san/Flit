@@ -1,4 +1,5 @@
 use crate::archive::ArchiveOp;
+use crate::location::ProviderId;
 use crate::provider::{FileOp, OpReport};
 
 const DEPTH: usize = 100;
@@ -45,12 +46,12 @@ pub fn inverse(report: &OpReport) -> Option<Step> {
 
 #[derive(Default, Debug)]
 pub struct Journal {
-    undo: Vec<Step>,
-    redo: Vec<Step>,
+    undo: Vec<(ProviderId, Step)>,
+    redo: Vec<(ProviderId, Step)>,
 }
 
 impl Journal {
-    pub fn record(&mut self, origin: Origin, report: &OpReport) {
+    pub fn record(&mut self, origin: Origin, provider: ProviderId, report: &OpReport) {
         let Some(step) = inverse(report) else { return };
         let stack = match origin {
             Origin::Fresh => {
@@ -60,13 +61,13 @@ impl Journal {
             Origin::Undo => &mut self.redo,
             Origin::Redo => &mut self.undo,
         };
-        stack.push(step);
+        stack.push((provider, step));
         if stack.len() > DEPTH {
             stack.remove(0);
         }
     }
 
-    pub fn take(&mut self, origin: Origin) -> Option<Step> {
+    pub fn take(&mut self, origin: Origin) -> Option<(ProviderId, Step)> {
         match origin {
             Origin::Undo => self.undo.pop(),
             Origin::Redo => self.redo.pop(),

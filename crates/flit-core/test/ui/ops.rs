@@ -257,29 +257,100 @@ fn clicking_elsewhere_commits_the_rename() {
     assert_eq!(ops(&mut app).into_iter().map(|(_, op)| op).collect::<Vec<_>>(), [FileOp::Rename { item: p(r"C:\x\a.txt"), name: b"c.txt".to_vec() }]);
 }
 
+fn sent(app: &mut App) -> Vec<(ProviderId, OpId, FileOp)> {
+    app.drain_effects().filter_map(|e| if let Effect::Provider { provider, req: ProviderRequest::Op { id, op, .. } } = e { Some((provider, id, op)) } else { None }).collect()
+}
+
+fn ubuntu() -> ProviderId {
+    ProviderId::Wsl("Ubuntu".into())
+}
+
 #[test]
-fn rename_in_wsl_escapes_windows_characters() {
+fn rename_in_wsl_sends_the_linux_name_to_the_agent() {
     let mut app = app_at("wsl://Ubuntu/home");
     deliver(&mut app, &[("a", false)]);
     select(&mut app, &["a"]);
     key(&mut app, Key::F(2), NO);
-    typed(&mut app, "x:y");
+    typed(&mut app, "x:y.");
     key(&mut app, Key::Enter, NO);
-    let [(_, op)] = ops(&mut app).try_into().unwrap();
-    assert_eq!(op, FileOp::Rename { item: p(r"\\wsl.localhost\Ubuntu\home\a"), name: "x\u{F03A}y".as_bytes().to_vec() });
+    let [(provider, _, op)] = sent(&mut app).try_into().unwrap();
+    assert_eq!((provider, op), (ubuntu(), FileOp::Rename { item: p("/home/a"), name: b"x:y.".to_vec() }));
 }
 
 #[test]
-fn trash_in_wsl_goes_to_the_distro_with_linux_paths() {
+fn trash_and_delete_in_wsl_go_to_the_distro_with_linux_paths() {
     let mut app = app_at("wsl://Ubuntu/home");
     deliver(&mut app, &[("a:b", false), ("c", true)]);
     select(&mut app, &["a:b", "c"]);
     key(&mut app, Key::Delete, NO);
-    let sent: Vec<_> = app.drain_effects().filter_map(|e| if let Effect::Provider { provider, req: ProviderRequest::Op { op, .. } } = e { Some((provider, op)) } else { None }).collect();
-    assert_eq!(sent, [(ProviderId::Wsl("Ubuntu".into()), FileOp::Trash(vec![p("/home/a:b"), p("/home/c")]))]);
+    let sent_ops: Vec<_> = sent(&mut app).into_iter().map(|(provider, _, op)| (provider, op)).collect();
+    assert_eq!(sent_ops, [(ubuntu(), FileOp::Trash(vec![p("/home/a:b"), p("/home/c")]))]);
+    assert_eq!(app.job_states()[0].0, "Moving 2 items to the Trash");
     select(&mut app, &["c"]);
     key(&mut app, Key::Delete, SHIFT);
     assert!(app.jobs.modal());
+    key(&mut app, Key::Enter, NO);
+    let sent_ops: Vec<_> = sent(&mut app).into_iter().map(|(provider, _, op)| (provider, op)).collect();
+    assert_eq!(sent_ops, [(ubuntu(), FileOp::Delete(vec![p("/home/c")]))]);
+}
+
+#[test]
+fn ctrl_z_after_del_in_wsl_restores_from_the_linux_trash() {
+    let mut app = app_at("wsl://Ubuntu/home");
+    deliver(&mut app, &[("a", false)]);
+    select(&mut app, &["a"]);
+    key(&mut app, Key::Delete, NO);
+    let [(_, id, op)] = sent(&mut app).try_into().unwrap();
+    done(&mut app, id, op, &[("/home/a", "/home/u/.local/share/Trash/files/a")]);
+    app.drain_effects().for_each(drop);
+    key(&mut app, Key::Char('Z'), CTRL);
+    let [(provider, id, op)] = sent(&mut app).try_into().unwrap();
+    assert_eq!((provider, op.clone()), (ubuntu(), FileOp::Restore(vec![(p("/home/u/.local/share/Trash/files/a"), p("/home/a"))])));
+    done(&mut app, id, op, &[("/home/u/.local/share/Trash/files/a", "/home/a")]);
+    app.drain_effects().for_each(drop);
+    key(&mut app, Key::Char('Y'), CTRL);
+    let [(provider, _, op)] = sent(&mut app).try_into().unwrap();
+    assert_eq!((provider, op), (ubuntu(), FileOp::Trash(vec![p("/home/a")])));
+}
+
+#[test]
+fn operations_inside_one_distro_are_routed_to_its_agent() {
+    let local = ProviderId::Local;
+    let copy = FileOp::Copy { items: vec![p("\\\\wsl.localhost\\Ubuntu\\home\\a\u{F03A}b")], dest: p(r"\\wsl$\ubuntu\tmp") };
+    assert_eq!(route(local.clone(), copy), Some((ubuntu(), FileOp::Copy { items: vec![p("/home/a:b")], dest: p("/tmp") })));
+    let rename = FileOp::Rename { item: p(r"\\wsl.localhost\Ubuntu\home\a"), name: "x\u{F03A}y".as_bytes().to_vec() };
+    assert_eq!(route(local.clone(), rename), Some((ubuntu(), FileOp::Rename { item: p("/home/a"), name: b"x:y".to_vec() })));
+    let paste = FileOp::Paste { dest: p(r"\\wsl.localhost\Ubuntu\") };
+    assert_eq!(route(local.clone(), paste), Some((ubuntu(), FileOp::Paste { dest: p("/") })));
+    for stays in [
+        FileOp::Copy { items: vec![p(r"C:\a")], dest: p(r"\\wsl.localhost\Ubuntu\tmp") },
+        FileOp::Move { items: vec![p(r"\\wsl.localhost\Debian\a")], dest: p(r"\\wsl.localhost\Ubuntu\tmp") },
+        FileOp::Copy { items: vec![p(r"\\wsl.localhost\Ubuntu\x.zip\a")], dest: p(r"\\wsl.localhost\Ubuntu\tmp") },
+        FileOp::Flatten(vec![p(r"\\wsl.localhost\Ubuntu\tmp")]),
+        FileOp::EmptyBin,
+    ] {
+        assert_eq!(route(local.clone(), stays.clone()), Some((local.clone(), stays)));
+    }
+    let back = FileOp::Trash(vec![p(r"\\wsl.localhost\Ubuntu\tmp\a")]);
+    assert_eq!(route(ubuntu(), back), Some((ubuntu(), FileOp::Trash(vec![p("/tmp/a")]))), "a step recorded from a share report is routed by its paths");
+    assert_eq!(route(local.clone(), FileOp::Delete(vec![p("/etc")])), None, "Linux paths never go to Windows");
+    assert_eq!(route(ubuntu(), FileOp::Copy { items: vec![p("/a")], dest: p(r"C:\b") }), None);
+}
+
+#[test]
+fn copy_and_paste_in_wsl_reach_the_agent() {
+    let mut app = app_at("wsl://Ubuntu/home");
+    deliver(&mut app, &[("a", false)]);
+    key(&mut app, Key::Char('V'), CTRL);
+    let [(provider, id, op)] = sent(&mut app).try_into().unwrap();
+    assert_eq!((provider, op), (ubuntu(), FileOp::Paste { dest: p("/home") }));
+    assert_eq!(app.job_states()[0].0, "Pasting into \u{201C}home\u{201D}");
+    let report = FileOp::Copy { items: vec![p("/tmp/a")], dest: p("/home") };
+    done(&mut app, id, report, &[("/tmp/a", "/home/a (2)")]);
+    deliver(&mut app, &[("a", false), ("a (2)", false)]);
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, t0());
+    assert_eq!(selected(&app), ["a (2)"], "the copy in the agent's Linux path is revealed in the WSL tab");
 }
 
 #[test]

@@ -40,6 +40,7 @@ const RESERVED: [&str; 4] = ["CON", "PRN", "AUX", "NUL"];
 const BIN_ONLY: &str = "Items in the Recycle Bin can only be restored or deleted";
 const STREAMS_VIEW_ONLY: &str = "Alternate data streams are shown for viewing only";
 const OPEN_BIN: &str = "Open the Recycle Bin to restore items";
+const MIXED_PATHS: &str = "Items inside WSL and on Windows cannot be combined in one operation";
 const MAX_TERMINALS: usize = 5;
 const RUNNABLE: [&[u8]; 4] = [b"exe", b"com", b"bat", b"cmd"];
 pub(super) const TIMER_SLACK: Duration = Duration::from_millis(16);
@@ -89,6 +90,7 @@ struct Pending {
     origin: Origin,
     then: Then,
     ctl: OpCtl,
+    provider: ProviderId,
 }
 
 struct Slow {
@@ -277,6 +279,44 @@ pub fn choose_effect(allowed: u32, m: Mods, same_volume: bool) -> u32 {
     [COPY, MOVE, LINK].into_iter().find(|e| allowed & e != 0).unwrap_or(NONE)
 }
 
+fn op_path(loc: &Location) -> Option<FsPath> {
+    match loc {
+        Location::Wsl { path, .. } => Some(path.clone()),
+        _ => loc.to_windows(),
+    }
+}
+
+fn in_distro(op: &FileOp) -> Option<(String, FileOp)> {
+    if !matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::Delete(_) | FileOp::Trash(_) | FileOp::Paste { .. }) {
+        return None;
+    }
+    let distro: std::cell::RefCell<Option<String>> = Default::default();
+    let linux = op.map_paths(|p| {
+        let Location::Wsl { distro: d, path } = Location::from_local(p.clone()) else { return None };
+        let mut seen = distro.borrow_mut();
+        let same = seen.get_or_insert_with(|| d.clone()).eq_ignore_ascii_case(&d);
+        (same && archive::split(p).is_none()).then_some(path)
+    })?;
+    let real = |dir: &FsPath, name: &[u8]| Location::from_local(dir.join(name)).file_name().to_vec();
+    let linux = match (op, linux) {
+        (FileOp::Rename { item, name }, FileOp::Rename { item: path, .. }) => FileOp::Rename { name: real(&item.parent()?, name), item: path },
+        (FileOp::NewFolder { dir, name }, FileOp::NewFolder { dir: path, .. }) => FileOp::NewFolder { name: real(dir, name), dir: path },
+        (_, linux) => linux,
+    };
+    Some((distro.into_inner()?, linux))
+}
+
+pub fn route(provider: ProviderId, op: FileOp) -> Option<(ProviderId, FileOp)> {
+    let unix = |p: &FsPath| p.kind() == PathKind::Unix;
+    if op.all_paths(|p| !unix(p)) {
+        return Some(match in_distro(&op) {
+            Some((distro, linux)) => (ProviderId::Wsl(distro), linux),
+            None => (ProviderId::Local, op),
+        });
+    }
+    (matches!(provider, ProviderId::Wsl(_)) && op.all_paths(unix)).then_some((provider, op))
+}
+
 fn same_location(a: &Location, b: &Location) -> bool {
     a.to_bytes().eq_ignore_ascii_case(&b.to_bytes())
 }
@@ -336,16 +376,17 @@ impl App {
     }
 
     fn start_op_on(&mut self, provider: ProviderId, tab: TabId, op: FileOp, origin: Origin, then: Then) {
+        let Some((provider, op)) = route(provider, op) else { return self.status(MIXED_PATHS) };
         self.ops.next_id += 1;
         let id = self.ops.next_id;
         let ctl = OpCtl::new(self.conflict_default);
-        self.track_job(id, &op, &ctl);
-        self.ops.pending.push(Pending { id, tab, origin, then, ctl: ctl.clone() });
+        self.track_job(id, &provider, &op, &ctl);
+        self.ops.pending.push(Pending { id, tab, origin, then, ctl: ctl.clone(), provider: provider.clone() });
         self.effects.push(Effect::Provider { provider, req: ProviderRequest::Op { tab, id, op, ctl } });
     }
 
-    pub(super) fn start_confirmed(&mut self, op: FileOp) {
-        self.start_op(op, Origin::Fresh, Then::Nothing);
+    pub(super) fn start_confirmed(&mut self, provider: ProviderId, op: FileOp) {
+        self.start_op_on(provider, self.tab().id, op, Origin::Fresh, Then::Nothing);
     }
 
     pub(super) fn op_ctl(&self, id: OpId) -> Option<OpCtl> {
@@ -371,9 +412,13 @@ impl App {
             return;
         }
         let t = self.tab();
-        if let (false, Location::Wsl { .. }) = (permanent, &t.view_loc) {
+        if let Location::Wsl { .. } = &t.view_loc {
+            let (provider, tab) = (t.view_loc.provider(), t.id);
             let paths = items.iter().map(|&i| t.entry_location(i).path().clone()).collect();
-            return self.start_op_on(t.view_loc.provider(), t.id, FileOp::Trash(paths), Origin::Fresh, Then::Nothing);
+            return match permanent {
+                true => self.ask_confirm_on(provider, FileOp::Delete(paths)),
+                false => self.start_op_on(provider, tab, FileOp::Trash(paths), Origin::Fresh, Then::Nothing),
+            };
         }
         match self.item_paths(&items) {
             Ok(paths) if permanent => self.ask_confirm(FileOp::Delete(paths)),
@@ -701,8 +746,8 @@ impl App {
     fn replay(&mut self, origin: Origin) {
         match self.ops.journal.take(origin) {
             None => self.status(if origin == Origin::Undo { "Nothing to undo" } else { "Nothing to redo" }),
-            Some(Step::Refuse(msg)) => self.status(msg),
-            Some(Step::Run(op)) => self.start_op(op, origin, Then::Select),
+            Some((_, Step::Refuse(msg))) => self.status(msg),
+            Some((provider, Step::Run(op))) => self.start_op_on(provider, self.tab().id, op, origin, Then::Select),
         }
     }
 
@@ -789,16 +834,21 @@ impl App {
             self.reload(k, now);
         }
         if let Some(r) = &report {
-            self.tags_moved(r);
+            let provider = pending.as_ref().map_or(ProviderId::Local, |p| p.provider.clone());
+            self.tags_moved(&provider, r);
         }
         let (Some(report), Some(p)) = (report, pending) else { return };
-        self.ops.journal.record(p.origin, &report);
+        self.ops.journal.record(p.origin, p.provider.clone(), &report);
         if self.archive_then(tab, &p.then, &report, error.as_deref(), now) {
             return;
         }
         if let (Then::Fill(items), Some((_, folder))) = (&p.then, report.items.first()) {
-            let reveal = Then::Reveal(Location::from_local(folder.clone()).file_name().to_vec());
-            return self.start_op_for(tab, FileOp::Move { items: items.clone(), dest: folder.clone() }, Origin::Fresh, reveal);
+            let folder = Location::on(&p.provider, folder.clone());
+            let reveal = Then::Reveal(folder.file_name().to_vec());
+            return match folder.to_windows() {
+                Some(dest) => self.start_op_for(tab, FileOp::Move { items: items.clone(), dest }, Origin::Fresh, reveal),
+                None => self.status("Some names cannot be used by Windows shell operations"),
+            };
         }
         if let (FileOp::NewStream { item, name }, Some(k), None) = (&report.op, k, &error) {
             self.tabs[k].error = Some(format!("Created the stream {}:{}", item.display(), crate::name::display(name)));
@@ -816,7 +866,7 @@ impl App {
             _ => report
                 .items
                 .iter()
-                .map(|(_, to)| Location::from_local(to.clone()))
+                .map(|(_, to)| Location::on(&p.provider, to.clone()))
                 .filter(|to| to.parent().is_some_and(|p| same_location(&p, &dir)))
                 .map(|to| to.file_name().to_vec())
                 .collect(),
@@ -964,13 +1014,14 @@ impl App {
             return false;
         }
         let dir = t.entry_dir(r.idx);
-        let (item, target) = (dir.join(&old).to_windows(), dir.join(name.as_bytes()).to_windows());
+        let (item, target) = (op_path(&dir.join(&old)), op_path(&dir.join(name.as_bytes())));
         let (Some(item), Some(target)) = (item, target) else {
             self.status("This name cannot be used by Windows shell operations");
             return true;
         };
         self.tab_mut().error = None;
-        self.start_op(FileOp::Rename { item, name: target.file_name().to_vec() }, Origin::Fresh, Then::Select);
+        let tab = self.tab().id;
+        self.start_op_on(dir.provider(), tab, FileOp::Rename { item, name: target.file_name().to_vec() }, Origin::Fresh, Then::Select);
         true
     }
 
@@ -984,12 +1035,13 @@ impl App {
         let names = batch_names(base, &items, |n| taken.contains(n));
         let dirs: Vec<Location> = v.rows().iter().filter(|&&i| v.is_selected(i)).map(|&i| t.entry_dir(i)).collect();
         let renamed = items.iter().zip(&names).zip(&dirs).filter(|(((old, _), new), _)| *old != new.as_slice());
-        let pairs: Option<Vec<(FsPath, FsPath)>> = renamed.map(|(((old, _), new), dir)| Some((dir.join(old).to_windows()?, dir.join(new).to_windows()?))).collect();
+        let pairs: Option<Vec<(FsPath, FsPath)>> = renamed.map(|(((old, _), new), dir)| Some((op_path(&dir.join(old))?, op_path(&dir.join(new))?))).collect();
+        let (provider, tab) = (dirs.first().map_or(ProviderId::Local, Location::provider), t.id);
         match pairs {
             Some(p) if p.is_empty() => {}
             Some(p) => {
                 self.tab_mut().error = None;
-                self.start_op(FileOp::MoveTo(p), Origin::Fresh, Then::Select);
+                self.start_op_on(provider, tab, FileOp::MoveTo(p), Origin::Fresh, Then::Select);
             }
             None => self.status("Some names cannot be used by Windows shell operations"),
         }

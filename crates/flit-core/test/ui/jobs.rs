@@ -225,5 +225,8 @@ fn titles_name_the_operation_and_its_items() {
     assert_eq!(job_title(&FileOp::MoveTo(vec![(items[0].clone(), p(r"C:\a\x.txt")), (items[1].clone(), p(r"C:\a\y.txt"))])).unwrap(), "Renaming 2 items");
     assert_eq!(job_title(&FileOp::Flatten(vec![p(r"C:\a")])).unwrap(), "Flattening \u{201C}a\u{201D}");
     assert!(job_title(&FileOp::Rename { item: items[0].clone(), name: b"z".to_vec() }).is_none());
-    assert_eq!(job_dest(&FileOp::Trash(items)), Some(Location::recycle_bin()));
+    assert_eq!(job_dest(&ProviderId::Local, &FileOp::Trash(items)), Some(Location::recycle_bin()));
+    let wsl = ProviderId::Wsl("Ubuntu".into());
+    assert_eq!(job_dest(&wsl, &FileOp::Trash(vec![p("/home/a")])), None);
+    assert_eq!(job_dest(&wsl, &FileOp::Copy { items: vec![p("/home/a")], dest: p("/tmp") }), Some(Location::parse("wsl://Ubuntu/tmp").unwrap()));
 }

@@ -237,12 +237,17 @@ fn tag_column_is_opt_in_and_shows_names_and_marks() {
 fn finished_moves_and_copies_carry_tags() {
     let mut app = app_with(&[("a.txt", 1)]);
     let report = |op| OpReport { op, items: vec![(path(r"C:\x\a.txt"), path(r"D:\y\a.txt"))] };
-    app.tags_moved(&report(FileOp::Copy { items: Vec::new(), dest: path(r"D:\y") }));
+    let local = ProviderId::Local;
+    app.tags_moved(&local, &report(FileOp::Copy { items: Vec::new(), dest: path(r"D:\y") }));
     app.set_tags(tags_with(&["Important"], &[(r"C:\x\a.txt", 1, false)]));
-    app.tags_moved(&report(FileOp::Link { items: Vec::new(), dest: path(r"D:\y") }));
+    app.tags_moved(&local, &report(FileOp::Link { items: Vec::new(), dest: path(r"D:\y") }));
     assert!(requests(&mut app).is_empty(), "nothing is tagged or the operation keeps the files");
-    app.tags_moved(&report(FileOp::Move { items: Vec::new(), dest: path(r"D:\y") }));
-    app.tags_moved(&report(FileOp::Copy { items: Vec::new(), dest: path(r"D:\y") }));
+    app.tags_moved(&local, &report(FileOp::Move { items: Vec::new(), dest: path(r"D:\y") }));
+    app.tags_moved(&local, &report(FileOp::Copy { items: Vec::new(), dest: path(r"D:\y") }));
     let pairs = vec![(path(r"C:\x\a.txt"), path(r"D:\y\a.txt"))];
     assert_eq!(requests(&mut app), [TagRequest::Moved { pairs: pairs.clone(), copy: false }, TagRequest::Moved { pairs, copy: true }]);
+    let linux = OpReport { op: FileOp::Rename { item: path("/h/a:b"), name: b"c".to_vec() }, items: vec![(path("/h/a:b"), path("/h/c"))] };
+    app.tags_moved(&ProviderId::Wsl("U".into()), &linux);
+    let pairs = vec![(path("\\\\wsl.localhost\\U\\h\\a\u{F03A}b"), path(r"\\wsl.localhost\U\h\c"))];
+    assert_eq!(requests(&mut app), [TagRequest::Moved { pairs, copy: false }], "tags keep Windows paths for WSL files");
 }

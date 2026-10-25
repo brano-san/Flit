@@ -208,14 +208,16 @@ impl App {
         }
     }
 
-    pub(super) fn tags_moved(&mut self, r: &OpReport) {
+    pub(super) fn tags_moved(&mut self, provider: &ProviderId, r: &OpReport) {
         let copy = match r.op {
             FileOp::Copy { .. } => true,
             FileOp::Move { .. } | FileOp::Rename { .. } | FileOp::MoveTo(_) | FileOp::Restore(_) | FileOp::Trash(_) | FileOp::Flatten(_) => false,
             _ => return,
         };
-        if self.tags().any() && !r.items.is_empty() {
-            self.effects.push(Effect::Tags(TagRequest::Moved { pairs: r.items.clone(), copy }));
+        let windows = |p: &FsPath| Location::on(provider, p.clone()).to_windows();
+        let pairs: Vec<(FsPath, FsPath)> = r.items.iter().filter_map(|(a, b)| Some((windows(a)?, windows(b)?))).collect();
+        if self.tags().any() && !pairs.is_empty() {
+            self.effects.push(Effect::Tags(TagRequest::Moved { pairs, copy }));
         }
     }
 
