@@ -595,7 +595,7 @@ fn text_file(d: &Dir, rel: &str, mb: usize) -> FsPath {
             seed ^= seed >> 7;
             seed ^= seed << 17;
             chunk.extend_from_slice(WORDS[(seed % 16) as usize].as_bytes());
-            chunk.push(if seed % 11 == 0 { b'\n' } else { b' ' });
+            chunk.push(if seed.is_multiple_of(11) { b'\n' } else { b' ' });
         }
         f.write_all(&chunk[..1 << 20]).unwrap();
     }

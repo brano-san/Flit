@@ -16,7 +16,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 const BOMB_RATIO: u64 = 10_000;
 const BOMB_FLOOR: u64 = 1 << 30;
 const CHUNK: usize = 256 * 1024;
-const DIRECT: u64= 1 << 20;
+const DIRECT: u64 = 1 << 20;
 
 pub type Pairs = Vec<(FsPath, FsPath)>;
 pub type Outcome = Result<Pairs, (Pairs, PlatformError)>;

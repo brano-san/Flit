@@ -599,6 +599,7 @@ impl App {
 
     pub(super) fn draw_unavailable<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme, list: Rect, e: &FsError) {
         let title = match e.kind {
+            _ if e.code == crate::archive::PASSWORD_CODE => "This archive is encrypted",
             FsErrorKind::NotFound => "This folder does not exist",
             FsErrorKind::AccessDenied => "You do not have permission to open this folder",
             FsErrorKind::NotADirectory => "This location is not a folder",
