@@ -128,6 +128,7 @@ pub(super) struct SearchView {
     error: Option<String>,
     started: Option<Instant>,
     elapsed: Option<Duration>,
+    scope: Option<(String, String)>,
 }
 
 struct SLayout {
@@ -154,14 +155,19 @@ pub fn thousands(n: u64) -> String {
 
 impl App {
     pub fn open_search(&mut self) {
+        let lib = self.current_library().and_then(|p| self.nav.sidebar.library(&p).cloned());
+        let scope = lib.and_then(|l| Some((l.name, crate::library::search_scope(&l.folders)?)));
         let s = &mut self.search;
         if !s.active {
             s.active = true;
             s.drag = SDrag::None;
             self.editing = false;
             self.marquee = None;
-            self.effects.push(Effect::Title("Search — Flit".into()));
-            if s.gen == 0 {
+            let title = scope.as_ref().map_or_else(|| "Search — Flit".to_owned(), |(name, _)| format!("Search in {name} — Flit"));
+            self.effects.push(Effect::Title(title));
+            let rescope = s.scope != scope;
+            s.scope = scope;
+            if s.gen == 0 || rescope {
                 self.search_query(Instant::now());
             }
         }
@@ -250,7 +256,11 @@ impl App {
         s.error = None;
         s.started = Some(now);
         s.elapsed = None;
-        self.effects.push(Effect::Search(SearchRequest::Query { gen: s.gen, text: s.edit.text.clone(), sort: s.sort }));
+        let text = match &s.scope {
+            Some((_, scope)) => format!("{scope} {}", s.edit.text),
+            None => s.edit.text.clone(),
+        };
+        self.effects.push(Effect::Search(SearchRequest::Query { gen: s.gen, text, sort: s.sort }));
         self.dirty = true;
     }
 

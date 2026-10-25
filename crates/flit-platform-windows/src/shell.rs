@@ -14,7 +14,7 @@ use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBU
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Controls::{IImageList, ILD_TRANSPARENT};
 use windows::Win32::UI::Shell::*;
-use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetForegroundWindow, GetIconInfo, GetWindowThreadProcessId, HICON, ICONINFO, SW_SHOWNORMAL};
+use windows::Win32::UI::WindowsAndMessaging::{CreatePopupMenu, DestroyIcon, DestroyMenu, GetForegroundWindow, GetIconInfo, GetWindowThreadProcessId, HICON, ICONINFO, SW_SHOWNORMAL};
 
 pub struct ShellCom {
     lists: Vec<(u32, IImageList)>,
@@ -235,6 +235,9 @@ impl Shell for ShellCom {
     }
 
     fn launch(&mut self, launch: &Launch) -> Result<(), PlatformError> {
+        if let Launch::Eject(drive) = launch {
+            return eject(drive);
+        }
         commands(launch, windows_terminal().as_deref()).iter().try_for_each(execute)
     }
 
@@ -286,6 +289,21 @@ pub(crate) fn commands(launch: &Launch, terminal: Option<&str>) -> Vec<Command> 
                 })
                 .collect(),
         },
+        Launch::Eject(_) => Vec::new(),
+    }
+}
+
+fn eject(drive: &FsPath) -> Result<(), PlatformError> {
+    com_sta();
+    let hwnd = owner_window().unwrap_or_default();
+    let menu: IContextMenu = crate::context_menu::Pidls::parse(std::slice::from_ref(drive))?.ui_object(hwnd)?;
+    unsafe {
+        let popup = CreatePopupMenu().map_err(err)?;
+        let queried = menu.QueryContextMenu(popup, 0, 1, 0x7FFF, CMF_NORMAL);
+        let info = CMINVOKECOMMANDINFO { cbSize: size_of::<CMINVOKECOMMANDINFO>() as u32, hwnd, lpVerb: windows::core::s!("eject"), nShow: SW_SHOWNORMAL.0, ..Default::default() };
+        let result = queried.ok().and_then(|_| menu.InvokeCommand(&info)).map_err(err);
+        let _ = DestroyMenu(popup);
+        result
     }
 }
 

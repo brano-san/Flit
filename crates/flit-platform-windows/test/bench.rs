@@ -239,6 +239,18 @@ fn bench_places() {
     measure("drives()", RUNS, |_| (), |_| assert!(!crate::places::drives().is_empty()));
     measure("wsl_distros()", RUNS, |_| (), |_| drop(crate::places::wsl_distros()));
     measure("known_folder shell:Downloads", RUNS, |_| (), |_| assert!(<crate::Windows as flit_platform::Platform>::known_folder("shell:Downloads").is_some()));
+    crate::com_sta();
+    measure("libraries() IShellLibrary read", RUNS, |_| (), |_| drop(crate::library::libraries()));
+    measure("recent(24) Recent folder", RUNS, |_| (), |_| drop(crate::places::recent(24)));
+    eprintln!("      {} libraries, {} recent files", crate::library::libraries().len(), crate::places::recent(24).0.len());
+    let docs = crate::library::libraries().into_iter().find(|l| !l.folders.is_empty());
+    if let Some(lib) = docs {
+        measure("library listing (merged folders)", RUNS, |_| (), |_| {
+            let mut go = |_: &ListingBuilder<'_>| true;
+            let mut b = ListingBuilder::new(CaseMode::Insensitive, &mut go);
+            NtFs.read_dir(&lib.path, &mut b).unwrap();
+        });
+    }
 }
 
 #[test]

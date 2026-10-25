@@ -91,12 +91,12 @@ fn places() -> Arc<Places> {
     Arc::new(Places {
         folders: vec![(KnownFolder::Home, loc(r"C:\Users\u")), (KnownFolder::Downloads, loc(r"C:\Users\u\Downloads"))],
         drives: vec![
-            Drive { path: FsPath::parse(r"C:\").unwrap(), label: "Local Disk (C:)".into(), total: 1000, free: 250 },
-            Drive { path: FsPath::parse(r"E:\").unwrap(), label: "USB Drive (E:)".into(), total: 0, free: 0 },
+            Drive { path: FsPath::parse(r"C:\").unwrap(), label: "Local Disk (C:)".into(), total: 1000, free: 250, removable: false },
+            Drive { path: FsPath::parse(r"E:\").unwrap(), label: "USB Drive (E:)".into(), total: 0, free: 0, removable: true },
         ],
         wsl: vec!["Ubuntu".into()],
         recycle_bin: true,
-        templates: Vec::new(),
+        ..Default::default()
     })
 }
 

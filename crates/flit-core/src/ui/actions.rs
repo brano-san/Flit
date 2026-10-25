@@ -1,7 +1,10 @@
+use super::home::Widget;
 use super::sidebar::KnownFolder;
 use super::{App, Column, Effect, LayoutMode, Route};
 use crate::input::{Key, Mods};
+use crate::library::LibraryOp;
 use crate::location::Location;
+use crate::path::PathKind;
 use crate::open::OpenTarget;
 use crate::sort::{DateUnit, Folders, GroupField, SortField};
 use std::time::Instant;
@@ -63,6 +66,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("nav.refresh", "Refresh", &[key(Key::F(5)), ctrl(Key::Char('R'))], |a, now| a.refresh(now)),
     Action::new("nav.address", "Focus the address bar", &[ctrl(Key::Char('L')), alt(Key::Char('D')), key(Key::F(4))], |a, _| a.begin_edit()),
     Action::new("nav.home", "Go to the home folder", &[], |a, now| a.go_known(KnownFolder::Home, now)),
+    Action::new("nav.home_page", "Go to the Home page", &[], |a, now| a.go_home_page(false, now)),
     Action::new("nav.computer", "Go to This PC", &[], |a, now| a.navigate(Location::computer(), now)),
     Action::new("nav.recycle_bin", "Go to the Recycle Bin", &[], |a, now| a.navigate(Location::recycle_bin(), now)),
     Action::new("tab.new", "New tab", &[ctrl(Key::Char('T'))], |a, now| a.new_tab_here(now)),
@@ -131,6 +135,19 @@ pub static ACTIONS: &[Action] = &[
     Action::new("sidebar.toggle", "Show or hide the sidebar", &[ctrl(Key::Char('B'))], |a, _| a.toggle_sidebar()),
     Action::new("sidebar.focus", "Switch focus between sidebar and list", &[key(Key::F(6))], |a, _| a.cycle_sidebar_focus()),
     Action::new("sidebar.pin", "Pin or unpin the current folder", &[ctrl(Key::Char('D'))], |a, _| a.pin_current()),
+    Action::new("sidebar.compact", "Switch between the full and the compact sidebar", &[], |a, _| a.toggle_compact()),
+    Action::new("sidebar.sections", "Show and expand all sidebar sections", &[], |a, _| a.show_all_sections()),
+    Action::new("home.quick_access", "Show or hide Quick access on the Home page", &[], |a, _| a.toggle_widget(Widget::QuickAccess)),
+    Action::new("home.drives", "Show or hide Drives on the Home page", &[], |a, _| a.toggle_widget(Widget::Drives)),
+    Action::new("home.recent", "Show or hide Recent files on the Home page", &[], |a, _| a.toggle_widget(Widget::Recent)),
+    Action::new("home.clear_recent", "Clear the list of recent files on the Home page", &[], |a, _| a.clear_recent()),
+    Action::new("libraries.new", "New library", &[], |a, _| a.ask_new_library()),
+    Action::new("libraries.restore", "Restore the default libraries", &[], |a, _| a.effects.push(Effect::Library(LibraryOp::RestoreDefaults))),
+    Action::new("library.locations", "Choose the folders of this library", &[], |a, _| {
+        if let Some(lib) = a.current_library() {
+            a.library_dialog(lib);
+        }
+    }),
     Action::new("select.all", "Select all", &[ctrl(Key::Char('A'))], |a, _| a.select_all()),
     Action::new("select.none", "Clear selection", &[key(Key::Escape), ctrl_shift(Key::Char('A'))], |a, _| a.clear_selection()),
     Action::new("select.invert", "Invert selection", &[ctrl(Key::Char('I'))], |a, _| a.invert_selection()),
@@ -221,6 +238,23 @@ impl App {
         self.dirty = true;
         (a.run)(self, now);
         true
+    }
+
+    pub fn available(&self, id: &str) -> bool {
+        let kind = self.current_location().path().kind();
+        let (home, bin, library) = (kind == PathKind::Home, kind == PathKind::RecycleBin, self.current_library().is_some());
+        let no_files = home || bin || kind == PathKind::Computer;
+        match id.split('.').next().unwrap_or_default() {
+            _ if id.ends_with("origin") || id == "view.column.deleted" => bin,
+            "bin" => bin,
+            "home" => home,
+            "library" => library,
+            "search" if id == "search.group_folder" => self.search.active,
+            "file" => !no_files,
+            "view" | "select" | "item" => !home,
+            "app" => !(no_files || library),
+            _ => !(id == "nav.up" && self.current_location().parent().is_none()),
+        }
     }
 
     pub(super) fn remember_closed(&mut self, loc: Location) {

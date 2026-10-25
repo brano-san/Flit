@@ -10,6 +10,7 @@ mod engine;
 mod fileops;
 mod fs;
 mod instance;
+mod library;
 mod mft;
 mod pipe;
 mod places;
@@ -158,6 +159,18 @@ impl Platform for Windows {
 
     fn templates() -> Vec<flit_core::ui::NewTemplate> {
         places::templates()
+    }
+
+    fn libraries() -> Vec<flit_core::library::Library> {
+        library::libraries()
+    }
+
+    fn library(op: &flit_core::library::LibraryOp) -> Result<(), PlatformError> {
+        library::apply(op)
+    }
+
+    fn recent(limit: usize) -> (Vec<flit_core::ui::Recent>, bool) {
+        places::recent(limit)
     }
 
     fn double_click_time() -> std::time::Duration {

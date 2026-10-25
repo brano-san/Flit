@@ -1,5 +1,5 @@
 use flit_core::sort::SortField;
-use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavState, Persisted, Sizes, ViewPrefs};
+use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavPrefs, NavState, Persisted, Sizes, ViewPrefs};
 use flit_core::Location;
 use flit_platform::{Placement, Platform};
 use serde::{Deserialize, Serialize};
@@ -57,15 +57,21 @@ pub struct Saved {
     pub persisted: Persisted,
     placement: Option<Bounds>,
     pub nav: NavState,
+    pub side: NavPrefs,
 }
 
 impl Saved {
     pub fn new(persisted: Persisted, placement: Option<Placement>) -> Self {
-        Self { version: VERSION, persisted, placement: placement.map(|p| (p.x, p.y, p.width, p.height, p.maximized)), nav: NavState::default() }
+        Self { version: VERSION, persisted, placement: placement.map(|p| (p.x, p.y, p.width, p.height, p.maximized)), nav: NavState::default(), side: NavPrefs::default() }
     }
 
     pub fn with_nav(mut self, nav: NavState) -> Self {
         self.nav = nav;
+        self
+    }
+
+    pub fn with_side(mut self, side: NavPrefs) -> Self {
+        self.side = side;
         self
     }
 
@@ -75,6 +81,7 @@ impl Saved {
         p.prefs = p.prefs.clone().sanitized();
         self.placement = self.placement.filter(|&(_, _, w, h, _)| w > 0 && h > 0);
         self.nav = self.nav.sanitized();
+        self.side = self.side.sanitized();
         self
     }
 
@@ -91,7 +98,7 @@ impl Saved {
             view.columns.widths[c as usize] = w;
         }
         let persisted = Persisted { path: h.path, show_hidden: h.show_hidden, view, ..Default::default() };
-        Self { version: h.version, persisted, placement: h.placement, nav: NavState::default() }
+        Self { version: h.version, persisted, placement: h.placement, nav: NavState::default(), side: NavPrefs::default() }
     }
 
     fn decode(bytes: &[u8]) -> Option<Self> {
@@ -100,11 +107,14 @@ impl Saved {
         let Ok((nav, tail)) = postcard::take_from_bytes::<NavState>(tail) else { return Some(saved) };
         saved.nav = nav;
         let Ok((mut r, tail)) = postcard::take_from_bytes::<ViewRecord>(tail) else { return Some(saved) };
-        if let Ok(l) = postcard::from_bytes::<LayoutRecord>(tail) {
+        if let Ok((l, tail)) = postcard::take_from_bytes::<LayoutRecord>(tail) {
             (r.view, r.prefs.defaults) = (with_look(r.view, l.view), with_look(r.prefs.defaults, l.defaults));
             (r.prefs.thumbnails, r.prefs.thumb_cache_mb) = (l.thumbnails, l.thumb_cache_mb);
             if l.folders.len() == r.folders.len() {
                 r.folders.iter_mut().zip(l.folders).for_each(|((_, v), lk)| *v = with_look(*v, lk));
+            }
+            if let Ok(side) = postcard::from_bytes::<NavPrefs>(tail) {
+                saved.side = side;
             }
         }
         let p = &mut saved.persisted;
@@ -128,6 +138,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&self.nav).ok()?);
         bytes.extend(postcard::to_stdvec(&views).ok()?);
         bytes.extend(postcard::to_stdvec(&layouts).ok()?);
+        bytes.extend(postcard::to_stdvec(&self.side).ok()?);
         Some(bytes)
     }
 

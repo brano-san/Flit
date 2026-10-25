@@ -94,6 +94,26 @@ fn out_of_range_sizes_and_cache_limits_fall_back() {
 }
 
 #[test]
+fn sidebar_and_home_preferences_ride_last_so_older_files_still_load() {
+    let side = NavPrefs {
+        compact: true,
+        collapsed: vec!["drives".into()],
+        hidden: vec!["wsl".into()],
+        widgets_off: vec!["recent".into()],
+        recent_hidden: vec![(flit_core::FsPath::parse(r"C:\a.txt").unwrap(), 42)],
+        recent_cleared: 7,
+    };
+    let s = Saved::new(Persisted::default(), None).with_side(side.clone());
+    let bytes = s.encode().unwrap();
+    assert_eq!(Saved::decode(&bytes).unwrap().sanitized().side, side);
+    let without = Saved::new(Persisted::default(), None).encode().unwrap();
+    let older = &without[..without.len() - postcard::to_stdvec(&NavPrefs::default()).unwrap().len()];
+    let back = Saved::decode(older).unwrap();
+    assert_eq!(back.side, NavPrefs::default());
+    assert_eq!(back.persisted, s.persisted);
+}
+
+#[test]
 fn corrupted_nav_state_falls_back() {
     let mut s = Saved::new(Persisted::default(), None);
     s.nav = NavState { pinned: vec![loc(r"C:\a"), loc(r"C:\b"), loc(r"C:\a")], sidebar_w: f32::INFINITY, sidebar: true };
