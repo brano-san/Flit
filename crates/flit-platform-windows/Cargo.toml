@@ -12,6 +12,7 @@ flit-search.workspace = true
 flit-platform.workspace = true
 flit-proto.workspace = true
 crossbeam-channel.workspace = true
+rayon.workspace = true
 tracing.workspace = true
 
 [target.'cfg(windows)'.dependencies]
@@ -20,6 +21,7 @@ windows-core.workspace = true
 [target.'cfg(windows)'.dependencies.windows]
 workspace = true
 features = [
+    "Wdk_Foundation",
     "Wdk_Storage_FileSystem",
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",

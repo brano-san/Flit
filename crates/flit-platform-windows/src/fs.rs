@@ -1,10 +1,18 @@
+use crate::walk_index::Handle;
 use flit_core::listing::{attr, Meta};
 use flit_core::path::PathKind;
 use flit_core::{FsError, FsErrorKind, FsPath, ListingBuilder};
 use flit_platform::Fs;
+use std::cell::RefCell;
 use std::mem::offset_of;
-use windows::core::PCWSTR;
-use windows::Wdk::Storage::FileSystem::{NtQueryDirectoryFile, FileIdBothDirectoryInformation, FILE_ID_BOTH_DIR_INFORMATION};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
+use windows::core::{PCWSTR, PWSTR};
+use windows::Wdk::Foundation::OBJECT_ATTRIBUTES;
+use windows::Wdk::Storage::FileSystem::{
+    FileFullDirectoryInformation, FileIdBothDirectoryInformation, NtOpenFile, NtQueryDirectoryFile, FILE_DIRECTORY_FILE, FILE_FULL_DIR_INFORMATION, FILE_ID_BOTH_DIR_INFORMATION, FILE_OPEN_FOR_BACKUP_INTENT,
+    FILE_SYNCHRONOUS_IO_NONALERT,
+};
 use windows::Win32::Foundation::*;
 use windows::Win32::Storage::FileSystem::*;
 use windows::Win32::System::Ioctl::{PropertyStandardQuery, StorageDeviceSeekPenaltyProperty, DEVICE_SEEK_PENALTY_DESCRIPTOR, IOCTL_STORAGE_QUERY_PROPERTY, STORAGE_PROPERTY_QUERY};
@@ -86,6 +94,102 @@ fn volumes(out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
     Ok(())
 }
 
+thread_local! {
+    static SCAN_BUFFER: RefCell<Vec<u64>> = RefCell::new(vec![0; BUFFER / 8]);
+}
+
+fn open_child(parent: &Handle, name: &[u16]) -> Option<Handle> {
+    let bytes = (name.len() * 2) as u16;
+    let object = UNICODE_STRING { Length: bytes, MaximumLength: bytes, Buffer: PWSTR(name.as_ptr() as *mut u16) };
+    let attrs = OBJECT_ATTRIBUTES { Length: size_of::<OBJECT_ATTRIBUTES>() as u32, RootDirectory: parent.0, ObjectName: &object, Attributes: OBJ_CASE_INSENSITIVE, ..Default::default() };
+    let (mut h, mut iosb) = (HANDLE::default(), IO_STATUS_BLOCK::default());
+    let share = (FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE).0;
+    let options = FILE_DIRECTORY_FILE.0 | FILE_SYNCHRONOUS_IO_NONALERT.0 | FILE_OPEN_FOR_BACKUP_INTENT.0;
+    let st = unsafe { NtOpenFile(&mut h, FILE_LIST_DIRECTORY.0 | SYNCHRONIZE.0, &attrs, &mut iosb, share, options) };
+    st.is_ok().then(|| Handle(h))
+}
+
+fn scan(dir: &Handle, keep_going: &dyn Fn() -> bool, mut subdir: impl FnMut(&[u16])) -> u64 {
+    SCAN_BUFFER.with_borrow_mut(|buf| {
+        let mut bytes = 0;
+        let mut first = true;
+        while keep_going() {
+            let mut iosb = IO_STATUS_BLOCK::default();
+            let st = unsafe { NtQueryDirectoryFile(dir.0, None, None, None, &mut iosb, buf.as_mut_ptr() as _, BUFFER as u32, FileFullDirectoryInformation, false, None, first) };
+            if st.is_err() {
+                break;
+            }
+            first = false;
+            let base = buf.as_ptr() as *const u8;
+            let mut off = 0usize;
+            loop {
+                let e = unsafe { base.add(off) } as *const FILE_FULL_DIR_INFORMATION;
+                let (next, attrs, tag, size, len) = unsafe { ((*e).NextEntryOffset, (*e).FileAttributes, (*e).EaSize, (*e).EndOfFile as u64, (*e).FileNameLength as usize / 2) };
+                if attrs & FILE_ATTRIBUTE_DIRECTORY.0 == 0 {
+                    bytes += size;
+                } else if map_attrs(attrs, tag) & attr::LINK == 0 {
+                    let name = unsafe { std::slice::from_raw_parts(base.add(off + offset_of!(FILE_FULL_DIR_INFORMATION, FileName)) as *const u16, len) };
+                    if name != [b'.' as u16] && name != [b'.' as u16, b'.' as u16] {
+                        subdir(name);
+                    }
+                }
+                if next == 0 {
+                    break;
+                }
+                off += next as usize;
+            }
+        }
+        bytes
+    })
+}
+
+struct Subdirs {
+    parent: Handle,
+    names: Vec<u16>,
+    ends: Vec<usize>,
+}
+
+impl Subdirs {
+    fn open(&self, k: usize) -> Option<Handle> {
+        let start = k.checked_sub(1).map_or(0, |p| self.ends[p]);
+        open_child(&self.parent, &self.names[start..self.ends[k]])
+    }
+}
+
+struct Tree<'a> {
+    idx: u32,
+    bytes: AtomicU64,
+    open: AtomicUsize,
+    keep_going: &'a (dyn Fn() -> bool + Sync),
+    report: &'a (dyn Fn(u32, u64) + Sync),
+}
+
+impl Tree<'_> {
+    fn enter(&self, open: impl FnOnce() -> Option<Handle>) -> Option<Handle> {
+        (self.keep_going)().then(open).flatten()
+    }
+
+    fn visit<'s>(&'s self, s: &rayon::Scope<'s>, dir: Option<Handle>) {
+        if let Some(parent) = dir {
+            let mut subdirs = Subdirs { parent, names: Vec::new(), ends: Vec::new() };
+            let bytes = scan(&subdirs.parent, self.keep_going, |name| {
+                subdirs.names.extend_from_slice(name);
+                subdirs.ends.push(subdirs.names.len());
+            });
+            self.bytes.fetch_add(bytes, Ordering::Relaxed);
+            self.open.fetch_add(subdirs.ends.len(), Ordering::Relaxed);
+            let subdirs = Arc::new(subdirs);
+            for k in 0..subdirs.ends.len() {
+                let subdirs = subdirs.clone();
+                s.spawn(move |s| self.visit(s, self.enter(move || subdirs.open(k))));
+            }
+        }
+        if self.open.fetch_sub(1, Ordering::AcqRel) == 1 {
+            (self.report)(self.idx, self.bytes.load(Ordering::Relaxed));
+        }
+    }
+}
+
 impl Fs for NtFs {
     fn read_dir(&self, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
         if dir.kind() == PathKind::Computer {
@@ -156,6 +260,23 @@ impl Fs for NtFs {
             );
             let _ = CloseHandle(h);
             r.ok().map(|()| desc.IncursSeekPenalty)
+        }
+    }
+
+    fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, u64) + Sync)) {
+        let trees: Vec<Tree> = items.iter().map(|&(idx, _)| Tree { idx, bytes: AtomicU64::new(0), open: AtomicUsize::new(1), keep_going, report }).collect();
+        let walk = || {
+            rayon::scope(|s| {
+                for (tree, (_, name)) in trees.iter().zip(items).rev() {
+                    let path = dir.join(name);
+                    s.spawn(move |s| tree.visit(s, tree.enter(|| open_dir(&path, FILE_LIST_DIRECTORY.0, false).ok().map(Handle))));
+                }
+            })
+        };
+        let threads = if self.seek_penalty(dir) == Some(true) { 1 } else { 0 };
+        match rayon::ThreadPoolBuilder::new().num_threads(threads).thread_name(|k| format!("flit-sizes-{k}")).build() {
+            Ok(pool) => pool.install(walk),
+            Err(_) => walk(),
         }
     }
 }

@@ -132,6 +132,9 @@ pub trait Provider: Send + Sync + 'static {
 pub trait Fs: Send + Sync + 'static {
     fn read_dir(&self, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError>;
     fn seek_penalty(&self, path: &FsPath) -> Option<bool>;
+    fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, u64) + Sync)) {
+        local::dir_sizes(self, dir, items, keep_going, report)
+    }
 }
 
 pub trait Watcher: Sized + Send + 'static {

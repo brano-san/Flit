@@ -36,15 +36,11 @@ enum WatchCmd {
     Stop { tab: TabId, gen: u64 },
 }
 
-enum ShellJob {
-    Open(TabId, FsPath),
-    Op(TabId, OpId, FileOp),
-}
-
 pub struct LocalProvider {
     jobs: Sender<ListJob>,
     sizes: Sender<SizesJob>,
-    shell: Sender<ShellJob>,
+    ops: Sender<(TabId, OpId, FileOp)>,
+    opens: Sender<(TabId, FsPath)>,
     watch: Sender<WatchCmd>,
     pending_watch: Mutex<HashMap<TabId, (u64, FsPath)>>,
 }
@@ -87,27 +83,35 @@ impl LocalProvider {
                 run_sizes(&*sizes_fs, job, &sizes_events, &sizes_wake);
             }
         })?;
-        let (shell, shell_rx) = unbounded::<ShellJob>();
+        let (opens, opens_rx) = unbounded::<(TabId, FsPath)>();
+        let (open_events, open_wake) = (events.clone(), wake.clone());
+        spawn("flit-shell-open".into(), move || {
+            let mut sh = S::new();
+            for (tab, p) in opens_rx {
+                let error = match &mut sh {
+                    Ok(sh) => match sh.open(&p) {
+                        Ok(()) => continue,
+                        Err(e) => e.to_string(),
+                    },
+                    Err(e) => e.to_string(),
+                };
+                let _ = open_events.send(ProviderEvent::OpDone { tab, id: 0, error: Some(error), report: None });
+                open_wake();
+            }
+        })?;
+        let (ops, ops_rx) = unbounded::<(TabId, OpId, FileOp)>();
         spawn("flit-shell-ops".into(), move || {
             let mut sh = S::new();
-            for job in shell_rx {
-                let ev = match (&mut sh, job) {
-                    (Ok(sh), ShellJob::Open(tab, p)) => match sh.open(&p) {
-                        Ok(()) => continue,
-                        Err(e) => ProviderEvent::OpDone { tab, id: 0, error: Some(e.to_string()), report: None },
-                    },
-                    (Ok(sh), ShellJob::Op(tab, id, op)) => {
-                        let (error, report) = run_op(sh, op);
-                        ProviderEvent::OpDone { tab, id, error, report }
-                    }
-                    (Err(e), ShellJob::Open(tab, _)) => ProviderEvent::OpDone { tab, id: 0, error: Some(e.to_string()), report: None },
-                    (Err(e), ShellJob::Op(tab, id, _)) => ProviderEvent::OpDone { tab, id, error: Some(e.to_string()), report: None },
+            for (tab, id, op) in ops_rx {
+                let (error, report) = match &mut sh {
+                    Ok(sh) => run_op(sh, op),
+                    Err(e) => (Some(e.to_string()), None),
                 };
-                let _ = events.send(ev);
+                let _ = events.send(ProviderEvent::OpDone { tab, id, error, report });
                 wake();
             }
         })?;
-        Ok(Self { jobs, sizes, shell, watch, pending_watch: Mutex::default() })
+        Ok(Self { jobs, sizes, ops, opens, watch, pending_watch: Mutex::default() })
     }
 }
 
@@ -128,8 +132,8 @@ impl Provider for LocalProvider {
                 pending.remove(&tab);
                 self.watch.send(WatchCmd::Stop { tab, gen }).map_err(drop)
             }
-            ProviderRequest::Op { tab, id, op } => self.shell.send(ShellJob::Op(tab, id, op)).map_err(drop),
-            ProviderRequest::Open { tab, path } => self.shell.send(ShellJob::Open(tab, path)).map_err(drop),
+            ProviderRequest::Op { tab, id, op } => self.ops.send((tab, id, op)).map_err(drop),
+            ProviderRequest::Open { tab, path } => self.opens.send((tab, path)).map_err(drop),
         };
     }
 }
@@ -173,17 +177,22 @@ fn run_list<F: Fs>(fs: &F, job: ListJob, watch: &Sender<WatchCmd>, wake: &Wake) 
 
 fn run_sizes<F: Fs>(fs: &F, job: SizesJob, events: &Sender<ProviderEvent>, wake: &Wake) {
     let SizesJob { tab, gen, dir, items, cancel } = job;
-    let one = |(idx, name): &(u32, Vec<u8>)| {
-        if !cancel.is_current(gen) {
-            return;
-        }
-        let size = tree_size(fs, &dir.join(name), &cancel, gen);
-        if cancel.is_current(gen) {
-            let _ = events.send(ProviderEvent::DirSize { tab, gen, idx: *idx, size });
+    let keep_going = || cancel.is_current(gen);
+    fs.dir_sizes(&dir, &items, &keep_going, &|idx, size| {
+        if keep_going() {
+            let _ = events.send(ProviderEvent::DirSize { tab, gen, idx, size });
             wake();
         }
+    });
+}
+
+pub(crate) fn dir_sizes<F: Fs + ?Sized>(fs: &F, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, u64) + Sync)) {
+    let one = |(idx, name): &(u32, Vec<u8>)| {
+        if keep_going() {
+            report(*idx, tree_size(fs, &dir.join(name), keep_going));
+        }
     };
-    if fs.seek_penalty(&dir) == Some(true) {
+    if fs.seek_penalty(dir) == Some(true) {
         items.iter().for_each(one);
     } else {
         items.par_iter().for_each(one);
@@ -234,13 +243,13 @@ fn list<F: Fs>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: CaseMode, 
     }
 }
 
-fn tree_size<F: Fs>(fs: &F, root: &FsPath, cancel: &GenToken, gen: u64) -> u64 {
+fn tree_size<F: Fs + ?Sized>(fs: &F, root: &FsPath, keep_going: &(dyn Fn() -> bool + Sync)) -> u64 {
     let mut total = 0u64;
     let mut stack = vec![root.clone()];
     while let Some(dir) = stack.pop() {
-        let mut keep_going = |_: &ListingBuilder<'_>| cancel.is_current(gen);
-        let mut b = ListingBuilder::new(CaseMode::Sensitive, &mut keep_going);
-        if fs.read_dir(&dir, &mut b).is_err() || !cancel.is_current(gen) {
+        let mut each_batch = |_: &ListingBuilder<'_>| keep_going();
+        let mut b = ListingBuilder::new(CaseMode::Sensitive, &mut each_batch);
+        if fs.read_dir(&dir, &mut b).is_err() || !keep_going() {
             continue;
         }
         let l = &b.listing;

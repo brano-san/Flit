@@ -311,6 +311,7 @@ dependencies = [
  "flit-platform",
  "flit-proto",
  "flit-search",
+ "rayon",
  "tracing",
  "windows",
  "windows-core",

@@ -3,6 +3,7 @@ use crate::OpOutcome;
 use flit_core::listing::Meta;
 use flit_core::ui::{Bitmap, IconRequest};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 struct MemFs(HashMap<Vec<u8>, Vec<(&'static str, bool, u64)>>);
 
@@ -98,6 +99,47 @@ fn list_streams_sorted_snapshots_and_sizes() {
     provider.submit(ProviderRequest::Op { tab: 9, id: 3, op: trash.clone() });
     let report = Some(OpReport { op: trash, items: vec![(p(r"C:\r\c"), p(r"C:\r\c"))] });
     assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { tab: 9, id: 3, error: None, report });
+}
+
+static RELEASE_OP: AtomicBool = AtomicBool::new(false);
+
+struct BusyShell;
+impl Shell for BusyShell {
+    fn new() -> Result<Self, PlatformError> {
+        Ok(BusyShell)
+    }
+    fn icon(&mut self, _: &IconRequest) -> Option<Bitmap> {
+        None
+    }
+    fn type_name(&mut self, _: &[u8]) -> Option<String> {
+        None
+    }
+    fn open(&mut self, _: &FsPath) -> Result<(), PlatformError> {
+        Err(PlatformError::new(5, "denied"))
+    }
+}
+impl FileOps for BusyShell {
+    fn file_op(&mut self, _: &FileOp) -> OpOutcome {
+        while !RELEASE_OP.load(Ordering::Acquire) {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        OpOutcome::default()
+    }
+    fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
+        Err(PlatformError::new(-1, "empty"))
+    }
+    fn clear_clipboard(&mut self) {}
+}
+
+#[test]
+fn open_is_not_queued_behind_a_running_op() {
+    let (tx, rx) = unbounded();
+    let provider = LocalProvider::new::<_, NoWatch, BusyShell>(fs(), 1, tx, Arc::new(|| {})).unwrap();
+    provider.submit(ProviderRequest::Op { tab: 1, id: 5, op: FileOp::Copy { items: vec![p(r"C:\r\a.txt")], dest: p(r"C:\r\sub") } });
+    provider.submit(ProviderRequest::Open { tab: 2, path: p(r"C:\r\b.txt") });
+    assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { tab: 2, id: 0, error: Some(_), report: None }));
+    RELEASE_OP.store(true, Ordering::Release);
+    assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { tab: 1, id: 5, error: None, report: Some(_) }));
 }
 
 #[derive(Default)]
