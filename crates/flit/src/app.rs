@@ -590,9 +590,15 @@ impl<P: Platform> Handler<P> {
                         st.app.import_settings(&text);
                     }
                 }
-                settings::Reply::Imported(Err(e)) => self.status(id, format!("Cannot read the settings file: {e}")),
+                settings::Reply::Imported(Err(e)) => {
+                    tracing::warn!("cannot import settings: {e}");
+                    self.status(id, format!("Cannot read the settings file: {e}"));
+                }
                 settings::Reply::Exported(Ok(path)) => self.status(id, format!("Exported the settings and tags to {}", path.display())),
-                settings::Reply::Exported(Err(e)) => self.status(id, format!("Cannot export the settings: {e}")),
+                settings::Reply::Exported(Err(e)) => {
+                    tracing::warn!("cannot export settings: {e}");
+                    self.status(id, format!("Cannot export the settings: {e}"));
+                }
                 settings::Reply::ExportExists { path, size, modified } => {
                     if let (Some(st), Some(path)) = (self.windows.get_mut(&id), FsPath::parse(&path.to_string_lossy())) {
                         st.app.ask_replace_export(path, size, modified);
@@ -633,6 +639,11 @@ impl<P: Platform> Handler<P> {
     fn drain(&mut self) {
         let now = Instant::now();
         while let Ok(ev) = self.events.try_recv() {
+            match &ev {
+                ProviderEvent::OpDone { error: Some(e), .. } => tracing::warn!("operation failed: {e}"),
+                ProviderEvent::Hashed { result: Err(e), .. } => tracing::warn!("hashing failed: {e}"),
+                _ => {}
+            }
             let target = match &ev {
                 ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } => self.window_of_tab(*tab),
                 ProviderEvent::OpDone { tab, .. } => self.window_of_tab(*tab).or(self.active),
@@ -703,6 +714,7 @@ impl<P: Platform> Handler<P> {
                     }
                 }
                 Reply::Failed(message) => {
+                    tracing::warn!("library: {message}");
                     if let Some(st) = self.active.and_then(|id| self.windows.get_mut(&id)) {
                         st.app.library_failed(&message);
                     }
@@ -825,7 +837,11 @@ impl<P: Platform> Handler<P> {
             return;
         }
         if let Some(b) = st.born.take() {
-            eprintln!("window ready in {:.1} ms with {} tabs", b.elapsed().as_secs_f64() * 1e3, st.app.tabs().len());
+            let (ms, tabs) = (b.elapsed().as_secs_f64() * 1e3, st.app.tabs().len());
+            tracing::info!("window ready in {ms:.1} ms with {tabs} tabs, software rendering: {}", st.software);
+            if self.timing {
+                eprintln!("window ready in {ms:.1} ms with {tabs} tabs");
+            }
         }
         st.visible.pane.store(st.app.visible_rows());
         st.visible.other.store(st.app.other_visible_rows().unwrap_or((u64::MAX, 0, 0)));
@@ -883,7 +899,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         app.set_maximized(window.is_maximized());
         window.set_title(&app.window_title());
         let id = window.id();
-        let born = self.requested.take().filter(|_| self.timing);
+        let born = self.requested.take();
         let st = WinState { app, gfx: Gfx::new(text, ATLAS), renderer: None, software: false, device_gen: 0, visible: Arc::default(), session_rev: 0, placement: Some(window.placement()), born, preview_rev: u64::MAX };
         self.windows.insert(id, st);
         self.active = Some(id);
@@ -1036,7 +1052,8 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let thumb_cache: Cache = P::cache_dir().map(|d| Arc::new(Mutex::new(ThumbCache::new(d.join("thumbs"), saved.persisted.prefs.thumb_cache_mb))));
     let (shell, thumbs, sorter, previews, done) = start_workers::<P>(wake.clone(), thumb_cache.clone())?;
     let tags = TagWorker::start::<P>(local.tags().clone(), wake.clone())?;
-    let about = About { os: String::new(), file: settings_file.as_deref().and_then(|f| FsPath::parse(&f.to_string_lossy())), cache_bytes: None };
+    let fs_path = |p: PathBuf| FsPath::parse(&p.to_string_lossy());
+    let about = About { os: String::new(), file: settings_file.clone().and_then(fs_path), cache_bytes: None, logs: P::state_dir().map(|d| d.join("logs")).and_then(fs_path) };
     let settings = Settings::start::<P>(settings_file.filter(|_| metrics.is_none()), settings_text, thumb_cache.clone(), wake.clone());
     let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes(), local.tags().clone())?;
     let (routes, errors) = if open.is_empty() { Default::default() } else { open::routes(&open, &P::known_folder) };

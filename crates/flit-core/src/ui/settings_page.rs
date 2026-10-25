@@ -5,13 +5,15 @@ use super::palette::{Palette, Pick};
 use super::settings::{self, Kind, Page, Value, SETTINGS};
 use super::{centered, App, Effect, Hit, SettingsCmd, G_CLOSE};
 use crate::input::{Key, Mods, MouseButton};
-use crate::location::ProviderId;
-use crate::path::FsPath;
-use crate::provider::ProviderRequest;
+use crate::location::{Location, ProviderId};
+use crate::open::{OpenTarget, Route};
+use crate::path::{FsPath, PathKind};
+use crate::provider::{Launch, ProviderRequest};
 use crate::render::{Color, Rect};
 use crate::tags;
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::Theme;
+use std::time::Instant;
 
 const MAX_W: f32 = 960.0;
 const NAV_W: f32 = 210.0;
@@ -36,7 +38,14 @@ const G_PLUS: &str = "\u{E710}";
 const G_DOWN: &str = "\u{E70D}";
 const G_SEARCH: &str = "\u{E721}";
 
-const LIBRARIES: [(&str, &str); 18] = [
+const DOCS_URL: &str = "https://github.com/brano-san/Flit#readme";
+const BUG_URL: &str = "https://github.com/brano-san/Flit/issues/new?labels=bug";
+const FEATURE_URL: &str = "https://github.com/brano-san/Flit/issues/new?labels=enhancement";
+const REPOSITORY_URL: &str = "https://github.com/brano-san/Flit";
+const PRIVACY_URL: &str = "https://github.com/brano-san/Flit#конфиденциальность";
+pub(super) const LINKS: [(&str, &str); 5] = [("help.docs", DOCS_URL), ("help.bug", BUG_URL), ("help.feature", FEATURE_URL), ("help.repository", REPOSITORY_URL), ("help.privacy", PRIVACY_URL)];
+
+const LIBRARIES: [(&str, &str); 20] = [
     ("arc-swap", "shared snapshots"),
     ("bumpalo", "frame memory"),
     ("crc32fast", "checksums"),
@@ -53,6 +62,8 @@ const LIBRARIES: [(&str, &str); 18] = [
     ("sevenz-rust2", "7z archives"),
     ("smallvec", "small lists"),
     ("tar", "TAR archives"),
+    ("tracing", "log file"),
+    ("tracing-subscriber", "log file"),
     ("unrar-ng", "RAR archives"),
     ("zip", "ZIP archives"),
 ];
@@ -73,6 +84,13 @@ pub(super) enum Btn {
     Rename,
     Recolor,
     Delete,
+    OpenLog,
+    OpenLogs,
+    Docs,
+    ReportBug,
+    RequestFeature,
+    Repository,
+    Privacy,
 }
 
 impl Btn {
@@ -92,6 +110,13 @@ impl Btn {
             Btn::Rename => "Rename",
             Btn::Recolor => "Color",
             Btn::Delete => "Delete",
+            Btn::OpenLog => "Open the log file",
+            Btn::OpenLogs => "Open the log folder",
+            Btn::Docs => "Documentation",
+            Btn::ReportBug => "Report a bug",
+            Btn::RequestFeature => "Request a feature",
+            Btn::Repository => "GitHub repository",
+            Btn::Privacy => "Privacy statement",
         }
     }
 }
@@ -99,6 +124,12 @@ impl Btn {
 const PATH_BUTTONS: &[Btn] = &[Btn::AddHome, Btn::AddCurrent, Btn::AddTyped];
 const TAG_BUTTONS: &[Btn] = &[Btn::Rename, Btn::Recolor, Btn::Delete];
 const FILE_BUTTONS: &[Btn] = &[Btn::OpenFile, Btn::Export, Btn::Import];
+const LOG_BUTTONS: &[Btn] = &[Btn::OpenLog, Btn::OpenLogs];
+const HELP_BUTTONS: &[Btn] = &[Btn::Docs, Btn::ReportBug, Btn::RequestFeature];
+const LINK_BUTTONS: &[Btn] = &[Btn::Repository, Btn::Privacy];
+pub const LOG_FILE: &str = "flit.log";
+const NO_LOGS: &str = "Flit has no log folder in this session";
+const NO_TELEMETRY: &str = "Flit has no telemetry and no user identifier: it sends nothing anywhere.";
 
 #[derive(Clone, Debug, PartialEq)]
 enum Line {
@@ -191,6 +222,7 @@ pub struct About {
     pub os: String,
     pub file: Option<FsPath>,
     pub cache_bytes: Option<u64>,
+    pub logs: Option<FsPath>,
 }
 
 pub(super) struct SettingsUi {
@@ -400,6 +432,30 @@ impl App {
         }
     }
 
+    pub(super) fn open_link(&mut self, id: &str) {
+        if let Some((_, url)) = LINKS.iter().find(|(k, _)| *k == id) {
+            self.launch(Launch::Run { program: (*url).to_owned(), args: String::new(), dir: None });
+        }
+    }
+
+    pub(super) fn open_log_file(&mut self) {
+        match self.about.logs.as_ref().map(|d| d.join(LOG_FILE.as_bytes())) {
+            Some(path) => {
+                let tab = self.tab().id;
+                self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Open { tab, path } });
+            }
+            None => self.status(NO_LOGS),
+        }
+    }
+
+    pub(super) fn open_log_folder(&mut self, now: Instant) {
+        let Some(dir) = self.about.logs.clone() else { return self.status(NO_LOGS) };
+        if self.settings.is_some() {
+            self.close_settings();
+        }
+        self.dispatch(vec![Route { folder: Location::from_local(dir), select: Some(LOG_FILE.as_bytes().to_vec()) }], OpenTarget::NewTab, now);
+    }
+
     fn export_default(&self) -> String {
         let here = self.tab().view_loc.to_windows().filter(|p| self.caps.is_native(p));
         here.map(|p| p.join(EXPORT_NAME.as_bytes()).display().into_owned()).unwrap_or_default()
@@ -445,7 +501,7 @@ impl App {
     }
 
     fn page_lines(&self, page: Page, out: &mut Vec<Line>) {
-        for (i, _) in SETTINGS.iter().enumerate().filter(|(_, s)| s.page == page) {
+        for (i, _) in SETTINGS.iter().enumerate().filter(|(_, s)| s.page == page && s.id != settings::LOG_LEVEL) {
             self.setting_lines(i, out);
         }
         match page {
@@ -467,11 +523,21 @@ impl App {
                 out.push(Line::Info("File", self.about.file.as_ref().map_or_else(|| "None in this session".to_owned(), |f| f.display().into_owned())));
                 out.push(Line::Buttons(None, FILE_BUTTONS));
                 out.push(Line::Buttons(None, &[Btn::Reset]));
+                out.push(Line::Group("Log file"));
+                if let Some(i) = settings::index(settings::LOG_LEVEL) {
+                    self.setting_lines(i, out);
+                }
+                out.push(Line::Info("Folder", self.about.logs.as_ref().map_or_else(|| "None in this session".to_owned(), |f| f.display().into_owned())));
+                out.push(Line::Buttons(None, LOG_BUTTONS));
             }
             Page::About => {
                 out.push(Line::Info("Version", format!("Flit {}", env!("CARGO_PKG_VERSION"))));
                 out.push(Line::Info("Windows", if self.about.os.is_empty() { "Unknown".into() } else { self.about.os.clone() }));
                 out.push(Line::Buttons(None, &[Btn::CopyAbout]));
+                out.push(Line::Group("Help"));
+                out.push(Line::Buttons(None, HELP_BUTTONS));
+                out.push(Line::Buttons(None, LINK_BUTTONS));
+                out.push(Line::Note(NO_TELEMETRY));
                 out.push(Line::Group("Third-party libraries"));
                 out.extend(LIBRARIES.iter().map(|(name, what)| Line::Info(name, (*what).to_owned())));
             }
@@ -496,8 +562,8 @@ impl App {
             let extra: &[&'static [Btn]] = match page {
                 Page::Appearance => &[&[Btn::CustomizeToolbar]],
                 Page::Tags => &[&[Btn::NewTag]],
-                Page::Advanced => &[&[Btn::ClearCache], FILE_BUTTONS, &[Btn::Reset]],
-                Page::About => &[&[Btn::CopyAbout]],
+                Page::Advanced => &[&[Btn::ClearCache], FILE_BUTTONS, &[Btn::Reset], LOG_BUTTONS],
+                Page::About => &[&[Btn::CopyAbout], HELP_BUTTONS, LINK_BUTTONS],
                 _ => &[],
             };
             for b in extra.iter().filter(|b| b.iter().any(|b| matches(query, &b.label().to_lowercase()))) {
@@ -759,6 +825,13 @@ impl App {
                 self.effects.push(Effect::SetClipboard(text));
                 self.status("Copied the version info");
             }
+            (Btn::OpenLog, ..) => self.open_log_file(),
+            (Btn::OpenLogs, ..) => self.open_log_folder(Instant::now()),
+            (Btn::Docs, ..) => self.open_link("help.docs"),
+            (Btn::ReportBug, ..) => self.open_link("help.bug"),
+            (Btn::RequestFeature, ..) => self.open_link("help.feature"),
+            (Btn::Repository, ..) => self.open_link("help.repository"),
+            (Btn::Privacy, ..) => self.open_link("help.privacy"),
             (Btn::Rename, _, Some(k)) => {
                 let name = self.tag_defs().get(k).map(|t| t.name.clone()).unwrap_or_default();
                 self.open_tag_pick(super::tags::TagPick::Name { tag: Some(k), assign: Vec::new() }, &name);

@@ -127,3 +127,13 @@ fn open_serializes() {
     let bytes = postcard::to_allocvec(&o).unwrap();
     assert_eq!(postcard::from_bytes::<Open>(&bytes).unwrap(), o);
 }
+
+#[test]
+fn relative_paths_resolve_against_a_unix_folder() {
+    let none = |_: &str| None;
+    let r = |s: &str| resolve(s.as_bytes(), Some(b"/home/u/work"), &none).unwrap();
+    assert_eq!(r("src/lib"), Location::parse("/home/u/work/src/lib").unwrap());
+    assert_eq!(r("../other"), Location::parse("/home/u/other").unwrap());
+    assert_eq!(r("/etc"), Location::parse("/etc").unwrap());
+    assert_eq!(r("file:///home/u/My%20Files"), Location::parse("/home/u/My Files").unwrap());
+}

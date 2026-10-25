@@ -79,8 +79,11 @@ fn work(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>>, first: Str
             match job {
                 Job::Write(_) if Some(k) != newest_write => {}
                 Job::Write(text) => {
-                    if path.as_deref().is_some_and(|p| write_atomic(p, text.as_bytes()).is_ok()) {
-                        last = text;
+                    if let Some(p) = path.as_deref() {
+                        match write_atomic(p, text.as_bytes()) {
+                            Ok(()) => last = text,
+                            Err(e) => tracing::warn!("cannot write the settings file {}: {e}", p.display()),
+                        }
                     }
                 }
                 Job::Backup => {
@@ -157,10 +160,16 @@ impl Settings {
                 self.send(Job::CacheLimit(mb));
             }
         }
+        if let Some(level) = log_level(&values) {
+            crate::logs::set_level(level);
+        }
         self.values = values;
     }
 
     pub fn adopt(&mut self, doc: &Doc, values: Vec<Value>) {
+        for problem in &doc.problems {
+            tracing::warn!("settings file: {problem}");
+        }
         if !doc.broken {
             self.unknown = doc.unknown.clone();
         }
@@ -184,6 +193,13 @@ impl Settings {
 pub fn cache_limit(values: &[Value]) -> Option<u32> {
     match values.get(settings::index("advanced.thumb_cache_mb")?) {
         Some(Value::Number(n)) => u32::try_from(*n).ok(),
+        _ => None,
+    }
+}
+
+pub fn log_level(values: &[Value]) -> Option<usize> {
+    match values.get(settings::index(settings::LOG_LEVEL)?) {
+        Some(Value::Choice(k)) => Some(*k),
         _ => None,
     }
 }
