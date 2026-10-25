@@ -33,6 +33,7 @@ const G_CHECK: &str = "\u{E73E}";
 
 const CONFLICT_BUTTONS: [&str; 4] = ["Replace", "Keep both", "Skip", "Cancel"];
 const CONFIRM_BUTTONS: [&str; 2] = ["Delete", "Cancel"];
+const RESTORE_BUTTONS: [&str; 2] = ["Restore", "Not now"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum JobState {
@@ -143,6 +144,7 @@ impl Job {
 pub(super) enum Ask {
     Conflict { id: OpId, conflict: Conflict },
     Confirm(FileOp),
+    Restore,
 }
 
 #[derive(Default)]
@@ -326,6 +328,13 @@ impl App {
         self.dirty = true;
     }
 
+    pub fn offer_restore(&mut self) {
+        self.jobs.asks.push_back(Ask::Restore);
+        self.jobs.sel = 0;
+        self.layout();
+        self.dirty = true;
+    }
+
     pub fn jobs_open(&self) -> bool {
         self.jobs.open
     }
@@ -338,6 +347,7 @@ impl App {
         match self.jobs.asks.front()? {
             Ask::Conflict { .. } => Some("conflict"),
             Ask::Confirm(_) => Some("confirm"),
+            Ask::Restore => Some("restore"),
         }
     }
 
@@ -416,10 +426,11 @@ impl App {
                 }
             }
             Ask::Confirm(op) if button == 0 => self.start_confirmed(op),
-            Ask::Confirm(_) => {}
+            Ask::Restore if button == 0 => self.effects.push(super::Effect::RestoreSession),
+            Ask::Confirm(_) | Ask::Restore => {}
         }
         self.jobs.all = false;
-        self.jobs.sel = if matches!(self.jobs.asks.front(), Some(Ask::Confirm(_))) { 0 } else { 1 };
+        self.jobs.sel = if matches!(self.jobs.asks.front(), Some(Ask::Confirm(_) | Ask::Restore)) { 0 } else { 1 };
         self.layout();
         self.dirty = true;
     }
@@ -428,6 +439,7 @@ impl App {
         match self.jobs.asks.front() {
             Some(Ask::Conflict { .. }) => &CONFLICT_BUTTONS,
             Some(Ask::Confirm(_)) => &CONFIRM_BUTTONS,
+            Some(Ask::Restore) => &RESTORE_BUTTONS,
             None => &[],
         }
     }
@@ -500,6 +512,7 @@ impl App {
             let (buttons, dh) = match ask {
                 Ask::Conflict { .. } => (CONFLICT_BUTTONS.len(), s(236.0)),
                 Ask::Confirm(_) => (CONFIRM_BUTTONS.len(), s(168.0)),
+                Ask::Restore => (RESTORE_BUTTONS.len(), s(168.0)),
             };
             let dw = s(DIALOG_W).min(w - s(32.0));
             let d = Rect::new(((w - dw) / 2.0).round(), ((h - dh) / 2.0).round().max(s(40.0)), dw, dh);
@@ -761,6 +774,7 @@ impl App {
                 let (title, text) = confirm_text(op);
                 (title.into(), vec![text, "This cannot be undone.".into()])
             }
+            Some(Ask::Restore) => ("Restore the previous session?".into(), vec!["Flit did not close properly last time.".into(), "Restore reopens the windows and tabs that were open.".into()]),
             None => return,
         };
         let mb = g.metrics(bold);

@@ -1,8 +1,9 @@
 use super::actions::{keys_text, ACTIONS};
 use super::edit::{EditAction, LineEdit};
 use super::palette::{Palette, Pick};
-use super::{App, Drag, Effect, Focus, Hit};
+use super::{App, Drag, Effect, Focus, Hit, Route};
 use crate::hash::FxHashSet;
+use crate::open::OpenTarget;
 use crate::input::{CursorIcon, Event, Key, Mods, MouseButton};
 use crate::listing::attr;
 use crate::location::{Location, ProviderId};
@@ -131,11 +132,13 @@ pub enum Spot {
     Tab(usize),
     Crumb(usize),
     Side(usize),
+    NewTab,
 }
 
 #[derive(Clone, PartialEq, Debug)]
 enum Target {
     Reveal,
+    NewTab,
     Into { dest: FsPath, spot: Spot },
     Trash(Spot),
     Run { program: FsPath, spot: Spot },
@@ -1081,6 +1084,10 @@ impl App {
                 let Some(d) = self.ops.dropping.take() else { return drop_effect::NONE };
                 match d.target {
                     Some(Target::Reveal) if effect != drop_effect::NONE => self.on_event(&Event::DroppedFiles(d.paths), now),
+                    Some(Target::NewTab) if effect != drop_effect::NONE => {
+                        let routes = d.paths.into_iter().map(|p| Route { folder: Location::from_local(p), select: None }).collect();
+                        self.dispatch(routes, OpenTarget::NewTab, now);
+                    }
                     Some(Target::Trash(_)) if effect != drop_effect::NONE => self.start_op(FileOp::Trash(d.paths), Origin::Fresh, Then::Nothing),
                     Some(Target::Run { program, .. }) if effect != drop_effect::NONE => {
                         let tab = self.tab().id;
@@ -1130,6 +1137,7 @@ impl App {
             Hit::Tab(i) | Hit::TabClose(i) => into(self.tabs.get(i)?.location(), Spot::Tab(i)),
             Hit::Crumb(i) => into(&t.crumbs.get(i)?.1, Spot::Crumb(i)),
             Hit::Side(i) | Hit::SidePin(i) => into(&self.nav.sidebar.items.get(i)?.loc, Spot::Side(i)),
+            Hit::NewTab => Some(Target::NewTab),
             Hit::Header(_) | Hit::ColSep(_) | Hit::Sizes | Hit::Bin(_) => None,
             Hit::SideEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose => None,
             Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside => None,
@@ -1146,7 +1154,7 @@ impl App {
         let Some(d) = &self.ops.dropping else { return NONE };
         let effect = match &target {
             None => NONE,
-            Some(Target::Reveal) => [COPY, LINK].into_iter().find(|e| allowed & e != 0).unwrap_or(NONE),
+            Some(Target::Reveal | Target::NewTab) => [COPY, LINK].into_iter().find(|e| allowed & e != 0).unwrap_or(NONE),
             Some(Target::Trash(_)) if d.paths.is_empty() || d.paths.iter().any(recycle::in_bin) => NONE,
             Some(Target::Trash(_)) => allowed & MOVE,
             Some(Target::Run { program, .. }) if d.paths.is_empty() || d.paths.contains(program) => NONE,
@@ -1215,6 +1223,7 @@ impl App {
         let d = self.ops.dropping.as_ref().filter(|d| d.effect != drop_effect::NONE)?;
         match d.target.as_ref()? {
             Target::Into { spot, .. } | Target::Run { spot, .. } | Target::Trash(spot) => Some(*spot),
+            Target::NewTab => Some(Spot::NewTab),
             Target::Reveal => None,
         }
     }
@@ -1228,6 +1237,8 @@ impl App {
             Target::Into { dest, .. } => ("Move to %1", name(dest)),
             Target::Trash(_) => ("Move to %1", RECYCLE_BIN_LABEL.to_owned()),
             Target::Run { program, .. } => ("Open with %1", name(program)),
+            Target::NewTab if d.paths.len() == 1 => ("Open %1 in a new tab", name(&d.paths[0])),
+            Target::NewTab => ("Open in new tabs", String::new()),
             Target::Reveal => return None,
         };
         Some((verb.to_owned(), target))

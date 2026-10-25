@@ -91,6 +91,14 @@ pub trait Window {
     fn properties(&self, paths: Vec<FsPath>);
     fn start_drag(&self, paths: Vec<FsPath>);
     fn set_timer(&self, ms: u32);
+    fn to_screen(&self, x: f32, y: f32) -> (i32, i32) {
+        (x as i32, y as i32)
+    }
+    fn window_at(&self, _x: f32, _y: f32) -> Option<(WindowId, f32, f32)> {
+        None
+    }
+    fn toggle_fullscreen(&self) {}
+    fn set_compact(&self, _on: Option<bool>) {}
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

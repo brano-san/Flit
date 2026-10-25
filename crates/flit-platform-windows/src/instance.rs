@@ -72,7 +72,8 @@ fn names() -> (Vec<u16>, Vec<u16>) {
         let _ = ProcessIdToSessionId(GetCurrentProcessId(), &mut session);
     }
     let wide = |s: String| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
-    let suffix = if elevated() { "-admin" } else { "" };
+    let tag = std::env::var("FLIT_INSTANCE").map(|t| format!("-{t}")).unwrap_or_default();
+    let suffix = format!("{}{tag}", if elevated() { "-admin" } else { "" });
     (wide(format!(r"Local\flit-{sid}{suffix}")), wide(format!(r"\\.\pipe\flit-{sid}-{session}{suffix}")))
 }
 

@@ -61,6 +61,7 @@ pub enum Event {
     DevicesChanged,
     Timer,
     ClipboardChanged(u32),
+    SessionEnding,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

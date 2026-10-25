@@ -3,6 +3,7 @@
 mod app;
 mod metrics;
 mod places;
+mod session;
 mod search_client;
 mod state;
 mod thumbs;

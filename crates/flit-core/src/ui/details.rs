@@ -613,6 +613,7 @@ impl App {
             let w = g.measure(text, font).min(list.w);
             g.text(list.x + (list.w - w) / 2.0, y + self.s(56.0 + 24.0 * k as f32), text, font, color, list.w);
         }
+        self.draw_eject(g, th);
     }
 
     pub(super) fn count_text(&self, s: &mut impl std::fmt::Write, v: &DirView) {
@@ -704,6 +705,10 @@ impl App {
         if self.details.autoscroll.take().is_some() {
             self.set_cursor(CursorIcon::Default);
         }
+    }
+
+    pub(super) fn autoscrolling(&self) -> bool {
+        self.details.autoscroll.is_some()
     }
 
     pub(super) fn autoscroll_down(&mut self, h: Hit, along: f32, button: MouseButton) -> bool {

@@ -16,6 +16,8 @@ pub enum MenuItem {
 pub(super) enum Cmd {
     Action(&'static str),
     NewItem(usize),
+    Go(usize),
+    Jump(isize),
 }
 
 const SORTS: [(SortField, &str, &str); 5] = [
@@ -160,8 +162,61 @@ impl App {
         })
     }
 
-    pub(super) fn build_search_menu(&mut self) -> Vec<MenuItem> {
-        self.collect(|a, m| m.check("search.group_folder", "Group by folder", a.search.group_folder))
+    pub(super) fn build_search_menu(&mut self, on_row: bool) -> Vec<MenuItem> {
+        self.collect(|a, m| {
+            if on_row {
+                m.command(Cmd::Action("search.reveal"), "Open file location", "Ctrl+Enter".into(), false);
+                m.separator();
+            }
+            m.check("search.group_folder", "Group by folder", a.search.group_folder);
+        })
+    }
+
+    pub(super) fn build_tab_menu(&mut self) -> Vec<MenuItem> {
+        self.collect(|a, m| {
+            let (n, cur) = (a.tabs.len(), a.cur);
+            m.action("tab.new", "New tab");
+            m.separator();
+            if n > 1 {
+                m.action("tab.move_to_window", "Move tab to a new window");
+                m.separator();
+            }
+            m.action("tab.close", "Close tab");
+            if n > 1 {
+                m.action("tab.close_others", "Close other tabs");
+            }
+            if cur > 0 {
+                m.action("tab.close_left", "Close tabs to the left");
+            }
+            if cur + 1 < n {
+                m.action("tab.close_right", "Close tabs to the right");
+            }
+            if !a.nav.closed.is_empty() {
+                m.separator();
+                m.action("tab.reopen", "Reopen closed tab");
+            }
+        })
+    }
+
+    pub(super) fn build_tab_actions_menu(&mut self) -> Vec<MenuItem> {
+        self.collect(|a, m| {
+            m.action("tab.new", "New tab");
+            m.action("window.new", "New window");
+            if a.tabs.len() > 1 {
+                m.action("tab.move_to_window", "Move tab to a new window");
+            }
+            m.separator();
+            m.action("window.compact", "Mini window");
+            m.action("window.fullscreen", "Full screen");
+            m.separator();
+            m.action("tab.close_all", "Close all tabs");
+        })
+    }
+
+    pub(super) fn list_menu(&mut self, entries: Vec<(String, Cmd, bool)>) -> Vec<MenuItem> {
+        let (items, cmds) = entries.into_iter().map(|(label, cmd, checked)| (MenuItem::Command { label, keys: String::new(), checked }, cmd)).unzip();
+        self.menu = cmds;
+        items
     }
 
     fn view_menus(&self, m: &mut Menu) {
@@ -283,6 +338,8 @@ impl App {
                 self.run_action(id, now);
             }
             Some(Cmd::NewItem(n)) => self.new_item(n),
+            Some(Cmd::Go(k)) => self.go_target(k, now),
+            Some(Cmd::Jump(n)) => self.jump_history(n, now),
             None => {}
         }
     }
