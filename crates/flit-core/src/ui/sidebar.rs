@@ -534,7 +534,8 @@ impl App {
         }
         if let Drag::PinMove { to, .. } = self.drag {
             let n = sb.state.pinned.len().min(sb.rects.len());
-            let y = sb.rects.get(to).filter(|_| to < n).map_or_else(|| sb.rects[n.saturating_sub(1)].bottom(), |r| r.y);
+            let before = sb.rects.get(to).filter(|_| to < n).map(|r| r.y);
+            let y = before.or_else(|| sb.rects.get(n.saturating_sub(1)).map(|r| r.bottom())).unwrap_or(area.y);
             g.dl.rect(Rect::new(area.x + s8, y - 1.0, area.w - 2.0 * s8, self.s(2.0)), t.accent);
         }
         g.dl.set_clip(None);

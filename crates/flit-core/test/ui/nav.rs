@@ -273,6 +273,21 @@ fn pinned_folders_reorder_by_drag() {
 }
 
 #[test]
+fn pins_removed_by_another_window_mid_drag_are_harmless() {
+    let mut app = app_at(r"C:\x");
+    app.set_pinned(vec![loc(r"C:\a"), loc(r"C:\b")]);
+    let first = app.nav.sidebar.rects[0];
+    let x = first.x + 20.0;
+    app.on_event(&Event::MouseDown { x, y: first.y + 5.0, button: MouseButton::Left, clicks: 1 }, t0());
+    app.on_event(&Event::MouseMove { x, y: first.y + 40.0 }, t0());
+    assert!(matches!(app.drag, Drag::PinMove { .. }));
+    app.set_pinned(Vec::new());
+    app.frame(&mut Gfx::new(Mono, 1024), t0());
+    app.on_event(&Event::MouseUp { x, y: first.y + 40.0, button: MouseButton::Left }, t0());
+    assert!(app.nav_state().pinned.is_empty());
+}
+
+#[test]
 fn sidebar_toggle_splitter_and_persisted_width() {
     let mut app = app_at(r"C:\x");
     let shown = app.layout.list.x;
