@@ -1,8 +1,10 @@
 mod indexer;
 mod local;
+mod wsl;
 
 pub use indexer::{root_of, start_indexer};
 pub use local::{via_unc, LocalProvider, CANCELLED};
+pub use wsl::{AgentImage, AgentImages, AgentLauncher, AgentProcess, Timing, WslProvider, UNMAPPABLE};
 
 use crossbeam_channel::Sender;
 use flit_core::atlas::Slot;
@@ -298,5 +300,9 @@ pub trait Platform: 'static {
     }
     fn elevated() -> bool {
         false
+    }
+    fn watch_wsl(_changed: Box<dyn Fn() + Send>) {}
+    fn wsl_launcher(_distro: &str, _images: &AgentImages) -> Option<Box<dyn AgentLauncher>> {
+        None
     }
 }

@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-const PARTIAL_EVERY: Duration = Duration::from_millis(16);
-const PARTIAL_COST_FACTOR: u32 = 4;
+pub(crate) const PARTIAL_EVERY: Duration = Duration::from_millis(16);
+pub(crate) const PARTIAL_COST_FACTOR: u32 = 4;
 const QUEUE_POLL: Duration = Duration::from_millis(50);
 
 struct ListJob {
@@ -358,7 +358,7 @@ pub(crate) fn dir_sizes<F: Fs + ?Sized>(fs: &F, dir: &FsPath, items: &[(u32, Vec
 }
 
 #[allow(clippy::too_many_arguments)]
-fn snapshot(gen: u64, path: &FsPath, listing: Listing, keys: SortKeys, view: ViewSpec, done: bool, error: Option<FsError>, elapsed: Duration) -> Arc<DirSnapshot> {
+pub(crate) fn snapshot(gen: u64, path: &FsPath, listing: Listing, keys: SortKeys, view: ViewSpec, done: bool, error: Option<FsError>, elapsed: Duration) -> Arc<DirSnapshot> {
     let mut order = Vec::new();
     sort::sort(&listing, &keys, view, &mut order);
     Arc::new(DirSnapshot { gen, path: path.clone(), listing, keys, order, view, done, error, elapsed })

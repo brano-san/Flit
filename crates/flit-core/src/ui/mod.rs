@@ -514,6 +514,7 @@ impl App {
         }
         let total = routes.len();
         routes.truncate(MAX_ROUTES);
+        routes.iter_mut().for_each(|r| r.folder.canonicalize(&self.nav.sidebar.places.wsl));
         match target {
             OpenTarget::NewWindow => self.effects.push(Effect::NewWindow(routes)),
             OpenTarget::CurrentTab => {
@@ -718,6 +719,14 @@ impl App {
             ProviderEvent::Navigate { tab, path } => {
                 if self.tab().id == tab {
                     self.navigate(Location::from_local(path), now);
+                }
+            }
+            ProviderEvent::Status { tab, gen, text } => {
+                if let Some(k) = tab_of(&self.tabs, tab, gen) {
+                    if let Some(l) = self.tabs[k].loading.as_mut() {
+                        l.note = Some(text);
+                        self.dirty |= k == self.cur;
+                    }
                 }
             }
         }
@@ -1735,8 +1744,8 @@ impl App {
             if !v.snap().done {
                 s.push_str("    Loading…");
             }
-        } else if tab.loading.is_some() {
-            s.push_str("Loading…");
+        } else if let Some(l) = &tab.loading {
+            s.push_str(l.note.as_deref().unwrap_or("Loading…"));
         }
         g.text(r.x + pad, baseline, &s, font, color, r.w / 2.0);
 

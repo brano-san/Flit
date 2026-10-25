@@ -231,6 +231,7 @@ pub enum ProviderEvent {
     OpProgress { tab: TabId, id: OpId, progress: OpProgress },
     OpConflict { tab: TabId, id: OpId, conflict: Conflict },
     Navigate { tab: TabId, path: FsPath },
+    Status { tab: TabId, gen: u64, text: String },
 }
 
 #[cfg(test)]

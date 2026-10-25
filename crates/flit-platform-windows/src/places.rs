@@ -1,11 +1,15 @@
 use flit_core::provider::Template;
 use flit_core::ui::{Drive, NewTemplate};
+use flit_core::location::valid_distro;
 use flit_core::FsPath;
 use std::path::PathBuf;
 use windows::core::{w, PCWSTR, PWSTR};
 use windows::Win32::Foundation::ERROR_NO_MORE_ITEMS;
 use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW};
-use windows::Win32::System::Registry::{RegCloseKey, RegEnumKeyExW, RegGetValueW, RegOpenKeyExW, HKEY, HKEY_CLASSES_ROOT, HKEY_CURRENT_USER, KEY_READ, REG_ROUTINE_FLAGS, RRF_RT_ANY, RRF_RT_REG_BINARY, RRF_RT_REG_SZ};
+use windows::Win32::System::Registry::{
+    RegCloseKey, RegEnumKeyExW, RegGetValueW, RegNotifyChangeKeyValue, RegOpenKeyExW, HKEY, HKEY_CLASSES_ROOT, HKEY_CURRENT_USER, KEY_NOTIFY, KEY_READ, REG_NOTIFY_CHANGE_LAST_SET, REG_NOTIFY_CHANGE_NAME, REG_ROUTINE_FLAGS, RRF_RT_ANY,
+    RRF_RT_REG_BINARY, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
+};
 use windows::Win32::UI::Shell::{AssocQueryStringW, SHLoadIndirectString, ASSOCF_NONE, ASSOCSTR_FRIENDLYDOCNAME};
 
 const DRIVE_REMOVABLE: u32 = 2;
@@ -52,11 +56,30 @@ pub fn drives() -> Vec<Drive> {
         .collect()
 }
 
+const LXSS: PCWSTR = w!(r"Software\Microsoft\Windows\CurrentVersion\Lxss");
+const INSTALLED: u32 = 1;
+
+pub fn watch_lxss(changed: Box<dyn Fn() + Send>) {
+    let watcher = move || {
+        let mut key = HKEY::default();
+        if unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, LXSS, None, KEY_NOTIFY, &mut key) }.is_err() {
+            return;
+        }
+        let key = Key(key);
+        while unsafe { RegNotifyChangeKeyValue(key.0, true, REG_NOTIFY_CHANGE_NAME | REG_NOTIFY_CHANGE_LAST_SET, None, false) }.is_ok() {
+            changed();
+        }
+    };
+    if let Err(e) = std::thread::Builder::new().name("flit-lxss-watch".into()).spawn(watcher) {
+        tracing::warn!("cannot watch the WSL distribution list: {e}");
+    }
+}
+
 pub fn wsl_distros() -> Vec<String> {
     let mut key = HKEY::default();
     let mut out = Vec::new();
     unsafe {
-        if RegOpenKeyExW(HKEY_CURRENT_USER, w!(r"Software\Microsoft\Windows\CurrentVersion\Lxss"), None, KEY_READ, &mut key).is_err() {
+        if RegOpenKeyExW(HKEY_CURRENT_USER, LXSS, None, KEY_READ, &mut key).is_err() {
             return out;
         }
         for index in 0.. {
@@ -68,9 +91,11 @@ pub fn wsl_distros() -> Vec<String> {
             let mut name = [0u16; 256];
             let mut size = (name.len() * 2) as u32;
             let read = RegGetValueW(key, PCWSTR(sub.as_ptr()), w!("DistributionName"), RRF_RT_REG_SZ, None, Some(name.as_mut_ptr() as _), Some(&mut size));
-            if read.is_ok() {
+            let (mut state, mut state_size) = (INSTALLED, 4u32);
+            let _ = RegGetValueW(key, PCWSTR(sub.as_ptr()), w!("State"), RRF_RT_REG_DWORD, None, Some(&mut state as *mut u32 as _), Some(&mut state_size));
+            if read.is_ok() && state == INSTALLED {
                 let distro = wide_str(&name);
-                if !distro.is_empty() && !out.contains(&distro) {
+                if valid_distro(&distro) && !out.contains(&distro) {
                     out.push(distro);
                 }
             }
