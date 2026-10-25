@@ -26,6 +26,7 @@ const MAX_HISTORY_MENU: usize = 16;
 const LONG_PRESS: Duration = Duration::from_millis(500);
 const SUGGESTION_H: f32 = 28.0;
 const NOT_URLS: [&str; 3] = ["file", "shell", "wsl"];
+const EXPLORER: &str = "explorer.exe";
 
 type Anchor = ((f32, f32), Option<Vec<u8>>);
 
@@ -95,9 +96,15 @@ impl App {
         self.addr.typed = typed;
     }
 
-    fn launch(&mut self, launch: Launch) {
+    pub(super) fn launch(&mut self, launch: Launch) {
         let tab = self.tab().id;
         self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch } });
+    }
+
+    pub(super) fn hand_to_explorer(&mut self, location: &str) -> String {
+        tracing::info!("handing {location} to File Explorer");
+        self.launch(Launch::Run { program: EXPLORER.into(), args: format!("\"{location}\""), dir: None });
+        format!("Flit cannot show {location}, so it opens in File Explorer")
     }
 
     fn remember_typed(&mut self, text: &str) {

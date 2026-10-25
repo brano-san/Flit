@@ -87,7 +87,7 @@ pub enum FileOp {
     EmptyBin,
     Flatten(Vec<FsPath>),
     Archive(ArchiveOp),
-    FolderIcon { folder: FsPath, icon: FsPath, index: i32 },
+    FolderIcon { folder: FsPath, icon: Option<FsPath>, index: i32 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -131,7 +131,7 @@ impl FileOp {
             FileOp::EmptyBin => FileOp::EmptyBin,
             FileOp::Flatten(v) => FileOp::Flatten(all(v)?),
             FileOp::Archive(a) => FileOp::Archive(a.map_paths(&f)?),
-            FileOp::FolderIcon { folder, icon, index } => FileOp::FolderIcon { folder: f(folder)?, icon: f(icon)?, index: *index },
+            FileOp::FolderIcon { folder, icon, index } => FileOp::FolderIcon { folder: f(folder)?, icon: match icon { Some(i) => Some(f(i)?), None => None }, index: *index },
         })
     }
 }

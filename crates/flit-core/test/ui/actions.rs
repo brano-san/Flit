@@ -82,3 +82,54 @@ fn every_action_runs_headless() {
         assert!(!app.tabs().is_empty(), "{}", a.id);
     }
 }
+
+fn launched(app: &mut App) -> Vec<crate::provider::Launch> {
+    app.drain_effects().filter_map(|e| if let Effect::Provider { req: crate::provider::ProviderRequest::Launch { launch, .. }, .. } = e { Some(launch) } else { None }).collect()
+}
+
+fn press(app: &mut App, c: Chord) {
+    app.on_event(&crate::input::Event::Key { key: c.key, mods: c.mods, pressed: true }, Instant::now());
+}
+
+fn bare_app() -> App {
+    let mut app = App::new(Persisted { path: Location::parse(r"C:\x").unwrap(), ..Default::default() }, Vec::new(), 0, false, 1.0, (900, 500), Instant::now());
+    app.drain_effects().for_each(drop);
+    app
+}
+
+#[test]
+fn help_and_log_shortcuts_open_the_documentation_the_log_file_and_its_folder() {
+    use crate::path::FsPath;
+    use crate::provider::{Launch, ProviderRequest};
+    let mut app = bare_app();
+    press(&mut app, key(Key::F(1)));
+    assert_eq!(launched(&mut app), [Launch::Run { program: "https://github.com/brano-san/Flit#readme".into(), args: String::new(), dir: None }]);
+    press(&mut app, ctrl(Key::Char('.')));
+    assert!(app.drain_effects().all(|e| !matches!(e, Effect::Provider { req: ProviderRequest::Open { .. }, .. })), "no log folder, nothing opens");
+    assert_eq!(app.tab().error.as_deref(), Some("Flit has no log folder in this session"));
+    app.about.logs = FsPath::parse(r"C:\Users\me\AppData\Local\Flit\logs");
+    press(&mut app, ctrl(Key::Char('.')));
+    let opened: Vec<FsPath> = app.drain_effects().filter_map(|e| if let Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } = e { Some(path) } else { None }).collect();
+    assert_eq!(opened, [FsPath::parse(r"C:\Users\me\AppData\Local\Flit\logs\flit.log").unwrap()]);
+    press(&mut app, ctrl_shift(Key::Char('.')));
+    assert_eq!((app.tabs().len(), app.current_location().display().into_owned()), (2, r"C:\Users\me\AppData\Local\Flit\logs".to_owned()));
+    for (id, url) in super::super::settings_page::LINKS {
+        assert!(app.run_action(id, Instant::now()), "{id}");
+        assert_eq!(launched(&mut app), [Launch::Run { program: url.into(), args: String::new(), dir: None }], "{id}");
+        assert!(url.starts_with("https://github.com/brano-san/Flit"), "{url}");
+    }
+}
+
+#[test]
+fn shell_folders_flit_cannot_show_go_to_file_explorer_with_a_note() {
+    use crate::provider::Launch;
+    let mut app = bare_app();
+    let open = crate::open::Open { paths: vec![b"shell:ControlPanelFolder".to_vec()], ..Default::default() };
+    app.open(&open, &|_| None, Instant::now());
+    assert_eq!(launched(&mut app), [Launch::Run { program: "explorer.exe".into(), args: "\"shell:ControlPanelFolder\"".into(), dir: None }]);
+    assert_eq!(app.tab().error.as_deref(), Some("Flit cannot show shell:ControlPanelFolder, so it opens in File Explorer"));
+    assert_eq!(app.tabs().len(), 1);
+    let known = crate::open::Open { paths: vec![b"shell:Downloads".to_vec()], ..Default::default() };
+    app.open(&known, &|_| Location::parse(r"C:\Users\me\Downloads"), Instant::now());
+    assert!(launched(&mut app).is_empty(), "folders with a file system path still open in Flit");
+}

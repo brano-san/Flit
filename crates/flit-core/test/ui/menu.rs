@@ -12,12 +12,17 @@ const FOLDER: usize = 0;
 const FILE: usize = 1;
 
 fn app_with(items: &[(&str, bool)]) -> App {
+    let attrs: Vec<(&str, u32)> = items.iter().map(|&(n, dir)| (n, if dir { attr::DIR } else { 0 })).collect();
+    app_with_attrs(&attrs)
+}
+
+fn app_with_attrs(items: &[(&str, u32)]) -> App {
     let mut app = App::new(Persisted { path: Location::parse(r"C:\x").unwrap(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 600), Instant::now());
     let t = app.tab();
     let mut listing = Listing::default();
     let mut keys = SortKeys::new(CaseMode::Insensitive);
-    for &(n, dir) in items {
-        let i = listing.push(n.as_bytes(), Meta { attrs: if dir { attr::DIR } else { 0 }, ..Default::default() });
+    for &(n, attrs) in items {
+        let i = listing.push(n.as_bytes(), Meta { attrs, ..Default::default() });
         keys.push(listing.name(i));
     }
     let mut order = Vec::new();
@@ -84,6 +89,16 @@ fn item_menu_lists_flit_commands_with_their_shortcuts() {
     }
     assert!(!labels.iter().any(|l| l.starts_with("New alternate")), "{labels:?}");
     assert!(!commands(&file.menu).iter().any(|l| l == "Change icon"));
+    assert!(!labels.iter().any(|l| l == "Restore default icon"), "a plain folder has no custom icon to remove");
+}
+
+#[test]
+fn a_folder_that_can_carry_a_custom_icon_offers_to_restore_the_default_one() {
+    let mut app = app_with_attrs(&[("photos", attr::DIR | attr::READONLY)]);
+    let menu = right_click(&mut app, Some(0), false);
+    run(&mut app, &menu, "Restore default icon");
+    let op = app.drain_effects().find_map(|e| if let Effect::Provider { req: ProviderRequest::Op { op, .. }, .. } = e { Some(op) } else { None });
+    assert_eq!(op, Some(crate::provider::FileOp::FolderIcon { folder: FsPath::parse(r"C:\x\photos").unwrap(), icon: None, index: 0 }));
 }
 
 #[test]

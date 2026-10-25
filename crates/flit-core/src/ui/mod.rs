@@ -43,7 +43,7 @@ pub use toolbar::{Show, ToolContext, ToolItem, ToolbarState, CONTEXTS};
 pub use address::Typed;
 pub use tabbar::{MovedTab, Startup, WindowSession};
 pub use settings::{ConfirmDelete, Doc, Page, Setting, Value, SETTINGS};
-pub use settings_page::About;
+pub use settings_page::{About, LOG_FILE};
 pub use split::{SplitDir, SplitPrefs, SplitSession};
 
 use crate::fmt as format;
@@ -407,6 +407,7 @@ pub struct App {
     pub startup: Startup,
     pub startup_pages: Vec<Location>,
     pub about: About,
+    pub log_level: usize,
     pub split_prefs: SplitPrefs,
     pub prefs: ViewPrefs,
     folders: FolderViews,
@@ -495,6 +496,7 @@ impl App {
             },
             startup: state.startup,
             about: About::default(),
+            log_level: settings::LOG_DEFAULT,
             split_prefs: state.split,
             prefs: state.prefs,
             folders: state.folders,
@@ -660,7 +662,7 @@ impl App {
     pub fn show_open_errors(&mut self, errors: &[ResolveError]) {
         if let Some(e) = errors.first() {
             self.tab_mut().error = Some(match e {
-                ResolveError::UnknownShellLocation(s) => format!("Cannot open {s} in Flit"),
+                ResolveError::UnknownShellLocation(s) => self.hand_to_explorer(s),
                 ResolveError::Invalid(s) => format!("Invalid path: {s}"),
             });
             self.dirty = true;
