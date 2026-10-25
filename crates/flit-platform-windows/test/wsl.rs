@@ -131,6 +131,25 @@ fn real_agent_lists_watches_and_falls_back_nowhere() {
 
 #[test]
 #[ignore]
+fn killing_wsl_exe_ends_the_agent() {
+    let launcher = WslLauncher::new(&distro(), image());
+    launcher.deliver().unwrap();
+    let ours = Hello { build: launcher.build().into(), ..Hello::new(Protocol::Provider, flit_proto::provider::VERSION) };
+    let mut p = launcher.launch().unwrap();
+    write_frame(&mut p.input, &ours).unwrap();
+    read_hello(&mut p.output, &ours).unwrap();
+    let running = || run(&format!("pgrep -f '[f]lit/agent-{}' || true", launcher.build())).trim().to_owned();
+    assert!(!running().is_empty());
+    (p.stop)(Duration::ZERO);
+    let end = Instant::now() + Duration::from_secs(5);
+    while !running().is_empty() {
+        assert!(Instant::now() < end, "the agent outlived wsl.exe");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+#[ignore]
 fn bench_wsl_warm_start() {
     let launcher = WslLauncher::new(&distro(), image());
     let ours = Hello { build: launcher.build().into(), ..Hello::new(Protocol::Provider, flit_proto::provider::VERSION) };
