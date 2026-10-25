@@ -82,6 +82,41 @@ fn copy_move_rename_new_folder_and_link_report_their_results() {
 }
 
 #[test]
+fn new_files_come_from_templates_and_streams_attach_to_files() {
+    let t = TempDir::new("newfile");
+    let mut sh = ShellCom::new().unwrap();
+    let source = t.file("source.docx", "template body");
+    std::fs::File::options().write(true).open(t.0.join("source.docx")).unwrap().set_modified(std::time::SystemTime::UNIX_EPOCH).unwrap();
+    let new = |name: &str, template| FileOp::NewFile { dir: t.path(""), name: name.as_bytes().to_vec(), template };
+    let out = sh.file_op(&new("New Text Document.txt", Template::Empty));
+    assert_eq!((out.error.is_none(), names(&out.items)), (true, vec!["New Text Document.txt".to_owned()]));
+    assert_eq!(std::fs::metadata(t.0.join("New Text Document.txt")).unwrap().len(), 0);
+    let out = sh.file_op(&new("New Text Document.txt", Template::Empty));
+    assert_eq!(names(&out.items), ["New Text Document (2).txt"], "a taken name is renamed instead of overwritten");
+    sh.file_op(&new("New.zip", Template::Data(vec![0x50, 0x4B, 5, 6])));
+    assert_eq!(std::fs::read(t.0.join("New.zip")).unwrap(), [0x50, 0x4B, 5, 6]);
+    let out = sh.file_op(&new("New.docx", Template::Copy(source.clone())));
+    assert_eq!(out.items, vec![(t.path("New.docx"), t.path("New.docx"))]);
+    assert_eq!(std::fs::read_to_string(t.0.join("New.docx")).unwrap(), "template body");
+    let modified = std::fs::metadata(t.0.join("New.docx")).unwrap().modified().unwrap();
+    assert!(modified.elapsed().unwrap() < std::time::Duration::from_secs(600), "a copied template is dated now");
+    let taken = new("New.docx", Template::Empty);
+    assert_eq!(direct(&taken), (Vec::new(), Some(taken.clone())));
+    assert_eq!(std::fs::read_to_string(t.0.join("New.docx")).unwrap(), "template body");
+
+    let a = t.file("a.txt", "main");
+    let out = sh.file_op(&FileOp::NewStream { item: a.clone(), name: b"meta".to_vec() });
+    assert_eq!((out.error.is_none(), out.items), (true, vec![(a.clone(), a.clone())]));
+    assert!(std::fs::metadata(format!("{}:meta", t.0.join("a.txt").display())).is_ok());
+    assert_eq!(std::fs::read_to_string(t.0.join("a.txt")).unwrap(), "main");
+    let again = sh.file_op(&FileOp::NewStream { item: a, name: b"meta".to_vec() });
+    assert!(again.items.is_empty() && again.error.unwrap().message.starts_with("Cannot create the stream"));
+
+    let out = sh.file_op(&FileOp::Link { items: vec![t.path("missing.txt")], dest: t.path("") });
+    assert!(out.items.is_empty() && out.error.unwrap().message.ends_with("does not exist"));
+}
+
+#[test]
 fn unaddressable_names_are_refused_before_the_shell_sees_them() {
     let t = TempDir::new("refuse");
     let mut sh = ShellCom::new().unwrap();

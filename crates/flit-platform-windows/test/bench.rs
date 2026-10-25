@@ -3,7 +3,7 @@ use crate::fs::NtFs;
 use crate::shell::ShellCom;
 use crate::watcher::DirWatcher;
 use flit_core::listing::ListingBuilder;
-use flit_core::provider::{FileOp, GenToken};
+use flit_core::provider::{FileOp, GenToken, Template};
 use flit_core::sort::CaseMode;
 use flit_core::ui::{IconKind, IconRequest};
 use flit_core::{FsPath, ProviderEvent, ProviderRequest};
@@ -235,6 +235,41 @@ fn bench_places() {
     measure("drives()", RUNS, |_| (), |_| assert!(!crate::places::drives().is_empty()));
     measure("wsl_distros()", RUNS, |_| (), |_| drop(crate::places::wsl_distros()));
     measure("known_folder shell:Downloads", RUNS, |_| (), |_| assert!(<crate::Windows as flit_platform::Platform>::known_folder("shell:Downloads").is_some()));
+}
+
+#[test]
+#[ignore]
+fn bench_new_items() {
+    crate::com_sta();
+    measure("templates() HKCR ShellNew scan", RUNS, |_| (), |_| {
+        assert!(crate::places::templates().iter().all(|t| t.ext.starts_with('.') && !t.label.is_empty() && !t.stem.is_empty()));
+    });
+    let found: Vec<String> = crate::places::templates().iter().map(|t| format!("{} ({}, {})", t.label, t.stem, t.ext)).collect();
+    eprintln!("      {} templates: {}", found.len(), found.join("; "));
+    let d = Dir::temp("new");
+    let mut sh = ShellCom::new().unwrap();
+    let template = d.file("template.docx", 20_000);
+    let new = |name: String, template| FileOp::NewFile { dir: d.path(""), name: name.into_bytes(), template };
+    measure("new empty file", RUNS, |k| new(format!("e{k}.txt"), Template::Empty), |op| ok(sh.file_op(&op)));
+    measure("new file from 22-byte data", RUNS, |k| new(format!("z{k}.zip"), Template::Data(vec![0x50; 22])), |op| ok(sh.file_op(&op)));
+    measure("new file from 20 KB template file", RUNS, |k| new(format!("t{k}.docx"), Template::Copy(template.clone())), |op| ok(sh.file_op(&op)));
+    measure("new alternate data stream", RUNS, |k| d.file(&format!("s{k}.txt"), 10), |f| ok(sh.file_op(&FileOp::NewStream { item: f, name: b"meta".to_vec() })));
+    std::fs::create_dir(d.0.join("target")).unwrap();
+    let links = sh.file_op(&FileOp::Link { items: vec![d.path("target"), template.clone()], dest: d.path("") }).items;
+    let (to_folder, to_file) = (links[0].1.clone(), links[1].1.clone());
+    measure(".lnk to a folder resolved", RUNS, |_| to_folder.clone(), |l| assert_eq!(sh.shortcut_folder(&l), Some(d.path("target"))));
+    measure(".lnk to a file resolved", RUNS, |_| to_file.clone(), |l| assert_eq!(sh.shortcut_folder(&l), None));
+    for n in [100, 1000] {
+        let names: Vec<Vec<u8>> = (0..n).map(|i| format!("photo{i}.jpg").into_bytes()).collect();
+        let items: Vec<(&[u8], bool)> = names.iter().map(|n| (n.as_slice(), false)).collect();
+        measure(&format!("batch_names for {n} items"), RUNS, |_| (), |_| assert_eq!(flit_core::ui::batch_names("Trip", &items, |_| false).len(), n));
+        measure(&format!("batch rename {n} files"), 5, |k| {
+            let dir = format!("batch{n}_{k}");
+            std::fs::create_dir(d.0.join(&dir)).unwrap();
+            let new_names = flit_core::ui::batch_names("Trip", &items, |_| false);
+            names.iter().zip(new_names).map(|(old, new)| (d.file(&format!("{dir}/{}", String::from_utf8_lossy(old)), 10), d.path(&format!("{dir}/{}", String::from_utf8_lossy(&new))))).collect::<Vec<_>>()
+        }, |pairs| ok(sh.file_op(&FileOp::MoveTo(pairs))));
+    }
 }
 
 fn rand_tag() -> u128 {

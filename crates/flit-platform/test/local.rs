@@ -267,3 +267,61 @@ fn unmappable_wsl_paths_never_reach_win32() {
     let snap = out.take().unwrap();
     assert!(snap.done && snap.error.is_some() && snap.gen == 3);
 }
+
+struct LinkShell;
+impl Shell for LinkShell {
+    fn new() -> Result<Self, PlatformError> {
+        Ok(LinkShell)
+    }
+    fn icon(&mut self, _: &IconRequest) -> Option<Bitmap> {
+        None
+    }
+    fn type_name(&mut self, _: &[u8]) -> Option<String> {
+        None
+    }
+    fn open(&mut self, path: &FsPath) -> Result<(), PlatformError> {
+        Err(PlatformError::new(1, format!("opened {}", path.display())))
+    }
+    fn launch(&mut self, launch: &Launch) -> Result<(), PlatformError> {
+        Err(PlatformError::new(2, format!("{launch:?}")))
+    }
+    fn shortcut_folder(&mut self, link: &FsPath) -> Option<FsPath> {
+        link.as_bytes().ends_with(b"docs.LNK").then(|| p(r"D:\docs"))
+    }
+}
+impl FileOps for LinkShell {
+    fn file_op(&mut self, _: &FileOp) -> OpOutcome {
+        OpOutcome::default()
+    }
+    fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
+        Err(PlatformError::new(-1, "empty"))
+    }
+    fn clear_clipboard(&mut self) {}
+}
+
+#[test]
+fn shortcuts_to_folders_navigate_and_launches_reach_the_shell() {
+    let (tx, rx) = unbounded();
+    let provider = LocalProvider::new::<_, NoWatch, LinkShell>(fs(), 1, tx, Arc::new(|| {})).unwrap();
+    let next = || rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let error = |e: ProviderEvent| match e {
+        ProviderEvent::OpDone { error: Some(e), .. } => e,
+        e => panic!("{e:?}"),
+    };
+    provider.submit(ProviderRequest::Open { tab: 3, path: p(r"C:\r\docs.LNK") });
+    assert_eq!(next(), ProviderEvent::Navigate { tab: 3, path: p(r"D:\docs") });
+    provider.submit(ProviderRequest::Open { tab: 3, path: p(r"C:\r\app.lnk") });
+    assert!(error(next()).starts_with(r"opened C:\r\app.lnk"));
+    provider.submit(ProviderRequest::Open { tab: 3, path: p(r"C:\r\lnk") });
+    assert!(error(next()).starts_with(r"opened C:\r\lnk"));
+    provider.submit(ProviderRequest::Launch { tab: 3, launch: Launch::Terminal { dirs: vec![p(r"C:\r")], admin: false } });
+    assert!(error(next()).starts_with("Terminal"));
+}
+
+#[test]
+fn wsl_launches_map_to_unc() {
+    let launch = Launch::With { program: FsPath::parse("/bin/tool.exe").unwrap(), args: vec![FsPath::parse("/home/a").unwrap()] };
+    let Some(ProviderRequest::Launch { launch: Launch::With { program, args }, .. }) = via_unc("Ubuntu", ProviderRequest::Launch { tab: 1, launch }) else { panic!() };
+    assert_eq!(program.display(), r"\\wsl.localhost\Ubuntu\bin\tool.exe");
+    assert_eq!(args[0].display(), r"\\wsl.localhost\Ubuntu\home\a");
+}
