@@ -13,7 +13,7 @@ use std::time::Instant;
 
 const MAX_CLOSED: usize = 32;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Chord {
     pub key: Key,
     pub mods: Mods,
@@ -66,8 +66,8 @@ impl Action {
 
 pub static ACTIONS: &[Action] = &[
     Action::new("palette.show", "Show command palette", &[ctrl_shift(Key::Char('P'))], |a, _| a.open_palette()),
-    Action::new("nav.back", "Go back", &[alt(Key::Left), key(Key::Backspace)], |a, now| a.go_history(false, now)),
-    Action::new("nav.forward", "Go forward", &[alt(Key::Right)], |a, now| a.go_history(true, now)),
+    Action::new("nav.back", "Go back", &[alt(Key::Left), key(Key::Backspace), key(Key::BrowserBack)], |a, now| a.go_history(false, now)),
+    Action::new("nav.forward", "Go forward", &[alt(Key::Right), key(Key::BrowserForward)], |a, now| a.go_history(true, now)),
     Action::new("nav.up", "Go up to the parent folder", &[alt(Key::Up)], |a, now| a.go_up(now)),
     Action::new("nav.refresh", "Refresh", &[key(Key::F(5)), ctrl(Key::Char('R'))], |a, now| a.refresh(now)),
     Action::new("nav.address", "Focus the address bar", &[ctrl(Key::Char('L')), alt(Key::Char('D')), key(Key::F(4))], |a, _| a.begin_edit()),
@@ -290,9 +290,12 @@ pub fn chord_text(c: &Chord) -> String {
             Key::Escape => "Esc",
             Key::Backspace => "Backspace",
             Key::Delete => "Del",
+            Key::Insert => "Ins",
             Key::Tab => "Tab",
             Key::Space => "Space",
             Key::Apps => "Menu",
+            Key::BrowserBack => "BrowserBack",
+            Key::BrowserForward => "BrowserForward",
             _ => "?",
         }),
     }
@@ -303,10 +306,14 @@ pub fn keys_text(a: &Action) -> String {
     a.keys.iter().map(chord_text).collect::<Vec<_>>().join(", ")
 }
 
+pub fn index(id: &str) -> Option<usize> {
+    ACTIONS.iter().position(|a| a.id == id)
+}
+
 impl App {
     pub(super) fn run_bound(&mut self, key: Key, mods: Mods, now: Instant) -> bool {
-        let Some(a) = find(key, mods) else { return false };
-        (a.run)(self, now);
+        let Some(i) = self.keymap.owner(Chord { key, mods }) else { return false };
+        (ACTIONS[i].run)(self, now);
         true
     }
 

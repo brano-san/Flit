@@ -1,4 +1,4 @@
-use super::actions::{chord_text, ACTIONS};
+use super::keymap::Keymap;
 use super::toolbar::{Overflow, ToolMenu};
 use super::{App, LayoutMode};
 use crate::archive::{self, Format};
@@ -79,9 +79,6 @@ const LAYOUT_CHOICES: [(LayoutMode, &str); 6] = [
 
 const UNITS: [(DateUnit, &str, &str); 3] = [(DateUnit::Year, "view.group.year", "Year"), (DateUnit::Month, "view.group.month", "Month"), (DateUnit::Day, "view.group.day", "Day")];
 
-fn keys_of(id: &str) -> String {
-    ACTIONS.iter().find(|a| a.id == id).and_then(|a| a.keys.first()).map(chord_text).unwrap_or_default()
-}
 
 fn trimmed(mut items: Vec<MenuItem>) -> Vec<MenuItem> {
     if items.last() == Some(&MenuItem::Separator) {
@@ -92,6 +89,7 @@ fn trimmed(mut items: Vec<MenuItem>) -> Vec<MenuItem> {
 
 pub(super) struct Menu<'a> {
     hidden: &'a [&'static str],
+    keys: &'a Keymap,
     items: Vec<MenuItem>,
     cmds: Vec<Cmd>,
 }
@@ -114,7 +112,8 @@ impl Menu<'_> {
     }
 
     pub(super) fn action(&mut self, id: &'static str, label: &str) {
-        self.command(Cmd::Action(id), label, keys_of(id), false);
+        let keys = self.keys.first_text(id).unwrap_or_default();
+        self.command(Cmd::Action(id), label, keys, false);
     }
 
     pub(super) fn check(&mut self, id: &'static str, label: &str, checked: bool) {
@@ -153,7 +152,7 @@ impl App {
     }
 
     pub(super) fn collect(&mut self, fill: impl FnOnce(&Self, &mut Menu)) -> Vec<MenuItem> {
-        let mut m = Menu { hidden: &self.menu_hidden, items: Vec::new(), cmds: Vec::new() };
+        let mut m = Menu { hidden: &self.menu_hidden, keys: &self.keymap, items: Vec::new(), cmds: Vec::new() };
         fill(self, &mut m);
         let (items, cmds) = (trimmed(m.items), m.cmds);
         self.menu = cmds;
@@ -257,7 +256,8 @@ impl App {
     fn layout_entries(&self, m: &mut Menu) {
         let t = self.tab();
         for (mode, id) in LAYOUT_CHOICES {
-            m.command(Cmd::Action(id), mode.title(), keys_of(id), mode == t.mode);
+            let keys = m.keys.first_text(id).unwrap_or_default();
+            m.command(Cmd::Action(id), mode.title(), keys, mode == t.mode);
         }
         m.separator();
         m.action("view.size.larger", "Larger items");
@@ -293,7 +293,8 @@ impl App {
     }
 
     fn new_entries(&self, m: &mut Menu) {
-        m.command(Cmd::NewItem(0), "Folder", keys_of("file.new_folder"), false);
+        let keys = m.keys.first_text("file.new_folder").unwrap_or_default();
+        m.command(Cmd::NewItem(0), "Folder", keys, false);
         m.command(Cmd::NewItem(1), "Shortcut", String::new(), false);
         for (k, tpl) in self.nav.sidebar.places.templates.iter().enumerate() {
             m.command(Cmd::NewItem(k + 2), &tpl.label, String::new(), false);

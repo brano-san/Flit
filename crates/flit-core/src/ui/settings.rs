@@ -10,9 +10,10 @@ use crate::open::OpenTarget;
 use crate::provider::Resolve;
 use crate::sort::{DateUnit, Folders, GroupField, SortField};
 use crate::tags::{self, Tag, TagRequest, MAX_TAGS};
+use super::keymap::{self, Keymap};
 use crate::theme::{Area, Mode};
 use serde_json::{Map, Value as Json};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 const MAX_PATHS: usize = 64;
@@ -25,12 +26,13 @@ pub enum Page {
     Files,
     Layout,
     Tags,
+    Actions,
     Advanced,
     About,
 }
 
 impl Page {
-    pub const ALL: [Page; 7] = [Page::General, Page::Appearance, Page::Files, Page::Layout, Page::Tags, Page::Advanced, Page::About];
+    pub const ALL: [Page; 8] = [Page::General, Page::Appearance, Page::Files, Page::Layout, Page::Tags, Page::Actions, Page::Advanced, Page::About];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -39,6 +41,7 @@ impl Page {
             Page::Files => "Files and folders",
             Page::Layout => "Layout",
             Page::Tags => "Tags",
+            Page::Actions => "Actions",
             Page::Advanced => "Advanced",
             Page::About => "About",
         }
@@ -63,6 +66,7 @@ pub enum Kind {
     Paths(fn(&App) -> Vec<Location>, fn(&mut App, Vec<Location>)),
     Text(fn(&App) -> String, fn(&mut App, String)),
     Pick(Picker, fn(&App) -> String, fn(&mut App, String)),
+    Keys(fn(&App) -> Arc<Keymap>, fn(&mut App, Arc<Keymap>)),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -86,6 +90,7 @@ pub enum Value {
     Number(i64),
     Paths(Vec<Location>),
     Text(String),
+    Keys(Arc<Keymap>),
 }
 
 const fn toggle(id: &'static str, page: Page, title: &'static str, help: &'static str, get: fn(&App) -> bool, set: fn(&mut App, bool)) -> Setting {
@@ -258,6 +263,7 @@ pub static SETTINGS: &[Setting] = &[
         kind: Kind::Number { min: super::THUMB_CACHE_MB.0 as i64, max: super::THUMB_CACHE_MB.2 as i64, step: 100, unit: "MB", get: |a| a.prefs.thumb_cache_mb as i64, set: |a, v| a.prefs.thumb_cache_mb = v as u32 },
     },
     choice(LOG_LEVEL, Page::Advanced, "What the log file records", "%LOCALAPPDATA%\\Flit\\logs; never file contents or passwords", LOG_CHOICES, |a| a.log_level, |a, i| a.log_level = i),
+    Setting { id: "keys", page: Page::Actions, title: "Keyboard shortcuts", help: "Shortcuts that differ from the defaults, by command id", kind: Kind::Keys(|a| a.keymap.clone(), |a, k| a.set_keymap(k)) },
 ];
 
 impl Setting {
@@ -268,6 +274,7 @@ impl Setting {
             Kind::Number { get, .. } => Value::Number(get(a)),
             Kind::Paths(get, _) => Value::Paths(get(a)),
             Kind::Text(get, _) | Kind::Pick(_, get, _) => Value::Text(get(a)),
+            Kind::Keys(get, _) => Value::Keys(get(a)),
         }
     }
 
@@ -279,6 +286,7 @@ impl Setting {
             (Kind::Paths(_, set), Value::Paths(p)) if p.len() <= MAX_PATHS => set(a, p),
             (Kind::Text(_, set), Value::Text(t)) if t.len() <= MAX_TEXT => set(a, t),
             (Kind::Pick(picker, _, set), Value::Text(t)) if picker.accepts(&t) => set(a, t),
+            (Kind::Keys(_, set), Value::Keys(k)) => set(a, k),
             _ => return false,
         }
         true
@@ -292,6 +300,7 @@ impl Setting {
             (_, Value::Paths(p)) => Json::Array(p.iter().map(|l| Json::String(path_text(l))).collect()),
             (_, Value::Text(t)) => Json::String(t.clone()),
             (_, Value::Choice(i)) => Json::from(*i),
+            (_, Value::Keys(k)) => k.to_json(),
         }
     }
 
@@ -306,6 +315,7 @@ impl Setting {
             }
             Kind::Text(..) => j.as_str().filter(|t| t.len() <= MAX_TEXT).map(|t| Value::Text(t.to_owned())),
             Kind::Pick(picker, ..) => j.as_str().filter(|t| picker.accepts(t)).map(|t| Value::Text(t.to_owned())),
+            Kind::Keys(..) => keymap::parse(j).map(|(k, _)| Value::Keys(k)),
         }
     }
 
@@ -402,7 +412,12 @@ pub fn parse(text: &str) -> Doc {
         }
         match index(&k) {
             Some(i) => match SETTINGS[i].from_json(&v) {
-                Some(value) => doc.values.push((i, value)),
+                Some(value) => {
+                    if let Value::Keys(_) = value {
+                        doc.problems.extend(keymap::parse(&v).map(|(_, p)| p).unwrap_or_default());
+                    }
+                    doc.values.push((i, value));
+                }
                 None => {
                     doc.bad.push(i);
                     doc.problems.push(format!("The value of {k} in the settings file is not valid, so the default is used"));
@@ -425,7 +440,19 @@ pub fn render(values: &[Value], unknown: &Map<String, Json>, tags: Option<&[Tag]
         out.push_str("  ");
         out.push_str(&Json::String(k.to_owned()).to_string());
         out.push_str(": ");
-        out.push_str(&v.to_string());
+        match v {
+            Json::Object(m) if !m.is_empty() => {
+                out.push('{');
+                for (n, (k, x)) in m.iter().enumerate() {
+                    out.push_str(if n == 0 { "\n    " } else { ",\n    " });
+                    out.push_str(&Json::String(k.clone()).to_string());
+                    out.push_str(": ");
+                    out.push_str(&x.to_string());
+                }
+                out.push_str("\n  }");
+            }
+            _ => out.push_str(&v.to_string()),
+        }
     };
     for (s, v) in SETTINGS.iter().zip(values) {
         put(s.id, &s.to_json(v));

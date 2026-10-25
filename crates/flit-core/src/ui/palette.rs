@@ -1,4 +1,4 @@
-use super::actions::{keys_text, ACTIONS};
+use super::actions::ACTIONS;
 use super::describe::description;
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
@@ -140,7 +140,7 @@ impl Palette {
 
     fn commands(app: &App) -> Self {
         let ids: Vec<usize> = (0..ACTIONS.len()).filter(|&i| app.available(ACTIONS[i].id)).collect();
-        let mut p = Self::new(Pick::Commands, ids.iter().map(|&i| (ACTIONS[i].title.to_owned(), keys_text(&ACTIONS[i]))).collect(), "");
+        let mut p = Self::new(Pick::Commands, ids.iter().map(|&i| (ACTIONS[i].title.to_owned(), app.keymap.text(i))).collect(), "");
         p.descs = ids.iter().map(|&i| description(ACTIONS[i].id)).collect();
         p.ids = ids;
         p.refresh();
@@ -149,7 +149,12 @@ impl Palette {
 
     fn refresh(&mut self) {
         let descs = self.descs.iter().copied().chain(std::iter::repeat(""));
-        self.matches = if self.pick.is_input() { Vec::new() } else { rank(self.field.text(), self.titles.iter().map(String::as_str).zip(descs)) };
+        self.matches = if self.pick.is_input() {
+            Vec::new()
+        } else if matches!(self.pick, Pick::Setting(SettingPick::Capture { .. })) {
+            (0..self.titles.len()).collect()
+        } else {
+            rank(self.field.text(), self.titles.iter().map(String::as_str).zip(descs)) };
         self.sel = 0;
         self.first = 0;
     }
@@ -230,15 +235,18 @@ impl App {
     }
 
     pub(super) fn palette_key(&mut self, key: Key, m: Mods, now: Instant) -> bool {
+        if self.capture_key(key, m, now) {
+            return true;
+        }
         if key == Key::Delete && self.remove_palette_item() {
             self.layout();
             return true;
         }
+        let closes = self.keymap.runs(key, m, "palette.show");
         let Some(p) = &mut self.nav.palette else { return false };
         let page = MAX_ROWS as isize;
         match key {
             Key::Escape => self.close_palette(),
-            Key::Char('P') if m.ctrl && m.shift => self.close_palette(),
             Key::Enter => {
                 let sel = p.sel;
                 self.run_palette_item(sel, now);
@@ -247,8 +255,8 @@ impl App {
             Key::Down => p.select(p.sel as isize + 1),
             Key::PageUp => p.select((p.sel as isize - page).max(0)),
             Key::PageDown => p.select((p.sel as isize + page).min(p.matches.len() as isize - 1)),
-            _ => {
-                if let FieldKey::Edited { changed, action } = p.field.key(key, m) {
+            _ => match p.field.key(key, m) {
+                FieldKey::Edited { changed, action } => {
                     if changed {
                         p.refresh();
                     }
@@ -258,7 +266,9 @@ impl App {
                         _ => {}
                     }
                 }
-            }
+                FieldKey::Ignored if closes => self.close_palette(),
+                FieldKey::Ignored => {}
+            },
         }
         self.layout();
         true
@@ -266,6 +276,9 @@ impl App {
 
     pub(super) fn palette_insert(&mut self, s: &str) -> bool {
         let Some(p) = &mut self.nav.palette else { return false };
+        if matches!(p.pick, Pick::Setting(SettingPick::Capture { .. })) {
+            return true;
+        }
         p.field.insert(s);
         p.refresh();
         self.layout();

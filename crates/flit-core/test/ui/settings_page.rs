@@ -499,3 +499,171 @@ fn bench_settings_window() {
         values.as_secs_f64() * 1e6
     );
 }
+
+fn focus_chip(a: &mut App, id: &str, chip: usize) {
+    let i = crate::ui::actions::index(id).unwrap();
+    let u = a.settings.as_mut().unwrap();
+    let k = u.lines.iter().position(|l| matches!(l, Line::Action(j, ..) if *j == i)).unwrap_or_else(|| panic!("{id} is not shown"));
+    (u.focus, u.sub, u.searching, u.reveal) = (k, chip, false, true);
+    a.layout();
+}
+
+fn capture_rows(a: &App) -> Vec<String> {
+    let p = a.nav.palette.as_ref().expect("the capture dialog is open");
+    assert!(matches!(p.pick, Pick::Setting(SettingPick::Capture { .. })));
+    p.titles.clone()
+}
+
+fn keys_of(a: &App, id: &str) -> String {
+    a.keymap.text_of(id)
+}
+
+fn note(a: &App) -> String {
+    a.tab().error.clone().unwrap_or_default()
+}
+
+#[test]
+fn the_actions_page_lists_and_finds_every_command() {
+    let mut a = app();
+    a.open_settings(Some(Page::Actions));
+    let lines = a.settings_lines();
+    assert_eq!(lines.iter().filter(|l| l.starts_with("action ")).count(), ACTIONS.len());
+    assert!(lines.contains(&"action file.copy Ctrl+C".to_owned()));
+    assert!(lines.contains(&"action nav.home ".to_owned()), "commands without shortcuts are listed too");
+    typed(&mut a, "copy path");
+    let found = a.settings_lines();
+    assert!(found.contains(&"Actions".to_owned()) && found.iter().any(|l| l.starts_with("action item.copy_path")), "{found:?}");
+    assert!(!found.iter().any(|l| l.starts_with("action tab.new")));
+    key(&mut a, Key::Escape, NO);
+    typed(&mut a, "ctrl+shift+t");
+    assert!(a.settings_lines().iter().any(|l| l.starts_with("action tab.reopen")), "a shortcut finds its command");
+    key(&mut a, Key::Escape, NO);
+    let k = ui(&a).lines.iter().position(|l| matches!(l, Line::Action(0, ..))).unwrap();
+    let chips = button_rects(&ui(&a).lines[k], rect(&a, k), s);
+    assert_eq!(chips.len(), 2, "one shortcut and the + chip");
+    click_at(&mut a, center(chips[1]));
+    assert_eq!(capture_rows(&a), ["Press the new shortcut for «Show command palette»"]);
+    key(&mut a, Key::Escape, NO);
+    assert!(a.nav.palette.is_none() && a.settings_open());
+}
+
+#[test]
+fn shortcuts_are_added_reassigned_refused_edited_removed_and_restored() {
+    let mut a = app();
+    a.open_settings(Some(Page::Actions));
+    focus_chip(&mut a, "view.hidden", 1);
+    key(&mut a, Key::Enter, NO);
+    assert_eq!(capture_rows(&a), ["Press the new shortcut for «Show or hide hidden files»"]);
+    typed(&mut a, "q");
+    let f = a.palette_field().unwrap();
+    let before = a.current_location().clone();
+    a.on_event(&Event::MouseDown { x: f.x + 4.0, y: f.y + 4.0, button: MouseButton::Back, clicks: 1 }, Instant::now());
+    assert_eq!(capture_rows(&a).len(), 1, "typed letters and mouse buttons are not recorded");
+    assert_eq!(a.current_location(), &before);
+    key(&mut a, Key::Char('K'), CTRL);
+    assert_eq!(capture_rows(&a)[0], "Assign Ctrl+K to «Show or hide hidden files»");
+    key(&mut a, Key::Enter, NO);
+    assert!(a.nav.palette.is_none() && a.settings_open());
+    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+H, Ctrl+K");
+    assert!(note(&a).starts_with("Ctrl+K runs «Show or hide hidden files» now"), "{}", note(&a));
+
+    focus_chip(&mut a, "view.hidden", 2);
+    key(&mut a, Key::Enter, NO);
+    key(&mut a, Key::Char('T'), CTRL);
+    assert_eq!(capture_rows(&a)[0], "Reassign Ctrl+T from «New tab» to «Show or hide hidden files»");
+    assert_eq!(a.nav.palette.as_ref().unwrap().keys[0], "«New tab» is left without a shortcut");
+    key(&mut a, Key::Enter, NO);
+    assert_eq!(keys_of(&a, "tab.new"), "");
+    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+H, Ctrl+K, Ctrl+T");
+    assert!(note(&a).ends_with("«New tab» is left without a shortcut"), "{}", note(&a));
+
+    focus_chip(&mut a, "view.hidden", 3);
+    key(&mut a, Key::Enter, NO);
+    key(&mut a, Key::Char('1'), CTRL);
+    assert!(capture_rows(&a)[0].starts_with("Ctrl+1 cannot be used: it switches to tab 1"));
+    key(&mut a, Key::Enter, NO);
+    assert!(capture_rows(&a)[0].starts_with("Ctrl+1 cannot be used"), "Enter keeps the dialog open for other keys");
+    key(&mut a, Key::Char('A'), NO);
+    assert!(capture_rows(&a)[0].starts_with("A cannot be used"));
+    key(&mut a, Key::Escape, NO);
+    assert!(a.nav.palette.is_none() && a.settings_open());
+    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+H, Ctrl+K, Ctrl+T");
+
+    focus_chip(&mut a, "view.hidden", 0);
+    key(&mut a, Key::Enter, NO);
+    assert_eq!(capture_rows(&a).last().unwrap(), "Remove the shortcut Ctrl+H");
+    key(&mut a, Key::Char('J'), CTRL);
+    key(&mut a, Key::Enter, NO);
+    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+J, Ctrl+K, Ctrl+T", "editing replaces the shortcut in place");
+
+    focus_chip(&mut a, "view.hidden", 1);
+    key(&mut a, Key::Enter, NO);
+    a.run_palette_item(1, Instant::now());
+    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+J, Ctrl+T");
+    focus_chip(&mut a, "view.hidden", 0);
+    key(&mut a, Key::Delete, NO);
+    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+T");
+
+    focus_chip(&mut a, "tab.new", 1);
+    key(&mut a, Key::Enter, NO);
+    assert_eq!(keys_of(&a, "tab.new"), "Ctrl+T", "the arrow chip restores the defaults");
+    assert_eq!(keys_of(&a, "view.hidden"), "");
+    assert!(note(&a).contains("«Show or hide hidden files» is left without a shortcut"), "{}", note(&a));
+
+    let k = ui(&a).lines.iter().position(|l| *l == Line::Buttons(None, &[Btn::RestoreKeys])).unwrap();
+    let u = a.settings.as_mut().unwrap();
+    (u.focus, u.sub) = (k, 0);
+    key(&mut a, Key::Enter, NO);
+    key(&mut a, Key::Enter, NO);
+    assert_eq!(a.keymap, crate::ui::keymap::defaults());
+    assert_eq!(note(&a), "All commands have their default shortcuts again");
+}
+
+#[test]
+#[ignore]
+fn bench_actions_page() {
+    let ms = |d: Duration| d.as_secs_f64() * 1e3;
+    let mut a = App::new(Persisted::default(), Vec::new(), 0, false, 1.0, (1400, 900), Instant::now());
+    let mut gfx = Gfx::new(Mono, 1024);
+    a.frame(&mut gfx, Instant::now());
+    let mut opens = Vec::new();
+    for _ in 0..50 {
+        let t = Instant::now();
+        a.open_settings(Some(Page::Actions));
+        a.frame(&mut gfx, Instant::now());
+        opens.push(t.elapsed());
+        a.close_settings();
+        a.frame(&mut gfx, Instant::now());
+    }
+    opens.sort();
+    a.open_settings(Some(Page::Actions));
+    let mut typing = Vec::new();
+    for _ in 0..20 {
+        for c in "copy path".chars() {
+            let t = Instant::now();
+            a.on_event(&Event::Char(c), Instant::now());
+            a.frame(&mut gfx, Instant::now());
+            typing.push(t.elapsed());
+        }
+        key(&mut a, Key::Escape, NO);
+    }
+    typing.sort();
+    let mut scrolls = Vec::new();
+    for k in 0..200 {
+        let t = Instant::now();
+        a.on_event(&Event::MouseMove { x: 700.0, y: 400.0 }, Instant::now());
+        a.on_event(&Event::Wheel { dx: 0.0, dy: if k % 40 < 20 { -1.0 } else { 1.0 } }, Instant::now());
+        a.frame(&mut gfx, Instant::now());
+        scrolls.push(t.elapsed());
+    }
+    scrolls.sort();
+    eprintln!(
+        "BENCH actions page: open to finished frame median {:.3} ms max {:.3} ms; keystroke in search to finished frame median {:.3} ms max {:.3} ms; wheel step median {:.3} ms p99 {:.3} ms",
+        ms(opens[opens.len() / 2]),
+        ms(*opens.last().unwrap()),
+        ms(typing[typing.len() / 2]),
+        ms(*typing.last().unwrap()),
+        ms(scrolls[100]),
+        ms(scrolls[198])
+    );
+}

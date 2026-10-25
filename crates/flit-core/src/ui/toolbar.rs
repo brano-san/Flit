@@ -1,4 +1,3 @@
-use super::actions::{chord_text, ACTIONS};
 use super::ops::TIMER_SLACK;
 use super::palette::{Palette, Pick};
 use super::{centered, App, Effect, Hit, LayoutMode, LAYOUTS};
@@ -95,9 +94,6 @@ fn tool(id: &str) -> Option<&'static Tool> {
     TOOLS.iter().find(|t| t.id == id)
 }
 
-fn keys_of(id: &str) -> Option<String> {
-    ACTIONS.iter().find(|a| a.id == id).and_then(|a| a.keys.first()).map(chord_text)
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Show {
@@ -598,7 +594,7 @@ impl App {
         let items = self.toolbar_items();
         let Some(ToolItem::Button(id, _)) = items.get(tip.item) else { return None };
         let t = tool(id)?;
-        Some(match keys_of(t.id) {
+        Some(match self.keymap.first_text(t.id) {
             Some(k) => format!("{} ({k})", t.label),
             None => t.label.to_owned(),
         })
@@ -746,7 +742,7 @@ impl App {
                 centered(g, Rect::new(row.x + s4, row.y, self.s(24.0), row.h), G_CHECK, icons, t.accent);
             }
             g.text(row.x + self.s(32.0), baseline(row), lm.title(), font, t.text, row.w);
-            let keys = keys_of(LAYOUT_IDS[k]).unwrap_or_default();
+            let keys = self.keymap.first_text(LAYOUT_IDS[k]).unwrap_or_default();
             let kw = g.measure(&keys, small);
             g.text(row.right() - s12 - kw, baseline(row), &keys, small, t.text_dim, f32::INFINITY);
         }
@@ -830,7 +826,7 @@ impl App {
                 }
                 rows
             }
-            ToolPick::Add(ctx) => self.addable(*ctx).into_iter().map(|t| (t.label.to_owned(), keys_of(t.id).unwrap_or_default())).collect(),
+            ToolPick::Add(ctx) => self.addable(*ctx).into_iter().map(|t| (t.label.to_owned(), self.keymap.first_text(t.id).unwrap_or_default())).collect(),
         };
         let mut p = Palette::new(Pick::Toolbar(pick), rows, "");
         p.select_row(select);

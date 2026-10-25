@@ -9,14 +9,14 @@ pub enum MouseButton {
     Forward,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub struct Mods {
     pub ctrl: bool,
     pub shift: bool,
     pub alt: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Key {
     Up,
     Down,
@@ -30,6 +30,7 @@ pub enum Key {
     Escape,
     Backspace,
     Delete,
+    Insert,
     Tab,
     Space,
     F(u8),

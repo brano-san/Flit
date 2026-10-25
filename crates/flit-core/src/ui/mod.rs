@@ -28,6 +28,7 @@ mod tabbar;
 mod tags;
 mod split;
 mod describe;
+mod keymap;
 mod toolbar;
 mod popup;
 
@@ -47,6 +48,7 @@ pub use address::Typed;
 pub use tabbar::{MovedTab, Startup, WindowSession};
 pub use settings::{ConfirmDelete, Doc, Page, Setting, Value, SETTINGS};
 pub use settings_page::{About, LOG_FILE};
+pub use keymap::Keymap;
 pub use split::{SplitDir, SplitPrefs, SplitSession};
 
 use crate::fmt as format;
@@ -468,6 +470,7 @@ pub struct App {
     preview: preview_pane::PreviewPane,
     alt: split::Alt,
     toolbar: toolbar::Toolbar,
+    keymap: Arc<Keymap>,
 }
 
 impl App {
@@ -555,6 +558,7 @@ impl App {
             preview: Default::default(),
             alt: Default::default(),
             toolbar: Default::default(),
+            keymap: keymap::defaults(),
         };
         let mut start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
         let total = start.len();
@@ -1597,8 +1601,6 @@ impl App {
         let page = self.page_rows();
         let mut moved = None;
         match (key, m.ctrl, m.alt) {
-            (Key::BrowserBack, ..) => self.go_history(false, now),
-            (Key::BrowserForward, ..) => self.go_history(true, now),
             (Key::Char(c @ '1'..='9'), true, false) => {
                 let i = if c == '9' { self.tabs.len() - 1 } else { c as usize - '1' as usize };
                 self.select_tab(i);

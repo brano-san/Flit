@@ -1,3 +1,4 @@
+use super::actions::{chord_text, Chord, ACTIONS};
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
 use super::menu::Cmd;
@@ -26,6 +27,9 @@ const NOTE_H: f32 = 32.0;
 const ITEM_H: f32 = 32.0;
 const BUTTONS_H: f32 = 46.0;
 const TAG_H: f32 = 40.0;
+const ACTION_H: f32 = 40.0;
+const CHIP_W: f32 = 124.0;
+const CHIP_SMALL: f32 = 30.0;
 const INFO_H: f32 = 28.0;
 const CONTROL_W: f32 = 250.0;
 const BUTTON_W: f32 = 190.0;
@@ -37,6 +41,7 @@ const G_MINUS: &str = "\u{E738}";
 const G_PLUS: &str = "\u{E710}";
 const G_DOWN: &str = "\u{E70D}";
 const G_SEARCH: &str = "\u{E721}";
+const G_UNDO: &str = "\u{E7A7}";
 
 const DOCS_URL: &str = "https://github.com/brano-san/Flit#readme";
 const BUG_URL: &str = "https://github.com/brano-san/Flit/issues/new?labels=bug";
@@ -84,6 +89,7 @@ pub(super) enum Btn {
     Rename,
     Recolor,
     Delete,
+    RestoreKeys,
     OpenLog,
     OpenLogs,
     Docs,
@@ -110,6 +116,7 @@ impl Btn {
             Btn::Rename => "Rename",
             Btn::Recolor => "Color",
             Btn::Delete => "Delete",
+            Btn::RestoreKeys => "Restore all shortcuts",
             Btn::OpenLog => "Open the log file",
             Btn::OpenLogs => "Open the log folder",
             Btn::Docs => "Documentation",
@@ -140,6 +147,7 @@ enum Line {
     Buttons(Option<usize>, &'static [Btn]),
     Tag(usize),
     Info(&'static str, String),
+    Action(usize, usize, bool),
 }
 
 impl Line {
@@ -152,6 +160,14 @@ impl Line {
             Line::Buttons(..) => BUTTONS_H,
             Line::Tag(_) => TAG_H,
             Line::Info(..) => INFO_H,
+            Line::Action(..) => ACTION_H,
+        }
+    }
+
+    fn count(&self) -> usize {
+        match self {
+            Line::Action(_, n, custom) => n + 1 + usize::from(*custom),
+            _ => self.buttons().len(),
         }
     }
 
@@ -189,6 +205,8 @@ pub(super) enum SettingPick {
     Export,
     Import,
     Reset,
+    ResetKeys,
+    Capture { action: usize, old: Option<Chord>, chord: Option<Chord> },
     Color(usize),
     Font(usize),
 }
@@ -201,6 +219,8 @@ impl SettingPick {
             SettingPick::Export => "Full path of the file to export the settings and tags to",
             SettingPick::Import => "Full path of the settings file to import",
             SettingPick::Reset => "Reset all settings?",
+            SettingPick::ResetKeys => "Restore the default shortcuts?",
+            SettingPick::Capture { .. } => "Press the keys of the new shortcut",
             SettingPick::Color(_) => "A color as #RRGGBB, for example #1D2533",
             SettingPick::Font(_) => "Type to filter the installed fonts",
         }
@@ -212,14 +232,14 @@ impl SettingPick {
             SettingPick::AddPath(_) => "Enter adds the page",
             SettingPick::Export => "Enter writes the file",
             SettingPick::Import => "Enter reads the file and applies it",
-            SettingPick::Reset => "",
+            SettingPick::Reset | SettingPick::ResetKeys | SettingPick::Capture { .. } => "",
             SettingPick::Color(_) => "Enter applies the color",
             SettingPick::Font(_) => "No matching fonts",
         }
     }
 
     pub(super) fn is_input(&self) -> bool {
-        !matches!(self, SettingPick::Reset | SettingPick::Font(_))
+        !matches!(self, SettingPick::Reset | SettingPick::ResetKeys | SettingPick::Capture { .. } | SettingPick::Font(_))
     }
 }
 
@@ -316,6 +336,19 @@ fn button_rects(line: &Line, r: Rect, s: impl Fn(f32) -> f32) -> Vec<Rect> {
     let h = s(30.0);
     let y = r.y + (r.h - h) / 2.0;
     match line {
+        Line::Action(_, n, custom) => {
+            let widths: Vec<f32> = std::iter::repeat_n(s(CHIP_W), *n).chain([s(CHIP_SMALL)]).chain(custom.then(|| s(CHIP_SMALL))).collect();
+            let (gap, ch) = (s(6.0), s(26.0));
+            let mut x = r.right() - s(PAD) - widths.iter().sum::<f32>() - gap * (widths.len() - 1) as f32;
+            widths
+                .into_iter()
+                .map(|w| {
+                    let chip = Rect::new(x, r.y + (r.h - ch) / 2.0, w, ch);
+                    x += w + gap;
+                    chip
+                })
+                .collect()
+        }
         Line::Tag(_) => {
             let w = s(TAG_BUTTON_W);
             let n = buttons.len();
@@ -363,6 +396,7 @@ impl App {
                 Line::Buttons(_, b) => b.iter().map(|b| b.label()).collect::<Vec<_>>().join(" | "),
                 Line::Tag(k) => self.tag_defs().get(*k).map_or_else(String::new, |t| format!("tag {}", t.name)),
                 Line::Info(label, value) => format!("{label}: {value}"),
+                Line::Action(i, ..) => format!("action {} {}", ACTIONS[*i].id, self.keymap.text(*i)),
             })
             .collect()
     }
@@ -493,8 +527,27 @@ impl App {
     pub(super) fn setting_choose(&mut self, pick: SettingPick, id: usize) {
         match pick {
             SettingPick::Reset if id == 0 => self.reset_settings(),
+            SettingPick::ResetKeys if id == 0 => self.restore_all_keys(),
+            SettingPick::Capture { action, old, chord } => self.capture_choose(action, old, chord, id),
             SettingPick::Font(i) => self.choose_font(i, id),
             _ => {}
+        }
+    }
+
+    pub(super) fn ask_reset_keys(&mut self) {
+        let items = vec![("Restore the default shortcuts of all commands".to_owned(), "Shortcuts you added or changed are lost".to_owned()), ("Cancel".to_owned(), String::new())];
+        self.open_pick(Palette::new(Pick::Setting(SettingPick::ResetKeys), items, ""));
+    }
+
+    fn action_line(&self, i: usize) -> Line {
+        Line::Action(i, self.keymap.keys(i).len(), self.keymap.is_custom(i))
+    }
+
+    fn press_chip(&mut self, i: usize, n: usize, b: usize) {
+        match self.keymap.keys(i).get(b).copied() {
+            Some(c) if b < n => self.open_capture(i, Some(c)),
+            _ if b == n => self.open_capture(i, None),
+            _ => self.restore_keys(i),
         }
     }
 
@@ -512,7 +565,7 @@ impl App {
                 Some(path) => self.effects.push(Effect::Settings(SettingsCmd::Import(path))),
                 None => self.status("Enter the full path of a file"),
             },
-            SettingPick::Reset | SettingPick::Font(_) => {}
+            SettingPick::Reset | SettingPick::ResetKeys | SettingPick::Capture { .. } | SettingPick::Font(_) => {}
         }
     }
 
@@ -554,11 +607,20 @@ impl App {
                 out.push(Line::Group("Third-party libraries"));
                 out.extend(LIBRARIES.iter().map(|(name, what)| Line::Info(name, (*what).to_owned())));
             }
+            Page::Actions => {
+                out.push(Line::Note("Enter or a click changes a shortcut, Delete removes it, + adds one, the arrow restores the defaults."));
+                out.push(Line::Note("A key runs one command: taking a used key moves it, and clashes in settings.json fall back to the defaults."));
+                out.push(Line::Buttons(None, &[Btn::RestoreKeys]));
+                out.extend((0..ACTIONS.len()).map(|i| self.action_line(i)));
+            }
             Page::General | Page::Files | Page::Layout => {}
         }
     }
 
     fn setting_lines(&self, i: usize, out: &mut Vec<Line>) {
+        if let Kind::Keys(..) = SETTINGS[i].kind {
+            return;
+        }
         out.push(Line::Setting(i));
         if let Kind::Paths(..) = SETTINGS[i].kind {
             out.extend((0..self.paths_of(i).len()).map(|k| Line::Path(i, k)));
@@ -577,8 +639,12 @@ impl App {
                 Page::Tags => &[&[Btn::NewTag]],
                 Page::Advanced => &[&[Btn::ClearCache], FILE_BUTTONS, &[Btn::Reset], LOG_BUTTONS],
                 Page::About => &[&[Btn::CopyAbout], HELP_BUTTONS, LINK_BUTTONS],
+                Page::Actions => &[&[Btn::RestoreKeys]],
                 _ => &[],
             };
+            if page == Page::Actions {
+                out.extend((0..ACTIONS.len()).filter(|&i| matches(query, self.keymap.words(i))).map(|i| self.action_line(i)));
+            }
             for b in extra.iter().filter(|b| b.iter().any(|b| matches(query, &b.label().to_lowercase()))) {
                 out.push(Line::Buttons(None, b));
             }
@@ -616,6 +682,7 @@ impl App {
             ui.focus = ui.first_focusable();
             ui.sub = 0;
         }
+        ui.sub = ui.sub.min(ui.lines.get(ui.focus).map_or(0, |l| l.count().saturating_sub(1)));
         let mut y = 0.0;
         let mut offsets = Vec::with_capacity(ui.lines.len());
         for l in &ui.lines {
@@ -814,6 +881,9 @@ impl App {
     }
 
     fn press_button(&mut self, line: &Line, b: usize) {
+        if let Line::Action(i, n, _) = *line {
+            return self.press_chip(i, n, b);
+        }
         let Some(&btn) = line.buttons().get(b) else { return };
         let owner = match line {
             Line::Buttons(Some(i), _) => Some(*i),
@@ -841,6 +911,7 @@ impl App {
             (Btn::Export, ..) => self.ask_export_settings(),
             (Btn::Import, ..) => self.ask_import_settings(),
             (Btn::Reset, ..) => self.ask_reset_settings(),
+            (Btn::RestoreKeys, ..) => self.ask_reset_keys(),
             (Btn::CustomizeToolbar, ..) => self.customize_toolbar(),
             (Btn::CopyAbout, ..) => {
                 let text = format!("Flit {}\r\n{}", env!("CARGO_PKG_VERSION"), self.about.os);
@@ -871,7 +942,7 @@ impl App {
             Some(Line::Setting(i)) if searching_results => self.reveal_setting(i),
             Some(Line::Setting(i)) => self.activate_setting(i, None),
             Some(Line::Path(i, n)) => self.remove_path(i, n),
-            Some(l @ (Line::Buttons(..) | Line::Tag(_))) => self.press_button(&l, sub),
+            Some(l @ (Line::Buttons(..) | Line::Tag(_) | Line::Action(..))) => self.press_button(&l, sub),
             _ => {}
         }
     }
@@ -880,17 +951,18 @@ impl App {
         if self.nav.palette.is_some() {
             return false;
         }
+        let closes = self.keymap.runs(key, m, "settings.open");
         let Some(ui) = &mut self.settings else { return false };
         self.dirty = true;
         let plain = !m.ctrl && !m.alt;
-        let line = ui.lines.get(ui.focus).cloned();
+        let (line, sub) = (ui.lines.get(ui.focus).cloned(), ui.sub);
         match key {
             Key::Escape if !ui.search.text().is_empty() => {
                 ui.search.edit.set("");
                 ui.focus = usize::MAX;
             }
             Key::Escape => return self.close_settings_handled(),
-            Key::Char(',') if m.ctrl && !m.shift => return self.close_settings_handled(),
+            _ if closes => return self.close_settings_handled(),
             Key::Char('F') if m.ctrl => {
                 ui.searching = true;
                 ui.search.edit.select_all();
@@ -946,8 +1018,8 @@ impl App {
                 Some(Line::Setting(i)) => {
                     self.turn_setting(i, key == Key::Left);
                 }
-                Some(l @ (Line::Buttons(..) | Line::Tag(_))) => {
-                    let n = l.buttons().len().max(1);
+                Some(l @ (Line::Buttons(..) | Line::Tag(_) | Line::Action(..))) => {
+                    let n = l.count().max(1);
                     ui.sub = if key == Key::Left { (ui.sub + n - 1) % n } else { (ui.sub + 1) % n };
                 }
                 _ => {}
@@ -956,11 +1028,15 @@ impl App {
                 let k = ui.focus;
                 self.activate_line(k);
             }
-            Key::Delete if plain => {
-                if let Some(Line::Path(i, n)) = line {
-                    self.remove_path(i, n);
+            Key::Delete if plain => match line {
+                Some(Line::Path(i, n)) => self.remove_path(i, n),
+                Some(Line::Action(i, n, _)) if sub < n => {
+                    if let Some(&c) = self.keymap.keys(i).get(sub) {
+                        self.remove_chord(i, c);
+                    }
                 }
-            }
+                _ => {}
+            },
             _ => return true,
         }
         self.layout();
@@ -1165,11 +1241,29 @@ impl App {
                         g.text(r.x + s(PAD) + dot + s(24.0) + nw, mid(r, ms), &label, small, t.text_dim, s(220.0));
                     }
                 }
+                Line::Action(i, n, _) => {
+                    let a = &ACTIONS[*i];
+                    let chips = button_rects(line, r, s);
+                    let room = chips.first().map_or(r.right(), |c| c.x) - r.x - s(PAD) * 2.0;
+                    let tw = g.text(r.x + s(PAD), mid(r, mf), a.title, font, t.text, room);
+                    g.text(r.x + s(PAD) + tw + s(10.0), mid(r, ms), a.id, small, t.text_dim, room - tw - s(10.0));
+                    let keys = self.keymap.keys(*i);
+                    for (b, chip) in chips.into_iter().enumerate() {
+                        let on = focused && ui.sub == b;
+                        g.dl.round_rect(chip, if hover == Hit::Settings(SHit::Button(k, b)) { t.button_pressed } else { t.button_hover }, s4);
+                        g.dl.outline(chip, if on { t.accent } else { t.input_border }, s4, if on { sc.round().max(1.0) } else { 1.0 });
+                        match keys.get(b) {
+                            Some(c) if b < *n => centered(g, chip, &chord_text(c), small, t.text),
+                            _ if b == *n => centered(g, chip, G_PLUS, self.icon_font(9.0), t.accent),
+                            _ => centered(g, chip, G_UNDO, self.icon_font(10.0), t.text_dim),
+                        }
+                    }
+                }
                 Line::Buttons(..) => {}
             }
             for (b, (br, btn)) in button_rects(line, r, s).into_iter().zip(line.buttons()).enumerate() {
                 let hot = hover == Hit::Settings(SHit::Button(k, b));
-                let danger = matches!(btn, Btn::Reset | Btn::Delete);
+                let danger = matches!(btn, Btn::Reset | Btn::Delete | Btn::RestoreKeys);
                 g.dl.round_rect(br, if hot { t.button_pressed } else { t.button_hover }, s4);
                 g.dl.outline(br, if focused && ui.sub == b { t.accent } else { t.input_border }, s4, if focused && ui.sub == b { sc.round().max(1.0) } else { 1.0 });
                 let glyph_w = if matches!(btn, Btn::AddHome | Btn::AddCurrent | Btn::NewTag) { s(18.0) } else { 0.0 };

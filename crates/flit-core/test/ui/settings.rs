@@ -27,6 +27,7 @@ fn every_setting_has_a_unique_id_a_title_a_description_and_a_page() {
             Page::Files => "files",
             Page::Layout => "layout",
             Page::Advanced => "advanced",
+            Page::Actions => "keys",
             Page::Tags | Page::About => "",
         };
         assert_eq!(s.id.split('.').next(), Some(prefix), "the id of {} starts with its page", s.id);
@@ -87,7 +88,7 @@ fn every_toggle_and_choice_reads_back_what_was_set() {
                 assert!(s.set(&mut a, Value::Paths(pages.clone())));
                 assert_eq!(s.get(&a), Value::Paths(pages));
             }
-            Kind::Text(..) | Kind::Pick(..) => {}
+            Kind::Text(..) | Kind::Pick(..) | Kind::Keys(..) => {}
         }
         assert!(!s.set(&mut a, Value::Text("wrong kind".into())) || matches!(s.kind, Kind::Text(..) | Kind::Pick(..)));
     }
