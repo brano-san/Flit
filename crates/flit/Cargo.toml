@@ -28,4 +28,4 @@ tracing-tracy = { workspace = true, optional = true }
 flit-platform-windows.workspace = true
 
 [target.'cfg(not(windows))'.dependencies]
-flit-platform-linux.workspace = true
+flit-platform-linux-gui.workspace = true
