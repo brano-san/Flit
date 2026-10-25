@@ -15,6 +15,7 @@ pub mod attr {
     pub const LINK: u32 = 1 << 4;
     pub const VOLUME: u32 = 1 << 5;
     pub const SIZE_KNOWN: u32 = 1 << 6;
+    pub const ARCHIVED: u32 = 1 << 7;
     pub const DELETED: u32 = 1 << 31;
 }
 
@@ -144,6 +145,9 @@ pub enum FsErrorKind {
 
 impl fmt::Display for FsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.code == crate::archive::PASSWORD_CODE {
+            return f.write_str(crate::archive::PASSWORD_NEEDED);
+        }
         let what = match self.kind {
             FsErrorKind::NotFound => "Path not found",
             FsErrorKind::AccessDenied => "Access denied",

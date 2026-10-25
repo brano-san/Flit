@@ -1,3 +1,5 @@
+use crate::archive::ArchiveOp;
+use crate::digest::HashKind;
 use crate::desktop_ini::FolderKind;
 use crate::listing::{DirChange, DirSnapshot, Meta};
 use crate::path::FsPath;
@@ -84,6 +86,7 @@ pub enum FileOp {
     Purge(Vec<(FsPath, FsPath)>),
     EmptyBin,
     Flatten(Vec<FsPath>),
+    Archive(ArchiveOp),
     FolderIcon { folder: FsPath, icon: FsPath, index: i32 },
 }
 
@@ -127,6 +130,7 @@ impl FileOp {
             FileOp::Purge(v) => FileOp::Purge(pairs(v)?),
             FileOp::EmptyBin => FileOp::EmptyBin,
             FileOp::Flatten(v) => FileOp::Flatten(all(v)?),
+            FileOp::Archive(a) => FileOp::Archive(a.map_paths(&f)?),
             FileOp::FolderIcon { folder, icon, index } => FileOp::FolderIcon { folder: f(folder)?, icon: f(icon)?, index: *index },
         })
     }
@@ -245,6 +249,7 @@ pub enum ProviderRequest {
     Op { tab: TabId, id: OpId, op: FileOp, ctl: OpCtl },
     Open { tab: TabId, path: FsPath },
     Launch { tab: TabId, launch: Launch },
+    Hash { tab: TabId, id: OpId, file: FsPath, kinds: Vec<HashKind>, ctl: OpCtl },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -256,6 +261,7 @@ pub enum ProviderEvent {
     OpProgress { tab: TabId, id: OpId, progress: OpProgress },
     OpConflict { tab: TabId, id: OpId, conflict: Conflict },
     Navigate { tab: TabId, path: FsPath },
+    Hashed { tab: TabId, id: OpId, result: Result<Vec<String>, String> },
     Status { tab: TabId, gen: u64, text: String },
 }
 

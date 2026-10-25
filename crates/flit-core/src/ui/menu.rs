@@ -1,6 +1,7 @@
 use super::actions::{chord_text, ACTIONS};
 use super::toolbar::{Overflow, ToolMenu};
 use super::{App, LayoutMode};
+use crate::archive::{self, Format};
 use crate::location::Location;
 use crate::path::PathKind;
 use crate::sort::{DateUnit, Folders, GroupField, SortField};
@@ -307,6 +308,19 @@ impl App {
             ToolMenu::Sort => self.sort_entries(m),
             ToolMenu::Group => self.group_entries(m),
             ToolMenu::Layout => self.layout_entries(m),
+            ToolMenu::Extract if self.archive_view().is_some() => {
+                m.action("archive.extract", "Extract…");
+                m.action("archive.extract_here", "Extract next to the archive");
+            }
+            ToolMenu::Extract => {
+                m.action("archive.extract", "Extract files…");
+                m.action("archive.extract_here", "Extract here");
+                m.action("archive.smart", "Smart extract");
+                m.action("archive.extract_folder", "Extract to a folder named after the archive");
+                if self.selected_archives().len() == 1 {
+                    m.action("archive.open", "Open as folder");
+                }
+            }
         }
     }
 
@@ -340,6 +354,7 @@ impl App {
         let Some(v) = &t.view else { return };
         let count = v.selected_count();
         let folders = self.selected_folders();
+        let inside = self.archive_view().is_some();
         let files = t.view_loc.path().kind() != PathKind::Computer;
         m.action("item.open", "Open");
         if !folders.is_empty() {
@@ -348,13 +363,21 @@ impl App {
         }
         m.separator();
         if files {
-            m.action("file.cut", "Cut");
+            if !inside {
+                m.action("file.cut", "Cut");
+            }
             m.action("file.copy", "Copy");
             if count == 1 && folders.len() == 1 {
                 m.action("file.paste_into", "Paste");
             }
         }
         m.action("item.copy_path", "Copy path");
+        if inside {
+            m.separator();
+            m.action("archive.extract", "Extract…");
+            m.action("archive.extract_here", "Extract next to the archive");
+            return;
+        }
         if files {
             m.action("file.shortcut", "Create shortcut");
             m.action("file.rename", "Rename");
@@ -389,9 +412,38 @@ impl App {
             if count == 1 && folders.len() == 1 {
                 m.action("file.folder_icon", "Change icon");
             }
+            m.separator();
+            self.archive_menu(m, count, folders.is_empty());
         }
         m.separator();
         m.action("item.properties", "Properties");
+    }
+
+    fn archive_menu(&self, m: &mut Menu, count: usize, no_folders: bool) {
+        let archives = self.selected_archives();
+        if !archives.is_empty() {
+            let own = match archives.as_slice() {
+                [one] => format!("Extract to \u{201C}{}\\\u{201D}", crate::name::display(archive::stem(one.file_name()))),
+                _ => "Extract each to its own folder".to_owned(),
+            };
+            m.submenu("Extract", |m| {
+                m.action("archive.extract", "Extract files…");
+                m.action("archive.extract_here", "Extract here");
+                m.action("archive.smart", "Smart extract");
+                m.action("archive.extract_folder", &own);
+                if archives.len() == 1 {
+                    m.action("archive.open", "Open as folder");
+                }
+            });
+        }
+        m.submenu("Compress", |m| {
+            m.action("archive.compress", "Add to archive…");
+            m.action("archive.zip", &format!("Compress to \u{201C}{}\u{201D}", self.quick_name(Format::Zip)));
+            m.action("archive.7z", &format!("Compress to \u{201C}{}\u{201D}", self.quick_name(Format::SevenZ)));
+        });
+        if count == 1 && no_folders {
+            m.action("file.hashes", "Hashes…");
+        }
     }
 
     fn folder_menu(&self, m: &mut Menu) {
@@ -401,6 +453,15 @@ impl App {
         m.action("nav.refresh", "Refresh");
         m.separator();
         if t.view_loc.is_recycle_bin() {
+            return;
+        }
+        if self.archive_view().is_some() {
+            m.action("file.paste", "Paste");
+            m.action("archive.extract", "Extract all…");
+            if !self.sizes_label().is_empty() {
+                m.action("archive.encoding", "Encoding of names…");
+            }
+            m.action("item.copy_path", "Copy path");
             return;
         }
         if files {

@@ -592,6 +592,7 @@ impl App {
     }
 
     pub(super) fn on_loaded(&mut self, k: usize) {
+        self.archive_loaded(k);
         self.tabs[k].fit_pending |= self.prefs.auto_fit;
         if self.prefs.auto_sizes && k == self.cur {
             self.compute_dir_sizes();
@@ -608,6 +609,7 @@ impl App {
 
     pub(super) fn draw_unavailable<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme, list: Rect, e: &FsError) {
         let title = match e.kind {
+            _ if e.code == crate::archive::PASSWORD_CODE => "This archive is encrypted",
             FsErrorKind::NotFound => "This folder does not exist",
             FsErrorKind::AccessDenied => "You do not have permission to open this folder",
             FsErrorKind::NotADirectory => "This location is not a folder",

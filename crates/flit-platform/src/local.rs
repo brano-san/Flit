@@ -1,5 +1,7 @@
 use crate::{FileOps, Fs, Job, PlatformError, Provider, Shell, Wake, Watcher};
 use crossbeam_channel::{bounded, unbounded, Sender};
+use flit_core::archive::ArchiveOp;
+use flit_core::digest::HashKind;
 use flit_core::desktop_ini::FolderKind;
 use flit_core::listing::{attr, DirSnapshot, Listing, ListingBuilder};
 use flit_core::provider::{FileOp, GenToken, Launch, OpCtl, OpId, OpReport, SnapshotSlot, Stage};
@@ -39,6 +41,14 @@ struct SizesJob {
 enum ShellJob {
     Open(FsPath),
     Launch(Launch),
+}
+
+struct HashMsg {
+    tab: TabId,
+    id: OpId,
+    file: FsPath,
+    kinds: Vec<HashKind>,
+    ctl: OpCtl,
 }
 
 struct OpMsg {
@@ -117,6 +127,8 @@ fn transfer_volume(op: &FileOp) -> Option<Vec<u8>> {
         FileOp::Copy { dest, .. } => Some(volume(dest)),
         FileOp::Move { items, dest } if items.iter().any(|i| crosses(i, dest)) => Some(volume(dest)),
         FileOp::MoveTo(pairs) if pairs.iter().any(|(a, b)| crosses(a, b)) => pairs.first().map(|(_, b)| volume(b)),
+        FileOp::Archive(ArchiveOp::Compress { archive, .. }) => Some(volume(archive)),
+        FileOp::Archive(ArchiveOp::Extract { archives, dest, .. }) => dest.as_ref().or(archives.first()).map(volume),
         _ => None,
     }
 }
@@ -135,6 +147,7 @@ pub struct LocalProvider {
     sizes: Sender<SizesJob>,
     ops: Sender<OpMsg>,
     shell: Sender<(TabId, ShellJob)>,
+    hashes: Sender<HashMsg>,
     watch: Sender<WatchCmd>,
     pending_watch: Mutex<HashMap<TabId, (u64, FsPath)>>,
     busy: Arc<AtomicUsize>,
@@ -193,6 +206,22 @@ impl LocalProvider {
                 open_wake();
             }
         })?;
+        let (hashes, hash_rx) = unbounded::<HashMsg>();
+        let (hash_fs, hash_events, hash_wake) = (fs.clone(), events.clone(), wake.clone());
+        spawn("flit-hash".into(), move || {
+            for HashMsg { tab, id, file, kinds, ctl } in hash_rx {
+                let (fs, reply) = (hash_fs.clone(), Reply { tab, id, events: hash_events.clone(), wake: hash_wake.clone() });
+                let failed = reply.clone();
+                let started = spawn(format!("flit-hash-{id}"), move || {
+                    let job = reply.job(ctl);
+                    let result = fs.hash(&file, &kinds, &job).map_err(|e| if job.cancelled() { CANCELLED.to_owned() } else { e.message });
+                    reply.send(ProviderEvent::Hashed { tab, id, result });
+                });
+                if let Err(e) = started {
+                    failed.send(ProviderEvent::Hashed { tab, id, result: Err(e.message) });
+                }
+            }
+        })?;
         let (ops, ops_rx) = unbounded::<OpMsg>();
         let busy = Arc::new(AtomicUsize::new(0));
         let (gate, running) = (Arc::new(Gate::default()), busy.clone());
@@ -237,7 +266,7 @@ impl LocalProvider {
                 }
             }
         })?;
-        Ok(Self { jobs, sizes, ops, shell, watch, pending_watch: Mutex::default(), busy, tags: TagCell::default() })
+        Ok(Self { jobs, sizes, ops, shell, hashes, watch, pending_watch: Mutex::default(), busy, tags: TagCell::default() })
     }
 
     pub fn tags(&self) -> &TagCell {
@@ -290,6 +319,7 @@ impl Provider for LocalProvider {
             ProviderRequest::Op { tab, id, op, ctl } => self.ops.send(OpMsg { tab, id, op, ctl }).map_err(drop),
             ProviderRequest::Open { tab, path } => self.shell.send((tab, ShellJob::Open(path))).map_err(drop),
             ProviderRequest::Launch { tab, launch } => self.shell.send((tab, ShellJob::Launch(launch))).map_err(drop),
+            ProviderRequest::Hash { tab, id, file, kinds, ctl } => self.hashes.send(HashMsg { tab, id, file, kinds, ctl }).map_err(drop),
         };
     }
 }
@@ -452,6 +482,7 @@ pub fn via_unc(distro: &str, req: ProviderRequest) -> Option<ProviderRequest> {
         ProviderRequest::Op { tab, id, op, ctl } => ProviderRequest::Op { tab, id, op: op.map_paths(unc)?, ctl },
         ProviderRequest::Open { tab, path } => ProviderRequest::Open { tab, path: unc(&path)? },
         ProviderRequest::Launch { tab, launch } => ProviderRequest::Launch { tab, launch: launch.map_paths(unc)? },
+        ProviderRequest::Hash { tab, id, file, kinds, ctl } => ProviderRequest::Hash { tab, id, file: unc(&file)?, kinds, ctl },
     })
 }
 

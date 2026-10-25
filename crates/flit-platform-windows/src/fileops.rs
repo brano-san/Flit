@@ -144,6 +144,7 @@ fn check_names(op: &FileOp) -> Result<(), PlatformError> {
         FileOp::FolderIcon { folder, icon, .. } => vec![folder, icon],
         FileOp::MoveTo(pairs) | FileOp::Restore(pairs) => pairs.iter().flat_map(|(a, b)| [a, b]).collect(),
         FileOp::Paste { dest } => vec![dest],
+        FileOp::Archive(_) => Vec::new(),
     };
     paths.into_iter().try_for_each(shell_addressable)?;
     match op {
@@ -269,7 +270,7 @@ unsafe fn queue(fo: &IFileOperation, op: &FileOp) -> Result<(), PlatformError> {
             };
             fo.NewItem(&shell_item(dir)?, FILE_ATTRIBUTE_NORMAL.0, PCWSTR(name.as_ptr()), source.as_ref().map_or(PCWSTR::null(), |s| PCWSTR(s.as_ptr())), None).map_err(err)?;
         }
-        FileOp::Link { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } | FileOp::Flatten(_) | FileOp::FolderIcon { .. } => return Err(PlatformError::new(-1, "not a file operation")),
+        FileOp::Link { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } | FileOp::Flatten(_) | FileOp::FolderIcon { .. } | FileOp::Archive(_) => return Err(PlatformError::new(-1, "not a file operation")),
     }
     Ok(())
 }
@@ -506,8 +507,20 @@ fn with_rest(mut items: Vec<(FsPath, FsPath)>, error: Option<PlatformError>, res
     OpOutcome { items, error: error.or(out.error) }
 }
 
+fn free_space(dir: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    let w: Vec<u16> = dir.as_os_str().encode_wide().chain([0]).collect();
+    let mut free = 0u64;
+    unsafe { windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(PCWSTR(w.as_ptr()), Some(&mut free), None, None) }.ok()?;
+    Some(free)
+}
+
 impl FileOps for ShellCom {
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome {
+        let env = flit_archive::Env { utc_offset: <crate::Windows as flit_platform::Platform>::utc_offset_minutes(), free_space: &free_space };
+        if let Some(out) = flit_archive::file_op(op, job, &env) {
+            return out;
+        }
         if let Err(e) = check_names(op) {
             return OpOutcome { items: Vec::new(), error: Some(e) };
         }

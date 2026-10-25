@@ -1,4 +1,5 @@
 pub mod edit;
+mod archive;
 mod columns;
 mod details;
 mod ops;
@@ -7,6 +8,7 @@ mod tab;
 pub mod actions;
 mod field;
 mod filter;
+mod form;
 mod flow;
 mod home;
 mod jobs;
@@ -231,12 +233,13 @@ pub struct Persisted {
     pub view: FolderView,
     pub prefs: ViewPrefs,
     pub folders: FolderViews,
+    pub archive: crate::archive::Defaults,
     pub startup: Startup,
 }
 
 impl Default for Persisted {
     fn default() -> Self {
-        Self { path: Location::computer(), show_hidden: false, view: FolderView::default(), prefs: ViewPrefs::default(), folders: FolderViews::default(), startup: Startup::default() }
+        Self { path: Location::computer(), show_hidden: false, view: FolderView::default(), prefs: ViewPrefs::default(), folders: FolderViews::default(), archive: Default::default(), startup: Startup::default() }
     }
 }
 
@@ -301,6 +304,7 @@ enum Hit {
     Dialog,
     DialogButton(usize),
     DialogCheck,
+    Form(usize),
     Modal,
     TabActions,
     CrumbMenu(usize),
@@ -411,6 +415,7 @@ pub struct App {
     search: search::SearchView,
     jobs: jobs::Jobs,
     details: details::Details,
+    archive: archive::ArchiveUi,
     strip: tabbar::Strip,
     addr: address::Address,
     tag_fixes: Vec<(FsPath, u32, Instant)>,
@@ -474,6 +479,7 @@ impl App {
             search: Default::default(),
             jobs: Default::default(),
             details: Default::default(),
+            archive: archive::ArchiveUi::new(state.archive),
             strip: Default::default(),
             addr: Default::default(),
             tag_fixes: Vec::new(),
@@ -506,7 +512,7 @@ impl App {
 
     pub fn persisted(&self) -> Persisted {
         let t = self.tab();
-        Persisted { path: t.location().clone(), show_hidden: t.view_spec.show_hidden, view: t.folder_view(), prefs: self.prefs.clone(), folders: self.folders.clone(), startup: Startup::default() }
+        Persisted { path: t.location().clone(), show_hidden: t.view_spec.show_hidden, view: t.folder_view(), prefs: self.prefs.clone(), folders: self.folders.clone(), archive: self.archive.prefs.clone(), startup: Startup::default() }
     }
 
     pub fn tab(&self) -> &Tab {
@@ -741,7 +747,11 @@ impl App {
         }
         let e = t.view.as_ref().unwrap().listing().entries[i as usize];
         let loc = t.entry_location(i);
-        if e.is_dir() || crate::library::is_library(loc.path()) {
+        if !e.is_dir() && self.open_archived(&loc) {
+            return;
+        }
+        let t = self.tab();
+        if e.is_dir() || self.browses_as_folder(loc.file_name()) || crate::library::is_library(loc.path()) {
             let target = if self.folders_in_new_tab { OpenTarget::NewTab } else { OpenTarget::CurrentTab };
             self.dispatch(vec![Route { folder: loc, select: None }], target, now);
         } else {
@@ -832,6 +842,7 @@ impl App {
                     self.navigate(Location::from_local(path), now);
                 }
             }
+            ProviderEvent::Hashed { id, result, .. } => self.hashed(id, result),
             ProviderEvent::Status { tab, gen, text } => {
                 if let Some(k) = tab_of(&self.tabs, tab, gen) {
                     if let Some(l) = self.tabs[k].loading.as_mut() {
@@ -892,7 +903,7 @@ impl App {
     }
 
     pub fn on_paste(&mut self, text: &str) {
-        if self.jobs.modal() {
+        if self.form_insert(text) || self.jobs.modal() {
             return;
         }
         if self.search.active {
@@ -1238,7 +1249,7 @@ impl App {
 
     fn mouse_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8, now: Instant) {
         self.dirty = true;
-        if self.jobs_mouse_down(self.hit(x, y)) || self.strip_mouse_down(self.hit(x, y), button, clicks, now) || self.autoscroll_down(self.hit(x, y), self.along_of(x, y), button) || self.ops_mouse_down(x, y, button, clicks) {
+        if self.form_down(x, y, clicks) || self.jobs_mouse_down(self.hit(x, y)) || self.strip_mouse_down(self.hit(x, y), button, clicks, now) || self.autoscroll_down(self.hit(x, y), self.along_of(x, y), button) || self.ops_mouse_down(x, y, button, clicks) {
             return;
         }
         let h = self.hit(x, y);
@@ -1356,8 +1367,8 @@ impl App {
             Hit::Header(c) => self.sort_column(self.layout.columns[c].field()),
             Hit::Group(g) => self.toggle_group(g),
             Hit::Pane(i, Some(row)) => self.open_pane_row(i, row, now),
+            Hit::Sizes => self.sizes_button(),
             Hit::Preview(p) => self.preview_click(p),
-            Hit::Sizes => self.compute_dir_sizes(),
             Hit::Bin(k) => self.bin_button(k),
             Hit::Side(i) => self.open_side_item(i, self.mods.ctrl, now),
             Hit::SidePin(i) => self.toggle_pin_item(i),
@@ -1471,7 +1482,7 @@ impl App {
             return;
         }
         self.dirty = true;
-        if self.jobs.modal() || self.ops_char(c) {
+        if self.form_insert(c.encode_utf8(&mut [0; 4])) || self.jobs.modal() || self.ops_char(c) {
             return;
         }
         if self.editing {
@@ -1998,6 +2009,11 @@ impl App {
                     format::size(&mut s, size);
                 }
             }
+            if let Some(total) = self.unpacked_total() {
+                s.push_str("    ");
+                format::size(&mut s, total);
+                s.push_str(" unpacked");
+            }
             if !v.snap().done {
                 s.push_str("    Loading…");
             }
@@ -2011,7 +2027,9 @@ impl App {
             let _ = write!(right, "{:.1} ms first · {:.1} ms all", first.as_secs_f64() * 1e3, done.as_secs_f64() * 1e3);
         }
         let in_bin = tab.view_loc.is_recycle_bin();
-        let labels: &[&str] = if in_bin { &BIN_BUTTONS } else { &["Folder sizes"] };
+        let sizes = self.sizes_label();
+        let sizes = [sizes.as_str()];
+        let labels: &[&str] = if in_bin { &BIN_BUTTONS } else if sizes[0].is_empty() { &[] } else { &sizes };
         let mut buttons = [Rect::default(); 3];
         let mut x = r.right() - pad;
         for (k, label) in labels.iter().enumerate().rev() {

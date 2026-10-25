@@ -3,6 +3,7 @@ use super::edit::{EditAction, LineEdit};
 use super::palette::{Palette, Pick};
 use super::sidebar::Section;
 use super::{App, Drag, Effect, Focus, Hit, Route};
+use crate::archive::{self, Format};
 use crate::library;
 use crate::hash::FxHashSet;
 use crate::open::OpenTarget;
@@ -69,12 +70,14 @@ pub enum DragEvent {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-enum Then {
+pub(super) enum Then {
     Nothing,
     Select,
     Rename,
     Fill(Vec<FsPath>),
     Reveal(Vec<u8>),
+    Open(FsPath),
+    Launch,
 }
 
 struct Pending {
@@ -311,7 +314,7 @@ impl App {
         }
     }
 
-    fn start_op(&mut self, op: FileOp, origin: Origin, then: Then) {
+    pub(super) fn start_op(&mut self, op: FileOp, origin: Origin, then: Then) {
         self.start_op_for(self.tab().id, op, origin, then);
     }
 
@@ -444,6 +447,9 @@ impl App {
         if items.is_empty() {
             return;
         }
+        if cut && self.archive_view().is_some() {
+            return self.status(archive::INSIDE);
+        }
         match self.item_paths(&items) {
             Ok(paths) => {
                 let t = self.tab();
@@ -503,7 +509,7 @@ impl App {
         }
     }
 
-    fn free_name(&self, stem: &str, ext: &str) -> String {
+    pub(super) fn free_name(&self, stem: &str, ext: &str) -> String {
         let prefix = stem.to_ascii_lowercase().into_bytes();
         let taken: FxHashSet<Vec<u8>> = match &self.tab().view {
             Some(v) => {
@@ -623,7 +629,7 @@ impl App {
             },
             p @ (Pick::NewLibrary | Pick::LibraryAdd(_)) => self.submit_library(p, text),
             Pick::Tags(t) => self.tag_input(t, text),
-            Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Toolbar(_) => {}
+            Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Encoding(_) | Pick::Toolbar(_) => {}
         }
     }
 
@@ -700,8 +706,8 @@ impl App {
         if self.in_bin() && on_items {
             return self.status(BIN_ONLY);
         }
-        if self.in_bin() {
-            let menu = self.build_menu(false);
+        if self.in_bin() || self.archive_view().is_some() {
+            let menu = self.build_menu(on_items);
             return self.flit_menu(x, y, menu);
         }
         let t = self.tab();
@@ -741,7 +747,7 @@ impl App {
             self.dirty |= k == self.cur;
         }
         let any_done = report.as_ref().is_some_and(|r| !r.items.is_empty());
-        let unwatched = |l: &Location| matches!(l, Location::Wsl { .. }) || l.path().kind() == PathKind::Unc;
+        let unwatched = |l: &Location| matches!(l, Location::Wsl { .. }) || l.path().kind() == PathKind::Unc || archive::split(l.path()).is_some();
         if let Some(k) = k.filter(|&k| (error.is_none() || any_done) && unwatched(self.tabs[k].location())) {
             self.reload(k, now);
         }
@@ -750,6 +756,9 @@ impl App {
         }
         let (Some(report), Some(p)) = (report, pending) else { return };
         self.ops.journal.record(p.origin, &report);
+        if self.archive_then(tab, &p.then, &report, error.as_deref(), now) {
+            return;
+        }
         if let (Then::Fill(items), Some((_, folder))) = (&p.then, report.items.first()) {
             let reveal = Then::Reveal(Location::from_local(folder.clone()).file_name().to_vec());
             return self.start_op_for(tab, FileOp::Move { items: items.clone(), dest: folder.clone() }, Origin::Fresh, reveal);
@@ -832,7 +841,7 @@ impl App {
 
     fn rename_target(&self) -> Option<u32> {
         let t = self.tab();
-        let v = t.view.as_ref().filter(|_| !matches!(t.view_loc.path().kind(), PathKind::Computer | PathKind::RecycleBin))?;
+        let v = t.view.as_ref().filter(|_| !matches!(t.view_loc.path().kind(), PathKind::Computer | PathKind::RecycleBin) && self.archive_view().is_none())?;
         v.focus.filter(|&f| v.is_visible(f)).or_else(|| if v.selected_count() == 1 { v.selected().next() } else { None })
     }
 
@@ -1011,7 +1020,7 @@ impl App {
         self.ops.press = None;
         let items = self.selected_items();
         let Ok(paths) = self.item_paths(&items) else { return false };
-        if paths.is_empty() {
+        if paths.is_empty() || self.archive_view().is_some() {
             return false;
         }
         self.pressed = Hit::None;
@@ -1156,7 +1165,7 @@ impl App {
                 let v = t.view.as_ref()?;
                 let i = *v.rows().get(row)?;
                 let runnable = RUNNABLE.iter().any(|e| v.listing().ext(i).eq_ignore_ascii_case(e));
-                if v.listing().entries[i as usize].is_dir() {
+                if v.listing().entries[i as usize].is_dir() || archive::browsable(v.listing().name(i)).is_some_and(Format::can_add) {
                     into(&t.entry_location(i), Spot::Row(row))
                 } else if runnable {
                     t.entry_location(i).to_windows().map(|program| Target::Run { program, spot: Spot::Row(row) })
@@ -1175,7 +1184,7 @@ impl App {
             Hit::SideEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose => None,
             Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside => None,
             Hit::OpsButton | Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsClear | Hit::OpsCancel(_) | Hit::OpsMore(_) | Hit::OpsMenu(_) => None,
-            Hit::Dialog | Hit::DialogButton(_) | Hit::DialogCheck | Hit::Modal | Hit::Preview(_) => None,
+            Hit::Dialog | Hit::DialogButton(_) | Hit::DialogCheck | Hit::Form(_) | Hit::Modal | Hit::Preview(_) => None,
             _ if self.layout.status.contains(x, y) => None,
             _ => Some(Target::Reveal),
         }
@@ -1197,6 +1206,8 @@ impl App {
             Some(Target::Into { dest, .. }) => {
                 if d.paths.is_empty() || d.paths.iter().any(|p| p.as_bytes().eq_ignore_ascii_case(dest.as_bytes()) || inside(dest, p)) {
                     NONE
+                } else if archive::split(dest).is_some() {
+                    allowed & COPY
                 } else {
                     let e = choose_effect(allowed, m, d.paths.iter().all(|p| same_volume(p, dest)));
                     let all_here = d.paths.iter().all(|p| p.parent().is_some_and(|q| q.as_bytes().eq_ignore_ascii_case(dest.as_bytes())));

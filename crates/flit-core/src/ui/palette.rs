@@ -24,6 +24,7 @@ pub(super) enum Pick {
     Shortcut(FsPath),
     Stream(FsPath),
     FolderIcon(FsPath),
+    Encoding(FsPath),
     NewLibrary,
     Library(FsPath),
     LibraryAdd(FsPath),
@@ -34,6 +35,7 @@ pub(super) enum Pick {
 impl Pick {
     fn placeholder(&self) -> &'static str {
         match self {
+            Pick::Encoding(_) => "Type to filter the encodings of names in the archive",
             Pick::Commands => "Type a command",
             Pick::NewItem => "Type to filter the kinds of new items",
             Pick::Shortcut(_) => "Full path of the shortcut target",
@@ -51,6 +53,7 @@ impl Pick {
         match self {
             Pick::Commands => "No matching commands",
             Pick::NewItem => "No matching kinds of items",
+            Pick::Encoding(_) => "No matching encodings",
             Pick::Shortcut(_) => "Enter creates the shortcut in this folder",
             Pick::Stream(_) => "Enter creates the stream",
             Pick::FolderIcon(_) => "Enter writes the icon into desktop.ini of the folder",
@@ -194,6 +197,7 @@ impl App {
         };
         match p.pick {
             Pick::Commands => (ACTIONS[p.ids[id]].run)(self, now),
+            Pick::Encoding(archive) => self.set_encoding(&archive, id, now),
             Pick::Library(lib) => self.library_row(lib, &p.titles[id], false),
             Pick::Tags(t) => self.tag_choose(t, id, now),
             Pick::Toolbar(t) => self.tool_choose(t, id),

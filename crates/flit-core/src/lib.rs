@@ -1,4 +1,6 @@
+pub mod archive;
 pub mod atlas;
+pub mod digest;
 pub mod desktop_ini;
 pub mod filter;
 pub mod fmt;

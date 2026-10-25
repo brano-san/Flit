@@ -5,6 +5,7 @@ members = [
     "crates/flit-proto",
     "crates/flit-search",
     "crates/flit-platform",
+    "crates/flit-archive",
     "crates/flit-platform-windows",
     "crates/flit-platform-linux",
     "crates/flit",
@@ -23,6 +24,7 @@ flit-core = { path = "crates/flit-core" }
 flit-proto = { path = "crates/flit-proto" }
 flit-search = { path = "crates/flit-search" }
 flit-platform = { path = "crates/flit-platform" }
+flit-archive = { path = "crates/flit-archive" }
 flit-platform-windows = { path = "crates/flit-platform-windows" }
 flit-platform-linux = { path = "crates/flit-platform-linux" }
 
@@ -37,6 +39,7 @@ mimalloc = { version = "0.1", default-features = false }
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1.1", default-features = false, features = ["use-std"] }
 tracing = "0.1"
+crc32fast = "1.5"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
 tracing-tracy = "0.12"
 criterion = { version = "0.8", default-features = false }

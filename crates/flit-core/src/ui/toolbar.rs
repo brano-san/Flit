@@ -2,6 +2,7 @@ use super::actions::{chord_text, ACTIONS};
 use super::ops::TIMER_SLACK;
 use super::palette::{Palette, Pick};
 use super::{centered, App, Effect, Hit, LayoutMode, LAYOUTS};
+use crate::archive;
 use crate::input::{Key, MouseButton};
 use crate::path::PathKind;
 use crate::render::{Color, Rect};
@@ -33,6 +34,7 @@ pub(super) enum ToolMenu {
     Sort,
     Group,
     Layout,
+    Extract,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -86,6 +88,7 @@ const TOOLS: &[Tool] = &[
     act("nav.refresh", "Refresh", "\u{E72C}"),
     act("search.folder", "Search", "\u{E721}"),
     act("sidebar.toggle", "Sidebar", "\u{E700}"),
+    menu("menu.extract", "Extract", "\u{E8B7}", ToolMenu::Extract),
 ];
 
 fn tool(id: &str) -> Option<&'static Tool> {
@@ -250,6 +253,7 @@ pub(super) struct Toolbar {
     fly: Option<Fly>,
     tip: Option<Tip>,
     sliding: bool,
+    archive: bool,
 }
 
 impl App {
@@ -263,8 +267,21 @@ impl App {
         self.dirty = true;
     }
 
-    pub fn toolbar_items(&self) -> &[ToolItem] {
-        &self.toolbar.state.sets[self.tool_context().index()]
+    pub fn toolbar_items(&self) -> Vec<ToolItem> {
+        let mut items = self.toolbar.state.sets[self.tool_context().index()].clone();
+        let extract = ToolItem::Button("menu.extract".into(), Show::Both);
+        if self.toolbar.archive && !items.contains(&extract) {
+            items.extend([ToolItem::Separator, extract]);
+        }
+        items
+    }
+
+    fn archive_context(&self) -> bool {
+        let selected = self.tab().view.as_ref().is_some_and(|v| {
+            let l = v.listing();
+            self.selected_items().into_iter().any(|i| !l.entries[i as usize].is_dir() && archive::format_of(l.name(i)).is_some())
+        });
+        selected || self.archive_view().is_some()
     }
 
     pub(super) fn toolbar_h(&self) -> f32 {
@@ -570,7 +587,8 @@ impl App {
 
     pub fn toolbar_tip(&self) -> Option<String> {
         let tip = self.toolbar.tip.as_ref().filter(|t| t.shown)?;
-        let Some(ToolItem::Button(id, _)) = self.toolbar_items().get(tip.item) else { return None };
+        let items = self.toolbar_items();
+        let Some(ToolItem::Button(id, _)) = items.get(tip.item) else { return None };
         let t = tool(id)?;
         Some(match keys_of(t.id) {
             Some(k) => format!("{} ({k})", t.label),
@@ -580,6 +598,7 @@ impl App {
 
     pub(super) fn draw_toolbar_row<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
         let row = self.layout.commands;
+        self.toolbar.archive = row.h > 0.0 && self.archive_context();
         self.toolbar.placed.clear();
         self.toolbar.overflow.clear();
         self.toolbar.more = Rect::default();
@@ -592,7 +611,7 @@ impl App {
         let m = g.metrics(font);
         let (pad, icon_w, sep_w) = (self.s(PAD), self.s(ICON_W), self.s(SEP_W));
         let bh = self.s(BUTTON_H);
-        let items = self.toolbar_items().to_vec();
+        let items = self.toolbar_items();
         let width = |g: &mut Gfx<B>, item: &ToolItem| match item {
             ToolItem::Separator => sep_w,
             ToolItem::Button(id, show) => match (tool(id), show) {

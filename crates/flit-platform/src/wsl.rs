@@ -192,7 +192,11 @@ fn starts_agent(req: &ProviderRequest) -> bool {
 }
 
 fn for_agent(req: &ProviderRequest) -> bool {
-    starts_agent(req) || matches!(req, ProviderRequest::Watch { .. })
+    let archived = match req {
+        ProviderRequest::List { path, .. } | ProviderRequest::DirSizes { dir: path, .. } | ProviderRequest::Watch { path: Some(path), .. } => flit_core::archive::split(path).is_some(),
+        _ => false,
+    };
+    !archived && (starts_agent(req) || matches!(req, ProviderRequest::Watch { .. }))
 }
 
 fn read_events(id: u64, mut output: Box<dyn Read + Send>, ours: Hello, tx: Sender<Msg>) {

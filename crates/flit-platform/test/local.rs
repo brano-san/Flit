@@ -405,3 +405,16 @@ fn wsl_launches_map_to_unc() {
     assert_eq!(program.display(), r"\\wsl.localhost\Ubuntu\bin\tool.exe");
     assert_eq!(args[0].display(), r"\\wsl.localhost\Ubuntu\home\a");
 }
+
+#[test]
+fn hash_requests_answer_on_their_own_thread() {
+    let (tx, rx) = unbounded();
+    let provider = LocalProvider::new::<_, NoWatch, NoShell>(fs(), 1, tx, Arc::new(|| {})).unwrap();
+    provider.submit(ProviderRequest::Hash { tab: 4, id: 9, file: p(r"C:\r\a.txt"), kinds: vec![HashKind::Sha256], ctl: OpCtl::default() });
+    match rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+        ProviderEvent::Hashed { tab: 4, id: 9, result: Err(e) } => assert!(e.contains("not supported"), "{e}"),
+        e => panic!("{e:?}"),
+    }
+    let Some(ProviderRequest::Hash { file, .. }) = via_unc("Ubuntu", ProviderRequest::Hash { tab: 1, id: 2, file: FsPath::parse("/home/a.iso").unwrap(), kinds: Vec::new(), ctl: OpCtl::default() }) else { panic!() };
+    assert_eq!(file.display(), r"\\wsl.localhost\Ubuntu\home\a.iso");
+}

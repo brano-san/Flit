@@ -1,3 +1,4 @@
+use flit_core::archive::Defaults;
 use flit_core::sort::SortField;
 use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavPrefs, NavState, PaneState, Persisted, Sizes, ToolbarState, ViewPrefs, MAX_HISTORY};
 use flit_core::Location;
@@ -135,6 +136,7 @@ impl Saved {
         let Ok((nav, tail)) = postcard::take_from_bytes::<NavState>(tail) else { return Some(saved) };
         saved.nav = nav;
         let Ok((mut r, tail)) = postcard::take_from_bytes::<ViewRecord>(tail) else { return Some(saved) };
+        let mut rest = None;
         if let Ok((l, tail)) = postcard::take_from_bytes::<LayoutRecord>(tail) {
             (r.view, r.prefs.defaults) = (with_look(r.view, l.view), with_look(r.prefs.defaults, l.defaults));
             (r.prefs.thumbnails, r.prefs.thumb_cache_mb) = (l.thumbnails, l.thumb_cache_mb);
@@ -145,14 +147,18 @@ impl Saved {
                 saved.pane = pane;
                 if let Ok((side, tail)) = postcard::take_from_bytes::<NavPrefs>(tail) {
                     saved.side = side;
-                    if let Ok((tools, _)) = postcard::take_from_bytes::<Tools>(tail) {
-                        saved.tools = tools;
-                    }
+                    rest = Some(tail);
                 }
             }
         }
         let p = &mut saved.persisted;
         (p.view, p.prefs, p.folders) = (r.view, r.prefs, FolderViews::from_entries(r.folders));
+        if let Some((archive, tail)) = rest.and_then(|t| postcard::take_from_bytes::<Defaults>(t).ok()) {
+            p.archive = archive.sanitized();
+            if let Ok((tools, _)) = postcard::take_from_bytes::<Tools>(tail) {
+                saved.tools = tools;
+            }
+        }
         Some(saved)
     }
 
@@ -174,6 +180,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&layouts).ok()?);
         bytes.extend(postcard::to_stdvec(&self.pane).ok()?);
         bytes.extend(postcard::to_stdvec(&self.side).ok()?);
+        bytes.extend(postcard::to_stdvec(&p.archive.clone().sanitized()).ok()?);
         bytes.extend(postcard::to_stdvec(&self.tools).ok()?);
         Some(bytes)
     }

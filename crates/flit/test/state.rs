@@ -111,7 +111,8 @@ fn sidebar_and_home_preferences_ride_sixth_after_the_pane_so_older_files_still_l
     let bytes = s.encode().unwrap();
     let back = Saved::decode(&bytes).unwrap().sanitized();
     assert_eq!((back.pane, &back.side), (pane, &side));
-    let master_layout = &bytes[..bytes.len() - postcard::to_stdvec(&side).unwrap().len()];
+    let trailing = postcard::to_stdvec(&side).unwrap().len() + postcard::to_stdvec(&s.persisted.archive).unwrap().len();
+    let master_layout = &bytes[..bytes.len() - trailing];
     let (_, tail) = postcard::take_from_bytes::<Head>(master_layout).unwrap();
     let (_, tail) = postcard::take_from_bytes::<NavState>(tail).unwrap();
     let (_, tail) = postcard::take_from_bytes::<ViewRecord>(tail).unwrap();
@@ -135,13 +136,32 @@ fn corrupted_nav_state_falls_back() {
 }
 
 #[test]
-fn pane_state_rides_last_and_older_files_keep_the_default() {
+fn archive_defaults_ride_last_and_never_keep_a_password() {
+    use flit_core::archive::{Compression, Defaults, Format, Secret};
+    use flit_core::digest::HashKind;
+    let mut persisted = Persisted::default();
+    let compression = Compression { format: Format::SevenZ, level: 9, threads: 4, password: Some(Secret("x".into())), ..Default::default() };
+    persisted.archive = Defaults { compression, history: vec![r"C:\out".into()], open_after: true, hashes: vec![HashKind::Sha512] };
+    let s = Saved::new(persisted, None);
+    let bytes = s.encode().unwrap();
+    let back = Saved::decode(&bytes).unwrap();
+    let want = Defaults { compression: Compression { password: None, ..s.persisted.archive.compression.clone() }, ..s.persisted.archive.clone() };
+    assert_eq!(back.persisted.archive, want);
+    assert_eq!(back.persisted.prefs, s.persisted.prefs);
+    let stored = postcard::to_stdvec(&want).unwrap();
+    assert!(bytes.ends_with(&stored));
+    let without = &bytes[..bytes.len() - stored.len()];
+    assert_eq!(Saved::decode(without).unwrap().persisted.archive, Defaults::default());
+}
+
+#[test]
+fn pane_state_rides_after_layouts_and_older_files_keep_the_default() {
     let pane = PaneState { visible: true, details: true, right_w: 410.0, bottom_h: 300.0, volume: 0.25 };
     let s = Saved::new(Persisted::default(), None).with_pane(pane);
     let bytes = s.encode().unwrap();
     assert_eq!(Saved::decode(&bytes).unwrap().pane, pane);
     let older = Saved::new(Persisted::default(), None).encode().unwrap();
-    let trailing = postcard::to_stdvec(&PaneState::default()).unwrap().len() + postcard::to_stdvec(&NavPrefs::default()).unwrap().len();
+    let trailing = [postcard::to_stdvec(&PaneState::default()), postcard::to_stdvec(&NavPrefs::default()), postcard::to_stdvec(&Defaults::default())].map(|b| b.unwrap().len()).iter().sum::<usize>();
     let without = &older[..older.len() - trailing];
     assert_eq!(Saved::decode(without).unwrap().pane, PaneState::default());
     let broken = Saved { pane: PaneState { right_w: -1.0, volume: f32::NAN, ..pane }, ..s }.sanitized();

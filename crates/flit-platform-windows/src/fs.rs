@@ -206,6 +206,9 @@ impl Fs for NtFs {
             _ if flit_core::library::is_library(dir) => return crate::library::list(dir, out),
             _ => {}
         }
+        if let Some(listed) = flit_archive::read_dir(dir, out, <crate::Windows as flit_platform::Platform>::utc_offset_minutes()) {
+            return listed;
+        }
         let h = open_dir(dir, FILE_LIST_DIRECTORY.0, false)?;
         if let Some(v) = (out.wants_ids() && dir.kind() == PathKind::Drive).then(|| crate::tags::volume_serial(h)).flatten() {
             out.set_volume(v);
@@ -249,6 +252,10 @@ impl Fs for NtFs {
             let _ = CloseHandle(h);
         }
         result
+    }
+
+    fn hash(&self, file: &FsPath, kinds: &[flit_core::digest::HashKind], job: &flit_platform::Job) -> Result<Vec<String>, flit_platform::PlatformError> {
+        crate::digest::hash_file(file, kinds, job)
     }
 
     fn desktop_ini(&self, dir: &FsPath) -> Option<DesktopIni> {

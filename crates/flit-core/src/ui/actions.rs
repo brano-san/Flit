@@ -2,6 +2,7 @@ use super::home::Widget;
 use super::sidebar::KnownFolder;
 use super::tags::TagPick;
 use super::{App, Column, Effect, LayoutMode, Route, WindowCmd};
+use crate::archive::{Format, Place};
 use crate::input::{Key, Mods};
 use crate::library::LibraryOp;
 use crate::location::Location;
@@ -205,6 +206,16 @@ pub static ACTIONS: &[Action] = &[
     Action::new("file.folder_icon", "Change the folder icon", &[], |a, _| a.ask_folder_icon()),
     Action::new("file.shortcut", "Create shortcuts to the selected items", &[], |a, _| a.create_shortcuts()),
     Action::new("file.flatten", "Flatten folder: move files from all subfolders into it", &[], |a, _| a.flatten_selection()),
+    Action::new("archive.compress", "Add to archive…", &[], |a, _| a.compress_dialog()),
+    Action::new("archive.zip", "Compress to ZIP", &[], |a, _| a.compress_quick(Format::Zip)),
+    Action::new("archive.7z", "Compress to 7z", &[], |a, _| a.compress_quick(Format::SevenZ)),
+    Action::new("archive.extract", "Extract files…", &[alt(Key::Char('E'))], |a, _| a.extract_dialog()),
+    Action::new("archive.extract_here", "Extract here", &[], |a, _| a.extract_with(Place::Here)),
+    Action::new("archive.extract_folder", "Extract to a folder named after the archive", &[], |a, _| a.extract_with(Place::OwnFolder)),
+    Action::new("archive.smart", "Smart extract", &[ctrl_shift(Key::Char('E'))], |a, _| a.extract_with(Place::Smart)),
+    Action::new("archive.open", "Open the archive as a folder", &[], |a, now| a.open_as_folder(now)),
+    Action::new("archive.encoding", "Choose the encoding of names in the archive", &[], |a, _| a.pick_encoding()),
+    Action::new("file.hashes", "Hashes…", &[], |a, _| a.hashes_dialog()),
     Action::new("ops.show", "Show or hide file operations", &[], |a, _| a.toggle_jobs()),
     Action::new("ops.clear", "Clear completed file operations", &[], |a, _| a.clear_completed()),
     Action::new("edit.undo", "Undo", &[ctrl(Key::Char('Z'))], |a, _| a.undo()),
@@ -286,7 +297,7 @@ impl App {
             "search" if id == "search.group_folder" => self.search.active,
             "search" if id == "search.folder" => !no_files,
             "search" if id == "search.clear_history" => !self.search_history().is_empty(),
-            "file" => !no_files,
+            "file" | "archive" => !no_files,
             "view" | "select" | "item" => !home,
             "app" => !(no_files || library),
             _ => !(id == "nav.up" && self.current_location().parent().is_none()),

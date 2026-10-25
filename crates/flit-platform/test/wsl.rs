@@ -196,6 +196,16 @@ fn lists_exact_names_through_the_agent() {
 }
 
 #[test]
+fn folders_inside_archives_are_read_through_the_share_without_the_agent() {
+    let s = setup(Fake::new(lister), Timing::default());
+    list(&s.wsl, 1, 1, "/home/u/a.zip/docs");
+    until("share", || s.local.0.lock().unwrap().len() == 2);
+    let local = s.local.0.lock().unwrap();
+    assert!(matches!(&local[1], ProviderRequest::List { path, .. } if path.as_bytes() == br"\\wsl.localhost\Ubuntu\home\u\a.zip\docs"));
+    assert_eq!(s.fake.launches.load(Ordering::SeqCst), 0);
+}
+
+#[test]
 fn a_missing_agent_is_delivered_once() {
     let fake = Fake::new(lister);
     *fake.installed.lock().unwrap() = None;

@@ -1,4 +1,6 @@
+use super::form::Form;
 use super::{centered, App, Hit, Route};
+use crate::archive::{self, ArchiveOp};
 use crate::fmt as format;
 use crate::input::{Key, Mods};
 use crate::location::Location;
@@ -32,6 +34,7 @@ const G_MORE: &str = "\u{E712}";
 const G_CHECK: &str = "\u{E73E}";
 
 const CONFLICT_BUTTONS: [&str; 4] = ["Replace", "Keep both", "Skip", "Cancel"];
+const UNREADABLE_BUTTONS: [&str; 2] = ["Skip", "Cancel"];
 const CONFIRM_BUTTONS: [&str; 2] = ["Delete", "Cancel"];
 const RESTORE_BUTTONS: [&str; 2] = ["Restore", "Not now"];
 
@@ -147,6 +150,16 @@ pub(super) enum Ask {
     Restore,
 }
 
+impl Ask {
+    fn unreadable(&self) -> bool {
+        matches!(self, Ask::Conflict { conflict, .. } if archive::is_unreadable(conflict))
+    }
+
+    fn first_button(&self) -> usize {
+        usize::from(matches!(self, Ask::Conflict { .. }) && !self.unreadable())
+    }
+}
+
 #[derive(Default)]
 struct Rects {
     button: Rect,
@@ -165,6 +178,7 @@ pub(super) struct Jobs {
     pub open: bool,
     pub menu: Option<usize>,
     pub asks: VecDeque<Ask>,
+    pub form: Option<Form>,
     pub all: bool,
     pub sel: usize,
     first: usize,
@@ -178,7 +192,7 @@ impl Jobs {
     }
 
     pub fn modal(&self) -> bool {
-        !self.asks.is_empty()
+        !self.asks.is_empty() || self.form.is_some()
     }
 
     fn visible(&self) -> std::ops::Range<usize> {
@@ -225,6 +239,9 @@ fn job_title(op: &FileOp) -> Option<String> {
         FileOp::Restore(pairs) => format!("Restoring {}", if pairs.len() == 1 { quoted(&pairs[0].1) } else { format!("{} items", pairs.len()) }),
         FileOp::Purge(pairs) => format!("Deleting {} from the Recycle Bin", if pairs.len() == 1 { quoted(&pairs[0].1) } else { format!("{} items", pairs.len()) }),
         FileOp::EmptyBin => "Emptying the Recycle Bin".into(),
+        FileOp::Archive(ArchiveOp::Compress { items, archive, .. }) => format!("Compressing {} to {}", count(items), quoted(archive)),
+        FileOp::Archive(ArchiveOp::Extract { archives, .. }) => format!("Extracting {}", count(archives)),
+        FileOp::Archive(ArchiveOp::Open { item }) => format!("Opening {}", quoted(item)),
         FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::NewStream { .. } | FileOp::Link { .. } | FileOp::FolderIcon { .. } => return None,
     })
 }
@@ -236,6 +253,8 @@ fn job_dest(op: &FileOp) -> Option<Location> {
         FileOp::Restore(pairs) => pairs.first()?.1.parent()?,
         FileOp::Flatten(dirs) => dirs.first()?.clone(),
         FileOp::Trash(_) => return Some(Location::recycle_bin()),
+        FileOp::Archive(ArchiveOp::Compress { archive, .. }) => archive.parent()?,
+        FileOp::Archive(ArchiveOp::Extract { archives, dest, .. }) => dest.clone().or_else(|| archives.first()?.parent())?,
         _ => return None,
     };
     Some(Location::from_local(path))
@@ -284,22 +303,26 @@ impl App {
     }
 
     pub(super) fn job_progress(&mut self, id: OpId, progress: OpProgress, now: Instant) {
-        if let Some(j) = self.job_mut(id) {
-            j.progress = progress;
-            j.sample(now);
-            self.dirty = true;
+        match self.job_mut(id) {
+            Some(j) => {
+                j.progress = progress;
+                j.sample(now);
+            }
+            None => self.form_progress(id, &progress),
         }
+        self.dirty = true;
     }
 
     pub(super) fn job_conflict(&mut self, id: OpId, conflict: Conflict) {
         if let Some(j) = self.job_mut(id) {
             j.asking = true;
         }
+        let ask = Ask::Conflict { id, conflict };
         if self.jobs.asks.is_empty() {
             self.jobs.all = false;
-            self.jobs.sel = 1;
+            self.jobs.sel = ask.first_button();
         }
-        self.jobs.asks.push_back(Ask::Conflict { id, conflict });
+        self.jobs.asks.push_back(ask);
         self.layout();
         self.dirty = true;
     }
@@ -344,10 +367,12 @@ impl App {
     }
 
     pub fn asking(&self) -> Option<&str> {
-        match self.jobs.asks.front()? {
-            Ask::Conflict { .. } => Some("conflict"),
-            Ask::Confirm(_) => Some("confirm"),
-            Ask::Restore => Some("restore"),
+        match self.jobs.asks.front() {
+            Some(a) if a.unreadable() => Some("unreadable"),
+            Some(Ask::Conflict { .. }) => Some("conflict"),
+            Some(Ask::Confirm(_)) => Some("confirm"),
+            Some(Ask::Restore) => Some("restore"),
+            None => self.jobs.form.as_ref().map(|f| f.kind.name()),
         }
     }
 
@@ -412,9 +437,10 @@ impl App {
 
     fn answer(&mut self, button: usize) {
         let Some(ask) = self.jobs.asks.pop_front() else { return };
+        let unreadable = ask.unreadable();
         match ask {
             Ask::Conflict { id, .. } => {
-                let choice = [Some(Resolve::Replace), Some(Resolve::KeepBoth), Some(Resolve::Skip), None][button.min(3)];
+                let choice = if unreadable { [Some(Resolve::Skip), None][button.min(1)] } else { [Some(Resolve::Replace), Some(Resolve::KeepBoth), Some(Resolve::Skip), None][button.min(3)] };
                 if let Some(ctl) = self.op_ctl(id) {
                     match choice {
                         Some(c) => ctl.answer(c, self.jobs.all),
@@ -430,13 +456,14 @@ impl App {
             Ask::Confirm(_) | Ask::Restore => {}
         }
         self.jobs.all = false;
-        self.jobs.sel = if matches!(self.jobs.asks.front(), Some(Ask::Confirm(_) | Ask::Restore)) { 0 } else { 1 };
+        self.jobs.sel = self.jobs.asks.front().map_or(0, Ask::first_button);
         self.layout();
         self.dirty = true;
     }
 
     fn dialog_buttons(&self) -> &'static [&'static str] {
         match self.jobs.asks.front() {
+            Some(a) if a.unreadable() => &UNREADABLE_BUTTONS,
             Some(Ask::Conflict { .. }) => &CONFLICT_BUTTONS,
             Some(Ask::Confirm(_)) => &CONFIRM_BUTTONS,
             Some(Ask::Restore) => &RESTORE_BUTTONS,
@@ -445,9 +472,9 @@ impl App {
     }
 
     pub(super) fn jobs_key(&mut self, key: Key, m: Mods) -> bool {
-        if self.jobs.modal() {
+        if !self.jobs.asks.is_empty() {
             let n = self.dialog_buttons().len();
-            let conflict = matches!(self.jobs.asks.front(), Some(Ask::Conflict { .. }));
+            let conflict = self.jobs.asks.front().is_some_and(|a| matches!(a, Ask::Conflict { .. }) && !a.unreadable());
             let plain = !m.ctrl && !m.alt;
             match key {
                 Key::Escape => self.answer(n - 1),
@@ -461,6 +488,9 @@ impl App {
                 _ => {}
             }
             self.dirty = true;
+            return true;
+        }
+        if self.form_key(key, m) {
             return true;
         }
         if self.jobs.open && key == Key::Escape {
@@ -489,6 +519,8 @@ impl App {
     }
 
     pub(super) fn layout_jobs(&mut self) {
+        self.layout_form();
+        let labels = self.dialog_buttons().len();
         let (w, h, sc) = (self.size.0, self.size.1, self.scale);
         let s = |v: f32| (v * sc).round();
         let button = self.layout.ops_button;
@@ -510,9 +542,8 @@ impl App {
         }
         if let Some(ask) = j.asks.front() {
             let (buttons, dh) = match ask {
-                Ask::Conflict { .. } => (CONFLICT_BUTTONS.len(), s(236.0)),
-                Ask::Confirm(_) => (CONFIRM_BUTTONS.len(), s(168.0)),
-                Ask::Restore => (RESTORE_BUTTONS.len(), s(168.0)),
+                Ask::Conflict { .. } => (labels, s(236.0)),
+                Ask::Confirm(_) | Ask::Restore => (labels, s(168.0)),
             };
             let dw = s(DIALOG_W).min(w - s(32.0));
             let d = Rect::new(((w - dw) / 2.0).round(), ((h - dh) / 2.0).round().max(s(40.0)), dw, dh);
@@ -526,6 +557,9 @@ impl App {
 
     pub(super) fn jobs_hit(&self, x: f32, y: f32) -> Option<Hit> {
         let r = &self.jobs.r;
+        if self.jobs.asks.is_empty() && self.jobs.form.is_some() {
+            return self.form_hit(x, y);
+        }
         if self.jobs.modal() {
             if let Some(k) = r.buttons.iter().position(|b| b.contains(x, y)) {
                 return Some(Hit::DialogButton(k));
@@ -571,7 +605,7 @@ impl App {
     }
 
     pub(super) fn jobs_mouse_down(&mut self, h: Hit) -> bool {
-        let ours = matches!(h, Hit::Modal | Hit::Dialog | Hit::DialogButton(_) | Hit::DialogCheck | Hit::OpsButton | Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsClear | Hit::OpsCancel(_) | Hit::OpsMore(_) | Hit::OpsMenu(_));
+        let ours = matches!(h, Hit::Modal | Hit::Dialog | Hit::DialogButton(_) | Hit::DialogCheck | Hit::Form(_) | Hit::OpsButton | Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsClear | Hit::OpsCancel(_) | Hit::OpsMore(_) | Hit::OpsMenu(_));
         if !ours {
             if self.jobs.open {
                 self.jobs.open = false;
@@ -603,6 +637,7 @@ impl App {
             Hit::OpsMenu(k) => self.run_job_menu(k, now),
             Hit::DialogButton(k) => self.answer(k),
             Hit::DialogCheck => self.jobs.all = !self.jobs.all,
+            Hit::Form(_) => return self.form_up(h),
             _ => return false,
         }
         self.dirty = true;
@@ -638,7 +673,10 @@ impl App {
         if self.jobs.open && !self.search.active {
             self.draw_panel(g, t);
         }
-        if self.jobs.modal() {
+        if self.jobs.form.is_some() {
+            self.draw_form(g, t);
+        }
+        if !self.jobs.asks.is_empty() {
             self.draw_dialog(g, t);
         }
     }
@@ -761,6 +799,10 @@ impl App {
         g.dl.outline(d, t.input_border, s8, 1.0);
         let offset = self.utc_offset_min;
         let (title, lines): (String, Vec<String>) = match self.jobs.asks.front() {
+            Some(Ask::Conflict { conflict: c, .. }) if archive::is_unreadable(c) => {
+                let lines = vec![format!("{} cannot be read.", quoted(&c.source)), "Another program may be using it, or reading it needs permissions Flit does not have.".into()];
+                ("Some items cannot be compressed".into(), lines)
+            }
             Some(Ask::Conflict { conflict: c, .. }) => {
                 let folder = c.target.parent().map(|p| quoted(&p)).unwrap_or_default();
                 let both_dirs = c.from.attrs & c.to.attrs & crate::listing::attr::DIR != 0;
@@ -796,7 +838,8 @@ impl App {
                 g.dl.outline(bx, if self.hover == Hit::DialogCheck { t.accent } else { t.text_dim }, s4, s(1.0).max(1.0));
             }
             let baseline = (check.y + (check.h + mf.ascent - mf.descent) / 2.0).round();
-            g.text(bx.right() + s8, baseline, "Do this for all remaining conflicts", font, t.text, check.w - bx.w - s8);
+            let label = if self.jobs.asks.front().is_some_and(Ask::unreadable) { "Skip every item that cannot be read" } else { "Do this for all remaining conflicts" };
+            g.text(bx.right() + s8, baseline, label, font, t.text, check.w - bx.w - s8);
         }
         let labels = self.dialog_buttons();
         let buttons = self.jobs.r.buttons.clone();
