@@ -990,7 +990,7 @@ impl App {
         self.ops.press = None;
         let items = self.selected_items();
         let Ok(paths) = self.item_paths(&items) else { return false };
-        if paths.is_empty() {
+        if paths.is_empty() || self.archive_view().is_some() {
             return false;
         }
         self.pressed = Hit::None;

@@ -157,11 +157,6 @@ pub fn forget(archive: &FsPath) {
     index::forget(archive);
 }
 
-pub fn uncompressed_size(archive: &FsPath, utc_offset: i32) -> Result<(u64, usize), PlatformError> {
-    let index = index::open(archive, utc_offset)?;
-    Ok((index.items.iter().map(|i| i.size).sum(), index.items.iter().filter(|i| !i.dir).count()))
-}
-
 #[cfg(test)]
 #[path = "../test/lib.rs"]
 mod tests;

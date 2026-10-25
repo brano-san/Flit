@@ -298,7 +298,6 @@ fn smart_extraction_avoids_double_folders() {
     assert_eq!(smart("two.zip").items, vec![(t.fs("two.zip"), t.fs("out/two"))]);
     assert_eq!(t.read("out/one/inner/a.txt"), b"a");
     assert_eq!(t.read("out/two/y.txt"), b"y");
-    assert_eq!(uncompressed_size(&t.fs("two.zip"), 0).unwrap(), (2, 2));
 }
 
 #[test]
