@@ -116,15 +116,7 @@ fn remove(p: &FsPath) -> std::io::Result<()> {
     if meta.file_attributes() & FILE_ATTRIBUTE_DIRECTORY.0 != 0 {
         return std::fs::remove_dir_all(&path);
     }
-    std::fs::remove_file(&path).or_else(|e| {
-        let mut perm = meta.permissions();
-        if !perm.readonly() {
-            return Err(e);
-        }
-        perm.set_readonly(false);
-        std::fs::set_permissions(&path, perm)?;
-        std::fs::remove_file(&path)
-    })
+    std::fs::remove_file(&path)
 }
 
 fn failure(p: &FsPath, e: std::io::Error) -> PlatformError {
