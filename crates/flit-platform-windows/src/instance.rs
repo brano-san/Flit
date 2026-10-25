@@ -28,7 +28,7 @@ pub struct PipeInstance {
     pipe: Vec<u16>,
 }
 
-fn user_sid() -> Option<String> {
+pub(crate) fn user_sid() -> Option<String> {
     process_user_sid(unsafe { GetCurrentProcess() })
 }
 
@@ -46,7 +46,7 @@ fn elevated() -> bool {
     }
 }
 
-fn process_user_sid(process: HANDLE) -> Option<String> {
+pub(crate) fn process_user_sid(process: HANDLE) -> Option<String> {
     unsafe {
         let mut token = HANDLE::default();
         OpenProcessToken(process, TOKEN_QUERY, &mut token).ok()?;

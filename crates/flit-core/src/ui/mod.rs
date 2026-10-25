@@ -1,5 +1,6 @@
 pub mod edit;
 mod ops;
+mod search;
 mod tab;
 pub mod actions;
 mod field;
@@ -10,6 +11,7 @@ pub mod palette;
 pub mod sidebar;
 
 pub use ops::{base_name_len, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, ShellMenu, SHELL_VERBS};
+pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchSort};
 pub use sidebar::{Drive, KnownFolder, NavState, Places};
 pub use tab::Tab;
 
@@ -149,6 +151,7 @@ pub enum Effect {
     StartDrag(Vec<FsPath>),
     Pinned(Vec<Location>),
     RefreshPlaces,
+    Search(SearchRequest),
 }
 
 pub enum IconResult {
@@ -289,6 +292,7 @@ pub struct App {
     ops: ops::Ops,
     nav: nav::Nav,
     marquee: Option<marquee::Marquee>,
+    search: search::SearchView,
 }
 
 impl App {
@@ -327,6 +331,7 @@ impl App {
             ops: ops::Ops::default(),
             nav: nav::Nav::default(),
             marquee: None,
+            search: Default::default(),
         };
         let mut start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
         let total = start.len();
@@ -398,7 +403,7 @@ impl App {
     }
 
     pub fn ime_area(&self) -> Option<Rect> {
-        self.editing.then_some(self.layout.address).or_else(|| self.nav_ime_area()).or_else(|| self.rename_ime_area())
+        self.search_ime_area().or(self.editing.then_some(self.layout.address)).or_else(|| self.nav_ime_area()).or_else(|| self.rename_ime_area())
     }
 
     fn s(&self, v: f32) -> f32 {
@@ -668,6 +673,9 @@ impl App {
     }
 
     pub fn on_paste(&mut self, text: &str) {
+        if self.search.active {
+            return self.search_paste(text);
+        }
         if self.ops_paste(text) {
             return;
         }
@@ -821,6 +829,9 @@ impl App {
     }
 
     pub fn on_event(&mut self, ev: &Event, now: Instant) {
+        if self.search.active && self.search_event(ev, now) {
+            return;
+        }
         match ev {
             Event::Resized { width, height } => {
                 self.size = (*width as f32, *height as f32);
@@ -1256,14 +1267,23 @@ impl App {
         for _ in 0..2 {
             arena.reset();
             g.begin(th.bg);
-            self.draw_list(g, &arena, th);
-            self.draw_marquee(g, th);
-            self.draw_ops(g, th);
-            self.draw_header(g, th);
+            if self.search.active {
+                self.draw_search(g, &arena, th);
+            } else {
+                self.draw_list(g, &arena, th);
+                self.draw_marquee(g, th);
+                self.draw_ops(g, th);
+                self.draw_header(g, th);
+            }
             self.draw_title(g, th);
-            self.draw_toolbar(g, th);
-            self.draw_status(g, &arena, th);
-            self.draw_nav(g, th);
+            if self.search.active {
+                self.draw_search_bar(g, &arena, th);
+                self.draw_sidebar(g, th);
+            } else {
+                self.draw_toolbar(g, th);
+                self.draw_status(g, &arena, th);
+                self.draw_nav(g, th);
+            }
             if !g.atlas_reset {
                 break;
             }

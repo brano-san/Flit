@@ -1,5 +1,6 @@
 use crate::metrics::{Metrics, Step};
 use crate::places::PlacesWorker;
+use crate::search_client::SearchClient;
 use crate::state::{self, Saved};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use flit_core::input::Event;
@@ -143,6 +144,7 @@ struct Handler<P: Platform> {
     injection: Option<(Instant, Event)>,
     wake: Wake,
     device_gen: u64,
+    search: SearchClient,
     places: PlacesWorker,
 }
 
@@ -231,6 +233,7 @@ impl<P: Platform> Handler<P> {
                         st.app.open(&cmd, &P::known_folder, Instant::now());
                     }
                 }
+                Effect::Search(req) => self.search.submit(id, req),
                 Effect::NewWindow(routes) => {
                     let persisted = self.saved.persisted.clone();
                     let app = self.new_app(routes, persisted);
@@ -298,6 +301,11 @@ impl<P: Platform> Handler<P> {
             }
         }
         self.queued_opens.extend(self.opens.try_iter());
+        while let Ok((window, ev)) = self.search.events.try_recv() {
+            if let Some(st) = self.windows.get_mut(&window) {
+                st.app.on_search_event(ev, now);
+            }
+        }
         if let Some(places) = self.places.poll() {
             for st in self.windows.values_mut() {
                 st.app.set_places(places.clone());
@@ -514,6 +522,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
                 }
             }
         }
+        self.search.forget(id);
         if self.active == Some(id) {
             self.active = self.windows.keys().next().copied();
         }
@@ -553,6 +562,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         i.listen(sink.clone(), wake.clone());
     }
     let (shell, sorter, done) = start_workers::<P>(wake.clone())?;
+    let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes())?;
     let (routes, errors) = if open.is_empty() { Default::default() } else { open::routes(&open, &P::known_folder) };
     let new_window = open.target == OpenTarget::NewWindow;
     let mut h = Handler::<P> {
@@ -578,6 +588,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         sw: None,
         gpu_pending: 2,
         device_gen: 0,
+        search,
     };
     let mut first = h.new_app(routes, saved.persisted.clone());
     first.show_open_errors(&errors);

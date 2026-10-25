@@ -29,6 +29,8 @@ flit-platform-linux = { path = "crates/flit-platform-linux" }
 crossbeam-channel = "0.5"
 arc-swap = "1.7"
 rayon = "1.10"
+memchr = "2.7"
+regex = "1.11"
 bumpalo = { version = "3.16", features = ["collections"] }
 smallvec = "1.13"
 mimalloc = { version = "0.1", default-features = false }

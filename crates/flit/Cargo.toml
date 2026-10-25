@@ -12,6 +12,8 @@ profile = ["dep:tracing-tracy"]
 [dependencies]
 flit-core.workspace = true
 flit-platform.workspace = true
+flit-proto.workspace = true
+flit-search.workspace = true
 crossbeam-channel.workspace = true
 mimalloc.workspace = true
 serde.workspace = true

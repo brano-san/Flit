@@ -30,9 +30,9 @@ fn chords_are_unique_and_printable() {
 }
 
 #[test]
-fn shortcuts_reserved_for_other_features_stay_free() {
+fn shortcuts_of_other_features_are_registered() {
     for c in [ctrl(Key::Char('E')), ctrl_shift(Key::Char('F'))] {
-        assert!(find(c.key, c.mods).is_none(), "{} is reserved", chord_text(&c));
+        assert_eq!(find(c.key, c.mods).map(|a| a.id), Some("search.open"), "{}", chord_text(&c));
     }
     let file_ops = [
         (ctrl(Key::Char('C')), "file.copy"),

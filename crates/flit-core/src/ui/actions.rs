@@ -67,6 +67,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("tab.previous", "Previous tab", &[ctrl_shift(Key::Tab)], |a, _| a.select_tab((a.cur + a.tabs.len() - 1) % a.tabs.len())),
     Action::new("window.new", "New window", &[ctrl(Key::Char('N'))], |a, _| a.new_window_here()),
     Action::new("view.filter", "Filter items in this folder", &[ctrl(Key::Char('F'))], |a, _| a.open_filter()),
+    Action::new("search.open", "Search all drives", &[ctrl(Key::Char('E')), ctrl_shift(Key::Char('F'))], |a, _| a.open_search()),
     Action::new("view.hidden", "Show or hide hidden files", &[ctrl(Key::Char('H'))], |a, _| a.toggle_hidden()),
     Action::new("view.sort.name", "Sort by name", &[], |a, _| a.sort_by(SortField::Name)),
     Action::new("view.sort.modified", "Sort by date modified", &[], |a, _| a.sort_by(SortField::Modified)),

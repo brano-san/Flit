@@ -1,5 +1,6 @@
 #![cfg(windows)]
 
+mod access;
 mod clipboard;
 mod context_menu;
 mod d3d;
@@ -8,8 +9,12 @@ mod dwrite;
 mod fileops;
 mod fs;
 mod instance;
+mod mft;
+mod pipe;
 mod places;
+mod service;
 mod shell;
+mod walk_index;
 mod watcher;
 mod window;
 
@@ -17,14 +22,15 @@ pub use d3d::{D3dDevice, D3dRenderer};
 pub use dwrite::DWriteText;
 pub use fs::NtFs;
 pub use instance::PipeInstance;
+pub use mft::MftIndex;
+pub use pipe::PipeConn;
 pub use shell::ShellCom;
+pub use walk_index::WalkIndex;
 pub use watcher::DirWatcher;
 pub use window::{Win32, Win32Waker, Win32Window};
 
 use flit_core::{FsPath, Location};
-use flit_platform::{IndexSource, Platform, PlatformError, Service};
-use flit_search::index::{Checkpoint, IndexSink};
-use flit_search::proto::VolumeInfo;
+use flit_platform::{OnClient, Platform, PlatformError, Service};
 use windows::core::{w, PCWSTR, PWSTR};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Dwm::{DwmGetCompositionTimingInfo, DWM_TIMING_INFO};
@@ -82,6 +88,7 @@ impl Platform for Windows {
     type Instance = PipeInstance;
     type IndexSource = MftIndex;
     type Service = WinService;
+    type FallbackIndex = WalkIndex;
 
     fn text() -> Result<DWriteText, PlatformError> {
         DWriteText::new()
@@ -147,28 +154,23 @@ impl Platform for Windows {
     }
 }
 
-pub struct MftIndex;
-
-impl IndexSource for MftIndex {
-    fn volumes(&self) -> Result<Vec<VolumeInfo>, PlatformError> {
-        Ok(Vec::new())
-    }
-    fn scan<S: IndexSink>(&mut self, _: &str, _: &mut S) -> Result<Checkpoint, PlatformError> {
-        Err(PlatformError::unsupported("MFT scan (stage 2)"))
-    }
-    fn changes<S: IndexSink>(&mut self, _: &str, _: Checkpoint, _: &mut S) -> Result<Checkpoint, PlatformError> {
-        Err(PlatformError::unsupported("USN journal (stage 2)"))
-    }
-}
+const PIPE_NAME: &str = r"\\.\pipe\flit-indexd";
 
 pub struct WinService;
 
 impl Service for WinService {
+    type Conn = PipeConn;
     fn endpoint() -> String {
-        r"\\.\pipe\flit-indexd".into()
+        PIPE_NAME.into()
     }
     fn run(body: fn() -> Result<(), PlatformError>) -> Result<(), PlatformError> {
-        body()
+        service::run(body)
+    }
+    fn connect() -> Result<PipeConn, PlatformError> {
+        pipe::connect_to(&Self::endpoint())
+    }
+    fn listen(max_clients: usize, on_client: OnClient<PipeConn>) -> Result<(), PlatformError> {
+        pipe::listen_at(&Self::endpoint(), max_clients, on_client)
     }
 }
 
