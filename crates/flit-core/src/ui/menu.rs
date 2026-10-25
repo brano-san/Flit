@@ -1,4 +1,5 @@
 use super::actions::{chord_text, ACTIONS};
+use super::toolbar::{Overflow, ToolMenu};
 use super::{App, LayoutMode};
 use crate::location::Location;
 use crate::path::PathKind;
@@ -182,39 +183,96 @@ impl App {
     }
 
     fn view_menus(&self, m: &mut Menu) {
+        m.submenu("Layout", |m| self.layout_entries(m));
+        m.submenu("Sort by", |m| self.sort_entries(m));
+        m.submenu("Group by", |m| self.group_entries(m));
+    }
+
+    fn layout_entries(&self, m: &mut Menu) {
         let t = self.tab();
-        let in_bin = t.view_loc.is_recycle_bin();
-        let (sort, group) = (t.view_spec.sort, t.view_spec.group);
-        m.submenu("Layout", |m| {
-            for (mode, id) in LAYOUT_CHOICES {
-                m.command(Cmd::Action(id), mode.title(), keys_of(id), mode == t.mode);
+        for (mode, id) in LAYOUT_CHOICES {
+            m.command(Cmd::Action(id), mode.title(), keys_of(id), mode == t.mode);
+        }
+        m.separator();
+        m.action("view.size.larger", "Larger items");
+        m.action("view.size.smaller", "Smaller items");
+        m.separator();
+        m.check("view.thumbnails", "Show thumbnails", self.prefs.thumbnails);
+    }
+
+    fn sort_entries(&self, m: &mut Menu) {
+        let t = self.tab();
+        let sort = t.view_spec.sort;
+        m.choices(if t.view_loc.is_recycle_bin() { &BIN_SORTS[..] } else { &SORTS[..] }, sort.field);
+        m.separator();
+        m.check("view.sort.ascending", "Ascending", !sort.descending);
+        m.check("view.sort.descending", "Descending", sort.descending);
+        m.separator();
+        m.choices(&FOLDERS, sort.folders);
+    }
+
+    fn group_entries(&self, m: &mut Menu) {
+        let t = self.tab();
+        let group = t.view_spec.group;
+        m.choices(if t.view_loc.is_recycle_bin() { &BIN_GROUPS[..] } else { &GROUPS[..] }, group.field);
+        if group.field != GroupField::None {
+            m.separator();
+            m.check("view.group.ascending", "Ascending", !group.descending);
+            m.check("view.group.descending", "Descending", group.descending);
+        }
+        if group.field.is_date() {
+            m.separator();
+            m.choices(&UNITS, group.unit);
+        }
+    }
+
+    fn new_entries(&self, m: &mut Menu) {
+        m.command(Cmd::NewItem(0), "Folder", keys_of("file.new_folder"), false);
+        m.command(Cmd::NewItem(1), "Shortcut", String::new(), false);
+        for (k, tpl) in self.nav.sidebar.places.templates.iter().enumerate() {
+            m.command(Cmd::NewItem(k + 2), &tpl.label, String::new(), false);
+        }
+    }
+
+    fn select_entries(&self, m: &mut Menu) {
+        m.action("select.all", "Select all");
+        m.action("select.invert", "Invert selection");
+        m.action("select.none", "Clear selection");
+    }
+
+    fn tool_entries(&self, m: &mut Menu, tool: ToolMenu) {
+        match tool {
+            ToolMenu::New => self.new_entries(m),
+            ToolMenu::Select => self.select_entries(m),
+            ToolMenu::Sort => self.sort_entries(m),
+            ToolMenu::Group => self.group_entries(m),
+            ToolMenu::Layout => self.layout_entries(m),
+        }
+    }
+
+    pub(super) fn build_tool_menu(&mut self, tool: ToolMenu) -> Vec<MenuItem> {
+        self.collect(|a, m| a.tool_entries(m, tool))
+    }
+
+    pub(super) fn build_overflow_menu(&mut self, items: &[Overflow]) -> Vec<MenuItem> {
+        self.collect(|a, m| {
+            for item in items {
+                match *item {
+                    Overflow::Action(id, label) => m.action(id, label),
+                    Overflow::Menu(tool, label) => m.submenu(label, |m| a.tool_entries(m, tool)),
+                    Overflow::Separator => m.separator(),
+                }
             }
+        })
+    }
+
+    pub(super) fn build_toolbar_menu(&mut self) -> Vec<MenuItem> {
+        self.collect(|_, m| {
+            m.action("toolbar.customize", "Customize the toolbar");
+            m.action("toolbar.reset", "Reset the toolbar to defaults");
             m.separator();
-            m.action("view.size.larger", "Larger items");
-            m.action("view.size.smaller", "Smaller items");
-            m.separator();
-            m.check("view.thumbnails", "Show thumbnails", self.prefs.thumbnails);
-        });
-        m.submenu("Sort by", |m| {
-            m.choices(if in_bin { &BIN_SORTS[..] } else { &SORTS[..] }, sort.field);
-            m.separator();
-            m.check("view.sort.ascending", "Ascending", !sort.descending);
-            m.check("view.sort.descending", "Descending", sort.descending);
-            m.separator();
-            m.choices(&FOLDERS, sort.folders);
-        });
-        m.submenu("Group by", |m| {
-            m.choices(if in_bin { &BIN_GROUPS[..] } else { &GROUPS[..] }, group.field);
-            if group.field != GroupField::None {
-                m.separator();
-                m.check("view.group.ascending", "Ascending", !group.descending);
-                m.check("view.group.descending", "Descending", group.descending);
-            }
-            if group.field.is_date() {
-                m.separator();
-                m.choices(&UNITS, group.unit);
-            }
-        });
+            m.action("toolbar.toggle", "Hide the toolbar");
+        })
     }
 
     fn item_menu(&self, m: &mut Menu) {
@@ -287,13 +345,7 @@ impl App {
         }
         if files {
             if m.shown("file.new_item") {
-                m.submenu("New", |m| {
-                    m.command(Cmd::NewItem(0), "Folder", keys_of("file.new_folder"), false);
-                    m.command(Cmd::NewItem(1), "Shortcut", String::new(), false);
-                    for (k, tpl) in self.nav.sidebar.places.templates.iter().enumerate() {
-                        m.command(Cmd::NewItem(k + 2), &tpl.label, String::new(), false);
-                    }
-                });
+                m.submenu("New", |m| self.new_entries(m));
             }
             m.action("file.paste", "Paste");
             m.action("app.terminal", "Open in terminal");

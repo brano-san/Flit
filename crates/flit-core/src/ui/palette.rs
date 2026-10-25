@@ -2,6 +2,7 @@ use super::actions::{keys_text, ACTIONS};
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
 use super::tags::TagPick;
+use super::toolbar::ToolPick;
 use super::{App, Effect, Hit};
 use crate::input::{Key, Mods};
 use crate::path::FsPath;
@@ -24,6 +25,7 @@ pub(super) enum Pick {
     Stream(FsPath),
     FolderIcon(FsPath),
     Tags(TagPick),
+    Toolbar(ToolPick),
 }
 
 impl Pick {
@@ -35,6 +37,7 @@ impl Pick {
             Pick::Stream(_) => "Name of the new alternate data stream",
             Pick::FolderIcon(_) => "Full path of an icon, program or library, then optionally a comma and the icon index",
             Pick::Tags(t) => t.placeholder(),
+            Pick::Toolbar(t) => t.placeholder(),
         }
     }
 
@@ -46,6 +49,7 @@ impl Pick {
             Pick::Stream(_) => "Enter creates the stream",
             Pick::FolderIcon(_) => "Enter writes the icon into desktop.ini of the folder",
             Pick::Tags(t) => t.empty(),
+            Pick::Toolbar(_) => "No matching buttons",
         }
     }
 
@@ -131,6 +135,10 @@ impl Palette {
         }
     }
 
+    pub(super) fn select_row(&mut self, k: usize) {
+        self.select(k.min(self.matches.len().saturating_sub(1)) as isize);
+    }
+
     fn scroll(&mut self, rows: isize) {
         let max = self.matches.len().saturating_sub(MAX_ROWS) as isize;
         self.first = (self.first as isize + rows).clamp(0, max) as usize;
@@ -173,6 +181,7 @@ impl App {
         match p.pick {
             Pick::Commands => (ACTIONS[id].run)(self, now),
             Pick::Tags(t) => self.tag_choose(t, id, now),
+            Pick::Toolbar(t) => self.tool_choose(t, id),
             _ => self.new_item(id),
         }
     }

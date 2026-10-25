@@ -17,6 +17,7 @@ pub mod palette;
 mod preview_pane;
 pub mod sidebar;
 mod tags;
+mod toolbar;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchSort};
@@ -27,6 +28,7 @@ pub use jobs::JobState;
 pub use preview_pane::PaneState;
 pub use menu::MenuItem;
 pub use tab::Tab;
+pub use toolbar::{Show, ToolContext, ToolItem, ToolbarState, CONTEXTS};
 
 use crate::fmt as format;
 use crate::hash::{self, FxHashMap};
@@ -194,6 +196,7 @@ pub enum Effect {
     Host(HostCmd),
     Timer(Duration),
     Tags(TagRequest),
+    Share(Vec<FsPath>),
 }
 
 pub enum IconResult {
@@ -254,6 +257,7 @@ enum Hit {
     Group(usize),
     Pane(usize, Option<usize>),
     Preview(preview_pane::PaneHit),
+    Tool(toolbar::ToolHit),
     ListEmpty,
     Track,
     Thumb,
@@ -301,6 +305,7 @@ struct Layout {
     new_tab: Rect,
     caption: [Rect; 3],
     toolbar: Rect,
+    commands: Rect,
     nav: [Rect; 4],
     address: Rect,
     ops_button: Rect,
@@ -378,6 +383,7 @@ pub struct App {
     details: details::Details,
     tag_fixes: Vec<(FsPath, u32, Instant)>,
     preview: preview_pane::PreviewPane,
+    toolbar: toolbar::Toolbar,
 }
 
 impl App {
@@ -434,6 +440,7 @@ impl App {
             details: Default::default(),
             tag_fixes: Vec::new(),
             preview: Default::default(),
+            toolbar: Default::default(),
         };
         let mut start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
         let total = start.len();
@@ -859,6 +866,7 @@ impl App {
         let ops_button = self.ops_button_visible();
         let (kinds, widths) = (self.column_kinds(), self.tab().columns);
         let status_bar = self.prefs.status_bar || self.tab().error.is_some();
+        let tool_h = self.toolbar_h();
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
         let l = &mut self.layout;
@@ -890,7 +898,8 @@ impl App {
         let right = if ops_button { w - s(10.0) - s(NAV_W) } else { w };
         l.ops_button = if ops_button { Rect::new(right + s(4.0), l.nav[0].y, s(NAV_W), l.nav[0].h) } else { Rect::default() };
         l.address = Rect::new(ax, l.toolbar.y + s(5.0), (right - s(12.0) - ax).max(s(40.0)), s(TOOL_H - 10.0));
-        l.header = Rect::new(cx, l.toolbar.bottom() + filter_h, w - cx, s(HEADER_H));
+        l.commands = Rect::new(0.0, l.toolbar.bottom(), w, tool_h);
+        l.header = Rect::new(cx, l.commands.bottom() + filter_h, w - cx, s(HEADER_H));
         let status_h = if status_bar { s(STATUS_H) } else { 0.0 };
         l.status = Rect::new(0.0, h - status_h, w, status_h);
         if !status_bar {
@@ -939,7 +948,7 @@ impl App {
     }
 
     fn hit(&self, x: f32, y: f32) -> Hit {
-        if let Some(h) = self.jobs_hit(x, y) {
+        if let Some(h) = self.jobs_hit(x, y).or_else(|| self.toolbar_hit(x, y)) {
             return h;
         }
         if let Some(h) = self.nav_hit(x, y).or_else(|| self.preview_hit(x, y)) {
@@ -1091,6 +1100,7 @@ impl App {
                 self.timer_at = None;
                 self.ops_timer(now);
                 self.hover_timer(now);
+                self.toolbar_timer(now);
             }
             Event::ClipboardChanged(seq) => self.clipboard_changed(*seq),
             Event::Hosted(ev) => self.on_hosted(ev.clone()),
@@ -1105,7 +1115,7 @@ impl App {
     }
 
     fn mouse_move(&mut self, x: f32, y: f32, now: Instant) {
-        if self.autoscroll_move(self.along_of(x, y)) || self.ops_mouse_move(x, y) || self.marquee_move(x, y) {
+        if self.toolbar_mouse_move(x) || self.autoscroll_move(self.along_of(x, y)) || self.ops_mouse_move(x, y) || self.marquee_move(x, y) {
             return;
         }
         match self.drag {
@@ -1144,6 +1154,7 @@ impl App {
         };
         self.set_cursor(cursor);
         self.hover_pick(h, now);
+        self.toolbar_hover(h, now);
         if h != self.hover {
             self.hover = h;
             self.dirty = true;
@@ -1156,7 +1167,7 @@ impl App {
             return;
         }
         let h = self.hit(x, y);
-        if self.nav_mouse_down(h, (x, y), button, clicks, now) {
+        if self.nav_mouse_down(h, (x, y), button, clicks, now) || self.toolbar_mouse_down(h, x, button) {
             return;
         }
         match (button, h) {
@@ -1240,7 +1251,7 @@ impl App {
         if let Drag::PinMove { from, to } = was {
             return self.drop_pin(from, to);
         }
-        if button != MouseButton::Left || was != Drag::None {
+        if self.toolbar_mouse_up(x, y, button) || button != MouseButton::Left || was != Drag::None {
             return;
         }
         let h = self.hit(x, y);
@@ -1272,6 +1283,7 @@ impl App {
             Hit::SidePin(i) => self.toggle_pin_item(i),
             Hit::FilterClose => self.close_filter(),
             Hit::PaletteRow(i) => self.run_palette_item(i, now),
+            Hit::Tool(t) => self.toolbar_click(t, now),
             _ => {}
         }
     }
@@ -1316,7 +1328,7 @@ impl App {
 
     fn key(&mut self, key: Key, m: Mods, now: Instant) {
         self.dirty = true;
-        if self.jobs_key(key, m) || self.ops_key(key, m) {
+        if self.toolbar_key(key) || self.jobs_key(key, m) || self.ops_key(key, m) {
             return;
         }
         if self.editing {
@@ -1488,10 +1500,12 @@ impl App {
                 self.draw_sidebar(g, th);
             } else {
                 self.draw_toolbar(g, th);
+                self.draw_toolbar_row(g, th);
                 if self.layout.status.h > 0.0 {
                     self.draw_status(g, &arena, th);
                 }
                 self.draw_nav(g, th);
+                self.draw_toolbar_popups(g, th);
             }
             self.draw_jobs(g, th);
             if !g.atlas_reset {

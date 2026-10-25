@@ -23,7 +23,7 @@ impl App {
     }
 
     pub(super) fn layout_nav(&mut self) {
-        let (top, bottom, x) = (self.layout.toolbar.bottom(), self.layout.status.y, self.layout.header.x);
+        let (top, bottom, x) = (self.layout.commands.bottom(), self.layout.status.y, self.layout.header.x);
         self.layout_sidebar(top, bottom);
         self.layout_filter(x, top);
         self.layout_palette(self.layout.title.bottom());
