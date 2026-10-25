@@ -4,6 +4,7 @@ mod d3d;
 mod dwrite;
 mod fs;
 mod instance;
+mod mft;
 mod pipe;
 mod shell;
 mod walk_index;
@@ -14,6 +15,7 @@ pub use d3d::{D3dDevice, D3dRenderer};
 pub use dwrite::DWriteText;
 pub use fs::NtFs;
 pub use instance::PipeInstance;
+pub use mft::MftIndex;
 pub use pipe::PipeConn;
 pub use shell::ShellCom;
 pub use walk_index::WalkIndex;
@@ -21,9 +23,7 @@ pub use watcher::DirWatcher;
 pub use window::{Win32, Win32Waker, Win32Window};
 
 use flit_core::{FsPath, Location};
-use flit_platform::{IndexSource, OnClient, Platform, PlatformError, Service};
-use flit_search::index::{Checkpoint, IndexSink};
-use flit_search::proto::VolumeInfo;
+use flit_platform::{OnClient, Platform, PlatformError, Service};
 use windows::core::{w, PCWSTR, PWSTR};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Dwm::{DwmGetCompositionTimingInfo, DWM_TIMING_INFO};
@@ -136,23 +136,6 @@ impl Platform for Windows {
         unsafe { DwmGetCompositionTimingInfo(HWND::default(), &mut info) }.ok()?;
         let rate = info.rateRefresh;
         (rate.uiNumerator > 0 && rate.uiDenominator > 0).then(|| std::time::Duration::from_secs_f64(rate.uiDenominator as f64 / rate.uiNumerator as f64))
-    }
-}
-
-pub struct MftIndex;
-
-impl IndexSource for MftIndex {
-    fn new() -> Result<Self, PlatformError> {
-        Ok(MftIndex)
-    }
-    fn volumes(&self) -> Result<Vec<VolumeInfo>, PlatformError> {
-        Ok(Vec::new())
-    }
-    fn scan<S: IndexSink>(&mut self, _: &str, _: &mut S) -> Result<Checkpoint, PlatformError> {
-        Err(PlatformError::unsupported("MFT scan (stage 2)"))
-    }
-    fn changes<S: IndexSink>(&mut self, _: &str, _: Checkpoint, _: &mut S) -> Result<Option<Checkpoint>, PlatformError> {
-        Err(PlatformError::unsupported("USN journal (stage 2)"))
     }
 }
 

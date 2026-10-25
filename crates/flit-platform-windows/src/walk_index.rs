@@ -26,7 +26,7 @@ const SYNTHETIC: u64 = 1 << 63;
 
 type Record = FILE_NOTIFY_EXTENDED_INFORMATION;
 
-struct Handle(HANDLE);
+pub(crate) struct Handle(pub HANDLE);
 unsafe impl Send for Handle {}
 unsafe impl Sync for Handle {}
 
@@ -261,14 +261,14 @@ fn walk<S: IndexSink>(root: &FsPath, root_id: u64, sink: &mut S, synthetic: &Ato
     });
 }
 
-fn file_id(path: &FsPath) -> Option<u64> {
+pub(crate) fn file_id(path: &FsPath) -> Option<u64> {
     let h = Handle(open_dir(path, FILE_READ_ATTRIBUTES.0, false).ok()?);
     let mut info = BY_HANDLE_FILE_INFORMATION::default();
     unsafe { GetFileInformationByHandle(h.0, &mut info) }.ok()?;
     Some(((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64)
 }
 
-fn volume_id(root: &FsPath) -> String {
+pub(crate) fn volume_id(root: &FsPath) -> String {
     let d = root.display();
     if root.kind() == PathKind::Drive && root.is_root() {
         d.trim_end_matches('\\').to_owned()
@@ -285,7 +285,7 @@ fn relative(root: &FsPath, rel: &[u16]) -> FsPath {
 
 pub struct WalkIndex {
     roots: Vec<FsPath>,
-    watches: Vec<(String, RootWatch)>,
+    watches: Vec<(String, Option<RootWatch>)>,
     synthetic: AtomicU64,
 }
 
@@ -328,7 +328,7 @@ impl WalkIndex {
     }
 }
 
-fn fixed_drives() -> Vec<FsPath> {
+pub(crate) fn fixed_drives() -> Vec<FsPath> {
     let mask = unsafe { GetLogicalDrives() };
     (0..26u8)
         .filter(|i| mask & (1 << i) != 0)
@@ -351,9 +351,7 @@ impl IndexSource for WalkIndex {
     fn scan<S: IndexSink>(&mut self, volume: &str, sink: &mut S) -> Result<Checkpoint, PlatformError> {
         let root = self.root(volume)?;
         self.watches.retain(|(v, _)| v != volume);
-        if let Some(w) = RootWatch::start(&root) {
-            self.watches.push((volume.to_owned(), w));
-        }
+        self.watches.push((volume.to_owned(), RootWatch::start(&root)));
         let root_id = file_id(&root).ok_or_else(|| PlatformError::new(-1, format!("cannot open {}", root.display())))?;
         sink.upsert(&IndexRecord { id: root_id, parent: root_id, name: b".", size: 0, modified: 0, attrs: attr::DIR });
         walk(&root, root_id, sink, &self.synthetic);
@@ -362,7 +360,8 @@ impl IndexSource for WalkIndex {
 
     fn changes<S: IndexSink>(&mut self, volume: &str, from: Checkpoint, sink: &mut S) -> Result<Option<Checkpoint>, PlatformError> {
         let root = self.root(volume)?;
-        let Some((_, w)) = self.watches.iter().find(|(v, _)| v == volume) else { return Ok(Some(from)) };
+        let Some((_, watch)) = self.watches.iter().find(|(v, _)| v == volume) else { return Ok(None) };
+        let Some(w) = watch else { return Ok(Some(from)) };
         let q = w.take();
         if q.overflow {
             return Ok(None);
