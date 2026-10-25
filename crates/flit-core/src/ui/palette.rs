@@ -2,6 +2,7 @@ use super::actions::{keys_text, ACTIONS};
 use super::describe::description;
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
+use super::settings_page::SettingPick;
 use super::tags::TagPick;
 use super::toolbar::ToolPick;
 use super::{App, Effect, Hit};
@@ -30,6 +31,7 @@ pub(super) enum Pick {
     Library(FsPath),
     LibraryAdd(FsPath),
     Tags(TagPick),
+    Setting(SettingPick),
     Toolbar(ToolPick),
 }
 
@@ -46,6 +48,7 @@ impl Pick {
             Pick::Library(_) => "Enter makes a folder the default save location, Delete removes it from the library",
             Pick::LibraryAdd(_) => "Full path of the folder to include in the library",
             Pick::Tags(t) => t.placeholder(),
+            Pick::Setting(p) => p.placeholder(),
             Pick::Toolbar(t) => t.placeholder(),
         }
     }
@@ -62,12 +65,13 @@ impl Pick {
             Pick::Library(_) => "No matching folders",
             Pick::LibraryAdd(_) => "Enter adds the folder to the library",
             Pick::Tags(t) => t.empty(),
+            Pick::Setting(p) => p.empty(),
             Pick::Toolbar(_) => "No matching buttons",
         }
     }
 
     fn is_input(&self) -> bool {
-        matches!(self, Pick::Shortcut(_) | Pick::Stream(_) | Pick::FolderIcon(_) | Pick::NewLibrary | Pick::LibraryAdd(_)) || matches!(self, Pick::Tags(t) if t.is_input())
+        matches!(self, Pick::Shortcut(_) | Pick::Stream(_) | Pick::FolderIcon(_) | Pick::NewLibrary | Pick::LibraryAdd(_)) || matches!(self, Pick::Tags(t) if t.is_input()) || matches!(self, Pick::Setting(p) if p.is_input())
     }
 }
 
@@ -211,6 +215,7 @@ impl App {
             Pick::Encoding(archive) => self.set_encoding(&archive, id, now),
             Pick::Library(lib) => self.library_row(lib, &p.titles[id], false),
             Pick::Tags(t) => self.tag_choose(t, id, now),
+            Pick::Setting(p) => self.setting_choose(p, id),
             Pick::Toolbar(t) => self.tool_choose(t, id),
             _ => self.new_item(id),
         }

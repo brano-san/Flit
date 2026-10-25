@@ -2,6 +2,7 @@ use crate::metrics::{Metrics, Step};
 use crate::places::{PlacesWorker, Reply};
 use crate::search_client::SearchClient;
 use crate::session::{self, Files, Session, Writer};
+use crate::settings::{self, Job, Settings};
 use crate::state::{self, Saved, Tools};
 use crate::tags::{self, TagWorker};
 use crate::thumbs::ThumbCache;
@@ -13,7 +14,7 @@ use flit_core::preview::{PreviewData, PreviewRequest};
 use flit_core::sort::{self, ViewSpec};
 use flit_core::tags::TagRequest;
 use flit_core::text::Gfx;
-use flit_core::ui::{App, DragEvent, Effect, IconRequest, IconResult, MovedTab, Persisted, Startup, Typed, WindowCmd, WindowSession};
+use flit_core::ui::{About, App, DragEvent, Effect, IconRequest, IconResult, MovedTab, Persisted, SettingsCmd, Startup, Typed, Value, WindowCmd, WindowSession};
 use flit_core::{FsPath, Location, ProviderEvent, ProviderId, ProviderRequest, TabId};
 use flit_platform::*;
 use std::collections::{HashMap, VecDeque};
@@ -268,6 +269,9 @@ struct Handler<P: Platform> {
     timing: bool,
     requested: Option<Instant>,
     tags: TagWorker,
+    settings: Settings,
+    dates: (String, String),
+    about: About,
 }
 
 impl<P: Platform> Handler<P> {
@@ -303,6 +307,12 @@ impl<P: Platform> Handler<P> {
         app.set_places(self.places.current());
         app.share_typed(self.typed.clone());
         app.set_tags(self.tags.current());
+        app.set_date_patterns(self.dates.0.clone(), self.dates.1.clone());
+        app.about = self.about.clone();
+        if !self.settings.values.is_empty() {
+            let all: Vec<(usize, Value)> = self.settings.values.iter().cloned().enumerate().collect();
+            app.apply_settings(&all);
+        }
         let fx: Vec<Effect> = app.drain_effects().collect();
         for e in fx {
             if let Effect::Provider { provider, req } = e {
@@ -516,8 +526,12 @@ impl<P: Platform> Handler<P> {
                 Effect::Library(op) => self.places.library(op),
                 Effect::Timer(d) => window.set_timer(d.as_millis().clamp(1, u32::MAX as u128) as u32),
                 Effect::Tags(req) => self.tags.submit(Some(id), req),
+                Effect::Settings(SettingsCmd::Export { path, text, replace }) => self.settings.send(Job::Export(crate::preview::std_path(&path), text, replace)),
+                Effect::Settings(SettingsCmd::Import(path)) => self.settings.send(Job::Import(crate::preview::std_path(&path))),
+                Effect::Settings(SettingsCmd::CacheSize) => self.settings.send(Job::CacheSize),
             }
         }
+        self.sync_settings(id);
         if self.windows.get(&id).is_some_and(|st| st.app.has_effects()) {
             return self.flush(window);
         }
@@ -530,6 +544,89 @@ impl<P: Platform> Handler<P> {
             }
         }
         self.note_session(window);
+    }
+
+    fn sync_settings(&mut self, id: WindowId) {
+        let Some(st) = self.windows.get(&id) else { return };
+        if self.settings.values.is_empty() {
+            return;
+        }
+        let values = st.app.setting_values();
+        if values == self.settings.values {
+            return;
+        }
+        let changed: Vec<(usize, Value)> = values.iter().enumerate().filter(|(i, v)| self.settings.values.get(*i) != Some(*v)).map(|(i, v)| (i, v.clone())).collect();
+        for (_, st) in self.windows.iter_mut().filter(|(w, _)| **w != id) {
+            st.app.apply_settings(&changed);
+        }
+        for app in &mut self.pending {
+            app.apply_settings(&changed);
+        }
+        self.settings.set_values(values);
+        self.settings.save();
+        (self.wake)();
+    }
+
+    fn settings_replies(&mut self, window: &Win<P>) {
+        let id = window.id();
+        while let Ok(reply) = self.settings.replies.try_recv() {
+            match reply {
+                settings::Reply::System { os, dates } => {
+                    self.about.os = os;
+                    self.share_about();
+                    for app in self.windows.values_mut().map(|st| &mut st.app).chain(self.pending.iter_mut()) {
+                        app.set_date_patterns(dates.0.clone(), dates.1.clone());
+                    }
+                    self.dates = dates;
+                }
+                settings::Reply::CacheUsed(bytes) => {
+                    self.about.cache_bytes = Some(bytes);
+                    self.share_about();
+                }
+                settings::Reply::Changed(text) => self.reload_settings(id, &text),
+                settings::Reply::Imported(Ok(text)) => {
+                    if let Some(st) = self.windows.get_mut(&id) {
+                        st.app.import_settings(&text);
+                    }
+                }
+                settings::Reply::Imported(Err(e)) => self.status(id, format!("Cannot read the settings file: {e}")),
+                settings::Reply::Exported(Ok(path)) => self.status(id, format!("Exported the settings and tags to {}", path.display())),
+                settings::Reply::Exported(Err(e)) => self.status(id, format!("Cannot export the settings: {e}")),
+                settings::Reply::ExportExists { path, size, modified } => {
+                    if let (Some(st), Some(path)) = (self.windows.get_mut(&id), FsPath::parse(&path.to_string_lossy())) {
+                        st.app.ask_replace_export(path, size, modified);
+                    }
+                }
+            }
+        }
+    }
+
+    fn share_about(&mut self) {
+        for st in self.windows.values_mut() {
+            st.app.set_about(self.about.clone());
+        }
+        for app in &mut self.pending {
+            app.set_about(self.about.clone());
+        }
+    }
+
+    fn status(&mut self, id: WindowId, text: String) {
+        if let Some(st) = self.windows.get_mut(&id) {
+            st.app.status(text);
+        }
+    }
+
+    fn reload_settings(&mut self, id: WindowId, text: &str) {
+        let doc = flit_core::ui::settings::parse(text);
+        let Some(st) = self.windows.get_mut(&id) else { return };
+        st.app.apply_doc(&doc);
+        let values = st.app.setting_values();
+        let all: Vec<(usize, Value)> = values.iter().cloned().enumerate().collect();
+        for app in self.windows.iter_mut().filter(|(w, _)| **w != id).map(|(_, st)| &mut st.app).chain(self.pending.iter_mut()) {
+            app.apply_settings(&all);
+        }
+        self.settings.adopt(&doc, values);
+        (self.wake)();
     }
 
     fn drain(&mut self) {
@@ -689,6 +786,7 @@ impl<P: Platform> Handler<P> {
             }
         }
         let Some(st) = self.windows.get_mut(&id) else { return };
+        st.app.set_clock(filetime_now());
         let t = Instant::now();
         let animating = st.app.frame(&mut st.gfx, t);
         let renderer = st.renderer.as_mut().unwrap();
@@ -798,6 +896,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         let id = window.id();
         if event == Event::Focus(true) {
             self.active = Some(id);
+            self.settings.send(Job::Check);
         }
         if event == Event::SessionEnding && !self.ending {
             if let Some(st) = self.windows.get_mut(&id) {
@@ -833,6 +932,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
             window.activate();
         }
         self.drain();
+        self.settings_replies(window);
         self.inject_due(window);
         self.poll_gpu(false);
         if self.hw.is_some() && self.windows.get(&window.id()).is_some_and(|st| st.software) {
@@ -876,6 +976,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
             self.take_opens();
             if self.queued_opens.is_empty() {
                 state::save::<P>(&self.saved);
+                self.settings.finish();
                 self.final_session(last.filter(|_| !self.ending));
                 self.local.wait_idle(OPS_GRACE);
             } else {
@@ -890,9 +991,29 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
 
 use flit_core::input::HitArea;
 
+fn filetime_now() -> i64 {
+    let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    (unix + 11_644_473_600) * 10_000_000
+}
+
 pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Option<PathBuf>, started: Instant) -> Result<(), PlatformError> {
     let mut saved = state::load::<P>();
-    saved.persisted.split.dual |= metrics.is_some() && crate::metrics::dual_at_start();
+    let settings_file = settings::file::<P>();
+    let settings_text = settings_file.as_deref().and_then(settings::read);
+    let mut doc = settings_text.as_deref().map(flit_core::ui::settings::parse).unwrap_or_default();
+    if let Some(startup) = doc.startup() {
+        saved.persisted.startup = startup;
+    }
+    if let Some(mb) = settings::thumb_cache_mb(&doc) {
+        saved.persisted.prefs.thumb_cache_mb = mb;
+    }
+    if let Some(Value::Bool(dual)) = doc.value("general.dual_pane") {
+        saved.persisted.split.dual = *dual;
+    }
+    if metrics.is_some() && crate::metrics::dual_at_start() {
+        saved.persisted.split.dual = true;
+        doc.values.retain(|(i, _)| flit_core::ui::SETTINGS[*i].id != "general.dual_pane");
+    }
     let ws = Ws::<P>::new()?;
     let waker = ws.waker();
     let wake: Wake = Arc::new(move || waker.wake());
@@ -914,6 +1035,8 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let thumb_cache: Cache = P::state_dir().map(|d| Arc::new(Mutex::new(ThumbCache::new(d.join("thumbs"), saved.persisted.prefs.thumb_cache_mb))));
     let (shell, thumbs, sorter, previews, done) = start_workers::<P>(wake.clone(), thumb_cache.clone())?;
     let tags = TagWorker::start::<P>(local.tags().clone(), wake.clone())?;
+    let about = About { os: String::new(), file: settings_file.as_deref().and_then(|f| FsPath::parse(&f.to_string_lossy())), cache_bytes: None };
+    let settings = Settings::start::<P>(settings_file.filter(|_| metrics.is_none()), settings_text, thumb_cache.clone(), wake.clone());
     let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes(), local.tags().clone())?;
     let (routes, errors) = if open.is_empty() { Default::default() } else { open::routes(&open, &P::known_folder) };
     let new_window = open.target == OpenTarget::NewWindow;
@@ -971,6 +1094,9 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         timing: std::env::var_os("FLIT_TIMING").is_some(),
         requested: Some(started),
         tags,
+        settings,
+        dates: ("yyyy-MM-dd".into(), "HH:mm".into()),
+        about,
     };
     let (mut first, placement) = match &first_window {
         Some((ws, placement)) => (h.restored_app(ws), *placement),
@@ -980,6 +1106,9 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
             (app, if new_window { None } else { saved.placement() })
         }
     };
+    first.apply_doc(&doc);
+    let values = first.setting_values();
+    h.settings.adopt(&doc, values);
     if h.crashed.is_some() {
         first.offer_restore();
     }

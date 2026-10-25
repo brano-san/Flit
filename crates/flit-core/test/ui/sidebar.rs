@@ -60,7 +60,8 @@ fn layout_shows_the_pin_hint_and_scrolls_long_lists() {
     assert!(app.nav.sidebar.rects[0].y < first, "the wheel scrolls the sidebar, not the list");
     app.on_event(&crate::input::Event::Wheel { dx: 0.0, dy: -1000.0 }, Instant::now());
     let sb = &app.nav.sidebar;
-    assert!((sb.rects.last().unwrap().bottom() + (6.0) - sb.rect.bottom()).abs() < 1.0, "clamped at the end");
+    assert!((sb.rects.last().unwrap().bottom() + 6.0 + (28.0 + 8.0) - sb.rect.bottom()).abs() < 1.0, "clamped at the end, above the Settings button");
+    assert!(sb.rects.last().unwrap().bottom() < sb.settings.y);
     assert!(matches!(app.sidebar_hit(sb.rects[23].x + 5.0, sb.rects[23].y + 5.0), Some(Hit::Side(23))));
     assert!(app.sidebar_hit(sb.rect.right() + 50.0, sb.rect.y + 5.0).is_none());
 }

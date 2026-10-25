@@ -139,12 +139,12 @@ fn the_operations_panel_shows_progress_results_and_cancels() {
     app.on_provider_event(ProviderEvent::OpProgress { tab, id, progress }, t0());
     let j = &app.jobs.list[0];
     assert_eq!((j.fraction(), j.status()), (0.25, "25%".to_owned()));
-    assert!(j.detail().starts_with("50 B of 200 B") && j.detail().ends_with("1 of 4 items"), "{}", j.detail());
+    assert!(j.detail(false).starts_with("50 B of 200 B") && j.detail(false).ends_with("1 of 4 items"), "{}", j.detail(false));
     let mut g = Gfx::new(Mono, 2048);
     app.frame(&mut g, t0());
     click(&mut app, |a| Jobs::cancel_rect(a.jobs.r.rows[0], unscaled));
     assert!(ctl.is_cancelled() && app.jobs_open());
-    assert_eq!(app.jobs.list[0].detail(), "Cancelling…");
+    assert_eq!(app.jobs.list[0].detail(false), "Cancelling…");
     finish(&mut app, id, Some("The operation was cancelled"));
     let (failed, _) = paste(&mut app);
     finish(&mut app, failed, Some("Access is denied"));

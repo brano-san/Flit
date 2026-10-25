@@ -8,6 +8,7 @@ const SETTLE_FRAMES: u32 = 30;
 const FALLBACK_PERIOD: Duration = Duration::from_micros(16_667);
 const SCROLL_TIME: Duration = Duration::from_secs(2);
 const GOLDEN_FRACTION: f64 = 0.618_033_988_749_895;
+const SETTINGS_SEARCH: &str = "thumbnail";
 
 pub enum Step {
     None,
@@ -24,6 +25,7 @@ enum Phase {
     Scroll,
     Sort,
     Done,
+    Settings(usize),
 }
 
 pub struct Metrics {
@@ -50,6 +52,8 @@ pub struct Metrics {
     split: bool,
     split_at: Option<Instant>,
     split_ready: Option<f64>,
+    settings_mark: Option<Instant>,
+    settings_input: Vec<(f64, f64)>,
 }
 
 fn ms(d: Duration) -> f64 {
@@ -98,6 +102,8 @@ impl Metrics {
             split: std::env::var_os("FLIT_METRICS_SPLIT").is_some(),
             split_at: dual_at_start().then_some(started),
             split_ready: None,
+            settings_mark: None,
+            settings_input: Vec::new(),
         }
     }
 
@@ -192,8 +198,25 @@ impl Metrics {
             }
             Phase::Sort => Step::None,
             Phase::Done => {
-                self.write();
-                Step::Finish
+                self.phase = Phase::Settings(0);
+                self.settings_mark = Some(now);
+                Step::Inject(key(Key::Char(','), true))
+            }
+            Phase::Settings(n) => {
+                if let Some(t) = self.settings_mark.take() {
+                    self.settings_input.push((ms(now - t), cpu_ms as f64));
+                }
+                match SETTINGS_SEARCH.chars().nth(n) {
+                    Some(c) => {
+                        self.phase = Phase::Settings(n + 1);
+                        self.settings_mark = Some(now);
+                        Step::Inject(Event::Char(c))
+                    }
+                    None => {
+                        self.write();
+                        Step::Finish
+                    }
+                }
             }
         }
     }
@@ -206,10 +229,13 @@ impl Metrics {
         let mut cpu: Vec<f64> = self.cpu.iter().map(|&c| c as f64).collect();
         let mut lat = self.latencies.clone();
         let opt = |v: Option<f64>| v.map_or("null".to_string(), |x| format!("{x:.2}"));
+        let open = self.settings_input.first().copied();
+        let mut search: Vec<f64> = self.settings_input.iter().skip(1).map(|s| s.0).collect();
+        let mut search_cpu: Vec<f64> = self.settings_input.iter().skip(1).map(|s| s.1).collect();
         let mut s = String::new();
         let _ = write!(
             s,
-            "{{\"entries\":{},\"start_to_first_frame_ms\":{},\"first_rows_ms\":{},\"full_listing_ms\":{},\"first_rows_worker_ms\":{},\"full_listing_worker_ms\":{},\"scroll_rows\":{},\"scroll_frames\":{},\"scroll_ms\":{:.2},\"software_frames\":{},\"frame_period_ms\":{:.2},\"refresh_from_display\":{},\"frame_interval_p50_ms\":{:.2},\"dropped_frames\":{},\"frame_cpu_p50_ms\":{:.2},\"frame_cpu_p99_ms\":{:.2},\"input_to_frame_p50_ms\":{:.2},\"input_to_frame_max_ms\":{:.2},\"sort_ms\":{},\"panes\":{},\"split_ready_ms\":{}}}",
+            "{{\"entries\":{},\"start_to_first_frame_ms\":{},\"first_rows_ms\":{},\"full_listing_ms\":{},\"first_rows_worker_ms\":{},\"full_listing_worker_ms\":{},\"scroll_rows\":{},\"scroll_frames\":{},\"scroll_ms\":{:.2},\"software_frames\":{},\"frame_period_ms\":{:.2},\"refresh_from_display\":{},\"frame_interval_p50_ms\":{:.2},\"dropped_frames\":{},\"frame_cpu_p50_ms\":{:.2},\"frame_cpu_p99_ms\":{:.2},\"input_to_frame_p50_ms\":{:.2},\"input_to_frame_max_ms\":{:.2},\"sort_ms\":{},\"panes\":{},\"split_ready_ms\":{},\"settings_open_ms\":{},\"settings_open_cpu_ms\":{},\"settings_search_p50_ms\":{:.2},\"settings_search_cpu_p50_ms\":{:.2}}}",
             self.entries,
             opt(self.first_frame),
             opt(self.first_rows),
@@ -231,6 +257,10 @@ impl Metrics {
             opt(self.sort),
             if self.split { 2 } else { 1 },
             opt(self.split_ready),
+            opt(open.map(|o| o.0)),
+            opt(open.map(|o| o.1)),
+            percentile(&mut search, 0.5),
+            percentile(&mut search_cpu, 0.5),
         );
         let _ = std::fs::write(&self.out, s);
     }

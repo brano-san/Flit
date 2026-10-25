@@ -270,6 +270,11 @@ fn menus_offer_splits_arrangement_and_the_other_pane() {
     app.context_menu();
     let m = menu(&mut app);
     assert!(m.contains(&"Open in other pane".into()) && m.contains(&"Close pane".into()), "{m:?}");
+    let hide = &crate::ui::SETTINGS[crate::ui::settings::index("general.menu_panes").unwrap()];
+    assert!(hide.set(&mut app, crate::ui::Value::Bool(false)));
+    app.context_menu();
+    let m = menu(&mut app);
+    assert!(!m.contains(&"Open in other pane".into()) && !m.contains(&"Close pane".into()), "the setting hides the pane commands: {m:?}");
 }
 
 #[test]

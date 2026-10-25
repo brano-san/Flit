@@ -77,7 +77,7 @@ impl App {
         if !matches!(button, MouseButton::Left | MouseButton::Middle | MouseButton::Right) {
             return false;
         }
-        let ours = palette_hit || matches!(h, Hit::Side(_) | Hit::SidePin(_) | Hit::SideEmpty | Hit::SideHeader(_) | Hit::HomeItem(_) | Hit::HomeEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose);
+        let ours = palette_hit || matches!(h, Hit::Side(_) | Hit::SidePin(_) | Hit::SideEmpty | Hit::SideHeader(_) | Hit::SideSettings | Hit::HomeItem(_) | Hit::HomeEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose);
         if !ours {
             return false;
         }
@@ -91,7 +91,7 @@ impl App {
             (MouseButton::Left, Hit::Splitter) => self.begin_splitter_drag(x),
             (MouseButton::Left, Hit::FilterField) => self.filter_click(x, clicks),
             (MouseButton::Left, Hit::PaletteField) => self.palette_click(x, clicks),
-            (MouseButton::Left, Hit::Side(_) | Hit::SidePin(_) | Hit::SideHeader(_) | Hit::HomeItem(_) | Hit::FilterClose | Hit::PaletteRow(_)) => {
+            (MouseButton::Left, Hit::Side(_) | Hit::SidePin(_) | Hit::SideHeader(_) | Hit::SideSettings | Hit::HomeItem(_) | Hit::FilterClose | Hit::PaletteRow(_)) => {
                 self.pressed = h;
                 self.nav.sidebar.press_y = y;
             }
@@ -105,7 +105,6 @@ impl App {
     pub(super) fn draw_nav<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
         self.draw_sidebar(g, t);
         self.draw_filter(g, t);
-        self.draw_palette(g, t);
     }
 }
 

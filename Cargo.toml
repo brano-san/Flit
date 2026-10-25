@@ -38,6 +38,7 @@ smallvec = "1.13"
 mimalloc = { version = "0.1", default-features = false }
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1.1", default-features = false, features = ["use-std"] }
+serde_json = "1"
 tracing = "0.1"
 crc32fast = "1.5"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }

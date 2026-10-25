@@ -6,6 +6,7 @@ mod metrics;
 mod places;
 mod preview;
 mod session;
+mod settings;
 mod search_client;
 mod state;
 mod tags;

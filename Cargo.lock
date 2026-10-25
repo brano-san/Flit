@@ -387,6 +387,7 @@ dependencies = [
  "postcard",
  "rayon",
  "serde",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
  "tracing-tracy",
@@ -416,6 +417,7 @@ dependencies = [
  "criterion",
  "postcard",
  "serde",
+ "serde_json",
  "smallvec",
  "tracing",
 ]

@@ -245,10 +245,10 @@ impl App {
         }
         let Some(loc) = self.card_location(i) else { return };
         let file = matches!(self.nav.home.cards[i].1, Card::Recent(r) if !self.nav.sidebar.places.recent[r].dir);
-        let target = if new_tab { OpenTarget::NewTab } else { OpenTarget::CurrentTab };
-        match file {
-            true => self.place_command(PlaceCmd::OpenFile(loc.path().clone()), now),
-            false => self.dispatch(vec![Route { folder: loc, select: None }], target, now),
+        match (file, new_tab) {
+            (true, _) => self.place_command(PlaceCmd::OpenFile(loc.path().clone()), now),
+            (false, true) => self.open_in_tabs(vec![Route { folder: loc, select: None }], now),
+            (false, false) => self.dispatch(vec![Route { folder: loc, select: None }], OpenTarget::CurrentTab, now),
         }
     }
 
@@ -344,9 +344,9 @@ impl App {
                         let fill = if used >= 0.9 { t.error } else { t.accent };
                         g.dl.round_rect(Rect::new(bar.x, bar.y, (bar.w * used.clamp(0.0, 1.0)).max(bar.h), bar.h), fill, bar.h / 2.0);
                         text.clear();
-                        format::size(&mut text, d.free);
+                        format::size_in(&mut text, d.free, self.style.decimal);
                         text.push_str(" free of ");
-                        format::size(&mut text, d.total);
+                        format::size_in(&mut text, d.total, self.style.decimal);
                         g.text(tx, r.bottom() - s6 - ms.descent, &text, small, t.text_dim, tw);
                     }
                 }
@@ -364,7 +364,7 @@ impl App {
                     let (glyph, color) = if e.dir { (G_FOLDER, t.accent) } else { (G_FILE, t.text_dim) };
                     centered(g, Rect::new(r.x, r.y, self.s(28.0), r.h), glyph, icons, color);
                     text.clear();
-                    format::datetime(&mut text, e.at, self.utc_offset_min);
+                    format::datetime_in(&mut text, e.at, self.utc_offset_min, &self.style);
                     let dw = g.measure(&text, small);
                     g.text(r.right() - s8 - dw, mid(*r, ms), &text, small, t.text_dim, f32::INFINITY);
                     let x = r.x + self.s(36.0);

@@ -171,6 +171,12 @@ pub fn description(id: &str) -> &'static str {
         "toolbar.toggle" => "Show or hide the row of command buttons under the address bar",
         "toolbar.customize" => "Add, remove and reorder the buttons of the toolbar",
         "toolbar.reset" => "Put back the default buttons of the toolbar",
+        "tags.settings" => "Show the tags with their colors in the settings window, labels, preferences",
+        "settings.open" => "Open the window with all preferences, options, configuration",
+        "settings.file" => "Edit settings.json with the program for JSON files, preferences, options",
+        "settings.export" => "Save all settings and tags to a JSON file, back up preferences",
+        "settings.import" => "Load settings and tags from a JSON file, restore preferences",
+        "settings.reset" => "Put every setting back to its default value, restore defaults, preferences",
         "file.share" => "Send the selected files with the Windows share window",
         _ => "",
     }

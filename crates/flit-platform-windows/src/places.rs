@@ -9,7 +9,7 @@ use windows::Win32::Foundation::ERROR_NO_MORE_ITEMS;
 use windows::Win32::Storage::FileSystem::{GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW, FILE_ATTRIBUTE_DIRECTORY, WIN32_FIND_DATAW};
 use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_INPROC_SERVER, STGM_READ};
 use windows::Win32::System::Registry::{
-    RegCloseKey, RegEnumKeyExW, RegGetValueW, RegNotifyChangeKeyValue, RegOpenKeyExW, HKEY, HKEY_CLASSES_ROOT, HKEY_CURRENT_USER, KEY_NOTIFY, KEY_READ, REG_NOTIFY_CHANGE_LAST_SET, REG_NOTIFY_CHANGE_NAME, REG_ROUTINE_FLAGS, RRF_RT_ANY,
+    RegCloseKey, RegEnumKeyExW, RegGetValueW, RegNotifyChangeKeyValue, RegOpenKeyExW, HKEY, HKEY_CLASSES_ROOT, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_NOTIFY, KEY_READ, REG_NOTIFY_CHANGE_LAST_SET, REG_NOTIFY_CHANGE_NAME, REG_ROUTINE_FLAGS, RRF_RT_ANY,
     RRF_RT_REG_BINARY, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
 };
 use windows::Win32::UI::Shell::{AssocQueryStringW, IShellLinkW, SHGetKnownFolderPath, SHLoadIndirectString, ShellLink, ASSOCF_NONE, ASSOCSTR_FRIENDLYDOCNAME, FOLDERID_Recent, KF_FLAG_DEFAULT};
@@ -160,6 +160,22 @@ fn lxss() -> Vec<(String, Option<FsPath>)> {
         }
     }
     out
+}
+
+pub fn date_patterns() -> (String, String) {
+    let read = |name: &str, fallback: &str| string(HKEY_CURRENT_USER, Some(r"Control Panel\International"), Some(name)).unwrap_or_else(|| fallback.to_owned());
+    (read("sShortDate", "yyyy-MM-dd"), read("sShortTime", "HH:mm"))
+}
+
+pub fn os_version() -> String {
+    const KEY: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
+    let build = string(HKEY_LOCAL_MACHINE, Some(KEY), Some("CurrentBuildNumber")).unwrap_or_default();
+    let name = if build.parse::<u32>().is_ok_and(|b| b >= 22000) { "Windows 11" } else { "Windows 10" };
+    let edition = string(HKEY_LOCAL_MACHINE, Some(KEY), Some("EditionID")).unwrap_or_default();
+    let release = string(HKEY_LOCAL_MACHINE, Some(KEY), Some("DisplayVersion")).unwrap_or_default();
+    let mut ubr = 0u32;
+    let _ = query(HKEY_LOCAL_MACHINE, Some(KEY), Some("UBR"), RRF_RT_REG_DWORD, Some((&mut ubr as *mut u32).cast()), 4);
+    format!("{name} {edition} {release} (build {build}.{ubr})").split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 pub fn wsl_distros() -> Vec<String> {

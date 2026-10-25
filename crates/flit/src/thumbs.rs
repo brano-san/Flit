@@ -144,6 +144,18 @@ impl ThumbCache {
         }
     }
 
+    pub fn used(&mut self) -> u64 {
+        self.load();
+        self.segs.iter().map(|s| s.1).sum()
+    }
+
+    pub fn set_limit(&mut self, limit_mb: u32) {
+        self.limit = (limit_mb as u64) << 20;
+        if self.loaded {
+            self.trim();
+        }
+    }
+
     pub fn clear(&mut self) {
         self.load();
         self.out = None;

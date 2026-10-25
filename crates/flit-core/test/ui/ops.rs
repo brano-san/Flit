@@ -314,6 +314,20 @@ fn ctrl_z_after_del_in_wsl_restores_from_the_linux_trash() {
 }
 
 #[test]
+fn confirmed_wsl_trash_can_delete_permanently_through_the_agent() {
+    let mut app = app_at("wsl://Ubuntu/home");
+    deliver(&mut app, &[("a", false)]);
+    select(&mut app, &["a"]);
+    app.confirm_delete = crate::ui::ConfirmDelete::Always;
+    key(&mut app, Key::Delete, NO);
+    assert_eq!(app.asking(), Some("confirm"));
+    app.jobs.all = true;
+    key(&mut app, Key::Enter, NO);
+    let [(provider, _, op)] = sent(&mut app).try_into().unwrap();
+    assert_eq!((provider, op), (ubuntu(), FileOp::Delete(vec![p("/home/a")])));
+}
+
+#[test]
 fn operations_inside_one_distro_are_routed_to_its_agent() {
     let local = ProviderId::Local;
     let copy = FileOp::Copy { items: vec![p("\\\\wsl.localhost\\Ubuntu\\home\\a\u{F03A}b")], dest: p(r"\\wsl$\ubuntu\tmp") };

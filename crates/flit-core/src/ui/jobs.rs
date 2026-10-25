@@ -38,6 +38,7 @@ const UNREADABLE_BUTTONS: [&str; 2] = ["Skip", "Cancel"];
 const CONFIRM_BUTTONS: [&str; 2] = ["Delete", "Cancel"];
 const RESTORE_ALL_BUTTONS: [&str; 2] = ["Restore", "Cancel"];
 const RESTORE_BUTTONS: [&str; 2] = ["Restore", "Not now"];
+const REPLACE_BUTTONS: [&str; 2] = ["Replace", "Cancel"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum JobState {
@@ -107,7 +108,7 @@ impl Job {
         }
     }
 
-    fn detail(&self) -> String {
+    fn detail(&self, decimal: bool) -> String {
         let p = &self.progress;
         let mut s = String::new();
         match &self.state {
@@ -116,12 +117,12 @@ impl Job {
             JobState::Running if p.stage == Stage::Queued => s.push_str("Waiting for another operation on this drive"),
             JobState::Running if p.stage == Stage::Preparing => s.push_str("Preparing…"),
             JobState::Running if self.by_bytes() => {
-                format::size(&mut s, p.bytes);
+                format::size_in(&mut s, p.bytes, decimal);
                 s.push_str(" of ");
-                format::size(&mut s, p.total_bytes);
+                format::size_in(&mut s, p.total_bytes, decimal);
                 if self.speed > 0.0 {
                     s.push_str(" · ");
-                    format::size(&mut s, self.speed as u64);
+                    format::size_in(&mut s, self.speed as u64, decimal);
                     s.push_str("/s");
                 }
                 let _ = write!(s, " · {} of {} items", p.items.min(p.total_items), p.total_items);
@@ -149,6 +150,7 @@ pub(super) enum Ask {
     Conflict { id: OpId, conflict: Conflict },
     Confirm(FileOp, ProviderId),
     Restore,
+    ReplaceExport { path: FsPath, existing: crate::listing::Meta },
 }
 
 impl Ask {
@@ -267,6 +269,8 @@ fn confirm_text(op: &FileOp) -> (&'static str, String) {
         many => format!("These {} items will be deleted permanently.", many.len()),
     };
     match op {
+        FileOp::Trash(items) if items.len() == 1 => ("Move to the Recycle Bin?", format!("{} will be moved to the Recycle Bin.", quoted(&items[0]))),
+        FileOp::Trash(items) => ("Move to the Recycle Bin?", format!("These {} items will be moved to the Recycle Bin.", items.len())),
         FileOp::Delete(items) => ("Delete permanently?", names(items.iter().collect())),
         FileOp::Purge(pairs) => ("Delete permanently?", names(pairs.iter().map(|(_, original)| original).collect())),
         FileOp::Restore(pairs) if pairs.len() == 1 => ("Restore all items?", format!("{} will go back to where it was deleted from.", quoted(&pairs[0].1))),
@@ -275,18 +279,22 @@ fn confirm_text(op: &FileOp) -> (&'static str, String) {
     }
 }
 
-fn meta_line(label: &str, m: &crate::listing::Meta, offset: i32) -> String {
+fn meta_line(label: &str, m: &crate::listing::Meta, offset: i32, style: &format::Style) -> String {
     let mut s = format!("{label}: ");
     if m.attrs & crate::listing::attr::DIR != 0 {
         s.push_str("folder");
     } else {
-        format::size(&mut s, m.size);
+        format::size_in(&mut s, m.size, style.decimal);
     }
     if m.modified > 0 {
         s.push_str(", modified ");
-        format::datetime(&mut s, m.modified, offset);
+        format::datetime_in(&mut s, m.modified, offset, style);
     }
     s
+}
+
+fn can_delete_instead(ask: &Ask) -> bool {
+    matches!(ask, Ask::Confirm(FileOp::Trash(_), _))
 }
 
 impl App {
@@ -355,7 +363,17 @@ impl App {
     }
 
     pub(super) fn ask_confirm_on(&mut self, provider: ProviderId, op: FileOp) {
+        if self.jobs.asks.is_empty() {
+            self.jobs.all = false;
+        }
         self.jobs.asks.push_back(Ask::Confirm(op, provider));
+        self.jobs.sel = 0;
+        self.layout();
+        self.dirty = true;
+    }
+
+    pub fn ask_replace_export(&mut self, path: FsPath, size: u64, modified: i64) {
+        self.jobs.asks.push_back(Ask::ReplaceExport { path, existing: crate::listing::Meta { size, modified, ..Default::default() } });
         self.jobs.sel = 0;
         self.layout();
         self.dirty = true;
@@ -382,6 +400,7 @@ impl App {
             Some(Ask::Conflict { .. }) => Some("conflict"),
             Some(Ask::Confirm(..)) => Some("confirm"),
             Some(Ask::Restore) => Some("restore"),
+            Some(Ask::ReplaceExport { .. }) => Some("replace"),
             None => self.jobs.form.as_ref().map(|f| f.kind.name()),
         }
     }
@@ -461,9 +480,14 @@ impl App {
                     j.asking = false;
                 }
             }
+            Ask::Confirm(FileOp::Trash(items), provider) if button == 0 && self.jobs.all => self.start_confirmed(provider, FileOp::Delete(items)),
             Ask::Confirm(op, provider) if button == 0 => self.start_confirmed(provider, op),
             Ask::Restore if button == 0 => self.effects.push(super::Effect::RestoreSession),
-            Ask::Confirm(..) | Ask::Restore => {}
+            Ask::ReplaceExport { path, .. } if button == 0 => {
+                let text = self.export_text();
+                self.effects.push(super::Effect::Settings(super::SettingsCmd::Export { path, text, replace: true }));
+            }
+            Ask::Confirm(..) | Ask::Restore | Ask::ReplaceExport { .. } => {}
         }
         self.jobs.all = false;
         self.jobs.sel = self.jobs.asks.front().map_or(0, Ask::first_button);
@@ -478,6 +502,7 @@ impl App {
             Some(Ask::Confirm(FileOp::Restore(_), _)) => &RESTORE_ALL_BUTTONS,
             Some(Ask::Confirm(..)) => &CONFIRM_BUTTONS,
             Some(Ask::Restore) => &RESTORE_BUTTONS,
+            Some(Ask::ReplaceExport { .. }) => &REPLACE_BUTTONS,
             None => &[],
         }
     }
@@ -552,16 +577,18 @@ impl App {
             }
         }
         if let Some(ask) = j.asks.front() {
+            let checked = matches!(ask, Ask::Conflict { .. }) || can_delete_instead(ask);
             let (buttons, dh) = match ask {
                 Ask::Conflict { .. } => (labels, s(236.0)),
-                Ask::Confirm(..) | Ask::Restore => (labels, s(168.0)),
+                _ if checked => (labels, s(208.0)),
+                Ask::Confirm(..) | Ask::Restore | Ask::ReplaceExport { .. } => (labels, s(168.0)),
             };
             let dw = s(DIALOG_W).min(w - s(32.0));
             let d = Rect::new(((w - dw) / 2.0).round(), ((h - dh) / 2.0).round().max(s(40.0)), dw, dh);
             let (bw, gap) = (s(BUTTON_W).min((dw - s(40.0) - s(8.0) * (buttons as f32 - 1.0)) / buttons as f32), s(8.0));
             let right = d.right() - s(20.0);
             j.r.buttons = (0..buttons).map(|k| Rect::new(right - (buttons - k) as f32 * bw - (buttons - 1 - k) as f32 * gap, d.bottom() - s(20.0) - s(BUTTON_H), bw, s(BUTTON_H))).collect();
-            j.r.check = if matches!(ask, Ask::Conflict { .. }) { Rect::new(d.x + s(20.0), d.bottom() - s(20.0) - s(BUTTON_H) - s(40.0), dw - s(40.0), s(28.0)) } else { Rect::default() };
+            j.r.check = if checked { Rect::new(d.x + s(20.0), d.bottom() - s(20.0) - s(BUTTON_H) - s(40.0), dw - s(40.0), s(28.0)) } else { Rect::default() };
             j.r.dialog = d;
         }
     }
@@ -772,7 +799,7 @@ impl App {
                 _ => t.accent,
             };
             g.dl.round_rect(Rect::new(bar.x, bar.y, (bar.w * j.fraction()).max(if j.fraction() > 0.0 { s(4.0) } else { 0.0 }), bar.h), fill, s(2.0));
-            let detail = j.detail();
+            let detail = j.detail(self.style.decimal);
             let ms = g.metrics(small);
             let dy = (bar.bottom() + s(4.0) + (s(18.0) + ms.ascent - ms.descent) / 2.0).round();
             let dcolor = if matches!(j.state, JobState::Failed(_)) { t.error } else { t.text_dim };
@@ -817,17 +844,23 @@ impl App {
             Some(Ask::Conflict { conflict: c, .. }) => {
                 let folder = c.target.parent().map(|p| quoted(&p)).unwrap_or_default();
                 let both_dirs = c.from.attrs & c.to.attrs & crate::listing::attr::DIR != 0;
-                let mut lines = vec![format!("{} already exists in {folder}.", quoted(&c.target)), meta_line("New", &c.from, offset), meta_line("Existing", &c.to, offset)];
+                let mut lines = vec![format!("{} already exists in {folder}.", quoted(&c.target)), meta_line("New", &c.from, offset, &self.style), meta_line("Existing", &c.to, offset, &self.style)];
                 if both_dirs {
                     lines.push("Replace merges the folders: items with other names stay.".into());
                 }
                 ("Replace or skip?".into(), lines)
             }
-            Some(Ask::Confirm(op, _)) => {
+            Some(Ask::Confirm(op, provider)) => {
                 let (title, text) = confirm_text(op);
-                let note = if matches!(op, FileOp::Restore(_)) { "Ctrl+Z sends them back to the Recycle Bin." } else { "This cannot be undone." };
+                let note = match op {
+                    FileOp::Trash(_) if *provider != ProviderId::Local => "The Linux Trash keeps them until it is emptied.",
+                    FileOp::Trash(_) => "The Recycle Bin keeps them until it is emptied.",
+                    FileOp::Restore(_) => "Ctrl+Z sends them back to the Recycle Bin.",
+                    _ => "This cannot be undone.",
+                };
                 (title.into(), vec![text, note.into()])
             }
+            Some(Ask::ReplaceExport { path, existing }) => (format!("Replace {}?", quoted(path)), vec![format!("The settings export would write over this file in {}.", path.parent().map(|p| quoted(&p)).unwrap_or_default()), meta_line("Existing", existing, offset, &self.style)]),
             Some(Ask::Restore) => ("Restore the previous session?".into(), vec!["Flit did not close properly last time.".into(), "Restore reopens the windows and tabs that were open.".into()]),
             None => return,
         };
@@ -850,7 +883,11 @@ impl App {
                 g.dl.outline(bx, if self.hover == Hit::DialogCheck { t.accent } else { t.text_dim }, s4, s(1.0).max(1.0));
             }
             let baseline = (check.y + (check.h + mf.ascent - mf.descent) / 2.0).round();
-            let label = if self.jobs.asks.front().is_some_and(Ask::unreadable) { "Skip every item that cannot be read" } else { "Do this for all remaining conflicts" };
+            let label = match self.jobs.asks.front() {
+                Some(a) if a.unreadable() => "Skip every item that cannot be read",
+                Some(Ask::Confirm(..)) => "Delete permanently instead",
+                _ => "Do this for all remaining conflicts",
+            };
             g.text(bx.right() + s8, baseline, label, font, t.text, check.w - bx.w - s8);
         }
         let labels = self.dialog_buttons();
