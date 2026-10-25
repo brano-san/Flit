@@ -89,3 +89,26 @@ fn index_changes_refresh_the_result_and_status_is_pushed() {
     s.tick(&latest, &mut |m| ticked.push(m));
     assert!(ticked.is_empty());
 }
+
+#[test]
+fn folder_sorted_results_carry_group_starts() {
+    let s = SharedIndex::new();
+    let mut v = VolumeIndex::new("C:", b"C:\\", b'\\');
+    v.upsert(&IndexRecord { id: 5, parent: 5, name: b".", size: 0, modified: 0, attrs: attr::DIR });
+    v.upsert(&IndexRecord { id: 6, parent: 5, name: b"a", size: 0, modified: 0, attrs: attr::DIR });
+    v.upsert(&IndexRecord { id: 7, parent: 5, name: b"b", size: 0, modified: 0, attrs: attr::DIR });
+    for (id, parent, name) in [(10, 6, "x1.txt"), (11, 6, "x2.txt"), (12, 7, "x3.txt"), (13, 5, "x4.txt")] {
+        v.upsert(&IndexRecord { id, parent, name: name.as_bytes(), size: 1, modified: 0, attrs: 0 });
+    }
+    v.commit();
+    s.write().volumes.push(v);
+    let mut session = Session::new(s, 0);
+    let latest = AtomicU64::new(1);
+    let by_folder = Sort { key: SortKey::Path, descending: false };
+    let out = run(&mut session, &latest, Message::Query { gen: 1, text: "x".into(), sort: by_folder });
+    assert_eq!(out[0], Message::QueryDone { gen: 1, total: 4 });
+    assert_eq!(out[1], Message::Groups { gen: 1, starts: vec![0, 1, 3] });
+    latest.store(2, Ordering::Release);
+    let out = run(&mut session, &latest, query(2, "x"));
+    assert!(!out.iter().any(|m| matches!(m, Message::Groups { .. })), "only folder order has groups");
+}

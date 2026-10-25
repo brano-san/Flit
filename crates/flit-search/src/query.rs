@@ -153,6 +153,21 @@ fn strip_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
     head.eq_ignore_ascii_case(prefix).then(|| &s[prefix.len()..])
 }
 
+const OWN_PROPERTIES: [&str; 6] = ["path", "regex", "ext", "size", "dm", "tag"];
+
+pub fn shell_query(text: &str) -> Option<String> {
+    let text = text.trim();
+    if let Some(rest) = text.strip_prefix('$') {
+        return Some(rest.trim().to_owned());
+    }
+    let foreign = |tok: &str| {
+        let tok = tok.trim_start_matches(['!', '-']);
+        let Some((name, value)) = tok.split_once(':') else { return false };
+        name.len() > 1 && !value.is_empty() && name.bytes().all(|b| b.is_ascii_alphabetic() || b == b'.') && !OWN_PROPERTIES.iter().any(|p| p.eq_ignore_ascii_case(name))
+    };
+    tokens(text).iter().any(|(tok, literal)| !literal && foreign(tok)).then(|| text.to_owned())
+}
+
 pub fn parse(text: &str, clock: Clock) -> Result<Query, String> {
     let mut terms = Vec::new();
     let mut not = false;

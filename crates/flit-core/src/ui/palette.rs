@@ -3,6 +3,7 @@ use super::describe::description;
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
 use super::tags::TagPick;
+use super::toolbar::ToolPick;
 use super::{App, Effect, Hit};
 use crate::input::{Key, Mods};
 use crate::path::FsPath;
@@ -29,6 +30,7 @@ pub(super) enum Pick {
     Library(FsPath),
     LibraryAdd(FsPath),
     Tags(TagPick),
+    Toolbar(ToolPick),
 }
 
 impl Pick {
@@ -44,6 +46,7 @@ impl Pick {
             Pick::Library(_) => "Enter makes a folder the default save location, Delete removes it from the library",
             Pick::LibraryAdd(_) => "Full path of the folder to include in the library",
             Pick::Tags(t) => t.placeholder(),
+            Pick::Toolbar(t) => t.placeholder(),
         }
     }
 
@@ -59,6 +62,7 @@ impl Pick {
             Pick::Library(_) => "No matching folders",
             Pick::LibraryAdd(_) => "Enter adds the folder to the library",
             Pick::Tags(t) => t.empty(),
+            Pick::Toolbar(_) => "No matching buttons",
         }
     }
 
@@ -159,6 +163,10 @@ impl Palette {
         }
     }
 
+    pub(super) fn select_row(&mut self, k: usize) {
+        self.select(k.min(self.matches.len().saturating_sub(1)) as isize);
+    }
+
     fn scroll(&mut self, rows: isize) {
         let max = self.matches.len().saturating_sub(MAX_ROWS) as isize;
         self.first = (self.first as isize + rows).clamp(0, max) as usize;
@@ -203,6 +211,7 @@ impl App {
             Pick::Encoding(archive) => self.set_encoding(&archive, id, now),
             Pick::Library(lib) => self.library_row(lib, &p.titles[id], false),
             Pick::Tags(t) => self.tag_choose(t, id, now),
+            Pick::Toolbar(t) => self.tool_choose(t, id),
             _ => self.new_item(id),
         }
     }

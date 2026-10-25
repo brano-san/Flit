@@ -112,6 +112,7 @@ pub trait Window {
     fn toggle_fullscreen(&self) {}
     fn set_compact(&self, _on: Option<bool>) {}
     fn host(&self, _cmd: HostCmd) {}
+    fn share(&self, _paths: Vec<FsPath>) {}
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -368,5 +369,8 @@ pub trait Platform: 'static {
     }
     fn resolve_files(keys: &[FileKey]) -> Vec<Resolved> {
         keys.iter().map(|_| Resolved::Unavailable).collect()
+    }
+    fn shell_search(_folder: Option<&FsPath>, _query: &str, _keep_going: &dyn Fn() -> bool, _found: &mut dyn FnMut(FsPath, flit_core::Meta)) -> Result<(), PlatformError> {
+        Err(PlatformError::new(-1, "Windows Search is not available on this system"))
     }
 }

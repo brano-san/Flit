@@ -25,9 +25,10 @@ mod tabbar;
 mod tags;
 mod split;
 mod describe;
+mod toolbar;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
-pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchSort};
+pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource, MAX_HISTORY};
 pub use sidebar::{Drive, KnownFolder, NavPrefs, NavState, Places, Section};
 pub use home::{Recent, Widget};
 pub use details::{folder_key, Columns, FolderView, FolderViews, ViewPrefs, THUMB_CACHE_MB};
@@ -36,6 +37,7 @@ pub use jobs::JobState;
 pub use preview_pane::PaneState;
 pub use menu::MenuItem;
 pub use tab::Tab;
+pub use toolbar::{Show, ToolContext, ToolItem, ToolbarState, CONTEXTS};
 pub use address::Typed;
 pub use tabbar::{MovedTab, Startup, WindowSession};
 pub use split::{SplitDir, SplitPrefs, SplitSession};
@@ -212,6 +214,7 @@ pub enum Effect {
     MoveTab { tab: MovedTab, at: Option<(f32, f32)>, last: bool },
     RestoreSession,
     Tags(TagRequest),
+    Share(Vec<FsPath>),
 }
 
 pub enum IconResult {
@@ -275,6 +278,7 @@ enum Hit {
     Group(usize),
     Pane(usize, Option<usize>),
     Preview(preview_pane::PaneHit),
+    Tool(toolbar::ToolHit),
     ListEmpty,
     Track,
     Thumb,
@@ -336,6 +340,7 @@ struct Layout {
     actions: Rect,
     caption: [Rect; 3],
     toolbar: Rect,
+    commands: Rect,
     nav: [Rect; 4],
     home: Rect,
     address: Rect,
@@ -426,6 +431,7 @@ pub struct App {
     tag_fixes: Vec<(FsPath, u32, Instant)>,
     preview: preview_pane::PreviewPane,
     alt: split::Alt,
+    toolbar: toolbar::Toolbar,
 }
 
 impl App {
@@ -491,6 +497,7 @@ impl App {
             tag_fixes: Vec::new(),
             preview: Default::default(),
             alt: Default::default(),
+            toolbar: Default::default(),
         };
         let mut start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
         let total = start.len();
@@ -955,6 +962,7 @@ impl App {
         let cx = self.sidebar_width();
         let ops_button = self.ops_button_visible();
         let status_bar = self.prefs.status_bar || self.tab().error.is_some();
+        let tool_h = self.toolbar_h();
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
         let l = &mut self.layout;
@@ -988,7 +996,8 @@ impl App {
         let right = if ops_button { w - s(10.0) - s(NAV_W) } else { w };
         l.ops_button = if ops_button { Rect::new(right + s(4.0), l.nav[0].y, s(NAV_W), l.nav[0].h) } else { Rect::default() };
         l.address = Rect::new(ax, l.toolbar.y + s(5.0), (right - s(12.0) - ax).max(s(40.0)), s(TOOL_H - 10.0));
-        l.header = Rect::new(cx, l.toolbar.bottom(), w - cx, s(HEADER_H));
+        l.commands = Rect::new(0.0, l.toolbar.bottom(), w, tool_h);
+        l.header = Rect::new(cx, l.commands.bottom(), w - cx, s(HEADER_H));
         let status_h = if status_bar { s(STATUS_H) } else { 0.0 };
         l.status = Rect::new(0.0, h - status_h, w, status_h);
         if !status_bar {
@@ -997,7 +1006,7 @@ impl App {
         }
         self.layout_preview();
         let l = &self.layout;
-        let area = Rect::new(l.header.x, l.toolbar.bottom(), l.header.w, (l.bottom - l.toolbar.bottom()).max(0.0));
+        let area = Rect::new(l.header.x, l.commands.bottom(), l.header.w, (l.bottom - l.commands.bottom()).max(0.0));
         let (mine, theirs) = self.split_areas(area);
         if let Some(r) = theirs {
             self.layout_other(r);
@@ -1058,10 +1067,10 @@ impl App {
     }
 
     fn hit(&self, x: f32, y: f32) -> Hit {
-        if let Some(h) = self.jobs_hit(x, y) {
+        if let Some(h) = self.jobs_hit(x, y).or_else(|| self.flyout_hit(x, y)) {
             return h;
         }
-        if let Some(h) = self.address_hit(x, y).or_else(|| self.nav_hit(x, y)).or_else(|| self.preview_hit(x, y)) {
+        if let Some(h) = self.address_hit(x, y).or_else(|| self.nav_hit(x, y)).or_else(|| self.preview_hit(x, y)).or_else(|| self.toolbar_hit(x, y)) {
             return h;
         }
         let l = &self.layout;
@@ -1222,6 +1231,7 @@ impl App {
                 self.timer_at = None;
                 self.ops_timer(now);
                 self.hover_timer(now);
+                self.toolbar_timer(now);
                 self.history_timer(now);
                 self.tip_timer(now);
             }
@@ -1240,7 +1250,7 @@ impl App {
 
     fn mouse_move(&mut self, x: f32, y: f32, now: Instant) {
         self.strip_pointer(x, y, now);
-        if self.autoscroll_move(self.along_of(x, y)) || self.ops_mouse_move(x, y) || self.marquee_move(x, y) {
+        if self.toolbar_mouse_move(x) || self.autoscroll_move(self.along_of(x, y)) || self.ops_mouse_move(x, y) || self.marquee_move(x, y) {
             return;
         }
         match self.drag {
@@ -1282,6 +1292,7 @@ impl App {
         };
         self.set_cursor(cursor);
         self.hover_pick(h, now);
+        self.toolbar_hover(h, now);
         if h != self.hover {
             self.hover = h;
             self.dirty = true;
@@ -1298,7 +1309,7 @@ impl App {
             return;
         }
         let h = self.hit(x, y);
-        if self.nav_mouse_down(h, (x, y), button, clicks, now) {
+        if self.nav_mouse_down(h, (x, y), button, clicks, now) || self.toolbar_mouse_down(h, x, button) {
             return;
         }
         match (button, h) {
@@ -1391,7 +1402,7 @@ impl App {
         if let Drag::Tab { torn: true, .. } = was {
             return self.tear_off(x, y);
         }
-        if button != MouseButton::Left || was != Drag::None {
+        if self.toolbar_mouse_up(x, y, button) || button != MouseButton::Left || was != Drag::None {
             return;
         }
         let h = self.hit(x, y);
@@ -1426,6 +1437,7 @@ impl App {
             Hit::HomeButton => self.go_home_page(self.mods.ctrl, now),
             Hit::FilterClose => self.close_filter(),
             Hit::PaletteRow(i) => self.run_palette_item(i, now),
+            Hit::Tool(t) => self.toolbar_click(t, now),
             Hit::TabActions => self.tab_actions_menu(),
             Hit::CrumbMenu(i) => self.crumb_menu(i),
             Hit::CrumbOverflow => self.overflow_menu(),
@@ -1474,7 +1486,7 @@ impl App {
 
     fn key(&mut self, key: Key, m: Mods, now: Instant) {
         self.dirty = true;
-        if self.jobs_key(key, m) || self.ops_key(key, m) || self.strip_key(key) {
+        if self.toolbar_key(key) || self.jobs_key(key, m) || self.ops_key(key, m) || self.strip_key(key) {
             return;
         }
         if self.editing {
@@ -1653,10 +1665,12 @@ impl App {
                 self.draw_sidebar(g, th);
             } else {
                 self.draw_toolbar(g, th);
+                self.draw_toolbar_row(g, th);
                 if self.layout.status.h > 0.0 {
                     self.draw_status(g, &arena, th);
                 }
                 self.draw_nav(g, th);
+                self.draw_toolbar_popups(g, th);
                 self.draw_suggestions(g, th);
             }
             self.draw_tab_tip(g, th);

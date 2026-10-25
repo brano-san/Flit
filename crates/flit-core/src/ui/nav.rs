@@ -21,7 +21,7 @@ pub(super) struct Nav {
 
 impl App {
     pub(super) fn layout_nav(&mut self) {
-        let (top, bottom) = (self.layout.toolbar.bottom(), self.layout.status.y);
+        let (top, bottom) = (self.layout.commands.bottom(), self.layout.status.y);
         self.layout_sidebar(top, bottom);
         self.layout_palette(self.layout.title.bottom());
     }

@@ -30,6 +30,7 @@ pub(crate) enum ShellUi {
     Menu(ShellMenu),
     Properties(Vec<FsPath>),
     Drag(Vec<FsPath>),
+    Share(Vec<FsPath>),
 }
 
 struct Active {
@@ -369,11 +370,24 @@ fn properties(hwnd: HWND, paths: &[FsPath]) -> Result<(), PlatformError> {
     }
 }
 
+fn share(hwnd: HWND, paths: &[FsPath]) -> Result<(), PlatformError> {
+    let menu: IContextMenu = Pidls::parse(paths)?.ui_object(hwnd)?;
+    unsafe {
+        let hmenu = CreatePopupMenu().map_err(err)?;
+        let _ = menu.QueryContextMenu(hmenu, 0, FIRST_ID, LAST_ID, CMF_NORMAL);
+        let info = CMINVOKECOMMANDINFO { cbSize: size_of::<CMINVOKECOMMANDINFO>() as u32, hwnd, lpVerb: PCSTR(c"Windows.ModernShare".as_ptr() as *const u8), nShow: SW_SHOWNORMAL.0, ..Default::default() };
+        let invoked = menu.InvokeCommand(&info).map_err(err);
+        let _ = DestroyMenu(hmenu);
+        invoked
+    }
+}
+
 pub(crate) fn run(hwnd: HWND, req: ShellUi, send: &dyn Fn(Event)) {
     let result = match &req {
         ShellUi::Menu(m) => unsafe { show_menu(hwnd, m, send) },
         ShellUi::Properties(paths) => properties(hwnd, paths),
         ShellUi::Drag(paths) => crate::dragdrop::start_drag(hwnd, paths),
+        ShellUi::Share(paths) => share(hwnd, paths),
     };
     if let Err(e) = result {
         tracing::warn!("shell: {e}");

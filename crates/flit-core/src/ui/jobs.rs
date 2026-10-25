@@ -685,7 +685,7 @@ impl App {
         }
     }
 
-    fn shadow(&self) -> Color {
+    pub(super) fn shadow(&self) -> Color {
         if self.dark { Color::rgba(0x00000090) } else { Color::rgba(0x00000030) }
     }
 

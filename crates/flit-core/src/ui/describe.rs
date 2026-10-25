@@ -165,6 +165,13 @@ pub fn description(id: &str) -> &'static str {
         "item.quick_view" => "Preview the selection in a separate window, space",
         "preview.play" => "Start or stop the audio or video in the preview",
         "item.context_menu" => "Open the menu of the selection from the keyboard, right click",
+        "search.folder" => "Find files only in this folder and the folders inside it, find in folder",
+        "search.clear_history" => "Forget the recent search queries listed under the search box",
+        "view.streams" => "List the alternate data streams of files as their own rows, NTFS streams",
+        "toolbar.toggle" => "Show or hide the row of command buttons under the address bar",
+        "toolbar.customize" => "Add, remove and reorder the buttons of the toolbar",
+        "toolbar.reset" => "Put back the default buttons of the toolbar",
+        "file.share" => "Send the selected files with the Windows share window",
         _ => "",
     }
 }

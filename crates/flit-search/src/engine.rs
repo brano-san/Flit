@@ -10,6 +10,7 @@ use std::cmp::Ordering;
 const MIN_CHUNK: usize = 4096;
 const SMALL: usize = 1 << 16;
 pub const MAX_ROWS: u64 = 1024;
+pub const MAX_GROUPED: u64 = 200_000;
 
 pub type Cancel<'a> = &'a (dyn Fn() -> bool + Sync);
 
@@ -302,6 +303,17 @@ impl Engine {
             dirs.push(dir);
         }
         (batch, dirs)
+    }
+
+    pub fn groups(&self, rs: &mut ResultSet) -> Option<Vec<u64>> {
+        if rs.sort.key != SortKey::Path || rs.total > MAX_GROUPED || rs.total == 0 {
+            return None;
+        }
+        rs.ensure(self, rs.total as usize);
+        let parent = |&(vol, i): &(u32, u32)| (vol, self.volumes[vol as usize].parents[i as usize]);
+        let mut starts = vec![0];
+        starts.extend(rs.rows.windows(2).enumerate().filter(|(_, w)| parent(&w[0]) != parent(&w[1])).map(|(k, _)| k as u64 + 1));
+        Some(starts)
     }
 
     pub fn volume_mut(&mut self, id: &str) -> Option<&mut VolumeIndex> {

@@ -116,6 +116,8 @@ pub struct ViewPrefs {
     pub thumbnails: bool,
     #[serde(skip, default = "thumb_cache_mb")]
     pub thumb_cache_mb: u32,
+    #[serde(skip)]
+    pub show_streams: bool,
 }
 
 fn yes() -> bool {
@@ -150,6 +152,7 @@ impl Default for ViewPrefs {
             hover_select: false,
             thumbnails: true,
             thumb_cache_mb: THUMB_CACHE_MB.1,
+            show_streams: false,
         }
     }
 }
@@ -341,6 +344,7 @@ impl App {
         let v = &mut self.tabs[k].view_spec;
         v.hide_dotfiles = !p.show_dotfiles;
         v.show_system = p.show_system;
+        v.show_streams = p.show_streams;
         v.utc_offset_min = if v.group.field.is_date() { tz } else { 0 };
     }
 
@@ -441,6 +445,15 @@ impl App {
         }
         self.layout();
         self.dirty = true;
+    }
+
+    pub(super) fn toggle_streams(&mut self, now: Instant) {
+        self.toggle_pref(|p| &mut p.show_streams);
+        if self.prefs.show_streams {
+            for k in 0..self.tabs.len() {
+                self.reload(k, now);
+            }
+        }
     }
 
     pub(super) fn set_default_view(&mut self) {

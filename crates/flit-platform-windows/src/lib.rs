@@ -24,6 +24,7 @@ mod tags;
 mod walk_index;
 mod watcher;
 mod window;
+mod winsearch;
 mod wsl;
 
 pub use d3d::{D3dDevice, D3dRenderer};
@@ -197,6 +198,10 @@ impl Platform for Windows {
 
     fn file_key(path: &FsPath) -> Option<flit_core::tags::FileKey> {
         tags::file_key(path)
+    }
+
+    fn shell_search(folder: Option<&FsPath>, query: &str, keep_going: &dyn Fn() -> bool, found: &mut dyn FnMut(FsPath, flit_core::Meta)) -> Result<(), PlatformError> {
+        winsearch::search(folder, query, keep_going, found)
     }
 
     fn resolve_files(keys: &[flit_core::tags::FileKey]) -> Vec<flit_platform::Resolved> {
