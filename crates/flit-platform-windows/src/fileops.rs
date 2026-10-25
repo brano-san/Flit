@@ -5,7 +5,7 @@ use flit_core::FsPath;
 use flit_platform::{FileOps, OpOutcome, PlatformError};
 use std::cell::RefCell;
 use windows::core::{s, Interface, HRESULT, PCWSTR};
-use windows::Win32::Storage::FileSystem::{GetFileAttributesW, FILE_ATTRIBUTE_DIRECTORY, INVALID_FILE_ATTRIBUTES};
+use windows::Win32::Storage::FileSystem::{CreateDirectoryW, GetFileAttributesW, MoveFileExW, FILE_ATTRIBUTE_DIRECTORY, INVALID_FILE_ATTRIBUTES, MOVE_FILE_FLAGS};
 use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_ALL, CLSCTX_INPROC_SERVER};
 use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::{CreatePopupMenu, DestroyMenu, SW_SHOWNORMAL};
@@ -286,6 +286,58 @@ fn exists(p: &FsPath) -> bool {
     unsafe { GetFileAttributesW(PCWSTR(p.to_wide(true).as_ptr())) != INVALID_FILE_ATTRIBUTES }
 }
 
+fn is_dir(p: &FsPath) -> bool {
+    let attrs = unsafe { GetFileAttributesW(PCWSTR(p.to_wide(true).as_ptr())) };
+    attrs != INVALID_FILE_ATTRIBUTES && attrs & FILE_ATTRIBUTE_DIRECTORY.0 != 0
+}
+
+fn notify(event: SHCNE_ID, item: &FsPath, other: Option<&FsPath>) {
+    let (a, b) = (item.to_wide(false), other.map(|o| o.to_wide(false)));
+    unsafe { SHChangeNotify(event, SHCNF_PATHW | SHCNF_FLUSHNOWAIT, Some(a.as_ptr().cast()), b.as_ref().map(|b| b.as_ptr().cast())) };
+}
+
+fn direct_move(from: &FsPath, to: &FsPath) -> bool {
+    let (src, dst) = (from.to_wide(true), to.to_wide(true));
+    if unsafe { MoveFileExW(PCWSTR(src.as_ptr()), PCWSTR(dst.as_ptr()), MOVE_FILE_FLAGS(0)) }.is_err() {
+        return false;
+    }
+    notify(if is_dir(to) { SHCNE_RENAMEFOLDER } else { SHCNE_RENAMEITEM }, from, Some(to));
+    true
+}
+
+fn direct(op: &FileOp) -> (Vec<(FsPath, FsPath)>, Option<FileOp>) {
+    let pairs: Vec<(FsPath, FsPath)> = match op {
+        FileOp::Move { items, dest } => items.iter().map(|i| (i.clone(), dest.join(i.file_name()))).collect(),
+        FileOp::MoveTo(pairs) => pairs.clone(),
+        FileOp::Rename { item, name } => match item.parent() {
+            Some(dir) => vec![(item.clone(), dir.join(name))],
+            None => return (Vec::new(), Some(op.clone())),
+        },
+        FileOp::NewFolder { dir, name } => {
+            let path = dir.join(name);
+            if unsafe { CreateDirectoryW(PCWSTR(path.to_wide(true).as_ptr()), None) }.is_err() {
+                return (Vec::new(), Some(op.clone()));
+            }
+            notify(SHCNE_MKDIR, &path, None);
+            return (vec![(path.clone(), path)], None);
+        }
+        _ => return (Vec::new(), Some(op.clone())),
+    };
+    let mut done = Vec::new();
+    for (from, to) in &pairs {
+        if !direct_move(from, to) {
+            break;
+        }
+        done.push((from.clone(), to.clone()));
+    }
+    let rest = match done.len() {
+        0 => Some(op.clone()),
+        n if n < pairs.len() => Some(FileOp::MoveTo(pairs[n..].to_vec())),
+        _ => None,
+    };
+    (done, rest)
+}
+
 fn link_path(dest: &FsPath, target: &FsPath) -> FsPath {
     let stem: Vec<u8> = target.file_name().iter().copied().filter(|&c| c != b':' && c != b'\\').collect();
     (1..)
@@ -334,7 +386,13 @@ impl FileOps for ShellCom {
         match op {
             FileOp::Link { items, dest } => unsafe { make_links(items, dest) },
             FileOp::Restore(pairs) => unsafe { restore(pairs) },
-            _ => unsafe { perform(op) },
+            _ => {
+                let (mut items, rest) = direct(op);
+                let Some(rest) = rest else { return OpOutcome { items, error: None } };
+                let out = unsafe { perform(&rest) };
+                items.extend(out.items);
+                OpOutcome { items, error: out.error }
+            }
         }
     }
 

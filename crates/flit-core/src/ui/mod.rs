@@ -4,6 +4,7 @@ mod tab;
 pub mod actions;
 mod field;
 mod filter;
+mod marquee;
 mod nav;
 pub mod palette;
 pub mod sidebar;
@@ -227,6 +228,7 @@ enum Drag {
     EditSelect,
     Splitter { start_x: f32, start_w: f32 },
     PinMove { from: usize, to: usize },
+    Marquee,
 }
 
 #[derive(Default)]
@@ -286,6 +288,7 @@ pub struct App {
     dirty: bool,
     ops: ops::Ops,
     nav: nav::Nav,
+    marquee: Option<marquee::Marquee>,
 }
 
 impl App {
@@ -323,6 +326,7 @@ impl App {
             dirty: true,
             ops: ops::Ops::default(),
             nav: nav::Nav::default(),
+            marquee: None,
         };
         let mut start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
         let total = start.len();
@@ -890,7 +894,7 @@ impl App {
     }
 
     fn mouse_move(&mut self, x: f32, y: f32) {
-        if self.ops_mouse_move(x, y) {
+        if self.ops_mouse_move(x, y) || self.marquee_move(x, y) {
             return;
         }
         let (rh, lh) = (self.layout.row_h, self.layout.list.h);
@@ -920,7 +924,7 @@ impl App {
             }
             Drag::Splitter { start_x, start_w } => return self.drag_splitter(x, start_x, start_w),
             Drag::PinMove { from, .. } => return self.drag_pin(from, y),
-            Drag::None => {}
+            Drag::Marquee | Drag::None => {}
         }
         if self.start_pin_drag(y) {
             return;
@@ -974,17 +978,25 @@ impl App {
             }
             Hit::Row(row) => {
                 self.focus = Focus::List;
-                if !self.press_row(row, button, clicks, x, y) {
+                if button == MouseButton::Left && clicks == 1 && !self.mods.shift && self.marquee_column(x) {
+                    let base = self.marquee_base();
+                    self.click_row(row, button, clicks, now);
+                    self.arm_marquee(x, y, self.mods.ctrl, base);
+                } else if !self.press_row(row, button, clicks, x, y) {
                     self.click_row(row, button, clicks, now);
                 }
             }
             Hit::ListEmpty => {
                 self.focus = Focus::List;
+                let base = self.marquee_base();
                 let ctrl = self.mods.ctrl;
                 if let Some(v) = &mut self.tab_mut().view {
                     if !ctrl {
                         v.clear_selection();
                     }
+                }
+                if button == MouseButton::Left {
+                    self.arm_marquee(x, y, ctrl, base);
                 }
             }
             Hit::Thumb => self.drag = Drag::Thumb { grab: y - self.layout.thumb.y },
@@ -1000,6 +1012,7 @@ impl App {
 
     fn mouse_up(&mut self, x: f32, y: f32, button: MouseButton, now: Instant) {
         self.ops_mouse_up(x, y, button);
+        self.end_marquee();
         let was = std::mem::replace(&mut self.drag, Drag::None);
         let pressed = std::mem::replace(&mut self.pressed, Hit::None);
         self.dirty = true;
@@ -1226,6 +1239,7 @@ impl App {
         self.dirty = false;
         let mut animating = self.tab_mut().apply_diffs(DIFF_BUDGET);
         self.ops_frame(now);
+        animating |= self.marquee_autoscroll(dt);
 
         let t = self.tab_mut();
         let diff = t.scroll_target - t.scroll;
@@ -1243,6 +1257,7 @@ impl App {
             arena.reset();
             g.begin(th.bg);
             self.draw_list(g, &arena, th);
+            self.draw_marquee(g, th);
             self.draw_ops(g, th);
             self.draw_header(g, th);
             self.draw_title(g, th);
