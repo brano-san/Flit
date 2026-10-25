@@ -471,9 +471,11 @@ dependencies = [
 name = "flit-platform-linux-gui"
 version = "0.1.0"
 dependencies = [
+ "crossbeam-channel",
  "flit-core",
  "flit-platform",
  "flit-platform-linux",
+ "flit-proto",
  "libc",
 ]
 

@@ -46,6 +46,10 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 impl<K: Clone + Eq + Hash + Send + 'static> Notify<K> {
     pub fn new(emit: impl Fn(K, Notice) + Send + 'static) -> io::Result<Self> {
+        Self::with_window(COALESCE, emit)
+    }
+
+    pub fn with_window(window: Duration, emit: impl Fn(K, Notice) + Send + 'static) -> io::Result<Self> {
         let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC) };
         if fd < 0 {
             return Err(io::Error::last_os_error());
@@ -53,7 +57,7 @@ impl<K: Clone + Eq + Hash + Send + 'static> Notify<K> {
         let fd = Arc::new(unsafe { OwnedFd::from_raw_fd(fd) });
         let watches = Arc::new(Mutex::new(Watches { dirs: HashMap::new(), keys: HashMap::new() }));
         let (rfd, rw) = (fd.clone(), watches.clone());
-        std::thread::Builder::new().name("flit-inotify".into()).spawn(move || read_loop(&rfd, &rw, &emit))?;
+        std::thread::Builder::new().name("flit-inotify".into()).spawn(move || read_loop(&rfd, &rw, window, &emit))?;
         Ok(Self { fd, watches })
     }
 
@@ -131,7 +135,7 @@ fn flush<K: Clone>(watches: &Mutex<Watches<K>>, pending: HashMap<i32, Pending>, 
     }
 }
 
-fn read_loop<K: Clone>(fd: &OwnedFd, watches: &Mutex<Watches<K>>, emit: &dyn Fn(K, Notice)) {
+fn read_loop<K: Clone>(fd: &OwnedFd, watches: &Mutex<Watches<K>>, window: Duration, emit: &dyn Fn(K, Notice)) {
     let mut buf = vec![0u8; 64 << 10];
     let mut pending = HashMap::new();
     let mut overflow = false;
@@ -149,7 +153,7 @@ fn read_loop<K: Clone>(fd: &OwnedFd, watches: &Mutex<Watches<K>>, emit: &dyn Fn(
                 return;
             }
             parse(&buf[..n as usize], &mut pending, &mut overflow);
-            deadline.get_or_insert_with(|| Instant::now() + COALESCE);
+            deadline.get_or_insert_with(|| Instant::now() + window);
         } else if ready < 0 && io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
             return;
         }

@@ -1,12 +1,12 @@
 use crate::fs::{cstring, host, names, node_at, open_at, open_dir, open_dir_at, Node};
 use crate::trash::Trash;
 use flit_core::path::PathKind;
-use flit_core::provider::{Conflict, FileOp, Resolve, Stage};
+use flit_core::provider::{Conflict, FileOp, Resolve, Stage, Template};
 use flit_core::FsPath;
 use flit_platform::{Job, OpOutcome, PlatformError, CANCELLED};
 use flit_proto::listing::check_name;
 use std::ffi::{CStr, CString};
-use std::io;
+use std::io::{self, Write};
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
@@ -655,6 +655,46 @@ impl<'a> Engine<'a> {
         }
     }
 
+    fn new_file(&mut self, dir: &FsPath, name: &[u8], template: &Template) {
+        if check_name(name, false).is_err() {
+            return self.note(format!("\"{}\" is not a valid name", flit_core::name::display(name)));
+        }
+        let fd = match host(dir).ok_or_else(|| errno(libc::EINVAL)).and_then(open_dir) {
+            Ok(fd) => fd,
+            Err(e) => return self.fail(dir, &e),
+        };
+        let source = match template {
+            Template::Copy(src) => match host(src).ok_or_else(|| errno(libc::EINVAL)).and_then(std::fs::File::open) {
+                Ok(f) => Some(f),
+                Err(e) => return self.fail(src, &e),
+            },
+            _ => None,
+        };
+        let mut name = name.to_vec();
+        loop {
+            let to = dir.join(&name);
+            let made = cstring(&name).and_then(|c| open_at(fd.as_raw_fd(), &c, libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL, 0o666));
+            let file = match made {
+                Ok(f) => std::fs::File::from(f),
+                Err(e) if e.raw_os_error() == Some(libc::EEXIST) => {
+                    name = numbered(fd.as_raw_fd(), &name, false, b"", false);
+                    continue;
+                }
+                Err(e) => return self.fail(&to, &e),
+            };
+            let written = match (template, source) {
+                (Template::Data(data), _) => (&file).write_all(data),
+                (_, Some(mut src)) => io::copy(&mut src, &mut &file).map(drop),
+                _ => Ok(()),
+            };
+            match written {
+                Ok(()) => self.done.push((to.clone(), to)),
+                Err(e) => self.fail(&to, &e),
+            }
+            return;
+        }
+    }
+
     fn delete_at(&mut self, dir: RawFd, name: &CStr, path: &FsPath, node: &Node) -> bool {
         if self.stopped() {
             return false;
@@ -783,6 +823,7 @@ pub fn run(op: &FileOp, job: &Job, trash: Option<&Trash>) -> OpOutcome {
         }
         FileOp::Rename { item, name } => e.rename(item, name),
         FileOp::NewFolder { dir, name } => e.new_folder(dir, name),
+        FileOp::NewFile { dir, name, template } => e.new_file(dir, name, template),
         FileOp::Delete(items) => e.delete(items),
         FileOp::Trash(items) => e.trash(items, trash),
         FileOp::Restore(pairs) => e.restore(pairs, trash),

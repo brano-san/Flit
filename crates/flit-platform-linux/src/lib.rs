@@ -3,6 +3,7 @@
 pub mod agent;
 mod fs;
 mod inotify;
+pub mod mounts;
 mod ops;
 mod trash;
 
@@ -10,9 +11,10 @@ mod trash;
 #[path = "../test/temp.rs"]
 mod temp;
 
-pub use fs::{host, LinuxFs};
-pub use inotify::Inotify;
-pub use trash::Trash;
+pub use fs::{host, stat_path, LinuxFs};
+pub use inotify::{Inotify, Notice, Notify};
+pub use ops::run as run_op;
+pub use trash::{percent_decode, trash_time, Trash};
 
 use flit_core::atlas::Slot;
 use flit_core::input::CursorIcon;
