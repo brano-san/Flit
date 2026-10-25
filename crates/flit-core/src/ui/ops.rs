@@ -258,6 +258,9 @@ impl App {
             Ok(d) => d,
             Err(e) => return self.status(e),
         };
+        if self.tab().filter.is_some() {
+            self.close_filter();
+        }
         let mut taken = Vec::new();
         if let Some(v) = &self.tab().view {
             let l = v.listing();
@@ -497,32 +500,15 @@ impl App {
     }
 
     pub(super) fn ops_key(&mut self, key: Key, m: Mods) -> bool {
-        if let Some(action) = self.ops.rename.as_mut().map(|r| r.edit.key(key, m)) {
-            match action {
-                EditAction::Submit => {
-                    self.commit_rename();
-                }
-                EditAction::Cancel => self.ops.rename = None,
-                EditAction::Copy(s) => self.effects.push(Effect::SetClipboard(s)),
-                EditAction::Paste => self.effects.push(Effect::Paste),
-                EditAction::Changed | EditAction::None => {}
+        let Some(action) = self.ops.rename.as_mut().map(|r| r.edit.key(key, m)) else { return false };
+        match action {
+            EditAction::Submit => {
+                self.commit_rename();
             }
-            return true;
-        }
-        if self.editing {
-            return false;
-        }
-        match (key, m.ctrl, m.alt, m.shift) {
-            (Key::Char('C'), true, false, false) => self.copy_selection(),
-            (Key::Char('X'), true, false, false) => self.cut_selection(),
-            (Key::Char('V'), true, false, false) => self.paste(),
-            (Key::Char('Z'), true, false, false) => self.undo(),
-            (Key::Char('Y'), true, false, false) => self.redo(),
-            (Key::Char('N'), true, false, true) => self.new_folder(),
-            (Key::F(2), false, false, false) => self.rename_focused(),
-            (Key::Enter, false, true, false) => self.properties(),
-            (Key::F(10), false, false, true) | (Key::Apps, ..) => self.context_menu(),
-            _ => return false,
+            EditAction::Cancel => self.ops.rename = None,
+            EditAction::Copy(s) => self.effects.push(Effect::SetClipboard(s)),
+            EditAction::Paste => self.effects.push(Effect::Paste),
+            EditAction::Changed | EditAction::None => {}
         }
         true
     }
@@ -677,6 +663,8 @@ impl App {
             }
             Hit::ListEmpty | Hit::Track | Hit::Thumb => here(),
             Hit::Header(_) | Hit::ColSep(_) | Hit::Sizes => None,
+            Hit::Side(_) | Hit::SidePin(_) | Hit::SideEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose => None,
+            Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside => None,
             _ if self.layout.status.contains(x, y) => None,
             _ => Some(Target::Reveal),
         }

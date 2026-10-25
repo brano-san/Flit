@@ -1,7 +1,11 @@
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
-use flit_core::listing::{Listing, Meta};
+use flit_core::listing::{DirSnapshot, Listing, Meta};
 use flit_core::sort::{self, CaseMode, SortField, SortKeys, SortSpec, ViewSpec};
+use flit_core::view::DirView;
+use flit_core::FsPath;
 use std::hint::black_box;
+use std::sync::Arc;
+use std::time::Duration;
 
 fn names(n: usize) -> Vec<Vec<u16>> {
     let mut seed = 0x2545F4914F6CDD1Du64;
@@ -62,6 +66,41 @@ fn benches(c: &mut Criterion) {
 
     let (a, z) = ("file0123 copy (2).txt".as_bytes(), "file123 copy (10).txt".as_bytes());
     c.bench_function("natural_cmp_pair", |b| b.iter(|| sort::natural_cmp(black_box(a), black_box(z), CaseMode::Insensitive)));
+
+    filter_benches(c, l, k);
+}
+
+fn filter_benches(c: &mut Criterion, listing: Listing, keys: SortKeys) {
+    let view = ViewSpec::default();
+    let mut order = Vec::new();
+    sort::sort(&listing, &keys, view, &mut order);
+    let path = FsPath::parse(r"C:\bench").unwrap();
+    let snap = DirSnapshot { gen: 1, path, listing, keys, order, view, done: true, error: None, elapsed: Duration::ZERO };
+    let mut v = DirView::new(Arc::new(snap));
+    c.bench_function("filter_100k_ascii (keystroke from no filter)", |b| {
+        b.iter(|| {
+            v.set_filter("");
+            v.set_filter(black_box("report"));
+        })
+    });
+    c.bench_function("filter_100k_cyrillic", |b| {
+        b.iter(|| {
+            v.set_filter("");
+            v.set_filter(black_box("копия"));
+        })
+    });
+    c.bench_function("filter_100k_wildcard", |b| {
+        b.iter(|| {
+            v.set_filter("");
+            v.set_filter(black_box("img_*.png"));
+        })
+    });
+    c.bench_function("filter_100k_narrowing (fi → fil)", |b| {
+        b.iter(|| {
+            v.set_filter("fi");
+            v.set_filter(black_box("fil"));
+        })
+    });
 }
 
 criterion_group!(core, benches);

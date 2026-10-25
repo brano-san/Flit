@@ -11,3 +11,4 @@ target/
 Thumbs.db
 desktop.ini
 /doc/
+/.claude/worktrees/

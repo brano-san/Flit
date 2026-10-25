@@ -2,6 +2,7 @@
 
 mod app;
 mod metrics;
+mod places;
 mod state;
 
 use flit_core::name;

@@ -289,6 +289,24 @@ fn new_folder_picks_a_free_name_and_starts_renaming_it() {
 }
 
 #[test]
+fn file_shortcuts_leave_the_filter_field_alone_and_a_new_folder_clears_the_filter() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false), ("b.txt", false)]);
+    select(&mut app, &["a.txt"]);
+    key(&mut app, Key::Char('F'), CTRL);
+    typed(&mut app, "b");
+    key(&mut app, Key::Char('C'), CTRL);
+    key(&mut app, Key::Char('V'), CTRL);
+    assert!(app.drain_effects().all(|e| !matches!(e, Effect::Provider { .. } | Effect::SetClipboardFiles { .. })));
+    key(&mut app, Key::Char('N'), CTRL_SHIFT);
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::NewFolder { dir: p(r"C:\x"), name: b"New folder".to_vec() });
+    done(&mut app, id, op, &[(r"C:\x\New folder", r"C:\x\New folder")]);
+    change(&mut app, ChangeKind::Added, "New folder", true);
+    assert_eq!(app.rename_text(), Some("New folder"));
+}
+
+#[test]
 fn nothing_to_place_into_this_pc() {
     let mut app = app_at("This PC");
     deliver(&mut app, &[("C:", true)]);

@@ -1,4 +1,5 @@
 use crate::metrics::{Metrics, Step};
+use crate::places::PlacesWorker;
 use crate::state::{self, Saved};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use flit_core::input::Event;
@@ -142,6 +143,7 @@ struct Handler<P: Platform> {
     injection: Option<(Instant, Event)>,
     wake: Wake,
     device_gen: u64,
+    places: PlacesWorker,
 }
 
 impl<P: Platform> Handler<P> {
@@ -165,6 +167,8 @@ impl<P: Platform> Handler<P> {
         self.next_base += TAB_STRIDE;
         let mut app = App::new(persisted, routes, base, P::dark_mode(), 1.0, (1100, 720), Instant::now());
         app.utc_offset_min = P::utc_offset_minutes();
+        app.set_nav_state(self.saved.nav.clone());
+        app.set_places(self.places.current());
         let fx: Vec<Effect> = app.drain_effects().collect();
         for e in fx {
             if let Effect::Provider { provider, req } = e {
@@ -216,7 +220,7 @@ impl<P: Platform> Handler<P> {
                 Effect::Window(WindowCmd::ToggleMaximize) => window.toggle_maximize(),
                 Effect::Window(WindowCmd::Close) => {
                     if let Some(st) = self.windows.get(&id) {
-                        self.saved = Saved::new(st.app.persisted(), Some(window.placement()));
+                        self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state());
                     }
                     window.close();
                 }
@@ -237,6 +241,14 @@ impl<P: Platform> Handler<P> {
                 Effect::ShellMenu(menu) => window.shell_menu(menu),
                 Effect::Properties(paths) => window.properties(paths),
                 Effect::StartDrag(paths) => window.start_drag(paths),
+                Effect::Pinned(pinned) => {
+                    for (_, st) in self.windows.iter_mut().filter(|(w, _)| **w != id) {
+                        st.app.set_pinned(pinned.clone());
+                    }
+                    self.saved.nav.pinned = pinned;
+                    (self.wake)();
+                }
+                Effect::RefreshPlaces => self.places.refresh(),
             }
         }
         if self.windows.get(&id).is_some_and(|st| st.app.has_effects()) {
@@ -286,6 +298,11 @@ impl<P: Platform> Handler<P> {
             }
         }
         self.queued_opens.extend(self.opens.try_iter());
+        if let Some(places) = self.places.poll() {
+            for st in self.windows.values_mut() {
+                st.app.set_places(places.clone());
+            }
+        }
     }
 
     fn inject_due(&mut self, window: &Win<P>) {
@@ -378,6 +395,7 @@ impl<P: Platform> Handler<P> {
         st.visible.gen.store(gen, Ordering::Relaxed);
         st.visible.first.store(first, Ordering::Relaxed);
         st.visible.last.store(last, Ordering::Relaxed);
+        self.places.start_once();
         let now = Instant::now();
         if animating {
             window.request_redraw();
@@ -487,7 +505,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         let id = window.id();
         if let Some(mut st) = self.windows.remove(&id) {
             if self.windows.is_empty() {
-                self.saved = Saved::new(st.app.persisted(), Some(window.placement()));
+                self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state());
             }
             st.app.shutdown();
             for e in st.app.drain_effects().collect::<Vec<_>>() {
@@ -552,6 +570,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         done,
         saved: saved.clone(),
         metrics: metrics.map(|m| Metrics::new(m, started, P::refresh_period())),
+        places: PlacesWorker::new::<P>(wake.clone()),
         injection: None,
         wake,
         gpu,

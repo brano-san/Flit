@@ -1,8 +1,15 @@
 pub mod edit;
 mod ops;
 mod tab;
+pub mod actions;
+mod field;
+mod filter;
+mod nav;
+pub mod palette;
+pub mod sidebar;
 
 pub use ops::{base_name_len, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, ShellMenu, SHELL_VERBS};
+pub use sidebar::{Drive, KnownFolder, NavState, Places};
 pub use tab::Tab;
 
 use crate::fmt as format;
@@ -139,6 +146,8 @@ pub enum Effect {
     ShellMenu(ShellMenu),
     Properties(Vec<FsPath>),
     StartDrag(Vec<FsPath>),
+    Pinned(Vec<Location>),
+    RefreshPlaces,
 }
 
 pub enum IconResult {
@@ -177,6 +186,8 @@ pub struct LoadStats {
 enum Focus {
     List,
     Address,
+    Filter,
+    Sidebar,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -196,6 +207,16 @@ enum Hit {
     Track,
     Thumb,
     Sizes,
+    Side(usize),
+    SidePin(usize),
+    SideEmpty,
+    Splitter,
+    FilterField,
+    FilterClose,
+    PaletteRow(usize),
+    PaletteField,
+    PaletteBox,
+    PaletteOutside,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -204,6 +225,8 @@ enum Drag {
     Thumb { grab: f32 },
     ColSep { col: usize, start_x: f32, start_w: f32 },
     EditSelect,
+    Splitter { start_x: f32, start_w: f32 },
+    PinMove { from: usize, to: usize },
 }
 
 #[derive(Default)]
@@ -262,6 +285,7 @@ pub struct App {
     last_frame: Option<Instant>,
     dirty: bool,
     ops: ops::Ops,
+    nav: nav::Nav,
 }
 
 impl App {
@@ -298,6 +322,7 @@ impl App {
             last_frame: None,
             dirty: true,
             ops: ops::Ops::default(),
+            nav: nav::Nav::default(),
         };
         let mut start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
         let total = start.len();
@@ -369,7 +394,7 @@ impl App {
     }
 
     pub fn ime_area(&self) -> Option<Rect> {
-        self.editing.then_some(self.layout.address).or(self.rename_ime_area())
+        self.editing.then_some(self.layout.address).or_else(|| self.nav_ime_area()).or_else(|| self.rename_ime_area())
     }
 
     fn s(&self, v: f32) -> f32 {
@@ -495,6 +520,7 @@ impl App {
         }
         let mut t = self.tabs.remove(i);
         t.shutdown(&mut self.effects);
+        self.remember_closed(t.location().clone());
         if self.cur > i || self.cur >= self.tabs.len() {
             self.cur = self.cur.saturating_sub(1);
         }
@@ -641,6 +667,9 @@ impl App {
         if self.ops_paste(text) {
             return;
         }
+        if !self.editing && self.nav_insert(text.lines().next().unwrap_or("")) {
+            return;
+        }
         if self.editing {
             self.edit.insert(text.lines().next().unwrap_or(""));
             self.dirty = true;
@@ -656,6 +685,7 @@ impl App {
 
     fn layout(&mut self) {
         let (w, h) = self.size;
+        let (cx, filter_h) = self.content_origin();
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
         let l = &mut self.layout;
@@ -685,13 +715,13 @@ impl App {
         }
         let ax = l.nav[3].right() + s(8.0);
         l.address = Rect::new(ax, l.toolbar.y + s(5.0), (w - s(12.0) - ax).max(s(40.0)), s(TOOL_H - 10.0));
-        l.header = Rect::new(0.0, l.toolbar.bottom(), w, s(HEADER_H));
+        l.header = Rect::new(cx, l.toolbar.bottom() + filter_h, w - cx, s(HEADER_H));
         l.status = Rect::new(0.0, h - s(STATUS_H), w, s(STATUS_H));
-        l.list = Rect::new(0.0, l.header.bottom(), w - s(SCROLLBAR_W), (l.status.y - l.header.bottom()).max(0.0));
+        l.list = Rect::new(cx, l.header.bottom(), (w - cx - s(SCROLLBAR_W)).max(0.0), (l.status.y - l.header.bottom()).max(0.0));
         l.track = Rect::new(l.list.right(), l.list.y, s(SCROLLBAR_W), l.list.h);
         let fixed: f32 = self.col_w.iter().map(|&c| s(c)).sum();
         let name_w = (l.list.w - fixed).max(s(NAME_MIN_W));
-        let mut x = 0.0;
+        let mut x = cx;
         for (i, r) in l.cols.iter_mut().enumerate() {
             let cw = if i == 0 { name_w } else { s(self.col_w[i - 1]) };
             *r = Rect::new(x, l.header.y, cw, l.header.h);
@@ -713,9 +743,13 @@ impl App {
         } else {
             Rect::default()
         };
+        self.layout_nav();
     }
 
     fn hit(&self, x: f32, y: f32) -> Hit {
+        if let Some(h) = self.nav_hit(x, y) {
+            return h;
+        }
         let l = &self.layout;
         if l.title.contains(x, y) {
             if let Some(i) = l.caption.iter().position(|r| r.contains(x, y)) {
@@ -813,6 +847,9 @@ impl App {
             Event::MouseDown { x, y, button, clicks } => self.mouse_down(*x, *y, *button, *clicks, now),
             Event::MouseUp { x, y, button } => self.mouse_up(*x, *y, *button, now),
             Event::Wheel { dy, .. } => {
+                if self.nav_wheel(*dy) {
+                    return;
+                }
                 let (rh, lh) = (self.layout.row_h, self.layout.list.h);
                 let t = self.tab_mut();
                 t.scroll_target = (t.scroll_target - dy * 3.0 * rh).clamp(0.0, t.max_scroll(rh, lh));
@@ -841,6 +878,7 @@ impl App {
             }
             Event::CloseRequested => self.effects.push(Effect::Window(WindowCmd::Close)),
             Event::ShellVerb(verb) => self.shell_verb(verb),
+            Event::DevicesChanged => self.effects.push(Effect::RefreshPlaces),
         }
     }
 
@@ -880,12 +918,18 @@ impl App {
                 self.dirty = true;
                 return;
             }
+            Drag::Splitter { start_x, start_w } => return self.drag_splitter(x, start_x, start_w),
+            Drag::PinMove { from, .. } => return self.drag_pin(from, y),
             Drag::None => {}
+        }
+        if self.start_pin_drag(y) {
+            return;
         }
         let h = self.hit(x, y);
         let cursor = match h {
-            Hit::ColSep(_) => CursorIcon::ResizeHorizontal,
+            Hit::ColSep(_) | Hit::Splitter => CursorIcon::ResizeHorizontal,
             Hit::Address if self.editing => CursorIcon::Text,
+            Hit::FilterField | Hit::PaletteField => CursorIcon::Text,
             _ => CursorIcon::Default,
         };
         self.set_cursor(cursor);
@@ -901,6 +945,9 @@ impl App {
             return;
         }
         let h = self.hit(x, y);
+        if self.nav_mouse_down(h, (x, y), button, clicks, now) {
+            return;
+        }
         match (button, h) {
             (MouseButton::Back, _) => return self.go_history(false, now),
             (MouseButton::Forward, _) => return self.go_history(true, now),
@@ -956,6 +1003,9 @@ impl App {
         let was = std::mem::replace(&mut self.drag, Drag::None);
         let pressed = std::mem::replace(&mut self.pressed, Hit::None);
         self.dirty = true;
+        if let Drag::PinMove { from, to } = was {
+            return self.drop_pin(from, to);
+        }
         if button != MouseButton::Left || was != Drag::None {
             return;
         }
@@ -987,6 +1037,10 @@ impl App {
                 self.resort(k);
             }
             Hit::Sizes => self.compute_dir_sizes(),
+            Hit::Side(i) => self.open_side_item(i, self.mods.ctrl, now),
+            Hit::SidePin(i) => self.toggle_pin_item(i),
+            Hit::FilterClose => self.close_filter(),
+            Hit::PaletteRow(i) => self.run_palette_item(i, now),
             _ => {}
         }
     }
@@ -1048,46 +1102,19 @@ impl App {
             }
             return;
         }
+        if self.nav_key(key, m, now) {
+            return;
+        }
         let page = self.page_rows();
         let (rh, lh) = (self.layout.row_h, self.layout.list.h);
         let mut moved = None;
         match (key, m.ctrl, m.alt) {
-            (Key::Left, false, true) | (Key::Backspace, false, false) | (Key::BrowserBack, ..) => self.go_history(false, now),
-            (Key::Right, false, true) | (Key::BrowserForward, ..) => self.go_history(true, now),
-            (Key::Up, false, true) => self.go_up(now),
-            (Key::F(5), ..) | (Key::Char('R'), true, false) => self.refresh(now),
-            (Key::Char('W'), true, false) | (Key::F(4), true, false) => self.close_tab(self.cur),
-            (Key::Char('L'), true, false) | (Key::Char('D'), false, true) | (Key::F(4), false, false) => self.begin_edit(),
-            (Key::Char('T'), true, false) => self.new_tab_here(now),
-            (Key::Tab, true, false) => {
-                let n = self.tabs.len();
-                let next = if m.shift { (self.cur + n - 1) % n } else { (self.cur + 1) % n };
-                self.select_tab(next);
-            }
+            (Key::BrowserBack, ..) => self.go_history(false, now),
+            (Key::BrowserForward, ..) => self.go_history(true, now),
             (Key::Char(c @ '1'..='9'), true, false) => {
                 let i = if c == '9' { self.tabs.len() - 1 } else { c as usize - '1' as usize };
                 self.select_tab(i);
             }
-            (Key::Char('H'), true, false) => {
-                let k = self.cur;
-                let t = self.tab_mut();
-                t.view_spec.show_hidden = !t.view_spec.show_hidden;
-                self.resort(k);
-            }
-            (Key::Char('S'), true, false) if m.shift => self.compute_dir_sizes(),
-            (Key::Char('A'), true, false) => {
-                if let Some(v) = &mut self.tab_mut().view {
-                    v.select_all();
-                }
-            }
-            (Key::Char('C'), true, false) if m.shift => self.copy_paths(),
-            (Key::Escape, ..) => {
-                if let Some(v) = &mut self.tab_mut().view {
-                    v.clear_selection();
-                }
-            }
-            (Key::Enter, false, false) => self.open_selection(now),
-            (Key::Delete, false, false) => self.trash_selection(),
             (Key::Space, true, false) => {
                 if let Some(v) = &mut self.tab_mut().view {
                     if let Some(f) = v.focus {
@@ -1122,6 +1149,9 @@ impl App {
         if self.editing {
             let mut b = [0; 4];
             self.edit.insert(c.encode_utf8(&mut b));
+            return;
+        }
+        if self.nav_insert(c.encode_utf8(&mut [0; 4])) {
             return;
         }
         if self.mods.ctrl != self.mods.alt {
@@ -1218,6 +1248,7 @@ impl App {
             self.draw_title(g, th);
             self.draw_toolbar(g, th);
             self.draw_status(g, &arena, th);
+            self.draw_nav(g, th);
             if !g.atlas_reset {
                 break;
             }
@@ -1368,7 +1399,7 @@ impl App {
     fn draw_header<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
         let l = &self.layout;
         g.dl.rect(l.header, t.header);
-        g.dl.rect(Rect::new(0.0, l.header.bottom() - 1.0, l.header.w, 1.0), t.separator);
+        g.dl.rect(Rect::new(l.header.x, l.header.bottom() - 1.0, l.header.w, 1.0), t.separator);
         let font = self.ui_font(12.0);
         let m = g.metrics(font);
         let baseline = (l.header.y + (l.header.h + m.ascent - m.descent) / 2.0).round();
@@ -1408,7 +1439,7 @@ impl App {
         let mut type_requests: Vec<Vec<u8>> = Vec::new();
         if let Some(v) = &tab.view {
             if v.rows().is_empty() && v.snap().done && v.snap().error.is_none() {
-                let msg = "This folder is empty.";
+                let msg = if v.is_filtered() { "No items match the filter." } else { "This folder is empty." };
                 let w = g.measure(msg, font);
                 g.text(list.x + (list.w - w) / 2.0, list.y + self.s(40.0), msg, font, t.text_dim, f32::INFINITY);
             }
@@ -1519,8 +1550,12 @@ impl App {
             s.push_str(err);
             color = t.error;
         } else if let Some(v) = tab.view.as_ref().filter(|v| v.snap().gen == tab.gen) {
-            let n = v.rows().len();
-            let _ = write!(s, "{n} {}", if n == 1 { "item" } else { "items" });
+            let (n, total) = (v.rows().len(), v.total_rows());
+            if v.is_filtered() {
+                let _ = write!(s, "{n} of {total} {}", if total == 1 { "item" } else { "items" });
+            } else {
+                let _ = write!(s, "{n} {}", if n == 1 { "item" } else { "items" });
+            }
             let k = v.selected_count();
             if k > 0 {
                 let _ = write!(s, "    {k} selected");

@@ -56,6 +56,7 @@ pub enum Event {
     DroppedFiles(Vec<FsPath>),
     CloseRequested,
     ShellVerb(String),
+    DevicesChanged,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

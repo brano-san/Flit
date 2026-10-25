@@ -1,3 +1,4 @@
+use super::field::Field;
 use super::{Effect, LoadStats};
 use crate::input::Mods;
 use crate::listing::{attr, DirChange, DirSnapshot};
@@ -41,6 +42,7 @@ pub struct Tab {
     pub(super) reveal_pending: bool,
     type_ahead: String,
     type_ahead_at: Option<Instant>,
+    pub(super) filter: Option<Field>,
 }
 
 impl Tab {
@@ -65,6 +67,7 @@ impl Tab {
             reveal_pending: false,
             type_ahead: String::new(),
             type_ahead_at: None,
+            filter: None,
         }
     }
 
@@ -83,6 +86,9 @@ impl Tab {
         self.gen = gen;
         self.cancel.set(gen);
         let loc = self.location().clone();
+        if loc != self.view_loc {
+            self.reset_filter();
+        }
         let provider = loc.provider();
         if let Some(old) = self.watching.take().filter(|p| *p != provider) {
             fx.push(Effect::Provider { provider: old, req: ProviderRequest::Watch { tab: self.id, gen, path: None } });
@@ -128,6 +134,7 @@ impl Tab {
                 self.view_loc = self.location().clone();
                 self.scroll = 0.0;
                 self.scroll_target = 0.0;
+                self.refilter_view();
             }
         }
         let v = self.view.as_mut().unwrap();
