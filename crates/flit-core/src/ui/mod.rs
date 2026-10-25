@@ -1,6 +1,8 @@
 pub mod edit;
+mod search;
 mod tab;
 
+pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchSort};
 pub use tab::Tab;
 
 use crate::fmt as format;
@@ -133,6 +135,7 @@ pub enum Effect {
     Title(String),
     NewWindow(Vec<Route>),
     Open(Open),
+    Search(SearchRequest),
 }
 
 pub enum IconResult {
@@ -255,6 +258,7 @@ pub struct App {
     arena: Bump,
     last_frame: Option<Instant>,
     dirty: bool,
+    search: search::SearchView,
 }
 
 impl App {
@@ -290,6 +294,7 @@ impl App {
             arena: Bump::new(),
             last_frame: None,
             dirty: true,
+            search: Default::default(),
         };
         let mut start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
         let total = start.len();
@@ -361,7 +366,7 @@ impl App {
     }
 
     pub fn ime_area(&self) -> Option<Rect> {
-        self.editing.then_some(self.layout.address)
+        self.search_ime_area().or(self.editing.then_some(self.layout.address))
     }
 
     fn s(&self, v: f32) -> f32 {
@@ -640,6 +645,9 @@ impl App {
     }
 
     pub fn on_paste(&mut self, text: &str) {
+        if self.search.active {
+            return self.search_paste(text);
+        }
         if self.editing {
             self.edit.insert(text.lines().next().unwrap_or(""));
             self.dirty = true;
@@ -782,6 +790,9 @@ impl App {
     }
 
     pub fn on_event(&mut self, ev: &Event, now: Instant) {
+        if self.search.active && self.search_event(ev, now) {
+            return;
+        }
         match ev {
             Event::Resized { width, height } => {
                 self.size = (*width as f32, *height as f32);
@@ -1045,6 +1056,7 @@ impl App {
             (Key::Char('W'), true, false) | (Key::F(4), true, false) => self.close_tab(self.cur),
             (Key::Char('L'), true, false) | (Key::Char('D'), false, true) | (Key::F(4), false, false) => self.begin_edit(),
             (Key::Char('T'), true, false) => self.new_tab_here(now),
+            (Key::Char('E'), true, false) => self.open_search(),
             (Key::Tab, true, false) => {
                 let n = self.tabs.len();
                 let next = if m.shift { (self.cur + n - 1) % n } else { (self.cur + 1) % n };
@@ -1204,11 +1216,19 @@ impl App {
         for _ in 0..2 {
             arena.reset();
             g.begin(th.bg);
-            self.draw_list(g, &arena, th);
-            self.draw_header(g, th);
+            if self.search.active {
+                self.draw_search(g, &arena, th);
+            } else {
+                self.draw_list(g, &arena, th);
+                self.draw_header(g, th);
+            }
             self.draw_title(g, th);
-            self.draw_toolbar(g, th);
-            self.draw_status(g, &arena, th);
+            if self.search.active {
+                self.draw_search_bar(g, &arena, th);
+            } else {
+                self.draw_toolbar(g, th);
+                self.draw_status(g, &arena, th);
+            }
             if !g.atlas_reset {
                 break;
             }

@@ -2,6 +2,7 @@
 
 mod app;
 mod metrics;
+mod search_client;
 mod state;
 
 use flit_core::name;
