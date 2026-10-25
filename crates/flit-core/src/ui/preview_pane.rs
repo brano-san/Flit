@@ -776,6 +776,7 @@ impl App {
             rows.push(("Total size", size_text(bytes)));
         }
         if let Some((total, free)) = s.drive {
+            rows.push(("Used space", size_text(total.saturating_sub(free))));
             rows.push(("Free space", size_text(free)));
             rows.push(("Total size", size_text(total)));
         }
