@@ -187,6 +187,14 @@ impl Platform for Windows {
         instance::elevated()
     }
 
+    fn date_patterns() -> (String, String) {
+        places::date_patterns()
+    }
+
+    fn os_version() -> String {
+        places::os_version()
+    }
+
     fn watch_wsl(changed: Box<dyn Fn() + Send>) {
         places::watch_lxss(changed)
     }

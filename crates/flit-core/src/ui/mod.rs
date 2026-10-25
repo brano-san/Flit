@@ -19,6 +19,8 @@ mod menu;
 mod nav;
 pub mod palette;
 mod preview_pane;
+pub mod settings;
+mod settings_page;
 pub mod sidebar;
 mod address;
 mod tabbar;
@@ -36,6 +38,8 @@ pub use menu::MenuItem;
 pub use tab::Tab;
 pub use address::Typed;
 pub use tabbar::{MovedTab, Startup, WindowSession};
+pub use settings::{ConfirmDelete, Doc, Page, Setting, Value, SETTINGS};
+pub use settings_page::About;
 
 use crate::fmt as format;
 use crate::hash::{self, FxHashMap};
@@ -209,6 +213,14 @@ pub enum Effect {
     MoveTab { tab: MovedTab, at: Option<(f32, f32)>, last: bool },
     RestoreSession,
     Tags(TagRequest),
+    Settings(SettingsCmd),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SettingsCmd {
+    Export { path: FsPath, text: String },
+    Import(FsPath),
+    CacheSize,
 }
 
 pub enum IconResult {
@@ -307,6 +319,8 @@ enum Hit {
     CrumbOverflow,
     Suggestion(usize),
     Eject,
+    SideSettings,
+    Settings(settings_page::SHit),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -366,8 +380,23 @@ pub struct App {
     pub tab_actions_button: bool,
     pub folders_in_new_tab: bool,
     pub double_click_up: bool,
+    pub switch_to_new_tab: bool,
+    pub smooth_scroll: bool,
+    pub single_click_files: bool,
+    pub single_click_folders: bool,
+    pub single_click_columns: bool,
+    pub select_previous: bool,
+    pub show_flatten: bool,
+    pub confirm_delete: ConfirmDelete,
+    pub style: format::Style,
+    pub show_hidden: bool,
+    pub startup: Startup,
+    pub startup_pages: Vec<Location>,
+    pub about: About,
     pub prefs: ViewPrefs,
     folders: FolderViews,
+    settings: Option<settings_page::SettingsUi>,
+    clicked_open: bool,
     menu: Vec<menu::Cmd>,
     focused_at: Option<Instant>,
     dark: bool,
@@ -433,8 +462,26 @@ impl App {
             tab_actions_button: true,
             folders_in_new_tab: false,
             double_click_up: true,
+            switch_to_new_tab: true,
+            smooth_scroll: true,
+            single_click_files: false,
+            single_click_folders: false,
+            single_click_columns: false,
+            select_previous: true,
+            show_flatten: false,
+            confirm_delete: ConfirmDelete::default(),
+            style: format::Style::default(),
+            show_hidden: state.show_hidden,
+            startup_pages: match &state.startup {
+                Startup::Folders(pages) => pages.clone(),
+                _ => Vec::new(),
+            },
+            startup: state.startup,
+            about: About::default(),
             prefs: state.prefs,
             folders: state.folders,
+            settings: None,
+            clicked_open: false,
             menu: Vec::new(),
             focused_at: None,
             dark,
@@ -505,7 +552,7 @@ impl App {
 
     pub fn persisted(&self) -> Persisted {
         let t = self.tab();
-        Persisted { path: t.location().clone(), show_hidden: t.view_spec.show_hidden, view: t.folder_view(), prefs: self.prefs.clone(), folders: self.folders.clone(), archive: self.archive.prefs.clone(), startup: Startup::default() }
+        Persisted { path: t.location().clone(), show_hidden: t.view_spec.show_hidden, view: t.folder_view(), prefs: self.prefs.clone(), folders: self.folders.clone(), archive: self.archive.prefs.clone(), startup: self.startup.clone() }
     }
 
     pub fn tab(&self) -> &Tab {
@@ -551,7 +598,7 @@ impl App {
     }
 
     pub fn ime_area(&self) -> Option<Rect> {
-        self.search_ime_area().or(self.editing.then_some(self.layout.address)).or_else(|| self.nav_ime_area()).or_else(|| self.rename_ime_area())
+        self.search_ime_area().or_else(|| self.settings_ime_area()).or(self.editing.then_some(self.layout.address)).or_else(|| self.nav_ime_area()).or_else(|| self.rename_ime_area())
     }
 
     fn s(&self, v: f32) -> f32 {
@@ -702,7 +749,8 @@ impl App {
     fn go_up(&mut self, now: Instant) {
         let cur = self.current_location().clone();
         if let Some(parent) = cur.parent() {
-            self.dispatch(vec![Route { folder: parent, select: Some(cur.file_name().to_vec()) }], OpenTarget::CurrentTab, now);
+            let select = self.select_previous.then(|| cur.file_name().to_vec());
+            self.dispatch(vec![Route { folder: parent, select }], OpenTarget::CurrentTab, now);
         }
     }
 
@@ -711,11 +759,11 @@ impl App {
     }
 
     fn jump_history(&mut self, n: isize, now: Instant) {
-        let k = self.cur;
+        let (k, previous) = (self.cur, self.select_previous);
         let t = &mut self.tabs[k];
         let from = t.location().clone();
         if t.history.jump(n) {
-            let select = (from.parent().as_ref() == Some(t.location())).then(|| from.file_name().to_vec());
+            let select = (previous && from.parent().as_ref() == Some(t.location())).then(|| from.file_name().to_vec());
             self.load_tab(k, select, now);
             self.after_tab_change();
         }
@@ -745,8 +793,12 @@ impl App {
         }
         let t = self.tab();
         if e.is_dir() || self.browses_as_folder(loc.file_name()) || crate::library::is_library(loc.path()) {
-            let target = if self.folders_in_new_tab { OpenTarget::NewTab } else { OpenTarget::CurrentTab };
-            self.dispatch(vec![Route { folder: loc, select: None }], target, now);
+            let route = vec![Route { folder: loc, select: None }];
+            if self.folders_in_new_tab {
+                self.open_in_tabs(route, now);
+            } else {
+                self.dispatch(route, OpenTarget::CurrentTab, now);
+            }
         } else {
             self.effects.push(Effect::Provider { provider: loc.provider(), req: ProviderRequest::Open { tab: t.id, path: loc.path().clone() } });
         }
@@ -896,7 +948,7 @@ impl App {
     }
 
     pub fn on_paste(&mut self, text: &str) {
-        if self.form_insert(text) || self.jobs.modal() {
+        if self.form_insert(text) || self.jobs.modal() || self.settings_insert(text.lines().next().unwrap_or("")) {
             return;
         }
         if self.search.active {
@@ -1008,10 +1060,11 @@ impl App {
         self.layout_nav();
         self.layout_jobs();
         self.layout_address();
+        self.layout_settings();
     }
 
     fn hit(&self, x: f32, y: f32) -> Hit {
-        if let Some(h) = self.jobs_hit(x, y) {
+        if let Some(h) = self.jobs_hit(x, y).or_else(|| self.palette_hit(x, y)).or_else(|| self.settings_hit(x, y)) {
             return h;
         }
         if let Some(h) = self.address_hit(x, y).or_else(|| self.nav_hit(x, y)).or_else(|| self.preview_hit(x, y)) {
@@ -1132,7 +1185,7 @@ impl App {
             Event::MouseDown { x, y, button, clicks } => self.mouse_down(*x, *y, *button, *clicks, now),
             Event::MouseUp { x, y, button } => self.mouse_up(*x, *y, *button, now),
             Event::Wheel { dy, .. } => {
-                if self.jobs_wheel(*dy) || self.nav_wheel(*dy) || self.pane_wheel(*dy) || self.preview_wheel(*dy) || self.strip_wheel(*dy) {
+                if self.jobs_wheel(*dy) || self.nav_wheel(*dy) || self.settings_wheel(*dy) || self.pane_wheel(*dy) || self.preview_wheel(*dy) || self.strip_wheel(*dy) {
                     return;
                 }
                 if self.mods.ctrl {
@@ -1224,7 +1277,7 @@ impl App {
         let cursor = match h {
             Hit::ColSep(_) | Hit::Splitter => CursorIcon::ResizeHorizontal,
             Hit::Address if self.editing => CursorIcon::Text,
-            Hit::FilterField | Hit::PaletteField => CursorIcon::Text,
+            Hit::FilterField | Hit::PaletteField | Hit::Settings(settings_page::SHit::Search) => CursorIcon::Text,
             Hit::Preview(preview_pane::PaneHit::Split) => self.preview_cursor(),
             _ => CursorIcon::Default,
         };
@@ -1238,7 +1291,7 @@ impl App {
 
     fn mouse_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8, now: Instant) {
         self.dirty = true;
-        if self.form_down(x, y, clicks) || self.jobs_mouse_down(self.hit(x, y)) || self.strip_mouse_down(self.hit(x, y), button, clicks, now) || self.autoscroll_down(self.hit(x, y), self.along_of(x, y), button) || self.ops_mouse_down(x, y, button, clicks) {
+        if self.form_down(x, y, clicks) || self.jobs_mouse_down(self.hit(x, y)) || self.settings_mouse_down(self.hit(x, y), x, button, clicks) || self.strip_mouse_down(self.hit(x, y), button, clicks, now) || self.autoscroll_down(self.hit(x, y), self.along_of(x, y), button) || self.ops_mouse_down(x, y, button, clicks) {
             return;
         }
         let h = self.hit(x, y);
@@ -1370,6 +1423,8 @@ impl App {
             Hit::CrumbMenu(i) => self.crumb_menu(i),
             Hit::CrumbOverflow => self.overflow_menu(),
             Hit::Eject => self.eject(),
+            Hit::SideSettings => self.open_settings(None),
+            Hit::Settings(s) => self.settings_click(s, x, y),
             _ => {}
         }
     }
@@ -1381,6 +1436,8 @@ impl App {
 
     fn click_row(&mut self, row: usize, button: MouseButton, clicks: u8, now: Instant) {
         let m = self.mods;
+        let plain = !m.ctrl && !m.shift;
+        let opened_by_first_click = std::mem::take(&mut self.clicked_open);
         let Some(v) = &mut self.tabs[self.cur].view else { return };
         let i = v.rows()[row];
         if button == MouseButton::Right {
@@ -1391,7 +1448,7 @@ impl App {
             v.focus = Some(i);
             return;
         }
-        if clicks >= 2 && !m.ctrl && !m.shift {
+        if clicks >= 2 && plain && !opened_by_first_click {
             return self.open_entry(i, now);
         }
         if m.shift {
@@ -1410,11 +1467,33 @@ impl App {
             v.anchor = Some(i);
         }
         v.focus = Some(i);
+        if clicks == 1 && plain && self.single_click_opens(i) {
+            self.clicked_open = true;
+            self.open_entry(i, now);
+        }
+    }
+
+    fn single_click_opens(&self, i: u32) -> bool {
+        let t = self.tab();
+        let Some(v) = t.view.as_ref().filter(|_| !t.view_loc.is_recycle_bin()) else { return false };
+        match v.listing().entries.get(i as usize).is_some_and(|e| e.is_dir()) {
+            true if t.look == LayoutMode::Columns => self.single_click_columns,
+            true => self.single_click_folders,
+            false => self.single_click_files,
+        }
+    }
+
+    fn open_in_tabs(&mut self, routes: Vec<Route>, now: Instant) {
+        let back = self.cur;
+        self.dispatch(routes, OpenTarget::NewTab, now);
+        if !self.switch_to_new_tab && self.cur != back {
+            self.select_tab(back);
+        }
     }
 
     fn key(&mut self, key: Key, m: Mods, now: Instant) {
         self.dirty = true;
-        if self.jobs_key(key, m) || self.ops_key(key, m) || self.strip_key(key) {
+        if self.jobs_key(key, m) || self.settings_key(key, m) || self.ops_key(key, m) || self.strip_key(key) {
             return;
         }
         if self.editing {
@@ -1470,7 +1549,7 @@ impl App {
             return;
         }
         self.dirty = true;
-        if self.form_insert(c.encode_utf8(&mut [0; 4])) || self.jobs.modal() || self.ops_char(c) {
+        if self.form_insert(c.encode_utf8(&mut [0; 4])) || self.jobs.modal() || self.settings_insert(c.encode_utf8(&mut [0; 4])) || self.ops_char(c) {
             return;
         }
         if self.editing {
@@ -1559,9 +1638,10 @@ impl App {
         animating |= self.marquee_autoscroll(dt);
         animating |= self.autoscroll_step(dt);
 
+        let smooth = self.smooth_scroll;
         let t = self.tab_mut();
         let diff = t.scroll_target - t.scroll;
-        if diff.abs() > 0.5 {
+        if diff.abs() > 0.5 && smooth {
             t.scroll += diff * (1.0 - (-dt / SCROLL_TAU).exp()).max(0.15);
             animating = true;
         } else {
@@ -1600,6 +1680,10 @@ impl App {
                 }
                 self.draw_nav(g, th);
                 self.draw_suggestions(g, th);
+            }
+            self.draw_settings(g, th);
+            if !self.search.active {
+                self.draw_palette(g, th);
             }
             self.draw_tab_tip(g, th);
             self.draw_jobs(g, th);
@@ -1992,12 +2076,12 @@ impl App {
                 let size = v.selected_size();
                 if size > 0 {
                     s.push_str("  ");
-                    format::size(&mut s, size);
+                    format::size_in(&mut s, size, self.style.decimal);
                 }
             }
             if let Some(total) = self.unpacked_total() {
                 s.push_str("    ");
-                format::size(&mut s, total);
+                format::size_in(&mut s, total, self.style.decimal);
                 s.push_str(" unpacked");
             }
             if !v.snap().done {

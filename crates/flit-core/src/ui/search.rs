@@ -673,12 +673,12 @@ impl App {
             }
             if !is_dir {
                 let mut sz = bumpalo::collections::String::new_in(arena);
-                format::size(&mut sz, r.meta.size);
+                format::size_in(&mut sz, r.meta.size, self.style.decimal);
                 let w = g.measure(&sz, font);
                 g.text((sl.cols[2].right() - pad - w).max(sl.cols[2].x + pad), ty, &sz, font, t.text_dim, sl.cols[2].w - 2.0 * pad);
             }
             let mut d = bumpalo::collections::String::new_in(arena);
-            format::datetime(&mut d, r.meta.modified, self.utc_offset_min);
+            format::datetime_in(&mut d, r.meta.modified, self.utc_offset_min, &self.style);
             g.text(sl.cols[3].x + pad, ty, &d, font, t.text_dim, sl.cols[3].w - 2.0 * pad);
         }
         g.dl.set_clip(None);

@@ -23,6 +23,7 @@ pub(super) enum Cmd {
     ToggleTag(usize),
     ShowTag(usize),
     OpenTagged(usize),
+    Setting(usize, usize),
 }
 
 const SORTS: [(SortField, &str, &str); 6] = [
@@ -221,6 +222,8 @@ impl App {
             m.action("window.fullscreen", "Full screen");
             m.separator();
             m.action("tab.close_all", "Close all tabs");
+            m.separator();
+            m.action("settings.open", "Settings");
         })
     }
 
@@ -238,7 +241,7 @@ impl App {
                 m.separator();
             }
             m.action("tags.new", "New tag");
-            m.action("tags.manage", "Manage tags");
+            m.action("tags.settings", "Manage tags");
         })
     }
 
@@ -317,7 +320,7 @@ impl App {
             let pinned = folders.iter().all(|l| self.nav.sidebar.state.pinned.contains(l));
             m.action("item.pin", if pinned { "Unpin from sidebar" } else { "Pin to sidebar" });
         }
-        if t.view_loc.path().kind() == PathKind::Drive {
+        if t.view_loc.path().kind() == PathKind::Drive && m.shown("tags.edit") {
             let (any, all) = self.selection_tags();
             m.submenu("Edit tags", |m| {
                 for (k, tag) in self.tag_defs().iter().enumerate() {
@@ -341,8 +344,13 @@ impl App {
             if count == 1 && folders.len() == 1 {
                 m.action("file.folder_icon", "Change icon");
             }
+            if self.show_flatten && !folders.is_empty() && folders.len() == count {
+                m.action("file.flatten", "Flatten folder");
+            }
             m.separator();
-            self.archive_menu(m, count, folders.is_empty());
+            if m.shown("archive.menu") {
+                self.archive_menu(m, count, folders.is_empty());
+            }
         }
         m.separator();
         m.action("item.properties", "Properties");
@@ -427,6 +435,7 @@ impl App {
             Some(Cmd::ToggleTag(k)) => self.toggle_tag(k),
             Some(Cmd::ShowTag(k)) => self.show_tag(k),
             Some(Cmd::OpenTagged(k)) => self.open_all_tagged(k, now),
+            Some(Cmd::Setting(i, choice)) => self.choose_setting(i, choice),
             None => {}
         }
     }

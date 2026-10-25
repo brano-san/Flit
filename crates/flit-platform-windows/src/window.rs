@@ -725,6 +725,7 @@ fn map_key(vk: u16) -> Key {
         VK_BROWSER_FORWARD => Key::BrowserForward,
         VK_APPS => Key::Apps,
         VK_OEM_3 => Key::Char('`'),
+        VK_OEM_COMMA => Key::Char(','),
         VK_OEM_PLUS => Key::Char('+'),
         VK_OEM_MINUS | VK_SUBTRACT => Key::Char('-'),
         VK_ADD => Key::NumPlus,

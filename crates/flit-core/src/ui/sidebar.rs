@@ -41,6 +41,7 @@ const G_PIN: &str = "\u{E718}";
 const G_UNPIN: &str = "\u{E77A}";
 const G_EXPANDED: &str = "\u{E70D}";
 const G_COLLAPSED: &str = "\u{E76C}";
+pub(super) const G_SETTINGS: &str = "\u{E713}";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum KnownFolder {
@@ -252,6 +253,7 @@ pub(super) struct Sidebar {
     pub hint: Option<Rect>,
     pub rect: Rect,
     pub splitter: Rect,
+    pub settings: Rect,
     scroll: f32,
     content_h: f32,
     pub cursor: usize,
@@ -563,8 +565,10 @@ impl App {
             return self.show_tag(k);
         }
         let Some(folder) = self.nav.sidebar.items.get(i).map(|it| it.loc.clone()) else { return };
-        let target = if new_tab { OpenTarget::NewTab } else { OpenTarget::CurrentTab };
-        self.dispatch(vec![Route { folder, select: None }], target, now);
+        match new_tab {
+            true => self.open_in_tabs(vec![Route { folder, select: None }], now),
+            false => self.dispatch(vec![Route { folder, select: None }], OpenTarget::CurrentTab, now),
+        }
     }
 
     pub(super) fn known_folder(&self, k: KnownFolder) -> Option<Location> {
@@ -713,11 +717,14 @@ impl App {
         sb.rects.clear();
         sb.headers.clear();
         sb.hint = None;
+        sb.settings = Rect::default();
         if width <= 0.0 {
             return;
         }
         let (x, w) = if compact { (s(4.0), (width - s(8.0)).max(0.0)) } else { (s(6.0), (width - s(12.0)).max(0.0)) };
         let (header_h, row_h) = if compact { (s(COMPACT_HEADER_H), s(COMPACT_ROW_H)) } else { (s(HEADER_H), s(ROW_H)) };
+        let footer = row_h + s(8.0);
+        sb.settings = Rect::new(x, sb.rect.bottom() - row_h - s(4.0), w, row_h);
         let mut y = s(4.0);
         for section in Section::ALL {
             if sb.is_hidden(section) || !sb.has_items(section) {
@@ -737,7 +744,7 @@ impl App {
             }
             y += if compact { s(2.0) } else { s(6.0) };
         }
-        sb.content_h = y;
+        sb.content_h = y + footer;
         sb.scroll = sb.scroll.clamp(0.0, (sb.content_h - sb.rect.h).max(0.0));
         let dy = top - sb.scroll;
         for r in sb.rects.iter_mut().chain(sb.headers.iter_mut().map(|(r, _)| r)).chain(sb.hint.iter_mut()) {
@@ -755,6 +762,9 @@ impl App {
         }
         if !sb.rect.contains(x, y) {
             return None;
+        }
+        if sb.settings.contains(x, y) {
+            return Some(Hit::SideSettings);
         }
         for (i, r) in sb.rects.iter().enumerate() {
             if r.contains(x, y) {
@@ -839,7 +849,7 @@ impl App {
         g.dl.rect(area, t.chrome);
         let line = if matches!(self.hover, Hit::Splitter) || matches!(self.drag, Drag::Splitter { .. }) { t.accent } else { t.separator };
         g.dl.rect(Rect::new(area.right() - 1.0, area.y, 1.0, area.h), line);
-        g.dl.set_clip(Some(Rect::new(area.x, area.y, area.w - 1.0, area.h)));
+        g.dl.set_clip(Some(Rect::new(area.x, area.y, area.w - 1.0, (sb.settings.y - area.y - self.s(4.0)).max(0.0))));
         let font = self.ui_font(13.0);
         let small = self.ui_font(12.0);
         let icons = self.icon_font(14.0);
@@ -935,6 +945,18 @@ impl App {
             g.dl.rect(Rect::new(area.x + s8, y - 1.0, area.w - 2.0 * s8, self.s(2.0)), t.accent);
         }
         g.dl.set_clip(None);
+        let r = sb.settings;
+        g.dl.rect(Rect::new(area.x + s8, r.y - self.s(4.0), area.w - 2.0 * s8, 1.0), t.separator);
+        if self.hover == Hit::SideSettings || self.settings_open() {
+            g.dl.round_rect(r, if self.settings_open() { t.selection } else { t.button_hover }, s4);
+        }
+        if compact {
+            centered(g, r, G_SETTINGS, icons, t.text_dim);
+        } else {
+            centered(g, Rect::new(r.x + s4, r.y, self.s(28.0), r.h), G_SETTINGS, icons, t.text_dim);
+            let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
+            g.text(r.x + s36, baseline, "Settings", font, t.text, r.w - s36);
+        }
     }
 }
 

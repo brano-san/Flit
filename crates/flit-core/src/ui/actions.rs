@@ -1,7 +1,7 @@
 use super::home::Widget;
 use super::sidebar::KnownFolder;
 use super::tags::TagPick;
-use super::{App, Column, Effect, LayoutMode, Route, WindowCmd};
+use super::{App, Column, Effect, LayoutMode, Page, Route, WindowCmd};
 use crate::archive::{Format, Place};
 use crate::input::{Key, Mods};
 use crate::library::LibraryOp;
@@ -179,6 +179,12 @@ pub static ACTIONS: &[Action] = &[
     Action::new("tags.remove", "Remove all tags from the selected items", &[], |a, _| a.remove_tags()),
     Action::new("tags.manage", "Manage tags: rename, recolor or delete", &[], |a, _| a.open_tag_pick(TagPick::Manage, "")),
     Action::new("tags.open_all", "Open all items with a tag", &[], |a, _| a.open_tag_pick(TagPick::OpenAll, "")),
+    Action::new("tags.settings", "Open the Tags page of the settings", &[], |a, _| a.open_settings(Some(Page::Tags))),
+    Action::new("settings.open", "Settings", &[ctrl(Key::Char(','))], |a, _| a.open_settings(None)),
+    Action::new("settings.file", "Open the settings file in a text editor", &[ctrl_shift(Key::Char(','))], |a, _| a.open_settings_file()),
+    Action::new("settings.export", "Export settings and tags to a file", &[], |a, _| a.ask_export_settings()),
+    Action::new("settings.import", "Import settings and tags from a file", &[], |a, _| a.ask_import_settings()),
+    Action::new("settings.reset", "Reset all settings to their defaults", &[], |a, _| a.ask_reset_settings()),
     Action::new("item.copy_path", "Copy path", &[ctrl_shift(Key::Char('C'))], |a, _| a.copy_paths(false)),
     Action::new("item.copy_quoted_path", "Copy path in quotes", &[ctrl_alt(Key::Char('C'))], |a, _| a.copy_paths(true)),
     Action::new("app.terminal", "Open in terminal", &[ctrl(Key::Char('`'))], |a, _| a.open_terminal(false)),
@@ -318,6 +324,9 @@ impl App {
         let routes: Vec<Route> = self.selected_folders().into_iter().map(|folder| Route { folder, select: None }).collect();
         if routes.is_empty() {
             return self.status("Select the folders to open");
+        }
+        if target == OpenTarget::NewTab {
+            return self.open_in_tabs(routes, now);
         }
         self.dispatch(routes, target, now);
     }

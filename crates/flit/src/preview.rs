@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
 
 #[cfg(windows)]
-fn std_path(p: &FsPath) -> PathBuf {
+pub(crate) fn std_path(p: &FsPath) -> PathBuf {
     use std::os::windows::ffi::OsStringExt;
     let mut w = p.to_wide(true);
     w.pop();
@@ -14,7 +14,7 @@ fn std_path(p: &FsPath) -> PathBuf {
 }
 
 #[cfg(not(windows))]
-fn std_path(p: &FsPath) -> PathBuf {
+pub(crate) fn std_path(p: &FsPath) -> PathBuf {
     PathBuf::from(p.display().into_owned())
 }
 

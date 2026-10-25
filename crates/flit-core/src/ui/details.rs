@@ -443,6 +443,12 @@ impl App {
         self.dirty = true;
     }
 
+    pub(super) fn set_pref(&mut self, f: fn(&mut ViewPrefs) -> &mut bool, on: bool) {
+        if *f(&mut self.prefs) != on {
+            self.toggle_pref(f);
+        }
+    }
+
     pub(super) fn set_default_view(&mut self) {
         self.prefs.defaults = self.tab().folder_view();
         self.status("New folders will open with this view");
@@ -515,14 +521,14 @@ impl App {
         let mut s = bumpalo::collections::String::new_in(arena);
         match col {
             Column::Name => s.push_str(&self.shown_name(l, i)),
-            Column::Modified | Column::Deleted => format::datetime(&mut s, e.modified, self.utc_offset_min),
-            Column::Created => format::datetime(&mut s, e.created, self.utc_offset_min),
+            Column::Modified | Column::Deleted => format::datetime_in(&mut s, e.modified, self.utc_offset_min, &self.style),
+            Column::Created => format::datetime_in(&mut s, e.created, self.utc_offset_min, &self.style),
             Column::Origin => s.push_str(&name::display(recycle::origin(l, i))),
             Column::Tag => self.tag_text(&mut s, e.tags),
             Column::Type => return self.type_text(arena, l, i),
             Column::Size => {
                 if !e.is_dir() || e.attrs & (attr::SIZE_KNOWN | attr::VOLUME) != 0 {
-                    format::size(&mut s, e.size);
+                    format::size_in(&mut s, e.size, self.style.decimal);
                 }
             }
         }

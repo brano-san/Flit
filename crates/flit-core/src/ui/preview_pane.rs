@@ -769,25 +769,25 @@ impl App {
         let mut y = 0.0;
         self.header(g, t, &s, &mut y);
         let mut text = String::new();
-        let off = self.utc_offset_min;
+        let (off, style) = (self.utc_offset_min, self.style.clone());
         let mut date = |v: i64| {
             text.clear();
-            format::datetime(&mut text, v, off);
+            format::datetime_in(&mut text, v, off, &style);
             text.clone()
         };
         let mut rows: Vec<(&str, String)> = Vec::new();
         if let Some((n, bytes)) = s.many {
             rows.push(("Items", super::thousands(n as u64)));
-            rows.push(("Total size", size_text(bytes)));
+            rows.push(("Total size", self.size_text(bytes)));
         }
         if let Some((total, free)) = s.drive {
-            rows.push(("Used space", size_text(total.saturating_sub(free))));
-            rows.push(("Free space", size_text(free)));
-            rows.push(("Total size", size_text(total)));
+            rows.push(("Used space", self.size_text(total.saturating_sub(free))));
+            rows.push(("Free space", self.size_text(free)));
+            rows.push(("Total size", self.size_text(total)));
         }
         if let Some(e) = s.entry.filter(|e| e.attrs & attr::VOLUME == 0) {
             if !e.is_dir() || e.attrs & attr::SIZE_KNOWN != 0 {
-                rows.push(("Size", format!("{} ({} bytes)", size_text(e.size), super::thousands(e.size))));
+                rows.push(("Size", format!("{} ({} bytes)", self.size_text(e.size), super::thousands(e.size))));
             }
             if e.modified > 0 {
                 rows.push(("Modified", date(e.modified)));
@@ -916,7 +916,7 @@ impl App {
         self.header(g, t, &s, &mut y);
         let mut rows: Vec<(&str, String)> = Vec::new();
         if let Some((_, bytes)) = s.many {
-            rows.push(("Total size", size_text(bytes)));
+            rows.push(("Total size", self.size_text(bytes)));
         }
         if let Some((total, free)) = s.drive {
             let bar = Rect::new(b.x, b.y + y - self.preview.scroll, b.w, self.s(8.0));
@@ -924,12 +924,12 @@ impl App {
             let used = if total > 0 { (total - free.min(total)) as f32 / total as f32 } else { 0.0 };
             g.dl.round_rect(Rect { w: (bar.w * used).round(), ..bar }, if used > 0.9 { t.error } else { t.accent }, self.s(4.0));
             y += self.s(16.0);
-            rows.push(("Free", format!("{} of {}", size_text(free), size_text(total))));
+            rows.push(("Free", format!("{} of {}", self.size_text(free), self.size_text(total))));
         }
         if let Some(e) = s.entry.filter(|e| !e.is_dir()) {
-            rows.push(("Size", size_text(e.size)));
+            rows.push(("Size", self.size_text(e.size)));
             let mut d = String::new();
-            format::datetime(&mut d, e.modified, self.utc_offset_min);
+            format::datetime_in(&mut d, e.modified, self.utc_offset_min, &self.style);
             rows.push(("Modified", d));
         }
         for (label, value) in &rows {
@@ -946,7 +946,7 @@ impl App {
 
     fn folder_lines<B: TextBackend>(&self, g: &mut Gfx<B>, t: &Theme, f: &FolderSummary, y: &mut f32) {
         let mut lines = vec![(format!("{}, {}", plural(f.dirs, "folder", "folders"), plural(f.files, "file", "files")), t.text)];
-        let mut size = size_text(f.bytes);
+        let mut size = self.size_text(f.bytes);
         if !f.complete {
             let _ = write!(size, " in the first {} items", super::thousands(preview::FOLDER_SCAN as u64));
         }
@@ -956,7 +956,7 @@ impl App {
         }
         if f.newest > 0 {
             let mut d = "Last change ".to_string();
-            format::datetime(&mut d, f.newest, self.utc_offset_min);
+            format::datetime_in(&mut d, f.newest, self.utc_offset_min, &self.style);
             lines.push((d, t.text_dim));
         }
         if !f.types.is_empty() {
@@ -1054,10 +1054,12 @@ impl App {
     }
 }
 
-fn size_text(bytes: u64) -> String {
-    let mut s = String::new();
-    format::size(&mut s, bytes);
-    s
+impl App {
+    fn size_text(&self, bytes: u64) -> String {
+        let mut s = String::new();
+        format::size_in(&mut s, bytes, self.style.decimal);
+        s
+    }
 }
 
 #[cfg(test)]

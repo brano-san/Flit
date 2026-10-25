@@ -359,6 +359,12 @@ pub trait Platform: 'static {
     fn elevated() -> bool {
         false
     }
+    fn date_patterns() -> (String, String) {
+        ("yyyy-MM-dd".into(), "HH:mm".into())
+    }
+    fn os_version() -> String {
+        std::env::consts::OS.to_owned()
+    }
     fn watch_wsl(_changed: Box<dyn Fn() + Send>) {}
     fn wsl_launcher(_distro: &str, _images: &AgentImages) -> Option<Box<dyn AgentLauncher>> {
         None

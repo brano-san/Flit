@@ -2,7 +2,7 @@ use super::actions::{keys_text, ACTIONS};
 use super::edit::{EditAction, LineEdit};
 use super::palette::{Palette, Pick};
 use super::sidebar::Section;
-use super::{App, Drag, Effect, Focus, Hit, Route};
+use super::{App, ConfirmDelete, Drag, Effect, Focus, Hit, Route};
 use crate::archive::{self, Format};
 use crate::library;
 use crate::hash::FxHashSet;
@@ -332,7 +332,22 @@ impl App {
     }
 
     pub(super) fn start_confirmed(&mut self, op: FileOp) {
-        self.start_op(op, Origin::Fresh, Then::Nothing);
+        let t = self.tab();
+        let (provider, tab) = (if matches!(op, FileOp::Trash(_)) { t.view_loc.provider() } else { ProviderId::Local }, t.id);
+        self.start_op_on(provider, tab, op, Origin::Fresh, Then::Nothing);
+    }
+
+    fn delete_or_ask(&mut self, op: FileOp) {
+        let ask = match self.confirm_delete {
+            ConfirmDelete::Always => true,
+            ConfirmDelete::Permanent => !matches!(op, FileOp::Trash(_)),
+            ConfirmDelete::Never => false,
+        };
+        if ask {
+            self.ask_confirm(op);
+        } else {
+            self.start_confirmed(op);
+        }
     }
 
     pub(super) fn op_ctl(&self, id: OpId) -> Option<OpCtl> {
@@ -358,13 +373,13 @@ impl App {
             return;
         }
         let t = self.tab();
-        if let (false, Location::Wsl { .. }) = (permanent, &t.view_loc) {
-            let paths = items.iter().map(|&i| t.entry_location(i).path().clone()).collect();
-            return self.start_op_on(t.view_loc.provider(), t.id, FileOp::Trash(paths), Origin::Fresh, Then::Nothing);
-        }
-        match self.item_paths(&items) {
-            Ok(paths) if permanent => self.ask_confirm(FileOp::Delete(paths)),
-            Ok(paths) => self.start_op(FileOp::Trash(paths), Origin::Fresh, Then::Nothing),
+        let paths = match (permanent, &t.view_loc) {
+            (false, Location::Wsl { .. }) => Ok(items.iter().map(|&i| t.entry_location(i).path().clone()).collect()),
+            _ => self.item_paths(&items),
+        };
+        match paths {
+            Ok(paths) if permanent => self.delete_or_ask(FileOp::Delete(paths)),
+            Ok(paths) => self.delete_or_ask(FileOp::Trash(paths)),
             Err(e) => self.status(e),
         }
     }
@@ -400,7 +415,7 @@ impl App {
     fn purge_selection(&mut self) {
         let pairs = self.bin_pairs(self.selected_items().into_iter());
         if !pairs.is_empty() {
-            self.ask_confirm(FileOp::Purge(pairs));
+            self.delete_or_ask(FileOp::Purge(pairs));
         }
     }
 
@@ -629,6 +644,7 @@ impl App {
             },
             p @ (Pick::NewLibrary | Pick::LibraryAdd(_)) => self.submit_library(p, text),
             Pick::Tags(t) => self.tag_input(t, text),
+            Pick::Setting(p) => self.setting_input(p, text),
             Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Encoding(_) => {}
         }
     }
@@ -1055,8 +1071,13 @@ impl App {
         v.set_selected(i, true);
         v.anchor = Some(i);
         v.focus = Some(i);
+        let gen = v.snap().gen;
+        if self.single_click_opens(i) {
+            self.clicked_open = true;
+            return self.open_entry(i, now);
+        }
         if p.slow {
-            self.ops.slow = Some(Slow { tab, gen: v.snap().gen, idx: i, at: now + wait });
+            self.ops.slow = Some(Slow { tab, gen, idx: i, at: now + wait });
             self.arm_timer(now, now + wait);
         }
     }

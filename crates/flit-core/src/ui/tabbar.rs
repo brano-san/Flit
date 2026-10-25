@@ -1,7 +1,6 @@
 use super::{App, Drag, Effect, Hit, Route, Tab, WindowCmd, G_DRIVE, G_FOLDER, MAX_ROUTES};
 use crate::input::{Key, MouseButton};
 use crate::location::Location;
-use crate::open::OpenTarget;
 use crate::path::PathKind;
 use crate::render::Rect;
 use crate::sort::ViewSpec;
@@ -321,7 +320,7 @@ impl App {
             return false;
         }
         let folder = t.entry_location(i);
-        self.dispatch(vec![Route { folder, select: None }], OpenTarget::NewTab, now);
+        self.open_in_tabs(vec![Route { folder, select: None }], now);
         true
     }
 
@@ -355,7 +354,7 @@ impl App {
         for i in files.into_iter().take(super::MAX_OPEN) {
             self.open_entry(i, now);
         }
-        self.dispatch(routes, OpenTarget::NewTab, now);
+        self.open_in_tabs(routes, now);
     }
 }
 
