@@ -1,7 +1,7 @@
 use flit_core::Open;
 use serde::{Deserialize, Serialize};
 
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 pub const MAX_FRAME: usize = 256 << 10;
 

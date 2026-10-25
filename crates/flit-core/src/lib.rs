@@ -14,6 +14,7 @@ pub mod provider;
 pub mod recycle;
 pub mod render;
 pub mod sort;
+pub mod tags;
 pub mod text;
 pub mod theme;
 pub mod thumbs;

@@ -285,7 +285,7 @@ impl App {
         loc.to_windows().ok_or("This folder cannot be used by Windows shell operations")
     }
 
-    fn item_paths(&self, items: &[u32]) -> Result<Vec<FsPath>, &'static str> {
+    pub(super) fn item_paths(&self, items: &[u32]) -> Result<Vec<FsPath>, &'static str> {
         if self.in_bin() {
             return Err(BIN_ONLY);
         }
@@ -293,7 +293,7 @@ impl App {
         items.iter().map(|&i| t.entry_location(i).to_windows()).collect::<Option<Vec<_>>>().ok_or("Some names cannot be used by Windows shell operations")
     }
 
-    fn selected_items(&self) -> Vec<u32> {
+    pub(super) fn selected_items(&self) -> Vec<u32> {
         let t = self.tab();
         match &t.view {
             Some(v) if t.view_loc.path().kind() != PathKind::Computer => v.selected().collect(),
@@ -607,6 +607,7 @@ impl App {
                 Ok(name) => self.start_op(FileOp::NewStream { item, name: name.into_bytes() }, Origin::Fresh, Then::Nothing),
                 Err(e) => self.status(e),
             },
+            Pick::Tags(t) => self.tag_input(t, text),
             Pick::Commands | Pick::NewItem => {}
         }
     }
@@ -728,6 +729,9 @@ impl App {
         let unwatched = |l: &Location| matches!(l, Location::Wsl { .. }) || l.path().kind() == PathKind::Unc;
         if let Some(k) = k.filter(|&k| (error.is_none() || any_done) && unwatched(self.tabs[k].location())) {
             self.reload(k, now);
+        }
+        if let Some(r) = &report {
+            self.tags_moved(r);
         }
         let (Some(report), Some(p)) = (report, pending) else { return };
         self.ops.journal.record(p.origin, &report);
