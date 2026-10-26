@@ -8,7 +8,7 @@ struct Dropped {
     entered: bool,
 }
 
-fn receive(conn: &RustConnection, atoms: &Atoms, window: Window) -> Dropped {
+fn receive(conn: &XCBConnection, atoms: &Atoms, window: Window) -> Dropped {
     let mut out = Dropped { data: Vec::new(), entered: false };
     let mut source = NONE;
     loop {
@@ -43,7 +43,7 @@ fn files_dragged_out_reach_an_xdnd_target_as_a_uri_list() {
         eprintln!("no X server, skipped");
         return;
     }
-    let (conn, screen) = RustConnection::connect(None).unwrap();
+    let (conn, screen) = XCBConnection::connect(None).unwrap();
     let root = conn.setup().roots[screen].root;
     let atoms = Atoms::new(&conn).unwrap().reply().unwrap();
     let window = conn.generate_id().unwrap();
@@ -54,7 +54,7 @@ fn files_dragged_out_reach_an_xdnd_target_as_a_uri_list() {
     while conn.get_window_attributes(window).unwrap().reply().unwrap().map_state != MapState::VIEWABLE {
         std::thread::sleep(Duration::from_millis(5));
     }
-    let (input, _) = RustConnection::connect(None).unwrap();
+    let (input, _) = XCBConnection::connect(None).unwrap();
     let fake = |kind, detail, x, y| {
         input.xtest_fake_input(kind, detail, CURRENT_TIME, root, x, y, 0).unwrap();
         input.flush().unwrap();

@@ -7,7 +7,7 @@ use x11rb::protocol::xproto::{
     SELECTION_NOTIFY_EVENT,
 };
 use x11rb::protocol::Event;
-use x11rb::rust_connection::RustConnection;
+use x11rb::xcb_ffi::XCBConnection;
 use x11rb::{CURRENT_TIME, NONE};
 
 const VERSION: u32 = 5;
@@ -56,7 +56,7 @@ pub fn release_pointer_of(display: *mut c_void) {
 }
 
 struct Source {
-    conn: RustConnection,
+    conn: XCBConnection,
     root: Window,
     window: Window,
     atoms: Atoms,
@@ -73,7 +73,7 @@ struct Target {
 
 impl Source {
     fn open(data: Vec<u8>) -> R<Self> {
-        let (conn, screen) = RustConnection::connect(None)?;
+        let (conn, screen) = XCBConnection::connect(None)?;
         let root = conn.setup().roots[screen].root;
         let atoms = Atoms::new(&conn)?.reply()?;
         let window = conn.generate_id()?;
@@ -95,7 +95,8 @@ impl Source {
 
     fn aware(&self, w: Window) -> Option<u32> {
         let reply = self.conn.get_property(false, w, self.atoms.XdndAware, AtomEnum::ATOM, 0, 1).ok()?.reply().ok()?;
-        reply.value32()?.next()
+        let first = reply.value32()?.next();
+        first
     }
 
     fn target_at(&self) -> Option<(Window, u32)> {
