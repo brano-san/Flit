@@ -80,3 +80,28 @@ fn deleting_the_watched_folder_asks_for_a_rescan() {
     assert!(settle(&rx, 5).1);
     assert!(n.watch(6, &sub).is_err());
 }
+
+fn event(wd: i32, mask: u32, name: &[u8]) -> Vec<u8> {
+    let len = name.len().div_ceil(16) * 16;
+    let mut e = Vec::new();
+    e.extend(wd.to_ne_bytes());
+    e.extend(mask.to_ne_bytes());
+    e.extend(0u32.to_ne_bytes());
+    e.extend((len as u32).to_ne_bytes());
+    e.extend(name);
+    e.resize(HEADER + len, 0);
+    e
+}
+
+#[test]
+fn queue_overflow_and_truncated_events_ask_for_a_full_rescan() {
+    let whole = event(1, libc::IN_CREATE, b"a.txt");
+    let (mut pending, mut overflow) = (HashMap::new(), false);
+    parse(&whole, &mut pending, &mut overflow);
+    assert!(!overflow && pending[&1].names == [b"a.txt".to_vec()]);
+    for buf in [event(-1, libc::IN_Q_OVERFLOW, b""), [whole.clone(), event(1, libc::IN_CREATE, b"b.txt")[..HEADER + 3].to_vec()].concat(), [whole.clone(), vec![0; 5]].concat()] {
+        let (mut pending, mut overflow) = (HashMap::new(), false);
+        parse(&buf, &mut pending, &mut overflow);
+        assert!(overflow, "{buf:?}");
+    }
+}

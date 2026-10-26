@@ -155,7 +155,7 @@ fn notice_at(buf: &[u8], off: usize) -> Option<(Notice, u32)> {
     Some((notice, u32_at(buf, off + offset_of!(Record, NextEntryOffset))?))
 }
 
-pub(crate) fn notices(buf: &[u8]) -> Vec<Notice> {
+pub(crate) fn notices(buf: &[u8]) -> Option<Vec<Notice>> {
     crate::watcher::records(buf, |b, off| notice_at(b, off).map(|(n, next)| (Some(n), next)))
 }
 
@@ -358,7 +358,8 @@ impl IndexSource for WalkIndex {
             return Ok(None);
         }
         for buf in q.buffers {
-            if !self.apply(&root, notices(&buf), sink) {
+            let Some(list) = notices(&buf) else { return Ok(None) };
+            if !self.apply(&root, list, sink) {
                 return Ok(None);
             }
         }

@@ -25,12 +25,12 @@ fn record(action: FILE_ACTION, path: &str, id: i64, parent: i64, attrs: u32, nex
 fn extended_notices_carry_ids_and_relative_paths() {
     let mut buf = record(FILE_ACTION_RENAMED_OLD_NAME, r"a\old.txt", 7, 3, FILE_ATTRIBUTE_ARCHIVE.0, 120);
     buf.extend(record(FILE_ACTION_RENAMED_NEW_NAME, r"b\new.txt", 7, 4, FILE_ATTRIBUTE_ARCHIVE.0, 0));
-    let got = notices(&buf);
+    let got = notices(&buf).unwrap();
     assert_eq!(got.len(), 2);
     assert_eq!((got[1].id, got[1].parent, got[1].size, got[1].modified), (7, 4, 42, 9));
     assert_eq!(String::from_utf16(&got[1].path).unwrap(), r"b\new.txt");
     let cut = record(FILE_ACTION_ADDED, "x", 1, 2, 0, 0);
-    assert!(notices(&cut[..cut.len() - 1]).is_empty());
+    assert!(notices(&cut[..cut.len() - 1]).is_none());
 }
 
 #[test]
@@ -45,11 +45,11 @@ fn renames_pair_up_and_unknown_ids_force_a_rescan() {
     let mut buf = record(FILE_ACTION_RENAMED_OLD_NAME, "old.txt", 7, 3, 0, 120);
     buf.extend(record(FILE_ACTION_RENAMED_NEW_NAME, "new.txt", 7, 3, 0, 120));
     buf.extend(record(FILE_ACTION_RENAMED_OLD_NAME, "gone.txt", 8, 3, 0, 0));
-    assert!(w.apply(&root, notices(&buf), &mut v));
+    assert!(w.apply(&root, notices(&buf).unwrap(), &mut v));
     v.commit();
     assert_eq!(v.name(v.lookup(7).unwrap()), b"new.txt");
     assert!(v.lookup(8).is_none(), "moved out of the watched tree");
-    assert!(!w.apply(&root, notices(&record(FILE_ACTION_REMOVED, "x", 0, 3, 0, 0)), &mut v));
+    assert!(!w.apply(&root, notices(&record(FILE_ACTION_REMOVED, "x", 0, 3, 0, 0)).unwrap(), &mut v));
 }
 
 fn temp_root(tag: &str) -> std::path::PathBuf {
