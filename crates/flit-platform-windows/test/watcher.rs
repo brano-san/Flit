@@ -26,7 +26,7 @@ fn one_char_name_in_final_record_is_parsed() {
     assert_eq!(last.len(), 86);
     assert!(last.len() < size_of::<Record>());
     buf.extend(last);
-    let got = notices(&buf);
+    let got = notices(&buf).unwrap();
     assert_eq!(got.len(), 2);
     assert_eq!(String::from_utf16(&got[0].name).unwrap(), "long name.txt");
     assert_eq!(got[0].kind, ChangeKind::Added);
@@ -36,15 +36,24 @@ fn one_char_name_in_final_record_is_parsed() {
 }
 
 #[test]
-fn truncated_and_unknown_records_are_dropped() {
+fn unknown_records_are_skipped_and_truncated_buffers_ask_for_a_rescan() {
     let mut buf = record(FILE_ACTION(99), "skip", 0, 104);
     buf.extend(record(FILE_ACTION_REMOVED, "gone", 0, 0));
-    let got = notices(&buf);
+    let got = notices(&buf).unwrap();
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].kind, ChangeKind::Removed);
     let cut = record(FILE_ACTION_ADDED, "abcdef", 0, 0);
-    assert!(notices(&cut[..cut.len() - 1]).is_empty());
-    assert!(notices(&[]).is_empty());
+    assert!(notices(&cut[..cut.len() - 1]).is_none());
+    let whole = record(FILE_ACTION_ADDED, "kept", 0, 0).len() as u32;
+    let mut partial = record(FILE_ACTION_ADDED, "kept", 0, whole);
+    partial.extend(&cut[..cut.len() - 1]);
+    assert!(notices(&partial).is_none(), "a good record before a cut one does not make a partial list");
+    let mut beyond = record(FILE_ACTION_ADDED, "kept", 0, whole);
+    beyond.extend(record(FILE_ACTION_ADDED, "lost", 0, 0));
+    let at = offset_of!(Record, NextEntryOffset);
+    beyond[at..at + 4].copy_from_slice(&4096u32.to_le_bytes());
+    assert!(notices(&beyond).is_none(), "a next offset past the buffer is an overflow");
+    assert!(notices(&[]).is_none());
 }
 
 #[test]
@@ -122,7 +131,7 @@ fn a_stopped_watch_lives_until_its_queued_completion_is_dequeued() {
     assert_eq!(got, key);
     assert_eq!(ov as *const OVERLAPPED, &*st.slots[&key].ov as *const OVERLAPPED);
     if ok && n > 0 {
-        assert!(notices(st.slots[&key].bytes(n as usize)).iter().any(|x| x.name == [b'x' as u16]));
+        assert!(notices(st.slots[&key].bytes(n as usize)).unwrap().iter().any(|x| x.name == [b'x' as u16]));
     }
     st.close(key);
     assert!(st.slots.is_empty());
