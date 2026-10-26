@@ -147,3 +147,9 @@ fn alternate_data_streams_are_listed_only_on_request() {
     assert_eq!(list(false), [("a.txt".to_owned(), 3, false), ("sub".to_owned(), 0, false)]);
     assert_eq!(list(true), [("a.txt".to_owned(), 3, false), ("a.txt:meta".to_owned(), 5, true), ("sub".to_owned(), 0, false)]);
 }
+
+#[test]
+fn names_the_file_system_of_a_path() {
+    let fs = NtFs.file_system(&FsPath::parse(&std::env::temp_dir().to_string_lossy()).unwrap()).unwrap();
+    assert!(["NTFS", "ReFS", "FAT32", "exFAT"].contains(&fs.as_str()), "{fs}");
+}

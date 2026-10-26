@@ -114,3 +114,11 @@ fn folder_sizes_skip_links_and_honour_cancellation() {
     dir_sizes(t.path(), &items, &|| false, &|i, s| none.lock().unwrap().push((i, s)));
     assert!(none.into_inner().unwrap().is_empty());
 }
+
+#[test]
+fn names_the_file_system_of_a_path() {
+    let t = Temp::new("fstype");
+    let fs = LinuxFs.file_system(&FsPath::parse(t.path().to_str().unwrap()).unwrap()).unwrap();
+    assert!(!fs.is_empty());
+    assert_eq!(LinuxFs.file_system(&FsPath::parse("/proc/self").unwrap()).as_deref(), Some("proc"));
+}

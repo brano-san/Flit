@@ -578,6 +578,12 @@ impl<H: WindowHandler<Win32>> Shared<H> {
                 node.queue.borrow_mut().push_back(Event::Key { key: Key::Char(','), mods: Mods { ctrl: true, ..Mods::default() }, pressed: true });
                 self.woken.set(true);
             }
+            if std::env::var_os("FLIT_CAPTURE_PROPERTIES").is_some() {
+                let mut q = node.queue.borrow_mut();
+                q.push_back(Event::Key { key: Key::Down, mods: Mods::default(), pressed: true });
+                q.push_back(Event::Key { key: Key::Enter, mods: Mods { alt: true, ..Mods::default() }, pressed: true });
+                self.woken.set(true);
+            }
         } else {
             let _ = ShowWindow(hwnd, if maximized { SW_SHOWMAXIMIZED } else { SW_SHOW });
         }

@@ -182,6 +182,9 @@ pub trait Fs: Send + Sync + 'static {
     fn cluster_size(&self, _path: &FsPath) -> u64 {
         0
     }
+    fn file_system(&self, _path: &FsPath) -> Option<String> {
+        None
+    }
     fn volume_key(&self, path: &FsPath) -> Vec<u8> {
         path.root_bytes().to_ascii_lowercase()
     }

@@ -323,6 +323,11 @@ impl Fs for LinuxFs {
         let items: Vec<(u32, PathBuf)> = items.iter().map(|(i, n)| (*i, PathBuf::from(OsStr::from_bytes(n)))).collect();
         dir_sizes(path, &items, keep_going, report);
     }
+
+    fn file_system(&self, path: &FsPath) -> Option<String> {
+        let path = host(path)?;
+        crate::mounts::read().ok()?.into_iter().filter(|m| path.starts_with(m.path())).max_by_key(|m| m.point.len()).map(|m| m.fstype)
+    }
 }
 
 #[cfg(test)]

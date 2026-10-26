@@ -317,6 +317,10 @@ impl Fs for NtFs {
         }
     }
 
+    fn file_system(&self, path: &FsPath) -> Option<String> {
+        crate::engine::volume_file_system(path)
+    }
+
     fn cluster_size(&self, path: &FsPath) -> u64 {
         let wide = path.to_wide(true);
         let mut root = [0u16; 1024];

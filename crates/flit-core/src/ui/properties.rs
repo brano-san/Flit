@@ -20,6 +20,7 @@ struct Rows {
     unpacked: Option<usize>,
     contains: Option<usize>,
     accessed: Option<usize>,
+    file_system: Option<usize>,
 }
 
 pub(super) struct Measuring {
@@ -100,6 +101,9 @@ impl App {
             }
         };
         add(&mut controls, S::PropertiesLocation, &location);
+        if !packed {
+            rows.file_system = add(&mut controls, S::PropertiesFileSystem, counting);
+        }
         let known = (folders == 0).then(|| entries.iter().map(|e| e.size).sum::<u64>());
         rows.size = add(&mut controls, S::PropertiesSize, &known.map_or_else(|| counting.to_owned(), |b| self.bytes_text(b)));
         if !packed {
@@ -137,7 +141,7 @@ impl App {
         self.open_form(f);
     }
 
-    pub(super) fn measured(&mut self, id: OpId, totals: Totals, done: bool) {
+    pub(super) fn measured(&mut self, id: OpId, totals: Totals, file_system: Option<String>, done: bool) {
         let Some(mut f) = self.jobs.form.take() else { return };
         let Kind::Properties(m) = &f.kind else {
             self.jobs.form = Some(f);
@@ -154,6 +158,9 @@ impl App {
             (m.rows.unpacked, self.bytes_text(totals.unpacked)),
             (m.rows.contains, contains_text(totals.files + m.files, totals.folders + m.folders)),
         ];
+        if done {
+            values.push((m.rows.file_system, file_system.unwrap_or_else(|| "—".into())));
+        }
         if totals.accessed > 0 || done {
             values.push((m.rows.accessed, self.date_text(totals.accessed)));
         }
