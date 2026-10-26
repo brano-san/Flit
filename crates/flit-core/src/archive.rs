@@ -15,6 +15,7 @@ pub enum Format {
     Gz,
     TarGz,
     Rar,
+    Lzh,
 }
 
 impl Format {
@@ -28,6 +29,7 @@ impl Format {
             Format::Gz => "GZip",
             Format::TarGz => "TAR.GZ",
             Format::Rar => "RAR",
+            Format::Lzh => "LZH",
         }
     }
 
@@ -39,19 +41,20 @@ impl Format {
             Format::Gz => "gz",
             Format::TarGz => "tar.gz",
             Format::Rar => "rar",
+            Format::Lzh => "lzh",
         }
     }
 
     pub fn max_level(self) -> u8 {
         match self {
-            Format::Tar | Format::Rar => 0,
+            Format::Tar | Format::Rar | Format::Lzh => 0,
             _ => 9,
         }
     }
 
     pub fn default_level(self) -> u8 {
         match self {
-            Format::Tar | Format::Rar => 0,
+            Format::Tar | Format::Rar | Format::Lzh => 0,
             Format::SevenZ => 5,
             _ => 6,
         }
@@ -66,9 +69,9 @@ impl Format {
     }
 }
 
-const BROWSABLE: &[(&str, Format)] = &[("zip", Format::Zip), ("7z", Format::SevenZ), ("rar", Format::Rar), ("tar", Format::Tar), ("tgz", Format::TarGz), ("gz", Format::Gz)];
+const BROWSABLE: &[(&str, Format)] = &[("zip", Format::Zip), ("7z", Format::SevenZ), ("rar", Format::Rar), ("tar", Format::Tar), ("tgz", Format::TarGz), ("gz", Format::Gz), ("lzh", Format::Lzh), ("lha", Format::Lzh), ("jar", Format::Zip), ("war", Format::Zip), ("ear", Format::Zip), ("apk", Format::Zip), ("aar", Format::Zip), ("msix", Format::Zip), ("appx", Format::Zip), ("msixbundle", Format::Zip), ("appxbundle", Format::Zip), ("nupkg", Format::Zip), ("vsix", Format::Zip), ("xpi", Format::Zip)];
 
-const ZIP_BASED: &[&str] = &["jar", "war", "ear", "apk", "aar", "msix", "appx", "msixbundle", "appxbundle", "nupkg", "vsix", "xpi", "epub", "docx", "xlsx", "pptx", "odt", "ods", "odp"];
+const ZIP_BASED: &[&str] = &["epub", "docx", "xlsx", "pptx", "odt", "ods", "odp"];
 
 fn ext_of(name: &[u8]) -> &[u8] {
     name.iter().rposition(|&c| c == b'.').map_or(&[], |i| &name[i + 1..])
@@ -188,7 +191,11 @@ pub struct Compression {
     pub threads: u32,
     pub password: Option<Secret>,
     pub encrypt_names: bool,
+    #[serde(skip)]
+    pub word: u32,
 }
+
+pub const WORD_SIZES: [u32; 12] = [8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 273];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Place {
@@ -244,6 +251,9 @@ impl Defaults {
         }
         c.level = c.level.min(c.format.max_level());
         c.password = None;
+        if !WORD_SIZES.contains(&c.word) {
+            c.word = 0;
+        }
         self.history.truncate(HISTORY);
         self.hashes.dedup();
         if self.hashes.is_empty() {

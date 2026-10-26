@@ -176,6 +176,9 @@ pub trait Fs: Send + Sync + 'static {
     fn hash(&self, file: &FsPath, kinds: &[HashKind], job: &Job) -> Result<Vec<String>, PlatformError> {
         hash_file(file, kinds, job)
     }
+    fn cluster_size(&self, _path: &FsPath) -> u64 {
+        0
+    }
     fn volume_key(&self, path: &FsPath) -> Vec<u8> {
         path.root_bytes().to_ascii_lowercase()
     }

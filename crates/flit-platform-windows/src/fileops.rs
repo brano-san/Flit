@@ -147,6 +147,8 @@ fn check_names(op: &FileOp) -> Result<(), PlatformError> {
         FileOp::MoveTo(pairs) | FileOp::Restore(pairs) => pairs.iter().flat_map(|(a, b)| [a, b]).collect(),
         FileOp::Paste { dest } => vec![dest],
         FileOp::Archive(_) => Vec::new(),
+        FileOp::InstallFonts(v) => v.iter().collect(),
+        FileOp::LockScreen(p) => vec![p],
     };
     paths.into_iter().try_for_each(shell_addressable)?;
     match op {
@@ -272,7 +274,7 @@ unsafe fn queue(fo: &IFileOperation, op: &FileOp) -> Result<(), PlatformError> {
             };
             fo.NewItem(&shell_item(dir)?, FILE_ATTRIBUTE_NORMAL.0, PCWSTR(name.as_ptr()), source.as_ref().map_or(PCWSTR::null(), |s| PCWSTR(s.as_ptr())), None).map_err(err)?;
         }
-        FileOp::Link { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } | FileOp::Flatten(_) | FileOp::FolderIcon { .. } | FileOp::Archive(_) => return Err(PlatformError::new(-1, "not a file operation")),
+        FileOp::Link { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } | FileOp::Flatten(_) | FileOp::FolderIcon { .. } | FileOp::Archive(_) | FileOp::InstallFonts(_) | FileOp::LockScreen(_) => return Err(PlatformError::new(-1, "not a file operation")),
     }
     Ok(())
 }
@@ -533,6 +535,8 @@ impl FileOps for ShellCom {
             FileOp::FolderIcon { folder, icon, index } => folder_icon(folder, icon.as_ref(), *index),
             FileOp::Purge(pairs) => purge(pairs),
             FileOp::EmptyBin => empty_bin(),
+            FileOp::InstallFonts(fonts) => crate::install::install_fonts(fonts, job),
+            FileOp::LockScreen(image) => crate::install::lock_screen(image),
             op if engine::native(op) => {
                 let out = engine::run(op, job);
                 with_rest(out.items, out.error, out.rest, job)

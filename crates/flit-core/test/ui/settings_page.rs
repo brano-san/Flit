@@ -246,10 +246,10 @@ fn advanced_page_exports_imports_resets_and_clears_the_cache() {
     key(&mut a, Key::Enter, NO);
     let wanted = SettingsCmd::Import(FsPath::parse(r"C:\x\flit-settings.json").unwrap());
     assert!(a.drain_effects().any(|e| matches!(e, Effect::Settings(c) if c == wanted)));
-    a.single_click_files = true;
+    a.single_click_files = crate::ui::settings::ClickOpen::Always;
     press(&mut a, Btn::Reset);
     key(&mut a, Key::Enter, NO);
-    assert!(!a.single_click_files);
+    assert_eq!(a.single_click_files, crate::ui::settings::ClickOpen::Never);
     a.set_about(About { os: "Windows 11".into(), file: FsPath::parse(r"C:\Users\me\AppData\Local\Flit\settings.json"), cache_bytes: Some(3 << 20), logs: None });
     assert!(a.settings_lines().contains(&"Thumbnail cache in use: 3.0 MB".to_owned()));
     press(&mut a, Btn::OpenFile);
@@ -403,15 +403,23 @@ fn folders_open_in_background_tabs_and_with_one_click_when_asked() {
     key(&mut a, Key::Enter, CTRL);
     assert_eq!((a.tabs().len(), a.cur), (3, 2));
     let mut a = listed(&[("docs", true), ("a.txt", false)]);
-    a.single_click_folders = true;
+    a.single_click_folders = crate::ui::settings::ClickOpen::Always;
     a.click_row(0, MouseButton::Left, 1, Instant::now());
     assert_eq!(a.current_location(), &Location::parse(r"C:\x\docs").unwrap());
     let mut a = listed(&[("docs", true), ("a.txt", false)]);
-    a.single_click_files = true;
+    a.single_click_files = crate::ui::settings::ClickOpen::Always;
     a.click_row(0, MouseButton::Left, 1, Instant::now());
     assert_eq!(a.current_location(), &Location::parse(r"C:\x").unwrap(), "folders still need a double click");
     a.click_row(1, MouseButton::Left, 1, Instant::now());
     assert!(a.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { .. }, .. })));
+    let mut a = listed(&[("docs", true), ("a.txt", false)]);
+    a.single_click_folders = crate::ui::settings::ClickOpen::Touch;
+    a.on_event(&Event::Pointer { touch: false }, Instant::now());
+    a.click_row(0, MouseButton::Left, 1, Instant::now());
+    assert_eq!(a.current_location(), &Location::parse(r"C:\x").unwrap(), "a mouse click only selects in touch mode");
+    a.on_event(&Event::Pointer { touch: true }, Instant::now());
+    a.click_row(0, MouseButton::Left, 1, Instant::now());
+    assert_eq!(a.current_location(), &Location::parse(r"C:\x\docs").unwrap(), "a tap opens in touch mode");
 }
 
 #[test]

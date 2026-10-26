@@ -2,7 +2,7 @@ use crate::fs::{map_attrs, NtFs};
 use flit_core::listing::{attr, Listing, ListingBuilder, Meta};
 use flit_core::provider::{Conflict, FileOp, Resolve, Stage};
 use flit_core::sort::CaseMode;
-use flit_core::FsPath;
+use flit_core::{limits, FsPath};
 use flit_core::i18n::S;
 use flit_core::tr_en;
 use flit_platform::{Fs, Job, PlatformError};
@@ -165,6 +165,14 @@ fn free_space(dir: &FsPath) -> Option<u64> {
     Some(free)
 }
 
+pub(crate) fn volume_file_system(p: &FsPath) -> Option<String> {
+    let mut volume = [0u16; 300];
+    unsafe { GetVolumePathNameW(PCWSTR(wide(p).as_ptr()), &mut volume) }.ok()?;
+    let mut fs = [0u16; 64];
+    unsafe { GetVolumeInformationW(PCWSTR(volume.as_ptr()), None, None, None, None, Some(&mut fs)) }.ok()?;
+    Some(String::from_utf16_lossy(&fs[..fs.iter().position(|&c| c == 0)?]))
+}
+
 fn make_parents(p: &FsPath) -> bool {
     p.parent().is_some_and(|dir| std::fs::create_dir_all(crate::fileops::std_path(&dir)).is_ok())
 }
@@ -189,11 +197,12 @@ pub(crate) struct Engine<'a> {
     fatal: bool,
     elevate: bool,
     dirs: Vec<FsPath>,
+    limit: Option<(Vec<u8>, Option<u64>)>,
 }
 
 impl<'a> Engine<'a> {
     pub(crate) fn new(job: &'a Job) -> Self {
-        Self { job, done: Vec::new(), failed: 0, first: None, fatal: false, elevate: false, dirs: Vec::new() }
+        Self { job, done: Vec::new(), failed: 0, first: None, fatal: false, elevate: false, dirs: Vec::new(), limit: None }
     }
 
     fn stopped(&self) -> bool {
@@ -274,11 +283,26 @@ impl<'a> Engine<'a> {
 
     pub(crate) fn room(&mut self, dest: &FsPath, need: u64) -> bool {
         let Some(free) = free_space(dest).filter(|&free| free < need) else { return true };
+        if self.job.ctl().policy().is_none() && self.job.resolve(limits::short_of_space(dest, need, free)).is_some() {
+            return true;
+        }
         let (mut needed, mut available) = (String::new(), String::new());
         flit_core::fmt::size(&mut needed, need);
         flit_core::fmt::size(&mut available, free);
         self.note(tr_en!(S::ErrorsEngineNoRoom, folder = dest.display(), need = needed, free = available));
         false
+    }
+
+    fn size_limit(&mut self, dst: &FsPath) -> Option<u64> {
+        let root = dst.root_bytes();
+        match &self.limit {
+            Some((r, l)) if r.as_slice() == root => *l,
+            _ => {
+                let l = volume_file_system(dst).and_then(|fs| limits::max_file_size(&fs));
+                self.limit = Some((root.to_vec(), l));
+                l
+            }
+        }
     }
 
     fn ask(&self, src: &FsPath, from: Meta, dst: &FsPath) -> Option<Resolve> {
@@ -329,6 +353,20 @@ impl<'a> Engine<'a> {
         if mode != Mode::Move && is_dir_link(&m) {
             self.note(tr_en!(S::ErrorsEngineLinkSkipped, path = src.display()));
             return Res::Nothing;
+        }
+        if !dir && mode != Mode::Move {
+            if let Some(limit) = self.size_limit(&dst).filter(|&l| limits::exceeds(m.size, Some(l))) {
+                let unasked = self.job.ctl().policy().is_some();
+                if self.job.resolve(limits::over_limit(src, &dst, m.size, limit)).is_some() {
+                    self.skip(&m);
+                }
+                if unasked {
+                    let mut most = String::new();
+                    flit_core::fmt::size(&mut most, limit);
+                    self.note(tr_en!(S::ErrorsOpsExtraOverLimit, path = src.display(), limit = most));
+                }
+                return Res::Nothing;
+            }
         }
         let (mut replace, mut retried) = (false, false);
         loop {

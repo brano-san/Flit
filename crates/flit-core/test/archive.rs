@@ -10,7 +10,9 @@ fn formats_come_from_extensions() {
     assert_eq!(browsable(b"a.tar.gz"), Some(Format::TarGz));
     assert_eq!(browsable(b"a.tgz"), Some(Format::TarGz));
     assert_eq!(browsable(b"a.gz"), Some(Format::Gz));
-    assert_eq!(browsable(b"a.jar"), None);
+    assert_eq!(browsable(b"a.jar"), Some(Format::Zip));
+    assert_eq!(browsable(b"a.lzh"), Some(Format::Lzh));
+    assert_eq!(browsable(b"a.docx"), None);
     assert_eq!(format_of(b"a.jar"), Some(Format::Zip));
     assert_eq!(format_of(b"a.msix"), Some(Format::Zip));
     assert_eq!(format_of(b"a.txt"), None);

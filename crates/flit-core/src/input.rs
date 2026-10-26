@@ -48,6 +48,7 @@ pub enum Event {
     ScaleChanged(f32),
     MouseMove { x: f32, y: f32 },
     MouseDown { x: f32, y: f32, button: MouseButton, clicks: u8 },
+    Pointer { touch: bool },
     MouseUp { x: f32, y: f32, button: MouseButton },
     Wheel { dx: f32, dy: f32 },
     MouseLeave,

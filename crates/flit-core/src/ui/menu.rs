@@ -429,6 +429,7 @@ impl App {
             if self.show_flatten && !folders.is_empty() && folders.len() == count {
                 m.action("file.flatten", S::MenuFlattenFolder.t());
             }
+            self.media_entries(m);
             m.separator();
             if m.shown("archive.menu") {
                 self.archive_menu(m, count, folders.is_empty());

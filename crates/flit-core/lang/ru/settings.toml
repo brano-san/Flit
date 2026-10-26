@@ -164,6 +164,10 @@ about = "О программе"
 
 [choice]
 "language.system" = "Как в Windows"
+"click.never" = "Никогда"
+"click.touch" = "Только касанием или пером"
+"click.mouse" = "Только мышью"
+"click.always" = "Всегда"
 "language.en" = "English"
 "language.ru" = "Русский"
 "startup.continue" = "Продолжить с того же места"

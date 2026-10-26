@@ -229,6 +229,7 @@ pub fn sniff(path: &Path, name: &[u8]) -> Result<Format, PlatformError> {
         [0x1f, 0x8b, ..] => Format::Gz,
         _ if head.len() >= 262 && &head[257..262] == b"ustar" => Format::Tar,
         [b'P', b'K', ..] => Format::Zip,
+        [_, _, b'-', b'l', b'h' | b'z', _, b'-', ..] => Format::Lzh,
         _ => match archive::format_of(name) {
             Some(Format::Tar) => Format::Tar,
             Some(Format::Zip) => Format::Zip,
@@ -253,6 +254,23 @@ fn rar_index(path: &Path, password: Option<&Secret>, offset_min: i32) -> Result<
     Ok(out)
 }
 
+pub fn lzh_error(e: impl std::fmt::Display) -> PlatformError {
+    corrupt(&format!("The LZH archive cannot be read: {e}"))
+}
+
+fn lzh_index(path: &Path, offset_min: i32) -> Result<Vec<Raw>, PlatformError> {
+    let mut r = delharc::parse_file(path).map_err(lzh_error)?;
+    let mut out = Vec::new();
+    loop {
+        let h = r.header();
+        let modified = if h.level < 2 { dos_ticks((h.last_modified >> 16) as u16, h.last_modified as u16, offset_min) } else { unix_ticks(h.last_modified as i64) };
+        out.push(Raw { name: h.parse_pathname_to_str().into_bytes(), utf8: true, size: h.original_size, modified, dir: h.is_directory(), link: false });
+        if !r.seek_next_file().map_err(lzh_error)? {
+            return Ok(out);
+        }
+    }
+}
+
 pub fn rar_error(e: unrar_ng::error::UnrarError, had_password: bool) -> PlatformError {
     use unrar_ng::error::Code;
     match e.code {
@@ -274,6 +292,7 @@ fn build(archive: &FsPath, path: &Path, len: u64, offset_min: i32) -> Result<Ind
         Format::Tar => (tar_index(BufReader::new(File::open(path).map_err(io_error)?))?, None),
         Format::TarGz => (tar_index(flate2::read::MultiGzDecoder::new(BufReader::new(File::open(path).map_err(io_error)?)))?, None),
         Format::Rar => (rar_index(path, password.as_ref(), offset_min)?, None),
+        Format::Lzh => (lzh_index(path, offset_min)?, None),
         Format::Gz => {
             let mut f = File::open(path).map_err(io_error)?;
             let head = read_at(&mut f, 0, len.min(64 * 1024) as usize).map_err(io_error)?;

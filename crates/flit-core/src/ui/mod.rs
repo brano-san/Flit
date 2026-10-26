@@ -4,6 +4,7 @@ mod archive;
 mod columns;
 mod details;
 mod ops;
+mod ops_extra;
 mod search;
 mod tab;
 pub mod actions;
@@ -31,6 +32,7 @@ mod describe;
 mod keymap;
 mod toolbar;
 mod popup;
+mod properties;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource, MAX_HISTORY};
@@ -404,9 +406,10 @@ pub struct App {
     pub double_click_up: bool,
     pub switch_to_new_tab: bool,
     pub smooth_scroll: bool,
-    pub single_click_files: bool,
-    pub single_click_folders: bool,
-    pub single_click_columns: bool,
+    pub touch_input: bool,
+    pub single_click_files: settings::ClickOpen,
+    pub single_click_folders: settings::ClickOpen,
+    pub single_click_columns: settings::ClickOpen,
     pub select_previous: bool,
     pub show_flatten: bool,
     pub confirm_delete: ConfirmDelete,
@@ -495,9 +498,10 @@ impl App {
             double_click_up: true,
             switch_to_new_tab: true,
             smooth_scroll: true,
-            single_click_files: false,
-            single_click_folders: false,
-            single_click_columns: false,
+            touch_input: false,
+            single_click_files: settings::ClickOpen::Never,
+            single_click_folders: settings::ClickOpen::Never,
+            single_click_columns: settings::ClickOpen::Never,
             select_previous: true,
             show_flatten: false,
             confirm_delete: ConfirmDelete::default(),
@@ -939,6 +943,7 @@ impl App {
                 }
             }
             ProviderEvent::Hashed { id, result, .. } => self.hashed(id, result.map_err(|e| crate::i18n::localize(&e).into_owned())),
+            ProviderEvent::Measured { id, totals, done, .. } => self.measured(id, totals, done),
             ProviderEvent::Status { tab, gen, text } => {
                 if let Some(k) = tab_of(&self.tabs, tab, gen) {
                     if let Some(l) = self.tabs[k].loading.as_mut() {
@@ -1257,6 +1262,7 @@ impl App {
                     self.dirty = true;
                 }
             }
+            Event::Pointer { touch } => self.touch_input = *touch,
             Event::MouseDown { x, y, button, clicks } => self.mouse_down(*x, *y, *button, *clicks, now),
             Event::MouseUp { x, y, button } => self.mouse_up(*x, *y, *button, now),
             Event::Wheel { dy, .. } => {
@@ -1568,9 +1574,9 @@ impl App {
         let t = self.tab();
         let Some(v) = t.view.as_ref().filter(|_| !t.view_loc.is_recycle_bin()) else { return false };
         match v.listing().entries.get(i as usize).is_some_and(|e| e.is_dir()) {
-            true if t.look == LayoutMode::Columns => self.single_click_columns,
-            true => self.single_click_folders,
-            false => self.single_click_files,
+            true if t.look == LayoutMode::Columns => self.single_click_columns.opens(self.touch_input),
+            true => self.single_click_folders.opens(self.touch_input),
+            false => self.single_click_files.opens(self.touch_input),
         }
     }
 

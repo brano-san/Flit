@@ -24,6 +24,9 @@ impl Fs for MemFs {
     fn seek_penalty(&self, _: &FsPath) -> Option<bool> {
         Some(false)
     }
+    fn cluster_size(&self, _: &FsPath) -> u64 {
+        4
+    }
 }
 
 struct NoWatch;
@@ -441,4 +444,20 @@ fn transfer_queues_follow_the_volume_key() {
     let mem = fs();
     assert_eq!(transfer_volume(&mem, &FileOp::Copy { items: vec![p(r"E:\a")], dest: p(r"C:\x") }), Some(br"c:\".to_vec()));
     assert_eq!(transfer_volume(&mem, &mv(r"C:\a", r"c:\b")), None);
+}
+
+#[test]
+fn measure_counts_contents_rounds_to_clusters_and_keeps_archives_apart() {
+    let mut m = fs();
+    m.0.insert(p(r"C:\r\a.zip").as_bytes().to_vec(), vec![("in", true, 0), ("big", false, 1000)]);
+    m.0.insert(p(r"C:\r\a.zip\in").as_bytes().to_vec(), vec![("small", false, 3)]);
+    let mut reports = 0;
+    let t = measure(&m, &[(p(r"C:\r\sub"), None), (p(r"C:\r\a.txt"), Some(7))], &|| true, &mut |_| reports += 1);
+    assert_eq!((t.files, t.folders, t.size, t.on_disk, t.unpacked), (2, 1, 127, 128, 0));
+    let t = measure(&m, &[(p(r"C:\r\a.zip"), Some(50)), (p(r"C:\r\a.zip"), None)], &|| true, &mut |_| {});
+    assert_eq!((t.files, t.folders, t.size, t.on_disk, t.unpacked), (2, 1, 50, 52, 1003));
+    let t = measure(&m, &[(p(r"C:\r\sub"), None)], &|| false, &mut |_| {});
+    assert_eq!((t.files, t.folders), (0, 0));
+    let Some(ProviderRequest::Measure { items, .. }) = via_unc("Ubuntu", ProviderRequest::Measure { tab: 1, id: 2, items: vec![(FsPath::parse("/home").unwrap(), None)], ctl: OpCtl::default() }) else { panic!() };
+    assert!(items[0].0.display().starts_with(r"\\wsl"));
 }

@@ -1,0 +1,5 @@
+over_limit = "{path}: the file is larger than {limit}, the most this drive's file system holds"
+font = "{path}: the font could not be installed ({error})"
+not_font = "{path} is not a .ttf, .otf or .ttc font"
+lock_screen = "The lock screen background could not be changed: {error}"
+unsupported = "This operation is not available on this system"

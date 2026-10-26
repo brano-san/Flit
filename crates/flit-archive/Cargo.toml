@@ -10,9 +10,10 @@ license.workspace = true
 flit-core.workspace = true
 flit-platform.workspace = true
 zip = { version = "7.3", default-features = false, features = ["aes-crypto", "deflate-flate2-zlib-rs", "deflate64"] }
-sevenz-rust2 = { version = "0.20", default-features = false, features = ["aes256", "compress"] }
+sevenz-rust2 = { version = "0.24", default-features = false, features = ["aes256", "compress"] }
 tar = { version = "0.4", default-features = false }
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 crc32fast.workspace = true
 encoding_rs = "0.8.35"
+delharc = "0.8"
 unrar-ng = { version = "0.7", default-features = false }

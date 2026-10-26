@@ -263,6 +263,9 @@ fn write_7z<W: Write + Seek>(w: W, sources: Vec<Source>, options: &Compression, 
     };
     let mut lzma = if threads > 1 { Lzma2Options::from_level_mt(level, threads, dict as u64 * 4) } else { Lzma2Options::from_level(level) };
     lzma.set_dictionary_size(dict);
+    if options.word > 0 {
+        lzma.set_nice_len(options.word);
+    }
     match &options.password {
         Some(pw) => {
             z.set_content_methods(vec![sevenz_rust2::encoder_options::AesEncoderOptions::new(Password::new(&pw.0)).into(), lzma.into()]);
@@ -342,7 +345,7 @@ fn write_all(sink: Sink, sources: Vec<Source>, format: Format, options: &Compres
             let gz = flate2::write::GzEncoder::new(BufWriter::new(sink), flate2::Compression::new(options.level.min(9) as u32));
             flush(write_tar(gz, &sources, job)?.finish().map_err(write_error)?)
         }
-        Format::Rar => Err(corrupt("RAR archives cannot be created")),
+        Format::Rar | Format::Lzh => Err(corrupt("RAR and LZH archives cannot be created")),
     }
 }
 

@@ -257,3 +257,27 @@ fn a_finished_job_drops_its_conflict_and_resets_the_default_button() {
     assert_eq!((app.asking(), app.jobs.sel), (Some("restore"), 0));
     drop(waiting);
 }
+
+#[test]
+fn items_too_large_for_the_drive_are_skipped_or_cancel_without_setting_a_policy() {
+    let mut app = app_at(r"C:\x");
+    let ask = |app: &mut App, ctl: &OpCtl, id: OpId, conflict: Conflict| {
+        let (tx, rx) = mpsc::channel();
+        let c = ctl.clone();
+        let waiting = std::thread::spawn(move || c.resolve(|| tx.send(()).unwrap()));
+        rx.recv().unwrap();
+        app.on_provider_event(ProviderEvent::OpConflict { tab: app.tab().id, id, conflict }, t0());
+        waiting
+    };
+    let (id, ctl) = paste(&mut app);
+    let waiting = ask(&mut app, &ctl, id, crate::limits::over_limit(&p(r"C:\a\big.iso"), &p(r"E:\big.iso"), 5 << 30, crate::limits::FAT_MAX_FILE));
+    assert_eq!((app.asking(), app.jobs.sel, app.dialog_buttons()), (Some("too_large"), 0, vec!["Skip", "Cancel"]));
+    key(&mut app, Key::Char('A'));
+    key(&mut app, Key::Enter);
+    assert_eq!((waiting.join().unwrap(), ctl.policy(), app.asking()), (Some(Resolve::Skip), None, None));
+
+    let waiting = ask(&mut app, &ctl, id, crate::limits::short_of_space(&p(r"E:\"), 10, 3));
+    assert_eq!((app.asking(), app.dialog_buttons()), (Some("too_large"), vec!["Copy anyway", "Cancel"]));
+    key(&mut app, Key::Escape);
+    assert_eq!((waiting.join().unwrap(), ctl.is_cancelled()), (None, true));
+}

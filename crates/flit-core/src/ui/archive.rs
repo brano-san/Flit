@@ -2,7 +2,7 @@ use super::form::{Control, Form};
 use super::ops::{validate_name, Then};
 use super::palette::{Palette, Pick};
 use super::{App, Effect, Route};
-use crate::archive::{self, ArchiveOp, Compression, Defaults, Encoding, Format, Place, Secret};
+use crate::archive::{self, ArchiveOp, Compression, Defaults, Encoding, Format, Place, Secret, WORD_SIZES};
 use crate::digest::{self, HashKind};
 use crate::listing::attr;
 use crate::location::{Location, ProviderId};
@@ -23,9 +23,10 @@ const C_FORMAT: usize = 1;
 const C_LEVEL: usize = 2;
 const C_VOLUME: usize = 3;
 const C_DICTIONARY: usize = 4;
-const C_THREADS: usize = 5;
-const C_PASSWORD: usize = 6;
-const C_NAMES: usize = 7;
+const C_WORD: usize = 5;
+const C_THREADS: usize = 6;
+const C_PASSWORD: usize = 7;
+const C_NAMES: usize = 8;
 
 const E_DEST: usize = 0;
 const E_RECENT: usize = 1;
@@ -60,6 +61,7 @@ pub(super) enum Kind {
     Extract { archives: Vec<FsPath>, entries: Vec<FsPath> },
     Password { archive: FsPath, retry: Retry },
     Hashes(Hashing),
+    Properties(super::properties::Measuring),
 }
 
 impl Kind {
@@ -69,6 +71,7 @@ impl Kind {
             Kind::Extract { .. } => "extract",
             Kind::Password { .. } => "password",
             Kind::Hashes(_) => "hashes",
+            Kind::Properties(_) => "properties",
         }
     }
 }
@@ -81,6 +84,11 @@ pub(super) struct ArchiveUi {
 impl ArchiveUi {
     pub fn new(prefs: Defaults) -> Self {
         Self { prefs: prefs.sanitized(), next_id: 0 }
+    }
+
+    pub fn take_id(&mut self) -> OpId {
+        self.next_id += 1;
+        self.next_id
     }
 }
 
@@ -119,6 +127,10 @@ impl App {
             }
         }
     }
+}
+
+fn word_labels() -> Vec<String> {
+    std::iter::once(S::ArchiveAutomatic.t().to_owned()).chain(WORD_SIZES.iter().map(u32::to_string)).collect()
 }
 
 fn position<T: PartialEq + Copy>(items: &[(&str, T)], v: T) -> usize {
@@ -232,6 +244,7 @@ impl App {
             Control::choice(S::ArchiveCompressionLevel.t(), levels(c.format), c.level as usize),
             Control::choice(S::ArchiveSplitVolumes.t(), labels(&VOLUMES, S::ArchiveDoNotSplit), position(&VOLUMES, c.volume)),
             Control::choice(S::ArchiveDictionarySize.t(), labels(&DICTIONARIES, S::ArchiveAutomatic), position(&DICTIONARIES, c.dictionary)),
+            Control::choice(S::ArchiveWordSize.t(), word_labels(), WORD_SIZES.iter().position(|&w| w == c.word).map_or(0, |i| i + 1)),
             Control::choice(S::ArchiveCpuThreads.t(), labels(&THREADS, S::ArchiveAutomatic), position(&THREADS, c.threads)),
             Control::secret(S::ArchivePassword.t(), S::ArchivePasswordCompressHint.t()),
             Control::check(S::ArchiveEncryptNames.t(), c.encrypt_names),
@@ -245,7 +258,7 @@ impl App {
         let Some((items, dir, _)) = self.compress_items() else { return };
         let c = &self.archive.prefs.compression;
         let same = c.format == format;
-        let options = Compression { format, level: if same { c.level } else { format.default_level() }, dictionary: if same { c.dictionary } else { 0 }, threads: c.threads, ..Default::default() };
+        let options = Compression { format, level: if same { c.level } else { format.default_level() }, dictionary: if same { c.dictionary } else { 0 }, word: if same { c.word } else { 0 }, threads: c.threads, ..Default::default() };
         let archive = dir.join(self.quick_name(format).as_bytes());
         self.start_op(FileOp::Archive(ArchiveOp::Compress { items, archive, options }), Origin::Fresh, Then::Select);
     }
@@ -270,6 +283,7 @@ impl App {
             level: (f.choice(C_LEVEL) as u8).min(format.max_level()),
             volume: VOLUMES[f.choice(C_VOLUME)].1,
             dictionary: DICTIONARIES[f.choice(C_DICTIONARY)].1,
+            word: f.choice(C_WORD).checked_sub(1).map_or(0, |i| WORD_SIZES[i]),
             threads: THREADS[f.choice(C_THREADS)].1,
             encrypt_names: format == Format::SevenZ && !password.is_empty() && f.checked(C_NAMES),
             password: (!password.is_empty()).then_some(Secret(password)),
@@ -557,8 +571,7 @@ impl App {
     }
 
     fn hash_file(&mut self, file: FsPath, kinds: Vec<HashKind>) -> (OpId, OpCtl) {
-        self.archive.next_id += 1;
-        let id = HASH_IDS + self.archive.next_id;
+        let id = HASH_IDS + self.archive.take_id();
         let ctl = OpCtl::new(None);
         let tab = self.tab().id;
         self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Hash { tab, id, file, kinds, ctl: ctl.clone() } });
@@ -671,6 +684,7 @@ impl App {
             Kind::Extract { .. } => self.submit_extract(f),
             Kind::Password { .. } => self.submit_password(f),
             Kind::Hashes(_) => self.submit_hashes(f),
+            Kind::Properties(_) => None,
         };
         if self.jobs.form.is_none() {
             self.jobs.form = keep;
@@ -678,8 +692,10 @@ impl App {
     }
 
     pub(super) fn form_closed(&mut self, f: Form) {
-        if let Kind::Hashes(Hashing { run: Some(r), .. }) = &f.kind {
-            r.ctl.cancel();
+        match &f.kind {
+            Kind::Hashes(Hashing { run: Some(r), .. }) => r.ctl.cancel(),
+            Kind::Properties(m) => m.ctl.cancel(),
+            _ => {}
         }
     }
 }

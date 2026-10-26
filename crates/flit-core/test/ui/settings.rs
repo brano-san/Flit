@@ -231,3 +231,18 @@ fn switching_language_retranslates_the_status_message() {
     set(&mut a, LANGUAGE, Value::Choice(1));
     assert_eq!(a.tab().error.as_deref(), Some(S::ArchiveSelectToCompress.en()));
 }
+
+#[test]
+fn single_click_modes_follow_the_pointer_and_old_booleans_still_load() {
+    use super::ClickOpen::*;
+    let opens: Vec<(bool, bool)> = [Never, Touch, Mouse, Always].iter().map(|m| (m.opens(false), m.opens(true))).collect();
+    assert_eq!(opens, [(false, false), (false, true), (true, false), (true, true)]);
+    let doc = parse(r#"{"files.single_click_files": true, "files.single_click_folders": false, "files.single_click_columns": "touch"}"#);
+    assert!(doc.bad.is_empty(), "{:?}", doc.problems);
+    let mut a = app();
+    a.apply_doc(&doc);
+    assert_eq!((a.single_click_files, a.single_click_folders, a.single_click_columns), (Always, Never, Touch));
+    a.single_click_folders = Mouse;
+    let text = render(&a.setting_values(), &Map::new(), None);
+    assert!(text.contains(r#""files.single_click_folders": "mouse""#), "{text}");
+}

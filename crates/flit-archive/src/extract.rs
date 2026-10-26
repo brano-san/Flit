@@ -1,4 +1,4 @@
-use crate::index::{self, rar_error, sevenz_error, Index, Item};
+use crate::index::{self, lzh_error, rar_error, sevenz_error, Index, Item};
 use crate::names::fold;
 use crate::{corrupt, io_error, password_error, std_path, Env};
 use flit_core::archive::{self, Format, Place, Secret};
@@ -305,8 +305,34 @@ fn stream(plan: &Plan<'_>, out: &mut Out<'_>, password: Option<&Secret>) -> Resu
             }
         }
         Format::Rar => rar(plan, out, &by_ordinal, last, password)?,
+        Format::Lzh => {
+            let mut r = delharc::parse_file(&path).map_err(lzh_error)?;
+            for o in 0..=last {
+                if let Some(&(i, rel)) = by_ordinal.get(&o) {
+                    if !plan.index.items[i].dir && !r.is_decoder_supported() {
+                        return Err(corrupt("This LZH compression method is not supported"));
+                    }
+                    put(out, i, rel, &mut Checked(&mut r))?;
+                }
+                if !r.seek_next_file().map_err(lzh_error)? {
+                    break;
+                }
+            }
+        }
     }
     Ok(())
+}
+
+struct Checked<'a>(&'a mut delharc::LhaDecodeReader<File>);
+
+impl Read for Checked<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.0.read(buf)?;
+        if n == 0 && !buf.is_empty() && !self.0.crc_is_ok() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "CRC mismatch"));
+        }
+        Ok(n)
+    }
 }
 
 fn rar(plan: &Plan<'_>, out: &mut Out<'_>, by_ordinal: &HashMap<usize, (usize, &str)>, last: usize, password: Option<&Secret>) -> Result<(), PlatformError> {

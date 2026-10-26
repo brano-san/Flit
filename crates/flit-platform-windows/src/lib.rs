@@ -10,6 +10,7 @@ mod dwrite;
 mod engine;
 mod fileops;
 mod fs;
+mod install;
 mod instance;
 mod library;
 mod mft;
