@@ -185,7 +185,7 @@ fn an_encrypted_archive_asks_for_its_password_and_retries_only_what_is_left() {
     select(&mut app, &["a.zip", "b.zip"]);
     app.run_action("archive.extract_here", t0());
     let (id, op) = only(&mut app);
-    finish(&mut app, id, op, &[(r"C:\locked\a.zip", r"C:\locked\a.txt")], Some(archive::PASSWORD_NEEDED));
+    finish(&mut app, id, op, &[(r"C:\locked\a.zip", r"C:\locked\a.txt")], Some(crate::i18n::S::ErrorsArchivePasswordNeeded.en()));
     assert_eq!(app.asking(), Some("password"));
     assert_eq!(form(&app).controls.len(), 2);
     typed(&mut app, "secret");
@@ -194,7 +194,7 @@ fn an_encrypted_archive_asks_for_its_password_and_retries_only_what_is_left() {
     assert_eq!(archive::password(&p(r"C:\locked\a.zip")), None);
     let (id, op) = only(&mut app);
     assert_eq!(op, FileOp::Archive(ArchiveOp::Extract { archives: vec![p(r"C:\locked\b.zip")], dest: None, place: Place::Here }));
-    finish(&mut app, id, op, &[], Some(archive::WRONG_PASSWORD));
+    finish(&mut app, id, op, &[], Some(crate::i18n::S::ErrorsArchiveWrongPassword.en()));
     assert_eq!(app.asking(), Some("password"));
     assert!(form(&app).error);
     key(&mut app, Key::Escape, NO);
@@ -263,7 +263,7 @@ fn inside_an_archive_cut_and_rename_are_refused_and_the_menu_is_flits_own() {
     deliver(&mut app, &[("x.txt", PACKED)]);
     select(&mut app, &["x.txt"]);
     app.cut_selection();
-    assert_eq!(app.tab().error.as_deref(), Some(archive::INSIDE));
+    assert_eq!(app.tab().error.as_deref(), Some(crate::i18n::S::ErrorsArchiveInside.en()));
     app.rename_focused();
     assert!(!app.is_renaming());
     let labels = |items: &[crate::ui::MenuItem]| items.iter().filter_map(|i| if let crate::ui::MenuItem::Command { label, .. } = i { Some(label.clone()) } else { None }).collect::<Vec<_>>();

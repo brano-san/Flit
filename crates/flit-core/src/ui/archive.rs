@@ -170,7 +170,7 @@ impl App {
 
     fn compress_items(&mut self) -> Option<(Vec<FsPath>, FsPath, bool)> {
         if self.archive_view().is_some() {
-            self.status(archive::INSIDE);
+            self.status(crate::i18n::S::ErrorsArchiveInside.t());
             return None;
         }
         let items = self.selected_items();
@@ -396,7 +396,7 @@ impl App {
         let label = name::display(archive.file_name()).into_owned();
         let controls = vec![Control::value("Archive", &label), Control::secret("Password", "Password of the archive")];
         let mut f = Form::new(Kind::Password { archive, retry }, "This archive is encrypted", controls, vec!["OK", "Cancel"]);
-        f.say(if wrong { archive::WRONG_PASSWORD } else { "Flit keeps the password in memory until it closes" }, wrong);
+        f.say(if wrong { crate::i18n::S::ErrorsArchiveWrongPassword.t() } else { crate::i18n::S::ErrorsArchivePasswordKept.t() }, wrong);
         self.open_form(f);
     }
 
@@ -500,7 +500,7 @@ impl App {
 
     pub fn hashes_dialog(&mut self) {
         if self.archive_view().is_some() {
-            return self.status(archive::INSIDE);
+            return self.status(crate::i18n::S::ErrorsArchiveInside.t());
         }
         let t = self.tab();
         let Some(v) = &t.view else { return };

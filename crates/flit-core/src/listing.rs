@@ -146,18 +146,20 @@ pub enum FsErrorKind {
 
 impl fmt::Display for FsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use crate::i18n::S;
         if self.code == crate::archive::PASSWORD_CODE {
-            return f.write_str(crate::archive::PASSWORD_NEEDED);
+            return f.write_str(S::ErrorsArchivePasswordNeeded.t());
         }
         let what = match self.kind {
-            FsErrorKind::NotFound => "Path not found",
-            FsErrorKind::AccessDenied => "Access denied",
-            FsErrorKind::NotADirectory => "Not a folder",
-            FsErrorKind::Unavailable => "Location is not available",
-            FsErrorKind::Other => "Error",
-            FsErrorKind::NoMedia => "No media in the drive",
+            FsErrorKind::NotFound => S::ErrorsFsNotFound,
+            FsErrorKind::AccessDenied => S::ErrorsFsAccessDenied,
+            FsErrorKind::NotADirectory => S::ErrorsFsNotADirectory,
+            FsErrorKind::Unavailable => S::ErrorsFsUnavailable,
+            FsErrorKind::Other => S::ErrorsFsOther,
+            FsErrorKind::NoMedia => S::ErrorsFsNoMedia,
         };
-        write!(f, "{what} (0x{:08X})", self.code as u32)
+        crate::i18n::fill_into(f, S::ErrorsFsCoded.t(), &[("what", &what), ("code", &format_args!("{:08X}", self.code as u32))]);
+        Ok(())
     }
 }
 

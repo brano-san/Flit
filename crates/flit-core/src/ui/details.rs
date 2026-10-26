@@ -3,6 +3,7 @@ use super::ops::TIMER_SLACK;
 use super::{centered, App, Column, Drag, Effect, Hit, MenuItem, ShellMenu, Tab, BIN_COLUMNS, COLUMNS, G_CHEVRON, G_FILE, G_FOLDER, G_SORT_DOWN};
 use crate::fmt as format;
 use crate::hash::{FxHashMap, FxHasher};
+use crate::i18n::S;
 use crate::input::{CursorIcon, MouseButton};
 use crate::listing::{attr, FsError, FsErrorKind, Listing};
 use crate::location::Location;
@@ -628,15 +629,16 @@ impl App {
 
     pub(super) fn draw_unavailable<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme, list: Rect, e: &FsError) {
         let title = match e.kind {
-            _ if e.code == crate::archive::PASSWORD_CODE => "This archive is encrypted",
-            FsErrorKind::NotFound => "This folder does not exist",
-            FsErrorKind::AccessDenied => "You do not have permission to open this folder",
-            FsErrorKind::NotADirectory => "This location is not a folder",
-            FsErrorKind::Unavailable => "This location is not available",
-            FsErrorKind::Other => "This folder cannot be opened",
-            FsErrorKind::NoMedia => "There is no disc or memory card in this drive",
-        };
-        let detail = if e.kind == FsErrorKind::NoMedia { format!("{e}. Insert one and press F5, or eject the drive.") } else { format!("{e}. Press F5 to try again.") };
+            _ if e.code == crate::archive::PASSWORD_CODE => S::ErrorsFsTitleEncrypted,
+            FsErrorKind::NotFound => S::ErrorsFsTitleNotFound,
+            FsErrorKind::AccessDenied => S::ErrorsFsTitleAccessDenied,
+            FsErrorKind::NotADirectory => S::ErrorsFsTitleNotADirectory,
+            FsErrorKind::Unavailable => S::ErrorsFsTitleUnavailable,
+            FsErrorKind::Other => S::ErrorsFsTitleOther,
+            FsErrorKind::NoMedia => S::ErrorsFsTitleNoMedia,
+        }
+        .t();
+        let detail = crate::tr!(if e.kind == FsErrorKind::NoMedia { S::ErrorsFsInsertMedia } else { S::ErrorsFsRetry }, error = e);
         let (big, small) = (self.ui_font(16.0), self.ui_font(13.0));
         let y = list.y + self.s(48.0);
         centered(g, Rect::new(list.x, y, list.w, self.s(32.0)), G_WARNING, self.icon_font(24.0), th.error);

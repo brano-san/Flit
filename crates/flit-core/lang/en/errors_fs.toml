@@ -1,0 +1,18 @@
+not_found = "Path not found"
+access_denied = "Access denied"
+not_a_directory = "Not a folder"
+unavailable = "Location is not available"
+other = "Error"
+no_media = "No media in the drive"
+coded = "{what} (0x{code})"
+retry = "{error}. Press F5 to try again."
+insert_media = "{error}. Insert one and press F5, or eject the drive."
+
+[title]
+encrypted = "This archive is encrypted"
+not_found = "This folder does not exist"
+access_denied = "You do not have permission to open this folder"
+not_a_directory = "This location is not a folder"
+unavailable = "This location is not available"
+other = "This folder cannot be opened"
+no_media = "There is no disc or memory card in this drive"

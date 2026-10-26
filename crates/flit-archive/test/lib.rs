@@ -136,7 +136,7 @@ fn passwords_protect_zip_and_7z() {
         assert_eq!(out.error.map(|e| e.code), Some(PASSWORD_CODE));
         archive::set_password(&archive, Some(Secret("wrong".into())));
         let out = extract(&archive, &t.fs("wrong"), Place::Here);
-        assert_eq!(out.error.map(|e| e.message), Some(archive::WRONG_PASSWORD.to_owned()), "{ext}");
+        assert_eq!(out.error.map(|e| e.message), Some(flit_core::i18n::S::ErrorsArchiveWrongPassword.en().to_owned()), "{ext}");
         archive::set_password(&archive, Some(Secret("correct horse".into())));
         assert_eq!(names(&archive).unwrap().len(), 3);
         let out = extract(&archive, &t.fs("ok"), Place::Here);
@@ -283,12 +283,12 @@ fn files_are_added_to_zips_and_copied_out_of_them() {
     let again = run(FileOp::Copy { items: vec![picks[0].clone()], dest: t.fs("copied") }, Resolve::KeepBoth);
     assert_eq!(again.items, vec![(picks[0].clone(), t.fs("copied/note (2).txt"))]);
     let refused = run(FileOp::Trash(vec![picks[0].clone()]), Resolve::Replace);
-    assert_eq!(refused.error.map(|e| e.message), Some(archive::INSIDE.to_owned()));
+    assert_eq!(refused.error.map(|e| e.message), Some(flit_core::i18n::S::ErrorsArchiveInside.en().to_owned()));
     assert!(file_op(&FileOp::Trash(vec![zip.clone()]), &Job::detached(Resolve::Replace), &env()).is_none());
     t.write("b.7z", b"");
     compress(vec![t.fs("new/note.txt")], t.fs("b.7z"), Format::SevenZ, None);
     let out = run(FileOp::Copy { items: vec![t.fs("new/note.txt")], dest: t.fs("b.7z") }, Resolve::KeepBoth);
-    assert_eq!(out.error.map(|e| e.message), Some(archive::NO_ADD.to_owned()));
+    assert_eq!(out.error.map(|e| e.message), Some(flit_core::i18n::S::ErrorsArchiveNoAdd.en().to_owned()));
 }
 
 #[test]

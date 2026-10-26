@@ -473,7 +473,7 @@ fn archives_are_folders_for_listing_and_operations() {
     assert!(copied.error.is_none(), "{:?}", copied.error);
     assert_eq!(read(&t, r"out\a.txt"), "alpha");
     let refused = run(&mut sh, &FileOp::Rename { item: zip.join(b"b.txt"), name: b"c.txt".to_vec() });
-    assert_eq!(refused.error.map(|e| e.message), Some(flit_core::archive::INSIDE.to_owned()));
+    assert_eq!(refused.error.map(|e| e.message), Some(flit_core::i18n::S::ErrorsArchiveInside.en().to_owned()));
     let here = run(&mut sh, &FileOp::Archive(ArchiveOp::Extract { archives: vec![zip.clone()], dest: None, place: Place::OwnFolder }));
     assert_eq!(here.items, vec![(zip.clone(), t.path("pack"))]);
     assert_eq!(read(&t, r"pack\docs\a.txt"), "alpha");

@@ -542,7 +542,7 @@ impl App {
             return;
         }
         if cut && self.archive_view().is_some() {
-            return self.status(archive::INSIDE);
+            return self.status(crate::i18n::S::ErrorsArchiveInside.t());
         }
         match self.item_paths(&items) {
             Ok(paths) => {

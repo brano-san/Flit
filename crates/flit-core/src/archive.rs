@@ -254,10 +254,6 @@ impl Defaults {
 }
 
 pub const PASSWORD_CODE: i64 = 0x5057_0001;
-pub const PASSWORD_NEEDED: &str = "The archive is encrypted: enter its password";
-pub const WRONG_PASSWORD: &str = "The password is wrong";
-pub const INSIDE: &str = "This cannot be done inside an archive";
-pub const NO_ADD: &str = "Files can be added only to ZIP archives";
 
 pub fn unreadable(item: &FsPath, meta: Meta) -> Conflict {
     Conflict { source: item.clone(), target: item.clone(), from: meta, to: meta }
@@ -268,7 +264,8 @@ pub fn is_unreadable(c: &Conflict) -> bool {
 }
 
 pub fn needs_password(error: &str) -> bool {
-    error.contains(PASSWORD_NEEDED) || error.contains(WRONG_PASSWORD)
+    use crate::i18n::S;
+    [S::ErrorsArchivePasswordNeeded, S::ErrorsArchiveWrongPassword].iter().any(|s| error.contains(s.en()) || error.contains(s.t()))
 }
 
 #[derive(Default)]

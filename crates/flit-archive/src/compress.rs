@@ -419,7 +419,7 @@ pub fn add(items: &[FsPath], archive: &FsPath, inner: &str, job: &Job, env: &Env
     let fail = |e| (Vec::new(), e);
     let index = index::open(archive, env.utc_offset).map_err(fail)?;
     if !index.format.can_add() {
-        return Err(fail(PlatformError::new(-1, archive::NO_ADD)));
+        return Err(fail(PlatformError::new(-1, flit_core::i18n::S::ErrorsArchiveNoAdd.en())));
     }
     if items.iter().any(|i| crate::locate(i).is_some_and(|(a, n)| a == *archive || !n.is_empty())) {
         return Err(fail(PlatformError::new(-1, "Items inside archives cannot be added to an archive; extract them first")));

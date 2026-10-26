@@ -33,7 +33,7 @@ pub(crate) fn corrupt(message: &str) -> PlatformError {
 }
 
 pub(crate) fn password_error(had_password: bool) -> PlatformError {
-    PlatformError::new(PASSWORD_CODE, if had_password { archive::WRONG_PASSWORD } else { archive::PASSWORD_NEEDED })
+    PlatformError::new(PASSWORD_CODE, if had_password { flit_core::i18n::S::ErrorsArchiveWrongPassword.en() } else { flit_core::i18n::S::ErrorsArchivePasswordNeeded.en() })
 }
 
 pub fn locate(path: &FsPath) -> Option<(FsPath, String)> {
@@ -130,7 +130,7 @@ pub fn file_op(op: &FileOp, job: &Job, env: &Env<'_>) -> Option<OpOutcome> {
             let (archive, _) = located.next()?;
             Some(done(extract::entries(&archive, items, dest, job, env)))
         }
-        op => paths_of(op).iter().any(inside).then(|| OpOutcome { items: Vec::new(), error: Some(PlatformError::new(-1, archive::INSIDE)) }),
+        op => paths_of(op).iter().any(inside).then(|| OpOutcome { items: Vec::new(), error: Some(PlatformError::new(-1, flit_core::i18n::S::ErrorsArchiveInside.en())) }),
     }
 }
 
