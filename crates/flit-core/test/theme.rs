@@ -91,3 +91,13 @@ fn high_contrast_maps_every_token_to_a_system_color() {
     assert!(p.dark);
     assert!(Area::ALL.iter().all(|&a| *p.area(a) == t));
 }
+#[test]
+fn a_checkmark_stands_out_on_every_accent() {
+    let mut accents = vec![LIGHT.accent, DARK.accent];
+    accents.extend(PRESETS.iter().flat_map(|p| [derive(Color::rgb(p.light)).accent, derive(Color::rgb(p.dark)).accent]));
+    for a in accents {
+        assert!(contrast(ink_on(a), a) >= MIN_TEXT_CONTRAST, "{a:?}");
+    }
+    assert_eq!(ink_on(DARK.accent), BLACK);
+    assert_eq!(ink_on(LIGHT.accent), WHITE);
+}

@@ -96,7 +96,7 @@
 "theme.toggle" = "Switch between the light and the dark theme"
 "theme.light" = "Use the light theme"
 "theme.dark" = "Use the dark theme"
-"theme.system" = "Follow the Windows theme"
+"theme.system" = "Follow the system theme"
 "view.streams" = "Show or hide alternate data streams"
 "view.checkboxes" = "Show or hide item check boxes"
 "view.hover_select" = "Select items by hovering"

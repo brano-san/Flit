@@ -8,7 +8,8 @@ use crate::listing::{attr, Entry};
 use crate::location::ProviderId;
 use crate::name;
 use crate::path::FsPath;
-use crate::provider::{OpCtl, OpId, ProviderRequest, Totals};
+use crate::preview::{self, PreviewRequest, PropGroup};
+use crate::provider::{GenToken, OpCtl, OpId, ProviderRequest, Totals};
 use bumpalo::Bump;
 
 const MEASURE_IDS: OpId = 1 << 61;
@@ -30,6 +31,7 @@ pub(super) struct Measuring {
     files: u64,
     folders: u64,
     rows: Rows,
+    props: u64,
 }
 
 pub(super) fn measured_items(paths: &[FsPath], entries: &[Entry], archive_root: bool) -> Vec<(FsPath, Option<u64>)> {
@@ -135,8 +137,15 @@ impl App {
         let tab = self.tab().id;
         let req = ProviderRequest::Measure { tab, id, items: measured_items(&paths, &entries, archive_root), ctl: ctl.clone() };
         self.effects.push(Effect::Provider { provider: ProviderId::Local, req });
+        let props = if packed || paths.len() != 1 { 0 } else { self.gen() };
+        if props != 0 {
+            let cancel = GenToken::default();
+            cancel.set(props);
+            let req = PreviewRequest { gen: props, cancel, path: paths[0].clone(), kind: preview::Kind::Other, size: 0, details: true, px: 0 };
+            self.effects.push(Effect::Preview(req));
+        }
         let (files, folders) = if paths.len() > 1 { (files, folders) } else { (0, 0) };
-        let mut f = Form::new(Kind::Properties(Measuring { id, ctl, packed, files, folders, rows }), &title, controls, vec![S::ArchiveClose.t()]);
+        let mut f = Form::new(Kind::Properties(Measuring { id, ctl, packed, files, folders, rows, props }), &title, controls, vec![S::ArchiveClose.t()]);
         f.say(counting, false);
         self.open_form(f);
     }
@@ -170,10 +179,23 @@ impl App {
             }
         }
         if done {
-            f.say(S::PropertiesCounted.t(), false);
+            f.say(String::new(), false);
         }
         self.jobs.form = Some(f);
         self.dirty = true;
+    }
+
+    pub(super) fn properties_props(&mut self, gen: u64, groups: &[PropGroup]) -> bool {
+        let Some(f) = &mut self.jobs.form else { return false };
+        let Kind::Properties(m) = &f.kind else { return false };
+        if m.props != gen {
+            return false;
+        }
+        for (k, v) in groups.iter().flat_map(|g| &g.rows) {
+            f.controls.push(Control::value(k, v));
+        }
+        self.dirty = true;
+        true
     }
 }
 

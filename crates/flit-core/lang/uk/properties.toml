@@ -18,7 +18,6 @@ hidden = "Прихований"
 system = "Системний"
 link = "Посилання"
 counting = "Підрахунок…"
-counted = "Підраховано"
 bytes = ["{size} ({n} байт)", "{size} ({n} байти)", "{size} ({n} байтів)"]
 shell_action = "Властивості Windows"
 shell_describe = "Показати діалогове вікно властивостей Windows для виділення"

@@ -94,7 +94,7 @@
 "theme.toggle" = "深色模式，浅色模式，夜间，颜色，外观"
 "theme.light" = "浅色模式，明亮颜色，外观"
 "theme.dark" = "深色模式，夜间，黑色，外观"
-"theme.system" = "Windows 深色或浅色模式，默认主题，外观"
+"theme.system" = "系统深色或浅色模式，Windows，默认主题，外观"
 "view.checkboxes" = "在每个项目上显示复选框，便于用鼠标选择"
 "view.hover_select" = "指针停留在项目上时选择该项目"
 "view.auto_sizes" = "打开文件夹时立即显示文件夹大小，目录大小"

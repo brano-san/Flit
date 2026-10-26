@@ -18,7 +18,6 @@ hidden = "Oculto"
 system = "Sistema"
 link = "Vínculo"
 counting = "Contando…"
-counted = "Contados"
 bytes = ["{size} ({n} byte)", "{size} ({n} de bytes)", "{size} ({n} bytes)"]
 shell_action = "Propiedades de Windows"
 shell_describe = "Mostrar el cuadro de diálogo de propiedades de Windows de la selección"

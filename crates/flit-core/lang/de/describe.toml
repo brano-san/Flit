@@ -94,7 +94,7 @@
 "theme.toggle" = "Dunkler Modus, heller Modus, Nacht, Farben, Darstellung"
 "theme.light" = "Heller Modus, helle Farben, Darstellung"
 "theme.dark" = "Dunkler Modus, Nacht, schwarz, Darstellung"
-"theme.system" = "Dunkler oder heller Modus von Windows, Standarddesign, Darstellung"
+"theme.system" = "Dunkler oder heller Modus des Systems, Windows, Standarddesign, Darstellung"
 "view.checkboxes" = "Auf jedem Element ein Kästchen zur Auswahl mit der Maus anzeigen"
 "view.hover_select" = "Ein Element auswählen, wenn der Zeiger darauf ruht"
 "view.auto_sizes" = "Die Größe von Ordnern sofort beim Öffnen eines Ordners anzeigen, Verzeichnisgröße"

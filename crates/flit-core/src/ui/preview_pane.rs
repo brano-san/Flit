@@ -499,7 +499,7 @@ impl App {
                 self.preview.state.details = i == 1;
                 self.layout();
             }
-            PaneHit::Properties => self.properties(),
+            PaneHit::Properties => self.properties_dialog(),
             PaneHit::Tag(k) => self.toggle_tag(k),
             PaneHit::NewTag => self.new_tag(true),
             PaneHit::Play => {
@@ -595,6 +595,11 @@ impl App {
     }
 
     pub fn on_preview(&mut self, gen: u64, data: PreviewData) {
+        if let PreviewData::Props(groups) = &data {
+            if self.properties_props(gen, groups) {
+                return;
+            }
+        }
         let p = &mut self.preview;
         if gen != p.gen {
             return;

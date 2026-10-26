@@ -236,3 +236,12 @@ fn unix_terms_rename_the_trash_and_the_computer() {
     let same = S::MenuCopy.en();
     assert!(std::ptr::eq(unix_term(same, Lang::En), same));
 }
+
+#[test]
+fn system_choices_name_the_system_not_windows() {
+    for l in Lang::ALL {
+        for s in [S::SettingsChoiceLanguageSystem, S::SettingsChoiceDateSystem, S::SettingsChoiceThemeSystem] {
+            assert!(!s.in_lang(l).contains("Windows"), "{l:?}");
+        }
+    }
+}

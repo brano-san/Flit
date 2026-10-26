@@ -314,6 +314,10 @@ pub fn is_dark(bg: Color) -> bool {
     contrast(WHITE, bg) > contrast(BLACK, bg)
 }
 
+pub fn ink_on(fill: Color) -> Color {
+    if is_dark(fill) { WHITE } else { BLACK }
+}
+
 fn readable(c: Color, bg: Color, pole: Color, min: f32) -> Color {
     (0..=20).map(|k| mix(c, pole, k as f32 / 20.0)).find(|&m| contrast(m, bg) >= min).unwrap_or(pole)
 }

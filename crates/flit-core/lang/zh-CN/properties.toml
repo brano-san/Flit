@@ -18,7 +18,6 @@ hidden = "隐藏"
 system = "系统"
 link = "链接"
 counting = "正在计数…"
-counted = "已计数"
 bytes = ["{size}（{n} 字节）"]
 shell_action = "Windows 属性"
 shell_describe = "显示所选内容的 Windows 属性对话框"

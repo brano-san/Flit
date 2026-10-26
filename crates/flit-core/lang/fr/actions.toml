@@ -96,7 +96,7 @@
 "theme.toggle" = "Basculer entre le thème clair et le thème sombre"
 "theme.light" = "Utiliser le thème clair"
 "theme.dark" = "Utiliser le thème sombre"
-"theme.system" = "Suivre le thème de Windows"
+"theme.system" = "Suivre le thème du système"
 "view.streams" = "Afficher ou masquer les flux de données alternatifs"
 "view.checkboxes" = "Afficher ou masquer les cases à cocher des éléments"
 "view.hover_select" = "Sélectionner les éléments par survol"

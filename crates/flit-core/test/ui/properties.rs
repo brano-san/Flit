@@ -2,6 +2,7 @@ use super::*;
 use crate::input::{Event, Key, Mods};
 use crate::listing::{DirSnapshot, Listing, Meta};
 use crate::location::Location;
+use crate::preview::PreviewData;
 use crate::provider::ProviderEvent;
 use crate::sort::{self, CaseMode, SortKeys, ViewSpec};
 use crate::ui::Persisted;
@@ -83,6 +84,27 @@ fn a_folder_counts_in_the_background_and_esc_closes() {
     app.on_event(&Event::Key { key: Key::Escape, mods: Mods::default(), pressed: true }, Instant::now());
     assert_eq!(app.asking(), None);
     assert!(ctl.is_cancelled());
+}
+
+#[test]
+fn a_single_file_shows_the_shell_details_and_no_leftover_note() {
+    let mut app = app_at(r"C:\work");
+    deliver(&mut app, &[("a.txt", 0, 5), ("b.txt", 0, 7)]);
+    select(&mut app, &["a.txt"]);
+    app.properties_dialog();
+    let effects: Vec<Effect> = app.drain_effects().collect();
+    let req = effects.iter().find_map(|e| if let Effect::Preview(r) = e { Some(r.clone()) } else { None }).unwrap();
+    assert!(req.details && req.path == FsPath::parse(r"C:\work\a.txt").unwrap());
+    let id = effects.iter().find_map(|e| if let Effect::Provider { req: ProviderRequest::Measure { id, .. }, .. } = e { Some(*id) } else { None }).unwrap();
+    let rows = vec![("Authors".to_string(), "Ann".to_string())];
+    app.on_preview(req.gen + 1, PreviewData::Props(vec![PropGroup { title: "Origin".into(), rows: rows.clone() }]));
+    assert!(app.jobs.form.as_ref().unwrap().controls.iter().all(|c| !matches!(c, Control::Value { label, .. } if label == "Authors")));
+    app.on_preview(req.gen, PreviewData::Props(vec![PropGroup { title: "Origin".into(), rows }]));
+    let f = app.jobs.form.as_ref().unwrap();
+    assert!(f.controls.iter().any(|c| matches!(c, Control::Value { label, value } if label == "Authors" && value == "Ann")));
+    let tab = app.tab().id;
+    app.on_provider_event(ProviderEvent::Measured { tab, id, totals: Totals { size: 5, ..Totals::default() }, file_system: Some("NTFS".into()), done: true }, Instant::now());
+    assert_eq!(app.jobs.form.as_ref().unwrap().note, "");
 }
 
 #[test]

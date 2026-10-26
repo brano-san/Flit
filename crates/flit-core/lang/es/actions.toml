@@ -96,7 +96,7 @@
 "theme.toggle" = "Alternar entre el tema claro y el oscuro"
 "theme.light" = "Usar el tema claro"
 "theme.dark" = "Usar el tema oscuro"
-"theme.system" = "Seguir el tema de Windows"
+"theme.system" = "Seguir el tema del sistema"
 "view.streams" = "Mostrar u ocultar los flujos de datos alternativos"
 "view.checkboxes" = "Mostrar u ocultar las casillas de los elementos"
 "view.hover_select" = "Seleccionar elementos al pasar el puntero"

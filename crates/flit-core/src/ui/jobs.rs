@@ -970,7 +970,7 @@ impl App {
             let bx = Rect::new(check.x, check.y + (check.h - s(18.0)) / 2.0, s(18.0), s(18.0));
             if self.jobs.all {
                 g.dl.round_rect(bx, t.accent, s4);
-                centered(g, bx, G_CHECK, self.icon_font(10.0), t.bg);
+                centered(g, bx, G_CHECK, self.icon_font(11.0), crate::theme::ink_on(t.accent));
             } else {
                 g.dl.outline(bx, if self.hover == Hit::DialogCheck { t.accent } else { t.text_dim }, s4, s(1.0).max(1.0));
             }

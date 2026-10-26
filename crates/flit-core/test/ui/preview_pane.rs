@@ -120,7 +120,8 @@ fn details_tab_and_many_items() {
     let b = a.preview.r.button;
     a.on_event(&Event::MouseDown { x: b.x + 2.0, y: b.y + 2.0, button: crate::input::MouseButton::Left, clicks: 1 }, Instant::now());
     a.on_event(&Event::MouseUp { x: b.x + 2.0, y: b.y + 2.0, button: crate::input::MouseButton::Left }, Instant::now());
-    assert!(a.drain_effects().any(|e| matches!(e, Effect::Properties(p) if p.len() == 4)));
+    assert_eq!(a.asking(), Some("properties"));
+    assert!(a.drain_effects().all(|e| !matches!(e, Effect::Properties(_))));
 }
 
 #[test]

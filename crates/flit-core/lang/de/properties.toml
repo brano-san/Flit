@@ -18,7 +18,6 @@ hidden = "Versteckt"
 system = "System"
 link = "Verknüpfung"
 counting = "Wird gezählt…"
-counted = "Gezählt"
 bytes = ["{size} ({n} Byte)", "{size} ({n} Bytes)"]
 shell_action = "Windows-Eigenschaften"
 shell_describe = "Den Windows-Eigenschaftendialog der Auswahl anzeigen"

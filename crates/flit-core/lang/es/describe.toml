@@ -94,7 +94,7 @@
 "theme.toggle" = "Modo oscuro, modo claro, noche, colores, apariencia"
 "theme.light" = "Modo claro, colores brillantes, apariencia"
 "theme.dark" = "Modo oscuro, noche, negro, apariencia"
-"theme.system" = "Modo oscuro o claro de Windows, tema predeterminado, apariencia"
+"theme.system" = "Modo oscuro o claro del sistema, Windows, tema predeterminado, apariencia"
 "view.checkboxes" = "Mostrar una casilla en cada elemento para seleccionar con el mouse"
 "view.hover_select" = "Seleccionar un elemento cuando el puntero se detiene sobre él"
 "view.auto_sizes" = "Mostrar el tamaño de las carpetas en cuanto se abre una carpeta, tamaño de directorio"

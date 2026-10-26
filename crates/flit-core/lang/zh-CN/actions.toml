@@ -96,7 +96,7 @@
 "theme.toggle" = "在浅色和深色主题之间切换"
 "theme.light" = "使用浅色主题"
 "theme.dark" = "使用深色主题"
-"theme.system" = "跟随 Windows 主题"
+"theme.system" = "跟随系统主题"
 "view.streams" = "显示或隐藏备用数据流"
 "view.checkboxes" = "显示或隐藏项目复选框"
 "view.hover_select" = "悬停时选择项目"

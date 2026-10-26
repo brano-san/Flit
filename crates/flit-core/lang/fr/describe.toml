@@ -94,7 +94,7 @@
 "theme.toggle" = "Mode sombre, mode clair, nuit, couleurs, apparence"
 "theme.light" = "Mode clair, couleurs vives, apparence"
 "theme.dark" = "Mode sombre, nuit, noir, apparence"
-"theme.system" = "Mode sombre ou clair de Windows, thème par défaut, apparence"
+"theme.system" = "Mode sombre ou clair du système, Windows, thème par défaut, apparence"
 "view.checkboxes" = "Afficher une case sur chaque élément pour sélectionner à la souris"
 "view.hover_select" = "Sélectionner un élément quand le pointeur reste dessus"
 "view.auto_sizes" = "Afficher la taille des dossiers dès l’ouverture d’un dossier, taille du répertoire"

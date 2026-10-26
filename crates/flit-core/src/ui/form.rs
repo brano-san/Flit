@@ -516,7 +516,7 @@ impl App {
 fn draw_box<B: TextBackend>(g: &mut Gfx<B>, t: &Theme, bx: Rect, on: bool, hot: bool, icons: FontStyle, r: f32, sc: f32) {
     if on {
         g.dl.round_rect(bx, t.accent, r);
-        centered(g, bx, G_CHECK, icons, t.bg);
+        centered(g, bx, G_CHECK, icons, crate::theme::ink_on(t.accent));
     } else {
         g.dl.outline(bx, if hot { t.accent } else { t.text_dim }, r, sc.round().max(1.0));
     }

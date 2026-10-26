@@ -18,7 +18,6 @@ hidden = "Скрытый"
 system = "Системный"
 link = "Ссылка"
 counting = "Подсчёт…"
-counted = "Подсчитано"
 bytes = ["{size} ({n} байт)", "{size} ({n} байта)", "{size} ({n} байт)"]
 shell_action = "Свойства Windows"
 shell_describe = "Показать окно свойств Windows для выделенных элементов"

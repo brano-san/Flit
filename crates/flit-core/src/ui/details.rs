@@ -717,7 +717,7 @@ impl App {
     pub(super) fn draw_checkbox<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme, r: Rect, on: bool) {
         if on {
             g.dl.round_rect(r, th.accent, self.s(3.0));
-            centered(g, r, G_CHECK, self.icon_font(9.0), th.bg);
+            centered(g, r, G_CHECK, self.icon_font(10.0), crate::theme::ink_on(th.accent));
         } else {
             g.dl.outline(r, th.text_dim, self.s(3.0), self.s(1.0).max(1.0));
         }
