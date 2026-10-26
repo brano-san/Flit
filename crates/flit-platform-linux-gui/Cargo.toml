@@ -17,10 +17,14 @@ glutin = { version = "0.32", default-features = false, features = ["egl", "wayla
 glow = "0.18"
 raw-window-handle = "0.6"
 tracing.workspace = true
+harfrust = "0.15"
+swash = { version = "0.2.10", default-features = false, features = ["std", "render"] }
+unicode-bidi = { version = "0.3.18", default-features = false, features = ["hardcoded-data", "std"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 png = "0.18"
 x11-dl = "2.21"
+serde_json.workspace = true
 
 [target.'cfg(target_os = "linux")'.build-dependencies]
 naga = { version = "30", default-features = false, features = ["wgsl-in", "glsl-out"] }
