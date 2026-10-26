@@ -3,6 +3,7 @@ use super::menu::Menu;
 use super::tags::G_TAG;
 use super::{centered, App, Drag, Effect, Focus, Hit, IconKind, IconRequest, Route, ShellMenu, G_DRIVE, G_FOLDER};
 use crate::hash;
+use crate::i18n::S;
 use crate::input::{Key, Mods};
 use crate::library::{self, Library, LibraryOp};
 use crate::location::{Location, ProviderId};
@@ -60,13 +61,13 @@ impl KnownFolder {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Home => "Home",
-            Self::Desktop => "Desktop",
-            Self::Downloads => "Downloads",
-            Self::Documents => "Documents",
-            Self::Pictures => "Pictures",
-            Self::Music => "Music",
-            Self::Videos => "Videos",
+            Self::Home => S::SidebarFolderHome.t(),
+            Self::Desktop => S::SidebarFolderDesktop.t(),
+            Self::Downloads => S::SidebarFolderDownloads.t(),
+            Self::Documents => S::SidebarFolderDocuments.t(),
+            Self::Pictures => S::SidebarFolderPictures.t(),
+            Self::Music => S::SidebarFolderMusic.t(),
+            Self::Videos => S::SidebarFolderVideos.t(),
         }
     }
 
@@ -189,12 +190,12 @@ impl Section {
 
     pub fn title(self) -> &'static str {
         match self {
-            Section::Pinned => "Pinned",
-            Section::Folders => "Folders",
-            Section::Libraries => "Libraries",
-            Section::Drives => "Drives",
+            Section::Pinned => S::SidebarSectionPinned.t(),
+            Section::Folders => S::SidebarSectionFolders.t(),
+            Section::Libraries => S::SidebarSectionLibraries.t(),
+            Section::Drives => S::SidebarSectionDrives.t(),
             Section::Wsl => "WSL",
-            Section::Tags => "Tags",
+            Section::Tags => S::SidebarSectionTags.t(),
         }
     }
 
@@ -481,7 +482,7 @@ impl App {
             }
         }
         if pinned.len() == before {
-            return self.status("Only folders that are not pinned yet can be pinned");
+            return self.status(S::SidebarOnlyUnpinned.t());
         }
         self.pins_changed();
     }
@@ -508,7 +509,7 @@ impl App {
     pub(super) fn pin_selection(&mut self) {
         let folders = self.selected_folders();
         if folders.is_empty() {
-            return self.status("Select the folders to pin");
+            return self.status(S::SidebarSelectToPin.t());
         }
         let pinned = &mut self.nav.sidebar.state.pinned;
         if folders.iter().all(|l| pinned.contains(l)) {
@@ -614,44 +615,44 @@ impl App {
         let path = loc.to_windows();
         let lib = library::is_library(loc.path());
         let menu = self.collect(|a, m| {
-            m.place("Open", PlaceCmd::Open(loc.clone(), OpenTarget::CurrentTab), false);
-            m.place("Open in new tab", PlaceCmd::Open(loc.clone(), OpenTarget::NewTab), false);
-            m.place("Open in new window", PlaceCmd::Open(loc.clone(), OpenTarget::NewWindow), false);
+            m.place(S::MenuOpen.t(), PlaceCmd::Open(loc.clone(), OpenTarget::CurrentTab), false);
+            m.place(S::MenuOpenInNewTab.t(), PlaceCmd::Open(loc.clone(), OpenTarget::NewTab), false);
+            m.place(S::MenuOpenInNewWindow.t(), PlaceCmd::Open(loc.clone(), OpenTarget::NewWindow), false);
             a.place_pane_items(m, &loc);
             m.separator();
             if let Some(p) = &path {
-                m.place("Copy path", PlaceCmd::CopyPath(loc.clone()), false);
+                m.place(S::MenuCopyPath.t(), PlaceCmd::CopyPath(loc.clone()), false);
                 if !lib {
-                    m.place("Open in terminal", PlaceCmd::Terminal(p.clone()), false);
+                    m.place(S::MenuOpenInTerminal.t(), PlaceCmd::Terminal(p.clone()), false);
                 }
             }
             m.separator();
             let pinned = &a.nav.sidebar.state.pinned;
             if !loc.is_recycle_bin() {
-                m.place(if pinned.contains(&loc) { "Unpin from sidebar" } else { "Pin to sidebar" }, PlaceCmd::Pin(loc.clone()), false);
+                m.place(if pinned.contains(&loc) { S::MenuUnpinFromSidebar.t() } else { S::MenuPinToSidebar.t() }, PlaceCmd::Pin(loc.clone()), false);
             }
             if let Some(i) = pinned.iter().position(|l| *l == loc) {
                 if i > 0 {
-                    m.place("Move up", PlaceCmd::MovePin(loc.clone(), -1), false);
+                    m.place(S::SidebarMoveUp.t(), PlaceCmd::MovePin(loc.clone(), -1), false);
                 }
                 if i + 1 < pinned.len() {
-                    m.place("Move down", PlaceCmd::MovePin(loc.clone(), 1), false);
+                    m.place(S::SidebarMoveDown.t(), PlaceCmd::MovePin(loc.clone(), 1), false);
                 }
             }
             if a.nav.sidebar.places.drives.iter().any(|d| d.removable && d.path == *loc.path()) {
-                m.place("Eject", PlaceCmd::Eject(loc.path().clone()), false);
+                m.place(S::MenuEject.t(), PlaceCmd::Eject(loc.path().clone()), false);
             }
             if lib {
-                m.place("Library locations", PlaceCmd::Library(loc.path().clone()), false);
+                m.place(S::SidebarLibraryLocations.t(), PlaceCmd::Library(loc.path().clone()), false);
             }
             if loc.is_recycle_bin() {
-                m.place("Restore all items", PlaceCmd::RestoreAll, false);
-                m.place("Empty Recycle Bin", PlaceCmd::EmptyBin, false);
+                m.place(S::SidebarRestoreAll.t(), PlaceCmd::RestoreAll, false);
+                m.place(S::UiBinEmpty.t(), PlaceCmd::EmptyBin, false);
             }
             extra(a, m);
             m.separator();
             if let Some(p) = &path {
-                m.place("Properties", PlaceCmd::Properties(p.clone()), false);
+                m.place(S::MenuProperties.t(), PlaceCmd::Properties(p.clone()), false);
             }
         });
         self.show_place_menu(x, y, path, menu);
@@ -668,26 +669,26 @@ impl App {
         let menu = self.collect(|a, m| {
             let sb = &a.nav.sidebar;
             if let Some(s) = section {
-                m.place(if sb.is_collapsed(s) { "Expand" } else { "Collapse" }, PlaceCmd::Collapse(s), false);
-                m.place("Hide this section", PlaceCmd::Hide(s), false);
+                m.place(if sb.is_collapsed(s) { S::SidebarExpand.t() } else { S::SidebarCollapse.t() }, PlaceCmd::Collapse(s), false);
+                m.place(S::SidebarHideSection.t(), PlaceCmd::Hide(s), false);
                 m.separator();
             }
             if section == Some(Section::Tags) {
-                m.action("tags.new", "New tag");
-                m.action("tags.manage", "Manage tags");
+                m.action("tags.new", S::MenuNewTag.t());
+                m.action("tags.manage", S::MenuManageTags.t());
                 m.separator();
             }
             if section.is_none_or(|s| s == Section::Libraries) {
-                m.place("New library", PlaceCmd::NewLibrary, false);
-                m.place("Restore default libraries", PlaceCmd::RestoreLibraries, false);
+                m.place(S::SidebarNewLibrary.t(), PlaceCmd::NewLibrary, false);
+                m.place(S::SidebarRestoreLibraries.t(), PlaceCmd::RestoreLibraries, false);
                 m.separator();
             }
-            m.submenu("Sections", |m| {
+            m.submenu(S::SidebarSections.t(), |m| {
                 for s in Section::ALL {
                     m.place(s.title(), PlaceCmd::Hide(s), !sb.is_hidden(s));
                 }
             });
-            m.place("Compact sidebar", PlaceCmd::Compact, sb.prefs.compact);
+            m.place(S::SidebarCompact.t(), PlaceCmd::Compact, sb.prefs.compact);
         });
         self.flit_menu(x, y, menu);
     }
@@ -885,7 +886,7 @@ impl App {
         }
         if let Some(r) = sb.hint {
             let baseline = (r.y + (r.h + ms.ascent - ms.descent) / 2.0).round();
-            g.text(r.x + s12, baseline, "Ctrl+D pins the current folder", small, t.text_dim.alpha(0xA0), r.w - s12);
+            g.text(r.x + s12, baseline, S::SidebarPinHint.t(), small, t.text_dim.alpha(0xA0), r.w - s12);
         }
         let mut requests: Vec<IconRequest> = Vec::new();
         for (i, (it, &r)) in sb.items.iter().zip(&sb.rects).enumerate() {
@@ -962,7 +963,7 @@ impl App {
         } else {
             centered(g, Rect::new(r.x + s4, r.y, self.s(28.0), r.h), G_SETTINGS, icons, t.text_dim);
             let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
-            g.text(r.x + s36, baseline, "Settings", font, t.text, r.w - s36);
+            g.text(r.x + s36, baseline, S::MenuSettings.t(), font, t.text, r.w - s36);
         }
         self.request_icons(requests);
     }

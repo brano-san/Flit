@@ -3,9 +3,9 @@ use super::palette::{Palette as PickList, Pick};
 use super::settings::{Kind, Picker, Value, SETTINGS};
 use super::settings_page::SettingPick;
 use super::{App, Effect, SettingsCmd};
+use crate::i18n::S;
 use crate::theme::{Area, Mode, Palette, Tint, PRESETS};
 
-pub const DEFAULT_FONT: &str = "System default";
 const MAX_FONT: usize = 64;
 
 pub struct Look {
@@ -92,9 +92,9 @@ impl App {
             Value::Text(t) => Tint::parse(&t).unwrap_or_default(),
             _ => Tint::Default,
         };
-        let mut entries = vec![("Default".to_owned(), Cmd::Setting(i, 0), cur == Tint::Default)];
+        let mut entries = vec![(S::AppearanceDefault.t().to_owned(), Cmd::Setting(i, 0), cur == Tint::Default)];
         entries.extend(PRESETS.iter().enumerate().map(|(k, p)| (p.label.t().to_owned(), Cmd::Setting(i, k + 1), cur == Tint::Preset(k))));
-        entries.push(("Custom color…".to_owned(), Cmd::Setting(i, PRESETS.len() + 1), matches!(cur, Tint::Custom(_))));
+        entries.push((S::AppearanceCustomColor.t().to_owned(), Cmd::Setting(i, PRESETS.len() + 1), matches!(cur, Tint::Custom(_))));
         let items = self.list_menu(entries);
         self.flit_menu(x, y, items);
     }
@@ -121,7 +121,7 @@ impl App {
             self.effects.push(Effect::Settings(SettingsCmd::Fonts));
             return;
         };
-        let items = std::iter::once(DEFAULT_FONT.to_owned()).chain(fonts.iter().cloned()).map(|f| (f, String::new())).collect();
+        let items = std::iter::once(S::AppearanceSystemFont.t().to_owned()).chain(fonts.iter().cloned()).map(|f| (f, String::new())).collect();
         self.open_pick(PickList::new(Pick::Setting(SettingPick::Font(i)), items, ""));
     }
 
@@ -147,11 +147,11 @@ impl App {
         let v = get(self);
         Some(match picker {
             Picker::Color => match Tint::parse(&v).unwrap_or_default() {
-                Tint::Default => "Default".to_owned(),
+                Tint::Default => S::AppearanceDefault.t().to_owned(),
                 t => t.label(),
             },
-            Picker::Font if v.is_empty() => DEFAULT_FONT.to_owned(),
-            Picker::Font if self.look.font_missing => format!("{v} (not installed)"),
+            Picker::Font if v.is_empty() => S::AppearanceSystemFont.t().to_owned(),
+            Picker::Font if self.look.font_missing => crate::tr!(S::AppearanceNotInstalled, font = v),
             Picker::Font => v,
         })
     }

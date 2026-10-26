@@ -21,7 +21,7 @@ enum Digest {
 unsafe impl Send for Digest {}
 
 fn status(st: windows::Win32::Foundation::NTSTATUS) -> Result<(), PlatformError> {
-    if st.is_ok() { Ok(()) } else { Err(PlatformError::new(st.0 as i64, "The hash could not be computed")) }
+    if st.is_ok() { Ok(()) } else { Err(PlatformError::new(st.0 as i64, flit_core::i18n::S::ErrorsEngineHashFailed.en())) }
 }
 
 impl Digest {
@@ -138,7 +138,7 @@ pub fn hash_file(file: &FsPath, kinds: &[HashKind], job: &Job) -> Result<Vec<Str
     let mut out = Vec::with_capacity(kinds.len());
     for (tx, worker) in workers {
         drop(tx);
-        let value = worker.map_err(io)?.join().map_err(|_| PlatformError::new(-1, "The hash could not be computed"))?;
+        let value = worker.map_err(io)?.join().map_err(|_| PlatformError::new(-1, flit_core::i18n::S::ErrorsEngineHashFailed.en()))?;
         out.push(value);
     }
     read?;

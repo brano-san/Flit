@@ -11,6 +11,14 @@ done_in = "{results} за {ms} мс"
 in = "В «{name}»"
 all_drives = "Все диски"
 recent = "Недавние запросы · Shift+Del удаляет запрос"
+folders = ["{n} папка", "{n} папки", "{n} папок"]
+
+[error]
+rows_without_folders = "Индекс передал строки без папок."
+invalid_rows = "Индекс передал некорректные строки: {error}"
+unavailable = "Поиск недоступен: {error}"
+cannot_start = "Не удалось начать поиск: {error}"
+shell = "Поиск Windows: {error}"
 
 [column]
 folder = "Папка"

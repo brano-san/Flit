@@ -3,7 +3,9 @@ use flit_core::listing::{attr, Listing, ListingBuilder, Meta};
 use flit_core::provider::{Conflict, FileOp, Resolve, Stage};
 use flit_core::sort::CaseMode;
 use flit_core::FsPath;
-use flit_platform::{Fs, Job, PlatformError, CANCELLED};
+use flit_core::i18n::S;
+use flit_core::tr_en;
+use flit_platform::{Fs, Job, PlatformError};
 use std::ffi::c_void;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
@@ -223,10 +225,10 @@ impl<'a> Engine<'a> {
 
     fn error(&self) -> Option<PlatformError> {
         if self.job.cancelled() {
-            return Some(PlatformError::new(ERROR_CANCELLED.0 as i64, CANCELLED));
+            return Some(PlatformError::new(ERROR_CANCELLED.0 as i64, S::ErrorsEngineCancelled.en()));
         }
         let first = self.first.clone()?;
-        Some(PlatformError::new(-1, if self.failed > 1 { format!("{} items failed. {first}", self.failed) } else { first }))
+        Some(PlatformError::new(-1, if self.failed > 1 { tr_en!(S::ErrorsEngineFailed, count = self.failed, first = first) } else { first }))
     }
 
     fn running(&self, total: Tally) {
@@ -272,12 +274,10 @@ impl<'a> Engine<'a> {
 
     pub(crate) fn room(&mut self, dest: &FsPath, need: u64) -> bool {
         let Some(free) = free_space(dest).filter(|&free| free < need) else { return true };
-        let mut msg = format!("There is not enough free space in {}: the items need ", dest.display());
-        flit_core::fmt::size(&mut msg, need);
-        msg.push_str(", but only ");
-        flit_core::fmt::size(&mut msg, free);
-        msg.push_str(" is free");
-        self.note(msg);
+        let (mut needed, mut available) = (String::new(), String::new());
+        flit_core::fmt::size(&mut needed, need);
+        flit_core::fmt::size(&mut available, free);
+        self.note(tr_en!(S::ErrorsEngineNoRoom, folder = dest.display(), need = needed, free = available));
         false
     }
 
@@ -323,11 +323,11 @@ impl<'a> Engine<'a> {
         }
         let dir = is_dir(&m);
         if dir && inside(&dst, src) {
-            self.note(format!("{}: the destination folder is inside the source folder", src.display()));
+            self.note(tr_en!(S::ErrorsEngineInside, path = src.display()));
             return Res::Nothing;
         }
         if mode != Mode::Move && is_dir_link(&m) {
-            self.note(format!("{}: folder links are not copied", src.display()));
+            self.note(tr_en!(S::ErrorsEngineLinkSkipped, path = src.display()));
             return Res::Nothing;
         }
         let (mut replace, mut retried) = (false, false);
@@ -407,7 +407,7 @@ impl<'a> Engine<'a> {
         let l = match children(src) {
             Ok(l) => l,
             Err(e) => {
-                self.note(format!("{}: cannot read the folder (error {})", src.display(), e.code));
+                self.note(tr_en!(S::ErrorsEngineUnreadable, path = src.display(), code = e.code));
                 return (Vec::new(), false);
             }
         };
@@ -444,7 +444,7 @@ impl<'a> Engine<'a> {
             .map(|p| {
                 let m = stat(p);
                 if m.is_none() {
-                    self.note(format!("{}: the item no longer exists", p.display()));
+                    self.note(tr_en!(S::ErrorsEngineGone, path = p.display()));
                 }
                 m
             })
@@ -528,7 +528,7 @@ impl<'a> Engine<'a> {
         self.touch(Some(dir));
         match move_file(item, &to, MOVE_FILE_FLAGS(0)) {
             Ok(()) => self.done.push((item.clone(), to)),
-            Err(_) if exists(&to) && !same(item, &to) => self.note(format!("An item named \"{}\" already exists", flit_core::name::display(name))),
+            Err(_) if exists(&to) && !same(item, &to) => self.note(tr_en!(S::ErrorsEngineExists, name = flit_core::name::display(name))),
             Err(e) if code(&e) == ERROR_ACCESS_DENIED => return Some(FileOp::Rename { item: item.clone(), name: name.to_vec() }),
             Err(e) => self.fail(item, &e, false),
         }
@@ -546,7 +546,7 @@ impl<'a> Engine<'a> {
                         self.delete_tree(&p.join(l.name(i)), &l.entries[i as usize].meta(), false);
                     }
                 }
-                Err(e) => self.note(format!("{}: cannot read the folder (error {})", p.display(), e.code)),
+                Err(e) => self.note(tr_en!(S::ErrorsEngineUnreadable, path = p.display(), code = e.code)),
             }
         }
         let gone = if is_dir(m) { remove_dir(p) } else { delete_file(p) };
@@ -597,7 +597,7 @@ impl<'a> Engine<'a> {
     fn flatten_dir(&mut self, root: &FsPath, dir: &FsPath) {
         let l = match children(dir) {
             Ok(l) => l,
-            Err(e) => return self.note(format!("{}: cannot read the folder (error {})", dir.display(), e.code)),
+            Err(e) => return self.note(tr_en!(S::ErrorsEngineUnreadable, path = dir.display(), code = e.code)),
         };
         for i in 0..l.len() as u32 {
             if self.stopped() {

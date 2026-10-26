@@ -5,7 +5,8 @@ properties = "Properties"
 reading = "Reading properties…"
 loading = "Loading preview…"
 new_tag = "+ New tag"
-ext_file = "{ext} file"
+shortcut = "Shortcut to {target}"
+too_large = "The image is too large to preview"
 truncated = ["Showing the first {n} character", "Showing the first {n} characters"]
 
 [tab]

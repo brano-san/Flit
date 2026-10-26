@@ -4,6 +4,8 @@ use crate::shell::{owner_window, shell_addressable, ShellCom};
 use crate::{clipboard, err, take_pwstr};
 use flit_core::provider::{FileOp, Stage, Template};
 use flit_core::FsPath;
+use flit_core::i18n::S;
+use flit_core::tr_en;
 use flit_platform::{FileOps, Job, OpOutcome, PlatformError};
 use std::cell::RefCell;
 use std::ffi::OsString;
@@ -149,7 +151,7 @@ fn check_names(op: &FileOp) -> Result<(), PlatformError> {
     paths.into_iter().try_for_each(shell_addressable)?;
     match op {
         FileOp::Rename { name, .. } | FileOp::NewFolder { name, .. } | FileOp::NewFile { name, .. } if name.ends_with(b".") || name.ends_with(b" ") || name.is_empty() => {
-            Err(PlatformError::new(-1, "A name cannot be empty or end with a dot or a space"))
+            Err(PlatformError::new(-1, S::ErrorsEngineBadName.en()))
         }
         _ => Ok(()),
     }
@@ -211,8 +213,8 @@ unsafe fn restore(pairs: &[(FsPath, FsPath)]) -> OpOutcome {
     };
     let items: Vec<IShellItem> = found.iter().flatten().cloned().collect();
     let mut error = match items.len() {
-        0 => Some(PlatformError::new(-1, "The deleted items are no longer in the Recycle Bin")),
-        n if n < pairs.len() => Some(PlatformError::new(-1, "Some deleted items are no longer in the Recycle Bin")),
+        0 => Some(PlatformError::new(-1, S::ErrorsEngineRestoreGone.en())),
+        n if n < pairs.len() => Some(PlatformError::new(-1, S::ErrorsEngineRestoreSomeGone.en())),
         _ => None,
     };
     if !items.is_empty() {
@@ -225,7 +227,7 @@ unsafe fn restore(pairs: &[(FsPath, FsPath)]) -> OpOutcome {
 }
 
 fn parent_and_name(p: &FsPath) -> Result<(IShellItem, Vec<u16>), PlatformError> {
-    let parent = p.parent().ok_or_else(|| PlatformError::new(-1, format!("{} has no parent folder", p.display())))?;
+    let parent = p.parent().ok_or_else(|| PlatformError::new(-1, tr_en!(S::ErrorsEngineNoParent, path = p.display())))?;
     Ok((shell_item(&parent)?, wide_name(p.file_name())))
 }
 
@@ -318,8 +320,8 @@ fn flags(op: &FileOp) -> FILEOPERATION_FLAGS {
 }
 
 fn cancelled(op: &FileOp) -> PlatformError {
-    let what = if matches!(op, FileOp::Trash(_) | FileOp::Delete(_) | FileOp::Purge(_) | FileOp::EmptyBin) { "Deletion" } else { "The operation" };
-    PlatformError::new(-1, format!("{what} was cancelled"))
+    let what = if matches!(op, FileOp::Trash(_) | FileOp::Delete(_) | FileOp::Purge(_) | FileOp::EmptyBin) { S::ErrorsEngineDeletionCancelled } else { S::ErrorsEngineCancelled };
+    PlatformError::new(-1, what.en())
 }
 
 unsafe fn perform(op: &FileOp, job: &Job) -> OpOutcome {
@@ -398,7 +400,7 @@ fn new_stream(item: &FsPath, name: &[u8]) -> OpOutcome {
     flit_core::name::to_utf16(name, &mut w);
     match create_new(Path::new(&OsString::from_wide(&w)), &[]) {
         Ok(()) => OpOutcome { items: vec![(item.clone(), item.clone())], error: None },
-        Err(e) => OpOutcome { items: Vec::new(), error: Some(PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("Cannot create the stream: {e}"))) },
+        Err(e) => OpOutcome { items: Vec::new(), error: Some(PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, tr_en!(S::ErrorsEngineStream, error = e))) },
     }
 }
 
@@ -458,7 +460,7 @@ unsafe fn make_links(items: &[FsPath], dest: &FsPath) -> OpOutcome {
     for target in items {
         let made = (|| {
             if !exists(target) {
-                return Err(PlatformError::new(-1, format!("{} does not exist", target.display())));
+                return Err(PlatformError::new(-1, tr_en!(S::ErrorsEngineMissing, path = target.display())));
             }
             let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).map_err(err)?;
             link.SetPath(PCWSTR(target.to_wide(false).as_ptr())).map_err(err)?;
@@ -491,7 +493,7 @@ fn purge(pairs: &[(FsPath, FsPath)]) -> OpOutcome {
 fn empty_bin() -> OpOutcome {
     let roots = recycle::roots();
     if recycle::count(&roots) == 0 {
-        return OpOutcome { items: Vec::new(), error: Some(PlatformError::new(-1, "The Recycle Bin is already empty")) };
+        return OpOutcome { items: Vec::new(), error: Some(PlatformError::new(-1, S::ErrorsEngineBinEmpty.en())) };
     }
     let out = recycle::empty(&roots);
     unsafe { SHUpdateRecycleBinIcon() };

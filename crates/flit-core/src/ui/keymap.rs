@@ -1,6 +1,7 @@
 use super::actions::{chord_text, index, Chord, ACTIONS};
 use super::describe::{description, description_en};
-use crate::i18n::{self, Lang};
+use crate::i18n::{self, Lang, S};
+use crate::{tr, tr_en};
 use super::palette::{Palette, Pick};
 use super::settings_page::SettingPick;
 use super::App;
@@ -201,19 +202,19 @@ pub fn parse_chord(s: &str) -> Option<Chord> {
 pub fn refusal(c: Chord) -> Option<String> {
     let m = c.mods;
     if c.key == Key::Other {
-        return Some("Flit does not know this key".into());
+        return Some(S::ErrorsKeymapUnknownKey.en().into());
     }
     if matches!(c.key, Key::Char(_) | Key::Space) && !m.ctrl && !m.alt {
-        return Some("letters, digits, symbols and Space need Ctrl or Alt, because without them they type".into());
+        return Some(S::ErrorsKeymapNeedsModifier.en().into());
     }
     if ACTIONS.iter().any(|a| a.keys.contains(&c)) {
         return None;
     }
     match c.key {
-        Key::Char('9') if m.ctrl && !m.alt => Some("it switches to the last tab".into()),
-        Key::Char(d @ '1'..='8') if m.ctrl && !m.alt => Some(format!("it switches to tab {d}")),
-        Key::Space if m.ctrl && !m.alt => Some("it selects or unselects the focused item".into()),
-        Key::Up | Key::Down | Key::Left | Key::Right | Key::PageUp | Key::PageDown | Key::Home | Key::End if !m.alt => Some("it moves the focus in the list".into()),
+        Key::Char('9') if m.ctrl && !m.alt => Some(S::ErrorsKeymapLastTab.en().into()),
+        Key::Char(d @ '1'..='8') if m.ctrl && !m.alt => Some(tr_en!(S::ErrorsKeymapTab, n = d)),
+        Key::Space if m.ctrl && !m.alt => Some(S::ErrorsKeymapSelect.en().into()),
+        Key::Up | Key::Down | Key::Left | Key::Right | Key::PageUp | Key::PageDown | Key::Home | Key::End if !m.alt => Some(S::ErrorsKeymapMovesFocus.en().into()),
         _ => None,
     }
 }
@@ -243,16 +244,16 @@ pub fn parse(j: &Json) -> Option<(Arc<Keymap>, Vec<String>)> {
             continue;
         };
         let Some(list) = v.as_array() else {
-            problems.push(format!("The shortcuts of {id} in the settings file are not a list, so it keeps its default shortcuts"));
+            problems.push(tr_en!(S::ErrorsKeymapNotList, id = id));
             continue;
         };
         let mut keys = Vec::new();
         let mut bad = None;
         for item in list {
             match item.as_str().and_then(parse_chord) {
-                None => bad = Some(format!("{item} in the shortcuts of {id} is not a key")),
+                None => bad = Some(tr_en!(S::ErrorsKeymapNotKey, item = item, id = id)),
                 Some(c) => match refusal(c) {
-                    Some(why) => bad = Some(format!("{} cannot be a shortcut of {id} ({why})", chord_text(&c))),
+                    Some(why) => bad = Some(tr_en!(S::ErrorsKeymapRefused, key = chord_text(&c), id = id, why = why)),
                     None if !keys.contains(&c) => keys.push(c),
                     None => {}
                 },
@@ -262,7 +263,7 @@ pub fn parse(j: &Json) -> Option<(Arc<Keymap>, Vec<String>)> {
             }
         }
         match bad {
-            Some(p) => problems.push(format!("{p}, so {id} keeps its default shortcuts")),
+            Some(p) => problems.push(p),
             None => custom[i] = (keys != ACTIONS[i].keys).then_some(keys),
         }
     }
@@ -270,7 +271,7 @@ pub fn parse(j: &Json) -> Option<(Arc<Keymap>, Vec<String>)> {
         if custom[a].is_none() && custom[b].is_none() {
             break;
         }
-        problems.push(format!("{} was given to both {} and {}, so they have their default shortcuts again", chord_text(&c), ACTIONS[a].id, ACTIONS[b].id));
+        problems.push(tr_en!(S::ErrorsKeymapClash, key = chord_text(&c), first = ACTIONS[a].id, second = ACTIONS[b].id));
         custom[a] = None;
         custom[b] = None;
     }
@@ -299,32 +300,33 @@ impl App {
 
     fn rest_text(&self, j: usize, without: Option<Chord>) -> String {
         let rest: Vec<String> = self.keymap.keys(j).iter().filter(|&&k| Some(k) != without).map(chord_text).collect();
+        let command = ACTIONS[j].title;
         match rest.is_empty() {
-            true => "is left without a shortcut".into(),
-            false => format!("keeps {}", rest.join(", ")),
+            true => tr!(S::KeymapStatusLeftWithout, command = command),
+            false => tr!(S::KeymapStatusKeeps, command = command, keys = rest.join(", ")),
         }
     }
 
     fn assign_chord(&mut self, i: usize, old: Option<Chord>, c: Chord) {
-        let rest = self.keymap.owner(c).filter(|&j| j != i).map(|j| format!("; «{}» {}", ACTIONS[j].title, self.rest_text(j, Some(c))));
+        let rest = self.keymap.owner(c).filter(|&j| j != i).map(|j| format!("; {}", self.rest_text(j, Some(c))));
         self.edit_keys(|k| k.assign(i, old, c));
-        self.status(format!("{} runs «{}» now{}", chord_text(&c), ACTIONS[i].title, rest.unwrap_or_default()));
+        self.status(tr!(S::KeymapStatusAssigned, key = chord_text(&c), command = ACTIONS[i].title) + &rest.unwrap_or_default());
     }
 
     pub(super) fn remove_chord(&mut self, i: usize, c: Chord) {
         self.edit_keys(|k| k.remove(i, c));
         let title = ACTIONS[i].title;
         match self.keymap.keys(i).is_empty() {
-            true => self.status(format!("«{title}» has no shortcut now")),
-            false => self.status(format!("Removed {} from «{title}»", chord_text(&c))),
+            true => self.status(tr!(S::KeymapStatusNoShortcut, command = title)),
+            false => self.status(tr!(S::KeymapStatusRemoved, key = chord_text(&c), command = title)),
         }
     }
 
     pub(super) fn restore_keys(&mut self, i: usize) {
         let taken = self.edit_keys(|k| k.restore(i));
-        let mut note = format!("«{}» has its default shortcuts again", ACTIONS[i].title);
+        let mut note = tr!(S::KeymapStatusRestored, command = ACTIONS[i].title);
         for j in taken {
-            note.push_str(&format!("; «{}» {}", ACTIONS[j].title, self.rest_text(j, None)));
+            note.push_str(&format!("; {}", self.rest_text(j, None)));
         }
         self.status(note);
     }
@@ -333,7 +335,7 @@ impl App {
         self.keymap = defaults();
         self.layout();
         self.dirty = true;
-        self.status("All commands have their default shortcuts again");
+        self.status(S::KeymapStatusRestoredAll.t());
     }
 
     pub(super) fn open_capture(&mut self, action: usize, old: Option<Chord>) {
@@ -344,20 +346,20 @@ impl App {
         let title = ACTIONS[action].title;
         let mut rows: Vec<(String, String)> = Vec::new();
         match chord {
-            None => rows.push((format!("Press the new shortcut for «{title}»"), "Esc cancels".into())),
+            None => rows.push((tr!(S::KeymapCapturePress, command = title), S::KeymapCaptureEscCancels.t().into())),
             Some(c) => {
                 let name = chord_text(&c);
                 rows.push(match (refusal(c), self.keymap.owner(c)) {
-                    (Some(why), _) => (format!("{name} cannot be used: {why}"), "Press other keys".into()),
-                    (None, Some(j)) if j == action => (format!("{name} already runs «{title}»"), String::new()),
-                    (None, Some(j)) => (format!("Reassign {name} from «{}» to «{title}»", ACTIONS[j].title), format!("«{}» {}", ACTIONS[j].title, self.rest_text(j, Some(c)))),
-                    (None, None) => (format!("Assign {name} to «{title}»"), "Enter".into()),
+                    (Some(why), _) => (tr!(S::KeymapCaptureCannot, key = name, why = i18n::localize(&why)), S::KeymapCaptureOtherKeys.t().into()),
+                    (None, Some(j)) if j == action => (tr!(S::KeymapCaptureAlready, key = name, command = title), String::new()),
+                    (None, Some(j)) => (tr!(S::KeymapCaptureReassign, key = name, from = ACTIONS[j].title, command = title), self.rest_text(j, Some(c))),
+                    (None, None) => (tr!(S::KeymapCaptureAssign, key = name, command = title), "Enter".into()),
                 });
-                rows.push(("Cancel".into(), "Esc".into()));
+                rows.push((S::SettingsPageDialogCancel.t().into(), "Esc".into()));
             }
         }
         if let Some(o) = old {
-            rows.push((format!("Remove the shortcut {}", chord_text(&o)), String::new()));
+            rows.push((tr!(S::KeymapCaptureRemove, key = chord_text(&o)), String::new()));
         }
         let text = chord.map(|c| chord_text(&c)).unwrap_or_default();
         self.nav.palette = Some(Palette::new(Pick::Setting(SettingPick::Capture { action, old, chord }), rows, &text));

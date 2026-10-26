@@ -10,12 +10,13 @@ use crate::name;
 use crate::path::{FsPath, PathKind};
 use crate::provider::{FileOp, OpCtl, OpId, OpProgress, OpReport, ProviderRequest, TabId};
 use crate::undo::Origin;
+use crate::i18n::S;
 use std::time::Instant;
 
 const HASH_IDS: OpId = 1 << 62;
-const VOLUMES: [(&str, u64); 6] = [("Do not split", 0), ("10 MB", 10 << 20), ("100 MB", 100 << 20), ("700 MB", 700 << 20), ("4092 MB", 4092 << 20), ("4.7 GB", 4_700_000_000)];
-const DICTIONARIES: [(&str, u32); 7] = [("Automatic", 0), ("1 MB", 1 << 20), ("4 MB", 4 << 20), ("16 MB", 16 << 20), ("32 MB", 32 << 20), ("64 MB", 64 << 20), ("256 MB", 256 << 20)];
-const THREADS: [(&str, u32); 6] = [("Automatic", 0), ("1", 1), ("2", 2), ("4", 4), ("8", 8), ("16", 16)];
+const VOLUMES: [(&str, u64); 6] = [("", 0), ("10 MB", 10 << 20), ("100 MB", 100 << 20), ("700 MB", 700 << 20), ("4092 MB", 4092 << 20), ("4.7 GB", 4_700_000_000)];
+const DICTIONARIES: [(&str, u32); 7] = [("", 0), ("1 MB", 1 << 20), ("4 MB", 4 << 20), ("16 MB", 16 << 20), ("32 MB", 32 << 20), ("64 MB", 64 << 20), ("256 MB", 256 << 20)];
+const THREADS: [(&str, u32); 6] = [("", 0), ("1", 1), ("2", 2), ("4", 4), ("8", 8), ("16", 16)];
 
 const C_NAME: usize = 0;
 const C_FORMAT: usize = 1;
@@ -83,8 +84,8 @@ impl ArchiveUi {
     }
 }
 
-fn labels<T>(items: &[(&str, T)]) -> Vec<String> {
-    items.iter().map(|(l, _)| (*l).to_owned()).collect()
+fn labels<T>(items: &[(&str, T)], zero: S) -> Vec<String> {
+    items.iter().map(|(l, _)| if l.is_empty() { zero.t() } else { l }.to_owned()).collect()
 }
 
 fn position<T: PartialEq + Copy>(items: &[(&str, T)], v: T) -> usize {
@@ -94,10 +95,10 @@ fn position<T: PartialEq + Copy>(items: &[(&str, T)], v: T) -> usize {
 fn levels(f: Format) -> Vec<String> {
     (0..=f.max_level())
         .map(|n| match n {
-            0 => "0 · Store".to_owned(),
-            1 => "1 · Fastest".to_owned(),
-            n if n == f.default_level() => format!("{n} · Normal"),
-            9 => "9 · Ultra".to_owned(),
+            0 => crate::tr!(S::ArchiveLevelStore, n = n),
+            1 => crate::tr!(S::ArchiveLevelFastest, n = n),
+            n if n == f.default_level() => crate::tr!(S::ArchiveLevelNormal, n = n),
+            9 => crate::tr!(S::ArchiveLevelUltra, n = n),
             n => n.to_string(),
         })
         .collect()
@@ -109,10 +110,10 @@ fn ext_for(f: Format, single_file: bool) -> &'static str {
 
 fn format_note(f: Format) -> &'static str {
     match f {
-        Format::Zip => "ZIP uses Deflate; a password encrypts the contents with AES-256, names stay readable",
-        Format::SevenZ => "7z uses solid LZMA2; the dictionary size and threads apply only to it",
-        Format::Tar => "TAR keeps files together without compressing them",
-        _ => "GZip compresses one file alone and puts several items into a TAR.GZ",
+        Format::Zip => S::ArchiveNoteZip.t(),
+        Format::SevenZ => S::ArchiveNote7z.t(),
+        Format::Tar => S::ArchiveNoteTar.t(),
+        _ => S::ArchiveNoteGz.t(),
     }
 }
 
@@ -130,9 +131,9 @@ fn kept(mut f: Form, note: &str) -> Option<Form> {
 
 fn names_label(archive: &FsPath) -> String {
     match (archive::chosen_encoding(archive), archive::detected_encoding(archive)) {
-        (Some(e), _) => format!("Names: {}", e.short()),
-        (None, Some(d)) => format!("Names: Automatic ({})", d.short()),
-        (None, None) => "Names: Automatic".to_owned(),
+        (Some(e), _) => crate::tr!(S::ArchiveNames, encoding = e.short()),
+        (None, Some(d)) => crate::tr!(S::ArchiveNames, encoding = crate::tr!(S::ArchiveAutomaticDetected, encoding = d.short())),
+        (None, None) => crate::tr!(S::ArchiveNames, encoding = S::ArchiveAutomatic.t()),
     }
 }
 
@@ -160,7 +161,7 @@ impl App {
         match (&t.view, items.as_slice()) {
             (Some(v), &[i]) if v.listing().entries[i as usize].is_dir() => name::display(v.listing().name(i)).into_owned(),
             (Some(v), &[i]) => name::display(archive::stem(v.listing().name(i))).into_owned(),
-            _ => Some(name::display(t.view_loc.file_name()).into_owned()).filter(|n| !n.is_empty() && !n.ends_with(':')).unwrap_or_else(|| "Archive".to_owned()),
+            _ => Some(name::display(t.view_loc.file_name()).into_owned()).filter(|n| !n.is_empty() && !n.ends_with(':')).unwrap_or_else(|| S::ArchiveArchive.t().to_owned()),
         }
     }
 
@@ -175,7 +176,7 @@ impl App {
         }
         let items = self.selected_items();
         if items.is_empty() {
-            self.status("Select the items to compress");
+            self.status(S::ArchiveSelectToCompress.t());
             return None;
         }
         let single = items.len() == 1 && self.tab().view.as_ref().is_some_and(|v| !v.listing().entries[items[0] as usize].is_dir());
@@ -193,16 +194,16 @@ impl App {
         let c = self.archive.prefs.compression.clone();
         let name = self.free_name(&self.quick_stem(), &format!(".{}", ext_for(c.format, single)));
         let controls = vec![
-            Control::text("Archive name", &name, "Name of the new archive"),
-            Control::choice("Format", Format::WRITABLE.iter().map(|f| f.label().to_owned()).collect(), Format::WRITABLE.iter().position(|&f| f == c.format).unwrap_or(0)),
-            Control::choice("Compression level", levels(c.format), c.level as usize),
-            Control::choice("Split into volumes", labels(&VOLUMES), position(&VOLUMES, c.volume)),
-            Control::choice("Dictionary size", labels(&DICTIONARIES), position(&DICTIONARIES, c.dictionary)),
-            Control::choice("CPU threads", labels(&THREADS), position(&THREADS, c.threads)),
-            Control::secret("Password", "Leave empty to keep the archive unencrypted"),
-            Control::check("Encrypt file names (7z only)", c.encrypt_names),
+            Control::text(S::ArchiveArchiveName.t(), &name, S::ArchiveArchiveNameHint.t()),
+            Control::choice(S::ArchiveFormat.t(), Format::WRITABLE.iter().map(|f| f.label().to_owned()).collect(), Format::WRITABLE.iter().position(|&f| f == c.format).unwrap_or(0)),
+            Control::choice(S::ArchiveCompressionLevel.t(), levels(c.format), c.level as usize),
+            Control::choice(S::ArchiveSplitVolumes.t(), labels(&VOLUMES, S::ArchiveDoNotSplit), position(&VOLUMES, c.volume)),
+            Control::choice(S::ArchiveDictionarySize.t(), labels(&DICTIONARIES, S::ArchiveAutomatic), position(&DICTIONARIES, c.dictionary)),
+            Control::choice("CPU threads", labels(&THREADS, S::ArchiveAutomatic), position(&THREADS, c.threads)),
+            Control::secret(S::ArchivePassword.t(), S::ArchivePasswordCompressHint.t()),
+            Control::check(S::ArchiveEncryptNames.t(), c.encrypt_names),
         ];
-        let mut f = Form::new(Kind::Compress { items, dir, single }, "Add to archive", controls, vec!["Compress", "Cancel"]);
+        let mut f = Form::new(Kind::Compress { items, dir, single }, S::ArchiveAddToArchive.t(), controls, vec![S::ArchiveCompress.t(), S::SettingsPageDialogCancel.t()]);
         f.say(format_note(c.format), false);
         self.open_form(f);
     }
@@ -229,7 +230,7 @@ impl App {
         }
         let password = f.text(C_PASSWORD).to_owned();
         if !password.is_empty() && !format.encrypts() {
-            return kept(f, "Only ZIP and 7z archives can have a password");
+            return kept(f, S::ArchivePasswordFormats.t());
         }
         let options = Compression {
             format,
@@ -277,7 +278,7 @@ impl App {
         }
         let archives = self.selected_archives();
         if archives.is_empty() {
-            self.status("Select the archives to extract");
+            self.status(S::ArchiveSelectToExtract.t());
             return None;
         }
         Some((archives, Vec::new()))
@@ -288,19 +289,19 @@ impl App {
         let Some(parent) = archives[0].parent() else { return };
         let dest = if archives.len() == 1 && entries.is_empty() { parent.join(archive::stem(archives[0].file_name())) } else { parent };
         let p = &self.archive.prefs;
-        let recent = std::iter::once("Choose a recent folder".to_owned()).chain(p.history.iter().cloned()).collect();
-        let detected = archive::detected_encoding(&archives[0]).map_or_else(|| "Automatic".to_owned(), |e| format!("Automatic ({})", e.short()));
+        let recent = std::iter::once(S::ArchiveChooseRecent.t().to_owned()).chain(p.history.iter().cloned()).collect();
+        let detected = archive::detected_encoding(&archives[0]).map_or_else(|| S::ArchiveAutomatic.t().to_owned(), |e| crate::tr!(S::ArchiveAutomaticDetected, encoding = e.short()));
         let encodings = std::iter::once(detected).chain(Encoding::ALL.iter().map(|e| e.label().to_owned())).collect();
         let chosen = archive::chosen_encoding(&archives[0]).and_then(|e| Encoding::ALL.iter().position(|&x| x == e)).map_or(0, |i| i + 1);
         let controls = vec![
-            Control::text("Extract to", &dest.display(), "Full path of the destination folder"),
-            Control::choice("Recent folders", recent, 0),
-            Control::secret("Password", "Needed only for encrypted archives"),
-            Control::choice("Encoding of names", encodings, chosen),
-            Control::check("Open the folder when done", p.open_after),
+            Control::text(S::ArchiveExtractTo.t(), &dest.display(), S::ArchiveExtractToHint.t()),
+            Control::choice(S::ArchiveRecentFolders.t(), recent, 0),
+            Control::secret(S::ArchivePassword.t(), S::ArchivePasswordExtractHint.t()),
+            Control::choice(S::ArchiveNamesEncoding.t(), encodings, chosen),
+            Control::check(S::ArchiveOpenWhenDone.t(), p.open_after),
         ];
-        let title = if entries.is_empty() { "Extract archive" } else { "Extract the selected items" };
-        self.open_form(Form::new(Kind::Extract { archives, entries }, title, controls, vec!["Extract", "Cancel"]));
+        let title = if entries.is_empty() { S::ArchiveExtractArchive.t() } else { S::ArchiveExtractSelected.t() };
+        self.open_form(Form::new(Kind::Extract { archives, entries }, title, controls, vec![S::ArchiveExtract.t(), S::SettingsPageDialogCancel.t()]));
     }
 
     fn extract_changed(&mut self, k: usize) {
@@ -315,7 +316,7 @@ impl App {
     fn submit_extract(&mut self, f: Form) -> Option<Form> {
         let Kind::Extract { archives, entries } = &f.kind else { return None };
         let (archives, entries) = (archives.clone(), entries.clone());
-        let Some(dest) = self.caps.native_path(f.text(E_DEST)) else { return kept(f, "Enter the full path of the destination folder") };
+        let Some(dest) = self.caps.native_path(f.text(E_DEST)) else { return kept(f, S::ArchiveEnterDestination.t()) };
         let text = dest.display().into_owned();
         let p = &mut self.archive.prefs;
         p.history.retain(|h| !h.eq_ignore_ascii_case(&text));
@@ -358,7 +359,7 @@ impl App {
     pub fn open_as_folder(&mut self, now: Instant) {
         match self.selected_archives().as_slice() {
             [one] => self.navigate(Location::from_local(one.clone()), now),
-            _ => self.status("Select one archive to open as a folder"),
+            _ => self.status(S::ArchiveSelectOneToOpen.t()),
         }
     }
 
@@ -394,8 +395,8 @@ impl App {
         }
         let wrong = archive::password(&archive).is_some();
         let label = name::display(archive.file_name()).into_owned();
-        let controls = vec![Control::value("Archive", &label), Control::secret("Password", "Password of the archive")];
-        let mut f = Form::new(Kind::Password { archive, retry }, "This archive is encrypted", controls, vec!["OK", "Cancel"]);
+        let controls = vec![Control::value(S::ArchiveArchive.t(), &label), Control::secret(S::ArchivePassword.t(), S::ArchivePasswordHint.t())];
+        let mut f = Form::new(Kind::Password { archive, retry }, S::ArchiveEncryptedTitle.t(), controls, vec![S::ArchiveOk.t(), S::SettingsPageDialogCancel.t()]);
         f.say(if wrong { crate::i18n::S::ErrorsArchiveWrongPassword.t() } else { crate::i18n::S::ErrorsArchivePasswordKept.t() }, wrong);
         self.open_form(f);
     }
@@ -452,7 +453,7 @@ impl App {
 
     pub(super) fn sizes_label(&self) -> String {
         match self.archive_view() {
-            None => "Folder sizes".to_owned(),
+            None => S::ToolbarButtonFolderSizes.t().to_owned(),
             Some((a, _)) if matches!(archive::format_of(a.file_name()), Some(Format::Zip | Format::Tar | Format::TarGz)) => names_label(&a),
             Some(_) => String::new(),
         }
@@ -479,11 +480,11 @@ impl App {
         let archive = match (self.archive_view(), self.selected_archives().as_slice()) {
             (Some((a, _)), _) => a,
             (None, [one]) => one.clone(),
-            _ => return self.status("Open an archive or select one to choose the encoding of its names"),
+            _ => return self.status(S::ArchivePickEncodingHint.t()),
         };
         let chosen = archive::chosen_encoding(&archive);
-        let mark = |on: bool| if on { "current".to_owned() } else { String::new() };
-        let detected = archive::detected_encoding(&archive).map_or_else(|| "Automatic".to_owned(), |e| format!("Automatic (detected {})", e.short()));
+        let mark = |on: bool| if on { S::ArchiveCurrent.t().to_owned() } else { String::new() };
+        let detected = archive::detected_encoding(&archive).map_or_else(|| S::ArchiveAutomatic.t().to_owned(), |e| crate::tr!(S::ArchiveAutomaticDetectedLong, encoding = e.short()));
         let mut items = vec![(detected, mark(chosen.is_none()))];
         items.extend(Encoding::ALL.iter().map(|&e| (e.label().to_owned(), mark(chosen == Some(e)))));
         self.open_pick(Palette::new(Pick::Encoding(archive), items, ""));
@@ -506,20 +507,20 @@ impl App {
         let Some(v) = &t.view else { return };
         let selected = self.selected_items();
         let pick = v.focus.filter(|f| selected.contains(f)).or(selected.first().copied()).filter(|&i| !v.listing().entries[i as usize].is_dir());
-        let Some(i) = pick else { return self.status("Select a file to compute its hashes") };
+        let Some(i) = pick else { return self.status(S::ArchiveSelectToHash.t()) };
         let file = match self.item_paths(&[i]) {
             Ok(mut p) => p.remove(0),
             Err(e) => return self.status(e),
         };
         let kinds = self.archive.prefs.hashes.clone();
         let flags = HashKind::ALL.iter().map(|k| (k.label().to_owned(), kinds.contains(k))).collect();
-        let mut controls = vec![Control::flags("Algorithms", flags), Control::text("Compare with", "", "A hash value or the full path of another file")];
+        let mut controls = vec![Control::flags(S::ArchiveAlgorithms.t(), flags), Control::text(S::ArchiveCompareWith.t(), "", S::ArchiveCompareHint.t())];
         controls.extend(kinds.iter().map(|k| Control::value(k.label(), "…")));
-        let title = format!("Hashes of \u{201C}{}\u{201D}", name::display(file.file_name()));
+        let title = crate::tr!(S::ArchiveHashesTitle, name = name::display(file.file_name()));
         let (id, ctl) = self.hash_file(file.clone(), kinds.clone());
-        let mut f = Form::new(Kind::Hashes(Hashing { file, kinds, values: Vec::new(), run: Some(Run { id, ctl, other: None }) }), &title, controls, vec!["Compute", "Close"]);
+        let mut f = Form::new(Kind::Hashes(Hashing { file, kinds, values: Vec::new(), run: Some(Run { id, ctl, other: None }) }), &title, controls, vec![S::ArchiveCompute.t(), S::ArchiveClose.t()]);
         f.progress = Some(0.0);
-        f.say("Reading the file once for all chosen algorithms…", false);
+        f.say(S::ArchiveReading.t(), false);
         self.open_form(f);
     }
 
@@ -535,7 +536,7 @@ impl App {
     fn submit_hashes(&mut self, mut f: Form) -> Option<Form> {
         let chosen: Vec<HashKind> = HashKind::ALL.iter().zip(f.flags(H_KINDS)).filter(|(_, on)| *on).map(|(k, _)| *k).collect();
         if chosen.is_empty() {
-            return kept(f, "Choose at least one algorithm");
+            return kept(f, S::ArchiveChooseAlgorithm.t());
         }
         self.archive.prefs.hashes = chosen.clone();
         let Kind::Hashes(h) = &f.kind else { return None };
@@ -551,7 +552,7 @@ impl App {
                 (h.kinds, h.values, h.run) = (chosen, Vec::new(), Some(Run { id, ctl, other: None }));
             }
             f.progress = Some(0.0);
-            f.say("Reading the file once for all chosen algorithms…", false);
+            f.say(S::ArchiveReading.t(), false);
             return Some(f);
         }
         self.compare(&mut f);
@@ -562,19 +563,19 @@ impl App {
         let text = f.text(H_COMPARE).trim().to_owned();
         let Kind::Hashes(h) = &mut f.kind else { return };
         if text.is_empty() {
-            return f.say("Click a value to copy it", false);
+            return f.say(S::ArchiveClickToCopy.t(), false);
         }
         if let Some(other) = self.caps.native_path(&text) {
             let (id, ctl) = self.hash_file(other.clone(), h.kinds.clone());
             h.run = Some(Run { id, ctl, other: Some(other) });
             f.progress = Some(0.0);
-            return f.say("Reading the other file…", false);
+            return f.say(S::ArchiveReadingOther.t(), false);
         }
         let pairs: Vec<(HashKind, String)> = h.kinds.iter().copied().zip(h.values.iter().cloned()).collect();
         match digest::matching(&text, &pairs) {
-            Some(k) => f.say(format!("The value matches the {} hash", k.label()), false),
-            None if digest::expected(&text).is_none() => f.say("Enter a hash value or the full path of another file", true),
-            None => f.say("The value does not match any computed hash", true),
+            Some(k) => f.say(crate::tr!(S::ArchiveHashMatches, kind = k.label()), false),
+            None if digest::expected(&text).is_none() => f.say(S::ArchiveEnterHash.t(), true),
+            None => f.say(S::ArchiveHashNoMatch.t(), true),
         }
     }
 
@@ -612,9 +613,9 @@ impl App {
                 let labels: Vec<&str> = h.kinds.iter().map(|k| k.label()).collect();
                 let other = name::display(other.file_name()).into_owned();
                 if same {
-                    f.say(format!("{other} is identical: {} match", labels.join(", ")), false);
+                    f.say(crate::tr!(S::ArchiveIdentical, other = other, kinds = labels.join(", ")), false);
                 } else {
-                    f.say(format!("{other} differs from this file"), true);
+                    f.say(crate::tr!(S::ArchiveDiffers, other = other), true);
                 }
             }
         }

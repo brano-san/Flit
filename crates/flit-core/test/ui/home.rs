@@ -152,7 +152,7 @@ fn recent_entries_hide_in_flit_until_they_are_used_again() {
     assert!(cards(&app).contains(&"recent old.txt".to_owned()), "opened again after removal");
     assert!(app.run_action("home.clear_recent", Instant::now()));
     assert!(!cards(&app).iter().any(|c| c.starts_with("recent")));
-    assert!(app.nav.home.notes.iter().any(|n| n.1 == "No recent files" && !n.2));
+    assert!(app.nav.home.notes.iter().any(|n| n.1.t() == "No recent files" && !n.2));
     let mut fresh = (*places()).clone();
     fresh.recent.push(recent("new.txt", r"C:\new.txt", false, 500));
     app.set_places(Arc::new(fresh));
@@ -165,7 +165,7 @@ fn recent_entries_hide_in_flit_until_they_are_used_again() {
 #[test]
 fn tag_cards_show_their_items_and_offer_the_tag_menu() {
     let mut app = home_app();
-    assert!(app.nav.home.notes.iter().any(|n| n.1.starts_with("No tags yet")));
+    assert!(app.nav.home.notes.iter().any(|n| n.1.t().starts_with("No tags yet")));
     let mut store = crate::tags::TagStore { tags: Vec::new(), files: crate::hash::FxHashMap::default() };
     store.add("Work", crate::tags::COLORS[1].1).unwrap();
     store.add("Long name", crate::tags::COLORS[2].1).unwrap();
@@ -186,7 +186,7 @@ fn tag_cards_show_their_items_and_offer_the_tag_menu() {
 fn turned_off_recent_files_show_a_warning() {
     let mut app = home_app();
     app.set_places(Arc::new(Places { recent_off: true, ..(*places()).clone() }));
-    assert!(app.nav.home.notes.iter().any(|n| n.2 && n.1.contains("turned off")));
+    assert!(app.nav.home.notes.iter().any(|n| n.2 && n.1.t().contains("turned off")));
 }
 
 #[test]

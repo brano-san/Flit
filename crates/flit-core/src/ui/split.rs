@@ -1,3 +1,4 @@
+use crate::i18n::S;
 use super::filter::FilterRects;
 use super::home::Home;
 use super::menu::Menu;
@@ -19,8 +20,6 @@ const GAP: f32 = 5.0;
 const GRIP: f32 = 3.0;
 const MIN_SHARE: f32 = 0.15;
 const MARK_H: f32 = 2.0;
-const TOO_NARROW: &str = "The window is too narrow for two panes";
-const ONE_PANE: &str = "This tab has one pane";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SplitDir {
@@ -352,7 +351,7 @@ impl App {
 
     pub(super) fn open_in_pane(&mut self, mut folder: Location, dir: Option<SplitDir>, now: Instant) {
         if !self.wide() {
-            return self.status(TOO_NARROW);
+            return self.status(S::SplitTooNarrow.t());
         }
         if self.search.active {
             self.close_search();
@@ -373,7 +372,7 @@ impl App {
 
     fn close_pane(&mut self) {
         let k = self.cur;
-        let Some(s) = self.tabs[k].split.take() else { return self.status(ONE_PANE) };
+        let Some(s) = self.tabs[k].split.take() else { return self.status(S::SplitOnePane.t()) };
         let mut gone = std::mem::replace(&mut self.tabs[k], s.other);
         gone.shutdown(&mut self.effects);
         self.swap_alt();
@@ -399,7 +398,7 @@ impl App {
     }
 
     fn arrange(&mut self, dir: SplitDir) {
-        let Some(s) = self.tab_mut().split.as_deref_mut() else { return self.status(ONE_PANE) };
+        let Some(s) = self.tab_mut().split.as_deref_mut() else { return self.status(S::SplitOnePane.t()) };
         s.dir = dir;
         self.strip.rev += 1;
         self.layout();
@@ -425,13 +424,13 @@ impl App {
 
     fn toggle_dual_default(&mut self) {
         self.split_prefs.dual = !self.split_prefs.dual;
-        self.status(if self.split_prefs.dual { "New tabs open with two panes" } else { "New tabs open with one pane" });
+        self.status(if self.split_prefs.dual { S::SplitDualOn.t() } else { S::SplitDualOff.t() });
     }
 
     fn switch_default_dir(&mut self) {
         let p = &mut self.split_prefs;
         p.dir = if p.dir == SplitDir::Vertical { SplitDir::Horizontal } else { SplitDir::Vertical };
-        self.status(if self.split_prefs.dir == SplitDir::Vertical { "New panes open side by side" } else { "New panes open one above the other" });
+        self.status(if self.split_prefs.dir == SplitDir::Vertical { S::SplitSideBySide.t() } else { S::SplitStacked.t() });
     }
 
     pub(super) fn run_pane(&mut self, id: &str, now: Instant) {
@@ -497,23 +496,23 @@ impl App {
 
     pub(super) fn item_pane_items(&self, m: &mut Menu) {
         if self.split_shown() {
-            m.action("pane.open_other", "Open in other pane");
+            m.action("pane.open_other", S::SplitOpenInOtherPane.t());
         } else if self.wide() {
-            m.submenu("Open in new pane", |m| {
-                m.action("pane.new_vertical", "Split vertically");
-                m.action("pane.new_horizontal", "Split horizontally");
+            m.submenu(S::SplitOpenInNewPane.t(), |m| {
+                m.action("pane.new_vertical", S::SplitSplitVertically.t());
+                m.action("pane.new_horizontal", S::SplitSplitHorizontally.t());
             });
         }
     }
 
     pub(super) fn here_pane_items(&self, m: &mut Menu) {
         if self.split_shown() {
-            m.action("pane.here_other", "Open in other pane");
-            m.action("pane.close", "Close pane");
+            m.action("pane.here_other", S::SplitOpenInOtherPane.t());
+            m.action("pane.close", S::SplitClosePane.t());
         } else if self.wide() {
-            m.submenu("Open in new pane", |m| {
-                m.action("pane.split_vertical", "Split vertically");
-                m.action("pane.split_horizontal", "Split horizontally");
+            m.submenu(S::SplitOpenInNewPane.t(), |m| {
+                m.action("pane.split_vertical", S::SplitSplitVertically.t());
+                m.action("pane.split_horizontal", S::SplitSplitHorizontally.t());
             });
         }
         m.separator();
@@ -521,11 +520,11 @@ impl App {
 
     pub(super) fn place_pane_items(&self, m: &mut Menu, loc: &Location) {
         if self.split_shown() {
-            m.place("Open in other pane", PlaceCmd::Pane(loc.clone(), None), false);
+            m.place(S::SplitOpenInOtherPane.t(), PlaceCmd::Pane(loc.clone(), None), false);
         } else if self.wide() {
-            m.submenu("Open in new pane", |m| {
-                m.place("Split vertically", PlaceCmd::Pane(loc.clone(), Some(SplitDir::Vertical)), false);
-                m.place("Split horizontally", PlaceCmd::Pane(loc.clone(), Some(SplitDir::Horizontal)), false);
+            m.submenu(S::SplitOpenInNewPane.t(), |m| {
+                m.place(S::SplitSplitVertically.t(), PlaceCmd::Pane(loc.clone(), Some(SplitDir::Vertical)), false);
+                m.place(S::SplitSplitHorizontally.t(), PlaceCmd::Pane(loc.clone(), Some(SplitDir::Horizontal)), false);
             });
         }
     }
@@ -534,16 +533,16 @@ impl App {
         m.separator();
         match self.dir() {
             Some(dir) => {
-                m.check("pane.arrange_vertical", "Arrange side by side", dir == SplitDir::Vertical);
-                m.check("pane.arrange_horizontal", "Arrange one above the other", dir == SplitDir::Horizontal);
-                m.action("pane.close", "Close pane");
+                m.check("pane.arrange_vertical", S::SplitArrangeSideBySide.t(), dir == SplitDir::Vertical);
+                m.check("pane.arrange_horizontal", S::SplitArrangeStacked.t(), dir == SplitDir::Horizontal);
+                m.action("pane.close", S::SplitClosePane.t());
             }
             None => {
-                m.action("pane.split_vertical", "Split vertically");
-                m.action("pane.split_horizontal", "Split horizontally");
+                m.action("pane.split_vertical", S::SplitSplitVertically.t());
+                m.action("pane.split_horizontal", S::SplitSplitHorizontally.t());
             }
         }
-        m.check("pane.dual_default", "Open new tabs with two panes", self.split_prefs.dual);
+        m.check("pane.dual_default", S::SplitDualDefault.t(), self.split_prefs.dual);
     }
 }
 

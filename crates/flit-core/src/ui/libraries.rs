@@ -1,12 +1,11 @@
 use super::palette::{Palette, Pick};
 use super::sidebar::Places;
 use super::{App, Effect};
+use crate::i18n::{self, S};
 use crate::library::{self, LibraryOp};
 use crate::location::Location;
 use crate::path::{FsPath, PathKind};
 use std::time::Instant;
-
-const ADD_FOLDER: &str = "Add a folder…";
 
 impl App {
     pub(super) fn library_save(&self, lib: &FsPath) -> Option<FsPath> {
@@ -20,7 +19,7 @@ impl App {
             return;
         }
         let name = self.nav.sidebar.library(loc.path()).map_or_else(|| library::stem(loc.path()), |l| l.name.clone());
-        let mut crumbs: Vec<(String, Location)> = loc.parent().map(|p| ("Libraries".to_owned(), p)).into_iter().collect();
+        let mut crumbs: Vec<(String, Location)> = loc.parent().map(|p| (S::SidebarSectionLibraries.t().to_owned(), p)).into_iter().collect();
         crumbs.push((name, loc));
         self.tabs[k].crumbs = crumbs;
     }
@@ -60,21 +59,21 @@ impl App {
 
     pub(super) fn library_dialog(&mut self, lib: FsPath) {
         if self.nav.sidebar.library(&lib).is_none() {
-            return self.status("This library is not loaded yet");
+            return self.status(S::LibrariesNotLoaded.t());
         }
         let p = self.library_palette(lib);
         self.open_pick(p);
     }
 
     fn library_palette(&self, lib: FsPath) -> Palette {
-        let rows = self.nav.sidebar.library(&lib).map(|l| l.folders.iter().map(|f| (f.display().into_owned(), if l.save.as_ref() == Some(f) { "Default save location".to_owned() } else { String::new() })).collect::<Vec<_>>()).unwrap_or_default();
+        let rows = self.nav.sidebar.library(&lib).map(|l| l.folders.iter().map(|f| (f.display().into_owned(), if l.save.as_ref() == Some(f) { S::LibrariesDefaultSave.t().to_owned() } else { String::new() })).collect::<Vec<_>>()).unwrap_or_default();
         let mut items = rows;
-        items.push((ADD_FOLDER.to_owned(), String::new()));
+        items.push((S::LibrariesAddFolder.t().to_owned(), String::new()));
         Palette::new(Pick::Library(lib), items, "")
     }
 
     pub(super) fn library_row(&mut self, lib: FsPath, title: &str, remove: bool) {
-        if title == ADD_FOLDER {
+        if title == S::LibrariesAddFolder.t() {
             return if remove { self.library_dialog(lib) } else { self.open_pick(Palette::new(Pick::LibraryAdd(lib), Vec::new(), "")) };
         }
         let Some(folder) = FsPath::parse(title) else { return };
@@ -90,14 +89,14 @@ impl App {
             },
             Pick::LibraryAdd(library) => match FsPath::parse(text.trim_matches('"')).filter(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim)) {
                 Some(folder) => self.effects.push(Effect::Library(LibraryOp::Add { library, folder })),
-                None => self.status("Enter the full path of the folder to include in the library"),
+                None => self.status(S::LibrariesEnterPath.t()),
             },
             _ => {}
         }
     }
 
     pub fn library_failed(&mut self, message: &str) {
-        self.status(format!("The library was not changed: {message}"));
+        self.status(crate::tr!(S::LibrariesNotChanged, message = i18n::localize(message)));
     }
 }
 

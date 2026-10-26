@@ -72,7 +72,6 @@ extract_all = "Извлечь все…"
 encoding_of_names = "Кодировка имен…"
 new = "Создать"
 eject = "Извлечь"
-empty_recycle_bin = "Очистить корзину"
 
 [sort]
 name = "Имя"

@@ -141,7 +141,7 @@ fn hosted_previews_follow_the_subject() {
     assert!(a.drain_effects().any(|e| matches!(e, Effect::Host(HostCmd::Place(None)))));
     a.close_palette();
     a.on_event(&Event::Hosted(HostEvent::Failed { gen: r.gen, message: "no handler".into() }), Instant::now());
-    assert!(matches!(&a.preview.content, Content::Basic(Some(m)) if m == "no handler"));
+    assert!(matches!(&a.preview.content, Content::Basic(Some(preview::Note::Message(m))) if m == "no handler"));
     select(&mut a, "a.rs");
     frame(&mut a);
     assert!(!a.drain_effects().any(|e| matches!(e, Effect::Host(HostCmd::Close))));

@@ -2,6 +2,7 @@ use flit_core::provider::Template;
 use flit_core::ui::{Drive, NewTemplate, Recent};
 use flit_core::location::valid_distro;
 use flit_core::FsPath;
+use flit_core::i18n::S;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use windows::core::{w, Interface, PCWSTR, PWSTR};
@@ -44,11 +45,11 @@ pub fn drives() -> Vec<Drive> {
             let name = match wide_str(&label) {
                 l if !l.is_empty() => l,
                 _ => match kind {
-                    DRIVE_FIXED => "Local Disk",
-                    DRIVE_REMOVABLE => "USB Drive",
-                    DRIVE_CDROM => "CD Drive",
-                    DRIVE_REMOTE => "Network Drive",
-                    _ => "Drive",
+                    DRIVE_FIXED => S::SidebarDriveLocal.t(),
+                    DRIVE_REMOVABLE => S::SidebarDriveUsb.t(),
+                    DRIVE_CDROM => S::SidebarDriveCd.t(),
+                    DRIVE_REMOTE => S::SidebarDriveNetwork.t(),
+                    _ => S::SidebarDriveOther.t(),
                 }
                 .to_owned(),
             };

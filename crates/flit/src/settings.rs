@@ -48,7 +48,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 fn export(to: PathBuf, text: &str, replace: bool) -> Reply {
     match std::fs::metadata(&to) {
-        Ok(m) if m.is_dir() => Reply::Exported(Err(format!("{} is a folder", to.display()))),
+        Ok(m) if m.is_dir() => Reply::Exported(Err(flit_core::tr_en!(flit_core::i18n::S::ErrorsSettingsIsFolder, path = to.display()))),
         Ok(m) if !replace => {
             let modified = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| (d.as_secs() as i64 + 11_644_473_600) * 10_000_000 + i64::from(d.subsec_nanos() / 100));
             Reply::ExportExists { path: to, size: m.len(), modified }

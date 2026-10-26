@@ -90,7 +90,7 @@ fn main() {
         if let Err(e) = tags::run_command::<P>(&open) {
             tracing::error!("cannot tag the files: {e}");
             logs::flush();
-            <P as Platform>::fatal_error(&format!("Flit could not tag the files: {e}"));
+            <P as Platform>::fatal_error(&flit_core::tr!(flit_core::i18n::S::UiAppTagFailed, error = flit_core::i18n::localize(&e.to_string())));
         }
         return logs::flush();
     }
@@ -102,7 +102,7 @@ fn main() {
         if headless {
             eprintln!("flit: {e}");
         } else {
-            <P as Platform>::fatal_error(&format!("Flit could not start: {e}"));
+            <P as Platform>::fatal_error(&flit_core::tr!(flit_core::i18n::S::UiAppStartFailed, error = flit_core::i18n::localize(&e.to_string())));
         }
         std::process::exit(1);
     }

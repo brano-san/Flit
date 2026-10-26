@@ -162,7 +162,7 @@ impl App {
         let Some(f) = &mut self.jobs.form else { return };
         if let Some(Control::Value { label, value }) = f.controls.get(k) {
             let text = value.clone();
-            f.say(format!("Copied {label}"), false);
+            f.say(crate::tr!(crate::i18n::S::FormCopied, label = label), false);
             self.effects.push(Effect::SetClipboard(text));
         }
     }

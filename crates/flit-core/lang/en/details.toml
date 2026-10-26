@@ -35,16 +35,5 @@ filtered = ["{shown} of {n} item", "{shown} of {n} items"]
 folders = ["{n} folder", "{n} folders"]
 files = ["{n} file", "{n} files"]
 
-[unavailable]
-encrypted = "This archive is encrypted"
-not_found = "This folder does not exist"
-access_denied = "You do not have permission to open this folder"
-not_a_folder = "This location is not a folder"
-unavailable = "This location is not available"
-other = "This folder cannot be opened"
-no_media = "There is no disc or memory card in this drive"
-retry = "{error}. Press F5 to try again."
-insert_media = "{error}. Insert one and press F5, or eject the drive."
-
 [status]
 default_view = "New folders will open with this view"

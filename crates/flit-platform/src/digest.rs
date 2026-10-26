@@ -111,7 +111,7 @@ pub fn hash_file(file: &FsPath, kinds: &[HashKind], job: &Job) -> Result<Vec<Str
     let mut out = Vec::with_capacity(kinds.len());
     for (tx, worker) in workers {
         drop(tx);
-        out.push(worker.join().map_err(|_| PlatformError::new(-1, "The hash could not be computed"))?);
+        out.push(worker.join().map_err(|_| PlatformError::new(-1, flit_core::i18n::S::ErrorsEngineHashFailed.en()))?);
     }
     read?;
     job.update(|p| p.items = 1);

@@ -384,7 +384,7 @@ impl Ctl {
         };
         match (via_unc(&self.distro, req), op) {
             (Some(req), _) => self.local.submit(req),
-            (None, Some((tab, id))) => self.emit(ProviderEvent::OpDone { tab, id, error: Some(UNMAPPABLE.into()), report: None }),
+            (None, Some((tab, id))) => self.emit(ProviderEvent::OpDone { tab, id, error: Some(flit_core::i18n::S::ErrorsEngineUnmappable.en().into()), report: None }),
             (None, None) => tracing::warn!("path is not reachable through \\\\wsl.localhost\\{}", self.distro),
         }
     }
@@ -607,7 +607,7 @@ impl Ctl {
     fn finished(&mut self, id: ReqId, error: Option<String>, items: Vec<(FsPath, FsPath)>) {
         let Some(Pending::Op(o)) = self.pending.remove(&id) else { return };
         if let Err(e) = check_report(&o.request, &items) {
-            self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error: Some(format!("The connection to {} was lost", self.distro)), report: None });
+            self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error: Some(flit_core::tr_en!(flit_core::i18n::S::ErrorsEngineWslLost, distro = self.distro)), report: None });
             return self.crashed(&e.to_string());
         }
         if o.clear && error.is_none() {
@@ -673,7 +673,7 @@ impl Ctl {
         if let State::Ready(conn) = std::mem::replace(&mut self.state, State::Idle) {
             conn.end(Duration::ZERO);
         }
-        let lost = format!("The connection to {} was lost", self.distro);
+        let lost = flit_core::tr_en!(flit_core::i18n::S::ErrorsEngineWslLost, distro = self.distro);
         for (_, p) in std::mem::take(&mut self.pending) {
             match p {
                 Pending::List(l) => l.finish(Some(FsError { kind: FsErrorKind::Unavailable, code: 0 }), &self.wake),
@@ -686,7 +686,7 @@ impl Ctl {
         }
         self.clears.clear();
         for (tab, _) in std::mem::take(&mut self.watches) {
-            self.emit(ProviderEvent::OpDone { tab, id: 0, error: Some(format!("{lost}: this folder no longer updates. Press F5 to reload it.")), report: None });
+            self.emit(ProviderEvent::OpDone { tab, id: 0, error: Some(flit_core::tr_en!(flit_core::i18n::S::ErrorsEngineWslStopped, distro = self.distro)), report: None });
         }
         let now = Instant::now();
         self.crashes.push_back(now);

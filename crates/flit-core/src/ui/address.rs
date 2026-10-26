@@ -1,3 +1,4 @@
+use crate::i18n::S;
 use super::menu::Cmd;
 use super::ops::TIMER_SLACK;
 use super::{centered, App, Effect, Hit, G_FOLDER};
@@ -103,11 +104,11 @@ impl App {
 
     pub(super) fn hand_to_explorer(&mut self, location: &str) -> String {
         if location.contains('"') {
-            return format!("Cannot open {location} in Flit");
+            return crate::tr!(S::AddressCannotOpen, location = location);
         }
         tracing::info!("handing {location} to File Explorer");
         self.launch(Launch::Run { program: EXPLORER.into(), args: format!("\"{location}\""), dir: None });
-        format!("Flit cannot show {location}, so it opens in File Explorer")
+        crate::tr!(S::AddressHandedToExplorer, location = location)
     }
 
     fn remember_typed(&mut self, text: &str) {
@@ -235,7 +236,7 @@ impl App {
 
     fn subfolder_menu(&mut self, loc: Location, mut names: Vec<Vec<u8>>, mark: Option<Vec<u8>>, (x, y): (f32, f32)) {
         if names.is_empty() {
-            return self.status(format!("{} has no folders", label(&loc)));
+            return self.status(crate::tr!(S::AddressNoFolders, name = label(&loc)));
         }
         names.truncate(MAX_MENU);
         let entries = names.iter().enumerate().map(|(k, n)| (name::display(n).into_owned(), Cmd::Go(k), mark.as_deref() == Some(n.as_slice()))).collect();
@@ -434,7 +435,7 @@ impl App {
         let s4 = self.s(4.0);
         g.dl.round_rect(b, if self.hover == Hit::Eject { th.button_pressed } else { th.button_hover }, s4);
         g.dl.outline(b, th.input_border, s4, 1.0);
-        centered(g, b, "Eject", self.ui_font(13.0), th.text);
+        centered(g, b, S::MenuEject.t(), self.ui_font(13.0), th.text);
     }
 
     pub(super) fn eject(&mut self) {

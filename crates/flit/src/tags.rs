@@ -1,6 +1,7 @@
 use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
 use flit_core::hash::FxHashMap;
 use flit_core::open::{self, Open};
+use flit_core::i18n::S;
 use flit_core::tags::{self, FileKey, TagCell, TagEvent, TagRequest, TagStore, Tagged, Tags, COLORS};
 use flit_core::ui::{SearchKey, SearchRow, SearchSort};
 use flit_core::{FsPath, Meta};
@@ -14,7 +15,6 @@ use std::time::Duration;
 
 const FILE_VERSION: u32 = 1;
 const RECHECK_EVERY: Duration = Duration::from_secs(120);
-const NOT_TAGGABLE: &str = "Tags work only for items on local NTFS drives";
 
 #[derive(Serialize, Deserialize)]
 struct TagFile {
@@ -128,7 +128,7 @@ impl Book {
 
     fn set(&mut self, items: Vec<FsPath>, tag: usize, on: bool, out: &mut Outcome) {
         if tag >= self.store.tags.len() {
-            out.status = Some("This tag no longer exists".into());
+            out.status = Some(S::ErrorsTagsGone.en().into());
             return;
         }
         let mut refused = 0;
@@ -142,7 +142,7 @@ impl Book {
             out.changed = true;
         }
         if refused > 0 {
-            out.status = Some(NOT_TAGGABLE.into());
+            out.status = Some(S::ErrorsTagsNotTaggable.en().into());
         }
     }
 
@@ -220,7 +220,7 @@ impl Book {
         let n = items.len();
         self.set(items, k, true, out);
         if out.status.is_none() {
-            out.status = Some(format!("Tagged {n} {} with {}", if n == 1 { "item" } else { "items" }, self.store.tags[k].name));
+            out.status = Some(flit_core::trn!(flit_core::i18n::P::SidebarTagTagged, n, tag = self.store.tags[k].name));
         }
     }
 }
@@ -237,7 +237,7 @@ pub fn run_command<P: Platform>(o: &Open) -> Result<String, String> {
     let mut book = Book::load(state_file::<P>(), P::file_key, P::resolve_files);
     let items = command_items::<P>(o);
     if items.is_empty() {
-        return Err("Flit -Tag needs a tag name and the files to tag".into());
+        return Err(S::SidebarTagNeedsArgs.t().into());
     }
     let out = book.apply(TagRequest::Command { name: o.tag.clone().unwrap_or_default(), items });
     let status = out.status.unwrap_or_default();
@@ -311,7 +311,7 @@ pub fn search(t: &Tags, q: &Query, sort: SearchSort) -> Result<Vec<SearchRow>, S
             let bits = match tags::find(&t.defs, name) {
                 _ if name.is_empty() => u32::MAX,
                 Some(k) => 1 << k,
-                None => return Err(format!("No tag named \"{name}\"")),
+                None => return Err(flit_core::tr!(S::ErrorsTagsNoTag, name = name)),
             };
             wanted.insert(name, bits);
         }

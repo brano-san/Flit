@@ -140,16 +140,16 @@ impl Encoding {
     pub fn label(self) -> &'static str {
         match self {
             Encoding::Utf8 => "UTF-8",
-            Encoding::Cp437 => "CP437 (DOS, Latin US)",
-            Encoding::Cp866 => "CP866 (DOS, Cyrillic)",
-            Encoding::Cp1251 => "Windows-1251 (Cyrillic)",
-            Encoding::Cp1252 => "Windows-1252 (Western)",
-            Encoding::Cp1250 => "Windows-1250 (Central European)",
-            Encoding::Koi8R => "KOI8-R (Cyrillic)",
-            Encoding::ShiftJis => "Shift_JIS (Japanese)",
-            Encoding::Gbk => "GBK (Chinese Simplified)",
-            Encoding::Big5 => "Big5 (Chinese Traditional)",
-            Encoding::EucKr => "EUC-KR (Korean)",
+            Encoding::Cp437 => crate::i18n::S::ArchiveEncCp437.t(),
+            Encoding::Cp866 => crate::i18n::S::ArchiveEncCp866.t(),
+            Encoding::Cp1251 => crate::i18n::S::ArchiveEncCp1251.t(),
+            Encoding::Cp1252 => crate::i18n::S::ArchiveEncCp1252.t(),
+            Encoding::Cp1250 => crate::i18n::S::ArchiveEncCp1250.t(),
+            Encoding::Koi8R => crate::i18n::S::ArchiveEncKoi8r.t(),
+            Encoding::ShiftJis => crate::i18n::S::ArchiveEncShiftJis.t(),
+            Encoding::Gbk => crate::i18n::S::ArchiveEncGbk.t(),
+            Encoding::Big5 => crate::i18n::S::ArchiveEncBig5.t(),
+            Encoding::EucKr => crate::i18n::S::ArchiveEncEucKr.t(),
         }
     }
 

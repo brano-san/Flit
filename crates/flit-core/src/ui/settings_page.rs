@@ -5,6 +5,7 @@ use super::menu::Cmd;
 use super::palette::{Palette, Pick};
 use super::settings::{self, Kind, Page, Picker, Value, SETTINGS};
 use super::{centered, App, Effect, Hit, SettingsCmd, G_CLOSE};
+use crate::i18n::{P, S};
 use crate::input::{Key, Mods, MouseButton};
 use crate::location::{Location, ProviderId};
 use crate::open::{OpenTarget, Route};
@@ -50,27 +51,27 @@ const REPOSITORY_URL: &str = "https://github.com/brano-san/Flit";
 const PRIVACY_URL: &str = "https://github.com/brano-san/Flit#конфиденциальность";
 pub(super) const LINKS: [(&str, &str); 5] = [("help.docs", DOCS_URL), ("help.bug", BUG_URL), ("help.feature", FEATURE_URL), ("help.repository", REPOSITORY_URL), ("help.privacy", PRIVACY_URL)];
 
-const LIBRARIES: [(&str, &str); 20] = [
-    ("arc-swap", "shared snapshots"),
-    ("bumpalo", "frame memory"),
-    ("crc32fast", "checksums"),
-    ("crossbeam-channel", "threads"),
-    ("encoding_rs", "names in old archives"),
-    ("flate2", "GZip"),
-    ("memchr", "search"),
-    ("mimalloc", "memory allocator"),
-    ("postcard", "state files"),
-    ("rayon", "parallel work"),
-    ("regex", "search"),
-    ("serde", "serialization"),
-    ("serde_json", "settings file"),
-    ("sevenz-rust2", "7z archives"),
-    ("smallvec", "small lists"),
-    ("tar", "TAR archives"),
-    ("tracing", "log file"),
-    ("tracing-subscriber", "log file"),
-    ("unrar-ng", "RAR archives"),
-    ("zip", "ZIP archives"),
+const LIBRARIES: [(&str, S); 20] = [
+    ("arc-swap", S::SettingsPageLibrarySharedSnapshots),
+    ("bumpalo", S::SettingsPageLibraryFrameMemory),
+    ("crc32fast", S::SettingsPageLibraryChecksums),
+    ("crossbeam-channel", S::SettingsPageLibraryThreads),
+    ("encoding_rs", S::SettingsPageLibraryOldArchiveNames),
+    ("flate2", S::SettingsPageLibraryGzip),
+    ("memchr", S::SettingsPageLibrarySearch),
+    ("mimalloc", S::SettingsPageLibraryAllocator),
+    ("postcard", S::SettingsPageLibraryStateFiles),
+    ("rayon", S::SettingsPageLibraryParallelWork),
+    ("regex", S::SettingsPageLibrarySearch),
+    ("serde", S::SettingsPageLibrarySerialization),
+    ("serde_json", S::SettingsPageLibrarySettingsFile),
+    ("sevenz-rust2", S::SettingsPageLibraryArchives7z),
+    ("smallvec", S::SettingsPageLibrarySmallLists),
+    ("tar", S::SettingsPageLibraryArchivesTar),
+    ("tracing", S::SettingsPageLibraryLogFile),
+    ("tracing-subscriber", S::SettingsPageLibraryLogFile),
+    ("unrar-ng", S::SettingsPageLibraryArchivesRar),
+    ("zip", S::SettingsPageLibraryArchivesZip),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -102,28 +103,28 @@ pub(super) enum Btn {
 impl Btn {
     fn label(self) -> &'static str {
         match self {
-            Btn::AddHome => "Add the Home page",
-            Btn::AddCurrent => "Add the current folder",
-            Btn::AddTyped => "Type a path…",
-            Btn::NewTag => "New tag",
-            Btn::ClearCache => "Clear the cache",
-            Btn::OpenFile => "Open the settings file",
-            Btn::Export => "Export settings…",
-            Btn::Import => "Import settings…",
-            Btn::Reset => "Reset all settings",
-            Btn::CopyAbout => "Copy version info",
-            Btn::CustomizeToolbar => "Customize the toolbar…",
-            Btn::Rename => "Rename",
-            Btn::Recolor => "Color",
-            Btn::Delete => "Delete",
-            Btn::RestoreKeys => "Restore all shortcuts",
-            Btn::OpenLog => "Open the log file",
-            Btn::OpenLogs => "Open the log folder",
-            Btn::Docs => "Documentation",
-            Btn::ReportBug => "Report a bug",
-            Btn::RequestFeature => "Request a feature",
-            Btn::Repository => "GitHub repository",
-            Btn::Privacy => "Privacy statement",
+            Btn::AddHome => S::SettingsPageButtonAddHome.t(),
+            Btn::AddCurrent => S::SettingsPageButtonAddCurrent.t(),
+            Btn::AddTyped => S::SettingsPageButtonAddTyped.t(),
+            Btn::NewTag => S::SettingsPageButtonNewTag.t(),
+            Btn::ClearCache => S::SettingsPageButtonClearCache.t(),
+            Btn::OpenFile => S::SettingsPageButtonOpenFile.t(),
+            Btn::Export => S::SettingsPageButtonExport.t(),
+            Btn::Import => S::SettingsPageButtonImport.t(),
+            Btn::Reset => S::SettingsPageButtonReset.t(),
+            Btn::CopyAbout => S::SettingsPageButtonCopyAbout.t(),
+            Btn::CustomizeToolbar => S::SettingsPageButtonCustomizeToolbar.t(),
+            Btn::Rename => S::SettingsPageButtonRename.t(),
+            Btn::Recolor => S::SettingsPageButtonRecolor.t(),
+            Btn::Delete => S::SettingsPageButtonDelete.t(),
+            Btn::RestoreKeys => S::SettingsPageButtonRestoreKeys.t(),
+            Btn::OpenLog => S::SettingsPageButtonOpenLog.t(),
+            Btn::OpenLogs => S::SettingsPageButtonOpenLogs.t(),
+            Btn::Docs => S::SettingsPageButtonDocs.t(),
+            Btn::ReportBug => S::SettingsPageButtonReportBug.t(),
+            Btn::RequestFeature => S::SettingsPageButtonRequestFeature.t(),
+            Btn::Repository => S::SettingsPageButtonRepository.t(),
+            Btn::Privacy => S::SettingsPageButtonPrivacy.t(),
         }
     }
 }
@@ -135,8 +136,8 @@ const LOG_BUTTONS: &[Btn] = &[Btn::OpenLog, Btn::OpenLogs];
 const HELP_BUTTONS: &[Btn] = &[Btn::Docs, Btn::ReportBug, Btn::RequestFeature];
 const LINK_BUTTONS: &[Btn] = &[Btn::Repository, Btn::Privacy];
 pub const LOG_FILE: &str = "flit.log";
-const NO_LOGS: &str = "Flit has no log folder in this session";
-const NO_TELEMETRY: &str = "Flit has no telemetry and no user identifier: it sends nothing anywhere.";
+const NO_LOGS: S = S::SettingsPageStatusNoLogs;
+const NO_TELEMETRY: S = S::SettingsPageLineNoTelemetry;
 
 #[derive(Clone, Debug, PartialEq)]
 enum Line {
@@ -214,27 +215,27 @@ pub(super) enum SettingPick {
 impl SettingPick {
     pub(super) fn placeholder(&self) -> &'static str {
         match self {
-            SettingPick::Text(_) => "New value",
-            SettingPick::AddPath(_) => "Full path of a folder, or Home for the Home page",
-            SettingPick::Export => "Full path of the file to export the settings and tags to",
-            SettingPick::Import => "Full path of the settings file to import",
-            SettingPick::Reset => "Reset all settings?",
-            SettingPick::ResetKeys => "Restore the default shortcuts?",
-            SettingPick::Capture { .. } => "Press the keys of the new shortcut",
-            SettingPick::Color(_) => "A color as #RRGGBB, for example #1D2533",
-            SettingPick::Font(_) => "Type to filter the installed fonts",
+            SettingPick::Text(_) => S::SettingsPagePickText.t(),
+            SettingPick::AddPath(_) => S::SettingsPagePickAddPath.t(),
+            SettingPick::Export => S::SettingsPagePickExport.t(),
+            SettingPick::Import => S::SettingsPagePickImport.t(),
+            SettingPick::Reset => S::SettingsPagePickReset.t(),
+            SettingPick::ResetKeys => S::SettingsPagePickResetKeys.t(),
+            SettingPick::Capture { .. } => S::SettingsPagePickCapture.t(),
+            SettingPick::Color(_) => S::SettingsPagePickColor.t(),
+            SettingPick::Font(_) => S::SettingsPagePickFont.t(),
         }
     }
 
     pub(super) fn empty(&self) -> &'static str {
         match self {
-            SettingPick::Text(_) => "Enter saves the value",
-            SettingPick::AddPath(_) => "Enter adds the page",
-            SettingPick::Export => "Enter writes the file",
-            SettingPick::Import => "Enter reads the file and applies it",
+            SettingPick::Text(_) => S::SettingsPageHintText.t(),
+            SettingPick::AddPath(_) => S::SettingsPageHintAddPath.t(),
+            SettingPick::Export => S::SettingsPageHintExport.t(),
+            SettingPick::Import => S::SettingsPageHintImport.t(),
             SettingPick::Reset | SettingPick::ResetKeys | SettingPick::Capture { .. } => "",
-            SettingPick::Color(_) => "Enter applies the color",
-            SettingPick::Font(_) => "No matching fonts",
+            SettingPick::Color(_) => S::SettingsPageHintColor.t(),
+            SettingPick::Font(_) => S::SettingsPageHintFont.t(),
         }
     }
 
@@ -362,7 +363,7 @@ fn button_rects(line: &Line, r: Rect, s: impl Fn(f32) -> f32) -> Vec<Rect> {
 }
 
 fn size_text(bytes: Option<u64>, decimal: bool) -> String {
-    let Some(b) = bytes else { return "Not measured yet".into() };
+    let Some(b) = bytes else { return S::SettingsPageLineNotMeasured.t().into() };
     let mut s = String::new();
     crate::fmt::size_in(&mut s, b, decimal);
     s
@@ -454,7 +455,7 @@ impl App {
     fn add_path(&mut self, i: usize, loc: crate::location::Location) {
         let mut paths = self.paths_of(i);
         if paths.contains(&loc) {
-            return self.status("This page is already in the list");
+            return self.status(S::SettingsPageStatusPageListed.t());
         }
         paths.push(loc);
         self.change_setting(i, Value::Paths(paths));
@@ -474,7 +475,7 @@ impl App {
                 let tab = self.tab().id;
                 self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Open { tab, path } });
             }
-            None => self.status("Flit has no settings file in this session"),
+            None => self.status(S::SettingsPageStatusNoFile.t()),
         }
     }
 
@@ -490,12 +491,12 @@ impl App {
                 let tab = self.tab().id;
                 self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Open { tab, path } });
             }
-            None => self.status(NO_LOGS),
+            None => self.status(NO_LOGS.t()),
         }
     }
 
     pub(super) fn open_log_folder(&mut self, now: Instant) {
-        let Some(dir) = self.about.logs.clone() else { return self.status(NO_LOGS) };
+        let Some(dir) = self.about.logs.clone() else { return self.status(NO_LOGS.t()) };
         if self.settings.is_some() {
             self.close_settings();
         }
@@ -520,7 +521,7 @@ impl App {
     }
 
     pub(super) fn ask_reset_settings(&mut self) {
-        let items = vec![("Reset all settings to their defaults".to_owned(), "Tags, pinned folders and folder views stay".to_owned()), ("Cancel".to_owned(), String::new())];
+        let items = vec![(S::SettingsPageDialogReset.t().to_owned(), S::SettingsPageDialogResetNote.t().to_owned()), (S::SettingsPageDialogCancel.t().to_owned(), String::new())];
         self.open_pick(Palette::new(Pick::Setting(SettingPick::Reset), items, ""));
     }
 
@@ -535,7 +536,7 @@ impl App {
     }
 
     pub(super) fn ask_reset_keys(&mut self) {
-        let items = vec![("Restore the default shortcuts of all commands".to_owned(), "Shortcuts you added or changed are lost".to_owned()), ("Cancel".to_owned(), String::new())];
+        let items = vec![(S::SettingsPageDialogResetKeys.t().to_owned(), S::SettingsPageDialogResetKeysNote.t().to_owned()), (S::SettingsPageDialogCancel.t().to_owned(), String::new())];
         self.open_pick(Palette::new(Pick::Setting(SettingPick::ResetKeys), items, ""));
     }
 
@@ -555,15 +556,15 @@ impl App {
         match pick {
             SettingPick::Text(i) => self.change_setting(i, Value::Text(text.to_owned())),
             SettingPick::Color(i) if Picker::Color.accepts(text) => self.change_setting(i, Value::Text(text.to_owned())),
-            SettingPick::Color(_) => self.status("Enter a color as # and six hexadecimal digits, for example #1D2533"),
+            SettingPick::Color(_) => self.status(S::SettingsPageStatusBadColor.t()),
             SettingPick::AddPath(i) => match settings::parse_path(text) {
                 Some(loc) => self.add_path(i, loc),
-                None => self.status("Enter the full path of a folder, or Home"),
+                None => self.status(S::SettingsPageStatusBadFolder.t()),
             },
             SettingPick::Export | SettingPick::Import => match self.caps.native_path(text) {
                 Some(path) if pick == SettingPick::Export => self.effects.push(Effect::Settings(SettingsCmd::Export { path, text: self.export_text(), replace: false })),
                 Some(path) => self.effects.push(Effect::Settings(SettingsCmd::Import(path))),
-                None => self.status("Enter the full path of a file"),
+                None => self.status(S::SettingsPageStatusBadFile.t()),
             },
             SettingPick::Reset | SettingPick::ResetKeys | SettingPick::Capture { .. } | SettingPick::Font(_) => {}
         }
@@ -577,39 +578,39 @@ impl App {
             Page::Appearance => out.push(Line::Buttons(None, &[Btn::CustomizeToolbar])),
             Page::Tags => {
                 if self.tag_defs().is_empty() {
-                    out.push(Line::Note("There are no tags yet."));
+                    out.push(Line::Note(S::SettingsPageLineNoTags.t()));
                 }
                 out.extend((0..self.tag_defs().len()).map(Line::Tag));
                 out.push(Line::Buttons(None, &[Btn::NewTag]));
             }
             Page::Advanced => {
-                out.push(Line::Info("Thumbnail cache in use", size_text(self.about.cache_bytes, self.style.decimal)));
+                out.push(Line::Info(S::SettingsPageLineCache.t(), size_text(self.about.cache_bytes, self.style.decimal)));
                 out.push(Line::Buttons(None, &[Btn::ClearCache]));
-                out.push(Line::Group("Settings file"));
-                out.push(Line::Info("File", self.about.file.as_ref().map_or_else(|| "None in this session".to_owned(), |f| f.display().into_owned())));
+                out.push(Line::Group(S::SettingsPageLineSettingsFile.t()));
+                out.push(Line::Info(S::SettingsPageLineFile.t(), self.about.file.as_ref().map_or_else(|| S::SettingsPageLineNone.t().to_owned(), |f| f.display().into_owned())));
                 out.push(Line::Buttons(None, FILE_BUTTONS));
                 out.push(Line::Buttons(None, &[Btn::Reset]));
-                out.push(Line::Group("Log file"));
+                out.push(Line::Group(S::SettingsPageLineLogFile.t()));
                 if let Some(i) = settings::index(settings::LOG_LEVEL) {
                     self.setting_lines(i, out);
                 }
-                out.push(Line::Info("Folder", self.about.logs.as_ref().map_or_else(|| "None in this session".to_owned(), |f| f.display().into_owned())));
+                out.push(Line::Info(S::SettingsPageLineFolder.t(), self.about.logs.as_ref().map_or_else(|| S::SettingsPageLineNone.t().to_owned(), |f| f.display().into_owned())));
                 out.push(Line::Buttons(None, LOG_BUTTONS));
             }
             Page::About => {
-                out.push(Line::Info("Version", format!("Flit {}", env!("CARGO_PKG_VERSION"))));
-                out.push(Line::Info("Windows", if self.about.os.is_empty() { "Unknown".into() } else { self.about.os.clone() }));
+                out.push(Line::Info(S::SettingsPageLineVersion.t(), format!("Flit {}", env!("CARGO_PKG_VERSION"))));
+                out.push(Line::Info("Windows", if self.about.os.is_empty() { S::SettingsPageLineUnknown.t().into() } else { self.about.os.clone() }));
                 out.push(Line::Buttons(None, &[Btn::CopyAbout]));
-                out.push(Line::Group("Help"));
+                out.push(Line::Group(S::SettingsPageLineHelp.t()));
                 out.push(Line::Buttons(None, HELP_BUTTONS));
                 out.push(Line::Buttons(None, LINK_BUTTONS));
-                out.push(Line::Note(NO_TELEMETRY));
-                out.push(Line::Group("Third-party libraries"));
-                out.extend(LIBRARIES.iter().map(|(name, what)| Line::Info(name, (*what).to_owned())));
+                out.push(Line::Note(NO_TELEMETRY.t()));
+                out.push(Line::Group(S::SettingsPageLineLibraries.t()));
+                out.extend(LIBRARIES.iter().map(|(name, what)| Line::Info(name, what.t().to_owned())));
             }
             Page::Actions => {
-                out.push(Line::Note("Enter or a click changes a shortcut, Delete removes it, + adds one, the arrow restores the defaults."));
-                out.push(Line::Note("A key runs one command: taking a used key moves it, and clashes in settings.json fall back to the defaults."));
+                out.push(Line::Note(S::SettingsPageLineKeysHow.t()));
+                out.push(Line::Note(S::SettingsPageLineKeysRule.t()));
                 out.push(Line::Buttons(None, &[Btn::RestoreKeys]));
                 out.extend((0..ACTIONS.len()).map(|i| self.action_line(i)));
             }
@@ -653,7 +654,7 @@ impl App {
             }
         }
         if out.is_empty() {
-            out.push(Line::Note("No settings match the search."));
+            out.push(Line::Note(S::SettingsPageLineNoMatch.t()));
         }
     }
 
@@ -916,7 +917,7 @@ impl App {
             (Btn::CopyAbout, ..) => {
                 let text = format!("Flit {}\r\n{}", env!("CARGO_PKG_VERSION"), self.about.os);
                 self.effects.push(Effect::SetClipboard(text));
-                self.status("Copied the version info");
+                self.status(S::SettingsPageStatusCopied.t());
             }
             (Btn::OpenLog, ..) => self.open_log_file(),
             (Btn::OpenLogs, ..) => self.open_log_folder(Instant::now()),
@@ -1082,7 +1083,7 @@ impl App {
             (Kind::Choice(c, ..), Value::Choice(k)) => c.get(k).map_or("", |c| c.1.t()).to_owned(),
             (Kind::Number { unit, .. }, Value::Number(n)) => format!("{n} {unit}"),
             (Kind::Text(..), Value::Text(t)) => t,
-            (Kind::Paths(..), Value::Paths(p)) => format!("{} pages", p.len()),
+            (Kind::Paths(..), Value::Paths(p)) => crate::trn!(P::SettingsPagePages, p.len()),
             (Kind::Pick(..), _) => self.pick_text(i).unwrap_or_default(),
             _ => String::new(),
         }
@@ -1116,7 +1117,7 @@ impl App {
         let mid = |r: Rect, m: crate::text::FontMetrics| (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
         let hover = self.hover;
         centered(g, Rect::new(p.x + s(14.0), p.y + s(14.0), s(24.0), s(30.0)), super::sidebar::G_SETTINGS, self.icon_font(16.0), t.accent);
-        g.text(p.x + s(44.0), (p.y + s(14.0) + (s(30.0) + mh.ascent - mh.descent) / 2.0).round(), "Settings", head, t.text, nav_w - s(52.0));
+        g.text(p.x + s(44.0), (p.y + s(14.0) + (s(30.0) + mh.ascent - mh.descent) / 2.0).round(), S::SettingsPageLineTitle.t(), head, t.text, nav_w - s(52.0));
         let searching = !ui.query().is_empty();
         for (k, r) in ui.nav.iter().enumerate() {
             let page = Page::ALL[k];
@@ -1138,7 +1139,7 @@ impl App {
         g.dl.outline(sr, if focused_search { t.accent } else { t.input_border }, s4, if focused_search { sc.round().max(1.0) } else { 1.0 });
         centered(g, Rect::new(sr.x + s4, sr.y, s(24.0), sr.h), G_SEARCH, icons, t.text_dim);
         let inner = Rect::new(sr.x + s(32.0), sr.y, sr.w - s(40.0), sr.h);
-        ui.search.draw(g, t, inner, font, focused_search, "Search settings", sc);
+        ui.search.draw(g, t, inner, font, focused_search, S::SettingsPageLineSearch.t(), sc);
         let list = ui.list;
         g.dl.set_clip(Some(list));
         let list_focused = !ui.searching && self.active && self.nav.palette.is_none();
@@ -1236,7 +1237,7 @@ impl App {
                         let dot = s(12.0);
                         g.dl.round_rect(Rect::new(r.x + s(PAD), r.y + (r.h - dot) / 2.0, dot, dot), Color::rgb(tag.color), dot / 2.0);
                         let count = self.tags().count(*n);
-                        let label = format!("{} · {} items", tags::color_name(tag.color), count);
+                        let label = crate::trn!(P::SettingsPageTagItems, count, color = tags::color_name(tag.color));
                         let nw = g.text(r.x + s(PAD) + dot + s(10.0), mid(r, mf), &tag.name, font, t.text, s(220.0));
                         g.text(r.x + s(PAD) + dot + s(24.0) + nw, mid(r, ms), &label, small, t.text_dim, s(220.0));
                     }

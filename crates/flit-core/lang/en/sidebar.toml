@@ -28,3 +28,33 @@ folders = "Folders"
 libraries = "Libraries"
 drives = "Drives"
 tags = "Tags"
+
+[tag]
+filter = "Type to filter tags"
+choose_action = "Choose what to do with the tag"
+new_name = "Name of the new tag"
+rename_to = "New name of the tag"
+filter_colors = "Type to filter colors"
+delete_prompt = "Delete the tag?"
+open_which = "Choose the tag whose items to open"
+enter_creates = "Enter creates the tag"
+enter_renames = "Enter renames the tag"
+no_colors = "No matching colors"
+no_match = "No matching tags"
+select_items = "Select the items to tag"
+none_yet = "There are no tags yet"
+change_color = "Change color"
+current = "Current"
+delete_named = "Delete the tag \"{name}\""
+removes_from = ["Removes it from {n} item", "Removes it from {n} items"]
+none_available = "No available items have this tag"
+opened_some = ["Opened {opened} of {n} tagged item", "Opened {opened} of {n} tagged items"]
+tagged = ["Tagged {n} item with {tag}", "Tagged {n} items with {tag}"]
+needs_args = "Flit -Tag needs a tag name and the files to tag"
+
+[drive]
+local = "Local Disk"
+usb = "USB Drive"
+cd = "CD Drive"
+network = "Network Drive"
+other = "Drive"

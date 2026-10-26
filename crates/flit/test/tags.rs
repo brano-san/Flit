@@ -103,7 +103,7 @@ fn tags_are_assigned_cleared_deleted_and_survive_a_restart() {
     let mut b = book(Some(f.0.clone()));
     assert_eq!(b.store.tags.len(), 1);
     let o = b.apply(TagRequest::Create { name: "Work".into(), color: 7, assign: vec![path(r"c:\t\a.txt"), path(r"c:\t\b.txt"), path(r"e:\x.txt")] });
-    assert_eq!((o.changed, o.files.len(), o.status.as_deref()), (true, 2, Some(NOT_TAGGABLE)));
+    assert_eq!((o.changed, o.files.len(), o.status.as_deref()), (true, 2, Some(flit_core::i18n::S::ErrorsTagsNotTaggable.en())));
     let o = b.apply(TagRequest::Set { items: vec![path(r"c:\t\a.txt")], tag: 0, on: true });
     assert_eq!(o.files, [(path(r"c:\t\a.txt"), 0b11)]);
     assert_eq!(b.apply(TagRequest::Set { items: vec![path(r"c:\t\a.txt")], tag: 5, on: true }).status.as_deref(), Some("This tag no longer exists"));

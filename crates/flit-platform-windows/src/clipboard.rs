@@ -88,7 +88,7 @@ pub(crate) unsafe fn open(owner: Option<HWND>) -> Result<(), PlatformError> {
             std::thread::sleep(Duration::from_millis(15));
         }
     }
-    Err(PlatformError::new(-1, "The clipboard is in use by another application"))
+    Err(PlatformError::new(-1, flit_core::i18n::S::ErrorsEngineClipboardBusy.en()))
 }
 
 pub(crate) fn write_files(owner: HWND, paths: &[FsPath], cut: bool) -> bool {
@@ -112,7 +112,7 @@ pub(crate) fn read_files() -> Result<(Vec<FsPath>, bool), PlatformError> {
         let _ = CloseClipboard();
         match files {
             Some(files) if !files.is_empty() => Ok((files, effect.is_some_and(effect_is_move))),
-            _ => Err(PlatformError::new(-1, "The clipboard does not contain files")),
+            _ => Err(PlatformError::new(-1, flit_core::i18n::S::ErrorsEngineClipboardNoFiles.en())),
         }
     }
 }

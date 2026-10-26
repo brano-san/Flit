@@ -2,6 +2,7 @@ use super::ops::TIMER_SLACK;
 use super::palette::{Palette, Pick};
 use super::{centered, App, Effect, Hit, LayoutMode, LAYOUTS};
 use crate::archive;
+use crate::i18n::S;
 use crate::input::{Key, MouseButton};
 use crate::path::PathKind;
 use crate::render::{Color, Rect};
@@ -19,7 +20,7 @@ const MAX_ITEMS: usize = 48;
 const TIP_DELAY: Duration = Duration::from_millis(500);
 const FLY_W: f32 = 272.0;
 const FLY_ROW: f32 = 30.0;
-const TOGGLES: [&str; 4] = ["Show hidden items", "Show file name extensions", "Adaptive layout", "Show thumbnails"];
+const TOGGLES: [S; 4] = [S::ToolbarFlyoutShowHidden, S::ToolbarFlyoutShowExtensions, S::ToolbarFlyoutAdaptive, S::ToolbarFlyoutThumbnails];
 const LAYOUT_IDS: [&str; 6] = ["view.layout.details", "view.layout.list", "view.layout.cards", "view.layout.columns", "view.layout.grid", "view.layout.adaptive"];
 
 const G_MORE: &str = "\u{E712}";
@@ -44,50 +45,50 @@ enum Kind {
 
 struct Tool {
     id: &'static str,
-    label: &'static str,
+    label: S,
     glyph: &'static str,
     kind: Kind,
 }
 
-const fn act(id: &'static str, label: &'static str, glyph: &'static str) -> Tool {
+const fn act(id: &'static str, label: S, glyph: &'static str) -> Tool {
     Tool { id, label, glyph, kind: Kind::Action }
 }
 
-const fn menu(id: &'static str, label: &'static str, glyph: &'static str, m: ToolMenu) -> Tool {
+const fn menu(id: &'static str, label: S, glyph: &'static str, m: ToolMenu) -> Tool {
     Tool { id, label, glyph, kind: Kind::Menu(m) }
 }
 
 const TOOLS: &[Tool] = &[
-    menu("menu.new", "New", "\u{E710}", ToolMenu::New),
-    act("file.cut", "Cut", "\u{E8C6}"),
-    act("file.copy", "Copy", "\u{E8C8}"),
-    act("file.paste", "Paste", "\u{E77F}"),
-    act("file.rename", "Rename", "\u{E8AC}"),
-    act("file.share", "Share", "\u{E72D}"),
-    act("item.trash", "Delete", "\u{E74D}"),
-    act("item.properties", "Properties", "\u{E946}"),
-    menu("menu.select", "Select", "\u{E8B3}", ToolMenu::Select),
-    menu("menu.sort", "Sort", "\u{E8CB}", ToolMenu::Sort),
-    menu("menu.group", "Group", "\u{E8FD}", ToolMenu::Group),
-    menu("menu.layout", "Layout", "\u{E8A9}", ToolMenu::Layout),
-    act("view.pane", "Info pane", "\u{E8A0}"),
-    act("bin.restore", "Restore", "\u{E777}"),
-    act("bin.restore_all", "Restore all", "\u{E777}"),
-    act("bin.empty", "Empty Recycle Bin", "\u{E74D}"),
-    act("file.new_folder", "New folder", "\u{E8F4}"),
-    act("file.new_item", "New item", "\u{E7C3}"),
-    act("item.copy_path", "Copy path", "\u{E71B}"),
-    act("item.delete", "Delete permanently", "\u{E74D}"),
-    act("app.terminal", "Terminal", "\u{E756}"),
-    act("item.pin", "Pin to sidebar", "\u{E718}"),
-    act("edit.undo", "Undo", "\u{E7A7}"),
-    act("edit.redo", "Redo", "\u{E7A6}"),
-    act("view.hidden", "Hidden items", "\u{E890}"),
-    act("view.sizes", "Folder sizes", "\u{EDA2}"),
-    act("nav.refresh", "Refresh", "\u{E72C}"),
-    act("search.folder", "Search", "\u{E721}"),
-    act("sidebar.toggle", "Sidebar", "\u{E700}"),
-    menu("menu.extract", "Extract", "\u{E8B7}", ToolMenu::Extract),
+    menu("menu.new", S::ToolbarButtonNew, "\u{E710}", ToolMenu::New),
+    act("file.cut", S::ToolbarButtonCut, "\u{E8C6}"),
+    act("file.copy", S::ToolbarButtonCopy, "\u{E8C8}"),
+    act("file.paste", S::ToolbarButtonPaste, "\u{E77F}"),
+    act("file.rename", S::ToolbarButtonRename, "\u{E8AC}"),
+    act("file.share", S::ToolbarButtonShare, "\u{E72D}"),
+    act("item.trash", S::ToolbarButtonDelete, "\u{E74D}"),
+    act("item.properties", S::ToolbarButtonProperties, "\u{E946}"),
+    menu("menu.select", S::ToolbarButtonSelect, "\u{E8B3}", ToolMenu::Select),
+    menu("menu.sort", S::ToolbarButtonSort, "\u{E8CB}", ToolMenu::Sort),
+    menu("menu.group", S::ToolbarButtonGroup, "\u{E8FD}", ToolMenu::Group),
+    menu("menu.layout", S::ToolbarButtonLayout, "\u{E8A9}", ToolMenu::Layout),
+    act("view.pane", S::ToolbarButtonInfoPane, "\u{E8A0}"),
+    act("bin.restore", S::ToolbarButtonRestore, "\u{E777}"),
+    act("bin.restore_all", S::ToolbarButtonRestoreAll, "\u{E777}"),
+    act("bin.empty", S::ToolbarButtonEmptyBin, "\u{E74D}"),
+    act("file.new_folder", S::ToolbarButtonNewFolder, "\u{E8F4}"),
+    act("file.new_item", S::ToolbarButtonNewItem, "\u{E7C3}"),
+    act("item.copy_path", S::ToolbarButtonCopyPath, "\u{E71B}"),
+    act("item.delete", S::ToolbarButtonDeletePermanently, "\u{E74D}"),
+    act("app.terminal", S::ToolbarButtonTerminal, "\u{E756}"),
+    act("item.pin", S::ToolbarButtonPin, "\u{E718}"),
+    act("edit.undo", S::ToolbarButtonUndo, "\u{E7A7}"),
+    act("edit.redo", S::ToolbarButtonRedo, "\u{E7A6}"),
+    act("view.hidden", S::ToolbarButtonHiddenItems, "\u{E890}"),
+    act("view.sizes", S::ToolbarButtonFolderSizes, "\u{EDA2}"),
+    act("nav.refresh", S::ToolbarButtonRefresh, "\u{E72C}"),
+    act("search.folder", S::ToolbarButtonSearch, "\u{E721}"),
+    act("sidebar.toggle", S::ToolbarButtonSidebar, "\u{E700}"),
+    menu("menu.extract", S::ToolbarButtonExtract, "\u{E8B7}", ToolMenu::Extract),
 ];
 
 fn tool(id: &str) -> Option<&'static Tool> {
@@ -122,11 +123,19 @@ impl ToolContext {
         self as usize
     }
 
-    fn name(self) -> &'static str {
+    fn reset_message(self) -> S {
         match self {
-            ToolContext::Folder => "folders",
-            ToolContext::RecycleBin => "the Recycle Bin",
-            ToolContext::ThisPc => "This PC",
+            ToolContext::Folder => S::ToolbarResetFolders,
+            ToolContext::RecycleBin => S::ToolbarResetRecycleBin,
+            ToolContext::ThisPc => S::ToolbarResetThisPc,
+        }
+    }
+
+    fn edit_label(self) -> S {
+        match self {
+            ToolContext::Folder => S::ToolbarPickEditFolders,
+            ToolContext::RecycleBin => S::ToolbarPickEditRecycleBin,
+            ToolContext::ThisPc => S::ToolbarPickEditThisPc,
         }
     }
 
@@ -219,9 +228,9 @@ pub(super) enum ToolPick {
 impl ToolPick {
     pub(super) fn placeholder(&self) -> &'static str {
         match self {
-            ToolPick::Items(_) => "Choose a toolbar button to move, remove or change it",
-            ToolPick::Item(..) => "Choose what to do with the button",
-            ToolPick::Add(_) => "Type to filter the buttons to add",
+            ToolPick::Items(_) => S::ToolbarPickItems.t(),
+            ToolPick::Item(..) => S::ToolbarPickItem.t(),
+            ToolPick::Add(_) => S::ToolbarPickAdd.t(),
         }
     }
 }
@@ -312,7 +321,7 @@ impl App {
     pub(super) fn reset_toolbar(&mut self) {
         let ctx = self.tool_context();
         self.toolbar.state.sets[ctx.index()] = ctx.defaults();
-        self.status(format!("The toolbar buttons for {} are back to the defaults", ctx.name()));
+        self.status(ctx.reset_message().t());
     }
 
     pub(super) fn customize_toolbar(&mut self) {
@@ -323,7 +332,7 @@ impl App {
     pub(super) fn share_selection(&mut self) {
         let items = self.selected_items();
         if items.is_empty() {
-            return self.status("Select the files to share");
+            return self.status(S::ToolbarSelectToShare.t());
         }
         match self.item_paths(&items) {
             Ok(paths) => self.effects.push(Effect::Share(paths)),
@@ -490,8 +499,8 @@ impl App {
                     }
                 }
                 Some(ToolItem::Button(id, _)) => match tool(id) {
-                    Some(t) if t.kind == Kind::Action && self.tool_enabled(t.id) => out.push(Overflow::Action(t.id, t.label)),
-                    Some(Tool { kind: Kind::Menu(m), label, .. }) => out.push(Overflow::Menu(*m, label)),
+                    Some(t) if t.kind == Kind::Action && self.tool_enabled(t.id) => out.push(Overflow::Action(t.id, t.label.t())),
+                    Some(Tool { kind: Kind::Menu(m), label, .. }) => out.push(Overflow::Menu(*m, label.t())),
                     _ => {}
                 },
                 None => {}
@@ -595,8 +604,8 @@ impl App {
         let Some(ToolItem::Button(id, _)) = items.get(tip.item) else { return None };
         let t = tool(id)?;
         Some(match self.keymap.first_text(t.id) {
-            Some(k) => format!("{} ({k})", t.label),
-            None => t.label.to_owned(),
+            Some(k) => format!("{} ({k})", t.label.t()),
+            None => t.label.t().to_owned(),
         })
     }
 
@@ -622,7 +631,7 @@ impl App {
                 (None, _) => 0.0,
                 (Some(_), Show::Icon) => icon_w,
                 (Some(tl), show) => {
-                    let mut w = g.measure(tl.label, font) + 2.0 * pad;
+                    let mut w = g.measure(tl.label.t(), font) + 2.0 * pad;
                     if *show == Show::Both {
                         w += icon_w - pad;
                     }
@@ -677,7 +686,7 @@ impl App {
             }
             if show != Show::Icon {
                 let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
-                let w = g.text(cx + pad, baseline, tl.label, font, color, f32::INFINITY);
+                let w = g.text(cx + pad, baseline, tl.label.t(), font, color, f32::INFINITY);
                 if matches!(tl.kind, Kind::Menu(_)) {
                     g.text(cx + pad + w + self.s(5.0), baseline - self.s(1.0), G_DOWN, chevron, t.text_dim, f32::INFINITY);
                 }
@@ -746,7 +755,7 @@ impl App {
             let kw = g.measure(&keys, small);
             g.text(row.right() - s12 - kw, baseline(row), &keys, small, t.text_dim, f32::INFINITY);
         }
-        g.text(size_row.x + self.s(10.0), baseline(size_row), "Size", font, t.text, label_w);
+        g.text(size_row.x + self.s(10.0), baseline(size_row), S::ToolbarFlyoutSize.t(), font, t.text, label_w);
         let tr = f.slider;
         g.dl.round_rect(tr, t.separator, tr.h / 2.0);
         let n = look.levels() as usize;
@@ -773,7 +782,7 @@ impl App {
             } else {
                 g.dl.outline(bx, t.text_dim, self.s(3.0), 1.0);
             }
-            g.text(row.x + self.s(32.0), baseline(row), TOGGLES[k], font, t.text, row.w);
+            g.text(row.x + self.s(32.0), baseline(row), TOGGLES[k].t(), font, t.text, row.w);
         }
         self.toolbar.fly = Some(f);
     }
@@ -796,13 +805,13 @@ impl App {
 
     fn open_tool_pick(&mut self, pick: ToolPick, select: usize) {
         let label = |item: &ToolItem| match item {
-            ToolItem::Separator => ("Separator".to_owned(), String::new()),
+            ToolItem::Separator => (S::ToolbarPickSeparator.t().to_owned(), String::new()),
             ToolItem::Button(id, show) => {
-                let name = tool(id).map_or(id.as_str(), |t| t.label).to_owned();
+                let name = tool(id).map_or(id.as_str(), |t| t.label.t()).to_owned();
                 let how = match show {
-                    Show::Icon => "icon only",
-                    Show::Label => "label only",
-                    Show::Both => "icon and label",
+                    Show::Icon => S::ToolbarPickIconOnly.t(),
+                    Show::Label => S::ToolbarPickLabelOnly.t(),
+                    Show::Both => S::ToolbarPickIconAndLabel.t(),
                 };
                 (name, how.to_owned())
             }
@@ -811,22 +820,22 @@ impl App {
             ToolPick::Items(ctx) => {
                 let set = &self.toolbar.state.sets[ctx.index()];
                 let mut rows: Vec<(String, String)> = set.iter().map(label).collect();
-                rows.push(("Add a button".into(), String::new()));
-                rows.push(("Add a separator".into(), String::new()));
-                rows.push(("Reset these buttons to the defaults".into(), String::new()));
+                rows.push((S::ToolbarPickAddButton.t().into(), String::new()));
+                rows.push((S::ToolbarPickAddSeparator.t().into(), String::new()));
+                rows.push((S::ToolbarPickReset.t().into(), String::new()));
                 for other in CONTEXTS.into_iter().filter(|c| c != ctx) {
-                    rows.push((format!("Edit the toolbar of {}", other.name()), String::new()));
+                    rows.push((other.edit_label().t().to_owned(), String::new()));
                 }
                 rows
             }
             ToolPick::Item(ctx, k) => {
-                let mut rows = vec![("Move left".into(), String::new()), ("Move right".into(), String::new()), ("Remove".into(), String::new())];
+                let mut rows = [S::ToolbarPickMoveLeft, S::ToolbarPickMoveRight, S::ToolbarPickRemove].map(|s| (s.t().to_owned(), String::new())).to_vec();
                 if matches!(self.toolbar.state.sets[ctx.index()].get(*k), Some(ToolItem::Button(..))) {
-                    rows.extend(["Show the icon only", "Show the label only", "Show the icon and the label"].map(|s| (s.to_owned(), String::new())));
+                    rows.extend([S::ToolbarPickShowIcon, S::ToolbarPickShowLabel, S::ToolbarPickShowBoth].map(|s| (s.t().to_owned(), String::new())));
                 }
                 rows
             }
-            ToolPick::Add(ctx) => self.addable(*ctx).into_iter().map(|t| (t.label.to_owned(), self.keymap.first_text(t.id).unwrap_or_default())).collect(),
+            ToolPick::Add(ctx) => self.addable(*ctx).into_iter().map(|t| (t.label.t().to_owned(), self.keymap.first_text(t.id).unwrap_or_default())).collect(),
         };
         let mut p = Palette::new(Pick::Toolbar(pick), rows, "");
         p.select_row(select);

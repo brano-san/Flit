@@ -1,5 +1,6 @@
 use crate::fs::fs_error;
 use crate::{com_sta, err, take_pwstr, NtFs};
+use flit_core::i18n::S;
 use flit_core::library::{self, Library, LibraryOp};
 use flit_core::sort::CaseMode;
 use flit_core::{FsError, FsPath, ListingBuilder};
@@ -121,10 +122,10 @@ fn restore(dir: &std::path::Path, defaults: &[Classic]) -> Result<usize, Platfor
         let file = match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(PlatformError::new(-1, format!("cannot create {}: {e}", path.display()))),
+            Err(e) => return Err(PlatformError::new(-1, flit_core::tr_en!(S::ErrorsLibrariesCreate, path = path.display(), error = e))),
         };
         let mut file = file;
-        file.write_all(d.xml().as_bytes()).map_err(|e| PlatformError::new(-1, format!("cannot write {}: {e}", path.display())))?;
+        file.write_all(d.xml().as_bytes()).map_err(|e| PlatformError::new(-1, flit_core::tr_en!(S::ErrorsLibrariesWrite, path = path.display(), error = e)))?;
         let w: Vec<u16> = path.as_os_str().to_string_lossy().encode_utf16().chain(Some(0)).collect();
         unsafe { SHChangeNotify(SHCNE_CREATE, SHCNF_PATHW, Some(w.as_ptr().cast()), None) };
         made += 1;
@@ -141,7 +142,7 @@ pub(crate) fn apply(op: &LibraryOp) -> Result<(), PlatformError> {
             lib.SaveInKnownFolder(&FOLDERID_Libraries as *const GUID, PCWSTR(wide.as_ptr()), LSF_FAILIFTHERE).map(drop).map_err(err)
         },
         LibraryOp::RestoreDefaults => {
-            let dir = libraries_dir().ok_or_else(|| PlatformError::new(-1, "the Libraries folder is unknown"))?;
+            let dir = libraries_dir().ok_or_else(|| PlatformError::new(-1, S::ErrorsLibrariesUnknownFolder.en()))?;
             restore(&dir, &DEFAULTS).map(drop)
         }
         LibraryOp::Add { library, folder } => change(library, |l| unsafe { l.AddFolder(&item(folder)?) }),

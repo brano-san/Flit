@@ -1,4 +1,5 @@
 use crate::archive::ArchiveOp;
+use crate::i18n::S;
 use crate::location::ProviderId;
 use crate::provider::{FileOp, OpReport};
 
@@ -17,8 +18,6 @@ pub enum Origin {
     Redo,
 }
 
-pub const NOT_RECYCLED: &str = "The deleted items are not in the Recycle Bin, so the deletion cannot be undone";
-
 pub fn inverse(report: &OpReport) -> Option<Step> {
     let items = &report.items;
     if items.is_empty() {
@@ -36,7 +35,7 @@ pub fn inverse(report: &OpReport) -> Option<Step> {
         FileOp::Trash(_) => {
             let recycled: Vec<_> = items.iter().filter(|(from, to)| from != to).map(|(from, to)| (to.clone(), from.clone())).collect();
             if recycled.is_empty() {
-                return Some(Step::Refuse(NOT_RECYCLED));
+                return Some(Step::Refuse(S::ErrorsOpsNotRecycled.en()));
             }
             FileOp::Restore(recycled)
         }

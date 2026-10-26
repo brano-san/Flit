@@ -218,7 +218,7 @@ impl App {
 
     pub(super) fn move_tab_to_window(&mut self) {
         if self.tabs.len() == 1 {
-            return self.status("This is the only tab in the window");
+            return self.status(crate::i18n::S::TabbarOnlyTab.t());
         }
         self.detach_tab(None);
     }

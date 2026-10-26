@@ -399,8 +399,30 @@ pub enum PreviewData {
     Folder(FolderSummary),
     Media { video: bool, poster: Option<Bitmap> },
     Handler(String),
-    Basic { poster: Option<Bitmap>, note: Option<String> },
+    Basic { poster: Option<Bitmap>, note: Option<Note> },
     Props(Vec<PropGroup>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Note {
+    Message(String),
+    Archived,
+    CannotPlay(String),
+    Shortcut(String),
+    TooLarge,
+}
+
+impl Note {
+    pub fn text(&self) -> String {
+        use crate::i18n::S;
+        match self {
+            Note::Message(m) => m.clone(),
+            Note::Archived => S::PreviewArchived.t().to_owned(),
+            Note::CannotPlay(error) => crate::tr!(S::PreviewCannotPlay, error = error),
+            Note::Shortcut(target) => crate::tr!(S::PreviewShortcut, target = target),
+            Note::TooLarge => S::PreviewTooLarge.t().to_owned(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

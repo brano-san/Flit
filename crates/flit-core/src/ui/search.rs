@@ -2,6 +2,8 @@ use super::edit::{EditAction, LineEdit};
 use super::{centered, icon_key, App, Effect, Hit, G_BACK, G_CHEVRON, G_FILE, G_FOLDER, G_SORT_DOWN, G_SORT_UP, ICON};
 use crate::fmt as format;
 use crate::hash::FxHashMap;
+use crate::i18n::{self, P, S};
+use crate::{tr, trn, trn_into, tr_into};
 use crate::input::{CursorIcon, Event, Key, Mods, MouseButton};
 use crate::listing::{attr, Entry, Meta};
 use crate::location::Location;
@@ -14,7 +16,6 @@ use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::Theme;
 use bumpalo::Bump;
 use std::collections::HashSet;
-use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
 pub const PAGE: u64 = 64;
@@ -24,7 +25,6 @@ const KEEP_AROUND: u64 = 2048;
 const MAX_RECENT: usize = 8;
 const G_SEARCH: &str = "\u{E721}";
 const G_HISTORY: &str = "\u{E81C}";
-const PLACEHOLDER: &str = "Search: words, *.ext, ext:, size:, dm:, path:, regex:, tag:, or $ and property:value for Windows Search";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum SearchKey {
@@ -110,7 +110,7 @@ pub enum SearchEvent {
     Error { message: String },
 }
 
-const COLUMNS: [(&str, SearchKey); 4] = [("Name", SearchKey::Name), ("Folder", SearchKey::Folder), ("Size", SearchKey::Size), ("Date modified", SearchKey::Modified)];
+const COLUMNS: [(S, SearchKey); 4] = [(S::DetailsColumnName, SearchKey::Name), (S::SearchColumnFolder, SearchKey::Folder), (S::DetailsColumnSize, SearchKey::Size), (S::DetailsColumnModified, SearchKey::Modified)];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 enum SHit {
@@ -330,8 +330,8 @@ impl App {
 
     pub(super) fn search_title(&self) -> String {
         match &self.search.within {
-            Some(w) => format!("Search in {} — Flit", w.name()),
-            None => "Search — Flit".into(),
+            Some(w) => tr!(S::SearchTitleIn, name = w.name()),
+            None => S::SearchTitle.t().into(),
         }
     }
 
@@ -979,7 +979,7 @@ impl App {
         let s = &self.search;
         let headers = s.grouped();
         if s.done && s.total == 0 && !s.walking {
-            let msg = if s.error.is_some() { "The query is not valid." } else { "No files match." };
+            let msg = if s.error.is_some() { S::SearchInvalid.t() } else { S::SearchNoMatch.t() };
             let w = g.measure(msg, font);
             g.text(sl.list.x + (sl.list.w - w) / 2.0, sl.list.y + self.s(40.0), msg, font, t.text_dim, f32::INFINITY);
         }
@@ -1052,7 +1052,7 @@ impl App {
                 g.dl.rect(Rect::new(r.x, r.y + self.s(6.0), 1.0, r.h - self.s(12.0)), t.separator);
             }
             g.dl.set_clip(Some(r));
-            let w = g.text(r.x + pad, baseline, title, hfont, t.text_dim, r.w - 2.0 * pad);
+            let w = g.text(r.x + pad, baseline, title.t(), hfont, t.text_dim, r.w - 2.0 * pad);
             if s.sort.key == *key {
                 let glyph = if s.sort.descending { G_SORT_DOWN } else { G_SORT_UP };
                 g.text(r.x + pad + w + self.s(6.0), baseline, glyph, self.icon_font(8.0), t.text_dim, f32::INFINITY);
@@ -1075,7 +1075,7 @@ impl App {
         let x = icon.right() + self.s(8.0);
         let mut count = bumpalo::collections::String::new_in(arena);
         let n = s.group_len(k);
-        let _ = write!(count, "{} {}", thousands(n), if n == 1 { "item" } else { "items" });
+        trn_into!(&mut count, P::DetailsCountItems, n);
         let small = self.ui_font(12.0);
         let cw = g.measure(&count, small);
         let w = g.text(x, baseline, &dir, font, t.text, (r.right() - x - cw - self.s(32.0)).max(0.0));
@@ -1105,39 +1105,47 @@ impl App {
             left.push_str(e);
             color = t.error;
         } else if s.walking {
-            let _ = write!(left, "Searching… {} {}", thousands(s.total), if s.total == 1 { "result" } else { "results" });
             if s.folders > 0 {
-                let _ = write!(left, " in {} folders", thousands(s.folders));
+                trn_into!(&mut left, P::SearchWalkingIn, s.folders, results = trn!(P::SearchResults, s.total));
+            } else {
+                trn_into!(&mut left, P::SearchWalking, s.total);
             }
         } else if s.done {
-            let _ = write!(left, "{} {}", thousands(s.total), if s.total == 1 { "result" } else { "results" });
-            if let Some(e) = s.elapsed {
-                let _ = write!(left, " in {:.1} ms", e.as_secs_f64() * 1e3);
+            let results = trn!(P::SearchResults, s.total);
+            match s.elapsed {
+                Some(e) => {
+                    let mut ms = String::new();
+                    i18n::decimal(&mut ms, e.as_secs_f64() * 1e3, 1);
+                    tr_into!(&mut left, S::SearchDoneIn, results = results, ms = ms);
+                }
+                None => left.push_str(&results),
             }
             if s.folders > 0 {
-                let _ = write!(left, " · {} folders", thousands(s.folders));
+                left.push_str(" · ");
+                trn_into!(&mut left, P::SearchFolders, s.folders);
             }
         } else {
-            left.push_str("Searching…");
+            left.push_str(S::SearchSearching.t());
         }
         g.text(status.x + pad, baseline, &left, font, color, status.w / 2.0 - pad);
         let mut right = bumpalo::collections::String::new_in(arena);
         let tagged = crate::tags::has_tag_term(&s.edit.text);
         right.push_str(match (s.source, s.backend) {
-            (Some(SearchSource::Walk), _) => "Live search of the folder and its subfolders",
-            (Some(SearchSource::Shell), _) => "Windows Search",
-            _ if tagged => "Tagged files",
-            (None, SearchBackend::Connecting) => "Connecting to the index",
-            (None, SearchBackend::Service) => "Index service",
-            (None, SearchBackend::Fallback) => "Local index (flit-indexd unavailable)",
-        });
+            (Some(SearchSource::Walk), _) => S::SearchSourceWalk,
+            (Some(SearchSource::Shell), _) => S::SearchSourceShell,
+            _ if tagged => S::SearchSourceTagged,
+            (None, SearchBackend::Connecting) => S::SearchSourceConnecting,
+            (None, SearchBackend::Service) => S::SearchSourceService,
+            (None, SearchBackend::Fallback) => S::SearchSourceFallback,
+        }.t());
         for v in s.volumes.iter().filter(|_| !tagged && s.source.is_none()) {
-            let label = if v.id.is_empty() { "index" } else { &v.id };
-            let _ = match &v.state {
-                IndexState::Ready => write!(right, " · {label} {} files", thousands(v.files)),
-                IndexState::Scanning(p) => write!(right, " · {label} indexing {:.0}% ({} files)", p * 100.0, thousands(v.files)),
-                IndexState::Error(e) => write!(right, " · {label} error: {e}"),
-            };
+            let label = if v.id.is_empty() { S::SearchIndexDefault.t() } else { &v.id };
+            right.push_str(" · ");
+            match &v.state {
+                IndexState::Ready => trn_into!(&mut right, P::SearchIndexReady, v.files, label = label),
+                IndexState::Scanning(p) => trn_into!(&mut right, P::SearchIndexScanning, v.files, label = label, percent = format!("{:.0}", p * 100.0)),
+                IndexState::Error(e) => tr_into!(&mut right, S::SearchIndexError, label = label, error = e),
+            }
         }
         let rcolor = if s.backend == SearchBackend::Fallback && !tagged && s.source.is_none() { t.error } else { t.text_dim };
         let rw = g.measure(&right, font).min(status.w / 2.0 - pad);
@@ -1157,8 +1165,8 @@ impl App {
         let m = g.metrics(font);
         let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
         let label = match &self.search.within {
-            Some(w) => format!("In {}", w.name()),
-            None if self.search.home.is_some() => "All drives".to_owned(),
+            Some(w) => tr!(S::SearchIn, name = w.name()),
+            None if self.search.home.is_some() => S::SearchAllDrives.t().to_owned(),
             None => String::new(),
         };
         let mut x = icon.right() + self.s(4.0);
@@ -1194,7 +1202,7 @@ impl App {
             g.dl.rect(Rect::new(x0 + a, r.y + (r.h * 0.2).round(), b - a, (r.h * 0.6).round()), t.text_selection);
         }
         if s.edit.text.is_empty() {
-            g.text(inner.x, baseline, PLACEHOLDER, font, t.text_dim.alpha(0xA0), inner.w);
+            g.text(inner.x, baseline, S::SearchPlaceholder.t(), font, t.text_dim.alpha(0xA0), inner.w);
         } else {
             g.text(x0, baseline, &s.edit.text, font, t.text, f32::INFINITY);
         }
@@ -1224,7 +1232,7 @@ impl App {
         g.dl.outline(panel, t.input_border, s6, 1.0);
         let small = self.ui_font(12.0);
         let head = Rect::new(x + s6, y + s6, w - 2.0 * s6, row_h);
-        g.text(head.x + self.s(10.0), (head.y + (head.h + m.ascent - m.descent) / 2.0).round(), "Recent searches · Shift+Del removes one", small, t.text_dim, head.w);
+        g.text(head.x + self.s(10.0), (head.y + (head.h + m.ascent - m.descent) / 2.0).round(), S::SearchRecent.t(), small, t.text_dim, head.w);
         for (n, &k) in recent.iter().enumerate() {
             let r = Rect::new(x + s6, head.bottom() + n as f32 * row_h, w - 2.0 * s6, row_h);
             if self.search.recent_sel == Some(n) {

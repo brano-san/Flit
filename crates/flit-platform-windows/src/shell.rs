@@ -40,7 +40,7 @@ pub(crate) fn desktop_ini(dir: &FsPath) -> Option<DesktopIni> {
 
 pub(crate) fn shell_addressable(p: &FsPath) -> Result<(), PlatformError> {
     if p.components().any(|c| c.ends_with(b".") || c.ends_with(b" ")) {
-        return Err(PlatformError::new(-1, format!("{} cannot be handled by the Windows shell: a name ends with a dot or a space", p.display())));
+        return Err(PlatformError::new(-1, flit_core::tr_en!(flit_core::i18n::S::ErrorsEngineUnaddressable, path = p.display())));
     }
     Ok(())
 }

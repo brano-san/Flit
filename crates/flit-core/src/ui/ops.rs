@@ -9,7 +9,8 @@ use crate::open::OpenTarget;
 use crate::input::{CursorIcon, Event, Key, Mods, MouseButton};
 use crate::listing::attr;
 use crate::location::{Location, ProviderId};
-use crate::path::{FsPath, PathKind, RECYCLE_BIN_LABEL};
+use crate::i18n::{P, S};
+use crate::path::{FsPath, PathKind};
 use crate::provider::{FileOp, GenToken, Launch, OpCtl, OpId, OpReport, ProviderRequest, SnapshotSlot, TabId, Template};
 use crate::recycle;
 use crate::render::Rect;
@@ -29,17 +30,16 @@ pub mod drop_effect {
 
 pub const SHELL_VERBS: [&str; 6] = ["rename", "copy", "cut", "paste", "delete", "newfolder"];
 
-const NEW_FOLDER: &str = "New folder";
 const REVEAL_FOR: Duration = Duration::from_secs(10);
 const SPRING_DELAY: Duration = Duration::from_millis(1300);
 const SECTION_SPRING_DELAY: Duration = Duration::from_millis(500);
 const DRAG_START: f32 = 4.0;
 const MAX_NAME_UNITS: usize = 255;
 const RESERVED: [&str; 4] = ["CON", "PRN", "AUX", "NUL"];
-const BIN_ONLY: &str = "Items in the Recycle Bin can only be restored or deleted";
-const STREAMS_VIEW_ONLY: &str = "Alternate data streams are shown for viewing only";
-const OPEN_BIN: &str = "Open the Recycle Bin to restore items";
-const MIXED_PATHS: &str = "Items inside WSL and on Windows cannot be combined in one operation";
+const BIN_ONLY: S = S::UiOpsBinOnly;
+const STREAMS_VIEW_ONLY: S = S::UiOpsStreamsViewOnly;
+const OPEN_BIN: S = S::UiOpsOpenBin;
+const MIXED_PATHS: S = S::UiOpsMixedPaths;
 const MAX_TERMINALS: usize = 5;
 const RUNNABLE: [&[u8]; 4] = [b"exe", b"com", b"bat", b"cmd"];
 pub(super) const TIMER_SLACK: Duration = Duration::from_millis(16);
@@ -189,25 +189,25 @@ pub fn validate_name(text: &str, windows: bool) -> Result<String, &'static str> 
         name = name.trim_end_matches(['.', ' ']);
     }
     if name.is_empty() {
-        return Err("A name cannot be empty");
+        return Err(S::UiOpsNameEmpty.t());
     }
     if name == "." || name == ".." {
-        return Err("This name is not allowed");
+        return Err(S::UiOpsNameNotAllowed.t());
     }
     if windows {
         if name.chars().any(|c| c.is_control() || r#"<>:"/\|?*"#.contains(c)) {
-            return Err(r#"A name cannot contain any of these characters: \ / : * ? " < > |"#);
+            return Err(S::UiOpsNameBadChars.t());
         }
         let stem = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
         let port = |n: &str| (n.len() == 1 && n.as_bytes()[0].is_ascii_digit()) || matches!(n, "¹" | "²" | "³");
         if RESERVED.contains(&stem.as_str()) || ["COM", "LPT"].iter().any(|p| stem.strip_prefix(p).is_some_and(port)) {
-            return Err("This name is reserved by Windows");
+            return Err(S::UiOpsNameReserved.t());
         }
     } else if name.contains(['/', '\0']) {
-        return Err("A name cannot contain a slash");
+        return Err(S::UiOpsNameSlash.t());
     }
     if (if windows { name.encode_utf16().count() } else { name.len() }) > MAX_NAME_UNITS {
-        return Err("The name is too long");
+        return Err(S::UiOpsNameTooLong.t());
     }
     Ok(name.to_owned())
 }
@@ -342,24 +342,24 @@ impl App {
     pub(super) fn shell_dir(&self) -> Result<FsPath, &'static str> {
         let loc = &self.tab().view_loc;
         match loc.path().kind() {
-            PathKind::Computer => return Err("Files cannot be placed in This PC"),
-            PathKind::RecycleBin => return Err("Files cannot be placed in the Recycle Bin"),
-            PathKind::Home => return Err("Files cannot be placed on the Home page"),
-            _ if library::is_library(loc.path()) => return self.library_save(loc.path()).ok_or("This library has no folder to save into"),
+            PathKind::Computer => return Err(S::UiOpsNotInComputer.t()),
+            PathKind::RecycleBin => return Err(S::UiOpsNotInBin.t()),
+            PathKind::Home => return Err(S::UiOpsNotOnHome.t()),
+            _ if library::is_library(loc.path()) => return self.library_save(loc.path()).ok_or(S::UiOpsLibraryNoFolder.t()),
             _ => {}
         }
-        loc.to_windows().ok_or("This folder cannot be used by Windows shell operations")
+        loc.to_windows().ok_or(S::UiOpsFolderNotShell.t())
     }
 
     pub(super) fn item_paths(&self, items: &[u32]) -> Result<Vec<FsPath>, &'static str> {
         if self.in_bin() {
-            return Err(BIN_ONLY);
+            return Err(BIN_ONLY.t());
         }
         let t = self.tab();
         if t.view.as_ref().is_some_and(|v| items.iter().any(|&i| v.listing().entries[i as usize].attrs & attr::STREAM != 0)) {
-            return Err(STREAMS_VIEW_ONLY);
+            return Err(STREAMS_VIEW_ONLY.t());
         }
-        items.iter().map(|&i| t.entry_location(i).to_windows()).collect::<Option<Vec<_>>>().ok_or("Some names cannot be used by Windows shell operations")
+        items.iter().map(|&i| t.entry_location(i).to_windows()).collect::<Option<Vec<_>>>().ok_or(S::UiOpsNamesNotShell.t())
     }
 
     pub(super) fn selected_items(&self) -> Vec<u32> {
@@ -379,7 +379,7 @@ impl App {
     }
 
     fn start_op_on(&mut self, provider: ProviderId, tab: TabId, op: FileOp, origin: Origin, then: Then) {
-        let Some((provider, op)) = route(provider, op, self.caps.unix_paths) else { return self.status(MIXED_PATHS) };
+        let Some((provider, op)) = route(provider, op, self.caps.unix_paths) else { return self.status(MIXED_PATHS.t()) };
         self.ops.next_id += 1;
         let id = self.ops.next_id;
         let ctl = OpCtl::new(self.conflict_default);
@@ -453,7 +453,7 @@ impl App {
             None => Vec::new(),
         };
         if items.is_empty() {
-            return self.status("Select the folders to flatten");
+            return self.status(S::UiOpsSelectFlatten.t());
         }
         match self.item_paths(&items) {
             Ok(dirs) => self.start_op(FileOp::Flatten(dirs), Origin::Fresh, Then::Nothing),
@@ -476,7 +476,7 @@ impl App {
 
     fn restore(&mut self, all: bool) {
         if !self.in_bin() {
-            return if all { self.probe_bin() } else { self.status(OPEN_BIN) };
+            return if all { self.probe_bin() } else { self.status(OPEN_BIN.t()) };
         }
         let pairs = match (all, &self.tab().view) {
             (true, Some(v)) => {
@@ -486,8 +486,8 @@ impl App {
             _ => self.bin_pairs(self.selected_items().into_iter()),
         };
         match pairs.is_empty() {
-            true if all => self.status("The Recycle Bin is empty"),
-            true => self.status("Select the items to restore"),
+            true if all => self.status(S::UiEmptyBin.t()),
+            true => self.status(S::UiOpsSelectRestore.t()),
             false if all => self.ask_confirm(FileOp::Restore(pairs)),
             false => self.start_op(FileOp::Restore(pairs), Origin::Fresh, Then::Nothing),
         }
@@ -511,7 +511,7 @@ impl App {
         let l = &snap.listing;
         let pairs: Vec<(FsPath, FsPath)> = (0..l.len() as u32).filter(|&i| l.entries[i as usize].attrs & attr::DELETED == 0).filter_map(|i| Some((recycle::recycled(l, i)?, recycle::original(l, i)?))).collect();
         match pairs.is_empty() {
-            true => self.status("The Recycle Bin is empty"),
+            true => self.status(S::UiEmptyBin.t()),
             false => self.ask_confirm(FileOp::Restore(pairs)),
         }
     }
@@ -599,7 +599,7 @@ impl App {
         };
         match dest {
             Some(dest) => self.start_op(FileOp::Paste { dest }, Origin::Fresh, Then::Nothing),
-            None => self.status("Select one folder to paste into"),
+            None => self.status(S::UiOpsSelectPasteInto.t()),
         }
     }
 
@@ -628,26 +628,26 @@ impl App {
     }
 
     pub fn new_folder(&mut self) {
-        self.create(|dir, name| FileOp::NewFolder { dir, name }, NEW_FOLDER, "");
+        self.create(|dir, name| FileOp::NewFolder { dir, name }, S::UiOpsNewFolderName.t(), "");
     }
 
     pub fn new_folder_with_selection(&mut self) {
         let items = self.selected_items();
         if items.is_empty() {
-            return self.status("Select the items to put into a new folder");
+            return self.status(S::UiOpsSelectNewFolder.t());
         }
         let (paths, dir) = match (self.item_paths(&items), self.shell_dir()) {
             (Ok(p), Ok(d)) => (p, d),
             (Err(e), _) | (_, Err(e)) => return self.status(e),
         };
-        let name = self.free_name(NEW_FOLDER, "").into_bytes();
+        let name = self.free_name(S::UiOpsNewFolderName.t(), "").into_bytes();
         self.start_op(FileOp::NewFolder { dir, name }, Origin::Fresh, Then::Fill(paths));
     }
 
     pub fn create_shortcuts(&mut self) {
         let items = self.selected_items();
         if items.is_empty() {
-            return self.status("Select the items to create shortcuts to");
+            return self.status(S::UiOpsSelectShortcut.t());
         }
         match (self.item_paths(&items), self.shell_dir()) {
             (Ok(items), Ok(dest)) => self.start_op(FileOp::Link { items, dest }, Origin::Fresh, Then::Select),
@@ -660,7 +660,7 @@ impl App {
             return self.status(e);
         }
         let folder_keys = self.keymap.text_of("file.new_folder");
-        let mut items = vec![("Folder".to_owned(), folder_keys), ("Shortcut".to_owned(), String::new())];
+        let mut items = vec![(S::MenuFolder.t().to_owned(), folder_keys), (S::MenuShortcut.t().to_owned(), String::new())];
         items.extend(self.nav.sidebar.places.templates.iter().map(|t| (t.label.clone(), t.ext.clone())));
         self.open_pick(Palette::new(Pick::NewItem, items, ""));
     }
@@ -688,7 +688,7 @@ impl App {
     }
 
     pub fn new_stream(&mut self) {
-        let Some(i) = self.rename_target() else { return self.status("Select a file to add a stream to") };
+        let Some(i) = self.rename_target() else { return self.status(S::UiOpsSelectStream.t()) };
         match self.item_paths(&[i]) {
             Ok(mut p) => self.open_pick(Palette::new(Pick::Stream(p.remove(0)), Vec::new(), "")),
             Err(e) => self.status(e),
@@ -721,11 +721,11 @@ impl App {
         match pick {
             Pick::FolderIcon(folder) => match icon_location(text) {
                 Some((icon, index)) => self.start_op(FileOp::FolderIcon { folder, icon: Some(icon), index }, Origin::Fresh, Then::Nothing),
-                None => self.status("Enter the full path of an icon, program or library, optionally followed by a comma and the icon index"),
+                None => self.status(S::UiOpsIconHint.t()),
             },
             Pick::Shortcut(dest) => match self.caps.native_path(text) {
                 Some(target) => self.start_op(FileOp::Link { items: vec![target], dest }, Origin::Fresh, Then::Rename),
-                None => self.status("Enter the full path of the file or folder the shortcut points to"),
+                None => self.status(S::UiOpsTargetHint.t()),
             },
             Pick::Stream(item) => match validate_name(text, true) {
                 Ok(name) => self.start_op(FileOp::NewStream { item, name: name.into_bytes() }, Origin::Fresh, Then::Nothing),
@@ -748,11 +748,11 @@ impl App {
             (false, Ok(paths)) => paths.into_iter().take(MAX_TERMINALS).collect(),
             _ => match t.view_loc.to_windows().filter(|p| p.kind() != PathKind::Computer) {
                 Some(dir) => vec![dir],
-                None => return self.status("This location cannot be opened in a terminal"),
+                None => return self.status(S::UiOpsNoTerminal.t()),
             },
         };
         if folders.len() > MAX_TERMINALS {
-            self.status(format!("Opened the first {MAX_TERMINALS} of {} folders in the terminal", folders.len()));
+            self.status(crate::trn!(P::UiOpsTerminals, folders.len(), shown = MAX_TERMINALS));
         }
         let tab = self.tab().id;
         self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch: Launch::Terminal { dirs, admin } } });
@@ -768,7 +768,7 @@ impl App {
 
     fn replay(&mut self, origin: Origin) {
         match self.ops.journal.take(origin) {
-            None => self.status(if origin == Origin::Undo { "Nothing to undo" } else { "Nothing to redo" }),
+            None => self.status(if origin == Origin::Undo { S::UiOpsNothingToUndo } else { S::UiOpsNothingToRedo }.t()),
             Some((_, Step::Refuse(msg))) => self.status(msg),
             Some((provider, Step::Run(op))) => self.start_op_on(provider, self.tab().id, op, origin, Then::Select),
         }
@@ -809,14 +809,14 @@ impl App {
 
     fn shell_menu(&mut self, x: f32, y: f32, on_items: bool, extended: bool) {
         if self.in_bin() && on_items {
-            return self.status(BIN_ONLY);
+            return self.status(BIN_ONLY.t());
         }
         if self.in_bin() || self.archive_view().is_some() {
             let menu = self.build_menu(on_items);
             return self.flit_menu(x, y, menu);
         }
         let t = self.tab();
-        let Some(dir) = t.view_loc.to_windows() else { return self.status("This folder cannot be used by Windows shell operations") };
+        let Some(dir) = t.view_loc.to_windows() else { return self.status(S::UiOpsFolderNotShell.t()) };
         let items: Vec<u32> = match (&t.view, on_items) {
             (Some(v), true) => v.selected().collect(),
             _ => Vec::new(),
@@ -870,17 +870,17 @@ impl App {
             let reveal = Then::Reveal(folder.file_name().to_vec());
             return match folder.to_windows() {
                 Some(dest) => self.start_op_for(tab, FileOp::Move { items: items.clone(), dest }, Origin::Fresh, reveal),
-                None => self.status("Some names cannot be used by Windows shell operations"),
+                None => self.status(S::UiOpsNamesNotShell.t()),
             };
         }
         if let (FileOp::NewStream { item, name }, Some(k), None) = (&report.op, k, &error) {
-            self.tabs[k].error = Some(format!("Created the stream {}:{}", item.display(), crate::name::display(name)));
+            self.tabs[k].error = Some(crate::tr!(S::UiOpsStreamCreated, name = format_args!("{}:{}", item.display(), crate::name::display(name))));
             self.dirty |= k == self.cur;
         }
         if let (FileOp::FolderIcon { folder, icon, .. }, None) = (&report.op, &error) {
             self.icon_epoch += 1;
-            let done = if icon.is_some() { "Changed the icon of" } else { "Restored the default icon of" };
-            self.tabs[k.unwrap_or(self.cur)].error = Some(format!("{done} {}", folder.display()));
+            let done = if icon.is_some() { S::UiOpsIconChanged } else { S::UiOpsIconRestored };
+            self.tabs[k.unwrap_or(self.cur)].error = Some(crate::tr!(done, folder = folder.display()));
             self.dirty = true;
         }
         let Some(k) = k.filter(|_| p.then != Then::Nothing && !matches!(report.op, FileOp::Trash(_))) else { return };
@@ -966,11 +966,11 @@ impl App {
         let t = &mut self.tabs[self.cur];
         let Some(v) = t.view.as_mut() else { return };
         if v.listing().entries[idx as usize].attrs & attr::STREAM != 0 {
-            t.error = Some(STREAMS_VIEW_ONLY.into());
+            t.error = Some(STREAMS_VIEW_ONLY.t().into());
             return;
         }
         let Ok(name) = std::str::from_utf8(v.listing().name(idx)) else {
-            t.error = Some("This name cannot be edited in Flit".into());
+            t.error = Some(S::UiOpsNameNotEditable.t().into());
             return;
         };
         let mut edit = LineEdit::default();
@@ -1031,7 +1031,7 @@ impl App {
         }
         let old_str = String::from_utf8_lossy(&old);
         if !is_dir && self.warn_extension_change && r.confirmed.as_deref() != Some(&name) && changes_extension(&old_str, &name) {
-            let msg = format!("Changing the extension of \"{old_str}\" can make it unusable. Press Enter again to rename it, or Esc to cancel.");
+            let msg = crate::tr!(S::UiOpsExtensionWarning, name = old_str);
             r.confirmed = Some(name);
             self.ops.rename = Some(r);
             self.status(msg);
@@ -1040,7 +1040,7 @@ impl App {
         let dir = t.entry_dir(r.idx);
         let (item, target) = (op_path(&dir.join(&old)), op_path(&dir.join(name.as_bytes())));
         let (Some(item), Some(target)) = (item, target) else {
-            self.status("This name cannot be used by Windows shell operations");
+            self.status(S::UiOpsNameNotShell.t());
             return true;
         };
         self.tab_mut().error = None;
@@ -1067,7 +1067,7 @@ impl App {
                 self.tab_mut().error = None;
                 self.start_op_on(provider, tab, FileOp::MoveTo(p), Origin::Fresh, Then::Select);
             }
-            None => self.status("Some names cannot be used by Windows shell operations"),
+            None => self.status(S::UiOpsNamesNotShell.t()),
         }
     }
 
@@ -1404,17 +1404,17 @@ impl App {
         let d = self.ops.dropping.as_ref().filter(|d| d.effect != drop_effect::NONE)?;
         let name = |p: &FsPath| crate::name::display(p.file_name()).into_owned();
         let (verb, target) = match d.target.as_ref()? {
-            Target::Into { dest, .. } if d.effect == drop_effect::COPY => ("Copy to %1", name(dest)),
-            Target::Into { dest, .. } if d.effect == drop_effect::LINK => ("Create link in %1", name(dest)),
-            Target::Into { dest, .. } => ("Move to %1", name(dest)),
-            Target::Trash(_) => ("Move to %1", RECYCLE_BIN_LABEL.to_owned()),
-            Target::Run { program, .. } => ("Open with %1", name(program)),
-            Target::NewTab if d.paths.len() == 1 => ("Open %1 in a new tab", name(&d.paths[0])),
-            Target::NewTab => ("Open in new tabs", String::new()),
-            Target::Pin => ("Pin to %1", "Sidebar".to_owned()),
+            Target::Into { dest, .. } if d.effect == drop_effect::COPY => (S::UiDropCopy, name(dest)),
+            Target::Into { dest, .. } if d.effect == drop_effect::LINK => (S::UiDropLink, name(dest)),
+            Target::Into { dest, .. } => (S::UiDropMove, name(dest)),
+            Target::Trash(_) => (S::UiDropMove, S::PathRecycleBin.t().to_owned()),
+            Target::Run { program, .. } => (S::UiDropOpenWith, name(program)),
+            Target::NewTab if d.paths.len() == 1 => (S::UiDropNewTab, name(&d.paths[0])),
+            Target::NewTab => (S::UiDropNewTabs, String::new()),
+            Target::Pin => (S::UiDropPin, S::ToolbarButtonSidebar.t().to_owned()),
             Target::Reveal => return None,
         };
-        Some((verb.to_owned(), target))
+        Some((verb.t().to_owned(), target))
     }
 
     pub(super) fn rename_ime_area(&self) -> Option<Rect> {

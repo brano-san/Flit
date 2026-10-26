@@ -2,6 +2,7 @@ use super::layouts::Parts;
 use super::palette::{Palette, Pick};
 use super::{App, Effect, Route, MAX_OPEN};
 use crate::listing::attr;
+use crate::i18n::{P, S};
 use crate::location::{Location, ProviderId};
 use crate::open::OpenTarget;
 use crate::path::{FsPath, PathKind};
@@ -19,7 +20,6 @@ const FIX_WINDOW: Duration = Duration::from_secs(10);
 const MAX_MARKS: usize = 6;
 const MARK: f32 = 8.0;
 const MARK_GAP: f32 = 3.0;
-const NOT_TAGGABLE: &str = "Tags work only for items on local NTFS drives";
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum TagPick {
@@ -34,22 +34,22 @@ pub(super) enum TagPick {
 impl TagPick {
     pub(super) fn placeholder(&self) -> &'static str {
         match self {
-            TagPick::Manage => "Type to filter tags",
-            TagPick::Actions(_) => "Choose what to do with the tag",
-            TagPick::Name { tag: None, .. } => "Name of the new tag",
-            TagPick::Name { .. } => "New name of the tag",
-            TagPick::Color { .. } => "Type to filter colors",
-            TagPick::Delete(_) => "Delete the tag?",
-            TagPick::OpenAll => "Choose the tag whose items to open",
+            TagPick::Manage => S::SidebarTagFilter.t(),
+            TagPick::Actions(_) => S::SidebarTagChooseAction.t(),
+            TagPick::Name { tag: None, .. } => S::SidebarTagNewName.t(),
+            TagPick::Name { .. } => S::SidebarTagRenameTo.t(),
+            TagPick::Color { .. } => S::SidebarTagFilterColors.t(),
+            TagPick::Delete(_) => S::SidebarTagDeletePrompt.t(),
+            TagPick::OpenAll => S::SidebarTagOpenWhich.t(),
         }
     }
 
     pub(super) fn empty(&self) -> &'static str {
         match self {
-            TagPick::Name { tag: None, .. } => "Enter creates the tag",
-            TagPick::Name { .. } => "Enter renames the tag",
-            TagPick::Color { .. } => "No matching colors",
-            _ => "No matching tags",
+            TagPick::Name { tag: None, .. } => S::SidebarTagEnterCreates.t(),
+            TagPick::Name { .. } => S::SidebarTagEnterRenames.t(),
+            TagPick::Color { .. } => S::SidebarTagNoColors.t(),
+            _ => S::SidebarTagNoMatch.t(),
         }
     }
 
@@ -59,7 +59,7 @@ impl TagPick {
 }
 
 fn items_text(n: usize) -> String {
-    format!("{n} {}", if n == 1 { "item" } else { "items" })
+    crate::trn!(P::DetailsCountItems, n)
 }
 
 impl App {
@@ -108,9 +108,9 @@ impl App {
     fn tag_items(&mut self) -> Option<Vec<FsPath>> {
         let items = self.selected_items();
         let result = match (items.is_empty(), self.tab().view_loc.path().kind()) {
-            (true, _) => Err("Select the items to tag"),
+            (true, _) => Err(S::SidebarTagSelectItems.t()),
             (false, PathKind::Drive) => self.item_paths(&items),
-            _ => Err(NOT_TAGGABLE),
+            _ => Err(S::ErrorsTagsNotTaggable.t()),
         };
         result.map_err(|e| self.status(e)).ok()
     }
@@ -124,7 +124,7 @@ impl App {
             false => Vec::new(),
         };
         if self.tag_defs().len() >= MAX_TAGS {
-            return self.status("Flit supports at most 32 tags");
+            return self.status(S::ErrorsTagsTooMany.t());
         }
         self.open_tag_pick(TagPick::Name { tag: None, assign }, "");
     }
@@ -135,15 +135,15 @@ impl App {
         let rows = || t.defs.iter().enumerate().map(|(k, d)| (d.name.clone(), format!("{} · {}", tags::color_name(d.color), items_text(t.count(k))))).collect::<Vec<_>>();
         let plain = |titles: &[&str]| titles.iter().map(|s| (s.to_string(), String::new())).collect::<Vec<_>>();
         let items = match &pick {
-            TagPick::Manage => [rows(), plain(&["New tag"])].concat(),
-            TagPick::OpenAll if t.defs.is_empty() => return self.status("There are no tags yet"),
+            TagPick::Manage => [rows(), plain(&[S::MenuNewTag.t()])].concat(),
+            TagPick::OpenAll if t.defs.is_empty() => return self.status(S::SidebarTagNoneYet.t()),
             TagPick::OpenAll => rows(),
-            TagPick::Actions(_) => plain(&["Rename", "Change color", "Delete"]),
+            TagPick::Actions(_) => plain(&[S::MenuRename.t(), S::SidebarTagChangeColor.t(), S::MenuDelete.t()]),
             TagPick::Color { tag, .. } => {
                 let current = tag.and_then(|k| t.defs.get(k)).map(|d| d.color);
-                COLORS.iter().map(|&(n, c)| (n.to_owned(), if current == Some(c) { "Current".to_owned() } else { String::new() })).collect()
+                COLORS.iter().map(|&(n, c)| (n.t().to_owned(), if current == Some(c) { S::SidebarTagCurrent.t().to_owned() } else { String::new() })).collect()
             }
-            TagPick::Delete(k) => vec![(format!("Delete the tag \"{}\"", name(*k)), format!("Removes it from {}", items_text(t.count(*k)))), ("Cancel".into(), String::new())],
+            TagPick::Delete(k) => vec![(crate::tr!(S::SidebarTagDeleteNamed, name = name(*k)), crate::trn!(P::SidebarTagRemovesFrom, t.count(*k))), (S::SettingsPageDialogCancel.t().into(), String::new())],
             TagPick::Name { .. } => Vec::new(),
         };
         self.open_pick(Palette::new(Pick::Tags(pick), items, text));
@@ -191,7 +191,7 @@ impl App {
         let items: Vec<(FsPath, bool)> = self.tags().files.iter().filter(|f| f.present && f.mask & (1 << k) != 0).map(|f| (f.path.clone(), f.meta.attrs & attr::DIR != 0)).collect();
         let total = items.len();
         if total == 0 {
-            return self.status("No available items have this tag");
+            return self.status(S::SidebarTagNoneAvailable.t());
         }
         let (dirs, files): (Vec<_>, Vec<_>) = items.into_iter().partition(|i| i.1);
         let tab = self.tab().id;
@@ -204,7 +204,7 @@ impl App {
             self.dispatch(routes, OpenTarget::NewTab, now);
         }
         if opened < total {
-            self.status(format!("Opened {opened} of {total} tagged items"));
+            self.status(crate::trn!(P::SidebarTagOpenedSome, total, opened = opened));
         }
     }
 

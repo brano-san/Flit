@@ -6,6 +6,7 @@ use super::settings_page::SettingPick;
 use super::tags::TagPick;
 use super::toolbar::ToolPick;
 use super::{App, Effect, Hit};
+use crate::i18n::S;
 use crate::input::{Key, Mods};
 use crate::path::FsPath;
 use crate::render::{Color, Rect};
@@ -38,15 +39,15 @@ pub(super) enum Pick {
 impl Pick {
     fn placeholder(&self) -> &'static str {
         match self {
-            Pick::Encoding(_) => "Type to filter the encodings of names in the archive",
-            Pick::Commands => "Type a command",
-            Pick::NewItem => "Type to filter the kinds of new items",
-            Pick::Shortcut(_) => "Full path of the shortcut target",
-            Pick::Stream(_) => "Name of the new alternate data stream",
-            Pick::FolderIcon(_) => "Full path of an icon, program or library, then optionally a comma and the icon index",
-            Pick::NewLibrary => "Name of the new library",
-            Pick::Library(_) => "Enter makes a folder the default save location, Delete removes it from the library",
-            Pick::LibraryAdd(_) => "Full path of the folder to include in the library",
+            Pick::Encoding(_) => S::PalettePlaceholderEncoding.t(),
+            Pick::Commands => S::PalettePlaceholderCommands.t(),
+            Pick::NewItem => S::PalettePlaceholderNewItem.t(),
+            Pick::Shortcut(_) => S::PalettePlaceholderShortcut.t(),
+            Pick::Stream(_) => S::PalettePlaceholderStream.t(),
+            Pick::FolderIcon(_) => S::PalettePlaceholderFolderIcon.t(),
+            Pick::NewLibrary => S::PalettePlaceholderNewLibrary.t(),
+            Pick::Library(_) => S::PalettePlaceholderLibrary.t(),
+            Pick::LibraryAdd(_) => S::PalettePlaceholderLibraryAdd.t(),
             Pick::Tags(t) => t.placeholder(),
             Pick::Setting(p) => p.placeholder(),
             Pick::Toolbar(t) => t.placeholder(),
@@ -55,18 +56,18 @@ impl Pick {
 
     fn empty(&self) -> &'static str {
         match self {
-            Pick::Commands => "No matching commands",
-            Pick::NewItem => "No matching kinds of items",
-            Pick::Encoding(_) => "No matching encodings",
-            Pick::Shortcut(_) => "Enter creates the shortcut in this folder",
-            Pick::Stream(_) => "Enter creates the stream",
-            Pick::FolderIcon(_) => "Enter writes the icon into desktop.ini of the folder",
-            Pick::NewLibrary => "Enter creates the library in the Libraries folder",
-            Pick::Library(_) => "No matching folders",
-            Pick::LibraryAdd(_) => "Enter adds the folder to the library",
+            Pick::Commands => S::PaletteEmptyCommands.t(),
+            Pick::NewItem => S::PaletteEmptyNewItem.t(),
+            Pick::Encoding(_) => S::PaletteEmptyEncoding.t(),
+            Pick::Shortcut(_) => S::PaletteEmptyShortcut.t(),
+            Pick::Stream(_) => S::PaletteEmptyStream.t(),
+            Pick::FolderIcon(_) => S::PaletteEmptyFolderIcon.t(),
+            Pick::NewLibrary => S::PaletteEmptyNewLibrary.t(),
+            Pick::Library(_) => S::PaletteEmptyLibrary.t(),
+            Pick::LibraryAdd(_) => S::PaletteEmptyLibraryAdd.t(),
             Pick::Tags(t) => t.empty(),
             Pick::Setting(p) => p.empty(),
-            Pick::Toolbar(_) => "No matching buttons",
+            Pick::Toolbar(_) => S::PaletteEmptyToolbar.t(),
         }
     }
 

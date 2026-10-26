@@ -2,6 +2,7 @@ use super::sidebar::{KnownFolder, PlaceCmd, G_HOME};
 use super::tags::G_TAG;
 use super::{centered, App, Effect, Hit, Route, G_DRIVE, G_FILE, G_FOLDER};
 use crate::fmt as format;
+use crate::i18n::S;
 use crate::location::Location;
 use crate::open::OpenTarget;
 use crate::path::FsPath;
@@ -32,10 +33,10 @@ impl Widget {
 
     pub fn title(self) -> &'static str {
         match self {
-            Widget::QuickAccess => "Quick access",
-            Widget::Drives => "Drives",
-            Widget::Tags => "Tags",
-            Widget::Recent => "Recent files",
+            Widget::QuickAccess => S::HomeWidgetQuickAccess.t(),
+            Widget::Drives => S::HomeWidgetDrives.t(),
+            Widget::Tags => S::HomeWidgetTags.t(),
+            Widget::Recent => S::HomeWidgetRecent.t(),
         }
     }
 
@@ -69,7 +70,7 @@ pub(super) enum Card {
 pub(super) struct Home {
     pub cards: Vec<(Rect, Card)>,
     pub titles: Vec<(Rect, Widget)>,
-    pub notes: Vec<(Rect, &'static str, bool)>,
+    pub notes: Vec<(Rect, S, bool)>,
     pub area: Rect,
     scroll: f32,
     content_h: f32,
@@ -179,16 +180,16 @@ impl App {
                 Widget::QuickAccess => grid(&mut h.cards, &mut y, std::mem::take(&mut folders), FOLDER_CARD),
                 Widget::Drives => grid(&mut h.cards, &mut y, (0..drives).map(Card::Drive).collect(), DRIVE_CARD),
                 Widget::Tags if tags == 0 => {
-                    h.notes.push((Rect::new(x0, y, w, s(NOTE_H)), "No tags yet: Edit tags in the menu of a file adds one", false));
+                    h.notes.push((Rect::new(x0, y, w, s(NOTE_H)), S::HomeNoTags, false));
                     y += s(NOTE_H);
                 }
                 Widget::Tags => grid(&mut h.cards, &mut y, (0..tags).map(Card::Tag).collect(), FOLDER_CARD),
                 Widget::Recent => {
                     if recent_off {
-                        h.notes.push((Rect::new(x0, y, w, s(NOTE_H)), "Windows does not keep a list of recent files: it is turned off in Settings, Personalization, Start", true));
+                        h.notes.push((Rect::new(x0, y, w, s(NOTE_H)), S::HomeRecentOff, true));
                         y += s(NOTE_H);
                     } else if recent.is_empty() {
-                        h.notes.push((Rect::new(x0, y, w, s(NOTE_H)), "No recent files", false));
+                        h.notes.push((Rect::new(x0, y, w, s(NOTE_H)), S::HomeNoRecent, false));
                         y += s(NOTE_H);
                     }
                     for &i in &recent {
@@ -264,19 +265,19 @@ impl App {
             let path = loc.path().clone();
             return self.place_menu(x, y, loc, |_, m| {
                 m.separator();
-                m.place("Remove from the list", PlaceCmd::Forget(path), false);
+                m.place(S::HomeRemoveFromList.t(), PlaceCmd::Forget(path), false);
             });
         }
         let path = loc.path().clone();
         let menu = self.collect(|_, m| {
-            m.place("Open", PlaceCmd::OpenFile(path.clone()), false);
-            m.place("Open file location", PlaceCmd::Reveal(path.clone()), false);
-            m.place("Copy path", PlaceCmd::CopyPath(loc.clone()), false);
+            m.place(S::MenuOpen.t(), PlaceCmd::OpenFile(path.clone()), false);
+            m.place(S::MenuOpenFileLocation.t(), PlaceCmd::Reveal(path.clone()), false);
+            m.place(S::MenuCopyPath.t(), PlaceCmd::CopyPath(loc.clone()), false);
             m.separator();
-            m.place("Remove from the list", PlaceCmd::Forget(path.clone()), false);
-            m.place("Clear the list", PlaceCmd::ClearRecent, false);
+            m.place(S::HomeRemoveFromList.t(), PlaceCmd::Forget(path.clone()), false);
+            m.place(S::HomeClearList.t(), PlaceCmd::ClearRecent, false);
             m.separator();
-            m.place("Properties", PlaceCmd::Properties(path.clone()), false);
+            m.place(S::MenuProperties.t(), PlaceCmd::Properties(path.clone()), false);
         });
         self.show_place_menu(x, y, Some(path), menu);
     }
@@ -289,7 +290,7 @@ impl App {
             }
             if a.widget_shown(Widget::Recent) && a.recent_items().next().is_some() {
                 m.separator();
-                m.place("Clear recent files", PlaceCmd::ClearRecent, false);
+                m.place(S::HomeClearRecent.t(), PlaceCmd::ClearRecent, false);
             }
         });
         self.flit_menu(x, y, menu);
@@ -314,7 +315,7 @@ impl App {
                 centered(g, Rect::new(r.x, r.y, self.s(20.0), r.h), G_WARNING, icons, t.error);
             }
             let x = if warn { r.x + self.s(26.0) } else { r.x };
-            g.text(x, mid(r, ms), note, small, t.text_dim, r.right() - x);
+            g.text(x, mid(r, ms), note.t(), small, t.text_dim, r.right() - x);
         }
         let places = &self.nav.sidebar.places;
         let mut text = String::new();
@@ -343,10 +344,11 @@ impl App {
                         g.dl.round_rect(bar, t.separator, bar.h / 2.0);
                         let fill = if used >= 0.9 { t.error } else { t.accent };
                         g.dl.round_rect(Rect::new(bar.x, bar.y, (bar.w * used.clamp(0.0, 1.0)).max(bar.h), bar.h), fill, bar.h / 2.0);
+                        let (mut free, mut total) = (String::new(), String::new());
+                        format::size_in(&mut free, d.free, self.style.decimal);
+                        format::size_in(&mut total, d.total, self.style.decimal);
                         text.clear();
-                        format::size_in(&mut text, d.free, self.style.decimal);
-                        text.push_str(" free of ");
-                        format::size_in(&mut text, d.total, self.style.decimal);
+                        crate::tr_into!(&mut text, S::HomeDriveFree, free = free, total = total);
                         g.text(tx, r.bottom() - s6 - ms.descent, &text, small, t.text_dim, tw);
                     }
                 }

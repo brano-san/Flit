@@ -1,4 +1,4 @@
-use flit_core::preview::{self, FolderSummary, Kind, PreviewData, PreviewRequest, FOLDER_SCAN, IMAGE_FILE_LIMIT, POSTER_PX, RTF_BYTES, SNIFF_LIMIT, TEXT_BYTES};
+use flit_core::preview::{self, FolderSummary, Kind, Note, PreviewData, PreviewRequest, FOLDER_SCAN, IMAGE_FILE_LIMIT, POSTER_PX, RTF_BYTES, SNIFF_LIMIT, TEXT_BYTES};
 use flit_core::FsPath;
 use flit_platform::Shell;
 use std::io::Read;
@@ -42,13 +42,13 @@ fn folder(req: &PreviewRequest) -> Option<FolderSummary> {
     Some(s.finish(true))
 }
 
-fn basic<S: Shell>(shell: &mut S, req: &PreviewRequest, note: Option<String>) -> PreviewData {
+fn basic<S: Shell>(shell: &mut S, req: &PreviewRequest, note: Option<Note>) -> PreviewData {
     PreviewData::Basic { poster: shell.poster(&req.path, POSTER_PX), note }
 }
 
 fn other<S: Shell>(shell: &mut S, req: &PreviewRequest, ext: &[u8]) -> Option<PreviewData> {
     if ext.eq_ignore_ascii_case(b"lnk") {
-        let note = shell.link_target(&req.path).map(|t| format!("Shortcut to {}", t.display()));
+        let note = shell.link_target(&req.path).map(|t| Note::Shortcut(t.display().into_owned()));
         return Some(PreviewData::Basic { poster: None, note });
     }
     if let Some(clsid) = shell.preview_handler(ext) {
@@ -74,7 +74,7 @@ pub fn load<S: Shell>(shell: &mut S, req: &PreviewRequest) -> Option<PreviewData
     let ext = &ext[ext.len() - flit_core::name::ext_len(ext)..];
     match req.kind {
         Kind::Folder => folder(req).map(PreviewData::Folder),
-        Kind::Image if req.size > IMAGE_FILE_LIMIT => Some(basic(shell, req, Some("The image is too large to preview".into()))),
+        Kind::Image if req.size > IMAGE_FILE_LIMIT => Some(basic(shell, req, Some(Note::TooLarge))),
         Kind::Image => Some(shell.preview_image(&req.path, req.px).map_or_else(|| basic(shell, req, None), PreviewData::Image)),
         Kind::Audio | Kind::Video => Some(PreviewData::Media { video: req.kind == Kind::Video, poster: shell.poster(&req.path, POSTER_PX) }),
         Kind::Rtf => match shell.preview_handler(ext) {

@@ -72,7 +72,6 @@ extract_all = "Extract all…"
 encoding_of_names = "Encoding of names…"
 new = "New"
 eject = "Eject"
-empty_recycle_bin = "Empty Recycle Bin"
 
 [sort]
 name = "Name"

@@ -11,6 +11,14 @@ done_in = "{results} in {ms} ms"
 in = "In {name}"
 all_drives = "All drives"
 recent = "Recent searches · Shift+Del removes one"
+folders = ["{n} folder", "{n} folders"]
+
+[error]
+rows_without_folders = "The index sent rows without folders."
+invalid_rows = "The index sent invalid rows: {error}"
+unavailable = "Search is unavailable: {error}"
+cannot_start = "Cannot start the search: {error}"
+shell = "Windows Search: {error}"
 
 [column]
 folder = "Folder"

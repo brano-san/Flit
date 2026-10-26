@@ -170,7 +170,7 @@ fn closing_and_toggling_panes_keeps_the_right_one() {
     assert_eq!(app.tab().id, left, "closing the active pane leaves the other one");
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Watch { tab, path: None, .. }, .. } if tab == right)));
     app.run_action("pane.close", t0());
-    assert_eq!(app.tab().error.as_deref(), Some(ONE_PANE));
+    assert_eq!(app.tab().error.as_deref(), Some(crate::i18n::S::SplitOnePane.t()));
     key(&mut app, Key::Char('S'), CTRL_SHIFT);
     let added = app.tab().id;
     assert_eq!(app.other_pane().map(|t| t.id), Some(left));
@@ -184,7 +184,7 @@ fn narrow_windows_hide_the_second_pane_and_refuse_a_new_one() {
     let mut app = app_sized(r"C:\a", 700);
     key(&mut app, Key::Char('V'), ALT_SHIFT);
     assert!(app.other_pane().is_none());
-    assert_eq!(app.tab().error.as_deref(), Some(TOO_NARROW));
+    assert_eq!(app.tab().error.as_deref(), Some(crate::i18n::S::SplitTooNarrow.t()));
     ev(&mut app, Event::Resized { width: 1000, height: 600 });
     key(&mut app, Key::Char('V'), ALT_SHIFT);
     assert!(app.split_shown());

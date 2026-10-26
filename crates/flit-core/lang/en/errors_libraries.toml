@@ -1,0 +1,3 @@
+create = "Cannot create {path}: {error}"
+write = "Cannot write {path}: {error}"
+unknown_folder = "The Libraries folder is unknown"

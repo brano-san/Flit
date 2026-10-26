@@ -3,6 +3,7 @@ use super::details::{folder_key, CHECK, CHECK_GAP};
 use super::flow::{Flow, FlowParams};
 use super::{App, Effect, Hit, Tab, ROW_H, SCROLLBAR_W};
 use crate::desktop_ini::FolderKind;
+use crate::i18n::S;
 use crate::input::{Key, Mods};
 use crate::render::Rect;
 use crate::view::DirView;
@@ -28,8 +29,6 @@ const IMAGES: [&[u8]; 20] = [
 const VIDEOS: [&[u8]; 14] = [b"mp4", b"m4v", b"mkv", b"avi", b"mov", b"wmv", b"webm", b"mpg", b"mpeg", b"3gp", b"flv", b"ts", b"m2ts", b"mts"];
 const DOCUMENTS: [&[u8]; 5] = [b"pdf", b"docx", b"xlsx", b"pptx", b"psd"];
 
-pub(super) const ADAPTIVE_SHARED: &str = "Adaptive layout needs per-folder views: turn off \"Use the same view for all folders\" first";
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LayoutMode {
     #[default]
@@ -46,12 +45,12 @@ pub const LAYOUTS: [LayoutMode; 6] = [LayoutMode::Details, LayoutMode::List, Lay
 impl LayoutMode {
     pub fn title(self) -> &'static str {
         match self {
-            LayoutMode::Details => "Details",
-            LayoutMode::List => "List",
-            LayoutMode::Cards => "Cards",
-            LayoutMode::Columns => "Columns",
-            LayoutMode::Grid => "Grid",
-            LayoutMode::Adaptive => "Adaptive",
+            LayoutMode::Details => S::LayoutsDetails.t(),
+            LayoutMode::List => S::LayoutsList.t(),
+            LayoutMode::Cards => S::LayoutsCards.t(),
+            LayoutMode::Columns => S::LayoutsColumns.t(),
+            LayoutMode::Grid => S::LayoutsGrid.t(),
+            LayoutMode::Adaptive => S::LayoutsAdaptive.t(),
         }
     }
 
@@ -429,7 +428,7 @@ impl App {
 
     pub(super) fn set_layout(&mut self, mode: LayoutMode) {
         if mode == LayoutMode::Adaptive && self.prefs.same_for_all {
-            return self.status(ADAPTIVE_SHARED);
+            return self.status(S::LayoutsAdaptiveShared.t());
         }
         let look = self.concrete(self.cur, mode);
         let t = self.tab_mut();
@@ -455,7 +454,7 @@ impl App {
     pub(super) fn clear_thumbnails(&mut self) {
         self.thumbs.clear();
         self.effects.push(Effect::ClearThumbnails);
-        self.status("The thumbnail cache was cleared");
+        self.status(S::LayoutsThumbnailsCleared.t());
     }
 
     pub(super) fn settle_look(&mut self, k: usize, fresh: bool, done: bool) {

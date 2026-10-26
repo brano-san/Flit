@@ -127,7 +127,7 @@ pub(crate) fn purge(pairs: &[(FsPath, FsPath)]) -> OpOutcome {
     let mut out = OpOutcome::default();
     for (recycled, original) in pairs {
         let Some(info) = info_file(recycled) else {
-            out.error = Some(PlatformError::new(-1, format!("{} is not in the Recycle Bin", recycled.display())));
+            out.error = Some(PlatformError::new(-1, flit_core::tr_en!(flit_core::i18n::S::ErrorsEngineNotInBin, path = recycled.display())));
             continue;
         };
         match remove(recycled) {

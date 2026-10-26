@@ -2,6 +2,7 @@ use super::keymap::Keymap;
 use super::toolbar::{Overflow, ToolMenu};
 use super::{App, LayoutMode};
 use crate::archive::{self, Format};
+use crate::i18n::S;
 use crate::listing::attr;
 use crate::location::Location;
 use crate::path::PathKind;
@@ -28,44 +29,44 @@ pub(super) enum Cmd {
     Setting(usize, usize),
 }
 
-const SORTS: [(SortField, &str, &str); 6] = [
-    (SortField::Name, "view.sort.name", "Name"),
-    (SortField::Modified, "view.sort.modified", "Date modified"),
-    (SortField::Created, "view.sort.created", "Date created"),
-    (SortField::Type, "view.sort.type", "Type"),
-    (SortField::Size, "view.sort.size", "Size"),
-    (SortField::Tag, "view.sort.tag", "Tags"),
+const SORTS: [(SortField, &str, S); 6] = [
+    (SortField::Name, "view.sort.name", S::MenuSortName),
+    (SortField::Modified, "view.sort.modified", S::MenuSortModified),
+    (SortField::Created, "view.sort.created", S::MenuSortCreated),
+    (SortField::Type, "view.sort.type", S::MenuSortType),
+    (SortField::Size, "view.sort.size", S::MenuSortSize),
+    (SortField::Tag, "view.sort.tag", S::MenuSortTags),
 ];
 
-const BIN_SORTS: [(SortField, &str, &str); 4] = [
-    (SortField::Name, "view.sort.name", "Name"),
-    (SortField::Origin, "view.sort.origin", "Original location"),
-    (SortField::Modified, "view.sort.modified", "Date deleted"),
-    (SortField::Size, "view.sort.size", "Size"),
+const BIN_SORTS: [(SortField, &str, S); 4] = [
+    (SortField::Name, "view.sort.name", S::MenuSortName),
+    (SortField::Origin, "view.sort.origin", S::MenuSortOrigin),
+    (SortField::Modified, "view.sort.modified", S::MenuSortDeleted),
+    (SortField::Size, "view.sort.size", S::MenuSortSize),
 ];
 
-const FOLDERS: [(Folders, &str, &str); 3] = [
-    (Folders::First, "view.sort.folders_first", "Show folders first"),
-    (Folders::Last, "view.sort.files_first", "Show files first"),
-    (Folders::Mixed, "view.sort.mixed", "Mix files and folders"),
+const FOLDERS: [(Folders, &str, S); 3] = [
+    (Folders::First, "view.sort.folders_first", S::MenuSortFoldersFirst),
+    (Folders::Last, "view.sort.files_first", S::MenuSortFilesFirst),
+    (Folders::Mixed, "view.sort.mixed", S::MenuSortMixed),
 ];
 
-const GROUPS: [(GroupField, &str, &str); 7] = [
-    (GroupField::None, "view.group.none", "None"),
-    (GroupField::Name, "view.group.name", "Name"),
-    (GroupField::Modified, "view.group.modified", "Date modified"),
-    (GroupField::Created, "view.group.created", "Date created"),
-    (GroupField::Type, "view.group.type", "Type"),
-    (GroupField::Size, "view.group.size", "Size"),
-    (GroupField::Tag, "view.group.tag", "Tags"),
+const GROUPS: [(GroupField, &str, S); 7] = [
+    (GroupField::None, "view.group.none", S::MenuGroupNone),
+    (GroupField::Name, "view.group.name", S::MenuSortName),
+    (GroupField::Modified, "view.group.modified", S::MenuSortModified),
+    (GroupField::Created, "view.group.created", S::MenuSortCreated),
+    (GroupField::Type, "view.group.type", S::MenuSortType),
+    (GroupField::Size, "view.group.size", S::MenuSortSize),
+    (GroupField::Tag, "view.group.tag", S::MenuSortTags),
 ];
 
-const BIN_GROUPS: [(GroupField, &str, &str); 5] = [
-    (GroupField::None, "view.group.none", "None"),
-    (GroupField::Name, "view.group.name", "Name"),
-    (GroupField::Origin, "view.group.origin", "Original location"),
-    (GroupField::Modified, "view.group.modified", "Date deleted"),
-    (GroupField::Size, "view.group.size", "Size"),
+const BIN_GROUPS: [(GroupField, &str, S); 5] = [
+    (GroupField::None, "view.group.none", S::MenuGroupNone),
+    (GroupField::Name, "view.group.name", S::MenuSortName),
+    (GroupField::Origin, "view.group.origin", S::MenuSortOrigin),
+    (GroupField::Modified, "view.group.modified", S::MenuSortDeleted),
+    (GroupField::Size, "view.group.size", S::MenuSortSize),
 ];
 
 const LAYOUT_CHOICES: [(LayoutMode, &str); 6] = [
@@ -77,7 +78,7 @@ const LAYOUT_CHOICES: [(LayoutMode, &str); 6] = [
     (LayoutMode::Adaptive, "view.layout.adaptive"),
 ];
 
-const UNITS: [(DateUnit, &str, &str); 3] = [(DateUnit::Year, "view.group.year", "Year"), (DateUnit::Month, "view.group.month", "Month"), (DateUnit::Day, "view.group.day", "Day")];
+const UNITS: [(DateUnit, &str, S); 3] = [(DateUnit::Year, "view.group.year", S::MenuGroupYear), (DateUnit::Month, "view.group.month", S::MenuGroupMonth), (DateUnit::Day, "view.group.day", S::MenuGroupDay)];
 
 
 fn trimmed(mut items: Vec<MenuItem>) -> Vec<MenuItem> {
@@ -120,9 +121,9 @@ impl Menu<'_> {
         self.command(Cmd::Action(id), label, String::new(), checked);
     }
 
-    fn choices<T: PartialEq>(&mut self, items: &[(T, &'static str, &'static str)], current: T) {
+    fn choices<T: PartialEq>(&mut self, items: &[(T, &'static str, S)], current: T) {
         for (v, id, label) in items {
-            self.check(id, label, *v == current);
+            self.check(id, label.t(), *v == current);
         }
     }
 
@@ -170,62 +171,62 @@ impl App {
                 m.check(c.toggle_id(), c.title(), cols.shown(c));
             }
             m.separator();
-            m.action("view.columns.fit", "Size all columns to fit");
-            m.check("view.columns.autofit", "Always size columns to fit", a.prefs.auto_fit);
+            m.action("view.columns.fit", S::MenuFitColumns.t());
+            m.check("view.columns.autofit", S::MenuAutofitColumns.t(), a.prefs.auto_fit);
         })
     }
 
     pub(super) fn build_search_menu(&mut self, on_row: bool) -> Vec<MenuItem> {
         self.collect(|a, m| {
             if on_row {
-                m.command(Cmd::Action("search.reveal"), "Open file location", "Ctrl+Enter".into(), false);
+                m.command(Cmd::Action("search.reveal"), S::MenuOpenFileLocation.t(), "Ctrl+Enter".into(), false);
                 m.separator();
             }
-            m.check("search.group_folder", "Group by folder", a.search.group_folder);
+            m.check("search.group_folder", S::MenuGroupByFolder.t(), a.search.group_folder);
         })
     }
 
     pub(super) fn build_tab_menu(&mut self) -> Vec<MenuItem> {
         self.collect(|a, m| {
             let (n, cur) = (a.tabs.len(), a.cur);
-            m.action("tab.new", "New tab");
+            m.action("tab.new", S::MenuNewTab.t());
             m.separator();
             if n > 1 {
-                m.action("tab.move_to_window", "Move tab to a new window");
+                m.action("tab.move_to_window", S::MenuMoveTabToWindow.t());
                 m.separator();
             }
-            m.action("tab.close", "Close tab");
+            m.action("tab.close", S::MenuCloseTab.t());
             if n > 1 {
-                m.action("tab.close_others", "Close other tabs");
+                m.action("tab.close_others", S::MenuCloseOtherTabs.t());
             }
             if cur > 0 {
-                m.action("tab.close_left", "Close tabs to the left");
+                m.action("tab.close_left", S::MenuCloseTabsLeft.t());
             }
             if cur + 1 < n {
-                m.action("tab.close_right", "Close tabs to the right");
+                m.action("tab.close_right", S::MenuCloseTabsRight.t());
             }
             if !a.nav.closed.is_empty() {
                 m.separator();
-                m.action("tab.reopen", "Reopen closed tab");
+                m.action("tab.reopen", S::MenuReopenClosedTab.t());
             }
         })
     }
 
     pub(super) fn build_tab_actions_menu(&mut self) -> Vec<MenuItem> {
         self.collect(|a, m| {
-            m.action("tab.new", "New tab");
-            m.action("window.new", "New window");
+            m.action("tab.new", S::MenuNewTab.t());
+            m.action("window.new", S::MenuNewWindow.t());
             if a.tabs.len() > 1 {
-                m.action("tab.move_to_window", "Move tab to a new window");
+                m.action("tab.move_to_window", S::MenuMoveTabToWindow.t());
             }
             m.separator();
-            m.action("window.compact", "Mini window");
-            m.action("window.fullscreen", "Full screen");
+            m.action("window.compact", S::MenuMiniWindow.t());
+            m.action("window.fullscreen", S::MenuFullScreen.t());
             a.tab_pane_items(m);
             m.separator();
-            m.action("tab.close_all", "Close all tabs");
+            m.action("tab.close_all", S::MenuCloseAllTabs.t());
             m.separator();
-            m.action("settings.open", "Settings");
+            m.action("settings.open", S::MenuSettings.t());
         })
     }
 
@@ -238,19 +239,19 @@ impl App {
     pub(super) fn build_tag_menu(&mut self, tag: Option<usize>) -> Vec<MenuItem> {
         self.collect(|_, m| {
             if let Some(k) = tag {
-                m.command(Cmd::ShowTag(k), "Show items with this tag", String::new(), false);
-                m.command(Cmd::OpenTagged(k), "Open all tagged items", String::new(), false);
+                m.command(Cmd::ShowTag(k), S::MenuShowTagged.t(), String::new(), false);
+                m.command(Cmd::OpenTagged(k), S::MenuOpenTagged.t(), String::new(), false);
                 m.separator();
             }
-            m.action("tags.new", "New tag");
-            m.action("tags.settings", "Manage tags");
+            m.action("tags.new", S::MenuNewTag.t());
+            m.action("tags.settings", S::MenuManageTags.t());
         })
     }
 
     fn view_menus(&self, m: &mut Menu) {
-        m.submenu("Layout", |m| self.layout_entries(m));
-        m.submenu("Sort by", |m| self.sort_entries(m));
-        m.submenu("Group by", |m| self.group_entries(m));
+        m.submenu(S::MenuLayout.t(), |m| self.layout_entries(m));
+        m.submenu(S::MenuSortBy.t(), |m| self.sort_entries(m));
+        m.submenu(S::MenuGroupBy.t(), |m| self.group_entries(m));
     }
 
     fn layout_entries(&self, m: &mut Menu) {
@@ -260,10 +261,10 @@ impl App {
             m.command(Cmd::Action(id), mode.title(), keys, mode == t.mode);
         }
         m.separator();
-        m.action("view.size.larger", "Larger items");
-        m.action("view.size.smaller", "Smaller items");
+        m.action("view.size.larger", S::MenuLargerItems.t());
+        m.action("view.size.smaller", S::MenuSmallerItems.t());
         m.separator();
-        m.check("view.thumbnails", "Show thumbnails", self.prefs.thumbnails);
+        m.check("view.thumbnails", S::MenuShowThumbnails.t(), self.prefs.thumbnails);
     }
 
     fn sort_entries(&self, m: &mut Menu) {
@@ -271,8 +272,8 @@ impl App {
         let sort = t.view_spec.sort;
         m.choices(if t.view_loc.is_recycle_bin() { &BIN_SORTS[..] } else { &SORTS[..] }, sort.field);
         m.separator();
-        m.check("view.sort.ascending", "Ascending", !sort.descending);
-        m.check("view.sort.descending", "Descending", sort.descending);
+        m.check("view.sort.ascending", S::MenuSortAscending.t(), !sort.descending);
+        m.check("view.sort.descending", S::MenuSortDescending.t(), sort.descending);
         m.separator();
         m.choices(&FOLDERS, sort.folders);
     }
@@ -283,8 +284,8 @@ impl App {
         m.choices(if t.view_loc.is_recycle_bin() { &BIN_GROUPS[..] } else { &GROUPS[..] }, group.field);
         if group.field != GroupField::None {
             m.separator();
-            m.check("view.group.ascending", "Ascending", !group.descending);
-            m.check("view.group.descending", "Descending", group.descending);
+            m.check("view.group.ascending", S::MenuSortAscending.t(), !group.descending);
+            m.check("view.group.descending", S::MenuSortDescending.t(), group.descending);
         }
         if group.field.is_date() {
             m.separator();
@@ -294,17 +295,17 @@ impl App {
 
     fn new_entries(&self, m: &mut Menu) {
         let keys = m.keys.first_text("file.new_folder").unwrap_or_default();
-        m.command(Cmd::NewItem(0), "Folder", keys, false);
-        m.command(Cmd::NewItem(1), "Shortcut", String::new(), false);
+        m.command(Cmd::NewItem(0), S::MenuFolder.t(), keys, false);
+        m.command(Cmd::NewItem(1), S::MenuShortcut.t(), String::new(), false);
         for (k, tpl) in self.nav.sidebar.places.templates.iter().enumerate() {
             m.command(Cmd::NewItem(k + 2), &tpl.label, String::new(), false);
         }
     }
 
     fn select_entries(&self, m: &mut Menu) {
-        m.action("select.all", "Select all");
-        m.action("select.invert", "Invert selection");
-        m.action("select.none", "Clear selection");
+        m.action("select.all", S::MenuSelectAll.t());
+        m.action("select.invert", S::MenuInvertSelection.t());
+        m.action("select.none", S::MenuClearSelection.t());
     }
 
     fn tool_entries(&self, m: &mut Menu, tool: ToolMenu) {
@@ -315,16 +316,16 @@ impl App {
             ToolMenu::Group => self.group_entries(m),
             ToolMenu::Layout => self.layout_entries(m),
             ToolMenu::Extract if self.archive_view().is_some() => {
-                m.action("archive.extract", "Extract…");
-                m.action("archive.extract_here", "Extract next to the archive");
+                m.action("archive.extract", S::MenuExtractDialog.t());
+                m.action("archive.extract_here", S::MenuExtractNextToArchive.t());
             }
             ToolMenu::Extract => {
-                m.action("archive.extract", "Extract files…");
-                m.action("archive.extract_here", "Extract here");
-                m.action("archive.smart", "Smart extract");
-                m.action("archive.extract_folder", "Extract to a folder named after the archive");
+                m.action("archive.extract", S::MenuExtractFiles.t());
+                m.action("archive.extract_here", S::MenuExtractHere.t());
+                m.action("archive.smart", S::MenuSmartExtract.t());
+                m.action("archive.extract_folder", S::MenuExtractToNamedFolder.t());
                 if self.selected_archives().len() == 1 {
-                    m.action("archive.open", "Open as folder");
+                    m.action("archive.open", S::MenuOpenAsFolder.t());
                 }
             }
         }
@@ -348,10 +349,10 @@ impl App {
 
     pub(super) fn build_toolbar_menu(&mut self) -> Vec<MenuItem> {
         self.collect(|_, m| {
-            m.action("toolbar.customize", "Customize the toolbar");
-            m.action("toolbar.reset", "Reset the toolbar to defaults");
+            m.action("toolbar.customize", S::MenuCustomizeToolbar.t());
+            m.action("toolbar.reset", S::MenuResetToolbar.t());
             m.separator();
-            m.action("toolbar.toggle", "Hide the toolbar");
+            m.action("toolbar.toggle", S::MenuHideToolbar.t());
         })
     }
 
@@ -362,10 +363,10 @@ impl App {
         let folders = self.selected_folders();
         let inside = self.archive_view().is_some();
         let files = t.view_loc.path().kind() != PathKind::Computer;
-        m.action("item.open", "Open");
+        m.action("item.open", S::MenuOpen.t());
         if !folders.is_empty() {
-            m.action("item.open_tab", "Open in new tab");
-            m.action("item.open_window", "Open in new window");
+            m.action("item.open_tab", S::MenuOpenInNewTab.t());
+            m.action("item.open_window", S::MenuOpenInNewWindow.t());
             if m.shown("pane.menu") {
                 self.item_pane_items(m);
             }
@@ -373,60 +374,60 @@ impl App {
         m.separator();
         if files {
             if !inside {
-                m.action("file.cut", "Cut");
+                m.action("file.cut", S::MenuCut.t());
             }
-            m.action("file.copy", "Copy");
+            m.action("file.copy", S::MenuCopy.t());
             if count == 1 && folders.len() == 1 {
-                m.action("file.paste_into", "Paste");
+                m.action("file.paste_into", S::MenuPaste.t());
             }
         }
-        m.action("item.copy_path", "Copy path");
+        m.action("item.copy_path", S::MenuCopyPath.t());
         if inside {
             m.separator();
-            m.action("archive.extract", "Extract…");
-            m.action("archive.extract_here", "Extract next to the archive");
+            m.action("archive.extract", S::MenuExtractDialog.t());
+            m.action("archive.extract_here", S::MenuExtractNextToArchive.t());
             return;
         }
         if files {
-            m.action("file.shortcut", "Create shortcut");
-            m.action("file.rename", "Rename");
-            m.action("item.trash", "Delete");
+            m.action("file.shortcut", S::MenuCreateShortcut.t());
+            m.action("file.rename", S::MenuRename.t());
+            m.action("item.trash", S::MenuDelete.t());
         }
         m.separator();
         if folders.len() == count {
             let pinned = folders.iter().all(|l| self.nav.sidebar.state.pinned.contains(l));
-            m.action("item.pin", if pinned { "Unpin from sidebar" } else { "Pin to sidebar" });
+            m.action("item.pin", if pinned { S::MenuUnpinFromSidebar.t() } else { S::MenuPinToSidebar.t() });
         }
         if t.view_loc.path().kind() == PathKind::Drive && m.shown("tags.edit") {
             let (any, all) = self.selection_tags();
-            m.submenu("Edit tags", |m| {
+            m.submenu(S::MenuEditTags.t(), |m| {
                 for (k, tag) in self.tag_defs().iter().enumerate() {
                     m.command(Cmd::ToggleTag(k), &tag.name, String::new(), all & (1 << k) != 0);
                 }
                 m.separator();
-                m.action("tags.new", "New tag");
+                m.action("tags.new", S::MenuNewTag.t());
                 if any != 0 {
-                    m.action("tags.remove", "Remove tags");
+                    m.action("tags.remove", S::MenuRemoveTags.t());
                 }
             });
         }
         if files {
-            m.action("file.new_folder_with_selection", "New folder with selection");
+            m.action("file.new_folder_with_selection", S::MenuNewFolderWithSelection.t());
             if count == 1 && folders.is_empty() {
-                m.action("file.new_stream", "New alternate data stream");
+                m.action("file.new_stream", S::MenuNewStream.t());
             }
             if !folders.is_empty() {
-                m.action("app.terminal", "Open in terminal");
+                m.action("app.terminal", S::MenuOpenInTerminal.t());
             }
             if count == 1 && folders.len() == 1 {
-                m.action("file.folder_icon", "Change icon");
+                m.action("file.folder_icon", S::MenuChangeIcon.t());
                 let custom = attr::READONLY | attr::SYSTEM;
                 if self.rename_target().is_some_and(|i| v.listing().entries[i as usize].attrs & custom != 0) {
-                    m.action("file.folder_icon_reset", "Restore default icon");
+                    m.action("file.folder_icon_reset", S::MenuRestoreDefaultIcon.t());
                 }
             }
             if self.show_flatten && !folders.is_empty() && folders.len() == count {
-                m.action("file.flatten", "Flatten folder");
+                m.action("file.flatten", S::MenuFlattenFolder.t());
             }
             m.separator();
             if m.shown("archive.menu") {
@@ -434,33 +435,33 @@ impl App {
             }
         }
         m.separator();
-        m.action("item.properties", "Properties");
+        m.action("item.properties", S::MenuProperties.t());
     }
 
     fn archive_menu(&self, m: &mut Menu, count: usize, no_folders: bool) {
         let archives = self.selected_archives();
         if !archives.is_empty() {
             let own = match archives.as_slice() {
-                [one] => format!("Extract to \u{201C}{}\\\u{201D}", crate::name::display(archive::stem(one.file_name()))),
-                _ => "Extract each to its own folder".to_owned(),
+                [one] => crate::tr!(S::MenuExtractTo, name = crate::name::display(archive::stem(one.file_name()))),
+                _ => S::MenuExtractEach.t().to_owned(),
             };
-            m.submenu("Extract", |m| {
-                m.action("archive.extract", "Extract files…");
-                m.action("archive.extract_here", "Extract here");
-                m.action("archive.smart", "Smart extract");
+            m.submenu(S::MenuExtract.t(), |m| {
+                m.action("archive.extract", S::MenuExtractFiles.t());
+                m.action("archive.extract_here", S::MenuExtractHere.t());
+                m.action("archive.smart", S::MenuSmartExtract.t());
                 m.action("archive.extract_folder", &own);
                 if archives.len() == 1 {
-                    m.action("archive.open", "Open as folder");
+                    m.action("archive.open", S::MenuOpenAsFolder.t());
                 }
             });
         }
-        m.submenu("Compress", |m| {
-            m.action("archive.compress", "Add to archive…");
-            m.action("archive.zip", &format!("Compress to \u{201C}{}\u{201D}", self.quick_name(Format::Zip)));
-            m.action("archive.7z", &format!("Compress to \u{201C}{}\u{201D}", self.quick_name(Format::SevenZ)));
+        m.submenu(S::MenuCompress.t(), |m| {
+            m.action("archive.compress", S::MenuAddToArchive.t());
+            m.action("archive.zip", &crate::tr!(S::MenuCompressTo, name = self.quick_name(Format::Zip)));
+            m.action("archive.7z", &crate::tr!(S::MenuCompressTo, name = self.quick_name(Format::SevenZ)));
         });
         if count == 1 && no_folders {
-            m.action("file.hashes", "Hashes…");
+            m.action("file.hashes", S::MenuHashes.t());
         }
     }
 
@@ -468,7 +469,7 @@ impl App {
         let t = self.tab();
         let files = t.view_loc.path().kind() != PathKind::Computer;
         self.view_menus(m);
-        m.action("nav.refresh", "Refresh");
+        m.action("nav.refresh", S::MenuRefresh.t());
         m.separator();
         if m.shown("pane.menu") {
             self.here_pane_items(m);
@@ -477,27 +478,27 @@ impl App {
             return;
         }
         if self.archive_view().is_some() {
-            m.action("file.paste", "Paste");
-            m.action("archive.extract", "Extract all…");
+            m.action("file.paste", S::MenuPaste.t());
+            m.action("archive.extract", S::MenuExtractAll.t());
             if !self.sizes_label().is_empty() {
-                m.action("archive.encoding", "Encoding of names…");
+                m.action("archive.encoding", S::MenuEncodingOfNames.t());
             }
-            m.action("item.copy_path", "Copy path");
+            m.action("item.copy_path", S::MenuCopyPath.t());
             return;
         }
         if files {
             if m.shown("file.new_item") {
-                m.submenu("New", |m| self.new_entries(m));
+                m.submenu(S::MenuNew.t(), |m| self.new_entries(m));
             }
-            m.action("file.paste", "Paste");
-            m.action("app.terminal", "Open in terminal");
+            m.action("file.paste", S::MenuPaste.t());
+            m.action("app.terminal", S::MenuOpenInTerminal.t());
         }
         let pinned = self.nav.sidebar.state.pinned.contains(t.location());
-        m.action("sidebar.pin", if pinned { "Unpin from sidebar" } else { "Pin to sidebar" });
-        m.action("item.copy_path", "Copy path");
+        m.action("sidebar.pin", if pinned { S::MenuUnpinFromSidebar.t() } else { S::MenuPinToSidebar.t() });
+        m.action("item.copy_path", S::MenuCopyPath.t());
         m.separator();
         if files {
-            m.action("item.properties", "Properties");
+            m.action("item.properties", S::MenuProperties.t());
         }
     }
 

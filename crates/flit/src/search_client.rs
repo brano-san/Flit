@@ -1,6 +1,8 @@
 use crate::find::{self, Found, Hit};
 use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
+use flit_core::i18n::S;
 use flit_core::tags::TagCell;
+use flit_core::tr;
 use flit_core::ui::{IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource};
 use flit_core::FsPath;
 use flit_platform::{start_indexer, Duplex, IndexSource, Platform, PlatformError, Service, Wake, WindowId};
@@ -107,8 +109,8 @@ pub fn to_event(msg: Message, backend: SearchBackend, note: &Option<String>) -> 
         Message::Rows { gen, from, entries, dirs } => {
             let rows = match entries.entries(true) {
                 Ok(it) if dirs.len() == entries.len() => it.zip(dirs).map(|((name, meta), dir)| SearchRow { name: name.to_vec(), dir, meta }).collect(),
-                Ok(_) => return Some(SearchEvent::Error { message: "the index sent rows without folders".into() }),
-                Err(e) => return Some(SearchEvent::Error { message: format!("the index sent invalid rows: {e}") }),
+                Ok(_) => return Some(SearchEvent::Error { message: S::SearchErrorRowsWithoutFolders.t().into() }),
+                Err(e) => return Some(SearchEvent::Error { message: tr!(S::SearchErrorInvalidRows, error = e) }),
             };
             SearchEvent::Rows { gen, from, rows }
         }
@@ -330,7 +332,7 @@ impl<P: Platform> Worker<P> {
                 self.links.insert(window, link);
                 self.send(window, SearchEvent::Status { backend: SearchBackend::Fallback, volumes: Vec::new(), note });
             }
-            Err(e) => self.send(window, SearchEvent::Error { message: format!("search is unavailable: {e}") }),
+            Err(e) => self.send(window, SearchEvent::Error { message: tr!(S::SearchErrorUnavailable, error = e) }),
         }
     }
 
@@ -431,7 +433,7 @@ impl<P: Platform> Worker<P> {
         });
         if let Err(e) = spawned {
             self.hits.remove(&window);
-            self.send(window, SearchEvent::Error { message: format!("cannot start the search: {e}") });
+            self.send(window, SearchEvent::Error { message: tr!(S::SearchErrorCannotStart, error = e) });
             self.send(window, SearchEvent::Done { gen, total: 0 });
         }
     }
@@ -523,7 +525,7 @@ fn run_shell<P: Platform>(folder: Option<&FsPath>, aqs: &str, keep_going: find::
     flush(&mut batch);
     if let Err(e) = result {
         tracing::warn!("Windows Search: {e}");
-        found.lock().unwrap_or_else(|e| e.into_inner()).error = Some(format!("Windows Search: {}", e.message.trim()));
+        found.lock().unwrap_or_else(|e| e.into_inner()).error = Some(tr!(S::SearchErrorShell, error = e.message.trim()));
     }
 }
 

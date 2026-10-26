@@ -1,4 +1,5 @@
 use crate::hash::FxHashMap;
+use crate::i18n::S;
 use crate::listing::Meta;
 use crate::path::FsPath;
 use serde::{Deserialize, Serialize};
@@ -6,17 +7,17 @@ use std::sync::{Arc, RwLock};
 
 pub const MAX_TAGS: usize = 32;
 pub const MAX_NAME: usize = 64;
-pub const COLORS: [(&str, u32); 10] = [
-    ("Red", 0xE81123),
-    ("Orange", 0xF7630C),
-    ("Yellow", 0xFFB900),
-    ("Green", 0x16C60C),
-    ("Teal", 0x00B7C3),
-    ("Blue", 0x0078D4),
-    ("Purple", 0x8764B8),
-    ("Pink", 0xE3008C),
-    ("Brown", 0x8E562E),
-    ("Gray", 0x7A7574),
+pub const COLORS: [(S, u32); 10] = [
+    (S::ThemeTagColorRed, 0xE81123),
+    (S::ThemeTagColorOrange, 0xF7630C),
+    (S::ThemeTagColorYellow, 0xFFB900),
+    (S::ThemeTagColorGreen, 0x16C60C),
+    (S::ThemeTagColorTeal, 0x00B7C3),
+    (S::ThemeTagColorBlue, 0x0078D4),
+    (S::ThemeTagColorPurple, 0x8764B8),
+    (S::ThemeTagColorPink, 0xE3008C),
+    (S::ThemeTagColorBrown, 0x8E562E),
+    (S::ThemeTagColorGray, 0x7A7574),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,25 +68,25 @@ pub fn find(tags: &[Tag], name: &str) -> Option<usize> {
 pub fn validate_name(tags: &[Tag], name: &str, except: Option<usize>) -> Result<String, &'static str> {
     let name = name.trim();
     if name.is_empty() {
-        return Err("Enter a name for the tag");
+        return Err(S::ErrorsTagsEmpty.en());
     }
     if name.starts_with('.') || name.ends_with('.') {
-        return Err("A tag name cannot start or end with a dot");
+        return Err(S::ErrorsTagsDot.en());
     }
     if name.chars().any(|c| c.is_control() || c == '"') {
-        return Err("A tag name cannot contain quotes or control characters");
+        return Err(S::ErrorsTagsCharacters.en());
     }
     if name.chars().count() > MAX_NAME {
-        return Err("A tag name can be at most 64 characters long");
+        return Err(S::ErrorsTagsTooLong.en());
     }
     if find(tags, name).is_some_and(|k| Some(k) != except) {
-        return Err("A tag with this name already exists");
+        return Err(S::ErrorsTagsExists.en());
     }
     Ok(name.to_owned())
 }
 
 pub fn color_name(color: u32) -> &'static str {
-    COLORS.iter().find(|c| c.1 == color).map_or("Custom", |c| c.0)
+    COLORS.iter().find(|c| c.1 == color).map_or(S::ThemeTagColorCustom, |c| c.0).t()
 }
 
 pub fn query_for(name: &str) -> String {
@@ -117,7 +118,7 @@ impl TagStore {
     pub fn add(&mut self, name: &str, color: u32) -> Result<usize, &'static str> {
         let name = validate_name(&self.tags, name, None)?;
         if self.tags.len() >= MAX_TAGS {
-            return Err("Flit supports at most 32 tags");
+            return Err(S::ErrorsTagsTooMany.en());
         }
         self.tags.push(Tag { name, color });
         Ok(self.tags.len() - 1)
@@ -125,7 +126,7 @@ impl TagStore {
 
     pub fn rename(&mut self, k: usize, name: &str) -> Result<(), &'static str> {
         let name = validate_name(&self.tags, name, Some(k))?;
-        self.tags.get_mut(k).ok_or("This tag no longer exists")?.name = name;
+        self.tags.get_mut(k).ok_or(S::ErrorsTagsGone.en())?.name = name;
         Ok(())
     }
 

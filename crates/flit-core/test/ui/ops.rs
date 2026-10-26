@@ -242,7 +242,7 @@ fn deleting_permanently_cannot_be_undone() {
     app.drain_effects().for_each(drop);
     key(&mut app, Key::Char('Z'), CTRL);
     assert!(ops(&mut app).is_empty());
-    assert_eq!(app.tab().error.as_deref(), Some(crate::undo::NOT_RECYCLED));
+    assert_eq!(app.tab().error.as_deref(), Some(crate::i18n::S::ErrorsOpsNotRecycled.en()));
 }
 
 #[test]
@@ -707,7 +707,7 @@ fn the_recycle_bin_shows_where_items_came_from_and_refuses_ordinary_file_command
     for (k, m) in [(Key::Char('C'), CTRL), (Key::Char('X'), CTRL), (Key::Enter, ALT), (Key::F(10), SHIFT)] {
         key(&mut app, k, m);
         assert!(app.drain_effects().all(|e| !matches!(e, Effect::SetClipboardFiles { .. } | Effect::Properties(_) | Effect::ShellMenu(_))));
-        assert_eq!(app.tab().error.as_deref(), Some(BIN_ONLY));
+        assert_eq!(app.tab().error.as_deref(), Some(BIN_ONLY.t()));
     }
     for (k, m) in [(Key::Char('V'), CTRL), (Key::Char('N'), CTRL_SHIFT)] {
         key(&mut app, k, m);
@@ -807,7 +807,7 @@ fn shift_delete_deletes_permanently_without_an_undo_step() {
     assert_eq!(app.tab().error.as_deref(), Some("Nothing to undo"));
     app.run_action("bin.restore", t0());
     assert!(ops(&mut app).is_empty());
-    assert_eq!(app.tab().error.as_deref(), Some(OPEN_BIN));
+    assert_eq!(app.tab().error.as_deref(), Some(OPEN_BIN.t()));
     app.run_action("bin.empty", t0());
     key(&mut app, Key::Enter, NO);
     assert_eq!(op_list(&mut app), [FileOp::EmptyBin], "the bin can be emptied from anywhere");
@@ -1239,7 +1239,7 @@ fn restore_all_from_the_sidebar_lists_the_bin_first_when_it_is_not_open() {
     let (gen, out) = app.drain_effects().find_map(|e| if let Effect::Provider { req: ProviderRequest::List { gen, out, .. }, .. } = e { Some((gen, out)) } else { None }).unwrap();
     out.publish(Arc::new(DirSnapshot { gen, path: path.clone(), listing: Listing::default(), keys: SortKeys::new(CaseMode::Insensitive), order: Vec::new(), view: ViewSpec::default(), done: true, error: None, elapsed: Duration::ZERO }));
     app.poll();
-    assert_eq!(app.tab().error.as_deref(), Some("The Recycle Bin is empty"));
+    assert_eq!(app.tab().error.as_deref(), Some(S::UiEmptyBin.t()));
     app.run_action("bin.restore", t0());
     assert_eq!(app.tab().error.as_deref(), Some("Open the Recycle Bin to restore items"));
 }

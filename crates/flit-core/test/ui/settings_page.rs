@@ -298,7 +298,7 @@ fn about_page_shows_versions_and_libraries() {
     let lines = a.settings_lines();
     assert!(lines[0].starts_with("Version: Flit ") && lines[1] == "Windows: Windows 11 Pro 24H2 (build 26100.1)");
     assert!(lines.contains(&"serde_json: settings file".to_owned()));
-    assert_eq!(lines[3..7], ["Help", "Documentation | Report a bug | Request a feature", "GitHub repository | Privacy statement", NO_TELEMETRY]);
+    assert_eq!(lines[3..7], ["Help", "Documentation | Report a bug | Request a feature", "GitHub repository | Privacy statement", NO_TELEMETRY.t()]);
     let k = ui(&a).lines.iter().position(|l| l.buttons().contains(&Btn::ReportBug)).unwrap();
     let r = button_rects(&ui(&a).lines[k].clone(), rect(&a, k), s)[1];
     a.drain_effects().for_each(drop);

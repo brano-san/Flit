@@ -366,7 +366,7 @@ impl App {
     fn open_folders_in(&mut self, target: OpenTarget, now: Instant) {
         let routes: Vec<Route> = self.selected_folders().into_iter().map(|folder| Route { folder, select: None }).collect();
         if routes.is_empty() {
-            return self.status("Select the folders to open");
+            return self.status(S::ActionsStatusSelectFolders.t());
         }
         if target == OpenTarget::NewTab {
             return self.open_in_tabs(routes, now);

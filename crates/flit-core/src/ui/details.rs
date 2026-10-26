@@ -3,7 +3,7 @@ use super::ops::TIMER_SLACK;
 use super::{centered, App, Column, Drag, Effect, Hit, MenuItem, ShellMenu, Tab, BIN_COLUMNS, COLUMNS, G_CHEVRON, G_FILE, G_FOLDER, G_SORT_DOWN};
 use crate::fmt as format;
 use crate::hash::{FxHashMap, FxHasher};
-use crate::i18n::S;
+use crate::i18n::{P, S};
 use crate::input::{CursorIcon, MouseButton};
 use crate::listing::{attr, FsError, FsErrorKind, Listing};
 use crate::location::Location;
@@ -32,16 +32,15 @@ const AUTOSCROLL_RATE: f32 = 8.0;
 pub(super) const CHECK: f32 = 14.0;
 pub(super) const CHECK_GAP: f32 = 8.0;
 pub const THUMB_CACHE_MB: (u32, u32, u32) = (100, 500, 5000);
-const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-const SIZE_GROUPS: [&str; 8] = [
-    "Folders",
-    "Empty",
-    "Tiny (under 16 KB)",
-    "Small (16 KB to 1 MB)",
-    "Medium (1 to 128 MB)",
-    "Large (128 MB to 1 GB)",
-    "Huge (1 to 4 GB)",
-    "Gigantic (over 4 GB)",
+const SIZE_GROUPS: [S; 8] = [
+    S::DetailsSizeGroupFolders,
+    S::DetailsSizeGroupEmpty,
+    S::DetailsSizeGroupTiny,
+    S::DetailsSizeGroupSmall,
+    S::DetailsSizeGroupMedium,
+    S::DetailsSizeGroupLarge,
+    S::DetailsSizeGroupHuge,
+    S::DetailsSizeGroupGigantic,
 ];
 const G_CALENDAR: &str = "\u{E787}";
 const G_FONT: &str = "\u{E8D2}";
@@ -296,12 +295,12 @@ impl Tab {
 
 fn date_label(s: &mut impl std::fmt::Write, value: Option<i64>, unit: DateUnit) {
     let Some(n) = value else {
-        let _ = s.write_str("Unknown date");
+        let _ = s.write_str(S::DetailsGroupUnknownDate.t());
         return;
     };
     let _ = match unit {
         DateUnit::Year => write!(s, "{n}"),
-        DateUnit::Month => write!(s, "{} {}", MONTHS[n.rem_euclid(12) as usize], n.div_euclid(12)),
+        DateUnit::Month => write!(s, "{} {}", format::month_name(n.rem_euclid(12) as u32 + 1), n.div_euclid(12)),
         DateUnit::Day => {
             let (y, m, d) = format::civil_from_days(n);
             write!(s, "{y:04}-{m:02}-{d:02}")
@@ -465,7 +464,7 @@ impl App {
 
     pub(super) fn set_default_view(&mut self) {
         self.prefs.defaults = self.tab().folder_view();
-        self.status("New folders will open with this view");
+        self.status(S::DetailsStatusDefaultView.t());
     }
 
     pub(super) fn fit_columns<B: TextBackend>(&mut self, g: &mut Gfx<B>, arena: &Bump) {
@@ -513,18 +512,18 @@ impl App {
     pub(super) fn type_text<'a>(&self, arena: &'a Bump, l: &Listing, i: u32) -> &'a str {
         let e = &l.entries[i as usize];
         if e.attrs & attr::VOLUME != 0 {
-            return "Drive";
+            return S::DetailsTypeDrive.t();
         }
         if e.is_dir() {
-            return "File folder";
+            return S::DetailsTypeFolder.t();
         }
         let ext = l.ext(i);
         match self.type_names.get(&ext.to_ascii_lowercase()) {
             Some(Some(n)) if !n.is_empty() => arena.alloc_str(n),
-            _ if ext.is_empty() => "File",
+            _ if ext.is_empty() => S::DetailsTypeFile.t(),
             _ => {
                 let mut s = bumpalo::collections::String::new_in(arena);
-                let _ = write!(s, "{} File", name::display(ext).to_uppercase());
+                crate::tr_into!(&mut s, S::DetailsTypeExtFile, ext = name::display(ext).to_uppercase());
                 s.into_bump_str()
             }
         }
@@ -561,14 +560,14 @@ impl App {
                 _ => s.extend(name::display(l.name(i)).chars().take(1).flat_map(char::to_uppercase)),
             },
             GroupField::Type => return self.type_text(arena, l, i),
-            GroupField::Size => s.push_str(SIZE_GROUPS[sort::size_bucket(e) as usize]),
+            GroupField::Size => s.push_str(SIZE_GROUPS[sort::size_bucket(e) as usize].t()),
             GroupField::Modified => date_label(&mut s, sort::date_unit_value(e.modified, &spec), spec.group.unit),
             GroupField::Created => date_label(&mut s, sort::date_unit_value(e.created, &spec), spec.group.unit),
             GroupField::Origin => match recycle::origin(l, i) {
-                [] => s.push_str("Unknown location"),
+                [] => s.push_str(S::DetailsGroupUnknownLocation.t()),
                 o => s.push_str(&name::display(o)),
             },
-            GroupField::Tag => s.push_str(self.tag_defs().get(sort::first_tag(e.tags) as usize).map_or("No tags", |t| t.name.as_str())),
+            GroupField::Tag => s.push_str(self.tag_defs().get(sort::first_tag(e.tags) as usize).map_or(S::DetailsGroupNoTags.t(), |t| t.name.as_str())),
         }
         s.into_bump_str()
     }
@@ -651,15 +650,16 @@ impl App {
 
     pub(super) fn count_text(&self, s: &mut impl std::fmt::Write, v: &DirView) {
         let n = v.base_rows().len();
-        let plural = |k: usize, one: &'static str, many: &'static str| if k == 1 { one } else { many };
-        let _ = if v.is_filtered() {
-            write!(s, "{n} of {} {}", v.total_rows(), plural(v.total_rows(), "item", "items"))
+        if v.is_filtered() {
+            crate::trn_into!(s, P::DetailsCountFiltered, v.total_rows(), shown = crate::i18n::num(n as u64));
         } else if self.prefs.split_count {
             let dirs = v.base_rows().iter().filter(|&&i| v.listing().entries[i as usize].is_dir()).count();
-            write!(s, "{dirs} {}, {} {}", plural(dirs, "folder", "folders"), n - dirs, plural(n - dirs, "file", "files"))
+            crate::trn_into!(&mut *s, P::DetailsCountFolders, dirs);
+            let _ = s.write_str(", ");
+            crate::trn_into!(s, P::DetailsCountFiles, n - dirs);
         } else {
-            write!(s, "{n} {}", plural(n, "item", "items"))
-        };
+            crate::trn_into!(s, P::DetailsCountItems, n);
+        }
     }
 
     pub(super) fn draw_checkbox<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme, r: Rect, on: bool) {

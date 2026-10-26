@@ -1,3 +1,4 @@
 not_json = "The settings file is not valid JSON ({error}), so the settings of the last session stay"
 tags = "The tags in the settings file are not a list, so they were ignored"
 value = "The value of {key} in the settings file is not valid, so the default is used"
+is_folder = "{path} is a folder"

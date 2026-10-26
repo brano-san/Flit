@@ -35,7 +35,7 @@ fn every_operation_has_its_inverse() {
 fn nothing_done_means_nothing_to_undo_and_permanent_deletes_refuse() {
     assert_eq!(inverse(&report(FileOp::Copy { items: vec![p(r"C:\a\x")], dest: p(r"C:\b") }, &[])), None);
     let gone = report(FileOp::Trash(vec![p(r"\\srv\s\x")]), &[(r"\\srv\s\x", r"\\srv\s\x")]);
-    assert_eq!(inverse(&gone), Some(Step::Refuse(NOT_RECYCLED)));
+    assert_eq!(inverse(&gone), Some(Step::Refuse(crate::i18n::S::ErrorsOpsNotRecycled.en())));
 }
 
 #[test]

@@ -381,7 +381,7 @@ pub trait Platform: 'static {
         Vec::new()
     }
     fn library(_op: &flit_core::library::LibraryOp) -> Result<(), PlatformError> {
-        Err(PlatformError::new(-1, "libraries are not available on this system"))
+        Err(PlatformError::new(-1, flit_core::i18n::S::ErrorsEngineNoLibraries.en()))
     }
     fn recent(_limit: usize) -> (Vec<flit_core::ui::Recent>, bool) {
         (Vec::new(), false)
@@ -412,6 +412,6 @@ pub trait Platform: 'static {
         keys.iter().map(|_| Resolved::Unavailable).collect()
     }
     fn shell_search(_folder: Option<&FsPath>, _query: &str, _keep_going: &dyn Fn() -> bool, _found: &mut dyn FnMut(FsPath, flit_core::Meta)) -> Result<(), PlatformError> {
-        Err(PlatformError::new(-1, "Windows Search is not available on this system"))
+        Err(PlatformError::new(-1, flit_core::i18n::S::ErrorsEngineNoWindowsSearch.en()))
     }
 }

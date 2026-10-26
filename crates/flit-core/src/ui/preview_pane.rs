@@ -5,7 +5,8 @@ use crate::input::CursorIcon;
 use crate::listing::{attr, Entry};
 use crate::name;
 use crate::path::{FsPath, PathKind};
-use crate::preview::{self, Block, Doc, FolderSummary, HostCmd, HostEvent, Hosted, Kind, MediaCmd, PreviewData, PreviewRequest, PropGroup, Run, Tone, IMAGE_PX};
+use crate::i18n::{P, S};
+use crate::preview::{self, Block, Doc, FolderSummary, HostCmd, HostEvent, Hosted, Kind, MediaCmd, Note, PreviewData, PreviewRequest, PropGroup, Run, Tone, IMAGE_PX};
 use crate::provider::GenToken;
 use crate::recycle;
 use crate::render::{Color, Rect};
@@ -26,7 +27,7 @@ const ROW: f32 = 22.0;
 const ICON_PX: f32 = 48.0;
 const BUTTON_H: f32 = 28.0;
 const CONTROLS_H: f32 = 34.0;
-const TAB_TITLES: [&str; 2] = ["Preview", "Details"];
+const TAB_TITLES: [S; 2] = [S::PreviewTabPreview, S::PreviewTabDetails];
 const G_PLAY: &str = "\u{E768}";
 const G_PAUSE: &str = "\u{E769}";
 const G_VOLUME: &str = "\u{E767}";
@@ -97,7 +98,7 @@ enum Content {
     Folder(FolderSummary),
     Media { video: bool },
     Handler,
-    Basic(Option<String>),
+    Basic(Option<Note>),
     Props(Vec<PropGroup>),
 }
 
@@ -309,10 +310,6 @@ fn layout_doc<B: TextBackend>(g: &mut Gfx<B>, d: &Doc, width: f32, sc: f32, widt
 fn clock(out: &mut String, secs: f64) {
     let s = secs.max(0.0) as u64;
     let _ = if s >= 3600 { write!(out, "{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { write!(out, "{}:{:02}", s / 60, s % 60) };
-}
-
-fn plural(n: u64, one: &str, many: &str) -> String {
-    format!("{} {}", super::thousands(n), if n == 1 { one } else { many })
 }
 
 impl App {
@@ -544,7 +541,7 @@ impl App {
                 let dir_key = if in_bin { recycle::origin(l, i).to_vec() } else { base.dir_key };
                 Some(Subject { title: name::display(name).into_owned(), path, kind, entry: Some(e), ext: l.ext(i).to_vec(), dir_key, drive, ..base })
             }
-            n => Some(Subject { title: format!("{} items selected", super::thousands(n as u64)), many: Some((n, v.selected_size())), path: None, ..base }),
+            n => Some(Subject { title: crate::trn!(P::PreviewSelected, n), many: Some((n, v.selected_size())), path: None, ..base }),
         }
     }
 
@@ -578,7 +575,7 @@ impl App {
         let Some(s) = subject.filter(|s| s.many.is_none() && s.drive.is_none()) else { return };
         let Some(path) = s.path else { return };
         if archived {
-            p.content = Content::Basic(Some("Inside an archive: extract it to preview".into()));
+            p.content = Content::Basic(Some(Note::Archived));
             return;
         }
         let side = p.r.body.w.max(p.r.body.h) * 2.0;
@@ -625,7 +622,7 @@ impl App {
             HostEvent::Failed { gen, message } if gen == p.host.gen => {
                 let media = !p.host.handler;
                 p.host = Host::default();
-                p.content = if media { Content::Basic(Some(format!("Cannot play this file: {message}"))) } else { Content::Basic(Some(message)) };
+                p.content = if media { Content::Basic(Some(Note::CannotPlay(message))) } else { Content::Basic(Some(Note::Message(message))) };
             }
             HostEvent::Media { gen, position, duration, playing } if gen == p.host.gen => p.media = Media { position, duration, playing },
             _ => return,
@@ -668,7 +665,7 @@ impl App {
             if self.hover == Hit::Preview(PaneHit::Tab(i)) {
                 g.dl.round_rect(tr, t.button_hover, self.s(4.0));
             }
-            centered(g, tr, title, font, if active { t.text } else { t.text_dim });
+            centered(g, tr, title.t(), font, if active { t.text } else { t.text_dim });
             if active {
                 g.dl.rect(Rect::new(tr.x + self.s(16.0), tr.bottom() - self.s(2.0), tr.w - self.s(32.0), self.s(2.0)), t.accent);
             }
@@ -689,7 +686,7 @@ impl App {
             let c = if self.hover == Hit::Preview(PaneHit::Properties) { t.button_hover } else { t.input_bg };
             g.dl.round_rect(b, c, self.s(4.0));
             g.dl.outline(b, t.input_border, self.s(4.0), 1.0);
-            centered(g, b, "Properties", self.ui_font(12.5), t.text);
+            centered(g, b, S::PreviewProperties.t(), self.ui_font(12.5), t.text);
         }
         self.place_host();
     }
@@ -721,17 +718,17 @@ impl App {
     }
 
     fn type_label(&self, s: &Subject) -> String {
-        let Some(e) = s.entry else { return "File folder".into() };
+        let Some(e) = s.entry else { return S::DetailsTypeFolder.t().into() };
         if e.attrs & attr::VOLUME != 0 {
-            return "Drive".into();
+            return S::DetailsTypeDrive.t().into();
         }
         if e.is_dir() {
-            return "File folder".into();
+            return S::DetailsTypeFolder.t().into();
         }
         match self.type_names.get(&s.ext.to_ascii_lowercase()) {
             Some(Some(n)) if !n.is_empty() => n.clone(),
-            _ if s.ext.is_empty() => "File".into(),
-            _ => format!("{} file", name::display(&s.ext).to_uppercase()),
+            _ if s.ext.is_empty() => S::DetailsTypeFile.t().into(),
+            _ => crate::tr!(S::DetailsTypeExtFile, ext = name::display(&s.ext).to_uppercase()),
         }
     }
 
@@ -777,31 +774,31 @@ impl App {
         };
         let mut rows: Vec<(&str, String)> = Vec::new();
         if let Some((n, bytes)) = s.many {
-            rows.push(("Items", super::thousands(n as u64)));
-            rows.push(("Total size", self.size_text(bytes)));
+            rows.push((S::PreviewFieldItems.t(), super::thousands(n as u64)));
+            rows.push((S::PreviewFieldTotalSize.t(), self.size_text(bytes)));
         }
         if let Some((total, free)) = s.drive {
-            rows.push(("Used space", self.size_text(total.saturating_sub(free))));
-            rows.push(("Free space", self.size_text(free)));
-            rows.push(("Total size", self.size_text(total)));
+            rows.push((S::PreviewFieldUsedSpace.t(), self.size_text(total.saturating_sub(free))));
+            rows.push((S::PreviewFieldFreeSpace.t(), self.size_text(free)));
+            rows.push((S::PreviewFieldTotalSize.t(), self.size_text(total)));
         }
         if let Some(e) = s.entry.filter(|e| e.attrs & attr::VOLUME == 0) {
             if !e.is_dir() || e.attrs & attr::SIZE_KNOWN != 0 {
-                rows.push(("Size", format!("{} ({} bytes)", self.size_text(e.size), super::thousands(e.size))));
+                rows.push((S::DetailsColumnSize.t(), crate::trn!(P::PreviewFieldSizeBytes, e.size, size = self.size_text(e.size))));
             }
             if e.modified > 0 {
-                rows.push(("Modified", date(e.modified)));
+                rows.push((S::PreviewFieldModified.t(), date(e.modified)));
             }
             if e.created > 0 {
-                rows.push(("Created", date(e.created)));
+                rows.push((S::PreviewFieldCreated.t(), date(e.created)));
             }
-            let flags: Vec<&str> = [(attr::READONLY, "Read-only"), (attr::HIDDEN, "Hidden"), (attr::SYSTEM, "System"), (attr::LINK, "Link")].iter().filter(|f| e.attrs & f.0 != 0).map(|f| f.1).collect();
+            let flags: Vec<&str> = [(attr::READONLY, S::PreviewAttrReadOnly), (attr::HIDDEN, S::PreviewAttrHidden), (attr::SYSTEM, S::PreviewAttrSystem), (attr::LINK, S::PreviewAttrLink)].iter().filter(|f| e.attrs & f.0 != 0).map(|f| f.1.t()).collect();
             if !flags.is_empty() {
-                rows.push(("Attributes", flags.join(", ")));
+                rows.push((S::PreviewFieldAttributes.t(), flags.join(", ")));
             }
         }
         if let Some(dir) = s.path.as_ref().and_then(|p| p.parent()).filter(|_| s.entry.is_some()) {
-            rows.push(("Folder", dir.display().into_owned()));
+            rows.push((S::PreviewFieldFolder.t(), dir.display().into_owned()));
         }
         for (label, value) in &rows {
             self.field(g, &mut y, label, value, t);
@@ -811,7 +808,7 @@ impl App {
             Content::Props(groups) => groups.clone(),
             Content::Loading => {
                 y += self.s(8.0);
-                self.text_line(g, &mut y, "Reading properties…", self.ui_font(12.5), t.text_dim);
+                self.text_line(g, &mut y, S::PreviewReading.t(), self.ui_font(12.5), t.text_dim);
                 Vec::new()
             }
             _ => Vec::new(),
@@ -838,9 +835,9 @@ impl App {
         let (h, pad, dot, gap) = (self.s(22.0), self.s(8.0), self.s(8.0), self.s(6.0));
         let lw = (b.w * 0.38).round().min(self.s(140.0));
         let top = b.y + *y - self.preview.scroll;
-        g.text(b.x, (top + (self.s(ROW) + lm.ascent - lm.descent) / 2.0).round(), "Tags", label, t.text_dim, lw - self.s(8.0));
+        g.text(b.x, (top + (self.s(ROW) + lm.ascent - lm.descent) / 2.0).round(), S::DetailsColumnTag.t(), label, t.text_dim, lw - self.s(8.0));
         let (any, all) = self.selection_tags();
-        let chips: Vec<(PaneHit, String, Option<Color>)> = self.tag_defs().iter().enumerate().map(|(k, d)| (PaneHit::Tag(k), d.name.clone(), Some(Color::rgb(d.color)))).chain([(PaneHit::NewTag, "+ New tag".to_owned(), None)]).collect();
+        let chips: Vec<(PaneHit, String, Option<Color>)> = self.tag_defs().iter().enumerate().map(|(k, d)| (PaneHit::Tag(k), d.name.clone(), Some(Color::rgb(d.color)))).chain([(PaneHit::NewTag, S::PreviewNewTag.t().to_owned(), None)]).collect();
         let (left, mut x, mut row) = (b.x + lw, b.x + lw, top + ((self.s(ROW) - h) / 2.0).round());
         for (hit, name, color) in chips {
             let mark = if color.is_some() { dot + gap } else { 0.0 };
@@ -887,7 +884,7 @@ impl App {
                 }
             }
             Content::Handler => {
-                self.text_line(g, &mut y, "Loading preview…", small, t.text_dim);
+                self.text_line(g, &mut y, S::PreviewLoading.t(), small, t.text_dim);
                 return y;
             }
             &Content::Media { video } => return self.draw_media(g, t, &s, video),
@@ -898,13 +895,13 @@ impl App {
                 return y;
             }
             Content::Loading if s.kind != Kind::Folder && s.entry.is_some() => {
-                self.text_line(g, &mut y, "Loading…", small, t.text_dim);
+                self.text_line(g, &mut y, S::UiStatusLoading.t(), small, t.text_dim);
                 return y;
             }
             _ => {}
         }
         let note = match &self.preview.content {
-            Content::Basic(n) => n.clone(),
+            Content::Basic(n) => n.as_ref().map(Note::text),
             _ => None,
         };
         if let Some((w, h)) = dims {
@@ -916,7 +913,7 @@ impl App {
         self.header(g, t, &s, &mut y);
         let mut rows: Vec<(&str, String)> = Vec::new();
         if let Some((_, bytes)) = s.many {
-            rows.push(("Total size", self.size_text(bytes)));
+            rows.push((S::PreviewFieldTotalSize.t(), self.size_text(bytes)));
         }
         if let Some((total, free)) = s.drive {
             let bar = Rect::new(b.x, b.y + y - self.preview.scroll, b.w, self.s(8.0));
@@ -924,13 +921,13 @@ impl App {
             let used = if total > 0 { (total - free.min(total)) as f32 / total as f32 } else { 0.0 };
             g.dl.round_rect(Rect { w: (bar.w * used).round(), ..bar }, if used > 0.9 { t.error } else { t.accent }, self.s(4.0));
             y += self.s(16.0);
-            rows.push(("Free", format!("{} of {}", self.size_text(free), self.size_text(total))));
+            rows.push((S::PreviewFieldFree.t(), crate::tr!(S::PreviewFieldFreeOf, free = self.size_text(free), total = self.size_text(total))));
         }
         if let Some(e) = s.entry.filter(|e| !e.is_dir()) {
-            rows.push(("Size", self.size_text(e.size)));
+            rows.push((S::DetailsColumnSize.t(), self.size_text(e.size)));
             let mut d = String::new();
             format::datetime_in(&mut d, e.modified, self.utc_offset_min, &self.style);
-            rows.push(("Modified", d));
+            rows.push((S::PreviewFieldModified.t(), d));
         }
         for (label, value) in &rows {
             self.field(g, &mut y, label, value, t);
@@ -945,23 +942,23 @@ impl App {
     }
 
     fn folder_lines<B: TextBackend>(&self, g: &mut Gfx<B>, t: &Theme, f: &FolderSummary, y: &mut f32) {
-        let mut lines = vec![(format!("{}, {}", plural(f.dirs, "folder", "folders"), plural(f.files, "file", "files")), t.text)];
+        let mut lines = vec![(format!("{}, {}", crate::trn!(P::DetailsCountFolders, f.dirs), crate::trn!(P::DetailsCountFiles, f.files)), t.text)];
         let mut size = self.size_text(f.bytes);
         if !f.complete {
-            let _ = write!(size, " in the first {} items", super::thousands(preview::FOLDER_SCAN as u64));
+            size = crate::trn!(P::PreviewFolderScanned, preview::FOLDER_SCAN, size = size);
         }
         lines.push((size, t.text));
         if f.hidden > 0 {
-            lines.push((format!("{} hidden", plural(f.hidden, "item", "items")), t.text_dim));
+            lines.push((crate::trn!(P::PreviewFolderHidden, f.hidden), t.text_dim));
         }
         if f.newest > 0 {
-            let mut d = "Last change ".to_string();
+            let mut d = String::new();
             format::datetime_in(&mut d, f.newest, self.utc_offset_min, &self.style);
-            lines.push((d, t.text_dim));
+            lines.push((crate::tr!(S::PreviewFolderLastChange, date = d), t.text_dim));
         }
         if !f.types.is_empty() {
-            let types: Vec<String> = f.types.iter().map(|(e, n)| format!("{} {}", if e.is_empty() { "no extension" } else { e }, super::thousands(*n))).collect();
-            lines.push((format!("Most common: {}", types.join(", ")), t.text_dim));
+            let types: Vec<String> = f.types.iter().map(|(e, n)| format!("{} {}", if e.is_empty() { S::PreviewFolderNoExtension.t() } else { e }, super::thousands(*n))).collect();
+            lines.push((crate::tr!(S::PreviewFolderMostCommon, types = types.join(", ")), t.text_dim));
         }
         for (l, c) in lines {
             self.text_line(g, y, &l, self.ui_font(12.5), c);
@@ -1047,7 +1044,7 @@ impl App {
         if d.truncated {
             let m = g.metrics(note_font);
             let top = b.y + h - scroll + (8.0 * sc).round();
-            g.text(b.x, top + m.ascent, &format!("Showing the first {} characters", super::thousands(preview::TEXT_CHARS as u64)), note_font, t.text_dim, b.w);
+            g.text(b.x, top + m.ascent, &crate::trn!(P::PreviewTruncated, preview::TEXT_CHARS), note_font, t.text_dim, b.w);
             h += (8.0 * sc).round() + m.ascent + m.descent + (4.0 * sc).round();
         }
         h

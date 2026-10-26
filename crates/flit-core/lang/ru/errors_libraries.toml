@@ -1,0 +1,3 @@
+create = "Не удалось создать {path}: {error}"
+write = "Не удалось записать {path}: {error}"
+unknown_folder = "Папка «Библиотеки» не найдена"

@@ -2,6 +2,7 @@ use super::form::Form;
 use super::{centered, App, Hit, Route};
 use crate::archive::{self, ArchiveOp};
 use crate::fmt as format;
+use crate::i18n::{P, S};
 use crate::input::{Key, Mods};
 use crate::location::{Location, ProviderId};
 use crate::name;
@@ -12,7 +13,6 @@ use crate::render::{Color, Rect};
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::Theme;
 use std::collections::VecDeque;
-use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
 const PANEL_W: f32 = 420.0;
@@ -33,12 +33,12 @@ const G_CLOSE: &str = "\u{E8BB}";
 const G_MORE: &str = "\u{E712}";
 const G_CHECK: &str = "\u{E73E}";
 
-const CONFLICT_BUTTONS: [&str; 4] = ["Replace", "Keep both", "Skip", "Cancel"];
-const UNREADABLE_BUTTONS: [&str; 2] = ["Skip", "Cancel"];
-const CONFIRM_BUTTONS: [&str; 2] = ["Delete", "Cancel"];
-const RESTORE_ALL_BUTTONS: [&str; 2] = ["Restore", "Cancel"];
-const RESTORE_BUTTONS: [&str; 2] = ["Restore", "Not now"];
-const REPLACE_BUTTONS: [&str; 2] = ["Replace", "Cancel"];
+const CONFLICT_BUTTONS: [S; 4] = [S::UiButtonReplace, S::UiButtonKeepBoth, S::UiButtonSkip, S::UiButtonCancel];
+const UNREADABLE_BUTTONS: [S; 2] = [S::UiButtonSkip, S::UiButtonCancel];
+const CONFIRM_BUTTONS: [S; 2] = [S::UiButtonDelete, S::UiButtonCancel];
+const RESTORE_ALL_BUTTONS: [S; 2] = [S::UiButtonRestore, S::UiButtonCancel];
+const RESTORE_BUTTONS: [S; 2] = [S::UiButtonRestore, S::UiButtonNotNow];
+const REPLACE_BUTTONS: [S; 2] = [S::UiButtonReplace, S::UiButtonCancel];
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum JobState {
@@ -50,7 +50,8 @@ pub enum JobState {
 
 pub(super) struct Job {
     pub id: OpId,
-    pub title: String,
+    op: FileOp,
+    wsl: bool,
     pub dest: Option<Location>,
     pub ctl: OpCtl,
     pub state: JobState,
@@ -64,6 +65,12 @@ pub(super) struct Job {
 }
 
 impl Job {
+    fn title(&self) -> String {
+        match (&self.op, self.wsl) {
+            (FileOp::Trash(items), true) => crate::tr!(S::UiJobTitleTrashingLinux, what = count(items)),
+            (op, _) => job_title(op).unwrap_or_default(),
+        }
+    }
     fn fraction(&self) -> f32 {
         let p = &self.progress;
         let f = match (self.state == JobState::Done, p.total_bytes, p.total_items) {
@@ -98,13 +105,13 @@ impl Job {
 
     fn status(&self) -> String {
         match &self.state {
-            JobState::Running if self.asking => "Conflict".into(),
-            JobState::Running if self.progress.stage == Stage::Queued => "Queued".into(),
+            JobState::Running if self.asking => S::UiJobConflict.t().into(),
+            JobState::Running if self.progress.stage == Stage::Queued => S::UiJobQueued.t().into(),
             JobState::Running if self.progress.stage == Stage::Preparing => String::new(),
             JobState::Running => format!("{:.0}%", self.fraction() * 100.0),
-            JobState::Done => "Done".into(),
-            JobState::Failed(_) => "Failed".into(),
-            JobState::Cancelled => "Cancelled".into(),
+            JobState::Done => S::UiJobDone.t().into(),
+            JobState::Failed(_) => S::UiJobFailed.t().into(),
+            JobState::Cancelled => S::UiJobCancelled.t().into(),
         }
     }
 
@@ -112,35 +119,41 @@ impl Job {
         let p = &self.progress;
         let mut s = String::new();
         match &self.state {
-            JobState::Running if self.asking => s.push_str("Waiting for your answer"),
-            JobState::Running if self.ctl.is_cancelled() => s.push_str("Cancelling…"),
-            JobState::Running if p.stage == Stage::Queued => s.push_str("Waiting for another operation on this drive"),
-            JobState::Running if p.stage == Stage::Preparing => s.push_str("Preparing…"),
+            JobState::Running if self.asking => s.push_str(S::UiJobWaitingAnswer.t()),
+            JobState::Running if self.ctl.is_cancelled() => s.push_str(S::UiJobCancelling.t()),
+            JobState::Running if p.stage == Stage::Queued => s.push_str(S::UiJobWaitingDrive.t()),
+            JobState::Running if p.stage == Stage::Preparing => s.push_str(S::UiJobPreparing.t()),
             JobState::Running if self.by_bytes() => {
-                format::size_in(&mut s, p.bytes, decimal);
-                s.push_str(" of ");
-                format::size_in(&mut s, p.total_bytes, decimal);
+                let size = |v: u64| {
+                    let mut out = String::new();
+                    format::size_in(&mut out, v, decimal);
+                    out
+                };
+                crate::tr_into!(&mut s, S::UiJobBytesOf, done = size(p.bytes), total = size(p.total_bytes));
                 if self.speed > 0.0 {
                     s.push_str(" · ");
-                    format::size_in(&mut s, self.speed as u64, decimal);
-                    s.push_str("/s");
+                    crate::tr_into!(&mut s, S::UiJobSpeed, size = size(self.speed as u64));
                 }
-                let _ = write!(s, " · {} of {} items", p.items.min(p.total_items), p.total_items);
+                s.push_str(" · ");
+                crate::trn_into!(&mut s, P::UiJobItemsOf, p.total_items, done = crate::i18n::num(p.items.min(p.total_items)));
             }
             JobState::Running => {
-                let _ = write!(s, "{} of {} items", p.items.min(p.total_items), p.total_items);
+                crate::trn_into!(&mut s, P::UiJobItemsOf, p.total_items, done = crate::i18n::num(p.items.min(p.total_items)));
                 if self.speed > 0.0 {
-                    let _ = write!(s, " · {:.0} items/s", self.speed);
+                    s.push_str(" · ");
+                    crate::tr_into!(&mut s, S::UiJobItemsSpeed, speed = format_args!("{:.0}", self.speed));
                 }
             }
             JobState::Done => match (self.started, self.finished) {
                 (Some(a), Some(b)) => {
-                    let _ = write!(s, "Completed in {:.1} s", b.duration_since(a).as_secs_f64());
+                    let mut secs = String::new();
+                    crate::i18n::decimal(&mut secs, b.duration_since(a).as_secs_f64(), 1);
+                    crate::tr_into!(&mut s, S::UiJobCompletedIn, seconds = secs);
                 }
-                _ => s.push_str("Completed"),
+                _ => s.push_str(S::UiJobCompleted.t()),
             },
             JobState::Failed(e) => s.push_str(e),
-            JobState::Cancelled => s.push_str("Cancelled before it finished; the remaining items were left in place"),
+            JobState::Cancelled => s.push_str(S::UiJobCancelledDetail.t()),
         }
         s
     }
@@ -222,29 +235,35 @@ fn quoted(p: &FsPath) -> String {
 fn count(items: &[FsPath]) -> String {
     match items {
         [one] => quoted(one),
-        many => format!("{} items", many.len()),
+        many => crate::trn!(P::DetailsCountItems, many.len()),
+    }
+}
+
+fn count_pairs(pairs: &[(FsPath, FsPath)], pick: impl Fn(&(FsPath, FsPath)) -> &FsPath) -> String {
+    match pairs {
+        [one] => quoted(pick(one)),
+        many => crate::trn!(P::DetailsCountItems, many.len()),
     }
 }
 
 fn job_title(op: &FileOp) -> Option<String> {
     Some(match op {
-        FileOp::Copy { items, dest } => format!("Copying {} to {}", count(items), quoted(dest)),
-        FileOp::Move { items, dest } => format!("Moving {} to {}", count(items), quoted(dest)),
+        FileOp::Copy { items, dest } => crate::tr!(S::UiJobTitleCopying, what = count(items), dest = quoted(dest)),
+        FileOp::Move { items, dest } => crate::tr!(S::UiJobTitleMoving, what = count(items), dest = quoted(dest)),
         FileOp::MoveTo(pairs) => {
             let renames = pairs.iter().all(|(a, b)| a.parent() == b.parent());
-            let n = if pairs.len() == 1 { quoted(&pairs[0].0) } else { format!("{} items", pairs.len()) };
-            format!("{} {n}", if renames { "Renaming" } else { "Moving" })
+            crate::tr!(if renames { S::UiJobTitleRenaming } else { S::UiJobTitleMovingItems }, what = count_pairs(pairs, |p| &p.0))
         }
-        FileOp::Paste { dest } => format!("Pasting into {}", quoted(dest)),
-        FileOp::Trash(items) => format!("Moving {} to the Recycle Bin", count(items)),
-        FileOp::Delete(items) => format!("Deleting {}", count(items)),
-        FileOp::Flatten(dirs) => format!("Flattening {}", count(dirs)),
-        FileOp::Restore(pairs) => format!("Restoring {}", if pairs.len() == 1 { quoted(&pairs[0].1) } else { format!("{} items", pairs.len()) }),
-        FileOp::Purge(pairs) => format!("Deleting {} from the Recycle Bin", if pairs.len() == 1 { quoted(&pairs[0].1) } else { format!("{} items", pairs.len()) }),
-        FileOp::EmptyBin => "Emptying the Recycle Bin".into(),
-        FileOp::Archive(ArchiveOp::Compress { items, archive, .. }) => format!("Compressing {} to {}", count(items), quoted(archive)),
-        FileOp::Archive(ArchiveOp::Extract { archives, .. }) => format!("Extracting {}", count(archives)),
-        FileOp::Archive(ArchiveOp::Open { item }) => format!("Opening {}", quoted(item)),
+        FileOp::Paste { dest } => crate::tr!(S::UiJobTitlePasting, dest = quoted(dest)),
+        FileOp::Trash(items) => crate::tr!(S::UiJobTitleTrashing, what = count(items)),
+        FileOp::Delete(items) => crate::tr!(S::UiJobTitleDeleting, what = count(items)),
+        FileOp::Flatten(dirs) => crate::tr!(S::UiJobTitleFlattening, what = count(dirs)),
+        FileOp::Restore(pairs) => crate::tr!(S::UiJobTitleRestoring, what = count_pairs(pairs, |p| &p.1)),
+        FileOp::Purge(pairs) => crate::tr!(S::UiJobTitlePurging, what = count_pairs(pairs, |p| &p.1)),
+        FileOp::EmptyBin => S::UiJobTitleEmptying.t().into(),
+        FileOp::Archive(ArchiveOp::Compress { items, archive, .. }) => crate::tr!(S::UiJobTitleCompressing, what = count(items), dest = quoted(archive)),
+        FileOp::Archive(ArchiveOp::Extract { archives, .. }) => crate::tr!(S::UiJobTitleExtracting, what = count(archives)),
+        FileOp::Archive(ArchiveOp::Open { item }) => crate::tr!(S::UiJobTitleOpening, what = quoted(item)),
         FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::NewStream { .. } | FileOp::Link { .. } | FileOp::FolderIcon { .. } => return None,
     })
 }
@@ -265,32 +284,34 @@ fn job_dest(provider: &ProviderId, op: &FileOp) -> Option<Location> {
 
 fn confirm_text(op: &FileOp) -> (&'static str, String) {
     let names = |v: Vec<&FsPath>| match v.as_slice() {
-        [one] => format!("{} will be deleted permanently.", quoted(one)),
-        many => format!("These {} items will be deleted permanently.", many.len()),
+        [one] => crate::tr!(S::UiConfirmDeleteOne, name = quoted(one)),
+        many => crate::trn!(P::UiConfirmDeleteMany, many.len()),
     };
     match op {
-        FileOp::Trash(items) if items.len() == 1 => ("Move to the Recycle Bin?", format!("{} will be moved to the Recycle Bin.", quoted(&items[0]))),
-        FileOp::Trash(items) => ("Move to the Recycle Bin?", format!("These {} items will be moved to the Recycle Bin.", items.len())),
-        FileOp::Delete(items) => ("Delete permanently?", names(items.iter().collect())),
-        FileOp::Purge(pairs) => ("Delete permanently?", names(pairs.iter().map(|(_, original)| original).collect())),
-        FileOp::Restore(pairs) if pairs.len() == 1 => ("Restore all items?", format!("{} will go back to where it was deleted from.", quoted(&pairs[0].1))),
-        FileOp::Restore(pairs) => ("Restore all items?", format!("All {} items in the Recycle Bin will go back to where they were deleted from.", pairs.len())),
-        _ => ("Empty the Recycle Bin?", "All items in the Recycle Bin will be deleted permanently.".into()),
+        FileOp::Trash(items) if items.len() == 1 => (S::UiConfirmTrash.t(), crate::tr!(S::UiConfirmTrashOne, name = quoted(&items[0]))),
+        FileOp::Trash(items) => (S::UiConfirmTrash.t(), crate::trn!(P::UiConfirmTrashMany, items.len())),
+        FileOp::Delete(items) => (S::UiConfirmDelete.t(), names(items.iter().collect())),
+        FileOp::Purge(pairs) => (S::UiConfirmDelete.t(), names(pairs.iter().map(|(_, original)| original).collect())),
+        FileOp::Restore(pairs) if pairs.len() == 1 => (S::UiConfirmRestore.t(), crate::tr!(S::UiConfirmRestoreOne, name = quoted(&pairs[0].1))),
+        FileOp::Restore(pairs) => (S::UiConfirmRestore.t(), crate::trn!(P::UiConfirmRestoreMany, pairs.len())),
+        _ => (S::UiConfirmEmpty.t(), S::UiConfirmEmptyText.t().into()),
     }
 }
 
-fn meta_line(label: &str, m: &crate::listing::Meta, offset: i32, style: &format::Style) -> String {
-    let mut s = format!("{label}: ");
+fn meta_line(label: S, m: &crate::listing::Meta, offset: i32, style: &format::Style) -> String {
+    let mut what = String::new();
     if m.attrs & crate::listing::attr::DIR != 0 {
-        s.push_str("folder");
+        what.push_str(S::UiConflictFolder.t());
     } else {
-        format::size_in(&mut s, m.size, style.decimal);
+        format::size_in(&mut what, m.size, style.decimal);
     }
     if m.modified > 0 {
-        s.push_str(", modified ");
-        format::datetime_in(&mut s, m.modified, offset, style);
+        let mut date = String::new();
+        format::datetime_in(&mut date, m.modified, offset, style);
+        crate::tr!(S::UiConflictMetaModified, label = label.t(), what = what, date = date)
+    } else {
+        crate::tr!(S::UiConflictMeta, label = label.t(), what = what)
     }
-    s
 }
 
 fn can_delete_instead(ask: &Ask) -> bool {
@@ -299,11 +320,10 @@ fn can_delete_instead(ask: &Ask) -> bool {
 
 impl App {
     pub(super) fn track_job(&mut self, id: OpId, provider: &ProviderId, op: &FileOp, ctl: &OpCtl) {
-        let Some(mut title) = job_title(op) else { return };
-        if let (FileOp::Trash(items), ProviderId::Wsl(_)) = (op, provider) {
-            title = format!("Moving {} to the Trash", count(items));
+        if job_title(op).is_none() {
+            return;
         }
-        let job = Job { id, title, dest: job_dest(provider, op), ctl: ctl.clone(), state: JobState::Running, progress: OpProgress::default(), asking: false, started: None, finished: None, mark: None, speed: 0.0, samples: VecDeque::new() };
+        let job = Job { id, op: op.clone(), wsl: matches!(provider, ProviderId::Wsl(_)), dest: job_dest(provider, op), ctl: ctl.clone(), state: JobState::Running, progress: OpProgress::default(), asking: false, started: None, finished: None, mark: None, speed: 0.0, samples: VecDeque::new() };
         if let Some(k) = self.jobs.list.iter().position(|j| j.state != JobState::Running).filter(|_| self.jobs.list.len() >= MAX_JOBS) {
             self.jobs.list.remove(k);
         }
@@ -391,7 +411,7 @@ impl App {
     }
 
     pub fn job_states(&self) -> Vec<(String, JobState, OpProgress)> {
-        self.jobs.list.iter().map(|j| (j.title.clone(), j.state.clone(), j.progress)).collect()
+        self.jobs.list.iter().map(|j| (j.title(), j.state.clone(), j.progress)).collect()
     }
 
     pub fn asking(&self) -> Option<&str> {
@@ -432,28 +452,32 @@ impl App {
         }
     }
 
-    fn job_menu_items(&self, row: usize) -> Vec<&'static str> {
+    fn job_menu(&self, row: usize) -> Vec<S> {
         let Some(j) = self.jobs.list.get(self.jobs.row_of(row)) else { return Vec::new() };
         let mut items = Vec::new();
         if j.dest.is_some() {
-            items.push("Open destination");
+            items.push(S::UiJobOpenDestination);
         }
-        items.push(if j.state == JobState::Running { "Cancel" } else { "Remove from the list" });
+        items.push(if j.state == JobState::Running { S::UiButtonCancel } else { S::UiJobRemove });
         items
+    }
+
+    fn job_menu_items(&self, row: usize) -> Vec<&'static str> {
+        self.job_menu(row).into_iter().map(S::t).collect()
     }
 
     fn run_job_menu(&mut self, k: usize, now: Instant) {
         let Some(row) = self.jobs.menu.take() else { return };
-        let item = self.job_menu_items(row).get(k).copied();
+        let item = self.job_menu(row).get(k).copied();
         let i = self.jobs.row_of(row);
         match item {
-            Some("Open destination") => {
+            Some(S::UiJobOpenDestination) => {
                 if let Some(folder) = self.jobs.list.get(i).and_then(|j| j.dest.clone()) {
                     self.jobs.open = false;
                     self.dispatch(vec![Route { folder, select: None }], OpenTarget::NewTab, now);
                 }
             }
-            Some("Cancel") => self.cancel_job(row),
+            Some(S::UiButtonCancel) => self.cancel_job(row),
             Some(_) => {
                 self.jobs.list.remove(i);
                 self.jobs.first = self.jobs.first.min(self.jobs.list.len().saturating_sub(MAX_ROWS));
@@ -495,8 +519,8 @@ impl App {
         self.dirty = true;
     }
 
-    pub(super) fn dialog_buttons(&self) -> &'static [&'static str] {
-        match self.jobs.asks.front() {
+    pub(super) fn dialog_buttons(&self) -> Vec<&'static str> {
+        let keys: &[S] = match self.jobs.asks.front() {
             Some(a) if a.unreadable() => &UNREADABLE_BUTTONS,
             Some(Ask::Conflict { .. }) => &CONFLICT_BUTTONS,
             Some(Ask::Confirm(FileOp::Restore(_), _)) => &RESTORE_ALL_BUTTONS,
@@ -504,7 +528,8 @@ impl App {
             Some(Ask::Restore) => &RESTORE_BUTTONS,
             Some(Ask::ReplaceExport { .. }) => &REPLACE_BUTTONS,
             None => &[],
-        }
+        };
+        keys.iter().map(|k| k.t()).collect()
     }
 
     pub(super) fn jobs_key(&mut self, key: Key, m: Mods) -> bool {
@@ -734,19 +759,19 @@ impl App {
         g.dl.outline(p, t.input_border, s6, 1.0);
         let m = g.metrics(bold);
         let head = (p.y + (s(PANEL_HEAD) + m.ascent - m.descent) / 2.0).round();
-        g.text(p.x + s12 + s6, head, "Operations", bold, t.text, p.w / 2.0);
+        g.text(p.x + s12 + s6, head, S::UiJobOperations.t(), bold, t.text, p.w / 2.0);
         let clear = self.jobs.r.clear;
         let done = self.jobs.list.iter().any(|j| j.state != JobState::Running);
         if self.hover == Hit::OpsClear && done {
             g.dl.round_rect(clear, t.button_hover, s4);
         }
-        let label = "Clear completed";
+        let label = S::UiJobClearCompleted.t();
         let lw = g.measure(label, small);
         g.text(clear.right() - lw - s(8.0), head, label, small, if done { t.accent } else { t.text_dim.alpha(0x70) }, f32::INFINITY);
         g.dl.set_clip(Some(p));
         if self.jobs.list.is_empty() {
             let baseline = (p.y + s(PANEL_HEAD) + s(ROW_H) / 2.0).round();
-            g.text(p.x + s12 + s6, baseline, "No operations yet. Copies, moves and deletions show up here.", font, t.text_dim, p.w - 2.0 * s12);
+            g.text(p.x + s12 + s6, baseline, S::UiJobNone.t(), font, t.text_dim, p.w - 2.0 * s12);
         }
         let rows = self.jobs.r.rows.clone();
         for (k, &row) in rows.iter().enumerate() {
@@ -765,7 +790,7 @@ impl App {
             let title_end = if running { cancel.x } else { more.x } - s(8.0) - sw;
             let mt = g.metrics(font);
             let title_y = (row.y + s(6.0) + (s(24.0) + mt.ascent - mt.descent) / 2.0).round();
-            g.text(row.x + s12, title_y, &j.title, font, t.text, title_end - row.x - s12 - s(8.0));
+            g.text(row.x + s12, title_y, &j.title(), font, t.text, title_end - row.x - s12 - s(8.0));
             let status_color = match j.state {
                 JobState::Failed(_) => t.error,
                 JobState::Done => t.text_dim,
@@ -838,30 +863,31 @@ impl App {
         let offset = self.utc_offset_min;
         let (title, lines): (String, Vec<String>) = match self.jobs.asks.front() {
             Some(Ask::Conflict { conflict: c, .. }) if archive::is_unreadable(c) => {
-                let lines = vec![format!("{} cannot be read.", quoted(&c.source)), "Another program may be using it, or reading it needs permissions Flit does not have.".into()];
-                ("Some items cannot be compressed".into(), lines)
+                let lines = vec![crate::tr!(S::UiConflictUnreadable, name = quoted(&c.source)), S::UiConflictUnreadableHint.t().into()];
+                (S::UiConflictUnreadableTitle.t().into(), lines)
             }
             Some(Ask::Conflict { conflict: c, .. }) => {
                 let folder = c.target.parent().map(|p| quoted(&p)).unwrap_or_default();
                 let both_dirs = c.from.attrs & c.to.attrs & crate::listing::attr::DIR != 0;
-                let mut lines = vec![format!("{} already exists in {folder}.", quoted(&c.target)), meta_line("New", &c.from, offset, &self.style), meta_line("Existing", &c.to, offset, &self.style)];
+                let mut lines = vec![crate::tr!(S::UiConflictExists, name = quoted(&c.target), folder = folder), meta_line(S::UiConflictNew, &c.from, offset, &self.style), meta_line(S::UiConflictExisting, &c.to, offset, &self.style)];
                 if both_dirs {
-                    lines.push("Replace merges the folders: items with other names stay.".into());
+                    lines.push(S::UiConflictMerge.t().into());
                 }
-                ("Replace or skip?".into(), lines)
+                (S::UiConflictTitle.t().into(), lines)
             }
             Some(Ask::Confirm(op, provider)) => {
                 let (title, text) = confirm_text(op);
                 let note = match op {
-                    FileOp::Trash(_) if *provider != ProviderId::Local => "The Linux Trash keeps them until it is emptied.",
-                    FileOp::Trash(_) => "The Recycle Bin keeps them until it is emptied.",
-                    FileOp::Restore(_) => "Ctrl+Z sends them back to the Recycle Bin.",
-                    _ => "This cannot be undone.",
-                };
+                    FileOp::Trash(_) if *provider != ProviderId::Local => S::UiConfirmNoteLinuxTrash,
+                    FileOp::Trash(_) => S::UiConfirmNoteBin,
+                    FileOp::Restore(_) => S::UiConfirmNoteRestore,
+                    _ => S::UiConfirmNoteUndo,
+                }
+                .t();
                 (title.into(), vec![text, note.into()])
             }
-            Some(Ask::ReplaceExport { path, existing }) => (format!("Replace {}?", quoted(path)), vec![format!("The settings export would write over this file in {}.", path.parent().map(|p| quoted(&p)).unwrap_or_default()), meta_line("Existing", existing, offset, &self.style)]),
-            Some(Ask::Restore) => ("Restore the previous session?".into(), vec!["Flit did not close properly last time.".into(), "Restore reopens the windows and tabs that were open.".into()]),
+            Some(Ask::ReplaceExport { path, existing }) => (crate::tr!(S::UiExportReplaceTitle, name = quoted(path)), vec![crate::tr!(S::UiExportReplace, folder = path.parent().map(|p| quoted(&p)).unwrap_or_default()), meta_line(S::UiConflictExisting, existing, offset, &self.style)]),
+            Some(Ask::Restore) => (S::UiSessionRestoreTitle.t().into(), vec![S::UiSessionCrashed.t().into(), S::UiSessionRestore.t().into()]),
             None => return,
         };
         let mb = g.metrics(bold);
@@ -884,10 +910,11 @@ impl App {
             }
             let baseline = (check.y + (check.h + mf.ascent - mf.descent) / 2.0).round();
             let label = match self.jobs.asks.front() {
-                Some(a) if a.unreadable() => "Skip every item that cannot be read",
-                Some(Ask::Confirm(..)) => "Delete permanently instead",
-                _ => "Do this for all remaining conflicts",
-            };
+                Some(a) if a.unreadable() => S::UiConflictSkipAll,
+                Some(Ask::Confirm(..)) => S::UiConfirmDeleteInstead,
+                _ => S::UiConflictApplyAll,
+            }
+            .t();
             g.text(bx.right() + s8, baseline, label, font, t.text, check.w - bx.w - s8);
         }
         let labels = self.dialog_buttons();

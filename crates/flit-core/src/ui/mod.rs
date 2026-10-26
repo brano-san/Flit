@@ -53,6 +53,7 @@ pub use split::{SplitDir, SplitPrefs, SplitSession};
 
 use crate::fmt as format;
 use crate::hash::{self, FxHashMap};
+use crate::i18n::{P, S};
 use crate::input::{CursorIcon, Event, HitArea, Key, Mods, MouseButton};
 use crate::listing::{attr, DirSnapshot};
 use crate::location::{Location, ProviderId};
@@ -71,7 +72,6 @@ use crate::thumbs;
 use crate::view::Line;
 use bumpalo::Bump;
 use edit::{EditAction, LineEdit};
-use std::fmt::Write as _;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -113,7 +113,7 @@ const G_FOLDER: &str = "\u{E8B7}";
 const G_FILE: &str = "\u{E7C3}";
 const G_DRIVE: &str = "\u{EDA2}";
 
-const BIN_BUTTONS: [&str; 3] = ["Restore", "Restore all", "Empty Recycle Bin"];
+const BIN_BUTTONS: [S; 3] = [S::UiBinRestore, S::UiBinRestoreAll, S::UiBinEmpty];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Column {
@@ -133,15 +133,16 @@ pub const BIN_COLUMNS: [Column; 4] = [Column::Name, Column::Origin, Column::Dele
 impl Column {
     fn title(self) -> &'static str {
         match self {
-            Column::Name => "Name",
-            Column::Modified => "Date modified",
-            Column::Created => "Date created",
-            Column::Type => "Type",
-            Column::Size => "Size",
-            Column::Origin => "Original location",
-            Column::Deleted => "Date deleted",
-            Column::Tag => "Tags",
+            Column::Name => S::DetailsColumnName,
+            Column::Modified => S::DetailsColumnModified,
+            Column::Created => S::DetailsColumnCreated,
+            Column::Type => S::DetailsColumnType,
+            Column::Size => S::DetailsColumnSize,
+            Column::Origin => S::DetailsColumnOrigin,
+            Column::Deleted => S::DetailsColumnDeleted,
+            Column::Tag => S::DetailsColumnTag,
         }
+        .t()
     }
     fn field(self) -> SortField {
         match self {
@@ -577,7 +578,7 @@ impl App {
 
     fn report_dropped(&mut self, total: usize) {
         if total > MAX_ROUTES {
-            self.tab_mut().error = Some(format!("Opened the first {MAX_ROUTES} of {total} locations"));
+            self.tab_mut().error = Some(crate::trn!(P::UiDroppedRoutes, total, shown = MAX_ROUTES));
         }
     }
 
@@ -679,7 +680,7 @@ impl App {
         if let Some(e) = errors.first() {
             self.tab_mut().error = Some(match e {
                 ResolveError::UnknownShellLocation(s) => self.hand_to_explorer(s),
-                ResolveError::Invalid(s) => format!("Invalid path: {s}"),
+                ResolveError::Invalid(s) => crate::tr!(S::UiInvalidPath, path = s),
             });
             self.dirty = true;
         }
@@ -822,7 +823,7 @@ impl App {
         let t = self.tab();
         if t.view_loc.is_recycle_bin() {
             let name = name::display(t.view.as_ref().unwrap().listing().name(i)).into_owned();
-            self.tab_mut().error = Some(format!("\"{name}\" is in the Recycle Bin. Restore it to open it."));
+            self.tab_mut().error = Some(crate::tr!(S::UiInRecycleBin, name = name));
             return;
         }
         let e = t.view.as_ref().unwrap().listing().entries[i as usize];
@@ -2037,12 +2038,13 @@ impl App {
                 self.draw_unavailable(g, t, list, e);
             } else if v.rows().is_empty() && v.groups().is_empty() && v.snap().done {
                 let msg = if v.is_filtered() {
-                    "No items match the filter."
+                    S::UiEmptyFiltered
                 } else if in_bin {
-                    "The Recycle Bin is empty."
+                    S::UiEmptyBin
                 } else {
-                    "This folder is empty."
-                };
+                    S::UiEmptyFolder
+                }
+                .t();
                 let w = g.measure(msg, font);
                 g.text(list.x + (list.w - w) / 2.0, list.y + self.s(40.0), msg, font, t.text_dim, f32::INFINITY);
             }
@@ -2175,7 +2177,8 @@ impl App {
             self.count_text(&mut s, v);
             let k = v.selected_count();
             if k > 0 {
-                let _ = write!(s, "    {k} selected");
+                s.push_str("    ");
+                crate::trn_into!(&mut s, P::UiStatusSelected, k);
                 let size = v.selected_size();
                 if size > 0 {
                     s.push_str("  ");
@@ -2184,25 +2187,28 @@ impl App {
             }
             if let Some(total) = self.unpacked_total() {
                 s.push_str("    ");
-                format::size_in(&mut s, total, self.style.decimal);
-                s.push_str(" unpacked");
+                let mut size = String::new();
+                format::size_in(&mut size, total, self.style.decimal);
+                crate::tr_into!(&mut s, S::UiStatusUnpacked, size = size);
             }
             if !v.snap().done {
-                s.push_str("    Loading…");
+                s.push_str("    ");
+                s.push_str(S::UiStatusLoading.t());
             }
         } else if let Some(l) = &tab.loading {
-            s.push_str(l.note.as_deref().unwrap_or("Loading…"));
+            s.push_str(l.note.as_deref().unwrap_or(S::UiStatusLoading.t()));
         }
         g.text(r.x + pad, baseline, &s, font, color, r.w / 2.0);
 
         let mut right = bumpalo::collections::String::new_in(arena);
         if let (Some(first), Some(done)) = (tab.stats.first, tab.stats.done) {
-            let _ = write!(right, "{:.1} ms first · {:.1} ms all", first.as_secs_f64() * 1e3, done.as_secs_f64() * 1e3);
+            crate::tr_into!(&mut right, S::UiStatusTiming, first = format_args!("{:.1}", first.as_secs_f64() * 1e3), all = format_args!("{:.1}", done.as_secs_f64() * 1e3));
         }
         let in_bin = tab.view_loc.is_recycle_bin();
         let sizes = self.sizes_label();
         let sizes = [sizes.as_str()];
-        let labels: &[&str] = if in_bin { &BIN_BUTTONS } else if sizes[0].is_empty() { &[] } else { &sizes };
+        let bin = BIN_BUTTONS.map(S::t);
+        let labels: &[&str] = if in_bin { &bin } else if sizes[0].is_empty() { &[] } else { &sizes };
         let mut buttons = [Rect::default(); 3];
         let mut x = r.right() - pad;
         for (k, label) in labels.iter().enumerate().rev() {

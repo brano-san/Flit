@@ -7,6 +7,7 @@ use crate::state::{self, Saved, Tools};
 use crate::tags::{self, TagWorker};
 use crate::thumbs::ThumbCache;
 use crossbeam_channel::{unbounded, Receiver, Sender};
+use flit_core::i18n::S;
 use flit_core::input::Event;
 use flit_core::listing::DirSnapshot;
 use flit_core::open::{self, Open, OpenTarget, Route};
@@ -299,7 +300,7 @@ impl<P: Platform> Handler<P> {
         app.double_click = P::double_click_time();
         app.caps = P::caps();
         if base == 0 && P::elevated() {
-            app.status("Flit runs as administrator, so Windows blocks files dragged in from other programs");
+            app.status(S::UiAppElevated.t());
         }
         app.set_nav_state(self.saved.nav.clone());
         app.set_nav_prefs(self.saved.side.clone());
@@ -601,12 +602,12 @@ impl<P: Platform> Handler<P> {
                 }
                 settings::Reply::Imported(Err(e)) => {
                     tracing::warn!("cannot import settings: {e}");
-                    self.status(id, format!("Cannot read the settings file: {e}"));
+                    self.status(id, flit_core::tr!(S::UiAppImportFailed, error = flit_core::i18n::localize(&e.to_string())));
                 }
-                settings::Reply::Exported(Ok(path)) => self.status(id, format!("Exported the settings and tags to {}", path.display())),
+                settings::Reply::Exported(Ok(path)) => self.status(id, flit_core::tr!(S::UiAppExported, path = path.display())),
                 settings::Reply::Exported(Err(e)) => {
                     tracing::warn!("cannot export settings: {e}");
-                    self.status(id, format!("Cannot export the settings: {e}"));
+                    self.status(id, flit_core::tr!(S::UiAppExportFailed, error = flit_core::i18n::localize(&e.to_string())));
                 }
                 settings::Reply::ExportExists { path, size, modified } => {
                     if let (Some(st), Some(path)) = (self.windows.get_mut(&id), FsPath::parse(&path.to_string_lossy())) {

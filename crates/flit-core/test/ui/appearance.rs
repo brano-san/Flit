@@ -128,7 +128,7 @@ fn the_font_comes_from_the_installed_families_and_falls_back() {
     assert!(a.nav.palette.is_none());
     a.set_fonts(vec!["Arial".into(), "Bahnschrift".into(), "Consolas".into()]);
     let p = a.nav.palette.as_ref().expect("the font list opens");
-    assert_eq!(p.titles, [DEFAULT_FONT, "Arial", "Bahnschrift", "Consolas"]);
+    assert_eq!(p.titles, [S::AppearanceSystemFont.t(), "Arial", "Bahnschrift", "Consolas"]);
     a.palette_insert("bahn");
     let sel = a.nav.palette.as_ref().unwrap().sel;
     a.run_palette_item(sel, Instant::now());
@@ -141,7 +141,7 @@ fn the_font_comes_from_the_installed_families_and_falls_back() {
     a.run_palette_item(0, Instant::now());
     assert_eq!(get(&a, "appearance.font"), text(""));
     frame(&mut a);
-    assert_eq!(a.pick_text(i).as_deref(), Some(DEFAULT_FONT));
+    assert_eq!(a.pick_text(i).as_deref(), Some(S::AppearanceSystemFont.t()));
     assert!(!set(&mut a, "appearance.font", text("Bad\u{7}Name")));
 }
 
