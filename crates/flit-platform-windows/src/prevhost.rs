@@ -195,6 +195,7 @@ pub(crate) fn forget(parent: HWND) {
     if HOSTS.with(|h| h.borrow_mut().remove(&(parent.0 as isize))).is_some() {
         send(Job::Close { parent: parent.0 as isize });
     }
+    take(parent);
 }
 
 #[implement(IMFMediaEngineNotify)]
@@ -309,7 +310,7 @@ unsafe fn media(s: &Session, cmd: MediaCmd) {
 
 unsafe fn poll(worker: HWND) {
     let mut failed = Vec::new();
-    let any = SESSIONS.with(|all| {
+    let (dead, any) = SESSIONS.with(|all| {
         let mut all = all.borrow_mut();
         for (&parent, s) in all.iter_mut() {
             let Some(m) = &s.media else { continue };
@@ -326,14 +327,15 @@ unsafe fn poll(worker: HWND) {
                 post(parent, HostEvent::Media { gen: s.gen, position: now.0, duration: now.1, playing: now.2 });
             }
         }
-        for (parent, gen, code) in &failed {
-            if let Some(s) = all.remove(parent) {
-                close(s);
-            }
-            post(*parent, HostEvent::Failed { gen: *gen, message: format!("media error {code}") });
-        }
-        all.values().any(|s| s.media.is_some())
+        let dead: Vec<_> = failed.iter().map(|&(parent, gen, code)| (parent, gen, code, all.remove(&parent))).collect();
+        (dead, all.values().any(|s| s.media.is_some()))
     });
+    for (parent, gen, code, session) in dead {
+        if let Some(s) = session {
+            close(s);
+        }
+        post(parent, HostEvent::Failed { gen, message: format!("media error {code}") });
+    }
     if any {
         SetTimer(Some(worker), 1, POLL_MS, None);
     } else {
@@ -391,7 +393,13 @@ unsafe fn process(worker: HWND) {
 unsafe extern "system" fn worker_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
         WM_JOB => process(hwnd),
-        WM_TIMER if !BUSY.get() => poll(hwnd),
+        WM_TIMER if !BUSY.replace(true) => {
+            poll(hwnd);
+            BUSY.set(false);
+            if !QUEUE.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
+                process(hwnd);
+            }
+        }
         WM_TIMER => {}
         _ => return DefWindowProcW(hwnd, msg, wp, lp),
     }

@@ -1,5 +1,5 @@
 use super::*;
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{unbounded, Receiver, Sender};
 use flit_core::attr;
 use flit_proto::transport::{encode, handshake, read_frame};
 use flit_search::index::{IndexRecord, IndexSink, VolumeIndex};
@@ -147,4 +147,25 @@ fn silent_and_foreign_clients_are_rejected() {
     let (mut c, server) = start();
     c.write_all(b"\x05\x00\x00\x00hello").unwrap();
     assert!(matches!(server.join().unwrap(), Err(ProtoError::NotFlit)));
+}
+
+#[test]
+fn a_client_that_stops_reading_cannot_grow_the_request_queue() {
+    let (to_server, server_rx) = unbounded();
+    let (server_tx, client_rx) = crossbeam_channel::bounded(1);
+    let mut c = MemPipe { rx: client_rx, tx: to_server, pending: Vec::new(), timeout: None };
+    let server = MemPipe { rx: server_rx, tx: server_tx, pending: Vec::new(), timeout: None };
+    let sh = shared();
+    let handle = std::thread::spawn(move || serve(server, sh, 0));
+    handshake(&mut c, &Hello::new(Protocol::Index, VERSION)).unwrap();
+    write_frame(&mut c, &Message::Query { gen: 1, text: "report".into(), sort: SORT }).unwrap();
+    const FLOOD: usize = 200;
+    for _ in 0..FLOOD {
+        write_frame(&mut c, &Message::GetRows { gen: 1, from: 0, to: 10 }).unwrap();
+    }
+    std::thread::sleep(Duration::from_millis(500));
+    let unread = c.tx.len();
+    assert!(unread >= FLOOD - MAX_QUEUED - 2, "the server consumed {} requests it cannot answer", FLOOD - unread);
+    drop(c);
+    let _ = handle.join().unwrap();
 }

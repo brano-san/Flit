@@ -5,3 +5,7 @@ pub mod provider;
 pub mod transport;
 
 pub use transport::{read_frame, write_frame, Hello, ProtoError, Protocol};
+
+#[cfg(test)]
+#[path = "../test/fuzz.rs"]
+mod fuzz;

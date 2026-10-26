@@ -9,3 +9,10 @@ fn events_are_taken_per_window() {
     assert_eq!(take(HWND(-8isize as _)), [HostEvent::Ready { gen: 3, ms: 4 }]);
     assert!(take(HWND(-7isize as _)).is_empty());
 }
+
+#[test]
+fn forgetting_a_window_drops_its_undelivered_events() {
+    post(-9, HostEvent::Ready { gen: 1, ms: 2 });
+    forget(HWND(-9isize as _));
+    assert!(take(HWND(-9isize as _)).is_empty());
+}
