@@ -7,6 +7,15 @@ use flit_platform_linux::mounts::parse;
 use std::os::unix::ffi::OsStrExt;
 
 #[test]
+fn bookmarks_come_from_gtk_then_kde_without_home_duplicates_or_missing_folders() {
+    let gtk = b"file:///home/u/Projects Projects\nfile:///home/u/My%20Docs\nsftp://host/x\nfile:///home/u/gone\n";
+    let kde = b"<xbel><bookmark href=\"file:///home/u\"><title>Home</title></bookmark><bookmark href=\"file:///home/u/Projects\"/><bookmark href=\"file:///srv/a&amp;b\"/><bookmark href=\"trash:/\"/></xbel>";
+    let got = bookmarks_from(gtk, kde, &[b"/home/u", b"/"], |p| !p.ends_with("gone"));
+    let paths: Vec<String> = got.iter().map(|l| String::from_utf8_lossy(l.path().as_bytes()).into_owned()).collect();
+    assert_eq!(paths, ["/home/u/Projects", "/home/u/My Docs", "/srv/a&b"]);
+}
+
+#[test]
 fn eject_unmounts_then_powers_off_the_block_device_behind_the_mount() {
     let table = parse(b"40 1 8:17 / /media/u/STICK rw,nosuid - vfat /dev/sdb1 rw\n41 1 0:50 / /media/u/net rw - fuse.sshfs host:/ rw\n");
     let steps = eject_steps(&table, Path::new("/media/u/STICK")).unwrap();

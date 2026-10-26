@@ -211,7 +211,7 @@ pub fn load<P: Platform>() -> Saved {
         .and_then(|b| Saved::decode(&b))
         .filter(|s| s.version == VERSION)
         .map(Saved::sanitized)
-        .unwrap_or_else(|| Saved::new(Persisted { path: Location::from_local(P::home()), ..Default::default() }, None))
+        .unwrap_or_else(|| Saved::new(Persisted { path: Location::from_local(P::home()), ..Default::default() }, None).with_nav(NavState { pinned: P::bookmarks(), ..NavState::default() }))
 }
 
 pub fn save<P: Platform>(s: &Saved) {

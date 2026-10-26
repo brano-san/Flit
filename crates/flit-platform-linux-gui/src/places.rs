@@ -169,6 +169,29 @@ fn utc_ticks(s: &[u8]) -> Option<i64> {
     (t != -1).then(|| t * 10_000_000 + 116_444_736_000_000_000)
 }
 
+pub fn bookmarks_from(gtk: &[u8], kde: &[u8], skip: &[&[u8]], is_dir: impl Fn(&Path) -> bool) -> Vec<flit_core::Location> {
+    let gtk = gtk.split(|&b| b == b'\n').filter_map(|l| l.split(|&b| b == b' ').next());
+    let kde = kde.split(|&b| b == b'<').filter(|t| t.starts_with(b"bookmark ")).filter_map(|t| attribute(t, b"href")).map(unescape_xml);
+    let mut out: Vec<flit_core::Location> = Vec::new();
+    for uri in gtk.map(<[u8]>::to_vec).chain(kde) {
+        let Some(path) = crate::instance::decode_uri(&uri).filter(|p| p.starts_with(b"/") && !skip.contains(&p.as_slice())) else { continue };
+        let Some(p) = flit_core::FsPath::parse_exact(&path).filter(|_| is_dir(Path::new(std::ffi::OsStr::from_bytes(&path)))) else { continue };
+        let loc = flit_core::Location::from_local(p);
+        if !out.contains(&loc) {
+            out.push(loc);
+        }
+    }
+    out
+}
+
+pub fn bookmarks() -> Vec<flit_core::Location> {
+    let read = |p: Option<PathBuf>| p.and_then(|p| std::fs::read(p).ok()).unwrap_or_default();
+    let home = std::env::var_os("HOME").unwrap_or_default();
+    let gtk = read(crate::xdg::config_home().map(|c| c.join("gtk-3.0/bookmarks")));
+    let kde = read(crate::xdg::data_home().map(|d| d.join("user-places.xbel")));
+    bookmarks_from(&gtk, &kde, &[home.as_bytes(), b"/"], Path::is_dir)
+}
+
 pub fn recent_from(xbel: &[u8], limit: usize, exists: impl Fn(&Path) -> Option<bool>) -> Vec<flit_core::ui::Recent> {
     let mut found: Vec<(i64, Vec<u8>)> = xbel
         .split(|&b| b == b'<')

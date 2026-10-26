@@ -392,6 +392,9 @@ pub trait Platform: 'static {
     fn recent(_limit: usize) -> (Vec<flit_core::ui::Recent>, bool) {
         (Vec::new(), false)
     }
+    fn bookmarks() -> Vec<Location> {
+        Vec::new()
+    }
     fn double_click_time() -> std::time::Duration {
         std::time::Duration::from_millis(500)
     }

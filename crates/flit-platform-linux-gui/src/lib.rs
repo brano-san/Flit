@@ -85,6 +85,9 @@ impl Platform for Linux {
     fn recent(limit: usize) -> (Vec<flit_core::ui::Recent>, bool) {
         places::recent(limit)
     }
+    fn bookmarks() -> Vec<flit_core::Location> {
+        places::bookmarks()
+    }
 
     fn state_dir() -> Option<PathBuf> {
         xdg::state_dir()
