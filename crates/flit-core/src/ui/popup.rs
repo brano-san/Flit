@@ -96,7 +96,7 @@ impl<B: TextBackend> Measure<'_, B> {
                 _ => 0.0,
             };
             if !matches!(node, Node::Separator) {
-                width = width.max((LABEL_X * s + self.g.measure(node.label(), self.font) + keys + ARROW_W * s).ceil());
+                width = width.max((LABEL_X * s + self.g.measure(node.label(), self.font) + keys + (ARROW_W + PAD) * s).ceil());
             }
             height += node.height(s);
             nodes.push(node);

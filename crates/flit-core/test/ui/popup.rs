@@ -47,6 +47,11 @@ fn a_click_on_a_toggle_flips_its_check_in_place_and_keeps_the_submenu_open() {
     assert_eq!(v.mouse_up(x, y), MenuOutcome::Toggled(1));
     assert!(matches!(v.lists[1].nodes[0], Node::Command { checked: true, .. }));
     assert_eq!(v.key(Key::Space), MenuOutcome::Toggled(1));
+    let long = vec![cmd("A label long enough to set the width of its panel")];
+    let mut g = Gfx::new(Mono, 256);
+    let w = MenuView::new(&long, 0.0, 0.0, screen(), 1.0, &mut g).lists[0].width;
+    let room = w - PAD - LABEL_X - ARROW_W;
+    assert!(room >= g.measure("A label long enough to set the width of its panel", font(1.0)), "the widest label is not cut by the row padding");
     let (x, y) = row(&v, 0, 0);
     v.mouse_move(x, y);
     assert_eq!(v.mouse_up(x, y), MenuOutcome::Command(0));
