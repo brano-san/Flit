@@ -241,6 +241,8 @@ pub static ACTIONS: &[Action] = &[
     Action::new("file.flatten", S::ActionsFileFlatten, &[], |a, _| a.flatten_selection()),
     Action::new("file.install_fonts", S::OpsExtraInstallFonts, &[], |a, _| a.install_fonts_selection()),
     Action::new("file.lock_screen", S::OpsExtraLockScreen, &[], |a, _| a.lock_screen_selection()),
+    Action::new("file.set_backdrop", S::OpsExtraSetBackdrop, &[], |a, _| a.backdrop_selection()),
+    Action::new("view.clear_backdrop", S::OpsExtraClearBackdrop, &[], |a, _| a.set_backdrop(String::new())),
     Action::new("archive.compress", S::ActionsArchiveCompress, &[], |a, _| a.compress_dialog()),
     Action::new("archive.zip", S::ActionsArchiveZip, &[], |a, _| a.compress_quick(Format::Zip)),
     Action::new("archive.7z", S::ActionsArchive7z, &[], |a, _| a.compress_quick(Format::SevenZ)),

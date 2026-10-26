@@ -1,8 +1,11 @@
 install_fonts = "Install font"
 lock_screen = "Set as lock screen background"
+set_backdrop = "Set as Flit background"
+clear_backdrop = "Remove Flit background"
 installing_fonts = "Installing {what}"
 select_fonts = "Select .ttf, .otf or .ttc font files to install"
 select_image = "Select one image to show on the lock screen"
+select_backdrop = "Select one image to use as the Flit background"
 copy_anyway = "Copy anyway"
 too_large_title = "Items too large for this drive"
 no_room = "The items need {need}, but {folder} has only {free} free."
@@ -13,3 +16,5 @@ over_limit_hint = "Skip it to copy the other items, or use a drive formatted as 
 [describe]
 install_fonts = "Install the selected font files for the current user"
 lock_screen = "Show the selected image on the Windows lock screen"
+set_backdrop = "Show the selected image dimmed behind the file list in every Flit window"
+clear_backdrop = "Go back to the plain background color"

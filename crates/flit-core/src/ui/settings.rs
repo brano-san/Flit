@@ -233,6 +233,7 @@ pub static SETTINGS: &[Setting] = &[
     toggle("general.menu_compress", Page::General, S::SettingsTitleGeneralMenuCompress, S::SettingsHelpGeneralMenuCompress, |a| shown_in_menu(a, "archive.menu"), |a, on| show_in_menu(a, "archive.menu", on)),
     choice("appearance.theme", Page::Appearance, S::SettingsTitleAppearanceTheme, S::SettingsHelpAppearanceTheme, THEME_CHOICES, |a| pos(&THEMES, &a.look.mode), |a, i| a.set_theme_mode(THEMES[i])),
     pick("appearance.background", Picker::Color, S::SettingsTitleAppearanceBackground, S::SettingsHelpAppearanceBackground, |a| a.look.background.key(), |a, v| a.set_background(&v)),
+    Setting { id: "appearance.background_image", page: Page::Appearance, title: S::SettingsTitleAppearanceBackgroundImage, help: S::SettingsHelpAppearanceBackgroundImage, kind: Kind::Text(|a| a.look.backdrop_path.clone(), |a, v| a.set_backdrop(v)) },
     pick("appearance.font", Picker::Font, S::SettingsTitleAppearanceFont, S::SettingsHelpAppearanceFont, |a| a.look.font.clone(), |a, v| a.set_ui_font(&v)),
     toggle("appearance.toolbar", Page::Appearance, S::SettingsTitleAppearanceToolbar, S::SettingsHelpAppearanceToolbar, |a| a.toolbar.state.visible, |a, on| {
         if a.toolbar.state.visible != on {

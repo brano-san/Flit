@@ -55,6 +55,7 @@ pub mod kind {
     pub const THUMB: u32 = 3;
     pub const PREVIEW: u32 = 4;
     pub const SHADOW: u32 = 5;
+    pub const BACKDROP: u32 = 6;
 }
 
 #[repr(C)]
@@ -132,6 +133,10 @@ impl DrawList {
 
     pub fn thumb(&mut self, r: Rect, uv: [f32; 4], alpha: u8) {
         self.push(r, uv, Color(0xFFFF_FFFF).alpha(alpha), 0.0, 0.0, kind::THUMB);
+    }
+
+    pub fn backdrop(&mut self, r: Rect, uv: [f32; 4], alpha: u8) {
+        self.push(r, uv, Color(0xFFFF_FFFF).alpha(alpha), 0.0, 0.0, kind::BACKDROP);
     }
 
     pub fn preview(&mut self, r: Rect) {

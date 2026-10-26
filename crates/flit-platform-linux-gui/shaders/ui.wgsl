@@ -8,7 +8,8 @@ struct Globals {
 @group(0) @binding(1) var atlas: texture_2d<f32>;
 @group(0) @binding(2) var thumbs: texture_2d<f32>;
 @group(0) @binding(3) var preview: texture_2d<f32>;
-@group(0) @binding(4) var samp: sampler;
+@group(0) @binding(4) var backdrop: texture_2d<f32>;
+@group(0) @binding(5) var samp: sampler;
 
 struct VsIn {
     @location(0) rect: vec4<f32>,
@@ -72,6 +73,9 @@ fn fs_main(i: PsIn) -> @location(0) vec4<f32> {
     }
     if (i.kind == 4u) {
         return textureSampleLevel(preview, samp, i.uv, 0.0) * i.color.a;
+    }
+    if (i.kind == 6u) {
+        return textureSampleLevel(backdrop, samp, i.uv, 0.0) * i.color.a;
     }
     let r = i.params.x;
     let border = i.params.y;

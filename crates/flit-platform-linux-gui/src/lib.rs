@@ -181,6 +181,10 @@ impl Renderer for LinuxRenderer {
         self.gl.upload_preview(image);
     }
 
+    fn upload_backdrop(&mut self, image: Option<&Bitmap>) {
+        self.gl.upload_backdrop(image);
+    }
+
     fn render(&mut self, list: &DrawList) -> Result<(), RenderError> {
         self.window.pre_present_notify();
         self.gl.render(list)

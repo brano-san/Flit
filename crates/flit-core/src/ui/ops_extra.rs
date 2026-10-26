@@ -35,6 +35,13 @@ impl App {
         }
     }
 
+    pub(super) fn backdrop_selection(&mut self) {
+        match self.selected_files().as_slice() {
+            [one] if is_image(one) => self.set_backdrop(one.display().into_owned()),
+            _ => self.status(S::OpsExtraSelectBackdrop.t()),
+        }
+    }
+
     pub(super) fn media_entries(&self, m: &mut Menu) {
         let files = self.selected_files();
         if !files.is_empty() && files.iter().all(|p| install::is_font(p.file_name())) {
@@ -43,6 +50,7 @@ impl App {
         if let [one] = files.as_slice() {
             if is_image(one) {
                 m.action("file.lock_screen", S::OpsExtraLockScreen.t());
+                m.action("file.set_backdrop", S::OpsExtraSetBackdrop.t());
             }
         }
     }

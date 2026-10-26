@@ -160,6 +160,7 @@ pub trait Renderer: Sized {
     fn upload(&mut self, slot: Slot, rgba: &[u8]);
     fn upload_thumb(&mut self, _slot: Slot, _rgba: &[u8]) {}
     fn upload_preview(&mut self, _image: Option<&Bitmap>) {}
+    fn upload_backdrop(&mut self, _image: Option<&Bitmap>) {}
     fn render(&mut self, list: &DrawList) -> Result<(), RenderError>;
 }
 

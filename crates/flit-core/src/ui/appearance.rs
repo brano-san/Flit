@@ -4,9 +4,23 @@ use super::settings::{Kind, Picker, Value, SETTINGS};
 use super::settings_page::SettingPick;
 use super::{App, Effect, SettingsCmd};
 use crate::i18n::S;
+use super::Bitmap;
+use crate::path::FsPath;
+use crate::render::{DrawList, Rect};
 use crate::theme::{Area, Mode, Palette, SystemColors, Tint, PRESETS};
 
 const MAX_FONT: usize = 64;
+const BACKDROP_ALPHA: u8 = 0x48;
+
+pub(super) fn cover_uv(window_aspect: f32, image_aspect: f32) -> [f32; 4] {
+    if image_aspect > window_aspect {
+        let half = window_aspect / image_aspect / 2.0;
+        [0.5 - half, 0.0, 0.5 + half, 1.0]
+    } else {
+        let half = image_aspect / window_aspect / 2.0;
+        [0.0, 0.5 - half, 1.0, 0.5 + half]
+    }
+}
 
 pub struct Look {
     pub mode: Mode,
@@ -19,6 +33,10 @@ pub struct Look {
     font_pick: Option<usize>,
     system_dark: bool,
     pub contrast: Option<SystemColors>,
+    pub backdrop_path: String,
+    backdrop: Option<Bitmap>,
+    backdrop_gen: u64,
+    backdrop_rev: u64,
 }
 
 impl Look {
@@ -34,6 +52,10 @@ impl Look {
             font_pick: None,
             system_dark,
             contrast: None,
+            backdrop_path: String::new(),
+            backdrop: None,
+            backdrop_gen: 0,
+            backdrop_rev: 0,
         }
     }
 }
@@ -85,6 +107,47 @@ impl App {
     pub(super) fn set_area_color(&mut self, area: Area, key: &str) {
         self.look.areas[area as usize] = Tint::parse(key).unwrap_or_default();
         self.restyle();
+    }
+
+    pub(super) fn set_backdrop(&mut self, path: String) {
+        let path = path.trim().to_owned();
+        if path == self.look.backdrop_path {
+            return;
+        }
+        let l = &mut self.look;
+        l.backdrop_gen += 1;
+        l.backdrop_rev += 1;
+        l.backdrop = None;
+        l.backdrop_path = path;
+        if let Some(p) = FsPath::parse(&l.backdrop_path).filter(|_| !l.backdrop_path.is_empty()) {
+            self.effects.push(Effect::Backdrop { gen: l.backdrop_gen, path: p });
+        }
+        self.dirty = true;
+    }
+
+    pub fn on_backdrop(&mut self, gen: u64, image: Option<Bitmap>) {
+        if gen != self.look.backdrop_gen {
+            return;
+        }
+        if image.is_none() {
+            self.status(crate::tr!(S::AppearanceBackdropFailed, path = self.look.backdrop_path));
+        }
+        self.look.backdrop = image;
+        self.look.backdrop_rev += 1;
+        self.dirty = true;
+    }
+
+    pub fn backdrop_image(&self) -> (u64, Option<&Bitmap>) {
+        (self.look.backdrop_rev, self.look.backdrop.as_ref())
+    }
+
+    pub(super) fn draw_backdrop(&self, dl: &mut DrawList) {
+        let Some(b) = &self.look.backdrop else { return };
+        let (w, h) = self.size;
+        if w <= 0.0 || h <= 0.0 || b.width == 0 || b.height == 0 {
+            return;
+        }
+        dl.backdrop(Rect::new(0.0, 0.0, w, h), cover_uv(w / h, b.width as f32 / b.height as f32), BACKDROP_ALPHA);
     }
 
     pub(super) fn set_ui_font(&mut self, name: &str) {
