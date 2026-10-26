@@ -1,0 +1,4 @@
+not_json = "Die Einstellungsdatei ist kein gültiges JSON ({error}), daher bleiben die Einstellungen der letzten Sitzung erhalten"
+tags = "Die Tags in der Einstellungsdatei sind keine Liste und wurden daher ignoriert"
+value = "Der Wert von {key} in der Einstellungsdatei ist ungültig, daher wird der Standard verwendet"
+is_folder = "{path} ist ein Ordner"

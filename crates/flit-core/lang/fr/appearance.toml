@@ -1,0 +1,5 @@
+default = "Par défaut"
+custom_color = "Couleur personnalisée…"
+system_font = "Police système par défaut"
+not_installed = "{font} (non installée)"
+backdrop_failed = "Impossible d’afficher {path} en arrière-plan"

@@ -33,3 +33,9 @@ fn recent_files_are_newest_first_unique_and_limited() {
     assert!(recent_files(&root.join("missing"), 8).is_empty());
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn maps_windows_ui_languages_to_flit_codes() {
+    assert_eq!([0x0419, 0x0409, 0x0809, 0x0407, 0x040C, 0x0C0A, 0x0422, 0x0804, 0x1004].map(language_code), ["ru", "en", "en", "de", "fr", "es", "uk", "zh-CN", "zh-CN"]);
+    assert_eq!([0x0404, 0x0C04, 0x0411].map(language_code), ["", "", ""]);
+}

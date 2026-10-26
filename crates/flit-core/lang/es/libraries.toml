@@ -1,0 +1,5 @@
+add_folder = "Agregar una carpeta…"
+not_loaded = "Esta biblioteca aún no se ha cargado"
+default_save = "Ubicación de guardado predeterminada"
+enter_path = "Escribe la ruta completa de la carpeta que quieres incluir en la biblioteca"
+not_changed = "La biblioteca no se modificó: {message}"

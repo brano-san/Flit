@@ -1,0 +1,38 @@
+placeholder = "Suche: Wörter, *.ext, ext:, size:, dm:, path:, regex:, tag: oder $ und Eigenschaft:Wert für Windows Search"
+title = "Suche — Flit"
+title_in = "Suche in {name} — Flit"
+invalid = "Die Abfrage ist ungültig."
+no_match = "Keine Dateien gefunden."
+searching = "Suche läuft…"
+walking = ["Suche läuft… {n} Ergebnis", "Suche läuft… {n} Ergebnisse"]
+walking_in = ["Suche läuft… {results} in {n} Ordner", "Suche läuft… {results} in {n} Ordnern"]
+results = ["{n} Ergebnis", "{n} Ergebnisse"]
+done_in = "{results} in {ms} ms"
+in = "In {name}"
+all_drives = "Alle Laufwerke"
+recent = "Letzte Suchen · Shift+Entf entfernt eine"
+folders = ["{n} Ordner", "{n} Ordner"]
+
+[error]
+rows_without_folders = "Der Index hat Zeilen ohne Ordner gesendet."
+invalid_rows = "Der Index hat ungültige Zeilen gesendet: {error}"
+unavailable = "Die Suche ist nicht verfügbar: {error}"
+cannot_start = "Die Suche kann nicht gestartet werden: {error}"
+shell = "Windows Search: {error}"
+
+[column]
+folder = "Ordner"
+
+[source]
+walk = "Live-Suche im Ordner und seinen Unterordnern"
+shell = "Windows Search"
+tagged = "Dateien mit Tags"
+connecting = "Verbindung zum Index wird hergestellt"
+service = "Indexdienst"
+fallback = "Lokaler Index (flit-indexd nicht verfügbar)"
+
+[index]
+default = "Index"
+ready = ["{label} {n} Datei", "{label} {n} Dateien"]
+scanning = ["{label} Indizierung {percent} % ({n} Datei)", "{label} Indizierung {percent} % ({n} Dateien)"]
+error = "{label} Fehler: {error}"

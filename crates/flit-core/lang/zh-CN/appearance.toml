@@ -1,0 +1,5 @@
+default = "默认"
+custom_color = "自定义颜色…"
+system_font = "系统默认"
+not_installed = "{font}（未安装）"
+backdrop_failed = "无法将 {path} 显示为背景"

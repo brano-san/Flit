@@ -11,49 +11,80 @@ pub enum Lang {
     #[default]
     En,
     Ru,
+    De,
+    Fr,
+    Es,
+    Uk,
+    ZhCn,
 }
 
 impl Lang {
-    pub const ALL: [Lang; 2] = [Lang::En, Lang::Ru];
+    pub const ALL: [Lang; 7] = [Lang::En, Lang::Ru, Lang::De, Lang::Fr, Lang::Es, Lang::Uk, Lang::ZhCn];
 
     pub fn code(self) -> &'static str {
         match self {
             Lang::En => "en",
             Lang::Ru => "ru",
+            Lang::De => "de",
+            Lang::Fr => "fr",
+            Lang::Es => "es",
+            Lang::Uk => "uk",
+            Lang::ZhCn => "zh-CN",
         }
     }
 
     pub fn from_code(code: &str) -> Option<Lang> {
-        let primary = code.split(['-', '_']).next().unwrap_or_default();
-        Lang::ALL.into_iter().find(|l| primary.eq_ignore_ascii_case(l.code()))
+        let code = code.split(['.', '@']).next().unwrap_or_default().to_ascii_lowercase();
+        let mut parts = code.split(['-', '_']);
+        let primary = parts.next().unwrap_or_default();
+        if primary == "zh" {
+            return matches!(parts.next(), None | Some("cn" | "sg" | "hans")).then_some(Lang::ZhCn);
+        }
+        Lang::ALL.into_iter().find(|l| primary == l.code())
     }
 
     fn from_u8(v: u8) -> Lang {
-        if v == Lang::Ru as u8 { Lang::Ru } else { Lang::En }
+        Lang::ALL.get(usize::from(v)).copied().unwrap_or_default()
+    }
+
+    pub fn plural_forms(self) -> usize {
+        match self {
+            Lang::ZhCn => 1,
+            Lang::En | Lang::De => 2,
+            Lang::Ru | Lang::Uk | Lang::Fr | Lang::Es => 3,
+        }
     }
 
     fn form(self, n: u64) -> usize {
+        let million = n != 0 && n.is_multiple_of(1_000_000);
         match self {
-            Lang::En => usize::from(n != 1),
-            Lang::Ru => match (n % 10, n % 100) {
+            Lang::ZhCn => 0,
+            Lang::En | Lang::De => usize::from(n != 1),
+            Lang::Ru | Lang::Uk => match (n % 10, n % 100) {
                 (1, r) if r != 11 => 0,
                 (2..=4, r) if !(12..=14).contains(&r) => 1,
                 _ => 2,
             },
+            Lang::Fr if n <= 1 => 0,
+            Lang::Es if n == 1 => 0,
+            Lang::Fr | Lang::Es if million => 1,
+            Lang::Fr | Lang::Es => 2,
         }
     }
 
     pub fn group_separator(self) -> &'static str {
         match self {
-            Lang::En => ",",
-            Lang::Ru => "\u{A0}",
+            Lang::En | Lang::ZhCn => ",",
+            Lang::Ru | Lang::Uk => "\u{A0}",
+            Lang::Fr => "\u{202F}",
+            Lang::De | Lang::Es => ".",
         }
     }
 
     pub fn decimal_separator(self) -> char {
         match self {
-            Lang::En => '.',
-            Lang::Ru => ',',
+            Lang::En | Lang::ZhCn => '.',
+            Lang::Ru | Lang::Uk | Lang::Fr | Lang::De | Lang::Es => ',',
         }
     }
 }
@@ -88,6 +119,11 @@ pub fn search_langs() -> &'static [Lang] {
     match lang() {
         Lang::En => &[Lang::En],
         Lang::Ru => &[Lang::En, Lang::Ru],
+        Lang::De => &[Lang::En, Lang::De],
+        Lang::Fr => &[Lang::En, Lang::Fr],
+        Lang::Es => &[Lang::En, Lang::Es],
+        Lang::Uk => &[Lang::En, Lang::Uk],
+        Lang::ZhCn => &[Lang::En, Lang::ZhCn],
     }
 }
 
@@ -109,6 +145,11 @@ pub fn unix_term(s: &'static str, l: Lang) -> &'static str {
     let pairs: &[(&str, &str)] = match l {
         Lang::En => &[("Recycle Bin", "Trash"), ("This PC", "Computer")],
         Lang::Ru => &[("Этот компьютер", "Компьютер")],
+        Lang::De => &[("Dieser PC", "Computer")],
+        Lang::Fr => &[("Ce PC", "Ordinateur")],
+        Lang::Es => &[("Este equipo", "Equipo")],
+        Lang::Uk => &[("Цей ПК", "Комп'ютер")],
+        Lang::ZhCn => &[("此电脑", "计算机")],
     };
     if !pairs.iter().any(|(from, _)| s.contains(from)) {
         return s;
@@ -391,7 +432,7 @@ struct Template {
 }
 
 fn templates(l: Lang) -> &'static [Template] {
-    static ALL: [std::sync::OnceLock<Vec<Template>>; 2] = [std::sync::OnceLock::new(), std::sync::OnceLock::new()];
+    static ALL: [std::sync::OnceLock<Vec<Template>>; Lang::ALL.len()] = [const { std::sync::OnceLock::new() }; Lang::ALL.len()];
     ALL[l as usize].get_or_init(|| {
         let plain = S::ALL.into_iter().map(|s| Template { key: Key::S(s), text: s.in_lang(l) });
         let plural = P::ALL.into_iter().flat_map(|p| p.forms(l).iter().map(move |&text| Template { key: Key::P(p), text }));

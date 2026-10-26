@@ -1,0 +1,5 @@
+add_folder = "Ordner hinzufügen…"
+not_loaded = "Diese Bibliothek ist noch nicht geladen"
+default_save = "Standardspeicherort"
+enter_path = "Geben Sie den vollständigen Pfad des Ordners ein, der in die Bibliothek aufgenommen werden soll"
+not_changed = "Die Bibliothek wurde nicht geändert: {message}"

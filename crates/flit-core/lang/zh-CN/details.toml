@@ -1,0 +1,39 @@
+[column]
+name = "名称"
+modified = "修改日期"
+created = "创建日期"
+type = "类型"
+size = "大小"
+origin = "原位置"
+deleted = "删除日期"
+tag = "标记"
+
+[type]
+drive = "驱动器"
+folder = "文件夹"
+file = "文件"
+ext_file = "{ext} 文件"
+
+[group]
+unknown_date = "未知日期"
+unknown_location = "未知位置"
+no_tags = "无标记"
+
+[size_group]
+folders = "文件夹"
+empty = "空"
+tiny = "微小（小于 16 KB）"
+small = "小（16 KB 到 1 MB）"
+medium = "中（1 到 128 MB）"
+large = "大（128 MB 到 1 GB）"
+huge = "特大（1 到 4 GB）"
+gigantic = "巨大（大于 4 GB）"
+
+[count]
+items = ["{n} 个项目"]
+filtered = ["{shown}/{n} 个项目"]
+folders = ["{n} 个文件夹"]
+files = ["{n} 个文件"]
+
+[status]
+default_view = "新文件夹将以此视图打开"

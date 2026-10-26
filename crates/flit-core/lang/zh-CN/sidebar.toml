@@ -1,0 +1,61 @@
+move_up = "上移"
+move_down = "下移"
+library_locations = "库位置"
+restore_all = "还原所有项目"
+expand = "展开"
+collapse = "折叠"
+hide_section = "隐藏此分区"
+new_library = "新建库"
+restore_libraries = "还原默认库"
+sections = "分区"
+compact = "紧凑侧边栏"
+pin_hint = "Ctrl+D 固定当前文件夹"
+only_unpinned = "只能固定尚未固定的文件夹"
+select_to_pin = "选择要固定的文件夹"
+
+[folder]
+home = "主文件夹"
+desktop = "桌面"
+downloads = "下载"
+documents = "文档"
+pictures = "图片"
+music = "音乐"
+videos = "视频"
+
+[section]
+pinned = "已固定"
+folders = "文件夹"
+libraries = "库"
+drives = "驱动器"
+tags = "标记"
+
+[tag]
+filter = "键入以筛选标记"
+choose_action = "选择对标记执行的操作"
+new_name = "新标记的名称"
+rename_to = "标记的新名称"
+filter_colors = "键入以筛选颜色"
+delete_prompt = "删除此标记？"
+open_which = "选择要打开其项目的标记"
+enter_creates = "按 Enter 创建标记"
+enter_renames = "按 Enter 重命名标记"
+no_colors = "没有匹配的颜色"
+no_match = "没有匹配的标记"
+select_items = "选择要添加标记的项目"
+none_yet = "还没有标记"
+change_color = "更改颜色"
+current = "当前"
+delete_named = "删除标记“{name}”"
+removes_from = ["将从 {n} 个项目中移除"]
+none_available = "没有可用的项目带有此标记"
+opened_some = ["已打开 {n} 个带标记项目中的 {opened} 个"]
+tagged = ["已为 {n} 个项目添加标记 {tag}"]
+needs_args = "Flit -Tag 需要标记名称和要添加标记的文件"
+
+[drive]
+local = "本地磁盘"
+usb = "U 盘"
+cd = "CD 驱动器"
+network = "网络驱动器"
+other = "驱动器"
+label = "{name} ({letter}:)"

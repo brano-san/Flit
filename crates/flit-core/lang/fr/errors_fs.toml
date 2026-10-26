@@ -1,0 +1,18 @@
+not_found = "Chemin introuvable"
+access_denied = "Accès refusé"
+not_a_directory = "Ce n’est pas un dossier"
+unavailable = "L’emplacement n’est pas disponible"
+other = "Erreur"
+no_media = "Aucun support dans le lecteur"
+coded = "{what} (0x{code})"
+retry = "{error}. Appuyez sur F5 pour réessayer."
+insert_media = "{error}. Insérez-en un et appuyez sur F5, ou éjectez le lecteur."
+
+[title]
+encrypted = "Cette archive est chiffrée"
+not_found = "Ce dossier n’existe pas"
+access_denied = "Vous n’avez pas l’autorisation d’ouvrir ce dossier"
+not_a_directory = "Cet emplacement n’est pas un dossier"
+unavailable = "Cet emplacement n’est pas disponible"
+other = "Impossible d’ouvrir ce dossier"
+no_media = "Aucun disque ni carte mémoire dans ce lecteur"

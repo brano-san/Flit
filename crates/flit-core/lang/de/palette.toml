@@ -1,0 +1,22 @@
+[placeholder]
+encoding = "Tippen, um die Codierungen der Namen im Archiv zu filtern"
+commands = "Befehl eingeben"
+new_item = "Tippen, um die Arten neuer Elemente zu filtern"
+shortcut = "Vollständiger Pfad des Verknüpfungsziels"
+stream = "Name des neuen alternativen Datenstroms"
+folder_icon = "Vollständiger Pfad eines Symbols, Programms oder einer Bibliothek, optional gefolgt von einem Komma und dem Symbolindex"
+new_library = "Name der neuen Bibliothek"
+library = "Enter macht einen Ordner zum Standardspeicherort, Entf entfernt ihn aus der Bibliothek"
+library_add = "Vollständiger Pfad des Ordners, der in die Bibliothek aufgenommen werden soll"
+
+[empty]
+commands = "Keine passenden Befehle"
+new_item = "Keine passenden Elementarten"
+encoding = "Keine passenden Codierungen"
+shortcut = "Enter erstellt die Verknüpfung in diesem Ordner"
+stream = "Enter erstellt den Datenstrom"
+folder_icon = "Enter schreibt das Symbol in die desktop.ini des Ordners"
+new_library = "Enter erstellt die Bibliothek im Ordner „Bibliotheken“"
+library = "Keine passenden Ordner"
+library_add = "Enter fügt den Ordner zur Bibliothek hinzu"
+toolbar = "Keine passenden Schaltflächen"

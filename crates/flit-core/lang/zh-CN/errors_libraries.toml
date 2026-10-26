@@ -1,0 +1,3 @@
+create = "无法创建 {path}：{error}"
+write = "无法写入 {path}：{error}"
+unknown_folder = "库文件夹未知"

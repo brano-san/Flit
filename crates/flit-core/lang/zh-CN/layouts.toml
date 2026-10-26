@@ -1,0 +1,8 @@
+details = "详细信息"
+list = "列表"
+cards = "卡片"
+columns = "分栏"
+grid = "网格"
+adaptive = "自适应"
+adaptive_shared = "自适应布局需要每个文件夹单独的视图：请先关闭“所有文件夹使用相同视图”"
+thumbnails_cleared = "缩略图缓存已清除"

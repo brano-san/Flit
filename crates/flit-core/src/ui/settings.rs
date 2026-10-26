@@ -190,14 +190,10 @@ pub const LOG_DEFAULT: usize = 3;
 const LOG_CHOICES: Choices = &[("off", S::SettingsChoiceLogOff), ("error", S::SettingsChoiceLogError), ("warn", S::SettingsChoiceLogWarn), ("info", S::SettingsChoiceLogInfo), ("debug", S::SettingsChoiceLogDebug)];
 
 pub const LANGUAGE: &str = "general.language";
-const LANGUAGE_CHOICES: Choices = &[("system", S::SettingsChoiceLanguageSystem), ("en", S::SettingsChoiceLanguageEn), ("ru", S::SettingsChoiceLanguageRu)];
+const LANGUAGE_CHOICES: Choices = &[("system", S::SettingsChoiceLanguageSystem), ("en", S::SettingsChoiceLanguageEn), ("ru", S::SettingsChoiceLanguageRu), ("de", S::SettingsChoiceLanguageDe), ("fr", S::SettingsChoiceLanguageFr), ("es", S::SettingsChoiceLanguageEs), ("uk", S::SettingsChoiceLanguageUk), ("zh-CN", S::SettingsChoiceLanguageZhCn)];
 
 pub fn language_of(choice: usize) -> Lang {
-    match choice {
-        1 => Lang::En,
-        2 => Lang::Ru,
-        _ => i18n::system_lang(),
-    }
+    choice.checked_sub(1).and_then(|k| Lang::ALL.get(k).copied()).unwrap_or_else(i18n::system_lang)
 }
 
 pub static SETTINGS: &[Setting] = &[

@@ -1,0 +1,5 @@
+password_needed = "El archivo comprimido está cifrado: escribe su contraseña"
+wrong_password = "La contraseña no es correcta"
+inside = "Esto no se puede hacer dentro de un archivo comprimido"
+no_add = "Solo se pueden agregar archivos a archivos ZIP"
+password_kept = "Flit guarda la contraseña en memoria hasta que se cierra"

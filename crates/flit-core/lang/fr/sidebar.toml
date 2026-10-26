@@ -1,0 +1,61 @@
+move_up = "Monter"
+move_down = "Descendre"
+library_locations = "Emplacements de la bibliothèque"
+restore_all = "Restaurer tous les éléments"
+expand = "Développer"
+collapse = "Réduire"
+hide_section = "Masquer cette section"
+new_library = "Nouvelle bibliothèque"
+restore_libraries = "Restaurer les bibliothèques par défaut"
+sections = "Sections"
+compact = "Barre latérale compacte"
+pin_hint = "Ctrl+D épingle le dossier actuel"
+only_unpinned = "Seuls les dossiers pas encore épinglés peuvent être épinglés"
+select_to_pin = "Sélectionnez les dossiers à épingler"
+
+[folder]
+home = "Accueil"
+desktop = "Bureau"
+downloads = "Téléchargements"
+documents = "Documents"
+pictures = "Images"
+music = "Musique"
+videos = "Vidéos"
+
+[section]
+pinned = "Épinglés"
+folders = "Dossiers"
+libraries = "Bibliothèques"
+drives = "Lecteurs"
+tags = "Balises"
+
+[tag]
+filter = "Tapez pour filtrer les balises"
+choose_action = "Choisissez quoi faire de la balise"
+new_name = "Nom de la nouvelle balise"
+rename_to = "Nouveau nom de la balise"
+filter_colors = "Tapez pour filtrer les couleurs"
+delete_prompt = "Supprimer la balise ?"
+open_which = "Choisissez la balise dont ouvrir les éléments"
+enter_creates = "Entrée crée la balise"
+enter_renames = "Entrée renomme la balise"
+no_colors = "Aucune couleur correspondante"
+no_match = "Aucune balise correspondante"
+select_items = "Sélectionnez les éléments à baliser"
+none_yet = "Il n’y a encore aucune balise"
+change_color = "Changer la couleur"
+current = "Actuelle"
+delete_named = "Supprimer la balise « {name} »"
+removes_from = ["La retire de {n} élément", "La retire de {n} d’éléments", "La retire de {n} éléments"]
+none_available = "Aucun élément disponible ne porte cette balise"
+opened_some = ["{opened} élément balisé ouvert sur {n}", "{opened} éléments balisés ouverts sur {n}", "{opened} éléments balisés ouverts sur {n}"]
+tagged = ["{n} élément balisé avec {tag}", "{n} d’éléments balisés avec {tag}", "{n} éléments balisés avec {tag}"]
+needs_args = "Flit -Tag nécessite un nom de balise et les fichiers à baliser"
+
+[drive]
+local = "Disque local"
+usb = "Lecteur USB"
+cd = "Lecteur de CD"
+network = "Lecteur réseau"
+other = "Lecteur"
+label = "{name} ({letter}:)"

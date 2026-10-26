@@ -1,0 +1,18 @@
+[status]
+assigned = "{key} тепер виконує «{command}»"
+left_without = "«{command}» залишилася без сполучення клавіш"
+keeps = "«{command}» зберігає {keys}"
+no_shortcut = "«{command}» тепер не має сполучення клавіш"
+removed = "{key} видалено з «{command}»"
+restored = "Для «{command}» відновлено стандартні сполучення клавіш"
+restored_all = "Для всіх команд відновлено стандартні сполучення клавіш"
+
+[capture]
+press = "Натисніть нове сполучення клавіш для «{command}»"
+esc_cancels = "Esc — скасувати"
+cannot = "{key} не можна використати: {why}"
+other_keys = "Натисніть інші клавіші"
+already = "{key} уже виконує «{command}»"
+reassign = "Перепризначити {key} з «{from}» на «{command}»"
+assign = "Призначити {key} для «{command}»"
+remove = "Видалити сполучення клавіш {key}"

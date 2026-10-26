@@ -1,0 +1,13 @@
+no_tags = "Noch keine Tags: „Tags bearbeiten“ im Menü einer Datei fügt eines hinzu"
+recent_off = "Windows führt keine Liste zuletzt verwendeter Dateien: Sie ist unter Einstellungen, Personalisierung, Start deaktiviert"
+no_recent = "Keine zuletzt verwendeten Dateien"
+remove_from_list = "Aus der Liste entfernen"
+clear_list = "Liste löschen"
+clear_recent = "Zuletzt verwendete Dateien löschen"
+drive_free = "{free} frei von {total}"
+
+[widget]
+quick_access = "Schnellzugriff"
+drives = "Laufwerke"
+tags = "Tags"
+recent = "Zuletzt verwendete Dateien"

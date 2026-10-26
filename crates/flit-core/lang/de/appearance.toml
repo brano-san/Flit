@@ -1,0 +1,5 @@
+default = "Standard"
+custom_color = "Benutzerdefinierte Farbe…"
+system_font = "Systemstandard"
+not_installed = "{font} (nicht installiert)"
+backdrop_failed = "{path} kann nicht als Hintergrund angezeigt werden"

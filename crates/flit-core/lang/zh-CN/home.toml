@@ -1,0 +1,13 @@
+no_tags = "还没有标记：在文件菜单中选择“编辑标记”即可添加"
+recent_off = "Windows 未保留最近使用的文件列表：此功能已在“设置”>“个性化”>“开始”中关闭"
+no_recent = "没有最近使用的文件"
+remove_from_list = "从列表中删除"
+clear_list = "清除列表"
+clear_recent = "清除最近使用的文件"
+drive_free = "{free} 可用，共 {total}"
+
+[widget]
+quick_access = "快速访问"
+drives = "驱动器"
+tags = "标记"
+recent = "最近使用的文件"

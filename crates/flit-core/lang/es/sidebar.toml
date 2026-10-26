@@ -1,0 +1,61 @@
+move_up = "Subir"
+move_down = "Bajar"
+library_locations = "Ubicaciones de la biblioteca"
+restore_all = "Restaurar todos los elementos"
+expand = "Expandir"
+collapse = "Contraer"
+hide_section = "Ocultar esta sección"
+new_library = "Nueva biblioteca"
+restore_libraries = "Restaurar las bibliotecas predeterminadas"
+sections = "Secciones"
+compact = "Barra lateral compacta"
+pin_hint = "Ctrl+D ancla la carpeta actual"
+only_unpinned = "Solo se pueden anclar las carpetas que aún no están ancladas"
+select_to_pin = "Selecciona las carpetas que quieres anclar"
+
+[folder]
+home = "Inicio"
+desktop = "Escritorio"
+downloads = "Descargas"
+documents = "Documentos"
+pictures = "Imágenes"
+music = "Música"
+videos = "Vídeos"
+
+[section]
+pinned = "Anclado"
+folders = "Carpetas"
+libraries = "Bibliotecas"
+drives = "Unidades"
+tags = "Etiquetas"
+
+[tag]
+filter = "Escribe para filtrar las etiquetas"
+choose_action = "Elige qué hacer con la etiqueta"
+new_name = "Nombre de la nueva etiqueta"
+rename_to = "Nuevo nombre de la etiqueta"
+filter_colors = "Escribe para filtrar los colores"
+delete_prompt = "¿Eliminar la etiqueta?"
+open_which = "Elige la etiqueta cuyos elementos quieres abrir"
+enter_creates = "Enter crea la etiqueta"
+enter_renames = "Enter cambia el nombre de la etiqueta"
+no_colors = "No hay colores coincidentes"
+no_match = "No hay etiquetas coincidentes"
+select_items = "Selecciona los elementos que quieres etiquetar"
+none_yet = "Aún no hay etiquetas"
+change_color = "Cambiar color"
+current = "Actual"
+delete_named = "Eliminar la etiqueta «{name}»"
+removes_from = ["La quita de {n} elemento", "La quita de {n} de elementos", "La quita de {n} elementos"]
+none_available = "Ningún elemento disponible tiene esta etiqueta"
+opened_some = ["Se abrieron {opened} de {n} elemento etiquetado", "Se abrieron {opened} de {n} de elementos etiquetados", "Se abrieron {opened} de {n} elementos etiquetados"]
+tagged = ["Se etiquetó {n} elemento con {tag}", "Se etiquetaron {n} de elementos con {tag}", "Se etiquetaron {n} elementos con {tag}"]
+needs_args = "Flit -Tag necesita un nombre de etiqueta y los archivos que se van a etiquetar"
+
+[drive]
+local = "Disco local"
+usb = "Unidad USB"
+cd = "Unidad de CD"
+network = "Unidad de red"
+other = "Unidad"
+label = "{name} ({letter}:)"

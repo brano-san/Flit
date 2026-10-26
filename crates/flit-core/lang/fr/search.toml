@@ -1,0 +1,38 @@
+placeholder = "Rechercher : mots, *.ext, ext:, size:, dm:, path:, regex:, tag:, ou $ et propriété:valeur pour Windows Search"
+title = "Recherche — Flit"
+title_in = "Recherche dans {name} — Flit"
+invalid = "La requête n’est pas valide."
+no_match = "Aucun fichier ne correspond."
+searching = "Recherche…"
+walking = ["Recherche… {n} résultat", "Recherche… {n} de résultats", "Recherche… {n} résultats"]
+walking_in = ["Recherche… {results} dans {n} dossier", "Recherche… {results} dans {n} de dossiers", "Recherche… {results} dans {n} dossiers"]
+results = ["{n} résultat", "{n} de résultats", "{n} résultats"]
+done_in = "{results} en {ms} ms"
+in = "Dans {name}"
+all_drives = "Tous les lecteurs"
+recent = "Recherches récentes · Maj+Suppr en retire une"
+folders = ["{n} dossier", "{n} de dossiers", "{n} dossiers"]
+
+[error]
+rows_without_folders = "L’index a envoyé des lignes sans dossier."
+invalid_rows = "L’index a envoyé des lignes non valides : {error}"
+unavailable = "La recherche n’est pas disponible : {error}"
+cannot_start = "Impossible de lancer la recherche : {error}"
+shell = "Windows Search : {error}"
+
+[column]
+folder = "Dossier"
+
+[source]
+walk = "Recherche directe dans le dossier et ses sous-dossiers"
+shell = "Windows Search"
+tagged = "Fichiers balisés"
+connecting = "Connexion à l’index"
+service = "Service d’indexation"
+fallback = "Index local (flit-indexd indisponible)"
+
+[index]
+default = "index"
+ready = ["{label} {n} fichier", "{label} {n} de fichiers", "{label} {n} fichiers"]
+scanning = ["{label} indexation {percent} % ({n} fichier)", "{label} indexation {percent} % ({n} de fichiers)", "{label} indexation {percent} % ({n} fichiers)"]
+error = "{label} erreur : {error}"

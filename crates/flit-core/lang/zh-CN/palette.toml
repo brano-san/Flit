@@ -1,0 +1,22 @@
+[placeholder]
+encoding = "键入以筛选压缩文件中的名称编码"
+commands = "键入命令"
+new_item = "键入以筛选新项目的种类"
+shortcut = "快捷方式目标的完整路径"
+stream = "新备用数据流的名称"
+folder_icon = "图标、程序或库的完整路径，可选择后跟逗号和图标索引"
+new_library = "新库的名称"
+library = "按 Enter 将文件夹设为默认保存位置，按 Delete 将其从库中删除"
+library_add = "要包含到库中的文件夹的完整路径"
+
+[empty]
+commands = "没有匹配的命令"
+new_item = "没有匹配的项目种类"
+encoding = "没有匹配的编码"
+shortcut = "按 Enter 在此文件夹中创建快捷方式"
+stream = "按 Enter 创建流"
+folder_icon = "按 Enter 将图标写入文件夹的 desktop.ini"
+new_library = "按 Enter 在库文件夹中创建库"
+library = "没有匹配的文件夹"
+library_add = "按 Enter 将文件夹添加到库"
+toolbar = "没有匹配的按钮"

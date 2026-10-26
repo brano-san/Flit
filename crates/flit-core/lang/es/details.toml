@@ -1,0 +1,39 @@
+[column]
+name = "Nombre"
+modified = "Fecha de modificación"
+created = "Fecha de creación"
+type = "Tipo"
+size = "Tamaño"
+origin = "Ubicación original"
+deleted = "Fecha de eliminación"
+tag = "Etiquetas"
+
+[type]
+drive = "Unidad"
+folder = "Carpeta de archivos"
+file = "Archivo"
+ext_file = "Archivo {ext}"
+
+[group]
+unknown_date = "Fecha desconocida"
+unknown_location = "Ubicación desconocida"
+no_tags = "Sin etiquetas"
+
+[size_group]
+folders = "Carpetas"
+empty = "Vacío"
+tiny = "Diminuto (menos de 16 KB)"
+small = "Pequeño (de 16 KB a 1 MB)"
+medium = "Mediano (de 1 a 128 MB)"
+large = "Grande (de 128 MB a 1 GB)"
+huge = "Enorme (de 1 a 4 GB)"
+gigantic = "Gigantesco (más de 4 GB)"
+
+[count]
+items = ["{n} elemento", "{n} de elementos", "{n} elementos"]
+filtered = ["{shown} de {n} elemento", "{shown} de {n} de elementos", "{shown} de {n} elementos"]
+folders = ["{n} carpeta", "{n} de carpetas", "{n} carpetas"]
+files = ["{n} archivo", "{n} de archivos", "{n} archivos"]
+
+[status]
+default_view = "Las carpetas nuevas se abrirán con esta vista"

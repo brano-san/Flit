@@ -1,0 +1,22 @@
+[placeholder]
+encoding = "Escribe para filtrar las codificaciones de nombres del archivo comprimido"
+commands = "Escribe un comando"
+new_item = "Escribe para filtrar los tipos de elementos nuevos"
+shortcut = "Ruta completa del destino del acceso directo"
+stream = "Nombre del nuevo flujo de datos alternativo"
+folder_icon = "Ruta completa de un icono, programa o biblioteca y, opcionalmente, una coma y el índice del icono"
+new_library = "Nombre de la nueva biblioteca"
+library = "Enter convierte una carpeta en la ubicación de guardado predeterminada, Supr la quita de la biblioteca"
+library_add = "Ruta completa de la carpeta que quieres incluir en la biblioteca"
+
+[empty]
+commands = "No hay comandos coincidentes"
+new_item = "No hay tipos de elementos coincidentes"
+encoding = "No hay codificaciones coincidentes"
+shortcut = "Enter crea el acceso directo en esta carpeta"
+stream = "Enter crea el flujo"
+folder_icon = "Enter escribe el icono en el desktop.ini de la carpeta"
+new_library = "Enter crea la biblioteca en la carpeta Bibliotecas"
+library = "No hay carpetas coincidentes"
+library_add = "Enter agrega la carpeta a la biblioteca"
+toolbar = "No hay botones coincidentes"

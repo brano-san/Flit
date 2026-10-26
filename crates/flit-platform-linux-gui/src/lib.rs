@@ -111,6 +111,10 @@ impl Platform for Linux {
         xdg::known_folder(name)
     }
 
+    fn ui_language() -> String {
+        ["LC_ALL", "LC_MESSAGES", "LANG"].iter().filter_map(|k| std::env::var(k).ok()).find(|v| !v.is_empty()).unwrap_or_default()
+    }
+
     fn templates() -> Vec<flit_core::ui::NewTemplate> {
         xdg::templates()
     }

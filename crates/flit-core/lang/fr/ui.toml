@@ -1,0 +1,165 @@
+quoted = "« {name} »"
+invalid_path = "Chemin non valide : {path}"
+in_recycle_bin = "« {name} » se trouve dans la Corbeille. Restaurez-le pour l’ouvrir."
+dropped_routes = ["Premier emplacement sur {n} ouvert ({shown})", "{shown} premiers emplacements sur {n} ouverts", "{shown} premiers emplacements sur {n} ouverts"]
+
+[bin]
+restore = "Restaurer"
+restore_all = "Restaurer tout"
+empty = "Vider la Corbeille"
+
+[empty]
+filtered = "Aucun élément ne correspond au filtre."
+bin = "La Corbeille est vide."
+folder = "Ce dossier est vide."
+
+[status]
+selected = ["{n} sélectionné", "{n} de sélectionnés", "{n} sélectionnés"]
+unpacked = "{size} décompressé"
+loading = "Chargement…"
+timing = "{first} ms premier · {all} ms tout"
+
+[button]
+replace = "Remplacer"
+keep_both = "Conserver les deux"
+skip = "Ignorer"
+cancel = "Annuler"
+delete = "Supprimer"
+restore = "Restaurer"
+not_now = "Pas maintenant"
+
+[job]
+operations = "Opérations"
+clear_completed = "Effacer les opérations terminées"
+none = "Aucune opération pour l’instant. Les copies, déplacements et suppressions s’affichent ici."
+open_destination = "Ouvrir la destination"
+remove = "Retirer de la liste"
+conflict = "Conflit"
+queued = "En attente"
+done = "Terminé"
+failed = "Échec"
+cancelled = "Annulé"
+waiting_answer = "En attente de votre réponse"
+cancelling = "Annulation…"
+waiting_drive = "En attente d’une autre opération sur ce lecteur"
+preparing = "Préparation…"
+bytes_of = "{done} sur {total}"
+speed = "{size}/s"
+items_of = ["{done} sur {n} élément", "{done} sur {n} d’éléments", "{done} sur {n} éléments"]
+items_speed = "{speed} éléments/s"
+completed_in = "Terminé en {seconds} s"
+completed = "Terminé"
+cancelled_detail = "Annulé avant la fin ; les éléments restants ont été laissés en place"
+
+[job_title]
+copying = "Copie de {what} vers {dest}"
+moving = "Déplacement de {what} vers {dest}"
+renaming = "Renommage de {what}"
+moving_items = "Déplacement de {what}"
+pasting = "Collage dans {dest}"
+trashing = "Déplacement de {what} vers la Corbeille"
+trashing_linux = "Déplacement de {what} vers la Corbeille"
+deleting = "Suppression de {what}"
+flattening = "Aplatissement de {what}"
+restoring = "Restauration de {what}"
+purging = "Suppression de {what} de la Corbeille"
+emptying = "Vidage de la Corbeille"
+compressing = "Compression de {what} vers {dest}"
+extracting = "Extraction de {what}"
+opening = "Ouverture de {what}"
+
+[confirm]
+trash = "Déplacer vers la Corbeille ?"
+trash_one = "{name} sera déplacé vers la Corbeille."
+trash_many = ["Cet élément ({n}) sera déplacé vers la Corbeille.", "Ces {n} d’éléments seront déplacés vers la Corbeille.", "Ces {n} éléments seront déplacés vers la Corbeille."]
+delete = "Supprimer définitivement ?"
+delete_one = "{name} sera supprimé définitivement."
+delete_many = ["Cet élément ({n}) sera supprimé définitivement.", "Ces {n} d’éléments seront supprimés définitivement.", "Ces {n} éléments seront supprimés définitivement."]
+restore = "Restaurer tous les éléments ?"
+restore_one = "{name} retournera à l’emplacement d’où il a été supprimé."
+restore_many = ["L’élément ({n}) de la Corbeille retournera à l’emplacement d’où il a été supprimé.", "Les {n} d’éléments de la Corbeille retourneront à l’emplacement d’où ils ont été supprimés.", "Les {n} éléments de la Corbeille retourneront à l’emplacement d’où ils ont été supprimés."]
+empty = "Vider la Corbeille ?"
+empty_text = "Tous les éléments de la Corbeille seront supprimés définitivement."
+note_linux_trash = "La Corbeille de Linux les conserve jusqu’à ce qu’elle soit vidée."
+note_bin = "La Corbeille les conserve jusqu’à ce qu’elle soit vidée."
+note_restore = "Ctrl+Z les renvoie dans la Corbeille."
+note_undo = "Cette action est irréversible."
+delete_instead = "Supprimer définitivement à la place"
+
+[conflict]
+title = "Remplacer ou ignorer ?"
+exists = "{name} existe déjà dans {folder}."
+merge = "Remplacer fusionne les dossiers : les éléments portant d’autres noms sont conservés."
+apply_all = "Faire de même pour tous les conflits restants"
+new = "Nouveau"
+existing = "Existant"
+folder = "dossier"
+meta = "{label} : {what}"
+meta_modified = "{label} : {what}, modifié le {date}"
+unreadable_title = "Certains éléments ne peuvent pas être compressés"
+unreadable = "Impossible de lire {name}."
+unreadable_hint = "Un autre programme l’utilise peut-être, ou sa lecture nécessite des autorisations que Flit n’a pas."
+skip_all = "Ignorer tous les éléments illisibles"
+
+[export]
+replace_title = "Remplacer {name} ?"
+replace = "L’exportation des paramètres écraserait ce fichier dans {folder}."
+
+[session]
+restore_title = "Restaurer la session précédente ?"
+crashed = "Flit ne s’est pas fermé correctement la dernière fois."
+restore = "Restaurer rouvre les fenêtres et onglets qui étaient ouverts."
+
+[ops]
+new_folder_name = "Nouveau dossier"
+bin_only = "Les éléments de la Corbeille peuvent seulement être restaurés ou supprimés"
+streams_view_only = "Les flux de données alternatifs sont affichés en lecture seule"
+open_bin = "Ouvrez la Corbeille pour restaurer des éléments"
+mixed_paths = "Les éléments dans WSL et sous Windows ne peuvent pas être combinés dans une même opération"
+name_empty = "Un nom ne peut pas être vide"
+name_not_allowed = "Ce nom n’est pas autorisé"
+name_bad_chars = "Un nom ne peut contenir aucun de ces caractères : \\ / : * ? \" < > |"
+name_reserved = "Ce nom est réservé par Windows"
+name_slash = "Un nom ne peut pas contenir de barre oblique"
+name_too_long = "Le nom est trop long"
+name_not_editable = "Ce nom ne peut pas être modifié dans Flit"
+name_not_shell = "Ce nom ne peut pas être utilisé par les opérations du shell Windows"
+names_not_shell = "Certains noms ne peuvent pas être utilisés par les opérations du shell Windows"
+folder_not_shell = "Ce dossier ne peut pas être utilisé par les opérations du shell Windows"
+not_in_computer = "Impossible de placer des fichiers dans Ce PC"
+not_in_bin = "Impossible de placer des fichiers dans la Corbeille"
+not_on_home = "Impossible de placer des fichiers sur la page Accueil"
+library_no_folder = "Cette bibliothèque n’a pas de dossier d’enregistrement"
+select_flatten = "Sélectionnez les dossiers à aplatir"
+select_restore = "Sélectionnez les éléments à restaurer"
+select_paste_into = "Sélectionnez un dossier dans lequel coller"
+select_new_folder = "Sélectionnez les éléments à placer dans un nouveau dossier"
+select_shortcut = "Sélectionnez les éléments vers lesquels créer des raccourcis"
+select_stream = "Sélectionnez un fichier auquel ajouter un flux"
+icon_hint = "Entrez le chemin complet d’une icône, d’un programme ou d’une bibliothèque, éventuellement suivi d’une virgule et de l’index de l’icône"
+target_hint = "Entrez le chemin complet du fichier ou dossier vers lequel pointe le raccourci"
+no_terminal = "Cet emplacement ne peut pas être ouvert dans un terminal"
+terminals = ["Premier dossier sur {n} ouvert dans le terminal ({shown})", "{shown} premiers dossiers sur {n} ouverts dans le terminal", "{shown} premiers dossiers sur {n} ouverts dans le terminal"]
+nothing_to_undo = "Rien à annuler"
+nothing_to_redo = "Rien à rétablir"
+stream_created = "Flux {name} créé"
+icon_changed = "Icône de {folder} modifiée"
+icon_restored = "Icône par défaut de {folder} rétablie"
+extension_warning = "Modifier l’extension de « {name} » peut le rendre inutilisable. Appuyez de nouveau sur Entrée pour le renommer, ou sur Échap pour annuler."
+
+[drop]
+copy = "Copier vers %1"
+link = "Créer un lien dans %1"
+move = "Déplacer vers %1"
+open_with = "Ouvrir avec %1"
+new_tab = "Ouvrir %1 dans un nouvel onglet"
+new_tabs = "Ouvrir dans de nouveaux onglets"
+pin = "Épingler à %1"
+
+[app]
+elevated = "Flit s’exécute en tant qu’administrateur, Windows bloque donc les fichiers glissés depuis d’autres programmes"
+import_failed = "Impossible de lire le fichier de paramètres : {error}"
+exported = "Paramètres et balises exportés vers {path}"
+export_failed = "Impossible d’exporter les paramètres : {error}"
+tag_failed = "Flit n’a pas pu baliser les fichiers : {error}"
+start_failed = "Flit n’a pas pu démarrer : {error}"

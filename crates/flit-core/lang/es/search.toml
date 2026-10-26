@@ -1,0 +1,38 @@
+placeholder = "Buscar: palabras, *.ext, ext:, size:, dm:, path:, regex:, tag:, o $ y propiedad:valor para Windows Search"
+title = "Búsqueda — Flit"
+title_in = "Búsqueda en {name} — Flit"
+invalid = "La consulta no es válida."
+no_match = "Ningún archivo coincide."
+searching = "Buscando…"
+walking = ["Buscando… {n} resultado", "Buscando… {n} de resultados", "Buscando… {n} resultados"]
+walking_in = ["Buscando… {results} en {n} carpeta", "Buscando… {results} en {n} de carpetas", "Buscando… {results} en {n} carpetas"]
+results = ["{n} resultado", "{n} de resultados", "{n} resultados"]
+done_in = "{results} en {ms} ms"
+in = "En {name}"
+all_drives = "Todas las unidades"
+recent = "Búsquedas recientes · Shift+Supr quita una"
+folders = ["{n} carpeta", "{n} de carpetas", "{n} carpetas"]
+
+[error]
+rows_without_folders = "El índice envió filas sin carpetas."
+invalid_rows = "El índice envió filas no válidas: {error}"
+unavailable = "La búsqueda no está disponible: {error}"
+cannot_start = "No se puede iniciar la búsqueda: {error}"
+shell = "Windows Search: {error}"
+
+[column]
+folder = "Carpeta"
+
+[source]
+walk = "Búsqueda en vivo de la carpeta y sus subcarpetas"
+shell = "Windows Search"
+tagged = "Archivos etiquetados"
+connecting = "Conectando con el índice"
+service = "Servicio de índice"
+fallback = "Índice local (flit-indexd no disponible)"
+
+[index]
+default = "índice"
+ready = ["{label} {n} archivo", "{label} {n} de archivos", "{label} {n} archivos"]
+scanning = ["{label} indexando {percent}% ({n} archivo)", "{label} indexando {percent}% ({n} de archivos)", "{label} indexando {percent}% ({n} archivos)"]
+error = "{label} error: {error}"

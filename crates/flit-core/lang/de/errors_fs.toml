@@ -1,0 +1,18 @@
+not_found = "Pfad nicht gefunden"
+access_denied = "Zugriff verweigert"
+not_a_directory = "Kein Ordner"
+unavailable = "Ort nicht verfügbar"
+other = "Fehler"
+no_media = "Kein Datenträger im Laufwerk"
+coded = "{what} (0x{code})"
+retry = "{error}. Drücken Sie F5, um es erneut zu versuchen."
+insert_media = "{error}. Legen Sie einen ein und drücken Sie F5, oder werfen Sie das Laufwerk aus."
+
+[title]
+encrypted = "Dieses Archiv ist verschlüsselt"
+not_found = "Dieser Ordner ist nicht vorhanden"
+access_denied = "Sie haben keine Berechtigung, diesen Ordner zu öffnen"
+not_a_directory = "Dieser Ort ist kein Ordner"
+unavailable = "Dieser Ort ist nicht verfügbar"
+other = "Dieser Ordner kann nicht geöffnet werden"
+no_media = "In diesem Laufwerk befindet sich keine Disc oder Speicherkarte"

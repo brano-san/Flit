@@ -1,0 +1,165 @@
+quoted = "«{name}»"
+invalid_path = "Ruta no válida: {path}"
+in_recycle_bin = "«{name}» está en la Papelera de reciclaje. Restáuralo para abrirlo."
+dropped_routes = ["Se abrió la primera {shown} de {n} ubicación", "Se abrieron las primeras {shown} de {n} de ubicaciones", "Se abrieron las primeras {shown} de {n} ubicaciones"]
+
+[bin]
+restore = "Restaurar"
+restore_all = "Restaurar todo"
+empty = "Vaciar Papelera de reciclaje"
+
+[empty]
+filtered = "Ningún elemento coincide con el filtro."
+bin = "La Papelera de reciclaje está vacía."
+folder = "Esta carpeta está vacía."
+
+[status]
+selected = ["{n} seleccionado", "{n} de seleccionados", "{n} seleccionados"]
+unpacked = "{size} descomprimido"
+loading = "Cargando…"
+timing = "{first} ms el primero · {all} ms todos"
+
+[button]
+replace = "Reemplazar"
+keep_both = "Conservar ambos"
+skip = "Omitir"
+cancel = "Cancelar"
+delete = "Eliminar"
+restore = "Restaurar"
+not_now = "Ahora no"
+
+[job]
+operations = "Operaciones"
+clear_completed = "Borrar completadas"
+none = "Aún no hay operaciones. Aquí aparecen las copias, los movimientos y las eliminaciones."
+open_destination = "Abrir destino"
+remove = "Quitar de la lista"
+conflict = "Conflicto"
+queued = "En cola"
+done = "Listo"
+failed = "Error"
+cancelled = "Cancelado"
+waiting_answer = "Esperando tu respuesta"
+cancelling = "Cancelando…"
+waiting_drive = "Esperando a otra operación en esta unidad"
+preparing = "Preparando…"
+bytes_of = "{done} de {total}"
+speed = "{size}/s"
+items_of = ["{done} de {n} elemento", "{done} de {n} de elementos", "{done} de {n} elementos"]
+items_speed = "{speed} elementos/s"
+completed_in = "Completado en {seconds} s"
+completed = "Completado"
+cancelled_detail = "Se canceló antes de terminar; los elementos restantes se quedaron en su lugar"
+
+[job_title]
+copying = "Copiando {what} en {dest}"
+moving = "Moviendo {what} a {dest}"
+renaming = "Cambiando el nombre de {what}"
+moving_items = "Moviendo {what}"
+pasting = "Pegando en {dest}"
+trashing = "Moviendo {what} a la Papelera de reciclaje"
+trashing_linux = "Moviendo {what} a la Papelera"
+deleting = "Eliminando {what}"
+flattening = "Aplanando {what}"
+restoring = "Restaurando {what}"
+purging = "Eliminando {what} de la Papelera de reciclaje"
+emptying = "Vaciando la Papelera de reciclaje"
+compressing = "Comprimiendo {what} en {dest}"
+extracting = "Extrayendo {what}"
+opening = "Abriendo {what}"
+
+[confirm]
+trash = "¿Mover a la Papelera de reciclaje?"
+trash_one = "{name} se moverá a la Papelera de reciclaje."
+trash_many = ["Este {n} elemento se moverá a la Papelera de reciclaje.", "Estos {n} de elementos se moverán a la Papelera de reciclaje.", "Estos {n} elementos se moverán a la Papelera de reciclaje."]
+delete = "¿Eliminar permanentemente?"
+delete_one = "{name} se eliminará permanentemente."
+delete_many = ["Este {n} elemento se eliminará permanentemente.", "Estos {n} de elementos se eliminarán permanentemente.", "Estos {n} elementos se eliminarán permanentemente."]
+restore = "¿Restaurar todos los elementos?"
+restore_one = "{name} volverá a la ubicación de la que se eliminó."
+restore_many = ["El {n} elemento de la Papelera de reciclaje volverá a la ubicación de la que se eliminó.", "Los {n} de elementos de la Papelera de reciclaje volverán a las ubicaciones de las que se eliminaron.", "Los {n} elementos de la Papelera de reciclaje volverán a las ubicaciones de las que se eliminaron."]
+empty = "¿Vaciar la Papelera de reciclaje?"
+empty_text = "Todos los elementos de la Papelera de reciclaje se eliminarán permanentemente."
+note_linux_trash = "La Papelera de Linux los guarda hasta que se vacía."
+note_bin = "La Papelera de reciclaje los guarda hasta que se vacía."
+note_restore = "Ctrl+Z los devuelve a la Papelera de reciclaje."
+note_undo = "Esta acción no se puede deshacer."
+delete_instead = "Eliminar permanentemente en su lugar"
+
+[conflict]
+title = "¿Reemplazar u omitir?"
+exists = "{name} ya existe en {folder}."
+merge = "Reemplazar combina las carpetas: los elementos con otros nombres se conservan."
+apply_all = "Hacer esto con todos los conflictos restantes"
+new = "Nuevo"
+existing = "Existente"
+folder = "carpeta"
+meta = "{label}: {what}"
+meta_modified = "{label}: {what}, modificado el {date}"
+unreadable_title = "Algunos elementos no se pueden comprimir"
+unreadable = "No se puede leer {name}."
+unreadable_hint = "Puede que otro programa lo esté usando o que leerlo requiera permisos que Flit no tiene."
+skip_all = "Omitir todos los elementos que no se pueden leer"
+
+[export]
+replace_title = "¿Reemplazar {name}?"
+replace = "La exportación de la configuración sobrescribiría este archivo en {folder}."
+
+[session]
+restore_title = "¿Restaurar la sesión anterior?"
+crashed = "Flit no se cerró correctamente la última vez."
+restore = "Restaurar vuelve a abrir las ventanas y pestañas que estaban abiertas."
+
+[ops]
+new_folder_name = "Nueva carpeta"
+bin_only = "Los elementos de la Papelera de reciclaje solo se pueden restaurar o eliminar"
+streams_view_only = "Los flujos de datos alternativos se muestran solo para verlos"
+open_bin = "Abre la Papelera de reciclaje para restaurar elementos"
+mixed_paths = "No se pueden combinar elementos de WSL y de Windows en una misma operación"
+name_empty = "Un nombre no puede estar vacío"
+name_not_allowed = "Este nombre no está permitido"
+name_bad_chars = "Un nombre no puede contener ninguno de estos caracteres: \\ / : * ? \" < > |"
+name_reserved = "Este nombre está reservado por Windows"
+name_slash = "Un nombre no puede contener una barra diagonal"
+name_too_long = "El nombre es demasiado largo"
+name_not_editable = "Este nombre no se puede editar en Flit"
+name_not_shell = "Este nombre no se puede usar en operaciones del shell de Windows"
+names_not_shell = "Algunos nombres no se pueden usar en operaciones del shell de Windows"
+folder_not_shell = "Esta carpeta no se puede usar en operaciones del shell de Windows"
+not_in_computer = "No se pueden colocar archivos en Este equipo"
+not_in_bin = "No se pueden colocar archivos en la Papelera de reciclaje"
+not_on_home = "No se pueden colocar archivos en la página Inicio"
+library_no_folder = "Esta biblioteca no tiene ninguna carpeta donde guardar"
+select_flatten = "Selecciona las carpetas que quieres aplanar"
+select_restore = "Selecciona los elementos que quieres restaurar"
+select_paste_into = "Selecciona una carpeta en la que pegar"
+select_new_folder = "Selecciona los elementos que quieres poner en una nueva carpeta"
+select_shortcut = "Selecciona los elementos para los que quieres crear accesos directos"
+select_stream = "Selecciona un archivo al que agregar un flujo"
+icon_hint = "Escribe la ruta completa de un icono, programa o biblioteca, seguida opcionalmente de una coma y el índice del icono"
+target_hint = "Escribe la ruta completa del archivo o carpeta al que apunta el acceso directo"
+no_terminal = "Esta ubicación no se puede abrir en Terminal"
+terminals = ["Se abrió en Terminal la primera {shown} de {n} carpeta", "Se abrieron en Terminal las primeras {shown} de {n} de carpetas", "Se abrieron en Terminal las primeras {shown} de {n} carpetas"]
+nothing_to_undo = "No hay nada que deshacer"
+nothing_to_redo = "No hay nada que rehacer"
+stream_created = "Se creó el flujo {name}"
+icon_changed = "Se cambió el icono de {folder}"
+icon_restored = "Se restauró el icono predeterminado de {folder}"
+extension_warning = "Si cambias la extensión de «{name}», puede quedar inutilizable. Presiona Enter de nuevo para cambiarle el nombre o Esc para cancelar."
+
+[drop]
+copy = "Copiar en %1"
+link = "Crear vínculo en %1"
+move = "Mover a %1"
+open_with = "Abrir con %1"
+new_tab = "Abrir %1 en una nueva pestaña"
+new_tabs = "Abrir en nuevas pestañas"
+pin = "Anclar a %1"
+
+[app]
+elevated = "Flit se ejecuta como administrador, así que Windows bloquea los archivos arrastrados desde otros programas"
+import_failed = "No se puede leer el archivo de configuración: {error}"
+exported = "Se exportaron la configuración y las etiquetas a {path}"
+export_failed = "No se puede exportar la configuración: {error}"
+tag_failed = "Flit no pudo etiquetar los archivos: {error}"
+start_failed = "Flit no se pudo iniciar: {error}"

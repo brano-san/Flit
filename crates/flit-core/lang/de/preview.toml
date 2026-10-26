@@ -1,0 +1,40 @@
+selected = ["{n} Element ausgewählt", "{n} Elemente ausgewählt"]
+archived = "In einem Archiv: Zum Anzeigen der Vorschau extrahieren"
+cannot_play = "Diese Datei kann nicht wiedergegeben werden: {error}"
+properties = "Eigenschaften"
+reading = "Eigenschaften werden gelesen…"
+loading = "Vorschau wird geladen…"
+new_tag = "+ Neues Tag"
+shortcut = "Verknüpfung mit {target}"
+too_large = "Das Bild ist für eine Vorschau zu groß"
+truncated = ["Das erste {n} Zeichen wird angezeigt", "Die ersten {n} Zeichen werden angezeigt"]
+
+[tab]
+preview = "Vorschau"
+details = "Details"
+
+[field]
+items = "Elemente"
+total_size = "Gesamtgröße"
+used_space = "Belegter Speicher"
+free_space = "Freier Speicher"
+size_bytes = ["{size} ({n} Byte)", "{size} ({n} Bytes)"]
+modified = "Geändert"
+created = "Erstellt"
+attributes = "Attribute"
+folder = "Ordner"
+free = "Frei"
+free_of = "{free} von {total}"
+
+[attr]
+read_only = "Schreibgeschützt"
+hidden = "Versteckt"
+system = "System"
+link = "Verknüpfung"
+
+[folder]
+scanned = ["{size} im ersten {n} Element", "{size} in den ersten {n} Elementen"]
+hidden = ["{n} Element ausgeblendet", "{n} Elemente ausgeblendet"]
+last_change = "Letzte Änderung {date}"
+most_common = "Am häufigsten: {types}"
+no_extension = "keine Erweiterung"

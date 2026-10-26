@@ -1,0 +1,3 @@
+create = "Impossible de créer {path} : {error}"
+write = "Impossible d’écrire {path} : {error}"
+unknown_folder = "Le dossier Bibliothèques est inconnu"

@@ -1,0 +1,8 @@
+details = "Details"
+list = "Liste"
+cards = "Karten"
+columns = "Spalten"
+grid = "Raster"
+adaptive = "Adaptiv"
+adaptive_shared = "Das adaptive Layout erfordert ordnerspezifische Ansichten: Deaktivieren Sie zuerst „Dieselbe Ansicht für alle Ordner verwenden“"
+thumbnails_cleared = "Der Miniaturansichtscache wurde geleert"

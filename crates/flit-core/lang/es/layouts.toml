@@ -1,0 +1,8 @@
+details = "Detalles"
+list = "Lista"
+cards = "Tarjetas"
+columns = "Columnas"
+grid = "Cuadrícula"
+adaptive = "Adaptable"
+adaptive_shared = "El diseño adaptable necesita vistas por carpeta: primero desactiva «Usar la misma vista para todas las carpetas»"
+thumbnails_cleared = "Se borró la caché de miniaturas"

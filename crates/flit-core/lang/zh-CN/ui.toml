@@ -1,0 +1,165 @@
+quoted = "“{name}”"
+invalid_path = "无效路径：{path}"
+in_recycle_bin = "“{name}”位于回收站中。请先还原再打开。"
+dropped_routes = ["已打开 {n} 个位置中的前 {shown} 个"]
+
+[bin]
+restore = "还原"
+restore_all = "全部还原"
+empty = "清空回收站"
+
+[empty]
+filtered = "没有与筛选条件匹配的项目。"
+bin = "回收站为空。"
+folder = "此文件夹为空。"
+
+[status]
+selected = ["已选择 {n} 个"]
+unpacked = "解压后 {size}"
+loading = "正在加载…"
+timing = "首批 {first} 毫秒 · 全部 {all} 毫秒"
+
+[button]
+replace = "替换"
+keep_both = "保留两者"
+skip = "跳过"
+cancel = "取消"
+delete = "删除"
+restore = "还原"
+not_now = "以后再说"
+
+[job]
+operations = "操作"
+clear_completed = "清除已完成"
+none = "还没有操作。复制、移动和删除会显示在这里。"
+open_destination = "打开目标位置"
+remove = "从列表中删除"
+conflict = "冲突"
+queued = "已排队"
+done = "完成"
+failed = "失败"
+cancelled = "已取消"
+waiting_answer = "等待你的回答"
+cancelling = "正在取消…"
+waiting_drive = "正在等待此驱动器上的另一个操作"
+preparing = "正在准备…"
+bytes_of = "{done}，共 {total}"
+speed = "{size}/秒"
+items_of = ["{done}/{n} 个项目"]
+items_speed = "{speed} 个项目/秒"
+completed_in = "已完成，用时 {seconds} 秒"
+completed = "已完成"
+cancelled_detail = "在完成前已取消；剩余项目保持原位"
+
+[job_title]
+copying = "正在将 {what} 复制到 {dest}"
+moving = "正在将 {what} 移动到 {dest}"
+renaming = "正在重命名 {what}"
+moving_items = "正在移动 {what}"
+pasting = "正在粘贴到 {dest}"
+trashing = "正在将 {what} 移到回收站"
+trashing_linux = "正在将 {what} 移到废纸篓"
+deleting = "正在删除 {what}"
+flattening = "正在展平 {what}"
+restoring = "正在还原 {what}"
+purging = "正在从回收站中删除 {what}"
+emptying = "正在清空回收站"
+compressing = "正在将 {what} 压缩到 {dest}"
+extracting = "正在解压 {what}"
+opening = "正在打开 {what}"
+
+[confirm]
+trash = "移到回收站？"
+trash_one = "{name} 将被移到回收站。"
+trash_many = ["这 {n} 个项目将被移到回收站。"]
+delete = "永久删除？"
+delete_one = "{name} 将被永久删除。"
+delete_many = ["这 {n} 个项目将被永久删除。"]
+restore = "还原所有项目？"
+restore_one = "{name} 将恢复到删除前的位置。"
+restore_many = ["回收站中的 {n} 个项目将恢复到删除前的位置。"]
+empty = "清空回收站？"
+empty_text = "回收站中的所有项目将被永久删除。"
+note_linux_trash = "Linux 废纸篓会保留它们，直到被清空。"
+note_bin = "回收站会保留它们，直到被清空。"
+note_restore = "按 Ctrl+Z 可将它们送回回收站。"
+note_undo = "此操作无法撤消。"
+delete_instead = "改为永久删除"
+
+[conflict]
+title = "替换还是跳过？"
+exists = "{folder} 中已存在 {name}。"
+merge = "替换会合并文件夹：其他名称的项目将保留。"
+apply_all = "对所有剩余冲突执行此操作"
+new = "新的"
+existing = "现有的"
+folder = "文件夹"
+meta = "{label}：{what}"
+meta_modified = "{label}：{what}，修改于 {date}"
+unreadable_title = "部分项目无法压缩"
+unreadable = "无法读取 {name}。"
+unreadable_hint = "可能有其他程序正在使用它，或读取它需要 Flit 不具备的权限。"
+skip_all = "跳过所有无法读取的项目"
+
+[export]
+replace_title = "替换 {name}？"
+replace = "导出设置将覆盖 {folder} 中的此文件。"
+
+[session]
+restore_title = "还原上一个会话？"
+crashed = "Flit 上次未正常关闭。"
+restore = "“还原”会重新打开之前打开的窗口和标签页。"
+
+[ops]
+new_folder_name = "新建文件夹"
+bin_only = "回收站中的项目只能还原或删除"
+streams_view_only = "备用数据流仅供查看"
+open_bin = "打开回收站以还原项目"
+mixed_paths = "WSL 中和 Windows 上的项目不能在一个操作中合并处理"
+name_empty = "名称不能为空"
+name_not_allowed = "不允许使用此名称"
+name_bad_chars = "名称不能包含下列任何字符：\\ / : * ? \" < > |"
+name_reserved = "此名称已被 Windows 保留"
+name_slash = "名称不能包含斜杠"
+name_too_long = "名称太长"
+name_not_editable = "无法在 Flit 中编辑此名称"
+name_not_shell = "此名称无法用于 Windows shell 操作"
+names_not_shell = "某些名称无法用于 Windows shell 操作"
+folder_not_shell = "此文件夹无法用于 Windows shell 操作"
+not_in_computer = "无法将文件放入此电脑"
+not_in_bin = "无法将文件放入回收站"
+not_on_home = "无法将文件放到主页上"
+library_no_folder = "此库没有可保存到的文件夹"
+select_flatten = "选择要展平的文件夹"
+select_restore = "选择要还原的项目"
+select_paste_into = "选择一个要粘贴到的文件夹"
+select_new_folder = "选择要放入新文件夹的项目"
+select_shortcut = "选择要为其创建快捷方式的项目"
+select_stream = "选择要添加流的文件"
+icon_hint = "输入图标、程序或库的完整路径，可选择后跟逗号和图标索引"
+target_hint = "输入快捷方式指向的文件或文件夹的完整路径"
+no_terminal = "无法在终端中打开此位置"
+terminals = ["已在终端中打开 {n} 个文件夹中的前 {shown} 个"]
+nothing_to_undo = "没有可撤消的操作"
+nothing_to_redo = "没有可重做的操作"
+stream_created = "已创建流 {name}"
+icon_changed = "已更改 {folder} 的图标"
+icon_restored = "已还原 {folder} 的默认图标"
+extension_warning = "更改“{name}”的扩展名可能导致其无法使用。再次按 Enter 重命名，或按 Esc 取消。"
+
+[drop]
+copy = "复制到 %1"
+link = "在 %1 中创建链接"
+move = "移动到 %1"
+open_with = "用 %1 打开"
+new_tab = "在新标签页中打开 %1"
+new_tabs = "在新标签页中打开"
+pin = "固定到 %1"
+
+[app]
+elevated = "Flit 以管理员身份运行，因此 Windows 会阻止从其他程序拖入的文件"
+import_failed = "无法读取设置文件：{error}"
+exported = "已将设置和标记导出到 {path}"
+export_failed = "无法导出设置：{error}"
+tag_failed = "Flit 无法为文件添加标记：{error}"
+start_failed = "Flit 无法启动：{error}"
