@@ -6,6 +6,7 @@ mod inotify;
 pub mod mounts;
 mod ops;
 mod trash;
+mod walk;
 
 #[cfg(test)]
 #[path = "../test/temp.rs"]
@@ -14,6 +15,7 @@ mod temp;
 pub use fs::{host, stat_path, LinuxFs};
 pub use inotify::{Inotify, Notice, Notify};
 pub use ops::run as run_op;
+pub use walk::{indexed, WalkIndex};
 pub use trash::{percent_decode, percent_encode, trash_time, Trash};
 
 use flit_core::atlas::Slot;
@@ -24,8 +26,6 @@ use flit_core::text::{FontMetrics, FontStyle, GlyphBitmap, GlyphKey, ShapedText,
 use flit_core::ui::{Bitmap, IconRequest, ShellMenu};
 use flit_core::{FsPath, Location, Open};
 use flit_platform::*;
-use flit_search::index::{Checkpoint, IndexSink};
-use flit_search::proto::VolumeInfo;
 
 pub struct Linux;
 
@@ -243,23 +243,6 @@ impl SingleInstance for DbusInstance {
         Instance::Primary(DbusInstance)
     }
     fn listen(self, _: OpenSink, _: Wake) {}
-}
-
-pub struct WalkIndex;
-
-impl IndexSource for WalkIndex {
-    fn new() -> Result<Self, PlatformError> {
-        Ok(WalkIndex)
-    }
-    fn volumes(&self) -> Result<Vec<VolumeInfo>, PlatformError> {
-        Ok(Vec::new())
-    }
-    fn scan<S: IndexSink>(&mut self, _: &str, _: &mut S) -> Result<Checkpoint, PlatformError> {
-        Err(PlatformError::unsupported("index scan"))
-    }
-    fn changes<S: IndexSink>(&mut self, _: &str, _: Checkpoint, _: &mut S) -> Result<Option<Checkpoint>, PlatformError> {
-        Err(PlatformError::unsupported("index changes"))
-    }
 }
 
 pub struct Systemd;
