@@ -153,7 +153,10 @@ unsafe fn reply(api: &Api, conn: *mut c_void, msg: *mut c_void, xml: Option<&CSt
 }
 
 pub fn session_address() -> Option<String> {
-    std::env::var("DBUS_SESSION_BUS_ADDRESS").ok().filter(|a| !a.is_empty()).or_else(|| Some(format!("unix:path={}/bus", crate::xdg::runtime_dir()?.display())))
+    ["DBUS_SESSION_BUS_ADDRESS", "DBUS_STARTER_ADDRESS"]
+        .iter()
+        .find_map(|k| std::env::var(k).ok().filter(|a| !a.is_empty()))
+        .or_else(|| Some(format!("unix:path={}/bus", crate::xdg::runtime_dir()?.display())))
 }
 
 pub fn serve(address: &str, opens: OpenSink, wake: Wake, ready: impl FnOnce(bool)) {
@@ -169,7 +172,7 @@ pub fn serve(address: &str, opens: OpenSink, wake: Wake, ready: impl FnOnce(bool
             return ready(false);
         }
         ready(true);
-        while (api.read_write)(conn, -1) != 0 {
+        loop {
             loop {
                 let msg = (api.pop)(conn);
                 if msg.is_null() {
@@ -190,6 +193,9 @@ pub fn serve(address: &str, opens: OpenSink, wake: Wake, ready: impl FnOnce(bool
                     }
                 }
                 (api.unref)(msg);
+            }
+            if (api.read_write)(conn, -1) == 0 {
+                break;
             }
         }
     }
