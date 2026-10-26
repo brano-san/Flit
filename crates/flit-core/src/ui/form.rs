@@ -316,6 +316,15 @@ impl App {
             if f.focus == k {
                 focus = node;
             }
+            if let Control::Flags { items, cur, spots, .. } = c {
+                for (j, (name, on)) in items.iter().enumerate() {
+                    let option = put(t, targets, node, Hit::FormFlag(k, j), Role::CheckBox, name, spots.get(j).copied().unwrap_or_default());
+                    t.nodes[option].selected = *on;
+                    if f.focus == k && *cur == j {
+                        focus = option;
+                    }
+                }
+            }
         }
         let n = f.controls.len();
         for (b, (label, &r)) in f.buttons.iter().zip(&f.button_rects).enumerate() {
@@ -331,6 +340,20 @@ impl App {
         if let Some(f) = &mut self.jobs.form {
             f.focus = k.min(f.slots().saturating_sub(1));
         }
+    }
+
+    pub(super) fn form_a11y_flag(&mut self, k: usize, j: usize, toggle: bool) {
+        self.form_a11y_focus(k);
+        if let Some(Control::Flags { items, cur, .. }) = self.jobs.form.as_mut().and_then(|f| f.controls.get_mut(k)) {
+            if j >= items.len() {
+                return;
+            }
+            *cur = j;
+            if toggle {
+                self.form_activate(k);
+            }
+        }
+        self.dirty = true;
     }
 
     pub(super) fn form_a11y_invoke(&mut self, k: usize) {
