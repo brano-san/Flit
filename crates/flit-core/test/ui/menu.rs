@@ -193,7 +193,7 @@ fn windows_only_actions_disappear_everywhere_on_linux() {
     }
     assert!(app.available("file.rename"));
     assert!(!app.toolbar_items().iter().any(|i| matches!(i, crate::ui::toolbar::ToolItem::Button(id, _) if id == "file.share")));
-    app.open_settings(Some(crate::ui::settings_page::Page::Actions));
+    app.open_settings(Some(crate::ui::settings::Page::Actions));
     let lines = app.settings_lines();
     assert!(lines.iter().any(|l| l.starts_with("action file.rename")), "{lines:?}");
     assert!(!lines.iter().any(|l| crate::caps::WINDOWS_ONLY_ACTIONS.iter().any(|id| l.starts_with(&format!("action {id} ")))), "{lines:?}");
