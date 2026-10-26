@@ -133,7 +133,7 @@ say('selected', files.get_n_selected_children())
 address = frame.get_child_at_index(2)
 say('text', address.get_text(0, -1))
 back = frame.get_child_at_index(1).get_child_at_index(0)
-say('action', Atspi.Action.get_name(back, 0), back.do_action(0))
+say('action', back.get_action_name(0), back.do_action(0))
 say('state', frame.get_state_set().contains(Atspi.StateType.ACTIVE))
 
 loop = GLib.MainLoop()
