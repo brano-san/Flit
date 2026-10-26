@@ -35,6 +35,21 @@ const WM_WAKE: u32 = WM_APP + 1;
 const WM_DESTROY_REQUEST: u32 = WM_APP + 2;
 const WM_OPEN_WINDOW: u32 = WM_APP + 3;
 const TIMER_ID: usize = 1;
+const CAPTURE_TIMER_ID: usize = 2;
+
+fn capture_pointer(q: &mut std::collections::VecDeque<Event>) {
+    let mouse = std::env::var("FLIT_CAPTURE_MOUSE").ok().and_then(|v| v.split_once(',').and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?))));
+    let wheel: f32 = std::env::var("FLIT_CAPTURE_WHEEL").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+    if let Some((x, y)) = mouse {
+        q.push_back(Event::MouseMove { x, y });
+    }
+    if wheel != 0.0 {
+        q.push_back(Event::Wheel { dx: 0.0, dy: -wheel });
+    }
+    if let Some((x, y)) = mouse {
+        q.push_back(Event::MouseMove { x, y });
+    }
+}
 const COMPACT: (f32, f32) = (560.0, 380.0);
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -577,20 +592,16 @@ impl<H: WindowHandler<Win32>> Shared<H> {
             if std::env::var_os("FLIT_CAPTURE_SETTINGS").is_some() {
                 node.send(Event::Key { key: Key::Char(','), mods: Mods { ctrl: true, ..Mods::default() }, pressed: true });
                 node.redraw_now();
-                let mut q = node.queue.borrow_mut();
-                q.extend(std::env::var("FLIT_CAPTURE_TYPE").unwrap_or_default().chars().map(Event::Char));
-                let mouse = std::env::var("FLIT_CAPTURE_MOUSE").ok().and_then(|v| v.split_once(',').and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?))));
-                if let Some((x, y)) = mouse {
-                    q.push_back(Event::MouseMove { x, y });
+                node.queue.borrow_mut().extend(std::env::var("FLIT_CAPTURE_TYPE").unwrap_or_default().chars().map(Event::Char));
+            }
+            match std::env::var("FLIT_CAPTURE_POINTER_MS").ok().and_then(|v| v.parse().ok()) {
+                Some(ms) => {
+                    SetTimer(Some(hwnd), CAPTURE_TIMER_ID, ms, None);
                 }
-                let wheel: f32 = std::env::var("FLIT_CAPTURE_WHEEL").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
-                if wheel != 0.0 {
-                    q.push_back(Event::Wheel { dx: 0.0, dy: -wheel });
+                None => {
+                    capture_pointer(&mut node.queue.borrow_mut());
+                    self.woken.set(true);
                 }
-                if let Some((x, y)) = mouse {
-                    q.push_back(Event::MouseMove { x, y });
-                }
-                self.woken.set(true);
             }
             if let Ok(text) = std::env::var("FLIT_CAPTURE_ADDRESS") {
                 node.send(Event::Key { key: Key::Char('L'), mods: Mods { ctrl: true, ..Mods::default() }, pressed: true });
@@ -1169,6 +1180,13 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
         WM_DEVICECHANGE if matches!(wp.0 as u32, DBT_DEVICEARRIVAL | DBT_DEVICEREMOVECOMPLETE) => {
             s.send(Event::DevicesChanged);
             None
+        }
+        WM_TIMER if wp.0 == CAPTURE_TIMER_ID => {
+            let _ = KillTimer(Some(hwnd), CAPTURE_TIMER_ID);
+            capture_pointer(&mut s.queue.borrow_mut());
+            s.shared().flush();
+            s.redraw_now();
+            Some(LRESULT(0))
         }
         WM_TIMER if wp.0 == TIMER_ID => {
             let _ = KillTimer(Some(hwnd), TIMER_ID);
