@@ -58,7 +58,9 @@ fn the_walk_matches_names_and_paths_in_every_subfolder() {
     assert_eq!(f.hits[0].row.dir, top);
     assert_eq!(groups(&f.hits), [0, 1, 2]);
     assert_eq!(names(&run(&root, "ext:md", &|| true)), ["notes.md", "report.md"]);
-    assert_eq!(names(&run(&root, r"path:\b\", &|| true)), ["c", "notes.md", "report.md"]);
+    let sep = std::path::MAIN_SEPARATOR;
+    assert_eq!(names(&run(&root, &format!("path:{sep}b{sep}"), &|| true)), ["c", "notes.md", "report.md"]);
+    assert_eq!(names(&run(&root, &format!("{sep}b{sep}"), &|| true)), ["c", "notes.md", "report.md"]);
     let stop = AtomicBool::new(false);
     let f = run(&root, "", &|| !stop.swap(true, Ordering::Relaxed));
     assert!(f.folders <= 1, "a cancelled walk stops at once");
