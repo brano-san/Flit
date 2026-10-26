@@ -319,7 +319,7 @@ pub(crate) fn commands(launch: &Launch, terminal: Option<&str>) -> Vec<Command> 
                 })
                 .collect(),
         },
-        Launch::Eject(_) => Vec::new(),
+        Launch::Eject(_) | Launch::Mount(_) => Vec::new(),
     }
 }
 

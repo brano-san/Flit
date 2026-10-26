@@ -54,7 +54,7 @@ pub fn drives() -> Vec<Drive> {
                 .to_owned(),
             };
             let path = FsPath::parse(&format!("{letter}:\\"))?;
-            Some(Drive { path, label: flit_core::tr_en!(S::SidebarDriveLabel, name = name, letter = letter), total, free, removable: matches!(kind, DRIVE_REMOVABLE | DRIVE_CDROM) })
+            Some(Drive { path, label: flit_core::tr_en!(S::SidebarDriveLabel, name = name, letter = letter), total, free, removable: matches!(kind, DRIVE_REMOVABLE | DRIVE_CDROM), unmounted: false })
         })
         .collect()
 }

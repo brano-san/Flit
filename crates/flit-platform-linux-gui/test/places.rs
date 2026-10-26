@@ -16,6 +16,19 @@ fn bookmarks_come_from_gtk_then_kde_without_home_duplicates_or_missing_folders()
 }
 
 #[test]
+fn unmounted_hotplug_filesystems_become_mountable_drives() {
+    let lsblk = "PATH=\"/dev/sda1\" LABEL=\"\" SIZE=\"100\" MOUNTPOINT=\"/\" HOTPLUG=\"0\" FSTYPE=\"ext4\"\n\
+PATH=\"/dev/sdb1\" LABEL=\"MY STICK\" SIZE=\"2048\" MOUNTPOINT=\"\" HOTPLUG=\"1\" FSTYPE=\"vfat\"\n\
+PATH=\"/dev/sdb2\" LABEL=\"\" SIZE=\"4096\" MOUNTPOINT=\"\" HOTPLUG=\"1\" FSTYPE=\"exfat\"\n\
+PATH=\"/dev/sdb3\" LABEL=\"\" SIZE=\"1\" MOUNTPOINT=\"\" HOTPLUG=\"1\" FSTYPE=\"swap\"\n\
+PATH=\"/dev/sdc\" LABEL=\"\" SIZE=\"1\" MOUNTPOINT=\"\" HOTPLUG=\"1\" FSTYPE=\"\"\n\
+PATH=\"/dev/sdd1\" LABEL=\"Mounted\" SIZE=\"1\" MOUNTPOINT=\"/media/u/M\" HOTPLUG=\"1\" FSTYPE=\"vfat\"\n";
+    let d = unmounted_from(lsblk);
+    let got: Vec<(&[u8], &str, u64, bool)> = d.iter().map(|d| (d.path.as_bytes(), d.label.as_str(), d.total, d.unmounted)).collect();
+    assert_eq!(got, [(&b"/dev/sdb1"[..], "MY STICK", 0, true), (&b"/dev/sdb2"[..], "sdb2", 0, true)]);
+}
+
+#[test]
 fn eject_unmounts_then_powers_off_the_block_device_behind_the_mount() {
     let table = parse(b"40 1 8:17 / /media/u/STICK rw,nosuid - vfat /dev/sdb1 rw\n41 1 0:50 / /media/u/net rw - fuse.sshfs host:/ rw\n");
     let steps = eject_steps(&table, Path::new("/media/u/STICK")).unwrap();

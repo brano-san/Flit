@@ -103,6 +103,7 @@ pub struct Drive {
     pub total: u64,
     pub free: u64,
     pub removable: bool,
+    pub unmounted: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -568,6 +569,10 @@ impl App {
             return self.show_tag(k);
         }
         let Some(folder) = self.nav.sidebar.items.get(i).map(|it| it.loc.clone()) else { return };
+        if let Some(d) = self.nav.sidebar.places.drives.iter().find(|d| d.unmounted && d.path == *folder.path()) {
+            let (tab, launch) = (self.tab().id, Launch::Mount(d.path.clone()));
+            return self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch } });
+        }
         match new_tab {
             true => self.open_in_tabs(vec![Route { folder, select: None }], now),
             false => self.dispatch(vec![Route { folder, select: None }], OpenTarget::CurrentTab, now),

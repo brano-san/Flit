@@ -5,6 +5,7 @@ use flit_platform::{OpOutcome, PlatformError};
 use flit_platform_linux::mounts::{self, Mount};
 use flit_platform_linux::Trash;
 use std::os::unix::ffi::OsStrExt;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct Volume {
@@ -40,8 +41,44 @@ pub fn volumes() -> Vec<Volume> {
 pub fn drives() -> Vec<Drive> {
     volumes()
         .into_iter()
-        .filter_map(|v| Some(Drive { path: crate::xdg::fs_path(v.mount.path())?, label: v.label, total: v.total, free: v.free, removable: v.mount.removable() }))
+        .filter_map(|v| Some(Drive { path: crate::xdg::fs_path(v.mount.path())?, label: v.label, total: v.total, free: v.free, removable: v.mount.removable(), unmounted: false }))
+        .chain(unmounted())
         .collect()
+}
+
+fn unmounted() -> Vec<Drive> {
+    let out = std::process::Command::new("lsblk").args(["-P", "-b", "-o", "PATH,LABEL,MOUNTPOINT,HOTPLUG,FSTYPE"]).stderr(std::process::Stdio::null()).output();
+    out.map(|o| unmounted_from(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default()
+}
+
+pub fn unmounted_from(lsblk: &str) -> Vec<Drive> {
+    let mut out = Vec::new();
+    for line in lsblk.lines() {
+        let mut f = HashMap::new();
+        let mut rest = line.trim();
+        while let Some((key, tail)) = rest.split_once("=\"") {
+            let Some((value, after)) = tail.split_once('"') else { break };
+            f.insert(key.trim(), value);
+            rest = after;
+        }
+        let get = |k: &str| f.get(k).copied().unwrap_or("");
+        if get("MOUNTPOINT").is_empty() && get("HOTPLUG") == "1" && !matches!(get("FSTYPE"), "" | "swap" | "crypto_LUKS") {
+            let Some(path) = flit_core::FsPath::parse_exact(get("PATH").as_bytes()) else { continue };
+            let label = if get("LABEL").is_empty() { get("PATH").rsplit('/').next().unwrap_or("").to_owned() } else { get("LABEL").to_owned() };
+            out.push(Drive { path, label, total: 0, free: 0, removable: true, unmounted: true });
+        }
+    }
+    out
+}
+
+pub fn mount(device: &Path) -> std::io::Result<PathBuf> {
+    let out = std::process::Command::new("udisksctl").args(["mount", "--no-user-interaction", "-b"]).arg(device).output()?;
+    if !out.status.success() {
+        return Err(std::io::Error::other(String::from_utf8_lossy(&out.stderr).trim().to_owned()));
+    }
+    let table = mounts::read()?;
+    let found = table.iter().rev().find(|m| m.source == device.as_os_str().as_bytes()).map(|m| m.path().to_path_buf());
+    found.ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "mounted, but the mount point is unknown"))
 }
 
 pub fn eject_steps(table: &[Mount], point: &Path) -> Option<[[std::ffi::OsString; 4]; 2]> {

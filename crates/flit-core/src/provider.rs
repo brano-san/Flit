@@ -98,6 +98,7 @@ pub enum Launch {
     With { program: FsPath, args: Vec<FsPath> },
     Run { program: String, args: String, dir: Option<FsPath> },
     Eject(FsPath),
+    Mount(FsPath),
 }
 
 impl Launch {
@@ -108,6 +109,7 @@ impl Launch {
             Launch::With { program, args } => Launch::With { program: f(program)?, args: all(args)? },
             Launch::Run { program, args, dir } => Launch::Run { program: program.clone(), args: args.clone(), dir: dir.as_ref().map(&f).unwrap_or(None) },
             Launch::Eject(drive) => Launch::Eject(f(drive)?),
+            Launch::Mount(device) => Launch::Mount(device.clone()),
         })
     }
 }

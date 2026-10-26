@@ -297,6 +297,7 @@ fn run_shell<S: Shell>(sh: &mut S, job: ShellJob) -> Result<Option<FsPath>, Plat
             None => sh.open(&p).map(|()| None),
         },
         ShellJob::Open(p) => sh.open(&p).map(|()| None),
+        ShellJob::Launch(Launch::Mount(device)) => sh.mount(&device).map(Some),
         ShellJob::Launch(l) => sh.launch(&l).map(|()| None),
     }
 }

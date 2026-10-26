@@ -217,6 +217,9 @@ pub trait Shell: Sized {
     fn launch(&mut self, _launch: &Launch) -> Result<(), PlatformError> {
         Err(PlatformError::unsupported("launching programs"))
     }
+    fn mount(&mut self, _device: &FsPath) -> Result<FsPath, PlatformError> {
+        Err(PlatformError::unsupported("mounting volumes"))
+    }
     fn shortcut_folder(&mut self, _link: &FsPath) -> Option<FsPath> {
         None
     }

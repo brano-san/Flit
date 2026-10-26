@@ -117,6 +117,7 @@ fn launch(l: &Launch) -> Result<(), PlatformError> {
             detach(cmd).map_err(|e| spawn_error(program, &e))
         }
         Launch::Eject(drive) => crate::places::eject(Path::new(os(drive))).map_err(|e| spawn_error("udisksctl", &e)),
+        Launch::Mount(_) => Err(PlatformError::unsupported("mounting outside the shell thread")),
     }
 }
 
@@ -152,6 +153,11 @@ impl Shell for LinuxShell {
 
     fn launch(&mut self, l: &Launch) -> Result<(), PlatformError> {
         launch(l)
+    }
+
+    fn mount(&mut self, device: &FsPath) -> Result<FsPath, PlatformError> {
+        let point = crate::places::mount(Path::new(os(device))).map_err(|e| PlatformError::new(-1, format!("cannot mount {}: {e}", device.display())))?;
+        crate::xdg::fs_path(&point).ok_or_else(|| PlatformError::new(-1, "the mount point is not a valid path"))
     }
 }
 

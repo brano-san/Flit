@@ -152,7 +152,7 @@ fn drop_effects_follow_explorer_rules() {
 
 #[test]
 fn unix_volumes_come_from_the_mount_list() {
-    let drive = |path: &str| Drive { path: p(path), label: String::new(), total: 0, free: 0, removable: false };
+    let drive = |path: &str| Drive { path: p(path), label: String::new(), total: 0, free: 0, removable: false, unmounted: false };
     let mounts = [drive("/"), drive("/home"), drive("/media/u/USB"), drive(r"C:\")];
     assert!(same_volume(&p("/home/a"), &p("/home/b/c"), &mounts));
     assert!(!same_volume(&p("/home/a"), &p("/media/u/USB/x"), &mounts));
