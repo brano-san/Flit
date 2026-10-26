@@ -640,6 +640,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                     handler.event(w, Event::Char(c));
                 }
             }
+            WindowEvent::Ime(Ime::Preedit(text, _)) => handler.event(w, Event::Preedit(text)),
             WindowEvent::Ime(Ime::Commit(text)) => {
                 for c in text.chars() {
                     handler.event(w, Event::Char(c));

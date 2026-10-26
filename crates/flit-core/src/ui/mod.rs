@@ -451,6 +451,7 @@ pub struct App {
     next_gen: u64,
     timer_at: Option<Instant>,
     own_menu: Option<own_menu::OwnMenu>,
+    pub preedit: String,
 
     focus: Focus,
     kb: usize,
@@ -548,6 +549,7 @@ impl App {
             next_gen: 0,
             timer_at: None,
             own_menu: None,
+            preedit: String::new(),
             focus: Focus::List,
             kb: 0,
             a11y_targets: Vec::new(),
@@ -666,6 +668,23 @@ impl App {
 
     fn theme(&self) -> &Theme {
         &self.look.palette.base
+    }
+
+    pub fn preedit_rect<B: TextBackend>(&self, g: &mut Gfx<B>) -> Option<Rect> {
+        let r = self.ime_area().filter(|_| !self.preedit.is_empty())?;
+        let (pad, h) = (self.s(6.0), self.s(26.0));
+        let w = g.measure(&self.preedit, self.ui_font(13.0)) + 2.0 * pad;
+        Some(Rect::new(r.x.min(self.size.0 - w).max(0.0).round(), (r.bottom() + self.s(2.0)).round(), w.round(), h))
+    }
+
+    fn draw_preedit<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme) {
+        let Some(b) = self.preedit_rect(g) else { return };
+        let (s4, font) = (self.s(4.0), self.ui_font(13.0));
+        g.dl.round_rect(b, th.chrome, s4);
+        g.dl.outline(b, th.input_border, s4, 1.0);
+        centered(g, b, &self.preedit, font, th.text);
+        let line = Rect::new(b.x + self.s(6.0), b.bottom() - self.s(6.0), b.w - self.s(12.0), self.s(1.0).max(1.0));
+        g.dl.rect(line, th.text);
     }
 
     fn ui_font(&self, px: f32) -> FontStyle {
@@ -1308,6 +1327,10 @@ impl App {
             }
             Event::Char(c) => self.char_input(*c, now),
             Event::Pasted(text) => self.on_paste(text),
+            Event::Preedit(text) => {
+                self.preedit.clone_from(text);
+                self.dirty = true;
+            }
             Event::DroppedFiles(paths) => {
                 let routes: Vec<Route> = paths
                     .iter()
@@ -1816,6 +1839,7 @@ impl App {
             }
             self.draw_tab_tip(g, th);
             self.draw_jobs(g, th);
+            self.draw_preedit(g, th);
             self.draw_own_menu(g, th);
             if !g.atlas_reset {
                 break;

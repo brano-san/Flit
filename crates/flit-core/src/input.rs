@@ -55,6 +55,7 @@ pub enum Event {
     Key { key: Key, mods: Mods, pressed: bool },
     Char(char),
     Pasted(String),
+    Preedit(String),
     Focus(bool),
     ThemeChanged { dark: bool },
     Contrast(Option<crate::theme::SystemColors>),

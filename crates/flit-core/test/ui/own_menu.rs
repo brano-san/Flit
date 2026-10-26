@@ -27,6 +27,21 @@ fn key(app: &mut App, key: Key) {
 }
 
 #[test]
+fn preedit_text_shows_under_the_field_being_edited_until_it_is_committed() {
+    let mut app = app();
+    let mut g = Gfx::new(Mono, 256);
+    app.frame(&mut g, Instant::now());
+    app.on_event(&Event::Preedit("にほ".into()), Instant::now());
+    assert!(app.preedit_rect(&mut g).is_none(), "no field has focus");
+    app.editing = true;
+    let field = app.ime_area().unwrap();
+    let r = app.preedit_rect(&mut g).unwrap();
+    assert!(r.y >= field.bottom() && r.w > 0.0);
+    app.on_event(&Event::Preedit(String::new()), Instant::now());
+    assert!(app.preedit_rect(&mut g).is_none());
+}
+
+#[test]
 fn commands_are_counted_through_submenus() {
     assert_eq!(commands(&[cmd("a"), MenuItem::Separator, MenuItem::Submenu { label: "s".into(), items: vec![cmd("b"), cmd("c")] }]), 3);
 }
