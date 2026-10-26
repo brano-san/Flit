@@ -263,3 +263,40 @@ fn cancelling_removes_the_partial_copy() {
     assert_eq!(listing(&dst), [b"big".to_vec()]);
     assert_eq!(read(&dst.join("big")), "old");
 }
+
+#[test]
+#[ignore]
+fn bench_copy_a_thousand_small_files_and_one_large_file_against_cp() {
+    let t = Temp::new("bench-copy");
+    let small = t.path().join("small");
+    for k in 0..1000 {
+        std::fs::create_dir_all(&small).unwrap();
+        t.file(&format!("small/f{k}"), 1024);
+    }
+    let mut runs = Vec::new();
+    for k in 0..5 {
+        let dest = t.path().join(format!("out{k}"));
+        std::fs::create_dir_all(&dest).unwrap();
+        let start = std::time::Instant::now();
+        ok(run(&FileOp::Copy { items: vec![fp(&small)], dest: fp(&dest) }, &quiet(Resolve::Skip), None));
+        runs.push(start.elapsed());
+    }
+    runs.sort();
+    eprintln!("measure: 1000 x 1 KB copy median {:?}", runs[2]);
+    let big = t.path().join("big");
+    let mb = vec![7u8; 1 << 20];
+    let mut f = std::fs::File::create(&big).unwrap();
+    for _ in 0..1024 {
+        std::io::Write::write_all(&mut f, &mb).unwrap();
+    }
+    drop(f);
+    let ours = t.path().join("ours");
+    std::fs::create_dir_all(&ours).unwrap();
+    let start = std::time::Instant::now();
+    ok(run(&FileOp::Copy { items: vec![fp(&big)], dest: fp(&ours) }, &quiet(Resolve::Skip), None));
+    let flit = start.elapsed();
+    let start = std::time::Instant::now();
+    assert!(std::process::Command::new("cp").arg(&big).arg(t.path().join("by-cp")).status().unwrap().success());
+    let cp = start.elapsed();
+    eprintln!("measure: 1 GB copy flit {flit:?}, cp {cp:?}, flit speed {:.0}% of cp", cp.as_secs_f64() / flit.as_secs_f64() * 100.0);
+}
