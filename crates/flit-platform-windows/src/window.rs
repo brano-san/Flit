@@ -3,7 +3,11 @@ use crate::prevhost::WM_HOSTED;
 use flit_core::preview::HostCmd;
 use crate::err;
 use flit_core::input::{CursorIcon, Event, HitArea, Key, Mods, MouseButton};
-use flit_core::render::Rect;
+use flit_core::a11y::Tree;
+use flit_core::render::{Color, Rect};
+use flit_core::theme::SystemColors;
+use crate::uia::{WM_A11Y_FOCUS, WM_A11Y_INVOKE, WM_A11Y_SELECT};
+use windows::Win32::UI::Accessibility::{IRawElementProviderSimple, UiaClientsAreListening, UiaDisconnectProvider, UiaReturnRawElementProvider, UiaRootObjectId, HCF_HIGHCONTRASTON, HIGHCONTRASTW};
 use flit_core::ui::{DragEvent, ShellMenu};
 use flit_core::FsPath;
 use flit_platform::{DropReply, Placement, PlatformError, Waker, Window, WindowHandler, WindowId, WindowOptions, WindowSystem};
@@ -15,7 +19,7 @@ use std::sync::Arc;
 use windows::core::{w, BOOL, PCWSTR};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
-use windows::Win32::Graphics::Gdi::{ClientToScreen, GetMonitorInfoW, MonitorFromWindow, ScreenToClient, ValidateRect, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+use windows::Win32::Graphics::Gdi::{GetSysColor, SYS_COLOR_INDEX, COLOR_BTNFACE, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_HOTLIGHT, COLOR_WINDOW, COLOR_WINDOWTEXT, ClientToScreen, GetMonitorInfoW, MonitorFromWindow, ScreenToClient, ValidateRect, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::System::DataExchange::{AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, SetClipboardData};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
@@ -66,6 +70,7 @@ pub struct Win32Window {
     mode: Cell<Mode>,
     restore: Cell<Option<(WINDOWPLACEMENT, isize)>>,
     pub(crate) sync: Rc<FrameSync>,
+    a11y: RefCell<Option<crate::uia::Access>>,
 }
 
 impl Win32Window {
@@ -85,6 +90,7 @@ impl Win32Window {
             mode: Cell::new(Mode::Normal),
             restore: Cell::new(None),
             sync: Rc::new(FrameSync::default()),
+            a11y: RefCell::new(None),
         }
     }
 
@@ -364,6 +370,20 @@ impl Window for Win32Window {
     }
 }
 
+pub(crate) fn high_contrast() -> Option<SystemColors> {
+    if crate::d3d::capture_path().is_some() && std::env::var_os("FLIT_CAPTURE_CONTRAST").is_some() {
+        let c = Color::rgb;
+        return Some(SystemColors { window: c(0x000000), window_text: c(0xFFFFFF), highlight: c(0x1AEBFF), highlight_text: c(0x000000), hotlight: c(0x75E9FC), gray_text: c(0x3FF23F), btn_face: c(0x000000) });
+    }
+    let mut hc = HIGHCONTRASTW { cbSize: size_of::<HIGHCONTRASTW>() as u32, ..Default::default() };
+    unsafe { SystemParametersInfoW(SPI_GETHIGHCONTRAST, hc.cbSize, Some(&mut hc as *mut HIGHCONTRASTW as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0)) }.ok()?;
+    if !hc.dwFlags.contains(HCF_HIGHCONTRASTON) {
+        return None;
+    }
+    let c = |i: SYS_COLOR_INDEX| Color(unsafe { GetSysColor(i) } | 0xFF00_0000);
+    Some(SystemColors { window: c(COLOR_WINDOW), window_text: c(COLOR_WINDOWTEXT), highlight: c(COLOR_HIGHLIGHT), highlight_text: c(COLOR_HIGHLIGHTTEXT), hotlight: c(COLOR_HOTLIGHT), gray_text: c(COLOR_GRAYTEXT), btn_face: c(COLOR_BTNFACE) })
+}
+
 fn load_cursor(c: CursorIcon) -> HCURSOR {
     let id = match c {
         CursorIcon::Default => IDC_ARROW,
@@ -430,12 +450,34 @@ impl<H: WindowHandler<Win32>> Node<H> {
         reply
     }
 
+    fn sync_a11y(&self, h: &mut H) {
+        let access = self.window.a11y.borrow();
+        let Some(acc) = access.as_ref() else { return };
+        if unsafe { UiaClientsAreListening() }.as_bool() {
+            if let Some(tree) = h.accessibility(&self.window) {
+                acc.update(tree);
+            }
+        }
+    }
+
+    fn root_provider(&self, hwnd: HWND) -> IRawElementProviderSimple {
+        let tree = if self.ready.get() { self.shared().handler.try_borrow_mut().ok().and_then(|mut h| h.accessibility(&self.window)) } else { None };
+        if self.window.a11y.borrow().is_none() {
+            let first = crate::uia::Access::new(hwnd, tree.clone().unwrap_or_else(|| Tree::new(String::new(), Rect::default())));
+            *self.window.a11y.borrow_mut() = Some(first);
+        } else if let (Some(acc), Some(tree)) = (self.window.a11y.borrow().as_ref(), tree) {
+            acc.update(tree);
+        }
+        self.window.a11y.borrow().as_ref().map(|a| a.root.clone()).expect("accessibility root")
+    }
+
     fn redraw_now(&self) {
         let sh = self.shared();
         match sh.handler.try_borrow_mut() {
             Ok(mut h) if self.ready.get() => {
                 self.window.redraw.set(false);
                 h.redraw(&self.window);
+                self.sync_a11y(&mut *h);
             }
             _ => self.window.redraw.set(true),
         }
@@ -519,6 +561,13 @@ impl<H: WindowHandler<Win32>> Shared<H> {
         self.nodes.borrow_mut().push(node.clone());
         if let Ok(mut h) = self.handler.try_borrow_mut() {
             h.created(&node.window);
+        }
+        if let Some(colors) = high_contrast() {
+            node.queue.borrow_mut().push_back(Event::Contrast(Some(colors)));
+        }
+        let tabs = if hidden { std::env::var("FLIT_CAPTURE_TABS").ok().and_then(|v| v.parse().ok()).unwrap_or(0) } else { 0 };
+        for _ in 0..tabs {
+            node.queue.borrow_mut().push_back(Event::Key { key: Key::Tab, mods: Mods::default(), pressed: true });
         }
         node.ready.set(true);
         self.flush();
@@ -968,6 +1017,27 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
             s.send(Event::Focus(msg == WM_SETFOCUS));
             None
         }
+        WM_GETOBJECT if lp.0 as i32 == UiaRootObjectId => Some(UiaReturnRawElementProvider(hwnd, wp, lp, &s.root_provider(hwnd))),
+        WM_A11Y_INVOKE => {
+            s.send(Event::Invoke(wp.0 as u64));
+            Some(LRESULT(0))
+        }
+        WM_A11Y_FOCUS => {
+            s.send(Event::A11yFocus(wp.0 as u64));
+            Some(LRESULT(0))
+        }
+        WM_A11Y_SELECT => {
+            s.send(Event::A11ySelect(wp.0 as u64));
+            Some(LRESULT(0))
+        }
+        WM_SYSCOLORCHANGE => {
+            s.send(Event::Contrast(high_contrast()));
+            None
+        }
+        WM_SETTINGCHANGE if wp.0 as u32 == SPI_SETHIGHCONTRAST.0 => {
+            s.send(Event::Contrast(high_contrast()));
+            None
+        }
         WM_SETTINGCHANGE => {
             if lp.0 != 0 && PCWSTR(lp.0 as *const u16).to_string().is_ok_and(|v| v == "ImmersiveColorSet") {
                 s.send(Event::ThemeChanged { dark: crate::dark_mode() });
@@ -1010,6 +1080,10 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
             Some(LRESULT(0))
         }
         WM_DESTROY => {
+            if let Some(acc) = w.a11y.take() {
+                let _ = UiaReturnRawElementProvider(hwnd, WPARAM(0), LPARAM(0), None::<&IRawElementProviderSimple>);
+                let _ = UiaDisconnectProvider(&acc.root);
+            }
             crate::dragdrop::revoke(hwnd);
             OPEN.with_borrow_mut(|open| open.retain(|(h, _)| *h != hwnd.0 as isize));
             crate::prevhost::forget(hwnd);

@@ -1,4 +1,9 @@
 pub mod edit;
+mod a11y;
+mod focus;
+#[cfg(test)]
+#[path = "../../test/ui/harness.rs"]
+mod harness;
 mod appearance;
 mod archive;
 mod columns;
@@ -281,6 +286,10 @@ enum Focus {
     Address,
     Filter,
     Sidebar,
+    TabBar,
+    Nav,
+    Toolbar,
+    Preview,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -442,6 +451,8 @@ pub struct App {
     timer_at: Option<Instant>,
 
     focus: Focus,
+    kb: usize,
+    a11y_targets: Vec<(u64, Hit)>,
     edit: LineEdit,
     editing: bool,
     edit_scroll: f32,
@@ -535,6 +546,8 @@ impl App {
             next_gen: 0,
             timer_at: None,
             focus: Focus::List,
+            kb: 0,
+            a11y_targets: Vec::new(),
             edit: LineEdit::default(),
             editing: false,
             edit_scroll: 0.0,
@@ -1246,6 +1259,10 @@ impl App {
                 self.dirty = true;
             }
             Event::ThemeChanged { dark } => self.set_system_dark(*dark),
+            Event::Contrast(colors) => self.set_contrast(*colors),
+            Event::Invoke(id) => self.a11y_invoke(*id, now),
+            Event::A11yFocus(id) => self.a11y_focus(*id),
+            Event::A11ySelect(id) => self.a11y_select(*id, now),
             Event::Focus(f) => {
                 self.active = *f;
                 self.mods = Mods::default();
@@ -1487,6 +1504,10 @@ impl App {
         if h != pressed || self.jobs_click(h, now) {
             return;
         }
+        self.click(h, x, y, now);
+    }
+
+    fn click(&mut self, h: Hit, x: f32, y: f32, now: Instant) {
         match h {
             Hit::TabClose(i) => self.close_tab(i),
             Hit::NewTab => self.new_tab_here(now),
@@ -1591,6 +1612,9 @@ impl App {
     fn key(&mut self, key: Key, m: Mods, now: Instant) {
         self.dirty = true;
         if self.toolbar_key(key) || self.jobs_key(key, m) || self.settings_key(key, m) || self.ops_key(key, m) || self.strip_key(key) {
+            return;
+        }
+        if self.focus_key(key, m, now) {
             return;
         }
         if self.editing {
@@ -1774,6 +1798,7 @@ impl App {
                     self.draw_status(g, &arena, th);
                 }
                 self.draw_sidebar(g, palette.area(Area::Sidebar));
+                self.draw_kb_focus(g, th);
                 self.draw_filter(g, files);
                 self.draw_toolbar_popups(g, th);
                 self.draw_suggestions(g, th);
@@ -2123,7 +2148,8 @@ impl App {
                 }
 
                 let ty = baseline(p.name);
-                let name_color = if faded { t.text_dim } else { t.text };
+                let picked = v.is_selected(i) && list_focused;
+                let name_color = if picked { t.selection_text } else if faded { t.text_dim } else { t.text };
                 self.draw_name(g, &p, &self.shown_name(listing, i), e.tags, font, name_color);
                 want_type(i);
                 match mode {
@@ -2132,7 +2158,7 @@ impl App {
                             let r = l.cols[c];
                             let s = self.cell_text(arena, listing, i, col);
                             let x = if col == Column::Size { (r.right() - pad - g.measure(s, font)).max(r.x + pad) } else { r.x + pad };
-                            g.text(x, ty, s, font, t.text_dim, r.w - 2.0 * pad);
+                            g.text(x, ty, s, font, if picked { t.selection_text } else { t.text_dim }, r.w - 2.0 * pad);
                         }
                     }
                     LayoutMode::Cards => {

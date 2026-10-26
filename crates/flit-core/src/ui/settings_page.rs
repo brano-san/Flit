@@ -4,7 +4,9 @@ use super::field::{Field, FieldKey};
 use super::menu::Cmd;
 use super::palette::{Palette, Pick};
 use super::settings::{self, Kind, Page, Picker, Value, SETTINGS};
+use super::a11y::{leaf, put, union};
 use super::{centered, App, Effect, Hit, SettingsCmd, G_CLOSE};
+use crate::a11y::{Role, Tree};
 use crate::i18n::{P, S};
 use crate::input::{Key, Mods, MouseButton};
 use crate::location::{Location, ProviderId};
@@ -17,6 +19,9 @@ use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::Theme;
 use std::time::Instant;
 
+const SETTINGS_ID: u64 = 13;
+const PAGES_ID: u64 = 14;
+const LIST_ID: u64 = 15;
 const MAX_W: f32 = 960.0;
 const NAV_W: f32 = 210.0;
 const HEAD_H: f32 = 60.0;
@@ -748,6 +753,100 @@ impl App {
             },
             Line::Path(..) if remove_rect(r, s).contains(x, y) => h(SHit::Remove(k)),
             _ => h(SHit::Line(k)),
+        }
+    }
+
+    pub(super) fn settings_a11y(&self, t: &mut Tree, targets: &mut Vec<(u64, Hit)>) -> Option<usize> {
+        let ui = self.settings.as_ref()?;
+        let s = |v: f32| (v * self.scale).round();
+        let at = Hit::Settings;
+        let d = t.add(0, SETTINGS_ID, Role::Dialog, S::SettingsPageLineTitle.t(), ui.panel);
+        put(t, targets, d, at(SHit::Close), Role::Button, S::A11yButtonClose.t(), ui.close);
+        let search = put(t, targets, d, at(SHit::Search), Role::Edit, S::SettingsPageLineSearch.t(), ui.search_rect);
+        t.nodes[search].value = ui.search.text().to_owned();
+        let searching = !ui.query().is_empty();
+        let pages = t.add(d, PAGES_ID, Role::TabList, S::A11yRegionSettingsPages.t(), union(ui.nav.iter().copied()));
+        for (k, r) in ui.nav.iter().enumerate() {
+            let p = put(t, targets, pages, at(SHit::Page(k)), Role::Tab, Page::ALL[k].title(), *r);
+            t.nodes[p].selected = !searching && Page::ALL[k] == ui.page;
+        }
+        let list = t.add(d, LIST_ID, Role::Group, if searching { S::SettingsPageLineSearch.t() } else { ui.page.title() }, ui.list);
+        let mut section = list;
+        let mut focus = if ui.searching { search } else { d };
+        for (k, (line, &r)) in ui.lines.iter().zip(&ui.rects).enumerate() {
+            if r.bottom() < ui.list.y || r.y > ui.list.bottom() {
+                continue;
+            }
+            let id = leaf(at(SHit::Line(k)));
+            let row = match line {
+                Line::Group(title) => {
+                    section = t.add(list, id, Role::Group, *title, r);
+                    None
+                }
+                Line::Note(text) => Some(t.add(section, id, Role::Text, *text, r)),
+                Line::Info(label, value) => {
+                    let n = t.add(section, id, Role::Text, *label, r);
+                    t.nodes[n].value = value.clone();
+                    Some(n)
+                }
+                Line::Setting(i) => {
+                    let set = &SETTINGS[*i];
+                    let (role, hit) = match set.kind {
+                        Kind::Toggle(..) => (Role::CheckBox, SHit::Control(k)),
+                        Kind::Choice(..) => (Role::ComboBox, SHit::Control(k)),
+                        Kind::Text(..) | Kind::Pick(..) => (Role::Button, SHit::Control(k)),
+                        _ => (Role::Group, SHit::Line(k)),
+                    };
+                    let n = put(t, targets, section, at(hit), role, set.title.t(), r);
+                    t.nodes[n].help = set.help.t().to_owned();
+                    t.nodes[n].value = self.setting_value_text(*i);
+                    t.nodes[n].selected = set.get(self) == Value::Bool(true);
+                    if let Kind::Number { .. } = set.kind {
+                        let (minus, plus) = step_rects(r, s);
+                        put(t, targets, n, at(SHit::Step(k, false)), Role::Button, S::A11yButtonDecrease.t(), minus);
+                        put(t, targets, n, at(SHit::Step(k, true)), Role::Button, S::A11yButtonIncrease.t(), plus);
+                    }
+                    Some(n)
+                }
+                Line::Path(i, n) => {
+                    let p = t.add(section, id, Role::Text, self.paths_of(*i).get(*n).map(settings::path_text).unwrap_or_default(), r);
+                    put(t, targets, p, at(SHit::Remove(k)), Role::Button, S::A11yButtonRemove.t(), remove_rect(r, s));
+                    Some(p)
+                }
+                Line::Tag(n) => Some(t.add(section, id, Role::Group, self.tag_defs().get(*n).map_or("", |tag| tag.name.as_str()), r)),
+                Line::Action(i, _, _) => {
+                    let n = t.add(section, id, Role::Group, ACTIONS[*i].title.t(), r);
+                    t.nodes[n].value = self.keymap.keys(*i).iter().map(chord_text).collect::<Vec<_>>().join(", ");
+                    Some(n)
+                }
+                Line::Buttons(..) => None,
+            };
+            let mut subs = Vec::new();
+            for (b, br) in button_rects(line, r, s).into_iter().enumerate() {
+                let name = match line {
+                    Line::Action(i, n, _) => match self.keymap.keys(*i).get(b) {
+                        Some(c) if b < *n => chord_text(c),
+                        _ if b == *n => S::A11yButtonAddShortcut.t().to_owned(),
+                        _ => S::A11yButtonRestoreShortcut.t().to_owned(),
+                    },
+                    _ => line.buttons().get(b).map_or("", |btn| btn.label()).to_owned(),
+                };
+                subs.push(put(t, targets, row.unwrap_or(section), at(SHit::Button(k, b)), Role::Button, &name, br));
+            }
+            if !ui.searching && k == ui.focus {
+                focus = subs.get(ui.sub).copied().or(row).unwrap_or(focus);
+            }
+        }
+        Some(focus)
+    }
+
+    pub(super) fn settings_a11y_focus(&mut self, sh: SHit) {
+        let Some(ui) = &mut self.settings else { return };
+        match sh {
+            SHit::Search => ui.searching = true,
+            SHit::Line(k) | SHit::Control(k) | SHit::Step(k, _) | SHit::Remove(k) => (ui.searching, ui.focus, ui.sub) = (false, k, 0),
+            SHit::Button(k, b) => (ui.searching, ui.focus, ui.sub) = (false, k, b),
+            _ => {}
         }
     }
 

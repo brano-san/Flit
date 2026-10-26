@@ -1,12 +1,15 @@
 use super::archive::Kind;
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
+use super::a11y::put;
 use super::{centered, App, Effect, Hit};
+use crate::a11y::{Role, Tree};
 use crate::input::{Key, Mods};
 use crate::render::{Color, Rect};
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::Theme;
 
+const FORM_ID: u64 = 12;
 const WIDTH: f32 = 600.0;
 const HEAD: f32 = 56.0;
 const ROW: f32 = 34.0;
@@ -292,6 +295,52 @@ impl App {
             self.form_activate(k);
         }
         true
+    }
+
+    pub(super) fn form_a11y(&self, t: &mut Tree, targets: &mut Vec<(u64, Hit)>) -> Option<usize> {
+        let f = self.jobs.form.as_ref().filter(|_| self.jobs.asks.is_empty())?;
+        let d = t.add(0, FORM_ID, Role::Dialog, &f.title, f.rect);
+        t.nodes[d].help = f.note.clone();
+        let mut focus = d;
+        for (k, (c, &r)) in f.controls.iter().zip(&f.rows).enumerate() {
+            let (role, label, value) = match c {
+                Control::Text { label, field, .. } => (Role::Edit, label, if field.secret { String::new() } else { field.text().to_owned() }),
+                Control::Choice { label, options, sel } => (Role::ComboBox, label, options.get(*sel).cloned().unwrap_or_default()),
+                Control::Check { label, .. } => (Role::CheckBox, label, String::new()),
+                Control::Flags { label, items, .. } => (Role::Group, label, items.iter().filter(|i| i.1).map(|i| i.0.as_str()).collect::<Vec<_>>().join(", ")),
+                Control::Value { label, value } => (Role::Text, label, value.clone()),
+            };
+            let node = put(t, targets, d, Hit::Form(k), role, label, r);
+            t.nodes[node].value = value;
+            t.nodes[node].selected = matches!(c, Control::Check { on: true, .. });
+            if f.focus == k {
+                focus = node;
+            }
+        }
+        let n = f.controls.len();
+        for (b, (label, &r)) in f.buttons.iter().zip(&f.button_rects).enumerate() {
+            let node = put(t, targets, d, Hit::Form(n + b), Role::Button, label, r);
+            if f.focus == n + b {
+                focus = node;
+            }
+        }
+        Some(focus)
+    }
+
+    pub(super) fn form_a11y_focus(&mut self, k: usize) {
+        if let Some(f) = &mut self.jobs.form {
+            f.focus = k.min(f.slots().saturating_sub(1));
+        }
+    }
+
+    pub(super) fn form_a11y_invoke(&mut self, k: usize) {
+        self.form_a11y_focus(k);
+        match self.jobs.form.as_ref().and_then(|f| f.controls.get(k)) {
+            Some(Control::Choice { .. }) => self.turn(k, false),
+            Some(Control::Text { .. }) => {}
+            _ => self.form_activate(k),
+        }
+        self.dirty = true;
     }
 
     pub(super) fn form_hit(&self, x: f32, y: f32) -> Option<Hit> {

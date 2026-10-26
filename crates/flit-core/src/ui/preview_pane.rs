@@ -327,6 +327,10 @@ impl App {
         (self.preview.image_rev, self.preview.image.as_ref())
     }
 
+    pub(super) fn preview_area(&self) -> Rect {
+        if self.preview.state.visible { self.preview.r.pane } else { Rect::default() }
+    }
+
     pub(super) fn toggle_preview_pane(&mut self) {
         let p = &mut self.preview;
         p.state.visible = !p.state.visible;
@@ -514,6 +518,10 @@ impl App {
         if !matches!(self.hover, Hit::Preview(_)) {
             return false;
         }
+        self.scroll_preview(dy)
+    }
+
+    pub(super) fn scroll_preview(&mut self, dy: f32) -> bool {
         let p = &mut self.preview;
         p.scroll = (p.scroll - dy * 3.0 * ROW * self.scale).clamp(0.0, (p.extent - p.r.body.h).max(0.0));
         self.dirty = true;

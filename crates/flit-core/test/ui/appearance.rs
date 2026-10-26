@@ -174,3 +174,21 @@ fn the_appearance_page_draws_in_both_themes_with_custom_colors() {
         a.on_event(&Event::MouseUp { x: 500.0, y: 300.0, button: MouseButton::Left }, Instant::now());
     }
 }
+
+#[test]
+fn high_contrast_overrides_the_theme_and_follows_live_changes() {
+    let mut a = App::new(Persisted::default(), Vec::new(), 0, false, 1.0, (1000, 600), Instant::now());
+    let colors = SystemColors {
+        window: Color::rgb(0xFFFFFF),
+        window_text: Color::rgb(0x000000),
+        highlight: Color::rgb(0x37006E),
+        highlight_text: Color::rgb(0xFFFFFF),
+        hotlight: Color::rgb(0x00009F),
+        gray_text: Color::rgb(0x600000),
+        btn_face: Color::rgb(0xFFFFFF),
+    };
+    a.on_event(&Event::Contrast(Some(colors)), Instant::now());
+    assert_eq!(a.look.palette.base, crate::theme::high_contrast(&colors));
+    a.on_event(&Event::Contrast(None), Instant::now());
+    assert_eq!(a.look.palette.base, LIGHT);
+}

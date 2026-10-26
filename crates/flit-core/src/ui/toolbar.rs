@@ -598,6 +598,23 @@ impl App {
         key == Key::Escape
     }
 
+    pub(super) fn tool_buttons(&self) -> Vec<(ToolHit, Rect, &'static str, &'static str, bool)> {
+        let items = self.toolbar_items();
+        let mut out: Vec<_> = self
+            .toolbar
+            .placed
+            .iter()
+            .filter_map(|&(i, r)| match items.get(i) {
+                Some(ToolItem::Button(id, _)) => tool(id).map(|t| (ToolHit::Button(i), r, t.label.t(), t.id, self.tool_enabled(t.id))),
+                _ => None,
+            })
+            .collect();
+        if self.toolbar.more.w > 0.0 {
+            out.push((ToolHit::More, self.toolbar.more, S::A11yButtonMore.t(), "", true));
+        }
+        out
+    }
+
     pub fn toolbar_tip(&self) -> Option<String> {
         let tip = self.toolbar.tip.as_ref().filter(|t| t.shown)?;
         let items = self.toolbar_items();

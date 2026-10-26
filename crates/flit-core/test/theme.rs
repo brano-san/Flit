@@ -68,3 +68,26 @@ fn tints_parse_and_print_their_settings_value() {
         assert_eq!(Tint::parse(bad), None, "{bad}");
     }
 }
+
+const HC_BLACK: SystemColors = SystemColors {
+    window: Color::rgb(0x000000),
+    window_text: Color::rgb(0xFFFFFF),
+    highlight: Color::rgb(0x1AEBFF),
+    highlight_text: Color::rgb(0x000000),
+    hotlight: Color::rgb(0x75E9FC),
+    gray_text: Color::rgb(0x3FF23F),
+    btn_face: Color::rgb(0x000000),
+};
+
+#[test]
+fn high_contrast_maps_every_token_to_a_system_color() {
+    let t = high_contrast(&HC_BLACK);
+    assert_eq!((t.bg, t.text, t.text_dim), (HC_BLACK.window, HC_BLACK.window_text, HC_BLACK.window_text));
+    assert_eq!((t.selection, t.selection_text), (HC_BLACK.highlight, HC_BLACK.highlight_text));
+    assert_eq!((t.accent, t.chrome, t.placeholder), (HC_BLACK.hotlight, HC_BLACK.btn_face, HC_BLACK.gray_text));
+    assert_eq!(t.focus_ring, HC_BLACK.window_text);
+    assert!(contrast(t.selection_text, t.selection) >= MIN_TEXT_CONTRAST);
+    let p = Palette::high_contrast(&HC_BLACK);
+    assert!(p.dark);
+    assert!(Area::ALL.iter().all(|&a| *p.area(a) == t));
+}
