@@ -591,6 +591,12 @@ impl<H: WindowHandler<Win32>> Shared<H> {
                 }
                 self.woken.set(true);
             }
+            if let Ok(text) = std::env::var("FLIT_CAPTURE_ADDRESS") {
+                node.send(Event::Key { key: Key::Char('L'), mods: Mods { ctrl: true, ..Mods::default() }, pressed: true });
+                node.redraw_now();
+                node.queue.borrow_mut().extend(text.chars().map(Event::Char));
+                self.woken.set(true);
+            }
             if std::env::var_os("FLIT_CAPTURE_PROPERTIES").is_some() {
                 let mut q = node.queue.borrow_mut();
                 q.push_back(Event::Key { key: Key::Down, mods: Mods::default(), pressed: true });
