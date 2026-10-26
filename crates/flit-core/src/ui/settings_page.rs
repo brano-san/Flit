@@ -1255,7 +1255,7 @@ impl App {
         g.dl.outline(sr, if focused_search { t.accent } else { t.input_border }, s4, if focused_search { sc.round().max(1.0) } else { 1.0 });
         centered(g, Rect::new(sr.x + s4, sr.y, s(24.0), sr.h), G_SEARCH, icons, t.text_dim);
         let inner = Rect::new(sr.x + s(32.0), sr.y, sr.w - s(40.0), sr.h);
-        ui.search.draw(g, t, inner, font, focused_search, S::SettingsPageLineSearch.t(), sc);
+        ui.search.draw(g, t, inner, font, focused_search, S::SettingsPageLineSearch.t(), sc, Some(&self.preedit));
         let list = ui.list;
         g.dl.set_clip(Some(list));
         let list_focused = !ui.searching && self.active && self.nav.palette.is_none();

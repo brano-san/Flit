@@ -42,6 +42,39 @@ pub enum Key {
     Apps,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Preedit {
+    pub text: String,
+    pub cursor: Option<usize>,
+}
+
+impl Preedit {
+    pub fn new(text: String, cursor: Option<usize>) -> Self {
+        let cursor = cursor.filter(|&c| text.is_char_boundary(c));
+        Self { text, cursor }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.text.is_empty()
+    }
+
+    pub fn caret(&self) -> usize {
+        self.cursor.unwrap_or(self.text.len())
+    }
+}
+
+impl From<&str> for Preedit {
+    fn from(text: &str) -> Self {
+        Self::new(text.to_owned(), None)
+    }
+}
+
+impl From<String> for Preedit {
+    fn from(text: String) -> Self {
+        Self::new(text, None)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     Resized { width: u32, height: u32 },
@@ -55,7 +88,7 @@ pub enum Event {
     Key { key: Key, mods: Mods, pressed: bool },
     Char(char),
     Pasted(String),
-    Preedit(String),
+    Preedit(Preedit),
     Focus(bool),
     ThemeChanged { dark: bool },
     Contrast(Option<crate::theme::SystemColors>),

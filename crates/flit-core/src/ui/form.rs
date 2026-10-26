@@ -416,7 +416,7 @@ impl App {
                     g.dl.round_rect(area, t.input_bg, s4);
                     g.dl.outline(area, if focused { t.accent } else { t.input_border }, s4, if focused { sc.round().max(1.0) } else { 1.0 });
                     let inner = Rect::new(area.x + s8, area.y, area.w - 2.0 * s8, area.h);
-                    field.draw(g, t, inner, font, focused && active, placeholder, sc);
+                    field.draw(g, t, inner, font, focused && active, placeholder, sc, Some(&self.preedit));
                 }
                 Control::Choice { label, options, sel } => {
                     g.text(row.x, mid(row), label, font, t.text, s(LABEL_W) - s8);

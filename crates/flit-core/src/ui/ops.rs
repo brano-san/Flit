@@ -1457,25 +1457,14 @@ impl App {
             let pos = g.hit(&r.edit.text, font, x - inner.x + r.scroll);
             r.edit.move_to(pos, extend);
         }
-        let caret_x = g.caret_x(&r.edit.text, font, r.edit.caret);
-        if caret_x - r.scroll > inner.w {
-            r.scroll = caret_x - inner.w;
-        } else if caret_x < r.scroll {
-            r.scroll = caret_x;
-        }
         g.dl.set_clip(Some(list));
         g.dl.round_rect(rect, th.input_bg, radius);
         g.dl.outline(rect, th.accent, radius, caret_w);
         g.dl.set_clip(Some(Rect::new(inner.x, inner.y.max(list.y), inner.w, inner.h.min(list.bottom() - inner.y.max(list.y)).max(0.0))));
-        let x0 = inner.x - r.scroll;
-        let sel = r.edit.selection();
-        if !sel.is_empty() {
-            let a = g.caret_x(&r.edit.text, font, sel.start);
-            let b = g.caret_x(&r.edit.text, font, sel.end);
-            g.dl.rect(Rect::new(x0 + a, rect.y + inset, b - a, rect.h - 2.0 * inset), th.text_selection);
-        }
-        g.text(x0, baseline, &r.edit.text, font, th.text, f32::INFINITY);
-        g.dl.rect(Rect::new(x0 + caret_x, rect.y + inset, caret_w, rect.h - 2.0 * inset), th.text);
+        let line = super::field::EditLine { text: &r.edit.text, caret: r.edit.caret, selection: r.edit.selection() };
+        let look = super::field::EditLook { font, baseline, line_y: rect.y + inset, line_h: rect.h - 2.0 * inset, stroke: caret_w, focused: true };
+        let preedit = Some(&self.preedit).filter(|p| !p.is_empty());
+        super::field::draw_line(g, th, inner, &mut r.scroll, line, preedit, look);
         g.dl.set_clip(None);
     }
 }
