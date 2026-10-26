@@ -366,6 +366,7 @@ impl TextBackend for LinuxText {
         if face.embolden {
             render.embolden(px * EMBOLDEN_PER_PX);
         }
+        self.image.data.clear();
         if !render.render_into(&mut scaler, key.id, &mut self.image) {
             return false;
         }

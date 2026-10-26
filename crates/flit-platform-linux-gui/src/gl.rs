@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use flit_core::atlas::Slot;
 use flit_core::render::{DrawList, Instance};
 use flit_core::thumbs::THUMB_ATLAS;
@@ -257,6 +255,7 @@ impl Drop for Shared {
 
 enum Target {
     Window(Surface<WindowSurface>),
+    #[cfg_attr(not(test), allow(dead_code))]
     Offscreen(glow::Framebuffer, glow::Texture),
 }
 
@@ -283,6 +282,7 @@ impl GlRenderer {
         Self::with_target(dev, Target::Window(surface), (w, h), atlas_size)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn offscreen(dev: &GlDevice, (w, h): (u32, u32), atlas_size: u32) -> Result<Self, PlatformError> {
         dev.bind_to_current_thread()?;
         let s = &dev.shared;
@@ -487,4 +487,4 @@ impl Drop for GlRenderer {
 
 #[cfg(test)]
 #[path = "../test/gl.rs"]
-mod tests;
+pub(crate) mod tests;

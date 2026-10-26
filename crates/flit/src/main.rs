@@ -13,8 +13,10 @@ mod state;
 mod tags;
 mod thumbs;
 
-use flit_core::name;
+#[cfg(not(target_os = "linux"))]
 use flit_core::open::parse_args;
+#[cfg(target_os = "linux")]
+use flit_platform_linux_gui::instance::parse_args;
 use flit_platform::{Instance, Platform, SingleInstance};
 use std::ffi::OsStr;
 use std::path::PathBuf;
@@ -26,7 +28,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[cfg(windows)]
 pub type P = flit_platform_windows::Windows;
 #[cfg(not(windows))]
-pub type P = flit_platform_linux::Linux;
+pub type P = flit_platform_linux_gui::Linux;
 
 fn wtf8(s: &OsStr) -> Vec<u8> {
     #[cfg(windows)]
@@ -34,7 +36,7 @@ fn wtf8(s: &OsStr) -> Vec<u8> {
         use std::os::windows::ffi::OsStrExt;
         let w: Vec<u16> = s.encode_wide().collect();
         let mut out = Vec::with_capacity(w.len());
-        name::push_utf16(&mut out, &w);
+        flit_core::name::push_utf16(&mut out, &w);
         out
     }
     #[cfg(unix)]
@@ -92,6 +94,8 @@ fn main() {
         }
         return logs::flush();
     }
+    #[cfg(target_os = "linux")]
+    flit_platform_linux_gui::prefetch_fonts();
     if let Err(e) = app::run::<P>(open, instance, metrics, started) {
         tracing::error!("cannot start: {e}");
         logs::flush();
