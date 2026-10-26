@@ -43,7 +43,47 @@ pub fn drives() -> Vec<Drive> {
         .into_iter()
         .filter_map(|v| Some(Drive { path: crate::xdg::fs_path(v.mount.path())?, label: v.label, total: v.total, free: v.free, removable: v.mount.removable(), unmounted: false, kind: None, remote: None }))
         .chain(unmounted())
+        .chain(gvfs(&gvfs_root()))
         .collect()
+}
+
+pub fn gvfs_root() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR").map_or_else(|| PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() })), PathBuf::from).join("gvfs")
+}
+
+pub fn gvfs_label(name: &str) -> String {
+    let (kind, rest) = name.split_once(':').unwrap_or(("", name));
+    let field = |k: &str| rest.split(',').find_map(|kv| kv.strip_prefix(k)?.strip_prefix('='));
+    match (field("share"), field("host").or(field("server"))) {
+        (Some(share), Some(host)) => format!("{share} ({host})"),
+        (None, Some(host)) => format!("{host} ({kind})"),
+        _ => name.to_owned(),
+    }
+}
+
+pub fn gvfs(root: &Path) -> Vec<Drive> {
+    let Ok(dir) = std::fs::read_dir(root) else { return Vec::new() };
+    let mut out: Vec<Drive> = dir
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let path = crate::xdg::fs_path(&e.path())?;
+            Some(Drive { path, label: gvfs_label(&name), total: 0, free: 0, removable: false, unmounted: false, kind: None, remote: Some(name) })
+        })
+        .collect();
+    out.sort_by(|a, b| a.label.cmp(&b.label));
+    out
+}
+
+pub fn local_path(gio_info: &str) -> Option<PathBuf> {
+    gio_info.lines().find_map(|l| l.trim().strip_prefix("local path:")).map(|p| PathBuf::from(p.trim()))
+}
+
+pub fn connect(uri: &str) -> std::io::Result<PathBuf> {
+    let run = |args: &[&str]| std::process::Command::new("gio").args(args).stdin(std::process::Stdio::null()).output();
+    let mounted = run(&["mount", uri])?;
+    let info = run(&["info", uri])?;
+    local_path(&String::from_utf8_lossy(&info.stdout)).ok_or_else(|| std::io::Error::other(String::from_utf8_lossy(&mounted.stderr).trim().to_owned()))
 }
 
 fn unmounted() -> Vec<Drive> {

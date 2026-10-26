@@ -164,6 +164,11 @@ impl Shell for LinuxShell {
         let point = crate::places::mount(Path::new(os(device))).map_err(|e| PlatformError::new(-1, format!("cannot mount {}: {e}", device.display())))?;
         crate::xdg::fs_path(&point).ok_or_else(|| PlatformError::new(-1, "the mount point is not a valid path"))
     }
+
+    fn connect(&mut self, uri: &str) -> Result<FsPath, PlatformError> {
+        let point = crate::places::connect(uri).map_err(|e| PlatformError::new(-1, format!("cannot connect to {uri}: {e}")))?;
+        crate::xdg::fs_path(&point).ok_or_else(|| PlatformError::new(-1, "the mount point is not a valid path"))
+    }
 }
 
 impl FileOps for LinuxShell {
