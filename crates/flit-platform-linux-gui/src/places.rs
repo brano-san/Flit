@@ -4,6 +4,7 @@ use flit_core::{FsError, FsErrorKind, ListingBuilder};
 use flit_platform::{OpOutcome, PlatformError};
 use flit_platform_linux::mounts::{self, Mount};
 use flit_platform_linux::Trash;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 pub struct Volume {
@@ -104,6 +105,80 @@ pub fn empty(trash: &Trash, tops: &[PathBuf]) -> OpOutcome {
     }
     let items = removed.iter().filter_map(|p| crate::xdg::fs_path(p)).map(|p| (p.clone(), p)).collect();
     OpOutcome { items, error: error.map(|e| PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("Some items could not be deleted from the Trash: {e}"))) }
+}
+
+fn attribute<'a>(tag: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
+    let key = [b" ", name, b"=\""].concat();
+    let at = tag.windows(key.len()).position(|w| w == key.as_slice())? + key.len();
+    let len = tag[at..].iter().position(|&b| b == b'"')?;
+    Some(&tag[at..at + len])
+}
+
+fn unescape_xml(s: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(s.len());
+    let mut i = 0;
+    while i < s.len() {
+        let entity = [(&b"&amp;"[..], b'&'), (b"&lt;", b'<'), (b"&gt;", b'>'), (b"&quot;", b'"'), (b"&apos;", b'\'')].into_iter().find(|(e, _)| s[i..].starts_with(e));
+        match entity {
+            Some((e, c)) => {
+                out.push(c);
+                i += e.len();
+            }
+            None => {
+                out.push(s[i]);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+fn utc_ticks(s: &[u8]) -> Option<i64> {
+    let s = std::str::from_utf8(s.get(..19)?).ok()?;
+    let num = |r: std::ops::Range<usize>| s.get(r)?.parse::<i32>().ok();
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    tm.tm_year = num(0..4)? - 1900;
+    tm.tm_mon = num(5..7)? - 1;
+    tm.tm_mday = num(8..10)?;
+    tm.tm_hour = num(11..13)?;
+    tm.tm_min = num(14..16)?;
+    tm.tm_sec = num(17..19)?;
+    let t = unsafe { libc::timegm(&mut tm) };
+    (t != -1).then(|| t * 10_000_000 + 116_444_736_000_000_000)
+}
+
+pub fn recent_from(xbel: &[u8], limit: usize, exists: impl Fn(&Path) -> Option<bool>) -> Vec<flit_core::ui::Recent> {
+    let mut found: Vec<(i64, Vec<u8>)> = xbel
+        .split(|&b| b == b'<')
+        .filter(|t| t.starts_with(b"bookmark "))
+        .filter_map(|tag| {
+            let href = unescape_xml(attribute(tag, b"href")?);
+            let path = crate::instance::decode_uri(&href).filter(|p| p.starts_with(b"/"))?;
+            let at = attribute(tag, b"modified").or_else(|| attribute(tag, b"visited")).and_then(utc_ticks).unwrap_or(0);
+            Some((at, path))
+        })
+        .collect();
+    found.sort_by_key(|f| std::cmp::Reverse(f.0));
+    let mut out: Vec<flit_core::ui::Recent> = Vec::new();
+    for (at, path) in found {
+        if out.len() == limit {
+            break;
+        }
+        let Some(target) = flit_core::FsPath::parse_exact(&path) else { continue };
+        if out.iter().any(|r| r.target == target) {
+            continue;
+        }
+        let Some(dir) = exists(Path::new(std::ffi::OsStr::from_bytes(&path))) else { continue };
+        let name = flit_core::name::display(target.file_name()).into_owned();
+        out.push(flit_core::ui::Recent { name, target, dir, at });
+    }
+    out
+}
+
+pub fn recent(limit: usize) -> (Vec<flit_core::ui::Recent>, bool) {
+    let file = crate::xdg::data_home().map(|d| d.join("recently-used.xbel"));
+    let bytes = file.and_then(|f| std::fs::read(f).ok()).unwrap_or_default();
+    (recent_from(&bytes, limit, |p| std::fs::metadata(p).ok().map(|m| m.is_dir())), false)
 }
 
 #[cfg(test)]
