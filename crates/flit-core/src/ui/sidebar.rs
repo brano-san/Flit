@@ -279,7 +279,7 @@ fn pinned_glyph(loc: &Location) -> &'static str {
 }
 
 impl Sidebar {
-    fn rebuild(&mut self) {
+    pub(super) fn rebuild(&mut self) {
         let p = self.places.clone();
         let library_name = |l: &Location| p.libraries.iter().find(|lib| lib.path == *l.path()).map(|lib| lib.name.clone());
         let mut items: Vec<Item> = self
@@ -296,7 +296,7 @@ impl Sidebar {
         items.extend(p.libraries.iter().map(|l| Item { section: Section::Libraries, label: l.name.clone(), glyph: G_LIBRARY, loc: Location::Local(l.path.clone()), usage: None }));
         items.extend(p.drives.iter().map(|d| Item {
             section: Section::Drives,
-            label: d.label.clone(),
+            label: crate::i18n::relocalize(&d.label, crate::i18n::Lang::En).into_owned(),
             glyph: G_DRIVE,
             loc: Location::Local(d.path.clone()),
             usage: (d.total > 0).then(|| (d.total.saturating_sub(d.free)) as f32 / d.total as f32),

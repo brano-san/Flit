@@ -10,7 +10,7 @@ use crate::name;
 use crate::path::{FsPath, PathKind};
 use crate::provider::{FileOp, OpCtl, OpId, OpProgress, OpReport, ProviderRequest, TabId};
 use crate::undo::Origin;
-use crate::i18n::S;
+use crate::i18n::{self, Lang, S};
 use std::time::Instant;
 
 const HASH_IDS: OpId = 1 << 62;
@@ -85,7 +85,40 @@ impl ArchiveUi {
 }
 
 fn labels<T>(items: &[(&str, T)], zero: S) -> Vec<String> {
-    items.iter().map(|(l, _)| if l.is_empty() { zero.t() } else { l }.to_owned()).collect()
+    items.iter().map(|(l, _)| if l.is_empty() { zero.t().to_owned() } else { crate::fmt::size_label(l) }).collect()
+}
+
+impl App {
+    pub(super) fn relabel_form(&mut self, from: Lang) {
+        let Some(f) = &mut self.jobs.form else { return };
+        let moved = |s: &mut String| *s = i18n::relocalize(s, from).into_owned();
+        moved(&mut f.title);
+        moved(&mut f.note);
+        for b in &mut f.buttons {
+            *b = i18n::relocalize_static(b, from);
+        }
+        for (k, c) in f.controls.iter_mut().enumerate() {
+            match c {
+                Control::Text { label, placeholder, .. } => {
+                    moved(label);
+                    *placeholder = i18n::relocalize_static(placeholder, from);
+                }
+                Control::Choice { label, options, .. } => {
+                    moved(label);
+                    match (&f.kind, k) {
+                        (Kind::Compress { .. }, C_VOLUME) => *options = labels(&VOLUMES, S::ArchiveDoNotSplit),
+                        (Kind::Compress { .. }, C_DICTIONARY) => *options = labels(&DICTIONARIES, S::ArchiveAutomatic),
+                        _ => options.iter_mut().for_each(moved),
+                    }
+                }
+                Control::Check { label, .. } | Control::Value { label, .. } => moved(label),
+                Control::Flags { label, items, .. } => {
+                    moved(label);
+                    items.iter_mut().for_each(|(s, _)| moved(s));
+                }
+            }
+        }
+    }
 }
 
 fn position<T: PartialEq + Copy>(items: &[(&str, T)], v: T) -> usize {
@@ -199,7 +232,7 @@ impl App {
             Control::choice(S::ArchiveCompressionLevel.t(), levels(c.format), c.level as usize),
             Control::choice(S::ArchiveSplitVolumes.t(), labels(&VOLUMES, S::ArchiveDoNotSplit), position(&VOLUMES, c.volume)),
             Control::choice(S::ArchiveDictionarySize.t(), labels(&DICTIONARIES, S::ArchiveAutomatic), position(&DICTIONARIES, c.dictionary)),
-            Control::choice("CPU threads", labels(&THREADS, S::ArchiveAutomatic), position(&THREADS, c.threads)),
+            Control::choice(S::ArchiveCpuThreads.t(), labels(&THREADS, S::ArchiveAutomatic), position(&THREADS, c.threads)),
             Control::secret(S::ArchivePassword.t(), S::ArchivePasswordCompressHint.t()),
             Control::check(S::ArchiveEncryptNames.t(), c.encrypt_names),
         ];

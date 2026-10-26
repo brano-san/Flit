@@ -1,3 +1,4 @@
+quoted = "“{name}”"
 invalid_path = "Invalid path: {path}"
 in_recycle_bin = "\"{name}\" is in the Recycle Bin. Restore it to open it."
 dropped_routes = ["Opened the first {shown} of {n} location", "Opened the first {shown} of {n} locations"]

@@ -63,6 +63,18 @@ pub fn size_in(out: &mut impl Write, bytes: u64, decimal: bool) {
     let _ = write!(out, " {}", unit.t());
 }
 
+pub fn size_label(label: &str) -> String {
+    let Some((n, unit)) = label.split_once(' ').and_then(|(n, u)| Some((n, UNITS.into_iter().find(|s| s.en() == u)?))) else { return label.to_owned() };
+    let mut out = String::new();
+    match n.parse::<f64>() {
+        Ok(v) if n.contains('.') => i18n::decimal(&mut out, v, 1),
+        _ => out.push_str(n),
+    }
+    out.push(' ');
+    out.push_str(unit.t());
+    out
+}
+
 fn local_secs(ticks: i64, offset_min: i32) -> i64 {
     ticks / 10_000_000 - 11_644_473_600 + offset_min as i64 * 60
 }

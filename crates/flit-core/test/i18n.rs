@@ -141,3 +141,22 @@ fn folder_errors_follow_the_language() {
     assert!(crate::archive::needs_password(S::ErrorsArchiveWrongPassword.t()));
     set_lang(Lang::En);
 }
+
+#[test]
+fn relocalize_moves_messages_between_languages() {
+    set_lang(Lang::En);
+    let status = crate::tr!(S::KeymapStatusAssigned, key = "F2", command = S::SidebarDriveLocal.t());
+    let plural = crate::trn!(P::DetailsCountFiles, 3);
+    let drive = crate::tr_en!(S::SidebarDriveLabel, name = S::SidebarDriveLocal.en(), letter = 'C');
+    set_lang(Lang::Ru);
+    let ru = relocalize(&status, Lang::En).into_owned();
+    assert_eq!(ru, "F2 теперь запускает «Локальный диск»");
+    assert_eq!(relocalize(&plural, Lang::En), "3 файла");
+    assert_eq!(relocalize(&drive, Lang::En), "Локальный диск (C:)");
+    assert_eq!(relocalize("Data (D:)", Lang::En), "Data (D:)");
+    assert_eq!(relocalize_static(S::ArchiveOk.en(), Lang::En), S::ArchiveOk.in_lang(Lang::Ru));
+    assert_eq!(crate::tr!(S::UiQuoted, name = "a"), "«a»");
+    assert_eq!(localize(S::ErrorsSearchUnreadableQuery.en()), S::ErrorsSearchUnreadableQuery.in_lang(Lang::Ru));
+    set_lang(Lang::En);
+    assert_eq!(relocalize(&ru, Lang::Ru), status);
+}

@@ -229,7 +229,7 @@ impl Jobs {
 }
 
 fn quoted(p: &FsPath) -> String {
-    format!("\u{201C}{}\u{201D}", name::display(p.file_name()))
+    crate::tr!(S::UiQuoted, name = name::display(p.file_name()))
 }
 
 fn count(items: &[FsPath]) -> String {

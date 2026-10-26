@@ -220,3 +220,14 @@ fn global_settings_apply_to_every_tab() {
     set(&mut a, "files.dotfiles", Value::Bool(false));
     assert!(a.tabs().iter().all(|t| t.view_spec.hide_dotfiles));
 }
+
+#[test]
+fn switching_language_retranslates_the_status_message() {
+    let mut a = app();
+    set(&mut a, LANGUAGE, Value::Choice(1));
+    a.status(S::ArchiveSelectToCompress.t());
+    set(&mut a, LANGUAGE, Value::Choice(2));
+    assert_eq!(a.tab().error.as_deref(), Some(S::ArchiveSelectToCompress.in_lang(Lang::Ru)));
+    set(&mut a, LANGUAGE, Value::Choice(1));
+    assert_eq!(a.tab().error.as_deref(), Some(S::ArchiveSelectToCompress.en()));
+}

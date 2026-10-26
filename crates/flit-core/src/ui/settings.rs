@@ -582,7 +582,14 @@ impl App {
         if self.shown_lang == l {
             return;
         }
-        self.shown_lang = l;
+        let old = std::mem::replace(&mut self.shown_lang, l);
+        for t in &mut self.tabs {
+            if let Some(e) = &mut t.error {
+                *e = i18n::relocalize(e, old).into_owned();
+            }
+        }
+        self.relabel_form(old);
+        self.nav.sidebar.rebuild();
         let title = if self.search.active { self.search_title() } else { self.window_title() };
         self.effects.push(Effect::Title(title));
         self.layout();
