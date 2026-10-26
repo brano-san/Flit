@@ -73,6 +73,8 @@ encoding_of_names = "Encoding of names…"
 new = "New"
 eject = "Eject"
 
+open_with = "Open with"
+
 [sort]
 name = "Name"
 modified = "Date modified"

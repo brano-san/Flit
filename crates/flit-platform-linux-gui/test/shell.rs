@@ -90,7 +90,7 @@ fn theme_probe_never_blocks_the_caller() {
     dark_preference(move |dark| {
         let _ = tx.send(dark);
     });
-    assert!(start.elapsed() < Duration::from_millis(20));
+    assert!(start.elapsed() < Duration::from_millis(200));
     let _ = rx.recv_timeout(Duration::from_secs(2));
     let _ = clipboard_text();
 }

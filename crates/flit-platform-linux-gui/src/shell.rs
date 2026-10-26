@@ -97,6 +97,11 @@ fn launch(l: &Launch) -> Result<(), PlatformError> {
     match l {
         Launch::Terminal { admin: true, .. } => Err(PlatformError::new(-1, "Flit does not open terminals with elevated rights on Linux")),
         Launch::Terminal { dirs, .. } => dirs.iter().try_for_each(|d| open_terminal(Path::new(os(d)))),
+        Launch::With { program, args } if program.as_bytes().ends_with(b".desktop") => {
+            let files: Vec<PathBuf> = args.iter().filter_map(|a| host(a).map(Path::to_path_buf)).collect();
+            let token = crate::window::activation_token();
+            crate::apps::launch(Path::new(os(program)), &files, token.as_deref()).map_err(|e| spawn_error(&program.display(), &e))
+        }
         Launch::With { program, args } => {
             let mut cmd = Command::new(os(program));
             cmd.args(args.iter().map(os));

@@ -73,6 +73,8 @@ encoding_of_names = "Кодировка имен…"
 new = "Создать"
 eject = "Извлечь"
 
+open_with = "Открыть с помощью"
+
 [sort]
 name = "Имя"
 modified = "Дата изменения"

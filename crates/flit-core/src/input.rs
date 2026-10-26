@@ -61,6 +61,7 @@ pub enum Event {
     CloseRequested,
     ShellVerb(String),
     MenuCommand(usize),
+    ShowMenu { items: Vec<crate::ui::MenuItem>, x: f32, y: f32, launches: Vec<crate::provider::Launch> },
     DevicesChanged,
     Timer,
     ClipboardChanged(u32),

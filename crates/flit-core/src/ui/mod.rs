@@ -32,6 +32,7 @@ mod describe;
 mod keymap;
 mod toolbar;
 mod popup;
+mod own_menu;
 mod properties;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
@@ -440,6 +441,7 @@ pub struct App {
     next_tab: TabId,
     next_gen: u64,
     timer_at: Option<Instant>,
+    own_menu: Option<own_menu::OwnMenu>,
 
     focus: Focus,
     edit: LineEdit,
@@ -534,6 +536,7 @@ impl App {
             next_tab: tab_base + 1,
             next_gen: 0,
             timer_at: None,
+            own_menu: None,
             focus: Focus::List,
             edit: LineEdit::default(),
             editing: false,
@@ -1231,6 +1234,9 @@ impl App {
     }
 
     pub fn on_event(&mut self, ev: &Event, now: Instant) {
+        if self.own_menu_event(ev, now) {
+            return;
+        }
         if self.search.active && !self.jobs.modal() && self.search_event(ev, now) {
             return;
         }
@@ -1302,6 +1308,7 @@ impl App {
             Event::CloseRequested => self.effects.push(Effect::Window(WindowCmd::Close)),
             Event::ShellVerb(verb) => self.shell_verb(verb),
             Event::MenuCommand(k) => self.menu_command(*k, now),
+            Event::ShowMenu { .. } => {}
             Event::DevicesChanged => self.effects.push(Effect::RefreshPlaces),
             Event::Timer => {
                 self.timer_at = None;
@@ -1784,6 +1791,7 @@ impl App {
             }
             self.draw_tab_tip(g, th);
             self.draw_jobs(g, th);
+            self.draw_own_menu(g, th);
             if !g.atlas_reset {
                 break;
             }
