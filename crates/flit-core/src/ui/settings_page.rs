@@ -5,7 +5,7 @@ use super::menu::Cmd;
 use super::palette::{Palette, Pick};
 use super::settings::{self, Kind, Page, Picker, Value, SETTINGS};
 use super::a11y::{leaf, put, union};
-use super::{centered, App, Effect, Hit, SettingsCmd, G_CLOSE};
+use super::{centered, App, Effect, Glide, Hit, SettingsCmd, G_CLOSE};
 use crate::a11y::{Role, Tree};
 use crate::i18n::{P, S};
 use crate::input::{Key, Mods, MouseButton};
@@ -265,7 +265,7 @@ pub(super) struct SettingsUi {
     rects: Vec<Rect>,
     focus: usize,
     sub: usize,
-    scroll: f32,
+    pub(super) scroll: Glide,
     content_h: f32,
     reveal: bool,
     panel: Rect,
@@ -285,7 +285,7 @@ impl SettingsUi {
             rects: Vec::new(),
             focus: 0,
             sub: 0,
-            scroll: 0.0,
+            scroll: Glide::default(),
             content_h: 0.0,
             reveal: false,
             panel: Rect::default(),
@@ -436,7 +436,7 @@ impl App {
         if let Some(p) = page {
             ui.page = p;
             ui.search.edit.set("");
-            ui.scroll = 0.0;
+            ui.scroll.snap(0.0);
             ui.focus = usize::MAX;
         }
         self.effects.push(Effect::Settings(SettingsCmd::CacheSize));
@@ -715,15 +715,15 @@ impl App {
         ui.content_h = y;
         if std::mem::take(&mut ui.reveal) {
             if let Some(&(fy, fh)) = offsets.get(ui.focus) {
-                if fy < ui.scroll {
-                    ui.scroll = fy;
-                } else if fy + fh > ui.scroll + ui.list.h {
-                    ui.scroll = fy + fh - ui.list.h;
+                if fy < ui.scroll.target {
+                    ui.scroll.target = fy;
+                } else if fy + fh > ui.scroll.target + ui.list.h {
+                    ui.scroll.target = fy + fh - ui.list.h;
                 }
             }
         }
-        ui.scroll = ui.scroll.clamp(0.0, (ui.content_h - ui.list.h).max(0.0));
-        ui.rects = offsets.into_iter().map(|(ly, lh)| Rect::new(ui.list.x, ui.list.y + ly - ui.scroll, ui.list.w, lh)).collect();
+        ui.scroll.clamp(ui.content_h - ui.list.h);
+        ui.rects = offsets.into_iter().map(|(ly, lh)| Rect::new(ui.list.x, ui.list.y + ly - ui.scroll.pos, ui.list.w, lh)).collect();
         self.settings = Some(ui);
     }
 
@@ -908,7 +908,7 @@ impl App {
             SHit::Page(k) => {
                 ui.page = Page::ALL[k];
                 ui.search.edit.set("");
-                ui.scroll = 0.0;
+                ui.scroll.snap(0.0);
                 ui.focus = usize::MAX;
                 ui.searching = false;
                 self.layout();
@@ -1090,7 +1090,8 @@ impl App {
                 let n = Page::ALL.len();
                 ui.page = Page::ALL[if key == Key::PageUp { (at + n - 1) % n } else { (at + 1) % n }];
                 ui.search.edit.set("");
-                (ui.focus, ui.scroll, ui.searching) = (usize::MAX, 0.0, false);
+                (ui.focus, ui.searching) = (usize::MAX, false);
+                ui.scroll.snap(0.0);
             }
             Key::Up | Key::Down if plain => {
                 let step = if key == Key::Up { -1 } else { 1 };
@@ -1118,7 +1119,8 @@ impl App {
             _ if ui.searching => {
                 if let FieldKey::Edited { changed, action } = ui.search.key(key, m) {
                     if changed {
-                        (ui.focus, ui.scroll) = (usize::MAX, 0.0);
+                        ui.focus = usize::MAX;
+        ui.scroll.snap(0.0);
                     }
                     match action {
                         EditAction::Copy(s) => self.effects.push(Effect::SetClipboard(s)),
@@ -1175,7 +1177,8 @@ impl App {
         }
         ui.searching = true;
         ui.search.insert(s);
-        (ui.focus, ui.scroll) = (usize::MAX, 0.0);
+        ui.focus = usize::MAX;
+        ui.scroll.snap(0.0);
         self.layout();
         self.dirty = true;
         true
@@ -1187,7 +1190,7 @@ impl App {
         }
         let step = 3.0 * (ITEM_H * self.scale).round();
         if let Some(ui) = &mut self.settings {
-            ui.scroll = (ui.scroll - dy * step).clamp(0.0, (ui.content_h - ui.list.h).max(0.0));
+            ui.scroll.by(-dy * step, ui.content_h - ui.list.h);
         }
         self.layout();
         self.dirty = true;
@@ -1397,7 +1400,7 @@ impl App {
         }
         g.dl.set_clip(None);
         if ui.content_h > list.h {
-            let frac = ui.scroll / (ui.content_h - list.h);
+            let frac = ui.scroll.pos / (ui.content_h - list.h);
             let th = (list.h * list.h / ui.content_h).max(s(24.0));
             let thumb = Rect::new(list.right() - s(6.0), list.y + (list.h - th) * frac, s(4.0), th);
             g.dl.round_rect(thumb, t.scrollbar, s(2.0));

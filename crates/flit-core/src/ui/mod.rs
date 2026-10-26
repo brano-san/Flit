@@ -101,6 +101,42 @@ const TAB_MIN_W: f32 = 72.0;
 const DIFF_BUDGET: Duration = Duration::from_millis(4);
 const MAX_PENDING_DIFFS: usize = 1 << 16;
 const SCROLL_TAU: f32 = 0.045;
+
+fn glide(pos: &mut f32, target: f32, dt: f32, smooth: bool) -> bool {
+    let diff = target - *pos;
+    if diff.abs() > 0.5 && smooth {
+        *pos += diff * (1.0 - (-dt / SCROLL_TAU).exp()).max(0.15);
+        return true;
+    }
+    *pos = target;
+    false
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct Glide {
+    pub pos: f32,
+    pub target: f32,
+}
+
+impl Glide {
+    pub(super) fn snap(&mut self, v: f32) {
+        *self = Self { pos: v, target: v };
+    }
+
+    pub(super) fn by(&mut self, delta: f32, max: f32) {
+        self.target = (self.target + delta).clamp(0.0, max.max(0.0));
+    }
+
+    pub(super) fn clamp(&mut self, max: f32) {
+        let max = max.max(0.0);
+        self.pos = self.pos.clamp(0.0, max);
+        self.target = self.target.clamp(0.0, max);
+    }
+
+    pub(super) fn step(&mut self, dt: f32, smooth: bool) -> bool {
+        glide(&mut self.pos, self.target, dt, smooth)
+    }
+}
 const MAX_OPEN: usize = 16;
 const MAX_THUMB_STATES: usize = 1 << 16;
 const MAX_ROUTES: usize = 32;
@@ -1804,6 +1840,7 @@ impl App {
         animating |= self.marquee_autoscroll(dt);
         animating |= self.autoscroll_step(dt);
         animating |= self.scroll_step(dt);
+        animating |= self.glide_overlays(dt);
         animating |= self.step_other(dt);
         self.layout();
         self.sync_preview(now);
@@ -1876,13 +1913,14 @@ impl App {
     fn scroll_step(&mut self, dt: f32) -> bool {
         let smooth = self.smooth_scroll;
         let t = self.tab_mut();
-        let diff = t.scroll_target - t.scroll;
-        if diff.abs() > 0.5 && smooth {
-            t.scroll += diff * (1.0 - (-dt / SCROLL_TAU).exp()).max(0.15);
-            return true;
-        }
-        t.scroll = t.scroll_target;
-        false
+        glide(&mut t.scroll, t.scroll_target, dt, smooth)
+    }
+
+    fn glide_overlays(&mut self, dt: f32) -> bool {
+        let smooth = self.smooth_scroll;
+        let settings = self.settings.as_mut().is_some_and(|ui| ui.scroll.step(dt, smooth));
+        let palette = self.nav.palette.as_mut().is_some_and(|p| p.scroll.step(dt, smooth));
+        settings | palette
     }
 
     fn draw_title<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {

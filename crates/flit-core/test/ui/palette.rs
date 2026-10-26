@@ -1,4 +1,54 @@
 use super::*;
+use crate::input::Event;
+use crate::text::tests::Mono;
+use std::time::Duration;
+
+fn draw(a: &mut App, now: Instant) {
+    a.frame(&mut Gfx::new(Mono, 1024), now);
+}
+
+fn long_pick(now: Instant) -> App {
+    let mut a = crate::ui::harness::app(&[]);
+    let rows = (0..200).map(|i| (format!("row {i}"), String::new())).collect();
+    a.open_pick(Palette::new(Pick::NewItem, rows, ""));
+    draw(&mut a, now);
+    a
+}
+
+fn pos(a: &App) -> f32 {
+    a.nav.palette.as_ref().unwrap().scroll.pos
+}
+
+fn wheel_frame(a: &mut App, dy: f32, now: Instant) -> f32 {
+    a.on_event(&Event::Wheel { dx: 0.0, dy }, now);
+    assert!(a.dirty, "a wheel over the palette must request a frame");
+    draw(a, now + Duration::from_millis(16));
+    pos(a)
+}
+
+#[test]
+fn palette_wheel_up_and_down_move_on_the_same_frame() {
+    let t0 = Instant::now();
+    let mut a = long_pick(t0);
+    let down = wheel_frame(&mut a, -1.0, t0);
+    assert!(down > 0.0, "wheel down moves on its first frame");
+    for k in 1..60 {
+        draw(&mut a, t0 + Duration::from_millis(16 * k));
+    }
+    let settled = pos(&a);
+    assert!(settled > down, "the palette glides toward the target over frames");
+    let up = wheel_frame(&mut a, 1.0, t0 + Duration::from_millis(16 * 59));
+    assert!(up < settled, "wheel up moves on its first frame: {settled} -> {up}");
+    assert!((settled - up - down).abs() < 1.0, "one notch up and one notch down cover the same first-frame distance");
+}
+
+#[test]
+fn palette_lays_out_only_visible_rows() {
+    let t0 = Instant::now();
+    let mut a = long_pick(t0);
+    wheel_frame(&mut a, -30.0, t0);
+    assert!(a.nav.palette.as_ref().unwrap().rows.len() <= MAX_ROWS + 1);
+}
 
 fn titles(q: &str) -> Vec<&'static str> {
     matches(q).into_iter().map(|i| ACTIONS[i].title.t()).collect()

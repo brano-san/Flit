@@ -5,7 +5,7 @@ use super::field::{Field, FieldKey};
 use super::settings_page::SettingPick;
 use super::tags::TagPick;
 use super::toolbar::ToolPick;
-use super::{App, Effect, Hit};
+use super::{App, Effect, Glide, Hit};
 use crate::i18n::S;
 use crate::input::{Key, Mods};
 use crate::path::FsPath;
@@ -90,6 +90,9 @@ pub(super) struct Palette {
     ids: Vec<usize>,
     pub sel: usize,
     first: usize,
+    shift: f32,
+    pub(super) scroll: Glide,
+    list: Rect,
     rect: Rect,
     field_rect: Rect,
     pub rows: Vec<Rect>,
@@ -142,7 +145,7 @@ impl Palette {
     pub(super) fn new(pick: Pick, items: Vec<(String, String)>, text: &str) -> Self {
         let (titles, keys): (Vec<String>, Vec<String>) = items.into_iter().unzip();
         let ids = (0..titles.len()).collect();
-        let mut p = Self { pick, titles, field: Field::default(), matches: Vec::new(), keys, alts: Vec::new(), descs: Vec::new(), ids, sel: 0, first: 0, rect: Rect::default(), field_rect: Rect::default(), rows: Vec::new() };
+        let mut p = Self { pick, titles, field: Field::default(), matches: Vec::new(), keys, alts: Vec::new(), descs: Vec::new(), ids, sel: 0, first: 0, shift: 0.0, scroll: Glide::default(), list: Rect::default(), rect: Rect::default(), field_rect: Rect::default(), rows: Vec::new() };
         p.field.edit.set(text);
         p.field.edit.select_all();
         p.refresh();
@@ -170,7 +173,11 @@ impl Palette {
             rank(self.field.text(), self.titles.iter().map(String::as_str).zip(alts).zip(descs).map(|((t, a), d)| (t, a, d)))
         };
         self.sel = 0;
-        self.first = 0;
+        self.scroll.snap(0.0);
+    }
+
+    fn max_scroll(&self) -> f32 {
+        self.matches.len().saturating_sub(MAX_ROWS) as f32 * ROW_H
     }
 
     fn select(&mut self, to: isize) {
@@ -179,10 +186,12 @@ impl Palette {
             return;
         }
         self.sel = to.rem_euclid(n) as usize;
-        if self.sel < self.first {
-            self.first = self.sel;
-        } else if self.sel >= self.first + MAX_ROWS {
-            self.first = self.sel + 1 - MAX_ROWS;
+        let top = self.sel as f32 * ROW_H;
+        let view = MAX_ROWS as f32 * ROW_H;
+        if top < self.scroll.target {
+            self.scroll.target = top;
+        } else if top + ROW_H > self.scroll.target + view {
+            self.scroll.target = top + ROW_H - view;
         }
     }
 
@@ -190,10 +199,6 @@ impl Palette {
         self.select(k.min(self.matches.len().saturating_sub(1)) as isize);
     }
 
-    fn scroll(&mut self, rows: isize) {
-        let max = self.matches.len().saturating_sub(MAX_ROWS) as isize;
-        self.first = (self.first as isize + rows).clamp(0, max) as usize;
-    }
 }
 
 impl App {
@@ -311,8 +316,10 @@ impl App {
 
     pub(super) fn palette_wheel(&mut self, dy: f32) {
         if let Some(p) = &mut self.nav.palette {
-            p.scroll(-(dy * 3.0).round() as isize);
-            self.layout();
+            let max = p.max_scroll();
+            p.scroll.by(-dy * 3.0 * ROW_H, max);
+            self.hover = Hit::PaletteBox;
+            self.dirty = true;
         }
     }
 
@@ -325,14 +332,17 @@ impl App {
         let y = top + s(4.0);
         p.field_rect = Rect::new(x + s(8.0), y + s(8.0), pw - s(16.0), s(FIELD_H));
         p.rows.clear();
-        let mut ry = p.field_rect.bottom() + s(6.0);
-        for _ in p.first..p.matches.len().min(p.first + MAX_ROWS) {
-            p.rows.push(Rect::new(x + s(6.0), ry, pw - s(12.0), s(ROW_H)));
-            ry += s(ROW_H);
+        let unit = s(ROW_H);
+        let top = p.field_rect.bottom() + s(6.0);
+        let at = p.scroll.pos / ROW_H;
+        p.first = at.floor() as usize;
+        p.shift = ((at - at.floor()) * unit).round();
+        let n = p.matches.len();
+        for k in p.first..n.min(p.first + MAX_ROWS + 1) {
+            p.rows.push(Rect::new(x + s(6.0), top + (k - p.first) as f32 * unit - p.shift, pw - s(12.0), unit));
         }
-        if p.matches.is_empty() {
-            ry += s(ROW_H);
-        }
+        let ry = top + n.clamp(1, MAX_ROWS) as f32 * unit;
+        p.list = Rect::new(x, top, pw, ry - top);
         p.rect = Rect::new(x, y, pw, ry + s(6.0) - y);
     }
 
@@ -347,7 +357,7 @@ impl App {
         if p.field_rect.contains(x, y) {
             return Some(Hit::PaletteField);
         }
-        Some(p.rows.iter().position(|r| r.contains(x, y)).map_or(Hit::PaletteBox, |i| Hit::PaletteRow(p.first + i)))
+        Some(p.rows.iter().position(|r| r.contains(x, y) && p.list.contains(x, y)).map_or(Hit::PaletteBox, |i| Hit::PaletteRow(p.first + i)))
     }
 
     pub(super) fn draw_palette<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
@@ -366,6 +376,7 @@ impl App {
         let inner = Rect::new(fr.x + s12, fr.y, fr.w - 2.0 * s12, fr.h);
         p.field.draw(g, t, inner, font, active, p.pick.placeholder(), scale, Some(&self.preedit));
         let m = g.metrics(font);
+        g.dl.set_clip(Some(p.list));
         for (k, &row) in p.rows.iter().enumerate() {
             let i = p.first + k;
             if i == p.sel {
@@ -379,6 +390,7 @@ impl App {
             g.text(row.right() - s12 - kw, baseline, keys, small, t.text_dim, f32::INFINITY);
             g.text(row.x + s12, baseline, &p.titles[p.matches[i]], font, t.text, row.w - 3.0 * s12 - kw);
         }
+        g.dl.set_clip(None);
         if p.matches.is_empty() {
             let baseline = (fr.bottom() + s6 + (row_h + m.ascent - m.descent) / 2.0).round();
             g.text(r.x + s12 + s6, baseline, p.pick.empty(), font, t.text_dim, r.w - 2.0 * s12);

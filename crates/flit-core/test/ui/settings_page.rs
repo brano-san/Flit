@@ -21,6 +21,31 @@ fn app() -> App {
     a
 }
 
+#[test]
+fn settings_wheel_glides_toward_the_target_over_frames() {
+    let t0 = Instant::now();
+    let mut a = app();
+    a.open_settings(Some(Page::General));
+    a.frame(&mut Gfx::new(Mono, 1024), t0);
+    let list = a.settings.as_ref().unwrap().list;
+    a.on_event(&Event::MouseMove { x: list.x + list.w / 2.0, y: list.y + list.h / 2.0 }, t0);
+    a.on_event(&Event::Wheel { dx: 0.0, dy: -1.0 }, t0);
+    let target = a.settings.as_ref().unwrap().scroll.target;
+    assert!(target > 0.0);
+    let mut seen = Vec::new();
+    for k in 1..40 {
+        a.frame(&mut Gfx::new(Mono, 1024), t0 + Duration::from_millis(16 * k));
+        seen.push(a.settings.as_ref().unwrap().scroll.pos);
+    }
+    assert!(seen[0] > 0.0 && seen[0] < target, "the first frame moves part of the way: {seen:?}");
+    assert!(seen.windows(2).all(|w| w[1] >= w[0]));
+    assert_eq!(*seen.last().unwrap(), target);
+    let up_from = *seen.last().unwrap();
+    a.on_event(&Event::Wheel { dx: 0.0, dy: 1.0 }, t0 + Duration::from_secs(1));
+    a.frame(&mut Gfx::new(Mono, 1024), t0 + Duration::from_millis(1016));
+    assert!(a.settings.as_ref().unwrap().scroll.pos < up_from, "wheel up moves on its first frame");
+}
+
 fn listed(items: &[(&str, bool)]) -> App {
     let mut a = app();
     let t = a.tab();
