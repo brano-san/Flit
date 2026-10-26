@@ -44,6 +44,10 @@ impl Fs for LinuxGuiFs {
         LinuxFs.dir_sizes(dir, items, keep_going, report)
     }
 
+    fn file_system(&self, path: &FsPath) -> Option<String> {
+        LinuxFs.file_system(path)
+    }
+
     fn volume_key(&self, path: &FsPath) -> Vec<u8> {
         match host(path).and_then(device) {
             Some(dev) => format!("dev:{dev}").into_bytes(),

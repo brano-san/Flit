@@ -329,7 +329,7 @@ fn appearance_page_hides_the_toolbar_and_opens_its_customization() {
     let mut a = listed(&[("a.txt", false)]);
     a.open_settings(Some(Page::Appearance));
     let lines = a.settings_lines();
-    assert_eq!(lines[..4], ["appearance.theme", "appearance.background", "appearance.font", "appearance.toolbar"]);
+    assert_eq!(lines[..5], ["appearance.theme", "appearance.background", "appearance.background_image", "appearance.font", "appearance.toolbar"]);
     assert_eq!(lines.last().map(String::as_str), Some("Customize the toolbar…"));
     let k = line(&mut a, "appearance.toolbar");
     let at = center(switch_rect(rect(&a, k), s));

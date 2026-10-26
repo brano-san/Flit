@@ -158,6 +158,8 @@ fn key(id: &str) -> Option<S> {
         "file.folder_icon" => S::DescribeFileFolderIcon,
         "file.install_fonts" => S::OpsExtraDescribeInstallFonts,
         "file.lock_screen" => S::OpsExtraDescribeLockScreen,
+        "file.set_backdrop" => S::OpsExtraDescribeSetBackdrop,
+        "view.clear_backdrop" => S::OpsExtraDescribeClearBackdrop,
         "file.shortcut" => S::DescribeFileShortcut,
         "file.flatten" => S::DescribeFileFlatten,
         "archive.compress" => S::DescribeArchiveCompress,

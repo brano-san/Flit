@@ -1,0 +1,8 @@
+details = "Détails"
+list = "Liste"
+cards = "Cartes"
+columns = "Colonnes"
+grid = "Grille"
+adaptive = "Adaptative"
+adaptive_shared = "La disposition adaptative nécessite des affichages par dossier : désactivez d’abord « Utiliser le même affichage pour tous les dossiers »"
+thumbnails_cleared = "Le cache des miniatures a été vidé"

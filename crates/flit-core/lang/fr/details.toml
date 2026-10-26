@@ -1,0 +1,39 @@
+[column]
+name = "Nom"
+modified = "Modifié le"
+created = "Date de création"
+type = "Type"
+size = "Taille"
+origin = "Emplacement d’origine"
+deleted = "Date de suppression"
+tag = "Balises"
+
+[type]
+drive = "Lecteur"
+folder = "Dossier de fichiers"
+file = "Fichier"
+ext_file = "Fichier {ext}"
+
+[group]
+unknown_date = "Date inconnue"
+unknown_location = "Emplacement inconnu"
+no_tags = "Aucune balise"
+
+[size_group]
+folders = "Dossiers"
+empty = "Vide"
+tiny = "Minuscule (moins de 16 Ko)"
+small = "Petit (de 16 Ko à 1 Mo)"
+medium = "Moyen (de 1 à 128 Mo)"
+large = "Grand (de 128 Mo à 1 Go)"
+huge = "Très grand (de 1 à 4 Go)"
+gigantic = "Gigantesque (plus de 4 Go)"
+
+[count]
+items = ["{n} élément", "{n} d’éléments", "{n} éléments"]
+filtered = ["{shown} sur {n} élément", "{shown} sur {n} d’éléments", "{shown} sur {n} éléments"]
+folders = ["{n} dossier", "{n} de dossiers", "{n} dossiers"]
+files = ["{n} fichier", "{n} de fichiers", "{n} fichiers"]
+
+[status]
+default_view = "Les nouveaux dossiers s’ouvriront avec cet affichage"

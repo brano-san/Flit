@@ -131,9 +131,22 @@ fn quick_look() -> Option<std::path::PathBuf> {
         .find(|p| std::fs::symlink_metadata(p).is_ok())
 }
 
-fn seer(path: &str) -> bool {
+const SEER_CLASS: &str = "SeerWindowClass";
+const QUICK_LOOK_TOGGLE: &str = "QuickLook.App.PipeMessages.Toggle";
+
+fn quick_look_pipe() -> String {
+    format!(r"\\.\pipe\QuickLook.App.Pipe.{}", crate::instance::user_sid().unwrap_or_default())
+}
+
+fn quick_look_running(pipe: &str, path: &str) -> bool {
+    use std::io::Write;
+    std::fs::OpenOptions::new().write(true).open(pipe).and_then(|mut f| f.write_all(format!("{QUICK_LOOK_TOGGLE}|{path}\r\n").as_bytes())).is_ok()
+}
+
+fn seer(class: &str, path: &str) -> bool {
     unsafe {
-        let Ok(hwnd) = FindWindowW(w!("SeerWindowClass"), PCWSTR::null()) else { return false };
+        let class = wide_str(class);
+        let Ok(hwnd) = FindWindowW(PCWSTR(class.as_ptr()), PCWSTR::null()) else { return false };
         let text = wide_str(path);
         let data = COPYDATASTRUCT { dwData: SEER_INVOKE, cbData: (text.len() * 2) as u32, lpData: text.as_ptr() as *mut _ };
         let mut result = 0usize;
@@ -143,7 +156,7 @@ fn seer(path: &str) -> bool {
 
 pub(crate) fn quick_view(path: &FsPath) -> bool {
     let text = path.display().into_owned();
-    if seer(&text) {
+    if seer(SEER_CLASS, &text) || quick_look_running(&quick_look_pipe(), &text) {
         return true;
     }
     quick_look().is_some_and(|exe| std::process::Command::new(exe).arg(&text).spawn().is_ok())

@@ -112,6 +112,10 @@ impl Platform for Linux {
         xdg::known_folder(name)
     }
 
+    fn ui_language() -> String {
+        ["LC_ALL", "LC_MESSAGES", "LANG"].iter().filter_map(|k| std::env::var(k).ok()).find(|v| !v.is_empty()).unwrap_or_default()
+    }
+
     fn templates() -> Vec<flit_core::ui::NewTemplate> {
         xdg::templates()
     }
@@ -180,6 +184,10 @@ impl Renderer for LinuxRenderer {
 
     fn upload_preview(&mut self, image: Option<&Bitmap>) {
         self.gl.upload_preview(image);
+    }
+
+    fn upload_backdrop(&mut self, image: Option<&Bitmap>) {
+        self.gl.upload_backdrop(image);
     }
 
     fn render(&mut self, list: &DrawList) -> Result<(), RenderError> {

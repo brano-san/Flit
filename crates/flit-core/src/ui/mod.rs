@@ -227,6 +227,7 @@ pub enum Effect {
     Search(SearchRequest),
     Preview(PreviewRequest),
     QuickView(FsPath),
+    Backdrop { gen: u64, path: FsPath },
     Host(HostCmd),
     Timer(Duration),
     MoveTab { tab: MovedTab, at: Option<(f32, f32)>, last: bool },
@@ -978,7 +979,7 @@ impl App {
                 }
             }
             ProviderEvent::Hashed { id, result, .. } => self.hashed(id, result.map_err(|e| crate::i18n::localize(&e).into_owned())),
-            ProviderEvent::Measured { id, totals, done, .. } => self.measured(id, totals, done),
+            ProviderEvent::Measured { id, totals, file_system, done, .. } => self.measured(id, totals, file_system, done),
             ProviderEvent::Status { tab, gen, text } => {
                 if let Some(k) = tab_of(&self.tabs, tab, gen) {
                     if let Some(l) = self.tabs[k].loading.as_mut() {
@@ -1801,6 +1802,7 @@ impl App {
         for _ in 0..2 {
             arena.reset();
             g.begin(files.bg);
+            self.draw_backdrop(&mut g.dl);
             if self.search.active {
                 self.draw_search(g, &arena, th);
             } else {

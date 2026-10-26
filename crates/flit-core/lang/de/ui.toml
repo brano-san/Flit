@@ -1,0 +1,165 @@
+quoted = "„{name}“"
+invalid_path = "Ungültiger Pfad: {path}"
+in_recycle_bin = "„{name}“ befindet sich im Papierkorb. Stellen Sie es wieder her, um es zu öffnen."
+dropped_routes = ["Der erste {shown} von {n} Orten wurde geöffnet", "Die ersten {shown} von {n} Orten wurden geöffnet"]
+
+[bin]
+restore = "Wiederherstellen"
+restore_all = "Alle wiederherstellen"
+empty = "Papierkorb leeren"
+
+[empty]
+filtered = "Keine Elemente entsprechen dem Filter."
+bin = "Der Papierkorb ist leer."
+folder = "Dieser Ordner ist leer."
+
+[status]
+selected = ["{n} ausgewählt", "{n} ausgewählt"]
+unpacked = "{size} entpackt"
+loading = "Wird geladen…"
+timing = "{first} ms erste · {all} ms alle"
+
+[button]
+replace = "Ersetzen"
+keep_both = "Beide behalten"
+skip = "Überspringen"
+cancel = "Abbrechen"
+delete = "Löschen"
+restore = "Wiederherstellen"
+not_now = "Nicht jetzt"
+
+[job]
+operations = "Vorgänge"
+clear_completed = "Abgeschlossene entfernen"
+none = "Noch keine Vorgänge. Kopier-, Verschiebe- und Löschvorgänge werden hier angezeigt."
+open_destination = "Ziel öffnen"
+remove = "Aus der Liste entfernen"
+conflict = "Konflikt"
+queued = "In der Warteschlange"
+done = "Fertig"
+failed = "Fehlgeschlagen"
+cancelled = "Abgebrochen"
+waiting_answer = "Wartet auf Ihre Antwort"
+cancelling = "Wird abgebrochen…"
+waiting_drive = "Wartet auf einen anderen Vorgang auf diesem Laufwerk"
+preparing = "Wird vorbereitet…"
+bytes_of = "{done} von {total}"
+speed = "{size}/s"
+items_of = ["{done} von {n} Element", "{done} von {n} Elementen"]
+items_speed = "{speed} Elemente/s"
+completed_in = "Abgeschlossen in {seconds} s"
+completed = "Abgeschlossen"
+cancelled_detail = "Vor dem Abschluss abgebrochen; die restlichen Elemente wurden nicht verändert"
+
+[job_title]
+copying = "{what} wird nach {dest} kopiert"
+moving = "{what} wird nach {dest} verschoben"
+renaming = "{what} wird umbenannt"
+moving_items = "{what} wird verschoben"
+pasting = "Einfügen in {dest}"
+trashing = "{what} wird in den Papierkorb verschoben"
+trashing_linux = "{what} wird in den Papierkorb verschoben"
+deleting = "{what} wird gelöscht"
+flattening = "{what} wird reduziert"
+restoring = "{what} wird wiederhergestellt"
+purging = "{what} wird aus dem Papierkorb gelöscht"
+emptying = "Papierkorb wird geleert"
+compressing = "{what} wird nach {dest} komprimiert"
+extracting = "{what} wird extrahiert"
+opening = "{what} wird geöffnet"
+
+[confirm]
+trash = "In den Papierkorb verschieben?"
+trash_one = "{name} wird in den Papierkorb verschoben."
+trash_many = ["Dieses {n} Element wird in den Papierkorb verschoben.", "Diese {n} Elemente werden in den Papierkorb verschoben."]
+delete = "Endgültig löschen?"
+delete_one = "{name} wird endgültig gelöscht."
+delete_many = ["Dieses {n} Element wird endgültig gelöscht.", "Diese {n} Elemente werden endgültig gelöscht."]
+restore = "Alle Elemente wiederherstellen?"
+restore_one = "{name} wird an den Ort zurückgelegt, von dem es gelöscht wurde."
+restore_many = ["Das {n} Element im Papierkorb wird an den Ort zurückgelegt, von dem es gelöscht wurde.", "Alle {n} Elemente im Papierkorb werden an die Orte zurückgelegt, von denen sie gelöscht wurden."]
+empty = "Papierkorb leeren?"
+empty_text = "Alle Elemente im Papierkorb werden endgültig gelöscht."
+note_linux_trash = "Der Linux-Papierkorb behält sie, bis er geleert wird."
+note_bin = "Der Papierkorb behält sie, bis er geleert wird."
+note_restore = "Ctrl+Z verschiebt sie zurück in den Papierkorb."
+note_undo = "Dies kann nicht rückgängig gemacht werden."
+delete_instead = "Stattdessen endgültig löschen"
+
+[conflict]
+title = "Ersetzen oder überspringen?"
+exists = "{name} ist in {folder} bereits vorhanden."
+merge = "Ersetzen führt die Ordner zusammen: Elemente mit anderen Namen bleiben erhalten."
+apply_all = "Für alle verbleibenden Konflikte übernehmen"
+new = "Neu"
+existing = "Vorhanden"
+folder = "Ordner"
+meta = "{label}: {what}"
+meta_modified = "{label}: {what}, geändert am {date}"
+unreadable_title = "Einige Elemente können nicht komprimiert werden"
+unreadable = "{name} kann nicht gelesen werden."
+unreadable_hint = "Möglicherweise wird es von einem anderen Programm verwendet, oder zum Lesen sind Berechtigungen nötig, die Flit nicht hat."
+skip_all = "Alle nicht lesbaren Elemente überspringen"
+
+[export]
+replace_title = "{name} ersetzen?"
+replace = "Der Export der Einstellungen würde diese Datei in {folder} überschreiben."
+
+[session]
+restore_title = "Vorherige Sitzung wiederherstellen?"
+crashed = "Flit wurde beim letzten Mal nicht ordnungsgemäß beendet."
+restore = "Wiederherstellen öffnet die Fenster und Registerkarten erneut, die geöffnet waren."
+
+[ops]
+new_folder_name = "Neuer Ordner"
+bin_only = "Elemente im Papierkorb können nur wiederhergestellt oder gelöscht werden"
+streams_view_only = "Alternative Datenströme werden nur zur Ansicht angezeigt"
+open_bin = "Öffnen Sie den Papierkorb, um Elemente wiederherzustellen"
+mixed_paths = "Elemente in WSL und unter Windows können nicht in einem Vorgang kombiniert werden"
+name_empty = "Ein Name darf nicht leer sein"
+name_not_allowed = "Dieser Name ist nicht zulässig"
+name_bad_chars = "Ein Name darf keines der folgenden Zeichen enthalten: \\ / : * ? \" < > |"
+name_reserved = "Dieser Name ist von Windows reserviert"
+name_slash = "Ein Name darf keinen Schrägstrich enthalten"
+name_too_long = "Der Name ist zu lang"
+name_not_editable = "Dieser Name kann in Flit nicht bearbeitet werden"
+name_not_shell = "Dieser Name kann von Windows-Shell-Vorgängen nicht verwendet werden"
+names_not_shell = "Einige Namen können von Windows-Shell-Vorgängen nicht verwendet werden"
+folder_not_shell = "Dieser Ordner kann von Windows-Shell-Vorgängen nicht verwendet werden"
+not_in_computer = "Dateien können nicht in „Dieser PC“ abgelegt werden"
+not_in_bin = "Dateien können nicht im Papierkorb abgelegt werden"
+not_on_home = "Dateien können nicht auf der Startseite abgelegt werden"
+library_no_folder = "Diese Bibliothek hat keinen Ordner zum Speichern"
+select_flatten = "Wählen Sie die zu reduzierenden Ordner aus"
+select_restore = "Wählen Sie die wiederherzustellenden Elemente aus"
+select_paste_into = "Wählen Sie einen Ordner zum Einfügen aus"
+select_new_folder = "Wählen Sie die Elemente für einen neuen Ordner aus"
+select_shortcut = "Wählen Sie die Elemente aus, zu denen Verknüpfungen erstellt werden sollen"
+select_stream = "Wählen Sie eine Datei aus, der ein Datenstrom hinzugefügt werden soll"
+icon_hint = "Geben Sie den vollständigen Pfad eines Symbols, Programms oder einer Bibliothek ein, optional gefolgt von einem Komma und dem Symbolindex"
+target_hint = "Geben Sie den vollständigen Pfad der Datei oder des Ordners ein, auf die die Verknüpfung zeigt"
+no_terminal = "Dieser Ort kann nicht in einem Terminal geöffnet werden"
+terminals = ["Der erste {shown} von {n} Ordnern wurde im Terminal geöffnet", "Die ersten {shown} von {n} Ordnern wurden im Terminal geöffnet"]
+nothing_to_undo = "Nichts rückgängig zu machen"
+nothing_to_redo = "Nichts zu wiederholen"
+stream_created = "Datenstrom {name} erstellt"
+icon_changed = "Symbol von {folder} geändert"
+icon_restored = "Standardsymbol von {folder} wiederhergestellt"
+extension_warning = "Wenn Sie die Erweiterung von „{name}“ ändern, kann die Datei unbrauchbar werden. Drücken Sie erneut Enter zum Umbenennen oder Esc zum Abbrechen."
+
+[drop]
+copy = "Nach %1 kopieren"
+link = "Verknüpfung in %1 erstellen"
+move = "Nach %1 verschieben"
+open_with = "Öffnen mit %1"
+new_tab = "%1 in neuer Registerkarte öffnen"
+new_tabs = "In neuen Registerkarten öffnen"
+pin = "An %1 anheften"
+
+[app]
+elevated = "Flit läuft als Administrator, daher blockiert Windows Dateien, die aus anderen Programmen hereingezogen werden"
+import_failed = "Die Einstellungsdatei kann nicht gelesen werden: {error}"
+exported = "Einstellungen und Tags wurden nach {path} exportiert"
+export_failed = "Die Einstellungen können nicht exportiert werden: {error}"
+tag_failed = "Flit konnte die Dateien nicht mit Tags versehen: {error}"
+start_failed = "Flit konnte nicht gestartet werden: {error}"

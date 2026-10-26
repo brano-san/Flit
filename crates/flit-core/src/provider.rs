@@ -287,7 +287,7 @@ pub enum ProviderEvent {
     OpConflict { tab: TabId, id: OpId, conflict: Conflict },
     Navigate { tab: TabId, path: FsPath },
     Hashed { tab: TabId, id: OpId, result: Result<Vec<String>, String> },
-    Measured { tab: TabId, id: OpId, totals: Totals, done: bool },
+    Measured { tab: TabId, id: OpId, totals: Totals, file_system: Option<String>, done: bool },
     Status { tab: TabId, gen: u64, text: String },
 }
 

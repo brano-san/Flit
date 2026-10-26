@@ -1,0 +1,18 @@
+[status]
+assigned = "{key} führt jetzt „{command}“ aus"
+left_without = "„{command}“ hat keine Tastenkombination mehr"
+keeps = "„{command}“ behält {keys}"
+no_shortcut = "„{command}“ hat jetzt keine Tastenkombination"
+removed = "{key} von „{command}“ entfernt"
+restored = "„{command}“ hat wieder seine Standardtastenkombinationen"
+restored_all = "Alle Befehle haben wieder ihre Standardtastenkombinationen"
+
+[capture]
+press = "Drücken Sie die neue Tastenkombination für „{command}“"
+esc_cancels = "Esc bricht ab"
+cannot = "{key} kann nicht verwendet werden: {why}"
+other_keys = "Drücken Sie andere Tasten"
+already = "{key} führt bereits „{command}“ aus"
+reassign = "{key} von „{from}“ zu „{command}“ neu zuweisen"
+assign = "{key} „{command}“ zuweisen"
+remove = "Tastenkombination {key} entfernen"

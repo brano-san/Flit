@@ -1,0 +1,13 @@
+no_tags = "Aún no hay etiquetas: Editar etiquetas en el menú de un archivo agrega una"
+recent_off = "Windows no guarda una lista de archivos recientes: está desactivada en Configuración, Personalización, Inicio"
+no_recent = "No hay archivos recientes"
+remove_from_list = "Quitar de la lista"
+clear_list = "Borrar la lista"
+clear_recent = "Borrar archivos recientes"
+drive_free = "{free} disponibles de {total}"
+
+[widget]
+quick_access = "Acceso rápido"
+drives = "Unidades"
+tags = "Etiquetas"
+recent = "Archivos recientes"

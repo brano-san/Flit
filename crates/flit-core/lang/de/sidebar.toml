@@ -1,0 +1,61 @@
+move_up = "Nach oben"
+move_down = "Nach unten"
+library_locations = "Bibliotheksorte"
+restore_all = "Alle Elemente wiederherstellen"
+expand = "Erweitern"
+collapse = "Reduzieren"
+hide_section = "Diesen Abschnitt ausblenden"
+new_library = "Neue Bibliothek"
+restore_libraries = "Standardbibliotheken wiederherstellen"
+sections = "Abschnitte"
+compact = "Kompakte Seitenleiste"
+pin_hint = "Ctrl+D heftet den aktuellen Ordner an"
+only_unpinned = "Nur noch nicht angeheftete Ordner können angeheftet werden"
+select_to_pin = "Wählen Sie die anzuheftenden Ordner aus"
+
+[folder]
+home = "Start"
+desktop = "Desktop"
+downloads = "Downloads"
+documents = "Dokumente"
+pictures = "Bilder"
+music = "Musik"
+videos = "Videos"
+
+[section]
+pinned = "Angeheftet"
+folders = "Ordner"
+libraries = "Bibliotheken"
+drives = "Laufwerke"
+tags = "Tags"
+
+[tag]
+filter = "Tippen, um Tags zu filtern"
+choose_action = "Wählen Sie, was mit dem Tag geschehen soll"
+new_name = "Name des neuen Tags"
+rename_to = "Neuer Name des Tags"
+filter_colors = "Tippen, um Farben zu filtern"
+delete_prompt = "Tag löschen?"
+open_which = "Wählen Sie das Tag, dessen Elemente geöffnet werden sollen"
+enter_creates = "Enter erstellt das Tag"
+enter_renames = "Enter benennt das Tag um"
+no_colors = "Keine passenden Farben"
+no_match = "Keine passenden Tags"
+select_items = "Wählen Sie die Elemente aus, die ein Tag erhalten sollen"
+none_yet = "Es gibt noch keine Tags"
+change_color = "Farbe ändern"
+current = "Aktuell"
+delete_named = "Tag „{name}“ löschen"
+removes_from = ["Entfernt es von {n} Element", "Entfernt es von {n} Elementen"]
+none_available = "Keine verfügbaren Elemente haben dieses Tag"
+opened_some = ["{opened} von {n} Element mit Tag geöffnet", "{opened} von {n} Elementen mit Tag geöffnet"]
+tagged = ["{n} Element mit {tag} versehen", "{n} Elemente mit {tag} versehen"]
+needs_args = "Flit -Tag benötigt einen Tagnamen und die Dateien, die das Tag erhalten sollen"
+
+[drive]
+local = "Lokaler Datenträger"
+usb = "USB-Laufwerk"
+cd = "CD-Laufwerk"
+network = "Netzlaufwerk"
+other = "Laufwerk"
+label = "{name} ({letter}:)"

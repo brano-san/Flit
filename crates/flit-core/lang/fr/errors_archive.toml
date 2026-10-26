@@ -1,0 +1,5 @@
+password_needed = "L’archive est chiffrée : entrez son mot de passe"
+wrong_password = "Le mot de passe est incorrect"
+inside = "Cette action est impossible dans une archive"
+no_add = "Les fichiers ne peuvent être ajoutés qu’aux archives ZIP"
+password_kept = "Flit garde le mot de passe en mémoire jusqu’à sa fermeture"

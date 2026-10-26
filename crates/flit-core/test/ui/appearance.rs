@@ -192,3 +192,49 @@ fn high_contrast_overrides_the_theme_and_follows_live_changes() {
     a.on_event(&Event::Contrast(None), Instant::now());
     assert_eq!(a.look.palette.base, LIGHT);
 }
+
+#[test]
+fn cover_crops_the_longer_side_of_the_image_around_its_center() {
+    assert_eq!(cover_uv(1.0, 2.0), [0.25, 0.0, 0.75, 1.0]);
+    assert_eq!(cover_uv(2.0, 1.0), [0.0, 0.25, 1.0, 0.75]);
+    assert_eq!(cover_uv(1.5, 1.5), [0.0, 0.0, 1.0, 1.0]);
+}
+
+#[test]
+fn a_background_image_loads_in_the_background_and_draws_dimmed_behind_everything() {
+    use crate::render::kind::BACKDROP;
+    let mut a = app();
+    assert!(set(&mut a, "appearance.background_image", text(r" C:\pics\sea.jpg ")));
+    assert_eq!(get(&a, "appearance.background_image"), text(r"C:\pics\sea.jpg"));
+    let gen = match a.drain_effects().find(|e| matches!(e, Effect::Backdrop { .. })) {
+        Some(Effect::Backdrop { gen, path }) => {
+            assert_eq!(path, FsPath::parse(r"C:\pics\sea.jpg").unwrap());
+            gen
+        }
+        _ => panic!("no backdrop request"),
+    };
+    let (rev, image) = a.backdrop_image();
+    assert!(image.is_none());
+    a.on_backdrop(gen + 1, Some(Bitmap { width: 1, height: 1, rgba: vec![9; 4] }));
+    assert_eq!(a.backdrop_image().0, rev);
+    assert!(!frame(&mut a).dl.instances.iter().any(|i| i.kind == BACKDROP));
+    a.on_backdrop(gen, Some(Bitmap { width: 4, height: 2, rgba: vec![9; 32] }));
+    assert_ne!(a.backdrop_image().0, rev);
+    let g = frame(&mut a);
+    assert_eq!(g.dl.instances.iter().position(|i| i.kind == BACKDROP), Some(0));
+    assert!(g.dl.instances[0].color >> 24 < 0x80);
+    a.run_action("view.clear_backdrop", Instant::now());
+    assert_eq!(get(&a, "appearance.background_image"), text(""));
+    assert!(a.backdrop_image().1.is_none());
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::Backdrop { .. })));
+    assert!(!frame(&mut a).dl.instances.iter().any(|i| i.kind == BACKDROP));
+}
+
+#[test]
+fn a_failed_background_image_says_so_in_the_status_bar() {
+    let mut a = app();
+    set(&mut a, "appearance.background_image", text(r"C:\pics\broken.jpg"));
+    let Some(Effect::Backdrop { gen, .. }) = a.drain_effects().find(|e| matches!(e, Effect::Backdrop { .. })) else { panic!() };
+    a.on_backdrop(gen, None);
+    assert!(a.tab().error.as_deref().is_some_and(|e| e.contains("broken.jpg")));
+}

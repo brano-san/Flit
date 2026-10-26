@@ -1,0 +1,18 @@
+[status]
+assigned = "{key} exécute désormais « {command} »"
+left_without = "« {command} » n’a plus de raccourci"
+keeps = "« {command} » conserve {keys}"
+no_shortcut = "« {command} » n’a désormais aucun raccourci"
+removed = "{key} retiré de « {command} »"
+restored = "« {command} » retrouve ses raccourcis par défaut"
+restored_all = "Toutes les commandes retrouvent leurs raccourcis par défaut"
+
+[capture]
+press = "Appuyez sur le nouveau raccourci de « {command} »"
+esc_cancels = "Échap pour annuler"
+cannot = "{key} ne peut pas être utilisé : {why}"
+other_keys = "Appuyez sur d’autres touches"
+already = "{key} exécute déjà « {command} »"
+reassign = "Réattribuer {key} de « {from} » à « {command} »"
+assign = "Attribuer {key} à « {command} »"
+remove = "Supprimer le raccourci {key}"

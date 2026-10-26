@@ -1,0 +1,5 @@
+password_needed = "Das Archiv ist verschlüsselt: Geben Sie das Kennwort ein"
+wrong_password = "Das Kennwort ist falsch"
+inside = "Dies ist innerhalb eines Archivs nicht möglich"
+no_add = "Dateien können nur zu ZIP-Archiven hinzugefügt werden"
+password_kept = "Flit behält das Kennwort bis zum Beenden im Arbeitsspeicher"

@@ -1,0 +1,18 @@
+not_found = "No se encontró la ruta de acceso"
+access_denied = "Acceso denegado"
+not_a_directory = "No es una carpeta"
+unavailable = "La ubicación no está disponible"
+other = "Error"
+no_media = "No hay ningún medio en la unidad"
+coded = "{what} (0x{code})"
+retry = "{error}. Presiona F5 para intentarlo de nuevo."
+insert_media = "{error}. Inserta uno y presiona F5, o expulsa la unidad."
+
+[title]
+encrypted = "Este archivo comprimido está cifrado"
+not_found = "Esta carpeta no existe"
+access_denied = "No tienes permiso para abrir esta carpeta"
+not_a_directory = "Esta ubicación no es una carpeta"
+unavailable = "Esta ubicación no está disponible"
+other = "No se puede abrir esta carpeta"
+no_media = "No hay ningún disco ni tarjeta de memoria en esta unidad"

@@ -1,0 +1,38 @@
+placeholder = "搜索：词语、*.ext、ext:、size:、dm:、path:、regex:、tag:，或用 $ 和 property:value 进行 Windows Search"
+title = "搜索 — Flit"
+title_in = "在 {name} 中搜索 — Flit"
+invalid = "查询无效。"
+no_match = "没有匹配的文件。"
+searching = "正在搜索…"
+walking = ["正在搜索… {n} 个结果"]
+walking_in = ["正在搜索… {n} 个文件夹中 {results}"]
+results = ["{n} 个结果"]
+done_in = "{results}，用时 {ms} 毫秒"
+in = "位于 {name}"
+all_drives = "所有驱动器"
+recent = "最近的搜索 · Shift+Del 删除一项"
+folders = ["{n} 个文件夹"]
+
+[error]
+rows_without_folders = "索引发送了不含文件夹的行。"
+invalid_rows = "索引发送了无效的行：{error}"
+unavailable = "搜索不可用：{error}"
+cannot_start = "无法开始搜索：{error}"
+shell = "Windows Search：{error}"
+
+[column]
+folder = "文件夹"
+
+[source]
+walk = "实时搜索文件夹及其子文件夹"
+shell = "Windows Search"
+tagged = "带标记的文件"
+connecting = "正在连接索引"
+service = "索引服务"
+fallback = "本地索引（flit-indexd 不可用）"
+
+[index]
+default = "索引"
+ready = ["{label} {n} 个文件"]
+scanning = ["{label} 正在编制索引 {percent}%（{n} 个文件）"]
+error = "{label} 错误：{error}"

@@ -1,0 +1,22 @@
+[placeholder]
+encoding = "Tapez pour filtrer les encodages des noms de l’archive"
+commands = "Tapez une commande"
+new_item = "Tapez pour filtrer les types de nouveaux éléments"
+shortcut = "Chemin complet de la cible du raccourci"
+stream = "Nom du nouveau flux de données alternatif"
+folder_icon = "Chemin complet d’une icône, d’un programme ou d’une bibliothèque, puis éventuellement une virgule et l’index de l’icône"
+new_library = "Nom de la nouvelle bibliothèque"
+library = "Entrée définit un dossier comme emplacement d’enregistrement par défaut, Suppr le retire de la bibliothèque"
+library_add = "Chemin complet du dossier à inclure dans la bibliothèque"
+
+[empty]
+commands = "Aucune commande correspondante"
+new_item = "Aucun type d’élément correspondant"
+encoding = "Aucun encodage correspondant"
+shortcut = "Entrée crée le raccourci dans ce dossier"
+stream = "Entrée crée le flux"
+folder_icon = "Entrée écrit l’icône dans le desktop.ini du dossier"
+new_library = "Entrée crée la bibliothèque dans le dossier Bibliothèques"
+library = "Aucun dossier correspondant"
+library_add = "Entrée ajoute le dossier à la bibliothèque"
+toolbar = "Aucun bouton correspondant"

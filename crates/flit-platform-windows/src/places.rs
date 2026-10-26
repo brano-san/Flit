@@ -169,13 +169,22 @@ pub fn date_patterns() -> (String, String) {
 }
 
 pub fn ui_language() -> String {
-    const LANG_RUSSIAN: u16 = 0x19;
-    const LANG_ENGLISH: u16 = 0x09;
     let id = unsafe { windows::Win32::Globalization::GetUserDefaultUILanguage() };
-    match id & 0x3FF {
-        LANG_RUSSIAN => "ru".into(),
-        LANG_ENGLISH => "en".into(),
-        _ => String::new(),
+    language_code(id).into()
+}
+
+pub(crate) fn language_code(langid: u16) -> &'static str {
+    const ZH_CN: u16 = 0x0804;
+    const ZH_SG: u16 = 0x1004;
+    match (langid & 0x3FF, langid) {
+        (0x19, _) => "ru",
+        (0x09, _) => "en",
+        (0x07, _) => "de",
+        (0x0C, _) => "fr",
+        (0x0A, _) => "es",
+        (0x22, _) => "uk",
+        (_, ZH_CN | ZH_SG) => "zh-CN",
+        _ => "",
     }
 }
 

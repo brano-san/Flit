@@ -1,0 +1,18 @@
+[status]
+assigned = "{key} ejecuta ahora «{command}»"
+left_without = "«{command}» se queda sin método abreviado"
+keeps = "«{command}» conserva {keys}"
+no_shortcut = "«{command}» ya no tiene método abreviado"
+removed = "Se quitó {key} de «{command}»"
+restored = "«{command}» vuelve a tener sus métodos abreviados predeterminados"
+restored_all = "Todos los comandos vuelven a tener sus métodos abreviados predeterminados"
+
+[capture]
+press = "Presiona el nuevo método abreviado para «{command}»"
+esc_cancels = "Esc cancela"
+cannot = "No se puede usar {key}: {why}"
+other_keys = "Presiona otras teclas"
+already = "{key} ya ejecuta «{command}»"
+reassign = "Reasignar {key} de «{from}» a «{command}»"
+assign = "Asignar {key} a «{command}»"
+remove = "Quitar el método abreviado {key}"

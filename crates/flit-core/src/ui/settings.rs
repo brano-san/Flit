@@ -190,14 +190,10 @@ pub const LOG_DEFAULT: usize = 3;
 const LOG_CHOICES: Choices = &[("off", S::SettingsChoiceLogOff), ("error", S::SettingsChoiceLogError), ("warn", S::SettingsChoiceLogWarn), ("info", S::SettingsChoiceLogInfo), ("debug", S::SettingsChoiceLogDebug)];
 
 pub const LANGUAGE: &str = "general.language";
-const LANGUAGE_CHOICES: Choices = &[("system", S::SettingsChoiceLanguageSystem), ("en", S::SettingsChoiceLanguageEn), ("ru", S::SettingsChoiceLanguageRu)];
+const LANGUAGE_CHOICES: Choices = &[("system", S::SettingsChoiceLanguageSystem), ("en", S::SettingsChoiceLanguageEn), ("ru", S::SettingsChoiceLanguageRu), ("de", S::SettingsChoiceLanguageDe), ("fr", S::SettingsChoiceLanguageFr), ("es", S::SettingsChoiceLanguageEs), ("uk", S::SettingsChoiceLanguageUk), ("zh-CN", S::SettingsChoiceLanguageZhCn)];
 
 pub fn language_of(choice: usize) -> Lang {
-    match choice {
-        1 => Lang::En,
-        2 => Lang::Ru,
-        _ => i18n::system_lang(),
-    }
+    choice.checked_sub(1).and_then(|k| Lang::ALL.get(k).copied()).unwrap_or_else(i18n::system_lang)
 }
 
 pub static SETTINGS: &[Setting] = &[
@@ -233,6 +229,7 @@ pub static SETTINGS: &[Setting] = &[
     toggle("general.menu_compress", Page::General, S::SettingsTitleGeneralMenuCompress, S::SettingsHelpGeneralMenuCompress, |a| shown_in_menu(a, "archive.menu"), |a, on| show_in_menu(a, "archive.menu", on)),
     choice("appearance.theme", Page::Appearance, S::SettingsTitleAppearanceTheme, S::SettingsHelpAppearanceTheme, THEME_CHOICES, |a| pos(&THEMES, &a.look.mode), |a, i| a.set_theme_mode(THEMES[i])),
     pick("appearance.background", Picker::Color, S::SettingsTitleAppearanceBackground, S::SettingsHelpAppearanceBackground, |a| a.look.background.key(), |a, v| a.set_background(&v)),
+    Setting { id: "appearance.background_image", page: Page::Appearance, title: S::SettingsTitleAppearanceBackgroundImage, help: S::SettingsHelpAppearanceBackgroundImage, kind: Kind::Text(|a| a.look.backdrop_path.clone(), |a, v| a.set_backdrop(v)) },
     pick("appearance.font", Picker::Font, S::SettingsTitleAppearanceFont, S::SettingsHelpAppearanceFont, |a| a.look.font.clone(), |a, v| a.set_ui_font(&v)),
     toggle("appearance.toolbar", Page::Appearance, S::SettingsTitleAppearanceToolbar, S::SettingsHelpAppearanceToolbar, |a| a.toolbar.state.visible, |a, on| {
         if a.toolbar.state.visible != on {

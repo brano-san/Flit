@@ -1,0 +1,5 @@
+over_limit = "{path}：文件大于 {limit}，超出此驱动器文件系统的上限"
+font = "{path}：无法安装字体（{error}）"
+not_font = "{path} 不是 .ttf、.otf 或 .ttc 字体"
+lock_screen = "无法更改锁屏背景：{error}"
+unsupported = "此系统上不提供此操作"

@@ -1,0 +1,3 @@
+create = "No se puede crear {path}: {error}"
+write = "No se puede escribir {path}: {error}"
+unknown_folder = "Se desconoce la carpeta Bibliotecas"

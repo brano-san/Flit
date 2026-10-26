@@ -1,0 +1,5 @@
+over_limit = "{path}: el archivo supera {limit}, el máximo que admite el sistema de archivos de esta unidad"
+font = "{path}: no se pudo instalar la fuente ({error})"
+not_font = "{path} no es una fuente .ttf, .otf ni .ttc"
+lock_screen = "No se pudo cambiar el fondo de la pantalla de bloqueo: {error}"
+unsupported = "Esta operación no está disponible en este sistema"

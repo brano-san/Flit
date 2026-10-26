@@ -1,0 +1,5 @@
+over_limit = "{path}: Die Datei ist größer als {limit}, das Maximum für das Dateisystem dieses Laufwerks"
+font = "{path}: Die Schriftart konnte nicht installiert werden ({error})"
+not_font = "{path} ist keine .ttf-, .otf- oder .ttc-Schriftart"
+lock_screen = "Der Sperrbildschirmhintergrund konnte nicht geändert werden: {error}"
+unsupported = "Dieser Vorgang ist auf diesem System nicht verfügbar"

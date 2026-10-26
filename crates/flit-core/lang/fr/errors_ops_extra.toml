@@ -1,0 +1,5 @@
+over_limit = "{path} : le fichier dépasse {limit}, le maximum que le système de fichiers de ce lecteur accepte"
+font = "{path} : la police n’a pas pu être installée ({error})"
+not_font = "{path} n’est pas une police .ttf, .otf ou .ttc"
+lock_screen = "L’arrière-plan de l’écran de verrouillage n’a pas pu être modifié : {error}"
+unsupported = "Cette opération n’est pas disponible sur ce système"

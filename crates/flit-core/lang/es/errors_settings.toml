@@ -1,0 +1,4 @@
+not_json = "El archivo de configuración no es un JSON válido ({error}), así que se mantiene la configuración de la última sesión"
+tags = "Las etiquetas del archivo de configuración no son una lista, así que se omitieron"
+value = "El valor de {key} en el archivo de configuración no es válido, así que se usa el predeterminado"
+is_folder = "{path} es una carpeta"

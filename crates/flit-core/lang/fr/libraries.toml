@@ -1,0 +1,5 @@
+add_folder = "Ajouter un dossier…"
+not_loaded = "Cette bibliothèque n’est pas encore chargée"
+default_save = "Emplacement d’enregistrement par défaut"
+enter_path = "Entrez le chemin complet du dossier à inclure dans la bibliothèque"
+not_changed = "La bibliothèque n’a pas été modifiée : {message}"

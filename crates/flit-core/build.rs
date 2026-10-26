@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::path::Path;
 
-const LANGS: [&str; 2] = ["en", "ru"];
+const LANGS: [&str; 7] = ["en", "ru", "de", "fr", "es", "uk", "zh-CN"];
 
 #[derive(Clone)]
 enum Entry {

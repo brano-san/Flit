@@ -160,6 +160,7 @@ pub trait Renderer: Sized {
     fn upload(&mut self, slot: Slot, rgba: &[u8]);
     fn upload_thumb(&mut self, _slot: Slot, _rgba: &[u8]) {}
     fn upload_preview(&mut self, _image: Option<&Bitmap>) {}
+    fn upload_backdrop(&mut self, _image: Option<&Bitmap>) {}
     fn render(&mut self, list: &DrawList) -> Result<(), RenderError>;
 }
 
@@ -181,6 +182,9 @@ pub trait Fs: Send + Sync + 'static {
     }
     fn cluster_size(&self, _path: &FsPath) -> u64 {
         0
+    }
+    fn file_system(&self, _path: &FsPath) -> Option<String> {
+        None
     }
     fn volume_key(&self, path: &FsPath) -> Vec<u8> {
         path.root_bytes().to_ascii_lowercase()

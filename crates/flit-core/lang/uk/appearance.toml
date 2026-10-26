@@ -1,0 +1,5 @@
+default = "За замовчуванням"
+custom_color = "Власний колір…"
+system_font = "Системний за замовчуванням"
+not_installed = "{font} (не встановлено)"
+backdrop_failed = "Не вдається показати {path} як тло"

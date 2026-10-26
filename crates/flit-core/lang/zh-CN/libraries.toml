@@ -1,0 +1,5 @@
+add_folder = "添加文件夹…"
+not_loaded = "此库尚未加载"
+default_save = "默认保存位置"
+enter_path = "输入要包含到库中的文件夹的完整路径"
+not_changed = "库未更改：{message}"

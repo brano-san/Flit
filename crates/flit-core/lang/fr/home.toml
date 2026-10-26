@@ -1,0 +1,13 @@
+no_tags = "Aucune balise pour l’instant : Modifier les balises dans le menu d’un fichier en ajoute une"
+recent_off = "Windows ne conserve pas de liste des fichiers récents : l’option est désactivée dans Paramètres, Personnalisation, Démarrer"
+no_recent = "Aucun fichier récent"
+remove_from_list = "Retirer de la liste"
+clear_list = "Effacer la liste"
+clear_recent = "Effacer les fichiers récents"
+drive_free = "{free} libres sur {total}"
+
+[widget]
+quick_access = "Accès rapide"
+drives = "Lecteurs"
+tags = "Balises"
+recent = "Fichiers récents"

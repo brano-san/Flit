@@ -327,9 +327,9 @@ impl Provider for LocalProvider {
                 let (fs, reply) = (self.measure_fs.clone(), Reply { tab, id, events: self.measure_events.clone(), wake: self.measure_wake.clone() });
                 spawn(format!("flit-measure-{id}"), move || {
                     let keep_going = || !ctl.is_cancelled();
-                    let totals = measure(&*fs, &items, &keep_going, &mut |t| reply.send(ProviderEvent::Measured { tab, id, totals: *t, done: false }));
+                    let totals = measure(&*fs, &items, &keep_going, &mut |t| reply.send(ProviderEvent::Measured { tab, id, totals: *t, file_system: None, done: false }));
                     if keep_going() {
-                        reply.send(ProviderEvent::Measured { tab, id, totals, done: true });
+                        reply.send(ProviderEvent::Measured { tab, id, totals, file_system: items.first().and_then(|(p, _)| fs.file_system(p)), done: true });
                     }
                 })
                 .map_err(drop)

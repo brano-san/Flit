@@ -100,6 +100,17 @@ unsafe fn program(gl: &glow::Context) -> Result<glow::Program, String> {
     Ok(program)
 }
 
+unsafe fn replace_image(gl: &glow::Context, slot: &mut Option<glow::Texture>, image: Option<&Bitmap>) {
+    if let Some(old) = slot.take() {
+        gl.delete_texture(old);
+    }
+    *slot = image.filter(|b| b.width > 0 && b.height > 0).and_then(|b| {
+        let tex = texture(gl, b.width, b.height).map_err(|e| tracing::warn!("image texture: {e}")).ok()?;
+        update(gl, tex, Slot { x: 0, y: 0, w: b.width, h: b.height }, &b.rgba);
+        Some(tex)
+    });
+}
+
 unsafe fn texture(gl: &glow::Context, w: u32, h: u32) -> Result<glow::Texture, PlatformError> {
     let t = gl.create_texture().map_err(err)?;
     gl.bind_texture(glow::TEXTURE_2D, Some(t));
@@ -268,6 +279,7 @@ pub struct GlRenderer {
     atlas: glow::Texture,
     thumbs: Option<glow::Texture>,
     preview: Option<glow::Texture>,
+    backdrop: Option<glow::Texture>,
     size: (u32, u32),
 }
 
@@ -331,6 +343,7 @@ impl GlRenderer {
                 atlas,
                 thumbs: None,
                 preview: None,
+                backdrop: None,
                 size: (w.max(1), h.max(1)),
             })
         }
@@ -399,19 +412,14 @@ impl GlRenderer {
     }
 
     pub fn upload_preview(&mut self, image: Option<&Bitmap>) {
-        if !self.shared.has_context() {
-            return;
+        if self.shared.has_context() {
+            unsafe { replace_image(&self.shared.gl, &mut self.preview, image) };
         }
-        let gl = &self.shared.gl;
-        unsafe {
-            if let Some(old) = self.preview.take() {
-                gl.delete_texture(old);
-            }
-            self.preview = image.filter(|b| b.width > 0 && b.height > 0).and_then(|b| {
-                let tex = texture(gl, b.width, b.height).map_err(|e| tracing::warn!("preview texture: {e}")).ok()?;
-                update(gl, tex, Slot { x: 0, y: 0, w: b.width, h: b.height }, &b.rgba);
-                Some(tex)
-            });
+    }
+
+    pub fn upload_backdrop(&mut self, image: Option<&Bitmap>) {
+        if self.shared.has_context() {
+            unsafe { replace_image(&self.shared.gl, &mut self.backdrop, image) };
         }
     }
 
@@ -436,7 +444,7 @@ impl GlRenderer {
             gl.bind_buffer(glow::UNIFORM_BUFFER, Some(self.globals));
             gl.buffer_data_u8_slice(glow::UNIFORM_BUFFER, bytes(std::slice::from_ref(&globals)), glow::STREAM_DRAW);
             gl.bind_buffer_base(glow::UNIFORM_BUFFER, 0, Some(self.globals));
-            for (unit, tex) in [Some(self.atlas), self.thumbs, self.preview].into_iter().enumerate() {
+            for (unit, tex) in [Some(self.atlas), self.thumbs, self.preview, self.backdrop].into_iter().enumerate() {
                 gl.active_texture(glow::TEXTURE0 + unit as u32);
                 gl.bind_texture(glow::TEXTURE_2D, Some(tex.unwrap_or(s.empty)));
             }
@@ -474,7 +482,7 @@ impl Drop for GlRenderer {
             gl.delete_vertex_array(self.vao);
             gl.delete_buffer(self.instances);
             gl.delete_buffer(self.globals);
-            for tex in [Some(self.atlas), self.thumbs, self.preview].into_iter().flatten() {
+            for tex in [Some(self.atlas), self.thumbs, self.preview, self.backdrop].into_iter().flatten() {
                 gl.delete_texture(tex);
             }
             if let Target::Offscreen(fbo, tex) = self.target {

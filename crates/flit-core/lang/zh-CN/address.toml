@@ -1,0 +1,3 @@
+cannot_open = "无法在 Flit 中打开 {location}"
+handed_to_explorer = "Flit 无法显示 {location}，因此在文件资源管理器中打开"
+no_folders = "{name} 中没有文件夹"

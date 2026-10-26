@@ -1,0 +1,40 @@
+selected = ["{n} élément sélectionné", "{n} d’éléments sélectionnés", "{n} éléments sélectionnés"]
+archived = "Dans une archive : extrayez-la pour afficher l’aperçu"
+cannot_play = "Impossible de lire ce fichier : {error}"
+properties = "Propriétés"
+reading = "Lecture des propriétés…"
+loading = "Chargement de l’aperçu…"
+new_tag = "+ Nouvelle balise"
+shortcut = "Raccourci vers {target}"
+too_large = "L’image est trop grande pour l’aperçu"
+truncated = ["Affichage du premier caractère ({n})", "Affichage des {n} de premiers caractères", "Affichage des {n} premiers caractères"]
+
+[tab]
+preview = "Aperçu"
+details = "Détails"
+
+[field]
+items = "Éléments"
+total_size = "Taille totale"
+used_space = "Espace utilisé"
+free_space = "Espace libre"
+size_bytes = ["{size} ({n} octet)", "{size} ({n} d’octets)", "{size} ({n} octets)"]
+modified = "Modifié le"
+created = "Créé le"
+attributes = "Attributs"
+folder = "Dossier"
+free = "Libre"
+free_of = "{free} sur {total}"
+
+[attr]
+read_only = "Lecture seule"
+hidden = "Caché"
+system = "Système"
+link = "Lien"
+
+[folder]
+scanned = ["{size} dans le premier élément ({n})", "{size} dans les {n} de premiers éléments", "{size} dans les {n} premiers éléments"]
+hidden = ["{n} élément caché", "{n} d’éléments cachés", "{n} éléments cachés"]
+last_change = "Dernière modification {date}"
+most_common = "Les plus fréquents : {types}"
+no_extension = "sans extension"

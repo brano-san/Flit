@@ -1,0 +1,38 @@
+placeholder = "Пошук: слова, *.ext, ext:, size:, dm:, path:, regex:, tag: або $ і властивість:значення для Windows Search"
+title = "Пошук — Flit"
+title_in = "Пошук у {name} — Flit"
+invalid = "Запит недійсний."
+no_match = "Немає відповідних файлів."
+searching = "Пошук…"
+walking = ["Пошук… {n} результат", "Пошук… {n} результати", "Пошук… {n} результатів"]
+walking_in = ["Пошук… {results} у {n} папці", "Пошук… {results} у {n} папках", "Пошук… {results} у {n} папках"]
+results = ["{n} результат", "{n} результати", "{n} результатів"]
+done_in = "{results} за {ms} мс"
+in = "У {name}"
+all_drives = "Усі диски"
+recent = "Нещодавні пошуки · Shift+Del видаляє запис"
+folders = ["{n} папка", "{n} папки", "{n} папок"]
+
+[error]
+rows_without_folders = "Індекс надіслав рядки без папок."
+invalid_rows = "Індекс надіслав недійсні рядки: {error}"
+unavailable = "Пошук недоступний: {error}"
+cannot_start = "Не вдається почати пошук: {error}"
+shell = "Windows Search: {error}"
+
+[column]
+folder = "Папка"
+
+[source]
+walk = "Пошук наживо в папці та її вкладених папках"
+shell = "Windows Search"
+tagged = "Файли з тегами"
+connecting = "Підключення до індексу"
+service = "Служба індексу"
+fallback = "Локальний індекс (flit-indexd недоступний)"
+
+[index]
+default = "індекс"
+ready = ["{label} {n} файл", "{label} {n} файли", "{label} {n} файлів"]
+scanning = ["{label} індексування {percent}% ({n} файл)", "{label} індексування {percent}% ({n} файли)", "{label} індексування {percent}% ({n} файлів)"]
+error = "{label} помилка: {error}"

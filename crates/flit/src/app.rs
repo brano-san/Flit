@@ -31,6 +31,7 @@ const FS_THREADS: usize = 4;
 const SHELL_THREADS: usize = 2;
 const THUMB_THREADS: usize = 3;
 const PREVIEW_THREADS: usize = 2;
+const BACKDROP_PX: u32 = 2560;
 const ICON_MARGIN: u32 = 32;
 const TAB_STRIDE: TabId = 1 << 32;
 const TORN_GRAB: (f32, f32) = (60.0, 18.0);
@@ -117,6 +118,7 @@ struct SortJob {
 enum PreviewJob {
     Load { window: WindowId, req: PreviewRequest },
     QuickView { window: WindowId, path: FsPath },
+    Backdrop { window: WindowId, gen: u64, path: FsPath },
 }
 
 enum Done {
@@ -126,6 +128,7 @@ enum Done {
     Sorted { window: WindowId, tab: TabId, gen: u64, view: ViewSpec, base_len: usize, order: Vec<u32>, ms: f64 },
     Preview { window: WindowId, gen: u64, data: PreviewData },
     QuickView { window: WindowId, shown: bool },
+    Backdrop { window: WindowId, gen: u64, image: Option<flit_core::ui::Bitmap> },
 }
 
 fn tools(app: &App) -> Tools {
@@ -152,6 +155,7 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache) -> Result<Workers, Platf
                         None => continue,
                     },
                     PreviewJob::QuickView { window, path } => Done::QuickView { window, shown: shell.quick_view(&path) },
+                    PreviewJob::Backdrop { window, gen, path } => Done::Backdrop { window, gen, image: shell.preview_image(&path, BACKDROP_PX) },
                 };
                 if tx.send(done).is_err() {
                     return;
@@ -229,6 +233,7 @@ struct WinState<P: Platform> {
     placement: Option<Placement>,
     born: Option<Instant>,
     preview_rev: u64,
+    backdrop_rev: u64,
     dark: Option<bool>,
 }
 
@@ -502,6 +507,9 @@ impl<P: Platform> Handler<P> {
                 Effect::QuickView(path) => {
                     let _ = self.previews.send(PreviewJob::QuickView { window: id, path });
                 }
+                Effect::Backdrop { gen, path } => {
+                    let _ = self.previews.send(PreviewJob::Backdrop { window: id, gen, path });
+                }
                 Effect::Host(cmd) => window.host(cmd),
                 Effect::NewWindow(routes) => {
                     self.requested = Some(Instant::now());
@@ -692,6 +700,11 @@ impl<P: Platform> Handler<P> {
                         st.app.on_quick_view(shown);
                     }
                 }
+                Done::Backdrop { window, gen, image } => {
+                    if let Some(st) = self.windows.get_mut(&window) {
+                        st.app.on_backdrop(gen, image);
+                    }
+                }
                 Done::Sorted { window, tab, gen, view, base_len, order, ms } => {
                     if let Some(st) = self.windows.get_mut(&window) {
                         st.app.on_resorted(tab, gen, view, base_len, order);
@@ -797,6 +810,7 @@ impl<P: Platform> Handler<P> {
                     st.gfx.reset_atlas();
                     st.gfx.thumbs.clear();
                     st.preview_rev = u64::MAX;
+                    st.backdrop_rev = u64::MAX;
                     st.renderer = Some(r);
                     st.software = software;
                     st.device_gen = self.device_gen;
@@ -833,6 +847,11 @@ impl<P: Platform> Handler<P> {
         if rev != st.preview_rev {
             renderer.upload_preview(image);
             st.preview_rev = rev;
+        }
+        let (rev, image) = st.app.backdrop_image();
+        if rev != st.backdrop_rev {
+            renderer.upload_backdrop(image);
+            st.backdrop_rev = rev;
         }
         let lost = matches!(renderer.render(&st.gfx.dl), Err(RenderError::DeviceLost));
         if lost {
@@ -916,7 +935,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         window.set_title(&app.window_title());
         let id = window.id();
         let born = self.requested.take();
-        let st = WinState { app, gfx: Gfx::new(text, ATLAS), renderer: None, software: false, device_gen: 0, visible: Arc::default(), session_rev: 0, placement: Some(window.placement()), born, preview_rev: u64::MAX, dark: None };
+        let st = WinState { app, gfx: Gfx::new(text, ATLAS), renderer: None, software: false, device_gen: 0, visible: Arc::default(), session_rev: 0, placement: Some(window.placement()), born, preview_rev: u64::MAX, backdrop_rev: u64::MAX, dark: None };
         self.windows.insert(id, st);
         self.active = Some(id);
         self.flush(window);

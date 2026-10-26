@@ -71,12 +71,13 @@ fn a_folder_counts_in_the_background_and_esc_closes() {
     assert_eq!(value(&app, S::PropertiesSize).as_deref(), Some(S::PropertiesCounting.t()));
     assert!(value(&app, S::PropertiesUnpacked).is_none());
     let tab = app.tab().id;
-    app.on_provider_event(ProviderEvent::Measured { tab, id: id + 1, totals: Totals { files: 9, ..Totals::default() }, done: true }, Instant::now());
+    app.on_provider_event(ProviderEvent::Measured { tab, id: id + 1, totals: Totals { files: 9, ..Totals::default() }, file_system: None, done: true }, Instant::now());
     assert_eq!(value(&app, S::PropertiesContains).as_deref(), Some(S::PropertiesCounting.t()));
-    app.on_provider_event(ProviderEvent::Measured { tab, id, totals: Totals { files: 4, folders: 2, size: 2048, on_disk: 4096, ..Totals::default() }, done: true }, Instant::now());
+    app.on_provider_event(ProviderEvent::Measured { tab, id, totals: Totals { files: 4, folders: 2, size: 2048, on_disk: 4096, ..Totals::default() }, file_system: Some("NTFS".into()), done: true }, Instant::now());
     assert_eq!(value(&app, S::PropertiesContains), Some(contains_text(4, 2)));
     assert!(value(&app, S::PropertiesSize).unwrap().contains("2"));
     assert!(value(&app, S::PropertiesOnDisk).unwrap().contains("4"));
+    assert_eq!(value(&app, S::PropertiesFileSystem).as_deref(), Some("NTFS"));
     let Some(Form { kind: Kind::Properties(m), .. }) = &app.jobs.form else { panic!() };
     let ctl = m.ctl.clone();
     app.on_event(&Event::Key { key: Key::Escape, mods: Mods::default(), pressed: true }, Instant::now());

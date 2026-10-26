@@ -60,8 +60,22 @@ fn placeholders_match_in_every_language() {
 #[test]
 fn plural_strings_have_the_forms_of_their_language() {
     for p in P::ALL {
-        assert_eq!(p.forms(Lang::En).len(), 2, "{}: one, other", p.key());
-        assert_eq!(p.forms(Lang::Ru).len(), 3, "{}: one, few, many", p.key());
+        for l in Lang::ALL {
+            assert_eq!(p.forms(l).len(), l.plural_forms(), "{} in {l:?}", p.key());
+        }
+    }
+}
+
+#[test]
+fn cldr_plural_rules_for_the_other_languages() {
+    let ns = [0u64, 1, 2, 5, 11, 21, 22, 25, 1_000_000, 2_000_000, 1_000_001];
+    assert_eq!(ns.map(|n| Lang::Uk.form(n)), ns.map(|n| Lang::Ru.form(n)));
+    assert_eq!(ns.map(|n| Lang::De.form(n)), ns.map(|n| Lang::En.form(n)));
+    assert_eq!(ns.map(|n| Lang::Fr.form(n)), [0, 0, 2, 2, 2, 2, 2, 2, 1, 1, 2]);
+    assert_eq!(ns.map(|n| Lang::Es.form(n)), [2, 0, 2, 2, 2, 2, 2, 2, 1, 1, 2]);
+    assert!(ns.iter().all(|&n| Lang::ZhCn.form(n) == 0));
+    for l in Lang::ALL {
+        assert!(ns.iter().all(|&n| l.form(n) < l.plural_forms()), "{l:?}");
     }
 }
 
@@ -112,7 +126,39 @@ fn fill_replaces_named_placeholders_and_keeps_unknown_ones() {
 fn language_codes() {
     assert_eq!(Lang::from_code("ru-RU"), Some(Lang::Ru));
     assert_eq!(Lang::from_code("EN"), Some(Lang::En));
-    assert_eq!(Lang::from_code("de-DE"), None);
+    assert_eq!(Lang::from_code("de-DE"), Some(Lang::De));
+    assert_eq!(Lang::from_code("fr_CA.UTF-8"), Some(Lang::Fr));
+    assert_eq!(Lang::from_code("es"), Some(Lang::Es));
+    assert_eq!(Lang::from_code("uk_UA.UTF-8@euro"), Some(Lang::Uk));
+    assert_eq!(Lang::from_code("zh-CN"), Some(Lang::ZhCn));
+    assert_eq!(Lang::from_code("zh_SG"), Some(Lang::ZhCn));
+    assert_eq!(Lang::from_code("zh-TW"), None);
+    assert_eq!(Lang::from_code("ja-JP"), None);
+    assert_eq!(Lang::from_code("C"), None);
+    for l in Lang::ALL {
+        assert_eq!(Lang::from_code(l.code()), Some(l));
+        assert_eq!(Lang::from_u8(l as u8), l);
+    }
+}
+
+#[test]
+fn language_picker_lists_every_language_in_its_own_name() {
+    use crate::ui::settings::{language_of, SETTINGS};
+    let Some(crate::ui::settings::Kind::Choice(choices, ..)) = SETTINGS.iter().find(|s| s.id == "general.language").map(|s| s.kind) else { panic!() };
+    assert_eq!(choices.len(), Lang::ALL.len() + 1);
+    for (k, l) in Lang::ALL.into_iter().enumerate() {
+        assert_eq!(choices[k + 1].0, l.code());
+        assert_eq!(language_of(k + 1), l);
+        let name = choices[k + 1].1;
+        assert!(Lang::ALL.iter().all(|&o| name.in_lang(o) == name.en()), "{}", name.key());
+    }
+}
+
+#[test]
+fn every_language_names_this_pc_as_its_unix_term_expects() {
+    for l in Lang::ALL.into_iter().filter(|&l| l != Lang::En) {
+        assert_ne!(unix_term(S::PathComputer.in_lang(l), l), S::PathComputer.in_lang(l), "{l:?}");
+    }
 }
 
 #[test]
