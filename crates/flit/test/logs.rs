@@ -74,7 +74,11 @@ fn a_panic_record_names_the_thread_the_place_and_the_backtrace() {
     let record = Arc::new(Mutex::new(String::new()));
     let seen = record.clone();
     let previous = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| *seen.lock().unwrap() = panic_record(info)));
+    std::panic::set_hook(Box::new(move |info| {
+        if std::thread::current().name() == Some("flit-test-panic") {
+            *seen.lock().unwrap() = panic_record(info);
+        }
+    }));
     let worker = std::thread::Builder::new().name("flit-test-panic".into()).spawn(|| panic!("the test panics on purpose")).unwrap();
     assert!(worker.join().is_err());
     std::panic::set_hook(previous);

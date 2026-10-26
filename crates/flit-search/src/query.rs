@@ -227,7 +227,7 @@ fn term(tok: &str, literal: bool, clock: Clock) -> Result<Option<Term>, String> 
         let re = RegexBuilder::new(s).case_insensitive(true).size_limit(REGEX_SIZE_LIMIT).build().map_err(|e| format!("invalid regex: {e}"))?;
         Pattern::Regex(re)
     } else {
-        if s.contains('\\') {
+        if s.contains(['\\', '/']) {
             scope = Scope::Path;
         }
         let l = lowercase(s.as_bytes());
