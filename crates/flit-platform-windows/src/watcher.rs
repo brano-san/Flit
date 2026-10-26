@@ -205,21 +205,21 @@ fn notice_at(buf: &[u8], off: usize) -> Option<(Option<Notice>, u32)> {
     Some((kind.map(|kind| Notice { kind, name, meta }), u32_at(buf, off + offset_of!(Record, NextEntryOffset))?))
 }
 
-pub(crate) fn notices(buf: &[u8]) -> Vec<Notice> {
+pub(crate) fn notices(buf: &[u8]) -> Option<Vec<Notice>> {
     records(buf, notice_at)
 }
 
-pub(crate) fn records<T>(buf: &[u8], at: impl Fn(&[u8], usize) -> Option<(Option<T>, u32)>) -> Vec<T> {
+pub(crate) fn records<T>(buf: &[u8], at: impl Fn(&[u8], usize) -> Option<(Option<T>, u32)>) -> Option<Vec<T>> {
     let mut out = Vec::new();
     let mut off = 0usize;
-    while let Some((notice, next)) = at(buf, off) {
+    loop {
+        let (notice, next) = at(buf, off)?;
         out.extend(notice);
         if next == 0 {
-            break;
+            return Some(out);
         }
         off += next as usize;
     }
-    out
 }
 
 pub(crate) fn short_alias(name: &[u16]) -> bool {
@@ -295,7 +295,7 @@ fn run(port: HANDLE, state: &Mutex<State>, events: Sender<ProviderEvent>, wake: 
             continue;
         }
         let (tab, gen) = (w.tab, w.gen);
-        let found = (ok && n > 0 && !w.rescan).then(|| (notices(w.bytes(n as usize)), w.path.clone()));
+        let found = if ok && n > 0 && !w.rescan { notices(w.bytes(n as usize)).map(|list| (list, w.path.clone())) } else { None };
         if !ok || !w.issue() {
             st.by_tab.retain(|_, v| {
                 v.retain(|k| *k != key);

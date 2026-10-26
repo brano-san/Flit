@@ -7,6 +7,7 @@ mod logs;
 mod metrics;
 mod places;
 mod preview;
+mod schema;
 mod session;
 mod settings;
 mod search_client;

@@ -35,6 +35,23 @@ fn sessions_round_trip_and_skip_empty_windows() {
 }
 
 #[test]
+fn session_files_from_a_newer_flit_are_set_aside_and_broken_ones_go_to_bad() {
+    let d = temp("schema");
+    let f = d.0.join("session.bin");
+    let s = Session::new(vec![(window(&[r"C:\a"], 0), None)], vec!["typed".into()]);
+    write(&f, &s);
+    assert_eq!(load(&f), Some(s.clone()));
+    let mut newer = s.clone();
+    newer.version = VERSION + 1;
+    write(&f, &newer);
+    assert_eq!(load(&f), None);
+    assert_eq!(std::fs::read(crate::schema::aside(&f, crate::schema::NEWER)).unwrap(), newer.encode().unwrap());
+    std::fs::write(&f, [1u8, 0xFF, 0xFF]).unwrap();
+    assert_eq!(load(&f), None);
+    assert!(crate::schema::aside(&f, crate::schema::BAD).exists());
+}
+
+#[test]
 fn the_writer_keeps_the_latest_session_and_the_marker_tells_a_crash() {
     let d = temp("writer");
     let files = Files { session: d.0.join("session.bin"), marker: d.0.join("running") };

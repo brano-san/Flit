@@ -335,6 +335,8 @@ pub fn hidden() -> bool {
 }
 
 fn png(w: u32, h: u32, raw: &[u8]) -> Vec<u8> {
+    const ONE_BLACK_PIXEL: [u8; 4] = [0, 0, 0, 0];
+    let (w, h, raw) = if w == 0 || h == 0 || raw.is_empty() { (1, 1, &ONE_BLACK_PIXEL[..]) } else { (w, h, raw) };
     let mut z = vec![0x78, 0x01];
     let blocks: Vec<&[u8]> = raw.chunks(0xFFFF).collect();
     for (i, b) in blocks.iter().enumerate() {
@@ -506,3 +508,7 @@ impl D3dRenderer {
         srv
     }
 }
+
+#[cfg(test)]
+#[path = "../test/d3d.rs"]
+mod tests;

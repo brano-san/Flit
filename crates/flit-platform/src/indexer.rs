@@ -140,13 +140,13 @@ fn scan<S: IndexSource>(source: &mut S, shared: &SharedIndex, info: &VolumeInfo)
     }
 }
 
-fn load_snapshot(dir: &Path, id: &str) -> Option<(VolumeIndex, Checkpoint)> {
-    let bytes = std::fs::read(dir.join(snapshot::file_name(id))).ok()?;
+fn load_snapshot(dir: &Path, id: &str, key: &str) -> Option<(VolumeIndex, Checkpoint)> {
+    let bytes = std::fs::read(dir.join(snapshot::file_name(key))).ok()?;
     let (v, cp) = snapshot::load(&bytes).ok()?;
     (v.id == id && (v.root.clone(), v.sep) == root_of(id)).then_some((v, cp))
 }
 
-fn save_snapshot(dir: &Path, shared: &SharedIndex, id: &str, cp: Checkpoint) -> std::io::Result<()> {
+fn save_snapshot(dir: &Path, shared: &SharedIndex, id: &str, key: &str, cp: Checkpoint) -> std::io::Result<()> {
     let mut buf = Vec::new();
     {
         let e = shared.read();
@@ -154,7 +154,7 @@ fn save_snapshot(dir: &Path, shared: &SharedIndex, id: &str, cp: Checkpoint) -> 
         snapshot::save(v, cp, &mut buf);
     }
     std::fs::create_dir_all(dir)?;
-    let path = dir.join(snapshot::file_name(id));
+    let path = dir.join(snapshot::file_name(key));
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, &buf)?;
     std::fs::rename(&tmp, &path)
@@ -184,7 +184,7 @@ fn run<S: IndexSource>(mut source: S, owner: Arc<SharedIndex>, snapshots: Option
     let mut saved_at = vec![Instant::now(); volumes.len()];
     if let Some(dir) = &snapshots {
         for (k, info) in volumes.iter().enumerate() {
-            let Some((v, cp)) = load_snapshot(dir, &info.id) else { continue };
+            let Some((v, cp)) = load_snapshot(dir, &info.id, &source.snapshot_key(&info.id)) else { continue };
             let files = v.live() as u64;
             {
                 let mut e = shared.write();
@@ -229,7 +229,7 @@ fn run<S: IndexSource>(mut source: S, owner: Arc<SharedIndex>, snapshots: Option
             }
             if let (Some(dir), Some(cp)) = (&snapshots, points[k]) {
                 if dirty[k] && (fresh || saved_at[k].elapsed() >= SAVE_EVERY) {
-                    dirty[k] = save_snapshot(dir, shared, &info.id, cp).is_err();
+                    dirty[k] = save_snapshot(dir, shared, &info.id, &source.snapshot_key(&info.id), cp).is_err();
                     saved_at[k] = Instant::now();
                 }
             }

@@ -125,6 +125,21 @@ fn tags_are_assigned_cleared_deleted_and_survive_a_restart() {
 }
 
 #[test]
+fn a_store_from_a_newer_flit_is_set_aside_and_todays_file_reads_as_version_one() {
+    let f = TempFile::new("newer");
+    std::fs::create_dir_all(f.0.parent().unwrap()).unwrap();
+    let store = TagStore { tags: vec![flit_core::tags::Tag { name: "Work".into(), color: 3 }], ..Default::default() };
+    let today = postcard::to_stdvec(&TagFile { version: 1, store: store.clone() }).unwrap();
+    std::fs::write(&f.0, &today).unwrap();
+    assert_eq!(book(Some(f.0.clone())).store, store);
+    let newer = postcard::to_stdvec(&TagFile { version: FILE_VERSION + 1, store }).unwrap();
+    std::fs::write(&f.0, &newer).unwrap();
+    assert_eq!(book(Some(f.0.clone())).store, TagStore::default());
+    assert_eq!(std::fs::read(f.0.with_extension("bin.newer")).unwrap(), newer);
+    assert!(!f.0.exists());
+}
+
+#[test]
 fn a_store_with_more_tags_than_a_mask_holds_is_set_aside() {
     let f = TempFile::new("toomany");
     let tags = (0..70).map(|i| flit_core::tags::Tag { name: format!("t{i}"), color: 0 }).collect();

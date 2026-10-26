@@ -93,7 +93,10 @@ fn parse(buf: &[u8], pending: &mut HashMap<i32, Pending>, overflow: &mut bool) {
     let mut off = 0;
     while off + HEADER <= buf.len() {
         let (wd, mask, len) = (i32::from_ne_bytes(word(off)), u32::from_ne_bytes(word(off + 4)), u32::from_ne_bytes(word(off + 12)) as usize);
-        let raw = &buf[off + HEADER..(off + HEADER + len).min(buf.len())];
+        let Some(raw) = buf.get(off + HEADER..off + HEADER + len) else {
+            *overflow = true;
+            return;
+        };
         let name = &raw[..raw.iter().position(|&b| b == 0).unwrap_or(raw.len())];
         off += HEADER + len;
         if mask & libc::IN_Q_OVERFLOW != 0 {
@@ -106,6 +109,9 @@ fn parse(buf: &[u8], pending: &mut HashMap<i32, Pending>, overflow: &mut bool) {
         } else if !name.is_empty() && p.seen.insert(name.to_vec()) {
             p.names.push(name.to_vec());
         }
+    }
+    if off != buf.len() {
+        *overflow = true;
     }
 }
 
