@@ -352,8 +352,7 @@ impl App {
     pub(super) fn open_many(&mut self, now: Instant) {
         let t = self.tab();
         let Some(v) = &t.view else { return };
-        let browse = self.archive_view().is_none();
-        let (dirs, files): (Vec<u32>, Vec<u32>) = v.selected().partition(|&i| v.listing().entries[i as usize].is_dir() || (browse && crate::archive::browsable(v.listing().name(i)).is_some()));
+        let (dirs, files): (Vec<u32>, Vec<u32>) = v.selected().partition(|&i| v.listing().entries[i as usize].is_dir() || self.browses_as_folder(v.listing().name(i)));
         let routes: Vec<Route> = dirs.into_iter().map(|i| Route { folder: t.entry_location(i), select: None }).collect();
         for i in files.into_iter().take(super::MAX_OPEN) {
             self.open_entry(i, now);

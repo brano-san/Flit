@@ -474,6 +474,8 @@ pub struct App {
     pub tab_actions_button: bool,
     pub folders_in_new_tab: bool,
     pub double_click_up: bool,
+    pub archives_as_folders: bool,
+    pub spring_delay_ms: u32,
     pub switch_to_new_tab: bool,
     pub smooth_scroll: bool,
     pub touch_input: bool,
@@ -501,6 +503,8 @@ pub struct App {
     pub look: appearance::Look,
     dark: bool,
     scale: f32,
+    system_scale: f32,
+    ui_scale: u32,
     size: (f32, f32),
     maximized: bool,
     active: bool,
@@ -571,6 +575,8 @@ impl App {
             tab_actions_button: true,
             folders_in_new_tab: false,
             double_click_up: true,
+            archives_as_folders: false,
+            spring_delay_ms: 1300,
             switch_to_new_tab: true,
             smooth_scroll: true,
             touch_input: false,
@@ -601,6 +607,8 @@ impl App {
             look: appearance::Look::new(dark),
             dark,
             scale,
+            system_scale: scale,
+            ui_scale: 100,
             size: (size.0 as f32, size.1 as f32),
             maximized: false,
             active: true,
@@ -721,6 +729,21 @@ impl App {
 
     pub fn ime_area(&self) -> Option<Rect> {
         self.search_ime_area().or_else(|| self.settings_ime_area()).or(self.editing.then_some(self.layout.address)).or_else(|| self.nav_ime_area()).or_else(|| self.rename_ime_area())
+    }
+
+    pub fn ui_scale(&self) -> u32 {
+        self.ui_scale
+    }
+
+    pub fn set_ui_scale(&mut self, percent: u32) {
+        self.ui_scale = percent;
+        self.rescale();
+    }
+
+    fn rescale(&mut self) {
+        self.scale = self.system_scale * self.ui_scale as f32 / 100.0;
+        self.layout();
+        self.dirty = true;
     }
 
     fn s(&self, v: f32) -> f32 {
@@ -1327,9 +1350,8 @@ impl App {
                 self.dirty = true;
             }
             Event::ScaleChanged(s) => {
-                self.scale = *s;
-                self.layout();
-                self.dirty = true;
+                self.system_scale = *s;
+                self.rescale();
             }
             Event::ThemeChanged { dark } => self.set_system_dark(*dark),
             Event::Contrast(colors) => self.set_contrast(*colors),

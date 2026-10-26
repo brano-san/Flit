@@ -205,6 +205,7 @@ fn an_encrypted_archive_asks_for_its_password_and_retries_only_what_is_left() {
 #[test]
 fn archives_open_as_folders_and_files_inside_open_from_a_temporary_copy() {
     let mut app = app_at(r"C:\browse");
+    app.archives_as_folders = true;
     deliver(&mut app, &[("a.zip", FILE), ("report.docx", FILE)]);
     select(&mut app, &["report.docx"]);
     key(&mut app, Key::Enter, NO);
@@ -229,14 +230,61 @@ fn archives_open_as_folders_and_files_inside_open_from_a_temporary_copy() {
 }
 
 #[test]
+fn by_default_archives_open_in_the_system_app_and_open_as_folder_still_browses_them() {
+    let mut app = app_at(r"C:\browse");
+    assert!(!app.archives_as_folders);
+    deliver(&mut app, &[("a.zip", FILE), ("b.7z", FILE)]);
+    select(&mut app, &["a.zip"]);
+    key(&mut app, Key::Enter, NO);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } if path == p(r"C:\browse\a.zip"))));
+    assert_eq!(app.current_location(), &Location::parse(r"C:\browse").unwrap());
+    select(&mut app, &["a.zip", "b.7z"]);
+    key(&mut app, Key::Enter, NO);
+    let opened: Vec<FsPath> = app
+        .drain_effects()
+        .filter_map(|e| match e {
+            Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } => Some(path),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(opened, [p(r"C:\browse\a.zip"), p(r"C:\browse\b.7z")]);
+    assert_eq!(app.tabs().len(), 1);
+    select(&mut app, &["a.zip"]);
+    app.open_as_folder(t0());
+    assert_eq!(app.current_location(), &Location::parse(r"C:\browse\a.zip").unwrap());
+    deliver(&mut app, &[("inner.zip", PACKED)]);
+    select(&mut app, &["inner.zip"]);
+    key(&mut app, Key::Enter, NO);
+    let (id, op) = only(&mut app);
+    finish(&mut app, id, op, &[(r"C:\browse\a.zip\inner.zip", r"C:\tmp\2\inner.zip")], None);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } if path == p(r"C:\tmp\2\inner.zip"))));
+    assert_eq!(app.current_location(), &Location::parse(r"C:\browse\a.zip").unwrap());
+}
+
+#[test]
+fn the_archives_as_folders_setting_is_read_from_the_settings_file() {
+    let mut app = app_at(r"C:\browse");
+    let i = crate::ui::settings::index("files.archives_as_folders").unwrap();
+    assert_eq!(crate::ui::settings::defaults()[i], crate::ui::settings::Value::Bool(false));
+    app.apply_doc(&crate::ui::settings::parse(r#"{"files.archives_as_folders": true}"#));
+    assert!(app.archives_as_folders);
+    deliver(&mut app, &[("a.zip", FILE)]);
+    select(&mut app, &["a.zip"]);
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(app.current_location(), &Location::parse(r"C:\browse\a.zip").unwrap());
+}
+
+#[test]
 fn archives_open_like_folders_in_new_tabs_when_asked() {
     let mut app = app_at(r"C:\browse");
+    app.archives_as_folders = true;
     app.folders_in_new_tab = true;
     deliver(&mut app, &[("a.zip", FILE), ("b.7z", FILE)]);
     select(&mut app, &["a.zip"]);
     key(&mut app, Key::Enter, NO);
     assert_eq!((app.tabs().len(), app.current_location()), (2, &Location::parse(r"C:\browse\a.zip").unwrap()));
     let mut app = app_at(r"C:\browse");
+    app.archives_as_folders = true;
     deliver(&mut app, &[("a.zip", FILE), ("b.7z", FILE)]);
     select(&mut app, &["a.zip", "b.7z"]);
     key(&mut app, Key::Enter, NO);

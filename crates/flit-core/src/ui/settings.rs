@@ -279,6 +279,7 @@ pub static SETTINGS: &[Setting] = &[
     choice("files.conflicts", Page::Files, S::SettingsTitleFilesConflicts, S::SettingsHelpFilesConflicts, CONFLICT_CHOICES, |a| pos(&CONFLICTS, &a.conflict_default), |a, i| a.conflict_default = CONFLICTS[i]),
     choice("files.size_units", Page::Files, S::SettingsTitleFilesSizeUnits, S::SettingsHelpFilesSizeUnits, UNITS, |a| usize::from(a.style.decimal), |a, i| a.set_style(|s| s.decimal = i == 1)),
     toggle("files.auto_sizes", Page::Files, S::SettingsTitleFilesAutoSizes, S::SettingsHelpFilesAutoSizes, |a| a.prefs.auto_sizes, |a, on| a.set_pref(|p| &mut p.auto_sizes, on)),
+    toggle("files.archives_as_folders", Page::Files, S::SettingsTitleFilesArchivesAsFolders, S::SettingsHelpFilesArchivesAsFolders, |a| a.archives_as_folders, |a, on| a.archives_as_folders = on),
     choice("files.archive_format", Page::Files, S::SettingsTitleFilesArchiveFormat, S::SettingsHelpFilesArchiveFormat, ARCHIVE_CHOICES, |a| pos(&ARCHIVES, &a.archive.prefs.compression.format), |a, i| {
         let c = &mut a.archive.prefs.compression;
         (c.format, c.level) = (ARCHIVES[i], ARCHIVES[i].default_level());
