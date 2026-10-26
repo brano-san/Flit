@@ -1,3 +1,4 @@
+pub mod a11y;
 pub mod archive;
 pub mod atlas;
 pub mod caps;

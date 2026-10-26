@@ -4,7 +4,7 @@ use super::settings::{Kind, Picker, Value, SETTINGS};
 use super::settings_page::SettingPick;
 use super::{App, Effect, SettingsCmd};
 use crate::i18n::S;
-use crate::theme::{Area, Mode, Palette, Tint, PRESETS};
+use crate::theme::{Area, Mode, Palette, SystemColors, Tint, PRESETS};
 
 const MAX_FONT: usize = 64;
 
@@ -18,6 +18,7 @@ pub struct Look {
     fonts: Option<Vec<String>>,
     font_pick: Option<usize>,
     system_dark: bool,
+    pub contrast: Option<SystemColors>,
 }
 
 impl Look {
@@ -32,6 +33,7 @@ impl Look {
             fonts: None,
             font_pick: None,
             system_dark,
+            contrast: None,
         }
     }
 }
@@ -55,9 +57,17 @@ impl App {
         self.restyle();
     }
 
+    pub(super) fn set_contrast(&mut self, colors: Option<SystemColors>) {
+        self.look.contrast = colors;
+        self.restyle();
+    }
+
     fn restyle(&mut self) {
         let l = &mut self.look;
-        l.palette = Palette::new(l.mode.dark(l.system_dark), l.background, l.areas);
+        l.palette = match &l.contrast {
+            Some(c) => Palette::high_contrast(c),
+            None => Palette::new(l.mode.dark(l.system_dark), l.background, l.areas),
+        };
         self.dark = l.palette.dark;
         self.dirty = true;
     }

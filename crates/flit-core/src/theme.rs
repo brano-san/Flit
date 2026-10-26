@@ -12,6 +12,7 @@ pub struct Theme {
     pub hover: Color,
     pub selection: Color,
     pub selection_inactive: Color,
+    pub selection_text: Color,
     pub focus_ring: Color,
     pub separator: Color,
     pub input_bg: Color,
@@ -36,6 +37,7 @@ pub const LIGHT: Theme = Theme {
     hover: Color::rgba(0x0000000A),
     selection: Color::rgba(0x005FB826),
     selection_inactive: Color::rgba(0x00000014),
+    selection_text: Color::rgb(0x1B1B1B),
     focus_ring: Color::rgba(0x005FB8A0),
     separator: Color::rgba(0x0000001A),
     input_bg: Color::rgb(0xFFFFFF),
@@ -60,6 +62,7 @@ pub const DARK: Theme = Theme {
     hover: Color::rgba(0xFFFFFF0F),
     selection: Color::rgba(0x60CDFF30),
     selection_inactive: Color::rgba(0xFFFFFF1A),
+    selection_text: Color::rgb(0xF0F0F0),
     focus_ring: Color::rgba(0x60CDFFA0),
     separator: Color::rgba(0xFFFFFF17),
     input_bg: Color::rgb(0x2B2B2B),
@@ -204,6 +207,49 @@ impl Palette {
     pub fn area(&self, a: Area) -> &Theme {
         &self.areas[a as usize]
     }
+
+    pub fn high_contrast(c: &SystemColors) -> Self {
+        let base = high_contrast(c);
+        Self { dark: is_dark(base.bg), base, areas: [base; 5] }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SystemColors {
+    pub window: Color,
+    pub window_text: Color,
+    pub highlight: Color,
+    pub highlight_text: Color,
+    pub hotlight: Color,
+    pub gray_text: Color,
+    pub btn_face: Color,
+}
+
+pub fn high_contrast(c: &SystemColors) -> Theme {
+    Theme {
+        bg: c.window,
+        chrome: c.btn_face,
+        header: c.window,
+        text: c.window_text,
+        text_dim: c.window_text,
+        accent: c.hotlight,
+        hover: c.highlight.alpha(0x40),
+        selection: c.highlight,
+        selection_inactive: c.highlight,
+        selection_text: c.highlight_text,
+        focus_ring: c.window_text,
+        separator: c.window_text,
+        input_bg: c.window,
+        input_border: c.window_text,
+        text_selection: c.highlight,
+        button_hover: c.highlight.alpha(0x40),
+        button_pressed: c.highlight.alpha(0x80),
+        close_hover: c.highlight,
+        scrollbar: c.window_text,
+        scrollbar_hover: c.hotlight,
+        placeholder: c.gray_text,
+        error: c.hotlight,
+    }
 }
 
 pub fn derive(bg: Color) -> Theme {
@@ -218,6 +264,7 @@ pub fn derive(bg: Color) -> Theme {
         chrome,
         input_bg: mix(bg, WHITE, if dark { 0.06 } else { 0.7 }),
         text: readable(base.text, chrome, pole, 7.0),
+        selection_text: readable(base.text, chrome, pole, 7.0),
         text_dim: readable(base.text_dim, chrome, pole, MIN_TEXT_CONTRAST),
         accent,
         selection: accent.alpha(alpha(base.selection)),

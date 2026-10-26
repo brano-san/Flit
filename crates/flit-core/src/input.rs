@@ -57,6 +57,8 @@ pub enum Event {
     Pasted(String),
     Focus(bool),
     ThemeChanged { dark: bool },
+    Contrast(Option<crate::theme::SystemColors>),
+    Invoke(u64),
     DroppedFiles(Vec<FsPath>),
     CloseRequested,
     ShellVerb(String),

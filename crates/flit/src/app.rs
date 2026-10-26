@@ -983,6 +983,10 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         reply
     }
 
+    fn accessibility(&mut self, window: &Win<P>) -> Option<flit_core::a11y::Tree> {
+        self.windows.get_mut(&window.id()).map(|st| st.app.accessibility())
+    }
+
     fn destroyed(&mut self, window: &Win<P>) {
         let id = window.id();
         let mut last = None;

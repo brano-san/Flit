@@ -1,0 +1,18 @@
+[region]
+tabs = "Вкладки"
+navigation = "Переходы"
+address = "Адрес"
+commands = "Команды"
+sidebar = "Область навигации"
+files = "Файлы"
+columns = "Столбцы"
+preview = "Просмотр"
+
+[button]
+new_tab = "Новая вкладка"
+tab_actions = "Действия с вкладками"
+minimize = "Свернуть"
+maximize = "Развернуть"
+restore = "Восстановить"
+close = "Закрыть"
+more = "Другие команды"

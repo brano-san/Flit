@@ -1,0 +1,18 @@
+[region]
+tabs = "Tabs"
+navigation = "Navigation"
+address = "Address"
+commands = "Commands"
+sidebar = "Navigation pane"
+files = "Files"
+columns = "Columns"
+preview = "Preview"
+
+[button]
+new_tab = "New tab"
+tab_actions = "Tab actions"
+minimize = "Minimize"
+maximize = "Maximize"
+restore = "Restore"
+close = "Close"
+more = "More options"

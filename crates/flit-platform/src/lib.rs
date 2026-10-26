@@ -132,6 +132,9 @@ pub trait WindowHandler<W: WindowSystem> {
     fn woken(&mut self, window: &W::Window);
     fn destroyed(&mut self, window: &W::Window);
     fn drag(&mut self, window: &W::Window, event: DragEvent) -> DropReply;
+    fn accessibility(&mut self, _window: &W::Window) -> Option<flit_core::a11y::Tree> {
+        None
+    }
 }
 
 pub trait WindowSystem: Sized + 'static {

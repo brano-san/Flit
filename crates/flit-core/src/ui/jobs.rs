@@ -860,18 +860,9 @@ impl App {
         }
     }
 
-    fn draw_dialog<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
-        let (font, small, bold) = (self.ui_font(13.0), self.ui_font(12.0), FontStyle::new(FontFamily::Ui, 16.0 * self.scale, true));
-        let s = |v: f32| (v * self.scale).round();
-        let (s4, s8, s20) = (s(4.0), s(8.0), s(20.0));
-        let (w, h) = self.size;
-        g.dl.rect(Rect::new(0.0, 0.0, w, h), if self.dark { Color::rgba(0x00000070) } else { Color::rgba(0x00000040) });
-        let d = self.jobs.r.dialog;
-        g.dl.shadow(Rect::new(d.x, d.y + s8, d.w, d.h), self.shadow(), s8, s(24.0));
-        g.dl.round_rect(d, t.bg, s8);
-        g.dl.outline(d, t.input_border, s8, 1.0);
+    pub(super) fn dialog_text(&self) -> Option<(String, Vec<String>)> {
         let offset = self.utc_offset_min;
-        let (title, lines): (String, Vec<String>) = match self.jobs.asks.front() {
+        Some(match self.jobs.asks.front() {
             Some(Ask::Conflict { conflict: c, .. }) if limits::too_large(c) => {
                 let size = |b: u64| {
                     let mut out = String::new();
@@ -911,8 +902,25 @@ impl App {
             }
             Some(Ask::ReplaceExport { path, existing }) => (crate::tr!(S::UiExportReplaceTitle, name = quoted(path)), vec![crate::tr!(S::UiExportReplace, folder = path.parent().map(|p| quoted(&p)).unwrap_or_default()), meta_line(S::UiConflictExisting, existing, offset, &self.style)]),
             Some(Ask::Restore) => (S::UiSessionRestoreTitle.t().into(), vec![S::UiSessionCrashed.t().into(), S::UiSessionRestore.t().into()]),
-            None => return,
-        };
+            None => return None,
+        })
+    }
+
+    pub(super) fn dialog_rects(&self) -> (Rect, &[Rect]) {
+        (self.jobs.r.dialog, &self.jobs.r.buttons)
+    }
+
+    fn draw_dialog<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
+        let (font, small, bold) = (self.ui_font(13.0), self.ui_font(12.0), FontStyle::new(FontFamily::Ui, 16.0 * self.scale, true));
+        let s = |v: f32| (v * self.scale).round();
+        let (s4, s8, s20) = (s(4.0), s(8.0), s(20.0));
+        let (w, h) = self.size;
+        g.dl.rect(Rect::new(0.0, 0.0, w, h), if self.dark { Color::rgba(0x00000070) } else { Color::rgba(0x00000040) });
+        let d = self.jobs.r.dialog;
+        g.dl.shadow(Rect::new(d.x, d.y + s8, d.w, d.h), self.shadow(), s8, s(24.0));
+        g.dl.round_rect(d, t.bg, s8);
+        g.dl.outline(d, t.input_border, s8, 1.0);
+        let Some((title, lines)) = self.dialog_text() else { return };
         let mb = g.metrics(bold);
         let mut y = d.y + s20 + mb.ascent;
         g.text(d.x + s20, y.round(), &title, bold, t.text, d.w - 2.0 * s20);

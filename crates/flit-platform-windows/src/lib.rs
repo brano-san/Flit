@@ -22,6 +22,7 @@ mod recycle;
 mod service;
 mod shell;
 mod tags;
+mod uia;
 mod walk_index;
 mod watcher;
 mod window;
