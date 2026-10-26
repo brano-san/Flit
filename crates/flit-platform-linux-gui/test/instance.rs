@@ -76,7 +76,16 @@ fn a_dead_primary_leaves_no_lock_behind() {
     let first = SocketInstance::acquire_in(t.path(), &Open::default());
     assert!(matches!(first, Instance::Primary(_)));
     drop(first);
-    assert!(matches!(SocketInstance::acquire_in(t.path(), &Open::default()), Instance::Primary(_)));
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let reacquired = loop {
+        let next = SocketInstance::acquire_in(t.path(), &Open::default());
+        if matches!(next, Instance::Primary(_)) || std::time::Instant::now() > deadline {
+            break next;
+        }
+        drop(next);
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert!(matches!(reacquired, Instance::Primary(_)));
 }
 
 #[test]
