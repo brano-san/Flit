@@ -42,19 +42,17 @@ pub fn drives() -> Vec<Drive> {
                     let _ = GetDiskFreeSpaceExW(root, None, Some(&mut total), Some(&mut free));
                 }
             }
-            let name = match wide_str(&label) {
-                l if !l.is_empty() => l,
-                _ => match kind {
-                    DRIVE_FIXED => S::SidebarDriveLocal.en(),
-                    DRIVE_REMOVABLE => S::SidebarDriveUsb.en(),
-                    DRIVE_CDROM => S::SidebarDriveCd.en(),
-                    DRIVE_REMOTE => S::SidebarDriveNetwork.en(),
-                    _ => S::SidebarDriveOther.en(),
-                }
-                .to_owned(),
-            };
+            let volume_label = wide_str(&label);
+            let default_kind = volume_label.is_empty().then_some(match kind {
+                DRIVE_FIXED => S::SidebarDriveLocal,
+                DRIVE_REMOVABLE => S::SidebarDriveUsb,
+                DRIVE_CDROM => S::SidebarDriveCd,
+                DRIVE_REMOTE => S::SidebarDriveNetwork,
+                _ => S::SidebarDriveOther,
+            });
+            let name = default_kind.map_or(volume_label, |k| k.en().to_owned());
             let path = FsPath::parse(&format!("{letter}:\\"))?;
-            Some(Drive { path, label: flit_core::tr_en!(S::SidebarDriveLabel, name = name, letter = letter), total, free, removable: matches!(kind, DRIVE_REMOVABLE | DRIVE_CDROM), unmounted: false })
+            Some(Drive { path, label: flit_core::tr_en!(S::SidebarDriveLabel, name = name, letter = letter), total, free, removable: matches!(kind, DRIVE_REMOVABLE | DRIVE_CDROM), unmounted: false, kind: default_kind })
         })
         .collect()
 }

@@ -337,7 +337,7 @@ impl App {
                     centered(g, Rect::new(r.x + s4, r.y, s40, r.h), G_DRIVE, big_icons, t.text_dim);
                     let tx = r.x + s40 + s8;
                     let tw = r.right() - s12 - tx;
-                    g.text(tx, r.y + s8 + m.ascent, &crate::i18n::relocalize(&d.label, crate::i18n::Lang::En), font, t.text, tw);
+                    g.text(tx, r.y + s8 + m.ascent, &d.title(), font, t.text, tw);
                     if d.total > 0 {
                         let used = d.total.saturating_sub(d.free) as f32 / d.total as f32;
                         let bar = Rect::new(tx, r.y + (r.h / 2.0).round() + s4 - self.s(2.0), tw.max(0.0), self.s(6.0));

@@ -81,6 +81,13 @@ impl Lang {
         }
     }
 
+    pub fn minimum_grouping_digits(self) -> usize {
+        match self {
+            Lang::Es => 2,
+            Lang::En | Lang::Ru | Lang::Uk | Lang::Fr | Lang::De | Lang::ZhCn => 1,
+        }
+    }
+
     pub fn decimal_separator(self) -> char {
         match self {
             Lang::En | Lang::ZhCn => '.',
@@ -238,9 +245,11 @@ impl Display for Num {
             }
         }
         let digits = &buf[i..];
-        let sep = lang().group_separator();
+        let l = lang();
+        let sep = l.group_separator();
+        let grouped = digits.len() >= 3 + l.minimum_grouping_digits();
         for (k, d) in digits.iter().enumerate() {
-            if k > 0 && (digits.len() - k) % 3 == 0 {
+            if grouped && k > 0 && (digits.len() - k) % 3 == 0 {
                 f.write_str(sep)?;
             }
             f.write_char(*d as char)?;
@@ -389,7 +398,7 @@ pub fn localize(msg: &str) -> Cow<'_, str> {
     for &k in errors() {
         let en = k.en();
         if let Some(args) = captures(en, msg) {
-            let localized: Vec<(&str, String)> = args.iter().map(|&(n, v)| (n, localize(v).into_owned())).collect();
+            let localized: Vec<(&str, String)> = args.iter().map(|&(n, v)| (n, if carries_catalogue_text(n) || n == "what" { localize(v).into_owned() } else { v.to_owned() })).collect();
             let refs: Vec<(&str, &dyn Display)> = localized.iter().map(|(n, v)| (*n, v as &dyn Display)).collect();
             return Cow::Owned(fill(k.in_lang(l), &refs));
         }
@@ -398,18 +407,31 @@ pub fn localize(msg: &str) -> Cow<'_, str> {
 }
 
 pub fn relocalize(msg: &str, from: Lang) -> Cow<'_, str> {
+    relocalize_as(msg, from, false)
+}
+
+const CATALOGUE_ARGS: [&str; 4] = ["error", "why", "message", "command"];
+
+fn carries_catalogue_text(arg: &str) -> bool {
+    CATALOGUE_ARGS.contains(&arg)
+}
+
+fn relocalize_as(msg: &str, from: Lang, structured_only: bool) -> Cow<'_, str> {
     let to = lang();
     if to == from || msg.is_empty() {
         return Cow::Borrowed(msg);
     }
     for t in templates(from) {
+        if structured_only && !t.text.contains('{') {
+            continue;
+        }
         let Some(args) = captures(t.text, msg) else { continue };
         let n = args.iter().find(|(name, _)| *name == "n").map_or(0, |(_, v)| v.chars().filter(char::is_ascii_digit).collect::<String>().parse::<u64>().unwrap_or(0));
         let target = match t.key {
             Key::S(s) => s.in_lang(to),
             Key::P(p) => p.pick_in(to, n),
         };
-        let moved: Vec<(&str, String)> = args.iter().map(|&(name, v)| (name, if name == "n" { num(n).to_string() } else { relocalize(v, from).into_owned() })).collect();
+        let moved: Vec<(&str, String)> = args.iter().map(|&(name, v)| (name, if name == "n" { num(n).to_string() } else { relocalize_as(v, from, !carries_catalogue_text(name)).into_owned() })).collect();
         let refs: Vec<(&str, &dyn Display)> = moved.iter().map(|(name, v)| (*name, v as &dyn Display)).collect();
         return Cow::Owned(fill(target, &refs));
     }
