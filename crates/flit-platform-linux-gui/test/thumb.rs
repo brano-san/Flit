@@ -103,6 +103,48 @@ fn an_embedded_exif_thumbnail_is_used_when_it_is_large_enough() {
     assert!(exif_thumbnail(&std::fs::read(&big).unwrap()).is_none());
 }
 
+fn with_orientation(main: &[u8], o: u16) -> Vec<u8> {
+    let mut tiff = b"MM\0\x2a\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01".to_vec();
+    tiff.extend_from_slice(&o.to_be_bytes());
+    tiff.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
+    let mut out = main[..2].to_vec();
+    out.extend_from_slice(&[0xFF, 0xE1]);
+    out.extend_from_slice(&((tiff.len() + 8) as u16).to_be_bytes());
+    out.extend_from_slice(b"Exif\0\0");
+    out.extend_from_slice(&tiff);
+    out.extend_from_slice(&main[2..]);
+    out
+}
+
+#[test]
+fn exif_orientation_turns_the_picture() {
+    let px = |b: &Bitmap, x: u32, y: u32| b.rgba[((y * b.width + x) * 4) as usize];
+    let src = Bitmap { width: 3, height: 2, rgba: (0..6u8).flat_map(|v| [v, 0, 0, 255]).collect() };
+    let cw = orient(src.clone(), 6);
+    assert_eq!((cw.width, cw.height), (2, 3));
+    assert_eq!((px(&cw, 0, 0), px(&cw, 1, 0), px(&cw, 0, 2)), (3, 0, 5));
+    let ccw = orient(src.clone(), 8);
+    assert_eq!((px(&ccw, 0, 0), px(&ccw, 1, 0)), (2, 5));
+    assert_eq!(px(&orient(src.clone(), 3), 0, 0), 5);
+    assert_eq!(px(&orient(src.clone(), 2), 0, 0), 2);
+    assert_eq!(px(&orient(src.clone(), 4), 0, 0), 3);
+    assert_eq!(orient(src.clone(), 1).rgba, src.rgba);
+    let t = Temp::new("orient");
+    let plain = t.path().join("p.jpg");
+    if !convert(&["-size", "64x32", "xc:red", plain.to_str().unwrap()]) {
+        return;
+    }
+    let turned = with_orientation(&std::fs::read(&plain).unwrap(), 6);
+    assert_eq!(orientation(&turned), 6);
+    assert_eq!(orientation(&std::fs::read(&plain).unwrap()), 1);
+    let file = t.path().join("turned.jpg");
+    std::fs::write(&file, &turned).unwrap();
+    let b = image(Path::new(&file), 1000).unwrap();
+    assert_eq!((b.width, b.height), (32, 64));
+    let thumb = thumbnail(&file, 16, None).unwrap();
+    assert_eq!((thumb.width, thumb.height), (8, 16));
+}
+
 #[test]
 #[ignore]
 fn bench_a_twelve_megapixel_jpeg_thumbnail() {

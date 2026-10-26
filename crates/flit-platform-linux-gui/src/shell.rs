@@ -129,6 +129,14 @@ impl Shell for LinuxShell {
         crate::thumb::thumbnail(host(&req.path)?, req.size, cache)
     }
 
+    fn preview_image(&mut self, path: &FsPath, max: u32) -> Option<Bitmap> {
+        crate::thumb::image(host(path)?, max)
+    }
+
+    fn poster(&mut self, path: &FsPath, size: u32) -> Option<Bitmap> {
+        poster(host(path)?, size)
+    }
+
     fn type_name(&mut self, ext: &[u8]) -> Option<String> {
         crate::mime::type_name(ext)
     }
@@ -175,6 +183,34 @@ impl FileOps for LinuxShell {
     fn clear_clipboard(&mut self) {
         OWN_FILES.lock().unwrap_or_else(|e| e.into_inner()).take();
     }
+}
+
+const POSTER_TIMEOUT: Duration = Duration::from_secs(3);
+
+pub fn poster_command(path: &Path, size: u32) -> Option<Vec<OsString>> {
+    let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
+    let media = crate::mime::mime_of(ext.as_bytes()).unwrap_or_default();
+    let px = size.to_string();
+    let file = path.as_os_str().to_owned();
+    let args: Vec<OsString> = if ext == "pdf" {
+        ["pdftoppm", "-png", "-f", "1", "-l", "1", "-singlefile", "-scale-to", &px].into_iter().map(OsString::from).chain([file, "-".into()]).collect()
+    } else if media.starts_with("video/") || media.starts_with("audio/") {
+        ["ffmpegthumbnailer", "-c", "png", "-o", "-", "-s", &px, "-i"].into_iter().map(OsString::from).chain([file]).collect()
+    } else {
+        return None;
+    };
+    Some(args)
+}
+
+fn poster(path: &Path, size: u32) -> Option<Bitmap> {
+    if let Some(b) = crate::thumb::thumbnail(path, size, None) {
+        return Some(b);
+    }
+    let args = poster_command(path, size)?;
+    let mut cmd = Command::new(on_path(&args[0])?);
+    let child = cmd.args(&args[1..]).stdin(Stdio::null()).stderr(Stdio::null()).stdout(Stdio::piped()).spawn().ok()?;
+    let png = wait_output(child, POSTER_TIMEOUT)?;
+    crate::thumb::png_bytes(&png).map(|b| crate::thumb::fit(b, size))
 }
 
 pub fn icon_names(req: &IconRequest) -> Vec<String> {

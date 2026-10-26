@@ -59,6 +59,59 @@ fn decode_png_from<R: std::io::BufRead + std::io::Seek>(mut reader: png::Reader<
     Some(Bitmap { width: w, height: h, rgba })
 }
 
+pub fn png_bytes(data: &[u8]) -> Option<Bitmap> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(data));
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    decode_png_from(decoder.read_info().ok()?)
+}
+
+pub fn orientation(jpeg: &[u8]) -> u16 {
+    let found = || {
+        let tiff = exif_block(jpeg)?;
+        let le = tiff.get(..2)? == b"II";
+        let ifd0 = read_u32(tiff, 4, le)? as usize;
+        (0..read_u16(tiff, ifd0, le)? as usize).map(|k| ifd0 + 2 + k * 12).find(|&e| read_u16(tiff, e, le) == Some(0x0112)).and_then(|e| read_u16(tiff, e + 8, le))
+    };
+    found().filter(|o| (1..=8).contains(o)).unwrap_or(1)
+}
+
+pub fn orient(b: Bitmap, o: u16) -> Bitmap {
+    if o <= 1 {
+        return b;
+    }
+    let (w, h) = (b.width as usize, b.height as usize);
+    let swap = o >= 5;
+    let (nw, nh) = if swap { (h, w) } else { (w, h) };
+    let mut rgba = vec![0u8; b.rgba.len()];
+    for y in 0..h {
+        for x in 0..w {
+            let (nx, ny) = match o {
+                2 => (w - 1 - x, y),
+                3 => (w - 1 - x, h - 1 - y),
+                4 => (x, h - 1 - y),
+                5 => (y, x),
+                6 => (h - 1 - y, x),
+                7 => (h - 1 - y, w - 1 - x),
+                _ => (y, w - 1 - x),
+            };
+            let (from, to) = ((y * w + x) * 4, (ny * nw + nx) * 4);
+            rgba[to..to + 4].copy_from_slice(&b.rgba[from..from + 4]);
+        }
+    }
+    Bitmap { width: nw as u32, height: nh as u32, rgba }
+}
+
+pub fn image(path: &Path, max: u32) -> Option<Bitmap> {
+    if lower_ext(path) == b"png" {
+        return decode_png(path).map(|b| fit(b, max));
+    }
+    if !supported(path) {
+        return None;
+    }
+    let data = std::fs::read(path).ok()?;
+    Some(orient(fit(decode_jpeg_bytes(&data, max)?, max), orientation(&data)))
+}
+
 pub fn decode_png(path: &Path) -> Option<Bitmap> {
     let mut decoder = png::Decoder::new(BufReader::new(File::open(path).ok()?));
     decoder.set_transformations(png::Transformations::normalize_to_color8());
@@ -134,7 +187,7 @@ pub fn exif_thumbnail(jpeg: &[u8]) -> Option<&[u8]> {
 fn decode_jpeg(path: &Path, size: u32) -> Option<Bitmap> {
     let data = std::fs::read(path).ok()?;
     let embedded = exif_thumbnail(&data).and_then(|t| decode_jpeg_bytes(t, size)).filter(|b| b.width.max(b.height) >= size);
-    embedded.or_else(|| decode_jpeg_bytes(&data, size))
+    Some(orient(embedded.or_else(|| decode_jpeg_bytes(&data, size))?, orientation(&data)))
 }
 
 pub fn fit(b: Bitmap, size: u32) -> Bitmap {

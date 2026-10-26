@@ -7,6 +7,26 @@ fn fs_path(p: &Path) -> FsPath {
 }
 
 #[test]
+fn posters_come_from_pdftoppm_and_ffmpegthumbnailer() {
+    let pdf = poster_command(Path::new("/d/a b.PDF"), 256).unwrap();
+    assert_eq!(pdf.iter().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>(), ["pdftoppm", "-png", "-f", "1", "-l", "1", "-singlefile", "-scale-to", "256", "/d/a b.PDF", "-"]);
+    if std::path::Path::new("/usr/share/mime/globs2").exists() {
+        let video = poster_command(Path::new("/d/clip.mp4"), 128).unwrap();
+        assert_eq!(video[0], "ffmpegthumbnailer");
+        assert_eq!(video.last().unwrap(), "/d/clip.mp4");
+    }
+    assert!(poster_command(Path::new("/d/notes.txt"), 128).is_none());
+    let t = Temp::new("poster");
+    let pdf = t.path().join("one.pdf");
+    let made = std::process::Command::new("convert").args(["-size", "200x300", "xc:blue", pdf.to_str().unwrap()]).status().is_ok_and(|s| s.success());
+    if made && on_path(OsStr::new("pdftoppm")).is_some() {
+        let b = poster(&pdf, 120).unwrap();
+        assert_eq!(b.height, 120);
+        assert!(b.rgba[2] > 200);
+    }
+}
+
+#[test]
 fn file_lists_round_trip_through_uri_lists_and_gnome_cut_markers() {
     let paths = vec![FsPath::parse_exact(b"/tmp/a b/\xD0\xBC%.txt").unwrap(), FsPath::parse_exact(b"/x\xFF").unwrap()];
     let list = uri_list(&paths);
