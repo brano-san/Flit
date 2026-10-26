@@ -23,11 +23,12 @@ const G_SUBMENU: &str = "\u{E76C}";
 pub enum MenuOutcome {
     Open,
     Command(usize),
+    Toggled(usize),
     Closed,
 }
 
 enum Node {
-    Command { label: String, keys: String, checked: bool, id: usize },
+    Command { label: String, keys: String, checked: bool, stay: bool, id: usize },
     Submenu { label: String, list: usize },
     Separator,
 }
@@ -83,9 +84,9 @@ impl<B: TextBackend> Measure<'_, B> {
         let mut nodes = Vec::with_capacity(items.len());
         for item in items {
             let node = match item {
-                MenuItem::Command { label, keys, checked } => {
+                MenuItem::Command { label, keys, checked, stay } => {
                     self.next_id += 1;
-                    Node::Command { label: label.clone(), keys: keys.clone(), checked: *checked, id: self.next_id - 1 }
+                    Node::Command { label: label.clone(), keys: keys.clone(), checked: *checked, stay: *stay, id: self.next_id - 1 }
                 }
                 MenuItem::Submenu { label, items } => Node::Submenu { label: label.clone(), list: self.flatten(items, lists) },
                 MenuItem::Separator => Node::Separator,
@@ -152,8 +153,8 @@ impl MenuView {
             return MenuOutcome::Open;
         }
         let Some((k, Some(row))) = self.hit(x, y) else { return MenuOutcome::Open };
-        if let Node::Command { id, .. } = self.lists[self.panels[k].list].nodes[row] {
-            return MenuOutcome::Command(id);
+        if let Some(outcome) = self.pick(k, row) {
+            return outcome;
         }
         self.focus(k, Some(row));
         MenuOutcome::Open
@@ -171,7 +172,7 @@ impl MenuView {
             Key::Right | Key::Enter | Key::Space => {
                 let Some(row) = self.panels[k].hot else { return MenuOutcome::Open };
                 match self.lists[self.panels[k].list].nodes[row] {
-                    Node::Command { id, .. } if key != Key::Right => return MenuOutcome::Command(id),
+                    Node::Command { .. } if key != Key::Right => return self.pick(k, row).unwrap_or(MenuOutcome::Open),
                     Node::Submenu { .. } => {
                         self.focus(k, Some(row));
                         self.step(Key::Home);
@@ -182,6 +183,18 @@ impl MenuView {
             _ => {}
         }
         MenuOutcome::Open
+    }
+
+    fn pick(&mut self, k: usize, row: usize) -> Option<MenuOutcome> {
+        let list = self.panels[k].list;
+        match &mut self.lists[list].nodes[row] {
+            Node::Command { stay: true, checked, id, .. } => {
+                *checked = !*checked;
+                Some(MenuOutcome::Toggled(*id))
+            }
+            Node::Command { id, .. } => Some(MenuOutcome::Command(*id)),
+            _ => None,
+        }
     }
 
     pub fn draw<B: TextBackend>(&self, g: &mut Gfx<B>, t: &Theme, shadow: Color) {

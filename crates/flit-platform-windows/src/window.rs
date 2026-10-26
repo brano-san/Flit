@@ -1085,7 +1085,12 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
         }
         WM_SHELL_UI => {
             for req in crate::context_menu::take(hwnd) {
-                crate::context_menu::run(hwnd, req, &|ev| s.send(ev));
+                crate::context_menu::run(hwnd, req, &|ev| {
+                    s.send(ev);
+                    if s.window.redraw.get() {
+                        s.redraw_now();
+                    }
+                });
             }
             Some(LRESULT(0))
         }

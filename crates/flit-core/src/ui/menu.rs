@@ -11,7 +11,7 @@ use std::time::Instant;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuItem {
-    Command { label: String, keys: String, checked: bool },
+    Command { label: String, keys: String, checked: bool, stay: bool },
     Submenu { label: String, items: Vec<MenuItem> },
     Separator,
 }
@@ -106,11 +106,16 @@ impl Menu<'_> {
         self.command(Cmd::Place(cmd), label, String::new(), checked);
     }
 
+    pub(super) fn toggle(&mut self, label: &str, cmd: super::sidebar::PlaceCmd, checked: bool) {
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked, stay: true });
+        self.cmds.push(Cmd::Place(cmd));
+    }
+
     fn command(&mut self, cmd: Cmd, label: &str, keys: String, checked: bool) {
         if matches!(cmd, Cmd::Action(id) if !self.shown(id)) {
             return;
         }
-        self.items.push(MenuItem::Command { label: label.to_owned(), keys, checked });
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys, checked, stay: false });
         self.cmds.push(cmd);
     }
 
@@ -249,7 +254,7 @@ impl App {
     }
 
     pub(super) fn list_menu(&mut self, entries: Vec<(String, Cmd, bool)>) -> Vec<MenuItem> {
-        let (items, cmds) = entries.into_iter().map(|(label, cmd, checked)| (MenuItem::Command { label, keys: String::new(), checked }, cmd)).unzip();
+        let (items, cmds) = entries.into_iter().map(|(label, cmd, checked)| (MenuItem::Command { label, keys: String::new(), checked, stay: false }, cmd)).unzip();
         self.menu = cmds;
         items
     }

@@ -153,6 +153,46 @@ fn sections_collapse_hide_and_come_back() {
     assert_eq!(side_labels(&app).len(), 6);
 }
 
+fn stays(items: &[MenuItem]) -> Vec<String> {
+    items
+        .iter()
+        .flat_map(|i| match i {
+            MenuItem::Command { label, stay: true, .. } => vec![label.clone()],
+            MenuItem::Submenu { items, .. } => stays(items),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+#[test]
+fn section_toggles_keep_the_menu_open_and_update_the_sidebar_behind_it() {
+    let mut app = app_with_places();
+    click(header(&app, Section::Folders), &mut app, MouseButton::Right);
+    let m = menu(&mut app);
+    assert_eq!(stays(&m.menu), ["Pinned", "Folders", "Libraries", "Drives", "WSL", "Tags", "Compact sidebar"], "only the show/hide toggles stay open");
+    app.on_event(&Event::ShowMenu { items: m.menu, x: 300.0, y: 100.0, launches: Vec::new() }, Instant::now());
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, Instant::now());
+    let key = |app: &mut App, key: Key| app.on_event(&Event::Key { key, mods: Mods::default(), pressed: true }, Instant::now());
+    key(&mut app, Key::End);
+    key(&mut app, Key::Enter);
+    assert!(app.own_menu_open(), "toggling Compact leaves the menu open");
+    assert!(app.nav_prefs().compact);
+    app.frame(&mut g, Instant::now());
+    for k in [Key::Up, Key::Right, Key::Down, Key::Enter] {
+        key(&mut app, k);
+    }
+    assert!(app.own_menu_open(), "hiding a section leaves the menu open");
+    assert!(app.nav.sidebar.is_hidden(Section::Folders));
+    assert!(!side_labels(&app).contains(&"Recycle Bin"), "the sidebar behind the menu follows");
+    key(&mut app, Key::Enter);
+    assert!(app.own_menu_open() && !app.nav.sidebar.is_hidden(Section::Folders), "the same row toggles back");
+    key(&mut app, Key::Escape);
+    key(&mut app, Key::Up);
+    key(&mut app, Key::Enter);
+    assert!(!app.own_menu_open(), "ordinary commands still close the menu");
+}
+
 #[test]
 fn compact_mode_shows_icons_only_and_is_a_core_flag() {
     let mut app = app_with_places();

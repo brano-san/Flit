@@ -49,6 +49,10 @@ impl App {
         match outcome {
             MenuOutcome::Open => self.dirty |= matches!(ev, Event::Key { .. }),
             MenuOutcome::Closed => self.close_own_menu(),
+            MenuOutcome::Toggled(k) => {
+                self.dirty = true;
+                self.on_event(&Event::MenuCommand(k), now);
+            }
             MenuOutcome::Command(k) => {
                 let menu = self.own_menu.take();
                 self.dirty = true;

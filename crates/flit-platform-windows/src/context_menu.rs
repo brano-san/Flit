@@ -9,7 +9,7 @@ use std::sync::Once;
 use std::time::{Duration, Instant};
 use windows::core::{w, Interface, HSTRING, PCSTR, PCWSTR, PSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
-use windows::Win32::Graphics::Gdi::ClientToScreen;
+use windows::Win32::Graphics::Gdi::{ClientToScreen, InvalidateRect};
 use windows::Win32::System::Com::IDataObject;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_SHIFT};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
@@ -41,6 +41,60 @@ struct Active {
 thread_local! {
     static QUEUE: RefCell<Vec<(isize, ShellUi)>> = const { RefCell::new(Vec::new()) };
     static ACTIVE: RefCell<Option<Active>> = const { RefCell::new(None) };
+    static TOGGLES: RefCell<Option<Toggles>> = const { RefCell::new(None) };
+}
+
+struct Toggles {
+    ids: Vec<u32>,
+    send: *const (dyn Fn(Event) + 'static),
+}
+
+pub(crate) fn toggle_ids(items: &[MenuItem]) -> Vec<u32> {
+    fn walk(items: &[MenuItem], next: &mut u32, out: &mut Vec<u32>) {
+        for item in items {
+            match item {
+                MenuItem::Command { stay, .. } => {
+                    if *stay {
+                        out.push(*next);
+                    }
+                    *next += 1;
+                }
+                MenuItem::Submenu { items, .. } => walk(items, next, out),
+                MenuItem::Separator => {}
+            }
+        }
+    }
+    let (mut out, mut next) = (Vec::new(), FLIT_FIRST);
+    walk(items, &mut next, &mut out);
+    out
+}
+
+unsafe fn toggle_under(msg: &MSG) -> bool {
+    let hmenu = HMENU(SendMessageW(msg.hwnd, MN_GETHMENU, None, None).0 as _);
+    if hmenu.is_invalid() {
+        return false;
+    }
+    let at = MenuItemFromPoint(None, hmenu, msg.pt);
+    if at < 0 {
+        return false;
+    }
+    let id = GetMenuItemID(hmenu, at);
+    let Some(send) = TOGGLES.with_borrow(|t| t.as_ref().filter(|t| t.ids.contains(&id)).map(|t| t.send)) else { return false };
+    let checked = GetMenuState(hmenu, id, MF_BYCOMMAND) & MF_CHECKED.0 != 0;
+    CheckMenuItem(hmenu, id, (MF_BYCOMMAND | if checked { MF_UNCHECKED } else { MF_CHECKED }).0);
+    let _ = InvalidateRect(Some(msg.hwnd), None, true);
+    (*send)(Event::MenuCommand((id - FLIT_FIRST) as usize));
+    true
+}
+
+unsafe extern "system" fn menu_filter(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if code == MSGF_MENU as i32 {
+        let msg = &*(lp.0 as *const MSG);
+        if msg.message == WM_LBUTTONUP && toggle_under(msg) {
+            return LRESULT(1);
+        }
+    }
+    CallNextHookEx(None, code, wp, lp)
 }
 
 pub(crate) fn request(hwnd: HWND, req: ShellUi) {
@@ -236,7 +290,7 @@ fn menu_text(label: &str, keys: &str) -> HSTRING {
 unsafe fn append(hmenu: HMENU, items: &[MenuItem], next: &mut u32) -> windows::core::Result<()> {
     for item in items {
         match item {
-            MenuItem::Command { label, keys, checked } => {
+            MenuItem::Command { label, keys, checked, .. } => {
                 AppendMenuW(hmenu, if *checked { MF_STRING | MF_CHECKED } else { MF_STRING }, *next as usize, &menu_text(label, keys))?;
                 *next += 1;
             }
@@ -320,7 +374,20 @@ unsafe fn show_menu(hwnd: HWND, m: &ShellMenu, send: &dyn Fn(Event)) -> Result<(
     let mut pt = POINT { x: m.x as i32, y: m.y as i32 };
     let _ = ClientToScreen(hwnd, &mut pt);
     tracing::info!("context menu ready in {:.1} ms, shell items {}", started.elapsed().as_secs_f64() * 1e3, if m.inline { "inline" } else { "in a submenu" });
+    let ids = toggle_ids(&m.menu);
+    let hook = match ids.is_empty() {
+        true => None,
+        false => {
+            let send: *const (dyn Fn(Event) + '_) = send;
+            TOGGLES.set(Some(Toggles { ids, send: std::mem::transmute::<*const (dyn Fn(Event) + '_), *const (dyn Fn(Event) + 'static)>(send) }));
+            SetWindowsHookExW(WH_MSGFILTER, Some(menu_filter), None, windows::Win32::System::Threading::GetCurrentThreadId()).ok()
+        }
+    };
     let cmd = TrackPopupMenuEx(hmenu, (TPM_RETURNCMD | TPM_RIGHTBUTTON).0, pt.x, pt.y, hwnd, None).0 as u32;
+    if let Some(h) = hook {
+        let _ = UnhookWindowsHookEx(h);
+    }
+    TOGGLES.set(None);
     let menu = ACTIVE.take().and_then(|a| a.menu);
     let result = match (cmd, menu) {
         (FLIT_FIRST.., _) => {

@@ -730,10 +730,10 @@ impl App {
             }
             m.submenu(S::SidebarSections.t(), |m| {
                 for s in Section::ALL {
-                    m.place(s.title(), PlaceCmd::Hide(s), !sb.is_hidden(s));
+                    m.toggle(s.title(), PlaceCmd::Hide(s), !sb.is_hidden(s));
                 }
             });
-            m.place(S::SidebarCompact.t(), PlaceCmd::Compact, sb.prefs.compact);
+            m.toggle(S::SidebarCompact.t(), PlaceCmd::Compact, sb.prefs.compact);
         });
         self.flit_menu(x, y, menu);
     }

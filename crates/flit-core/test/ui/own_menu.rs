@@ -6,7 +6,7 @@ use crate::ui::{Effect, Persisted};
 use crate::{FsPath, Location};
 
 fn cmd(label: &str) -> MenuItem {
-    MenuItem::Command { label: label.into(), keys: String::new(), checked: false }
+    MenuItem::Command { label: label.into(), keys: String::new(), checked: false, stay: false }
 }
 
 fn app() -> App {
