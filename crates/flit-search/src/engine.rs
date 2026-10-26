@@ -74,7 +74,7 @@ impl<'q> Prepared<'q> {
             .collect();
         let driver = query.driver().map(|(k, lit)| (k, Finder::new(lit), matches!(query.terms[k].filter, Filter::Match(_, Pattern::Text(_)))));
         let heavy = query.terms.iter().any(|t| match &t.filter {
-            Filter::Match(scope, pattern) => *scope == Scope::Path || !matches!(pattern, Pattern::Text(_)),
+            Filter::Match(scope, pattern) => *scope == Scope::Path || matches!(pattern, Pattern::Regex(_)),
             Filter::Ext(_) => true,
             _ => false,
         });
