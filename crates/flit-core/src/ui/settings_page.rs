@@ -1228,6 +1228,7 @@ impl App {
     fn setting_value_text(&self, i: usize) -> String {
         match (SETTINGS[i].kind, SETTINGS[i].get(self)) {
             (Kind::Choice(c, ..), Value::Choice(k)) => c.get(k).map_or("", |c| c.1.t()).to_owned(),
+            (Kind::Number { zero: Some(off), .. }, Value::Number(0)) => off.t().to_owned(),
             (Kind::Number { unit, .. }, Value::Number(n)) => format!("{n} {unit}"),
             (Kind::Text(..), Value::Text(t)) => t,
             (Kind::Paths(..), Value::Paths(p)) => crate::trn!(P::SettingsPagePages, p.len()),

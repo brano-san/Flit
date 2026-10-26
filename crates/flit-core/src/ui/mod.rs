@@ -47,6 +47,7 @@ pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent,
 pub use sidebar::{Drive, KnownFolder, NavPrefs, NavState, Places, Section};
 pub use home::{Recent, Widget};
 pub const UI_SCALE: (u32, u32) = (75, 200);
+pub const SPRING_DELAY_MAX_MS: u32 = 3000;
 pub use details::{folder_key, Columns, FolderView, FolderViews, ViewPrefs, THUMB_CACHE_MB};
 pub use layouts::{adaptive_layout, has_thumbnail, is_media, LayoutMode, Sizes, LAYOUTS};
 pub use jobs::JobState;

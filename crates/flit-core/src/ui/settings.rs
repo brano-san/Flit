@@ -98,7 +98,7 @@ pub type Choices = &'static [(&'static str, S)];
 pub enum Kind {
     Toggle(fn(&App) -> bool, fn(&mut App, bool)),
     Choice(Choices, fn(&App) -> usize, fn(&mut App, usize)),
-    Number { min: i64, max: i64, step: i64, unit: S, get: fn(&App) -> i64, set: fn(&mut App, i64) },
+    Number { min: i64, max: i64, step: i64, unit: S, zero: Option<S>, get: fn(&App) -> i64, set: fn(&mut App, i64) },
     Paths(fn(&App) -> Vec<Location>, fn(&mut App, Vec<Location>)),
     Text(fn(&App) -> String, fn(&mut App, String)),
     Pick(Picker, fn(&App) -> String, fn(&mut App, String)),
@@ -247,7 +247,7 @@ pub static SETTINGS: &[Setting] = &[
         page: Page::Appearance,
         title: S::SettingsTitleAppearanceScale,
         help: S::SettingsHelpAppearanceScale,
-        kind: Kind::Number { min: super::UI_SCALE.0 as i64, max: super::UI_SCALE.1 as i64, step: 25, unit: S::SettingsUnitPercent, get: |a| a.ui_scale() as i64, set: |a, v| a.set_ui_scale(v as u32) },
+        kind: Kind::Number { min: super::UI_SCALE.0 as i64, max: super::UI_SCALE.1 as i64, step: 25, unit: S::SettingsUnitPercent, zero: None, get: |a| a.ui_scale() as i64, set: |a, v| a.set_ui_scale(v as u32) },
     },
     toggle("appearance.toolbar", Page::Appearance, S::SettingsTitleAppearanceToolbar, S::SettingsHelpAppearanceToolbar, |a| a.toolbar.state.visible, |a, on| {
         if a.toolbar.state.visible != on {
@@ -275,6 +275,13 @@ pub static SETTINGS: &[Setting] = &[
     toggle("files.thumbnails", Page::Files, S::SettingsTitleFilesThumbnails, S::SettingsHelpFilesThumbnails, |a| a.prefs.thumbnails, |a, on| a.set_pref(|p| &mut p.thumbnails, on)),
     toggle("files.checkboxes", Page::Files, S::SettingsTitleFilesCheckboxes, S::SettingsHelpFilesCheckboxes, |a| a.prefs.checkboxes, |a, on| a.set_pref(|p| &mut p.checkboxes, on)),
     toggle("files.hover_select", Page::Files, S::SettingsTitleFilesHoverSelect, S::SettingsHelpFilesHoverSelect, |a| a.prefs.hover_select, |a, on| a.set_pref(|p| &mut p.hover_select, on)),
+    Setting {
+        id: "files.spring_delay",
+        page: Page::Files,
+        title: S::SettingsTitleFilesSpringDelay,
+        help: S::SettingsHelpFilesSpringDelay,
+        kind: Kind::Number { min: 0, max: super::SPRING_DELAY_MAX_MS as i64, step: 100, unit: S::SettingsUnitMs, zero: Some(S::SettingsChoiceSpringOff), get: |a| a.spring_delay_ms as i64, set: |a, v| a.spring_delay_ms = v as u32 },
+    },
     choice("files.single_click_files", Page::Files, S::SettingsTitleFilesSingleClickFiles, S::SettingsHelpFilesSingleClickFiles, CLICK_CHOICES, |a| pos(&CLICKS, &a.single_click_files), |a, i| a.single_click_files = CLICKS[i]),
     choice("files.single_click_folders", Page::Files, S::SettingsTitleFilesSingleClickFolders, S::SettingsHelpFilesSingleClickFolders, CLICK_CHOICES, |a| pos(&CLICKS, &a.single_click_folders), |a, i| a.single_click_folders = CLICKS[i]),
     choice("files.single_click_columns", Page::Files, S::SettingsTitleFilesSingleClickColumns, S::SettingsHelpFilesSingleClickColumns, CLICK_CHOICES, |a| pos(&CLICKS, &a.single_click_columns), |a, i| a.single_click_columns = CLICKS[i]),
@@ -315,7 +322,7 @@ pub static SETTINGS: &[Setting] = &[
         page: Page::Advanced,
         title: S::SettingsTitleAdvancedThumbCacheMb,
         help: S::SettingsHelpAdvancedThumbCacheMb,
-        kind: Kind::Number { min: super::THUMB_CACHE_MB.0 as i64, max: super::THUMB_CACHE_MB.2 as i64, step: 100, unit: S::SettingsUnitMb, get: |a| a.prefs.thumb_cache_mb as i64, set: |a, v| a.prefs.thumb_cache_mb = v as u32 },
+        kind: Kind::Number { min: super::THUMB_CACHE_MB.0 as i64, max: super::THUMB_CACHE_MB.2 as i64, step: 100, unit: S::SettingsUnitMb, zero: None, get: |a| a.prefs.thumb_cache_mb as i64, set: |a, v| a.prefs.thumb_cache_mb = v as u32 },
     },
     choice(LOG_LEVEL, Page::Advanced, S::SettingsTitleAdvancedLogLevel, S::SettingsHelpAdvancedLogLevel, LOG_CHOICES, |a| a.log_level, |a, i| a.log_level = i),
     Setting { id: "keys", page: Page::Actions, title: S::SettingsTitleKeys, help: S::SettingsHelpKeys, kind: Kind::Keys(|a| a.keymap.clone(), |a, k| a.set_keymap(k)) },
