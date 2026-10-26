@@ -1,6 +1,7 @@
 use crate::{fs, places};
 use flit_core::provider::{FileOp, Launch};
-use flit_core::ui::{Bitmap, IconRequest};
+use flit_core::ui::{Bitmap, IconKind, IconRequest};
+use std::os::unix::ffi::OsStringExt;
 use flit_core::FsPath;
 use flit_platform::{FileOps, Job, OpOutcome, PlatformError, Shell};
 use flit_platform_linux::{host, run_op};
@@ -119,8 +120,8 @@ impl Shell for LinuxShell {
         Ok(LinuxShell)
     }
 
-    fn icon(&mut self, _: &IconRequest) -> Option<Bitmap> {
-        None
+    fn icon(&mut self, req: &IconRequest) -> Option<Bitmap> {
+        crate::icons::icon(&icon_names(req), req.size)
     }
 
     fn thumbnail(&mut self, req: &IconRequest) -> Option<Bitmap> {
@@ -173,6 +174,30 @@ impl FileOps for LinuxShell {
 
     fn clear_clipboard(&mut self) {
         OWN_FILES.lock().unwrap_or_else(|e| e.into_inner()).take();
+    }
+}
+
+pub fn icon_names(req: &IconRequest) -> Vec<String> {
+    let owned = |list: &[&str]| list.iter().map(|s| s.to_string()).collect();
+    let path = req.path.as_bytes();
+    match req.kind {
+        IconKind::Folder | IconKind::CustomFolder => {
+            let home = crate::xdg::home().map(|h| h.into_os_string().into_vec());
+            if home.as_deref() == Some(path) {
+                owned(&["user-home", "folder"])
+            } else {
+                owned(&["folder"])
+            }
+        }
+        IconKind::Volume if path.starts_with(b"/media/") || path.starts_with(b"/run/media/") => owned(&["drive-removable-media", "drive-harddisk"]),
+        IconKind::Volume => owned(&["drive-harddisk"]),
+        IconKind::Type | IconKind::File | IconKind::Thumbnail => {
+            let name = req.path.file_name();
+            let ext = name.iter().rposition(|&b| b == b'.').filter(|&i| i > 0).map(|i| &name[i + 1..]);
+            let mut names = ext.and_then(crate::mime::mime_of).map(|m| crate::mime::icon_names(&m)).unwrap_or_default();
+            names.extend(owned(&["text-x-generic", "unknown"]));
+            names
+        }
     }
 }
 
@@ -294,6 +319,12 @@ fn gtk_theme_dark() -> Option<bool> {
 
 fn session_bus() -> bool {
     std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some() || crate::xdg::runtime_dir().is_some_and(|d| d.join("bus").exists())
+}
+
+pub fn gsettings(args: &[&str]) -> Option<String> {
+    let full: Vec<&str> = ["gsettings", "get"].into_iter().chain(args.iter().copied()).collect();
+    let child = helper(&full)?.stdout(Stdio::piped()).spawn().ok()?;
+    String::from_utf8(wait_output(child, HELPER_TIMEOUT)?).ok()
 }
 
 fn probe_dark() -> Option<bool> {

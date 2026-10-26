@@ -39,17 +39,27 @@ fn decode_png_from<R: std::io::BufRead + std::io::Seek>(mut reader: png::Reader<
     let frame = reader.next_frame(&mut buf).ok()?;
     buf.truncate(frame.buffer_size());
     let (w, h) = (frame.width, frame.height);
+    let premultiply = |p: &[u8]| {
+        let a = p[3] as u32;
+        [p[0], p[1], p[2]].map(|c| ((c as u32 * a + 127) / 255) as u8)
+    };
     let rgba = match (frame.color_type, frame.bit_depth) {
-        (png::ColorType::Rgba, png::BitDepth::Eight) => buf,
+        (png::ColorType::Rgba, png::BitDepth::Eight) => buf.chunks_exact(4).flat_map(|p| {
+            let [r, g, b] = premultiply(p);
+            [r, g, b, p[3]]
+        }).collect(),
         (png::ColorType::Rgb, png::BitDepth::Eight) => buf.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
-        (png::ColorType::GrayscaleAlpha, png::BitDepth::Eight) => buf.chunks_exact(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
+        (png::ColorType::GrayscaleAlpha, png::BitDepth::Eight) => buf.chunks_exact(2).flat_map(|p| {
+            let [g, _, _] = premultiply(&[p[0], p[0], p[0], p[1]]);
+            [g, g, g, p[1]]
+        }).collect(),
         (png::ColorType::Grayscale, png::BitDepth::Eight) => buf.iter().flat_map(|&g| [g, g, g, 255]).collect(),
         _ => return None,
     };
     Some(Bitmap { width: w, height: h, rgba })
 }
 
-fn decode_png(path: &Path) -> Option<Bitmap> {
+pub fn decode_png(path: &Path) -> Option<Bitmap> {
     let mut decoder = png::Decoder::new(BufReader::new(File::open(path).ok()?));
     decoder.set_transformations(png::Transformations::normalize_to_color8());
     decode_png_from(decoder.read_info().ok()?)

@@ -3,8 +3,10 @@
 mod fonts;
 pub mod fs;
 mod gl;
+mod icons;
 mod input;
 mod mime;
+mod svg;
 pub mod instance;
 pub mod places;
 pub mod shell;
