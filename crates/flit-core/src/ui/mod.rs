@@ -1261,6 +1261,8 @@ impl App {
             Event::ThemeChanged { dark } => self.set_system_dark(*dark),
             Event::Contrast(colors) => self.set_contrast(*colors),
             Event::Invoke(id) => self.a11y_invoke(*id, now),
+            Event::A11yFocus(id) => self.a11y_focus(*id),
+            Event::A11ySelect(id) => self.a11y_select(*id, now),
             Event::Focus(f) => {
                 self.active = *f;
                 self.mods = Mods::default();

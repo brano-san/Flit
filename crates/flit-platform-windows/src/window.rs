@@ -6,7 +6,7 @@ use flit_core::input::{CursorIcon, Event, HitArea, Key, Mods, MouseButton};
 use flit_core::a11y::Tree;
 use flit_core::render::{Color, Rect};
 use flit_core::theme::SystemColors;
-use crate::uia::WM_A11Y_INVOKE;
+use crate::uia::{WM_A11Y_FOCUS, WM_A11Y_INVOKE, WM_A11Y_SELECT};
 use windows::Win32::UI::Accessibility::{IRawElementProviderSimple, UiaClientsAreListening, UiaDisconnectProvider, UiaReturnRawElementProvider, UiaRootObjectId, HCF_HIGHCONTRASTON, HIGHCONTRASTW};
 use flit_core::ui::{DragEvent, ShellMenu};
 use flit_core::FsPath;
@@ -1020,6 +1020,14 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
         WM_GETOBJECT if lp.0 as i32 == UiaRootObjectId => Some(UiaReturnRawElementProvider(hwnd, wp, lp, &s.root_provider(hwnd))),
         WM_A11Y_INVOKE => {
             s.send(Event::Invoke(wp.0 as u64));
+            Some(LRESULT(0))
+        }
+        WM_A11Y_FOCUS => {
+            s.send(Event::A11yFocus(wp.0 as u64));
+            Some(LRESULT(0))
+        }
+        WM_A11Y_SELECT => {
+            s.send(Event::A11ySelect(wp.0 as u64));
             Some(LRESULT(0))
         }
         WM_SYSCOLORCHANGE => {

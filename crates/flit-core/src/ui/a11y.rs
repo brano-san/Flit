@@ -1,6 +1,7 @@
 use super::actions::ACTIONS;
 use super::describe::description;
 use super::{App, Column, Focus, Hit, LayoutMode};
+use super::focus::ORDER;
 use crate::a11y::{Role, Tree};
 use crate::hash;
 use crate::i18n::S;
@@ -22,7 +23,7 @@ const LEAF: u64 = 1 << 63;
 
 const NAV_IDS: [&str; 5] = ["nav.back", "nav.forward", "nav.up", "nav.refresh", "nav.home_page"];
 
-fn leaf(h: Hit) -> u64 {
+pub(super) fn leaf(h: Hit) -> u64 {
     hash::hash(&format!("{h:?}")) | LEAF
 }
 
@@ -30,7 +31,7 @@ fn action_title(id: &str) -> &'static str {
     ACTIONS.iter().find(|a| a.id == id).map_or("", |a| a.title.t())
 }
 
-fn union(rects: impl IntoIterator<Item = Rect>) -> Rect {
+pub(super) fn union(rects: impl IntoIterator<Item = Rect>) -> Rect {
     let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
     for r in rects.into_iter().filter(|r| r.w > 0.0) {
         (x0, y0, x1, y1) = (x0.min(r.x), y0.min(r.y), x1.max(r.right()), y1.max(r.bottom()));
@@ -38,7 +39,7 @@ fn union(rects: impl IntoIterator<Item = Rect>) -> Rect {
     if x0 > x1 { Rect::default() } else { Rect::new(x0, y0, x1 - x0, y1 - y0) }
 }
 
-fn put(t: &mut Tree, targets: &mut Vec<(u64, Hit)>, parent: usize, hit: Hit, role: Role, name: &str, r: Rect) -> usize {
+pub(super) fn put(t: &mut Tree, targets: &mut Vec<(u64, Hit)>, parent: usize, hit: Hit, role: Role, name: &str, r: Rect) -> usize {
     let id = leaf(hit);
     targets.push((id, hit));
     t.add(parent, id, role, name, r)
@@ -185,6 +186,10 @@ impl App {
             }
         }
 
+        if let Some(k) = self.settings_a11y(&mut t, &mut targets) {
+            focus = Some(k);
+        }
+
         if let Some((title, lines)) = self.dialog_text() {
             let (rect, buttons) = self.dialog_rects();
             let buttons = buttons.to_vec();
@@ -199,14 +204,63 @@ impl App {
             }
         }
 
+        if let Some(k) = self.form_a11y(&mut t, &mut targets) {
+            focus = Some(k);
+        }
+
         t.focus = if self.active { focus } else { None };
         self.a11y_targets = targets;
         t
     }
 
+    fn a11y_hit(&self, id: u64) -> Option<Hit> {
+        self.a11y_targets.iter().find(|(k, _)| *k == id).map(|&(_, h)| h)
+    }
+
     pub(super) fn a11y_invoke(&mut self, id: u64, now: Instant) {
-        if let Some(&(_, h)) = self.a11y_targets.iter().find(|(k, _)| *k == id) {
-            self.activate(h, now);
+        match self.a11y_hit(id) {
+            Some(Hit::Form(k)) => self.form_a11y_invoke(k),
+            Some(h) => self.activate(h, now),
+            None => {}
+        }
+    }
+
+    pub(super) fn a11y_focus(&mut self, id: u64) {
+        let Some(h) = self.a11y_hit(id) else { return };
+        self.dirty = true;
+        match h {
+            Hit::Settings(sh) => self.settings_a11y_focus(sh),
+            Hit::Form(k) => self.form_a11y_focus(k),
+            Hit::DialogButton(k) => self.jobs.sel = k,
+            Hit::Row(row) => {
+                self.focus = Focus::List;
+                if let Some(v) = &mut self.tabs[self.cur].view {
+                    v.focus = v.rows().get(row).copied();
+                }
+            }
+            _ => {
+                let Some((region, n)) = ORDER.into_iter().find_map(|r| self.focus_targets(r).iter().position(|&(k, _)| k == h).map(|n| (r, n))) else { return };
+                if region == Focus::Address {
+                    return self.enter_focus(region);
+                }
+                self.focus = region;
+                self.kb = n;
+                if region == Focus::Sidebar {
+                    self.nav.sidebar.cursor = n;
+                }
+            }
+        }
+    }
+
+    pub(super) fn a11y_select(&mut self, id: u64, now: Instant) {
+        match self.a11y_hit(id) {
+            Some(Hit::Row(row)) => {
+                self.focus = Focus::List;
+                self.tabs[self.cur].focus_row(row, crate::input::Mods::default());
+                self.dirty = true;
+            }
+            Some(_) => self.a11y_invoke(id, now),
+            None => {}
         }
     }
 }

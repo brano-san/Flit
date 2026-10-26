@@ -59,6 +59,8 @@ pub enum Event {
     ThemeChanged { dark: bool },
     Contrast(Option<crate::theme::SystemColors>),
     Invoke(u64),
+    A11yFocus(u64),
+    A11ySelect(u64),
     DroppedFiles(Vec<FsPath>),
     CloseRequested,
     ShellVerb(String),

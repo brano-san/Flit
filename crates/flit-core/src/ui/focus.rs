@@ -6,7 +6,7 @@ use crate::text::{Gfx, TextBackend};
 use crate::theme::Theme;
 use std::time::Instant;
 
-const ORDER: [Focus; 7] = [Focus::TabBar, Focus::Nav, Focus::Address, Focus::Toolbar, Focus::Sidebar, Focus::List, Focus::Preview];
+pub(super) const ORDER: [Focus; 7] = [Focus::TabBar, Focus::Nav, Focus::Address, Focus::Toolbar, Focus::Sidebar, Focus::List, Focus::Preview];
 
 impl App {
     pub(super) fn focus_targets(&self, region: Focus) -> Vec<(Hit, Rect)> {

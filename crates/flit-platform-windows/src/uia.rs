@@ -14,6 +14,8 @@ use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
 use windows_core::{implement, Error, IUnknown, IUnknownImpl, Interface, Result, HRESULT};
 
 pub(crate) const WM_A11Y_INVOKE: u32 = WM_APP + 4;
+pub(crate) const WM_A11Y_FOCUS: u32 = WM_APP + 5;
+pub(crate) const WM_A11Y_SELECT: u32 = WM_APP + 6;
 
 pub(crate) struct Hub {
     hwnd: isize,
@@ -36,8 +38,14 @@ impl Access {
         let mut cur = self.hub.tree.lock().unwrap_or_else(|e| e.into_inner());
         let old = std::mem::replace(&mut *cur, tree);
         let focused = cur.focus.map(|k| cur.nodes[k].id);
+        let reshaped = old.nodes.len() != cur.nodes.len() || old.nodes.iter().zip(&cur.nodes).any(|(a, b)| a.id != b.id || a.parent != b.parent);
         let picked = cur.nodes.iter().find(|n| n.selected && matches!(n.role, Role::ListItem | Role::DataItem | Role::TreeItem | Role::Tab) && !old.find(n.id).is_some_and(|k| old.nodes[k].selected)).map(|n| n.id);
         drop(cur);
+        if reshaped {
+            unsafe {
+                let _ = UiaRaiseStructureChangedEvent(&self.root, StructureChangeType_ChildrenInvalidated, std::ptr::null_mut(), 0);
+            }
+        }
         if focused.is_some() && focused != old.focus.map(|k| old.nodes[k].id) {
             self.raise(focused, UIA_AutomationFocusChangedEventId);
         }
@@ -53,7 +61,7 @@ impl Access {
     }
 }
 
-#[implement(IRawElementProviderSimple, IRawElementProviderFragment, IRawElementProviderFragmentRoot, IInvokeProvider, ISelectionItemProvider)]
+#[implement(IRawElementProviderSimple, IRawElementProviderFragment, IRawElementProviderFragmentRoot, IInvokeProvider, ISelectionItemProvider, IToggleProvider)]
 struct Element {
     hub: Arc<Hub>,
     id: u64,
@@ -70,6 +78,8 @@ fn control_type(role: Role) -> UIA_CONTROLTYPE_ID {
         Role::Tab => UIA_TabItemControlTypeId,
         Role::ToolBar => UIA_ToolBarControlTypeId,
         Role::Button => UIA_ButtonControlTypeId,
+        Role::CheckBox => UIA_CheckBoxControlTypeId,
+        Role::ComboBox => UIA_ComboBoxControlTypeId,
         Role::Group => UIA_GroupControlTypeId,
         Role::Link => UIA_HyperlinkControlTypeId,
         Role::Edit => UIA_EditControlTypeId,
@@ -123,8 +133,13 @@ impl Element {
         id.map(|id| Element { hub: self.hub.clone(), id }.into()).ok_or_else(Error::empty)
     }
 
+    fn post(&self, msg: u32) -> Result<()> {
+        self.with(|_, _| ())?;
+        unsafe { PostMessageW(Some(self.hwnd()), msg, WPARAM(self.id as usize), LPARAM(0)) }
+    }
+
     fn invokable(role: Role) -> bool {
-        matches!(role, Role::Button | Role::Tab | Role::TreeItem | Role::ListItem | Role::DataItem | Role::HeaderItem | Role::Link)
+        matches!(role, Role::Button | Role::ComboBox | Role::Tab | Role::TreeItem | Role::ListItem | Role::DataItem | Role::HeaderItem | Role::Link)
     }
 }
 
@@ -139,6 +154,7 @@ impl IRawElementProviderSimple_Impl for Element_Impl {
         match pattern {
             UIA_InvokePatternId if Element::invokable(role) => me.to_interface::<IInvokeProvider>().cast(),
             UIA_SelectionItemPatternId if matches!(role, Role::Tab | Role::TreeItem | Role::ListItem | Role::DataItem) => me.to_interface::<ISelectionItemProvider>().cast(),
+            UIA_TogglePatternId if role == Role::CheckBox => me.to_interface::<IToggleProvider>().cast(),
             _ => Err(Error::empty()),
         }
     }
@@ -156,6 +172,7 @@ impl IRawElementProviderSimple_Impl for Element_Impl {
                 UIA_HasKeyboardFocusPropertyId => flag(t.focus == Some(k)),
                 UIA_IsKeyboardFocusablePropertyId => flag(n.role != Role::Text),
                 UIA_SelectionItemIsSelectedPropertyId => flag(n.selected),
+                UIA_ToggleToggleStatePropertyId => int(toggle_state(n.selected).0),
                 UIA_AutomationIdPropertyId if k != 0 => text(&format!("{:x}", n.id)),
                 UIA_FrameworkIdPropertyId => text("Flit"),
                 _ => VARIANT::default(),
@@ -220,7 +237,7 @@ impl IRawElementProviderFragment_Impl for Element_Impl {
     }
 
     fn SetFocus(&self) -> Result<()> {
-        Ok(())
+        self.post(WM_A11Y_FOCUS)
     }
 
     fn FragmentRoot(&self) -> Result<IRawElementProviderFragmentRoot> {
@@ -250,17 +267,13 @@ impl IRawElementProviderFragmentRoot_Impl for Element_Impl {
 
 impl IInvokeProvider_Impl for Element_Impl {
     fn Invoke(&self) -> Result<()> {
-        self.with(|_, _| ())?;
-        unsafe { PostMessageW(Some(self.hwnd()), WM_A11Y_INVOKE, WPARAM(self.id as usize), LPARAM(0)) }
+        self.post(WM_A11Y_INVOKE)
     }
 }
 
 impl ISelectionItemProvider_Impl for Element_Impl {
     fn Select(&self) -> Result<()> {
-        if self.with(|t, k| t.nodes[k].role)? == Role::Tab {
-            return IInvokeProvider_Impl::Invoke(self);
-        }
-        Err(Error::from_hresult(HRESULT(UIA_E_INVALIDOPERATION as i32)))
+        self.post(WM_A11Y_SELECT)
     }
 
     fn AddToSelection(&self) -> Result<()> {
@@ -278,6 +291,20 @@ impl ISelectionItemProvider_Impl for Element_Impl {
     fn SelectionContainer(&self) -> Result<IRawElementProviderSimple> {
         let parent = self.with(|t, k| t.nodes[t.nodes[k].parent].id)?;
         Ok(Element { hub: self.hub.clone(), id: parent }.into())
+    }
+}
+
+fn toggle_state(on: bool) -> ToggleState {
+    if on { ToggleState_On } else { ToggleState_Off }
+}
+
+impl IToggleProvider_Impl for Element_Impl {
+    fn Toggle(&self) -> Result<()> {
+        self.post(WM_A11Y_INVOKE)
+    }
+
+    fn ToggleState(&self) -> Result<ToggleState> {
+        Ok(toggle_state(self.with(|t, k| t.nodes[k].selected)?))
     }
 }
 

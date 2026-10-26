@@ -7,6 +7,8 @@ pub enum Role {
     Tab,
     ToolBar,
     Button,
+    CheckBox,
+    ComboBox,
     Group,
     Link,
     Edit,

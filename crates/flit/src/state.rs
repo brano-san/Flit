@@ -159,8 +159,12 @@ impl Saved {
             if let Ok((tools, tail)) = postcard::take_from_bytes::<Tools>(tail) {
                 p.prefs.show_streams = tools.streams;
                 saved.tools = tools;
-                if let Ok((split, _)) = postcard::take_from_bytes::<SplitPrefs>(tail) {
+                if let Ok((split, tail)) = postcard::take_from_bytes::<SplitPrefs>(tail) {
                     p.split = split;
+                    if let Ok((word, _)) = postcard::take_from_bytes::<u32>(tail) {
+                        p.archive.compression.word = word;
+                        p.archive = std::mem::take(&mut p.archive).sanitized();
+                    }
                 }
             }
         }
@@ -188,6 +192,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&p.archive.clone().sanitized()).ok()?);
         bytes.extend(postcard::to_stdvec(&Tools { streams: p.prefs.show_streams, ..self.tools.clone() }).ok()?);
         bytes.extend(postcard::to_stdvec(&p.split).ok()?);
+        bytes.extend(postcard::to_stdvec(&p.archive.clone().sanitized().compression.word).ok()?);
         Some(bytes)
     }
 
