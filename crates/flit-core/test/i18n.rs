@@ -130,3 +130,14 @@ fn english_errors_are_shown_in_the_chosen_language() {
     let any = S::ALL.into_iter().find(|s| s.key().starts_with("errors")).unwrap();
     assert_eq!(localize(any.en()), any.en());
 }
+
+#[test]
+fn folder_errors_follow_the_language() {
+    let e = crate::listing::FsError { kind: crate::listing::FsErrorKind::AccessDenied, code: 5 };
+    assert_eq!(e.to_string(), "Access denied (0x00000005)");
+    set_lang(Lang::Ru);
+    assert_eq!(e.to_string(), "Отказано в доступе (0x00000005)");
+    assert_eq!(localize("Access denied (0x00000005)"), "Отказано в доступе (0x00000005)");
+    assert!(crate::archive::needs_password(S::ErrorsArchiveWrongPassword.t()));
+    set_lang(Lang::En);
+}
