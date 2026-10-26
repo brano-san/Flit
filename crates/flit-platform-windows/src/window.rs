@@ -481,13 +481,15 @@ impl<H: WindowHandler<Win32>> Shared<H> {
         let node = Rc::new(Node { window: Win32Window::new(id, self.hub), queue: RefCell::default(), ready: Cell::new(false), shared: self });
         let sys = GetDpiForSystem() as f32 / 96.0;
         let title = wide(&opts.title);
+        let hidden = crate::d3d::capture_path().is_some();
+        let (ex, at) = if hidden { (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, -32000) } else { (WS_EX_APPWINDOW, CW_USEDEFAULT) };
         let hwnd = CreateWindowExW(
-            WS_EX_NOREDIRECTIONBITMAP | WS_EX_APPWINDOW,
+            WS_EX_NOREDIRECTIONBITMAP | ex,
             WINDOW_CLASS,
             PCWSTR(title.as_ptr()),
             WS_OVERLAPPEDWINDOW,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
+            at,
+            at,
             (1100.0 * sys) as i32,
             (720.0 * sys) as i32,
             None,
@@ -498,7 +500,7 @@ impl<H: WindowHandler<Win32>> Shared<H> {
         .map_err(err)?;
         OPEN.with_borrow_mut(|open| open.push((hwnd.0 as isize, id)));
         let mut maximized = false;
-        if let Some(p) = opts.placement.filter(|p| p.width > 100 && p.height > 100) {
+        if let Some(p) = opts.placement.filter(|p| !hidden && p.width > 100 && p.height > 100) {
             let wp = WINDOWPLACEMENT {
                 length: size_of::<WINDOWPLACEMENT>() as u32,
                 showCmd: SW_HIDE.0 as u32,
@@ -521,7 +523,15 @@ impl<H: WindowHandler<Win32>> Shared<H> {
         node.ready.set(true);
         self.flush();
         node.redraw_now();
-        let _ = ShowWindow(hwnd, if maximized { SW_SHOWMAXIMIZED } else { SW_SHOW });
+        if hidden {
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            if std::env::var_os("FLIT_CAPTURE_SETTINGS").is_some() {
+                node.queue.borrow_mut().push_back(Event::Key { key: Key::Char(','), mods: Mods { ctrl: true, ..Mods::default() }, pressed: true });
+                self.woken.set(true);
+            }
+        } else {
+            let _ = ShowWindow(hwnd, if maximized { SW_SHOWMAXIMIZED } else { SW_SHOW });
+        }
         crate::dragdrop::register(hwnd, Rc::as_ptr(&node) as *const (), drag_thunk::<H>);
         Ok(())
     }

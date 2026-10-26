@@ -290,7 +290,7 @@ impl Sidebar {
             .collect();
         items.extend(p.folders.iter().map(|(k, l)| Item { section: Section::Folders, label: k.label().to_owned(), glyph: k.glyph(), loc: l.clone(), usage: None }));
         if p.recycle_bin {
-            let label = crate::path::RECYCLE_BIN_LABEL.to_owned();
+            let label = S::PathRecycleBin.t().to_owned();
             items.push(Item { section: Section::Folders, label, glyph: G_RECYCLE_BIN, loc: Location::recycle_bin(), usage: None });
         }
         items.extend(p.libraries.iter().map(|l| Item { section: Section::Libraries, label: l.name.clone(), glyph: G_LIBRARY, loc: Location::Local(l.path.clone()), usage: None }));

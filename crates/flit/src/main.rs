@@ -79,7 +79,7 @@ fn main() {
     };
     logs::init(<P as Platform>::state_dir().map(|d| d.join("logs")), std::env::var_os("FLIT_LOG").is_some());
     tracing::info!("Flit {} started, process {}", env!("CARGO_PKG_VERSION"), std::process::id());
-    let system = flit_core::i18n::Lang::from_code(&<P as Platform>::ui_language()).unwrap_or_default();
+    let system = flit_core::i18n::Lang::from_code(&std::env::var("FLIT_LANG").unwrap_or_else(|_| <P as Platform>::ui_language())).unwrap_or_default();
     flit_core::i18n::set_system_lang(system);
     flit_core::i18n::set_lang(system);
     let headless = metrics.is_some();

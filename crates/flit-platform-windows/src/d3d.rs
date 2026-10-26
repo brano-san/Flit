@@ -281,9 +281,77 @@ impl D3dRenderer {
             if n > 0 {
                 ctx.DrawInstanced(4, n as u32, 0, 0);
             }
+            if let Some(path) = capture_path() {
+                self.capture(path)?;
+            }
             self.swap.Present(1, DXGI_PRESENT(0)).ok().map_err(err)
         }
     }
+
+    unsafe fn capture(&self, path: &std::path::Path) -> Result<(), PlatformError> {
+        static EXIT: std::sync::Once = std::sync::Once::new();
+        EXIT.call_once(|| {
+            let ms = std::env::var("FLIT_CAPTURE_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(4000);
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+                std::process::exit(0);
+            });
+        });
+        let back: ID3D11Texture2D = self.swap.GetBuffer(0).map_err(err)?;
+        let mut desc = D3D11_TEXTURE2D_DESC::default();
+        back.GetDesc(&mut desc);
+        desc.Usage = D3D11_USAGE_STAGING;
+        desc.BindFlags = 0;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ.0 as u32;
+        desc.MiscFlags = 0;
+        let mut staging = None;
+        self.dev.device.CreateTexture2D(&desc, None, Some(&mut staging)).map_err(err)?;
+        let Some(staging) = staging else { return Ok(()) };
+        self.dev.ctx.CopyResource(&staging, &back);
+        let mut map = D3D11_MAPPED_SUBRESOURCE::default();
+        self.dev.ctx.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut map)).map_err(err)?;
+        let (w, h) = (desc.Width as usize, desc.Height as usize);
+        let mut raw = Vec::with_capacity((w * 3 + 1) * h);
+        for y in 0..h {
+            let row = std::slice::from_raw_parts((map.pData as *const u8).add(y * map.RowPitch as usize), w * 4);
+            raw.push(0);
+            raw.extend(row.chunks_exact(4).flat_map(|p| [p[2], p[1], p[0]]));
+        }
+        self.dev.ctx.Unmap(&staging, 0);
+        let tmp = path.with_extension("tmp");
+        let _ = std::fs::write(&tmp, png(w as u32, h as u32, &raw)).and_then(|_| std::fs::rename(&tmp, path));
+        Ok(())
+    }
+}
+
+pub fn capture_path() -> Option<&'static std::path::Path> {
+    static PATH: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| std::env::var_os("FLIT_HIDDEN_CAPTURE").map(Into::into)).as_deref()
+}
+
+fn png(w: u32, h: u32, raw: &[u8]) -> Vec<u8> {
+    let mut z = vec![0x78, 0x01];
+    let blocks: Vec<&[u8]> = raw.chunks(0xFFFF).collect();
+    for (i, b) in blocks.iter().enumerate() {
+        let n = b.len() as u16;
+        z.push(u8::from(i + 1 == blocks.len()));
+        z.extend(n.to_le_bytes());
+        z.extend((!n).to_le_bytes());
+        z.extend_from_slice(b);
+    }
+    let (a, b) = raw.iter().fold((1u32, 0u32), |(a, b), &x| ((a + x as u32) % 65521, (b + a + x as u32) % 65521));
+    z.extend(((b << 16) | a).to_be_bytes());
+    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+    let mut chunk = |kind: &[u8], data: &[u8]| {
+        out.extend((data.len() as u32).to_be_bytes());
+        let body = [kind, data].concat();
+        out.extend_from_slice(&body);
+        out.extend(crc32fast::hash(&body).to_be_bytes());
+    };
+    chunk(b"IHDR", &[&w.to_be_bytes()[..], &h.to_be_bytes(), &[8, 2, 0, 0, 0]].concat());
+    chunk(b"IDAT", &z);
+    chunk(b"IEND", &[]);
+    out
 }
 
 impl Drop for D3dRenderer {

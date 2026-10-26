@@ -2202,7 +2202,10 @@ impl App {
 
         let mut right = bumpalo::collections::String::new_in(arena);
         if let (Some(first), Some(done)) = (tab.stats.first, tab.stats.done) {
-            crate::tr_into!(&mut right, S::UiStatusTiming, first = format_args!("{:.1}", first.as_secs_f64() * 1e3), all = format_args!("{:.1}", done.as_secs_f64() * 1e3));
+            let (mut a, mut b) = (bumpalo::collections::String::new_in(arena), bumpalo::collections::String::new_in(arena));
+            crate::i18n::decimal(&mut a, first.as_secs_f64() * 1e3, 1);
+            crate::i18n::decimal(&mut b, done.as_secs_f64() * 1e3, 1);
+            crate::tr_into!(&mut right, S::UiStatusTiming, first = a, all = b);
         }
         let in_bin = tab.view_loc.is_recycle_bin();
         let sizes = self.sizes_label();
