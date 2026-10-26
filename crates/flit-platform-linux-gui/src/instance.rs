@@ -172,7 +172,7 @@ impl SingleInstance for SocketInstance {
     }
 }
 
-fn decode_uri(arg: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn decode_uri(arg: &[u8]) -> Option<Vec<u8>> {
     if arg.starts_with(b"trash:") {
         return Some(RECYCLE_BIN_SHELL.as_bytes().to_vec());
     }

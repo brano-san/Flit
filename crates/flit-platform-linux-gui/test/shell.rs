@@ -7,6 +7,26 @@ fn fs_path(p: &Path) -> FsPath {
 }
 
 #[test]
+fn file_lists_round_trip_through_uri_lists_and_gnome_cut_markers() {
+    let paths = vec![FsPath::parse_exact(b"/tmp/a b/\xD0\xBC%.txt").unwrap(), FsPath::parse_exact(b"/x\xFF").unwrap()];
+    let list = uri_list(&paths);
+    assert_eq!(list, "file:///tmp/a%20b/%D0%BC%25.txt\r\nfile:///x%FF\r\n");
+    assert_eq!(parse_file_list(list.as_bytes()), (paths.clone(), false));
+    assert_eq!(parse_file_list(b"# comment\nfile://localhost/x%FF\nhttp://e/x\n"), (vec![paths[1].clone()], false));
+    assert_eq!(parse_file_list(b"cut\nfile:///x%FF"), (vec![paths[1].clone()], true));
+    assert_eq!(parse_file_list(b"copy\nfile:///x%FF\n"), (vec![paths[1].clone()], false));
+    remember_files(&paths, true);
+    let mut sh = LinuxShell;
+    if clipboard_bytes("text/uri-list").is_none() {
+        assert_eq!(sh.clipboard_files().unwrap(), (paths, true));
+    }
+    sh.clear_clipboard();
+    if clipboard_bytes("text/uri-list").is_none() {
+        assert!(sh.clipboard_files().is_err());
+    }
+}
+
+#[test]
 fn arguments_split_on_spaces_and_respect_quotes() {
     assert_eq!(split_args(r#"-a "two words" 'single quoted' plain"#), ["-a", "two words", "single quoted", "plain"]);
     assert_eq!(split_args(r#"  "" x  "#), ["", "x"]);

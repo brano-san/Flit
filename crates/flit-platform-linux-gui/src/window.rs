@@ -79,6 +79,7 @@ enum Command {
     Close(WindowId),
     Paste(WindowId),
     Copy(String),
+    CopyFiles(String),
 }
 
 type Commands = Rc<RefCell<Vec<Command>>>;
@@ -239,8 +240,8 @@ impl Window for LinuxWindow {
         preferred_dark().or_else(|| self.raw.theme().map(|t| t == Theme::Dark)).unwrap_or(false)
     }
 
-    fn set_clipboard_files(&self, paths: &[FsPath], _cut: bool) {
-        tracing::debug!("the file clipboard is not available on Linux yet, {} paths dropped", paths.len());
+    fn set_clipboard_files(&self, paths: &[FsPath], cut: bool) {
+        self.push(Command::CopyFiles(crate::shell::remember_files(paths, cut)));
     }
 
     fn shell_menu(&self, _menu: ShellMenu) {}
@@ -406,6 +407,21 @@ fn copy(el: &dyn ActiveEventLoop, text: String) {
     }
 }
 
+fn copy_files(el: &dyn ActiveEventLoop, list: String) {
+    let data = DataTransferSendBuilder::new(list.clone())
+        .with_type(TypeHint::UriList, |list: &String, _| Some(list.clone()))
+        .with_type(TypeHint::Plaintext, |list: &String, _| Some(list.clone()))
+        .build();
+    if let Err(e) = el.set_clipboard(data) {
+        tracing::debug!("winit cannot set the file clipboard ({e}), asking a helper program");
+        background("flit-copy", move || {
+            if !crate::shell::set_clipboard_files(&list) {
+                tracing::info!("the file clipboard stays inside Flit: no wl-copy or xclip");
+            }
+        });
+    }
+}
+
 impl<H: WindowHandler<LinuxWindows>> Loop<H> {
     fn settle(&mut self, el: &dyn ActiveEventLoop) {
         if !self.started {
@@ -422,6 +438,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                     Command::Close(id) => self.close(id),
                     Command::Paste(id) => paste(el, id),
                     Command::Copy(text) => copy(el, text),
+                    Command::CopyFiles(list) => copy_files(el, list),
                 }
             }
         }

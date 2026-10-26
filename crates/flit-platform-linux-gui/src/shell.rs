@@ -150,10 +150,66 @@ impl FileOps for LinuxShell {
     }
 
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
-        Err(PlatformError::unsupported("pasting files from the clipboard"))
+        let own = OWN_FILES.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let read = |mime: &str| clipboard_bytes(mime).filter(|b| !b.is_empty());
+        let (paths, cut) = match read("x-special/gnome-copied-files").or_else(|| read("text/uri-list")) {
+            Some(bytes) => {
+                let (paths, cut) = parse_file_list(&bytes);
+                let ours = own.as_ref().filter(|(list, _)| parse_file_list(list.as_bytes()).0 == paths);
+                (paths, cut || ours.is_some_and(|o| o.1))
+            }
+            None => own.map(|(list, cut)| (parse_file_list(list.as_bytes()).0, cut)).unwrap_or_default(),
+        };
+        if paths.is_empty() {
+            return Err(PlatformError::new(-1, "the clipboard holds no files"));
+        }
+        Ok((paths, cut))
     }
 
-    fn clear_clipboard(&mut self) {}
+    fn clear_clipboard(&mut self) {
+        OWN_FILES.lock().unwrap_or_else(|e| e.into_inner()).take();
+    }
+}
+
+static OWN_FILES: std::sync::Mutex<Option<(String, bool)>> = std::sync::Mutex::new(None);
+
+pub fn uri_list(paths: &[FsPath]) -> String {
+    paths.iter().map(|p| format!("file://{}\r\n", flit_platform_linux::percent_encode(p.as_bytes()))).collect()
+}
+
+pub fn parse_file_list(bytes: &[u8]) -> (Vec<FsPath>, bool) {
+    let mut lines = bytes.split(|&b| b == b'\n').map(|l| l.strip_suffix(b"\r").unwrap_or(l)).filter(|l| !l.is_empty()).peekable();
+    let cut = match lines.peek() {
+        Some(&b"cut") => true,
+        Some(&b"copy") => false,
+        _ => return (lines.filter(|l| !l.starts_with(b"#")).filter_map(crate::instance::decode_uri).filter_map(|p| FsPath::parse_exact(&p)).collect(), false),
+    };
+    lines.next();
+    (lines.filter_map(crate::instance::decode_uri).filter_map(|p| FsPath::parse_exact(&p)).collect(), cut)
+}
+
+pub fn remember_files(paths: &[FsPath], cut: bool) -> String {
+    let list = uri_list(paths);
+    *OWN_FILES.lock().unwrap_or_else(|e| e.into_inner()) = Some((list.clone(), cut));
+    list
+}
+
+fn clipboard_bytes(mime: &str) -> Option<Vec<u8>> {
+    let args: [&str; 7] = if wayland() { ["wl-paste", "--no-newline", "--type", mime, "", "", ""] } else { ["xclip", "-selection", "clipboard", "-target", mime, "-out", ""] };
+    let args: Vec<&str> = args.into_iter().filter(|a| !a.is_empty()).collect();
+    let child = helper(&args)?.stdout(Stdio::piped()).spawn().ok()?;
+    wait_output(child, HELPER_TIMEOUT)
+}
+
+pub fn set_clipboard_files(list: &str) -> bool {
+    let args: &[&str] = if wayland() { &["wl-copy", "--type", "text/uri-list"] } else { &["xclip", "-selection", "clipboard", "-target", "text/uri-list", "-in"] };
+    let Some(mut cmd) = helper(args) else { return false };
+    let Ok(mut child) = cmd.stdin(Stdio::piped()).stdout(Stdio::null()).process_group(0).spawn() else { return false };
+    let written = child.stdin.take().is_some_and(|mut input| input.write_all(list.as_bytes()).is_ok());
+    let _ = std::thread::Builder::new().name("flit-reap".into()).spawn(move || {
+        let _ = child.wait();
+    });
+    written
 }
 
 fn wait_output(mut child: Child, limit: Duration) -> Option<Vec<u8>> {
