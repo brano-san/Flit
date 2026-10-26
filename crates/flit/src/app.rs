@@ -299,6 +299,7 @@ impl<P: Platform> Handler<P> {
         app.utc_offset_min = P::utc_offset_minutes();
         app.double_click = P::double_click_time();
         app.caps = P::caps();
+        flit_core::i18n::set_unix_terms(app.caps.unix_paths);
         if base == 0 && P::elevated() {
             app.status(S::UiAppElevated.t());
         }

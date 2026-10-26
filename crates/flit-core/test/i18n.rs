@@ -160,3 +160,13 @@ fn relocalize_moves_messages_between_languages() {
     set_lang(Lang::En);
     assert_eq!(relocalize(&ru, Lang::Ru), status);
 }
+
+#[test]
+fn unix_terms_rename_the_trash_and_the_computer() {
+    assert_eq!(unix_term(S::PathRecycleBin.en(), Lang::En), "Trash");
+    assert_eq!(unix_term("Move {what} to the Recycle Bin", Lang::En), "Move {what} to the Trash");
+    assert_eq!(unix_term(S::PathComputer.in_lang(Lang::Ru), Lang::Ru), "Компьютер");
+    assert_eq!(unix_term("Файлы нельзя поместить в «Этот компьютер»", Lang::Ru), "Файлы нельзя поместить в «Компьютер»");
+    let same = S::MenuCopy.en();
+    assert!(std::ptr::eq(unix_term(same, Lang::En), same));
+}

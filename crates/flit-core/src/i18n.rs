@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::fmt::{self, Display, Write};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::OnceLock;
 
 include!(concat!(env!("OUT_DIR"), "/strings.rs"));
 
@@ -98,20 +99,55 @@ pub fn set_system_lang(l: Lang) {
     SYSTEM.store(l as u8, Ordering::Relaxed);
 }
 
+static UNIX_TERMS: AtomicBool = AtomicBool::new(false);
+
+pub fn set_unix_terms(on: bool) {
+    UNIX_TERMS.store(on, Ordering::Relaxed);
+}
+
+pub fn unix_term(s: &'static str, l: Lang) -> &'static str {
+    let pairs: &[(&str, &str)] = match l {
+        Lang::En => &[("Recycle Bin", "Trash"), ("This PC", "Computer")],
+        Lang::Ru => &[("Этот компьютер", "Компьютер")],
+    };
+    if !pairs.iter().any(|(from, _)| s.contains(from)) {
+        return s;
+    }
+    let out = pairs.iter().fold(s.to_owned(), |acc, (from, to)| acc.replace(from, to));
+    Box::leak(out.into_boxed_str())
+}
+
+fn s_row(l: Lang) -> &'static [&'static str] {
+    static UNIX: OnceLock<Vec<Vec<&'static str>>> = OnceLock::new();
+    if !UNIX_TERMS.load(Ordering::Relaxed) {
+        return &S_TABLE[l as usize];
+    }
+    &UNIX.get_or_init(|| Lang::ALL.iter().map(|&l| S_TABLE[l as usize].iter().map(|s| unix_term(s, l)).collect()).collect())[l as usize]
+}
+
+fn p_row(l: Lang) -> &'static [&'static [&'static str]] {
+    static UNIX: OnceLock<Vec<Vec<&'static [&'static str]>>> = OnceLock::new();
+    if !UNIX_TERMS.load(Ordering::Relaxed) {
+        return &P_TABLE[l as usize];
+    }
+    let build = || Lang::ALL.iter().map(|&l| P_TABLE[l as usize].iter().map(|f| &*Box::leak(f.iter().map(|s| unix_term(s, l)).collect::<Box<[_]>>())).collect()).collect();
+    &UNIX.get_or_init(build)[l as usize]
+}
+
 impl S {
     #[inline]
     pub fn t(self) -> &'static str {
-        S_TABLE[lang() as usize][self as usize]
+        s_row(lang())[self as usize]
     }
 
     #[inline]
     pub fn en(self) -> &'static str {
-        S_TABLE[Lang::En as usize][self as usize]
+        s_row(Lang::En)[self as usize]
     }
 
     #[inline]
     pub fn in_lang(self, l: Lang) -> &'static str {
-        S_TABLE[l as usize][self as usize]
+        s_row(l)[self as usize]
     }
 
     pub fn key(self) -> &'static str {
@@ -132,12 +168,12 @@ impl P {
     }
 
     pub fn pick_in(self, l: Lang, n: u64) -> &'static str {
-        let forms = P_TABLE[l as usize][self as usize];
+        let forms = p_row(l)[self as usize];
         forms[l.form(n).min(forms.len() - 1)]
     }
 
     pub fn forms(self, l: Lang) -> &'static [&'static str] {
-        P_TABLE[l as usize][self as usize]
+        p_row(l)[self as usize]
     }
 
     pub fn key(self) -> &'static str {
