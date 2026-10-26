@@ -1,4 +1,4 @@
-use crossbeam_channel::{unbounded, RecvTimeoutError};
+use crossbeam_channel::{bounded, RecvTimeoutError};
 use flit_platform::Duplex;
 use flit_proto::transport::{read_frame_limited, read_hello, write_frame, Hello, Protocol};
 use flit_proto::ProtoError;
@@ -13,6 +13,7 @@ pub const MAX_CLIENTS: usize = 16;
 pub const MAX_REQUEST: usize = 64 << 10;
 pub const READ_TIMEOUT: Duration = Duration::from_secs(2);
 const TICK: Duration = Duration::from_millis(250);
+pub const MAX_QUEUED: usize = 8;
 
 pub fn serve<C: Duplex>(mut conn: C, shared: Arc<SharedIndex>, utc_offset_min: i32) -> Result<(), ProtoError> {
     conn.set_read_timeout(Some(READ_TIMEOUT));
@@ -22,7 +23,7 @@ pub fn serve<C: Duplex>(mut conn: C, shared: Arc<SharedIndex>, utc_offset_min: i
     theirs?;
     let access = conn.access()?;
     let latest = Arc::new(AtomicU64::new(0));
-    let (tx, rx) = unbounded::<Message>();
+    let (tx, rx) = bounded::<Message>(MAX_QUEUED);
     let mut writer = conn.try_clone()?;
     let worker_latest = latest.clone();
     let worker = std::thread::Builder::new().name("flit-indexd-session".into()).spawn(move || {

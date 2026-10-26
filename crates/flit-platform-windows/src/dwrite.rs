@@ -56,7 +56,7 @@ impl IDWriteTextRenderer_Impl for Collector_Impl {
             let desc = &*desc;
             let Some(face) = (*run.fontFace).clone() else { return Ok(()) };
             let n = run.glyphCount as usize;
-            let ids = if n == 0 { Vec::new() } else { from_raw_parts(run.glyphIndices, n).to_vec() };
+            let ids = if n == 0 || run.glyphIndices.is_null() { vec![0; n] } else { from_raw_parts(run.glyphIndices, n).to_vec() };
             let advances = if run.glyphAdvances.is_null() { vec![0.0; n] } else { from_raw_parts(run.glyphAdvances, n).to_vec() };
             let offsets = if run.glyphOffsets.is_null() {
                 vec![(0.0, 0.0); n]
@@ -211,7 +211,7 @@ impl DWriteText {
 impl TextBackend for DWriteText {
     fn set_ui_family(&mut self, name: &str) -> bool {
         let wide: Vec<u16> = name.encode_utf16().chain([0]).collect();
-        let found = !name.is_empty() && !name.contains(' ') && self.has_family(PCWSTR(wide.as_ptr()));
+        let found = !name.is_empty() && !name.contains('\0') && self.has_family(PCWSTR(wide.as_ptr()));
         self.ui_family = if found { wide } else { unsafe { self.default_ui.as_wide() }.iter().copied().chain([0]).collect() };
         self.formats.retain(|style, _| style.family != FontFamily::Ui);
         self.primary.retain(|(family, _), _| *family != FontFamily::Ui);
@@ -317,7 +317,7 @@ impl TextBackend for DWriteText {
                 out.top = -r.top;
                 out.width = w;
                 out.height = h;
-                out.data.resize((w * h) as usize, 0);
+                out.data.resize(w as usize * h as usize, 0);
                 if w > 0 && h > 0 {
                     analysis.CreateAlphaTexture(DWRITE_TEXTURE_ALIASED_1x1, &r, &mut out.data).ok()?;
                 }

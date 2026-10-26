@@ -10,3 +10,6 @@ license.workspace = true
 flit-core.workspace = true
 serde.workspace = true
 postcard.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

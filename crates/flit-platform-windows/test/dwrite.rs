@@ -43,4 +43,20 @@ fn the_interface_font_is_chosen_from_the_installed_families_and_falls_back() {
     assert_eq!(width(&mut t), default, "a missing font falls back to the default");
     assert!(t.set_ui_family(""));
     assert_eq!(width(&mut t), default);
+    assert!(t.set_ui_family("Courier New"), "family names with spaces are offered by families() and must be accepted");
+    assert!(width(&mut t) > default * 1.5);
+    assert!(!t.set_ui_family("Courier New\0Arial"));
+}
+
+#[test]
+fn reshaping_reuses_font_faces() {
+    let mut t = DWriteText::new().unwrap();
+    let style = FontStyle::new(FontFamily::Ui, 13.0, false);
+    let mut s = ShapedText::default();
+    t.shape("Hello, мир 你好", style, &mut s);
+    let faces = t.faces.len();
+    for _ in 0..50 {
+        t.shape("Hello, мир 你好", style, &mut s);
+    }
+    assert_eq!(t.faces.len(), faces);
 }
