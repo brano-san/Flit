@@ -196,3 +196,21 @@ fn purge_refuses_items_outside_the_trash() {
     assert!(out.error.is_some() && out.items.is_empty());
     assert!(loose.exists());
 }
+
+#[test]
+fn gvfs_mounts_become_drives_with_readable_names() {
+    assert_eq!(gvfs_label("smb-share:server=nas,share=photos"), "photos (nas)");
+    assert_eq!(gvfs_label("sftp:host=box.lan,user=me"), "box.lan (sftp)");
+    assert_eq!(gvfs_label("mtp:host=Google_Pixel_7_1234"), "Google_Pixel_7_1234 (mtp)");
+    assert_eq!(gvfs_label("odd"), "odd");
+    let root = std::env::temp_dir().join(format!("flit-gvfs-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("smb-share:server=nas,share=photos")).unwrap();
+    std::fs::create_dir_all(root.join("mtp:host=Phone")).unwrap();
+    let drives = gvfs(&root);
+    assert_eq!(drives.iter().map(|d| d.label.as_str()).collect::<Vec<_>>(), ["Phone (mtp)", "photos (nas)"]);
+    assert!(drives.iter().all(|d| d.remote.is_some() && !d.removable));
+    assert!(gvfs(&root.join("missing")).is_empty());
+    std::fs::remove_dir_all(&root).unwrap();
+    assert_eq!(local_path("display name: photos\n  local path: /run/user/1000/gvfs/smb-share:server=nas,share=photos\n"), Some(PathBuf::from("/run/user/1000/gvfs/smb-share:server=nas,share=photos")));
+    assert_eq!(local_path("uri: smb://nas/\n"), None);
+}
