@@ -389,7 +389,9 @@ impl App {
             return;
         }
         if files {
-            m.action("file.shortcut", S::MenuCreateShortcut.t());
+            if !self.caps.unix_paths {
+                m.action("file.shortcut", S::MenuCreateShortcut.t());
+            }
             m.action("file.rename", S::MenuRename.t());
             m.action("item.trash", S::MenuDelete.t());
         }
@@ -413,7 +415,7 @@ impl App {
         }
         if files {
             m.action("file.new_folder_with_selection", S::MenuNewFolderWithSelection.t());
-            if count == 1 && folders.is_empty() {
+            if count == 1 && folders.is_empty() && !self.caps.unix_paths {
                 m.action("file.new_stream", S::MenuNewStream.t());
             }
             if !folders.is_empty() {

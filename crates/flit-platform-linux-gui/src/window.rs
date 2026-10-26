@@ -252,8 +252,10 @@ impl Window for LinuxWindow {
 
     fn shell_menu(&self, menu: ShellMenu) {
         let id = self.id;
+        let start = Instant::now();
         background("flit-menu", move || {
             let (items, launches) = crate::apps::menu_with_apps(menu.menu, &menu.items);
+            tracing::debug!(elapsed = ?start.elapsed(), apps = launches.len(), "menu ready");
             if !items.is_empty() {
                 QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((id, Event::ShowMenu { items, x: menu.x, y: menu.y, launches }));
                 wake_loop();

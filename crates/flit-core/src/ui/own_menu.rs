@@ -47,7 +47,7 @@ impl App {
             _ => return false,
         };
         match outcome {
-            MenuOutcome::Open => {}
+            MenuOutcome::Open => self.dirty |= matches!(ev, Event::Key { .. }),
             MenuOutcome::Closed => self.close_own_menu(),
             MenuOutcome::Command(k) => {
                 let menu = self.own_menu.take();
