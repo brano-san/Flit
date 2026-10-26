@@ -1,0 +1,4 @@
+default = "Default"
+custom_color = "Custom color…"
+system_font = "System default"
+not_installed = "{font} (not installed)"

@@ -1,0 +1,4 @@
+default = "По умолчанию"
+custom_color = "Свой цвет…"
+system_font = "Системный шрифт"
+not_installed = "{font} (не установлен)"

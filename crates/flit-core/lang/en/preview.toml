@@ -1,0 +1,39 @@
+selected = ["{n} item selected", "{n} items selected"]
+archived = "Inside an archive: extract it to preview"
+cannot_play = "Cannot play this file: {error}"
+properties = "Properties"
+reading = "Reading properties…"
+loading = "Loading preview…"
+new_tag = "+ New tag"
+ext_file = "{ext} file"
+truncated = ["Showing the first {n} character", "Showing the first {n} characters"]
+
+[tab]
+preview = "Preview"
+details = "Details"
+
+[field]
+items = "Items"
+total_size = "Total size"
+used_space = "Used space"
+free_space = "Free space"
+size_bytes = ["{size} ({n} byte)", "{size} ({n} bytes)"]
+modified = "Modified"
+created = "Created"
+attributes = "Attributes"
+folder = "Folder"
+free = "Free"
+free_of = "{free} of {total}"
+
+[attr]
+read_only = "Read-only"
+hidden = "Hidden"
+system = "System"
+link = "Link"
+
+[folder]
+scanned = ["{size} in the first {n} item", "{size} in the first {n} items"]
+hidden = ["{n} item hidden", "{n} items hidden"]
+last_change = "Last change {date}"
+most_common = "Most common: {types}"
+no_extension = "no extension"

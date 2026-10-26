@@ -1,0 +1,18 @@
+[status]
+assigned = "{key} runs «{command}» now"
+left_without = "«{command}» is left without a shortcut"
+keeps = "«{command}» keeps {keys}"
+no_shortcut = "«{command}» has no shortcut now"
+removed = "Removed {key} from «{command}»"
+restored = "«{command}» has its default shortcuts again"
+restored_all = "All commands have their default shortcuts again"
+
+[capture]
+press = "Press the new shortcut for «{command}»"
+esc_cancels = "Esc cancels"
+cannot = "{key} cannot be used: {why}"
+other_keys = "Press other keys"
+already = "{key} already runs «{command}»"
+reassign = "Reassign {key} from «{from}» to «{command}»"
+assign = "Assign {key} to «{command}»"
+remove = "Remove the shortcut {key}"

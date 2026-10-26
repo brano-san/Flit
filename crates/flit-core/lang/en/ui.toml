@@ -1,0 +1,19 @@
+invalid_path = "Invalid path: {path}"
+in_recycle_bin = "\"{name}\" is in the Recycle Bin. Restore it to open it."
+dropped_routes = ["Opened the first {shown} of {n} location", "Opened the first {shown} of {n} locations"]
+
+[bin]
+restore = "Restore"
+restore_all = "Restore all"
+empty = "Empty Recycle Bin"
+
+[empty]
+filtered = "No items match the filter."
+bin = "The Recycle Bin is empty."
+folder = "This folder is empty."
+
+[status]
+selected = ["{n} selected", "{n} selected"]
+unpacked = "{size} unpacked"
+loading = "Loading…"
+timing = "{first} ms first · {all} ms all"

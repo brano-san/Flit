@@ -1,0 +1,22 @@
+[placeholder]
+encoding = "Type to filter the encodings of names in the archive"
+commands = "Type a command"
+new_item = "Type to filter the kinds of new items"
+shortcut = "Full path of the shortcut target"
+stream = "Name of the new alternate data stream"
+folder_icon = "Full path of an icon, program or library, then optionally a comma and the icon index"
+new_library = "Name of the new library"
+library = "Enter makes a folder the default save location, Delete removes it from the library"
+library_add = "Full path of the folder to include in the library"
+
+[empty]
+commands = "No matching commands"
+new_item = "No matching kinds of items"
+encoding = "No matching encodings"
+shortcut = "Enter creates the shortcut in this folder"
+stream = "Enter creates the stream"
+folder_icon = "Enter writes the icon into desktop.ini of the folder"
+new_library = "Enter creates the library in the Libraries folder"
+library = "No matching folders"
+library_add = "Enter adds the folder to the library"
+toolbar = "No matching buttons"

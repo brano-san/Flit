@@ -1,0 +1,3 @@
+cannot_open = "Не удается открыть {location} в Flit"
+handed_to_explorer = "Flit не может показать {location}, поэтому расположение откроется в Проводнике"
+no_folders = "В «{name}» нет папок"

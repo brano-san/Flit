@@ -1,0 +1,30 @@
+placeholder = "Поиск: слова, *.ext, ext:, size:, dm:, path:, regex:, tag: или $ и свойство:значение для поиска Windows"
+title = "Поиск — Flit"
+title_in = "Поиск в «{name}» — Flit"
+invalid = "Недопустимый запрос."
+no_match = "Ничего не найдено."
+searching = "Поиск…"
+walking = ["Поиск… {n} результат", "Поиск… {n} результата", "Поиск… {n} результатов"]
+walking_in = ["Поиск… {results} в {n} папке", "Поиск… {results} в {n} папках", "Поиск… {results} в {n} папках"]
+results = ["{n} результат", "{n} результата", "{n} результатов"]
+done_in = "{results} за {ms} мс"
+in = "В «{name}»"
+all_drives = "Все диски"
+recent = "Недавние запросы · Shift+Del удаляет запрос"
+
+[column]
+folder = "Папка"
+
+[source]
+walk = "Поиск в папке и вложенных папках"
+shell = "Поиск Windows"
+tagged = "Файлы с тегами"
+connecting = "Подключение к индексу"
+service = "Служба индексирования"
+fallback = "Локальный индекс (flit-indexd недоступен)"
+
+[index]
+default = "индекс"
+ready = ["{label}: {n} файл", "{label}: {n} файла", "{label}: {n} файлов"]
+scanning = ["{label}: индексирование {percent}% ({n} файл)", "{label}: индексирование {percent}% ({n} файла)", "{label}: индексирование {percent}% ({n} файлов)"]
+error = "{label}: ошибка — {error}"

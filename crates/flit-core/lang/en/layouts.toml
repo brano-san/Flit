@@ -1,0 +1,8 @@
+details = "Details"
+list = "List"
+cards = "Cards"
+columns = "Columns"
+grid = "Grid"
+adaptive = "Adaptive"
+adaptive_shared = "Adaptive layout needs per-folder views: turn off \"Use the same view for all folders\" first"
+thumbnails_cleared = "The thumbnail cache was cleared"

@@ -1,0 +1,30 @@
+placeholder = "Search: words, *.ext, ext:, size:, dm:, path:, regex:, tag:, or $ and property:value for Windows Search"
+title = "Search — Flit"
+title_in = "Search in {name} — Flit"
+invalid = "The query is not valid."
+no_match = "No files match."
+searching = "Searching…"
+walking = ["Searching… {n} result", "Searching… {n} results"]
+walking_in = ["Searching… {results} in {n} folder", "Searching… {results} in {n} folders"]
+results = ["{n} result", "{n} results"]
+done_in = "{results} in {ms} ms"
+in = "In {name}"
+all_drives = "All drives"
+recent = "Recent searches · Shift+Del removes one"
+
+[column]
+folder = "Folder"
+
+[source]
+walk = "Live search of the folder and its subfolders"
+shell = "Windows Search"
+tagged = "Tagged files"
+connecting = "Connecting to the index"
+service = "Index service"
+fallback = "Local index (flit-indexd unavailable)"
+
+[index]
+default = "index"
+ready = ["{label} {n} file", "{label} {n} files"]
+scanning = ["{label} indexing {percent}% ({n} file)", "{label} indexing {percent}% ({n} files)"]
+error = "{label} error: {error}"

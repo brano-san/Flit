@@ -1,0 +1,7 @@
+empty = "Enter a name for the tag"
+dot = "A tag name cannot start or end with a dot"
+characters = "A tag name cannot contain quotes or control characters"
+too_long = "A tag name can be at most 64 characters long"
+exists = "A tag with this name already exists"
+too_many = "Flit supports at most 32 tags"
+gone = "This tag no longer exists"

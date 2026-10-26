@@ -1,0 +1,3 @@
+cannot_open = "Cannot open {location} in Flit"
+handed_to_explorer = "Flit cannot show {location}, so it opens in File Explorer"
+no_folders = "{name} has no folders"

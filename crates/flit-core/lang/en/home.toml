@@ -1,0 +1,13 @@
+no_tags = "No tags yet: Edit tags in the menu of a file adds one"
+recent_off = "Windows does not keep a list of recent files: it is turned off in Settings, Personalization, Start"
+no_recent = "No recent files"
+remove_from_list = "Remove from the list"
+clear_list = "Clear the list"
+clear_recent = "Clear recent files"
+drive_free = "{free} free of {total}"
+
+[widget]
+quick_access = "Quick access"
+drives = "Drives"
+tags = "Tags"
+recent = "Recent files"

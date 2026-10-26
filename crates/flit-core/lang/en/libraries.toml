@@ -1,0 +1,5 @@
+add_folder = "Add a folder…"
+not_loaded = "This library is not loaded yet"
+default_save = "Default save location"
+enter_path = "Enter the full path of the folder to include in the library"
+not_changed = "The library was not changed: {message}"

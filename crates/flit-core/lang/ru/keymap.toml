@@ -1,0 +1,18 @@
+[status]
+assigned = "{key} теперь запускает «{command}»"
+left_without = "«{command}» остается без сочетания клавиш"
+keeps = "У «{command}» остается {keys}"
+no_shortcut = "У «{command}» больше нет сочетания клавиш"
+removed = "Сочетание {key} удалено у «{command}»"
+restored = "У «{command}» снова стандартные сочетания клавиш"
+restored_all = "У всех команд снова стандартные сочетания клавиш"
+
+[capture]
+press = "Нажмите новое сочетание клавиш для «{command}»"
+esc_cancels = "Esc — отмена"
+cannot = "{key} нельзя использовать: {why}"
+other_keys = "Нажмите другие клавиши"
+already = "{key} уже запускает «{command}»"
+reassign = "Переназначить {key} с «{from}» на «{command}»"
+assign = "Назначить {key} для «{command}»"
+remove = "Удалить сочетание {key}"
