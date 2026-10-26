@@ -63,6 +63,11 @@ debug = "line-tables-only"
 [profile.bench]
 inherits = "release"
 
+[profile.dist]
+inherits = "release"
+debug = false
+strip = true
+
 [profile.wsl-agent]
 inherits = "release"
 debug = false

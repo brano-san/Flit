@@ -11,6 +11,7 @@ keys="start_to_first_frame_ms first_rows_ms full_listing_ms frame_cpu_p50_ms fra
 cargo build --release -p flit -p flit-gen --manifest-path "$root/Cargo.toml"
 [ -d "$data/flat_100k" ] || "$target/release/flit-gen" "$data" --all >/dev/null
 mkdir -p "$out"
+rm -f "$out"/*.json
 
 sandbox=$(mktemp -d /tmp/flit-metrics-XXXXXX)
 mkdir -p "$sandbox/home" "$sandbox/run"
@@ -44,7 +45,6 @@ median() {
 printf '| folder | %s |\n' "$(echo $keys | sed 's/ / | /g')"
 for folder in flat_10k flat_100k; do
     for i in $(seq "$runs"); do
-        rm -f "$out/$folder-$i.json"
         timeout 120 "$target/release/flit" --metrics "$out/$folder-$i.json" "$data/$folder" >/dev/null 2>&1 || true
     done
     row="| $folder |"
@@ -54,3 +54,4 @@ for folder in flat_10k flat_100k; do
     echo "$row"
 done
 ls -l "$target/release/flit" | awk '{print "binary bytes:", $5}'
+grep -q '"start_to_first_frame_ms":[0-9]' "$out/flat_10k-1.json" || { echo "flit drew no frame under $server" >&2; exit 1; }

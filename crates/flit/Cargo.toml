@@ -24,6 +24,41 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-tracy = { workspace = true, optional = true }
 
+[package.metadata.deb]
+name = "flit"
+maintainer = "Flit developers"
+section = "utils"
+priority = "optional"
+extended-description = "A fast GPU-drawn file manager for Wayland and X11."
+depends = "libc6 (>= 2.35), libegl1, libgles2, libxkbcommon0, libfontconfig1"
+recommends = "libxkbcommon-x11-0, libwayland-client0, libwayland-egl1, xdg-utils, shared-mime-info"
+assets = [
+    ["target/release/flit", "usr/bin/", "755"],
+    ["../../assets/flit.desktop", "usr/share/applications/", "644"],
+    ["../../assets/icon/hicolor/scalable/apps/flit.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["../../assets/icon/hicolor/256x256/apps/flit.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
+    ["../../assets/icon/hicolor/128x128/apps/flit.png", "usr/share/icons/hicolor/128x128/apps/", "644"],
+    ["../../assets/icon/hicolor/64x64/apps/flit.png", "usr/share/icons/hicolor/64x64/apps/", "644"],
+    ["../../assets/icon/hicolor/48x48/apps/flit.png", "usr/share/icons/hicolor/48x48/apps/", "644"],
+    ["../../assets/icon/hicolor/32x32/apps/flit.png", "usr/share/icons/hicolor/32x32/apps/", "644"],
+    ["../../assets/icon/hicolor/16x16/apps/flit.png", "usr/share/icons/hicolor/16x16/apps/", "644"],
+]
+
+[package.metadata.generate-rpm]
+summary = "Fast GPU-drawn file manager"
+assets = [
+    { source = "target/release/flit", dest = "/usr/bin/flit", mode = "755" },
+    { source = "../../assets/flit.desktop", dest = "/usr/share/applications/flit.desktop", mode = "644" },
+    { source = "../../assets/icon/hicolor/scalable/apps/flit.svg", dest = "/usr/share/icons/hicolor/scalable/apps/flit.svg", mode = "644" },
+    { source = "../../assets/icon/hicolor/256x256/apps/flit.png", dest = "/usr/share/icons/hicolor/256x256/apps/flit.png", mode = "644" },
+    { source = "../../assets/icon/hicolor/48x48/apps/flit.png", dest = "/usr/share/icons/hicolor/48x48/apps/flit.png", mode = "644" },
+]
+
+[package.metadata.generate-rpm.requires]
+mesa-libEGL = "*"
+libxkbcommon = "*"
+fontconfig = "*"
+
 [target.'cfg(windows)'.dependencies]
 flit-platform-windows.workspace = true
 
