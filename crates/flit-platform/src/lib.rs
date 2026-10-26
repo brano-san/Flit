@@ -332,6 +332,9 @@ pub trait IndexSource: Sized + Send {
     fn volumes(&self) -> Result<Vec<VolumeInfo>, PlatformError>;
     fn scan<S: IndexSink>(&mut self, volume: &str, sink: &mut S) -> Result<Checkpoint, PlatformError>;
     fn changes<S: IndexSink>(&mut self, volume: &str, from: Checkpoint, sink: &mut S) -> Result<Option<Checkpoint>, PlatformError>;
+    fn snapshot_key(&self, volume: &str) -> String {
+        volume.to_owned()
+    }
 }
 
 pub trait Duplex: std::io::Read + std::io::Write + Send + Sized + 'static {

@@ -5,7 +5,7 @@ use std::os::unix::fs::symlink;
 
 fn index_of(root: &Path) -> VolumeIndex {
     let mut v = VolumeIndex::new("t", root.as_os_str().as_bytes(), b'/');
-    walk(root, &mut v).unwrap();
+    walk(root, &mut v, &mut Tree::default()).unwrap();
     v.commit();
     v
 }
@@ -67,6 +67,43 @@ fn a_volume_is_rewalked_only_after_its_period() {
 }
 
 #[test]
+fn the_root_volume_is_keyed_by_its_file_system_identity() {
+    let all = mounts::read().unwrap();
+    let root = all.iter().rev().find(|m| m.point == b"/").unwrap();
+    let key = volume_key(root, &mounts::labels(Path::new(BY_UUID))).unwrap();
+    assert!(!key.is_empty() && !key.contains('/'), "{key}");
+}
+
+#[test]
+fn a_sweep_picks_up_new_removed_and_moved_entries_by_directory_mtime() {
+    let t = Temp::new("sweep");
+    let r = t.path();
+    std::fs::create_dir_all(r.join("d/e")).unwrap();
+    std::fs::write(r.join("d/old.txt"), b"x").unwrap();
+    std::fs::write(r.join("d/e/inner.rs"), b"x").unwrap();
+    let mut w = WalkIndex::with_roots(vec![("v".into(), r.to_path_buf(), "ext4".into())]);
+    let mut v = VolumeIndex::new("v", r.as_os_str().as_bytes(), b'/');
+    let cp = w.scan("v", &mut v).unwrap();
+    v.commit();
+    std::fs::remove_file(r.join("d/old.txt")).unwrap();
+    std::fs::write(r.join("new.txt"), b"x").unwrap();
+    std::fs::create_dir_all(r.join("n/m")).unwrap();
+    std::fs::write(r.join("n/m/deep.txt"), b"x").unwrap();
+    std::fs::rename(r.join("d/e"), r.join("moved")).unwrap();
+    assert_eq!(w.changes("v", cp, &mut v).unwrap(), Some(cp));
+    v.commit();
+    let root = r.to_string_lossy();
+    let expect: Vec<String> = ["d", "moved", "moved/inner.rs", "n", "n/m", "n/m/deep.txt", "new.txt"].iter().map(|p| format!("{root}/{p}")).collect();
+    assert_eq!(paths(&v), expect);
+    std::fs::remove_dir_all(r.join("n")).unwrap();
+    w.trees.get_mut("v").unwrap().swept = None;
+    w.changes("v", cp, &mut v).unwrap();
+    v.commit();
+    let expect: Vec<String> = ["d", "moved", "moved/inner.rs", "new.txt"].iter().map(|p| format!("{root}/{p}")).collect();
+    assert_eq!(paths(&v), expect);
+}
+
+#[test]
 #[ignore]
 fn bench_walk_and_snapshot_of_four_hundred_thousand_entries() {
     let t = Temp::new("walk-bench");
@@ -93,4 +130,32 @@ fn bench_walk_and_snapshot_of_four_hundred_thousand_entries() {
     let start = Instant::now();
     let (back, _) = flit_search::snapshot::load(&bytes).unwrap();
     eprintln!("measure: snapshot of {} bytes loads in {:?} with {} entries", bytes.len(), start.elapsed(), back.live());
+}
+
+#[test]
+#[ignore]
+fn bench_an_idle_sweep_of_twenty_thousand_directories() {
+    let t = Temp::new("sweep-bench");
+    for d in 0..200 {
+        for s in 0..100 {
+            let dir = t.path().join(format!("dir{d}/sub{s}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::File::create(dir.join("f.txt")).unwrap();
+        }
+    }
+    let mut v = VolumeIndex::new("t", t.path().as_os_str().as_bytes(), b'/');
+    let mut tree = Tree::default();
+    walk(t.path(), &mut v, &mut tree).unwrap();
+    v.commit();
+    std::thread::sleep(Duration::from_secs(3));
+    tree.sweep(&mut v);
+    let mut runs: Vec<Duration> = (0..5)
+        .map(|_| {
+            let start = Instant::now();
+            assert_eq!(tree.sweep(&mut v), 0);
+            start.elapsed()
+        })
+        .collect();
+    runs.sort();
+    eprintln!("measure: idle sweep of {} directories median {:?}", tree.dirs.len(), runs[2]);
 }
