@@ -70,7 +70,8 @@ pub(crate) fn toggle_ids(items: &[MenuItem]) -> Vec<u32> {
 }
 
 unsafe fn toggle_under(msg: &MSG) -> bool {
-    let hmenu = HMENU(SendMessageW(msg.hwnd, MN_GETHMENU, None, None).0 as _);
+    let under = WindowFromPoint(msg.pt);
+    let hmenu = HMENU(SendMessageW(under, MN_GETHMENU, None, None).0 as _);
     if hmenu.is_invalid() {
         return false;
     }
@@ -82,7 +83,7 @@ unsafe fn toggle_under(msg: &MSG) -> bool {
     let Some(send) = TOGGLES.with_borrow(|t| t.as_ref().filter(|t| t.ids.contains(&id)).map(|t| t.send)) else { return false };
     let checked = GetMenuState(hmenu, id, MF_BYCOMMAND) & MF_CHECKED.0 != 0;
     CheckMenuItem(hmenu, id, (MF_BYCOMMAND | if checked { MF_UNCHECKED } else { MF_CHECKED }).0);
-    let _ = InvalidateRect(Some(msg.hwnd), None, true);
+    let _ = InvalidateRect(Some(under), None, true);
     (*send)(Event::MenuCommand((id - FLIT_FIRST) as usize));
     true
 }
