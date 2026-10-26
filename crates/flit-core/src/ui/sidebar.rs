@@ -12,7 +12,7 @@ use crate::path::{FsPath, PathKind};
 use crate::provider::{Launch, ProviderRequest};
 use crate::render::{Color, Rect};
 use crate::tags::Tags;
-use crate::text::{Gfx, TextBackend};
+use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::Theme;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -27,6 +27,10 @@ const DRIVE_H: f32 = 38.0;
 const HEADER_H: f32 = 28.0;
 const COMPACT_HEADER_H: f32 = 12.0;
 const PIN_W: f32 = 22.0;
+const SECTION_GAP: f32 = 10.0;
+const ITEM_INDENT: f32 = 18.0;
+const HEADER_TITLE_X: f32 = 28.0;
+const BAR_MARGIN: f32 = 12.0;
 const MAX_LIST: usize = 256;
 const RECENT_MAX: usize = 10;
 
@@ -46,6 +50,7 @@ const G_PIN: &str = "\u{E718}";
 const G_UNPIN: &str = "\u{E77A}";
 const G_EXPANDED: &str = "\u{E70D}";
 const G_COLLAPSED: &str = "\u{E76C}";
+const G_RECENT: &str = "\u{E81C}";
 pub(super) const G_SETTINGS: &str = "\u{E713}";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -243,6 +248,18 @@ impl Section {
             Section::Tags => "tags",
         }
     }
+
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Section::Pinned => G_PIN,
+            Section::Recent => G_RECENT,
+            Section::Folders => G_FOLDER,
+            Section::Libraries => G_LIBRARY,
+            Section::Drives => G_DRIVE,
+            Section::Wsl => G_LINUX,
+            Section::Tags => G_TAG,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -297,6 +314,7 @@ pub(super) struct Sidebar {
     pub cursor: usize,
     pub press_y: f32,
     pub tags: Arc<Tags>,
+    pub bar_w: f32,
 }
 
 fn pinned_label(loc: &Location) -> String {
@@ -405,6 +423,10 @@ impl Sidebar {
     pub fn pin_rect(&self, r: Rect, scale: f32) -> Rect {
         let w = (PIN_W * scale).round();
         Rect::new(r.right() - w - (4.0 * scale).round(), r.y + ((r.h - w) / 2.0).round(), w, w)
+    }
+
+    pub fn min_w(&self) -> f32 {
+        (6.0 + ITEM_INDENT + 36.0 + self.bar_w + 12.0 + 6.0).ceil().clamp(SIDEBAR_MIN_W, SIDEBAR_MAX_W)
     }
 
     pub fn library(&self, path: &FsPath) -> Option<&Library> {
@@ -827,7 +849,7 @@ impl App {
                 sb.rects.push(Rect::new(x, y, w, h));
                 y += h;
             }
-            y += if compact { s(2.0) } else { s(6.0) };
+            y += if compact { s(2.0) } else { s(SECTION_GAP) };
         }
         sb.content_h = y + footer;
         sb.scroll = sb.scroll.clamp(0.0, (sb.content_h - sb.rect.h).max(0.0));
@@ -876,7 +898,7 @@ impl App {
     }
 
     pub(super) fn drag_splitter(&mut self, x: f32, start_x: f32, start_w: f32) {
-        let w = (start_w + (x - start_x) / self.scale).clamp(SIDEBAR_MIN_W, SIDEBAR_MAX_W);
+        let w = (start_w + (x - start_x) / self.scale).clamp(self.nav.sidebar.min_w(), SIDEBAR_MAX_W);
         self.nav.sidebar.state.sidebar_w = w.round();
         self.layout();
         self.dirty = true;
@@ -940,9 +962,12 @@ impl App {
         let icons = self.icon_font(14.0);
         let pin_font = self.icon_font(11.0);
         let chevron = self.icon_font(8.0);
+        let header_font = self.header_font();
+        let header_icons = self.icon_font(13.0);
         let m = g.metrics(font);
         let ms = g.metrics(small);
-        let (s4, s8, s12, s36) = (self.s(4.0), self.s(8.0), self.s(12.0), self.s(36.0));
+        let mh = g.metrics(header_font);
+        let (s4, s8, s36) = (self.s(4.0), self.s(8.0), self.s(36.0));
         let here = self.tabs[self.cur].location();
         let focused = self.active && self.focus == Focus::Sidebar;
         let (drop, drop_header) = match self.drop_spot() {
@@ -961,14 +986,16 @@ impl App {
                 g.dl.rect(Rect::new(r.x + s8, (r.y + r.h / 2.0).round(), r.w - 2.0 * s8, 1.0), t.separator);
                 continue;
             }
-            let (baseline, chevron_r) = header_parts(r, ms.ascent, ms.descent, self.scale);
-            g.text(r.x + s8, baseline, section.title(), small, t.text_dim, r.w - s8 - s12 - s8);
+            let (icon_r, title_x, baseline, chevron_r) = header_parts(r, mh.ascent, mh.descent, self.scale);
+            centered(g, icon_r, section.glyph(), header_icons, t.text);
+            g.text(title_x, baseline, section.title(), header_font, t.text, chevron_r.x - title_x - s4);
             let glyph = if sb.is_collapsed(section) { G_COLLAPSED } else { G_EXPANDED };
             centered(g, chevron_r, glyph, chevron, t.text_dim);
         }
         if let Some(r) = sb.hint {
             let baseline = (r.y + (r.h + ms.ascent - ms.descent) / 2.0).round();
-            g.text(r.x + s12, baseline, S::SidebarPinHint.t(), small, t.text_dim.alpha(0xA0), r.w - s12);
+            let x = r.x + self.s(HEADER_TITLE_X);
+            g.text(x, baseline, S::SidebarPinHint.t(), small, t.text_dim.alpha(0xA0), r.right() - x);
         }
         let mut requests: Vec<IconRequest> = Vec::new();
         for (i, (it, &r)) in sb.items.iter().zip(&sb.rects).enumerate() {
@@ -1006,7 +1033,7 @@ impl App {
                 continue;
             }
             let text_h = self.s(ROW_H);
-            let icon_r = Rect::new(r.x + s4, r.y, self.s(28.0), text_h);
+            let (icon_r, text_x) = item_parts(r, self.scale);
             if !self.place_icon(g, it, icon_r, &mut requests) {
                 centered(g, icon_r, it.glyph, icons, color);
             }
@@ -1014,9 +1041,9 @@ impl App {
             let pin_r = sb.pin_rect(Rect::new(r.x, r.y, r.w, text_h), self.scale);
             let pin = hovered && sb.pinnable(i);
             let text_right = if pin { pin_r.x - s4 } else { r.right() - s8 };
-            g.text(r.x + s36, baseline, &it.label, font, t.text, text_right - r.x - s36);
+            g.text(text_x, baseline, &it.label, font, t.text, text_right - text_x);
             if let Some(used) = it.usage {
-                let bar = Rect::new(r.x + s36, r.y + text_h - self.s(2.0), (r.right() - s12 - r.x - s36).max(0.0), self.s(4.0));
+                let bar = self.drive_bar(r);
                 g.dl.round_rect(bar, t.separator, bar.h / 2.0);
                 let fill = if used >= 0.9 { t.error } else { t.accent };
                 g.dl.round_rect(Rect::new(bar.x, bar.y, (bar.w * used.clamp(0.0, 1.0)).max(bar.h), bar.h), fill, bar.h / 2.0);
@@ -1051,6 +1078,29 @@ impl App {
         self.request_icons(requests);
     }
 
+    fn header_font(&self) -> FontStyle {
+        FontStyle::new(FontFamily::Ui, 13.0 * self.scale, true)
+    }
+
+    fn drive_bar(&self, r: Rect) -> Rect {
+        let (_, x) = item_parts(r, self.scale);
+        let avail = (r.right() - self.s(12.0) - x).max(0.0);
+        Rect::new(x, r.y + self.s(ROW_H) - self.s(2.0), self.s(self.nav.sidebar.bar_w).min(avail), self.s(4.0))
+    }
+
+    pub(super) fn fit_sidebar<B: TextBackend>(&mut self, g: &mut Gfx<B>) {
+        let font = self.ui_font(13.0);
+        let sb = &mut self.nav.sidebar;
+        let widest = sb.items.iter().filter(|it| it.usage.is_some()).map(|it| g.measure(&it.label, font)).fold(0.0, f32::max);
+        let bar_w = if widest > 0.0 { (widest / self.scale).ceil() + BAR_MARGIN } else { 0.0 };
+        sb.bar_w = bar_w;
+        let min = sb.min_w();
+        if sb.state.sidebar_w < min {
+            sb.state.sidebar_w = min;
+            self.layout();
+        }
+    }
+
     fn place_icon<B: TextBackend>(&self, g: &mut Gfx<B>, it: &Item, r: Rect, requests: &mut Vec<IconRequest>) -> bool {
         let px = self.s(16.0);
         let Some((key, kind, path)) = place_icon_request(it, &self.nav.sidebar.places, px as u32) else { return false };
@@ -1064,10 +1114,17 @@ impl App {
     }
 }
 
-fn header_parts(r: Rect, ascent: f32, descent: f32, scale: f32) -> (f32, Rect) {
+fn header_parts(r: Rect, ascent: f32, descent: f32, scale: f32) -> (Rect, f32, f32, Rect) {
     let s = |v: f32| (v * scale).round();
     let baseline = (r.y + (r.h + ascent - descent) / 2.0).round();
-    (baseline, Rect::new(r.right() - s(12.0) - s(8.0), r.y, s(12.0) + s(4.0), r.h))
+    let icon = Rect::new(r.x + s(4.0), r.y, s(20.0), r.h);
+    (icon, r.x + s(HEADER_TITLE_X), baseline, Rect::new(r.right() - s(12.0) - s(8.0), r.y, s(12.0) + s(4.0), r.h))
+}
+
+fn item_parts(r: Rect, scale: f32) -> (Rect, f32) {
+    let s = |v: f32| (v * scale).round();
+    let icon = Rect::new(r.x + s(ITEM_INDENT) + s(4.0), r.y, s(28.0), s(ROW_H));
+    (icon, icon.right() + s(4.0))
 }
 
 fn place_icon_request(it: &Item, places: &Places, px: u32) -> Option<(u64, IconKind, FsPath)> {

@@ -544,7 +544,7 @@ impl App {
                 let path = if in_bin { recycle::recycled(l, i) } else { t.entry_location(i).to_windows() };
                 let kind = if e.is_dir() { Kind::Folder } else { preview::kind(l.ext(i)) };
                 let drive = (e.attrs & attr::VOLUME != 0)
-                    .then(|| self.nav.sidebar.places.drives.iter().find(|d| d.path.as_bytes().get(..2).is_some_and(|p| p.eq_ignore_ascii_case(name))).map(|d| (d.total, d.free)))
+                    .then(|| self.nav.sidebar.places.drives.iter().find(|d| d.path.as_bytes().get(..2).is_some_and(|p| p.eq_ignore_ascii_case(name)) && d.total > 0).map(|d| (d.total, d.free)))
                     .flatten();
                 let dir_key = if in_bin { recycle::origin(l, i).to_vec() } else { base.dir_key };
                 Some(Subject { title: name::display(name).into_owned(), path, kind, entry: Some(e), ext: l.ext(i).to_vec(), dir_key, drive, ..base })

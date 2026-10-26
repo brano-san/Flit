@@ -60,7 +60,7 @@ fn layout_shows_the_pin_hint_and_scrolls_long_lists() {
     assert!(app.nav.sidebar.rects[0].y < first, "the wheel scrolls the sidebar, not the list");
     app.on_event(&crate::input::Event::Wheel { dx: 0.0, dy: -1000.0 }, Instant::now());
     let sb = &app.nav.sidebar;
-    assert!((sb.rects.last().unwrap().bottom() + 6.0 + (28.0 + 8.0) - sb.rect.bottom()).abs() < 1.0, "clamped at the end, above the Settings button");
+    assert!((sb.rects.last().unwrap().bottom() + SECTION_GAP + (28.0 + 8.0) - sb.rect.bottom()).abs() < 1.0, "clamped at the end, above the Settings button");
     assert!(sb.rects.last().unwrap().bottom() < sb.settings.y);
     assert!(matches!(app.sidebar_hit(sb.rects[23].x + 5.0, sb.rects[23].y + 5.0), Some(Hit::Side(23))));
     assert!(app.sidebar_hit(sb.rect.right() + 50.0, sb.rect.y + 5.0).is_none());
@@ -233,14 +233,15 @@ fn section_header_labels_and_chevrons_sit_in_the_middle_of_their_hover_rect() {
         let mut app = App::new(Persisted::default(), Vec::new(), 0, false, scale, (1200, 2000), Instant::now());
         app.set_places(Arc::new(Places { drives: vec![drive('C')], wsl: vec!["Debian".into()], recycle_bin: true, ..Default::default() }));
         let mut g = Gfx::new(Mono, 1024);
-        let m = g.metrics(app.ui_font(12.0));
+        let m = g.metrics(app.header_font());
         assert!(app.nav.sidebar.headers.len() >= 4, "{scale}");
         for &(r, section) in &app.nav.sidebar.headers {
             let mid = r.y + r.h / 2.0;
-            let (baseline, chevron) = header_parts(r, m.ascent, m.descent, scale);
+            let (icon, _, baseline, chevron) = header_parts(r, m.ascent, m.descent, scale);
             let text_mid = baseline + (m.descent - m.ascent) / 2.0;
             assert!((text_mid - mid).abs() <= 0.5, "{section:?} at {scale}: label centre {text_mid} vs {mid}");
             assert_eq!((chevron.y, chevron.h), (r.y, r.h), "{section:?} at {scale}: the chevron shares the hover rect");
+            assert_eq!((icon.y, icon.h), (r.y, r.h), "{section:?} at {scale}: the header glyph shares the hover rect");
         }
     }
 }
@@ -362,4 +363,90 @@ fn places_ask_the_system_for_their_icons_and_keep_glyphs_until_then() {
     assert!(!asked.iter().any(|(p, _)| p == br"Z:\"), "an offline share is not touched");
     assert_eq!(asked.len(), 7, "{asked:?}");
     assert!(app.icons.values().all(|s| *s == crate::ui::IconState::Pending));
+}
+
+#[test]
+fn every_section_header_has_its_own_glyph_before_the_title() {
+    let glyphs: Vec<&str> = Section::ALL.iter().map(|s| s.glyph()).collect();
+    let mut unique = glyphs.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), Section::ALL.len(), "{glyphs:?}");
+    let app = app_with_places();
+    for &(r, section) in &app.nav.sidebar.headers {
+        let (icon, title_x, _, chevron) = header_parts(r, 10.0, 3.0, 1.0);
+        assert!(r.x < icon.x && icon.right() <= title_x && title_x < chevron.x, "{section:?}");
+    }
+}
+
+#[test]
+fn items_are_indented_so_their_icons_line_up_with_the_header_titles() {
+    for scale in [1.0, 1.5, 2.0] {
+        let mut app = App::new(Persisted::default(), Vec::new(), 0, false, scale, (1200, 900), Instant::now());
+        app.set_places(Arc::new(Places { drives: vec![drive('C')], recycle_bin: true, ..Default::default() }));
+        let sb = &app.nav.sidebar;
+        let (header_icon, title_x, _, _) = header_parts(sb.headers[0].0, 10.0, 3.0, scale);
+        for &r in &sb.rects {
+            let (icon, text_x) = item_parts(r, scale);
+            let glyph_left = icon.x + (icon.w - (16.0 * scale).round()) / 2.0;
+            assert!(glyph_left > header_icon.right(), "{scale}: items sit right of the header glyph");
+            assert!((glyph_left - title_x).abs() <= 2.0 * scale, "{scale}: icon {glyph_left} vs title {title_x}");
+            assert!(text_x > icon.right() - 1.0);
+            assert_eq!(r.x, sb.headers[0].0.x, "hit rects stay full width");
+        }
+    }
+}
+
+fn drive_bars(app: &App) -> Vec<(Rect, Rect)> {
+    let sb = &app.nav.sidebar;
+    sb.items.iter().zip(&sb.rects).filter(|(it, _)| it.usage.is_some()).map(|(_, &r)| (r, app.drive_bar(r))).collect()
+}
+
+#[test]
+fn drive_bars_share_the_widest_label_width_and_ignore_the_sidebar_width() {
+    let mut app = app_with_places();
+    let mut g = Gfx::new(Mono, 1024);
+    let font = app.ui_font(13.0);
+    let widest = app.nav.sidebar.items.iter().filter(|it| it.usage.is_some()).map(|it| g.measure(&it.label, font)).fold(0.0, f32::max);
+    assert!(widest > 0.0);
+    let mut widths = Vec::new();
+    for w in [240.0, 420.0] {
+        let mut st = app.nav_state();
+        st.sidebar_w = w;
+        app.set_nav_state(st);
+        app.frame(&mut g, Instant::now());
+        assert_eq!(app.nav.sidebar.bar_w, widest.ceil() + BAR_MARGIN);
+        let bars = drive_bars(&app);
+        assert_eq!(bars.len(), 2);
+        for (r, b) in &bars {
+            assert_eq!(b.x, item_parts(*r, 1.0).1, "the bar starts under the label");
+            assert_eq!(b.w, bars[0].1.w, "every drive bar has the same width");
+        }
+        widths.push(bars[0].1.w);
+    }
+    assert_eq!(widths, [widest.ceil() + BAR_MARGIN; 2], "a wider sidebar does not stretch the bars");
+}
+
+#[test]
+fn drives_set_the_minimum_sidebar_width() {
+    let mut app = App::new(Persisted::default(), Vec::new(), 0, false, 1.0, (1200, 900), Instant::now());
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, Instant::now());
+    assert_eq!(app.nav.sidebar.min_w(), SIDEBAR_MIN_W, "the floor holds without drives");
+    let mut st = app.nav_state();
+    st.sidebar_w = SIDEBAR_MIN_W;
+    app.set_nav_state(st);
+    let long = Drive { label: "A very long volume label for bars (D:)".into(), ..drive('D') };
+    app.set_places(Arc::new(Places { drives: vec![drive('C'), long], ..Default::default() }));
+    app.frame(&mut g, Instant::now());
+    let min = app.nav.sidebar.min_w();
+    assert!(min > SIDEBAR_MIN_W && min == (78.0 + app.nav.sidebar.bar_w).ceil(), "{min}");
+    assert_eq!(app.nav_state().sidebar_w, min, "a narrower sidebar grows to fit the bars");
+    for (r, bar) in drive_bars(&app) {
+        assert_eq!(bar.w, app.nav.sidebar.bar_w, "the bar fits uncut");
+        assert!(bar.right() <= r.right() - 12.0 + 0.01);
+    }
+    app.begin_splitter_drag(min);
+    app.drag_splitter(0.0, min, min);
+    assert_eq!(app.nav_state().sidebar_w, min, "the splitter stops at the drive minimum");
 }

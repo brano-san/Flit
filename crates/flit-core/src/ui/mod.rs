@@ -1875,6 +1875,7 @@ impl App {
         arena.reset();
         self.fit_columns(g, &arena);
         self.fit_other(g, &arena);
+        self.fit_sidebar(g);
         self.look.font_missing = !g.set_ui_family(&self.look.font);
         let palette = self.look.palette;
         let (th, files) = (&palette.base, palette.area(Area::Files));
