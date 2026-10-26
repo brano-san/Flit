@@ -21,6 +21,7 @@ documents = "文档"
 pictures = "图片"
 music = "音乐"
 videos = "视频"
+file_system = "文件系统"
 
 [section]
 pinned = "已固定"

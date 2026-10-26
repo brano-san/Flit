@@ -21,6 +21,7 @@ documents = "Documentos"
 pictures = "Imágenes"
 music = "Música"
 videos = "Vídeos"
+file_system = "Sistema de archivos"
 
 [section]
 pinned = "Anclado"

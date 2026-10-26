@@ -337,6 +337,14 @@ fn remove_rect(r: Rect, s: impl Fn(f32) -> f32) -> Rect {
     Rect::new(r.right() - s(PAD) - s(28.0), r.y + (r.h - s(24.0)) / 2.0, s(28.0), s(24.0))
 }
 
+thread_local! {
+    static LABEL_W: std::cell::RefCell<std::collections::HashMap<&'static str, f32>> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+fn glyph_w(btn: &Btn, s: impl Fn(f32) -> f32) -> f32 {
+    if matches!(btn, Btn::AddHome | Btn::AddCurrent | Btn::NewTag) { s(18.0) } else { 0.0 }
+}
+
 fn button_rects(line: &Line, r: Rect, s: impl Fn(f32) -> f32) -> Vec<Rect> {
     let buttons = line.buttons();
     let h = s(30.0);
@@ -361,8 +369,17 @@ fn button_rects(line: &Line, r: Rect, s: impl Fn(f32) -> f32) -> Vec<Rect> {
             (0..n).map(|k| Rect::new(r.right() - s(PAD) - (n - k) as f32 * (w + s(8.0)) + s(8.0), y, w, h)).collect()
         }
         _ => {
-            let (w, x0) = (s(BUTTON_W), r.x + if matches!(line, Line::Buttons(Some(_), _)) { s(32.0) } else { s(PAD) });
-            (0..buttons.len()).map(|k| Rect::new(x0 + k as f32 * (w + s(8.0)), y, w, h)).collect()
+            let mut x = r.x + if matches!(line, Line::Buttons(Some(_), _)) { s(32.0) } else { s(PAD) };
+            buttons
+                .iter()
+                .map(|btn| {
+                    let label = LABEL_W.with(|m| m.borrow().get(btn.label()).copied()).unwrap_or(0.0);
+                    let w = s(BUTTON_W).max(label + s(16.0) + glyph_w(btn, &s));
+                    let b = Rect::new(x, y, w, h);
+                    x += w + s(8.0);
+                    b
+                })
+                .collect()
         }
     }
 }
@@ -1361,12 +1378,16 @@ impl App {
                 }
                 Line::Buttons(..) => {}
             }
+            for btn in line.buttons() {
+                let w = g.measure(btn.label(), font);
+                LABEL_W.with(|m| m.borrow_mut().insert(btn.label(), w));
+            }
             for (b, (br, btn)) in button_rects(line, r, s).into_iter().zip(line.buttons()).enumerate() {
                 let hot = hover == Hit::Settings(SHit::Button(k, b));
                 let danger = matches!(btn, Btn::Reset | Btn::Delete | Btn::RestoreKeys);
                 g.dl.round_rect(br, if hot { t.button_pressed } else { t.button_hover }, s4);
                 g.dl.outline(br, if focused && ui.sub == b { t.accent } else { t.input_border }, s4, if focused && ui.sub == b { sc.round().max(1.0) } else { 1.0 });
-                let glyph_w = if matches!(btn, Btn::AddHome | Btn::AddCurrent | Btn::NewTag) { s(18.0) } else { 0.0 };
+                let glyph_w = glyph_w(btn, s);
                 if glyph_w > 0.0 {
                     centered(g, Rect::new(br.x + s(8.0), br.y, glyph_w, br.h), G_PLUS, self.icon_font(9.0), t.accent);
                 }
