@@ -68,7 +68,7 @@ fn application_dates_are_relative_to_today() {
 #[test]
 fn russian_sizes_and_dates() {
     crate::i18n::set_lang(crate::i18n::Lang::Ru);
-    assert_eq!(s(|o| size(o, 1023)), "1023 Б");
+    assert_eq!(s(|o| size(o, 1023)), "1023 байт");
     assert_eq!(s(|o| size(o, 1536)), "1,5 КБ");
     assert_eq!(s(|o| size_in(o, 1500, true)), "1,5 кБ");
     assert_eq!(s(|o| size(o, 150 * 1024 * 1024)), "150 МБ");
@@ -85,4 +85,26 @@ fn russian_sizes_and_dates() {
     assert_eq!(at(400), "20 сен 2025");
     assert_eq!(month_name(5), "Май");
     crate::i18n::set_lang(crate::i18n::Lang::En);
+}
+
+#[test]
+fn sizes_use_russian_units() {
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+    let mut s = String::new();
+    size(&mut s, 512);
+    assert_eq!(s, "512 байт");
+    s.clear();
+    size(&mut s, 10 << 20);
+    assert_eq!(s, "10,0 МБ");
+    assert_eq!(size_label("4.7 GB"), "4,7 ГБ");
+    assert_eq!(size_label("10 MB"), "10 МБ");
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+    assert_eq!(size_label("10 MB"), "10 MB");
+}
+
+#[test]
+fn a_single_t_takes_the_first_character_of_the_meridiem() {
+    assert_eq!(first_char("午前"), "午");
+    assert_eq!(first_char("PM"), "P");
+    assert_eq!(first_char(""), "");
 }

@@ -1102,7 +1102,7 @@ impl App {
         let mut left = bumpalo::collections::String::new_in(arena);
         let mut color = t.text_dim;
         if let Some(e) = &s.error {
-            left.push_str(e);
+            left.push_str(&crate::i18n::localize(e));
             color = t.error;
         } else if s.walking {
             if s.folders > 0 {

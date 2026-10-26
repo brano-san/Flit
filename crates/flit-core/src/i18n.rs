@@ -320,6 +320,51 @@ pub fn localize(msg: &str) -> Cow<'_, str> {
     Cow::Borrowed(msg)
 }
 
+pub fn relocalize(msg: &str, from: Lang) -> Cow<'_, str> {
+    let to = lang();
+    if to == from || msg.is_empty() {
+        return Cow::Borrowed(msg);
+    }
+    for t in templates(from) {
+        let Some(args) = captures(t.text, msg) else { continue };
+        let n = args.iter().find(|(name, _)| *name == "n").map_or(0, |(_, v)| v.chars().filter(char::is_ascii_digit).collect::<String>().parse::<u64>().unwrap_or(0));
+        let target = match t.key {
+            Key::S(s) => s.in_lang(to),
+            Key::P(p) => p.pick_in(to, n),
+        };
+        let moved: Vec<(&str, String)> = args.iter().map(|&(name, v)| (name, if name == "n" { num(n).to_string() } else { relocalize(v, from).into_owned() })).collect();
+        let refs: Vec<(&str, &dyn Display)> = moved.iter().map(|(name, v)| (*name, v as &dyn Display)).collect();
+        return Cow::Owned(fill(target, &refs));
+    }
+    Cow::Borrowed(msg)
+}
+
+pub fn relocalize_static(msg: &'static str, from: Lang) -> &'static str {
+    S::ALL.into_iter().find(|s| s.in_lang(from) == msg).map_or(msg, |s| s.t())
+}
+
+#[derive(Clone, Copy)]
+enum Key {
+    S(S),
+    P(P),
+}
+
+struct Template {
+    key: Key,
+    text: &'static str,
+}
+
+fn templates(l: Lang) -> &'static [Template] {
+    static ALL: [std::sync::OnceLock<Vec<Template>>; 2] = [std::sync::OnceLock::new(), std::sync::OnceLock::new()];
+    ALL[l as usize].get_or_init(|| {
+        let plain = S::ALL.into_iter().map(|s| Template { key: Key::S(s), text: s.in_lang(l) });
+        let plural = P::ALL.into_iter().flat_map(|p| p.forms(l).iter().map(move |&text| Template { key: Key::P(p), text }));
+        let mut v: Vec<Template> = plain.chain(plural).filter(|t| literal_len(t.text) > 0).collect();
+        v.sort_by_key(|t| std::cmp::Reverse(literal_len(t.text)));
+        v
+    })
+}
+
 fn errors() -> &'static [S] {
     static ERRORS: std::sync::OnceLock<Vec<S>> = std::sync::OnceLock::new();
     ERRORS.get_or_init(|| {

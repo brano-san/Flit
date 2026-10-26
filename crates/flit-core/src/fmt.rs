@@ -63,6 +63,18 @@ pub fn size_in(out: &mut impl Write, bytes: u64, decimal: bool) {
     let _ = write!(out, " {}", unit.t());
 }
 
+pub fn size_label(label: &str) -> String {
+    let Some((n, unit)) = label.split_once(' ').and_then(|(n, u)| Some((n, UNITS.into_iter().find(|s| s.en() == u)?))) else { return label.to_owned() };
+    let mut out = String::new();
+    match n.parse::<f64>() {
+        Ok(v) if n.contains('.') => i18n::decimal(&mut out, v, 1),
+        _ => out.push_str(n),
+    }
+    out.push(' ');
+    out.push_str(unit.t());
+    out
+}
+
 fn local_secs(ticks: i64, offset_min: i32) -> i64 {
     ticks / 10_000_000 - 11_644_473_600 + offset_min as i64 * 60
 }
@@ -165,12 +177,16 @@ pub fn picture(out: &mut impl Write, pattern: &str, secs: i64) {
             ('m', _) => write!(out, "{min:02}"),
             ('s', 1) => write!(out, "{s}"),
             ('s', _) => write!(out, "{s:02}"),
-            ('t', 1) => out.write_str(meridiem(h).get(..1).unwrap_or_default()),
+            ('t', 1) => out.write_str(first_char(meridiem(h))),
             ('t', _) => out.write_str(meridiem(h)),
             ('g', _) => Ok(()),
             _ => (0..n).try_for_each(|_| out.write_char(c)),
         };
     }
+}
+
+fn first_char(s: &str) -> &str {
+    s.char_indices().nth(1).map_or(s, |(i, _)| &s[..i])
 }
 
 fn meridiem(h: i64) -> &'static str {

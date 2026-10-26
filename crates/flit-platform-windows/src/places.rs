@@ -45,16 +45,16 @@ pub fn drives() -> Vec<Drive> {
             let name = match wide_str(&label) {
                 l if !l.is_empty() => l,
                 _ => match kind {
-                    DRIVE_FIXED => S::SidebarDriveLocal.t(),
-                    DRIVE_REMOVABLE => S::SidebarDriveUsb.t(),
-                    DRIVE_CDROM => S::SidebarDriveCd.t(),
-                    DRIVE_REMOTE => S::SidebarDriveNetwork.t(),
-                    _ => S::SidebarDriveOther.t(),
+                    DRIVE_FIXED => S::SidebarDriveLocal.en(),
+                    DRIVE_REMOVABLE => S::SidebarDriveUsb.en(),
+                    DRIVE_CDROM => S::SidebarDriveCd.en(),
+                    DRIVE_REMOTE => S::SidebarDriveNetwork.en(),
+                    _ => S::SidebarDriveOther.en(),
                 }
                 .to_owned(),
             };
             let path = FsPath::parse(&format!("{letter}:\\"))?;
-            Some(Drive { path, label: format!("{name} ({letter}:)"), total, free, removable: matches!(kind, DRIVE_REMOVABLE | DRIVE_CDROM) })
+            Some(Drive { path, label: flit_core::tr_en!(S::SidebarDriveLabel, name = name, letter = letter), total, free, removable: matches!(kind, DRIVE_REMOVABLE | DRIVE_CDROM) })
         })
         .collect()
 }

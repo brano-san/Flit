@@ -48,8 +48,10 @@ fn moved_path(path: &FsPath, from: &FsPath, to: &FsPath) -> Option<FsPath> {
     if same(p, f) {
         return Some(to.clone());
     }
-    let rest = p.get(f.len()..).filter(|r| same(&p[..f.len()], f) && r.first() == Some(&path.sep()))?;
-    FsPath::parse_bytes(&[to.as_bytes(), rest].concat())
+    let sep = [path.sep()];
+    let (f, t) = (f.strip_suffix(&sep).unwrap_or(f), to.as_bytes().strip_suffix(&sep).unwrap_or(to.as_bytes()));
+    let rest = p.get(f.len()..).filter(|r| same(&p[..f.len()], f) && r.first() == Some(&sep[0]))?;
+    FsPath::parse_bytes(&[t, rest].concat())
 }
 
 impl Book {
@@ -57,7 +59,7 @@ impl Book {
         let bytes = file.as_ref().and_then(|f| std::fs::read(f).ok());
         let store = match bytes.as_deref().map(postcard::from_bytes::<TagFile>) {
             None => TagStore::default(),
-            Some(Ok(t)) if t.version == FILE_VERSION => t.store,
+            Some(Ok(t)) if t.version == FILE_VERSION && t.store.tags.len() <= tags::MAX_TAGS => t.store,
             Some(_) => {
                 if let Some(f) = &file {
                     tracing::warn!("{} is not readable; it is kept as tags.bin.bad", f.display());

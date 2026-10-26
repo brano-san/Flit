@@ -38,7 +38,7 @@ unsafe fn condition(aqs: &str) -> Result<ICondition, PlatformError> {
     let solution = parser.Parse(&HSTRING::from(aqs), None).map_err(err)?;
     let mut parsed = None;
     solution.GetQuery(Some(&mut parsed), None).map_err(err)?;
-    let parsed = parsed.ok_or_else(|| PlatformError::new(-1, "Windows Search could not read the query"))?;
+    let parsed = parsed.ok_or_else(|| PlatformError::new(-1, flit_core::i18n::S::ErrorsSearchUnreadableQuery.en()))?;
     let now = GetLocalTime();
     solution.Resolve(&parsed, SQRO_DONT_SPLIT_WORDS, Some(&now)).map_err(err)
 }
