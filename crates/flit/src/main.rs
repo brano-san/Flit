@@ -1,6 +1,7 @@
 #![cfg_attr(not(test), windows_subsystem = "windows")]
 
 mod app;
+mod diagnose;
 mod find;
 mod logs;
 mod metrics;
@@ -53,7 +54,18 @@ fn main() {
     let mut activated = false;
     let mut it = std::env::args_os().skip(1);
     while let Some(a) = it.next() {
-        if a == "--dbus-activated" {
+        if a == "--diagnose" {
+            #[cfg(windows)]
+            flit_platform_windows::diagnose::attach_console();
+            match diagnose::run::<P>() {
+                Ok(path) => println!("{}", path.display()),
+                Err(e) => {
+                    eprintln!("flit: cannot write the diagnostics file: {e}");
+                    std::process::exit(1);
+                }
+            }
+            return;
+        } else if a == "--dbus-activated" {
             activated = true;
         } else if a == "--metrics" {
             metrics = it.next().map(PathBuf::from);
