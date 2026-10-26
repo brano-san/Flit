@@ -8,6 +8,7 @@ coded = "{what} (0x{code})"
 retry = "{error}. Press F5 to try again."
 insert_media = "{error}. Insert one and press F5, or eject the drive."
 not_responding = "The network location is not responding"
+device_unsupported = "This action is not available on phones and cameras"
 
 [title]
 encrypted = "This archive is encrypted"

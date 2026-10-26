@@ -508,3 +508,13 @@ fn renames_refuse_taken_names_but_change_case() {
     let batch = run(&mut sh, &FileOp::MoveTo(vec![(t.path("A.txt"), t.path("Trip (1).txt")), (t.path("b.txt"), t.path("Trip (2).txt"))]));
     assert_eq!(names(&batch.items), ["Trip (1).txt", "Trip (2).txt"]);
 }
+
+#[test]
+fn devices_refuse_what_the_shell_cannot_do_on_them() {
+    let phone = FsPath::device(b"Pixel 7").unwrap().join(b"DCIM");
+    let job = Job::detached(flit_core::provider::Resolve::Skip);
+    for op in [FileOp::NewFile { dir: phone.clone(), name: b"a.txt".to_vec(), template: Template::Empty }, FileOp::Link { items: vec![phone.clone()], dest: FsPath::parse(r"C:\").unwrap() }] {
+        let out = device_op(&op, &job);
+        assert_eq!(out.error.map(|e| e.message), Some(S::ErrorsFsDeviceUnsupported.en().to_owned()));
+    }
+}
