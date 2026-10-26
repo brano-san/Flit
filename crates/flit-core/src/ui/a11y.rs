@@ -220,6 +220,7 @@ impl App {
     pub(super) fn a11y_invoke(&mut self, id: u64, now: Instant) {
         match self.a11y_hit(id) {
             Some(Hit::Form(k)) => self.form_a11y_invoke(k),
+            Some(Hit::FormFlag(k, j)) => self.form_a11y_flag(k, j, true),
             Some(h) => self.activate(h, now),
             None => {}
         }
@@ -231,6 +232,7 @@ impl App {
         match h {
             Hit::Settings(sh) => self.settings_a11y_focus(sh),
             Hit::Form(k) => self.form_a11y_focus(k),
+            Hit::FormFlag(k, j) => self.form_a11y_flag(k, j, false),
             Hit::DialogButton(k) => self.jobs.sel = k,
             Hit::Row(row) => {
                 self.focus = Focus::List;

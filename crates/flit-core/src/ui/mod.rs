@@ -341,6 +341,7 @@ enum Hit {
     DialogButton(usize),
     DialogCheck,
     Form(usize),
+    FormFlag(usize, usize),
     Modal,
     TabActions,
     CrumbMenu(usize),

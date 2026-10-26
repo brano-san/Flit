@@ -84,6 +84,42 @@ fn the_settings_page_exposes_pages_rows_values_and_toggles() {
 }
 
 #[test]
+fn each_option_of_a_checkbox_group_is_its_own_node() {
+    let mut a = app(&["alpha.txt"]);
+    let v = a.tabs[a.cur].view.as_mut().unwrap();
+    let i = v.find(b"alpha.txt").unwrap();
+    v.set_selected(i, true);
+    v.focus = Some(i);
+    a.hashes_dialog();
+    a.layout();
+    let t = a.accessibility();
+    let group = t.nodes.iter().find(|n| n.role == Role::Group).expect("the algorithms group");
+    let options: Vec<_> = group.children.iter().map(|&c| &t.nodes[c]).collect();
+    let before = a.jobs.form.as_ref().unwrap().flags(0);
+    assert_eq!(options.len(), before.len());
+    assert!(options.iter().all(|n| n.role == Role::CheckBox && !n.name.is_empty()));
+    assert_eq!(options.iter().map(|n| n.selected).collect::<Vec<_>>(), before);
+    let second = options[1].id;
+    a.on_event(&Event::A11yFocus(second), Instant::now());
+    assert_eq!(a.accessibility().focus.map(|k| a.accessibility().nodes[k].id), Some(second));
+    a.on_event(&Event::Invoke(second), Instant::now());
+    let after = a.jobs.form.as_ref().unwrap().flags(0);
+    assert_eq!(after[1], !before[1]);
+    assert_eq!(after[0], before[0]);
+}
+
+#[test]
+fn command_bar_buttons_are_focusable_before_the_first_frame() {
+    let mut a = App::new(crate::ui::Persisted { path: crate::Location::parse("C:\\Work").unwrap(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 600), Instant::now());
+    a.enter_focus(Focus::Toolbar);
+    assert_eq!(a.focus, Focus::Toolbar);
+    let t = a.accessibility();
+    let paste = t.by_name(S::ToolbarButtonPaste.t()).unwrap();
+    assert_eq!(paste.role, Role::Button);
+    assert!(t.focus.is_some_and(|k| t.nodes[t.nodes[k].parent].role == Role::ToolBar));
+}
+
+#[test]
 fn form_dialogs_expose_fields_with_values_and_their_buttons() {
     let mut a = app(&["alpha.txt"]);
     let v = a.tabs[a.cur].view.as_mut().unwrap();

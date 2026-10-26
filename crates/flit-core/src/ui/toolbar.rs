@@ -601,9 +601,14 @@ impl App {
 
     pub(super) fn tool_buttons(&self) -> Vec<(ToolHit, Rect, &'static str, &'static str, bool)> {
         let items = self.toolbar_items();
-        let mut out: Vec<_> = self
-            .toolbar
-            .placed
+        let unplaced: Vec<(usize, Rect)>;
+        let placed = if self.toolbar.placed.is_empty() && self.toolbar.more.w <= 0.0 && self.layout.commands.h > 0.0 {
+            unplaced = (0..items.len()).map(|i| (i, Rect::default())).collect();
+            &unplaced
+        } else {
+            &self.toolbar.placed
+        };
+        let mut out: Vec<_> = placed
             .iter()
             .filter_map(|&(i, r)| match items.get(i) {
                 Some(ToolItem::Button(id, _)) => tool(id).map(|t| (ToolHit::Button(i), r, t.label.t(), t.id, self.tool_enabled(t.id))),
