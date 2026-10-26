@@ -123,6 +123,11 @@ impl Shell for LinuxShell {
         None
     }
 
+    fn thumbnail(&mut self, req: &IconRequest) -> Option<Bitmap> {
+        let cache = crate::xdg::cache_dir().and_then(|d| d.parent().map(|p| p.join("thumbnails")));
+        crate::thumb::thumbnail(host(&req.path)?, req.size, cache)
+    }
+
     fn type_name(&mut self, _: &[u8]) -> Option<String> {
         None
     }

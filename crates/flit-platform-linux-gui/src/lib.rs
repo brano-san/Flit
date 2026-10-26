@@ -8,6 +8,7 @@ pub mod instance;
 pub mod places;
 pub mod shell;
 mod text;
+mod thumb;
 mod window;
 pub mod xdg;
 
@@ -75,6 +76,10 @@ impl Platform for Linux {
 
     fn recycle_bin() -> bool {
         true
+    }
+
+    fn recent(limit: usize) -> (Vec<flit_core::ui::Recent>, bool) {
+        places::recent(limit)
     }
 
     fn state_dir() -> Option<PathBuf> {
