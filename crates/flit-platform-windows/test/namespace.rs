@@ -91,3 +91,13 @@ fn network_root_resolves_through_the_real_shell() {
     assert!(net.meta().attrs & attr::DIR != 0);
     assert_eq!(item(&FsPath::device(b"No Such Phone 123").unwrap()).err(), Some(not_found()));
 }
+
+#[test]
+fn portable_devices_are_told_apart_by_their_parsing_name() {
+    assert!(is_device(r"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\\?\usb#vid_18d1&pid_4ee1#abc#{6ac27878-a6fa-4155-ba85-f98f491d4f33}"));
+    assert!(!is_device(r"C:\"));
+    assert!(!is_device(r"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\::{F874310E-B6B7-47DC-BC84-B9E6B38F5903}"));
+    let d = device_drive(FsPath::device(b"Pixel 7").unwrap(), "Pixel 7".into());
+    assert_eq!((d.title(), d.path.display().into_owned()), ("Pixel 7".to_owned(), r"This PC\Pixel 7".to_owned()));
+    assert!(devices().iter().all(|d| d.path.is_device()));
+}

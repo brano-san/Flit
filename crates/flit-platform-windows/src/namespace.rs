@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use windows::core::{Interface, GUID, PCWSTR};
 use windows::Win32::Foundation::{PROPERTYKEY, WIN32_ERROR};
 use windows::Win32::System::SystemServices::{SFGAO_FOLDER, SFGAO_HIDDEN, SFGAO_STREAM};
-use windows::Win32::UI::Shell::{BHID_EnumItems, IEnumShellItems, IShellItem, IShellItem2, SHCreateItemFromParsingName, SIGDN_NORMALDISPLAY};
+use windows::Win32::UI::Shell::{BHID_EnumItems, IEnumShellItems, IShellItem, IShellItem2, SHCreateItemFromParsingName, SIGDN_DESKTOPABSOLUTEPARSING, SIGDN_NORMALDISPLAY};
 
 const STORAGE: GUID = GUID::from_u128(0xb725f130_47ef_101a_a5f1_02608c9eebac);
 const SIZE: PROPERTYKEY = PROPERTYKEY { fmtid: STORAGE, pid: 12 };
@@ -172,3 +172,28 @@ pub(crate) fn read_dir(dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(),
 #[cfg(test)]
 #[path = "../test/namespace.rs"]
 mod tests;
+
+pub(crate) fn devices() -> Vec<flit_core::ui::Drive> {
+    com_sta();
+    let Ok(pc) = parse(flit_core::path::SHELL_COMPUTER) else { return Vec::new() };
+    let mut out = Vec::new();
+    let _ = Item(pc).children(&mut |child| {
+        let parsing = unsafe { child.0.GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING).ok().and_then(|p| take_pwstr(p)) };
+        if parsing.is_some_and(|w| is_device(&String::from_utf16_lossy(&w))) {
+            let name = child.name();
+            if let Some(path) = FsPath::device(&name) {
+                out.push(device_drive(path, String::from_utf8_lossy(&name).into_owned()));
+            }
+        }
+        true
+    });
+    out
+}
+
+pub(crate) fn is_device(parsing: &str) -> bool {
+    parsing.contains(r"\\?\")
+}
+
+pub(crate) fn device_drive(path: FsPath, label: String) -> flit_core::ui::Drive {
+    flit_core::ui::Drive { path, label, total: 0, free: 0, removable: false, unmounted: false, kind: None, remote: None }
+}

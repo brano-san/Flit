@@ -8,6 +8,7 @@ coded = "{what} (0x{code})"
 retry = "{error}。按 F5 重试。"
 insert_media = "{error}。请插入介质并按 F5，或弹出驱动器。"
 not_responding = "网络位置没有响应"
+device_unsupported = "此操作不适用于手机和相机"
 
 [title]
 encrypted = "此压缩文件已加密"

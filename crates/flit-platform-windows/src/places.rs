@@ -67,6 +67,7 @@ pub fn drives() -> Vec<Drive> {
         }
     }
     out.sort_by(|a, b| a.path.as_bytes().cmp(b.path.as_bytes()));
+    out.extend(crate::namespace::devices());
     out.push(Drive { path: FsPath::network(), label: S::PathNetwork.en().to_owned(), total: 0, free: 0, removable: false, unmounted: false, kind: Some(S::PathNetwork), remote: None });
     out
 }

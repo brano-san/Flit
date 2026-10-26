@@ -8,6 +8,7 @@ coded = "{what} (0x{code})"
 retry = "{error}. Presiona F5 para intentarlo de nuevo."
 insert_media = "{error}. Inserta uno y presiona F5, o expulsa la unidad."
 not_responding = "La ubicación de red no responde"
+device_unsupported = "Esta acción no está disponible para teléfonos y cámaras"
 
 [title]
 encrypted = "Este archivo comprimido está cifrado"

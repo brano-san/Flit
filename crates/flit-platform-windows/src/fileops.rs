@@ -523,8 +523,18 @@ fn free_space(dir: &Path) -> Option<u64> {
     Some(free)
 }
 
+fn device_op(op: &FileOp, job: &Job) -> OpOutcome {
+    match op {
+        FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Delete(_) | FileOp::Trash(_) | FileOp::Rename { .. } | FileOp::NewFolder { .. } => unsafe { perform(op, job) },
+        _ => OpOutcome { items: Vec::new(), error: Some(PlatformError::new(-1, S::ErrorsFsDeviceUnsupported.en())) },
+    }
+}
+
 impl FileOps for ShellCom {
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome {
+        if !op.all_paths(|p| p.kind() != flit_core::path::PathKind::Shell) {
+            return device_op(op, job);
+        }
         let env = flit_archive::Env { utc_offset: <crate::Windows as flit_platform::Platform>::utc_offset_minutes(), free_space: &free_space };
         if let Some(out) = flit_archive::file_op(op, job, &env) {
             return out;
