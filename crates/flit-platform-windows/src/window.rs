@@ -578,7 +578,8 @@ impl<H: WindowHandler<Win32>> Shared<H> {
                 node.send(Event::Key { key: Key::Char(','), mods: Mods { ctrl: true, ..Mods::default() }, pressed: true });
                 node.redraw_now();
                 let mut q = node.queue.borrow_mut();
-                let mouse = std::env::var("FLIT_CAPTURE_MOUSE").ok().and_then(|v| v.split_once(',').and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?))));
+                q.extend(std::env::var("FLIT_CAPTURE_TYPE").unwrap_or_default().chars().map(Event::Char));
+                let mouse =std::env::var("FLIT_CAPTURE_MOUSE").ok().and_then(|v| v.split_once(',').and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?))));
                 if let Some((x, y)) = mouse {
                     q.push_back(Event::MouseMove { x, y });
                 }
