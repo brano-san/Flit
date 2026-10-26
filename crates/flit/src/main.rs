@@ -91,6 +91,8 @@ fn main() {
         }
         return logs::flush();
     }
+    #[cfg(target_os = "linux")]
+    flit_platform_linux_gui::prefetch_fonts();
     if let Err(e) = app::run::<P>(open, instance, metrics, started) {
         tracing::error!("cannot start: {e}");
         logs::flush();
