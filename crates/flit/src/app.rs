@@ -277,6 +277,7 @@ struct Handler<P: Platform> {
     timing: bool,
     requested: Option<Instant>,
     tags: TagWorker,
+    git: crate::git::GitWorker,
     settings: Settings,
     dates: (String, String),
     about: About,
@@ -325,8 +326,10 @@ impl<P: Platform> Handler<P> {
         }
         let fx: Vec<Effect> = app.drain_effects().collect();
         for e in fx {
-            if let Effect::Provider { provider, req } = e {
-                self.submit(provider, req);
+            match e {
+                Effect::Provider { provider, req } => self.submit(provider, req),
+                Effect::Git(req) => self.git.submit(req),
+                _ => {}
             }
         }
         app
@@ -539,6 +542,7 @@ impl<P: Platform> Handler<P> {
                 Effect::Library(op) => self.places.library(op),
                 Effect::Timer(d) => window.set_timer(d.as_millis().clamp(1, u32::MAX as u128) as u32),
                 Effect::Tags(req) => self.tags.submit(Some(id), req),
+                Effect::Git(req) => self.git.submit(req),
                 Effect::Settings(SettingsCmd::Export { path, text, replace }) => self.settings.send(Job::Export(crate::preview::std_path(&path), text, replace)),
                 Effect::Settings(SettingsCmd::Import(path)) => self.settings.send(Job::Import(crate::preview::std_path(&path))),
                 Effect::Settings(SettingsCmd::CacheSize) => self.settings.send(Job::CacheSize),
@@ -723,6 +727,14 @@ impl<P: Platform> Handler<P> {
             }
             for app in self.pending.iter_mut().filter(|_| window.is_none()) {
                 app.on_tags(ev.clone(), now);
+            }
+        }
+        while let Ok(ev) = self.git.events.try_recv() {
+            let base = ev.tab() / TAB_STRIDE * TAB_STRIDE;
+            let owns = |app: &App| app.tabs().first().is_some_and(|t| t.id / TAB_STRIDE * TAB_STRIDE == base);
+            let target = self.windows.values_mut().map(|st| &mut st.app).chain(self.pending.iter_mut()).find(|app| owns(app));
+            if let Some(app) = target {
+                app.on_git(ev);
             }
         }
         while let Ok((window, ev)) = self.search.events.try_recv() {
@@ -1116,6 +1128,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         Startup::Folders(tabs) => VecDeque::from([(WindowSession { tabs: tabs.clone(), cur: 0, ..Default::default() }, None)]),
     };
     let first_window = restore.pop_front().filter(|(w, _)| !w.tabs.is_empty());
+    let h_wake = wake.clone();
     let mut h = Handler::<P> {
         windows: HashMap::new(),
         pending: VecDeque::new(),
@@ -1156,6 +1169,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         timing: std::env::var_os("FLIT_TIMING").is_some(),
         requested: Some(started),
         tags,
+        git: crate::git::GitWorker::start(h_wake)?,
         settings,
         dates: ("yyyy-MM-dd".into(), "HH:mm".into()),
         about,

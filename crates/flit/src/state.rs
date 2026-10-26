@@ -30,6 +30,23 @@ struct ViewRecord {
 }
 
 type Look = (LayoutMode, Sizes);
+type GitLook = (u8, [f32; 4]);
+
+#[derive(Serialize, Deserialize)]
+struct GitRecord {
+    view: GitLook,
+    defaults: GitLook,
+    folders: Vec<GitLook>,
+}
+
+fn git_look(v: &FolderView) -> GitLook {
+    (v.columns.git, v.columns.git_widths)
+}
+
+fn with_git(mut v: FolderView, (git, widths): GitLook) -> FolderView {
+    (v.columns.git, v.columns.git_widths) = (git & 0x0F, widths);
+    v
+}
 
 #[derive(Serialize, Deserialize)]
 struct LayoutRecord {
@@ -161,9 +178,17 @@ impl Saved {
                 saved.tools = tools;
                 if let Ok((split, tail)) = postcard::take_from_bytes::<SplitPrefs>(tail) {
                     p.split = split;
-                    if let Ok((word, _)) = postcard::take_from_bytes::<u32>(tail) {
+                    if let Ok((word, tail)) = postcard::take_from_bytes::<u32>(tail) {
                         p.archive.compression.word = word;
                         p.archive = std::mem::take(&mut p.archive).sanitized();
+                        if let Ok((g, _)) = postcard::take_from_bytes::<GitRecord>(tail) {
+                            (p.view, p.prefs.defaults) = (with_git(p.view, g.view), with_git(p.prefs.defaults, g.defaults));
+                            let mut folders = p.folders.entries();
+                            if folders.len() == g.folders.len() {
+                                folders.iter_mut().zip(g.folders).for_each(|((_, v), gl)| *v = with_git(*v, gl));
+                                p.folders = FolderViews::from_entries(folders);
+                            }
+                        }
                     }
                 }
             }
@@ -182,6 +207,7 @@ impl Saved {
             thumbnails: p.prefs.thumbnails,
             thumb_cache_mb: p.prefs.thumb_cache_mb,
         };
+        let gits = GitRecord { view: git_look(&p.view), defaults: git_look(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| git_look(v)).collect() };
         let views = ViewRecord { view: legacy(p.view), prefs, folders: folders.into_iter().map(|(k, v)| (k, legacy(v))).collect() };
         let mut bytes = postcard::to_stdvec(&self.head()).ok()?;
         bytes.extend(postcard::to_stdvec(&self.nav).ok()?);
@@ -193,6 +219,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&Tools { streams: p.prefs.show_streams, ..self.tools.clone() }).ok()?);
         bytes.extend(postcard::to_stdvec(&p.split).ok()?);
         bytes.extend(postcard::to_stdvec(&p.archive.clone().sanitized().compression.word).ok()?);
+        bytes.extend(postcard::to_stdvec(&gits).ok()?);
         Some(bytes)
     }
 

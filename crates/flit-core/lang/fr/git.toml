@@ -1,0 +1,40 @@
+[column]
+status = "Statut Git"
+message = "Message du commit"
+author = "Auteur du commit"
+date = "Date du commit"
+
+[state]
+modified = "Modifié"
+added = "Ajouté"
+deleted = "Supprimé"
+renamed = "Renommé"
+untracked = "Non suivi"
+conflict = "Conflit"
+
+[op]
+fetching = "Récupération…"
+pulling = "Pull en cours…"
+pushing = "Push en cours…"
+initializing = "Création du dépôt Git…"
+cloning = "Clonage de {url}…"
+switching = "Passage à {branch}…"
+
+[done]
+fetch = "Récupération terminée"
+pull = "Pull terminé"
+push = "Push terminé"
+init = "Dépôt Git créé"
+clone = "Cloné dans {name}"
+switch = "Passé à {branch}"
+
+[error]
+not_repo = "Ce dossier n’est pas dans un dépôt Git"
+no_web = "Le dépôt n’a pas de dépôt distant web"
+failed = "Git : {error}"
+
+[clone]
+title = "Cloner un dépôt"
+url = "URL du dépôt"
+hint = "https://github.com/owner/repo.git"
+button = "Cloner"

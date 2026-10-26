@@ -1,0 +1,40 @@
+[column]
+status = "Git 状态"
+message = "提交消息"
+author = "提交作者"
+date = "提交日期"
+
+[state]
+modified = "已修改"
+added = "已添加"
+deleted = "已删除"
+renamed = "已重命名"
+untracked = "未跟踪"
+conflict = "冲突"
+
+[op]
+fetching = "正在获取…"
+pulling = "正在拉取…"
+pushing = "正在推送…"
+initializing = "正在创建 Git 仓库…"
+cloning = "正在克隆 {url}…"
+switching = "正在切换到 {branch}…"
+
+[done]
+fetch = "获取完成"
+pull = "拉取完成"
+push = "推送完成"
+init = "已创建 Git 仓库"
+clone = "已克隆到 {name}"
+switch = "已切换到 {branch}"
+
+[error]
+not_repo = "此文件夹不在 Git 仓库中"
+no_web = "该仓库没有网页远程地址"
+failed = "Git：{error}"
+
+[clone]
+title = "克隆仓库"
+url = "仓库 URL"
+hint = "https://github.com/owner/repo.git"
+button = "克隆"

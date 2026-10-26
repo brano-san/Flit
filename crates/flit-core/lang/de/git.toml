@@ -1,0 +1,40 @@
+[column]
+status = "Git-Status"
+message = "Commit-Nachricht"
+author = "Commit-Autor"
+date = "Commit-Datum"
+
+[state]
+modified = "Geändert"
+added = "Hinzugefügt"
+deleted = "Gelöscht"
+renamed = "Umbenannt"
+untracked = "Nicht verfolgt"
+conflict = "Konflikt"
+
+[op]
+fetching = "Abrufen…"
+pulling = "Pull läuft…"
+pushing = "Push läuft…"
+initializing = "Git-Repository wird erstellt…"
+cloning = "{url} wird geklont…"
+switching = "Wechsel zu {branch}…"
+
+[done]
+fetch = "Abrufen abgeschlossen"
+pull = "Pull abgeschlossen"
+push = "Push abgeschlossen"
+init = "Git-Repository erstellt"
+clone = "In {name} geklont"
+switch = "Zu {branch} gewechselt"
+
+[error]
+not_repo = "Dieser Ordner liegt in keinem Git-Repository"
+no_web = "Das Repository hat keinen Web-Remote"
+failed = "Git: {error}"
+
+[clone]
+title = "Repository klonen"
+url = "Repository-URL"
+hint = "https://github.com/owner/repo.git"
+button = "Klonen"

@@ -39,6 +39,7 @@ mod toolbar;
 mod popup;
 mod own_menu;
 mod properties;
+mod git;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource, MAX_HISTORY};
@@ -120,6 +121,7 @@ const G_SORT_DOWN: &str = "\u{E70D}";
 const G_FOLDER: &str = "\u{E8B7}";
 const G_FILE: &str = "\u{E7C3}";
 const G_DRIVE: &str = "\u{EDA2}";
+const G_BRANCH: &str = "\u{2387}";
 
 const BIN_BUTTONS: [S; 3] = [S::UiBinRestore, S::UiBinRestoreAll, S::UiBinEmpty];
 
@@ -133,8 +135,14 @@ pub enum Column {
     Deleted,
     Created,
     Tag,
+    GitStatus,
+    GitMessage,
+    GitAuthor,
+    GitDate,
 }
 
+pub const GIT_COLUMNS: [Column; 4] = [Column::GitStatus, Column::GitMessage, Column::GitAuthor, Column::GitDate];
+pub const REPO_COLUMNS: [Column; 10] = [Column::Name, Column::Modified, Column::Created, Column::Type, Column::Size, Column::Tag, Column::GitStatus, Column::GitMessage, Column::GitAuthor, Column::GitDate];
 pub const COLUMNS: [Column; 6] = [Column::Name, Column::Modified, Column::Created, Column::Type, Column::Size, Column::Tag];
 pub const BIN_COLUMNS: [Column; 4] = [Column::Name, Column::Origin, Column::Deleted, Column::Size];
 
@@ -149,11 +157,15 @@ impl Column {
             Column::Origin => S::DetailsColumnOrigin,
             Column::Deleted => S::DetailsColumnDeleted,
             Column::Tag => S::DetailsColumnTag,
+            Column::GitStatus => S::GitColumnStatus,
+            Column::GitMessage => S::GitColumnMessage,
+            Column::GitAuthor => S::GitColumnAuthor,
+            Column::GitDate => S::GitColumnDate,
         }
         .t()
     }
-    fn field(self) -> SortField {
-        match self {
+    fn field(self) -> Option<SortField> {
+        Some(match self {
             Column::Name => SortField::Name,
             Column::Modified | Column::Deleted => SortField::Modified,
             Column::Created => SortField::Created,
@@ -161,7 +173,12 @@ impl Column {
             Column::Size => SortField::Size,
             Column::Origin => SortField::Origin,
             Column::Tag => SortField::Tag,
-        }
+            Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => return None,
+        })
+    }
+
+    pub fn is_git(self) -> bool {
+        self as u8 >= Column::GitStatus as u8
     }
 }
 
@@ -235,6 +252,7 @@ pub enum Effect {
     Tags(TagRequest),
     Settings(SettingsCmd),
     Share(Vec<FsPath>),
+    Git(crate::git::GitRequest),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -315,6 +333,7 @@ enum Hit {
     Track,
     Thumb,
     Sizes,
+    Branch,
     Bin(usize),
     Side(usize),
     SidePin(usize),
@@ -388,6 +407,7 @@ struct Layout {
     thumb: Rect,
     status: Rect,
     sizes: Rect,
+    branch: Rect,
     bin: [Rect; 3],
     crumbs: Vec<Rect>,
     row_h: f32,
@@ -412,6 +432,7 @@ pub struct App {
     pub conflict_default: Option<Resolve>,
     pub shell_items_inline: bool,
     pub menu_hidden: Vec<&'static str>,
+    git_branches: Vec<String>,
     pub tab_wheel_reversed: bool,
     pub tab_actions_button: bool,
     pub folders_in_new_tab: bool,
@@ -508,6 +529,7 @@ impl App {
             conflict_default: None,
             shell_items_inline: false,
             menu_hidden: Vec::new(),
+            git_branches: Vec::new(),
             tab_wheel_reversed: false,
             tab_actions_button: true,
             folders_in_new_tab: false,
@@ -935,6 +957,7 @@ impl App {
             ProviderEvent::Changes { tab, gen, changes } => {
                 if let Some(k) = tab_of(&self.tabs, tab, gen) {
                     self.tabs[k].pending_diffs.extend(changes);
+                    self.git_refresh(k, true);
                     if self.tabs[k].pending_diffs.len() > MAX_PENDING_DIFFS {
                         return self.on_provider_event(ProviderEvent::Rescan { tab, gen }, now);
                     }
@@ -1233,6 +1256,9 @@ impl App {
         }
         if l.sizes.contains(x, y) {
             return Hit::Sizes;
+        }
+        if l.branch.contains(x, y) {
+            return Hit::Branch;
         }
         if let Some(k) = l.bin.iter().position(|r| r.contains(x, y)) {
             return Hit::Bin(k);
@@ -1538,10 +1564,15 @@ impl App {
                     self.navigate(p, now);
                 }
             }
-            Hit::Header(c) => self.sort_column(self.layout.columns[c].field()),
+            Hit::Header(c) => {
+                if let Some(f) = self.layout.columns[c].field() {
+                    self.sort_column(f);
+                }
+            }
             Hit::Group(g) => self.toggle_group(g),
             Hit::Pane(i, Some(row)) => self.open_pane_row(i, row, now),
             Hit::Sizes => self.sizes_button(),
+            Hit::Branch => self.git_branches_menu(),
             Hit::Preview(p) => self.preview_click(p),
             Hit::Bin(k) => self.bin_button(k),
             Hit::Side(i) => self.open_side_item(i, self.mods.ctrl, now),
@@ -2043,7 +2074,7 @@ impl App {
             }
             g.dl.set_clip(Some(r));
             let w = g.text(r.x + pad, baseline, col.title(), font, t.text_dim, r.w - 2.0 * pad);
-            if sort.field == col.field() {
+            if Some(sort.field) == col.field() {
                 let glyph = if sort.descending { G_SORT_DOWN } else { G_SORT_UP };
                 g.text(r.x + pad + w + self.s(6.0), baseline, glyph, self.icon_font(8.0), t.text_dim, f32::INFINITY);
             }
@@ -2140,6 +2171,10 @@ impl App {
                         thumb_requests.push(IconRequest { key: k, kind: IconKind::Thumbnail, path: d.join(name), size: thumb_px, gen: tab.gen, row: row as u32 });
                     }
                 }
+                let badge = tab.git_status(name).map(|st| {
+                    let d = (ir.h * 0.42).max(self.s(9.0)).round();
+                    (Rect::new(ir.right() - d * 0.8, ir.bottom() - d * 0.8, d, d), st)
+                });
                 if !thumbed && !g.image_alpha(key, ir, alpha) {
                     icon_glyph(g, t, &e, ir);
                     let wanted = !self.icons.contains_key(&key) && !requests.iter().any(|r| r.key == key);
@@ -2156,6 +2191,10 @@ impl App {
                 let ty = baseline(p.name);
                 let picked = v.is_selected(i) && list_focused;
                 let name_color = if picked { t.selection_text } else if faded { t.text_dim } else { t.text };
+                if let Some((br, st)) = badge {
+                    g.dl.round_rect(br, git::status_color(st), br.w / 2.0);
+                    centered(g, br, st.letter(), FontStyle::new(FontFamily::Ui, br.h * 0.72, true), Color::rgb(0xFF_FF_FF));
+                }
                 self.draw_name(g, &p, &self.shown_name(listing, i), e.tags, font, name_color);
                 want_type(i);
                 match mode {
@@ -2265,6 +2304,19 @@ impl App {
         }
         self.layout.sizes = if in_bin { Rect::default() } else { buttons[0] };
         self.layout.bin = if in_bin { buttons } else { Default::default() };
+        self.layout.branch = Rect::default();
+        if let Some(branch) = self.git_branch().filter(|b| !b.is_empty() && !in_bin) {
+            let label = arena.alloc_str(&format!("{G_BRANCH} {branch}"));
+            let w = g.measure(label, font) + self.s(16.0);
+            x -= w;
+            let br = Rect::new(x, r.y + self.s(2.0), w, r.h - self.s(4.0));
+            if self.hover == Hit::Branch {
+                g.dl.round_rect(br, t.button_hover, self.s(3.0));
+            }
+            g.text(br.x + self.s(8.0), baseline, label, font, t.text_dim, f32::INFINITY);
+            self.layout.branch = br;
+            x -= self.s(4.0);
+        }
         let rw = g.measure(&right, font);
         g.text(x - self.s(12.0) - rw, baseline, &right, font, t.text_dim.alpha(0xA0), f32::INFINITY);
     }

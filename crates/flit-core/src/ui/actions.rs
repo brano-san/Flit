@@ -3,6 +3,7 @@ use super::sidebar::KnownFolder;
 use super::tags::TagPick;
 use super::{App, Column, Effect, LayoutMode, Page, Route, WindowCmd};
 use crate::archive::{Format, Place};
+use crate::git::GitOp;
 use crate::i18n::S;
 use crate::input::{Key, Mods};
 use crate::library::LibraryOp;
@@ -156,6 +157,17 @@ pub static ACTIONS: &[Action] = &[
     Action::new("view.column.origin", S::ActionsViewColumnOrigin, &[], |a, _| a.toggle_column(Column::Origin)),
     Action::new("view.column.deleted", S::ActionsViewColumnDeleted, &[], |a, _| a.toggle_column(Column::Deleted)),
     Action::new("view.column.tag", S::ActionsViewColumnTag, &[], |a, _| a.toggle_column(Column::Tag)),
+    Action::new("view.column.git_status", S::ActionsViewColumnGitStatus, &[], |a, _| a.toggle_column(Column::GitStatus)),
+    Action::new("view.column.git_message", S::ActionsViewColumnGitMessage, &[], |a, _| a.toggle_column(Column::GitMessage)),
+    Action::new("view.column.git_author", S::ActionsViewColumnGitAuthor, &[], |a, _| a.toggle_column(Column::GitAuthor)),
+    Action::new("view.column.git_date", S::ActionsViewColumnGitDate, &[], |a, _| a.toggle_column(Column::GitDate)),
+    Action::new("git.fetch", S::ActionsGitFetch, &[], |a, _| a.git_run(GitOp::Fetch)),
+    Action::new("git.pull", S::ActionsGitPull, &[], |a, _| a.git_run(GitOp::Pull)),
+    Action::new("git.push", S::ActionsGitPush, &[], |a, _| a.git_run(GitOp::Push)),
+    Action::new("git.init", S::ActionsGitInit, &[], |a, _| a.git_run(GitOp::Init)),
+    Action::new("git.clone", S::ActionsGitClone, &[], |a, _| a.ask_clone()),
+    Action::new("git.branches", S::ActionsGitBranches, &[], |a, _| a.git_branches_menu()),
+    Action::new("git.open_remote", S::ActionsGitOpenRemote, &[], |a, _| a.git_run(GitOp::OpenRemote)),
     Action::new("view.dotfiles", S::ActionsViewDotfiles, &[], |a, _| a.toggle_pref(|p| &mut p.show_dotfiles)),
     Action::new("view.system", S::ActionsViewSystem, &[], |a, _| a.toggle_pref(|p| &mut p.show_system)),
     Action::new("view.extensions", S::ActionsViewExtensions, &[], |a, _| a.toggle_pref(|p| &mut p.show_extensions)),

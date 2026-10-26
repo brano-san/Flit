@@ -3,6 +3,7 @@
 mod app;
 mod diagnose;
 mod find;
+mod git;
 mod logs;
 mod metrics;
 mod places;
