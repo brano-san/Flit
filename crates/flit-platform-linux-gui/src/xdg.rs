@@ -7,15 +7,15 @@ use std::path::{Path, PathBuf};
 
 const APP: &str = "flit";
 
-const USER_DIRS: [(&str, &str, &str); 8] = [
-    ("shell:Desktop", "XDG_DESKTOP_DIR", "Desktop"),
-    ("shell:Downloads", "XDG_DOWNLOAD_DIR", "Downloads"),
-    ("shell:Personal", "XDG_DOCUMENTS_DIR", "Documents"),
-    ("shell:My Pictures", "XDG_PICTURES_DIR", "Pictures"),
-    ("shell:My Music", "XDG_MUSIC_DIR", "Music"),
-    ("shell:My Video", "XDG_VIDEOS_DIR", "Videos"),
-    ("shell:Templates", "XDG_TEMPLATES_DIR", "Templates"),
-    ("shell:Public", "XDG_PUBLICSHARE_DIR", "Public"),
+const USER_DIRS: [(&str, &str, &str, &str); 8] = [
+    ("shell:Desktop", "XDG_DESKTOP_DIR", "Desktop", "user-desktop"),
+    ("shell:Downloads", "XDG_DOWNLOAD_DIR", "Downloads", "folder-download"),
+    ("shell:Personal", "XDG_DOCUMENTS_DIR", "Documents", "folder-documents"),
+    ("shell:My Pictures", "XDG_PICTURES_DIR", "Pictures", "folder-pictures"),
+    ("shell:My Music", "XDG_MUSIC_DIR", "Music", "folder-music"),
+    ("shell:My Video", "XDG_VIDEOS_DIR", "Videos", "folder-videos"),
+    ("shell:Templates", "XDG_TEMPLATES_DIR", "Templates", "folder-templates"),
+    ("shell:Public", "XDG_PUBLICSHARE_DIR", "Public", "folder-publicshare"),
 ];
 
 fn absolute_var(name: &str) -> Option<PathBuf> {
@@ -91,9 +91,13 @@ fn user_dirs_file() -> Option<PathBuf> {
 
 pub fn user_dir(shell_name: &str) -> Option<PathBuf> {
     let home = home()?;
-    let (_, key, fallback) = USER_DIRS.iter().find(|(s, k, f)| s.eq_ignore_ascii_case(shell_name) || k.eq_ignore_ascii_case(shell_name) || f.eq_ignore_ascii_case(shell_name.trim_start_matches("shell:")))?;
+    let (_, key, fallback, _) = USER_DIRS.iter().find(|(s, k, f, _)| s.eq_ignore_ascii_case(shell_name) || k.eq_ignore_ascii_case(shell_name) || f.eq_ignore_ascii_case(shell_name.trim_start_matches("shell:")))?;
     let configured = user_dirs_file().and_then(|f| std::fs::read(f).ok()).and_then(|text| parse_user_dirs(&text, home.as_os_str().as_bytes()).into_iter().rev().find(|(k, _)| k == key).map(|(_, p)| p));
     Some(configured.map_or_else(|| home.join(fallback), |p| PathBuf::from(OsStr::from_bytes(&p))))
+}
+
+pub fn user_dir_icon(path: &Path) -> Option<&'static str> {
+    USER_DIRS.iter().find(|(shell, ..)| user_dir(shell).as_deref() == Some(path)).map(|(.., icon)| *icon)
 }
 
 pub fn fs_path(p: &Path) -> Option<FsPath> {

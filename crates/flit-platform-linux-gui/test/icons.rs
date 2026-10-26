@@ -71,6 +71,12 @@ fn file_kinds_map_to_freedesktop_icon_names() {
     let req = |kind, path: &str| flit_core::ui::IconRequest { key: 0, kind, path: flit_core::FsPath::parse(path).unwrap(), size: 32, gen: 0, row: 0 };
     assert_eq!(crate::shell::icon_names(&req(flit_core::ui::IconKind::Volume, "/media/ann/USB")), ["drive-removable-media", "drive-harddisk"]);
     assert_eq!(crate::shell::icon_names(&req(flit_core::ui::IconKind::Folder, "/srv")), ["folder"]);
+    assert_eq!(crate::shell::icon_names(&req(flit_core::ui::IconKind::Place, "shell:RecycleBinFolder")), ["user-trash", "folder"]);
+    assert_eq!(crate::shell::icon_names(&req(flit_core::ui::IconKind::Place, "/srv")), ["folder", "folder"]);
+    if let Some(home) = crate::xdg::home().and_then(|h| h.to_str().map(str::to_owned)) {
+        assert_eq!(crate::shell::icon_names(&req(flit_core::ui::IconKind::Place, &home)), ["user-home", "folder"]);
+        assert_eq!(crate::shell::icon_names(&req(flit_core::ui::IconKind::Folder, &home)), ["folder"], "file list folder icons are cached per size, never per path");
+    }
     let file = crate::shell::icon_names(&req(flit_core::ui::IconKind::Type, "/x/.bashrc"));
     assert_eq!(file, ["text-x-generic", "unknown"]);
     if std::path::Path::new("/usr/share/mime/globs2").exists() {

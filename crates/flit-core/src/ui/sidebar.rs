@@ -1,4 +1,4 @@
-use super::home::{Recent, Widget};
+﻿use super::home::{Recent, Widget};
 use super::menu::Menu;
 use super::tags::G_TAG;
 use super::{centered, App, Drag, Effect, Focus, Hit, IconKind, IconRequest, Route, ShellMenu, G_DRIVE, G_FOLDER};
@@ -957,7 +957,7 @@ impl App {
                 None => t.accent,
             };
             if compact {
-                if !self.distro_icon(g, it, r, &mut requests) {
+                if !self.place_icon(g, it, r, &mut requests) {
                     centered(g, r, it.glyph, icons, color);
                 }
                 if let Some(used) = it.usage {
@@ -970,7 +970,7 @@ impl App {
             }
             let text_h = self.s(ROW_H);
             let icon_r = Rect::new(r.x + s4, r.y, self.s(28.0), text_h);
-            if !self.distro_icon(g, it, icon_r, &mut requests) {
+            if !self.place_icon(g, it, icon_r, &mut requests) {
                 centered(g, icon_r, it.glyph, icons, color);
             }
             let baseline = (r.y + (text_h + m.ascent - m.descent) / 2.0).round();
@@ -1013,18 +1013,29 @@ impl App {
         self.request_icons(requests);
     }
 
-    fn distro_icon<B: TextBackend>(&self, g: &mut Gfx<B>, it: &Item, r: Rect, requests: &mut Vec<IconRequest>) -> bool {
-        let Location::Wsl { distro, .. } = &it.loc else { return false };
-        let Some(path) = it.loc.to_windows().filter(|_| it.section == Section::Wsl) else { return false };
+    fn place_icon<B: TextBackend>(&self, g: &mut Gfx<B>, it: &Item, r: Rect, requests: &mut Vec<IconRequest>) -> bool {
         let px = self.s(16.0);
-        let key = hash::hash(&("vol", distro.as_bytes(), px as u32));
+        let Some((key, kind, path)) = place_icon_request(it, &self.nav.sidebar.places, px as u32) else { return false };
         if g.image(key, Rect::new((r.x + (r.w - px) / 2.0).round(), (r.y + (r.h - px) / 2.0).round(), px, px)) {
             return true;
         }
         if !self.icons.contains_key(&key) && !requests.iter().any(|q| q.key == key) {
-            requests.push(IconRequest { key, kind: IconKind::Volume, path, size: px as u32, gen: 0, row: 0 });
+            requests.push(IconRequest { key, kind, path, size: px as u32, gen: 0, row: 0 });
         }
         false
+    }
+}
+
+fn place_icon_request(it: &Item, places: &Places, px: u32) -> Option<(u64, IconKind, FsPath)> {
+    match (&it.loc, it.section) {
+        (_, Section::Tags) => None,
+        (Location::Wsl { distro, path }, _) if path.is_root() => Some((hash::hash(&("vol", distro.as_bytes(), px)), IconKind::Volume, it.loc.to_windows()?)),
+        (Location::Wsl { .. }, _) => Some((hash::hash(&("dir", px)), IconKind::Folder, it.loc.to_windows()?)),
+        (Location::Local(path), Section::Drives) => {
+            let drive = places.drives.iter().find(|d| d.path == *path)?;
+            (!drive.offline()).then(|| (hash::hash(&("place", path.as_bytes(), px)), IconKind::Volume, path.clone()))
+        }
+        (Location::Local(path), _) => Some((hash::hash(&("place", path.as_bytes(), px)), IconKind::Place, path.clone())),
     }
 }
 

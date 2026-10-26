@@ -1,4 +1,4 @@
-use super::*;
+﻿use super::*;
 use crate::input::{Event, MouseButton};
 use crate::text::tests::Mono;
 use crate::ui::{DragEvent, MenuItem, Persisted, Spot};
@@ -240,4 +240,34 @@ fn distros_in_the_sidebar_show_their_own_icons() {
     assert!(asked.contains(&(br"\\wsl.localhost\Debian\".to_vec(), IconKind::Volume)), "{asked:?}");
     app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::Icon(r) if r.kind == IconKind::Volume)), "a pending icon is asked once");
+}
+
+#[test]
+fn places_ask_the_system_for_their_icons_and_keep_glyphs_until_then() {
+    let mut app = app_with_places();
+    let offline = Drive { path: FsPath::parse(r"Z:\").unwrap(), label: "Share (Z:)".into(), total: 0, free: 0, removable: false, unmounted: true, kind: None, remote: Some(r"\\srv\share".into()) };
+    let downloads = loc(r"C:\Users\u\Downloads");
+    let mut places = (*app.nav.sidebar.places).clone();
+    places.folders = vec![(KnownFolder::Downloads, downloads.clone())];
+    places.drives.push(offline);
+    app.set_places(Arc::new(places));
+    let mut store = crate::tags::TagStore { tags: Vec::new(), files: Default::default() };
+    store.add("Red", 0xFF0000).unwrap();
+    app.set_tags(Arc::new(Tags::new(1, &store, &Default::default())));
+    app.drain_effects().for_each(drop);
+    app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    let asked: Vec<(Vec<u8>, IconKind)> = app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { Some((r.path.as_bytes().to_vec(), r.kind)) } else { None }).collect();
+    for want in [
+        (br"C:\a".to_vec(), IconKind::Place),
+        (downloads.path().as_bytes().to_vec(), IconKind::Place),
+        (FsPath::recycle_bin().as_bytes().to_vec(), IconKind::Place),
+        (br"C:\".to_vec(), IconKind::Volume),
+        (br"E:\".to_vec(), IconKind::Volume),
+        (br"\\wsl.localhost\Debian\".to_vec(), IconKind::Volume),
+    ] {
+        assert!(asked.contains(&want), "{want:?} not in {asked:?}");
+    }
+    assert!(!asked.iter().any(|(p, _)| p == br"Z:\"), "an offline share is not touched");
+    assert_eq!(asked.len(), 7, "{asked:?}");
+    assert!(app.icons.values().all(|s| *s == crate::ui::IconState::Pending));
 }

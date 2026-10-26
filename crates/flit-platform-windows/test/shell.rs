@@ -143,6 +143,20 @@ fn distro_icons_come_from_their_start_menu_shortcut() {
 }
 
 #[test]
+fn places_get_their_own_shell_icons_not_the_plain_folder() {
+    let mut shell = ShellCom::new().unwrap();
+    let req = |kind, path: FsPath| IconRequest { key: 0, kind, path, size: 16, gen: 0, row: 0 };
+    let folder = shell.icon(&req(IconKind::Folder, p(r"C:\Windows"))).expect("folder icon").rgba;
+    let mut places = vec![FsPath::recycle_bin(), FsPath::computer(), FsPath::home_page()];
+    places.extend(std::env::var("USERPROFILE").ok().map(|home| p(&format!(r"{home}\Downloads"))).filter(|d| std::path::Path::new(&*d.display()).is_dir()));
+    for place in places {
+        let b = shell.icon(&req(IconKind::Place, place.clone())).unwrap_or_else(|| panic!("{place:?}"));
+        assert!(b.width <= 16 && b.height <= 16, "{place:?}");
+        assert_ne!(b.rgba, folder, "{place:?} has its own icon");
+    }
+}
+
+#[test]
 fn shell_icons_match_requested_size() {
     let mut shell = ShellCom::new().unwrap();
     for size in [16, 56, 100, 300] {

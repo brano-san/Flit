@@ -235,6 +235,7 @@ pub enum IconKind {
     Folder,
     CustomFolder,
     Volume,
+    Place,
     Thumbnail,
 }
 
