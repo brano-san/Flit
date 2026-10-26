@@ -1,4 +1,4 @@
-﻿use super::home::{Recent, Widget};
+use super::home::{Recent, Widget};
 use super::menu::Menu;
 use super::tags::G_TAG;
 use super::{centered, App, Drag, Effect, Focus, Hit, IconKind, IconRequest, Route, ShellMenu, G_DRIVE, G_FOLDER};

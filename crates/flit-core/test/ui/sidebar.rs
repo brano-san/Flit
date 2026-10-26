@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 use crate::input::{Event, MouseButton};
 use crate::text::tests::Mono;
 use crate::ui::{DragEvent, MenuItem, Persisted, Spot};
