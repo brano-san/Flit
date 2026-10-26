@@ -7,6 +7,17 @@ use flit_platform_linux::mounts::parse;
 use std::os::unix::ffi::OsStrExt;
 
 #[test]
+fn eject_unmounts_then_powers_off_the_block_device_behind_the_mount() {
+    let table = parse(b"40 1 8:17 / /media/u/STICK rw,nosuid - vfat /dev/sdb1 rw\n41 1 0:50 / /media/u/net rw - fuse.sshfs host:/ rw\n");
+    let steps = eject_steps(&table, Path::new("/media/u/STICK")).unwrap();
+    let words = |s: &[std::ffi::OsString; 4]| s.iter().map(|w| w.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
+    assert_eq!(words(&steps[0]), "udisksctl unmount -b /dev/sdb1");
+    assert_eq!(words(&steps[1]), "udisksctl power-off -b /dev/sdb1");
+    assert!(eject_steps(&table, Path::new("/media/u/net")).is_none());
+    assert!(eject_steps(&table, Path::new("/nowhere")).is_none());
+}
+
+#[test]
 fn recent_files_come_from_the_xbel_newest_first_existing_and_unique() {
     let xbel = br#"<?xml version="1.0"?>
 <xbel version="1.0">

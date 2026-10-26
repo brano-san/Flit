@@ -44,6 +44,28 @@ pub fn drives() -> Vec<Drive> {
         .collect()
 }
 
+pub fn eject_steps(table: &[Mount], point: &Path) -> Option<[[std::ffi::OsString; 4]; 2]> {
+    let m = table.iter().rev().find(|m| m.path() == point && m.source.starts_with(b"/dev/"))?;
+    let dev = std::ffi::OsStr::from_bytes(&m.source).to_owned();
+    let step = |verb: &str| ["udisksctl".into(), verb.into(), "-b".into(), dev.clone()];
+    Some([step("unmount"), step("power-off")])
+}
+
+pub fn eject(point: &Path) -> std::io::Result<()> {
+    let table = mounts::read()?;
+    let steps = eject_steps(&table, point).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "not a mounted block device"))?;
+    std::thread::Builder::new().name("flit-eject".into()).spawn(move || {
+        for [program, args @ ..] in steps {
+            match std::process::Command::new(&program).args(&args).status() {
+                Ok(s) if s.success() => {}
+                Ok(s) => return tracing::warn!("{} {:?} failed: {s}", program.to_string_lossy(), args),
+                Err(e) => return tracing::warn!("cannot run udisksctl: {e}"),
+            }
+        }
+    })?;
+    Ok(())
+}
+
 pub fn list_computer(out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
     let table = mounts::read().map_err(|e| FsError { kind: FsErrorKind::Unavailable, code: e.raw_os_error().unwrap_or(-1) as i64 })?;
     for m in mounts::visible(&table, &mounts::user_name()) {

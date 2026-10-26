@@ -116,7 +116,7 @@ fn launch(l: &Launch) -> Result<(), PlatformError> {
             }
             detach(cmd).map_err(|e| spawn_error(program, &e))
         }
-        Launch::Eject(_) => Err(PlatformError::unsupported("ejecting drives")),
+        Launch::Eject(drive) => crate::places::eject(Path::new(os(drive))).map_err(|e| spawn_error("udisksctl", &e)),
     }
 }
 
