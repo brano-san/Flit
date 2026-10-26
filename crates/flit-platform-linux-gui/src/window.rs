@@ -429,6 +429,14 @@ fn copy(el: &dyn ActiveEventLoop, text: String) {
 }
 
 fn drag_out(el: &dyn ActiveEventLoop, source: winit::window::WindowId, list: String) {
+    if let Ok(RawDisplayHandle::Xlib(x)) = el.display_handle().map(|h| h.as_raw()) {
+        crate::xdnd::release_pointer_of(x.display.map_or(std::ptr::null_mut(), |d| d.as_ptr()));
+        background("flit-drag", move || match crate::xdnd::drag(list) {
+            Ok(outcome) => tracing::info!("drag out of Flit: {outcome:?}"),
+            Err(e) => tracing::info!("cannot drag files out of Flit here: {e}"),
+        });
+        return;
+    }
     let data = DataTransferSendBuilder::new(list).with_type(TypeHint::UriList, |list: &String, _| Some(list.clone())).build();
     if let Err(e) = el.start_drag(source, data, &[DndAction::Copy, DndAction::Move], None) {
         tracing::info!("cannot drag files out of Flit here: {e}");

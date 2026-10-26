@@ -16,6 +16,7 @@ pub mod shell;
 mod text;
 mod thumb;
 mod window;
+mod xdnd;
 pub mod xdg;
 
 #[cfg(test)]

@@ -763,7 +763,19 @@ tar xzf target/packages/flit-*-linux.tar.gz && sh flit-*-linux/install.sh
 sh flit-*-linux/install.sh --uninstall
 ```
 
-PKGBUILD для AUR лежит в `packaging/aur`. Метрики снимаются без видимых окон под Xvfb или `weston --backend=headless` (`FLIT_SERVER=weston`), `HOME` и `XDG_*` подменяются временным каталогом:
+PKGBUILD для AUR лежит в `packaging/aur`.
+
+### «Показать в папке» из других программ
+
+Запущенный Flit занимает на сеансовой шине имя `org.freedesktop.FileManager1` и отвечает на `ShowFolders`, `ShowItems` и `ShowItemProperties`: браузеры и другие программы через него открывают папку загрузки с выделенным файлом. Чтобы шина запускала Flit сама, когда он закрыт, нужен файл активации `org.freedesktop.FileManager1.service`. Под этим же именем его ставят Nautilus, Nemo и Dolphin, поэтому `.deb` и `.rpm` его не содержат: пакеты конфликтовали бы по файлу `/usr/share/dbus-1/services/org.freedesktop.FileManager1.service`, а запасной путь через `update-alternatives` есть не во всех дистрибутивах и всё равно решал бы за всех пользователей машины. Файл включается по желанию и только для своего пользователя, в `~/.local/share/dbus-1/services`: шина ищет файлы активации сначала в `$XDG_DATA_HOME`, поэтому пользовательский файл перекрывает системный от другого файлового менеджера, ничего в системе не меняя.
+
+- tar.gz: `sh flit-*-linux/install.sh --dbus-activation` ставит Flit и файл активации с путём к `flit` в `$PREFIX/bin`; `install.sh --uninstall` удаляет файл, только если он запускает Flit.
+- AUR: пакет кладёт готовый файл в `/usr/share/flit/dbus`, включение — `install -Dm644 /usr/share/flit/dbus/org.freedesktop.FileManager1.service ~/.local/share/dbus-1/services/org.freedesktop.FileManager1.service`.
+- `.deb`, `.rpm`: так же вручную, из `assets/org.freedesktop.FileManager1.service` с заменой `@BINDIR@` на `/usr/bin`.
+
+Шина запускает `flit --dbus-activated`: такой процесс до двух секунд ждёт первый вызов с шины и открывает первым окном его папку, а не домашнюю, так что вызов не даёт двух окон. Без вызова за это время открывается обычное окно.
+
+Метрики снимаются без видимых окон под Xvfb или `weston --backend=headless` (`FLIT_SERVER=weston`), `HOME` и `XDG_*` подменяются временным каталогом:
 
 ```
 bash scripts/metrics.sh
@@ -875,7 +887,7 @@ set FLIT_BENCH_10M=1 && cargo bench -p flit-search -- search_10m
 | Запрос | 1 млн | 10 млн |
 |---|---|---|
 | построение индекса | 281 мс | 3,9 с |
-| `r`, `re`, `rep`, `repo`, `repor`, `report` (набор по буквам) | 1,3–1,7 мс | 13–15 мс |
+| `r`, `re`, `rep`, `repo`, `repor`, `report` (набор по буквам) | 0,95–1,4 мс (в WSL2 1,5–1,8 мс, было 3,1–3,3) | 13–15 мс |
 | `report-12` | 0,48 мс | 7,2 мс |
 | `докум` | 1,25 мс | 12,5 мс |
 | `img_00` | 0,32 мс | 3,1 мс |

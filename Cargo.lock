@@ -837,6 +837,7 @@ dependencies = [
  "unicode-bidi",
  "winit",
  "x11-dl",
+ "x11rb",
 ]
 
 [[package]]

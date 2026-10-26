@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 
 const ATLAS: u32 = 2048;
 const OPS_GRACE: Duration = Duration::from_secs(2);
+const ACTIVATION_WAIT: Duration = Duration::from_secs(2);
 const FS_THREADS: usize = 4;
 const SHELL_THREADS: usize = 2;
 const THUMB_THREADS: usize = 3;
@@ -1032,7 +1033,7 @@ fn filetime_now() -> i64 {
     (unix + 11_644_473_600) * 10_000_000
 }
 
-pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Option<PathBuf>, started: Instant) -> Result<(), PlatformError> {
+pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Option<PathBuf>, activated: bool, started: Instant) -> Result<(), PlatformError> {
     let mut saved = state::load::<P>();
     let settings_file = settings::file::<P>();
     let settings_text = settings_file.as_deref().and_then(settings::read);
@@ -1078,6 +1079,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let about = About { os: String::new(), file: settings_file.clone().and_then(fs_path), cache_bytes: None, logs: P::state_dir().map(|d| d.join("logs")).and_then(fs_path) };
     let settings = Settings::start::<P>(settings_file.filter(|_| metrics.is_none()), settings_text, thumb_cache.clone(), wake.clone());
     let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes(), local.tags().clone())?;
+    let open = if activated { opens.recv_timeout(ACTIVATION_WAIT).unwrap_or(open) } else { open };
     let (routes, errors) = if open.is_empty() { Default::default() } else { open::routes(&open, &P::known_folder) };
     let new_window = open.target == OpenTarget::NewWindow;
     let files = if metrics.is_none() { Files::of::<P>() } else { None };

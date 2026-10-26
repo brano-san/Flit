@@ -50,9 +50,12 @@ fn main() {
     let started = Instant::now();
     let mut args: Vec<Vec<u8>> = Vec::new();
     let mut metrics: Option<PathBuf> = None;
+    let mut activated = false;
     let mut it = std::env::args_os().skip(1);
     while let Some(a) = it.next() {
-        if a == "--metrics" {
+        if a == "--dbus-activated" {
+            activated = true;
+        } else if a == "--metrics" {
             metrics = it.next().map(PathBuf::from);
         } else {
             args.push(wtf8(&a));
@@ -96,7 +99,7 @@ fn main() {
     }
     #[cfg(target_os = "linux")]
     flit_platform_linux_gui::prefetch_fonts();
-    if let Err(e) = app::run::<P>(open, instance, metrics, started) {
+    if let Err(e) = app::run::<P>(open, instance, metrics, activated, started) {
         tracing::error!("cannot start: {e}");
         logs::flush();
         if headless {
