@@ -240,3 +240,37 @@ fn details_tab_shows_and_edits_the_selection_tags() {
     frame(&mut a);
     assert!(a.preview.chips.is_empty());
 }
+
+#[test]
+fn volumes_of_unknown_size_show_no_size_instead_of_zero_bytes() {
+    let mut app = App::new(Persisted { path: Location::computer(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 600), Instant::now());
+    let share = crate::ui::Drive { path: crate::path::FsPath::parse(r"Z:\").unwrap(), label: "Share (Z:)".into(), total: 0, free: 0, removable: false, unmounted: false, kind: None, remote: Some(r"\\srv\s".into()) };
+    let fixed = crate::ui::Drive { path: crate::path::FsPath::parse(r"C:\").unwrap(), label: "C".into(), total: 1000, free: 400, removable: false, unmounted: false, kind: None, remote: None };
+    app.set_places(Arc::new(crate::ui::Places { drives: vec![fixed, share], ..Default::default() }));
+    let t = app.tab();
+    let mut listing = Listing::default();
+    let mut keys = SortKeys::new(CaseMode::Insensitive);
+    for (n, attrs, size) in [("C:", attr::DIR | attr::VOLUME | attr::SIZE_KNOWN, 1000), ("Ubuntu-22.04", attr::DIR | attr::VOLUME, 0), ("Z:", attr::DIR | attr::VOLUME, 0)] {
+        let i = listing.push(n.as_bytes(), Meta { attrs, size, ..Default::default() });
+        keys.push(listing.name(i));
+    }
+    let view = t.view_spec;
+    let mut order = Vec::new();
+    sort::sort(&listing, &keys, view, &mut order);
+    t.slot.publish(Arc::new(DirSnapshot { gen: t.gen, path: t.location().path().clone(), listing, keys, order, view, done: true, error: None, elapsed: Duration::from_millis(1) }));
+    app.poll();
+    let arena = bumpalo::Bump::new();
+    let v = app.tab().view.as_ref().unwrap();
+    let size = |name: &str| {
+        let i = (0..3).find(|&i| v.listing().name(i) == name.as_bytes()).unwrap();
+        app.cell_text(&arena, v.listing(), i, crate::ui::Column::Size).to_owned()
+    };
+    assert_eq!(size("Ubuntu-22.04"), "", "a WSL distro has no known size");
+    assert_eq!(size("Z:"), "");
+    assert!(!size("C:").is_empty());
+    for (name, want) in [("C:", Some((1000, 400))), ("Z:", None), ("Ubuntu-22.04", None)] {
+        app.tab_mut().view.as_mut().unwrap().clear_selection();
+        select(&mut app, name);
+        assert_eq!(app.subject().unwrap().drive, want, "{name}");
+    }
+}

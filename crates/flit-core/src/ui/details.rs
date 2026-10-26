@@ -592,7 +592,7 @@ impl App {
             Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => self.git_text(&mut s, l.name(i), col),
             Column::Type => return self.type_text(arena, l, i),
             Column::Size => {
-                if !e.is_dir() || e.attrs & (attr::SIZE_KNOWN | attr::VOLUME) != 0 {
+                if !e.is_dir() || e.attrs & attr::SIZE_KNOWN != 0 {
                     format::size_in(&mut s, e.size, self.style.decimal);
                 }
             }
