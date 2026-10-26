@@ -755,7 +755,7 @@ sc.exe start flit-indexd
 
 ## Linux
 
-Окно Wayland или X11 (winit), отрисовка OpenGL ES 3.0 через EGL, текст harfrust и swash. Нужны glibc 2.35+, `libegl1`, `libgles2`, `libxkbcommon0`, `libfontconfig1`, а для X11 ещё `libxkbcommon-x11-0`.
+Окно Wayland или X11 (winit), отрисовка OpenGL ES 3.0 через EGL, текст harfrust и swash. Нужны glibc 2.35+, `libegl1`, `libgles2`, `libxkbcommon0`, `libfontconfig1`, а для X11 ещё `libxkbcommon-x11-0`. Если есть `libturbojpeg.so.0` (`libturbojpeg0` или `libturbojpeg` в Debian и Ubuntu, `libjpeg-turbo` в Arch, `turbojpeg` в Fedora), миниатюры JPEG декодирует она: 12 Мп без встроенной миниатюры в 256 px — 12–23 мс вместо 20–33 мс у запасного jpeg-decoder (замер в WSL2, `bench_a_twelve_megapixel_jpeg_thumbnail`).
 
 Сборка и пакеты (tar.gz с `install.sh` в `~/.local`, а при установленных `cargo-deb` и `cargo-generate-rpm` ещё `.deb` и `.rpm`) складываются в `target/packages`; бинарник собирается профилем `dist` без отладочной информации:
 

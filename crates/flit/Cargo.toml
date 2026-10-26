@@ -31,7 +31,7 @@ section = "utils"
 priority = "optional"
 extended-description = "A fast GPU-drawn file manager for Wayland and X11."
 depends = "libc6 (>= 2.35), libegl1, libgles2, libxkbcommon0, libfontconfig1"
-recommends = "libxkbcommon-x11-0, libwayland-client0, libwayland-egl1, xdg-utils, shared-mime-info"
+recommends = "libxkbcommon-x11-0, libwayland-client0, libwayland-egl1, xdg-utils, shared-mime-info, libturbojpeg0 | libturbojpeg"
 assets = [
     ["target/release/flit", "usr/bin/", "755"],
     ["../../assets/flit.desktop", "usr/share/applications/", "644"],

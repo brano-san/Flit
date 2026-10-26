@@ -119,6 +119,9 @@ pub fn decode_png(path: &Path) -> Option<Bitmap> {
 }
 
 fn decode_jpeg_bytes(data: &[u8], size: u32) -> Option<Bitmap> {
+    if let Some(b) = crate::turbo::decode(data, size) {
+        return Some(b);
+    }
     let mut decoder = jpeg_decoder::Decoder::new(data);
     let target = size.clamp(1, u16::MAX as u32) as u16;
     let (w, h) = decoder.scale(target, target).ok()?;
