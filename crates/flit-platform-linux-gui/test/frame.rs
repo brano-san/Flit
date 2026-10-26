@@ -61,3 +61,21 @@ fn a_frame_of_the_app_shows_the_tab_strip_and_the_listing() {
     let list = dark_pixels(&px, (230, 140, 700, 300));
     assert!(tab_strip > 40 && list > 400, "tab strip {tab_strip} and list {list} dark pixels");
 }
+
+
+#[test]
+fn a_glyph_rasterises_the_same_after_another_glyph() {
+    use flit_core::text::{FontFamily, FontStyle, GlyphBitmap, GlyphKey, ShapedText, TextBackend};
+    let mut t = Linux::text().unwrap();
+    let mut shaped = ShapedText::default();
+    t.shape("BW", FontStyle::new(FontFamily::Ui, 14.0, false), &mut shaped);
+    let key = |g: &flit_core::text::ShapedGlyph| GlyphKey { font: g.font, id: g.id, size_q: 56, subpx: 0 };
+    let raster = |t: &mut text::LinuxText, k| {
+        let mut out = GlyphBitmap::default();
+        assert!(t.rasterize(k, &mut out));
+        out.data
+    };
+    let first = raster(&mut t, key(&shaped.glyphs[0]));
+    raster(&mut t, key(&shaped.glyphs[1]));
+    assert_eq!(raster(&mut t, key(&shaped.glyphs[0])), first);
+}
