@@ -649,6 +649,30 @@ fn hovering_a_folder_tab_or_crumb_while_dragging_opens_it() {
     assert_eq!(op_list(&mut app), [FileOp::Copy { items: vec![p(r"D:\in\f.txt")], dest: p(r"C:\folder") }]);
 }
 
+#[test]
+fn the_spring_delay_setting_decides_when_a_hovered_folder_opens_or_turns_it_off() {
+    let all = drop_effect::COPY | drop_effect::MOVE;
+    let start = t0();
+    let hover = |delay: i64, held: u64| {
+        let mut app = two_tabs();
+        let i = super::super::settings::index("files.spring_delay").unwrap();
+        assert!(super::super::settings::SETTINGS[i].set(&mut app, super::super::settings::Value::Number(delay)));
+        let sub = row_xy(&app, 0);
+        app.drag(&DragEvent::Enter { paths: vec![p(r"D:\in\f.txt")], x: sub.0, y: sub.1, mods: NO, allowed: all }, start);
+        for ms in [0, held] {
+            app.drag(&DragEvent::Over { x: sub.0, y: sub.1, mods: NO, allowed: all }, start + Duration::from_millis(ms));
+        }
+        app.current_location() == &Location::parse(r"C:\x\sub").unwrap()
+    };
+    assert!(!hover(1300, 1200) && hover(1300, 1300), "the default waits 1.3 s");
+    assert!(!hover(300, 250) && hover(300, 300));
+    assert!(!hover(3000, 2900) && hover(3000, 3000));
+    assert!(!hover(0, 60_000), "off never springs");
+    let i = super::super::settings::index("files.spring_delay").unwrap();
+    assert_eq!(super::super::settings::defaults()[i], super::super::settings::Value::Number(1300));
+    assert!(!super::super::settings::SETTINGS[i].set(&mut two_tabs(), super::super::settings::Value::Number(3100)));
+}
+
 const BIN_REPORT: (&str, &str) = (r"C:\$Recycle.Bin\S-1\$RAB12CD.txt", r"C:\Users\u\Docs\report.txt");
 const BIN_OLD: (&str, &str) = (r"D:\$Recycle.Bin\S-1\$R000001", r"D:\old");
 

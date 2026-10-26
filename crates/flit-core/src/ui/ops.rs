@@ -31,7 +31,6 @@ pub mod drop_effect {
 pub const SHELL_VERBS: [&str; 6] = ["rename", "copy", "cut", "paste", "delete", "newfolder"];
 
 const REVEAL_FOR: Duration = Duration::from_secs(10);
-const SPRING_DELAY: Duration = Duration::from_millis(1300);
 const SECTION_SPRING_DELAY: Duration = Duration::from_millis(500);
 const DRAG_START: f32 = 4.0;
 const MAX_NAME_UNITS: usize = 255;
@@ -1382,10 +1381,14 @@ impl App {
     }
 
     fn spring_load(&mut self, x: f32, y: f32, now: Instant) {
+        if self.spring_delay_ms == 0 {
+            return;
+        }
+        let delay = Duration::from_millis(self.spring_delay_ms.into());
         let spot = self.spring_spot(x, y);
         let Some(d) = &mut self.ops.dropping else { return };
         let due = match (spot, d.spring) {
-            (Some(s), Some((held, since))) if s == held => now.duration_since(since) >= if matches!(s, Spot::SideHeader(_)) { SECTION_SPRING_DELAY } else { SPRING_DELAY },
+            (Some(s), Some((held, since))) if s == held => now.duration_since(since) >= if matches!(s, Spot::SideHeader(_)) { SECTION_SPRING_DELAY.min(delay) } else { delay },
             _ => {
                 d.spring = spot.map(|s| (s, now));
                 false
