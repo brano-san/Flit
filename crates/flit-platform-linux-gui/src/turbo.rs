@@ -24,6 +24,10 @@ struct Api {
 unsafe impl Send for Api {}
 unsafe impl Sync for Api {}
 
+unsafe fn cast<T: Copy>(p: *mut c_void) -> T {
+    std::mem::transmute_copy(&p)
+}
+
 fn load() -> Option<Api> {
     let lib = unsafe { libc::dlopen(c"libturbojpeg.so.0".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
     if lib.is_null() {
@@ -34,17 +38,17 @@ fn load() -> Option<Api> {
         (!p.is_null()).then_some(p)
     };
     unsafe {
-        let factors: unsafe extern "C" fn(*mut c_int) -> *const Factor = std::mem::transmute(sym(c"tjGetScalingFactors")?);
+        let factors: unsafe extern "C" fn(*mut c_int) -> *const Factor = cast(sym(c"tjGetScalingFactors")?);
         let mut n = 0;
         let list = factors(&mut n);
         if list.is_null() || n <= 0 {
             return None;
         }
         Some(Api {
-            init: std::mem::transmute::<*mut c_void, _>(sym(c"tjInitDecompress")?),
-            header: std::mem::transmute::<*mut c_void, _>(sym(c"tjDecompressHeader3")?),
-            decompress: std::mem::transmute::<*mut c_void, _>(sym(c"tjDecompress2")?),
-            destroy: std::mem::transmute::<*mut c_void, _>(sym(c"tjDestroy")?),
+            init: cast(sym(c"tjInitDecompress")?),
+            header: cast(sym(c"tjDecompressHeader3")?),
+            decompress: cast(sym(c"tjDecompress2")?),
+            destroy: cast(sym(c"tjDestroy")?),
             factors: std::slice::from_raw_parts(list, n as usize).to_vec(),
         })
     }
