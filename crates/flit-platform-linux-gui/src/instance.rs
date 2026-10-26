@@ -151,6 +151,7 @@ impl SingleInstance for SocketInstance {
     }
 
     fn listen(self, opens: OpenSink, wake: Wake) {
+        crate::dbus::start(opens.clone(), wake.clone());
         let _ = std::thread::Builder::new().name("flit-instance".into()).spawn(move || {
             let _lock = self._lock;
             let (taken, freed) = bounded::<()>(MAX_CLIENTS);
