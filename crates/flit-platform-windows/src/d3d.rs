@@ -330,6 +330,10 @@ pub fn capture_path() -> Option<&'static std::path::Path> {
     PATH.get_or_init(|| std::env::var_os("FLIT_HIDDEN_CAPTURE").map(Into::into)).as_deref()
 }
 
+pub fn hidden() -> bool {
+    capture_path().is_some() || std::env::var_os("FLIT_HIDDEN").is_some()
+}
+
 fn png(w: u32, h: u32, raw: &[u8]) -> Vec<u8> {
     let mut z = vec![0x78, 0x01];
     let blocks: Vec<&[u8]> = raw.chunks(0xFFFF).collect();

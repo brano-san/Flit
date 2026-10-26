@@ -523,7 +523,7 @@ impl<H: WindowHandler<Win32>> Shared<H> {
         let node = Rc::new(Node { window: Win32Window::new(id, self.hub), queue: RefCell::default(), ready: Cell::new(false), shared: self });
         let sys = GetDpiForSystem() as f32 / 96.0;
         let title = wide(&opts.title);
-        let hidden = crate::d3d::capture_path().is_some();
+        let hidden = crate::d3d::hidden();
         let (ex, at) = if hidden { (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, -32000) } else { (WS_EX_APPWINDOW, CW_USEDEFAULT) };
         let hwnd = CreateWindowExW(
             WS_EX_NOREDIRECTIONBITMAP | ex,
