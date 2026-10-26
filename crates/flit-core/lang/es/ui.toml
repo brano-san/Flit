@@ -27,6 +27,7 @@ cancel = "Cancelar"
 delete = "Eliminar"
 restore = "Restaurar"
 not_now = "Ahora no"
+open_folder = "Abrir carpeta"
 
 [job]
 operations = "Operaciones"
@@ -108,6 +109,8 @@ replace = "La exportación de la configuración sobrescribiría este archivo en 
 [session]
 restore_title = "¿Restaurar la sesión anterior?"
 crashed = "Flit no se cerró correctamente la última vez."
+crash_title = "Flit se bloqueó la última vez"
+crash_report = "Flit se bloqueó la última vez. Se guardó un informe del error: {name}."
 restore = "Restaurar vuelve a abrir las ventanas y pestañas que estaban abiertas."
 
 [ops]

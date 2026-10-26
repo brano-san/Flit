@@ -131,3 +131,21 @@ fn bench_the_cost_of_a_log_line() {
     });
     println!("file size {} bytes", std::fs::metadata(d.0.join(FILE)).map_or(0, |m| m.len()) + std::fs::metadata(d.0.join(OLD)).map_or(0, |m| m.len()));
 }
+
+#[test]
+fn the_crash_report_is_the_newest_dump_since_the_marker() {
+    let d = Temp(std::env::temp_dir().join(format!("flit-crash-report-{}", std::process::id())));
+    std::fs::create_dir_all(&d.0).unwrap();
+    let now = std::time::SystemTime::now();
+    let put = |name: &str, age: u64| {
+        let p = d.0.join(name);
+        std::fs::write(&p, b"MDMP").unwrap();
+        std::fs::File::options().write(true).open(&p).unwrap().set_modified(now - Duration::from_secs(age)).unwrap();
+    };
+    put("flit-crash-old.dmp", 600);
+    put("flit-crash-a.dmp", 20);
+    put("flit-crash-b.dmp", 10);
+    put("flit-crash-b.txt", 5);
+    assert_eq!(crash_report(&d.0, now - Duration::from_secs(60)), Some(d.0.join("flit-crash-b.dmp")));
+    assert_eq!(crash_report(&d.0, now), None);
+}

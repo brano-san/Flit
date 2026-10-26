@@ -60,6 +60,10 @@ impl Files {
         self.marker.exists()
     }
 
+    pub fn marked_at(&self) -> Option<std::time::SystemTime> {
+        std::fs::metadata(&self.marker).and_then(|m| m.modified()).ok()
+    }
+
     pub fn mark(&self) {
         if let Some(dir) = self.marker.parent() {
             let _ = std::fs::create_dir_all(dir);

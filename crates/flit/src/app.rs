@@ -1103,6 +1103,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let new_window = open.target == OpenTarget::NewWindow;
     let files = if metrics.is_none() { Files::of::<P>() } else { None };
     let crashed = files.as_ref().is_some_and(Files::crashed);
+    let dump = files.as_ref().filter(|_| crashed).and_then(Files::marked_at).zip(P::state_dir()).and_then(|(t, d)| crate::logs::crash_report(&d.join("logs"), t)).and_then(fs_path);
     let previous = files.as_ref().and_then(|f| session::load(&f.session));
     if let Some(f) = &files {
         f.mark();
@@ -1170,8 +1171,10 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     first.apply_doc(&doc);
     let values = first.setting_values();
     h.settings.adopt(&doc, values);
-    if h.crashed.is_some() {
-        first.offer_restore();
+    match dump {
+        Some(d) => first.offer_crash_report(h.crashed.is_some(), d),
+        None if h.crashed.is_some() => first.offer_restore(),
+        None => {}
     }
     let dark = first.is_dark();
     h.pending.push_back(first);

@@ -27,6 +27,7 @@ cancel = "Abbrechen"
 delete = "Löschen"
 restore = "Wiederherstellen"
 not_now = "Nicht jetzt"
+open_folder = "Ordner öffnen"
 
 [job]
 operations = "Vorgänge"
@@ -108,6 +109,8 @@ replace = "Der Export der Einstellungen würde diese Datei in {folder} überschr
 [session]
 restore_title = "Vorherige Sitzung wiederherstellen?"
 crashed = "Flit wurde beim letzten Mal nicht ordnungsgemäß beendet."
+crash_title = "Flit ist beim letzten Mal abgestürzt"
+crash_report = "Flit ist beim letzten Mal abgestürzt. Ein Absturzbericht wurde gespeichert: {name}."
 restore = "Wiederherstellen öffnet die Fenster und Registerkarten erneut, die geöffnet waren."
 
 [ops]
