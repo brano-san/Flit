@@ -13,7 +13,7 @@ mod ops_extra;
 mod search;
 mod tab;
 pub mod actions;
-mod field;
+pub(crate) mod field;
 mod filter;
 mod form;
 mod flow;
@@ -452,7 +452,7 @@ pub struct App {
     next_gen: u64,
     timer_at: Option<Instant>,
     own_menu: Option<own_menu::OwnMenu>,
-    pub preedit: String,
+    pub preedit: crate::input::Preedit,
 
     focus: Focus,
     kb: usize,
@@ -550,7 +550,7 @@ impl App {
             next_gen: 0,
             timer_at: None,
             own_menu: None,
-            preedit: String::new(),
+            preedit: Default::default(),
             focus: Focus::List,
             kb: 0,
             a11y_targets: Vec::new(),
@@ -669,23 +669,6 @@ impl App {
 
     fn theme(&self) -> &Theme {
         &self.look.palette.base
-    }
-
-    pub fn preedit_rect<B: TextBackend>(&self, g: &mut Gfx<B>) -> Option<Rect> {
-        let r = self.ime_area().filter(|_| !self.preedit.is_empty())?;
-        let (pad, h) = (self.s(6.0), self.s(26.0));
-        let w = g.measure(&self.preedit, self.ui_font(13.0)) + 2.0 * pad;
-        Some(Rect::new(r.x.min(self.size.0 - w).max(0.0).round(), (r.bottom() + self.s(2.0)).round(), w.round(), h))
-    }
-
-    fn draw_preedit<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme) {
-        let Some(b) = self.preedit_rect(g) else { return };
-        let (s4, font) = (self.s(4.0), self.ui_font(13.0));
-        g.dl.round_rect(b, th.chrome, s4);
-        g.dl.outline(b, th.input_border, s4, 1.0);
-        centered(g, b, &self.preedit, font, th.text);
-        let line = Rect::new(b.x + self.s(6.0), b.bottom() - self.s(6.0), b.w - self.s(12.0), self.s(1.0).max(1.0));
-        g.dl.rect(line, th.text);
     }
 
     fn ui_font(&self, px: f32) -> FontStyle {
@@ -1841,7 +1824,6 @@ impl App {
             }
             self.draw_tab_tip(g, th);
             self.draw_jobs(g, th);
-            self.draw_preedit(g, th);
             self.draw_own_menu(g, th);
             if !g.atlas_reset {
                 break;
@@ -1974,21 +1956,10 @@ impl App {
                 let pos = g.hit(&self.edit.text, font, x - inner.x + self.edit_scroll);
                 self.edit.move_to(pos, extend);
             }
-            let caret_x = g.caret_x(&self.edit.text, font, self.edit.caret);
-            if caret_x - self.edit_scroll > inner.w {
-                self.edit_scroll = caret_x - inner.w;
-            } else if caret_x < self.edit_scroll {
-                self.edit_scroll = caret_x;
-            }
-            let x0 = inner.x - self.edit_scroll;
-            let sel = self.edit.selection();
-            if !sel.is_empty() {
-                let a = g.caret_x(&self.edit.text, font, sel.start);
-                let b = g.caret_x(&self.edit.text, font, sel.end);
-                g.dl.rect(Rect::new(x0 + a, r.y + self.s(5.0), b - a, r.h - self.s(10.0)), t.text_selection);
-            }
-            g.text(x0, baseline, &self.edit.text, font, t.text, f32::INFINITY);
-            g.dl.rect(Rect::new(x0 + caret_x, r.y + self.s(6.0), self.s(1.0).max(1.0), r.h - self.s(12.0)), t.text);
+            let line = field::EditLine { text: &self.edit.text, caret: self.edit.caret, selection: self.edit.selection() };
+            let look = field::EditLook { font, baseline, line_y: r.y + self.s(6.0), line_h: r.h - self.s(12.0), stroke: self.s(1.0).max(1.0), focused: true };
+            let preedit = Some(&self.preedit).filter(|p| !p.is_empty());
+            field::draw_line(g, t, inner, &mut self.edit_scroll, line, preedit, look);
         } else {
             self.draw_crumbs(g, t, inner, baseline, font);
         }

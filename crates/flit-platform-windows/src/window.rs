@@ -2,7 +2,7 @@ use crate::context_menu::{ShellUi, WM_SHELL_UI};
 use crate::prevhost::WM_HOSTED;
 use flit_core::preview::HostCmd;
 use crate::err;
-use flit_core::input::{CursorIcon, Event, HitArea, Key, Mods, MouseButton};
+use flit_core::input::{CursorIcon, Event, HitArea, Key, Mods, MouseButton, Preedit};
 use flit_core::a11y::Tree;
 use flit_core::render::{Color, Rect};
 use flit_core::theme::SystemColors;
@@ -25,7 +25,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
 use windows::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow, GetSystemMetricsForDpi, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
-use windows::Win32::UI::Input::Ime::{ImmGetContext, ImmReleaseContext, ImmSetCompositionWindow, CFS_POINT, COMPOSITIONFORM};
+use windows::Win32::UI::Input::Ime::{ImmGetCompositionStringW, ImmGetContext, ImmReleaseContext, ImmSetCandidateWindow, ImmSetCompositionWindow, CANDIDATEFORM, CFS_EXCLUDE, CFS_POINT, COMPOSITIONFORM, GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR, IME_COMPOSITION_STRING, ISC_SHOWUICOMPOSITIONWINDOW};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::System::Threading::WaitForSingleObjectEx;
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
@@ -810,6 +810,26 @@ fn map_key(vk: u16) -> Key {
     }
 }
 
+pub(crate) fn preedit_from_utf16(units: &[u16], cursor: i32) -> Preedit {
+    let text = String::from_utf16_lossy(units);
+    let cursor = usize::try_from(cursor).ok().filter(|&c| c <= units.len()).map(|c| String::from_utf16_lossy(&units[..c]).len());
+    Preedit::new(text, cursor)
+}
+
+unsafe fn composition(hwnd: HWND) -> Preedit {
+    let himc = ImmGetContext(hwnd);
+    if himc.is_invalid() {
+        return Preedit::default();
+    }
+    let bytes = ImmGetCompositionStringW(himc, GCS_COMPSTR, None, 0);
+    let mut units = vec![0u16; usize::try_from(bytes).unwrap_or(0) / 2];
+    let got = if units.is_empty() { 0 } else { ImmGetCompositionStringW(himc, GCS_COMPSTR, Some(units.as_mut_ptr() as _), (units.len() * 2) as u32) };
+    units.truncate(usize::try_from(got).unwrap_or(0) / 2);
+    let cursor = ImmGetCompositionStringW(himc, GCS_CURSORPOS, None, 0);
+    let _ = ImmReleaseContext(hwnd, himc);
+    preedit_from_utf16(&units, cursor)
+}
+
 fn is_caption_button(wp: WPARAM) -> bool {
     matches!(wp.0 as u32, HTMINBUTTON | HTMAXBUTTON | HTCLOSE)
 }
@@ -1062,13 +1082,31 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
             }
             Some(LRESULT(0))
         }
+        WM_IME_SETCONTEXT => Some(DefWindowProcW(hwnd, msg, wp, LPARAM(lp.0 & !(ISC_SHOWUICOMPOSITIONWINDOW as isize)))),
         WM_IME_STARTCOMPOSITION => {
             let a = w.ime_area.get();
             let himc = ImmGetContext(hwnd);
             let cf = COMPOSITIONFORM { dwStyle: CFS_POINT, ptCurrentPos: POINT { x: a.x as i32, y: a.y as i32 }, ..Default::default() };
             let _ = ImmSetCompositionWindow(himc, &cf);
+            let area = RECT { left: a.x as i32, top: a.y as i32, right: a.right() as i32, bottom: a.bottom() as i32 };
+            let cand = CANDIDATEFORM { dwIndex: 0, dwStyle: CFS_EXCLUDE, ptCurrentPos: POINT { x: a.x as i32, y: a.bottom() as i32 }, rcArea: area };
+            let _ = ImmSetCandidateWindow(himc, &cand);
             let _ = ImmReleaseContext(hwnd, himc);
-            None
+            Some(LRESULT(0))
+        }
+        WM_IME_COMPOSITION => {
+            let flags = IME_COMPOSITION_STRING(lp.0 as u32);
+            let committed = (flags.0 & GCS_RESULTSTR.0) != 0;
+            let r = if committed { DefWindowProcW(hwnd, msg, wp, lp) } else { LRESULT(0) };
+            let preedit = if (flags.0 & GCS_COMPSTR.0) != 0 { composition(hwnd) } else { Preedit::default() };
+            if committed || (flags.0 & GCS_COMPSTR.0) != 0 {
+                s.send(Event::Preedit(preedit));
+            }
+            Some(r)
+        }
+        WM_IME_ENDCOMPOSITION => {
+            s.send(Event::Preedit(Preedit::default()));
+            Some(LRESULT(0))
         }
         WM_CLOSE => {
             s.send(Event::CloseRequested);
@@ -1113,3 +1151,7 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
         _ => None,
     }
 }
+
+#[cfg(test)]
+#[path = "../test/window.rs"]
+mod tests;

@@ -165,7 +165,7 @@ impl App {
         }
         centered(g, close, G_CLOSE, self.icon_font(8.0), t.text_dim);
         if let Some(f) = self.tabs[self.cur].filter.as_mut() {
-            f.draw(g, t, inner, font, focused, crate::i18n::S::FilterPlaceholder.t(), scale);
+            f.draw(g, t, inner, font, focused, crate::i18n::S::FilterPlaceholder.t(), scale, Some(&self.preedit));
         }
     }
 }

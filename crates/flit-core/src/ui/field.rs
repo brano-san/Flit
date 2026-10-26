@@ -1,5 +1,6 @@
 use super::edit::{EditAction, LineEdit};
-use crate::input::{Key, Mods};
+use crate::input::{Key, Mods, Preedit};
+use std::ops::Range;
 use crate::render::Rect;
 use crate::text::{FontStyle, Gfx, TextBackend};
 use crate::theme::Theme;
@@ -50,7 +51,7 @@ impl Field {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn draw<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, inner: Rect, font: FontStyle, focused: bool, placeholder: &str, scale: f32) {
+    pub fn draw<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, inner: Rect, font: FontStyle, focused: bool, placeholder: &str, scale: f32, preedit: Option<&Preedit>) {
         let m = g.metrics(font);
         let baseline = (inner.y + (inner.h + m.ascent - m.descent) / 2.0).round();
         let line_h = (m.ascent + m.descent + 4.0 * scale).min(inner.h);
@@ -65,27 +66,77 @@ impl Field {
         }
         let text = &self.edit.text;
         let to_shown = |b: usize| if self.secret { text[..b].chars().count() * MASK.len_utf8() } else { b };
-        let caret_x = g.caret_x(&shown, font, to_shown(self.edit.caret));
-        if caret_x - self.scroll > inner.w {
-            self.scroll = caret_x - inner.w;
-        } else if caret_x < self.scroll {
-            self.scroll = caret_x;
-        }
-        let x0 = inner.x - self.scroll;
-        if self.edit.text.is_empty() {
+        let sel = self.edit.selection();
+        let line = EditLine { text: &shown, caret: to_shown(self.edit.caret), selection: to_shown(sel.start)..to_shown(sel.end) };
+        let composing = preedit.filter(|p| focused && !self.secret && !p.is_empty());
+        if self.edit.text.is_empty() && composing.is_none() {
+            self.scroll = 0.0;
             g.text(inner.x, baseline, placeholder, font, t.text_dim, inner.w);
-        } else {
-            let sel = self.edit.selection();
-            if focused && !sel.is_empty() {
-                let a = g.caret_x(&shown, font, to_shown(sel.start));
-                let b = g.caret_x(&shown, font, to_shown(sel.end));
-                g.dl.rect(Rect::new(x0 + a, line_y, b - a, line_h), t.text_selection);
+            if focused {
+                g.dl.rect(Rect::new(inner.x, line_y, scale.round().max(1.0), line_h), t.text);
             }
-            g.text(x0, baseline, &shown, font, t.text, f32::INFINITY);
-        }
-        if focused {
-            g.dl.rect(Rect::new(x0 + caret_x, line_y, scale.round().max(1.0), line_h), t.text);
+        } else {
+            let look = EditLook { font, baseline, line_y, line_h, stroke: scale.round().max(1.0), focused };
+            draw_line(g, t, inner, &mut self.scroll, line, composing, look);
         }
         g.dl.set_clip(None);
+    }
+}
+
+pub(super) struct EditLine<'a> {
+    pub text: &'a str,
+    pub caret: usize,
+    pub selection: Range<usize>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct EditLook {
+    pub font: FontStyle,
+    pub baseline: f32,
+    pub line_y: f32,
+    pub line_h: f32,
+    pub stroke: f32,
+    pub focused: bool,
+}
+
+pub(super) fn compose(line: &EditLine<'_>, preedit: &Preedit) -> (String, usize, Range<usize>) {
+    let at = line.caret.min(line.text.len());
+    let mut text = String::with_capacity(line.text.len() + preedit.text.len());
+    text.push_str(&line.text[..at]);
+    text.push_str(&preedit.text);
+    text.push_str(&line.text[at..]);
+    (text, at + preedit.caret(), at..at + preedit.text.len())
+}
+
+pub(super) fn draw_line<B: TextBackend>(g: &mut Gfx<B>, t: &Theme, inner: Rect, scroll: &mut f32, line: EditLine<'_>, preedit: Option<&Preedit>, look: EditLook) {
+    let font = look.font;
+    let (owned, caret, selection, underline) = match preedit {
+        Some(p) => {
+            let (text, caret, underline) = compose(&line, p);
+            (Some(text), caret, 0..0, Some(underline))
+        }
+        None => (None, line.caret, line.selection.clone(), None),
+    };
+    let text = owned.as_deref().unwrap_or(line.text);
+    let caret_x = g.caret_x(text, font, caret);
+    if caret_x - *scroll > inner.w {
+        *scroll = caret_x - inner.w;
+    } else if caret_x < *scroll {
+        *scroll = caret_x;
+    }
+    let x0 = inner.x - *scroll;
+    if look.focused && !selection.is_empty() {
+        let a = g.caret_x(text, font, selection.start);
+        let b = g.caret_x(text, font, selection.end);
+        g.dl.rect(Rect::new(x0 + a, look.line_y, b - a, look.line_h), t.text_selection);
+    }
+    g.text(x0, look.baseline, text, font, t.text, f32::INFINITY);
+    if let Some(u) = underline {
+        let a = g.caret_x(text, font, u.start);
+        let b = g.caret_x(text, font, u.end);
+        g.dl.rect(Rect::new(x0 + a, look.baseline + 2.0 * look.stroke, b - a, look.stroke), t.text);
+    }
+    if look.focused {
+        g.dl.rect(Rect::new(x0 + caret_x, look.line_y, look.stroke, look.line_h), t.text);
     }
 }

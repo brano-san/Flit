@@ -27,18 +27,23 @@ fn key(app: &mut App, key: Key) {
 }
 
 #[test]
-fn preedit_text_shows_under_the_field_being_edited_until_it_is_committed() {
+fn preedit_text_is_composed_inline_at_the_caret_until_it_is_committed() {
+    use crate::input::Preedit;
+    use crate::ui::field::{compose, EditLine};
+    let line = EditLine { text: "ab", caret: 1, selection: 1..1 };
+    let p = Preedit::new("にほ".into(), Some("に".len()));
+    assert_eq!(compose(&line, &p), ("aにほb".to_owned(), 1 + "に".len(), 1..1 + "にほ".len()));
+    assert_eq!(compose(&line, &"にほ".into()).1, 1 + "にほ".len(), "without a cursor the caret ends the preedit");
+    assert_eq!(Preedit::new("にほ".into(), Some(1)).cursor, None, "a cursor inside a character is dropped");
     let mut app = app();
     let mut g = Gfx::new(Mono, 256);
-    app.frame(&mut g, Instant::now());
-    app.on_event(&Event::Preedit("にほ".into()), Instant::now());
-    assert!(app.preedit_rect(&mut g).is_none(), "no field has focus");
     app.editing = true;
-    let field = app.ime_area().unwrap();
-    let r = app.preedit_rect(&mut g).unwrap();
-    assert!(r.y >= field.bottom() && r.w > 0.0);
-    app.on_event(&Event::Preedit(String::new()), Instant::now());
-    assert!(app.preedit_rect(&mut g).is_none());
+    app.on_event(&Event::Preedit(p.clone()), Instant::now());
+    assert_eq!(app.preedit, p);
+    app.frame(&mut g, Instant::now());
+    app.on_event(&Event::Preedit(String::new().into()), Instant::now());
+    assert!(app.preedit.is_empty());
+    app.frame(&mut g, Instant::now());
 }
 
 #[test]

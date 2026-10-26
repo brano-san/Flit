@@ -361,7 +361,7 @@ impl App {
         g.dl.round_rect(fr, t.input_bg, s4);
         g.dl.outline(fr, t.accent, s4, scale.round().max(1.0));
         let inner = Rect::new(fr.x + s12, fr.y, fr.w - 2.0 * s12, fr.h);
-        p.field.draw(g, t, inner, font, active, p.pick.placeholder(), scale);
+        p.field.draw(g, t, inner, font, active, p.pick.placeholder(), scale, Some(&self.preedit));
         let m = g.metrics(font);
         for (k, &row) in p.rows.iter().enumerate() {
             let i = p.first + k;
