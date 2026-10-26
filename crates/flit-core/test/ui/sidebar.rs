@@ -136,7 +136,7 @@ fn sections_collapse_hide_and_come_back() {
     click(header(&app, Section::Wsl), &mut app, MouseButton::Right);
     let m = menu(&mut app);
     assert!(!m.shell);
-    assert_eq!(labels(&m.menu), ["Collapse", "Hide this section", "Pinned *", "Folders *", "Libraries *", "Drives *", "WSL *", "Tags *", "Compact sidebar"]);
+    assert_eq!(labels(&m.menu), ["Collapse", "Hide this section", "Pinned *", "Recent *", "Folders *", "Libraries *", "Drives *", "WSL *", "Tags *", "Compact sidebar"]);
     run(&mut app, &m, "Hide this section");
     assert!(!app.nav.sidebar.headers.iter().any(|h| h.1 == Section::Wsl));
     assert_eq!(side_labels(&app), ["a", "b", "Recycle Bin"]);
@@ -169,7 +169,7 @@ fn section_toggles_keep_the_menu_open_and_update_the_sidebar_behind_it() {
     let mut app = app_with_places();
     click(header(&app, Section::Folders), &mut app, MouseButton::Right);
     let m = menu(&mut app);
-    assert_eq!(stays(&m.menu), ["Pinned", "Folders", "Libraries", "Drives", "WSL", "Tags", "Compact sidebar"], "only the show/hide toggles stay open");
+    assert_eq!(stays(&m.menu), ["Pinned", "Recent", "Folders", "Libraries", "Drives", "WSL", "Tags", "Compact sidebar"], "only the show/hide toggles stay open");
     app.on_event(&Event::ShowMenu { items: m.menu, x: 300.0, y: 100.0, launches: Vec::new() }, Instant::now());
     let mut g = Gfx::new(Mono, 1024);
     app.frame(&mut g, Instant::now());
@@ -179,7 +179,7 @@ fn section_toggles_keep_the_menu_open_and_update_the_sidebar_behind_it() {
     assert!(app.own_menu_open(), "toggling Compact leaves the menu open");
     assert!(app.nav_prefs().compact);
     app.frame(&mut g, Instant::now());
-    for k in [Key::Up, Key::Right, Key::Down, Key::Enter] {
+    for k in [Key::Up, Key::Right, Key::Down, Key::Down, Key::Enter] {
         key(&mut app, k);
     }
     assert!(app.own_menu_open(), "hiding a section leaves the menu open");
@@ -191,6 +191,40 @@ fn section_toggles_keep_the_menu_open_and_update_the_sidebar_behind_it() {
     key(&mut app, Key::Up);
     key(&mut app, Key::Enter);
     assert!(!app.own_menu_open(), "ordinary commands still close the menu");
+}
+
+#[test]
+fn recent_files_and_folders_have_their_own_capped_group() {
+    let mut app = app_with_places();
+    let recent = |k: i64, dir: bool| Recent { name: format!("r{k}"), target: FsPath::parse(&format!(r"C:\r\r{k}")).unwrap(), dir, at: 100 - k };
+    let mut places = (*app.nav.sidebar.places).clone();
+    places.recent = (0..14).map(|k| recent(k, k % 2 == 0)).collect();
+    app.set_places(Arc::new(places));
+    app.drain_effects().for_each(drop);
+    let labels: Vec<String> = side_labels(&app).into_iter().map(str::to_owned).collect();
+    assert_eq!(labels[..3], ["a", "b", "r0"], "Recent follows Pinned");
+    assert_eq!(app.nav.sidebar.items.iter().filter(|it| it.section == Section::Recent).count(), 10);
+    assert!(app.nav.sidebar.headers.iter().any(|h| h.1 == Section::Recent));
+    app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    let asked: Vec<(Vec<u8>, IconKind)> = app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { Some((r.path.as_bytes().to_vec(), r.kind)) } else { None }).collect();
+    assert!(asked.contains(&(br"C:\r\r0".to_vec(), IconKind::Place)) && asked.contains(&(br"C:\r\r1".to_vec(), IconKind::File)), "{asked:?}");
+    let file = labels.iter().position(|l| *l == "r1").unwrap();
+    app.open_side_item(file, false, Instant::now());
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } if path == FsPath::parse(r"C:\r\r1").unwrap())));
+    assert!(!app.nav.sidebar.pinnable(file) && app.nav.sidebar.pinnable(file - 1), "files have no pin button");
+    click(app.nav.sidebar.rects[file], &mut app, MouseButton::Right);
+    let m = menu(&mut app);
+    run(&mut app, &m, "Remove from the list");
+    assert!(!side_labels(&app).contains(&"r1"));
+    assert_eq!(app.nav.sidebar.items.iter().filter(|it| it.section == Section::Recent).count(), 10, "the next entry moves up");
+    let folder = side_labels(&app).iter().position(|l| *l == "r0").unwrap();
+    app.open_side_item(folder, false, Instant::now());
+    assert_eq!(app.current_location(), &loc(r"C:\r\r0"));
+    click(header(&app, Section::Recent), &mut app, MouseButton::Right);
+    let m = menu(&mut app);
+    assert!(stays(&m.menu).contains(&"Recent".to_owned()));
+    run(&mut app, &m, "Recent");
+    assert!(!app.nav.sidebar.items.iter().any(|it| it.section == Section::Recent) && app.nav.sidebar.is_hidden(Section::Recent));
 }
 
 #[test]

@@ -29,6 +29,7 @@ folders = "Ordner"
 libraries = "Bibliotheken"
 drives = "Laufwerke"
 tags = "Tags"
+recent = "Zuletzt verwendet"
 
 [tag]
 filter = "Tippen, um Tags zu filtern"

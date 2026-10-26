@@ -1,7 +1,7 @@
 use super::home::{Recent, Widget};
 use super::menu::Menu;
 use super::tags::G_TAG;
-use super::{centered, App, Drag, Effect, Focus, Hit, IconKind, IconRequest, Route, ShellMenu, G_DRIVE, G_FOLDER};
+use super::{centered, App, Drag, Effect, Focus, Hit, IconKind, IconRequest, Route, ShellMenu, G_DRIVE, G_FILE, G_FOLDER};
 use crate::hash;
 use crate::i18n::S;
 use crate::input::{Key, Mods};
@@ -28,6 +28,7 @@ const HEADER_H: f32 = 28.0;
 const COMPACT_HEADER_H: f32 = 12.0;
 const PIN_W: f32 = 22.0;
 const MAX_LIST: usize = 256;
+const RECENT_MAX: usize = 10;
 
 pub(super) const G_HOME: &str = "\u{E80F}";
 const G_DESKTOP: &str = "\u{E7F4}";
@@ -208,6 +209,7 @@ fn toggle(list: &mut Vec<String>, id: &str) {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Section {
     Pinned,
+    Recent,
     Folders,
     Libraries,
     Drives,
@@ -216,11 +218,12 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 6] = [Section::Pinned, Section::Folders, Section::Libraries, Section::Drives, Section::Wsl, Section::Tags];
+    pub const ALL: [Section; 7] = [Section::Pinned, Section::Recent, Section::Folders, Section::Libraries, Section::Drives, Section::Wsl, Section::Tags];
 
     pub fn title(self) -> &'static str {
         match self {
             Section::Pinned => S::SidebarSectionPinned.t(),
+            Section::Recent => S::SidebarSectionRecent.t(),
             Section::Folders => S::SidebarSectionFolders.t(),
             Section::Libraries => S::SidebarSectionLibraries.t(),
             Section::Drives => S::SidebarSectionDrives.t(),
@@ -232,6 +235,7 @@ impl Section {
     pub fn id(self) -> &'static str {
         match self {
             Section::Pinned => "pinned",
+            Section::Recent => "recent",
             Section::Folders => "folders",
             Section::Libraries => "libraries",
             Section::Drives => "drives",
@@ -319,6 +323,13 @@ impl Sidebar {
             .iter()
             .map(|l| Item { section: Section::Pinned, label: library_name(l).unwrap_or_else(|| pinned_label(l)), glyph: pinned_glyph(l), loc: l.clone(), usage: None })
             .collect();
+        items.extend(self.recent().take(RECENT_MAX).map(|(_, r)| Item {
+            section: Section::Recent,
+            label: r.name.clone(),
+            glyph: if r.dir { G_FOLDER } else { G_FILE },
+            loc: Location::from_local(r.target.clone()),
+            usage: None,
+        }));
         items.extend(p.folders.iter().map(|(k, l)| Item { section: Section::Folders, label: k.label().to_owned(), glyph: k.glyph(), loc: l.clone(), usage: None }));
         if p.recycle_bin {
             let label = S::PathRecycleBin.t().to_owned();
@@ -342,6 +353,25 @@ impl Sidebar {
         self.cursor = self.cursor.min(self.items.len().saturating_sub(1));
     }
 
+    pub(super) fn recent(&self) -> impl Iterator<Item = (usize, &Recent)> {
+        let p = &self.prefs;
+        self.places.recent.iter().enumerate().filter(move |(_, r)| r.at > p.recent_cleared && !p.recent_hidden.iter().any(|(path, at)| *path == r.target && r.at <= *at))
+    }
+
+    pub(super) fn recent_entry(&self, i: usize) -> Option<usize> {
+        let it = self.items.get(i).filter(|it| it.section == Section::Recent)?;
+        self.places.recent.iter().position(|r| Location::from_local(r.target.clone()) == it.loc)
+    }
+
+    pub fn recent_file(&self, i: usize) -> Option<FsPath> {
+        let r = &self.places.recent[self.recent_entry(i)?];
+        (!r.dir).then(|| r.target.clone())
+    }
+
+    pub fn pinnable(&self, i: usize) -> bool {
+        self.tag_of(i).is_none() && self.recent_file(i).is_none()
+    }
+
     pub fn tag_of(&self, i: usize) -> Option<usize> {
         let first = self.items.iter().position(|it| it.section == Section::Tags)?;
         (self.items.get(i)?.section == Section::Tags).then(|| i - first)
@@ -363,6 +393,7 @@ impl Sidebar {
         let p = &self.places;
         match s {
             Section::Pinned => true,
+            Section::Recent => self.recent().next().is_some(),
             Section::Folders => !p.folders.is_empty() || p.recycle_bin,
             Section::Libraries => !p.libraries.is_empty(),
             Section::Drives => !p.drives.is_empty(),
@@ -426,7 +457,7 @@ impl App {
         self.nav_prefs_changed();
     }
 
-    fn nav_prefs_changed(&mut self) {
+    pub(super) fn nav_prefs_changed(&mut self) {
         self.nav.sidebar.rebuild();
         self.layout();
         self.dirty = true;
@@ -598,6 +629,9 @@ impl App {
         if let Some(k) = self.nav.sidebar.tag_of(i) {
             return self.show_tag(k);
         }
+        if let Some(file) = self.nav.sidebar.recent_file(i) {
+            return self.place_command(PlaceCmd::OpenFile(file), now);
+        }
         let Some(folder) = self.nav.sidebar.items.get(i).map(|it| it.loc.clone()) else { return };
         if let Some(d) = self.nav.sidebar.places.drives.iter().find(|d| d.unmounted && d.path == *folder.path()) {
             let (tab, launch) = (self.tab().id, Launch::Mount(d.path.clone()));
@@ -745,6 +779,9 @@ impl App {
                     let menu = self.build_tag_menu(Some(k));
                     return self.flit_menu(x, y, menu);
                 }
+                if let Some(r) = self.nav.sidebar.recent_entry(i) {
+                    return self.recent_menu(x, y, r);
+                }
                 if let Some(loc) = self.nav.sidebar.items.get(i).map(|it| it.loc.clone()) {
                     self.place_menu(x, y, loc, |_, _| {});
                 }
@@ -816,7 +853,7 @@ impl App {
         }
         for (i, r) in sb.rects.iter().enumerate() {
             if r.contains(x, y) {
-                let pin = !sb.prefs.compact && sb.pin_rect(*r, self.scale).contains(x, y) && sb.tag_of(i).is_none();
+                let pin = !sb.prefs.compact && sb.pin_rect(*r, self.scale).contains(x, y) && sb.pinnable(i);
                 return Some(if pin { Hit::SidePin(i) } else { Hit::Side(i) });
             }
         }
@@ -975,7 +1012,8 @@ impl App {
             }
             let baseline = (r.y + (text_h + m.ascent - m.descent) / 2.0).round();
             let pin_r = sb.pin_rect(Rect::new(r.x, r.y, r.w, text_h), self.scale);
-            let text_right = if hovered && tag.is_none() { pin_r.x - s4 } else { r.right() - s8 };
+            let pin = hovered && sb.pinnable(i);
+            let text_right = if pin { pin_r.x - s4 } else { r.right() - s8 };
             g.text(r.x + s36, baseline, &it.label, font, t.text, text_right - r.x - s36);
             if let Some(used) = it.usage {
                 let bar = Rect::new(r.x + s36, r.y + text_h - self.s(2.0), (r.right() - s12 - r.x - s36).max(0.0), self.s(4.0));
@@ -983,7 +1021,7 @@ impl App {
                 let fill = if used >= 0.9 { t.error } else { t.accent };
                 g.dl.round_rect(Rect::new(bar.x, bar.y, (bar.w * used.clamp(0.0, 1.0)).max(bar.h), bar.h), fill, bar.h / 2.0);
             }
-            if hovered && tag.is_none() {
+            if pin {
                 if self.hover == Hit::SidePin(i) {
                     g.dl.round_rect(pin_r, t.button_hover, s4);
                 }
@@ -1028,13 +1066,14 @@ impl App {
 
 fn place_icon_request(it: &Item, places: &Places, px: u32) -> Option<(u64, IconKind, FsPath)> {
     match (&it.loc, it.section) {
-        (_, Section::Tags) => None,
+        (_, Section::Tags) | (Location::Wsl { .. }, Section::Recent) => None,
         (Location::Wsl { distro, path }, _) if path.is_root() => Some((hash::hash(&("vol", distro.as_bytes(), px)), IconKind::Volume, it.loc.to_windows()?)),
         (Location::Wsl { .. }, _) => Some((hash::hash(&("dir", px)), IconKind::Folder, it.loc.to_windows()?)),
         (Location::Local(path), Section::Drives) => {
             let drive = places.drives.iter().find(|d| d.path == *path)?;
             (!drive.offline()).then(|| (hash::hash(&("place", path.as_bytes(), px)), IconKind::Volume, path.clone()))
         }
+        (Location::Local(path), Section::Recent) if places.recent.iter().any(|r| !r.dir && r.target == *path) => Some((hash::hash(&("place", path.as_bytes(), px)), IconKind::File, path.clone())),
         (Location::Local(path), _) => Some((hash::hash(&("place", path.as_bytes(), px)), IconKind::Place, path.clone())),
     }
 }

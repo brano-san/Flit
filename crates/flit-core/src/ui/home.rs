@@ -110,8 +110,7 @@ impl App {
     }
 
     pub(super) fn recent_items(&self) -> impl Iterator<Item = (usize, &Recent)> {
-        let p = &self.nav.sidebar.prefs;
-        self.nav.sidebar.places.recent.iter().enumerate().filter(move |(_, r)| r.at > p.recent_cleared && !p.recent_hidden.iter().any(|(path, at)| *path == r.target && r.at <= *at))
+        self.nav.sidebar.recent()
     }
 
     pub(super) fn forget_recent(&mut self, path: FsPath) {
@@ -119,8 +118,7 @@ impl App {
         let p = &mut self.nav.sidebar.prefs;
         p.recent_hidden.retain(|(q, _)| *q != path);
         p.recent_hidden.push((path, at));
-        self.layout();
-        self.dirty = true;
+        self.nav_prefs_changed();
     }
 
     pub(super) fn clear_recent(&mut self) {
@@ -130,8 +128,7 @@ impl App {
             p.recent_cleared = p.recent_cleared.max(at);
             p.recent_hidden.clear();
         }
-        self.layout();
-        self.dirty = true;
+        self.nav_prefs_changed();
     }
 
     fn folder_cards(&self) -> Vec<Card> {
@@ -261,6 +258,11 @@ impl App {
         }
         let Some(loc) = self.card_location(i) else { return };
         let Card::Recent(r) = self.nav.home.cards[i].1 else { return self.place_menu(x, y, loc, |_, _| {}) };
+        self.recent_menu(x, y, r);
+    }
+
+    pub(super) fn recent_menu(&mut self, x: f32, y: f32, r: usize) {
+        let Some(loc) = self.nav.sidebar.places.recent.get(r).map(|e| Location::from_local(e.target.clone())) else { return };
         if self.nav.sidebar.places.recent[r].dir {
             let path = loc.path().clone();
             return self.place_menu(x, y, loc, |_, m| {
