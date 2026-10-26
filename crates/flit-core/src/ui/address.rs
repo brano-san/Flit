@@ -28,6 +28,7 @@ const LONG_PRESS: Duration = Duration::from_millis(500);
 const SUGGESTION_H: f32 = 28.0;
 const NOT_URLS: [&str; 3] = ["file", "shell", "wsl"];
 const EXPLORER: &str = "explorer.exe";
+const SEPS: [char; 2] = ['\\', '/'];
 
 type Anchor = ((f32, f32), Option<Vec<u8>>);
 
@@ -50,6 +51,7 @@ pub(super) struct Address {
     targets: Vec<Location>,
     menu: Option<(Probe, Anchor)>,
     probe: Option<Probe>,
+    missing: Vec<Location>,
     pub seen: Option<String>,
     items: Vec<(String, bool)>,
     rects: Vec<Rect>,
@@ -79,6 +81,89 @@ fn split_command(text: &str) -> (String, String) {
 fn folders(v: &DirView) -> Vec<Vec<u8>> {
     let l = v.listing();
     v.rows().iter().filter(|&&i| l.entries[i as usize].is_dir()).map(|&i| l.name(i).to_vec()).collect()
+}
+
+enum Folders {
+    Pending,
+    Missing,
+    Found(Vec<Vec<u8>>),
+}
+
+type Rank = (u8, usize, usize, usize);
+
+fn rank((tier, dist): (u8, usize), recency: usize, text: &str) -> Rank {
+    (tier, recency, dist, text.chars().count())
+}
+
+fn lower(s: &str) -> Vec<char> {
+    s.chars().flat_map(char::to_lowercase).collect()
+}
+
+fn place_key(s: &str) -> String {
+    s.trim().trim_end_matches(SEPS).to_lowercase()
+}
+
+fn allowance(q: &[char]) -> usize {
+    (q.len() / 3).min(2)
+}
+
+fn edit_row(a: &[char], b: &[char]) -> Vec<usize> {
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut diag = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let up = row[j + 1];
+            row[j + 1] = (diag + usize::from(ca != cb)).min(up + 1).min(row[j] + 1);
+            diag = up;
+        }
+    }
+    row
+}
+
+fn subsequence(q: &[char], c: &[char]) -> bool {
+    let mut rest = c.iter();
+    q.iter().all(|x| rest.any(|y| y == x))
+}
+
+fn literal(q: &[char], c: &[char]) -> Option<(u8, usize)> {
+    if c.starts_with(q) {
+        Some((0, 0))
+    } else if q.len() > 1 && c.windows(q.len()).any(|w| w == q) {
+        Some((1, 0))
+    } else {
+        None
+    }
+}
+
+fn closeness(q: &[char], c: &[char], loose: bool) -> Option<(u8, usize)> {
+    literal(q, c).or_else(|| {
+        let d = edit_row(q, &c[..c.len().min(q.len() + 2)]).into_iter().min().unwrap_or(0);
+        (d <= allowance(q) || loose && q.len() > 1 && subsequence(q, c)).then_some((2, d))
+    })
+}
+
+fn path_closeness(query: &str, cand: &str) -> Option<(u8, usize)> {
+    let (q, c) = (lower(query.trim()), lower(cand));
+    if let Some(m) = literal(&q, &c) {
+        return Some(m);
+    }
+    let is_sep = |ch: &char| SEPS.contains(ch);
+    let (qs, cs): (Vec<&[char]>, Vec<&[char]>) = (q.split(is_sep).collect(), c.split(is_sep).collect());
+    let (last, head) = qs.split_last()?;
+    if cs.len() < head.len() {
+        return None;
+    }
+    let mut dist = 0;
+    for (a, b) in head.iter().zip(&cs) {
+        let d = edit_row(a, b)[b.len()];
+        if d > allowance(a) {
+            return None;
+        }
+        dist += d;
+    }
+    let (_, d) = closeness(last, cs.get(head.len()).copied().unwrap_or_default(), false)?;
+    Some((2, dist + d))
 }
 
 fn label(loc: &Location) -> String {
@@ -291,6 +376,7 @@ impl App {
     pub(super) fn layout_address(&mut self) {
         if !self.editing {
             if self.addr.seen.take().is_some() {
+                self.addr.missing.clear();
                 self.addr.items.clear();
                 self.addr.rects.clear();
                 self.addr.sel = None;
@@ -305,43 +391,98 @@ impl App {
         self.addr.rects = (0..self.addr.items.len()).map(|k| Rect::new(a.x, a.bottom() + gap + k as f32 * h, a.w, h)).collect();
     }
 
-    fn suggest(&mut self) {
-        let text = self.edit.text.clone();
-        let mut items: Vec<(String, bool)> = Vec::new();
-        if !text.trim().is_empty() {
-            let typed = self.addr.typed.lock().unwrap_or_else(|e| e.into_inner());
-            items.extend(typed.iter().filter(|t| t.len() > text.len() && name::starts_with_ci(t.as_bytes(), &text)).take(MAX_SUGGESTIONS / 2).map(|t| (t.clone(), true)));
-        }
-        if let Some(cut) = text.rfind(['\\', '/']) {
-            let (dir, prefix, sep) = (&text[..=cut], &text[cut + 1..], &text[cut..=cut]);
-            for n in self.subfolders(dir).unwrap_or_default().iter().filter(|n| name::starts_with_ci(n, prefix)) {
-                let s = format!("{dir}{}{sep}", name::display(n));
-                if items.len() == MAX_SUGGESTIONS {
-                    break;
-                }
-                if !items.iter().any(|(t, _)| *t == s) {
-                    items.push((s, false));
-                }
-            }
-        }
-        self.addr.items = items;
-        self.addr.sel = None;
+    fn places(&self) -> Vec<(String, bool)> {
+        let mut out: Vec<(String, bool)> = self.addr.typed.lock().unwrap_or_else(|e| e.into_inner()).iter().map(|t| (t.clone(), true)).collect();
+        let shown = |l: &Location| (l.display().into_owned(), false);
+        let sb = &self.nav.sidebar;
+        let mut recent: Vec<_> = sb.places.recent.iter().filter(|r| r.dir).collect();
+        recent.sort_by_key(|r| std::cmp::Reverse(r.at));
+        out.extend(self.tab().history.back_list().iter().rev().map(shown));
+        out.extend(recent.into_iter().map(|r| (r.target.display().into_owned(), false)));
+        out.extend(sb.state.pinned.iter().map(shown));
+        out.extend(sb.places.folders.iter().map(|(_, l)| shown(l)));
+        out
     }
 
-    fn subfolders(&mut self, dir: &str) -> Option<Vec<Vec<u8>>> {
+    fn suggest(&mut self) {
+        self.addr.sel = None;
+        self.addr.items.clear();
+        let text = self.edit.text.clone();
+        if text.trim().is_empty() {
+            return;
+        }
+        let places = self.places();
+        let keys: Vec<String> = places.iter().map(|(p, _)| place_key(p)).collect();
+        let recency = |s: &str| {
+            let k = place_key(s);
+            keys.iter().position(|p| *p == k).unwrap_or(usize::MAX)
+        };
+        let mut found: Vec<(Rank, String, bool)> = Vec::new();
+        let typed_key = place_key(&text);
+        for ((p, typed), k) in places.iter().zip(&keys) {
+            if let Some(m) = path_closeness(&text, p).filter(|_| *k != typed_key) {
+                found.push((rank(m, recency(p), p), p.clone(), *typed));
+            }
+        }
+        let (mut end, mut cut) = (text.len(), text.rfind(SEPS));
+        while let Some(c) = cut {
+            let (dir, seg, sep) = (&text[..=c], &text[c + 1..end], &text[c..=c]);
+            match self.subfolders(dir) {
+                Folders::Found(names) => {
+                    let q = lower(seg);
+                    for n in &names {
+                        let shown = name::display(n);
+                        if let Some(m) = closeness(&q, &lower(&shown), true) {
+                            let s = format!("{dir}{shown}{sep}");
+                            found.push((rank(m, recency(&s), &s), s, false));
+                        }
+                    }
+                    break;
+                }
+                Folders::Missing => (end, cut) = (c, text[..c].rfind(SEPS)),
+                Folders::Pending => break,
+            }
+        }
+        found.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        let mut seen = Vec::new();
+        self.addr.items = found
+            .into_iter()
+            .filter(|f| {
+                let k = place_key(&f.1);
+                !seen.contains(&k) && {
+                    seen.push(k);
+                    true
+                }
+            })
+            .take(MAX_SUGGESTIONS)
+            .map(|f| (f.1, f.2))
+            .collect();
+    }
+
+    fn subfolders(&mut self, dir: &str) -> Folders {
         let cwd = self.current_location().to_windows().map(|p| p.as_bytes().to_vec());
-        let loc = open::resolve(dir.as_bytes(), cwd.as_deref(), &|_| None).ok()?;
+        let Ok(loc) = open::resolve(dir.as_bytes(), cwd.as_deref(), &|_| None) else { return Folders::Pending };
+        if self.addr.missing.contains(&loc) {
+            return Folders::Missing;
+        }
         if let Some(names) = self.shown_folders(&loc) {
-            return Some(names);
+            return Folders::Found(names);
         }
         if let Some(p) = self.addr.probe.as_ref().filter(|p| p.loc == loc) {
-            return p.view.as_ref().map(folders);
+            return match &p.view {
+                None => Folders::Pending,
+                Some(v) if v.snap().error.is_some() && v.total_rows() == 0 => {
+                    self.addr.missing.push(loc);
+                    Folders::Missing
+                }
+                Some(v) => Folders::Found(folders(v)),
+            };
         }
         if let Some(old) = self.addr.probe.take() {
             old.cancel.set(u64::MAX);
         }
         self.addr.probe = Some(self.probe(loc));
-        None
+        Folders::Pending
     }
 
     pub(super) fn suggesting(&self) -> bool {

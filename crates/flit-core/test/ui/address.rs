@@ -169,6 +169,63 @@ fn suggestions_come_from_subfolders_and_typed_paths() {
     assert!(!app.editing);
 }
 
+fn type_address(app: &mut App, text: &str) {
+    key(app, Key::Char('L'), CTRL);
+    app.layout();
+    app.edit.set(text);
+    app.layout();
+}
+
+fn answer_probe(app: &mut App, expect: &str, items: &[(&str, bool)], error: Option<FsErrorKind>) {
+    let p = app.addr.probe.as_ref().expect("a probe");
+    assert_eq!(p.loc, loc(expect));
+    p.slot.publish(snapshot(p.gen, &p.loc, items, error));
+    app.poll();
+    app.layout();
+}
+
+fn suggested(app: &App) -> Vec<&str> {
+    app.addr.items.iter().map(|(t, _)| t.as_str()).collect()
+}
+
+#[test]
+fn a_missing_folder_suggests_close_names_from_its_nearest_existing_parent() {
+    let mut app = app_at(r"D:\x");
+    type_address(&mut app, r"C:\User\");
+    assert!(app.addr.items.is_empty());
+    answer_probe(&mut app, r"C:\User", &[], Some(FsErrorKind::NotFound));
+    answer_probe(&mut app, r"C:\", &[("Users", true), ("Windows", true), ("Program Files", true), ("pagefile.sys", false)], None);
+    assert_eq!(suggested(&app), [r"C:\Users\"]);
+
+    type_address(&mut app, r"C:\Usr\brno\Dcs");
+    answer_probe(&mut app, r"C:\Usr\brno", &[], Some(FsErrorKind::NotFound));
+    answer_probe(&mut app, r"C:\Usr", &[], Some(FsErrorKind::NotFound));
+    answer_probe(&mut app, r"C:\", &[("Users", true), ("Windows", true)], None);
+    assert_eq!(suggested(&app), [r"C:\Users\"]);
+}
+
+#[test]
+fn a_typo_in_the_last_name_still_finds_the_folder() {
+    let mut app = app_at(r"D:\x");
+    type_address(&mut app, r"C:\Users\brano\Dcuments");
+    answer_probe(&mut app, r"C:\Users\brano", &[("Desktop", true), ("Documents", true), ("Downloads", true), ("notes.txt", false)], None);
+    assert_eq!(suggested(&app), [r"C:\Users\brano\Documents\"]);
+
+    app.share_typed(Arc::new(Mutex::new(vec![r"C:\Users\brano\Documents\Work".into(), r"C:\Windows".into()])));
+    type_address(&mut app, r"C:\Usrs\brano\Docs");
+    assert_eq!(suggested(&app), [r"C:\Users\brano\Documents\Work"]);
+}
+
+#[test]
+fn suggestions_rank_prefix_then_recent_then_closeness_then_length() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("dxo", true), ("redo", true), ("dotfiles_long", true), ("Downloads", true), ("docs", true), ("dog.txt", false), ("zzz", true)], None);
+    app.share_typed(Arc::new(Mutex::new(vec![r"C:\x\Downloads".into()])));
+    type_address(&mut app, r"C:\x\do");
+    assert_eq!(suggested(&app), [r"C:\x\Downloads", r"C:\x\docs\", r"C:\x\dotfiles_long\", r"C:\x\redo\", r"C:\x\dxo\"]);
+    assert!(app.addr.items[0].1);
+}
+
 #[test]
 fn chevrons_list_subfolders_and_the_ellipsis_lists_hidden_crumbs() {
     let mut app = app_at(r"C:\x\y");
