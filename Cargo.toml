@@ -67,6 +67,7 @@ inherits = "release"
 inherits = "release"
 debug = false
 strip = true
+lto = "fat"
 
 [profile.wsl-agent]
 inherits = "release"

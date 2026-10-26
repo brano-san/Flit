@@ -54,19 +54,74 @@ fn jpegs_decode_at_a_reduced_scale() {
     assert!(b.rgba[0] > 200 && b.rgba[2] < 60, "the top is red: {:?}", &b.rgba[..4]);
 }
 
+fn with_exif_thumbnail(main: &[u8], thumb: &[u8], le: bool) -> Vec<u8> {
+    let u16b = |v: u16| if le { v.to_le_bytes() } else { v.to_be_bytes() };
+    let u32b = |v: u32| if le { v.to_le_bytes() } else { v.to_be_bytes() };
+    let mut tiff = Vec::new();
+    tiff.extend_from_slice(if le { b"II" } else { b"MM" });
+    tiff.extend_from_slice(&u16b(42));
+    tiff.extend_from_slice(&u32b(8));
+    tiff.extend_from_slice(&u16b(0));
+    tiff.extend_from_slice(&u32b(14));
+    tiff.extend_from_slice(&u16b(2));
+    for (tag, value) in [(0x0201u16, 14 + 2 + 24 + 4), (0x0202, thumb.len() as u32)] {
+        tiff.extend_from_slice(&u16b(tag));
+        tiff.extend_from_slice(&u16b(4));
+        tiff.extend_from_slice(&u32b(1));
+        tiff.extend_from_slice(&u32b(value));
+    }
+    tiff.extend_from_slice(&u32b(0));
+    tiff.extend_from_slice(thumb);
+    let mut out = main[..2].to_vec();
+    out.extend_from_slice(&[0xFF, 0xE1]);
+    out.extend_from_slice(&((tiff.len() + 8) as u16).to_be_bytes());
+    out.extend_from_slice(b"Exif\0\0");
+    out.extend_from_slice(&tiff);
+    out.extend_from_slice(&main[2..]);
+    out
+}
+
+#[test]
+fn an_embedded_exif_thumbnail_is_used_when_it_is_large_enough() {
+    let t = Temp::new("thumb-exif");
+    let (big, small) = (t.path().join("big.jpg"), t.path().join("small.jpg"));
+    if !convert(&["-size", "800x600", "xc:red", big.to_str().unwrap()]) || !convert(&["-size", "160x120", "xc:blue", small.to_str().unwrap()]) {
+        return;
+    }
+    for le in [true, false] {
+        let joined = with_exif_thumbnail(&std::fs::read(&big).unwrap(), &std::fs::read(&small).unwrap(), le);
+        assert_eq!(exif_thumbnail(&joined).map(|t| t.len()), Some(std::fs::metadata(&small).unwrap().len() as usize));
+        let src = t.path().join("joined.jpg");
+        std::fs::write(&src, &joined).unwrap();
+        let blue = thumbnail(&src, 96, None).unwrap();
+        assert_eq!((blue.width, blue.height), (96, 72));
+        assert!(blue.rgba[2] > 200 && blue.rgba[0] < 60, "the embedded blue thumbnail: {:?}", &blue.rgba[..4]);
+        let red = thumbnail(&src, 256, None).unwrap();
+        assert_eq!((red.width, red.height), (256, 192));
+        assert!(red.rgba[0] > 200, "the full red image when the embedded one is too small");
+    }
+    assert!(exif_thumbnail(&std::fs::read(&big).unwrap()).is_none());
+}
+
 #[test]
 #[ignore]
 fn bench_a_twelve_megapixel_jpeg_thumbnail() {
     let t = Temp::new("thumb-bench");
-    let src = t.path().join("p.jpg");
-    assert!(convert(&["-size", "4000x3000", "plasma:", "-quality", "90", src.to_str().unwrap()]));
-    let mut took: Vec<_> = (0..7)
-        .map(|_| {
-            let start = Instant::now();
-            assert!(thumbnail(&src, 256, None).is_some());
-            start.elapsed()
-        })
-        .collect();
-    took.sort();
-    eprintln!("measure: 12 MP JPEG to a 256 px thumbnail median {:?}", took[3]);
+    let sources: [(&str, &[&str]); 2] = [("noise", &["plasma:"]), ("smooth", &["plasma:", "-blur", "0x3"])];
+    for (label, make) in sources {
+        let src = t.path().join(format!("{label}.jpg"));
+        let mut args = vec!["-size", "4000x3000"];
+        args.extend_from_slice(make);
+        args.extend_from_slice(&["-quality", "90", src.to_str().unwrap()]);
+        assert!(convert(&args));
+        let mut took: Vec<_> = (0..7)
+            .map(|_| {
+                let start = Instant::now();
+                assert!(thumbnail(&src, 256, None).is_some());
+                start.elapsed()
+            })
+            .collect();
+        took.sort();
+        eprintln!("measure: 12 MP {label} JPEG of {} bytes to a 256 px thumbnail median {:?}", std::fs::metadata(&src).unwrap().len(), took[3]);
+    }
 }

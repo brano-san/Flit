@@ -55,8 +55,8 @@ fn decode_png(path: &Path) -> Option<Bitmap> {
     decode_png_from(decoder.read_info().ok()?)
 }
 
-fn decode_jpeg(path: &Path, size: u32) -> Option<Bitmap> {
-    let mut decoder = jpeg_decoder::Decoder::new(BufReader::new(File::open(path).ok()?));
+fn decode_jpeg_bytes(data: &[u8], size: u32) -> Option<Bitmap> {
+    let mut decoder = jpeg_decoder::Decoder::new(data);
     let target = size.clamp(1, u16::MAX as u32) as u16;
     let (w, h) = decoder.scale(target, target).ok()?;
     let pixels = decoder.decode().ok()?;
@@ -66,6 +66,65 @@ fn decode_jpeg(path: &Path, size: u32) -> Option<Bitmap> {
         _ => return None,
     };
     Some(Bitmap { width: w as u32, height: h as u32, rgba })
+}
+
+fn read_u16(b: &[u8], at: usize, le: bool) -> Option<u16> {
+    let v = [*b.get(at)?, *b.get(at + 1)?];
+    Some(if le { u16::from_le_bytes(v) } else { u16::from_be_bytes(v) })
+}
+
+fn read_u32(b: &[u8], at: usize, le: bool) -> Option<u32> {
+    let v = [*b.get(at)?, *b.get(at + 1)?, *b.get(at + 2)?, *b.get(at + 3)?];
+    Some(if le { u32::from_le_bytes(v) } else { u32::from_be_bytes(v) })
+}
+
+pub fn exif_block(jpeg: &[u8]) -> Option<&[u8]> {
+    let mut at = 2;
+    while at + 4 <= jpeg.len() && jpeg[at] == 0xFF {
+        let marker = jpeg[at + 1];
+        let len = read_u16(jpeg, at + 2, false)? as usize;
+        if marker == 0xDA {
+            return None;
+        }
+        let body = jpeg.get(at + 4..at + 2 + len)?;
+        if marker == 0xE1 && body.starts_with(b"Exif\0\0") {
+            return Some(&body[6..]);
+        }
+        at += 2 + len;
+    }
+    None
+}
+
+pub fn exif_thumbnail(jpeg: &[u8]) -> Option<&[u8]> {
+    let tiff = exif_block(jpeg)?;
+    let le = match tiff.get(..2)? {
+        b"II" => true,
+        b"MM" => false,
+        _ => return None,
+    };
+    let ifd0 = read_u32(tiff, 4, le)? as usize;
+    let count0 = read_u16(tiff, ifd0, le)? as usize;
+    let ifd1 = read_u32(tiff, ifd0 + 2 + count0 * 12, le)? as usize;
+    if ifd1 == 0 {
+        return None;
+    }
+    let (mut offset, mut length) = (None, None);
+    for k in 0..read_u16(tiff, ifd1, le)? as usize {
+        let entry = ifd1 + 2 + k * 12;
+        match read_u16(tiff, entry, le)? {
+            0x0201 => offset = read_u32(tiff, entry + 8, le),
+            0x0202 => length = read_u32(tiff, entry + 8, le),
+            _ => {}
+        }
+    }
+    let (offset, length) = (offset? as usize, length? as usize);
+    tiff.get(offset..offset.checked_add(length)?)
+}
+
+fn decode_jpeg(path: &Path, size: u32) -> Option<Bitmap> {
+    let data = std::fs::read(path).ok()?;
+    let embedded = exif_thumbnail(&data).and_then(|t| decode_jpeg_bytes(t, size)).filter(|b| b.width.max(b.height) >= size);
+    embedded.or_else(|| decode_jpeg_bytes(&data, size))
 }
 
 pub fn fit(b: Bitmap, size: u32) -> Bitmap {
