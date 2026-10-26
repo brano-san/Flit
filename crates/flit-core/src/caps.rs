@@ -14,7 +14,12 @@ pub const WINDOWS_ONLY_ACTIONS: &[&str] = &[
     "file.install_fonts",
     "file.lock_screen",
     "item.shell_properties",
+    "drive.map",
+    "drive.disconnect",
+    "nav.network",
 ];
+
+pub const UNIX_ONLY_ACTIONS: &[&str] = &["drive.connect_server"];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Caps {
@@ -23,14 +28,17 @@ pub struct Caps {
 
 impl Caps {
     pub fn supports(&self, action: &str) -> bool {
-        !self.unix_paths || !WINDOWS_ONLY_ACTIONS.contains(&action)
+        match self.unix_paths {
+            true => !WINDOWS_ONLY_ACTIONS.contains(&action),
+            false => !UNIX_ONLY_ACTIONS.contains(&action),
+        }
     }
 
     pub fn is_native(&self, p: &FsPath) -> bool {
         match p.kind() {
             PathKind::Unix => self.unix_paths,
             PathKind::Drive | PathKind::Unc | PathKind::Verbatim => !self.unix_paths,
-            PathKind::Computer | PathKind::RecycleBin | PathKind::Home => false,
+            PathKind::Computer | PathKind::RecycleBin | PathKind::Home | PathKind::Shell => false,
         }
     }
 

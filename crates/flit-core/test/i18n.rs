@@ -214,7 +214,7 @@ fn relocalize_moves_messages_between_languages() {
     assert_eq!(ru, "F2 теперь запускает «Локальный диск»");
     assert_eq!(relocalize(&plural, Lang::En), "3 файла");
     assert_eq!(relocalize(&drive, Lang::En), drive, "a {{name}} that equals a catalogue string is data and stays");
-    let local = crate::ui::sidebar::Drive { path: crate::FsPath::parse(r"C:\").unwrap(), label: drive.clone(), total: 0, free: 0, removable: false, unmounted: false, kind: Some(S::SidebarDriveLocal) };
+    let local = crate::ui::sidebar::Drive { path: crate::FsPath::parse(r"C:\").unwrap(), label: drive.clone(), total: 0, free: 0, removable: false, unmounted: false, kind: Some(S::SidebarDriveLocal), remote: None };
     assert_eq!(local.title(), "Локальный диск (C:)");
     assert_eq!(crate::ui::sidebar::Drive { kind: None, ..local }.title(), drive);
     let nested = crate::tr_en!(S::UiQuoted, name = S::SidebarDriveLocal.en());

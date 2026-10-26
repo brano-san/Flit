@@ -39,3 +39,10 @@ fn maps_windows_ui_languages_to_flit_codes() {
     assert_eq!([0x0419, 0x0409, 0x0809, 0x0407, 0x040C, 0x0C0A, 0x0422, 0x0804, 0x1004].map(language_code), ["ru", "en", "en", "de", "fr", "es", "uk", "zh-CN", "zh-CN"]);
     assert_eq!([0x0404, 0x0C04, 0x0411].map(language_code), ["", "", ""]);
 }
+
+#[test]
+fn drives_end_with_the_network_place_and_mapped_drives_carry_their_share() {
+    let all = drives();
+    assert_eq!(all.last().map(|d| d.path.clone()), Some(FsPath::network()));
+    assert!(all.iter().filter(|d| d.remote.is_some()).all(|d| d.path.kind() == flit_core::path::PathKind::Drive && d.label.contains('\\')));
+}

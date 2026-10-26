@@ -7,6 +7,7 @@ no_media = "Aucun support dans le lecteur"
 coded = "{what} (0x{code})"
 retry = "{error}. Appuyez sur F5 pour réessayer."
 insert_media = "{error}. Insérez-en un et appuyez sur F5, ou éjectez le lecteur."
+not_responding = "L'emplacement réseau ne répond pas"
 
 [title]
 encrypted = "Cette archive est chiffrée"

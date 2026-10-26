@@ -31,6 +31,9 @@ pub(crate) fn item_path(item: &IShellItem) -> Option<FsPath> {
 }
 
 fn shell_item(p: &FsPath) -> Result<IShellItem, PlatformError> {
+    if p.kind() == flit_core::path::PathKind::Shell {
+        return crate::namespace::item(p).map_err(|e| PlatformError::new(e.code, format!("{}: {e}", p.display())));
+    }
     let w = p.to_wide(false);
     unsafe { SHCreateItemFromParsingName(PCWSTR(w.as_ptr()), None) }.map_err(|e| PlatformError::new(e.code().0 as i64, format!("{}: {}", p.display(), e.message())))
 }

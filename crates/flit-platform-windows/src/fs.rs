@@ -229,13 +229,17 @@ impl Fs for NtFs {
         match dir.kind() {
             PathKind::Computer => return volumes(out),
             PathKind::RecycleBin => return crate::recycle::list(&crate::recycle::roots(), out),
+            PathKind::Shell => return crate::namespace::read_dir(dir, out),
             _ if flit_core::library::is_library(dir) => return crate::library::list(dir, out),
             _ => {}
         }
         if let Some(listed) = flit_archive::read_dir(dir, out, <crate::Windows as flit_platform::Platform>::utc_offset_minutes()) {
             return listed;
         }
-        let h = open_dir(dir, FILE_LIST_DIRECTORY.0, false)?;
+        let h = match open_dir(dir, FILE_LIST_DIRECTORY.0, false) {
+            Err(e) if crate::network::needs_logon(dir, &e) && crate::network::logon(dir) => open_dir(dir, FILE_LIST_DIRECTORY.0, false)?,
+            opened => opened?,
+        };
         if let Some(v) = (out.wants_ids() && dir.kind() == PathKind::Drive).then(|| crate::tags::volume_serial(h)).flatten() {
             out.set_volume(v);
         }
@@ -289,6 +293,10 @@ impl Fs for NtFs {
 
     fn desktop_ini(&self, dir: &FsPath) -> Option<DesktopIni> {
         crate::shell::desktop_ini(dir)
+    }
+
+    fn remote(&self, path: &FsPath) -> bool {
+        crate::network::remote(path)
     }
 
     fn seek_penalty(&self, path: &FsPath) -> Option<bool> {

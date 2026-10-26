@@ -734,6 +734,7 @@ impl App {
             p @ (Pick::NewLibrary | Pick::LibraryAdd(_)) => self.submit_library(p, text),
             Pick::Tags(t) => self.tag_input(t, text),
             Pick::Setting(p) => self.setting_input(p, text),
+            Pick::Server => self.connect_server(text),
             Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Encoding(_) | Pick::Toolbar(_) => {}
         }
     }

@@ -10,7 +10,7 @@ use flit_core::tags::{TagCell, Tags};
 use flit_core::{FsError, FsErrorKind, FsPath, Location, ProviderEvent, ProviderRequest, TabId};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -298,6 +298,7 @@ fn run_shell<S: Shell>(sh: &mut S, job: ShellJob) -> Result<Option<FsPath>, Plat
         },
         ShellJob::Open(p) => sh.open(&p).map(|()| None),
         ShellJob::Launch(Launch::Mount(device)) => sh.mount(&device).map(Some),
+        ShellJob::Launch(Launch::ConnectServer(uri)) => sh.connect(&uri).map(Some),
         ShellJob::Launch(l) => sh.launch(&l).map(|()| None),
     }
 }
@@ -308,7 +309,11 @@ impl Provider for LocalProvider {
         let _ = match req {
             ProviderRequest::List { tab, gen, path, view, case, out, cancel } => {
                 let watch = pending.remove(&tab).filter(|(g, _)| *g == gen).map(|(_, p)| p);
-                self.jobs.send(ListJob { tab, gen, path, view, case, out, cancel, watch, tags: self.tags.get() }).map_err(drop)
+                let job = ListJob { tab, gen, path, view, case, out, cancel, watch, tags: self.tags.get() };
+                match self.measure_fs.remote(&job.path) {
+                    true => list_remote(self.measure_fs.clone(), job, self.watch.clone(), self.measure_wake.clone(), REMOTE_TIMEOUT),
+                    false => self.jobs.send(job).map_err(drop),
+                }
             }
             ProviderRequest::DirSizes { tab, gen, dir, items, cancel } => self.sizes.send(SizesJob { tab, gen, dir, items, cancel }).map_err(drop),
             ProviderRequest::Watch { tab, gen, path: Some(path) } => {
@@ -371,7 +376,39 @@ fn run_op<S: FileOps>(sh: &mut S, op: FileOp) -> (Option<String>, Option<OpRepor
     }
 }
 
-fn run_list<F: Fs>(fs: &F, job: ListJob, watch: &Sender<WatchCmd>, wake: &Wake) {
+pub(crate) const REMOTE_TIMEOUT: Duration = Duration::from_secs(15);
+
+fn list_remote(fs: Arc<dyn Fs>, mut job: ListJob, watch: Sender<WatchCmd>, wake: Wake, timeout: Duration) -> Result<(), ()> {
+    let (tab, gen, cancel, out, path, view, case) = (job.tab, job.gen, job.cancel.clone(), job.out.clone(), job.path.clone(), job.view, job.case);
+    let arm = job.watch.take();
+    let heard = Arc::new(AtomicBool::new(false));
+    let (finished, done) = bounded::<()>(1);
+    let (seen, inner) = (heard.clone(), wake.clone());
+    let traced: Wake = Arc::new(move || {
+        seen.store(true, Ordering::Release);
+        inner()
+    });
+    let (arm_cancel, worker_watch) = (cancel.clone(), watch.clone());
+    spawn("flit-fs-remote".into(), move || {
+        run_list(&*fs, job, &worker_watch, &traced);
+        if let Some(dir) = arm.filter(|_| arm_cancel.is_current(gen)) {
+            let (armed, _) = bounded(1);
+            let _ = worker_watch.send(WatchCmd::Arm { tab, gen, path: dir, cancel: arm_cancel, armed });
+        }
+        let _ = finished.send(());
+    })
+    .map_err(drop)?;
+    spawn("flit-fs-remote-watchdog".into(), move || {
+        let late = done.recv_timeout(timeout).is_err();
+        if late && !heard.load(Ordering::Acquire) && cancel.is_current(gen) {
+            out.publish(snapshot(gen, &path, Listing::default(), SortKeys::new(case), view, true, Some(FsError::not_responding()), timeout));
+            wake();
+        }
+    })
+    .map_err(drop)
+}
+
+fn run_list<F: Fs + ?Sized>(fs: &F, job: ListJob, watch: &Sender<WatchCmd>, wake: &Wake) {
     let ListJob { tab, gen, path, view, case, out, cancel, watch: arm, tags } = job;
     if !cancel.is_current(gen) {
         return;
@@ -417,7 +454,7 @@ pub(crate) fn snapshot(gen: u64, path: &FsPath, listing: Listing, keys: SortKeys
 }
 
 #[allow(clippy::too_many_arguments)]
-fn list<F: Fs>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: CaseMode, tags: Arc<Tags>, out: &SnapshotSlot, cancel: &GenToken, wake: &Wake) {
+fn list<F: Fs + ?Sized>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: CaseMode, tags: Arc<Tags>, out: &SnapshotSlot, cancel: &GenToken, wake: &Wake) {
     if !cancel.is_current(gen) {
         return;
     }

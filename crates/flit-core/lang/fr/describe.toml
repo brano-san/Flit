@@ -188,3 +188,7 @@
 "help.privacy" = "Ce que Flit conserve et envoie : rien ne quitte l’ordinateur, aucune télémétrie"
 "logs.file" = "Afficher flit.log avec les erreurs, avertissements et durées dans un éditeur de texte, diagnostic"
 "logs.folder" = "Ouvrir le dossier des fichiers journaux dans un nouvel onglet, diagnostic"
+"nav.network" = "Ouvrir la liste des ordinateurs et partages du réseau local, SMB, UNC"
+"drive.map" = "Attribuer une lettre de lecteur à un partage réseau, net use"
+"drive.disconnect" = "Retirer un lecteur réseau connecté, net use /delete"
+"drive.connect_server" = "Monter un partage réseau par son adresse, smb, sftp, ftp, gio mount"

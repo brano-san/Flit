@@ -188,3 +188,7 @@
 "help.privacy" = "Qué guarda y envía Flit: nada sale del equipo, sin telemetría"
 "logs.file" = "Mostrar flit.log con errores, advertencias y tiempos en un editor de texto, diagnóstico"
 "logs.folder" = "Abrir la carpeta con los archivos de registro en una nueva pestaña, diagnóstico"
+"nav.network" = "Abrir la lista de equipos y recursos compartidos de la red local, SMB, UNC"
+"drive.map" = "Asignar una letra de unidad a un recurso de red, net use"
+"drive.disconnect" = "Quitar una unidad de red conectada, net use /delete"
+"drive.connect_server" = "Montar un recurso de red por su dirección, smb, sftp, ftp, gio mount"

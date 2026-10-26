@@ -128,6 +128,14 @@ impl Listing {
     }
 }
 
+pub const NOT_RESPONDING_CODE: i64 = 0x79;
+
+impl FsError {
+    pub fn not_responding() -> Self {
+        Self { kind: FsErrorKind::Unavailable, code: NOT_RESPONDING_CODE }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FsError {
     pub kind: FsErrorKind,
@@ -151,6 +159,7 @@ impl fmt::Display for FsError {
             return f.write_str(S::ErrorsArchivePasswordNeeded.t());
         }
         let what = match self.kind {
+            _ if self.code == NOT_RESPONDING_CODE => S::ErrorsFsNotResponding,
             FsErrorKind::NotFound => S::ErrorsFsNotFound,
             FsErrorKind::AccessDenied => S::ErrorsFsAccessDenied,
             FsErrorKind::NotADirectory => S::ErrorsFsNotADirectory,

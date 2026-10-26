@@ -7,6 +7,7 @@ no_media = "No hay ningún medio en la unidad"
 coded = "{what} (0x{code})"
 retry = "{error}. Presiona F5 para intentarlo de nuevo."
 insert_media = "{error}. Inserta uno y presiona F5, o expulsa la unidad."
+not_responding = "La ubicación de red no responde"
 
 [title]
 encrypted = "Este archivo comprimido está cifrado"

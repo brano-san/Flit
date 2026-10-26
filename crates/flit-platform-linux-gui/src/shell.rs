@@ -118,6 +118,7 @@ fn launch(l: &Launch) -> Result<(), PlatformError> {
         }
         Launch::Eject(drive) => crate::places::eject(Path::new(os(drive))).map_err(|e| spawn_error("udisksctl", &e)),
         Launch::Mount(_) => Err(PlatformError::unsupported("mounting outside the shell thread")),
+        Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) => Err(PlatformError::unsupported("mapping network drives")),
     }
 }
 

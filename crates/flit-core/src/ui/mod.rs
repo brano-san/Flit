@@ -24,6 +24,7 @@ mod layouts;
 mod marquee;
 mod menu;
 mod nav;
+mod network;
 pub mod palette;
 mod preview_pane;
 pub mod settings;

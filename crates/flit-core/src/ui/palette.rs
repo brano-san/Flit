@@ -34,6 +34,7 @@ pub(super) enum Pick {
     Tags(TagPick),
     Setting(SettingPick),
     Toolbar(ToolPick),
+    Server,
 }
 
 impl Pick {
@@ -51,6 +52,7 @@ impl Pick {
             Pick::Tags(t) => t.placeholder(),
             Pick::Setting(p) => p.placeholder(),
             Pick::Toolbar(t) => t.placeholder(),
+            Pick::Server => S::SidebarDriveServerPrompt.t(),
         }
     }
 
@@ -68,11 +70,12 @@ impl Pick {
             Pick::Tags(t) => t.empty(),
             Pick::Setting(p) => p.empty(),
             Pick::Toolbar(_) => S::PaletteEmptyToolbar.t(),
+            Pick::Server => S::SidebarDriveServerEnter.t(),
         }
     }
 
     fn is_input(&self) -> bool {
-        matches!(self, Pick::Shortcut(_) | Pick::Stream(_) | Pick::FolderIcon(_) | Pick::NewLibrary | Pick::LibraryAdd(_)) || matches!(self, Pick::Tags(t) if t.is_input()) || matches!(self, Pick::Setting(p) if p.is_input())
+        matches!(self, Pick::Shortcut(_) | Pick::Stream(_) | Pick::FolderIcon(_) | Pick::NewLibrary | Pick::LibraryAdd(_) | Pick::Server) || matches!(self, Pick::Tags(t) if t.is_input()) || matches!(self, Pick::Setting(p) if p.is_input())
     }
 }
 

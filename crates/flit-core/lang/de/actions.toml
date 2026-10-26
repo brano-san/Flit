@@ -189,3 +189,7 @@
 "preview.play" = "Medien in der Vorschau abspielen oder anhalten"
 "item.context_menu" = "Kontextmenü anzeigen"
 "status.select_folders" = "Wählen Sie die zu öffnenden Ordner aus"
+"nav.network" = "Zu Netzwerk wechseln"
+"drive.map" = "Netzlaufwerk verbinden"
+"drive.disconnect" = "Netzlaufwerk trennen"
+"drive.connect_server" = "Mit Server verbinden"

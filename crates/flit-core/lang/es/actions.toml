@@ -189,3 +189,7 @@
 "preview.play" = "Reproducir o pausar el contenido multimedia"
 "item.context_menu" = "Mostrar el menú contextual"
 "status.select_folders" = "Selecciona las carpetas que quieres abrir"
+"nav.network" = "Ir a Red"
+"drive.map" = "Conectar a unidad de red"
+"drive.disconnect" = "Desconectar unidad de red"
+"drive.connect_server" = "Conectar al servidor"

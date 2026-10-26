@@ -12,6 +12,7 @@ pub enum PathKind {
     Unix,
     RecycleBin,
     Home,
+    Shell,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -26,6 +27,8 @@ pub const RECYCLE_BIN_LABEL: &str = "Recycle Bin";
 pub const RECYCLE_BIN_SHELL: &str = "shell:RecycleBinFolder";
 pub const HOME_LABEL: &str = "Home";
 pub const HOME_SHELL: &str = "shell:::{f874310e-b6b7-47dc-bc84-b9e6b38f5903}";
+pub const SHELL_COMPUTER: &str = "shell:::{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
+pub const SHELL_NETWORK: &str = "shell:::{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}";
 const UNIX_HOST: bool = cfg!(unix);
 
 pub fn is_label(input: &[u8], label: S) -> bool {
@@ -45,6 +48,52 @@ impl FsPath {
 
     pub fn home_page() -> Self {
         Self { s: HOME_SHELL.as_bytes().to_vec(), root: HOME_SHELL.len() as u16, kind: PathKind::Home }
+    }
+
+    pub fn network() -> Self {
+        Self::shell(SHELL_NETWORK.as_bytes(), b"").unwrap_or_else(Self::computer)
+    }
+
+    pub fn network_server(server: &[u8]) -> Option<Self> {
+        Self::shell(SHELL_NETWORK.as_bytes(), server)
+    }
+
+    pub fn device(name: &[u8]) -> Option<Self> {
+        Self::shell(SHELL_COMPUTER.as_bytes(), name)
+    }
+
+    fn shell(root: &[u8], rest: &[u8]) -> Option<Self> {
+        let mut r = root.to_vec();
+        r.push(b'\\');
+        Some(Self::with_segments(r, PathKind::Shell, b'\\', rest)?.normalized())
+    }
+
+    pub fn shell_root(&self) -> Option<&[u8]> {
+        (self.kind == PathKind::Shell).then(|| &self.s[..self.root as usize - 1])
+    }
+
+    fn shell_root_is(&self, root: &str) -> bool {
+        self.shell_root().is_some_and(|r| r.eq_ignore_ascii_case(root.as_bytes()))
+    }
+
+    pub fn is_network(&self) -> bool {
+        self.shell_root_is(SHELL_NETWORK)
+    }
+
+    pub fn is_device(&self) -> bool {
+        self.shell_root_is(SHELL_COMPUTER)
+    }
+
+    fn normalized(self) -> Self {
+        if self.is_device() && self.is_root() {
+            return Self::computer();
+        }
+        if self.is_network() && self.components().count() >= 2 {
+            let mut unc = br"\\".to_vec();
+            unc.extend_from_slice(&self.s[self.root as usize..]);
+            return Self::parse_on(&unc, false).unwrap_or(self);
+        }
+        self
     }
 
     pub fn parse(input: &str) -> Option<Self> {
@@ -78,6 +127,21 @@ impl FsPath {
         if input.eq_ignore_ascii_case(HOME_SHELL.as_bytes()) {
             return Some(Self::home_page());
         }
+        if !unix_host {
+            if input.len() > 9 && input[..9].eq_ignore_ascii_case(b"shell:::{") {
+                let end = input.iter().position(|&c| c == b'}')? + 1;
+                let rest = &input[end..];
+                let rest = rest.strip_prefix(b"\\").or_else(|| rest.strip_prefix(b"/")).unwrap_or(rest);
+                return Self::shell(&input[..end], rest);
+            }
+            let (head, rest) = input.iter().position(|&c| c == b'\\' || c == b'/').map_or((input, &b""[..]), |i| (&input[..i], &input[i + 1..]));
+            if is_label(head, S::PathNetwork) {
+                return Self::shell(SHELL_NETWORK.as_bytes(), rest);
+            }
+            if !rest.is_empty() && is_label(head, S::PathComputer) {
+                return Self::shell(SHELL_COMPUTER.as_bytes(), rest);
+            }
+        }
         if input[0] == b'/' && (unix_host || input.get(1) != Some(&b'/')) {
             return Self::with_segments(b"/".to_vec(), PathKind::Unix, b'/', &input[1..]);
         }
@@ -100,7 +164,9 @@ impl FsPath {
         if let Some(body) = unc_body {
             let mut parts = body.splitn(3, |&c| c == b'\\');
             let server = parts.next().filter(|s| !s.is_empty())?;
-            let share = parts.next().filter(|s| !s.is_empty())?;
+            let Some(share) = parts.next().filter(|s| !s.is_empty()) else {
+                return if verbatim || unix_host { None } else { Self::network_server(server) };
+            };
             let mut root = br"\\".to_vec();
             root.extend_from_slice(server);
             root.push(b'\\');
@@ -174,6 +240,14 @@ impl FsPath {
             PathKind::Computer => Cow::Borrowed(S::PathComputer.t()),
             PathKind::RecycleBin => Cow::Borrowed(S::PathRecycleBin.t()),
             PathKind::Home => Cow::Borrowed(S::PathHome.t()),
+            PathKind::Shell => {
+                let mut b = self.root_label().to_vec();
+                for c in self.components() {
+                    b.push(b'\\');
+                    b.extend_from_slice(c);
+                }
+                Cow::Owned(name::display(&b).into_owned())
+            }
             _ => name::display(&self.s),
         }
     }
@@ -195,7 +269,7 @@ impl FsPath {
         }
         let mut p = self.clone();
         p.push(child);
-        p
+        p.normalized()
     }
 
     fn parent_in_root(&self) -> Option<Self> {
@@ -213,6 +287,8 @@ impl FsPath {
         match self.kind {
             PathKind::Computer | PathKind::RecycleBin | PathKind::Home => None,
             PathKind::Unix => self.parent_in_root(),
+            PathKind::Shell => self.parent_in_root().map(Self::normalized),
+            PathKind::Unc if self.is_root() => self.unc_parts().and_then(|(server, ..)| Self::network_server(server)),
             _ => self.parent_in_root().or_else(|| Some(Self::computer())),
         }
     }
@@ -232,6 +308,8 @@ impl FsPath {
             PathKind::RecycleBin => S::PathRecycleBin.t().as_bytes(),
             PathKind::Home => S::PathHome.t().as_bytes(),
             PathKind::Unix => b"/",
+            PathKind::Shell if self.is_network() => S::PathNetwork.t().as_bytes(),
+            PathKind::Shell if self.is_device() => S::PathComputer.t().as_bytes(),
             _ => &self.s[..self.root as usize - 1],
         }
     }

@@ -188,3 +188,7 @@
 "help.privacy" = "Flit 保存和发送的内容：所有数据都不离开电脑，无遥测"
 "logs.file" = "在文本编辑器中显示包含错误、警告和耗时的 flit.log，诊断"
 "logs.folder" = "在新标签页中打开日志文件所在文件夹，诊断"
+"nav.network" = "打开局域网中的计算机和共享列表，SMB，UNC"
+"drive.map" = "为网络共享分配驱动器号，net use"
+"drive.disconnect" = "移除已映射的网络驱动器，net use /delete"
+"drive.connect_server" = "按地址挂载网络共享，smb、sftp、ftp、gio mount"

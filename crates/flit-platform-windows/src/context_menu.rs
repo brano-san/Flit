@@ -82,6 +82,11 @@ impl Pidls {
     pub(crate) fn parse(paths: &[FsPath]) -> Result<Self, PlatformError> {
         let mut out = Pidls { abs: Vec::with_capacity(paths.len()) };
         for p in paths {
+            if p.kind() == PathKind::Shell {
+                let item = crate::namespace::item(p).map_err(|e| PlatformError::new(e.code, format!("{}: {e}", p.display())))?;
+                out.abs.push(unsafe { SHGetIDListFromObject(&item) }.map_err(err)?);
+                continue;
+            }
             let mut pidl = std::ptr::null_mut();
             let name = parse_name(p);
             unsafe { SHParseDisplayName(PCWSTR(name.as_ptr()), None, &mut pidl, 0, None) }.map_err(|e| PlatformError::new(e.code().0 as i64, format!("{}: {}", p.display(), e.message())))?;

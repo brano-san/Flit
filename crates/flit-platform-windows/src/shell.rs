@@ -159,9 +159,11 @@ impl ShellCom {
     }
 
     fn item_image(&self, path: &FsPath, size: u32, flags: SIIGBF) -> Option<Bitmap> {
-        let w = wide(path);
         unsafe {
-            let factory: IShellItemImageFactory = SHCreateItemFromParsingName(PCWSTR(w.as_ptr()), None).ok()?;
+            let factory: IShellItemImageFactory = match path.kind() {
+                PathKind::Shell => crate::namespace::item(path).ok()?.cast().ok()?,
+                _ => SHCreateItemFromParsingName(PCWSTR(wide(path).as_ptr()), None).ok()?,
+            };
             let image = factory.GetImage(SIZE { cx: size as i32, cy: size as i32 }, flags);
             crate::crash::rearm();
             let hbm = image.ok()?;
@@ -242,10 +244,17 @@ impl Shell for ShellCom {
     }
 
     fn launch(&mut self, launch: &Launch) -> Result<(), PlatformError> {
-        if let Launch::Eject(drive) = launch {
-            return eject(drive);
+        match launch {
+            Launch::Eject(drive) => return eject(drive),
+            Launch::MapDrive(prefill) => return crate::network::map_dialog(prefill.as_ref()),
+            Launch::Disconnect(drive) => return crate::network::disconnect_dialog(drive.as_ref()),
+            _ => {}
         }
         commands(launch, windows_terminal().as_deref()).iter().try_for_each(execute)
+    }
+
+    fn mount(&mut self, device: &FsPath) -> Result<FsPath, PlatformError> {
+        crate::network::reconnect(device)
     }
 
     fn shortcut_folder(&mut self, link: &FsPath) -> Option<FsPath> {
@@ -321,7 +330,7 @@ pub(crate) fn commands(launch: &Launch, terminal: Option<&str>) -> Vec<Command> 
                 })
                 .collect(),
         },
-        Launch::Eject(_) | Launch::Mount(_) => Vec::new(),
+        Launch::Eject(_) | Launch::Mount(_) | Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) => Vec::new(),
     }
 }
 

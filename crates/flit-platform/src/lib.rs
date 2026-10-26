@@ -171,6 +171,9 @@ pub trait Provider: Send + Sync + 'static {
 pub trait Fs: Send + Sync + 'static {
     fn read_dir(&self, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError>;
     fn seek_penalty(&self, path: &FsPath) -> Option<bool>;
+    fn remote(&self, _path: &FsPath) -> bool {
+        false
+    }
     fn desktop_ini(&self, _dir: &FsPath) -> Option<DesktopIni> {
         None
     }
@@ -223,6 +226,9 @@ pub trait Shell: Sized {
     }
     fn mount(&mut self, _device: &FsPath) -> Result<FsPath, PlatformError> {
         Err(PlatformError::unsupported("mounting volumes"))
+    }
+    fn connect(&mut self, _uri: &str) -> Result<FsPath, PlatformError> {
+        Err(PlatformError::unsupported("connecting to servers"))
     }
     fn shortcut_folder(&mut self, _link: &FsPath) -> Option<FsPath> {
         None

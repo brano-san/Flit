@@ -461,3 +461,68 @@ fn measure_counts_contents_rounds_to_clusters_and_keeps_archives_apart() {
     let Some(ProviderRequest::Measure { items, .. }) = via_unc("Ubuntu", ProviderRequest::Measure { tab: 1, id: 2, items: vec![(FsPath::parse("/home").unwrap(), None)], ctl: OpCtl::default() }) else { panic!() };
     assert!(items[0].0.display().starts_with(r"\\wsl"));
 }
+struct HangFs(Mutex<Option<crossbeam_channel::Receiver<()>>>);
+impl Fs for HangFs {
+    fn read_dir(&self, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+        if self.remote(dir) {
+            let gate = self.0.lock().unwrap().clone();
+            if let Some(gate) = gate {
+                let _ = gate.recv();
+            }
+        }
+        out.push(b"x", Meta::default());
+        Ok(())
+    }
+    fn seek_penalty(&self, _: &FsPath) -> Option<bool> {
+        None
+    }
+    fn remote(&self, path: &FsPath) -> bool {
+        path.kind() == flit_core::path::PathKind::Unc
+    }
+}
+
+fn request(tab: TabId, path: &str, slot: &Arc<SnapshotSlot>, cancel: &GenToken) -> ProviderRequest {
+    ProviderRequest::List { tab, gen: 1, path: p(path), view: ViewSpec::default(), case: CaseMode::Insensitive, out: slot.clone(), cancel: cancel.clone() }
+}
+
+fn wait_for(slot: &SnapshotSlot) -> Arc<DirSnapshot> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(s) = slot.take().filter(|s| s.done) {
+            return s;
+        }
+        assert!(Instant::now() < deadline, "no listing");
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn a_hanging_share_never_blocks_local_listings() {
+    let (release, gate) = bounded::<()>(0);
+    let (tx, _rx) = unbounded();
+    let provider = LocalProvider::new::<_, NoWatch, NoShell>(HangFs(Mutex::new(Some(gate))), 1, tx, Arc::new(|| {})).unwrap();
+    let (remote, local, cancel) = (Arc::new(SnapshotSlot::default()), Arc::new(SnapshotSlot::default()), GenToken::default());
+    cancel.set(1);
+    provider.submit(request(1, r"\\srv\share", &remote, &cancel));
+    provider.submit(request(2, r"C:\here", &local, &cancel));
+    assert_eq!(wait_for(&local).listing.len(), 1);
+    assert!(remote.take().is_none());
+    drop(release);
+    assert_eq!(wait_for(&remote).listing.len(), 1);
+}
+
+#[test]
+fn a_silent_share_reports_not_responding_until_it_answers() {
+    let (release, gate) = bounded::<()>(0);
+    let fs: Arc<dyn Fs> = Arc::new(HangFs(Mutex::new(Some(gate))));
+    let (slot, cancel) = (Arc::new(SnapshotSlot::default()), GenToken::default());
+    cancel.set(1);
+    let (watch, _) = unbounded();
+    let job = ListJob { tab: 1, gen: 1, path: p(r"\\srv\share"), view: ViewSpec::default(), case: CaseMode::Insensitive, out: slot.clone(), cancel: cancel.clone(), watch: None, tags: Arc::default() };
+    list_remote(fs, job, watch, Arc::new(|| {}), Duration::from_millis(50)).unwrap();
+    let late = wait_for(&slot);
+    assert_eq!(late.error, Some(FsError::not_responding()));
+    drop(release);
+    let answer = wait_for(&slot);
+    assert_eq!((answer.error.clone(), answer.listing.len()), (None, 1));
+}

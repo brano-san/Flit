@@ -188,3 +188,7 @@
 "help.privacy" = "What Flit keeps and sends: nothing leaves the computer, no telemetry"
 "logs.file" = "Show flit.log with errors, warnings and timings in a text editor, diagnostics"
 "logs.folder" = "Open the folder with the log files in a new tab, diagnostics"
+"nav.network" = "Open the list of computers and shares on the local network, SMB, UNC"
+"drive.map" = "Assign a drive letter to a network share, net use"
+"drive.disconnect" = "Remove a mapped network drive, unmap, net use /delete"
+"drive.connect_server" = "Mount a network share by address, smb, sftp, ftp, gio mount"

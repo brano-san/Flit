@@ -99,6 +99,9 @@ pub enum Launch {
     Run { program: String, args: String, dir: Option<FsPath> },
     Eject(FsPath),
     Mount(FsPath),
+    MapDrive(Option<FsPath>),
+    Disconnect(Option<FsPath>),
+    ConnectServer(String),
 }
 
 impl Launch {
@@ -110,6 +113,7 @@ impl Launch {
             Launch::Run { program, args, dir } => Launch::Run { program: program.clone(), args: args.clone(), dir: dir.as_ref().map(&f).unwrap_or(None) },
             Launch::Eject(drive) => Launch::Eject(f(drive)?),
             Launch::Mount(device) => Launch::Mount(device.clone()),
+            Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) => self.clone(),
         })
     }
 }

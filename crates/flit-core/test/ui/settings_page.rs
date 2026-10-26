@@ -535,7 +535,7 @@ fn the_actions_page_lists_and_finds_every_command() {
     let mut a = app();
     a.open_settings(Some(Page::Actions));
     let lines = a.settings_lines();
-    assert_eq!(lines.iter().filter(|l| l.starts_with("action ")).count(), ACTIONS.len());
+    assert_eq!(lines.iter().filter(|l| l.starts_with("action ")).count(), ACTIONS.iter().filter(|x| a.caps.supports(x.id)).count());
     assert!(lines.contains(&"action file.copy Ctrl+C".to_owned()));
     assert!(lines.contains(&"action nav.home ".to_owned()), "commands without shortcuts are listed too");
     typed(&mut a, "copy path");

@@ -188,3 +188,7 @@
 "help.privacy" = "Was Flit speichert und sendet: nichts verlässt den Computer, keine Telemetrie"
 "logs.file" = "flit.log mit Fehlern, Warnungen und Zeitmessungen in einem Texteditor anzeigen, Diagnose"
 "logs.folder" = "Den Ordner mit den Protokolldateien in einer neuen Registerkarte öffnen, Diagnose"
+"nav.network" = "Liste der Computer und Freigaben im lokalen Netzwerk öffnen, SMB, UNC"
+"drive.map" = "Einer Netzwerkfreigabe einen Laufwerksbuchstaben zuweisen, net use"
+"drive.disconnect" = "Ein verbundenes Netzlaufwerk entfernen, net use /delete"
+"drive.connect_server" = "Netzwerkfreigabe über eine Adresse einhängen, smb, sftp, ftp, gio mount"

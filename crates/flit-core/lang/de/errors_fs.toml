@@ -7,6 +7,7 @@ no_media = "Kein Datenträger im Laufwerk"
 coded = "{what} (0x{code})"
 retry = "{error}. Drücken Sie F5, um es erneut zu versuchen."
 insert_media = "{error}. Legen Sie einen ein und drücken Sie F5, oder werfen Sie das Laufwerk aus."
+not_responding = "Der Netzwerkspeicherort antwortet nicht"
 
 [title]
 encrypted = "Dieses Archiv ist verschlüsselt"

@@ -16,6 +16,8 @@ mod install;
 mod instance;
 mod library;
 mod mft;
+mod namespace;
+mod network;
 mod pipe;
 mod places;
 mod preview;

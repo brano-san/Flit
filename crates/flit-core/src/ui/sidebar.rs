@@ -39,6 +39,8 @@ const G_VIDEOS: &str = "\u{E714}";
 const G_LINUX: &str = "\u{E756}";
 const G_RECYCLE_BIN: &str = "\u{E74D}";
 const G_LIBRARY: &str = "\u{E8F1}";
+const G_NET_OFFLINE: &str = "\u{E7BA}";
+const G_NETWORK: &str = "\u{E72D}";
 const G_PIN: &str = "\u{E718}";
 const G_UNPIN: &str = "\u{E77A}";
 const G_EXPANDED: &str = "\u{E70D}";
@@ -105,13 +107,30 @@ pub struct Drive {
     pub removable: bool,
     pub unmounted: bool,
     pub kind: Option<S>,
+    pub remote: Option<String>,
 }
 
 impl Drive {
     pub fn title(&self) -> String {
-        match self.kind.and_then(|k| Some((k, self.label.strip_prefix(k.en())?))) {
+        let title = match self.kind.and_then(|k| Some((k, self.label.strip_prefix(k.en())?))) {
             Some((k, rest)) => format!("{}{rest}", k.t()),
             None => self.label.clone(),
+        };
+        match self.offline() {
+            true => format!("{title} \u{2014} {}", S::SidebarDriveOffline.t()),
+            false => title,
+        }
+    }
+
+    pub fn offline(&self) -> bool {
+        self.unmounted && self.remote.is_some()
+    }
+
+    fn glyph(&self) -> &'static str {
+        match () {
+            _ if self.path.is_network() => G_NETWORK,
+            _ if self.offline() => G_NET_OFFLINE,
+            _ => G_DRIVE,
         }
     }
 }
@@ -245,6 +264,7 @@ pub(super) enum PlaceCmd {
     Forget(FsPath),
     ClearRecent,
     Pane(Location, Option<super::SplitDir>),
+    Launch(Launch),
 }
 
 #[derive(Clone, Debug)]
@@ -308,7 +328,7 @@ impl Sidebar {
         items.extend(p.drives.iter().map(|d| Item {
             section: Section::Drives,
             label: d.title(),
-            glyph: G_DRIVE,
+            glyph: d.glyph(),
             loc: Location::Local(d.path.clone()),
             usage: (d.total > 0).then(|| (d.total.saturating_sub(d.free)) as f32 / d.total as f32),
         }));
@@ -610,6 +630,7 @@ impl App {
             PlaceCmd::Pin(loc) => self.toggle_pin(loc),
             PlaceCmd::MovePin(loc, by) => self.move_pin(loc, by),
             PlaceCmd::Eject(drive) => self.effects.push(launch(Launch::Eject(drive))),
+            PlaceCmd::Launch(l) => self.effects.push(launch(l)),
             PlaceCmd::Properties(path) => self.effects.push(Effect::Properties(vec![path])),
             PlaceCmd::Collapse(s) => self.toggle_section(s),
             PlaceCmd::Hide(s) => self.toggle_section_shown(s),
@@ -657,6 +678,9 @@ impl App {
             if a.nav.sidebar.places.drives.iter().any(|d| d.removable && d.path == *loc.path()) {
                 m.place(S::MenuEject.t(), PlaceCmd::Eject(loc.path().clone()), false);
             }
+            if a.caps.supports("drive.disconnect") && a.nav.sidebar.places.drives.iter().any(|d| d.remote.is_some() && d.path == *loc.path() && d.path.kind() == PathKind::Drive) {
+                m.place(S::SidebarDriveDisconnect.t(), PlaceCmd::Launch(Launch::Disconnect(Some(loc.path().clone()))), false);
+            }
             if lib {
                 m.place(S::SidebarLibraryLocations.t(), PlaceCmd::Library(loc.path().clone()), false);
             }
@@ -691,6 +715,12 @@ impl App {
             if section == Some(Section::Tags) {
                 m.action("tags.new", S::MenuNewTag.t());
                 m.action("tags.manage", S::MenuManageTags.t());
+                m.separator();
+            }
+            if section.is_none_or(|s| s == Section::Drives) {
+                m.action("drive.map", S::SidebarDriveMap.t());
+                m.action("drive.disconnect", S::SidebarDriveDisconnectDialog.t());
+                m.action("drive.connect_server", S::SidebarDriveConnectServer.t());
                 m.separator();
             }
             if section.is_none_or(|s| s == Section::Libraries) {

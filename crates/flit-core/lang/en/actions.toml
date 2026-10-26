@@ -189,3 +189,7 @@
 "preview.play" = "Play or pause the previewed media"
 "item.context_menu" = "Show context menu"
 "status.select_folders" = "Select the folders to open"
+"nav.network" = "Go to Network"
+"drive.map" = "Map network drive"
+"drive.disconnect" = "Disconnect network drive"
+"drive.connect_server" = "Connect to server"

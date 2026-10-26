@@ -7,6 +7,7 @@ no_media = "驱动器中没有介质"
 coded = "{what} (0x{code})"
 retry = "{error}。按 F5 重试。"
 insert_media = "{error}。请插入介质并按 F5，或弹出驱动器。"
+not_responding = "网络位置没有响应"
 
 [title]
 encrypted = "此压缩文件已加密"

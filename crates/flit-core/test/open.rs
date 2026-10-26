@@ -107,9 +107,17 @@ fn windows_path_forms() {
     assert_eq!(r("FILE:///C:/x").unwrap(), Location::parse(r"C:\x").unwrap());
     assert_eq!(r("file:///tmp/x").unwrap(), Location::parse(r"D:\tmp\x").unwrap());
     assert!(matches!(r("file://server"), Err(ResolveError::Invalid(_))));
-    assert!(matches!(r("file://server/"), Err(ResolveError::Invalid(_))));
     assert!(matches!(r("file://"), Err(ResolveError::Invalid(_))));
-    assert!(matches!(r(r"\\server"), Err(ResolveError::Invalid(_))));
+    match FsPath::network_server(b"server").map(Location::from_local) {
+        Some(server) if cfg!(windows) => {
+            assert_eq!(r("file://server/").unwrap(), server);
+            assert_eq!(r(r"\\server").unwrap(), server);
+        }
+        _ => {
+            assert!(matches!(r("file://server/"), Err(ResolveError::Invalid(_))));
+            assert!(matches!(r(r"\\server"), Err(ResolveError::Invalid(_))));
+        }
+    }
 }
 
 #[test]

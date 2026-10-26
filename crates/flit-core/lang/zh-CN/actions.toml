@@ -189,3 +189,7 @@
 "preview.play" = "播放或暂停预览的媒体"
 "item.context_menu" = "显示上下文菜单"
 "status.select_folders" = "选择要打开的文件夹"
+"nav.network" = "转到网络"
+"drive.map" = "映射网络驱动器"
+"drive.disconnect" = "断开网络驱动器"
+"drive.connect_server" = "连接到服务器"

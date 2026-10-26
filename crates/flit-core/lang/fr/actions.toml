@@ -189,3 +189,7 @@
 "preview.play" = "Lire ou mettre en pause le média affiché"
 "item.context_menu" = "Afficher le menu contextuel"
 "status.select_folders" = "Sélectionnez les dossiers à ouvrir"
+"nav.network" = "Aller à Réseau"
+"drive.map" = "Connecter un lecteur réseau"
+"drive.disconnect" = "Déconnecter un lecteur réseau"
+"drive.connect_server" = "Se connecter à un serveur"
