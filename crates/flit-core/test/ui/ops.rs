@@ -498,8 +498,10 @@ fn alt_enter_shows_properties_of_the_selection_or_the_folder() {
     key(&mut app, Key::Enter, ALT);
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Properties(p) if p == [FsPath::parse(r"C:\x").unwrap()])));
     select(&mut app, &["a.txt"]);
-    key(&mut app, Key::Enter, ALT);
+    key(&mut app, Key::Enter, Mods { shift: true, ..ALT });
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Properties(p) if p == [FsPath::parse(r"C:\x\a.txt").unwrap()])));
+    key(&mut app, Key::Enter, ALT);
+    assert_eq!(app.asking(), Some("properties"));
 }
 
 #[test]

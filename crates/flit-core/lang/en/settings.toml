@@ -164,6 +164,10 @@ about = "About"
 
 [choice]
 "language.system" = "As in Windows"
+"click.never" = "Never"
+"click.touch" = "Only with touch or pen"
+"click.mouse" = "Only with a mouse"
+"click.always" = "Always"
 "language.en" = "English"
 "language.ru" = "Русский"
 "startup.continue" = "Continue where you left off"

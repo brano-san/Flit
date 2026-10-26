@@ -4,7 +4,7 @@ use flit_core::archive::ArchiveOp;
 use flit_core::digest::HashKind;
 use flit_core::desktop_ini::FolderKind;
 use flit_core::listing::{attr, DirSnapshot, Listing, ListingBuilder};
-use flit_core::provider::{FileOp, GenToken, Launch, OpCtl, OpId, OpReport, SnapshotSlot, Stage};
+use flit_core::provider::{FileOp, GenToken, Launch, OpCtl, OpId, OpReport, SnapshotSlot, Stage, Totals};
 use flit_core::sort::{self, CaseMode, SortKeys, ViewSpec};
 use flit_core::tags::{TagCell, Tags};
 use flit_core::{FsError, FsErrorKind, FsPath, Location, ProviderEvent, ProviderRequest, TabId};
@@ -149,6 +149,9 @@ pub struct LocalProvider {
     pending_watch: Mutex<HashMap<TabId, (u64, FsPath)>>,
     busy: Arc<AtomicUsize>,
     tags: TagCell,
+    measure_fs: Arc<dyn Fs>,
+    measure_events: Sender<ProviderEvent>,
+    measure_wake: Wake,
 }
 
 fn spawn(name: String, body: impl FnOnce() + Send + 'static) -> Result<(), PlatformError> {
@@ -219,6 +222,8 @@ impl LocalProvider {
                 }
             }
         })?;
+        let measure_fs: Arc<dyn Fs> = fs.clone();
+        let (measure_events, measure_wake) = (events.clone(), wake.clone());
         let (ops, ops_rx) = unbounded::<OpMsg>();
         let busy = Arc::new(AtomicUsize::new(0));
         let (gate, running, ops_fs) = (Arc::new(Gate::default()), busy.clone(), fs.clone());
@@ -263,7 +268,7 @@ impl LocalProvider {
                 }
             }
         })?;
-        Ok(Self { jobs, sizes, ops, shell, hashes, watch, pending_watch: Mutex::default(), busy, tags: TagCell::default() })
+        Ok(Self { jobs, sizes, ops, shell, hashes, watch, pending_watch: Mutex::default(), busy, tags: TagCell::default(), measure_fs, measure_events, measure_wake })
     }
 
     pub fn tags(&self) -> &TagCell {
@@ -317,6 +322,17 @@ impl Provider for LocalProvider {
             ProviderRequest::Open { tab, path } => self.shell.send((tab, ShellJob::Open(path))).map_err(drop),
             ProviderRequest::Launch { tab, launch } => self.shell.send((tab, ShellJob::Launch(launch))).map_err(drop),
             ProviderRequest::Hash { tab, id, file, kinds, ctl } => self.hashes.send(HashMsg { tab, id, file, kinds, ctl }).map_err(drop),
+            ProviderRequest::Measure { tab, id, items, ctl } => {
+                let (fs, reply) = (self.measure_fs.clone(), Reply { tab, id, events: self.measure_events.clone(), wake: self.measure_wake.clone() });
+                spawn(format!("flit-measure-{id}"), move || {
+                    let keep_going = || !ctl.is_cancelled();
+                    let totals = measure(&*fs, &items, &keep_going, &mut |t| reply.send(ProviderEvent::Measured { tab, id, totals: *t, done: false }));
+                    if keep_going() {
+                        reply.send(ProviderEvent::Measured { tab, id, totals, done: true });
+                    }
+                })
+                .map_err(drop)
+            }
         };
     }
 }
@@ -442,6 +458,69 @@ fn list<F: Fs>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: CaseMode, 
     }
 }
 
+const MEASURE_REPORT_EVERY: Duration = Duration::from_millis(200);
+
+fn on_disk(size: u64, cluster: u64) -> u64 {
+    if cluster == 0 { 0 } else { size.div_ceil(cluster) * cluster }
+}
+
+fn accessed(path: &FsPath) -> i64 {
+    std::fs::metadata(crate::std_path(path)).and_then(|m| m.accessed()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| (d.as_secs() as i64 + 11_644_473_600) * 10_000_000 + d.subsec_nanos() as i64 / 100)
+}
+
+pub(crate) fn measure<F: Fs + ?Sized>(fs: &F, items: &[(FsPath, Option<u64>)], keep_going: &dyn Fn() -> bool, report: &mut dyn FnMut(&Totals)) -> Totals {
+    let mut t = Totals { accessed: items.first().map_or(0, |(p, _)| accessed(p)), ..Totals::default() };
+    let mut clusters: HashMap<Vec<u8>, u64> = HashMap::new();
+    let mut cluster = |p: &FsPath| *clusters.entry(fs.volume_key(p)).or_insert_with(|| fs.cluster_size(p));
+    let mut last = Instant::now();
+    for (root, size) in items {
+        let found = flit_core::archive::split(root);
+        let packed = found.is_some();
+        if let Some(size) = size {
+            t.size += size;
+            if found.is_none_or(|(_, inner)| inner.is_empty()) {
+                t.on_disk += on_disk(*size, cluster(root));
+            }
+            continue;
+        }
+        let unit = if packed { 0 } else { cluster(root) };
+        let mut stack = vec![root.clone()];
+        while let Some(dir) = stack.pop() {
+            if !keep_going() {
+                return t;
+            }
+            let mut each_batch = |_: &ListingBuilder<'_>| keep_going();
+            let mut b = ListingBuilder::new(CaseMode::Sensitive, &mut each_batch);
+            if fs.read_dir(&dir, &mut b).is_err() {
+                continue;
+            }
+            let l = &b.listing;
+            for i in 0..l.len() as u32 {
+                let e = &l.entries[i as usize];
+                if e.is_dir() {
+                    t.folders += 1;
+                    if e.attrs & attr::LINK == 0 {
+                        stack.push(dir.join(l.name(i)));
+                    }
+                } else if e.attrs & attr::STREAM == 0 {
+                    t.files += 1;
+                    if packed {
+                        t.unpacked += e.size;
+                    } else {
+                        t.size += e.size;
+                        t.on_disk += on_disk(e.size, unit);
+                    }
+                }
+            }
+            if last.elapsed() >= MEASURE_REPORT_EVERY {
+                last = Instant::now();
+                report(&t);
+            }
+        }
+    }
+    t
+}
+
 fn tree_size<F: Fs + ?Sized>(fs: &F, root: &FsPath, keep_going: &(dyn Fn() -> bool + Sync)) -> u64 {
     let mut total = 0u64;
     let mut stack = vec![root.clone()];
@@ -483,6 +562,7 @@ pub fn via_unc(distro: &str, req: ProviderRequest) -> Option<ProviderRequest> {
         ProviderRequest::Open { tab, path } => ProviderRequest::Open { tab, path: unc(&path)? },
         ProviderRequest::Launch { tab, launch } => ProviderRequest::Launch { tab, launch: launch.map_paths(unc)? },
         ProviderRequest::Hash { tab, id, file, kinds, ctl } => ProviderRequest::Hash { tab, id, file: unc(&file)?, kinds, ctl },
+        ProviderRequest::Measure { tab, id, items, ctl } => ProviderRequest::Measure { tab, id, items: items.into_iter().map(|(p, s)| unc(&p).map(|p| (p, s))).collect::<Option<_>>()?, ctl },
     })
 }
 

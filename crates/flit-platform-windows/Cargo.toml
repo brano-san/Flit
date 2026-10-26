@@ -23,6 +23,9 @@ windows-core.workspace = true
 [target.'cfg(windows)'.dependencies.windows]
 workspace = true
 features = [
+    "Foundation",
+    "Storage_Streams",
+    "System_UserProfile",
     "Wdk_Foundation",
     "Wdk_Storage_FileSystem",
     "Win32_Foundation",

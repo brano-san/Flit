@@ -1,4 +1,3 @@
-use std::ffi::{c_void, CString};
 use std::{env, fs, path::PathBuf};
 
 fn main() {
@@ -16,6 +15,7 @@ fn main() {
 
 #[cfg(windows)]
 fn compile(src: &str, entry: &str, target: &str) -> Result<Vec<u8>, String> {
+    use std::ffi::{c_void, CString};
     #[repr(C)]
     struct BlobVtbl {
         _qi: usize,

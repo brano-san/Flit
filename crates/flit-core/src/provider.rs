@@ -88,6 +88,8 @@ pub enum FileOp {
     Flatten(Vec<FsPath>),
     Archive(ArchiveOp),
     FolderIcon { folder: FsPath, icon: Option<FsPath>, index: i32 },
+    InstallFonts(Vec<FsPath>),
+    LockScreen(FsPath),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -136,6 +138,8 @@ impl FileOp {
             FileOp::Flatten(v) => FileOp::Flatten(all(v)?),
             FileOp::Archive(a) => FileOp::Archive(a.map_paths(&f)?),
             FileOp::FolderIcon { folder, icon, index } => FileOp::FolderIcon { folder: f(folder)?, icon: match icon { Some(i) => Some(f(i)?), None => None }, index: *index },
+            FileOp::InstallFonts(v) => FileOp::InstallFonts(all(v)?),
+            FileOp::LockScreen(p) => FileOp::LockScreen(f(p)?),
         })
     }
 }
@@ -249,6 +253,16 @@ pub struct OpReport {
     pub items: Vec<(FsPath, FsPath)>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Totals {
+    pub files: u64,
+    pub folders: u64,
+    pub size: u64,
+    pub on_disk: u64,
+    pub unpacked: u64,
+    pub accessed: i64,
+}
+
 #[derive(Debug)]
 pub enum ProviderRequest {
     List { tab: TabId, gen: u64, path: FsPath, view: ViewSpec, case: CaseMode, out: Arc<SnapshotSlot>, cancel: GenToken },
@@ -258,6 +272,7 @@ pub enum ProviderRequest {
     Open { tab: TabId, path: FsPath },
     Launch { tab: TabId, launch: Launch },
     Hash { tab: TabId, id: OpId, file: FsPath, kinds: Vec<HashKind>, ctl: OpCtl },
+    Measure { tab: TabId, id: OpId, items: Vec<(FsPath, Option<u64>)>, ctl: OpCtl },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -270,6 +285,7 @@ pub enum ProviderEvent {
     OpConflict { tab: TabId, id: OpId, conflict: Conflict },
     Navigate { tab: TabId, path: FsPath },
     Hashed { tab: TabId, id: OpId, result: Result<Vec<String>, String> },
+    Measured { tab: TabId, id: OpId, totals: Totals, done: bool },
     Status { tab: TabId, gen: u64, text: String },
 }
 

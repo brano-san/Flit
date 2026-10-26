@@ -423,3 +423,80 @@ fn std_path_keeps_non_utf8_bytes() {
     let p = FsPath::parse_bytes(b"/tmp/caf\xe9").unwrap();
     assert_eq!(std_path(&p).as_os_str().as_bytes(), b"/tmp/caf\xe9");
 }
+
+fn crc16(data: &[u8]) -> u16 {
+    data.iter().fold(0u16, |mut crc, &b| {
+        crc ^= b as u16;
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xA001 } else { crc >> 1 };
+        }
+        crc
+    })
+}
+
+fn lh0(name: &str, data: &[u8], crc: u16) -> Vec<u8> {
+    let mut h = b"-lh0-".to_vec();
+    h.extend((data.len() as u32).to_le_bytes());
+    h.extend((data.len() as u32).to_le_bytes());
+    h.extend(0x5A21_6000u32.to_le_bytes());
+    h.extend([0x20, 0, name.len() as u8]);
+    h.extend(name.as_bytes());
+    h.extend(crc.to_le_bytes());
+    let sum = h.iter().fold(0u8, |s, &b| s.wrapping_add(b));
+    let mut out = vec![h.len() as u8, sum];
+    out.extend(h);
+    out.extend(data);
+    out
+}
+
+#[test]
+fn lzh_lists_as_a_folder_and_extracts_with_a_crc_check() {
+    let t = Temp::new("lzh");
+    let mut lzh = lh0("docs\\note.txt", b"stored in lha", crc16(b"stored in lha"));
+    lzh.extend(lh0("top.bin", b"0123456789", crc16(b"0123456789")));
+    lzh.push(0);
+    t.write("a.lzh", &lzh);
+    assert_eq!(flit_core::archive::browsable(b"a.lzh"), Some(Format::Lzh));
+    assert_eq!(names(&t.fs("a.lzh")).unwrap(), vec![("docs".to_owned(), 13, true), ("top.bin".to_owned(), 10, false)]);
+    let out = extract(&t.fs("a.lzh"), &t.fs("out"), Place::Here);
+    assert!(out.error.is_none(), "{:?}", out.error);
+    assert_eq!(t.read("out/docs/note.txt"), b"stored in lha");
+    assert_eq!(t.read("out/top.bin"), b"0123456789");
+    let mut bad = lh0("bad.txt", b"payload", crc16(b"payload") ^ 1);
+    bad.push(0);
+    t.write("bad.lzh", &bad);
+    assert!(extract(&t.fs("bad.lzh"), &t.fs("bad"), Place::Here).error.is_some());
+}
+
+#[test]
+fn seven_z_word_size_changes_the_stream_and_still_extracts() {
+    let t = Temp::new("word");
+    let mut seed = 7u64;
+    let text: Vec<u8> = (0..60_000).flat_map(|_| {
+        seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        format!("word{} ", (seed >> 33) % 300).into_bytes()
+    }).collect();
+    t.write("src/text.txt", &text);
+    let mut sizes = Vec::new();
+    for word in [8, 273] {
+        let archive = t.fs(&format!("w{word}.7z"));
+        let options = Compression { format: Format::SevenZ, level: 9, word, threads: 1, ..Compression::default() };
+        let out = run(FileOp::Archive(ArchiveOp::Compress { items: vec![t.fs("src/text.txt")], archive: archive.clone(), options }), Resolve::Replace);
+        assert!(out.error.is_none(), "{:?}", out.error);
+        assert!(extract(&archive, &t.fs(&format!("out{word}")), Place::Here).error.is_none());
+        assert_eq!(t.read(&format!("out{word}/text.txt")), t.read("src/text.txt"));
+        sizes.push(fs::metadata(t.path(&format!("w{word}.7z"))).unwrap().len());
+    }
+    assert_ne!(sizes[0], sizes[1]);
+}
+
+#[test]
+fn package_formats_browse_like_zip_and_documents_open_as_folder_only() {
+    for name in ["app.jar", "app.apk", "app.msix", "app.appx", "lib.nupkg", "ext.vsix", "x.LHA"] {
+        assert!(flit_core::archive::browsable(name.as_bytes()).is_some(), "{name}");
+    }
+    for name in ["a.docx", "b.epub", "c.odt"] {
+        assert!(flit_core::archive::browsable(name.as_bytes()).is_none(), "{name}");
+        assert_eq!(flit_core::archive::format_of(name.as_bytes()), Some(Format::Zip), "{name}");
+    }
+}

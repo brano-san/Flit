@@ -160,7 +160,7 @@
 "ops.clear" = "Remove finished operations from the panel"
 "edit.undo" = "Revert the last file operation"
 "edit.redo" = "Repeat the reverted file operation"
-"item.properties" = "Show the Windows properties dialog of the selection"
+"item.properties" = "Show the size, contents, dates and attributes of the selection"
 "view.pane" = "Panel on the side with a preview and details of the selection"
 "view.pane.preview" = "Show the preview of the selection in the side panel"
 "view.pane.details" = "Show the details of the selection in the side panel"

@@ -317,6 +317,18 @@ impl Fs for NtFs {
         }
     }
 
+    fn cluster_size(&self, path: &FsPath) -> u64 {
+        let wide = path.to_wide(true);
+        let mut root = [0u16; 1024];
+        let (mut sectors, mut bytes, mut free, mut total) = (0u32, 0u32, 0u32, 0u32);
+        unsafe {
+            if GetVolumePathNameW(PCWSTR(wide.as_ptr()), &mut root).is_err() || GetDiskFreeSpaceW(PCWSTR(root.as_ptr()), Some(&mut sectors), Some(&mut bytes), Some(&mut free), Some(&mut total)).is_err() {
+                return 0;
+            }
+        }
+        sectors as u64 * bytes as u64
+    }
+
     fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, u64) + Sync)) {
         let trees: Vec<Tree> = items.iter().map(|&(idx, _)| Tree { idx, bytes: AtomicU64::new(0), open: AtomicUsize::new(1), keep_going, report }).collect();
         let walk = || {

@@ -4,6 +4,7 @@ use crate::archive::{self, ArchiveOp};
 use crate::fmt as format;
 use crate::i18n::{P, S};
 use crate::input::{Key, Mods};
+use crate::limits;
 use crate::location::{Location, ProviderId};
 use crate::name;
 use crate::open::OpenTarget;
@@ -35,6 +36,7 @@ const G_CHECK: &str = "\u{E73E}";
 
 const CONFLICT_BUTTONS: [S; 4] = [S::UiButtonReplace, S::UiButtonKeepBoth, S::UiButtonSkip, S::UiButtonCancel];
 const UNREADABLE_BUTTONS: [S; 2] = [S::UiButtonSkip, S::UiButtonCancel];
+const NO_ROOM_BUTTONS: [S; 2] = [S::OpsExtraCopyAnyway, S::UiButtonCancel];
 const CONFIRM_BUTTONS: [S; 2] = [S::UiButtonDelete, S::UiButtonCancel];
 const RESTORE_ALL_BUTTONS: [S; 2] = [S::UiButtonRestore, S::UiButtonCancel];
 const RESTORE_BUTTONS: [S; 2] = [S::UiButtonRestore, S::UiButtonNotNow];
@@ -168,11 +170,19 @@ pub(super) enum Ask {
 
 impl Ask {
     fn unreadable(&self) -> bool {
-        matches!(self, Ask::Conflict { conflict, .. } if archive::is_unreadable(conflict))
+        matches!(self, Ask::Conflict { conflict, .. } if archive::is_unreadable(conflict) && !limits::too_large(conflict))
+    }
+
+    fn too_large(&self) -> bool {
+        matches!(self, Ask::Conflict { conflict, .. } if limits::too_large(conflict))
+    }
+
+    fn name_conflict(&self) -> bool {
+        matches!(self, Ask::Conflict { .. }) && !self.unreadable() && !self.too_large()
     }
 
     fn first_button(&self) -> usize {
-        usize::from(matches!(self, Ask::Conflict { .. }) && !self.unreadable())
+        usize::from(self.name_conflict())
     }
 }
 
@@ -264,7 +274,8 @@ fn job_title(op: &FileOp) -> Option<String> {
         FileOp::Archive(ArchiveOp::Compress { items, archive, .. }) => crate::tr!(S::UiJobTitleCompressing, what = count(items), dest = quoted(archive)),
         FileOp::Archive(ArchiveOp::Extract { archives, .. }) => crate::tr!(S::UiJobTitleExtracting, what = count(archives)),
         FileOp::Archive(ArchiveOp::Open { item }) => crate::tr!(S::UiJobTitleOpening, what = quoted(item)),
-        FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::NewStream { .. } | FileOp::Link { .. } | FileOp::FolderIcon { .. } => return None,
+        FileOp::InstallFonts(fonts) => crate::tr!(S::OpsExtraInstallingFonts, what = count(fonts)),
+        FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::NewStream { .. } | FileOp::Link { .. } | FileOp::FolderIcon { .. } | FileOp::LockScreen(_) => return None,
     })
 }
 
@@ -413,6 +424,7 @@ impl App {
     pub fn asking(&self) -> Option<&str> {
         match self.jobs.asks.front() {
             Some(a) if a.unreadable() => Some("unreadable"),
+            Some(a) if a.too_large() => Some("too_large"),
             Some(Ask::Conflict { .. }) => Some("conflict"),
             Some(Ask::Confirm(..)) => Some("confirm"),
             Some(Ask::Restore) => Some("restore"),
@@ -486,13 +498,13 @@ impl App {
 
     fn answer(&mut self, button: usize) {
         let Some(ask) = self.jobs.asks.pop_front() else { return };
-        let unreadable = ask.unreadable();
+        let (two, too_large) = (!ask.name_conflict(), ask.too_large());
         match ask {
             Ask::Conflict { id, .. } => {
-                let choice = if unreadable { [Some(Resolve::Skip), None][button.min(1)] } else { [Some(Resolve::Replace), Some(Resolve::KeepBoth), Some(Resolve::Skip), None][button.min(3)] };
+                let choice = if two { [Some(Resolve::Skip), None][button.min(1)] } else { [Some(Resolve::Replace), Some(Resolve::KeepBoth), Some(Resolve::Skip), None][button.min(3)] };
                 if let Some(ctl) = self.op_ctl(id) {
                     match choice {
-                        Some(c) => ctl.answer(c, self.jobs.all),
+                        Some(c) => ctl.answer(c, self.jobs.all && !too_large),
                         None => ctl.cancel(),
                     }
                 }
@@ -517,7 +529,8 @@ impl App {
 
     pub(super) fn dialog_buttons(&self) -> Vec<&'static str> {
         let keys: &[S] = match self.jobs.asks.front() {
-            Some(a) if a.unreadable() => &UNREADABLE_BUTTONS,
+            Some(Ask::Conflict { conflict, .. }) if limits::is_short_of_space(conflict) => &NO_ROOM_BUTTONS,
+            Some(a) if a.unreadable() || a.too_large() => &UNREADABLE_BUTTONS,
             Some(Ask::Conflict { .. }) => &CONFLICT_BUTTONS,
             Some(Ask::Confirm(FileOp::Restore(_), _)) => &RESTORE_ALL_BUTTONS,
             Some(Ask::Confirm(..)) => &CONFIRM_BUTTONS,
@@ -531,7 +544,7 @@ impl App {
     pub(super) fn jobs_key(&mut self, key: Key, m: Mods) -> bool {
         if !self.jobs.asks.is_empty() {
             let n = self.dialog_buttons().len();
-            let conflict = self.jobs.asks.front().is_some_and(|a| matches!(a, Ask::Conflict { .. }) && !a.unreadable());
+            let conflict = self.jobs.asks.front().is_some_and(Ask::name_conflict);
             let plain = !m.ctrl && !m.alt;
             match key {
                 Key::Escape => self.answer(n - 1),
@@ -598,8 +611,9 @@ impl App {
             }
         }
         if let Some(ask) = j.asks.front() {
-            let checked = matches!(ask, Ask::Conflict { .. }) || can_delete_instead(ask);
+            let checked = (matches!(ask, Ask::Conflict { .. }) && !ask.too_large()) || can_delete_instead(ask);
             let (buttons, dh) = match ask {
+                Ask::Conflict { .. } if ask.too_large() => (labels, s(168.0)),
                 Ask::Conflict { .. } => (labels, s(236.0)),
                 _ if checked => (labels, s(208.0)),
                 Ask::Confirm(..) | Ask::Restore | Ask::ReplaceExport { .. } => (labels, s(168.0)),
@@ -858,6 +872,19 @@ impl App {
         g.dl.outline(d, t.input_border, s8, 1.0);
         let offset = self.utc_offset_min;
         let (title, lines): (String, Vec<String>) = match self.jobs.asks.front() {
+            Some(Ask::Conflict { conflict: c, .. }) if limits::too_large(c) => {
+                let size = |b: u64| {
+                    let mut out = String::new();
+                    format::size(&mut out, b);
+                    out
+                };
+                let lines = if limits::is_short_of_space(c) {
+                    vec![crate::tr!(S::OpsExtraNoRoom, need = size(c.from.size), folder = quoted(&c.target), free = size(c.to.size)), S::OpsExtraNoRoomHint.t().into()]
+                } else {
+                    vec![crate::tr!(S::OpsExtraOverLimit, name = quoted(&c.source), size = size(c.from.size), limit = size(c.to.size)), S::OpsExtraOverLimitHint.t().into()]
+                };
+                (S::OpsExtraTooLargeTitle.t().into(), lines)
+            }
             Some(Ask::Conflict { conflict: c, .. }) if archive::is_unreadable(c) => {
                 let lines = vec![crate::tr!(S::UiConflictUnreadable, name = quoted(&c.source)), S::UiConflictUnreadableHint.t().into()];
                 (S::UiConflictUnreadableTitle.t().into(), lines)

@@ -61,6 +61,26 @@ pub enum ConfirmDelete {
     Never,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ClickOpen {
+    #[default]
+    Never,
+    Touch,
+    Mouse,
+    Always,
+}
+
+impl ClickOpen {
+    pub fn opens(self, touch: bool) -> bool {
+        match self {
+            ClickOpen::Never => false,
+            ClickOpen::Touch => touch,
+            ClickOpen::Mouse => !touch,
+            ClickOpen::Always => true,
+        }
+    }
+}
+
 pub type Choices = &'static [(&'static str, S)];
 
 #[derive(Clone, Copy)]
@@ -161,6 +181,8 @@ const ARCHIVE_CHOICES: Choices = &[("zip", S::SettingsChoiceArchiveZip), ("7z", 
 const THEMES: [Mode; 3] = [Mode::System, Mode::Light, Mode::Dark];
 const THEME_CHOICES: Choices = &[("system", S::SettingsChoiceThemeSystem), ("light", S::SettingsChoiceThemeLight), ("dark", S::SettingsChoiceThemeDark)];
 const OPS_CHOICES: Choices = &[("during", S::SettingsChoiceOpsDuring), ("always", S::SettingsChoiceOpsAlways)];
+const CLICKS: [ClickOpen; 4] = [ClickOpen::Never, ClickOpen::Touch, ClickOpen::Mouse, ClickOpen::Always];
+const CLICK_CHOICES: Choices = &[("never", S::SettingsChoiceClickNever), ("touch", S::SettingsChoiceClickTouch), ("mouse", S::SettingsChoiceClickMouse), ("always", S::SettingsChoiceClickAlways)];
 const COUNT_CHOICES: Choices = &[("total", S::SettingsChoiceCountTotal), ("separate", S::SettingsChoiceCountSeparate)];
 const AREA_HELP: S = S::SettingsHelpAreaColor;
 pub const LOG_LEVEL: &str = "advanced.log_level";
@@ -238,9 +260,9 @@ pub static SETTINGS: &[Setting] = &[
     toggle("files.thumbnails", Page::Files, S::SettingsTitleFilesThumbnails, S::SettingsHelpFilesThumbnails, |a| a.prefs.thumbnails, |a, on| a.set_pref(|p| &mut p.thumbnails, on)),
     toggle("files.checkboxes", Page::Files, S::SettingsTitleFilesCheckboxes, S::SettingsHelpFilesCheckboxes, |a| a.prefs.checkboxes, |a, on| a.set_pref(|p| &mut p.checkboxes, on)),
     toggle("files.hover_select", Page::Files, S::SettingsTitleFilesHoverSelect, S::SettingsHelpFilesHoverSelect, |a| a.prefs.hover_select, |a, on| a.set_pref(|p| &mut p.hover_select, on)),
-    toggle("files.single_click_files", Page::Files, S::SettingsTitleFilesSingleClickFiles, S::SettingsHelpFilesSingleClickFiles, |a| a.single_click_files, |a, on| a.single_click_files = on),
-    toggle("files.single_click_folders", Page::Files, S::SettingsTitleFilesSingleClickFolders, S::SettingsHelpFilesSingleClickFolders, |a| a.single_click_folders, |a, on| a.single_click_folders = on),
-    toggle("files.single_click_columns", Page::Files, S::SettingsTitleFilesSingleClickColumns, S::SettingsHelpFilesSingleClickColumns, |a| a.single_click_columns, |a, on| a.single_click_columns = on),
+    choice("files.single_click_files", Page::Files, S::SettingsTitleFilesSingleClickFiles, S::SettingsHelpFilesSingleClickFiles, CLICK_CHOICES, |a| pos(&CLICKS, &a.single_click_files), |a, i| a.single_click_files = CLICKS[i]),
+    choice("files.single_click_folders", Page::Files, S::SettingsTitleFilesSingleClickFolders, S::SettingsHelpFilesSingleClickFolders, CLICK_CHOICES, |a| pos(&CLICKS, &a.single_click_folders), |a, i| a.single_click_folders = CLICKS[i]),
+    choice("files.single_click_columns", Page::Files, S::SettingsTitleFilesSingleClickColumns, S::SettingsHelpFilesSingleClickColumns, CLICK_CHOICES, |a| pos(&CLICKS, &a.single_click_columns), |a, i| a.single_click_columns = CLICKS[i]),
     toggle("files.folders_in_new_tab", Page::Files, S::SettingsTitleFilesFoldersInNewTab, S::SettingsHelpFilesFoldersInNewTab, |a| a.folders_in_new_tab, |a, on| a.folders_in_new_tab = on),
     toggle("files.double_click_up", Page::Files, S::SettingsTitleFilesDoubleClickUp, S::SettingsHelpFilesDoubleClickUp, |a| a.double_click_up, |a, on| a.double_click_up = on),
     toggle("files.select_previous", Page::Files, S::SettingsTitleFilesSelectPrevious, S::SettingsHelpFilesSelectPrevious, |a| a.select_previous, |a, on| a.select_previous = on),
@@ -324,7 +346,10 @@ impl Setting {
     pub fn from_json(&self, j: &Json) -> Option<Value> {
         match self.kind {
             Kind::Toggle(..) => j.as_bool().map(Value::Bool),
-            Kind::Choice(c, ..) => c.iter().position(|(k, _)| Some(*k) == j.as_str()).map(Value::Choice),
+            Kind::Choice(c, ..) => {
+                let key = j.as_bool().map_or(j.as_str(), |on| Some(if on { "always" } else { "never" }));
+                c.iter().position(|(k, _)| Some(*k) == key).map(Value::Choice)
+            }
             Kind::Number { min, max, .. } => j.as_i64().filter(|n| (min..=max).contains(n)).map(Value::Number),
             Kind::Paths(..) => {
                 let items = j.as_array().filter(|a| a.len() <= MAX_PATHS)?;

@@ -280,6 +280,21 @@ fn no_operation_silences_windows_confirmations_or_errors() {
 }
 
 #[test]
+fn a_copy_short_of_space_asks_before_it_fails() {
+    let t = TempDir::new("room");
+    std::fs::create_dir(t.0.join("dst")).unwrap();
+    let (job, asked) = answering(&[(Resolve::Skip, false)]);
+    assert!(engine::Engine::new(&job).room(&t.path("dst"), u64::MAX), "copy anyway goes ahead");
+    let seen = asked.lock().unwrap().clone();
+    assert!(seen.len() == 1 && flit_core::limits::is_short_of_space(&seen[0]) && seen[0].from.size == u64::MAX);
+    let (job, _) = answering(&[]);
+    assert!(!engine::Engine::new(&job).room(&t.path("dst"), u64::MAX), "cancel stops the copy");
+    let (job, asked) = answering(&[]);
+    assert!(engine::Engine::new(&job).room(&t.path("dst"), 1) && asked.lock().unwrap().is_empty());
+    assert!(engine::volume_file_system(&t.path("dst")).is_some_and(|fs| !fs.is_empty()));
+}
+
+#[test]
 fn copies_trees_natively_and_names_duplicates_like_explorer() {
     let t = TempDir::new("tree");
     std::fs::create_dir_all(t.0.join(r"src\sub\deep")).unwrap();

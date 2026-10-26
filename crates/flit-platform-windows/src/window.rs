@@ -879,6 +879,7 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
             let clicks = if matches!(msg, WM_LBUTTONDBLCLK | WM_RBUTTONDBLCLK | WM_MBUTTONDBLCLK | WM_XBUTTONDBLCLK) { 2 } else { 1 };
             SetCapture(hwnd);
             let (x, y) = client_xy();
+            s.send(Event::Pointer { touch: GetMessageExtraInfo().0 as u32 & 0xFFFF_FF00 == 0xFF51_5700 });
             s.send(Event::MouseDown { x, y, button, clicks });
             Some(LRESULT(if matches!(msg, WM_XBUTTONDOWN | WM_XBUTTONDBLCLK) { 1 } else { 0 }))
         }
