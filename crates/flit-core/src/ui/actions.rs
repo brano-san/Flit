@@ -316,19 +316,22 @@ pub fn index(id: &str) -> Option<usize> {
 
 impl App {
     pub(super) fn run_bound(&mut self, key: Key, mods: Mods, now: Instant) -> bool {
-        let Some(i) = self.keymap.owner(Chord { key, mods }) else { return false };
+        let Some(i) = self.keymap.owner(Chord { key, mods }).filter(|&i| self.caps.supports(ACTIONS[i].id)) else { return false };
         (ACTIONS[i].run)(self, now);
         true
     }
 
     pub fn run_action(&mut self, id: &str, now: Instant) -> bool {
-        let Some(a) = ACTIONS.iter().find(|a| a.id == id) else { return false };
+        let Some(a) = ACTIONS.iter().find(|a| a.id == id && self.caps.supports(id)) else { return false };
         self.dirty = true;
         (a.run)(self, now);
         true
     }
 
     pub fn available(&self, id: &str) -> bool {
+        if !self.caps.supports(id) {
+            return false;
+        }
         let kind = self.current_location().path().kind();
         let (home, bin, library) = (kind == PathKind::Home, kind == PathKind::RecycleBin, self.current_library().is_some());
         let no_files = home || bin || kind == PathKind::Computer;

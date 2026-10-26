@@ -617,7 +617,7 @@ impl App {
                 out.push(Line::Note(S::SettingsPageLineKeysHow.t()));
                 out.push(Line::Note(S::SettingsPageLineKeysRule.t()));
                 out.push(Line::Buttons(None, &[Btn::RestoreKeys]));
-                out.extend((0..ACTIONS.len()).map(|i| self.action_line(i)));
+                out.extend((0..ACTIONS.len()).filter(|&i| self.caps.supports(ACTIONS[i].id)).map(|i| self.action_line(i)));
             }
             Page::General | Page::Files | Page::Layout => {}
         }
@@ -649,7 +649,7 @@ impl App {
                 _ => &[],
             };
             if page == Page::Actions {
-                out.extend((0..ACTIONS.len()).filter(|&i| matches(query, self.keymap.words(i))).map(|i| self.action_line(i)));
+                out.extend((0..ACTIONS.len()).filter(|&i| self.caps.supports(ACTIONS[i].id) && matches(query, self.keymap.words(i))).map(|i| self.action_line(i)));
             }
             for b in extra.iter().filter(|b| b.iter().any(|b| matches(query, &b.label().to_lowercase()))) {
                 out.push(Line::Buttons(None, b));

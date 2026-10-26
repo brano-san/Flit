@@ -174,3 +174,27 @@ fn hidden_items_and_inline_shell_items_follow_the_core_flags() {
     app.shell_items_inline = true;
     assert!(right_click(&mut app, Some(FILE), false).inline);
 }
+
+#[test]
+fn windows_only_actions_disappear_everywhere_on_linux() {
+    let mut app = app_with(&[("a.txt", false), ("sub", true)]);
+    let windows = commands(&right_click(&mut app, Some(FILE), false).menu);
+    assert!(windows.iter().any(|l| l == "Create shortcut") && windows.iter().any(|l| l == "New alternate data stream"));
+    app.caps = crate::caps::Caps { unix_paths: true };
+    let file = commands(&right_click(&mut app, Some(FILE), false).menu);
+    let folder = commands(&right_click(&mut app, Some(FOLDER), false).menu);
+    for gone in ["Create shortcut", "New alternate data stream", "Change icon"] {
+        assert!(!file.iter().chain(&folder).any(|l| l == gone), "{gone} in {file:?} {folder:?}");
+    }
+    assert!(file.iter().any(|l| l.starts_with("Rename")));
+    for id in crate::caps::WINDOWS_ONLY_ACTIONS {
+        assert!(!app.available(id), "{id} offered by the palette");
+        assert!(!app.run_action(id, Instant::now()), "{id} runs");
+    }
+    assert!(app.available("file.rename"));
+    assert!(!app.toolbar_items().iter().any(|i| matches!(i, crate::ui::toolbar::ToolItem::Button(id, _) if id == "file.share")));
+    app.open_settings(Some(crate::ui::settings_page::Page::Actions));
+    let lines = app.settings_lines();
+    assert!(lines.iter().any(|l| l.starts_with("action file.rename")), "{lines:?}");
+    assert!(!lines.iter().any(|l| crate::caps::WINDOWS_ONLY_ACTIONS.iter().any(|id| l.starts_with(&format!("action {id} ")))), "{lines:?}");
+}

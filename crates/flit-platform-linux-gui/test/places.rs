@@ -97,6 +97,13 @@ fn volumes_take_labels_and_sizes() {
 }
 
 #[test]
+fn the_root_drive_is_named_in_the_interface_language() {
+    let root = &parse(b"1 0 8:1 / / rw - ext4 /dev/sda1 rw\n")[0];
+    assert_eq!(name_of(root, flit_core::i18n::Lang::En), "File System");
+    assert_eq!(name_of(root, flit_core::i18n::Lang::Ru), "Файловая система");
+}
+
+#[test]
 fn computer_lists_absolute_mount_points_as_volumes() {
     let l = listing(|b| list_computer(b).unwrap());
     let root = (0..l.len() as u32).find(|&i| l.name(i) == b"/").expect("the root is always shown");

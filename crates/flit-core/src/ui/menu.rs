@@ -90,6 +90,7 @@ fn trimmed(mut items: Vec<MenuItem>) -> Vec<MenuItem> {
 
 pub(super) struct Menu<'a> {
     hidden: &'a [&'static str],
+    caps: crate::caps::Caps,
     keys: &'a Keymap,
     items: Vec<MenuItem>,
     cmds: Vec<Cmd>,
@@ -97,7 +98,7 @@ pub(super) struct Menu<'a> {
 
 impl Menu<'_> {
     fn shown(&self, id: &str) -> bool {
-        !self.hidden.contains(&id)
+        !self.hidden.contains(&id) && self.caps.supports(id)
     }
 
     pub(super) fn place(&mut self, label: &str, cmd: super::sidebar::PlaceCmd, checked: bool) {
@@ -153,7 +154,7 @@ impl App {
     }
 
     pub(super) fn collect(&mut self, fill: impl FnOnce(&Self, &mut Menu)) -> Vec<MenuItem> {
-        let mut m = Menu { hidden: &self.menu_hidden, keys: &self.keymap, items: Vec::new(), cmds: Vec::new() };
+        let mut m = Menu { hidden: &self.menu_hidden, caps: self.caps, keys: &self.keymap, items: Vec::new(), cmds: Vec::new() };
         fill(self, &mut m);
         let (items, cmds) = (trimmed(m.items), m.cmds);
         self.menu = cmds;
@@ -389,9 +390,7 @@ impl App {
             return;
         }
         if files {
-            if !self.caps.unix_paths {
-                m.action("file.shortcut", S::MenuCreateShortcut.t());
-            }
+            m.action("file.shortcut", S::MenuCreateShortcut.t());
             m.action("file.rename", S::MenuRename.t());
             m.action("item.trash", S::MenuDelete.t());
         }
@@ -415,7 +414,7 @@ impl App {
         }
         if files {
             m.action("file.new_folder_with_selection", S::MenuNewFolderWithSelection.t());
-            if count == 1 && folders.is_empty() && !self.caps.unix_paths {
+            if count == 1 && folders.is_empty() {
                 m.action("file.new_stream", S::MenuNewStream.t());
             }
             if !folders.is_empty() {

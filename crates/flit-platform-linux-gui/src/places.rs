@@ -15,9 +15,9 @@ pub struct Volume {
     pub free: u64,
 }
 
-fn name_of(m: &Mount) -> String {
+fn name_of(m: &Mount, l: flit_core::i18n::Lang) -> String {
     match m.point.as_slice() {
-        b"/" => "File System".into(),
+        b"/" => flit_core::i18n::S::SidebarFolderFileSystem.in_lang(l).into(),
         p => String::from_utf8_lossy(p.rsplit(|&b| b == b'/').next().unwrap_or(p)).into_owned(),
     }
 }
@@ -28,7 +28,7 @@ pub fn volumes_from(table: &[Mount], user: &[u8], by_label: &Path) -> Vec<Volume
         .into_iter()
         .map(|m| {
             let (total, free) = mounts::space(m.path()).unwrap_or_default();
-            let label = mounts::label_of(&m, &labels).filter(|_| m.point != b"/").unwrap_or_else(|| name_of(&m));
+            let label = mounts::label_of(&m, &labels).filter(|_| m.point != b"/").unwrap_or_else(|| name_of(&m, flit_core::i18n::lang()));
             Volume { mount: m, label, total, free }
         })
         .collect()
