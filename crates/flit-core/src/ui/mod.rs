@@ -1346,6 +1346,7 @@ impl App {
             }
             Event::MouseMove { x, y } => self.mouse_move(*x, *y, now),
             Event::MouseLeave => {
+                self.hide_settings_tip();
                 self.hover_pick(Hit::None, now);
                 if self.hover != Hit::None {
                     self.hover = Hit::None;
@@ -1421,6 +1422,7 @@ impl App {
 
     fn mouse_move(&mut self, x: f32, y: f32, now: Instant) {
         self.strip_pointer(x, y, now);
+        self.settings_tip(x, y);
         if self.toolbar_mouse_move(x) || self.autoscroll_move(self.along_of(x, y)) || self.ops_mouse_move(x, y) || self.marquee_move(x, y) {
             return;
         }

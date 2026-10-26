@@ -46,6 +46,47 @@ fn settings_wheel_glides_toward_the_target_over_frames() {
     assert!(a.settings.as_ref().unwrap().scroll.pos < up_from, "wheel up moves on its first frame");
 }
 
+#[test]
+fn a_cut_description_shows_its_full_text_on_hover_and_hides_on_key_wheel_and_leave() {
+    let t0 = Instant::now();
+    let mut a = app();
+    a.on_event(&Event::Resized { width: 760, height: 520 }, t0);
+    a.open_settings(Some(Page::General));
+    a.frame(&mut Gfx::new(Mono, 1024), t0);
+    let (k, r) = *a.settings.as_ref().unwrap().cut.first().expect("a narrow window cuts some description");
+    let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    a.on_event(&Event::MouseMove { x, y }, t0);
+    assert_eq!(a.settings.as_ref().unwrap().tip, Some((k, (x, y))));
+    let plain = { let mut g = Gfx::new(Mono, 1024); a.frame(&mut g, t0); g.dl.instances.len() };
+    a.on_event(&Event::MouseMove { x: x + 1.0, y }, t0);
+    assert_eq!(a.settings.as_ref().unwrap().tip, Some((k, (x, y))), "the tip stays put while the pointer stays on the same text");
+    key(&mut a, Key::Down, NO);
+    assert_eq!(a.settings.as_ref().unwrap().tip, None);
+    let hidden = { let mut g = Gfx::new(Mono, 1024); a.frame(&mut g, t0); g.dl.instances.len() };
+    assert!(plain > hidden, "the tip draws a box and its text");
+    a.on_event(&Event::MouseMove { x, y: y + 0.5 }, t0);
+    assert!(a.settings.as_ref().unwrap().tip.is_some());
+    a.on_event(&Event::Wheel { dx: 0.0, dy: -1.0 }, t0);
+    assert_eq!(a.settings.as_ref().unwrap().tip, None);
+    a.frame(&mut Gfx::new(Mono, 1024), t0 + Duration::from_secs(1));
+    a.on_event(&Event::MouseMove { x, y }, t0);
+    a.on_event(&Event::MouseLeave, t0);
+    assert_eq!(a.settings.as_ref().unwrap().tip, None);
+}
+
+#[test]
+fn tips_wrap_long_text_within_the_width() {
+    let mut g = Gfx::new(Mono, 1024);
+    let font = crate::text::FontStyle::new(crate::text::FontFamily::Ui, 12.0, false);
+    let text = "one two three four five six seven eight nine ten eleven twelve";
+    let max = g.measure("one two three four", font);
+    let lines = wrap(&mut g, text, font, max);
+    assert!(lines.len() > 2);
+    assert!(lines.iter().all(|l| g.measure(l, font) <= max));
+    assert_eq!(lines.join(" "), text);
+    assert!(wrap(&mut g, "", font, max).is_empty());
+}
+
 fn listed(items: &[(&str, bool)]) -> App {
     let mut a = app();
     let t = a.tab();
@@ -93,6 +134,9 @@ fn line(a: &mut App, id: &str) -> usize {
     let k = ui(a).lines.iter().position(|l| *l == Line::Setting(i)).unwrap_or_else(|| panic!("{id} is not shown"));
     let u = a.settings.as_mut().unwrap();
     (u.focus, u.reveal) = (k, true);
+    a.layout();
+    let u = a.settings.as_mut().unwrap();
+    u.scroll.snap(u.scroll.target);
     a.layout();
     k
 }
@@ -367,7 +411,10 @@ fn appearance_page_hides_the_toolbar_and_opens_its_customization() {
     let u = a.settings.as_mut().unwrap();
     (u.focus, u.reveal) = (b, true);
     a.layout();
-    let l = ui(&a).lines[b].clone();
+    let u = a.settings.as_mut().unwrap();
+    u.scroll.snap(u.scroll.target);
+    a.layout();
+    let l =ui(&a).lines[b].clone();
     let r = button_rects(&l, rect(&a, b), s)[0];
     click_at(&mut a, center(r));
     assert!(matches!(a.nav.palette.as_ref().map(|p| &p.pick), Some(Pick::Toolbar(_))), "the customization layer opens over the settings");

@@ -267,6 +267,8 @@ pub(super) struct SettingsUi {
     sub: usize,
     pub(super) scroll: Glide,
     content_h: f32,
+    cut: Vec<(usize, Rect)>,
+    tip: Option<(usize, (f32, f32))>,
     reveal: bool,
     panel: Rect,
     nav: Vec<Rect>,
@@ -287,6 +289,8 @@ impl SettingsUi {
             sub: 0,
             scroll: Glide::default(),
             content_h: 0.0,
+            cut: Vec::new(),
+            tip: None,
             reveal: false,
             panel: Rect::default(),
             nav: Vec::new(),
@@ -326,6 +330,28 @@ fn switch_rect(r: Rect, s: impl Fn(f32) -> f32) -> Rect {
 
 fn control_rect(r: Rect, s: impl Fn(f32) -> f32) -> Rect {
     Rect::new(r.right() - s(PAD) - s(CONTROL_W), r.y + (r.h - s(30.0)) / 2.0, s(CONTROL_W), s(30.0))
+}
+
+const TIP_W: f32 = 380.0;
+
+fn wrap<'a, B: TextBackend>(g: &mut Gfx<B>, text: &'a str, font: FontStyle, max_w: f32) -> Vec<&'a str> {
+    let mut lines = Vec::new();
+    let (mut start, mut end) = (0, 0);
+    for word in text.split_whitespace() {
+        let at = word.as_ptr() as usize - text.as_ptr() as usize;
+        let next = at + word.len();
+        if end == start {
+            start = at;
+        } else if g.measure(&text[start..next], font) > max_w {
+            lines.push(&text[start..end]);
+            start = at;
+        }
+        end = next;
+    }
+    if end > start {
+        lines.push(&text[start..end]);
+    }
+    lines
 }
 
 fn step_rects(r: Rect, s: impl Fn(f32) -> f32) -> (Rect, Rect) {
@@ -1069,6 +1095,7 @@ impl App {
             return false;
         }
         let closes = self.keymap.runs(key, m, "settings.open");
+        self.hide_settings_tip();
         let Some(ui) = &mut self.settings else { return false };
         self.dirty = true;
         let plain = !m.ctrl && !m.alt;
@@ -1189,6 +1216,7 @@ impl App {
             return false;
         }
         let step = 3.0 * (ITEM_H * self.scale).round();
+        self.hide_settings_tip();
         if let Some(ui) = &mut self.settings {
             ui.scroll.by(-dy * step, ui.content_h - ui.list.h);
         }
@@ -1261,6 +1289,7 @@ impl App {
         ui.search.draw(g, t, inner, font, focused_search, S::SettingsPageLineSearch.t(), sc, Some(&self.preedit));
         let list = ui.list;
         g.dl.set_clip(Some(list));
+        let mut cut = Vec::new();
         let list_focused = !ui.searching && self.active && self.nav.palette.is_none();
         for (k, (line, &r)) in ui.lines.iter().zip(&ui.rects).enumerate() {
             if r.bottom() < list.y || r.y > list.bottom() {
@@ -1293,7 +1322,11 @@ impl App {
                     let text_w = r.w - s(PAD) * 3.0 - s(CONTROL_W);
                     let ty = r.y + s(10.0) + mf.ascent;
                     g.text(r.x + s(PAD), ty.round(), set.title.t(), font, t.text, text_w);
-                    g.text(r.x + s(PAD), (ty + s(20.0)).round(), set.help.t(), small, t.text_dim, text_w);
+                    let help_y = (ty + s(20.0)).round();
+                    g.text(r.x + s(PAD), help_y, set.help.t(), small, t.text_dim, text_w);
+                    if g.measure(set.help.t(), small) > text_w {
+                        cut.push((k, Rect::new(r.x + s(PAD), help_y - ms.ascent, text_w, ms.ascent + ms.descent)));
+                    }
                     let value = self.setting_value_text(*i);
                     match (set.kind, set.get(self)) {
                         (Kind::Toggle(..), Value::Bool(on)) => {
@@ -1404,6 +1437,54 @@ impl App {
             let th = (list.h * list.h / ui.content_h).max(s(24.0));
             let thumb = Rect::new(list.right() - s(6.0), list.y + (list.h - th) * frac, s(4.0), th);
             g.dl.round_rect(thumb, t.scrollbar, s(2.0));
+        }
+        ui.cut = cut;
+        if let Some((k, (x, y))) = ui.tip {
+            if let Some(&Line::Setting(i)) = ui.lines.get(k) {
+                self.paint_tip(g, t, SETTINGS[i].help.t(), (x, y));
+            }
+        }
+    }
+
+    fn paint_tip<B: TextBackend>(&self, g: &mut Gfx<B>, t: &Theme, text: &str, (x, y): (f32, f32)) {
+        let font = self.ui_font(12.0);
+        let m = g.metrics(font);
+        let (pad, line_h, edge) = (self.s(8.0), (self.s(12.0) * 1.45).round(), self.s(8.0));
+        let max_w = self.s(TIP_W).min(self.size.0 - 2.0 * edge - 2.0 * pad);
+        let lines = wrap(g, text, font, max_w);
+        let w = lines.iter().map(|l| g.measure(l, font)).fold(0.0, f32::max).ceil() + 2.0 * pad;
+        let h = lines.len() as f32 * line_h + 2.0 * pad;
+        let below = y + self.s(20.0);
+        let ty = if below + h > self.size.1 - edge { y - self.s(6.0) - h } else { below };
+        let b = Rect::new((x + self.s(12.0)).min(self.size.0 - w - edge).max(edge), ty.max(edge), w, h);
+        g.dl.shadow(Rect::new(b.x, b.y + self.s(2.0), b.w, b.h), if self.dark { Color::rgba(0x00000080) } else { Color::rgba(0x00000030) }, self.s(4.0), self.s(8.0));
+        g.dl.round_rect(b, t.bg, self.s(4.0));
+        g.dl.outline(b, t.input_border, self.s(4.0), 1.0);
+        for (n, l) in lines.iter().enumerate() {
+            let base = b.y + pad + n as f32 * line_h + (line_h + m.ascent - m.descent) / 2.0;
+            g.text(b.x + pad, base.round(), l, font, t.text, w - 2.0 * pad);
+        }
+    }
+
+    pub(super) fn settings_tip(&mut self, x: f32, y: f32) {
+        let blocked = self.nav.palette.is_some();
+        let Some(ui) = &mut self.settings else { return };
+        let over = if blocked || !ui.list.contains(x, y) { None } else { ui.cut.iter().find(|(_, r)| r.contains(x, y)).map(|&(k, _)| k) };
+        match (over, ui.tip) {
+            (Some(k), Some((was, _))) if k == was => {}
+            (Some(k), _) => {
+                ui.tip = Some((k, (x, y)));
+                self.dirty = true;
+            }
+            (None, Some(_)) => self.hide_settings_tip(),
+            (None, None) => {}
+        }
+    }
+
+    pub(super) fn hide_settings_tip(&mut self) {
+        if let Some(ui) = self.settings.as_mut().filter(|ui| ui.tip.is_some()) {
+            ui.tip = None;
+            self.dirty = true;
         }
     }
 }
