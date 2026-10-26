@@ -7,6 +7,7 @@ mod gl;
 mod icons;
 mod input;
 mod mime;
+mod props;
 mod svg;
 pub mod instance;
 pub mod places;

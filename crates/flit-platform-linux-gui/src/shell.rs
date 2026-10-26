@@ -155,6 +155,10 @@ impl Shell for LinuxShell {
         launch(l)
     }
 
+    fn properties(&mut self, path: &FsPath) -> Vec<flit_core::preview::PropGroup> {
+        host(path).map(crate::props::properties).unwrap_or_default()
+    }
+
     fn mount(&mut self, device: &FsPath) -> Result<FsPath, PlatformError> {
         let point = crate::places::mount(Path::new(os(device))).map_err(|e| PlatformError::new(-1, format!("cannot mount {}: {e}", device.display())))?;
         crate::xdg::fs_path(&point).ok_or_else(|| PlatformError::new(-1, "the mount point is not a valid path"))
