@@ -1,5 +1,6 @@
 #![cfg(target_os = "linux")]
 
+mod apps;
 mod fonts;
 pub mod fs;
 mod gl;

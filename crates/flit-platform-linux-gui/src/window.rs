@@ -18,6 +18,7 @@ use winit::event_loop::run_on_demand::EventLoopExtRunOnDemand;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy, OwnedDisplayHandle};
 use winit::keyboard::ModifiersState;
 use winit::platform::wayland::{ActiveEventLoopExtWayland, WindowAttributesWayland};
+use winit::platform::startup_notify::WindowExtStartupNotify;
 use winit::platform::x11::WindowAttributesX11;
 use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
 use winit::monitor::Fullscreen;
@@ -39,7 +40,12 @@ static PROXY: OnceLock<EventLoopProxy> = OnceLock::new();
 static PREFERRED_DARK: AtomicU8 = AtomicU8::new(DARK_UNKNOWN);
 static THEME_CHANGED: AtomicBool = AtomicBool::new(false);
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
-static PASTED: Mutex<Vec<(WindowId, String)>> = Mutex::new(Vec::new());
+static QUEUED: Mutex<Vec<(WindowId, Event)>> = Mutex::new(Vec::new());
+static TOKEN: Mutex<Option<String>> = Mutex::new(None);
+
+pub(crate) fn activation_token() -> Option<String> {
+    TOKEN.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
 
 pub(crate) fn display() -> Option<OwnedDisplayHandle> {
     DISPLAY.get().cloned()
@@ -244,7 +250,16 @@ impl Window for LinuxWindow {
         self.push(Command::CopyFiles(crate::shell::remember_files(paths, cut)));
     }
 
-    fn shell_menu(&self, _menu: ShellMenu) {}
+    fn shell_menu(&self, menu: ShellMenu) {
+        let id = self.id;
+        background("flit-menu", move || {
+            let (items, launches) = crate::apps::menu_with_apps(menu.menu, &menu.items);
+            if !items.is_empty() {
+                QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((id, Event::ShowMenu { items, x: menu.x, y: menu.y, launches }));
+                wake_loop();
+            }
+        });
+    }
 
     fn properties(&self, _paths: Vec<FsPath>) {}
 
@@ -387,7 +402,7 @@ fn paste(el: &dyn ActiveEventLoop, window: WindowId) {
             tracing::debug!("winit cannot read the clipboard ({e}), asking a helper program");
             background("flit-paste", move || {
                 if let Some(text) = crate::shell::clipboard_text() {
-                    PASTED.lock().unwrap_or_else(|e| e.into_inner()).push((window, text));
+                    QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((window, Event::Pasted(text)));
                     wake_loop();
                 }
             });
@@ -552,7 +567,11 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                 w.edge.set(None);
                 handler.event(w, Event::MouseLeave);
             }
+            WindowEvent::ActivationTokenDone { token, .. } => *TOKEN.lock().unwrap_or_else(|e| e.into_inner()) = Some(token.into_raw()),
             WindowEvent::PointerButton { state, position, button, .. } => {
+                if state == ElementState::Pressed {
+                    let _ = w.raw.request_activation_token();
+                }
                 if let Some(button) = button.mouse_button().and_then(input::mouse_button) {
                     self.button(i, state == ElementState::Pressed, position, button);
                 }
@@ -588,10 +607,10 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
                 self.handler.event(&node.window, Event::ThemeChanged { dark });
             }
         }
-        let pasted = std::mem::take(&mut *PASTED.lock().unwrap_or_else(|e| e.into_inner()));
-        for (id, text) in pasted {
+        let queued = std::mem::take(&mut *QUEUED.lock().unwrap_or_else(|e| e.into_inner()));
+        for (id, ev) in queued {
             if let Some(node) = self.nodes.iter().find(|n| n.window.id == id) {
-                self.handler.event(&node.window, Event::Pasted(text));
+                self.handler.event(&node.window, ev);
             }
         }
         if SHUTDOWN.swap(false, Ordering::AcqRel) {

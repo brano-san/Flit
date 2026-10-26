@@ -4,7 +4,7 @@ use std::path::Path;
 fn sources() -> String {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut all = String::new();
-    let mut stack: Vec<_> = ["flit-core", "flit", "flit-platform-windows", "flit-platform", "flit-archive"].iter().map(|c| crates.join(c).join("src")).collect();
+    let mut stack: Vec<_> = ["flit-core", "flit", "flit-platform-windows", "flit-platform", "flit-platform-linux-gui", "flit-archive"].iter().map(|c| crates.join(c).join("src")).collect();
     while let Some(dir) = stack.pop() {
         for e in std::fs::read_dir(&dir).unwrap() {
             let p = e.unwrap().path();
