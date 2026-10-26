@@ -228,6 +228,24 @@ fn recent_files_and_folders_have_their_own_capped_group() {
 }
 
 #[test]
+fn section_header_labels_and_chevrons_sit_in_the_middle_of_their_hover_rect() {
+    for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
+        let mut app = App::new(Persisted::default(), Vec::new(), 0, false, scale, (1200, 2000), Instant::now());
+        app.set_places(Arc::new(Places { drives: vec![drive('C')], wsl: vec!["Debian".into()], recycle_bin: true, ..Default::default() }));
+        let mut g = Gfx::new(Mono, 1024);
+        let m = g.metrics(app.ui_font(12.0));
+        assert!(app.nav.sidebar.headers.len() >= 4, "{scale}");
+        for &(r, section) in &app.nav.sidebar.headers {
+            let mid = r.y + r.h / 2.0;
+            let (baseline, chevron) = header_parts(r, m.ascent, m.descent, scale);
+            let text_mid = baseline + (m.descent - m.ascent) / 2.0;
+            assert!((text_mid - mid).abs() <= 0.5, "{section:?} at {scale}: label centre {text_mid} vs {mid}");
+            assert_eq!((chevron.y, chevron.h), (r.y, r.h), "{section:?} at {scale}: the chevron shares the hover rect");
+        }
+    }
+}
+
+#[test]
 fn compact_mode_shows_icons_only_and_is_a_core_flag() {
     let mut app = app_with_places();
     let full = app.layout.list.x;

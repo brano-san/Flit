@@ -961,10 +961,10 @@ impl App {
                 g.dl.rect(Rect::new(r.x + s8, (r.y + r.h / 2.0).round(), r.w - 2.0 * s8, 1.0), t.separator);
                 continue;
             }
-            let baseline = (r.y + (r.h + ms.ascent - ms.descent) / 2.0 + self.s(3.0)).round();
+            let (baseline, chevron_r) = header_parts(r, ms.ascent, ms.descent, self.scale);
             g.text(r.x + s8, baseline, section.title(), small, t.text_dim, r.w - s8 - s12 - s8);
             let glyph = if sb.is_collapsed(section) { G_COLLAPSED } else { G_EXPANDED };
-            centered(g, Rect::new(r.right() - s12 - s8, r.y + self.s(3.0), s12 + s4, r.h), glyph, chevron, t.text_dim);
+            centered(g, chevron_r, glyph, chevron, t.text_dim);
         }
         if let Some(r) = sb.hint {
             let baseline = (r.y + (r.h + ms.ascent - ms.descent) / 2.0).round();
@@ -1062,6 +1062,12 @@ impl App {
         }
         false
     }
+}
+
+fn header_parts(r: Rect, ascent: f32, descent: f32, scale: f32) -> (f32, Rect) {
+    let s = |v: f32| (v * scale).round();
+    let baseline = (r.y + (r.h + ascent - descent) / 2.0).round();
+    (baseline, Rect::new(r.right() - s(12.0) - s(8.0), r.y, s(12.0) + s(4.0), r.h))
 }
 
 fn place_icon_request(it: &Item, places: &Places, px: u32) -> Option<(u64, IconKind, FsPath)> {
