@@ -16,51 +16,74 @@ const NAME_DO_NOT_QUEUE: u32 = 4;
 const PRIMARY_OWNER: c_int = 1;
 
 #[repr(C)]
-struct Error {
+pub(crate) struct Error {
     name: *const c_char,
     message: *const c_char,
     flags: u32,
     padding: *mut c_void,
 }
 
+impl Error {
+    pub(crate) fn new() -> Self {
+        Error { name: std::ptr::null(), message: std::ptr::null(), flags: 0, padding: std::ptr::null_mut() }
+    }
+
+    pub(crate) fn message(&self) -> String {
+        text(self.message)
+    }
+}
+
 #[repr(C, align(8))]
-struct Iter([u8; 128]);
+pub(crate) struct Iter([u8; 128]);
 
 impl Iter {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Iter([0; 128])
     }
 }
 
-struct Api {
-    error_init: unsafe extern "C" fn(*mut Error),
-    error_free: unsafe extern "C" fn(*mut Error),
-    open_private: unsafe extern "C" fn(*const c_char, *mut Error) -> *mut c_void,
-    register: unsafe extern "C" fn(*mut c_void, *mut Error) -> u32,
+pub(crate) struct Api {
+    pub(crate) error_init: unsafe extern "C" fn(*mut Error),
+    pub(crate) error_free: unsafe extern "C" fn(*mut Error),
+    pub(crate) open_private: unsafe extern "C" fn(*const c_char, *mut Error) -> *mut c_void,
+    pub(crate) register: unsafe extern "C" fn(*mut c_void, *mut Error) -> u32,
     request_name: unsafe extern "C" fn(*mut c_void, *const c_char, u32, *mut Error) -> c_int,
-    read_write: unsafe extern "C" fn(*mut c_void, c_int) -> u32,
-    pop: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
-    msg_type: unsafe extern "C" fn(*mut c_void) -> c_int,
-    member: unsafe extern "C" fn(*mut c_void) -> *const c_char,
-    interface: unsafe extern "C" fn(*mut c_void) -> *const c_char,
-    iter_init: unsafe extern "C" fn(*mut c_void, *mut Iter) -> u32,
-    iter_type: unsafe extern "C" fn(*mut Iter) -> c_int,
-    iter_recurse: unsafe extern "C" fn(*mut Iter, *mut Iter),
-    iter_basic: unsafe extern "C" fn(*mut Iter, *mut c_void),
-    iter_next: unsafe extern "C" fn(*mut Iter) -> u32,
-    iter_init_append: unsafe extern "C" fn(*mut c_void, *mut Iter),
-    iter_append_basic: unsafe extern "C" fn(*mut Iter, c_int, *const c_void) -> u32,
-    new_return: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
-    send: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut u32) -> u32,
-    flush: unsafe extern "C" fn(*mut c_void),
-    unref: unsafe extern "C" fn(*mut c_void),
+    pub(crate) read_write: unsafe extern "C" fn(*mut c_void, c_int) -> u32,
+    pub(crate) pop: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+    pub(crate) msg_type: unsafe extern "C" fn(*mut c_void) -> c_int,
+    pub(crate) member: unsafe extern "C" fn(*mut c_void) -> *const c_char,
+    pub(crate) interface: unsafe extern "C" fn(*mut c_void) -> *const c_char,
+    pub(crate) iter_init: unsafe extern "C" fn(*mut c_void, *mut Iter) -> u32,
+    pub(crate) iter_type: unsafe extern "C" fn(*mut Iter) -> c_int,
+    pub(crate) iter_recurse: unsafe extern "C" fn(*mut Iter, *mut Iter),
+    pub(crate) iter_basic: unsafe extern "C" fn(*mut Iter, *mut c_void),
+    pub(crate) iter_next: unsafe extern "C" fn(*mut Iter) -> u32,
+    pub(crate) iter_init_append: unsafe extern "C" fn(*mut c_void, *mut Iter),
+    pub(crate) iter_append_basic: unsafe extern "C" fn(*mut Iter, c_int, *const c_void) -> u32,
+    pub(crate) new_return: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+    pub(crate) send: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut u32) -> u32,
+    pub(crate) flush: unsafe extern "C" fn(*mut c_void),
+    pub(crate) unref: unsafe extern "C" fn(*mut c_void),
+    pub(crate) new_method_call: unsafe extern "C" fn(*const c_char, *const c_char, *const c_char, *const c_char) -> *mut c_void,
+    pub(crate) new_signal: unsafe extern "C" fn(*const c_char, *const c_char, *const c_char) -> *mut c_void,
+    pub(crate) new_error: unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> *mut c_void,
+    pub(crate) call: unsafe extern "C" fn(*mut c_void, *mut c_void, c_int, *mut Error) -> *mut c_void,
+    pub(crate) open_container: unsafe extern "C" fn(*mut Iter, c_int, *const c_char, *mut Iter) -> u32,
+    pub(crate) close_container: unsafe extern "C" fn(*mut Iter, *mut Iter) -> u32,
+    pub(crate) add_match: unsafe extern "C" fn(*mut c_void, *const c_char, *mut Error),
+    pub(crate) path: unsafe extern "C" fn(*mut c_void) -> *const c_char,
+    pub(crate) unique_name: unsafe extern "C" fn(*mut c_void) -> *const c_char,
+    pub(crate) unix_fd: unsafe extern "C" fn(*mut c_void, *mut c_int) -> u32,
+    pub(crate) dispatch_status: unsafe extern "C" fn(*mut c_void) -> c_int,
+    pub(crate) close: unsafe extern "C" fn(*mut c_void),
+    pub(crate) release: unsafe extern "C" fn(*mut c_void),
 }
 
 unsafe fn cast<T: Copy>(p: *mut c_void) -> T {
     std::mem::transmute_copy(&p)
 }
 
-fn load() -> Option<Api> {
+pub(crate) fn load() -> Option<Api> {
     let lib = unsafe { libc::dlopen(c"libdbus-1.so.3".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
     if lib.is_null() {
         return None;
@@ -92,6 +115,19 @@ fn load() -> Option<Api> {
             send: cast(sym(c"dbus_connection_send")?),
             flush: cast(sym(c"dbus_connection_flush")?),
             unref: cast(sym(c"dbus_message_unref")?),
+            new_method_call: cast(sym(c"dbus_message_new_method_call")?),
+            new_signal: cast(sym(c"dbus_message_new_signal")?),
+            new_error: cast(sym(c"dbus_message_new_error")?),
+            call: cast(sym(c"dbus_connection_send_with_reply_and_block")?),
+            open_container: cast(sym(c"dbus_message_iter_open_container")?),
+            close_container: cast(sym(c"dbus_message_iter_close_container")?),
+            add_match: cast(sym(c"dbus_bus_add_match")?),
+            path: cast(sym(c"dbus_message_get_path")?),
+            unique_name: cast(sym(c"dbus_bus_get_unique_name")?),
+            unix_fd: cast(sym(c"dbus_connection_get_unix_fd")?),
+            dispatch_status: cast(sym(c"dbus_connection_get_dispatch_status")?),
+            close: cast(sym(c"dbus_connection_close")?),
+            release: cast(sym(c"dbus_connection_unref")?),
         })
     }
 }
@@ -109,7 +145,7 @@ pub fn request(method: &str, uris: &[Vec<u8>]) -> Option<Open> {
     }
 }
 
-fn text(p: *const c_char) -> String {
+pub(crate) fn text(p: *const c_char) -> String {
     if p.is_null() {
         return String::new();
     }

@@ -40,6 +40,7 @@ static PROXY: OnceLock<EventLoopProxy> = OnceLock::new();
 static PREFERRED_DARK: AtomicU8 = AtomicU8::new(DARK_UNKNOWN);
 static THEME_CHANGED: AtomicBool = AtomicBool::new(false);
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+static A11Y_REFRESH: AtomicBool = AtomicBool::new(false);
 static QUEUED: Mutex<Vec<(WindowId, Event)>> = Mutex::new(Vec::new());
 static TOKEN: Mutex<Option<String>> = Mutex::new(None);
 
@@ -77,6 +78,24 @@ fn watch_desktop() {
     });
     if let Err(e) = shutdown {
         tracing::warn!("cannot handle shutdown signals: {e}");
+    }
+    crate::atspi::start(
+        || {
+            A11Y_REFRESH.store(true, Ordering::Release);
+            wake_loop();
+        },
+        |id, event| {
+            QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((id, event));
+            wake_loop();
+        },
+    );
+}
+
+fn publish_a11y<H: WindowHandler<LinuxWindows>>(handler: &mut H, w: &LinuxWindow) {
+    if crate::atspi::listening() {
+        if let Some(tree) = handler.accessibility(w) {
+            crate::atspi::publish(w.id, w.to_screen(0.0, 0.0), tree);
+        }
     }
 }
 
@@ -532,6 +551,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
     fn close(&mut self, id: WindowId) {
         let Some(i) = self.nodes.iter().position(|n| n.window.id == id) else { return };
         let node = self.nodes.remove(i);
+        crate::atspi::closed(id);
         self.handler.destroyed(&node.window);
     }
 
@@ -626,7 +646,10 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         let (handler, node) = (&mut self.handler, &mut self.nodes[i]);
         let w = &node.window;
         match event {
-            WindowEvent::RedrawRequested => handler.redraw(w),
+            WindowEvent::RedrawRequested => {
+                handler.redraw(w);
+                publish_a11y(handler, w);
+            }
             WindowEvent::SurfaceResized(size) => {
                 w.resized(size);
                 handler.event(w, Event::Resized { width: size.width, height: size.height });
@@ -707,6 +730,11 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
         for (id, ev) in queued {
             if let Some(node) = self.nodes.iter().find(|n| n.window.id == id) {
                 self.handler.event(&node.window, ev);
+            }
+        }
+        if A11Y_REFRESH.swap(false, Ordering::AcqRel) {
+            for node in &self.nodes {
+                publish_a11y(&mut self.handler, &node.window);
             }
         }
         if SHUTDOWN.swap(false, Ordering::AcqRel) {
