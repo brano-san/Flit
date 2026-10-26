@@ -250,3 +250,23 @@ fn seven_z_word_size_rides_tenth_and_older_files_keep_automatic() {
     junk.extend(postcard::to_stdvec(&65u32).unwrap());
     assert_eq!(Saved::decode(&junk).unwrap().persisted.archive.compression.word, 0);
 }
+
+#[test]
+fn state_files_round_trip_and_newer_or_broken_ones_are_set_aside() {
+    let d = crate::schema::tests::Dir::new("state");
+    let f = d.0.join("state.bin");
+    let s = Saved::new(Persisted { path: loc(r"D:\kept"), show_hidden: true, ..Default::default() }, None);
+    let bytes = s.encode().unwrap();
+    std::fs::write(&f, &bytes).unwrap();
+    let back = load_from(&f).unwrap();
+    assert_eq!((back.persisted.path, back.persisted.show_hidden), (loc(r"D:\kept"), true));
+    let mut newer = s.clone();
+    newer.version = VERSION + 1;
+    let newer = newer.encode().unwrap();
+    std::fs::write(&f, &newer).unwrap();
+    assert!(load_from(&f).is_none());
+    assert_eq!(std::fs::read(crate::schema::aside(&f, crate::schema::NEWER)).unwrap(), newer);
+    std::fs::write(&f, [VERSION as u8, 0xFF]).unwrap();
+    assert!(load_from(&f).is_none());
+    assert!(crate::schema::aside(&f, crate::schema::BAD).exists());
+}

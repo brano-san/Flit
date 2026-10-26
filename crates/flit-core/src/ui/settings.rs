@@ -19,6 +19,17 @@ use std::time::Instant;
 
 const MAX_PATHS: usize = 64;
 const MAX_TEXT: usize = 4096;
+pub const SCHEMA: u64 = 1;
+pub const SCHEMA_KEY: &str = "schema";
+pub type Migration = fn(&mut Map<String, Json>);
+const MIGRATIONS: [Migration; 0] = [];
+
+pub fn migrate(map: &mut Map<String, Json>, from: u64, current: u64, steps: &[Migration]) -> bool {
+    let Some(first) = current.checked_sub(steps.len() as u64).and_then(|oldest| from.checked_sub(oldest)) else { return false };
+    let Some(todo) = steps.get(first as usize..) else { return false };
+    todo.iter().for_each(|step| step(map));
+    true
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {
@@ -410,9 +421,14 @@ pub struct Doc {
     pub tags: Vec<Tag>,
     pub problems: Vec<String>,
     pub broken: bool,
+    pub schema: u64,
 }
 
 impl Doc {
+    pub fn newer(&self) -> bool {
+        self.schema > SCHEMA
+    }
+
     pub fn value(&self, id: &str) -> Option<&Value> {
         let i = index(id)?;
         self.values.iter().find(|(k, _)| *k == i).map(|(_, v)| v)
@@ -439,7 +455,7 @@ fn parse_color(s: &str) -> Option<u32> {
 
 pub fn parse(text: &str) -> Doc {
     let mut doc = Doc::default();
-    let map = match serde_json::from_str::<Map<String, Json>>(text.trim_start_matches('\u{FEFF}')) {
+    let mut map = match serde_json::from_str::<Map<String, Json>>(text.trim_start_matches('\u{FEFF}')) {
         Ok(m) => m,
         Err(e) => {
             doc.broken = true;
@@ -447,6 +463,12 @@ pub fn parse(text: &str) -> Doc {
             return doc;
         }
     };
+    doc.schema = map.remove(SCHEMA_KEY).and_then(|v| v.as_u64()).unwrap_or(SCHEMA);
+    if doc.newer() {
+        doc.problems.push(format!("the file was written by a newer Flit (schema {}, this one reads up to {SCHEMA}); it is used read-only", doc.schema));
+    } else if migrate(&mut map, doc.schema, SCHEMA, &MIGRATIONS) {
+        doc.schema = SCHEMA;
+    }
     for (k, v) in map {
         if k == "tags" {
             let list = v.as_array().map(|a| a.iter().filter_map(|t| Some(Tag { name: t.get("name")?.as_str()?.to_owned(), color: parse_color(t.get("color")?.as_str()?)? })).collect::<Vec<_>>());
@@ -503,9 +525,10 @@ pub fn render(values: &[Value], unknown: &Map<String, Json>, tags: Option<&[Tag]
     for (s, v) in SETTINGS.iter().zip(values) {
         put(s.id, &s.to_json(v));
     }
-    for (k, v) in unknown.iter().filter(|(k, _)| index(k).is_none() && *k != "tags") {
+    for (k, v) in unknown.iter().filter(|(k, _)| index(k).is_none() && *k != "tags" && *k != SCHEMA_KEY) {
         put(k, v);
     }
+    put(SCHEMA_KEY, &Json::from(SCHEMA));
     if let Some(tags) = tags {
         let list = tags.iter().map(|t| serde_json::json!({ "name": t.name, "color": format!("#{:06X}", t.color & 0xFF_FFFF) })).collect();
         put("tags", &Json::Array(list));

@@ -119,6 +119,7 @@ pub struct Settings {
     pub values: Vec<Value>,
     pub unknown: Map<String, Json>,
     pub replies: Receiver<Reply>,
+    pub read_only: bool,
     jobs: Option<Sender<Job>>,
     thread: Option<JoinHandle<()>>,
 }
@@ -136,7 +137,7 @@ impl Settings {
                 work(path, cache, first, rx, tx, wake)
             })
             .ok();
-        Self { values: Vec::new(), unknown: Map::new(), replies, jobs: thread.as_ref().map(|_| jobs), thread }
+        Self { values: Vec::new(), unknown: Map::new(), replies, read_only: false, jobs: thread.as_ref().map(|_| jobs), thread }
     }
 
     pub fn send(&self, job: Job) {
@@ -150,7 +151,9 @@ impl Settings {
     }
 
     pub fn save(&self) {
-        self.send(Job::Write(self.text()));
+        if !self.read_only {
+            self.send(Job::Write(self.text()));
+        }
     }
 
     pub fn set_values(&mut self, values: Vec<Value>) {
@@ -174,6 +177,7 @@ impl Settings {
             self.unknown = doc.unknown.clone();
         }
         self.set_values(values);
+        self.read_only = doc.newer();
         if doc.broken {
             self.send(Job::Backup);
         }

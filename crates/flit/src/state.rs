@@ -205,12 +205,16 @@ fn file<P: Platform>() -> Option<PathBuf> {
     P::state_dir().map(|d| d.join("state.bin"))
 }
 
+const MIGRATIONS: [crate::schema::Step; 0] = [];
+
+fn load_from(f: &std::path::Path) -> Option<Saved> {
+    crate::schema::load(f, VERSION, &MIGRATIONS, Saved::decode).map(Saved::sanitized)
+}
+
 pub fn load<P: Platform>() -> Saved {
     file::<P>()
-        .and_then(|f| std::fs::read(f).ok())
-        .and_then(|b| Saved::decode(&b))
-        .filter(|s| s.version == VERSION)
-        .map(Saved::sanitized)
+        .as_deref()
+        .and_then(load_from)
         .unwrap_or_else(|| Saved::new(Persisted { path: Location::from_local(P::home()), ..Default::default() }, None).with_nav(NavState { pinned: P::bookmarks(), ..NavState::default() }))
 }
 

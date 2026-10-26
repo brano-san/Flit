@@ -76,8 +76,10 @@ impl Files {
     }
 }
 
+const MIGRATIONS: [crate::schema::Step; 0] = [];
+
 pub fn load(path: &Path) -> Option<Session> {
-    std::fs::read(path).ok().and_then(|b| Session::decode(&b))
+    crate::schema::load(path, VERSION, &MIGRATIONS, Session::decode)
 }
 
 pub fn write(path: &Path, s: &Session) {

@@ -246,3 +246,39 @@ fn single_click_modes_follow_the_pointer_and_old_booleans_still_load() {
     let text = render(&a.setting_values(), &Map::new(), None);
     assert!(text.contains(r#""files.single_click_folders": "mouse""#), "{text}");
 }
+
+#[test]
+fn the_schema_is_written_todays_files_read_as_schema_one_and_newer_ones_are_flagged() {
+    let text = render(defaults(), &Map::new(), None);
+    assert!(text.contains("\"schema\": 1"), "{text}");
+    let doc = parse(&text);
+    assert_eq!((doc.schema, doc.newer(), doc.values.len(), doc.unknown.len()), (SCHEMA, false, SETTINGS.len(), 0));
+    let today = parse("{\"files.show_hidden\": true}");
+    assert_eq!((today.schema, today.newer(), today.value("files.show_hidden")), (1, false, Some(&Value::Bool(true))));
+    let newer = parse("{\"schema\": 2, \"files.show_hidden\": true, \"future.key\": 1}");
+    assert!(newer.newer() && !newer.problems.is_empty());
+    assert!(render(defaults(), &newer.unknown, None).matches("\"schema\"").count() == 1);
+}
+
+#[test]
+fn settings_migrate_step_by_step() {
+    fn rename(m: &mut Map<String, Json>) {
+        if let Some(v) = m.remove("old.key") {
+            m.insert("mid.key".into(), v);
+        }
+    }
+    fn bump(m: &mut Map<String, Json>) {
+        if let Some(v) = m.remove("mid.key") {
+            m.insert("new.key".into(), Json::from(v.as_i64().unwrap_or(0) + 1));
+        }
+    }
+    let steps: [Migration; 2] = [rename, bump];
+    let mut m: Map<String, Json> = serde_json::from_str("{\"old.key\": 1}").unwrap();
+    assert!(migrate(&mut m, 1, 3, &steps));
+    assert_eq!(m.get("new.key"), Some(&Json::from(2)));
+    let mut m: Map<String, Json> = serde_json::from_str("{\"mid.key\": 5}").unwrap();
+    assert!(migrate(&mut m, 2, 3, &steps));
+    assert_eq!(m.get("new.key"), Some(&Json::from(6)));
+    assert!(!migrate(&mut m, 0, 3, &steps));
+    assert!(migrate(&mut m, 3, 3, &steps));
+}
