@@ -2,7 +2,7 @@ set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 target=${CARGO_TARGET_DIR:-$root/target}
-version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)
+version=$(tr -d '\r' < "$root/Cargo.toml" | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
 arch=$(uname -m)
 name=flit-$version-$arch-linux
 out=$target/packages
