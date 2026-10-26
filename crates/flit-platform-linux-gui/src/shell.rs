@@ -128,8 +128,8 @@ impl Shell for LinuxShell {
         crate::thumb::thumbnail(host(&req.path)?, req.size, cache)
     }
 
-    fn type_name(&mut self, _: &[u8]) -> Option<String> {
-        None
+    fn type_name(&mut self, ext: &[u8]) -> Option<String> {
+        crate::mime::type_name(ext)
     }
 
     fn open(&mut self, path: &FsPath) -> Result<(), PlatformError> {

@@ -4,6 +4,7 @@ mod fonts;
 pub mod fs;
 mod gl;
 mod input;
+mod mime;
 pub mod instance;
 pub mod places;
 pub mod shell;
