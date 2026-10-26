@@ -206,9 +206,13 @@ fn notice_at(buf: &[u8], off: usize) -> Option<(Option<Notice>, u32)> {
 }
 
 pub(crate) fn notices(buf: &[u8]) -> Vec<Notice> {
+    records(buf, notice_at)
+}
+
+pub(crate) fn records<T>(buf: &[u8], at: impl Fn(&[u8], usize) -> Option<(Option<T>, u32)>) -> Vec<T> {
     let mut out = Vec::new();
     let mut off = 0usize;
-    while let Some((notice, next)) = notice_at(buf, off) {
+    while let Some((notice, next)) = at(buf, off) {
         out.extend(notice);
         if next == 0 {
             break;

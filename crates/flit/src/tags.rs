@@ -48,8 +48,10 @@ fn moved_path(path: &FsPath, from: &FsPath, to: &FsPath) -> Option<FsPath> {
     if same(p, f) {
         return Some(to.clone());
     }
-    let rest = p.get(f.len()..).filter(|r| same(&p[..f.len()], f) && r.first() == Some(&path.sep()))?;
-    FsPath::parse_bytes(&[to.as_bytes(), rest].concat())
+    let sep = [path.sep()];
+    let (f, t) = (f.strip_suffix(&sep).unwrap_or(f), to.as_bytes().strip_suffix(&sep).unwrap_or(to.as_bytes()));
+    let rest = p.get(f.len()..).filter(|r| same(&p[..f.len()], f) && r.first() == Some(&sep[0]))?;
+    FsPath::parse_bytes(&[t, rest].concat())
 }
 
 impl Book {

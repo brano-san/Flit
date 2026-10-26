@@ -4,7 +4,36 @@ use crate::listing::{attr, ChangeKind, DirChange, DirSnapshot, Listing, Meta};
 use crate::sort::{self, GroupField, ViewSpec};
 use smallvec::SmallVec;
 use std::borrow::Borrow;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+const STALE: u64 = u64::MAX;
+
+#[derive(Debug)]
+struct Memo(AtomicU64);
+
+impl Default for Memo {
+    fn default() -> Self {
+        Self(AtomicU64::new(STALE))
+    }
+}
+
+impl Memo {
+    fn get(&self, compute: impl FnOnce() -> u64) -> u64 {
+        match self.0.load(Ordering::Relaxed) {
+            STALE => {
+                let v = compute();
+                self.0.store(v, Ordering::Relaxed);
+                v
+            }
+            v => v,
+        }
+    }
+
+    fn clear(&self) {
+        self.0.store(STALE, Ordering::Relaxed);
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Group {
@@ -33,11 +62,14 @@ pub struct DirView {
     groups: Vec<Group>,
     collapsed: Vec<u64>,
     shown: Option<Vec<u32>>,
+    dirs: Memo,
+    selected_size: Memo,
+    live_size: Memo,
 }
 
 impl DirView {
     pub fn new(snap: Arc<DirSnapshot>) -> Self {
-        let mut v = Self { snap, sel: Vec::new(), sel_count: 0, focus: None, anchor: None, names: None, filter: None, groups: Vec::new(), collapsed: Vec::new(), shown: None };
+        let mut v = Self { snap, sel: Vec::new(), sel_count: 0, focus: None, anchor: None, names: None, filter: None, groups: Vec::new(), collapsed: Vec::new(), shown: None, dirs: Memo::default(), selected_size: Memo::default(), live_size: Memo::default() };
         v.regroup();
         v
     }
@@ -117,6 +149,9 @@ impl DirView {
     }
 
     fn regroup(&mut self) {
+        self.dirs.clear();
+        self.selected_size.clear();
+        self.live_size.clear();
         self.groups.clear();
         self.shown = None;
         let view = self.snap.view;
@@ -210,6 +245,7 @@ impl DirView {
         let was = self.sel[w] & bit != 0;
         if was != on {
             self.sel[w] ^= bit;
+            self.selected_size.clear();
             if on { self.sel_count += 1 } else { self.sel_count -= 1 }
         }
     }
@@ -217,6 +253,7 @@ impl DirView {
     pub fn clear_selection(&mut self) {
         self.sel.clear();
         self.sel_count = 0;
+        self.selected_size.clear();
     }
 
     pub fn select_all(&mut self) {
@@ -258,8 +295,18 @@ impl DirView {
     }
 
     pub fn selected_size(&self) -> u64 {
-        let l = self.listing();
-        self.selected().map(|i| &l.entries[i as usize]).filter(|e| !e.is_dir() || e.attrs & attr::SIZE_KNOWN != 0).map(|e| e.size).sum()
+        self.selected_size.get(|| {
+            let l = self.listing();
+            self.selected().map(|i| &l.entries[i as usize]).filter(|e| !e.is_dir() || e.attrs & attr::SIZE_KNOWN != 0).map(|e| e.size).sum()
+        })
+    }
+
+    pub fn dir_count(&self) -> usize {
+        self.dirs.get(|| self.base_rows().iter().filter(|&&i| self.listing().entries[i as usize].is_dir()).count() as u64) as usize
+    }
+
+    pub fn live_size(&self) -> u64 {
+        self.live_size.get(|| self.listing().entries.iter().filter(|e| e.attrs & attr::DELETED == 0).map(|e| e.size).sum())
     }
 
     fn prune(&mut self) {

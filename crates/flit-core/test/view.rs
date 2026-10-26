@@ -147,3 +147,24 @@ fn selection_ops() {
     v.set_selected(200, false);
     assert_eq!(v.selected_count(), 3);
 }
+
+#[test]
+fn status_totals_follow_selection_filter_and_changes() {
+    let mut v = DirView::new(snap(&["a", "bb", "ccc"]));
+    assert_eq!((v.dir_count(), v.selected_size(), v.live_size()), (0, 0, 6));
+    v.set_selected(1, true);
+    assert_eq!(v.selected_size(), 2);
+    v.set_selected(2, true);
+    assert_eq!(v.selected_size(), 5);
+    v.set_filter("cc");
+    assert_eq!(v.selected_size(), 3);
+    v.set_filter("");
+    v.set_selected(0, true);
+    assert_eq!(v.selected_size(), 4);
+    v.apply(&change(ChangeKind::Removed, "ccc", 0));
+    assert_eq!((v.selected_size(), v.live_size()), (1, 3));
+    v.apply(&change(ChangeKind::Added, "d", 10));
+    assert_eq!(v.live_size(), 13);
+    v.clear_selection();
+    assert_eq!(v.selected_size(), 0);
+}

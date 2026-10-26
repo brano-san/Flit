@@ -245,3 +245,10 @@ fn bench_tag_queries_over_10k_files() {
         eprintln!("BENCH {:<44} median {:>9.3} ms   max {:>9.3} ms", format!("{text} over 10k tagged files"), times[7].as_secs_f64() * 1e3, times[14].as_secs_f64() * 1e3);
     }
 }
+
+#[test]
+fn moves_out_of_a_drive_root_keep_the_rest_of_the_path() {
+    assert_eq!(moved_path(&path(r"c:\a\b.txt"), &path(r"c:\"), &path(r"d:\x")), Some(path(r"d:\x\a\b.txt")));
+    assert_eq!(moved_path(&path(r"c:\a\b.txt"), &path(r"c:\a"), &path(r"d:\")), Some(path(r"d:\b.txt")));
+    assert_eq!(moved_path(&path(r"c:\ab"), &path(r"c:\a"), &path(r"d:\x")), None);
+}

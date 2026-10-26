@@ -653,7 +653,7 @@ impl App {
         if v.is_filtered() {
             crate::trn_into!(s, P::DetailsCountFiltered, v.total_rows(), shown = crate::i18n::num(n as u64));
         } else if self.prefs.split_count {
-            let dirs = v.base_rows().iter().filter(|&&i| v.listing().entries[i as usize].is_dir()).count();
+            let dirs = v.dir_count();
             crate::trn_into!(&mut *s, P::DetailsCountFolders, dirs);
             let _ = s.write_str(", ");
             crate::trn_into!(s, P::DetailsCountFiles, n - dirs);

@@ -101,3 +101,10 @@ fn sizes_use_russian_units() {
     crate::i18n::set_lang(crate::i18n::Lang::En);
     assert_eq!(size_label("10 MB"), "10 MB");
 }
+
+#[test]
+fn a_single_t_takes_the_first_character_of_the_meridiem() {
+    assert_eq!(first_char("午前"), "午");
+    assert_eq!(first_char("PM"), "P");
+    assert_eq!(first_char(""), "");
+}

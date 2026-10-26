@@ -505,8 +505,7 @@ impl App {
         if !inner.is_empty() || archive::format_of(archive.file_name()) == Some(Format::Gz) {
             return None;
         }
-        let l = self.tab().view.as_ref()?.listing();
-        Some(l.entries.iter().filter(|e| e.attrs & attr::DELETED == 0).map(|e| e.size).sum())
+        Some(self.tab().view.as_ref()?.live_size())
     }
 
     pub fn pick_encoding(&mut self) {

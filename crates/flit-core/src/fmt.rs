@@ -177,12 +177,16 @@ pub fn picture(out: &mut impl Write, pattern: &str, secs: i64) {
             ('m', _) => write!(out, "{min:02}"),
             ('s', 1) => write!(out, "{s}"),
             ('s', _) => write!(out, "{s:02}"),
-            ('t', 1) => out.write_str(meridiem(h).get(..1).unwrap_or_default()),
+            ('t', 1) => out.write_str(first_char(meridiem(h))),
             ('t', _) => out.write_str(meridiem(h)),
             ('g', _) => Ok(()),
             _ => (0..n).try_for_each(|_| out.write_char(c)),
         };
     }
+}
+
+fn first_char(s: &str) -> &str {
+    s.char_indices().nth(1).map_or(s, |(i, _)| &s[..i])
 }
 
 fn meridiem(h: i64) -> &'static str {

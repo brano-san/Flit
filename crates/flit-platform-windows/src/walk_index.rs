@@ -156,16 +156,7 @@ fn notice_at(buf: &[u8], off: usize) -> Option<(Notice, u32)> {
 }
 
 pub(crate) fn notices(buf: &[u8]) -> Vec<Notice> {
-    let mut out = Vec::new();
-    let mut off = 0usize;
-    while let Some((n, next)) = notice_at(buf, off) {
-        out.push(n);
-        if next == 0 {
-            break;
-        }
-        off += next as usize;
-    }
-    out
+    crate::watcher::records(buf, |b, off| notice_at(b, off).map(|(n, next)| (Some(n), next)))
 }
 
 struct Job {
