@@ -5,6 +5,10 @@ const TICKS_PER_SEC: i64 = 10_000_000;
 const UNIX_EPOCH_SECS: i64 = 11_644_473_600;
 const DAY: i64 = 86_400;
 const REGEX_SIZE_LIMIT: usize = 1 << 22;
+pub const MAX_TERMS: usize = 32;
+pub const MAX_REGEXES: usize = 4;
+pub const MAX_EXTS: usize = 64;
+pub const MAX_PATTERN: usize = 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Scope {
@@ -179,6 +183,12 @@ pub fn parse(text: &str, clock: Clock) -> Result<Query, String> {
                 if let Some(mut t) = term(&tok, literal, clock)? {
                     t.negate ^= std::mem::take(&mut not);
                     terms.push(t);
+                    if terms.len() > MAX_TERMS {
+                        return Err(format!("the query has more than {MAX_TERMS} terms"));
+                    }
+                    if terms.iter().filter(|t| matches!(t.filter, Filter::Match(_, Pattern::Regex(_)))).count() > MAX_REGEXES {
+                        return Err(format!("the query has more than {MAX_REGEXES} regular expressions"));
+                    }
                 }
             }
         }
@@ -205,6 +215,9 @@ fn term(tok: &str, literal: bool, clock: Clock) -> Result<Option<Term>, String> 
         }
         if !regex {
             let filter = if let Some(v) = strip_ci(s, "ext:") {
+                if v.split(';').count() > MAX_EXTS {
+                    return Err(format!("ext: lists at most {MAX_EXTS} extensions"));
+                }
                 Some(Filter::Ext(v.split(';').map(|e| lowercase(e.trim_start_matches('.').as_bytes())).collect()))
             } else if let Some(v) = strip_ci(s, "size:") {
                 let (lo, hi) = interval(v, &|x| size_value(x).map(|n| (n as i128, n as i128 + 1))).ok_or_else(|| format!("invalid size: {v}"))?;
@@ -222,6 +235,9 @@ fn term(tok: &str, literal: bool, clock: Clock) -> Result<Option<Term>, String> 
     }
     if s.is_empty() {
         return Ok(None);
+    }
+    if s.len() > MAX_PATTERN {
+        return Err(format!("a search term is longer than {MAX_PATTERN} bytes"));
     }
     let pattern = if regex {
         let re = RegexBuilder::new(s).case_insensitive(true).size_limit(REGEX_SIZE_LIMIT).build().map_err(|e| format!("invalid regex: {e}"))?;

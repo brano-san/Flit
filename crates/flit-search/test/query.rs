@@ -137,3 +137,21 @@ fn dollar_and_foreign_properties_go_to_windows_search() {
         assert_eq!(shell_query(own), None, "{own}");
     }
 }
+
+#[test]
+fn hostile_queries_are_refused_before_they_cost_much() {
+    let many = (0..=MAX_TERMS).map(|k| format!("t{k}")).collect::<Vec<_>>().join(" ");
+    assert!(parse(&many, clock()).is_err());
+    let ok = (0..MAX_TERMS).map(|k| format!("t{k}")).collect::<Vec<_>>().join(" ");
+    assert_eq!(parse(&ok, clock()).unwrap().terms.len(), MAX_TERMS);
+    let regexes = (0..=MAX_REGEXES).map(|k| format!("regex:a{k}")).collect::<Vec<_>>().join(" ");
+    assert!(parse(&regexes, clock()).is_err());
+    let started = std::time::Instant::now();
+    let flood = vec!["regex:(a|b){1,200}"; 5000].join(" ");
+    assert!(parse(&flood, clock()).is_err());
+    assert!(started.elapsed() < std::time::Duration::from_secs(2), "{:?}", started.elapsed());
+    assert!(parse(&format!("ext:{}", vec!["a"; MAX_EXTS + 1].join(";")), clock()).is_err());
+    assert!(parse(&format!("ext:{}", vec!["a"; MAX_EXTS].join(";")), clock()).is_ok());
+    assert!(parse(&"*a".repeat(MAX_PATTERN), clock()).is_err());
+    assert!(parse(&"a".repeat(MAX_PATTERN), clock()).is_ok());
+}
