@@ -62,6 +62,7 @@ pub(super) enum Kind {
     Password { archive: FsPath, retry: Retry },
     Hashes(Hashing),
     Properties(super::properties::Measuring),
+    GitClone,
 }
 
 impl Kind {
@@ -72,6 +73,7 @@ impl Kind {
             Kind::Password { .. } => "password",
             Kind::Hashes(_) => "hashes",
             Kind::Properties(_) => "properties",
+            Kind::GitClone => "git_clone",
         }
     }
 }
@@ -685,6 +687,7 @@ impl App {
             Kind::Password { .. } => self.submit_password(f),
             Kind::Hashes(_) => self.submit_hashes(f),
             Kind::Properties(_) => None,
+            Kind::GitClone => self.submit_clone(f),
         };
         if self.jobs.form.is_none() {
             self.jobs.form = keep;

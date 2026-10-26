@@ -1,0 +1,40 @@
+[column]
+status = "Git status"
+message = "Commit message"
+author = "Commit author"
+date = "Commit date"
+
+[state]
+modified = "Modified"
+added = "Added"
+deleted = "Deleted"
+renamed = "Renamed"
+untracked = "Untracked"
+conflict = "Conflict"
+
+[op]
+fetching = "Fetching…"
+pulling = "Pulling…"
+pushing = "Pushing…"
+initializing = "Creating a Git repository…"
+cloning = "Cloning {url}…"
+switching = "Switching to {branch}…"
+
+[done]
+fetch = "Fetch finished"
+pull = "Pull finished"
+push = "Push finished"
+init = "Created a Git repository"
+clone = "Cloned into {name}"
+switch = "Switched to {branch}"
+
+[error]
+not_repo = "This folder is not in a Git repository"
+no_web = "The repository has no web remote"
+failed = "Git: {error}"
+
+[clone]
+title = "Clone repository"
+url = "Repository URL"
+hint = "https://github.com/owner/repo.git"
+button = "Clone"

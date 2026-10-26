@@ -164,7 +164,7 @@ fn set_widget(a: &mut App, w: Widget, on: bool) {
 
 fn set_column(a: &mut App, c: Column, on: bool) {
     if a.prefs.defaults.columns.shown(c) != on {
-        a.prefs.defaults.columns.hidden ^= 1 << c as u8;
+        a.prefs.defaults.columns.toggle(c);
     }
 }
 

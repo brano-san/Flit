@@ -1,6 +1,6 @@
 use super::layouts::{LayoutMode, Sizes};
 use super::ops::TIMER_SLACK;
-use super::{centered, App, Column, Drag, Effect, Hit, MenuItem, ShellMenu, Tab, BIN_COLUMNS, COLUMNS, G_CHEVRON, G_FILE, G_FOLDER, G_SORT_DOWN};
+use super::{centered, App, Column, Drag, Effect, Hit, MenuItem, ShellMenu, Tab, BIN_COLUMNS, COLUMNS, REPO_COLUMNS, G_CHEVRON, G_FILE, G_FOLDER, G_SORT_DOWN};
 use crate::fmt as format;
 use crate::hash::{FxHashMap, FxHasher};
 use crate::i18n::{P, S};
@@ -52,21 +52,57 @@ const G_WARNING: &str = "\u{E7BA}";
 pub struct Columns {
     pub hidden: u8,
     pub widths: [f32; 7],
+    #[serde(skip)]
+    pub git: u8,
+    #[serde(skip, default = "git_widths")]
+    pub git_widths: [f32; 4],
+}
+
+pub const GIT_WIDTHS: [f32; 4] = [100.0, 260.0, 140.0, 150.0];
+
+fn git_widths() -> [f32; 4] {
+    GIT_WIDTHS
 }
 
 impl Default for Columns {
     fn default() -> Self {
-        Self { hidden: 1 << Column::Created as u8, widths: [0.0, 150.0, 140.0, 90.0, 220.0, 150.0, 150.0] }
+        Self { hidden: 1 << Column::Created as u8, widths: [0.0, 150.0, 140.0, 90.0, 220.0, 150.0, 150.0], git: 0, git_widths: GIT_WIDTHS }
     }
+}
+
+fn git_slot(c: Column) -> usize {
+    c as usize - Column::GitStatus as usize
 }
 
 impl Columns {
     pub fn shown(&self, c: Column) -> bool {
+        if c.is_git() {
+            return (self.git >> git_slot(c)) & 1 == 1;
+        }
         c == Column::Name || ((self.hidden >> c as u8) & 1 == 1) == (c == Column::Tag)
     }
 
     pub fn width(&self, c: Column) -> f32 {
+        if c.is_git() {
+            let w = self.git_widths[git_slot(c)];
+            return if (MIN_COL_W..=MAX_COL_W).contains(&w) { w } else { GIT_WIDTHS[git_slot(c)] };
+        }
         self.widths[c.slot()]
+    }
+
+    pub fn set_width(&mut self, c: Column, w: f32) {
+        match c.is_git() {
+            true => self.git_widths[git_slot(c)] = w,
+            false => self.widths[c.slot()] = w,
+        }
+    }
+
+    pub fn toggle(&mut self, c: Column) {
+        match c {
+            Column::Name => {}
+            c if c.is_git() => self.git ^= 1 << git_slot(c),
+            c => self.hidden ^= 1 << c as u8,
+        }
     }
 
     pub fn sanitized(mut self) -> Self {
@@ -271,6 +307,10 @@ impl Column {
             Column::Origin => "view.column.origin",
             Column::Deleted => "view.column.deleted",
             Column::Tag => "view.column.tag",
+            Column::GitStatus => "view.column.git_status",
+            Column::GitMessage => "view.column.git_message",
+            Column::GitAuthor => "view.column.git_author",
+            Column::GitDate => "view.column.git_date",
         }
     }
 
@@ -310,7 +350,14 @@ fn date_label(s: &mut impl std::fmt::Write, value: Option<i64>, unit: DateUnit) 
 
 impl App {
     pub(super) fn column_kinds(&self) -> &'static [Column] {
-        if self.tab().view_loc.is_recycle_bin() { &BIN_COLUMNS } else { &COLUMNS }
+        let t = self.tab();
+        if t.view_loc.is_recycle_bin() {
+            &BIN_COLUMNS
+        } else if t.git.as_ref().is_some_and(|g| g.root.is_some()) {
+            &REPO_COLUMNS
+        } else {
+            &COLUMNS
+        }
     }
 
     pub fn columns(&self) -> Vec<Column> {
@@ -336,6 +383,7 @@ impl App {
         self.sync_spec(k);
         let case = self.case;
         self.tabs[k].load(gen, select, case, now, &mut self.effects);
+        self.git_refresh(k, false);
         self.place_loaded(k);
     }
 
@@ -406,7 +454,10 @@ impl App {
 
     pub(super) fn toggle_column(&mut self, c: Column) {
         if c != Column::Name {
-            self.change_view(|t| t.columns.hidden ^= 1 << c as u8);
+            self.change_view(|t| t.columns.toggle(c));
+            if c.is_git() {
+                self.git_refresh(self.cur, false);
+            }
             if self.prefs.auto_fit {
                 self.request_fit();
             }
@@ -414,7 +465,7 @@ impl App {
     }
 
     pub(super) fn set_column_width(&mut self, c: Column, w: f32) {
-        self.change_view(|t| t.columns.widths[c.slot()] = w.clamp(MIN_COL_W, MAX_COL_W).round());
+        self.change_view(|t| t.columns.set_width(c, w.clamp(MIN_COL_W, MAX_COL_W).round()));
     }
 
     pub(super) fn request_fit(&mut self) {
@@ -477,7 +528,7 @@ impl App {
         let lines = self.visible_lines(&self.flow());
         let t = &self.tabs[k];
         let Some(v) = &t.view else { return };
-        let mut widths = t.columns.widths;
+        let mut cols = t.columns;
         for &c in self.layout.columns.iter().filter(|&&c| c != Column::Name) {
             let mut w = g.measure(c.title(), hfont) + glyph;
             for line in lines.clone() {
@@ -485,9 +536,9 @@ impl App {
                     w = w.max(g.measure(self.cell_text(arena, v.listing(), v.rows()[r], c), font));
                 }
             }
-            widths[c.slot()] = ((w + 2.0 * pad) / self.scale).clamp(MIN_COL_W, MAX_COL_W).ceil();
+            cols.set_width(c, ((w + 2.0 * pad) / self.scale).clamp(MIN_COL_W, MAX_COL_W).ceil());
         }
-        self.change_view(|t| t.columns.widths = widths);
+        self.change_view(|t| t.columns = cols);
     }
 
     pub(super) fn header_menu(&mut self, x: f32, y: f32) {
@@ -538,6 +589,7 @@ impl App {
             Column::Created => format::datetime_in(&mut s, e.created, self.utc_offset_min, &self.style),
             Column::Origin => s.push_str(&name::display(recycle::origin(l, i))),
             Column::Tag => self.tag_text(&mut s, e.tags),
+            Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => self.git_text(&mut s, l.name(i), col),
             Column::Type => return self.type_text(arena, l, i),
             Column::Size => {
                 if !e.is_dir() || e.attrs & (attr::SIZE_KNOWN | attr::VOLUME) != 0 {

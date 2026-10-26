@@ -2,7 +2,22 @@ use super::*;
 use flit_core::sort::{GroupField, GroupSpec, SortSpec};
 use flit_core::ui::{folder_key, Columns};
 
-const WORD_LEN: usize = 1;
+const GIT_LEN: usize = 35;
+const WORD_LEN: usize = 1 + GIT_LEN;
+
+#[test]
+fn repository_columns_ride_in_their_own_record() {
+    let mut persisted = Persisted { path: loc(r"D:\x"), ..Default::default() };
+    persisted.view.columns.toggle(Column::GitStatus);
+    persisted.view.columns.set_width(Column::GitMessage, 333.0);
+    persisted.prefs.defaults.columns.toggle(Column::GitDate);
+    let s = Saved::new(persisted, None);
+    let back = Saved::decode(&s.encode().unwrap()).unwrap();
+    assert!(back.persisted.view.columns.shown(Column::GitStatus));
+    assert_eq!(back.persisted.view.columns.width(Column::GitMessage), 333.0);
+    assert!(back.persisted.prefs.defaults.columns.shown(Column::GitDate));
+    assert!(!back.persisted.prefs.defaults.columns.shown(Column::GitStatus));
+}
 
 #[test]
 fn corrupted_widths_and_placement_fall_back_to_defaults() {
@@ -243,8 +258,8 @@ fn seven_z_word_size_rides_tenth_and_older_files_keep_automatic() {
     let bytes = s.encode().unwrap();
     assert_eq!(Saved::decode(&bytes).unwrap().persisted.archive.compression.word, 64);
     let stored = postcard::to_stdvec(&64u32).unwrap();
-    assert!(bytes.ends_with(&stored));
-    let older = &bytes[..bytes.len() - stored.len()];
+    assert!(bytes[..bytes.len() - GIT_LEN].ends_with(&stored));
+    let older = &bytes[..bytes.len() - GIT_LEN - stored.len()];
     assert_eq!(Saved::decode(older).unwrap().persisted.archive.compression.word, 0);
     let mut junk = older.to_vec();
     junk.extend(postcard::to_stdvec(&65u32).unwrap());

@@ -27,6 +27,7 @@ pub(super) enum Cmd {
     ShowTag(usize),
     OpenTagged(usize),
     Setting(usize, usize),
+    GitBranch(usize),
 }
 
 const SORTS: [(SortField, &str, S); 6] = [
@@ -228,6 +229,22 @@ impl App {
             m.action("tab.close_all", S::MenuCloseAllTabs.t());
             m.separator();
             m.action("settings.open", S::MenuSettings.t());
+        })
+    }
+
+    pub(super) fn build_branch_menu(&mut self) -> Vec<MenuItem> {
+        let current = self.git_branch().unwrap_or_default().to_owned();
+        let branches = self.git_branches.clone();
+        self.collect(|_, m| {
+            for (k, b) in branches.iter().enumerate() {
+                m.command(Cmd::GitBranch(k), b, String::new(), *b == current);
+            }
+            m.separator();
+            m.action("git.fetch", S::ActionsGitFetch.t());
+            m.action("git.pull", S::ActionsGitPull.t());
+            m.action("git.push", S::ActionsGitPush.t());
+            m.separator();
+            m.action("git.open_remote", S::ActionsGitOpenRemote.t());
         })
     }
 
@@ -517,6 +534,7 @@ impl App {
             Some(Cmd::ShowTag(k)) => self.show_tag(k),
             Some(Cmd::OpenTagged(k)) => self.open_all_tagged(k, now),
             Some(Cmd::Setting(i, choice)) => self.choose_setting(i, choice),
+            Some(Cmd::GitBranch(k)) => self.git_switch(k),
             None => {}
         }
     }

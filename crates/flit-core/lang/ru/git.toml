@@ -1,0 +1,40 @@
+[column]
+status = "Статус Git"
+message = "Сообщение коммита"
+author = "Автор коммита"
+date = "Дата коммита"
+
+[state]
+modified = "Изменён"
+added = "Добавлен"
+deleted = "Удалён"
+renamed = "Переименован"
+untracked = "Не отслеживается"
+conflict = "Конфликт"
+
+[op]
+fetching = "Получение изменений…"
+pulling = "Загрузка изменений…"
+pushing = "Отправка изменений…"
+initializing = "Создание репозитория Git…"
+cloning = "Клонирование {url}…"
+switching = "Переключение на {branch}…"
+
+[done]
+fetch = "Изменения получены"
+pull = "Изменения загружены"
+push = "Изменения отправлены"
+init = "Создан репозиторий Git"
+clone = "Клонировано в {name}"
+switch = "Переключено на {branch}"
+
+[error]
+not_repo = "Эта папка не в репозитории Git"
+no_web = "У репозитория нет удалённого адреса в вебе"
+failed = "Git: {error}"
+
+[clone]
+title = "Клонировать репозиторий"
+url = "Адрес репозитория"
+hint = "https://github.com/owner/repo.git"
+button = "Клонировать"

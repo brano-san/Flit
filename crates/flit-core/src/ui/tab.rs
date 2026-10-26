@@ -57,6 +57,7 @@ pub struct Tab {
     pub(super) filter: Option<Field>,
     pub(super) panes: Vec<Pane>,
     pub(super) split: Option<Box<super::split::Split>>,
+    pub(super) git: Option<std::sync::Arc<crate::git::GitInfo>>,
 }
 
 impl Tab {
@@ -89,6 +90,7 @@ impl Tab {
             filter: None,
             panes: Vec::new(),
             split: None,
+            git: None,
         }
     }
 
@@ -126,6 +128,7 @@ impl Tab {
         self.error = None;
         self.crumbs = loc.crumbs();
         self.stats = LoadStats::default();
+        self.keep_git_root();
         let path = loc.path().clone();
         if loc.is_home_page() {
             fx.push(Effect::Provider { provider, req: ProviderRequest::Watch { tab: self.id, gen, path: None } });
