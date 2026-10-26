@@ -7,7 +7,7 @@ use crate::library;
 use crate::hash::FxHashSet;
 use crate::open::OpenTarget;
 use crate::input::{CursorIcon, Event, Key, Mods, MouseButton};
-use crate::listing::attr;
+use crate::listing::{attr, ChangeKind, DirChange};
 use crate::location::{Location, ProviderId};
 use crate::i18n::{P, S};
 use crate::path::{FsPath, PathKind};
@@ -862,6 +862,9 @@ impl App {
             self.tags_moved(&provider, r);
         }
         let (Some(report), Some(p)) = (report, pending) else { return };
+        if let (FileOp::Trash(_) | FileOp::Delete(_), Some(k)) = (&report.op, k) {
+            self.drop_gone(k, &p.provider, &report);
+        }
         self.ops.journal.record(p.origin, p.provider.clone(), &report);
         if self.archive_then(tab, &p.then, &report, error.as_deref(), now) {
             return;
@@ -902,6 +905,20 @@ impl App {
             self.ops.reveal.push(Reveal { tab, dir, names, rename, started: false, until: now + REVEAL_FOR });
             self.dirty |= k == self.cur;
         }
+    }
+
+    fn drop_gone(&mut self, k: usize, provider: &ProviderId, report: &OpReport) {
+        let t = &mut self.tabs[k];
+        let dir = &t.view_loc;
+        let gone: Vec<DirChange> = report
+            .items
+            .iter()
+            .map(|(from, _)| Location::on(provider, from.clone()))
+            .filter(|from| from.parent().is_some_and(|p| same_location(&p, dir)))
+            .map(|from| DirChange { kind: ChangeKind::Removed, name: from.file_name().to_vec(), meta: None })
+            .collect();
+        t.pending_diffs.extend(gone);
+        self.dirty |= t.apply_diffs() && k == self.cur;
     }
 
     pub(super) fn ops_frame(&mut self, now: Instant) {

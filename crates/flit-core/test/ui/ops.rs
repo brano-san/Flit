@@ -1271,3 +1271,68 @@ fn typed_paths_follow_the_platform_caps() {
     app.submit_pick(Pick::Shortcut(p("/home/u")), r"C:\x");
     assert!(ops(&mut app).is_empty(), "Unix caps refuse a drive path");
 }
+
+fn bulk(app: &mut App, n: usize) -> (Vec<String>, OpId, FileOp) {
+    let names: Vec<String> = (0..n).map(|k| format!("IMG_{k:04}.jpg")).collect();
+    let items: Vec<(&str, bool)> = names.iter().map(|n| (n.as_str(), false)).chain([("keep.txt", false)]).collect();
+    deliver(app, &items);
+    let all: Vec<&str> = names.iter().map(String::as_str).collect();
+    select(app, &all);
+    key(app, Key::Delete, NO);
+    let [(id, op)] = ops(app).try_into().unwrap();
+    (names, id, op)
+}
+
+fn watcher_removes(app: &mut App, names: &[String]) {
+    let (tab, gen) = (app.tab().id, app.tab().gen);
+    for n in names {
+        let change = DirChange { kind: ChangeKind::Removed, name: n.as_bytes().to_vec(), meta: None };
+        app.on_provider_event(ProviderEvent::Changes { tab, gen, changes: vec![change] }, t0());
+    }
+    app.poll();
+}
+
+fn shown(app: &App) -> String {
+    let v = app.tab().view.as_ref().unwrap();
+    match v.rows() {
+        [one] => String::from_utf8_lossy(v.listing().name(*one)).into_owned(),
+        rows => format!("{} rows", rows.len()),
+    }
+}
+
+#[test]
+fn removals_from_a_bulk_trash_land_in_one_pass_without_waiting_for_frames() {
+    let mut app = app_at(r"C:\pics");
+    let (names, _, op) = bulk(&mut app, 1250);
+    assert!(matches!(&op, FileOp::Trash(p) if p.len() == 1250));
+    let started = Instant::now();
+    watcher_removes(&mut app, &names);
+    let spent = started.elapsed();
+    assert_eq!(shown(&app), "keep.txt", "every confirmed removal is applied as soon as the events are polled");
+    assert!(app.tab().pending_diffs.is_empty());
+    assert!(spent < Duration::from_millis(500), "1250 single removals took {spent:?}");
+    let mut g = Gfx::new(Mono, 1024);
+    assert!(!app.frame(&mut g, t0()), "nothing is left to animate");
+}
+
+#[test]
+fn a_context_menu_during_a_bulk_trash_still_ends_with_the_deleted_rows_gone() {
+    let mut app = app_at(r"C:\pics");
+    let (names, id, op) = bulk(&mut app, 1250);
+    let mut g = Gfx::new(Mono, 1024);
+    watcher_removes(&mut app, &names[..400]);
+    app.frame(&mut g, t0());
+    let spot = row_xy(&app, 0);
+    press(&mut app, spot, MouseButton::Right, NO);
+    release(&mut app, spot, MouseButton::Right);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::ShellMenu(_))));
+    watcher_removes(&mut app, &names[400..900]);
+    let report: Vec<(String, String)> = names.iter().map(|n| (format!(r"C:\pics\{n}"), format!(r"C:\$Recycle.Bin\S-1\$R{n}"))).collect();
+    let pairs: Vec<(&str, &str)> = report.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    done(&mut app, id, op, &pairs);
+    app.poll();
+    assert_eq!(shown(&app), "keep.txt", "rows the operation reports as gone leave even while the shell menu holds the frames");
+    watcher_removes(&mut app, &names[900..]);
+    app.frame(&mut g, t0());
+    assert_eq!(shown(&app), "keep.txt");
+}

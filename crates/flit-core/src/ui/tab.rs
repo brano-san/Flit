@@ -19,7 +19,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const TYPE_AHEAD_RESET: Duration = Duration::from_millis(1000);
-const DIFF_CHUNK: usize = 256;
 
 pub(super) struct Loading {
     pub gen: u64,
@@ -201,21 +200,13 @@ impl Tab {
         done && stale_view
     }
 
-    pub(super) fn apply_diffs(&mut self, budget: Duration) -> bool {
+    pub(super) fn apply_diffs(&mut self) -> bool {
         let Some(v) = self.view.as_mut().filter(|v| v.snap().done) else { return false };
         if self.loading.is_some() || self.pending_diffs.is_empty() {
             return false;
         }
-        let (start, pending) = (Instant::now(), &mut self.pending_diffs);
-        let mut n = 0;
-        v.apply_all(std::iter::from_fn(|| {
-            n += 1;
-            if n % DIFF_CHUNK == 0 && start.elapsed() >= budget {
-                return None;
-            }
-            pending.pop_front()
-        }));
-        !self.pending_diffs.is_empty()
+        v.apply_all(self.pending_diffs.drain(..));
+        true
     }
 
     pub(super) fn focused_name(&self) -> Option<Vec<u8>> {

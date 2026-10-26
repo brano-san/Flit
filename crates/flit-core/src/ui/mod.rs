@@ -98,7 +98,6 @@ const NAME_MIN_W: f32 = 120.0;
 const TAB_MAX_W: f32 = 220.0;
 const TAB_MIN_W: f32 = 72.0;
 
-const DIFF_BUDGET: Duration = Duration::from_millis(4);
 const MAX_PENDING_DIFFS: usize = 1 << 16;
 const SCROLL_TAU: f32 = 0.045;
 
@@ -950,8 +949,9 @@ impl App {
         let mut visible = false;
         for k in 0..self.tabs.len() {
             visible |= self.poll_tab(k);
+            visible |= self.tabs[k].apply_diffs() && k == self.cur;
             if self.tabs[k].split.is_some() {
-                visible |= self.on_other_at(k, |a| a.poll_tab(k));
+                visible |= self.on_other_at(k, |a| a.poll_tab(k) | a.tabs[k].apply_diffs());
             }
         }
         self.poll_bin();
@@ -1836,10 +1836,9 @@ impl App {
         self.last_frame = Some(now);
         self.poll();
         self.dirty = false;
-        let mut animating = self.tab_mut().apply_diffs(DIFF_BUDGET);
         self.apply_tag_fixes(now);
         self.ops_frame(now);
-        animating |= self.marquee_autoscroll(dt);
+        let mut animating = self.marquee_autoscroll(dt);
         animating |= self.autoscroll_step(dt);
         animating |= self.scroll_step(dt);
         animating |= self.glide_overlays(dt);

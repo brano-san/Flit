@@ -3,7 +3,7 @@ use super::filter::FilterRects;
 use super::home::Home;
 use super::menu::Menu;
 use super::sidebar::PlaceCmd;
-use super::{App, Drag, DragEvent, Effect, Focus, Hit, Layout, Route, Tab, DIFF_BUDGET};
+use super::{App, Drag, DragEvent, Effect, Focus, Hit, Layout, Route, Tab};
 use crate::input::{CursorIcon, Event, Key, Mods};
 use crate::location::Location;
 use crate::provider::{ProviderEvent, TabId};
@@ -264,7 +264,7 @@ impl App {
             return false;
         }
         let k = self.cur;
-        self.on_other_at(k, |a| a.tab_mut().apply_diffs(DIFF_BUDGET) | a.scroll_step(dt))
+        self.on_other_at(k, |a| a.scroll_step(dt))
     }
 
     pub(super) fn fit_other<B: TextBackend>(&mut self, g: &mut Gfx<B>, arena: &Bump) {

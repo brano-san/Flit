@@ -1047,6 +1047,12 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
             s.redraw_now();
             Some(LRESULT(0))
         }
+        WM_ENTERIDLE => {
+            if w.redraw.get() {
+                s.redraw_now();
+            }
+            None
+        }
         WM_ERASEBKGND => Some(LRESULT(1)),
         WM_SETCURSOR if (lp.0 & 0xFFFF) as u32 == HTCLIENT => {
             SetCursor(Some(load_cursor(w.cursor.get())));
