@@ -106,6 +106,21 @@ fn the_file_is_written_only_when_it_is_missing_broken_incomplete_or_wrong() {
 }
 
 #[test]
+fn a_file_from_a_newer_flit_is_never_rewritten() {
+    let d = temp("newer");
+    let file = d.0.join("settings.json");
+    let text = "{\"schema\": 9, \"files.show_hidden\": true}".to_owned();
+    write_atomic(&file, text.as_bytes()).unwrap();
+    let doc = settings::parse(&text);
+    let mut s = Settings::start::<crate::P>(Some(file.clone()), Some(text.clone()), None, Arc::new(|| {}));
+    s.adopt(&doc, settings::defaults().to_vec());
+    s.save();
+    s.finish();
+    assert!(s.read_only);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
+}
+
+#[test]
 fn unknown_keys_survive_a_rewrite_and_cache_limits_are_read() {
     let doc = settings::parse("{\"advanced.thumb_cache_mb\": 1200, \"theme.name\": \"Storm\"}");
     assert_eq!(thumb_cache_mb(&doc), Some(1200));
