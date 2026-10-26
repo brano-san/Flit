@@ -38,6 +38,7 @@ about = "Info"
 "appearance.background" = "Hintergrundfarbe"
 "appearance.background_image" = "Hintergrundbild"
 "appearance.font" = "Schriftart der Oberfläche"
+"appearance.scale" = "Skalierung der Oberfläche"
 "appearance.toolbar" = "Symbolleiste anzeigen"
 "appearance.tab_actions" = "Schaltfläche „Registerkartenaktionen“ anzeigen"
 "appearance.ops_button" = "Schaltfläche für Dateivorgänge anzeigen"
@@ -119,6 +120,7 @@ about = "Info"
 "appearance.background" = "Eine Vorgabe hat einen hellen und einen dunklen Ton; eine benutzerdefinierte Farbe wählt selbst zwischen hellem und dunklem Text, und Akzente passen sich an, um lesbar zu bleiben"
 "appearance.background_image" = "Ein Bild hinter der Dateiliste, abgedunkelt, damit Namen lesbar bleiben; leer für keines. „Als Flit-Hintergrund festlegen“ im Menü eines Bildes füllt es aus"
 "appearance.font" = "Für den gesamten Text einschließlich Dateinamen; Code im Vorschaubereich bleibt in Festbreitenschrift, und eine nicht installierte Schriftart fällt auf den Standard zurück"
+"appearance.scale" = "Macht alles größer oder kleiner, zusätzlich zur Anzeigeskalierung des Systems"
 "appearance.toolbar" = "Die Befehlsleiste unter der Adressleiste; auch Ctrl+Shift+B schaltet sie um"
 "appearance.tab_actions" = "Links neben den Fensterschaltflächen: neue Registerkarte und neues Fenster, Bereiche, Minifenster und Vollbild"
 "appearance.ops_button" = "Rechts neben der Adressleiste; nach einem fehlgeschlagenen Vorgang bleibt sie, bis Sie sie öffnen"
@@ -240,6 +242,7 @@ about = "Info"
 
 [unit]
 mb = "MB"
+percent = "%"
 
 [status]
 reset = "Alle Einstellungen sind wieder auf Standard"

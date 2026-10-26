@@ -242,6 +242,13 @@ pub static SETTINGS: &[Setting] = &[
     pick("appearance.background", Picker::Color, S::SettingsTitleAppearanceBackground, S::SettingsHelpAppearanceBackground, |a| a.look.background.key(), |a, v| a.set_background(&v)),
     Setting { id: "appearance.background_image", page: Page::Appearance, title: S::SettingsTitleAppearanceBackgroundImage, help: S::SettingsHelpAppearanceBackgroundImage, kind: Kind::Text(|a| a.look.backdrop_path.clone(), |a, v| a.set_backdrop(v)) },
     pick("appearance.font", Picker::Font, S::SettingsTitleAppearanceFont, S::SettingsHelpAppearanceFont, |a| a.look.font.clone(), |a, v| a.set_ui_font(&v)),
+    Setting {
+        id: "appearance.scale",
+        page: Page::Appearance,
+        title: S::SettingsTitleAppearanceScale,
+        help: S::SettingsHelpAppearanceScale,
+        kind: Kind::Number { min: super::UI_SCALE.0 as i64, max: super::UI_SCALE.1 as i64, step: 25, unit: S::SettingsUnitPercent, get: |a| a.ui_scale() as i64, set: |a, v| a.set_ui_scale(v as u32) },
+    },
     toggle("appearance.toolbar", Page::Appearance, S::SettingsTitleAppearanceToolbar, S::SettingsHelpAppearanceToolbar, |a| a.toolbar.state.visible, |a, on| {
         if a.toolbar.state.visible != on {
             a.toggle_toolbar();

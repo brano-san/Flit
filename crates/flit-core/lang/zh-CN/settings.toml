@@ -38,6 +38,7 @@ about = "关于"
 "appearance.background" = "背景色"
 "appearance.background_image" = "背景图片"
 "appearance.font" = "界面字体"
+"appearance.scale" = "界面缩放"
 "appearance.toolbar" = "显示工具栏"
 "appearance.tab_actions" = "显示“标签页操作”按钮"
 "appearance.ops_button" = "显示文件操作按钮"
@@ -119,6 +120,7 @@ about = "关于"
 "appearance.background" = "预设颜色有浅色和深色两种色调；自定义颜色会自行决定使用浅色或深色文本，强调色会自动调整以保持可读"
 "appearance.background_image" = "文件列表后面的图片，经过暗化以保持名称可读；留空则不使用。图片菜单中的“设置为 Flit 背景”会填写此项"
 "appearance.font" = "用于所有文本，包括文件名；预览窗格中的代码保持等宽字体，未安装的字体将回退到默认字体"
+"appearance.scale" = "在系统显示缩放的基础上放大或缩小所有内容"
 "appearance.toolbar" = "地址栏下方的命令栏；也可按 Ctrl+Shift+B 切换"
 "appearance.tab_actions" = "位于窗口按钮左侧：新建标签页和窗口、窗格、迷你窗口和全屏"
 "appearance.ops_button" = "位于地址栏右侧；操作失败后会一直显示，直到你打开它"
@@ -240,6 +242,7 @@ about = "关于"
 
 [unit]
 mb = "MB"
+percent = "%"
 
 [status]
 reset = "所有设置已恢复为默认值"

@@ -282,3 +282,28 @@ fn settings_migrate_step_by_step() {
     assert!(!migrate(&mut m, 0, 3, &steps));
     assert!(migrate(&mut m, 3, 3, &steps));
 }
+
+#[test]
+fn the_interface_scale_multiplies_the_display_scale_for_layout_fonts_and_hits() {
+    let mut a = app();
+    a.on_event(&crate::input::Event::ScaleChanged(1.5), Instant::now());
+    assert_eq!(get(&a, "appearance.scale"), Value::Number(100));
+    let (row, title, font) = (a.layout.row_h, a.layout.title, a.ui_font(13.0).size_q);
+    assert!(set(&mut a, "appearance.scale", Value::Number(200)));
+    assert_eq!(a.scale, 3.0);
+    assert!((a.layout.row_h - 2.0 * row).abs() <= 1.0, "{} vs {row}", a.layout.row_h);
+    assert!((a.layout.title.h - 2.0 * title.h).abs() <= 1.0);
+    assert_eq!(a.ui_font(13.0).size_q, 2 * font);
+    assert!(a.layout.title.contains(title.x + 1.0, title.bottom() + 2.0));
+    assert_eq!(a.hit_test(title.right() - 1.0, title.bottom() + 2.0), a.hit_test(title.right() - 1.0, 1.0));
+    a.on_event(&crate::input::Event::ScaleChanged(1.0), Instant::now());
+    assert_eq!(a.scale, 2.0);
+    assert!(set(&mut a, "appearance.scale", Value::Number(75)));
+    assert_eq!(a.scale, 0.75);
+    assert!(a.layout.row_h < row);
+    assert!(!set(&mut a, "appearance.scale", Value::Number(250)));
+    let doc = parse(r#"{"appearance.scale": 50}"#);
+    assert_eq!(doc.bad, [index("appearance.scale").unwrap()]);
+    a.apply_doc(&parse(r#"{"appearance.scale": 150}"#));
+    assert_eq!(a.scale, 1.5);
+}

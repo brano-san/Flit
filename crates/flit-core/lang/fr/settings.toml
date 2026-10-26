@@ -38,6 +38,7 @@ about = "À propos"
 "appearance.background" = "Couleur d’arrière-plan"
 "appearance.background_image" = "Image d’arrière-plan"
 "appearance.font" = "Police de l’interface"
+"appearance.scale" = "Échelle de l’interface"
 "appearance.toolbar" = "Afficher la barre d’outils"
 "appearance.tab_actions" = "Afficher le bouton Actions d’onglet"
 "appearance.ops_button" = "Afficher le bouton des opérations sur les fichiers"
@@ -119,6 +120,7 @@ about = "À propos"
 "appearance.background" = "Un préréglage a une nuance claire et une nuance sombre ; une couleur personnalisée choisit elle-même un texte clair ou sombre, et les accents s’ajustent pour rester lisibles"
 "appearance.background_image" = "Une image derrière la liste des fichiers, atténuée pour que les noms restent lisibles ; vide pour aucune. « Définir comme arrière-plan de Flit » dans le menu d’une image la renseigne"
 "appearance.font" = "Pour tout le texte, noms de fichiers compris ; le code dans le volet d’aperçu reste en chasse fixe, et une police non installée est remplacée par la police par défaut"
+"appearance.scale" = "Agrandit ou réduit tout, en plus de l’échelle d’affichage du système"
 "appearance.toolbar" = "La barre de commandes sous la barre d’adresse ; Ctrl+Shift+B l’affiche ou la masque aussi"
 "appearance.tab_actions" = "À gauche des boutons de la fenêtre : nouvel onglet et fenêtre, volets, mini-fenêtre et plein écran"
 "appearance.ops_button" = "À droite de la barre d’adresse ; après un échec, il reste jusqu’à ce que vous l’ouvriez"
@@ -240,6 +242,7 @@ about = "À propos"
 
 [unit]
 mb = "Mo"
+percent = "%"
 
 [status]
 reset = "Tous les paramètres sont revenus à leurs valeurs par défaut"

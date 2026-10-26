@@ -38,6 +38,7 @@ about = "Acerca de"
 "appearance.background" = "Color de fondo"
 "appearance.background_image" = "Imagen de fondo"
 "appearance.font" = "Fuente de la interfaz"
+"appearance.scale" = "Escala de la interfaz"
 "appearance.toolbar" = "Mostrar la barra de herramientas"
 "appearance.tab_actions" = "Mostrar el botón Acciones de pestaña"
 "appearance.ops_button" = "Mostrar el botón de operaciones de archivo"
@@ -119,6 +120,7 @@ about = "Acerca de"
 "appearance.background" = "Un color predefinido tiene un tono claro y uno oscuro; un color personalizado elige por sí mismo texto claro u oscuro, y los acentos se ajustan para seguir siendo legibles"
 "appearance.background_image" = "Una imagen detrás de la lista de archivos, atenuada para que los nombres sigan legibles; vacío para ninguna. «Establecer como fondo de Flit» en el menú de una imagen la rellena"
 "appearance.font" = "Para todo el texto, incluidos los nombres de archivo; el código del panel de vista previa sigue en monoespaciado, y una fuente no instalada vuelve a la predeterminada"
+"appearance.scale" = "Agranda o reduce todo, además de la escala de pantalla del sistema"
 "appearance.toolbar" = "La barra de comandos bajo la barra de direcciones; Ctrl+Shift+B también la muestra u oculta"
 "appearance.tab_actions" = "A la izquierda de los botones de la ventana: nueva pestaña y ventana, paneles, miniventana y pantalla completa"
 "appearance.ops_button" = "A la derecha de la barra de direcciones; tras una operación con error permanece hasta que lo abres"
@@ -240,6 +242,7 @@ about = "Acerca de"
 
 [unit]
 mb = "MB"
+percent = "%"
 
 [status]
 reset = "Toda la configuración ha vuelto a sus valores predeterminados"

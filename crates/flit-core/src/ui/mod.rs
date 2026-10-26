@@ -46,6 +46,7 @@ pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource, MAX_HISTORY};
 pub use sidebar::{Drive, KnownFolder, NavPrefs, NavState, Places, Section};
 pub use home::{Recent, Widget};
+pub const UI_SCALE: (u32, u32) = (75, 200);
 pub use details::{folder_key, Columns, FolderView, FolderViews, ViewPrefs, THUMB_CACHE_MB};
 pub use layouts::{adaptive_layout, has_thumbnail, is_media, LayoutMode, Sizes, LAYOUTS};
 pub use jobs::JobState;
@@ -736,7 +737,7 @@ impl App {
     }
 
     pub fn set_ui_scale(&mut self, percent: u32) {
-        self.ui_scale = percent;
+        self.ui_scale = percent.clamp(UI_SCALE.0, UI_SCALE.1);
         self.rescale();
     }
 
