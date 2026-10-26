@@ -79,6 +79,7 @@ fn glob_matches_whole_names() {
     assert!(g("*", "") && g("*", "anything") && !g("", "x") && g("", ""));
     assert!(g("*re*rt*", "my report final") && !g("*re*rt", "report final"));
     assert!(g("f*1*.txt", "file100.txt") && g("**a", "bba"));
+    assert!(g("img_*", "img_0001.jpg") && !g("img_*", "x_img_0001") && g("img_*", "img_") && !g("*.jpg", "jpg"));
     let Filter::Match(Scope::Name, Pattern::Glob(_)) = one("*.TXT").filter else { panic!() };
     let Filter::Match(_, Pattern::Text(_)) = one("\"*.txt\"").filter else { panic!() };
 }

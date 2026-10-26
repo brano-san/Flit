@@ -338,6 +338,13 @@ fn char_len(s: &[u8], at: usize) -> usize {
 }
 
 pub fn glob(p: &[u8], s: &[u8]) -> bool {
+    let wild = |c: &u8| *c == b'*' || *c == b'?';
+    if let Some(suffix) = p.strip_prefix(b"*").filter(|r| !r.iter().any(wild)) {
+        return s.ends_with(suffix);
+    }
+    if let Some(prefix) = p.strip_suffix(b"*").filter(|r| !r.iter().any(wild)) {
+        return s.starts_with(prefix);
+    }
     let (mut pi, mut si) = (0, 0);
     let mut star: Option<(usize, usize)> = None;
     while si < s.len() {
