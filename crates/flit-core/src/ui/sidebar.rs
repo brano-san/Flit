@@ -104,6 +104,16 @@ pub struct Drive {
     pub free: u64,
     pub removable: bool,
     pub unmounted: bool,
+    pub kind: Option<S>,
+}
+
+impl Drive {
+    pub fn title(&self) -> String {
+        match self.kind.and_then(|k| Some((k, self.label.strip_prefix(k.en())?))) {
+            Some((k, rest)) => format!("{}{rest}", k.t()),
+            None => self.label.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -297,7 +307,7 @@ impl Sidebar {
         items.extend(p.libraries.iter().map(|l| Item { section: Section::Libraries, label: l.name.clone(), glyph: G_LIBRARY, loc: Location::Local(l.path.clone()), usage: None }));
         items.extend(p.drives.iter().map(|d| Item {
             section: Section::Drives,
-            label: crate::i18n::relocalize(&d.label, crate::i18n::Lang::En).into_owned(),
+            label: d.title(),
             glyph: G_DRIVE,
             loc: Location::Local(d.path.clone()),
             usage: (d.total > 0).then(|| (d.total.saturating_sub(d.free)) as f32 / d.total as f32),

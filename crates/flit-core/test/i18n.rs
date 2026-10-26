@@ -112,6 +112,21 @@ fn numbers_follow_the_language() {
     let mut s = String::new();
     decimal(&mut s, 12.5, 1);
     assert_eq!(s, "12,5");
+    let cldr = [
+        (Lang::En, "1,000", "12,345"),
+        (Lang::Ru, "1\u{A0}000", "12\u{A0}345"),
+        (Lang::Uk, "1\u{A0}000", "12\u{A0}345"),
+        (Lang::De, "1.000", "12.345"),
+        (Lang::Fr, "1\u{202F}000", "12\u{202F}345"),
+        (Lang::Es, "1000", "12.345"),
+        (Lang::ZhCn, "1,000", "12,345"),
+    ];
+    for (l, four, five) in cldr {
+        set_lang(l);
+        assert_eq!((num(1000).to_string(), num(12345).to_string()), (four.to_owned(), five.to_owned()), "{l:?}");
+    }
+    set_lang(Lang::Es);
+    assert_eq!(num(1234567).to_string(), "1.234.567");
     set_lang(Lang::En);
 }
 
@@ -198,7 +213,12 @@ fn relocalize_moves_messages_between_languages() {
     let ru = relocalize(&status, Lang::En).into_owned();
     assert_eq!(ru, "F2 теперь запускает «Локальный диск»");
     assert_eq!(relocalize(&plural, Lang::En), "3 файла");
-    assert_eq!(relocalize(&drive, Lang::En), "Локальный диск (C:)");
+    assert_eq!(relocalize(&drive, Lang::En), drive, "a {{name}} that equals a catalogue string is data and stays");
+    let local = crate::ui::sidebar::Drive { path: crate::FsPath::parse(r"C:\").unwrap(), label: drive.clone(), total: 0, free: 0, removable: false, unmounted: false, kind: Some(S::SidebarDriveLocal) };
+    assert_eq!(local.title(), "Локальный диск (C:)");
+    assert_eq!(crate::ui::sidebar::Drive { kind: None, ..local }.title(), drive);
+    let nested = crate::tr_en!(S::UiQuoted, name = S::SidebarDriveLocal.en());
+    assert_eq!(relocalize(&nested, Lang::En), crate::tr!(S::UiQuoted, name = S::SidebarDriveLocal.en()));
     assert_eq!(relocalize("Data (D:)", Lang::En), "Data (D:)");
     assert_eq!(relocalize_static(S::ArchiveOk.en(), Lang::En), S::ArchiveOk.in_lang(Lang::Ru));
     assert_eq!(crate::tr!(S::UiQuoted, name = "a"), "«a»");

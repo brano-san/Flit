@@ -20,7 +20,7 @@ fn recent(name: &str, target: &str, dir: bool, at: i64) -> Recent {
 fn places() -> Arc<Places> {
     Arc::new(Places {
         folders: vec![(KnownFolder::Home, loc(r"C:\Users\u")), (KnownFolder::Downloads, loc(r"C:\Users\u\Downloads"))],
-        drives: vec![Drive { path: p(r"C:\"), label: "Local Disk (C:)".into(), total: 1000, free: 250, removable: false, unmounted: false }],
+        drives: vec![Drive { path: p(r"C:\"), label: "Local Disk (C:)".into(), total: 1000, free: 250, removable: false, unmounted: false, kind: None }],
         recent: vec![recent("report.docx", r"C:\Users\u\Documents\report.docx", false, 300), recent("proj", r"C:\work\proj", true, 200), recent("old.txt", r"C:\old.txt", false, 100)],
         ..Default::default()
     })
@@ -194,7 +194,7 @@ fn turned_off_recent_files_show_a_warning() {
 fn bench_home_and_sidebar_frames() {
     let mut places = (*places()).clone();
     places.recent = (0..24).map(|k| recent(&format!("file {k}.docx"), &format!(r"C:\Users\u\Documents\file {k}.docx"), false, 1000 - k)).collect();
-    places.drives = (0..8).map(|k| Drive { path: p(&format!("{}:\\", (b'C' + k) as char)), label: format!("Disk {k}"), total: 1000, free: 300, removable: k > 5, unmounted: false }).collect();
+    places.drives = (0..8).map(|k| Drive { path: p(&format!("{}:\\", (b'C' + k) as char)), label: format!("Disk {k}"), total: 1000, free: 300, removable: k > 5, unmounted: false, kind: None }).collect();
     let mut app = App::new(Persisted::default(), Vec::new(), 0, false, 1.0, (1400, 900), Instant::now());
     app.set_places(Arc::new(places));
     app.set_pinned((0..12).map(|k| loc(&format!(r"C:\work\p{k}"))).collect());

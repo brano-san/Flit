@@ -41,7 +41,7 @@ pub fn volumes() -> Vec<Volume> {
 pub fn drives() -> Vec<Drive> {
     volumes()
         .into_iter()
-        .filter_map(|v| Some(Drive { path: crate::xdg::fs_path(v.mount.path())?, label: v.label, total: v.total, free: v.free, removable: v.mount.removable(), unmounted: false }))
+        .filter_map(|v| Some(Drive { path: crate::xdg::fs_path(v.mount.path())?, label: v.label, total: v.total, free: v.free, removable: v.mount.removable(), unmounted: false, kind: None }))
         .chain(unmounted())
         .collect()
 }
@@ -65,7 +65,7 @@ pub fn unmounted_from(lsblk: &str) -> Vec<Drive> {
         if get("MOUNTPOINT").is_empty() && get("HOTPLUG") == "1" && !matches!(get("FSTYPE"), "" | "swap" | "crypto_LUKS") {
             let Some(path) = flit_core::FsPath::parse_exact(get("PATH").as_bytes()) else { continue };
             let label = if get("LABEL").is_empty() { get("PATH").rsplit('/').next().unwrap_or("").to_owned() } else { get("LABEL").to_owned() };
-            out.push(Drive { path, label, total: 0, free: 0, removable: true, unmounted: true });
+            out.push(Drive { path, label, total: 0, free: 0, removable: true, unmounted: true, kind: None });
         }
     }
     out
