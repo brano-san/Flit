@@ -575,7 +575,20 @@ impl<H: WindowHandler<Win32>> Shared<H> {
         if hidden {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             if std::env::var_os("FLIT_CAPTURE_SETTINGS").is_some() {
-                node.queue.borrow_mut().push_back(Event::Key { key: Key::Char(','), mods: Mods { ctrl: true, ..Mods::default() }, pressed: true });
+                node.send(Event::Key { key: Key::Char(','), mods: Mods { ctrl: true, ..Mods::default() }, pressed: true });
+                node.redraw_now();
+                let mut q = node.queue.borrow_mut();
+                let mouse = std::env::var("FLIT_CAPTURE_MOUSE").ok().and_then(|v| v.split_once(',').and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?))));
+                if let Some((x, y)) = mouse {
+                    q.push_back(Event::MouseMove { x, y });
+                }
+                let wheel: f32 = std::env::var("FLIT_CAPTURE_WHEEL").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+                if wheel != 0.0 {
+                    q.push_back(Event::Wheel { dx: 0.0, dy: -wheel });
+                }
+                if let Some((x, y)) = mouse {
+                    q.push_back(Event::MouseMove { x, y });
+                }
                 self.woken.set(true);
             }
             if std::env::var_os("FLIT_CAPTURE_PROPERTIES").is_some() {
