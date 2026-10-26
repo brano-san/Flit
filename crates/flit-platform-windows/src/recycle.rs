@@ -10,10 +10,11 @@ use flit_platform::{Fs, OpOutcome, PlatformError};
 use rayon::prelude::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::io::Write;
 use std::os::windows::fs::MetadataExt;
 use windows::core::PCWSTR;
 use windows::Wdk::Storage::FileSystem::FILE_NON_DIRECTORY_FILE;
-use windows::Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDrives, ReadFile, FILE_ATTRIBUTE_DIRECTORY, FILE_LIST_DIRECTORY, FILE_READ_DATA};
+use windows::Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDrives, MoveFileExW, ReadFile, FILE_ATTRIBUTE_DIRECTORY, FILE_LIST_DIRECTORY, FILE_READ_DATA, MOVE_FILE_FLAGS};
 
 const HEADER: usize = 24;
 const V1_PATH_UNITS: usize = 260;
@@ -139,6 +140,77 @@ pub(crate) fn purge(pairs: &[(FsPath, FsPath)]) -> OpOutcome {
         }
     }
     out
+}
+
+const DIRECT_BYTES: u64 = 1 << 30;
+const ID_CHARS: &[u8; 36] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+fn same_drive(root: &FsPath, p: &FsPath) -> bool {
+    let (r, p) = (root.as_bytes(), p.as_bytes());
+    p.len() > 2 && p[1] == b':' && r.len() > 2 && r[..2].eq_ignore_ascii_case(&p[..2])
+}
+
+fn now_filetime() -> i64 {
+    let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    (since.as_nanos() / 100) as i64 + 116_444_736_000_000_000
+}
+
+fn info_record(size: u64, deleted: i64, path: &[u16]) -> Vec<u8> {
+    let mut b: Vec<u8> = [2u64.to_le_bytes(), size.to_le_bytes(), deleted.to_le_bytes()].concat();
+    b.extend((path.len() as u32).to_le_bytes());
+    b.extend(path.iter().flat_map(|c| c.to_le_bytes()));
+    b
+}
+
+fn next_id(seed: &mut u64, ext: &[u8]) -> Vec<u8> {
+    let mut id: Vec<u8> = (0..6)
+        .map(|_| {
+            *seed ^= *seed << 13;
+            *seed ^= *seed >> 7;
+            *seed ^= *seed << 17;
+            ID_CHARS[(*seed % ID_CHARS.len() as u64) as usize]
+        })
+        .collect();
+    id.extend_from_slice(ext);
+    id
+}
+
+pub(crate) fn recycle_into(root: &FsPath, p: &FsPath, budget: &mut u64, seed: &mut u64) -> Option<FsPath> {
+    let meta = std::fs::symlink_metadata(std_path(p)).ok().filter(|m| m.file_attributes() & FILE_ATTRIBUTE_DIRECTORY.0 == 0)?;
+    *budget = budget.checked_sub(meta.len())?;
+    let name = p.file_name();
+    let ext = name.iter().rposition(|&c| c == b'.').map_or(&b""[..], |i| &name[i..]);
+    let record = info_record(meta.len(), now_filetime(), &p.to_wide(false));
+    for _ in 0..8 {
+        let id = next_id(seed, ext);
+        let (info, payload) = (root.join(&[&b"$I"[..], &id].concat()), root.join(&[&b"$R"[..], &id].concat()));
+        let mut f = match std::fs::File::create_new(std_path(&info)) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return None,
+        };
+        let (src, dst) = (p.to_wide(true), payload.to_wide(true));
+        let moved = f.write_all(&record).is_ok() && unsafe { MoveFileExW(PCWSTR(src.as_ptr()), PCWSTR(dst.as_ptr()), MOVE_FILE_FLAGS(0)) }.is_ok();
+        drop(f);
+        if moved {
+            return Some(payload);
+        }
+        let _ = std::fs::remove_file(std_path(&info));
+        return None;
+    }
+    None
+}
+
+pub(crate) fn trash(paths: &[FsPath]) -> (Vec<(FsPath, FsPath)>, Vec<FsPath>) {
+    let roots = roots();
+    let (mut done, mut left, mut budget, mut seed) = (Vec::new(), Vec::new(), DIRECT_BYTES, now_filetime() as u64 | 1);
+    for p in paths {
+        match roots.iter().find(|r| same_drive(r, p)).and_then(|r| recycle_into(r, p, &mut budget, &mut seed)) {
+            Some(payload) => done.push((p.clone(), payload)),
+            None => left.push(p.clone()),
+        }
+    }
+    (done, left)
 }
 
 pub(crate) fn count(roots: &[FsPath]) -> usize {

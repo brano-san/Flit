@@ -748,3 +748,54 @@ fn bench_archives() {
         eprintln!("      {label}: {:.0} MB/s at best", 512.0 * 1.048_576 / best.as_secs_f64());
     }
 }
+
+fn bulk_delete(label: &str, op: fn(Vec<FsPath>) -> FileOp, n: usize) {
+    use flit_platform::Watcher;
+    let d = Dir::temp("bulk");
+    let files: Vec<FsPath> = (0..n).map(|i| d.file(&format!("IMG_{i:05}.jpg"), 2048)).collect();
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let mut w = DirWatcher::new(tx, Arc::new(|| {})).unwrap();
+    w.watch(1, 1, Some(&d.path("")));
+    let mut sh = ShellCom::new().unwrap();
+    let start = Instant::now();
+    let collector = std::thread::spawn(move || {
+        let (mut removed, mut batches, mut first, mut last) = (0, 0, None, Duration::ZERO);
+        while removed < n {
+            match rx.recv_timeout(Duration::from_secs(5)) {
+                Ok(ProviderEvent::Changes { changes, .. }) => {
+                    let at = start.elapsed();
+                    batches += 1;
+                    removed += changes.iter().filter(|c| c.kind == flit_core::listing::ChangeKind::Removed).count();
+                    first.get_or_insert(at);
+                    last = at;
+                }
+                Ok(ProviderEvent::Rescan { .. }) => {
+                    eprintln!("      watcher overflowed into a rescan");
+                    break;
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+        (removed, batches, first, last)
+    });
+    let out = run(&mut sh, &op(files));
+    let shell = start.elapsed();
+    assert!(out.error.is_none(), "{:?}", out.error);
+    let (removed, batches, first, last) = collector.join().unwrap();
+    drop(w);
+    let ms = |d: Duration| d.as_secs_f64() * 1e3;
+    eprintln!("BENCH {label} {n} files: shell {:.1} ms, {removed} removals in {batches} watcher batches from {:.1} to {:.1} ms", ms(shell), ms(first.unwrap_or_default()), ms(last));
+    let recycled: Vec<(FsPath, FsPath)> = out.items.into_iter().filter(|(a, b)| a != b).map(|(from, to)| (to, from)).collect();
+    if !recycled.is_empty() {
+        ok(run(&mut sh, &FileOp::Purge(recycled)));
+    }
+}
+
+#[test]
+#[ignore]
+fn bench_bulk_delete() {
+    crate::com_sta();
+    bulk_delete("delete", FileOp::Delete, 1250);
+    bulk_delete("trash", FileOp::Trash, 1250);
+}

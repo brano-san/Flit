@@ -438,6 +438,16 @@ fn direct(op: &FileOp) -> (Vec<(FsPath, FsPath)>, Option<FileOp>) {
             let (done, left): (Vec<_>, Vec<_>) = pairs.iter().cloned().partition(|(recycled, original)| direct_restore(recycled, original));
             (done, (!left.is_empty()).then_some(FileOp::Restore(left)))
         }
+        FileOp::Trash(paths) => {
+            let (done, left) = recycle::trash(paths);
+            for (original, _) in &done {
+                notify(SHCNE_DELETE, original, None);
+            }
+            if !done.is_empty() {
+                unsafe { SHUpdateRecycleBinIcon() };
+            }
+            (done, (!left.is_empty()).then_some(FileOp::Trash(left)))
+        }
         FileOp::NewFolder { dir, name } if unsafe { CreateDirectoryW(PCWSTR(dir.join(name).to_wide(true).as_ptr()), None) }.is_ok() => created(dir.join(name), SHCNE_MKDIR),
         FileOp::NewFile { dir, name, template } if new_file(&dir.join(name), template) => created(dir.join(name), SHCNE_CREATE),
         _ => (Vec::new(), Some(op.clone())),

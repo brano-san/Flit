@@ -162,6 +162,40 @@ fn purging_removes_payload_and_info_and_refuses_paths_outside_a_bin() {
 }
 
 #[test]
+fn files_are_recycled_directly_in_the_shell_format_and_folders_are_left_to_the_shell() {
+    let bin = FakeBin::new("direct");
+    let src = bin.top.join("src");
+    std::fs::create_dir_all(src.join("folder")).unwrap();
+    let file = |name: &str, body: &[u8]| {
+        std::fs::write(src.join(name), body).unwrap();
+        FsPath::parse(src.join(name).to_str().unwrap()).unwrap()
+    };
+    let photos: Vec<FsPath> = (0..300).map(|k| file(&format!("IMG_{k:04}.jpg"), b"jpeg")).collect();
+    let (plain, folder) = (file("README", b"12345"), FsPath::parse(src.join("folder").to_str().unwrap()).unwrap());
+    let (mut budget, mut seed) = (u64::MAX, 7);
+    let started = std::time::Instant::now();
+    let recycled: Vec<FsPath> = photos.iter().chain([&plain]).map(|p| recycle_into(&bin.path(), p, &mut budget, &mut seed).unwrap()).collect();
+    assert!(started.elapsed() < std::time::Duration::from_secs(3), "{:?} for 301 files", started.elapsed());
+    assert_eq!(recycle_into(&bin.path(), &folder, &mut budget, &mut seed), None);
+    assert!(src.join("folder").exists());
+    assert!(photos.iter().all(|p| !std_path(p).exists()));
+    assert!(recycled[0].file_name().starts_with(b"$R") && recycled[0].file_name().ends_with(b".jpg"));
+    assert_eq!(recycled[300].file_name().len(), 8);
+    let l = listed(&[bin.path()]);
+    assert_eq!(l.len(), 301);
+    let (i, e) = find(&l, "README");
+    assert_eq!((e.size, bin::original(&l, i)), (5, Some(plain.clone())));
+    assert_eq!(bin::recycled(&l, i).as_ref(), recycled.last());
+    assert!(e.modified > 133_000_000_000_000_000, "deleted now, as a FILETIME");
+    assert_eq!(std::fs::read(std_path(&recycled[0])).unwrap(), b"jpeg");
+    let mut tight = 3;
+    assert_eq!(recycle_into(&bin.path(), &file("big.bin", b"four"), &mut tight, &mut seed), None, "over the byte budget the shell decides");
+    assert!(src.join("big.bin").exists());
+    let other_drive = FsPath::parse(r"Q:\$Recycle.Bin\S-1").unwrap();
+    assert!(!same_drive(&other_drive, &plain) && same_drive(&bin.path(), &plain));
+}
+
+#[test]
 fn emptying_a_fake_bin_removes_items_and_orphans_but_keeps_desktop_ini() {
     let bin = FakeBin::new("empty");
     bin.recycle("A.txt", r"C:\a.txt", 2, false);
