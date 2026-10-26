@@ -27,6 +27,7 @@ cancel = "Cancel"
 delete = "Delete"
 restore = "Restore"
 not_now = "Not now"
+open_folder = "Open folder"
 
 [job]
 operations = "Operations"
@@ -108,6 +109,8 @@ replace = "The settings export would write over this file in {folder}."
 [session]
 restore_title = "Restore the previous session?"
 crashed = "Flit did not close properly last time."
+crash_title = "Flit crashed last time"
+crash_report = "Flit crashed last time. A crash report was saved: {name}."
 restore = "Restore reopens the windows and tabs that were open."
 
 [ops]

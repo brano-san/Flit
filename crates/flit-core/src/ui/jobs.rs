@@ -40,6 +40,8 @@ const NO_ROOM_BUTTONS: [S; 2] = [S::OpsExtraCopyAnyway, S::UiButtonCancel];
 const CONFIRM_BUTTONS: [S; 2] = [S::UiButtonDelete, S::UiButtonCancel];
 const RESTORE_ALL_BUTTONS: [S; 2] = [S::UiButtonRestore, S::UiButtonCancel];
 const RESTORE_BUTTONS: [S; 2] = [S::UiButtonRestore, S::UiButtonNotNow];
+const CRASH_RESTORE_BUTTONS: [S; 3] = [S::UiButtonRestore, S::UiButtonOpenFolder, S::UiButtonNotNow];
+const CRASH_BUTTONS: [S; 2] = [S::UiButtonOpenFolder, S::UiButtonNotNow];
 const REPLACE_BUTTONS: [S; 2] = [S::UiButtonReplace, S::UiButtonCancel];
 
 #[derive(Clone, Debug, PartialEq)]
@@ -164,7 +166,7 @@ impl Job {
 pub(super) enum Ask {
     Conflict { id: OpId, conflict: Conflict },
     Confirm(FileOp, ProviderId),
-    Restore,
+    Restore { session: bool, dump: Option<FsPath> },
     ReplaceExport { path: FsPath, existing: crate::listing::Meta },
 }
 
@@ -235,6 +237,14 @@ impl Jobs {
 
     fn more_rect(row: Rect, s: impl Fn(f32) -> f32) -> Rect {
         Rect::new(row.right() - s(34.0), row.y + s(6.0), s(28.0), s(24.0))
+    }
+}
+
+fn restore_buttons(session: bool, dump: bool) -> &'static [S] {
+    match (session, dump) {
+        (true, true) => &CRASH_RESTORE_BUTTONS,
+        (false, true) => &CRASH_BUTTONS,
+        _ => &RESTORE_BUTTONS,
     }
 }
 
@@ -410,7 +420,17 @@ impl App {
     }
 
     pub fn offer_restore(&mut self) {
-        self.push_ask(Ask::Restore);
+        self.push_ask(Ask::Restore { session: true, dump: None });
+    }
+
+    pub fn offer_crash_report(&mut self, session: bool, dump: FsPath) {
+        self.push_ask(Ask::Restore { session, dump: Some(dump) });
+    }
+
+    fn offer_crash_folder(&mut self, dump: &FsPath) {
+        let Some(folder) = dump.parent() else { return };
+        let select = Some(dump.file_name().to_vec());
+        self.dispatch(vec![Route { folder: Location::from_local(folder), select }], OpenTarget::NewTab, Instant::now());
     }
 
     pub fn jobs_open(&self) -> bool {
@@ -427,7 +447,7 @@ impl App {
             Some(a) if a.too_large() => Some("too_large"),
             Some(Ask::Conflict { .. }) => Some("conflict"),
             Some(Ask::Confirm(..)) => Some("confirm"),
-            Some(Ask::Restore) => Some("restore"),
+            Some(Ask::Restore { .. }) => Some("restore"),
             Some(Ask::ReplaceExport { .. }) => Some("replace"),
             None => self.jobs.form.as_ref().map(|f| f.kind.name()),
         }
@@ -514,12 +534,23 @@ impl App {
             }
             Ask::Confirm(FileOp::Trash(items), provider) if button == 0 && self.jobs.all => self.start_confirmed(provider, FileOp::Delete(items)),
             Ask::Confirm(op, provider) if button == 0 => self.start_confirmed(provider, op),
-            Ask::Restore if button == 0 => self.effects.push(super::Effect::RestoreSession),
+            Ask::Restore { session, dump } => match restore_buttons(session, dump.is_some()).get(button) {
+                Some(S::UiButtonRestore) => self.effects.push(super::Effect::RestoreSession),
+                Some(S::UiButtonOpenFolder) => {
+                    if let Some(dump) = dump {
+                        self.offer_crash_folder(&dump);
+                    }
+                    if session {
+                        self.push_ask(Ask::Restore { session, dump: None });
+                    }
+                }
+                _ => {}
+            },
             Ask::ReplaceExport { path, .. } if button == 0 => {
                 let text = self.export_text();
                 self.effects.push(super::Effect::Settings(super::SettingsCmd::Export { path, text, replace: true }));
             }
-            Ask::Confirm(..) | Ask::Restore | Ask::ReplaceExport { .. } => {}
+            Ask::Confirm(..) | Ask::ReplaceExport { .. } => {}
         }
         self.jobs.all = false;
         self.jobs.sel = self.jobs.asks.front().map_or(0, Ask::first_button);
@@ -534,7 +565,7 @@ impl App {
             Some(Ask::Conflict { .. }) => &CONFLICT_BUTTONS,
             Some(Ask::Confirm(FileOp::Restore(_), _)) => &RESTORE_ALL_BUTTONS,
             Some(Ask::Confirm(..)) => &CONFIRM_BUTTONS,
-            Some(Ask::Restore) => &RESTORE_BUTTONS,
+            Some(Ask::Restore { session, dump }) => restore_buttons(*session, dump.is_some()),
             Some(Ask::ReplaceExport { .. }) => &REPLACE_BUTTONS,
             None => &[],
         };
@@ -616,7 +647,7 @@ impl App {
                 Ask::Conflict { .. } if ask.too_large() => (labels, s(168.0)),
                 Ask::Conflict { .. } => (labels, s(236.0)),
                 _ if checked => (labels, s(208.0)),
-                Ask::Confirm(..) | Ask::Restore | Ask::ReplaceExport { .. } => (labels, s(168.0)),
+                Ask::Confirm(..) | Ask::Restore { .. } | Ask::ReplaceExport { .. } => (labels, s(168.0)),
             };
             let dw = s(DIALOG_W).min(w - s(32.0));
             let d = Rect::new(((w - dw) / 2.0).round(), ((h - dh) / 2.0).round().max(s(40.0)), dw, dh);
@@ -901,7 +932,11 @@ impl App {
                 (title.into(), vec![text, note.into()])
             }
             Some(Ask::ReplaceExport { path, existing }) => (crate::tr!(S::UiExportReplaceTitle, name = quoted(path)), vec![crate::tr!(S::UiExportReplace, folder = path.parent().map(|p| quoted(&p)).unwrap_or_default()), meta_line(S::UiConflictExisting, existing, offset, &self.style)]),
-            Some(Ask::Restore) => (S::UiSessionRestoreTitle.t().into(), vec![S::UiSessionCrashed.t().into(), S::UiSessionRestore.t().into()]),
+            Some(Ask::Restore { session, dump }) => {
+                let title = if *session { S::UiSessionRestoreTitle } else { S::UiSessionCrashTitle };
+                let first = dump.as_ref().map_or_else(|| S::UiSessionCrashed.t().into(), |d| crate::tr!(S::UiSessionCrashReport, name = quoted(d)));
+                (title.t().into(), std::iter::once(first).chain(session.then(|| S::UiSessionRestore.t().into())).collect())
+            }
             None => return None,
         })
     }

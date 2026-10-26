@@ -137,6 +137,17 @@ fn run(dir: Option<PathBuf>, rx: Receiver<Msg>, echo: bool) {
     }
 }
 
+pub fn crash_report(dir: &Path, since: std::time::SystemTime) -> Option<PathBuf> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "dmp"))
+        .filter_map(|e| Some((e.metadata().and_then(|m| m.modified()).ok()?, e.path())))
+        .filter(|(t, _)| *t >= since)
+        .max()
+        .map(|(_, p)| p)
+}
+
 static SINK: OnceLock<Sink> = OnceLock::new();
 static LEVEL: OnceLock<(reload::Handle<LevelFilter, Registry>, LevelFilter)> = OnceLock::new();
 

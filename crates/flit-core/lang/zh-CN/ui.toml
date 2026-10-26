@@ -27,6 +27,7 @@ cancel = "取消"
 delete = "删除"
 restore = "还原"
 not_now = "以后再说"
+open_folder = "打开文件夹"
 
 [job]
 operations = "操作"
@@ -108,6 +109,8 @@ replace = "导出设置将覆盖 {folder} 中的此文件。"
 [session]
 restore_title = "还原上一个会话？"
 crashed = "Flit 上次未正常关闭。"
+crash_title = "Flit 上次崩溃了"
+crash_report = "Flit 上次崩溃了。崩溃报告已保存：{name}。"
 restore = "“还原”会重新打开之前打开的窗口和标签页。"
 
 [ops]

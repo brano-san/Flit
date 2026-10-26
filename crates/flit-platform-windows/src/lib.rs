@@ -3,6 +3,7 @@
 mod access;
 mod clipboard;
 mod context_menu;
+pub mod crash;
 mod d3d;
 mod digest;
 mod dragdrop;

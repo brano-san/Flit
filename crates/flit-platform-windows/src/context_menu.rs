@@ -185,7 +185,9 @@ unsafe fn query_into(hwnd: HWND, m: &ShellMenu, hmenu: HMENU, at: u32) -> Result
     if !m.items.is_empty() {
         flags |= CMF_ITEMMENU;
     }
-    menu.QueryContextMenu(hmenu, at, FIRST_ID, LAST_ID, flags).ok().map_err(err)?;
+    let queried = menu.QueryContextMenu(hmenu, at, FIRST_ID, LAST_ID, flags);
+    crate::crash::rearm();
+    queried.ok().map_err(err)?;
     Ok(menu)
 }
 

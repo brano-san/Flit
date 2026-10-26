@@ -162,7 +162,9 @@ impl ShellCom {
         let w = wide(path);
         unsafe {
             let factory: IShellItemImageFactory = SHCreateItemFromParsingName(PCWSTR(w.as_ptr()), None).ok()?;
-            let hbm = factory.GetImage(SIZE { cx: size as i32, cy: size as i32 }, flags).ok()?;
+            let image = factory.GetImage(SIZE { cx: size as i32, cy: size as i32 }, flags);
+            crate::crash::rearm();
+            let hbm = image.ok()?;
             let bits = dib_bits(hbm);
             let _ = DeleteObject(HGDIOBJ(hbm.0));
             let (width, height, mut rgba) = bits?;

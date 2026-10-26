@@ -27,6 +27,7 @@ cancel = "Annuler"
 delete = "Supprimer"
 restore = "Restaurer"
 not_now = "Pas maintenant"
+open_folder = "Ouvrir le dossier"
 
 [job]
 operations = "Opérations"
@@ -108,6 +109,8 @@ replace = "L’exportation des paramètres écraserait ce fichier dans {folder}.
 [session]
 restore_title = "Restaurer la session précédente ?"
 crashed = "Flit ne s’est pas fermé correctement la dernière fois."
+crash_title = "Flit a planté la dernière fois"
+crash_report = "Flit a planté la dernière fois. Un rapport de plantage a été enregistré : {name}."
 restore = "Restaurer rouvre les fenêtres et onglets qui étaient ouverts."
 
 [ops]
