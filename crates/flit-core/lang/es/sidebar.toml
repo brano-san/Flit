@@ -29,6 +29,7 @@ folders = "Carpetas"
 libraries = "Bibliotecas"
 drives = "Unidades"
 tags = "Etiquetas"
+recent = "Recientes"
 
 [tag]
 filter = "Escribe para filtrar las etiquetas"

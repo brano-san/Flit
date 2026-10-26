@@ -29,6 +29,7 @@ folders = "Dossiers"
 libraries = "Bibliothèques"
 drives = "Lecteurs"
 tags = "Balises"
+recent = "Récents"
 
 [tag]
 filter = "Tapez pour filtrer les balises"

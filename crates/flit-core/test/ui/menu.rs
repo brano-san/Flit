@@ -47,7 +47,7 @@ fn commands(items: &[MenuItem]) -> Vec<String> {
     items
         .iter()
         .flat_map(|i| match i {
-            MenuItem::Command { label, keys, checked } => vec![format!("{label}{}{}", if keys.is_empty() { String::new() } else { format!("\t{keys}") }, if *checked { " *" } else { "" })],
+            MenuItem::Command { label, keys, checked, .. } => vec![format!("{label}{}{}", if keys.is_empty() { String::new() } else { format!("\t{keys}") }, if *checked { " *" } else { "" })],
             MenuItem::Submenu { items, .. } => commands(items),
             MenuItem::Separator => Vec::new(),
         })

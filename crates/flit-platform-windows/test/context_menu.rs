@@ -52,12 +52,20 @@ unsafe fn texts(hmenu: HMENU) -> Vec<String> {
 }
 
 fn command(label: &str, keys: &str, checked: bool) -> MenuItem {
-    MenuItem::Command { label: label.into(), keys: keys.into(), checked }
+    MenuItem::Command { label: label.into(), keys: keys.into(), checked, stay: false }
 }
 
 fn flit_menu(t: &TempDir, inline: bool) -> ShellMenu {
     let menu = vec![command("Open", "Enter", false), MenuItem::Separator, MenuItem::Submenu { label: "Sort by".into(), items: vec![command("Name", "", true)] }, command("R&D", "", false)];
     ShellMenu { dir: t.path(""), items: vec![t.path("a.txt")], x: 0.0, y: 0.0, extended: false, menu, inline, shell: true }
+}
+
+#[test]
+fn toggles_are_found_by_the_same_ids_the_native_menu_gets() {
+    let toggle = |label: &str| MenuItem::Command { label: label.into(), keys: String::new(), checked: true, stay: true };
+    let menu = vec![command("Collapse", "", false), MenuItem::Separator, MenuItem::Submenu { label: "Sections".into(), items: vec![toggle("Pinned"), toggle("Drives")] }, toggle("Compact")];
+    assert_eq!(toggle_ids(&menu), [FLIT_FIRST + 1, FLIT_FIRST + 2, FLIT_FIRST + 3]);
+    assert!(toggle_ids(&flit_menu(&TempDir::new("toggles"), false).menu).is_empty());
 }
 
 #[test]

@@ -136,7 +136,7 @@ fn sections_collapse_hide_and_come_back() {
     click(header(&app, Section::Wsl), &mut app, MouseButton::Right);
     let m = menu(&mut app);
     assert!(!m.shell);
-    assert_eq!(labels(&m.menu), ["Collapse", "Hide this section", "Pinned *", "Folders *", "Libraries *", "Drives *", "WSL *", "Tags *", "Compact sidebar"]);
+    assert_eq!(labels(&m.menu), ["Collapse", "Hide this section", "Pinned *", "Recent *", "Folders *", "Libraries *", "Drives *", "WSL *", "Tags *", "Compact sidebar"]);
     run(&mut app, &m, "Hide this section");
     assert!(!app.nav.sidebar.headers.iter().any(|h| h.1 == Section::Wsl));
     assert_eq!(side_labels(&app), ["a", "b", "Recycle Bin"]);
@@ -151,6 +151,80 @@ fn sections_collapse_hide_and_come_back() {
     assert!(app.run_action("sidebar.sections", Instant::now()));
     assert!(app.nav_prefs().collapsed.is_empty() && app.nav_prefs().hidden.is_empty());
     assert_eq!(side_labels(&app).len(), 6);
+}
+
+fn stays(items: &[MenuItem]) -> Vec<String> {
+    items
+        .iter()
+        .flat_map(|i| match i {
+            MenuItem::Command { label, stay: true, .. } => vec![label.clone()],
+            MenuItem::Submenu { items, .. } => stays(items),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+#[test]
+fn section_toggles_keep_the_menu_open_and_update_the_sidebar_behind_it() {
+    let mut app = app_with_places();
+    click(header(&app, Section::Folders), &mut app, MouseButton::Right);
+    let m = menu(&mut app);
+    assert_eq!(stays(&m.menu), ["Pinned", "Recent", "Folders", "Libraries", "Drives", "WSL", "Tags", "Compact sidebar"], "only the show/hide toggles stay open");
+    app.on_event(&Event::ShowMenu { items: m.menu, x: 300.0, y: 100.0, launches: Vec::new() }, Instant::now());
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, Instant::now());
+    let key = |app: &mut App, key: Key| app.on_event(&Event::Key { key, mods: Mods::default(), pressed: true }, Instant::now());
+    key(&mut app, Key::End);
+    key(&mut app, Key::Enter);
+    assert!(app.own_menu_open(), "toggling Compact leaves the menu open");
+    assert!(app.nav_prefs().compact);
+    app.frame(&mut g, Instant::now());
+    for k in [Key::Up, Key::Right, Key::Down, Key::Down, Key::Enter] {
+        key(&mut app, k);
+    }
+    assert!(app.own_menu_open(), "hiding a section leaves the menu open");
+    assert!(app.nav.sidebar.is_hidden(Section::Folders));
+    assert!(!side_labels(&app).contains(&"Recycle Bin"), "the sidebar behind the menu follows");
+    key(&mut app, Key::Enter);
+    assert!(app.own_menu_open() && !app.nav.sidebar.is_hidden(Section::Folders), "the same row toggles back");
+    key(&mut app, Key::Escape);
+    key(&mut app, Key::Up);
+    key(&mut app, Key::Enter);
+    assert!(!app.own_menu_open(), "ordinary commands still close the menu");
+}
+
+#[test]
+fn recent_files_and_folders_have_their_own_capped_group() {
+    let mut app = app_with_places();
+    let recent = |k: i64, dir: bool| Recent { name: format!("r{k}"), target: FsPath::parse(&format!(r"C:\r\r{k}")).unwrap(), dir, at: 100 - k };
+    let mut places = (*app.nav.sidebar.places).clone();
+    places.recent = (0..14).map(|k| recent(k, k % 2 == 0)).collect();
+    app.set_places(Arc::new(places));
+    app.drain_effects().for_each(drop);
+    let labels: Vec<String> = side_labels(&app).into_iter().map(str::to_owned).collect();
+    assert_eq!(labels[..3], ["a", "b", "r0"], "Recent follows Pinned");
+    assert_eq!(app.nav.sidebar.items.iter().filter(|it| it.section == Section::Recent).count(), 10);
+    assert!(app.nav.sidebar.headers.iter().any(|h| h.1 == Section::Recent));
+    app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    let asked: Vec<(Vec<u8>, IconKind)> = app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { Some((r.path.as_bytes().to_vec(), r.kind)) } else { None }).collect();
+    assert!(asked.contains(&(br"C:\r\r0".to_vec(), IconKind::Place)) && asked.contains(&(br"C:\r\r1".to_vec(), IconKind::File)), "{asked:?}");
+    let file = labels.iter().position(|l| *l == "r1").unwrap();
+    app.open_side_item(file, false, Instant::now());
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } if path == FsPath::parse(r"C:\r\r1").unwrap())));
+    assert!(!app.nav.sidebar.pinnable(file) && app.nav.sidebar.pinnable(file - 1), "files have no pin button");
+    click(app.nav.sidebar.rects[file], &mut app, MouseButton::Right);
+    let m = menu(&mut app);
+    run(&mut app, &m, "Remove from the list");
+    assert!(!side_labels(&app).contains(&"r1"));
+    assert_eq!(app.nav.sidebar.items.iter().filter(|it| it.section == Section::Recent).count(), 10, "the next entry moves up");
+    let folder = side_labels(&app).iter().position(|l| *l == "r0").unwrap();
+    app.open_side_item(folder, false, Instant::now());
+    assert_eq!(app.current_location(), &loc(r"C:\r\r0"));
+    click(header(&app, Section::Recent), &mut app, MouseButton::Right);
+    let m = menu(&mut app);
+    assert!(stays(&m.menu).contains(&"Recent".to_owned()));
+    run(&mut app, &m, "Recent");
+    assert!(!app.nav.sidebar.items.iter().any(|it| it.section == Section::Recent) && app.nav.sidebar.is_hidden(Section::Recent));
 }
 
 #[test]
@@ -240,4 +314,34 @@ fn distros_in_the_sidebar_show_their_own_icons() {
     assert!(asked.contains(&(br"\\wsl.localhost\Debian\".to_vec(), IconKind::Volume)), "{asked:?}");
     app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::Icon(r) if r.kind == IconKind::Volume)), "a pending icon is asked once");
+}
+
+#[test]
+fn places_ask_the_system_for_their_icons_and_keep_glyphs_until_then() {
+    let mut app = app_with_places();
+    let offline = Drive { path: FsPath::parse(r"Z:\").unwrap(), label: "Share (Z:)".into(), total: 0, free: 0, removable: false, unmounted: true, kind: None, remote: Some(r"\\srv\share".into()) };
+    let downloads = loc(r"C:\Users\u\Downloads");
+    let mut places = (*app.nav.sidebar.places).clone();
+    places.folders = vec![(KnownFolder::Downloads, downloads.clone())];
+    places.drives.push(offline);
+    app.set_places(Arc::new(places));
+    let mut store = crate::tags::TagStore { tags: Vec::new(), files: Default::default() };
+    store.add("Red", 0xFF0000).unwrap();
+    app.set_tags(Arc::new(Tags::new(1, &store, &Default::default())));
+    app.drain_effects().for_each(drop);
+    app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    let asked: Vec<(Vec<u8>, IconKind)> = app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { Some((r.path.as_bytes().to_vec(), r.kind)) } else { None }).collect();
+    for want in [
+        (br"C:\a".to_vec(), IconKind::Place),
+        (downloads.path().as_bytes().to_vec(), IconKind::Place),
+        (FsPath::recycle_bin().as_bytes().to_vec(), IconKind::Place),
+        (br"C:\".to_vec(), IconKind::Volume),
+        (br"E:\".to_vec(), IconKind::Volume),
+        (br"\\wsl.localhost\Debian\".to_vec(), IconKind::Volume),
+    ] {
+        assert!(asked.contains(&want), "{want:?} not in {asked:?}");
+    }
+    assert!(!asked.iter().any(|(p, _)| p == br"Z:\"), "an offline share is not touched");
+    assert_eq!(asked.len(), 7, "{asked:?}");
+    assert!(app.icons.values().all(|s| *s == crate::ui::IconState::Pending));
 }

@@ -3,7 +3,7 @@ use crate::text::tests::Mono;
 use crate::theme;
 
 fn cmd(label: &str) -> MenuItem {
-    MenuItem::Command { label: label.into(), keys: String::new(), checked: false }
+    MenuItem::Command { label: label.into(), keys: String::new(), checked: false, stay: false }
 }
 
 fn sample() -> Vec<MenuItem> {
@@ -11,7 +11,7 @@ fn sample() -> Vec<MenuItem> {
         cmd("Open"),
         MenuItem::Submenu { label: "Sort by".into(), items: vec![cmd("Name"), MenuItem::Separator, cmd("Size")] },
         MenuItem::Separator,
-        MenuItem::Command { label: "Paste".into(), keys: "Ctrl+V".into(), checked: true },
+        MenuItem::Command { label: "Paste".into(), keys: "Ctrl+V".into(), checked: true, stay: false },
     ]
 }
 
@@ -30,6 +30,31 @@ fn center(r: Rect) -> (f32, f32) {
 
 fn row(v: &MenuView, panel: usize, i: usize) -> (f32, f32) {
     center(v.rows(&v.panels[panel]).nth(i).unwrap().1)
+}
+
+#[test]
+fn a_click_on_a_toggle_flips_its_check_in_place_and_keeps_the_submenu_open() {
+    let toggle = |label: &str, checked| MenuItem::Command { label: label.into(), keys: String::new(), checked, stay: true };
+    let items = vec![cmd("Open"), MenuItem::Submenu { label: "Sections".into(), items: vec![toggle("Pinned", true), toggle("Drives", false)] }];
+    let mut v = MenuView::new(&items, 100.0, 100.0, screen(), 1.0, &mut Gfx::new(Mono, 256));
+    let (x, y) = row(&v, 0, 1);
+    v.mouse_move(x, y);
+    let (x, y) = row(&v, 1, 0);
+    v.mouse_move(x, y);
+    assert_eq!(v.mouse_up(x, y), MenuOutcome::Toggled(1));
+    assert_eq!(v.panels().count(), 2, "the submenu stays open");
+    assert!(matches!(v.lists[1].nodes[0], Node::Command { checked: false, .. }));
+    assert_eq!(v.mouse_up(x, y), MenuOutcome::Toggled(1));
+    assert!(matches!(v.lists[1].nodes[0], Node::Command { checked: true, .. }));
+    assert_eq!(v.key(Key::Space), MenuOutcome::Toggled(1));
+    let long = vec![cmd("A label long enough to set the width of its panel")];
+    let mut g = Gfx::new(Mono, 256);
+    let w = MenuView::new(&long, 0.0, 0.0, screen(), 1.0, &mut g).lists[0].width;
+    let room = w - PAD - LABEL_X - ARROW_W;
+    assert!(room >= g.measure("A label long enough to set the width of its panel", font(1.0)), "the widest label is not cut by the row padding");
+    let (x, y) = row(&v, 0, 0);
+    v.mouse_move(x, y);
+    assert_eq!(v.mouse_up(x, y), MenuOutcome::Command(0));
 }
 
 #[test]

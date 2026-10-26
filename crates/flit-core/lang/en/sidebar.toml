@@ -29,6 +29,7 @@ folders = "Folders"
 libraries = "Libraries"
 drives = "Drives"
 tags = "Tags"
+recent = "Recent"
 
 [tag]
 filter = "Type to filter tags"

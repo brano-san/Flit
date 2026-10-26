@@ -162,6 +162,7 @@ impl ShellCom {
         unsafe {
             let factory: IShellItemImageFactory = match path.kind() {
                 PathKind::Shell => crate::namespace::item(path).ok()?.cast().ok()?,
+                PathKind::Computer => SHCreateItemFromParsingName(w!("shell:MyComputerFolder"), None).ok()?,
                 _ => SHCreateItemFromParsingName(PCWSTR(wide(path).as_ptr()), None).ok()?,
             };
             let image = factory.GetImage(SIZE { cx: size as i32, cy: size as i32 }, flags);
@@ -199,6 +200,7 @@ impl Shell for ShellCom {
                 Location::Wsl { distro, .. } => crate::places::wsl_shortcut(&distro).and_then(|lnk| self.item_image(&lnk, req.size, SIIGBF_ICONONLY)),
                 _ => self.item_image(&req.path, req.size, SIIGBF_ICONONLY).or_else(|| self.generic_icon(&req.path, false, req.size)),
             },
+            IconKind::Place => self.item_image(&req.path, req.size, SIIGBF_ICONONLY).or_else(|| self.generic_icon(&req.path, true, req.size)),
             IconKind::File => self.item_image(&req.path, req.size, SIIGBF_ICONONLY).or_else(|| self.generic_icon(&req.path, false, req.size)),
             IconKind::CustomFolder => desktop_ini(&req.path)
                 .filter(|ini| ini.icon)

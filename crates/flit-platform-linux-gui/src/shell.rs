@@ -1,7 +1,7 @@
 use crate::{fs, places};
 use flit_core::provider::{FileOp, Launch};
 use flit_core::ui::{Bitmap, IconKind, IconRequest};
-use std::os::unix::ffi::OsStringExt;
+use flit_core::path::PathKind;
 use flit_core::FsPath;
 use flit_platform::{FileOps, Job, OpOutcome, PlatformError, Shell};
 use flit_platform_linux::{host, run_op};
@@ -238,14 +238,8 @@ pub fn icon_names(req: &IconRequest) -> Vec<String> {
     let owned = |list: &[&str]| list.iter().map(|s| s.to_string()).collect();
     let path = req.path.as_bytes();
     match req.kind {
-        IconKind::Folder | IconKind::CustomFolder => {
-            let home = crate::xdg::home().map(|h| h.into_os_string().into_vec());
-            if home.as_deref() == Some(path) {
-                owned(&["user-home", "folder"])
-            } else {
-                owned(&["folder"])
-            }
-        }
+        IconKind::Folder | IconKind::CustomFolder => owned(&["folder"]),
+        IconKind::Place => owned(&[place_icon_name(&req.path), "folder"]),
         IconKind::Volume if path.starts_with(b"/media/") || path.starts_with(b"/run/media/") => owned(&["drive-removable-media", "drive-harddisk"]),
         IconKind::Volume => owned(&["drive-harddisk"]),
         IconKind::Type | IconKind::File | IconKind::Thumbnail => {
@@ -258,7 +252,19 @@ pub fn icon_names(req: &IconRequest) -> Vec<String> {
     }
 }
 
-static OWN_FILES: std::sync::Mutex<Option<(String, bool)>> = std::sync::Mutex::new(None);
+fn place_icon_name(path: &FsPath) -> &'static str {
+    let local = Path::new(OsStr::from_bytes(path.as_bytes()));
+    match path.kind() {
+        PathKind::RecycleBin => "user-trash",
+        PathKind::Home => "user-home",
+        PathKind::Computer => "computer",
+        PathKind::Shell => "network-workgroup",
+        _ if crate::xdg::home().as_deref() == Some(local) => "user-home",
+        _ => crate::xdg::user_dir_icon(local).unwrap_or("folder"),
+    }
+}
+
+static OWN_FILES:std::sync::Mutex<Option<(String, bool)>> = std::sync::Mutex::new(None);
 
 pub fn uri_list(paths: &[FsPath]) -> String {
     paths.iter().map(|p| format!("file://{}\r\n", flit_platform_linux::percent_encode(p.as_bytes()))).collect()

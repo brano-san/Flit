@@ -29,6 +29,7 @@ folders = "Папки"
 libraries = "Библиотеки"
 drives = "Диски"
 tags = "Теги"
+recent = "Недавние"
 
 [tag]
 filter = "Введите текст для поиска тегов"

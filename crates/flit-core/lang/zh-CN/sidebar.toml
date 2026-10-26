@@ -29,6 +29,7 @@ folders = "文件夹"
 libraries = "库"
 drives = "驱动器"
 tags = "标记"
+recent = "最近使用"
 
 [tag]
 filter = "键入以筛选标记"
