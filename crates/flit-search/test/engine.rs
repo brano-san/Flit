@@ -220,3 +220,40 @@ fn bench_folder_scoped_queries_and_groups() {
     let starts = e.groups(&mut rs).unwrap();
     eprintln!("BENCH folder groups of {} results: {} groups in {:.1} ms", rs.total, starts.len(), ms(t));
 }
+
+#[test]
+fn every_scan_path_agrees_with_the_plain_matcher() {
+    let mut v = VolumeIndex::new("C:", b"C:\\", b'\\');
+    put(&mut v, 5, 5, ".", 0, 0, true);
+    let stems = ["report", "Report-1", "rep", ".rs", "a.", "noext", "x.tar.gz", "main.rs", "lib.RS", "Документ", "img_0042.jpg", "h"];
+    let n = SMALL as u64 + 3000;
+    for k in 0..n {
+        let name = format!("{}{}{}", stems[(k % 12) as usize], k % 97, if k % 5 == 0 { ".h" } else { "" });
+        put(&mut v, 100 + k, 5, &name, (k * 7919) % 5000, (k % 50) as i64, k % 11 == 0);
+    }
+    v.commit();
+    let e = Engine { volumes: vec![v], version: 1 };
+    let v = &e.volumes[0];
+    for text in [".", "r", "rep", "report-1", "докум", "ext:rs;h", "ext:", "ext:gz", "!ext:h", "size:>1k", "!size:<2k", "!dm:today", "rep size:<3k", "*.jpg", "img* !size:>4k", "regex:^rep\\d"] {
+        let q = parse(text, clock()).unwrap();
+        let expected: Vec<u32> = (0..v.len() as u32)
+            .filter(|&i| v.listed(i))
+            .filter(|&i| {
+                let plain = crate::query::Plain { name: v.name(i), lower_name: v.lower_name(i), path: b"", lower_path: b"", size: v.sizes[i as usize], modified: v.modified[i as usize], dir: v.is_dir(i) };
+                q.matches(&plain, &|_| false)
+            })
+            .collect();
+        for key in [SortKey::Name, SortKey::Size] {
+            for descending in [false, true] {
+                let mut rs = e.search(&q, Sort { key, descending }, &|| false).unwrap();
+                assert_eq!(rs.total, expected.len() as u64, "{text}");
+                rs.ensure(&e, expected.len());
+                let mut got: Vec<u32> = rs.rows.iter().map(|&(_, i)| i).collect();
+                let rank = &v.ranks[order_of(key) as usize];
+                assert!(got.windows(2).all(|w| (rank[w[0] as usize] < rank[w[1] as usize]) != descending), "{text} {key:?} {descending} order");
+                got.sort_unstable();
+                assert_eq!(got, expected, "{text} {key:?} {descending}");
+            }
+        }
+    }
+}
