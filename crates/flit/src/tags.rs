@@ -57,7 +57,7 @@ impl Book {
         let bytes = file.as_ref().and_then(|f| std::fs::read(f).ok());
         let store = match bytes.as_deref().map(postcard::from_bytes::<TagFile>) {
             None => TagStore::default(),
-            Some(Ok(t)) if t.version == FILE_VERSION => t.store,
+            Some(Ok(t)) if t.version == FILE_VERSION && t.store.tags.len() <= tags::MAX_TAGS => t.store,
             Some(_) => {
                 if let Some(f) = &file {
                     tracing::warn!("{} is not readable; it is kept as tags.bin.bad", f.display());

@@ -351,7 +351,10 @@ impl App {
         if let Some(j) = self.job_mut(id) {
             j.asking = true;
         }
-        let ask = Ask::Conflict { id, conflict };
+        self.push_ask(Ask::Conflict { id, conflict });
+    }
+
+    fn push_ask(&mut self, ask: Ask) {
         if self.jobs.asks.is_empty() {
             self.jobs.all = false;
             self.jobs.sel = ask.first_button();
@@ -362,7 +365,12 @@ impl App {
     }
 
     pub(super) fn job_done(&mut self, id: OpId, error: Option<&str>, now: Instant) {
-        self.jobs.asks.retain(|a| !matches!(a, Ask::Conflict { id: k, .. } if *k == id));
+        let asked = |a: &Ask| matches!(a, Ask::Conflict { id: k, .. } if *k == id);
+        if self.jobs.asks.front().is_some_and(asked) {
+            self.jobs.all = false;
+            self.jobs.sel = self.jobs.asks.iter().find(|a| !asked(a)).map_or(0, Ask::first_button);
+        }
+        self.jobs.asks.retain(|a| !asked(a));
         let Some(j) = self.job_mut(id) else { return };
         j.state = match error {
             _ if j.ctl.is_cancelled() => JobState::Cancelled,
@@ -383,27 +391,15 @@ impl App {
     }
 
     pub(super) fn ask_confirm_on(&mut self, provider: ProviderId, op: FileOp) {
-        if self.jobs.asks.is_empty() {
-            self.jobs.all = false;
-        }
-        self.jobs.asks.push_back(Ask::Confirm(op, provider));
-        self.jobs.sel = 0;
-        self.layout();
-        self.dirty = true;
+        self.push_ask(Ask::Confirm(op, provider));
     }
 
     pub fn ask_replace_export(&mut self, path: FsPath, size: u64, modified: i64) {
-        self.jobs.asks.push_back(Ask::ReplaceExport { path, existing: crate::listing::Meta { size, modified, ..Default::default() } });
-        self.jobs.sel = 0;
-        self.layout();
-        self.dirty = true;
+        self.push_ask(Ask::ReplaceExport { path, existing: crate::listing::Meta { size, modified, ..Default::default() } });
     }
 
     pub fn offer_restore(&mut self) {
-        self.jobs.asks.push_back(Ask::Restore);
-        self.jobs.sel = 0;
-        self.layout();
-        self.dirty = true;
+        self.push_ask(Ask::Restore);
     }
 
     pub fn jobs_open(&self) -> bool {

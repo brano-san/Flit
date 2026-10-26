@@ -230,3 +230,30 @@ fn titles_name_the_operation_and_its_items() {
     assert_eq!(job_dest(&wsl, &FileOp::Trash(vec![p("/home/a")])), None);
     assert_eq!(job_dest(&wsl, &FileOp::Copy { items: vec![p("/home/a")], dest: p("/tmp") }), Some(Location::parse("wsl://Ubuntu/tmp").unwrap()));
 }
+
+#[test]
+fn a_dialog_queued_behind_a_conflict_keeps_the_conflicts_default_button() {
+    let mut app = app_at(r"C:\x");
+    let (id, ctl) = paste(&mut app);
+    let waiting = asked(&mut app, id, &ctl);
+    app.ask_confirm(FileOp::Trash(vec![p(r"C:\x\a.txt")]));
+    app.offer_restore();
+    assert_eq!((app.asking(), app.jobs.sel), (Some("conflict"), 1));
+    key(&mut app, Key::Enter);
+    assert_eq!(waiting.join().unwrap(), Some(Resolve::KeepBoth));
+    assert_eq!((app.asking(), app.jobs.sel), (Some("confirm"), 0));
+}
+
+#[test]
+fn a_finished_job_drops_its_conflict_and_resets_the_default_button() {
+    let mut app = app_at(r"C:\x");
+    let (id, ctl) = paste(&mut app);
+    let waiting = asked(&mut app, id, &ctl);
+    app.offer_restore();
+    key(&mut app, Key::Right);
+    key(&mut app, Key::Right);
+    ctl.cancel();
+    finish(&mut app, id, Some("cancelled"));
+    assert_eq!((app.asking(), app.jobs.sel), (Some("restore"), 0));
+    drop(waiting);
+}

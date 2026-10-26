@@ -125,6 +125,17 @@ fn tags_are_assigned_cleared_deleted_and_survive_a_restart() {
 }
 
 #[test]
+fn a_store_with_more_tags_than_a_mask_holds_is_set_aside() {
+    let f = TempFile::new("toomany");
+    let tags = (0..70).map(|i| flit_core::tags::Tag { name: format!("t{i}"), color: 0 }).collect();
+    let bytes = postcard::to_stdvec(&TagFile { version: FILE_VERSION, store: TagStore { tags, files: Default::default() } }).unwrap();
+    std::fs::create_dir_all(f.0.parent().unwrap()).unwrap();
+    std::fs::write(&f.0, bytes).unwrap();
+    let b = book(Some(f.0.clone()));
+    assert_eq!((b.store.clone(), b.store.all()), (TagStore::default(), 1));
+}
+
+#[test]
 fn moves_and_copies_keep_tags_and_rechecks_follow_the_disk() {
     for p in [r"c:\t\dir", r"c:\t\dir\in.txt", r"c:\t\one.txt", r"c:\t\two.txt", r"c:\t\gone.txt"] {
         create(p);
