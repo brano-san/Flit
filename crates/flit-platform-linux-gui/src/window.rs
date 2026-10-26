@@ -1,7 +1,7 @@
 use crate::input::{self, Clicks};
 use flit_core::input::{CursorIcon, Event, HitArea, MouseButton};
 use flit_core::render::Rect;
-use flit_core::ui::ShellMenu;
+use flit_core::ui::{drop_effect, DragEvent, ShellMenu};
 use flit_core::FsPath;
 use flit_platform::{Placement, PlatformError, Waker, Window, WindowHandler, WindowId, WindowOptions, WindowSystem};
 use std::cell::{Cell, RefCell};
@@ -11,11 +11,11 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
-use winit::data_transfer::{DataTransferSendBuilder, TypeHint};
+use winit::data_transfer::{DataTransferId, DataTransferSendBuilder, TypeHint};
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, Ime, WindowEvent};
 use winit::event_loop::run_on_demand::EventLoopExtRunOnDemand;
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy, OwnedDisplayHandle};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, DndAction, EventLoop, EventLoopProxy, OwnedDisplayHandle};
 use winit::keyboard::ModifiersState;
 use winit::platform::wayland::{ActiveEventLoopExtWayland, WindowAttributesWayland};
 use winit::platform::startup_notify::WindowExtStartupNotify;
@@ -86,6 +86,7 @@ enum Command {
     Paste(WindowId),
     Copy(String),
     CopyFiles(String),
+    Drag(winit::window::WindowId, String),
 }
 
 type Commands = Rc<RefCell<Vec<Command>>>;
@@ -265,7 +266,9 @@ impl Window for LinuxWindow {
 
     fn properties(&self, _paths: Vec<FsPath>) {}
 
-    fn start_drag(&self, _paths: Vec<FsPath>) {}
+    fn start_drag(&self, paths: Vec<FsPath>) {
+        self.push(Command::Drag(self.raw.id(), crate::shell::uri_list(&paths)));
+    }
 
     fn set_timer(&self, ms: u32) {
         self.timer.set(Some(Instant::now() + Duration::from_millis(ms.into())));
@@ -349,7 +352,7 @@ impl WindowSystem for LinuxWindows {
 
     fn run<H: WindowHandler<Self>>(mut self, first: WindowOptions, handler: H) -> Result<(), PlatformError> {
         let commands: Commands = Rc::new(RefCell::new(vec![Command::Open(first)]));
-        let mut app = Loop { handler, nodes: Vec::new(), commands, pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None };
+        let mut app = Loop { handler, nodes: Vec::new(), commands, pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None };
         self.event_loop.run_app_on_demand(&mut app).map_err(|e| PlatformError::new(-1, format!("event loop: {e}")))?;
         app.error.map_or(Ok(()), Err)
     }
@@ -369,6 +372,7 @@ struct Loop<H> {
     mods: ModifiersState,
     started: bool,
     error: Option<PlatformError>,
+    incoming: Option<Incoming>,
 }
 
 fn platform_attributes(el: &dyn ActiveEventLoop) -> Box<dyn PlatformWindowAttributes> {
@@ -424,6 +428,31 @@ fn copy(el: &dyn ActiveEventLoop, text: String) {
     }
 }
 
+fn drag_out(el: &dyn ActiveEventLoop, source: winit::window::WindowId, list: String) {
+    let data = DataTransferSendBuilder::new(list).with_type(TypeHint::UriList, |list: &String, _| Some(list.clone())).build();
+    if let Err(e) = el.start_drag(source, data, &[DndAction::Copy, DndAction::Move], None) {
+        tracing::info!("cannot drag files out of Flit here: {e}");
+    }
+}
+
+struct Incoming {
+    id: DataTransferId,
+    at: (f32, f32),
+    entered: bool,
+    dropped: bool,
+}
+
+fn dnd_actions(effect: u32) -> Vec<DndAction> {
+    let mut out = Vec::new();
+    if effect & drop_effect::COPY != 0 {
+        out.push(DndAction::Copy);
+    }
+    if effect & drop_effect::MOVE != 0 {
+        out.push(DndAction::Move);
+    }
+    out
+}
+
 fn copy_files(el: &dyn ActiveEventLoop, list: String) {
     let data = DataTransferSendBuilder::new(list.clone())
         .with_type(TypeHint::UriList, |list: &String, _| Some(list.clone()))
@@ -456,6 +485,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                     Command::Paste(id) => paste(el, id),
                     Command::Copy(text) => copy(el, text),
                     Command::CopyFiles(list) => copy_files(el, list),
+                    Command::Drag(source, list) => drag_out(el, source, list),
                 }
             }
         }
@@ -527,6 +557,61 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             (HitArea::Caption, MouseButton::Right) => w.raw.show_window_menu(position.into()),
             _ => handler.event(w, Event::MouseDown { x, y, button, clicks }),
         }
+    }
+
+    fn drag_in(&mut self, el: &dyn ActiveEventLoop, i: usize, event: WindowEvent) -> Option<WindowEvent> {
+        let (handler, w, mods) = (&mut self.handler, &self.nodes[i].window, input::mods(self.mods));
+        let all = drop_effect::COPY | drop_effect::MOVE;
+        let mut deliver = |ev: DragEvent, id: DataTransferId| {
+            let effect = handler.drag(w, ev).effect;
+            let _ = el.set_valid_dnd_actions(id, &dnd_actions(effect));
+        };
+        match event {
+            WindowEvent::DragEntered { id, position } => {
+                let at = position.map_or((0.0, 0.0), |p| (p.x as f32, p.y as f32));
+                self.incoming = Some(Incoming { id, at, entered: false, dropped: false });
+                let _ = el.set_valid_dnd_actions(id, &[DndAction::Copy, DndAction::Move]);
+                if let Err(e) = el.fetch_data_transfer(id, &TypeHint::UriList) {
+                    tracing::debug!("the dragged data has no file list: {e}");
+                }
+            }
+            WindowEvent::DataTransferReceived { id, value, .. } if self.incoming.as_ref().is_some_and(|d| d.id == id && !d.entered) => {
+                let d = self.incoming.as_mut()?;
+                let paths = value.try_as_bytes().map(|b| crate::shell::parse_file_list(&b).0).unwrap_or_default();
+                d.entered = true;
+                let (at, dropped) = (d.at, d.dropped);
+                deliver(DragEvent::Enter { paths, x: at.0, y: at.1, mods, allowed: all }, id);
+                if dropped {
+                    deliver(DragEvent::Drop { x: at.0, y: at.1, mods, allowed: all }, id);
+                    self.incoming = None;
+                }
+            }
+            WindowEvent::DragPosition { id, position, .. } => {
+                let d = self.incoming.as_mut().filter(|d| d.id == id)?;
+                d.at = (position.x as f32, position.y as f32);
+                if d.entered {
+                    let at = d.at;
+                    deliver(DragEvent::Over { x: at.0, y: at.1, mods, allowed: all }, id);
+                }
+            }
+            WindowEvent::DragDropped { id, .. } => {
+                let d = self.incoming.as_mut().filter(|d| d.id == id)?;
+                if !d.entered {
+                    d.dropped = true;
+                    return None;
+                }
+                let at = d.at;
+                self.incoming = None;
+                deliver(DragEvent::Drop { x: at.0, y: at.1, mods, allowed: all }, id);
+            }
+            WindowEvent::DragLeft { id } => {
+                if self.incoming.take().is_some_and(|d| d.id == id && d.entered) {
+                    deliver(DragEvent::Leave, id);
+                }
+            }
+            other => return Some(other),
+        }
+        None
     }
 
     fn dispatch(&mut self, i: usize, event: WindowEvent) {
@@ -626,7 +711,9 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
 
     fn window_event(&mut self, el: &dyn ActiveEventLoop, id: winit::window::WindowId, event: WindowEvent) {
         if let Some(i) = self.nodes.iter().position(|n| n.window.raw.id() == id) {
-            self.dispatch(i, event);
+            if let Some(event) = self.drag_in(el, i, event) {
+                self.dispatch(i, event);
+            }
         }
         self.settle(el);
     }
