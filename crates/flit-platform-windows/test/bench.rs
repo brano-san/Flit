@@ -482,7 +482,7 @@ fn bench_first_drag() {
     use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
     use windows::Win32::System::Ole::{OleInitialize, DROPEFFECT_MOVE};
     use windows::Win32::UI::Shell::{IDragSourceHelper, IDropTargetHelper, CLSID_DragDropHelper};
-    use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, WINDOW_EX_STYLE, WS_OVERLAPPEDWINDOW};
+    use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW};
     let d = Dir::temp("firstdrag");
     std::fs::create_dir(d.0.join("dst")).unwrap();
     let wallpaper = Path::new(r"C:\Windows\Web\Wallpaper\Windows\img0.jpg");
@@ -493,7 +493,7 @@ fn bench_first_drag() {
     let files: Vec<FsPath> = (0..4).map(|k| d.file(&format!("f{k}.txt"), 10)).collect();
     timed("OleInitialize", || unsafe { OleInitialize(None).unwrap() });
     let target: IDropTargetHelper = timed("CoCreateInstance(DragDropHelper) first", || unsafe { CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER).unwrap() });
-    let hwnd = unsafe { CreateWindowExW(WINDOW_EX_STYLE(0), w!("STATIC"), w!("flit-bench"), WS_OVERLAPPEDWINDOW, 0, 0, 200, 200, None, None, None, None).unwrap() };
+    let hwnd = unsafe { CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, w!("STATIC"), w!("flit-bench"), WS_OVERLAPPEDWINDOW, -32000, -32000, 200, 200, None, None, None, None).unwrap() };
     let data = |f: &FsPath| -> IDataObject { Pidls::parse(std::slice::from_ref(f)).unwrap().ui_object(hwnd).unwrap() };
     let source_image = |label: &str, obj: &IDataObject| {
         timed(label, || unsafe {
