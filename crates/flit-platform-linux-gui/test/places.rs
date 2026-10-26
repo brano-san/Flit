@@ -6,6 +6,29 @@ use flit_core::{FsPath, Listing};
 use flit_platform_linux::mounts::parse;
 use std::os::unix::ffi::OsStrExt;
 
+#[test]
+fn recent_files_come_from_the_xbel_newest_first_existing_and_unique() {
+    let xbel = br#"<?xml version="1.0"?>
+<xbel version="1.0">
+  <bookmark href="file:///home/ann/old.txt" added="2020-01-01T00:00:00Z" modified="2020-01-01T00:00:00Z" visited="2020-01-01T00:00:00Z"/>
+  <bookmark href="file:///home/ann/Tom%20&amp;%20Jerry" modified="2024-05-01T10:00:00.123456Z"><info/></bookmark>
+  <bookmark href="file:///home/ann/gone.txt" modified="2025-01-01T00:00:00Z"/>
+  <bookmark href="https://example.com/x" modified="2025-02-01T00:00:00Z"/>
+  <bookmark href="file:///home/ann/old.txt" modified="2019-01-01T00:00:00Z"/>
+</xbel>"#;
+    let exists = |p: &Path| match p.as_os_str().as_bytes() {
+        b"/home/ann/old.txt" => Some(false),
+        b"/home/ann/Tom & Jerry" => Some(true),
+        _ => None,
+    };
+    let got = recent_from(xbel, 10, exists);
+    let names: Vec<(&str, bool)> = got.iter().map(|r| (r.name.as_str(), r.dir)).collect();
+    assert_eq!(names, [("Tom & Jerry", true), ("old.txt", false)]);
+    assert_eq!(got[0].at, 1_714_557_600 * 10_000_000 + 116_444_736_000_000_000);
+    assert_eq!(recent_from(xbel, 1, exists).len(), 1);
+    assert!(recent_from(b"", 5, exists).is_empty());
+}
+
 fn listing(fill: impl FnOnce(&mut ListingBuilder<'_>)) -> Listing {
     let mut go = |_: &ListingBuilder<'_>| true;
     let mut b = ListingBuilder::new(CaseMode::Sensitive, &mut go);

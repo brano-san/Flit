@@ -21,6 +21,9 @@ winit = { version = "=0.31.0-beta.4", default-features = false, features = ["way
 harfrust = "0.15"
 swash = { version = "0.2.10", default-features = false, features = ["std", "render"] }
 unicode-bidi = { version = "0.3.18", default-features = false, features = ["hardcoded-data", "std"] }
+md-5.workspace = true
+png = "0.18"
+jpeg-decoder = "0.3"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 png = "0.18"

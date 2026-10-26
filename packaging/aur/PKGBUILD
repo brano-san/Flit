@@ -1,0 +1,37 @@
+pkgname=flit
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Fast GPU-drawn file manager"
+arch=('x86_64' 'aarch64')
+url="https://github.com/brano-san/Flit"
+license=('MIT')
+depends=('glibc' 'libglvnd' 'libxkbcommon' 'fontconfig')
+optdepends=('libxkbcommon-x11: X11 sessions' 'wayland: Wayland sessions' 'xdg-utils: opening files' 'shared-mime-info: file type names')
+makedepends=('cargo')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
+_srcdir=Flit-$pkgver
+sha256sums=('SKIP')
+
+prepare() {
+    cd "$_srcdir"
+    cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+    cd "$_srcdir"
+    cargo build --frozen --release -p flit
+}
+
+check() {
+    cd "$_srcdir"
+    cargo test --frozen --release -p flit-core -p flit-search -p flit-platform-linux
+}
+
+package() {
+    cd "$_srcdir"
+    install -Dm755 target/release/flit "$pkgdir/usr/bin/flit"
+    install -Dm644 assets/flit.desktop "$pkgdir/usr/share/applications/flit.desktop"
+    install -d "$pkgdir/usr/share/icons"
+    cp -r assets/icon/hicolor "$pkgdir/usr/share/icons/"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

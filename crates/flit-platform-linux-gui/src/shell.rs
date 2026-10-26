@@ -123,8 +123,13 @@ impl Shell for LinuxShell {
         None
     }
 
-    fn type_name(&mut self, _: &[u8]) -> Option<String> {
-        None
+    fn thumbnail(&mut self, req: &IconRequest) -> Option<Bitmap> {
+        let cache = crate::xdg::cache_dir().and_then(|d| d.parent().map(|p| p.join("thumbnails")));
+        crate::thumb::thumbnail(host(&req.path)?, req.size, cache)
+    }
+
+    fn type_name(&mut self, ext: &[u8]) -> Option<String> {
+        crate::mime::type_name(ext)
     }
 
     fn open(&mut self, path: &FsPath) -> Result<(), PlatformError> {

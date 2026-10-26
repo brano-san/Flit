@@ -751,6 +751,27 @@ sc.exe start flit-indexd
 - всех имён жёстких ссылок: в индексе одно имя файла;
 - быстрого первого широкого запроса у клиента службы: права проверяются по одной папке, и первый пустой запрос на томе с сотнями тысяч папок может занять секунды (дальше ответы берутся из кэша на 5 минут).
 
+## Linux
+
+Окно Wayland или X11 (winit), отрисовка OpenGL ES 3.0 через EGL, текст harfrust и swash. Нужны glibc 2.35+, `libegl1`, `libgles2`, `libxkbcommon0`, `libfontconfig1`, а для X11 ещё `libxkbcommon-x11-0`.
+
+Сборка и пакеты (tar.gz с `install.sh` в `~/.local`, а при установленных `cargo-deb` и `cargo-generate-rpm` ещё `.deb` и `.rpm`) складываются в `target/packages`; бинарник собирается профилем `dist` без отладочной информации:
+
+```
+bash scripts/package-linux.sh
+tar xzf target/packages/flit-*-linux.tar.gz && sh flit-*-linux/install.sh
+sh flit-*-linux/install.sh --uninstall
+```
+
+PKGBUILD для AUR лежит в `packaging/aur`. Метрики снимаются без видимых окон под Xvfb или `weston --backend=headless` (`FLIT_SERVER=weston`), `HOME` и `XDG_*` подменяются временным каталогом:
+
+```
+bash scripts/metrics.sh
+LIBGL_ALWAYS_SOFTWARE=1 FLIT_SERVER=weston FLIT_RUNS=3 bash scripts/metrics.sh
+```
+
+Тесты `flit-platform-linux-gui` сами переносят `HOME` и `XDG_RUNTIME_DIR` в `/tmp/flit-test-<uid>`, сбрасывают `XDG_*_HOME` и не подключаются к дисплею WSLg.
+
 ## Тесты
 
 ```
@@ -776,7 +797,7 @@ wsl.exe -d Ubuntu-22.04 --exec /mnt/d/Flit/target/x86_64-unknown-linux-musl/rele
 cargo test -p flit-platform-windows --release --lib wsl:: -- --ignored --nocapture --test-threads=1
 ```
 
-CI (`.github/workflows/ci.yml`): Windows — release-сборка со встроенным агентом WSL (цель `x86_64-unknown-linux-musl`), тесты и clippy; Linux — `cargo check --workspace`, тесты ОС-независимых крейтов и `flit-platform-linux`; отдельная проверка правила зависимостей (см. [ARCHITECTURE.md](ARCHITECTURE.md)).
+CI (`.github/workflows/ci.yml`): Windows — release-сборка со встроенным агентом WSL (цель `x86_64-unknown-linux-musl`), тесты и clippy; Linux — `cargo check --workspace`, тесты ОС-независимых крейтов и `flit-platform-linux`; `linux-gui` на ubuntu-22.04 — clippy и тесты Linux-крейтов и `flit` на llvmpipe, проверка первого кадра под Xvfb и weston headless через `scripts/metrics.sh` и сборка tar.gz; отдельная проверка правила зависимостей (см. [ARCHITECTURE.md](ARCHITECTURE.md)).
 
 ## Бенчмарки
 

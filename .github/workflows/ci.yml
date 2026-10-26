@@ -30,6 +30,31 @@ jobs:
       - run: cargo check --workspace
       - run: cargo test -p flit-core -p flit-search -p flit-platform -p flit-proto -p flit-platform-linux
 
+  linux-gui:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxkbcommon-x11-0 libegl1 libgles2 libgl1-mesa-dri xvfb weston imagemagick
+      - run: cargo clippy --release -p flit -p flit-platform-linux -p flit-platform-linux-gui --all-targets -- -D warnings
+      - run: cargo test --release -p flit -p flit-platform-linux -p flit-platform-linux-gui
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+      - run: FLIT_RUNS=1 bash scripts/metrics.sh
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+      - run: FLIT_RUNS=1 FLIT_SERVER=weston bash scripts/metrics.sh
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+      - run: bash scripts/package-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flit-linux
+          path: target/dist/*.tar.gz
+
   deps-isolation:
     runs-on: ubuntu-latest
     steps:
