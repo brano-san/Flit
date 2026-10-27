@@ -259,9 +259,10 @@ fn chevrons_list_subfolders_and_the_ellipsis_lists_hidden_crumbs() {
     frame(&mut app);
     let n = app.tab().crumbs.len();
     assert_eq!(app.addr.chevrons.len(), n);
-    let c = app.addr.chevrons[n - 1];
+    assert_eq!(app.addr.chevrons[n - 1].w, 0.0, "the last crumb in the bar has no chevron after it");
+    let c = app.addr.chevrons[n - 2];
     assert!(c.w > 0.0);
-    assert_eq!(app.hit(c.x + c.w / 2.0, c.y + c.h / 2.0), Hit::CrumbMenu(n - 1));
+    assert_eq!(app.hit(c.x + c.w / 2.0, c.y + c.h / 2.0), Hit::CrumbMenu(n - 2));
     app.crumb_menu(n - 1);
     assert_eq!(menu(&mut app), [("inner".to_owned(), false)]);
     app.crumb_menu(n - 2);

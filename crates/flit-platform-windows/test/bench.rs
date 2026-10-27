@@ -876,3 +876,17 @@ fn bench_bulk_delete() {
     bulk_delete("delete", FileOp::Delete, 1250);
     bulk_delete("trash", FileOp::Trash, 1250);
 }
+
+#[test]
+fn place_icons_arrive_premultiplied_so_their_edges_stay_dark() {
+    let mut sh = ShellCom::new().unwrap();
+    let home = std::env::var("USERPROFILE").unwrap();
+    for sub in ["Desktop", "Downloads", "Music"] {
+        for size in [16u32, 20, 32] {
+            let r = IconRequest { key: 0, kind: IconKind::Place, path: FsPath::parse(&format!("{home}\\{sub}")).unwrap(), size, gen: 0, row: 0 };
+            let b = sh.icon(&r).unwrap();
+            let over = b.rgba.chunks_exact(4).filter(|px| px[0].max(px[1]).max(px[2]) > px[3]).count();
+            assert_eq!(over, 0, "{sub} at {size} px has {over} pixels brighter than their alpha");
+        }
+    }
+}

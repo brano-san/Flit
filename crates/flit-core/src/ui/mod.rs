@@ -2080,7 +2080,7 @@ impl App {
         let widths: Vec<f32> = crumbs.iter().map(|(label, _)| g.measure(label, font) + 2.0 * gap).collect();
         let ov_w = g.measure(address::OVERFLOW, font) + 2.0 * gap;
         let n = widths.len();
-        let fits = |first: usize, end: usize| widths[first..end].iter().sum::<f32>() + chev_w * (end - first) as f32 + if first > 0 { ov_w } else { 0.0 } <= inner.w;
+        let fits = |first: usize, end: usize| widths[first..end].iter().sum::<f32>() + chev_w * (end - first).saturating_sub(1) as f32 + if first > 0 { ov_w } else { 0.0 } <= inner.w;
         let mut end = n;
         while end > real && !fits(0, end) {
             end -= 1;
@@ -2120,6 +2120,9 @@ impl App {
             let last = i + 1 == real;
             g.text(x + gap, baseline, &crumbs[i].0, font, if last { t.text } else { t.text_dim }, inner.right() - x);
             x += w;
+            if i + 1 == end {
+                break;
+            }
             let chev = Rect::new(x, inner.y + s3, chev_w, inner.h - s6);
             if self.hover == Hit::CrumbMenu(i) {
                 g.dl.round_rect(chev, t.button_hover, s3);

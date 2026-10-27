@@ -174,7 +174,7 @@ impl ShellCom {
             if !rgba.chunks_exact(4).any(|p| p[3] != 0) {
                 rgba.chunks_exact_mut(4).for_each(|p| p[3] = 255);
             }
-            bgra_to_rgba(&mut rgba, false);
+            bgra_to_rgba(&mut rgba, true);
             Some(fit(Bitmap { width, height, rgba }, size))
         }
     }

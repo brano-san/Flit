@@ -29,6 +29,7 @@ const COMPACT_HEADER_H: f32 = 12.0;
 const PIN_W: f32 = 22.0;
 const SECTION_GAP: f32 = 10.0;
 const ITEM_INDENT: f32 = 18.0;
+const PLACE_ICON: f32 = 20.0;
 const HEADER_TITLE_X: f32 = 28.0;
 const BAR_MARGIN: f32 = 12.0;
 const MAX_LIST: usize = 256;
@@ -1102,7 +1103,7 @@ impl App {
     }
 
     fn place_icon<B: TextBackend>(&self, g: &mut Gfx<B>, it: &Item, r: Rect, requests: &mut Vec<IconRequest>) -> bool {
-        let px = self.s(16.0);
+        let px = self.s(PLACE_ICON);
         let Some((key, kind, path)) = place_icon_request(it, &self.nav.sidebar.places, px as u32) else { return false };
         if g.image(key, Rect::new((r.x + (r.w - px) / 2.0).round(), (r.y + (r.h - px) / 2.0).round(), px, px)) {
             return true;
