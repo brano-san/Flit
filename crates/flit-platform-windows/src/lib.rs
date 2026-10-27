@@ -13,6 +13,7 @@ mod engine;
 mod fileops;
 mod fs;
 mod install;
+mod integration;
 mod instance;
 mod library;
 mod mft;
@@ -208,6 +209,10 @@ impl Platform for Windows {
 
     fn ui_language() -> String {
         places::ui_language()
+    }
+
+    fn integrate(what: flit_platform::Integration, on: bool) -> Result<(), PlatformError> {
+        integration::integrate(what, on)
     }
 
     fn watch_wsl(changed: Box<dyn Fn() + Send>) {

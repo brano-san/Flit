@@ -15,6 +15,7 @@ pub mod library;
 pub mod limits;
 pub mod listing;
 pub mod location;
+pub mod mimeapps;
 pub mod name;
 pub mod nav;
 pub mod open;

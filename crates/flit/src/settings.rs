@@ -2,7 +2,7 @@ use crate::thumbs::ThumbCache;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use flit_core::ui::settings::{self, Doc};
 use flit_core::ui::{Value, SETTINGS};
-use flit_platform::{Platform, Wake};
+use flit_platform::{Integration, Platform, PlatformError, Wake};
 use serde_json::{Map, Value as Json};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -16,6 +16,7 @@ pub enum Job {
     Import(PathBuf),
     CacheSize,
     CacheLimit(u32),
+    Integrate(Integration, bool),
 }
 
 pub enum Reply {
@@ -25,7 +26,10 @@ pub enum Reply {
     Exported(Result<PathBuf, String>),
     ExportExists { path: PathBuf, size: u64, modified: i64 },
     CacheUsed(u64),
+    IntegrationFailed(Integration, bool, String),
 }
+
+pub type Integrate = fn(Integration, bool) -> Result<(), PlatformError>;
 
 pub fn file<P: Platform>() -> Option<PathBuf> {
     P::config_dir().map(|d| d.join("settings.json"))
@@ -65,7 +69,7 @@ fn locked(c: &Mutex<ThumbCache>) -> std::sync::MutexGuard<'_, ThumbCache> {
     c.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn work(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>>, first: String, jobs: Receiver<Job>, replies: Sender<Reply>, wake: Wake) {
+fn work(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>>, integrate: Option<Integrate>, first: String, jobs: Receiver<Job>, replies: Sender<Reply>, wake: Wake) {
     let mut last = first;
     let reply = |r: Reply| {
         let _ = replies.send(r);
@@ -105,6 +109,12 @@ fn work(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>>, first: Str
                         reply(Reply::CacheUsed(used));
                     }
                 }
+                Job::Integrate(what, on) => {
+                    if let Some(Err(e)) = integrate.map(|f| f(what, on)) {
+                        tracing::warn!("cannot turn {what:?} {}: {e:?}", if on { "on" } else { "off" });
+                        reply(Reply::IntegrationFailed(what, on, e.message));
+                    }
+                }
                 Job::CacheLimit(mb) => {
                     if let Some(c) = &cache {
                         locked(c).set_limit(mb);
@@ -125,16 +135,17 @@ pub struct Settings {
 }
 
 impl Settings {
-    pub fn start<P: Platform>(file: Option<PathBuf>, text: Option<String>, cache: Option<Arc<Mutex<ThumbCache>>>, wake: Wake) -> Self {
+    pub fn start<P: Platform>(file: Option<PathBuf>, text: Option<String>, cache: Option<Arc<Mutex<ThumbCache>>>, integrate: bool, wake: Wake) -> Self {
         let (jobs, rx) = unbounded::<Job>();
         let (tx, replies) = unbounded::<Reply>();
         let (path, first) = (file, text.unwrap_or_default());
+        let integrate: Option<Integrate> = integrate.then_some(P::integrate);
         let thread = std::thread::Builder::new()
             .name("flit-settings".into())
             .spawn(move || {
                 let _ = tx.send(Reply::System { os: P::os_version(), dates: P::date_patterns() });
                 wake();
-                work(path, cache, first, rx, tx, wake)
+                work(path, cache, integrate, first, rx, tx, wake)
             })
             .ok();
         Self { values: Vec::new(), unknown: Map::new(), replies, read_only: false, jobs: thread.as_ref().map(|_| jobs), thread }
@@ -162,6 +173,9 @@ impl Settings {
             if let Some(mb) = limit {
                 self.send(Job::CacheLimit(mb));
             }
+        }
+        for (what, on) in integration_changes(&self.values, &values) {
+            self.send(Job::Integrate(what, on));
         }
         if let Some(level) = log_level(&values) {
             crate::logs::set_level(level);
@@ -197,6 +211,25 @@ impl Settings {
 pub fn cache_limit(values: &[Value]) -> Option<u32> {
     match values.get(settings::index("advanced.thumb_cache_mb")?) {
         Some(Value::Number(n)) => u32::try_from(*n).ok(),
+        _ => None,
+    }
+}
+
+pub fn integration_changes(before: &[Value], now: &[Value]) -> Vec<(Integration, bool)> {
+    let mut out = Vec::new();
+    for what in Integration::ALL {
+        match (flag(before, what.setting()), flag(now, what.setting())) {
+            (Some(was), Some(on)) if was != on => out.push((what, on)),
+            (None, Some(true)) => out.push((what, true)),
+            _ => {}
+        }
+    }
+    out
+}
+
+pub fn flag(values: &[Value], id: &str) -> Option<bool> {
+    match values.get(settings::index(id)?) {
+        Some(Value::Bool(b)) => Some(*b),
         _ => None,
     }
 }

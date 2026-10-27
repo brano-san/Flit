@@ -19,7 +19,7 @@ fn worker(path: &Path, first: &str) -> (Sender<Job>, Receiver<Reply>, JoinHandle
     let (jobs, rx) = unbounded();
     let (tx, replies) = unbounded();
     let (path, first) = (path.to_path_buf(), first.to_owned());
-    let thread = std::thread::spawn(move || work(Some(path), None, first, rx, tx, Arc::new(|| {})));
+    let thread = std::thread::spawn(move || work(Some(path), None, None, first, rx, tx, Arc::new(|| {})));
     (jobs, replies, thread)
 }
 
@@ -96,7 +96,7 @@ fn the_file_is_written_only_when_it_is_missing_broken_incomplete_or_wrong() {
             write_atomic(&file, t.as_bytes()).unwrap();
         }
         let doc = text.as_deref().map(settings::parse).unwrap_or_default();
-        let mut s = Settings::start::<crate::P>(Some(file.clone()), text.clone(), None, Arc::new(|| {}));
+        let mut s = Settings::start::<crate::P>(Some(file.clone()), text.clone(), None, false, Arc::new(|| {}));
         s.adopt(&doc, defaults.clone());
         s.finish();
         let now = std::fs::read_to_string(&file).ok();
@@ -112,7 +112,7 @@ fn a_file_from_a_newer_flit_is_never_rewritten() {
     let text = "{\"schema\": 9, \"files.show_hidden\": true}".to_owned();
     write_atomic(&file, text.as_bytes()).unwrap();
     let doc = settings::parse(&text);
-    let mut s = Settings::start::<crate::P>(Some(file.clone()), Some(text.clone()), None, Arc::new(|| {}));
+    let mut s = Settings::start::<crate::P>(Some(file.clone()), Some(text.clone()), None, false, Arc::new(|| {}));
     s.adopt(&doc, settings::defaults().to_vec());
     s.save();
     s.finish();
@@ -124,7 +124,7 @@ fn a_file_from_a_newer_flit_is_never_rewritten() {
 fn unknown_keys_survive_a_rewrite_and_cache_limits_are_read() {
     let doc = settings::parse("{\"advanced.thumb_cache_mb\": 1200, \"theme.name\": \"Storm\"}");
     assert_eq!(thumb_cache_mb(&doc), Some(1200));
-    let mut s = Settings::start::<crate::P>(None, None, None, Arc::new(|| {}));
+    let mut s = Settings::start::<crate::P>(None, None, None, false, Arc::new(|| {}));
     s.adopt(&doc, settings::defaults().to_vec());
     assert!(s.text().contains("\"theme.name\": \"Storm\""));
     assert_eq!(cache_limit(&s.values), Some(500));
@@ -132,4 +132,45 @@ fn unknown_keys_survive_a_rewrite_and_cache_limits_are_read() {
     assert!(s.text().contains("\"theme.name\": \"Storm\""), "a broken file does not drop the unknown keys read before");
     s.finish();
     assert_eq!(thumb_cache_mb(&settings::parse("{\"advanced.thumb_cache_mb\": 1}")), None, "out of range values do not reach the cache");
+}
+
+fn with(id: &str, on: bool) -> Vec<Value> {
+    let mut v = settings::defaults().to_vec();
+    v[settings::index(id).unwrap()] = Value::Bool(on);
+    v
+}
+
+#[test]
+fn integration_runs_on_changes_and_reasserts_only_what_is_on_at_start() {
+    let (dm, verb) = (Integration::DefaultManager, Integration::OpenInFlit);
+    let off = settings::defaults().to_vec();
+    assert_eq!(integration_changes(&[], &off), []);
+    assert_eq!(integration_changes(&[], &with(dm.setting(), true)), [(dm, true)]);
+    assert_eq!(integration_changes(&off, &off), []);
+    assert_eq!(integration_changes(&off, &with(verb.setting(), true)), [(verb, true)]);
+    assert_eq!(integration_changes(&with(dm.setting(), true), &off), [(dm, false)]);
+}
+
+static CALLS: Mutex<Vec<(Integration, bool)>> = Mutex::new(Vec::new());
+
+fn fake(what: Integration, on: bool) -> Result<(), PlatformError> {
+    CALLS.lock().unwrap().push((what, on));
+    if on && what == Integration::OpenInFlit { Err(PlatformError::new(5, "access denied")) } else { Ok(()) }
+}
+
+#[test]
+fn the_worker_reports_integration_failures() {
+    let (jobs, rx) = unbounded();
+    let (tx, replies) = unbounded();
+    let thread = std::thread::spawn(move || work(None, None, Some(fake), String::new(), rx, tx, Arc::new(|| {})));
+    jobs.send(Job::Integrate(Integration::DefaultManager, true)).unwrap();
+    jobs.send(Job::Integrate(Integration::OpenInFlit, true)).unwrap();
+    drop(jobs);
+    thread.join().unwrap();
+    assert_eq!(*CALLS.lock().unwrap(), [(Integration::DefaultManager, true), (Integration::OpenInFlit, true)]);
+    match replies.try_recv() {
+        Ok(Reply::IntegrationFailed(Integration::OpenInFlit, true, e)) => assert_eq!(e, "access denied"),
+        _ => panic!("expected one failure"),
+    }
+    assert!(replies.try_recv().is_err());
 }

@@ -90,6 +90,8 @@ about = "Acerca de"
 "advanced.log_level" = "Qué registra el archivo de registro"
 "general.startup_pages" = "Páginas que se abren al iniciar"
 "advanced.thumb_cache_mb" = "Tamaño de la caché de miniaturas"
+"advanced.default_manager" = "Usar Flit como administrador de archivos predeterminado"
+"advanced.open_in_flit" = "«Abrir en Flit» en los diálogos Abrir/Guardar"
 "keys" = "Métodos abreviados de teclado"
 
 [help]
@@ -169,6 +171,8 @@ about = "Acerca de"
 "advanced.log_level" = "%LOCALAPPDATA%\\Flit\\logs; nunca el contenido de archivos ni contraseñas"
 "general.startup_pages" = "Se usa cuando Flit se inicia con páginas concretas: carpetas o la página Inicio, cada una en su propia pestaña"
 "advanced.thumb_cache_mb" = "Miniaturas guardadas en disco en %LOCALAPPDATA%\\Flit\\thumbs; las más antiguas se eliminan primero"
+"advanced.default_manager" = "Win+E y las carpetas abiertas desde el escritorio u otros programas se abren en Flit; el Panel de control y otras carpetas del sistema siguen abriéndose en el Explorador de archivos. Solo cambia la configuración de su propio usuario; la anterior se guarda y vuelve al desactivarlo. Desactívelo antes de eliminar Flit"
+"advanced.open_in_flit" = "Haga clic derecho en una carpeta o en un espacio vacío de cualquier diálogo Abrir/Guardar o del Explorador de archivos y elija «Abrir en Flit» para abrir esa carpeta aquí. Sustituir los diálogos exigiría cargar el código de Flit en cada uno de los demás programas, y Flit no lo hace. Al desactivarlo se quita el comando"
 "keys" = "Métodos abreviados distintos de los predeterminados, por id de comando"
 "area_color" = "Predeterminado sigue el color de fondo; el texto sobre un color personalizado se ajusta para seguir siendo legible"
 

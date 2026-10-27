@@ -37,6 +37,23 @@ pub enum Resolved {
     Unavailable,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Integration {
+    DefaultManager,
+    OpenInFlit,
+}
+
+impl Integration {
+    pub const ALL: [Integration; 2] = [Integration::DefaultManager, Integration::OpenInFlit];
+
+    pub fn setting(self) -> &'static str {
+        match self {
+            Integration::DefaultManager => flit_core::ui::settings::DEFAULT_MANAGER,
+            Integration::OpenInFlit => flit_core::ui::settings::OPEN_IN_FLIT,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PlatformError {
     pub code: i64,
@@ -425,6 +442,9 @@ pub trait Platform: 'static {
     }
     fn ui_language() -> String {
         String::new()
+    }
+    fn integrate(_what: Integration, _on: bool) -> Result<(), PlatformError> {
+        Err(PlatformError::unsupported("system integration"))
     }
     fn watch_wsl(_changed: Box<dyn Fn() + Send>) {}
     fn wsl_launcher(_distro: &str, _images: &AgentImages) -> Option<Box<dyn AgentLauncher>> {
