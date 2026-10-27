@@ -1034,7 +1034,7 @@ impl App {
                 continue;
             }
             let text_h = self.s(ROW_H);
-            let (icon_r, text_x) = item_parts(r, self.scale);
+            let (icon_r, text_x) = (item_icon(r, self.scale, it.usage.is_some()), item_parts(r, self.scale).1);
             if !self.place_icon(g, it, icon_r, &mut requests) {
                 centered(g, icon_r, it.glyph, icons, color);
             }
@@ -1126,6 +1126,11 @@ fn item_parts(r: Rect, scale: f32) -> (Rect, f32) {
     let s = |v: f32| (v * scale).round();
     let icon = Rect::new(r.x + s(ITEM_INDENT) + s(4.0), r.y, s(28.0), s(ROW_H));
     (icon, icon.right() + s(4.0))
+}
+
+fn item_icon(r: Rect, scale: f32, drive: bool) -> Rect {
+    let icon = item_parts(r, scale).0;
+    if drive { Rect::new(icon.x, r.y, icon.w, r.h) } else { icon }
 }
 
 fn place_icon_request(it: &Item, places: &Places, px: u32) -> Option<(u64, IconKind, FsPath)> {

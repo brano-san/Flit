@@ -397,6 +397,20 @@ fn items_are_indented_so_their_icons_line_up_with_the_header_titles() {
     }
 }
 
+#[test]
+fn drive_icons_center_on_the_whole_row_with_its_bar_and_other_icons_on_the_label() {
+    for scale in [1.0, 1.5] {
+        let mut app = App::new(Persisted::default(), Vec::new(), 0, false, scale, (1200, 900), Instant::now());
+        app.set_places(Arc::new(Places { drives: vec![drive('C')], recycle_bin: true, ..Default::default() }));
+        let sb = &app.nav.sidebar;
+        let tall = sb.rects.iter().copied().find(|r| r.h > (28.0 * scale).round()).expect("a drive row with a bar");
+        let icon = item_icon(tall, scale, true);
+        assert_eq!(icon.y + icon.h / 2.0, tall.y + tall.h / 2.0, "{scale}: the drive icon sits between its label and its bar");
+        let plain = sb.rects.iter().copied().find(|r| r.h <= (28.0 * scale).round()).unwrap();
+        assert_eq!(item_icon(plain, scale, false), item_parts(plain, scale).0);
+    }
+}
+
 fn drive_bars(app: &App) -> Vec<(Rect, Rect)> {
     let sb = &app.nav.sidebar;
     sb.items.iter().zip(&sb.rects).filter(|(it, _)| it.usage.is_some()).map(|(_, &r)| (r, app.drive_bar(r))).collect()
