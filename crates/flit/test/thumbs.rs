@@ -67,7 +67,7 @@ fn the_oldest_thumbnails_go_first_when_the_cache_outgrows_its_limit_and_clear_re
 }
 
 #[test]
-#[ignore]
+#[cfg_attr(debug_assertions, ignore)]
 fn bench_thumb_cache() {
     let d = temp("bench");
     let mut c = ThumbCache::new(d.0.clone(), 500);
@@ -84,10 +84,13 @@ fn bench_thumb_cache() {
         let mb = (side * side * 4) as f64 * n as f64 / 1e6;
         eprintln!("BENCH thumb cache {side}px put {n} ({mb:.1} MB)  {:>8.2} ms  {:>7.0} per s", put.as_secs_f64() * 1e3, n as f64 / put.as_secs_f64());
         eprintln!("BENCH thumb cache {side}px get {got}            {:>8.2} ms  {:>7.0} per s  {:.3} ms each", get.as_secs_f64() * 1e3, got as f64 / get.as_secs_f64(), get.as_secs_f64() * 1e3 / got as f64);
+        assert!(put / n as u32 <= std::time::Duration::from_millis(1), "{side}px put {:?} each", put / n as u32);
+        assert!(get / got as u32 <= std::time::Duration::from_micros(500), "{side}px get {:?} each", get / got as u32);
     }
     drop(c);
     let t = Instant::now();
     let mut c = ThumbCache::new(d.0.clone(), 500);
     assert!(c.get(128_000).is_some());
     eprintln!("BENCH thumb cache index rebuild of 500 thumbnails {:>8.2} ms", t.elapsed().as_secs_f64() * 1e3);
+    assert!(t.elapsed() < std::time::Duration::from_millis(30), "index rebuild took {:?}", t.elapsed());
 }

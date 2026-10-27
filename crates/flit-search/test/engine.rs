@@ -176,7 +176,7 @@ fn visibility_hides_entries_of_unlistable_folders() {
 }
 
 #[test]
-#[ignore]
+#[cfg_attr(debug_assertions, ignore)]
 fn bench_folder_scoped_queries_and_groups() {
     let mut v = VolumeIndex::new("C:", b"C:\\", b'\\');
     put(&mut v, 5, 5, ".", 0, 0, true);
@@ -213,12 +213,14 @@ fn bench_folder_scoped_queries_and_groups() {
     for text in ["report", r#"report path:"C:\top 42\""#, r#"path:"C:\top 42\""#, r#"path:"C:\top 42\sub 7\""#] {
         let (total, t) = median(text, SortKey::Name);
         eprintln!("BENCH {text:?}: {total} results, query and first page {t:.1} ms");
+        assert!(t < 20.0, "{text:?} took {t:.1} ms");
     }
     let q = parse(r#"path:"C:\top 42\""#, clock()).unwrap();
     let mut rs = e.search(&q, Sort { key: SortKey::Path, descending: false }, &|| false).unwrap();
     let t = std::time::Instant::now();
     let starts = e.groups(&mut rs).unwrap();
     eprintln!("BENCH folder groups of {} results: {} groups in {:.1} ms", rs.total, starts.len(), ms(t));
+    assert!(ms(t) < 10.0, "groups took {:.1} ms", ms(t));
 }
 
 #[test]

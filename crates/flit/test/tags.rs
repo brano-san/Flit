@@ -234,7 +234,7 @@ fn tag_queries_combine_with_the_rest_of_the_syntax() {
 }
 
 #[test]
-#[ignore]
+#[cfg_attr(debug_assertions, ignore)]
 fn bench_tag_queries_over_10k_files() {
     let mut s = TagStore::default();
     s.add("Work", 0).unwrap();
@@ -258,6 +258,7 @@ fn bench_tag_queries_over_10k_files() {
             .collect();
         times.sort();
         eprintln!("BENCH {:<44} median {:>9.3} ms   max {:>9.3} ms", format!("{text} over 10k tagged files"), times[7].as_secs_f64() * 1e3, times[14].as_secs_f64() * 1e3);
+        assert!(times[7] < std::time::Duration::from_millis(10), "{text} took {:?}", times[7]);
     }
 }
 

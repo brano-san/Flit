@@ -243,7 +243,7 @@ fn tags_sort_by_first_tag_and_group_untagged_last() {
 }
 
 #[test]
-#[ignore]
+#[cfg_attr(debug_assertions, ignore)]
 fn bench_sort_and_group_100k() {
     let (l, k) = synthetic(100_000);
     let mut o = Vec::new();
@@ -260,6 +260,7 @@ fn bench_sort_and_group_100k() {
             .collect();
         runs.sort_by(f64::total_cmp);
         println!("sort {sort_field:?} group {group:?}: {:.2} ms median over 100k", runs[4]);
+        assert!(runs[4] < 60.0, "sort {sort_field:?} group {group:?} took {:.2} ms", runs[4]);
     }
     let path = crate::path::FsPath::parse(r"C:\x").unwrap();
     for group in [GroupField::None, GroupField::Name, GroupField::Type, GroupField::Modified] {
@@ -281,5 +282,6 @@ fn bench_sort_and_group_100k() {
         let merge = runs[4].0;
         runs.sort_by(|a, b| a.1.total_cmp(&b.1));
         println!("ui thread, group {group:?}: merge {merge:.2} ms, regroup {:.2} ms median over 100k, {} groups", runs[4].1, v.groups().len());
+        assert!(merge < 8.0 && runs[4].1 < 8.0, "merge {merge:.2} ms, regroup {:.2} ms for group {group:?}", runs[4].1);
     }
 }
