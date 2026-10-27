@@ -68,27 +68,87 @@ fn toggles_are_found_by_the_same_ids_the_native_menu_gets() {
     assert!(toggle_ids(&flit_menu(&TempDir::new("toggles"), false).menu).is_empty());
 }
 
+fn fake(verb: &str) -> ShellItem<'_> {
+    ShellItem { verb, usable: true, children: None }
+}
+
 #[test]
-fn flit_items_come_first_and_shell_items_wait_for_their_submenu() {
+fn shell_items_from_programs_are_kept_and_duplicates_of_flit_and_windows_items_are_not() {
+    let seven_zip = ["SevenZipCompress".to_owned(), "SevenZip.Checksum".to_owned(), "SevenZip.Checksum.Calc.CRC32".to_owned()];
+    let send_to = [String::new(), String::new()];
+    let library = ["PinToStartScreen".to_owned()];
+    let items = [
+        ("Open", fake("open")),
+        ("Copilot", fake("{DB6BACB1-FC31-4B28-9C53-7240A4F98404}")),
+        ("Edit", fake("edit")),
+        ("Edit with Notepad++", fake("{E6950302-61F0-4FEB-97DB-855E30D4A991}")),
+        ("Edit with Notepad++ (legacy)", ShellItem { verb: "ANotepad++64", usable: false, children: None }),
+        ("Add to Favorites", fake("pintohomefile")),
+        ("Open with Code", fake("VSCode")),
+        ("Git Bash here", fake("git_shell")),
+        ("7-Zip", ShellItem { verb: "SevenZip", usable: true, children: Some(&seven_zip) }),
+        ("What's locking this file?", fake("")),
+        ("Open with", ShellItem { verb: "openas", usable: true, children: Some(&[]) }),
+        ("Give access to", ShellItem { verb: "Windows.Share", usable: true, children: Some(&send_to) }),
+        ("Copy as path", fake("copyaspath")),
+        ("Share", fake("Windows.ModernShare")),
+        ("Restore previous versions", fake("PreviousVersions")),
+        ("Include in library", ShellItem { verb: "", usable: true, children: Some(&library) }),
+        ("Send to", ShellItem { verb: "", usable: true, children: Some(&send_to) }),
+        ("Cut", fake("cut")),
+        ("Copy", fake("COPY")),
+        ("Create shortcut", fake("link")),
+        ("Delete", fake("delete")),
+        ("Rename", fake("rename")),
+        ("Properties", fake("properties")),
+        ("Open in new tab", fake("opennewtab")),
+        ("blank", ShellItem { verb: "", usable: false, children: None }),
+    ];
+    let by = |want: Place| items.iter().filter(|(_, i)| place(i) == want).map(|(l, _)| *l).collect::<Vec<_>>();
+    assert_eq!(by(Place::App), ["Copilot", "Edit with Notepad++", "Open with Code", "Git Bash here", "7-Zip", "What's locking this file?"]);
+    assert_eq!(by(Place::Duplicate), ["Open", "Copy as path", "Cut", "Copy", "Create shortcut", "Delete", "Rename", "Properties", "Open in new tab"]);
+    assert_eq!(
+        by(Place::Windows),
+        ["Edit", "Edit with Notepad++ (legacy)", "Add to Favorites", "Open with", "Give access to", "Share", "Restore previous versions", "Include in library", "Send to", "blank"]
+    );
+}
+
+#[test]
+fn flit_items_come_first_then_program_items_then_the_rest_of_the_shell_in_a_submenu() {
     crate::com_sta();
-    let t = TempDir::new("lazy");
+    let t = TempDir::new("lifted");
     std::fs::write(t.0.join("a.txt"), "x").unwrap();
-    unsafe {
-        let hmenu = CreatePopupMenu().unwrap();
-        let active = fill(HWND::default(), &flit_menu(&t, false), hmenu).unwrap();
-        assert!(active.menu.is_none());
-        assert_eq!(texts(hmenu), ["Open\tEnter", "-", "Sort by", "R&&D", "-", "Show more options"]);
-        let sort = GetSubMenu(hmenu, 2);
-        assert_eq!((GetMenuItemID(hmenu, 0), GetMenuItemID(sort, 0), GetMenuItemID(hmenu, 3)), (FLIT_FIRST, FLIT_FIRST + 1, FLIT_FIRST + 2));
-        assert_ne!(GetMenuState(sort, 0, MF_BYPOSITION) & MF_CHECKED.0, 0);
-        let more = GetSubMenu(hmenu, 5);
-        assert_eq!(GetMenuItemCount(Some(more)), 0);
-        ACTIVE.set(Some(active));
-        assert_eq!(forward(WM_INITMENUPOPUP, WPARAM(more.0 as usize), LPARAM(5)), Some(LRESULT(0)));
-        let filled = ACTIVE.take().and_then(|a| a.menu).expect("the shell menu stays for its command");
-        let verbs = shell_verbs(&filled, more);
-        assert!(["copy", "delete", "properties"].iter().all(|v| verbs.iter().any(|x| x == v)), "{verbs:?}");
-        let _ = DestroyMenu(hmenu);
+    std::fs::create_dir(t.0.join("dir")).unwrap();
+    let single = flit_menu(&t, false);
+    let several = ShellMenu { items: vec![t.path("a.txt"), t.path("dir")], ..flit_menu(&t, false) };
+    for m in [single, several] {
+        unsafe {
+            let hmenu = CreatePopupMenu().unwrap();
+            let menu = fill(HWND::default(), &m, hmenu).unwrap().menu.expect("the shell menu is asked before the menu shows");
+            let all = texts(hmenu);
+            assert_eq!(all[..5], ["Open\tEnter", "-", "Sort by", "R&&D", "-"], "{all:?}");
+            assert_eq!(all.last().map(String::as_str), Some("Show more options"));
+            assert!(!all.windows(2).any(|w| w[0] == "-" && w[1] == "-"), "{all:?}");
+            let sort = GetSubMenu(hmenu, 2);
+            assert_eq!((GetMenuItemID(hmenu, 0), GetMenuItemID(sort, 0), GetMenuItemID(hmenu, 3)), (FLIT_FIRST, FLIT_FIRST + 1, FLIT_FIRST + 2));
+            assert_ne!(GetMenuState(sort, 0, MF_BYPOSITION) & MF_CHECKED.0, 0);
+            let count = GetMenuItemCount(Some(hmenu));
+            for i in 5..count - 1 {
+                if is_separator(hmenu, i) {
+                    continue;
+                }
+                assert_eq!(place_at(&menu, hmenu, i), Some(Place::App), "{} is not a program's item", all[i as usize]);
+                let mut info = MENUITEMINFOW { cbSize: size_of::<MENUITEMINFOW>() as u32, fMask: MIIM_ID | MIIM_SUBMENU, ..Default::default() };
+                GetMenuItemInfoW(hmenu, i as u32, true, &mut info).unwrap();
+                assert!(!info.hSubMenu.is_invalid() || (FIRST_ID..=LAST_ID).contains(&info.wID), "{} keeps the shell's command id", all[i as usize]);
+            }
+            let more = GetSubMenu(hmenu, count - 1);
+            let rest: Vec<Option<Place>> = (0..GetMenuItemCount(Some(more))).map(|i| place_at(&menu, more, i)).collect();
+            assert!(!rest.contains(&Some(Place::App)), "{:?}", texts(more));
+            let verbs = shell_verbs(&menu, more);
+            assert!(["copy", "delete", "properties"].iter().all(|v| verbs.iter().any(|x| x == v)), "{verbs:?}");
+            let _ = DestroyMenu(hmenu);
+        }
     }
 }
 
@@ -145,7 +205,7 @@ fn bench_menu_prepare() {
         let _ = DestroyMenu(h);
     });
     report("menu before show: shell items (old)", shell_only);
-    report("menu before show: Flit items + submenu (new)", lazy);
+    report("menu before show: Flit, program items, submenu", lazy);
     report("menu before show: inline shell items", inline);
 }
 
@@ -173,4 +233,56 @@ fn shell_data_objects_carry_the_dragged_paths() {
     let data: IDataObject = Pidls::parse(&paths).unwrap().ui_object(HWND::default()).unwrap();
     assert_eq!(crate::dragdrop::data_paths(&data), paths);
     assert!(Pidls::parse(&[t.path("missing.txt")]).is_err());
+}
+
+unsafe fn walk_labels(menu: &IContextMenu, hmenu: HMENU, depth: usize, out: &mut Vec<String>) {
+    if let Ok(m3) = menu.cast::<IContextMenu3>() {
+        let _ = m3.HandleMenuMsg2(WM_INITMENUPOPUP, WPARAM(hmenu.0 as usize), LPARAM(0), None);
+    } else if let Ok(m2) = menu.cast::<IContextMenu2>() {
+        let _ = m2.HandleMenuMsg(WM_INITMENUPOPUP, WPARAM(hmenu.0 as usize), LPARAM(0));
+    }
+    for i in 0..GetMenuItemCount(Some(hmenu)) {
+        let mut buf = [0u16; 256];
+        let mut info = MENUITEMINFOW {
+            cbSize: size_of::<MENUITEMINFOW>() as u32,
+            fMask: MIIM_STRING | MIIM_SUBMENU | MIIM_ID | MIIM_FTYPE | MIIM_BITMAP | MIIM_STATE,
+            dwTypeData: windows::core::PWSTR(buf.as_mut_ptr()),
+            cch: buf.len() as u32,
+            ..Default::default()
+        };
+        let _ = GetMenuItemInfoW(hmenu, i as u32, true, &mut info);
+        if info.fType.0 & MFT_SEPARATOR.0 != 0 {
+            out.push(format!("{}-", "  ".repeat(depth)));
+            continue;
+        }
+        let label = String::from_utf16_lossy(&buf[..info.cch as usize]);
+        let verb = (FIRST_ID..=LAST_ID).contains(&info.wID).then(|| verb(menu, (info.wID - FIRST_ID) as usize)).flatten().unwrap_or_default();
+        let icon = if info.hbmpItem.is_invalid() { "" } else { " [icon]" };
+        let grey = if info.fState.0 & MFS_DISABLED.0 != 0 { " [disabled]" } else { "" };
+        out.push(format!("{}{label} <{verb}> #{}{icon}{grey}", "  ".repeat(depth), info.wID));
+        if !info.hSubMenu.is_invalid() {
+            walk_labels(menu, info.hSubMenu, depth + 1, out);
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn print_the_shell_menu_of_flit_menu_probe() {
+    crate::com_sta();
+    let probe = std::env::var("FLIT_MENU_PROBE").expect("FLIT_MENU_PROBE=<path>[|<path>…]");
+    let items: Vec<FsPath> = probe.split('|').filter_map(FsPath::parse).collect();
+    let dir = items[0].parent().unwrap();
+    let inline = std::env::var("FLIT_MENU_INLINE").is_ok();
+    let m = ShellMenu { dir, items, x: 0.0, y: 0.0, extended: false, menu: vec![command("(Flit items)", "", false)], inline, shell: true };
+    unsafe {
+        let hmenu = CreatePopupMenu().unwrap();
+        let started = Instant::now();
+        let menu = fill(HWND::default(), &m, hmenu).unwrap().menu.unwrap();
+        let ms = started.elapsed().as_secs_f64() * 1e3;
+        let mut out = Vec::new();
+        walk_labels(&menu, hmenu, 0, &mut out);
+        eprintln!("PROBE {ms:.1} ms\n{}", out.join("\n"));
+        let _ = DestroyMenu(hmenu);
+    }
 }
