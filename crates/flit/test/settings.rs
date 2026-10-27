@@ -142,20 +142,21 @@ fn with(id: &str, on: bool) -> Vec<Value> {
 
 #[test]
 fn integration_runs_on_changes_and_reasserts_only_what_is_on_at_start() {
-    let (dm, verb) = (Integration::DefaultManager, Integration::OpenInFlit);
+    let on = with(settings::DEFAULT_MANAGER, true);
     let off = settings::defaults().to_vec();
-    assert_eq!(integration_changes(&[], &off), []);
-    assert_eq!(integration_changes(&[], &with(dm.setting(), true)), [(dm, true)]);
-    assert_eq!(integration_changes(&off, &off), []);
-    assert_eq!(integration_changes(&off, &with(verb.setting(), true)), [(verb, true)]);
-    assert_eq!(integration_changes(&with(dm.setting(), true), &off), [(dm, false)]);
+    assert_eq!(integration_change(&[], &off), None);
+    assert_eq!(integration_change(&[], &on), Some(true));
+    assert_eq!(integration_change(&off, &off), None);
+    assert_eq!(integration_change(&on, &on), None);
+    assert_eq!(integration_change(&off, &on), Some(true));
+    assert_eq!(integration_change(&on, &off), Some(false));
 }
 
-static CALLS: Mutex<Vec<(Integration, bool)>> = Mutex::new(Vec::new());
+static CALLS: Mutex<Vec<bool>> = Mutex::new(Vec::new());
 
-fn fake(what: Integration, on: bool) -> Result<(), PlatformError> {
-    CALLS.lock().unwrap().push((what, on));
-    if on && what == Integration::OpenInFlit { Err(PlatformError::new(5, "access denied")) } else { Ok(()) }
+fn fake(on: bool) -> Result<(), PlatformError> {
+    CALLS.lock().unwrap().push(on);
+    if on { Err(PlatformError::new(5, "access denied")) } else { Ok(()) }
 }
 
 #[test]
@@ -163,13 +164,13 @@ fn the_worker_reports_integration_failures() {
     let (jobs, rx) = unbounded();
     let (tx, replies) = unbounded();
     let thread = std::thread::spawn(move || work(None, None, Some(fake), String::new(), rx, tx, Arc::new(|| {})));
-    jobs.send(Job::Integrate(Integration::DefaultManager, true)).unwrap();
-    jobs.send(Job::Integrate(Integration::OpenInFlit, true)).unwrap();
+    jobs.send(Job::Integrate(false)).unwrap();
+    jobs.send(Job::Integrate(true)).unwrap();
     drop(jobs);
     thread.join().unwrap();
-    assert_eq!(*CALLS.lock().unwrap(), [(Integration::DefaultManager, true), (Integration::OpenInFlit, true)]);
+    assert_eq!(*CALLS.lock().unwrap(), [false, true]);
     match replies.try_recv() {
-        Ok(Reply::IntegrationFailed(Integration::OpenInFlit, true, e)) => assert_eq!(e, "access denied"),
+        Ok(Reply::IntegrationFailed(true, e)) => assert_eq!(e, "access denied"),
         _ => panic!("expected one failure"),
     }
     assert!(replies.try_recv().is_err());

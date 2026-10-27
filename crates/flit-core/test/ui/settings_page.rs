@@ -399,22 +399,18 @@ fn advanced_page_groups_the_log_level_folder_and_buttons() {
 }
 
 #[test]
-fn system_integration_starts_off_and_open_in_flit_is_windows_only() {
-    let ids = [settings::DEFAULT_MANAGER.to_owned(), settings::OPEN_IN_FLIT.to_owned()];
-    let mut a = app();
-    a.open_settings(Some(Page::Advanced));
-    let lines = a.settings_lines();
-    assert!(ids.iter().all(|id| lines.contains(id)), "{lines:?}");
-    assert_eq!([value(&a, &ids[0]), value(&a, &ids[1])], [Value::Bool(false), Value::Bool(false)]);
-    typed(&mut a, "Open/Save");
-    assert!(a.settings_lines().contains(&ids[1]));
-    let mut linux = app();
-    linux.caps = crate::caps::Caps { unix_paths: true };
-    linux.open_settings(Some(Page::Advanced));
-    let lines = linux.settings_lines();
-    assert!(lines.contains(&ids[0]) && !lines.contains(&ids[1]), "{lines:?}");
-    typed(&mut linux, "Open/Save");
-    assert!(!linux.settings_lines().contains(&ids[1]));
+fn system_integration_starts_off_on_every_platform() {
+    let id = settings::DEFAULT_MANAGER.to_owned();
+    for unix_paths in [false, true] {
+        let mut a = app();
+        a.caps = crate::caps::Caps { unix_paths };
+        a.open_settings(Some(Page::Advanced));
+        let lines = a.settings_lines();
+        assert!(lines.contains(&id) && !lines.iter().any(|l| l.contains("open_in_flit")), "{lines:?}");
+        assert_eq!(value(&a, &id), Value::Bool(false));
+        typed(&mut a, "Open/Save");
+        assert!(!a.settings_lines().contains(&id));
+    }
 }
 
 #[test]

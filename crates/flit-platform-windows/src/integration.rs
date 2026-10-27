@@ -1,4 +1,4 @@
-use flit_platform::{Integration, PlatformError};
+use flit_platform::PlatformError;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, WIN32_ERROR};
 use windows::Win32::System::Registry::{
@@ -9,7 +9,9 @@ use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_ASSOCCHANGED, SHCNF_IDLIST
 
 const WIN_E: &str = r"CLSID\{52205fd8-5dfb-447d-801a-d0b52f2e83e1}\shell\opennewwindow\command";
 const HOME: &str = "::{f874310e-b6b7-47dc-bc84-b9e6b38f5903}";
-const VERB_KEYS: [&str; 3] = [r"Directory\shell\Flit", r"Directory\Background\shell\Flit", r"Drive\shell\Flit"];
+const OLD_VERBS: [&str; 3] = [r"Directory\shell\Flit", r"Directory\Background\shell\Flit", r"Drive\shell\Flit"];
+const OLD_VERB_BACKUP: &str = "OpenInFlit";
+const MANAGER_BACKUP: &str = "DefaultManager";
 const ABSENT: &str = "absent";
 const CREATED: &str = "created";
 
@@ -28,29 +30,23 @@ impl Root {
         format!(r"{}\{key}", self.classes)
     }
 
-    fn backup_of(&self, what: Integration) -> String {
-        format!(r"{}\{what:?}", self.backup)
+    fn backup_of(&self, name: &str) -> String {
+        format!(r"{}\{name}", self.backup)
     }
 }
 
 pub type Entry = (String, &'static str, String);
 
-pub fn entries(what: Integration, exe: &str, label: &str) -> Vec<Entry> {
+pub fn entries(exe: &str) -> Vec<Entry> {
     let open = format!("\"{exe}\" \"%1\"");
-    match what {
-        Integration::DefaultManager => vec![
-            (r"Folder\shell\open\command".into(), "", open.clone()),
-            (r"Folder\shell\open\command".into(), "DelegateExecute", String::new()),
-            (r"Folder\shell\explore\command".into(), "", open),
-            (r"Folder\shell\explore\command".into(), "DelegateExecute", String::new()),
-            (WIN_E.into(), "", format!("\"{exe}\" \"{HOME}\"")),
-            (WIN_E.into(), "DelegateExecute", String::new()),
-        ],
-        Integration::OpenInFlit => VERB_KEYS
-            .iter()
-            .flat_map(|k| [((*k).to_owned(), "MUIVerb", label.to_owned()), ((*k).to_owned(), "Icon", format!("\"{exe}\",0")), (format!(r"{k}\command"), "", format!("\"{exe}\" \"%V\""))])
-            .collect(),
-    }
+    vec![
+        (r"Folder\shell\open\command".into(), "", open.clone()),
+        (r"Folder\shell\open\command".into(), "DelegateExecute", String::new()),
+        (r"Folder\shell\explore\command".into(), "", open),
+        (r"Folder\shell\explore\command".into(), "DelegateExecute", String::new()),
+        (WIN_E.into(), "", format!("\"{exe}\" \"{HOME}\"")),
+        (WIN_E.into(), "DelegateExecute", String::new()),
+    ]
 }
 
 fn wide(s: &str) -> Vec<u16> {
@@ -129,9 +125,9 @@ fn slot(key: &str, name: &str) -> String {
     format!("{key}|{name}")
 }
 
-pub fn set(root: &Root, what: Integration, on: bool, exe: &str, label: &str) -> Result<(), PlatformError> {
-    let plan = entries(what, exe, label);
-    let backup = root.backup_of(what);
+pub fn set(root: &Root, on: bool, exe: &str) -> Result<(), PlatformError> {
+    let plan = entries(exe);
+    let backup = root.backup_of(MANAGER_BACKUP);
     if on {
         if !exists(root.hive, &backup) {
             save(root, &plan, &backup)?;
@@ -191,10 +187,45 @@ fn restore(root: &Root, plan: &[Entry], backup: &str) -> Result<(), PlatformErro
         }
     }
     delete_tree(root.hive, backup);
+    prune_backup(root);
+    Ok(())
+}
+
+fn prune_backup(root: &Root) {
     for k in ancestors(&root.backup).skip(1).collect::<Vec<_>>().into_iter().rev().take_while(|k| empty(root.hive, k)) {
         delete_tree(root.hive, k);
     }
-    Ok(())
+}
+
+fn launches_flit(command: &str) -> bool {
+    let Some(rest) = command.strip_prefix('"') else { return false };
+    let Some((exe, args)) = rest.split_once('"') else { return false };
+    let file = exe.rsplit(['\\', '/']).next().unwrap_or_default();
+    file.eq_ignore_ascii_case("flit.exe") && args.trim() == "\"%V\""
+}
+
+fn old_verb_entries() -> Vec<Entry> {
+    OLD_VERBS.iter().flat_map(|k| [((*k).to_owned(), "MUIVerb", String::new()), ((*k).to_owned(), "Icon", String::new()), (format!(r"{k}\command"), "", String::new())]).collect()
+}
+
+pub fn forget_open_in_flit(root: &Root) -> Result<bool, PlatformError> {
+    let ours: Vec<&str> = OLD_VERBS.into_iter().filter(|k| read(root.hive, &root.class(&format!(r"{k}\command")), "").is_some_and(|(_, d)| launches_flit(&strings(&d).concat()))).collect();
+    let backup = root.backup_of(OLD_VERB_BACKUP);
+    if exists(root.hive, &backup) {
+        restore(root, &old_verb_entries(), &backup)?;
+        return Ok(true);
+    }
+    for k in &ours {
+        delete_tree(root.hive, &root.class(k));
+    }
+    Ok(!ours.is_empty())
+}
+
+pub fn tidy() {
+    if forget_open_in_flit(&Root::user()).unwrap_or(false) {
+        tracing::info!("removed the «Open in Flit» commands left by an earlier version");
+        unsafe { SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None) };
+    }
 }
 
 pub fn delete_tree(hive: HKEY, key: &str) {
@@ -205,10 +236,9 @@ pub fn delete_tree(hive: HKEY, key: &str) {
     }
 }
 
-pub fn integrate(what: Integration, on: bool) -> Result<(), PlatformError> {
+pub fn integrate(on: bool) -> Result<(), PlatformError> {
     let exe = std::env::current_exe().map_err(|e| PlatformError::new(-1, e.to_string()))?;
-    let label = flit_core::i18n::S::UiAppOpenInFlit.t();
-    set(&Root::user(), what, on, &exe.to_string_lossy(), label)?;
+    set(&Root::user(), on, &exe.to_string_lossy())?;
     unsafe { SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None) };
     Ok(())
 }

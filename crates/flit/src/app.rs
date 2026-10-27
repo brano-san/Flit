@@ -610,9 +610,9 @@ impl<P: Platform> Handler<P> {
                     self.share_about();
                 }
                 settings::Reply::Changed(text) => self.reload_settings(id, &text),
-                settings::Reply::IntegrationFailed(what, on, error) => {
+                settings::Reply::IntegrationFailed(on, error) => {
                     self.status(id, flit_core::tr!(S::UiAppIntegrationFailed, error = flit_core::i18n::localize(&error)));
-                    let Some(k) = flit_core::ui::settings::index(what.setting()) else { continue };
+                    let Some(k) = flit_core::ui::settings::index(flit_core::ui::settings::DEFAULT_MANAGER) else { continue };
                     let back = [(k, Value::Bool(!on))];
                     for app in self.windows.values_mut().map(|st| &mut st.app).chain(self.pending.iter_mut()) {
                         app.apply_settings(&back);

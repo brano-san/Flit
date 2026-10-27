@@ -166,5 +166,4 @@ exported = "Настройки и теги экспортированы в {path
 export_failed = "Не удается экспортировать настройки: {error}"
 tag_failed = "Flit не удалось назначить теги файлам: {error}"
 start_failed = "Не удалось запустить Flit: {error}"
-open_in_flit = "Открыть во Flit"
 integration_failed = "Не удалось изменить интеграцию с системой: {error}"

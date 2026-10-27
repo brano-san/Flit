@@ -91,7 +91,6 @@ about = "Info"
 "general.startup_pages" = "Beim Start zu öffnende Seiten"
 "advanced.thumb_cache_mb" = "Größe des Miniaturansichtscaches"
 "advanced.default_manager" = "Flit als Standard-Dateimanager verwenden"
-"advanced.open_in_flit" = "«In Flit öffnen» in Öffnen/Speichern-Dialogen"
 "keys" = "Tastenkombinationen"
 
 [help]
@@ -172,7 +171,6 @@ about = "Info"
 "general.startup_pages" = "Wird verwendet, wenn Flit mit bestimmten Seiten startet: Ordner oder die Startseite, jeweils in einer eigenen Registerkarte"
 "advanced.thumb_cache_mb" = "Miniaturansichten auf dem Datenträger in %LOCALAPPDATA%\\Flit\\thumbs; die ältesten werden zuerst entfernt"
 "advanced.default_manager" = "Win+E und Ordner, die vom Desktop oder aus anderen Programmen geöffnet werden, öffnen sich in Flit; Systemsteuerung und andere Systemordner öffnen weiter im Datei-Explorer. Nur Ihre eigenen Benutzereinstellungen ändern sich; die bisherigen werden gesichert und beim Ausschalten wiederhergestellt. Vor dem Löschen von Flit ausschalten"
-"advanced.open_in_flit" = "Klicken Sie in einem Öffnen/Speichern-Dialog oder im Datei-Explorer mit der rechten Maustaste auf einen Ordner oder eine leere Stelle und wählen Sie «In Flit öffnen», um den Ordner hier zu öffnen. Die Dialoge selbst zu ersetzen hieße, den Code von Flit in jedes andere Programm zu laden, und das tut Flit nicht. Ausschalten entfernt den Befehl"
 "keys" = "Tastenkombinationen, die vom Standard abweichen, nach Befehls-ID"
 "area_color" = "„Standard“ folgt der Hintergrundfarbe; Text auf einer benutzerdefinierten Farbe passt sich an, um lesbar zu bleiben"
 

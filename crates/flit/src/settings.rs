@@ -2,7 +2,7 @@ use crate::thumbs::ThumbCache;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use flit_core::ui::settings::{self, Doc};
 use flit_core::ui::{Value, SETTINGS};
-use flit_platform::{Integration, Platform, PlatformError, Wake};
+use flit_platform::{Platform, PlatformError, Wake};
 use serde_json::{Map, Value as Json};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -16,7 +16,7 @@ pub enum Job {
     Import(PathBuf),
     CacheSize,
     CacheLimit(u32),
-    Integrate(Integration, bool),
+    Integrate(bool),
 }
 
 pub enum Reply {
@@ -26,10 +26,10 @@ pub enum Reply {
     Exported(Result<PathBuf, String>),
     ExportExists { path: PathBuf, size: u64, modified: i64 },
     CacheUsed(u64),
-    IntegrationFailed(Integration, bool, String),
+    IntegrationFailed(bool, String),
 }
 
-pub type Integrate = fn(Integration, bool) -> Result<(), PlatformError>;
+pub type Integrate = fn(bool) -> Result<(), PlatformError>;
 
 pub fn file<P: Platform>() -> Option<PathBuf> {
     P::config_dir().map(|d| d.join("settings.json"))
@@ -109,10 +109,10 @@ fn work(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>>, integrate:
                         reply(Reply::CacheUsed(used));
                     }
                 }
-                Job::Integrate(what, on) => {
-                    if let Some(Err(e)) = integrate.map(|f| f(what, on)) {
-                        tracing::warn!("cannot turn {what:?} {}: {e:?}", if on { "on" } else { "off" });
-                        reply(Reply::IntegrationFailed(what, on, e.message));
+                Job::Integrate(on) => {
+                    if let Some(Err(e)) = integrate.map(|f| f(on)) {
+                        tracing::warn!("cannot turn the default file manager {}: {e:?}", if on { "on" } else { "off" });
+                        reply(Reply::IntegrationFailed(on, e.message));
                     }
                 }
                 Job::CacheLimit(mb) => {
@@ -145,6 +145,9 @@ impl Settings {
             .spawn(move || {
                 let _ = tx.send(Reply::System { os: P::os_version(), dates: P::date_patterns() });
                 wake();
+                if integrate.is_some() {
+                    P::tidy_integration();
+                }
                 work(path, cache, integrate, first, rx, tx, wake)
             })
             .ok();
@@ -174,8 +177,8 @@ impl Settings {
                 self.send(Job::CacheLimit(mb));
             }
         }
-        for (what, on) in integration_changes(&self.values, &values) {
-            self.send(Job::Integrate(what, on));
+        if let Some(on) = integration_change(&self.values, &values) {
+            self.send(Job::Integrate(on));
         }
         if let Some(level) = log_level(&values) {
             crate::logs::set_level(level);
@@ -215,16 +218,12 @@ pub fn cache_limit(values: &[Value]) -> Option<u32> {
     }
 }
 
-pub fn integration_changes(before: &[Value], now: &[Value]) -> Vec<(Integration, bool)> {
-    let mut out = Vec::new();
-    for what in Integration::ALL {
-        match (flag(before, what.setting()), flag(now, what.setting())) {
-            (Some(was), Some(on)) if was != on => out.push((what, on)),
-            (None, Some(true)) => out.push((what, true)),
-            _ => {}
-        }
+pub fn integration_change(before: &[Value], now: &[Value]) -> Option<bool> {
+    match (flag(before, settings::DEFAULT_MANAGER), flag(now, settings::DEFAULT_MANAGER)) {
+        (Some(was), Some(on)) if was != on => Some(on),
+        (None, Some(true)) => Some(true),
+        _ => None,
     }
-    out
 }
 
 pub fn flag(values: &[Value], id: &str) -> Option<bool> {

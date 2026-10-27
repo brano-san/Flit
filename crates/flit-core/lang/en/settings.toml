@@ -91,7 +91,6 @@ about = "About"
 "general.startup_pages" = "Pages to open at startup"
 "advanced.thumb_cache_mb" = "Thumbnail cache size"
 "advanced.default_manager" = "Use Flit as the default file manager"
-"advanced.open_in_flit" = "Add «Open in Flit» to Open/Save dialogs"
 "keys" = "Keyboard shortcuts"
 
 [help]
@@ -172,7 +171,6 @@ about = "About"
 "general.startup_pages" = "Used when Flit starts with specific pages: folders or the Home page, each in its own tab"
 "advanced.thumb_cache_mb" = "Thumbnails kept on disk in %LOCALAPPDATA%\\Flit\\thumbs; the oldest go first"
 "advanced.default_manager" = "Win+E and folders opened from the desktop or other programs open in Flit; Control Panel and other system folders still open in File Explorer. Only your own user settings change; the previous ones are saved and come back when you turn this off. Turn it off before deleting Flit"
-"advanced.open_in_flit" = "Right-click a folder or an empty spot in any Open/Save dialog or in File Explorer and choose «Open in Flit» to open that folder here. Replacing the dialogs themselves would mean loading Flit's code into every other program, which Flit does not do. Turning it off removes the command"
 "keys" = "Shortcuts that differ from the defaults, by command id"
 "area_color" = "Default follows the background color; text on a custom color adjusts to stay readable"
 

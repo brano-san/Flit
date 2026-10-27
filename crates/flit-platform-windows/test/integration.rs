@@ -19,8 +19,8 @@ impl Sandbox {
         write(self.0.hive, &self.0.class(key), name, kind, data).unwrap();
     }
 
-    fn snapshot(&self, what: Integration) -> Vec<Seen> {
-        entries(what, "x", "y").into_iter().map(|(k, n, _)| (k.clone(), n, self.get(&k, n), exists(self.0.hive, &self.0.class(&k)))).collect()
+    fn snapshot(&self) -> Vec<Seen> {
+        entries("x").into_iter().map(|(k, n, _)| (k.clone(), n, self.get(&k, n), exists(self.0.hive, &self.0.class(&k)))).collect()
     }
 }
 
@@ -41,48 +41,81 @@ fn default_manager_round_trip_restores_the_previous_values_exactly() {
     sb.put(r"Folder\shell\open\command", "", REG_EXPAND_SZ.0, &sz(r"%SystemRoot%\Explorer.exe"));
     sb.put(r"Folder\shell\explore\command", "DelegateExecute", REG_SZ.0, &sz("{11dbb47c-a525-400b-9e80-a54615a090c0}"));
     sb.put(r"Folder\shell\open", "keep", REG_SZ.0, &sz("me"));
-    let before = sb.snapshot(Integration::DefaultManager);
-    set(&sb.0, Integration::DefaultManager, true, EXE, "Open in Flit").unwrap();
+    let before = sb.snapshot();
+    set(&sb.0, true, EXE).unwrap();
     let text = |k: &str, n: &str| sb.get(k, n).map(|(t, d)| (t, strings(&d).join("")));
     assert_eq!(text(r"Folder\shell\open\command", ""), Some((REG_SZ.0, format!("\"{EXE}\" \"%1\""))));
     assert_eq!(text(r"Folder\shell\explore\command", "DelegateExecute"), Some((REG_SZ.0, String::new())));
     assert_eq!(text(WIN_E, ""), Some((REG_SZ.0, format!("\"{EXE}\" \"{HOME}\""))));
-    set(&sb.0, Integration::DefaultManager, true, r"D:\Moved\flit.exe", "Open in Flit").unwrap();
+    set(&sb.0, true, r"D:\Moved\flit.exe").unwrap();
     assert_eq!(text(r"Folder\shell\open\command", ""), Some((REG_SZ.0, "\"D:\\Moved\\flit.exe\" \"%1\"".into())));
-    set(&sb.0, Integration::DefaultManager, false, EXE, "Open in Flit").unwrap();
-    assert_eq!(sb.snapshot(Integration::DefaultManager), before);
+    set(&sb.0, false, EXE).unwrap();
+    assert_eq!(sb.snapshot(), before);
     assert_eq!(text(r"Folder\shell\open", "keep"), Some((REG_SZ.0, "me".into())));
     assert!(!exists(sb.0.hive, &sb.0.class("CLSID")));
     assert!(!exists(sb.0.hive, &sb.0.backup));
-    set(&sb.0, Integration::DefaultManager, false, EXE, "Open in Flit").unwrap();
-    assert_eq!(sb.snapshot(Integration::DefaultManager), before);
+    set(&sb.0, false, EXE).unwrap();
+    assert_eq!(sb.snapshot(), before);
+}
+
+fn plant_old_verbs(sb: &Sandbox, exe: &str) {
+    for k in OLD_VERBS {
+        sb.put(k, "MUIVerb", REG_SZ.0, &sz("Open in Flit"));
+        sb.put(k, "Icon", REG_SZ.0, &sz(&format!("\"{exe}\",0")));
+        sb.put(&format!(r"{k}\command"), "", REG_SZ.0, &sz(&format!("\"{exe}\" \"%V\"")));
+    }
 }
 
 #[test]
-fn open_in_flit_verbs_disappear_completely_when_turned_off() {
-    let sb = Sandbox::new("verb");
+fn old_open_in_flit_verbs_are_restored_from_their_backup() {
+    let sb = Sandbox::new("old-backup");
     sb.put(r"Directory\Background\shell\Other", "", REG_SZ.0, &sz("other"));
-    set(&sb.0, Integration::OpenInFlit, true, EXE, "Open in Flit").unwrap();
-    assert_eq!(sb.get(r"Directory\shell\Flit", "MUIVerb").map(|(_, d)| strings(&d)), Some(vec!["Open in Flit".to_owned()]));
-    assert_eq!(sb.get(r"Directory\Background\shell\Flit\command", "").map(|(_, d)| strings(&d)), Some(vec![format!("\"{EXE}\" \"%V\"")]));
-    assert!(sb.get(r"Drive\shell\Flit\command", "").is_some());
-    set(&sb.0, Integration::OpenInFlit, false, EXE, "Open in Flit").unwrap();
-    for k in VERB_KEYS {
+    let backup = sb.0.backup_of(OLD_VERB_BACKUP);
+    let created = ["Drive", r"Drive\shell", r"Drive\shell\Flit", r"Drive\shell\Flit\command", r"Directory\shell\Flit", r"Directory\shell\Flit\command", r"Directory\Background\shell\Flit", r"Directory\Background\shell\Flit\command", "Directory\\shell"].map(String::from);
+    write(sb.0.hive, &backup, CREATED, REG_MULTI_SZ.0, &multi_sz(&created)).unwrap();
+    let absent: Vec<String> = old_verb_entries().iter().map(|(k, n, _)| slot(k, n)).collect();
+    write(sb.0.hive, &backup, ABSENT, REG_MULTI_SZ.0, &multi_sz(&absent)).unwrap();
+    plant_old_verbs(&sb, EXE);
+    assert!(forget_open_in_flit(&sb.0).unwrap());
+    for k in OLD_VERBS {
         assert!(!exists(sb.0.hive, &sb.0.class(k)), "{k}");
     }
     assert!(!exists(sb.0.hive, &sb.0.class("Drive")));
     assert!(sb.get(r"Directory\Background\shell\Other", "").is_some());
+    assert!(!exists(sb.0.hive, &sb.0.backup));
+    assert!(!forget_open_in_flit(&sb.0).unwrap());
 }
 
 #[test]
-fn features_keep_separate_backups() {
+fn old_open_in_flit_verbs_without_a_backup_go_only_when_they_launch_flit() {
+    let sb = Sandbox::new("old-bare");
+    plant_old_verbs(&sb, r"C:\Moved\FLIT.EXE");
+    sb.put(r"Drive\shell\Flit\command", "", REG_SZ.0, &sz("\"C:\\Other\\tool.exe\" \"%V\""));
+    assert!(forget_open_in_flit(&sb.0).unwrap());
+    assert!(!exists(sb.0.hive, &sb.0.class(r"Directory\shell\Flit")));
+    assert!(!exists(sb.0.hive, &sb.0.class(r"Directory\Background\shell\Flit")));
+    assert!(sb.get(r"Drive\shell\Flit\command", "").is_some(), "a key another program owns stays");
+    assert!(!forget_open_in_flit(&sb.0).unwrap());
+}
+
+#[test]
+fn only_a_flit_command_counts_as_ours() {
+    assert!(launches_flit("\"C:\\Apps\\Flit\\flit.exe\" \"%V\""));
+    assert!(!launches_flit("\"C:\\Apps\\Flit\\flit.exe\" \"%1\""));
+    assert!(!launches_flit("\"C:\\Apps\\notflit.exe\" \"%V\""));
+    assert!(!launches_flit("C:\\Apps\\Flit\\flit.exe %V"));
+}
+
+#[test]
+fn the_default_manager_backup_survives_the_cleanup() {
     let sb = Sandbox::new("both");
-    set(&sb.0, Integration::DefaultManager, true, EXE, "a").unwrap();
-    set(&sb.0, Integration::OpenInFlit, true, EXE, "a").unwrap();
-    set(&sb.0, Integration::OpenInFlit, false, EXE, "a").unwrap();
-    assert!(sb.get(r"Folder\shell\open\command", "").is_some());
-    set(&sb.0, Integration::DefaultManager, false, EXE, "a").unwrap();
+    set(&sb.0, true, EXE).unwrap();
+    plant_old_verbs(&sb, EXE);
+    forget_open_in_flit(&sb.0).unwrap();
+    assert!(exists(sb.0.hive, &sb.0.backup_of(MANAGER_BACKUP)));
+    set(&sb.0, false, EXE).unwrap();
     assert!(!exists(sb.0.hive, &sb.0.class("Folder")));
+    assert!(!exists(sb.0.hive, &sb.0.backup));
 }
 
 #[test]
