@@ -57,13 +57,35 @@ impl Drop for Waitable {
     }
 }
 
+pub(crate) struct Composition {
+    device: IDCompositionDesktopDevice,
+    _target: IDCompositionTarget,
+    visual: IDCompositionVisual2,
+}
+
+impl Composition {
+    fn new(hwnd: windows::Win32::Foundation::HWND) -> Result<Self, PlatformError> {
+        unsafe {
+            let device: IDCompositionDesktopDevice = DCompositionCreateDevice2(None::<&windows::core::IUnknown>).map_err(err)?;
+            let target = device.CreateTargetForHwnd(hwnd, false).map_err(err)?;
+            let visual = device.CreateVisual().map_err(err)?;
+            target.SetRoot(&visual).map_err(err)?;
+            Ok(Self { device, _target: target, visual })
+        }
+    }
+
+    unsafe fn show(&self, swap: &IDXGISwapChain2) -> Result<(), PlatformError> {
+        self.visual.SetContent(swap).map_err(err)?;
+        self.device.Commit().map_err(err)?;
+        self.device.WaitForCommitCompletion().map_err(err)
+    }
+}
+
 pub struct D3dRenderer {
     dev: Gpu,
     waitable: Waitable,
     swap: IDXGISwapChain2,
-    _dcomp: IDCompositionDevice,
-    _target: IDCompositionTarget,
-    _visual: IDCompositionVisual,
+    shown: bool,
     rtv: Option<ID3D11RenderTargetView>,
     instances: ID3D11Buffer,
     capacity: usize,
@@ -285,7 +307,14 @@ impl D3dRenderer {
             if let Some(path) = capture_path() {
                 self.capture(path)?;
             }
-            self.swap.Present(1, DXGI_PRESENT(0)).ok().map_err(err)
+            self.swap.Present(1, DXGI_PRESENT(0)).ok().map_err(err)?;
+            if !self.shown {
+                if let Some(c) = self.sync.composition.borrow().as_ref() {
+                    c.show(&self.swap)?;
+                }
+                self.shown = true;
+            }
+            Ok(())
         }
     }
 
@@ -403,12 +432,9 @@ impl Renderer for D3dRenderer {
             swap.SetMaximumFrameLatency(1).map_err(err)?;
             let waitable = Waitable(swap.GetFrameLatencyWaitableObject());
 
-            let dcomp: IDCompositionDevice = DCompositionCreateDevice(&dxgi).map_err(err)?;
-            let target = dcomp.CreateTargetForHwnd(window.hwnd(), false).map_err(err)?;
-            let visual = dcomp.CreateVisual().map_err(err)?;
-            visual.SetContent(&swap).map_err(err)?;
-            target.SetRoot(&visual).map_err(err)?;
-            dcomp.Commit().map_err(err)?;
+            if window.sync.composition.borrow().is_none() {
+                *window.sync.composition.borrow_mut() = Some(Composition::new(window.hwnd())?);
+            }
 
             let capacity = 16 * 1024;
             let instances = buffer(device, capacity * size_of::<Instance>(), D3D11_BIND_VERTEX_BUFFER)?;
@@ -422,9 +448,7 @@ impl Renderer for D3dRenderer {
                 dev: dev.gpu.clone(),
                 waitable,
                 swap,
-                _dcomp: dcomp,
-                _target: target,
-                _visual: visual,
+                shown: false,
                 rtv: None,
                 instances,
                 capacity,

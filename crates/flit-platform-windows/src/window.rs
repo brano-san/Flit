@@ -72,6 +72,7 @@ thread_local! {
 pub(crate) struct FrameSync {
     pub waitable: Cell<HANDLE>,
     pub waited: Cell<bool>,
+    pub composition: RefCell<Option<crate::d3d::Composition>>,
 }
 
 pub struct Win32Window {

@@ -916,7 +916,7 @@ impl<P: Platform> Handler<P> {
             let (ms, tabs) = (b.elapsed().as_secs_f64() * 1e3, st.app.tabs().len());
             tracing::info!("window ready in {ms:.1} ms with {tabs} tabs, software rendering: {}", st.software);
             if self.timing {
-                eprintln!("window ready in {ms:.1} ms with {tabs} tabs");
+                eprintln!("window ready in {ms:.1} ms with {tabs} tabs, software rendering: {}", st.software);
             }
         }
         st.visible.pane.store(st.app.visible_rows());
