@@ -268,6 +268,7 @@ impl App {
     }
 
     fn reload_moved(&mut self, k: usize, select: Option<Vec<u8>>) {
+        self.tabs[k].drop_trail();
         self.load_tab(k, select, Instant::now());
         if k == self.cur {
             self.after_tab_change();
@@ -307,9 +308,9 @@ impl App {
     }
 
     pub(super) fn crumb_menu(&mut self, i: usize) {
-        let crumbs = &self.tab().crumbs;
-        let Some(loc) = crumbs.get(i).map(|c| c.1.clone()) else { return };
-        let mark = crumbs.get(i + 1).map(|c| c.1.file_name().to_vec());
+        let t = self.tab();
+        let Some(loc) = t.crumb(i).map(|c| c.1.clone()) else { return };
+        let mark = t.crumb(i + 1).map(|c| c.1.file_name().to_vec());
         let at = (self.addr.chevrons.get(i).map_or(self.layout.address.x, |r| r.x), self.layout.address.bottom());
         if let Some(names) = self.shown_folders(&loc) {
             return self.subfolder_menu(loc, names, mark, at);

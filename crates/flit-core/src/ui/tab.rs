@@ -47,6 +47,8 @@ pub struct Tab {
     pub(super) error: Option<String>,
     pub(super) pending_diffs: VecDeque<DirChange>,
     pub(super) crumbs: Vec<(String, Location)>,
+    pub(super) trail: Location,
+    pub(super) ghosts: Vec<(String, Location)>,
     pub stats: LoadStats,
     pub(super) scroll: f32,
     pub(super) scroll_target: f32,
@@ -64,6 +66,8 @@ impl Tab {
         Self {
             id,
             view_loc: at.clone(),
+            trail: at.clone(),
+            ghosts: Vec::new(),
             history: History::new(at),
             gen: 0,
             cancel: GenToken::default(),
@@ -126,6 +130,7 @@ impl Tab {
         self.pending_diffs.clear();
         self.error = None;
         self.crumbs = loc.crumbs();
+        self.follow_trail();
         self.stats = LoadStats::default();
         self.keep_git_root();
         let path = loc.path().clone();
@@ -196,6 +201,7 @@ impl Tab {
         if done {
             self.stats.done = Some(v.snap().elapsed);
             self.loading = None;
+            self.check_trail();
         }
         done && stale_view
     }
@@ -206,7 +212,39 @@ impl Tab {
             return false;
         }
         v.apply_all(self.pending_diffs.drain(..));
+        self.check_trail();
         true
+    }
+
+    pub(super) fn crumb(&self, i: usize) -> Option<&(String, Location)> {
+        self.crumbs.get(i).or_else(|| self.ghosts.get(i.checked_sub(self.crumbs.len())?))
+    }
+
+    pub(super) fn follow_trail(&mut self) {
+        let here = self.location().clone();
+        if !std::iter::successors(Some(self.trail.clone()), Location::parent).any(|l| l == here) {
+            self.trail = here.clone();
+        }
+        let mut ghosts = if self.trail == here { Vec::new() } else { self.trail.crumbs() };
+        self.ghosts = ghosts.split_off(here.crumbs().len().min(ghosts.len()));
+    }
+
+    pub(super) fn drop_trail(&mut self) {
+        self.trail = self.location().clone();
+        self.ghosts.clear();
+    }
+
+    fn check_trail(&mut self) {
+        let Some(name) = self.ghosts.first().map(|g| g.1.file_name().to_vec()) else { return };
+        let here = self.history.current();
+        let Some(v) = self.view.as_mut().filter(|v| v.snap().done && v.snap().error.is_none() && self.view_loc == *here) else { return };
+        let folder = |l: &Listing, i: u32| l.entries[i as usize].attrs & (attr::DIR | attr::DELETED) == attr::DIR;
+        let exact = v.find(&name).is_some_and(|i| folder(v.listing(), i));
+        let wanted = name::display(&name).to_lowercase();
+        let l = v.listing();
+        if !exact && !(0..l.len() as u32).any(|i| folder(l, i) && name::display(l.name(i)).to_lowercase() == wanted) {
+            self.drop_trail();
+        }
     }
 
     pub(super) fn focused_name(&self) -> Option<Vec<u8>> {

@@ -32,6 +32,8 @@ pub struct WindowSession {
     pub cur: usize,
     #[serde(skip)]
     pub splits: Vec<Option<super::SplitSession>>,
+    #[serde(skip)]
+    pub trails: Vec<Location>,
 }
 
 pub struct MovedTab(Box<Tab>);
@@ -80,7 +82,7 @@ impl App {
     }
 
     pub fn session(&self) -> WindowSession {
-        WindowSession { tabs: self.tabs.iter().map(|t| t.location().clone()).collect(), cur: self.cur, splits: self.split_sessions() }
+        WindowSession { tabs: self.tabs.iter().map(|t| t.location().clone()).collect(), cur: self.cur, splits: self.split_sessions(), trails: self.tabs.iter().map(|t| t.trail.clone()).collect() }
     }
 
     pub fn session_rev(&self) -> u64 {
@@ -109,6 +111,17 @@ impl App {
         self.cur = cur;
         self.strip.rev += 1;
         self.effects.push(Effect::Title(self.window_title()));
+        self.dirty = true;
+    }
+
+    pub fn restore_trails(&mut self, trails: &[Location]) {
+        if trails.len() != self.tabs.len() {
+            return;
+        }
+        for (t, trail) in self.tabs.iter_mut().zip(trails) {
+            t.trail = trail.clone();
+            t.follow_trail();
+        }
         self.dirty = true;
     }
 

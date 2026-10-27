@@ -1315,7 +1315,7 @@ impl App {
             }
             Hit::ListEmpty | Hit::Group(_) | Hit::Track | Hit::Thumb => here(),
             Hit::Tab(i) | Hit::TabClose(i) => into(self.tabs.get(i)?.location(), Spot::Tab(i)),
-            Hit::Crumb(i) => into(&t.crumbs.get(i)?.1, Spot::Crumb(i)),
+            Hit::Crumb(i) => into(&t.crumb(i)?.1, Spot::Crumb(i)),
             Hit::Side(i) | Hit::SidePin(i) if self.nav.sidebar.recent_file(i).is_none() => into(&self.nav.sidebar.items.get(i)?.loc, Spot::Side(i)),
             Hit::Side(_) | Hit::SidePin(_) => None,
             Hit::NewTab => Some(Target::NewTab),
@@ -1371,7 +1371,7 @@ impl App {
         let t = self.tab();
         match self.hit(x, y) {
             Hit::Tab(i) | Hit::TabClose(i) if i != self.cur => Some(Spot::Tab(i)),
-            Hit::Crumb(i) if i + 1 < t.crumbs.len() => Some(Spot::Crumb(i)),
+            Hit::Crumb(i) if i + 1 != t.crumbs.len() => Some(Spot::Crumb(i)),
             Hit::Row(row) if !self.in_bin() => {
                 let v = t.view.as_ref()?;
                 v.listing().entries[*v.rows().get(row)? as usize].is_dir().then_some(Spot::Row(row))
@@ -1403,7 +1403,7 @@ impl App {
         let folder = match spot {
             Some(Spot::Tab(i)) => return self.select_tab(i),
             Some(Spot::SideHeader(s)) => return self.toggle_section(s),
-            Some(Spot::Crumb(i)) => t.crumbs.get(i).map(|c| c.1.clone()),
+            Some(Spot::Crumb(i)) => t.crumb(i).map(|c| c.1.clone()),
             Some(Spot::Row(row)) => t.view.as_ref().and_then(|v| v.rows().get(row).map(|&i| t.entry_location(i))),
             _ => None,
         };

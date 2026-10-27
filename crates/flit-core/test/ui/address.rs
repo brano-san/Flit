@@ -1,6 +1,6 @@
 use super::*;
 use crate::input::{Event, MouseButton};
-use crate::listing::{attr, FsError, Listing, Meta};
+use crate::listing::{attr, DirChange, FsError, Listing, Meta};
 use crate::sort::{self, CaseMode, SortKeys, ViewSpec};
 use crate::text::tests::Mono;
 use crate::ui::{MenuItem, Persisted};
@@ -346,4 +346,125 @@ fn restoring_a_crashed_session_is_offered_and_never_forced() {
     app.offer_restore();
     key(&mut app, Key::Enter, NO);
     assert!(app.drain_effects().any(|e| matches!(e, Effect::RestoreSession)));
+}
+
+fn ghosts(app: &App) -> Vec<&str> {
+    app.tab().ghosts.iter().map(|g| g.0.as_str()).collect()
+}
+
+fn click_at(app: &mut App, r: Rect) {
+    let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    app.on_event(&Event::MouseMove { x, y }, Instant::now());
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, Instant::now());
+    app.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, Instant::now());
+}
+
+#[test]
+fn going_up_keeps_the_deeper_folders_as_a_dimmed_tail() {
+    let mut app = app_at(r"C:\a\b\c");
+    assert!(ghosts(&app).is_empty());
+    app.go_up(Instant::now());
+    assert_eq!(app.tab().location(), &loc(r"C:\a\b"));
+    assert_eq!(ghosts(&app), ["c"]);
+    app.go_up(Instant::now());
+    assert_eq!(ghosts(&app), ["b", "c"]);
+    assert_eq!(app.tab().title(), "a");
+    app.go_history(false, Instant::now());
+    assert_eq!(app.tab().location(), &loc(r"C:\a\b"));
+    assert_eq!(ghosts(&app), ["c"]);
+    app.navigate(loc(r"C:\a"), Instant::now());
+    app.navigate(loc(r"C:\a\b"), Instant::now());
+    assert_eq!(ghosts(&app), ["c"], "going back down into the tail only moves the current marker");
+    frame(&mut app);
+    let real = app.tab().crumbs.len();
+    assert_eq!(app.layout.crumbs.len(), real + 1);
+    assert!(app.layout.crumbs[real].w > 0.0);
+    assert_eq!(app.session().trails, [loc(r"C:\a\b\c")]);
+}
+
+#[test]
+fn clicking_a_dimmed_crumb_navigates_into_it_through_history() {
+    let mut app = app_at(r"C:\a\b\c");
+    app.go_up(Instant::now());
+    app.go_up(Instant::now());
+    frame(&mut app);
+    let real = app.tab().crumbs.len();
+    let b = app.layout.crumbs[real];
+    assert_eq!(app.hit(b.x + b.w / 2.0, b.y + b.h / 2.0), Hit::Crumb(real));
+    click_at(&mut app, b);
+    assert_eq!(app.tab().location(), &loc(r"C:\a\b"));
+    assert_eq!(app.tab().history.back_list().last(), Some(&loc(r"C:\a")));
+    assert_eq!(ghosts(&app), ["c"]);
+    frame(&mut app);
+    deliver(&mut app, &[("c", true), ("d", true)], None);
+    app.drain_effects().for_each(drop);
+    app.crumb_menu(app.tab().crumbs.len() - 1);
+    assert_eq!(menu(&mut app), [("c".to_owned(), true), ("d".to_owned(), false)]);
+}
+
+#[test]
+fn a_different_child_or_an_unrelated_place_replaces_the_tail() {
+    let mut app = app_at(r"C:\a\b\c");
+    app.go_up(Instant::now());
+    app.go_up(Instant::now());
+    app.navigate(loc(r"C:\a\x"), Instant::now());
+    assert!(ghosts(&app).is_empty());
+    app.go_up(Instant::now());
+    assert_eq!(ghosts(&app), ["x"]);
+    app.navigate(loc(r"D:\elsewhere"), Instant::now());
+    app.navigate(loc(r"C:\a"), Instant::now());
+    assert!(ghosts(&app).is_empty());
+}
+
+#[test]
+fn a_dimmed_folder_that_is_gone_drops_with_everything_below_it() {
+    let mut app = app_at(r"C:\a\b\c");
+    app.go_up(Instant::now());
+    app.go_up(Instant::now());
+    deliver(&mut app, &[("B", true), ("other", true)], None);
+    assert_eq!(ghosts(&app), ["b", "c"], "names match without case");
+    let (tab, gen) = (app.tab().id, app.tab().gen);
+    let gone = DirChange { kind: crate::listing::ChangeKind::Removed, name: b"B".to_vec(), meta: None };
+    app.on_provider_event(crate::provider::ProviderEvent::Changes { tab, gen, changes: vec![gone] }, Instant::now());
+    app.poll();
+    assert!(ghosts(&app).is_empty());
+    assert_eq!(app.tab().trail, loc(r"C:\a"));
+
+    let mut file = app_at(r"C:\a\b");
+    file.go_up(Instant::now());
+    deliver(&mut file, &[("b", false)], None);
+    assert!(ghosts(&file).is_empty(), "a file of that name is no folder to go back into");
+
+    let mut denied = app_at(r"C:\a\b");
+    denied.go_up(Instant::now());
+    deliver(&mut denied, &[], Some(FsErrorKind::AccessDenied));
+    assert_eq!(ghosts(&denied), ["b"], "an unreadable parent proves nothing");
+}
+
+#[test]
+fn editing_and_copying_the_address_show_only_the_current_folder() {
+    let mut app = app_at(r"C:\a\b\c");
+    app.go_up(Instant::now());
+    key(&mut app, Key::Char('L'), CTRL);
+    assert_eq!(app.edit.text, r"C:\a\b");
+    assert_eq!(app.current_location(), &loc(r"C:\a\b"));
+    assert_eq!(app.window_title(), "C:\\a\\b \u{2014} Flit");
+}
+
+#[test]
+fn the_dimmed_tail_collapses_before_real_crumbs_overflow() {
+    let mut app = app_at(r"C:\one\two\a_rather_long_folder_name\another_rather_long_folder_name\yet_another_long_one");
+    for _ in 0..3 {
+        app.go_up(Instant::now());
+    }
+    assert_eq!(ghosts(&app).len(), 3);
+    app.on_event(&Event::Resized { width: 560, height: 600 }, Instant::now());
+    frame(&mut app);
+    let real = app.tab().crumbs.len();
+    assert_eq!(app.addr.overflow.w, 0.0, "real crumbs stay in the bar");
+    assert!(app.layout.crumbs[..real].iter().all(|r| r.w > 0.0));
+    assert_eq!(app.layout.crumbs[real + 2].w, 0.0, "the deepest dimmed crumb goes first");
+    app.on_event(&Event::Resized { width: 1400, height: 600 }, Instant::now());
+    frame(&mut app);
+    assert!(app.layout.crumbs.iter().all(|r| r.w > 0.0));
 }
