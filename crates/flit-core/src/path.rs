@@ -267,7 +267,9 @@ impl FsPath {
             }
             return Self::parse_bytes(&b).unwrap_or_else(Self::computer);
         }
-        let mut p = self.clone();
+        let mut s = Vec::with_capacity(self.s.len() + 1 + child.len());
+        s.extend_from_slice(&self.s);
+        let mut p = Self { s, root: self.root, kind: self.kind };
         p.push(child);
         p.normalized()
     }

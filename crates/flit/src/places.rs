@@ -12,9 +12,10 @@ use std::time::Instant;
 const RECENT_LIMIT: usize = 24;
 const SNAPSHOT_VERSION: u32 = 1;
 const KEPT_ICONS: usize = 256;
+const KEPT_MAX_PX: u32 = 64;
 const ICONS_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
 pub const PLACES_FILE: &str = "places.bin";
-pub const ICONS_FILE: &str = "chrome-icons.bin";
+pub const ICONS_FILE: &str = "icons.bin";
 
 enum Job {
     Refresh,
@@ -121,13 +122,12 @@ impl PlacesWorker {
         Self { requests, results, current, pending: Some(Box::new(run)) }
     }
 
-    pub fn start_once(&mut self) -> bool {
-        let Some(run) = self.pending.take() else { return false };
+    pub fn start_once(&mut self) {
+        let Some(run) = self.pending.take() else { return };
         if let Err(e) = std::thread::Builder::new().name("flit-places".into()).spawn(run) {
             tracing::warn!("cannot start flit-places: {e}");
         }
         self.refresh();
-        true
     }
 
     pub fn refresh(&self) {
@@ -203,60 +203,68 @@ impl KeptIcon {
     }
 }
 
-pub struct ChromeIcons {
-    pub kept: Vec<KeptIcon>,
-    changed: bool,
-    writer: Option<(Sender<Vec<u8>>, std::thread::JoinHandle<()>)>,
+pub fn worth_keeping(req: &IconRequest) -> bool {
+    req.size <= KEPT_MAX_PX
+        && match req.kind {
+            IconKind::Type | IconKind::Folder | IconKind::Volume => true,
+            IconKind::Place | IconKind::File => req.gen == 0,
+            IconKind::CustomFolder | IconKind::Thumbnail => false,
+        }
 }
 
-impl ChromeIcons {
+fn remember(kept: &mut Vec<KeptIcon>, icon: KeptIcon) {
+    kept.retain(|k| k.key != icon.key);
+    kept.push(icon);
+    if kept.len() > KEPT_ICONS {
+        kept.remove(0);
+    }
+}
+
+pub struct KeptIcons {
+    pub kept: Vec<KeptIcon>,
+    writer: Option<(Sender<KeptIcon>, std::thread::JoinHandle<()>)>,
+}
+
+impl KeptIcons {
     pub fn load(file: Option<PathBuf>) -> Self {
-        let kept = file.as_deref().and_then(load).unwrap_or_default();
+        let kept: Vec<KeptIcon> = file.as_deref().and_then(load).unwrap_or_default();
+        let mut on_disk = kept.clone();
         let writer = file.and_then(|path| {
-            let (tx, rx) = unbounded::<Vec<u8>>();
+            let (tx, rx) = unbounded::<KeptIcon>();
             let write = move || {
-                while let Ok(mut bytes) = rx.recv() {
-                    while let Ok(newer) = rx.recv_timeout(ICONS_SETTLE) {
-                        bytes = newer;
+                while let Ok(icon) = rx.recv() {
+                    remember(&mut on_disk, icon);
+                    while let Ok(icon) = rx.recv_timeout(ICONS_SETTLE) {
+                        remember(&mut on_disk, icon);
                     }
-                    store(&path, &bytes);
+                    if let Some(bytes) = encode(&on_disk) {
+                        store(&path, &bytes);
+                    }
                 }
             };
-            std::thread::Builder::new().name("flit-chrome-icons".into()).spawn(write).ok().map(|h| (tx, h))
+            std::thread::Builder::new().name("flit-kept-icons".into()).spawn(write).ok().map(|h| (tx, h))
         });
-        Self { kept, changed: false, writer }
+        Self { kept, writer }
     }
 
     pub fn keep(&mut self, req: &IconRequest, image: &Bitmap) {
-        if req.gen != 0 || req.kind == IconKind::Thumbnail {
+        if !worth_keeping(req) {
             return;
         }
-        self.kept.retain(|k| k.key != req.key);
-        self.kept.push(KeptIcon { key: req.key, kind: req.kind, path: req.path.clone(), size: req.size, image: image.clone() });
-        if self.kept.len() > KEPT_ICONS {
-            self.kept.remove(0);
+        let icon = KeptIcon { key: req.key, kind: req.kind, path: req.path.clone(), size: req.size, image: image.clone() };
+        if let Some((w, _)) = &self.writer {
+            let _ = w.send(icon.clone());
         }
-        self.changed = true;
+        remember(&mut self.kept, icon);
     }
 
-    pub fn flush(&mut self) {
-        if !std::mem::take(&mut self.changed) {
-            return;
-        }
-        if let Some(((w, _), bytes)) = self.writer.as_ref().zip(encode(&self.kept)) {
-            let _ = w.send(bytes);
-        }
-    }
-
-    pub fn save(&mut self) {
-        self.flush();
+    pub fn finish(&mut self) {
         if let Some((w, h)) = self.writer.take() {
             drop(w);
             let _ = h.join();
         }
     }
 }
-
 #[cfg(test)]
 #[path = "../test/places.rs"]
 mod tests;

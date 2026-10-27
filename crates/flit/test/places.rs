@@ -51,23 +51,26 @@ fn the_sidebar_comes_back_from_the_last_run_before_anything_is_collected() {
 }
 
 #[test]
-fn only_window_chrome_icons_are_kept_and_they_survive_a_restart() {
+fn chrome_and_file_type_icons_are_kept_and_they_survive_a_restart() {
     let d = temp("icons");
     let file = d.0.join(ICONS_FILE);
-    let mut icons = ChromeIcons::load(Some(file.clone()));
+    let mut icons = KeptIcons::load(Some(file.clone()));
     icons.keep(&request(1, 0, IconKind::Place), &icon(1));
     icons.keep(&request(2, 5, IconKind::Type), &icon(2));
     icons.keep(&request(3, 0, IconKind::Thumbnail), &icon(3));
+    icons.keep(&request(4, 5, IconKind::Place), &icon(4));
+    icons.keep(&IconRequest { size: 256, ..request(5, 5, IconKind::Folder) }, &icon(5));
+    icons.keep(&request(6, 5, IconKind::CustomFolder), &icon(6));
     icons.keep(&request(1, 0, IconKind::Place), &icon(9));
-    icons.save();
-    let back = ChromeIcons::load(Some(file));
-    assert_eq!(back.kept.iter().map(|k| (k.key, k.image.rgba[0])).collect::<Vec<_>>(), vec![(1, 9)]);
-    assert_eq!(back.kept[0].request().gen, 0);
+    icons.finish();
+    let back = KeptIcons::load(Some(file));
+    assert_eq!(back.kept.iter().map(|k| (k.key, k.image.rgba[0])).collect::<Vec<_>>(), vec![(2, 2), (1, 9)]);
+    assert!(back.kept.iter().all(|k| k.request().gen == 0));
 }
 
 #[test]
 fn the_kept_icons_stay_bounded() {
-    let mut icons = ChromeIcons::load(None);
+    let mut icons = KeptIcons::load(None);
     for k in 0..KEPT_ICONS as u64 + 10 {
         icons.keep(&request(k, 0, IconKind::Place), &icon(0));
     }
@@ -79,15 +82,15 @@ fn the_kept_icons_stay_bounded() {
 #[cfg_attr(debug_assertions, ignore)]
 fn loading_the_kept_sidebar_fits_in_a_frame() {
     let d = temp("budget");
-    let mut icons = ChromeIcons::load(Some(d.0.join(ICONS_FILE)));
+    let mut icons = KeptIcons::load(Some(d.0.join(ICONS_FILE)));
     for k in 0..KEPT_ICONS as u64 {
         icons.keep(&request(k, 0, IconKind::Place), &icon(k as u8));
     }
-    icons.save();
+    icons.finish();
     let file = d.0.join(PLACES_FILE);
     store(&file, &encode(&places()).unwrap());
     let t = Instant::now();
-    let back = ChromeIcons::load(Some(d.0.join(ICONS_FILE)));
+    let back = KeptIcons::load(Some(d.0.join(ICONS_FILE)));
     let snapshot = load::<Places>(&file);
     let took = t.elapsed();
     assert_eq!((back.kept.len(), snapshot.is_some()), (KEPT_ICONS, true));

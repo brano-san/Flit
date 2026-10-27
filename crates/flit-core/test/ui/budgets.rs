@@ -128,10 +128,10 @@ fn every_hot_path_stays_within_its_time_budget() {
     b.worst("50k folder: hover frame p99", 300, 6.0, |a, k| a.on_event(&Event::MouseMove { x: 400.0 + (k % 40) as f32 * 9.0, y: 200.0 + (k % 30) as f32 * 18.0 }, Instant::now()));
     b.worst("50k folder: arrow key frame p99", 300, 6.0, |a, _| a.on_event(&Event::Key { key: Key::Down, mods: NO, pressed: true }, Instant::now()));
     b.once("50k folder: select all", 30.0, |a| a.on_event(&Event::Key { key: Key::Char('A'), mods: CTRL, pressed: true }, Instant::now()));
-    b.once("50k folder: context menu on 50k selected", 40.0, |a| {
+    b.once("50k folder: context menu on 50k selected", 12.0, |a| {
         std::hint::black_box(a.build_menu(true));
     });
-    b.once("50k folder: properties of 50k selected", 60.0, |a| a.properties_dialog());
+    b.once("50k folder: properties of 50k selected", 15.0, |a| a.properties_dialog());
     b.key(Key::Escape, NO);
     b.frame();
     b.once("50k folder: sort by size", 80.0, |a| {

@@ -1441,3 +1441,14 @@ fn a_context_menu_during_a_bulk_trash_still_ends_with_the_deleted_rows_gone() {
     app.frame(&mut g, t0());
     assert_eq!(shown(&app), "keep.txt");
 }
+
+#[test]
+fn item_paths_of_a_plain_folder_match_the_general_path_for_every_kind_of_folder() {
+    for dir in [r"C:\Users\me", r"C:\", r"\\server\share\docs", r"\\?\C:\deep"] {
+        let mut app = app_at(dir);
+        deliver(&mut app, &[("a.txt", false), ("sub", true), ("Ubuntu", true)]);
+        let items: Vec<u32> = (0..3).collect();
+        let general: Option<Vec<FsPath>> = items.iter().map(|&i| app.tab().entry_location(i).to_windows()).collect();
+        assert_eq!(app.item_paths(&items).ok(), general, "{dir}");
+    }
+}

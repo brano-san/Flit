@@ -358,7 +358,14 @@ impl App {
         if t.view.as_ref().is_some_and(|v| items.iter().any(|&i| v.listing().entries[i as usize].attrs & attr::STREAM != 0)) {
             return Err(STREAMS_VIEW_ONLY.t());
         }
-        items.iter().map(|&i| t.entry_location(i).to_windows()).collect::<Option<Vec<_>>>().ok_or(S::UiOpsNamesNotShell.t())
+        let plain = match (&t.view, &t.view_loc) {
+            (Some(v), Location::Local(dir)) if !t.view_loc.is_recycle_bin() && !library::is_library(dir) && !matches!(dir.kind(), PathKind::Home | PathKind::Computer) => Some((v.listing(), dir)),
+            _ => None,
+        };
+        match plain {
+            Some((l, dir)) => Ok(items.iter().map(|&i| dir.join(l.name(i))).collect()),
+            None => items.iter().map(|&i| t.entry_location(i).to_windows()).collect::<Option<Vec<_>>>().ok_or(S::UiOpsNamesNotShell.t()),
+        }
     }
 
     pub(super) fn selected_items(&self) -> Vec<u32> {
