@@ -336,6 +336,34 @@ fn fresh(d: &Dir, rel: &str) -> FsPath {
     d.path(rel)
 }
 
+#[test]
+#[ignore]
+fn bench_thumbnails_without_any_cache() {
+    let d = Dir::temp("thumbs");
+    let walls: Vec<PathBuf> = [r"C:\Windows\Web\Wallpaper", r"C:\Windows\Web\4K\Wallpaper"]
+        .iter()
+        .flat_map(|r| walkdir(Path::new(r)))
+        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("jpg")))
+        .collect();
+    assert!(!walls.is_empty());
+    let files: Vec<FsPath> = (0..RUNS * 2)
+        .map(|k| {
+            let to = d.0.join(format!("photo{k}-{}.jpg", rand_tag()));
+            std::fs::copy(&walls[k % walls.len()], &to).unwrap();
+            fs_path(&to)
+        })
+        .collect();
+    let mut sh = ShellCom::new().unwrap();
+    let req = |path: FsPath, size| IconRequest { key: 0, kind: IconKind::Thumbnail, path, size, gen: 0, row: 0 };
+    measure("thumbnail 256 px of a fresh 1920x1200 jpg", RUNS, |k| req(files[k].clone(), 256), |r| assert!(sh.icon(&r).is_some()));
+    measure("thumbnail 96 px of a fresh 1920x1200 jpg", RUNS, |k| req(files[RUNS + k].clone(), 96), |r| assert!(sh.icon(&r).is_some()));
+    measure("thumbnail 256 px again, Windows cache warm", RUNS, |k| req(files[k].clone(), 256), |r| assert!(sh.icon(&r).is_some()));
+}
+
+fn walkdir(dir: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(dir).into_iter().flatten().flatten().flat_map(|e| if e.path().is_dir() { walkdir(&e.path()) } else { vec![e.path()] }).collect()
+}
+
 fn within<S>(over: &mut Vec<String>, label: &str, budget_ms: f64, runs: usize, mut setup: impl FnMut(usize) -> S, mut op: impl FnMut(S)) {
     let mut times: Vec<Duration> = (0..runs)
         .map(|k| {
