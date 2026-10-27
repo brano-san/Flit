@@ -21,7 +21,38 @@ pub(crate) const WM_SHELL_UI: u32 = WM_APP + 0x40;
 const FIRST_ID: u32 = 1;
 const LAST_ID: u32 = 0x7FFF;
 const FLIT_FIRST: u32 = 0x8000;
-const COVERED: [&str; 8] = ["open", "cut", "copy", "paste", "delete", "rename", "link", "properties"];
+const COVERED: [&str; 11] = ["open", "cut", "copy", "paste", "delete", "rename", "link", "properties", "copyaspath", "opennewwindow", "opennewtab"];
+const WINDOWS_VERBS: [&str; 29] = [
+    "edit",
+    "openas",
+    "print",
+    "printto",
+    "find",
+    "explore",
+    "runas",
+    "runasuser",
+    "opennewprocess",
+    "pintohome",
+    "pintohomefile",
+    "unpinfromhome",
+    "pintostartscreen",
+    "windows.share",
+    "windows.modernshare",
+    "previousversions",
+    "setdesktopwallpaper",
+    "rotate90",
+    "rotate270",
+    "play",
+    "enqueue",
+    "mount",
+    "eject",
+    "format",
+    "undelete",
+    "empty",
+    "cmd",
+    "powershell",
+    "wsl",
+];
 const CMIC_MASK_UNICODE: u32 = 0x4000;
 const THIS_PC: &str = "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
 const PREWARM_DELAY: Duration = Duration::from_millis(500);
@@ -34,8 +65,36 @@ pub(crate) enum ShellUi {
 }
 
 struct Active {
-    more: Option<(HMENU, HWND, ShellMenu)>,
     menu: Option<IContextMenu>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Place {
+    Duplicate,
+    App,
+    Windows,
+}
+
+pub(crate) struct ShellItem<'a> {
+    pub verb: &'a str,
+    pub usable: bool,
+    pub children: Option<&'a [String]>,
+}
+
+fn named(list: &[&str], verb: &str) -> bool {
+    list.iter().any(|v| v.eq_ignore_ascii_case(verb))
+}
+
+pub(crate) fn place(item: &ShellItem) -> Place {
+    if named(&COVERED, item.verb) {
+        return Place::Duplicate;
+    }
+    let app_verb = |v: &String| !v.is_empty() && !named(&WINDOWS_VERBS, v) && !named(&COVERED, v);
+    match item.children {
+        _ if !item.usable || named(&WINDOWS_VERBS, item.verb) => Place::Windows,
+        Some(children) if item.verb.is_empty() && !children.iter().any(app_verb) => Place::Windows,
+        _ => Place::App,
+    }
 }
 
 thread_local! {
@@ -185,9 +244,6 @@ pub(crate) fn forward(msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
     if !matches!(msg, WM_INITMENUPOPUP | WM_DRAWITEM | WM_MEASUREITEM | WM_MENUCHAR) {
         return None;
     }
-    if msg == WM_INITMENUPOPUP && fill_more(HMENU(wp.0 as _)) {
-        return Some(LRESULT(0));
-    }
     let menu = ACTIVE.with_borrow(|a| a.as_ref()?.menu.clone())?;
     unsafe {
         if let Ok(m) = menu.cast::<IContextMenu3>() {
@@ -198,22 +254,6 @@ pub(crate) fn forward(msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
         menu.cast::<IContextMenu2>().ok()?.HandleMenuMsg(msg, wp, lp).ok()?;
         Some(LRESULT(if msg == WM_INITMENUPOPUP { 0 } else { 1 }))
     }
-}
-
-fn fill_more(hmenu: HMENU) -> bool {
-    let Some((_, hwnd, req)) = ACTIVE.with_borrow_mut(|a| a.as_mut()?.more.take_if(|(h, ..)| *h == hmenu)) else { return false };
-    let started = Instant::now();
-    unsafe {
-        match query_into(hwnd, &req, hmenu, 0) {
-            Ok(menu) => ACTIVE.with_borrow_mut(|a| a.as_mut().map(|a| a.menu = Some(menu))).unwrap_or_default(),
-            Err(e) => tracing::warn!("shell menu: {e}"),
-        }
-        if GetMenuItemCount(Some(hmenu)) <= 0 {
-            let _ = AppendMenuW(hmenu, MF_GRAYED, 0, w!("No more options"));
-        }
-    }
-    tracing::info!("shell menu items added in {:.1} ms", started.elapsed().as_secs_f64() * 1e3);
-    true
 }
 
 fn verb(menu: &IContextMenu, id: usize) -> Option<String> {
@@ -311,13 +351,81 @@ unsafe fn is_separator(hmenu: HMENU, i: i32) -> bool {
     GetMenuItemInfoW(hmenu, i as u32, true, &mut info).is_ok() && info.fType.0 & MFT_SEPARATOR.0 != 0
 }
 
+unsafe fn id_verb(menu: &IContextMenu, id: u32) -> String {
+    (FIRST_ID..=LAST_ID).contains(&id).then(|| verb(menu, (id - FIRST_ID) as usize)).flatten().unwrap_or_default()
+}
+
+unsafe fn verbs_under(menu: &IContextMenu, hmenu: HMENU, out: &mut Vec<String>) {
+    for i in 0..GetMenuItemCount(Some(hmenu)) {
+        let mut info = MENUITEMINFOW { cbSize: size_of::<MENUITEMINFOW>() as u32, fMask: MIIM_ID | MIIM_SUBMENU, ..Default::default() };
+        if GetMenuItemInfoW(hmenu, i as u32, true, &mut info).is_err() {
+            continue;
+        }
+        out.push(id_verb(menu, info.wID));
+        if !info.hSubMenu.is_invalid() {
+            verbs_under(menu, info.hSubMenu, out);
+        }
+    }
+}
+
+unsafe fn place_at(menu: &IContextMenu, hmenu: HMENU, i: i32) -> Option<Place> {
+    let mut info = MENUITEMINFOW { cbSize: size_of::<MENUITEMINFOW>() as u32, fMask: MIIM_ID | MIIM_SUBMENU | MIIM_STATE | MIIM_FTYPE, ..Default::default() };
+    GetMenuItemInfoW(hmenu, i as u32, true, &mut info).ok()?;
+    if info.fType.0 & MFT_SEPARATOR.0 != 0 {
+        return None;
+    }
+    let sub = !info.hSubMenu.is_invalid();
+    let mut children = Vec::new();
+    if sub {
+        verbs_under(menu, info.hSubMenu, &mut children);
+    }
+    let verb = id_verb(menu, info.wID);
+    let usable = info.fState.0 & MFS_DISABLED.0 == 0 && (sub || (FIRST_ID..=LAST_ID).contains(&info.wID));
+    Some(place(&ShellItem { verb: &verb, usable, children: sub.then_some(children.as_slice()) }))
+}
+
+unsafe fn move_item(from: HMENU, i: i32, to: HMENU) -> windows::core::Result<()> {
+    let mut kind = MENUITEMINFOW { cbSize: size_of::<MENUITEMINFOW>() as u32, fMask: MIIM_FTYPE, ..Default::default() };
+    GetMenuItemInfoW(from, i as u32, true, &mut kind)?;
+    let text = kind.fType.0 & (MFT_OWNERDRAW.0 | MFT_BITMAP.0) == 0;
+    let mut buf = [0u16; 512];
+    let common = MIIM_STATE | MIIM_ID | MIIM_SUBMENU | MIIM_CHECKMARKS | MIIM_DATA;
+    let mut info = MENUITEMINFOW {
+        cbSize: size_of::<MENUITEMINFOW>() as u32,
+        fMask: common | if text { MIIM_FTYPE | MIIM_STRING | MIIM_BITMAP } else { MIIM_TYPE },
+        dwTypeData: windows::core::PWSTR(buf.as_mut_ptr()),
+        cch: buf.len() as u32 - 1,
+        ..Default::default()
+    };
+    GetMenuItemInfoW(from, i as u32, true, &mut info)?;
+    RemoveMenu(from, i as u32, MF_BYPOSITION)?;
+    InsertMenuItemW(to, GetMenuItemCount(Some(to)).max(0) as u32, true, &info)
+}
+
+unsafe fn lift_apps(menu: &IContextMenu, more: HMENU, hmenu: HMENU) -> usize {
+    let mut lifted = 0;
+    let mut i = 0;
+    while i < GetMenuItemCount(Some(more)) {
+        if place_at(menu, more, i) == Some(Place::App) && move_item(more, i, hmenu).is_ok() {
+            lifted += 1;
+            continue;
+        }
+        i += 1;
+    }
+    tidy_separators(more);
+    lifted
+}
+
 unsafe fn drop_covered(menu: &IContextMenu, hmenu: HMENU, from: i32) {
     for i in (from..GetMenuItemCount(Some(hmenu))).rev() {
-        let id = GetMenuItemID(hmenu, i);
-        if (FIRST_ID..=LAST_ID).contains(&id) && verb(menu, (id - FIRST_ID) as usize).is_some_and(|v| COVERED.iter().any(|c| v.eq_ignore_ascii_case(c))) {
+        if place_at(menu, hmenu, i) == Some(Place::Duplicate) {
             let _ = DeleteMenu(hmenu, i as u32, MF_BYPOSITION);
         }
     }
+    tidy_separators(hmenu);
+}
+
+unsafe fn tidy_separators(hmenu: HMENU) {
     let mut prev = true;
     let mut i = 0;
     while i < GetMenuItemCount(Some(hmenu)) {
@@ -335,7 +443,7 @@ unsafe fn drop_covered(menu: &IContextMenu, hmenu: HMENU, from: i32) {
 }
 
 unsafe fn fill(hwnd: HWND, m: &ShellMenu, hmenu: HMENU) -> Result<Active, PlatformError> {
-    let mut active = Active { more: None, menu: None };
+    let mut active = Active { menu: None };
     let mut next = FLIT_FIRST;
     append(hmenu, &m.menu, &mut next).map_err(err)?;
     if !m.shell {
@@ -356,8 +464,19 @@ unsafe fn fill(hwnd: HWND, m: &ShellMenu, hmenu: HMENU) -> Result<Active, Platfo
         return Ok(active);
     }
     let more = CreatePopupMenu().map_err(err)?;
+    match query_into(hwnd, m, more, 0) {
+        Ok(menu) => {
+            if lift_apps(&menu, more, hmenu) > 0 {
+                AppendMenuW(hmenu, MF_SEPARATOR, 0, None).map_err(err)?;
+            }
+            active.menu = Some(menu);
+        }
+        Err(e) => tracing::warn!("shell menu: {e}"),
+    }
+    if GetMenuItemCount(Some(more)) <= 0 {
+        AppendMenuW(more, MF_GRAYED, 0, w!("No more options")).map_err(err)?;
+    }
     AppendMenuW(hmenu, MF_POPUP, more.0 as usize, w!("Show more options")).map_err(err)?;
-    active.more = Some((more, hwnd, m.clone()));
     Ok(active)
 }
 

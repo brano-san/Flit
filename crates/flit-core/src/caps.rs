@@ -21,6 +21,10 @@ pub const WINDOWS_ONLY_ACTIONS: &[&str] = &[
 
 pub const UNIX_ONLY_ACTIONS: &[&str] = &["drive.connect_server"];
 
+pub fn is_builtin_archive_action(action: &str) -> bool {
+    action.starts_with("archive.") || action == "menu.extract"
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Caps {
     pub unix_paths: bool,

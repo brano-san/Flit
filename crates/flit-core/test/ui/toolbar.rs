@@ -291,6 +291,7 @@ fn with_two_panes_the_toolbar_follows_the_active_pane_and_both_panes_start_below
     let now = Instant::now();
     let keypress = |app: &mut App, key: Key, mods: Mods| app.on_event(&Event::Key { key, mods, pressed: true }, now);
     let mut app = app_at(r"C:\x", &["a.txt", "d.txt"]);
+    app.builtin_archives = true;
     keypress(&mut app, Key::Char('V'), ALT_SHIFT);
     app.on_event(&Event::Key { key: Key::Char('V'), mods: NO, pressed: false }, now);
     app.navigate(Location::parse(r"C:\y").unwrap(), now);
@@ -333,6 +334,10 @@ fn with_two_panes_the_toolbar_follows_the_active_pane_and_both_panes_start_below
 #[test]
 fn archives_add_an_extract_group() {
     let mut app = app_at(r"C:\x", &["a.zip", "b.txt"]);
+    select(&mut app, "a.zip");
+    assert!(!ids(&app).contains(&"menu.extract".to_owned()), "the system archiver handles archives by default");
+    app.builtin_archives = true;
+    select(&mut app, "b.txt");
     assert!(!ids(&app).contains(&"menu.extract".to_owned()));
     select(&mut app, "a.zip");
     assert_eq!(ids(&app)[ids(&app).len() - 2..], ["|", "menu.extract"]);

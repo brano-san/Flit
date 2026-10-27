@@ -92,6 +92,7 @@ fn trimmed(mut items: Vec<MenuItem>) -> Vec<MenuItem> {
 pub(super) struct Menu<'a> {
     hidden: &'a [&'static str],
     caps: crate::caps::Caps,
+    builtin_archives: bool,
     keys: &'a Keymap,
     items: Vec<MenuItem>,
     cmds: Vec<Cmd>,
@@ -99,7 +100,7 @@ pub(super) struct Menu<'a> {
 
 impl Menu<'_> {
     fn shown(&self, id: &str) -> bool {
-        !self.hidden.contains(&id) && self.caps.supports(id)
+        !self.hidden.contains(&id) && self.caps.supports(id) && (self.builtin_archives || !crate::caps::is_builtin_archive_action(id))
     }
 
     pub(super) fn place(&mut self, label: &str, cmd: super::sidebar::PlaceCmd, checked: bool) {
@@ -160,7 +161,7 @@ impl App {
     }
 
     pub(super) fn collect(&mut self, fill: impl FnOnce(&Self, &mut Menu)) -> Vec<MenuItem> {
-        let mut m = Menu { hidden: &self.menu_hidden, caps: self.caps, keys: &self.keymap, items: Vec::new(), cmds: Vec::new() };
+        let mut m = Menu { hidden: &self.menu_hidden, caps: self.caps, builtin_archives: self.builtin_archives, keys: &self.keymap, items: Vec::new(), cmds: Vec::new() };
         fill(self, &mut m);
         let (items, cmds) = (trimmed(m.items), m.cmds);
         self.menu = cmds;
@@ -455,14 +456,17 @@ impl App {
             self.media_entries(m);
             m.separator();
             if m.shown("archive.menu") {
-                self.archive_menu(m, count, folders.is_empty());
+                self.archive_menu(m);
+            }
+            if count == 1 && folders.is_empty() {
+                m.action("file.hashes", S::MenuHashes.t());
             }
         }
         m.separator();
         m.action("item.properties", S::MenuProperties.t());
     }
 
-    fn archive_menu(&self, m: &mut Menu, count: usize, no_folders: bool) {
+    fn archive_menu(&self, m: &mut Menu) {
         let archives = self.selected_archives();
         if !archives.is_empty() {
             let own = match archives.as_slice() {
@@ -484,9 +488,6 @@ impl App {
             m.action("archive.zip", &crate::tr!(S::MenuCompressTo, name = self.quick_name(Format::Zip)));
             m.action("archive.7z", &crate::tr!(S::MenuCompressTo, name = self.quick_name(Format::SevenZ)));
         });
-        if count == 1 && no_folders {
-            m.action("file.hashes", S::MenuHashes.t());
-        }
     }
 
     fn folder_menu(&self, m: &mut Menu) {

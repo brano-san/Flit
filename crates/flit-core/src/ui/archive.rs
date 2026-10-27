@@ -421,7 +421,7 @@ impl App {
     }
 
     pub(super) fn browses_as_folder(&self, name: &[u8]) -> bool {
-        self.archives_as_folders && self.archive_view().is_none() && archive::browsable(name).is_some()
+        self.builtin_archives && self.archives_as_folders && self.archive_view().is_none() && archive::browsable(name).is_some()
     }
 
     fn password_retry(op: &FileOp, done: &[(FsPath, FsPath)], then: &Then) -> Option<(FsPath, Retry)> {
@@ -476,7 +476,7 @@ impl App {
             Then::Open(dir) if error.is_none() => self.dispatch(vec![Route { folder: Location::from_local(dir.clone()), select: None }], self.open_target, now),
             Then::Launch => {
                 for (_, to) in &report.items {
-                    if self.archives_as_folders && archive::browsable(to.file_name()).is_some() {
+                    if self.builtin_archives && self.archives_as_folders && archive::browsable(to.file_name()).is_some() {
                         self.navigate(Location::from_local(to.clone()), now);
                     } else {
                         self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Open { tab, path: to.clone() } });

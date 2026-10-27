@@ -603,11 +603,41 @@ fn note(a: &App) -> String {
 }
 
 #[test]
+fn inactive_archive_settings_are_dimmed_skipped_by_the_keyboard_and_ignore_clicks() {
+    use crate::ui::settings::NEEDS_BUILTIN_ARCHIVES;
+    let mut a = app();
+    a.open_settings(Some(Page::Files));
+    let before = a.archive.prefs.compression.format;
+    let lines = a.settings_lines();
+    let off: Vec<usize> = (0..lines.len()).filter(|&k| lines[k].starts_with("off ")).collect();
+    assert_eq!(off.len(), 2, "{lines:?}");
+    assert!(off.iter().all(|&k| ui(&a).lines[k] != Line::Setting(index(&lines[k][4..]).unwrap()) && !ui(&a).lines[k].focusable()));
+    for _ in 0..lines.len() + 4 {
+        key(&mut a, Key::Down, NO);
+        assert!(!off.contains(&ui(&a).focus), "focus landed on {}", lines[ui(&a).focus]);
+    }
+    for &k in &off {
+        a.settings_click(SHit::Control(k), 0.0, 0.0);
+        a.settings_click(SHit::Line(k), 0.0, 0.0);
+    }
+    assert!(a.menu.is_empty() && a.nav.palette.is_none() && a.archive.prefs.compression.format == before, "a click on an inactive row opens nothing");
+    a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    let k = off[0];
+    assert_eq!(a.setting_help(&ui(&a).lines[k]).split(' ').next(), Some("Inactive:"));
+    a.apply_doc(&settings::parse(r#"{"files.archive_format": "7z"}"#));
+    assert_eq!(a.archive.prefs.compression.format, crate::archive::Format::SevenZ, "the settings file still applies");
+    a.builtin_archives = true;
+    a.layout();
+    assert!(!a.settings_lines().iter().any(|l| l.starts_with("off ")));
+    assert!(NEEDS_BUILTIN_ARCHIVES.iter().all(|id| SETTINGS[index(id).unwrap()].enabled(&a)));
+}
+
+#[test]
 fn the_actions_page_lists_and_finds_every_command() {
     let mut a = app();
     a.open_settings(Some(Page::Actions));
     let lines = a.settings_lines();
-    assert_eq!(lines.iter().filter(|l| l.starts_with("action ")).count(), ACTIONS.iter().filter(|x| a.caps.supports(x.id)).count());
+    assert_eq!(lines.iter().filter(|l| l.starts_with("action ")).count(), ACTIONS.iter().filter(|x| a.supports(x.id)).count());
     assert!(lines.contains(&"action file.copy Ctrl+C".to_owned()));
     assert!(lines.contains(&"action nav.home ".to_owned()), "commands without shortcuts are listed too");
     typed(&mut a, "copy path");
