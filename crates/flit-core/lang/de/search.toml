@@ -30,6 +30,7 @@ tagged = "Dateien mit Tags"
 connecting = "Verbindung zum Index wird hergestellt"
 service = "Indexdienst"
 fallback = "Lokaler Index (flit-indexd nicht verfügbar)"
+off = "Indizierung ist in Einstellungen › Erweitert aus; F3 sucht im geöffneten Ordner"
 
 [index]
 default = "Index"

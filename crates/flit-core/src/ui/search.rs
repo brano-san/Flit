@@ -64,6 +64,7 @@ pub enum SearchRequest {
     Query { gen: u64, text: String, sort: SearchSort, scope: SearchScope },
     Rows { gen: u64, from: u64, to: u64 },
     Close,
+    Indexing(bool),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -93,6 +94,7 @@ pub enum SearchBackend {
     Connecting,
     Service,
     Fallback,
+    Off,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -366,13 +368,18 @@ impl App {
         (self.search.done && !self.search.walking).then_some(self.search.total)
     }
 
+    pub(super) fn set_indexing(&mut self, on: bool) {
+        self.indexing = on;
+        self.effects.push(Effect::Search(SearchRequest::Indexing(on)));
+    }
+
     pub fn search_backend(&self) -> SearchBackend {
         self.search.backend
     }
 
     pub fn index_ready(&self) -> Option<u64> {
         let v = &self.search.volumes;
-        let ready = !v.is_empty() && v.iter().all(|v| !matches!(v.state, IndexState::Scanning(_)));
+        let ready = self.search.backend == SearchBackend::Off || (!v.is_empty() && v.iter().all(|v| !matches!(v.state, IndexState::Scanning(_))));
         ready.then(|| v.iter().map(|v| v.files).sum())
     }
 
@@ -1162,6 +1169,7 @@ impl App {
             (None, SearchBackend::Connecting) => S::SearchSourceConnecting,
             (None, SearchBackend::Service) => S::SearchSourceService,
             (None, SearchBackend::Fallback) => S::SearchSourceFallback,
+            (None, SearchBackend::Off) => S::SearchSourceOff,
         }.t());
         for v in s.volumes.iter().filter(|_| !tagged && s.source.is_none()) {
             let label = if v.id.is_empty() { S::SearchIndexDefault.t() } else { &v.id };
@@ -1172,7 +1180,7 @@ impl App {
                 IndexState::Error(e) => tr_into!(&mut right, S::SearchIndexError, label = label, error = e),
             }
         }
-        let rcolor = if s.backend == SearchBackend::Fallback && !tagged && s.source.is_none() { t.error } else { t.text_dim };
+        let rcolor = if matches!(s.backend, SearchBackend::Fallback | SearchBackend::Off) && !tagged && s.source.is_none() { t.error } else { t.text_dim };
         let rw = g.measure(&right, font).min(status.w / 2.0 - pad);
         g.text(status.right() - pad - rw, baseline, &right, font, rcolor, status.w / 2.0 - pad);
         self.draw_recent(g, t);

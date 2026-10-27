@@ -30,6 +30,7 @@ tagged = "Tagged files"
 connecting = "Connecting to the index"
 service = "Index service"
 fallback = "Local index (flit-indexd unavailable)"
+off = "Indexing is off in Settings › Advanced; F3 searches the open folder"
 
 [index]
 default = "index"

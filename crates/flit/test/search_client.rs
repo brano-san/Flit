@@ -105,6 +105,21 @@ fn tag_queries_in_a_folder_keep_only_its_files() {
 }
 
 #[test]
+fn indexing_off_answers_without_an_index() {
+    let (me, rx) = unbounded();
+    let (out, events) = unbounded();
+    let mut w = Worker::<crate::P>::new(rx, me, out, Arc::new(|| {}), 0, TagCell::default());
+    let latest = Arc::new(AtomicU64::new(1));
+    w.request(2, latest.clone(), SearchRequest::Indexing(false));
+    assert_eq!(events.try_iter().map(|(_, e)| e).collect::<Vec<_>>(), [SearchEvent::Status { backend: SearchBackend::Off, volumes: Vec::new(), note: None }]);
+    w.request(2, latest.clone(), SearchRequest::Query { gen: 1, text: "report".into(), sort: SearchSort::default(), scope: SearchScope::All });
+    assert_eq!(events.try_iter().map(|(_, e)| e).collect::<Vec<_>>().last(), Some(&SearchEvent::Done { gen: 1, total: 0 }));
+    assert!(w.links.is_empty() && w.local.is_none(), "no service connection and no in-process indexer");
+    w.request(2, latest, SearchRequest::Indexing(false));
+    assert!(events.try_iter().next().is_none(), "repeating the same setting does nothing");
+}
+
+#[test]
 fn walk_scopes_stream_found_events_and_serve_rows() {
     let dir = crate::find::tests::Scratch::new("search", &["one.txt", "sub/two.txt", "sub/skip.md"]);
     let (me, rx) = unbounded();

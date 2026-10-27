@@ -88,7 +88,7 @@ pub fn to_message(req: &SearchRequest) -> Option<Message> {
             Message::Query { gen: *gen, text: index_text(text, scope), sort: Sort { key, descending: sort.descending } }
         }
         SearchRequest::Rows { gen, from, to } => Message::GetRows { gen: *gen, from: *from, to: *to },
-        SearchRequest::Close => return None,
+        SearchRequest::Close | SearchRequest::Indexing(_) => return None,
     })
 }
 
@@ -197,6 +197,7 @@ struct Worker<P: Platform> {
     wake: Wake,
     utc_offset_min: i32,
     remote_failed: Option<String>,
+    indexing: bool,
     local: Option<Arc<SharedIndex>>,
     links: HashMap<WindowId, Link<Conn<P>>>,
     last_query: HashMap<WindowId, SearchRequest>,
@@ -245,7 +246,7 @@ fn reader<C: Duplex>(mut conn: C, window: WindowId, alive: Arc<AtomicBool>, out:
 
 impl<P: Platform> Worker<P> {
     fn new(rx: Receiver<Cmd>, me: Sender<Cmd>, out: Out, wake: Wake, utc_offset_min: i32, tags: TagCell) -> Self {
-        Self { rx, me, out, wake, utc_offset_min, remote_failed: None, local: None, links: HashMap::new(), last_query: HashMap::new(), latests: HashMap::new(), tags, hits: HashMap::new() }
+        Self { rx, me, out, wake, utc_offset_min, remote_failed: None, indexing: true, local: None, links: HashMap::new(), last_query: HashMap::new(), latests: HashMap::new(), tags, hits: HashMap::new() }
     }
 
     fn run(mut self) {
@@ -304,7 +305,26 @@ impl<P: Platform> Worker<P> {
         Ok(Link::Local { session: Session::new(shared, self.utc_offset_min), latest })
     }
 
+    fn set_indexing(&mut self, on: bool) {
+        if self.indexing == on {
+            return;
+        }
+        self.indexing = on;
+        let windows: Vec<(WindowId, Arc<AtomicU64>)> = self.latests.iter().map(|(w, l)| (*w, l.clone())).collect();
+        for (window, latest) in windows {
+            self.drop_link(window);
+            self.open(window, latest);
+        }
+        if !on {
+            self.local = None;
+        }
+    }
+
     fn open(&mut self, window: WindowId, latest: Arc<AtomicU64>) {
+        if !self.indexing {
+            self.send(window, SearchEvent::Status { backend: SearchBackend::Off, volumes: Vec::new(), note: None });
+            return;
+        }
         if self.remote_failed.is_none() {
             match connect::<P>() {
                 Ok(conn) => {
@@ -338,6 +358,9 @@ impl<P: Platform> Worker<P> {
 
     fn request(&mut self, window: WindowId, latest: Arc<AtomicU64>, req: SearchRequest) {
         self.latests.insert(window, latest.clone());
+        if let SearchRequest::Indexing(on) = req {
+            return self.set_indexing(on);
+        }
         if matches!(req, SearchRequest::Query { .. }) {
             self.last_query.insert(window, req.clone());
         }
@@ -352,6 +375,9 @@ impl<P: Platform> Worker<P> {
         }
         if !self.links.contains_key(&window) {
             self.open(window, latest);
+        }
+        if let (false, SearchRequest::Query { gen, .. }) = (self.indexing, &req) {
+            return self.send(window, SearchEvent::Done { gen: *gen, total: 0 });
         }
         let Some(msg) = to_message(&req) else { return };
         let note = self.remote_failed.clone();
@@ -411,6 +437,7 @@ impl<P: Platform> Worker<P> {
                 self.hits.remove(&window);
                 false
             }
+            SearchRequest::Indexing(_) => false,
         }
     }
 

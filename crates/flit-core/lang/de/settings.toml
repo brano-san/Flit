@@ -91,6 +91,7 @@ about = "Info"
 "general.startup_pages" = "Beim Start zu öffnende Seiten"
 "advanced.thumb_cache_mb" = "Größe des Miniaturansichtscaches"
 "advanced.default_manager" = "Flit als Standard-Dateimanager verwenden"
+"advanced.indexing" = "Dateien für die Suche indizieren"
 "keys" = "Tastenkombinationen"
 
 [help]
@@ -171,6 +172,7 @@ about = "Info"
 "general.startup_pages" = "Wird verwendet, wenn Flit mit bestimmten Seiten startet: Ordner oder die Startseite, jeweils in einer eigenen Registerkarte"
 "advanced.thumb_cache_mb" = "Miniaturansichten auf dem Datenträger in %LOCALAPPDATA%\\Flit\\thumbs; die ältesten werden zuerst entfernt"
 "advanced.default_manager" = "Win+E und Ordner, die vom Desktop oder aus anderen Programmen geöffnet werden, öffnen sich in Flit; Systemsteuerung und andere Systemordner öffnen weiter im Datei-Explorer. Nur Ihre eigenen Benutzereinstellungen ändern sich; die bisherigen werden gesichert und beim Ausschalten wiederhergestellt. Vor dem Löschen von Flit ausschalten"
+"advanced.indexing" = "Flit hält eine Liste der Namen auf allen Laufwerken, damit die Suche Dateien überall in Millisekunden findet. Ist es aus, liest Flit die Laufwerke nicht im Hintergrund und gibt den Speicher des Index frei; die Suche im geöffneten Ordner (F3) funktioniert weiter, indem sie diesen Ordner liest"
 "keys" = "Tastenkombinationen, die vom Standard abweichen, nach Befehls-ID"
 "area_color" = "„Standard“ folgt der Hintergrundfarbe; Text auf einer benutzerdefinierten Farbe passt sich an, um lesbar zu bleiben"
 

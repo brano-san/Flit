@@ -30,6 +30,7 @@ tagged = "带标记的文件"
 connecting = "正在连接索引"
 service = "索引服务"
 fallback = "本地索引（flit-indexd 不可用）"
+off = "索引已在“设置 › 高级”中关闭；F3 在打开的文件夹中搜索"
 
 [index]
 default = "索引"

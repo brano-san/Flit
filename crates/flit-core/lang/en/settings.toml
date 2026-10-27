@@ -91,6 +91,7 @@ about = "About"
 "general.startup_pages" = "Pages to open at startup"
 "advanced.thumb_cache_mb" = "Thumbnail cache size"
 "advanced.default_manager" = "Use Flit as the default file manager"
+"advanced.indexing" = "Index files for search"
 "keys" = "Keyboard shortcuts"
 
 [help]
@@ -171,6 +172,7 @@ about = "About"
 "general.startup_pages" = "Used when Flit starts with specific pages: folders or the Home page, each in its own tab"
 "advanced.thumb_cache_mb" = "Thumbnails kept on disk in %LOCALAPPDATA%\\Flit\\thumbs; the oldest go first"
 "advanced.default_manager" = "Win+E and folders opened from the desktop or other programs open in Flit; Control Panel and other system folders still open in File Explorer. Only your own user settings change; the previous ones are saved and come back when you turn this off. Turn it off before deleting Flit"
+"advanced.indexing" = "Keeps a list of the names on every drive so that search finds files anywhere in milliseconds. When it is off, Flit does not read the drives in the background and frees the index memory; search inside an open folder (F3) still works by reading that folder"
 "keys" = "Shortcuts that differ from the defaults, by command id"
 "area_color" = "Default follows the background color; text on a custom color adjusts to stay readable"
 
