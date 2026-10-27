@@ -189,6 +189,48 @@ unsafe extern "system" fn on_chunk(msg: *const COPYFILE2_MESSAGE, ctx: *const c_
     COPYFILE2_PROGRESS_CONTINUE
 }
 
+const QUICK_MAX: u64 = 1 << 20;
+const QUICK_MIN: usize = 8;
+const QUICK_THREADS: usize = 4;
+
+fn quick_copy(from: &FsPath, to: &FsPath) -> windows::core::Result<()> {
+    let params = COPYFILE2_EXTENDED_PARAMETERS { dwSize: size_of::<COPYFILE2_EXTENDED_PARAMETERS>() as u32, dwCopyFlags: COPY_FILE_FAIL_IF_EXISTS, ..Default::default() };
+    unsafe { CopyFile2(PCWSTR(wide(from).as_ptr()), PCWSTR(wide(to).as_ptr()), Some(&params)) }
+}
+
+fn quick(job: &Job, files: &[(FsPath, FsPath, u64)], across: bool) -> Vec<bool> {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
+    let done: Vec<AtomicBool> = files.iter().map(|_| AtomicBool::new(false)).collect();
+    if files.len() < QUICK_MIN {
+        return vec![false; files.len()];
+    }
+    let next = AtomicUsize::new(0);
+    std::thread::scope(|s| {
+        for _ in 0..QUICK_THREADS {
+            s.spawn(|| loop {
+                let k = next.fetch_add(1, Relaxed);
+                let Some((from, to, size)) = files.get(k) else { break };
+                if job.cancelled() {
+                    break;
+                }
+                if quick_copy(from, to).is_err() {
+                    continue;
+                }
+                if across && delete_file(from).is_err() {
+                    let _ = delete_file(to);
+                    continue;
+                }
+                job.update(|p| {
+                    p.items += 1;
+                    p.bytes += size;
+                });
+                done[k].store(true, Relaxed);
+            });
+        }
+    });
+    done.into_iter().map(AtomicBool::into_inner).collect()
+}
+
 pub(crate) struct Engine<'a> {
     job: &'a Job,
     done: Pairs,
@@ -450,12 +492,25 @@ impl<'a> Engine<'a> {
             }
         };
         let (mut out, mut complete) = (Vec::new(), true);
+        let small: Vec<u32> = match mode {
+            Mode::Move => Vec::new(),
+            _ => (0..l.len() as u32).filter(|&i| !is_dir(&l.entries[i as usize].meta()) && l.entries[i as usize].size <= QUICK_MAX).collect(),
+        };
+        let files: Vec<(FsPath, FsPath, u64)> = small.iter().map(|&i| (src.join(l.name(i)), dst.join(l.name(i)), l.entries[i as usize].size)).collect();
+        let mut copied = vec![false; l.len()];
+        for (&i, ok) in small.iter().zip(quick(self.job, &files, mode == Mode::Across)) {
+            copied[i as usize] = ok;
+        }
         for i in 0..l.len() as u32 {
             if self.stopped() {
                 return (out, false);
             }
             let name = l.name(i);
             let s = src.join(name);
+            if copied[i as usize] {
+                out.push((s, dst.join(name)));
+                continue;
+            }
             match self.transfer(&s, dst.join(name), l.entries[i as usize].meta(), mode, false) {
                 Res::Whole(d) => out.push((s, d)),
                 Res::Part(v) => {
@@ -500,11 +555,21 @@ impl<'a> Engine<'a> {
         self.running(total);
         self.touch(Some(dest.clone()));
         let mut shell = Vec::new();
+        let small: Vec<usize> = (0..items.len()).filter(|&k| native[k] && metas[k].is_some_and(|m| !is_dir(&m) && m.size <= QUICK_MAX) && !items[k].parent().is_some_and(|p| same(&p, dest))).collect();
+        let files: Vec<(FsPath, FsPath, u64)> = small.iter().map(|&k| (items[k].clone(), dest.join(items[k].file_name()), metas[k].map_or(0, |m| m.size))).collect();
+        let mut copied = vec![false; items.len()];
+        for (&k, ok) in small.iter().zip(quick(self.job, &files, false)) {
+            copied[k] = ok;
+        }
         for (k, item) in items.iter().enumerate() {
             if self.stopped() {
                 break;
             }
             let Some(m) = metas[k] else { continue };
+            if copied[k] {
+                self.done.push((item.clone(), dest.join(item.file_name())));
+                continue;
+            }
             if !native[k] {
                 shell.push(item.clone());
                 continue;

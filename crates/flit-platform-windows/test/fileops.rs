@@ -353,6 +353,35 @@ fn conflicts_keep_both_replace_or_skip_and_never_touch_unchosen_items() {
 }
 
 #[test]
+fn many_small_files_copy_in_parallel_and_still_ask_about_every_conflict_in_order() {
+    let t = TempDir::new("quick");
+    std::fs::create_dir_all(t.0.join(r"src\tree")).unwrap();
+    std::fs::create_dir_all(t.0.join(r"dst\tree")).unwrap();
+    let names: Vec<String> = (0..30).map(|k| format!("f{k:02}.txt")).collect();
+    let items: Vec<FsPath> = names.iter().map(|n| t.file(&format!(r"src\{n}"), "new")).collect();
+    names.iter().for_each(|n| drop(t.file(&format!(r"src\tree\{n}"), "new")));
+    for k in [3, 11, 27] {
+        drop(t.file(&format!(r"dst\{}", names[k]), "old!"));
+        drop(t.file(&format!(r"dst\tree\{}", names[k]), "old!"));
+    }
+    let (job, asked) = answering(&[(Resolve::Skip, false), (Resolve::Replace, false), (Resolve::KeepBoth, false)]);
+    let out = engine::run(&FileOp::Copy { items: items.clone(), dest: t.path("dst") }, &job);
+    assert!(out.error.is_none(), "{:?}", out.error);
+    let targets: Vec<FsPath> = asked.lock().unwrap().iter().map(|c| c.target.clone()).collect();
+    assert_eq!(targets, [3, 11, 27].map(|k| t.path(&format!(r"dst\{}", names[k]))));
+    assert_eq!(out.items.len(), 29);
+    assert_eq!([read(&t, r"dst\f03.txt"), read(&t, r"dst\f11.txt"), read(&t, r"dst\f27.txt"), read(&t, r"dst\f27 (2).txt"), read(&t, r"dst\f00.txt")], ["old!", "new", "old!", "new", "new"]);
+    assert!(!t.has(r"dst\f11.txt.flit-partial"));
+
+    let (job, asked) = answering(&[(Resolve::Replace, false), (Resolve::Skip, true)]);
+    let out = engine::run(&FileOp::Copy { items: vec![t.path(r"src\tree")], dest: t.path("dst") }, &job);
+    assert!(out.error.is_none(), "{:?}", out.error);
+    assert_eq!(asked.lock().unwrap().len(), 2, "the folder, then one file with Skip for all");
+    assert_eq!(out.items.len(), 27);
+    assert_eq!([read(&t, r"dst\tree\f03.txt"), read(&t, r"dst\tree\f00.txt"), read(&t, r"dst\tree\f29.txt")], ["old!", "new", "new"]);
+}
+
+#[test]
 fn replacing_a_folder_merges_and_keeps_what_only_the_target_has() {
     let t = TempDir::new("merge");
     std::fs::create_dir_all(t.0.join(r"src\f")).unwrap();

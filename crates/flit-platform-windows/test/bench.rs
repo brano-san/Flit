@@ -336,6 +336,55 @@ fn fresh(d: &Dir, rel: &str) -> FsPath {
     d.path(rel)
 }
 
+fn within<S>(over: &mut Vec<String>, label: &str, budget_ms: f64, runs: usize, mut setup: impl FnMut(usize) -> S, mut op: impl FnMut(S)) {
+    let mut times: Vec<Duration> = (0..runs)
+        .map(|k| {
+            let s = setup(k);
+            let t = Instant::now();
+            op(s);
+            t.elapsed()
+        })
+        .collect();
+    times.sort();
+    let median = times[runs / 2].as_secs_f64() * 1000.0;
+    eprintln!("BUDGET {label:<44} median {median:>9.3} ms   budget {budget_ms} ms");
+    if median > budget_ms {
+        over.push(format!("{label}: {median:.3} ms > {budget_ms} ms"));
+    }
+}
+
+#[test]
+fn everyday_disk_operations_stay_within_their_budgets() {
+    let d = Dir::temp("budget");
+    let mut sh = ShellCom::new().unwrap();
+    let mut over = Vec::new();
+    let listing = tree(&d, "list10k", 10_000, 0);
+    within(&mut over, "read a 10k-file folder", 40.0, 5, |_| (), |_| assert_eq!(count(&NtFs, &listing), 10_000));
+    let sys = FsPath::parse(r"C:\Windows\System32").unwrap();
+    within(&mut over, "read C:\\Windows\\System32", 20.0, 5, |_| (), |_| assert!(count(&NtFs, &sys) > 1000));
+    within(&mut over, "read This PC", 10.0, 5, |_| (), |_| assert!(count(&NtFs, &FsPath::computer()) > 0));
+    let one = d.file("one.txt", 4096);
+    within(&mut over, "copy 1 file 4 KB", 20.0, 5, |k| fresh(&d, &format!("c1_{k}")), |dest| ok(run(&mut sh, &FileOp::Copy { items: vec![one.clone()], dest })));
+    let folder = tree(&d, "src200", 200, 1024);
+    within(&mut over, "copy a folder of 200 files 1 KB", 250.0, 3, |k| fresh(&d, &format!("c200_{k}")), |dest| ok(run(&mut sh, &FileOp::Copy { items: vec![folder.clone()], dest })));
+    let loose: Vec<FsPath> = (0..200).map(|i| d.path(&format!("src200/f{i:04}.txt"))).collect();
+    within(&mut over, "copy 200 selected files 1 KB", 250.0, 3, |k| fresh(&d, &format!("l200_{k}")), |dest| ok(run(&mut sh, &FileOp::Copy { items: loose.clone(), dest })));
+    within(&mut over, "move a folder of 50 files on one volume", 20.0, 3, |k| (tree(&d, &format!("mv{k}"), 50, 10), fresh(&d, &format!("mvd{k}"))), |(f, dest)| ok(run(&mut sh, &FileOp::Move { items: vec![f], dest })));
+    within(&mut over, "rename 1 file", 10.0, 5, |k| (d.file(&format!("r{k}.txt"), 1), format!("renamed{k}.txt").into_bytes()), |(item, name)| ok(run(&mut sh, &FileOp::Rename { item, name })));
+    within(&mut over, "batch rename 100 files", 200.0, 3, |k| {
+        let dir = tree(&d, &format!("ren{k}"), 100, 10);
+        (0..100).map(|i| (dir.join(format!("f{i:04}.txt").as_bytes()), dir.join(format!("Trip ({}).txt", i + 1).as_bytes()))).collect::<Vec<_>>()
+    }, |pairs| ok(run(&mut sh, &FileOp::MoveTo(pairs))));
+    within(&mut over, "delete a folder of 200 files", 250.0, 3, |k| tree(&d, &format!("del{k}"), 200, 10), |f| ok(run(&mut sh, &FileOp::Delete(vec![f]))));
+    within(&mut over, "list drives", 150.0, 3, |_| (), |_| assert!(!crate::places::drives().is_empty()));
+    let warm = d.file("warm.txt", 1);
+    query_menu(file_menu(&warm));
+    let files: Vec<FsPath> = (0..5).map(|k| d.file(&format!("m{k}.txt"), 10)).collect();
+    within(&mut over, "context menu of a file, warm", 400.0, 5, |k| files[k].clone(), |f| query_menu(file_menu(&f)));
+    within(&mut over, "context menu of the folder background, warm", 200.0, 5, |_| d.path(""), |p| query_menu(background_menu(&p)));
+    assert!(over.is_empty(), "over budget:\n{}", over.join("\n"));
+}
+
 #[test]
 #[ignore]
 fn bench_engine() {
