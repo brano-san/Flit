@@ -498,7 +498,12 @@ impl<P: Platform> Handler<P> {
                     window.close();
                 }
                 Effect::Cursor(c) => window.set_cursor(c),
-                Effect::Title(t) => window.set_title(&t),
+                Effect::Title(t) => {
+                    window.set_title(&t);
+                    if let Some(st) = self.windows.get(&id) {
+                        window.set_folder(st.app.current_location().to_windows().as_ref());
+                    }
+                }
                 Effect::Open(cmd) => {
                     if let Some(st) = self.windows.get_mut(&id) {
                         st.app.open(&cmd, &P::known_folder, Instant::now());
@@ -958,6 +963,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         app.on_event(&Event::ThemeChanged { dark: window.is_dark_mode() }, now);
         app.set_maximized(window.is_maximized());
         window.set_title(&app.window_title());
+        window.set_folder(app.current_location().to_windows().as_ref());
         let id = window.id();
         let born = self.requested.take();
         let st = WinState { app, gfx: Gfx::new(text, ATLAS), renderer: None, software: false, device_gen: 0, visible: Arc::default(), session_rev: 0, placement: Some(window.placement()), born, preview_rev: u64::MAX, backdrop_rev: u64::MAX, dark: None };

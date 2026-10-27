@@ -26,6 +26,7 @@ mod prevhost;
 mod recycle;
 mod service;
 mod shell;
+mod shellwin;
 mod tags;
 mod uia;
 mod walk_index;

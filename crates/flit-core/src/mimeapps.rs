@@ -1,5 +1,6 @@
 pub const DEFAULTS: &str = "[Default Applications]";
 pub const FOLDER: &str = "inode/directory";
+pub const FOLDER_TYPES: [&str; 2] = [FOLDER, "x-directory/normal"];
 pub const FLIT_DESKTOP: &str = "flit.desktop";
 const FILE: &str = "file\n";
 const NO_FILE: &str = "nofile\n";
@@ -66,21 +67,27 @@ pub fn backup(original: Option<&str>) -> String {
 }
 
 pub fn ours(original: Option<&str>) -> String {
-    set_default_app(original.unwrap_or_default(), FOLDER, Some(FLIT_DESKTOP))
+    FOLDER_TYPES.iter().fold(original.unwrap_or_default().to_owned(), |text, mime| set_default_app(&text, mime, Some(FLIT_DESKTOP)))
+}
+
+pub fn original(backup: &str) -> Option<Option<&str>> {
+    match backup.strip_prefix(FILE) {
+        Some(t) => Some(Some(t)),
+        None if backup == NO_FILE => Some(None),
+        None => None,
+    }
 }
 
 pub fn restore(backup: &str, current: Option<&str>) -> Option<String> {
-    let original = match backup.strip_prefix(FILE) {
-        Some(t) => Some(t),
-        None if backup == NO_FILE => None,
-        None => return current.map(str::to_owned),
-    };
+    let Some(original) = original(backup) else { return current.map(str::to_owned) };
     let current = current.unwrap_or_default();
     if current == ours(original) {
         return original.map(str::to_owned);
     }
-    let previous = original.and_then(|t| default_app(t, FOLDER));
-    Some(set_default_app(current, FOLDER, previous.as_deref()))
+    Some(FOLDER_TYPES.iter().fold(current.to_owned(), |text, mime| {
+        let previous = original.and_then(|t| default_app(t, mime));
+        set_default_app(&text, mime, previous.as_deref())
+    }))
 }
 
 #[cfg(test)]

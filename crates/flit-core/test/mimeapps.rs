@@ -24,7 +24,9 @@ fn turning_off_restores_the_file_exactly() {
     for original in [Some(LIST), Some("[Other]\na=b"), Some(""), None] {
         let saved = backup(original);
         let written = ours(original);
-        assert_eq!(default_app(&written, FOLDER).as_deref(), Some(FLIT_DESKTOP));
+        for mime in FOLDER_TYPES {
+            assert_eq!(default_app(&written, mime).as_deref(), Some(FLIT_DESKTOP), "{mime}");
+        }
         assert_eq!(restore(&saved, Some(&written)).as_deref(), original, "{original:?}");
     }
 }
@@ -39,4 +41,15 @@ fn later_edits_by_other_programs_survive_turning_off() {
     let fresh = restore(&backup(None), Some("[Default Applications]\ninode/directory=flit.desktop\nimage/png=eog.desktop\n")).unwrap();
     assert_eq!(fresh, "[Default Applications]\nimage/png=eog.desktop\n");
     assert_eq!(restore("garbage", Some("x")).as_deref(), Some("x"));
+}
+
+#[test]
+fn both_folder_types_go_back_to_their_own_previous_handlers() {
+    let original = "[Default Applications]\ninode/directory=org.gnome.Nautilus.desktop\nx-directory/normal=nemo.desktop\n";
+    let edited = format!("{}image/png=eog.desktop\n", ours(Some(original)));
+    let back = restore(&backup(Some(original)), Some(&edited)).unwrap();
+    assert_eq!(default_app(&back, "inode/directory").as_deref(), Some("org.gnome.Nautilus.desktop"));
+    assert_eq!(default_app(&back, "x-directory/normal").as_deref(), Some("nemo.desktop"));
+    let without = restore(&backup(Some("[Default Applications]\ninode/directory=a.desktop\n")), Some(&format!("{}b=c\n", ours(Some("[Default Applications]\ninode/directory=a.desktop\n"))))).unwrap();
+    assert_eq!(default_app(&without, "x-directory/normal"), None);
 }

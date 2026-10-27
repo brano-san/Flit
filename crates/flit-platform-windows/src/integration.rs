@@ -239,6 +239,7 @@ pub fn delete_tree(hive: HKEY, key: &str) {
 pub fn integrate(on: bool) -> Result<(), PlatformError> {
     let exe = std::env::current_exe().map_err(|e| PlatformError::new(-1, e.to_string()))?;
     set(&Root::user(), on, &exe.to_string_lossy())?;
+    crate::shellwin::enable(on);
     unsafe { SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None) };
     Ok(())
 }

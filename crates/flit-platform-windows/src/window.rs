@@ -247,6 +247,10 @@ impl Window for Win32Window {
         self.post(WM_DESTROY_REQUEST, 0);
     }
 
+    fn set_folder(&self, folder: Option<&FsPath>) {
+        crate::shellwin::show(self.hwnd(), folder);
+    }
+
     fn placement(&self) -> Placement {
         let mut wp = WINDOWPLACEMENT { length: size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
         match self.restore.get() {
@@ -1181,6 +1185,7 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
             crate::dragdrop::revoke(hwnd);
             OPEN.with_borrow_mut(|open| open.retain(|(h, _)| *h != hwnd.0 as isize));
             crate::prevhost::forget(hwnd);
+            crate::shellwin::show(hwnd, None);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             s.shared().destroyed(hwnd);
             Some(LRESULT(0))

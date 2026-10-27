@@ -26,7 +26,7 @@ fn a_private_session_bus_delivers_show_items_to_the_open_sink() {
     let sink: OpenSink = Arc::new(Mutex::new(Some(tx)));
     let (ready_tx, ready_rx) = crossbeam_channel::bounded(1);
     let bus = address.clone();
-    std::thread::spawn(move || serve(&bus, sink, Arc::new(|| {}), move |ok| ready_tx.send(ok).unwrap()));
+    std::thread::spawn(move || serve(&bus, sink, Arc::new(|| {}), move |ok| ready_tx.send(ok).unwrap(), || true));
     let ok = ready_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     if !ok {
         let _ = daemon.kill();
@@ -71,10 +71,51 @@ fn a_call_queued_by_bus_activation_is_answered() {
     let (tx, rx) = crossbeam_channel::unbounded();
     let sink: OpenSink = Arc::new(Mutex::new(Some(tx)));
     let bus = address.clone();
-    std::thread::spawn(move || serve(&bus, sink, Arc::new(|| {}), |_| {}));
+    std::thread::spawn(move || serve(&bus, sink, Arc::new(|| {}), |_| {}, || true));
     let open = rx.recv_timeout(Duration::from_secs(5));
     let out = send.wait_with_output().unwrap();
     let _ = daemon.kill();
     assert_eq!(open.unwrap().paths, [b"/srv".to_vec()]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+fn owned(address: &str) -> bool {
+    let out = Command::new("dbus-send")
+        .args([&format!("--bus={address}"), "--print-reply", "--dest=org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus.NameHasOwner", "string:org.freedesktop.FileManager1"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).contains("boolean true")
+}
+
+fn eventually(address: &str, want: bool) -> bool {
+    (0..100).any(|_| {
+        let now = owned(address) == want;
+        if !now {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        now
+    })
+}
+
+#[test]
+fn the_name_is_owned_only_while_the_setting_is_on() {
+    let Ok(mut daemon) = Command::new("dbus-daemon").args(["--session", "--nofork", "--print-address=1"]).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else { return };
+    let mut address = String::new();
+    BufReader::new(daemon.stdout.take().unwrap()).read_line(&mut address).unwrap();
+    let address = address.trim().to_owned();
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let sink: OpenSink = Arc::new(Mutex::new(Some(tx)));
+    let bus = address.clone();
+    std::thread::spawn(move || run(&bus, sink, Arc::new(|| {})));
+    std::thread::sleep(Duration::from_millis(300));
+    let off_at_start = !owned(&address);
+    want(true);
+    let taken = eventually(&address, true);
+    want(false);
+    let released = eventually(&address, false);
+    want(true);
+    let taken_again = eventually(&address, true);
+    want(false);
+    let _ = daemon.kill();
+    assert!(off_at_start && taken && released && taken_again, "{off_at_start} {taken} {released} {taken_again}");
 }

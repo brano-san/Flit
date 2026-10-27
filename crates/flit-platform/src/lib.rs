@@ -88,6 +88,7 @@ pub trait Window {
     fn scale(&self) -> f32;
     fn request_redraw(&self);
     fn set_title(&self, title: &str);
+    fn set_folder(&self, _folder: Option<&FsPath>) {}
     fn set_cursor(&self, cursor: CursorIcon);
     fn minimize(&self);
     fn toggle_maximize(&self);
