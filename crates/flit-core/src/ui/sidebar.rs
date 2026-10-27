@@ -54,7 +54,7 @@ const G_COLLAPSED: &str = "\u{E76C}";
 const G_RECENT: &str = "\u{E81C}";
 pub(super) const G_SETTINGS: &str = "\u{E713}";
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum KnownFolder {
     Home,
     Desktop,
@@ -105,7 +105,7 @@ impl KnownFolder {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Drive {
     pub path: FsPath,
     pub label: String,
@@ -142,7 +142,7 @@ impl Drive {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Places {
     pub folders: Vec<(KnownFolder, Location)>,
     pub drives: Vec<Drive>,

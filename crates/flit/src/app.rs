@@ -1,5 +1,5 @@
 use crate::metrics::{Metrics, Step};
-use crate::places::{PlacesWorker, Reply};
+use crate::places::{ChromeIcons, PlacesWorker, Reply, ICONS_FILE, PLACES_FILE};
 use crate::search_client::SearchClient;
 use crate::session::{self, Files, Session, Writer};
 use crate::settings::{self, Job, Settings};
@@ -122,7 +122,7 @@ enum PreviewJob {
 }
 
 enum Done {
-    Icon { window: WindowId, key: u64, result: IconResult },
+    Icon { window: WindowId, req: IconRequest, result: IconResult },
     Thumb { window: WindowId, key: u64, result: IconResult },
     TypeName(Vec<u8>, Option<String>),
     Sorted { window: WindowId, tab: TabId, gen: u64, view: ViewSpec, base_len: usize, order: Vec<u32>, ms: f64 },
@@ -191,7 +191,7 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache) -> Result<Workers, Platf
                         } else {
                             shell.icon(&req).map_or(IconResult::Failed, IconResult::Ready)
                         };
-                        Done::Icon { window, key: req.key, result }
+                        Done::Icon { window, req, result }
                     }
                     ShellJob::TypeName(ext) => {
                         let name = shell.type_name(&ext);
@@ -267,6 +267,7 @@ struct Handler<P: Platform> {
     device_gen: u64,
     search: SearchClient,
     places: PlacesWorker,
+    chrome: ChromeIcons,
     files: Option<Files>,
     writer: Option<Writer>,
     crashed: Option<Session>,
@@ -413,6 +414,7 @@ impl<P: Platform> Handler<P> {
             w.finish();
         }
         self.writer = None;
+        self.chrome.save();
         if let Some(f) = &self.files {
             if let Some(s) = s {
                 session::write(&f.session, &s);
@@ -697,11 +699,19 @@ impl<P: Platform> Handler<P> {
         }
         while let Ok(done) = self.done.try_recv() {
             match done {
-                Done::Icon { window, key, result } => {
-                    if let Some(st) = self.windows.get_mut(&window) {
-                        st.app.on_icon(&mut st.gfx, key, result);
+                Done::Icon { window, req, result } => match result {
+                    IconResult::Ready(image) if req.gen == 0 => {
+                        self.chrome.keep(&req, &image);
+                        for st in self.windows.values_mut() {
+                            st.app.on_icon(&mut st.gfx, req.key, IconResult::Ready(image.clone()));
+                        }
                     }
-                }
+                    result => {
+                        if let Some(st) = self.windows.get_mut(&window) {
+                            st.app.on_icon(&mut st.gfx, req.key, result);
+                        }
+                    }
+                },
                 Done::Thumb { window, key, result } => {
                     if let Some(st) = self.windows.get_mut(&window) {
                         st.app.on_thumb(&mut st.gfx, key, result);
@@ -737,6 +747,7 @@ impl<P: Platform> Handler<P> {
                 }
             }
         }
+        self.chrome.flush();
         self.take_opens();
         while let Ok((window, ev)) = self.tags.events.try_recv() {
             let wanted = |id: &WindowId| window.is_none_or(|w| w == *id);
@@ -910,7 +921,11 @@ impl<P: Platform> Handler<P> {
         }
         st.visible.pane.store(st.app.visible_rows());
         st.visible.other.store(st.app.other_visible_rows().unwrap_or((u64::MAX, 0, 0)));
-        self.places.start_once();
+        if self.places.start_once() {
+            for k in &self.chrome.kept {
+                let _ = self.shell.send(ShellJob::Icon { window: id, req: k.request(), visible: st.visible.clone() });
+            }
+        }
         let now = Instant::now();
         if animating {
             window.request_redraw();
@@ -966,7 +981,11 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         window.set_folder(app.current_location().to_windows().as_ref());
         let id = window.id();
         let born = self.requested.take();
-        let st = WinState { app, gfx: Gfx::new(text, ATLAS), renderer: None, software: false, device_gen: 0, visible: Arc::default(), session_rev: 0, placement: Some(window.placement()), born, preview_rev: u64::MAX, backdrop_rev: u64::MAX, dark: None };
+        let mut gfx = Gfx::new(text, ATLAS);
+        for k in &self.chrome.kept {
+            gfx.add_image(k.key, k.image.width, k.image.height, k.image.rgba.clone());
+        }
+        let st = WinState { app, gfx, renderer: None, software: false, device_gen: 0, visible: Arc::default(), session_rev: 0, placement: Some(window.placement()), born, preview_rev: u64::MAX, backdrop_rev: u64::MAX, dark: None };
         self.windows.insert(id, st);
         self.active = Some(id);
         self.flush(window);
@@ -1170,7 +1189,8 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         done,
         saved: saved.clone(),
         metrics: metrics.map(|m| Metrics::new(m, started, P::refresh_period())),
-        places: PlacesWorker::new::<P>(wake.clone()),
+        places: PlacesWorker::new::<P>(wake.clone(), P::cache_dir().map(|d| d.join(PLACES_FILE))),
+        chrome: ChromeIcons::load(P::cache_dir().map(|d| d.join(ICONS_FILE))),
         injection: None,
         wake,
         gpu,

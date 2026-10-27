@@ -133,7 +133,7 @@ fn main() {
     let singles: Vec<&(String, Entry)> = source.iter().filter(|(_, e)| matches!(e, Entry::One(_))).collect();
     let plurals: Vec<&(String, Entry)> = source.iter().filter(|(_, e)| matches!(e, Entry::Forms(_))).collect();
     let mut code = String::new();
-    code.push_str("#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]\n#[repr(u16)]\npub enum S {\n");
+    code.push_str("#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]\n#[repr(u16)]\npub enum S {\n");
     for (k, _) in &singles {
         let _ = writeln!(code, "    {},", ident(k));
     }

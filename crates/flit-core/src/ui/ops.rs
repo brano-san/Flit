@@ -43,7 +43,7 @@ const MAX_TERMINALS: usize = 5;
 const RUNNABLE: [&[u8]; 4] = [b"exe", b"com", b"bat", b"cmd"];
 pub(super) const TIMER_SLACK: Duration = Duration::from_millis(16);
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NewTemplate {
     pub label: String,
     pub ext: String,

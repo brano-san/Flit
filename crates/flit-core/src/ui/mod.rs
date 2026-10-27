@@ -229,7 +229,7 @@ pub enum WindowCmd {
     Compact(Option<bool>),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum IconKind {
     Type,
     File,
@@ -250,7 +250,7 @@ pub struct IconRequest {
     pub row: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Bitmap {
     pub width: u32,
     pub height: u32,

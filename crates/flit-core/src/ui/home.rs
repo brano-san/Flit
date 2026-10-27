@@ -51,7 +51,7 @@ impl Widget {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Recent {
     pub name: String,
     pub target: FsPath,

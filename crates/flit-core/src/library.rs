@@ -3,7 +3,7 @@ use crate::path::{FsPath, PathKind};
 
 pub const EXT: &[u8] = b".library-ms";
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Library {
     pub name: String,
     pub path: FsPath,
