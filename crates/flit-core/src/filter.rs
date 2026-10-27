@@ -1,6 +1,8 @@
 use crate::listing::Listing;
 use crate::name;
 
+const PARALLEL_FROM: usize = 1 << 15;
+
 #[derive(Clone, Debug)]
 pub struct NameFilter {
     needle: String,
@@ -46,16 +48,30 @@ impl NameFilter {
     }
 
     pub fn seed_from(&mut self, prev: &NameFilter, listing: &Listing) {
-        let mut buf = String::new();
-        self.matched = prev.matched.iter().enumerate().map(|(i, &m)| m && self.matches_name(listing.name(i as u32), &mut buf)).collect();
+        self.matched = self.match_range(listing, 0, prev.matched.len(), &|i| prev.matched[i]);
+    }
+
+    fn match_range(&self, listing: &Listing, from: usize, to: usize, keep: &(dyn Fn(usize) -> bool + Sync)) -> Vec<bool> {
+        let one = |start: usize, end: usize| {
+            let mut buf = String::new();
+            (start..end).map(|i| keep(i) && self.matches_name(listing.name(i as u32), &mut buf)).collect::<Vec<bool>>()
+        };
+        let threads = if to - from < PARALLEL_FROM { 1 } else { std::thread::available_parallelism().map_or(1, |n| n.get()) };
+        if threads == 1 {
+            return one(from, to);
+        }
+        let chunk = (to - from).div_ceil(threads);
+        std::thread::scope(|s| {
+            let parts: Vec<_> = (from..to).step_by(chunk).map(|start| s.spawn(move || one(start, (start + chunk).min(to)))).collect();
+            parts.into_iter().flat_map(|p| p.join().unwrap_or_default()).collect()
+        })
     }
 
     pub fn sync(&mut self, listing: &Listing, order: &[u32]) {
         if self.matched.len() > listing.len() {
             self.matched.clear();
         }
-        let mut buf = String::new();
-        let fresh: Vec<bool> = (self.matched.len()..listing.len()).map(|i| self.matches_name(listing.name(i as u32), &mut buf)).collect();
+        let fresh = self.match_range(listing, self.matched.len(), listing.len(), &|_| true);
         self.matched.extend(fresh);
         let matched = &self.matched;
         self.rows.clear();

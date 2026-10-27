@@ -117,7 +117,7 @@ fn growing_snapshots_keep_the_filter() {
 
 #[test]
 fn narrowing_reuses_previous_matches() {
-    let names: Vec<String> = (0..2000).map(|i| format!("Item {i} {}", if i % 3 == 0 { "Ёлка" } else { "x" })).collect();
+    let names: Vec<String> = (0..100_000).map(|i| format!("Item {i} {}", if i % 3 == 0 { "Ёлка" } else { "x" })).collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut typed = DirView::new(snap(&refs));
     let mut direct = DirView::new(snap(&refs));

@@ -362,6 +362,20 @@ impl App {
         }
     }
 
+    pub fn search_finished(&self) -> Option<u64> {
+        (self.search.done && !self.search.walking).then_some(self.search.total)
+    }
+
+    pub fn search_backend(&self) -> SearchBackend {
+        self.search.backend
+    }
+
+    pub fn index_ready(&self) -> Option<u64> {
+        let v = &self.search.volumes;
+        let ready = !v.is_empty() && v.iter().all(|v| !matches!(v.state, IndexState::Scanning(_)));
+        ready.then(|| v.iter().map(|v| v.files).sum())
+    }
+
     pub fn search_history(&self) -> &[String] {
         &self.search.history
     }

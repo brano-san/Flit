@@ -11,6 +11,8 @@ const GOLDEN_FRACTION: f64 = 0.618_033_988_749_895;
 const SETTINGS_SEARCH: &str = "thumbnail";
 const THEME_SWITCHES: u32 = 8;
 const SETTINGS_CLOSE: u32 = 2;
+const QUERIES: [&str; 3] = ["report", "отчёт", "文件"];
+const INDEX_WAIT: Duration = Duration::from_secs(900);
 
 pub enum Step {
     None,
@@ -29,6 +31,10 @@ enum Phase {
     Done,
     Settings(usize),
     Theme(u32),
+    Filter(usize, usize),
+    SearchOpen(usize),
+    IndexWait(usize, Instant),
+    Search(usize, usize, usize),
 }
 
 pub struct Metrics {
@@ -58,6 +64,20 @@ pub struct Metrics {
     settings_mark: Option<Instant>,
     settings_input: Vec<(f64, f64)>,
     theme_switch: Vec<(f64, f64)>,
+    cold_first_rows: Option<f64>,
+    cold_full: Option<f64>,
+    awaiting: bool,
+    dispatched: Option<Instant>,
+    filter_keys: Vec<Vec<f64>>,
+    filter_rows: Vec<usize>,
+    index_ready: Option<f64>,
+    index_wait: Option<f64>,
+    index_files: u64,
+    backend: String,
+    private_listing: f64,
+    private_indexed: f64,
+    search_keys: [Vec<Vec<f64>>; 2],
+    search_totals: [Vec<u64>; 2],
 }
 
 fn ms(d: Duration) -> f64 {
@@ -70,6 +90,40 @@ fn percentile(v: &mut [f64], p: f64) -> f64 {
     }
     v.sort_by(f64::total_cmp);
     v[((v.len() - 1) as f64 * p).round() as usize]
+}
+
+#[cfg(windows)]
+fn private_mb() -> f64 {
+    #[repr(C)]
+    #[derive(Default)]
+    struct Counters {
+        cb: u32,
+        page_faults: u32,
+        sizes: [usize; 8],
+        private: usize,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn K32GetProcessMemoryInfo(process: isize, counters: *mut Counters, cb: u32) -> i32;
+        fn GetCurrentProcess() -> isize;
+    }
+    let mut c = Counters { cb: std::mem::size_of::<Counters>() as u32, ..Counters::default() };
+    let ok = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut c, c.cb) } != 0;
+    if ok { c.private as f64 / 1_048_576.0 } else { 0.0 }
+}
+
+#[cfg(not(windows))]
+fn private_mb() -> f64 {
+    0.0
+}
+
+fn flat(v: &[Vec<f64>]) -> Vec<f64> {
+    v.iter().flatten().copied().collect()
+}
+
+fn nested(v: &[Vec<f64>]) -> String {
+    let inner: Vec<String> = v.iter().map(|k| format!("[{}]", k.iter().map(|x| format!("{x:.2}")).collect::<Vec<_>>().join(","))).collect();
+    format!("[{}]", inner.join(","))
 }
 
 pub fn dual_at_start() -> bool {
@@ -109,18 +163,33 @@ impl Metrics {
             settings_mark: None,
             settings_input: Vec::new(),
             theme_switch: Vec::new(),
+            cold_first_rows: None,
+            cold_full: None,
+            awaiting: false,
+            dispatched: None,
+            filter_keys: vec![Vec::new(); QUERIES.len()],
+            filter_rows: Vec::new(),
+            index_ready: None,
+            index_wait: None,
+            index_files: 0,
+            backend: String::new(),
+            private_listing: 0.0,
+            private_indexed: 0.0,
+            search_keys: [vec![Vec::new(); QUERIES.len()], vec![Vec::new(); QUERIES.len()]],
+            search_totals: [Vec::new(), Vec::new()],
         }
     }
 
     pub fn on_injected(&mut self, at: Instant) {
         self.injected_at = Some(at);
+        self.dispatched = Some(at);
         self.injection_pending = false;
     }
 
     pub fn on_sorted(&mut self, sort_ms: f64) {
         if matches!(self.phase, Phase::Sort) {
             self.sort = Some(sort_ms);
-            self.phase = Phase::Done;
+            self.phase = Phase::Filter(0, 0);
         }
     }
 
@@ -130,12 +199,26 @@ impl Metrics {
 
     pub fn after_frame(&mut self, app: &App, software: bool, cpu_ms: f32, now: Instant) -> Step {
         self.first_frame.get_or_insert_with(|| ms(now - self.started));
-        if let Some(t) = self.injected_at.take() {
-            self.latencies.push(ms(now - t));
+        let latency = self.injected_at.take().map(|t| ms(now - t));
+        let typing = matches!(self.phase, Phase::Filter(..) | Phase::SearchOpen(_) | Phase::IndexWait(..) | Phase::Search(..));
+        if let Some(l) = latency.filter(|_| !typing) {
+            self.latencies.push(l);
+        }
+        if self.awaiting {
+            if latency.is_none() {
+                return Step::None;
+            }
+            self.awaiting = false;
         }
         let stats = app.tab().stats;
         match self.phase {
             Phase::Loading => {
+                if self.cold_first_rows.is_none() && stats.first.is_some() && stats.entries > 0 {
+                    self.cold_first_rows = Some(ms(now - self.started));
+                }
+                if stats.done.is_some() && self.cold_full.is_none() {
+                    self.cold_full = Some(ms(now - self.started));
+                }
                 if stats.done.is_none() {
                     return Step::None;
                 }
@@ -172,6 +255,7 @@ impl Metrics {
                 Step::None
             }
             Phase::Settle(0) => {
+                self.private_listing = private_mb();
                 self.phase = Phase::Scroll;
                 self.scroll_from = app.visible_rows().1 as usize;
                 Step::None
@@ -202,6 +286,73 @@ impl Metrics {
                 Step::InjectAfter(self.period().mul_f64(offset), Event::Wheel { dx: 0.0, dy: -(step / 3.0) as f32 })
             }
             Phase::Sort => Step::None,
+            Phase::Filter(q, c) => {
+                if let (Some(l), true) = (latency, c >= 2) {
+                    self.filter_keys[q].push(l);
+                }
+                let chars: Vec<char> = QUERIES[q].chars().collect();
+                if c == 0 {
+                    self.phase = Phase::Filter(q, 1);
+                    return self.typed(key(Key::Char('F'), true));
+                }
+                if let Some(&ch) = chars.get(c - 1) {
+                    self.phase = Phase::Filter(q, c + 1);
+                    return self.typed(Event::Char(ch));
+                }
+                self.filter_rows.push(app.tab().rows());
+                if q + 1 < QUERIES.len() {
+                    self.phase = Phase::Filter(q + 1, 0);
+                    return Step::None;
+                }
+                self.phase = Phase::SearchOpen(0);
+                self.typed(key(Key::Escape, false))
+            }
+            Phase::SearchOpen(scope) => {
+                self.phase = Phase::IndexWait(scope, now);
+                self.typed(if scope == 0 { key(Key::Char('E'), true) } else { key(Key::F(3), false) })
+            }
+            Phase::IndexWait(scope, since) => {
+                if let Some(files) = app.index_ready() {
+                    if self.index_ready.is_none() {
+                        self.index_ready = Some(ms(now - self.started));
+                        self.index_wait = Some(ms(now - since));
+                        self.index_files = files;
+                        self.backend = format!("{:?}", app.search_backend());
+                        self.private_indexed = private_mb();
+                    }
+                    self.phase = Phase::Search(scope, 0, 0);
+                    return Step::None;
+                }
+                if now - since > INDEX_WAIT {
+                    self.phase = Phase::Done;
+                    return self.typed(key(Key::Escape, false));
+                }
+                Step::None
+            }
+            Phase::Search(scope, q, c) => {
+                let chars: Vec<char> = QUERIES[q].chars().collect();
+                if c >= 2 {
+                    let Some(total) = app.search_finished() else { return Step::None };
+                    self.search_keys[scope][q].push(self.dispatched.map_or(0.0, |t| ms(now - t)));
+                    if c - 1 == chars.len() {
+                        self.search_totals[scope].push(total);
+                    }
+                }
+                if c == 0 {
+                    self.phase = Phase::Search(scope, q, 1);
+                    return self.typed(if scope == 0 { key(Key::Char('E'), true) } else { key(Key::F(3), false) });
+                }
+                if let Some(&ch) = chars.get(c - 1) {
+                    self.phase = Phase::Search(scope, q, c + 1);
+                    return self.typed(Event::Char(ch));
+                }
+                if q + 1 < QUERIES.len() {
+                    self.phase = Phase::Search(scope, q + 1, 0);
+                    return Step::None;
+                }
+                self.phase = if scope == 0 { Phase::SearchOpen(1) } else { Phase::Done };
+                self.typed(key(Key::Escape, false))
+            }
             Phase::Done => {
                 self.phase = Phase::Settings(0);
                 self.settings_mark = Some(now);
@@ -233,6 +384,11 @@ impl Metrics {
         }
     }
 
+    fn typed(&mut self, ev: Event) -> Step {
+        self.awaiting = true;
+        Step::InjectAfter(Duration::ZERO, ev)
+    }
+
     fn switch_theme(&mut self, n: u32, now: Instant) -> Step {
         self.phase = Phase::Theme(n);
         if n < SETTINGS_CLOSE {
@@ -258,7 +414,7 @@ impl Metrics {
         let mut s = String::new();
         let _ = write!(
             s,
-            "{{\"entries\":{},\"start_to_first_frame_ms\":{},\"first_rows_ms\":{},\"full_listing_ms\":{},\"first_rows_worker_ms\":{},\"full_listing_worker_ms\":{},\"scroll_rows\":{},\"scroll_frames\":{},\"scroll_ms\":{:.2},\"software_frames\":{},\"frame_period_ms\":{:.2},\"refresh_from_display\":{},\"frame_interval_p50_ms\":{:.2},\"dropped_frames\":{},\"frame_cpu_p50_ms\":{:.2},\"frame_cpu_p99_ms\":{:.2},\"input_to_frame_p50_ms\":{:.2},\"input_to_frame_max_ms\":{:.2},\"sort_ms\":{},\"panes\":{},\"split_ready_ms\":{},\"settings_open_ms\":{},\"settings_open_cpu_ms\":{},\"settings_search_p50_ms\":{:.2},\"settings_search_cpu_p50_ms\":{:.2},\"theme_switch_p50_ms\":{:.2},\"theme_switch_cpu_p50_ms\":{:.2}}}",
+            "{{\"entries\":{},\"start_to_first_frame_ms\":{},\"first_rows_ms\":{},\"full_listing_ms\":{},\"first_rows_worker_ms\":{},\"full_listing_worker_ms\":{},\"scroll_rows\":{},\"scroll_frames\":{},\"scroll_ms\":{:.2},\"software_frames\":{},\"frame_period_ms\":{:.2},\"refresh_from_display\":{},\"frame_interval_p50_ms\":{:.2},\"dropped_frames\":{},\"frame_cpu_p50_ms\":{:.2},\"frame_cpu_p99_ms\":{:.2},\"input_to_frame_p50_ms\":{:.2},\"input_to_frame_max_ms\":{:.2},\"sort_ms\":{},\"panes\":{},\"split_ready_ms\":{},\"settings_open_ms\":{},\"settings_open_cpu_ms\":{},\"settings_search_p50_ms\":{:.2},\"settings_search_cpu_p50_ms\":{:.2},\"theme_switch_p50_ms\":{:.2},\"theme_switch_cpu_p50_ms\":{:.2},\"cold_first_rows_ms\":{},\"cold_full_listing_ms\":{},\"filter_key_p50_ms\":{:.2},\"filter_key_max_ms\":{:.2},\"filter_rows\":{:?},\"filter_keys_ms\":{},\"index_ready_ms\":{},\"index_wait_ms\":{},\"index_files\":{},\"search_backend\":\"{}\",\"private_listing_mb\":{:.0},\"private_indexed_mb\":{:.0},\"private_end_mb\":{:.0},\"search_key_p50_ms\":{:.2},\"search_key_max_ms\":{:.2},\"search_totals\":{:?},\"search_keys_ms\":{},\"folder_search_key_p50_ms\":{:.2},\"folder_search_key_max_ms\":{:.2},\"folder_search_totals\":{:?},\"folder_search_keys_ms\":{}}}",
             self.entries,
             opt(self.first_frame),
             opt(self.first_rows),
@@ -286,6 +442,27 @@ impl Metrics {
             percentile(&mut search_cpu, 0.5),
             percentile(&mut theme, 0.5),
             percentile(&mut theme_cpu, 0.5),
+            opt(self.cold_first_rows),
+            opt(self.cold_full),
+            percentile(&mut flat(&self.filter_keys), 0.5),
+            flat(&self.filter_keys).iter().copied().fold(0.0, f64::max),
+            self.filter_rows,
+            nested(&self.filter_keys),
+            opt(self.index_ready),
+            opt(self.index_wait),
+            self.index_files,
+            self.backend,
+            self.private_listing,
+            self.private_indexed,
+            private_mb(),
+            percentile(&mut flat(&self.search_keys[0]), 0.5),
+            flat(&self.search_keys[0]).iter().copied().fold(0.0, f64::max),
+            self.search_totals[0],
+            nested(&self.search_keys[0]),
+            percentile(&mut flat(&self.search_keys[1]), 0.5),
+            flat(&self.search_keys[1]).iter().copied().fold(0.0, f64::max),
+            self.search_totals[1],
+            nested(&self.search_keys[1]),
         );
         let _ = std::fs::write(&self.out, s);
     }

@@ -1,13 +1,14 @@
-param([switch]$Bench)
+param([switch]$Bench, [switch]$Big)
 
 $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 $root = Split-Path -Parent $PSScriptRoot
 $runs = 3
-$timeoutMs = 300000
+$timeoutMs = 1200000
 $folders = @('flat_10k', 'flat_100k')
-$keys = @('entries', 'start_to_first_frame_ms', 'first_rows_ms', 'full_listing_ms', 'first_rows_worker_ms', 'full_listing_worker_ms', 'scroll_rows', 'scroll_frames', 'scroll_ms', 'software_frames', 'frame_period_ms', 'frame_interval_p50_ms', 'dropped_frames', 'frame_cpu_p50_ms', 'frame_cpu_p99_ms', 'input_to_frame_p50_ms', 'input_to_frame_max_ms', 'sort_ms')
+if ($Big) { $folders += @('mixed_1m', 'mixed_5m') }
+$keys = @('entries', 'start_to_first_frame_ms', 'first_rows_ms', 'full_listing_ms', 'first_rows_worker_ms', 'full_listing_worker_ms', 'scroll_rows', 'scroll_frames', 'scroll_ms', 'software_frames', 'frame_period_ms', 'frame_interval_p50_ms', 'dropped_frames', 'frame_cpu_p50_ms', 'frame_cpu_p99_ms', 'input_to_frame_p50_ms', 'input_to_frame_max_ms', 'sort_ms', 'cold_first_rows_ms', 'cold_full_listing_ms', 'filter_key_p50_ms', 'filter_key_max_ms', 'index_ready_ms', 'index_wait_ms', 'index_files', 'search_key_p50_ms', 'search_key_max_ms', 'folder_search_key_p50_ms', 'folder_search_key_max_ms', 'private_listing_mb', 'private_indexed_mb')
 $flit = Join-Path $root 'target\release\flit.exe'
 $gen = Join-Path $root 'target\release\flit-gen.exe'
 $testdata = Join-Path $root 'target\testdata'
@@ -21,6 +22,10 @@ try {
 
     & $gen $testdata --all
     if ($LASTEXITCODE -ne 0) { throw "flit-gen failed ($LASTEXITCODE)" }
+    if ($Big) {
+        & $gen $testdata --mixed 1000000 --mixed 5000000
+        if ($LASTEXITCODE -ne 0) { throw "flit-gen failed ($LASTEXITCODE)" }
+    }
 
     $benchLines = @()
     if ($Bench) {
@@ -57,6 +62,10 @@ foreach ($folder in $folders) {
         $json = Join-Path $outDir "$folder-$i.json"
         Remove-Item -LiteralPath $json -ErrorAction SilentlyContinue
         $dir = Join-Path $testdata $folder
+        $profileDir = Join-Path $outDir 'profile'
+        Remove-Item -LiteralPath $profileDir -Recurse -Force -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Force $profileDir | Out-Null
+        $env:LOCALAPPDATA = $profileDir
         Write-Host "flit --metrics $folder (run $i/$runs)"
         $p = Start-Process -FilePath $flit -ArgumentList '--metrics', "`"$json`"", "`"$dir`"" -PassThru
         if (-not $p.WaitForExit($timeoutMs)) {

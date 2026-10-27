@@ -35,6 +35,125 @@ const UNICODE_FILES: [&str; 20] = [
 ];
 const UNICODE_DIRS: [&str; 4] = ["Документы", "中文目录", "📁 Emoji", "עברית"];
 
+const VOCAB: &[&str] = &[
+    "report", "Invoice", "photo", "backup", "notes", "draft", "budget", "meeting", "Résumé", "café", "naïve", "Straße", "Ångström", "Zürich", "señal", "Łódź",
+    "отчёт", "Документ", "фото", "бюджет", "Ёлка", "встреча", "черновик", "Счёт", "архив", "Привет", "έγγραφο", "Αναφορά", "文件", "报告", "照片", "会议记录",
+    "ファイル", "写真", "東京", "보고서", "사진", "تقرير", "صورة", "דוח", "תמונה", "दस्तावेज़", "रिपोर्ट", "ภาพถ่าย", "รายงาน", "🎉", "📁", "🦀",
+    "👨\u{200D}👩\u{200D}👧", "✅", "🔥", "Ünïcödé", "ﬁnal", "e\u{301}clair", "2024", "v2", "final", "copy", "IMG", "DSC", "scan", "temp",
+];
+const SEPS: [&str; 4] = [" ", "_", "-", "."];
+const TEXT_EXTS: [&str; 8] = ["txt", "md", "json", "csv", "log", "rs", "py", "html"];
+const BIN_EXTS: [&str; 10] = ["jpg", "PNG", "mp4", "pdf", "docx", "zip", "exe", "dll", "bin", ""];
+
+fn mixed_name(i: u64) -> (String, bool) {
+    let mut x = mix(i ^ 0xA11C_E5ED);
+    let words = if x >> 60 == 0 { 8 + (x >> 20) % 5 } else { 1 + x % 4 };
+    let mut s = String::new();
+    for k in 0..words {
+        x = mix(x);
+        if k > 0 {
+            s.push_str(SEPS[(x % 4) as usize]);
+        }
+        s.push_str(VOCAB[(x >> 8) as usize % VOCAB.len()]);
+    }
+    x = mix(x);
+    s.push_str(&format!(" {i}"));
+    let text = x.is_multiple_of(3);
+    let ext = if text { TEXT_EXTS[(x >> 8) as usize % TEXT_EXTS.len()] } else { BIN_EXTS[(x >> 8) as usize % BIN_EXTS.len()] };
+    if !ext.is_empty() {
+        s.push('.');
+        s.push_str(ext);
+    }
+    (s, text)
+}
+
+fn mixed_size(i: u64) -> usize {
+    let r = mix(i ^ 0x512E);
+    let span = |lo: u64, hi: u64| (lo + (r >> 16) % (hi - lo)) as usize;
+    match r % 1000 {
+        0..200 => 0,
+        200..650 => span(1, 1 << 10),
+        650..950 => span(1 << 10, 16 << 10),
+        950..995 => span(16 << 10, 64 << 10),
+        _ => span(64 << 10, 1 << 20),
+    }
+}
+
+fn mixed_content(i: u64, size: usize, text: bool, buf: &mut Vec<u8>) {
+    buf.clear();
+    let mut x = mix(i ^ 0xC0FFEE);
+    if text {
+        let mut words = 0;
+        while buf.len() < size {
+            x = mix(x);
+            buf.extend_from_slice(VOCAB[(x >> 8) as usize % VOCAB.len()].as_bytes());
+            words += 1;
+            buf.push(if words % 12 == 0 { b'\n' } else { b' ' });
+        }
+        let mut end = size;
+        while end > 0 && end < buf.len() && buf[end] & 0xC0 == 0x80 {
+            end -= 1;
+        }
+        buf.truncate(end);
+        buf.resize(size, b' ');
+    } else {
+        while buf.len() < size {
+            x = mix(x);
+            buf.extend_from_slice(&x.to_le_bytes());
+        }
+        buf.truncate(size);
+    }
+}
+
+fn write_mixed(dir: &Path, n: u64) -> io::Result<u64> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    const BLOCK: u64 = 1024;
+    fs::create_dir_all(dir).map_err(|e| at(dir, e))?;
+    let next = AtomicU64::new(0);
+    let made = AtomicU64::new(0);
+    let bytes = AtomicU64::new(0);
+    let threads = thread::available_parallelism().map_or(4, |n| n.get()).min(16);
+    let started = Instant::now();
+    thread::scope(|s| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                s.spawn(|| {
+                    let mut buf = Vec::new();
+                    loop {
+                        let from = next.fetch_add(BLOCK, Ordering::Relaxed);
+                        if from >= n {
+                            return Ok::<(), io::Error>(());
+                        }
+                        for i in from..(from + BLOCK).min(n) {
+                            let (name, text) = mixed_name(i);
+                            let size = mixed_size(i);
+                            let p = dir.join(&name);
+                            let mut f = match fs::OpenOptions::new().write(true).create_new(true).open(&p) {
+                                Ok(f) => f,
+                                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                                Err(e) => return Err(at(&p, e)),
+                            };
+                            mixed_content(i, size, text, &mut buf);
+                            io::Write::write_all(&mut f, &buf).map_err(|e| at(&p, e))?;
+                            bytes.fetch_add(size as u64, Ordering::Relaxed);
+                        }
+                        made.fetch_add((from + BLOCK).min(n) - from, Ordering::Relaxed);
+                    }
+                })
+            })
+            .collect();
+        while !workers.iter().all(|w| w.is_finished()) {
+            thread::sleep(std::time::Duration::from_millis(250));
+            let done = made.load(Ordering::Relaxed);
+            let rate = done as f64 / started.elapsed().as_secs_f64();
+            eprint!("\r{done}/{n} files, {:.0} per second, {:.1} GB      ", rate, bytes.load(Ordering::Relaxed) as f64 / 1e9);
+        }
+        eprintln!();
+        workers.into_iter().try_for_each(|w| w.join().expect("writer thread panicked"))
+    })?;
+    Ok(bytes.into_inner())
+}
+
 fn mix(seed: u64) -> u64 {
     let mut z = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -212,7 +331,7 @@ fn invalid_utf16() -> Option<Plan> {
 }
 
 fn usage() -> ! {
-    eprintln!("usage: flit-gen <out_dir> [--flat N]... [--nested] [--long] [--unicode] [--invalid-utf16] [--all]");
+    eprintln!("usage: flit-gen <out_dir> [--flat N]... [--mixed N]... [--nested] [--long] [--unicode] [--invalid-utf16] [--all]");
     std::process::exit(2);
 }
 
@@ -254,11 +373,13 @@ fn run(out: &Path, sets: Vec<(String, Option<Plan>)>) -> io::Result<()> {
 fn main() {
     let mut out: Option<PathBuf> = None;
     let mut flats: Vec<u64> = Vec::new();
+    let mut mixed: Vec<u64> = Vec::new();
     let (mut want_nested, mut want_long, mut want_unicode, mut want_invalid) = (false, false, false, false);
     let mut args = std::env::args_os().skip(1);
     while let Some(a) = args.next() {
         match a.to_str() {
             Some("--flat") => flats.push(args.next().and_then(|n| n.to_str()?.parse().ok()).unwrap_or_else(|| usage())),
+            Some("--mixed") => mixed.push(args.next().and_then(|n| n.to_str()?.parse().ok()).unwrap_or_else(|| usage())),
             Some("--nested") => want_nested = true,
             Some("--long") => want_long = true,
             Some("--unicode") => want_unicode = true,
@@ -288,11 +409,35 @@ fn main() {
     if want_invalid {
         sets.push(("invalid_utf16".into(), invalid_utf16()));
     }
-    if sets.is_empty() {
+    if sets.is_empty() && mixed.is_empty() {
         usage();
     }
-    if let Err(e) = run(&out, sets) {
+    let result = if sets.is_empty() { Ok(()) } else { run(&out, sets) }.and_then(|()| mixed.iter().try_for_each(|&n| run_mixed(&out, n)));
+    if let Err(e) = result {
         eprintln!("flit-gen: {e}");
         std::process::exit(1);
     }
+}
+
+fn mixed_dir_name(n: u64) -> String {
+    match n {
+        n if n >= 1_000_000 && n.is_multiple_of(1_000_000) => format!("mixed_{}m", n / 1_000_000),
+        n if n >= 1000 && n.is_multiple_of(1000) => format!("mixed_{}k", n / 1000),
+        n => format!("mixed_{n}"),
+    }
+}
+
+fn run_mixed(out: &Path, n: u64) -> io::Result<()> {
+    let t = Instant::now();
+    let dir = out.join(mixed_dir_name(n));
+    let name = mixed_dir_name(n);
+    if dir.is_dir() && count(&dir).ok() == Some(n as usize) {
+        println!("{name:<16} {n:>8} {:>12} {:>8.2}s  already complete", "-", t.elapsed().as_secs_f64());
+        return Ok(());
+    }
+    let bytes = write_mixed(&dir, n)?;
+    let found = count(&dir).map_err(|e| at(&dir, e))?;
+    let status = if found == n as usize { "created".to_string() } else { format!("created, but folder holds {found} entries") };
+    println!("{name:<16} {n:>8} {bytes:>12} {:>8.2}s  {status}", t.elapsed().as_secs_f64());
+    Ok(())
 }
