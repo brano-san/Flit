@@ -239,3 +239,55 @@ fn the_palette_lists_only_commands_that_apply_here() {
     assert!(!folder.iter().any(|t| t.contains("Home page") && t.starts_with("Show")));
     assert!(!folder.iter().any(|t| t == "Group search results by folder"));
 }
+
+fn asked(app: &mut App, size: u32) -> Vec<(String, crate::ui::IconKind)> {
+    app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { (r.size == size).then(|| (r.path.display().into_owned(), r.kind)) } else { None }).collect()
+}
+
+fn kinds_in(g: &Gfx<Mono>, r: Rect, kind: u32) -> usize {
+    g.dl.instances.iter().filter(|i| i.kind == kind && r.contains(i.rect[0] + i.rect[2] / 2.0, i.rect[1] + i.rect[3] / 2.0)).count()
+}
+
+#[test]
+fn home_cards_ask_the_system_for_place_drive_and_file_icons() {
+    use crate::ui::IconKind::{Place, Volume};
+    let mut app = home_app();
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, Instant::now());
+    let cards = asked(&mut app, 32);
+    for want in [(r"C:\work", Place), (r"C:\Users\u\Downloads", Place), (r"C:\", Volume)] {
+        assert!(cards.contains(&(want.0.to_owned(), want.1)), "{want:?} not in {cards:?}");
+    }
+    assert_eq!(cards.len(), 3, "{cards:?}");
+    let rows = app.icons.len();
+    app.frame(&mut g, Instant::now());
+    assert!(asked(&mut app, 32).is_empty(), "pending card icons are asked once");
+    assert_eq!(app.icons.len(), rows);
+}
+
+#[test]
+fn recent_rows_ask_for_file_and_folder_icons() {
+    use crate::ui::IconKind::{File, Place};
+    let mut app = home_app();
+    app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    let rows = asked(&mut app, 20);
+    for want in [(r"C:\Users\u\Documents\report.docx", File), (r"C:\work\proj", Place), (r"C:\old.txt", File)] {
+        assert!(rows.contains(&(want.0.to_owned(), want.1)), "{want:?} not in {rows:?}");
+    }
+}
+
+#[test]
+fn card_glyphs_show_only_until_the_system_icon_arrives() {
+    let mut app = home_app();
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, Instant::now());
+    let r = card_rect(&app, "Downloads");
+    let ir = Rect::new(r.x, r.y, 44.0, r.h);
+    assert_eq!(kinds_in(&g, ir, crate::render::kind::GLYPH), 1, "the folder glyph stands in while loading");
+    assert_eq!(kinds_in(&g, ir, crate::render::kind::IMAGE), 0);
+    let key = app.drain_effects().find_map(|e| if let Effect::Icon(q) = e { (q.size == 32 && q.path.display() == r"C:\Users\u\Downloads").then_some(q.key) } else { None }).expect("asked");
+    app.on_icon(&mut g, key, crate::ui::IconResult::Ready(crate::ui::Bitmap { width: 32, height: 32, rgba: vec![255; 32 * 32 * 4] }));
+    app.frame(&mut g, Instant::now());
+    assert_eq!(kinds_in(&g, ir, crate::render::kind::IMAGE), 1, "the system icon replaces the glyph");
+    assert_eq!(kinds_in(&g, ir, crate::render::kind::GLYPH), 0);
+}

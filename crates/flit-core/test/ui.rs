@@ -173,7 +173,7 @@ fn frame_draws_and_requests_icons() {
     app.frame(&mut g, t0());
     assert!(!g.dl.instances.is_empty());
     let effects: Vec<Effect> = app.drain_effects().collect();
-    let icons = effects.iter().filter(|e| matches!(e, Effect::Icon(_))).count();
+    let icons = effects.iter().filter(|e| matches!(e, Effect::Icon(r) if r.kind == IconKind::Type)).count();
     let types = effects.iter().filter(|e| matches!(e, Effect::TypeName(_))).count();
     assert_eq!(icons, 1, "one icon request per extension");
     assert_eq!(types, 1);
@@ -190,7 +190,7 @@ fn this_pc_asks_for_distro_icons_by_their_share_root() {
     publish(&mut app, ViewSpec::default(), true, &[("C:", attr::DIR | attr::VOLUME), ("Ubuntu-22.04", attr::DIR | attr::VOLUME)]);
     app.drain_effects().for_each(drop);
     app.frame(&mut Gfx::new(Mono, 1024), t0());
-    let mut asked: Vec<(Vec<u8>, IconKind)> = app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { Some((r.path.as_bytes().to_vec(), r.kind)) } else { None }).collect();
+    let mut asked: Vec<(Vec<u8>, IconKind)> = app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { (r.kind == IconKind::Volume).then_some((r.path.as_bytes().to_vec(), r.kind)) } else { None }).collect();
     asked.sort_by(|a, b| a.0.cmp(&b.0));
     assert_eq!(asked, [(br"C:\".to_vec(), IconKind::Volume), (br"\\wsl.localhost\Ubuntu-22.04\".to_vec(), IconKind::Volume)]);
 }

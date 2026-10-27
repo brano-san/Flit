@@ -1,6 +1,6 @@
-use super::sidebar::{KnownFolder, PlaceCmd, G_HOME};
+use super::sidebar::{location_icon, recent_icon, KnownFolder, PlaceCmd, G_HOME, PLACE_ICON};
 use super::tags::G_TAG;
-use super::{centered, App, Effect, Hit, Route, G_DRIVE, G_FILE, G_FOLDER};
+use super::{centered, App, Effect, Hit, IconRequest, Route, G_DRIVE, G_FILE, G_FOLDER};
 use crate::fmt as format;
 use crate::i18n::S;
 use crate::location::Location;
@@ -18,6 +18,7 @@ const FOLDER_CARD: (f32, f32) = (200.0, 52.0);
 const DRIVE_CARD: (f32, f32) = (260.0, 68.0);
 const RECENT_H: f32 = 30.0;
 const NOTE_H: f32 = 28.0;
+const CARD_ICON: f32 = 32.0;
 const G_WARNING: &str = "\u{E7BA}";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -320,6 +321,8 @@ impl App {
             g.text(x, mid(r, ms), note.t(), small, t.text_dim, r.right() - x);
         }
         let places = &self.nav.sidebar.places;
+        let (card_px, row_px) = (self.s(CARD_ICON), self.s(PLACE_ICON));
+        let mut requests: Vec<IconRequest> = Vec::new();
         let mut text = String::new();
         for (i, (r, card)) in h.cards.iter().enumerate() {
             if r.bottom() < area.y || r.y > area.bottom() {
@@ -329,14 +332,19 @@ impl App {
             match card {
                 Card::Folder { label, loc } => {
                     g.dl.round_rect(*r, if hovered { t.button_hover } else { t.chrome }, s6);
-                    let glyph = if loc.is_home_page() { G_HOME } else { G_FOLDER };
-                    centered(g, Rect::new(r.x + s4, r.y, s40, r.h), glyph, big_icons, t.accent);
+                    let ir = Rect::new(r.x + s4, r.y, s40, r.h);
+                    if !self.system_icon(g, location_icon(loc, places, card_px as u32), ir, card_px, 0xFF, &mut requests) {
+                        centered(g, ir, if loc.is_home_page() { G_HOME } else { G_FOLDER }, big_icons, t.accent);
+                    }
                     g.text(r.x + s40 + s8, mid(*r, m), label, font, t.text, r.w - s40 - s12);
                 }
                 Card::Drive(d) => {
                     let Some(d) = places.drives.get(*d) else { continue };
                     g.dl.round_rect(*r, if hovered { t.button_hover } else { t.chrome }, s6);
-                    centered(g, Rect::new(r.x + s4, r.y, s40, r.h), G_DRIVE, big_icons, t.text_dim);
+                    let ir = Rect::new(r.x + s4, r.y, s40, r.h);
+                    if !self.system_icon(g, location_icon(&Location::Local(d.path.clone()), places, card_px as u32), ir, card_px, 0xFF, &mut requests) {
+                        centered(g, ir, G_DRIVE, big_icons, t.text_dim);
+                    }
                     let tx = r.x + s40 + s8;
                     let tw = r.right() - s12 - tx;
                     g.text(tx, r.y + s8 + m.ascent, &d.title(), font, t.text, tw);
@@ -365,8 +373,11 @@ impl App {
                     if hovered {
                         g.dl.round_rect(*r, t.button_hover, s4);
                     }
-                    let (glyph, color) = if e.dir { (G_FOLDER, t.accent) } else { (G_FILE, t.text_dim) };
-                    centered(g, Rect::new(r.x, r.y, self.s(28.0), r.h), glyph, icons, color);
+                    let ir = Rect::new(r.x, r.y, self.s(28.0), r.h);
+                    if !self.system_icon(g, recent_icon(e, places, row_px as u32), ir, row_px, 0xFF, &mut requests) {
+                        let (glyph, color) = if e.dir { (G_FOLDER, t.accent) } else { (G_FILE, t.text_dim) };
+                        centered(g, ir, glyph, icons, color);
+                    }
                     text.clear();
                     format::datetime_in(&mut text, e.at, self.utc_offset_min, &self.style);
                     let dw = g.measure(&text, small);
@@ -380,6 +391,7 @@ impl App {
             }
         }
         g.dl.set_clip(None);
+        self.request_icons(requests);
     }
 }
 

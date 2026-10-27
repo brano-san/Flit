@@ -1961,6 +1961,7 @@ impl App {
         let m = g.metrics(font);
         let close_font = self.icon_font(8.0);
         let drop = self.drop_spot();
+        let mut requests: Vec<IconRequest> = Vec::new();
         for (i, &(r, c)) in l.tabs.iter().enumerate() {
             let active = i == self.cur;
             let hovered = matches!(self.hover, Hit::Tab(k) | Hit::TabClose(k) if k == i);
@@ -1979,7 +1980,10 @@ impl App {
             let torn = active && matches!(self.drag, Drag::Tab { torn: true, .. });
             let color = if torn { t.text_dim.alpha(0x60) } else if active { t.text } else { t.text_dim };
             let icon = Rect::new(r.x + self.s(10.0), r.y + (r.h - self.s(16.0)) / 2.0, self.s(16.0), self.s(16.0));
-            centered(g, icon, tabbar::tab_glyph(self.tabs[i].location()), self.icon_font(12.0), if torn { color } else { t.accent.alpha(0xC0) });
+            let loc = self.tabs[i].location();
+            if !self.system_icon(g, sidebar::folder_icon(loc, &self.nav.sidebar, icon.w as u32), icon, icon.w, if torn { 0x60 } else { 0xFF }, &mut requests) {
+                centered(g, icon, tabbar::tab_glyph(loc), self.icon_font(12.0), if torn { color } else { t.accent.alpha(0xC0) });
+            }
             g.text(icon.right() + self.s(6.0), baseline, &label, font, color, c.x - icon.right() - self.s(10.0));
             if active || hovered {
                 if self.hover == Hit::TabClose(i) {
@@ -2015,6 +2019,7 @@ impl App {
             }
             centered(g, r, glyph, caption_icons, color);
         }
+        self.request_icons(requests);
     }
 
     fn draw_toolbar<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
@@ -2407,6 +2412,17 @@ impl App {
             self.icons.insert(r.key, IconState::Pending);
             self.effects.push(Effect::Icon(r));
         }
+    }
+
+    fn system_icon<B: TextBackend>(&self, g: &mut Gfx<B>, icon: Option<sidebar::SystemIcon>, r: Rect, px: f32, alpha: u8, requests: &mut Vec<IconRequest>) -> bool {
+        let Some((key, kind, path)) = icon else { return false };
+        if g.image_alpha(key, Rect::new((r.x + (r.w - px) / 2.0).round(), (r.y + (r.h - px) / 2.0).round(), px, px), alpha) {
+            return true;
+        }
+        if !self.icons.contains_key(&key) && !requests.iter().any(|q| q.key == key) {
+            requests.push(IconRequest { key, kind, path, size: px as u32, gen: 0, row: 0 });
+        }
+        false
     }
 }
 
