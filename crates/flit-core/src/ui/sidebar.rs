@@ -1145,7 +1145,7 @@ pub(super) fn location_icon(loc: &Location, places: &Places, px: u32) -> Option<
         Location::Local(path) => match places.drives.iter().find(|d| d.path == *path) {
             Some(d) if d.offline() => None,
             Some(_) => place(path, IconKind::Volume),
-            None if path.kind() == PathKind::Drive && path.is_root() => place(path, IconKind::Volume),
+            None if matches!(path.kind(), PathKind::Drive | PathKind::Unix) && path.is_root() => place(path, IconKind::Volume),
             None => place(path, IconKind::Place),
         },
     }
