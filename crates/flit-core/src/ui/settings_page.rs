@@ -672,6 +672,9 @@ impl App {
         if let Kind::Keys(..) = SETTINGS[i].kind {
             return;
         }
+        if self.caps.unix_paths && settings::WINDOWS_ONLY_SETTINGS.contains(&SETTINGS[i].id) {
+            return;
+        }
         if !SETTINGS[i].enabled(self) {
             return out.push(Line::Off(i));
         }

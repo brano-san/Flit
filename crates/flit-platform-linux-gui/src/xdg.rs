@@ -50,6 +50,31 @@ pub fn config_dir() -> Option<PathBuf> {
     Some(config_home()?.join(APP))
 }
 
+pub fn default_manager(on: bool) -> std::io::Result<()> {
+    use flit_core::mimeapps;
+    let missing = || std::io::Error::new(std::io::ErrorKind::NotFound, "no HOME or XDG_CONFIG_HOME");
+    let list = config_home().ok_or_else(missing)?.join("mimeapps.list");
+    let saved = config_dir().ok_or_else(missing)?.join("default-manager.backup");
+    let current = std::fs::read_to_string(&list).ok();
+    if on {
+        if !saved.exists() {
+            std::fs::create_dir_all(saved.parent().unwrap_or(Path::new("/")))?;
+            std::fs::write(&saved, mimeapps::backup(current.as_deref()))?;
+        }
+        std::fs::create_dir_all(list.parent().unwrap_or(Path::new("/")))?;
+        let text = mimeapps::set_default_app(current.as_deref().unwrap_or_default(), mimeapps::FOLDER, Some(mimeapps::FLIT_DESKTOP));
+        return std::fs::write(&list, text);
+    }
+    let Ok(backup) = std::fs::read_to_string(&saved) else { return Ok(()) };
+    match mimeapps::restore(&backup, current.as_deref()) {
+        Some(text) => std::fs::write(&list, text)?,
+        None => {
+            let _ = std::fs::remove_file(&list);
+        }
+    }
+    std::fs::remove_file(&saved)
+}
+
 pub fn runtime_dir() -> Option<PathBuf> {
     absolute_var("XDG_RUNTIME_DIR")
 }

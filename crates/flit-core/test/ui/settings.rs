@@ -61,6 +61,20 @@ fn defaults_are_the_values_of_a_fresh_app_and_survive_json() {
 }
 
 #[test]
+fn system_integration_is_off_by_default_and_follows_the_file() {
+    assert_eq!(defaults()[index(DEFAULT_MANAGER).unwrap()], Value::Bool(false));
+    assert_eq!(defaults()[index(OPEN_IN_FLIT).unwrap()], Value::Bool(false));
+    let mut a = app();
+    a.apply_doc(&parse(r#"{"advanced.default_manager": true, "advanced.open_in_flit": true}"#));
+    assert!(a.default_manager && a.open_in_flit);
+    assert_eq!(get(&a, DEFAULT_MANAGER), Value::Bool(true));
+    let text = a.export_text();
+    assert!(text.contains("\"advanced.default_manager\": true") && text.contains("\"advanced.open_in_flit\": true"), "{text}");
+    set(&mut a, OPEN_IN_FLIT, Value::Bool(false));
+    assert!(!a.open_in_flit && a.default_manager);
+}
+
+#[test]
 fn every_toggle_and_choice_reads_back_what_was_set() {
     let mut a = app();
     for s in SETTINGS {

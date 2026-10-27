@@ -141,6 +141,13 @@ impl Platform for Linux {
     fn watch_wsl(changed: Box<dyn Fn() + Send>) {
         places::watch_mounts(changed)
     }
+
+    fn integrate(what: flit_platform::Integration, on: bool) -> Result<(), PlatformError> {
+        match what {
+            flit_platform::Integration::DefaultManager => xdg::default_manager(on).map_err(handle_error),
+            flit_platform::Integration::OpenInFlit => Err(PlatformError::unsupported("Open in Flit")),
+        }
+    }
 }
 pub struct LinuxRenderer {
     gl: GlRenderer,

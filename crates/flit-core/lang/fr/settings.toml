@@ -90,6 +90,8 @@ about = "À propos"
 "advanced.log_level" = "Contenu du fichier journal"
 "general.startup_pages" = "Pages à ouvrir au démarrage"
 "advanced.thumb_cache_mb" = "Taille du cache des miniatures"
+"advanced.default_manager" = "Utiliser Flit comme gestionnaire de fichiers par défaut"
+"advanced.open_in_flit" = "Ajouter « Ouvrir dans Flit » aux menus des dossiers et aux boîtes Ouvrir/Enregistrer"
 "keys" = "Raccourcis clavier"
 
 [help]
@@ -169,6 +171,8 @@ about = "À propos"
 "advanced.log_level" = "%LOCALAPPDATA%\\Flit\\logs ; jamais le contenu des fichiers ni les mots de passe"
 "general.startup_pages" = "Utilisé quand Flit démarre avec des pages précises : des dossiers ou la page Accueil, chacun dans son propre onglet"
 "advanced.thumb_cache_mb" = "Miniatures conservées sur le disque dans %LOCALAPPDATA%\\Flit\\thumbs ; les plus anciennes partent en premier"
+"advanced.default_manager" = "Win+E et les dossiers ouverts depuis le bureau ou d’autres programmes s’ouvrent dans Flit ; le Panneau de configuration et les autres dossiers système s’ouvrent toujours dans l’Explorateur de fichiers. Seuls vos propres réglages d’utilisateur changent ; les précédents sont sauvegardés et reviennent quand vous désactivez l’option. Désactivez-la avant de supprimer Flit"
+"advanced.open_in_flit" = "Windows ne permet de remplacer les boîtes Ouvrir et Enregistrer qu’en chargeant son code dans chaque autre programme, ce que Flit ne fait pas. À la place, cliquez avec le bouton droit sur un dossier ou un espace vide dans une boîte Ouvrir/Enregistrer ou dans l’Explorateur de fichiers et choisissez « Ouvrir dans Flit ». La désactivation retire la commande"
 "keys" = "Raccourcis qui diffèrent des valeurs par défaut, par identifiant de commande"
 "area_color" = "Par défaut suit la couleur d’arrière-plan ; le texte sur une couleur personnalisée s’ajuste pour rester lisible"
 

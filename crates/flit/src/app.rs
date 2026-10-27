@@ -609,6 +609,18 @@ impl<P: Platform> Handler<P> {
                     self.share_about();
                 }
                 settings::Reply::Changed(text) => self.reload_settings(id, &text),
+                settings::Reply::IntegrationFailed(what, on, error) => {
+                    self.status(id, flit_core::tr!(S::UiAppIntegrationFailed, error = flit_core::i18n::localize(&error)));
+                    let Some(k) = flit_core::ui::settings::index(what.setting()) else { continue };
+                    let back = [(k, Value::Bool(!on))];
+                    for app in self.windows.values_mut().map(|st| &mut st.app).chain(self.pending.iter_mut()) {
+                        app.apply_settings(&back);
+                    }
+                    if let Some(v) = self.settings.values.get_mut(k) {
+                        *v = Value::Bool(!on);
+                    }
+                    self.settings.save();
+                }
                 settings::Reply::Imported(Ok(text)) => {
                     if let Some(st) = self.windows.get_mut(&id) {
                         st.app.import_settings(&text);
@@ -1108,7 +1120,8 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let tags = TagWorker::start::<P>(local.tags().clone(), wake.clone())?;
     let fs_path = |p: PathBuf| FsPath::parse(&p.to_string_lossy());
     let about = About { os: String::new(), file: settings_file.clone().and_then(fs_path), cache_bytes: None, logs: P::state_dir().map(|d| d.join("logs")).and_then(fs_path) };
-    let settings = Settings::start::<P>(settings_file.filter(|_| metrics.is_none()), settings_text, thumb_cache.clone(), wake.clone());
+    let integrate = metrics.is_none() && std::env::var_os("FLIT_HIDDEN_CAPTURE").is_none();
+    let settings = Settings::start::<P>(settings_file.filter(|_| metrics.is_none()), settings_text, thumb_cache.clone(), integrate, wake.clone());
     let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes(), local.tags().clone())?;
     let open = if activated { opens.recv_timeout(ACTIVATION_WAIT).unwrap_or(open) } else { open };
     let (routes, errors) = if open.is_empty() { Default::default() } else { open::routes(&open, &P::known_folder) };

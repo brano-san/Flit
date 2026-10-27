@@ -132,6 +132,10 @@ fn ui(a: &App) -> &SettingsUi {
 fn line(a: &mut App, id: &str) -> usize {
     let i = index(id).unwrap();
     let k = ui(a).lines.iter().position(|l| *l == Line::Setting(i)).unwrap_or_else(|| panic!("{id} is not shown"));
+    reveal(a, k)
+}
+
+fn reveal(a: &mut App, k: usize) -> usize {
     let u = a.settings.as_mut().unwrap();
     (u.focus, u.reveal) = (k, true);
     a.layout();
@@ -387,10 +391,30 @@ fn advanced_page_groups_the_log_level_folder_and_buttons() {
     assert_eq!(lines.iter().filter(|l| *l == settings::LOG_LEVEL).count(), 1);
     assert_eq!(a.log_level, settings::LOG_DEFAULT);
     let k = ui(&a).lines.iter().position(|l| l.buttons().contains(&Btn::OpenLogs)).unwrap();
+    reveal(&mut a, k);
     let r = button_rects(&ui(&a).lines[k].clone(), rect(&a, k), s)[1];
     click_at(&mut a, center(r));
     assert!(!a.settings_open(), "the folder opens in a tab the settings window would hide");
     assert_eq!(a.current_location().display(), r"C:\Users\me\AppData\Local\Flit\logs");
+}
+
+#[test]
+fn system_integration_starts_off_and_open_in_flit_is_windows_only() {
+    let ids = [settings::DEFAULT_MANAGER.to_owned(), settings::OPEN_IN_FLIT.to_owned()];
+    let mut a = app();
+    a.open_settings(Some(Page::Advanced));
+    let lines = a.settings_lines();
+    assert!(ids.iter().all(|id| lines.contains(id)), "{lines:?}");
+    assert_eq!([value(&a, &ids[0]), value(&a, &ids[1])], [Value::Bool(false), Value::Bool(false)]);
+    typed(&mut a, "Open/Save");
+    assert!(a.settings_lines().contains(&ids[1]));
+    let mut linux = app();
+    linux.caps = crate::caps::Caps { unix_paths: true };
+    linux.open_settings(Some(Page::Advanced));
+    let lines = linux.settings_lines();
+    assert!(lines.contains(&ids[0]) && !lines.contains(&ids[1]), "{lines:?}");
+    typed(&mut linux, "Open/Save");
+    assert!(!linux.settings_lines().contains(&ids[1]));
 }
 
 #[test]
