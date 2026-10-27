@@ -327,6 +327,14 @@ impl ResultSet {
 }
 
 impl Engine {
+    pub fn has_order(&self, order: Order) -> bool {
+        self.volumes.iter().all(|v| v.has_order(order))
+    }
+
+    pub fn build_order(&mut self, order: Order) {
+        self.volumes.par_iter_mut().for_each(|v| v.build_order(order));
+    }
+
     pub fn total(&self) -> u64 {
         self.volumes.iter().map(|v| v.live() as u64).sum()
     }
@@ -348,6 +356,9 @@ impl Engine {
 
     pub fn search_as(&self, query: &Query, sort: Sort, access: Option<&dyn Visibility>, cancel: Cancel<'_>) -> Option<ResultSet> {
         let order = order_of(sort.key);
+        if !self.has_order(order) {
+            return None;
+        }
         let mut streams = Vec::new();
         let mut total = 0u64;
         let p = Prepared::new(query);

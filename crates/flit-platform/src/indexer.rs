@@ -101,6 +101,13 @@ impl IndexSink for Feed<'_> {
         self.tick();
     }
 
+    fn knows(&self, id: u64) -> bool {
+        match &self.private {
+            Some(v) => v.knows(id),
+            None => self.shared.read().volumes.iter().find(|v| v.id == self.info.id).is_some_and(|v| v.knows(id)),
+        }
+    }
+
     fn progress(&mut self, done: u64, total: u64) {
         self.progress = if total == 0 { 0.0 } else { (done as f64 / total as f64).clamp(0.0, 1.0) as f32 };
     }
@@ -122,6 +129,7 @@ fn scan<S: IndexSource>(source: &mut S, shared: &SharedIndex, info: &VolumeInfo)
         Ok(cp) => {
             if let Some(mut v) = feed.private.take() {
                 v.commit();
+                v.shrink();
                 feed.info.files = v.live() as u64;
                 let mut e = shared.write();
                 if let Some(slot) = e.volume_mut(&info.id) {
@@ -181,7 +189,7 @@ fn run<S: IndexSource>(mut source: S, owner: Arc<SharedIndex>, snapshots: Option
     let mut points: Vec<Option<Checkpoint>> = vec![None; volumes.len()];
     let mut retry_at = vec![Instant::now(); volumes.len()];
     let mut dirty = vec![false; volumes.len()];
-    let mut saved_at = vec![Instant::now(); volumes.len()];
+    let mut saved_at: Vec<Option<Instant>> = vec![None; volumes.len()];
     if let Some(dir) = &snapshots {
         for (k, info) in volumes.iter().enumerate() {
             let Some((v, cp)) = load_snapshot(dir, &info.id, &source.snapshot_key(&info.id)) else { continue };
@@ -228,9 +236,9 @@ fn run<S: IndexSource>(mut source: S, owner: Arc<SharedIndex>, snapshots: Option
                 }
             }
             if let (Some(dir), Some(cp)) = (&snapshots, points[k]) {
-                if dirty[k] && (fresh || saved_at[k].elapsed() >= SAVE_EVERY) {
+                if dirty[k] && (fresh || saved_at[k].is_none_or(|t| t.elapsed() >= SAVE_EVERY)) {
                     dirty[k] = save_snapshot(dir, shared, &info.id, &source.snapshot_key(&info.id), cp).is_err();
-                    saved_at[k] = Instant::now();
+                    saved_at[k] = Some(Instant::now());
                 }
             }
         }

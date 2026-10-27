@@ -874,6 +874,7 @@ dependencies = [
  "criterion",
  "flit-core",
  "flit-proto",
+ "hashbrown",
  "memchr",
  "postcard",
  "proptest",

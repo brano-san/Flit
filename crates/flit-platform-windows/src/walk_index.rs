@@ -1,4 +1,5 @@
 use crate::fs::{map_attrs, open_dir};
+use crate::mft::{query_journal, usn_records, UsnRecord};
 use crossbeam_channel::{bounded, unbounded};
 use flit_core::listing::attr;
 use flit_core::path::PathKind;
@@ -7,7 +8,7 @@ use flit_platform::{IndexSource, PlatformError};
 use flit_search::index::{Checkpoint, IndexRecord, IndexSink};
 use flit_search::proto::{VolumeInfo, VolumeState};
 use std::collections::HashSet;
-use std::mem::offset_of;
+use std::mem::{offset_of, size_of};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -16,10 +17,12 @@ use windows::Wdk::Storage::FileSystem::{FileIdBothDirectoryInformation, NtQueryD
 use windows::Win32::Foundation::*;
 use windows::Win32::Storage::FileSystem::*;
 use windows::Win32::System::Threading::{CreateEventW, ResetEvent, SetEvent, WaitForMultipleObjects, INFINITE};
-use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, IO_STATUS_BLOCK, OVERLAPPED};
+use windows::Win32::System::Ioctl::{FSCTL_READ_UNPRIVILEGED_USN_JOURNAL, READ_USN_JOURNAL_DATA_V0, USN_JOURNAL_DATA_V0, USN_REASON_FILE_DELETE, USN_REASON_RENAME_NEW_NAME};
+use windows::Win32::System::IO::{CancelIoEx, DeviceIoControl, GetOverlappedResult, IO_STATUS_BLOCK, OVERLAPPED};
 
 const DIR_BUFFER: usize = 64 * 1024;
 const WATCH_BUFFER: usize = 512 * 1024;
+const JOURNAL_BUFFER: usize = 1 << 20;
 const DRIVE_FIXED: u32 = 3;
 const WALK_THREADS: usize = 8;
 const SYNTHETIC: u64 = 1 << 63;
@@ -171,10 +174,30 @@ struct Batch {
     items: Vec<(u64, usize, u64, i64, u32)>,
 }
 
+impl Batch {
+    fn subdirs(&self) -> impl Iterator<Item = (&[u8], u64)> {
+        let starts = std::iter::once(0).chain(self.items.iter().map(|it| it.1));
+        self.items.iter().zip(starts).filter(|(it, _)| it.4 & attr::DIR != 0 && it.4 & attr::LINK == 0).map(|(it, start)| (&self.names[start..it.1], it.0))
+    }
+
+    fn feed<S: IndexSink>(&self, sink: &mut S) {
+        let mut start = 0;
+        for &(id, end, size, modified, attrs) in &self.items {
+            sink.upsert(&IndexRecord { id, parent: self.parent, name: &self.names[start..end], size, modified, attrs });
+            start = end;
+        }
+    }
+}
+
 fn read_dir_ids(job: &Job, synthetic: &AtomicU64, subdirs: &mut Vec<Job>) -> Batch {
-    let mut batch = Batch { parent: job.id, ..Default::default() };
-    let Ok(h) = open_dir(&job.path, FILE_LIST_DIRECTORY.0, false) else { return batch };
-    let h = Handle(h);
+    let Ok(h) = open_dir(&job.path, FILE_LIST_DIRECTORY.0, false) else { return Batch { parent: job.id, ..Default::default() } };
+    let batch = list(&Handle(h), job.id, synthetic);
+    subdirs.extend(batch.subdirs().map(|(name, id)| Job { path: job.path.join(name), id }));
+    batch
+}
+
+fn list(h: &Handle, parent: u64, synthetic: &AtomicU64) -> Batch {
+    let mut batch = Batch { parent, ..Default::default() };
     let mut buf = vec![0u64; DIR_BUFFER / 8];
     let mut first = true;
     loop {
@@ -196,12 +219,8 @@ fn read_dir_ids(job: &Job, synthetic: &AtomicU64, subdirs: &mut Vec<Job>) -> Bat
             let dots = wide == [b'.' as u16] || wide == [b'.' as u16, b'.' as u16];
             if !dots {
                 let id = if id == 0 { SYNTHETIC | synthetic.fetch_add(1, Ordering::Relaxed) } else { id };
-                let start = batch.names.len();
                 name::push_utf16(&mut batch.names, wide);
                 batch.items.push((id, batch.names.len(), size, modified, attrs));
-                if attrs & attr::DIR != 0 && attrs & attr::LINK == 0 {
-                    subdirs.push(Job { path: job.path.join(&batch.names[start..]), id });
-                }
             }
             if next == 0 {
                 break;
@@ -238,11 +257,7 @@ fn walk<S: IndexSink>(root: &FsPath, root_id: u64, sink: &mut S, synthetic: &Ato
         drop(out_tx);
         let mut done = 0u64;
         for batch in out_rx {
-            let mut start = 0;
-            for &(id, end, size, modified, attrs) in &batch.items {
-                sink.upsert(&IndexRecord { id, parent: batch.parent, name: &batch.names[start..end], size, modified, attrs });
-                start = end;
-            }
+            batch.feed(sink);
             done += 1;
             sink.progress(done, done + pending.load(Ordering::Relaxed) as u64);
             if sink.cancelled() {
@@ -274,15 +289,106 @@ fn relative(root: &FsPath, rel: &[u16]) -> FsPath {
     bytes.split(|&b| b == b'\\').filter(|c| !c.is_empty()).fold(root.clone(), |p, c| p.join(c))
 }
 
+enum Live {
+    Journal(Handle),
+    Watch(Option<RootWatch>),
+}
+
+fn open_journal(root: &FsPath) -> Option<(Handle, USN_JOURNAL_DATA_V0)> {
+    let h = Handle(open_dir(root, FILE_READ_ATTRIBUTES.0, false).ok()?);
+    let j = query_journal(h.0).ok()?;
+    Some((h, j))
+}
+
+fn open_id(hint: &Handle, id: u64) -> Option<Handle> {
+    let desc = FILE_ID_DESCRIPTOR { dwSize: size_of::<FILE_ID_DESCRIPTOR>() as u32, Type: FileIdType, Anonymous: FILE_ID_DESCRIPTOR_0 { FileId: id as i64 } };
+    let share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    Some(Handle(unsafe { OpenFileById(hint.0, &desc, FILE_LIST_DIRECTORY.0, share, None, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT) }.ok()?))
+}
+
+#[derive(Default)]
+struct Touched {
+    dirs: Vec<u64>,
+    removed: Vec<u64>,
+    moved: Vec<(u64, u64)>,
+    seen: HashSet<u64>,
+}
+
+impl Touched {
+    fn push(&mut self, r: &UsnRecord<'_>) {
+        if r.reason & USN_REASON_FILE_DELETE != 0 {
+            self.removed.push(r.frn);
+        } else if r.reason & USN_REASON_RENAME_NEW_NAME != 0 {
+            self.moved.push((r.frn, r.parent));
+        }
+        if self.seen.insert(r.parent) {
+            self.dirs.push(r.parent);
+        }
+    }
+}
+
+fn read_journal(dir: &Handle, from: Checkpoint, touched: &mut Touched) -> Option<i64> {
+    let mut next = from.next;
+    let mut buf = vec![0u64; JOURNAL_BUFFER / 8];
+    loop {
+        let input = READ_USN_JOURNAL_DATA_V0 { StartUsn: next, ReasonMask: u32::MAX, ReturnOnlyOnClose: 0, Timeout: 0, BytesToWaitFor: 0, UsnJournalID: from.journal };
+        let mut got = 0u32;
+        unsafe { DeviceIoControl(dir.0, FSCTL_READ_UNPRIVILEGED_USN_JOURNAL, Some(&input as *const _ as _), size_of::<READ_USN_JOURNAL_DATA_V0>() as u32, Some(buf.as_mut_ptr() as _), JOURNAL_BUFFER as u32, Some(&mut got), None) }.ok()?;
+        let bytes = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, (got as usize).min(JOURNAL_BUFFER)) };
+        let after = i64::from_le_bytes(bytes.get(..8)?.try_into().ok()?);
+        usn_records(&bytes[8..]).for_each(|r| touched.push(&r));
+        if bytes.len() <= 8 || after <= next {
+            return Some(next.max(after));
+        }
+        next = after;
+    }
+}
+
+fn relist<S: IndexSink>(dir: &Handle, touched: Touched, sink: &mut S, synthetic: &AtomicU64) {
+    for &id in &touched.removed {
+        sink.remove(id);
+    }
+    for &(id, parent) in &touched.moved {
+        if !sink.knows(parent) {
+            sink.remove(id);
+        }
+    }
+    let mut queue: Vec<u64> = touched.dirs.into_iter().filter(|&d| sink.knows(d)).collect();
+    let mut listed = HashSet::new();
+    while let Some(d) = queue.pop() {
+        if !listed.insert(d) {
+            continue;
+        }
+        let Some(h) = open_id(dir, d) else { continue };
+        let batch = list(&h, d, synthetic);
+        queue.extend(batch.subdirs().map(|(_, id)| id).filter(|&id| !sink.knows(id)));
+        batch.feed(sink);
+    }
+}
+
 pub struct WalkIndex {
     roots: Vec<FsPath>,
-    watches: Vec<(String, Option<RootWatch>)>,
+    live: Vec<(String, Live)>,
     synthetic: AtomicU64,
 }
 
 impl WalkIndex {
     pub fn with_roots(roots: Vec<FsPath>) -> Self {
-        Self { roots, watches: Vec::new(), synthetic: AtomicU64::new(1) }
+        Self { roots, live: Vec::new(), synthetic: AtomicU64::new(1) }
+    }
+
+    fn follow<S: IndexSink>(&self, dir: &Handle, from: Checkpoint, sink: &mut S) -> Option<Checkpoint> {
+        let j = query_journal(dir.0).ok()?;
+        if j.UsnJournalID != from.journal || from.next < j.FirstUsn || from.next < j.LowestValidUsn {
+            return None;
+        }
+        if from.next >= j.NextUsn {
+            return Some(from);
+        }
+        let mut touched = Touched::default();
+        let next = read_journal(dir, from, &mut touched)?;
+        relist(dir, touched, sink, &self.synthetic);
+        Some(Checkpoint { journal: from.journal, next })
     }
 
     fn root(&self, volume: &str) -> Result<FsPath, PlatformError> {
@@ -341,17 +447,31 @@ impl IndexSource for WalkIndex {
 
     fn scan<S: IndexSink>(&mut self, volume: &str, sink: &mut S) -> Result<Checkpoint, PlatformError> {
         let root = self.root(volume)?;
-        self.watches.retain(|(v, _)| v != volume);
-        self.watches.push((volume.to_owned(), RootWatch::start(&root)));
+        self.live.retain(|(v, _)| v != volume);
         let root_id = file_id(&root).ok_or_else(|| PlatformError::new(-1, format!("cannot open {}", root.display())))?;
+        let (live, cp) = match open_journal(&root) {
+            Some((h, j)) => (Live::Journal(h), Checkpoint { journal: j.UsnJournalID, next: j.NextUsn }),
+            None => (Live::Watch(RootWatch::start(&root)), Checkpoint { journal: root_id, next: 0 }),
+        };
+        self.live.push((volume.to_owned(), live));
         sink.upsert(&IndexRecord { id: root_id, parent: root_id, name: b".", size: 0, modified: 0, attrs: attr::DIR });
         walk(&root, root_id, sink, &self.synthetic);
-        Ok(Checkpoint { journal: root_id, next: 0 })
+        Ok(cp)
     }
 
     fn changes<S: IndexSink>(&mut self, volume: &str, from: Checkpoint, sink: &mut S) -> Result<Option<Checkpoint>, PlatformError> {
         let root = self.root(volume)?;
-        let Some((_, watch)) = self.watches.iter().find(|(v, _)| v == volume) else { return Ok(None) };
+        if !self.live.iter().any(|(v, _)| v == volume) {
+            match open_journal(&root) {
+                Some((h, j)) if j.UsnJournalID == from.journal => self.live.push((volume.to_owned(), Live::Journal(h))),
+                _ => return Ok(None),
+            }
+        }
+        let Some((_, live)) = self.live.iter().find(|(v, _)| v == volume) else { return Ok(None) };
+        let watch = match live {
+            Live::Journal(dir) => return Ok(self.follow(dir, from, sink)),
+            Live::Watch(w) => w,
+        };
         let Some(w) = watch else { return Ok(Some(from)) };
         let q = w.take();
         if q.overflow {

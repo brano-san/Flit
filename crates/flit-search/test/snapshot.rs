@@ -15,6 +15,8 @@ fn sample() -> VolumeIndex {
 }
 
 fn rows(v: &VolumeIndex) -> Vec<(String, u64, i64, u32)> {
+    let mut v = v.clone();
+    v.build_order(Order::Path);
     v.perms[Order::Path as usize]
         .iter()
         .map(|&i| {

@@ -1,6 +1,7 @@
 use flit_core::attr;
-use flit_core::hash::FxHashMap;
+use flit_core::hash::{self, FxHashMap};
 use flit_core::name;
+use hashbrown::HashTable;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -24,6 +25,7 @@ pub struct Checkpoint {
 pub trait IndexSink {
     fn upsert(&mut self, record: &IndexRecord<'_>);
     fn remove(&mut self, id: u64);
+    fn knows(&self, id: u64) -> bool;
     fn progress(&mut self, _done: u64, _total: u64) {}
     fn cancelled(&self) -> bool {
         false
@@ -35,6 +37,7 @@ pub const ROOT: u32 = 1 << 30;
 pub const KEPT_ATTRS: u32 = attr::DIR | attr::HIDDEN | attr::SYSTEM | attr::READONLY | attr::LINK;
 const MAX_DEPTH: usize = 1024;
 const MAX_NAME: usize = u16::MAX as usize;
+const SAME: u32 = u32::MAX;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Order {
@@ -76,7 +79,6 @@ pub struct VolumeIndex {
     pub sep: u8,
     pub epoch: u64,
     pub ids: Vec<u64>,
-    pub parent_ids: Vec<u64>,
     pub parents: Vec<u32>,
     pub names: Vec<u8>,
     pub name_off: Vec<u32>,
@@ -91,7 +93,9 @@ pub struct VolumeIndex {
     pub attrs: Vec<u32>,
     pub perms: [Vec<u32>; 4],
     pub ranks: [Vec<u32>; 4],
-    by_id: FxHashMap<u64, u32>,
+    by_id: HashTable<u32>,
+    orphan_parents: FxHashMap<u32, u64>,
+    built: u8,
     removed_now: FxHashMap<u64, u32>,
     orphans: Vec<u32>,
     changed: Vec<u32>,
@@ -123,7 +127,67 @@ impl VolumeIndex {
     }
 
     pub fn lookup(&self, id: u64) -> Option<u32> {
-        self.by_id.get(&id).copied()
+        self.by_id.find(hash::hash(&id), |&i| self.ids[i as usize] == id).copied()
+    }
+
+    fn index_id(&mut self, i: u32) {
+        let ids = &self.ids;
+        self.by_id.insert_unique(hash::hash(&ids[i as usize]), i, |&j| hash::hash(&ids[j as usize]));
+    }
+
+    fn unindex_id(&mut self, id: u64) -> Option<u32> {
+        let ids = &self.ids;
+        self.by_id.find_entry(hash::hash(&id), |&i| ids[i as usize] == id).ok().map(|e| e.remove().0)
+    }
+
+    pub fn parent_id(&self, i: u32) -> u64 {
+        let k = i as usize;
+        match self.parents[k] {
+            _ if self.attrs[k] & ROOT != 0 => self.ids[k],
+            NONE => self.orphan_parents.get(&i).copied().unwrap_or(self.ids[k]),
+            p => self.ids[p as usize],
+        }
+    }
+
+    pub fn has_order(&self, order: Order) -> bool {
+        order == Order::Name || self.built & (1 << order as u8) != 0
+    }
+
+    pub fn build_order(&mut self, order: Order) {
+        if self.has_order(order) {
+            return;
+        }
+        self.commit();
+        self.built |= 1 << order as u8;
+        self.perms[order as usize] = match order {
+            Order::Path => self.path_perm(),
+            _ => {
+                let mut all: Vec<u32> = (0..self.len() as u32).filter(|&i| self.listed(i)).collect();
+                all.par_sort_unstable_by_key(|&i| self.key(order, i));
+                all
+            }
+        };
+        self.rank_of(order);
+    }
+
+    pub fn shrink(&mut self) {
+        let ids = &self.ids;
+        self.by_id.shrink_to_fit(|&j| hash::hash(&ids[j as usize]));
+        self.ids.shrink_to_fit();
+        self.parents.shrink_to_fit();
+        self.names.shrink_to_fit();
+        self.name_off.shrink_to_fit();
+        self.name_len.shrink_to_fit();
+        self.lower.shrink_to_fit();
+        self.lower_off.shrink_to_fit();
+        self.lower_len.shrink_to_fit();
+        self.seg_start.shrink_to_fit();
+        self.seg_entry.shrink_to_fit();
+        self.sizes.shrink_to_fit();
+        self.modified.shrink_to_fit();
+        self.attrs.shrink_to_fit();
+        self.perms.iter_mut().chain(self.ranks.iter_mut()).for_each(Vec::shrink_to_fit);
+        self.orphan_parents.shrink_to_fit();
     }
 
     #[inline]
@@ -138,8 +202,14 @@ impl VolumeIndex {
 
     #[inline]
     pub fn name(&self, i: u32) -> &[u8] {
-        let (o, l) = (self.name_off[i as usize] as usize, self.name_len[i as usize] as usize);
-        &self.names[o..o + l]
+        let l = self.name_len[i as usize] as usize;
+        match self.name_off[i as usize] {
+            SAME => {
+                let o = self.lower_off[i as usize] as usize;
+                &self.lower[o..o + l]
+            }
+            o => &self.names[o as usize..o as usize + l],
+        }
     }
 
     #[inline]
@@ -205,13 +275,17 @@ impl VolumeIndex {
 
     fn put_name(&mut self, i: usize, name: &[u8]) {
         let name = &name[..name.len().min(MAX_NAME)];
-        self.name_off[i] = self.names.len() as u32;
-        self.name_len[i] = name.len() as u16;
-        self.names.extend_from_slice(name);
         let at = self.lower.len();
         lowercase_into(name, &mut self.lower);
         let len = (self.lower.len() - at).min(MAX_NAME);
         self.lower.truncate(at + len);
+        self.name_len[i] = name.len() as u16;
+        if self.lower[at..] == *name {
+            self.name_off[i] = SAME;
+        } else {
+            self.name_off[i] = self.names.len() as u32;
+            self.names.extend_from_slice(name);
+        }
         self.lower.push(0);
         self.lower_off[i] = at as u32;
         self.lower_len[i] = len as u16;
@@ -219,16 +293,21 @@ impl VolumeIndex {
         self.seg_entry.push(i as u32);
     }
 
-    fn resolve(&mut self, i: u32) {
-        let pid = self.parent_ids[i as usize];
-        if self.attrs[i as usize] & ROOT != 0 {
-            self.parents[i as usize] = NONE;
+    fn resolve(&mut self, i: u32, pid: u64) {
+        let k = i as usize;
+        if self.attrs[k] & ROOT != 0 {
+            self.parents[k] = NONE;
+            self.orphan_parents.remove(&i);
             return;
         }
-        match self.by_id.get(&pid) {
-            Some(&p) => self.parents[i as usize] = p,
+        match self.lookup(pid) {
+            Some(p) => {
+                self.parents[k] = p;
+                self.orphan_parents.remove(&i);
+            }
             None => {
-                self.parents[i as usize] = NONE;
+                self.parents[k] = NONE;
+                self.orphan_parents.insert(i, pid);
                 self.orphans.push(i);
             }
         }
@@ -237,7 +316,7 @@ impl VolumeIndex {
     fn revive(&mut self, id: u64) -> Option<u32> {
         let i = self.removed_now.remove(&id)?;
         self.attrs[i as usize] &= !attr::DELETED;
-        self.by_id.insert(id, i);
+        self.index_id(i);
         self.live += (self.attrs[i as usize] & ROOT == 0) as usize;
         Some(i)
     }
@@ -245,8 +324,9 @@ impl VolumeIndex {
     fn resolve_orphans(&mut self) {
         let orphans = std::mem::take(&mut self.orphans);
         for i in orphans {
+            let Some(&pid) = self.orphan_parents.get(&i) else { continue };
             if self.attrs[i as usize] & attr::DELETED == 0 && self.parents[i as usize] == NONE {
-                self.resolve(i);
+                self.resolve(i, pid);
                 if self.parents[i as usize] != NONE {
                     self.touch(i);
                 }
@@ -310,10 +390,16 @@ impl VolumeIndex {
             if self.attrs[i] & attr::DELETED != 0 {
                 continue;
             }
-            let (o, l) = (old_off[i] as usize, old_len[i] as usize);
-            self.name_off[i] = self.names.len() as u32;
-            self.name_len[i] = l as u16;
-            self.names.extend_from_slice(&names[o..o + l]);
+            let (o, l) = (old_off[i], old_len[i]);
+            self.name_len[i] = l;
+            self.name_off[i] = match o {
+                SAME => SAME,
+                o => {
+                    let at = self.names.len() as u32;
+                    self.names.extend_from_slice(&names[o as usize..o as usize + l as usize]);
+                    at
+                }
+            };
             let (o, l) = (old_loff[i] as usize, old_llen[i] as usize);
             let at = self.lower.len() as u32;
             self.lower_off[i] = at;
@@ -435,13 +521,16 @@ impl VolumeIndex {
         fresh.par_sort_unstable_by(|&a, &b| self.cmp_name(a, b));
         self.merge_into(Order::Name, &fresh);
         self.rank_of(Order::Name);
-        for order in [Order::Size, Order::Modified] {
+        let lazy: Vec<Order> = [Order::Size, Order::Modified].into_iter().filter(|&o| self.has_order(o)).collect();
+        for order in lazy {
             fresh.par_sort_unstable_by_key(|&i| self.key(order, i));
             self.merge_into(order, &fresh);
             self.rank_of(order);
         }
-        self.perms[Order::Path as usize] = self.path_perm();
-        self.rank_of(Order::Path);
+        if self.has_order(Order::Path) {
+            self.perms[Order::Path as usize] = self.path_perm();
+            self.rank_of(Order::Path);
+        }
         for &i in &self.changed {
             self.changed_bits[i as usize / 64] = 0;
         }
@@ -452,9 +541,13 @@ impl VolumeIndex {
 }
 
 impl IndexSink for VolumeIndex {
+    fn knows(&self, id: u64) -> bool {
+        self.lookup(id).is_some()
+    }
+
     fn upsert(&mut self, r: &IndexRecord<'_>) {
         let attrs = (r.attrs & KEPT_ATTRS) | if r.parent == r.id { ROOT } else { 0 };
-        let found = self.by_id.get(&r.id).copied().or_else(|| self.revive(r.id));
+        let found = self.lookup(r.id).or_else(|| self.revive(r.id));
         let i = match found {
             Some(i) => {
                 let k = i as usize;
@@ -467,16 +560,14 @@ impl IndexSink for VolumeIndex {
                 let was_dir = self.attrs[k] & attr::DIR != 0;
                 self.attrs[k] = attrs;
                 self.removed_dirs |= was_dir && attrs & attr::DIR == 0;
-                if self.parent_ids[k] != r.parent || self.parents[k] == NONE {
-                    self.parent_ids[k] = r.parent;
-                    self.resolve(i);
+                if self.parent_id(i) != r.parent || self.parents[k] == NONE {
+                    self.resolve(i, r.parent);
                 }
                 i
             }
             None => {
                 let i = self.len() as u32;
                 self.ids.push(r.id);
-                self.parent_ids.push(r.parent);
                 self.parents.push(NONE);
                 self.name_off.push(0);
                 self.name_len.push(0);
@@ -486,9 +577,9 @@ impl IndexSink for VolumeIndex {
                 self.sizes.push(r.size);
                 self.modified.push(r.modified);
                 self.attrs.push(attrs);
-                self.by_id.insert(r.id, i);
+                self.index_id(i);
                 self.live += (attrs & ROOT == 0) as usize;
-                self.resolve(i);
+                self.resolve(i, r.parent);
                 i
             }
         };
@@ -496,7 +587,8 @@ impl IndexSink for VolumeIndex {
     }
 
     fn remove(&mut self, id: u64) {
-        let Some(i) = self.by_id.remove(&id) else { return };
+        let Some(i) = self.unindex_id(id) else { return };
+        self.orphan_parents.remove(&i);
         let k = i as usize;
         self.attrs[k] |= attr::DELETED;
         self.dead_bytes += self.lower_len[k] as usize + 1;

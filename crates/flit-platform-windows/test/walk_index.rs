@@ -121,3 +121,64 @@ fn scans_a_tree_and_follows_live_changes() {
     std::fs::remove_dir_all(&root).unwrap();
     let _ = std::fs::remove_dir_all(&outside);
 }
+
+fn listing(v: &VolumeIndex) -> Vec<(String, u64)> {
+    let mut out: Vec<(String, u64)> = (0..v.len() as u32)
+        .filter(|&i| v.listed(i))
+        .map(|i| {
+            let mut p = Vec::new();
+            v.path_into(i, false, &mut Vec::new(), &mut p);
+            (String::from_utf8(p).unwrap(), v.sizes[i as usize])
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn a_restart_catches_up_from_the_journal_without_walking_again() {
+    let root = temp_root("resume");
+    let outside = temp_root("resume-outside");
+    for d in ["keep/deep", "gone/inner", "leaving/inner", "renamed-me"] {
+        std::fs::create_dir_all(root.join(d)).unwrap();
+    }
+    std::fs::write(root.join("keep/deep/a.txt"), b"1").unwrap();
+    std::fs::write(root.join("gone/inner/b.txt"), b"2").unwrap();
+    std::fs::write(root.join("leaving/inner/c.txt"), b"3").unwrap();
+    std::fs::write(root.join("grows.txt"), b"4").unwrap();
+    std::fs::create_dir_all(outside.join("arriving/inner")).unwrap();
+    std::fs::write(outside.join("arriving/inner/d.txt"), b"5").unwrap();
+    let rs = root.to_str().unwrap().to_owned();
+    let fresh = |rs: &str| {
+        let mut w = WalkIndex::with_roots(vec![FsPath::parse(rs).unwrap()]);
+        let volume = w.volumes().unwrap()[0].id.clone();
+        let mut v = VolumeIndex::new(&volume, rs.as_bytes(), b'\\');
+        let cp = w.scan(&volume, &mut v).unwrap();
+        v.commit();
+        (v, cp, volume)
+    };
+    let (mut v, cp, volume) = fresh(&rs);
+    assert_ne!(cp.next, 0, "the temp folder sits on a volume with a change journal");
+
+    std::fs::remove_dir_all(root.join("gone")).unwrap();
+    std::fs::create_dir_all(root.join("new/a/b/c")).unwrap();
+    std::fs::write(root.join("new/a/b/c/e.txt"), b"66").unwrap();
+    std::fs::rename(root.join("renamed-me"), root.join("renamed")).unwrap();
+    std::fs::rename(root.join("leaving"), outside.join("left")).unwrap();
+    std::fs::rename(outside.join("arriving"), root.join("keep/arrived")).unwrap();
+    std::fs::write(root.join("grows.txt"), b"4444").unwrap();
+
+    let mut w = WalkIndex::with_roots(vec![FsPath::parse(&rs).unwrap()]);
+    let next = w.changes(&volume, cp, &mut v).unwrap().expect("the journal still covers the checkpoint");
+    v.commit();
+    assert!(next.next > cp.next);
+    assert_eq!(listing(&v), listing(&fresh(&rs).0));
+    assert!(listing(&v).iter().any(|(p, s)| p.ends_with(r"keep\arrived\inner\d.txt") && *s == 1));
+    assert!(listing(&v).iter().any(|(p, s)| p.ends_with("grows.txt") && *s == 4));
+
+    let stale = Checkpoint { journal: cp.journal ^ 1, next: cp.next };
+    assert_eq!(WalkIndex::with_roots(vec![FsPath::parse(&rs).unwrap()]).changes(&volume, stale, &mut v).unwrap(), None, "another journal means a full walk");
+    drop(w);
+    std::fs::remove_dir_all(&root).unwrap();
+    let _ = std::fs::remove_dir_all(&outside);
+}

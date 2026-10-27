@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use flit_core::attr;
 use flit_search::engine::Engine;
-use flit_search::index::{IndexRecord, IndexSink, VolumeIndex};
+use flit_search::index::{IndexRecord, IndexSink, Order, VolumeIndex};
 use flit_search::proto::{Sort, SortKey};
 use flit_search::query::{parse, Clock};
 use std::hint::black_box;
@@ -57,7 +57,8 @@ fn bench_size(c: &mut Criterion, n: usize, label: &str) {
     let started = Instant::now();
     let v = synthetic(n);
     eprintln!("{label}: built {} entries in {:?}", v.live(), started.elapsed());
-    let engine = Engine { volumes: vec![v], version: 1 };
+    let mut engine = Engine { volumes: vec![v], version: 1 };
+    engine.build_order(Order::Size);
     let clock = Clock { now: NOW, utc_offset_min: 0 };
     let never = || false;
     let mut g = c.benchmark_group(label);

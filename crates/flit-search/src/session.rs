@@ -1,4 +1,4 @@
-use crate::engine::{Engine, ResultSet, Visibility};
+use crate::engine::{order_of, Engine, ResultSet, Visibility};
 use crate::proto::{Message, Sort, VolumeInfo};
 use crate::query::{self, Clock, Query};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,6 +25,18 @@ impl SharedIndex {
 
     pub fn write(&self) -> RwLockWriteGuard<'_, Engine> {
         self.engine.write().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn read_sorted(&self, sort: Sort) -> RwLockReadGuard<'_, Engine> {
+        let order = order_of(sort.key);
+        loop {
+            let engine = self.read();
+            if engine.has_order(order) {
+                return engine;
+            }
+            drop(engine);
+            self.write().build_order(order);
+        }
     }
 
     pub fn set_volume(&self, info: VolumeInfo) {
@@ -81,17 +93,15 @@ impl Session {
                 }
                 self.current = Some(Current { gen, query, sort, version: 0, set: None });
                 let shared = self.shared.clone();
-                let engine = shared.read();
+                let engine = shared.read_sorted(sort);
                 if self.run(&engine, latest, out) {
                     self.send_rows(&engine, gen, 0, FIRST_PAGE, out);
                 }
             }
             Message::GetRows { gen, from, to } => {
-                if self.current.as_ref().is_none_or(|c| c.gen != gen) {
-                    return;
-                }
+                let Some(sort) = self.current.as_ref().filter(|c| c.gen == gen).map(|c| c.sort) else { return };
                 let shared = self.shared.clone();
-                let engine = shared.read();
+                let engine = shared.read_sorted(sort);
                 let stale = self.current.as_ref().is_some_and(|c| c.version != engine.version || c.set.is_none());
                 if !stale || self.run(&engine, latest, out) {
                     self.send_rows(&engine, gen, from, to, out);
@@ -107,12 +117,12 @@ impl Session {
             self.status_seen = version;
             out(Message::IndexStatus { volumes });
         }
-        let Some((gen, version)) = self.current.as_ref().map(|c| (c.gen, c.version)) else { return };
+        let Some((gen, version, sort)) = self.current.as_ref().map(|c| (c.gen, c.version, c.sort)) else { return };
         if self.refreshed.elapsed() < REFRESH_EVERY || latest.load(Ordering::Acquire) != gen {
             return;
         }
         let shared = self.shared.clone();
-        let engine = shared.read();
+        let engine = shared.read_sorted(sort);
         if version != engine.version && self.run(&engine, latest, out) {
             self.send_rows(&engine, gen, 0, FIRST_PAGE, out);
         }

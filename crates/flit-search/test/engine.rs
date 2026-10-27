@@ -29,7 +29,7 @@ fn sample() -> Engine {
     put(&mut d, 20, 5, "backup", 0, 3, true);
     put(&mut d, 21, 20, "report.bak", 700, 5, false);
     d.commit();
-    Engine { volumes: vec![c, d], version: 1 }
+    ready(Engine { volumes: vec![c, d], version: 1 })
 }
 
 fn names(e: &Engine, text: &str, key: SortKey, descending: bool) -> Vec<String> {
@@ -122,7 +122,7 @@ fn large_result_sets_walk_the_permutation() {
     }
     put(&mut v, 99, 5, "other", 0, 0, false);
     v.commit();
-    let e = Engine { volumes: vec![v], version: 1 };
+    let e = ready(Engine { volumes: vec![v], version: 1 });
     let q = parse("item", clock()).unwrap();
     for key in [SortKey::Name, SortKey::Size] {
         for descending in [false, true] {
@@ -193,7 +193,7 @@ fn bench_folder_scoped_queries_and_groups() {
         }
     }
     v.commit();
-    let e = Engine { volumes: vec![v], version: 1 };
+    let e = ready(Engine { volumes: vec![v], version: 1 });
     let ms = |t: std::time::Instant| t.elapsed().as_secs_f64() * 1e3;
     let median = |text: &str, key: SortKey| {
         let q = parse(text, clock()).unwrap();
@@ -234,7 +234,7 @@ fn every_scan_path_agrees_with_the_plain_matcher() {
         put(&mut v, 100 + k, 5, &name, (k * 7919) % 5000, (k % 50) as i64, k % 11 == 0);
     }
     v.commit();
-    let e = Engine { volumes: vec![v], version: 1 };
+    let e = ready(Engine { volumes: vec![v], version: 1 });
     let v = &e.volumes[0];
     for text in [".", "r", "rep", "report-1", "докум", "ext:rs;h", "ext:", "ext:gz", "!ext:h", "size:>1k", "!size:<2k", "!dm:today", "rep size:<3k", "*.jpg", "img* !size:>4k", "regex:^rep\\d"] {
         let q = parse(text, clock()).unwrap();
@@ -258,4 +258,11 @@ fn every_scan_path_agrees_with_the_plain_matcher() {
             }
         }
     }
+}
+
+fn ready(mut e: Engine) -> Engine {
+    for order in [Order::Size, Order::Modified, Order::Path] {
+        e.build_order(order);
+    }
+    e
 }

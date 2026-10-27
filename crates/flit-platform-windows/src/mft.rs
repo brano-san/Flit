@@ -345,7 +345,7 @@ fn volume_data(volume: HANDLE) -> Result<NTFS_VOLUME_DATA_BUFFER, PlatformError>
     Ok(vd)
 }
 
-fn query_journal(volume: HANDLE) -> windows::core::Result<USN_JOURNAL_DATA_V0> {
+pub(crate) fn query_journal(volume: HANDLE) -> windows::core::Result<USN_JOURNAL_DATA_V0> {
     let mut j = USN_JOURNAL_DATA_V0::default();
     let mut got = 0u32;
     unsafe { DeviceIoControl(volume, FSCTL_QUERY_USN_JOURNAL, None, 0, Some(&mut j as *mut _ as _), size_of::<USN_JOURNAL_DATA_V0>() as u32, Some(&mut got), None) }?;

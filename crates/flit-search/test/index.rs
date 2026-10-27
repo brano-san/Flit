@@ -135,7 +135,7 @@ fn incremental_permutations_match_a_full_sort() {
                     let id = 100 + rnd(next - 100);
                     if let Some(i) = v.lookup(id) {
                         let dir = v.is_dir(i);
-                        let parent = if dir { v.parent_ids[i as usize] } else { dirs[rnd(dirs.len() as u64) as usize] };
+                        let parent = if dir { v.parent_id(i) } else { dirs[rnd(dirs.len() as u64) as usize] };
                         let name = names[rnd(names.len() as u64) as usize].to_uppercase();
                         v.upsert(&IndexRecord { id, parent, name: name.as_bytes(), size: rnd(50), modified: rnd(20) as i64, attrs: if dir { attr::DIR } else { 0 } });
                     }
@@ -146,6 +146,7 @@ fn incremental_permutations_match_a_full_sort() {
         }
         v.commit();
         for order in [Order::Name, Order::Size, Order::Modified, Order::Path] {
+            v.build_order(order);
             let expected = brute(&v, order);
             let got = &v.perms[order as usize];
             assert_eq!(got, &expected, "round {round} {order:?}");
@@ -177,4 +178,20 @@ fn compaction_drops_dead_names_and_bumps_the_epoch() {
     assert!(v.lower.len() < before / 10, "{} vs {before}", v.lower.len());
     assert_eq!(path(&v, 101), r"C:\short1");
     assert_eq!(v.seg_start.len(), v.live() + 1, "live entries plus the root");
+}
+
+#[test]
+fn names_already_in_lower_case_are_kept_once() {
+    let mut v = VolumeIndex::new("C:", b"C:", b'/');
+    v.upsert(&IndexRecord { id: 5, parent: 5, name: b".", size: 0, modified: 0, attrs: attr::DIR });
+    v.upsert(&IndexRecord { id: 6, parent: 5, name: b"readme.md", size: 0, modified: 0, attrs: 0 });
+    v.upsert(&IndexRecord { id: 7, parent: 5, name: "README.md".as_bytes(), size: 0, modified: 0, attrs: 0 });
+    v.upsert(&IndexRecord { id: 8, parent: 5, name: "ДОК".as_bytes(), size: 0, modified: 0, attrs: 0 });
+    v.commit();
+    assert_eq!(v.names, ["README.md".as_bytes(), "ДОК".as_bytes()].concat());
+    let named = |v: &VolumeIndex, id| v.name(v.lookup(id).unwrap()).to_vec();
+    assert_eq!((named(&v, 6), named(&v, 7), named(&v, 8)), (b"readme.md".to_vec(), b"README.md".to_vec(), "ДОК".as_bytes().to_vec()));
+    v.upsert(&IndexRecord { id: 6, parent: 5, name: b"Readme.md", size: 0, modified: 0, attrs: 0 });
+    v.commit();
+    assert_eq!(named(&v, 6), b"Readme.md");
 }

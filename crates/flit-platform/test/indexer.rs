@@ -107,6 +107,7 @@ fn snapshots_let_a_restart_resume_without_scanning() {
     assert_eq!(*second.scans.lock().unwrap(), 0, "the snapshot replaces the scan");
     assert!(names(&shared).contains(&"scan1-9.txt".to_string()));
     assert_eq!(shared.status().1[0].state, VolumeState::Ready);
+    wait_until("the caught-up snapshot", || std::fs::read(&file).ok().and_then(|b| snapshot::load(&b).ok()).is_some_and(|(v, _)| (0..v.len() as u32).any(|i| v.name(i) == b"after-restart.txt")));
     drop(shared);
     std::thread::sleep(POLL * 3);
     std::fs::write(&file, b"garbage").unwrap();

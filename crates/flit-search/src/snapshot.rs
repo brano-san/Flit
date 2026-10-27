@@ -33,7 +33,7 @@ pub fn save(v: &VolumeIndex, cp: Checkpoint, out: &mut Vec<u8>) {
     for i in alive {
         let k = i as usize;
         out.extend_from_slice(&v.ids[k].to_le_bytes());
-        out.extend_from_slice(&v.parent_ids[k].to_le_bytes());
+        out.extend_from_slice(&v.parent_id(i).to_le_bytes());
         out.extend_from_slice(&v.sizes[k].to_le_bytes());
         out.extend_from_slice(&v.modified[k].to_le_bytes());
         out.extend_from_slice(&(v.attrs[k] & KEPT_ATTRS).to_le_bytes());
@@ -107,6 +107,7 @@ pub fn load(bytes: &[u8]) -> Result<(VolumeIndex, Checkpoint), String> {
         return Err("the snapshot has trailing bytes".into());
     }
     v.commit();
+    v.shrink();
     Ok((v, cp))
 }
 

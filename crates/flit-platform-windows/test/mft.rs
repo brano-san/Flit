@@ -278,7 +278,8 @@ fn volumes_without_mft_access_are_walked_and_never_resumed_blindly() {
     let f = (0..v.len() as u32).find(|&i| v.name(i) == b"f.txt").unwrap();
     assert_eq!(v.sizes[f as usize], 3);
     assert!(matches!(fresh.modes.get(&volume), Some(Mode::Walk)));
-    assert_eq!(fresh.changes(&volume, cp, &mut v).unwrap(), Some(cp));
+    let next = fresh.changes(&volume, cp, &mut v).unwrap().expect("a walked volume follows its journal");
+    assert!(next.journal == cp.journal && next.next >= cp.next);
     drop(fresh);
     std::fs::remove_dir_all(&dir).unwrap();
 }

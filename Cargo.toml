@@ -33,6 +33,7 @@ flit-platform-linux-gui = { path = "crates/flit-platform-linux-gui" }
 crossbeam-channel = "0.5"
 arc-swap = "1.7"
 rayon = "1.10"
+hashbrown = { version = "0.17", default-features = false }
 memchr = "2.7"
 regex = "1.11"
 bumpalo = { version = "3.16", features = ["collections"] }
