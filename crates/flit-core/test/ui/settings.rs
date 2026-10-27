@@ -298,8 +298,9 @@ fn the_interface_scale_multiplies_the_display_scale_for_layout_fonts_and_hits() 
     assert_eq!(a.hit_test(title.right() - 1.0, title.bottom() + 2.0), a.hit_test(title.right() - 1.0, 1.0));
     a.on_event(&crate::input::Event::ScaleChanged(1.0), Instant::now());
     assert_eq!(a.scale, 2.0);
-    assert!(set(&mut a, "appearance.scale", Value::Number(75)));
-    assert_eq!(a.scale, 0.75);
+    assert!(set(&mut a, "appearance.scale", Value::Number(110)));
+    assert!((a.scale - 1.1).abs() < 1e-6);
+    assert!(set(&mut a, "appearance.scale", Value::Number(70)));
     assert!(a.layout.row_h < row);
     assert!(!set(&mut a, "appearance.scale", Value::Number(250)));
     let doc = parse(r#"{"appearance.scale": 50}"#);

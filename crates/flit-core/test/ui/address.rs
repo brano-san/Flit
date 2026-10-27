@@ -227,6 +227,32 @@ fn suggestions_rank_prefix_then_recent_then_closeness_then_length() {
 }
 
 #[test]
+fn up_to_25_suggestions_scroll_ten_at_a_time() {
+    let mut app = app_at(r"C:\x");
+    let names: Vec<String> = (0..30).map(|k| format!("d{k:02}")).collect();
+    let items: Vec<(&str, bool)> = names.iter().map(|n| (n.as_str(), true)).collect();
+    deliver(&mut app, &items, None);
+    type_address(&mut app, r"C:\x\d");
+    frame(&mut app);
+    assert_eq!(app.addr.items.len(), 25);
+    assert_eq!(app.addr.rects.len(), 10);
+    let r = app.addr.rects[0];
+    assert_eq!(app.hit(r.x + 5.0, r.y + 5.0), Hit::Suggestion(0));
+    app.suggestions_wheel(-1.0);
+    frame(&mut app);
+    assert_eq!(app.hit(r.x + 5.0, r.y + 5.0), Hit::Suggestion(3));
+    app.suggestions_wheel(-100.0);
+    frame(&mut app);
+    assert_eq!(app.hit(r.x + 5.0, r.y + 5.0), Hit::Suggestion(15));
+    app.suggestions_wheel(100.0);
+    for _ in 0..12 {
+        app.address_key(Key::Down, Mods::default());
+    }
+    frame(&mut app);
+    assert_eq!(app.hit(r.x + 5.0, r.y + 5.0), Hit::Suggestion(2));
+}
+
+#[test]
 fn chevrons_list_subfolders_and_the_ellipsis_lists_hidden_crumbs() {
     let mut app = app_at(r"C:\x\y");
     deliver(&mut app, &[("inner", true), ("note.txt", false)], None);

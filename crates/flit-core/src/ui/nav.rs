@@ -56,6 +56,10 @@ impl App {
             self.palette_wheel(dy);
             return true;
         }
+        if self.suggesting() && matches!(self.hover, Hit::Suggestion(_)) {
+            self.suggestions_wheel(dy);
+            return true;
+        }
         if matches!(self.hover, Hit::Side(_) | Hit::SidePin(_) | Hit::SideEmpty | Hit::SideHeader(_)) {
             self.sidebar_wheel(dy);
             return true;

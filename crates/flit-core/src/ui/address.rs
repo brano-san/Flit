@@ -21,7 +21,8 @@ pub type Typed = Arc<Mutex<Vec<String>>>;
 pub(super) const OVERFLOW: &str = "\u{2026}";
 const G_HISTORY: &str = "\u{E81C}";
 const MAX_TYPED: usize = 64;
-const MAX_SUGGESTIONS: usize = 10;
+const MAX_SUGGESTIONS: usize = 25;
+const SHOWN_SUGGESTIONS: usize = 10;
 const MAX_MENU: usize = 256;
 const MAX_HISTORY_MENU: usize = 16;
 const LONG_PRESS: Duration = Duration::from_millis(500);
@@ -56,6 +57,7 @@ pub(super) struct Address {
     items: Vec<(String, bool)>,
     rects: Vec<Rect>,
     sel: Option<usize>,
+    top: usize,
 }
 
 fn is_url(text: &str) -> bool {
@@ -388,7 +390,9 @@ impl App {
             _ => {}
         }
         let (a, h, gap) = (self.layout.address, self.s(SUGGESTION_H), self.s(4.0));
-        self.addr.rects = (0..self.addr.items.len()).map(|k| Rect::new(a.x, a.bottom() + gap + k as f32 * h, a.w, h)).collect();
+        let shown = self.addr.items.len().min(SHOWN_SUGGESTIONS);
+        self.addr.top = self.addr.top.min(self.addr.items.len() - shown);
+        self.addr.rects = (0..shown).map(|k| Rect::new(a.x, a.bottom() + gap + k as f32 * h, a.w, h)).collect();
     }
 
     fn places(&self) -> Vec<(String, bool)> {
@@ -406,6 +410,7 @@ impl App {
 
     fn suggest(&mut self) {
         self.addr.sel = None;
+        self.addr.top = 0;
         self.addr.items.clear();
         let text = self.edit.text.clone();
         if text.trim().is_empty() {
@@ -498,7 +503,7 @@ impl App {
 
     pub(super) fn address_hit(&self, x: f32, y: f32) -> Option<Hit> {
         if self.editing {
-            return self.addr.rects.iter().position(|r| r.contains(x, y)).map(Hit::Suggestion);
+            return self.addr.rects.iter().position(|r| r.contains(x, y)).map(|k| Hit::Suggestion(self.addr.top + k));
         }
         if !self.layout.address.contains(x, y) {
             return None;
@@ -532,8 +537,18 @@ impl App {
             }
             _ => return false,
         }
+        if let Some(k) = self.addr.sel {
+            self.addr.top = self.addr.top.min(k).max((k + 1).saturating_sub(SHOWN_SUGGESTIONS));
+        }
         self.dirty = true;
         true
+    }
+
+    pub(super) fn suggestions_wheel(&mut self, dy: f32) {
+        let steps = (dy * 3.0).round() as isize;
+        let last = self.addr.items.len().saturating_sub(SHOWN_SUGGESTIONS);
+        self.addr.top = self.addr.top.saturating_add_signed(-steps).min(last);
+        self.dirty = true;
     }
 
     pub(super) fn draw_suggestions<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme) {
@@ -547,7 +562,14 @@ impl App {
         g.dl.outline(b, th.input_border, s6, 1.0);
         let (font, icons) = (self.ui_font(13.0), self.icon_font(12.0));
         let m = g.metrics(font);
-        for (k, (r, (text, typed))) in self.addr.rects.iter().zip(&self.addr.items).enumerate() {
+        let n = self.addr.items.len();
+        if n > self.addr.rects.len() {
+            let track = b.h - 2.0 * s4;
+            let thumb = Rect::new(b.right() - s4 - self.s(3.0), b.y + s4 + track * self.addr.top as f32 / n as f32, self.s(3.0), track * self.addr.rects.len() as f32 / n as f32);
+            g.dl.round_rect(thumb, th.scrollbar, self.s(1.5));
+        }
+        for (k, (r, (text, typed))) in self.addr.rects.iter().zip(&self.addr.items[self.addr.top..]).enumerate() {
+            let k = self.addr.top + k;
             if self.addr.sel == Some(k) {
                 g.dl.round_rect(r.inset(s4, 1.0), th.selection, s4);
             } else if self.hover == Hit::Suggestion(k) {

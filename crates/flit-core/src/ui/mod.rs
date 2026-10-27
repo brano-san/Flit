@@ -46,7 +46,7 @@ pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource, MAX_HISTORY};
 pub use sidebar::{Drive, KnownFolder, NavPrefs, NavState, Places, Section};
 pub use home::{Recent, Widget};
-pub const UI_SCALE: (u32, u32) = (75, 200);
+pub const UI_SCALE: (u32, u32) = (70, 200);
 pub const SPRING_DELAY_MAX_MS: u32 = 3000;
 pub use details::{folder_key, Columns, FolderView, FolderViews, ViewPrefs, THUMB_CACHE_MB};
 pub use layouts::{adaptive_layout, has_thumbnail, is_media, LayoutMode, Sizes, LAYOUTS};
