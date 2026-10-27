@@ -500,3 +500,26 @@ fn package_formats_browse_like_zip_and_documents_open_as_folder_only() {
         assert_eq!(flit_core::archive::format_of(name.as_bytes()), Some(Format::Zip), "{name}");
     }
 }
+#[test]
+fn large_files_split_into_parallel_chunks_extract_intact() {
+    let t = Temp::new("pzip");
+    let words: Vec<u8> = (0..3_500_000u32).map(|i| b"abcdefgh ijk lmnop"[(i.wrapping_mul(2_654_435_761) >> 28) as usize]).collect();
+    t.write("src/big.txt", &words);
+    t.write("src/exact.bin", &vec![7u8; 1 << 20]);
+    t.write("src/empty.txt", b"");
+    for level in [0, 6] {
+        let archive = t.fs(&format!("l{level}.zip"));
+        let options = Compression { format: Format::Zip, level, threads: 4, ..Compression::default() };
+        let out = run(FileOp::Archive(ArchiveOp::Compress { items: vec![t.fs("src")], archive: archive.clone(), options }), Resolve::Replace);
+        assert!(out.error.is_none(), "{:?}", out.error);
+        let mut z = zip::ZipArchive::new(fs::File::open(t.path(&format!("l{level}.zip"))).unwrap()).unwrap();
+        let mut got = Vec::new();
+        z.by_name("src/big.txt").unwrap().read_to_end(&mut got).unwrap();
+        assert_eq!(got, words);
+        let out = extract(&archive, &t.fs(&format!("out{level}")), Place::Here);
+        assert!(out.error.is_none(), "{:?}", out.error);
+        assert_eq!(t.read(&format!("out{level}/src/exact.bin")), vec![7u8; 1 << 20]);
+        assert!(t.path(&format!("out{level}/src/empty.txt")).is_file());
+    }
+}
+

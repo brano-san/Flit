@@ -14,13 +14,13 @@ use std::path::{Path, PathBuf};
 
 const LZMA_DICT: [u32; 10] = [256 << 10, 1 << 20, 2 << 20, 4 << 20, 4 << 20, 8 << 20, 8 << 20, 16 << 20, 32 << 20, 64 << 20];
 
-struct Source {
-    path: PathBuf,
-    from: FsPath,
-    name: String,
-    dir: bool,
-    size: u64,
-    modified: i64,
+pub(crate) struct Source {
+    pub(crate) path: PathBuf,
+    pub(crate) from: FsPath,
+    pub(crate) name: String,
+    pub(crate) dir: bool,
+    pub(crate) size: u64,
+    pub(crate) modified: i64,
 }
 
 fn collect(items: &[FsPath], prefix: &str) -> Result<Vec<Source>, PlatformError> {
@@ -97,7 +97,7 @@ impl Read for Lazy<'_> {
     }
 }
 
-fn unreadable(s: &Source, job: &Job) -> Result<(), PlatformError> {
+pub(crate) fn unreadable(s: &Source, job: &Job) -> Result<(), PlatformError> {
     let meta = Meta { size: s.size, modified: s.modified, created: 0, attrs: 0 };
     match job.resolve(archive::unreadable(&s.from, meta)) {
         Some(_) => {
@@ -111,7 +111,7 @@ fn unreadable(s: &Source, job: &Job) -> Result<(), PlatformError> {
     }
 }
 
-fn write_error(e: io::Error) -> PlatformError {
+pub(crate) fn write_error(e: io::Error) -> PlatformError {
     if e.to_string() == CANCELLED { cancelled() } else { io_error(e) }
 }
 
@@ -192,7 +192,7 @@ impl Seek for Sink {
     }
 }
 
-fn zip_time(ticks: i64, offset: i32) -> zip::DateTime {
+pub(crate) fn zip_time(ticks: i64, offset: i32) -> zip::DateTime {
     let secs = ticks / 10_000_000 - 11_644_473_600 + offset as i64 * 60;
     let (y, m, d) = flit_core::fmt::civil_from_days(secs.div_euclid(86_400));
     let rem = secs.rem_euclid(86_400);
@@ -234,9 +234,17 @@ fn zip_entries<W: Write + Seek>(z: &mut zip::ZipWriter<W>, sources: &[Source], l
 }
 
 fn write_zip<W: Write + Seek>(w: W, sources: &[Source], options: &Compression, job: &Job, env: &Env<'_>) -> Result<W, PlatformError> {
+    let Some(password) = &options.password else { return crate::pzip::write(w, sources, options.level, threads(options) as usize, job, env) };
     let mut z = zip::ZipWriter::new(w);
-    zip_entries(&mut z, sources, options.level, options.password.as_ref().map(|p| p.0.as_str()), job, env)?;
+    zip_entries(&mut z, sources, options.level, Some(password.0.as_str()), job, env)?;
     z.finish().map_err(|e| corrupt(&e.to_string()))
+}
+
+fn threads(options: &Compression) -> u32 {
+    match options.threads {
+        0 => std::thread::available_parallelism().map_or(1, |n| n.get() as u32),
+        t => t,
+    }
 }
 
 fn write_7z<W: Write + Seek>(w: W, sources: Vec<Source>, options: &Compression, job: &Job) -> Result<W, PlatformError> {
@@ -257,10 +265,7 @@ fn write_7z<W: Write + Seek>(w: W, sources: Vec<Source>, options: &Compression, 
     let mut z = ArchiveWriter::new(w).map_err(err)?;
     let level = options.level.min(9) as u32;
     let dict = if options.dictionary > 0 { options.dictionary } else { LZMA_DICT[level as usize] };
-    let threads = match options.threads {
-        0 => std::thread::available_parallelism().map_or(1, |n| n.get() as u32),
-        t => t,
-    };
+    let threads = threads(options);
     let mut lzma = if threads > 1 { Lzma2Options::from_level_mt(level, threads, dict as u64) } else { Lzma2Options::from_level(level) };
     lzma.set_dictionary_size(dict);
     if options.word > 0 {

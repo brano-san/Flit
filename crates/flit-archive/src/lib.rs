@@ -2,6 +2,7 @@ mod compress;
 mod extract;
 mod index;
 mod names;
+mod pzip;
 
 pub use index::{days_from_civil, dos_ticks};
 pub use names::{decode, detect, safe_path};
