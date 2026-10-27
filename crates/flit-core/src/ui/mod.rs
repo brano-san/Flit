@@ -2431,3 +2431,7 @@ pub fn icon_key(name: &[u8], ext: &[u8], e: &crate::listing::Entry, size: u32, d
 #[cfg(test)]
 #[path = "../../test/ui.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../test/ui/budgets.rs"]
+mod budgets;
