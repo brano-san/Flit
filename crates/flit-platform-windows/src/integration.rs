@@ -125,22 +125,27 @@ fn slot(key: &str, name: &str) -> String {
     format!("{key}|{name}")
 }
 
-pub fn set(root: &Root, on: bool, exe: &str) -> Result<(), PlatformError> {
+pub fn set(root: &Root, on: bool, exe: &str) -> Result<bool, PlatformError> {
     let plan = entries(exe);
     let backup = root.backup_of(MANAGER_BACKUP);
     if on {
+        let stale: Vec<&Entry> = plan.iter().filter(|(key, name, data)| read(root.hive, &root.class(key), name) != Some((REG_SZ.0, sz(data)))).collect();
+        if stale.is_empty() && exists(root.hive, &backup) {
+            return Ok(false);
+        }
         if !exists(root.hive, &backup) {
             save(root, &plan, &backup)?;
         }
-        for (key, name, data) in &plan {
+        for (key, name, data) in stale {
             write(root.hive, &root.class(key), name, REG_SZ.0, &sz(data))?;
         }
-        return Ok(());
+        return Ok(true);
     }
-    if exists(root.hive, &backup) {
-        restore(root, &plan, &backup)?;
+    if !exists(root.hive, &backup) {
+        return Ok(false);
     }
-    Ok(())
+    restore(root, &plan, &backup)?;
+    Ok(true)
 }
 
 fn save(root: &Root, plan: &[Entry], backup: &str) -> Result<(), PlatformError> {
@@ -238,9 +243,11 @@ pub fn delete_tree(hive: HKEY, key: &str) {
 
 pub fn integrate(on: bool) -> Result<(), PlatformError> {
     let exe = std::env::current_exe().map_err(|e| PlatformError::new(-1, e.to_string()))?;
-    set(&Root::user(), on, &exe.to_string_lossy())?;
+    let changed = set(&Root::user(), on, &exe.to_string_lossy())?;
     crate::shellwin::enable(on);
-    unsafe { SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None) };
+    if changed {
+        unsafe { SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None) };
+    }
     Ok(())
 }
 

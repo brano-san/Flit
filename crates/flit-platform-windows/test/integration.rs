@@ -42,19 +42,20 @@ fn default_manager_round_trip_restores_the_previous_values_exactly() {
     sb.put(r"Folder\shell\explore\command", "DelegateExecute", REG_SZ.0, &sz("{11dbb47c-a525-400b-9e80-a54615a090c0}"));
     sb.put(r"Folder\shell\open", "keep", REG_SZ.0, &sz("me"));
     let before = sb.snapshot();
-    set(&sb.0, true, EXE).unwrap();
+    assert!(set(&sb.0, true, EXE).unwrap());
+    assert!(!set(&sb.0, true, EXE).unwrap(), "an unchanged registration writes nothing and tells the shell nothing");
     let text = |k: &str, n: &str| sb.get(k, n).map(|(t, d)| (t, strings(&d).join("")));
     assert_eq!(text(r"Folder\shell\open\command", ""), Some((REG_SZ.0, format!("\"{EXE}\" \"%1\""))));
     assert_eq!(text(r"Folder\shell\explore\command", "DelegateExecute"), Some((REG_SZ.0, String::new())));
     assert_eq!(text(WIN_E, ""), Some((REG_SZ.0, format!("\"{EXE}\" \"{HOME}\""))));
     set(&sb.0, true, r"D:\Moved\flit.exe").unwrap();
     assert_eq!(text(r"Folder\shell\open\command", ""), Some((REG_SZ.0, "\"D:\\Moved\\flit.exe\" \"%1\"".into())));
-    set(&sb.0, false, EXE).unwrap();
+    assert!(set(&sb.0, false, EXE).unwrap());
     assert_eq!(sb.snapshot(), before);
     assert_eq!(text(r"Folder\shell\open", "keep"), Some((REG_SZ.0, "me".into())));
     assert!(!exists(sb.0.hive, &sb.0.class("CLSID")));
     assert!(!exists(sb.0.hive, &sb.0.backup));
-    set(&sb.0, false, EXE).unwrap();
+    assert!(!set(&sb.0, false, EXE).unwrap());
     assert_eq!(sb.snapshot(), before);
 }
 

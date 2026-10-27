@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use windows::core::{w, BOOL, PCWSTR};
 use windows::Win32::Foundation::*;
-use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
+use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows::Win32::Graphics::Gdi::{GetSysColor, SYS_COLOR_INDEX, COLOR_BTNFACE, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_HOTLIGHT, COLOR_WINDOW, COLOR_WINDOWTEXT, ClientToScreen, GetMonitorInfoW, MonitorFromWindow, ScreenToClient, ValidateRect, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::System::DataExchange::{AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, SetClipboardData};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -417,6 +417,13 @@ fn load_cursor(c: CursorIcon) -> HCURSOR {
     unsafe { LoadCursorW(None, id).unwrap_or_default() }
 }
 
+fn cloak(hwnd: HWND, on: bool) {
+    let v = BOOL::from(on);
+    unsafe {
+        let _ = DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, &v as *const BOOL as _, 4);
+    }
+}
+
 pub(crate) fn apply_dark(hwnd: HWND, dark: bool) {
     let v = BOOL::from(dark);
     unsafe {
@@ -628,7 +635,12 @@ impl<H: WindowHandler<Win32>> Shared<H> {
                 self.woken.set(true);
             }
         } else {
+            cloak(hwnd, true);
             let _ = ShowWindow(hwnd, if maximized { SW_SHOWMAXIMIZED } else { SW_SHOW });
+            update_size(&node.window);
+            self.flush();
+            node.redraw_now();
+            cloak(hwnd, false);
         }
         crate::dragdrop::register(hwnd, Rc::as_ptr(&node) as *const (), drag_thunk::<H>);
         Ok(())
