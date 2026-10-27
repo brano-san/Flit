@@ -349,7 +349,7 @@ fn places_ask_the_system_for_their_icons_and_keep_glyphs_until_then() {
     app.set_tags(Arc::new(Tags::new(1, &store, &Default::default())));
     app.drain_effects().for_each(drop);
     app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
-    let asked: Vec<(Vec<u8>, IconKind)> = app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { Some((r.path.as_bytes().to_vec(), r.kind)) } else { None }).collect();
+    let asked: Vec<(Vec<u8>, IconKind)> = app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { (r.size == 20).then_some((r.path.as_bytes().to_vec(), r.kind)) } else { None }).collect();
     for want in [
         (br"C:\a".to_vec(), IconKind::Place),
         (downloads.path().as_bytes().to_vec(), IconKind::Place),

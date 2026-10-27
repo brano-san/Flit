@@ -1,5 +1,6 @@
 use super::edit::{EditAction, LineEdit};
-use super::{centered, icon_key, App, Effect, Hit, G_BACK, G_CHEVRON, G_FILE, G_FOLDER, G_SORT_DOWN, G_SORT_UP, ICON};
+use super::sidebar::folder_icon;
+use super::{centered, icon_key, App, Effect, Hit, IconRequest, G_BACK, G_CHEVRON, G_FILE, G_FOLDER, G_SORT_DOWN, G_SORT_UP, ICON};
 use crate::fmt as format;
 use crate::hash::FxHashMap;
 use crate::i18n::{self, P, S};
@@ -976,6 +977,7 @@ impl App {
         let focused = self.active;
         let (first, last) = self.search_range();
         g.dl.set_clip(Some(sl.list));
+        let mut requests: Vec<IconRequest> = Vec::new();
         let s = &self.search;
         let headers = s.grouped();
         if s.done && s.total == 0 && !s.walking {
@@ -988,7 +990,7 @@ impl App {
             let row = match s.line_at(line) {
                 SLine::Row(r) => r,
                 SLine::Header(k) => {
-                    self.draw_search_group(g, arena, t, k, Rect::new(sl.list.x, y, sl.list.w, rh));
+                    self.draw_search_group(g, arena, t, k, Rect::new(sl.list.x, y, sl.list.w, rh), &mut requests);
                     continue;
                 }
             };
@@ -1003,12 +1005,16 @@ impl App {
             let ext_at = if is_dir { r.name.len() } else { r.name.len() - name::ext_len(&r.name) };
             let ext = &r.name[ext_at..];
             let entry = Entry { size: 0, modified: 0, created: 0, name_off: 0, attrs: r.meta.attrs, name_len: 0, ext_len: 0, tags: 0 };
-            let (key, _) = icon_key(&r.name, ext, &entry, icon_px as u32, &r.dir, self.icon_epoch);
+            let (key, kind) = icon_key(&r.name, ext, &entry, icon_px as u32, &r.dir, self.icon_epoch);
             let indent = if headers { self.s(16.0) } else { 0.0 };
             let ir = Rect::new(sl.cols[0].x + pad + indent, y + ((rh - icon_px) / 2.0).round(), icon_px, icon_px);
             if !g.image(key, ir) {
                 let (glyph, color) = if is_dir { (G_FOLDER, t.accent.alpha(0xB0)) } else { (G_FILE, t.text_dim.alpha(0x90)) };
                 centered(g, ir, glyph, FontStyle::new(FontFamily::Icons, icon_px * 0.85, false), color);
+                let wanted = !self.icons.contains_key(&key) && !requests.iter().any(|q| q.key == key);
+                if let Some(path) = wanted.then(|| Location::parse_exact(&r.dir)).flatten().and_then(|d| d.join(&r.name).to_windows()) {
+                    requests.push(IconRequest { key, kind, path, size: icon_px as u32, gen: 0, row: 0 });
+                }
             }
             let ty = y + text_dy;
             let name_x = ir.right() + self.s(8.0);
@@ -1033,6 +1039,7 @@ impl App {
             g.text(sl.cols[3].x + pad, ty, &d, font, t.text_dim, sl.cols[3].w - 2.0 * pad);
         }
         g.dl.set_clip(None);
+        self.request_icons(requests);
         let s = &self.search;
         if sl.thumb.h > 0.0 {
             let hot = matches!(s.hover, SHit::Thumb | SHit::Track) || matches!(s.drag, SDrag::Thumb(_));
@@ -1061,7 +1068,7 @@ impl App {
         }
     }
 
-    fn draw_search_group<B: TextBackend>(&self, g: &mut Gfx<B>, arena: &Bump, t: &Theme, k: usize, r: Rect) {
+    fn draw_search_group<B: TextBackend>(&self, g: &mut Gfx<B>, arena: &Bump, t: &Theme, k: usize, r: Rect, requests: &mut Vec<IconRequest>) {
         let s = &self.search;
         let font = FontStyle::new(FontFamily::Ui, 12.5 * self.scale, true);
         let m = g.metrics(font);
@@ -1070,7 +1077,11 @@ impl App {
             g.dl.round_rect(r.inset(self.s(4.0), 1.0), t.hover, self.s(4.0));
         }
         let icon = Rect::new(r.x + self.s(10.0), r.y, self.s(16.0), r.h);
-        centered(g, icon, G_FOLDER, self.icon_font(11.0), t.accent.alpha(0xC0));
+        let folder = s.row(s.groups[k]).and_then(|row| Location::parse_exact(&row.dir));
+        let system = folder.and_then(|loc| folder_icon(&loc, &self.nav.sidebar, icon.w as u32));
+        if !self.system_icon(g, system, icon, icon.w, 0xFF, requests) {
+            centered(g, icon, G_FOLDER, self.icon_font(11.0), t.accent.alpha(0xC0));
+        }
         let dir = s.row(s.groups[k]).map(|row| name::display(&row.dir).into_owned()).unwrap_or_else(|| "…".into());
         let x = icon.right() + self.s(8.0);
         let mut count = bumpalo::collections::String::new_in(arena);

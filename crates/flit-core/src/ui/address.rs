@@ -1,7 +1,8 @@
 use crate::i18n::S;
 use super::menu::Cmd;
 use super::ops::TIMER_SLACK;
-use super::{centered, App, Effect, Hit, G_FOLDER};
+use super::sidebar::folder_icon;
+use super::{centered, App, Effect, Hit, IconRequest, G_FOLDER};
 use crate::input::{Key, Mods};
 use crate::listing::{DirSnapshot, FsErrorKind};
 use crate::location::{Location, ProviderId};
@@ -552,7 +553,7 @@ impl App {
         self.dirty = true;
     }
 
-    pub(super) fn draw_suggestions<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme) {
+    pub(super) fn draw_suggestions<B: TextBackend>(&mut self, g: &mut Gfx<B>, th: &Theme) {
         let (Some(first), Some(last)) = (self.addr.rects.first().copied(), self.addr.rects.last().copied()) else { return };
         if !self.editing {
             return;
@@ -563,6 +564,7 @@ impl App {
         g.dl.outline(b, th.input_border, s6, 1.0);
         let (font, icons) = (self.ui_font(13.0), self.icon_font(12.0));
         let m = g.metrics(font);
+        let mut requests: Vec<IconRequest> = Vec::new();
         let n = self.addr.items.len();
         if n > self.addr.rects.len() {
             let track = b.h - 2.0 * s4;
@@ -577,10 +579,14 @@ impl App {
                 g.dl.round_rect(r.inset(s4, 1.0), th.hover, s4);
             }
             let icon = Rect::new(r.x + self.s(10.0), r.y, self.s(16.0), r.h);
-            centered(g, icon, if *typed { G_HISTORY } else { G_FOLDER }, icons, th.text_dim);
+            let system = (!*typed).then(|| Location::parse(text)).flatten().and_then(|loc| folder_icon(&loc, &self.nav.sidebar, icon.w as u32));
+            if !self.system_icon(g, system, icon, icon.w, 0xFF, &mut requests) {
+                centered(g, icon, if *typed { G_HISTORY } else { G_FOLDER }, icons, th.text_dim);
+            }
             let x = icon.right() + self.s(8.0);
             g.text(x, (r.y + (r.h + m.ascent - m.descent) / 2.0).round(), text, font, th.text, r.right() - x - s6);
         }
+        self.request_icons(requests);
     }
 
     pub(super) fn eject_rect(&self) -> Option<Rect> {

@@ -61,7 +61,7 @@ fn escape_and_clicks_outside_close_the_menu_without_a_command() {
     shown(&mut app, Vec::new());
     app.on_event(&Event::MouseDown { x: 900.0, y: 550.0, button: MouseButton::Left, clicks: 1 }, Instant::now());
     assert!(!app.own_menu_open());
-    assert!(app.drain_effects().next().is_none());
+    assert!(app.drain_effects().all(|e| matches!(e, Effect::Icon(_))));
 }
 
 #[test]

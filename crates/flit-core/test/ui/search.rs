@@ -301,3 +301,24 @@ fn bench_grouped_search_frames() {
     let ms = |d: Duration| d.as_secs_f64() * 1e3;
     eprintln!("BENCH grouped search results, {total} rows in {} folders: frame median {:.3} ms p99 {:.3} ms", total.div_ceil(7), ms(times[100]), ms(times[197]));
 }
+
+#[test]
+fn results_ask_the_system_for_their_icons_and_folder_headers_for_folder_icons() {
+    let mut app = app();
+    app.open_search();
+    app.run_action("search.group_folder", t0());
+    requests(&mut app);
+    let gen = gen_of(&app);
+    app.on_search_event(SearchEvent::Done { gen, total: 3 }, t0());
+    app.on_search_event(SearchEvent::Groups { gen, starts: vec![0] }, t0());
+    let rows = vec![row("a.txt", r"C:\one", false), row("b.txt", r"C:\one", false), row("sub", r"C:\one", true)];
+    app.on_search_event(SearchEvent::Rows { gen, from: 0, rows }, t0());
+    app.drain_effects().for_each(drop);
+    frame(&mut app);
+    let asked: Vec<(String, crate::ui::IconKind)> = app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { Some((r.path.display().into_owned(), r.kind)) } else { None }).collect();
+    assert!(asked.contains(&(r"C:\one\a.txt".to_owned(), crate::ui::IconKind::Type)), "{asked:?}");
+    assert!(!asked.iter().any(|(p, _)| p == r"C:\one\b.txt"), "one request per extension: {asked:?}");
+    assert!(asked.iter().any(|(_, k)| *k == crate::ui::IconKind::Folder), "{asked:?}");
+    frame(&mut app);
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::Icon(_))), "pending icons are asked once");
+}

@@ -29,7 +29,7 @@ const COMPACT_HEADER_H: f32 = 12.0;
 const PIN_W: f32 = 22.0;
 const SECTION_GAP: f32 = 10.0;
 const ITEM_INDENT: f32 = 18.0;
-const PLACE_ICON: f32 = 20.0;
+pub(super) const PLACE_ICON: f32 = 20.0;
 const HEADER_TITLE_X: f32 = 28.0;
 const BAR_MARGIN: f32 = 12.0;
 const MAX_LIST: usize = 256;
@@ -1104,14 +1104,7 @@ impl App {
 
     fn place_icon<B: TextBackend>(&self, g: &mut Gfx<B>, it: &Item, r: Rect, requests: &mut Vec<IconRequest>) -> bool {
         let px = self.s(PLACE_ICON);
-        let Some((key, kind, path)) = place_icon_request(it, &self.nav.sidebar.places, px as u32) else { return false };
-        if g.image(key, Rect::new((r.x + (r.w - px) / 2.0).round(), (r.y + (r.h - px) / 2.0).round(), px, px)) {
-            return true;
-        }
-        if !self.icons.contains_key(&key) && !requests.iter().any(|q| q.key == key) {
-            requests.push(IconRequest { key, kind, path, size: px as u32, gen: 0, row: 0 });
-        }
-        false
+        self.system_icon(g, place_icon_request(it, &self.nav.sidebar.places, px as u32), r, px, 0xFF, requests)
     }
 }
 
@@ -1133,18 +1126,50 @@ fn item_icon(r: Rect, scale: f32, drive: bool) -> Rect {
     if drive { Rect::new(icon.x, r.y, icon.w, r.h) } else { icon }
 }
 
-fn place_icon_request(it: &Item, places: &Places, px: u32) -> Option<(u64, IconKind, FsPath)> {
+fn place_icon_request(it: &Item, places: &Places, px: u32) -> Option<SystemIcon> {
     match (&it.loc, it.section) {
         (_, Section::Tags) | (Location::Wsl { .. }, Section::Recent) => None,
-        (Location::Wsl { distro, path }, _) if path.is_root() => Some((hash::hash(&("vol", distro.as_bytes(), px)), IconKind::Volume, it.loc.to_windows()?)),
-        (Location::Wsl { .. }, _) => Some((hash::hash(&("dir", px)), IconKind::Folder, it.loc.to_windows()?)),
-        (Location::Local(path), Section::Drives) => {
-            let drive = places.drives.iter().find(|d| d.path == *path)?;
-            (!drive.offline()).then(|| (hash::hash(&("place", path.as_bytes(), px)), IconKind::Volume, path.clone()))
-        }
-        (Location::Local(path), Section::Recent) if places.recent.iter().any(|r| !r.dir && r.target == *path) => Some((hash::hash(&("place", path.as_bytes(), px)), IconKind::File, path.clone())),
-        (Location::Local(path), _) => Some((hash::hash(&("place", path.as_bytes(), px)), IconKind::Place, path.clone())),
+        (Location::Local(path), Section::Recent) => places.recent.iter().find(|r| r.target == *path).and_then(|r| recent_icon(r, places, px)),
+        (loc, _) => location_icon(loc, places, px),
     }
+}
+
+pub(super) type SystemIcon = (u64, IconKind, FsPath);
+
+pub(super) fn location_icon(loc: &Location, places: &Places, px: u32) -> Option<SystemIcon> {
+    let place = |path: &FsPath, kind| Some((hash::hash(&("place", path.as_bytes(), px)), kind, path.clone()));
+    match loc {
+        _ if loc.is_home_page() => None,
+        Location::Wsl { distro, path } if path.is_root() => Some((hash::hash(&("vol", distro.as_bytes(), px)), IconKind::Volume, loc.to_windows()?)),
+        Location::Wsl { .. } => Some((hash::hash(&("dir", px)), IconKind::Folder, loc.to_windows()?)),
+        Location::Local(path) => match places.drives.iter().find(|d| d.path == *path) {
+            Some(d) if d.offline() => None,
+            Some(_) => place(path, IconKind::Volume),
+            None if matches!(path.kind(), PathKind::Drive | PathKind::Unix) && path.is_root() => place(path, IconKind::Volume),
+            None => place(path, IconKind::Place),
+        },
+    }
+}
+
+pub(super) fn recent_icon(r: &Recent, places: &Places, px: u32) -> Option<SystemIcon> {
+    match Location::from_local(r.target.clone()) {
+        Location::Wsl { .. } => None,
+        _ if !r.dir => Some((hash::hash(&("place", r.target.as_bytes(), px)), IconKind::File, r.target.clone())),
+        loc => location_icon(&loc, places, px),
+    }
+}
+
+pub(super) fn folder_icon(loc: &Location, sb: &Sidebar, px: u32) -> Option<SystemIcon> {
+    let path = loc.path();
+    let special = loc.is_root()
+        || matches!(path.kind(), PathKind::Computer | PathKind::RecycleBin | PathKind::Home | PathKind::Shell)
+        || library::is_library(path)
+        || sb.is_pinned(loc)
+        || sb.places.folders.iter().any(|(_, l)| l == loc);
+    if special {
+        return location_icon(loc, &sb.places, px);
+    }
+    Some((hash::hash(&("dir", px)), IconKind::Folder, loc.to_windows()?))
 }
 
 #[cfg(test)]

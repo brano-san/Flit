@@ -312,3 +312,52 @@ fn window_modes_have_shortcuts() {
     let cmds: Vec<WindowCmd> = app.drain_effects().filter_map(|e| if let Effect::Window(c) = e { Some(c) } else { None }).collect();
     assert_eq!(cmds, [WindowCmd::Fullscreen, WindowCmd::Compact(None), WindowCmd::Compact(Some(true)), WindowCmd::Compact(Some(false))]);
 }
+
+fn tab_icons(app: &mut App) -> Vec<(String, crate::ui::IconKind, u64)> {
+    app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { (r.size == 16).then(|| (r.path.display().into_owned(), r.kind, r.key)) } else { None }).collect()
+}
+
+#[test]
+fn tabs_show_the_system_icon_of_their_location() {
+    use crate::ui::IconKind::{Folder, Place, Volume};
+    use crate::ui::{Drive, KnownFolder, Places};
+    let mut app = app_with(&[r"C:\Users\u\Downloads", r"C:\", r"C:\work\sub", "wsl://Debian/", r"C:\work\pinned"]);
+    let drive = Drive { path: FsPath::parse(r"C:\").unwrap(), label: "Local Disk (C:)".into(), total: 10, free: 5, removable: false, unmounted: false, kind: None, remote: None };
+    app.set_places(Arc::new(Places { folders: vec![(KnownFolder::Downloads, loc(r"C:\Users\u\Downloads"))], drives: vec![drive], ..Default::default() }));
+    app.set_pinned(vec![loc(r"C:\work\pinned")]);
+    app.open_in_tabs([Location::computer(), Location::recycle_bin(), Location::home_page()].into_iter().map(|folder| Route { folder, select: None }).collect(), Instant::now());
+    app.drain_effects().for_each(drop);
+    let mut g = crate::text::Gfx::new(crate::text::tests::Mono, 1024);
+    app.frame(&mut g, Instant::now());
+    let asked: Vec<(String, crate::ui::IconKind)> = tab_icons(&mut app).into_iter().map(|(p, k, _)| (p, k)).collect();
+    for want in [
+        (r"C:\Users\u\Downloads".to_owned(), Place),
+        (r"C:\".to_owned(), Volume),
+        (r"C:\work\sub".to_owned(), Folder),
+        (r"\\wsl.localhost\Debian\".to_owned(), Volume),
+        (r"C:\work\pinned".to_owned(), Place),
+        (FsPath::computer().display().into_owned(), Place),
+        (FsPath::recycle_bin().display().into_owned(), Place),
+    ] {
+        assert!(asked.contains(&want), "{want:?} not in {asked:?}");
+    }
+    assert_eq!(asked.len(), 7, "the Flit home page keeps its own glyph: {asked:?}");
+    app.frame(&mut g, Instant::now());
+    assert!(tab_icons(&mut app).is_empty(), "pending tab icons are asked once");
+}
+
+#[test]
+fn ordinary_folder_tabs_share_one_cached_folder_icon_that_replaces_the_glyph() {
+    let mut app = app_with(&[r"C:\x\one", r"C:\x\two"]);
+    let mut g = crate::text::Gfx::new(crate::text::tests::Mono, 1024);
+    app.frame(&mut g, Instant::now());
+    let folders: Vec<u64> = tab_icons(&mut app).into_iter().filter(|(_, k, _)| *k == crate::ui::IconKind::Folder).map(|(_, _, key)| key).collect();
+    assert_eq!(folders.len(), 1, "one cached folder icon for every ordinary folder tab");
+    let tab = app.layout.tabs[1].0;
+    let inside = |g: &crate::text::Gfx<crate::text::tests::Mono>, kind| g.dl.instances.iter().filter(|i| i.kind == kind && i.rect[0] >= tab.x && i.rect[0] < tab.x + 28.0 && i.rect[1] >= tab.y && i.rect[1] < tab.bottom()).count();
+    assert_eq!(inside(&g, crate::render::kind::GLYPH), 1, "the glyph stands in while loading");
+    app.on_icon(&mut g, folders[0], crate::ui::IconResult::Ready(crate::ui::Bitmap { width: 16, height: 16, rgba: vec![255; 16 * 16 * 4] }));
+    app.frame(&mut g, Instant::now());
+    assert_eq!(inside(&g, crate::render::kind::IMAGE), 1);
+    assert_eq!(inside(&g, crate::render::kind::GLYPH), 0, "no glyph once the icon is here");
+}
