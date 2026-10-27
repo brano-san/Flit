@@ -62,8 +62,7 @@ pub fn default_manager(on: bool) -> std::io::Result<()> {
             std::fs::write(&saved, mimeapps::backup(current.as_deref()))?;
         }
         std::fs::create_dir_all(list.parent().unwrap_or(Path::new("/")))?;
-        let text = mimeapps::set_default_app(current.as_deref().unwrap_or_default(), mimeapps::FOLDER, Some(mimeapps::FLIT_DESKTOP));
-        return std::fs::write(&list, text);
+        return std::fs::write(&list, mimeapps::ours(current.as_deref()));
     }
     let Ok(backup) = std::fs::read_to_string(&saved) else { return Ok(()) };
     match mimeapps::restore(&backup, current.as_deref()) {
@@ -73,6 +72,37 @@ pub fn default_manager(on: bool) -> std::io::Result<()> {
         }
     }
     std::fs::remove_file(&saved)
+}
+
+pub fn activation_text(exe: &Path) -> String {
+    format!("[D-BUS Service]\nName=org.freedesktop.FileManager1\nExec=\"{}\" --dbus-activated\n", exe.display())
+}
+
+pub fn swap_file(on: bool, target: &Path, saved: &Path, ours: &str) -> std::io::Result<()> {
+    use flit_core::mimeapps;
+    let current = std::fs::read_to_string(target).ok();
+    if on {
+        if !saved.exists() {
+            std::fs::create_dir_all(saved.parent().unwrap_or(Path::new("/")))?;
+            std::fs::write(saved, mimeapps::backup(current.as_deref()))?;
+        }
+        std::fs::create_dir_all(target.parent().unwrap_or(Path::new("/")))?;
+        return std::fs::write(target, ours);
+    }
+    let Ok(backup) = std::fs::read_to_string(saved) else { return Ok(()) };
+    match mimeapps::original(&backup) {
+        Some(Some(text)) if current.as_deref() == Some(ours) => std::fs::write(target, text)?,
+        Some(None) if current.as_deref() == Some(ours) => std::fs::remove_file(target)?,
+        _ => {}
+    }
+    std::fs::remove_file(saved)
+}
+
+pub fn bus_activation(on: bool) -> std::io::Result<()> {
+    let missing = || std::io::Error::new(std::io::ErrorKind::NotFound, "no HOME or XDG_DATA_HOME");
+    let target = data_home().ok_or_else(missing)?.join("dbus-1/services/org.freedesktop.FileManager1.service");
+    let saved = config_dir().ok_or_else(missing)?.join("file-manager1.backup");
+    swap_file(on, &target, &saved, &activation_text(&std::env::current_exe()?))
 }
 
 pub fn runtime_dir() -> Option<PathBuf> {

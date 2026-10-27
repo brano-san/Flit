@@ -142,11 +142,10 @@ impl Platform for Linux {
         places::watch_mounts(changed)
     }
 
-    fn integrate(what: flit_platform::Integration, on: bool) -> Result<(), PlatformError> {
-        match what {
-            flit_platform::Integration::DefaultManager => xdg::default_manager(on).map_err(handle_error),
-            flit_platform::Integration::OpenInFlit => Err(PlatformError::unsupported("Open in Flit")),
-        }
+    fn integrate(on: bool) -> Result<(), PlatformError> {
+        xdg::default_manager(on).and_then(|_| xdg::bus_activation(on)).map_err(handle_error)?;
+        dbus::want(on);
+        Ok(())
     }
 }
 pub struct LinuxRenderer {

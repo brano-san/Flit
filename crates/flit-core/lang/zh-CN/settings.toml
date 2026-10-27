@@ -91,7 +91,6 @@ about = "关于"
 "general.startup_pages" = "启动时打开的页面"
 "advanced.thumb_cache_mb" = "缩略图缓存大小"
 "advanced.default_manager" = "将 Flit 设为默认文件管理器"
-"advanced.open_in_flit" = "在打开/保存对话框中添加“在 Flit 中打开”"
 "keys" = "键盘快捷键"
 
 [help]
@@ -172,7 +171,6 @@ about = "关于"
 "general.startup_pages" = "Flit 以特定页面启动时使用：文件夹或主页，各自在单独的标签页中"
 "advanced.thumb_cache_mb" = "缩略图保存在磁盘上的 %LOCALAPPDATA%\\Flit\\thumbs 中；最旧的先删除"
 "advanced.default_manager" = "Win+E 以及从桌面或其他程序打开的文件夹会在 Flit 中打开；控制面板和其他系统文件夹仍在文件资源管理器中打开。只更改你自己用户的设置；原有设置会被保存，关闭此项时恢复。删除 Flit 前请先关闭"
-"advanced.open_in_flit" = "在任何打开/保存对话框或文件资源管理器中右键单击文件夹或空白处，选择“在 Flit 中打开”即可在这里打开该文件夹。替换对话框本身需要把 Flit 的代码加载到其他每个程序中，Flit 不会这样做。关闭此项会移除该命令"
 "keys" = "与默认值不同的快捷键，按命令 ID 列出"
 "area_color" = "默认跟随背景色；自定义颜色上的文本会自动调整以保持可读"
 

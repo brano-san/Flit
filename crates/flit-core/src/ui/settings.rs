@@ -207,8 +207,6 @@ const AREA_HELP: S = S::SettingsHelpAreaColor;
 pub const LOG_LEVEL: &str = "advanced.log_level";
 pub const LOG_DEFAULT: usize = 1;
 pub const DEFAULT_MANAGER: &str = "advanced.default_manager";
-pub const OPEN_IN_FLIT: &str = "advanced.open_in_flit";
-pub const WINDOWS_ONLY_SETTINGS: [&str; 1] = [OPEN_IN_FLIT];
 const LOG_CHOICES: Choices = &[("off", S::SettingsChoiceLogOff), ("error", S::SettingsChoiceLogError), ("warn", S::SettingsChoiceLogWarn), ("info", S::SettingsChoiceLogInfo), ("debug", S::SettingsChoiceLogDebug)];
 
 pub const LANGUAGE: &str = "general.language";
@@ -337,7 +335,6 @@ pub static SETTINGS: &[Setting] = &[
         kind: Kind::Number { min: super::THUMB_CACHE_MB.0 as i64, max: super::THUMB_CACHE_MB.2 as i64, step: 100, unit: S::SettingsUnitMb, zero: None, get: |a| a.prefs.thumb_cache_mb as i64, set: |a, v| a.prefs.thumb_cache_mb = v as u32 },
     },
     toggle(DEFAULT_MANAGER, Page::Advanced, S::SettingsTitleAdvancedDefaultManager, S::SettingsHelpAdvancedDefaultManager, |a| a.default_manager, |a, on| a.default_manager = on),
-    toggle(OPEN_IN_FLIT, Page::Advanced, S::SettingsTitleAdvancedOpenInFlit, S::SettingsHelpAdvancedOpenInFlit, |a| a.open_in_flit, |a, on| a.open_in_flit = on),
     choice(LOG_LEVEL, Page::Advanced, S::SettingsTitleAdvancedLogLevel, S::SettingsHelpAdvancedLogLevel, LOG_CHOICES, |a| a.log_level, |a, i| a.log_level = i),
     Setting { id: "keys", page: Page::Actions, title: S::SettingsTitleKeys, help: S::SettingsHelpKeys, kind: Kind::Keys(|a| a.keymap.clone(), |a, k| a.set_keymap(k)) },
 ];

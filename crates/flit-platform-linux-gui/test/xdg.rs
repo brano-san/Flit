@@ -76,3 +76,53 @@ fn known_folders_come_from_user_dirs_and_must_exist() {
     assert_eq!(known_folder("shell:Profile"), fs_path(&home).map(Location::from_local));
     assert_eq!(known_folder("shell:NoSuchFolder"), None);
 }
+
+#[test]
+fn the_bus_activation_file_round_trips_exactly() {
+    let dir = Temp::new("activation");
+    let target = dir.path().join("data/dbus-1/services/org.freedesktop.FileManager1.service");
+    let saved = dir.path().join("config/flit/file-manager1.backup");
+    let ours = activation_text(Path::new("/opt/my apps/flit"));
+    assert!(ours.contains("Exec=\"/opt/my apps/flit\" --dbus-activated\n"), "{ours}");
+    swap_file(true, &target, &saved, &ours).unwrap();
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), ours);
+    swap_file(true, &target, &saved, &ours).unwrap();
+    swap_file(false, &target, &saved, &ours).unwrap();
+    assert!(!target.exists() && !saved.exists());
+    let nautilus = "[D-BUS Service]\nName=org.freedesktop.FileManager1\nExec=/usr/bin/nautilus --gapplication-service\n";
+    std::fs::write(&target, nautilus).unwrap();
+    swap_file(true, &target, &saved, &ours).unwrap();
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), ours);
+    swap_file(false, &target, &saved, &ours).unwrap();
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), nautilus);
+    assert!(!saved.exists());
+    swap_file(false, &target, &saved, &ours).unwrap();
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), nautilus);
+}
+
+#[test]
+fn a_bus_activation_file_replaced_by_someone_else_is_left_alone() {
+    let dir = Temp::new("activation-taken");
+    let target = dir.path().join("services/x.service");
+    let saved = dir.path().join("x.backup");
+    swap_file(true, &target, &saved, "ours").unwrap();
+    std::fs::write(&target, "theirs").unwrap();
+    swap_file(false, &target, &saved, "ours").unwrap();
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "theirs");
+    assert!(!saved.exists());
+}
+
+#[test]
+fn turning_the_default_manager_on_and_off_restores_the_test_home() {
+    let config = config_home().unwrap();
+    let list = config.join("mimeapps.list");
+    let original = "[Default Applications]\nx-directory/normal=nemo.desktop\n";
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(&list, original).unwrap();
+    default_manager(true).unwrap();
+    let text = std::fs::read_to_string(&list).unwrap();
+    assert!(text.contains("inode/directory=flit.desktop") && text.contains("x-directory/normal=flit.desktop"), "{text}");
+    default_manager(false).unwrap();
+    assert_eq!(std::fs::read_to_string(&list).unwrap(), original);
+    let _ = std::fs::remove_file(&list);
+}

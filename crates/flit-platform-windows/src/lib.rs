@@ -26,6 +26,7 @@ mod prevhost;
 mod recycle;
 mod service;
 mod shell;
+mod shellwin;
 mod tags;
 mod uia;
 mod walk_index;
@@ -211,8 +212,12 @@ impl Platform for Windows {
         places::ui_language()
     }
 
-    fn integrate(what: flit_platform::Integration, on: bool) -> Result<(), PlatformError> {
-        integration::integrate(what, on)
+    fn integrate(on: bool) -> Result<(), PlatformError> {
+        integration::integrate(on)
+    }
+
+    fn tidy_integration() {
+        integration::tidy()
     }
 
     fn watch_wsl(changed: Box<dyn Fn() + Send>) {

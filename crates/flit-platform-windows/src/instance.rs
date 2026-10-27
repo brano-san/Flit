@@ -268,6 +268,7 @@ impl SingleInstance for PipeInstance {
     }
 
     fn listen(self, opens: OpenSink, wake: Wake) {
+        crate::shellwin::deliver_to(opens.clone(), wake.clone());
         let _ = std::thread::Builder::new().name("flit-instance".into()).spawn(move || listen_loop(self.pipe, opens, wake));
     }
 }
