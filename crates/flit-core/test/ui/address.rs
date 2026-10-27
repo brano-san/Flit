@@ -469,3 +469,16 @@ fn the_dimmed_tail_collapses_before_real_crumbs_overflow() {
     frame(&mut app);
     assert!(app.layout.crumbs.iter().all(|r| r.w > 0.0));
 }
+
+#[test]
+fn folder_suggestions_show_system_icons_and_history_keeps_its_glyph() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("docs", true), ("Downloads", true)], None);
+    app.share_typed(Arc::new(Mutex::new(vec![r"C:\x\Downloads".into()])));
+    type_address(&mut app, r"C:\x\do");
+    app.drain_effects().for_each(drop);
+    frame(&mut app);
+    let asked: Vec<(String, crate::ui::IconKind)> = app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { Some((r.path.display().into_owned(), r.kind)) } else { None }).collect();
+    assert!(asked.contains(&(r"C:\x\docs\".to_owned(), crate::ui::IconKind::Folder)) || asked.contains(&(r"C:\x\docs".to_owned(), crate::ui::IconKind::Folder)), "{asked:?}");
+    assert!(!asked.iter().any(|(p, _)| p.starts_with(r"C:\x\Downloads")), "typed history is not a folder icon: {asked:?}");
+}
