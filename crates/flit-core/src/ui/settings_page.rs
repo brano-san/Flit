@@ -56,7 +56,7 @@ const REPOSITORY_URL: &str = "https://github.com/brano-san/Flit";
 const PRIVACY_URL: &str = "https://github.com/brano-san/Flit#конфиденциальность";
 pub(super) const LINKS: [(&str, &str); 5] = [("help.docs", DOCS_URL), ("help.bug", BUG_URL), ("help.feature", FEATURE_URL), ("help.repository", REPOSITORY_URL), ("help.privacy", PRIVACY_URL)];
 
-const LIBRARIES: [(&str, S); 20] = [
+const LIBRARIES: [(&str, S); 19] = [
     ("arc-swap", S::SettingsPageLibrarySharedSnapshots),
     ("bumpalo", S::SettingsPageLibraryFrameMemory),
     ("crc32fast", S::SettingsPageLibraryChecksums),
@@ -64,7 +64,6 @@ const LIBRARIES: [(&str, S); 20] = [
     ("encoding_rs", S::SettingsPageLibraryOldArchiveNames),
     ("flate2", S::SettingsPageLibraryGzip),
     ("memchr", S::SettingsPageLibrarySearch),
-    ("mimalloc", S::SettingsPageLibraryAllocator),
     ("postcard", S::SettingsPageLibraryStateFiles),
     ("rayon", S::SettingsPageLibraryParallelWork),
     ("regex", S::SettingsPageLibrarySearch),

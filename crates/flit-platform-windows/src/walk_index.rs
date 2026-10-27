@@ -24,7 +24,7 @@ const DIR_BUFFER: usize = 64 * 1024;
 const WATCH_BUFFER: usize = 512 * 1024;
 const JOURNAL_BUFFER: usize = 1 << 20;
 const DRIVE_FIXED: u32 = 3;
-const WALK_THREADS: usize = 8;
+const WALK_THREADS: usize = 16;
 const SYNTHETIC: u64 = 1 << 63;
 
 type Record = FILE_NOTIFY_EXTENDED_INFORMATION;
@@ -196,38 +196,46 @@ fn read_dir_ids(job: &Job, synthetic: &AtomicU64, subdirs: &mut Vec<Job>) -> Bat
     batch
 }
 
+thread_local! {
+    static LIST_BUFFER: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 fn list(h: &Handle, parent: u64, synthetic: &AtomicU64) -> Batch {
     let mut batch = Batch { parent, ..Default::default() };
-    let mut buf = vec![0u64; DIR_BUFFER / 8];
-    let mut first = true;
-    loop {
-        let mut iosb = IO_STATUS_BLOCK::default();
-        let st = unsafe { NtQueryDirectoryFile(h.0, None, None, None, &mut iosb, buf.as_mut_ptr() as _, DIR_BUFFER as u32, FileIdBothDirectoryInformation, false, None, first) };
-        if st.is_err() || st == STATUS_NO_MORE_FILES {
-            break;
+    LIST_BUFFER.with_borrow_mut(|buf| {
+        if buf.is_empty() {
+            *buf = vec![0u64; DIR_BUFFER / 8];
         }
-        first = false;
-        let base = buf.as_ptr() as *const u8;
-        let mut off = 0usize;
+        let mut first = true;
         loop {
-            let e = unsafe { base.add(off) } as *const FILE_ID_BOTH_DIR_INFORMATION;
-            let (next, wide, id, size, modified, attrs) = unsafe {
-                let at = base.add(off + offset_of!(FILE_ID_BOTH_DIR_INFORMATION, FileName)) as *const u16;
-                let wide = std::slice::from_raw_parts(at, (*e).FileNameLength as usize / 2);
-                ((*e).NextEntryOffset, wide, (*e).FileId as u64, (*e).EndOfFile as u64, (*e).LastWriteTime, map_attrs((*e).FileAttributes, (*e).EaSize))
-            };
-            let dots = wide == [b'.' as u16] || wide == [b'.' as u16, b'.' as u16];
-            if !dots {
-                let id = if id == 0 { SYNTHETIC | synthetic.fetch_add(1, Ordering::Relaxed) } else { id };
-                name::push_utf16(&mut batch.names, wide);
-                batch.items.push((id, batch.names.len(), size, modified, attrs));
-            }
-            if next == 0 {
+            let mut iosb = IO_STATUS_BLOCK::default();
+            let st = unsafe { NtQueryDirectoryFile(h.0, None, None, None, &mut iosb, buf.as_mut_ptr() as _, DIR_BUFFER as u32, FileIdBothDirectoryInformation, false, None, first) };
+            if st.is_err() || st == STATUS_NO_MORE_FILES {
                 break;
             }
-            off += next as usize;
+            first = false;
+            let base = buf.as_ptr() as *const u8;
+            let mut off = 0usize;
+            loop {
+                let e = unsafe { base.add(off) } as *const FILE_ID_BOTH_DIR_INFORMATION;
+                let (next, wide, id, size, modified, attrs) = unsafe {
+                    let at = base.add(off + offset_of!(FILE_ID_BOTH_DIR_INFORMATION, FileName)) as *const u16;
+                    let wide = std::slice::from_raw_parts(at, (*e).FileNameLength as usize / 2);
+                    ((*e).NextEntryOffset, wide, (*e).FileId as u64, (*e).EndOfFile as u64, (*e).LastWriteTime, map_attrs((*e).FileAttributes, (*e).EaSize))
+                };
+                let dots = wide == [b'.' as u16] || wide == [b'.' as u16, b'.' as u16];
+                if !dots {
+                    let id = if id == 0 { SYNTHETIC | synthetic.fetch_add(1, Ordering::Relaxed) } else { id };
+                    name::push_utf16(&mut batch.names, wide);
+                    batch.items.push((id, batch.names.len(), size, modified, attrs));
+                }
+                if next == 0 {
+                    break;
+                }
+                off += next as usize;
+            }
         }
-    }
+    });
     batch
 }
 

@@ -25,9 +25,6 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::time::Instant;
 
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 #[cfg(windows)]
 pub type P = flit_platform_windows::Windows;
 #[cfg(not(windows))]
