@@ -523,3 +523,26 @@ fn large_files_split_into_parallel_chunks_extract_intact() {
     }
 }
 
+
+#[test]
+fn gzip_and_tar_gz_compress_in_parallel_chunks_and_extract_intact() {
+    let t = Temp::new("pgz");
+    let words: Vec<u8> = (0..3_500_000u32).map(|i| b"abcdefgh ijk lmnop"[(i.wrapping_mul(2_654_435_761) >> 28) as usize]).collect();
+    t.write("src/big.txt", &words);
+    t.write("src/exact.bin", &vec![7u8; 1 << 20]);
+    for (level, format, items, name) in [(6, Format::Gz, vec![t.fs("src/big.txt")], "big.txt.gz"), (0, Format::Gz, vec![t.fs("src/big.txt")], "stored.txt.gz"), (6, Format::TarGz, vec![t.fs("src")], "src.tar.gz")] {
+        let archive = t.fs(name);
+        let options = Compression { format, level, threads: 4, ..Compression::default() };
+        let out = run(FileOp::Archive(ArchiveOp::Compress { items, archive: archive.clone(), options }), Resolve::Replace);
+        assert!(out.error.is_none(), "{:?}", out.error);
+        let mut plain = Vec::new();
+        flate2::read::GzDecoder::new(fs::File::open(t.path(name)).unwrap()).read_to_end(&mut plain).unwrap();
+        assert!(plain.len() >= words.len(), "{name}");
+        let out = extract(&archive, &t.fs(&format!("out-{name}")), Place::Here);
+        assert!(out.error.is_none(), "{:?}", out.error);
+    }
+    assert_eq!(t.read("out-big.txt.gz/big.txt"), words);
+    assert_eq!(t.read("out-stored.txt.gz/big.txt"), words);
+    assert_eq!(t.read("out-src.tar.gz/src/big.txt"), words);
+    assert_eq!(t.read("out-src.tar.gz/src/exact.bin"), vec![7u8; 1 << 20]);
+}

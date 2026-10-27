@@ -100,7 +100,7 @@ fn deflate(c: &mut Compress, p: &mut Piece) -> Result<(), PlatformError> {
     }
 }
 
-fn pack(pieces: &mut [Piece], level: u8, threads: usize) -> Result<(), PlatformError> {
+fn pack(pieces: &mut [Piece], level: u8, threads: usize, store: bool) -> Result<(), PlatformError> {
     let queue = Mutex::new(pieces.iter_mut());
     let failure = Mutex::new(None);
     std::thread::scope(|s| {
@@ -111,7 +111,7 @@ fn pack(pieces: &mut [Piece], level: u8, threads: usize) -> Result<(), PlatformE
                     let next = queue.lock().unwrap_or_else(|e| e.into_inner()).next();
                     let Some(p) = next else { return };
                     p.crc.update(&p.data);
-                    if level == 0 {
+                    if store {
                         continue;
                     }
                     if let Err(e) = deflate(&mut c, p) {
@@ -292,7 +292,7 @@ pub(crate) fn write<W: Write + Seek>(w: W, sources: &[Source], level: u8, thread
     while !batch.is_empty() {
         let (packed, next) = std::thread::scope(|s| {
             let reader = s.spawn(|| feed.fill(budget));
-            let packed = pack(&mut batch, level, threads.max(1));
+            let packed = pack(&mut batch, level, threads.max(1), level == 0);
             (packed, reader.join().unwrap_or_else(|_| Err(corrupt("the archive reader stopped"))))
         });
         packed?;
@@ -303,4 +303,72 @@ pub(crate) fn write<W: Write + Seek>(w: W, sources: &[Source], level: u8, thread
         batch = next?;
     }
     out.finish()
+}
+
+pub(crate) struct Gzip<W: Write> {
+    w: W,
+    level: u8,
+    threads: usize,
+    pieces: Vec<Piece>,
+    buf: Vec<u8>,
+    tail: Vec<u8>,
+    crc: crc32fast::Hasher,
+    len: u64,
+}
+
+impl<W: Write> Gzip<W> {
+    pub(crate) fn new(mut w: W, level: u8, threads: usize, name: Option<&[u8]>, mtime: u32) -> io::Result<Self> {
+        let mut head = vec![0x1f, 0x8b, 8, if name.is_some() { 8 } else { 0 }];
+        head.extend(mtime.to_le_bytes());
+        head.extend([0, 255]);
+        if let Some(name) = name {
+            head.extend(name.iter().filter(|&&b| b != 0));
+            head.push(0);
+        }
+        w.write_all(&head)?;
+        let threads = threads.max(1);
+        Ok(Self { w, level, threads, pieces: Vec::with_capacity(threads * 4), buf: Vec::with_capacity(CHUNK), tail: Vec::new(), crc: crc32fast::Hasher::new(), len: 0 })
+    }
+
+    fn cut(&mut self, last: bool) {
+        let data = std::mem::replace(&mut self.buf, if last { Vec::new() } else { Vec::with_capacity(CHUNK) });
+        let dict = std::mem::replace(&mut self.tail, data[data.len().saturating_sub(DICT)..].to_vec());
+        self.pieces.push(Piece { last, dict, data, ..Piece::default() });
+    }
+
+    fn drain(&mut self) -> io::Result<()> {
+        pack(&mut self.pieces, self.level, self.threads, false).map_err(|e| io::Error::other(format!("{e:?}")))?;
+        for p in self.pieces.drain(..) {
+            self.w.write_all(&p.out)?;
+            self.crc.combine(&p.crc);
+            self.len += p.data.len() as u64;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn finish(mut self) -> io::Result<W> {
+        self.cut(true);
+        self.drain()?;
+        self.w.write_all(&self.crc.clone().finalize().to_le_bytes())?;
+        self.w.write_all(&(self.len as u32).to_le_bytes())?;
+        Ok(self.w)
+    }
+}
+
+impl<W: Write> Write for Gzip<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let n = buf.len().min(CHUNK - self.buf.len());
+        self.buf.extend_from_slice(&buf[..n]);
+        if self.buf.len() == CHUNK {
+            self.cut(false);
+            if self.pieces.len() == self.threads * 4 {
+                self.drain()?;
+            }
+        }
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.w.flush()
+    }
 }

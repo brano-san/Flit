@@ -329,11 +329,11 @@ fn write_tar<W: Write>(w: W, sources: &[Source], job: &Job) -> Result<W, Platfor
     t.into_inner().map_err(write_error)
 }
 
-fn write_gz<W: Write>(w: W, s: &Source, level: u8, job: &Job) -> Result<W, PlatformError> {
+fn write_gz<W: Write>(w: W, s: &Source, level: u8, threads: usize, job: &Job) -> Result<W, PlatformError> {
     let file = File::open(&s.path).map_err(io_error)?;
     let name = s.name.rsplit('/').next().unwrap_or(&s.name).as_bytes().to_vec();
     let mtime = (s.modified / 10_000_000 - 11_644_473_600).clamp(0, u32::MAX as i64) as u32;
-    let mut gz = flate2::GzBuilder::new().filename(name).mtime(mtime).write(w, flate2::Compression::new(level.min(9) as u32));
+    let mut gz = crate::pzip::Gzip::new(w, level, threads, Some(&name), mtime).map_err(write_error)?;
     io::copy(&mut Progress { inner: file, job }, &mut gz).map_err(write_error)?;
     job.update(|p| p.items += 1);
     gz.finish().map_err(write_error)
@@ -345,9 +345,9 @@ fn write_all(sink: Sink, sources: Vec<Source>, format: Format, options: &Compres
         Format::Zip => flush(write_zip(BufWriter::new(sink), &sources, options, job, env)?),
         Format::SevenZ => flush(write_7z(BufWriter::new(sink), sources, options, job)?),
         Format::Tar => flush(write_tar(BufWriter::new(sink), &sources, job)?),
-        Format::Gz => flush(write_gz(BufWriter::new(sink), &sources[0], options.level, job)?),
+        Format::Gz => flush(write_gz(BufWriter::new(sink), &sources[0], options.level, threads(options) as usize, job)?),
         Format::TarGz => {
-            let gz = flate2::write::GzEncoder::new(BufWriter::new(sink), flate2::Compression::new(options.level.min(9) as u32));
+            let gz = crate::pzip::Gzip::new(BufWriter::new(sink), options.level, threads(options) as usize, None, 0).map_err(write_error)?;
             flush(write_tar(gz, &sources, job)?.finish().map_err(write_error)?)
         }
         Format::Rar | Format::Lzh => Err(corrupt("RAR and LZH archives cannot be created")),

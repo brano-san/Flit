@@ -797,7 +797,7 @@ fn bench_archives() {
 
     let big = text_file(&d, "big.txt", 256);
     let size = 256u64 << 20;
-    for (format, ext, runs) in [(Format::Zip, "zip", 3), (Format::SevenZ, "7z", 1)] {
+    for (format, ext, runs) in [(Format::Zip, "zip", 3), (Format::SevenZ, "7z", 1), (Format::Gz, "gz", 3), (Format::TarGz, "tar.gz", 3)] {
         throughput(&format!("compress 1 file 256 MB to {ext}"), size, runs, |k| compress(vec![big.clone()], d.path(&format!("big{k}.{ext}")), format), &mut sh);
         let archive = d.path(&format!("big0.{ext}"));
         let packed = std::fs::metadata(d.0.join(format!("big0.{ext}"))).unwrap().len();
