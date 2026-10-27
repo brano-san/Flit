@@ -171,7 +171,7 @@ fn sources(op: &FileOp) -> Option<Vec<FsPath>> {
     }
 }
 
-unsafe fn recycled_items(paths: &[FsPath]) -> Result<Vec<Option<IShellItem>>, PlatformError> {
+pub(crate) unsafe fn recycled_items(paths: &[FsPath]) -> Result<Vec<Option<IShellItem>>, PlatformError> {
     let bin: IShellItem = SHGetKnownFolderItem(&FOLDERID_RecycleBinFolder, KF_FLAG_DEFAULT, None).map_err(err)?;
     let items: IEnumShellItems = bin.BindToHandler(None, &BHID_EnumItems).map_err(err)?;
     let mut found: Vec<Option<IShellItem>> = vec![None; paths.len()];

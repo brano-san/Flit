@@ -321,6 +321,9 @@ impl Window for Win32Window {
     }
 
     fn set_clipboard_files(&self, paths: &[FsPath], cut: bool) {
+        if cut && !paths.is_empty() && paths.iter().all(crate::context_menu::is_recycled) {
+            return crate::context_menu::request(self.hwnd(), ShellUi::Verb(paths.to_vec(), c"cut"));
+        }
         crate::clipboard::write_files(self.hwnd(), paths, cut);
     }
 
@@ -329,7 +332,7 @@ impl Window for Win32Window {
     }
 
     fn share(&self, paths: Vec<FsPath>) {
-        crate::context_menu::request(self.hwnd(), ShellUi::Share(paths));
+        crate::context_menu::request(self.hwnd(), ShellUi::Verb(paths, c"Windows.ModernShare"));
     }
 
     fn properties(&self, paths: Vec<FsPath>) {

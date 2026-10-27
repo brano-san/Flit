@@ -235,6 +235,65 @@ fn shell_data_objects_carry_the_dragged_paths() {
     assert!(Pidls::parse(&[t.path("missing.txt")]).is_err());
 }
 
+struct Recycled(Vec<(FsPath, FsPath)>);
+
+impl Drop for Recycled {
+    fn drop(&mut self) {
+        let left: Vec<(FsPath, FsPath)> = self.0.iter().filter(|(r, _)| crate::fileops::std_path(r).exists()).cloned().collect();
+        let _ = crate::recycle::purge(&left);
+    }
+}
+
+unsafe fn shell_menu_of(paths: &[FsPath]) -> (Vec<String>, Vec<String>) {
+    let menu: IContextMenu = Pidls::parse(paths).unwrap().ui_object(HWND::default()).unwrap();
+    let hmenu = CreatePopupMenu().unwrap();
+    menu.QueryContextMenu(hmenu, 0, FIRST_ID, LAST_ID, CMF_NORMAL).ok().unwrap();
+    let out = (texts(hmenu), shell_verbs(&menu, hmenu));
+    let _ = DestroyMenu(hmenu);
+    out
+}
+
+#[test]
+#[ignore]
+fn recycled_items_get_the_bins_own_menu_and_restore_or_purge_only_themselves() {
+    use flit_core::provider::{FileOp, Resolve};
+    use flit_platform::{FileOps, Job, Shell};
+    crate::com_sta();
+    let t = TempDir::new("bin");
+    let originals: Vec<FsPath> = ["one.txt", "two.txt", "three.txt"]
+        .iter()
+        .map(|n| {
+            std::fs::write(t.0.join(n), n).unwrap();
+            t.path(n)
+        })
+        .collect();
+    let (done, left) = crate::recycle::trash(&originals);
+    assert!(left.is_empty(), "{left:?}");
+    let guard = Recycled(done.into_iter().map(|(original, recycled)| (recycled, original)).collect());
+    let recycled: Vec<FsPath> = guard.0.iter().map(|(r, _)| r.clone()).collect();
+    for items in [&recycled[..1], &recycled[..]] {
+        let (labels, verbs) = unsafe { shell_menu_of(items) };
+        eprintln!("BIN ITEMS x{}: {labels:?} {verbs:?}", items.len());
+        for v in ["undelete", "cut", "delete", "properties"] {
+            assert!(verbs.iter().any(|x| x == v), "{v} missing from {verbs:?}");
+        }
+        assert!(verbs.iter().all(|v| v != "copy" && v != "rename"), "{verbs:?}");
+    }
+    let (labels, verbs) = unsafe { shell_menu_of(&[FsPath::recycle_bin()]) };
+    eprintln!("BIN ITSELF: {labels:?} {verbs:?}");
+    assert!(verbs.iter().any(|v| v == "properties"), "{verbs:?}");
+    let mut sh = crate::ShellCom::new().unwrap();
+    let job = Job::detached(Resolve::KeepBoth);
+    let out = sh.file_op(&FileOp::Restore(guard.0[..1].to_vec()), &job);
+    assert!(out.error.is_none(), "{:?}", out.error);
+    assert!(std::fs::read(t.0.join("one.txt")).is_ok_and(|b| b == b"one.txt") && !crate::fileops::std_path(&recycled[0]).exists());
+    let out = sh.file_op(&FileOp::Purge(guard.0[1..].to_vec()), &job);
+    assert!(out.error.is_none(), "{:?}", out.error);
+    assert_eq!(out.items.len(), 2);
+    assert!(recycled.iter().all(|r| !crate::fileops::std_path(r).exists()));
+    assert!(Pidls::parse(&recycled[1..]).is_err(), "purged items are gone from the bin");
+}
+
 unsafe fn walk_labels(menu: &IContextMenu, hmenu: HMENU, depth: usize, out: &mut Vec<String>) {
     if let Ok(m3) = menu.cast::<IContextMenu3>() {
         let _ = m3.HandleMenuMsg2(WM_INITMENUPOPUP, WPARAM(hmenu.0 as usize), LPARAM(0), None);

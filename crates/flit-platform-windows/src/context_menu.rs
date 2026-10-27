@@ -5,6 +5,7 @@ use flit_core::ui::{MenuItem, ShellMenu, SHELL_VERBS};
 use flit_core::FsPath;
 use flit_platform::PlatformError;
 use std::cell::RefCell;
+use std::ffi::CStr;
 use std::sync::Once;
 use std::time::{Duration, Instant};
 use windows::core::{w, Interface, HSTRING, PCSTR, PCWSTR, PSTR};
@@ -55,13 +56,14 @@ const WINDOWS_VERBS: [&str; 29] = [
 ];
 const CMIC_MASK_UNICODE: u32 = 0x4000;
 const THIS_PC: &str = "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
+const RECYCLE_BIN: &str = "::{645FF040-5081-101B-9F08-00AA002F954E}";
 const PREWARM_DELAY: Duration = Duration::from_millis(500);
 
 pub(crate) enum ShellUi {
     Menu(ShellMenu),
     Properties(Vec<FsPath>),
     Drag(Vec<FsPath>),
-    Share(Vec<FsPath>),
+    Verb(Vec<FsPath>, &'static CStr),
 }
 
 struct Active {
@@ -185,17 +187,36 @@ impl Drop for Pidls {
 }
 
 fn parse_name(p: &FsPath) -> Vec<u16> {
-    if p.kind() == PathKind::Computer {
-        THIS_PC.encode_utf16().chain(Some(0)).collect()
-    } else {
-        p.to_wide(false)
+    match p.kind() {
+        PathKind::Computer => THIS_PC.encode_utf16().chain(Some(0)).collect(),
+        PathKind::RecycleBin => RECYCLE_BIN.encode_utf16().chain(Some(0)).collect(),
+        _ => p.to_wide(false),
     }
+}
+
+pub(crate) fn is_recycled(p: &FsPath) -> bool {
+    crate::recycle::info_file(p).is_some()
+}
+
+fn in_bin(p: &FsPath) -> bool {
+    p.kind() == PathKind::RecycleBin || is_recycled(p)
 }
 
 impl Pidls {
     pub(crate) fn parse(paths: &[FsPath]) -> Result<Self, PlatformError> {
         let mut out = Pidls { abs: Vec::with_capacity(paths.len()) };
+        let recycled: Vec<FsPath> = paths.iter().filter(|p| is_recycled(p)).cloned().collect();
+        let mut found = match recycled.is_empty() {
+            true => Vec::new(),
+            false => unsafe { crate::fileops::recycled_items(&recycled)? },
+        }
+        .into_iter();
         for p in paths {
+            if is_recycled(p) {
+                let item = found.next().flatten().ok_or_else(|| PlatformError::new(-1, flit_core::tr_en!(flit_core::i18n::S::ErrorsEngineNotInBin, path = p.display())))?;
+                out.abs.push(unsafe { SHGetIDListFromObject(&item) }.map_err(err)?);
+                continue;
+            }
             if p.kind() == PathKind::Shell {
                 let item = crate::namespace::item(p).map_err(|e| PlatformError::new(e.code, format!("{}: {e}", p.display())))?;
                 out.abs.push(unsafe { SHGetIDListFromObject(&item) }.map_err(err)?);
@@ -554,6 +575,9 @@ unsafe fn invoke(hwnd: HWND, menu: &IContextMenu, id: usize, m: &ShellMenu, pt: 
 }
 
 fn properties(hwnd: HWND, paths: &[FsPath]) -> Result<(), PlatformError> {
+    if paths.iter().any(in_bin) {
+        return invoke_verb(hwnd, paths, c"properties");
+    }
     unsafe {
         if let [one] = paths {
             let name = parse_name(one);
@@ -564,12 +588,12 @@ fn properties(hwnd: HWND, paths: &[FsPath]) -> Result<(), PlatformError> {
     }
 }
 
-fn share(hwnd: HWND, paths: &[FsPath]) -> Result<(), PlatformError> {
+pub(crate) fn invoke_verb(hwnd: HWND, paths: &[FsPath], verb: &CStr) -> Result<(), PlatformError> {
     let menu: IContextMenu = Pidls::parse(paths)?.ui_object(hwnd)?;
     unsafe {
         let hmenu = CreatePopupMenu().map_err(err)?;
         let _ = menu.QueryContextMenu(hmenu, 0, FIRST_ID, LAST_ID, CMF_NORMAL);
-        let info = CMINVOKECOMMANDINFO { cbSize: size_of::<CMINVOKECOMMANDINFO>() as u32, hwnd, lpVerb: PCSTR(c"Windows.ModernShare".as_ptr() as *const u8), nShow: SW_SHOWNORMAL.0, ..Default::default() };
+        let info = CMINVOKECOMMANDINFO { cbSize: size_of::<CMINVOKECOMMANDINFO>() as u32, hwnd, lpVerb: PCSTR(verb.as_ptr() as *const u8), nShow: SW_SHOWNORMAL.0, ..Default::default() };
         let invoked = menu.InvokeCommand(&info).map_err(err);
         let _ = DestroyMenu(hmenu);
         invoked
@@ -581,7 +605,7 @@ pub(crate) fn run(hwnd: HWND, req: ShellUi, send: &dyn Fn(Event)) {
         ShellUi::Menu(m) => unsafe { show_menu(hwnd, m, send) },
         ShellUi::Properties(paths) => properties(hwnd, paths),
         ShellUi::Drag(paths) => crate::dragdrop::start_drag(hwnd, paths),
-        ShellUi::Share(paths) => share(hwnd, paths),
+        ShellUi::Verb(paths, verb) => invoke_verb(hwnd, paths, verb),
     };
     if let Err(e) = result {
         tracing::warn!("shell: {e}");
