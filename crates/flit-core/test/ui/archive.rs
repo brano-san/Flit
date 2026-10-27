@@ -21,8 +21,14 @@ fn p(s: &str) -> FsPath {
     FsPath::parse(s).unwrap()
 }
 
-fn app_at(path: &str) -> App {
+fn system_app_at(path: &str) -> App {
     App::new(Persisted { path: Location::parse(path).unwrap(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 700), t0())
+}
+
+fn app_at(path: &str) -> App {
+    let mut app = system_app_at(path);
+    app.builtin_archives = true;
+    app
 }
 
 fn deliver(app: &mut App, items: &[(&str, u32)]) {
@@ -268,6 +274,85 @@ fn the_archives_as_folders_setting_is_read_from_the_settings_file() {
     assert_eq!(crate::ui::settings::defaults()[i], crate::ui::settings::Value::Bool(false));
     app.apply_doc(&crate::ui::settings::parse(r#"{"files.archives_as_folders": true}"#));
     assert!(app.archives_as_folders);
+    deliver(&mut app, &[("a.zip", FILE)]);
+    select(&mut app, &["a.zip"]);
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(app.current_location(), &Location::parse(r"C:\browse\a.zip").unwrap());
+}
+
+fn labels_deep(items: &[crate::ui::MenuItem]) -> Vec<String> {
+    items
+        .iter()
+        .flat_map(|i| match i {
+            crate::ui::MenuItem::Command { label, .. } => vec![label.clone()],
+            crate::ui::MenuItem::Submenu { label, items } => std::iter::once(label.clone()).chain(labels_deep(items)).collect(),
+            crate::ui::MenuItem::Separator => Vec::new(),
+        })
+        .collect()
+}
+
+fn settings_page_lines(app: &mut App, page: crate::ui::settings::Page) -> Vec<String> {
+    app.open_settings(Some(page));
+    let lines = app.settings_lines();
+    app.close_settings();
+    lines
+}
+
+#[test]
+fn with_builtin_handling_off_archives_go_to_the_system_app_and_flits_archive_commands_and_settings_are_inactive() {
+    use crate::ui::settings::{defaults, index, Page, Value, BUILTIN_ARCHIVES, NEEDS_BUILTIN_ARCHIVES};
+    assert_eq!(defaults()[index(BUILTIN_ARCHIVES).unwrap()], Value::Bool(false));
+    let mut app = system_app_at(r"C:\sys");
+    app.archives_as_folders = true;
+    deliver(&mut app, &[("a.zip", FILE), ("b.txt", FILE)]);
+    select(&mut app, &["a.zip"]);
+    key(&mut app, Key::Enter, NO);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } if path == p(r"C:\sys\a.zip"))));
+    assert_eq!(app.current_location(), &Location::parse(r"C:\sys").unwrap());
+    let menu = labels_deep(&app.build_menu(true));
+    for gone in ["Compress", "Extract", "Add to archive…", "Extract here", "Open as folder"] {
+        assert!(!menu.iter().any(|l| l == gone), "{gone} in {menu:?}");
+    }
+    assert!(menu.contains(&"Copy".to_owned()) && menu.contains(&"Properties".to_owned()));
+    select(&mut app, &["b.txt"]);
+    assert!(labels_deep(&app.build_menu(true)).contains(&"Hashes…".to_owned()), "Hashes stays without the archive commands");
+    select(&mut app, &["a.zip"]);
+    key(&mut app, Key::Char('E'), Mods { alt: true, ..NO });
+    assert!(app.jobs.form.is_none());
+    for id in ["archive.compress", "archive.zip", "archive.extract", "archive.extract_here", "archive.open"] {
+        assert!(!app.run_action(id, t0()), "{id}");
+        assert!(!app.available(id), "{id}");
+    }
+    assert!(ops(&mut app).is_empty());
+    let mut lines = settings_page_lines(&mut app, Page::Files);
+    lines.extend(settings_page_lines(&mut app, Page::General));
+    assert!(lines.contains(&BUILTIN_ARCHIVES.to_owned()), "{lines:?}");
+    for id in NEEDS_BUILTIN_ARCHIVES {
+        assert!(lines.contains(&format!("off {id}")) && !lines.contains(&id.to_owned()), "{id} in {lines:?}");
+    }
+    app.builtin_archives = true;
+    let mut lines = settings_page_lines(&mut app, Page::Files);
+    lines.extend(settings_page_lines(&mut app, Page::General));
+    for id in NEEDS_BUILTIN_ARCHIVES {
+        assert!(lines.contains(&id.to_owned()), "{id} in {lines:?}");
+    }
+    let menu = labels_deep(&app.build_menu(true));
+    assert!(menu.contains(&"Compress".to_owned()) && menu.contains(&"Extract".to_owned()), "{menu:?}");
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(app.current_location(), &Location::parse(r"C:\sys\a.zip").unwrap());
+}
+
+#[test]
+fn settings_files_that_browsed_archives_keep_builtin_handling_on() {
+    let mut app = system_app_at(r"C:\browse");
+    app.apply_doc(&crate::ui::settings::parse(r#"{"schema": 1, "files.archives_as_folders": true}"#));
+    assert!(app.builtin_archives && app.archives_as_folders);
+    let mut off = system_app_at(r"C:\browse");
+    off.apply_doc(&crate::ui::settings::parse(r#"{"schema": 1, "files.archives_as_folders": false}"#));
+    assert!(!off.builtin_archives);
+    let mut chosen = system_app_at(r"C:\browse");
+    chosen.apply_doc(&crate::ui::settings::parse(r#"{"schema": 2, "files.archives_as_folders": true}"#));
+    assert!(!chosen.builtin_archives && chosen.archives_as_folders, "a current file keeps the choice it records");
     deliver(&mut app, &[("a.zip", FILE)]);
     select(&mut app, &["a.zip"]);
     key(&mut app, Key::Enter, NO);

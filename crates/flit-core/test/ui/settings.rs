@@ -248,14 +248,14 @@ fn single_click_modes_follow_the_pointer_and_old_booleans_still_load() {
 }
 
 #[test]
-fn the_schema_is_written_todays_files_read_as_schema_one_and_newer_ones_are_flagged() {
+fn the_schema_is_written_unmarked_files_read_as_current_and_newer_ones_are_flagged() {
     let text = render(defaults(), &Map::new(), None);
-    assert!(text.contains("\"schema\": 1"), "{text}");
+    assert!(text.contains("\"schema\": 2"), "{text}");
     let doc = parse(&text);
     assert_eq!((doc.schema, doc.newer(), doc.values.len(), doc.unknown.len()), (SCHEMA, false, SETTINGS.len(), 0));
     let today = parse("{\"files.show_hidden\": true}");
-    assert_eq!((today.schema, today.newer(), today.value("files.show_hidden")), (1, false, Some(&Value::Bool(true))));
-    let newer = parse("{\"schema\": 2, \"files.show_hidden\": true, \"future.key\": 1}");
+    assert_eq!((today.schema, today.newer(), today.value("files.show_hidden")), (SCHEMA, false, Some(&Value::Bool(true))));
+    let newer = parse("{\"schema\": 3, \"files.show_hidden\": true, \"future.key\": 1}");
     assert!(newer.newer() && !newer.problems.is_empty());
     assert!(render(defaults(), &newer.unknown, None).matches("\"schema\"").count() == 1);
 }

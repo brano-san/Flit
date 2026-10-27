@@ -79,6 +79,7 @@ libraries = "Third-party libraries"
 keys_how = "Enter or a click changes a shortcut, Delete removes it, + adds one, the arrow restores the defaults."
 keys_rule = "A key runs one command: taking a used key moves it, and clashes in settings.json fall back to the defaults."
 no_match = "No settings match the search."
+needs_builtin_archives = "Inactive: built-in archive handling is off."
 
 [library]
 shared_snapshots = "shared snapshots"

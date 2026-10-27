@@ -149,6 +149,7 @@ enum Line {
     Group(&'static str),
     Note(&'static str),
     Setting(usize),
+    Off(usize),
     Path(usize, usize),
     Buttons(Option<usize>, &'static [Btn]),
     Tag(usize),
@@ -161,7 +162,7 @@ impl Line {
         match self {
             Line::Group(_) => GROUP_H,
             Line::Note(_) => NOTE_H,
-            Line::Setting(_) => SETTING_H,
+            Line::Setting(_) | Line::Off(_) => SETTING_H,
             Line::Path(..) => ITEM_H,
             Line::Buttons(..) => BUTTONS_H,
             Line::Tag(_) => TAG_H,
@@ -178,7 +179,7 @@ impl Line {
     }
 
     fn focusable(&self) -> bool {
-        !matches!(self, Line::Group(_) | Line::Note(_) | Line::Info(..))
+        !matches!(self, Line::Group(_) | Line::Note(_) | Line::Info(..) | Line::Off(_))
     }
 
     fn buttons(&self) -> &'static [Btn] {
@@ -441,6 +442,7 @@ impl App {
             .map(|l| match l {
                 Line::Group(t) | Line::Note(t) => t.to_string(),
                 Line::Setting(i) => SETTINGS[*i].id.to_owned(),
+                Line::Off(i) => format!("off {}", SETTINGS[*i].id),
                 Line::Path(i, k) => format!("{} #{k}", SETTINGS[*i].id),
                 Line::Buttons(_, b) => b.iter().map(|b| b.label()).collect::<Vec<_>>().join(" | "),
                 Line::Tag(k) => self.tag_defs().get(*k).map_or_else(String::new, |t| format!("tag {}", t.name)),
@@ -660,7 +662,7 @@ impl App {
                 out.push(Line::Note(S::SettingsPageLineKeysHow.t()));
                 out.push(Line::Note(S::SettingsPageLineKeysRule.t()));
                 out.push(Line::Buttons(None, &[Btn::RestoreKeys]));
-                out.extend((0..ACTIONS.len()).filter(|&i| self.caps.supports(ACTIONS[i].id)).map(|i| self.action_line(i)));
+                out.extend((0..ACTIONS.len()).filter(|&i| self.supports(ACTIONS[i].id)).map(|i| self.action_line(i)));
             }
             Page::General | Page::Files | Page::Layout => {}
         }
@@ -669,6 +671,9 @@ impl App {
     fn setting_lines(&self, i: usize, out: &mut Vec<Line>) {
         if let Kind::Keys(..) = SETTINGS[i].kind {
             return;
+        }
+        if !SETTINGS[i].enabled(self) {
+            return out.push(Line::Off(i));
         }
         out.push(Line::Setting(i));
         if let Kind::Paths(..) = SETTINGS[i].kind {
@@ -692,7 +697,7 @@ impl App {
                 _ => &[],
             };
             if page == Page::Actions {
-                out.extend((0..ACTIONS.len()).filter(|&i| self.caps.supports(ACTIONS[i].id) && matches(query, self.keymap.words(i))).map(|i| self.action_line(i)));
+                out.extend((0..ACTIONS.len()).filter(|&i| self.supports(ACTIONS[i].id) && matches(query, self.keymap.words(i))).map(|i| self.action_line(i)));
             }
             for b in extra.iter().filter(|b| b.iter().any(|b| matches(query, &b.label().to_lowercase()))) {
                 out.push(Line::Buttons(None, b));
@@ -849,6 +854,20 @@ impl App {
                         put(t, targets, n, at(SHit::Step(k, false)), Role::Button, S::A11yButtonDecrease.t(), minus);
                         put(t, targets, n, at(SHit::Step(k, true)), Role::Button, S::A11yButtonIncrease.t(), plus);
                     }
+                    Some(n)
+                }
+                Line::Off(i) => {
+                    let set = &SETTINGS[*i];
+                    let role = match set.kind {
+                        Kind::Toggle(..) => Role::CheckBox,
+                        Kind::Choice(..) => Role::ComboBox,
+                        _ => Role::Group,
+                    };
+                    let n = t.add(section, id, role, set.title.t(), r);
+                    t.nodes[n].help = self.setting_help(line).into_owned();
+                    t.nodes[n].value = self.setting_value_text(*i);
+                    t.nodes[n].selected = set.get(self) == Value::Bool(true);
+                    t.nodes[n].enabled = false;
                     Some(n)
                 }
                 Line::Path(i, n) => {
@@ -1225,6 +1244,14 @@ impl App {
         true
     }
 
+    fn setting_help(&self, line: &Line) -> std::borrow::Cow<'static, str> {
+        match line {
+            Line::Off(i) => format!("{} {}", S::SettingsPageLineNeedsBuiltinArchives.t(), SETTINGS[*i].help.t()).into(),
+            Line::Setting(i) => SETTINGS[*i].help.t().into(),
+            _ => "".into(),
+        }
+    }
+
     fn setting_value_text(&self, i: usize) -> String {
         match (SETTINGS[i].kind, SETTINGS[i].get(self)) {
             (Kind::Choice(c, ..), Value::Choice(k)) => c.get(k).map_or("", |c| c.1.t()).to_owned(),
@@ -1318,14 +1345,15 @@ impl App {
                     g.text(r.x + s(PAD), mid(r, ms), label, small, t.text_dim, s(200.0));
                     g.text(r.x + s(PAD) + s(210.0), mid(r, ms), value, small, t.text, r.w - s(PAD) * 2.0 - s(210.0));
                 }
-                Line::Setting(i) => {
+                Line::Setting(i) | Line::Off(i) => {
                     let set = &SETTINGS[*i];
                     let text_w = r.w - s(PAD) * 3.0 - s(CONTROL_W);
                     let ty = r.y + s(10.0) + mf.ascent;
                     g.text(r.x + s(PAD), ty.round(), set.title.t(), font, t.text, text_w);
                     let help_y = (ty + s(20.0)).round();
-                    g.text(r.x + s(PAD), help_y, set.help.t(), small, t.text_dim, text_w);
-                    if g.measure(set.help.t(), small) > text_w {
+                    let help = self.setting_help(line);
+                    g.text(r.x + s(PAD), help_y, &help, small, t.text_dim, text_w);
+                    if g.measure(&help, small) > text_w {
                         cut.push((k, Rect::new(r.x + s(PAD), help_y - ms.ascent, text_w, ms.ascent + ms.descent)));
                     }
                     let value = self.setting_value_text(*i);
@@ -1374,6 +1402,9 @@ impl App {
                             let vw = g.measure(&value, small);
                             g.text(r.right() - s(PAD) - vw, mid(r, ms), &value, small, t.text_dim, f32::INFINITY);
                         }
+                    }
+                    if let Line::Off(_) = line {
+                        g.dl.rect(row, t.bg.alpha(0xA0));
                     }
                 }
                 Line::Path(i, n) => {
@@ -1441,8 +1472,8 @@ impl App {
         }
         ui.cut = cut;
         if let Some((k, (x, y))) = ui.tip {
-            if let Some(&Line::Setting(i)) = ui.lines.get(k) {
-                self.paint_tip(g, t, SETTINGS[i].help.t(), (x, y));
+            if let Some(line @ (Line::Setting(_) | Line::Off(_))) = ui.lines.get(k) {
+                self.paint_tip(g, t, &self.setting_help(line), (x, y));
             }
         }
     }

@@ -19,10 +19,18 @@ use std::time::Instant;
 
 const MAX_PATHS: usize = 64;
 const MAX_TEXT: usize = 4096;
-pub const SCHEMA: u64 = 1;
+pub const SCHEMA: u64 = 2;
 pub const SCHEMA_KEY: &str = "schema";
 pub type Migration = fn(&mut Map<String, Json>);
-const MIGRATIONS: [Migration; 0] = [];
+const MIGRATIONS: [Migration; 1] = [browsed_archives_keep_builtin_handling];
+pub const BUILTIN_ARCHIVES: &str = "files.builtin_archives";
+pub const NEEDS_BUILTIN_ARCHIVES: [&str; 3] = ["general.menu_compress", "files.archives_as_folders", "files.archive_format"];
+
+fn browsed_archives_keep_builtin_handling(map: &mut Map<String, Json>) {
+    if map.get("files.archives_as_folders") == Some(&Json::Bool(true)) {
+        map.entry(BUILTIN_ARCHIVES).or_insert(Json::Bool(true));
+    }
+}
 
 pub fn migrate(map: &mut Map<String, Json>, from: u64, current: u64, steps: &[Migration]) -> bool {
     let Some(first) = current.checked_sub(steps.len() as u64).and_then(|oldest| from.checked_sub(oldest)) else { return false };
@@ -293,6 +301,7 @@ pub static SETTINGS: &[Setting] = &[
     choice("files.conflicts", Page::Files, S::SettingsTitleFilesConflicts, S::SettingsHelpFilesConflicts, CONFLICT_CHOICES, |a| pos(&CONFLICTS, &a.conflict_default), |a, i| a.conflict_default = CONFLICTS[i]),
     choice("files.size_units", Page::Files, S::SettingsTitleFilesSizeUnits, S::SettingsHelpFilesSizeUnits, UNITS, |a| usize::from(a.style.decimal), |a, i| a.set_style(|s| s.decimal = i == 1)),
     toggle("files.auto_sizes", Page::Files, S::SettingsTitleFilesAutoSizes, S::SettingsHelpFilesAutoSizes, |a| a.prefs.auto_sizes, |a, on| a.set_pref(|p| &mut p.auto_sizes, on)),
+    toggle(BUILTIN_ARCHIVES, Page::Files, S::SettingsTitleFilesBuiltinArchives, S::SettingsHelpFilesBuiltinArchives, |a| a.builtin_archives, |a, on| a.builtin_archives = on),
     toggle("files.archives_as_folders", Page::Files, S::SettingsTitleFilesArchivesAsFolders, S::SettingsHelpFilesArchivesAsFolders, |a| a.archives_as_folders, |a, on| a.archives_as_folders = on),
     choice("files.archive_format", Page::Files, S::SettingsTitleFilesArchiveFormat, S::SettingsHelpFilesArchiveFormat, ARCHIVE_CHOICES, |a| pos(&ARCHIVES, &a.archive.prefs.compression.format), |a, i| {
         let c = &mut a.archive.prefs.compression;
@@ -329,6 +338,10 @@ pub static SETTINGS: &[Setting] = &[
 ];
 
 impl Setting {
+    pub fn enabled(&self, a: &App) -> bool {
+        a.builtin_archives || !NEEDS_BUILTIN_ARCHIVES.contains(&self.id)
+    }
+
     pub fn get(&self, a: &App) -> Value {
         match self.kind {
             Kind::Toggle(get, _) => Value::Bool(get(a)),

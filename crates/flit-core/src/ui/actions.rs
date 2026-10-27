@@ -334,20 +334,24 @@ pub fn index(id: &str) -> Option<usize> {
 
 impl App {
     pub(super) fn run_bound(&mut self, key: Key, mods: Mods, now: Instant) -> bool {
-        let Some(i) = self.keymap.owner(Chord { key, mods }).filter(|&i| self.caps.supports(ACTIONS[i].id)) else { return false };
+        let Some(i) = self.keymap.owner(Chord { key, mods }).filter(|&i| self.supports(ACTIONS[i].id)) else { return false };
         (ACTIONS[i].run)(self, now);
         true
     }
 
     pub fn run_action(&mut self, id: &str, now: Instant) -> bool {
-        let Some(a) = ACTIONS.iter().find(|a| a.id == id && self.caps.supports(id)) else { return false };
+        let Some(a) = ACTIONS.iter().find(|a| a.id == id && self.supports(id)) else { return false };
         self.dirty = true;
         (a.run)(self, now);
         true
     }
 
+    pub fn supports(&self, id: &str) -> bool {
+        self.caps.supports(id) && (self.builtin_archives || !crate::caps::is_builtin_archive_action(id))
+    }
+
     pub fn available(&self, id: &str) -> bool {
-        if !self.caps.supports(id) {
+        if !self.supports(id) {
             return false;
         }
         let kind = self.current_location().path().kind();

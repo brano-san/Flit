@@ -277,9 +277,9 @@ impl App {
             return Vec::new();
         }
         let mut items = self.toolbar.state.sets[self.tool_context().index()].clone();
-        items.retain(|item| !matches!(item, ToolItem::Button(id, _) if !self.caps.supports(id)));
+        items.retain(|item| !matches!(item, ToolItem::Button(id, _) if !self.supports(id)));
         let extract = ToolItem::Button("menu.extract".into(), Show::Both);
-        if self.toolbar.archive && !items.contains(&extract) {
+        if self.toolbar.archive && self.supports("menu.extract") && !items.contains(&extract) {
             items.extend([ToolItem::Separator, extract]);
         }
         items
@@ -867,7 +867,7 @@ impl App {
 
     fn addable(&self, ctx: ToolContext) -> Vec<&'static Tool> {
         let set = &self.toolbar.state.sets[ctx.index()];
-        TOOLS.iter().filter(|t| self.caps.supports(t.id) && !set.iter().any(|i| matches!(i, ToolItem::Button(id, _) if id == t.id))).collect()
+        TOOLS.iter().filter(|t| self.supports(t.id) && !set.iter().any(|i| matches!(i, ToolItem::Button(id, _) if id == t.id))).collect()
     }
 
     pub(super) fn tool_choose(&mut self, pick: ToolPick, id: usize) {

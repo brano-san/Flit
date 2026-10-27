@@ -734,7 +734,7 @@ impl App {
             if a.nav.sidebar.places.drives.iter().any(|d| d.removable && d.path == *loc.path()) {
                 m.place(S::MenuEject.t(), PlaceCmd::Eject(loc.path().clone()), false);
             }
-            if a.caps.supports("drive.disconnect") && a.nav.sidebar.places.drives.iter().any(|d| d.remote.is_some() && d.path == *loc.path() && d.path.kind() == PathKind::Drive) {
+            if a.supports("drive.disconnect") && a.nav.sidebar.places.drives.iter().any(|d| d.remote.is_some() && d.path == *loc.path() && d.path.kind() == PathKind::Drive) {
                 m.place(S::SidebarDriveDisconnect.t(), PlaceCmd::Launch(Launch::Disconnect(Some(loc.path().clone()))), false);
             }
             if lib {

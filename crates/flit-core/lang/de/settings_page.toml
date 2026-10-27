@@ -79,6 +79,7 @@ libraries = "Bibliotheken von Drittanbietern"
 keys_how = "Enter oder ein Klick ändert eine Tastenkombination, Entf entfernt sie, + fügt eine hinzu, der Pfeil stellt die Standards wieder her."
 keys_rule = "Eine Taste führt einen Befehl aus: Eine belegte Taste wird verschoben, und Konflikte in settings.json fallen auf die Standards zurück."
 no_match = "Keine Einstellungen entsprechen der Suche."
+needs_builtin_archives = "Inaktiv: Die integrierte Archivverwaltung ist aus."
 
 [library]
 shared_snapshots = "gemeinsame Snapshots"
