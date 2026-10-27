@@ -178,7 +178,7 @@ pub fn init(dir: Option<PathBuf>, echo: bool) {
         previous(info);
     }));
     let floor = if echo { LevelFilter::DEBUG } else { LevelFilter::OFF };
-    let (filter, handle) = reload::Layer::new(LevelFilter::INFO.max(floor));
+    let (filter, handle) = reload::Layer::new(LEVELS[flit_core::ui::settings::LOG_DEFAULT].max(floor));
     let _ = LEVEL.set((handle, floor));
     let registry = tracing_subscriber::registry().with(filter);
     #[cfg(feature = "profile")]
@@ -191,7 +191,7 @@ pub fn init(dir: Option<PathBuf>, echo: bool) {
 
 pub fn set_level(choice: usize) {
     let Some((handle, floor)) = LEVEL.get() else { return };
-    let wanted = LEVELS.get(choice).copied().unwrap_or(LevelFilter::INFO).max(*floor);
+    let wanted = LEVELS.get(choice).copied().unwrap_or(LEVELS[flit_core::ui::settings::LOG_DEFAULT]).max(*floor);
     if handle.clone_current() != Some(wanted) {
         let _ = handle.modify(|f| *f = wanted);
     }

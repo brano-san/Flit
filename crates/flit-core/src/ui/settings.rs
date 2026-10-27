@@ -205,7 +205,7 @@ const CLICK_CHOICES: Choices = &[("never", S::SettingsChoiceClickNever), ("touch
 const COUNT_CHOICES: Choices = &[("total", S::SettingsChoiceCountTotal), ("separate", S::SettingsChoiceCountSeparate)];
 const AREA_HELP: S = S::SettingsHelpAreaColor;
 pub const LOG_LEVEL: &str = "advanced.log_level";
-pub const LOG_DEFAULT: usize = 3;
+pub const LOG_DEFAULT: usize = 1;
 const LOG_CHOICES: Choices = &[("off", S::SettingsChoiceLogOff), ("error", S::SettingsChoiceLogError), ("warn", S::SettingsChoiceLogWarn), ("info", S::SettingsChoiceLogInfo), ("debug", S::SettingsChoiceLogDebug)];
 
 pub const LANGUAGE: &str = "general.language";

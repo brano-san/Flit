@@ -96,7 +96,7 @@ fn levels_follow_the_settings_choices() {
     let k = flit_core::ui::settings::index(flit_core::ui::settings::LOG_LEVEL).unwrap();
     assert_eq!(doc.values, vec![(k, flit_core::ui::Value::Choice(2))]);
     assert_eq!(LEVELS[2], LevelFilter::WARN);
-    assert_eq!(LEVELS[flit_core::ui::settings::LOG_DEFAULT], LevelFilter::INFO);
+    assert_eq!(LEVELS[flit_core::ui::settings::LOG_DEFAULT], LevelFilter::ERROR);
 }
 
 #[test]
