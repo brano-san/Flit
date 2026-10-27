@@ -261,7 +261,7 @@ fn write_7z<W: Write + Seek>(w: W, sources: Vec<Source>, options: &Compression, 
         0 => std::thread::available_parallelism().map_or(1, |n| n.get() as u32),
         t => t,
     };
-    let mut lzma = if threads > 1 { Lzma2Options::from_level_mt(level, threads, dict as u64 * 4) } else { Lzma2Options::from_level(level) };
+    let mut lzma = if threads > 1 { Lzma2Options::from_level_mt(level, threads, dict as u64) } else { Lzma2Options::from_level(level) };
     lzma.set_dictionary_size(dict);
     if options.word > 0 {
         lzma.set_nice_len(options.word);
