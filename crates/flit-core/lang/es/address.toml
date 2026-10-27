@@ -1,3 +1,4 @@
 cannot_open = "No se puede abrir {location} en Flit"
 handed_to_explorer = "Flit no puede mostrar {location}, así que se abre en el Explorador de archivos"
 no_folders = "{name} no tiene carpetas"
+visited_deeper = "Visitado, más profundo"

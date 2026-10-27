@@ -1626,7 +1626,7 @@ impl App {
             Hit::Caption(1) => self.effects.push(Effect::Window(WindowCmd::ToggleMaximize)),
             Hit::Caption(_) => self.effects.push(Effect::Window(WindowCmd::Close)),
             Hit::Crumb(i) => {
-                if let Some((_, p)) = self.tab().crumbs.get(i).cloned() {
+                if let Some((_, p)) = self.tab().crumb(i).cloned() {
                     self.navigate(p, now);
                 }
             }
@@ -2070,13 +2070,19 @@ impl App {
         let chevron = self.icon_font(8.0);
         let gap = self.s(4.0);
         let chev_w = g.measure(G_CHEVRON, chevron) + 2.0 * gap;
-        let crumbs = &self.tabs[self.cur].crumbs;
+        let tab = &self.tabs[self.cur];
+        let real = tab.crumbs.len();
+        let crumbs: Vec<&(String, Location)> = tab.crumbs.iter().chain(&tab.ghosts).collect();
         let widths: Vec<f32> = crumbs.iter().map(|(label, _)| g.measure(label, font) + 2.0 * gap).collect();
         let ov_w = g.measure(address::OVERFLOW, font) + 2.0 * gap;
         let n = widths.len();
-        let fits = |first: usize| widths[first..].iter().sum::<f32>() + chev_w * (n - first) as f32 + if first > 0 { ov_w } else { 0.0 } <= inner.w;
+        let fits = |first: usize, end: usize| widths[first..end].iter().sum::<f32>() + chev_w * (end - first) as f32 + if first > 0 { ov_w } else { 0.0 } <= inner.w;
+        let mut end = n;
+        while end > real && !fits(0, end) {
+            end -= 1;
+        }
         let mut first = 0;
-        while first + 1 < n && !fits(first) {
+        while first + 1 < end && !fits(first, end) {
             first += 1;
         }
         let (s1, s3, s6) = (self.s(1.0), self.s(3.0), self.s(6.0));
@@ -2097,7 +2103,7 @@ impl App {
             self.addr.overflow = r;
             x += ov_w;
         }
-        for i in first..n {
+        for i in first..end {
             let w = widths[i];
             let cr = Rect::new(x, inner.y + s3, w, inner.h - s6);
             rects[i] = cr;
@@ -2107,7 +2113,7 @@ impl App {
             } else if self.hover == Hit::Crumb(i) {
                 g.dl.round_rect(cr, t.button_hover, s3);
             }
-            let last = i + 1 == n;
+            let last = i + 1 == real;
             g.text(x + gap, baseline, &crumbs[i].0, font, if last { t.text } else { t.text_dim }, inner.right() - x);
             x += w;
             let chev = Rect::new(x, inner.y + s3, chev_w, inner.h - s6);

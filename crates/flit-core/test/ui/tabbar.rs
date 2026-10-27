@@ -192,7 +192,7 @@ fn restored_tabs_stay_asleep_until_shown() {
     assert!(listed(&mut app).is_empty());
     assert_eq!(app.tabs[0].gen, 0);
     assert_eq!(app.tabs[2].title(), "c");
-    assert_eq!(app.session(), WindowSession { tabs: vec![loc(r"C:\a"), loc(r"C:\b"), loc(r"C:\c")], cur: 1, splits: vec![None, None, None] });
+    assert_eq!(app.session(), WindowSession { tabs: vec![loc(r"C:\a"), loc(r"C:\b"), loc(r"C:\c")], cur: 1, splits: vec![None, None, None], trails: vec![loc(r"C:\a"), loc(r"C:\b"), loc(r"C:\c")] });
     key(&mut app, Key::Char('3'), CTRL);
     assert_eq!(listed(&mut app), [r"C:\c"]);
     assert_eq!(app.window_title(), r"C:\c — Flit");

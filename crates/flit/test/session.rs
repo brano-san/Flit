@@ -74,7 +74,8 @@ fn panes_ride_after_the_session_so_older_files_load_with_one_pane() {
     use flit_core::ui::{SplitDir, SplitSession};
     let mut w = window(&[r"C:\a", r"C:\b"], 1);
     w.splits = vec![None, Some(SplitSession { other: Location::parse(r"D:\x").unwrap(), dir: SplitDir::Horizontal, ratio: 0.3, second: true })];
-    let s = Session::new(vec![(w.clone(), None), (window(&[r"E:\"], 0), None)], Vec::new());
+    w.trails = vec![Location::parse(r"C:\a\deep\er").unwrap(), Location::parse(r"C:\b").unwrap()];
+    let s =Session::new(vec![(w.clone(), None), (window(&[r"E:\"], 0), None)], Vec::new());
     let bytes = s.encode().unwrap();
     let back = Session::decode(&bytes).unwrap();
     assert_eq!(back.windows().next().unwrap().0, w);

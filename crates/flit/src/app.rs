@@ -341,6 +341,7 @@ impl<P: Platform> Handler<P> {
         let mut app = self.new_app(routes, self.saved.persisted.clone());
         app.restore_tabs(&ws.tabs, cur);
         app.restore_splits(&ws.splits);
+        app.restore_trails(&ws.trails);
         app
     }
 

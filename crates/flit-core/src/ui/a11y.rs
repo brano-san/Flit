@@ -101,11 +101,14 @@ impl App {
                 let a = t.add(0, ADDRESS, Role::ToolBar, S::A11yRegionAddress.t(), l.address);
                 t.nodes[a].value = loc;
                 t.nodes[a].help = description("nav.address").into();
-                let crumbs = self.tab().crumbs.clone();
+                let tab = self.tab();
                 for (i, r) in l.crumbs.iter().enumerate().filter(|(_, r)| r.w > 0.0) {
-                    if let Some((label, target)) = crumbs.get(i) {
+                    if let Some((label, target)) = tab.crumb(i) {
                         let k = put(&mut t, &mut targets, a, Hit::Crumb(i), Role::Button, label, *r);
-                        t.nodes[k].help = target.display().into_owned();
+                        t.nodes[k].help = match i < tab.crumbs.len() {
+                            true => target.display().into_owned(),
+                            false => format!("{}: {}", S::AddressVisitedDeeper.t(), target.display()),
+                        };
                     }
                 }
             }
