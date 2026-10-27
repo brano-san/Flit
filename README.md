@@ -284,7 +284,7 @@ Git (W9; нужен установленный `git` в `PATH`, сетью и у
 
 - Windows 11; Windows 10 версии 1709 и новее должна работать (нижнюю границу задаёт `ReadDirectoryChangesExW`), но на Windows 10 Flit пока не проверялся.
 - Rust stable 1.87 или новее (`rust-version` в `Cargo.toml`), MSVC-тулчейн (`x86_64-pc-windows-msvc`, как в CI).
-- Собирать нужно на Windows: `build.rs` компилирует HLSL-шейдер через системную `d3dcompiler_47.dll`. Windows SDK отдельно ставить не нужно, кросс-компиляция с Linux не поддерживается. Иконку `assets/icon/flit.ico` в `flit.exe` встраивает `crates/flit/build.rs`: он сам собирает из неё файл ресурсов `.res` и передаёт его компоновщику, поэтому `rc.exe` не нужен.
+- Собирать нужно на Windows: `build.rs` компилирует HLSL-шейдер через системную `d3dcompiler_47.dll`. Windows SDK отдельно ставить не нужно, кросс-компиляция с Linux не поддерживается. Иконку `assets/icon/flit.ico` в `flit.exe` встраивает `crates/flit/build.rs`: он сам собирает из неё файл ресурсов `.res` вместе с версией файла (VERSIONINFO: описание, версия из `Cargo.toml`, лицензия) и манифестом (`asInvoker`, Windows 10/11) и передаёт его компоновщику, поэтому `rc.exe` не нужен. Без версии и манифеста машинное обучение Defender принимало сборку `dist` за `Trojan:Win32/Bearfoos.B!ml` и отправляло её в карантин.
 
 ## Сборка
 
