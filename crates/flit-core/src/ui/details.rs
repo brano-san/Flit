@@ -45,7 +45,6 @@ const SIZE_GROUPS: [S; 8] = [
 const G_CALENDAR: &str = "\u{E787}";
 const G_FONT: &str = "\u{E8D2}";
 const G_PACKAGE: &str = "\u{E7B8}";
-const G_CHECK: &str = "\u{E73E}";
 const G_WARNING: &str = "\u{E7BA}";
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -717,7 +716,7 @@ impl App {
     pub(super) fn draw_checkbox<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme, r: Rect, on: bool) {
         if on {
             g.dl.round_rect(r, th.accent, self.s(3.0));
-            centered(g, r, G_CHECK, self.icon_font(10.0), crate::theme::ink_on(th.accent));
+            g.dl.check(r, crate::theme::ink_on(th.accent));
         } else {
             g.dl.outline(r, th.text_dim, self.s(3.0), self.s(1.0).max(1.0));
         }

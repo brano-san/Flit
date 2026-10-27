@@ -142,6 +142,25 @@ impl DrawList {
     pub fn preview(&mut self, r: Rect) {
         self.push(r, [0.0, 0.0, 1.0, 1.0], Color(0xFFFF_FFFF), 0.0, 0.0, kind::PREVIEW);
     }
+
+    pub fn check(&mut self, r: Rect, color: Color) {
+        let stroke = check_stroke(r);
+        let [a, b, c] = CHECK_POINTS.map(|(fx, fy)| (r.x + r.w * fx, r.y + r.h * fy));
+        for (from, to) in [(a, b), (b, c)] {
+            let steps = ((to.0 - from.0).hypot(to.1 - from.1) / (stroke * 0.5)).ceil().max(1.0) as usize;
+            for k in 0..=steps {
+                let t = k as f32 / steps as f32;
+                let (x, y) = (from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t);
+                self.push(Rect::new(x - stroke / 2.0, y - stroke / 2.0, stroke, stroke), [0.0; 4], color, stroke / 2.0, 0.0, kind::SOLID);
+            }
+        }
+    }
+}
+
+const CHECK_POINTS: [(f32, f32); 3] = [(0.24, 0.52), (0.42, 0.70), (0.77, 0.32)];
+
+pub fn check_stroke(r: Rect) -> f32 {
+    (r.w.min(r.h) * 0.16).max(1.75)
 }
 
 #[cfg(test)]

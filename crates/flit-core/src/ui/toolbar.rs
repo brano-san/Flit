@@ -805,7 +805,7 @@ impl App {
             let bx = Rect::new(row.x + self.s(9.0), row.y + (row.h - self.s(14.0)) / 2.0, self.s(14.0), self.s(14.0));
             if self.fly_checked(k) {
                 g.dl.round_rect(bx, t.accent, self.s(3.0));
-                centered(g, bx, G_CHECK, self.icon_font(10.0), crate::theme::ink_on(t.accent));
+                g.dl.check(bx, crate::theme::ink_on(t.accent));
             } else {
                 g.dl.outline(bx, t.text_dim, self.s(3.0), 1.0);
             }

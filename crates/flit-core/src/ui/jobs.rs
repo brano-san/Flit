@@ -32,7 +32,6 @@ const MAX_JOBS: usize = 100;
 const G_OPS: &str = "\u{E896}";
 const G_CLOSE: &str = "\u{E8BB}";
 const G_MORE: &str = "\u{E712}";
-const G_CHECK: &str = "\u{E73E}";
 
 const CONFLICT_BUTTONS: [S; 4] = [S::UiButtonReplace, S::UiButtonKeepBoth, S::UiButtonSkip, S::UiButtonCancel];
 const UNREADABLE_BUTTONS: [S; 2] = [S::UiButtonSkip, S::UiButtonCancel];
@@ -970,7 +969,7 @@ impl App {
             let bx = Rect::new(check.x, check.y + (check.h - s(18.0)) / 2.0, s(18.0), s(18.0));
             if self.jobs.all {
                 g.dl.round_rect(bx, t.accent, s4);
-                centered(g, bx, G_CHECK, self.icon_font(11.0), crate::theme::ink_on(t.accent));
+                g.dl.check(bx, crate::theme::ink_on(t.accent));
             } else {
                 g.dl.outline(bx, if self.hover == Hit::DialogCheck { t.accent } else { t.text_dim }, s4, s(1.0).max(1.0));
             }

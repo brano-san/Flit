@@ -46,6 +46,10 @@ fn capture_pointer(q: &mut std::collections::VecDeque<Event>) {
     if wheel != 0.0 {
         q.push_back(Event::Wheel { dx: 0.0, dy: -wheel });
     }
+    let clicks = std::env::var("FLIT_CAPTURE_CLICKS").unwrap_or_default();
+    for (x, y) in clicks.split(';').filter_map(|p| p.split_once(',').and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?)))) {
+        q.extend([Event::MouseMove { x, y }, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, Event::MouseUp { x, y, button: MouseButton::Left }]);
+    }
     if let Some((x, y)) = mouse {
         q.push_back(Event::MouseMove { x, y });
     }

@@ -93,10 +93,14 @@ fn high_contrast_maps_every_token_to_a_system_color() {
 }
 #[test]
 fn a_checkmark_stands_out_on_every_accent() {
-    let mut accents = vec![LIGHT.accent, DARK.accent];
-    accents.extend(PRESETS.iter().flat_map(|p| [derive(Color::rgb(p.light)).accent, derive(Color::rgb(p.dark)).accent]));
-    for a in accents {
-        assert!(contrast(ink_on(a), a) >= MIN_TEXT_CONTRAST, "{a:?}");
+    let mut accents = vec![(LIGHT.accent, false), (DARK.accent, true), (high_contrast(&HC_BLACK).accent, true)];
+    accents.extend(PRESETS.iter().flat_map(|p| [(derive(Color::rgb(p.light)).accent, false), (derive(Color::rgb(p.dark)).accent, true)]));
+    for (a, dark) in accents {
+        let ink = ink_on(a);
+        let other = if ink == BLACK { WHITE } else { BLACK };
+        assert!(contrast(ink, a) >= contrast(other, a), "{a:?}: the better of black and white");
+        let min = if dark { 7.0 } else { MIN_TEXT_CONTRAST };
+        assert!(contrast(ink, a) >= min, "{a:?}: {}", contrast(ink, a));
     }
     assert_eq!(ink_on(DARK.accent), BLACK);
     assert_eq!(ink_on(LIGHT.accent), WHITE);

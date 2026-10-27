@@ -20,7 +20,6 @@ const BUTTON_H: f32 = 32.0;
 const NOTE_H: f32 = 34.0;
 const FLAGS_PER_LINE: usize = 4;
 
-const G_CHECK: &str = "\u{E73E}";
 const G_LEFT: &str = "\u{E76B}";
 const G_RIGHT: &str = "\u{E76C}";
 
@@ -453,7 +452,7 @@ impl App {
                 }
                 Control::Check { label, on } => {
                     let bx = Rect::new(lx, row.y + (row.h - s(18.0)) / 2.0, s(18.0), s(18.0));
-                    draw_box(g, t, bx, *on, focused || hover == Hit::Form(k), icons, s4, sc);
+                    draw_box(g, t, bx, *on, focused || hover == Hit::Form(k), s4, sc);
                     g.text(bx.right() + s8, mid(row), label, font, t.text, row.right() - bx.right() - s8);
                 }
                 Control::Flags { label, items, cur, spots } => {
@@ -468,7 +467,7 @@ impl App {
                         let tw = g.measure(name, small).min(room);
                         let spot = Rect::new(cell.x, cell.y + s(4.0), s(22.0) + tw + s(6.0), cell.h - s(8.0));
                         let bx = Rect::new(cell.x, cell.y + (cell.h - s(16.0)) / 2.0, s(16.0), s(16.0));
-                        draw_box(g, t, bx, *on, focused && i == *cur, icons, s4, sc);
+                        draw_box(g, t, bx, *on, focused && i == *cur, s4, sc);
                         g.text(bx.right() + s(5.0), mid(cell), name, small, t.text, room);
                         if focused && i == *cur {
                             g.dl.rect(Rect::new(bx.right() + s(5.0), spot.bottom() - s(2.0), tw, s(1.0).max(1.0)), t.accent);
@@ -513,10 +512,10 @@ impl App {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_box<B: TextBackend>(g: &mut Gfx<B>, t: &Theme, bx: Rect, on: bool, hot: bool, icons: FontStyle, r: f32, sc: f32) {
+fn draw_box<B: TextBackend>(g: &mut Gfx<B>, t: &Theme, bx: Rect, on: bool, hot: bool, r: f32, sc: f32) {
     if on {
         g.dl.round_rect(bx, t.accent, r);
-        centered(g, bx, G_CHECK, icons, crate::theme::ink_on(t.accent));
+        g.dl.check(bx, crate::theme::ink_on(t.accent));
     } else {
         g.dl.outline(bx, if hot { t.accent } else { t.text_dim }, r, sc.round().max(1.0));
     }
