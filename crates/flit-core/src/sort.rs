@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use crate::hash::FxHasher;
 use crate::listing::{attr, Entry, Listing};
 use crate::{fmt, name, recycle};
@@ -87,6 +88,7 @@ const SYMBOLS: u8 = 0x02;
 const DIGITS: u8 = 0x48;
 const LETTERS: u8 = 0x50;
 const SIZE_LIMITS: [u64; 5] = [16 << 10, 1 << 20, 128 << 20, 1 << 30, 4 << 30];
+const PARALLEL_SORT: usize = 1 << 15;
 
 #[derive(Clone, Debug)]
 pub struct SortKeys {
@@ -122,6 +124,19 @@ impl SortKeys {
         let n = k.len().min(8);
         p[..n].copy_from_slice(&k[..n]);
         self.prefix.push(u64::from_be_bytes(p));
+    }
+
+    pub fn append(&mut self, part: SortKeys) {
+        let base = self.blob.len() as u32;
+        self.blob.extend_from_slice(&part.blob);
+        self.offs.extend(part.offs[1..].iter().map(|o| o + base));
+        self.prefix.extend_from_slice(&part.prefix);
+    }
+
+    pub fn shrink(&mut self) {
+        self.blob.shrink_to_fit();
+        self.offs.shrink_to_fit();
+        self.prefix.shrink_to_fit();
     }
 
     #[inline]
@@ -369,9 +384,7 @@ pub fn sort(l: &Listing, k: &SortKeys, view: ViewSpec, out: &mut Vec<u32>) {
     let spec = view.sort;
     let inv = |x: u64| if spec.descending { !x } else { x };
     let ginv = |x: u64| if view.group.descending { !x } else { x };
-    let mut items: Vec<Item> = (0..l.len() as u32)
-        .filter(|&i| visible(l, i, &view))
-        .map(|i| {
+    let item = |i: u32| {
             let e = &l.entries[i as usize];
             let primary = match spec.field {
                 SortField::Name => 0,
@@ -395,16 +408,24 @@ pub fn sort(l: &Listing, k: &SortKeys, view: ViewSpec, out: &mut Vec<u32>) {
             let (gkey, gexact) = group_key(l, i, &view);
             let name2 = inv(key_word(k.key(i), 8));
             Item { gkey: ginv(gkey), primary: inv(primary), name: inv(k.prefix[i as usize]), name2, idx: i, group, exact, gexact }
-        })
-        .collect();
-    items.sort_unstable_by(|a, b| {
+    };
+    let cmp = |a: &Item, b: &Item| {
         a.gkey
             .cmp(&b.gkey)
             .then_with(|| if a.gexact && b.gexact { Ordering::Equal } else { group_tail_cmp(l, &view, a.idx, b.idx) })
             .then_with(|| (a.group, a.primary).cmp(&(b.group, b.primary)))
             .then_with(|| if a.exact && b.exact { (a.name, a.name2).cmp(&(b.name, b.name2)) } else { Ordering::Equal })
             .then_with(|| item_cmp(l, k, spec, a.idx, b.idx))
-    });
+    };
+    let shown = |&i: &u32| visible(l, i, &view);
+    let mut items: Vec<Item>;
+    if l.len() < PARALLEL_SORT {
+        items = (0..l.len() as u32).filter(shown).map(item).collect();
+        items.sort_unstable_by(cmp);
+    } else {
+        items = (0..l.len() as u32).into_par_iter().filter(shown).map(item).collect();
+        items.par_sort_unstable_by(cmp);
+    }
     out.clear();
     out.extend(items.iter().map(|it| it.idx));
 }

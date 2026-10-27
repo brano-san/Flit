@@ -127,6 +127,7 @@ fn scan<S: IndexSource>(source: &mut S, shared: &SharedIndex, info: &VolumeInfo)
     feed.flush(VolumeState::Scanning { progress: 0.0 });
     match source.scan(&info.id, &mut feed) {
         Ok(cp) => {
+            let cold = feed.private.is_none();
             if let Some(mut v) = feed.private.take() {
                 v.commit();
                 v.shrink();
@@ -138,6 +139,9 @@ fn scan<S: IndexSource>(source: &mut S, shared: &SharedIndex, info: &VolumeInfo)
                 e.version += 1;
             }
             feed.flush(VolumeState::Ready);
+            if let Some(v) = shared.write().volume_mut(&info.id).filter(|_| cold) {
+                v.shrink();
+            }
             Some(cp)
         }
         Err(e) => {
@@ -155,16 +159,14 @@ fn load_snapshot(dir: &Path, id: &str, key: &str) -> Option<(VolumeIndex, Checkp
 }
 
 fn save_snapshot(dir: &Path, shared: &SharedIndex, id: &str, key: &str, cp: Checkpoint) -> std::io::Result<()> {
-    let mut buf = Vec::new();
-    {
-        let e = shared.read();
-        let Some(v) = e.volumes.iter().find(|v| v.id == id) else { return Ok(()) };
-        snapshot::save(v, cp, &mut buf);
-    }
     std::fs::create_dir_all(dir)?;
     let path = dir.join(snapshot::file_name(key));
     let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, &buf)?;
+    {
+        let e = shared.read();
+        let Some(v) = e.volumes.iter().find(|v| v.id == id) else { return Ok(()) };
+        snapshot::save_to(v, cp, std::fs::File::create(&tmp)?)?;
+    }
     std::fs::rename(&tmp, &path)
 }
 

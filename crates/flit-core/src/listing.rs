@@ -126,6 +126,20 @@ impl Listing {
     pub fn set_tags(&mut self, i: u32, mask: u32) {
         self.entries[i as usize].tags = mask;
     }
+
+    pub fn append(&mut self, part: Listing) {
+        let base = self.names.len() as u32;
+        self.names.extend_from_slice(&part.names);
+        self.entries.extend(part.entries.into_iter().map(|mut e| {
+            e.name_off += base;
+            e
+        }));
+    }
+
+    pub fn shrink(&mut self) {
+        self.names.shrink_to_fit();
+        self.entries.shrink_to_fit();
+    }
 }
 
 pub const NOT_RESPONDING_CODE: i64 = 0x79;
@@ -227,6 +241,15 @@ impl<'a> ListingBuilder<'a> {
     pub fn push(&mut self, name: &[u8], meta: Meta) {
         let i = self.listing.push(name, meta);
         self.keys.push(self.listing.name(i));
+    }
+
+    pub fn tagging(&self) -> Option<(Arc<Tags>, u32)> {
+        self.tags.clone().zip(self.volume)
+    }
+
+    pub fn append(&mut self, listing: Listing, keys: SortKeys) {
+        self.listing.append(listing);
+        self.keys.append(keys);
     }
 
     pub fn batch_done(&mut self) -> bool {

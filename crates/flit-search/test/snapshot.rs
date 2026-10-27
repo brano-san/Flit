@@ -62,8 +62,10 @@ fn damaged_snapshots_are_refused() {
     lying.extend_from_slice(MAGIC);
     lying.extend_from_slice(&VERSION.to_le_bytes());
     lying.extend_from_slice(&[0; 16]);
-    put_bytes(&mut lying, b"C:");
-    put_bytes(&mut lying, br"C:\");
+    for field in [&b"C:"[..], br"C:\"] {
+        lying.extend_from_slice(&(field.len() as u16).to_le_bytes());
+        lying.extend_from_slice(field);
+    }
     lying.push(b'\\');
     lying.extend_from_slice(&u64::MAX.to_le_bytes());
     let sum = checksum(VERSION, &lying);
@@ -84,4 +86,22 @@ fn version_one_snapshots_with_the_old_checksum_still_load() {
     assert_eq!(rows(&v), rows(&load(&buf).unwrap().0));
     old[20] ^= 1;
     assert!(load(&old).err().unwrap().contains("checksum"));
+}
+
+#[test]
+fn snapshots_larger_than_one_write_chunk_stream_with_the_same_checksum() {
+    let mut v = sample();
+    for k in 0..60_000u64 {
+        let name = format!("Отчёт {k} {}.txt", "x".repeat((k % 50) as usize));
+        v.upsert(&IndexRecord { id: 1000 + k, parent: 10, name: name.as_bytes(), size: k, modified: k as i64, attrs: 0 });
+    }
+    v.commit();
+    let mut buf = Vec::new();
+    save(&v, Checkpoint { journal: 3, next: 4 }, &mut buf);
+    assert!(buf.len() > 3 << 20);
+    let body = &buf[..buf.len() - 8];
+    assert_eq!(buf[buf.len() - 8..], checksum(VERSION, body).to_le_bytes());
+    let (back, cp) = load(&buf).unwrap();
+    assert_eq!((cp.journal, cp.next), (3, 4));
+    assert_eq!(rows(&back), rows(&v));
 }

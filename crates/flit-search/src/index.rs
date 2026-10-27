@@ -206,6 +206,7 @@ impl VolumeIndex {
         self.attrs.shrink_to_fit();
         self.perms.iter_mut().chain(self.ranks.iter_mut()).for_each(Vec::shrink_to_fit);
         self.orphan_parents.shrink_to_fit();
+        self.changed.shrink_to_fit();
     }
 
     #[inline]

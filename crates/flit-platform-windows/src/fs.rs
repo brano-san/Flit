@@ -224,6 +224,119 @@ impl Tree<'_> {
     }
 }
 
+const SERIAL_BUFFERS: usize = 64;
+const PARALLEL_BUFFER: usize = 1 << 20;
+const LIST_WORKERS: usize = 6;
+
+fn query_dir(h: HANDLE, buf: &mut [u64], first: bool) -> Result<bool, FsError> {
+    let mut iosb = IO_STATUS_BLOCK::default();
+    let st = unsafe { NtQueryDirectoryFile(h, None, None, None, &mut iosb, buf.as_mut_ptr() as _, (buf.len() * 8) as u32, FileIdBothDirectoryInformation, false, None, first) };
+    if st == STATUS_NO_MORE_FILES || (first && st == STATUS_NO_SUCH_FILE) {
+        return Ok(false);
+    }
+    if st.is_err() {
+        return Err(if first && st == STATUS_INVALID_PARAMETER { fs_error(ERROR_DIRECTORY) } else { nt_error(st) });
+    }
+    Ok(true)
+}
+
+fn each_entry(buf: &[u64], f: &mut dyn FnMut(&[u16], Meta, u64)) {
+    let base = buf.as_ptr() as *const u8;
+    let mut off = 0usize;
+    loop {
+        let e = unsafe { base.add(off) } as *const FILE_ID_BOTH_DIR_INFORMATION;
+        let (next, name, meta, id) = unsafe {
+            let name_at = base.add(off + offset_of!(FILE_ID_BOTH_DIR_INFORMATION, FileName)) as *const u16;
+            let name = std::slice::from_raw_parts(name_at, (*e).FileNameLength as usize / 2);
+            let attrs = map_attrs((*e).FileAttributes, (*e).EaSize);
+            ((*e).NextEntryOffset, name, Meta { size: (*e).EndOfFile as u64, modified: (*e).LastWriteTime, created: (*e).CreationTime, attrs }, (*e).FileId as u64)
+        };
+        if name != [b'.' as u16] && name != [b'.' as u16, b'.' as u16] {
+            f(name, meta, id);
+        }
+        if next == 0 {
+            return;
+        }
+        off += next as usize;
+    }
+}
+
+fn list_part(buf: &[u64], case: flit_core::sort::CaseMode, tagging: &Option<(Arc<flit_core::tags::Tags>, u32)>) -> (flit_core::listing::Listing, flit_core::sort::SortKeys) {
+    let mut listing = flit_core::listing::Listing::default();
+    let mut keys = flit_core::sort::SortKeys::new(case);
+    each_entry(buf, &mut |name, meta, id| {
+        let i = listing.push_utf16(name, meta);
+        keys.push(listing.name(i));
+        if let Some((tags, volume)) = tagging {
+            listing.set_tags(i, tags.mask(flit_core::tags::FileKey { volume: *volume, id }));
+        }
+    });
+    (listing, keys)
+}
+
+fn list_parallel(h: HANDLE, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+    use std::collections::BTreeMap;
+    use std::sync::mpsc;
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, LIST_WORKERS);
+    let (case, tagging) = (out.keys.case(), out.tagging());
+    let (job_tx, job_rx) = mpsc::sync_channel::<(usize, Vec<u64>)>(workers * 2);
+    let job_rx = std::sync::Mutex::new(job_rx);
+    let (done_tx, done_rx) = mpsc::channel();
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            let (job_rx, done_tx, tagging) = (&job_rx, done_tx.clone(), &tagging);
+            s.spawn(move || loop {
+                let job = job_rx.lock().unwrap_or_else(|e| e.into_inner()).recv();
+                let Ok((seq, buf)) = job else { return };
+                let part = list_part(&buf, case, tagging);
+                if done_tx.send((seq, buf, part)).is_err() {
+                    return;
+                }
+            });
+        }
+        drop(done_tx);
+        let mut free = Vec::new();
+        let mut ready = BTreeMap::new();
+        let (mut sent, mut next, mut reading) = (0usize, 0usize, true);
+        let mut result = Ok(());
+        while reading || next < sent {
+            while reading && sent - next < workers * 3 {
+                let mut buf = free.pop().unwrap_or_else(|| vec![0u64; PARALLEL_BUFFER / 8]);
+                match query_dir(h, &mut buf, false) {
+                    Ok(true) => {
+                        if job_tx.send((sent, buf)).is_err() {
+                            reading = false;
+                        }
+                        sent += 1;
+                    }
+                    Ok(false) => reading = false,
+                    Err(e) => {
+                        result = Err(e);
+                        reading = false;
+                    }
+                }
+            }
+            if next == sent {
+                break;
+            }
+            let Ok((seq, buf, part)) = done_rx.recv() else { break };
+            free.push(buf);
+            ready.insert(seq, part);
+            while let Some((listing, keys)) = ready.remove(&next) {
+                out.append(listing, keys);
+                next += 1;
+                if !out.batch_done() {
+                    reading = false;
+                    sent = next;
+                    break;
+                }
+            }
+        }
+        drop(job_tx);
+        result
+    })
+}
+
 impl Fs for NtFs {
     fn read_dir(&self, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
         match dir.kind() {
@@ -244,39 +357,23 @@ impl Fs for NtFs {
             out.set_volume(v);
         }
         let mut buf = vec![0u64; BUFFER / 8];
-        let mut first = true;
+        let mut reads = 0;
         let result = loop {
-            let mut iosb = IO_STATUS_BLOCK::default();
-            let st = unsafe { NtQueryDirectoryFile(h, None, None, None, &mut iosb, buf.as_mut_ptr() as _, BUFFER as u32, FileIdBothDirectoryInformation, false, None, first) };
-            if st == STATUS_NO_MORE_FILES || (first && st == STATUS_NO_SUCH_FILE) {
-                break Ok(());
+            if reads == SERIAL_BUFFERS && !out.wants_streams() {
+                break list_parallel(h, out);
             }
-            if st.is_err() {
-                break Err(if first && st == STATUS_INVALID_PARAMETER { fs_error(ERROR_DIRECTORY) } else { nt_error(st) });
+            match query_dir(h, &mut buf, reads == 0) {
+                Ok(true) => {}
+                Ok(false) => break Ok(()),
+                Err(e) => break Err(e),
             }
-            first = false;
-            let base = buf.as_ptr() as *const u8;
-            let mut off = 0usize;
-            loop {
-                let e = unsafe { base.add(off) } as *const FILE_ID_BOTH_DIR_INFORMATION;
-                let (next, name, meta, id) = unsafe {
-                    let name_at = base.add(off + offset_of!(FILE_ID_BOTH_DIR_INFORMATION, FileName)) as *const u16;
-                    let name = std::slice::from_raw_parts(name_at, (*e).FileNameLength as usize / 2);
-                    let attrs = map_attrs((*e).FileAttributes, (*e).EaSize);
-                    ((*e).NextEntryOffset, name, Meta { size: (*e).EndOfFile as u64, modified: (*e).LastWriteTime, created: (*e).CreationTime, attrs }, (*e).FileId as u64)
-                };
-                let dots = name == [b'.' as u16] || name == [b'.' as u16, b'.' as u16];
-                if !dots {
-                    out.push_utf16_id(name, meta, id);
-                    if out.wants_streams() && meta.attrs & attr::DIR == 0 {
-                        push_streams(dir, name, meta, out);
-                    }
+            reads += 1;
+            each_entry(&buf, &mut |name, meta, id| {
+                out.push_utf16_id(name, meta, id);
+                if out.wants_streams() && meta.attrs & attr::DIR == 0 {
+                    push_streams(dir, name, meta, out);
                 }
-                if next == 0 {
-                    break;
-                }
-                off += next as usize;
-            }
+            });
             if !out.batch_done() {
                 break Ok(());
             }

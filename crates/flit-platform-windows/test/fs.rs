@@ -153,3 +153,42 @@ fn names_the_file_system_of_a_path() {
     let fs = NtFs.file_system(&FsPath::parse(&std::env::temp_dir().to_string_lossy()).unwrap()).unwrap();
     assert!(["NTFS", "ReFS", "FAT32", "exFAT"].contains(&fs.as_str()), "{fs}");
 }
+
+#[test]
+fn large_folders_listed_in_parallel_chunks_keep_every_entry_once() {
+    let t = Temp::new("parallel-list");
+    let names: Vec<String> = (0..12_000).map(|k| format!("{k} {}.txt", "Длинное имя файла для проверки параллельного чтения ".repeat(3))).collect();
+    for (k, n) in names.iter().enumerate() {
+        t.file(n, k % 7);
+    }
+    let dir = fs_path(&t.0);
+    let mut calls = 0;
+    let mut go = |_: &ListingBuilder<'_>| {
+        calls += 1;
+        true
+    };
+    let mut b = ListingBuilder::new(flit_core::sort::CaseMode::Insensitive, &mut go);
+    NtFs.read_dir(&dir, &mut b).unwrap();
+    let l = &b.listing;
+    let mut got: Vec<(String, u64)> = (0..l.len() as u32).map(|i| (String::from_utf8(l.name(i).to_vec()).unwrap(), l.entries[i as usize].size)).collect();
+    got.sort();
+    let mut want: Vec<(String, u64)> = names.iter().enumerate().map(|(k, n)| (n.clone(), (k % 7) as u64)).collect();
+    want.sort();
+    assert_eq!(got, want);
+    for i in 0..l.len() as u32 {
+        let mut key = Vec::new();
+        flit_core::sort::encode_key(l.name(i), flit_core::sort::CaseMode::Insensitive, &mut key);
+        assert_eq!(b.keys.key(i), key.as_slice());
+    }
+    drop(b);
+    assert!(calls > SERIAL_BUFFERS, "{calls} batches");
+
+    let mut seen = 0;
+    let mut stop = |b: &ListingBuilder<'_>| {
+        seen = b.listing.len();
+        seen < 10_000
+    };
+    let mut b = ListingBuilder::new(flit_core::sort::CaseMode::Insensitive, &mut stop);
+    NtFs.read_dir(&dir, &mut b).unwrap();
+    assert!(b.listing.len() < names.len(), "a stopped listing ends early");
+}

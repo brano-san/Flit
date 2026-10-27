@@ -484,8 +484,10 @@ fn list<F: Fs + ?Sized>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: C
     if let Err(e) = &result {
         tracing::warn!("cannot list {}: {e}", path.display());
     }
-    let listing = std::mem::take(&mut b.listing);
-    let keys = std::mem::replace(&mut b.keys, SortKeys::new(case));
+    let mut listing = std::mem::take(&mut b.listing);
+    let mut keys = std::mem::replace(&mut b.keys, SortKeys::new(case));
+    listing.shrink();
+    keys.shrink();
     drop(b);
     if cancel.is_current(gen) {
         let snap = snapshot(gen, path, listing, keys, view, true, result.err(), start.elapsed());
