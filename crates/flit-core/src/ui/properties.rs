@@ -68,7 +68,7 @@ impl App {
         let t = self.tab();
         let Some(v) = &t.view else { return };
         let items: Vec<u32> = v.selected().collect();
-        if items.is_empty() {
+        if items.is_empty() || self.shell_bin() {
             return self.properties();
         }
         let paths = match self.item_paths(&items) {

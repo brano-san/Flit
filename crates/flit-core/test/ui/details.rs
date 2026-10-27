@@ -228,10 +228,10 @@ fn the_recycle_bin_background_menu_offers_view_commands_without_shell_items() {
     let menu = menu_of(&mut app);
     assert!(!menu.shell);
     let labels: Vec<String> = commands(&menu.menu).into_iter().map(|c| c.0).collect();
-    for want in ["Original location", "Date deleted", "Show files first", "Refresh"] {
+    for want in ["Original location", "Date deleted", "Show files first", "Refresh", "Empty Recycle Bin", "Restore all items", "Properties"] {
         assert!(labels.iter().any(|l| l == want), "{want} missing from {labels:?}");
     }
-    assert!(!labels.iter().any(|l| l == "Paste" || l == "Properties"), "{labels:?}");
+    assert!(!labels.iter().any(|l| l == "Paste"), "{labels:?}");
 }
 
 #[test]

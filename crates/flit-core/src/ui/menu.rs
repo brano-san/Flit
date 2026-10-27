@@ -383,6 +383,21 @@ impl App {
     fn item_menu(&self, m: &mut Menu) {
         let t = self.tab();
         let Some(v) = &t.view else { return };
+        if t.view_loc.is_recycle_bin() {
+            let shell = self.shell_bin();
+            m.action("bin.restore", S::UiBinRestore.t());
+            m.separator();
+            if shell {
+                m.action("file.cut", S::MenuCut.t());
+                m.separator();
+            }
+            m.action("item.trash", S::MenuDelete.t());
+            if shell {
+                m.separator();
+                m.action("item.properties", S::MenuProperties.t());
+            }
+            return;
+        }
         let count = v.selected_count();
         let folders = self.selected_folders();
         let inside = self.archive_view().is_some();
@@ -500,6 +515,12 @@ impl App {
             self.here_pane_items(m);
         }
         if t.view_loc.is_recycle_bin() {
+            m.action("bin.empty", S::UiBinEmpty.t());
+            m.action("bin.restore_all", S::SidebarRestoreAll.t());
+            if self.shell_bin() {
+                m.separator();
+                m.action("item.properties", S::MenuProperties.t());
+            }
             return;
         }
         if self.archive_view().is_some() {

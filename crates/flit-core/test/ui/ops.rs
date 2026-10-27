@@ -3,7 +3,7 @@ use crate::listing::{ChangeKind, DirChange, DirSnapshot, Listing, Meta};
 use crate::provider::ProviderEvent;
 use crate::sort::{self, CaseMode, SortKeys, ViewSpec};
 use crate::text::tests::Mono;
-use crate::ui::{Drive, Persisted};
+use crate::ui::{Drive, MenuItem, Persisted};
 use std::sync::Arc;
 
 const NO: Mods = Mods { ctrl: false, shift: false, alt: false };
@@ -730,11 +730,15 @@ fn the_recycle_bin_shows_where_items_came_from_and_refuses_ordinary_file_command
     key(&mut app, Key::Enter, NO);
     assert!(app.drain_effects().all(|e| !matches!(e, Effect::Provider { req: ProviderRequest::Open { .. } | ProviderRequest::List { .. }, .. })));
     assert_eq!(app.tab().error.as_deref(), Some("\"report.txt\" is in the Recycle Bin. Restore it to open it."));
-    for (k, m) in [(Key::Char('C'), CTRL), (Key::Char('X'), CTRL), (Key::Enter, ALT), (Key::F(10), SHIFT)] {
-        key(&mut app, k, m);
-        assert!(app.drain_effects().all(|e| !matches!(e, Effect::SetClipboardFiles { .. } | Effect::Properties(_) | Effect::ShellMenu(_))));
-        assert_eq!(app.tab().error.as_deref(), Some(BIN_ONLY.t()));
-    }
+    key(&mut app, Key::Char('C'), CTRL);
+    assert!(app.drain_effects().all(|e| !matches!(e, Effect::SetClipboardFiles { .. })));
+    assert_eq!(app.tab().error.as_deref(), Some(BIN_ONLY.t()));
+    key(&mut app, Key::Char('X'), CTRL);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::SetClipboardFiles { paths, cut: true } if paths == [p(BIN_REPORT.0)])), "a cut hands the recycled item to the shell");
+    key(&mut app, Key::Enter, ALT);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Properties(paths) if paths == [p(BIN_REPORT.0)])), "properties are the shell's sheet for the recycled item");
+    key(&mut app, Key::F(10), SHIFT);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::ShellMenu(m) if !m.shell && !m.menu.is_empty())));
     for (k, m) in [(Key::Char('V'), CTRL), (Key::Char('N'), CTRL_SHIFT)] {
         key(&mut app, k, m);
         assert!(ops(&mut app).is_empty());
@@ -788,6 +792,83 @@ fn delete_in_the_bin_purges_and_the_bin_commands_restore_or_empty() {
     app.run_action("bin.restore", t0());
     assert!(ops(&mut app).is_empty());
     assert_eq!(app.tab().error.as_deref(), Some("Select the items to restore"));
+}
+
+fn menu_rows(items: &[MenuItem]) -> Vec<String> {
+    items
+        .iter()
+        .map(|i| match i {
+            MenuItem::Command { label, .. } => label.clone(),
+            MenuItem::Submenu { label, .. } => format!("{label} >"),
+            MenuItem::Separator => "-".into(),
+        })
+        .collect()
+}
+
+fn run_menu(app: &mut App, items: &[MenuItem], label: &str) {
+    fn flat(items: &[MenuItem], out: &mut Vec<String>) {
+        for i in items {
+            match i {
+                MenuItem::Command { label, .. } => out.push(label.clone()),
+                MenuItem::Submenu { items, .. } => flat(items, out),
+                MenuItem::Separator => {}
+            }
+        }
+    }
+    let mut all = Vec::new();
+    flat(items, &mut all);
+    let k = all.iter().position(|l| l == label).unwrap_or_else(|| panic!("{label} not in {all:?}"));
+    app.on_event(&Event::MenuCommand(k), t0());
+}
+
+#[test]
+fn right_click_in_the_bin_offers_what_explorer_offers_for_one_or_many_items() {
+    let mut app = bin_app();
+    for picked in [&["report.txt"][..], &["report.txt", "old"]] {
+        select(&mut app, picked);
+        let menu = app.build_menu(true);
+        assert_eq!(menu_rows(&menu), ["Restore", "-", "Cut", "-", "Delete", "-", "Properties"], "{picked:?}");
+        let want: Vec<(&str, &str)> = [BIN_REPORT, BIN_OLD].into_iter().filter(|(_, o)| picked.iter().any(|n| o.ends_with(n))).collect();
+        let recycled: Vec<FsPath> = want.iter().map(|(r, _)| p(r)).collect();
+        run_menu(&mut app, &menu, "Restore");
+        assert_eq!(op_list(&mut app), [FileOp::Restore(pairs(&want))]);
+        let menu = app.build_menu(true);
+        run_menu(&mut app, &menu, "Delete");
+        assert_eq!(app.asking(), Some("confirm"), "a permanent delete asks first");
+        assert!(op_list(&mut app).is_empty());
+        key(&mut app, Key::Enter, NO);
+        assert_eq!(op_list(&mut app), [FileOp::Purge(pairs(&want))]);
+        let menu = app.build_menu(true);
+        run_menu(&mut app, &menu, "Cut");
+        assert!(app.drain_effects().any(|e| matches!(&e, Effect::SetClipboardFiles { paths, cut: true } if *paths == recycled)));
+        let menu = app.build_menu(true);
+        run_menu(&mut app, &menu, "Properties");
+        assert!(app.drain_effects().any(|e| matches!(&e, Effect::Properties(paths) if *paths == recycled)));
+        assert!(app.asking().is_none(), "the shell's sheet, not Flit's own dialog");
+    }
+}
+
+#[test]
+fn right_click_on_the_bin_background_empties_restores_sorts_and_shows_properties() {
+    let mut app = bin_app();
+    select(&mut app, &[]);
+    let menu = app.build_menu(false);
+    let rows = menu_rows(&menu);
+    assert_eq!(rows[..4], ["Layout >", "Sort by >", "Group by >", "Refresh"], "{rows:?}");
+    let tail = &rows[rows.len() - 4..];
+    assert_eq!(tail, ["Empty Recycle Bin", "Restore all items", "-", "Properties"], "{rows:?}");
+    let MenuItem::Submenu { items: sorts, .. } = &menu[1] else { panic!() };
+    assert!(menu_rows(sorts).iter().any(|l| l == "Original location"), "{:?}", menu_rows(sorts));
+    run_menu(&mut app, &menu, "Restore all items");
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(op_list(&mut app), [FileOp::Restore(pairs(&[BIN_REPORT, BIN_OLD]))]);
+    let menu = app.build_menu(false);
+    run_menu(&mut app, &menu, "Empty Recycle Bin");
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(op_list(&mut app), [FileOp::EmptyBin]);
+    let menu = app.build_menu(false);
+    run_menu(&mut app, &menu, "Properties");
+    assert!(app.drain_effects().any(|e| matches!(&e, Effect::Properties(paths) if *paths == [FsPath::recycle_bin()])));
 }
 
 #[test]

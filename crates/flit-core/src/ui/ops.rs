@@ -466,6 +466,14 @@ impl App {
         items.filter_map(|i| Some((recycle::recycled(l, i)?, recycle::original(l, i)?))).collect()
     }
 
+    pub(super) fn shell_bin(&self) -> bool {
+        self.in_bin() && !self.caps.unix_paths
+    }
+
+    fn recycled_paths(&self, items: &[u32]) -> Vec<FsPath> {
+        self.bin_pairs(items.iter().copied()).into_iter().map(|(recycled, _)| recycled).collect()
+    }
+
     fn purge_selection(&mut self) {
         let pairs = self.bin_pairs(self.selected_items().into_iter());
         if !pairs.is_empty() {
@@ -543,7 +551,11 @@ impl App {
         if cut && self.archive_view().is_some() {
             return self.status(crate::i18n::S::ErrorsArchiveInside.t());
         }
-        match self.item_paths(&items) {
+        let paths = match cut && self.shell_bin() {
+            true => Ok(self.recycled_paths(&items)),
+            false => self.item_paths(&items),
+        };
+        match paths {
             Ok(paths) => {
                 let t = self.tab();
                 self.ops.cut = t.view.as_ref().filter(|_| cut).map(|v| Cut { dir: t.view_loc.clone(), names: items.iter().map(|&i| v.listing().name(i).to_vec()).collect(), seq: None });
@@ -782,7 +794,12 @@ impl App {
         let t = self.tab();
         let Some(v) = &t.view else { return };
         let items: Vec<u32> = v.selected().collect();
-        let paths = if items.is_empty() {
+        let paths = if self.shell_bin() {
+            match items.is_empty() {
+                true => vec![FsPath::recycle_bin()],
+                false => self.recycled_paths(&items),
+            }
+        } else if items.is_empty() {
             match t.view_loc.to_windows().filter(|p| p.kind() != PathKind::Computer) {
                 Some(p) => vec![p],
                 None => return,
@@ -808,9 +825,6 @@ impl App {
     }
 
     fn shell_menu(&mut self, x: f32, y: f32, on_items: bool, extended: bool) {
-        if self.in_bin() && on_items {
-            return self.status(BIN_ONLY.t());
-        }
         if self.in_bin() || self.archive_view().is_some() {
             let menu = self.build_menu(on_items);
             return self.flit_menu(x, y, menu);
