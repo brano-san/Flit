@@ -20,7 +20,7 @@ const MAX_ITEMS: usize = 48;
 const TIP_DELAY: Duration = Duration::from_millis(500);
 const FLY_W: f32 = 272.0;
 const FLY_ROW: f32 = 30.0;
-const TOGGLES: [S; 4] = [S::ToolbarFlyoutShowHidden, S::ToolbarFlyoutShowExtensions, S::ToolbarFlyoutAdaptive, S::ToolbarFlyoutThumbnails];
+const TOGGLES: [S; 5] = [S::ToolbarFlyoutShowHidden, S::ToolbarFlyoutShowExtensions, S::ToolbarFlyoutAdaptive, S::ToolbarFlyoutThumbnails, S::ToolbarFlyoutFolderSizes];
 const LAYOUT_IDS: [&str; 6] = ["view.layout.details", "view.layout.list", "view.layout.cards", "view.layout.columns", "view.layout.grid", "view.layout.adaptive"];
 
 const G_MORE: &str = "\u{E712}";
@@ -240,7 +240,7 @@ struct Fly {
     rect: Rect,
     rows: [Rect; 6],
     slider: Rect,
-    toggles: [Rect; 4],
+    toggles: [Rect; 5],
 }
 
 struct Tip {
@@ -523,8 +523,11 @@ impl App {
                 let to = if t.mode == LayoutMode::Adaptive { t.look } else { LayoutMode::Adaptive };
                 self.set_layout(to);
             }
-            _ => {
+            3 => {
                 self.run_action("view.thumbnails", now);
+            }
+            _ => {
+                self.run_action("view.auto_sizes", now);
             }
         }
     }
@@ -535,7 +538,8 @@ impl App {
             0 => t.view_spec.show_hidden,
             1 => self.prefs.show_extensions,
             2 => t.mode == LayoutMode::Adaptive,
-            _ => self.prefs.thumbnails,
+            3 => self.prefs.thumbnails,
+            _ => self.prefs.auto_sizes,
         }
     }
 

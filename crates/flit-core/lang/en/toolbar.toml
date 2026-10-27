@@ -38,6 +38,7 @@ show_hidden = "Show hidden items"
 show_extensions = "Show file name extensions"
 adaptive = "Adaptive layout"
 thumbnails = "Show thumbnails"
+folder_sizes = "Show folder sizes"
 
 [pick]
 items = "Choose a toolbar button to move, remove or change it"

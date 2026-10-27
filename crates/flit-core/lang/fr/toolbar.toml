@@ -38,6 +38,7 @@ show_hidden = "Afficher les éléments masqués"
 show_extensions = "Afficher les extensions de noms de fichiers"
 adaptive = "Disposition adaptative"
 thumbnails = "Afficher les miniatures"
+folder_sizes = "Afficher la taille des dossiers"
 
 [pick]
 items = "Choisissez un bouton de la barre d’outils à déplacer, retirer ou modifier"

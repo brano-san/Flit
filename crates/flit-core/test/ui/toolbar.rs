@@ -197,6 +197,57 @@ fn layout_flyout_switches_views_resizes_items_and_toggles_options() {
 }
 
 #[test]
+fn the_status_bar_of_a_folder_has_no_folder_sizes_button() {
+    let app = app_at(r"C:\x", &["a.txt", "sub"]);
+    let s = app.layout.status;
+    assert!(s.h > 0.0);
+    assert_eq!(app.layout.encoding.w, 0.0);
+    let y = s.y + s.h / 2.0;
+    let hits: Vec<Hit> = (0..s.w as i32).step_by(4).map(|x| app.hit(s.x + x as f32, y)).collect();
+    assert!(!hits.iter().any(|h| matches!(h, Hit::Encoding)), "{hits:?}");
+}
+
+#[test]
+fn folder_sizes_is_a_check_item_in_both_layout_menus() {
+    let mut app = app_at(r"C:\x", &["a.txt", "sub"]);
+    let sizes = "Show folder sizes";
+    let layout_items = |app: &mut App| {
+        let menu = app.build_menu(false);
+        let Some(MenuItem::Submenu { items, .. }) = menu.into_iter().find(|i| matches!(i, MenuItem::Submenu { label, .. } if label == "Layout")) else { panic!("no Layout submenu") };
+        items
+    };
+    let checked = |items: &[MenuItem]| items.iter().find_map(|i| match i {
+        MenuItem::Command { label, checked, .. } if label == sizes => Some(*checked),
+        _ => None,
+    });
+    assert_eq!(checked(&layout_items(&mut app)), Some(false));
+    let k = app.menu.iter().position(|c| *c == crate::ui::menu::Cmd::Action("view.auto_sizes")).expect("the item runs view.auto_sizes");
+    app.menu_command(k, Instant::now());
+    assert!(app.prefs.auto_sizes);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: crate::provider::ProviderRequest::DirSizes { .. }, .. })), "turning it on computes the sizes");
+    assert_eq!(checked(&layout_items(&mut app)), Some(true));
+
+    press(&mut app, "menu.layout");
+    frame(&mut app);
+    let k = TOGGLES.iter().position(|s| s.t() == sizes).expect("the flyout lists folder sizes");
+    assert!(app.fly_checked(k));
+    let r = app.toolbar.fly.as_ref().unwrap().toggles[k];
+    assert!(r.h > 0.0);
+    click_at(&mut app, r.x + 20.0, r.y + r.h / 2.0, MouseButton::Left);
+    assert!(!app.prefs.auto_sizes);
+    assert!(!app.fly_checked(k));
+    assert!(app.toolbar.fly.is_some(), "toggles keep the flyout open");
+}
+
+#[test]
+fn calculate_folder_sizes_keeps_its_shortcut_and_palette_command() {
+    let mut app = app_at(r"C:\x", &["a.txt", "sub"]);
+    assert_eq!(app.keymap.first_text("view.sizes").as_deref(), Some("Ctrl+Alt+S"));
+    app.on_event(&Event::Key { key: Key::Char('S'), mods: Mods { ctrl: true, shift: false, alt: true }, pressed: true }, Instant::now());
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: crate::provider::ProviderRequest::DirSizes { .. }, .. })));
+}
+
+#[test]
 fn tooltips_name_the_button_and_its_shortcut_after_a_delay() {
     let mut app = app_at(r"C:\x", &["a.txt"]);
     let r = button(&app, "file.copy");

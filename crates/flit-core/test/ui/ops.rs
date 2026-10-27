@@ -876,7 +876,7 @@ fn the_status_bar_buttons_and_headers_of_the_bin_work_with_the_mouse() {
     let mut app = bin_app();
     select(&mut app, &["old"]);
     let buttons = app.layout.bin;
-    assert!(buttons.iter().all(|r| r.w > 0.0) && app.layout.sizes.w == 0.0);
+    assert!(buttons.iter().all(|r| r.w > 0.0) && app.layout.encoding.w == 0.0);
     for (k, want) in [(0, FileOp::Restore(pairs(&[BIN_OLD]))), (1, FileOp::Restore(pairs(&[BIN_REPORT, BIN_OLD]))), (2, FileOp::EmptyBin)] {
         let at = (buttons[k].x + 4.0, buttons[k].y + 4.0);
         press(&mut app, at, MouseButton::Left, NO);

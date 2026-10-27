@@ -431,18 +431,18 @@ fn the_context_menu_offers_extract_and_compress_by_selection() {
 fn the_status_bar_picks_the_encoding_of_zip_names_and_reloads_the_view() {
     let mut app = app_at(r"C:\enc\old.zip");
     deliver(&mut app, &[("readme.txt", PACKED)]);
-    assert_eq!(app.sizes_label(), "Names: Automatic");
-    app.sizes_button();
+    assert_eq!(app.encoding_label(), "Names: Automatic");
+    app.pick_encoding();
     assert!(app.nav.palette.as_ref().is_some_and(|pal| pal.pick == Pick::Encoding(p(r"C:\enc\old.zip"))));
     let k = 1 + Encoding::ALL.iter().position(|&e| e == Encoding::Cp866).unwrap();
     let row = app.nav.palette.as_ref().unwrap().matches.iter().position(|&m| m == k).unwrap();
     app.run_palette_item(row, t0());
     assert_eq!(archive::chosen_encoding(&p(r"C:\enc\old.zip")), Some(Encoding::Cp866));
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::List { .. }, .. })));
-    assert_eq!(app.sizes_label(), "Names: CP866");
+    assert_eq!(app.encoding_label(), "Names: CP866");
     let mut seven = app_at(r"C:\enc\new.7z");
     deliver(&mut seven, &[("readme.txt", PACKED)]);
-    assert_eq!(seven.sizes_label(), "");
+    assert_eq!(seven.encoding_label(), "");
 }
 
 #[test]

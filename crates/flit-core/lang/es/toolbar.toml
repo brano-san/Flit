@@ -38,6 +38,7 @@ show_hidden = "Mostrar elementos ocultos"
 show_extensions = "Mostrar extensiones de nombre de archivo"
 adaptive = "Diseño adaptable"
 thumbnails = "Mostrar miniaturas"
+folder_sizes = "Mostrar el tamaño de las carpetas"
 
 [pick]
 items = "Elige un botón de la barra de herramientas para moverlo, quitarlo o cambiarlo"

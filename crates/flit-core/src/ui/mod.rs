@@ -371,7 +371,7 @@ enum Hit {
     ListEmpty,
     Track,
     Thumb,
-    Sizes,
+    Encoding,
     Branch,
     Bin(usize),
     Side(usize),
@@ -445,7 +445,7 @@ struct Layout {
     track: Rect,
     thumb: Rect,
     status: Rect,
-    sizes: Rect,
+    encoding: Rect,
     branch: Rect,
     bin: [Rect; 3],
     crumbs: Vec<Rect>,
@@ -1187,7 +1187,7 @@ impl App {
         let status_h = if status_bar { s(STATUS_H) } else { 0.0 };
         l.status = Rect::new(0.0, h - status_h, w, status_h);
         if !status_bar {
-            l.sizes = Rect::default();
+            l.encoding = Rect::default();
             l.bin = Default::default();
         }
         self.layout_preview();
@@ -1321,8 +1321,8 @@ impl App {
         if l.list.contains(x, y) {
             return self.list_hit(x, y);
         }
-        if l.sizes.contains(x, y) {
-            return Hit::Sizes;
+        if l.encoding.contains(x, y) {
+            return Hit::Encoding;
         }
         if l.branch.contains(x, y) {
             return Hit::Branch;
@@ -1639,7 +1639,7 @@ impl App {
             }
             Hit::Group(g) => self.toggle_group(g),
             Hit::Pane(i, Some(row)) => self.open_pane_row(i, row, now),
-            Hit::Sizes => self.sizes_button(),
+            Hit::Encoding => self.pick_encoding(),
             Hit::Branch => self.git_branches_menu(),
             Hit::Preview(p) => self.preview_click(p),
             Hit::Bin(k) => self.bin_button(k),
@@ -2364,10 +2364,10 @@ impl App {
             crate::tr_into!(&mut right, S::UiStatusTiming, first = a, all = b);
         }
         let in_bin = tab.view_loc.is_recycle_bin();
-        let sizes = self.sizes_label();
-        let sizes = [sizes.as_str()];
+        let encoding = self.encoding_label();
+        let encoding = [encoding.as_str()];
         let bin = BIN_BUTTONS.map(S::t);
-        let labels: &[&str] = if in_bin { &bin } else if sizes[0].is_empty() { &[] } else { &sizes };
+        let labels: &[&str] = if in_bin { &bin } else if encoding[0].is_empty() { &[] } else { &encoding };
         let mut buttons = [Rect::default(); 3];
         let mut x = r.right() - pad;
         for (k, label) in labels.iter().enumerate().rev() {
@@ -2375,13 +2375,13 @@ impl App {
             x -= w;
             let br = Rect::new(x, r.y + self.s(2.0), w, r.h - self.s(4.0));
             buttons[k] = br;
-            if self.hover == if in_bin { Hit::Bin(k) } else { Hit::Sizes } {
+            if self.hover == if in_bin { Hit::Bin(k) } else { Hit::Encoding } {
                 g.dl.round_rect(br, t.button_hover, self.s(3.0));
             }
             g.text(br.x + self.s(8.0), baseline, label, font, t.text_dim, f32::INFINITY);
             x -= self.s(4.0);
         }
-        self.layout.sizes = if in_bin { Rect::default() } else { buttons[0] };
+        self.layout.encoding = if in_bin { Rect::default() } else { buttons[0] };
         self.layout.bin = if in_bin { buttons } else { Default::default() };
         self.layout.branch = Rect::default();
         if let Some(branch) = self.git_branch().filter(|b| !b.is_empty() && !in_bin) {

@@ -289,6 +289,7 @@ impl App {
         m.action("view.size.smaller", S::MenuSmallerItems.t());
         m.separator();
         m.check("view.thumbnails", S::MenuShowThumbnails.t(), self.prefs.thumbnails);
+        m.check("view.auto_sizes", S::ToolbarFlyoutFolderSizes.t(), self.prefs.auto_sizes);
     }
 
     fn sort_entries(&self, m: &mut Menu) {
@@ -526,7 +527,7 @@ impl App {
         if self.archive_view().is_some() {
             m.action("file.paste", S::MenuPaste.t());
             m.action("archive.extract", S::MenuExtractAll.t());
-            if !self.sizes_label().is_empty() {
+            if !self.encoding_label().is_empty() {
                 m.action("archive.encoding", S::MenuEncodingOfNames.t());
             }
             m.action("item.copy_path", S::MenuCopyPath.t());

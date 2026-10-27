@@ -38,6 +38,7 @@ show_hidden = "Ausgeblendete Elemente anzeigen"
 show_extensions = "Dateinamenerweiterungen anzeigen"
 adaptive = "Adaptives Layout"
 thumbnails = "Miniaturansichten anzeigen"
+folder_sizes = "Ordnergrößen anzeigen"
 
 [pick]
 items = "Wählen Sie eine Schaltfläche der Symbolleiste zum Verschieben, Entfernen oder Ändern"

@@ -38,6 +38,7 @@ show_hidden = "显示隐藏的项目"
 show_extensions = "显示文件扩展名"
 adaptive = "自适应布局"
 thumbnails = "显示缩略图"
+folder_sizes = "显示文件夹大小"
 
 [pick]
 items = "选择要移动、删除或更改的工具栏按钮"

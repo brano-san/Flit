@@ -500,19 +500,10 @@ impl App {
         }
     }
 
-    pub(super) fn sizes_label(&self) -> String {
+    pub(super) fn encoding_label(&self) -> String {
         match self.archive_view() {
-            None => S::ToolbarButtonFolderSizes.t().to_owned(),
             Some((a, _)) if matches!(archive::format_of(a.file_name()), Some(Format::Zip | Format::Tar | Format::TarGz)) => names_label(&a),
-            Some(_) => String::new(),
-        }
-    }
-
-    pub(super) fn sizes_button(&mut self) {
-        if self.archive_view().is_some() {
-            self.pick_encoding();
-        } else {
-            self.compute_dir_sizes();
+            _ => String::new(),
         }
     }
 

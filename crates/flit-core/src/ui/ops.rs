@@ -1333,7 +1333,7 @@ impl App {
             Hit::Side(i) | Hit::SidePin(i) if self.nav.sidebar.recent_file(i).is_none() => into(&self.nav.sidebar.items.get(i)?.loc, Spot::Side(i)),
             Hit::Side(_) | Hit::SidePin(_) => None,
             Hit::NewTab => Some(Target::NewTab),
-            Hit::Header(_) | Hit::ColSep(_) | Hit::Sizes | Hit::Bin(_) => None,
+            Hit::Header(_) | Hit::ColSep(_) | Hit::Encoding | Hit::Bin(_) => None,
             Hit::SideHeader(Section::Pinned) => Some(Target::Pin),
             Hit::SideHeader(_) | Hit::HomeItem(_) | Hit::HomeEmpty | Hit::HomeButton => None,
             Hit::SideEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose | Hit::PaneSplit => None,
