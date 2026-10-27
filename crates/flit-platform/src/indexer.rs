@@ -191,19 +191,30 @@ fn run<S: IndexSource>(mut source: S, owner: Arc<SharedIndex>, snapshots: Option
     let mut dirty = vec![false; volumes.len()];
     let mut saved_at: Vec<Option<Instant>> = vec![None; volumes.len()];
     if let Some(dir) = &snapshots {
-        for (k, info) in volumes.iter().enumerate() {
-            let Some((v, cp)) = load_snapshot(dir, &info.id, &source.snapshot_key(&info.id)) else { continue };
-            let files = v.live() as u64;
-            {
-                let mut e = shared.write();
-                if let Some(slot) = e.volume_mut(&info.id) {
-                    *slot = v;
-                }
-                e.version += 1;
-            }
-            shared.set_volume(VolumeInfo { files, state: VolumeState::Ready, ..info.clone() });
-            points[k] = Some(cp);
-        }
+        let keys: Vec<String> = volumes.iter().map(|info| source.snapshot_key(&info.id)).collect();
+        let loaded: Vec<Option<Checkpoint>> = std::thread::scope(|s| {
+            let loads: Vec<_> = volumes
+                .iter()
+                .zip(&keys)
+                .map(|(info, key)| {
+                    s.spawn(move || {
+                        let (v, cp) = load_snapshot(dir, &info.id, key)?;
+                        let files = v.live() as u64;
+                        {
+                            let mut e = shared.write();
+                            if let Some(slot) = e.volume_mut(&info.id) {
+                                *slot = v;
+                            }
+                            e.version += 1;
+                        }
+                        shared.set_volume(VolumeInfo { files, state: VolumeState::Ready, ..info.clone() });
+                        Some(cp)
+                    })
+                })
+                .collect();
+            loads.into_iter().map(|h| h.join().ok().flatten()).collect()
+        });
+        points = loaded;
     }
     while Arc::strong_count(&owner) > 1 {
         for (k, info) in volumes.iter().enumerate() {

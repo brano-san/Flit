@@ -170,6 +170,24 @@ impl VolumeIndex {
         self.rank_of(order);
     }
 
+    pub fn reserve(&mut self, records: usize, name_bytes: usize) {
+        let ids = &self.ids;
+        self.by_id.reserve(records, |&j| hash::hash(&ids[j as usize]));
+        self.ids.reserve(records);
+        self.parents.reserve(records);
+        self.name_off.reserve(records);
+        self.name_len.reserve(records);
+        self.lower.reserve(name_bytes + records);
+        self.lower_off.reserve(records);
+        self.lower_len.reserve(records);
+        self.seg_start.reserve(records);
+        self.seg_entry.reserve(records);
+        self.sizes.reserve(records);
+        self.modified.reserve(records);
+        self.attrs.reserve(records);
+        self.changed.reserve(records);
+    }
+
     pub fn shrink(&mut self) {
         let ids = &self.ids;
         self.by_id.shrink_to_fit(|&j| hash::hash(&ids[j as usize]));
@@ -266,11 +284,6 @@ impl VolumeIndex {
             self.changed_bits[w] |= 1 << b;
             self.changed.push(i);
         }
-    }
-
-    #[inline]
-    fn is_changed(&self, i: u32) -> bool {
-        self.changed_bits.get(i as usize / 64).is_some_and(|w| w & (1 << (i % 64)) != 0)
     }
 
     fn put_name(&mut self, i: usize, name: &[u8]) {
@@ -425,27 +438,54 @@ impl VolumeIndex {
         }
     }
 
-    fn merge_into(&mut self, order: Order, fresh: &[u32]) {
-        let old = std::mem::take(&mut self.perms[order as usize]);
-        let mut out = Vec::with_capacity(old.len() + fresh.len());
-        let mut f = fresh.iter().copied().peekable();
-        for i in old {
-            if self.is_changed(i) || !self.listed(i) {
-                continue;
+    fn merge_into(&mut self, order: Order, fresh: &[u32]) -> usize {
+        let o = order as usize;
+        let old = std::mem::take(&mut self.perms[o]);
+        let ranks = &mut self.ranks[o];
+        let mut dropped: Vec<usize> = Vec::with_capacity(self.changed.len());
+        for &i in &self.changed {
+            if let Some(r) = ranks.get_mut(i as usize).filter(|r| **r != NONE) {
+                dropped.push(*r as usize);
+                *r = NONE;
             }
-            while let Some(j) = f.next_if(|&j| self.before(order, j, i)) {
-                out.push(j);
-            }
-            out.push(i);
         }
-        out.extend(f);
-        self.perms[order as usize] = out;
+        dropped.sort_unstable();
+        let mut kept = Vec::with_capacity(old.len());
+        let mut at = 0;
+        for &d in &dropped {
+            kept.extend_from_slice(&old[at..d]);
+            at = d + 1;
+        }
+        kept.extend_from_slice(&old[at..]);
+        drop(old);
+        let mut first = dropped.first().copied().unwrap_or(usize::MAX);
+        let mut out = Vec::with_capacity(kept.len() + fresh.len());
+        let mut at = 0;
+        for &j in fresh {
+            let p = at + kept[at..].partition_point(|&i| self.before(order, i, j));
+            out.extend_from_slice(&kept[at..p]);
+            first = first.min(out.len());
+            out.push(j);
+            at = p;
+        }
+        out.extend_from_slice(&kept[at..]);
+        self.perms[o] = out;
+        first
     }
 
     fn before(&self, order: Order, a: u32, b: u32) -> bool {
         match order {
             Order::Name => self.cmp_name(a, b) == Ordering::Less,
             _ => self.key(order, a) < self.key(order, b),
+        }
+    }
+
+    fn rank_from(&mut self, order: Order, from: usize) {
+        let n = self.len();
+        let (perm, r) = (&self.perms[order as usize], &mut self.ranks[order as usize]);
+        r.resize(n, NONE);
+        for (pos, &i) in perm.iter().enumerate().skip(from) {
+            r[i as usize] = pos as u32;
         }
     }
 
@@ -519,17 +559,18 @@ impl VolumeIndex {
         }
         let mut fresh: Vec<u32> = self.changed.iter().copied().filter(|&i| self.listed(i)).collect();
         fresh.par_sort_unstable_by(|&a, &b| self.cmp_name(a, b));
-        self.merge_into(Order::Name, &fresh);
-        self.rank_of(Order::Name);
+        let from = self.merge_into(Order::Name, &fresh);
+        self.rank_from(Order::Name, from);
         let lazy: Vec<Order> = [Order::Size, Order::Modified].into_iter().filter(|&o| self.has_order(o)).collect();
         for order in lazy {
             fresh.par_sort_unstable_by_key(|&i| self.key(order, i));
-            self.merge_into(order, &fresh);
-            self.rank_of(order);
+            let from = self.merge_into(order, &fresh);
+            self.rank_from(order, from);
         }
         if self.has_order(Order::Path) {
-            self.perms[Order::Path as usize] = self.path_perm();
-            self.rank_of(Order::Path);
+            self.built &= !(1 << Order::Path as u8);
+            self.perms[Order::Path as usize] = Vec::new();
+            self.ranks[Order::Path as usize] = Vec::new();
         }
         for &i in &self.changed {
             self.changed_bits[i as usize / 64] = 0;

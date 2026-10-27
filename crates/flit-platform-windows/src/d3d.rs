@@ -137,7 +137,7 @@ fn create_device(driver: D3D_DRIVER_TYPE) -> windows::core::Result<(ID3D11Device
             None,
             driver,
             HMODULE::default(),
-            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS,
             Some(&levels),
             D3D11_SDK_VERSION,
             Some(&mut device),

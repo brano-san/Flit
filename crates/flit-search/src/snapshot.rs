@@ -2,11 +2,32 @@ use crate::index::{Checkpoint, IndexRecord, IndexSink, VolumeIndex, KEPT_ATTRS};
 use flit_core::attr;
 
 const MAGIC: &[u8; 8] = b"FLITIDX\0";
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const RECORD_FIXED: usize = 8 + 8 + 8 + 8 + 4 + 2;
 
 fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3))
+}
+
+fn words(bytes: &[u8]) -> u64 {
+    const K: u64 = 0x9e37_79b9_7f4a_7c15;
+    let mut lanes = [K, K ^ 1, K ^ 2, K ^ 3];
+    let mut blocks = bytes.chunks_exact(32);
+    for b in &mut blocks {
+        for (k, lane) in lanes.iter_mut().enumerate() {
+            let w = u64::from_le_bytes(b[k * 8..k * 8 + 8].try_into().unwrap());
+            *lane = (*lane ^ w).wrapping_mul(K).rotate_left(29);
+        }
+    }
+    lanes.iter().fold(fnv1a(blocks.remainder()) ^ bytes.len() as u64, |h, &l| (h ^ l).wrapping_mul(K).rotate_left(29))
+}
+
+fn checksum(version: u32, body: &[u8]) -> u64 {
+    if version == 1 {
+        fnv1a(body)
+    } else {
+        words(body)
+    }
 }
 
 pub fn file_name(volume: &str) -> String {
@@ -39,7 +60,7 @@ pub fn save(v: &VolumeIndex, cp: Checkpoint, out: &mut Vec<u8>) {
         out.extend_from_slice(&(v.attrs[k] & KEPT_ATTRS).to_le_bytes());
         put_bytes(out, v.name(i));
     }
-    let sum = fnv1a(out);
+    let sum = checksum(VERSION, out);
     out.extend_from_slice(&sum.to_le_bytes());
 }
 
@@ -78,13 +99,13 @@ pub fn load(bytes: &[u8]) -> Result<(VolumeIndex, Checkpoint), String> {
     if body.get(..8) != Some(MAGIC) {
         return Err("not a Flit index snapshot".into());
     }
-    if u64::from_le_bytes(sum.try_into().unwrap()) != fnv1a(body) {
-        return Err("the snapshot checksum does not match".into());
-    }
     let mut r = Reader { buf: body, at: 8 };
     let version = r.u32()?;
-    if version != VERSION {
+    if version != VERSION && version != 1 {
         return Err(format!("snapshot version {version} is not supported"));
+    }
+    if u64::from_le_bytes(sum.try_into().unwrap()) != checksum(version, body) {
+        return Err("the snapshot checksum does not match".into());
     }
     let cp = Checkpoint { journal: r.u64()?, next: r.u64()? as i64 };
     let id = String::from_utf8(r.bytes()?.to_vec()).map_err(|_| "the snapshot volume id is not UTF-8")?;
@@ -95,6 +116,7 @@ pub fn load(bytes: &[u8]) -> Result<(VolumeIndex, Checkpoint), String> {
         return Err("the snapshot record count is impossible".into());
     }
     let mut v = VolumeIndex::new(&id, &root, sep);
+    v.reserve(count as usize, body.len().saturating_sub(r.at + count as usize * RECORD_FIXED));
     for _ in 0..count {
         let (id, parent, size, modified, attrs) = (r.u64()?, r.u64()?, r.u64()?, r.u64()? as i64, r.u32()? & KEPT_ATTRS);
         let name = r.bytes()?;

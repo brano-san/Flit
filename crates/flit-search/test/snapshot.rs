@@ -66,7 +66,22 @@ fn damaged_snapshots_are_refused() {
     put_bytes(&mut lying, br"C:\");
     lying.push(b'\\');
     lying.extend_from_slice(&u64::MAX.to_le_bytes());
-    let sum = fnv1a(&lying);
+    let sum = checksum(VERSION, &lying);
     lying.extend_from_slice(&sum.to_le_bytes());
     assert!(load(&lying).err().unwrap().contains("impossible"));
+}
+
+#[test]
+fn version_one_snapshots_with_the_old_checksum_still_load() {
+    let mut buf = Vec::new();
+    save(&sample(), Checkpoint { journal: 7, next: 9 }, &mut buf);
+    let mut old = buf[..buf.len() - 8].to_vec();
+    old[8..12].copy_from_slice(&1u32.to_le_bytes());
+    let sum = fnv1a(&old);
+    old.extend_from_slice(&sum.to_le_bytes());
+    let (v, cp) = load(&old).unwrap();
+    assert_eq!(cp, Checkpoint { journal: 7, next: 9 });
+    assert_eq!(rows(&v), rows(&load(&buf).unwrap().0));
+    old[20] ^= 1;
+    assert!(load(&old).err().unwrap().contains("checksum"));
 }

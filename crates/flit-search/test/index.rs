@@ -195,3 +195,30 @@ fn names_already_in_lower_case_are_kept_once() {
     v.commit();
     assert_eq!(named(&v, 6), b"Readme.md");
 }
+
+#[test]
+#[cfg_attr(debug_assertions, ignore)]
+fn a_single_change_commits_without_touching_every_record() {
+    let mut v = volume();
+    for d in 0..1000u64 {
+        v.upsert(&rec(10 + d, 5, &format!("Folder {d}"), true));
+    }
+    for i in 0..1_000_000u64 {
+        let name = format!("file-{}-{}.txt", i % 7919, i);
+        v.upsert(&IndexRecord { id: 100_000 + i, parent: 10 + i % 1000, name: name.as_bytes(), size: i % 5000, modified: (i % 977) as i64, attrs: 0 });
+    }
+    v.commit();
+    for order in [Order::Size, Order::Modified, Order::Path] {
+        v.build_order(order);
+    }
+    let mut times: Vec<f64> = (0..7u64)
+        .map(|k| {
+            v.upsert(&IndexRecord { id: 10_000_000 + k, parent: 10 + k, name: b"Fresh.txt", size: 1, modified: 1, attrs: 0 });
+            let t = std::time::Instant::now();
+            v.commit();
+            t.elapsed().as_secs_f64() * 1000.0
+        })
+        .collect();
+    times.sort_by(f64::total_cmp);
+    assert!(times[3] < 8.0, "one new file took {:.1} ms to commit into 1M records", times[3]);
+}
