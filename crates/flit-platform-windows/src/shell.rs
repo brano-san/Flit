@@ -353,7 +353,7 @@ pub(crate) fn commands(launch: &Launch, terminal: Option<&str>) -> Vec<Command> 
                 })
                 .collect(),
         },
-        Launch::Eject(_) | Launch::Mount(_) | Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) => Vec::new(),
+        Launch::Eject(_) | Launch::Mount(_) | Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) | Launch::Reveal { .. } => Vec::new(),
     }
 }
 

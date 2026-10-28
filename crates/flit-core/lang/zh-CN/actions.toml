@@ -343,3 +343,5 @@
 "item.quick_view" = "快速查看"
 "preview.play" = "播放或暂停预览的媒体"
 "status.select_folders" = "选择要打开的文件夹"
+"status.select_item" = "请先选择一个项目。"
+"status.no_real_path" = "此项目在磁盘上没有实际位置。"

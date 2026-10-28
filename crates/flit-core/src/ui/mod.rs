@@ -34,6 +34,7 @@ mod address;
 mod goto;
 mod quick;
 mod tabbar;
+mod dock;
 mod tags;
 mod panels;
 mod describe;
@@ -401,6 +402,7 @@ impl Default for Persisted {
 pub struct LoadStats {
     pub first: Option<Duration>,
     pub done: Option<Duration>,
+    pub op: Option<Duration>,
     pub entries: usize,
 }
 
@@ -607,6 +609,7 @@ pub struct App {
     kb: usize,
     a11y_targets: Vec<(u64, Hit)>,
     mods: Mods,
+    docking: Option<dock::Docking>,
     hover: Hit,
     pressed: Hit,
     drag: Drag,
@@ -717,6 +720,7 @@ impl App {
             kb: 0,
             a11y_targets: Vec::new(),
             mods: Mods::default(),
+            docking: None,
             hover: Hit::None,
             pressed: Hit::None,
             drag: Drag::None,
@@ -1140,6 +1144,11 @@ impl App {
                     self.navigate(Location::from_local(path), now);
                 }
             }
+            ProviderEvent::Reveal { tab, path, new_tab } => {
+                if self.tab().id == tab {
+                    self.reveal_path(Location::from_local(path), new_tab, now);
+                }
+            }
             ProviderEvent::Hashed { id, result, .. } => self.hashed(id, result.map_err(|e| crate::i18n::localize(&e).into_owned())),
             ProviderEvent::Measured { id, totals, file_system, done, .. } => {
                 if !self.quick_measured(id, totals, done) {
@@ -1215,7 +1224,7 @@ impl App {
         if self.search.active {
             return self.search_paste(text);
         }
-        if self.ops_paste(text) {
+        if self.ops_paste(text) || self.inspector_insert(text.lines().next().unwrap_or("")) {
             return;
         }
         self.nav_insert(text.lines().next().unwrap_or(""));
@@ -1703,6 +1712,11 @@ impl App {
         if let Drag::Tab { torn: true, .. } = was {
             return self.tear_off(x, y);
         }
+        if let (Drag::Tab { .. }, Some(d)) = (was, self.docking.take()) {
+            if let Some(z) = d.hot.and_then(|k| d.zones.get(k)) {
+                return self.dock_tab(z.dock, self.mods.ctrl, now);
+            }
+        }
         if self.toolbar_mouse_up(x, y, button) || button != MouseButton::Left || was != Drag::None {
             return;
         }
@@ -1837,7 +1851,7 @@ impl App {
 
     fn key(&mut self, key: Key, m: Mods, now: Instant) {
         self.dirty = true;
-        if self.toolbar_key(key) || self.jobs_key(key, m) || self.settings_key(key, m) || self.ops_key(key, m) || self.strip_key(key) {
+        if self.toolbar_key(key) || self.jobs_key(key, m) || self.settings_key(key, m) || self.ops_key(key, m) || self.strip_key(key) || self.inspector_key(key, m) {
             return;
         }
         if self.focus_key(key, m, now) {
@@ -1858,7 +1872,7 @@ impl App {
             return;
         }
         self.dirty = true;
-        if self.form_insert(c.encode_utf8(&mut [0; 4])) || self.jobs.modal() || self.settings_insert(c.encode_utf8(&mut [0; 4])) || self.ops_char(c) {
+        if self.form_insert(c.encode_utf8(&mut [0; 4])) || self.jobs.modal() || self.settings_insert(c.encode_utf8(&mut [0; 4])) || self.ops_char(c) || self.inspector_insert(c.encode_utf8(&mut [0; 4])) {
             return;
         }
         if self.nav_insert(c.encode_utf8(&mut [0; 4])) {
@@ -1947,6 +1961,7 @@ impl App {
             if !self.search.active {
                 self.draw_palette(g, th);
             }
+            self.draw_tab_dock(g, th);
             self.draw_jobs(g, th);
             self.draw_confirm(g, th);
             self.draw_own_menu(g, th);
@@ -1995,7 +2010,10 @@ impl App {
         for (i, &(r, c)) in l.tabs.iter().enumerate().filter(|(_, (r, _))| r.w > 0.0) {
             let active = i == self.cur;
             let hovered = matches!(self.hover, Hit::Tab(k) | Hit::TabClose(k) if k == i);
-            if active {
+            let accented = self.menu_open_from(Hit::Tab(i)) || (active && self.docking.is_some());
+            if accented {
+                g.dl.round_rect(r.inset(0.0, self.s(2.0)), t.accent, self.s(6.0));
+            } else if active {
                 g.dl.round_rect(Rect::new(r.x, r.y, r.w, r.h + self.s(8.0)), t.bg, self.s(6.0));
             } else if hovered {
                 g.dl.round_rect(r.inset(0.0, self.s(2.0)), t.button_hover, self.s(6.0));
@@ -2008,16 +2026,16 @@ impl App {
             let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
             let label = self.tabs[i].title();
             let torn = active && matches!(self.drag, Drag::Tab { torn: true, .. });
-            let color = if torn { t.text_dim.alpha(0x60) } else if active { t.text } else { t.text_dim };
+            let color = if accented { theme::ink_on(t.accent) } else if torn { t.text_dim.alpha(0x60) } else if active { t.text } else { t.text_dim };
             let icon = Rect::new(r.x + self.s(10.0), r.y + (r.h - self.s(16.0)) / 2.0, self.s(16.0), self.s(16.0));
             let loc = self.tabs[i].location();
             if !self.system_icon(g, sidebar::folder_icon(loc, &self.nav.sidebar, icon.w as u32), icon, icon.w, if torn { 0x60 } else { 0xFF }, &mut requests) {
-                centered(g, icon, tabbar::tab_glyph(loc), self.icon_font(12.0), if torn { color } else { t.accent.alpha(0xC0) });
+                centered(g, icon, tabbar::tab_glyph(loc), self.icon_font(12.0), if torn || accented { color } else { t.accent.alpha(0xC0) });
             }
             g.text(icon.right() + self.s(6.0), baseline, &label, font, color, c.x - icon.right() - self.s(10.0));
             if active || hovered {
                 let state = widgets::Button::of(self.hover == Hit::TabClose(i), false, true);
-                widgets::Paint::new(g, t, self.scale).icon_button(c, G_CLOSE, close_font, state, t.text_dim);
+                widgets::Paint::new(g, t, self.scale).icon_button(c, G_CLOSE, close_font, state, if accented { color } else { t.text_dim });
             }
         }
         let mut w = widgets::Paint::new(g, t, self.scale);
@@ -2043,17 +2061,22 @@ impl App {
             self.draw_list(g, arena, files);
             self.draw_panes(g, files);
             if active {
-                self.draw_preview(g, palette.area(Area::Pane));
                 self.draw_marquee(g, files);
                 self.draw_ops(g, files);
             }
             self.draw_header(g, files);
+            if active {
+                self.draw_preview(g, palette.area(Area::Pane));
+            }
         }
         self.draw_title(g, th);
         self.draw_toolbar(g, palette.area(Area::Toolbar));
         self.draw_toolbar_row(g, palette.area(Area::Toolbar));
         if active && self.layout.status.h > 0.0 {
             self.draw_status(g, arena, th);
+        }
+        if active {
+            self.draw_drop_panel(g, files);
         }
     }
 
@@ -2115,10 +2138,16 @@ impl App {
             Some(palette::Pick::Crumb(i)) => Some(*i),
             _ => None,
         };
+        let skip = self.compact_skip(&tab.crumbs);
+        let marked = |i: usize| if tab.subfolders && i + 1 == real { tab::SUBFOLDERS_MARK } else { "" };
         let mark_w = g.measure(sidebar::G_EXPANDED, chevron) + gap;
-        let widths: Vec<f32> = crumbs.iter().enumerate().map(|(i, (label, _))| g.measure(label, font) + 2.0 * gap + if open == Some(i) { mark_w } else { 0.0 }).collect();
+        let widths: Vec<f32> = crumbs
+            .iter()
+            .enumerate()
+            .map(|(i, (label, _))| if i < skip { 0.0 } else { g.measure(label, font) + g.measure(marked(i), font) + 2.0 * gap + if open == Some(i) { mark_w } else { 0.0 } })
+            .collect();
         let n = widths.len();
-        let span = |end: usize| widths[..end].iter().sum::<f32>() + chev_w * end.saturating_sub(1) as f32;
+        let span = |end: usize| widths[..end].iter().sum::<f32>() + chev_w * end.saturating_sub(1 + skip) as f32;
         let (all, upto) = (span(n), span(real));
         let arrow_w = self.s(18.0);
         let over = all > area.w;
@@ -2133,7 +2162,7 @@ impl App {
         self.layout.crumb_arrows = if over { [Rect::new(area.x, area.y + s3, arrow_w, area.h - s6), Rect::new(area.x + arrow_w, area.y + s3, arrow_w, area.h - s6)] } else { [Rect::default(); 2] };
         let mut rects = vec![Rect::default(); n];
         g.dl.set_clip(Some(view));
-        for i in 0..n {
+        for i in skip..n {
             let w = widths[i];
             let cr = Rect::new(x, area.y + s3, w, area.h - s6);
             if cr.right() > view.x && cr.x < view.right() {
@@ -2155,7 +2184,10 @@ impl App {
                 _ if i >= real => t.text_dim.alpha(0x80),
                 _ => t.text_dim,
             };
-            g.text(x + gap, baseline, &crumbs[i].0, font, ink, f32::INFINITY);
+            let label_w = g.text(x + gap, baseline, &crumbs[i].0, font, ink, f32::INFINITY);
+            if !marked(i).is_empty() {
+                g.text(x + gap + label_w, baseline, marked(i), font, t.text_dim, f32::INFINITY);
+            }
             if lit {
                 g.text(x + w - mark_w, baseline - s1, sidebar::G_EXPANDED, chevron, ink, f32::INFINITY);
             }
@@ -2173,6 +2205,11 @@ impl App {
                 w.icon_button(self.layout.crumb_arrows[k], glyph, chevron, widgets::Button::of(self.hover == Hit::CrumbScroll(k == 1), false, on), t.text_dim);
             }
         }
+    }
+
+    fn compact_skip(&self, crumbs: &[(String, Location)]) -> usize {
+        let home = self.known_folder(sidebar::KnownFolder::Home).filter(|_| self.opts.compact_paths);
+        home.and_then(|h| crumbs.iter().position(|(_, l)| *l == h)).unwrap_or(0)
     }
 
     pub(super) fn crumb_rect(&self, i: usize) -> Option<Rect> {

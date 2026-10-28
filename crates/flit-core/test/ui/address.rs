@@ -575,3 +575,21 @@ fn goto_opened_before_quick_access_loads_shows_the_late_groups() {
     assert!(go(&app).lines.contains(&GoLine::Header(Section::Bookmarks)));
     assert_eq!(app.nav.palette.as_ref().unwrap().first, 0);
 }
+
+#[test]
+fn compact_paths_start_at_the_home_folder_and_subfolders_mark_the_last_crumb() {
+    let mut app = app_at(r"C:\Users\brano\Downloads\1");
+    let mut places = (*app.nav.sidebar.places).clone();
+    places.folders = vec![(KnownFolder::Home, loc(r"C:\Users\brano"))];
+    app.set_places(Arc::new(places));
+    app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    let shown = |app: &App| app.layout.crumbs.iter().map(|r| r.w > 0.0).collect::<Vec<_>>();
+    assert_eq!(shown(&app), [false, false, false, true, true, true], "brano › Downloads › 1");
+    app.set_compact_paths(false);
+    app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    assert_eq!(shown(&app), [true; 6]);
+    let before = app.layout.crumbs[5].w;
+    app.tabs[app.cur].subfolders = true;
+    app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    assert!(app.layout.crumbs[5].w > before, "the last crumb carries [...]");
+}

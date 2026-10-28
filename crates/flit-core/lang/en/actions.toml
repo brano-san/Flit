@@ -343,3 +343,5 @@
 "item.quick_view" = "Quick view"
 "preview.play" = "Play or pause the previewed media"
 "status.select_folders" = "Select the folders to open"
+"status.select_item" = "Select an item first."
+"status.no_real_path" = "This item has no real location on disk."

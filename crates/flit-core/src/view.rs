@@ -661,6 +661,10 @@ impl DirView {
         self.prune();
     }
 
+    pub fn filter_needle(&self) -> Option<&str> {
+        self.filter.as_ref().and_then(NameFilter::needle)
+    }
+
     pub fn set_filter(&mut self, text: &str) {
         let prev = self.filter.take();
         self.filter = NameFilter::new(text);

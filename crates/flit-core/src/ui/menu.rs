@@ -342,25 +342,24 @@ impl App {
     pub(super) fn build_tab_menu(&mut self) -> Vec<MenuItem> {
         self.collect(|a, m| {
             let (n, cur) = (a.tabs.len(), a.cur);
-            m.action("tab.new", S::MenuNewTab.t());
-            m.separator();
-            if n > 1 {
-                m.action("tab.move_to_window", S::MenuMoveTabToWindow.t());
+            let groups: [&[(&'static str, S, &'static str, bool)]; 4] = [
+                &[("tab.shift_left", S::ActionsTabShiftLeft, "\u{E76B}", cur > 0), ("tab.shift_right", S::ActionsTabShiftRight, "\u{E76C}", cur + 1 < n)],
+                &[("tab.duplicate", S::ActionsTabDuplicate, "\u{E8C8}", true), ("tab.duplicate_window", S::ActionsTabDuplicateWindow, "\u{E72A}", true)],
+                &[
+                    ("tab.close", S::ActionsTabClose, "\u{E8BB}", true),
+                    ("tab.close_others", S::ActionsTabCloseOthers, "\u{E8BB}", n > 1),
+                    ("tab.close_left", S::ActionsTabCloseLeft, "\u{E8BB}", cur > 0),
+                    ("tab.close_right", S::ActionsTabCloseRight, "\u{E8BB}", cur + 1 < n),
+                    ("tab.close_all", S::ActionsTabCloseAll, "\u{E8BB}", true),
+                ],
+                &[("tab.move_to_window", S::MenuMoveTabToWindow, "", n > 1), ("tab.reopen", S::MenuReopenClosedTab, "", !a.nav.closed.is_empty())],
+            ];
+            for group in groups {
+                for &(id, label, icon, live) in group {
+                    m.entry(Cmd::Action(id), label.t(), m.keys.all_text(id), Mark::None, false, !live);
+                    m.iconed(icon);
+                }
                 m.separator();
-            }
-            m.action("tab.close", S::MenuCloseTab.t());
-            if n > 1 {
-                m.action("tab.close_others", S::MenuCloseOtherTabs.t());
-            }
-            if cur > 0 {
-                m.action("tab.close_left", S::MenuCloseTabsLeft.t());
-            }
-            if cur + 1 < n {
-                m.action("tab.close_right", S::MenuCloseTabsRight.t());
-            }
-            if !a.nav.closed.is_empty() {
-                m.separator();
-                m.action("tab.reopen", S::MenuReopenClosedTab.t());
             }
         })
     }

@@ -553,3 +553,33 @@ fn a_deep_listing_walks_every_subfolder_and_marks_nested_items_with_their_folder
     assert_eq!((0..l.len() as u32).filter(|&i| flit_core::sort::visible(l, i, &shallow)).count(), 5, "without subfolders they hide");
     drop(rx);
 }
+
+#[test]
+fn paste_shortcut_links_the_clipboard_items_into_the_folder() {
+    let files = vec![p(r"C:\a\x.txt"), p(r"C:\a\y")];
+    let mut clip = Clip { files: files.clone(), cut: true, ..Default::default() };
+    let (error, _) = run_op(&mut clip, FileOp::PasteLink { dest: p(r"C:\b") });
+    assert!(error.is_none());
+    assert_eq!((clip.ran, clip.cleared), (vec![FileOp::Link { items: files, dest: p(r"C:\b") }], false), "a cut clipboard stays as it is");
+    let (error, report) = run_op(&mut Clip::default(), FileOp::PasteLink { dest: p(r"C:\b") });
+    assert!(error.is_some() && report.is_none());
+}
+
+#[test]
+fn open_containing_path_reveals_the_real_location() {
+    let dir = std::env::temp_dir().join(format!("flit-platform-reveal-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("inner")).unwrap();
+    std::fs::write(dir.join("inner").join("f.txt"), b"x").unwrap();
+    let roundabout = dir.join("inner").join("..").join("inner").join("f.txt");
+    let item = FsPath::parse(roundabout.to_str().unwrap()).unwrap();
+    let expected = FsPath::parse(dir.canonicalize().unwrap().join("inner").join("f.txt").to_str().unwrap().trim_start_matches(r"\?\")).unwrap();
+    assert_eq!(real_path(&mut LinkShell, &item), Some(expected.clone()));
+    let (tx, rx) = unbounded();
+    let provider = LocalProvider::new::<_, NoWatch, LinkShell>(fs(), 1, tx, Arc::new(|| {})).unwrap();
+    provider.submit(ProviderRequest::Launch { tab: 5, launch: Launch::Reveal { item, new_tab: true } });
+    assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::Reveal { tab: 5, path: expected, new_tab: true });
+    let gone = FsPath::parse(dir.join("missing.txt").to_str().unwrap()).unwrap();
+    provider.submit(ProviderRequest::Launch { tab: 5, launch: Launch::Reveal { item: gone, new_tab: false } });
+    assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { error: Some(_), .. }));
+    std::fs::remove_dir_all(&dir).unwrap();
+}

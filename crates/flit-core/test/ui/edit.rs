@@ -62,3 +62,21 @@ fn caret_snaps_to_char_boundary() {
     e.move_to(1, true);
     assert_eq!(&e.text[e.selection()], "П");
 }
+
+#[test]
+fn case_changes_only_the_selection_and_keeps_its_direction() {
+    let mut e = LineEdit::default();
+    e.set("Straße.txt");
+    assert!(!e.change_case(true), "nothing is selected");
+    e.key(Key::Home, NONE);
+    e.move_to(7, true);
+    assert!(e.change_case(true));
+    assert_eq!(e.text, "STRASSE.txt");
+    assert_eq!((e.anchor, e.caret), (0, 7));
+    e.set("ABC");
+    e.move_to(1, true);
+    assert!(e.change_case(false));
+    assert_eq!(e.text, "Abc");
+    assert_eq!((e.anchor, e.caret), (3, 1));
+    assert!(!e.change_case(false), "already lowercase");
+}

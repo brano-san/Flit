@@ -8,12 +8,12 @@ new_tag = "+ Nouvelle balise"
 shortcut = "Raccourci vers {target}"
 too_large = "L’image est trop grande pour l’aperçu"
 truncated = ["Affichage du premier caractère ({n})", "Affichage des {n} de premiers caractères", "Affichage des {n} premiers caractères"]
-
-[tab]
-preview = "Aperçu"
-details = "Détails"
+folders = ["{n} dossier", "{n} de dossiers", "{n} dossiers"]
+files = ["{n} fichier", "{n} de fichiers", "{n} fichiers"]
 
 [field]
+path = "Chemin"
+type = "Type"
 items = "Éléments"
 total_size = "Taille totale"
 used_space = "Espace utilisé"
@@ -22,7 +22,6 @@ size_bytes = ["{size} ({n} octet)", "{size} ({n} d’octets)", "{size} ({n} octe
 modified = "Modifié le"
 created = "Créé le"
 attributes = "Attributs"
-folder = "Dossier"
 free = "Libre"
 free_of = "{free} sur {total}"
 
@@ -33,8 +32,13 @@ system = "Système"
 link = "Lien"
 
 [folder]
+empty = "Ce dossier est vide."
 scanned = ["{size} dans le premier élément ({n})", "{size} dans les {n} de premiers éléments", "{size} dans les {n} premiers éléments"]
 hidden = ["{n} élément caché", "{n} d’éléments cachés", "{n} éléments cachés"]
 last_change = "Dernière modification {date}"
 most_common = "Les plus fréquents : {types}"
 no_extension = "sans extension"
+
+[filter]
+lines = "Filtrer {n} lignes..."
+files = "Filtrer {n} fichiers..."

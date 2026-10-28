@@ -1,1 +1,3 @@
 only_tab = "这是窗口中唯一的标签页"
+drag_move = "移动（按 Ctrl 复制）"
+drag_copy = "复制"

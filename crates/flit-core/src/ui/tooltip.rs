@@ -1,5 +1,7 @@
 use super::actions::{index, ACTIONS};
 use super::ops::TIMER_SLACK;
+use super::options::InspectorAt;
+use super::preview_pane::{PaneHit, PaneTool, Scale};
 use super::toolbar::ToolHit;
 use super::widgets::{Paint, RADIUS};
 use super::{App, Column, Drag, Hit, ViewMode};
@@ -122,6 +124,7 @@ impl App {
             Hit::FilterClose => self.nav.filter.close,
             Hit::PaletteClose | Hit::PaletteDescribe | Hit::PaletteScroll(_) => self.palette_button(h)?,
             Hit::Tool(ToolHit::Button(_) | ToolHit::More) => self.tool_rect(h)?,
+            Hit::Preview(ph) => self.preview_rect(ph)?,
             _ => return None,
         };
         (r.w > 0.0 && r.h > 0.0).then_some(r)
@@ -174,6 +177,26 @@ impl App {
             Hit::PaletteDescribe => text(if self.prefs.command_descriptions { S::TooltipPaletteDescriptionsOn } else { S::TooltipPaletteDescriptionsOff }, ""),
             Hit::PaletteScroll(down) => text(if down { S::TooltipScrollDown } else { S::TooltipScrollUp }, ""),
             Hit::Tool(ToolHit::More) => text(S::TooltipMore, ""),
+            Hit::Preview(ph) => match ph {
+                PaneHit::Close => text(S::TooltipInspectorClose, "inspector.toggle"),
+                PaneHit::At(InspectorAt::Auto) => text(S::TooltipInspectorAuto, "inspector.layout"),
+                PaneHit::At(InspectorAt::Right) => text(S::TooltipInspectorRight, "inspector.layout"),
+                PaneHit::At(InspectorAt::Below) => text(S::TooltipInspectorBelow, "inspector.layout"),
+                PaneHit::Tool(PaneTool::Wrap) => text(S::TooltipInspectorWrap, "inspector.wrap"),
+                PaneHit::Tool(PaneTool::Lines) => text(S::TooltipInspectorLines, "inspector.line_numbers"),
+                PaneHit::Tool(PaneTool::Spaces) => text(S::TooltipInspectorSpaces, "inspector.whitespace"),
+                PaneHit::Tool(PaneTool::Scale(Scale::Fit)) => text(S::TooltipInspectorFit, "inspector.scale"),
+                PaneHit::Tool(PaneTool::Scale(Scale::Original)) => text(S::TooltipInspectorOriginal, "inspector.scale"),
+                PaneHit::Tool(PaneTool::Scale(Scale::Custom)) => text(S::TooltipInspectorCustom, "inspector.scale"),
+                PaneHit::Tool(PaneTool::Grid) => text(S::TooltipInspectorGrid, "inspector.grid"),
+                PaneHit::Title => text(S::TooltipInspectorTitle, ""),
+                PaneHit::CardDetails => text(S::TooltipInspectorDetails, "inspector.details"),
+                PaneHit::CardClose => text(S::TooltipInspectorCardClose, ""),
+                PaneHit::Size if self.shows_image() => text(S::TooltipInspectorZoom, "inspector.zoom_in"),
+                PaneHit::Size => text(S::TooltipInspectorSize, "inspector.zoom_in"),
+                PaneHit::Filter => text(S::TooltipFilterBox, "inspector.filter"),
+                _ => return None,
+            },
             Hit::Tool(ToolHit::Button(i)) => {
                 let (id, line) = self.tool_tip(i)?;
                 (line.t().to_owned(), Some(id).filter(|id| index(id).is_some()))

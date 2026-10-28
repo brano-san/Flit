@@ -90,6 +90,7 @@ pub enum FileOp {
     FolderIcon { folder: FsPath, icon: Option<FsPath>, index: i32 },
     InstallFonts(Vec<FsPath>),
     LockScreen(FsPath),
+    PasteLink { dest: FsPath },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -102,6 +103,7 @@ pub enum Launch {
     MapDrive(Option<FsPath>),
     Disconnect(Option<FsPath>),
     ConnectServer(String),
+    Reveal { item: FsPath, new_tab: bool },
 }
 
 impl Launch {
@@ -114,6 +116,7 @@ impl Launch {
             Launch::Eject(drive) => Launch::Eject(f(drive)?),
             Launch::Mount(device) => Launch::Mount(device.clone()),
             Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) => self.clone(),
+            Launch::Reveal { item, new_tab } => Launch::Reveal { item: f(item)?, new_tab: *new_tab },
         })
     }
 }
@@ -146,6 +149,7 @@ impl FileOp {
             FileOp::FolderIcon { folder, icon, index } => FileOp::FolderIcon { folder: f(folder)?, icon: match icon { Some(i) => Some(f(i)?), None => None }, index: *index },
             FileOp::InstallFonts(v) => FileOp::InstallFonts(all(v)?),
             FileOp::LockScreen(p) => FileOp::LockScreen(f(p)?),
+            FileOp::PasteLink { dest } => FileOp::PasteLink { dest: f(dest)? },
         })
     }
 }
@@ -290,6 +294,7 @@ pub enum ProviderEvent {
     OpProgress { tab: TabId, id: OpId, progress: OpProgress },
     OpConflict { tab: TabId, id: OpId, conflict: Conflict },
     Navigate { tab: TabId, path: FsPath },
+    Reveal { tab: TabId, path: FsPath, new_tab: bool },
     Hashed { tab: TabId, id: OpId, result: Result<Vec<String>, String> },
     Measured { tab: TabId, id: OpId, totals: Totals, file_system: Option<String>, done: bool },
     Status { tab: TabId, gen: u64, text: String },

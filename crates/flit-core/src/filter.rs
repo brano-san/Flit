@@ -23,7 +23,7 @@ impl NameFilter {
 
     pub fn matches_name(&self, name: &[u8], buf: &mut String) -> bool {
         if !self.glob && (self.needle.is_ascii() || name.is_ascii()) {
-            return ascii_contains(name, self.needle.as_bytes());
+            return ascii_subsequence(name, self.needle.as_bytes());
         }
         if self.glob && name.is_ascii() {
             return glob(self.needle.as_bytes(), name);
@@ -39,12 +39,18 @@ impl NameFilter {
         if self.glob {
             glob(self.needle.as_bytes(), buf.as_bytes())
         } else {
-            buf.contains(self.needle.as_str())
+            let mut hay = buf.chars();
+            self.needle.chars().all(|n| hay.any(|h| h == n))
         }
     }
 
     pub fn narrows(&self, prev: &NameFilter) -> bool {
-        !self.glob && !prev.glob && self.needle.contains(prev.needle.as_str())
+        let mut hay = self.needle.chars();
+        !self.glob && !prev.glob && prev.needle.chars().all(|n| hay.any(|h| h == n))
+    }
+
+    pub fn needle(&self) -> Option<&str> {
+        (!self.glob).then_some(self.needle.as_str())
     }
 
     pub fn seed_from(&mut self, prev: &NameFilter, listing: &Listing) {
@@ -89,8 +95,9 @@ impl NameFilter {
     }
 }
 
-fn ascii_contains(hay: &[u8], needle: &[u8]) -> bool {
-    needle.len() <= hay.len() && hay.windows(needle.len()).any(|w| w.iter().zip(needle).all(|(h, &n)| h.to_ascii_lowercase() == n))
+fn ascii_subsequence(hay: &[u8], needle: &[u8]) -> bool {
+    let mut hay = hay.iter();
+    needle.iter().all(|&n| hay.any(|h| h.to_ascii_lowercase() == n))
 }
 
 fn glob(p: &[u8], s: &[u8]) -> bool {

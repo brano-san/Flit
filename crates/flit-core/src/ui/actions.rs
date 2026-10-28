@@ -1,4 +1,6 @@
 use super::home::Widget;
+use super::ops::Insert;
+use super::preview_pane::PaneTool;
 use super::sidebar::KnownFolder;
 use super::tags::TagPick;
 use super::{App, Column, Effect, LayoutMode, Page, Route, WindowCmd};
@@ -141,20 +143,15 @@ pub struct Action {
     pub extra: &'static [&'static str],
     pub ctx: Ctx,
     pub run: Option<fn(&mut App, Instant)>,
-    pub stage: u8,
 }
 
 impl Action {
     const fn new(id: &'static str, group: Group, title: S, desc: S, keys: &'static [Chord], run: fn(&mut App, Instant)) -> Self {
-        Self { id, group, title, desc, keys, extra: &[], ctx: Ctx::Main, run: Some(run), stage: 0 }
-    }
-
-    const fn later(id: &'static str, group: Group, title: S, desc: S, keys: &'static [Chord], stage: u8) -> Self {
-        Self { id, group, title, desc, keys, extra: &[], ctx: Ctx::Main, run: None, stage }
+        Self { id, group, title, desc, keys, extra: &[], ctx: Ctx::Main, run: Some(run) }
     }
 
     const fn held(id: &'static str, group: Group, title: S, desc: S, keys: &'static [Chord], ctx: Ctx) -> Self {
-        Self { id, group, title, desc, keys, extra: &[], ctx, run: None, stage: 0 }
+        Self { id, group, title, desc, keys, extra: &[], ctx, run: None }
     }
 
     const fn also(mut self, extra: &'static [&'static str]) -> Self {
@@ -206,7 +203,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("file.copy", G::Folder, S::ActionsFileCopy, S::DescribeFileCopy, &[ctrl(c('C')), ctrl(Key::Insert)], |a, _| a.copy_selection()),
     Action::new("file.cut", G::Folder, S::ActionsFileCut, S::DescribeFileCut, &[ctrl(c('X'))], |a, _| a.cut_selection()),
     Action::new("file.paste", G::Folder, S::ActionsFilePaste, S::DescribeFilePaste, &[ctrl(c('V')), shift(Key::Insert)], |a, _| a.paste()),
-    Action::later("file.paste_shortcut", G::Folder, S::ActionsFilePasteShortcut, S::DescribeFilePasteShortcut, &[], 7),
+    Action::new("file.paste_shortcut", G::Folder, S::ActionsFilePasteShortcut, S::DescribeFilePasteShortcut, &[], |a, _| a.paste_shortcut()),
     Action::new("panel.copy_previous", G::Folder, S::ActionsPanelCopyPrevious, S::DescribePanelCopyPrevious, &[], |a, _| a.send_to_panel(true, false)),
     Action::new("panel.copy_next", G::Folder, S::ActionsPanelCopyNext, S::DescribePanelCopyNext, &[ctrl(Key::F(6))], |a, _| a.send_to_panel(false, false)),
     Action::new("panel.move_previous", G::Folder, S::ActionsPanelMovePrevious, S::DescribePanelMovePrevious, &[], |a, _| a.send_to_panel(true, true)),
@@ -223,8 +220,8 @@ pub static ACTIONS: &[Action] = &[
     Action::new("file.new_folder", G::Folder, S::ActionsFileNewFolder, S::DescribeFileNewFolder, &[ctrl_shift(c('N'))], |a, _| a.new_folder()),
     Action::new("item.open_relative", G::Folder, S::ActionsItemOpenRelative, S::DescribeItemOpenRelative, &[ctrl_shift(c('E'))], |a, now| a.open_relative(OpenTarget::CurrentTab, now)),
     Action::new("item.open_relative_tab", G::Folder, S::ActionsItemOpenRelativeTab, S::DescribeItemOpenRelativeTab, &[], |a, now| a.open_relative(OpenTarget::NewTab, now)).also(&["MouseMiddle"]),
-    Action::later("item.open_containing", G::Folder, S::ActionsItemOpenContaining, S::DescribeItemOpenContaining, &[], 7),
-    Action::later("item.open_containing_tab", G::Folder, S::ActionsItemOpenContainingTab, S::DescribeItemOpenContainingTab, &[], 7).also(&["MouseMiddle"]),
+    Action::new("item.open_containing", G::Folder, S::ActionsItemOpenContaining, S::DescribeItemOpenContaining, &[], |a, _| a.open_containing(false)),
+    Action::new("item.open_containing_tab", G::Folder, S::ActionsItemOpenContainingTab, S::DescribeItemOpenContainingTab, &[], |a, _| a.open_containing(true)).also(&["MouseMiddle"]),
     Action::new("view.sort.cycle_folders", G::Folder, S::ActionsViewSortCycleFolders, S::DescribeViewSortCycleFolders, &[], |a, _| a.cycle_folders()),
     Action::new("view.toggle_folders", G::Folder, S::ActionsViewToggleFolders, S::DescribeViewToggleFolders, &[], |a, _| a.toggle_kind(true)),
     Action::new("view.toggle_files", G::Folder, S::ActionsViewToggleFiles, S::DescribeViewToggleFiles, &[], |a, _| a.toggle_kind(false)),
@@ -285,15 +282,15 @@ pub static ACTIONS: &[Action] = &[
     Action::new("view.group.collapse_all", G::GroupBy, S::ActionsViewGroupCollapseAll, S::DescribeViewGroupCollapseAll, &[], |a, _| a.fold_groups(true)),
     Action::new("view.group.expand_all", G::GroupBy, S::ActionsViewGroupExpandAll, S::DescribeViewGroupExpandAll, &[], |a, _| a.fold_groups(false)),
     Action::new("inspector.details", G::Inspector, S::ActionsInspectorDetails, S::DescribeInspectorDetails, &[ctrl(c('I'))], |a, _| a.toggle_inspector_details()),
-    Action::later("inspector.layout", G::Inspector, S::ActionsInspectorLayout, S::DescribeInspectorLayout, &[shift(Key::Space)], 7),
-    Action::later("inspector.zoom_in", G::Inspector, S::ActionsInspectorZoomIn, S::DescribeInspectorZoomIn, &[], 7).also(&["Ctrl+MouseWheelUp"]),
-    Action::later("inspector.zoom_out", G::Inspector, S::ActionsInspectorZoomOut, S::DescribeInspectorZoomOut, &[], 7).also(&["Ctrl+MouseWheelDown"]),
-    Action::later("inspector.wrap", G::Inspector, S::ActionsInspectorWrap, S::DescribeInspectorWrap, &[], 7),
-    Action::later("inspector.line_numbers", G::Inspector, S::ActionsInspectorLineNumbers, S::DescribeInspectorLineNumbers, &[], 7),
-    Action::later("inspector.whitespace", G::Inspector, S::ActionsInspectorWhitespace, S::DescribeInspectorWhitespace, &[], 7),
-    Action::later("inspector.filter", G::Inspector, S::ActionsInspectorFilter, S::DescribeInspectorFilter, &[], 7),
-    Action::later("inspector.grid", G::Inspector, S::ActionsInspectorGrid, S::DescribeInspectorGrid, &[], 7),
-    Action::later("inspector.scale", G::Inspector, S::ActionsInspectorScale, S::DescribeInspectorScale, &[], 7),
+    Action::new("inspector.layout", G::Inspector, S::ActionsInspectorLayout, S::DescribeInspectorLayout, &[shift(Key::Space)], |a, _| a.toggle_inspector_layout()),
+    Action::new("inspector.zoom_in", G::Inspector, S::ActionsInspectorZoomIn, S::DescribeInspectorZoomIn, &[], |a, _| a.inspector_zoom(true)).also(&["Ctrl+MouseWheelUp"]),
+    Action::new("inspector.zoom_out", G::Inspector, S::ActionsInspectorZoomOut, S::DescribeInspectorZoomOut, &[], |a, _| a.inspector_zoom(false)).also(&["Ctrl+MouseWheelDown"]),
+    Action::new("inspector.wrap", G::Inspector, S::ActionsInspectorWrap, S::DescribeInspectorWrap, &[], |a, _| a.inspector_toggle(PaneTool::Wrap)),
+    Action::new("inspector.line_numbers", G::Inspector, S::ActionsInspectorLineNumbers, S::DescribeInspectorLineNumbers, &[], |a, _| a.inspector_toggle(PaneTool::Lines)),
+    Action::new("inspector.whitespace", G::Inspector, S::ActionsInspectorWhitespace, S::DescribeInspectorWhitespace, &[], |a, _| a.inspector_toggle(PaneTool::Spaces)),
+    Action::new("inspector.filter", G::Inspector, S::ActionsInspectorFilter, S::DescribeInspectorFilter, &[], |a, _| a.open_inspector_filter()),
+    Action::new("inspector.grid", G::Inspector, S::ActionsInspectorGrid, S::DescribeInspectorGrid, &[], |a, _| a.inspector_toggle(PaneTool::Grid)),
+    Action::new("inspector.scale", G::Inspector, S::ActionsInspectorScale, S::DescribeInspectorScale, &[], |a, _| a.cycle_inspector_scale()),
     Action::new("panel.next", G::Panels, S::ActionsPanelNext, S::DescribePanelNext, &[key(Key::Tab)], |a, now| a.run_panel("panel.next", now)),
     Action::new("panel.previous", G::Panels, S::ActionsPanelPrevious, S::DescribePanelPrevious, &[shift(Key::Tab)], |a, now| a.run_panel("panel.previous", now)),
     Action::new("panel.left", G::Panels, S::ActionsPanelLeft, S::DescribePanelLeft, &[], |a, now| a.run_panel("panel.left", now)),
@@ -350,10 +347,10 @@ pub static ACTIONS: &[Action] = &[
     Action::new("font.reset", G::Options, S::ActionsFontReset, S::DescribeFontReset, &[ctrl(c('0'))], |a, _| a.set_ui_scale(100)),
     Action::new("spacing.increase", G::Options, S::ActionsSpacingIncrease, S::DescribeSpacingIncrease, &[], |a, _| a.step_spacing(super::options::SPACING_STEP)).also(&["Shift+Alt+MouseWheelUp"]),
     Action::new("spacing.decrease", G::Options, S::ActionsSpacingDecrease, S::DescribeSpacingDecrease, &[], |a, _| a.step_spacing(-super::options::SPACING_STEP)).also(&["Shift+Alt+MouseWheelDown"]),
-    Action::later("rename.insert_id", G::Rename, S::ActionsRenameInsertId, S::DescribeRenameInsertId, &[], 7).within(Ctx::Rename),
-    Action::later("rename.insert_date", G::Rename, S::ActionsRenameInsertDate, S::DescribeRenameInsertDate, &[], 7).within(Ctx::Rename),
-    Action::later("rename.insert_created", G::Rename, S::ActionsRenameInsertCreated, S::DescribeRenameInsertCreated, &[], 7).within(Ctx::Rename),
-    Action::later("rename.insert_modified", G::Rename, S::ActionsRenameInsertModified, S::DescribeRenameInsertModified, &[], 7).within(Ctx::Rename),
+    Action::new("rename.insert_id", G::Rename, S::ActionsRenameInsertId, S::DescribeRenameInsertId, &[], |a, _| a.rename_insert(Insert::Id)).within(Ctx::Rename),
+    Action::new("rename.insert_date", G::Rename, S::ActionsRenameInsertDate, S::DescribeRenameInsertDate, &[], |a, _| a.rename_insert(Insert::Today)).within(Ctx::Rename),
+    Action::new("rename.insert_created", G::Rename, S::ActionsRenameInsertCreated, S::DescribeRenameInsertCreated, &[], |a, _| a.rename_insert(Insert::Created)).within(Ctx::Rename),
+    Action::new("rename.insert_modified", G::Rename, S::ActionsRenameInsertModified, S::DescribeRenameInsertModified, &[], |a, _| a.rename_insert(Insert::Modified)).within(Ctx::Rename),
     Action::held("rename.previous", G::Rename, S::ActionsRenamePrevious, S::DescribeRenamePrevious, &[shift(Key::Tab)], Ctx::Rename),
     Action::held("rename.next", G::Rename, S::ActionsRenameNext, S::DescribeRenameNext, &[key(Key::Tab)], Ctx::Rename),
     Action::held("text.left", G::Text, S::ActionsTextLeft, S::DescribeTextLeft, &[key(Key::Left)], Ctx::Field),
@@ -376,8 +373,8 @@ pub static ACTIONS: &[Action] = &[
     Action::held("text.copy", G::Text, S::ActionsTextCopy, S::DescribeTextCopy, &[ctrl(c('C'))], Ctx::Field),
     Action::held("text.cut", G::Text, S::ActionsTextCut, S::DescribeTextCut, &[ctrl(c('X'))], Ctx::Field),
     Action::held("text.paste", G::Text, S::ActionsTextPaste, S::DescribeTextPaste, &[ctrl(c('V')), shift(Key::Insert)], Ctx::Field),
-    Action::later("text.uppercase", G::Text, S::ActionsTextUppercase, S::DescribeTextUppercase, &[], 7).within(Ctx::Field),
-    Action::later("text.lowercase", G::Text, S::ActionsTextLowercase, S::DescribeTextLowercase, &[], 7).within(Ctx::Field),
+    Action::new("text.uppercase", G::Text, S::ActionsTextUppercase, S::DescribeTextUppercase, &[], |a, _| a.change_case(true)).within(Ctx::Field),
+    Action::new("text.lowercase", G::Text, S::ActionsTextLowercase, S::DescribeTextLowercase, &[], |a, _| a.change_case(false)).within(Ctx::Field),
     Action::held("text.autocomplete", G::Text, S::ActionsTextAutocomplete, S::DescribeTextAutocomplete, &[key(Key::Tab)], Ctx::Field),
     Action::held("text.undo", G::Text, S::ActionsTextUndo, S::DescribeTextUndo, &[ctrl(c('Z'))], Ctx::Field),
     Action::held("text.redo", G::Text, S::ActionsTextRedo, S::DescribeTextRedo, &[ctrl_shift(c('Z'))], Ctx::Field),
@@ -645,8 +642,12 @@ impl App {
     }
 
     pub fn available(&self, id: &str) -> bool {
-        if !self.supports(id) || ACTIONS.iter().find(|a| a.id == id).is_none_or(|a| a.run.is_none() || !a.rebindable()) {
-            return false;
+        let Some(a) = ACTIONS.iter().find(|a| a.id == id).filter(|a| self.supports(id) && a.run.is_some()) else { return false };
+        match a.ctx {
+            Ctx::Rename => return self.is_renaming(),
+            Ctx::Field => return self.is_renaming() || self.inspector_field_focused() || matches!(self.focus, super::Focus::Filter),
+            Ctx::Main => {}
+            _ => return false,
         }
         let kind = self.current_location().path().kind();
         let (home, bin, library) = (kind == PathKind::Home, kind == PathKind::RecycleBin, self.current_library().is_some());
@@ -660,6 +661,7 @@ impl App {
             "home" => home,
             "library" => library,
             "panel" => self.panel_available(id),
+            "inspector" => self.inspector_available(id),
             "search" if id == "search.group_folder" => self.search.active,
             "search" if id == "search.folder" => !no_files,
             "search" if id == "search.clear_history" => !self.search_history().is_empty(),
@@ -709,6 +711,26 @@ impl App {
         let item = t.entry_location(i);
         let Some(folder) = item.parent() else { return };
         self.dispatch(vec![Route { folder, select: Some(item.file_name().to_vec()) }], target, now);
+    }
+
+    fn open_containing(&mut self, new_tab: bool) {
+        let t = self.tab();
+        let Some(i) = t.view.as_ref().and_then(|v| v.focus.filter(|&f| v.is_visible(f) && v.is_selected(f)).or_else(|| v.selected().next())) else {
+            return self.status(S::ActionsStatusSelectItem.t());
+        };
+        let item = t.entry_location(i);
+        match item.to_windows().filter(|_| !t.view_loc.is_recycle_bin() && self.archive_view().is_none()) {
+            Some(path) => self.launch(crate::provider::Launch::Reveal { item: path, new_tab }),
+            None => self.status(S::ActionsStatusNoRealPath.t()),
+        }
+    }
+
+    pub(super) fn reveal_path(&mut self, item: Location, new_tab: bool, now: Instant) {
+        let route = match item.parent() {
+            Some(folder) => Route { select: Some(item.file_name().to_vec()), folder },
+            None => Route { folder: item, select: None },
+        };
+        self.dispatch(vec![route], if new_tab { OpenTarget::NewTab } else { OpenTarget::CurrentTab }, now);
     }
 
     fn go_known(&mut self, k: KnownFolder, now: Instant) {
@@ -792,14 +814,6 @@ impl App {
         if let Some(v) = &mut self.tab_mut().view {
             v.fold_all(collapsed);
         }
-        self.layout();
-        self.dirty = true;
-    }
-
-    fn toggle_inspector_details(&mut self) {
-        let p = &mut self.preview;
-        p.state.details = !p.state.details || !p.state.visible;
-        p.state.visible = true;
         self.layout();
         self.dirty = true;
     }

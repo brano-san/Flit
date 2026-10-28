@@ -1,1 +1,3 @@
 only_tab = "Esta es la única pestaña de la ventana"
+drag_move = "Mover (Ctrl para copiar)"
+drag_copy = "Copiar"

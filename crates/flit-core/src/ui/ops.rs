@@ -21,6 +21,9 @@ use crate::undo::{Journal, Origin, Step};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+const RENAME_VEIL: u8 = 0xB0;
+pub(super) const DROP_FILL: u8 = 0x38;
+
 pub mod drop_effect {
     pub const NONE: u32 = 0;
     pub const COPY: u32 = 1;
@@ -175,6 +178,20 @@ pub(super) struct Ops {
     slow: Option<Slow>,
     cut: Option<Cut>,
     bin: Option<BinProbe>,
+    ids: u32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Insert {
+    Id,
+    Today,
+    Created,
+    Modified,
+}
+
+pub fn iso_date(ticks: i64, offset_min: i32) -> String {
+    let (y, m, d) = crate::fmt::civil_from_days(crate::fmt::local_days(ticks, offset_min));
+    format!("{y:04}-{m:02}-{d:02}")
 }
 
 struct BinProbe {
@@ -609,6 +626,13 @@ impl App {
         }
     }
 
+    pub fn paste_shortcut(&mut self) {
+        match self.shell_dir() {
+            Ok(dest) => self.start_op(FileOp::PasteLink { dest }, Origin::Fresh, Then::Select),
+            Err(e) => self.status(e),
+        }
+    }
+
     pub fn paste_into_selection(&mut self) {
         let items = self.selected_items();
         let is_dir = |i: u32| self.tab().view.as_ref().is_some_and(|v| v.listing().entries[i as usize].is_dir());
@@ -1033,6 +1057,7 @@ impl App {
 
     pub fn rename_focused(&mut self) {
         let Some(i) = self.rename_target() else { return };
+        self.ops.ids = 0;
         let batch = self.tab().view.as_ref().is_some_and(|v| v.selected_count() > 1 && v.is_selected(i));
         self.begin_rename(i, batch);
     }
@@ -1070,6 +1095,68 @@ impl App {
 
     pub fn is_renaming(&self) -> bool {
         self.ops.rename.is_some()
+    }
+
+    pub(super) fn rename_insert(&mut self, what: Insert) {
+        let Some(r) = &self.ops.rename else { return };
+        let t = self.tab();
+        let entry = t.view.as_ref().filter(|v| t.id == r.tab && v.snap().gen == r.gen).map(|v| v.listing().entries[r.idx as usize]);
+        let off = self.utc_offset_min;
+        let text = match what {
+            Insert::Id => {
+                self.ops.ids += 1;
+                self.ops.ids.to_string()
+            }
+            Insert::Today => iso_date(crate::fmt::now_ticks(), off),
+            Insert::Created => match entry.filter(|e| e.created > 0) {
+                Some(e) => iso_date(e.created, off),
+                None => return,
+            },
+            Insert::Modified => match entry.filter(|e| e.modified > 0) {
+                Some(e) => iso_date(e.modified, off),
+                None => return,
+            },
+        };
+        if let Some(r) = &mut self.ops.rename {
+            r.edit.insert(&text);
+        }
+        self.dirty = true;
+    }
+
+    pub(super) fn change_case(&mut self, upper: bool) {
+        let edit = match self.ops.rename.as_mut() {
+            Some(r) => Some(&mut r.edit),
+            None => None,
+        };
+        let edit = match edit {
+            Some(e) => Some(e),
+            None if self.focus == Focus::Filter => self.tabs[self.cur].filter.as_mut().map(|f| &mut f.edit),
+            None => self.inspector_field(),
+        };
+        let Some(edit) = edit else { return };
+        if edit.change_case(upper) {
+            if self.focus == Focus::Filter && self.ops.rename.is_none() {
+                self.tab_mut().refilter_view();
+            }
+            self.dirty = true;
+        }
+    }
+
+    fn rename_menu(&mut self, x: f32, y: f32) {
+        let menu = self.collect(|_, m| {
+            for (id, label) in [
+                ("rename.insert_id", S::ActionsRenameInsertId),
+                ("rename.insert_date", S::ActionsRenameInsertDate),
+                ("rename.insert_created", S::ActionsRenameInsertCreated),
+                ("rename.insert_modified", S::ActionsRenameInsertModified),
+            ] {
+                m.action(id, label.t());
+            }
+            m.separator();
+            m.action("text.uppercase", S::ActionsTextUppercase.t());
+            m.action("text.lowercase", S::ActionsTextLowercase.t());
+        });
+        self.flit_menu(x, y, menu);
     }
 
     pub fn rename_text(&self) -> Option<&str> {
@@ -1151,6 +1238,12 @@ impl App {
             self.rename_step(m.shift);
             return true;
         }
+        if let Some(r) = self.ops.rename.as_ref().filter(|_| key == Key::Apps || (key == Key::F(10) && m.shift && !m.ctrl && !m.alt)) {
+            let row = self.tab().view.as_ref().and_then(|v| v.row_of(r.idx));
+            let rect = row.and_then(|row| self.row_rect(row)).map_or(r.rect, |c| self.name_edit_rect(c));
+            self.rename_menu(rect.x, rect.bottom());
+            return true;
+        }
         let Some(action) = self.ops.rename.as_mut().map(|r| r.edit.key(key, m)) else { return false };
         match action {
             EditAction::Submit => {
@@ -1200,6 +1293,10 @@ impl App {
         self.ops.slow = None;
         let Some(r) = &mut self.ops.rename else { return false };
         if r.rect.contains(x, y) {
+            if button == MouseButton::Right {
+                self.rename_menu(x, y);
+                return true;
+            }
             if button == MouseButton::Left {
                 if clicks >= 2 {
                     r.edit.select_all();
@@ -1524,18 +1621,25 @@ impl App {
 
     pub(super) fn draw_ops<B: TextBackend>(&mut self, g: &mut Gfx<B>, th: &Theme) {
         let list = self.layout.list;
-        match self.drop_spot() {
-            Some(Spot::Row(row)) => {
-                let Some(r) = self.row_rect(row).map(|c| self.item_parts(c).body) else { return self.draw_rename(g, th) };
-                g.dl.set_clip(Some(list));
-                g.dl.round_rect(r, th.selection, self.s(4.0));
-                g.dl.outline(r, th.accent, self.s(4.0), self.s(1.0).max(1.0));
-                g.dl.set_clip(None);
-            }
-            Some(Spot::List) => g.dl.outline(list.inset(1.0, 1.0), th.accent, self.s(4.0), self.s(2.0).max(1.0)),
-            _ => {}
+        let row = match self.drop_spot() {
+            Some(Spot::Row(row)) => self.row_rect(row).map(|c| self.item_parts(c).body),
+            _ => None,
+        };
+        if let Some(r) = row {
+            g.dl.set_clip(Some(list));
+            g.dl.round_rect(r, th.selection, self.s(4.0));
+            g.dl.outline(r, th.accent, self.s(4.0), self.s(1.0).max(1.0));
+            g.dl.set_clip(None);
         }
         self.draw_rename(g, th);
+    }
+
+    pub(super) fn draw_drop_panel<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme) {
+        if self.drop_spot() == Some(Spot::List) {
+            let panel = self.panel_rect();
+            g.dl.rect(panel, th.teal.alpha(DROP_FILL));
+            g.dl.outline(panel.inset(1.0, 1.0), th.teal, self.s(4.0), self.s(2.0).max(1.0));
+        }
     }
 
     fn draw_rename<B: TextBackend>(&mut self, g: &mut Gfx<B>, th: &Theme) {
@@ -1547,6 +1651,16 @@ impl App {
         };
         let list = self.layout.list;
         let Some(rect) = self.row_rect(row).map(|c| self.name_edit_rect(c)) else { return };
+        if let Some(cell) = self.row_rect(row) {
+            let veil = self.look.palette.area(crate::theme::Area::Files).bg.alpha(RENAME_VEIL);
+            g.dl.set_clip(Some(list));
+            g.dl.rect(Rect::new(list.x, list.y, list.w, (cell.y - list.y).max(0.0)), veil);
+            g.dl.rect(Rect::new(list.x, cell.bottom(), list.w, (list.bottom() - cell.bottom()).max(0.0)), veil);
+            g.dl.set_clip(None);
+        }
+        let mut th = *th;
+        th.text_selection = th.accent;
+        let th = &th;
         let font = self.ui_font(13.0);
         let m = g.metrics(font);
         let baseline = (rect.y + (rect.h + m.ascent - m.descent) / 2.0).round();

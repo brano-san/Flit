@@ -1,1 +1,3 @@
 only_tab = "C’est le seul onglet de la fenêtre"
+drag_move = "Déplacer (Ctrl pour copier)"
+drag_copy = "Copier"

@@ -1,3 +1,4 @@
+use super::dock::Dock;
 use super::filter::FilterRects;
 use super::home::Home;
 use super::menu::Menu;
@@ -131,7 +132,7 @@ fn normalize(n: &mut Node) {
     }
 }
 
-fn insert(root: &mut Node, next_to: u32, id: u32, down: bool) {
+fn insert(root: &mut Node, next_to: u32, id: u32, down: bool, before: bool) {
     let mut path = Vec::new();
     if !path_of(root, next_to, &mut path) {
         return;
@@ -141,13 +142,31 @@ fn insert(root: &mut Node, next_to: u32, id: u32, down: bool) {
             if *d == down {
                 let half = kids[k].1 / 2.0;
                 kids[k].1 = half;
-                kids.insert(k + 1, (Node::Leaf(id), half));
+                kids.insert(if before { k } else { k + 1 }, (Node::Leaf(id), half));
                 return;
             }
         }
     }
     let leaf = node_mut(root, &path);
-    *leaf = Node::Group { down, kids: vec![(Node::Leaf(next_to), 1.0), (Node::Leaf(id), 1.0)] };
+    let mut kids = vec![(Node::Leaf(next_to), 1.0), (Node::Leaf(id), 1.0)];
+    if before {
+        kids.reverse();
+    }
+    *leaf = Node::Group { down, kids };
+}
+
+fn add_column(root: &mut Node, id: u32, before: bool) {
+    let old = std::mem::replace(root, Node::Leaf(id));
+    let total = match &old {
+        Node::Group { down: false, kids } => kids.iter().map(|k| k.1).sum::<f32>(),
+        _ => 1.0,
+    };
+    let mut kids = vec![(old, total), (Node::Leaf(id), total / 2.0)];
+    if before {
+        kids.reverse();
+    }
+    *root = Node::Group { down: false, kids };
+    normalize(root);
 }
 
 fn remove(root: &mut Node, id: u32) {
@@ -228,7 +247,7 @@ fn sizes(s: &Shape, out: &mut Vec<(usize, usize)>) {
 
 fn event_tab(ev: &ProviderEvent) -> Option<TabId> {
     match ev {
-        ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } | ProviderEvent::OpDone { tab, .. } | ProviderEvent::Navigate { tab, .. } | ProviderEvent::Status { tab, .. } => Some(*tab),
+        ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } | ProviderEvent::OpDone { tab, .. } | ProviderEvent::Navigate { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::Status { tab, .. } => Some(*tab),
         _ => None,
     }
 }
@@ -564,9 +583,68 @@ impl App {
         let id = self.panels.next;
         self.panels.next += 1;
         self.panels.list.push(Panel { id, tabs: vec![tab], ..Default::default() });
-        insert(&mut self.panels.root, self.panels.active, id, down);
+        insert(&mut self.panels.root, self.panels.active, id, down, false);
         self.strip.rev += 1;
         self.activate_panel(id);
+        if self.tab().gen == 0 {
+            self.load_tab(self.cur, None, now);
+        }
+    }
+
+    pub(super) fn dock_tab(&mut self, dock: Dock, copy: bool, now: Instant) {
+        let src = self.panels.here;
+        let alone = self.tabs.len() == 1;
+        let onto_self = matches!(dock, Dock::Into(p) | Dock::Split { panel: p, .. } if p == src);
+        if src != self.panels.active || (!copy && (dock == Dock::Into(src) || (alone && onto_self))) {
+            return;
+        }
+        let tab = if copy {
+            let t = self.tab();
+            let loc = t.location().clone();
+            let mut tab = Tab::new(self.next_tab, loc.clone(), t.view_spec);
+            tab.set_folder_view(t.folder_view());
+            tab.crumbs = loc.crumbs();
+            self.next_tab += 1;
+            tab
+        } else {
+            let tab = self.tabs.remove(self.cur);
+            if !alone {
+                self.cur = self.cur.min(self.tabs.len() - 1);
+                self.after_tab_change();
+            }
+            tab
+        };
+        let id = match dock {
+            Dock::Into(p) => p,
+            _ => {
+                let id = self.panels.next;
+                self.panels.next += 1;
+                self.panels.list.push(Panel { id, ..Default::default() });
+                match dock {
+                    Dock::Split { panel, down, before } => insert(&mut self.panels.root, panel, id, down, before),
+                    Dock::Window { before } => add_column(&mut self.panels.root, id, before),
+                    Dock::Between { left } => insert(&mut self.panels.root, left, id, false, false),
+                    Dock::Into(_) => {}
+                }
+                id
+            }
+        };
+        if id == src {
+            self.tabs.push(tab);
+            self.cur = self.tabs.len() - 1;
+        } else if let Some(i) = self.slot(id) {
+            let p = &mut self.panels.list[i];
+            p.tabs.push(tab);
+            p.cur = p.tabs.len() - 1;
+            self.enter(id);
+            self.panels.active = id;
+        }
+        if !copy && alone {
+            self.panels.list.retain(|p| p.id != src);
+            remove(&mut self.panels.root, src);
+        }
+        self.strip.rev += 1;
+        self.panel_changed();
         if self.tab().gen == 0 {
             self.load_tab(self.cur, None, now);
         }

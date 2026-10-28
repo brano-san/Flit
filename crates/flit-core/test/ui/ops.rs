@@ -1452,3 +1452,112 @@ fn item_paths_of_a_plain_folder_match_the_general_path_for_every_kind_of_folder(
         assert_eq!(app.item_paths(&items).ok(), general, "{dir}");
     }
 }
+
+#[test]
+fn iso_dates_follow_the_utc_offset() {
+    let ticks = 133_486_272_000_000_000;
+    assert_eq!(iso_date(ticks, 0), "2024-01-02");
+    assert_eq!(iso_date(ticks, -60), "2024-01-01");
+}
+
+#[test]
+fn rename_inserts_ids_dates_and_changes_case() {
+    let mut app = app_at(r"C:\x");
+    let t = app.tab();
+    let mut listing = Listing::default();
+    let mut keys = SortKeys::new(CaseMode::Insensitive);
+    let i = listing.push(b"photo.jpg", Meta { size: 1, modified: 133_486_272_000_000_000, created: 0, ..Default::default() });
+    keys.push(listing.name(i));
+    let mut order = Vec::new();
+    sort::sort(&listing, &keys, ViewSpec::default(), &mut order);
+    let snap = DirSnapshot { gen: t.gen, path: t.location().path().clone(), listing, keys, order, view: ViewSpec::default(), done: true, error: None, elapsed: Duration::ZERO };
+    t.slot.publish(Arc::new(snap));
+    app.poll();
+    app.drain_effects().for_each(drop);
+    assert!(!app.available("rename.insert_id") && !app.available("text.uppercase"));
+    select(&mut app, &["photo.jpg"]);
+    key(&mut app, Key::F(2), NO);
+    assert!(app.available("rename.insert_id") && app.available("text.uppercase"));
+    assert!(app.run_action("rename.insert_id", t0()));
+    typed(&mut app, "_");
+    assert!(app.run_action("rename.insert_id", t0()));
+    assert_eq!(app.rename_text(), Some("1_2.jpg"));
+    typed(&mut app, "_");
+    assert!(app.run_action("rename.insert_modified", t0()));
+    assert_eq!(app.rename_text(), Some("1_2_2024-01-02.jpg"));
+    assert!(app.run_action("rename.insert_created", t0()));
+    assert_eq!(app.rename_text(), Some("1_2_2024-01-02.jpg"), "an unknown creation date inserts nothing");
+    key(&mut app, Key::Char('A'), CTRL);
+    assert!(app.run_action("text.uppercase", t0()));
+    assert_eq!(app.rename_text(), Some("1_2_2024-01-02.JPG"));
+    assert!(app.run_action("text.lowercase", t0()));
+    assert_eq!(app.rename_text(), Some("1_2_2024-01-02.jpg"));
+    key(&mut app, Key::Escape, NO);
+    key(&mut app, Key::F(2), NO);
+    assert!(app.run_action("rename.insert_id", t0()));
+    assert_eq!(app.rename_text(), Some("1.jpg"), "the counter restarts with every rename");
+}
+
+#[test]
+fn paste_shortcut_asks_for_links_in_the_current_folder() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false)]);
+    assert!(app.run_action("file.paste_shortcut", t0()));
+    assert_eq!(ops(&mut app).into_iter().map(|(_, op)| op).collect::<Vec<_>>(), [FileOp::PasteLink { dest: p(r"C:\x") }]);
+}
+
+fn colors(app: &mut App) -> Vec<u32> {
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, t0());
+    g.dl.instances.iter().map(|i| i.color).collect()
+}
+
+#[test]
+fn rename_dims_other_rows_and_selects_on_the_accent() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false), ("b.txt", false), ("c.txt", false)]);
+    let files = *app.look.palette.area(crate::theme::Area::Files);
+    let veil = files.bg.alpha(RENAME_VEIL).0;
+    assert!(!colors(&mut app).contains(&veil));
+    select(&mut app, &["b.txt"]);
+    key(&mut app, Key::F(2), NO);
+    let drawn = colors(&mut app);
+    assert_eq!(drawn.iter().filter(|&&c| c == veil).count(), 2, "rows above and below are veiled");
+    assert!(drawn.contains(&files.accent.0), "the selected base name sits on the accent");
+}
+
+#[test]
+fn a_file_drop_on_the_panel_fills_it_with_teal_and_a_folder_lights_only_its_row() {
+    use drop_effect::*;
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("sub", true), ("a.txt", false)]);
+    let files = *app.look.palette.area(crate::theme::Area::Files);
+    let fill = files.teal.alpha(DROP_FILL).0;
+    let empty = (300.0, app.layout.list.y + 200.0);
+    app.drag(&DragEvent::Enter { paths: vec![p(r"D:\in\f.txt")], x: empty.0, y: empty.1, mods: NO, allowed: COPY | MOVE }, t0());
+    assert!(colors(&mut app).contains(&fill));
+    let sub = row_xy(&app, 0);
+    app.drag(&DragEvent::Over { x: sub.0, y: sub.1, mods: NO, allowed: COPY | MOVE }, t0());
+    let drawn = colors(&mut app);
+    assert!(!drawn.contains(&fill) && drawn.contains(&files.selection.0));
+    app.drag(&DragEvent::Leave, t0());
+}
+
+#[test]
+fn the_rename_menu_opens_with_the_mouse_or_the_menu_key() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false)]);
+    select(&mut app, &["a.txt"]);
+    key(&mut app, Key::F(2), NO);
+    app.drain_effects().for_each(drop);
+    key(&mut app, Key::F(10), SHIFT);
+    let labels: Vec<String> = app
+        .drain_effects()
+        .find_map(|e| if let Effect::ShellMenu(m) = e { Some(m.menu) } else { None })
+        .unwrap()
+        .into_iter()
+        .filter_map(|i| if let MenuItem::Command { label, .. } = i { Some(label) } else { None })
+        .collect();
+    assert_eq!(labels, ["Insert Incremental ID", "Insert Current Date", "Insert File Create Date", "Insert File Last Modified Date", "Uppercase", "Lowercase"]);
+    assert!(app.is_renaming());
+}

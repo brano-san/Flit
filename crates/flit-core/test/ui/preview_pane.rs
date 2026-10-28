@@ -58,12 +58,14 @@ fn toggles_and_reserves_the_right_or_bottom_edge() {
     assert!(wide.pane_state().visible);
     let pane = wide.preview.r.pane;
     assert_eq!(pane.right(), 1200.0);
-    assert_eq!(wide.layout.list.w, list_w - pane.w);
+    assert_eq!(pane.bottom(), wide.layout.status.bottom());
+    assert_eq!(wide.layout.status.right(), pane.x);
+    assert!(wide.layout.list.w < list_w);
     let mut tall = app((700, 1200));
     press(&mut tall, Key::Space, NO);
     let pane = tall.preview.r.pane;
-    assert_eq!(pane.bottom(), tall.layout.status.y);
-    assert!(tall.layout.list.bottom() <= pane.y);
+    assert_eq!(pane.bottom(), 1200.0);
+    assert!(tall.layout.status.bottom() <= pane.y && tall.layout.list.bottom() <= tall.layout.status.y);
     press(&mut tall, Key::Space, NO);
     assert!(!tall.pane_state().visible);
     assert_eq!(tall.preview.r.pane, Rect::default());
@@ -102,26 +104,94 @@ fn selection_requests_previews_and_drops_stale_results() {
 }
 
 #[test]
-fn details_tab_and_many_items() {
+fn properties_card_details_and_many_items() {
     let mut a = app((1200, 700));
-    press(&mut a, Key::Char('P'), Mods { shift: true, alt: true, ctrl: false });
-    assert!(a.pane_state().visible && a.pane_state().details);
+    press(&mut a, Key::Space, NO);
     select(&mut a, "c.docx");
     frame(&mut a);
-    let r = requests(&mut a).pop().unwrap();
-    assert!(r.details);
-    a.on_preview(r.gen, PreviewData::Props(vec![preview::PropGroup { title: "Document".into(), rows: vec![("Pages".into(), "3".into())] }]));
+    assert!(requests(&mut a).iter().all(|r| !r.details));
+    press(&mut a, Key::Char('I'), Mods { ctrl: true, ..Mods::default() });
+    assert!(a.preview.look.card && a.pane_state().details);
     frame(&mut a);
-    assert!(a.preview.extent > 0.0);
+    let r = requests(&mut a).into_iter().find(|r| r.details).expect("properties request");
+    a.on_preview(r.gen, PreviewData::Props(vec![preview::PropGroup { title: "Document".into(), rows: vec![("Pages".into(), "3".into())] }]));
+    assert_eq!(a.preview.props.len(), 1);
+    frame(&mut a);
+    assert!(a.preview.card_extent > 0.0);
+    a.preview_click(PaneHit::CardClose);
+    assert!(!a.preview.look.card);
     press(&mut a, Key::Char('A'), Mods { ctrl: true, ..Mods::default() });
     frame(&mut a);
-    assert!(requests(&mut a).is_empty());
     assert_eq!(a.preview.subject.as_ref().unwrap().many, Some((4, 300)));
+    assert_eq!(a.preview.subject.as_ref().unwrap().title, "1 Folder, 3 Files");
+    assert!(a.preview.types.len() >= 3);
+    a.preview_click(PaneHit::Title);
+    frame(&mut a);
     let b = a.preview.r.button;
     a.on_event(&Event::MouseDown { x: b.x + 2.0, y: b.y + 2.0, button: crate::input::MouseButton::Left, clicks: 1 }, Instant::now());
     a.on_event(&Event::MouseUp { x: b.x + 2.0, y: b.y + 2.0, button: crate::input::MouseButton::Left }, Instant::now());
     assert_eq!(a.asking(), Some("properties"));
     assert!(a.drain_effects().all(|e| !matches!(e, Effect::Properties(_))));
+}
+
+#[test]
+fn inspector_commands_change_the_look_and_layout() {
+    let mut a = app((1200, 700));
+    assert!(!a.available("inspector.wrap"));
+    press(&mut a, Key::Space, NO);
+    select(&mut a, "a.rs");
+    frame(&mut a);
+    let r = requests(&mut a).pop().unwrap();
+    a.on_preview(r.gen, PreviewData::Doc(preview::text_doc("one
+two  words
+three", None)));
+    frame(&mut a);
+    for id in ["inspector.wrap", "inspector.line_numbers", "inspector.whitespace", "inspector.filter", "inspector.zoom_in", "inspector.layout"] {
+        assert!(a.available(id), "{id}");
+    }
+    assert!(!a.available("inspector.grid") && !a.available("inspector.scale"));
+    let (lines, spaces) = (a.preview.look.lines, a.preview.look.spaces);
+    assert!(a.run_action("inspector.line_numbers", Instant::now()));
+    assert!(a.run_action("inspector.whitespace", Instant::now()));
+    assert_eq!((a.preview.look.lines, a.preview.look.spaces), (!lines, !spaces));
+    let size = a.opts.inspector_size;
+    assert!(a.run_action("inspector.zoom_in", Instant::now()));
+    assert_eq!(a.opts.inspector_size, size + 1);
+    assert!(a.run_action("inspector.zoom_out", Instant::now()));
+    assert_eq!(a.opts.inspector_size, size);
+    assert!(a.run_action("inspector.filter", Instant::now()));
+    assert!(a.inspector_field_focused());
+    a.on_event(&Event::Char('t'), Instant::now());
+    a.on_event(&Event::Char('w'), Instant::now());
+    frame(&mut a);
+    assert_eq!(a.preview.doc.as_ref().map(|d| d.shown), Some(1));
+    press(&mut a, Key::Escape, NO);
+    assert!(!a.inspector_field_focused());
+    assert!(a.inspector_right());
+    assert!(a.run_action("inspector.layout", Instant::now()));
+    assert_eq!(a.preview.look.at, InspectorAt::Below);
+    frame(&mut a);
+    assert!(!a.inspector_right() && a.preview.r.pane.y > a.layout.status.y);
+    select(&mut a, "b.png");
+    frame(&mut a);
+    let r = requests(&mut a).pop().unwrap();
+    a.on_preview(r.gen, PreviewData::Image(Bitmap { width: 40, height: 20, rgba: vec![255; 3200] }));
+    frame(&mut a);
+    assert!(a.available("inspector.grid") && a.available("inspector.scale") && !a.available("inspector.wrap"));
+    assert_eq!(a.preview.look.scale, Scale::Fit);
+    assert!(a.run_action("inspector.scale", Instant::now()));
+    assert_eq!(a.preview.look.scale, Scale::Original);
+    assert!(a.run_action("inspector.zoom_in", Instant::now()));
+    assert_eq!(a.preview.look.scale, Scale::Custom);
+    assert!(a.preview.look.zoom > 1.0);
+    let grid = a.preview.look.grid;
+    assert!(a.run_action("inspector.grid", Instant::now()));
+    assert_eq!(a.preview.look.grid, !grid);
+    assert_eq!(image_factor(Scale::Original, 3.0, (40.0, 20.0), (10.0, 10.0)), 1.0);
+    assert_eq!(image_factor(Scale::Fit, 3.0, (40.0, 20.0), (20.0, 20.0)), 0.5);
+    assert_eq!(image_factor(Scale::Fit, 3.0, (4.0, 2.0), (20.0, 20.0)), 1.0);
+    assert_eq!(image_factor(Scale::Custom, 3.0, (4.0, 2.0), (20.0, 20.0)), 3.0);
+    press(&mut a, Key::Char('W'), Mods { ctrl: true, ..Mods::default() });
 }
 
 #[test]
@@ -202,13 +272,15 @@ fn documents_wrap_to_the_pane_width() {
     let mut g = Gfx::new(Mono, 1024);
     let mut widths = FxHashMap::default();
     let d = preview::text_doc("aaaa bbbb cccc\nverylongwordthatbreaks", None);
-    let lay = layout_doc(&mut g, &d, 95.0, (1.0, 12.5), &mut widths);
+    let lay = layout_doc(&mut g, &d, 95.0, (1.0, 12.5), &mut widths, true, "");
     let lines: Vec<String> = lay.lines.iter().map(|l| lay.pieces[l.pieces.start as usize..l.pieces.end as usize].iter().map(|p| &d.text[p.start as usize..p.end as usize]).collect()).collect();
     assert_eq!(lines, ["aaaa bbbb ", "cccc", "verylongw", "ordthatbr", "eaks"]);
     let code = preview::text_doc("fn main() { let x = 1; }", Some(preview::syntax::by_ext("rs").unwrap()));
-    assert_eq!(layout_doc(&mut g, &code, 50.0, (1.0, 12.5), &mut widths).lines.len(), 1);
+    assert_eq!(layout_doc(&mut g, &code, 50.0, (1.0, 12.5), &mut widths, false, "").lines.len(), 1);
+    let lay = layout_doc(&mut g, &d, 95.0, (1.0, 12.5), &mut widths, false, "long");
+    assert_eq!((lay.shown, lay.lines.len(), lay.lines[0].num), (1, 1, 2));
     let md = preview::markdown_doc("# Title\n\nbody text here");
-    let lay = layout_doc(&mut g, &md, 400.0, (1.0, 12.5), &mut widths);
+    let lay = layout_doc(&mut g, &md, 400.0, (1.0, 12.5), &mut widths, true, "");
     assert_eq!(lay.lines.len(), 2);
     assert!(lay.lines[0].h > 0.0 && lay.height > lay.lines[1].y);
 }

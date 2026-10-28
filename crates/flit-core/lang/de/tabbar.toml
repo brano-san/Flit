@@ -1,1 +1,3 @@
 only_tab = "Dies ist die einzige Registerkarte im Fenster"
+drag_move = "Verschieben (Strg zum Kopieren)"
+drag_copy = "Kopieren"

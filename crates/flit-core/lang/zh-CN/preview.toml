@@ -8,12 +8,12 @@ new_tag = "+ 新建标记"
 shortcut = "指向 {target} 的快捷方式"
 too_large = "图片太大，无法预览"
 truncated = ["显示前 {n} 个字符"]
-
-[tab]
-preview = "预览"
-details = "详细信息"
+folders = ["{n} 个文件夹"]
+files = ["{n} 个文件"]
 
 [field]
+path = "路径"
+type = "类型"
 items = "项目"
 total_size = "总大小"
 used_space = "已用空间"
@@ -22,7 +22,6 @@ size_bytes = ["{size}（{n} 字节）"]
 modified = "修改时间"
 created = "创建时间"
 attributes = "属性"
-folder = "文件夹"
 free = "可用"
 free_of = "{free}，共 {total}"
 
@@ -33,8 +32,13 @@ system = "系统"
 link = "链接"
 
 [folder]
+empty = "此文件夹为空。"
 scanned = ["前 {n} 个项目共 {size}"]
 hidden = ["{n} 个隐藏项目"]
 last_change = "最后更改于 {date}"
 most_common = "最常见：{types}"
 no_extension = "无扩展名"
+
+[filter]
+lines = "筛选 {n} 行..."
+files = "筛选 {n} 个文件..."

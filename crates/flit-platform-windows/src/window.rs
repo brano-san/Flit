@@ -67,6 +67,11 @@ fn capture_pointer(q: &mut std::collections::VecDeque<Event>) {
         let Some((x, y)) = p.split_once(',').and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?))) else { continue };
         q.extend([Event::MouseMove { x, y }, Event::MouseDown { x, y, button, clicks: 1 }, Event::MouseUp { x, y, button }]);
     }
+    let drag: Vec<(f32, f32)> = std::env::var("FLIT_CAPTURE_DRAG").unwrap_or_default().split(';').filter_map(|p| p.split_once(',').and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?)))).collect();
+    if let Some(&(x, y)) = drag.first() {
+        q.extend([Event::MouseMove { x, y }, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }]);
+        q.extend(drag[1..].iter().map(|&(x, y)| Event::MouseMove { x, y }));
+    }
     if let Some((x, y)) = mouse {
         q.push_back(Event::MouseMove { x, y });
     }

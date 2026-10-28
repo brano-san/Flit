@@ -39,7 +39,7 @@ pub fn inverse(report: &OpReport) -> Option<Step> {
             }
             FileOp::Restore(recycled)
         }
-        FileOp::Paste { .. } | FileOp::NewStream { .. } | FileOp::Delete(_) | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::FolderIcon { .. } | FileOp::InstallFonts(_) | FileOp::LockScreen(_) => return None,
+        FileOp::Paste { .. } | FileOp::PasteLink { .. } | FileOp::NewStream { .. } | FileOp::Delete(_) | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::FolderIcon { .. } | FileOp::InstallFonts(_) | FileOp::LockScreen(_) => return None,
     }))
 }
 

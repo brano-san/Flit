@@ -2,6 +2,11 @@ use super::{App, Drag, Effect, Hit, Route, Tab, G_DRIVE, G_FOLDER, MAX_ROUTES};
 use crate::input::{Key, MouseButton};
 use crate::location::Location;
 use crate::path::PathKind;
+use crate::render::Rect;
+use crate::i18n::S;
+use crate::text::{Gfx, TextBackend};
+use crate::theme::Theme;
+use super::widgets::Paint;
 use crate::sort::ViewSpec;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -174,12 +179,66 @@ impl App {
             return;
         }
         let (m, title) = (self.s(TEAR_MARGIN), self.layout.title);
-        let torn = y < title.y - m || y > title.bottom() + m || x < -m || x > self.size.0 + m;
-        if !torn {
-            self.move_tab(self.tab_slot(x));
+        let torn = x < 0.0 || y < 0.0 || x >= self.size.0 || y >= self.size.1;
+        let on_strip = y >= title.y - m && y <= title.bottom() + m && x >= title.x && x < title.right();
+        if torn || on_strip {
+            self.docking = None;
+            if on_strip {
+                self.move_tab(self.tab_slot(x));
+            }
+        } else {
+            let panels: Vec<(u32, Rect)> = self.panels.list.iter().map(|p| (p.id, p.rect)).collect();
+            let area = Rect::new(self.panels.left, 0.0, (self.size.0 - self.panels.left).max(0.0), self.size.1);
+            let zones = super::dock::zones(&panels, area, (x, y), self.scale);
+            let hot = super::dock::zone_at(&zones, x, y);
+            self.docking = Some(super::dock::Docking { zones, hot, at: (x, y) });
         }
         self.drag = Drag::Tab { origin, x: x0, y: y0, moved: true, torn };
         self.dirty = true;
+    }
+
+    pub(super) fn draw_tab_dock<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
+        let Some(d) = self.docking.as_ref() else { return };
+        let sc = self.scale;
+        let s = |v: f32| (v * sc).round();
+        let mut p = Paint::new(g, t, sc);
+        if let Some(z) = d.hot.and_then(|k| d.zones.get(k)) {
+            p.g.dl.rect(z.area, t.teal.alpha(super::ops::DROP_FILL));
+            p.g.dl.outline(z.area, t.teal, 0.0, s(1.0).max(1.0));
+        }
+        for (k, z) in d.zones.iter().enumerate() {
+            let hot = d.hot == Some(k);
+            p.g.dl.round_rect(z.button, if hot { t.teal.alpha(0x40) } else { t.popup }, s(4.0));
+            p.dashed(z.button, if hot { t.teal } else { t.text_dim });
+            for (r, on) in super::dock::scheme_rects(z.button, z.scheme, sc) {
+                if on {
+                    p.g.dl.round_rect(r, if hot { t.teal } else { t.accent }, s(2.0));
+                } else {
+                    p.g.dl.outline(r, t.text_dim, s(2.0), 1.0);
+                }
+            }
+        }
+        let tab = &self.tabs[self.cur];
+        let (font, small) = (self.ui_font(12.5), self.ui_font(11.5));
+        let label = tab.title();
+        let caption = if self.mods.ctrl { S::TabbarDragCopy.t() } else { S::TabbarDragMove.t() };
+        let w = (p.g.measure(&label, font) + s(70.0)).max(p.g.measure(caption, small) + s(24.0)).min(s(320.0));
+        let (x, y) = d.at;
+        let card = Rect::new((x + s(14.0)).min(self.size.0 - w).max(0.0), (y + s(14.0)).min(self.size.1 - s(58.0)).max(0.0), w, s(58.0));
+        p.frame(card);
+        let head = Rect::new(card.x, card.y + s(4.0), card.w, s(26.0));
+        p.g.dl.round_rect(head.inset(s(4.0), 0.0), t.accent, s(4.0));
+        let ink = crate::theme::ink_on(t.accent);
+        let icon = Rect::new(head.x + s(10.0), head.y, s(16.0), head.h);
+        p.centered(icon, tab_glyph(tab.location()), self.icon_font(12.0), ink);
+        let m = p.g.metrics(font);
+        let baseline = (head.y + (head.h + m.ascent - m.descent) / 2.0).round();
+        p.g.text(icon.right() + s(6.0), baseline, &label, font, ink, head.right() - icon.right() - s(36.0));
+        p.centered(Rect::new(head.right() - s(28.0), head.y, s(20.0), head.h), super::G_CLOSE, self.icon_font(8.0), ink);
+        let m = p.g.metrics(small);
+        let line = Rect::new(card.x, head.bottom() + s(2.0), card.w, card.bottom() - head.bottom() - s(4.0));
+        let baseline = (line.y + (line.h + m.ascent - m.descent) / 2.0).round();
+        p.g.text(card.x + s(12.0), baseline, caption, small, t.text_dim, card.w - s(24.0));
     }
 
     pub(super) fn strip_key(&mut self, key: Key) -> bool {
@@ -188,6 +247,7 @@ impl App {
             return false;
         }
         self.move_tab(origin.min(self.tabs.len() - 1));
+        self.docking = None;
         self.drag = Drag::None;
         self.pressed = Hit::None;
         self.dirty = true;
@@ -295,9 +355,9 @@ impl App {
             return;
         }
         match self.hit(x, y) {
-            Hit::Tab(_) | Hit::TabClose(_) => {
-                let menu = self.build_tab_menu();
-                self.flit_menu(x, y, menu);
+            Hit::Tab(i) | Hit::TabClose(i) => {
+                self.select_tab(i);
+                self.open_tab_menu();
             }
             Hit::Nav(i @ 0..=1) => self.history_menu(i),
             _ => {}
@@ -307,7 +367,7 @@ impl App {
     pub(super) fn open_tab_menu(&mut self) {
         let Some(&(r, _)) = self.layout.tabs.get(self.cur) else { return };
         let menu = self.build_tab_menu();
-        self.flit_menu(r.x, r.bottom(), menu);
+        self.button_menu(Hit::Tab(self.cur), r.x, r.bottom(), menu);
     }
 
     pub(super) fn open_many(&mut self, now: Instant) {

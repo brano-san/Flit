@@ -307,3 +307,15 @@ fn a_crash_report_without_a_session_only_opens_the_folder() {
     assert_eq!(app.asking(), None);
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::RestoreSession)));
 }
+
+#[test]
+fn operations_longer_than_half_a_second_show_their_duration_in_the_status_block() {
+    let mut app = app_at(r"C:\x");
+    let (quick, _) = paste(&mut app);
+    app.job_done(quick, None, Instant::now());
+    assert_eq!(app.tab().stats.op, None);
+    let (slow, _) = paste(&mut app);
+    app.job_done(slow, None, Instant::now() + Duration::from_millis(1500));
+    assert!(app.tab().stats.op.is_some_and(|d| d >= Duration::from_millis(1400)));
+    assert_eq!(app.bottom_tip(crate::ui::bottom::BottomHit::Elapsed), S::TooltipElapsedOp);
+}

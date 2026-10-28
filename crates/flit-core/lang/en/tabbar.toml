@@ -1,1 +1,3 @@
 only_tab = "This is the only tab in the window"
+drag_move = "Move (Ctrl to copy)"
+drag_copy = "Copy"

@@ -343,3 +343,5 @@
 "item.quick_view" = "Schnellansicht"
 "preview.play" = "Medien in der Vorschau abspielen oder anhalten"
 "status.select_folders" = "Wählen Sie die zu öffnenden Ordner aus"
+"status.select_item" = "Wählen Sie zuerst ein Element aus."
+"status.no_real_path" = "Dieses Element hat keinen echten Speicherort auf dem Datenträger."

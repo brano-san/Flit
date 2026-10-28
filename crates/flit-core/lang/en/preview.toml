@@ -8,12 +8,12 @@ new_tag = "+ New tag"
 shortcut = "Shortcut to {target}"
 too_large = "The image is too large to preview"
 truncated = ["Showing the first {n} character", "Showing the first {n} characters"]
-
-[tab]
-preview = "Preview"
-details = "Details"
+folders = ["{n} Folder", "{n} Folders"]
+files = ["{n} File", "{n} Files"]
 
 [field]
+path = "Path"
+type = "Type"
 items = "Items"
 total_size = "Total size"
 used_space = "Used space"
@@ -22,7 +22,6 @@ size_bytes = ["{size} ({n} byte)", "{size} ({n} bytes)"]
 modified = "Modified"
 created = "Created"
 attributes = "Attributes"
-folder = "Folder"
 free = "Free"
 free_of = "{free} of {total}"
 
@@ -33,8 +32,13 @@ system = "System"
 link = "Link"
 
 [folder]
+empty = "This folder is empty."
 scanned = ["{size} in the first {n} item", "{size} in the first {n} items"]
 hidden = ["{n} item hidden", "{n} items hidden"]
 last_change = "Last change {date}"
 most_common = "Most common: {types}"
 no_extension = "no extension"
+
+[filter]
+lines = "Filter {n} lines..."
+files = "Filter {n} files..."

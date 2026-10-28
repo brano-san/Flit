@@ -198,9 +198,9 @@ impl LocalProvider {
         spawn("flit-shell-open".into(), move || {
             let mut sh = S::new();
             for (tab, job) in shell_rx {
-                let event = match sh.as_mut().map_err(|e| e.clone()).and_then(|sh| run_shell(sh, job)) {
+                let event = match sh.as_mut().map_err(|e| e.clone()).and_then(|sh| run_shell(sh, tab, job)) {
                     Ok(None) => continue,
-                    Ok(Some(path)) => ProviderEvent::Navigate { tab, path },
+                    Ok(Some(event)) => event,
                     Err(e) => ProviderEvent::OpDone { tab, id: 0, error: Some(e.to_string()), report: None },
                 };
                 let _ = open_events.send(event);
@@ -291,15 +291,43 @@ fn is_shortcut(p: &FsPath) -> bool {
     b.len() > 4 && b[b.len() - 4..].eq_ignore_ascii_case(b".lnk")
 }
 
-fn run_shell<S: Shell>(sh: &mut S, job: ShellJob) -> Result<Option<FsPath>, PlatformError> {
+#[cfg(windows)]
+fn from_std(p: &std::path::Path) -> Option<FsPath> {
+    let s = p.to_string_lossy();
+    let plain = match s.strip_prefix(r"\\?\UNC\") {
+        Some(rest) => format!(r"\\{rest}"),
+        None => s.strip_prefix(r"\\?\").unwrap_or(&s).to_owned(),
+    };
+    FsPath::parse(&plain)
+}
+
+#[cfg(unix)]
+fn from_std(p: &std::path::Path) -> Option<FsPath> {
+    use std::os::unix::ffi::OsStrExt;
+    FsPath::parse_bytes(p.as_os_str().as_bytes())
+}
+
+pub fn real_path<S: Shell>(sh: &mut S, item: &FsPath) -> Option<FsPath> {
+    if let Some(target) = is_shortcut(item).then(|| sh.link_target(item)).flatten() {
+        return Some(target);
+    }
+    from_std(&std::fs::canonicalize(crate::std_path(item)).ok()?)
+}
+
+fn run_shell<S: Shell>(sh: &mut S, tab: TabId, job: ShellJob) -> Result<Option<ProviderEvent>, PlatformError> {
+    let go = |path: FsPath| Some(ProviderEvent::Navigate { tab, path });
     match job {
         ShellJob::Open(p) if is_shortcut(&p) => match sh.shortcut_folder(&p) {
-            Some(dir) => Ok(Some(dir)),
+            Some(dir) => Ok(go(dir)),
             None => sh.open(&p).map(|()| None),
         },
         ShellJob::Open(p) => sh.open(&p).map(|()| None),
-        ShellJob::Launch(Launch::Mount(device)) => sh.mount(&device).map(Some),
-        ShellJob::Launch(Launch::ConnectServer(uri)) => sh.connect(&uri).map(Some),
+        ShellJob::Launch(Launch::Mount(device)) => sh.mount(&device).map(go),
+        ShellJob::Launch(Launch::ConnectServer(uri)) => sh.connect(&uri).map(go),
+        ShellJob::Launch(Launch::Reveal { item, new_tab }) => match real_path(sh, &item) {
+            Some(path) => Ok(Some(ProviderEvent::Reveal { tab, path, new_tab })),
+            None => Err(PlatformError::new(-1, "The target of this item cannot be found")),
+        },
         ShellJob::Launch(l) => sh.launch(&l).map(|()| None),
     }
 }
@@ -354,6 +382,7 @@ fn resolve_paste<S: FileOps>(sh: &mut S, op: FileOp) -> Result<(FileOp, bool), S
             (items, true) => (FileOp::Move { items: items.into_iter().filter(|i| !same_dir(i, &dest)).collect(), dest }, true),
             (items, false) => (FileOp::Copy { items, dest }, false),
         },
+        FileOp::PasteLink { dest } => (FileOp::Link { items: sh.clipboard_files().map_err(|e| e.to_string())?.0, dest }, false),
         op => (op, false),
     })
 }

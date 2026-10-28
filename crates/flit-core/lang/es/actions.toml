@@ -343,3 +343,5 @@
 "item.quick_view" = "Vista rápida"
 "preview.play" = "Reproducir o pausar el contenido multimedia"
 "status.select_folders" = "Selecciona las carpetas que quieres abrir"
+"status.select_item" = "Selecciona primero un elemento."
+"status.no_real_path" = "Este elemento no tiene una ubicación real en el disco."

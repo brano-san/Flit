@@ -50,6 +50,23 @@ impl LineEdit {
         true
     }
 
+    pub fn change_case(&mut self, upper: bool) -> bool {
+        let r = self.selection();
+        if r.is_empty() {
+            return false;
+        }
+        let part = &self.text[r.clone()];
+        let changed = if upper { part.to_uppercase() } else { part.to_lowercase() };
+        if changed == part {
+            return false;
+        }
+        let forward = self.caret >= self.anchor;
+        self.text.replace_range(r.clone(), &changed);
+        let end = r.start + changed.len();
+        (self.anchor, self.caret) = if forward { (r.start, end) } else { (end, r.start) };
+        true
+    }
+
     pub fn insert(&mut self, s: &str) {
         self.take_selection();
         let s: String = s.chars().filter(|c| !c.is_control()).collect();

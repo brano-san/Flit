@@ -8,12 +8,12 @@ new_tag = "+ Nueva etiqueta"
 shortcut = "Acceso directo a {target}"
 too_large = "La imagen es demasiado grande para la vista previa"
 truncated = ["Se muestra el primer {n} carácter", "Se muestran los primeros {n} de caracteres", "Se muestran los primeros {n} caracteres"]
-
-[tab]
-preview = "Vista previa"
-details = "Detalles"
+folders = ["{n} carpeta", "{n} de carpetas", "{n} carpetas"]
+files = ["{n} archivo", "{n} de archivos", "{n} archivos"]
 
 [field]
+path = "Ruta"
+type = "Tipo"
 items = "Elementos"
 total_size = "Tamaño total"
 used_space = "Espacio usado"
@@ -22,7 +22,6 @@ size_bytes = ["{size} ({n} byte)", "{size} ({n} de bytes)", "{size} ({n} bytes)"
 modified = "Modificado"
 created = "Creado"
 attributes = "Atributos"
-folder = "Carpeta"
 free = "Disponible"
 free_of = "{free} de {total}"
 
@@ -33,8 +32,13 @@ system = "Sistema"
 link = "Vínculo"
 
 [folder]
+empty = "Esta carpeta está vacía."
 scanned = ["{size} en el primer {n} elemento", "{size} en los primeros {n} de elementos", "{size} en los primeros {n} elementos"]
 hidden = ["{n} elemento oculto", "{n} de elementos ocultos", "{n} elementos ocultos"]
 last_change = "Último cambio: {date}"
 most_common = "Más comunes: {types}"
 no_extension = "sin extensión"
+
+[filter]
+lines = "Filtrar {n} líneas..."
+files = "Filtrar {n} archivos..."

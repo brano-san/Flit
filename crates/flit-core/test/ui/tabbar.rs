@@ -66,6 +66,11 @@ fn menu_labels(app: &mut App) -> Vec<String> {
     menu.into_iter().filter_map(|i| if let MenuItem::Command { label, .. } = i { Some(label) } else { None }).collect()
 }
 
+fn gray_labels(app: &mut App) -> Vec<String> {
+    let menu = app.drain_effects().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m.menu) } else { None }).unwrap();
+    menu.into_iter().filter_map(|i| if let MenuItem::Command { label, disabled: true, .. } = i { Some(label) } else { None }).collect()
+}
+
 fn listed(app: &mut App) -> Vec<String> {
     app.drain_effects()
         .filter_map(|e| if let Effect::Provider { req: ProviderRequest::List { path, .. }, .. } = e { Some(path.display().into_owned()) } else { None })
@@ -80,9 +85,17 @@ fn tab_menu_closes_other_left_and_right_tabs_and_remembers_them() {
     ev(&mut app, Event::MouseUp { x, y, button: MouseButton::Right });
     assert_eq!(app.cur, 2);
     let labels = menu_labels(&mut app);
-    for l in ["Move tab to a new window", "Close other tabs", "Close tabs to the left", "Close tabs to the right"] {
-        assert!(labels.iter().any(|m| m == l), "{l} missing in {labels:?}");
-    }
+    assert_eq!(
+        labels,
+        ["Shift Tab Left", "Shift Tab Right", "Duplicate Tab", "Duplicate Tab To New Window", "Close Tab", "Close Other Tabs", "Close Left Tabs", "Close Right Tabs", "Close All Tabs", "Move tab to a new window", "Reopen closed tab"]
+    );
+    assert_eq!(app.menu_owner, Some(Hit::Tab(2)));
+    let (x0, y0) = tab_xy(&app, 0);
+    ev(&mut app, Event::MouseDown { x: x0, y: y0, button: MouseButton::Right, clicks: 1 });
+    ev(&mut app, Event::MouseUp { x: x0, y: y0, button: MouseButton::Right });
+    let gray = gray_labels(&mut app);
+    assert_eq!(gray, ["Shift Tab Left", "Close Left Tabs", "Reopen closed tab"]);
+    app.select_tab(2);
     app.run_action("tab.close_right", Instant::now());
     assert_eq!(names(&app), [r"C:\a", r"C:\b", r"C:\c"]);
     app.run_action("tab.close_left", Instant::now());
@@ -127,12 +140,14 @@ fn a_tab_torn_off_the_strip_moves_to_another_window() {
     let (x, y) = tab_xy(&app, 1);
     ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
     ev(&mut app, Event::MouseMove { x, y: 300.0 });
-    assert!(matches!(app.drag, Drag::Tab { torn: true, .. }));
+    assert!(matches!(app.drag, Drag::Tab { torn: false, .. }) && app.docking.is_some(), "inside the window the tab docks");
+    ev(&mut app, Event::MouseMove { x, y: -30.0 });
+    assert!(matches!(app.drag, Drag::Tab { torn: true, .. }) && app.docking.is_none());
     app.drain_effects().for_each(drop);
-    ev(&mut app, Event::MouseUp { x, y: 300.0, button: MouseButton::Left });
+    ev(&mut app, Event::MouseUp { x, y: -30.0, button: MouseButton::Left });
     let moved = app.drain_effects().find_map(|e| if let Effect::MoveTab { tab, at, last } = e { Some((tab, at, last)) } else { None }).unwrap();
     assert_eq!(moved.0.location(), &loc(r"C:\"));
-    assert_eq!((moved.1, moved.2), (Some((x, 300.0)), false));
+    assert_eq!((moved.1, moved.2), (Some((x, -30.0)), false));
     assert_eq!(names(&app), [r"C:\a"]);
 
     let mut target = app_with(&[r"C:\x", r"C:\y"]);
@@ -147,8 +162,8 @@ fn a_tab_torn_off_the_strip_moves_to_another_window() {
 
     let (x, y) = tab_xy(&app, 0);
     ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
-    ev(&mut app, Event::MouseMove { x, y: 300.0 });
-    ev(&mut app, Event::MouseUp { x, y: 300.0, button: MouseButton::Left });
+    ev(&mut app, Event::MouseMove { x, y: -30.0 });
+    ev(&mut app, Event::MouseUp { x, y: -30.0, button: MouseButton::Left });
     let back = app.drain_effects().find_map(|e| if let Effect::MoveTab { tab, last: true, .. } = e { Some(tab) } else { None }).unwrap();
     assert_eq!(names(&app), [r"C:\a"]);
     app.adopt_tab(back, Instant::now());
@@ -362,4 +377,67 @@ fn ordinary_folder_tabs_share_one_cached_folder_icon_that_replaces_the_glyph() {
     app.frame(&mut g, Instant::now());
     assert_eq!(inside(&g, crate::render::kind::IMAGE), 1);
     assert_eq!(inside(&g, crate::render::kind::GLYPH), 0, "no glyph once the icon is here");
+}
+
+fn drop_on(app: &mut App, from: usize, pick: impl Fn(&crate::ui::dock::Zone) -> bool) {
+    let (x, y) = tab_xy(app, from);
+    ev(app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
+    let r = app.panel_rect();
+    ev(app, Event::MouseMove { x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 });
+    let z = *app.docking.as_ref().unwrap().zones.iter().find(|z| pick(z)).expect("zone");
+    let (zx, zy) = (z.button.x + 2.0, z.button.y + 2.0);
+    ev(app, Event::MouseMove { x: zx, y: zy });
+    assert_eq!(app.docking.as_ref().unwrap().hot.map(|k| app.docking.as_ref().unwrap().zones[k].dock), Some(z.dock));
+    ev(app, Event::MouseUp { x: zx, y: zy, button: MouseButton::Left });
+    assert!(app.docking.is_none());
+    let mut g = crate::text::Gfx::new(crate::text::tests::Mono, 1024);
+    app.frame(&mut g, Instant::now());
+}
+
+#[test]
+fn dropping_a_tab_on_a_zone_splits_moves_or_copies_it() {
+    use crate::ui::dock::Dock;
+    let mut app = app_with(&[r"C:\a", r"C:\b"]);
+    let first = app.panels.active;
+    drop_on(&mut app, 1, |z| matches!(z.dock, Dock::Split { down: false, before: false, .. }));
+    assert_eq!(app.panel_count(), 2);
+    assert_ne!(app.panels.active, first);
+    assert_eq!(names(&app), [r"C:\b"]);
+    let second = app.panels.active;
+    assert!(app.panel_rect().x > 300.0, "the new panel is on the right");
+    drop_on(&mut app, 0, |z| matches!(z.dock, Dock::Split { down: false, before: true, .. }));
+    assert_eq!(app.panel_count(), 2, "the only tab of a panel cannot split its own panel");
+    app.activate_panel(first);
+    assert_eq!(names(&app), [r"C:\a"]);
+    let r = app.panels.list.iter().find(|p| p.id == second).unwrap().rect;
+    let (x, y) = tab_xy(&app, 0);
+    ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
+    ev(&mut app, Event::MouseMove { x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 });
+    let z = *app.docking.as_ref().unwrap().zones.iter().find(|z| z.dock == Dock::Into(second)).unwrap();
+    ev(&mut app, Event::MouseMove { x: z.button.x + 2.0, y: z.button.y + 2.0 });
+    ev(&mut app, Event::Key { key: Key::Other, mods: Mods { ctrl: true, shift: false, alt: false }, pressed: true });
+    ev(&mut app, Event::MouseUp { x: z.button.x + 2.0, y: z.button.y + 2.0, button: MouseButton::Left });
+    assert_eq!(app.panel_count(), 2, "a copy leaves the source panel");
+    assert_eq!(app.panels.active, second);
+    assert_eq!(names(&app), [r"C:\b", r"C:\a"]);
+    assert_eq!(app.cur, 1);
+    ev(&mut app, Event::Key { key: Key::Other, mods: NO, pressed: false });
+    app.activate_panel(first);
+    let r = app.panels.list.iter().find(|p| p.id == second).unwrap().rect;
+    let (x, y) = tab_xy(&app, 0);
+    ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
+    ev(&mut app, Event::MouseMove { x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 });
+    let z = *app.docking.as_ref().unwrap().zones.iter().find(|z| z.dock == Dock::Into(second)).unwrap();
+    ev(&mut app, Event::MouseMove { x: z.button.x + 2.0, y: z.button.y + 2.0 });
+    ev(&mut app, Event::MouseUp { x: z.button.x + 2.0, y: z.button.y + 2.0, button: MouseButton::Left });
+    assert_eq!(app.panel_count(), 1, "moving the last tab away closes its panel");
+    assert_eq!(names(&app), [r"C:\b", r"C:\a", r"C:\a"]);
+    let (x, y) = tab_xy(&app, 0);
+    ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
+    let left = app.panels.left;
+    ev(&mut app, Event::MouseMove { x: left + 5.0, y: 400.0 });
+    let edge = app.docking.as_ref().unwrap().zones.iter().find(|z| z.dock == Dock::Window { before: true }).copied();
+    assert!(edge.is_some(), "the window edge offers a column");
+    key(&mut app, Key::Escape, NO);
+    assert!(app.docking.is_none() && app.drag == Drag::None);
 }

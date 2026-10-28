@@ -8,7 +8,7 @@ use crate::text::{Gfx, TextBackend};
 use crate::theme::Theme;
 use bumpalo::Bump;
 
-const ELAPSED_MIN_MS: u128 = 500;
+pub(super) const ELAPSED_MIN_MS: u128 = 500;
 const BUTTON_W: f32 = 26.0;
 const ZOOM_W: f32 = 46.0;
 const G_CLOCK: &str = "\u{E81C}";
@@ -99,6 +99,7 @@ impl App {
             },
             BottomHit::Layout => S::TooltipLayoutPicker,
             BottomHit::Zoom => S::TooltipZoom,
+            BottomHit::Elapsed if self.tab().stats.op.is_some() => S::TooltipElapsedOp,
             BottomHit::Elapsed => S::TooltipElapsed,
         }
     }
@@ -191,7 +192,8 @@ impl App {
             right = self.counter(g, t, right, BottomHit::Files, arena.alloc_str(&files));
             right = self.counter(g, t, right, BottomHit::Folders, arena.alloc_str(&dirs));
         }
-        if let Some(done) = self.tab().stats.done.filter(|d| d.as_millis() > ELAPSED_MIN_MS) {
+        let stats = self.tab().stats;
+        if let Some(done) = stats.op.or(stats.done).filter(|d| d.as_millis() > ELAPSED_MIN_MS) {
             let mut n = bumpalo::collections::String::new_in(arena);
             crate::i18n::decimal(&mut n, done.as_secs_f64(), 1);
             let label = arena.alloc_str(&crate::tr!(S::FilterSeconds, n = n));

@@ -60,6 +60,7 @@ pub(super) struct Job {
     pub state: JobState,
     pub progress: OpProgress,
     pub asking: bool,
+    created: Instant,
     started: Option<Instant>,
     finished: Option<Instant>,
     mark: Option<(Instant, u64)>,
@@ -273,7 +274,7 @@ fn job_title(op: &FileOp) -> Option<String> {
             let renames = pairs.iter().all(|(a, b)| a.parent() == b.parent());
             crate::tr!(if renames { S::UiJobTitleRenaming } else { S::UiJobTitleMovingItems }, what = count_pairs(pairs, |p| &p.0))
         }
-        FileOp::Paste { dest } => crate::tr!(S::UiJobTitlePasting, dest = quoted(dest)),
+        FileOp::Paste { dest } | FileOp::PasteLink { dest } => crate::tr!(S::UiJobTitlePasting, dest = quoted(dest)),
         FileOp::Trash(items) => crate::tr!(S::UiJobTitleTrashing, what = count(items)),
         FileOp::Delete(items) => crate::tr!(S::UiJobTitleDeleting, what = count(items)),
         FileOp::Flatten(dirs) => crate::tr!(S::UiJobTitleFlattening, what = count(dirs)),
@@ -290,7 +291,7 @@ fn job_title(op: &FileOp) -> Option<String> {
 
 fn job_dest(provider: &ProviderId, op: &FileOp) -> Option<Location> {
     let path = match op {
-        FileOp::Copy { dest, .. } | FileOp::Move { dest, .. } | FileOp::Paste { dest } => dest.clone(),
+        FileOp::Copy { dest, .. } | FileOp::Move { dest, .. } | FileOp::Paste { dest } | FileOp::PasteLink { dest } => dest.clone(),
         FileOp::MoveTo(pairs) => pairs.first()?.1.parent()?,
         FileOp::Restore(pairs) => pairs.first()?.1.parent()?,
         FileOp::Flatten(dirs) => dirs.first()?.clone(),
@@ -343,7 +344,7 @@ impl App {
         if job_title(op).is_none() {
             return;
         }
-        let job = Job { id, op: op.clone(), wsl: matches!(provider, ProviderId::Wsl(_)), dest: job_dest(provider, op), ctl: ctl.clone(), state: JobState::Running, progress: OpProgress::default(), asking: false, started: None, finished: None, mark: None, speed: 0.0, samples: VecDeque::new() };
+        let job = Job { id, op: op.clone(), wsl: matches!(provider, ProviderId::Wsl(_)), dest: job_dest(provider, op), ctl: ctl.clone(), state: JobState::Running, progress: OpProgress::default(), asking: false, created: Instant::now(), started: None, finished: None, mark: None, speed: 0.0, samples: VecDeque::new() };
         if let Some(k) = self.jobs.list.iter().position(|j| j.state != JobState::Running).filter(|_| self.jobs.list.len() >= MAX_JOBS) {
             self.jobs.list.remove(k);
         }
@@ -400,7 +401,11 @@ impl App {
         j.started.get_or_insert(now);
         j.finished = Some(now);
         j.asking = false;
+        let took = now.saturating_duration_since(j.created);
         let failed = matches!(j.state, JobState::Failed(_));
+        if took.as_millis() > super::bottom::ELAPSED_MIN_MS {
+            self.tab_mut().stats.op = Some(took);
+        }
         self.jobs.unseen_failure |= failed && !self.jobs.open;
         self.layout();
         self.dirty = true;

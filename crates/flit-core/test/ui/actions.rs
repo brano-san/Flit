@@ -338,7 +338,7 @@ fn unavailable_commands_keep_their_keys_but_do_nothing() {
     for a in ACTIONS.iter().filter(|a| a.run.is_none()) {
         assert!(!app.available(a.id), "{}", a.id);
         assert!(!app.run_action(a.id, Instant::now()), "{}", a.id);
-        assert!(a.stage == 0 || (4..=7).contains(&a.stage), "{}", a.id);
+        assert!(a.ctx != Ctx::Main, "every command of the main context runs: {}", a.id);
     }
     press(&mut app, ctrl(Key::Char('E')));
     assert!(!app.search_active(), "Ctrl+E is Toggle Subfolders now, not search");
@@ -523,4 +523,24 @@ fn shell_folders_flit_cannot_show_go_to_file_explorer_with_a_note() {
     let smuggled = crate::open::Open { paths: vec![br#"shell:x" "C:\evil.exe"#.to_vec()], ..Default::default() };
     app.open(&smuggled, &|_| None, Instant::now());
     assert!(launched(&mut app).is_empty(), "a quote cannot add arguments to File Explorer");
+}
+
+#[test]
+fn open_containing_path_asks_the_provider_and_follows_the_answer() {
+    let mut app = crate::ui::harness::app(&["a.lnk", "b.txt"]);
+    app.drain_effects().for_each(drop);
+    assert!(app.run_action("item.open_containing", Instant::now()));
+    assert!(app.drain_effects().all(|e| !matches!(e, Effect::Provider { .. })), "nothing is selected");
+    press(&mut app, key(Key::Down));
+    app.drain_effects().for_each(drop);
+    assert!(app.run_action("item.open_containing_tab", Instant::now()));
+    let launched = app.drain_effects().find_map(|e| match e {
+        Effect::Provider { req: crate::provider::ProviderRequest::Launch { launch: crate::provider::Launch::Reveal { item, new_tab }, .. }, .. } => Some((item.display().into_owned(), new_tab)),
+        _ => None,
+    });
+    assert_eq!(launched, Some((r"C:\Work\a.lnk".to_owned(), true)));
+    let tab = app.tab().id;
+    app.on_provider_event(crate::provider::ProviderEvent::Reveal { tab, path: crate::path::FsPath::parse(r"D:\real\target.txt").unwrap(), new_tab: true }, Instant::now());
+    assert_eq!(app.tabs().len(), 2);
+    assert_eq!(app.current_location().path().display(), r"D:\real");
 }

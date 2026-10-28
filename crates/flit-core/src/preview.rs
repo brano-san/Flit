@@ -19,6 +19,7 @@ pub const IMAGE_FILE_LIMIT: u64 = 256 << 20;
 pub const POSTER_PX: u32 = 256;
 pub const FOLDER_SCAN: usize = 20_000;
 pub const MAX_PROPS: usize = 120;
+pub const FOLDER_ROWS: usize = 2_000;
 
 const IMAGES: &[&str] = &["jpg", "jpeg", "jpe", "jfif", "png", "gif", "bmp", "dib", "tif", "tiff", "ico", "webp", "heic", "heif", "avif", "jxr", "wdp", "dds", "jxl"];
 const AUDIO: &[&str] = &["mp3", "wav", "wma", "flac", "m4a", "aac", "ogg", "oga", "opus", "aif", "aiff", "amr", "ac3"];
@@ -99,6 +100,7 @@ pub struct Doc {
     pub mono: bool,
     pub wrap: bool,
     pub truncated: bool,
+    pub encoding: &'static str,
 }
 
 impl Doc {
@@ -219,12 +221,28 @@ pub fn markdown_doc(src: &str) -> Doc {
     Doc { truncated, ..markdown::markdown(&text) }
 }
 
+pub fn encoding_of(b: &[u8]) -> &'static str {
+    match b {
+        [0xFF, 0xFE, ..] => "UTF-16 LE",
+        [0xFE, 0xFF, ..] => "UTF-16 BE",
+        [0xEF, 0xBB, 0xBF, ..] => "UTF-8 BOM",
+        _ => "UTF-8",
+    }
+}
+
 pub fn build(kind: Kind, bytes: &[u8]) -> Doc {
-    match kind {
+    let doc = match kind {
         Kind::Markdown => markdown_doc(&decode(bytes)),
         Kind::Code(k) => text_doc(&decode(bytes), Some(k)),
-        Kind::Rtf => text_doc(&rtf_text(bytes), None),
+        Kind::Rtf => return Doc { encoding: "RTF", ..text_doc(&rtf_text(bytes), None) },
         _ => text_doc(&decode(bytes), None),
+    };
+    Doc { encoding: encoding_of(bytes), ..doc }
+}
+
+impl Doc {
+    pub fn para_text(&self, k: usize) -> impl Iterator<Item = &str> {
+        self.paras.get(k).map_or(0..0, |p| p.runs.clone()).map(|r| self.run_text(&self.runs[r as usize]))
     }
 }
 
@@ -361,13 +379,25 @@ pub struct FolderSummary {
     pub newest: i64,
     pub types: Vec<(String, u64)>,
     pub complete: bool,
+    pub entries: Vec<FolderItem>,
     counts: FxHashMap<String, u64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FolderItem {
+    pub name: String,
+    pub dir: bool,
+    pub size: u64,
+    pub modified: i64,
 }
 
 impl FolderSummary {
     pub fn add(&mut self, name: &[u8], dir: bool, hidden: bool, size: u64, modified: i64) {
         self.hidden += hidden as u64;
         self.newest = self.newest.max(modified);
+        if self.entries.len() < FOLDER_ROWS {
+            self.entries.push(FolderItem { name: name::display(name).into_owned(), dir, size, modified });
+        }
         if dir {
             self.dirs += 1;
             return;
@@ -382,7 +412,9 @@ impl FolderSummary {
         let mut types: Vec<(String, u64)> = std::mem::take(&mut self.counts).into_iter().collect();
         types.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         types.truncate(5);
-        Self { types, complete, ..self }
+        let mut entries = std::mem::take(&mut self.entries);
+        entries.sort_by_cached_key(|e| (!e.dir, e.name.to_lowercase()));
+        Self { types, complete, entries, ..self }
     }
 }
 

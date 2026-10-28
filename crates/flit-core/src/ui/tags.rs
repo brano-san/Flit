@@ -274,7 +274,15 @@ impl App {
         let (d, gap) = (self.s(MARK), self.s(MARK_GAP));
         let reserve = if count == 0 { 0.0 } else { count as f32 * (d + gap) + gap };
         let x = if p.center { r.x + ((r.w - reserve - g.measure(text, font)) / 2.0).max(0.0).round() } else { r.x };
-        let w = g.text(x, baseline, text, font, color, (r.right() - x - reserve).max(0.0));
+        let max_w = (r.right() - x - reserve).max(0.0);
+        let needle = self.tab().view.as_ref().and_then(|v| v.filter_needle());
+        let w = match needle.and_then(|q| super::fuzzy::fuzzy(q, text)) {
+            Some(m) => {
+                let accent = self.look.palette.area(crate::theme::Area::Files).accent;
+                super::widgets::Paint::new(g, self.look.palette.area(crate::theme::Area::Files), self.scale).marked((x, baseline), text, &m.ranges, font, (color, accent), max_w)
+            }
+            None => g.text(x, baseline, text, font, color, max_w),
+        };
         let y = r.y + ((r.h - d) / 2.0).round();
         for (k, t) in marks().enumerate() {
             g.dl.round_rect(Rect::new((x + w + 2.0 * gap + k as f32 * (d + gap)).round(), y, d, d), Color::rgb(t.color), d / 2.0);

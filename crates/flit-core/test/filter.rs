@@ -32,17 +32,20 @@ fn added(name: &str) -> DirChange {
 }
 
 #[test]
-fn substring_ignores_case_in_any_script() {
+fn fuzzy_match_ignores_case_in_any_script() {
     assert!(NameFilter::new("").is_none());
     assert!(hit("REP", "annual report.pdf"));
     assert!(hit("rt.P", "annual report.pdf"));
     assert!(!hit("reports", "annual report.pdf"));
+    assert!(hit("arpdf", "annual report.pdf"), "letters match in order, not only side by side");
+    assert!(!hit("fdp", "annual report.pdf"));
+    assert!(hit("мдк", "Мой ДОКУМЕНТ.txt"));
     assert!(hit("док", "Мой ДОКУМЕНТ.txt"));
     assert!(hit("ß", "Straße"));
     assert!(!hit("д", "plain ascii"));
     assert!(hit("a\u{FFFD}b", "a\u{FFFD}b"));
     let invalid = [b'x', 0xED, 0xA0, 0x80, b'y'];
-    assert!(!NameFilter::new("xy").unwrap().matches_name(&invalid, &mut String::new()));
+    assert!(!NameFilter::new("yx").unwrap().matches_name(&invalid, &mut String::new()));
     assert!(NameFilter::new("x\u{FFFD}").unwrap().matches_name(&invalid, &mut String::new()));
 }
 

@@ -68,8 +68,27 @@ impl<'a, B: TextBackend> Paint<'a, B> {
 
     pub fn frame(&mut self, r: Rect) {
         let radius = self.px(RADIUS);
+        self.g.dl.shadow(Rect::new(r.x, r.y + self.px(2.0), r.w, r.h), Color::rgba(0x0000_0050), radius, self.px(10.0));
         self.g.dl.round_rect(r, self.t.popup, radius);
         self.g.dl.outline(r, self.t.popup_border, radius, 1.0);
+    }
+
+    pub fn dashed(&mut self, r: Rect, color: Color) {
+        let (dash, gap, inset) = (self.px(3.0).max(2.0), self.px(3.0).max(2.0), self.px(BUTTON_RADIUS));
+        let mut x = r.x + inset;
+        while x < r.right() - inset {
+            let len = dash.min(r.right() - inset - x);
+            self.g.dl.rect(Rect::new(x, r.y, len, 1.0), color);
+            self.g.dl.rect(Rect::new(x, r.bottom() - 1.0, len, 1.0), color);
+            x += dash + gap;
+        }
+        let mut y = r.y + inset;
+        while y < r.bottom() - inset {
+            let len = dash.min(r.bottom() - inset - y);
+            self.g.dl.rect(Rect::new(r.x, y, 1.0, len), color);
+            self.g.dl.rect(Rect::new(r.right() - 1.0, y, 1.0, len), color);
+            y += dash + gap;
+        }
     }
 
     pub fn separator(&mut self, x: f32, y: f32, w: f32) {

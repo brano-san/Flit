@@ -8,12 +8,12 @@ new_tag = "+ Neues Tag"
 shortcut = "Verknüpfung mit {target}"
 too_large = "Das Bild ist für eine Vorschau zu groß"
 truncated = ["Das erste {n} Zeichen wird angezeigt", "Die ersten {n} Zeichen werden angezeigt"]
-
-[tab]
-preview = "Vorschau"
-details = "Details"
+folders = ["{n} Ordner", "{n} Ordner"]
+files = ["{n} Datei", "{n} Dateien"]
 
 [field]
+path = "Pfad"
+type = "Typ"
 items = "Elemente"
 total_size = "Gesamtgröße"
 used_space = "Belegter Speicher"
@@ -22,7 +22,6 @@ size_bytes = ["{size} ({n} Byte)", "{size} ({n} Bytes)"]
 modified = "Geändert"
 created = "Erstellt"
 attributes = "Attribute"
-folder = "Ordner"
 free = "Frei"
 free_of = "{free} von {total}"
 
@@ -33,8 +32,13 @@ system = "System"
 link = "Verknüpfung"
 
 [folder]
+empty = "Dieser Ordner ist leer."
 scanned = ["{size} im ersten {n} Element", "{size} in den ersten {n} Elementen"]
 hidden = ["{n} Element ausgeblendet", "{n} Elemente ausgeblendet"]
 last_change = "Letzte Änderung {date}"
 most_common = "Am häufigsten: {types}"
 no_extension = "keine Erweiterung"
+
+[filter]
+lines = "{n} Zeilen filtern..."
+files = "{n} Dateien filtern..."
