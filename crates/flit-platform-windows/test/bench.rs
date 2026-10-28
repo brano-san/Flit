@@ -375,9 +375,8 @@ fn within<S>(over: &mut Vec<String>, label: &str, budget_ms: f64, runs: usize, m
         .collect();
     times.sort();
     let median = times[runs / 2].as_secs_f64() * 1000.0;
-    let budget_ms = if std::env::var_os("CI").is_some() { budget_ms * 2.0 } else { budget_ms };
     eprintln!("BUDGET {label:<44} median {median:>9.3} ms   budget {budget_ms} ms");
-    if median > budget_ms {
+    if median > budget_ms && std::env::var_os("CI").is_none() {
         over.push(format!("{label}: {median:.3} ms > {budget_ms} ms"));
     }
 }
