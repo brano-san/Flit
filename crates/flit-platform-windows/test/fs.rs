@@ -23,7 +23,7 @@ struct Temp(PathBuf);
 
 impl Temp {
     fn new(tag: &str) -> Self {
-        let root = std::env::temp_dir().join(format!("flit-sizes-{tag}-{}", std::process::id()));
+        let root = crate::test_temp().join(format!("flit-sizes-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         Self(root)
@@ -150,7 +150,7 @@ fn alternate_data_streams_are_listed_only_on_request() {
 
 #[test]
 fn names_the_file_system_of_a_path() {
-    let fs = NtFs.file_system(&FsPath::parse(&std::env::temp_dir().to_string_lossy()).unwrap()).unwrap();
+    let fs = NtFs.file_system(&FsPath::parse(&crate::test_temp().to_string_lossy()).unwrap()).unwrap();
     assert!(["NTFS", "ReFS", "FAT32", "exFAT"].contains(&fs.as_str()), "{fs}");
 }
 

@@ -4,7 +4,7 @@ use std::process::Command;
 const CHILD_ENV: &str = "FLIT_TEST_CRASH";
 
 fn temp(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("flit-crash-{tag}-{}", std::process::id()));
+    let d = crate::test_temp().join(format!("flit-crash-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     d
 }

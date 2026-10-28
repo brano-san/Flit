@@ -81,7 +81,7 @@ fn wait_for(rx: &crossbeam_channel::Receiver<ProviderEvent>, want: impl Fn(&DirC
 
 #[test]
 fn armed_before_watch_returns_and_resolves_short_names() {
-    let root = std::env::temp_dir().join(format!("flit-watch-{}", std::process::id()));
+    let root = crate::test_temp().join(format!("flit-watch-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let long = root.join("long file name.txt");
@@ -105,7 +105,7 @@ fn armed_before_watch_returns_and_resolves_short_names() {
 }
 
 fn temp_dir(tag: &str) -> (std::path::PathBuf, FsPath) {
-    let root = std::env::temp_dir().join(format!("flit-watch-{tag}-{}", std::process::id()));
+    let root = crate::test_temp().join(format!("flit-watch-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let path = FsPath::parse(root.to_str().unwrap()).unwrap();

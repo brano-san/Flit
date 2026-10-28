@@ -53,7 +53,7 @@ fn renames_pair_up_and_unknown_ids_force_a_rescan() {
 }
 
 fn temp_root(tag: &str) -> std::path::PathBuf {
-    let root = std::env::temp_dir().join(format!("flit-walk-{tag}-{}", std::process::id()));
+    let root = crate::test_temp().join(format!("flit-walk-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     root

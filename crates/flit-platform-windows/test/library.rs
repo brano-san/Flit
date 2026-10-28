@@ -7,7 +7,7 @@ struct Temp(PathBuf);
 
 impl Temp {
     fn new(tag: &str) -> Self {
-        let root = std::env::temp_dir().join(format!("flit-library-{tag}-{}", std::process::id()));
+        let root = crate::test_temp().join(format!("flit-library-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         Self(root)

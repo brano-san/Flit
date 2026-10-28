@@ -19,7 +19,7 @@ fn read_description(data: &IDataObject) -> (DROPIMAGETYPE, String, String) {
 #[test]
 fn drop_captions_travel_in_the_dragged_data_object() {
     crate::com_sta();
-    let dir = std::env::temp_dir().join(format!("flit-dropdesc-{}", std::process::id()));
+    let dir = crate::test_temp().join(format!("flit-dropdesc-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.txt"), "x").unwrap();
     let file = FsPath::parse(dir.join("a.txt").to_str().unwrap()).unwrap();

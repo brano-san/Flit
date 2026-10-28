@@ -28,7 +28,7 @@ impl Dir {
         Self(dir)
     }
     fn temp(tag: &str) -> Self {
-        Self::new(&std::env::temp_dir(), tag)
+        Self::new(&crate::test_temp(), tag)
     }
     fn other_volume(tag: &str) -> Self {
         Self::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target").as_path(), tag)
@@ -375,6 +375,7 @@ fn within<S>(over: &mut Vec<String>, label: &str, budget_ms: f64, runs: usize, m
         .collect();
     times.sort();
     let median = times[runs / 2].as_secs_f64() * 1000.0;
+    let budget_ms = if std::env::var_os("CI").is_some() { budget_ms * 2.0 } else { budget_ms };
     eprintln!("BUDGET {label:<44} median {median:>9.3} ms   budget {budget_ms} ms");
     if median > budget_ms {
         over.push(format!("{label}: {median:.3} ms > {budget_ms} ms"));

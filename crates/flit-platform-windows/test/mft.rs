@@ -263,7 +263,7 @@ fn a_real_volume_is_scanned_when_permitted() {
 
 #[test]
 fn volumes_without_mft_access_are_walked_and_never_resumed_blindly() {
-    let dir = std::env::temp_dir().join(format!("flit-mft-walk-{}", std::process::id()));
+    let dir = crate::test_temp().join(format!("flit-mft-walk-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("sub")).unwrap();
     std::fs::write(dir.join("sub").join("f.txt"), b"abc").unwrap();

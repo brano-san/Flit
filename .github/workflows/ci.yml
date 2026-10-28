@@ -20,6 +20,19 @@ jobs:
       - run: cargo build --workspace --release
       - run: cargo test --workspace
       - run: cargo clippy --workspace
+      - if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          cargo build --profile dist -p flit -p flit-indexd
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          New-Item -ItemType Directory -Force target/packages | Out-Null
+          Compress-Archive -Path target/dist/flit.exe, target/dist/flit-indexd.exe, LICENSE, README.md -DestinationPath "target/packages/flit-$version-x86_64-windows.zip"
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: flit-windows
+          path: target/packages/*.zip
+          if-no-files-found: error
 
   linux:
     runs-on: ubuntu-latest
@@ -53,7 +66,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: flit-linux
-          path: target/dist/*.tar.gz
+          path: target/packages/*.tar.gz
 
   deps-isolation:
     runs-on: ubuntu-latest
@@ -72,3 +85,23 @@ jobs:
             fi
           done
           exit "$status"
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux, linux-gui, deps-isolation]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: flit-windows
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" *.zip --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" *.zip --title "Flit ${GITHUB_REF_NAME#v}" --generate-notes
+          fi

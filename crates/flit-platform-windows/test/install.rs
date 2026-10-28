@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn fonts_are_copied_under_their_own_name_and_other_files_are_refused() {
-    let dir = std::env::temp_dir().join(format!("flit-fonts-{}", std::process::id()));
+    let dir = crate::test_temp().join(format!("flit-fonts-{}", std::process::id()));
     let src = dir.join("in");
     std::fs::create_dir_all(&src).unwrap();
     std::fs::write(src.join("Demo Sans.otf"), b"OTTO").unwrap();

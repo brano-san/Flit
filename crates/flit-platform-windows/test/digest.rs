@@ -5,7 +5,7 @@ struct TempFile(std::path::PathBuf);
 
 impl TempFile {
     fn new(tag: &str, body: &[u8]) -> Self {
-        let p = std::env::temp_dir().join(format!("flit-digest-{tag}-{}", std::process::id()));
+        let p = crate::test_temp().join(format!("flit-digest-{tag}-{}", std::process::id()));
         std::fs::write(&p, body).unwrap();
         Self(p)
     }

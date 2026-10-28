@@ -10,7 +10,7 @@ pub(crate) struct FakeBin {
 
 impl FakeBin {
     pub fn new(tag: &str) -> Self {
-        let top = std::env::temp_dir().join(format!("flit-bin-{tag}-{}", std::process::id()));
+        let top = crate::test_temp().join(format!("flit-bin-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&top);
         let root = top.join(r"$Recycle.Bin\S-1-5-21-0-0-0-1001");
         std::fs::create_dir_all(&root).unwrap();

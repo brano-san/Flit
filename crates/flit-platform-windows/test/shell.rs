@@ -9,7 +9,7 @@ fn p(s: &str) -> FsPath {
 
 #[test]
 fn shortcuts_resolve_only_to_existing_folders() {
-    let root = std::env::temp_dir().join(format!("flit-shell-lnk-{}", std::process::id()));
+    let root = crate::test_temp().join(format!("flit-shell-lnk-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("target")).unwrap();
     std::fs::write(root.join("f.txt"), "x").unwrap();
@@ -116,7 +116,7 @@ pub(crate) fn write_jpeg(path: &std::path::Path, width: u32, height: u32, seed: 
 
 #[test]
 fn thumbnails_of_images_fit_the_requested_size_and_other_files_have_none() {
-    let root = std::env::temp_dir().join(format!("flit-shell-thumb-{}", std::process::id()));
+    let root = crate::test_temp().join(format!("flit-shell-thumb-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let mut shell = ShellCom::new().unwrap();

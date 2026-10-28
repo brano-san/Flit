@@ -11,7 +11,7 @@ impl Drop for Dir {
 }
 
 fn temp(tag: &str) -> Dir {
-    let d = std::env::temp_dir().join(format!("flit-preview-{tag}-{}", std::process::id()));
+    let d = crate::test_temp().join(format!("flit-preview-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     Dir(d)

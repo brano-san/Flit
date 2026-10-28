@@ -18,7 +18,7 @@ struct Tree {
 
 impl Tree {
     fn new(tag: &str) -> Self {
-        let base = std::env::temp_dir().join(format!("flit-access-{tag}-{}", std::process::id()));
+        let base = crate::test_temp().join(format!("flit-access-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(base.join("open")).unwrap();
         std::fs::create_dir_all(base.join("locked")).unwrap();

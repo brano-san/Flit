@@ -9,7 +9,7 @@ struct TempDir(PathBuf);
 
 impl TempDir {
     fn new(tag: &str) -> Self {
-        Self::under(&std::env::temp_dir(), tag)
+        Self::under(&crate::test_temp(), tag)
     }
     fn under(root: &Path, tag: &str) -> Self {
         let dir = root.join(format!("flit-ops-{tag}-{}", std::process::id()));
@@ -75,7 +75,7 @@ fn answering(answers: &[(Resolve, bool)]) -> (Job, Asked) {
 
 fn other_volume(tag: &str) -> Option<TempDir> {
     let other = TempDir::under(&Path::new(env!("CARGO_MANIFEST_DIR")).join(r"..\..\target"), tag);
-    let temp = std::env::temp_dir();
+    let temp = crate::test_temp();
     if temp.components().next() == other.0.components().next() {
         eprintln!("skipped: {} and {} share a volume", temp.display(), other.0.display());
         return None;

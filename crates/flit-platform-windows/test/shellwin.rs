@@ -32,7 +32,7 @@ fn a_registered_flit_window_receives_the_item_the_shell_asks_it_to_select() {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
     }
     let Ok(windows) = (unsafe { CoCreateInstance::<_, IShellWindows>(&ShellWindows, None, CLSCTX_ALL) }) else { return };
-    let dir = std::env::temp_dir().join(format!("flit-shellwin-{}", std::process::id()));
+    let dir = crate::test_temp().join(format!("flit-shellwin-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("a b.txt");
     std::fs::write(&file, b"x").unwrap();

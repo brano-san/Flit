@@ -5,7 +5,7 @@ use std::time::Duration;
 
 #[test]
 fn recent_files_are_newest_first_unique_and_limited() {
-    let root = std::env::temp_dir().join(format!("flit-recent-{}", std::process::id()));
+    let root = crate::test_temp().join(format!("flit-recent-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     for d in ["links", "work"] {
         std::fs::create_dir_all(root.join(d)).unwrap();
