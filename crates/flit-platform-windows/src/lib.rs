@@ -268,6 +268,6 @@ mod bench;
 #[cfg(test)]
 fn test_temp() -> std::path::PathBuf {
     let temp = std::env::temp_dir();
-    let long = std::fs::canonicalize(&temp).ok().and_then(|p| p.to_str().and_then(|s| s.strip_prefix(r"\?\")).map(std::path::PathBuf::from));
+    let long = std::fs::canonicalize(&temp).ok().and_then(|p| p.to_str().and_then(|s| s.strip_prefix(r"\\?\")).map(std::path::PathBuf::from));
     long.unwrap_or(temp)
 }
