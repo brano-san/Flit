@@ -720,7 +720,7 @@ impl App {
         ui.lines = lines;
         let (w, h, sc) = (self.size.0, self.size.1, self.scale);
         let s = |v: f32| (v * sc).round();
-        let top = self.layout.title.bottom() + s(12.0);
+        let top = self.s(super::TAB_H) + s(12.0);
         let pw = s(MAX_W).min(w - s(24.0)).max(s(320.0));
         let x = ((w - pw) / 2.0).round();
         ui.panel = Rect::new(x, top, pw, (h - top - s(12.0)).max(s(200.0)));
@@ -759,7 +759,7 @@ impl App {
 
     pub(super) fn settings_hit(&self, x: f32, y: f32) -> Option<Hit> {
         let ui = self.settings.as_ref()?;
-        if self.layout.title.contains(x, y) {
+        if self.in_title(y) {
             return None;
         }
         let s = |v: f32| (v * self.scale).round();
@@ -1276,7 +1276,7 @@ impl App {
         let icons = self.icon_font(10.0);
         let (s4, s6, s8) = (s(4.0), s(6.0), s(8.0));
         let (w, h) = self.size;
-        let top = self.layout.title.bottom();
+        let top = self.s(super::TAB_H);
         g.dl.rect(Rect::new(0.0, top, w, h - top), if self.dark { Color::rgba(0x00000070) } else { Color::rgba(0x00000040) });
         let p = ui.panel;
         g.dl.shadow(Rect::new(p.x, p.y + s8, p.w, p.h), if self.dark { Color::rgba(0x00000090) } else { Color::rgba(0x00000030) }, s8, s(24.0));

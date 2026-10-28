@@ -308,7 +308,7 @@ fn the_interface_scale_multiplies_the_display_scale_for_layout_fonts_and_hits() 
     assert!((a.layout.row_h - 2.0 * row).abs() <= 1.0, "{} vs {row}", a.layout.row_h);
     assert!((a.layout.title.h - 2.0 * title.h).abs() <= 1.0);
     assert_eq!(a.ui_font(13.0).size_q, 2 * font);
-    assert!(a.layout.title.contains(title.x + 1.0, title.bottom() + 2.0));
+    assert!(a.in_title(title.bottom() + 2.0));
     assert_eq!(a.hit_test(title.right() - 1.0, title.bottom() + 2.0), a.hit_test(title.right() - 1.0, 1.0));
     a.on_event(&crate::input::Event::ScaleChanged(1.0), Instant::now());
     assert_eq!(a.scale, 2.0);

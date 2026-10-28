@@ -63,7 +63,7 @@ impl App {
 
     pub(super) fn focus_key(&mut self, key: Key, m: Mods, now: Instant) -> bool {
         let suggesting = self.editing && self.suggesting();
-        if key == Key::Tab && !m.ctrl && !m.alt && !suggesting && self.nav.palette.is_none() {
+        if key == Key::Tab && !m.ctrl && !m.alt && !suggesting && self.nav.palette.is_none() && !self.cycles_panels() {
             self.cycle_focus(m.shift);
             return true;
         }

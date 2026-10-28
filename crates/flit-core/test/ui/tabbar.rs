@@ -4,7 +4,7 @@ use crate::listing::{attr, DirSnapshot, Listing, Meta};
 use crate::path::FsPath;
 use crate::provider::ProviderRequest;
 use crate::sort::{self, CaseMode, SortKeys};
-use crate::ui::{drop_effect, DragEvent, MenuItem, Persisted, Spot};
+use crate::ui::{drop_effect, DragEvent, MenuItem, Persisted, Spot, WindowCmd};
 use std::sync::Arc;
 
 const NO: Mods = Mods { ctrl: false, shift: false, alt: false };
@@ -17,7 +17,7 @@ fn loc(s: &str) -> Location {
 
 fn app_with(paths: &[&str]) -> App {
     let routes = paths.iter().map(|p| Route { folder: loc(p), select: None }).collect();
-    let mut app = App::new(Persisted::default(), routes, 0, false, 1.0, (1000, 600), Instant::now());
+    let mut app = App::new(Persisted::default(), routes, 0, false, 1.0, (2000, 600), Instant::now());
     app.drain_effects().for_each(drop);
     app
 }
@@ -192,7 +192,7 @@ fn restored_tabs_stay_asleep_until_shown() {
     assert!(listed(&mut app).is_empty());
     assert_eq!(app.tabs[0].gen, 0);
     assert_eq!(app.tabs[2].title(), "c");
-    assert_eq!(app.session(), WindowSession { tabs: vec![loc(r"C:\a"), loc(r"C:\b"), loc(r"C:\c")], cur: 1, splits: vec![None, None, None], trails: vec![loc(r"C:\a"), loc(r"C:\b"), loc(r"C:\c")] });
+    assert_eq!(app.session(), WindowSession { tabs: vec![loc(r"C:\a"), loc(r"C:\b"), loc(r"C:\c")], cur: 1, panels: None, trails: vec![loc(r"C:\a"), loc(r"C:\b"), loc(r"C:\c")] });
     key(&mut app, Key::Char('3'), CTRL);
     assert_eq!(listed(&mut app), [r"C:\c"]);
     assert_eq!(app.window_title(), r"C:\c — Flit");
@@ -293,10 +293,10 @@ fn dropping_onto_the_new_tab_button_opens_new_tabs() {
 fn tab_actions_button_follows_its_flag() {
     let mut app = app_with(&[r"C:\x", r"C:\y"]);
     let r = app.layout.actions;
-    assert!(r.w > 0.0 && r.right() <= app.layout.caption[0].x);
+    assert!(r.w > 0.0 && r.right() <= app.panels.caption[0].x);
     ev(&mut app, Event::MouseDown { x: r.x + 5.0, y: r.y + 5.0, button: MouseButton::Left, clicks: 1 });
     ev(&mut app, Event::MouseUp { x: r.x + 5.0, y: r.y + 5.0, button: MouseButton::Left });
-    assert_eq!(menu_labels(&mut app), ["New tab", "New window", "Move tab to a new window", "Mini window", "Full screen", "Split vertically", "Split horizontally", "Open new tabs with two panes", "Close all tabs", "Settings"]);
+    assert_eq!(menu_labels(&mut app), ["New tab", "New window", "Move tab to a new window", "Mini window", "Full screen", "Split Right", "Split Bottom", "Close all tabs", "Settings"]);
     app.tab_actions_button = false;
     app.layout();
     assert_eq!(app.layout.actions.w, 0.0);

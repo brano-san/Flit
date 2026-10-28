@@ -1,7 +1,7 @@
 use super::home::Widget;
 use super::layouts::LAYOUTS;
 use super::tabbar::Startup;
-use super::{App, Column, Effect, Persisted, SplitDir};
+use super::{App, Column, Effect, Persisted};
 use crate::archive::Format;
 use crate::fmt::DateFormat;
 use crate::i18n::{self, Lang, P, S};
@@ -193,8 +193,6 @@ const GROUPS: [GroupField; 7] = [GroupField::None, GroupField::Name, GroupField:
 const GROUP_CHOICES: Choices = &[("none", S::SettingsChoiceGroupNone), ("name", S::SettingsChoiceGroupName), ("modified", S::SettingsChoiceGroupModified), ("created", S::SettingsChoiceGroupCreated), ("size", S::SettingsChoiceGroupSize), ("type", S::SettingsChoiceGroupType), ("tags", S::SettingsChoiceGroupTags)];
 const UNITS_OF_DATE: [DateUnit; 3] = [DateUnit::Year, DateUnit::Month, DateUnit::Day];
 const DATE_UNIT_CHOICES: Choices = &[("year", S::SettingsChoiceDateUnitYear), ("month", S::SettingsChoiceDateUnitMonth), ("day", S::SettingsChoiceDateUnitDay)];
-const SPLITS: [SplitDir; 2] = [SplitDir::Vertical, SplitDir::Horizontal];
-const SPLIT_CHOICES: Choices = &[("vertical", S::SettingsChoiceSplitVertical), ("horizontal", S::SettingsChoiceSplitHorizontal)];
 const ARCHIVES: [Format; 4] = Format::WRITABLE;
 const ARCHIVE_CHOICES: Choices = &[("zip", S::SettingsChoiceArchiveZip), ("7z", S::SettingsChoiceArchive7z), ("tar", S::SettingsChoiceArchiveTar), ("gz", S::SettingsChoiceArchiveGz)];
 const THEMES: [Mode; 3] = [Mode::System, Mode::Light, Mode::Dark];
@@ -226,8 +224,6 @@ pub static SETTINGS: &[Setting] = &[
     Setting { id: "general.startup_pages", page: Page::General, title: S::SettingsTitleGeneralStartupPages, help: S::SettingsHelpGeneralStartupPages, kind: Kind::Paths(|a| a.startup_pages.clone(), |a, v| a.set_startup_pages(v)) },
     toggle("general.open_in_running", Page::General, S::SettingsTitleGeneralOpenInRunning, S::SettingsHelpGeneralOpenInRunning, |a| a.open_target != OpenTarget::NewWindow, |a, on| a.open_target = if on { OpenTarget::NewTab } else { OpenTarget::NewWindow }),
     toggle("general.switch_to_new_tab", Page::General, S::SettingsTitleGeneralSwitchToNewTab, S::SettingsHelpGeneralSwitchToNewTab, |a| a.switch_to_new_tab, |a, on| a.switch_to_new_tab = on),
-    toggle("general.dual_pane", Page::General, S::SettingsTitleGeneralDualPane, S::SettingsHelpGeneralDualPane, |a| a.split_prefs.dual, |a, on| a.split_prefs.dual = on),
-    choice("general.split_direction", Page::General, S::SettingsTitleGeneralSplitDirection, S::SettingsHelpGeneralSplitDirection, SPLIT_CHOICES, |a| pos(&SPLITS, &a.split_prefs.dir), |a, i| a.split_prefs.dir = SPLITS[i]),
     toggle("general.smooth_scroll", Page::General, S::SettingsTitleGeneralSmoothScroll, S::SettingsHelpGeneralSmoothScroll, |a| a.smooth_scroll, |a, on| a.smooth_scroll = on),
     toggle("general.tab_wheel_reversed", Page::General, S::SettingsTitleGeneralTabWheelReversed, S::SettingsHelpGeneralTabWheelReversed, |a| a.tab_wheel_reversed, |a, on| a.tab_wheel_reversed = on),
     choice("general.date_format", Page::General, S::SettingsTitleGeneralDateFormat, S::SettingsHelpGeneralDateFormat, DATE_CHOICES, |a| pos(&DATES, &a.style.dates), |a, i| a.set_style(|s| s.dates = DATES[i])),

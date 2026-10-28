@@ -10,6 +10,8 @@ settings_pages = "Разделы"
 preview = "Просмотр"
 
 [button]
+main_menu = "Главное меню"
+quick_access = "Скрыть или показать Quick Access"
 new_tab = "Новая вкладка"
 tab_actions = "Действия с вкладками"
 minimize = "Свернуть"

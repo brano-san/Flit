@@ -840,7 +840,7 @@ impl App {
             self.close_search();
             return false;
         }
-        if self.layout.title.contains(x, y) {
+        if self.in_title(y) {
             if matches!(self.hit(x, y), Hit::Tab(_) | Hit::TabClose(_) | Hit::NewTab) {
                 self.close_search();
             }
@@ -889,7 +889,7 @@ impl App {
     }
 
     fn search_mouse_up(&mut self, x: f32, y: f32, button: MouseButton) -> bool {
-        if self.layout.title.contains(x, y) && self.search.drag == SDrag::None {
+        if self.in_title(y) && self.search.drag == SDrag::None {
             return false;
         }
         let was = std::mem::take(&mut self.search.drag);
@@ -940,7 +940,7 @@ impl App {
             }
             SDrag::None => {}
         }
-        if self.layout.title.contains(x, y) {
+        if self.in_title(y) {
             if self.search.hover != SHit::None {
                 self.search.hover = SHit::None;
                 self.dirty = true;

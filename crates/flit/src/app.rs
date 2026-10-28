@@ -52,9 +52,13 @@ struct Rows {
     last: AtomicU32,
 }
 
+fn within(req: &IconRequest, (gen, first, last): (u64, u32, u32)) -> bool {
+    req.gen == gen && req.row + ICON_MARGIN >= first && req.row <= last + ICON_MARGIN
+}
+
 impl Rows {
     fn wants(&self, req: &IconRequest) -> bool {
-        req.gen == self.gen.load(Ordering::Relaxed) && req.row + ICON_MARGIN >= self.first.load(Ordering::Relaxed) && req.row <= self.last.load(Ordering::Relaxed) + ICON_MARGIN
+        within(req, (self.gen.load(Ordering::Relaxed), self.first.load(Ordering::Relaxed), self.last.load(Ordering::Relaxed)))
     }
 
     fn store(&self, (gen, first, last): (u64, u32, u32)) {
@@ -67,12 +71,12 @@ impl Rows {
 #[derive(Default)]
 struct Visible {
     pane: Rows,
-    other: Rows,
+    parked: Mutex<Vec<(u64, u32, u32)>>,
 }
 
 impl Visible {
     fn wants(&self, req: &IconRequest) -> bool {
-        req.gen == 0 || self.pane.wants(req) || self.other.wants(req)
+        req.gen == 0 || self.pane.wants(req) || self.parked.lock().is_ok_and(|p| p.iter().any(|&r| within(req, r)))
     }
 }
 
@@ -353,8 +357,10 @@ impl<P: Platform> Handler<P> {
         let routes = ws.tabs.get(cur).map(|l| vec![Route { folder: l.clone(), select: None }]).unwrap_or_default();
         let mut app = self.new_app(routes, self.saved.persisted.clone());
         app.restore_tabs(&ws.tabs, cur);
-        app.restore_splits(&ws.splits);
         app.restore_trails(&ws.trails);
+        if let Some(p) = &ws.panels {
+            app.restore_panels(p);
+        }
         app
     }
 
@@ -932,7 +938,7 @@ impl<P: Platform> Handler<P> {
             }
         }
         st.visible.pane.store(st.app.visible_rows());
-        st.visible.other.store(st.app.other_visible_rows().unwrap_or((u64::MAX, 0, 0)));
+        *st.visible.parked.lock().unwrap_or_else(|e| e.into_inner()) = st.app.parked_rows().collect();
         self.places.start_once();
         let now = Instant::now();
         if animating {
@@ -1114,7 +1120,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let mut saved = state::load::<P>();
     let settings_file = settings::file::<P>();
     let settings_text = settings_file.as_deref().and_then(settings::read);
-    let mut doc = settings_text.as_deref().map(flit_core::ui::settings::parse).unwrap_or_default();
+    let doc = settings_text.as_deref().map(flit_core::ui::settings::parse).unwrap_or_default();
     if let Some(Value::Choice(i)) = doc.value(flit_core::ui::settings::LANGUAGE) {
         flit_core::i18n::set_lang(flit_core::ui::settings::language_of(*i));
     }
@@ -1123,13 +1129,6 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     }
     if let Some(mb) = settings::thumb_cache_mb(&doc) {
         saved.persisted.prefs.thumb_cache_mb = mb;
-    }
-    if let Some(Value::Bool(dual)) = doc.value("general.dual_pane") {
-        saved.persisted.split.dual = *dual;
-    }
-    if metrics.is_some() && crate::metrics::dual_at_start() {
-        saved.persisted.split.dual = true;
-        doc.values.retain(|(i, _)| flit_core::ui::SETTINGS[*i].id != "general.dual_pane");
     }
     let ws = Ws::<P>::new()?;
     let waker = ws.waker();

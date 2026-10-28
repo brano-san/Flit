@@ -10,6 +10,8 @@ settings_pages = "Pages"
 preview = "Preview"
 
 [button]
+main_menu = "Main menu"
+quick_access = "Toggle Quick Access"
 new_tab = "New tab"
 tab_actions = "Tab actions"
 minimize = "Minimize"

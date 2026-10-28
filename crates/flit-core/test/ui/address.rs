@@ -459,13 +459,13 @@ fn the_dimmed_tail_collapses_before_real_crumbs_overflow() {
         app.go_up(Instant::now());
     }
     assert_eq!(ghosts(&app).len(), 3);
-    app.on_event(&Event::Resized { width: 560, height: 600 }, Instant::now());
+    app.on_event(&Event::Resized { width: 780, height: 600 }, Instant::now());
     frame(&mut app);
     let real = app.tab().crumbs.len();
     assert_eq!(app.addr.overflow.w, 0.0, "real crumbs stay in the bar");
     assert!(app.layout.crumbs[..real].iter().all(|r| r.w > 0.0));
     assert_eq!(app.layout.crumbs[real + 2].w, 0.0, "the deepest dimmed crumb goes first");
-    app.on_event(&Event::Resized { width: 1400, height: 600 }, Instant::now());
+    app.on_event(&Event::Resized { width: 1620, height: 600 }, Instant::now());
     frame(&mut app);
     assert!(app.layout.crumbs.iter().all(|r| r.w > 0.0));
 }

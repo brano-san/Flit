@@ -294,7 +294,7 @@ impl App {
     }
 
     pub(super) fn toolbar_h(&self) -> f32 {
-        if self.toolbar.state.visible && !self.search.active && (self.split_shown() || !self.tab().view_loc.is_home_page()) {
+        if self.toolbar.state.visible && !self.search.active && !self.tab().view_loc.is_home_page() {
             self.s(BAR_H)
         } else {
             0.0

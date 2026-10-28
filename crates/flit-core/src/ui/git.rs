@@ -137,14 +137,8 @@ impl App {
             }
             return;
         }
-        if let Some(k) = self.inactive_of(tab) {
-            self.on_other_at(k, |a| {
-                if a.tabs[k].gen == gen {
-                    a.tabs[k].git = info;
-                    a.layout();
-                    a.dirty = true;
-                }
-            });
+        if let Some(id) = self.parked_of(tab) {
+            self.visit(id, |a| a.git_status_arrived(tab, gen, info));
         }
     }
 

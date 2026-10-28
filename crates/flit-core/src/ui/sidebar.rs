@@ -285,7 +285,7 @@ pub(super) enum PlaceCmd {
     Widget(Widget),
     Forget(FsPath),
     ClearRecent,
-    Pane(Location, Option<super::SplitDir>),
+    Pane(Location, bool),
     Launch(Launch),
 }
 
@@ -700,7 +700,7 @@ impl App {
             PlaceCmd::Widget(w) => self.toggle_widget(w),
             PlaceCmd::Forget(path) => self.forget_recent(path),
             PlaceCmd::ClearRecent => self.clear_recent(),
-            PlaceCmd::Pane(loc, dir) => self.open_in_pane(loc, dir, now),
+            PlaceCmd::Pane(loc, down) => self.open_in_panel(loc, down, now),
         }
     }
 

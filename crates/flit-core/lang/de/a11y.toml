@@ -10,6 +10,8 @@ settings_pages = "Seiten"
 preview = "Vorschau"
 
 [button]
+main_menu = "Hauptmenü"
+quick_access = "Quick Access ein- oder ausblenden"
 new_tab = "Neue Registerkarte"
 tab_actions = "Registerkartenaktionen"
 minimize = "Minimieren"

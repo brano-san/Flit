@@ -187,12 +187,12 @@ fn pane_state_rides_after_layouts_and_older_files_keep_the_default() {
 }
 
 #[test]
-fn dual_pane_preferences_ride_ninth_so_files_from_master_still_load() {
-    use flit_core::ui::{Show, SplitDir, ToolItem, ToolbarState};
+fn the_old_dual_pane_record_stays_ninth_and_is_ignored_so_later_records_still_load() {
+    use flit_core::ui::{Show, ToolItem, ToolbarState};
     let mut toolbar = ToolbarState::default();
     toolbar.sets[0] = vec![ToolItem::Button("nav.refresh".into(), Show::Icon)];
     let tools = Tools { toolbar, searches: vec!["ext:txt".into()], streams: true };
-    let mut persisted = Persisted { split: SplitPrefs { dual: true, dir: SplitDir::Horizontal }, ..Default::default() };
+    let mut persisted = Persisted::default();
     persisted.archive.open_after = true;
     persisted.prefs.show_streams = true;
     let nav = NavState { pinned: vec![loc(r"C:\work")], sidebar_w: 280.0, sidebar: true };
@@ -202,10 +202,14 @@ fn dual_pane_preferences_ride_ninth_so_files_from_master_still_load() {
     let bytes = s.encode().unwrap();
     let back = Saved::decode(&bytes).unwrap();
     assert_eq!((&back.persisted, &back.nav, back.pane, &back.side, &back.tools), (&s.persisted, &nav, pane, &side, &tools));
-    let bytes = &bytes[..bytes.len() - WORD_LEN];
-    let stored = postcard::to_stdvec(&s.persisted.split).unwrap();
-    assert!(bytes.ends_with(&stored));
-    let master = &bytes[..bytes.len() - stored.len()];
+    let (head, word) = bytes.split_at(bytes.len() - WORD_LEN);
+    let stored = postcard::to_stdvec(&SplitPrefs::default()).unwrap();
+    assert!(head.ends_with(&stored));
+    let master = &head[..head.len() - stored.len()];
+    let mut dual = master.to_vec();
+    dual.extend(postcard::to_stdvec(&SplitPrefs { dual: true, dir: SplitDir::Horizontal }).unwrap());
+    dual.extend(word);
+    assert_eq!(Saved::decode(&dual).unwrap().persisted, s.persisted, "a file with two panes per tab keeps every later record");
     let (_, tail) = postcard::take_from_bytes::<Head>(master).unwrap();
     let (_, tail) = postcard::take_from_bytes::<NavState>(tail).unwrap();
     let (_, tail) = postcard::take_from_bytes::<ViewRecord>(tail).unwrap();
@@ -216,9 +220,7 @@ fn dual_pane_preferences_ride_ninth_so_files_from_master_still_load() {
     let (_, tail) = postcard::take_from_bytes::<Tools>(tail).unwrap();
     assert!(tail.is_empty(), "master writes eight records");
     let older = Saved::decode(master).unwrap();
-    assert_eq!(older.persisted.split, SplitPrefs::default());
     assert_eq!((older.pane, &older.side, &older.tools), (pane, &side, &tools));
-    assert_eq!(older.persisted, Persisted { split: SplitPrefs::default(), ..s.persisted.clone() });
 }
 
 #[test]

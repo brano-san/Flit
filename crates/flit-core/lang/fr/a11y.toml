@@ -10,6 +10,8 @@ settings_pages = "Pages"
 preview = "Aperçu"
 
 [button]
+main_menu = "Menu principal"
+quick_access = "Afficher ou masquer Quick Access"
 new_tab = "Nouvel onglet"
 tab_actions = "Actions d’onglet"
 minimize = "Réduire"

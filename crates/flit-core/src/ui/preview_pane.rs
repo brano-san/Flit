@@ -384,7 +384,7 @@ impl App {
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
         let st = self.preview.state;
-        let (w, h) = self.size;
+        let (ww, wh) = self.size;
         let shown = st.visible && !self.search.active && !self.on_home();
         let l = &mut self.layout;
         l.bottom = l.status.y;
@@ -393,9 +393,9 @@ impl App {
         if !shown {
             return;
         }
-        let (x0, top, bottom) = (l.header.x, l.commands.bottom(), l.status.y);
+        let (x0, w, top, bottom) = (l.header.x, l.header.right(), l.commands.bottom(), l.status.y);
         let (room_w, room_h) = ((w - x0).max(0.0), (bottom - top).max(0.0));
-        if w >= h {
+        if ww >= wh {
             let pw = s(st.right_w).min((room_w * 0.7).round());
             r.pane = Rect::new(w - pw, top, pw, room_h);
             r.split = Rect::new(r.pane.x - s(3.0), top, s(6.0), room_h);

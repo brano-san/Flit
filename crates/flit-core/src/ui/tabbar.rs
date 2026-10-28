@@ -1,4 +1,4 @@
-use super::{App, Drag, Effect, Hit, Route, Tab, WindowCmd, G_DRIVE, G_FOLDER, MAX_ROUTES};
+use super::{App, Drag, Effect, Hit, Route, Tab, G_DRIVE, G_FOLDER, MAX_ROUTES};
 use crate::input::{Key, MouseButton};
 use crate::location::Location;
 use crate::path::PathKind;
@@ -31,9 +31,9 @@ pub struct WindowSession {
     pub tabs: Vec<Location>,
     pub cur: usize,
     #[serde(skip)]
-    pub splits: Vec<Option<super::SplitSession>>,
-    #[serde(skip)]
     pub trails: Vec<Location>,
+    #[serde(skip)]
+    pub panels: Option<super::PanelsSession>,
 }
 
 pub struct MovedTab(Box<Tab>);
@@ -79,10 +79,6 @@ fn full_name(t: &Tab) -> String {
 impl App {
     pub fn window_title(&self) -> String {
         format!("{} — Flit", full_name(self.tab()))
-    }
-
-    pub fn session(&self) -> WindowSession {
-        WindowSession { tabs: self.tabs.iter().map(|t| t.location().clone()).collect(), cur: self.cur, splits: self.split_sessions(), trails: self.tabs.iter().map(|t| t.trail.clone()).collect() }
     }
 
     pub fn session_rev(&self) -> u64 {
@@ -135,7 +131,6 @@ impl App {
             self.move_tab(self.tab_slot(x));
         }
         self.reload(self.cur, now);
-        self.adopt_split(now);
         self.after_tab_change();
     }
 
@@ -153,7 +148,7 @@ impl App {
         if self.tab().gen == 0 {
             self.load_tab(self.cur, None, Instant::now());
         }
-        self.wake_other();
+        self.wake_panels();
     }
 
     fn tab_slot(&self, x: f32) -> usize {
@@ -209,7 +204,8 @@ impl App {
     }
 
     fn detach_tab(&mut self, at: Option<(f32, f32)>) {
-        let last = self.tabs.len() == 1;
+        let alone = self.tabs.len() == 1;
+        let last = alone && self.panel_count() == 1;
         let mut t = if last {
             let loc = self.tab().location().clone();
             let mut stand_in = Tab::new(self.next_tab, loc.clone(), self.tab().view_spec);
@@ -222,6 +218,8 @@ impl App {
         t.shutdown(&mut self.effects);
         if last {
             self.dirty = true;
+        } else if alone {
+            self.close_panel();
         } else {
             self.cur = self.cur.min(self.tabs.len() - 1);
             self.after_tab_change();
@@ -230,7 +228,7 @@ impl App {
     }
 
     pub(super) fn move_tab_to_window(&mut self) {
-        if self.tabs.len() == 1 {
+        if self.tabs.len() == 1 && self.panel_count() == 1 {
             return self.status(crate::i18n::S::TabbarOnlyTab.t());
         }
         self.detach_tab(None);
@@ -253,13 +251,12 @@ impl App {
     }
 
     pub(super) fn close_all_tabs(&mut self) {
-        self.effects.push(Effect::Window(WindowCmd::Close));
+        self.close_panel();
     }
 
     pub(super) fn strip_wheel(&mut self, dy: f32) -> bool {
         let Some((x, y)) = self.strip.pointer else { return false };
-        let l = &self.layout;
-        if !l.title.contains(x, y) || l.caption.iter().any(|r| r.contains(x, y)) {
+        if !self.layout.title.contains(x, y) || self.caption_hit(x, y) != Hit::None {
             return false;
         }
         self.strip.wheel += if self.tab_wheel_reversed { -dy } else { dy };

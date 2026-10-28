@@ -83,9 +83,8 @@ fn matches_rank_registered_titles() {
 #[test]
 fn commands_are_found_by_words_of_their_descriptions() {
     assert!(ACTIONS.iter().all(|a| !super::super::describe::description(a.id).is_empty()), "every command has a description");
-    let dual = titles("dual pane");
-    assert_eq!(dual[0], "Toggle dual pane", "a title match ranks first");
-    assert!(dual.contains(&"Split vertically: open this folder in a pane on the right"));
+    assert_eq!(titles("split right")[0], "Split Right", "a title match ranks first");
+    assert!(titles("dual pane").contains(&"Split Right"));
     assert!(titles("trash").contains(&"Move to Recycle Bin"));
     assert!(titles("unzip").contains(&"Extract here"));
     assert!(titles("checksum").contains(&"Hashes…"));

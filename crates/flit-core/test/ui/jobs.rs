@@ -107,7 +107,7 @@ fn the_conflict_dialog_is_modal_and_works_with_the_mouse() {
     click(&mut app, |a| a.layout.new_tab);
     app.on_event(&Event::Char('x'), t0());
     assert_eq!((app.tabs().len(), app.asking()), (tabs, Some("conflict")), "the rest of the window waits for the answer");
-    let close = app.layout.caption[2];
+    let close = app.panels.caption[2];
     assert_eq!(app.hit_test(close.x + 4.0, close.y + 4.0), crate::input::HitArea::Close, "the window can still be closed or moved");
     assert_eq!(app.hit_test(app.layout.new_tab.right() + 40.0, 10.0), crate::input::HitArea::Caption);
     click(&mut app, |a| a.jobs.r.check);

@@ -348,7 +348,7 @@ impl App {
 
     pub(super) fn palette_hit(&self, x: f32, y: f32) -> Option<Hit> {
         let p = self.nav.palette.as_ref()?;
-        if self.layout.title.contains(x, y) {
+        if self.in_title(y) {
             return None;
         }
         if !p.rect.contains(x, y) {

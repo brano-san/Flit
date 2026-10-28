@@ -47,7 +47,7 @@ fn every_default_shortcut_reads_back_and_stays_assignable() {
         assert!(refusal(refused).is_some(), "{}", chord_text(&refused));
     }
     assert!(refusal(ctrl(Key::Char('1'))).unwrap().contains("tab 1"));
-    assert_eq!(refusal(ctrl_shift(Key::Right)), None, "a default shortcut stays allowed");
+    assert_eq!(refusal(shift(Key::Tab)), None, "a default shortcut stays allowed");
     assert_eq!(refusal(alt(Key::Char('Q'))), None);
     assert_eq!(refusal(key(Key::Insert)), None);
     assert_eq!(defaults().owner(key(Key::BrowserBack)), Some(at("nav.back")), "the Back key is a remappable default");

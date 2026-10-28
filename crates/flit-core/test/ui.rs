@@ -199,8 +199,8 @@ fn this_pc_asks_for_distro_icons_by_their_share_root() {
 fn caption_hit_test() {
     let app = app_at(r"C:\x");
     let l = &app.layout;
-    assert_eq!(app.hit_test(l.caption[2].x + 2.0, 5.0), HitArea::Close);
-    assert_eq!(app.hit_test(l.caption[1].x + 2.0, 5.0), HitArea::Maximize);
+    assert_eq!(app.hit_test(app.panels.caption[2].x + 2.0, 5.0), HitArea::Close);
+    assert_eq!(app.hit_test(app.panels.caption[1].x + 2.0, 5.0), HitArea::Maximize);
     assert_eq!(app.hit_test(l.new_tab.right() + 20.0, 10.0), HitArea::Caption);
     assert_eq!(app.hit_test(l.tabs[0].0.x + 10.0, l.tabs[0].0.y + 10.0), HitArea::Client);
     assert_eq!(app.hit_test(l.address.x + 20.0, l.address.y + 5.0), HitArea::Client);

@@ -10,6 +10,8 @@ settings_pages = "Páginas"
 preview = "Vista previa"
 
 [button]
+main_menu = "Menú principal"
+quick_access = "Mostrar u ocultar Quick Access"
 new_tab = "Nueva pestaña"
 tab_actions = "Acciones de pestaña"
 minimize = "Minimizar"

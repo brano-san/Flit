@@ -18,10 +18,9 @@ pub(super) struct Nav {
 }
 
 impl App {
-    pub(super) fn layout_nav(&mut self) {
-        let (top, bottom) = (self.layout.commands.bottom(), self.layout.status.y);
+    pub(super) fn layout_nav(&mut self, top: f32, bottom: f32) {
         self.layout_sidebar(top, bottom);
-        self.layout_palette(self.layout.title.bottom());
+        self.layout_palette(top);
     }
 
     pub(super) fn nav_hit(&self, x: f32, y: f32) -> Option<Hit> {

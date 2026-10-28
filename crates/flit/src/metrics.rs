@@ -126,10 +126,6 @@ fn nested(v: &[Vec<f64>]) -> String {
     format!("[{}]", inner.join(","))
 }
 
-pub fn dual_at_start() -> bool {
-    std::env::var("FLIT_METRICS_SPLIT").is_ok_and(|s| s == "start")
-}
-
 fn key(key: Key, ctrl: bool) -> Event {
     Event::Key { key, mods: Mods { ctrl, ..Mods::default() }, pressed: true }
 }
@@ -158,7 +154,7 @@ impl Metrics {
             injections: 0,
             sort: None,
             split: std::env::var_os("FLIT_METRICS_SPLIT").is_some(),
-            split_at: dual_at_start().then_some(started),
+            split_at: None,
             split_ready: None,
             settings_mark: None,
             settings_input: Vec::new(),
@@ -224,12 +220,12 @@ impl Metrics {
                 }
                 if self.split && self.split_at.is_none() {
                     self.split_at = Some(now);
-                    return Step::Inject(Event::Key { key: Key::Char('V'), mods: Mods { shift: true, alt: true, ctrl: false }, pressed: true });
+                    return Step::Inject(Event::Key { key: Key::Char('S'), mods: Mods { shift: true, ctrl: true, alt: false }, pressed: true });
                 }
-                if app.other_pane().is_some_and(|t| t.stats.done.is_none()) {
+                if app.parked_tabs().any(|t| t.stats.done.is_none()) {
                     return Step::None;
                 }
-                self.split_ready = self.split_at.filter(|_| app.other_pane().is_some()).map(|at| ms(now - at));
+                self.split_ready = self.split_at.filter(|_| app.panel_count() > 1).map(|at| ms(now - at));
                 self.phase = Phase::Warm(SETTLE_FRAMES);
                 Step::None
             }

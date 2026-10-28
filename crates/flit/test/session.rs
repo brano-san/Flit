@@ -70,12 +70,13 @@ fn the_writer_keeps_the_latest_session_and_the_marker_tells_a_crash() {
 }
 
 #[test]
-fn panes_ride_after_the_session_so_older_files_load_with_one_pane() {
-    use flit_core::ui::{SplitDir, SplitSession};
+fn panels_ride_after_the_session_and_files_with_per_tab_panes_still_load() {
+    use flit_core::ui::{PanelsSession, Shape};
     let mut w = window(&[r"C:\a", r"C:\b"], 1);
-    w.splits = vec![None, Some(SplitSession { other: Location::parse(r"D:\x").unwrap(), dir: SplitDir::Horizontal, ratio: 0.3, second: true })];
     w.trails = vec![Location::parse(r"C:\a\deep\er").unwrap(), Location::parse(r"C:\b").unwrap()];
-    let s =Session::new(vec![(w.clone(), None), (window(&[r"E:\"], 0), None)], Vec::new());
+    let leaf = Shape::Leaf { tabs: 1, cur: 0 };
+    w.panels = Some(PanelsSession { root: Shape::Group { down: true, kids: vec![(leaf.clone(), 0.3), (leaf, 0.7)] }, active: 1 });
+    let s = Session::new(vec![(w.clone(), None), (window(&[r"E:\"], 0), None)], Vec::new());
     let bytes = s.encode().unwrap();
     let back = Session::decode(&bytes).unwrap();
     assert_eq!(back.windows().next().unwrap().0, w);
@@ -83,5 +84,11 @@ fn panes_ride_after_the_session_so_older_files_load_with_one_pane() {
     assert!(bytes.starts_with(&older) && bytes.len() > older.len());
     let old = Session::decode(&older).unwrap();
     assert_eq!(old.windows().next().unwrap().0, window(&[r"C:\a", r"C:\b"], 1));
-    assert_eq!(postcard::from_bytes::<Session>(&bytes).unwrap().windows().next().unwrap().0.tabs, w.tabs, "older builds read the tabs and skip the panes");
+    assert_eq!(postcard::from_bytes::<Session>(&bytes).unwrap().windows().next().unwrap().0.tabs, w.tabs, "older builds read the tabs and skip the panels");
+    let pane = SplitSession { other: Location::parse(r"D:\x").unwrap(), dir: SplitDir::Horizontal, ratio: 0.3, second: true };
+    let mut legacy = older.clone();
+    legacy.extend(postcard::to_stdvec(&vec![vec![None, Some(pane)], vec![None]]).unwrap());
+    legacy.extend(postcard::to_stdvec(&vec![w.trails.clone(), vec![Location::parse(r"E:\").unwrap()]]).unwrap());
+    let loaded = Session::decode(&legacy).unwrap().windows().next().unwrap().0;
+    assert_eq!(loaded, WindowSession { panels: None, ..w.clone() }, "a file with a second pane per tab loads its tabs and trails in one panel");
 }

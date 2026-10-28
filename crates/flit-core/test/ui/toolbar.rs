@@ -12,7 +12,6 @@ use std::sync::Arc;
 
 const NO: Mods = Mods { ctrl: false, shift: false, alt: false };
 const CTRL_SHIFT: Mods = Mods { ctrl: true, shift: true, alt: false };
-const ALT_SHIFT: Mods = Mods { ctrl: false, shift: true, alt: true };
 
 fn app_in(path: &str, size: (u32, u32), items: &[&str]) -> App {
     let mut app = App::new(Persisted { path: Location::parse(path).unwrap(), ..Default::default() }, Vec::new(), 0, false, 1.0, size, Instant::now());
@@ -38,7 +37,7 @@ fn load(app: &mut App, items: &[&str]) {
 }
 
 fn app_at(path: &str, items: &[&str]) -> App {
-    app_in(path, (1000, 600), items)
+    app_in(path, (1300, 600), items)
 }
 
 fn frame(app: &mut App) {
@@ -338,26 +337,27 @@ fn recycle_bin_this_pc_and_the_home_page_get_their_own_sets() {
 }
 
 #[test]
-fn with_two_panes_the_toolbar_follows_the_active_pane_and_both_panes_start_below_it() {
+fn with_two_panels_each_has_its_own_toolbar_row_that_follows_its_folder() {
     let now = Instant::now();
     let keypress = |app: &mut App, key: Key, mods: Mods| app.on_event(&Event::Key { key, mods, pressed: true }, now);
-    let mut app = app_at(r"C:\x", &["a.txt", "d.txt"]);
+    let mut app = app_in(r"C:\x", (2400, 600), &["a.txt", "d.txt"]);
     app.builtin_archives = true;
-    keypress(&mut app, Key::Char('V'), ALT_SHIFT);
-    app.on_event(&Event::Key { key: Key::Char('V'), mods: NO, pressed: false }, now);
+    keypress(&mut app, Key::Char('S'), CTRL_SHIFT);
+    app.on_event(&Event::Key { key: Key::Char('S'), mods: NO, pressed: false }, now);
     app.navigate(Location::parse(r"C:\y").unwrap(), now);
     load(&mut app, &["b.zip", "c.txt"]);
-    let below = app.layout.commands.bottom();
-    assert!(app.layout.commands.h > 0.0);
-    assert_eq!((app.layout.pane.y, app.alt.layout.pane.y), (below, below), "both panes start under the toolbar row");
+    let other = |a: &App| a.panels.list.iter().find(|p| p.id != a.panels.here).unwrap().layout.clone();
+    assert!(app.layout.commands.h > 0.0 && other(&app).commands.h > 0.0, "every panel has its toolbar row");
+    assert_eq!(app.layout.header.y, app.layout.commands.bottom());
+    assert_eq!(other(&app).header.y, other(&app).commands.bottom());
     select(&mut app, "b.zip");
     assert!(ids(&app).contains(&"menu.extract".to_owned()));
     press(&mut app, "menu.sort");
     let m = menu_of(&mut app);
     choose(&mut app, &m, "Size");
     assert_eq!(app.tab().view_spec.sort.field, crate::sort::SortField::Size);
-    assert_eq!(app.other_pane().unwrap().view_spec.sort.field, crate::sort::SortField::Name);
-    keypress(&mut app, Key::Right, CTRL_SHIFT);
+    assert_eq!(app.parked_tabs().next().unwrap().view_spec.sort.field, crate::sort::SortField::Name);
+    keypress(&mut app, Key::Tab, NO);
     frame(&mut app);
     assert_eq!(app.tab().location(), &Location::parse(r"C:\x").unwrap());
     assert!(!ids(&app).contains(&"menu.extract".to_owned()), "the Extract group follows the focus");
@@ -365,11 +365,11 @@ fn with_two_panes_the_toolbar_follows_the_active_pane_and_both_panes_start_below
     let m = menu_of(&mut app);
     choose(&mut app, &m, "Select all");
     assert_eq!(app.tab().view.as_ref().unwrap().selected_count(), 2);
-    assert_eq!(app.other_pane().unwrap().view.as_ref().unwrap().selected_count(), 1, "the other pane keeps its selection");
+    assert_eq!(app.parked_tabs().next().unwrap().view.as_ref().unwrap().selected_count(), 1, "the other panel keeps its selection");
     app.navigate(Location::recycle_bin(), now);
     load(&mut app, &[]);
     assert_eq!(&ids(&app)[..3], ["bin.restore", "bin.restore_all", "bin.empty"]);
-    keypress(&mut app, Key::Right, CTRL_SHIFT);
+    keypress(&mut app, Key::Tab, NO);
     frame(&mut app);
     assert_eq!(ids(&app)[0], "menu.new");
     keypress(&mut app, Key::F(3), NO);
@@ -377,9 +377,9 @@ fn with_two_panes_the_toolbar_follows_the_active_pane_and_both_panes_start_below
     app.close_search();
     app.navigate(Location::home_page(), now);
     frame(&mut app);
-    assert!(app.layout.commands.h > 0.0, "the row stays while the other pane shows a folder");
-    assert!(ids(&app).is_empty(), "the Home page gets no buttons");
-    assert_eq!((app.layout.pane.y, app.alt.layout.pane.y), (app.layout.commands.bottom(), app.layout.commands.bottom()));
+    assert_eq!(app.layout.commands.h, 0.0, "the Home page gets no toolbar row");
+    assert!(ids(&app).is_empty());
+    assert!(other(&app).commands.h > 0.0, "the other panel keeps its row");
 }
 
 #[test]

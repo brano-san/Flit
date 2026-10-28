@@ -670,8 +670,8 @@ impl App {
             if r.check.contains(x, y) {
                 return Some(Hit::DialogCheck);
             }
-            if self.layout.title.contains(x, y) {
-                return Some(self.layout.caption.iter().position(|c| c.contains(x, y)).map_or(Hit::None, Hit::Caption));
+            if self.in_title(y) {
+                return Some(self.caption_hit(x, y));
             }
             return Some(if r.dialog.contains(x, y) { Hit::Dialog } else { Hit::Modal });
         }

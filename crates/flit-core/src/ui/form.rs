@@ -373,8 +373,8 @@ impl App {
         if let Some(k) = f.rows.iter().position(|r| r.contains(x, y)) {
             return Some(Hit::Form(k));
         }
-        if self.layout.title.contains(x, y) {
-            return Some(self.layout.caption.iter().position(|c| c.contains(x, y)).map_or(Hit::None, Hit::Caption));
+        if self.in_title(y) {
+            return Some(self.caption_hit(x, y));
         }
         Some(if f.rect.contains(x, y) { Hit::Dialog } else { Hit::Modal })
     }

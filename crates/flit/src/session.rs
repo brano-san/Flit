@@ -1,6 +1,6 @@
 use crossbeam_channel::{unbounded, Sender};
 use flit_core::Location;
-use flit_core::ui::{SplitSession, WindowSession};
+use flit_core::ui::{PanelsSession, WindowSession};
 use flit_platform::{Placement, Platform};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -9,6 +9,20 @@ use std::thread::JoinHandle;
 const VERSION: u32 = 1;
 
 type Bounds = (i32, i32, i32, i32, bool);
+
+#[derive(Serialize, Deserialize)]
+enum SplitDir {
+    Vertical,
+    Horizontal,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SplitSession {
+    other: Location,
+    dir: SplitDir,
+    ratio: f32,
+    second: bool,
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Session {
@@ -29,13 +43,14 @@ impl Session {
 
     fn decode(bytes: &[u8]) -> Option<Self> {
         let (mut s, tail) = postcard::take_from_bytes::<Self>(bytes).ok().filter(|(s, _)| s.version == VERSION)?;
-        let Ok((splits, tail)) = postcard::take_from_bytes::<Vec<Vec<Option<SplitSession>>>>(tail) else { return Some(s) };
-        if splits.len() == s.windows.len() {
-            s.windows.iter_mut().zip(splits).for_each(|((w, _), panes)| w.splits = panes);
+        let Ok((_, tail)) = postcard::take_from_bytes::<Vec<Vec<Option<SplitSession>>>>(tail) else { return Some(s) };
+        let Ok((trails, tail)) = postcard::take_from_bytes::<Vec<Vec<Location>>>(tail) else { return Some(s) };
+        if trails.len() == s.windows.len() {
+            s.windows.iter_mut().zip(trails).for_each(|((w, _), t)| w.trails = t);
         }
-        if let Ok((trails, _)) = postcard::take_from_bytes::<Vec<Vec<Location>>>(tail) {
-            if trails.len() == s.windows.len() {
-                s.windows.iter_mut().zip(trails).for_each(|((w, _), t)| w.trails = t);
+        if let Ok((panels, _)) = postcard::take_from_bytes::<Vec<Option<PanelsSession>>>(tail) {
+            if panels.len() == s.windows.len() {
+                s.windows.iter_mut().zip(panels).for_each(|((w, _), p)| w.panels = p);
             }
         }
         Some(s)
@@ -43,10 +58,12 @@ impl Session {
 
     fn encode(&self) -> Option<Vec<u8>> {
         let mut bytes = postcard::to_stdvec(self).ok()?;
-        let splits: Vec<&Vec<Option<SplitSession>>> = self.windows.iter().map(|(w, _)| &w.splits).collect();
+        let splits: Vec<Vec<Option<SplitSession>>> = self.windows.iter().map(|_| Vec::new()).collect();
         bytes.extend(postcard::to_stdvec(&splits).ok()?);
         let trails: Vec<&Vec<Location>> = self.windows.iter().map(|(w, _)| &w.trails).collect();
         bytes.extend(postcard::to_stdvec(&trails).ok()?);
+        let panels: Vec<&Option<PanelsSession>> = self.windows.iter().map(|(w, _)| &w.panels).collect();
+        bytes.extend(postcard::to_stdvec(&panels).ok()?);
         Some(bytes)
     }
 }

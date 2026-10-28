@@ -33,7 +33,7 @@ pub mod sidebar;
 mod address;
 mod tabbar;
 mod tags;
-mod split;
+mod panels;
 mod describe;
 mod keymap;
 mod toolbar;
@@ -61,7 +61,7 @@ pub use tabbar::{MovedTab, Startup, WindowSession};
 pub use settings::{ConfirmDelete, Doc, Page, Setting, Value, SETTINGS};
 pub use settings_page::{About, LOG_FILE};
 pub use keymap::Keymap;
-pub use split::{SplitDir, SplitPrefs, SplitSession};
+pub use panels::{PanelsSession, Shape};
 
 use crate::fmt as format;
 use crate::hash::{self, FxHashMap};
@@ -79,7 +79,7 @@ use crate::render::{Color, Rect};
 use crate::sort::{CaseMode, GroupField, SortField, ViewSpec};
 use crate::tags::TagRequest;
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
-use crate::theme::{Area, Theme};
+use crate::theme::{self, Area, Theme};
 use crate::thumbs;
 use crate::view::Line;
 use bumpalo::Bump;
@@ -87,7 +87,7 @@ use edit::{EditAction, LineEdit};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const TAB_H: f32 = 36.0;
+const TAB_H: f32 = 32.0;
 const TOOL_H: f32 = 40.0;
 const HEADER_H: f32 = 28.0;
 const ROW_H: f32 = 24.0;
@@ -97,7 +97,7 @@ const CAPTION_W: f32 = 46.0;
 const SCROLLBAR_W: f32 = 12.0;
 const ICON: f32 = 16.0;
 const NAME_MIN_W: f32 = 120.0;
-const TAB_MAX_W: f32 = 220.0;
+const TAB_W: f32 = 190.0;
 const TAB_MIN_W: f32 = 72.0;
 
 const MAX_PENDING_DIFFS: usize = 1 << 16;
@@ -322,13 +322,12 @@ pub struct Persisted {
     pub prefs: ViewPrefs,
     pub folders: FolderViews,
     pub archive: crate::archive::Defaults,
-    pub split: SplitPrefs,
     pub startup: Startup,
 }
 
 impl Default for Persisted {
     fn default() -> Self {
-        Self { path: Location::computer(), show_hidden: false, view: FolderView::default(), prefs: ViewPrefs::default(), folders: FolderViews::default(), archive: Default::default(), split: SplitPrefs::default(), startup: Startup::default() }
+        Self { path: Location::computer(), show_hidden: false, view: FolderView::default(), prefs: ViewPrefs::default(), folders: FolderViews::default(), archive: Default::default(), startup: Startup::default() }
     }
 }
 
@@ -408,7 +407,9 @@ enum Hit {
     Eject,
     SideSettings,
     Settings(settings_page::SHit),
-    PaneSplit,
+    Menu,
+    QuickToggle,
+    PanelSep(usize),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -422,7 +423,7 @@ enum Drag {
     Preview { hit: preview_pane::PaneHit, start: f32, size: f32 },
     Marquee,
     Tab { origin: usize, x: f32, y: f32, moved: bool, torn: bool },
-    PaneSplit { start: f32, ratio: f32 },
+    PanelSep { sep: usize, start: f32, first: f32 },
 }
 
 #[derive(Default, Clone)]
@@ -431,7 +432,6 @@ struct Layout {
     tabs: Vec<(Rect, Rect)>,
     new_tab: Rect,
     actions: Rect,
-    caption: [Rect; 3],
     toolbar: Rect,
     commands: Rect,
     nav: [Rect; 4],
@@ -455,9 +455,6 @@ struct Layout {
     flow: flow::FlowParams,
     panes: Vec<Rect>,
     bottom: f32,
-    pane: Rect,
-    content: Rect,
-    splitter: Rect,
 }
 
 pub struct App {
@@ -498,7 +495,6 @@ pub struct App {
     pub default_manager: bool,
     pub language: usize,
     shown_lang: crate::i18n::Lang,
-    pub split_prefs: SplitPrefs,
     pub prefs: ViewPrefs,
     folders: FolderViews,
     settings: Option<settings_page::SettingsUi>,
@@ -557,7 +553,7 @@ pub struct App {
     addr: address::Address,
     tag_fixes: Vec<(FsPath, u32, Instant)>,
     preview: preview_pane::PreviewPane,
-    alt: split::Alt,
+    panels: panels::Panels,
     toolbar: toolbar::Toolbar,
     keymap: Arc<Keymap>,
 }
@@ -605,7 +601,6 @@ impl App {
             default_manager: false,
             language: 0,
             shown_lang: crate::i18n::lang(),
-            split_prefs: state.split,
             prefs: state.prefs,
             folders: state.folders,
             settings: None,
@@ -660,7 +655,7 @@ impl App {
             addr: Default::default(),
             tag_fixes: Vec::new(),
             preview: Default::default(),
-            alt: Default::default(),
+            panels: Default::default(),
             toolbar: Default::default(),
             keymap: keymap::defaults(),
         };
@@ -682,7 +677,7 @@ impl App {
     }
 
     pub fn shutdown(&mut self) {
-        for t in &mut self.tabs {
+        for t in self.tabs.iter_mut().chain(self.panels.list.iter_mut().flat_map(|p| p.tabs.iter_mut())) {
             t.shutdown(&mut self.effects);
         }
         self.cancel_ops();
@@ -690,7 +685,7 @@ impl App {
 
     pub fn persisted(&self) -> Persisted {
         let t = self.tab();
-        Persisted { path: t.location().clone(), show_hidden: t.view_spec.show_hidden, view: t.folder_view(), prefs: self.prefs.clone(), folders: self.folders.clone(), archive: self.archive.prefs.clone(), split: self.split_prefs, startup: self.startup.clone() }
+        Persisted { path: t.location().clone(), show_hidden: t.view_spec.show_hidden, view: t.folder_view(), prefs: self.prefs.clone(), folders: self.folders.clone(), archive: self.archive.prefs.clone(), startup: self.startup.clone() }
     }
 
     pub fn tab(&self) -> &Tab {
@@ -860,7 +855,6 @@ impl App {
         self.tabs.push(t);
         self.cur = self.tabs.len() - 1;
         self.load_tab(self.cur, r.select, now);
-        self.dual_new_tab(now);
         self.after_tab_change();
     }
 
@@ -884,8 +878,7 @@ impl App {
             return;
         }
         if self.tabs.len() == 1 {
-            self.effects.push(Effect::Window(WindowCmd::Close));
-            return;
+            return self.close_panel();
         }
         let mut t = self.tabs.remove(i);
         t.shutdown(&mut self.effects);
@@ -978,19 +971,21 @@ impl App {
     }
 
     pub fn poll(&mut self) -> bool {
+        let mut visible = self.poll_here();
+        visible |= self.poll_parked();
+        self.poll_bin();
+        visible |= self.poll_address();
+        self.dirty |= visible;
+        visible
+    }
+
+    fn poll_here(&mut self) -> bool {
         let mut visible = false;
         for k in 0..self.tabs.len() {
             visible |= self.poll_tab(k);
             visible |= self.tabs[k].apply_diffs() && k == self.cur;
-            if self.tabs[k].split.is_some() {
-                visible |= self.on_other_at(k, |a| a.poll_tab(k) | a.tabs[k].apply_diffs());
-            }
         }
-        self.poll_bin();
-        visible |= self.poll_panes();
-        visible |= self.poll_address();
-        self.dirty |= visible;
-        visible
+        visible | self.poll_panes()
     }
 
     fn poll_tab(&mut self, k: usize) -> bool {
@@ -1018,8 +1013,8 @@ impl App {
     }
 
     pub fn on_provider_event(&mut self, ev: ProviderEvent, now: Instant) {
-        if let Some(k) = self.inactive_of_event(&ev) {
-            return self.on_other_at(k, |a| a.on_provider_event(ev, now));
+        if let Some(id) = self.parked_of_event(&ev) {
+            return self.visit(id, |a| a.on_provider_event(ev, now));
         }
         let tab_of = |tabs: &[Tab], id: TabId, gen: u64| tabs.iter().position(|t| t.id == id && t.gen == gen);
         match ev {
@@ -1068,8 +1063,8 @@ impl App {
     }
 
     pub fn on_resorted(&mut self, tab: TabId, gen: u64, view: ViewSpec, base_len: usize, order: Vec<u32>) {
-        if let Some(k) = self.inactive_of(tab) {
-            return self.on_other_at(k, |a| a.on_resorted(tab, gen, view, base_len, order));
+        if let Some(id) = self.parked_of(tab) {
+            return self.visit(id, |a| a.on_resorted(tab, gen, view, base_len, order));
         }
         if let Some(k) = self.tabs.iter().position(|t| t.id == tab && t.gen == gen && t.view_spec == view) {
             if let Some(v) = &mut self.tabs[k].view {
@@ -1146,64 +1141,73 @@ impl App {
     }
 
     fn layout(&mut self) {
-        let (w, h) = self.size;
-        let cx = self.sidebar_width();
-        let ops_button = self.ops_button_visible();
-        let status_bar = self.prefs.status_bar || self.tab().error.is_some();
+        if self.panels.here != self.panels.active {
+            let r = self.panel_rect();
+            return self.layout_panel(r);
+        }
+        self.layout_panels();
+        self.layout_jobs();
+        self.layout_address();
+        self.layout_settings();
+    }
+
+    fn layout_panel(&mut self, area: Rect) {
+        let active = self.panels.here == self.panels.active;
+        let (right, inset) = self.panel_edges(area);
+        let ops_button = active && self.ops_button_visible();
+        let status_bar = active && (self.prefs.status_bar || self.tab().error.is_some());
         let tool_h = self.toolbar_h();
+        let (n, cur, actions) = (self.tabs.len(), self.cur, self.tab_actions_button);
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
         let l = &mut self.layout;
         l.row_h = s(ROW_H);
-        l.title = Rect::new(0.0, 0.0, w, s(TAB_H));
-        let cw = s(CAPTION_W);
-        for (i, r) in l.caption.iter_mut().enumerate() {
-            *r = Rect::new(w - (3 - i) as f32 * cw, 0.0, cw, s(32.0));
-        }
-        let n = self.tabs.len().max(1) as f32;
-        let x0 = s(8.0);
-        let add_w = s(32.0);
-        l.actions = if self.tab_actions_button { Rect::new(l.caption[0].x - s(44.0), s(4.0), s(36.0), s(28.0)) } else { Rect::default() };
-        let avail = (l.caption[0].x - s(48.0) - l.actions.w - x0 - add_w).max(0.0);
-        let tw = (avail / n).clamp(s(TAB_MIN_W), s(TAB_MAX_W));
+        l.title = Rect::new(area.x, area.y, area.w, s(TAB_H));
+        let limit = l.title.right() - if right { 3.0 * s(CAPTION_W) } else { 0.0 };
+        let bh = l.title.h - s(8.0);
+        let button = |x: f32| Rect::new(x, area.y + s(4.0), s(30.0), bh);
+        l.actions = if actions { button(limit - s(34.0)) } else { Rect::default() };
+        let x0 = area.x + inset + s(6.0);
+        let end = if actions { l.actions.x } else { limit };
+        let room = (end - s(40.0) - x0).max(0.0);
+        let tw = s(TAB_W).min(room).max(s(TAB_MIN_W).min(room));
+        let fit = ((room / tw.max(1.0)).floor() as usize).max(1);
+        let first = (cur + 1).saturating_sub(fit);
         l.tabs.clear();
-        for i in 0..self.tabs.len() {
-            let r = Rect::new(x0 + i as f32 * tw, s(6.0), tw, l.title.h - s(6.0));
-            let c = Rect::new(r.right() - s(28.0), r.y + (r.h - s(20.0)) / 2.0, s(20.0), s(20.0));
+        for i in 0..n {
+            let shown = (first..first + fit).contains(&i);
+            let x = x0 + (i.clamp(first, first + fit) - first) as f32 * tw;
+            let r = Rect::new(x, area.y + s(4.0), if shown { tw } else { 0.0 }, l.title.h - s(4.0));
+            let c = if shown { Rect::new(r.right() - s(26.0), r.y + (r.h - s(20.0)) / 2.0, s(20.0), s(20.0)) } else { Rect::default() };
             l.tabs.push((r, c));
         }
-        let after = x0 + self.tabs.len() as f32 * tw;
-        l.new_tab = Rect::new(after + s(4.0), s(8.0), add_w, l.title.h - s(12.0));
+        l.new_tab = button(x0 + (n.min(first + fit) - first) as f32 * tw + s(4.0));
 
-        l.toolbar = Rect::new(0.0, l.title.bottom(), w, s(TOOL_H));
+        l.toolbar = Rect::new(area.x, l.title.bottom(), area.w, s(TOOL_H));
         for (i, r) in l.nav.iter_mut().enumerate() {
-            *r = Rect::new(s(6.0) + i as f32 * s(NAV_W), l.toolbar.y + s(4.0), s(NAV_W), s(TOOL_H - 8.0));
+            *r = Rect::new(area.x + s(6.0) + i as f32 * s(NAV_W), l.toolbar.y + s(4.0), s(NAV_W), s(TOOL_H - 8.0));
         }
         l.home = Rect::new(l.nav[3].right(), l.nav[3].y, s(NAV_W), l.nav[3].h);
         let ax = l.home.right() + s(8.0);
-        let right = if ops_button { w - s(10.0) - s(NAV_W) } else { w };
-        l.ops_button = if ops_button { Rect::new(right + s(4.0), l.nav[0].y, s(NAV_W), l.nav[0].h) } else { Rect::default() };
-        l.address = Rect::new(ax, l.toolbar.y + s(5.0), (right - s(12.0) - ax).max(s(40.0)), s(TOOL_H - 10.0));
-        l.commands = Rect::new(0.0, l.toolbar.bottom(), w, tool_h);
-        l.header = Rect::new(cx, l.commands.bottom(), w - cx, s(HEADER_H));
+        let edge = if ops_button { area.right() - s(10.0) - s(NAV_W) } else { area.right() };
+        l.ops_button = if ops_button { Rect::new(edge + s(4.0), l.nav[0].y, s(NAV_W), l.nav[0].h) } else { Rect::default() };
+        l.address = Rect::new(ax, l.toolbar.y + s(5.0), (edge - s(12.0) - ax).max(s(40.0)), s(TOOL_H - 10.0));
+        l.commands = Rect::new(area.x, l.toolbar.bottom(), area.w, tool_h);
+        l.header = Rect::new(area.x, l.commands.bottom(), area.w, s(HEADER_H));
         let status_h = if status_bar { s(STATUS_H) } else { 0.0 };
-        l.status = Rect::new(0.0, h - status_h, w, status_h);
+        l.status = Rect::new(area.x, area.bottom() - status_h, area.w, status_h);
+        l.bottom = l.status.y;
         if !status_bar {
             l.encoding = Rect::default();
             l.bin = Default::default();
+            l.branch = Rect::default();
         }
-        self.layout_preview();
+        if active {
+            self.layout_preview();
+        }
         let l = &self.layout;
-        let area = Rect::new(l.header.x, l.commands.bottom(), l.header.w, (l.bottom - l.commands.bottom()).max(0.0));
-        let (mine, theirs) = self.split_areas(area);
-        if let Some(r) = theirs {
-            self.layout_other(r);
-        }
-        self.layout_pane(mine);
-        self.layout_nav();
-        self.layout_jobs();
-        self.layout_address();
-        self.layout_settings();
+        let content = Rect::new(l.header.x, l.commands.bottom(), l.header.w, (l.bottom - l.commands.bottom()).max(0.0));
+        self.layout_pane(content);
     }
 
     fn layout_pane(&mut self, area: Rect) {
@@ -1212,7 +1216,6 @@ impl App {
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
         let l = &mut self.layout;
-        l.pane = area;
         l.header = Rect::new(area.x, area.y + filter_h, area.w, s(HEADER_H));
         l.bottom = area.bottom();
         self.layout_look();
@@ -1259,29 +1262,12 @@ impl App {
         if let Some(h) = self.jobs_hit(x, y).or_else(|| self.palette_hit(x, y)).or_else(|| self.settings_hit(x, y)).or_else(|| self.flyout_hit(x, y)) {
             return h;
         }
-        if let Some(h) = self.address_hit(x, y).or_else(|| self.nav_hit(x, y)).or_else(|| self.preview_hit(x, y)).or_else(|| self.toolbar_hit(x, y)) {
+        if let Some(h) = self.chrome_hit(x, y).or_else(|| self.address_hit(x, y)).or_else(|| self.nav_hit(x, y)).or_else(|| self.preview_hit(x, y)).or_else(|| self.toolbar_hit(x, y)).or_else(|| self.sep_hit(x, y)) {
             return h;
         }
         let l = &self.layout;
         if l.title.contains(x, y) {
-            if let Some(i) = l.caption.iter().position(|r| r.contains(x, y)) {
-                return Hit::Caption(i);
-            }
-            if l.actions.contains(x, y) {
-                return Hit::TabActions;
-            }
-            for (i, (r, c)) in l.tabs.iter().enumerate() {
-                if c.contains(x, y) {
-                    return Hit::TabClose(i);
-                }
-                if r.contains(x, y) {
-                    return Hit::Tab(i);
-                }
-            }
-            if l.new_tab.contains(x, y) {
-                return Hit::NewTab;
-            }
-            return Hit::None;
+            return row_hit(l, x, y);
         }
         if l.toolbar.contains(x, y) {
             if let Some(i) = l.nav.iter().position(|r| r.contains(x, y)) {
@@ -1299,9 +1285,6 @@ impl App {
                 return Hit::Address;
             }
             return Hit::None;
-        }
-        if self.on_splitter(x, y) {
-            return Hit::PaneSplit;
         }
         if l.header.contains(x, y) {
             let grip = self.s(4.0);
@@ -1340,7 +1323,7 @@ impl App {
             Hit::Caption(0) => HitArea::Minimize,
             Hit::Caption(1) => HitArea::Maximize,
             Hit::Caption(_) => HitArea::Close,
-            Hit::None if self.layout.title.contains(x, y) => HitArea::Caption,
+            Hit::None if self.in_title(y) && self.parked_row_hit(x, y).is_none() => HitArea::Caption,
             _ => HitArea::Client,
         }
     }
@@ -1388,7 +1371,7 @@ impl App {
             Event::MouseDown { x, y, button, clicks } => self.mouse_down(*x, *y, *button, *clicks, now),
             Event::MouseUp { x, y, button } => self.mouse_up(*x, *y, *button, now),
             Event::Wheel { dy, .. } => {
-                if self.settings_wheel(*dy) || self.wheel_other(ev, now) || self.jobs_wheel(*dy) || self.nav_wheel(*dy) || self.pane_wheel(*dy) || self.preview_wheel(*dy) || self.strip_wheel(*dy) {
+                if self.settings_wheel(*dy) || self.panel_wheel(ev, *dy, now) || self.jobs_wheel(*dy) || self.nav_wheel(*dy) || self.pane_wheel(*dy) || self.preview_wheel(*dy) || self.strip_wheel(*dy) {
                     return;
                 }
                 if self.mods.ctrl {
@@ -1479,7 +1462,7 @@ impl App {
             Drag::PinMove { from, .. } => return self.drag_pin(from, y),
             Drag::Tab { .. } => return self.drag_tab(x, y),
             Drag::Preview { hit, start, size } => return self.preview_drag(hit, x, y, start, size),
-            Drag::PaneSplit { start, ratio } => return self.drag_pane_split(x, y, start, ratio),
+            Drag::PanelSep { sep, start, first } => return self.drag_sep(sep, x, y, start, first),
             Drag::Marquee | Drag::None => {}
         }
         if self.start_pin_drag(y) {
@@ -1491,10 +1474,11 @@ impl App {
             Hit::Address if self.editing => CursorIcon::Text,
             Hit::FilterField | Hit::PaletteField | Hit::Settings(settings_page::SHit::Search) => CursorIcon::Text,
             Hit::Preview(preview_pane::PaneHit::Split) => self.preview_cursor(),
-            Hit::PaneSplit => self.split_cursor(),
+            Hit::PanelSep(k) => self.sep_cursor(k),
             _ => CursorIcon::Default,
         };
         self.set_cursor(cursor);
+        self.parked_hover(x, y);
         self.hover_pick(h, now);
         self.toolbar_hover(h, now);
         if h != self.hover {
@@ -1509,7 +1493,7 @@ impl App {
             return;
         }
         if !self.settings_open() {
-            self.pane_press(x, y);
+            self.panel_press(x, y);
         }
         if self.jobs_mouse_down(self.hit(x, y)) || self.settings_mouse_down(self.hit(x, y), x, button, clicks) || self.strip_mouse_down(self.hit(x, y), button, clicks, now) || self.autoscroll_down(self.hit(x, y), self.along_of(x, y), button) || self.ops_mouse_down(x, y, button, clicks) {
             return;
@@ -1584,7 +1568,7 @@ impl App {
                 let col = self.layout.columns[i];
                 self.drag = Drag::ColSep { col, start_x: x, start_w: self.tab().columns.width(col) };
             }
-            Hit::PaneSplit if button == MouseButton::Left => self.begin_pane_split(x, y, clicks),
+            Hit::PanelSep(k) if button == MouseButton::Left => self.press_sep(k, x, y, clicks),
             _ => {}
         }
     }
@@ -1602,7 +1586,7 @@ impl App {
         if let Drag::PinMove { from, to } = was {
             return self.drop_pin(from, to);
         }
-        if let Drag::PaneSplit { .. } = was {
+        if let Drag::PanelSep { .. } = was {
             self.strip.rev += 1;
         }
         if let Drag::Tab { torn: true, .. } = was {
@@ -1629,6 +1613,8 @@ impl App {
             Hit::Caption(0) => self.effects.push(Effect::Window(WindowCmd::Minimize)),
             Hit::Caption(1) => self.effects.push(Effect::Window(WindowCmd::ToggleMaximize)),
             Hit::Caption(_) => self.effects.push(Effect::Window(WindowCmd::Close)),
+            Hit::Menu => self.open_palette(),
+            Hit::QuickToggle => self.toggle_sidebar(),
             Hit::Crumb(i) => {
                 if let Some((_, p)) = self.tab().crumb(i).cloned() {
                     self.navigate(p, now);
@@ -1873,14 +1859,14 @@ impl App {
         animating |= self.autoscroll_step(dt);
         animating |= self.scroll_step(dt);
         animating |= self.glide_overlays(dt);
-        animating |= self.step_other(dt);
+        animating |= self.step_parked(dt);
         self.layout();
         self.sync_preview(now);
 
         let mut arena = std::mem::take(&mut self.arena);
         arena.reset();
         self.fit_columns(g, &arena);
-        self.fit_other(g, &arena);
+        self.fit_parked(g, &arena);
         self.fit_sidebar(g);
         self.look.font_missing = !g.set_ui_family(&self.look.font);
         let palette = self.look.palette;
@@ -1890,34 +1876,17 @@ impl App {
             g.begin(files.bg);
             self.draw_backdrop(&mut g.dl);
             if self.search.active {
+                self.clear_parked_rows();
                 self.draw_search(g, &arena, th);
-            } else {
-                self.draw_other(g, &arena, files);
-                if self.on_home() {
-                    self.draw_home(g, files);
-                } else {
-                    self.draw_list(g, &arena, files);
-                    self.draw_panes(g, files);
-                    self.draw_preview(g, palette.area(Area::Pane));
-                    self.draw_marquee(g, files);
-                    self.draw_ops(g, files);
-                    self.draw_header(g, files);
-                }
-                self.draw_split(g, files);
-            }
-            self.draw_title(g, th);
-            if self.search.active {
+                self.draw_title(g, th);
                 self.draw_search_bar(g, &arena, th);
+                self.draw_chrome(g, th);
                 self.draw_sidebar(g, palette.area(Area::Sidebar));
             } else {
-                self.draw_toolbar(g, palette.area(Area::Toolbar));
-                self.draw_toolbar_row(g, palette.area(Area::Toolbar));
-                if self.layout.status.h > 0.0 {
-                    self.draw_status(g, &arena, th);
-                }
+                self.draw_panels(g, &arena, &palette);
+                self.draw_chrome(g, th);
                 self.draw_sidebar(g, palette.area(Area::Sidebar));
                 self.draw_kb_focus(g, th);
-                self.draw_filter(g, files);
                 self.draw_toolbar_popups(g, th);
                 self.draw_suggestions(g, th);
             }
@@ -1964,7 +1933,7 @@ impl App {
         let close_font = self.icon_font(8.0);
         let drop = self.drop_spot();
         let mut requests: Vec<IconRequest> = Vec::new();
-        for (i, &(r, c)) in l.tabs.iter().enumerate() {
+        for (i, &(r, c)) in l.tabs.iter().enumerate().filter(|(_, (r, _))| r.w > 0.0) {
             let active = i == self.cur;
             let hovered = matches!(self.hover, Hit::Tab(k) | Hit::TabClose(k) if k == i);
             if active {
@@ -2007,21 +1976,31 @@ impl App {
             }
             centered(g, l.actions, tabbar::G_TAB_ACTIONS, self.icon_font(12.0), t.text_dim);
         }
-
-        let caption_icons = self.icon_font(10.0);
-        let max_glyph = if self.maximized { G_RESTORE } else { G_MAX };
-        for (i, glyph) in [G_MIN, max_glyph, G_CLOSE].into_iter().enumerate() {
-            let r = l.caption[i];
-            let mut color = if self.active { t.text } else { t.text_dim };
-            if self.hover == Hit::Caption(i) {
-                g.dl.rect(r, if i == 2 { t.close_hover } else { t.button_hover });
-                if i == 2 {
-                    color = Color::rgb(0xFFFFFF);
-                }
-            }
-            centered(g, r, glyph, caption_icons, color);
-        }
         self.request_icons(requests);
+    }
+
+    fn draw_body<B: TextBackend>(&mut self, g: &mut Gfx<B>, arena: &Bump, palette: &theme::Palette) {
+        let (th, files) = (&palette.base, palette.area(Area::Files));
+        let active = self.panels.here == self.panels.active;
+        if self.on_home() {
+            self.draw_home(g, files);
+        } else {
+            self.draw_list(g, arena, files);
+            self.draw_panes(g, files);
+            if active {
+                self.draw_preview(g, palette.area(Area::Pane));
+                self.draw_marquee(g, files);
+                self.draw_ops(g, files);
+            }
+            self.draw_header(g, files);
+        }
+        self.draw_filter(g, files);
+        self.draw_title(g, th);
+        self.draw_toolbar(g, palette.area(Area::Toolbar));
+        self.draw_toolbar_row(g, palette.area(Area::Toolbar));
+        if active && self.layout.status.h > 0.0 {
+            self.draw_status(g, arena, th);
+        }
     }
 
     fn draw_toolbar<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
@@ -2426,6 +2405,24 @@ impl App {
         }
         false
     }
+}
+
+fn row_hit(l: &Layout, x: f32, y: f32) -> Hit {
+    if l.actions.contains(x, y) {
+        return Hit::TabActions;
+    }
+    for (i, (r, c)) in l.tabs.iter().enumerate() {
+        if c.contains(x, y) {
+            return Hit::TabClose(i);
+        }
+        if r.contains(x, y) {
+            return Hit::Tab(i);
+        }
+    }
+    if l.new_tab.contains(x, y) {
+        return Hit::NewTab;
+    }
+    Hit::None
 }
 
 fn icon_glyph<B: TextBackend>(g: &mut Gfx<B>, t: &Theme, e: &crate::listing::Entry, ir: Rect) {

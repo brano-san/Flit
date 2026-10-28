@@ -1264,7 +1264,7 @@ impl App {
 
     pub fn drag(&mut self, ev: &DragEvent, now: Instant) -> u32 {
         self.dirty = true;
-        self.drag_pane(ev);
+        self.drag_panel(ev);
         match ev {
             DragEvent::Enter { paths, x, y, mods, allowed } => {
                 self.ops.dropping = Some(Dropping { paths: paths.clone(), target: None, effect: drop_effect::NONE, spring: None });
@@ -1343,7 +1343,7 @@ impl App {
             Hit::Header(_) | Hit::ColSep(_) | Hit::Encoding | Hit::Bin(_) => None,
             Hit::SideHeader(Section::Pinned) => Some(Target::Pin),
             Hit::SideHeader(_) | Hit::HomeItem(_) | Hit::HomeEmpty | Hit::HomeButton => None,
-            Hit::SideEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose | Hit::PaneSplit => None,
+            Hit::SideEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose | Hit::PanelSep(_) | Hit::Menu | Hit::QuickToggle => None,
             Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside => None,
             Hit::OpsButton | Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsClear | Hit::OpsCancel(_) | Hit::OpsMore(_) | Hit::OpsMenu(_) => None,
             Hit::Dialog | Hit::DialogButton(_) | Hit::DialogCheck | Hit::Form(_) | Hit::Modal | Hit::Preview(_) => None,

@@ -10,6 +10,8 @@ settings_pages = "Сторінки"
 preview = "Попередній перегляд"
 
 [button]
+main_menu = "Головне меню"
+quick_access = "Сховати або показати Quick Access"
 new_tab = "Нова вкладка"
 tab_actions = "Дії з вкладкою"
 minimize = "Згорнути"

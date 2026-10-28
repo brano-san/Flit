@@ -1,6 +1,6 @@
 use flit_core::archive::Defaults;
 use flit_core::sort::SortField;
-use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavPrefs, NavState, PaneState, Persisted, Sizes, SplitPrefs, ToolbarState, ViewPrefs, MAX_HISTORY};
+use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavPrefs, NavState, PaneState, Persisted, Sizes, ToolbarState, ViewPrefs, MAX_HISTORY};
 use flit_core::Location;
 use flit_platform::{Placement, Platform};
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,19 @@ const VERSION: u32 = 2;
 const STAGE_ONE_COLUMNS: [Column; 3] = [Column::Modified, Column::Type, Column::Size];
 
 type Bounds = (i32, i32, i32, i32, bool);
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+enum SplitDir {
+    #[default]
+    Vertical,
+    Horizontal,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+struct SplitPrefs {
+    dual: bool,
+    dir: SplitDir,
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 struct Head {
@@ -176,8 +189,7 @@ impl Saved {
             if let Ok((tools, tail)) = postcard::take_from_bytes::<Tools>(tail) {
                 p.prefs.show_streams = tools.streams;
                 saved.tools = tools;
-                if let Ok((split, tail)) = postcard::take_from_bytes::<SplitPrefs>(tail) {
-                    p.split = split;
+                if let Ok((_, tail)) = postcard::take_from_bytes::<SplitPrefs>(tail) {
                     if let Ok((word, tail)) = postcard::take_from_bytes::<u32>(tail) {
                         p.archive.compression.word = word;
                         p.archive = std::mem::take(&mut p.archive).sanitized();
@@ -217,7 +229,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&self.side).ok()?);
         bytes.extend(postcard::to_stdvec(&p.archive.clone().sanitized()).ok()?);
         bytes.extend(postcard::to_stdvec(&Tools { streams: p.prefs.show_streams, ..self.tools.clone() }).ok()?);
-        bytes.extend(postcard::to_stdvec(&p.split).ok()?);
+        bytes.extend(postcard::to_stdvec(&SplitPrefs::default()).ok()?);
         bytes.extend(postcard::to_stdvec(&p.archive.clone().sanitized().compression.word).ok()?);
         bytes.extend(postcard::to_stdvec(&gits).ok()?);
         Some(bytes)

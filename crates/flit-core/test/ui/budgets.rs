@@ -190,7 +190,7 @@ fn every_hot_path_stays_within_its_time_budget() {
         a.run_action("tab.previous", Instant::now());
     });
     b.once("split the pane", 40.0, |a| {
-        a.run_action("pane.new_horizontal", Instant::now());
+        a.run_action("panel.open_bottom", Instant::now());
     });
     b.once("right click on a row", 40.0, |a| {
         a.on_event(&Event::MouseMove { x: 500.0, y: 300.0 }, Instant::now());

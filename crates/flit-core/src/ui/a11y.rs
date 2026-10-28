@@ -73,8 +73,10 @@ impl App {
         }
         let max = if self.maximized { S::A11yButtonRestore } else { S::A11yButtonMaximize };
         for (i, name) in [S::A11yButtonMinimize, max, S::A11yButtonClose].into_iter().enumerate() {
-            put(&mut t, &mut targets, tabs, Hit::Caption(i), Role::Button, name.t(), l.caption[i]);
+            put(&mut t, &mut targets, tabs, Hit::Caption(i), Role::Button, name.t(), self.panels.caption[i]);
         }
+        put(&mut t, &mut targets, tabs, Hit::Menu, Role::Button, S::A11yButtonMainMenu.t(), self.panels.menu);
+        put(&mut t, &mut targets, tabs, Hit::QuickToggle, Role::Button, S::A11yButtonQuickAccess.t(), self.panels.quick);
 
         let nav = t.add(0, NAV, Role::ToolBar, S::A11yRegionNavigation.t(), union(l.nav.iter().copied().chain([l.home])));
         let tab = self.tab();
