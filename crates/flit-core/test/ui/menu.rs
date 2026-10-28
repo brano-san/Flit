@@ -49,7 +49,7 @@ fn commands(items: &[MenuItem]) -> Vec<String> {
         .flat_map(|i| match i {
             MenuItem::Command { label, keys, checked, .. } => vec![format!("{label}{}{}", if keys.is_empty() { String::new() } else { format!("\t{keys}") }, if *checked { " *" } else { "" })],
             MenuItem::Submenu { items, .. } => commands(items),
-            MenuItem::Separator => Vec::new(),
+            MenuItem::Header(_) | MenuItem::Separator => Vec::new(),
         })
         .collect()
 }
@@ -77,14 +77,14 @@ fn item_menu_lists_flit_commands_with_their_shortcuts() {
     assert!(!file.inline);
     let labels = commands(&file.menu);
     assert_eq!(labels[0], "Open\tEnter");
-    for want in ["Cut\tCtrl+X", "Copy\tCtrl+C", "Copy path\tCtrl+Shift+C", "Create shortcut", "Rename\tF2", "Delete\tDel", "New folder with selection", "New alternate data stream", "Properties\tAlt+Enter"] {
+    for want in ["Cut\tCtrl+X", "Copy\tCtrl+C  Ctrl+Insert", "Copy path\tCtrl+Shift+C", "Create shortcut", "Rename\tF2", "Delete\tDelete", "New folder with selection", "New alternate data stream", "Properties\tShift+Alt+Enter"] {
         assert!(labels.iter().any(|l| l == want), "{want} missing from {labels:?}");
     }
     assert!(!labels.iter().any(|l| l.starts_with("Open in new") || l.contains("sidebar") || l.starts_with("Paste")), "{labels:?}");
     assert!(tidy(&file.menu));
     let folder = right_click(&mut app, Some(FOLDER), false);
     let labels = commands(&folder.menu);
-    for want in ["Open in new tab\tCtrl+Enter", "Open in new window\tCtrl+Alt+Enter", "Paste\tCtrl+Shift+V", "Pin to sidebar", "Open in terminal\tCtrl+`", "Change icon"] {
+    for want in ["Open in new tab\tCtrl+Enter", "Open in new window", "Paste\tCtrl+Shift+V", "Pin to sidebar", "Open in terminal", "Change icon"] {
         assert!(labels.iter().any(|l| l == want), "{want} missing from {labels:?}");
     }
     assert!(!labels.iter().any(|l| l.starts_with("New alternate")), "{labels:?}");
@@ -138,13 +138,13 @@ fn background_menu_offers_sorting_new_items_paste_and_terminal() {
     assert!(matches!(&menu.menu[0], MenuItem::Submenu { label, .. } if label == "Layout"));
     assert!(matches!(&menu.menu[1], MenuItem::Submenu { label, .. } if label == "Sort by"));
     let labels = commands(&menu.menu);
-    for want in ["Details\tCtrl+Shift+1 *", "Grid\tCtrl+Shift+5", "Larger items\tCtrl++  Ctrl+Shift++", "Name *", "Date modified", "Descending", "Refresh\tF5  Ctrl+R", "Folder\tCtrl+Shift+N", "Shortcut", "Paste\tCtrl+V", "Open in terminal\tCtrl+`", "Pin to sidebar\tCtrl+D", "Copy path\tCtrl+Shift+C", "Properties\tAlt+Enter"] {
+    for want in ["Details\tCtrl+Shift+1 *", "List\tCtrl+Shift+3", "Grid", "Larger items\tCtrl+MouseWheelUp", "Name *", "Date modified", "Descending", "Refresh\tCtrl+R  F5", "Folder\tCtrl+Shift+N", "Shortcut", "Paste\tCtrl+V  Shift+Insert", "Open in terminal", "Pin to sidebar", "Copy path\tCtrl+Shift+C", "Properties\tShift+Alt+Enter"] {
         assert!(labels.iter().any(|l| l == want), "{want} missing from {labels:?}");
     }
     run(&mut app, &menu, "Grid");
     assert_eq!((app.tab().mode, app.layout.mode), (LayoutMode::Grid, LayoutMode::Grid));
     let menu = right_click(&mut app, None, false);
-    assert!(commands(&menu.menu).iter().any(|l| l == "Grid\tCtrl+Shift+5 *"));
+    assert!(commands(&menu.menu).iter().any(|l| l == "Grid *"));
     run(&mut app, &menu, "Details");
     run(&mut app, &menu, "Date modified");
     assert_eq!(app.tab().view_spec.sort.field, SortField::Modified);

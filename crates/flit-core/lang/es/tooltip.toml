@@ -26,6 +26,8 @@ crumbs = "Mostrar el principio de la ruta."
 close_palette = "Cerrar esta ventana."
 scroll_up = "Desplazar hacia arriba."
 scroll_down = "Desplazar hacia abajo."
+palette_descriptions_on = "Las descripciones se muestran bajo los comandos."
+palette_descriptions_off = "Los comandos se muestran sin descripciones."
 
 [tool]
 "menu.new" = "Crear una carpeta, un acceso directo o un archivo."

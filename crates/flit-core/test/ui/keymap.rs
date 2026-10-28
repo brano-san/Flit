@@ -35,7 +35,7 @@ fn every_default_shortcut_reads_back_and_stays_assignable() {
         }
     }
     assert_eq!(parse_chord(" ctrl+SHIFT+p "), Some(ctrl_shift(Key::Char('P'))));
-    assert_eq!(parse_chord("Ctrl++"), Some(ctrl(Key::Char('+'))));
+    assert_eq!(parse_chord("Ctrl++"), Some(ctrl(Key::Char('='))));
     assert_eq!(parse_chord("Ctrl+Insert"), Some(ctrl(Key::Insert)));
     assert_eq!(parse_chord("Escape"), Some(key(Key::Escape)));
     assert_eq!(parse_chord("f24"), Some(key(Key::F(24))));
@@ -43,14 +43,16 @@ fn every_default_shortcut_reads_back_and_stays_assignable() {
     for bad in ["", "Ctrl+", "Ctrl+Ctrl+A", "F25", "F0", "Hyper+A", "AB", "Ctrl+Ж"] {
         assert_eq!(parse_chord(bad), None, "{bad}");
     }
-    for refused in [key(Key::Char('A')), shift(Key::Char('A')), key(Key::Space), ctrl(Key::Space), key(Key::Down), ctrl(Key::Char('7')), Chord { key: Key::Other, mods: CTRL }] {
+    for refused in [key(Key::Char('A')), shift(Key::Char('A')), shift(Key::Char('1')), ctrl(Key::Home), Chord { key: Key::Other, mods: CTRL }] {
         assert!(refusal(refused).is_some(), "{}", chord_text(&refused));
     }
-    assert!(refusal(ctrl(Key::Char('1'))).unwrap().contains("tab 1"));
+    for allowed in [ctrl(Key::Char('1')), ctrl(Key::Space), key(Key::Space)] {
+        assert_eq!(refusal(allowed), None, "{} is an ordinary command key now", chord_text(&allowed));
+    }
     assert_eq!(refusal(shift(Key::Tab)), None, "a default shortcut stays allowed");
     assert_eq!(refusal(alt(Key::Char('Q'))), None);
     assert_eq!(refusal(key(Key::Insert)), None);
-    assert_eq!(defaults().owner(key(Key::BrowserBack)), Some(at("nav.back")), "the Back key is a remappable default");
+    assert_eq!(defaults().owner(key(Key::BrowserBack)), None, "the Back key goes back unless a command takes it");
 }
 
 #[test]
@@ -63,8 +65,8 @@ fn the_file_keeps_unknown_ids_reports_bad_entries_and_resets_clashes() {
         "file.paste": ["Ctrl+Shift+F9", "Banana"],
         "edit.undo": ["Ctrl+Shift+F9", 5],
         "edit.redo": ["Y"],
-        "tab.new": ["Ctrl+K"],
-        "view.hidden": ["Ctrl+K"],
+        "tab.new": ["Ctrl+G"],
+        "view.hidden": ["Ctrl+G"],
         "select.all": ["Ctrl+T"]
     });
     let (k, problems) = parse(&j).unwrap();
@@ -75,12 +77,12 @@ fn the_file_keeps_unknown_ids_reports_bad_entries_and_resets_clashes() {
         assert_eq!(k.keys(at(id)), ACTIONS[at(id)].keys, "{id} keeps its defaults");
     }
     let all = problems.join("\n");
-    for part in ["shortcuts of file.cut in the settings file are not a list", "\"Banana\" in the shortcuts of file.paste is not a key", "5 in the shortcuts of edit.undo", "Y cannot be a shortcut of edit.redo", "Ctrl+K was given to both tab.new and view.hidden", "Ctrl+T was given to both tab.new and select.all"] {
+    for part in ["shortcuts of file.cut in the settings file are not a list", "\"Banana\" in the shortcuts of file.paste is not a key", "5 in the shortcuts of edit.undo", "Y cannot be a shortcut of edit.redo", "Ctrl+G was given to both tab.new and view.hidden", "Ctrl+T was given to both tab.new and select.all"] {
         assert!(all.contains(part), "{part} in\n{all}");
     }
     let out = k.to_json();
     assert_eq!(out["future.command"], json!(["Ctrl+Q"]));
-    assert_eq!(out["file.copy"], json!(["Ctrl+C", "Ctrl+Ins"]));
+    assert!(out.get("file.copy").is_none(), "the defaults written out again are not custom");
     assert_eq!(out["nav.refresh"], json!([]));
     assert!(out.get("tab.new").is_none() && out.get("file.paste").is_none());
     assert_eq!(parse(&out), Some((k, Vec::new())));
@@ -97,7 +99,7 @@ fn commands_added_by_later_stages_take_part_in_remapping_and_clashes() {
     }
     let (k, problems) = parse(&json!({"file.copy": ["Ctrl+Alt+T"], "theme.light": ["Ctrl+Alt+L"]})).unwrap();
     assert_eq!(k.keys(toggle), [ctrl_alt(Key::Char('T'))]);
-    assert_eq!(k.keys(at("file.copy")), [ctrl(Key::Char('C'))]);
+    assert_eq!(k.keys(at("file.copy")), [ctrl(Key::Char('C')), ctrl(Key::Insert)]);
     assert!(problems.iter().any(|p| p.contains("Ctrl+Alt+T was given to both file.copy and theme.toggle") || p.contains("Ctrl+Alt+T was given to both theme.toggle and file.copy")), "{problems:?}");
     let mut a = app();
     a.edit_keys(|m| m.assign(at("theme.light"), None, ctrl_alt(Key::Char('T'))));
@@ -108,9 +110,9 @@ fn commands_added_by_later_stages_take_part_in_remapping_and_clashes() {
 #[test]
 fn shortcuts_live_in_the_settings_file_and_travel_with_export_import_and_reset() {
     let mut a = app();
-    a.edit_keys(|k| k.assign(at("view.hidden"), None, ctrl(Key::Char('K'))));
+    a.edit_keys(|k| k.assign(at("view.hidden"), None, ctrl(Key::Char('G'))));
     let text = settings::render(&a.setting_values(), &Default::default(), None);
-    assert!(text.contains("  \"keys\": {\n    \"view.hidden\": [\"Ctrl+H\",\"Ctrl+K\"]\n  }"), "{text}");
+    assert!(text.contains("  \"keys\": {\n    \"view.hidden\": [\"Ctrl+H\",\"Ctrl+G\"]\n  }"), "{text}");
     let doc = settings::parse(&text);
     assert!(doc.problems.is_empty() && doc.bad.is_empty(), "{:?}", doc.problems);
     let mut b = app();
@@ -118,7 +120,7 @@ fn shortcuts_live_in_the_settings_file_and_travel_with_export_import_and_reset()
     assert_eq!(b.keymap(), a.keymap());
     let mut c = app();
     c.import_settings(&a.export_text());
-    assert_eq!(c.keymap().keys(at("view.hidden")), [ctrl(Key::Char('H')), ctrl(Key::Char('K'))]);
+    assert_eq!(c.keymap().keys(at("view.hidden")), [ctrl(Key::Char('H')), ctrl(Key::Char('G'))]);
     a.reset_settings();
     assert_eq!(a.keymap(), &defaults());
     let doc = settings::parse(r#"{"keys": {"file.copy": ["Q"], "later.thing": ["Ctrl+J"]}}"#);
@@ -138,10 +140,10 @@ fn shortcuts_live_in_the_settings_file_and_travel_with_export_import_and_reset()
 fn remapped_keys_run_their_new_commands_and_text_fields_keep_their_keys() {
     let mut a = app();
     let shown = a.tab().view_spec.show_hidden;
-    a.edit_keys(|k| k.assign(at("view.hidden"), Some(ctrl(Key::Char('H'))), ctrl(Key::Char('K'))));
+    a.edit_keys(|k| k.assign(at("view.hidden"), Some(ctrl(Key::Char('H'))), ctrl(Key::Char('G'))));
     press(&mut a, Key::Char('H'), CTRL);
     assert_eq!(a.tab().view_spec.show_hidden, shown, "the old key does nothing");
-    press(&mut a, Key::Char('K'), CTRL);
+    press(&mut a, Key::Char('G'), CTRL);
     assert_eq!(a.tab().view_spec.show_hidden, !shown, "the new key runs the command");
     a.edit_keys(|k| k.assign(at("view.hidden"), None, ctrl(Key::Char('A'))));
     assert_eq!(a.keymap().owner(ctrl(Key::Char('A'))), Some(at("view.hidden")), "Ctrl+A moved from Select all");
@@ -158,12 +160,12 @@ fn remapped_keys_run_their_new_commands_and_text_fields_keep_their_keys() {
 #[test]
 fn hints_in_menus_and_the_palette_follow_the_keymap() {
     let mut a = app();
-    a.edit_keys(|k| k.assign(at("settings.open"), Some(ctrl(Key::Char(','))), ctrl(Key::F(9))));
+    a.edit_keys(|k| k.assign(at("options.open"), Some(ctrl(Key::Char(','))), ctrl(Key::F(9))));
     let menu = a.build_tab_actions_menu();
     assert!(menu.iter().any(|i| matches!(i, MenuItem::Command { label, keys, .. } if label == "Settings" && keys == "Ctrl+F9")), "{menu:?}");
     a.open_palette();
     let p = a.nav.palette.as_ref().unwrap();
-    let row = p.titles.iter().position(|t| t == "Settings").unwrap();
+    let row = p.titles.iter().position(|t| t == "Options").unwrap();
     assert_eq!(p.keys[row], "Ctrl+F9");
     press(&mut a, Key::Escape, NO);
     press(&mut a, Key::F(9), CTRL);
@@ -185,7 +187,7 @@ fn bench_keymap() {
     }
     let custom: serde_json::Map<String, Json> = ACTIONS.iter().zip(&chords).map(|(a, c)| (a.id.to_owned(), json!([c]))).collect();
     let entries = custom.len();
-    let few = json!({"file.copy": ["Ctrl+C", "Ctrl+Ins"], "view.hidden": ["Ctrl+K"], "nav.refresh": []});
+    let few = json!({"file.copy": ["Ctrl+C", "Ctrl+Ins"], "view.hidden": ["Ctrl+G"], "nav.refresh": []});
     let t = Instant::now();
     for _ in 0..1000 {
         std::hint::black_box(parse(&few));
@@ -202,7 +204,7 @@ fn bench_keymap() {
     let built = Keymap::new(vec![None; ACTIONS.len()], Map::new());
     let build = t.elapsed();
     let (remapped, _) = parse(&few).unwrap();
-    let probes: Vec<Chord> = ACTIONS.iter().flat_map(|a| a.keys.iter().copied()).chain([ctrl(Key::Char('K')), ctrl(Key::Char('Q'))]).collect();
+    let probes: Vec<Chord> = ACTIONS.iter().flat_map(|a| a.keys.iter().copied()).chain([ctrl(Key::Char('G')), ctrl(Key::Char('Q'))]).collect();
     let n = 2_000_000;
     let t = Instant::now();
     for k in 0..n {

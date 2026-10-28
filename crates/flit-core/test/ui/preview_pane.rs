@@ -48,23 +48,23 @@ fn requests(app: &mut App) -> Vec<PreviewRequest> {
     app.drain_effects().filter_map(|e| if let Effect::Preview(r) = e { Some(r) } else { None }).collect()
 }
 
-const CTRL_ALT: Mods = Mods { ctrl: true, shift: false, alt: true };
+const NO: Mods = Mods { ctrl: false, shift: false, alt: false };
 
 #[test]
 fn toggles_and_reserves_the_right_or_bottom_edge() {
     let mut wide = app((1200, 700));
     let list_w = wide.layout.list.w;
-    press(&mut wide, Key::Char('I'), CTRL_ALT);
+    press(&mut wide, Key::Space, NO);
     assert!(wide.pane_state().visible);
     let pane = wide.preview.r.pane;
     assert_eq!(pane.right(), 1200.0);
     assert_eq!(wide.layout.list.w, list_w - pane.w);
     let mut tall = app((700, 1200));
-    press(&mut tall, Key::Char('I'), CTRL_ALT);
+    press(&mut tall, Key::Space, NO);
     let pane = tall.preview.r.pane;
     assert_eq!(pane.bottom(), tall.layout.status.y);
     assert!(tall.layout.list.bottom() <= pane.y);
-    press(&mut tall, Key::Char('I'), CTRL_ALT);
+    press(&mut tall, Key::Space, NO);
     assert!(!tall.pane_state().visible);
     assert_eq!(tall.preview.r.pane, Rect::default());
 }
@@ -172,10 +172,12 @@ fn media_controls_send_commands() {
 }
 
 #[test]
-fn space_quick_views_or_peeks_with_the_pane() {
+fn quick_view_opens_the_selection_or_peeks_with_the_pane() {
     let mut a = app((1200, 700));
     select(&mut a, "a.rs");
     a.on_event(&Event::Char(' '), Instant::now());
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::QuickView(_))), "Space toggles the Inspector, not Quick View");
+    assert!(a.run_action("item.quick_view", Instant::now()));
     let path = a.drain_effects().find_map(|e| if let Effect::QuickView(p) = e { Some(p) } else { None });
     assert_eq!(path, Some(FsPath::parse(r"C:\work\a.rs").unwrap()));
     a.on_quick_view(true);

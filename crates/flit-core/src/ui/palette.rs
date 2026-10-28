@@ -1,12 +1,11 @@
-use super::actions::ACTIONS;
-use super::describe::{description, description_en};
+use super::actions::{Group, ACTIONS};
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
 use super::fuzzy::fuzzy;
 use super::settings_page::SettingPick;
 use super::tags::TagPick;
 use super::toolbar::ToolPick;
-use super::widgets::{baseline, Button, Paint};
+use super::widgets::{baseline, Button, Paint, G_NEXT, G_OPEN};
 use super::{App, Effect, Glide, Hit, G_CLOSE, G_SORT_DOWN, G_SORT_UP, TAB_H, TOOL_H};
 use crate::i18n::S;
 use crate::input::{Key, Mods};
@@ -20,6 +19,7 @@ use std::time::Instant;
 
 const MIN_W: f32 = 360.0;
 const ROW_H: f32 = 30.0;
+const DESC_ROW_H: f32 = 46.0;
 const FIELD_H: f32 = 32.0;
 const TOP_GAP: f32 = 45.0;
 const EDGE: f32 = 12.0;
@@ -27,6 +27,24 @@ const HINT_H: f32 = 36.0;
 const SCROLL_W: f32 = 14.0;
 const DESC_PENALTY: i32 = 100_000;
 const G_SEARCH: &str = "\u{E721}";
+const G_DESCRIBE: &str = "\u{E8A5}";
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Line {
+    Header(Group),
+    Item(usize, Vec<Range<usize>>, Vec<Range<usize>>),
+}
+
+#[derive(Default)]
+pub(super) struct Commands {
+    pub lines: Vec<Line>,
+    pub collapsed: Vec<Group>,
+    pub descriptions: bool,
+    groups: Vec<Group>,
+    shown: Vec<&'static str>,
+    caps: Vec<Vec<String>>,
+    pub live: Vec<bool>,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Pick {
@@ -111,6 +129,8 @@ pub(super) struct Palette {
     pub page: usize,
     pub rows: Vec<Rect>,
     opened: Option<Instant>,
+    pub commands: Option<Commands>,
+    describe: Rect,
 }
 
 fn described(query: &str, desc: &str) -> Option<i32> {
@@ -134,13 +154,18 @@ fn rank<'a>(query: &str, items: impl Iterator<Item = (&'a str, &'a str, &'a str)
     scored.into_iter().map(|(_, i, r)| (i, r)).collect()
 }
 
-fn searched_description(id: &str) -> String {
-    let (local, en) = (description(id), description_en(id));
+fn searched_description(i: usize) -> String {
+    let (local, en) = (ACTIONS[i].desc.t(), ACTIONS[i].desc.en());
     if local == en { en.to_owned() } else { format!("{local} {en}") }
 }
 
+fn desc_marks(query: &str, desc: &str) -> Vec<Range<usize>> {
+    let limit = query.chars().filter(|c| !c.is_whitespace()).count().div_ceil(3).max(1);
+    fuzzy(query, desc).filter(|m| m.ranges.len() <= limit).map(|m| m.ranges).unwrap_or_default()
+}
+
 pub fn matches(query: &str) -> Vec<usize> {
-    let descs: Vec<String> = ACTIONS.iter().map(|a| searched_description(a.id)).collect();
+    let descs: Vec<String> = (0..ACTIONS.len()).map(searched_description).collect();
     rank(query, ACTIONS.iter().zip(&descs).map(|(a, d)| (a.title.t(), a.title.en(), d.as_str()))).into_iter().map(|(i, _)| i).collect()
 }
 
@@ -172,6 +197,8 @@ impl Palette {
             page: 1,
             rows: Vec::new(),
             opened: None,
+            commands: None,
+            describe: Rect::default(),
         };
         p.field.edit.set(text);
         p.field.edit.select_all();
@@ -180,16 +207,74 @@ impl Palette {
     }
 
     fn commands(app: &App) -> Self {
-        let ids: Vec<usize> = (0..ACTIONS.len()).filter(|&i| app.available(ACTIONS[i].id)).collect();
+        let mut ids: Vec<usize> = (0..ACTIONS.len()).filter(|&i| app.supports(ACTIONS[i].id)).collect();
+        ids.sort_by_key(|&i| Group::ALL.iter().position(|&g| g == ACTIONS[i].group));
         let mut p = Self::new(Pick::Commands, ids.iter().map(|&i| (ACTIONS[i].title.t().to_owned(), app.keymap.text(i))).collect(), "");
         p.alts = ids.iter().map(|&i| ACTIONS[i].title.en()).collect();
-        p.descs = ids.iter().map(|&i| searched_description(ACTIONS[i].id)).collect();
+        p.descs = ids.iter().map(|&i| searched_description(i)).collect();
+        p.commands = Some(Commands {
+            descriptions: app.prefs.command_descriptions,
+            groups: ids.iter().map(|&i| ACTIONS[i].group).collect(),
+            shown: ids.iter().map(|&i| ACTIONS[i].desc.t()).collect(),
+            caps: ids.iter().map(|&i| app.keymap.shown(i)).collect(),
+            live: ids.iter().map(|&i| app.available(ACTIONS[i].id)).collect(),
+            ..Default::default()
+        });
         p.ids = ids;
         p.refresh();
         p
     }
 
+    fn unit(&self) -> f32 {
+        if self.commands.as_ref().is_some_and(|c| c.descriptions) { DESC_ROW_H } else { ROW_H }
+    }
+
+    fn command_lines(&mut self) {
+        let query = self.field.text().to_owned();
+        let Some(c) = &mut self.commands else { return };
+        c.lines.clear();
+        if query.trim().is_empty() {
+            for g in Group::ALL {
+                let items: Vec<usize> = (0..c.groups.len()).filter(|&k| c.groups[k] == g).collect();
+                if items.is_empty() {
+                    continue;
+                }
+                c.lines.push(Line::Header(g));
+                if !c.collapsed.contains(&g) {
+                    c.lines.extend(items.into_iter().map(|k| Line::Item(k, Vec::new(), Vec::new())));
+                }
+            }
+        } else {
+            let alts = self.alts.iter().copied();
+            let ranked = rank(&query, self.titles.iter().map(String::as_str).zip(alts).zip(&self.descs).map(|((t, a), d)| (t, a, d.as_str())));
+            c.lines.extend(ranked.into_iter().map(|(k, marks)| Line::Item(k, marks, desc_marks(&query, c.shown[k]))));
+        }
+        let n = c.lines.len();
+        self.matches = (0..n).collect();
+        self.marks = vec![Vec::new(); n];
+        self.sel = 0;
+        self.scroll.snap(0.0);
+    }
+
+    fn fold(&mut self, g: Group) {
+        let Some(c) = &mut self.commands else { return };
+        match c.collapsed.iter().position(|&x| x == g) {
+            Some(k) => {
+                c.collapsed.remove(k);
+            }
+            None => c.collapsed.push(g),
+        }
+        let pos = self.scroll.pos;
+        self.command_lines();
+        let at = self.commands.as_ref().and_then(|c| c.lines.iter().position(|l| *l == Line::Header(g))).unwrap_or(0);
+        self.scroll.snap(pos.min(self.max_scroll()));
+        self.select(at as isize);
+    }
+
     fn refresh(&mut self) {
+        if self.commands.is_some() {
+            return self.command_lines();
+        }
         let alts = self.alts.iter().copied().chain(std::iter::repeat(""));
         let descs = self.descs.iter().map(String::as_str).chain(std::iter::repeat(""));
         let ranked = if self.pick.is_input() {
@@ -205,7 +290,7 @@ impl Palette {
     }
 
     fn max_scroll(&self) -> f32 {
-        self.matches.len().saturating_sub(self.page) as f32 * ROW_H
+        self.matches.len().saturating_sub(self.page) as f32 * self.unit()
     }
 
     fn select(&mut self, to: isize) {
@@ -214,12 +299,13 @@ impl Palette {
             return;
         }
         self.sel = to.rem_euclid(n) as usize;
-        let top = self.sel as f32 * ROW_H;
-        let view = self.page as f32 * ROW_H;
+        let unit = self.unit();
+        let top = self.sel as f32 * unit;
+        let view = self.page as f32 * unit;
         if top < self.scroll.target {
             self.scroll.target = top;
-        } else if top + ROW_H > self.scroll.target + view {
-            self.scroll.target = top + ROW_H - view;
+        } else if top + unit > self.scroll.target + view {
+            self.scroll.target = top + unit - view;
         }
     }
 
@@ -247,6 +333,21 @@ impl App {
         self.dirty = true;
     }
 
+    pub(super) fn toggle_descriptions(&mut self) {
+        self.prefs.command_descriptions = !self.prefs.command_descriptions;
+        if let Some(p) = &mut self.nav.palette {
+            if let Some(c) = &mut p.commands {
+                c.descriptions = self.prefs.command_descriptions;
+                let sel = p.sel as isize;
+                p.scroll.snap(0.0);
+                p.select(sel);
+                p.scroll.snap(p.scroll.target);
+            }
+        }
+        self.layout();
+        self.dirty = true;
+    }
+
     pub(super) fn close_palette(&mut self) {
         self.nav.palette = None;
         self.dirty = true;
@@ -262,8 +363,25 @@ impl App {
             self.nav.palette = Some(p);
             return;
         };
+        if let Some(c) = &p.commands {
+            match c.lines.get(id) {
+                Some(Line::Header(g)) => {
+                    let g = *g;
+                    let mut p = p;
+                    p.fold(g);
+                    self.nav.palette = Some(p);
+                    self.layout();
+                }
+                Some(Line::Item(k, ..)) if c.live[*k] => {
+                    if let Some(run) = ACTIONS[p.ids[*k]].run {
+                        run(self, now);
+                    }
+                }
+                _ => self.nav.palette = Some(p),
+            }
+            return;
+        }
         match p.pick {
-            Pick::Commands => (ACTIONS[p.ids[id]].run)(self, now),
             Pick::Encoding(archive) => self.set_encoding(&archive, id, now),
             Pick::Library(lib) => self.library_row(lib, &p.titles[id], false),
             Pick::Tags(t) => self.tag_choose(t, id, now),
@@ -344,8 +462,8 @@ impl App {
 
     pub(super) fn palette_wheel(&mut self, dy: f32) {
         if let Some(p) = &mut self.nav.palette {
-            let max = p.max_scroll();
-            p.scroll.by(-dy * 3.0 * ROW_H, max);
+            let (max, unit) = (p.max_scroll(), p.unit());
+            p.scroll.by(-dy * 3.0 * unit, max);
             self.hover = Hit::PaletteBox;
             self.dirty = true;
         }
@@ -353,8 +471,8 @@ impl App {
 
     pub(super) fn palette_step(&mut self, down: bool) {
         if let Some(p) = &mut self.nav.palette {
-            let max = p.max_scroll();
-            p.scroll.by(if down { ROW_H } else { -ROW_H }, max);
+            let (max, unit) = (p.max_scroll(), p.unit());
+            p.scroll.by(if down { unit } else { -unit }, max);
             self.dirty = true;
         }
     }
@@ -364,14 +482,17 @@ impl App {
         let s = |v: f32| (v * sc).round();
         let left = self.panels.left;
         let Some(p) = &mut self.nav.palette else { return };
+        let row_h = p.unit();
         let area = (w - left).max(s(200.0));
         let pw = (w / 2.0).round().max(s(MIN_W)).min(area - 2.0 * s(EDGE)).max(s(120.0));
         let x = (left + (area - pw) / 2.0).round().min(w - pw).max(0.0);
-        let unit = s(ROW_H);
+        let unit = s(row_h);
         let fixed = s(8.0) + s(FIELD_H) + s(6.0) + s(HINT_H);
         let y = (s(TAB_H) + s(TOOL_H) + s(TOP_GAP)).min((h - s(EDGE) - fixed - unit).max(s(EDGE)));
-        p.field_rect = Rect::new(x + s(8.0), y + s(8.0), pw - s(16.0) - s(FIELD_H) - s(4.0), s(FIELD_H));
-        p.close = Rect::new(p.field_rect.right() + s(4.0), p.field_rect.y, s(FIELD_H), s(FIELD_H));
+        let extra = if p.commands.is_some() { s(FIELD_H) + s(4.0) } else { 0.0 };
+        p.field_rect = Rect::new(x + s(8.0), y + s(8.0), pw - s(16.0) - s(FIELD_H) - s(4.0) - extra, s(FIELD_H));
+        p.describe = if extra > 0.0 { Rect::new(p.field_rect.right() + s(4.0), p.field_rect.y, s(FIELD_H), s(FIELD_H)) } else { Rect::default() };
+        p.close = Rect::new(p.field_rect.right() + s(4.0) + extra, p.field_rect.y, s(FIELD_H), s(FIELD_H));
         let top = p.field_rect.bottom() + s(6.0);
         let room = (h - s(EDGE) - s(HINT_H) - top).max(unit);
         p.page = ((room / unit).floor() as usize).max(1);
@@ -381,7 +502,7 @@ impl App {
         let scrolls = n > p.page;
         let bar = if scrolls { s(SCROLL_W) + s(4.0) } else { 0.0 };
         p.rows.clear();
-        let at = p.scroll.pos / ROW_H;
+        let at = p.scroll.pos / row_h;
         p.first = at.floor() as usize;
         p.shift = ((at - at.floor()) * unit).round();
         for k in p.first..n.min(p.first + p.page + 1) {
@@ -403,6 +524,7 @@ impl App {
         let p = self.nav.palette.as_ref()?;
         match h {
             Hit::PaletteClose => Some(p.close),
+            Hit::PaletteDescribe => Some(p.describe).filter(|r| r.w > 0.0),
             Hit::PaletteScroll(down) => Some(p.arrows[usize::from(down)]),
             _ => None,
         }
@@ -421,6 +543,9 @@ impl App {
         }
         if p.close.contains(x, y) {
             return Some(Hit::PaletteClose);
+        }
+        if p.describe.contains(x, y) {
+            return Some(Hit::PaletteDescribe);
         }
         if let Some(k) = p.arrows.iter().position(|r| r.contains(x, y)) {
             return Some(Hit::PaletteScroll(k == 1));
@@ -448,8 +573,60 @@ impl App {
         let inner = Rect::new(fr.x + fr.h, fr.y, fr.w - fr.h - s12, fr.h);
         p.field.draw(w.g, t, inner, font, active, p.pick.placeholder(), sc, Some(&self.preedit));
         w.icon_button(p.close, G_CLOSE, close_font, Button::of(hover == Hit::PaletteClose, false, true), t.text_dim);
+        if let Some(c) = &p.commands {
+            w.icon_button(p.describe, G_DESCRIBE, icons, Button::of(hover == Hit::PaletteDescribe, c.descriptions, true), t.text_dim);
+        }
         w.g.dl.set_clip(Some(p.list));
         for (k, &row) in p.rows.iter().enumerate() {
+            let i = p.first + k;
+            let Some(c) = &p.commands else { break };
+            let selected = i == p.sel;
+            let hot = selected || hover == Hit::PaletteRow(i);
+            match &c.lines[p.matches[i]] {
+                Line::Header(g) => {
+                    let head = Rect::new(row.x, row.y + (row.h - s4 * 7.0).max(0.0) / 2.0, row.w, row.h.min(s4 * 7.0));
+                    if hot {
+                        w.g.dl.round_rect(head, t.accent_fill, s4);
+                    }
+                    let ink = if hot { ink_on(t.accent_fill) } else { t.text };
+                    w.centered(Rect::new(head.x + s6, head.y, s16 + s6, head.h), g.icon(), icons, ink);
+                    let y = baseline(w.g, head, font);
+                    w.g.text(head.x + s16 + 2.0 * s12, y, g.title().t(), font, ink, head.w);
+                    let chevron = if c.collapsed.contains(g) { G_NEXT } else { G_OPEN };
+                    w.centered(Rect::new(head.right() - s12 - s16, head.y, s16, head.h), chevron, icons, ink);
+                }
+                Line::Item(n, title_marks, desc_marks) => {
+                    let live = c.live[*n];
+                    if selected {
+                        w.g.dl.round_rect(row, t.accent_fill, s4);
+                    } else if hover == Hit::PaletteRow(i) {
+                        w.g.dl.round_rect(row, t.hover, s4);
+                    }
+                    let gray = t.text_dim.alpha(0x90);
+                    let (ink, dim, mark) = match (selected, live) {
+                        (true, _) => {
+                            let on = ink_on(t.accent_fill);
+                            let quiet = if title_marks.is_empty() && desc_marks.is_empty() { on } else { on.alpha(0xA0) };
+                            (quiet, quiet, on)
+                        }
+                        (false, true) => (t.text, t.text_dim, t.accent),
+                        (false, false) => (gray, gray, t.accent.alpha(0x90)),
+                    };
+                    let caps_w = w.keycaps_w(&c.caps[*n], small);
+                    let room = row.w - 3.0 * s12 - caps_w;
+                    let line = if c.descriptions { Rect::new(row.x, row.y + s3, row.w, row.h / 2.0 - s3) } else { row };
+                    let y = baseline(w.g, line, font);
+                    w.marked((row.x + s12, y), &p.titles[*n], title_marks, font, (ink, mark), room);
+                    if c.descriptions {
+                        let below = Rect::new(row.x, row.y + row.h / 2.0, row.w, row.h / 2.0 - s3);
+                        let y = baseline(w.g, below, small);
+                        w.marked((row.x + s12, y), c.shown[*n], desc_marks, small, (dim, mark), room);
+                    }
+                    w.keycaps_lit(row.right() - s12 - caps_w, row.y + row.h / 2.0, &c.caps[*n], small, live);
+                }
+            }
+        }
+        for (k, &row) in p.rows.iter().enumerate().filter(|_| p.commands.is_none()) {
             let i = p.first + k;
             let selected = i == p.sel;
             if selected {

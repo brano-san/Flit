@@ -111,7 +111,7 @@ fn labels(items: &[MenuItem]) -> Vec<String> {
         .flat_map(|i| match i {
             MenuItem::Command { label, checked, .. } => vec![format!("{label}{}", if *checked { " *" } else { "" })],
             MenuItem::Submenu { items, .. } => labels(items),
-            MenuItem::Separator => Vec::new(),
+            MenuItem::Header(_) | MenuItem::Separator => Vec::new(),
         })
         .collect()
 }
@@ -148,7 +148,7 @@ fn sections_collapse_hide_and_come_back() {
     click(header(&app, Section::Wsl), &mut app, MouseButton::Right);
     let m = menu(&mut app);
     run(&mut app, &m, "Hide this section");
-    assert!(app.run_action("sidebar.sections", Instant::now()));
+    assert!(app.run_action("quick_access.sections", Instant::now()));
     assert!(app.nav_prefs().collapsed.is_empty() && app.nav_prefs().hidden.is_empty());
     assert_eq!(side_labels(&app).len(), 6);
 }
@@ -250,7 +250,7 @@ fn section_header_labels_and_chevrons_sit_in_the_middle_of_their_hover_rect() {
 fn compact_mode_shows_icons_only_and_is_a_core_flag() {
     let mut app = app_with_places();
     let full = app.layout.list.x;
-    assert!(app.run_action("sidebar.compact", Instant::now()));
+    assert!(app.run_action("quick_access.compact", Instant::now()));
     assert!(app.nav_prefs().compact);
     assert_eq!(app.layout.list.x, COMPACT_W);
     assert!(app.layout.list.x < full);

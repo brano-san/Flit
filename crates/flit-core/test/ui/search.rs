@@ -15,6 +15,8 @@ fn app() -> App {
 }
 
 const CTRL: Mods = Mods { ctrl: true, shift: false, alt: false };
+const CTRL_ALT: Mods = Mods { ctrl: true, shift: false, alt: true };
+const CTRL_SHIFT: Mods = Mods { ctrl: true, shift: true, alt: false };
 const NO: Mods = Mods { ctrl: false, shift: false, alt: false };
 
 fn key(app: &mut App, key: Key, mods: Mods) {
@@ -43,9 +45,9 @@ fn frame(app: &mut App) {
 }
 
 #[test]
-fn ctrl_e_opens_search_and_every_keystroke_is_a_new_query() {
+fn ctrl_alt_f_opens_search_and_every_keystroke_is_a_new_query() {
     let mut app = app();
-    key(&mut app, Key::Char('E'), CTRL);
+    key(&mut app, Key::Char('F'), CTRL_ALT);
     assert!(app.search_active());
     let fx: Vec<Effect> = app.drain_effects().collect();
     assert!(fx.iter().any(|e| matches!(e, Effect::Title(t) if t.starts_with("Search"))));
@@ -140,7 +142,7 @@ fn header_clicks_switch_the_order_and_escape_closes() {
     key(&mut app, Key::Escape, NO);
     assert!(!app.search_active());
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Title(t) if t.ends_with("— Flit") && !t.starts_with("Search"))));
-    key(&mut app, Key::Char('E'), CTRL);
+    key(&mut app, Key::Char('F'), CTRL_ALT);
     assert!(requests(&mut app).is_empty(), "reopening keeps the previous query and results");
     key(&mut app, Key::Char('T'), CTRL);
     assert!(!app.search_active());
@@ -167,10 +169,10 @@ fn scope_of(app: &mut App) -> Option<SearchScope> {
 }
 
 #[test]
-fn f3_searches_the_folder_live_or_through_a_ready_index_and_the_chip_widens_it() {
+fn ctrl_shift_f_searches_the_folder_live_or_through_a_ready_index_and_the_chip_widens_it() {
     let mut app = app();
     let here = Location::parse(r"C:\x").unwrap();
-    key(&mut app, Key::F(3), NO);
+    key(&mut app, Key::Char('F'), CTRL_SHIFT);
     assert!(app.search_active());
     let fx: Vec<Effect> = app.drain_effects().collect();
     assert!(fx.iter().any(|e| matches!(e, Effect::Title(t) if t == "Search in x — Flit")));
@@ -187,21 +189,21 @@ fn f3_searches_the_folder_live_or_through_a_ready_index_and_the_chip_widens_it()
     app.on_event(&Event::MouseUp { x: chip.x + 2.0, y: chip.y + 2.0, button: MouseButton::Left }, t0());
     assert_eq!(scope_of(&mut app), Some(SearchScope::All));
     assert_eq!(app.search_folder(), None);
-    key(&mut app, Key::F(3), NO);
+    key(&mut app, Key::Char('F'), CTRL_SHIFT);
     assert_eq!(scope_of(&mut app), Some(SearchScope::Indexed(here)));
-    key(&mut app, Key::Char('E'), CTRL);
+    key(&mut app, Key::Char('F'), CTRL_ALT);
     assert_eq!(scope_of(&mut app), Some(SearchScope::All));
     app.close_search();
     let zip = Location::parse(r"C:\x\pack.zip\docs").unwrap();
     app.navigate(zip.clone(), t0());
-    key(&mut app, Key::F(3), NO);
+    key(&mut app, Key::Char('F'), CTRL_SHIFT);
     assert_eq!(scope_of(&mut app), Some(SearchScope::Walk(zip)), "the index does not reach inside archives");
 }
 
 #[test]
 fn live_results_stream_in_and_keep_old_rows_until_new_ones_arrive() {
     let mut app = app();
-    key(&mut app, Key::F(3), NO);
+    key(&mut app, Key::Char('F'), CTRL_SHIFT);
     requests(&mut app);
     let gen = gen_of(&app);
     app.on_search_event(SearchEvent::Found { gen, total: 2, folders: 3, done: false, source: SearchSource::Walk }, t0());

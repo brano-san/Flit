@@ -30,7 +30,7 @@ tagged = "Fichiers balisés"
 connecting = "Connexion à l’index"
 service = "Service d’indexation"
 fallback = "Index local (flit-indexd indisponible)"
-off = "L’indexation est désactivée dans Paramètres › Avancé ; F3 cherche dans le dossier ouvert"
+off = "L’indexation est désactivée dans Paramètres › Avancé ; Ctrl+Shift+F cherche dans le dossier ouvert"
 
 [index]
 default = "index"

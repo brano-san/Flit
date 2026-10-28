@@ -26,6 +26,8 @@ crumbs = "Показати початок шляху."
 close_palette = "Закрити це вікно."
 scroll_up = "Прокрутити вгору."
 scroll_down = "Прокрутити вниз."
+palette_descriptions_on = "Під командами показано описи."
+palette_descriptions_off = "Команди показано без описів."
 
 [tool]
 "menu.new" = "Створити папку, ярлик або файл."

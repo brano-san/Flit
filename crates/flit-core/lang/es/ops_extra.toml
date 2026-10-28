@@ -12,9 +12,3 @@ no_room = "Los elementos necesitan {need}, pero {folder} solo tiene {free} libre
 no_room_hint = "Si copias de todos modos, se detendrá con un error cuando se llene la unidad."
 over_limit = "{name} ocupa {size}, pero el sistema de archivos de esta unidad admite archivos de hasta {limit}."
 over_limit_hint = "Omítelo para copiar los demás elementos o usa una unidad formateada en NTFS o exFAT."
-
-[describe]
-install_fonts = "Instalar los archivos de fuente seleccionados para el usuario actual"
-lock_screen = "Mostrar la imagen seleccionada en la pantalla de bloqueo de Windows"
-set_backdrop = "Mostrar la imagen seleccionada atenuada detrás de la lista de archivos en todas las ventanas de Flit"
-clear_backdrop = "Volver al color de fondo liso"

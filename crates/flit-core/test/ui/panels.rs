@@ -98,7 +98,7 @@ fn labels(items: &[MenuItem]) -> Vec<String> {
         .flat_map(|i| match i {
             MenuItem::Command { label, .. } => vec![label.clone()],
             MenuItem::Submenu { items, .. } => labels(items),
-            MenuItem::Separator => Vec::new(),
+            MenuItem::Header(_) | MenuItem::Separator => Vec::new(),
         })
         .collect()
 }

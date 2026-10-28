@@ -236,7 +236,7 @@ fn several_selected_items_open_together_and_folders_go_to_new_tabs() {
     assert_eq!(names(&app).len(), 4);
     app.select_tab(0);
     app.drain_effects().for_each(drop);
-    key(&mut app, Key::Enter, CTRL_ALT);
+    app.run_action("item.open_window", Instant::now());
     assert!(app.drain_effects().any(|e| matches!(e, Effect::NewWindow(r) if r[0].folder == loc(r"C:\x\a"))));
 }
 

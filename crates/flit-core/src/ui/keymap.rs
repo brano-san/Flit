@@ -1,5 +1,4 @@
 use super::actions::{chord_text, index, Chord, ACTIONS};
-use super::describe::{description, description_en};
 use crate::i18n::{self, Lang, S};
 use crate::{tr, tr_en};
 use super::palette::{Palette, Pick};
@@ -37,7 +36,7 @@ impl Keymap {
     fn reindex(&mut self) {
         let mut owners = std::mem::take(&mut self.owners);
         owners.clear();
-        for i in 0..ACTIONS.len() {
+        for i in (0..ACTIONS.len()).filter(|&i| ACTIONS[i].rebindable()) {
             for &c in self.keys(i) {
                 owners.entry(c).or_insert(i);
             }
@@ -53,8 +52,8 @@ impl Keymap {
                 .iter()
                 .enumerate()
                 .map(|(k, a)| {
-                    let local = if l == Lang::En { String::new() } else { format!(" {} {}", a.title.t(), description(a.id)) };
-                    format!("{} {} {} {}{local}", a.title.en(), a.id, description_en(a.id), self.text(k)).to_lowercase()
+                    let local = if l == Lang::En { String::new() } else { format!(" {} {}", a.title.t(), a.desc.t()) };
+                    format!("{} {} {} {}{local}", a.title.en(), a.id, a.desc.en(), self.text(k)).to_lowercase()
                 })
                 .collect()
         });
@@ -81,12 +80,16 @@ impl Keymap {
         self.keys(i).iter().map(chord_text).collect::<Vec<_>>().join(", ")
     }
 
+    pub fn shown(&self, i: usize) -> Vec<String> {
+        ACTIONS[i].shown_keys(self.keys(i))
+    }
+
     pub fn text_of(&self, id: &str) -> String {
         index(id).map(|i| self.text(i)).unwrap_or_default()
     }
 
     pub fn all_text(&self, id: &str) -> String {
-        index(id).map(|i| self.keys(i).iter().map(chord_text).collect::<Vec<_>>().join("  ")).unwrap_or_default()
+        index(id).map(|i| self.shown(i).into_iter().filter(|k| !k.contains("Keypad")).collect::<Vec<_>>().join("  ")).unwrap_or_default()
     }
 
     pub fn first_text(&self, id: &str) -> Option<String> {
@@ -195,6 +198,7 @@ pub fn parse_chord(s: &str) -> Option<Chord> {
         _ => {
             let mut chars = rest.chars();
             match (chars.next(), chars.next()) {
+                (Some('+'), None) => Key::Char('='),
                 (Some(c), None) if c.is_ascii_graphic() => Key::Char(c.to_ascii_uppercase()),
                 _ => return None,
             }
@@ -208,16 +212,13 @@ pub fn refusal(c: Chord) -> Option<String> {
     if c.key == Key::Other {
         return Some(S::ErrorsKeymapUnknownKey.en().into());
     }
-    if matches!(c.key, Key::Char(_) | Key::Space) && !m.ctrl && !m.alt {
-        return Some(S::ErrorsKeymapNeedsModifier.en().into());
-    }
     if ACTIONS.iter().any(|a| a.keys.contains(&c)) {
         return None;
     }
+    if matches!(c.key, Key::Char(_) | Key::Space) && !m.ctrl && !m.alt {
+        return Some(S::ErrorsKeymapNeedsModifier.en().into());
+    }
     match c.key {
-        Key::Char('9') if m.ctrl && !m.alt => Some(S::ErrorsKeymapLastTab.en().into()),
-        Key::Char(d @ '1'..='8') if m.ctrl && !m.alt => Some(tr_en!(S::ErrorsKeymapTab, n = d)),
-        Key::Space if m.ctrl && !m.alt => Some(S::ErrorsKeymapSelect.en().into()),
         Key::Up | Key::Down | Key::Left | Key::Right | Key::PageUp | Key::PageDown | Key::Home | Key::End if !m.alt => Some(S::ErrorsKeymapMovesFocus.en().into()),
         _ => None,
     }
@@ -225,7 +226,7 @@ pub fn refusal(c: Chord) -> Option<String> {
 
 fn clash(custom: &[Option<Vec<Chord>>]) -> Option<(Chord, usize, usize)> {
     let mut seen = FxHashMap::default();
-    for (i, own) in custom.iter().enumerate() {
+    for (i, own) in custom.iter().enumerate().filter(|&(i, _)| ACTIONS[i].rebindable()) {
         for &c in own.as_deref().unwrap_or(ACTIONS[i].keys) {
             if let Some(j) = seen.insert(c, i) {
                 return Some((c, j, i));
@@ -243,7 +244,7 @@ pub fn parse(j: &Json) -> Option<(Arc<Keymap>, Vec<String>)> {
     let mut custom: Vec<Option<Vec<Chord>>> = vec![None; ACTIONS.len()];
     let (mut unknown, mut problems) = (Map::new(), Vec::new());
     for (id, v) in map {
-        let Some(i) = index(id) else {
+        let Some(i) = index(id).filter(|&i| ACTIONS[i].rebindable()) else {
             unknown.insert(id.clone(), v.clone());
             continue;
         };

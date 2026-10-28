@@ -292,7 +292,7 @@ impl App {
         self.panels.list.iter().map(|p| p.id).filter(|&id| id != self.panels.here).collect()
     }
 
-    fn order(&self) -> Vec<u32> {
+    pub(super) fn order(&self) -> Vec<u32> {
         let mut out = Vec::new();
         leaves(&self.panels.root, &mut out);
         out

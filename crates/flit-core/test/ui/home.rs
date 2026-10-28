@@ -65,7 +65,7 @@ fn labels(items: &[MenuItem]) -> Vec<String> {
         .flat_map(|i| match i {
             MenuItem::Command { label, checked, .. } => vec![format!("{label}{}", if *checked { " *" } else { "" })],
             MenuItem::Submenu { items, .. } => labels(items),
-            MenuItem::Separator => Vec::new(),
+            MenuItem::Header(_) | MenuItem::Separator => Vec::new(),
         })
         .collect()
 }
@@ -223,21 +223,28 @@ fn bench_home_and_sidebar_frames() {
 #[test]
 fn the_palette_lists_only_commands_that_apply_here() {
     let mut app = home_app();
-    let titles = |app: &App| app.nav.palette.as_ref().unwrap().titles.clone();
+    let live = |app: &App| {
+        let p = app.nav.palette.as_ref().unwrap();
+        let c = p.commands.as_ref().unwrap();
+        p.titles.iter().cloned().zip(c.live.iter().copied()).collect::<Vec<(String, bool)>>()
+    };
+    let on = |rows: &[(String, bool)], title: &str| rows.iter().any(|(t, l)| t == title && *l);
+    let off = |rows: &[(String, bool)], title: &str| rows.iter().any(|(t, l)| t == title && !*l);
     app.open_palette();
-    let home = titles(&app);
-    assert!(home.iter().any(|t| t == "Show or hide Recent files on the Home page"));
-    assert!(!home.iter().any(|t| t == "Copy" || t == "Select all" || t == "Empty the Recycle Bin"));
-    let k = home.iter().position(|t| t == "Go to This PC").unwrap();
-    let row = app.nav.palette.as_ref().unwrap().matches.iter().position(|&m| m == k).unwrap();
+    let home = live(&app);
+    assert!(on(&home, "Show or hide Recent files on the Home page"));
+    assert!(off(&home, "Copy") && off(&home, "Empty Trash Items"), "commands that do not apply here are listed gray");
+    let k = home.iter().position(|(t, _)| t == "Go to This PC").unwrap();
+    let p = app.nav.palette.as_ref().unwrap();
+    let row = p.commands.as_ref().unwrap().lines.iter().position(|l| matches!(l, crate::ui::palette::Line::Item(n, ..) if *n == k)).unwrap();
     app.run_palette_item(row, Instant::now());
     assert_eq!(app.current_location(), &Location::computer(), "palette rows map back to their actions");
     app.navigate(loc(r"C:\x"), Instant::now());
     app.open_palette();
-    let folder = titles(&app);
-    assert!(folder.iter().any(|t| t == "Copy"));
-    assert!(!folder.iter().any(|t| t.contains("Home page") && t.starts_with("Show")));
-    assert!(!folder.iter().any(|t| t == "Group search results by folder"));
+    let folder = live(&app);
+    assert!(on(&folder, "Copy"));
+    assert!(off(&folder, "Show or hide Recent files on the Home page"));
+    assert!(off(&folder, "Group search results by folder"));
 }
 
 fn asked(app: &mut App, size: u32) -> Vec<(String, crate::ui::IconKind)> {

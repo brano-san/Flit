@@ -9,7 +9,7 @@ new_library = "New library"
 restore_libraries = "Restore default libraries"
 sections = "Sections"
 compact = "Compact sidebar"
-pin_hint = "Ctrl+D pins the current folder"
+pin_hint = "Toggle Folder Bookmark pins the current folder"
 only_unpinned = "Only folders that are not pinned yet can be pinned"
 select_to_pin = "Select the folders to pin"
 

@@ -3,7 +3,9 @@ use flit_core::sort::{GroupField, GroupSpec, SortSpec};
 use flit_core::ui::{folder_key, Columns};
 
 const GIT_LEN: usize = 35;
-const WORD_LEN: usize = 1 + GIT_LEN;
+const DESCRIPTIONS_LEN: usize = 1;
+const AFTER_WORD: usize = GIT_LEN + DESCRIPTIONS_LEN;
+const WORD_LEN: usize = 1 + AFTER_WORD;
 
 #[test]
 fn repository_columns_ride_in_their_own_record() {
@@ -260,8 +262,8 @@ fn seven_z_word_size_rides_tenth_and_older_files_keep_automatic() {
     let bytes = s.encode().unwrap();
     assert_eq!(Saved::decode(&bytes).unwrap().persisted.archive.compression.word, 64);
     let stored = postcard::to_stdvec(&64u32).unwrap();
-    assert!(bytes[..bytes.len() - GIT_LEN].ends_with(&stored));
-    let older = &bytes[..bytes.len() - GIT_LEN - stored.len()];
+    assert!(bytes[..bytes.len() - AFTER_WORD].ends_with(&stored));
+    let older = &bytes[..bytes.len() - AFTER_WORD - stored.len()];
     assert_eq!(Saved::decode(older).unwrap().persisted.archive.compression.word, 0);
     let mut junk = older.to_vec();
     junk.extend(postcard::to_stdvec(&65u32).unwrap());
@@ -286,4 +288,15 @@ fn state_files_round_trip_and_newer_or_broken_ones_are_set_aside() {
     std::fs::write(&f, [VERSION as u8, 0xFF]).unwrap();
     assert!(load_from(&f).is_none());
     assert!(crate::schema::aside(&f, crate::schema::BAD).exists());
+}
+
+#[test]
+fn the_palette_description_switch_rides_last_and_older_files_show_descriptions() {
+    let mut persisted = Persisted::default();
+    persisted.prefs.command_descriptions = false;
+    let bytes = Saved::new(persisted, None).encode().unwrap();
+    assert_eq!(bytes.last(), Some(&0));
+    assert!(!Saved::decode(&bytes).unwrap().persisted.prefs.command_descriptions);
+    let older = &bytes[..bytes.len() - DESCRIPTIONS_LEN];
+    assert!(Saved::decode(older).unwrap().persisted.prefs.command_descriptions);
 }

@@ -86,7 +86,7 @@ fn click(app: &mut App, (x, y): (f32, f32)) {
 fn ctrl_shift_digits_switch_layouts_and_each_folder_remembers_its_own() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &["a.txt", "b.txt"]);
-    let order = [('5', LayoutMode::Grid), ('2', LayoutMode::List), ('4', LayoutMode::Columns), ('3', LayoutMode::Cards), ('1', LayoutMode::Details)];
+    let order = [('5', LayoutMode::Grid), ('3', LayoutMode::List), ('4', LayoutMode::Grid), ('1', LayoutMode::Details)];
     for (digit, mode) in order {
         key(&mut app, Key::Char(digit), CTRL_SHIFT);
         assert_eq!((app.tab().mode, app.tab().look, app.layout.mode), (mode, mode, mode), "Ctrl+Shift+{digit}");
@@ -115,21 +115,24 @@ fn the_old_layout_stays_until_the_new_folder_arrives() {
 }
 
 #[test]
-fn ctrl_plus_minus_and_ctrl_wheel_resize_items_and_ctrl_numpad_plus_fits_columns() {
+fn zoom_commands_and_ctrl_wheel_resize_items_and_ctrl_equals_fits_columns() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &["a.txt"]);
     assert_eq!(app.layout.row_h, 24.0);
-    key(&mut app, Key::Char('+'), CTRL);
+    app.run_action("view.zoom_in", Instant::now());
+    frame(&mut app);
     assert_eq!((app.tab().sizes.level(LayoutMode::Details), app.layout.row_h), (2, 28.0));
-    key(&mut app, Key::Char('+'), CTRL_SHIFT);
+    app.run_action("view.zoom_in", Instant::now());
+    frame(&mut app);
     assert_eq!(app.layout.row_h, 32.0);
     for _ in 0..6 {
-        key(&mut app, Key::Char('-'), CTRL);
+        app.run_action("view.zoom_out", Instant::now());
+        frame(&mut app);
     }
     assert_eq!((app.tab().sizes.level(LayoutMode::Details), app.layout.row_h, app.layout.icon), (0, 20.0, 16.0));
-    key(&mut app, Key::NumPlus, CTRL);
+    key(&mut app, Key::Char('='), CTRL);
     assert!(app.tab().fit_pending);
-    assert_eq!(app.tab().sizes.level(LayoutMode::Details), 0, "Ctrl+Num+ fits columns instead of resizing");
+    assert_eq!(app.tab().sizes.level(LayoutMode::Details), 0, "Ctrl+= fits columns instead of resizing");
     key(&mut app, Key::Char('5'), CTRL_SHIFT);
     let icon = app.layout.icon;
     app.on_event(&Event::Key { key: Key::Other, mods: CTRL, pressed: true }, Instant::now());
@@ -197,7 +200,7 @@ fn list_flows_down_columns_and_scrolls_sideways() {
     let mut app = app_at(r"C:\x");
     let names = files(300, "txt");
     publish(&mut app, &names, true);
-    key(&mut app, Key::Char('2'), CTRL_SHIFT);
+    key(&mut app, Key::Char('3'), CTRL_SHIFT);
     frame(&mut app);
     let l = &app.layout;
     let per = l.flow.per;
@@ -222,7 +225,7 @@ fn list_flows_down_columns_and_scrolls_sideways() {
 fn columns_layout_arrows_go_to_the_parent_and_into_folders() {
     let mut app = app_at(r"C:\x\sub");
     deliver(&mut app, &["inner", "z.txt"]);
-    key(&mut app, Key::Char('4'), CTRL_SHIFT);
+    app.run_action("view.layout.columns", Instant::now());
     app.drain_effects().for_each(drop);
     key(&mut app, Key::Down, NO);
     assert_eq!(focused(&app).unwrap(), "inner");
@@ -263,7 +266,7 @@ fn serve_pane(app: &mut App, effects: &[Effect], path: &str, names: &[&str]) -> 
 fn columns_show_parent_panes_that_reuse_the_old_listing_and_navigate_on_click() {
     let mut app = app_at(r"C:\x\sub");
     deliver(&mut app, &["inner", "z.txt"]);
-    key(&mut app, Key::Char('4'), CTRL_SHIFT);
+    app.run_action("view.layout.columns", Instant::now());
     let effects: Vec<Effect> = app.drain_effects().collect();
     assert_eq!(app.layout.panes.len(), 2);
     assert!(serve_pane(&mut app, &effects, r"C:\x", &["other", "sub"]));
@@ -289,7 +292,7 @@ fn adaptive_shows_media_folders_as_a_grid_and_keeps_its_first_choice_while_loadi
     let mut app = app_at(r"C:\pics");
     let media = files(40, "jpg");
     publish(&mut app, &media[..10], false);
-    key(&mut app, Key::Char('6'), CTRL_SHIFT);
+    app.run_action("view.layout.adaptive", Instant::now());
     assert_eq!((app.tab().mode, app.tab().look), (LayoutMode::Adaptive, LayoutMode::Grid));
     let mut mixed = media.clone();
     mixed.extend(files(200, "txt"));
@@ -317,7 +320,7 @@ fn adaptive_is_refused_while_all_folders_share_one_view() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &["a.txt"]);
     app.run_action("view.same_for_all", Instant::now());
-    key(&mut app, Key::Char('6'), CTRL_SHIFT);
+    app.run_action("view.layout.adaptive", Instant::now());
     assert_eq!(app.tab().mode, LayoutMode::Details);
     assert_eq!(app.tab().error.as_deref(), Some(S::LayoutsAdaptiveShared.t()));
 }

@@ -54,13 +54,22 @@ impl LayoutMode {
         }
     }
 
-    fn slot(self) -> usize {
+    pub(super) fn slot(self) -> usize {
         match self {
             LayoutMode::Details | LayoutMode::Adaptive => 0,
             LayoutMode::List => 1,
             LayoutMode::Cards => 2,
             LayoutMode::Columns => 3,
             LayoutMode::Grid => 4,
+        }
+    }
+
+    pub fn icon(self) -> &'static str {
+        match self {
+            LayoutMode::Details | LayoutMode::List => "\u{E8FD}",
+            LayoutMode::Cards | LayoutMode::Adaptive => "\u{E8A9}",
+            LayoutMode::Columns => "\u{E8A0}",
+            LayoutMode::Grid => "\u{E8B9}",
         }
     }
 

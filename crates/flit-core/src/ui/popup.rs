@@ -18,6 +18,7 @@ const ARM_DISTANCE: f32 = 4.0;
 const FONT_PX: f32 = 13.0;
 const ICON_PX: f32 = 11.0;
 const G_SUBMENU: &str = "\u{E76C}";
+const OFF: u8 = 0x70;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuOutcome {
@@ -28,17 +29,22 @@ pub enum MenuOutcome {
 }
 
 enum Node {
-    Command { label: String, keys: String, checked: bool, stay: bool, mark: Mark, id: usize },
+    Command { label: String, keys: String, checked: bool, stay: bool, mark: Mark, id: usize, icon: &'static str, disabled: bool },
     Submenu { label: String, list: usize },
+    Header(String),
     Separator,
 }
 
 impl Node {
     fn label(&self) -> &str {
         match self {
-            Node::Command { label, .. } | Node::Submenu { label, .. } => label,
+            Node::Command { label, .. } | Node::Submenu { label, .. } | Node::Header(label) => label,
             Node::Separator => "",
         }
+    }
+
+    fn selectable(&self) -> bool {
+        matches!(self, Node::Command { disabled: false, .. } | Node::Submenu { .. })
     }
 
     fn height(&self, scale: f32) -> f32 {
@@ -84,11 +90,12 @@ impl<B: TextBackend> Measure<'_, B> {
         let mut nodes = Vec::with_capacity(items.len());
         for item in items {
             let node = match item {
-                MenuItem::Command { label, keys, checked, stay, mark } => {
+                MenuItem::Command { label, keys, checked, stay, mark, icon, disabled } => {
                     self.next_id += 1;
-                    Node::Command { label: label.clone(), keys: keys.clone(), checked: *checked, stay: *stay, mark: *mark, id: self.next_id - 1 }
+                    Node::Command { label: label.clone(), keys: keys.clone(), checked: *checked, stay: *stay, mark: *mark, id: self.next_id - 1, icon, disabled: *disabled }
                 }
                 MenuItem::Submenu { label, items } => Node::Submenu { label: label.clone(), list: self.flatten(items, lists) },
+                MenuItem::Header(label) => Node::Header(label.clone()),
                 MenuItem::Separator => Node::Separator,
             };
             let keys = match &node {
@@ -160,6 +167,9 @@ impl MenuView {
             return MenuOutcome::Open;
         }
         let Some((k, Some(row))) = self.hit(x, y) else { return MenuOutcome::Open };
+        if !self.lists[self.panels[k].list].nodes[row].selectable() {
+            return MenuOutcome::Open;
+        }
         if let Some(outcome) = self.pick(k, row) {
             return outcome;
         }
@@ -195,6 +205,7 @@ impl MenuView {
     fn pick(&mut self, k: usize, row: usize) -> Option<MenuOutcome> {
         let list = self.panels[k].list;
         match &mut self.lists[list].nodes[row] {
+            Node::Command { disabled: true, .. } => None,
             Node::Command { stay: true, checked, id, .. } => {
                 *checked = !*checked;
                 Some(MenuOutcome::Toggled(*id))
@@ -217,14 +228,25 @@ impl MenuView {
                     p.separator(row.x + PAD * s, row.y + row.h / 2.0, row.w - 2.0 * PAD * s);
                     continue;
                 }
-                let hot = panel.hot == Some(i);
+                let hot = panel.hot == Some(i) && node.selectable();
                 if hot {
                     p.g.dl.round_rect(row, t.accent_fill, RADIUS * s * 0.66);
                 }
-                let (ink, dim) = if hot { (ink_on(t.accent_fill), ink_on(t.accent_fill)) } else { (t.text, t.text_dim) };
+                let off = matches!(node, Node::Command { disabled: true, .. } | Node::Header(_));
+                let (ink, dim) = match (hot, off) {
+                    (true, _) => (ink_on(t.accent_fill), ink_on(t.accent_fill)),
+                    (false, true) => (t.text_dim.alpha(OFF), t.text_dim.alpha(OFF)),
+                    (false, false) => (t.text, t.text_dim),
+                };
                 let text_y = baseline(p.g, row, font);
                 let side = Rect::new(row.right() - ARROW_W * s, row.y, ARROW_W * s, row.h);
-                p.g.text(r.x + LABEL_X * s, text_y, node.label(), font, ink, side.x - r.x - LABEL_X * s);
+                let label_x = if matches!(node, Node::Header(_)) { row.x + PAD * s } else { r.x + LABEL_X * s };
+                p.g.text(label_x, text_y, node.label(), font, if matches!(node, Node::Header(_)) { t.text_dim } else { ink }, side.x - label_x);
+                if let Node::Command { icon, .. } = node {
+                    if !icon.is_empty() {
+                        p.centered(Rect::new(row.x, row.y, LABEL_X * s - (row.x - r.x), row.h), icon, icons, if off && !hot { dim } else { ink });
+                    }
+                }
                 match node {
                     Node::Command { keys, checked, mark, .. } => {
                         if !keys.is_empty() {
@@ -239,7 +261,7 @@ impl MenuView {
                         }
                     }
                     Node::Submenu { .. } => p.centered(side, G_SUBMENU, icons, ink),
-                    Node::Separator => {}
+                    Node::Header(_) | Node::Separator => {}
                 }
             }
         }
@@ -259,7 +281,7 @@ impl MenuView {
     fn hit(&self, x: f32, y: f32) -> Option<(usize, Option<usize>)> {
         let k = self.panels.iter().rposition(|p| p.rect.contains(x, y))?;
         let row = self.rows(&self.panels[k]).find(|(_, r)| r.contains(x, y)).map(|(i, _)| i);
-        Some((k, row.filter(|&i| !matches!(self.lists[self.panels[k].list].nodes[i], Node::Separator))))
+        Some((k, row.filter(|&i| self.lists[self.panels[k].list].nodes[i].selectable())))
     }
 
     fn focus(&mut self, k: usize, row: Option<usize>) {
@@ -293,7 +315,7 @@ impl MenuView {
     }
 
     fn selectable(&self, list: usize) -> Vec<usize> {
-        self.lists[list].nodes.iter().enumerate().filter(|(_, n)| !matches!(n, Node::Separator)).map(|(i, _)| i).collect()
+        self.lists[list].nodes.iter().enumerate().filter(|(_, n)| n.selectable()).map(|(i, _)| i).collect()
     }
 
     fn step(&mut self, key: Key) {

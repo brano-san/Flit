@@ -119,6 +119,6 @@ fn an_archive_root_also_measures_its_unpacked_contents_and_shift_opens_the_shell
     assert!(value(&app, S::PropertiesUnpacked).is_some() && value(&app, S::PropertiesContains).is_some());
     app.jobs.form = None;
     select(&mut app, &["pack.zip", "b.txt"]);
-    app.run_action("item.shell_properties", Instant::now());
+    app.run_action("item.inspect", Instant::now());
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Properties(p) if p.len() == 2)));
 }

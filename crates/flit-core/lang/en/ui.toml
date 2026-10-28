@@ -115,6 +115,7 @@ restore = "Restore reopens the windows and tabs that were open."
 
 [ops]
 new_folder_name = "New folder"
+new_file_name = "New file"
 bin_only = "Items in the Recycle Bin can only be restored or deleted"
 streams_view_only = "Alternate data streams are shown for viewing only"
 open_bin = "Open the Recycle Bin to restore items"

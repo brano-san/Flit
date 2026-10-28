@@ -24,7 +24,7 @@ pub fn commands(items: &[MenuItem]) -> usize {
         .map(|i| match i {
             MenuItem::Command { .. } => 1,
             MenuItem::Submenu { items, .. } => commands(items),
-            MenuItem::Separator => 0,
+            MenuItem::Header(_) | MenuItem::Separator => 0,
         })
         .sum()
 }

@@ -12,9 +12,3 @@ no_room = "项目需要 {need}，但 {folder} 只有 {free} 可用。"
 no_room_hint = "如果仍然复制，驱动器写满时将出错停止。"
 over_limit = "{name} 为 {size}，但此驱动器的文件系统只支持不超过 {limit} 的文件。"
 over_limit_hint = "跳过它以复制其他项目，或使用格式化为 NTFS 或 exFAT 的驱动器。"
-
-[describe]
-install_fonts = "为当前用户安装所选字体文件"
-lock_screen = "在 Windows 锁屏上显示所选图片"
-set_backdrop = "在每个 Flit 窗口的文件列表后面以暗化方式显示所选图片"
-clear_backdrop = "恢复为纯色背景"

@@ -9,7 +9,7 @@ new_library = "Neue Bibliothek"
 restore_libraries = "Standardbibliotheken wiederherstellen"
 sections = "Abschnitte"
 compact = "Kompakte Seitenleiste"
-pin_hint = "Ctrl+D heftet den aktuellen Ordner an"
+pin_hint = "„Ordner-Lesezeichen umschalten“ heftet den aktuellen Ordner an"
 only_unpinned = "Nur noch nicht angeheftete Ordner können angeheftet werden"
 select_to_pin = "Wählen Sie die anzuheftenden Ordner aus"
 

@@ -9,7 +9,7 @@ new_library = "Nouvelle bibliothèque"
 restore_libraries = "Restaurer les bibliothèques par défaut"
 sections = "Sections"
 compact = "Barre latérale compacte"
-pin_hint = "Ctrl+D épingle le dossier actuel"
+pin_hint = "« Basculer le signet du dossier » épingle le dossier actuel"
 only_unpinned = "Seuls les dossiers pas encore épinglés peuvent être épinglés"
 select_to_pin = "Sélectionnez les dossiers à épingler"
 

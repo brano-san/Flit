@@ -71,7 +71,7 @@ const TOOLS: &[Tool] = &[
     menu("menu.sort", S::ToolbarButtonSort, S::TooltipToolMenuSort, "\u{E8CB}", ToolMenu::Sort),
     menu("menu.group", S::ToolbarButtonGroup, S::TooltipToolMenuGroup, "\u{E8FD}", ToolMenu::Group),
     menu("menu.layout", S::ToolbarButtonLayout, S::TooltipToolMenuLayout, "\u{E8A9}", ToolMenu::Layout),
-    act("view.pane", S::ToolbarButtonInfoPane, S::TooltipToolViewPane, "\u{E8A0}"),
+    act("inspector.toggle", S::ToolbarButtonInfoPane, S::TooltipToolViewPane, "\u{E8A0}"),
     act("bin.restore", S::ToolbarButtonRestore, S::TooltipToolBinRestore, "\u{E777}"),
     act("bin.restore_all", S::ToolbarButtonRestoreAll, S::TooltipToolBinRestoreAll, "\u{E777}"),
     act("bin.empty", S::ToolbarButtonEmptyBin, S::TooltipToolBinEmpty, "\u{E74D}"),
@@ -84,10 +84,10 @@ const TOOLS: &[Tool] = &[
     act("edit.undo", S::ToolbarButtonUndo, S::TooltipToolEditUndo, "\u{E7A7}"),
     act("edit.redo", S::ToolbarButtonRedo, S::TooltipToolEditRedo, "\u{E7A6}"),
     act("view.hidden", S::ToolbarButtonHiddenItems, S::TooltipToolViewHidden, "\u{E890}"),
-    act("view.sizes", S::ToolbarButtonFolderSizes, S::TooltipToolViewSizes, "\u{EDA2}"),
+    act("folder.refresh_stats", S::ToolbarButtonFolderSizes, S::TooltipToolViewSizes, "\u{EDA2}"),
     act("nav.refresh", S::ToolbarButtonRefresh, S::TooltipToolNavRefresh, "\u{E72C}"),
     act("search.folder", S::ToolbarButtonSearch, S::TooltipToolSearchFolder, "\u{E721}"),
-    act("sidebar.toggle", S::ToolbarButtonSidebar, S::TooltipToolSidebarToggle, "\u{E700}"),
+    act("quick_access.toggle", S::ToolbarButtonSidebar, S::TooltipToolSidebarToggle, "\u{E700}"),
     menu("menu.extract", S::ToolbarButtonExtract, S::TooltipToolMenuExtract, "\u{E8B7}", ToolMenu::Extract),
 ];
 
@@ -141,7 +141,7 @@ impl ToolContext {
 
     pub fn defaults(self) -> Vec<ToolItem> {
         let b = |id: &str, show| ToolItem::Button(id.to_owned(), show);
-        let view = [ToolItem::Separator, b("menu.select", Show::Both), b("menu.sort", Show::Both), b("menu.group", Show::Both), b("menu.layout", Show::Both), ToolItem::Separator, b("view.pane", Show::Icon)];
+        let view = [ToolItem::Separator, b("menu.select", Show::Both), b("menu.sort", Show::Both), b("menu.group", Show::Both), b("menu.layout", Show::Both), ToolItem::Separator, b("inspector.toggle", Show::Icon)];
         let head = match self {
             ToolContext::Folder => vec![
                 b("menu.new", Show::Both),
@@ -180,6 +180,11 @@ impl ToolbarState {
     pub fn sanitized(mut self) -> Self {
         for set in &mut self.sets {
             let mut seen: Vec<String> = Vec::new();
+            for item in set.iter_mut() {
+                if let ToolItem::Button(id, _) = item {
+                    *id = super::actions::renamed(id).to_owned();
+                }
+            }
             set.retain(|item| match item {
                 ToolItem::Separator => true,
                 ToolItem::Button(id, _) if tool(id).is_some() && !seen.contains(id) => {
@@ -348,9 +353,9 @@ impl App {
 
     fn tool_checked(&self, id: &str) -> bool {
         match id {
-            "view.pane" => self.preview.state.visible,
+            "inspector.toggle" => self.preview.state.visible,
             "view.hidden" => self.tab().view_spec.show_hidden,
-            "sidebar.toggle" => self.nav.sidebar.state.sidebar,
+            "quick_access.toggle" => self.nav.sidebar.state.sidebar,
             "menu.layout" => self.toolbar.fly.is_some(),
             _ => false,
         }
@@ -555,8 +560,8 @@ impl App {
         let t = tool(&id)?;
         let on = match t.id {
             "view.hidden" => Some((self.tab().view_spec.show_hidden, S::TooltipToolViewHiddenOn)),
-            "view.pane" => Some((self.preview.state.visible, S::TooltipToolViewPaneOn)),
-            "sidebar.toggle" => Some((self.nav.sidebar.state.sidebar, S::TooltipToolSidebarToggleOn)),
+            "inspector.toggle" => Some((self.preview.state.visible, S::TooltipToolViewPaneOn)),
+            "quick_access.toggle" => Some((self.nav.sidebar.state.sidebar, S::TooltipToolSidebarToggleOn)),
             _ => None,
         };
         Some((t.id, on.filter(|o| o.0).map_or(t.tip, |o| o.1)))

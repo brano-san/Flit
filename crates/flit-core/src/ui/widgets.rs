@@ -15,7 +15,7 @@ const HINT_GAP: f32 = 18.0;
 const DISABLED: u8 = 0x70;
 const STEP_W: f32 = 34.0;
 pub(super) const G_CHECK_MARK: &str = "\u{E73E}";
-pub(super) const G_CROSS: &str = "\u{E711}";
+pub(super) const G_CROSS: &str = "\u{E8BB}";
 pub(super) const G_NEXT: &str = "\u{E76C}";
 pub(super) const G_OPEN: &str = "\u{E70D}";
 pub(super) const G_MINUS: &str = "\u{E738}";
@@ -110,15 +110,16 @@ impl<'a, B: TextBackend> Paint<'a, B> {
         (self.g.measure(text, font) + 2.0 * self.px(CAP_PAD)).ceil()
     }
 
-    pub fn keycap(&mut self, x: f32, cy: f32, text: &str, font: FontStyle) -> f32 {
+    pub fn keycap_lit(&mut self, x: f32, cy: f32, text: &str, font: FontStyle, lit: bool) -> f32 {
         let m = self.g.metrics(font);
         let w = self.keycap_w(text, font);
         let h = (m.ascent + m.descent + self.px(6.0)).round();
         let r = Rect::new(x.round(), (cy - h / 2.0).round(), w, h);
         let radius = self.px(BUTTON_RADIUS);
-        self.g.dl.round_rect(r, self.t.button_hover, radius);
+        let (fill, ink) = if lit { (self.t.button_hover, self.t.text) } else { (self.t.button_hover.alpha(0x50), self.t.text_dim) };
+        self.g.dl.round_rect(r, fill, radius);
         self.g.dl.outline(r, self.t.popup_border, radius, 1.0);
-        self.centered(r, text, font, self.t.text);
+        self.centered(r, text, font, ink);
         w
     }
 
@@ -127,10 +128,14 @@ impl<'a, B: TextBackend> Paint<'a, B> {
         keys.iter().map(|k| self.keycap_w(k, font) + gap).sum::<f32>() - if keys.is_empty() { 0.0 } else { gap }
     }
 
-    pub fn keycaps(&mut self, mut x: f32, cy: f32, keys: &[String], font: FontStyle) -> f32 {
+    pub fn keycaps(&mut self, x: f32, cy: f32, keys: &[String], font: FontStyle) -> f32 {
+        self.keycaps_lit(x, cy, keys, font, true)
+    }
+
+    pub fn keycaps_lit(&mut self, mut x: f32, cy: f32, keys: &[String], font: FontStyle, lit: bool) -> f32 {
         let (start, gap) = (x, self.px(CAP_GAP));
         for k in keys {
-            x += self.keycap(x, cy, k, font) + gap;
+            x += self.keycap_lit(x, cy, k, font, lit) + gap;
         }
         x - start - if keys.is_empty() { 0.0 } else { gap }
     }

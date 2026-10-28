@@ -12,9 +12,3 @@ no_room = "The items need {need}, but {folder} has only {free} free."
 no_room_hint = "Copying anyway stops with an error when the drive fills up."
 over_limit = "{name} is {size}, but this drive's file system holds files up to {limit}."
 over_limit_hint = "Skip it to copy the other items, or use a drive formatted as NTFS or exFAT."
-
-[describe]
-install_fonts = "Install the selected font files for the current user"
-lock_screen = "Show the selected image on the Windows lock screen"
-set_backdrop = "Show the selected image dimmed behind the file list in every Flit window"
-clear_backdrop = "Go back to the plain background color"

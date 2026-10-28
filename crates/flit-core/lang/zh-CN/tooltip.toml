@@ -26,6 +26,8 @@ crumbs = "显示路径的开头。"
 close_palette = "关闭此窗口。"
 scroll_up = "向上滚动。"
 scroll_down = "向下滚动。"
+palette_descriptions_on = "命令下方显示说明。"
+palette_descriptions_off = "命令不显示说明。"
 
 [tool]
 "menu.new" = "新建文件夹、快捷方式或文件。"

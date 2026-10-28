@@ -1,8 +1,5 @@
 unknown_key = "Flit kennt diese Taste nicht"
 needs_modifier = "Buchstaben, Ziffern, Symbole und Leertaste benötigen Ctrl oder Alt, da sie sonst Text eingeben"
-last_tab = "sie wechselt zur letzten Registerkarte"
-tab = "sie wechselt zur Registerkarte {n}"
-select = "sie wählt das fokussierte Element aus oder ab"
 moves_focus = "sie verschiebt den Fokus in der Liste"
 not_list = "Die Tastenkombinationen von {id} in der Einstellungsdatei sind keine Liste, daher behält es seine Standardtastenkombinationen"
 not_key = "{item} in den Tastenkombinationen von {id} ist keine Taste, daher behält {id} seine Standardtastenkombinationen"

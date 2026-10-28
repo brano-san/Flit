@@ -151,7 +151,7 @@ impl App {
         before.min(self.tabs.len() - 1)
     }
 
-    fn move_tab(&mut self, to: usize) {
+    pub(super) fn move_tab(&mut self, to: usize) {
         if to != self.cur {
             let t = self.tabs.remove(self.cur);
             self.tabs.insert(to, t);
@@ -306,6 +306,12 @@ impl App {
             Hit::Nav(i @ 0..=1) => self.history_menu(i),
             _ => {}
         }
+    }
+
+    pub(super) fn open_tab_menu(&mut self) {
+        let Some(&(r, _)) = self.layout.tabs.get(self.cur) else { return };
+        let menu = self.build_tab_menu();
+        self.flit_menu(r.x, r.bottom(), menu);
     }
 
     pub(super) fn tab_actions_menu(&mut self) {

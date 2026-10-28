@@ -86,10 +86,10 @@ fn the_palette_sits_over_the_panels_at_half_the_window() {
 #[test]
 fn matches_rank_registered_titles() {
     assert_eq!(matches(""), (0..ACTIONS.len()).collect::<Vec<_>>());
-    assert_eq!(titles("sort size")[0], "Sort by size");
-    assert_eq!(titles("refresh")[0], "Refresh");
-    assert_eq!(titles("pin")[0], "Pin or unpin the current folder");
-    assert_eq!(titles("filter")[0], "Filter items in this folder");
+    assert_eq!(titles("sort size")[0], "Sort By Size");
+    assert!(titles("refresh")[..2].contains(&"Refresh"));
+    assert!(titles("bookmark")[..2].contains(&"Toggle Folder Bookmark"));
+    assert_eq!(titles("filter")[0], "Filter");
     assert!(titles("qqq").is_empty());
 }
 
@@ -97,9 +97,82 @@ fn matches_rank_registered_titles() {
 fn commands_are_found_by_words_of_their_descriptions() {
     assert!(ACTIONS.iter().all(|a| !super::super::describe::description(a.id).is_empty()), "every command has a description");
     assert_eq!(titles("split right")[0], "Split Right", "a title match ranks first");
-    assert!(titles("dual pane").contains(&"Split Right"));
-    assert!(titles("trash").contains(&"Move to Recycle Bin"));
+    assert!(titles("current panel").contains(&"Split Right"));
+    assert!(titles("recycle bin").contains(&"Trash"));
     assert!(titles("unzip").contains(&"Extract here"));
     assert!(titles("checksum").contains(&"Hashes…"));
     assert!(titles("trash qqq").is_empty(), "every word must match");
+}
+
+fn commands(a: &App) -> &Commands {
+    a.nav.palette.as_ref().unwrap().commands.as_ref().unwrap()
+}
+
+fn headers(a: &App) -> Vec<Group> {
+    commands(a).lines.iter().filter_map(|l| if let Line::Header(g) = l { Some(*g) } else { None }).collect()
+}
+
+fn item_title(a: &App, row: usize) -> String {
+    let p = a.nav.palette.as_ref().unwrap();
+    match &commands(a).lines[row] {
+        Line::Item(k, ..) => p.titles[*k].clone(),
+        Line::Header(g) => panic!("row {row} is the header of {g:?}"),
+    }
+}
+
+#[test]
+fn ctrl_shift_p_lists_commands_under_collapsible_group_headers() {
+    let mut a = crate::ui::harness::app(&["a.txt"]);
+    let now = Instant::now();
+    a.on_event(&Event::Key { key: Key::Char('P'), mods: Mods { ctrl: true, shift: true, alt: false }, pressed: true }, now);
+    assert_eq!(a.nav.palette.as_ref().map(|p| p.pick.clone()), Some(Pick::Commands));
+    assert_eq!(headers(&a), Group::ALL, "every group has its header, in the order of the registry");
+    assert_eq!(item_title(&a, 1), "Toggle Subfolders");
+    let all = commands(&a).lines.len();
+    a.run_palette_item(0, now);
+    assert!(commands(&a).collapsed.contains(&Group::Quick));
+    assert_eq!(commands(&a).lines[1], Line::Header(Group::Folder), "a collapsed group shows only its header");
+    a.run_palette_item(0, now);
+    assert_eq!(commands(&a).lines.len(), all);
+}
+
+#[test]
+fn the_description_toggle_is_remembered() {
+    let mut a = crate::ui::harness::app(&["a.txt"]);
+    assert!(a.prefs.command_descriptions, "descriptions are shown at first");
+    a.open_palette();
+    a.toggle_descriptions();
+    assert!(!commands(&a).descriptions && !a.prefs.command_descriptions);
+    a.close_palette();
+    a.open_palette();
+    assert!(!commands(&a).descriptions);
+    a.toggle_descriptions();
+    assert!(commands(&a).descriptions && a.prefs.command_descriptions);
+}
+
+#[test]
+fn a_query_ranks_commands_fuzzily_and_marks_titles() {
+    let mut a = crate::ui::harness::app(&["a.txt"]);
+    a.open_palette();
+    a.palette_insert("tghid");
+    assert!(headers(&a).is_empty(), "a query shows one flat list");
+    assert_eq!(item_title(&a, 0), "Toggle Hidden Files");
+    let Line::Item(_, marks, _) = &commands(&a).lines[0] else { unreachable!() };
+    assert!(!marks.is_empty());
+    a.palette_insert("qqqq");
+    assert!(commands(&a).lines.is_empty());
+}
+
+#[test]
+fn unavailable_commands_are_listed_gray_and_never_run() {
+    let mut a = crate::ui::harness::app(&["a.txt"]);
+    a.open_palette();
+    a.palette_insert("toggle subfolders");
+    assert_eq!(item_title(&a, 0), "Toggle Subfolders");
+    let Line::Item(k, ..) = commands(&a).lines[0] else { unreachable!() };
+    assert!(!commands(&a).live[k]);
+    a.drain_effects().for_each(drop);
+    a.run_palette_item(0, Instant::now());
+    assert!(a.nav.palette.is_some(), "picking a gray command keeps the palette open");
+    assert!(a.drain_effects().next().is_none() && !a.search_active());
 }

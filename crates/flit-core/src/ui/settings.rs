@@ -19,16 +19,25 @@ use std::time::Instant;
 
 const MAX_PATHS: usize = 64;
 const MAX_TEXT: usize = 4096;
-pub const SCHEMA: u64 = 2;
+pub const SCHEMA: u64 = 3;
 pub const SCHEMA_KEY: &str = "schema";
 pub type Migration = fn(&mut Map<String, Json>);
-const MIGRATIONS: [Migration; 1] = [browsed_archives_keep_builtin_handling];
+const MIGRATIONS: [Migration; 2] = [browsed_archives_keep_builtin_handling, renamed_commands_keep_their_keys];
 pub const BUILTIN_ARCHIVES: &str = "files.builtin_archives";
 pub const NEEDS_BUILTIN_ARCHIVES: [&str; 3] = ["general.menu_compress", "files.archives_as_folders", "files.archive_format"];
 
 fn browsed_archives_keep_builtin_handling(map: &mut Map<String, Json>) {
     if map.get("files.archives_as_folders") == Some(&Json::Bool(true)) {
         map.entry(BUILTIN_ARCHIVES).or_insert(Json::Bool(true));
+    }
+}
+
+fn renamed_commands_keep_their_keys(map: &mut Map<String, Json>) {
+    let Some(Json::Object(keys)) = map.get_mut("keys") else { return };
+    for (old, new) in super::actions::RENAMED {
+        if let Some(v) = keys.remove(*old) {
+            keys.entry(*new).or_insert(v);
+        }
     }
 }
 

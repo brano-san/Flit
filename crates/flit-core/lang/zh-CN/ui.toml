@@ -115,6 +115,7 @@ restore = "“还原”会重新打开之前打开的窗口和标签页。"
 
 [ops]
 new_folder_name = "新建文件夹"
+new_file_name = "新建文件"
 bin_only = "回收站中的项目只能还原或删除"
 streams_view_only = "备用数据流仅供查看"
 open_bin = "打开回收站以还原项目"

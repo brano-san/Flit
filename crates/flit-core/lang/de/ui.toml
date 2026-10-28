@@ -115,6 +115,7 @@ restore = "Wiederherstellen öffnet die Fenster und Registerkarten erneut, die g
 
 [ops]
 new_folder_name = "Neuer Ordner"
+new_file_name = "Neue Datei"
 bin_only = "Elemente im Papierkorb können nur wiederhergestellt oder gelöscht werden"
 streams_view_only = "Alternative Datenströme werden nur zur Ansicht angezeigt"
 open_bin = "Öffnen Sie den Papierkorb, um Elemente wiederherzustellen"

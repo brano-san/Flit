@@ -80,7 +80,7 @@ fn labels(items: &[MenuItem], out: &mut Vec<String>) {
                 out.push(format!("[{label}]"));
                 labels(items, out);
             }
-            MenuItem::Separator => {}
+            MenuItem::Header(_) | MenuItem::Separator => {}
         }
     }
 }

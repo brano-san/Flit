@@ -148,6 +148,12 @@ impl DirView {
         self.prune();
     }
 
+    pub fn fold_all(&mut self, collapsed: bool) {
+        self.collapsed = if collapsed { self.groups.iter().map(|g| g.id).collect() } else { Vec::new() };
+        self.regroup();
+        self.prune();
+    }
+
     fn regroup(&mut self) {
         self.dirs.clear();
         self.selected_size.clear();

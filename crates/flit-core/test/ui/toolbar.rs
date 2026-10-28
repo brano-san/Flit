@@ -81,7 +81,7 @@ fn labels(items: &[MenuItem]) -> Vec<String> {
         .flat_map(|i| match i {
             MenuItem::Command { label, .. } => vec![label.clone()],
             MenuItem::Submenu { label, items } => std::iter::once(format!("[{label}]")).chain(labels(items)).collect(),
-            MenuItem::Separator => Vec::new(),
+            MenuItem::Header(_) | MenuItem::Separator => Vec::new(),
         })
         .collect()
 }
@@ -114,7 +114,7 @@ fn folders_get_the_main_group_and_the_view_menus_under_the_address_bar() {
     let app = app_at(r"C:\x", &["a.txt"]);
     assert_eq!(
         ids(&app),
-        ["menu.new", "|", "file.cut", "file.copy", "file.paste", "file.rename", "file.share", "item.trash", "|", "item.properties", "|", "menu.select", "menu.sort", "menu.group", "menu.layout", "|", "view.pane"]
+        ["menu.new", "|", "file.cut", "file.copy", "file.paste", "file.rename", "file.share", "item.trash", "|", "item.properties", "|", "menu.select", "menu.sort", "menu.group", "menu.layout", "|", "inspector.toggle"]
     );
     let l = &app.layout;
     assert_eq!(l.commands.y, l.toolbar.bottom());
@@ -242,8 +242,8 @@ fn folder_sizes_is_a_check_item_in_both_layout_menus() {
 #[test]
 fn calculate_folder_sizes_keeps_its_shortcut_and_palette_command() {
     let mut app = app_at(r"C:\x", &["a.txt", "sub"]);
-    assert_eq!(app.keymap.first_text("view.sizes").as_deref(), Some("Ctrl+Alt+S"));
-    app.on_event(&Event::Key { key: Key::Char('S'), mods: Mods { ctrl: true, shift: false, alt: true }, pressed: true }, Instant::now());
+    assert_eq!(app.keymap.first_text("folder.refresh_stats").as_deref(), Some("Alt+R"));
+    app.on_event(&Event::Key { key: Key::Char('R'), mods: Mods { ctrl: false, shift: false, alt: true }, pressed: true }, Instant::now());
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: crate::provider::ProviderRequest::DirSizes { .. }, .. })));
 }
 
@@ -256,10 +256,10 @@ fn tooltips_name_the_button_and_its_shortcut_after_a_delay() {
     assert_eq!(app.tooltip(), None);
     app.on_event(&Event::Timer, t0 + crate::ui::tooltip::DELAY + Duration::from_millis(20));
     let tip = app.tooltip().unwrap();
-    assert_eq!((tip.line.as_str(), tip.command.as_deref(), tip.keys.clone()), ("Copy the selected items to the clipboard.", Some("Copy"), vec!["Ctrl+C".to_owned()]));
+    assert_eq!((tip.line.as_str(), tip.command.as_deref(), tip.keys.clone()), ("Copy the selected items to the clipboard.", Some("Copy"), vec!["Ctrl+C".to_owned(), "Ctrl+Insert".to_owned()]));
     let copy = crate::ui::actions::index("file.copy").unwrap();
     app.edit_keys(|k| k.assign(copy, Some(crate::ui::actions::ctrl(Key::Char('C'))), crate::ui::actions::ctrl(Key::Insert)));
-    assert_eq!(app.tooltip().unwrap().keys, ["Ctrl+Ins"], "the tooltip shows the user's shortcut");
+    assert_eq!(app.tooltip().unwrap().keys, ["Ctrl+Insert"], "the tooltip shows the user's shortcut");
     frame(&mut app);
     let r = button(&app, "menu.layout");
     app.on_event(&Event::MouseMove { x: r.x + 4.0, y: r.y + 4.0 }, t0 + Duration::from_secs(1));
@@ -375,8 +375,8 @@ fn with_two_panels_each_has_its_own_toolbar_row_that_follows_its_folder() {
     keypress(&mut app, Key::Tab, NO);
     frame(&mut app);
     assert_eq!(ids(&app)[0], "menu.new");
-    keypress(&mut app, Key::F(3), NO);
-    assert_eq!(app.search_folder(), Some(&Location::parse(r"C:\y").unwrap()), "F3 searches the active pane's folder");
+    keypress(&mut app, Key::Char('F'), Mods { ctrl: true, shift: true, alt: false });
+    assert_eq!(app.search_folder(), Some(&Location::parse(r"C:\y").unwrap()), "Ctrl+Shift+F searches the active pane's folder");
     app.close_search();
     app.navigate(Location::home_page(), now);
     frame(&mut app);

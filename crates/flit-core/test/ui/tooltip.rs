@@ -17,11 +17,11 @@ fn tooltips_tell_the_purpose_the_command_and_its_keys() {
     assert_eq!(t.line, "Open a new tab in this panel.");
     assert_eq!(t.command, Some(title("tab.new")));
     assert_eq!(t.keys, ["Ctrl+T"]);
-    assert_eq!(a.tip_text(Hit::Nav(0)).unwrap().keys, ["Alt+Left", "Backspace", "BrowserBack"], "every shortcut gets a key cap");
+    assert_eq!(a.tip_text(Hit::Nav(0)).unwrap().keys, ["MouseX1", "Alt+Left"], "every shortcut gets a key cap, mouse buttons first");
     let home = a.tip_text(Hit::HomeButton).unwrap();
     assert_eq!((home.command, home.keys), (Some(title("nav.home_page")), vec!["Blank".to_owned()]), "a command without a shortcut shows Blank");
     let min = a.tip_text(Hit::Caption(0)).unwrap();
-    assert_eq!((min.line.as_str(), min.command, min.keys.len()), ("Minimize the window.", None, 0));
+    assert_eq!((min.line.as_str(), min.command, min.keys), ("Minimize the window.", Some(title("window.minimize")), vec!["Alt+M".to_owned()]));
     assert_eq!(a.tip_text(Hit::Row(0)), None, "rows are not buttons");
 }
 

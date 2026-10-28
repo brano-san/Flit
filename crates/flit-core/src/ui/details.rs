@@ -148,6 +148,8 @@ pub struct ViewPrefs {
     pub checkboxes: bool,
     pub hover_select: bool,
     #[serde(skip, default = "yes")]
+    pub command_descriptions: bool,
+    #[serde(skip, default = "yes")]
     pub thumbnails: bool,
     #[serde(skip, default = "thumb_cache_mb")]
     pub thumb_cache_mb: u32,
@@ -185,6 +187,7 @@ impl Default for ViewPrefs {
             split_count: false,
             checkboxes: false,
             hover_select: false,
+            command_descriptions: true,
             thumbnails: true,
             thumb_cache_mb: THUMB_CACHE_MB.1,
             show_streams: false,

@@ -237,7 +237,7 @@ fn pinning_from_keyboard_and_hover_button() {
     let mut app = app_at(r"C:\work\proj");
     app.set_places(places());
     app.drain_effects().for_each(drop);
-    key(&mut app, Key::Char('D'), CTRL);
+    app.run_action("folder.bookmark", Instant::now());
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Pinned(p) if p == [loc(r"C:\work\proj")])));
     assert_eq!(app.nav.sidebar.items[0].label, "proj");
     assert_eq!(app.nav_state().pinned, [loc(r"C:\work\proj")]);

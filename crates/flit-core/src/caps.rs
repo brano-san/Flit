@@ -13,7 +13,7 @@ pub const WINDOWS_ONLY_ACTIONS: &[&str] = &[
     "file.share",
     "file.install_fonts",
     "file.lock_screen",
-    "item.shell_properties",
+    "folder.explorer",
     "drive.map",
     "drive.disconnect",
     "nav.network",

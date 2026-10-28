@@ -121,7 +121,7 @@ pub(crate) fn toggle_ids(items: &[MenuItem]) -> Vec<u32> {
                     *next += 1;
                 }
                 MenuItem::Submenu { items, .. } => walk(items, next, out),
-                MenuItem::Separator => {}
+                MenuItem::Header(_) | MenuItem::Separator => {}
             }
         }
     }
@@ -352,8 +352,9 @@ fn menu_text(label: &str, keys: &str) -> HSTRING {
 unsafe fn append(hmenu: HMENU, items: &[MenuItem], next: &mut u32) -> windows::core::Result<()> {
     for item in items {
         match item {
-            MenuItem::Command { label, keys, checked, .. } => {
-                AppendMenuW(hmenu, if *checked { MF_STRING | MF_CHECKED } else { MF_STRING }, *next as usize, &menu_text(label, keys))?;
+            MenuItem::Command { label, keys, checked, disabled, .. } => {
+                let flags = MF_STRING | if *checked { MF_CHECKED } else { MF_STRING } | if *disabled { MF_GRAYED } else { MF_STRING };
+                AppendMenuW(hmenu, flags, *next as usize, &menu_text(label, keys))?;
                 *next += 1;
             }
             MenuItem::Submenu { label, items } => {
@@ -361,6 +362,7 @@ unsafe fn append(hmenu: HMENU, items: &[MenuItem], next: &mut u32) -> windows::c
                 append(sub, items, next)?;
                 AppendMenuW(hmenu, MF_POPUP, sub.0 as usize, &menu_text(label, ""))?;
             }
+            MenuItem::Header(label) => AppendMenuW(hmenu, MF_STRING | MF_GRAYED, 0, &menu_text(label, ""))?,
             MenuItem::Separator => AppendMenuW(hmenu, MF_SEPARATOR, 0, None)?,
         }
     }

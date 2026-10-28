@@ -115,6 +115,7 @@ restore = "Restaurar vuelve a abrir las ventanas y pestañas que estaban abierta
 
 [ops]
 new_folder_name = "Nueva carpeta"
+new_file_name = "Nuevo archivo"
 bin_only = "Los elementos de la Papelera de reciclaje solo se pueden restaurar o eliminar"
 streams_view_only = "Los flujos de datos alternativos se muestran solo para verlos"
 open_bin = "Abre la Papelera de reciclaje para restaurar elementos"

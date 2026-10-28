@@ -1,4 +1,4 @@
-use super::actions::{chord_text, index, ACTIONS};
+use super::actions::{index, ACTIONS};
 use super::ops::TIMER_SLACK;
 use super::toolbar::ToolHit;
 use super::widgets::{Paint, RADIUS};
@@ -107,7 +107,7 @@ impl App {
             Hit::Eject => self.eject_rect()?,
             Hit::FilterClose => self.nav.filter.close,
             Hit::CrumbOverflow => self.addr.overflow,
-            Hit::PaletteClose | Hit::PaletteScroll(_) => self.palette_button(h)?,
+            Hit::PaletteClose | Hit::PaletteDescribe | Hit::PaletteScroll(_) => self.palette_button(h)?,
             Hit::Tool(ToolHit::Button(_) | ToolHit::More) => self.tool_rect(h)?,
             _ => return None,
         };
@@ -118,10 +118,10 @@ impl App {
         let quick = if self.nav.sidebar.state.sidebar { S::TooltipQuickShown } else { S::TooltipQuickHidden };
         let (line, command) = match h {
             Hit::Menu => text(S::TooltipMenu, "palette.show"),
-            Hit::QuickToggle => text(quick, "sidebar.toggle"),
-            Hit::Caption(0) => text(S::TooltipMinimize, ""),
+            Hit::QuickToggle => text(quick, "quick_access.toggle"),
+            Hit::Caption(0) => text(S::TooltipMinimize, "window.minimize"),
             Hit::Caption(1) => text(if self.maximized { S::TooltipRestore } else { S::TooltipMaximize }, ""),
-            Hit::Caption(_) => text(S::TooltipCloseWindow, ""),
+            Hit::Caption(_) => text(S::TooltipCloseWindow, "window.close"),
             Hit::Tab(i) => (super::tabbar::full_name(self.tabs.get(i)?), None),
             Hit::TabClose(_) => text(S::TooltipCloseTab, "tab.close"),
             Hit::NewTab => text(S::TooltipNewTab, "tab.new"),
@@ -141,11 +141,12 @@ impl App {
                 let pinned = self.nav.sidebar.items.get(i).is_some_and(|it| self.nav.sidebar.state.pinned.contains(&it.loc));
                 text(if pinned { S::TooltipPinned } else { S::TooltipUnpinned }, "")
             }
-            Hit::SideSettings => text(S::TooltipSettings, "settings.open"),
+            Hit::SideSettings => text(S::TooltipSettings, "options.open"),
             Hit::Eject => text(S::TooltipEject, ""),
             Hit::FilterClose => text(S::TooltipFilterClose, "view.filter"),
             Hit::CrumbOverflow => text(S::TooltipCrumbs, ""),
             Hit::PaletteClose => text(S::TooltipClosePalette, ""),
+            Hit::PaletteDescribe => text(if self.prefs.command_descriptions { S::TooltipPaletteDescriptionsOn } else { S::TooltipPaletteDescriptionsOff }, ""),
             Hit::PaletteScroll(down) => text(if down { S::TooltipScrollDown } else { S::TooltipScrollUp }, ""),
             Hit::Tool(ToolHit::More) => text(S::TooltipMore, ""),
             Hit::Tool(ToolHit::Button(i)) => {
@@ -156,7 +157,7 @@ impl App {
         };
         let (command, keys) = match command.and_then(index) {
             Some(i) => {
-                let keys: Vec<String> = self.keymap.keys(i).iter().map(chord_text).collect();
+                let keys = self.keymap.shown(i);
                 (Some(ACTIONS[i].title.t().to_owned()), if keys.is_empty() { vec![S::WidgetsBlank.t().to_owned()] } else { keys })
             }
             None => (None, Vec::new()),

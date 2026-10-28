@@ -130,6 +130,10 @@ fn key(key: Key, ctrl: bool) -> Event {
     Event::Key { key, mods: Mods { ctrl, ..Mods::default() }, pressed: true }
 }
 
+fn search_key(scope: usize) -> Event {
+    Event::Key { key: Key::Char('F'), mods: Mods { ctrl: true, alt: scope == 0, shift: scope != 0 }, pressed: true }
+}
+
 impl Metrics {
     pub fn new(out: PathBuf, started: Instant, refresh: Option<Duration>) -> Self {
         Self {
@@ -305,7 +309,7 @@ impl Metrics {
             }
             Phase::SearchOpen(scope) => {
                 self.phase = Phase::IndexWait(scope, now);
-                self.typed(if scope == 0 { key(Key::Char('E'), true) } else { key(Key::F(3), false) })
+                self.typed(search_key(scope))
             }
             Phase::IndexWait(scope, since) => {
                 if let Some(files) = app.index_ready() {
@@ -336,7 +340,7 @@ impl Metrics {
                 }
                 if c == 0 {
                     self.phase = Phase::Search(scope, q, 1);
-                    return self.typed(if scope == 0 { key(Key::Char('E'), true) } else { key(Key::F(3), false) });
+                    return self.typed(search_key(scope));
                 }
                 if let Some(&ch) = chars.get(c - 1) {
                     self.phase = Phase::Search(scope, q, c + 1);

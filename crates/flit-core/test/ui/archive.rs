@@ -153,7 +153,7 @@ fn extraction_keys_dialog_history_and_opening_the_folder_when_done() {
     let mut app = app_at(r"C:\ext");
     deliver(&mut app, &[("a.zip", FILE), ("b.7z", FILE), ("c.txt", FILE)]);
     select(&mut app, &["a.zip"]);
-    key(&mut app, Key::Char('E'), Mods { ctrl: true, shift: true, alt: false });
+    app.run_action("archive.smart", Instant::now());
     let smart = FileOp::Archive(ArchiveOp::Extract { archives: vec![p(r"C:\ext\a.zip")], dest: None, place: Place::Smart });
     assert_eq!(ops(&mut app).into_iter().map(|(_, op)| op).collect::<Vec<_>>(), [smart]);
     key(&mut app, Key::Char('E'), Mods { alt: true, ..NO });
@@ -286,7 +286,7 @@ fn labels_deep(items: &[crate::ui::MenuItem]) -> Vec<String> {
         .flat_map(|i| match i {
             crate::ui::MenuItem::Command { label, .. } => vec![label.clone()],
             crate::ui::MenuItem::Submenu { label, items } => std::iter::once(label.clone()).chain(labels_deep(items)).collect(),
-            crate::ui::MenuItem::Separator => Vec::new(),
+            crate::ui::MenuItem::Header(_) | crate::ui::MenuItem::Separator => Vec::new(),
         })
         .collect()
 }

@@ -12,9 +12,3 @@ no_room = "Die Elemente benötigen {need}, aber auf {folder} sind nur {free} fre
 no_room_hint = "Beim trotzdem Kopieren bricht der Vorgang mit einem Fehler ab, sobald das Laufwerk voll ist."
 over_limit = "{name} ist {size} groß, aber das Dateisystem dieses Laufwerks unterstützt nur Dateien bis {limit}."
 over_limit_hint = "Überspringen Sie es, um die anderen Elemente zu kopieren, oder verwenden Sie ein mit NTFS oder exFAT formatiertes Laufwerk."
-
-[describe]
-install_fonts = "Die ausgewählten Schriftdateien für den aktuellen Benutzer installieren"
-lock_screen = "Das ausgewählte Bild auf dem Windows-Sperrbildschirm anzeigen"
-set_backdrop = "Das ausgewählte Bild abgedunkelt hinter der Dateiliste in jedem Flit-Fenster anzeigen"
-clear_backdrop = "Zur einfachen Hintergrundfarbe zurückkehren"

@@ -26,6 +26,8 @@ crumbs = "Den Anfang des Pfads anzeigen."
 close_palette = "Dieses Fenster schließen."
 scroll_up = "Nach oben scrollen."
 scroll_down = "Nach unten scrollen."
+palette_descriptions_on = "Unter den Befehlen stehen Beschreibungen."
+palette_descriptions_off = "Befehle werden ohne Beschreibungen aufgelistet."
 
 [tool]
 "menu.new" = "Einen Ordner, eine Verknüpfung oder eine Datei erstellen."

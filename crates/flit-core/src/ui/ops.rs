@@ -645,6 +645,40 @@ impl App {
         self.start_op(op(dir, name.into_bytes()), Origin::Fresh, Then::Rename);
     }
 
+    pub fn new_file(&mut self) {
+        self.create(|dir, name| FileOp::NewFile { dir, name, template: Template::Empty }, S::UiOpsNewFileName.t(), "");
+    }
+
+    pub(super) fn duplicate_selection(&mut self) {
+        let items = self.selected_items();
+        if items.is_empty() {
+            return;
+        }
+        match (self.item_paths(&items), self.shell_dir()) {
+            (Ok(items), Ok(dest)) => self.start_op(FileOp::Copy { items, dest }, Origin::Fresh, Then::Select),
+            (Err(e), _) | (_, Err(e)) => self.status(e),
+        }
+    }
+
+    pub(super) fn send_to_panel(&mut self, back: bool, moving: bool) {
+        let order = self.order();
+        let n = order.len();
+        let items = self.selected_items();
+        if n < 2 || items.is_empty() {
+            return;
+        }
+        let at = order.iter().position(|&id| id == self.panels.active).unwrap_or(0);
+        let target = order[if back { (at + n - 1) % n } else { (at + 1) % n }];
+        let dest = self.visit(target, |a| a.shell_dir());
+        match (self.item_paths(&items), dest) {
+            (Ok(items), Ok(dest)) => {
+                let op = if moving { FileOp::Move { items, dest } } else { FileOp::Copy { items, dest } };
+                self.start_op(op, Origin::Fresh, Then::Nothing);
+            }
+            (Err(e), _) | (_, Err(e)) => self.status(e),
+        }
+    }
+
     pub fn new_folder(&mut self) {
         self.create(|dir, name| FileOp::NewFolder { dir, name }, S::UiOpsNewFolderName.t(), "");
     }
@@ -1111,6 +1145,10 @@ impl App {
 
     pub(super) fn ops_key(&mut self, key: Key, m: Mods) -> bool {
         self.ops.slow = None;
+        if self.ops.rename.is_some() && key == Key::Tab && !m.ctrl && !m.alt {
+            self.rename_step(m.shift);
+            return true;
+        }
         let Some(action) = self.ops.rename.as_mut().map(|r| r.edit.key(key, m)) else { return false };
         match action {
             EditAction::Submit => {
@@ -1122,6 +1160,23 @@ impl App {
             EditAction::Changed | EditAction::None => {}
         }
         true
+    }
+
+    fn rename_step(&mut self, back: bool) {
+        let Some(idx) = self.ops.rename.as_ref().filter(|r| !r.batch).map(|r| r.idx) else {
+            self.commit_rename();
+            return;
+        };
+        let next = self.tab().view.as_ref().and_then(|v| {
+            let row = v.row_of(idx)?;
+            let to = if back { row.checked_sub(1)? } else { row + 1 };
+            v.rows().get(to).copied()
+        });
+        if self.commit_rename() {
+            if let Some(i) = next {
+                self.begin_rename(i, false);
+            }
+        }
     }
 
     pub(super) fn ops_char(&mut self, c: char) -> bool {
@@ -1344,7 +1399,7 @@ impl App {
             Hit::SideHeader(Section::Pinned) => Some(Target::Pin),
             Hit::SideHeader(_) | Hit::HomeItem(_) | Hit::HomeEmpty | Hit::HomeButton => None,
             Hit::SideEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose | Hit::PanelSep(_) | Hit::Menu | Hit::QuickToggle => None,
-            Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside | Hit::PaletteClose | Hit::PaletteScroll(_) => None,
+            Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside | Hit::PaletteClose | Hit::PaletteDescribe | Hit::PaletteScroll(_) => None,
             Hit::OpsButton | Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsClear | Hit::OpsCancel(_) | Hit::OpsMore(_) | Hit::OpsMenu(_) => None,
             Hit::Dialog | Hit::DialogButton(_) | Hit::DialogCheck | Hit::Form(_) | Hit::Modal | Hit::Preview(_) => None,
             _ if self.layout.status.contains(x, y) => None,

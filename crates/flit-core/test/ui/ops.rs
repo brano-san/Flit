@@ -498,9 +498,9 @@ fn alt_enter_shows_properties_of_the_selection_or_the_folder() {
     key(&mut app, Key::Enter, ALT);
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Properties(p) if p == [FsPath::parse(r"C:\x").unwrap()])));
     select(&mut app, &["a.txt"]);
-    key(&mut app, Key::Enter, Mods { shift: true, ..ALT });
-    assert!(app.drain_effects().any(|e| matches!(e, Effect::Properties(p) if p == [FsPath::parse(r"C:\x\a.txt").unwrap()])));
     key(&mut app, Key::Enter, ALT);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Properties(p) if p == [FsPath::parse(r"C:\x\a.txt").unwrap()])));
+    key(&mut app, Key::Enter, Mods { shift: true, ..ALT });
     assert_eq!(app.asking(), Some("properties"));
 }
 
@@ -800,7 +800,7 @@ fn menu_rows(items: &[MenuItem]) -> Vec<String> {
         .map(|i| match i {
             MenuItem::Command { label, .. } => label.clone(),
             MenuItem::Submenu { label, .. } => format!("{label} >"),
-            MenuItem::Separator => "-".into(),
+            MenuItem::Header(_) | MenuItem::Separator => "-".into(),
         })
         .collect()
 }
@@ -811,7 +811,7 @@ fn run_menu(app: &mut App, items: &[MenuItem], label: &str) {
             match i {
                 MenuItem::Command { label, .. } => out.push(label.clone()),
                 MenuItem::Submenu { items, .. } => flat(items, out),
-                MenuItem::Separator => {}
+                MenuItem::Header(_) | MenuItem::Separator => {}
             }
         }
     }
@@ -1260,7 +1260,7 @@ fn the_terminal_opens_the_folder_or_up_to_five_selected_folders() {
     let mut items: Vec<(&str, bool)> = dirs.iter().map(|&d| (d, true)).collect();
     items.push(("a.txt", false));
     deliver(&mut app, &items);
-    key(&mut app, Key::Char('`'), CTRL);
+    app.run_action("app.terminal", t0());
     assert_eq!(launches(&mut app), [Launch::Terminal { dirs: vec![p(r"C:\x")], admin: false }]);
     select(&mut app, &["a.txt"]);
     key(&mut app, Key::Char('`'), CTRL_SHIFT);
@@ -1268,13 +1268,13 @@ fn the_terminal_opens_the_folder_or_up_to_five_selected_folders() {
     let mut all = dirs.to_vec();
     all.push("a.txt");
     select(&mut app, &all);
-    key(&mut app, Key::Char('`'), CTRL);
+    app.run_action("app.terminal", t0());
     let first: Vec<FsPath> = dirs[..5].iter().map(|d| p(&format!(r"C:\x\{d}"))).collect();
     assert_eq!(launches(&mut app), [Launch::Terminal { dirs: first, admin: false }]);
     assert_eq!(app.tab().error.as_deref(), Some("Opened the first 5 of 7 folders in the terminal"));
     let mut app = app_at("This PC");
     deliver(&mut app, &[("C:", true)]);
-    key(&mut app, Key::Char('`'), CTRL);
+    app.run_action("app.terminal", t0());
     assert!(launches(&mut app).is_empty());
     assert_eq!(app.tab().error.as_deref(), Some("This location cannot be opened in a terminal"));
 }

@@ -64,7 +64,7 @@ fn the_theme_follows_windows_or_the_setting_and_ctrl_alt_t_switches_it() {
     for (id, dark) in [("theme.dark", true), ("theme.light", false), ("theme.system", true)] {
         let action = crate::ui::actions::ACTIONS.iter().find(|x| x.id == id).unwrap();
         assert!(a.available(id));
-        (action.run)(&mut a, Instant::now());
+        (action.run.unwrap())(&mut a, Instant::now());
         assert_eq!(a.is_dark(), dark, "{id}");
     }
     let clash: Vec<_> = crate::ui::actions::ACTIONS.iter().filter(|x| x.keys.iter().any(|c| c.key == Key::Char('T') && c.mods == CTRL_ALT)).map(|x| x.id).collect();

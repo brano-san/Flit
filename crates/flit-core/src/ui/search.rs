@@ -710,6 +710,20 @@ impl App {
         }
         let page = ((self.layout.list.h / self.layout.row_h.max(1.0)).floor() as i64).max(1);
         let mut moved = None;
+        if self.keymap.runs(key, m, "search.open") {
+            if self.search.within.is_some() {
+                self.open_scoped(None);
+            }
+            self.search.edit.select_all();
+            return true;
+        }
+        if self.keymap.runs(key, m, "search.folder") {
+            if self.search.within.is_none() && self.search.home.is_some() {
+                self.toggle_scope();
+            }
+            self.search.edit.select_all();
+            return true;
+        }
         match (key, m.ctrl, m.alt) {
             (Key::Escape, ..) => {
                 self.close_search();
@@ -721,20 +735,6 @@ impl App {
             }
             (Key::Enter, true, false) => {
                 self.reveal_search_row(self.search.focus.unwrap_or(0), now);
-                return true;
-            }
-            (Key::Char('E'), true, false) if !m.shift => {
-                if self.search.within.is_some() {
-                    self.open_scoped(None);
-                }
-                self.search.edit.select_all();
-                return true;
-            }
-            (Key::F(3), false, false) => {
-                if self.search.within.is_none() && self.search.home.is_some() {
-                    self.toggle_scope();
-                }
-                self.search.edit.select_all();
                 return true;
             }
             (Key::Char('C'), true, false) if m.shift => {

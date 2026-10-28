@@ -63,6 +63,16 @@ fn capture_key(text: &str) -> Event {
         "Enter" => Key::Enter,
         "Escape" => Key::Escape,
         "Tab" => Key::Tab,
+        "Space" => Key::Space,
+        "Left" => Key::Left,
+        "Right" => Key::Right,
+        "Home" => Key::Home,
+        "End" => Key::End,
+        "PageUp" => Key::PageUp,
+        "PageDown" => Key::PageDown,
+        "Delete" => Key::Delete,
+        "Backspace" => Key::Backspace,
+        f if f.len() > 1 && f.starts_with('F') && f[1..].parse::<u8>().is_ok() => Key::F(f[1..].parse().unwrap_or(1)),
         _ => Key::Char(name.chars().next().unwrap_or(' ').to_ascii_uppercase()),
     };
     Event::Key { key, mods: Mods { ctrl: has("ctrl"), shift: has("shift"), alt: has("alt") }, pressed: true }
@@ -629,6 +639,9 @@ impl<H: WindowHandler<Win32>> Shared<H> {
             }
             if let Ok(keys) = std::env::var("FLIT_CAPTURE_KEYS") {
                 node.queue.borrow_mut().extend(keys.split(';').filter(|k| !k.is_empty()).map(capture_key));
+                if std::env::var_os("FLIT_CAPTURE_SETTINGS").is_none() {
+                    node.queue.borrow_mut().extend(std::env::var("FLIT_CAPTURE_TYPE").unwrap_or_default().chars().map(Event::Char));
+                }
                 self.woken.set(true);
             }
             match std::env::var("FLIT_CAPTURE_POINTER_MS").ok().and_then(|v| v.parse().ok()) {
@@ -659,7 +672,7 @@ impl<H: WindowHandler<Win32>> Shared<H> {
             if std::env::var_os("FLIT_CAPTURE_PROPERTIES").is_some() {
                 let mut q = node.queue.borrow_mut();
                 q.push_back(Event::Key { key: Key::Down, mods: Mods::default(), pressed: true });
-                q.push_back(Event::Key { key: Key::Enter, mods: Mods { alt: true, ..Mods::default() }, pressed: true });
+                q.push_back(Event::Key { key: Key::Enter, mods: Mods { alt: true, shift: true, ..Mods::default() }, pressed: true });
                 self.woken.set(true);
             }
         } else {
@@ -884,10 +897,11 @@ fn map_key(vk: u16) -> Key {
         VK_OEM_3 => Key::Char('`'),
         VK_OEM_COMMA => Key::Char(','),
         VK_OEM_PERIOD => Key::Char('.'),
-        VK_OEM_PLUS => Key::Char('+'),
+        VK_OEM_PLUS => Key::Char('='),
         VK_OEM_MINUS | VK_SUBTRACT => Key::Char('-'),
         VK_ADD => Key::NumPlus,
         _ if (VK_F1.0..=VK_F24.0).contains(&vk.0) => Key::F((vk.0 - VK_F1.0 + 1) as u8),
+        _ if (VK_NUMPAD0.0..=VK_NUMPAD9.0).contains(&vk.0) => Key::Char((b'0' + (vk.0 - VK_NUMPAD0.0) as u8) as char),
         _ if (b'A' as u16..=b'Z' as u16).contains(&vk.0) || (b'0' as u16..=b'9' as u16).contains(&vk.0) => Key::Char(vk.0 as u8 as char),
         _ => Key::Other,
     }

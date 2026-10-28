@@ -193,7 +193,10 @@ impl Saved {
                     if let Ok((word, tail)) = postcard::take_from_bytes::<u32>(tail) {
                         p.archive.compression.word = word;
                         p.archive = std::mem::take(&mut p.archive).sanitized();
-                        if let Ok((g, _)) = postcard::take_from_bytes::<GitRecord>(tail) {
+                        if let Ok((g, tail)) = postcard::take_from_bytes::<GitRecord>(tail) {
+                            if let Ok((descriptions, _)) = postcard::take_from_bytes::<bool>(tail) {
+                                p.prefs.command_descriptions = descriptions;
+                            }
                             (p.view, p.prefs.defaults) = (with_git(p.view, g.view), with_git(p.prefs.defaults, g.defaults));
                             let mut folders = p.folders.entries();
                             if folders.len() == g.folders.len() {
@@ -232,6 +235,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&SplitPrefs::default()).ok()?);
         bytes.extend(postcard::to_stdvec(&p.archive.clone().sanitized().compression.word).ok()?);
         bytes.extend(postcard::to_stdvec(&gits).ok()?);
+        bytes.extend(postcard::to_stdvec(&p.prefs.command_descriptions).ok()?);
         Some(bytes)
     }
 

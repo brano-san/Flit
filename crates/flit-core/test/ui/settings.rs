@@ -264,12 +264,12 @@ fn single_click_modes_follow_the_pointer_and_old_booleans_still_load() {
 #[test]
 fn the_schema_is_written_unmarked_files_read_as_current_and_newer_ones_are_flagged() {
     let text = render(defaults(), &Map::new(), None);
-    assert!(text.contains("\"schema\": 2"), "{text}");
+    assert!(text.contains("\"schema\": 3"), "{text}");
     let doc = parse(&text);
     assert_eq!((doc.schema, doc.newer(), doc.values.len(), doc.unknown.len()), (SCHEMA, false, SETTINGS.len(), 0));
     let today = parse("{\"files.show_hidden\": true}");
     assert_eq!((today.schema, today.newer(), today.value("files.show_hidden")), (SCHEMA, false, Some(&Value::Bool(true))));
-    let newer = parse("{\"schema\": 3, \"files.show_hidden\": true, \"future.key\": 1}");
+    let newer = parse("{\"schema\": 4, \"files.show_hidden\": true, \"future.key\": 1}");
     assert!(newer.newer() && !newer.problems.is_empty());
     assert!(render(defaults(), &newer.unknown, None).matches("\"schema\"").count() == 1);
 }
@@ -321,4 +321,21 @@ fn the_interface_scale_multiplies_the_display_scale_for_layout_fonts_and_hits() 
     assert_eq!(doc.bad, [index("appearance.scale").unwrap()]);
     a.apply_doc(&parse(r#"{"appearance.scale": 150}"#));
     assert_eq!(a.scale, 1.5);
+}
+
+#[test]
+fn shortcuts_saved_under_old_command_ids_move_to_the_renamed_commands() {
+    let doc = parse(r#"{"schema": 2, "keys": {"sidebar.toggle": ["Ctrl+Shift+F9"], "view.pane": ["Alt+F9"], "settings.open": [], "quick_access.compact": ["Ctrl+F8"], "sidebar.compact": ["Ctrl+F7"]}}"#);
+    assert_eq!(doc.schema, SCHEMA);
+    let mut a = app();
+    a.apply_doc(&doc);
+    let k = a.keymap();
+    let at = |id: &str| crate::ui::actions::index(id).unwrap();
+    let chord = |s: &str| crate::ui::keymap::parse_chord(s).unwrap();
+    assert_eq!(k.keys(at("quick_access.toggle")), [chord("Ctrl+Shift+F9")]);
+    assert_eq!(k.keys(at("inspector.toggle")), [chord("Alt+F9")]);
+    assert!(k.keys(at("options.open")).is_empty() && k.is_custom(at("options.open")));
+    assert_eq!(k.keys(at("quick_access.compact")), [chord("Ctrl+F8")], "a key already saved under the new id wins");
+    let out = k.to_json();
+    assert!(["sidebar.toggle", "view.pane", "settings.open", "sidebar.compact"].iter().all(|old| out.get(*old).is_none()), "{out}");
 }

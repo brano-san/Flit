@@ -9,7 +9,7 @@ new_library = "Nueva biblioteca"
 restore_libraries = "Restaurar las bibliotecas predeterminadas"
 sections = "Secciones"
 compact = "Barra lateral compacta"
-pin_hint = "Ctrl+D ancla la carpeta actual"
+pin_hint = "«Añadir o quitar marcador de carpeta» ancla la carpeta actual"
 only_unpinned = "Solo se pueden anclar las carpetas que aún no están ancladas"
 select_to_pin = "Selecciona las carpetas que quieres anclar"
 

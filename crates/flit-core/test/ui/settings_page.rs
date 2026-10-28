@@ -175,7 +175,7 @@ fn opens_from_the_keyboard_the_palette_the_sidebar_and_the_tab_menu() {
     key(&mut a, Key::Escape, NO);
     assert!(!a.settings_open());
     key(&mut a, Key::Char('P'), Mods { ctrl: true, shift: true, alt: false });
-    typed(&mut a, "settings");
+    typed(&mut a, "options");
     key(&mut a, Key::Enter, NO);
     assert!(a.settings_open(), "the palette command opens the settings");
     key(&mut a, Key::Char(','), CTRL);
@@ -657,8 +657,9 @@ fn the_actions_page_lists_and_finds_every_command() {
     let mut a = app();
     a.open_settings(Some(Page::Actions));
     let lines = a.settings_lines();
-    assert_eq!(lines.iter().filter(|l| l.starts_with("action ")).count(), ACTIONS.iter().filter(|x| a.supports(x.id)).count());
-    assert!(lines.contains(&"action file.copy Ctrl+C".to_owned()));
+    assert_eq!(lines.iter().filter(|l| l.starts_with("action ")).count(), ACTIONS.iter().filter(|x| x.rebindable() && a.supports(x.id)).count());
+    assert!(!lines.iter().any(|l| l.starts_with("action text.") || l.starts_with("action tree.")), "commands of other contexts are not rebound here");
+    assert!(lines.contains(&"action file.copy Ctrl+C, Ctrl+Insert".to_owned()));
     assert!(lines.contains(&"action nav.home ".to_owned()), "commands without shortcuts are listed too");
     typed(&mut a, "copy path");
     let found = a.settings_lines();
@@ -672,7 +673,7 @@ fn the_actions_page_lists_and_finds_every_command() {
     let chips = button_rects(&ui(&a).lines[k], rect(&a, k), s);
     assert_eq!(chips.len(), 2, "one shortcut and the + chip");
     click_at(&mut a, center(chips[1]));
-    assert_eq!(capture_rows(&a), ["Press the new shortcut for «Show command palette»"]);
+    assert_eq!(capture_rows(&a), ["Press the new shortcut for «Toggle Subfolders»"]);
     key(&mut a, Key::Escape, NO);
     assert!(a.nav.palette.is_none() && a.settings_open());
 }
@@ -683,53 +684,53 @@ fn shortcuts_are_added_reassigned_refused_edited_removed_and_restored() {
     a.open_settings(Some(Page::Actions));
     focus_chip(&mut a, "view.hidden", 1);
     key(&mut a, Key::Enter, NO);
-    assert_eq!(capture_rows(&a), ["Press the new shortcut for «Show or hide hidden files»"]);
+    assert_eq!(capture_rows(&a), ["Press the new shortcut for «Toggle Hidden Files»"]);
     typed(&mut a, "q");
     let f = a.palette_field().unwrap();
     let before = a.current_location().clone();
     a.on_event(&Event::MouseDown { x: f.x + 4.0, y: f.y + 4.0, button: MouseButton::Back, clicks: 1 }, Instant::now());
     assert_eq!(capture_rows(&a).len(), 1, "typed letters and mouse buttons are not recorded");
     assert_eq!(a.current_location(), &before);
-    key(&mut a, Key::Char('K'), CTRL);
-    assert_eq!(capture_rows(&a)[0], "Assign Ctrl+K to «Show or hide hidden files»");
+    key(&mut a, Key::Char('G'), CTRL);
+    assert_eq!(capture_rows(&a)[0], "Assign Ctrl+G to «Toggle Hidden Files»");
     key(&mut a, Key::Enter, NO);
     assert!(a.nav.palette.is_none() && a.settings_open());
-    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+H, Ctrl+K");
-    assert!(note(&a).starts_with("Ctrl+K runs «Show or hide hidden files» now"), "{}", note(&a));
+    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+H, Ctrl+G");
+    assert!(note(&a).starts_with("Ctrl+G runs «Toggle Hidden Files» now"), "{}", note(&a));
 
     focus_chip(&mut a, "view.hidden", 2);
     key(&mut a, Key::Enter, NO);
     key(&mut a, Key::Char('T'), CTRL);
-    assert_eq!(capture_rows(&a)[0], "Reassign Ctrl+T from «New tab» to «Show or hide hidden files»");
-    assert_eq!(a.nav.palette.as_ref().unwrap().keys[0], "«New tab» is left without a shortcut");
+    assert_eq!(capture_rows(&a)[0], "Reassign Ctrl+T from «Open New Tab» to «Toggle Hidden Files»");
+    assert_eq!(a.nav.palette.as_ref().unwrap().keys[0], "«Open New Tab» is left without a shortcut");
     key(&mut a, Key::Enter, NO);
     assert_eq!(keys_of(&a, "tab.new"), "");
-    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+H, Ctrl+K, Ctrl+T");
-    assert!(note(&a).ends_with("«New tab» is left without a shortcut"), "{}", note(&a));
+    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+H, Ctrl+G, Ctrl+T");
+    assert!(note(&a).ends_with("«Open New Tab» is left without a shortcut"), "{}", note(&a));
 
     focus_chip(&mut a, "view.hidden", 3);
     key(&mut a, Key::Enter, NO);
-    key(&mut a, Key::Char('1'), CTRL);
-    assert!(capture_rows(&a)[0].starts_with("Ctrl+1 cannot be used: it switches to tab 1"));
+    key(&mut a, Key::Char('Q'), Mods { shift: true, ..NO });
+    assert!(capture_rows(&a)[0].starts_with("Shift+Q cannot be used: letters"), "{:?}", capture_rows(&a));
     key(&mut a, Key::Enter, NO);
-    assert!(capture_rows(&a)[0].starts_with("Ctrl+1 cannot be used"), "Enter keeps the dialog open for other keys");
+    assert!(capture_rows(&a)[0].starts_with("Shift+Q cannot be used"), "Enter keeps the dialog open for other keys");
     key(&mut a, Key::Char('A'), NO);
     assert!(capture_rows(&a)[0].starts_with("A cannot be used"));
     key(&mut a, Key::Escape, NO);
     assert!(a.nav.palette.is_none() && a.settings_open());
-    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+H, Ctrl+K, Ctrl+T");
+    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+H, Ctrl+G, Ctrl+T");
 
     focus_chip(&mut a, "view.hidden", 0);
     key(&mut a, Key::Enter, NO);
     assert_eq!(capture_rows(&a).last().unwrap(), "Remove the shortcut Ctrl+H");
-    key(&mut a, Key::Char('J'), CTRL);
+    key(&mut a, Key::Char('M'), CTRL);
     key(&mut a, Key::Enter, NO);
-    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+J, Ctrl+K, Ctrl+T", "editing replaces the shortcut in place");
+    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+M, Ctrl+G, Ctrl+T", "editing replaces the shortcut in place");
 
     focus_chip(&mut a, "view.hidden", 1);
     key(&mut a, Key::Enter, NO);
     a.run_palette_item(1, Instant::now());
-    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+J, Ctrl+T");
+    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+M, Ctrl+T");
     focus_chip(&mut a, "view.hidden", 0);
     key(&mut a, Key::Delete, NO);
     assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+T");
@@ -738,7 +739,7 @@ fn shortcuts_are_added_reassigned_refused_edited_removed_and_restored() {
     key(&mut a, Key::Enter, NO);
     assert_eq!(keys_of(&a, "tab.new"), "Ctrl+T", "the arrow chip restores the defaults");
     assert_eq!(keys_of(&a, "view.hidden"), "");
-    assert!(note(&a).contains("«Show or hide hidden files» is left without a shortcut"), "{}", note(&a));
+    assert!(note(&a).contains("«Toggle Hidden Files» is left without a shortcut"), "{}", note(&a));
 
     let k = ui(&a).lines.iter().position(|l| *l == Line::Buttons(None, &[Btn::RestoreKeys])).unwrap();
     let u = a.settings.as_mut().unwrap();

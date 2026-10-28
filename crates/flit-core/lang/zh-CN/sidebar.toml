@@ -9,7 +9,7 @@ new_library = "新建库"
 restore_libraries = "还原默认库"
 sections = "分区"
 compact = "紧凑侧边栏"
-pin_hint = "Ctrl+D 固定当前文件夹"
+pin_hint = "“切换文件夹书签”可固定当前文件夹"
 only_unpinned = "只能固定尚未固定的文件夹"
 select_to_pin = "选择要固定的文件夹"
 

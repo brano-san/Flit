@@ -94,7 +94,7 @@ fn commands(items: &[MenuItem]) -> Vec<(String, bool)> {
         .flat_map(|i| match i {
             MenuItem::Command { label, checked, .. } => vec![(label.clone(), *checked)],
             MenuItem::Submenu { items, .. } => commands(items),
-            MenuItem::Separator => Vec::new(),
+            MenuItem::Header(_) | MenuItem::Separator => Vec::new(),
         })
         .collect()
 }
@@ -238,14 +238,13 @@ fn the_recycle_bin_background_menu_offers_view_commands_without_shell_items() {
 fn selection_commands_checkboxes_and_hover_select() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &[("a", 1, false), ("b", 1, false), ("c", 1, false)]);
-    let ctrl = Mods { ctrl: true, ..Mods::default() };
-    press_key(&mut app, crate::input::Key::Char('I'), ctrl);
+    app.run_action("select.invert", Instant::now());
     assert_eq!(selected(&app), ["a", "b", "c"]);
     let x = app.layout.cols[0].x + 100.0;
     click_line(&mut app, 100.0, 0, MouseButton::Left);
-    press_key(&mut app, crate::input::Key::Char('I'), ctrl);
+    app.run_action("select.invert", Instant::now());
     assert_eq!(selected(&app), ["b", "c"]);
-    press_key(&mut app, crate::input::Key::Char('A'), Mods { shift: true, ..ctrl });
+    press_key(&mut app, crate::input::Key::Escape, Mods::default());
     assert!(selected(&app).is_empty());
     run(&mut app, "view.checkboxes");
     frame(&mut app);

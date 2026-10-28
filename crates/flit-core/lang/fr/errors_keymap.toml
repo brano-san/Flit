@@ -1,8 +1,5 @@
 unknown_key = "Flit ne connaît pas cette touche"
 needs_modifier = "les lettres, chiffres, symboles et Espace nécessitent Ctrl ou Alt, car sans eux ils saisissent du texte"
-last_tab = "elle passe au dernier onglet"
-tab = "elle passe à l’onglet {n}"
-select = "elle sélectionne ou désélectionne l’élément actif"
 moves_focus = "elle déplace le focus dans la liste"
 not_list = "Les raccourcis de {id} dans le fichier de paramètres ne forment pas une liste, ses raccourcis par défaut sont donc conservés"
 not_key = "{item} dans les raccourcis de {id} n’est pas une touche, {id} conserve donc ses raccourcis par défaut"

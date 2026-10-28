@@ -115,6 +115,7 @@ restore = "Restaurer rouvre les fenêtres et onglets qui étaient ouverts."
 
 [ops]
 new_folder_name = "Nouveau dossier"
+new_file_name = "Nouveau fichier"
 bin_only = "Les éléments de la Corbeille peuvent seulement être restaurés ou supprimés"
 streams_view_only = "Les flux de données alternatifs sont affichés en lecture seule"
 open_bin = "Ouvrez la Corbeille pour restaurer des éléments"

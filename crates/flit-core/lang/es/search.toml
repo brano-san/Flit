@@ -30,7 +30,7 @@ tagged = "Archivos etiquetados"
 connecting = "Conectando con el índice"
 service = "Servicio de índice"
 fallback = "Índice local (flit-indexd no disponible)"
-off = "La indexación está desactivada en Configuración › Avanzado; F3 busca en la carpeta abierta"
+off = "La indexación está desactivada en Configuración › Avanzado; Ctrl+Shift+F busca en la carpeta abierta"
 
 [index]
 default = "índice"

@@ -4,7 +4,7 @@ use crate::text::tests::Mono;
 use crate::theme;
 
 fn cmd(label: &str) -> MenuItem {
-    MenuItem::Command { label: label.into(), keys: String::new(), checked: false, stay: false, mark: Default::default() }
+    MenuItem::command(label, String::new())
 }
 
 fn sample() -> Vec<MenuItem> {
@@ -12,7 +12,7 @@ fn sample() -> Vec<MenuItem> {
         cmd("Open"),
         MenuItem::Submenu { label: "Sort by".into(), items: vec![cmd("Name"), MenuItem::Separator, cmd("Size")] },
         MenuItem::Separator,
-        MenuItem::Command { label: "Paste".into(), keys: "Ctrl+V".into(), checked: true, stay: false, mark: Default::default() },
+        MenuItem::command("Paste", "Ctrl+V").checked(true),
     ]
 }
 
@@ -35,7 +35,7 @@ fn row(v: &MenuView, panel: usize, i: usize) -> (f32, f32) {
 
 #[test]
 fn a_click_on_a_toggle_flips_its_check_in_place_and_keeps_the_submenu_open() {
-    let toggle = |label: &str, checked| MenuItem::Command { label: label.into(), keys: String::new(), checked, stay: true, mark: Default::default() };
+    let toggle = |label: &str, checked| MenuItem::command(label, String::new()).checked(checked).staying();
     let items = vec![cmd("Open"), MenuItem::Submenu { label: "Sections".into(), items: vec![toggle("Pinned", true), toggle("Drives", false)] }];
     let mut v = MenuView::new(&items, 100.0, 100.0, screen(), 1.0, &mut Gfx::new(Mono, 256));
     let (x, y) = row(&v, 0, 1);
@@ -137,4 +137,20 @@ fn draws_labels_keys_checks_and_arrows() {
     assert_eq!(glyphs, letters);
     let r = v.panels().next().unwrap();
     assert!(r.w >= LABEL_X + 50.0 + KEYS_GAP + 60.0 + ARROW_W);
+}
+
+#[test]
+fn headers_and_disabled_commands_are_shown_but_never_picked() {
+    let later = MenuItem::Command { label: "Later".into(), keys: "Ctrl+E".into(), checked: false, stay: false, mark: Mark::None, icon: "\u{E8B7}", disabled: true };
+    let items = vec![MenuItem::Header("Folder".into()), later, cmd("Open")];
+    let mut v = MenuView::new(&items, 100.0, 100.0, screen(), 1.0, &mut Gfx::new(Mono, 256));
+    assert_eq!(v.key(Key::Down), MenuOutcome::Open);
+    assert_eq!(v.panels[0].hot, Some(2), "the keyboard skips the header and the gray command");
+    assert_eq!(v.key(Key::Enter), MenuOutcome::Command(1));
+    for i in 0..2 {
+        let (x, y) = row(&v, 0, i);
+        v.mouse_move(x, y);
+        assert_ne!(v.panels[0].hot, Some(i));
+        assert!(!matches!(v.mouse_up(x, y), MenuOutcome::Command(_)), "row {i}");
+    }
 }

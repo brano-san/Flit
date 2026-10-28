@@ -26,6 +26,8 @@ crumbs = "Afficher le début du chemin."
 close_palette = "Fermer cette fenêtre."
 scroll_up = "Faire défiler vers le haut."
 scroll_down = "Faire défiler vers le bas."
+palette_descriptions_on = "Les descriptions sont affichées sous les commandes."
+palette_descriptions_off = "Les commandes sont listées sans description."
 
 [tool]
 "menu.new" = "Créer un dossier, un raccourci ou un fichier."

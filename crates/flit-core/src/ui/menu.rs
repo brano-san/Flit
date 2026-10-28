@@ -19,9 +19,30 @@ pub enum Mark {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuItem {
-    Command { label: String, keys: String, checked: bool, stay: bool, mark: Mark },
+    Command { label: String, keys: String, checked: bool, stay: bool, mark: Mark, icon: &'static str, disabled: bool },
     Submenu { label: String, items: Vec<MenuItem> },
+    Header(String),
     Separator,
+}
+
+impl MenuItem {
+    pub fn command(label: impl Into<String>, keys: impl Into<String>) -> Self {
+        MenuItem::Command { label: label.into(), keys: keys.into(), checked: false, stay: false, mark: Mark::None, icon: "", disabled: false }
+    }
+
+    pub fn checked(mut self, on: bool) -> Self {
+        if let MenuItem::Command { checked, .. } = &mut self {
+            *checked = on;
+        }
+        self
+    }
+
+    pub fn staying(mut self) -> Self {
+        if let MenuItem::Command { stay, .. } = &mut self {
+            *stay = true;
+        }
+        self
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -116,7 +137,7 @@ impl Menu<'_> {
     }
 
     pub(super) fn toggle(&mut self, label: &str, cmd: super::sidebar::PlaceCmd, checked: bool) {
-        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked, stay: true, mark: Mark::Check });
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked, stay: true, mark: Mark::Check, icon: "", disabled: false });
         self.cmds.push(Cmd::Place(cmd));
     }
 
@@ -128,7 +149,8 @@ impl Menu<'_> {
         if matches!(cmd, Cmd::Action(id) if !self.shown(id)) {
             return;
         }
-        self.items.push(MenuItem::Command { label: label.to_owned(), keys, checked, stay: false, mark });
+        let disabled = matches!(cmd, Cmd::Action(id) if super::actions::ACTIONS.iter().any(|a| a.id == id && a.run.is_none()));
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys, checked, stay: false, mark, icon: "", disabled });
         self.cmds.push(cmd);
     }
 
@@ -148,6 +170,12 @@ impl Menu<'_> {
     fn choices<T: PartialEq>(&mut self, items: &[(T, &'static str, S)], current: T) {
         for (v, id, label) in items {
             self.radio(id, label.t(), String::new(), *v == current);
+        }
+    }
+
+    fn iconed(&mut self, glyph: &'static str) {
+        if let Some(MenuItem::Command { icon, .. }) = self.items.last_mut() {
+            *icon = glyph;
         }
     }
 
@@ -239,7 +267,7 @@ impl App {
     pub(super) fn build_tab_actions_menu(&mut self) -> Vec<MenuItem> {
         self.collect(|a, m| {
             m.action("tab.new", S::MenuNewTab.t());
-            m.action("window.new", S::MenuNewWindow.t());
+            m.action("tab.duplicate_window", S::MenuNewWindow.t());
             if a.tabs.len() > 1 {
                 m.action("tab.move_to_window", S::MenuMoveTabToWindow.t());
             }
@@ -250,7 +278,7 @@ impl App {
             m.separator();
             m.action("tab.close_all", S::MenuCloseAllTabs.t());
             m.separator();
-            m.action("settings.open", S::MenuSettings.t());
+            m.action("options.open", S::MenuSettings.t());
         })
     }
 
@@ -271,7 +299,7 @@ impl App {
     }
 
     pub(super) fn list_menu(&mut self, entries: Vec<(String, Cmd, bool)>) -> Vec<MenuItem> {
-        let (items, cmds) = entries.into_iter().map(|(label, cmd, checked)| (MenuItem::Command { label, keys: String::new(), checked, stay: false, mark: Mark::None }, cmd)).unzip();
+        let (items, cmds) = entries.into_iter().map(|(label, cmd, checked)| (MenuItem::command(label, String::new()).checked(checked), cmd)).unzip();
         self.menu = cmds;
         items
     }
@@ -299,10 +327,11 @@ impl App {
         for (mode, id) in LAYOUT_CHOICES {
             let keys = m.keys.all_text(id);
             m.radio(id, mode.title(), keys, mode == t.mode);
+            m.iconed(mode.icon());
         }
         m.separator();
-        m.action("view.size.larger", S::MenuLargerItems.t());
-        m.action("view.size.smaller", S::MenuSmallerItems.t());
+        m.action("view.zoom_in", S::MenuLargerItems.t());
+        m.action("view.zoom_out", S::MenuSmallerItems.t());
         m.separator();
         m.check("view.thumbnails", S::MenuShowThumbnails.t(), self.prefs.thumbnails);
         m.check("view.auto_sizes", S::ToolbarFlyoutFolderSizes.t(), self.prefs.auto_sizes);
@@ -557,7 +586,7 @@ impl App {
             m.action("app.terminal", S::MenuOpenInTerminal.t());
         }
         let pinned = self.nav.sidebar.state.pinned.contains(t.location());
-        m.action("sidebar.pin", if pinned { S::MenuUnpinFromSidebar.t() } else { S::MenuPinToSidebar.t() });
+        m.action("folder.bookmark", if pinned { S::MenuUnpinFromSidebar.t() } else { S::MenuPinToSidebar.t() });
         m.action("item.copy_path", S::MenuCopyPath.t());
         m.separator();
         if files {

@@ -66,6 +66,19 @@ const LETTER_KEYS: [KeyCode; 26] = [
     KeyCode::KeyZ,
 ];
 
+const NUMPAD_DIGITS: [KeyCode; 10] = [
+    KeyCode::Numpad0,
+    KeyCode::Numpad1,
+    KeyCode::Numpad2,
+    KeyCode::Numpad3,
+    KeyCode::Numpad4,
+    KeyCode::Numpad5,
+    KeyCode::Numpad6,
+    KeyCode::Numpad7,
+    KeyCode::Numpad8,
+    KeyCode::Numpad9,
+];
+
 const DIGIT_KEYS: [KeyCode; 10] = [
     KeyCode::Digit0,
     KeyCode::Digit1,
@@ -125,7 +138,7 @@ fn key_at_us_position(code: KeyCode) -> Key {
     if let Some(i) = LETTER_KEYS.iter().position(|&k| k == code) {
         return Key::Char((b'A' + i as u8) as char);
     }
-    if let Some(i) = DIGIT_KEYS.iter().position(|&k| k == code) {
+    if let Some(i) = DIGIT_KEYS.iter().position(|&k| k == code).or_else(|| NUMPAD_DIGITS.iter().position(|&k| k == code)) {
         return Key::Char((b'0' + i as u8) as char);
     }
     match code {
@@ -133,7 +146,7 @@ fn key_at_us_position(code: KeyCode) -> Key {
         KeyCode::Backquote => Key::Char('`'),
         KeyCode::Comma => Key::Char(','),
         KeyCode::Period => Key::Char('.'),
-        KeyCode::Equal => Key::Char('+'),
+        KeyCode::Equal => Key::Char('='),
         KeyCode::Minus | KeyCode::NumpadSubtract => Key::Char('-'),
         KeyCode::NumpadAdd => Key::NumPlus,
         _ => Key::Other,

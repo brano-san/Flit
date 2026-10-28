@@ -17,7 +17,7 @@ fn latin_layouts_keep_the_logical_letter() {
     assert_eq!(key(PhysicalKey::Code(KeyCode::KeyQ), &chars("a")), Key::Char('A'));
     assert_eq!(key(PhysicalKey::Code(KeyCode::KeyC), &chars("j")), Key::Char('J'));
     assert_eq!(key(PhysicalKey::Code(KeyCode::Digit1), &chars("&")), Key::Char('1'));
-    assert_eq!(key(PhysicalKey::Code(KeyCode::Equal), &chars("=")), Key::Char('+'));
+    assert_eq!(key(PhysicalKey::Code(KeyCode::Equal), &chars("=")), Key::Char('='));
 }
 
 #[test]
@@ -26,7 +26,7 @@ fn named_and_numpad_keys() {
     assert_eq!(key(PhysicalKey::Code(KeyCode::Numpad8), &WinitKey::Named(NamedKey::ArrowUp)), Key::Up);
     assert_eq!(key(PhysicalKey::Code(KeyCode::F5), &WinitKey::Named(NamedKey::F5)), Key::F(5));
     assert_eq!(key(PhysicalKey::Code(KeyCode::Space), &chars(" ")), Key::Space);
-    assert_eq!(key(PhysicalKey::Code(KeyCode::Numpad1), &chars("1")), Key::Other);
+    assert_eq!(key(PhysicalKey::Code(KeyCode::Numpad1), &chars("1")), Key::Char('1'));
     assert_eq!(key(PhysicalKey::Code(KeyCode::NumpadAdd), &chars("+")), Key::NumPlus);
     assert_eq!(key(PhysicalKey::Code(KeyCode::ContextMenu), &WinitKey::Named(NamedKey::ContextMenu)), Key::Apps);
 }

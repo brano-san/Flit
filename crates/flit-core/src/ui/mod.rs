@@ -393,6 +393,7 @@ enum Hit {
     PaletteBox,
     PaletteOutside,
     PaletteClose,
+    PaletteDescribe,
     PaletteScroll(bool),
     OpsButton,
     OpsPanel,
@@ -1400,6 +1401,10 @@ impl App {
             Event::MouseDown { x, y, button, clicks } => self.mouse_down(*x, *y, *button, *clicks, now),
             Event::MouseUp { x, y, button } => self.mouse_up(*x, *y, *button, now),
             Event::Wheel { dy, .. } => {
+                if self.mods.alt && !self.mods.ctrl && !self.mods.shift && !self.settings_open() {
+                    self.run_action(if *dy > 0.0 { "font.increase" } else { "font.decrease" }, now);
+                    return;
+                }
                 if self.settings_wheel(*dy) || self.panel_wheel(ev, *dy, now) || self.jobs_wheel(*dy) || self.nav_wheel(*dy) || self.pane_wheel(*dy) || self.preview_wheel(*dy) || self.strip_wheel(*dy) {
                     return;
                 }
@@ -1641,7 +1646,7 @@ impl App {
             Hit::Caption(0) => self.effects.push(Effect::Window(WindowCmd::Minimize)),
             Hit::Caption(1) => self.effects.push(Effect::Window(WindowCmd::ToggleMaximize)),
             Hit::Caption(_) => self.effects.push(Effect::Window(WindowCmd::Close)),
-            Hit::Menu => self.open_palette(),
+            Hit::Menu => self.open_main_menu(),
             Hit::QuickToggle => self.toggle_sidebar(),
             Hit::Crumb(i) => {
                 if let Some((_, p)) = self.tab().crumb(i).cloned() {
@@ -1667,6 +1672,7 @@ impl App {
             Hit::FilterClose => self.close_filter(),
             Hit::PaletteRow(i) => self.run_palette_item(i, now),
             Hit::PaletteClose => self.close_palette(),
+            Hit::PaletteDescribe => self.toggle_descriptions(),
             Hit::Tool(t) => self.toolbar_click(t, now),
             Hit::TabActions => self.tab_actions_menu(),
             Hit::CrumbMenu(i) => self.crumb_menu(i),
@@ -1764,33 +1770,10 @@ impl App {
         if self.nav_key(key, m, now) {
             return;
         }
-        let page = self.page_rows();
-        let mut moved = None;
-        match (key, m.ctrl, m.alt) {
-            (Key::Char(c @ '1'..='9'), true, false) => {
-                let i = if c == '9' { self.tabs.len() - 1 } else { c as usize - '1' as usize };
-                self.select_tab(i);
-            }
-            (Key::Space, true, false) => {
-                if let Some(v) = &mut self.tab_mut().view {
-                    if let Some(f) = v.focus {
-                        let on = !v.is_selected(f);
-                        v.set_selected(f, on);
-                    }
-                }
-            }
-            (Key::Up | Key::Down | Key::Left | Key::Right, _, false) => {
-                self.arrow_key(key, m, now);
-            }
-            (Key::PageUp, _, false) => moved = Some(-page),
-            (Key::PageDown, _, false) => moved = Some(page),
-            (Key::Home, _, false) => moved = Some(isize::MIN / 2),
-            (Key::End, _, false) => moved = Some(isize::MAX / 2),
+        match key {
+            Key::BrowserBack => self.go_history(false, now),
+            Key::BrowserForward => self.go_history(true, now),
             _ => {}
-        }
-        if let Some(d) = moved {
-            self.tab_mut().move_focus(d, m);
-            self.reveal_focus(false);
         }
     }
 
@@ -1814,7 +1797,7 @@ impl App {
             return;
         }
         if c == ' ' && !self.tab().typing(now) {
-            return self.quick_view();
+            return;
         }
         if self.tab_mut().type_ahead(c, now) {
             self.reveal_focus(false);
@@ -1868,13 +1851,6 @@ impl App {
         self.effects.push(Effect::Provider { provider: loc.provider(), req });
     }
 
-    fn copy_paths(&mut self, quoted: bool) {
-        let t = self.tab();
-        let quote = |l: &Location| if quoted { format!("\"{}\"", l.display()) } else { l.display().into_owned() };
-        let sel: Vec<u32> = t.view.as_ref().map(|v| v.selected().collect()).unwrap_or_default();
-        let text = if sel.is_empty() { quote(t.location()) } else { sel.iter().map(|&i| quote(&t.entry_location(i))).collect::<Vec<_>>().join("\r\n") };
-        self.effects.push(Effect::SetClipboard(text));
-    }
 
     pub fn frame<B: TextBackend>(&mut self, g: &mut Gfx<B>, now: Instant) -> bool {
         let _span = tracing::trace_span!("ui_frame").entered();

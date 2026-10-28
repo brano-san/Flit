@@ -26,6 +26,8 @@ crumbs = "Show the start of the path."
 close_palette = "Close this window."
 scroll_up = "Scroll up."
 scroll_down = "Scroll down."
+palette_descriptions_on = "Descriptions are shown under the commands."
+palette_descriptions_off = "Commands are listed without descriptions."
 
 [tool]
 "menu.new" = "Create a new folder, shortcut or file."
