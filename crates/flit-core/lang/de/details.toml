@@ -37,3 +37,10 @@ files = ["{n} Datei", "{n} Dateien"]
 
 [status]
 default_view = "Neue Ordner werden mit dieser Ansicht geöffnet"
+
+[view]
+saved = "Gespeicherte Ansichtseinstellungen"
+none = "Keine"
+folder = "Dieser Ordner"
+subfolders = "Dieser Ordner und Unterordner"
+default = "Als Standard festlegen"

@@ -85,6 +85,7 @@ fn click(app: &mut App, (x, y): (f32, f32)) {
 #[test]
 fn ctrl_shift_digits_switch_layouts_and_each_folder_remembers_its_own() {
     let mut app = app_at(r"C:\x");
+    app.set_view_mode(crate::ui::ViewMode::Folder);
     deliver(&mut app, &["a.txt", "b.txt"]);
     let order = [('5', LayoutMode::Grid), ('3', LayoutMode::List), ('4', LayoutMode::Grid), ('1', LayoutMode::Details)];
     for (digit, mode) in order {
@@ -105,6 +106,7 @@ fn ctrl_shift_digits_switch_layouts_and_each_folder_remembers_its_own() {
 #[test]
 fn the_old_layout_stays_until_the_new_folder_arrives() {
     let mut app = app_at(r"C:\x");
+    app.set_view_mode(crate::ui::ViewMode::Folder);
     deliver(&mut app, &["a.txt"]);
     key(&mut app, Key::Char('5'), CTRL_SHIFT);
     app.navigate(loc(r"C:\y"), Instant::now());
@@ -117,6 +119,7 @@ fn the_old_layout_stays_until_the_new_folder_arrives() {
 #[test]
 fn zoom_commands_and_ctrl_wheel_resize_items_and_ctrl_equals_fits_columns() {
     let mut app = app_at(r"C:\x");
+    app.set_view_mode(crate::ui::ViewMode::Folder);
     deliver(&mut app, &["a.txt"]);
     assert_eq!(app.layout.row_h, 24.0);
     app.run_action("view.zoom_in", Instant::now());

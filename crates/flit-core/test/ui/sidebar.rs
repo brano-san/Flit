@@ -22,17 +22,19 @@ fn pinned_items_get_labels_and_glyphs() {
     assert_eq!(
         got,
         [
-            ("This PC", G_DRIVE, Section::Pinned),
-            ("Debian (WSL)", G_LINUX, Section::Pinned),
-            ("C:", G_DRIVE, Section::Pinned),
-            ("proj", G_FOLDER, Section::Pinned),
-            ("u", G_FOLDER, Section::Pinned),
-            ("Music", G_MUSIC, Section::Folders),
-            ("Disk (C:)", G_DRIVE, Section::Drives),
+            ("This PC", G_DRIVE, Section::Bookmarks),
+            ("Debian (WSL)", G_LINUX, Section::Bookmarks),
+            ("C:", G_DRIVE, Section::Bookmarks),
+            ("proj", G_FOLDER, Section::Bookmarks),
+            ("u", G_FOLDER, Section::Bookmarks),
+            ("Disk (C:)", G_DRIVE, Section::Storage),
+            ("This PC", G_DRIVE, Section::Places),
+            ("Music", G_MUSIC, Section::Places),
+            ("Home", G_HOME, Section::Places),
             ("Debian", G_LINUX, Section::Wsl),
         ]
     );
-    assert_eq!(sb.items[6].usage, Some(0.0));
+    assert_eq!(sb.items[5].usage, Some(0.0));
     assert!(sb.is_pinned(&loc(r"C:\")));
     assert!(!sb.is_pinned(&loc(r"C:\Users\u\Music")));
 }
@@ -40,7 +42,7 @@ fn pinned_items_get_labels_and_glyphs() {
 #[test]
 fn known_folders_map_to_shell_names() {
     let names: Vec<&str> = KnownFolder::ALL.iter().map(|k| k.shell_name()).collect();
-    assert_eq!(names, ["shell:Profile", "shell:Desktop", "shell:Downloads", "shell:Personal", "shell:My Pictures", "shell:My Music", "shell:My Video"]);
+    assert_eq!(names, ["shell:Profile", "shell:Desktop", "shell:Downloads", "shell:Personal", "shell:My Pictures", "shell:My Music", "shell:My Video", "shell:Favorites"]);
     assert_eq!(KnownFolder::ALL.map(|k| k.label())[0], "Home");
 }
 
@@ -52,7 +54,7 @@ fn layout_shows_the_pin_hint_and_scrolls_long_lists() {
     let drives = ('C'..='Z').map(drive).collect();
     app.set_places(Arc::new(Places { drives, ..Default::default() }));
     let sb = &app.nav.sidebar;
-    assert_eq!(sb.rects.len(), 24);
+    assert_eq!(sb.rects.len(), 26, "24 drives, This PC and Home");
     assert!(sb.content_h > sb.rect.h);
     let first = sb.rects[0].y;
     app.hover = Hit::Side(0);
@@ -60,7 +62,8 @@ fn layout_shows_the_pin_hint_and_scrolls_long_lists() {
     assert!(app.nav.sidebar.rects[0].y < first, "the wheel scrolls the sidebar, not the list");
     app.on_event(&crate::input::Event::Wheel { dx: 0.0, dy: -1000.0 }, Instant::now());
     let sb = &app.nav.sidebar;
-    assert!((sb.rects.last().unwrap().bottom() + SECTION_GAP + (28.0 + 8.0) - sb.rect.bottom()).abs() < 1.0, "clamped at the end, above the Settings button");
+    let end = sb.rects.last().unwrap().bottom();
+    assert!(end <= sb.list.bottom() + 0.5 && end >= sb.list.bottom() - SECTION_GAP - 1.0, "clamped at the end of the list, above the Settings button: {end} {:?}", sb.list);
     assert!(sb.rects.last().unwrap().bottom() < sb.settings.y);
     assert!(matches!(app.sidebar_hit(sb.rects[23].x + 5.0, sb.rects[23].y + 5.0), Some(Hit::Side(23))));
     assert!(app.sidebar_hit(sb.rect.right() + 50.0, sb.rect.y + 5.0).is_none());
@@ -126,31 +129,35 @@ fn side_labels(app: &App) -> Vec<&str> {
     app.nav.sidebar.items.iter().map(|it| it.label.as_str()).collect()
 }
 
+fn empty_area(app: &App) -> Rect {
+    let list = app.nav.sidebar.list;
+    Rect::new(list.x, list.bottom() - 12.0, list.w, 8.0)
+}
+
+fn disabled(items: &[MenuItem]) -> Vec<String> {
+    items.iter().filter_map(|i| if let MenuItem::Command { label, disabled: true, .. } = i { Some(label.clone()) } else { None }).collect()
+}
+
 #[test]
-fn sections_collapse_hide_and_come_back() {
+fn headers_fold_and_the_empty_area_menu_hides_sections() {
     let mut app = app_with_places();
-    click(header(&app, Section::Drives), &mut app, MouseButton::Left);
-    assert_eq!(side_labels(&app), ["a", "b", "Recycle Bin", "Debian"]);
+    assert_eq!(side_labels(&app), ["a", "b", "Disk (C:)", "USB (E:)", "This PC", "Recycle Bin", "Home", "Debian"]);
+    click(header(&app, Section::Storage), &mut app, MouseButton::Left);
+    assert_eq!(side_labels(&app), ["a", "b", "This PC", "Recycle Bin", "Home", "Debian"]);
     assert_eq!(app.nav_prefs().collapsed, ["drives"]);
     assert_eq!(app.nav.sidebar.rects.len(), app.nav.sidebar.items.len());
-    click(header(&app, Section::Wsl), &mut app, MouseButton::Right);
+    click(empty_area(&app), &mut app, MouseButton::Right);
     let m = menu(&mut app);
     assert!(!m.shell);
-    assert_eq!(labels(&m.menu), ["Collapse", "Hide this section", "Pinned *", "Recent *", "Folders *", "Libraries *", "Drives *", "WSL *", "Tags *", "Compact sidebar"]);
-    run(&mut app, &m, "Hide this section");
-    assert!(!app.nav.sidebar.headers.iter().any(|h| h.1 == Section::Wsl));
-    assert_eq!(side_labels(&app), ["a", "b", "Recycle Bin"]);
-    click(header(&app, Section::Folders), &mut app, MouseButton::Right);
-    let m = menu(&mut app);
-    assert!(labels(&m.menu).contains(&"WSL".to_owned()));
+    let all = labels(&m.menu);
+    for want in ["Recents *", "Bookmarks *", "Storage *", "Places *", "Libraries *", "WSL *", "Tags *", "Compact sidebar"] {
+        assert!(all.contains(&want.to_owned()), "{want} not in {all:?}");
+    }
     run(&mut app, &m, "WSL");
-    assert!(app.nav.sidebar.headers.iter().any(|h| h.1 == Section::Wsl));
-    click(header(&app, Section::Wsl), &mut app, MouseButton::Right);
-    let m = menu(&mut app);
-    run(&mut app, &m, "Hide this section");
+    assert!(!app.nav.sidebar.headers.iter().any(|h| h.1 == Section::Wsl));
     assert!(app.run_action("quick_access.sections", Instant::now()));
     assert!(app.nav_prefs().collapsed.is_empty() && app.nav_prefs().hidden.is_empty());
-    assert_eq!(side_labels(&app).len(), 6);
+    assert_eq!(side_labels(&app).len(), 8);
 }
 
 fn stays(items: &[MenuItem]) -> Vec<String> {
@@ -167,9 +174,9 @@ fn stays(items: &[MenuItem]) -> Vec<String> {
 #[test]
 fn section_toggles_keep_the_menu_open_and_update_the_sidebar_behind_it() {
     let mut app = app_with_places();
-    click(header(&app, Section::Folders), &mut app, MouseButton::Right);
+    click(empty_area(&app), &mut app, MouseButton::Right);
     let m = menu(&mut app);
-    assert_eq!(stays(&m.menu), ["Pinned", "Recent", "Folders", "Libraries", "Drives", "WSL", "Tags", "Compact sidebar"], "only the show/hide toggles stay open");
+    assert_eq!(stays(&m.menu), ["Recents", "Bookmarks", "Storage", "Places", "Libraries", "WSL", "Tags", "Compact sidebar"], "only the show/hide toggles stay open");
     app.on_event(&Event::ShowMenu { items: m.menu, x: 300.0, y: 100.0, launches: Vec::new() }, Instant::now());
     let mut g = Gfx::new(Mono, 1024);
     app.frame(&mut g, Instant::now());
@@ -183,14 +190,50 @@ fn section_toggles_keep_the_menu_open_and_update_the_sidebar_behind_it() {
         key(&mut app, k);
     }
     assert!(app.own_menu_open(), "hiding a section leaves the menu open");
-    assert!(app.nav.sidebar.is_hidden(Section::Folders));
-    assert!(!side_labels(&app).contains(&"Recycle Bin"), "the sidebar behind the menu follows");
+    assert!(app.nav.sidebar.is_hidden(Section::Storage));
+    assert!(!side_labels(&app).contains(&"Disk (C:)"), "the sidebar behind the menu follows");
     key(&mut app, Key::Enter);
-    assert!(app.own_menu_open() && !app.nav.sidebar.is_hidden(Section::Folders), "the same row toggles back");
+    assert!(app.own_menu_open() && !app.nav.sidebar.is_hidden(Section::Storage), "the same row toggles back");
     key(&mut app, Key::Escape);
     key(&mut app, Key::Up);
     key(&mut app, Key::Enter);
     assert!(!app.own_menu_open(), "ordinary commands still close the menu");
+}
+
+#[test]
+fn the_header_menu_folds_shifts_shows_paths_and_clears() {
+    let mut app = app_with_places();
+    click(header(&app, Section::Bookmarks), &mut app, MouseButton::Right);
+    let m = menu(&mut app);
+    assert_eq!(labels(&m.menu), ["Collapse All", "Expand All", "Show Paths", "Shift Group Up", "Shift Group Down", "Restore Groups Order", "Clear Bookmarks"]);
+    assert_eq!(disabled(&m.menu), ["Expand All", "Shift Group Up", "Restore Groups Order"], "Recents is empty, so Bookmarks is the first group shown");
+    run(&mut app, &m, "Shift Group Down");
+    assert_eq!(app.nav_prefs().order()[..4], [Section::Recents, Section::Storage, Section::Bookmarks, Section::Places]);
+    assert_eq!(side_labels(&app)[..3], ["Disk (C:)", "USB (E:)", "a"]);
+    click(header(&app, Section::Storage), &mut app, MouseButton::Right);
+    let m = menu(&mut app);
+    assert!(!disabled(&m.menu).contains(&"Restore Groups Order".to_owned()));
+    assert!(!labels(&m.menu).iter().any(|l| l.starts_with("Clear")), "Storage has no last group");
+    run(&mut app, &m, "Restore Groups Order");
+    assert_eq!(app.nav_prefs().order(), Section::ALL);
+    click(header(&app, Section::Places), &mut app, MouseButton::Right);
+    let m = menu(&mut app);
+    run(&mut app, &m, "Collapse All");
+    assert!(side_labels(&app).is_empty());
+    click(header(&app, Section::Places), &mut app, MouseButton::Right);
+    let m = menu(&mut app);
+    run(&mut app, &m, "Expand All");
+    assert_eq!(side_labels(&app).len(), 8);
+    click(header(&app, Section::Places), &mut app, MouseButton::Right);
+    let m = menu(&mut app);
+    run(&mut app, &m, "Show Paths");
+    assert!(app.nav_prefs().quick.show_paths);
+    assert_eq!(app.nav.sidebar.items[0].path, r"C:\a");
+    click(header(&app, Section::Bookmarks), &mut app, MouseButton::Right);
+    let m = menu(&mut app);
+    run(&mut app, &m, "Clear Bookmarks");
+    assert!(app.nav_state().pinned.is_empty());
+    assert!(app.run_action("bookmarks.clear", Instant::now()));
 }
 
 #[test]
@@ -202,29 +245,29 @@ fn recent_files_and_folders_have_their_own_capped_group() {
     app.set_places(Arc::new(places));
     app.drain_effects().for_each(drop);
     let labels: Vec<String> = side_labels(&app).into_iter().map(str::to_owned).collect();
-    assert_eq!(labels[..3], ["a", "b", "r0"], "Recent follows Pinned");
-    assert_eq!(app.nav.sidebar.items.iter().filter(|it| it.section == Section::Recent).count(), 10);
-    assert!(app.nav.sidebar.headers.iter().any(|h| h.1 == Section::Recent));
+    assert_eq!(labels[..3], ["r0", "r1", "r2"], "Recents come first");
+    assert_eq!(app.nav.sidebar.items.iter().filter(|it| it.section == Section::Recents).count(), 10);
+    assert!(app.nav.sidebar.headers.iter().any(|h| h.1 == Section::Recents));
     app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
     let asked: Vec<(Vec<u8>, IconKind)> = app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { Some((r.path.as_bytes().to_vec(), r.kind)) } else { None }).collect();
     assert!(asked.contains(&(br"C:\r\r0".to_vec(), IconKind::Place)) && asked.contains(&(br"C:\r\r1".to_vec(), IconKind::File)), "{asked:?}");
     let file = labels.iter().position(|l| *l == "r1").unwrap();
     app.open_side_item(file, false, Instant::now());
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } if path == FsPath::parse(r"C:\r\r1").unwrap())));
-    assert!(!app.nav.sidebar.pinnable(file) && app.nav.sidebar.pinnable(file - 1), "files have no pin button");
+    let a = labels.iter().position(|l| *l == "a").unwrap();
+    assert!(!app.nav.sidebar.removable(file) && app.nav.sidebar.removable(a), "only bookmarks have a remove button");
     click(app.nav.sidebar.rects[file], &mut app, MouseButton::Right);
     let m = menu(&mut app);
     run(&mut app, &m, "Remove from the list");
     assert!(!side_labels(&app).contains(&"r1"));
-    assert_eq!(app.nav.sidebar.items.iter().filter(|it| it.section == Section::Recent).count(), 10, "the next entry moves up");
+    assert_eq!(app.nav.sidebar.items.iter().filter(|it| it.section == Section::Recents).count(), 10, "the next entry moves up");
     let folder = side_labels(&app).iter().position(|l| *l == "r0").unwrap();
     app.open_side_item(folder, false, Instant::now());
     assert_eq!(app.current_location(), &loc(r"C:\r\r0"));
-    click(header(&app, Section::Recent), &mut app, MouseButton::Right);
+    click(header(&app, Section::Recents), &mut app, MouseButton::Right);
     let m = menu(&mut app);
-    assert!(stays(&m.menu).contains(&"Recent".to_owned()));
-    run(&mut app, &m, "Recent");
-    assert!(!app.nav.sidebar.items.iter().any(|it| it.section == Section::Recent) && app.nav.sidebar.is_hidden(Section::Recent));
+    run(&mut app, &m, "Clear Recents");
+    assert!(!app.nav.sidebar.items.iter().any(|it| it.section == Section::Recents));
 }
 
 #[test]
@@ -293,28 +336,28 @@ fn item_menus_offer_place_commands() {
 #[test]
 fn dragging_folders_onto_pinned_pins_them_and_collapsed_sections_spring_open() {
     let mut app = app_with_places();
-    let pinned = header(&app, Section::Pinned);
+    let pinned = header(&app, Section::Bookmarks);
     let (x, y) = (pinned.x + 10.0, pinned.y + pinned.h / 2.0);
     let paths = vec![FsPath::parse(r"D:\new").unwrap(), FsPath::parse(r"D:\file.txt").unwrap()];
     let (t, all, none) = (Instant::now(), 7, Mods::default());
     app.drag(&DragEvent::Enter { paths: paths.clone(), x, y, mods: none, allowed: all }, t);
     assert_eq!(app.drop_caption(), Some(("Pin to %1".to_owned(), "Sidebar".to_owned())));
-    assert_eq!(app.drop_spot(), Some(Spot::SideHeader(Section::Pinned)));
+    assert_eq!(app.drop_spot(), Some(Spot::SideHeader(Section::Bookmarks)));
     assert_eq!(app.drag(&DragEvent::Drop { x, y, mods: none, allowed: all }, t), 4);
     assert!(app.drain_effects().any(|e| matches!(e, Effect::PinFolders(p) if p == paths)));
     app.pin_locations(vec![loc(r"D:\new"), loc(r"C:\a")]);
     assert_eq!(app.nav_state().pinned, [loc(r"C:\a"), loc(r"C:\b"), loc(r"D:\new")]);
     app.pin_locations(vec![loc(r"C:\a")]);
     assert!(app.tab().error.is_some(), "nothing new to pin says so");
-    app.toggle_section(Section::Drives);
-    let drives = header(&app, Section::Drives);
+    app.toggle_section(Section::Storage);
+    let drives = header(&app, Section::Storage);
     let (x, y) = (drives.x + 10.0, drives.y + drives.h / 2.0);
     app.drag(&DragEvent::Enter { paths, x, y, mods: none, allowed: all }, t);
     assert_eq!(app.drag(&DragEvent::Over { x, y, mods: none, allowed: all }, t), 0);
     app.drag(&DragEvent::Over { x, y, mods: none, allowed: all }, t + Duration::from_millis(300));
-    assert!(app.nav.sidebar.is_collapsed(Section::Drives));
+    assert!(app.nav.sidebar.is_collapsed(Section::Storage));
     app.drag(&DragEvent::Over { x, y, mods: none, allowed: all }, t + Duration::from_millis(600));
-    assert!(!app.nav.sidebar.is_collapsed(Section::Drives), "half a second of hovering expands the section");
+    assert!(!app.nav.sidebar.is_collapsed(Section::Storage), "half a second of hovering expands the section");
 }
 
 #[test]
@@ -361,7 +404,7 @@ fn places_ask_the_system_for_their_icons_and_keep_glyphs_until_then() {
         assert!(asked.contains(&want), "{want:?} not in {asked:?}");
     }
     assert!(!asked.iter().any(|(p, _)| p == br"Z:\"), "an offline share is not touched");
-    assert_eq!(asked.len(), 7, "{asked:?}");
+    assert_eq!(asked.len(), 8, "{asked:?}");
     assert!(app.icons.values().all(|s| *s == crate::ui::IconState::Pending));
 }
 
@@ -463,4 +506,106 @@ fn drives_set_the_minimum_sidebar_width() {
     app.begin_splitter_drag(min);
     app.drag_splitter(0.0, min, min);
     assert_eq!(app.nav_state().sidebar_w, min, "the splitter stops at the drive minimum");
+}
+
+fn type_text(app: &mut App, text: &str) {
+    for c in text.chars() {
+        app.on_event(&Event::Char(c), Instant::now());
+    }
+}
+
+#[test]
+fn alt_f_filters_quick_access_with_marks_and_escape_clears_it() {
+    let mut app = app_with_places();
+    let alt = Mods { ctrl: false, shift: false, alt: true };
+    app.on_event(&Event::Key { key: Key::Char('F'), mods: alt, pressed: true }, Instant::now());
+    assert_eq!(app.focus, Focus::Sidebar);
+    assert!(app.nav.sidebar.typing);
+    type_text(&mut app, "dsk");
+    assert_eq!(side_labels(&app), ["Disk (C:)"]);
+    assert_eq!(app.nav.sidebar.items[0].marks, [0..1, 2..4]);
+    assert!(app.nav.sidebar.headers.iter().all(|h| h.1 == Section::Storage), "groups without matches are not shown");
+    frame(&mut app);
+    let c = app.nav.sidebar.clear;
+    assert!(c.w > 0.0);
+    assert_eq!(app.hit(c.x + c.w / 2.0, c.y + c.h / 2.0), Hit::QuickClear);
+    click(header(&app, Section::Storage), &mut app, MouseButton::Left);
+    assert_eq!(side_labels(&app), ["Disk (C:)"], "a folded group still shows its matches while filtering");
+    app.on_event(&Event::Key { key: Key::Escape, mods: Mods::default(), pressed: true }, Instant::now());
+    assert!(app.nav.sidebar.filter.text().is_empty());
+    assert!(!side_labels(&app).contains(&"Disk (C:)"), "the fold applies again once the filter is gone");
+    let f = app.nav.sidebar.field;
+    assert_eq!(app.hit(f.x + f.w / 2.0, f.y + f.h / 2.0), Hit::QuickField);
+    click(f, &mut app, MouseButton::Left);
+    assert!(app.nav.sidebar.typing && app.focus == Focus::Sidebar);
+    type_text(&mut app, "zz");
+    assert!(side_labels(&app).is_empty());
+    click(app.nav.sidebar.clear, &mut app, MouseButton::Left);
+    assert!(app.nav.sidebar.filter.text().is_empty());
+}
+
+#[test]
+fn short_paths_drop_the_home_parent_and_trailing_separators() {
+    let home = loc(r"C:\Users\brano");
+    assert_eq!(short_path(&loc(r"C:\Users\brano\Downloads"), Some(&home)), r"brano\Downloads");
+    assert_eq!(short_path(&loc(r"c:\users\brano"), Some(&home)), "brano");
+    assert_eq!(short_path(&loc(r"C:\"), Some(&home)), "C:");
+    assert_eq!(short_path(&loc(r"D:\work"), Some(&home)), r"D:\work");
+    assert_eq!(short_path(&loc(r"C:\Usersx\b"), Some(&home)), r"C:\Usersx\b");
+    assert_eq!(short_path(&Location::computer(), Some(&home)), "");
+    assert_eq!(short_path(&Location::recycle_bin(), None), "");
+}
+
+#[test]
+fn bookmarks_have_a_trash_button_that_asks_first() {
+    let mut app = app_with_places();
+    frame(&mut app);
+    let r = app.nav.sidebar.rects[0];
+    app.on_event(&Event::MouseMove { x: r.x + 5.0, y: r.y + 5.0 }, Instant::now());
+    let pin = app.nav.sidebar.pin_rect(r, app.scale);
+    assert_eq!(app.hit(pin.x + pin.w / 2.0, pin.y + pin.h / 2.0), Hit::SidePin(0));
+    assert_eq!(app.tip_text(Hit::SidePin(0)).unwrap().line, "Remove this bookmark.");
+    click(pin, &mut app, MouseButton::Left);
+    assert_eq!(app.nav_state().pinned.len(), 2, "removing asks first");
+    app.on_event(&Event::Key { key: Key::Enter, mods: Mods::default(), pressed: true }, Instant::now());
+    assert_eq!(app.nav_state().pinned, [loc(r"C:\b")]);
+    let drive = side_labels(&app).iter().position(|l| *l == "Disk (C:)").unwrap();
+    assert!(!app.nav.sidebar.removable(drive));
+}
+
+#[test]
+fn visits_are_counted_and_the_five_most_visited_are_offered() {
+    let mut app = App::new(Persisted { path: loc(r"C:\start"), ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 700), Instant::now());
+    for (path, times) in [(r"C:\a", 3), (r"C:\b", 1), (r"C:\c", 5), (r"C:\d", 2), (r"C:\e", 4), (r"C:\f", 6)] {
+        for _ in 0..times {
+            app.navigate(loc(path), Instant::now());
+            app.navigate(loc(r"C:\start"), Instant::now());
+        }
+    }
+    app.go_home_page(false, Instant::now());
+    assert!(!app.nav_prefs().quick.visits.iter().any(|(l, _)| l.is_home_page()), "the Home page is not a folder visit");
+    let top: Vec<String> = app.nav_prefs().most_visited().iter().map(|l| l.display().into_owned()).collect();
+    assert_eq!(top, [r"C:\f", r"C:\c", r"C:\e", r"C:\a", r"C:\d"]);
+    app.drain_effects().for_each(drop);
+    let r = app.layout.nav[3];
+    click(r, &mut app, MouseButton::Left);
+    let m = menu(&mut app);
+    assert_eq!(labels(&m.menu), ["f", "c", "e", "a", "d"]);
+    run(&mut app, &m, "c");
+    assert_eq!(app.current_location(), &loc(r"C:\c"));
+}
+
+#[test]
+fn quick_prefs_are_sanitized() {
+    let mut p = NavPrefs::default();
+    p.quick.order = (0..100).map(|k| format!("x{k}")).collect();
+    p.quick.visits = (0..200).map(|k| (loc(&format!(r"C:\v{k}")), 1)).collect();
+    let p = p.sanitized();
+    assert_eq!(p.quick.order.len(), 100, "short lists are kept as they are");
+    assert!(p.quick.visits.len() <= 64);
+    assert_eq!(p.order(), Section::ALL);
+}
+
+fn frame(app: &mut App) {
+    app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
 }

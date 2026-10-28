@@ -320,7 +320,6 @@ impl App {
             s.drag = SDrag::None;
             s.recent_open = true;
             s.recent_sel = None;
-            self.editing = false;
             self.marquee = None;
         }
         self.effects.push(Effect::Title(self.search_title()));

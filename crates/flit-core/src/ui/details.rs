@@ -1,5 +1,6 @@
 use super::layouts::{LayoutMode, Sizes};
 use super::ops::TIMER_SLACK;
+use super::sidebar::PlaceCmd;
 use super::{centered, App, Column, Drag, Effect, Hit, MenuItem, ShellMenu, Tab, BIN_COLUMNS, COLUMNS, REPO_COLUMNS, G_CHEVRON, G_FILE, G_FOLDER, G_SORT_DOWN};
 use crate::fmt as format;
 use crate::hash::{FxHashMap, FxHasher};
@@ -7,6 +8,7 @@ use crate::i18n::{P, S};
 use crate::input::{CursorIcon, MouseButton};
 use crate::listing::{attr, FsError, FsErrorKind, Listing};
 use crate::location::Location;
+use crate::path::PathKind;
 use crate::name;
 use crate::provider::TabId;
 use crate::recycle;
@@ -198,7 +200,23 @@ impl Default for ViewPrefs {
 #[derive(Default)]
 struct Lru {
     map: FxHashMap<u64, (u64, FolderView)>,
+    deep: Vec<u64>,
     clock: u64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ViewMode {
+    None,
+    Folder,
+    Subfolders,
+}
+
+pub(super) fn view_mode_glyph(mode: ViewMode) -> &'static str {
+    match mode {
+        ViewMode::None => "\u{E8A9}",
+        ViewMode::Folder => G_FOLDER,
+        ViewMode::Subfolders => "\u{E8F4}",
+    }
 }
 
 #[derive(Clone, Default)]
@@ -229,7 +247,60 @@ impl FolderViews {
             let cut = stamps.len() - FOLDER_VIEWS_CAP * 3 / 4;
             let keep = *stamps.select_nth_unstable(cut).1;
             l.map.retain(|_, e| e.0 >= keep);
+            let Lru { map, deep, .. } = &mut *l;
+            deep.retain(|k| map.contains_key(k));
         }
+    }
+
+    pub fn mode(&self, key: u64) -> ViewMode {
+        let l = self.lock();
+        match (l.map.contains_key(&key), l.deep.contains(&key)) {
+            (false, _) => ViewMode::None,
+            (true, false) => ViewMode::Folder,
+            (true, true) => ViewMode::Subfolders,
+        }
+    }
+
+    pub fn set_mode(&self, key: u64, mode: ViewMode, v: FolderView) {
+        if mode == ViewMode::None {
+            let mut l = self.lock();
+            l.map.remove(&key);
+            l.deep.retain(|&k| k != key);
+            return;
+        }
+        if !self.lock().map.contains_key(&key) {
+            self.put(key, v);
+        }
+        let mut l = self.lock();
+        l.deep.retain(|&k| k != key);
+        if mode == ViewMode::Subfolders {
+            l.deep.push(key);
+        }
+    }
+
+    pub fn owner(&self, keys: &[u64]) -> Option<u64> {
+        let l = self.lock();
+        let (first, rest) = keys.split_first()?;
+        if l.map.contains_key(first) {
+            return Some(*first);
+        }
+        rest.iter().copied().find(|k| l.deep.contains(k) && l.map.contains_key(k))
+    }
+
+    pub fn deep_keys(&self) -> Vec<u64> {
+        self.lock().deep.clone()
+    }
+
+    pub fn set_deep(&self, keys: Vec<u64>) {
+        let mut l = self.lock();
+        let Lru { map, deep, .. } = &mut *l;
+        *deep = keys.into_iter().filter(|k| map.contains_key(k)).collect();
+    }
+
+    pub fn clear(&self) {
+        let mut l = self.lock();
+        l.map.clear();
+        l.deep.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -268,6 +339,10 @@ impl std::fmt::Debug for FolderViews {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "FolderViews({})", self.len())
     }
+}
+
+fn lineage(loc: &Location) -> Vec<u64> {
+    std::iter::successors(Some(loc.clone()), Location::parent).map(|l| folder_key(&l)).collect()
 }
 
 pub fn folder_key(loc: &Location) -> u64 {
@@ -373,11 +448,52 @@ impl App {
 
     fn view_for(&self, t: &Tab) -> FolderView {
         let inherited = if t.mode == LayoutMode::Columns { t.folder_view() } else { self.prefs.defaults };
-        self.folders.get(folder_key(t.location())).unwrap_or(inherited)
+        self.folders.owner(&lineage(t.location())).and_then(|k| self.folders.get(k)).unwrap_or(inherited)
+    }
+
+    pub(super) fn view_mode(&self) -> ViewMode {
+        self.folders.mode(folder_key(self.current_location()))
+    }
+
+    pub(super) fn set_view_mode(&mut self, mode: ViewMode) {
+        let t = self.tab();
+        self.folders.set_mode(folder_key(t.location()), mode, t.folder_view());
+        self.dirty = true;
+    }
+
+    pub(super) fn cycle_view_mode(&mut self) {
+        self.set_view_mode(match self.view_mode() {
+            ViewMode::None => ViewMode::Folder,
+            ViewMode::Folder => ViewMode::Subfolders,
+            ViewMode::Subfolders => ViewMode::None,
+        });
+    }
+
+    pub(super) fn view_mode_menu(&mut self) {
+        let mode = self.view_mode();
+        let r = self.layout.view;
+        let menu = self.collect(|_, m| {
+            m.header(S::DetailsViewSaved.t());
+            for (v, label) in [(ViewMode::None, S::DetailsViewNone), (ViewMode::Folder, S::DetailsViewFolder), (ViewMode::Subfolders, S::DetailsViewSubfolders)] {
+                m.radio_place(label.t(), PlaceCmd::ViewMode(v), view_mode_glyph(v), v == mode);
+            }
+            m.separator();
+            m.place_icon(S::DetailsViewDefault.t(), PlaceCmd::DefaultView, "", mode == ViewMode::Folder);
+        });
+        self.button_menu(Hit::ViewMode, r.x, r.bottom(), menu);
+    }
+
+    pub(super) fn clear_folder_views(&mut self) {
+        self.folders.clear();
+        self.dirty = true;
     }
 
     pub(super) fn load_tab(&mut self, k: usize, select: Option<Vec<u8>>, now: Instant) {
         let gen = self.gen();
+        if self.tabs[k].view_loc != *self.tabs[k].location() {
+            let loc = self.tabs[k].location().clone();
+            self.count_visit(&loc);
+        }
         if !self.prefs.same_for_all {
             let fv = self.view_for(&self.tabs[k]);
             self.tabs[k].set_folder_view(fv);
@@ -399,9 +515,16 @@ impl App {
     }
 
     pub(super) fn remember_view(&mut self) {
-        if !self.prefs.same_for_all {
-            let t = self.tab();
-            self.folders.put(folder_key(t.location()), t.folder_view());
+        if self.prefs.same_for_all {
+            return;
+        }
+        let t = self.tab();
+        let special = matches!(t.location().path().kind(), PathKind::RecycleBin | PathKind::Computer | PathKind::Home);
+        match self.folders.owner(&lineage(t.location())) {
+            Some(k) => self.folders.put(k, t.folder_view()),
+            None if special => self.folders.put(folder_key(t.location()), t.folder_view()),
+            None if t.mode != LayoutMode::Columns => self.prefs.defaults = t.folder_view(),
+            None => {}
         }
     }
 

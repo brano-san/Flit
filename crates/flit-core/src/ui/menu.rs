@@ -136,6 +136,25 @@ impl Menu<'_> {
         self.command(Cmd::Place(cmd), label, String::new(), checked);
     }
 
+    pub(super) fn place_icon(&mut self, label: &str, cmd: super::sidebar::PlaceCmd, icon: &'static str, disabled: bool) {
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked: false, stay: false, mark: Mark::None, icon, disabled });
+        self.cmds.push(Cmd::Place(cmd));
+    }
+
+    pub(super) fn go(&mut self, label: &str, k: usize, icon: &'static str) {
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked: false, stay: false, mark: Mark::None, icon, disabled: false });
+        self.cmds.push(Cmd::Go(k));
+    }
+
+    pub(super) fn header(&mut self, label: &str) {
+        self.items.push(MenuItem::Header(label.to_owned()));
+    }
+
+    pub(super) fn radio_place(&mut self, label: &str, cmd: super::sidebar::PlaceCmd, icon: &'static str, checked: bool) {
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked, stay: false, mark: Mark::Radio, icon, disabled: false });
+        self.cmds.push(Cmd::Place(cmd));
+    }
+
     pub(super) fn toggle(&mut self, label: &str, cmd: super::sidebar::PlaceCmd, checked: bool) {
         self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked, stay: true, mark: Mark::Check, icon: "", disabled: false });
         self.cmds.push(Cmd::Place(cmd));
@@ -173,7 +192,7 @@ impl Menu<'_> {
         }
     }
 
-    fn iconed(&mut self, glyph: &'static str) {
+    pub(super) fn iconed(&mut self, glyph: &'static str) {
         if let Some(MenuItem::Command { icon, .. }) = self.items.last_mut() {
             *icon = glyph;
         }

@@ -787,7 +787,7 @@ impl App {
             Pick::Tags(t) => self.tag_input(t, text),
             Pick::Setting(p) => self.setting_input(p, text),
             Pick::Server => self.connect_server(text),
-            Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Encoding(_) | Pick::Toolbar(_) => {}
+            Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Encoding(_) | Pick::Toolbar(_) | Pick::GoTo | Pick::Crumb(_) => {}
         }
     }
 
@@ -1061,7 +1061,6 @@ impl App {
         self.reveal_focus(false);
         self.ops.rename = Some(Rename { tab, gen, idx, edit, scroll: 0.0, rect: Rect::default(), click: None, selecting: false, batch, confirmed: None });
         self.ops.slow = None;
-        self.editing = false;
         self.focus = Focus::List;
         self.dirty = true;
     }
@@ -1396,8 +1395,8 @@ impl App {
             Hit::Side(_) | Hit::SidePin(_) => None,
             Hit::NewTab => Some(Target::NewTab),
             Hit::Header(_) | Hit::ColSep(_) | Hit::Encoding | Hit::Bin(_) => None,
-            Hit::SideHeader(Section::Pinned) => Some(Target::Pin),
-            Hit::SideHeader(_) | Hit::HomeItem(_) | Hit::HomeEmpty | Hit::HomeButton => None,
+            Hit::SideHeader(Section::Bookmarks) => Some(Target::Pin),
+            Hit::SideHeader(_) | Hit::HomeItem(_) | Hit::HomeEmpty => None,
             Hit::SideEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose | Hit::PanelSep(_) | Hit::Menu | Hit::QuickToggle => None,
             Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside | Hit::PaletteClose | Hit::PaletteDescribe | Hit::PaletteScroll(_) => None,
             Hit::OpsButton | Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsClear | Hit::OpsCancel(_) | Hit::OpsMore(_) | Hit::OpsMenu(_) => None,
@@ -1493,7 +1492,7 @@ impl App {
         match d.target.as_ref()? {
             Target::Into { spot, .. } | Target::Run { spot, .. } | Target::Trash(spot) => Some(*spot),
             Target::NewTab => Some(Spot::NewTab),
-            Target::Pin => Some(Spot::SideHeader(Section::Pinned)),
+            Target::Pin => Some(Spot::SideHeader(Section::Bookmarks)),
             Target::Reveal => None,
         }
     }

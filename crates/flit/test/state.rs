@@ -4,7 +4,8 @@ use flit_core::ui::{folder_key, Columns};
 
 const GIT_LEN: usize = 35;
 const DESCRIPTIONS_LEN: usize = 1;
-const AFTER_WORD: usize = GIT_LEN + DESCRIPTIONS_LEN;
+const QUICK_LEN: usize = 4;
+const AFTER_WORD: usize = GIT_LEN + DESCRIPTIONS_LEN + QUICK_LEN;
 const WORD_LEN: usize = 1 + AFTER_WORD;
 
 #[test]
@@ -124,6 +125,7 @@ fn sidebar_and_home_preferences_ride_sixth_after_the_pane_so_older_files_still_l
         widgets_off: vec!["recent".into()],
         recent_hidden: vec![(flit_core::FsPath::parse(r"C:\a.txt").unwrap(), 42)],
         recent_cleared: 7,
+        quick: QuickPrefs::default(),
     };
     let pane = PaneState { visible: true, details: true, right_w: 410.0, bottom_h: 300.0, volume: 0.25 };
     let s = Saved::new(Persisted::default(), None).with_pane(pane).with_side(side.clone());
@@ -295,8 +297,24 @@ fn the_palette_description_switch_rides_last_and_older_files_show_descriptions()
     let mut persisted = Persisted::default();
     persisted.prefs.command_descriptions = false;
     let bytes = Saved::new(persisted, None).encode().unwrap();
-    assert_eq!(bytes.last(), Some(&0));
+    assert_eq!(bytes[bytes.len() - QUICK_LEN - 1], 0);
     assert!(!Saved::decode(&bytes).unwrap().persisted.prefs.command_descriptions);
-    let older = &bytes[..bytes.len() - DESCRIPTIONS_LEN];
+    let older = &bytes[..bytes.len() - QUICK_LEN - DESCRIPTIONS_LEN];
     assert!(Saved::decode(older).unwrap().persisted.prefs.command_descriptions);
+}
+
+#[test]
+fn quick_access_order_paths_visits_and_deep_views_ride_last() {
+    let persisted = Persisted { path: loc(r"D:\x"), ..Default::default() };
+    let deep = folder_key(&loc(r"D:\x"));
+    persisted.folders.put(deep, FolderView::default());
+    persisted.folders.set_deep(vec![deep, 42]);
+    let side = NavPrefs { quick: QuickPrefs { order: vec!["drives".into(), "pinned".into()], show_paths: true, visits: vec![(loc(r"D:\x"), 7)] }, ..Default::default() };
+    let bytes = Saved::new(persisted, None).with_side(side.clone()).encode().unwrap();
+    let back = Saved::decode(&bytes).unwrap();
+    assert_eq!(back.side.quick, side.quick);
+    assert_eq!(back.persisted.folders.deep_keys(), [deep], "keys without a saved view are dropped");
+    let record = postcard::to_stdvec(&QuickRecord { quick: side.quick.clone(), deep: vec![deep] }).unwrap().len();
+    let older = Saved::decode(&bytes[..bytes.len() - record]).unwrap();
+    assert_eq!(older.side.quick, QuickPrefs::default(), "older files start with the default order");
 }

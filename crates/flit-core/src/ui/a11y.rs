@@ -21,7 +21,7 @@ const PREVIEW: u64 = 9;
 const DIALOG: u64 = 10;
 const LEAF: u64 = 1 << 63;
 
-const NAV_IDS: [&str; 5] = ["nav.back", "nav.forward", "nav.up", "nav.refresh", "nav.home_page"];
+const NAV_IDS: [&str; 7] = ["nav.back", "nav.forward", "nav.up", "", "folder.cycle_view", "folder.bookmark", ""];
 
 pub(super) fn leaf(h: Hit) -> u64 {
     hash::hash(&format!("{h:?}")) | LEAF
@@ -78,14 +78,18 @@ impl App {
         put(&mut t, &mut targets, tabs, Hit::Menu, Role::Button, S::A11yButtonMainMenu.t(), self.panels.menu);
         put(&mut t, &mut targets, tabs, Hit::QuickToggle, Role::Button, S::A11yButtonQuickAccess.t(), self.panels.quick);
 
-        let nav = t.add(0, NAV, Role::ToolBar, S::A11yRegionNavigation.t(), union(l.nav.iter().copied().chain([l.home])));
+        let nav = t.add(0, NAV, Role::ToolBar, S::A11yRegionNavigation.t(), union(l.nav.iter().copied().chain([l.view, l.bookmark, l.more])));
         let tab = self.tab();
-        let enabled = [tab.history.can_back(), tab.history.can_forward(), tab.location().parent().is_some(), true, true];
-        let hits = [Hit::Nav(0), Hit::Nav(1), Hit::Nav(2), Hit::Nav(3), Hit::HomeButton];
-        let rects = [l.nav[0], l.nav[1], l.nav[2], l.nav[3], l.home];
-        for i in 0..5 {
-            let k = put(&mut t, &mut targets, nav, hits[i], Role::Button, action_title(NAV_IDS[i]), rects[i]);
-            t.nodes[k].help = description(NAV_IDS[i]).into();
+        let enabled = [tab.history.can_back(), tab.history.can_forward(), tab.location().parent().is_some(), true, true, true, true];
+        let hits = [Hit::Nav(0), Hit::Nav(1), Hit::Nav(2), Hit::Nav(3), Hit::ViewMode, Hit::Bookmark, Hit::PanelMenu];
+        let rects = [l.nav[0], l.nav[1], l.nav[2], l.nav[3], l.view, l.bookmark, l.more];
+        for i in 0..hits.len() {
+            let (name, help) = match NAV_IDS[i] {
+                "" => (if i == 3 { S::TooltipVisited.t() } else { S::TooltipPanelMenu.t() }, String::new()),
+                id => (action_title(id), description(id).into()),
+            };
+            let k = put(&mut t, &mut targets, nav, hits[i], Role::Button, name, rects[i]);
+            t.nodes[k].help = help;
             t.nodes[k].enabled = enabled[i];
             if self.focus == Focus::Nav && kb == Some(i) {
                 focus = Some(k);
@@ -94,12 +98,6 @@ impl App {
 
         if l.address.w > 0.0 && !self.search.active {
             let loc = self.tab().location().display().into_owned();
-            if self.editing {
-                let k = t.add(0, ADDRESS, Role::Edit, S::A11yRegionAddress.t(), l.address);
-                t.nodes[k].value = self.edit.text.clone();
-                t.nodes[k].help = description("nav.address").into();
-                focus = focus.or(Some(k));
-            } else {
                 let a = t.add(0, ADDRESS, Role::ToolBar, S::A11yRegionAddress.t(), l.address);
                 t.nodes[a].value = loc;
                 t.nodes[a].help = description("nav.address").into();
@@ -113,7 +111,6 @@ impl App {
                         };
                     }
                 }
-            }
         }
 
         if l.commands.h > 0.0 {

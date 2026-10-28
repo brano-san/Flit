@@ -2,6 +2,7 @@ use super::actions::{Group, ACTIONS};
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
 use super::fuzzy::fuzzy;
+use super::goto::Go;
 use super::settings_page::SettingPick;
 use super::tags::TagPick;
 use super::toolbar::ToolPick;
@@ -25,6 +26,8 @@ const TOP_GAP: f32 = 45.0;
 const EDGE: f32 = 12.0;
 const HINT_H: f32 = 36.0;
 const SCROLL_W: f32 = 14.0;
+const CRUMB_W: f32 = 320.0;
+const GO_W: f32 = 720.0;
 const DESC_PENALTY: i32 = 100_000;
 const G_SEARCH: &str = "\u{E721}";
 const G_DESCRIBE: &str = "\u{E8A5}";
@@ -61,6 +64,8 @@ pub(super) enum Pick {
     Setting(SettingPick),
     Toolbar(ToolPick),
     Server,
+    GoTo,
+    Crumb(usize),
 }
 
 impl Pick {
@@ -79,6 +84,7 @@ impl Pick {
             Pick::Setting(p) => p.placeholder(),
             Pick::Toolbar(t) => t.placeholder(),
             Pick::Server => S::SidebarDriveServerPrompt.t(),
+            Pick::GoTo | Pick::Crumb(_) => S::AddressGotoPlaceholder.t(),
         }
     }
 
@@ -97,6 +103,7 @@ impl Pick {
             Pick::Setting(p) => p.empty(),
             Pick::Toolbar(_) => S::PaletteEmptyToolbar.t(),
             Pick::Server => S::SidebarDriveServerEnter.t(),
+            Pick::GoTo | Pick::Crumb(_) => S::AddressGotoEmpty.t(),
         }
     }
 
@@ -108,7 +115,7 @@ impl Pick {
 pub(super) struct Palette {
     pub pick: Pick,
     pub titles: Vec<String>,
-    field: Field,
+    pub(super) field: Field,
     pub matches: Vec<usize>,
     pub marks: Vec<Vec<Range<usize>>>,
     pub keys: Vec<String>,
@@ -116,7 +123,7 @@ pub(super) struct Palette {
     descs: Vec<String>,
     ids: Vec<usize>,
     pub sel: usize,
-    first: usize,
+    pub first: usize,
     shift: f32,
     pub(super) scroll: Glide,
     list: Rect,
@@ -131,6 +138,7 @@ pub(super) struct Palette {
     opened: Option<Instant>,
     pub commands: Option<Commands>,
     describe: Rect,
+    pub go: Option<Go>,
 }
 
 fn described(query: &str, desc: &str) -> Option<i32> {
@@ -199,6 +207,7 @@ impl Palette {
             opened: None,
             commands: None,
             describe: Rect::default(),
+            go: None,
         };
         p.field.edit.set(text);
         p.field.edit.select_all();
@@ -272,6 +281,9 @@ impl Palette {
     }
 
     fn refresh(&mut self) {
+        if self.go.is_some() {
+            return;
+        }
         if self.commands.is_some() {
             return self.command_lines();
         }
@@ -293,7 +305,7 @@ impl Palette {
         self.matches.len().saturating_sub(self.page) as f32 * self.unit()
     }
 
-    fn select(&mut self, to: isize) {
+    pub(super) fn select(&mut self, to: isize) {
         let n = self.matches.len() as isize;
         if n == 0 {
             return;
@@ -324,9 +336,6 @@ impl App {
         let same = self.nav.palette.as_ref().is_some_and(|open| open.pick == p.pick);
         self.nav.palette = None;
         if !same {
-            if self.editing {
-                self.cancel_edit();
-            }
             self.nav.palette = Some(p);
         }
         self.layout();
@@ -354,6 +363,9 @@ impl App {
     }
 
     pub(super) fn run_palette_item(&mut self, index: usize, now: Instant) {
+        if self.go_open() {
+            return self.go_activate(index, now);
+        }
         let Some(p) = self.nav.palette.take() else { return };
         self.dirty = true;
         if p.pick.is_input() {
@@ -407,7 +419,11 @@ impl App {
             self.layout();
             return true;
         }
+        if self.go_key(key, m, now) {
+            return true;
+        }
         let closes = self.keymap.runs(key, m, "palette.show");
+        let mut changed_go = false;
         let Some(p) = &mut self.nav.palette else { return false };
         let page = p.page as isize;
         match key {
@@ -424,6 +440,7 @@ impl App {
                 FieldKey::Edited { changed, action } => {
                     if changed {
                         p.refresh();
+                        changed_go = p.go.is_some();
                     }
                     match action {
                         EditAction::Copy(s) => self.effects.push(Effect::SetClipboard(s)),
@@ -434,6 +451,9 @@ impl App {
                 FieldKey::Ignored if closes => self.close_palette(),
                 FieldKey::Ignored => {}
             },
+        }
+        if changed_go {
+            self.go_refresh();
         }
         self.layout();
         true
@@ -446,6 +466,9 @@ impl App {
         }
         p.field.insert(s);
         p.refresh();
+        if p.go.is_some() {
+            self.go_refresh();
+        }
         self.layout();
         true
     }
@@ -481,20 +504,36 @@ impl App {
         let (w, h, sc) = (self.size.0, self.size.1, self.scale);
         let s = |v: f32| (v * sc).round();
         let left = self.panels.left;
+        let anchor = match self.nav.palette.as_ref().map(|p| &p.pick) {
+            Some(Pick::Crumb(i)) => self.crumb_rect(*i),
+            _ => None,
+        };
         let Some(p) = &mut self.nav.palette else { return };
         let row_h = p.unit();
         let area = (w - left).max(s(200.0));
-        let pw = (w / 2.0).round().max(s(MIN_W)).min(area - 2.0 * s(EDGE)).max(s(120.0));
-        let x = (left + (area - pw) / 2.0).round().min(w - pw).max(0.0);
         let unit = s(row_h);
-        let fixed = s(8.0) + s(FIELD_H) + s(6.0) + s(HINT_H);
-        let y = (s(TAB_H) + s(TOOL_H) + s(TOP_GAP)).min((h - s(EDGE) - fixed - unit).max(s(EDGE)));
+        let hint_h = if anchor.is_some() { 0.0 } else { s(HINT_H) };
+        let fixed = s(8.0) + s(FIELD_H) + s(6.0) + hint_h;
+        let (x, y, pw) = match anchor {
+            Some(a) => {
+                let pw = a.w.max(s(CRUMB_W)).min(w - 2.0 * s(EDGE));
+                (a.x.min(w - s(EDGE) - pw).max(s(EDGE)), (a.bottom() + s(4.0)).min((h - s(EDGE) - fixed - unit).max(s(EDGE))), pw)
+            }
+            None => {
+                let pw = (w / 2.0).round().max(s(if p.go.is_some() { GO_W } else { MIN_W })).min(area - 2.0 * s(EDGE)).max(s(120.0));
+                ((left + (area - pw) / 2.0).round().min(w - pw).max(0.0), (s(TAB_H) + s(TOOL_H) + s(TOP_GAP)).min((h - s(EDGE) - fixed - unit).max(s(EDGE))), pw)
+            }
+        };
         let extra = if p.commands.is_some() { s(FIELD_H) + s(4.0) } else { 0.0 };
-        p.field_rect = Rect::new(x + s(8.0), y + s(8.0), pw - s(16.0) - s(FIELD_H) - s(4.0) - extra, s(FIELD_H));
+        let lead = if matches!(&p.go, Some(g) if g.crumb.is_none()) { 3.0 * s(FIELD_H) + s(9.0) } else { 0.0 };
+        if let Some(g) = &mut p.go {
+            g.buttons = std::array::from_fn(|k| if lead > 0.0 { Rect::new(x + pw - s(8.0) - s(FIELD_H) - lead + k as f32 * s(FIELD_H), y + s(8.0), s(FIELD_H), s(FIELD_H)) } else { Rect::default() });
+        }
+        p.field_rect = Rect::new(x + s(8.0), y + s(8.0), pw - s(16.0) - s(FIELD_H) - s(4.0) - extra - lead, s(FIELD_H));
         p.describe = if extra > 0.0 { Rect::new(p.field_rect.right() + s(4.0), p.field_rect.y, s(FIELD_H), s(FIELD_H)) } else { Rect::default() };
-        p.close = Rect::new(p.field_rect.right() + s(4.0) + extra, p.field_rect.y, s(FIELD_H), s(FIELD_H));
+        p.close = Rect::new(p.field_rect.right() + s(4.0) + extra + lead, p.field_rect.y, s(FIELD_H), s(FIELD_H));
         let top = p.field_rect.bottom() + s(6.0);
-        let room = (h - s(EDGE) - s(HINT_H) - top).max(unit);
+        let room = (h - s(EDGE) - hint_h - top).max(unit);
         p.page = ((room / unit).floor() as usize).max(1);
         let n = p.matches.len();
         let shown = n.clamp(1, p.page);
@@ -516,7 +555,7 @@ impl App {
         } else {
             ([Rect::default(); 2], Rect::default())
         };
-        p.hints = Rect::new(x, list.bottom(), pw, s(HINT_H));
+        p.hints = Rect::new(x, list.bottom(), pw, hint_h.max(s(6.0)));
         p.rect = Rect::new(x, y, pw, p.hints.bottom() - y);
     }
 
@@ -526,6 +565,7 @@ impl App {
             Hit::PaletteClose => Some(p.close),
             Hit::PaletteDescribe => Some(p.describe).filter(|r| r.w > 0.0),
             Hit::PaletteScroll(down) => Some(p.arrows[usize::from(down)]),
+            Hit::GoButton(k) => p.go.as_ref().map(|g| g.buttons[k]),
             _ => None,
         }
     }
@@ -547,6 +587,9 @@ impl App {
         if p.describe.contains(x, y) {
             return Some(Hit::PaletteDescribe);
         }
+        if let Some(k) = p.go.as_ref().and_then(|g| g.buttons.iter().position(|r| r.contains(x, y))) {
+            return Some(Hit::GoButton(k));
+        }
         if let Some(k) = p.arrows.iter().position(|r| r.contains(x, y)) {
             return Some(Hit::PaletteScroll(k == 1));
         }
@@ -562,21 +605,30 @@ impl App {
         let (close_font, arrow_font) = (self.icon_font(9.0), self.icon_font(8.0));
         let (active, hover, now) = (self.active, self.hover, self.last_frame.unwrap_or_else(Instant::now));
         let from = g.dl.instances.len();
-        let Some(p) = &mut self.nav.palette else { return };
+        let placeholder = self.nav.palette.as_ref().and_then(|p| p.go.as_ref().map(|_| self.go_placeholder(p)));
+        let Some(mut p) = self.nav.palette.take() else { return };
+        let mut requests = Vec::new();
         let opened = *p.opened.get_or_insert(now);
         let r = p.rect;
         let mut w = Paint::new(g, t, sc);
         w.frame(r);
         let fr = p.field_rect;
         w.field(fr, true);
-        w.centered(Rect::new(fr.x, fr.y, fr.h, fr.h), G_SEARCH, icons, t.text_dim);
+        let (lead, lead_ink) = if p.go.as_ref().is_some_and(|g| g.crumb.is_none()) { (super::G_FOLDER, t.accent) } else { (G_SEARCH, t.text_dim) };
+        w.centered(Rect::new(fr.x, fr.y, fr.h, fr.h), lead, icons, lead_ink);
         let inner = Rect::new(fr.x + fr.h, fr.y, fr.w - fr.h - s12, fr.h);
-        p.field.draw(w.g, t, inner, font, active, p.pick.placeholder(), sc, Some(&self.preedit));
+        p.field.draw(w.g, t, inner, font, active, placeholder.as_deref().unwrap_or(p.pick.placeholder()), sc, Some(&self.preedit));
         w.icon_button(p.close, G_CLOSE, close_font, Button::of(hover == Hit::PaletteClose, false, true), t.text_dim);
         if let Some(c) = &p.commands {
             w.icon_button(p.describe, G_DESCRIBE, icons, Button::of(hover == Hit::PaletteDescribe, c.descriptions, true), t.text_dim);
         }
+        if p.go.is_some() {
+            self.draw_go_buttons(w.g, t, &p, icons);
+        }
         w.g.dl.set_clip(Some(p.list));
+        if p.go.is_some() {
+            self.draw_go_rows(w.g, t, &p, font, small, self.icon_font(14.0), &mut requests);
+        }
         for (k, &row) in p.rows.iter().enumerate() {
             let i = p.first + k;
             let Some(c) = &p.commands else { break };
@@ -626,7 +678,7 @@ impl App {
                 }
             }
         }
-        for (k, &row) in p.rows.iter().enumerate().filter(|_| p.commands.is_none()) {
+        for (k, &row) in p.rows.iter().enumerate().filter(|_| p.commands.is_none() && p.go.is_none()) {
             let i = p.first + k;
             let selected = i == p.sel;
             if selected {
@@ -658,9 +710,18 @@ impl App {
             }
         }
         let hints = p.hints;
-        w.separator(hints.x + s12, hints.y, hints.w - 2.0 * s12);
-        let keys = [S::WidgetsKeyUp.t(), S::WidgetsKeyDown.t()];
-        w.hints(hints.x + hints.w / 2.0, hints.y + hints.h / 2.0, &[(&keys, S::WidgetsHintNavigate.t()), (&[S::WidgetsKeyEnter.t()], S::WidgetsHintUse.t()), (&[S::WidgetsKeyEscape.t()], S::WidgetsHintDismiss.t())], small);
+        let crumb = matches!(p.pick, Pick::Crumb(_));
+        if !crumb {
+            w.separator(hints.x + s12, hints.y, hints.w - 2.0 * s12);
+            let keys = [S::WidgetsKeyUp.t(), S::WidgetsKeyDown.t()];
+            if p.go.is_some() {
+                w.hints(hints.x + hints.w / 2.0, hints.y + hints.h / 2.0, &[(&keys, S::WidgetsHintNavigate.t()), (&[S::WidgetsKeyEnter.t()], S::WidgetsHintUse.t()), (&[S::WidgetsKeyTab.t()], S::WidgetsHintExpand.t()), (&[S::WidgetsKeyCtrlEnter.t()], S::WidgetsHintOpenInPanel.t()), (&[S::WidgetsKeyEscape.t()], S::WidgetsHintDismiss.t())], small);
+            } else {
+                w.hints(hints.x + hints.w / 2.0, hints.y + hints.h / 2.0, &[(&keys, S::WidgetsHintNavigate.t()), (&[S::WidgetsKeyEnter.t()], S::WidgetsHintUse.t()), (&[S::WidgetsKeyEscape.t()], S::WidgetsHintDismiss.t())], small);
+            }
+        }
+        self.nav.palette = Some(p);
+        self.request_icons(requests);
         self.pop(g, from, opened, (r.x + r.w / 2.0, r.y));
     }
 }

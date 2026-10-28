@@ -180,7 +180,7 @@ fn every_hot_path_stays_within_its_time_budget() {
     b.key(Key::Escape, NO);
     b.frame();
     b.worst("sidebar hover frame p99", 200, 6.0, |a, k| a.on_event(&Event::MouseMove { x: 60.0 + (k % 10) as f32 * 10.0, y: 140.0 + (k % 40) as f32 * 16.0 }, Instant::now()));
-    b.once("collapse a sidebar section", 10.0, |a| a.toggle_section(Section::Drives));
+    b.once("collapse a sidebar section", 10.0, |a| a.toggle_section(Section::Storage));
     b.once("new tab", 20.0, |a| {
         a.run_action("tab.new", Instant::now());
     });

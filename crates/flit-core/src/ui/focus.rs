@@ -13,7 +13,7 @@ impl App {
         let l = &self.layout;
         match region {
             Focus::TabBar => l.tabs.iter().enumerate().map(|(i, &(r, _))| (Hit::Tab(i), r)).chain([(Hit::NewTab, l.new_tab)]).collect(),
-            Focus::Nav => (0..4).map(|i| (Hit::Nav(i), l.nav[i])).chain([(Hit::HomeButton, l.home)]).collect(),
+            Focus::Nav => (0..4).map(|i| (Hit::Nav(i), l.nav[i])).chain([(Hit::ViewMode, l.view), (Hit::Bookmark, l.bookmark), (Hit::PanelMenu, l.more)]).collect(),
             Focus::Address => vec![(Hit::Address, l.address)],
             Focus::Toolbar => self.tool_buttons().into_iter().map(|(h, r, ..)| (Hit::Tool(h), r)).collect(),
             Focus::Sidebar => self.nav.sidebar.rects.iter().enumerate().map(|(i, &r)| (Hit::Side(i), r)).collect(),
@@ -25,7 +25,7 @@ impl App {
 
     fn reachable(&self, region: Focus) -> bool {
         match region {
-            Focus::Address => !self.search.active && self.layout.address.w > 0.0,
+            Focus::Address => false,
             Focus::List => true,
             _ => self.focus_targets(region).iter().any(|(_, r)| r.w > 0.0 && r.h > 0.0),
         }
@@ -33,9 +33,6 @@ impl App {
 
     pub(super) fn cycle_focus(&mut self, back: bool) {
         let at = ORDER.iter().position(|&f| f == self.focus).unwrap_or(5);
-        if self.editing {
-            self.cancel_edit();
-        }
         let n = ORDER.len();
         let next = (1..=n).map(|k| ORDER[if back { (at + n * 2 - k) % n } else { (at + k) % n }]).find(|&f| self.reachable(f)).unwrap_or(Focus::List);
         self.enter_focus(next);
@@ -56,14 +53,13 @@ impl App {
             _ => 0,
         };
         if region == Focus::Address {
-            self.begin_edit();
+            self.open_address();
         }
         self.dirty = true;
     }
 
     pub(super) fn focus_key(&mut self, key: Key, m: Mods, now: Instant) -> bool {
-        let suggesting = self.editing && self.suggesting();
-        if key == Key::Tab && !m.ctrl && !m.alt && !suggesting && self.nav.palette.is_none() && !self.cycles_panels() {
+        if key == Key::Tab && !m.ctrl && !m.alt && self.nav.palette.is_none() && !self.cycles_panels() {
             self.cycle_focus(m.shift);
             return true;
         }

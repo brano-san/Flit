@@ -43,20 +43,16 @@ impl App {
         if self.nav.palette.is_some() {
             return self.palette_insert(s);
         }
-        self.focus == Focus::Filter && self.filter_insert(s)
+        (self.focus == Focus::Filter && self.filter_insert(s)) || (self.focus == Focus::Sidebar && self.quick_insert(s))
     }
 
     pub(super) fn nav_ime_area(&self) -> Option<Rect> {
-        self.palette_field().or_else(|| (self.focus == Focus::Filter).then_some(self.nav.filter.field))
+        self.palette_field().or_else(|| (self.focus == Focus::Filter).then_some(self.nav.filter.field)).or_else(|| (self.focus == Focus::Sidebar && self.nav.sidebar.typing).then_some(self.nav.sidebar.field))
     }
 
     pub(super) fn nav_wheel(&mut self, dy: f32) -> bool {
         if self.nav.palette.is_some() {
             self.palette_wheel(dy);
-            return true;
-        }
-        if self.suggesting() && matches!(self.hover, Hit::Suggestion(_)) {
-            self.suggestions_wheel(dy);
             return true;
         }
         if matches!(self.hover, Hit::Side(_) | Hit::SidePin(_) | Hit::SideEmpty | Hit::SideHeader(_)) {
@@ -71,19 +67,20 @@ impl App {
     }
 
     pub(super) fn nav_mouse_down(&mut self, h: Hit, (x, y): (f32, f32), button: MouseButton, clicks: u8, now: Instant) -> bool {
-        let palette_hit = matches!(h, Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside | Hit::PaletteClose | Hit::PaletteDescribe | Hit::PaletteScroll(_));
+        let palette_hit = matches!(h, Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside | Hit::PaletteClose | Hit::PaletteDescribe | Hit::PaletteScroll(_) | Hit::GoButton(_));
         if self.nav.palette.is_some() && !palette_hit {
             self.close_palette();
+        }
+        if self.go_open() && matches!(button, MouseButton::Back | MouseButton::Forward) {
+            self.go_history_step(if button == MouseButton::Back { -1 } else { 1 }, now);
+            return true;
         }
         if !matches!(button, MouseButton::Left | MouseButton::Middle | MouseButton::Right) {
             return palette_hit;
         }
-        let ours = palette_hit || matches!(h, Hit::Side(_) | Hit::SidePin(_) | Hit::SideEmpty | Hit::SideHeader(_) | Hit::SideSettings | Hit::HomeItem(_) | Hit::HomeEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose);
+        let ours = palette_hit || matches!(h, Hit::Side(_) | Hit::SidePin(_) | Hit::SideEmpty | Hit::SideHeader(_) | Hit::SideSettings | Hit::HomeItem(_) | Hit::HomeEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose | Hit::QuickField | Hit::QuickClear);
         if !ours {
             return false;
-        }
-        if self.editing {
-            self.cancel_edit();
         }
         match (button, h) {
             (MouseButton::Left, Hit::PaletteOutside) => self.close_palette(),
@@ -92,8 +89,9 @@ impl App {
             (MouseButton::Left, Hit::Splitter) => self.begin_splitter_drag(x),
             (MouseButton::Left, Hit::FilterField) => self.filter_click(x, clicks),
             (MouseButton::Left, Hit::PaletteField) => self.palette_click(x, clicks),
+            (MouseButton::Left, Hit::QuickField) => self.quick_filter_click(x, clicks),
             (MouseButton::Left, Hit::PaletteScroll(down)) => self.palette_step(down),
-            (MouseButton::Left, Hit::Side(_) | Hit::SidePin(_) | Hit::SideHeader(_) | Hit::SideSettings | Hit::HomeItem(_) | Hit::FilterClose | Hit::PaletteRow(_) | Hit::PaletteClose | Hit::PaletteDescribe) => {
+            (MouseButton::Left, Hit::Side(_) | Hit::SidePin(_) | Hit::SideHeader(_) | Hit::SideSettings | Hit::HomeItem(_) | Hit::FilterClose | Hit::PaletteRow(_) | Hit::PaletteClose | Hit::PaletteDescribe | Hit::GoButton(_) | Hit::QuickClear) => {
                 self.pressed = h;
                 self.nav.sidebar.press_y = y;
             }

@@ -209,9 +209,9 @@ fn sidebar_lists_places_and_opens_items() {
     let mut app = app_at(r"C:\x");
     app.set_places(places());
     let labels: Vec<&str> = app.nav.sidebar.items.iter().map(|it| it.label.as_str()).collect();
-    assert_eq!(labels, ["Home", "Downloads", "Recycle Bin", "Local Disk (C:)", "USB Drive (E:)", "Ubuntu"]);
-    assert_eq!(app.nav.sidebar.items[3].usage, Some(0.75));
-    assert_eq!(app.nav.sidebar.items[4].usage, None);
+    assert_eq!(labels, ["Local Disk (C:)", "USB Drive (E:)", "This PC", "u", "Downloads", "Recycle Bin", "Home", "Ubuntu"]);
+    assert_eq!(app.nav.sidebar.items[0].usage, Some(0.75));
+    assert_eq!(app.nav.sidebar.items[1].usage, None);
     assert!(app.layout.list.x >= app.nav.sidebar.rect.right() - 1.0);
     app.drain_effects().for_each(drop);
     let r = side_rect(&app, "Downloads");
@@ -243,9 +243,10 @@ fn pinning_from_keyboard_and_hover_button() {
     assert_eq!(app.nav_state().pinned, [loc(r"C:\work\proj")]);
     let downloads = side_rect(&app, "Downloads");
     let pin = app.nav.sidebar.pin_rect(downloads, app.scale);
-    press(&mut app, pin, MouseButton::Left);
+    assert!(!matches!(app.hit(pin.x + pin.w / 2.0, pin.y + pin.h / 2.0), Hit::SidePin(_)), "only bookmarks have a remove button");
+    app.pin_locations(vec![loc(r"C:\Users\u\Downloads")]);
     assert_eq!(app.nav_state().pinned, [loc(r"C:\work\proj"), loc(r"C:\Users\u\Downloads")]);
-    assert!(listed(&mut app).is_empty(), "the pin button does not navigate");
+    assert!(listed(&mut app).is_empty(), "pinning does not navigate");
     let first = app.nav.sidebar.rects[0];
     let unpin = app.nav.sidebar.pin_rect(first, app.scale);
     press(&mut app, unpin, MouseButton::Left);
@@ -330,7 +331,7 @@ fn keyboard_focus_moves_into_the_sidebar() {
     app.drain_effects().for_each(drop);
     key(&mut app, Key::F(6), NO);
     assert_eq!(app.focus, Focus::Sidebar);
-    assert_eq!(app.nav.sidebar.cursor, side_index(&app, "Home"), "starts at the current location");
+    assert_eq!(app.nav.sidebar.cursor, side_index(&app, "u"), "starts at the current location");
     key(&mut app, Key::Down, NO);
     key(&mut app, Key::Enter, NO);
     assert_eq!(listed(&mut app), [(1, loc(r"C:\Users\u\Downloads"))]);

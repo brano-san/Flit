@@ -274,11 +274,11 @@ impl App {
         if id == back {
             return f(self);
         }
-        let (mark, saved) = (self.effects.len(), (self.focus, self.editing, self.hover, self.pressed));
+        let (mark, saved) = (self.effects.len(), (self.focus, self.hover, self.pressed));
         self.enter(id);
         let r = f(self);
         self.enter(back);
-        (self.focus, self.editing, self.hover, self.pressed) = saved;
+        (self.focus, self.hover, self.pressed) = saved;
         let tail: Vec<Effect> = self.effects.drain(mark.min(self.effects.len())..).collect();
         let retitle = tail.iter().any(|e| matches!(e, Effect::Title(_)));
         self.effects.extend(tail.into_iter().filter(|e| !matches!(e, Effect::Title(_))));
@@ -767,8 +767,8 @@ impl App {
 
     pub(super) fn draw_panels<B: TextBackend>(&mut self, g: &mut Gfx<B>, arena: &Bump, palette: &Palette) {
         let files = *palette.area(Area::Files);
-        let saved = (self.hover, self.pressed, self.drag, self.active, self.focus, self.editing, self.ops.dropping.take());
-        (self.drag, self.active, self.focus, self.editing) = (Drag::None, false, Focus::List, false);
+        let saved = (self.hover, self.pressed, self.drag, self.active, self.focus, self.ops.dropping.take());
+        (self.drag, self.active, self.focus) = (Drag::None, false, Focus::List);
         for id in self.parked_ids() {
             let hover = self.panels.hover.filter(|h| h.0 == id).map_or(Hit::None, |h| h.1);
             let rows = self.visit(id, |a| {
@@ -782,7 +782,7 @@ impl App {
                 self.panels.list[i].rows = Some(rows);
             }
         }
-        (self.hover, self.pressed, self.drag, self.active, self.focus, self.editing, self.ops.dropping) = saved;
+        (self.hover, self.pressed, self.drag, self.active, self.focus, self.ops.dropping) = saved;
         self.draw_body(g, arena, palette);
         if let Some(i) = self.slot(self.panels.here) {
             self.panels.list[i].rows = None;

@@ -344,7 +344,7 @@ fn unavailable_commands_keep_their_keys_but_do_nothing() {
     assert!(!app.search_active(), "Ctrl+E is Toggle Subfolders now, not search");
     assert!(app.effects.is_empty());
     press(&mut app, key(Key::F(4)));
-    assert!(!app.editing, "F4 belongs to GoTo, which arrives later");
+    assert!(app.go_open(), "F4 opens GoTo");
 }
 
 #[test]
@@ -362,7 +362,7 @@ fn search_filter_and_address_follow_section_9() {
     }
     for c in [ctrl(Key::Char('L')), alt(Key::Char('D'))] {
         press(&mut app, c);
-        assert!(app.editing, "{}", chord_text(&c));
+        assert!(app.go_open(), "{}", chord_text(&c));
         press(&mut app, key(Key::Escape));
     }
 }

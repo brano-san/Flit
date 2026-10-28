@@ -1,4 +1,8 @@
 cannot_open = "Cannot open {location} in Flit"
 handed_to_explorer = "Flit cannot show {location}, so it opens in File Explorer"
-no_folders = "{name} has no folders"
 visited_deeper = "Visited, deeper"
+filter_files = ["Filter {n} file...", "Filter {n} files..."]
+
+[goto]
+placeholder = "Open or expand a folder..."
+empty = "No matching folders"

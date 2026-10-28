@@ -1,9 +1,12 @@
 use super::confirm::Confirmed;
+use super::edit::EditAction;
+use super::field::{Field, FieldKey};
+use super::fuzzy::fuzzy;
 use super::home::{Recent, Widget};
 use super::menu::Menu;
 use super::tags::G_TAG;
 use super::widgets::{Button, Paint};
-use super::{centered, App, Drag, Effect, Focus, Hit, IconKind, IconRequest, Route, ShellMenu, G_DRIVE, G_FILE, G_FOLDER};
+use super::{centered, App, Drag, Effect, Focus, Hit, IconKind, IconRequest, Route, ShellMenu, G_CLOSE, G_DRIVE, G_FILE, G_FOLDER, TOOL_H};
 use crate::hash;
 use crate::i18n::S;
 use crate::input::{Key, Mods};
@@ -15,27 +18,31 @@ use crate::provider::{Launch, ProviderRequest};
 use crate::render::{Color, Rect};
 use crate::tags::Tags;
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
-use crate::theme::Theme;
+use crate::theme::{ink_on, Theme};
 use serde::{Deserialize, Serialize};
+use std::ops::Range;
 use std::sync::Arc;
 use std::time::Instant;
 
 pub const SIDEBAR_MIN_W: f32 = 160.0;
 pub const SIDEBAR_MAX_W: f32 = 480.0;
 const COMPACT_W: f32 = 48.0;
-const ROW_H: f32 = 28.0;
+const ROW_H: f32 = 25.0;
 const COMPACT_ROW_H: f32 = 32.0;
-const DRIVE_H: f32 = 38.0;
-const HEADER_H: f32 = 28.0;
+const DRIVE_H: f32 = 29.0;
+const HEADER_H: f32 = 26.0;
 const COMPACT_HEADER_H: f32 = 12.0;
 const PIN_W: f32 = 22.0;
-const SECTION_GAP: f32 = 10.0;
+const SECTION_GAP: f32 = 11.0;
 const ITEM_INDENT: f32 = 18.0;
 pub(super) const PLACE_ICON: f32 = 20.0;
 const HEADER_TITLE_X: f32 = 28.0;
 const BAR_MARGIN: f32 = 12.0;
 const MAX_LIST: usize = 256;
 const RECENT_MAX: usize = 10;
+const MAX_VISITS: usize = 64;
+pub(super) const MOST_VISITED: usize = 5;
+const PATH_GAP: f32 = 6.0;
 
 pub(super) const G_HOME: &str = "\u{E80F}";
 const G_DESKTOP: &str = "\u{E7F4}";
@@ -49,11 +56,15 @@ const G_RECYCLE_BIN: &str = "\u{E74D}";
 const G_LIBRARY: &str = "\u{E8F1}";
 const G_NET_OFFLINE: &str = "\u{E7BA}";
 const G_NETWORK: &str = "\u{E72D}";
-const G_PIN: &str = "\u{E718}";
-const G_UNPIN: &str = "\u{E77A}";
-const G_EXPANDED: &str = "\u{E70D}";
-const G_COLLAPSED: &str = "\u{E76C}";
+pub(super) const G_PIN: &str = "\u{E718}";
+const G_TRASH: &str = "\u{E74D}";
+pub(super) const G_EXPANDED: &str = "\u{E70D}";
+pub(super) const G_COLLAPSED: &str = "\u{E76C}";
 const G_RECENT: &str = "\u{E81C}";
+const G_SEARCH: &str = "\u{E721}";
+const G_SHIFT_UP: &str = "\u{E70E}";
+const G_RESTORE_ORDER: &str = "\u{E777}";
+const G_PATHS: &str = "\u{E8FD}";
 pub(super) const G_SETTINGS: &str = "\u{E713}";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -65,10 +76,12 @@ pub enum KnownFolder {
     Pictures,
     Music,
     Videos,
+    Favorites,
 }
 
 impl KnownFolder {
-    pub const ALL: [KnownFolder; 7] = [Self::Home, Self::Desktop, Self::Downloads, Self::Documents, Self::Pictures, Self::Music, Self::Videos];
+    pub const ALL: [KnownFolder; 8] = [Self::Home, Self::Desktop, Self::Downloads, Self::Documents, Self::Pictures, Self::Music, Self::Videos, Self::Favorites];
+    const PLACES: [KnownFolder; 7] = [Self::Home, Self::Desktop, Self::Downloads, Self::Documents, Self::Music, Self::Pictures, Self::Videos];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -79,6 +92,7 @@ impl KnownFolder {
             Self::Pictures => S::SidebarFolderPictures.t(),
             Self::Music => S::SidebarFolderMusic.t(),
             Self::Videos => S::SidebarFolderVideos.t(),
+            Self::Favorites => S::SidebarFolderFavorites.t(),
         }
     }
 
@@ -91,6 +105,7 @@ impl KnownFolder {
             Self::Pictures => "shell:My Pictures",
             Self::Music => "shell:My Music",
             Self::Videos => "shell:My Video",
+            Self::Favorites => "shell:Favorites",
         }
     }
 
@@ -103,6 +118,7 @@ impl KnownFolder {
             Self::Pictures => G_PICTURES,
             Self::Music => G_MUSIC,
             Self::Videos => G_VIDEOS,
+            Self::Favorites => G_PIN,
         }
     }
 }
@@ -192,16 +208,58 @@ pub struct NavPrefs {
     pub widgets_off: Vec<String>,
     pub recent_hidden: Vec<(FsPath, i64)>,
     pub recent_cleared: i64,
+    #[serde(skip)]
+    pub quick: QuickPrefs,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct QuickPrefs {
+    pub order: Vec<String>,
+    pub show_paths: bool,
+    pub visits: Vec<(Location, u32)>,
 }
 
 impl NavPrefs {
     pub fn sanitized(mut self) -> Self {
-        for v in [&mut self.collapsed, &mut self.hidden, &mut self.widgets_off] {
+        for v in [&mut self.collapsed, &mut self.hidden, &mut self.widgets_off, &mut self.quick.order] {
             v.truncate(MAX_LIST);
         }
         let n = self.recent_hidden.len();
         self.recent_hidden.drain(..n.saturating_sub(MAX_LIST));
+        self.quick.visits.truncate(MAX_VISITS);
         self
+    }
+
+    pub fn order(&self) -> Vec<Section> {
+        let mut out: Vec<Section> = self.quick.order.iter().filter_map(|id| Section::ALL.into_iter().find(|s| s.id() == id)).collect();
+        out.dedup();
+        for s in Section::ALL {
+            if !out.contains(&s) {
+                out.push(s);
+            }
+        }
+        out
+    }
+
+    pub fn count_visit(&mut self, loc: &Location) {
+        let v = &mut self.quick.visits;
+        match v.iter().position(|(l, _)| l == loc) {
+            Some(i) => v[i].1 = v[i].1.saturating_add(1),
+            None => {
+                if v.len() >= MAX_VISITS {
+                    if let Some(i) = v.iter().enumerate().min_by_key(|(_, e)| e.1).map(|(i, _)| i) {
+                        v.remove(i);
+                    }
+                }
+                v.push((loc.clone(), 1));
+            }
+        }
+    }
+
+    pub fn most_visited(&self) -> Vec<Location> {
+        let mut v: Vec<&(Location, u32)> = self.quick.visits.iter().collect();
+        v.sort_by_key(|e| std::cmp::Reverse(e.1));
+        v.into_iter().take(MOST_VISITED).map(|e| e.0.clone()).collect()
     }
 }
 
@@ -216,25 +274,25 @@ fn toggle(list: &mut Vec<String>, id: &str) {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Section {
-    Pinned,
-    Recent,
-    Folders,
+    Recents,
+    Bookmarks,
+    Storage,
+    Places,
     Libraries,
-    Drives,
     Wsl,
     Tags,
 }
 
 impl Section {
-    pub const ALL: [Section; 7] = [Section::Pinned, Section::Recent, Section::Folders, Section::Libraries, Section::Drives, Section::Wsl, Section::Tags];
+    pub const ALL: [Section; 7] = [Section::Recents, Section::Bookmarks, Section::Storage, Section::Places, Section::Libraries, Section::Wsl, Section::Tags];
 
     pub fn title(self) -> &'static str {
         match self {
-            Section::Pinned => S::SidebarSectionPinned.t(),
-            Section::Recent => S::SidebarSectionRecent.t(),
-            Section::Folders => S::SidebarSectionFolders.t(),
+            Section::Recents => S::SidebarSectionRecents.t(),
+            Section::Bookmarks => S::SidebarSectionBookmarks.t(),
+            Section::Storage => S::SidebarSectionStorage.t(),
+            Section::Places => S::SidebarSectionPlaces.t(),
             Section::Libraries => S::SidebarSectionLibraries.t(),
-            Section::Drives => S::SidebarSectionDrives.t(),
             Section::Wsl => "WSL",
             Section::Tags => S::SidebarSectionTags.t(),
         }
@@ -242,11 +300,11 @@ impl Section {
 
     pub fn id(self) -> &'static str {
         match self {
-            Section::Pinned => "pinned",
-            Section::Recent => "recent",
-            Section::Folders => "folders",
+            Section::Recents => "recent",
+            Section::Bookmarks => "pinned",
+            Section::Storage => "drives",
+            Section::Places => "folders",
             Section::Libraries => "libraries",
-            Section::Drives => "drives",
             Section::Wsl => "wsl",
             Section::Tags => "tags",
         }
@@ -254,11 +312,11 @@ impl Section {
 
     pub fn glyph(self) -> &'static str {
         match self {
-            Section::Pinned => G_PIN,
-            Section::Recent => G_RECENT,
-            Section::Folders => G_FOLDER,
+            Section::Recents => G_RECENT,
+            Section::Bookmarks => G_PIN,
+            Section::Storage => G_DRIVE,
+            Section::Places => G_FOLDER,
             Section::Libraries => G_LIBRARY,
-            Section::Drives => G_DRIVE,
             Section::Wsl => G_LINUX,
             Section::Tags => G_TAG,
         }
@@ -276,7 +334,6 @@ pub(super) enum PlaceCmd {
     MovePin(Location, isize),
     Eject(FsPath),
     Properties(FsPath),
-    Collapse(Section),
     Hide(Section),
     Compact,
     NewLibrary,
@@ -289,15 +346,23 @@ pub(super) enum PlaceCmd {
     ClearRecent,
     Pane(Location, bool),
     Launch(Launch),
+    Fold(bool),
+    ShowPaths,
+    Shift(Section, isize),
+    RestoreOrder,
+    ViewMode(super::details::ViewMode),
+    DefaultView,
 }
 
 #[derive(Clone, Debug)]
 pub(super) struct Item {
-    section: Section,
+    pub section: Section,
     pub label: String,
-    glyph: &'static str,
+    pub glyph: &'static str,
     pub loc: Location,
     pub usage: Option<f32>,
+    pub path: String,
+    pub marks: Vec<Range<usize>>,
 }
 
 #[derive(Default)]
@@ -310,8 +375,14 @@ pub(super) struct Sidebar {
     pub headers: Vec<(Rect, Section)>,
     pub hint: Option<Rect>,
     pub rect: Rect,
+    pub list: Rect,
     pub splitter: Rect,
     pub settings: Rect,
+    pub bar: Rect,
+    pub field: Rect,
+    pub clear: Rect,
+    pub filter: Field,
+    pub typing: bool,
     scroll: f32,
     content_h: f32,
     pub cursor: usize,
@@ -320,8 +391,27 @@ pub(super) struct Sidebar {
     pub bar_w: f32,
 }
 
-fn pinned_label(loc: &Location) -> String {
+pub(super) fn pinned_label(loc: &Location) -> String {
     loc.crumbs().pop().map(|(label, _)| label).unwrap_or_default()
+}
+
+pub(super) fn short_path(loc: &Location, home: Option<&Location>) -> String {
+    if matches!(loc.path().kind(), PathKind::Computer | PathKind::RecycleBin | PathKind::Home) {
+        return String::new();
+    }
+    let seps: &[char] = &['\\', '/'];
+    let shown = loc.display();
+    let full = match shown.trim_end_matches(seps) {
+        "" => shown.as_ref(),
+        trimmed => trimmed,
+    };
+    let base = home.and_then(Location::parent).map(|b| b.display().trim_end_matches(seps).to_owned());
+    if let Some(b) = base.filter(|b| !b.is_empty() && full.len() > b.len() + 1) {
+        if full.is_char_boundary(b.len()) && full[..b.len()].eq_ignore_ascii_case(&b) && full[b.len()..].starts_with(seps) {
+            return full[b.len() + 1..].to_owned();
+        }
+    }
+    full.to_owned()
 }
 
 fn pinned_glyph(loc: &Location) -> &'static str {
@@ -335,43 +425,68 @@ fn pinned_glyph(loc: &Location) -> &'static str {
 }
 
 impl Sidebar {
-    pub(super) fn rebuild(&mut self) {
-        let p = self.places.clone();
-        let library_name = |l: &Location| p.libraries.iter().find(|lib| lib.path == *l.path()).map(|lib| lib.name.clone());
-        let mut items: Vec<Item> = self
-            .state
-            .pinned
-            .iter()
-            .map(|l| Item { section: Section::Pinned, label: library_name(l).unwrap_or_else(|| pinned_label(l)), glyph: pinned_glyph(l), loc: l.clone(), usage: None })
-            .collect();
-        items.extend(self.recent().take(RECENT_MAX).map(|(_, r)| Item {
-            section: Section::Recent,
-            label: r.name.clone(),
-            glyph: if r.dir { G_FOLDER } else { G_FILE },
-            loc: Location::from_local(r.target.clone()),
-            usage: None,
-        }));
-        items.extend(p.folders.iter().map(|(k, l)| Item { section: Section::Folders, label: k.label().to_owned(), glyph: k.glyph(), loc: l.clone(), usage: None }));
-        if p.recycle_bin {
-            let label = S::PathRecycleBin.t().to_owned();
-            items.push(Item { section: Section::Folders, label, glyph: G_RECYCLE_BIN, loc: Location::recycle_bin(), usage: None });
+    fn known(&self, k: KnownFolder) -> Option<&Location> {
+        self.places.folders.iter().find(|(f, _)| *f == k).map(|(_, l)| l)
+    }
+
+    pub(super) fn section_items(&self, section: Section) -> Vec<Item> {
+        let p = &self.places;
+        let home = self.known(KnownFolder::Home);
+        let item = |label: String, glyph, loc: Location, usage| Item { section, label, glyph, path: short_path(&loc, home), loc, usage, marks: Vec::new() };
+        match section {
+            Section::Recents => self.recent().take(RECENT_MAX).map(|(_, r)| item(r.name.clone(), if r.dir { G_FOLDER } else { G_FILE }, Location::from_local(r.target.clone()), None)).collect(),
+            Section::Bookmarks => {
+                let library_name = |l: &Location| p.libraries.iter().find(|lib| lib.path == *l.path()).map(|lib| lib.name.clone());
+                self.state.pinned.iter().map(|l| item(library_name(l).unwrap_or_else(|| pinned_label(l)), pinned_glyph(l), l.clone(), None)).collect()
+            }
+            Section::Storage => p.drives.iter().map(|d| item(d.title(), d.glyph(), Location::Local(d.path.clone()), (d.total > 0).then(|| (d.total.saturating_sub(d.free)) as f32 / d.total as f32))).collect(),
+            Section::Places => {
+                let computer = Location::computer();
+                let mut out = vec![item(pinned_label(&computer), G_DRIVE, computer, None)];
+                for k in KnownFolder::PLACES {
+                    if let Some(l) = self.known(k) {
+                        let label = if k == KnownFolder::Home { pinned_label(l) } else { k.label().to_owned() };
+                        out.push(item(label, k.glyph(), l.clone(), None));
+                    }
+                }
+                if p.recycle_bin {
+                    out.push(item(S::PathRecycleBin.t().to_owned(), G_RECYCLE_BIN, Location::recycle_bin(), None));
+                }
+                if let Some(l) = self.known(KnownFolder::Favorites) {
+                    out.push(item(KnownFolder::Favorites.label().to_owned(), G_PIN, l.clone(), None));
+                }
+                out.push(item(S::PathHome.t().to_owned(), G_HOME, Location::home_page(), None));
+                out
+            }
+            Section::Libraries => p.libraries.iter().map(|l| item(l.name.clone(), G_LIBRARY, Location::Local(l.path.clone()), None)).collect(),
+            Section::Wsl => p.wsl.iter().filter_map(|d| Some(item(d.clone(), G_LINUX, Location::parse(&format!("wsl://{d}/"))?, None))).collect(),
+            Section::Tags => self.tags.defs.iter().map(|t| Item { section, label: t.name.clone(), glyph: G_TAG, loc: Location::computer(), usage: None, path: String::new(), marks: Vec::new() }).collect(),
         }
-        items.extend(p.libraries.iter().map(|l| Item { section: Section::Libraries, label: l.name.clone(), glyph: G_LIBRARY, loc: Location::Local(l.path.clone()), usage: None }));
-        items.extend(p.drives.iter().map(|d| Item {
-            section: Section::Drives,
-            label: d.title(),
-            glyph: d.glyph(),
-            loc: Location::Local(d.path.clone()),
-            usage: (d.total > 0).then(|| (d.total.saturating_sub(d.free)) as f32 / d.total as f32),
-        }));
-        items.extend(p.wsl.iter().filter_map(|d| {
-            let loc = Location::parse(&format!("wsl://{d}/"))?;
-            Some(Item { section: Section::Wsl, label: d.clone(), glyph: G_LINUX, loc, usage: None })
-        }));
-        items.extend(self.tags.defs.iter().map(|t| Item { section: Section::Tags, label: t.name.clone(), glyph: G_TAG, loc: Location::computer(), usage: None }));
-        items.retain(|it| !self.is_collapsed(it.section) && !self.is_hidden(it.section));
+    }
+
+    pub(super) fn rebuild(&mut self) {
+        let query = self.filter.text().trim().to_owned();
+        let mut items = Vec::new();
+        for s in self.prefs.order() {
+            if self.is_hidden(s) || (query.is_empty() && self.is_collapsed(s)) {
+                continue;
+            }
+            let mut found = self.section_items(s);
+            if !query.is_empty() {
+                found.retain_mut(|it| fuzzy(&query, &it.label).map(|m| it.marks = m.ranges).is_some());
+            }
+            items.extend(found);
+        }
         self.items = items;
         self.cursor = self.cursor.min(self.items.len().saturating_sub(1));
+    }
+
+    pub(super) fn filtering(&self) -> bool {
+        !self.filter.text().trim().is_empty()
+    }
+
+    pub(super) fn shown_sections(&self) -> Vec<Section> {
+        self.prefs.order().into_iter().filter(|&s| !self.is_hidden(s) && self.has_items(s) && (!self.filtering() || self.items.iter().any(|it| it.section == s))).collect()
     }
 
     pub(super) fn recent(&self) -> impl Iterator<Item = (usize, &Recent)> {
@@ -380,7 +495,7 @@ impl Sidebar {
     }
 
     pub(super) fn recent_entry(&self, i: usize) -> Option<usize> {
-        let it = self.items.get(i).filter(|it| it.section == Section::Recent)?;
+        let it = self.items.get(i).filter(|it| it.section == Section::Recents)?;
         self.places.recent.iter().position(|r| Location::from_local(r.target.clone()) == it.loc)
     }
 
@@ -389,8 +504,12 @@ impl Sidebar {
         (!r.dir).then(|| r.target.clone())
     }
 
-    pub fn pinnable(&self, i: usize) -> bool {
-        self.tag_of(i).is_none() && self.recent_file(i).is_none()
+    pub fn removable(&self, i: usize) -> bool {
+        self.items.get(i).is_some_and(|it| it.section == Section::Bookmarks)
+    }
+
+    fn first_bookmark(&self) -> usize {
+        self.items.iter().position(|it| it.section == Section::Bookmarks).unwrap_or(0)
     }
 
     pub fn tag_of(&self, i: usize) -> Option<usize> {
@@ -413,11 +532,11 @@ impl Sidebar {
     fn has_items(&self, s: Section) -> bool {
         let p = &self.places;
         match s {
-            Section::Pinned => true,
-            Section::Recent => self.recent().next().is_some(),
-            Section::Folders => !p.folders.is_empty() || p.recycle_bin,
+            Section::Bookmarks => true,
+            Section::Recents => self.recent().next().is_some(),
+            Section::Places => true,
             Section::Libraries => !p.libraries.is_empty(),
-            Section::Drives => !p.drives.is_empty(),
+            Section::Storage => !p.drives.is_empty(),
             Section::Wsl => !p.wsl.is_empty(),
             Section::Tags => !self.tags.defs.is_empty(),
         }
@@ -442,6 +561,7 @@ impl App {
         let old = std::mem::replace(&mut self.nav.sidebar.places, places);
         self.nav.sidebar.rebuild();
         self.places_changed(&old, Instant::now());
+        self.go_refresh();
         self.layout();
         self.dirty = true;
     }
@@ -457,6 +577,7 @@ impl App {
         if self.nav.sidebar.state.pinned != pinned {
             self.nav.sidebar.state.pinned = pinned;
             self.nav.sidebar.rebuild();
+            self.go_refresh();
             self.layout();
             self.dirty = true;
         }
@@ -530,6 +651,107 @@ impl App {
         self.nav_prefs_changed();
     }
 
+    fn fold_sections(&mut self, collapsed: bool) {
+        let shown = self.nav.sidebar.shown_sections();
+        let p = &mut self.nav.sidebar.prefs;
+        p.collapsed.retain(|id| !shown.iter().any(|s| s.id() == id));
+        if collapsed {
+            p.collapsed.extend(shown.iter().map(|s| s.id().to_owned()));
+        }
+        self.nav_prefs_changed();
+    }
+
+    fn shift_section(&mut self, s: Section, by: isize) {
+        let shown = self.nav.sidebar.shown_sections();
+        let Some(at) = shown.iter().position(|&x| x == s) else { return };
+        let Some(&other) = at.checked_add_signed(by).and_then(|k| shown.get(k)) else { return };
+        let mut order = self.nav.sidebar.prefs.order();
+        let (a, b) = (order.iter().position(|&x| x == s), order.iter().position(|&x| x == other));
+        if let (Some(a), Some(b)) = (a, b) {
+            order.swap(a, b);
+        }
+        self.nav.sidebar.prefs.quick.order = order.iter().map(|s| s.id().to_owned()).collect();
+        self.nav_prefs_changed();
+    }
+
+    pub(super) fn clear_bookmarks(&mut self) {
+        self.nav.sidebar.state.pinned.clear();
+        self.pins_changed();
+    }
+
+    pub(super) fn focus_quick_filter(&mut self) {
+        if !self.nav.sidebar.state.sidebar {
+            self.toggle_sidebar();
+        }
+        if self.nav.sidebar.prefs.compact {
+            self.toggle_compact();
+        }
+        self.close_palette();
+        let sb = &mut self.nav.sidebar;
+        sb.typing = true;
+        sb.filter.edit.select_all();
+        sb.cursor = 0;
+        self.focus = Focus::Sidebar;
+        self.dirty = true;
+    }
+
+    fn quick_filter_changed(&mut self) {
+        let sb = &mut self.nav.sidebar;
+        sb.scroll = 0.0;
+        sb.cursor = 0;
+        self.nav_prefs_changed();
+    }
+
+    pub(super) fn quick_insert(&mut self, s: &str) -> bool {
+        let sb = &mut self.nav.sidebar;
+        if self.focus != Focus::Sidebar || !sb.typing {
+            return false;
+        }
+        sb.filter.insert(s);
+        self.quick_filter_changed();
+        true
+    }
+
+    pub(super) fn clear_quick_filter(&mut self) {
+        let sb = &mut self.nav.sidebar;
+        sb.filter.edit.set("");
+        sb.typing = false;
+        if self.focus == Focus::Sidebar {
+            self.focus = Focus::List;
+        }
+        self.quick_filter_changed();
+    }
+
+    pub(super) fn quick_filter_click(&mut self, x: f32, clicks: u8) {
+        self.nav.sidebar.filter.click(x, clicks);
+        self.nav.sidebar.typing = true;
+        self.focus = Focus::Sidebar;
+        self.dirty = true;
+    }
+
+    fn quick_filter_key(&mut self, key: Key, m: Mods) -> bool {
+        match self.nav.sidebar.filter.key(key, m) {
+            FieldKey::Edited { changed, action } => {
+                match action {
+                    EditAction::Copy(s) => self.effects.push(Effect::SetClipboard(s)),
+                    EditAction::Paste => self.effects.push(Effect::Paste),
+                    _ => {}
+                }
+                if changed {
+                    self.quick_filter_changed();
+                }
+                true
+            }
+            FieldKey::Ignored => false,
+        }
+    }
+
+    pub(super) fn count_visit(&mut self, loc: &Location) {
+        if !loc.is_home_page() {
+            self.nav.sidebar.prefs.count_visit(loc);
+        }
+    }
+
     pub(super) fn cycle_sidebar_focus(&mut self) {
         if self.focus == Focus::Sidebar {
             self.focus = Focus::List;
@@ -537,7 +759,6 @@ impl App {
             if !self.nav.sidebar.state.sidebar {
                 self.toggle_sidebar();
             }
-            self.editing = false;
             self.focus = Focus::Sidebar;
             let here = self.current_location().clone();
             let sb = &mut self.nav.sidebar;
@@ -618,13 +839,10 @@ impl App {
 
     pub(super) fn toggle_pin_item(&mut self, i: usize, now: Instant) {
         let sb = &self.nav.sidebar;
-        let Some(loc) = sb.items.get(i).map(|it| it.loc.clone()) else { return };
-        match sb.rects.get(i).filter(|_| sb.state.pinned.contains(&loc)) {
-            Some(&r) => {
-                let anchor = if sb.prefs.compact { r } else { sb.pin_rect(r, self.scale) };
-                self.ask(anchor, (S::WidgetsRemoveItem.t(), S::WidgetsYes.t()), true, Confirmed::Unpin(loc), now);
-            }
-            None => self.toggle_pin(loc),
+        let Some(loc) = sb.items.get(i).filter(|_| sb.removable(i)).map(|it| it.loc.clone()) else { return };
+        if let Some(&r) = sb.rects.get(i) {
+            let anchor = if sb.prefs.compact { r } else { sb.pin_rect(r, self.scale) };
+            self.ask(anchor, (S::WidgetsRemoveItem.t(), S::WidgetsYes.t()), true, Confirmed::Unpin(loc), now);
         }
     }
 
@@ -637,16 +855,16 @@ impl App {
     pub(super) fn start_pin_drag(&mut self, y: f32) -> bool {
         let Hit::Side(i) = self.pressed else { return false };
         let sb = &self.nav.sidebar;
-        if sb.items.get(i).is_none_or(|it| it.section != Section::Pinned) || (y - sb.press_y).abs() < self.s(5.0) {
+        if !sb.removable(i) || sb.filtering() || (y - sb.press_y).abs() < self.s(5.0) {
             return false;
         }
-        self.drag_pin(i, y);
+        self.drag_pin(i - sb.first_bookmark(), y);
         true
     }
 
     pub(super) fn drag_pin(&mut self, from: usize, y: f32) {
         let sb = &self.nav.sidebar;
-        let to = sb.rects.iter().take(sb.state.pinned.len()).filter(|r| r.y + r.h / 2.0 < y).count();
+        let to = sb.rects.iter().skip(sb.first_bookmark()).take(sb.state.pinned.len()).filter(|r| r.y + r.h / 2.0 < y).count();
         self.drag = Drag::PinMove { from, to };
         self.dirty = true;
     }
@@ -703,7 +921,6 @@ impl App {
             PlaceCmd::Eject(drive) => self.effects.push(launch(Launch::Eject(drive))),
             PlaceCmd::Launch(l) => self.effects.push(launch(l)),
             PlaceCmd::Properties(path) => self.effects.push(Effect::Properties(vec![path])),
-            PlaceCmd::Collapse(s) => self.toggle_section(s),
             PlaceCmd::Hide(s) => self.toggle_section_shown(s),
             PlaceCmd::Compact => self.toggle_compact(),
             PlaceCmd::NewLibrary => self.ask_new_library(),
@@ -715,6 +932,19 @@ impl App {
             PlaceCmd::Forget(path) => self.forget_recent(path),
             PlaceCmd::ClearRecent => self.clear_recent(),
             PlaceCmd::Pane(loc, down) => self.open_in_panel(loc, down, now),
+            PlaceCmd::Fold(collapsed) => self.fold_sections(collapsed),
+            PlaceCmd::ShowPaths => {
+                let q = &mut self.nav.sidebar.prefs.quick;
+                q.show_paths = !q.show_paths;
+                self.nav_prefs_changed();
+            }
+            PlaceCmd::Shift(s, by) => self.shift_section(s, by),
+            PlaceCmd::ViewMode(mode) => self.set_view_mode(mode),
+            PlaceCmd::DefaultView => self.set_default_view(),
+            PlaceCmd::RestoreOrder => {
+                self.nav.sidebar.prefs.quick.order.clear();
+                self.nav_prefs_changed();
+            }
         }
     }
 
@@ -775,30 +1005,53 @@ impl App {
         self.effects.push(Effect::ShellMenu(ShellMenu { dir, items: vec![p], x, y, extended: shift, menu, inline: self.shell_items_inline || shift, shell: true }));
     }
 
-    fn section_menu(&mut self, x: f32, y: f32, section: Option<Section>) {
+    pub(super) fn build_section_menu(&mut self, s: Section) -> Vec<super::MenuItem> {
+        self.collect(|a, m| {
+            let sb = &a.nav.sidebar;
+            let shown = sb.shown_sections();
+            let at = shown.iter().position(|&x| x == s).unwrap_or(0);
+            let none_collapsed = shown.iter().all(|&x| !sb.is_collapsed(x));
+            m.place_icon(S::SidebarCollapseAll.t(), PlaceCmd::Fold(true), G_COLLAPSED, false);
+            m.place_icon(S::SidebarExpandAll.t(), PlaceCmd::Fold(false), G_EXPANDED, none_collapsed);
+            m.toggle(S::SidebarShowPaths.t(), PlaceCmd::ShowPaths, sb.prefs.quick.show_paths);
+            m.iconed(G_PATHS);
+            m.separator();
+            m.place_icon(S::SidebarShiftUp.t(), PlaceCmd::Shift(s, -1), G_SHIFT_UP, at == 0);
+            m.place_icon(S::SidebarShiftDown.t(), PlaceCmd::Shift(s, 1), G_EXPANDED, at + 1 >= shown.len());
+            m.place_icon(S::SidebarRestoreOrder.t(), PlaceCmd::RestoreOrder, G_RESTORE_ORDER, sb.prefs.order() == Section::ALL);
+            m.separator();
+            match s {
+                Section::Recents => {
+                    m.action("home.clear_recent", S::SidebarClearRecents.t());
+                    m.iconed(G_TRASH);
+                }
+                Section::Bookmarks => {
+                    m.action("bookmarks.clear", S::SidebarClearBookmarks.t());
+                    m.iconed(G_TRASH);
+                }
+                Section::Tags => {
+                    m.action("tags.new", S::MenuNewTag.t());
+                    m.action("tags.manage", S::MenuManageTags.t());
+                }
+                Section::Libraries => {
+                    m.place(S::SidebarNewLibrary.t(), PlaceCmd::NewLibrary, false);
+                    m.place(S::SidebarRestoreLibraries.t(), PlaceCmd::RestoreLibraries, false);
+                }
+                Section::Storage | Section::Places | Section::Wsl => {}
+            }
+        })
+    }
+
+    fn section_menu(&mut self, x: f32, y: f32) {
         let menu = self.collect(|a, m| {
             let sb = &a.nav.sidebar;
-            if let Some(s) = section {
-                m.place(if sb.is_collapsed(s) { S::SidebarExpand.t() } else { S::SidebarCollapse.t() }, PlaceCmd::Collapse(s), false);
-                m.place(S::SidebarHideSection.t(), PlaceCmd::Hide(s), false);
-                m.separator();
-            }
-            if section == Some(Section::Tags) {
-                m.action("tags.new", S::MenuNewTag.t());
-                m.action("tags.manage", S::MenuManageTags.t());
-                m.separator();
-            }
-            if section.is_none_or(|s| s == Section::Drives) {
-                m.action("drive.map", S::SidebarDriveMap.t());
-                m.action("drive.disconnect", S::SidebarDriveDisconnectDialog.t());
-                m.action("drive.connect_server", S::SidebarDriveConnectServer.t());
-                m.separator();
-            }
-            if section.is_none_or(|s| s == Section::Libraries) {
-                m.place(S::SidebarNewLibrary.t(), PlaceCmd::NewLibrary, false);
-                m.place(S::SidebarRestoreLibraries.t(), PlaceCmd::RestoreLibraries, false);
-                m.separator();
-            }
+            m.action("drive.map", S::SidebarDriveMap.t());
+            m.action("drive.disconnect", S::SidebarDriveDisconnectDialog.t());
+            m.action("drive.connect_server", S::SidebarDriveConnectServer.t());
+            m.separator();
+            m.place(S::SidebarNewLibrary.t(), PlaceCmd::NewLibrary, false);
+            m.place(S::SidebarRestoreLibraries.t(), PlaceCmd::RestoreLibraries, false);
+            m.separator();
             m.submenu(S::SidebarSections.t(), |m| {
                 for s in Section::ALL {
                     m.toggle(s.title(), PlaceCmd::Hide(s), !sb.is_hidden(s));
@@ -823,8 +1076,12 @@ impl App {
                     self.place_menu(x, y, loc, |_, _| {});
                 }
             }
-            Hit::SideHeader(s) => self.section_menu(x, y, Some(s)),
-            _ => self.section_menu(x, y, None),
+            Hit::SideHeader(s) => {
+                let r = self.nav.sidebar.headers.iter().find(|h| h.1 == s).map_or(Rect::new(x, y, 0.0, 0.0), |h| h.0);
+                let menu = self.build_section_menu(s);
+                self.button_menu(Hit::SideHeader(s), r.x, r.bottom(), menu);
+            }
+            _ => self.section_menu(x, y),
         }
     }
 
@@ -840,35 +1097,43 @@ impl App {
         sb.headers.clear();
         sb.hint = None;
         sb.settings = Rect::default();
+        (sb.bar, sb.field, sb.clear) = (Rect::default(), Rect::default(), Rect::default());
         if width <= 0.0 {
+            sb.list = Rect::default();
             return;
         }
         let (x, w) = if compact { (s(4.0), (width - s(8.0)).max(0.0)) } else { (s(6.0), (width - s(12.0)).max(0.0)) };
         let (header_h, row_h) = if compact { (s(COMPACT_HEADER_H), s(COMPACT_ROW_H)) } else { (s(HEADER_H), s(ROW_H)) };
-        let footer = row_h + s(8.0);
+        if !compact {
+            sb.bar = Rect::new(0.0, top, width - 1.0, s(TOOL_H));
+            sb.field = Rect::new(x, top + s(5.0), w, s(TOOL_H - 10.0));
+            let c = s(22.0);
+            sb.clear = if sb.filtering() { Rect::new(sb.field.right() - c - s(4.0), sb.field.y + ((sb.field.h - c) / 2.0).round(), c, c) } else { Rect::default() };
+        }
+        let list_top = sb.bar.bottom().max(top);
         sb.settings = Rect::new(x, sb.rect.bottom() - row_h - s(4.0), w, row_h);
+        sb.list = Rect::new(0.0, list_top, width - 1.0, (sb.settings.y - s(4.0) - list_top).max(0.0));
         let mut y = s(4.0);
-        for section in Section::ALL {
-            if sb.is_hidden(section) || !sb.has_items(section) {
-                continue;
-            }
+        let mut it = 0;
+        for section in sb.shown_sections() {
             sb.headers.push((Rect::new(x, y, w, header_h), section));
             y += header_h;
             let count = sb.items.iter().filter(|it| it.section == section).count();
-            if count == 0 && section == Section::Pinned && !compact && !sb.is_collapsed(section) {
+            if count == 0 && section == Section::Bookmarks && !compact && !sb.is_collapsed(section) {
                 sb.hint = Some(Rect::new(x, y, w, row_h));
                 y += row_h;
             }
-            for it in sb.items.iter().filter(|it| it.section == section) {
-                let h = if it.usage.is_some() && !compact { s(DRIVE_H) } else { row_h };
+            while sb.items.get(it).is_some_and(|i| i.section == section) {
+                let h = if sb.items[it].usage.is_some() && !compact { s(DRIVE_H) } else { row_h };
                 sb.rects.push(Rect::new(x, y, w, h));
                 y += h;
+                it += 1;
             }
             y += if compact { s(2.0) } else { s(SECTION_GAP) };
         }
-        sb.content_h = y + footer;
-        sb.scroll = sb.scroll.clamp(0.0, (sb.content_h - sb.rect.h).max(0.0));
-        let dy = top - sb.scroll;
+        sb.content_h = y;
+        sb.scroll = sb.scroll.clamp(0.0, (sb.content_h - sb.list.h).max(0.0));
+        let dy = list_top - sb.scroll;
         for r in sb.rects.iter_mut().chain(sb.headers.iter_mut().map(|(r, _)| r)).chain(sb.hint.iter_mut()) {
             r.y += dy;
         }
@@ -888,10 +1153,19 @@ impl App {
         if sb.settings.contains(x, y) {
             return Some(Hit::SideSettings);
         }
+        if sb.clear.contains(x, y) {
+            return Some(Hit::QuickClear);
+        }
+        if sb.field.contains(x, y) {
+            return Some(Hit::QuickField);
+        }
+        if !sb.list.contains(x, y) {
+            return Some(Hit::SideEmpty);
+        }
         for (i, r) in sb.rects.iter().enumerate() {
             if r.contains(x, y) {
-                let pin = !sb.prefs.compact && sb.pin_rect(*r, self.scale).contains(x, y) && sb.pinnable(i);
-                return Some(if pin { Hit::SidePin(i) } else { Hit::Side(i) });
+                let button = !sb.prefs.compact && sb.pin_rect(*r, self.scale).contains(x, y) && sb.removable(i);
+                return Some(if button { Hit::SidePin(i) } else { Hit::Side(i) });
             }
         }
         if let Some(&(_, s)) = sb.headers.iter().find(|(r, _)| r.contains(x, y)) {
@@ -903,7 +1177,7 @@ impl App {
     pub(super) fn sidebar_wheel(&mut self, dy: f32) {
         let sb = &mut self.nav.sidebar;
         let step = 3.0 * (ROW_H * self.scale).round();
-        sb.scroll = (sb.scroll - dy * step).clamp(0.0, (sb.content_h - sb.rect.h).max(0.0));
+        sb.scroll = (sb.scroll - dy * step).clamp(0.0, (sb.content_h - sb.list.h).max(0.0));
         self.layout();
         self.dirty = true;
     }
@@ -923,10 +1197,10 @@ impl App {
         self.layout();
         let sb = &mut self.nav.sidebar;
         let Some(r) = sb.rects.get(sb.cursor).copied() else { return };
-        if r.y < sb.rect.y {
-            sb.scroll -= sb.rect.y - r.y;
-        } else if r.bottom() > sb.rect.bottom() {
-            sb.scroll += r.bottom() - sb.rect.bottom();
+        if r.y < sb.list.y {
+            sb.scroll -= sb.list.y - r.y;
+        } else if r.bottom() > sb.list.bottom() {
+            sb.scroll += r.bottom() - sb.list.bottom();
         }
         self.layout();
     }
@@ -935,8 +1209,17 @@ impl App {
         let n = self.nav.sidebar.items.len();
         let plain = !m.ctrl && !m.alt && !m.shift;
         let cur = self.nav.sidebar.cursor;
+        let typing = self.nav.sidebar.typing;
+        if typing && !matches!(key, Key::Escape | Key::Enter | Key::Up | Key::Down | Key::PageUp | Key::PageDown) && self.quick_filter_key(key, m) {
+            return true;
+        }
         let to = match key {
+            Key::Escape if typing && self.nav.sidebar.filtering() => {
+                self.clear_quick_filter();
+                return true;
+            }
             Key::Escape => {
+                self.nav.sidebar.typing = false;
                 self.focus = Focus::List;
                 return true;
             }
@@ -945,7 +1228,7 @@ impl App {
                 return true;
             }
             Key::Delete if plain => {
-                if self.nav.sidebar.items.get(cur).is_some_and(|it| it.section == Section::Pinned) {
+                if self.nav.sidebar.items.get(cur).is_some_and(|it| it.section == Section::Bookmarks) {
                     self.toggle_pin_item(cur, now);
                 }
                 return true;
@@ -971,7 +1254,6 @@ impl App {
         g.dl.rect(area, t.chrome);
         let line = if matches!(self.hover, Hit::Splitter) || matches!(self.drag, Drag::Splitter { .. }) { t.accent } else { t.separator };
         g.dl.rect(Rect::new(area.right() - 1.0, area.y, 1.0, area.h), line);
-        g.dl.set_clip(Some(Rect::new(area.x, area.y, area.w - 1.0, (sb.settings.y - area.y - self.s(4.0)).max(0.0))));
         let font = self.ui_font(13.0);
         let small = self.ui_font(12.0);
         let icons = self.icon_font(14.0);
@@ -985,27 +1267,47 @@ impl App {
         let (s4, s8, s36) = (self.s(4.0), self.s(8.0), self.s(36.0));
         let here = self.tabs[self.cur].location();
         let focused = self.active && self.focus == Focus::Sidebar;
+        if sb.field.w > 0.0 {
+            let typing = focused && sb.typing;
+            let mut w = Paint::new(g, t, self.scale);
+            w.field(sb.field, typing);
+            let fr = sb.field;
+            w.centered(Rect::new(fr.x, fr.y, fr.h, fr.h), G_SEARCH, self.icon_font(11.0), t.text_dim);
+            let right = if sb.clear.w > 0.0 { sb.clear.x - s4 } else { fr.right() - s8 };
+            let inner = Rect::new(fr.x + fr.h, fr.y, (right - fr.x - fr.h).max(0.0), fr.h);
+            let preedit = typing.then_some(&self.preedit);
+            self.nav.sidebar.filter.draw(g, t, inner, font, typing, S::SidebarFilter.t(), self.scale, preedit);
+            let sb = &self.nav.sidebar;
+            if sb.clear.w > 0.0 {
+                Paint::new(g, t, self.scale).icon_button(sb.clear, G_CLOSE, self.icon_font(8.0), Button::of(self.hover == Hit::QuickClear, false, true), t.text_dim);
+            }
+        }
+        let sb = &self.nav.sidebar;
+        g.dl.set_clip(Some(sb.list));
         let (drop, drop_header) = match self.drop_spot() {
             Some(super::Spot::Side(i)) => (Some(i), None),
             Some(super::Spot::SideHeader(s)) => (None, Some(s)),
             _ => (None, None),
         };
+        let target = t.teal.alpha(0x70);
         for &(r, section) in &sb.headers {
+            let open = self.menu_open_from(Hit::SideHeader(section));
+            let lit = open || self.hover == Hit::SideHeader(section);
             if drop_header == Some(section) {
-                g.dl.round_rect(r, t.selection, s4);
-                g.dl.outline(r, t.accent, s4, self.s(1.0).max(1.0));
-            } else if self.hover == Hit::SideHeader(section) {
-                g.dl.round_rect(r, t.button_hover, s4);
+                g.dl.round_rect(r, target, s4);
+            } else if lit {
+                g.dl.round_rect(r, t.accent_fill, s4);
             }
             if compact {
                 g.dl.rect(Rect::new(r.x + s8, (r.y + r.h / 2.0).round(), r.w - 2.0 * s8, 1.0), t.separator);
                 continue;
             }
+            let ink = if lit && drop_header != Some(section) { ink_on(t.accent_fill) } else { t.text };
             let (icon_r, title_x, baseline, chevron_r) = header_parts(r, mh.ascent, mh.descent, self.scale);
-            centered(g, icon_r, section.glyph(), header_icons, t.text);
-            g.text(title_x, baseline, section.title(), header_font, t.text, chevron_r.x - title_x - s4);
-            let glyph = if sb.is_collapsed(section) { G_COLLAPSED } else { G_EXPANDED };
-            centered(g, chevron_r, glyph, chevron, t.text_dim);
+            centered(g, icon_r, section.glyph(), header_icons, ink);
+            g.text(title_x, baseline, section.title(), header_font, ink, chevron_r.x - title_x - s4);
+            let glyph = if sb.is_collapsed(section) && !sb.filtering() { G_COLLAPSED } else { G_EXPANDED };
+            centered(g, chevron_r, glyph, chevron, if lit { ink } else { t.text_dim });
         }
         if let Some(r) = sb.hint {
             let baseline = (r.y + (r.h + ms.ascent - ms.descent) / 2.0).round();
@@ -1013,26 +1315,30 @@ impl App {
             g.text(x, baseline, S::SidebarPinHint.t(), small, t.text_dim.alpha(0xA0), r.right() - x);
         }
         let mut requests: Vec<IconRequest> = Vec::new();
+        let list = sb.list;
         for (i, (it, &r)) in sb.items.iter().zip(&sb.rects).enumerate() {
-            if r.bottom() < area.y || r.y > area.bottom() {
+            if r.bottom() < list.y || r.y > list.bottom() {
                 continue;
             }
-            let hovered = matches!(self.hover, Hit::Side(k) | Hit::SidePin(k) if k == i);
+            let hovered = matches!(self.hover, Hit::Side(k) | Hit::SidePin(k) if k == i) && self.drag == Drag::None;
             let row = Rect::new(r.x, r.y + 1.0, r.w, r.h - 2.0);
             let tag = sb.tag_of(i).and_then(|k| sb.tags.defs.get(k));
-            if (it.loc == *here && tag.is_none()) || drop == Some(i) {
-                g.dl.round_rect(row, t.selection, s4);
-            } else if hovered {
-                g.dl.round_rect(row, t.button_hover, s4);
-            }
             if drop == Some(i) {
-                g.dl.outline(row, t.accent, s4, self.s(1.0).max(1.0));
-            } else if focused && sb.cursor == i {
+                g.dl.round_rect(row, target, s4);
+            } else if hovered {
+                g.dl.round_rect(row, t.accent_fill, s4);
+            } else if it.loc == *here && tag.is_none() {
+                g.dl.round_rect(row, t.selection, s4);
+            }
+            if focused && !sb.typing && sb.cursor == i && drop != Some(i) {
                 g.dl.outline(row, t.focus_ring, s4, 1.0);
             }
+            let lit = hovered && drop != Some(i);
+            let ink = if lit { ink_on(t.accent_fill) } else { t.text };
             let color = match tag {
                 Some(tag) => Color::rgb(tag.color),
-                None if it.section == Section::Drives || it.section == Section::Wsl => t.text_dim,
+                None if lit => ink,
+                None if it.section == Section::Storage || it.section == Section::Wsl => t.text_dim,
                 None => t.accent,
             };
             if compact {
@@ -1041,9 +1347,7 @@ impl App {
                 }
                 if let Some(used) = it.usage {
                     let bar = Rect::new(r.x + s8, r.bottom() - self.s(5.0), (r.w - 2.0 * s8).max(0.0), self.s(3.0));
-                    g.dl.round_rect(bar, t.separator, bar.h / 2.0);
-                    let fill = if used >= 0.9 { t.error } else { t.accent };
-                    g.dl.round_rect(Rect::new(bar.x, bar.y, (bar.w * used.clamp(0.0, 1.0)).max(bar.h), bar.h), fill, bar.h / 2.0);
+                    self.draw_usage(g, t, bar, used);
                 }
                 continue;
             }
@@ -1054,41 +1358,58 @@ impl App {
             }
             let baseline = (r.y + (text_h + m.ascent - m.descent) / 2.0).round();
             let pin_r = sb.pin_rect(Rect::new(r.x, r.y, r.w, text_h), self.scale);
-            let pin = hovered && sb.pinnable(i);
-            let text_right = if pin { pin_r.x - s4 } else { r.right() - s8 };
-            g.text(text_x, baseline, &it.label, font, t.text, text_right - text_x);
+            let trash = hovered && sb.removable(i);
+            let text_right = if trash { pin_r.x - s4 } else { r.right() - s8 };
+            let mark = if lit { ink } else { t.accent };
+            let w = Paint::new(g, t, self.scale).marked((text_x, baseline), &it.label, &it.marks, font, (ink, mark), text_right - text_x);
+            if sb.prefs.quick.show_paths && !it.path.is_empty() {
+                let gap = self.s(PATH_GAP);
+                let x = text_x + w + gap;
+                if x < text_right {
+                    let cw = g.text(x, baseline - self.s(1.0), G_COLLAPSED, chevron, if lit { ink } else { t.text_dim }, text_right - x);
+                    let px = x + cw + gap;
+                    g.text(px, baseline, &it.path, small, if lit { ink.alpha(0xC0) } else { t.text_dim }, text_right - px);
+                }
+            }
             if let Some(used) = it.usage {
                 let bar = self.drive_bar(r);
-                g.dl.round_rect(bar, t.separator, bar.h / 2.0);
-                let fill = if used >= 0.9 { t.error } else { t.accent };
-                g.dl.round_rect(Rect::new(bar.x, bar.y, (bar.w * used.clamp(0.0, 1.0)).max(bar.h), bar.h), fill, bar.h / 2.0);
+                self.draw_usage(g, t, bar, used);
             }
-            if pin {
-                let glyph = if sb.is_pinned(&it.loc) { G_UNPIN } else { G_PIN };
+            if trash {
                 let open = self.confirm.as_ref().is_some_and(|c| c.anchor == pin_r);
-                Paint::new(g, t, self.scale).icon_button(pin_r, glyph, pin_font, Button::of(self.hover == Hit::SidePin(i), open, true), t.text_dim);
+                Paint::new(g, t, self.scale).icon_button(pin_r, G_TRASH, pin_font, Button::of(self.hover == Hit::SidePin(i), open, true), ink);
             }
         }
         if let Drag::PinMove { to, .. } = self.drag {
-            let n = sb.state.pinned.len().min(sb.rects.len());
-            let before = sb.rects.get(to).filter(|_| to < n).map(|r| r.y);
-            let y = before.or_else(|| sb.rects.get(n.saturating_sub(1)).map(|r| r.bottom())).unwrap_or(area.y);
+            let first = sb.first_bookmark();
+            let n = sb.state.pinned.len().min(sb.rects.len().saturating_sub(first));
+            let before = sb.rects.get(first + to).filter(|_| to < n).map(|r| r.y);
+            let y = before.or_else(|| sb.rects.get((first + n).saturating_sub(1)).map(|r| r.bottom())).unwrap_or(list.y);
             g.dl.rect(Rect::new(area.x + s8, y - 1.0, area.w - 2.0 * s8, self.s(2.0)), t.accent);
         }
         g.dl.set_clip(None);
         let r = sb.settings;
         g.dl.rect(Rect::new(area.x + s8, r.y - self.s(4.0), area.w - 2.0 * s8, 1.0), t.separator);
-        if self.hover == Hit::SideSettings || self.settings_open() {
-            g.dl.round_rect(r, if self.settings_open() { t.selection } else { t.button_hover }, s4);
+        let open = self.settings_open();
+        let hot = self.hover == Hit::SideSettings && !open;
+        if open || hot {
+            g.dl.round_rect(r, if open { t.accent_fill } else { t.teal }, s4);
         }
+        let ink = if open { ink_on(t.accent_fill) } else if hot { ink_on(t.teal) } else { t.text_dim };
         if compact {
-            centered(g, r, G_SETTINGS, icons, t.text_dim);
+            centered(g, r, G_SETTINGS, icons, ink);
         } else {
-            centered(g, Rect::new(r.x + s4, r.y, self.s(28.0), r.h), G_SETTINGS, icons, t.text_dim);
+            centered(g, Rect::new(r.x + s4, r.y, self.s(28.0), r.h), G_SETTINGS, icons, ink);
             let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
-            g.text(r.x + s36, baseline, S::MenuSettings.t(), font, t.text, r.w - s36);
+            g.text(r.x + s36, baseline, S::MenuSettings.t(), font, if open || hot { ink } else { t.text }, r.w - s36);
         }
         self.request_icons(requests);
+    }
+
+    fn draw_usage<B: TextBackend>(&self, g: &mut Gfx<B>, t: &Theme, bar: Rect, used: f32) {
+        g.dl.round_rect(bar, t.separator, bar.h / 2.0);
+        let fill = if used >= 0.9 { t.error } else { t.accent };
+        g.dl.round_rect(Rect::new(bar.x, bar.y, (bar.w * used.clamp(0.0, 1.0)).max(bar.h), bar.h), fill, bar.h / 2.0);
     }
 
     fn header_font(&self) -> FontStyle {
@@ -1138,10 +1459,10 @@ fn item_icon(r: Rect, scale: f32, drive: bool) -> Rect {
     if drive { Rect::new(icon.x, r.y, icon.w, r.h) } else { icon }
 }
 
-fn place_icon_request(it: &Item, places: &Places, px: u32) -> Option<SystemIcon> {
+pub(super) fn place_icon_request(it: &Item, places: &Places, px: u32) -> Option<SystemIcon> {
     match (&it.loc, it.section) {
-        (_, Section::Tags) | (Location::Wsl { .. }, Section::Recent) => None,
-        (Location::Local(path), Section::Recent) => places.recent.iter().find(|r| r.target == *path).and_then(|r| recent_icon(r, places, px)),
+        (_, Section::Tags) | (Location::Wsl { .. }, Section::Recents) => None,
+        (Location::Local(path), Section::Recents) => places.recent.iter().find(|r| r.target == *path).and_then(|r| recent_icon(r, places, px)),
         (loc, _) => location_icon(loc, places, px),
     }
 }

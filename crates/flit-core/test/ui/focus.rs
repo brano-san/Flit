@@ -7,11 +7,11 @@ fn tab_walks_every_shown_region_in_order_and_shift_tab_walks_back() {
     let mut a = app(&["a.txt", "b.txt"]);
     assert_eq!(a.focus, Focus::List);
     let mut seen = Vec::new();
-    for _ in 0..6 {
+    for _ in 0..5 {
         press(&mut a, Key::Tab, false);
         seen.push(a.focus);
     }
-    assert_eq!(seen, [Focus::TabBar, Focus::Nav, Focus::Address, Focus::Toolbar, Focus::List, Focus::TabBar]);
+    assert_eq!(seen, [Focus::TabBar, Focus::Nav, Focus::Toolbar, Focus::List, Focus::TabBar]);
     press(&mut a, Key::Tab, true);
     assert_eq!(a.focus, Focus::List);
     press(&mut a, Key::Tab, true);
@@ -24,15 +24,12 @@ fn tab_walks_every_shown_region_in_order_and_shift_tab_walks_back() {
 }
 
 #[test]
-fn entering_the_address_bar_edits_it_and_leaving_stops_editing() {
+fn entering_the_address_bar_opens_the_address_window() {
     let mut a = app(&["a.txt"]);
-    a.enter_focus(Focus::Nav);
-    press(&mut a, Key::Tab, false);
-    assert_eq!(a.focus, Focus::Address);
-    assert!(a.editing);
-    press(&mut a, Key::Tab, false);
-    assert!(!a.editing);
-    assert_eq!(a.focus, Focus::Toolbar);
+    a.enter_focus(Focus::Address);
+    assert!(a.go_open());
+    press(&mut a, Key::Escape, false);
+    assert!(!a.go_open());
 }
 
 #[test]

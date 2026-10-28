@@ -1,9 +1,8 @@
 use crate::i18n::S;
+use super::actions::{Group, ACTIONS};
 use super::menu::Cmd;
 use super::ops::TIMER_SLACK;
-use super::sidebar::folder_icon;
-use super::{centered, App, Effect, Hit, IconRequest, G_FOLDER};
-use crate::input::{Key, Mods};
+use super::{centered, App, Effect, Hit};
 use crate::listing::{DirSnapshot, FsErrorKind};
 use crate::location::{Location, ProviderId};
 use crate::name;
@@ -19,49 +18,42 @@ use std::time::{Duration, Instant};
 
 pub type Typed = Arc<Mutex<Vec<String>>>;
 
-pub(super) const OVERFLOW: &str = "\u{2026}";
-const G_HISTORY: &str = "\u{E81C}";
 const MAX_TYPED: usize = 64;
 const MAX_SUGGESTIONS: usize = 25;
-const SHOWN_SUGGESTIONS: usize = 10;
-const MAX_MENU: usize = 256;
 const MAX_HISTORY_MENU: usize = 16;
 const LONG_PRESS: Duration = Duration::from_millis(500);
-const SUGGESTION_H: f32 = 28.0;
 const NOT_URLS: [&str; 3] = ["file", "shell", "wsl"];
 const EXPLORER: &str = "explorer.exe";
-const SEPS: [char; 2] = ['\\', '/'];
+pub(super) const SEPS: [char; 2] = ['\\', '/'];
 
-type Anchor = ((f32, f32), Option<Vec<u8>>);
-
-struct Probe {
-    loc: Location,
-    gen: u64,
-    slot: Arc<SnapshotSlot>,
-    cancel: GenToken,
-    view: Option<DirView>,
+pub(super) struct Probe {
+    pub loc: Location,
+    pub gen: u64,
+    pub slot: Arc<SnapshotSlot>,
+    pub cancel: GenToken,
+    pub view: Option<DirView>,
 }
 
 #[derive(Default)]
 pub(super) struct Address {
     pub pending: Option<String>,
-    pub chevrons: Vec<Rect>,
-    pub overflow: Rect,
     pub press: Option<(usize, Instant)>,
     pub typed: Typed,
     watch: Option<(TabId, u64, String)>,
     targets: Vec<Location>,
-    menu: Option<(Probe, Anchor)>,
-    probe: Option<Probe>,
+    pub probe: Option<Probe>,
     missing: Vec<Location>,
-    pub seen: Option<String>,
-    items: Vec<(String, bool)>,
-    rects: Vec<Rect>,
-    sel: Option<usize>,
-    top: usize,
+    pub shift: f32,
+    pub shift_for: Option<Location>,
 }
 
-fn is_url(text: &str) -> bool {
+pub(super) enum Listed {
+    Pending,
+    Missing,
+    Found(Vec<(Vec<u8>, bool)>),
+}
+
+pub(super) fn is_url(text: &str) -> bool {
     let Some((scheme, rest)) = text.split_once(':') else { return false };
     scheme.len() >= 2
         && !rest.is_empty()
@@ -70,7 +62,7 @@ fn is_url(text: &str) -> bool {
         && !NOT_URLS.iter().any(|s| scheme.eq_ignore_ascii_case(s))
 }
 
-fn split_command(text: &str) -> (String, String) {
+pub(super) fn split_command(text: &str) -> (String, String) {
     let t = text.trim();
     if let Some((program, args)) = t.strip_prefix('"').and_then(|r| r.split_once('"')) {
         return (program.to_owned(), args.trim().to_owned());
@@ -81,15 +73,9 @@ fn split_command(text: &str) -> (String, String) {
     }
 }
 
-fn folders(v: &DirView) -> Vec<Vec<u8>> {
+fn entries(v: &DirView) -> Vec<(Vec<u8>, bool)> {
     let l = v.listing();
-    v.rows().iter().filter(|&&i| l.entries[i as usize].is_dir()).map(|&i| l.name(i).to_vec()).collect()
-}
-
-enum Folders {
-    Pending,
-    Missing,
-    Found(Vec<Vec<u8>>),
+    v.rows().iter().map(|&i| (l.name(i).to_vec(), l.entries[i as usize].is_dir())).collect()
 }
 
 type Rank = (u8, usize, usize, usize);
@@ -102,7 +88,7 @@ fn lower(s: &str) -> Vec<char> {
     s.chars().flat_map(char::to_lowercase).collect()
 }
 
-fn place_key(s: &str) -> String {
+pub(super) fn place_key(s: &str) -> String {
     s.trim().trim_end_matches(SEPS).to_lowercase()
 }
 
@@ -169,11 +155,11 @@ fn path_closeness(query: &str, cand: &str) -> Option<(u8, usize)> {
     Some((2, dist + d))
 }
 
-fn label(loc: &Location) -> String {
+pub(super) fn label(loc: &Location) -> String {
     loc.crumbs().pop().map(|c| c.0).unwrap_or_default()
 }
 
-fn ready(p: &mut Probe) -> bool {
+pub(super) fn ready(p: &mut Probe) -> bool {
     if let Some(s) = p.slot.take().filter(|s| s.gen == p.gen && (s.done || s.error.is_some())) {
         p.view = Some(DirView::new(s));
     }
@@ -206,8 +192,8 @@ impl App {
         typed.truncate(MAX_TYPED);
     }
 
-    pub(super) fn typed_address(&mut self) -> bool {
-        let text = self.edit.text.trim().to_owned();
+    pub(super) fn typed_address(&mut self, text: &str) -> bool {
+        let text = text.trim().to_owned();
         if text.is_empty() {
             return false;
         }
@@ -220,6 +206,23 @@ impl App {
             self.addr.pending = Some(text);
         }
         false
+    }
+
+    pub(super) fn submit_address(&mut self, text: &str, now: Instant) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+        let cwd = self.current_location().to_windows().map(|p| p.as_bytes().to_vec());
+        let cmd = open::Open { paths: vec![text.as_bytes().to_vec()], target: open::OpenTarget::CurrentTab, cwd, ..Default::default() };
+        if self.typed_address(text) {
+            return;
+        }
+        if Location::parse(text).as_ref() == Some(self.current_location()) {
+            return self.refresh(now);
+        }
+        self.effects.push(Effect::Open(cmd));
+        self.dirty = true;
     }
 
     pub(super) fn watch_typed(&mut self, text: String) {
@@ -278,7 +281,7 @@ impl App {
         }
     }
 
-    fn probe(&mut self, loc: Location) -> Probe {
+    pub(super) fn probe(&mut self, loc: Location) -> Probe {
         let gen = self.gen();
         let p = Probe { loc, gen, slot: Arc::default(), cancel: GenToken::default(), view: None };
         p.cancel.set(gen);
@@ -287,65 +290,72 @@ impl App {
         p
     }
 
-    fn shown_folders(&self, loc: &Location) -> Option<Vec<Vec<u8>>> {
+    pub(super) fn listing(&mut self, loc: &Location) -> Listed {
+        if self.addr.missing.contains(loc) {
+            return Listed::Missing;
+        }
         let t = self.tab();
-        t.view.as_ref().filter(|v| t.view_loc == *loc && v.snap().done).map(folders)
+        if let Some(v) = t.view.as_ref().filter(|v| t.view_loc == *loc && v.snap().done) {
+            return Listed::Found(entries(v));
+        }
+        if let Some(p) = self.addr.probe.as_ref().filter(|p| p.loc == *loc) {
+            return match &p.view {
+                None => Listed::Pending,
+                Some(v) if v.snap().error.is_some() && v.total_rows() == 0 => {
+                    self.addr.missing.push(loc.clone());
+                    Listed::Missing
+                }
+                Some(v) => Listed::Found(entries(v)),
+            };
+        }
+        if let Some(old) = self.addr.probe.take() {
+            old.cancel.set(u64::MAX);
+        }
+        self.addr.probe = Some(self.probe(loc.clone()));
+        Listed::Pending
+    }
+
+    pub(super) fn resolve_typed(&self, dir: &str) -> Option<Location> {
+        let cwd = self.current_location().to_windows().map(|p| p.as_bytes().to_vec());
+        open::resolve(dir.as_bytes(), cwd.as_deref(), &|_| None).ok()
     }
 
     pub(super) fn poll_address(&mut self) -> bool {
-        let mut shown = false;
         if self.addr.probe.as_mut().is_some_and(|p| p.view.is_none() && ready(p)) {
-            if self.editing {
-                self.suggest();
-            }
-            shown = true;
+            self.go_refresh();
+            return true;
         }
-        if self.addr.menu.as_mut().is_some_and(|m| ready(&mut m.0)) {
-            let Some((p, (at, mark))) = self.addr.menu.take() else { return shown };
-            let names = p.view.as_ref().map(folders).unwrap_or_default();
-            self.subfolder_menu(p.loc, names, mark, at);
-        }
-        shown
-    }
-
-    pub(super) fn crumb_menu(&mut self, i: usize) {
-        let t = self.tab();
-        let Some(loc) = t.crumb(i).map(|c| c.1.clone()) else { return };
-        let mark = t.crumb(i + 1).map(|c| c.1.file_name().to_vec());
-        let at = (self.addr.chevrons.get(i).map_or(self.layout.address.x, |r| r.x), self.layout.address.bottom());
-        if let Some(names) = self.shown_folders(&loc) {
-            return self.subfolder_menu(loc, names, mark, at);
-        }
-        if let Some((old, ..)) = self.addr.menu.take() {
-            old.cancel.set(u64::MAX);
-        }
-        let p = self.probe(loc);
-        self.addr.menu = Some((p, (at, mark)));
-    }
-
-    fn subfolder_menu(&mut self, loc: Location, mut names: Vec<Vec<u8>>, mark: Option<Vec<u8>>, (x, y): (f32, f32)) {
-        if names.is_empty() {
-            return self.status(crate::tr!(S::AddressNoFolders, name = label(&loc)));
-        }
-        names.truncate(MAX_MENU);
-        let entries = names.iter().enumerate().map(|(k, n)| (name::display(n).into_owned(), Cmd::Go(k), mark.as_deref() == Some(n.as_slice()))).collect();
-        self.addr.targets = names.iter().map(|n| loc.join(n)).collect();
-        let menu = self.list_menu(entries);
-        self.flit_menu(x, y, menu);
-    }
-
-    pub(super) fn overflow_menu(&mut self) {
-        let hidden: Vec<(String, Location)> = self.tab().crumbs.iter().zip(&self.layout.crumbs).filter(|(_, r)| r.w == 0.0).map(|(c, _)| c.clone()).collect();
-        let entries = hidden.iter().enumerate().map(|(k, c)| (c.0.clone(), Cmd::Go(k), false)).collect();
-        self.addr.targets = hidden.into_iter().map(|c| c.1).collect();
-        let menu = self.list_menu(entries);
-        self.flit_menu(self.addr.overflow.x, self.layout.address.bottom(), menu);
+        false
     }
 
     pub(super) fn go_target(&mut self, k: usize, now: Instant) {
         if let Some(loc) = self.addr.targets.get(k).cloned() {
             self.navigate(loc, now);
         }
+    }
+
+    pub(super) fn visited_menu(&mut self) {
+        let list = self.nav.sidebar.prefs.most_visited();
+        let r = self.layout.nav[3];
+        let menu = self.collect(|_, m| {
+            for (k, loc) in list.iter().enumerate() {
+                m.go(&label(loc), k, super::G_FOLDER);
+            }
+        });
+        self.addr.targets = list;
+        if !menu.is_empty() {
+            self.button_menu(Hit::Nav(3), r.x, r.bottom(), menu);
+        }
+    }
+
+    pub(super) fn panel_quick_menu(&mut self) {
+        let r = self.layout.more;
+        let menu = self.collect(|_, m| {
+            for a in ACTIONS.iter().filter(|a| a.group == Group::Quick) {
+                m.action(a.id, a.title.t());
+            }
+        });
+        self.button_menu(Hit::PanelMenu, r.x, r.bottom(), menu);
     }
 
     pub(super) fn history_menu(&mut self, i: usize) {
@@ -377,26 +387,6 @@ impl App {
         }
     }
 
-    pub(super) fn layout_address(&mut self) {
-        if !self.editing {
-            if self.addr.seen.take().is_some() {
-                self.addr.missing.clear();
-                self.addr.items.clear();
-                self.addr.rects.clear();
-                self.addr.sel = None;
-            }
-            return;
-        }
-        match self.addr.seen.replace(self.edit.text.clone()) {
-            Some(was) if was != self.edit.text => self.suggest(),
-            _ => {}
-        }
-        let (a, h, gap) = (self.layout.address, self.s(SUGGESTION_H), self.s(4.0));
-        let shown = self.addr.items.len().min(SHOWN_SUGGESTIONS);
-        self.addr.top = self.addr.top.min(self.addr.items.len() - shown);
-        self.addr.rects = (0..shown).map(|k| Rect::new(a.x, a.bottom() + gap + k as f32 * h, a.w, h)).collect();
-    }
-
     fn places(&self) -> Vec<(String, bool)> {
         let mut out: Vec<(String, bool)> = self.addr.typed.lock().unwrap_or_else(|e| e.into_inner()).iter().map(|t| (t.clone(), true)).collect();
         let shown = |l: &Location| (l.display().into_owned(), false);
@@ -410,13 +400,9 @@ impl App {
         out
     }
 
-    fn suggest(&mut self) {
-        self.addr.sel = None;
-        self.addr.top = 0;
-        self.addr.items.clear();
-        let text = self.edit.text.clone();
+    pub(super) fn suggest(&mut self, text: &str) -> Vec<(String, bool)> {
         if text.trim().is_empty() {
-            return;
+            return Vec::new();
         }
         let places = self.places();
         let keys: Vec<String> = places.iter().map(|(p, _)| place_key(p)).collect();
@@ -425,19 +411,23 @@ impl App {
             keys.iter().position(|p| *p == k).unwrap_or(usize::MAX)
         };
         let mut found: Vec<(Rank, String, bool)> = Vec::new();
-        let typed_key = place_key(&text);
+        let typed_key = place_key(text);
         for ((p, typed), k) in places.iter().zip(&keys) {
-            if let Some(m) = path_closeness(&text, p).filter(|_| *k != typed_key) {
+            if let Some(m) = path_closeness(text, p).filter(|_| *k != typed_key) {
                 found.push((rank(m, recency(p), p), p.clone(), *typed));
             }
         }
         let (mut end, mut cut) = (text.len(), text.rfind(SEPS));
         while let Some(c) = cut {
             let (dir, seg, sep) = (&text[..=c], &text[c + 1..end], &text[c..=c]);
-            match self.subfolders(dir) {
-                Folders::Found(names) => {
+            let listed = match self.resolve_typed(dir) {
+                Some(loc) => self.listing(&loc),
+                None => Listed::Pending,
+            };
+            match listed {
+                Listed::Found(names) => {
                     let q = lower(seg);
-                    for n in &names {
+                    for (n, _) in names.iter().filter(|e| e.1) {
                         let shown = name::display(n);
                         if let Some(m) = closeness(&q, &lower(&shown), true) {
                             let s = format!("{dir}{shown}{sep}");
@@ -446,13 +436,13 @@ impl App {
                     }
                     break;
                 }
-                Folders::Missing => (end, cut) = (c, text[..c].rfind(SEPS)),
-                Folders::Pending => break,
+                Listed::Missing => (end, cut) = (c, text[..c].rfind(SEPS)),
+                Listed::Pending => break,
             }
         }
         found.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
         let mut seen = Vec::new();
-        self.addr.items = found
+        found
             .into_iter()
             .filter(|f| {
                 let k = place_key(&f.1);
@@ -463,129 +453,7 @@ impl App {
             })
             .take(MAX_SUGGESTIONS)
             .map(|f| (f.1, f.2))
-            .collect();
-    }
-
-    fn subfolders(&mut self, dir: &str) -> Folders {
-        let cwd = self.current_location().to_windows().map(|p| p.as_bytes().to_vec());
-        let Ok(loc) = open::resolve(dir.as_bytes(), cwd.as_deref(), &|_| None) else { return Folders::Pending };
-        if self.addr.missing.contains(&loc) {
-            return Folders::Missing;
-        }
-        if let Some(names) = self.shown_folders(&loc) {
-            return Folders::Found(names);
-        }
-        if let Some(p) = self.addr.probe.as_ref().filter(|p| p.loc == loc) {
-            return match &p.view {
-                None => Folders::Pending,
-                Some(v) if v.snap().error.is_some() && v.total_rows() == 0 => {
-                    self.addr.missing.push(loc);
-                    Folders::Missing
-                }
-                Some(v) => Folders::Found(folders(v)),
-            };
-        }
-        if let Some(old) = self.addr.probe.take() {
-            old.cancel.set(u64::MAX);
-        }
-        self.addr.probe = Some(self.probe(loc));
-        Folders::Pending
-    }
-
-    pub(super) fn suggesting(&self) -> bool {
-        self.editing && !self.addr.rects.is_empty()
-    }
-
-    pub(super) fn pick_suggestion(&mut self, k: usize) {
-        if let Some((text, _)) = self.addr.items.get(k).cloned() {
-            self.edit.set(&text);
-            self.dirty = true;
-        }
-    }
-
-    pub(super) fn address_hit(&self, x: f32, y: f32) -> Option<Hit> {
-        if self.editing {
-            return self.addr.rects.iter().position(|r| r.contains(x, y)).map(|k| Hit::Suggestion(self.addr.top + k));
-        }
-        if !self.layout.address.contains(x, y) {
-            return None;
-        }
-        if self.addr.overflow.contains(x, y) {
-            return Some(Hit::CrumbOverflow);
-        }
-        self.addr.chevrons.iter().position(|r| r.contains(x, y)).map(Hit::CrumbMenu)
-    }
-
-    pub(super) fn address_key(&mut self, key: Key, m: Mods) -> bool {
-        let n = self.addr.items.len();
-        if n == 0 || m.ctrl || m.alt {
-            return false;
-        }
-        let sel = self.addr.sel;
-        match key {
-            Key::Down => self.addr.sel = Some(sel.map_or(0, |k| (k + 1) % n)),
-            Key::Up => self.addr.sel = Some(sel.map_or(n - 1, |k| (k + n - 1) % n)),
-            Key::Tab => self.pick_suggestion(sel.unwrap_or(0)),
-            Key::Escape => {
-                self.addr.items.clear();
-                self.addr.rects.clear();
-                self.addr.sel = None;
-            }
-            Key::Enter => {
-                if let Some(k) = sel {
-                    self.pick_suggestion(k);
-                }
-                return false;
-            }
-            _ => return false,
-        }
-        if let Some(k) = self.addr.sel {
-            self.addr.top = self.addr.top.min(k).max((k + 1).saturating_sub(SHOWN_SUGGESTIONS));
-        }
-        self.dirty = true;
-        true
-    }
-
-    pub(super) fn suggestions_wheel(&mut self, dy: f32) {
-        let steps = (dy * 3.0).round() as isize;
-        let last = self.addr.items.len().saturating_sub(SHOWN_SUGGESTIONS);
-        self.addr.top = self.addr.top.saturating_add_signed(-steps).min(last);
-        self.dirty = true;
-    }
-
-    pub(super) fn draw_suggestions<B: TextBackend>(&mut self, g: &mut Gfx<B>, th: &Theme) {
-        let (Some(first), Some(last)) = (self.addr.rects.first().copied(), self.addr.rects.last().copied()) else { return };
-        if !self.editing {
-            return;
-        }
-        let (s4, s6) = (self.s(4.0), self.s(6.0));
-        let b = Rect::new(first.x, first.y - s4, first.w, last.bottom() - first.y + 2.0 * s4);
-        super::widgets::Paint::new(g, th, self.scale).frame(b);
-        let (font, icons) = (self.ui_font(13.0), self.icon_font(12.0));
-        let m = g.metrics(font);
-        let mut requests: Vec<IconRequest> = Vec::new();
-        let n = self.addr.items.len();
-        if n > self.addr.rects.len() {
-            let track = b.h - 2.0 * s4;
-            let thumb = Rect::new(b.right() - s4 - self.s(3.0), b.y + s4 + track * self.addr.top as f32 / n as f32, self.s(3.0), track * self.addr.rects.len() as f32 / n as f32);
-            g.dl.round_rect(thumb, th.scrollbar, self.s(1.5));
-        }
-        for (k, (r, (text, typed))) in self.addr.rects.iter().zip(&self.addr.items[self.addr.top..]).enumerate() {
-            let k = self.addr.top + k;
-            if self.addr.sel == Some(k) {
-                g.dl.round_rect(r.inset(s4, 1.0), th.selection, s4);
-            } else if self.hover == Hit::Suggestion(k) {
-                g.dl.round_rect(r.inset(s4, 1.0), th.hover, s4);
-            }
-            let icon = Rect::new(r.x + self.s(10.0), r.y, self.s(16.0), r.h);
-            let system = (!*typed).then(|| Location::parse(text)).flatten().and_then(|loc| folder_icon(&loc, &self.nav.sidebar, icon.w as u32));
-            if !self.system_icon(g, system, icon, icon.w, 0xFF, &mut requests) {
-                centered(g, icon, if *typed { G_HISTORY } else { G_FOLDER }, icons, th.text_dim);
-            }
-            let x = icon.right() + self.s(8.0);
-            g.text(x, (r.y + (r.h + m.ascent - m.descent) / 2.0).round(), text, font, th.text, r.right() - x - s6);
-        }
-        self.request_icons(requests);
+            .collect()
     }
 
     pub(super) fn eject_rect(&self) -> Option<Rect> {

@@ -145,6 +145,7 @@ fn grouping_adds_counted_headers_that_collapse_on_click() {
 #[test]
 fn views_are_remembered_per_folder_and_new_folders_use_the_defaults() {
     let mut app = app_at(r"C:\a");
+    app.set_view_mode(ViewMode::Folder);
     let now = Instant::now();
     run(&mut app, "view.sort.size");
     run(&mut app, "view.group.type");
@@ -161,7 +162,7 @@ fn views_are_remembered_per_folder_and_new_folders_use_the_defaults() {
     assert_eq!(listing_view.map(|v| (v.sort.field, v.group.field)), Some((SortField::Size, GroupField::Type)), "the folder is listed with its own view");
     app.go_history(true, now);
     assert!(app.tab().view_spec.sort.descending);
-    assert_eq!(app.persisted().folders.len(), 2);
+    assert_eq!(app.persisted().folders.len(), 1, "only the folder with a saved view is remembered");
     run(&mut app, "view.set_default");
     app.navigate(loc(r"C:\c"), now);
     assert!(app.tab().view_spec.sort.descending, "new folders open with the default view");
@@ -192,6 +193,7 @@ fn the_folder_store_is_bounded_and_keeps_recent_folders() {
 #[test]
 fn the_header_menu_shows_hides_and_fits_columns_and_the_bin_keeps_its_own() {
     let mut app = app_at(r"C:\x");
+    app.set_view_mode(ViewMode::Folder);
     deliver(&mut app, &[("a.txt", 10, false)]);
     let h = app.layout.cols[1];
     click(&mut app, h.x + 20.0, h.y + h.h / 2.0, MouseButton::Right);
@@ -398,4 +400,73 @@ fn folder_views_are_keyed_by_case_only_on_unix_paths() {
     assert_eq!(key(r"C:\Users\A"), key(r"c:\users\a"));
     assert_ne!(key("/home/A"), key("/home/a"));
     assert_eq!(key("/home/a"), key("/home/a"));
+}
+
+#[test]
+fn saved_views_follow_none_this_folder_and_subfolders() {
+    let now = Instant::now();
+    let mut app = app_at(r"C:\p");
+    assert_eq!(app.view_mode(), ViewMode::None);
+    run(&mut app, "view.sort.size");
+    app.navigate(loc(r"C:\q"), now);
+    assert_eq!(app.tab().view_spec.sort.field, SortField::Size, "without a saved view the change follows to other folders");
+    assert!(app.persisted().folders.is_empty());
+
+    app.navigate(loc(r"C:\p"), now);
+    app.set_view_mode(ViewMode::Subfolders);
+    run(&mut app, "view.sort.type");
+    app.navigate(loc(r"C:\p\deep\er"), now);
+    assert_eq!(app.tab().view_spec.sort.field, SortField::Type, "subfolders use the saved view");
+    assert_eq!(app.view_mode(), ViewMode::None, "the radio shows only the folder's own mode");
+    run(&mut app, "view.sort.name");
+    app.navigate(loc(r"C:\p"), now);
+    assert_eq!(app.tab().view_spec.sort.field, SortField::Name, "a change below updates the saved view");
+    app.navigate(loc(r"C:\q"), now);
+    assert_eq!(app.tab().view_spec.sort.field, SortField::Size, "other folders keep the defaults");
+
+    app.navigate(loc(r"C:\p\deep"), now);
+    app.set_view_mode(ViewMode::Folder);
+    run(&mut app, "view.sort.modified");
+    app.navigate(loc(r"C:\p\deep\er"), now);
+    assert_eq!(app.tab().view_spec.sort.field, SortField::Name, "This folder does not reach its subfolders");
+
+    app.navigate(loc(r"C:\p"), now);
+    app.run_action("folder.cycle_view", now);
+    assert_eq!(app.view_mode(), ViewMode::None);
+    app.run_action("folder.cycle_view", now);
+    assert_eq!(app.view_mode(), ViewMode::Folder);
+    app.run_action("views.clear", now);
+    assert!(app.persisted().folders.is_empty());
+    assert_eq!(app.view_mode(), ViewMode::None);
+}
+
+#[test]
+fn special_places_keep_their_own_view_without_asking() {
+    let now = Instant::now();
+    let mut app = app_at(r"C:\x");
+    app.navigate(Location::computer(), now);
+    run(&mut app, "view.sort.size");
+    app.navigate(loc(r"C:\x"), now);
+    assert_eq!(app.tab().view_spec.sort.field, SortField::Name);
+    app.navigate(Location::computer(), now);
+    assert_eq!(app.tab().view_spec.sort.field, SortField::Size);
+}
+
+#[test]
+fn the_saved_view_menu_has_a_header_three_modes_and_set_as_default() {
+    let mut app = app_at(r"C:\x");
+    frame(&mut app);
+    let r = app.layout.view;
+    assert_eq!(app.hit(r.x + r.w / 2.0, r.y + r.h / 2.0), Hit::ViewMode);
+    app.drain_effects().for_each(drop);
+    app.view_mode_menu();
+    let m = menu_of(&mut app);
+    assert!(matches!(&m.menu[0], MenuItem::Header(h) if h == "Saved view settings"));
+    assert_eq!(commands(&m.menu), [("None".to_owned(), true), ("This folder".to_owned(), false), ("This folder and subfolders".to_owned(), false), ("Set as default".to_owned(), false)]);
+    app.on_event(&Event::MenuCommand(1), Instant::now());
+    assert_eq!(app.view_mode(), ViewMode::Folder);
+    assert_eq!(app.tip_text(Hit::ViewMode).unwrap().line, "View settings are saved for this folder.");
+    app.view_mode_menu();
+    let m = menu_of(&mut app);
+    assert!(m.menu.iter().any(|i| matches!(i, MenuItem::Command { label, disabled: true, .. } if label == "Set as default")), "Set as default is off for This folder");
 }

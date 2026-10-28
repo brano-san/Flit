@@ -37,3 +37,10 @@ files = ["{n} 个文件"]
 
 [status]
 default_view = "新文件夹将以此视图打开"
+
+[view]
+saved = "已保存的视图设置"
+none = "无"
+folder = "此文件夹"
+subfolders = "此文件夹及子文件夹"
+default = "设为默认"

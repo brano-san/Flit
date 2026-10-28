@@ -156,7 +156,7 @@ fn set_focus_and_select_move_the_app_to_that_control() {
     let rows: Vec<(&str, bool)> = t.nodes.iter().filter(|n| n.role == Role::DataItem).map(|n| (n.name.as_str(), n.selected)).collect();
     assert_eq!(rows, [("alpha.txt", false), ("beta.txt", true)]);
     assert_eq!(t.nodes[t.focus.unwrap()].id, beta);
-    let refresh = t.by_name(action_title("nav.refresh")).unwrap().id;
+    let refresh = t.by_name(action_title("nav.up")).unwrap().id;
     a.on_event(&Event::A11yFocus(refresh), Instant::now());
     let t = a.accessibility();
     assert_eq!(t.nodes[t.focus.unwrap()].id, refresh);

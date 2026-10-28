@@ -12,7 +12,7 @@ use crate::preview::{self, PreviewRequest, PropGroup};
 use crate::provider::{GenToken, OpCtl, OpId, ProviderRequest, Totals};
 use bumpalo::Bump;
 
-const MEASURE_IDS: OpId = 1 << 61;
+pub(super) const MEASURE_IDS: OpId = 1 << 61;
 
 #[derive(Default)]
 struct Rows {

@@ -5,12 +5,16 @@ cancel = "Отмена"
 remove_item = "Убрать пункт из списка?"
 
 [key]
+tab = "Tab"
+ctrl_enter = "Ctrl+Enter"
 up = "Up"
 down = "Down"
 enter = "Enter"
 escape = "Escape"
 
 [hint]
+expand = "— раскрыть"
+open_in_panel = "— открыть в панели"
 navigate = "— перемещение"
 use = "— выбрать"
 dismiss = "— закрыть"

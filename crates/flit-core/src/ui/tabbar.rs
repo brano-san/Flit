@@ -274,10 +274,6 @@ impl App {
                 self.go_up(now);
                 true
             }
-            (MouseButton::Left, Hit::Suggestion(k)) => {
-                self.pick_suggestion(k);
-                true
-            }
             _ => false,
         }
     }

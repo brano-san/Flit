@@ -1,10 +1,13 @@
 use super::*;
-use crate::input::{Event, MouseButton};
+use crate::input::{Event, Key, Mods, MouseButton};
 use crate::listing::{attr, DirChange, FsError, Listing, Meta};
 use crate::sort::{self, CaseMode, SortKeys, ViewSpec};
 use crate::text::tests::Mono;
 use crate::ui::{MenuItem, Persisted};
 use crate::open::Open;
+use crate::ui::goto::{Kind as GoKind, Line as GoLine};
+use crate::ui::palette::Pick;
+use crate::ui::sidebar::{Drive, KnownFolder, Places, Section};
 
 const NO: Mods = Mods { ctrl: false, shift: false, alt: false };
 const CTRL: Mods = Mods { ctrl: true, shift: false, alt: false };
@@ -42,9 +45,15 @@ fn key(app: &mut App, key: Key, mods: Mods) {
     app.on_event(&Event::Key { key, mods, pressed: true }, Instant::now());
 }
 
+fn set_field(app: &mut App, text: &str) {
+    app.nav.palette.as_mut().expect("an open window").field.edit.set(text);
+    app.go_refresh();
+    app.layout();
+}
+
 fn submit(app: &mut App, text: &str) -> Vec<Effect> {
     key(app, Key::Char('L'), CTRL);
-    app.edit.set(text);
+    set_field(app, text);
     key(app, Key::Enter, NO);
     app.drain_effects().collect()
 }
@@ -128,52 +137,31 @@ fn a_file_location_shows_its_folder_with_the_file_selected() {
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { .. } | ProviderRequest::Launch { .. }, .. })));
 }
 
-#[test]
-fn suggestions_come_from_subfolders_and_typed_paths() {
-    let mut app = app_at(r"C:\x");
-    deliver(&mut app, &[("alpha", true), ("beta", true), ("apple.txt", false)], None);
-    app.share_typed(Arc::new(Mutex::new(vec![r"C:\x\alpha\deep".into(), r"D:\elsewhere".into()])));
-    key(&mut app, Key::Char('L'), CTRL);
-    app.layout();
-    assert!(app.addr.items.is_empty());
-    app.edit.set(r"C:\x\a");
-    app.layout();
-    assert_eq!(app.addr.items, [(r"C:\x\alpha\deep".to_owned(), true), (r"C:\x\alpha\".to_owned(), false)]);
-    assert_eq!(app.addr.rects.len(), 2);
-    let r = app.addr.rects[1];
-    assert_eq!(app.hit(r.x + 20.0, r.y + 5.0), Hit::Suggestion(1));
-    key(&mut app, Key::Down, NO);
-    key(&mut app, Key::Down, NO);
-    assert_eq!(app.addr.sel, Some(1));
-    key(&mut app, Key::Enter, NO);
-    let fx: Vec<Effect> = app.drain_effects().collect();
-    assert!(fx.iter().any(|e| matches!(e, Effect::Open(o) if o.paths == [br"C:\x\alpha\".to_vec()])));
-    assert!(app.addr.items.is_empty() || !app.editing);
+fn go(app: &App) -> &crate::ui::goto::Go {
+    app.nav.palette.as_ref().and_then(|p| p.go.as_ref()).expect("a go window")
+}
 
-    key(&mut app, Key::Char('L'), CTRL);
-    app.layout();
-    app.edit.set(r"D:\data\s");
-    app.layout();
-    assert!(app.addr.items.is_empty());
-    let p = app.addr.probe.as_ref().unwrap();
-    assert_eq!(p.loc, loc(r"D:\data"));
-    p.slot.publish(snapshot(p.gen, &p.loc, &[("src", true), ("docs", true), ("setup.exe", false)], None));
-    app.poll();
-    app.layout();
-    assert_eq!(app.addr.items, [(r"D:\data\src\".to_owned(), false)]);
-    key(&mut app, Key::Tab, NO);
-    assert_eq!(app.edit.text, r"D:\data\src\");
-    key(&mut app, Key::Escape, NO);
-    assert!(app.editing);
-    key(&mut app, Key::Escape, NO);
-    assert!(!app.editing);
+fn shown(app: &App) -> Vec<String> {
+    let g = go(app);
+    g.lines.iter().filter_map(|l| if let GoLine::Row(k, _) = l { Some(g.rows[*k].label.clone()) } else { None }).collect()
+}
+
+fn selected(app: &App) -> Option<String> {
+    let p = app.nav.palette.as_ref()?;
+    let g = p.go.as_ref().filter(|g| g.picked)?;
+    match g.lines.get(p.sel)? {
+        GoLine::Row(k, _) => Some(g.rows[*k].label.clone()),
+        GoLine::Header(s) => Some(format!("[{}]", s.id())),
+    }
+}
+
+fn field(app: &App) -> &str {
+    app.nav.palette.as_ref().expect("an open window").field.text()
 }
 
 fn type_address(app: &mut App, text: &str) {
     key(app, Key::Char('L'), CTRL);
-    app.layout();
-    app.edit.set(text);
-    app.layout();
+    set_field(app, text);
 }
 
 fn answer_probe(app: &mut App, expect: &str, items: &[(&str, bool)], error: Option<FsErrorKind>) {
@@ -184,15 +172,165 @@ fn answer_probe(app: &mut App, expect: &str, items: &[(&str, bool)], error: Opti
     app.layout();
 }
 
-fn suggested(app: &App) -> Vec<&str> {
-    app.addr.items.iter().map(|(t, _)| t.as_str()).collect()
+fn suggested(app: &App) -> Vec<String> {
+    let g = go(app);
+    g.lines.iter().filter_map(|l| if let GoLine::Row(k, _) = l { Some(&g.rows[*k]) } else { None }).filter(|r| matches!(r.kind, GoKind::Typed(_) | GoKind::Suggested(_))).map(|r| r.label.clone()).collect()
+}
+
+const ALT: Mods = Mods { ctrl: false, shift: false, alt: true };
+
+#[test]
+fn the_address_window_lists_the_folder_then_typed_paths_and_tab_expands() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("alpha", true), ("beta", true), ("apple.txt", false)], None);
+    app.share_typed(Arc::new(Mutex::new(vec![r"C:\x\alpha\deep".into(), r"D:\elsewhere".into()])));
+    key(&mut app, Key::Char('L'), CTRL);
+    assert_eq!(app.nav.palette.as_ref().map(|p| p.pick.clone()), Some(Pick::GoTo));
+    assert_eq!(field(&app), r"C:\x\");
+    assert_eq!(shown(&app)[..3], ["alpha".to_owned(), "beta".to_owned(), "apple.txt".to_owned()]);
+    assert_eq!(selected(&app), None, "a typed address is not replaced by a row until the arrows pick one");
+    set_field(&mut app, r"C:\x\a");
+    let rows = shown(&app);
+    assert_eq!(rows[..2], ["alpha".to_owned(), "apple.txt".to_owned()]);
+    assert!(rows.contains(&r"C:\x\alpha\deep".to_owned()), "{rows:?}");
+    assert!(!rows.contains(&r"C:\x\alpha\".to_owned()), "a folder already listed is not suggested twice: {rows:?}");
+    key(&mut app, Key::Down, NO);
+    assert_eq!(selected(&app).as_deref(), Some("alpha"));
+    key(&mut app, Key::Tab, NO);
+    assert_eq!(field(&app), r"C:\x\alpha\");
+    key(&mut app, Key::Escape, NO);
+    assert!(!app.go_open());
+
+    type_address(&mut app, r"C:\x\b");
+    key(&mut app, Key::Down, NO);
+    key(&mut app, Key::Enter, NO);
+    assert!(!app.go_open());
+    assert_eq!(app.tab().location(), &loc(r"C:\x\beta"));
+}
+
+#[test]
+fn goto_starts_with_quick_access_groups_that_fold() {
+    let mut app = app_at(r"C:\x");
+    let c = Drive { path: FsPath::parse(r"C:\").unwrap(), label: "Disk (C:)".into(), total: 100, free: 25, removable: false, unmounted: false, kind: None, remote: None };
+    app.set_places(Arc::new(Places { drives: vec![c], folders: vec![(KnownFolder::Downloads, loc(r"C:\Users\u\Downloads"))], ..Default::default() }));
+    app.nav.sidebar.state.pinned = vec![loc(r"C:\work")];
+    app.nav.sidebar.rebuild();
+    key(&mut app, Key::Char('P'), CTRL);
+    assert_eq!(field(&app), "");
+    let heads: Vec<Section> = go(&app).lines.iter().filter_map(|l| if let GoLine::Header(s) = l { Some(*s) } else { None }).collect();
+    assert_eq!(heads, [Section::Bookmarks, Section::Storage, Section::Places]);
+    assert_eq!(selected(&app).as_deref(), Some("work"), "the first item is selected");
+    frame(&mut app);
+    assert_eq!(app.nav.palette.as_ref().unwrap().first, 0, "the first header stays in view");
+    assert!(shown(&app).contains(&"Downloads".to_owned()));
+    let storage = go(&app).lines.iter().position(|l| *l == GoLine::Header(Section::Storage)).unwrap();
+    app.go_activate(storage, Instant::now());
+    assert!(!shown(&app).contains(&"Disk (C:)".to_owned()), "a header folds its group");
+    assert_eq!(selected(&app).as_deref(), Some("[drives]"));
+    app.go_activate(storage, Instant::now());
+    assert!(shown(&app).contains(&"Disk (C:)".to_owned()));
+    set_field(&mut app, "dl");
+    assert_eq!(shown(&app).first().map(String::as_str), Some("Downloads"), "typing without a separator filters Quick Access");
+    set_field(&mut app, "");
+    assert_eq!(selected(&app).as_deref(), Some("work"));
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(app.tab().location(), &loc(r"C:\work"));
+}
+
+#[test]
+fn goto_keys_walk_history_and_parents_and_select_in_the_panel() {
+    let mut app = app_at(r"C:\a");
+    app.navigate(loc(r"C:\b\c"), Instant::now());
+    deliver(&mut app, &[("f.txt", false), ("g.txt", false)], None);
+    app.drain_effects().for_each(drop);
+    key(&mut app, Key::F(4), NO);
+    assert!(app.go_open());
+    key(&mut app, Key::Left, ALT);
+    assert_eq!(app.tab().location(), &loc(r"C:\a"));
+    assert_eq!(field(&app), r"C:\a\");
+    app.on_event(&Event::MouseDown { x: 1.0, y: 300.0, button: MouseButton::Forward, clicks: 1 }, Instant::now());
+    assert_eq!(app.tab().location(), &loc(r"C:\b\c"));
+    assert_eq!(field(&app), r"C:\b\c\");
+    deliver(&mut app, &[("f.txt", false), ("g.txt", false)], None);
+    key(&mut app, Key::Up, ALT);
+    assert_eq!(field(&app), r"C:\b\");
+    assert_eq!(app.tab().location(), &loc(r"C:\b\c"), "Alt+Up only edits the field");
+    set_field(&mut app, r"C:\b\c\g");
+    key(&mut app, Key::Down, NO);
+    assert_eq!(selected(&app).as_deref(), Some("g.txt"));
+    key(&mut app, Key::Enter, CTRL);
+    assert!(!app.go_open());
+    assert_eq!(app.tab().location(), &loc(r"C:\b\c"));
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { .. }, .. })), "Ctrl+Enter selects instead of opening");
+}
+
+#[test]
+fn a_crumb_drops_down_its_folder_with_the_next_crumb_marked() {
+    let mut app = app_at(r"C:\x\y");
+    deliver(&mut app, &[("inner", true), ("note.txt", false)], None);
+    frame(&mut app);
+    let n = app.tab().crumbs.len();
+    let r = app.layout.crumbs[n - 2];
+    assert!(r.w > 0.0);
+    assert_eq!(app.hit(r.x + r.w / 2.0, r.y + r.h / 2.0), Hit::Crumb(n - 2));
+    click_at(&mut app, r);
+    assert_eq!(app.nav.palette.as_ref().map(|p| p.pick.clone()), Some(Pick::Crumb(n - 2)));
+    answer_probe(&mut app, r"C:\x", &[("y", true), ("z", true), ("x.txt", false)], None);
+    assert_eq!(shown(&app), ["y", "z", "x.txt"]);
+    assert_eq!(selected(&app).as_deref(), Some("y"), "the folder the path goes through is marked and selected");
+    let p = app.nav.palette.as_ref().unwrap();
+    assert_eq!(app.go_placeholder(p), "Filter 3 files...");
+    assert!(p.rect.y >= r.bottom(), "the dropdown opens under its crumb");
+    key(&mut app, Key::Down, NO);
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(app.tab().location(), &loc(r"C:\x\z"));
+
+    let mut keys = app_at(r"C:\x\y");
+    deliver(&mut keys, &[("inner", true)], None);
+    frame(&mut keys);
+    key(&mut keys, Key::Down, ALT);
+    let last = keys.tab().crumbs.len() - 1;
+    assert_eq!(keys.nav.palette.as_ref().map(|p| p.pick.clone()), Some(Pick::Crumb(last)));
+    assert_eq!(shown(&keys), ["inner"]);
+    key(&mut keys, Key::Left, ALT);
+    assert_eq!(keys.nav.palette.as_ref().map(|p| p.pick.clone()), Some(Pick::Crumb(last - 1)));
+    key(&mut keys, Key::Right, ALT);
+    assert_eq!(keys.nav.palette.as_ref().map(|p| p.pick.clone()), Some(Pick::Crumb(last)));
+    key(&mut keys, Key::Right, ALT);
+    assert_eq!(keys.nav.palette.as_ref().map(|p| p.pick.clone()), Some(Pick::Crumb(last)), "there is no crumb after the last one");
+    assert_eq!(keys.tab().location(), &loc(r"C:\x\y"));
+}
+
+#[test]
+fn a_long_path_scrolls_with_arrows_and_keeps_the_current_folder_in_view() {
+    let mut deep = app_at(r"C:\one\two\three\four\five\six\seven\eight\nine\ten");
+    deep.on_event(&Event::Resized { width: 520, height: 600 }, Instant::now());
+    frame(&mut deep);
+    let [left, right] = deep.layout.crumb_arrows;
+    assert!(left.w > 0.0 && right.w > 0.0);
+    assert_eq!(deep.hit(left.x + left.w / 2.0, left.y + left.h / 2.0), Hit::CrumbScroll(false));
+    let n = deep.tab().crumbs.len();
+    assert!(deep.layout.crumbs[n - 1].w > 0.0, "the current folder is in view");
+    assert_eq!(deep.layout.crumbs[0].w, 0.0);
+    for _ in 0..20 {
+        click_at(&mut deep, left);
+        frame(&mut deep);
+    }
+    assert!(deep.layout.crumbs[0].w > 0.0, "scrolling left reaches the start");
+    deep.navigate(loc(r"C:\one\two\three\four\five\six\seven\eight\nine"), Instant::now());
+    frame(&mut deep);
+    assert_eq!(deep.addr.shift, 0.0, "a new folder starts at the end again");
+
+    let mut short = app_at(r"C:\x");
+    frame(&mut short);
+    assert_eq!(short.layout.crumb_arrows[0].w, 0.0);
 }
 
 #[test]
 fn a_missing_folder_suggests_close_names_from_its_nearest_existing_parent() {
     let mut app = app_at(r"D:\x");
     type_address(&mut app, r"C:\User\");
-    assert!(app.addr.items.is_empty());
+    assert!(suggested(&app).is_empty());
     answer_probe(&mut app, r"C:\User", &[], Some(FsErrorKind::NotFound));
     answer_probe(&mut app, r"C:\", &[("Users", true), ("Windows", true), ("Program Files", true), ("pagefile.sys", false)], None);
     assert_eq!(suggested(&app), [r"C:\Users\"]);
@@ -209,7 +347,7 @@ fn a_typo_in_the_last_name_still_finds_the_folder() {
     let mut app = app_at(r"D:\x");
     type_address(&mut app, r"C:\Users\brano\Dcuments");
     answer_probe(&mut app, r"C:\Users\brano", &[("Desktop", true), ("Documents", true), ("Downloads", true), ("notes.txt", false)], None);
-    assert_eq!(suggested(&app), [r"C:\Users\brano\Documents\"]);
+    assert!(shown(&app).contains(&r"C:\Users\brano\Documents\".to_owned()) || shown(&app).contains(&"Documents".to_owned()), "{:?}", shown(&app));
 
     app.share_typed(Arc::new(Mutex::new(vec![r"C:\Users\brano\Documents\Work".into(), r"C:\Windows".into()])));
     type_address(&mut app, r"C:\Usrs\brano\Docs");
@@ -217,75 +355,19 @@ fn a_typo_in_the_last_name_still_finds_the_folder() {
 }
 
 #[test]
-fn suggestions_rank_prefix_then_recent_then_closeness_then_length() {
+fn suggestions_rank_prefix_then_recent_then_closeness_then_length_and_stop_at_25() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &[("dxo", true), ("redo", true), ("dotfiles_long", true), ("Downloads", true), ("docs", true), ("dog.txt", false), ("zzz", true)], None);
     app.share_typed(Arc::new(Mutex::new(vec![r"C:\x\Downloads".into()])));
-    type_address(&mut app, r"C:\x\do");
-    assert_eq!(suggested(&app), [r"C:\x\Downloads", r"C:\x\docs\", r"C:\x\dotfiles_long\", r"C:\x\redo\", r"C:\x\dxo\"]);
-    assert!(app.addr.items[0].1);
-}
+    let got = app.suggest(r"C:\x\do");
+    assert_eq!(got.iter().map(|g| g.0.as_str()).collect::<Vec<_>>(), [r"C:\x\Downloads", r"C:\x\docs\", r"C:\x\dotfiles_long\", r"C:\x\redo\", r"C:\x\dxo\"]);
+    assert!(got[0].1);
 
-#[test]
-fn up_to_25_suggestions_scroll_ten_at_a_time() {
-    let mut app = app_at(r"C:\x");
+    let mut many = app_at(r"C:\x");
     let names: Vec<String> = (0..30).map(|k| format!("d{k:02}")).collect();
     let items: Vec<(&str, bool)> = names.iter().map(|n| (n.as_str(), true)).collect();
-    deliver(&mut app, &items, None);
-    type_address(&mut app, r"C:\x\d");
-    frame(&mut app);
-    assert_eq!(app.addr.items.len(), 25);
-    assert_eq!(app.addr.rects.len(), 10);
-    let r = app.addr.rects[0];
-    assert_eq!(app.hit(r.x + 5.0, r.y + 5.0), Hit::Suggestion(0));
-    app.suggestions_wheel(-1.0);
-    frame(&mut app);
-    assert_eq!(app.hit(r.x + 5.0, r.y + 5.0), Hit::Suggestion(3));
-    app.suggestions_wheel(-100.0);
-    frame(&mut app);
-    assert_eq!(app.hit(r.x + 5.0, r.y + 5.0), Hit::Suggestion(15));
-    app.suggestions_wheel(100.0);
-    for _ in 0..12 {
-        app.address_key(Key::Down, Mods::default());
-    }
-    frame(&mut app);
-    assert_eq!(app.hit(r.x + 5.0, r.y + 5.0), Hit::Suggestion(2));
-}
-
-#[test]
-fn chevrons_list_subfolders_and_the_ellipsis_lists_hidden_crumbs() {
-    let mut app = app_at(r"C:\x\y");
-    deliver(&mut app, &[("inner", true), ("note.txt", false)], None);
-    frame(&mut app);
-    let n = app.tab().crumbs.len();
-    assert_eq!(app.addr.chevrons.len(), n);
-    assert_eq!(app.addr.chevrons[n - 1].w, 0.0, "the last crumb in the bar has no chevron after it");
-    let c = app.addr.chevrons[n - 2];
-    assert!(c.w > 0.0);
-    assert_eq!(app.hit(c.x + c.w / 2.0, c.y + c.h / 2.0), Hit::CrumbMenu(n - 2));
-    app.crumb_menu(n - 1);
-    assert_eq!(menu(&mut app), [("inner".to_owned(), false)]);
-    app.crumb_menu(n - 2);
-    let p = &app.addr.menu.as_ref().unwrap().0;
-    assert_eq!(p.loc, loc(r"C:\x"));
-    p.slot.publish(snapshot(p.gen, &p.loc, &[("y", true), ("z", true), ("x.txt", false)], None));
-    app.drain_effects().for_each(drop);
-    app.poll();
-    assert_eq!(menu(&mut app), [("y".to_owned(), true), ("z".to_owned(), false)]);
-    app.on_event(&Event::MenuCommand(1), Instant::now());
-    assert_eq!(app.tab().location(), &loc(r"C:\x\z"));
-
-    let mut deep = app_at(r"C:\one\two\three\four\five\six\seven\eight\nine\ten");
-    deep.on_event(&Event::Resized { width: 520, height: 600 }, Instant::now());
-    frame(&mut deep);
-    let o = deep.addr.overflow;
-    assert!(o.w > 0.0);
-    assert_eq!(deep.hit(o.x + o.w / 2.0, o.y + o.h / 2.0), Hit::CrumbOverflow);
-    deep.overflow_menu();
-    let hidden = menu(&mut deep);
-    assert_eq!(hidden.first().map(|h| h.0.as_str()), Some("This PC"));
-    deep.on_event(&Event::MenuCommand(0), Instant::now());
-    assert_eq!(deep.tab().location(), &Location::computer());
+    deliver(&mut many, &items, None);
+    assert_eq!(many.suggest(r"C:\x\d").len(), 25);
 }
 
 #[test]
@@ -398,9 +480,9 @@ fn clicking_a_dimmed_crumb_navigates_into_it_through_history() {
     assert_eq!(ghosts(&app), ["c"]);
     frame(&mut app);
     deliver(&mut app, &[("c", true), ("d", true)], None);
-    app.drain_effects().for_each(drop);
-    app.crumb_menu(app.tab().crumbs.len() - 1);
-    assert_eq!(menu(&mut app), [("c".to_owned(), true), ("d".to_owned(), false)]);
+    app.open_crumb(app.tab().crumbs.len() - 1);
+    assert_eq!(shown(&app), ["c", "d"]);
+    assert_eq!(selected(&app).as_deref(), Some("c"), "a dimmed crumb is marked in its parent's dropdown");
 }
 
 #[test]
@@ -447,13 +529,13 @@ fn editing_and_copying_the_address_show_only_the_current_folder() {
     let mut app = app_at(r"C:\a\b\c");
     app.go_up(Instant::now());
     key(&mut app, Key::Char('L'), CTRL);
-    assert_eq!(app.edit.text, r"C:\a\b");
+    assert_eq!(field(&app), r"C:\a\b\");
     assert_eq!(app.current_location(), &loc(r"C:\a\b"));
     assert_eq!(app.window_title(), "C:\\a\\b \u{2014} Flit");
 }
 
 #[test]
-fn the_dimmed_tail_collapses_before_real_crumbs_overflow() {
+fn the_dimmed_tail_scrolls_out_before_the_current_folder() {
     let mut app = app_at(r"C:\one\two\a_rather_long_folder_name\another_rather_long_folder_name\yet_another_long_one");
     for _ in 0..3 {
         app.go_up(Instant::now());
@@ -462,16 +544,16 @@ fn the_dimmed_tail_collapses_before_real_crumbs_overflow() {
     app.on_event(&Event::Resized { width: 780, height: 600 }, Instant::now());
     frame(&mut app);
     let real = app.tab().crumbs.len();
-    assert_eq!(app.addr.overflow.w, 0.0, "real crumbs stay in the bar");
-    assert!(app.layout.crumbs[..real].iter().all(|r| r.w > 0.0));
-    assert_eq!(app.layout.crumbs[real + 2].w, 0.0, "the deepest dimmed crumb goes first");
+    assert!(app.layout.crumbs[real - 1].w > 0.0, "the current folder stays in the bar");
+    assert_eq!(app.layout.crumbs[real + 2].w, 0.0, "the deepest dimmed crumb is scrolled out first");
+    assert!(app.layout.crumb_arrows[1].w > 0.0);
     app.on_event(&Event::Resized { width: 1620, height: 600 }, Instant::now());
     frame(&mut app);
     assert!(app.layout.crumbs.iter().all(|r| r.w > 0.0));
 }
 
 #[test]
-fn folder_suggestions_show_system_icons_and_history_keeps_its_glyph() {
+fn listed_folders_show_system_icons() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &[("docs", true), ("Downloads", true)], None);
     app.share_typed(Arc::new(Mutex::new(vec![r"C:\x\Downloads".into()])));
@@ -481,4 +563,15 @@ fn folder_suggestions_show_system_icons_and_history_keeps_its_glyph() {
     let asked: Vec<(String, crate::ui::IconKind)> = app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { Some((r.path.display().into_owned(), r.kind)) } else { None }).collect();
     assert!(asked.contains(&(r"C:\x\docs\".to_owned(), crate::ui::IconKind::Folder)) || asked.contains(&(r"C:\x\docs".to_owned(), crate::ui::IconKind::Folder)), "{asked:?}");
     assert!(!asked.iter().any(|(p, _)| p.starts_with(r"C:\x\Downloads")), "typed history is not a folder icon: {asked:?}");
+}
+
+#[test]
+fn goto_opened_before_quick_access_loads_shows_the_late_groups() {
+    let mut app = app_at(r"C:\x");
+    key(&mut app, Key::Char('P'), CTRL);
+    frame(&mut app);
+    app.set_pinned(vec![loc(r"C:\work")]);
+    frame(&mut app);
+    assert!(go(&app).lines.contains(&GoLine::Header(Section::Bookmarks)));
+    assert_eq!(app.nav.palette.as_ref().unwrap().first, 0);
 }

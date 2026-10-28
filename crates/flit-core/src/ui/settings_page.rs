@@ -455,9 +455,6 @@ impl App {
         if self.settings.is_some() && page.is_none() {
             return self.close_settings();
         }
-        if self.editing {
-            self.cancel_edit();
-        }
         self.nav.palette = None;
         let ui = self.settings.get_or_insert_with(|| SettingsUi::new(page.unwrap_or(Page::General)));
         if let Some(p) = page {

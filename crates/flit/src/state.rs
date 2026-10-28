@@ -1,6 +1,6 @@
 use flit_core::archive::Defaults;
 use flit_core::sort::SortField;
-use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavPrefs, NavState, PaneState, Persisted, Sizes, ToolbarState, ViewPrefs, MAX_HISTORY};
+use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavPrefs, NavState, PaneState, Persisted, QuickPrefs, Sizes, ToolbarState, ViewPrefs, MAX_HISTORY};
 use flit_core::Location;
 use flit_platform::{Placement, Platform};
 use serde::{Deserialize, Serialize};
@@ -44,6 +44,12 @@ struct ViewRecord {
 
 type Look = (LayoutMode, Sizes);
 type GitLook = (u8, [f32; 4]);
+
+#[derive(Serialize, Deserialize)]
+struct QuickRecord {
+    quick: QuickPrefs,
+    deep: Vec<u64>,
+}
 
 #[derive(Serialize, Deserialize)]
 struct GitRecord {
@@ -182,6 +188,7 @@ impl Saved {
                 }
             }
         }
+        let mut deep = Vec::new();
         let p = &mut saved.persisted;
         (p.view, p.prefs, p.folders) = (r.view, r.prefs, FolderViews::from_entries(r.folders));
         if let Some((archive, tail)) = rest.and_then(|t| postcard::take_from_bytes::<Defaults>(t).ok()) {
@@ -194,8 +201,12 @@ impl Saved {
                         p.archive.compression.word = word;
                         p.archive = std::mem::take(&mut p.archive).sanitized();
                         if let Ok((g, tail)) = postcard::take_from_bytes::<GitRecord>(tail) {
-                            if let Ok((descriptions, _)) = postcard::take_from_bytes::<bool>(tail) {
+                            if let Ok((descriptions, tail)) = postcard::take_from_bytes::<bool>(tail) {
                                 p.prefs.command_descriptions = descriptions;
+                                if let Ok((q, _)) = postcard::take_from_bytes::<QuickRecord>(tail) {
+                                    saved.side.quick = q.quick;
+                                    deep = q.deep;
+                                }
                             }
                             (p.view, p.prefs.defaults) = (with_git(p.view, g.view), with_git(p.prefs.defaults, g.defaults));
                             let mut folders = p.folders.entries();
@@ -203,6 +214,7 @@ impl Saved {
                                 folders.iter_mut().zip(g.folders).for_each(|((_, v), gl)| *v = with_git(*v, gl));
                                 p.folders = FolderViews::from_entries(folders);
                             }
+                            p.folders.set_deep(std::mem::take(&mut deep));
                         }
                     }
                 }
@@ -236,6 +248,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&p.archive.clone().sanitized().compression.word).ok()?);
         bytes.extend(postcard::to_stdvec(&gits).ok()?);
         bytes.extend(postcard::to_stdvec(&p.prefs.command_descriptions).ok()?);
+        bytes.extend(postcard::to_stdvec(&QuickRecord { quick: self.side.quick.clone(), deep: p.folders.deep_keys() }).ok()?);
         Some(bytes)
     }
 

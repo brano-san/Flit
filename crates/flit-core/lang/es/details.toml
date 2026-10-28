@@ -37,3 +37,10 @@ files = ["{n} archivo", "{n} de archivos", "{n} archivos"]
 
 [status]
 default_view = "Las carpetas nuevas se abrirán con esta vista"
+
+[view]
+saved = "Configuración de vista guardada"
+none = "Ninguna"
+folder = "Esta carpeta"
+subfolders = "Esta carpeta y subcarpetas"
+default = "Establecer como predeterminada"

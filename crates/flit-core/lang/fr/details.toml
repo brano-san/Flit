@@ -37,3 +37,10 @@ files = ["{n} fichier", "{n} de fichiers", "{n} fichiers"]
 
 [status]
 default_view = "Les nouveaux dossiers s’ouvriront avec cet affichage"
+
+[view]
+saved = "Paramètres d’affichage enregistrés"
+none = "Aucun"
+folder = "Ce dossier"
+subfolders = "Ce dossier et ses sous-dossiers"
+default = "Définir par défaut"

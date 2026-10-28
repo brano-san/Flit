@@ -596,7 +596,7 @@ impl App {
 
     pub fn on_preview(&mut self, gen: u64, data: PreviewData) {
         if let PreviewData::Props(groups) = &data {
-            if self.properties_props(gen, groups) {
+            if self.quick_props(gen, groups) || self.properties_props(gen, groups) {
                 return;
             }
         }
@@ -648,7 +648,7 @@ impl App {
         if p.host.gen == 0 {
             return;
         }
-        let covered = self.nav.palette.is_some() || self.jobs.open || self.jobs.modal() || self.search.active || self.suggesting();
+        let covered = self.nav.palette.is_some() || self.jobs.open || self.jobs.modal() || self.search.active;
         let want = match () {
             _ if covered || p.r.pane.w <= 0.0 || p.state.details => None,
             _ if p.host.handler => Some(p.r.body),

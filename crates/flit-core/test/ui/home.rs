@@ -81,7 +81,7 @@ fn home_is_its_own_location_with_widgets_and_no_listing() {
     let mut app = App::new(Persisted::default(), Vec::new(), 0, false, 1.0, (1000, 700), Instant::now());
     app.set_places(places());
     app.drain_effects().for_each(drop);
-    click(app.layout.home, &mut app, MouseButton::Left);
+    app.go_home_page(false, Instant::now());
     assert!(app.on_home());
     assert_eq!(app.current_location().display(), "Home");
     assert_eq!(app.tab().crumbs.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), ["Home"]);
@@ -98,8 +98,8 @@ fn home_is_its_own_location_with_widgets_and_no_listing() {
     app.set_pane_state(crate::ui::PaneState { visible: true, ..Default::default() });
     app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
     assert_eq!(app.nav.home.area, full, "the info pane stays out of the Home page");
-    app.begin_edit();
-    assert_eq!(app.edit.text, "");
+    app.open_address();
+    assert_eq!(app.nav.palette.as_ref().unwrap().field.text(), "");
 }
 
 #[test]
@@ -215,7 +215,7 @@ fn bench_home_and_sidebar_frames() {
     let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3;
     eprintln!("BENCH open Home, click to finished frame {:.3} ms; hover frames median {:.3} ms p99 {:.3} ms ({} cards)", ms(open), ms(times[200]), ms(times[396]), app.nav.home.cards.len());
     let t = Instant::now();
-    app.toggle_section(crate::ui::Section::Drives);
+    app.toggle_section(crate::ui::Section::Storage);
     app.frame(&mut gfx, Instant::now());
     eprintln!("BENCH collapse a sidebar section to finished frame {:.3} ms", ms(t.elapsed()));
 }

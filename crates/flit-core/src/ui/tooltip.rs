@@ -2,7 +2,7 @@ use super::actions::{index, ACTIONS};
 use super::ops::TIMER_SLACK;
 use super::toolbar::ToolHit;
 use super::widgets::{Paint, RADIUS};
-use super::{App, Drag, Hit};
+use super::{App, Drag, Hit, ViewMode};
 use crate::i18n::S;
 use crate::render::Rect;
 use crate::text::{Gfx, TextBackend};
@@ -28,6 +28,14 @@ pub struct TipText {
     pub line: String,
     pub command: Option<String>,
     pub keys: Vec<String>,
+}
+
+fn view_tip(mode: ViewMode) -> S {
+    match mode {
+        ViewMode::None => S::TooltipViewNone,
+        ViewMode::Folder => S::TooltipViewFolder,
+        ViewMode::Subfolders => S::TooltipViewSubfolders,
+    }
 }
 
 fn text(line: S, command: &str) -> (String, Option<&str>) {
@@ -97,7 +105,13 @@ impl App {
             Hit::NewTab => l.new_tab,
             Hit::TabActions => l.actions,
             Hit::Nav(i) => *l.nav.get(i)?,
-            Hit::HomeButton => l.home,
+            Hit::ViewMode => l.view,
+            Hit::Bookmark => l.bookmark,
+            Hit::PanelMenu => l.more,
+            Hit::CrumbScroll(right) => l.crumb_arrows[usize::from(right)],
+            Hit::Crumb(i) => *l.crumbs.get(i)?,
+            Hit::QuickClear => self.nav.sidebar.clear,
+            Hit::GoButton(_) => self.palette_button(h)?,
             Hit::OpsButton => l.ops_button,
             Hit::Encoding => l.encoding,
             Hit::Branch => l.branch,
@@ -106,7 +120,6 @@ impl App {
             Hit::SideSettings => self.nav.sidebar.settings,
             Hit::Eject => self.eject_rect()?,
             Hit::FilterClose => self.nav.filter.close,
-            Hit::CrumbOverflow => self.addr.overflow,
             Hit::PaletteClose | Hit::PaletteDescribe | Hit::PaletteScroll(_) => self.palette_button(h)?,
             Hit::Tool(ToolHit::Button(_) | ToolHit::More) => self.tool_rect(h)?,
             _ => return None,
@@ -129,22 +142,26 @@ impl App {
             Hit::Nav(0) => text(S::TooltipBack, "nav.back"),
             Hit::Nav(1) => text(S::TooltipForward, "nav.forward"),
             Hit::Nav(2) => text(S::TooltipUp, "nav.up"),
-            Hit::Nav(_) => text(S::TooltipRefresh, "nav.refresh"),
-            Hit::HomeButton => text(S::TooltipHome, "nav.home_page"),
+            Hit::Nav(_) => text(S::TooltipVisited, ""),
+            Hit::ViewMode => text(view_tip(self.view_mode()), "folder.cycle_view"),
+            Hit::Bookmark => text(if self.nav.sidebar.is_pinned(self.current_location()) { S::TooltipBookmarked } else { S::TooltipNotBookmarked }, "folder.bookmark"),
+            Hit::PanelMenu => text(S::TooltipPanelMenu, ""),
+            Hit::CrumbScroll(right) => text(if right { S::TooltipCrumbRight } else { S::TooltipCrumbLeft }, ""),
+            Hit::Crumb(i) if i < self.tab().crumbs.len() => text(S::TooltipCrumb, "folder.dropdown"),
+            Hit::QuickClear => text(S::TooltipQuickClear, ""),
+            Hit::GoButton(0) => text(S::TooltipBack, "goto.back"),
+            Hit::GoButton(1) => text(S::TooltipForward, "goto.forward"),
+            Hit::GoButton(_) => text(S::TooltipUp, "goto.up"),
             Hit::OpsButton => text(S::TooltipOps, "ops.show"),
             Hit::Encoding => text(S::TooltipEncoding, "archive.encoding"),
             Hit::Branch => text(S::TooltipBranch, "git.branches"),
             Hit::Bin(0) => text(S::TooltipToolBinRestore, "bin.restore"),
             Hit::Bin(1) => text(S::TooltipToolBinRestoreAll, "bin.restore_all"),
             Hit::Bin(_) => text(S::TooltipToolBinEmpty, "bin.empty"),
-            Hit::SidePin(i) => {
-                let pinned = self.nav.sidebar.items.get(i).is_some_and(|it| self.nav.sidebar.state.pinned.contains(&it.loc));
-                text(if pinned { S::TooltipPinned } else { S::TooltipUnpinned }, "")
-            }
+            Hit::SidePin(_) => text(S::TooltipRemoveBookmark, ""),
             Hit::SideSettings => text(S::TooltipSettings, "options.open"),
             Hit::Eject => text(S::TooltipEject, ""),
             Hit::FilterClose => text(S::TooltipFilterClose, "view.filter"),
-            Hit::CrumbOverflow => text(S::TooltipCrumbs, ""),
             Hit::PaletteClose => text(S::TooltipClosePalette, ""),
             Hit::PaletteDescribe => text(if self.prefs.command_descriptions { S::TooltipPaletteDescriptionsOn } else { S::TooltipPaletteDescriptionsOff }, ""),
             Hit::PaletteScroll(down) => text(if down { S::TooltipScrollDown } else { S::TooltipScrollUp }, ""),

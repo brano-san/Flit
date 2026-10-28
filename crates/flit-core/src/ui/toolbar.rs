@@ -402,9 +402,6 @@ impl App {
             self.toolbar.fly = None;
         }
         let Hit::Tool(t) = h else { return false };
-        if self.editing {
-            self.cancel_edit();
-        }
         self.tip_hide();
         self.dirty = true;
         match t {

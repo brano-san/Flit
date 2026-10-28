@@ -43,9 +43,6 @@ impl App {
     }
 
     pub(super) fn open_filter(&mut self) {
-        if self.editing {
-            self.cancel_edit();
-        }
         self.tab_mut().filter.get_or_insert_with(Field::default).edit.select_all();
         self.focus = Focus::Filter;
         self.layout();

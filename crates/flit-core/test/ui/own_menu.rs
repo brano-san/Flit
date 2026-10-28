@@ -37,7 +37,7 @@ fn preedit_text_is_composed_inline_at_the_caret_until_it_is_committed() {
     assert_eq!(Preedit::new("にほ".into(), Some(1)).cursor, None, "a cursor inside a character is dropped");
     let mut app = app();
     let mut g = Gfx::new(Mono, 256);
-    app.editing = true;
+    app.open_goto();
     app.on_event(&Event::Preedit(p.clone()), Instant::now());
     assert_eq!(app.preedit, p);
     app.frame(&mut g, Instant::now());

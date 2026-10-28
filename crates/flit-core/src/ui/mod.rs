@@ -31,6 +31,8 @@ pub mod settings;
 mod settings_page;
 pub mod sidebar;
 mod address;
+mod goto;
+mod quick;
 mod tabbar;
 mod tags;
 mod panels;
@@ -48,11 +50,11 @@ mod git;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource, MAX_HISTORY};
-pub use sidebar::{Drive, KnownFolder, NavPrefs, NavState, Places, Section};
+pub use sidebar::{Drive, KnownFolder, NavPrefs, NavState, Places, QuickPrefs, Section};
 pub use home::{Recent, Widget};
 pub const UI_SCALE: (u32, u32) = (70, 200);
 pub const SPRING_DELAY_MAX_MS: u32 = 3000;
-pub use details::{folder_key, Columns, FolderView, FolderViews, ViewPrefs, THUMB_CACHE_MB};
+pub use details::{folder_key, Columns, FolderView, FolderViews, ViewMode, ViewPrefs, THUMB_CACHE_MB};
 pub use layouts::{adaptive_layout, has_thumbnail, is_media, LayoutMode, Sizes, LAYOUTS};
 pub use jobs::JobState;
 pub use preview_pane::PaneState;
@@ -88,7 +90,7 @@ use crate::theme::{self, Area, Theme};
 use crate::thumbs;
 use crate::view::Line;
 use bumpalo::Bump;
-use edit::{EditAction, LineEdit};
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -98,6 +100,8 @@ const HEADER_H: f32 = 28.0;
 const ROW_H: f32 = 24.0;
 const STATUS_H: f32 = 24.0;
 const NAV_W: f32 = 34.0;
+const VISITED_W: f32 = 22.0;
+const CRUMB_STEP: f32 = 120.0;
 const CAPTION_W: f32 = 46.0;
 const SCROLLBAR_W: f32 = 12.0;
 const ICON: f32 = 16.0;
@@ -152,7 +156,9 @@ const PER_FILE_ICON_EXT: [&[u8]; 6] = [b"exe", b"ico", b"lnk", b"url", b"cur", b
 const G_BACK: &str = "\u{E72B}";
 const G_FORWARD: &str = "\u{E72A}";
 const G_UP: &str = "\u{E74A}";
-const G_REFRESH: &str = "\u{E72C}";
+const G_MORE: &str = "\u{E712}";
+const G_CRUMB_LEFT: &str = "\u{E76B}";
+const G_CRUMB_RIGHT: &str = "\u{E76C}";
 const G_MIN: &str = "\u{E921}";
 const G_MAX: &str = "\u{E922}";
 const G_RESTORE: &str = "\u{E923}";
@@ -384,7 +390,6 @@ enum Hit {
     SideHeader(Section),
     HomeItem(usize),
     HomeEmpty,
-    HomeButton,
     Splitter,
     FilterField,
     FilterClose,
@@ -409,9 +414,13 @@ enum Hit {
     FormFlag(usize, usize),
     Modal,
     TabActions,
-    CrumbMenu(usize),
-    CrumbOverflow,
-    Suggestion(usize),
+    ViewMode,
+    Bookmark,
+    PanelMenu,
+    CrumbScroll(bool),
+    GoButton(usize),
+    QuickField,
+    QuickClear,
     Eject,
     SideSettings,
     Settings(settings_page::SHit),
@@ -425,7 +434,6 @@ enum Drag {
     None,
     Thumb { grab: f32 },
     ColSep { col: Column, start_x: f32, start_w: f32 },
-    EditSelect,
     Splitter { start_x: f32, start_w: f32 },
     PinMove { from: usize, to: usize },
     Preview { hit: preview_pane::PaneHit, start: f32, size: f32 },
@@ -443,7 +451,10 @@ struct Layout {
     toolbar: Rect,
     commands: Rect,
     nav: [Rect; 4],
-    home: Rect,
+    view: Rect,
+    bookmark: Rect,
+    more: Rect,
+    crumb_arrows: [Rect; 2],
     address: Rect,
     ops_button: Rect,
     header: Rect,
@@ -530,6 +541,7 @@ pub struct App {
     menu_owner: Option<Hit>,
     menu_right: Option<f32>,
     tip: Option<tooltip::Tip>,
+    quick: Option<quick::QuickTip>,
     confirm: Option<confirm::Confirm>,
     motion: bool,
     pub preedit: crate::input::Preedit,
@@ -537,14 +549,10 @@ pub struct App {
     focus: Focus,
     kb: usize,
     a11y_targets: Vec<(u64, Hit)>,
-    edit: LineEdit,
-    editing: bool,
-    edit_scroll: f32,
     mods: Mods,
     hover: Hit,
     pressed: Hit,
     drag: Drag,
-    pending_edit: Option<(f32, bool)>,
     cursor: CursorIcon,
 
     icons: FxHashMap<u64, IconState>,
@@ -643,20 +651,17 @@ impl App {
             menu_owner: None,
             menu_right: None,
             tip: None,
+            quick: None,
             confirm: None,
             motion: false,
             preedit: Default::default(),
             focus: Focus::List,
             kb: 0,
             a11y_targets: Vec::new(),
-            edit: LineEdit::default(),
-            editing: false,
-            edit_scroll: 0.0,
             mods: Mods::default(),
             hover: Hit::None,
             pressed: Hit::None,
             drag: Drag::None,
-            pending_edit: None,
             cursor: CursorIcon::Default,
             icons: FxHashMap::default(),
             thumbs: FxHashMap::default(),
@@ -755,7 +760,7 @@ impl App {
     }
 
     pub fn ime_area(&self) -> Option<Rect> {
-        self.search_ime_area().or_else(|| self.settings_ime_area()).or(self.editing.then_some(self.layout.address)).or_else(|| self.nav_ime_area()).or_else(|| self.rename_ime_area())
+        self.search_ime_area().or_else(|| self.settings_ime_area()).or_else(|| self.nav_ime_area()).or_else(|| self.rename_ime_area())
     }
 
     pub fn ui_scale(&self) -> u32 {
@@ -883,7 +888,6 @@ impl App {
     }
 
     fn after_tab_change(&mut self) {
-        self.editing = false;
         self.focus = Focus::List;
         self.wake_tab();
         self.effects.push(Effect::Title(self.window_title()));
@@ -999,6 +1003,7 @@ impl App {
         visible |= self.poll_parked();
         self.poll_bin();
         visible |= self.poll_address();
+        visible |= self.poll_quick();
         self.dirty |= visible;
         visible
     }
@@ -1074,7 +1079,11 @@ impl App {
                 }
             }
             ProviderEvent::Hashed { id, result, .. } => self.hashed(id, result.map_err(|e| crate::i18n::localize(&e).into_owned())),
-            ProviderEvent::Measured { id, totals, file_system, done, .. } => self.measured(id, totals, file_system, done),
+            ProviderEvent::Measured { id, totals, file_system, done, .. } => {
+                if !self.quick_measured(id, totals, done) {
+                    self.measured(id, totals, file_system, done);
+                }
+            }
             ProviderEvent::Status { tab, gen, text } => {
                 if let Some(k) = tab_of(&self.tabs, tab, gen) {
                     if let Some(l) = self.tabs[k].loading.as_mut() {
@@ -1147,13 +1156,7 @@ impl App {
         if self.ops_paste(text) {
             return;
         }
-        if !self.editing && self.nav_insert(text.lines().next().unwrap_or("")) {
-            return;
-        }
-        if self.editing {
-            self.edit.insert(text.lines().next().unwrap_or(""));
-            self.dirty = true;
-        }
+        self.nav_insert(text.lines().next().unwrap_or(""));
     }
 
     fn resort(&mut self, k: usize) {
@@ -1171,7 +1174,6 @@ impl App {
         }
         self.layout_panels();
         self.layout_jobs();
-        self.layout_address();
         self.layout_settings();
     }
 
@@ -1211,11 +1213,14 @@ impl App {
         for (i, r) in l.nav.iter_mut().enumerate() {
             *r = Rect::new(area.x + s(6.0) + i as f32 * s(NAV_W), l.toolbar.y + s(4.0), s(NAV_W), s(TOOL_H - 8.0));
         }
-        l.home = Rect::new(l.nav[3].right(), l.nav[3].y, s(NAV_W), l.nav[3].h);
-        let ax = l.home.right() + s(8.0);
-        let edge = if ops_button { area.right() - s(10.0) - s(NAV_W) } else { area.right() };
-        l.ops_button = if ops_button { Rect::new(edge + s(4.0), l.nav[0].y, s(NAV_W), l.nav[0].h) } else { Rect::default() };
-        l.address = Rect::new(ax, l.toolbar.y + s(5.0), (edge - s(12.0) - ax).max(s(40.0)), s(TOOL_H - 10.0));
+        l.nav[3] = Rect::new(l.nav[2].right(), l.nav[2].y, s(VISITED_W), l.nav[2].h);
+        l.view = Rect::new(l.nav[3].right() + s(9.0), l.nav[3].y, s(NAV_W), l.nav[3].h);
+        l.bookmark = Rect::new(l.view.right(), l.view.y, s(NAV_W), l.view.h);
+        let ax = l.bookmark.right() + s(9.0);
+        l.more = Rect::new(area.right() - s(6.0) - s(NAV_W), l.nav[0].y, s(NAV_W), l.nav[0].h);
+        l.ops_button = if ops_button { Rect::new(l.more.x - s(NAV_W), l.nav[0].y, s(NAV_W), l.nav[0].h) } else { Rect::default() };
+        let edge = if ops_button { l.ops_button.x } else { l.more.x };
+        l.address = Rect::new(ax, l.toolbar.y + s(5.0), (edge - s(9.0) - ax).max(s(40.0)), s(TOOL_H - 10.0));
         l.commands = Rect::new(area.x, l.toolbar.bottom(), area.w, tool_h);
         l.header = Rect::new(area.x, l.commands.bottom(), area.w, s(HEADER_H));
         let status_h = if status_bar { s(STATUS_H) } else { 0.0 };
@@ -1286,7 +1291,7 @@ impl App {
         if let Some(h) = self.jobs_hit(x, y).or_else(|| self.palette_hit(x, y)).or_else(|| self.settings_hit(x, y)).or_else(|| self.flyout_hit(x, y)) {
             return h;
         }
-        if let Some(h) = self.chrome_hit(x, y).or_else(|| self.address_hit(x, y)).or_else(|| self.nav_hit(x, y)).or_else(|| self.preview_hit(x, y)).or_else(|| self.toolbar_hit(x, y)).or_else(|| self.sep_hit(x, y)) {
+        if let Some(h) = self.chrome_hit(x, y).or_else(|| self.nav_hit(x, y)).or_else(|| self.preview_hit(x, y)).or_else(|| self.toolbar_hit(x, y)).or_else(|| self.sep_hit(x, y)) {
             return h;
         }
         let l = &self.layout;
@@ -1297,14 +1302,21 @@ impl App {
             if let Some(i) = l.nav.iter().position(|r| r.contains(x, y)) {
                 return Hit::Nav(i);
             }
-            if l.home.contains(x, y) {
-                return Hit::HomeButton;
+            if l.view.contains(x, y) {
+                return Hit::ViewMode;
+            }
+            if l.bookmark.contains(x, y) {
+                return Hit::Bookmark;
+            }
+            if l.more.contains(x, y) {
+                return Hit::PanelMenu;
             }
             if l.address.contains(x, y) {
-                if !self.editing {
-                    if let Some(i) = l.crumbs.iter().position(|r| r.contains(x, y)) {
-                        return Hit::Crumb(i);
-                    }
+                if let Some(k) = l.crumb_arrows.iter().position(|r| r.contains(x, y)) {
+                    return Hit::CrumbScroll(k == 1);
+                }
+                if let Some(i) = l.crumbs.iter().position(|r| r.contains(x, y)) {
+                    return Hit::Crumb(i);
                 }
                 return Hit::Address;
             }
@@ -1358,6 +1370,7 @@ impl App {
     pub fn on_event(&mut self, ev: &Event, now: Instant) {
         if matches!(ev, Event::MouseDown { .. } | Event::Key { pressed: true, .. } | Event::Wheel { .. } | Event::MouseLeave | Event::Focus(false) | Event::ShowMenu { .. }) {
             self.tip_hide();
+            self.quick_hide();
         }
         if self.own_menu_event(ev, now) || self.confirm_event(ev, now) {
             return;
@@ -1453,6 +1466,7 @@ impl App {
                 self.hover_timer(now);
                 self.history_timer(now);
                 self.tip_timer(now);
+                self.quick_timer(now);
             }
             Event::ClipboardChanged(seq) => self.clipboard_changed(*seq),
             Event::SessionEnding => {}
@@ -1486,11 +1500,6 @@ impl App {
                 return;
             }
             Drag::ColSep { col, start_x, start_w } => return self.set_column_width(col, start_w - (x - start_x) / self.scale),
-            Drag::EditSelect => {
-                self.pending_edit = Some((x, true));
-                self.dirty = true;
-                return;
-            }
             Drag::Splitter { start_x, start_w } => return self.drag_splitter(x, start_x, start_w),
             Drag::PinMove { from, .. } => return self.drag_pin(from, y),
             Drag::Tab { .. } => return self.drag_tab(x, y),
@@ -1504,8 +1513,7 @@ impl App {
         let h = self.hit(x, y);
         let cursor = match h {
             Hit::ColSep(_) | Hit::Splitter => CursorIcon::ResizeHorizontal,
-            Hit::Address if self.editing => CursorIcon::Text,
-            Hit::FilterField | Hit::PaletteField | Hit::Settings(settings_page::SHit::Search) => CursorIcon::Text,
+            Hit::QuickField | Hit::FilterField | Hit::PaletteField | Hit::Settings(settings_page::SHit::Search) => CursorIcon::Text,
             Hit::Preview(preview_pane::PaneHit::Split) => self.preview_cursor(),
             Hit::PanelSep(k) => self.sep_cursor(k),
             _ => CursorIcon::Default,
@@ -1516,6 +1524,7 @@ impl App {
         if h != self.hover {
             self.hover = h;
             self.tip_hover(h, now);
+            self.quick_hover(h, now);
             self.dirty = true;
         }
     }
@@ -1543,22 +1552,10 @@ impl App {
             _ => {}
         }
         self.pressed = h;
-        if self.editing && h != Hit::Address {
-            self.cancel_edit();
-        }
         match h {
             Hit::Tab(i) => self.press_tab(i, x, y, button),
             Hit::Nav(i @ 0..=1) if button == MouseButton::Left => self.arm_history_press(i, now),
-            Hit::Address => {
-                if !self.editing {
-                    self.begin_edit();
-                } else if clicks >= 2 {
-                    self.edit.select_all();
-                } else {
-                    self.pending_edit = Some((x, self.mods.shift));
-                    self.drag = Drag::EditSelect;
-                }
-            }
+            Hit::Address if button == MouseButton::Left => self.open_address(),
             Hit::Row(row) => {
                 self.focus = Focus::List;
                 if button == MouseButton::Left && self.on_checkbox(x, y) {
@@ -1642,14 +1639,22 @@ impl App {
             Hit::Nav(0) => self.go_history(false, now),
             Hit::Nav(1) => self.go_history(true, now),
             Hit::Nav(2) => self.go_up(now),
-            Hit::Nav(_) => self.refresh(now),
+            Hit::Nav(_) => self.visited_menu(),
+            Hit::ViewMode => self.view_mode_menu(),
+            Hit::Bookmark => self.pin_current(),
+            Hit::PanelMenu => self.panel_quick_menu(),
+            Hit::CrumbScroll(right) => self.scroll_crumbs(right),
+            Hit::GoButton(k) => self.go_button(k, now),
+            Hit::QuickClear => self.clear_quick_filter(),
             Hit::Caption(0) => self.effects.push(Effect::Window(WindowCmd::Minimize)),
             Hit::Caption(1) => self.effects.push(Effect::Window(WindowCmd::ToggleMaximize)),
             Hit::Caption(_) => self.effects.push(Effect::Window(WindowCmd::Close)),
             Hit::Menu => self.open_main_menu(),
             Hit::QuickToggle => self.toggle_sidebar(),
             Hit::Crumb(i) => {
-                if let Some((_, p)) = self.tab().crumb(i).cloned() {
+                if i < self.tab().crumbs.len() {
+                    self.open_crumb(i);
+                } else if let Some((_, p)) = self.tab().crumb(i).cloned() {
                     self.navigate(p, now);
                 }
             }
@@ -1668,15 +1673,12 @@ impl App {
             Hit::SidePin(i) => self.toggle_pin_item(i, now),
             Hit::SideHeader(s) => self.toggle_section(s),
             Hit::HomeItem(i) => self.open_home_item(i, self.mods.ctrl, now),
-            Hit::HomeButton => self.go_home_page(self.mods.ctrl, now),
             Hit::FilterClose => self.close_filter(),
             Hit::PaletteRow(i) => self.run_palette_item(i, now),
             Hit::PaletteClose => self.close_palette(),
             Hit::PaletteDescribe => self.toggle_descriptions(),
             Hit::Tool(t) => self.toolbar_click(t, now),
             Hit::TabActions => self.tab_actions_menu(),
-            Hit::CrumbMenu(i) => self.crumb_menu(i),
-            Hit::CrumbOverflow => self.overflow_menu(),
             Hit::Eject => self.eject(),
             Hit::SideSettings => self.open_settings(None),
             Hit::Settings(s) => self.settings_click(s, x, y),
@@ -1754,19 +1756,6 @@ impl App {
         if self.focus_key(key, m, now) {
             return;
         }
-        if self.editing {
-            if self.address_key(key, m) {
-                return;
-            }
-            match self.edit.key(key, m) {
-                EditAction::Submit => self.submit_edit(now),
-                EditAction::Cancel => self.cancel_edit(),
-                EditAction::Copy(s) => self.effects.push(Effect::SetClipboard(s)),
-                EditAction::Paste => self.effects.push(Effect::Paste),
-                EditAction::Changed | EditAction::None => {}
-            }
-            return;
-        }
         if self.nav_key(key, m, now) {
             return;
         }
@@ -1785,11 +1774,6 @@ impl App {
         if self.form_insert(c.encode_utf8(&mut [0; 4])) || self.jobs.modal() || self.settings_insert(c.encode_utf8(&mut [0; 4])) || self.ops_char(c) {
             return;
         }
-        if self.editing {
-            let mut b = [0; 4];
-            self.edit.insert(c.encode_utf8(&mut b));
-            return;
-        }
         if self.nav_insert(c.encode_utf8(&mut [0; 4])) {
             return;
         }
@@ -1802,39 +1786,6 @@ impl App {
         if self.tab_mut().type_ahead(c, now) {
             self.reveal_focus(false);
         }
-    }
-
-    fn begin_edit(&mut self) {
-        self.editing = true;
-        self.focus = Focus::Address;
-        let loc = self.current_location();
-        let text = if matches!(loc.path().kind(), PathKind::Computer | PathKind::Home) { String::new() } else { loc.display().into_owned() };
-        self.edit.set(&text);
-        self.edit.select_all();
-        self.edit_scroll = 0.0;
-        self.addr.seen = None;
-        self.dirty = true;
-    }
-
-    fn cancel_edit(&mut self) {
-        self.editing = false;
-        self.focus = Focus::List;
-        self.drag = Drag::None;
-        self.set_cursor(CursorIcon::Default);
-    }
-
-    fn submit_edit(&mut self, now: Instant) {
-        let cwd = self.current_location().to_windows().map(|p| p.as_bytes().to_vec());
-        let cmd = Open { paths: vec![self.edit.text.as_bytes().to_vec()], target: OpenTarget::CurrentTab, cwd, ..Default::default() };
-        self.cancel_edit();
-        if self.typed_address() {
-            return;
-        }
-        if Location::parse(&self.edit.text).as_ref() == Some(self.current_location()) {
-            return self.refresh(now);
-        }
-        self.effects.push(Effect::Open(cmd));
-        self.dirty = true;
     }
 
     fn compute_dir_sizes(&mut self) {
@@ -1895,7 +1846,6 @@ impl App {
                 self.draw_sidebar(g, palette.area(Area::Sidebar));
                 self.draw_kb_focus(g, th);
                 self.draw_toolbar_popups(g, th);
-                self.draw_suggestions(g, th);
             }
             self.draw_settings(g, th);
             if !self.search.active {
@@ -1905,6 +1855,7 @@ impl App {
             self.draw_confirm(g, th);
             self.draw_own_menu(g, th);
             self.draw_tooltip(g, th);
+            self.draw_quick_tip(g, th);
             if !g.atlas_reset {
                 break;
             }
@@ -2016,14 +1967,23 @@ impl App {
         g.dl.rect(l.toolbar, t.bg);
         let icons = self.icon_font(12.0);
         let tab = self.tab();
-        let enabled = [tab.history.can_back(), tab.history.can_forward(), tab.location().parent().is_some(), true];
+        let enabled = [tab.history.can_back(), tab.history.can_forward(), tab.location().parent().is_some(), !self.nav.sidebar.prefs.quick.visits.is_empty()];
         let mut w = widgets::Paint::new(g, t, self.scale);
-        for (i, glyph) in [G_BACK, G_FORWARD, G_UP, G_REFRESH].into_iter().enumerate() {
-            let state = widgets::Button::of(self.hover == Hit::Nav(i), false, enabled[i]);
-            w.icon_button(l.nav[i].inset(self.s(2.0), 0.0), glyph, icons, state, t.text);
+        for (i, glyph) in [G_BACK, G_FORWARD, G_UP, sidebar::G_EXPANDED].into_iter().enumerate() {
+            let state = widgets::Button::of(self.hover == Hit::Nav(i), self.menu_open_from(Hit::Nav(i)), enabled[i]);
+            let font = if i == 3 { self.icon_font(8.0) } else { icons };
+            w.icon_button(l.nav[i].inset(self.s(2.0), 0.0), glyph, font, state, t.text);
         }
-        let home = widgets::Button::of(self.hover == Hit::HomeButton, false, true);
-        w.icon_button(l.home.inset(self.s(2.0), 0.0), sidebar::G_HOME, icons, home, if self.on_home() { t.accent } else { t.text });
+        let sep = |r: Rect| Rect::new(r.x - self.s(5.0), r.y + self.s(8.0), 1.0, r.h - self.s(16.0));
+        w.g.dl.rect(sep(l.view), t.separator);
+        w.g.dl.rect(sep(Rect::new(l.address.x, l.view.y, 0.0, l.view.h)), t.separator);
+        let view = widgets::Button::of(self.hover == Hit::ViewMode, self.menu_open_from(Hit::ViewMode), true);
+        w.icon_button(l.view.inset(self.s(2.0), 0.0), details::view_mode_glyph(self.view_mode()), icons, view, t.text);
+        let marked = self.nav.sidebar.is_pinned(self.current_location());
+        let bookmark = widgets::Button::of(self.hover == Hit::Bookmark, marked, true);
+        w.icon_button(l.bookmark.inset(self.s(2.0), 0.0), sidebar::G_PIN, icons, bookmark, if marked { t.accent } else { t.text_dim });
+        let more = widgets::Button::of(self.hover == Hit::PanelMenu, self.menu_open_from(Hit::PanelMenu), true);
+        w.icon_button(l.more.inset(self.s(2.0), 0.0), G_MORE, icons, more, t.text);
         let address = *self.look.palette.area(Area::Address);
         self.draw_address(g, &address);
         self.draw_ops_button(g, t);
@@ -2031,91 +1991,102 @@ impl App {
 
     fn draw_address<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
         let r = self.layout.address;
-        let radius = self.s(4.0);
-        g.dl.round_rect(r, t.input_bg, radius);
-        g.dl.outline(r, if self.editing { t.accent } else { t.input_border }, radius, self.s(1.0));
+        if t.bg != self.look.palette.area(Area::Toolbar).bg {
+            g.dl.round_rect(r, t.bg, self.s(4.0));
+        }
+        if self.hover == Hit::Address {
+            g.dl.round_rect(r, t.hover, self.s(4.0));
+        }
         let font = self.ui_font(13.0);
         let m = g.metrics(font);
         let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
-        let pad = self.s(8.0);
-        let inner = Rect::new(r.x + pad, r.y, r.w - 2.0 * pad, r.h);
-        g.dl.set_clip(Some(inner));
-        if self.editing {
-            if let Some((x, extend)) = self.pending_edit.take() {
-                let pos = g.hit(&self.edit.text, font, x - inner.x + self.edit_scroll);
-                self.edit.move_to(pos, extend);
-            }
-            let line = field::EditLine { text: &self.edit.text, caret: self.edit.caret, selection: self.edit.selection() };
-            let look = field::EditLook { font, baseline, line_y: r.y + self.s(6.0), line_h: r.h - self.s(12.0), stroke: self.s(1.0).max(1.0), focused: true };
-            let preedit = Some(&self.preedit).filter(|p| !p.is_empty());
-            field::draw_line(g, t, inner, &mut self.edit_scroll, line, preedit, look);
-        } else {
-            self.draw_crumbs(g, t, inner, baseline, font);
-        }
-        g.dl.set_clip(None);
+        self.draw_crumbs(g, t, r, baseline, font);
     }
 
-    fn draw_crumbs<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, inner: Rect, baseline: f32, font: FontStyle) {
+    fn draw_crumbs<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, area: Rect, baseline: f32, font: FontStyle) {
         let chevron = self.icon_font(8.0);
-        let gap = self.s(4.0);
-        let chev_w = g.measure(G_CHEVRON, chevron) + 2.0 * gap;
+        let gap = self.s(6.0);
+        let chev_w = g.measure(G_CHEVRON, chevron) + 2.0 * self.s(2.0);
+        let here = self.current_location().clone();
+        if self.addr.shift_for.as_ref() != Some(&here) {
+            self.addr.shift = 0.0;
+            self.addr.shift_for = Some(here);
+        }
         let tab = &self.tabs[self.cur];
         let real = tab.crumbs.len();
         let crumbs: Vec<&(String, Location)> = tab.crumbs.iter().chain(&tab.ghosts).collect();
-        let widths: Vec<f32> = crumbs.iter().map(|(label, _)| g.measure(label, font) + 2.0 * gap).collect();
-        let ov_w = g.measure(address::OVERFLOW, font) + 2.0 * gap;
+        let open = match self.nav.palette.as_ref().map(|p| &p.pick) {
+            Some(palette::Pick::Crumb(i)) => Some(*i),
+            _ => None,
+        };
+        let mark_w = g.measure(sidebar::G_EXPANDED, chevron) + gap;
+        let widths: Vec<f32> = crumbs.iter().enumerate().map(|(i, (label, _))| g.measure(label, font) + 2.0 * gap + if open == Some(i) { mark_w } else { 0.0 }).collect();
         let n = widths.len();
-        let fits = |first: usize, end: usize| widths[first..end].iter().sum::<f32>() + chev_w * (end - first).saturating_sub(1) as f32 + if first > 0 { ov_w } else { 0.0 } <= inner.w;
-        let mut end = n;
-        while end > real && !fits(0, end) {
-            end -= 1;
-        }
-        let mut first = 0;
-        while first + 1 < end && !fits(first, end) {
-            first += 1;
-        }
+        let span = |end: usize| widths[..end].iter().sum::<f32>() + chev_w * end.saturating_sub(1) as f32;
+        let (all, upto) = (span(n), span(real));
+        let arrow_w = self.s(18.0);
+        let over = all > area.w;
+        let view = if over { Rect::new(area.x + 2.0 * arrow_w, area.y, area.w - 2.0 * arrow_w, area.h) } else { area };
+        let x0 = if upto > view.w { view.right() - upto } else { view.x };
+        let (lo, hi) = ((view.right() - (x0 + all)).min(0.0), (view.x - x0).max(0.0));
+        self.addr.shift = self.addr.shift.clamp(lo, hi);
+        let mut x = x0 + self.addr.shift;
         let (s1, s3, s6) = (self.s(1.0), self.s(3.0), self.s(6.0));
         let drop = self.drop_spot();
-        let rects = &mut self.layout.crumbs;
-        rects.clear();
-        rects.resize(n, Rect::default());
-        self.addr.chevrons.clear();
-        self.addr.chevrons.resize(n, Rect::default());
-        let mut x = inner.x - gap;
-        self.addr.overflow = Rect::default();
-        if first > 0 {
-            let r = Rect::new(x, inner.y + s3, ov_w, inner.h - s6);
-            if self.hover == Hit::CrumbOverflow {
-                g.dl.round_rect(r, t.button_hover, s3);
-            }
-            g.text(x + gap, baseline, address::OVERFLOW, font, t.text_dim, f32::INFINITY);
-            self.addr.overflow = r;
-            x += ov_w;
-        }
-        for i in first..end {
+        let (left, right) = (x < view.x - 0.5, x + all > view.right() + 0.5);
+        self.layout.crumb_arrows = if over { [Rect::new(area.x, area.y + s3, arrow_w, area.h - s6), Rect::new(area.x + arrow_w, area.y + s3, arrow_w, area.h - s6)] } else { [Rect::default(); 2] };
+        let mut rects = vec![Rect::default(); n];
+        g.dl.set_clip(Some(view));
+        for i in 0..n {
             let w = widths[i];
-            let cr = Rect::new(x, inner.y + s3, w, inner.h - s6);
-            rects[i] = cr;
+            let cr = Rect::new(x, area.y + s3, w, area.h - s6);
+            if cr.right() > view.x && cr.x < view.right() {
+                let (a, b) = (cr.x.max(view.x), cr.right().min(view.right()));
+                rects[i] = Rect::new(a, cr.y, b - a, cr.h);
+            }
+            let lit = open == Some(i);
             if drop == Some(Spot::Crumb(i)) {
                 g.dl.round_rect(cr, t.selection, s3);
                 g.dl.outline(cr, t.accent, s3, s1.max(1.0));
+            } else if lit {
+                g.dl.round_rect(cr, t.accent_fill, s3);
             } else if self.hover == Hit::Crumb(i) {
                 g.dl.round_rect(cr, t.button_hover, s3);
             }
-            let last = i + 1 == real;
-            g.text(x + gap, baseline, &crumbs[i].0, font, if last { t.text } else { t.text_dim }, inner.right() - x);
+            let ink = match () {
+                _ if lit => theme::ink_on(t.accent_fill),
+                _ if i + 1 == real => t.text,
+                _ if i >= real => t.text_dim.alpha(0x80),
+                _ => t.text_dim,
+            };
+            g.text(x + gap, baseline, &crumbs[i].0, font, ink, f32::INFINITY);
+            if lit {
+                g.text(x + w - mark_w, baseline - s1, sidebar::G_EXPANDED, chevron, ink, f32::INFINITY);
+            }
             x += w;
-            if i + 1 == end {
-                break;
+            if i + 1 < n {
+                g.text(x + self.s(2.0), baseline - s1, G_CHEVRON, chevron, t.text_dim.alpha(if i + 1 >= real { 0x80 } else { 0xFF }), f32::INFINITY);
+                x += chev_w;
             }
-            let chev = Rect::new(x, inner.y + s3, chev_w, inner.h - s6);
-            if self.hover == Hit::CrumbMenu(i) {
-                g.dl.round_rect(chev, t.button_hover, s3);
-            }
-            g.text(x + gap, baseline - s1, G_CHEVRON, chevron, t.text_dim, f32::INFINITY);
-            self.addr.chevrons[i] = chev;
-            x += chev_w;
         }
+        g.dl.set_clip(None);
+        self.layout.crumbs = rects;
+        if over {
+            let mut w = widgets::Paint::new(g, t, self.scale);
+            for (k, (glyph, on)) in [(G_CRUMB_LEFT, left), (G_CRUMB_RIGHT, right)].into_iter().enumerate() {
+                w.icon_button(self.layout.crumb_arrows[k], glyph, chevron, widgets::Button::of(self.hover == Hit::CrumbScroll(k == 1), false, on), t.text_dim);
+            }
+        }
+    }
+
+    pub(super) fn crumb_rect(&self, i: usize) -> Option<Rect> {
+        self.layout.crumbs.get(i).copied().filter(|r| r.w > 0.0).or(Some(self.layout.address))
+    }
+
+    fn scroll_crumbs(&mut self, right: bool) {
+        let step = self.s(CRUMB_STEP);
+        self.addr.shift += if right { -step } else { step };
+        self.dirty = true;
     }
 
     fn draw_header<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {

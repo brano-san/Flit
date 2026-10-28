@@ -717,9 +717,6 @@ impl App {
             }
             return false;
         }
-        if self.editing {
-            self.cancel_edit();
-        }
         if !matches!(h, Hit::OpsMore(_) | Hit::OpsMenu(_)) {
             self.jobs.menu = None;
         }

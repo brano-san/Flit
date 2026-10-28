@@ -1,4 +1,8 @@
 cannot_open = "{location} kann in Flit nicht geöffnet werden"
 handed_to_explorer = "Flit kann {location} nicht anzeigen, daher wird es im Datei-Explorer geöffnet"
-no_folders = "{name} enthält keine Ordner"
 visited_deeper = "Besucht, tiefer"
+filter_files = ["{n} Datei filtern...", "{n} Dateien filtern..."]
+
+[goto]
+placeholder = "Ordner öffnen oder erweitern..."
+empty = "Keine passenden Ordner"

@@ -28,7 +28,6 @@ const ICONS: &[(u32, &str)] = &[
     (0xE76B, "chevron_left"),
     (0xE76C, "chevron_right"),
     (0xE777, "arrow_counterclockwise"),
-    (0xE77A, "pin_off"),
     (0xE77F, "clipboard_paste"),
     (0xE787, "calendar_ltr"),
     (0xE7A6, "arrow_redo"),

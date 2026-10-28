@@ -1,4 +1,8 @@
 cannot_open = "No se puede abrir {location} en Flit"
 handed_to_explorer = "Flit no puede mostrar {location}, así que se abre en el Explorador de archivos"
-no_folders = "{name} no tiene carpetas"
 visited_deeper = "Visitado, más profundo"
+filter_files = ["Filtrar {n} archivo...", "Filtrar {n} de archivos...", "Filtrar {n} archivos..."]
+
+[goto]
+placeholder = "Abrir o expandir una carpeta..."
+empty = "No hay carpetas coincidentes"

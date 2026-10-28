@@ -145,9 +145,6 @@ impl Form {
 
 impl App {
     pub(super) fn open_form(&mut self, form: Form) {
-        if self.editing {
-            self.cancel_edit();
-        }
         self.nav.palette = None;
         self.jobs.form = Some(form);
         self.layout();

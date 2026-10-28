@@ -37,3 +37,10 @@ files = ["{n} file", "{n} files"]
 
 [status]
 default_view = "New folders will open with this view"
+
+[view]
+saved = "Saved view settings"
+none = "None"
+folder = "This folder"
+subfolders = "This folder and subfolders"
+default = "Set as default"

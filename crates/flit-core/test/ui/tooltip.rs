@@ -18,8 +18,8 @@ fn tooltips_tell_the_purpose_the_command_and_its_keys() {
     assert_eq!(t.command, Some(title("tab.new")));
     assert_eq!(t.keys, ["Ctrl+T"]);
     assert_eq!(a.tip_text(Hit::Nav(0)).unwrap().keys, ["MouseX1", "Alt+Left"], "every shortcut gets a key cap, mouse buttons first");
-    let home = a.tip_text(Hit::HomeButton).unwrap();
-    assert_eq!((home.command, home.keys), (Some(title("nav.home_page")), vec!["Blank".to_owned()]), "a command without a shortcut shows Blank");
+    let view = a.tip_text(Hit::ViewMode).unwrap();
+    assert_eq!((view.line.as_str(), view.command, view.keys), ("View settings of this folder are not saved.", Some(title("folder.cycle_view")), vec!["Blank".to_owned()]), "a command without a shortcut shows Blank");
     let min = a.tip_text(Hit::Caption(0)).unwrap();
     assert_eq!((min.line.as_str(), min.command, min.keys), ("Minimize the window.", Some(title("window.minimize")), vec!["Alt+M".to_owned()]));
     assert_eq!(a.tip_text(Hit::Row(0)), None, "rows are not buttons");

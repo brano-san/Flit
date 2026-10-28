@@ -5,12 +5,16 @@ cancel = "Annuler"
 remove_item = "Retirer l’élément de la liste ?"
 
 [key]
+tab = "Tab"
+ctrl_enter = "Ctrl+Entrée"
 up = "Up"
 down = "Down"
 enter = "Enter"
 escape = "Escape"
 
 [hint]
+expand = "pour développer"
+open_in_panel = "pour ouvrir dans le panneau"
 navigate = "pour naviguer"
 use = "pour valider"
 dismiss = "pour fermer"
