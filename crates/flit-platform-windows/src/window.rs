@@ -628,6 +628,11 @@ impl<H: WindowHandler<Win32>> Shared<H> {
                 node.queue.borrow_mut().extend(text.chars().map(Event::Char));
                 self.woken.set(true);
             }
+            if std::env::var_os("FLIT_CAPTURE_SPLIT").is_some() {
+                let ctrl = Mods { ctrl: true, ..Mods::default() };
+                node.queue.borrow_mut().extend([Event::Key { key: Key::Char('S'), mods: Mods { shift: true, ..ctrl }, pressed: true }, Event::Key { key: Key::Char('S'), mods: ctrl, pressed: true }]);
+                self.woken.set(true);
+            }
             let ups: usize = std::env::var("FLIT_CAPTURE_UP").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
             if ups > 0 {
                 node.queue.borrow_mut().extend(std::iter::repeat_n(Event::Key { key: Key::Up, mods: Mods { alt: true, ..Mods::default() }, pressed: true }, ups));
