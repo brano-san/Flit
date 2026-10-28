@@ -112,13 +112,13 @@ Quick Access, строка навигации и GoTo (этап 4):
 Вид «Подробно» (этап 5.1):
 
 - сортировка ещё и по дате создания, явные «Ascending» и «Descending», папки сверху, снизу или вперемешку с файлами («Show folders first», «Show files first», «Mix files and folders»); всё это — в подменю «Sort by» и в палитре;
-- группировка по имени (первая буква, «#» для знаков, «0-9» для цифр), типу, размеру («Folders», «Empty», «Tiny (under 16 KB)» … «Gigantic (over 4 GB)» по границам Проводника), дате изменения и дате создания с точностью до года, месяца или дня в местном часовом поясе, а в корзине — по исходной папке и дате удаления; направление групп, единица даты и «None» — в подменю «Group by», те же команды и «No grouping» — в палитре; у группы заголовок со значком, названием и числом элементов, щелчок по заголовку сворачивает и разворачивает группу; правый щелчок по заголовку группы — меню папки;
+- группировка по имени, типу, размеру, датам и остальным ключам File Pilot (подробнее — в разделе «Список файлов и нижняя панель» ниже), а в корзине — по исходной папке и дате удаления; «None» — в подменю «Group by», те же команды и «No grouping» — в палитре; у группы заголовок с названием и числом элементов в скобках, щелчок по заголовку сворачивает и разворачивает группу; правый щелчок по заголовку группы — меню папки;
 - ключ группы считается в том же проходе, что и ключи сортировки, а список остаётся виртуальным: фоновая сортировка 100 000 записей с группировкой дороже сортировки без неё не больше чем на 2 мс, по типу, когда почти половина расширений длиннее 8 байт, — на 6–8 мс; раскладка групп в UI-потоке — сотые доли миллисекунды, проверка и слияние результата пересортировки — 3,2–4,2 мс вместо 1,7 (цифры — в разделе «Бенчмарки»);
 - колонка «Date created», по умолчанию скрытая; правый щелчок по заголовку колонок открывает меню Flit без пунктов оболочки: показать или скрыть каждую колонку, «Size all columns to fit» (Ctrl+«+» на цифровой клавиатуре) и «Always size columns to fit» (флаг ядра `ViewPrefs::auto_fit`: подгонка после каждой загрузки папки);
 - набор и ширины колонок, сортировка и группировка запоминаются для каждой папки, у корзины — свои; папка, вид которой не меняли, открывается видом по умолчанию («Use this view for folders without their own» в палитре), а «Use the same view for all folders» ведёт все папки одним видом (флаг ядра `ViewPrefs::same_for_all`); виды хранятся в `state.bin` Flit, не больше 4096 папок, давно не открывавшиеся вытесняются; в папки пользователя Flit сам ничего не пишет: `desktop.ini` только читается (адаптивная раскладка и свои значки папок, этап 5.2), а записывает его лишь явная команда «Change the folder icon»;
 - «Invert selection» и «Clear selection» (Esc) — в палитре и меню «Select»; флажки выделения на строках (щелчок по флажку переключает строку, не сбрасывая остальные) и выделение наведением через 0,6 с — флаги ядра `ViewPrefs::checkboxes` и `ViewPrefs::hover_select`, по умолчанию выключены, переключаются из палитры;
 - средняя кнопка мыши по файлу или пустому месту списка включает автопрокрутку (по папке она с этапа 6.1 открывает папку в новой вкладке): список едет к курсору тем быстрее, чем дальше курсор от точки щелчка; отпускание кнопки после движения или любой следующий щелчок её выключают;
-- отдельные переключатели для имён с точкой в начале («Show or hide dotfiles») и защищённых системных файлов («Show or hide protected operating system files»), скрытие расширений имён файлов, скрытие строки состояния и подсчёт «N folders, M files» вместо «N items»: команды палитры и флаги ядра `ViewPrefs`;
+- отдельные переключатели для имён с точкой в начале («Show or hide dotfiles») и защищённых системных файлов («Show or hide protected operating system files»), скрытие расширений имён файлов и скрытие нижней панели: команды палитры и флаги ядра `ViewPrefs`;
 - автоматический подсчёт размеров папок после загрузки папки (флаг `ViewPrefs::auto_sizes`, выключен; отметка «Show folder sizes» в меню «Layout» панели инструментов и контекстного меню): тот же параллельный обход, что у Ctrl+Alt+S; 400 папок с 10 000 файлов — 4,5 мс, `C:\Program Files` — 71 мс, `C:\Windows` — 1,5 с (4,2 с с холодного кэша), уход из папки обход отменяет;
 - недоступная папка показывает на месте списка сообщение по виду ошибки («This folder does not exist», «You do not have permission to open this folder» и т. п.), код ошибки и подсказку «Press F5 to try again»;
 - результаты поиска группируются по папке, где найдены: «Group by folder» в меню правого щелчка по результатам и команда палитры «Group search results by folder».
@@ -128,9 +128,20 @@ Quick Access, строка навигации и GoTo (этап 4):
 - шесть раскладок: «Подробно», «Список» (имена колонками сверху вниз, прокрутка по горизонтали), «Карточки» (значок или миниатюра, имя, тип и размер), «Колонки» (Миллер: слева до четырёх родительских папок, справа текущая), «Сетка» (крупные плитки с именем) и «Адаптивная»; переключение — Ctrl+Shift+1…6, подменю «Layout» в меню пустого места и палитра; выделение, рамка, перетаскивание, переименование, контекстное меню, быстрый переход, группировка и виртуальный список работают во всех раскладках, невидимые элементы не рисуются; переключение на папке из 100 000 элементов — от 0,01 до 0,3 мс процессорного времени ядра (раздел «Бенчмарки»);
 - в «Колонках» листинг папки, из которой ушли вглубь, остаётся колонкой-родителем без повторного чтения; ← уходит в родителя, → входит в папку под фокусом, щелчок по элементу колонки-родителя открывает папку или выделяет файл;
 - «Адаптивная» выбирает «Сетку», если в папке больше 60 % картинок и видео, иначе «Подробно»; тип папки из `[ViewState] FolderType` в `desktop.ini` (Pictures, Videos → «Сетка»; Documents, Music, Generic → «Подробно») главнее подсчёта; решение принимается по первой порции листинга и запоминается для папки (до 4096 папок), так что вид не прыгает ни во время загрузки, ни при следующем открытии; при «Use the same view for all folders» адаптивная раскладка недоступна, о чём говорит строка состояния;
-- размер элементов: пять ступеней у «Подробно», «Списка» и «Колонок», четыре у «Карточек», двенадцать у «Сетки» (значок от 32 до 320 пикселей); Ctrl+плюс и Ctrl+минус, Ctrl+колесо, пункты «Larger items» и «Smaller items»; размер своей у каждой раскладки и запоминается в виде папки; «Size all columns to fit» переехал на Ctrl+«+» цифровой клавиатуры;
+- размер элементов: у «Подробно», «Дерева», «Списка» и значков — общий масштаб в процентах (см. ниже), у «Карточек» и «Колонок» — свои ступени; Ctrl+плюс и Ctrl+минус, Ctrl+колесо, пункты «Larger items» и «Smaller items»; размер запоминается в виде папки; «Size all columns to fit» — Ctrl+=;
 - миниатюры в «Сетке» и «Карточках» (флаг ядра `ViewPrefs::thumbnails`, по умолчанию включён, команда «Show thumbnails in the Grid and Cards layouts» и пункт меню «Layout»): три фоновых потока со своим COM просят у оболочки `IShellItemImageFactory` только миниатюру, запросы ушедших за край экрана элементов пропускаются; готовые миниатюры лежат в атласе на GPU 4096×4096 (64 МБ, создаётся при первой миниатюре, вытеснение давно не показанных) и в собственном кэше на диске `%LOCALAPPDATA%\Flit\thumbs` — от 100 до 5000 МБ (`ViewPrefs::thumb_cache_mb`, по умолчанию 500, настройка на странице «Advanced»), старые миниатюры уходят первыми, «Clear the thumbnail cache» удаляет его целиком; в UI-потоке ничего не декодируется; миниатюра из своего кэша читается за 0,03–0,08 мс против 2,5–2,9 мс у кэша Windows;
 - свои значки папок: у папок с атрибутом «только чтение» или «системный» значок берётся из `IconResource`/`IconFile` их `desktop.ini` через оболочку; «Change the folder icon» (палитра) и «Change icon» (меню одной папки) записывают значок выделенной или текущей папки через `SHGetSetFolderCustomSettings`: в поле вводится полный путь к `.ico`, программе или библиотеке и, через запятую, номер значка (`C:\Windows\System32\shell32.dll,43`); результат — в строке состояния, новый значок виден сразу, отмены нет.
+
+Список файлов и нижняя панель (порт File Pilot, §6–§7):
+
+- масштаб в процентах ведёт раскладку: 0 % — «Details», 10 % — «Tree», 20 % — «List» (имена колонками по 300 пикселей), от 30 до 100 % — значки, 30 % — «M Icons», 60 % — «L Icons», 100 % — «XL Icons»; до 30 % шаг 10 %, выше — 5 %; Ctrl+колесо над списком, колесо над блоком процентов в нижней панели, ползунок размера во флайауте «Layout» панели инструментов и Ctrl+Shift+1…6 меняют один и тот же масштаб; в «M/L/XL Icons» под именем плитки — размер;
+- «Tree» (Ctrl+Shift+2): «Details» с раскрывающимися папками; щелчок по шеврону, → и ← раскрывают и сворачивают, Shift+→ и Shift+← — со всеми вложенными уровнями, ← на элементе внутри папки переходит к ней; содержимое раскрытой папки читается отдельным листингом и вплетается в общий список без перечитывания папки, список остаётся виртуальным, сортировка и группировка действуют на каждом уровне;
+- «Toggle Subfolders» (Ctrl+E, кнопка в нижней панели): папка читается со всеми подпапками, вложенные элементы стоят в общем списке с серым «› папка» после имени, у вкладки — «[...]»; выключение прячет вложенные элементы без перечитывания;
+- колонки «Total Items», «Date Accessed», «Volume Usage», «Folder Usage», а в «This PC» — «Free Space», «Percent Full», «File System»; порядок колонок File Pilot (Name, Type, Date Modified, Total Items, Size …), сортировка и группировка по всем этим ключам — в палитре и подменю «Sort by» и «Group by»; группы File Pilot: имя — «A - H», «I - P», «Q - Z», «Other»; даты — «Today» … «Long ago»; размер — «Gigantic (4+ GB)» … «Empty (0 B)»; число элементов — «Thousands (1000+)» … «None (0)»; проценты — по десяткам; без значения — «Unspecified» в конце;
+- заголовок колонок: отсортированная колонка ярче, стрелка у правого края, у «Type» воронка — выпадающий список типов (Alt+T): каждый тип с числом элементов и флажком, «Toggle all» и «Untoggle all»; с флажками выделения в заголовке «Name» — флажок «выделить всё»; средняя кнопка по заголовку закрывает колонку;
+- меню заголовка: «Shift Column Left», «Shift Column Right», «Size Column To Fit», «Close Column», «Size All Columns To Fit» (Ctrl+=), «Restore Default Columns» и флажки колонок в порядке File Pilot (Name всегда видна), ниже — колонки Flit;
+- нижняя панель: слева поле фильтра «Filter N files...» (щелчок или Ctrl+F; ✕ сбрасывает текст), кнопки «Toggle Subfolders» и «Retain filter on folder change»; посередине — выделение, ошибки, загрузка, распакованный размер архива, ветка Git, кодировка имён архива и кнопки корзины; справа — время открытия папки (если дольше 0,5 с), счётчики папок и файлов («v/N», щелчок прячет папки или файлы, «0/N» с крестиком), «Cycle Folders Sort Order», кнопка раскладки (меню раскладок) и блок процентов масштаба;
+- вид папки, сохранённый для папки или подпапок, теперь хранит и масштаб, режим подпапок, набор, порядок и ширины новых колонок.
 
 WSL (этап 4, устройство — [docs/design/wsl.md](docs/design/wsl.md)):
 
@@ -285,7 +296,7 @@ Git (W9; нужен установленный `git` в `PATH`, сетью и у
 - цвета областей окна: адресной строки, панели инструментов (строка с кнопками навигации и панель команд), боковой панели, области файлов (список, заголовки колонок, главная страница) и панели информации (`appearance.color_address`, `…_toolbar`, `…_sidebar`, `…_files`, `…_pane`); «Default» — как фон, у своего цвета текст области подбирается к нему; полоса вкладок, строка состояния, меню, палитра, диалоги и окно настроек остаются в цветах фона;
 - шрифт интерфейса (`appearance.font`) из установленных семейств: список собирает DirectWrite при первом открытии (100 семейств — около 0,1 мс) и фильтруется набором, как палитра; шрифт действует на весь текст, включая имена файлов; код в предпросмотре остаётся моноширинным, значки — Segoe Fluent Icons; семейство, которого нет (файл настроек с другой машины), заменяется шрифтом по умолчанию, а поле настройки пишет «(not installed)»;
 - масштаб интерфейса (`appearance.scale`, «Interface scale»): от 70 до 200 % шагом 10 %, по умолчанию 100 %; умножается на системный масштаб экрана (DPI в Windows, масштаб вывода в Linux) и применяется сразу во всех окнах — раскладка, шрифты, глифы в атласе и области щелчков следуют ему без перезапуска;
-- «Show the Tab actions button», «Show the file operations button» («Only while operations run» или «Always»), «Show the status bar», «Item count» («Total: 12 items» или «Apart: 3 folders, 9 files») — прежние флаги ядра, теперь в окне настроек; без строки состояния сообщения и ошибки всё равно показывают её, размеры папок считает Ctrl+Alt+S или отметка «Show folder sizes» в «Layout», а кнопки корзины и «Names:» архива заменяют команды палитры «Restore selected items from the Recycle Bin», «Restore all items from the Recycle Bin», «Empty the Recycle Bin» и «Choose the encoding of names in the archive»;
+- «Show the Tab actions button», «Show the file operations button» («Only while operations run» или «Always»), «Show the status bar» — прежние флаги ядра, теперь в окне настроек; без строки состояния сообщения и ошибки всё равно показывают её, размеры папок считает Ctrl+Alt+S или отметка «Show folder sizes» в «Layout», а кнопки корзины и «Names:» архива заменяют команды палитры «Restore selected items from the Recycle Bin», «Restore all items from the Recycle Bin», «Empty the Recycle Bin» и «Choose the encoding of names in the archive»;
 - замеры (`--metrics` на `flat_10k`, по 7 запусков, машина параллельно собирала другие ветки, поэтому разброс велик): смена темы Ctrl+Alt+T до представленного кадра — 4,1–4,2 мс по медиане (один кадр на 240 Гц), CPU этого кадра — 0,12–0,20 мс; старт до первого кадра — 22–49 мс у ветки и 23–49 мс у master (медианы двух серий 32,4 и 33,8 мс против 25,2 и 38,4 мс, то есть различие в пределах шума), CPU кадра прокрутки — медианы 0,38 и 0,57 мс против 0,31 и 0,40 мс у master; со шрифтом Georgia старт 23,7–39,3 мс (медиана 27,7), CPU кадра 0,31 мс, на `flat_100k` 30,0 мс и 0,32 мс против 26,3 и 0,36 мс со шрифтом по умолчанию; с фоном Storm и двумя цветами областей — 25,8 мс и 0,35 мс; выбор семейства в DirectWrite — меньше 2 мкс, разметка 200 имён шрифтом Georgia — 0,41 мс против 1,4–2,2 мс у Segoe UI Variable, у Bahnschrift — 1,6 мс; после смены шрифта кэш разметки сбрасывается, и один кадр размечает видимые строки заново.
 
 Журнал, справка и ссылки (этап 8.6):
@@ -365,7 +376,7 @@ target\release\flit.exe [аргументы]
 
 | Клавиши | Команда |
 |---|---|
-| Ctrl+E | Toggle Subfolders — появится на этапе 5, пока серая и ничего не делает |
+| Ctrl+E | Toggle Subfolders |
 | Space | Toggle Inspector |
 | Ctrl+Shift+S | Split Right |
 | Ctrl+S | Split Bottom |
@@ -388,10 +399,10 @@ target\release\flit.exe [аргументы]
 | Ctrl+Shift+Enter | Open In Right Split |
 | — | Open In Bottom Split |
 | — | Open In New Window |
-| MouseLeft, Right | Open In Tree — появится на этапе 5, пока серая и ничего не делает |
-| MouseLeft, Left | Close In Tree — появится на этапе 5, пока серая и ничего не делает |
-| Shift+MouseLeft, Shift+Right | Open All In Tree — появится на этапе 5, пока серая и ничего не делает |
-| Shift+MouseLeft, Shift+Left | Close All In Tree — появится на этапе 5, пока серая и ничего не делает |
+| MouseLeft, Right | Open In Tree |
+| MouseLeft, Left | Close In Tree |
+| Shift+MouseLeft, Shift+Right | Open All In Tree |
+| Shift+MouseLeft, Shift+Left | Close All In Tree |
 | Ctrl+C, Ctrl+Insert | Copy |
 | Ctrl+X | Cut |
 | Ctrl+V, Shift+Insert | Paste |
@@ -415,8 +426,8 @@ target\release\flit.exe [аргументы]
 | — | Open Containing Path — появится на этапе 7, пока серая и ничего не делает |
 | MouseMiddle | Open Containing Path In Tab — появится на этапе 7, пока серая и ничего не делает |
 | — | Cycle Folders Sort Order |
-| — | Toggle Folders — появится на этапе 5, пока серая и ничего не делает |
-| — | Toggle Files — появится на этапе 5, пока серая и ничего не делает |
+| — | Toggle Folders |
+| — | Toggle Files |
 | Ctrl+L, Alt+D | Open Address Bar |
 | Ctrl+= | Size All Columns To Fit |
 | Ctrl+F, F3 | Filter |
@@ -433,7 +444,7 @@ target\release\flit.exe [аргументы]
 | Alt+Down | Open Folder Dropdown |
 | Alt+Left | Open Left Folder Dropdown |
 | Alt+Right | Open Right Folder Dropdown |
-| Alt+T | Open Types Dropdown — появится на этапе 5, пока серая и ничего не делает |
+| Alt+T | Open Types Dropdown |
 
 ### View
 
@@ -442,7 +453,7 @@ target\release\flit.exe [аргументы]
 | Ctrl+MouseWheelUp | Zoom In Content |
 | Ctrl+MouseWheelDown | Zoom Out Content |
 | Ctrl+Shift+1 | View Details |
-| Ctrl+Shift+2 | View Tree — появится на этапе 5, пока серая и ничего не делает |
+| Ctrl+Shift+2 | View Tree |
 | Ctrl+Shift+3 | View List |
 | Ctrl+Shift+4 | View Medium Icons |
 | Ctrl+Shift+5 | View Large Icons |
@@ -456,16 +467,16 @@ target\release\flit.exe [аргументы]
 | — | Sort By Size |
 | — | Sort By Date Created |
 | — | Sort By Date Modified |
-| — | Sort By Date Accessed — появится на этапе 5, пока серая и ничего не делает |
+| — | Sort By Date Accessed |
 | — | Sort By Date Deleted |
-| — | Sort By Total Items — появится на этапе 5, пока серая и ничего не делает |
+| — | Sort By Total Items |
 | — | Sort By Type |
 | — | Sort By Original Location |
-| — | Sort By Free Space — появится на этапе 5, пока серая и ничего не делает |
-| — | Sort By File System — появится на этапе 5, пока серая и ничего не делает |
-| — | Sort By Percent Full — появится на этапе 5, пока серая и ничего не делает |
-| — | Sort By Volume Usage — появится на этапе 5, пока серая и ничего не делает |
-| — | Sort By Folder Usage — появится на этапе 5, пока серая и ничего не делает |
+| — | Sort By Free Space |
+| — | Sort By File System |
+| — | Sort By Percent Full |
+| — | Sort By Volume Usage |
+| — | Sort By Folder Usage |
 
 ### Group By
 
@@ -476,16 +487,16 @@ target\release\flit.exe [аргументы]
 | — | Group By Size |
 | — | Group By Date Created |
 | — | Group By Date Modified |
-| — | Group By Date Accessed — появится на этапе 5, пока серая и ничего не делает |
+| — | Group By Date Accessed |
 | — | Group By Date Deleted |
-| — | Group By Total Items — появится на этапе 5, пока серая и ничего не делает |
+| — | Group By Total Items |
 | — | Group By Type |
 | — | Group By Original Location |
-| — | Group By Free Space — появится на этапе 5, пока серая и ничего не делает |
-| — | Group By File System — появится на этапе 5, пока серая и ничего не делает |
-| — | Group By Percent Full — появится на этапе 5, пока серая и ничего не делает |
-| — | Group By Volume Usage — появится на этапе 5, пока серая и ничего не делает |
-| — | Group By Folder Usage — появится на этапе 5, пока серая и ничего не делает |
+| — | Group By Free Space |
+| — | Group By File System |
+| — | Group By Percent Full |
+| — | Group By Volume Usage |
+| — | Group By Folder Usage |
 | — | Collapse All Groups |
 | — | Expand All Groups |
 
@@ -681,7 +692,7 @@ target\release\flit.exe [аргументы]
 | Alt+P | Show the Preview tab of the pane |
 | Shift+Alt+P | Show the Details tab of the pane |
 
-Без сочетаний (111), из палитры и меню: «Group search results by folder», «Clear the history of searches», «Open the location of the found item», «Go to the home folder», «Go to the Home page», «Go to This PC», «Go to the Recycle Bin», «Go to Network», «Map network drive», «Disconnect network drive», «Connect to server», «Move tab to a new window», «Show or hide dotfiles», «Sort by tags», «Reverse sort order», «Sort in ascending order», «Sort in descending order», «Show folders before files», «Show files before folders», «Mix files and folders when sorting», «Group by tags», «Show groups in ascending order», «Show groups in descending order», «Group dates by year», «Group dates by month», «Group dates by day», «Cards layout», «Columns layout», «Grid layout», «Adaptive layout», «Show thumbnails in the Grid and Cards layouts», «Clear the thumbnail cache», «Always size columns to fit», «Show or hide the Date modified column», «Show or hide the Date created column», «Show or hide the Type column», «Show or hide the Size column», «Show or hide the Original location column», «Show or hide the Date deleted column», «Show or hide the Tags column», «Show or hide the Git status column», «Show or hide the Commit message column», «Show or hide the Commit author column», «Show or hide the Commit date column», «Git: Fetch», «Git: Pull», «Git: Push», «Git: Initialize a repository here», «Git: Clone a repository», «Git: Switch branch», «Git: Open the repository on the web», «Show or hide the status bar», «Count files and folders separately», «Use the light theme», «Use the dark theme», «Follow the system theme», «Show or hide alternate data streams», «Show or hide item check boxes», «Select items by hovering», «Calculate folder sizes automatically», «Use the same view for all folders», «Use this view for folders without their own», «Switch between the full and the compact sidebar», «Show and expand all sidebar sections», «Customize the toolbar», «Reset the toolbar to defaults», «Show or hide Quick access on the Home page», «Show or hide Drives on the Home page», «Show or hide Tags on the Home page», «Show or hide Recent files on the Home page», «New library», «Restore the default libraries», «Choose the folders of this library», «Invert selection», «Pin or unpin the selected folders», «New tag for the selected items», «Remove all tags from the selected items», «Manage tags: rename, recolor or delete», «Open all items with a tag», «Open the Tags page of the settings», «Export settings and tags to a file», «Import settings and tags from a file», «Reset all settings to their defaults», «Report a bug», «Request a feature», «Open the Flit repository on GitHub», «Read the privacy statement», «Share», «New folder with the selected items», «New alternate data stream», «Change the folder icon», «Restore the default folder icon», «Create shortcuts to the selected items», «Flatten folder: move files from all subfolders into it», «Install font», «Set as lock screen background», «Set as Flit background», «Remove Flit background», «Add to archive…», «Compress to ZIP», «Compress to 7z», «Extract here», «Extract to a folder named after the archive», «Smart extract», «Open the archive as a folder», «Choose the encoding of names in the archive», «Hashes…», «Show or hide file operations», «Clear completed file operations», «Quick view», «Play or pause the previewed media».
+Без сочетаний (105), из палитры и меню: «Group search results by folder», «Clear the history of searches», «Open the location of the found item», «Go to the home folder», «Go to the Home page», «Go to This PC», «Go to the Recycle Bin», «Go to Network», «Map network drive», «Disconnect network drive», «Connect to server», «Move tab to a new window», «Show or hide dotfiles», «Sort by tags», «Reverse sort order», «Sort in ascending order», «Sort in descending order», «Show folders before files», «Show files before folders», «Mix files and folders when sorting», «Group by tags», «Cards layout», «Columns layout», «Grid layout», «Adaptive layout», «Show thumbnails in the Grid and Cards layouts», «Clear the thumbnail cache», «Always size columns to fit», «Show or hide the Date modified column», «Show or hide the Date created column», «Show or hide the Type column», «Show or hide the Size column», «Show or hide the Original location column», «Show or hide the Date deleted column», «Show or hide the Tags column», «Show or hide the Git status column», «Show or hide the Commit message column», «Show or hide the Commit author column», «Show or hide the Commit date column», «Git: Fetch», «Git: Pull», «Git: Push», «Git: Initialize a repository here», «Git: Clone a repository», «Git: Switch branch», «Git: Open the repository on the web», «Show or hide the status bar», «Use the light theme», «Use the dark theme», «Follow the system theme», «Show or hide alternate data streams», «Show or hide item check boxes», «Select items by hovering», «Calculate folder sizes automatically», «Use the same view for all folders», «Use this view for folders without their own», «Switch between the full and the compact sidebar», «Show and expand all sidebar sections», «Customize the toolbar», «Reset the toolbar to defaults», «Show or hide Quick access on the Home page», «Show or hide Drives on the Home page», «Show or hide Tags on the Home page», «Show or hide Recent files on the Home page», «New library», «Restore the default libraries», «Choose the folders of this library», «Invert selection», «Pin or unpin the selected folders», «New tag for the selected items», «Remove all tags from the selected items», «Manage tags: rename, recolor or delete», «Open all items with a tag», «Open the Tags page of the settings», «Export settings and tags to a file», «Import settings and tags from a file», «Reset all settings to their defaults», «Report a bug», «Request a feature», «Open the Flit repository on GitHub», «Read the privacy statement», «Share», «New folder with the selected items», «New alternate data stream», «Change the folder icon», «Restore the default folder icon», «Create shortcuts to the selected items», «Flatten folder: move files from all subfolders into it», «Install font», «Set as lock screen background», «Set as Flit background», «Remove Flit background», «Add to archive…», «Compress to ZIP», «Compress to 7z», «Extract here», «Extract to a folder named after the archive», «Smart extract», «Open the archive as a folder», «Choose the encoding of names in the archive», «Hashes…», «Show or hide file operations», «Clear completed file operations», «Quick view», «Play or pause the previewed media».
 
 ### Перенесённые и снятые сочетания
 
@@ -689,7 +700,7 @@ target\release\flit.exe [аргументы]
 
 | Было | Стало |
 |---|---|
-| Ctrl+E — поиск по всем дискам | Toggle Subfolders (этап 5); поиск по всем дискам — Ctrl+Alt+F |
+| Ctrl+E — поиск по всем дискам | Toggle Subfolders; поиск по всем дискам — Ctrl+Alt+F |
 | Ctrl+Shift+F — поиск по всем дискам | Search In Subfolders (поиск в папке и подпапках) |
 | F3 — поиск в папке | Filter, как и Ctrl+F |
 | F4 — адресная строка | GoTo; адресная строка — Ctrl+L, Alt+D, щелчок по свободному месту пути |
@@ -705,7 +716,7 @@ target\release\flit.exe [аргументы]
 | Ctrl+\` — терминал | снято; «Open Console» — из палитры, Ctrl+Shift+\` — терминал администратора |
 | Ctrl+Alt+Enter — папки в новом окне | снято; «Open In New Window» — из палитры и меню |
 | Ctrl+Shift+, — файл настроек | снято; «Open Config» — из палитры |
-| Ctrl+Shift+2 … Ctrl+Shift+6 — раскладки | Ctrl+Shift+2 — View Tree (этап 5), Ctrl+Shift+3 — список, Ctrl+Shift+4/5/6 — значки M/L/XL в «Сетке»; «Карточки», «Колонки» и «Адаптивная» — из палитры и меню |
+| Ctrl+Shift+2 … Ctrl+Shift+6 — раскладки | Ctrl+Shift+1…6 ставят масштаб 0, 10, 20, 30, 60 и 100 % (Details, Tree, List, значки M/L/XL); «Карточки», «Колонки» и «Адаптивная» — из палитры и меню |
 | Ctrl++, Ctrl+Shift++, Ctrl+- — размер элементов | размер элементов — Ctrl+колесо и «Zoom In Content»/«Zoom Out Content» в палитре; Ctrl+Shift+= и Ctrl+- — размер шрифта, Ctrl+0 — сброс |
 | Ctrl+«+» на цифровой клавиатуре — подогнать колонки | Ctrl+= |
 | F10 — системное меню | Menu (палитра команд) |

@@ -47,8 +47,13 @@ fn capture_pointer(q: &mut std::collections::VecDeque<Event>) {
         q.push_back(Event::Wheel { dx: 0.0, dy: -wheel });
     }
     let clicks = std::env::var("FLIT_CAPTURE_CLICKS").unwrap_or_default();
-    for (x, y) in clicks.split(';').filter_map(|p| p.split_once(',').and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?)))) {
-        q.extend([Event::MouseMove { x, y }, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, Event::MouseUp { x, y, button: MouseButton::Left }]);
+    for p in clicks.split(';') {
+        let (button, p) = match p.trim().strip_prefix('r') {
+            Some(rest) => (MouseButton::Right, rest),
+            None => (MouseButton::Left, p),
+        };
+        let Some((x, y)) = p.split_once(',').and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?))) else { continue };
+        q.extend([Event::MouseMove { x, y }, Event::MouseDown { x, y, button, clicks: 1 }, Event::MouseUp { x, y, button }]);
     }
     if let Some((x, y)) = mouse {
         q.push_back(Event::MouseMove { x, y });
@@ -638,7 +643,10 @@ impl<H: WindowHandler<Win32>> Shared<H> {
                 node.queue.borrow_mut().extend(std::env::var("FLIT_CAPTURE_TYPE").unwrap_or_default().chars().map(Event::Char));
             }
             if let Ok(keys) = std::env::var("FLIT_CAPTURE_KEYS") {
-                node.queue.borrow_mut().extend(keys.split(';').filter(|k| !k.is_empty()).map(capture_key));
+                node.queue.borrow_mut().extend(keys.split(';').filter(|k| !k.is_empty()).flat_map(|k| match k.strip_prefix('\'') {
+                    Some(text) => text.chars().map(Event::Char).collect(),
+                    None => vec![capture_key(k)],
+                }));
                 if std::env::var_os("FLIT_CAPTURE_SETTINGS").is_none() {
                     node.queue.borrow_mut().extend(std::env::var("FLIT_CAPTURE_TYPE").unwrap_or_default().chars().map(Event::Char));
                 }

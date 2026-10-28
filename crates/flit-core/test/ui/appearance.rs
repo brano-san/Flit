@@ -157,8 +157,6 @@ fn bars_and_buttons_follow_their_settings() {
     a.status("Something to say");
     a.layout();
     assert!(a.layout.status.h > 0.0, "a message still shows the status bar");
-    assert!(set(&mut a, "appearance.item_count", Value::Choice(1)));
-    assert!(a.prefs.split_count);
 }
 
 #[test]

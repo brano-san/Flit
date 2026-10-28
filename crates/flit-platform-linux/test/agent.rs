@@ -131,7 +131,7 @@ fn folder_sizes_refuse_forged_names() {
     c.send(Request::DirSizes { id: 9, dir: fs_path(t.path()), items: vec![(3, b"a".to_vec()), (4, b"../etc".to_vec()), (5, b"..".to_vec())] });
     let mut got: Vec<(u32, u64)> = (0..3)
         .map(|_| match c.next() {
-            Event::DirSize { id: 9, idx, size } => (idx, size),
+            Event::DirSize { id: 9, idx, stats } => (idx, stats.size),
             other => panic!("unexpected {other:?}"),
         })
         .collect();

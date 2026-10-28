@@ -83,6 +83,11 @@ pub fn local_days(ticks: i64, offset_min: i32) -> i64 {
     local_secs(ticks, offset_min).div_euclid(86_400)
 }
 
+pub fn now_ticks() -> i64 {
+    let d = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    (d.as_secs() as i64 + 11_644_473_600) * 10_000_000 + d.subsec_nanos() as i64 / 100
+}
+
 pub fn datetime(out: &mut impl Write, ticks: i64, offset_min: i32) {
     if ticks <= 0 {
         return;

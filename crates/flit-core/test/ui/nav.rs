@@ -117,7 +117,8 @@ fn filter_narrows_rows_selection_and_layout() {
     key(&mut app, Key::Char('A'), CTRL);
     key(&mut app, Key::Char('F'), CTRL);
     assert_eq!(app.focus, Focus::Filter);
-    assert!(app.layout.header.y > header_y, "the filter bar pushes the list down");
+    assert_eq!(app.layout.header.y, header_y, "the filter lives in the bottom bar");
+    assert!(app.nav.filter.field.y >= app.layout.status.y && app.nav.filter.field.w > 0.0);
     typed(&mut app, ".RS");
     assert_eq!(rows(&app), ["banana.rs", "date.rs"]);
     let v = app.tab().view.as_ref().unwrap();

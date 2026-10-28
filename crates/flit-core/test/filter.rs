@@ -98,9 +98,9 @@ fn diffs_resorts_and_sizes_respect_the_filter() {
     let base = v.listing().len();
     v.apply(&added("a9"));
     v.merge_order(order, by_size, base);
-    v.set_dir_size(0, 5_000_000);
-    v.set_dir_size(3, 1_000_000);
-    v.set_dir_size(5, 3_000_000);
+    v.set_dir_stats(0, crate::listing::DirStats { size: 5_000_000, ..Default::default() });
+    v.set_dir_stats(3, crate::listing::DirStats { size: 1_000_000, ..Default::default() });
+    v.set_dir_stats(5, crate::listing::DirStats { size: 3_000_000, ..Default::default() });
     assert_eq!(rows(&v), ["a1", "a9", "a0"]);
     assert_eq!(v.total_rows(), 5);
 }

@@ -1,1 +1,4 @@
-placeholder = "按名称筛选"
+files = "筛选 {n} 个文件..."
+seconds = "{n} 秒"
+toggle_all = "全部勾选"
+untoggle_all = "全部取消"

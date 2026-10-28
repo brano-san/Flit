@@ -1,10 +1,11 @@
 use super::layouts::{LayoutMode, Sizes};
 use super::ops::TIMER_SLACK;
 use super::sidebar::PlaceCmd;
-use super::{centered, App, Column, Drag, Effect, Hit, MenuItem, ShellMenu, Tab, BIN_COLUMNS, COLUMNS, REPO_COLUMNS, G_CHEVRON, G_FILE, G_FOLDER, G_SORT_DOWN};
+use super::{centered, App, Column, Drag, Effect, Hit, MenuItem, ShellMenu, Tab, BIN_COLUMNS, COLUMNS, COMPUTER_COLUMNS, REPO_COLUMNS, G_CHEVRON, G_FOLDER, G_SORT_DOWN};
+use super::menu::ColumnCmd;
 use crate::fmt as format;
 use crate::hash::{FxHashMap, FxHasher};
-use crate::i18n::{P, S};
+use crate::i18n::S;
 use crate::input::{CursorIcon, MouseButton};
 use crate::listing::{attr, FsError, FsErrorKind, Listing};
 use crate::location::Location;
@@ -13,7 +14,7 @@ use crate::name;
 use crate::provider::TabId;
 use crate::recycle;
 use crate::render::Rect;
-use crate::sort::{self, DateUnit, Folders, GroupField, GroupSpec, SortField, SortSpec};
+use crate::sort::{self, Folders, GroupField, GroupSpec, SortField, SortSpec};
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::Theme;
 use crate::view::{DirView, Group, Line};
@@ -32,21 +33,16 @@ const HOVER_SELECT: Duration = Duration::from_millis(600);
 const AUTOSCROLL_DEAD: f32 = 12.0;
 const AUTOSCROLL_RATE: f32 = 8.0;
 pub(super) const CHECK: f32 = 14.0;
-pub(super) const CHECK_GAP: f32 = 8.0;
 pub const THUMB_CACHE_MB: (u32, u32, u32) = (100, 500, 5000);
-const SIZE_GROUPS: [S; 8] = [
-    S::DetailsSizeGroupFolders,
-    S::DetailsSizeGroupEmpty,
-    S::DetailsSizeGroupTiny,
-    S::DetailsSizeGroupSmall,
-    S::DetailsSizeGroupMedium,
-    S::DetailsSizeGroupLarge,
-    S::DetailsSizeGroupHuge,
+const SIZE_GROUPS: [S; 7] = [
     S::DetailsSizeGroupGigantic,
+    S::DetailsSizeGroupHuge,
+    S::DetailsSizeGroupLarge,
+    S::DetailsSizeGroupMedium,
+    S::DetailsSizeGroupSmall,
+    S::DetailsSizeGroupTiny,
+    S::DetailsSizeGroupEmpty,
 ];
-const G_CALENDAR: &str = "\u{E787}";
-const G_FONT: &str = "\u{E8D2}";
-const G_PACKAGE: &str = "\u{E7B8}";
 const G_WARNING: &str = "\u{E7BA}";
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -57,17 +53,76 @@ pub struct Columns {
     pub git: u8,
     #[serde(skip, default = "git_widths")]
     pub git_widths: [f32; 4],
+    #[serde(skip, default = "extra_shown")]
+    pub extra: u8,
+    #[serde(skip, default = "extra_widths")]
+    pub extra_widths: [f32; EXTRA],
+    #[serde(skip, default = "column_order")]
+    pub order: [u8; ORDERED],
 }
 
 pub const GIT_WIDTHS: [f32; 4] = [100.0, 260.0, 140.0, 150.0];
+pub const EXTRA: usize = 7;
+pub const ORDERED: usize = 15;
+const FIRST_EXTRA: u8 = Column::Items as u8;
+pub const EXTRA_WIDTHS: [f32; EXTRA] = [140.0, 150.0, 110.0, 110.0, 110.0, 90.0, 110.0];
+const DEFAULT_HIDDEN: u8 = 1 << Column::Created as u8;
+const DEFAULT_EXTRA: u8 = 1 << (Column::Items as u8 - FIRST_EXTRA) | 1 << (Column::Free as u8 - FIRST_EXTRA) | 1 << (Column::FileSystem as u8 - FIRST_EXTRA) | 1 << (Column::Percent as u8 - FIRST_EXTRA);
+const DEFAULT_WIDTHS: [f32; 7] = [0.0, 150.0, 140.0, 90.0, 220.0, 150.0, 150.0];
+pub const DEFAULT_ORDER: [Column; ORDERED] = [
+    Column::Name,
+    Column::Origin,
+    Column::Deleted,
+    Column::Type,
+    Column::Modified,
+    Column::Items,
+    Column::Size,
+    Column::Volume,
+    Column::Created,
+    Column::Accessed,
+    Column::FolderUsage,
+    Column::Tag,
+    Column::Free,
+    Column::Percent,
+    Column::FileSystem,
+];
+const ALL_COLUMNS: [Column; ORDERED] = [
+    Column::Name,
+    Column::Modified,
+    Column::Type,
+    Column::Size,
+    Column::Origin,
+    Column::Deleted,
+    Column::Created,
+    Column::Tag,
+    Column::Items,
+    Column::Accessed,
+    Column::Volume,
+    Column::FolderUsage,
+    Column::Free,
+    Column::FileSystem,
+    Column::Percent,
+];
 
 fn git_widths() -> [f32; 4] {
     GIT_WIDTHS
 }
 
+fn extra_shown() -> u8 {
+    DEFAULT_EXTRA
+}
+
+fn extra_widths() -> [f32; EXTRA] {
+    EXTRA_WIDTHS
+}
+
+fn column_order() -> [u8; ORDERED] {
+    DEFAULT_ORDER.map(|c| c as u8)
+}
+
 impl Default for Columns {
     fn default() -> Self {
-        Self { hidden: 1 << Column::Created as u8, widths: [0.0, 150.0, 140.0, 90.0, 220.0, 150.0, 150.0], git: 0, git_widths: GIT_WIDTHS }
+        Self { hidden: DEFAULT_HIDDEN, widths: DEFAULT_WIDTHS, git: 0, git_widths: GIT_WIDTHS, extra: DEFAULT_EXTRA, extra_widths: EXTRA_WIDTHS, order: column_order() }
     }
 }
 
@@ -75,10 +130,17 @@ fn git_slot(c: Column) -> usize {
     c as usize - Column::GitStatus as usize
 }
 
+fn extra_slot(c: Column) -> Option<usize> {
+    (c as u8 >= FIRST_EXTRA && !c.is_git()).then(|| (c as u8 - FIRST_EXTRA) as usize)
+}
+
 impl Columns {
     pub fn shown(&self, c: Column) -> bool {
         if c.is_git() {
             return (self.git >> git_slot(c)) & 1 == 1;
+        }
+        if let Some(k) = extra_slot(c) {
+            return (self.extra >> k) & 1 == 1;
         }
         c == Column::Name || ((self.hidden >> c as u8) & 1 == 1) == (c == Column::Tag)
     }
@@ -88,32 +150,75 @@ impl Columns {
             let w = self.git_widths[git_slot(c)];
             return if (MIN_COL_W..=MAX_COL_W).contains(&w) { w } else { GIT_WIDTHS[git_slot(c)] };
         }
+        if let Some(k) = extra_slot(c) {
+            return self.extra_widths[k];
+        }
         self.widths[c.slot()]
     }
 
     pub fn set_width(&mut self, c: Column, w: f32) {
-        match c.is_git() {
-            true => self.git_widths[git_slot(c)] = w,
-            false => self.widths[c.slot()] = w,
+        match (c.is_git(), extra_slot(c)) {
+            (true, _) => self.git_widths[git_slot(c)] = w,
+            (false, Some(k)) => self.extra_widths[k] = w,
+            (false, None) => self.widths[c.slot()] = w,
         }
     }
 
     pub fn toggle(&mut self, c: Column) {
-        match c {
-            Column::Name => {}
-            c if c.is_git() => self.git ^= 1 << git_slot(c),
-            c => self.hidden ^= 1 << c as u8,
+        match (c, extra_slot(c)) {
+            (Column::Name, _) => {}
+            (c, _) if c.is_git() => self.git ^= 1 << git_slot(c),
+            (_, Some(k)) => self.extra ^= 1 << k,
+            (c, None) => self.hidden ^= 1 << c as u8,
         }
+    }
+
+    pub fn ordered(&self, kinds: &[Column]) -> Vec<Column> {
+        let mut out: Vec<Column> = self.order.iter().filter_map(|&id| ALL_COLUMNS.iter().copied().find(|&c| c as u8 == id)).filter(|c| kinds.contains(c)).collect();
+        let missing: Vec<Column> = kinds.iter().copied().filter(|c| !out.contains(c)).collect();
+        out.extend(missing);
+        if let Some(k) = out.iter().position(|&c| c == Column::Name) {
+            out[..=k].rotate_right(1);
+        }
+        out
+    }
+
+    pub fn shift(&mut self, c: Column, kinds: &[Column], right: bool) {
+        let shown: Vec<Column> = self.ordered(kinds).into_iter().filter(|&x| self.shown(x)).collect();
+        let Some(k) = shown.iter().position(|&x| x == c) else { return };
+        let other = match right {
+            true => shown.get(k + 1),
+            false => k.checked_sub(1).and_then(|j| shown.get(j)),
+        };
+        let Some(&other) = other.filter(|&&o| o != Column::Name && c != Column::Name) else { return };
+        let (a, b) = (self.order.iter().position(|&id| id == c as u8), self.order.iter().position(|&id| id == other as u8));
+        if let (Some(a), Some(b)) = (a, b) {
+            self.order.swap(a, b);
+        }
+    }
+
+    pub fn is_default(&self) -> bool {
+        let d = Self::default();
+        self.hidden == d.hidden && self.extra == d.extra && self.order == d.order && self.widths[1..] == d.widths[1..] && self.extra_widths == d.extra_widths
+    }
+
+    pub fn restored(self) -> Self {
+        Self { git: self.git, git_widths: self.git_widths, ..Self::default() }
     }
 
     pub fn sanitized(mut self) -> Self {
         let d = Self::default();
-        for (w, dw) in self.widths.iter_mut().zip(d.widths) {
+        for (w, dw) in self.widths.iter_mut().zip(d.widths).chain(self.extra_widths.iter_mut().zip(d.extra_widths)) {
             if !(w.is_finite() && (MIN_COL_W..=MAX_COL_W).contains(w)) {
                 *w = dw;
             }
         }
         self.hidden &= 0xFE;
+        let mut seen = self.order;
+        seen.sort_unstable();
+        if seen != ALL_COLUMNS.map(|c| c as u8) {
+            self.order = d.order;
+        }
         self
     }
 }
@@ -126,12 +231,17 @@ pub struct FolderView {
     pub columns: Columns,
     #[serde(skip)]
     pub sizes: Sizes,
+    #[serde(skip)]
+    pub zoom: u8,
+    #[serde(skip)]
+    pub subfolders: bool,
 }
 
 impl FolderView {
     pub fn sanitized(mut self) -> Self {
         self.columns = self.columns.sanitized();
         self.sizes = self.sizes.sanitized();
+        self.zoom = super::layouts::zoom_of(self.layout, self.zoom);
         self
     }
 }
@@ -157,6 +267,8 @@ pub struct ViewPrefs {
     pub thumb_cache_mb: u32,
     #[serde(skip)]
     pub show_streams: bool,
+    #[serde(skip)]
+    pub retain_filter: bool,
 }
 
 fn yes() -> bool {
@@ -193,6 +305,7 @@ impl Default for ViewPrefs {
             thumbnails: true,
             thumb_cache_mb: THUMB_CACHE_MB.1,
             show_streams: false,
+            retain_filter: false,
         }
     }
 }
@@ -374,23 +487,6 @@ pub(super) struct Details {
 }
 
 impl Column {
-    pub(super) fn toggle_id(self) -> &'static str {
-        match self {
-            Column::Name => "",
-            Column::Modified => "view.column.modified",
-            Column::Created => "view.column.created",
-            Column::Type => "view.column.type",
-            Column::Size => "view.column.size",
-            Column::Origin => "view.column.origin",
-            Column::Deleted => "view.column.deleted",
-            Column::Tag => "view.column.tag",
-            Column::GitStatus => "view.column.git_status",
-            Column::GitMessage => "view.column.git_message",
-            Column::GitAuthor => "view.column.git_author",
-            Column::GitDate => "view.column.git_date",
-        }
-    }
-
     pub(super) fn slot(self) -> usize {
         if self == Column::Tag { Column::Deleted as usize } else { self as usize }
     }
@@ -398,31 +494,48 @@ impl Column {
 
 impl Tab {
     pub(super) fn folder_view(&self) -> FolderView {
-        FolderView { layout: self.mode, sort: self.view_spec.sort, group: self.view_spec.group, columns: self.columns, sizes: self.sizes }
+        FolderView { layout: self.mode, sort: self.view_spec.sort, group: self.view_spec.group, columns: self.columns, sizes: self.sizes, zoom: self.zoom, subfolders: self.subfolders }
     }
 
     pub(super) fn set_folder_view(&mut self, f: FolderView) {
         self.mode = f.layout;
         self.sizes = f.sizes;
+        self.zoom = super::layouts::zoom_of(f.layout, f.zoom);
+        self.subfolders = f.subfolders;
         self.view_spec.sort = f.sort;
         self.view_spec.group = f.group;
         self.columns = f.columns;
     }
 }
 
-fn date_label(s: &mut impl std::fmt::Write, value: Option<i64>, unit: DateUnit) {
-    let Some(n) = value else {
-        let _ = s.write_str(S::DetailsGroupUnknownDate.t());
-        return;
-    };
-    let _ = match unit {
-        DateUnit::Year => write!(s, "{n}"),
-        DateUnit::Month => write!(s, "{} {}", format::month_name(n.rem_euclid(12) as u32 + 1), n.div_euclid(12)),
-        DateUnit::Day => {
-            let (y, m, d) = format::civil_from_days(n);
-            write!(s, "{y:04}-{m:02}-{d:02}")
+const DATE_GROUPS: [S; 6] = [S::DetailsGroupToday, S::DetailsGroupYesterday, S::DetailsGroupLastWeek, S::DetailsGroupLastMonth, S::DetailsGroupLastYear, S::DetailsGroupLongAgo];
+const NAME_GROUPS: [S; 4] = [S::DetailsGroupNameAh, S::DetailsGroupNameIp, S::DetailsGroupNameQz, S::DetailsGroupOther];
+const ITEM_GROUPS: [S; 5] = [S::DetailsGroupThousands, S::DetailsGroupHundreds, S::DetailsGroupDozens, S::DetailsGroupFew, S::DetailsGroupNoItems];
+
+fn bucket_label(s: &mut impl std::fmt::Write, table: &[S], bucket: u64) {
+    let _ = s.write_str(table.get(bucket as usize).map_or(S::DetailsGroupUnspecified, |&k| k).t());
+}
+
+const NO_ITEMS: &str = "--";
+const G_CALENDAR: &str = "\u{E787}";
+
+fn percent_text(s: &mut impl std::fmt::Write, part: Option<u64>, whole: u64) {
+    if let (Some(part), true) = (part, whole > 0) {
+        let p = (part as u128 * 1000 / whole as u128).min(1000) as u64;
+        let _ = write!(s, "{}.{}%", p / 10, p % 10);
+    }
+}
+
+fn percent_label(s: &mut impl std::fmt::Write, bucket: u64) {
+    match bucket {
+        sort::UNSPECIFIED => {
+            let _ = s.write_str(S::DetailsGroupUnspecified.t());
         }
-    };
+        b => {
+            let lo = (9 - b.min(9)) * 10;
+            let _ = write!(s, "{lo}% - {}%", lo + 9);
+        }
+    }
 }
 
 impl App {
@@ -430,6 +543,8 @@ impl App {
         let t = self.tab();
         if t.view_loc.is_recycle_bin() {
             &BIN_COLUMNS
+        } else if t.view_loc.path().kind() == PathKind::Computer {
+            &COMPUTER_COLUMNS
         } else if t.git.as_ref().is_some_and(|g| g.root.is_some()) {
             &REPO_COLUMNS
         } else {
@@ -439,7 +554,7 @@ impl App {
 
     pub fn columns(&self) -> Vec<Column> {
         let cols = self.tab().columns;
-        self.column_kinds().iter().copied().filter(|&c| cols.shown(c)).collect()
+        cols.ordered(self.column_kinds()).into_iter().filter(|&c| cols.shown(c)).collect()
     }
 
     pub fn folder_views(&self) -> &FolderViews {
@@ -499,6 +614,7 @@ impl App {
             self.tabs[k].set_folder_view(fv);
         }
         self.sync_spec(k);
+        self.tabs[k].retain_filter = self.prefs.retain_filter;
         let case = self.case;
         self.tabs[k].load(gen, select, case, now, &mut self.effects);
         self.git_refresh(k, false);
@@ -507,11 +623,17 @@ impl App {
 
     pub(super) fn sync_spec(&mut self, k: usize) {
         let (p, tz) = (&self.prefs, self.utc_offset_min);
-        let v = &mut self.tabs[k].view_spec;
+        let t = &mut self.tabs[k];
+        let (deep, tree) = (t.subfolders, t.mode == LayoutMode::Tree);
+        let v = &mut t.view_spec;
         v.hide_dotfiles = !p.show_dotfiles;
         v.show_system = p.show_system;
         v.show_streams = p.show_streams;
-        v.utc_offset_min = if v.group.field.is_date() { tz } else { 0 };
+        v.deep = deep;
+        v.tree = tree;
+        let dated = v.group.field.is_date();
+        v.utc_offset_min = if dated { tz } else { 0 };
+        v.today = if dated { format::local_days(format::now_ticks(), tz) } else { 0 };
     }
 
     pub(super) fn remember_view(&mut self) {
@@ -532,6 +654,7 @@ impl App {
         let k = self.cur;
         let before = self.tabs[k].view_spec;
         f(&mut self.tabs[k]);
+        self.sync_spec(k);
         if self.tabs[k].view_spec != before {
             self.resort(k);
         }
@@ -567,14 +690,6 @@ impl App {
 
     pub(super) fn group_by(&mut self, field: GroupField) {
         self.change_view(|t| t.view_spec.group.field = field);
-    }
-
-    pub(super) fn set_group_descending(&mut self, descending: bool) {
-        self.change_view(|t| t.view_spec.group.descending = descending);
-    }
-
-    pub(super) fn set_date_unit(&mut self, unit: DateUnit) {
-        self.change_view(|t| t.view_spec.group.unit = unit);
     }
 
     pub(super) fn toggle_column(&mut self, c: Column) {
@@ -648,13 +763,15 @@ impl App {
         if !std::mem::take(&mut self.tabs[k].fit_pending) {
             return;
         }
+        let only = self.tabs[k].fit_column.take();
         let (font, hfont) = (self.ui_font(13.0), self.ui_font(12.0));
         let (pad, glyph) = (self.s(10.0), self.s(20.0));
         let lines = self.visible_lines(&self.flow());
         let t = &self.tabs[k];
         let Some(v) = &t.view else { return };
         let mut cols = t.columns;
-        for &c in self.layout.columns.iter().filter(|&&c| c != Column::Name) {
+
+        for &c in self.layout.columns.iter().filter(|&&c| c != Column::Name && only.is_none_or(|o| o == c)) {
             let mut w = g.measure(c.title(), hfont) + glyph;
             for line in lines.clone() {
                 if let Some(Line::Row(r)) = v.line(line) {
@@ -666,9 +783,23 @@ impl App {
         self.change_view(|t| t.columns = cols);
     }
 
-    pub(super) fn header_menu(&mut self, x: f32, y: f32) {
-        let menu = self.build_header_menu();
+    pub(super) fn header_menu(&mut self, x: f32, y: f32, col: Option<Column>) {
+        let menu = self.build_header_menu(col);
         self.flit_menu(x, y, menu);
+    }
+
+    pub(super) fn column_command(&mut self, c: ColumnCmd) {
+        let kinds = self.column_kinds();
+        match c {
+            ColumnCmd::Toggle(c) => self.toggle_column(c),
+            ColumnCmd::Shift(c, right) => self.change_view(|t| t.columns.shift(c, kinds, right)),
+            ColumnCmd::Fit(c) => {
+                self.tab_mut().fit_column = Some(c);
+                self.request_fit();
+            }
+            ColumnCmd::Restore => self.change_view(|t| t.columns = t.columns.restored()),
+        }
+        self.layout();
     }
 
     pub(super) fn flit_menu(&mut self, x: f32, y: f32, menu: Vec<MenuItem>) {
@@ -724,6 +855,32 @@ impl App {
                     format::size_in(&mut s, e.size, self.style.decimal);
                 }
             }
+            Column::Accessed => {
+                if e.accessed > 0 {
+                    format::datetime_in(&mut s, e.accessed, self.utc_offset_min, &self.style);
+                }
+            }
+            Column::Items => match l.stats(i) {
+                Some(st) if e.is_dir() && st.items() > 0 => {
+                    let _ = write!(s, "{}", st.items());
+                }
+                Some(_) => s.push_str(NO_ITEMS),
+                None if !e.is_dir() => s.push_str(NO_ITEMS),
+                None => {}
+            },
+            Column::Volume => percent_text(&mut s, sort::known_size(e), l.volume),
+            Column::FolderUsage => percent_text(&mut s, sort::known_size(e), l.total),
+            Column::Free => {
+                if let Some((free, _)) = l.drive(i) {
+                    format::size_in(&mut s, free, self.style.decimal);
+                }
+            }
+            Column::Percent => {
+                if let Some(p) = sort::used_permille(l, i) {
+                    let _ = write!(s, "{}.{}%", p / 10, p % 10);
+                }
+            }
+            Column::FileSystem => s.push_str(&name::display(sort::file_system(l, i))),
         }
         s.into_bump_str()
     }
@@ -732,17 +889,19 @@ impl App {
         let (l, spec, i) = (v.listing(), v.snap().view, gr.first);
         let e = &l.entries[i as usize];
         let mut s = bumpalo::collections::String::new_in(arena);
+        let key = sort::group_key(l, i, &spec).0;
         match spec.group.field {
             GroupField::None => {}
-            GroupField::Name => match sort::group_key(l, i, &spec).0 {
-                1 => s.push('#'),
-                2 => s.push_str("0-9"),
-                _ => s.extend(name::display(l.name(i)).chars().take(1).flat_map(char::to_uppercase)),
-            },
+            GroupField::Name => bucket_label(&mut s, &NAME_GROUPS, key),
             GroupField::Type => return self.type_text(arena, l, i),
-            GroupField::Size => s.push_str(SIZE_GROUPS[sort::size_bucket(e) as usize].t()),
-            GroupField::Modified => date_label(&mut s, sort::date_unit_value(e.modified, &spec), spec.group.unit),
-            GroupField::Created => date_label(&mut s, sort::date_unit_value(e.created, &spec), spec.group.unit),
+            GroupField::Size | GroupField::Free => bucket_label(&mut s, &SIZE_GROUPS, key),
+            GroupField::Modified | GroupField::Created | GroupField::Accessed => bucket_label(&mut s, &DATE_GROUPS, key),
+            GroupField::Items => bucket_label(&mut s, &ITEM_GROUPS, key),
+            GroupField::Volume | GroupField::FolderUsage | GroupField::Percent => percent_label(&mut s, key),
+            GroupField::FileSystem => match sort::file_system(l, i) {
+                [] => s.push_str(S::DetailsGroupUnspecified.t()),
+                fs => s.push_str(&name::display(fs)),
+            },
             GroupField::Origin => match recycle::origin(l, i) {
                 [] => s.push_str(S::DetailsGroupUnknownLocation.t()),
                 o => s.push_str(&name::display(o)),
@@ -752,36 +911,29 @@ impl App {
         s.into_bump_str()
     }
 
-    fn group_glyph(v: &DirView, gr: &Group) -> &'static str {
-        match v.snap().view.group.field {
-            GroupField::Name => G_FONT,
-            GroupField::Type if v.listing().entries[gr.first as usize].is_dir() => G_FOLDER,
-            GroupField::Type => G_FILE,
-            GroupField::Size => G_PACKAGE,
-            GroupField::Modified | GroupField::Created => G_CALENDAR,
-            GroupField::Origin | GroupField::None => G_FOLDER,
-            GroupField::Tag => super::tags::G_TAG,
-        }
-    }
-
     pub(super) fn draw_group_line<B: TextBackend>(&self, g: &mut Gfx<B>, arena: &Bump, th: &Theme, v: &DirView, k: usize, r: Rect) {
         let gr = v.groups()[k];
         let (y, rh, right) = (r.y, r.h, r.right());
         if self.hover == Hit::Group(k) && self.drag == Drag::None {
-            g.dl.round_rect(r.inset(self.s(4.0), 1.0), th.hover, self.s(4.0));
+            g.dl.outline(r.inset(self.s(4.0), 1.0), th.accent, self.s(4.0), self.s(1.0).max(1.0));
         }
         let x0 = r.x + self.s(10.0);
         centered(g, Rect::new(x0, y, self.s(16.0), rh), if gr.collapsed { G_CHEVRON } else { G_SORT_DOWN }, self.icon_font(8.0), th.text_dim);
-        let glyph_color = self.group_color(v, &gr).unwrap_or(th.accent.alpha(0xB0));
-        centered(g, Rect::new(x0 + self.s(20.0), y, self.s(16.0), rh), Self::group_glyph(v, &gr), self.icon_font(12.0), glyph_color);
-        let bold = FontStyle::new(FontFamily::Ui, 13.0 * self.scale, true);
+        let mut tx = x0 + self.s(24.0);
+        if let Some(color) = self.group_color(v, &gr) {
+            centered(g, Rect::new(tx, y, self.s(16.0), rh), super::tags::G_TAG, self.icon_font(12.0), color);
+            tx += self.s(22.0);
+        } else if v.snap().view.group.field.is_date() {
+            centered(g, Rect::new(tx, y, self.s(16.0), rh), G_CALENDAR, self.icon_font(12.0), th.text_dim);
+            tx += self.s(22.0);
+        }
+        let bold = FontStyle::new(FontFamily::Ui, 14.0 * self.scale, true);
         let m = g.metrics(bold);
         let baseline = (y + (rh + m.ascent - m.descent) / 2.0).round();
-        let tx = x0 + self.s(44.0);
         let room = right - tx;
         let w = g.text(tx, baseline, self.group_label(arena, v, &gr), bold, th.text, (room - self.s(80.0)).max(room * 0.6));
         let mut count = bumpalo::collections::String::new_in(arena);
-        let _ = write!(count, "{}", gr.count);
+        let _ = write!(count, "({})", gr.count);
         let cx = tx + w + self.s(8.0);
         let cw = g.text(cx, baseline, &count, self.ui_font(12.0), th.text_dim, f32::INFINITY);
         let sx = cx + cw + self.s(10.0);
@@ -826,20 +978,6 @@ impl App {
             g.text(list.x + (list.w - w) / 2.0, y + self.s(56.0 + 24.0 * k as f32), text, font, color, list.w);
         }
         self.draw_eject(g, th);
-    }
-
-    pub(super) fn count_text(&self, s: &mut impl std::fmt::Write, v: &DirView) {
-        let n = v.base_rows().len();
-        if v.is_filtered() {
-            crate::trn_into!(s, P::DetailsCountFiltered, v.total_rows(), shown = crate::i18n::num(n as u64));
-        } else if self.prefs.split_count {
-            let dirs = v.dir_count();
-            crate::trn_into!(&mut *s, P::DetailsCountFolders, dirs);
-            let _ = s.write_str(", ");
-            crate::trn_into!(s, P::DetailsCountFiles, n - dirs);
-        } else {
-            crate::trn_into!(s, P::DetailsCountItems, n);
-        }
     }
 
     pub(super) fn draw_checkbox<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme, r: Rect, on: bool) {

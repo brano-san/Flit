@@ -145,7 +145,7 @@ fn sort_click_resorts_and_diffs_apply() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &[("a", false), ("c", false)]);
     app.drain_effects().for_each(drop);
-    let size_header = app.layout.cols[3];
+    let size_header = app.layout.cols[app.layout.columns.iter().position(|&c| c == Column::Size).unwrap()];
     click(&mut app, size_header);
     let resort = app.drain_effects().find_map(|e| if let Effect::Resort { tab, gen, view, snap } = e { Some((tab, gen, view, snap)) } else { None });
     let (tab, gen, view, snap) = resort.expect("resort requested");
@@ -260,7 +260,7 @@ fn tabs_are_independent() {
     assert!(!app.poll(), "background tab changed, active one did not");
     assert_eq!(app.tabs()[1].view.as_ref().unwrap().listing().len(), 1);
     let (id2, gen2) = (app.tabs()[1].id, app.tabs()[1].gen);
-    app.on_provider_event(ProviderEvent::DirSize { tab: id2, gen: gen2 - 1, idx: 0, size: 99 }, t0());
+    app.on_provider_event(ProviderEvent::DirSize { tab: id2, gen: gen2 - 1, idx: 0, stats: crate::listing::DirStats { size: 99, ..Default::default() } }, t0());
     assert_ne!(app.tabs()[1].view.as_ref().unwrap().listing().entries[0].size, 99);
 }
 
@@ -341,7 +341,7 @@ fn actions_before_the_new_listing_target_the_shown_folder() {
     key(&mut app, Key::Char('S'), Mods { ctrl: true, shift: false, alt: true });
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::DirSizes { .. }, .. })));
     let (id, gen) = (app.tab().id, app.tab().gen);
-    app.on_provider_event(ProviderEvent::DirSize { tab: id, gen, idx: 0, size: 99 }, t0());
+    app.on_provider_event(ProviderEvent::DirSize { tab: id, gen, idx: 0, stats: crate::listing::DirStats { size: 99, ..Default::default() } }, t0());
     assert_ne!(app.tab().view.as_ref().unwrap().listing().entries[0].size, 99);
     key(&mut app, Key::Enter, NO);
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } if path == FsPath::parse(r"C:\work\src\main.rs").unwrap())));

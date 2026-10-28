@@ -138,13 +138,13 @@ fn background_menu_offers_sorting_new_items_paste_and_terminal() {
     assert!(matches!(&menu.menu[0], MenuItem::Submenu { label, .. } if label == "Layout"));
     assert!(matches!(&menu.menu[1], MenuItem::Submenu { label, .. } if label == "Sort by"));
     let labels = commands(&menu.menu);
-    for want in ["Details\tCtrl+Shift+1 *", "List\tCtrl+Shift+3", "Grid", "Larger items\tCtrl+MouseWheelUp", "Name *", "Date modified", "Descending", "Refresh\tCtrl+R  F5", "Folder\tCtrl+Shift+N", "Shortcut", "Paste\tCtrl+V  Shift+Insert", "Open in terminal", "Pin to sidebar", "Copy path\tCtrl+Shift+C", "Properties\tShift+Alt+Enter"] {
+    for want in ["Details\tCtrl+Shift+1 *", "Tree\tCtrl+Shift+2", "List\tCtrl+Shift+3", "M Icons\tCtrl+Shift+4", "Cards", "Total Items", "Larger items\tCtrl+MouseWheelUp", "Name *", "Date modified", "Descending", "Refresh\tCtrl+R  F5", "Folder\tCtrl+Shift+N", "Shortcut", "Paste\tCtrl+V  Shift+Insert", "Open in terminal", "Pin to sidebar", "Copy path\tCtrl+Shift+C", "Properties\tShift+Alt+Enter"] {
         assert!(labels.iter().any(|l| l == want), "{want} missing from {labels:?}");
     }
-    run(&mut app, &menu, "Grid");
-    assert_eq!((app.tab().mode, app.layout.mode), (LayoutMode::Grid, LayoutMode::Grid));
+    run(&mut app, &menu, "L Icons");
+    assert_eq!((app.tab().mode, app.layout.mode, app.tab().zoom), (LayoutMode::Grid, LayoutMode::Grid, 60));
     let menu = right_click(&mut app, None, false);
-    assert!(commands(&menu.menu).iter().any(|l| l == "Grid *"));
+    assert!(commands(&menu.menu).iter().any(|l| l == "L Icons\tCtrl+Shift+5 *"));
     run(&mut app, &menu, "Details");
     run(&mut app, &menu, "Date modified");
     assert_eq!(app.tab().view_spec.sort.field, SortField::Modified);
@@ -166,7 +166,7 @@ fn hidden_items_and_inline_shell_items_follow_the_core_flags() {
     assert!(!labels.iter().any(|l| ["Open", "Cut", "Copy", "Rename"].contains(&label_of(l))), "{labels:?}");
     assert!(tidy(&file.menu), "{:?}", file.menu);
     let background = right_click(&mut app, None, false);
-    assert!(!commands(&background.menu).iter().any(|l| l.starts_with("Folder") || l.starts_with("Refresh")));
+    assert!(!commands(&background.menu).iter().any(|l| l.starts_with("Folder\t") || l.starts_with("Refresh")));
     assert!(tidy(&background.menu), "{:?}", background.menu);
     assert!(right_click(&mut app, None, true).inline, "Shift shows every shell item in place");
     app.on_event(&Event::Key { key: Key::F(10), mods: Mods { shift: true, ..Mods::default() }, pressed: true }, Instant::now());

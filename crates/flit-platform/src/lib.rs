@@ -17,6 +17,7 @@ use flit_core::render::{DrawList, Rect};
 use flit_core::ui::{Bitmap, DragEvent, IconRequest, NewTemplate, ShellMenu};
 use flit_core::digest::HashKind;
 use flit_core::provider::{Conflict, FileOp, Launch, OpCtl, OpProgress, Resolve, Stage};
+use flit_core::listing::DirStats;
 use flit_core::tags::FileKey;
 use flit_core::{FsError, FsPath, ListingBuilder, Location, Meta, Open, ProviderEvent, ProviderRequest, TabId};
 use flit_search::index::{Checkpoint, IndexSink};
@@ -178,7 +179,7 @@ pub trait Fs: Send + Sync + 'static {
     fn desktop_ini(&self, _dir: &FsPath) -> Option<DesktopIni> {
         None
     }
-    fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, u64) + Sync)) {
+    fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, DirStats) + Sync)) {
         local::dir_sizes(self, dir, items, keep_going, report)
     }
     fn hash(&self, file: &FsPath, kinds: &[HashKind], job: &Job) -> Result<Vec<String>, PlatformError> {
@@ -189,6 +190,9 @@ pub trait Fs: Send + Sync + 'static {
     }
     fn file_system(&self, _path: &FsPath) -> Option<String> {
         None
+    }
+    fn volume_size(&self, _path: &FsPath) -> u64 {
+        0
     }
     fn volume_key(&self, path: &FsPath) -> Vec<u8> {
         path.root_bytes().to_ascii_lowercase()

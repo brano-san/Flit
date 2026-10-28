@@ -19,7 +19,7 @@ fn view(names: &[&str], group: GroupField) -> DirView {
 }
 
 fn grouped() -> DirView {
-    view(&["a1", "a2", "a3", "b1", "b2"], GroupField::Name)
+    view(&["a1", "a2", "a3", "q1", "q2"], GroupField::Name)
 }
 
 #[test]

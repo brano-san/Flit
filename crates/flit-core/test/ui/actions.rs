@@ -342,7 +342,7 @@ fn unavailable_commands_keep_their_keys_but_do_nothing() {
     }
     press(&mut app, ctrl(Key::Char('E')));
     assert!(!app.search_active(), "Ctrl+E is Toggle Subfolders now, not search");
-    assert!(app.effects.is_empty());
+    assert!(app.tab().subfolders);
     press(&mut app, key(Key::F(4)));
     assert!(app.go_open(), "F4 opens GoTo");
 }

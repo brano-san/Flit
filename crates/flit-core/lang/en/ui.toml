@@ -17,7 +17,6 @@ folder = "This folder is empty."
 selected = ["{n} selected", "{n} selected"]
 unpacked = "{size} unpacked"
 loading = "Loading…"
-timing = "{first} ms first · {all} ms all"
 
 [button]
 replace = "Replace"

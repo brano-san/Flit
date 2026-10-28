@@ -1,4 +1,3 @@
-fit_columns = "Ajuster toutes les colonnes"
 autofit_columns = "Toujours ajuster les colonnes"
 open_file_location = "Ouvrir l’emplacement du fichier"
 group_by_folder = "Regrouper par dossier"
@@ -74,6 +73,12 @@ new = "Nouveau"
 eject = "Éjecter"
 
 open_with = "Ouvrir avec"
+shift_left = "Décaler la colonne à gauche"
+shift_right = "Décaler la colonne à droite"
+size_fit = "Ajuster la largeur de la colonne"
+close_column = "Fermer la colonne"
+size_all = "Ajuster la largeur de toutes les colonnes"
+restore_columns = "Rétablir les colonnes par défaut"
 
 [sort]
 name = "Nom"
@@ -92,6 +97,3 @@ descending = "Décroissant"
 
 [group]
 none = "Aucun"
-year = "Année"
-month = "Mois"
-day = "Jour"

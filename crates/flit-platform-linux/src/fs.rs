@@ -1,4 +1,4 @@
-use flit_core::listing::attr;
+use flit_core::listing::{attr, DirStats};
 use flit_core::path::PathKind;
 use flit_core::{FsError, FsErrorKind, FsPath, ListingBuilder, Meta};
 use flit_platform::Fs;
@@ -175,16 +175,20 @@ fn to_meta(name: &[u8], node: &Node, target_dir: impl FnOnce() -> bool) -> Meta 
 }
 
 fn entry_meta(dir: libc::c_int, name: &CStr, d_type: u8) -> Meta {
+    entry_meta_at(dir, name, d_type).0
+}
+
+fn entry_meta_at(dir: libc::c_int, name: &CStr, d_type: u8) -> (Meta, i64) {
     let bytes = name.to_bytes();
     match node_at(dir, name, false) {
-        Ok(node) => to_meta(bytes, &node, || node_at(dir, name, true).is_ok_and(|t| t.is_dir())),
+        Ok(node) => (to_meta(bytes, &node, || node_at(dir, name, true).is_ok_and(|t| t.is_dir())), filetime(node.atime.sec, node.atime.nsec as i64)),
         Err(_) => {
             let attrs = match d_type {
                 DT_DIR => attr::DIR,
                 DT_LNK => attr::LINK,
                 _ => 0,
             };
-            Meta { attrs: attrs | if bytes.first() == Some(&b'.') { attr::HIDDEN } else { 0 }, ..Default::default() }
+            (Meta { attrs: attrs | if bytes.first() == Some(&b'.') { attr::HIDDEN } else { 0 }, ..Default::default() }, 0)
         }
     }
 }
@@ -259,26 +263,31 @@ pub fn scan(dir: &Path, mut each: impl FnMut(&[u8], Meta) -> bool) -> io::Result
     dents(fd.as_raw_fd(), |name, d_type| each(name.to_bytes(), entry_meta(fd.as_raw_fd(), name, d_type)))
 }
 
-pub fn tree_size(root: &Path, keep_going: &dyn Fn() -> bool) -> u64 {
-    let mut total = 0u64;
+pub fn tree_size(root: &Path, keep_going: &dyn Fn() -> bool) -> DirStats {
+    let mut s = DirStats::default();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         if !keep_going() {
             break;
         }
-        let _ = scan(&dir, |name, m| {
-            if m.attrs & attr::DIR != 0 && m.attrs & attr::LINK == 0 {
-                stack.push(dir.join(OsStr::from_bytes(name)));
-            } else if m.attrs & attr::DIR == 0 {
-                total += m.size;
+        let read = scan(&dir, |name, m| {
+            if m.attrs & attr::DIR != 0 {
+                s.folders += 1;
+                if m.attrs & attr::LINK == 0 {
+                    stack.push(dir.join(OsStr::from_bytes(name)));
+                }
+            } else {
+                s.size += m.size;
+                s.files += 1;
             }
             true
         });
+        s.partial |= read.is_err();
     }
-    total
+    s
 }
 
-pub fn dir_sizes(dir: &Path, items: &[(u32, PathBuf)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, u64) + Sync)) {
+pub fn dir_sizes(dir: &Path, items: &[(u32, PathBuf)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, DirStats) + Sync)) {
     let next = AtomicUsize::new(0);
     let workers = std::thread::available_parallelism().map_or(4, |n| n.get()).min(items.len()).max(1);
     std::thread::scope(|s| {
@@ -288,9 +297,9 @@ pub fn dir_sizes(dir: &Path, items: &[(u32, PathBuf)], keep_going: &(dyn Fn() ->
                     if !keep_going() {
                         return;
                     }
-                    let size = tree_size(&dir.join(name), keep_going);
+                    let stats = tree_size(&dir.join(name), keep_going);
                     if keep_going() {
-                        report(*idx, size);
+                        report(*idx, stats);
                     }
                 }
             });
@@ -304,8 +313,11 @@ impl Fs for LinuxFs {
     fn read_dir(&self, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
         let path = host(dir).ok_or(FsError { kind: FsErrorKind::Unavailable, code: 0 })?;
         let mut n = 0usize;
-        scan(path, |name, meta| {
-            out.push(name, meta);
+        let fd = open_dir(path).map_err(|e| fs_error(&e))?;
+        dents(fd.as_raw_fd(), |name, d_type| {
+            let (meta, accessed) = entry_meta_at(fd.as_raw_fd(), name, d_type);
+            out.push(name.to_bytes(), meta);
+            out.set_accessed(accessed);
             n += 1;
             !n.is_multiple_of(BATCH) || out.batch_done()
         })
@@ -318,10 +330,14 @@ impl Fs for LinuxFs {
         None
     }
 
-    fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, u64) + Sync)) {
+    fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, DirStats) + Sync)) {
         let Some(path) = host(dir) else { return };
         let items: Vec<(u32, PathBuf)> = items.iter().map(|(i, n)| (*i, PathBuf::from(OsStr::from_bytes(n)))).collect();
         dir_sizes(path, &items, keep_going, report);
+    }
+
+    fn volume_size(&self, path: &FsPath) -> u64 {
+        host(path).and_then(crate::mounts::space).map_or(0, |s| s.0)
     }
 
     fn file_system(&self, path: &FsPath) -> Option<String> {

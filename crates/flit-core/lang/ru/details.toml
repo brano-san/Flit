@@ -7,6 +7,13 @@ size = "Размер"
 origin = "Исходное расположение"
 deleted = "Дата удаления"
 tag = "Теги"
+items = "Всего элементов"
+accessed = "Дата доступа"
+volume = "Доля диска"
+folder_usage = "Доля папки"
+free = "Свободно"
+file_system = "Файловая система"
+percent = "Заполнено"
 
 [type]
 drive = "Диск"
@@ -15,23 +22,36 @@ file = "Файл"
 ext_file = "Файл «{ext}»"
 
 [group]
-unknown_date = "Дата неизвестна"
 unknown_location = "Неизвестное расположение"
 no_tags = "Без тегов"
+unspecified = "Не указано"
+name_ah = "A - H"
+name_ip = "I - P"
+name_qz = "Q - Z"
+other = "Другие"
+today = "Сегодня"
+yesterday = "Вчера"
+last_week = "На прошлой неделе"
+last_month = "В прошлом месяце"
+last_year = "В прошлом году"
+long_ago = "Давно"
+thousands = "Тысячи (1000+)"
+hundreds = "Сотни (100 - 999)"
+dozens = "Десятки (10 - 99)"
+few = "Несколько (1 - 9)"
+no_items = "Нет (0)"
 
 [size_group]
-folders = "Папки"
-empty = "Пустые"
-tiny = "Крошечные (до 16 КБ)"
-small = "Маленькие (16 КБ – 1 МБ)"
-medium = "Средние (1–128 МБ)"
-large = "Большие (128 МБ – 1 ГБ)"
-huge = "Огромные (1–4 ГБ)"
-gigantic = "Гигантские (более 4 ГБ)"
+empty = "Пустые (0 B)"
+tiny = "Крошечные (1 B - 16 KB)"
+small = "Маленькие (16 KB - 1 MB)"
+medium = "Средние (1 - 128 MB)"
+large = "Большие (128 MB - 1 GB)"
+huge = "Огромные (1 - 4 GB)"
+gigantic = "Гигантские (4+ GB)"
 
 [count]
 items = ["{n} элемент", "{n} элемента", "{n} элементов"]
-filtered = ["{shown} из {n} элемента", "{shown} из {n} элементов", "{shown} из {n} элементов"]
 folders = ["{n} папка", "{n} папки", "{n} папок"]
 files = ["{n} файл", "{n} файла", "{n} файлов"]
 

@@ -1,1 +1,4 @@
-placeholder = "Filtrer par nom"
+files = "Filtrer {n} fichiers..."
+seconds = "{n} s"
+toggle_all = "Tout cocher"
+untoggle_all = "Tout décocher"

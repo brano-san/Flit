@@ -1,7 +1,9 @@
 use crate::filter::NameFilter;
-use crate::hash::{self, FxHashMap};
-use crate::listing::{attr, ChangeKind, DirChange, DirSnapshot, Listing, Meta};
+use crate::hash::{self, FxHashMap, FxHashSet, FxHasher};
+use crate::listing::{attr, ChangeKind, DirChange, DirSnapshot, DirStats, Listing};
+use crate::path::PathKind;
 use crate::sort::{self, GroupField, ViewSpec};
+use std::hash::Hasher;
 use smallvec::SmallVec;
 use std::borrow::Borrow;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -51,6 +53,36 @@ pub enum Line {
     Row(usize),
 }
 
+pub const FOLDER_TYPE: &[u8] = b"/";
+
+pub fn type_key(l: &Listing, i: u32) -> u64 {
+    let mut h = FxHasher::default();
+    match l.entries[i as usize].is_dir() {
+        true => FOLDER_TYPE.iter().for_each(|&b| h.write_u8(b)),
+        false => l.ext(i).iter().for_each(|b| h.write_u8(b.to_ascii_lowercase())),
+    }
+    h.finish()
+}
+
+pub fn separator(kind: PathKind) -> u8 {
+    if kind == PathKind::Unix { b'/' } else { b'\\' }
+}
+
+pub fn rel_path(l: &Listing, i: u32, sep: u8, out: &mut Vec<u8>) {
+    out.clear();
+    out.extend_from_slice(l.folder(i));
+    if !out.is_empty() {
+        out.push(sep);
+    }
+    out.extend_from_slice(l.name(i));
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Counts {
+    pub dirs: usize,
+    pub files: usize,
+}
+
 pub struct DirView {
     snap: Arc<DirSnapshot>,
     sel: Vec<u64>,
@@ -62,16 +94,147 @@ pub struct DirView {
     groups: Vec<Group>,
     collapsed: Vec<u64>,
     shown: Option<Vec<u32>>,
+    tree: Option<FxHashSet<Vec<u8>>>,
+    hidden_types: FxHashSet<u64>,
+    shaped: Option<Vec<u32>>,
+    roots: Vec<u32>,
+    pos: Vec<u32>,
     dirs: Memo,
     selected_size: Memo,
     live_size: Memo,
+    shown_dirs: Memo,
+    all: Memo,
 }
 
 impl DirView {
     pub fn new(snap: Arc<DirSnapshot>) -> Self {
-        let mut v = Self { snap, sel: Vec::new(), sel_count: 0, focus: None, anchor: None, names: None, filter: None, groups: Vec::new(), collapsed: Vec::new(), shown: None, dirs: Memo::default(), selected_size: Memo::default(), live_size: Memo::default() };
+        let mut v = Self {
+            snap,
+            sel: Vec::new(),
+            sel_count: 0,
+            focus: None,
+            anchor: None,
+            names: None,
+            filter: None,
+            groups: Vec::new(),
+            collapsed: Vec::new(),
+            shown: None,
+            tree: None,
+            hidden_types: FxHashSet::default(),
+            shaped: None,
+            roots: Vec::new(),
+            pos: Vec::new(),
+            dirs: Memo::default(),
+            selected_size: Memo::default(),
+            live_size: Memo::default(),
+            shown_dirs: Memo::default(),
+            all: Memo::default(),
+        };
         v.regroup();
         v
+    }
+
+    pub fn set_shape(&mut self, tree: Option<FxHashSet<Vec<u8>>>, hidden_types: FxHashSet<u64>) {
+        if self.tree == tree && self.hidden_types == hidden_types {
+            return;
+        }
+        self.tree = tree;
+        self.hidden_types = hidden_types;
+        self.regroup();
+        self.prune();
+    }
+
+    pub fn tree_open(&self) -> Option<&FxHashSet<Vec<u8>>> {
+        self.tree.as_ref()
+    }
+
+    pub fn type_hidden(&self, key: u64) -> bool {
+        self.hidden_types.contains(&key)
+    }
+
+    pub fn separator(&self) -> u8 {
+        separator(self.snap.path.kind())
+    }
+
+    pub fn depth(&self, i: u32) -> usize {
+        let f = self.snap.listing.folder(i);
+        if f.is_empty() { 0 } else { 1 + f.iter().filter(|&&b| b == self.separator()).count() }
+    }
+
+    pub fn shaped_rows(&self) -> &[u32] {
+        self.shaped.as_deref().unwrap_or(self.base_rows())
+    }
+
+    pub fn shown_counts(&self) -> Counts {
+        let rows = self.rows();
+        let l = self.listing();
+        let dirs = self.shown_dirs.get(|| rows.iter().filter(|&&i| l.entries[i as usize].is_dir()).count() as u64) as usize;
+        Counts { dirs, files: rows.len() - dirs }
+    }
+
+    pub fn all_counts(&self) -> Counts {
+        let packed = self.all.get(|| {
+            let (l, v) = (self.listing(), ViewSpec { deep: true, hide_dirs: false, hide_files: false, ..self.snap.view });
+            let (mut d, mut f) = (0u64, 0u64);
+            for i in 0..l.len() as u32 {
+                if sort::visible(l, i, &v) {
+                    if l.entries[i as usize].is_dir() { d += 1 } else { f += 1 }
+                }
+            }
+            d << 32 | f
+        });
+        Counts { dirs: (packed >> 32) as usize, files: (packed & 0xFFFF_FFFF) as usize }
+    }
+
+    fn reshape(&mut self) {
+        self.shaped = None;
+        self.roots.clear();
+        self.pos.clear();
+        let l = &self.snap.listing;
+        let tree = self.tree.as_ref().filter(|_| l.nested > 0 && self.snap.view.tree);
+        if tree.is_none() && self.hidden_types.is_empty() {
+            return;
+        }
+        let keep = |i: u32| self.filter.as_ref().is_none_or(|f| f.matched(i)) && (self.hidden_types.is_empty() || !self.hidden_types.contains(&type_key(l, i)));
+        let mut rows = Vec::new();
+        match tree {
+            Some(open) => {
+                let sep = self.separator();
+                let mut kids: FxHashMap<&[u8], Vec<u32>> = FxHashMap::default();
+                for &i in &self.snap.order {
+                    kids.entry(l.folder(i)).or_default().push(i);
+                }
+                let mut path = Vec::new();
+                let mut stack: Vec<(&[u32], usize, u32)> = vec![(kids.get(&b""[..]).map_or(&[][..], |v| v.as_slice()), 0, u32::MAX)];
+                while let Some(top) = stack.last_mut() {
+                    let (list, at, root) = *top;
+                    let Some(&i) = list.get(at) else {
+                        stack.pop();
+                        continue;
+                    };
+                    top.1 += 1;
+                    let root = if root == u32::MAX { i } else { root };
+                    if keep(i) {
+                        rows.push(i);
+                        self.roots.push(root);
+                    }
+                    if l.entries[i as usize].is_dir() {
+                        rel_path(l, i, sep, &mut path);
+                        if open.contains(&path) {
+                            if let Some(children) = kids.get(path.as_slice()) {
+                                stack.push((children.as_slice(), 0, root));
+                            }
+                        }
+                    }
+                }
+            }
+            None => rows.extend(self.base_rows().iter().copied().filter(|&i| keep(i))),
+        }
+        self.pos = vec![u32::MAX; l.len()];
+        for (r, &i) in rows.iter().enumerate() {
+            self.pos[i as usize] = r as u32;
+        }
+        self.shaped = Some(rows);
     }
 
     pub fn snap(&self) -> &Arc<DirSnapshot> {
@@ -89,7 +252,7 @@ impl DirView {
     pub fn rows(&self) -> &[u32] {
         match &self.shown {
             Some(s) => s,
-            None => self.base_rows(),
+            None => self.shaped_rows(),
         }
     }
 
@@ -158,26 +321,31 @@ impl DirView {
         self.dirs.clear();
         self.selected_size.clear();
         self.live_size.clear();
+        self.shown_dirs.clear();
+        self.all.clear();
         self.groups.clear();
         self.shown = None;
+        self.reshape();
         let view = self.snap.view;
         let field = view.group.field;
         if field == GroupField::None {
             return;
         }
         let l = &self.snap.listing;
-        let base = match &self.filter {
-            Some(f) => f.rows(),
-            None => &self.snap.order,
+        let base = match (&self.shaped, &self.filter) {
+            (Some(s), _) => s.as_slice(),
+            (None, Some(f)) => f.rows(),
+            (None, None) => &self.snap.order,
         };
+        let keys = if self.roots.len() == base.len() { self.roots.as_slice() } else { base };
         let fold = !self.collapsed.is_empty();
         let mut shown = Vec::new();
         let mut r = 0;
         while r < base.len() {
-            let first = base[r];
+            let first = keys[r];
             let (key, bytes) = (sort::group_key(l, first, &view).0, sort::group_bytes(l, first, field));
             let same = |&i: &u32| sort::group_key(l, i, &view).0 == key && sort::group_bytes(l, i, field).eq_ignore_ascii_case(bytes);
-            let end = r + 1 + base[r + 1..].partition_point(same);
+            let end = r + 1 + keys[r + 1..].partition_point(same);
             let id = sort::group_id(l, first, &view);
             let collapsed = fold && self.collapsed.contains(&id);
             let start = if fold { shown.len() } else { r };
@@ -185,7 +353,7 @@ impl DirView {
                 shown.extend_from_slice(&base[r..end]);
             }
             let line = (start + self.groups.len()) as u32;
-            self.groups.push(Group { first, start: start as u32, line, count: (end - r) as u32, collapsed, id });
+            self.groups.push(Group { first: base[r], start: start as u32, line, count: (end - r) as u32, collapsed, id });
             r = end;
         }
         if fold {
@@ -204,6 +372,9 @@ impl DirView {
     }
 
     pub fn row_of(&self, i: u32) -> Option<usize> {
+        if self.shaped.is_some() && self.shown.is_none() {
+            return self.pos.get(i as usize).filter(|&&r| r != u32::MAX).map(|&r| r as usize);
+        }
         let s = &self.snap;
         match sort::find_row(&s.listing, &s.keys, &s.view, self.rows(), i) {
             Some(r) => Some(r),
@@ -217,7 +388,7 @@ impl DirView {
             let mut m = FxHashMap::default();
             m.reserve(l.len());
             for i in 0..l.len() as u32 {
-                if l.entries[i as usize].attrs & attr::DELETED == 0 {
+                if l.entries[i as usize].attrs & (attr::DELETED | attr::NESTED) == 0 {
                     m.entry(hash::hash(l.name(i))).or_insert_with(SmallVec::new).push(i);
                 }
             }
@@ -231,6 +402,7 @@ impl DirView {
         (i as usize) < l.len()
             && sort::visible(l, i, v)
             && self.filter.as_ref().is_none_or(|f| f.matched(i))
+            && (self.shaped.is_none() || self.pos.get(i as usize).is_some_and(|&r| r != u32::MAX))
             && (self.groups.is_empty() || self.collapsed.is_empty() || !self.collapsed.contains(&sort::group_id(l, i, v)))
     }
 
@@ -328,19 +500,6 @@ impl DirView {
         }
     }
 
-    fn update(&mut self, i: u32, meta: Meta) {
-        let snap = Arc::make_mut(&mut self.snap);
-        let row = sort::find_row(&snap.listing, &snap.keys, &snap.view, &snap.order, i).or_else(|| snap.order.iter().position(|&p| p == i));
-        if let Some(r) = row {
-            snap.order.remove(r);
-        }
-        snap.listing.set_meta(i, meta);
-        if sort::visible(&snap.listing, i, &snap.view) {
-            let p = sort::insert_pos(&snap.listing, &snap.keys, &snap.view, &snap.order, i);
-            snap.order.insert(p, i);
-        }
-    }
-
     pub fn apply(&mut self, c: &DirChange) {
         self.apply_all([c]);
     }
@@ -356,7 +515,7 @@ impl DirView {
             let snap = Arc::make_mut(&mut self.snap);
             let i = match existing {
                 Some(i) if c.kind == ChangeKind::Removed => {
-                    snap.listing.entries[i as usize].attrs |= attr::DELETED;
+                    snap.listing.mark_deleted(i);
                     if let Some(v) = self.names.as_mut().and_then(|m| m.get_mut(&hash::hash(c.name.as_slice()))) {
                         v.retain(|&mut x| x != i);
                     }
@@ -384,7 +543,17 @@ impl DirView {
         }
     }
 
+    fn full_sort(&mut self) {
+        let snap = Arc::make_mut(&mut self.snap);
+        let mut o = std::mem::take(&mut snap.order);
+        sort::sort(&snap.listing, &snap.keys, snap.view, &mut o);
+        snap.order = o;
+    }
+
     fn reorder(&mut self, mut touched: Vec<u32>) {
+        if !sort::incremental(&self.snap.view) {
+            return self.full_sort();
+        }
         let snap = Arc::make_mut(&mut self.snap);
         let (l, k, view) = (&snap.listing, &snap.keys, snap.view);
         let mut moved = vec![false; l.len()];
@@ -407,17 +576,52 @@ impl DirView {
         snap.order = order;
     }
 
-    pub fn set_dir_size(&mut self, i: u32, size: u64) {
+    pub fn set_dir_stats(&mut self, i: u32, stats: DirStats) {
         let Some(e) = self.listing().entries.get(i as usize) else { return };
         let mut m = e.meta();
         if m.attrs & attr::DELETED != 0 {
             return;
         }
-        m.size = size;
+        m.size = stats.size;
         m.attrs |= attr::SIZE_KNOWN;
-        self.update(i, m);
+        let snap = Arc::make_mut(&mut self.snap);
+        let row = sort::find_row(&snap.listing, &snap.keys, &snap.view, &snap.order, i).or_else(|| snap.order.iter().position(|&p| p == i));
+        if let Some(r) = row {
+            snap.order.remove(r);
+        }
+        snap.listing.set_stats(i, stats);
+        snap.listing.set_meta(i, m);
+        if !sort::incremental(&snap.view) {
+            self.full_sort();
+        } else if sort::visible(&snap.listing, i, &snap.view) {
+            let p = sort::insert_pos(&snap.listing, &snap.keys, &snap.view, &snap.order, i);
+            snap.order.insert(p, i);
+        }
         self.rows_changed();
         self.prune();
+    }
+
+    pub fn graft(&mut self, folder: &[u8], child: &Listing) -> usize {
+        let snap = Arc::make_mut(&mut self.snap);
+        let start = snap.listing.len() as u32;
+        for k in 0..child.len() as u32 {
+            let e = child.entries[k as usize];
+            if e.attrs & (attr::DELETED | attr::NESTED) != 0 {
+                continue;
+            }
+            let i = snap.listing.push_nested(child.name(k), e.meta(), e.accessed, folder);
+            snap.keys.push(snap.listing.name(i));
+            if let Some(s) = child.stats(k) {
+                snap.listing.set_stats(i, s);
+            }
+        }
+        let added = snap.listing.len() as u32 - start;
+        if added > 0 {
+            self.reorder((start..start + added).collect());
+            self.rows_changed();
+            self.prune();
+        }
+        added as usize
     }
 
     pub fn set_tags(&mut self, changes: &[(u32, u32)]) {

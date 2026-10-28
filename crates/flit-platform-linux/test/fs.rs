@@ -103,15 +103,16 @@ fn folder_sizes_skip_links_and_honour_cancellation() {
     symlink(outside.path(), t.path().join("a/link")).unwrap();
     std::fs::create_dir(t.path().join("b")).unwrap();
     t.file("b/three", 300);
-    assert_eq!(tree_size(&t.path().join("a"), &|| true), 300);
+    let st = tree_size(&t.path().join("a"), &|| true);
+    assert_eq!((st.size, st.folders, st.partial), (300, 3, false), "a link to a folder counts but is not followed");
     let got = std::sync::Mutex::new(Vec::new());
     let items = vec![(4, PathBuf::from("a")), (9, PathBuf::from("b"))];
-    dir_sizes(t.path(), &items, &|| true, &|i, s| got.lock().unwrap().push((i, s)));
+    dir_sizes(t.path(), &items, &|| true, &|i, s| got.lock().unwrap().push((i, s.size)));
     let mut got = got.into_inner().unwrap();
     got.sort();
     assert_eq!(got, [(4, 300), (9, 300)]);
     let none = std::sync::Mutex::new(Vec::new());
-    dir_sizes(t.path(), &items, &|| false, &|i, s| none.lock().unwrap().push((i, s)));
+    dir_sizes(t.path(), &items, &|| false, &|i, s| none.lock().unwrap().push((i, s.size)));
     assert!(none.into_inner().unwrap().is_empty());
 }
 

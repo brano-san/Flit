@@ -180,13 +180,12 @@ fn layout_flyout_switches_views_resizes_items_and_toggles_options() {
     };
     click_at(&mut app, row.x + 20.0, row.y + row.h / 2.0, MouseButton::Left);
     assert_eq!(app.tab().mode, LayoutMode::List);
-    let before = app.tab().sizes.level(app.tab().look);
+    assert_eq!(app.tab().zoom, 20);
     let y = slider.y + slider.h / 2.0;
     app.on_event(&Event::MouseDown { x: slider.x, y, button: MouseButton::Left, clicks: 1 }, Instant::now());
     app.on_event(&Event::MouseMove { x: slider.right(), y }, Instant::now());
     app.on_event(&Event::MouseUp { x: slider.right(), y, button: MouseButton::Left }, Instant::now());
-    let after = app.tab().sizes.level(app.tab().look);
-    assert!(after > before && after + 1 == app.tab().look.levels() as usize, "{before} -> {after}");
+    assert_eq!((app.tab().mode, app.tab().zoom), (LayoutMode::Grid, 100), "the size slider is the zoom percent");
     let shown = app.tab().view_spec.show_hidden;
     click_at(&mut app, hidden.x + 20.0, hidden.y + hidden.h / 2.0, MouseButton::Left);
     assert_eq!(app.tab().view_spec.show_hidden, !shown);

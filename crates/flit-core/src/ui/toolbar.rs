@@ -544,6 +544,11 @@ impl App {
         let look = self.tab().look;
         let n = look.levels() as f32;
         let frac = ((x - track.x) / track.w.max(1.0)).clamp(0.0, 1.0);
+        if self.tab().mode.zoomed() {
+            self.set_zoom((frac * super::layouts::ZOOM_XL as f32).round() as u8);
+            self.dirty = true;
+            return;
+        }
         let level = (frac * (n - 1.0)).round() as i32;
         let current = self.tab().sizes.level(look) as i32;
         if level != current {
@@ -750,7 +755,11 @@ impl App {
         g.text(size_row.x + self.s(10.0), baseline(size_row), S::ToolbarFlyoutSize.t(), font, t.text, label_w);
         let tr = f.slider;
         let n = look.levels() as usize;
-        let frac = if n > 1 { level as f32 / (n - 1) as f32 } else { 0.0 };
+        let frac = match mode.zoomed() {
+            true => tab.zoom as f32 / super::layouts::ZOOM_XL as f32,
+            false if n > 1 => level as f32 / (n - 1) as f32,
+            false => 0.0,
+        };
         let hot = self.toolbar.sliding || self.hover == Hit::Tool(ToolHit::Fly(FlyHit::Slider));
         Paint::new(g, t, self.scale).slider(tr, frac, hot);
         g.dl.rect(Rect::new(r.x + s6, sep_y, r.w - 2.0 * s6, 1.0), t.separator);

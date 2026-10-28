@@ -1,5 +1,6 @@
 use super::*;
 use crate::path::FsPath;
+use crate::listing::Meta;
 use crate::sort::{CaseMode, SortField, SortKeys, SortSpec};
 use std::time::Duration;
 

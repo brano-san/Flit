@@ -17,7 +17,6 @@ folder = "Ce dossier est vide."
 selected = ["{n} sélectionné", "{n} de sélectionnés", "{n} sélectionnés"]
 unpacked = "{size} décompressé"
 loading = "Chargement…"
-timing = "{first} ms premier · {all} ms tout"
 
 [button]
 replace = "Remplacer"

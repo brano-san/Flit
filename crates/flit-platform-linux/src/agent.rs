@@ -3,6 +3,7 @@ use crate::inotify::{Notice, Notify};
 use crate::ops;
 use crate::trash::Trash;
 use crossbeam_channel::{unbounded, Sender};
+use flit_core::listing::DirStats;
 use flit_core::provider::{FileOp, OpCtl};
 use flit_core::{FsError, FsErrorKind, FsPath};
 use flit_platform::Job;
@@ -101,15 +102,15 @@ fn list(ctx: &Ctx, id: ReqId, path: &FsPath) {
 }
 
 fn sizes(ctx: &Ctx, id: ReqId, dir: &FsPath, items: Vec<(u32, Vec<u8>)>) {
-    let Some(root) = host(dir) else { return items.iter().for_each(|(idx, _)| ctx.send(Event::DirSize { id, idx: *idx, size: 0 })) };
+    let Some(root) = host(dir) else { return items.iter().for_each(|(idx, _)| ctx.send(Event::DirSize { id, idx: *idx, stats: DirStats::default() })) };
     let (valid, invalid): (Vec<_>, Vec<_>) = items.into_iter().partition(|(_, name)| check_name(name, false).is_ok());
     for (idx, name) in invalid {
         eprintln!("flit-wsl-agent: refused folder size of {:?}", String::from_utf8_lossy(&name));
-        ctx.send(Event::DirSize { id, idx, size: 0 });
+        ctx.send(Event::DirSize { id, idx, stats: DirStats::default() });
     }
     let valid: Vec<(u32, PathBuf)> = valid.into_iter().map(|(i, n)| (i, PathBuf::from(OsStr::from_bytes(&n)))).collect();
     let keep_going = || !ctx.is_cancelled(id);
-    dir_sizes(root, &valid, &keep_going, &|idx, size| ctx.send(Event::DirSize { id, idx, size }));
+    dir_sizes(root, &valid, &keep_going, &|idx, stats| ctx.send(Event::DirSize { id, idx, stats }));
     ctx.finish(id);
 }
 

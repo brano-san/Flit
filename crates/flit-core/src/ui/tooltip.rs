@@ -2,7 +2,7 @@ use super::actions::{index, ACTIONS};
 use super::ops::TIMER_SLACK;
 use super::toolbar::ToolHit;
 use super::widgets::{Paint, RADIUS};
-use super::{App, Drag, Hit, ViewMode};
+use super::{App, Column, Drag, Hit, ViewMode};
 use crate::i18n::S;
 use crate::render::Rect;
 use crate::text::{Gfx, TextBackend};
@@ -161,7 +161,15 @@ impl App {
             Hit::SidePin(_) => text(S::TooltipRemoveBookmark, ""),
             Hit::SideSettings => text(S::TooltipSettings, "options.open"),
             Hit::Eject => text(S::TooltipEject, ""),
-            Hit::FilterClose => text(S::TooltipFilterClose, "view.filter"),
+            Hit::FilterClose => text(S::TooltipRevertFilter, ""),
+            Hit::FilterField => text(S::TooltipFilterBox, "view.filter"),
+            Hit::Bottom(b) => text(self.bottom_tip(b), b.command()),
+            Hit::Header(c) => match self.layout.columns.get(c)? {
+                Column::Type if self.tab().hidden_types.is_empty() => text(S::TooltipTypes, "folder.types"),
+                Column::Type => text(S::TooltipTypesActive, "folder.types"),
+                Column::Name if self.prefs.checkboxes => text(S::TooltipSelectAll, "select.all"),
+                _ => return None,
+            },
             Hit::PaletteClose => text(S::TooltipClosePalette, ""),
             Hit::PaletteDescribe => text(if self.prefs.command_descriptions { S::TooltipPaletteDescriptionsOn } else { S::TooltipPaletteDescriptionsOff }, ""),
             Hit::PaletteScroll(down) => text(if down { S::TooltipScrollDown } else { S::TooltipScrollUp }, ""),

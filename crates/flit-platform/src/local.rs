@@ -3,7 +3,8 @@ use crossbeam_channel::{bounded, unbounded, Sender};
 use flit_core::archive::ArchiveOp;
 use flit_core::digest::HashKind;
 use flit_core::desktop_ini::FolderKind;
-use flit_core::listing::{attr, DirSnapshot, Listing, ListingBuilder};
+use flit_core::listing::{attr, DirSnapshot, DirStats, Listing, ListingBuilder};
+use flit_core::path::PathKind;
 use flit_core::provider::{FileOp, GenToken, Launch, OpCtl, OpId, OpReport, SnapshotSlot, Stage, Totals};
 use flit_core::sort::{self, CaseMode, SortKeys, ViewSpec};
 use flit_core::tags::{TagCell, Tags};
@@ -425,18 +426,18 @@ fn run_list<F: Fs + ?Sized>(fs: &F, job: ListJob, watch: &Sender<WatchCmd>, wake
 fn run_sizes<F: Fs>(fs: &F, job: SizesJob, events: &Sender<ProviderEvent>, wake: &Wake) {
     let SizesJob { tab, gen, dir, items, cancel } = job;
     let keep_going = || cancel.is_current(gen);
-    fs.dir_sizes(&dir, &items, &keep_going, &|idx, size| {
+    fs.dir_sizes(&dir, &items, &keep_going, &|idx, stats| {
         if keep_going() {
-            let _ = events.send(ProviderEvent::DirSize { tab, gen, idx, size });
+            let _ = events.send(ProviderEvent::DirSize { tab, gen, idx, stats });
             wake();
         }
     });
 }
 
-pub(crate) fn dir_sizes<F: Fs + ?Sized>(fs: &F, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, u64) + Sync)) {
+pub(crate) fn dir_sizes<F: Fs + ?Sized>(fs: &F, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, DirStats) + Sync)) {
     let one = |(idx, name): &(u32, Vec<u8>)| {
         if keep_going() {
-            report(*idx, tree_size(fs, &dir.join(name), keep_going));
+            report(*idx, tree_stats(fs, &dir.join(name), keep_going));
         }
     };
     if fs.seek_penalty(dir) == Some(true) {
@@ -480,9 +481,13 @@ fn list<F: Fs + ?Sized>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: C
         true
     };
     let mut b = ListingBuilder::new(case, &mut on_batch).with_tags(tags).with_streams(view.show_streams);
+    b.listing.volume = fs.volume_size(path);
     let result = fs.read_dir(path, &mut b);
     if let Err(e) = &result {
         tracing::warn!("cannot list {}: {e}", path.display());
+    }
+    if view.deep && result.is_ok() && matches!(path.kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim | PathKind::Unix) {
+        read_deep(fs, path, &mut b, &|| cancel.is_current(gen));
     }
     let mut listing = std::mem::take(&mut b.listing);
     let mut keys = std::mem::replace(&mut b.keys, SortKeys::new(case));
@@ -561,28 +566,68 @@ pub(crate) fn measure<F: Fs + ?Sized>(fs: &F, items: &[(FsPath, Option<u64>)], k
     t
 }
 
-fn tree_size<F: Fs + ?Sized>(fs: &F, root: &FsPath, keep_going: &(dyn Fn() -> bool + Sync)) -> u64 {
-    let mut total = 0u64;
+pub(crate) fn read_deep<F: Fs + ?Sized>(fs: &F, root: &FsPath, b: &mut ListingBuilder<'_>, keep_going: &dyn Fn() -> bool) {
+    let sep = flit_core::view::separator(root.kind());
+    let case = b.keys.case();
+    let l = &b.listing;
+    let mut stack: Vec<Vec<u8>> = (0..l.len() as u32).filter(|&i| l.entries[i as usize].attrs & (attr::DIR | attr::LINK | attr::NESTED) == attr::DIR).map(|i| l.name(i).to_vec()).collect();
+    while let Some(rel) = stack.pop() {
+        if !keep_going() {
+            return;
+        }
+        let mut each_batch = |_: &ListingBuilder<'_>| keep_going();
+        let mut sub = ListingBuilder::new(case, &mut each_batch);
+        if fs.read_dir(&root.join(&rel), &mut sub).is_err() {
+            continue;
+        }
+        let l = &sub.listing;
+        for k in 0..l.len() as u32 {
+            let e = l.entries[k as usize];
+            if e.attrs & attr::STREAM != 0 {
+                continue;
+            }
+            b.push_nested(l.name(k), e.meta(), e.accessed, &rel);
+            if e.attrs & (attr::DIR | attr::LINK) == attr::DIR {
+                let mut child = rel.clone();
+                child.push(sep);
+                child.extend_from_slice(l.name(k));
+                stack.push(child);
+            }
+        }
+        if !b.batch_done() {
+            return;
+        }
+    }
+}
+
+fn tree_stats<F: Fs + ?Sized>(fs: &F, root: &FsPath, keep_going: &(dyn Fn() -> bool + Sync)) -> DirStats {
+    let mut s = DirStats::default();
     let mut stack = vec![root.clone()];
     while let Some(dir) = stack.pop() {
         let mut each_batch = |_: &ListingBuilder<'_>| keep_going();
         let mut b = ListingBuilder::new(CaseMode::Sensitive, &mut each_batch);
-        if fs.read_dir(&dir, &mut b).is_err() || !keep_going() {
+        if fs.read_dir(&dir, &mut b).is_err() {
+            s.partial |= keep_going();
+            continue;
+        }
+        if !keep_going() {
             continue;
         }
         let l = &b.listing;
         for i in 0..l.len() as u32 {
             let e = &l.entries[i as usize];
             if e.is_dir() {
+                s.folders += 1;
                 if e.attrs & attr::LINK == 0 {
                     stack.push(dir.join(l.name(i)));
                 }
-            } else {
-                total += e.size;
+            } else if e.attrs & attr::STREAM == 0 {
+                s.size += e.size;
+                s.files += 1;
             }
         }
     }
-    total
+    s
 }
 
 pub fn via_unc(distro: &str, req: ProviderRequest) -> Option<ProviderRequest> {

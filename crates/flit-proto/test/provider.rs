@@ -1,6 +1,6 @@
 use super::*;
 use crate::transport::{decode, encode};
-use flit_core::listing::ChangeKind;
+use flit_core::listing::{ChangeKind, DirStats};
 use flit_core::FsErrorKind;
 
 fn unix(p: &[u8]) -> FsPath {
@@ -36,7 +36,7 @@ fn roundtrip_every_message() {
         Event::Stat { id: 2, result: Err(err) },
         Event::Changes { id: 3, changes: vec![DirChange { kind: ChangeKind::Removed, name: b"x".to_vec(), meta: None }] },
         Event::Rescan { id: 3 },
-        Event::DirSize { id: 4, idx: 7, size: u64::MAX },
+        Event::DirSize { id: 4, idx: 7, stats: DirStats { size: u64::MAX, folders: 3, files: 9, partial: true } },
         Event::OpDone { id: 5, error: None, items: vec![(unix(b"/tmp/a"), unix(b"/home/u/.local/share/Trash/files/a"))] },
         Event::OpProgress { id: 6, progress: OpProgress { stage: flit_core::provider::Stage::Running, bytes: 1, total_bytes: 2, items: 3, total_items: 4 } },
         Event::OpConflict { id: 6, conflict: Conflict { source: unix(b"/tmp/\xFF"), target: unix(b"/home/\xFF"), from: Meta::default(), to: Meta { size: 5, ..Default::default() } } },

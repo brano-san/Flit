@@ -1,5 +1,5 @@
 use super::columns::{pane_depth, COLUMN_W};
-use super::details::{folder_key, CHECK, CHECK_GAP};
+use super::details::{folder_key, CHECK};
 use super::flow::{Flow, FlowParams};
 use super::{App, Effect, Hit, Tab, ROW_H, SCROLLBAR_W};
 use crate::desktop_ini::FolderKind;
@@ -14,10 +14,20 @@ use std::time::Instant;
 const LEVELS: [u8; 5] = [5, 5, 4, 5, 12];
 const ROWS: [f32; 5] = [20.0, 24.0, 28.0, 32.0, 40.0];
 const ROW_ICONS: [f32; 5] = [16.0, 16.0, 20.0, 24.0, 32.0];
-const LIST_W: [f32; 5] = [160.0, 200.0, 240.0, 280.0, 340.0];
+const LIST_W: f32 = 300.0;
+const TREE_INDENT: f32 = 16.0;
+pub const ZOOM_DETAILS: u8 = 0;
+pub const ZOOM_TREE: u8 = 10;
+pub const ZOOM_LIST: u8 = 20;
+pub const ZOOM_ICONS: u8 = 30;
+pub const ZOOM_LARGE: u8 = 60;
+pub const ZOOM_XL: u8 = 100;
+const TILE_MIN: f32 = 90.0;
+const TILE_PER_STEP: f32 = 3.0;
+const TILE_LINES: f32 = 52.0;
+const TILE_ICON: f32 = 0.6;
 const CARD_ICONS: [f32; 4] = [32.0, 48.0, 64.0, 96.0];
 const CARD_W: [f32; 4] = [240.0, 280.0, 320.0, 380.0];
-const GRID_ICONS: [f32; 12] = [32.0, 40.0, 48.0, 64.0, 80.0, 96.0, 128.0, 160.0, 192.0, 224.0, 256.0, 320.0];
 const GROUP_H: f32 = 32.0;
 const CARD_LINE: f32 = 18.0;
 const MEDIA_SHARE: (usize, usize) = (3, 5);
@@ -38,6 +48,7 @@ pub enum LayoutMode {
     Columns,
     Grid,
     Adaptive,
+    Tree,
 }
 
 pub const LAYOUTS: [LayoutMode; 6] = [LayoutMode::Details, LayoutMode::List, LayoutMode::Cards, LayoutMode::Columns, LayoutMode::Grid, LayoutMode::Adaptive];
@@ -51,12 +62,21 @@ impl LayoutMode {
             LayoutMode::Columns => S::LayoutsColumns.t(),
             LayoutMode::Grid => S::LayoutsGrid.t(),
             LayoutMode::Adaptive => S::LayoutsAdaptive.t(),
+            LayoutMode::Tree => S::LayoutsTree.t(),
         }
+    }
+
+    pub fn table(self) -> bool {
+        matches!(self, LayoutMode::Details | LayoutMode::Tree)
+    }
+
+    pub fn zoomed(self) -> bool {
+        matches!(self, LayoutMode::Details | LayoutMode::Tree | LayoutMode::List | LayoutMode::Grid)
     }
 
     pub(super) fn slot(self) -> usize {
         match self {
-            LayoutMode::Details | LayoutMode::Adaptive => 0,
+            LayoutMode::Details | LayoutMode::Adaptive | LayoutMode::Tree => 0,
             LayoutMode::List => 1,
             LayoutMode::Cards => 2,
             LayoutMode::Columns => 3,
@@ -66,7 +86,7 @@ impl LayoutMode {
 
     pub fn icon(self) -> &'static str {
         match self {
-            LayoutMode::Details | LayoutMode::List => "\u{E8FD}",
+            LayoutMode::Details | LayoutMode::List | LayoutMode::Tree => "\u{E8FD}",
             LayoutMode::Cards | LayoutMode::Adaptive => "\u{E8A9}",
             LayoutMode::Columns => "\u{E8A0}",
             LayoutMode::Grid => "\u{E8B9}",
@@ -78,8 +98,55 @@ impl LayoutMode {
     }
 
     fn rows(self) -> bool {
-        matches!(self, LayoutMode::Details | LayoutMode::List | LayoutMode::Columns | LayoutMode::Adaptive)
+        matches!(self, LayoutMode::Details | LayoutMode::List | LayoutMode::Columns | LayoutMode::Adaptive | LayoutMode::Tree)
     }
+}
+
+pub fn layout_of_zoom(z: u8) -> LayoutMode {
+    match z {
+        0..=9 => LayoutMode::Details,
+        10..=19 => LayoutMode::Tree,
+        20..=29 => LayoutMode::List,
+        _ => LayoutMode::Grid,
+    }
+}
+
+pub fn zoom_of(mode: LayoutMode, current: u8) -> u8 {
+    match mode {
+        LayoutMode::Details => ZOOM_DETAILS,
+        LayoutMode::Tree => ZOOM_TREE,
+        LayoutMode::List => ZOOM_LIST,
+        LayoutMode::Grid if current >= ZOOM_ICONS => current.min(ZOOM_XL),
+        LayoutMode::Grid => ZOOM_ICONS,
+        _ => current,
+    }
+}
+
+pub fn step_zoom(z: u8, up: bool) -> u8 {
+    let z = z.min(ZOOM_XL);
+    let next = match (up, z) {
+        (true, ..ZOOM_ICONS) => z / 10 * 10 + 10,
+        (true, _) => z + 5,
+        (false, 0) => 0,
+        (false, ..=ZOOM_ICONS) => (z - 1) / 10 * 10,
+        (false, _) => (z - 5).max(ZOOM_ICONS),
+    };
+    next.min(ZOOM_XL)
+}
+
+pub fn zoom_title(z: u8) -> &'static str {
+    match z {
+        0..=9 => S::LayoutsDetails.t(),
+        10..=19 => S::LayoutsTree.t(),
+        20..=29 => S::LayoutsList.t(),
+        30..=59 => S::LayoutsIconsM.t(),
+        60..=99 => S::LayoutsIconsL.t(),
+        _ => S::LayoutsIconsXl.t(),
+    }
+}
+
+pub fn tile_width(z: u8) -> f32 {
+    TILE_MIN + (z.clamp(ZOOM_ICONS, ZOOM_XL) - ZOOM_ICONS) as f32 * TILE_PER_STEP
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,6 +207,10 @@ enum Step {
 }
 
 impl App {
+    pub(super) fn tree_indent(&self) -> f32 {
+        self.s(TREE_INDENT)
+    }
+
     fn shown_look(&self) -> (LayoutMode, usize) {
         let t = self.tab();
         if self.search.active {
@@ -157,12 +228,14 @@ impl App {
         l.mode = mode;
         let row = mode.rows();
         l.row_h = if row { s(ROWS[level]) } else { s(ROW_H) };
-        l.icon = s(match mode {
-            LayoutMode::Cards => CARD_ICONS[level],
-            LayoutMode::Grid => GRID_ICONS[level],
-            _ => ROW_ICONS[level],
-        });
-        if mode != LayoutMode::Details {
+        let tile = s(tile_width(self.tab().zoom));
+        let l = &mut self.layout;
+        l.icon = match mode {
+            LayoutMode::Cards => s(CARD_ICONS[level]),
+            LayoutMode::Grid => (tile * TILE_ICON).round().max(s(16.0)),
+            _ => s(ROW_ICONS[level]),
+        };
+        if !mode.table() {
             l.header.h = 0.0;
         }
         let (top, bottom) = (l.header.bottom(), l.bottom);
@@ -187,17 +260,14 @@ impl App {
         l.flow = match mode {
             LayoutMode::List => {
                 let rh = l.row_h;
-                FlowParams { across: true, per: per(rh, list.h), cell: (s(LIST_W[level]), rh), head: rh }
+                FlowParams { across: true, per: per(rh, list.h), cell: (s(LIST_W), rh), head: rh }
             }
             LayoutMode::Cards => {
                 let cw = s(CARD_W[level]);
                 let ch = (l.icon + s(16.0)).max(s(3.0 * CARD_LINE + 16.0));
                 FlowParams { across: false, per: per(cw, list.w), cell: (cw, ch), head: s(GROUP_H) }
             }
-            LayoutMode::Grid => {
-                let tw = (l.icon + s(32.0)).max(s(88.0));
-                FlowParams { across: false, per: per(tw, list.w), cell: (tw, l.icon + s(44.0)), head: s(GROUP_H) }
-            }
+            LayoutMode::Grid => FlowParams { across: false, per: per(tile, list.w), cell: (tile, l.icon + s(TILE_LINES)), head: s(GROUP_H) },
             _ => FlowParams { across: false, per: 1, cell: (list.w, l.row_h), head: l.row_h },
         };
     }
@@ -270,31 +340,35 @@ impl App {
         let (s4, s8, s10) = (self.s(4.0), self.s(8.0), self.s(10.0));
         let icon = self.layout.icon;
         let box_px = self.s(CHECK);
-        let check = if self.prefs.checkboxes { self.s(CHECK + CHECK_GAP) } else { 0.0 };
         let mid = |r: Rect, h: f32| r.y + ((r.h - h) / 2.0).round();
+        let boxed = |ir: Rect| Rect::new(ir.x + ((ir.w - box_px) / 2.0).round(), ir.y + ((ir.h - box_px) / 2.0).round(), box_px, box_px);
         match self.layout.mode {
             LayoutMode::Cards => {
                 let b = c.inset(s4, s4);
-                let ir = Rect::new(b.x + s8 + check, mid(b, icon), icon, icon);
+                let ir = Rect::new(b.x + s8, mid(b, icon), icon, icon);
                 let nx = ir.right() + s10;
                 let line = self.s(CARD_LINE);
                 let name = Rect::new(nx, mid(b, 3.0 * line), (b.right() - s8 - nx).max(0.0), line);
-                Parts { body: b, icon: ir, check: Rect::new(b.x + s8, mid(b, box_px), box_px, box_px), name, center: false }
+                Parts { body: b, icon: ir, check: boxed(ir), name, center: false }
             }
             LayoutMode::Grid => {
                 let b = c.inset(s4, s4);
                 let ir = Rect::new(b.x + ((b.w - icon) / 2.0).round(), b.y + s8, icon, icon);
                 let name = Rect::new(b.x + s4, ir.bottom() + s4, (b.w - s8).max(0.0), self.s(20.0));
-                Parts { body: b, icon: ir, check: Rect::new(b.x + s4, b.y + s4, box_px, box_px), name, center: true }
+                Parts { body: b, icon: ir, check: boxed(ir), name, center: true }
             }
             mode => {
-                let ir = Rect::new(c.x + s10 + check, mid(c, icon), icon, icon);
+                let shift = match self.tree_slot(c) {
+                    Some((depth, dir)) => self.tree_indent() * (depth + usize::from(dir)) as f32,
+                    None => 0.0,
+                };
+                let ir = Rect::new(c.x + s10 + shift, mid(c, icon), icon, icon);
                 let right = match mode {
-                    LayoutMode::Details => self.layout.cols.first().map_or(c.right(), |col| col.right()),
+                    LayoutMode::Details | LayoutMode::Tree => self.layout.cols.first().map_or(c.right(), |col| col.right()),
                     _ => c.right(),
                 };
                 let nx = ir.right() + s8;
-                Parts { body: c.inset(s4, 1.0), icon: ir, check: Rect::new(c.x + s10, mid(c, box_px), box_px, box_px), name: Rect::new(nx, c.y, (right - s10 - nx).max(0.0), c.h), center: false }
+                Parts { body: c.inset(s4, 1.0), icon: ir, check: boxed(ir), name: Rect::new(nx, c.y, (right - s10 - nx).max(0.0), c.h), center: false }
             }
         }
     }
@@ -310,16 +384,13 @@ impl App {
         }
         let f = self.flow();
         let Some(line) = self.line_at(&f, x, y) else { return false };
-        let r = self.item_parts(self.line_rect(&f, line)).check;
-        if self.layout.mode.rows() {
-            return x >= r.x - self.s(10.0) && x < r.right() + self.s(CHECK_GAP / 2.0);
-        }
-        r.inset(-self.s(4.0), -self.s(4.0)).contains(x, y)
+        let r = self.item_parts(self.line_rect(&f, line)).icon;
+        r.inset(-self.s(2.0), -self.s(2.0)).contains(x, y)
     }
 
     pub(super) fn on_name(&self, x: f32, y: f32, row: usize) -> bool {
         match self.layout.mode {
-            LayoutMode::Details => self.layout.cols.first().is_some_and(|c| x < c.right()),
+            LayoutMode::Details | LayoutMode::Tree => self.layout.cols.first().is_some_and(|c| x < c.right()),
             _ => self.row_rect(row).is_some_and(|c| self.item_parts(c).name.inset(0.0, -self.s(4.0)).contains(x, y)),
         }
     }
@@ -386,6 +457,9 @@ impl App {
     }
 
     pub(super) fn arrow_key(&mut self, key: Key, m: Mods, now: Instant) -> bool {
+        if matches!(key, Key::Left | Key::Right) && self.tree_key(key == Key::Right, m) {
+            return true;
+        }
         if self.layout.mode == LayoutMode::Columns && !m.ctrl && !m.shift {
             match key {
                 Key::Left => {
@@ -440,12 +514,29 @@ impl App {
             return self.status(S::LayoutsAdaptiveShared.t());
         }
         let look = self.concrete(self.cur, mode);
+        let zoom = zoom_of(mode, self.tab().zoom);
         let t = self.tab_mut();
         if t.look != look {
             (t.scroll, t.scroll_target) = (0.0, 0.0);
             t.reveal_pending = true;
         }
-        self.change_view(|t| (t.mode, t.look) = (mode, look));
+        self.change_view(|t| (t.mode, t.look, t.zoom) = (mode, look, zoom));
+        self.shape_view();
+    }
+
+    pub(super) fn set_zoom(&mut self, zoom: u8) {
+        let zoom = zoom.min(ZOOM_XL);
+        let mode = layout_of_zoom(zoom);
+        if self.tab().mode == mode && self.tab().zoom == zoom {
+            return;
+        }
+        let t = self.tab_mut();
+        if t.look != mode {
+            (t.scroll, t.scroll_target) = (0.0, 0.0);
+        }
+        t.reveal_pending = true;
+        self.change_view(|t| (t.mode, t.look, t.zoom) = (mode, mode, zoom));
+        self.shape_view();
     }
 
     pub(super) fn resize_items(&mut self, d: i32) {
@@ -453,6 +544,9 @@ impl App {
             return;
         }
         let look = self.tab().look;
+        if look.zoomed() || self.tab().mode.zoomed() {
+            return self.set_zoom(step_zoom(self.tab().zoom, d > 0));
+        }
         let level = (self.tab().sizes.level(look) as i32 + d).clamp(0, look.levels() as i32 - 1) as u8;
         if level as usize != self.tab().sizes.level(look) {
             self.tab_mut().reveal_pending = true;

@@ -117,37 +117,42 @@ fn the_old_layout_stays_until_the_new_folder_arrives() {
 }
 
 #[test]
-fn zoom_commands_and_ctrl_wheel_resize_items_and_ctrl_equals_fits_columns() {
+fn zoom_steps_walk_details_tree_list_and_icons_and_ctrl_equals_fits_columns() {
     let mut app = app_at(r"C:\x");
     app.set_view_mode(crate::ui::ViewMode::Folder);
     deliver(&mut app, &["a.txt"]);
-    assert_eq!(app.layout.row_h, 24.0);
-    app.run_action("view.zoom_in", Instant::now());
-    frame(&mut app);
-    assert_eq!((app.tab().sizes.level(LayoutMode::Details), app.layout.row_h), (2, 28.0));
-    app.run_action("view.zoom_in", Instant::now());
-    frame(&mut app);
-    assert_eq!(app.layout.row_h, 32.0);
+    assert_eq!((app.tab().mode, app.tab().zoom, app.layout.row_h), (LayoutMode::Details, 0, 24.0));
+    let mut seen = Vec::new();
     for _ in 0..6 {
-        app.run_action("view.zoom_out", Instant::now());
+        app.run_action("view.zoom_in", Instant::now());
         frame(&mut app);
+        seen.push((app.tab().mode, app.tab().zoom));
     }
-    assert_eq!((app.tab().sizes.level(LayoutMode::Details), app.layout.row_h, app.layout.icon), (0, 20.0, 16.0));
-    key(&mut app, Key::Char('='), CTRL);
-    assert!(app.tab().fit_pending);
-    assert_eq!(app.tab().sizes.level(LayoutMode::Details), 0, "Ctrl+= fits columns instead of resizing");
-    key(&mut app, Key::Char('5'), CTRL_SHIFT);
+    assert_eq!(seen, [(LayoutMode::Tree, 10), (LayoutMode::List, 20), (LayoutMode::Grid, 30), (LayoutMode::Grid, 35), (LayoutMode::Grid, 40), (LayoutMode::Grid, 45)]);
+    assert_eq!(zoom_title(app.tab().zoom), "M Icons");
     let icon = app.layout.icon;
     app.on_event(&Event::Key { key: Key::Other, mods: CTRL, pressed: true }, Instant::now());
     app.on_event(&Event::Wheel { dx: 0.0, dy: 1.0 }, Instant::now());
-    assert!(app.layout.icon > icon);
+    frame(&mut app);
+    assert!(app.layout.icon > icon, "Ctrl+wheel zooms");
     for _ in 0..20 {
         app.on_event(&Event::Wheel { dx: 0.0, dy: 1.0 }, Instant::now());
     }
-    assert_eq!(app.tab().sizes.level(LayoutMode::Grid), 11);
-    assert_eq!(app.tab().sizes.level(LayoutMode::Details), 0, "every layout keeps its own size");
+    assert_eq!((app.tab().zoom, zoom_title(app.tab().zoom)), (ZOOM_XL, "XL Icons"));
+    for _ in 0..30 {
+        app.on_event(&Event::Wheel { dx: 0.0, dy: -1.0 }, Instant::now());
+    }
+    app.on_event(&Event::Key { key: Key::Other, mods: NO, pressed: false }, Instant::now());
+    assert_eq!((app.tab().mode, app.tab().zoom), (LayoutMode::Details, 0));
+    key(&mut app, Key::Char('='), CTRL);
+    assert!(app.tab().fit_pending);
+    assert_eq!(app.tab().zoom, 0, "Ctrl+= fits columns instead of resizing");
+    key(&mut app, Key::Char('5'), CTRL_SHIFT);
+    assert_eq!((app.tab().mode, app.tab().zoom), (LayoutMode::Grid, ZOOM_LARGE));
     let v = app.folder_views().get(folder_key(&loc(r"C:\x"))).unwrap();
-    assert_eq!((v.sizes.level(LayoutMode::Grid), v.sizes.level(LayoutMode::Details)), (11, 0));
+    assert_eq!((v.layout, v.zoom), (LayoutMode::Grid, ZOOM_LARGE), "the saved view keeps the zoom");
+    assert_eq!([step_zoom(0, false), step_zoom(29, true), step_zoom(31, false), step_zoom(100, true)], [0, 30, 30, 100]);
+    assert!(tile_width(ZOOM_XL) > tile_width(ZOOM_LARGE) && tile_width(ZOOM_LARGE) > tile_width(ZOOM_ICONS));
 }
 
 #[test]

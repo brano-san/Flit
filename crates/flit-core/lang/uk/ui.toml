@@ -17,7 +17,6 @@ folder = "Ця папка порожня."
 selected = ["Вибрано: {n}", "Вибрано: {n}", "Вибрано: {n}"]
 unpacked = "{size} після розпакування"
 loading = "Завантаження…"
-timing = "{first} мс перші · {all} мс усі"
 
 [button]
 replace = "Замінити"

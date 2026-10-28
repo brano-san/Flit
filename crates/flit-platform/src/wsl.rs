@@ -644,7 +644,7 @@ impl Ctl {
                     self.emit(ProviderEvent::Rescan { tab, gen });
                 }
             }
-            Event::DirSize { id, idx, size } => {
+            Event::DirSize { id, idx, stats } => {
                 let Some(Pending::Sizes { tab, gen, cancel, wanted }) = self.pending.get_mut(&id) else { return };
                 if !cancel.is_current(*gen) {
                     return self.cancel(id);
@@ -654,7 +654,7 @@ impl Ctl {
                     self.pending.remove(&id);
                 }
                 if fresh {
-                    self.emit(ProviderEvent::DirSize { tab, gen, idx, size });
+                    self.emit(ProviderEvent::DirSize { tab, gen, idx, stats });
                 }
             }
             Event::OpProgress { id, progress } => {

@@ -17,7 +17,6 @@ folder = "此文件夹为空。"
 selected = ["已选择 {n} 个"]
 unpacked = "解压后 {size}"
 loading = "正在加载…"
-timing = "首批 {first} 毫秒 · 全部 {all} 毫秒"
 
 [button]
 replace = "替换"

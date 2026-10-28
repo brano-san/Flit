@@ -1,4 +1,6 @@
 use super::columns::Pane;
+use super::tree::TreeState;
+use crate::hash::FxHashSet;
 use super::field::Field;
 use super::details::Columns;
 use super::layouts::{LayoutMode, Sizes};
@@ -19,6 +21,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const TYPE_AHEAD_RESET: Duration = Duration::from_millis(1000);
+pub(super) const SUBFOLDERS_MARK: &str = " [...]";
 
 pub(super) struct Loading {
     pub gen: u64,
@@ -41,6 +44,7 @@ pub struct Tab {
     pub(super) look: LayoutMode,
     pub(super) sizes: Sizes,
     pub(super) fit_pending: bool,
+    pub(super) fit_column: Option<super::Column>,
     pub(super) loading: Option<Loading>,
     pub(super) view: Option<DirView>,
     pub(super) view_loc: Location,
@@ -58,6 +62,12 @@ pub struct Tab {
     pub(super) filter: Option<Field>,
     pub(super) panes: Vec<Pane>,
     pub(super) git: Option<std::sync::Arc<crate::git::GitInfo>>,
+    pub(super) zoom: u8,
+    pub(super) subfolders: bool,
+    pub(super) deep_gen: u64,
+    pub(super) tree: TreeState,
+    pub(super) hidden_types: FxHashSet<u64>,
+    pub(super) retain_filter: bool,
 }
 
 impl Tab {
@@ -78,6 +88,7 @@ impl Tab {
             look: LayoutMode::default(),
             sizes: Sizes::default(),
             fit_pending: false,
+            fit_column: None,
             loading: None,
             view: None,
             error: None,
@@ -92,6 +103,12 @@ impl Tab {
             filter: None,
             panes: Vec::new(),
             git: None,
+            zoom: 0,
+            subfolders: false,
+            deep_gen: 0,
+            tree: TreeState::default(),
+            hidden_types: FxHashSet::default(),
+            retain_filter: false,
         }
     }
 
@@ -100,10 +117,14 @@ impl Tab {
     }
 
     pub fn title(&self) -> String {
-        match self.crumbs.last() {
+        let mut s = match self.crumbs.last() {
             Some((label, _)) => label.clone(),
             None => name::display(self.location().file_name()).into_owned(),
+        };
+        if self.subfolders {
+            s.push_str(SUBFOLDERS_MARK);
         }
+        s
     }
 
     pub(super) fn load(&mut self, gen: u64, select: Option<Vec<u8>>, case: CaseMode, now: Instant, fx: &mut Vec<Effect>) {
@@ -111,8 +132,13 @@ impl Tab {
         self.cancel.set(gen);
         let loc = self.location().clone();
         if loc != self.view_loc {
-            self.reset_filter();
+            if !self.retain_filter {
+                self.reset_filter();
+            }
+            self.tree.reset();
+            self.hidden_types.clear();
         }
+        self.tree.drop_probes();
         if self.view_spec.sort.field == SortField::Origin && !loc.is_recycle_bin() {
             self.view_spec.sort = SortSpec::default();
         }
@@ -175,6 +201,8 @@ impl Tab {
                 self.scroll = 0.0;
                 self.scroll_target = 0.0;
                 self.refilter_view();
+                self.tree.loaded.clear();
+                self.apply_shape();
             }
         }
         let v = self.view.as_mut().unwrap();
@@ -194,6 +222,9 @@ impl Tab {
             }
         }
         if done {
+            if v.snap().view.deep {
+                self.deep_gen = v.snap().gen;
+            }
             self.stats.done = Some(v.snap().elapsed);
             self.loading = None;
             self.check_trail();
@@ -332,7 +363,11 @@ impl Tab {
                 let e = &l.entries[i as usize];
                 e.is_dir() && e.attrs & (attr::LINK | attr::VOLUME) == 0
             })
-            .map(|&i| (i, l.name(i).to_vec()))
+            .map(|&i| {
+                let mut rel = Vec::new();
+                crate::view::rel_path(l, i, v.separator(), &mut rel);
+                (i, rel)
+            })
             .collect()
     }
 }

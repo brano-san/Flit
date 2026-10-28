@@ -96,7 +96,8 @@ fn list_streams_sorted_snapshots_and_sizes() {
     assert_eq!(names, ["sub", "a.txt", "b.txt", "c", "d"]);
     assert_eq!(snap.gen, 3);
     provider.submit(ProviderRequest::DirSizes { tab: 1, gen: 3, dir: p(r"C:\r"), items: vec![(1, b"sub".to_vec())], cancel: cancel.clone() });
-    assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::DirSize { tab: 1, gen: 3, idx: 1, size: 120 });
+    let ProviderEvent::DirSize { tab: 1, gen: 3, idx: 1, stats } = rx.recv_timeout(Duration::from_secs(5)).unwrap() else { panic!("folder size expected") };
+    assert_eq!((stats.size, stats.partial), (120, false));
     provider.submit(ProviderRequest::Open { tab: 4, path: p(r"C:\r\a.txt") });
     assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { tab: 4, id: 0, error: Some(_), report: None }));
     let trash = FileOp::Trash(vec![p(r"C:\r\c")]);
@@ -525,4 +526,30 @@ fn a_silent_share_reports_not_responding_until_it_answers() {
     drop(release);
     let answer = wait_for(&slot);
     assert_eq!((answer.error.clone(), answer.listing.len()), (None, 1));
+}
+
+#[test]
+fn a_deep_listing_walks_every_subfolder_and_marks_nested_items_with_their_folder() {
+    let (tx, rx) = unbounded();
+    let provider = LocalProvider::new::<_, NoWatch, NoShell>(fs(), 2, tx, Arc::new(|| {})).unwrap();
+    let slot = Arc::new(SnapshotSlot::default());
+    let cancel = GenToken::default();
+    cancel.set(5);
+    let view = ViewSpec { deep: true, ..ViewSpec::default() };
+    provider.submit(ProviderRequest::List { tab: 1, gen: 5, path: p(r"C:\r"), view, case: CaseMode::Insensitive, out: slot.clone(), cancel: cancel.clone() });
+    let snap = loop {
+        if let Some(s) = slot.take().filter(|s| s.done) {
+            break s;
+        }
+        std::thread::yield_now();
+    };
+    let l = &snap.listing;
+    let mut found: Vec<(String, String)> = (0..l.len() as u32).map(|i| (String::from_utf8_lossy(l.folder(i)).into_owned(), String::from_utf8_lossy(l.name(i)).into_owned())).collect();
+    found.sort();
+    let want = [("", "a.txt"), ("", "b.txt"), ("", "c"), ("", "d"), ("", "sub"), ("sub", "deep"), ("sub", "x"), (r"sub\deep", "y")];
+    assert_eq!(found, want.map(|(f, n)| (f.to_owned(), n.to_owned())));
+    assert_eq!((l.nested, snap.order.len()), (3, 8), "nested items are listed and sorted with the rest");
+    let shallow = ViewSpec::default();
+    assert_eq!((0..l.len() as u32).filter(|&i| flit_core::sort::visible(l, i, &shallow)).count(), 5, "without subfolders they hide");
+    drop(rx);
 }

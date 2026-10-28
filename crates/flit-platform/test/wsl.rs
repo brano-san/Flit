@@ -1,5 +1,5 @@
 use super::*;
-use flit_core::listing::{ChangeKind, DirChange};
+use flit_core::listing::{ChangeKind, DirChange, DirStats};
 use flit_core::provider::{Conflict, OpCtl, OpProgress, Resolve, Template};
 use flit_core::sort::CaseMode;
 use flit_core::Meta;
@@ -335,7 +335,7 @@ fn trash_goes_to_the_agent_and_the_rest_to_the_share() {
     let fake = Fake::new(|req| {
         Some(match req {
             Request::Op { id, .. } => vec![Event::OpDone { id: *id, error: Some("nope".into()), items: Vec::new() }],
-            Request::DirSizes { id, items, .. } => items.iter().map(|(idx, _)| Event::DirSize { id: *id, idx: *idx, size: 5 }).chain([Event::DirSize { id: *id, idx: 99, size: 1 }]).collect(),
+            Request::DirSizes { id, items, .. } => items.iter().map(|(idx, _)| Event::DirSize { id: *id, idx: *idx, stats: DirStats { size: 5, ..Default::default() } }).chain([Event::DirSize { id: *id, idx: 99, stats: DirStats { size: 1, ..Default::default() } }]).collect(),
             _ => Vec::new(),
         })
     });
@@ -346,7 +346,7 @@ fn trash_goes_to_the_agent_and_the_rest_to_the_share() {
     let token = GenToken::default();
     token.set(1);
     s.wsl.submit(ProviderRequest::DirSizes { tab: 2, gen: 1, dir: unix("/"), items: vec![(3, b"usr".to_vec())], cancel: token });
-    let size = event(&s.events, |e| if let ProviderEvent::DirSize { idx, size, .. } = e { Some((idx, size)) } else { None });
+    let size = event(&s.events, |e| if let ProviderEvent::DirSize { idx, stats, .. } = e { Some((idx, stats.size)) } else { None });
     assert_eq!(size, (3, 5));
     s.wsl.submit(ProviderRequest::Op { tab: 2, id: 12, op: FileOp::NewFile { dir: unix("/tmp"), name: b"n".to_vec(), template: Template::Empty }, ctl: OpCtl::default() });
     s.wsl.submit(ProviderRequest::Open { tab: 2, path: unix("/tmp/x:y") });

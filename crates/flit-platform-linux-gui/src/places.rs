@@ -147,11 +147,15 @@ pub fn list_computer(out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
     let table = mounts::read().map_err(|e| FsError { kind: FsErrorKind::Unavailable, code: e.raw_os_error().unwrap_or(-1) as i64 })?;
     for m in mounts::visible(&table, &mounts::user_name()) {
         let mut meta = Meta { attrs: attr::DIR | attr::VOLUME, ..Default::default() };
-        if let Some((total, _)) = mounts::space(m.path()) {
+        let space = mounts::space(m.path());
+        if let Some((total, _)) = space {
             meta.size = total;
             meta.attrs |= attr::SIZE_KNOWN;
         }
         out.push(&m.point, meta);
+        if let Some((_, free)) = space {
+            out.listing.push_drive_info(free, &m.fstype);
+        }
     }
     out.batch_done();
     Ok(())

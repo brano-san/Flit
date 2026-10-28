@@ -1,12 +1,19 @@
 [column]
 name = "Name"
-modified = "Date modified"
-created = "Date created"
+modified = "Date Modified"
+created = "Date Created"
 type = "Type"
 size = "Size"
-origin = "Original location"
-deleted = "Date deleted"
+origin = "Original Location"
+deleted = "Date Deleted"
 tag = "Tags"
+items = "Total Items"
+accessed = "Date Accessed"
+volume = "Volume Usage"
+folder_usage = "Folder Usage"
+free = "Free Space"
+file_system = "File System"
+percent = "Percent Full"
 
 [type]
 drive = "Drive"
@@ -15,23 +22,36 @@ file = "File"
 ext_file = "{ext} File"
 
 [group]
-unknown_date = "Unknown date"
 unknown_location = "Unknown location"
 no_tags = "No tags"
+unspecified = "Unspecified"
+name_ah = "A - H"
+name_ip = "I - P"
+name_qz = "Q - Z"
+other = "Other"
+today = "Today"
+yesterday = "Yesterday"
+last_week = "Last week"
+last_month = "Last month"
+last_year = "Last year"
+long_ago = "Long ago"
+thousands = "Thousands (1000+)"
+hundreds = "Hundreds (100 - 999)"
+dozens = "Dozens (10 - 99)"
+few = "Few (1 - 9)"
+no_items = "None (0)"
 
 [size_group]
-folders = "Folders"
-empty = "Empty"
-tiny = "Tiny (under 16 KB)"
-small = "Small (16 KB to 1 MB)"
-medium = "Medium (1 to 128 MB)"
-large = "Large (128 MB to 1 GB)"
-huge = "Huge (1 to 4 GB)"
-gigantic = "Gigantic (over 4 GB)"
+empty = "Empty (0 B)"
+tiny = "Tiny (1 B - 16 KB)"
+small = "Small (16 KB - 1 MB)"
+medium = "Medium (1 - 128 MB)"
+large = "Large (128 MB - 1 GB)"
+huge = "Huge (1 - 4 GB)"
+gigantic = "Gigantic (4+ GB)"
 
 [count]
 items = ["{n} item", "{n} items"]
-filtered = ["{shown} of {n} item", "{shown} of {n} items"]
 folders = ["{n} folder", "{n} folders"]
 files = ["{n} file", "{n} files"]
 

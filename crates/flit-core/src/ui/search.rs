@@ -1024,7 +1024,7 @@ impl App {
             let is_dir = r.meta.attrs & attr::DIR != 0;
             let ext_at = if is_dir { r.name.len() } else { r.name.len() - name::ext_len(&r.name) };
             let ext = &r.name[ext_at..];
-            let entry = Entry { size: 0, modified: 0, created: 0, name_off: 0, attrs: r.meta.attrs, name_len: 0, ext_len: 0, tags: 0 };
+            let entry = Entry { size: 0, modified: 0, created: 0, accessed: 0, name_off: 0, attrs: r.meta.attrs, name_len: 0, ext_len: 0, tags: 0 };
             let (key, kind) = icon_key(&r.name, ext, &entry, icon_px as u32, &r.dir, self.icon_epoch);
             let indent = if headers { self.s(16.0) } else { 0.0 };
             let ir = Rect::new(sl.cols[0].x + pad + indent, y + ((rh - icon_px) / 2.0).round(), icon_px, icon_px);

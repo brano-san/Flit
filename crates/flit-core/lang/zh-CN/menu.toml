@@ -1,4 +1,3 @@
-fit_columns = "将所有列调整为合适的大小"
 autofit_columns = "始终将列调整为合适的大小"
 open_file_location = "打开文件所在的位置"
 group_by_folder = "按文件夹分组"
@@ -74,6 +73,12 @@ new = "新建"
 eject = "弹出"
 
 open_with = "打开方式"
+shift_left = "左移列"
+shift_right = "右移列"
+size_fit = "调整列宽以适应内容"
+close_column = "关闭列"
+size_all = "调整所有列宽以适应内容"
+restore_columns = "恢复默认列"
 
 [sort]
 name = "名称"
@@ -92,6 +97,3 @@ descending = "递减"
 
 [group]
 none = "无"
-year = "年"
-month = "月"
-day = "日"

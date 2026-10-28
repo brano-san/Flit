@@ -64,7 +64,7 @@ impl Fs for Listed {
 
 fn sizes(fs: &impl Fs, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync)) -> Vec<(u32, u64)> {
     let got = Mutex::new(Vec::new());
-    fs.dir_sizes(dir, items, keep_going, &|idx, size| got.lock().unwrap().push((idx, size)));
+    fs.dir_sizes(dir, items, keep_going, &|idx, stats| got.lock().unwrap().push((idx, stats.size)));
     let mut got = got.into_inner().unwrap();
     got.sort();
     got

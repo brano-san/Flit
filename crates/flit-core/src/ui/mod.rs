@@ -47,6 +47,9 @@ mod tooltip;
 mod widgets;
 mod properties;
 mod git;
+mod tree;
+mod bottom;
+mod types;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource, MAX_HISTORY};
@@ -171,6 +174,8 @@ const G_FOLDER: &str = "\u{E8B7}";
 const G_FILE: &str = "\u{E7C3}";
 const G_DRIVE: &str = "\u{EDA2}";
 const G_BRANCH: &str = "\u{2387}";
+const NESTED_MARK: &str = "\u{203A} ";
+const G_FUNNEL: &str = "\u{E71C}";
 
 const BIN_BUTTONS: [S; 3] = [S::UiBinRestore, S::UiBinRestoreAll, S::UiBinEmpty];
 
@@ -184,6 +189,13 @@ pub enum Column {
     Deleted,
     Created,
     Tag,
+    Items,
+    Accessed,
+    Volume,
+    FolderUsage,
+    Free,
+    FileSystem,
+    Percent,
     GitStatus,
     GitMessage,
     GitAuthor,
@@ -191,12 +203,29 @@ pub enum Column {
 }
 
 pub const GIT_COLUMNS: [Column; 4] = [Column::GitStatus, Column::GitMessage, Column::GitAuthor, Column::GitDate];
-pub const REPO_COLUMNS: [Column; 10] = [Column::Name, Column::Modified, Column::Created, Column::Type, Column::Size, Column::Tag, Column::GitStatus, Column::GitMessage, Column::GitAuthor, Column::GitDate];
-pub const COLUMNS: [Column; 6] = [Column::Name, Column::Modified, Column::Created, Column::Type, Column::Size, Column::Tag];
+pub const REPO_COLUMNS: [Column; 14] = [
+    Column::Name,
+    Column::Type,
+    Column::Modified,
+    Column::Items,
+    Column::Size,
+    Column::Volume,
+    Column::Created,
+    Column::Accessed,
+    Column::FolderUsage,
+    Column::Tag,
+    Column::GitStatus,
+    Column::GitMessage,
+    Column::GitAuthor,
+    Column::GitDate,
+];
+pub const COLUMNS: [Column; 10] = [Column::Name, Column::Type, Column::Modified, Column::Items, Column::Size, Column::Volume, Column::Created, Column::Accessed, Column::FolderUsage, Column::Tag];
 pub const BIN_COLUMNS: [Column; 4] = [Column::Name, Column::Origin, Column::Deleted, Column::Size];
+pub const COMPUTER_COLUMNS: [Column; 6] = [Column::Name, Column::Type, Column::Size, Column::Free, Column::Percent, Column::FileSystem];
+pub const MENU_COLUMNS: [Column; 9] = [Column::Name, Column::Type, Column::Size, Column::Items, Column::Created, Column::Modified, Column::Accessed, Column::Volume, Column::FolderUsage];
 
 impl Column {
-    fn title(self) -> &'static str {
+    pub(super) fn title(self) -> &'static str {
         match self {
             Column::Name => S::DetailsColumnName,
             Column::Modified => S::DetailsColumnModified,
@@ -206,6 +235,13 @@ impl Column {
             Column::Origin => S::DetailsColumnOrigin,
             Column::Deleted => S::DetailsColumnDeleted,
             Column::Tag => S::DetailsColumnTag,
+            Column::Items => S::DetailsColumnItems,
+            Column::Accessed => S::DetailsColumnAccessed,
+            Column::Volume => S::DetailsColumnVolume,
+            Column::FolderUsage => S::DetailsColumnFolderUsage,
+            Column::Free => S::DetailsColumnFree,
+            Column::FileSystem => S::DetailsColumnFileSystem,
+            Column::Percent => S::DetailsColumnPercent,
             Column::GitStatus => S::GitColumnStatus,
             Column::GitMessage => S::GitColumnMessage,
             Column::GitAuthor => S::GitColumnAuthor,
@@ -213,7 +249,7 @@ impl Column {
         }
         .t()
     }
-    fn field(self) -> Option<SortField> {
+    pub(super) fn field(self) -> Option<SortField> {
         Some(match self {
             Column::Name => SortField::Name,
             Column::Modified | Column::Deleted => SortField::Modified,
@@ -222,6 +258,13 @@ impl Column {
             Column::Size => SortField::Size,
             Column::Origin => SortField::Origin,
             Column::Tag => SortField::Tag,
+            Column::Items => SortField::Items,
+            Column::Accessed => SortField::Accessed,
+            Column::Volume => SortField::Volume,
+            Column::FolderUsage => SortField::FolderUsage,
+            Column::Free => SortField::Free,
+            Column::FileSystem => SortField::FileSystem,
+            Column::Percent => SortField::Percent,
             Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => return None,
         })
     }
@@ -427,6 +470,7 @@ enum Hit {
     Menu,
     QuickToggle,
     PanelSep(usize),
+    Bottom(bottom::BottomHit),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -464,6 +508,7 @@ struct Layout {
     track: Rect,
     thumb: Rect,
     status: Rect,
+    bar: Vec<(bottom::BottomHit, Rect)>,
     encoding: Rect,
     branch: Rect,
     bin: [Rect; 3],
@@ -1014,7 +1059,7 @@ impl App {
             visible |= self.poll_tab(k);
             visible |= self.tabs[k].apply_diffs() && k == self.cur;
         }
-        visible | self.poll_panes()
+        visible | self.poll_panes() | self.poll_tree()
     }
 
     fn poll_tab(&mut self, k: usize) -> bool {
@@ -1031,6 +1076,9 @@ impl App {
         let resort = self.tabs[k].on_snapshot(snap);
         if fresh || loaded {
             self.settle_look(k, fresh, loaded);
+        }
+        if loaded {
+            self.reopen_tree(k);
         }
         if resort {
             self.resort(k);
@@ -1062,10 +1110,10 @@ impl App {
                     self.reload(k, now);
                 }
             }
-            ProviderEvent::DirSize { tab, gen, idx, size } => {
+            ProviderEvent::DirSize { tab, gen, idx, stats } => {
                 if let Some(k) = tab_of(&self.tabs, tab, gen) {
                     if let Some(v) = self.tabs[k].view.as_mut().filter(|v| v.snap().gen == gen) {
-                        v.set_dir_size(idx, size);
+                        v.set_dir_stats(idx, stats);
                     }
                     self.dirty |= k == self.cur;
                 }
@@ -1181,7 +1229,7 @@ impl App {
         let active = self.panels.here == self.panels.active;
         let (right, inset) = self.panel_edges(area);
         let ops_button = active && self.ops_button_visible();
-        let status_bar = active && (self.prefs.status_bar || self.tab().error.is_some());
+        let status_bar = active && (self.prefs.status_bar || self.tab().error.is_some() || self.tab().filter.is_some());
         let tool_h = self.toolbar_h();
         let (n, cur, actions) = (self.tabs.len(), self.cur, self.tab_actions_button);
         let sc = self.scale;
@@ -1240,17 +1288,16 @@ impl App {
     }
 
     fn layout_pane(&mut self, area: Rect) {
-        let filter_h = self.filter_bar_h();
         let (kinds, widths) = (self.column_kinds(), self.tab().columns);
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
         let l = &mut self.layout;
-        l.header = Rect::new(area.x, area.y + filter_h, area.w, s(HEADER_H));
+        l.header = Rect::new(area.x, area.y, area.w, s(HEADER_H));
         l.bottom = area.bottom();
         self.layout_look();
         let l = &mut self.layout;
         l.columns.clear();
-        l.columns.extend(kinds.iter().copied().filter(|&c| widths.shown(c)));
+        l.columns.extend(widths.ordered(kinds).into_iter().filter(|&c| widths.shown(c)));
         let fixed: f32 = l.columns.iter().skip(1).map(|&c| s(widths.width(c))).sum();
         let name_w = (l.list.w - fixed).max(s(NAME_MIN_W));
         let mut x = l.header.x;
@@ -1283,7 +1330,7 @@ impl App {
             }
         };
         self.sync_panes();
-        self.layout_filter(area.x, area.y);
+        self.layout_filter();
         self.layout_home();
     }
 
@@ -1341,6 +1388,9 @@ impl App {
         }
         if l.list.contains(x, y) {
             return self.list_hit(x, y);
+        }
+        if let Some(h) = self.bottom_hit(x, y) {
+            return h;
         }
         if l.encoding.contains(x, y) {
             return Hit::Encoding;
@@ -1419,6 +1469,9 @@ impl App {
                     return;
                 }
                 if self.settings_wheel(*dy) || self.panel_wheel(ev, *dy, now) || self.jobs_wheel(*dy) || self.nav_wheel(*dy) || self.pane_wheel(*dy) || self.preview_wheel(*dy) || self.strip_wheel(*dy) {
+                    return;
+                }
+                if self.bottom_wheel(*dy) {
                     return;
                 }
                 if self.mods.ctrl {
@@ -1548,6 +1601,13 @@ impl App {
             (MouseButton::Back, _) => return self.go_history(false, now),
             (MouseButton::Forward, _) => return self.go_history(true, now),
             (MouseButton::Middle, Hit::Tab(i) | Hit::TabClose(i)) => return self.close_tab(i),
+            (MouseButton::Middle, Hit::Header(c)) => {
+                if let Some(&col) = self.layout.columns.get(c) {
+                    self.toggle_column(col);
+                    self.layout();
+                }
+                return;
+            }
             (MouseButton::Middle, _) => return,
             _ => {}
         }
@@ -1558,7 +1618,9 @@ impl App {
             Hit::Address if button == MouseButton::Left => self.open_address(),
             Hit::Row(row) => {
                 self.focus = Focus::List;
-                if button == MouseButton::Left && self.on_checkbox(x, y) {
+                if button == MouseButton::Left && self.on_chevron(x, y, row) {
+                    self.tree_toggle_row(row, self.mods.shift);
+                } else if button == MouseButton::Left && self.on_checkbox(x, y) {
                     self.toggle_row(row);
                 } else if button == MouseButton::Left && clicks == 1 && !self.mods.shift && self.marquee_column(x) {
                     let base = self.marquee_base();
@@ -1659,13 +1721,19 @@ impl App {
                 }
             }
             Hit::Header(c) => {
-                if let Some(f) = self.layout.columns[c].field() {
+                let (col, r) = (self.layout.columns[c], self.layout.cols[c]);
+                if col == Column::Type && self.funnel_rect(r).contains(x, y) {
+                    self.open_types();
+                } else if col == Column::Name && self.prefs.checkboxes && self.header_check(r).inset(-self.s(4.0), -self.s(4.0)).contains(x, y) {
+                    self.toggle_select_all();
+                } else if let Some(f) = col.field() {
                     self.sort_column(f);
                 }
             }
             Hit::Group(g) => self.toggle_group(g),
             Hit::Pane(i, Some(row)) => self.open_pane_row(i, row, now),
             Hit::Encoding => self.pick_encoding(),
+            Hit::Bottom(b) => self.bottom_click(b),
             Hit::Branch => self.git_branches_menu(),
             Hit::Preview(p) => self.preview_click(p),
             Hit::Bin(k) => self.bin_button(k),
@@ -1953,7 +2021,6 @@ impl App {
             }
             self.draw_header(g, files);
         }
-        self.draw_filter(g, files);
         self.draw_title(g, th);
         self.draw_toolbar(g, palette.area(Area::Toolbar));
         self.draw_toolbar_row(g, palette.area(Area::Toolbar));
@@ -2110,11 +2177,29 @@ impl App {
                 g.dl.rect(Rect::new(r.x, r.y + self.s(6.0), 1.0, r.h - self.s(12.0)), t.separator);
             }
             g.dl.set_clip(Some(r));
-            let w = g.text(r.x + pad, baseline, col.title(), font, t.text_dim, r.w - 2.0 * pad);
-            if Some(sort.field) == col.field() {
-                let glyph = if sort.descending { G_SORT_DOWN } else { G_SORT_UP };
-                g.text(r.x + pad + w + self.s(6.0), baseline, glyph, self.icon_font(8.0), t.text_dim, f32::INFINITY);
+            let sorted = Some(sort.field) == col.field();
+            let mut x = r.x + pad;
+            if *col == Column::Name && self.prefs.checkboxes {
+                let b = self.header_check(r);
+                let all = self.tab().view.as_ref().is_some_and(|v| !v.rows().is_empty() && v.selected_count() == v.rows().len());
+                self.draw_checkbox(g, t, b, all);
+                x = b.right() + self.s(6.0);
             }
+            let mut room = r.right() - pad - x;
+            if *col == Column::Type {
+                let fr = self.funnel_rect(r);
+                let active = !self.tab().hidden_types.is_empty();
+                centered(g, fr, G_FUNNEL, self.icon_font(11.0), if active { t.accent } else { t.text_dim });
+                room = fr.x - x;
+            }
+            if sorted {
+                let glyph = if sort.descending { G_SORT_DOWN } else { G_SORT_UP };
+                let gw = self.s(14.0);
+                let right = if *col == Column::Type { self.funnel_rect(r).x } else { r.right() - pad };
+                g.text(right - gw, baseline, glyph, self.icon_font(8.0), t.text, f32::INFINITY);
+                room = room.min(right - gw - x);
+            }
+            g.text(x, baseline, col.title(), font, if sorted { t.text } else { t.text_dim }, room.max(0.0));
             g.dl.set_clip(None);
         }
     }
@@ -2232,10 +2317,22 @@ impl App {
                     g.dl.round_rect(br, git::status_color(st), br.w / 2.0);
                     centered(g, br, st.letter(), FontStyle::new(FontFamily::Ui, br.h * 0.72, true), Color::rgb(0xFF_FF_FF));
                 }
-                self.draw_name(g, &p, &self.shown_name(listing, i), e.tags, font, name_color);
+                let end = self.draw_name(g, &p, &self.shown_name(listing, i), e.tags, font, name_color);
+                if mode == LayoutMode::Tree && e.is_dir() {
+                    if let Some(cr) = self.chevron_rect(row) {
+                        let open = self.is_open_in_tree(i);
+                        centered(g, cr, if open { G_SORT_DOWN } else { G_CHEVRON }, self.icon_font(8.0), t.text_dim);
+                    }
+                }
+                let folder = listing.folder(i);
+                if !folder.is_empty() && mode != LayoutMode::Tree && !p.center {
+                    let label = arena.alloc_str(&format!("{NESTED_MARK}{}", crate::name::display(folder)));
+                    let x = end + self.s(8.0);
+                    g.text(x, ty, label, font, t.text_dim.alpha(0xA0), (p.name.right() - x).max(0.0));
+                }
                 want_type(i);
                 match mode {
-                    LayoutMode::Details => {
+                    LayoutMode::Details | LayoutMode::Tree => {
                         for (c, &col) in l.columns.iter().enumerate().skip(1) {
                             let r = l.cols[c];
                             let s = self.cell_text(arena, listing, i, col);
@@ -2250,6 +2347,13 @@ impl App {
                             let r = Rect { y: p.name.y + (k + 1) as f32 * p.name.h, ..p.name };
                             g.text(r.x, baseline(r), s, self.ui_font(12.0), t.text_dim, r.w);
                         }
+                    }
+                    LayoutMode::Grid if tab.mode.zoomed() => {
+                        let size = self.cell_text(arena, listing, i, Column::Size);
+                        let small = self.ui_font(11.0);
+                        let r = Rect { y: p.name.bottom(), h: self.s(14.0), ..p.name };
+                        let w = g.measure(size, small);
+                        g.text(r.x + ((r.w - w) / 2.0).max(0.0).round(), baseline(r), size, small, t.text_dim, r.w);
                     }
                     _ => {}
                 }
@@ -2272,90 +2376,6 @@ impl App {
             let hot = matches!(self.hover, Hit::Thumb | Hit::Track) || matches!(self.drag, Drag::Thumb { .. });
             g.dl.round_rect(th, if hot { t.scrollbar_hover } else { t.scrollbar }, th.w / 2.0);
         }
-    }
-
-    fn draw_status<B: TextBackend>(&mut self, g: &mut Gfx<B>, arena: &Bump, t: &Theme) {
-        let r = self.layout.status;
-        g.dl.rect(r, t.chrome);
-        let font = self.ui_font(12.0);
-        let m = g.metrics(font);
-        let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
-        let pad = self.s(12.0);
-        let tab = self.tab();
-        let mut s = bumpalo::collections::String::new_in(arena);
-        let mut color = t.text_dim;
-        if let Some(err) = &tab.error {
-            s.push_str(err);
-            color = t.error;
-        } else if let Some(v) = tab.view.as_ref().filter(|v| v.snap().gen == tab.gen && !tab.location().is_home_page()) {
-            self.count_text(&mut s, v);
-            let k = v.selected_count();
-            if k > 0 {
-                s.push_str("    ");
-                crate::trn_into!(&mut s, P::UiStatusSelected, k);
-                let size = v.selected_size();
-                if size > 0 {
-                    s.push_str("  ");
-                    format::size_in(&mut s, size, self.style.decimal);
-                }
-            }
-            if let Some(total) = self.unpacked_total() {
-                s.push_str("    ");
-                let mut size = String::new();
-                format::size_in(&mut size, total, self.style.decimal);
-                crate::tr_into!(&mut s, S::UiStatusUnpacked, size = size);
-            }
-            if !v.snap().done {
-                s.push_str("    ");
-                s.push_str(S::UiStatusLoading.t());
-            }
-        } else if let Some(l) = &tab.loading {
-            s.push_str(l.note.as_deref().unwrap_or(S::UiStatusLoading.t()));
-        }
-        g.text(r.x + pad, baseline, &s, font, color, r.w / 2.0);
-
-        let mut right = bumpalo::collections::String::new_in(arena);
-        if let (Some(first), Some(done)) = (tab.stats.first, tab.stats.done) {
-            let (mut a, mut b) = (bumpalo::collections::String::new_in(arena), bumpalo::collections::String::new_in(arena));
-            crate::i18n::decimal(&mut a, first.as_secs_f64() * 1e3, 1);
-            crate::i18n::decimal(&mut b, done.as_secs_f64() * 1e3, 1);
-            crate::tr_into!(&mut right, S::UiStatusTiming, first = a, all = b);
-        }
-        let in_bin = tab.view_loc.is_recycle_bin();
-        let encoding = self.encoding_label();
-        let encoding = [encoding.as_str()];
-        let bin = BIN_BUTTONS.map(S::t);
-        let labels: &[&str] = if in_bin { &bin } else if encoding[0].is_empty() { &[] } else { &encoding };
-        let mut buttons = [Rect::default(); 3];
-        let mut x = r.right() - pad;
-        for (k, label) in labels.iter().enumerate().rev() {
-            let w = g.measure(label, font) + self.s(16.0);
-            x -= w;
-            let br = Rect::new(x, r.y + self.s(2.0), w, r.h - self.s(4.0));
-            buttons[k] = br;
-            if self.hover == if in_bin { Hit::Bin(k) } else { Hit::Encoding } {
-                g.dl.round_rect(br, t.button_hover, self.s(3.0));
-            }
-            g.text(br.x + self.s(8.0), baseline, label, font, t.text_dim, f32::INFINITY);
-            x -= self.s(4.0);
-        }
-        self.layout.encoding = if in_bin { Rect::default() } else { buttons[0] };
-        self.layout.bin = if in_bin { buttons } else { Default::default() };
-        self.layout.branch = Rect::default();
-        if let Some(branch) = self.git_branch().filter(|b| !b.is_empty() && !in_bin) {
-            let label = arena.alloc_str(&format!("{G_BRANCH} {branch}"));
-            let w = g.measure(label, font) + self.s(16.0);
-            x -= w;
-            let br = Rect::new(x, r.y + self.s(2.0), w, r.h - self.s(4.0));
-            if self.hover == Hit::Branch {
-                g.dl.round_rect(br, t.button_hover, self.s(3.0));
-            }
-            g.text(br.x + self.s(8.0), baseline, label, font, t.text_dim, f32::INFINITY);
-            self.layout.branch = br;
-            x -= self.s(4.0);
-        }
-        let rw = g.measure(&right, font);
-        g.text(x - self.s(12.0) - rw, baseline, &right, font, t.text_dim.alpha(0xA0), f32::INFINITY);
     }
 }
 

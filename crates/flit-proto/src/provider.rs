@@ -1,13 +1,13 @@
 use crate::listing::{check_meta, check_name, EntryBatch};
 use crate::transport::ProtoError;
-use flit_core::listing::DirChange;
+use flit_core::listing::{DirChange, DirStats};
 use flit_core::path::PathKind;
 use flit_core::provider::{Conflict, FileOp, OpProgress, Resolve};
 use flit_core::{FsError, FsPath, Meta};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 4;
 
 pub type ReqId = u64;
 
@@ -30,7 +30,7 @@ pub enum Event {
     Stat { id: ReqId, result: Result<Meta, FsError> },
     Changes { id: ReqId, changes: Vec<DirChange> },
     Rescan { id: ReqId },
-    DirSize { id: ReqId, idx: u32, size: u64 },
+    DirSize { id: ReqId, idx: u32, stats: DirStats },
     OpProgress { id: ReqId, progress: OpProgress },
     OpConflict { id: ReqId, conflict: Conflict },
     OpDone { id: ReqId, error: Option<String>, items: Vec<(FsPath, FsPath)> },

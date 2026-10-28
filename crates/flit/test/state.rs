@@ -48,7 +48,7 @@ fn nav_state_and_views_ride_after_the_stage_one_record() {
     persisted.view.sort = SortSpec { field: SortField::Size, descending: true, ..Default::default() };
     persisted.view.columns.widths[Column::Type as usize] = 77.0;
     let s = Saved::new(persisted, Some(placement)).with_nav(nav.clone());
-    let bytes = s.encode().unwrap();
+    let bytes = older_encode(&s);
     let stage_one = postcard::to_stdvec(&s.head()).unwrap();
     assert!(bytes.len() > stage_one.len() && bytes.starts_with(&stage_one));
     let back = Saved::decode(&bytes).unwrap();
@@ -85,6 +85,7 @@ fn folder_views_and_preferences_survive_a_restart_and_created_sorts_by_name_for_
 fn layouts_and_item_sizes_ride_in_their_own_record_so_older_builds_still_read_details() {
     let mut persisted = Persisted::default();
     persisted.view.layout = LayoutMode::Grid;
+    persisted.view.zoom = 30;
     persisted.view.sizes = Sizes([0, 4, 3, 2, 11]);
     persisted.prefs.defaults.layout = LayoutMode::Adaptive;
     persisted.prefs.thumbnails = false;
@@ -93,7 +94,7 @@ fn layouts_and_item_sizes_ride_in_their_own_record_so_older_builds_still_read_de
     persisted.folders.put(folder_key(&loc(r"C:\Plain")), FolderView::default());
     persisted.folders.put(pics, FolderView { layout: LayoutMode::Columns, sizes: Sizes([2, 1, 1, 4, 5]), ..Default::default() });
     let s = Saved::new(persisted, None);
-    let bytes = s.encode().unwrap();
+    let bytes = older_encode(&s);
     let back = Saved::decode(&bytes).unwrap().sanitized();
     assert_eq!(back.persisted.view, s.persisted.view);
     assert_eq!(back.persisted.prefs, s.persisted.prefs);
@@ -129,7 +130,7 @@ fn sidebar_and_home_preferences_ride_sixth_after_the_pane_so_older_files_still_l
     };
     let pane = PaneState { visible: true, details: true, right_w: 410.0, bottom_h: 300.0, volume: 0.25 };
     let s = Saved::new(Persisted::default(), None).with_pane(pane).with_side(side.clone());
-    let bytes = s.encode().unwrap();
+    let bytes = older_encode(&s);
     let back = Saved::decode(&bytes).unwrap().sanitized();
     assert_eq!((back.pane, &back.side), (pane, &side));
     let trailing = postcard::to_stdvec(&side).unwrap().len() + postcard::to_stdvec(&s.persisted.archive).unwrap().len() + postcard::to_stdvec(&s.tools).unwrap().len() + postcard::to_stdvec(&SplitPrefs::default()).unwrap().len() + WORD_LEN;
@@ -164,7 +165,7 @@ fn archive_defaults_ride_seventh_and_never_keep_a_password() {
     let compression = Compression { format: Format::SevenZ, level: 9, threads: 4, password: Some(Secret("x".into())), ..Default::default() };
     persisted.archive = Defaults { compression, history: vec![r"C:\out".into()], open_after: true, hashes: vec![HashKind::Sha512] };
     let s = Saved::new(persisted, None);
-    let bytes = s.encode().unwrap();
+    let bytes = older_encode(&s);
     let back = Saved::decode(&bytes).unwrap();
     let want = Defaults { compression: Compression { password: None, ..s.persisted.archive.compression.clone() }, ..s.persisted.archive.clone() };
     assert_eq!(back.persisted.archive, want);
@@ -180,9 +181,9 @@ fn archive_defaults_ride_seventh_and_never_keep_a_password() {
 fn pane_state_rides_after_layouts_and_older_files_keep_the_default() {
     let pane = PaneState { visible: true, details: true, right_w: 410.0, bottom_h: 300.0, volume: 0.25 };
     let s = Saved::new(Persisted::default(), None).with_pane(pane);
-    let bytes = s.encode().unwrap();
+    let bytes = older_encode(&s);
     assert_eq!(Saved::decode(&bytes).unwrap().pane, pane);
-    let older = Saved::new(Persisted::default(), None).encode().unwrap();
+    let older = older_encode(&Saved::new(Persisted::default(), None));
     let trailing = [postcard::to_stdvec(&PaneState::default()), postcard::to_stdvec(&NavPrefs::default()), postcard::to_stdvec(&Defaults::default()), postcard::to_stdvec(&Tools::default()), postcard::to_stdvec(&SplitPrefs::default())].map(|b| b.unwrap().len()).iter().sum::<usize>() + WORD_LEN;
     let without = &older[..older.len() - trailing];
     assert_eq!(Saved::decode(without).unwrap().pane, PaneState::default());
@@ -203,7 +204,7 @@ fn the_old_dual_pane_record_stays_ninth_and_is_ignored_so_later_records_still_lo
     let side = NavPrefs { compact: true, ..Default::default() };
     let pane = PaneState { visible: true, ..Default::default() };
     let s = Saved::new(persisted, None).with_nav(nav.clone()).with_pane(pane).with_side(side.clone()).with_tools(tools.clone());
-    let bytes = s.encode().unwrap();
+    let bytes = older_encode(&s);
     let back = Saved::decode(&bytes).unwrap();
     assert_eq!((&back.persisted, &back.nav, back.pane, &back.side, &back.tools), (&s.persisted, &nav, pane, &side, &tools));
     let (head, word) = bytes.split_at(bytes.len() - WORD_LEN);
@@ -237,7 +238,7 @@ fn toolbar_and_search_history_ride_eighth_so_files_from_master_still_load() {
     persisted.archive.open_after = true;
     persisted.prefs.show_streams = true;
     let s = Saved::new(persisted, None).with_tools(tools.clone());
-    let bytes = s.encode().unwrap();
+    let bytes = older_encode(&s);
     let back = Saved::decode(&bytes).unwrap();
     assert_eq!((&back.tools, &back.persisted.archive, back.persisted.prefs.show_streams), (&tools, &s.persisted.archive, true));
     let bytes = &bytes[..bytes.len() - postcard::to_stdvec(&SplitPrefs::default()).unwrap().len() - WORD_LEN];
@@ -261,7 +262,7 @@ fn seven_z_word_size_rides_tenth_and_older_files_keep_automatic() {
     let mut persisted = Persisted::default();
     persisted.archive.compression.word = 64;
     let s = Saved::new(persisted, None);
-    let bytes = s.encode().unwrap();
+    let bytes = older_encode(&s);
     assert_eq!(Saved::decode(&bytes).unwrap().persisted.archive.compression.word, 64);
     let stored = postcard::to_stdvec(&64u32).unwrap();
     assert!(bytes[..bytes.len() - AFTER_WORD].ends_with(&stored));
@@ -277,13 +278,13 @@ fn state_files_round_trip_and_newer_or_broken_ones_are_set_aside() {
     let d = crate::schema::tests::Dir::new("state");
     let f = d.0.join("state.bin");
     let s = Saved::new(Persisted { path: loc(r"D:\kept"), show_hidden: true, ..Default::default() }, None);
-    let bytes = s.encode().unwrap();
+    let bytes = older_encode(&s);
     std::fs::write(&f, &bytes).unwrap();
     let back = load_from(&f).unwrap();
     assert_eq!((back.persisted.path, back.persisted.show_hidden), (loc(r"D:\kept"), true));
     let mut newer = s.clone();
     newer.version = VERSION + 1;
-    let newer = newer.encode().unwrap();
+    let newer = older_encode(&newer);
     std::fs::write(&f, &newer).unwrap();
     assert!(load_from(&f).is_none());
     assert_eq!(std::fs::read(crate::schema::aside(&f, crate::schema::NEWER)).unwrap(), newer);
@@ -296,7 +297,7 @@ fn state_files_round_trip_and_newer_or_broken_ones_are_set_aside() {
 fn the_palette_description_switch_rides_last_and_older_files_show_descriptions() {
     let mut persisted = Persisted::default();
     persisted.prefs.command_descriptions = false;
-    let bytes = Saved::new(persisted, None).encode().unwrap();
+    let bytes = older_encode(&Saved::new(persisted, None));
     assert_eq!(bytes[bytes.len() - QUICK_LEN - 1], 0);
     assert!(!Saved::decode(&bytes).unwrap().persisted.prefs.command_descriptions);
     let older = &bytes[..bytes.len() - QUICK_LEN - DESCRIPTIONS_LEN];
@@ -310,11 +311,44 @@ fn quick_access_order_paths_visits_and_deep_views_ride_last() {
     persisted.folders.put(deep, FolderView::default());
     persisted.folders.set_deep(vec![deep, 42]);
     let side = NavPrefs { quick: QuickPrefs { order: vec!["drives".into(), "pinned".into()], show_paths: true, visits: vec![(loc(r"D:\x"), 7)] }, ..Default::default() };
-    let bytes = Saved::new(persisted, None).with_side(side.clone()).encode().unwrap();
+    let bytes = older_encode(&Saved::new(persisted, None).with_side(side.clone()));
     let back = Saved::decode(&bytes).unwrap();
     assert_eq!(back.side.quick, side.quick);
     assert_eq!(back.persisted.folders.deep_keys(), [deep], "keys without a saved view are dropped");
     let record = postcard::to_stdvec(&QuickRecord { quick: side.quick.clone(), deep: vec![deep] }).unwrap().len();
     let older = Saved::decode(&bytes[..bytes.len() - record]).unwrap();
     assert_eq!(older.side.quick, QuickPrefs::default(), "older files start with the default order");
+}
+
+fn older_encode(s: &Saved) -> Vec<u8> {
+    let bytes = s.encode().unwrap();
+    let p = &s.persisted;
+    let folders = p.folders.entries();
+    let z = ZoomRecord { view: zoomed(&p.view), defaults: zoomed(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| zoomed(v)).collect(), retain_filter: p.prefs.retain_filter };
+    bytes[..bytes.len() - postcard::to_stdvec(&z).unwrap().len()].to_vec()
+}
+
+#[test]
+fn zoom_subfolders_and_new_columns_ride_last_and_older_files_keep_defaults() {
+    let mut persisted = Persisted { path: loc(r"D:\x"), ..Default::default() };
+    persisted.view.layout = LayoutMode::Grid;
+    persisted.view.zoom = 75;
+    persisted.view.subfolders = true;
+    persisted.view.columns.toggle(Column::Accessed);
+    persisted.view.columns.set_width(Column::Items, 200.0);
+    persisted.prefs.retain_filter = true;
+    let key = folder_key(&loc(r"D:\x"));
+    persisted.folders.put(key, FolderView { layout: LayoutMode::Tree, ..Default::default() });
+    let s = Saved::new(persisted, None);
+    let back = Saved::decode(&s.encode().unwrap()).unwrap().sanitized();
+    let v = back.persisted.view;
+    assert_eq!((v.layout, v.zoom, v.subfolders), (LayoutMode::Grid, 75, true));
+    assert!(v.columns.shown(Column::Accessed));
+    assert_eq!(v.columns.width(Column::Items), 200.0);
+    assert!(back.persisted.prefs.retain_filter);
+    assert_eq!(back.persisted.folders.get(key).map(|f| (f.layout, f.zoom)), Some((LayoutMode::Tree, 10)));
+    let older = Saved::decode(&older_encode(&s)).unwrap().sanitized();
+    let o = older.persisted.view;
+    assert_eq!((o.layout, o.zoom, o.subfolders), (LayoutMode::Grid, 30, false), "older files open icons at the medium size");
+    assert!(!o.columns.shown(Column::Accessed) && !older.persisted.prefs.retain_filter);
 }

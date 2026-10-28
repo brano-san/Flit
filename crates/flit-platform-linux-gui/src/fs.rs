@@ -1,5 +1,6 @@
 use crate::places;
 use crossbeam_channel::Sender;
+use flit_core::listing::DirStats;
 use flit_core::path::PathKind;
 use flit_core::{FsError, FsPath, ListingBuilder, ProviderEvent, TabId};
 use flit_platform::{Fs, PlatformError, Wake, Watcher};
@@ -40,8 +41,12 @@ impl Fs for LinuxGuiFs {
         None
     }
 
-    fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, u64) + Sync)) {
+    fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, DirStats) + Sync)) {
         LinuxFs.dir_sizes(dir, items, keep_going, report)
+    }
+
+    fn volume_size(&self, path: &FsPath) -> u64 {
+        LinuxFs.volume_size(path)
     }
 
     fn file_system(&self, path: &FsPath) -> Option<String> {

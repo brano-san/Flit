@@ -109,6 +109,10 @@ fn synthetic(n: u64) -> (Listing, SortKeys) {
         let created = MAR_15_2024 - (r % 400) as i64 * DAY;
         let idx = l.push(name.as_bytes(), Meta { size: SIZES[(r % 8) as usize], modified, created, attrs });
         l.set_tags(idx, [0, 0, 1, 2, 3, 4, 6, 1 << 31][(r % 8) as usize]);
+        l.set_accessed(idx, modified / 2 + (r % 3) as i64 * DAY);
+        if attrs & attr::DIR != 0 && r.is_multiple_of(3) {
+            l.set_stats(idx, crate::listing::DirStats { size: SIZES[(r % 8) as usize], folders: (r % 4) as u32, files: (r % 1200) as u32, partial: false });
+        }
         k.push(l.name(idx));
     }
     (l, k)
@@ -117,14 +121,14 @@ fn synthetic(n: u64) -> (Listing, SortKeys) {
 #[test]
 fn fast_sort_matches_comparator() {
     let (l, k) = synthetic(3000);
-    let groups = [GroupField::None, GroupField::Name, GroupField::Type, GroupField::Size, GroupField::Modified, GroupField::Created, GroupField::Tag];
-    for field in [SortField::Name, SortField::Size, SortField::Modified, SortField::Created, SortField::Type, SortField::Tag] {
+    let groups = [GroupField::None, GroupField::Name, GroupField::Type, GroupField::Size, GroupField::Modified, GroupField::Created, GroupField::Accessed, GroupField::Items, GroupField::Volume, GroupField::FolderUsage, GroupField::Tag];
+    for field in [SortField::Name, SortField::Size, SortField::Modified, SortField::Created, SortField::Accessed, SortField::Items, SortField::Volume, SortField::FolderUsage, SortField::Type, SortField::Tag] {
         for (descending, folders) in [(false, Folders::First), (true, Folders::First), (false, Folders::Last), (true, Folders::Mixed)] {
             for (g, &group) in groups.iter().enumerate() {
-                let unit = [DateUnit::Year, DateUnit::Month, DateUnit::Day][g % 3];
                 let view = ViewSpec {
                     sort: SortSpec { field, descending, folders },
-                    group: GroupSpec { field: group, descending: g % 2 == 1, unit },
+                    group: GroupSpec { field: group, descending: g % 2 == 1, ..Default::default() },
+                    today: crate::fmt::local_days(MAR_15_2024, 180) + 30 * g as i64,
                     show_hidden: true,
                     utc_offset_min: 180,
                     ..Default::default()
@@ -204,24 +208,34 @@ fn group_keys_follow_name_type_size_and_local_dates() {
     l.entries[1].modified = MAR_15_2024 + DAY + 1;
     let labels = |v: &ViewSpec| (0..l.len() as u32).map(|i| group_key(&l, i, v).0).collect::<Vec<_>>();
     let mut v = ViewSpec { group: GroupSpec { field: GroupField::Name, ..Default::default() }, ..Default::default() };
-    let by_name = labels(&v);
-    assert_eq!(by_name[2], 2);
-    assert_eq!(by_name[3], 1);
-    assert_eq!(by_name[5], 0x100 + 'ä' as u64);
+    assert_eq!(labels(&v), [2, 0, 3, 3, 2, 3], "A-H, I-P, Q-Z, then the rest");
     v.group.field = GroupField::Size;
-    assert_eq!(labels(&v), [1, 3, 7, 2, 0, 2]);
+    assert_eq!(labels(&v), [6, 4, 0, 5, UNSPECIFIED, 5], "Gigantic first, Empty last, folders without a size unspecified");
     v.group.field = GroupField::Type;
     assert_eq!(group_id(&l, 0, &v), group_id(&l, 1, &v), "extensions group without regard to case");
     assert_eq!(group_key(&l, 4, &v), (0, true));
-    v.group = GroupSpec { field: GroupField::Modified, unit: DateUnit::Day, ..Default::default() };
-    assert_ne!(group_key(&l, 0, &v), group_key(&l, 1, &v));
+    v.group = GroupSpec { field: GroupField::Modified, ..Default::default() };
+    v.today = crate::fmt::local_days(MAR_15_2024 + DAY + 1, 0);
+    assert_eq!(group_key(&l, 1, &v).0, 0, "today");
+    assert_eq!(group_key(&l, 0, &v).0, 1, "yesterday");
     v.utc_offset_min = -60;
     assert_eq!(group_key(&l, 0, &v), group_key(&l, 1, &v), "both fall on the same local day an hour west of UTC");
-    v.group.unit = DateUnit::Month;
-    assert_eq!(date_unit_value(l.entries[1].modified, &v), Some(2024 * 12 + 2));
-    assert_eq!(date_unit_value(0, &v), None);
-    v.group.unit = DateUnit::Year;
-    assert_eq!(date_unit_value(l.entries[1].modified, &v), Some(2024));
+    l.entries[2].modified = 0;
+    assert_eq!(group_key(&l, 2, &v).0, UNSPECIFIED, "no date");
+    v.today += 400;
+    assert_eq!(group_key(&l, 1, &v).0, 5, "long ago");
+}
+
+#[test]
+fn item_count_and_percent_buckets() {
+    let (mut l, _) = listing(&[("a", 0, true), ("b", 0, true), ("c", 0, true), ("f.txt", 50, false)]);
+    l.set_stats(0, crate::listing::DirStats { size: 10, folders: 1, files: 1500, partial: false });
+    l.set_stats(1, crate::listing::DirStats { size: 40, folders: 0, files: 0, partial: false });
+    assert_eq!((0..4).map(|i| items_bucket(&l, i)).collect::<Vec<_>>(), [0, 4, UNSPECIFIED, UNSPECIFIED]);
+    assert_eq!([percent_bucket(95, 100), percent_bucket(5, 100), percent_bucket(1, 0)], [0, 9, UNSPECIFIED]);
+    let v = ViewSpec { group: GroupSpec { field: GroupField::FolderUsage, ..Default::default() }, ..Default::default() };
+    assert!(!incremental(&v), "folder usage depends on every size");
+    assert_eq!(group_key(&l, 3, &v).0, percent_bucket(50, l.total));
 }
 
 #[test]

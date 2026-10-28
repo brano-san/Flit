@@ -7,6 +7,13 @@ size = "Taille"
 origin = "Emplacement d’origine"
 deleted = "Date de suppression"
 tag = "Balises"
+items = "Total des éléments"
+accessed = "Date d'accès"
+volume = "Part du volume"
+folder_usage = "Part du dossier"
+free = "Espace libre"
+file_system = "Système de fichiers"
+percent = "Pourcentage utilisé"
 
 [type]
 drive = "Lecteur"
@@ -15,23 +22,36 @@ file = "Fichier"
 ext_file = "Fichier {ext}"
 
 [group]
-unknown_date = "Date inconnue"
 unknown_location = "Emplacement inconnu"
 no_tags = "Aucune balise"
+unspecified = "Non spécifié"
+name_ah = "A - H"
+name_ip = "I - P"
+name_qz = "Q - Z"
+other = "Autres"
+today = "Aujourd'hui"
+yesterday = "Hier"
+last_week = "La semaine dernière"
+last_month = "Le mois dernier"
+last_year = "L'année dernière"
+long_ago = "Il y a longtemps"
+thousands = "Milliers (1000+)"
+hundreds = "Centaines (100 - 999)"
+dozens = "Dizaines (10 - 99)"
+few = "Quelques-uns (1 - 9)"
+no_items = "Aucun (0)"
 
 [size_group]
-folders = "Dossiers"
-empty = "Vide"
-tiny = "Minuscule (moins de 16 Ko)"
-small = "Petit (de 16 Ko à 1 Mo)"
-medium = "Moyen (de 1 à 128 Mo)"
-large = "Grand (de 128 Mo à 1 Go)"
-huge = "Très grand (de 1 à 4 Go)"
-gigantic = "Gigantesque (plus de 4 Go)"
+empty = "Vide (0 B)"
+tiny = "Minuscule (1 B - 16 KB)"
+small = "Petit (16 KB - 1 MB)"
+medium = "Moyen (1 - 128 MB)"
+large = "Grand (128 MB - 1 GB)"
+huge = "Énorme (1 - 4 GB)"
+gigantic = "Gigantesque (4+ GB)"
 
 [count]
 items = ["{n} élément", "{n} d’éléments", "{n} éléments"]
-filtered = ["{shown} sur {n} élément", "{shown} sur {n} d’éléments", "{shown} sur {n} éléments"]
 folders = ["{n} dossier", "{n} de dossiers", "{n} dossiers"]
 files = ["{n} fichier", "{n} de fichiers", "{n} fichiers"]
 

@@ -1247,7 +1247,8 @@ impl App {
             match self.hit(x, y) {
                 Hit::Row(_) => self.shell_menu(x, y, true, self.mods.shift),
                 Hit::ListEmpty | Hit::Group(_) => self.shell_menu(x, y, false, self.mods.shift),
-                Hit::Header(_) | Hit::ColSep(_) => self.header_menu(x, y),
+                Hit::Header(c) => self.header_menu(x, y, self.layout.columns.get(c).copied()),
+                Hit::ColSep(_) => self.header_menu(x, y, None),
                 h @ (Hit::Side(_) | Hit::SidePin(_) | Hit::SideHeader(_) | Hit::SideEmpty) => self.side_menu(x, y, h),
                 h @ (Hit::HomeItem(_) | Hit::HomeEmpty) => self.home_menu(x, y, h),
                 _ => {}

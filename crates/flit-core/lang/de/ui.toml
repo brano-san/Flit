@@ -17,7 +17,6 @@ folder = "Dieser Ordner ist leer."
 selected = ["{n} ausgewählt", "{n} ausgewählt"]
 unpacked = "{size} entpackt"
 loading = "Wird geladen…"
-timing = "{first} ms erste · {all} ms alle"
 
 [button]
 replace = "Ersetzen"

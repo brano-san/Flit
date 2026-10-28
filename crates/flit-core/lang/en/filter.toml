@@ -1,1 +1,4 @@
-placeholder = "Filter by name"
+files = "Filter {n} files..."
+seconds = "{n} sec"
+toggle_all = "Toggle all"
+untoggle_all = "Untoggle all"

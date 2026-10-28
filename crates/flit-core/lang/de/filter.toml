@@ -1,1 +1,4 @@
-placeholder = "Nach Name filtern"
+files = "{n} Dateien filtern..."
+seconds = "{n} s"
+toggle_all = "Alle einblenden"
+untoggle_all = "Alle ausblenden"

@@ -67,6 +67,26 @@ fn with_git(mut v: FolderView, (git, widths): GitLook) -> FolderView {
     v
 }
 
+type Zoomed = (u8, bool, u8, [f32; 7], [u8; 15]);
+
+#[derive(Serialize, Deserialize)]
+struct ZoomRecord {
+    view: Zoomed,
+    defaults: Zoomed,
+    folders: Vec<Zoomed>,
+    retain_filter: bool,
+}
+
+fn zoomed(v: &FolderView) -> Zoomed {
+    (v.zoom, v.subfolders, v.columns.extra, v.columns.extra_widths, v.columns.order)
+}
+
+fn with_zoom(mut v: FolderView, (zoom, subfolders, extra, widths, order): Zoomed) -> FolderView {
+    (v.zoom, v.subfolders) = (zoom, subfolders);
+    (v.columns.extra, v.columns.extra_widths, v.columns.order) = (extra, widths, order);
+    v.sanitized()
+}
+
 #[derive(Serialize, Deserialize)]
 struct LayoutRecord {
     view: Look,
@@ -153,7 +173,7 @@ impl Saved {
 
     fn head(&self) -> Head {
         let (p, v) = (&self.persisted, &self.persisted.view);
-        let sort = if matches!(v.sort.field, SortField::Created | SortField::Tag) { SortField::Name } else { v.sort.field };
+        let sort = if matches!(v.sort.field, SortField::Name | SortField::Modified | SortField::Type | SortField::Size | SortField::Origin) { v.sort.field } else { SortField::Name };
         Head { version: self.version, path: p.path.clone(), sort, descending: v.sort.descending, show_hidden: p.show_hidden, col_w: STAGE_ONE_COLUMNS.map(|c| v.columns.width(c)), placement: self.placement }
     }
 
@@ -188,7 +208,7 @@ impl Saved {
                 }
             }
         }
-        let mut deep = Vec::new();
+        let (mut deep, mut zoom) = (Vec::new(), None);
         let p = &mut saved.persisted;
         (p.view, p.prefs, p.folders) = (r.view, r.prefs, FolderViews::from_entries(r.folders));
         if let Some((archive, tail)) = rest.and_then(|t| postcard::take_from_bytes::<Defaults>(t).ok()) {
@@ -203,9 +223,10 @@ impl Saved {
                         if let Ok((g, tail)) = postcard::take_from_bytes::<GitRecord>(tail) {
                             if let Ok((descriptions, tail)) = postcard::take_from_bytes::<bool>(tail) {
                                 p.prefs.command_descriptions = descriptions;
-                                if let Ok((q, _)) = postcard::take_from_bytes::<QuickRecord>(tail) {
+                                if let Ok((q, tail)) = postcard::take_from_bytes::<QuickRecord>(tail) {
                                     saved.side.quick = q.quick;
                                     deep = q.deep;
+                                    zoom = postcard::take_from_bytes::<ZoomRecord>(tail).ok().map(|z| z.0);
                                 }
                             }
                             (p.view, p.prefs.defaults) = (with_git(p.view, g.view), with_git(p.prefs.defaults, g.defaults));
@@ -213,6 +234,14 @@ impl Saved {
                             if folders.len() == g.folders.len() {
                                 folders.iter_mut().zip(g.folders).for_each(|((_, v), gl)| *v = with_git(*v, gl));
                                 p.folders = FolderViews::from_entries(folders);
+                            }
+                            if let Some(z) = zoom.take() {
+                                (p.view, p.prefs.defaults, p.prefs.retain_filter) = (with_zoom(p.view, z.view), with_zoom(p.prefs.defaults, z.defaults), z.retain_filter);
+                                let mut folders = p.folders.entries();
+                                if folders.len() == z.folders.len() {
+                                    folders.iter_mut().zip(z.folders).for_each(|((_, v), zl)| *v = with_zoom(*v, zl));
+                                    p.folders = FolderViews::from_entries(folders);
+                                }
                             }
                             p.folders.set_deep(std::mem::take(&mut deep));
                         }
@@ -235,6 +264,7 @@ impl Saved {
             thumb_cache_mb: p.prefs.thumb_cache_mb,
         };
         let gits = GitRecord { view: git_look(&p.view), defaults: git_look(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| git_look(v)).collect() };
+        let zooms = ZoomRecord { view: zoomed(&p.view), defaults: zoomed(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| zoomed(v)).collect(), retain_filter: p.prefs.retain_filter };
         let views = ViewRecord { view: legacy(p.view), prefs, folders: folders.into_iter().map(|(k, v)| (k, legacy(v))).collect() };
         let mut bytes = postcard::to_stdvec(&self.head()).ok()?;
         bytes.extend(postcard::to_stdvec(&self.nav).ok()?);
@@ -249,6 +279,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&gits).ok()?);
         bytes.extend(postcard::to_stdvec(&p.prefs.command_descriptions).ok()?);
         bytes.extend(postcard::to_stdvec(&QuickRecord { quick: self.side.quick.clone(), deep: p.folders.deep_keys() }).ok()?);
+        bytes.extend(postcard::to_stdvec(&zooms).ok()?);
         Some(bytes)
     }
 

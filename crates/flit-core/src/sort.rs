@@ -15,6 +15,13 @@ pub enum SortField {
     Origin,
     Created,
     Tag,
+    Accessed,
+    Items,
+    Free,
+    FileSystem,
+    Percent,
+    Volume,
+    FolderUsage,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash, serde::Serialize, serde::Deserialize)]
@@ -43,11 +50,18 @@ pub enum GroupField {
     Created,
     Origin,
     Tag,
+    Accessed,
+    Items,
+    Free,
+    FileSystem,
+    Percent,
+    Volume,
+    FolderUsage,
 }
 
 impl GroupField {
     pub fn is_date(self) -> bool {
-        matches!(self, Self::Modified | Self::Created)
+        matches!(self, Self::Modified | Self::Created | Self::Accessed)
     }
 }
 
@@ -75,6 +89,11 @@ pub struct ViewSpec {
     pub hide_dotfiles: bool,
     pub show_streams: bool,
     pub utc_offset_min: i32,
+    pub today: i64,
+    pub deep: bool,
+    pub tree: bool,
+    pub hide_dirs: bool,
+    pub hide_files: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash)]
@@ -87,7 +106,8 @@ pub enum CaseMode {
 const SYMBOLS: u8 = 0x02;
 const DIGITS: u8 = 0x48;
 const LETTERS: u8 = 0x50;
-const SIZE_LIMITS: [u64; 5] = [16 << 10, 1 << 20, 128 << 20, 1 << 30, 4 << 30];
+const SIZE_LIMITS: [u64; 6] = [1, 16 << 10, 1 << 20, 128 << 20, 1 << 30, 4 << 30];
+pub const UNSPECIFIED: u64 = u64::MAX;
 const PARALLEL_SORT: usize = 1 << 15;
 
 #[derive(Clone, Debug)]
@@ -220,41 +240,74 @@ pub fn visible(l: &Listing, i: u32, v: &ViewSpec) -> bool {
         && (a & attr::HIDDEN == 0 || (v.show_hidden && (v.show_system || a & attr::SYSTEM == 0)))
         && !(v.hide_dotfiles && l.name(i).first() == Some(&b'.'))
         && (a & attr::STREAM == 0 || v.show_streams)
+        && (a & attr::NESTED == 0 || v.deep || v.tree)
+        && !(if a & attr::DIR != 0 { v.hide_dirs } else { v.hide_files })
 }
 
-fn initial(name: &[u8]) -> u64 {
-    if name.is_empty() {
-        return 1;
+pub fn initial(name: &[u8]) -> u64 {
+    match name.first().map(u8::to_ascii_lowercase) {
+        Some(b'a'..=b'h') => 0,
+        Some(b'i'..=b'p') => 1,
+        Some(b'q'..=b'z') => 2,
+        _ => 3,
     }
-    match char::from_u32(name::decode(name).0) {
-        Some(c) if c.is_ascii_digit() => 2,
-        Some(c) if c.is_alphabetic() => 0x100 + c.to_lowercase().next().unwrap_or(c) as u64,
-        _ => 1,
-    }
+}
+
+pub fn bytes_bucket(n: u64) -> u64 {
+    (SIZE_LIMITS.len() - SIZE_LIMITS.iter().position(|&lim| n < lim).unwrap_or(SIZE_LIMITS.len())) as u64
 }
 
 pub fn size_bucket(e: &Entry) -> u64 {
     if e.is_dir() && e.attrs & attr::SIZE_KNOWN == 0 {
-        return 0;
+        return UNSPECIFIED;
     }
-    if e.size == 0 {
-        return 1;
-    }
-    2 + SIZE_LIMITS.iter().position(|&lim| e.size < lim).unwrap_or(SIZE_LIMITS.len()) as u64
+    bytes_bucket(e.size)
 }
 
-pub fn date_unit_value(ticks: i64, v: &ViewSpec) -> Option<i64> {
+pub fn date_bucket(ticks: i64, v: &ViewSpec) -> u64 {
     if ticks <= 0 {
-        return None;
+        return UNSPECIFIED;
     }
-    let days = fmt::local_days(ticks, v.utc_offset_min);
-    Some(match v.group.unit {
-        DateUnit::Day => days,
-        unit => {
-            let (y, m, _) = fmt::civil_from_days(days);
-            if unit == DateUnit::Year { y } else { y * 12 + m as i64 - 1 }
-        }
-    })
+    match v.today - fmt::local_days(ticks, v.utc_offset_min) {
+        ..=0 => 0,
+        1 => 1,
+        2..=7 => 2,
+        8..=31 => 3,
+        32..=365 => 4,
+        _ => 5,
+    }
+}
+
+pub fn items_bucket(l: &Listing, i: u32) -> u64 {
+    let Some(n) = l.stats(i).filter(|_| l.entries[i as usize].is_dir()).map(|s| s.items()) else { return UNSPECIFIED };
+    match n {
+        1000.. => 0,
+        100.. => 1,
+        10.. => 2,
+        1.. => 3,
+        0 => 4,
+    }
+}
+
+pub fn percent_bucket(part: u64, whole: u64) -> u64 {
+    if whole == 0 {
+        return UNSPECIFIED;
+    }
+    9 - (part as u128 * 10 / whole as u128).min(9) as u64
+}
+
+pub fn known_size(e: &Entry) -> Option<u64> {
+    (!e.is_dir() || e.attrs & attr::SIZE_KNOWN != 0).then_some(e.size)
+}
+
+pub fn used_permille(l: &Listing, i: u32) -> Option<u64> {
+    let total = l.entries[i as usize].size;
+    let (free, _) = l.drive(i)?;
+    (total > 0).then(|| (total.saturating_sub(free) as u128 * 1000 / total as u128) as u64)
+}
+
+pub fn file_system(l: &Listing, i: u32) -> &[u8] {
+    l.drive(i).map_or(&[], |d| d.1)
 }
 
 pub fn first_tag(mask: u32) -> u64 {
@@ -266,10 +319,6 @@ fn tag_key(mask: u32) -> u64 {
     (!mask).reverse_bits() as u64
 }
 
-fn date_key(ticks: i64, v: &ViewSpec) -> u64 {
-    date_unit_value(ticks, v).map_or(0, |n| n as u64 ^ (1 << 63))
-}
-
 pub fn group_key(l: &Listing, i: u32, v: &ViewSpec) -> (u64, bool) {
     let e = &l.entries[i as usize];
     match v.group.field {
@@ -278,10 +327,20 @@ pub fn group_key(l: &Listing, i: u32, v: &ViewSpec) -> (u64, bool) {
         GroupField::Type if e.is_dir() => (0, true),
         GroupField::Type => (ext_prefix(l.ext(i)).saturating_add(1), l.ext(i).len() <= 8),
         GroupField::Size => (size_bucket(e), true),
-        GroupField::Modified => (date_key(e.modified, v), true),
-        GroupField::Created => (date_key(e.created, v), true),
+        GroupField::Modified => (date_bucket(e.modified, v), true),
+        GroupField::Created => (date_bucket(e.created, v), true),
+        GroupField::Accessed => (date_bucket(e.accessed, v), true),
         GroupField::Origin => (ext_prefix(recycle::origin(l, i)), recycle::origin(l, i).len() <= 8),
         GroupField::Tag => (first_tag(e.tags), true),
+        GroupField::Items => (items_bucket(l, i), true),
+        GroupField::Free => (l.drive(i).map_or(UNSPECIFIED, |d| bytes_bucket(d.0)), true),
+        GroupField::FileSystem => match file_system(l, i) {
+            [] => (UNSPECIFIED, true),
+            fs => (ext_prefix(fs).min(UNSPECIFIED - 1), fs.len() <= 8),
+        },
+        GroupField::Percent => (used_permille(l, i).map_or(UNSPECIFIED, |p| percent_bucket(p, 1000)), true),
+        GroupField::Volume => (known_size(e).map_or(UNSPECIFIED, |s| percent_bucket(s, l.volume)), true),
+        GroupField::FolderUsage => (known_size(e).map_or(UNSPECIFIED, |s| percent_bucket(s, l.total)), true),
     }
 }
 
@@ -289,6 +348,7 @@ pub fn group_bytes(l: &Listing, i: u32, f: GroupField) -> &[u8] {
     match f {
         GroupField::Type => l.ext(i),
         GroupField::Origin => recycle::origin(l, i),
+        GroupField::FileSystem => file_system(l, i),
         _ => &[],
     }
 }
@@ -297,16 +357,17 @@ pub fn group_cmp(l: &Listing, v: &ViewSpec, a: u32, b: u32) -> Ordering {
     if v.group.field == GroupField::None {
         return Ordering::Equal;
     }
-    let o = group_key(l, a, v).0.cmp(&group_key(l, b, v).0);
-    let o = if v.group.descending { o.reverse() } else { o };
-    o.then_with(|| group_tail_cmp(l, v, a, b))
+    group_key(l, a, v).0.cmp(&group_key(l, b, v).0).then_with(|| group_tail_cmp(l, v, a, b))
 }
 
 #[inline]
 fn group_tail_cmp(l: &Listing, v: &ViewSpec, a: u32, b: u32) -> Ordering {
     let f = v.group.field;
-    let o = ext_cmp(group_bytes(l, a, f), group_bytes(l, b, f));
-    if v.group.descending { o.reverse() } else { o }
+    ext_cmp(group_bytes(l, a, f), group_bytes(l, b, f))
+}
+
+pub fn incremental(v: &ViewSpec) -> bool {
+    v.group.field != GroupField::FolderUsage
 }
 
 pub fn group_id(l: &Listing, i: u32, v: &ViewSpec) -> u64 {
@@ -342,6 +403,10 @@ fn item_cmp(l: &Listing, k: &SortKeys, spec: SortSpec, a: u32, b: u32) -> Orderi
         SortField::Type => ext_cmp(l.ext(a), l.ext(b)),
         SortField::Origin => ext_cmp(recycle::origin(l, a), recycle::origin(l, b)),
         SortField::Tag => tag_key(ea.tags).cmp(&tag_key(eb.tags)),
+        SortField::Accessed => ea.accessed.cmp(&eb.accessed),
+        SortField::Volume | SortField::FolderUsage => ea.size.cmp(&eb.size),
+        SortField::Items | SortField::Free | SortField::Percent => primary(l, spec.field, a).cmp(&primary(l, spec.field, b)),
+        SortField::FileSystem => ext_cmp(file_system(l, a), file_system(l, b)),
     }
     .then_with(|| k.cmp(a, b))
     .then_with(|| l.name(a).cmp(l.name(b)));
@@ -379,25 +444,35 @@ fn ext_prefix(ext: &[u8]) -> u64 {
     u64::from_be_bytes(p)
 }
 
+fn primary(l: &Listing, field: SortField, i: u32) -> u64 {
+    let e = &l.entries[i as usize];
+    match field {
+        SortField::Name => 0,
+        SortField::Size | SortField::Volume | SortField::FolderUsage => e.size,
+        SortField::Modified => e.modified as u64 ^ (1 << 63),
+        SortField::Created => e.created as u64 ^ (1 << 63),
+        SortField::Accessed => e.accessed as u64 ^ (1 << 63),
+        SortField::Type => ext_prefix(l.ext(i)),
+        SortField::Origin => ext_prefix(recycle::origin(l, i)),
+        SortField::Tag => tag_key(e.tags),
+        SortField::Items => l.stats(i).filter(|_| e.is_dir()).map_or(0, |s| s.items() + 1),
+        SortField::Free => l.drive(i).map_or(0, |d| d.0),
+        SortField::FileSystem => ext_prefix(file_system(l, i)),
+        SortField::Percent => used_permille(l, i).map_or(0, |p| p + 1),
+    }
+}
+
 pub fn sort(l: &Listing, k: &SortKeys, view: ViewSpec, out: &mut Vec<u32>) {
     let _s = tracing::trace_span!("sort", n = l.len()).entered();
     let spec = view.sort;
     let inv = |x: u64| if spec.descending { !x } else { x };
-    let ginv = |x: u64| if view.group.descending { !x } else { x };
     let item = |i: u32| {
             let e = &l.entries[i as usize];
-            let primary = match spec.field {
-                SortField::Name => 0,
-                SortField::Size => e.size,
-                SortField::Modified => e.modified as u64 ^ (1 << 63),
-                SortField::Created => e.created as u64 ^ (1 << 63),
-                SortField::Type => ext_prefix(l.ext(i)),
-                SortField::Origin => ext_prefix(recycle::origin(l, i)),
-                SortField::Tag => tag_key(e.tags),
-            };
+            let primary = primary(l, spec.field, i);
             let exact = match spec.field {
                 SortField::Type => l.ext(i).len() <= 8,
                 SortField::Origin => recycle::origin(l, i).len() <= 8,
+                SortField::FileSystem => file_system(l, i).len() <= 8,
                 _ => true,
             };
             let group = match spec.folders {
@@ -407,7 +482,7 @@ pub fn sort(l: &Listing, k: &SortKeys, view: ViewSpec, out: &mut Vec<u32>) {
             };
             let (gkey, gexact) = group_key(l, i, &view);
             let name2 = inv(key_word(k.key(i), 8));
-            Item { gkey: ginv(gkey), primary: inv(primary), name: inv(k.prefix[i as usize]), name2, idx: i, group, exact, gexact }
+            Item { gkey, primary: inv(primary), name: inv(k.prefix[i as usize]), name2, idx: i, group, exact, gexact }
     };
     let cmp = |a: &Item, b: &Item| {
         a.gkey

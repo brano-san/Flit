@@ -17,6 +17,7 @@ pub mod attr {
     pub const SIZE_KNOWN: u32 = 1 << 6;
     pub const ARCHIVED: u32 = 1 << 7;
     pub const STREAM: u32 = 1 << 8;
+    pub const NESTED: u32 = 1 << 9;
     pub const DELETED: u32 = 1 << 31;
 }
 
@@ -34,6 +35,7 @@ pub struct Entry {
     pub size: u64,
     pub modified: i64,
     pub created: i64,
+    pub accessed: i64,
     pub name_off: u32,
     pub attrs: u32,
     pub name_len: u16,
@@ -58,10 +60,47 @@ impl Entry {
     }
 }
 
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DirStats {
+    pub size: u64,
+    pub folders: u32,
+    pub files: u32,
+    pub partial: bool,
+}
+
+const STATS_KNOWN: u64 = 1 << 63;
+const STATS_PARTIAL: u64 = 1 << 62;
+const STATS_COUNT: u64 = (1 << 31) - 1;
+
+impl DirStats {
+    fn pack(self) -> u64 {
+        STATS_KNOWN | if self.partial { STATS_PARTIAL } else { 0 } | (self.folders as u64).min(STATS_COUNT) << 31 | (self.files as u64).min(STATS_COUNT)
+    }
+
+    fn unpack(v: u64, size: u64) -> Option<Self> {
+        (v & STATS_KNOWN != 0).then_some(Self { size, folders: (v >> 31 & STATS_COUNT) as u32, files: (v & STATS_COUNT) as u32, partial: v & STATS_PARTIAL != 0 })
+    }
+
+    pub fn items(self) -> u64 {
+        self.folders as u64 + self.files as u64
+    }
+
+    pub fn add(&mut self, o: DirStats) {
+        self.size += o.size;
+        self.folders = self.folders.saturating_add(o.folders);
+        self.files = self.files.saturating_add(o.files);
+        self.partial |= o.partial;
+    }
+}
+
 #[derive(Clone, Default, Debug)]
 pub struct Listing {
     pub names: Vec<u8>,
     pub entries: Vec<Entry>,
+    pub items: Vec<u64>,
+    pub volume: u64,
+    pub total: u64,
+    pub nested: u32,
 }
 
 impl Listing {
@@ -85,6 +124,54 @@ impl Listing {
         &self.names[start..end.max(start)]
     }
     #[inline]
+    pub fn folder(&self, i: u32) -> &[u8] {
+        if self.entries[i as usize].attrs & attr::NESTED != 0 { self.tail(i) } else { &[] }
+    }
+
+    pub fn stats(&self, i: u32) -> Option<DirStats> {
+        DirStats::unpack(*self.items.get(i as usize)?, self.entries[i as usize].size)
+    }
+
+    pub fn set_stats(&mut self, i: u32, s: DirStats) {
+        if self.items.len() <= i as usize {
+            self.items.resize(i as usize + 1, 0);
+        }
+        self.items[i as usize] = s.pack();
+    }
+
+    pub fn drive(&self, i: u32) -> Option<(u64, &[u8])> {
+        let t = self.tail(i);
+        (self.entries[i as usize].attrs & attr::VOLUME != 0 && t.len() >= 8).then(|| (u64::from_le_bytes(t[..8].try_into().unwrap_or_default()), &t[8..]))
+    }
+
+    pub fn push_drive_info(&mut self, free: u64, file_system: &str) {
+        self.names.extend_from_slice(&free.to_le_bytes());
+        self.names.extend_from_slice(file_system.as_bytes());
+    }
+
+    pub fn push_nested(&mut self, name: &[u8], meta: Meta, accessed: i64, folder: &[u8]) -> u32 {
+        let i = self.push(name, Meta { attrs: meta.attrs | attr::NESTED, ..meta });
+        self.entries[i as usize].accessed = accessed;
+        self.names.extend_from_slice(folder);
+        self.nested += 1;
+        i
+    }
+
+    pub fn set_accessed(&mut self, i: u32, t: i64) {
+        self.entries[i as usize].accessed = t;
+    }
+
+    pub fn mark_deleted(&mut self, i: u32) {
+        let e = &mut self.entries[i as usize];
+        if e.attrs & attr::DELETED == 0 {
+            if e.attrs & attr::NESTED == 0 {
+                self.total = self.total.saturating_sub(e.size);
+            }
+            e.attrs |= attr::DELETED;
+        }
+    }
+
+    #[inline]
     pub fn ext(&self, i: u32) -> &[u8] {
         let n = self.name(i);
         &n[n.len() - self.entries[i as usize].ext_len as usize..]
@@ -94,10 +181,14 @@ impl Listing {
         let len = (self.names.len() - off).min(u16::MAX as usize);
         let name = &self.names[off..off + len];
         let ext_len = if meta.attrs & attr::DIR != 0 { 0 } else { name::ext_len(name) };
+        if meta.attrs & attr::NESTED == 0 {
+            self.total += meta.size;
+        }
         self.entries.push(Entry {
             size: meta.size,
             modified: meta.modified,
             created: meta.created,
+            accessed: 0,
             name_off: off as u32,
             attrs: meta.attrs,
             name_len: len as u16,
@@ -120,7 +211,12 @@ impl Listing {
     }
 
     pub fn set_meta(&mut self, i: u32, m: Meta) {
-        self.entries[i as usize].set_meta(m);
+        let e = &mut self.entries[i as usize];
+        if e.attrs & (attr::NESTED | attr::DELETED) == 0 {
+            self.total = self.total.saturating_sub(e.size) + m.size;
+        }
+        let nested = e.attrs & attr::NESTED;
+        e.set_meta(Meta { attrs: m.attrs | nested, ..m });
     }
 
     pub fn set_tags(&mut self, i: u32, mask: u32) {
@@ -129,6 +225,8 @@ impl Listing {
 
     pub fn append(&mut self, part: Listing) {
         let base = self.names.len() as u32;
+        self.total += part.total;
+        self.nested += part.nested;
         self.names.extend_from_slice(&part.names);
         self.entries.extend(part.entries.into_iter().map(|mut e| {
             e.name_off += base;
@@ -241,6 +339,17 @@ impl<'a> ListingBuilder<'a> {
     pub fn push(&mut self, name: &[u8], meta: Meta) {
         let i = self.listing.push(name, meta);
         self.keys.push(self.listing.name(i));
+    }
+
+    pub fn push_nested(&mut self, name: &[u8], meta: Meta, accessed: i64, folder: &[u8]) {
+        let i = self.listing.push_nested(name, meta, accessed, folder);
+        self.keys.push(self.listing.name(i));
+    }
+
+    pub fn set_accessed(&mut self, t: i64) {
+        if let Some(e) = self.listing.entries.last_mut() {
+            e.accessed = t;
+        }
     }
 
     pub fn tagging(&self) -> Option<(Arc<Tags>, u32)> {

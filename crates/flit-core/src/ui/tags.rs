@@ -266,7 +266,7 @@ impl App {
         self.tag_defs().get(sort::first_tag(mask) as usize).map(|t| Color::rgb(t.color))
     }
 
-    pub(super) fn draw_name<B: TextBackend>(&self, g: &mut Gfx<B>, p: &Parts, text: &str, mask: u32, font: FontStyle, color: Color) {
+    pub(super) fn draw_name<B: TextBackend>(&self, g: &mut Gfx<B>, p: &Parts, text: &str, mask: u32, font: FontStyle, color: Color) -> f32 {
         let (r, m) = (p.name, g.metrics(font));
         let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
         let marks = || tags::bits(mask).filter_map(|k| self.tag_defs().get(k)).take(MAX_MARKS);
@@ -279,6 +279,7 @@ impl App {
         for (k, t) in marks().enumerate() {
             g.dl.round_rect(Rect::new((x + w + 2.0 * gap + k as f32 * (d + gap)).round(), y, d, d), Color::rgb(t.color), d / 2.0);
         }
+        x + w + if count == 0 { 0.0 } else { reserve }
     }
 }
 

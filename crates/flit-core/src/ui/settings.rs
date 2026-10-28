@@ -9,7 +9,7 @@ use crate::location::Location;
 use crate::path::{is_label, PathKind, COMPUTER_LABEL, HOME_LABEL, RECYCLE_BIN_LABEL};
 use crate::open::OpenTarget;
 use crate::provider::Resolve;
-use crate::sort::{DateUnit, Folders, GroupField, SortField};
+use crate::sort::{Folders, GroupField, SortField};
 use crate::tags::{self, Tag, TagRequest, MAX_TAGS};
 use super::keymap::{self, Keymap};
 use crate::theme::{Area, Mode};
@@ -200,8 +200,6 @@ const FOLDERS: [Folders; 3] = [Folders::First, Folders::Last, Folders::Mixed];
 const FOLDER_CHOICES: Choices = &[("first", S::SettingsChoiceFolderFirst), ("last", S::SettingsChoiceFolderLast), ("mixed", S::SettingsChoiceFolderMixed)];
 const GROUPS: [GroupField; 7] = [GroupField::None, GroupField::Name, GroupField::Modified, GroupField::Created, GroupField::Size, GroupField::Type, GroupField::Tag];
 const GROUP_CHOICES: Choices = &[("none", S::SettingsChoiceGroupNone), ("name", S::SettingsChoiceGroupName), ("modified", S::SettingsChoiceGroupModified), ("created", S::SettingsChoiceGroupCreated), ("size", S::SettingsChoiceGroupSize), ("type", S::SettingsChoiceGroupType), ("tags", S::SettingsChoiceGroupTags)];
-const UNITS_OF_DATE: [DateUnit; 3] = [DateUnit::Year, DateUnit::Month, DateUnit::Day];
-const DATE_UNIT_CHOICES: Choices = &[("year", S::SettingsChoiceDateUnitYear), ("month", S::SettingsChoiceDateUnitMonth), ("day", S::SettingsChoiceDateUnitDay)];
 const ARCHIVES: [Format; 4] = Format::WRITABLE;
 const ARCHIVE_CHOICES: Choices = &[("zip", S::SettingsChoiceArchiveZip), ("7z", S::SettingsChoiceArchive7z), ("tar", S::SettingsChoiceArchiveTar), ("gz", S::SettingsChoiceArchiveGz)];
 const THEMES: [Mode; 3] = [Mode::System, Mode::Light, Mode::Dark];
@@ -209,7 +207,6 @@ const THEME_CHOICES: Choices = &[("system", S::SettingsChoiceThemeSystem), ("lig
 const OPS_CHOICES: Choices = &[("during", S::SettingsChoiceOpsDuring), ("always", S::SettingsChoiceOpsAlways)];
 const CLICKS: [ClickOpen; 4] = [ClickOpen::Never, ClickOpen::Touch, ClickOpen::Mouse, ClickOpen::Always];
 const CLICK_CHOICES: Choices = &[("never", S::SettingsChoiceClickNever), ("touch", S::SettingsChoiceClickTouch), ("mouse", S::SettingsChoiceClickMouse), ("always", S::SettingsChoiceClickAlways)];
-const COUNT_CHOICES: Choices = &[("total", S::SettingsChoiceCountTotal), ("separate", S::SettingsChoiceCountSeparate)];
 const AREA_HELP: S = S::SettingsHelpAreaColor;
 pub const LOG_LEVEL: &str = "advanced.log_level";
 pub const LOG_DEFAULT: usize = 1;
@@ -274,7 +271,6 @@ pub static SETTINGS: &[Setting] = &[
     toggle("appearance.round_corners", Page::Appearance, S::SettingsTitleAppearanceRoundCorners, S::SettingsHelpAppearanceRoundCorners, |a| a.round_corners, |a, on| a.round_corners = on),
     choice("appearance.ops_button", Page::Appearance, S::SettingsTitleAppearanceOpsButton, S::SettingsHelpAppearanceOpsButton, OPS_CHOICES, |a| usize::from(a.ops_button_always), |a, i| a.ops_button_always = i == 1),
     toggle("appearance.status_bar", Page::Appearance, S::SettingsTitleAppearanceStatusBar, S::SettingsHelpAppearanceStatusBar, |a| a.prefs.status_bar, |a, on| a.set_pref(|p| &mut p.status_bar, on)),
-    choice("appearance.item_count", Page::Appearance, S::SettingsTitleAppearanceItemCount, S::SettingsHelpAppearanceItemCount, COUNT_CHOICES, |a| usize::from(a.prefs.split_count), |a, i| a.set_pref(|p| &mut p.split_count, i == 1)),
     pick("appearance.color_address", Picker::Color, S::SettingsTitleAppearanceColorAddress, AREA_HELP, |a| a.look.areas[Area::Address as usize].key(), |a, v| a.set_area_color(Area::Address, &v)),
     pick("appearance.color_toolbar", Picker::Color, S::SettingsTitleAppearanceColorToolbar, AREA_HELP, |a| a.look.areas[Area::Toolbar as usize].key(), |a, v| a.set_area_color(Area::Toolbar, &v)),
     pick("appearance.color_sidebar", Picker::Color, S::SettingsTitleAppearanceColorSidebar, AREA_HELP, |a| a.look.areas[Area::Sidebar as usize].key(), |a, v| a.set_area_color(Area::Sidebar, &v)),
@@ -322,8 +318,6 @@ pub static SETTINGS: &[Setting] = &[
     toggle("layout.default_descending", Page::Layout, S::SettingsTitleLayoutDefaultDescending, S::SettingsHelpLayoutDefaultDescending, |a| a.prefs.defaults.sort.descending, |a, on| a.prefs.defaults.sort.descending = on),
     choice("layout.default_folders", Page::Layout, S::SettingsTitleLayoutDefaultFolders, S::SettingsHelpLayoutDefaultFolders, FOLDER_CHOICES, |a| pos(&FOLDERS, &a.prefs.defaults.sort.folders), |a, i| a.prefs.defaults.sort.folders = FOLDERS[i]),
     choice("layout.default_group", Page::Layout, S::SettingsTitleLayoutDefaultGroup, S::SettingsHelpLayoutDefaultGroup, GROUP_CHOICES, |a| pos(&GROUPS, &a.prefs.defaults.group.field), |a, i| a.prefs.defaults.group.field = GROUPS[i]),
-    toggle("layout.default_group_descending", Page::Layout, S::SettingsTitleLayoutDefaultGroupDescending, S::SettingsHelpLayoutDefaultGroupDescending, |a| a.prefs.defaults.group.descending, |a, on| a.prefs.defaults.group.descending = on),
-    choice("layout.default_date_unit", Page::Layout, S::SettingsTitleLayoutDefaultDateUnit, S::SettingsHelpLayoutDefaultDateUnit, DATE_UNIT_CHOICES, |a| pos(&UNITS_OF_DATE, &a.prefs.defaults.group.unit), |a, i| a.prefs.defaults.group.unit = UNITS_OF_DATE[i]),
     toggle("layout.column_modified", Page::Layout, S::SettingsTitleLayoutColumnModified, S::SettingsHelpLayoutColumnModified, |a| a.prefs.defaults.columns.shown(Column::Modified), |a, on| set_column(a, Column::Modified, on)),
     toggle("layout.column_created", Page::Layout, S::SettingsTitleLayoutColumnCreated, S::SettingsHelpLayoutColumnCreated, |a| a.prefs.defaults.columns.shown(Column::Created), |a, on| set_column(a, Column::Created, on)),
     toggle("layout.column_type", Page::Layout, S::SettingsTitleLayoutColumnType, S::SettingsHelpLayoutColumnType, |a| a.prefs.defaults.columns.shown(Column::Type), |a, on| set_column(a, Column::Type, on)),

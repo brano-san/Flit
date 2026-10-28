@@ -1,12 +1,13 @@
 use super::keymap::Keymap;
 use super::toolbar::{Overflow, ToolMenu};
-use super::{App, LayoutMode};
+use super::layouts::{layout_of_zoom, zoom_title, ZOOM_DETAILS, ZOOM_ICONS, ZOOM_LARGE, ZOOM_LIST, ZOOM_TREE, ZOOM_XL};
+use super::{App, Column, LayoutMode, MENU_COLUMNS};
 use crate::archive::{self, Format};
 use crate::i18n::S;
 use crate::listing::attr;
 use crate::location::Location;
 use crate::path::PathKind;
-use crate::sort::{DateUnit, Folders, GroupField, SortField};
+use crate::sort::{Folders, GroupField, SortField};
 use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -57,15 +58,44 @@ pub(super) enum Cmd {
     OpenTagged(usize),
     Setting(usize, usize),
     GitBranch(usize),
+    Column(ColumnCmd),
+    Types(TypeCmd),
 }
 
-const SORTS: [(SortField, &str, S); 6] = [
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum ColumnCmd {
+    Toggle(Column),
+    Shift(Column, bool),
+    Fit(Column),
+    Restore,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum TypeCmd {
+    Toggle(u64),
+    All(bool),
+}
+
+const SORTS: [(SortField, &str, S); 10] = [
     (SortField::Name, "view.sort.name", S::MenuSortName),
-    (SortField::Modified, "view.sort.modified", S::MenuSortModified),
-    (SortField::Created, "view.sort.created", S::MenuSortCreated),
     (SortField::Type, "view.sort.type", S::MenuSortType),
     (SortField::Size, "view.sort.size", S::MenuSortSize),
+    (SortField::Items, "view.sort.items", S::DetailsColumnItems),
+    (SortField::Created, "view.sort.created", S::MenuSortCreated),
+    (SortField::Modified, "view.sort.modified", S::MenuSortModified),
+    (SortField::Accessed, "view.sort.accessed", S::DetailsColumnAccessed),
+    (SortField::Volume, "view.sort.volume", S::DetailsColumnVolume),
+    (SortField::FolderUsage, "view.sort.folder_usage", S::DetailsColumnFolderUsage),
     (SortField::Tag, "view.sort.tag", S::MenuSortTags),
+];
+
+const COMPUTER_SORTS: [(SortField, &str, S); 6] = [
+    (SortField::Name, "view.sort.name", S::MenuSortName),
+    (SortField::Type, "view.sort.type", S::MenuSortType),
+    (SortField::Size, "view.sort.size", S::MenuSortSize),
+    (SortField::Free, "view.sort.free", S::DetailsColumnFree),
+    (SortField::Percent, "view.sort.percent", S::DetailsColumnPercent),
+    (SortField::FileSystem, "view.sort.file_system", S::DetailsColumnFileSystem),
 ];
 
 const BIN_SORTS: [(SortField, &str, S); 4] = [
@@ -81,14 +111,28 @@ const FOLDERS: [(Folders, &str, S); 3] = [
     (Folders::Mixed, "view.sort.mixed", S::MenuSortMixed),
 ];
 
-const GROUPS: [(GroupField, &str, S); 7] = [
+const GROUPS: [(GroupField, &str, S); 11] = [
     (GroupField::None, "view.group.none", S::MenuGroupNone),
     (GroupField::Name, "view.group.name", S::MenuSortName),
-    (GroupField::Modified, "view.group.modified", S::MenuSortModified),
-    (GroupField::Created, "view.group.created", S::MenuSortCreated),
     (GroupField::Type, "view.group.type", S::MenuSortType),
     (GroupField::Size, "view.group.size", S::MenuSortSize),
+    (GroupField::Items, "view.group.items", S::DetailsColumnItems),
+    (GroupField::Created, "view.group.created", S::MenuSortCreated),
+    (GroupField::Modified, "view.group.modified", S::MenuSortModified),
+    (GroupField::Accessed, "view.group.accessed", S::DetailsColumnAccessed),
+    (GroupField::Volume, "view.group.volume", S::DetailsColumnVolume),
+    (GroupField::FolderUsage, "view.group.folder_usage", S::DetailsColumnFolderUsage),
     (GroupField::Tag, "view.group.tag", S::MenuSortTags),
+];
+
+const COMPUTER_GROUPS: [(GroupField, &str, S); 7] = [
+    (GroupField::None, "view.group.none", S::MenuGroupNone),
+    (GroupField::Name, "view.group.name", S::MenuSortName),
+    (GroupField::Type, "view.group.type", S::MenuSortType),
+    (GroupField::Size, "view.group.size", S::MenuSortSize),
+    (GroupField::Free, "view.group.free", S::DetailsColumnFree),
+    (GroupField::Percent, "view.group.percent", S::DetailsColumnPercent),
+    (GroupField::FileSystem, "view.group.file_system", S::DetailsColumnFileSystem),
 ];
 
 const BIN_GROUPS: [(GroupField, &str, S); 5] = [
@@ -99,16 +143,16 @@ const BIN_GROUPS: [(GroupField, &str, S); 5] = [
     (GroupField::Size, "view.group.size", S::MenuSortSize),
 ];
 
-const LAYOUT_CHOICES: [(LayoutMode, &str); 6] = [
-    (LayoutMode::Details, "view.layout.details"),
-    (LayoutMode::List, "view.layout.list"),
-    (LayoutMode::Cards, "view.layout.cards"),
-    (LayoutMode::Columns, "view.layout.columns"),
-    (LayoutMode::Grid, "view.layout.grid"),
-    (LayoutMode::Adaptive, "view.layout.adaptive"),
+const ZOOM_CHOICES: [(u8, &str); 6] = [
+    (ZOOM_DETAILS, "view.layout.details"),
+    (ZOOM_TREE, "view.layout.tree"),
+    (ZOOM_LIST, "view.layout.list"),
+    (ZOOM_ICONS, "view.layout.icons_m"),
+    (ZOOM_LARGE, "view.layout.icons_l"),
+    (ZOOM_XL, "view.layout.icons_xl"),
 ];
 
-const UNITS: [(DateUnit, &str, S); 3] = [(DateUnit::Year, "view.group.year", S::MenuGroupYear), (DateUnit::Month, "view.group.month", S::MenuGroupMonth), (DateUnit::Day, "view.group.day", S::MenuGroupDay)];
+const FLIT_LAYOUTS: [(LayoutMode, &str); 3] = [(LayoutMode::Cards, "view.layout.cards"), (LayoutMode::Columns, "view.layout.columns"), (LayoutMode::Adaptive, "view.layout.adaptive")];
 
 
 fn trimmed(mut items: Vec<MenuItem>) -> Vec<MenuItem> {
@@ -162,6 +206,11 @@ impl Menu<'_> {
 
     fn command(&mut self, cmd: Cmd, label: &str, keys: String, checked: bool) {
         self.marked(cmd, label, keys, checked, Mark::None);
+    }
+
+    fn entry(&mut self, cmd: Cmd, label: &str, keys: String, mark: Mark, checked: bool, disabled: bool) {
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys, checked, stay: mark == Mark::Check && !disabled, mark, icon: "", disabled });
+        self.cmds.push(cmd);
     }
 
     fn marked(&mut self, cmd: Cmd, label: &str, keys: String, checked: bool, mark: Mark) {
@@ -235,15 +284,46 @@ impl App {
         self.collect(|a, m| if on_items { a.item_menu(m) } else { a.folder_menu(m) })
     }
 
-    pub(super) fn build_header_menu(&mut self) -> Vec<MenuItem> {
+    pub(super) fn build_header_menu(&mut self, col: Option<Column>) -> Vec<MenuItem> {
         self.collect(|a, m| {
-            let cols = a.tab().columns;
-            for &c in a.column_kinds().iter().skip(1) {
-                m.check(c.toggle_id(), c.title(), cols.shown(c));
+            let (cols, kinds) = (a.tab().columns, a.column_kinds());
+            let shown: Vec<Column> = cols.ordered(kinds).into_iter().filter(|&c| cols.shown(c)).collect();
+            if let Some(c) = col {
+                let k = shown.iter().position(|&x| x == c).unwrap_or(0);
+                let fixed = c == Column::Name;
+                m.entry(Cmd::Column(ColumnCmd::Shift(c, false)), S::MenuShiftLeft.t(), String::new(), Mark::None, false, fixed || k <= 1);
+                m.entry(Cmd::Column(ColumnCmd::Shift(c, true)), S::MenuShiftRight.t(), String::new(), Mark::None, false, fixed || k + 1 >= shown.len());
+                m.entry(Cmd::Column(ColumnCmd::Fit(c)), S::MenuSizeFit.t(), String::new(), Mark::None, false, false);
+                m.entry(Cmd::Column(ColumnCmd::Toggle(c)), S::MenuCloseColumn.t(), "MouseMiddle".into(), Mark::None, false, fixed);
+                m.separator();
+            }
+            let keys = m.keys.all_text("view.columns.fit");
+            m.entry(Cmd::Action("view.columns.fit"), S::MenuSizeAll.t(), keys, Mark::None, false, false);
+            m.entry(Cmd::Column(ColumnCmd::Restore), S::MenuRestoreColumns.t(), String::new(), Mark::None, false, cols.is_default());
+            m.separator();
+            let listed = MENU_COLUMNS.iter().copied().filter(|c| kinds.contains(c));
+            let extras = kinds.iter().copied().filter(|c| !MENU_COLUMNS.contains(c));
+            for c in listed.chain(extras) {
+                m.entry(Cmd::Column(ColumnCmd::Toggle(c)), c.title(), String::new(), Mark::Check, cols.shown(c), c == Column::Name);
             }
             m.separator();
-            m.action("view.columns.fit", S::MenuFitColumns.t());
             m.check("view.columns.autofit", S::MenuAutofitColumns.t(), a.prefs.auto_fit);
+        })
+    }
+
+    pub(super) fn build_layout_menu(&mut self) -> Vec<MenuItem> {
+        self.collect(|a, m| a.layout_entries(m))
+    }
+
+    pub(super) fn build_types_menu(&mut self, types: &[(u64, String, usize)]) -> Vec<MenuItem> {
+        self.collect(|a, m| {
+            let t = a.tab();
+            m.entry(Cmd::Types(TypeCmd::All(true)), S::FilterToggleAll.t(), String::new(), Mark::None, false, t.hidden_types.is_empty());
+            m.entry(Cmd::Types(TypeCmd::All(false)), S::FilterUntoggleAll.t(), String::new(), Mark::None, false, types.iter().all(|x| t.hidden_types.contains(&x.0)));
+            m.separator();
+            for (key, label, n) in types {
+                m.entry(Cmd::Types(TypeCmd::Toggle(*key)), label, n.to_string(), Mark::Check, !t.hidden_types.contains(key), false);
+            }
         })
     }
 
@@ -343,7 +423,14 @@ impl App {
 
     fn layout_entries(&self, m: &mut Menu) {
         let t = self.tab();
-        for (mode, id) in LAYOUT_CHOICES {
+        let current = t.mode.zoomed().then(|| zoom_title(t.zoom));
+        for (z, id) in ZOOM_CHOICES {
+            let keys = m.keys.all_text(id);
+            m.radio(id, zoom_title(z), keys, current == Some(zoom_title(z)));
+            m.iconed(layout_of_zoom(z).icon());
+        }
+        m.separator();
+        for (mode, id) in FLIT_LAYOUTS {
             let keys = m.keys.all_text(id);
             m.radio(id, mode.title(), keys, mode == t.mode);
             m.iconed(mode.icon());
@@ -359,7 +446,8 @@ impl App {
     fn sort_entries(&self, m: &mut Menu) {
         let t = self.tab();
         let sort = t.view_spec.sort;
-        m.choices(if t.view_loc.is_recycle_bin() { &BIN_SORTS[..] } else { &SORTS[..] }, sort.field);
+        let computer = t.view_loc.path().kind() == PathKind::Computer;
+        m.choices(if t.view_loc.is_recycle_bin() { &BIN_SORTS[..] } else if computer { &COMPUTER_SORTS[..] } else { &SORTS[..] }, sort.field);
         m.separator();
         m.radio("view.sort.ascending", S::MenuSortAscending.t(), String::new(), !sort.descending);
         m.radio("view.sort.descending", S::MenuSortDescending.t(), String::new(), sort.descending);
@@ -370,16 +458,8 @@ impl App {
     fn group_entries(&self, m: &mut Menu) {
         let t = self.tab();
         let group = t.view_spec.group;
-        m.choices(if t.view_loc.is_recycle_bin() { &BIN_GROUPS[..] } else { &GROUPS[..] }, group.field);
-        if group.field != GroupField::None {
-            m.separator();
-            m.radio("view.group.ascending", S::MenuSortAscending.t(), String::new(), !group.descending);
-            m.radio("view.group.descending", S::MenuSortDescending.t(), String::new(), group.descending);
-        }
-        if group.field.is_date() {
-            m.separator();
-            m.choices(&UNITS, group.unit);
-        }
+        let computer = t.view_loc.path().kind() == PathKind::Computer;
+        m.choices(if t.view_loc.is_recycle_bin() { &BIN_GROUPS[..] } else if computer { &COMPUTER_GROUPS[..] } else { &GROUPS[..] }, group.field);
     }
 
     fn new_entries(&self, m: &mut Menu) {
@@ -627,6 +707,8 @@ impl App {
             Some(Cmd::OpenTagged(k)) => self.open_all_tagged(k, now),
             Some(Cmd::Setting(i, choice)) => self.choose_setting(i, choice),
             Some(Cmd::GitBranch(k)) => self.git_switch(k),
+            Some(Cmd::Column(c)) => self.column_command(c),
+            Some(Cmd::Types(c)) => self.types_command(c),
             None => {}
         }
     }

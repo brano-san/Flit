@@ -119,24 +119,23 @@ fn grouping_adds_counted_headers_that_collapse_on_click() {
     click_line(&mut app, 100.0, 4, MouseButton::Left);
     assert_eq!(names(&app), ["src", "a.rs"]);
     assert_eq!(app.tab().view.as_ref().unwrap().lines(), 5);
-    let mut count = String::new();
-    app.count_text(&mut count, app.tab().view.as_ref().unwrap());
-    assert_eq!(count, "4 items", "collapsed items still count");
+    let c = app.tab().view.as_ref().unwrap().all_counts();
+    assert_eq!(c.dirs + c.files, 4, "collapsed items still count");
     frame(&mut app);
     click_line(&mut app, 100.0, 4, MouseButton::Left);
     assert_eq!(names(&app).len(), 4);
     run(&mut app, "view.group.size");
     resort_now(&mut app);
-    assert_eq!(group_labels(&app), ["Folders 1", "Tiny (under 16 KB) 2", "Small (16 KB to 1 MB) 1"]);
-    run(&mut app, "view.group.descending");
+    assert_eq!(group_labels(&app), ["Small (16 KB - 1 MB) 1", "Tiny (1 B - 16 KB) 2", "Unspecified 1"], "folders without a size come last");
+    run(&mut app, "view.sort.descending");
     resort_now(&mut app);
-    assert_eq!(group_labels(&app)[0], "Small (16 KB to 1 MB) 1");
+    assert_eq!(group_labels(&app)[0], "Small (16 KB - 1 MB) 1", "the order of groups is fixed");
     run(&mut app, "view.group.modified");
     resort_now(&mut app);
-    assert_eq!(group_labels(&app), ["Unknown date 4"]);
+    assert_eq!(group_labels(&app), ["Unspecified 4"]);
     run(&mut app, "view.group.name");
     resort_now(&mut app);
-    assert_eq!(group_labels(&app), ["S 1", "C 1", "B 1", "A 1"]);
+    assert_eq!(group_labels(&app), ["A - H 3", "Q - Z 1"]);
     run(&mut app, "view.group.none");
     resort_now(&mut app);
     assert!(app.tab().view.as_ref().unwrap().groups().is_empty());
@@ -199,17 +198,52 @@ fn the_header_menu_shows_hides_and_fits_columns_and_the_bin_keeps_its_own() {
     click(&mut app, h.x + 20.0, h.y + h.h / 2.0, MouseButton::Right);
     let menu = menu_of(&mut app);
     assert!(!menu.shell && menu.items.is_empty());
-    let want = [("Date modified", true), ("Date created", false), ("Type", true), ("Size", true), ("Tags", false), ("Size all columns to fit", false), ("Always size columns to fit", false)];
+    let want = [
+        ("Shift Column Left", false),
+        ("Shift Column Right", false),
+        ("Size Column To Fit", false),
+        ("Close Column", false),
+        ("Size All Columns To Fit", false),
+        ("Restore Default Columns", false),
+        ("Name", true),
+        ("Type", true),
+        ("Size", true),
+        ("Total Items", true),
+        ("Date Created", false),
+        ("Date Modified", true),
+        ("Date Accessed", false),
+        ("Volume Usage", false),
+        ("Folder Usage", false),
+        ("Tags", false),
+        ("Always size columns to fit", false),
+    ];
     assert_eq!(commands(&menu.menu), want.map(|(l, c)| (l.to_owned(), c)));
-    app.on_event(&Event::MenuCommand(1), Instant::now());
-    assert_eq!(app.columns(), [Column::Name, Column::Modified, Column::Created, Column::Type, Column::Size]);
+    let disabled: Vec<bool> = menu.menu.iter().filter_map(|m| if let MenuItem::Command { disabled, .. } = m { Some(*disabled) } else { None }).collect();
+    assert_eq!((disabled[0], disabled[1], disabled[5], disabled[6]), (true, false, true, true), "Type cannot move left of Name, defaults cannot be restored, Name always shows");
+    app.on_event(&Event::MenuCommand(10), Instant::now());
+    assert_eq!(app.columns(), [Column::Name, Column::Type, Column::Modified, Column::Items, Column::Size, Column::Created]);
     assert_eq!(app.layout.columns, app.columns());
+    let h = app.layout.cols[1];
+    click(&mut app, h.x + 20.0, h.y + h.h / 2.0, MouseButton::Right);
+    menu_of(&mut app);
+    app.on_event(&Event::MenuCommand(1), Instant::now());
+    assert_eq!(app.columns(), [Column::Name, Column::Modified, Column::Type, Column::Items, Column::Size, Column::Created], "Shift Column Right");
+    let t = app.layout.cols[2];
+    app.on_event(&Event::MouseDown { x: t.x + 20.0, y: t.y + 5.0, button: MouseButton::Middle, clicks: 1 }, Instant::now());
+    app.on_event(&Event::MouseUp { x: t.x + 20.0, y: t.y + 5.0, button: MouseButton::Middle }, Instant::now());
+    assert_eq!(app.columns(), [Column::Name, Column::Modified, Column::Items, Column::Size, Column::Created], "a middle click closes the column");
+    click(&mut app, h.x + 20.0, h.y + h.h / 2.0, MouseButton::Right);
+    menu_of(&mut app);
+    app.on_event(&Event::MenuCommand(5), Instant::now());
+    assert_eq!(app.columns(), [Column::Name, Column::Type, Column::Modified, Column::Items, Column::Size], "Restore Default Columns");
+    run(&mut app, "view.column.created");
     run(&mut app, "view.column.type");
     run(&mut app, "view.columns.fit");
     frame(&mut app);
     let w = app.tab().columns.widths;
     assert_eq!([Column::Modified, Column::Created, Column::Size].map(|c| w[c as usize]), [170.0, 160.0, 80.0]);
-    let (sx, sy) = (app.layout.cols[3].x, h.y + h.h / 2.0);
+    let k = app.layout.columns.iter().position(|&c| c == Column::Size).unwrap();
+    let (sx, sy) = (app.layout.cols[k].x, h.y + h.h / 2.0);
     app.on_event(&Event::MouseDown { x: sx, y: sy, button: MouseButton::Left, clicks: 1 }, Instant::now());
     app.on_event(&Event::MouseMove { x: sx - 25.0, y: sy }, Instant::now());
     app.on_event(&Event::MouseUp { x: sx - 25.0, y: sy, button: MouseButton::Left }, Instant::now());
@@ -302,10 +336,8 @@ fn display_switches_hide_dotfiles_extensions_and_the_status_bar_and_split_the_co
     let v = app.tab().view.as_ref().unwrap();
     let shown: Vec<String> = v.rows().iter().map(|&i| app.shown_name(v.listing(), i).into_owned()).collect();
     assert_eq!(shown, ["src", "notes"]);
-    run(&mut app, "view.item_count");
-    let mut count = String::new();
-    app.count_text(&mut count, app.tab().view.as_ref().unwrap());
-    assert_eq!(count, "1 folder, 1 file");
+    let c = app.tab().view.as_ref().unwrap().shown_counts();
+    assert_eq!((c.dirs, c.files), (1, 1));
     run(&mut app, "view.status_bar");
     frame(&mut app);
     assert_eq!((app.layout.status.h, app.layout.list.bottom()), (0.0, 600.0));
@@ -469,4 +501,27 @@ fn the_saved_view_menu_has_a_header_three_modes_and_set_as_default() {
     app.view_mode_menu();
     let m = menu_of(&mut app);
     assert!(m.menu.iter().any(|i| matches!(i, MenuItem::Command { label, disabled: true, .. } if label == "Set as default")), "Set as default is off for This folder");
+}
+
+#[test]
+fn new_columns_show_item_counts_usage_and_drive_space() {
+    use crate::listing::{attr, DirStats, Listing};
+    let app = app_at(r"C:\x");
+    let mut l = Listing::default();
+    let d = l.push(b"dir", Meta { attrs: attr::DIR, ..Default::default() });
+    let empty = l.push(b"none", Meta { attrs: attr::DIR, ..Default::default() });
+    let f = l.push(b"f.txt", Meta { size: 250, ..Default::default() });
+    l.set_stats(d, DirStats { size: 750, folders: 2, files: 10, partial: false });
+    l.set_stats(empty, DirStats::default());
+    l.volume = 10_000;
+    let arena = Bump::new();
+    let cell = |l: &Listing, i, c| app.cell_text(&arena, l, i, c).to_owned();
+    assert_eq!([cell(&l, d, Column::Items), cell(&l, empty, Column::Items), cell(&l, f, Column::Items)], ["12", "--", "--"]);
+    assert_eq!(cell(&l, f, Column::Volume), "2.5%");
+    assert_eq!(cell(&l, f, Column::FolderUsage), "100.0%");
+    let c = l.push(b"C:", Meta { attrs: attr::DIR | attr::VOLUME, size: 1000, ..Default::default() });
+    l.push_drive_info(250, "NTFS");
+    assert_eq!([cell(&l, c, Column::Percent), cell(&l, c, Column::FileSystem)], ["75.0%", "NTFS"]);
+    assert!(!cell(&l, c, Column::Free).is_empty());
+    assert_eq!(cell(&l, f, Column::Accessed), "", "no access time, no text");
 }

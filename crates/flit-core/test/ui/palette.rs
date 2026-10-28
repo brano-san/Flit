@@ -167,8 +167,8 @@ fn a_query_ranks_commands_fuzzily_and_marks_titles() {
 fn unavailable_commands_are_listed_gray_and_never_run() {
     let mut a = crate::ui::harness::app(&["a.txt"]);
     a.open_palette();
-    a.palette_insert("toggle subfolders");
-    assert_eq!(item_title(&a, 0), "Toggle Subfolders");
+    a.palette_insert("paste shortcut");
+    assert_eq!(item_title(&a, 0), "Paste Shortcut");
     let Line::Item(k, ..) = commands(&a).lines[0] else { unreachable!() };
     assert!(!commands(&a).live[k]);
     a.drain_effects().for_each(drop);

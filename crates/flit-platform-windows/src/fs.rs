@@ -1,12 +1,12 @@
 use crate::walk_index::Handle;
 use flit_core::desktop_ini::DesktopIni;
-use flit_core::listing::{attr, Meta};
+use flit_core::listing::{attr, DirStats, Meta};
 use flit_core::path::PathKind;
 use flit_core::{FsError, FsErrorKind, FsPath, ListingBuilder};
 use flit_platform::Fs;
 use std::cell::RefCell;
 use std::mem::offset_of;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use windows::core::{PCWSTR, PWSTR};
 use windows::Wdk::Foundation::OBJECT_ATTRIBUTES;
@@ -107,16 +107,22 @@ fn volumes(out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
         let name = [b'A' + i, b':'];
         let root: Vec<u16> = [b'A' + i, b':', b'\\'].iter().map(|&c| c as u16).chain(Some(0)).collect();
         let mut meta = Meta { attrs: attr::DIR | attr::VOLUME, ..Default::default() };
+        let mut free = None;
         unsafe {
             if GetDriveTypeW(PCWSTR(root.as_ptr())) == DRIVE_FIXED {
-                let mut total = 0u64;
-                if GetDiskFreeSpaceExW(PCWSTR(root.as_ptr()), None, Some(&mut total), None).is_ok() {
+                let (mut total, mut avail) = (0u64, 0u64);
+                if GetDiskFreeSpaceExW(PCWSTR(root.as_ptr()), Some(&mut avail), Some(&mut total), None).is_ok() {
                     meta.size = total;
                     meta.attrs |= attr::SIZE_KNOWN;
+                    free = Some(avail);
                 }
             }
         }
         out.push(&name, meta);
+        if let Some(free) = free {
+            let fs = FsPath::parse_bytes(&[b'A' + i, b':', b'\\']).and_then(|p| crate::engine::volume_file_system(&p)).unwrap_or_default();
+            out.listing.push_drive_info(free, &fs);
+        }
     }
     for distro in crate::places::wsl_distros() {
         out.push(distro.as_bytes(), Meta { attrs: attr::DIR | attr::VOLUME, ..Default::default() });
@@ -143,9 +149,9 @@ fn open_child(parent: &Handle, name: &[u16]) -> Option<Handle> {
     open_relative(parent, name, FILE_LIST_DIRECTORY.0, FILE_DIRECTORY_FILE.0 | FILE_OPEN_FOR_BACKUP_INTENT.0)
 }
 
-fn scan(dir: &Handle, keep_going: &dyn Fn() -> bool, mut subdir: impl FnMut(&[u16])) -> u64 {
+fn scan(dir: &Handle, keep_going: &dyn Fn() -> bool, mut subdir: impl FnMut(&[u16])) -> (u64, u64) {
     SCAN_BUFFER.with_borrow_mut(|buf| {
-        let mut bytes = 0;
+        let (mut bytes, mut files) = (0, 0);
         let mut first = true;
         while keep_going() {
             let mut iosb = IO_STATUS_BLOCK::default();
@@ -161,6 +167,7 @@ fn scan(dir: &Handle, keep_going: &dyn Fn() -> bool, mut subdir: impl FnMut(&[u1
                 let (next, attrs, tag, size, len) = unsafe { ((*e).NextEntryOffset, (*e).FileAttributes, (*e).EaSize, (*e).EndOfFile as u64, (*e).FileNameLength as usize / 2) };
                 if attrs & FILE_ATTRIBUTE_DIRECTORY.0 == 0 {
                     bytes += size;
+                    files += 1;
                 } else if map_attrs(attrs, tag) & attr::LINK == 0 {
                     let name = unsafe { std::slice::from_raw_parts(base.add(off + offset_of!(FILE_FULL_DIR_INFORMATION, FileName)) as *const u16, len) };
                     if name != [b'.' as u16] && name != [b'.' as u16, b'.' as u16] {
@@ -173,7 +180,7 @@ fn scan(dir: &Handle, keep_going: &dyn Fn() -> bool, mut subdir: impl FnMut(&[u1
                 off += next as usize;
             }
         }
-        bytes
+        (bytes, files)
     })
 }
 
@@ -193,9 +200,12 @@ impl Subdirs {
 struct Tree<'a> {
     idx: u32,
     bytes: AtomicU64,
+    files: AtomicU64,
+    folders: AtomicU64,
+    partial: AtomicBool,
     open: AtomicUsize,
     keep_going: &'a (dyn Fn() -> bool + Sync),
-    report: &'a (dyn Fn(u32, u64) + Sync),
+    report: &'a (dyn Fn(u32, DirStats) + Sync),
 }
 
 impl Tree<'_> {
@@ -206,20 +216,25 @@ impl Tree<'_> {
     fn visit<'s>(&'s self, s: &rayon::Scope<'s>, dir: Option<Handle>) {
         if let Some(parent) = dir {
             let mut subdirs = Subdirs { parent, names: Vec::new(), ends: Vec::new() };
-            let bytes = scan(&subdirs.parent, self.keep_going, |name| {
+            let (bytes, files) = scan(&subdirs.parent, self.keep_going, |name| {
                 subdirs.names.extend_from_slice(name);
                 subdirs.ends.push(subdirs.names.len());
             });
             self.bytes.fetch_add(bytes, Ordering::Relaxed);
+            self.files.fetch_add(files, Ordering::Relaxed);
+            self.folders.fetch_add(subdirs.ends.len() as u64, Ordering::Relaxed);
             self.open.fetch_add(subdirs.ends.len(), Ordering::Relaxed);
             let subdirs = Arc::new(subdirs);
             for k in 0..subdirs.ends.len() {
                 let subdirs = subdirs.clone();
                 s.spawn(move |s| self.visit(s, self.enter(move || subdirs.open(k))));
             }
+        } else if (self.keep_going)() {
+            self.partial.store(true, Ordering::Relaxed);
         }
         if self.open.fetch_sub(1, Ordering::AcqRel) == 1 {
-            (self.report)(self.idx, self.bytes.load(Ordering::Relaxed));
+            let count = |a: &AtomicU64| a.load(Ordering::Relaxed).min(u32::MAX as u64) as u32;
+            (self.report)(self.idx, DirStats { size: self.bytes.load(Ordering::Relaxed), folders: count(&self.folders), files: count(&self.files), partial: self.partial.load(Ordering::Relaxed) });
         }
     }
 }
@@ -240,19 +255,21 @@ fn query_dir(h: HANDLE, buf: &mut [u64], first: bool) -> Result<bool, FsError> {
     Ok(true)
 }
 
-fn each_entry(buf: &[u64], f: &mut dyn FnMut(&[u16], Meta, u64)) {
+type EntryVisit<'a> = dyn FnMut(&[u16], Meta, u64, i64) + 'a;
+
+fn each_entry(buf: &[u64], f: &mut EntryVisit) {
     let base = buf.as_ptr() as *const u8;
     let mut off = 0usize;
     loop {
         let e = unsafe { base.add(off) } as *const FILE_ID_BOTH_DIR_INFORMATION;
-        let (next, name, meta, id) = unsafe {
+        let (next, name, meta, id, accessed) = unsafe {
             let name_at = base.add(off + offset_of!(FILE_ID_BOTH_DIR_INFORMATION, FileName)) as *const u16;
             let name = std::slice::from_raw_parts(name_at, (*e).FileNameLength as usize / 2);
             let attrs = map_attrs((*e).FileAttributes, (*e).EaSize);
-            ((*e).NextEntryOffset, name, Meta { size: (*e).EndOfFile as u64, modified: (*e).LastWriteTime, created: (*e).CreationTime, attrs }, (*e).FileId as u64)
+            ((*e).NextEntryOffset, name, Meta { size: (*e).EndOfFile as u64, modified: (*e).LastWriteTime, created: (*e).CreationTime, attrs }, (*e).FileId as u64, (*e).LastAccessTime)
         };
         if name != [b'.' as u16] && name != [b'.' as u16, b'.' as u16] {
-            f(name, meta, id);
+            f(name, meta, id, accessed);
         }
         if next == 0 {
             return;
@@ -264,8 +281,9 @@ fn each_entry(buf: &[u64], f: &mut dyn FnMut(&[u16], Meta, u64)) {
 fn list_part(buf: &[u64], case: flit_core::sort::CaseMode, tagging: &Option<(Arc<flit_core::tags::Tags>, u32)>) -> (flit_core::listing::Listing, flit_core::sort::SortKeys) {
     let mut listing = flit_core::listing::Listing::default();
     let mut keys = flit_core::sort::SortKeys::new(case);
-    each_entry(buf, &mut |name, meta, id| {
+    each_entry(buf, &mut |name, meta, id, accessed| {
         let i = listing.push_utf16(name, meta);
+        listing.set_accessed(i, accessed);
         keys.push(listing.name(i));
         if let Some((tags, volume)) = tagging {
             listing.set_tags(i, tags.mask(flit_core::tags::FileKey { volume: *volume, id }));
@@ -368,8 +386,9 @@ impl Fs for NtFs {
                 Err(e) => break Err(e),
             }
             reads += 1;
-            each_entry(&buf, &mut |name, meta, id| {
+            each_entry(&buf, &mut |name, meta, id, accessed| {
                 out.push_utf16_id(name, meta, id);
+                out.set_accessed(accessed);
                 if out.wants_streams() && meta.attrs & attr::DIR == 0 {
                     push_streams(dir, name, meta, out);
                 }
@@ -422,6 +441,12 @@ impl Fs for NtFs {
         }
     }
 
+    fn volume_size(&self, path: &FsPath) -> u64 {
+        let mut total = 0u64;
+        let ok = unsafe { GetDiskFreeSpaceExW(PCWSTR(path.to_wide(true).as_ptr()), None, Some(&mut total), None) }.is_ok();
+        if ok { total } else { 0 }
+    }
+
     fn file_system(&self, path: &FsPath) -> Option<String> {
         crate::engine::volume_file_system(path)
     }
@@ -438,8 +463,11 @@ impl Fs for NtFs {
         sectors as u64 * bytes as u64
     }
 
-    fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, u64) + Sync)) {
-        let trees: Vec<Tree> = items.iter().map(|&(idx, _)| Tree { idx, bytes: AtomicU64::new(0), open: AtomicUsize::new(1), keep_going, report }).collect();
+    fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, DirStats) + Sync)) {
+        let trees: Vec<Tree> = items
+            .iter()
+            .map(|&(idx, _)| Tree { idx, bytes: AtomicU64::new(0), files: AtomicU64::new(0), folders: AtomicU64::new(0), partial: AtomicBool::new(false), open: AtomicUsize::new(1), keep_going, report })
+            .collect();
         let walk = || {
             rayon::scope(|s| {
                 for (tree, (_, name)) in trees.iter().zip(items).rev() {

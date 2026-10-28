@@ -10,12 +10,12 @@ use crate::library::LibraryOp;
 use crate::location::Location;
 use crate::path::PathKind;
 use crate::open::OpenTarget;
-use crate::sort::{DateUnit, Folders, GroupField, SortField};
+use crate::sort::{Folders, GroupField, SortField};
+use super::layouts::{ZOOM_DETAILS, ZOOM_ICONS, ZOOM_LARGE, ZOOM_LIST, ZOOM_TREE, ZOOM_XL};
 use std::time::Instant;
 
 const MAX_CLOSED: usize = 32;
 const FONT_STEP: i32 = 10;
-const ICON_LEVELS: [u8; 3] = [3, 6, 10];
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Chord {
@@ -181,7 +181,7 @@ impl Action {
 use Group as G;
 
 pub static ACTIONS: &[Action] = &[
-    Action::later("subfolders.toggle", G::Quick, S::ActionsSubfoldersToggle, S::DescribeSubfoldersToggle, &[ctrl(c('E'))], 5),
+    Action::new("subfolders.toggle", G::Quick, S::ActionsSubfoldersToggle, S::DescribeSubfoldersToggle, &[ctrl(c('E'))], |a, _| a.toggle_subfolders()),
     Action::new("inspector.toggle", G::Quick, S::ActionsInspectorToggle, S::DescribeInspectorToggle, &[key(Key::Space)], |a, _| a.toggle_preview_pane()),
     Action::new("panel.split_right", G::Quick, S::ActionsPanelSplitRight, S::DescribePanelSplitRight, &[ctrl_shift(c('S'))], |a, now| a.run_panel("panel.split_right", now)),
     Action::new("panel.split_bottom", G::Quick, S::ActionsPanelSplitBottom, S::DescribePanelSplitBottom, &[ctrl(c('S'))], |a, now| a.run_panel("panel.split_bottom", now)),
@@ -199,10 +199,10 @@ pub static ACTIONS: &[Action] = &[
     Action::new("panel.open_right", G::Folder, S::ActionsPanelOpenRight, S::DescribePanelOpenRight, &[ctrl_shift(Key::Enter)], |a, now| a.run_panel("panel.open_right", now)),
     Action::new("panel.open_bottom", G::Folder, S::ActionsPanelOpenBottom, S::DescribePanelOpenBottom, &[], |a, now| a.run_panel("panel.open_bottom", now)),
     Action::new("item.open_window", G::Folder, S::ActionsItemOpenWindow, S::DescribeItemOpenWindow, &[], |a, now| a.open_folders_in(OpenTarget::NewWindow, now)),
-    Action::later("tree.open", G::Folder, S::ActionsTreeOpen, S::DescribeTreeOpen, &[key(Key::Right)], 5).also(&["MouseLeft"]).within(Ctx::Tree),
-    Action::later("tree.close", G::Folder, S::ActionsTreeClose, S::DescribeTreeClose, &[key(Key::Left)], 5).also(&["MouseLeft"]).within(Ctx::Tree),
-    Action::later("tree.open_all", G::Folder, S::ActionsTreeOpenAll, S::DescribeTreeOpenAll, &[shift(Key::Right)], 5).also(&["Shift+MouseLeft"]).within(Ctx::Tree),
-    Action::later("tree.close_all", G::Folder, S::ActionsTreeCloseAll, S::DescribeTreeCloseAll, &[shift(Key::Left)], 5).also(&["Shift+MouseLeft"]).within(Ctx::Tree),
+    Action::new("tree.open", G::Folder, S::ActionsTreeOpen, S::DescribeTreeOpen, &[key(Key::Right)], |a, _| a.tree_open(false)).also(&["MouseLeft"]).within(Ctx::Tree),
+    Action::new("tree.close", G::Folder, S::ActionsTreeClose, S::DescribeTreeClose, &[key(Key::Left)], |a, _| a.tree_close(false)).also(&["MouseLeft"]).within(Ctx::Tree),
+    Action::new("tree.open_all", G::Folder, S::ActionsTreeOpenAll, S::DescribeTreeOpenAll, &[shift(Key::Right)], |a, _| a.tree_open(true)).also(&["Shift+MouseLeft"]).within(Ctx::Tree),
+    Action::new("tree.close_all", G::Folder, S::ActionsTreeCloseAll, S::DescribeTreeCloseAll, &[shift(Key::Left)], |a, _| a.tree_close(true)).also(&["Shift+MouseLeft"]).within(Ctx::Tree),
     Action::new("file.copy", G::Folder, S::ActionsFileCopy, S::DescribeFileCopy, &[ctrl(c('C')), ctrl(Key::Insert)], |a, _| a.copy_selection()),
     Action::new("file.cut", G::Folder, S::ActionsFileCut, S::DescribeFileCut, &[ctrl(c('X'))], |a, _| a.cut_selection()),
     Action::new("file.paste", G::Folder, S::ActionsFilePaste, S::DescribeFilePaste, &[ctrl(c('V')), shift(Key::Insert)], |a, _| a.paste()),
@@ -226,8 +226,8 @@ pub static ACTIONS: &[Action] = &[
     Action::later("item.open_containing", G::Folder, S::ActionsItemOpenContaining, S::DescribeItemOpenContaining, &[], 7),
     Action::later("item.open_containing_tab", G::Folder, S::ActionsItemOpenContainingTab, S::DescribeItemOpenContainingTab, &[], 7).also(&["MouseMiddle"]),
     Action::new("view.sort.cycle_folders", G::Folder, S::ActionsViewSortCycleFolders, S::DescribeViewSortCycleFolders, &[], |a, _| a.cycle_folders()),
-    Action::later("view.toggle_folders", G::Folder, S::ActionsViewToggleFolders, S::DescribeViewToggleFolders, &[], 5),
-    Action::later("view.toggle_files", G::Folder, S::ActionsViewToggleFiles, S::DescribeViewToggleFiles, &[], 5),
+    Action::new("view.toggle_folders", G::Folder, S::ActionsViewToggleFolders, S::DescribeViewToggleFolders, &[], |a, _| a.toggle_kind(true)),
+    Action::new("view.toggle_files", G::Folder, S::ActionsViewToggleFiles, S::DescribeViewToggleFiles, &[], |a, _| a.toggle_kind(false)),
     Action::new("nav.address", G::Folder, S::ActionsNavAddress, S::DescribeNavAddress, &[ctrl(c('L')), alt(c('D'))], |a, _| a.open_address()),
     Action::new("view.columns.fit", G::Folder, S::ActionsViewColumnsFit, S::DescribeViewColumnsFit, &[ctrl(c('='))], |a, _| a.request_fit()),
     Action::new("view.filter", G::Folder, S::ActionsViewFilter, S::DescribeViewFilter, &[ctrl(c('F')), key(Key::F(3))], |a, _| a.open_filter()),
@@ -244,44 +244,44 @@ pub static ACTIONS: &[Action] = &[
     Action::new("folder.dropdown", G::Folder, S::ActionsFolderDropdown, S::DescribeFolderDropdown, &[alt(Key::Down)], |a, _| a.open_folder_dropdown()),
     Action::held("folder.dropdown_left", G::Folder, S::ActionsFolderDropdownLeft, S::DescribeFolderDropdownLeft, &[alt(Key::Left)], Ctx::Dropdown),
     Action::held("folder.dropdown_right", G::Folder, S::ActionsFolderDropdownRight, S::DescribeFolderDropdownRight, &[alt(Key::Right)], Ctx::Dropdown),
-    Action::later("folder.types", G::Folder, S::ActionsFolderTypes, S::DescribeFolderTypes, &[alt(c('T'))], 5),
+    Action::new("folder.types", G::Folder, S::ActionsFolderTypes, S::DescribeFolderTypes, &[alt(c('T'))], |a, _| a.open_types()),
     Action::new("view.zoom_in", G::View, S::ActionsViewZoomIn, S::DescribeViewZoomIn, &[], |a, _| a.resize_items(1)).also(&["Ctrl+MouseWheelUp"]),
     Action::new("view.zoom_out", G::View, S::ActionsViewZoomOut, S::DescribeViewZoomOut, &[], |a, _| a.resize_items(-1)).also(&["Ctrl+MouseWheelDown"]),
-    Action::new("view.layout.details", G::View, S::ActionsViewLayoutDetails, S::DescribeViewLayoutDetails, &[ctrl_shift(c('1'))], |a, _| a.set_layout(LayoutMode::Details)),
-    Action::later("view.layout.tree", G::View, S::ActionsViewLayoutTree, S::DescribeViewLayoutTree, &[ctrl_shift(c('2'))], 5),
-    Action::new("view.layout.list", G::View, S::ActionsViewLayoutList, S::DescribeViewLayoutList, &[ctrl_shift(c('3'))], |a, _| a.set_layout(LayoutMode::List)),
-    Action::new("view.layout.icons_m", G::View, S::ActionsViewLayoutIconsM, S::DescribeViewLayoutIconsM, &[ctrl_shift(c('4'))], |a, _| a.set_icons(ICON_LEVELS[0])),
-    Action::new("view.layout.icons_l", G::View, S::ActionsViewLayoutIconsL, S::DescribeViewLayoutIconsL, &[ctrl_shift(c('5'))], |a, _| a.set_icons(ICON_LEVELS[1])),
-    Action::new("view.layout.icons_xl", G::View, S::ActionsViewLayoutIconsXl, S::DescribeViewLayoutIconsXl, &[ctrl_shift(c('6'))], |a, _| a.set_icons(ICON_LEVELS[2])),
+    Action::new("view.layout.details", G::View, S::ActionsViewLayoutDetails, S::DescribeViewLayoutDetails, &[ctrl_shift(c('1'))], |a, _| a.set_zoom(ZOOM_DETAILS)),
+    Action::new("view.layout.tree", G::View, S::ActionsViewLayoutTree, S::DescribeViewLayoutTree, &[ctrl_shift(c('2'))], |a, _| a.set_zoom(ZOOM_TREE)),
+    Action::new("view.layout.list", G::View, S::ActionsViewLayoutList, S::DescribeViewLayoutList, &[ctrl_shift(c('3'))], |a, _| a.set_zoom(ZOOM_LIST)),
+    Action::new("view.layout.icons_m", G::View, S::ActionsViewLayoutIconsM, S::DescribeViewLayoutIconsM, &[ctrl_shift(c('4'))], |a, _| a.set_zoom(ZOOM_ICONS)),
+    Action::new("view.layout.icons_l", G::View, S::ActionsViewLayoutIconsL, S::DescribeViewLayoutIconsL, &[ctrl_shift(c('5'))], |a, _| a.set_zoom(ZOOM_LARGE)),
+    Action::new("view.layout.icons_xl", G::View, S::ActionsViewLayoutIconsXl, S::DescribeViewLayoutIconsXl, &[ctrl_shift(c('6'))], |a, _| a.set_zoom(ZOOM_XL)),
     Action::new("view.sort.name", G::Sort, S::ActionsViewSortName, S::DescribeViewSortName, &[], |a, _| a.sort_by(SortField::Name)),
     Action::new("view.sort.size", G::Sort, S::ActionsViewSortSize, S::DescribeViewSortSize, &[], |a, _| a.sort_by(SortField::Size)),
     Action::new("view.sort.created", G::Sort, S::ActionsViewSortCreated, S::DescribeViewSortCreated, &[], |a, _| a.sort_by(SortField::Created)),
     Action::new("view.sort.modified", G::Sort, S::ActionsViewSortModified, S::DescribeViewSortModified, &[], |a, _| a.sort_by(SortField::Modified)),
-    Action::later("view.sort.accessed", G::Sort, S::ActionsViewSortAccessed, S::DescribeViewSortAccessed, &[], 5),
+    Action::new("view.sort.accessed", G::Sort, S::ActionsViewSortAccessed, S::DescribeViewSortAccessed, &[], |a, _| a.sort_by(SortField::Accessed)),
     Action::new("view.sort.deleted", G::Sort, S::ActionsViewSortDeleted, S::DescribeViewSortDeleted, &[], |a, _| a.sort_by(SortField::Modified)),
-    Action::later("view.sort.items", G::Sort, S::ActionsViewSortItems, S::DescribeViewSortItems, &[], 5),
+    Action::new("view.sort.items", G::Sort, S::ActionsViewSortItems, S::DescribeViewSortItems, &[], |a, _| a.sort_by(SortField::Items)),
     Action::new("view.sort.type", G::Sort, S::ActionsViewSortType, S::DescribeViewSortType, &[], |a, _| a.sort_by(SortField::Type)),
     Action::new("view.sort.origin", G::Sort, S::ActionsViewSortOrigin, S::DescribeViewSortOrigin, &[], |a, _| a.sort_by(SortField::Origin)),
-    Action::later("view.sort.free", G::Sort, S::ActionsViewSortFree, S::DescribeViewSortFree, &[], 5),
-    Action::later("view.sort.file_system", G::Sort, S::ActionsViewSortFileSystem, S::DescribeViewSortFileSystem, &[], 5),
-    Action::later("view.sort.percent", G::Sort, S::ActionsViewSortPercent, S::DescribeViewSortPercent, &[], 5),
-    Action::later("view.sort.volume", G::Sort, S::ActionsViewSortVolume, S::DescribeViewSortVolume, &[], 5),
-    Action::later("view.sort.folder_usage", G::Sort, S::ActionsViewSortFolderUsage, S::DescribeViewSortFolderUsage, &[], 5),
+    Action::new("view.sort.free", G::Sort, S::ActionsViewSortFree, S::DescribeViewSortFree, &[], |a, _| a.sort_by(SortField::Free)),
+    Action::new("view.sort.file_system", G::Sort, S::ActionsViewSortFileSystem, S::DescribeViewSortFileSystem, &[], |a, _| a.sort_by(SortField::FileSystem)),
+    Action::new("view.sort.percent", G::Sort, S::ActionsViewSortPercent, S::DescribeViewSortPercent, &[], |a, _| a.sort_by(SortField::Percent)),
+    Action::new("view.sort.volume", G::Sort, S::ActionsViewSortVolume, S::DescribeViewSortVolume, &[], |a, _| a.sort_by(SortField::Volume)),
+    Action::new("view.sort.folder_usage", G::Sort, S::ActionsViewSortFolderUsage, S::DescribeViewSortFolderUsage, &[], |a, _| a.sort_by(SortField::FolderUsage)),
     Action::new("view.group.none", G::GroupBy, S::ActionsViewGroupNone, S::DescribeViewGroupNone, &[], |a, _| a.group_by(GroupField::None)),
     Action::new("view.group.name", G::GroupBy, S::ActionsViewGroupName, S::DescribeViewGroupName, &[], |a, _| a.group_by(GroupField::Name)),
     Action::new("view.group.size", G::GroupBy, S::ActionsViewGroupSize, S::DescribeViewGroupSize, &[], |a, _| a.group_by(GroupField::Size)),
     Action::new("view.group.created", G::GroupBy, S::ActionsViewGroupCreated, S::DescribeViewGroupCreated, &[], |a, _| a.group_by(GroupField::Created)),
     Action::new("view.group.modified", G::GroupBy, S::ActionsViewGroupModified, S::DescribeViewGroupModified, &[], |a, _| a.group_by(GroupField::Modified)),
-    Action::later("view.group.accessed", G::GroupBy, S::ActionsViewGroupAccessed, S::DescribeViewGroupAccessed, &[], 5),
+    Action::new("view.group.accessed", G::GroupBy, S::ActionsViewGroupAccessed, S::DescribeViewGroupAccessed, &[], |a, _| a.group_by(GroupField::Accessed)),
     Action::new("view.group.deleted", G::GroupBy, S::ActionsViewGroupDeleted, S::DescribeViewGroupDeleted, &[], |a, _| a.group_by(GroupField::Modified)),
-    Action::later("view.group.items", G::GroupBy, S::ActionsViewGroupItems, S::DescribeViewGroupItems, &[], 5),
+    Action::new("view.group.items", G::GroupBy, S::ActionsViewGroupItems, S::DescribeViewGroupItems, &[], |a, _| a.group_by(GroupField::Items)),
     Action::new("view.group.type", G::GroupBy, S::ActionsViewGroupType, S::DescribeViewGroupType, &[], |a, _| a.group_by(GroupField::Type)),
     Action::new("view.group.origin", G::GroupBy, S::ActionsViewGroupOrigin, S::DescribeViewGroupOrigin, &[], |a, _| a.group_by(GroupField::Origin)),
-    Action::later("view.group.free", G::GroupBy, S::ActionsViewGroupFree, S::DescribeViewGroupFree, &[], 5),
-    Action::later("view.group.file_system", G::GroupBy, S::ActionsViewGroupFileSystem, S::DescribeViewGroupFileSystem, &[], 5),
-    Action::later("view.group.percent", G::GroupBy, S::ActionsViewGroupPercent, S::DescribeViewGroupPercent, &[], 5),
-    Action::later("view.group.volume", G::GroupBy, S::ActionsViewGroupVolume, S::DescribeViewGroupVolume, &[], 5),
-    Action::later("view.group.folder_usage", G::GroupBy, S::ActionsViewGroupFolderUsage, S::DescribeViewGroupFolderUsage, &[], 5),
+    Action::new("view.group.free", G::GroupBy, S::ActionsViewGroupFree, S::DescribeViewGroupFree, &[], |a, _| a.group_by(GroupField::Free)),
+    Action::new("view.group.file_system", G::GroupBy, S::ActionsViewGroupFileSystem, S::DescribeViewGroupFileSystem, &[], |a, _| a.group_by(GroupField::FileSystem)),
+    Action::new("view.group.percent", G::GroupBy, S::ActionsViewGroupPercent, S::DescribeViewGroupPercent, &[], |a, _| a.group_by(GroupField::Percent)),
+    Action::new("view.group.volume", G::GroupBy, S::ActionsViewGroupVolume, S::DescribeViewGroupVolume, &[], |a, _| a.group_by(GroupField::Volume)),
+    Action::new("view.group.folder_usage", G::GroupBy, S::ActionsViewGroupFolderUsage, S::DescribeViewGroupFolderUsage, &[], |a, _| a.group_by(GroupField::FolderUsage)),
     Action::new("view.group.collapse_all", G::GroupBy, S::ActionsViewGroupCollapseAll, S::DescribeViewGroupCollapseAll, &[], |a, _| a.fold_groups(true)),
     Action::new("view.group.expand_all", G::GroupBy, S::ActionsViewGroupExpandAll, S::DescribeViewGroupExpandAll, &[], |a, _| a.fold_groups(false)),
     Action::new("inspector.details", G::Inspector, S::ActionsInspectorDetails, S::DescribeInspectorDetails, &[ctrl(c('I'))], |a, _| a.toggle_inspector_details()),
@@ -428,11 +428,6 @@ pub static ACTIONS: &[Action] = &[
     Action::new("view.sort.files_first", G::Flit, S::ActionsViewSortFilesFirst, S::DescribeViewSortFilesFirst, &[], |a, _| a.set_folders(Folders::Last)),
     Action::new("view.sort.mixed", G::Flit, S::ActionsViewSortMixed, S::DescribeViewSortMixed, &[], |a, _| a.set_folders(Folders::Mixed)),
     Action::new("view.group.tag", G::Flit, S::ActionsViewGroupTag, S::DescribeViewGroupTag, &[], |a, _| a.group_by(GroupField::Tag)),
-    Action::new("view.group.ascending", G::Flit, S::ActionsViewGroupAscending, S::DescribeViewGroupAscending, &[], |a, _| a.set_group_descending(false)),
-    Action::new("view.group.descending", G::Flit, S::ActionsViewGroupDescending, S::DescribeViewGroupDescending, &[], |a, _| a.set_group_descending(true)),
-    Action::new("view.group.year", G::Flit, S::ActionsViewGroupYear, S::DescribeViewGroupYear, &[], |a, _| a.set_date_unit(DateUnit::Year)),
-    Action::new("view.group.month", G::Flit, S::ActionsViewGroupMonth, S::DescribeViewGroupMonth, &[], |a, _| a.set_date_unit(DateUnit::Month)),
-    Action::new("view.group.day", G::Flit, S::ActionsViewGroupDay, S::DescribeViewGroupDay, &[], |a, _| a.set_date_unit(DateUnit::Day)),
     Action::new("view.layout.cards", G::Flit, S::ActionsViewLayoutCards, S::DescribeViewLayoutCards, &[], |a, _| a.set_layout(LayoutMode::Cards)),
     Action::new("view.layout.columns", G::Flit, S::ActionsViewLayoutColumns, S::DescribeViewLayoutColumns, &[], |a, _| a.set_layout(LayoutMode::Columns)),
     Action::new("view.layout.grid", G::Flit, S::ActionsViewLayoutGrid, S::DescribeViewLayoutGrid, &[], |a, _| a.set_layout(LayoutMode::Grid)),
@@ -459,7 +454,6 @@ pub static ACTIONS: &[Action] = &[
     Action::new("git.branches", G::Flit, S::ActionsGitBranches, S::DescribeGitBranches, &[], |a, _| a.git_branches_menu()),
     Action::new("git.open_remote", G::Flit, S::ActionsGitOpenRemote, S::DescribeGitOpenRemote, &[], |a, _| a.git_run(GitOp::OpenRemote)),
     Action::new("view.status_bar", G::Flit, S::ActionsViewStatusBar, S::DescribeViewStatusBar, &[], |a, _| a.toggle_pref(|p| &mut p.status_bar)),
-    Action::new("view.item_count", G::Flit, S::ActionsViewItemCount, S::DescribeViewItemCount, &[], |a, _| a.toggle_pref(|p| &mut p.split_count)),
     Action::new("theme.toggle", G::Flit, S::ActionsThemeToggle, S::DescribeThemeToggle, &[ctrl_alt(c('T'))], |a, _| a.toggle_theme()),
     Action::new("theme.light", G::Flit, S::ActionsThemeLight, S::DescribeThemeLight, &[], |a, _| a.set_theme_mode(crate::theme::Mode::Light)),
     Action::new("theme.dark", G::Flit, S::ActionsThemeDark, S::DescribeThemeDark, &[], |a, _| a.set_theme_mode(crate::theme::Mode::Dark)),
@@ -790,15 +784,6 @@ impl App {
             Folders::Mixed => Folders::First,
         };
         self.set_folders(next);
-    }
-
-    fn set_icons(&mut self, level: u8) {
-        self.set_layout(LayoutMode::Grid);
-        let look = self.tab().look;
-        if look == LayoutMode::Grid && self.tab().sizes.level(look) != level as usize {
-            self.tab_mut().reveal_pending = true;
-            self.change_view(|t| t.sizes.0[look.slot()] = level);
-        }
     }
 
     fn fold_groups(&mut self, collapsed: bool) {

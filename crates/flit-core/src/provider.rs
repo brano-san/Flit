@@ -1,7 +1,7 @@
 use crate::archive::ArchiveOp;
 use crate::digest::HashKind;
 use crate::desktop_ini::FolderKind;
-use crate::listing::{DirChange, DirSnapshot, Meta};
+use crate::listing::{DirChange, DirSnapshot, DirStats, Meta};
 use crate::path::FsPath;
 use crate::sort::{CaseMode, ViewSpec};
 use arc_swap::ArcSwapOption;
@@ -285,7 +285,7 @@ pub enum ProviderRequest {
 pub enum ProviderEvent {
     Changes { tab: TabId, gen: u64, changes: Vec<DirChange> },
     Rescan { tab: TabId, gen: u64 },
-    DirSize { tab: TabId, gen: u64, idx: u32, size: u64 },
+    DirSize { tab: TabId, gen: u64, idx: u32, stats: DirStats },
     OpDone { tab: TabId, id: OpId, error: Option<String>, report: Option<OpReport> },
     OpProgress { tab: TabId, id: OpId, progress: OpProgress },
     OpConflict { tab: TabId, id: OpId, conflict: Conflict },

@@ -111,7 +111,7 @@ fn dir_sizes(provider: &LocalProvider, events: &crossbeam_channel::Receiver<Prov
     let mut total = 0;
     let mut got = 0;
     while got < n {
-        if let ProviderEvent::DirSize { size, .. } = events.recv_timeout(Duration::from_secs(120)).unwrap() {
+        if let ProviderEvent::DirSize { stats: flit_core::listing::DirStats { size, .. }, .. } = events.recv_timeout(Duration::from_secs(120)).unwrap() {
             total += size;
             got += 1;
         }

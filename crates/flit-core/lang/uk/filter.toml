@@ -1,1 +1,4 @@
-placeholder = "Фільтр за іменем"
+files = "Фільтр {n} файлів..."
+seconds = "{n} с"
+toggle_all = "Позначити всі"
+untoggle_all = "Зняти всі"

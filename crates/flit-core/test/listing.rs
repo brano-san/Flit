@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn compact_entry() {
-    assert_eq!(std::mem::size_of::<Entry>(), 40);
+    assert_eq!(std::mem::size_of::<Entry>(), 48);
 }
 
 #[test]

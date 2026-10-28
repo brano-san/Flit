@@ -7,6 +7,13 @@ size = "大小"
 origin = "原位置"
 deleted = "删除日期"
 tag = "标记"
+items = "项目总数"
+accessed = "访问日期"
+volume = "卷占用"
+folder_usage = "文件夹占用"
+free = "可用空间"
+file_system = "文件系统"
+percent = "已用百分比"
 
 [type]
 drive = "驱动器"
@@ -15,23 +22,36 @@ file = "文件"
 ext_file = "{ext} 文件"
 
 [group]
-unknown_date = "未知日期"
 unknown_location = "未知位置"
 no_tags = "无标记"
+unspecified = "未指定"
+name_ah = "A - H"
+name_ip = "I - P"
+name_qz = "Q - Z"
+other = "其他"
+today = "今天"
+yesterday = "昨天"
+last_week = "上周"
+last_month = "上个月"
+last_year = "去年"
+long_ago = "很久以前"
+thousands = "数千 (1000+)"
+hundreds = "数百 (100 - 999)"
+dozens = "数十 (10 - 99)"
+few = "少量 (1 - 9)"
+no_items = "无 (0)"
 
 [size_group]
-folders = "文件夹"
-empty = "空"
-tiny = "微小（小于 16 KB）"
-small = "小（16 KB 到 1 MB）"
-medium = "中（1 到 128 MB）"
-large = "大（128 MB 到 1 GB）"
-huge = "特大（1 到 4 GB）"
-gigantic = "巨大（大于 4 GB）"
+empty = "空 (0 B)"
+tiny = "极小 (1 B - 16 KB)"
+small = "小 (16 KB - 1 MB)"
+medium = "中 (1 - 128 MB)"
+large = "大 (128 MB - 1 GB)"
+huge = "巨大 (1 - 4 GB)"
+gigantic = "超大 (4+ GB)"
 
 [count]
 items = ["{n} 个项目"]
-filtered = ["{shown}/{n} 个项目"]
 folders = ["{n} 个文件夹"]
 files = ["{n} 个文件"]
 
