@@ -85,6 +85,10 @@ impl Keymap {
         index(id).map(|i| self.text(i)).unwrap_or_default()
     }
 
+    pub fn all_text(&self, id: &str) -> String {
+        index(id).map(|i| self.keys(i).iter().map(chord_text).collect::<Vec<_>>().join("  ")).unwrap_or_default()
+    }
+
     pub fn first_text(&self, id: &str) -> Option<String> {
         index(id).and_then(|i| self.keys(i).first()).map(chord_text)
     }

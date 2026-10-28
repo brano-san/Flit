@@ -1,0 +1,16 @@
+cmd = "命令："
+blank = "无"
+yes = "是"
+cancel = "取消"
+remove_item = "从列表中移除此项？"
+
+[key]
+up = "Up"
+down = "Down"
+enter = "Enter"
+escape = "Escape"
+
+[hint]
+navigate = "移动"
+use = "执行"
+dismiss = "关闭"

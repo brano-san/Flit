@@ -25,6 +25,11 @@ pub struct Theme {
     pub scrollbar_hover: Color,
     pub placeholder: Color,
     pub error: Color,
+    pub popup: Color,
+    pub popup_border: Color,
+    pub accent_fill: Color,
+    pub teal: Color,
+    pub destructive: Color,
 }
 
 pub const LIGHT: Theme = Theme {
@@ -50,6 +55,11 @@ pub const LIGHT: Theme = Theme {
     scrollbar_hover: Color::rgba(0x00000080),
     placeholder: Color::rgba(0x0000001A),
     error: Color::rgb(0xC42B1C),
+    popup: Color::rgb(0xFFFFFF),
+    popup_border: Color::rgba(0x0000002E),
+    accent_fill: Color::rgb(0x005FB8),
+    teal: Color::rgb(0x8FD3CF),
+    destructive: Color::rgb(0xC9555A),
 };
 
 pub const DARK: Theme = Theme {
@@ -75,6 +85,11 @@ pub const DARK: Theme = Theme {
     scrollbar_hover: Color::rgba(0xFFFFFF80),
     placeholder: Color::rgba(0xFFFFFF1A),
     error: Color::rgb(0xFF99A4),
+    popup: Color::rgb(0x262626),
+    popup_border: Color::rgba(0xFFFFFF33),
+    accent_fill: Color::rgb(0x2D6BD3),
+    teal: Color::rgb(0x2B6E6B),
+    destructive: Color::rgb(0x9E3B3F),
 };
 
 pub const MIN_TEXT_CONTRAST: f32 = 4.5;
@@ -249,6 +264,11 @@ pub fn high_contrast(c: &SystemColors) -> Theme {
         scrollbar_hover: c.hotlight,
         placeholder: c.gray_text,
         error: c.hotlight,
+        popup: c.window,
+        popup_border: c.window_text,
+        accent_fill: c.highlight,
+        teal: c.highlight,
+        destructive: c.highlight,
     }
 }
 
@@ -271,6 +291,7 @@ pub fn derive(bg: Color) -> Theme {
         focus_ring: accent.alpha(alpha(base.focus_ring)),
         text_selection: accent.alpha(alpha(base.text_selection)),
         error: readable(base.error, chrome, pole, MIN_TEXT_CONTRAST),
+        popup: mix(bg, WHITE, if dark { 0.06 } else { 0.7 }),
         ..base
     }
 }

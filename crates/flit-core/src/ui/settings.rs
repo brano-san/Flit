@@ -260,6 +260,9 @@ pub static SETTINGS: &[Setting] = &[
         }
     }),
     toggle("appearance.tab_actions", Page::Appearance, S::SettingsTitleAppearanceTabActions, S::SettingsHelpAppearanceTabActions, |a| a.tab_actions_button, |a, on| a.tab_actions_button = on),
+    toggle("appearance.tooltips", Page::Appearance, S::SettingsTitleAppearanceTooltips, S::SettingsHelpAppearanceTooltips, |a| a.tooltips, |a, on| a.set_tooltips(on)),
+    toggle("appearance.animations", Page::Appearance, S::SettingsTitleAppearanceAnimations, S::SettingsHelpAppearanceAnimations, |a| a.animations, |a, on| a.animations = on),
+    toggle("appearance.round_corners", Page::Appearance, S::SettingsTitleAppearanceRoundCorners, S::SettingsHelpAppearanceRoundCorners, |a| a.round_corners, |a, on| a.round_corners = on),
     choice("appearance.ops_button", Page::Appearance, S::SettingsTitleAppearanceOpsButton, S::SettingsHelpAppearanceOpsButton, OPS_CHOICES, |a| usize::from(a.ops_button_always), |a, i| a.ops_button_always = i == 1),
     toggle("appearance.status_bar", Page::Appearance, S::SettingsTitleAppearanceStatusBar, S::SettingsHelpAppearanceStatusBar, |a| a.prefs.status_bar, |a, on| a.set_pref(|p| &mut p.status_bar, on)),
     choice("appearance.item_count", Page::Appearance, S::SettingsTitleAppearanceItemCount, S::SettingsHelpAppearanceItemCount, COUNT_CHOICES, |a| usize::from(a.prefs.split_count), |a, i| a.set_pref(|p| &mut p.split_count, i == 1)),

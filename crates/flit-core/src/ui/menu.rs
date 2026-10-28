@@ -9,9 +9,17 @@ use crate::path::PathKind;
 use crate::sort::{DateUnit, Folders, GroupField, SortField};
 use std::time::Instant;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Mark {
+    #[default]
+    None,
+    Check,
+    Radio,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuItem {
-    Command { label: String, keys: String, checked: bool, stay: bool },
+    Command { label: String, keys: String, checked: bool, stay: bool, mark: Mark },
     Submenu { label: String, items: Vec<MenuItem> },
     Separator,
 }
@@ -108,30 +116,38 @@ impl Menu<'_> {
     }
 
     pub(super) fn toggle(&mut self, label: &str, cmd: super::sidebar::PlaceCmd, checked: bool) {
-        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked, stay: true });
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked, stay: true, mark: Mark::Check });
         self.cmds.push(Cmd::Place(cmd));
     }
 
     fn command(&mut self, cmd: Cmd, label: &str, keys: String, checked: bool) {
+        self.marked(cmd, label, keys, checked, Mark::None);
+    }
+
+    fn marked(&mut self, cmd: Cmd, label: &str, keys: String, checked: bool, mark: Mark) {
         if matches!(cmd, Cmd::Action(id) if !self.shown(id)) {
             return;
         }
-        self.items.push(MenuItem::Command { label: label.to_owned(), keys, checked, stay: false });
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys, checked, stay: false, mark });
         self.cmds.push(cmd);
     }
 
     pub(super) fn action(&mut self, id: &'static str, label: &str) {
-        let keys = self.keys.first_text(id).unwrap_or_default();
+        let keys = self.keys.all_text(id);
         self.command(Cmd::Action(id), label, keys, false);
     }
 
     pub(super) fn check(&mut self, id: &'static str, label: &str, checked: bool) {
-        self.command(Cmd::Action(id), label, String::new(), checked);
+        self.marked(Cmd::Action(id), label, String::new(), checked, Mark::Check);
+    }
+
+    fn radio(&mut self, id: &'static str, label: &str, keys: String, checked: bool) {
+        self.marked(Cmd::Action(id), label, keys, checked, Mark::Radio);
     }
 
     fn choices<T: PartialEq>(&mut self, items: &[(T, &'static str, S)], current: T) {
         for (v, id, label) in items {
-            self.check(id, label.t(), *v == current);
+            self.radio(id, label.t(), String::new(), *v == current);
         }
     }
 
@@ -255,7 +271,7 @@ impl App {
     }
 
     pub(super) fn list_menu(&mut self, entries: Vec<(String, Cmd, bool)>) -> Vec<MenuItem> {
-        let (items, cmds) = entries.into_iter().map(|(label, cmd, checked)| (MenuItem::Command { label, keys: String::new(), checked, stay: false }, cmd)).unzip();
+        let (items, cmds) = entries.into_iter().map(|(label, cmd, checked)| (MenuItem::Command { label, keys: String::new(), checked, stay: false, mark: Mark::None }, cmd)).unzip();
         self.menu = cmds;
         items
     }
@@ -281,8 +297,8 @@ impl App {
     fn layout_entries(&self, m: &mut Menu) {
         let t = self.tab();
         for (mode, id) in LAYOUT_CHOICES {
-            let keys = m.keys.first_text(id).unwrap_or_default();
-            m.command(Cmd::Action(id), mode.title(), keys, mode == t.mode);
+            let keys = m.keys.all_text(id);
+            m.radio(id, mode.title(), keys, mode == t.mode);
         }
         m.separator();
         m.action("view.size.larger", S::MenuLargerItems.t());
@@ -297,8 +313,8 @@ impl App {
         let sort = t.view_spec.sort;
         m.choices(if t.view_loc.is_recycle_bin() { &BIN_SORTS[..] } else { &SORTS[..] }, sort.field);
         m.separator();
-        m.check("view.sort.ascending", S::MenuSortAscending.t(), !sort.descending);
-        m.check("view.sort.descending", S::MenuSortDescending.t(), sort.descending);
+        m.radio("view.sort.ascending", S::MenuSortAscending.t(), String::new(), !sort.descending);
+        m.radio("view.sort.descending", S::MenuSortDescending.t(), String::new(), sort.descending);
         m.separator();
         m.choices(&FOLDERS, sort.folders);
     }
@@ -309,8 +325,8 @@ impl App {
         m.choices(if t.view_loc.is_recycle_bin() { &BIN_GROUPS[..] } else { &GROUPS[..] }, group.field);
         if group.field != GroupField::None {
             m.separator();
-            m.check("view.group.ascending", S::MenuSortAscending.t(), !group.descending);
-            m.check("view.group.descending", S::MenuSortDescending.t(), group.descending);
+            m.radio("view.group.ascending", S::MenuSortAscending.t(), String::new(), !group.descending);
+            m.radio("view.group.descending", S::MenuSortDescending.t(), String::new(), group.descending);
         }
         if group.field.is_date() {
             m.separator();
@@ -319,7 +335,7 @@ impl App {
     }
 
     fn new_entries(&self, m: &mut Menu) {
-        let keys = m.keys.first_text("file.new_folder").unwrap_or_default();
+        let keys = m.keys.all_text("file.new_folder");
         m.command(Cmd::NewItem(0), S::MenuFolder.t(), keys, false);
         m.command(Cmd::NewItem(1), S::MenuShortcut.t(), String::new(), false);
         for (k, tpl) in self.nav.sidebar.places.templates.iter().enumerate() {

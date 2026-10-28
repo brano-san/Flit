@@ -3,7 +3,7 @@ use super::popup::{MenuOutcome, MenuView};
 use super::App;
 use crate::input::Event;
 use crate::provider::Launch;
-use crate::render::{Color, Rect};
+use crate::render::Rect;
 use crate::text::{Gfx, TextBackend};
 use crate::theme::Theme;
 use std::time::Instant;
@@ -13,6 +13,9 @@ pub struct OwnMenu {
     at: (f32, f32),
     launches: Vec<Launch>,
     view: Option<MenuView>,
+    opened: Instant,
+    right: Option<f32>,
+    pointer: Option<(f32, f32)>,
 }
 
 pub fn commands(items: &[MenuItem]) -> usize {
@@ -29,8 +32,13 @@ pub fn commands(items: &[MenuItem]) -> usize {
 impl App {
     pub(super) fn own_menu_event(&mut self, ev: &Event, now: Instant) -> bool {
         if let Event::ShowMenu { items, x, y, launches } = ev {
-            self.own_menu = Some(OwnMenu { items: items.clone(), at: (*x, *y), launches: launches.clone(), view: None });
+            self.own_menu = Some(OwnMenu { items: items.clone(), at: (*x, *y), launches: launches.clone(), view: None, opened: now, right: self.menu_right.take(), pointer: None });
+            self.tip_hide();
             self.dirty = true;
+            return true;
+        }
+        if let (Some(m @ OwnMenu { view: None, .. }), Event::MouseMove { x, y }) = (self.own_menu.as_mut(), ev) {
+            m.pointer = Some((*x, *y));
             return true;
         }
         let Some(view) = self.own_menu.as_mut().and_then(|m| m.view.as_mut()) else { return false };
@@ -75,12 +83,35 @@ impl App {
         self.own_menu.is_some()
     }
 
+    pub(super) fn button_menu(&mut self, owner: super::Hit, x: f32, y: f32, menu: Vec<MenuItem>) {
+        self.flit_menu(x, y, menu);
+        self.menu_owner = Some(owner);
+    }
+
+    pub(super) fn menu_open_from(&self, owner: super::Hit) -> bool {
+        self.own_menu.is_some() && self.menu_owner == Some(owner)
+    }
+
+    pub(super) fn over_own_menu(&self, x: f32, y: f32) -> bool {
+        self.own_menu.as_ref().and_then(|m| m.view.as_ref()).is_some_and(|v| v.contains(x, y))
+    }
+
     pub(super) fn draw_own_menu<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
-        let (scale, bounds, dark) = (self.scale, Rect::new(0.0, 0.0, self.size.0, self.size.1), self.look.palette.dark);
+        let (scale, bounds) = (self.scale, Rect::new(0.0, 0.0, self.size.0, self.size.1));
         let Some(m) = self.own_menu.as_mut() else { return };
-        let view = m.view.get_or_insert_with(|| MenuView::new(&m.items, m.at.0, m.at.1, bounds, scale, g));
-        let shadow = if dark { Color::rgba(0x00000090) } else { Color::rgba(0x00000030) };
-        view.draw(g, t, shadow);
+        let view = m.view.get_or_insert_with(|| {
+            let mut v = MenuView::new(&m.items, m.at.0, m.at.1, bounds, scale, g);
+            if let Some(right) = m.right {
+                v.align_right(right);
+            }
+            if let Some((x, y)) = m.pointer {
+                v.mouse_move(x, y);
+            }
+            v
+        });
+        let (from, opened, at) = (g.dl.instances.len(), m.opened, m.at);
+        view.draw(g, t);
+        self.pop(g, from, opened, at);
     }
 }
 

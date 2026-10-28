@@ -75,12 +75,13 @@ const NO_CLIP: [f32; 4] = [-1e9, -1e9, 1e9, 1e9];
 pub struct DrawList {
     pub clear: Color,
     pub instances: Vec<Instance>,
+    pub round: bool,
     clip: [f32; 4],
 }
 
 impl Default for DrawList {
     fn default() -> Self {
-        Self { clear: Color::default(), instances: Vec::with_capacity(4096), clip: NO_CLIP }
+        Self { clear: Color::default(), instances: Vec::with_capacity(4096), round: true, clip: NO_CLIP }
     }
 }
 
@@ -111,16 +112,43 @@ impl DrawList {
         self.push(r.snap(), [0.0; 4], color, 0.0, 0.0, kind::SOLID);
     }
 
+    fn corner(&self, radius: f32) -> f32 {
+        if self.round { radius } else { 0.0 }
+    }
+
     pub fn round_rect(&mut self, r: Rect, color: Color, radius: f32) {
-        self.push(r.snap(), [0.0; 4], color, radius, 0.0, kind::SOLID);
+        self.push(r.snap(), [0.0; 4], color, self.corner(radius), 0.0, kind::SOLID);
     }
 
     pub fn outline(&mut self, r: Rect, color: Color, radius: f32, width: f32) {
-        self.push(r.snap(), [0.0; 4], color, radius, width, kind::SOLID);
+        self.push(r.snap(), [0.0; 4], color, self.corner(radius), width, kind::SOLID);
     }
 
     pub fn shadow(&mut self, r: Rect, color: Color, radius: f32, blur: f32) {
-        self.push(r.inset(-blur, -blur).snap(), [0.0; 4], color, radius, blur, kind::SHADOW);
+        self.push(r.inset(-blur, -blur).snap(), [0.0; 4], color, self.corner(radius), blur, kind::SHADOW);
+    }
+
+    pub fn circle(&mut self, r: Rect, color: Color) {
+        self.push(r, [0.0; 4], color, r.w.min(r.h) / 2.0, 0.0, kind::SOLID);
+    }
+
+    pub fn ring(&mut self, r: Rect, color: Color, width: f32) {
+        self.push(r, [0.0; 4], color, r.w.min(r.h) / 2.0, width, kind::SOLID);
+    }
+
+    pub fn pop_in(&mut self, from: usize, t: f32, center: (f32, f32)) {
+        let t = t.clamp(0.0, 1.0);
+        if t >= 1.0 {
+            return;
+        }
+        let k = 0.96 + 0.04 * t;
+        let scale = |v: f32, c: f32| c + (v - c) * k;
+        for i in self.instances.iter_mut().skip(from) {
+            let [x, y, w, h] = i.rect;
+            i.rect = [scale(x, center.0), scale(y, center.1), w * k, h * k];
+            let a = ((i.color >> 24) as f32 * t).round() as u32;
+            i.color = (i.color & 0x00FF_FFFF) | a << 24;
+        }
     }
 
     pub fn glyph(&mut self, r: Rect, uv: [f32; 4], color: Color) {

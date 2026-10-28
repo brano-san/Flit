@@ -1,0 +1,16 @@
+cmd = "Команда:"
+blank = "Нет"
+yes = "Да"
+cancel = "Отмена"
+remove_item = "Убрать пункт из списка?"
+
+[key]
+up = "Up"
+down = "Down"
+enter = "Enter"
+escape = "Escape"
+
+[hint]
+navigate = "— перемещение"
+use = "— выбрать"
+dismiss = "— закрыть"

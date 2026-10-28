@@ -559,6 +559,12 @@ impl<P: Platform> Handler<P> {
                     window.open_window(WindowOptions { title: "Flit".into(), placement: None, dark: window.is_dark_mode() });
                 }
                 Effect::SetClipboardFiles { paths, cut } => window.set_clipboard_files(&paths, cut),
+                Effect::ShellMenu(menu) if !menu.shell && menu.items.is_empty() => {
+                    if let Some(st) = self.windows.get_mut(&id) {
+                        st.app.on_event(&Event::ShowMenu { items: menu.menu, x: menu.x, y: menu.y, launches: Vec::new() }, Instant::now());
+                    }
+                    window.request_redraw();
+                }
                 Effect::ShellMenu(menu) => window.shell_menu(menu),
                 Effect::Properties(paths) => window.properties(paths),
                 Effect::Share(paths) => window.share(paths),

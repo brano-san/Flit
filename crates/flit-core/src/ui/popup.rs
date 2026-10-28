@@ -1,14 +1,15 @@
-use super::menu::MenuItem;
+use super::menu::{Mark, MenuItem};
+use super::widgets::{baseline, Paint};
 use crate::input::Key;
-use crate::render::{Color, Rect};
+use crate::render::Rect;
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
-use crate::theme::Theme;
+use crate::theme::{ink_on, Theme};
 
 const ROW_H: f32 = 28.0;
 const SEPARATOR_H: f32 = 9.0;
 const PAD: f32 = 4.0;
 const LABEL_X: f32 = 32.0;
-const CHECK_X: f32 = 11.0;
+const MARK: f32 = 14.0;
 const KEYS_GAP: f32 = 40.0;
 const ARROW_W: f32 = 28.0;
 const MIN_W: f32 = 160.0;
@@ -16,7 +17,6 @@ const RADIUS: f32 = 6.0;
 const ARM_DISTANCE: f32 = 4.0;
 const FONT_PX: f32 = 13.0;
 const ICON_PX: f32 = 11.0;
-const G_CHECK: &str = "\u{E73E}";
 const G_SUBMENU: &str = "\u{E76C}";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,7 +28,7 @@ pub enum MenuOutcome {
 }
 
 enum Node {
-    Command { label: String, keys: String, checked: bool, stay: bool, id: usize },
+    Command { label: String, keys: String, checked: bool, stay: bool, mark: Mark, id: usize },
     Submenu { label: String, list: usize },
     Separator,
 }
@@ -84,9 +84,9 @@ impl<B: TextBackend> Measure<'_, B> {
         let mut nodes = Vec::with_capacity(items.len());
         for item in items {
             let node = match item {
-                MenuItem::Command { label, keys, checked, stay } => {
+                MenuItem::Command { label, keys, checked, stay, mark } => {
                     self.next_id += 1;
-                    Node::Command { label: label.clone(), keys: keys.clone(), checked: *checked, stay: *stay, id: self.next_id - 1 }
+                    Node::Command { label: label.clone(), keys: keys.clone(), checked: *checked, stay: *stay, mark: *mark, id: self.next_id - 1 }
                 }
                 MenuItem::Submenu { label, items } => Node::Submenu { label: label.clone(), list: self.flatten(items, lists) },
                 MenuItem::Separator => Node::Separator,
@@ -117,6 +117,13 @@ impl MenuView {
         let rect = view.fit(w, h, x, x, top);
         view.panels.push(Panel { list: 0, rect, hot: None });
         view
+    }
+
+    pub fn align_right(&mut self, right: f32) {
+        let b = self.bounds;
+        if let Some(p) = self.panels.first_mut() {
+            p.rect.x = (right - p.rect.w).min(b.right() - p.rect.w).max(b.x);
+        }
     }
 
     pub fn panels(&self) -> impl Iterator<Item = Rect> + '_ {
@@ -197,41 +204,41 @@ impl MenuView {
         }
     }
 
-    pub fn draw<B: TextBackend>(&self, g: &mut Gfx<B>, t: &Theme, shadow: Color) {
+    pub fn draw<B: TextBackend>(&self, g: &mut Gfx<B>, t: &Theme) {
         let s = self.scale;
         let (font, icons) = (font(s), FontStyle::new(FontFamily::Icons, ICON_PX * s, false));
-        let (m, im) = (g.metrics(font), g.metrics(icons));
-        for p in &self.panels {
-            let r = p.rect;
-            g.dl.shadow(Rect::new(r.x, r.y + 2.0 * s, r.w, r.h), shadow, RADIUS * s, 8.0 * s);
-            g.dl.round_rect(r, t.chrome, RADIUS * s);
-            g.dl.outline(r, t.input_border, RADIUS * s, 1.0);
-            for (i, row) in self.rows(p) {
-                let node = &self.lists[p.list].nodes[i];
+        let mut p = Paint::new(g, t, s);
+        for panel in &self.panels {
+            let r = panel.rect;
+            p.frame(r);
+            for (i, row) in self.rows(panel) {
+                let node = &self.lists[panel.list].nodes[i];
                 if let Node::Separator = node {
-                    g.dl.rect(Rect::new(row.x + PAD * s, (row.y + row.h / 2.0).round(), row.w - 2.0 * PAD * s, 1.0), t.separator);
+                    p.separator(row.x + PAD * s, row.y + row.h / 2.0, row.w - 2.0 * PAD * s);
                     continue;
                 }
-                if p.hot == Some(i) {
-                    g.dl.round_rect(row, t.hover, RADIUS * s * 0.66);
+                let hot = panel.hot == Some(i);
+                if hot {
+                    p.g.dl.round_rect(row, t.accent_fill, RADIUS * s * 0.66);
                 }
-                let baseline = |a: f32, d: f32| (row.y + (row.h + a - d) / 2.0).round();
-                let (text_y, icon_y) = (baseline(m.ascent, m.descent), baseline(im.ascent, im.descent));
-                g.text(r.x + LABEL_X * s, text_y, node.label(), font, t.text, row.right() - r.x - LABEL_X * s - ARROW_W * s);
+                let (ink, dim) = if hot { (ink_on(t.accent_fill), ink_on(t.accent_fill)) } else { (t.text, t.text_dim) };
+                let text_y = baseline(p.g, row, font);
+                let side = Rect::new(row.right() - ARROW_W * s, row.y, ARROW_W * s, row.h);
+                p.g.text(r.x + LABEL_X * s, text_y, node.label(), font, ink, side.x - r.x - LABEL_X * s);
                 match node {
-                    Node::Command { keys, checked, .. } => {
-                        if *checked {
-                            g.text(r.x + CHECK_X * s, icon_y, G_CHECK, icons, t.text, f32::INFINITY);
-                        }
+                    Node::Command { keys, checked, mark, .. } => {
                         if !keys.is_empty() {
-                            let w = g.measure(keys, font);
-                            g.text(row.right() - ARROW_W * s - w, text_y, keys, font, t.text_dim, f32::INFINITY);
+                            let w = p.g.measure(keys, font);
+                            p.g.text(side.x - w, text_y, keys, font, dim, f32::INFINITY);
+                        }
+                        let bx = Rect::new(side.x + (side.w - MARK * s) / 2.0, row.y + (row.h - MARK * s) / 2.0, MARK * s, MARK * s).snap();
+                        match (mark, checked) {
+                            (Mark::Radio, on) => p.radio(bx, *on, None),
+                            (Mark::Check, on) | (Mark::None, on @ true) => p.checkbox(bx, *on),
+                            (Mark::None, false) => {}
                         }
                     }
-                    Node::Submenu { .. } => {
-                        let w = g.measure(G_SUBMENU, icons);
-                        g.text(row.right() - (ARROW_W * s + w) / 2.0, icon_y, G_SUBMENU, icons, t.text, f32::INFINITY);
-                    }
+                    Node::Submenu { .. } => p.centered(side, G_SUBMENU, icons, ink),
                     Node::Separator => {}
                 }
             }

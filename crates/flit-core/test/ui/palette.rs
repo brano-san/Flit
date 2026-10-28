@@ -47,7 +47,8 @@ fn palette_lays_out_only_visible_rows() {
     let t0 = Instant::now();
     let mut a = long_pick(t0);
     wheel_frame(&mut a, -30.0, t0);
-    assert!(a.nav.palette.as_ref().unwrap().rows.len() <= MAX_ROWS + 1);
+    let p = a.nav.palette.as_ref().unwrap();
+    assert!(p.rows.len() <= p.page + 1);
 }
 
 fn titles(q: &str) -> Vec<&'static str> {
@@ -55,19 +56,31 @@ fn titles(q: &str) -> Vec<&'static str> {
 }
 
 #[test]
-fn substrings_beat_fuzzy_matches_and_word_starts_win() {
-    assert_eq!(score("", "Anything"), Some(0));
-    assert!(score("tab", "New tab").unwrap() > score("nt", "New tab").unwrap());
-    assert!(score("new", "New tab").unwrap() > score("ew", "New tab").unwrap());
-    assert!(score("tab", "New tab").unwrap() > 2000);
-    assert!(score("nt", "New tab").unwrap() < 2000);
-    assert!(score("netab", "New tab").unwrap() > score("nt", "New tab").unwrap());
-    assert_eq!(score("ntb", "New tab"), None, "fuzzy letters must start a word or follow the previous match");
-    assert_eq!(score("sel", "Clear selection"), Some(3994));
-    assert_eq!(score("so", "Clear selection"), None);
-    assert!(score("so", "Show or hide hidden files").is_some());
-    assert_eq!(score("xyz", "New tab"), None);
-    assert_eq!(score("  NEW TAB ", "New tab"), score("new tab", "New tab"));
+fn ranking_is_fuzzy_and_marks_the_matched_letters() {
+    let rows = |q: &str, items: &[(&'static str, &'static str, &'static str)]| rank(q, items.iter().copied());
+    let three = [("New tab", "", ""), ("Print", "", ""), ("Clear selection", "", "")];
+    assert_eq!(rows("ntb", &three), vec![(0, vec![0..1, 4..5, 6..7])], "letters in order, gaps allowed");
+    assert_eq!(rows("", &three).len(), 3);
+    assert!(rows("xyz", &three).is_empty());
+    let sel = rows("sel", &[("Clear selection", "", ""), ("Select all", "", "")]);
+    assert_eq!(sel[0], (1, std::iter::once(0..3).collect()), "a match at a word start ranks first");
+    assert_eq!(rows("dual", &[("Split Right", "", "dual pane")]), vec![(0, Vec::new())], "descriptions match without marks in the title");
+    assert!(rows("dp", &[("Split Right", "", "dual pane")]).is_empty(), "scattered letters do not match descriptions");
+    assert_eq!(rows("new", &[("Nouvel onglet", "New tab", "")]), vec![(0, Vec::new())], "the English title matches too");
+}
+
+#[test]
+fn the_palette_sits_over_the_panels_at_half_the_window() {
+    let mut a = crate::ui::harness::app(&["a.txt"]);
+    a.open_palette();
+    draw(&mut a, Instant::now());
+    let (w, h) = a.size;
+    let left = a.panels.left;
+    let r = a.nav.palette.as_ref().unwrap().rect;
+    assert!((r.w - w / 2.0).abs() <= 1.0, "half the window: {r:?}");
+    assert!((r.x + r.w / 2.0 - (left + (w - left) / 2.0)).abs() <= 1.0, "centered over the panels: {r:?}");
+    assert_eq!(r.y, a.s(TAB_H) + a.s(TOOL_H) + a.s(TOP_GAP));
+    assert!(r.bottom() <= h);
 }
 
 #[test]

@@ -20,7 +20,7 @@ pub(super) struct Nav {
 impl App {
     pub(super) fn layout_nav(&mut self, top: f32, bottom: f32) {
         self.layout_sidebar(top, bottom);
-        self.layout_palette(top);
+        self.layout_palette();
     }
 
     pub(super) fn nav_hit(&self, x: f32, y: f32) -> Option<Hit> {
@@ -71,7 +71,7 @@ impl App {
     }
 
     pub(super) fn nav_mouse_down(&mut self, h: Hit, (x, y): (f32, f32), button: MouseButton, clicks: u8, now: Instant) -> bool {
-        let palette_hit = matches!(h, Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside);
+        let palette_hit = matches!(h, Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside | Hit::PaletteClose | Hit::PaletteScroll(_));
         if self.nav.palette.is_some() && !palette_hit {
             self.close_palette();
         }
@@ -92,7 +92,8 @@ impl App {
             (MouseButton::Left, Hit::Splitter) => self.begin_splitter_drag(x),
             (MouseButton::Left, Hit::FilterField) => self.filter_click(x, clicks),
             (MouseButton::Left, Hit::PaletteField) => self.palette_click(x, clicks),
-            (MouseButton::Left, Hit::Side(_) | Hit::SidePin(_) | Hit::SideHeader(_) | Hit::SideSettings | Hit::HomeItem(_) | Hit::FilterClose | Hit::PaletteRow(_)) => {
+            (MouseButton::Left, Hit::PaletteScroll(down)) => self.palette_step(down),
+            (MouseButton::Left, Hit::Side(_) | Hit::SidePin(_) | Hit::SideHeader(_) | Hit::SideSettings | Hit::HomeItem(_) | Hit::FilterClose | Hit::PaletteRow(_) | Hit::PaletteClose) => {
                 self.pressed = h;
                 self.nav.sidebar.press_y = y;
             }

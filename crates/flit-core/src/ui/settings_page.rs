@@ -1,7 +1,8 @@
 use super::actions::{chord_text, Chord, ACTIONS};
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
-use super::menu::Cmd;
+use super::menu::{Cmd, Mark, MenuItem};
+use super::widgets::Paint;
 use super::palette::{Palette, Pick};
 use super::settings::{self, Kind, Page, Picker, Value, SETTINGS};
 use super::a11y::{leaf, put, union};
@@ -43,7 +44,6 @@ const TAG_BUTTON_W: f32 = 92.0;
 const PAD: f32 = 16.0;
 const EXPORT_NAME: &str = "flit-settings.json";
 
-const G_MINUS: &str = "\u{E738}";
 const G_PLUS: &str = "\u{E710}";
 const G_DOWN: &str = "\u{E70D}";
 const G_SEARCH: &str = "\u{E721}";
@@ -1005,9 +1005,21 @@ impl App {
             (Kind::Toggle(..), Value::Bool(b)) => self.change_setting(i, Value::Bool(!b)),
             (Kind::Choice(choices, ..), Value::Choice(cur)) => {
                 let entries = choices.iter().enumerate().map(|(k, (_, label))| (label.t().to_owned(), Cmd::Setting(i, k), k == cur)).collect();
-                let items = self.list_menu(entries);
+                let items = self.list_menu(entries).into_iter().map(|mut it| {
+                    if let MenuItem::Command { mark, .. } = &mut it {
+                        *mark = Mark::Radio;
+                    }
+                    it
+                });
                 let (x, y) = self.menu_spot(i, at);
-                self.flit_menu(x, y, items);
+                let k = self.settings.as_ref().and_then(|ui| ui.lines.iter().position(|l| *l == Line::Setting(i)));
+                match k.zip(self.settings.as_ref()).map(|(k, ui)| (k, control_rect(ui.rects[k], |v| (v * self.scale).round()))) {
+                    Some((k, r)) => {
+                        self.button_menu(Hit::Settings(SHit::Control(k)), r.x, r.bottom() + self.s(4.0), items.collect());
+                        self.menu_right = Some(r.right());
+                    }
+                    None => self.flit_menu(x, y, items.collect()),
+                }
             }
             (Kind::Pick(Picker::Color, ..), _) => {
                 let (x, y) = self.menu_spot(i, at);
@@ -1275,13 +1287,9 @@ impl App {
         let (font, small, bold, head) = (self.ui_font(13.0), self.ui_font(12.0), FontStyle::new(FontFamily::Ui, 14.0 * sc, true), FontStyle::new(FontFamily::Ui, 20.0 * sc, true));
         let icons = self.icon_font(10.0);
         let (s4, s6, s8) = (s(4.0), s(6.0), s(8.0));
-        let (w, h) = self.size;
-        let top = self.s(super::TAB_H);
-        g.dl.rect(Rect::new(0.0, top, w, h - top), if self.dark { Color::rgba(0x00000070) } else { Color::rgba(0x00000040) });
         let p = ui.panel;
-        g.dl.shadow(Rect::new(p.x, p.y + s8, p.w, p.h), if self.dark { Color::rgba(0x00000090) } else { Color::rgba(0x00000030) }, s8, s(24.0));
         g.dl.round_rect(p, t.bg, s8);
-        g.dl.outline(p, t.input_border, s8, 1.0);
+        g.dl.outline(p, t.popup_border, s8, 1.0);
         let nav_w = ui.list.x - p.x;
         g.dl.round_rect(Rect::new(p.x, p.y, nav_w, p.h), t.chrome, s8);
         g.dl.rect(Rect::new(p.x + nav_w - s8, p.y, s8, p.h), t.chrome);
@@ -1358,19 +1366,14 @@ impl App {
                     let value = self.setting_value_text(*i);
                     match (set.kind, set.get(self)) {
                         (Kind::Toggle(..), Value::Bool(on)) => {
-                            let sw = switch_rect(r, s);
                             let hot = hover == Hit::Settings(SHit::Control(k));
-                            let knob = s(14.0);
-                            if on {
-                                g.dl.round_rect(sw, if hot { t.accent.alpha(0xD0) } else { t.accent }, sw.h / 2.0);
-                                g.dl.round_rect(Rect::new(sw.right() - knob - s4, sw.y + (sw.h - knob) / 2.0, knob, knob), t.bg, knob / 2.0);
-                            } else {
-                                g.dl.round_rect(sw, if hot { t.button_hover } else { t.input_bg }, sw.h / 2.0);
-                                g.dl.outline(sw, t.text_dim, sw.h / 2.0, sc.round().max(1.0));
-                                g.dl.round_rect(Rect::new(sw.x + s4, sw.y + (sw.h - knob) / 2.0, knob, knob), t.text_dim, knob / 2.0);
-                            }
+                            Paint::new(g, t, sc).switch(switch_rect(r, s), on, hot, self.icon_font(8.0));
                         }
-                        (Kind::Choice(..) | Kind::Text(..) | Kind::Pick(..), _) => {
+                        (Kind::Choice(..), _) => {
+                            let h = Hit::Settings(SHit::Control(k));
+                            Paint::new(g, t, sc).picker(control_rect(r, s), &value, font, self.icon_font(8.0), self.menu_open_from(h), hover == h);
+                        }
+                        (Kind::Text(..) | Kind::Pick(..), _) => {
                             let c = control_rect(r, s);
                             g.dl.round_rect(c, if hover == Hit::Settings(SHit::Control(k)) { t.button_hover } else { t.input_bg }, s4);
                             g.dl.outline(c, t.input_border, s4, 1.0);
@@ -1385,17 +1388,11 @@ impl App {
                             centered(g, Rect::new(c.right() - s(30.0), c.y, s(24.0), c.h), G_DOWN, icons, t.text_dim);
                         }
                         (Kind::Number { .. }, _) => {
-                            let c = control_rect(r, s);
-                            let (minus, plus) = step_rects(r, s);
-                            g.dl.round_rect(c, t.input_bg, s4);
-                            g.dl.outline(c, t.input_border, s4, 1.0);
-                            for (b, glyph, up) in [(minus, G_MINUS, false), (plus, G_PLUS, true)] {
-                                if hover == Hit::Settings(SHit::Step(k, up)) {
-                                    g.dl.round_rect(b.inset(s(2.0), s(2.0)), t.button_hover, s4);
-                                }
-                                centered(g, b, glyph, icons, t.text);
-                            }
-                            centered(g, Rect::new(minus.right(), c.y, plus.x - minus.right(), c.h), &value, font, t.text);
+                            let hot = match hover {
+                                Hit::Settings(SHit::Step(j, up)) if j == k => Some(up),
+                                _ => None,
+                            };
+                            Paint::new(g, t, sc).stepper(control_rect(r, s), &value, font, icons, hot);
                         }
                         _ => {
                             let vw = g.measure(&value, small);
@@ -1478,6 +1475,7 @@ impl App {
     }
 
     fn paint_tip<B: TextBackend>(&self, g: &mut Gfx<B>, t: &Theme, text: &str, (x, y): (f32, f32)) {
+        let sc = self.scale;
         let font = self.ui_font(12.0);
         let m = g.metrics(font);
         let (pad, line_h, edge) = (self.s(8.0), (self.s(12.0) * 1.45).round(), self.s(8.0));
@@ -1488,9 +1486,7 @@ impl App {
         let below = y + self.s(20.0);
         let ty = if below + h > self.size.1 - edge { y - self.s(6.0) - h } else { below };
         let b = Rect::new((x + self.s(12.0)).min(self.size.0 - w - edge).max(edge), ty.max(edge), w, h);
-        g.dl.shadow(Rect::new(b.x, b.y + self.s(2.0), b.w, b.h), if self.dark { Color::rgba(0x00000080) } else { Color::rgba(0x00000030) }, self.s(4.0), self.s(8.0));
-        g.dl.round_rect(b, t.bg, self.s(4.0));
-        g.dl.outline(b, t.input_border, self.s(4.0), 1.0);
+        Paint::new(g, t, sc).frame(b);
         for (n, l) in lines.iter().enumerate() {
             let base = b.y + pad + n as f32 * line_h + (line_h + m.ascent - m.descent) / 2.0;
             g.text(b.x + pad, base.round(), l, font, t.text, w - 2.0 * pad);

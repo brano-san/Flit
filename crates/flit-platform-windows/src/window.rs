@@ -54,6 +54,20 @@ fn capture_pointer(q: &mut std::collections::VecDeque<Event>) {
         q.push_back(Event::MouseMove { x, y });
     }
 }
+fn capture_key(text: &str) -> Event {
+    let (mods, name) = text.rsplit_once('+').unwrap_or(("", text));
+    let has = |m: &str| mods.split('+').any(|x| x.eq_ignore_ascii_case(m));
+    let key = match name {
+        "Up" => Key::Up,
+        "Down" => Key::Down,
+        "Enter" => Key::Enter,
+        "Escape" => Key::Escape,
+        "Tab" => Key::Tab,
+        _ => Key::Char(name.chars().next().unwrap_or(' ').to_ascii_uppercase()),
+    };
+    Event::Key { key, mods: Mods { ctrl: has("ctrl"), shift: has("shift"), alt: has("alt") }, pressed: true }
+}
+
 const COMPACT: (f32, f32) = (560.0, 380.0);
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -612,6 +626,10 @@ impl<H: WindowHandler<Win32>> Shared<H> {
                 node.send(Event::Key { key: Key::Char(','), mods: Mods { ctrl: true, ..Mods::default() }, pressed: true });
                 node.redraw_now();
                 node.queue.borrow_mut().extend(std::env::var("FLIT_CAPTURE_TYPE").unwrap_or_default().chars().map(Event::Char));
+            }
+            if let Ok(keys) = std::env::var("FLIT_CAPTURE_KEYS") {
+                node.queue.borrow_mut().extend(keys.split(';').filter(|k| !k.is_empty()).map(capture_key));
+                self.woken.set(true);
             }
             match std::env::var("FLIT_CAPTURE_POINTER_MS").ok().and_then(|v| v.parse().ok()) {
                 Some(ms) => {

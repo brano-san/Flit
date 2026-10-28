@@ -1,6 +1,8 @@
+use super::confirm::Confirmed;
 use super::home::{Recent, Widget};
 use super::menu::Menu;
 use super::tags::G_TAG;
+use super::widgets::{Button, Paint};
 use super::{centered, App, Drag, Effect, Focus, Hit, IconKind, IconRequest, Route, ShellMenu, G_DRIVE, G_FILE, G_FOLDER};
 use crate::hash;
 use crate::i18n::S;
@@ -614,8 +616,20 @@ impl App {
         self.toggle_pin(here);
     }
 
-    pub(super) fn toggle_pin_item(&mut self, i: usize) {
-        if let Some(loc) = self.nav.sidebar.items.get(i).map(|it| it.loc.clone()) {
+    pub(super) fn toggle_pin_item(&mut self, i: usize, now: Instant) {
+        let sb = &self.nav.sidebar;
+        let Some(loc) = sb.items.get(i).map(|it| it.loc.clone()) else { return };
+        match sb.rects.get(i).filter(|_| sb.state.pinned.contains(&loc)) {
+            Some(&r) => {
+                let anchor = if sb.prefs.compact { r } else { sb.pin_rect(r, self.scale) };
+                self.ask(anchor, (S::WidgetsRemoveItem.t(), S::WidgetsYes.t()), true, Confirmed::Unpin(loc), now);
+            }
+            None => self.toggle_pin(loc),
+        }
+    }
+
+    pub(super) fn unpin(&mut self, loc: Location, _now: Instant) {
+        if self.nav.sidebar.state.pinned.contains(&loc) {
             self.toggle_pin(loc);
         }
     }
@@ -932,7 +946,7 @@ impl App {
             }
             Key::Delete if plain => {
                 if self.nav.sidebar.items.get(cur).is_some_and(|it| it.section == Section::Pinned) {
-                    self.toggle_pin_item(cur);
+                    self.toggle_pin_item(cur, now);
                 }
                 return true;
             }
@@ -1050,11 +1064,9 @@ impl App {
                 g.dl.round_rect(Rect::new(bar.x, bar.y, (bar.w * used.clamp(0.0, 1.0)).max(bar.h), bar.h), fill, bar.h / 2.0);
             }
             if pin {
-                if self.hover == Hit::SidePin(i) {
-                    g.dl.round_rect(pin_r, t.button_hover, s4);
-                }
                 let glyph = if sb.is_pinned(&it.loc) { G_UNPIN } else { G_PIN };
-                centered(g, pin_r, glyph, pin_font, t.text_dim);
+                let open = self.confirm.as_ref().is_some_and(|c| c.anchor == pin_r);
+                Paint::new(g, t, self.scale).icon_button(pin_r, glyph, pin_font, Button::of(self.hover == Hit::SidePin(i), open, true), t.text_dim);
             }
         }
         if let Drag::PinMove { to, .. } = self.drag {

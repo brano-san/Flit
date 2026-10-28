@@ -2,23 +2,31 @@ use super::actions::ACTIONS;
 use super::describe::{description, description_en};
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
+use super::fuzzy::fuzzy;
 use super::settings_page::SettingPick;
 use super::tags::TagPick;
 use super::toolbar::ToolPick;
-use super::{App, Effect, Glide, Hit};
+use super::widgets::{baseline, Button, Paint};
+use super::{App, Effect, Glide, Hit, G_CLOSE, G_SORT_DOWN, G_SORT_UP, TAB_H, TOOL_H};
 use crate::i18n::S;
 use crate::input::{Key, Mods};
 use crate::path::FsPath;
-use crate::render::{Color, Rect};
+use crate::render::Rect;
 use crate::text::{Gfx, TextBackend};
-use crate::theme::Theme;
+use crate::theme::{ink_on, Theme};
 use std::cmp::Reverse;
+use std::ops::Range;
 use std::time::Instant;
 
-const WIDTH: f32 = 560.0;
+const MIN_W: f32 = 360.0;
 const ROW_H: f32 = 30.0;
 const FIELD_H: f32 = 32.0;
-const MAX_ROWS: usize = 12;
+const TOP_GAP: f32 = 45.0;
+const EDGE: f32 = 12.0;
+const HINT_H: f32 = 36.0;
+const SCROLL_W: f32 = 14.0;
+const DESC_PENALTY: i32 = 100_000;
+const G_SEARCH: &str = "\u{E721}";
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Pick {
@@ -84,6 +92,7 @@ pub(super) struct Palette {
     pub titles: Vec<String>,
     field: Field,
     pub matches: Vec<usize>,
+    pub marks: Vec<Vec<Range<usize>>>,
     pub keys: Vec<String>,
     alts: Vec<&'static str>,
     descs: Vec<String>,
@@ -93,42 +102,36 @@ pub(super) struct Palette {
     shift: f32,
     pub(super) scroll: Glide,
     list: Rect,
-    rect: Rect,
+    pub rect: Rect,
     field_rect: Rect,
+    close: Rect,
+    arrows: [Rect; 2],
+    track: Rect,
+    hints: Rect,
+    pub page: usize,
     pub rows: Vec<Rect>,
+    opened: Option<Instant>,
 }
 
-pub fn score(query: &str, title: &str) -> Option<u32> {
-    let q = query.trim().to_lowercase();
-    if q.is_empty() {
-        return Some(0);
-    }
-    let t = title.to_lowercase();
-    if let Some(p) = t.find(&q) {
-        let word = p == 0 || t.as_bytes()[p - 1] == b' ';
-        return Some(3000 - p.min(999) as u32 + if word { 1000 } else { 0 });
-    }
-    let chars: Vec<char> = t.chars().collect();
-    let word_start = |i: usize| i == 0 || chars[i - 1] == ' ';
-    let (mut score, mut next) = (1000u32, 0usize);
-    for qc in q.chars().filter(|c| !c.is_whitespace()) {
-        let found = (next..chars.len()).find(|&i| chars[i] == qc && ((i == next && next > 0) || word_start(i)))?;
-        score = (score + if found == next { 10 } else { 0 }).saturating_sub((found - next) as u32);
-        next = found + 1;
-    }
-    Some(score.min(1999))
+fn described(query: &str, desc: &str) -> Option<i32> {
+    let limit = query.chars().filter(|c| !c.is_whitespace()).count().div_ceil(3).max(1);
+    fuzzy(query, desc).filter(|m| m.ranges.len() <= limit).map(|m| m.score - DESC_PENALTY)
 }
 
-fn described(query: &str, desc: &str) -> Option<u32> {
-    let d = desc.to_lowercase();
-    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
-    (!words.is_empty() && words.iter().all(|w| d.contains(w.as_str()))).then_some(500)
-}
-
-fn rank<'a>(query: &str, items: impl Iterator<Item = (&'a str, &'a str, &'a str)>) -> Vec<usize> {
-    let mut scored: Vec<(u32, usize)> = items.enumerate().filter_map(|(i, (t, alt, d))| score(query, t).max(score(query, alt)).or_else(|| described(query, d)).map(|s| (s, i))).collect();
-    scored.sort_by_key(|&(s, i)| (Reverse(s), i));
-    scored.into_iter().map(|(_, i)| i).collect()
+fn rank<'a>(query: &str, items: impl Iterator<Item = (&'a str, &'a str, &'a str)>) -> Vec<(usize, Vec<Range<usize>>)> {
+    let mut scored: Vec<(i32, usize, Vec<Range<usize>>)> = items
+        .enumerate()
+        .filter_map(|(i, (t, alt, d))| {
+            let own = fuzzy(query, t).map(|m| (m.score, i, m.ranges));
+            let other = fuzzy(query, alt).map(|m| (m.score, i, Vec::new()));
+            match (own, other) {
+                (Some(a), Some(b)) => Some(if b.0 > a.0 { b } else { a }),
+                (a, b) => a.or(b).or_else(|| described(query, d).map(|s| (s, i, Vec::new()))),
+            }
+        })
+        .collect();
+    scored.sort_by_key(|&(s, i, _)| (Reverse(s), i));
+    scored.into_iter().map(|(_, i, r)| (i, r)).collect()
 }
 
 fn searched_description(id: &str) -> String {
@@ -138,14 +141,38 @@ fn searched_description(id: &str) -> String {
 
 pub fn matches(query: &str) -> Vec<usize> {
     let descs: Vec<String> = ACTIONS.iter().map(|a| searched_description(a.id)).collect();
-    rank(query, ACTIONS.iter().zip(&descs).map(|(a, d)| (a.title.t(), a.title.en(), d.as_str())))
+    rank(query, ACTIONS.iter().zip(&descs).map(|(a, d)| (a.title.t(), a.title.en(), d.as_str()))).into_iter().map(|(i, _)| i).collect()
 }
 
 impl Palette {
     pub(super) fn new(pick: Pick, items: Vec<(String, String)>, text: &str) -> Self {
         let (titles, keys): (Vec<String>, Vec<String>) = items.into_iter().unzip();
         let ids = (0..titles.len()).collect();
-        let mut p = Self { pick, titles, field: Field::default(), matches: Vec::new(), keys, alts: Vec::new(), descs: Vec::new(), ids, sel: 0, first: 0, shift: 0.0, scroll: Glide::default(), list: Rect::default(), rect: Rect::default(), field_rect: Rect::default(), rows: Vec::new() };
+        let mut p = Self {
+            pick,
+            titles,
+            field: Field::default(),
+            matches: Vec::new(),
+            marks: Vec::new(),
+            keys,
+            alts: Vec::new(),
+            descs: Vec::new(),
+            ids,
+            sel: 0,
+            first: 0,
+            shift: 0.0,
+            scroll: Glide::default(),
+            list: Rect::default(),
+            rect: Rect::default(),
+            field_rect: Rect::default(),
+            close: Rect::default(),
+            arrows: [Rect::default(); 2],
+            track: Rect::default(),
+            hints: Rect::default(),
+            page: 1,
+            rows: Vec::new(),
+            opened: None,
+        };
         p.field.edit.set(text);
         p.field.edit.select_all();
         p.refresh();
@@ -165,19 +192,20 @@ impl Palette {
     fn refresh(&mut self) {
         let alts = self.alts.iter().copied().chain(std::iter::repeat(""));
         let descs = self.descs.iter().map(String::as_str).chain(std::iter::repeat(""));
-        self.matches = if self.pick.is_input() {
+        let ranked = if self.pick.is_input() {
             Vec::new()
         } else if matches!(self.pick, Pick::Setting(SettingPick::Capture { .. })) {
-            (0..self.titles.len()).collect()
+            (0..self.titles.len()).map(|i| (i, Vec::new())).collect()
         } else {
             rank(self.field.text(), self.titles.iter().map(String::as_str).zip(alts).zip(descs).map(|((t, a), d)| (t, a, d)))
         };
+        (self.matches, self.marks) = ranked.into_iter().unzip();
         self.sel = 0;
         self.scroll.snap(0.0);
     }
 
     fn max_scroll(&self) -> f32 {
-        self.matches.len().saturating_sub(MAX_ROWS) as f32 * ROW_H
+        self.matches.len().saturating_sub(self.page) as f32 * ROW_H
     }
 
     fn select(&mut self, to: isize) {
@@ -187,7 +215,7 @@ impl Palette {
         }
         self.sel = to.rem_euclid(n) as usize;
         let top = self.sel as f32 * ROW_H;
-        let view = MAX_ROWS as f32 * ROW_H;
+        let view = self.page as f32 * ROW_H;
         if top < self.scroll.target {
             self.scroll.target = top;
         } else if top + ROW_H > self.scroll.target + view {
@@ -263,7 +291,7 @@ impl App {
         }
         let closes = self.keymap.runs(key, m, "palette.show");
         let Some(p) = &mut self.nav.palette else { return false };
-        let page = MAX_ROWS as isize;
+        let page = p.page as isize;
         match key {
             Key::Escape => self.close_palette(),
             Key::Enter => {
@@ -323,27 +351,61 @@ impl App {
         }
     }
 
-    pub(super) fn layout_palette(&mut self, top: f32) {
-        let (w, sc) = (self.size.0, self.scale);
+    pub(super) fn palette_step(&mut self, down: bool) {
+        if let Some(p) = &mut self.nav.palette {
+            let max = p.max_scroll();
+            p.scroll.by(if down { ROW_H } else { -ROW_H }, max);
+            self.dirty = true;
+        }
+    }
+
+    pub(super) fn layout_palette(&mut self) {
+        let (w, h, sc) = (self.size.0, self.size.1, self.scale);
         let s = |v: f32| (v * sc).round();
+        let left = self.panels.left;
         let Some(p) = &mut self.nav.palette else { return };
-        let pw = s(WIDTH).min(w - s(32.0)).max(s(120.0));
-        let x = ((w - pw) / 2.0).round();
-        let y = top + s(4.0);
-        p.field_rect = Rect::new(x + s(8.0), y + s(8.0), pw - s(16.0), s(FIELD_H));
-        p.rows.clear();
+        let area = (w - left).max(s(200.0));
+        let pw = (w / 2.0).round().max(s(MIN_W)).min(area - 2.0 * s(EDGE)).max(s(120.0));
+        let x = (left + (area - pw) / 2.0).round().min(w - pw).max(0.0);
         let unit = s(ROW_H);
+        let fixed = s(8.0) + s(FIELD_H) + s(6.0) + s(HINT_H);
+        let y = (s(TAB_H) + s(TOOL_H) + s(TOP_GAP)).min((h - s(EDGE) - fixed - unit).max(s(EDGE)));
+        p.field_rect = Rect::new(x + s(8.0), y + s(8.0), pw - s(16.0) - s(FIELD_H) - s(4.0), s(FIELD_H));
+        p.close = Rect::new(p.field_rect.right() + s(4.0), p.field_rect.y, s(FIELD_H), s(FIELD_H));
         let top = p.field_rect.bottom() + s(6.0);
+        let room = (h - s(EDGE) - s(HINT_H) - top).max(unit);
+        p.page = ((room / unit).floor() as usize).max(1);
+        let n = p.matches.len();
+        let shown = n.clamp(1, p.page);
+        let list = Rect::new(x, top, pw, shown as f32 * unit);
+        let scrolls = n > p.page;
+        let bar = if scrolls { s(SCROLL_W) + s(4.0) } else { 0.0 };
+        p.rows.clear();
         let at = p.scroll.pos / ROW_H;
         p.first = at.floor() as usize;
         p.shift = ((at - at.floor()) * unit).round();
-        let n = p.matches.len();
-        for k in p.first..n.min(p.first + MAX_ROWS + 1) {
-            p.rows.push(Rect::new(x + s(6.0), top + (k - p.first) as f32 * unit - p.shift, pw - s(12.0), unit));
+        for k in p.first..n.min(p.first + p.page + 1) {
+            p.rows.push(Rect::new(x + s(6.0), top + (k - p.first) as f32 * unit - p.shift, pw - s(12.0) - bar, unit));
         }
-        let ry = top + n.clamp(1, MAX_ROWS) as f32 * unit;
-        p.list = Rect::new(x, top, pw, ry - top);
-        p.rect = Rect::new(x, y, pw, ry + s(6.0) - y);
+        p.list = list;
+        let sw = s(SCROLL_W);
+        let tx = list.right() - s(4.0) - sw;
+        (p.arrows, p.track) = if scrolls {
+            ([Rect::new(tx, list.y, sw, sw), Rect::new(tx, list.bottom() - sw, sw, sw)], Rect::new(tx, list.y + sw, sw, (list.h - 2.0 * sw).max(0.0)))
+        } else {
+            ([Rect::default(); 2], Rect::default())
+        };
+        p.hints = Rect::new(x, list.bottom(), pw, s(HINT_H));
+        p.rect = Rect::new(x, y, pw, p.hints.bottom() - y);
+    }
+
+    pub(super) fn palette_button(&self, h: Hit) -> Option<Rect> {
+        let p = self.nav.palette.as_ref()?;
+        match h {
+            Hit::PaletteClose => Some(p.close),
+            Hit::PaletteScroll(down) => Some(p.arrows[usize::from(down)]),
+            _ => None,
+        }
     }
 
     pub(super) fn palette_hit(&self, x: f32, y: f32) -> Option<Hit> {
@@ -357,44 +419,72 @@ impl App {
         if p.field_rect.contains(x, y) {
             return Some(Hit::PaletteField);
         }
+        if p.close.contains(x, y) {
+            return Some(Hit::PaletteClose);
+        }
+        if let Some(k) = p.arrows.iter().position(|r| r.contains(x, y)) {
+            return Some(Hit::PaletteScroll(k == 1));
+        }
+        if p.track.contains(x, y) {
+            return Some(Hit::PaletteBox);
+        }
         Some(p.rows.iter().position(|r| r.contains(x, y) && p.list.contains(x, y)).map_or(Hit::PaletteBox, |i| Hit::PaletteRow(p.first + i)))
     }
 
     pub(super) fn draw_palette<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
-        let (font, small) = (self.ui_font(13.0), self.ui_font(12.0));
-        let (s4, s6, s12, row_h) = (self.s(4.0), self.s(6.0), self.s(12.0), self.s(ROW_H));
-        let (scale, active, hover) = (self.scale, self.active, self.hover);
-        let shadow = if self.dark { Color::rgba(0x00000090) } else { Color::rgba(0x00000030) };
+        let (font, small, icons) = (self.ui_font(13.0), self.ui_font(12.0), self.icon_font(11.0));
+        let (s3, s4, s6, s12, s16, sc) = (self.s(3.0), self.s(4.0), self.s(6.0), self.s(12.0), self.s(16.0), self.scale);
+        let (close_font, arrow_font) = (self.icon_font(9.0), self.icon_font(8.0));
+        let (active, hover, now) = (self.active, self.hover, self.last_frame.unwrap_or_else(Instant::now));
+        let from = g.dl.instances.len();
         let Some(p) = &mut self.nav.palette else { return };
+        let opened = *p.opened.get_or_insert(now);
         let r = p.rect;
-        g.dl.shadow(Rect::new(r.x, r.y + s4, r.w, r.h), shadow, s6, s12);
-        g.dl.round_rect(r, t.bg, s6);
-        g.dl.outline(r, t.input_border, s6, 1.0);
+        let mut w = Paint::new(g, t, sc);
+        w.frame(r);
         let fr = p.field_rect;
-        g.dl.round_rect(fr, t.input_bg, s4);
-        g.dl.outline(fr, t.accent, s4, scale.round().max(1.0));
-        let inner = Rect::new(fr.x + s12, fr.y, fr.w - 2.0 * s12, fr.h);
-        p.field.draw(g, t, inner, font, active, p.pick.placeholder(), scale, Some(&self.preedit));
-        let m = g.metrics(font);
-        g.dl.set_clip(Some(p.list));
+        w.field(fr, true);
+        w.centered(Rect::new(fr.x, fr.y, fr.h, fr.h), G_SEARCH, icons, t.text_dim);
+        let inner = Rect::new(fr.x + fr.h, fr.y, fr.w - fr.h - s12, fr.h);
+        p.field.draw(w.g, t, inner, font, active, p.pick.placeholder(), sc, Some(&self.preedit));
+        w.icon_button(p.close, G_CLOSE, close_font, Button::of(hover == Hit::PaletteClose, false, true), t.text_dim);
+        w.g.dl.set_clip(Some(p.list));
         for (k, &row) in p.rows.iter().enumerate() {
             let i = p.first + k;
-            if i == p.sel {
-                g.dl.round_rect(row, t.selection, s4);
+            let selected = i == p.sel;
+            if selected {
+                w.g.dl.round_rect(row, t.accent_fill, s4);
             } else if hover == Hit::PaletteRow(i) {
-                g.dl.round_rect(row, t.hover, s4);
+                w.g.dl.round_rect(row, t.hover, s4);
             }
-            let baseline = (row.y + (row.h + m.ascent - m.descent) / 2.0).round();
+            let (ink, dim, mark) = if selected { (ink_on(t.accent_fill), ink_on(t.accent_fill), ink_on(t.accent_fill)) } else { (t.text, t.text_dim, t.accent) };
+            let y = baseline(w.g, row, font);
             let keys = &p.keys[p.matches[i]];
-            let kw = if keys.is_empty() { 0.0 } else { g.measure(keys, small) };
-            g.text(row.right() - s12 - kw, baseline, keys, small, t.text_dim, f32::INFINITY);
-            g.text(row.x + s12, baseline, &p.titles[p.matches[i]], font, t.text, row.w - 3.0 * s12 - kw);
+            let kw = if keys.is_empty() { 0.0 } else { w.g.measure(keys, small) };
+            w.g.text(row.right() - s12 - kw, y, keys, small, dim, f32::INFINITY);
+            w.marked((row.x + s12, y), &p.titles[p.matches[i]], &p.marks[i], font, (ink, mark), row.w - 3.0 * s12 - kw);
         }
-        g.dl.set_clip(None);
+        w.g.dl.set_clip(None);
         if p.matches.is_empty() {
-            let baseline = (fr.bottom() + s6 + (row_h + m.ascent - m.descent) / 2.0).round();
-            g.text(r.x + s12 + s6, baseline, p.pick.empty(), font, t.text_dim, r.w - 2.0 * s12);
+            let row = Rect::new(r.x + s12, p.list.y, r.w - 2.0 * s12, p.list.h);
+            let y = baseline(w.g, row, font);
+            w.g.text(row.x + s6, y, p.pick.empty(), font, t.text_dim, row.w);
         }
+        if p.track.h > 0.0 {
+            let tr = p.track;
+            let total = p.matches.len().max(1) as f32;
+            let th = (tr.h * p.page as f32 / total).max(s16).min(tr.h);
+            let frac = if p.max_scroll() > 0.0 { p.scroll.pos / p.max_scroll() } else { 0.0 };
+            w.g.dl.round_rect(Rect::new(tr.x + s3, tr.y + (tr.h - th) * frac, tr.w - s6, th), if matches!(hover, Hit::PaletteBox) { t.scrollbar_hover } else { t.scrollbar }, s3);
+            for (k, glyph) in [G_SORT_UP, G_SORT_DOWN].into_iter().enumerate() {
+                w.icon_button(p.arrows[k], glyph, arrow_font, Button::of(hover == Hit::PaletteScroll(k == 1), false, true), t.text_dim);
+            }
+        }
+        let hints = p.hints;
+        w.separator(hints.x + s12, hints.y, hints.w - 2.0 * s12);
+        let keys = [S::WidgetsKeyUp.t(), S::WidgetsKeyDown.t()];
+        w.hints(hints.x + hints.w / 2.0, hints.y + hints.h / 2.0, &[(&keys, S::WidgetsHintNavigate.t()), (&[S::WidgetsKeyEnter.t()], S::WidgetsHintUse.t()), (&[S::WidgetsKeyEscape.t()], S::WidgetsHintDismiss.t())], small);
+        self.pop(g, from, opened, (r.x + r.w / 2.0, r.y));
     }
 }
 

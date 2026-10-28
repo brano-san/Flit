@@ -2,13 +2,10 @@ use super::{App, Drag, Effect, Hit, Route, Tab, G_DRIVE, G_FOLDER, MAX_ROUTES};
 use crate::input::{Key, MouseButton};
 use crate::location::Location;
 use crate::path::PathKind;
-use crate::render::Rect;
 use crate::sort::ViewSpec;
-use crate::text::{Gfx, TextBackend};
-use crate::theme::Theme;
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 pub const G_TAB_ACTIONS: &str = "\u{E70D}";
 const G_COMPUTER: &str = "\u{E7F4}";
@@ -16,7 +13,6 @@ const G_LINUX: &str = "\u{E756}";
 const G_BIN: &str = "\u{E74D}";
 const DRAG_START: f32 = 6.0;
 const TEAR_MARGIN: f32 = 24.0;
-const TIP_DELAY: Duration = Duration::from_millis(600);
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Startup {
@@ -55,7 +51,6 @@ pub(super) struct Strip {
     pub rev: u64,
     pub pointer: Option<(f32, f32)>,
     wheel: f32,
-    tip: Option<(usize, Option<Instant>)>,
 }
 
 pub fn tab_glyph(loc: &Location) -> &'static str {
@@ -69,7 +64,7 @@ pub fn tab_glyph(loc: &Location) -> &'static str {
     }
 }
 
-fn full_name(t: &Tab) -> String {
+pub(super) fn full_name(t: &Tab) -> String {
     match t.location().path().kind() {
         PathKind::Computer | PathKind::RecycleBin | PathKind::Home => t.title(),
         _ => t.location().display().into_owned(),
@@ -144,7 +139,7 @@ impl App {
 
     pub(super) fn wake_tab(&mut self) {
         self.strip.rev += 1;
-        self.strip.tip = None;
+        self.tip_hide();
         if self.tab().gen == 0 {
             self.load_tab(self.cur, None, Instant::now());
         }
@@ -267,48 +262,8 @@ impl App {
         true
     }
 
-    pub(super) fn strip_pointer(&mut self, x: f32, y: f32, now: Instant) {
+    pub(super) fn strip_pointer(&mut self, x: f32, y: f32) {
         self.strip.pointer = Some((x, y));
-        let over = match self.hit(x, y) {
-            Hit::Tab(i) if self.drag == Drag::None => Some(i),
-            _ => None,
-        };
-        match (over, self.strip.tip) {
-            (Some(i), Some((k, _))) if i == k => {}
-            (Some(i), _) => {
-                self.strip.tip = Some((i, Some(now + TIP_DELAY)));
-                self.arm_timer(now, now + TIP_DELAY);
-            }
-            (None, Some((_, shown))) => {
-                self.strip.tip = None;
-                self.dirty |= shown.is_none();
-            }
-            (None, None) => {}
-        }
-    }
-
-    pub(super) fn tip_timer(&mut self, now: Instant) {
-        let Some((i, Some(at))) = self.strip.tip else { return };
-        if now + super::ops::TIMER_SLACK < at {
-            return self.arm_timer(now, at);
-        }
-        self.strip.tip = Some((i, None));
-        self.dirty = true;
-    }
-
-    pub(super) fn draw_tab_tip<B: TextBackend>(&mut self, g: &mut Gfx<B>, th: &Theme) {
-        let Some((i, None)) = self.strip.tip else { return };
-        let (Some(t), Some(&(r, _))) = (self.tabs.get(i), self.layout.tabs.get(i)) else { return };
-        let text = full_name(t);
-        let font = self.ui_font(12.0);
-        let m = g.metrics(font);
-        let (pad, h) = (self.s(8.0), self.s(26.0));
-        let w = (g.measure(&text, font) + 2.0 * pad).min(self.size.0 - self.s(16.0));
-        let x = r.x.min(self.size.0 - w - self.s(8.0)).max(self.s(8.0));
-        let b = Rect::new(x, r.bottom() + self.s(4.0), w, h);
-        g.dl.round_rect(b, th.bg, self.s(4.0));
-        g.dl.outline(b, th.input_border, self.s(4.0), 1.0);
-        g.text(b.x + pad, (b.y + (h + m.ascent - m.descent) / 2.0).round(), &text, font, th.text, w - 2.0 * pad);
     }
 
     pub(super) fn strip_mouse_down(&mut self, h: Hit, button: MouseButton, clicks: u8, now: Instant) -> bool {
@@ -356,7 +311,7 @@ impl App {
     pub(super) fn tab_actions_menu(&mut self) {
         let r = self.layout.actions;
         let menu = self.build_tab_actions_menu();
-        self.flit_menu(r.x, r.bottom(), menu);
+        self.button_menu(Hit::TabActions, r.x, r.bottom(), menu);
     }
 
     pub(super) fn open_many(&mut self, now: Instant) {

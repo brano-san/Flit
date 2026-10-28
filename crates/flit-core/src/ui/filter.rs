@@ -15,7 +15,7 @@ pub(super) struct FilterRects {
     pub bar: Rect,
     pub field: Rect,
     inner: Rect,
-    close: Rect,
+    pub close: Rect,
 }
 
 impl Tab {

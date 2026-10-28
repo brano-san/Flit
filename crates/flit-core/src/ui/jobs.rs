@@ -10,7 +10,7 @@ use crate::name;
 use crate::open::OpenTarget;
 use crate::path::FsPath;
 use crate::provider::{Conflict, FileOp, OpCtl, OpId, OpProgress, Resolve, Stage};
-use crate::render::{Color, Rect};
+use crate::render::Rect;
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::Theme;
 use std::collections::VecDeque;
@@ -784,19 +784,13 @@ impl App {
         }
     }
 
-    pub(super) fn shadow(&self) -> Color {
-        if self.dark { Color::rgba(0x00000090) } else { Color::rgba(0x00000030) }
-    }
-
     fn draw_panel<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
         let (font, small, bold) = (self.ui_font(13.0), self.ui_font(12.0), FontStyle::new(FontFamily::Ui, 14.0 * self.scale, true));
         let icons = self.icon_font(10.0);
         let (s4, s6, s12) = (self.s(4.0), self.s(6.0), self.s(12.0));
         let s = |v: f32| (v * self.scale).round();
         let p = self.jobs.r.panel;
-        g.dl.shadow(Rect::new(p.x, p.y + s4, p.w, p.h), self.shadow(), s6, s12);
-        g.dl.round_rect(p, t.bg, s6);
-        g.dl.outline(p, t.input_border, s6, 1.0);
+        super::widgets::Paint::new(g, t, self.scale).frame(p);
         let m = g.metrics(bold);
         let head = (p.y + (s(PANEL_HEAD) + m.ascent - m.descent) / 2.0).round();
         g.text(p.x + s12 + s6, head, S::UiJobOperations.t(), bold, t.text, p.w / 2.0);
@@ -876,9 +870,7 @@ impl App {
             let menu = self.jobs.r.menu.clone();
             if let (Some(first), Some(last)) = (menu.first(), menu.last()) {
                 let bg = Rect::new(first.x, first.y, first.w, last.bottom() - first.y);
-                g.dl.shadow(Rect::new(bg.x, bg.y + s4, bg.w, bg.h), self.shadow(), s6, s4 * 3.0);
-                g.dl.round_rect(bg, t.bg, s4);
-                g.dl.outline(bg, t.input_border, s4, 1.0);
+                super::widgets::Paint::new(g, t, self.scale).frame(bg);
                 for (k, (r, label)) in menu.iter().zip(items).enumerate() {
                     if self.hover == Hit::OpsMenu(k) {
                         g.dl.round_rect(r.inset(s(3.0), s(2.0)), t.hover, s4);
@@ -948,12 +940,9 @@ impl App {
         let (font, small, bold) = (self.ui_font(13.0), self.ui_font(12.0), FontStyle::new(FontFamily::Ui, 16.0 * self.scale, true));
         let s = |v: f32| (v * self.scale).round();
         let (s4, s8, s20) = (s(4.0), s(8.0), s(20.0));
-        let (w, h) = self.size;
-        g.dl.rect(Rect::new(0.0, 0.0, w, h), if self.dark { Color::rgba(0x00000070) } else { Color::rgba(0x00000040) });
         let d = self.jobs.r.dialog;
-        g.dl.shadow(Rect::new(d.x, d.y + s8, d.w, d.h), self.shadow(), s8, s(24.0));
         g.dl.round_rect(d, t.bg, s8);
-        g.dl.outline(d, t.input_border, s8, 1.0);
+        g.dl.outline(d, t.popup_border, s8, 1.0);
         let Some((title, lines)) = self.dialog_text() else { return };
         let mb = g.metrics(bold);
         let mut y = d.y + s20 + mb.ascent;

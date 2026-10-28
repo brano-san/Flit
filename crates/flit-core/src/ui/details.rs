@@ -546,6 +546,9 @@ impl App {
     }
 
     pub(super) fn flit_menu(&mut self, x: f32, y: f32, menu: Vec<MenuItem>) {
+        self.menu_owner = None;
+        self.menu_right = None;
+        self.tip_hide();
         let dir = self.tab().view_loc.path().clone();
         self.effects.push(Effect::ShellMenu(ShellMenu { dir, items: Vec::new(), x, y, extended: false, menu, inline: false, shell: false }));
     }

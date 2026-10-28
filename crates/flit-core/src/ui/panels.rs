@@ -2,12 +2,13 @@ use super::filter::FilterRects;
 use super::home::Home;
 use super::menu::Menu;
 use super::sidebar::PlaceCmd;
-use super::{centered, row_hit, App, Drag, DragEvent, Effect, Focus, Hit, Layout, Tab, WindowCmd, CAPTION_W, G_CLOSE, G_MAX, G_MIN, G_RESTORE, MAX_OPEN, TAB_H};
+use super::widgets::{Button, Paint};
+use super::{row_hit, App, Drag, DragEvent, Effect, Focus, Hit, Layout, Tab, WindowCmd, CAPTION_W, G_CLOSE, G_MAX, G_MIN, G_RESTORE, MAX_OPEN, TAB_H};
 use crate::i18n::S;
 use crate::input::{CursorIcon, Event};
 use crate::location::Location;
 use crate::provider::{ProviderEvent, TabId};
-use crate::render::{Color, Rect};
+use crate::render::Rect;
 use crate::sort::ViewSpec;
 use crate::text::{Gfx, TextBackend};
 use crate::theme::{Area, Palette, Theme};
@@ -74,7 +75,7 @@ pub(super) struct Panels {
     pub caption: [Rect; 3],
     pub menu: Rect,
     pub quick: Rect,
-    left: f32,
+    pub left: f32,
     inset: f32,
     hover: Option<(u32, Hit)>,
 }
@@ -806,24 +807,26 @@ impl App {
             g.dl.rect(Rect::new(0.0, 0.0, side, top), t.chrome);
         }
         let icons = self.icon_font(12.0);
-        for (r, glyph, hit) in [(p.menu, G_MENU, Hit::Menu), (p.quick, G_QUICK, Hit::QuickToggle)] {
-            if self.hover == hit {
-                g.dl.round_rect(r, if self.pressed == hit { t.button_pressed } else { t.button_hover }, self.s(4.0));
-            }
-            centered(g, r, glyph, icons, t.text_dim);
+        let palette_open = self.nav.palette.as_ref().is_some_and(|p| p.pick == super::palette::Pick::Commands);
+        let mut w = Paint::new(g, t, self.scale);
+        for (r, glyph, hit, open) in [(p.menu, G_MENU, Hit::Menu, palette_open), (p.quick, G_QUICK, Hit::QuickToggle, false)] {
+            w.icon_button(r, glyph, icons, Button::of(self.hover == hit, open, true), t.text_dim);
         }
         let caption_icons = self.icon_font(10.0);
         let max_glyph = if self.maximized { G_RESTORE } else { G_MAX };
         for (i, glyph) in [G_MIN, max_glyph, G_CLOSE].into_iter().enumerate() {
             let r = self.panels.caption[i];
-            let mut color = if self.active { t.text } else { t.text_dim };
-            if self.hover == Hit::Caption(i) {
-                g.dl.rect(r, if i == 2 { t.close_hover } else { t.button_hover });
-                if i == 2 {
-                    color = Color::rgb(0xFFFFFF);
-                }
+            let idle = if self.active { t.text } else { t.text_dim };
+            let hot = self.hover == Hit::Caption(i);
+            let fill = match (hot, i) {
+                (true, 2) => Some(t.close_hover),
+                (true, _) => Some(t.teal),
+                _ => None,
+            };
+            if let Some(c) = fill {
+                w.g.dl.rect(r, c);
             }
-            centered(g, r, glyph, caption_icons, color);
+            w.centered(r, glyph, caption_icons, fill.map_or(idle, crate::theme::ink_on));
         }
     }
 }

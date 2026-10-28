@@ -5,7 +5,7 @@ use super::a11y::put;
 use super::{centered, App, Effect, Hit};
 use crate::a11y::{Role, Tree};
 use crate::input::{Key, Mods};
-use crate::render::{Color, Rect};
+use crate::render::Rect;
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::Theme;
 
@@ -413,15 +413,11 @@ impl App {
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
         let (s4, s8, s20) = (s(4.0), s(8.0), s(20.0));
-        let (w, h) = self.size;
-        let (dark, hover, active, pressed) = (self.dark, self.hover, self.active, self.pressed);
-        let shadow = if dark { Color::rgba(0x00000090) } else { Color::rgba(0x00000030) };
+        let (hover, active, pressed) = (self.hover, self.active, self.pressed);
         let Some(f) = &mut self.jobs.form else { return };
-        g.dl.rect(Rect::new(0.0, 0.0, w, h), if dark { Color::rgba(0x00000070) } else { Color::rgba(0x00000040) });
         let d = f.rect;
-        g.dl.shadow(Rect::new(d.x, d.y + s8, d.w, d.h), shadow, s8, s(24.0));
         g.dl.round_rect(d, t.bg, s8);
-        g.dl.outline(d, t.input_border, s8, 1.0);
+        g.dl.outline(d, t.popup_border, s8, 1.0);
         let mb = g.metrics(bold);
         g.text(d.x + s20, (d.y + s20 + mb.ascent).round(), &f.title, bold, t.text, d.w - 2.0 * s20);
         let mf = g.metrics(font);

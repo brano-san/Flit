@@ -1,5 +1,5 @@
-use super::ops::TIMER_SLACK;
 use super::palette::{Palette, Pick};
+use super::widgets::{Button, Paint};
 use super::{centered, App, Effect, Hit, LayoutMode, LAYOUTS};
 use crate::archive;
 use crate::i18n::S;
@@ -9,7 +9,7 @@ use crate::render::Rect;
 use crate::text::{Gfx, TextBackend};
 use crate::theme::Theme;
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 pub const BAR_H: f32 = 40.0;
 const BUTTON_H: f32 = 32.0;
@@ -17,7 +17,6 @@ const ICON_W: f32 = 34.0;
 const SEP_W: f32 = 13.0;
 const PAD: f32 = 10.0;
 const MAX_ITEMS: usize = 48;
-const TIP_DELAY: Duration = Duration::from_millis(500);
 const FLY_W: f32 = 272.0;
 const FLY_ROW: f32 = 30.0;
 const TOGGLES: [S; 5] = [S::ToolbarFlyoutShowHidden, S::ToolbarFlyoutShowExtensions, S::ToolbarFlyoutAdaptive, S::ToolbarFlyoutThumbnails, S::ToolbarFlyoutFolderSizes];
@@ -46,49 +45,50 @@ enum Kind {
 struct Tool {
     id: &'static str,
     label: S,
+    tip: S,
     glyph: &'static str,
     kind: Kind,
 }
 
-const fn act(id: &'static str, label: S, glyph: &'static str) -> Tool {
-    Tool { id, label, glyph, kind: Kind::Action }
+const fn act(id: &'static str, label: S, tip: S, glyph: &'static str) -> Tool {
+    Tool { id, label, tip, glyph, kind: Kind::Action }
 }
 
-const fn menu(id: &'static str, label: S, glyph: &'static str, m: ToolMenu) -> Tool {
-    Tool { id, label, glyph, kind: Kind::Menu(m) }
+const fn menu(id: &'static str, label: S, tip: S, glyph: &'static str, m: ToolMenu) -> Tool {
+    Tool { id, label, tip, glyph, kind: Kind::Menu(m) }
 }
 
 const TOOLS: &[Tool] = &[
-    menu("menu.new", S::ToolbarButtonNew, "\u{E710}", ToolMenu::New),
-    act("file.cut", S::ToolbarButtonCut, "\u{E8C6}"),
-    act("file.copy", S::ToolbarButtonCopy, "\u{E8C8}"),
-    act("file.paste", S::ToolbarButtonPaste, "\u{E77F}"),
-    act("file.rename", S::ToolbarButtonRename, "\u{E8AC}"),
-    act("file.share", S::ToolbarButtonShare, "\u{E72D}"),
-    act("item.trash", S::ToolbarButtonDelete, "\u{E74D}"),
-    act("item.properties", S::ToolbarButtonProperties, "\u{E946}"),
-    menu("menu.select", S::ToolbarButtonSelect, "\u{E8B3}", ToolMenu::Select),
-    menu("menu.sort", S::ToolbarButtonSort, "\u{E8CB}", ToolMenu::Sort),
-    menu("menu.group", S::ToolbarButtonGroup, "\u{E8FD}", ToolMenu::Group),
-    menu("menu.layout", S::ToolbarButtonLayout, "\u{E8A9}", ToolMenu::Layout),
-    act("view.pane", S::ToolbarButtonInfoPane, "\u{E8A0}"),
-    act("bin.restore", S::ToolbarButtonRestore, "\u{E777}"),
-    act("bin.restore_all", S::ToolbarButtonRestoreAll, "\u{E777}"),
-    act("bin.empty", S::ToolbarButtonEmptyBin, "\u{E74D}"),
-    act("file.new_folder", S::ToolbarButtonNewFolder, "\u{E8F4}"),
-    act("file.new_item", S::ToolbarButtonNewItem, "\u{E7C3}"),
-    act("item.copy_path", S::ToolbarButtonCopyPath, "\u{E71B}"),
-    act("item.delete", S::ToolbarButtonDeletePermanently, "\u{E74D}"),
-    act("app.terminal", S::ToolbarButtonTerminal, "\u{E756}"),
-    act("item.pin", S::ToolbarButtonPin, "\u{E718}"),
-    act("edit.undo", S::ToolbarButtonUndo, "\u{E7A7}"),
-    act("edit.redo", S::ToolbarButtonRedo, "\u{E7A6}"),
-    act("view.hidden", S::ToolbarButtonHiddenItems, "\u{E890}"),
-    act("view.sizes", S::ToolbarButtonFolderSizes, "\u{EDA2}"),
-    act("nav.refresh", S::ToolbarButtonRefresh, "\u{E72C}"),
-    act("search.folder", S::ToolbarButtonSearch, "\u{E721}"),
-    act("sidebar.toggle", S::ToolbarButtonSidebar, "\u{E700}"),
-    menu("menu.extract", S::ToolbarButtonExtract, "\u{E8B7}", ToolMenu::Extract),
+    menu("menu.new", S::ToolbarButtonNew, S::TooltipToolMenuNew, "\u{E710}", ToolMenu::New),
+    act("file.cut", S::ToolbarButtonCut, S::TooltipToolFileCut, "\u{E8C6}"),
+    act("file.copy", S::ToolbarButtonCopy, S::TooltipToolFileCopy, "\u{E8C8}"),
+    act("file.paste", S::ToolbarButtonPaste, S::TooltipToolFilePaste, "\u{E77F}"),
+    act("file.rename", S::ToolbarButtonRename, S::TooltipToolFileRename, "\u{E8AC}"),
+    act("file.share", S::ToolbarButtonShare, S::TooltipToolFileShare, "\u{E72D}"),
+    act("item.trash", S::ToolbarButtonDelete, S::TooltipToolItemTrash, "\u{E74D}"),
+    act("item.properties", S::ToolbarButtonProperties, S::TooltipToolItemProperties, "\u{E946}"),
+    menu("menu.select", S::ToolbarButtonSelect, S::TooltipToolMenuSelect, "\u{E8B3}", ToolMenu::Select),
+    menu("menu.sort", S::ToolbarButtonSort, S::TooltipToolMenuSort, "\u{E8CB}", ToolMenu::Sort),
+    menu("menu.group", S::ToolbarButtonGroup, S::TooltipToolMenuGroup, "\u{E8FD}", ToolMenu::Group),
+    menu("menu.layout", S::ToolbarButtonLayout, S::TooltipToolMenuLayout, "\u{E8A9}", ToolMenu::Layout),
+    act("view.pane", S::ToolbarButtonInfoPane, S::TooltipToolViewPane, "\u{E8A0}"),
+    act("bin.restore", S::ToolbarButtonRestore, S::TooltipToolBinRestore, "\u{E777}"),
+    act("bin.restore_all", S::ToolbarButtonRestoreAll, S::TooltipToolBinRestoreAll, "\u{E777}"),
+    act("bin.empty", S::ToolbarButtonEmptyBin, S::TooltipToolBinEmpty, "\u{E74D}"),
+    act("file.new_folder", S::ToolbarButtonNewFolder, S::TooltipToolFileNewFolder, "\u{E8F4}"),
+    act("file.new_item", S::ToolbarButtonNewItem, S::TooltipToolFileNewItem, "\u{E7C3}"),
+    act("item.copy_path", S::ToolbarButtonCopyPath, S::TooltipToolItemCopyPath, "\u{E71B}"),
+    act("item.delete", S::ToolbarButtonDeletePermanently, S::TooltipToolItemDelete, "\u{E74D}"),
+    act("app.terminal", S::ToolbarButtonTerminal, S::TooltipToolAppTerminal, "\u{E756}"),
+    act("item.pin", S::ToolbarButtonPin, S::TooltipToolItemPin, "\u{E718}"),
+    act("edit.undo", S::ToolbarButtonUndo, S::TooltipToolEditUndo, "\u{E7A7}"),
+    act("edit.redo", S::ToolbarButtonRedo, S::TooltipToolEditRedo, "\u{E7A6}"),
+    act("view.hidden", S::ToolbarButtonHiddenItems, S::TooltipToolViewHidden, "\u{E890}"),
+    act("view.sizes", S::ToolbarButtonFolderSizes, S::TooltipToolViewSizes, "\u{EDA2}"),
+    act("nav.refresh", S::ToolbarButtonRefresh, S::TooltipToolNavRefresh, "\u{E72C}"),
+    act("search.folder", S::ToolbarButtonSearch, S::TooltipToolSearchFolder, "\u{E721}"),
+    act("sidebar.toggle", S::ToolbarButtonSidebar, S::TooltipToolSidebarToggle, "\u{E700}"),
+    menu("menu.extract", S::ToolbarButtonExtract, S::TooltipToolMenuExtract, "\u{E8B7}", ToolMenu::Extract),
 ];
 
 fn tool(id: &str) -> Option<&'static Tool> {
@@ -243,12 +243,6 @@ struct Fly {
     toggles: [Rect; 5],
 }
 
-struct Tip {
-    item: usize,
-    at: Instant,
-    shown: bool,
-}
-
 #[derive(Default)]
 pub(super) struct Toolbar {
     pub state: ToolbarState,
@@ -256,7 +250,6 @@ pub(super) struct Toolbar {
     overflow: Vec<usize>,
     more: Rect,
     fly: Option<Fly>,
-    tip: Option<Tip>,
     sliding: bool,
     archive: bool,
 }
@@ -314,7 +307,7 @@ impl App {
         let st = &mut self.toolbar.state;
         st.visible = !st.visible;
         self.toolbar.fly = None;
-        self.toolbar.tip = None;
+        self.tip_hide();
         self.layout();
         self.dirty = true;
     }
@@ -407,7 +400,7 @@ impl App {
         if self.editing {
             self.cancel_edit();
         }
-        self.toolbar.tip = None;
+        self.tip_hide();
         self.dirty = true;
         match t {
             ToolHit::Fly(FlyHit::Outside) => self.toolbar.fly = None,
@@ -455,7 +448,7 @@ impl App {
                 let items = self.overflow_items();
                 let r = self.toolbar.more;
                 let menu = self.build_overflow_menu(&items);
-                self.flit_menu(r.x, r.bottom(), menu);
+                self.button_menu(Hit::Tool(ToolHit::More), r.x, r.bottom(), menu);
             }
             ToolHit::Fly(FlyHit::Layout(k)) => {
                 self.run_action(LAYOUT_IDS[k], now);
@@ -484,7 +477,7 @@ impl App {
             }
             Kind::Menu(m) => {
                 let menu = self.build_tool_menu(m);
-                self.flit_menu(anchor.x, anchor.bottom(), menu);
+                self.button_menu(Hit::Tool(ToolHit::Button(i)), anchor.x, anchor.bottom(), menu);
             }
         }
     }
@@ -557,44 +550,27 @@ impl App {
         self.dirty = true;
     }
 
-    pub(super) fn toolbar_hover(&mut self, h: Hit, now: Instant) {
-        let item = match h {
-            Hit::Tool(ToolHit::Button(i)) => Some(i),
+    pub(super) fn tool_tip(&self, i: usize) -> Option<(&'static str, S)> {
+        let Some(ToolItem::Button(id, _)) = self.toolbar_items().get(i).cloned() else { return None };
+        let t = tool(&id)?;
+        let on = match t.id {
+            "view.hidden" => Some((self.tab().view_spec.show_hidden, S::TooltipToolViewHiddenOn)),
+            "view.pane" => Some((self.preview.state.visible, S::TooltipToolViewPaneOn)),
+            "sidebar.toggle" => Some((self.nav.sidebar.state.sidebar, S::TooltipToolSidebarToggleOn)),
             _ => None,
         };
-        match (item, &self.toolbar.tip) {
-            (Some(i), Some(tip)) if tip.item == i => {}
-            (Some(i), _) => {
-                let shown = self.toolbar.tip.as_ref().is_some_and(|t| t.shown);
-                let at = if shown { now } else { now + TIP_DELAY };
-                self.toolbar.tip = Some(Tip { item: i, at, shown });
-                if !shown {
-                    self.arm_timer(now, at);
-                }
-                self.dirty |= shown;
-            }
-            (None, Some(_)) => {
-                self.dirty |= self.toolbar.tip.take().is_some_and(|t| t.shown);
-            }
-            (None, None) => {}
-        }
+        Some((t.id, on.filter(|o| o.0).map_or(t.tip, |o| o.1)))
     }
 
-    pub(super) fn toolbar_timer(&mut self, now: Instant) {
-        let Some(tip) = &mut self.toolbar.tip else { return };
-        if tip.shown {
-            return;
+    pub(super) fn tool_rect(&self, h: Hit) -> Option<Rect> {
+        match h {
+            Hit::Tool(ToolHit::More) => Some(self.toolbar.more),
+            Hit::Tool(ToolHit::Button(i)) => self.toolbar.placed.iter().find(|(k, _)| *k == i).map(|&(_, r)| r),
+            _ => None,
         }
-        if now + TIMER_SLACK < tip.at {
-            let at = tip.at;
-            return self.arm_timer(now, at);
-        }
-        tip.shown = true;
-        self.dirty = true;
     }
 
     pub(super) fn toolbar_key(&mut self, key: Key) -> bool {
-        self.toolbar.tip = None;
         if self.toolbar.fly.is_none() {
             return false;
         }
@@ -623,17 +599,6 @@ impl App {
             out.push((ToolHit::More, self.toolbar.more, S::A11yButtonMore.t(), "", true));
         }
         out
-    }
-
-    pub fn toolbar_tip(&self) -> Option<String> {
-        let tip = self.toolbar.tip.as_ref().filter(|t| t.shown)?;
-        let items = self.toolbar_items();
-        let Some(ToolItem::Button(id, _)) = items.get(tip.item) else { return None };
-        let t = tool(id)?;
-        Some(match self.keymap.first_text(t.id) {
-            Some(k) => format!("{} ({k})", t.label.t()),
-            None => t.label.t().to_owned(),
-        })
     }
 
     pub(super) fn draw_toolbar_row<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
@@ -688,49 +653,49 @@ impl App {
             self.toolbar.more = Rect::new(row.right() - self.s(6.0) - icon_w, row.y + ((row.h - bh) / 2.0).round(), icon_w, bh);
         }
         let radius = self.s(4.0);
+        let mut p = Paint::new(g, t, self.scale);
         for &(k, r) in &self.toolbar.placed {
             let (id, show) = match &items[k] {
                 ToolItem::Separator => {
-                    g.dl.rect(Rect::new((r.x + r.w / 2.0).round(), r.y + self.s(6.0), 1.0, r.h - self.s(12.0)), t.separator);
+                    p.g.dl.rect(Rect::new((r.x + r.w / 2.0).round(), r.y + self.s(6.0), 1.0, r.h - self.s(12.0)), t.separator);
                     continue;
                 }
                 ToolItem::Button(id, show) => (id.as_str(), *show),
             };
             let Some(tl) = tool(id) else { continue };
             let enabled = self.tool_enabled(tl.id);
-            let hot = self.hover == Hit::Tool(ToolHit::Button(k)) && enabled;
-            if self.tool_checked(tl.id) {
-                g.dl.round_rect(r, t.selection, radius);
-            } else if hot {
-                g.dl.round_rect(r, if self.pressed == Hit::Tool(ToolHit::Button(k)) { t.button_pressed } else { t.button_hover }, radius);
+            let h = Hit::Tool(ToolHit::Button(k));
+            let open = self.menu_open_from(h) || (tl.id == "menu.layout" && self.toolbar.fly.is_some());
+            let state = Button::of(self.hover == h, open, enabled);
+            match p.fill_of(state) {
+                Some(fill) => p.g.dl.round_rect(r, fill, radius),
+                None if self.tool_checked(tl.id) => p.g.dl.round_rect(r, t.selection, radius),
+                None => {}
             }
-            let color = if enabled { t.text } else { t.text_dim.alpha(0x70) };
+            let color = p.ink_of(state, t.text);
             let mut cx = r.x;
             if show != Show::Label {
-                let icon_color = if enabled && matches!(tl.id, "item.trash" | "item.delete" | "bin.empty") { t.text } else { color };
-                centered(g, Rect::new(r.x, r.y, icon_w, r.h), tl.glyph, icons, icon_color);
+                p.centered(Rect::new(r.x, r.y, icon_w, r.h), tl.glyph, icons, color);
                 cx += icon_w - pad;
             }
             if show != Show::Icon {
                 let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
-                let w = g.text(cx + pad, baseline, tl.label.t(), font, color, f32::INFINITY);
+                let w = p.g.text(cx + pad, baseline, tl.label.t(), font, color, f32::INFINITY);
                 if matches!(tl.kind, Kind::Menu(_)) {
-                    g.text(cx + pad + w + self.s(5.0), baseline - self.s(1.0), G_DOWN, chevron, t.text_dim, f32::INFINITY);
+                    let dim = if state == Button::Idle { t.text_dim } else { color };
+                    p.g.text(cx + pad + w + self.s(5.0), baseline - self.s(1.0), G_DOWN, chevron, dim, f32::INFINITY);
                 }
             }
         }
         let more = self.toolbar.more;
         if more.w > 0.0 {
-            if self.hover == Hit::Tool(ToolHit::More) {
-                g.dl.round_rect(more, t.button_hover, radius);
-            }
-            centered(g, more, G_MORE, icons, t.text);
+            let h = Hit::Tool(ToolHit::More);
+            p.icon_button(more, G_MORE, icons, Button::of(self.hover == h, self.menu_open_from(h), true), t.text);
         }
     }
 
     pub(super) fn draw_toolbar_popups<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
         self.draw_fly(g, t);
-        self.draw_tip(g, t);
     }
 
     fn draw_fly<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
@@ -761,9 +726,7 @@ impl App {
         }
         f.rect = Rect::new(x, y, w, ry + s6 - y);
         let r = f.rect;
-        g.dl.shadow(Rect::new(r.x, r.y + s4, r.w, r.h), self.shadow(), s6, s6 * 2.0);
-        g.dl.round_rect(r, t.bg, s6);
-        g.dl.outline(r, t.input_border, s6, 1.0);
+        Paint::new(g, t, self.scale).frame(r);
         let baseline = |r: Rect| (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
         let tab = self.tab();
         let (mode, look) = (tab.mode, tab.look);
@@ -784,50 +747,20 @@ impl App {
         }
         g.text(size_row.x + self.s(10.0), baseline(size_row), S::ToolbarFlyoutSize.t(), font, t.text, label_w);
         let tr = f.slider;
-        g.dl.round_rect(tr, t.separator, tr.h / 2.0);
         let n = look.levels() as usize;
         let frac = if n > 1 { level as f32 / (n - 1) as f32 } else { 0.0 };
-        g.dl.round_rect(Rect::new(tr.x, tr.y, tr.w * frac, tr.h), t.accent, tr.h / 2.0);
-        for k in 0..n {
-            let sx = tr.x + tr.w * k as f32 / (n - 1).max(1) as f32;
-            g.dl.round_rect(Rect::new(sx - 1.0, tr.y - self.s(3.0), 2.0, tr.h + self.s(6.0)), t.text_dim.alpha(0x60), 1.0);
-        }
-        let knob = self.s(14.0);
-        let kx = tr.x + tr.w * frac - knob / 2.0;
         let hot = self.toolbar.sliding || self.hover == Hit::Tool(ToolHit::Fly(FlyHit::Slider));
-        g.dl.round_rect(Rect::new(kx, tr.y + tr.h / 2.0 - knob / 2.0, knob, knob), if hot { t.accent } else { t.input_bg }, knob / 2.0);
-        g.dl.outline(Rect::new(kx, tr.y + tr.h / 2.0 - knob / 2.0, knob, knob), t.accent, knob / 2.0, self.s(1.5));
+        Paint::new(g, t, self.scale).slider(tr, frac, hot);
         g.dl.rect(Rect::new(r.x + s6, sep_y, r.w - 2.0 * s6, 1.0), t.separator);
         for (k, &row) in f.toggles.iter().enumerate() {
             if self.hover == Hit::Tool(ToolHit::Fly(FlyHit::Toggle(k))) {
                 g.dl.round_rect(row, t.hover, s4);
             }
             let bx = Rect::new(row.x + self.s(9.0), row.y + (row.h - self.s(14.0)) / 2.0, self.s(14.0), self.s(14.0));
-            if self.fly_checked(k) {
-                g.dl.round_rect(bx, t.accent, self.s(3.0));
-                g.dl.check(bx, crate::theme::ink_on(t.accent));
-            } else {
-                g.dl.outline(bx, t.text_dim, self.s(3.0), 1.0);
-            }
+            Paint::new(g, t, self.scale).checkbox(bx, self.fly_checked(k));
             g.text(row.x + self.s(32.0), baseline(row), TOGGLES[k].t(), font, t.text, row.w);
         }
         self.toolbar.fly = Some(f);
-    }
-
-    fn draw_tip<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
-        let Some(text) = self.toolbar_tip() else { return };
-        let Some(item) = self.toolbar.tip.as_ref().map(|t| t.item) else { return };
-        let Some(&(_, anchor)) = self.toolbar.placed.iter().find(|(k, _)| *k == item) else { return };
-        let font = self.ui_font(12.0);
-        let m = g.metrics(font);
-        let (pad, h) = (self.s(8.0), self.s(26.0));
-        let w = g.measure(&text, font) + 2.0 * pad;
-        let x = anchor.x.min(self.size.0 - w - self.s(4.0)).max(self.s(4.0));
-        let r = Rect::new(x, anchor.bottom() + self.s(6.0), w, h);
-        g.dl.shadow(Rect::new(r.x, r.y + self.s(1.0), r.w, r.h), self.shadow(), self.s(4.0), self.s(4.0));
-        g.dl.round_rect(r, t.chrome, self.s(4.0));
-        g.dl.outline(r, t.input_border, self.s(4.0), 1.0);
-        g.text(r.x + pad, (r.y + (r.h + m.ascent - m.descent) / 2.0).round(), &text, font, t.text, f32::INFINITY);
     }
 
     fn open_tool_pick(&mut self, pick: ToolPick, select: usize) {

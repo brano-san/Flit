@@ -1,9 +1,10 @@
 use super::*;
+use crate::render::Color;
 use crate::text::tests::Mono;
 use crate::theme;
 
 fn cmd(label: &str) -> MenuItem {
-    MenuItem::Command { label: label.into(), keys: String::new(), checked: false, stay: false }
+    MenuItem::Command { label: label.into(), keys: String::new(), checked: false, stay: false, mark: Default::default() }
 }
 
 fn sample() -> Vec<MenuItem> {
@@ -11,7 +12,7 @@ fn sample() -> Vec<MenuItem> {
         cmd("Open"),
         MenuItem::Submenu { label: "Sort by".into(), items: vec![cmd("Name"), MenuItem::Separator, cmd("Size")] },
         MenuItem::Separator,
-        MenuItem::Command { label: "Paste".into(), keys: "Ctrl+V".into(), checked: true, stay: false },
+        MenuItem::Command { label: "Paste".into(), keys: "Ctrl+V".into(), checked: true, stay: false, mark: Default::default() },
     ]
 }
 
@@ -34,7 +35,7 @@ fn row(v: &MenuView, panel: usize, i: usize) -> (f32, f32) {
 
 #[test]
 fn a_click_on_a_toggle_flips_its_check_in_place_and_keeps_the_submenu_open() {
-    let toggle = |label: &str, checked| MenuItem::Command { label: label.into(), keys: String::new(), checked, stay: true };
+    let toggle = |label: &str, checked| MenuItem::Command { label: label.into(), keys: String::new(), checked, stay: true, mark: Default::default() };
     let items = vec![cmd("Open"), MenuItem::Submenu { label: "Sections".into(), items: vec![toggle("Pinned", true), toggle("Drives", false)] }];
     let mut v = MenuView::new(&items, 100.0, 100.0, screen(), 1.0, &mut Gfx::new(Mono, 256));
     let (x, y) = row(&v, 0, 1);
@@ -129,9 +130,10 @@ fn draws_labels_keys_checks_and_arrows() {
     let mut v = MenuView::new(&sample(), 10.0, 10.0, screen(), 1.0, &mut g);
     v.key(Key::Down);
     g.begin(Color::default());
-    v.draw(&mut g, &theme::LIGHT, Color::rgba(0x00000030));
+    v.draw(&mut g, &theme::LIGHT);
     let glyphs = g.dl.instances.iter().filter(|i| i.kind == crate::render::kind::GLYPH).count();
-    let letters = "Open".len() + "Sort by".len() - 1 + "Paste".len() + "Ctrl+V".len() + 2;
+    let letters = "Open".len() + "Sort by".len() - 1 + "Paste".len() + "Ctrl+V".len() + 1;
+    assert!(g.dl.instances.iter().any(|i| i.color == theme::LIGHT.accent_fill.0), "the checked row has a filled box and the hot row an accent fill");
     assert_eq!(glyphs, letters);
     let r = v.panels().next().unwrap();
     assert!(r.w >= LABEL_X + 50.0 + KEYS_GAP + 60.0 + ARROW_W);

@@ -560,8 +560,7 @@ impl App {
         }
         let (s4, s6) = (self.s(4.0), self.s(6.0));
         let b = Rect::new(first.x, first.y - s4, first.w, last.bottom() - first.y + 2.0 * s4);
-        g.dl.round_rect(b, th.bg, s6);
-        g.dl.outline(b, th.input_border, s6, 1.0);
+        super::widgets::Paint::new(g, th, self.scale).frame(b);
         let (font, icons) = (self.ui_font(13.0), self.icon_font(12.0));
         let m = g.metrics(font);
         let mut requests: Vec<IconRequest> = Vec::new();

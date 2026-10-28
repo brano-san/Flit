@@ -189,7 +189,7 @@ pub fn open_with(files: &[flit_core::FsPath], entries: &[Entry], assoc: &Assoc) 
         .map(|p| p.extension().and_then(|e| crate::mime::mime_of(e.as_encoded_bytes())).unwrap_or_else(|| "application/octet-stream".into()))
         .collect();
     let apps: Vec<&Entry> = handlers(&mimes[0], entries, assoc).into_iter().filter(|e| mimes.iter().all(|m| handlers(m, entries, assoc).iter().any(|h| h.id == e.id))).collect();
-    let items = apps.iter().map(|e| flit_core::ui::MenuItem::Command { label: e.name.clone(), keys: String::new(), checked: false, stay: false }).collect();
+    let items = apps.iter().map(|e| flit_core::ui::MenuItem::Command { label: e.name.clone(), keys: String::new(), checked: false, stay: false, mark: flit_core::ui::Mark::None }).collect();
     let launches = apps.iter().filter_map(|e| Some(flit_core::provider::Launch::With { program: crate::xdg::fs_path(&e.path)?, args: files.to_vec() })).collect();
     (items, launches)
 }

@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Duration;
 use crate::input::{Event, Mods};
 use crate::listing::{attr, DirSnapshot, Listing, Meta};
 use crate::path::FsPath;
@@ -205,14 +206,15 @@ fn hovering_a_tab_shows_its_full_path_after_a_pause() {
     let mut app = app_with(&[r"C:\a\deep", r"C:\b"]);
     let start = Instant::now();
     let (x, y) = tab_xy(&app, 0);
+    let delay = crate::ui::tooltip::DELAY;
     app.on_event(&Event::MouseMove { x, y }, start);
-    assert_eq!(app.strip.tip, Some((0, Some(start + TIP_DELAY))));
+    assert_eq!(app.tooltip(), None);
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Timer(_))));
-    app.on_event(&Event::Timer, start + TIP_DELAY);
-    assert_eq!(app.strip.tip, Some((0, None)));
+    app.on_event(&Event::Timer, start + delay);
+    assert_eq!(app.tooltip().map(|t| (t.line, t.command)), Some((r"C:\a\deep".to_owned(), None)));
     let (x, y) = row_xy(&app, 2);
-    app.on_event(&Event::MouseMove { x, y }, start + TIP_DELAY);
-    assert_eq!(app.strip.tip, None);
+    app.on_event(&Event::MouseMove { x, y }, start + delay);
+    assert_eq!(app.tooltip(), None);
 }
 
 #[test]

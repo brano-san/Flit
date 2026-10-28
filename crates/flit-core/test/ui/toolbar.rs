@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Duration;
 use crate::input::{Event, Key, Mods, MouseButton};
 use crate::listing::{attr, DirSnapshot, Listing, Meta};
 use crate::location::Location;
@@ -252,16 +253,18 @@ fn tooltips_name_the_button_and_its_shortcut_after_a_delay() {
     let r = button(&app, "file.copy");
     let t0 = Instant::now();
     app.on_event(&Event::MouseMove { x: r.x + 4.0, y: r.y + 4.0 }, t0);
-    assert_eq!(app.toolbar_tip(), None);
-    app.on_event(&Event::Timer, t0 + TIP_DELAY + Duration::from_millis(20));
-    assert_eq!(app.toolbar_tip().as_deref(), Some("Copy (Ctrl+C)"));
+    assert_eq!(app.tooltip(), None);
+    app.on_event(&Event::Timer, t0 + crate::ui::tooltip::DELAY + Duration::from_millis(20));
+    let tip = app.tooltip().unwrap();
+    assert_eq!((tip.line.as_str(), tip.command.as_deref(), tip.keys.clone()), ("Copy the selected items to the clipboard.", Some("Copy"), vec!["Ctrl+C".to_owned()]));
     let copy = crate::ui::actions::index("file.copy").unwrap();
     app.edit_keys(|k| k.assign(copy, Some(crate::ui::actions::ctrl(Key::Char('C'))), crate::ui::actions::ctrl(Key::Insert)));
-    assert_eq!(app.toolbar_tip().as_deref(), Some("Copy (Ctrl+Ins)"), "the tooltip shows the user's shortcut");
+    assert_eq!(app.tooltip().unwrap().keys, ["Ctrl+Ins"], "the tooltip shows the user's shortcut");
     frame(&mut app);
     let r = button(&app, "menu.layout");
     app.on_event(&Event::MouseMove { x: r.x + 4.0, y: r.y + 4.0 }, t0 + Duration::from_secs(1));
-    assert_eq!(app.toolbar_tip().as_deref(), Some("Layout"), "the next tip shows at once");
+    let tip = app.tooltip().expect("the next tip shows at once");
+    assert_eq!((tip.line.as_str(), tip.command), ("Choose the layout and the item size.", None));
 }
 
 #[test]

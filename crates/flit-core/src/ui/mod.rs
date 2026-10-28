@@ -39,6 +39,10 @@ mod keymap;
 mod toolbar;
 mod popup;
 mod own_menu;
+mod confirm;
+mod fuzzy;
+mod tooltip;
+mod widgets;
 mod properties;
 mod git;
 
@@ -52,7 +56,7 @@ pub use details::{folder_key, Columns, FolderView, FolderViews, ViewPrefs, THUMB
 pub use layouts::{adaptive_layout, has_thumbnail, is_media, LayoutMode, Sizes, LAYOUTS};
 pub use jobs::JobState;
 pub use preview_pane::PaneState;
-pub use menu::MenuItem;
+pub use menu::{Mark, MenuItem};
 pub use popup::{MenuOutcome, MenuView};
 pub use tab::Tab;
 pub use toolbar::{Show, ToolContext, ToolItem, ToolbarState, CONTEXTS};
@@ -61,6 +65,7 @@ pub use tabbar::{MovedTab, Startup, WindowSession};
 pub use settings::{ConfirmDelete, Doc, Page, Setting, Value, SETTINGS};
 pub use settings_page::{About, LOG_FILE};
 pub use keymap::Keymap;
+pub use tooltip::TipText;
 pub use panels::{PanelsSession, Shape};
 
 use crate::fmt as format;
@@ -387,6 +392,8 @@ enum Hit {
     PaletteField,
     PaletteBox,
     PaletteOutside,
+    PaletteClose,
+    PaletteScroll(bool),
     OpsButton,
     OpsPanel,
     OpsRow(usize),
@@ -479,6 +486,9 @@ pub struct App {
     pub spring_delay_ms: u32,
     pub switch_to_new_tab: bool,
     pub smooth_scroll: bool,
+    pub animations: bool,
+    pub round_corners: bool,
+    pub tooltips: bool,
     pub touch_input: bool,
     pub single_click_files: settings::ClickOpen,
     pub single_click_folders: settings::ClickOpen,
@@ -516,6 +526,11 @@ pub struct App {
     next_gen: u64,
     timer_at: Option<Instant>,
     own_menu: Option<own_menu::OwnMenu>,
+    menu_owner: Option<Hit>,
+    menu_right: Option<f32>,
+    tip: Option<tooltip::Tip>,
+    confirm: Option<confirm::Confirm>,
+    motion: bool,
     pub preedit: crate::input::Preedit,
 
     focus: Focus,
@@ -582,6 +597,9 @@ impl App {
             spring_delay_ms: 1300,
             switch_to_new_tab: true,
             smooth_scroll: true,
+            animations: true,
+            round_corners: true,
+            tooltips: true,
             touch_input: false,
             single_click_files: settings::ClickOpen::Never,
             single_click_folders: settings::ClickOpen::Never,
@@ -621,6 +639,11 @@ impl App {
             next_gen: 0,
             timer_at: None,
             own_menu: None,
+            menu_owner: None,
+            menu_right: None,
+            tip: None,
+            confirm: None,
+            motion: false,
             preedit: Default::default(),
             focus: Focus::List,
             kb: 0,
@@ -1319,6 +1342,9 @@ impl App {
     }
 
     pub fn hit_test(&self, x: f32, y: f32) -> HitArea {
+        if self.over_own_menu(x, y) || self.confirm.as_ref().is_some_and(|c| c.rect.contains(x, y)) {
+            return HitArea::Client;
+        }
         match self.hit(x, y) {
             Hit::Caption(0) => HitArea::Minimize,
             Hit::Caption(1) => HitArea::Maximize,
@@ -1329,7 +1355,10 @@ impl App {
     }
 
     pub fn on_event(&mut self, ev: &Event, now: Instant) {
-        if self.own_menu_event(ev, now) {
+        if matches!(ev, Event::MouseDown { .. } | Event::Key { pressed: true, .. } | Event::Wheel { .. } | Event::MouseLeave | Event::Focus(false) | Event::ShowMenu { .. }) {
+            self.tip_hide();
+        }
+        if self.own_menu_event(ev, now) || self.confirm_event(ev, now) {
             return;
         }
         if self.search.active && !self.jobs.modal() && self.search_event(ev, now) {
@@ -1417,7 +1446,6 @@ impl App {
                 self.timer_at = None;
                 self.ops_timer(now);
                 self.hover_timer(now);
-                self.toolbar_timer(now);
                 self.history_timer(now);
                 self.tip_timer(now);
             }
@@ -1435,7 +1463,7 @@ impl App {
     }
 
     fn mouse_move(&mut self, x: f32, y: f32, now: Instant) {
-        self.strip_pointer(x, y, now);
+        self.strip_pointer(x, y);
         self.settings_tip(x, y);
         if self.toolbar_mouse_move(x) || self.autoscroll_move(self.along_of(x, y)) || self.ops_mouse_move(x, y) || self.marquee_move(x, y) {
             return;
@@ -1480,9 +1508,9 @@ impl App {
         self.set_cursor(cursor);
         self.parked_hover(x, y);
         self.hover_pick(h, now);
-        self.toolbar_hover(h, now);
         if h != self.hover {
             self.hover = h;
+            self.tip_hover(h, now);
             self.dirty = true;
         }
     }
@@ -1632,12 +1660,13 @@ impl App {
             Hit::Preview(p) => self.preview_click(p),
             Hit::Bin(k) => self.bin_button(k),
             Hit::Side(i) => self.open_side_item(i, self.mods.ctrl, now),
-            Hit::SidePin(i) => self.toggle_pin_item(i),
+            Hit::SidePin(i) => self.toggle_pin_item(i, now),
             Hit::SideHeader(s) => self.toggle_section(s),
             Hit::HomeItem(i) => self.open_home_item(i, self.mods.ctrl, now),
             Hit::HomeButton => self.go_home_page(self.mods.ctrl, now),
             Hit::FilterClose => self.close_filter(),
             Hit::PaletteRow(i) => self.run_palette_item(i, now),
+            Hit::PaletteClose => self.close_palette(),
             Hit::Tool(t) => self.toolbar_click(t, now),
             Hit::TabActions => self.tab_actions_menu(),
             Hit::CrumbMenu(i) => self.crumb_menu(i),
@@ -1853,6 +1882,8 @@ impl App {
         self.last_frame = Some(now);
         self.poll();
         self.dirty = false;
+        self.motion = false;
+        g.dl.round = self.round_corners;
         self.apply_tag_fixes(now);
         self.ops_frame(now);
         let mut animating = self.marquee_autoscroll(dt);
@@ -1894,9 +1925,10 @@ impl App {
             if !self.search.active {
                 self.draw_palette(g, th);
             }
-            self.draw_tab_tip(g, th);
             self.draw_jobs(g, th);
+            self.draw_confirm(g, th);
             self.draw_own_menu(g, th);
+            self.draw_tooltip(g, th);
             if !g.atlas_reset {
                 break;
             }
@@ -1909,17 +1941,21 @@ impl App {
                 animating = true;
             }
         }
-        animating || g.atlas_reset
+        animating || self.motion || g.atlas_reset
+    }
+
+    fn smooth(&self) -> bool {
+        self.smooth_scroll && self.animations
     }
 
     fn scroll_step(&mut self, dt: f32) -> bool {
-        let smooth = self.smooth_scroll;
+        let smooth = self.smooth();
         let t = self.tab_mut();
         glide(&mut t.scroll, t.scroll_target, dt, smooth)
     }
 
     fn glide_overlays(&mut self, dt: f32) -> bool {
-        let smooth = self.smooth_scroll;
+        let smooth = self.smooth();
         let settings = self.settings.as_mut().is_some_and(|ui| ui.scroll.step(dt, smooth));
         let palette = self.nav.palette.as_mut().is_some_and(|p| p.scroll.step(dt, smooth));
         settings | palette
@@ -1957,24 +1993,20 @@ impl App {
             }
             g.text(icon.right() + self.s(6.0), baseline, &label, font, color, c.x - icon.right() - self.s(10.0));
             if active || hovered {
-                if self.hover == Hit::TabClose(i) {
-                    g.dl.round_rect(c, t.button_hover, self.s(4.0));
-                }
-                centered(g, c, G_CLOSE, close_font, t.text_dim);
+                let state = widgets::Button::of(self.hover == Hit::TabClose(i), false, true);
+                widgets::Paint::new(g, t, self.scale).icon_button(c, G_CLOSE, close_font, state, t.text_dim);
             }
         }
+        let mut w = widgets::Paint::new(g, t, self.scale);
         if drop == Some(Spot::NewTab) {
-            g.dl.round_rect(l.new_tab, t.selection, self.s(4.0));
-            g.dl.outline(l.new_tab, t.accent, self.s(4.0), self.s(1.0).max(1.0));
-        } else if self.hover == Hit::NewTab {
-            g.dl.round_rect(l.new_tab, t.button_hover, self.s(4.0));
+            w.g.dl.round_rect(l.new_tab, t.teal, self.s(4.0));
+            w.centered(l.new_tab, G_ADD, self.icon_font(10.0), theme::ink_on(t.teal));
+        } else {
+            w.icon_button(l.new_tab, G_ADD, self.icon_font(10.0), widgets::Button::of(self.hover == Hit::NewTab, false, true), t.text_dim);
         }
-        centered(g, l.new_tab, G_ADD, self.icon_font(10.0), t.text_dim);
         if l.actions.w > 0.0 {
-            if self.hover == Hit::TabActions {
-                g.dl.round_rect(l.actions, t.button_hover, self.s(4.0));
-            }
-            centered(g, l.actions, tabbar::G_TAB_ACTIONS, self.icon_font(12.0), t.text_dim);
+            let state = widgets::Button::of(self.hover == Hit::TabActions, self.menu_open_from(Hit::TabActions), true);
+            w.icon_button(l.actions, tabbar::G_TAB_ACTIONS, self.icon_font(12.0), state, t.text_dim);
         }
         self.request_icons(requests);
     }
@@ -2009,20 +2041,13 @@ impl App {
         let icons = self.icon_font(12.0);
         let tab = self.tab();
         let enabled = [tab.history.can_back(), tab.history.can_forward(), tab.location().parent().is_some(), true];
+        let mut w = widgets::Paint::new(g, t, self.scale);
         for (i, glyph) in [G_BACK, G_FORWARD, G_UP, G_REFRESH].into_iter().enumerate() {
-            let r = l.nav[i];
-            if self.hover == Hit::Nav(i) && enabled[i] {
-                let c = if self.pressed == Hit::Nav(i) { t.button_pressed } else { t.button_hover };
-                g.dl.round_rect(r.inset(self.s(2.0), 0.0), c, self.s(4.0));
-            }
-            let color = if enabled[i] { t.text } else { t.text_dim.alpha(0x70) };
-            centered(g, r, glyph, icons, color);
+            let state = widgets::Button::of(self.hover == Hit::Nav(i), false, enabled[i]);
+            w.icon_button(l.nav[i].inset(self.s(2.0), 0.0), glyph, icons, state, t.text);
         }
-        if self.hover == Hit::HomeButton {
-            let c = if self.pressed == Hit::HomeButton { t.button_pressed } else { t.button_hover };
-            g.dl.round_rect(l.home.inset(self.s(2.0), 0.0), c, self.s(4.0));
-        }
-        centered(g, l.home, sidebar::G_HOME, icons, if self.on_home() { t.accent } else { t.text });
+        let home = widgets::Button::of(self.hover == Hit::HomeButton, false, true);
+        w.icon_button(l.home.inset(self.s(2.0), 0.0), sidebar::G_HOME, icons, home, if self.on_home() { t.accent } else { t.text });
         let address = *self.look.palette.area(Area::Address);
         self.draw_address(g, &address);
         self.draw_ops_button(g, t);

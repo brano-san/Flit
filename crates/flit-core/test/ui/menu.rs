@@ -138,7 +138,7 @@ fn background_menu_offers_sorting_new_items_paste_and_terminal() {
     assert!(matches!(&menu.menu[0], MenuItem::Submenu { label, .. } if label == "Layout"));
     assert!(matches!(&menu.menu[1], MenuItem::Submenu { label, .. } if label == "Sort by"));
     let labels = commands(&menu.menu);
-    for want in ["Details\tCtrl+Shift+1 *", "Grid\tCtrl+Shift+5", "Larger items\tCtrl++", "Name *", "Date modified", "Descending", "Refresh\tF5", "Folder\tCtrl+Shift+N", "Shortcut", "Paste\tCtrl+V", "Open in terminal\tCtrl+`", "Pin to sidebar\tCtrl+D", "Copy path\tCtrl+Shift+C", "Properties\tAlt+Enter"] {
+    for want in ["Details\tCtrl+Shift+1 *", "Grid\tCtrl+Shift+5", "Larger items\tCtrl++  Ctrl+Shift++", "Name *", "Date modified", "Descending", "Refresh\tF5  Ctrl+R", "Folder\tCtrl+Shift+N", "Shortcut", "Paste\tCtrl+V", "Open in terminal\tCtrl+`", "Pin to sidebar\tCtrl+D", "Copy path\tCtrl+Shift+C", "Properties\tAlt+Enter"] {
         assert!(labels.iter().any(|l| l == want), "{want} missing from {labels:?}");
     }
     run(&mut app, &menu, "Grid");

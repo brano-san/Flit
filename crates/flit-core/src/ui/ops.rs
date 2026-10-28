@@ -1344,7 +1344,7 @@ impl App {
             Hit::SideHeader(Section::Pinned) => Some(Target::Pin),
             Hit::SideHeader(_) | Hit::HomeItem(_) | Hit::HomeEmpty | Hit::HomeButton => None,
             Hit::SideEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose | Hit::PanelSep(_) | Hit::Menu | Hit::QuickToggle => None,
-            Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside => None,
+            Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside | Hit::PaletteClose | Hit::PaletteScroll(_) => None,
             Hit::OpsButton | Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsClear | Hit::OpsCancel(_) | Hit::OpsMore(_) | Hit::OpsMenu(_) => None,
             Hit::Dialog | Hit::DialogButton(_) | Hit::DialogCheck | Hit::Form(_) | Hit::Modal | Hit::Preview(_) => None,
             _ if self.layout.status.contains(x, y) => None,

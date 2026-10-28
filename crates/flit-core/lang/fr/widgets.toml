@@ -1,0 +1,16 @@
+cmd = "Commande :"
+blank = "Aucun"
+yes = "Oui"
+cancel = "Annuler"
+remove_item = "Retirer l’élément de la liste ?"
+
+[key]
+up = "Up"
+down = "Down"
+enter = "Enter"
+escape = "Escape"
+
+[hint]
+navigate = "pour naviguer"
+use = "pour valider"
+dismiss = "pour fermer"

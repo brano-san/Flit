@@ -1250,10 +1250,7 @@ impl App {
         let y = field.bottom() + s4;
         let h = s6 * 2.0 + row_h * (recent.len() + 1) as f32;
         let panel = Rect::new(x, y, w, h);
-        let shadow = self.shadow();
-        g.dl.shadow(Rect::new(panel.x, panel.y + s4, panel.w, panel.h), shadow, s6, s6 * 2.0);
-        g.dl.round_rect(panel, t.bg, s6);
-        g.dl.outline(panel, t.input_border, s6, 1.0);
+        super::widgets::Paint::new(g, t, self.scale).frame(panel);
         let small = self.ui_font(12.0);
         let head = Rect::new(x + s6, y + s6, w - 2.0 * s6, row_h);
         g.text(head.x + self.s(10.0), (head.y + (head.h + m.ascent - m.descent) / 2.0).round(), S::SearchRecent.t(), small, t.text_dim, head.w);

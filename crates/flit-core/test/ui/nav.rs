@@ -249,6 +249,8 @@ fn pinning_from_keyboard_and_hover_button() {
     let first = app.nav.sidebar.rects[0];
     let unpin = app.nav.sidebar.pin_rect(first, app.scale);
     press(&mut app, unpin, MouseButton::Left);
+    assert_eq!(app.nav_state().pinned.len(), 2, "unpinning asks first");
+    app.on_event(&Event::Key { key: Key::Enter, mods: Mods::default(), pressed: true }, Instant::now());
     assert_eq!(app.nav_state().pinned, [loc(r"C:\Users\u\Downloads")]);
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Pinned(p) if p.len() == 1)));
     app.set_pinned(vec![loc(r"D:\shared")]);

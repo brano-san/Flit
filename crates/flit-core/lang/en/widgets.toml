@@ -1,0 +1,16 @@
+cmd = "Cmd:"
+blank = "Blank"
+yes = "Yes"
+cancel = "Cancel"
+remove_item = "Remove item from list?"
+
+[key]
+up = "Up"
+down = "Down"
+enter = "Enter"
+escape = "Escape"
+
+[hint]
+navigate = "to navigate"
+use = "to use"
+dismiss = "to dismiss"
