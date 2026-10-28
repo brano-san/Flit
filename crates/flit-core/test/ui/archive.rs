@@ -325,14 +325,14 @@ fn with_builtin_handling_off_archives_go_to_the_system_app_and_flits_archive_com
     }
     assert!(ops(&mut app).is_empty());
     let mut lines = settings_page_lines(&mut app, Page::Files);
-    lines.extend(settings_page_lines(&mut app, Page::General));
+    lines.extend(settings_page_lines(&mut app, Page::Interface));
     assert!(lines.contains(&BUILTIN_ARCHIVES.to_owned()), "{lines:?}");
     for id in NEEDS_BUILTIN_ARCHIVES {
         assert!(lines.contains(&format!("off {id}")) && !lines.contains(&id.to_owned()), "{id} in {lines:?}");
     }
     app.builtin_archives = true;
     let mut lines = settings_page_lines(&mut app, Page::Files);
-    lines.extend(settings_page_lines(&mut app, Page::General));
+    lines.extend(settings_page_lines(&mut app, Page::Interface));
     for id in NEEDS_BUILTIN_ARCHIVES {
         assert!(lines.contains(&id.to_owned()), "{id} in {lines:?}");
     }

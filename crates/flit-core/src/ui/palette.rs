@@ -27,6 +27,7 @@ const EDGE: f32 = 12.0;
 const HINT_H: f32 = 36.0;
 const SCROLL_W: f32 = 14.0;
 const CRUMB_W: f32 = 320.0;
+const TABS_W: f32 = 380.0;
 const GO_W: f32 = 720.0;
 const DESC_PENALTY: i32 = 100_000;
 const G_SEARCH: &str = "\u{E721}";
@@ -66,6 +67,9 @@ pub(super) enum Pick {
     Server,
     GoTo,
     Crumb(usize),
+    Tabs,
+    SaveLayout,
+    LoadLayout,
 }
 
 impl Pick {
@@ -85,6 +89,9 @@ impl Pick {
             Pick::Toolbar(t) => t.placeholder(),
             Pick::Server => S::SidebarDriveServerPrompt.t(),
             Pick::GoTo | Pick::Crumb(_) => S::AddressGotoPlaceholder.t(),
+            Pick::Tabs => S::MenusSearchTabsShort.t(),
+            Pick::SaveLayout => S::MenusSaveLayoutPlaceholder.t(),
+            Pick::LoadLayout => S::MenusLoadLayoutPlaceholder.t(),
         }
     }
 
@@ -104,11 +111,14 @@ impl Pick {
             Pick::Toolbar(_) => S::PaletteEmptyToolbar.t(),
             Pick::Server => S::SidebarDriveServerEnter.t(),
             Pick::GoTo | Pick::Crumb(_) => S::AddressGotoEmpty.t(),
+            Pick::Tabs => S::MenusNoTabs.t(),
+            Pick::SaveLayout => S::MenusSaveLayoutHint.t(),
+            Pick::LoadLayout => S::MenusNoLayouts.t(),
         }
     }
 
     fn is_input(&self) -> bool {
-        matches!(self, Pick::Shortcut(_) | Pick::Stream(_) | Pick::FolderIcon(_) | Pick::NewLibrary | Pick::LibraryAdd(_) | Pick::Server) || matches!(self, Pick::Tags(t) if t.is_input()) || matches!(self, Pick::Setting(p) if p.is_input())
+        matches!(self, Pick::Shortcut(_) | Pick::Stream(_) | Pick::FolderIcon(_) | Pick::NewLibrary | Pick::LibraryAdd(_) | Pick::Server | Pick::SaveLayout) || matches!(self, Pick::Tags(t) if t.is_input()) || matches!(self, Pick::Setting(p) if p.is_input())
     }
 }
 
@@ -139,6 +149,7 @@ pub(super) struct Palette {
     pub commands: Option<Commands>,
     describe: Rect,
     pub go: Option<Go>,
+    pub placeholder: Option<String>,
 }
 
 fn described(query: &str, desc: &str) -> Option<i32> {
@@ -208,6 +219,7 @@ impl Palette {
             commands: None,
             describe: Rect::default(),
             go: None,
+            placeholder: None,
         };
         p.field.edit.set(text);
         p.field.edit.select_all();
@@ -234,8 +246,13 @@ impl Palette {
         p
     }
 
+    pub(super) fn set_descs(&mut self, descs: Vec<String>) {
+        self.descs = descs;
+        self.refresh();
+    }
+
     fn unit(&self) -> f32 {
-        if self.commands.as_ref().is_some_and(|c| c.descriptions) { DESC_ROW_H } else { ROW_H }
+        if self.commands.as_ref().is_some_and(|c| c.descriptions) || self.pick == Pick::Tabs { DESC_ROW_H } else { ROW_H }
     }
 
     fn command_lines(&mut self) {
@@ -399,11 +416,23 @@ impl App {
             Pick::Tags(t) => self.tag_choose(t, id, now),
             Pick::Setting(p) => self.setting_choose(p, id),
             Pick::Toolbar(t) => self.tool_choose(t, id),
+            Pick::Tabs => self.choose_tab_row(id, now),
+            Pick::LoadLayout => self.load_layout(&p.titles[id]),
             _ => self.new_item(id),
         }
     }
 
     fn remove_palette_item(&mut self) -> bool {
+        if let Some(p) = self.nav.palette.take_if(|p| p.pick == Pick::LoadLayout && p.field.text().is_empty()) {
+            if let Some(&id) = p.matches.get(p.sel) {
+                let name = p.titles[id].clone();
+                self.delete_layout(&name);
+            }
+            if !self.opts.layouts.is_empty() {
+                self.ask_load_layout();
+            }
+            return true;
+        }
         let Some(p) = self.nav.palette.take_if(|p| matches!(p.pick, Pick::Library(_))) else { return false };
         if let (Pick::Library(lib), Some(&id)) = (p.pick, p.matches.get(p.sel)) {
             self.library_row(lib, &p.titles[id], true);
@@ -506,18 +535,21 @@ impl App {
         let left = self.panels.left;
         let anchor = match self.nav.palette.as_ref().map(|p| &p.pick) {
             Some(Pick::Crumb(i)) => self.crumb_rect(*i),
+            Some(Pick::Tabs) => Some(self.tab_list_anchor()),
             _ => None,
         };
+        let tabs = self.nav.palette.as_ref().is_some_and(|p| p.pick == Pick::Tabs);
         let Some(p) = &mut self.nav.palette else { return };
         let row_h = p.unit();
         let area = (w - left).max(s(200.0));
         let unit = s(row_h);
-        let hint_h = if anchor.is_some() { 0.0 } else { s(HINT_H) };
+        let hint_h = if anchor.is_some() && !tabs { 0.0 } else { s(HINT_H) };
         let fixed = s(8.0) + s(FIELD_H) + s(6.0) + hint_h;
         let (x, y, pw) = match anchor {
             Some(a) => {
-                let pw = a.w.max(s(CRUMB_W)).min(w - 2.0 * s(EDGE));
-                (a.x.min(w - s(EDGE) - pw).max(s(EDGE)), (a.bottom() + s(4.0)).min((h - s(EDGE) - fixed - unit).max(s(EDGE))), pw)
+                let pw = a.w.max(s(if tabs { TABS_W } else { CRUMB_W })).min(w - 2.0 * s(EDGE));
+                let ax = if tabs { a.right() - pw } else { a.x };
+                (ax.min(w - s(EDGE) - pw).max(s(EDGE)), (a.bottom() + s(4.0)).min((h - s(EDGE) - fixed - unit).max(s(EDGE))), pw)
             }
             None => {
                 let pw = (w / 2.0).round().max(s(if p.go.is_some() { GO_W } else { MIN_W })).min(area - 2.0 * s(EDGE)).max(s(120.0));
@@ -535,6 +567,8 @@ impl App {
         let top = p.field_rect.bottom() + s(6.0);
         let room = (h - s(EDGE) - hint_h - top).max(unit);
         p.page = ((room / unit).floor() as usize).max(1);
+        let max = p.max_scroll();
+        p.scroll.clamp(max);
         let n = p.matches.len();
         let shown = n.clamp(1, p.page);
         let list = Rect::new(x, top, pw, shown as f32 * unit);
@@ -617,7 +651,7 @@ impl App {
         let (lead, lead_ink) = if p.go.as_ref().is_some_and(|g| g.crumb.is_none()) { (super::G_FOLDER, t.accent) } else { (G_SEARCH, t.text_dim) };
         w.centered(Rect::new(fr.x, fr.y, fr.h, fr.h), lead, icons, lead_ink);
         let inner = Rect::new(fr.x + fr.h, fr.y, fr.w - fr.h - s12, fr.h);
-        p.field.draw(w.g, t, inner, font, active, placeholder.as_deref().unwrap_or(p.pick.placeholder()), sc, Some(&self.preedit));
+        p.field.draw(w.g, t, inner, font, active, placeholder.as_deref().or(p.placeholder.as_deref()).unwrap_or(p.pick.placeholder()), sc, Some(&self.preedit));
         w.icon_button(p.close, G_CLOSE, close_font, Button::of(hover == Hit::PaletteClose, false, true), t.text_dim);
         if let Some(c) = &p.commands {
             w.icon_button(p.describe, G_DESCRIBE, icons, Button::of(hover == Hit::PaletteDescribe, c.descriptions, true), t.text_dim);
@@ -687,6 +721,21 @@ impl App {
                 w.g.dl.round_rect(row, t.hover, s4);
             }
             let (ink, dim, mark) = if selected { (ink_on(t.accent_fill), ink_on(t.accent_fill), ink_on(t.accent_fill)) } else { (t.text, t.text_dim, t.accent) };
+            if p.pick == Pick::Tabs {
+                let id = p.matches[i];
+                let closed = self.tab_row_closed(id);
+                let fade = |c: crate::render::Color| if closed && !selected { c.alpha(0x90) } else { c };
+                let glyph = self.tab_row_glyph(id);
+                w.centered(Rect::new(row.x + s6, row.y, s16 * 2.0, row.h), glyph, self.icon_font(18.0), fade(if selected { ink } else { t.accent }));
+                let x0 = row.x + s16 * 2.0 + s12;
+                let top = Rect::new(row.x, row.y + s3, row.w, row.h / 2.0 - s3);
+                let y = baseline(w.g, top, font);
+                w.marked((x0, y), &p.titles[id], &p.marks[i], font, (fade(ink), mark), row.right() - x0 - s12);
+                let below = Rect::new(row.x, row.y + row.h / 2.0, row.w, row.h / 2.0 - s3);
+                let y = baseline(w.g, below, small);
+                w.g.text(x0, y, &p.descs[id], small, fade(dim), row.right() - x0 - s12);
+                continue;
+            }
             let y = baseline(w.g, row, font);
             let keys = &p.keys[p.matches[i]];
             let kw = if keys.is_empty() { 0.0 } else { w.g.measure(keys, small) };

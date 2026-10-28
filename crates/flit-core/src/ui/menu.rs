@@ -16,6 +16,7 @@ pub enum Mark {
     None,
     Check,
     Radio,
+    Sort(bool),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -60,6 +61,7 @@ pub(super) enum Cmd {
     GitBranch(usize),
     Column(ColumnCmd),
     Types(TypeCmd),
+    SortColumn(SortField),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -114,12 +116,12 @@ const FOLDERS: [(Folders, &str, S); 3] = [
 const GROUPS: [(GroupField, &str, S); 11] = [
     (GroupField::None, "view.group.none", S::MenuGroupNone),
     (GroupField::Name, "view.group.name", S::MenuSortName),
-    (GroupField::Type, "view.group.type", S::MenuSortType),
     (GroupField::Size, "view.group.size", S::MenuSortSize),
-    (GroupField::Items, "view.group.items", S::DetailsColumnItems),
     (GroupField::Created, "view.group.created", S::MenuSortCreated),
     (GroupField::Modified, "view.group.modified", S::MenuSortModified),
     (GroupField::Accessed, "view.group.accessed", S::DetailsColumnAccessed),
+    (GroupField::Items, "view.group.items", S::DetailsColumnItems),
+    (GroupField::Type, "view.group.type", S::MenuSortType),
     (GroupField::Volume, "view.group.volume", S::DetailsColumnVolume),
     (GroupField::FolderUsage, "view.group.folder_usage", S::DetailsColumnFolderUsage),
     (GroupField::Tag, "view.group.tag", S::MenuSortTags),
@@ -166,7 +168,7 @@ pub(super) struct Menu<'a> {
     hidden: &'a [&'static str],
     caps: crate::caps::Caps,
     builtin_archives: bool,
-    keys: &'a Keymap,
+    pub(super) keys: &'a Keymap,
     items: Vec<MenuItem>,
     cmds: Vec<Cmd>,
 }
@@ -208,7 +210,7 @@ impl Menu<'_> {
         self.marked(cmd, label, keys, checked, Mark::None);
     }
 
-    fn entry(&mut self, cmd: Cmd, label: &str, keys: String, mark: Mark, checked: bool, disabled: bool) {
+    pub(super) fn entry(&mut self, cmd: Cmd, label: &str, keys: String, mark: Mark, checked: bool, disabled: bool) {
         self.items.push(MenuItem::Command { label: label.to_owned(), keys, checked, stay: mark == Mark::Check && !disabled, mark, icon: "", disabled });
         self.cmds.push(cmd);
     }
@@ -363,24 +365,6 @@ impl App {
         })
     }
 
-    pub(super) fn build_tab_actions_menu(&mut self) -> Vec<MenuItem> {
-        self.collect(|a, m| {
-            m.action("tab.new", S::MenuNewTab.t());
-            m.action("tab.duplicate_window", S::MenuNewWindow.t());
-            if a.tabs.len() > 1 {
-                m.action("tab.move_to_window", S::MenuMoveTabToWindow.t());
-            }
-            m.separator();
-            m.action("window.compact", S::MenuMiniWindow.t());
-            m.action("window.fullscreen", S::MenuFullScreen.t());
-            a.tab_pane_items(m);
-            m.separator();
-            m.action("tab.close_all", S::MenuCloseAllTabs.t());
-            m.separator();
-            m.action("options.open", S::MenuSettings.t());
-        })
-    }
-
     pub(super) fn build_branch_menu(&mut self) -> Vec<MenuItem> {
         let current = self.git_branch().unwrap_or_default().to_owned();
         let branches = self.git_branches.clone();
@@ -416,9 +400,22 @@ impl App {
     }
 
     fn view_menus(&self, m: &mut Menu) {
-        m.submenu(S::MenuLayout.t(), |m| self.layout_entries(m));
-        m.submenu(S::MenuSortBy.t(), |m| self.sort_entries(m));
-        m.submenu(S::MenuGroupBy.t(), |m| self.group_entries(m));
+        m.submenu(S::MenusView.t(), |m| self.layout_entries(m));
+        m.submenu(S::MenusSort.t(), |m| self.column_sort_entries(m));
+        m.submenu(S::MenusGroup.t(), |m| self.group_entries(m));
+    }
+
+    fn column_sort_entries(&self, m: &mut Menu) {
+        let t = self.tab();
+        let sort = t.view_spec.sort;
+        let (cols, kinds) = (t.columns, self.column_kinds());
+        for c in cols.ordered(kinds).into_iter().filter(|&c| cols.shown(c)) {
+            if let Some(f) = c.field() {
+                m.entry(Cmd::SortColumn(f), c.title(), String::new(), Mark::Sort(sort.descending), f == sort.field, false);
+            }
+        }
+        m.separator();
+        m.choices(&FOLDERS, sort.folders);
     }
 
     fn layout_entries(&self, m: &mut Menu) {
@@ -709,6 +706,7 @@ impl App {
             Some(Cmd::GitBranch(k)) => self.git_switch(k),
             Some(Cmd::Column(c)) => self.column_command(c),
             Some(Cmd::Types(c)) => self.types_command(c),
+            Some(Cmd::SortColumn(f)) => self.sort_column(f),
             None => {}
         }
     }

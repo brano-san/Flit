@@ -124,6 +124,7 @@ fn navigation_flow() {
 fn keyboard_selection_and_type_ahead() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &[("apple", false), ("banana", false), ("blueberry", false), ("cherry", false)]);
+    app.opts.char_key = crate::ui::options::CharKey::Select;
     key(&mut app, Key::Home, NO);
     key(&mut app, Key::Down, SHIFT);
     key(&mut app, Key::Down, SHIFT);
@@ -394,6 +395,7 @@ fn delete_needs_a_visible_selection() {
 fn altgr_characters_reach_type_ahead() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &[("zz", false), ("ąb", false)]);
+    app.opts.char_key = crate::ui::options::CharKey::Select;
     let altgr = Mods { ctrl: true, shift: false, alt: true };
     key(&mut app, Key::Char('A'), altgr);
     assert!(selected_names(&app).is_empty());

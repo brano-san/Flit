@@ -234,9 +234,9 @@ fn folders_open_in_new_panels_from_the_keyboard_and_menus() {
     app.run_action("panel.open_bottom", t0());
     assert_eq!(shape(&app), "((0/2)|1)");
     assert_eq!(app.tab().location(), &loc(r"C:\a\sub"));
-    app.tab_actions_menu();
+    app.panel_quick_menu();
     let m = menu(&mut app);
-    assert!(m.contains(&"Split Right".into()) && m.contains(&"Split Bottom".into()) && m.contains(&"Even All Panels".into()), "{m:?}");
+    assert!(m.contains(&"Split Right".into()) && m.contains(&"Split Bottom".into()), "{m:?}");
     let hide = &crate::ui::SETTINGS[crate::ui::settings::index("general.menu_panes").unwrap()];
     assert!(hide.set(&mut app, crate::ui::Value::Bool(false)));
     key(&mut app, Key::Escape, NO);

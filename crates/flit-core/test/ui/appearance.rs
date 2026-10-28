@@ -51,16 +51,16 @@ fn the_theme_follows_windows_or_the_setting_and_ctrl_alt_t_switches_it() {
     assert!(!a.is_dark() && *a.theme() == LIGHT);
     a.on_event(&Event::ThemeChanged { dark: true }, Instant::now());
     assert!(a.is_dark() && *a.theme() == DARK, "the system setting by default");
-    assert!(set(&mut a, "appearance.theme", Value::Choice(1)));
+    assert!(set(&mut a, "appearance.system_scheme", Value::Bool(false)) && set(&mut a, "appearance.color_scheme", Value::Choice(1)));
     assert!(!a.is_dark());
     a.on_event(&Event::ThemeChanged { dark: false }, Instant::now());
     a.on_event(&Event::ThemeChanged { dark: true }, Instant::now());
     assert!(!a.is_dark(), "a chosen theme ignores Windows");
     a.on_event(&Event::Key { key: Key::Char('T'), mods: CTRL_ALT, pressed: true }, Instant::now());
     assert!(a.is_dark());
-    assert_eq!(get(&a, "appearance.theme"), Value::Choice(2));
+    assert_eq!(get(&a, "appearance.color_scheme"), Value::Choice(0));
     a.on_event(&Event::Key { key: Key::Char('T'), mods: CTRL_ALT, pressed: true }, Instant::now());
-    assert_eq!(get(&a, "appearance.theme"), Value::Choice(1));
+    assert_eq!(get(&a, "appearance.color_scheme"), Value::Choice(1));
     for (id, dark) in [("theme.dark", true), ("theme.light", false), ("theme.system", true)] {
         let action = crate::ui::actions::ACTIONS.iter().find(|x| x.id == id).unwrap();
         assert!(a.available(id));
@@ -74,7 +74,7 @@ fn the_theme_follows_windows_or_the_setting_and_ctrl_alt_t_switches_it() {
 #[test]
 fn colors_are_picked_from_presets_or_typed_and_checked() {
     let mut a = app();
-    a.open_settings(Some(Page::Appearance));
+    a.open_settings(Some(Page::Interface));
     let i = index("appearance.background").unwrap();
     let menu = menu_after(&mut a, |a| a.activate_setting(i, None));
     assert_eq!(menu.len(), PRESETS.len() + 2);
@@ -121,7 +121,7 @@ fn area_colors_paint_their_area() {
 #[test]
 fn the_font_comes_from_the_installed_families_and_falls_back() {
     let mut a = app();
-    a.open_settings(Some(Page::Appearance));
+    a.open_settings(Some(Page::Interface));
     let i = index("appearance.font").unwrap();
     a.activate_setting(i, None);
     assert!(a.drain_effects().any(|e| matches!(e, Effect::Settings(SettingsCmd::Fonts))), "the families are listed only when asked");
@@ -165,7 +165,7 @@ fn the_appearance_page_draws_in_both_themes_with_custom_colors() {
     assert!(set(&mut a, "appearance.background", text("camouflage")));
     for dark in [false, true] {
         a.on_event(&Event::ThemeChanged { dark }, Instant::now());
-        a.open_settings(Some(Page::Appearance));
+        a.open_settings(Some(Page::Interface));
         let g = frame(&mut a);
         assert!(g.dl.instances.len() > 50);
         a.on_event(&Event::MouseMove { x: 500.0, y: 300.0 }, Instant::now());

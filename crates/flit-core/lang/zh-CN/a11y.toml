@@ -6,7 +6,6 @@ commands = "命令"
 sidebar = "导航窗格"
 files = "文件"
 columns = "列"
-settings_pages = "页面"
 preview = "预览"
 
 [button]

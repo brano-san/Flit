@@ -17,7 +17,7 @@ fn app() -> App {
 
 fn shown(app: &mut App, launches: Vec<Launch>) {
     let items = vec![cmd("Copy path"), MenuItem::Separator, MenuItem::Submenu { label: "Open with".into(), items: vec![cmd("Editor"), cmd("Viewer")] }];
-    app.on_event(&Event::ShowMenu { items, x: 100.0, y: 100.0, launches }, Instant::now());
+    app.on_event(&Event::ShowMenu { items, x: 100.0, y: 100.0, launches, kind: crate::ui::MenuKind::None, shell: Vec::new() }, Instant::now());
     let mut g = Gfx::new(Mono, 256);
     app.frame(&mut g, Instant::now());
 }

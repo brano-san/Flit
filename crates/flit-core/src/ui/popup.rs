@@ -20,12 +20,13 @@ const ICON_PX: f32 = 11.0;
 const G_SUBMENU: &str = "\u{E76C}";
 const OFF: u8 = 0x70;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum MenuOutcome {
     Open,
     Command(usize),
     Toggled(usize),
     Closed,
+    Pin(String, bool, Rect),
 }
 
 enum Node {
@@ -256,6 +257,7 @@ impl MenuView {
                         let bx = Rect::new(side.x + (side.w - MARK * s) / 2.0, row.y + (row.h - MARK * s) / 2.0, MARK * s, MARK * s).snap();
                         match (mark, checked) {
                             (Mark::Radio, on) => p.radio(bx, *on, None),
+                            (Mark::Sort(desc), on) => p.radio(bx, *on, on.then_some((!*desc, FontStyle::new(FontFamily::Ui, 10.0 * s, false)))),
                             (Mark::Check, on) | (Mark::None, on @ true) => p.checkbox(bx, *on),
                             (Mark::None, false) => {}
                         }

@@ -177,7 +177,7 @@ fn section_toggles_keep_the_menu_open_and_update_the_sidebar_behind_it() {
     click(empty_area(&app), &mut app, MouseButton::Right);
     let m = menu(&mut app);
     assert_eq!(stays(&m.menu), ["Recents", "Bookmarks", "Storage", "Places", "Libraries", "WSL", "Tags", "Compact sidebar"], "only the show/hide toggles stay open");
-    app.on_event(&Event::ShowMenu { items: m.menu, x: 300.0, y: 100.0, launches: Vec::new() }, Instant::now());
+    app.on_event(&Event::ShowMenu { items: m.menu, x: 300.0, y: 100.0, launches: Vec::new(), kind: m.kind, shell: Vec::new() }, Instant::now());
     let mut g = Gfx::new(Mono, 1024);
     app.frame(&mut g, Instant::now());
     let key = |app: &mut App, key: Key| app.on_event(&Event::Key { key, mods: Mods::default(), pressed: true }, Instant::now());

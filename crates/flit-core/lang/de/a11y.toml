@@ -6,7 +6,6 @@ commands = "Befehle"
 sidebar = "Navigationsbereich"
 files = "Dateien"
 columns = "Spalten"
-settings_pages = "Seiten"
 preview = "Vorschau"
 
 [button]

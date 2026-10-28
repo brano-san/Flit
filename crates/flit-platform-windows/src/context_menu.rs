@@ -10,7 +10,7 @@ use std::sync::Once;
 use std::time::{Duration, Instant};
 use windows::core::{w, Interface, HSTRING, PCSTR, PCWSTR, PSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
-use windows::Win32::Graphics::Gdi::{ClientToScreen, InvalidateRect};
+use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::System::Com::IDataObject;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_SHIFT};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
@@ -64,6 +64,13 @@ pub(crate) enum ShellUi {
     Properties(Vec<FsPath>),
     Drag(Vec<FsPath>),
     Verb(Vec<FsPath>, &'static CStr),
+    Pick(Option<u32>),
+}
+
+struct Shown {
+    hmenu: HMENU,
+    menu: ShellMenu,
+    pt: POINT,
 }
 
 struct Active {
@@ -102,61 +109,7 @@ pub(crate) fn place(item: &ShellItem) -> Place {
 thread_local! {
     static QUEUE: RefCell<Vec<(isize, ShellUi)>> = const { RefCell::new(Vec::new()) };
     static ACTIVE: RefCell<Option<Active>> = const { RefCell::new(None) };
-    static TOGGLES: RefCell<Option<Toggles>> = const { RefCell::new(None) };
-}
-
-struct Toggles {
-    ids: Vec<u32>,
-    send: *const (dyn Fn(Event) + 'static),
-}
-
-pub(crate) fn toggle_ids(items: &[MenuItem]) -> Vec<u32> {
-    fn walk(items: &[MenuItem], next: &mut u32, out: &mut Vec<u32>) {
-        for item in items {
-            match item {
-                MenuItem::Command { stay, .. } => {
-                    if *stay {
-                        out.push(*next);
-                    }
-                    *next += 1;
-                }
-                MenuItem::Submenu { items, .. } => walk(items, next, out),
-                MenuItem::Header(_) | MenuItem::Separator => {}
-            }
-        }
-    }
-    let (mut out, mut next) = (Vec::new(), FLIT_FIRST);
-    walk(items, &mut next, &mut out);
-    out
-}
-
-unsafe fn toggle_under(msg: &MSG) -> bool {
-    let under = WindowFromPoint(msg.pt);
-    let hmenu = HMENU(SendMessageW(under, MN_GETHMENU, None, None).0 as _);
-    if hmenu.is_invalid() {
-        return false;
-    }
-    let at = MenuItemFromPoint(None, hmenu, msg.pt);
-    if at < 0 {
-        return false;
-    }
-    let id = GetMenuItemID(hmenu, at);
-    let Some(send) = TOGGLES.with_borrow(|t| t.as_ref().filter(|t| t.ids.contains(&id)).map(|t| t.send)) else { return false };
-    let checked = GetMenuState(hmenu, id, MF_BYCOMMAND) & MF_CHECKED.0 != 0;
-    CheckMenuItem(hmenu, id, (MF_BYCOMMAND | if checked { MF_UNCHECKED } else { MF_CHECKED }).0);
-    let _ = InvalidateRect(Some(under), None, true);
-    (*send)(Event::MenuCommand((id - FLIT_FIRST) as usize));
-    true
-}
-
-unsafe extern "system" fn menu_filter(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    if code == MSGF_MENU as i32 {
-        let msg = &*(lp.0 as *const MSG);
-        if msg.message == WM_LBUTTONUP && toggle_under(msg) {
-            return LRESULT(1);
-        }
-    }
-    CallNextHookEx(None, code, wp, lp)
+    static SHOWN: RefCell<Option<Shown>> = const { RefCell::new(None) };
 }
 
 pub(crate) fn request(hwnd: HWND, req: ShellUi) {
@@ -331,7 +284,7 @@ pub(crate) fn prewarm() {
             crate::com_sta();
             let Some(exe) = std::env::current_exe().ok().and_then(|p| FsPath::parse(p.to_str()?)) else { return };
             let Some(dir) = exe.parent() else { return };
-            let menu = |dir: &FsPath, items: Vec<FsPath>| ShellMenu { dir: dir.clone(), items, x: 0.0, y: 0.0, extended: false, menu: Vec::new(), inline: false, shell: true };
+            let menu = |dir: &FsPath, items: Vec<FsPath>| ShellMenu { dir: dir.clone(), items, x: 0.0, y: 0.0, extended: false, menu: Vec::new(), inline: false, shell: true, kind: flit_core::ui::MenuKind::None };
             for m in [menu(&dir, vec![exe.clone()]), menu(&dir, Vec::new()), menu(&dir, vec![dir.clone()])] {
                 if let Ok((_, hmenu)) = unsafe { query(HWND::default(), &m) } {
                     let _ = unsafe { DestroyMenu(hmenu) };
@@ -503,8 +456,103 @@ unsafe fn fill(hwnd: HWND, m: &ShellMenu, hmenu: HMENU) -> Result<Active, Platfo
     Ok(active)
 }
 
+pub(crate) fn plain_label(text: &str) -> (String, String) {
+    let (label, keys) = text.split_once('\t').unwrap_or((text, ""));
+    let mut out = String::with_capacity(label.len());
+    let mut chars = label.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '&' if chars.peek() == Some(&'&') => {
+                out.push('&');
+                chars.next();
+            }
+            '&' => {}
+            c => out.push(c),
+        }
+    }
+    (out.trim().to_owned(), keys.trim().to_owned())
+}
+
+unsafe fn item_text(hmenu: HMENU, i: i32) -> String {
+    let mut buf = [0u16; 512];
+    let mut info = MENUITEMINFOW { cbSize: size_of::<MENUITEMINFOW>() as u32, fMask: MIIM_STRING, dwTypeData: windows::core::PWSTR(buf.as_mut_ptr()), cch: buf.len() as u32 - 1, ..Default::default() };
+    if GetMenuItemInfoW(hmenu, i as u32, true, &mut info).is_err() {
+        return String::new();
+    }
+    String::from_utf16_lossy(&buf[..info.cch as usize])
+}
+
+pub(crate) unsafe fn convert(hmenu: HMENU, from: i32, depth: usize, items: &mut Vec<MenuItem>, ids: &mut Vec<u32>) {
+    for i in from.max(0)..GetMenuItemCount(Some(hmenu)) {
+        let mut info = MENUITEMINFOW { cbSize: size_of::<MENUITEMINFOW>() as u32, fMask: MIIM_ID | MIIM_SUBMENU | MIIM_STATE | MIIM_FTYPE, ..Default::default() };
+        if GetMenuItemInfoW(hmenu, i as u32, true, &mut info).is_err() {
+            continue;
+        }
+        if info.fType.0 & MFT_SEPARATOR.0 != 0 {
+            if !matches!(items.last(), None | Some(MenuItem::Separator)) {
+                items.push(MenuItem::Separator);
+            }
+            continue;
+        }
+        let (label, keys) = plain_label(&item_text(hmenu, i));
+        if label.is_empty() {
+            continue;
+        }
+        if !info.hSubMenu.is_invalid() {
+            if depth > 4 {
+                continue;
+            }
+            let _ = forward(WM_INITMENUPOPUP, WPARAM(info.hSubMenu.0 as usize), LPARAM(i as isize));
+            let mut sub = Vec::new();
+            convert(info.hSubMenu, 0, depth + 1, &mut sub, ids);
+            if matches!(sub.last(), Some(MenuItem::Separator)) {
+                sub.pop();
+            }
+            if !sub.is_empty() {
+                items.push(MenuItem::Submenu { label, items: sub });
+            }
+            continue;
+        }
+        let disabled = info.fState.0 & MFS_DISABLED.0 != 0;
+        items.push(MenuItem::Command { label, keys, checked: info.fState.0 & MFS_CHECKED.0 != 0, stay: false, mark: flit_core::ui::Mark::None, icon: "", disabled });
+        ids.push(info.wID);
+    }
+    if matches!(items.last(), Some(MenuItem::Separator)) {
+        items.pop();
+    }
+}
+
+pub(crate) fn flit_ids(items: &[MenuItem], next: &mut u32, ids: &mut Vec<u32>) {
+    for item in items {
+        match item {
+            MenuItem::Command { .. } => {
+                ids.push(*next);
+                *next += 1;
+            }
+            MenuItem::Submenu { items, .. } => flit_ids(items, next, ids),
+            MenuItem::Header(_) | MenuItem::Separator => {}
+        }
+    }
+}
+
+pub(crate) unsafe fn own_items(m: &ShellMenu, hmenu: HMENU) -> (Vec<MenuItem>, Vec<u32>) {
+    let mut items = m.menu.clone();
+    let (mut ids, mut next) = (Vec::new(), FLIT_FIRST);
+    flit_ids(&m.menu, &mut next, &mut ids);
+    let ours = GetMenuItemCount(Some(hmenu)).min(m.menu.len() as i32);
+    if !items.is_empty() {
+        items.push(MenuItem::Separator);
+    }
+    convert(hmenu, ours, 0, &mut items, &mut ids);
+    if matches!(items.last(), Some(MenuItem::Separator)) {
+        items.pop();
+    }
+    (items, ids)
+}
+
 unsafe fn show_menu(hwnd: HWND, m: &ShellMenu, send: &dyn Fn(Event)) -> Result<(), PlatformError> {
     let started = Instant::now();
+    release();
     let hmenu = CreatePopupMenu().map_err(err)?;
     let active = match fill(hwnd, m, hmenu) {
         Ok(a) => a,
@@ -516,40 +564,41 @@ unsafe fn show_menu(hwnd: HWND, m: &ShellMenu, send: &dyn Fn(Event)) -> Result<(
     ACTIVE.set(Some(active));
     let mut pt = POINT { x: m.x as i32, y: m.y as i32 };
     let _ = ClientToScreen(hwnd, &mut pt);
-    tracing::info!("context menu ready in {:.1} ms, shell items {}", started.elapsed().as_secs_f64() * 1e3, if m.inline { "inline" } else { "in a submenu" });
-    let ids = toggle_ids(&m.menu);
-    let hook = match ids.is_empty() {
-        true => None,
-        false => {
-            let send: *const (dyn Fn(Event) + '_) = send;
-            TOGGLES.set(Some(Toggles { ids, send: std::mem::transmute::<*const (dyn Fn(Event) + '_), *const (dyn Fn(Event) + 'static)>(send) }));
-            SetWindowsHookExW(WH_MSGFILTER, Some(menu_filter), None, windows::Win32::System::Threading::GetCurrentThreadId()).ok()
-        }
-    };
-    let cmd = TrackPopupMenuEx(hmenu, (TPM_RETURNCMD | TPM_RIGHTBUTTON).0, pt.x, pt.y, hwnd, None).0 as u32;
-    if let Some(h) = hook {
-        let _ = UnhookWindowsHookEx(h);
+    let (items, ids) = own_items(m, hmenu);
+    tracing::info!("context menu ready in {:.1} ms, {} commands, shell items {}", started.elapsed().as_secs_f64() * 1e3, ids.len(), if m.inline { "inline" } else { "in a submenu" });
+    SHOWN.set(Some(Shown { hmenu, menu: m.clone(), pt }));
+    send(Event::ShowMenu { items, x: m.x, y: m.y, launches: Vec::new(), kind: m.kind, shell: ids });
+    Ok(())
+}
+
+fn release() {
+    if let Some(s) = SHOWN.take() {
+        let _ = unsafe { DestroyMenu(s.hmenu) };
     }
-    TOGGLES.set(None);
+    ACTIVE.set(None);
+}
+
+unsafe fn pick(hwnd: HWND, cmd: Option<u32>, send: &dyn Fn(Event)) -> Result<(), PlatformError> {
+    let Some(shown) = SHOWN.take() else { return Ok(()) };
     let menu = ACTIVE.take().and_then(|a| a.menu);
     let result = match (cmd, menu) {
-        (FLIT_FIRST.., _) => {
+        (Some(cmd @ FLIT_FIRST..), _) => {
             send(Event::MenuCommand((cmd - FLIT_FIRST) as usize));
             Ok(())
         }
-        (FIRST_ID..=LAST_ID, Some(menu)) => {
+        (Some(cmd @ FIRST_ID..=LAST_ID), Some(menu)) => {
             let id = (cmd - FIRST_ID) as usize;
             match verb(&menu, id).filter(|v| SHELL_VERBS.iter().any(|s| v.eq_ignore_ascii_case(s))) {
                 Some(v) => {
                     send(Event::ShellVerb(v));
                     Ok(())
                 }
-                None => invoke(hwnd, &menu, id, m, pt),
+                None => invoke(hwnd, &menu, id, &shown.menu, shown.pt),
             }
         }
         _ => Ok(()),
     };
-    let _ = DestroyMenu(hmenu);
+    let _ = DestroyMenu(shown.hmenu);
     result
 }
 
@@ -608,6 +657,7 @@ pub(crate) fn run(hwnd: HWND, req: ShellUi, send: &dyn Fn(Event)) {
         ShellUi::Properties(paths) => properties(hwnd, paths),
         ShellUi::Drag(paths) => crate::dragdrop::start_drag(hwnd, paths),
         ShellUi::Verb(paths, verb) => invoke_verb(hwnd, paths, verb),
+        ShellUi::Pick(cmd) => unsafe { pick(hwnd, *cmd, send) },
     };
     if let Err(e) = result {
         tracing::warn!("shell: {e}");

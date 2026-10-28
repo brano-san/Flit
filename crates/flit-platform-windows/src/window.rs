@@ -36,6 +36,18 @@ const WM_DESTROY_REQUEST: u32 = WM_APP + 2;
 const WM_OPEN_WINDOW: u32 = WM_APP + 3;
 const TIMER_ID: usize = 1;
 const CAPTURE_TIMER_ID: usize = 2;
+const CAPTURE_LATE_TIMER_ID: usize = 3;
+const CAPTURE_LATE_MS: u32 = 900;
+
+fn capture_keys(keys: &str) -> Vec<Event> {
+    keys.split(';')
+        .filter(|k| !k.is_empty())
+        .flat_map(|k| match k.strip_prefix('\'') {
+            Some(text) => text.chars().map(Event::Char).collect(),
+            None => vec![capture_key(k)],
+        })
+        .collect()
+}
 
 fn capture_pointer(q: &mut std::collections::VecDeque<Event>) {
     let mouse = std::env::var("FLIT_CAPTURE_MOUSE").ok().and_then(|v| v.split_once(',').and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?))));
@@ -373,6 +385,10 @@ impl Window for Win32Window {
         crate::context_menu::request(self.hwnd(), ShellUi::Verb(paths, c"Windows.ModernShare"));
     }
 
+    fn shell_pick(&self, cmd: Option<u32>) {
+        crate::context_menu::request(self.hwnd(), ShellUi::Pick(cmd));
+    }
+
     fn properties(&self, paths: Vec<FsPath>) {
         crate::context_menu::request(self.hwnd(), ShellUi::Properties(paths));
     }
@@ -643,10 +659,7 @@ impl<H: WindowHandler<Win32>> Shared<H> {
                 node.queue.borrow_mut().extend(std::env::var("FLIT_CAPTURE_TYPE").unwrap_or_default().chars().map(Event::Char));
             }
             if let Ok(keys) = std::env::var("FLIT_CAPTURE_KEYS") {
-                node.queue.borrow_mut().extend(keys.split(';').filter(|k| !k.is_empty()).flat_map(|k| match k.strip_prefix('\'') {
-                    Some(text) => text.chars().map(Event::Char).collect(),
-                    None => vec![capture_key(k)],
-                }));
+                node.queue.borrow_mut().extend(capture_keys(&keys));
                 if std::env::var_os("FLIT_CAPTURE_SETTINGS").is_none() {
                     node.queue.borrow_mut().extend(std::env::var("FLIT_CAPTURE_TYPE").unwrap_or_default().chars().map(Event::Char));
                 }
@@ -1259,6 +1272,16 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
         WM_TIMER if wp.0 == CAPTURE_TIMER_ID => {
             let _ = KillTimer(Some(hwnd), CAPTURE_TIMER_ID);
             capture_pointer(&mut s.queue.borrow_mut());
+            s.shared().flush();
+            s.redraw_now();
+            if std::env::var_os("FLIT_CAPTURE_LATE").is_some() {
+                SetTimer(Some(hwnd), CAPTURE_LATE_TIMER_ID, CAPTURE_LATE_MS, None);
+            }
+            Some(LRESULT(0))
+        }
+        WM_TIMER if wp.0 == CAPTURE_LATE_TIMER_ID => {
+            let _ = KillTimer(Some(hwnd), CAPTURE_LATE_TIMER_ID);
+            s.queue.borrow_mut().extend(capture_keys(&std::env::var("FLIT_CAPTURE_LATE").unwrap_or_default()));
             s.shared().flush();
             s.redraw_now();
             Some(LRESULT(0))

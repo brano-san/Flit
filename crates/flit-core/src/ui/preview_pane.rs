@@ -138,6 +138,7 @@ struct VLine {
 struct DocLayout {
     width: f32,
     scale: f32,
+    mono: f32,
     lines: Vec<VLine>,
     pieces: Vec<Piece>,
     height: f32,
@@ -194,9 +195,9 @@ fn ui(px: f32, sc: f32, bold: bool) -> FontStyle {
     FontStyle::new(FontFamily::Ui, px * sc, bold)
 }
 
-fn run_font(r: &Run, block: Block, sc: f32) -> FontStyle {
+fn run_font(r: &Run, block: Block, sc: f32, mono: f32) -> FontStyle {
     match block {
-        _ if r.mono => FontStyle::new(FontFamily::Mono, 12.5 * sc, false),
+        _ if r.mono => FontStyle::new(FontFamily::Mono, mono * sc, false),
         Block::Heading(1) => ui(20.0, sc, true),
         Block::Heading(2) => ui(17.0, sc, true),
         Block::Heading(_) => ui(14.5, sc, true),
@@ -204,9 +205,9 @@ fn run_font(r: &Run, block: Block, sc: f32) -> FontStyle {
     }
 }
 
-fn para_font(block: Block, mono: bool, sc: f32) -> FontStyle {
+fn para_font(block: Block, mono: bool, sc: f32, mono_px: f32) -> FontStyle {
     let r = Run { start: 0, end: 0, tone: Tone::Plain, bold: false, mono: mono || block == Block::Code };
-    run_font(&r, block, sc)
+    run_font(&r, block, sc, mono_px)
 }
 
 fn tone_color(t: &Theme, dark: bool, tone: Tone) -> Color {
@@ -235,12 +236,12 @@ fn put(pieces: &mut Vec<Piece>, first: usize, run: u32, start: u32, end: u32, x:
     }
 }
 
-fn layout_doc<B: TextBackend>(g: &mut Gfx<B>, d: &Doc, width: f32, sc: f32, widths: &mut FxHashMap<(char, FontStyle), f32>) -> DocLayout {
-    let mut out = DocLayout { width, scale: sc, ..Default::default() };
+fn layout_doc<B: TextBackend>(g: &mut Gfx<B>, d: &Doc, width: f32, (sc, mono): (f32, f32), widths: &mut FxHashMap<(char, FontStyle), f32>) -> DocLayout {
+    let mut out = DocLayout { width, scale: sc, mono, ..Default::default() };
     let mut y = 0.0;
     for (k, para) in d.paras.iter().enumerate() {
         let block = para.block;
-        let base_font = para_font(block, d.mono, sc);
+        let base_font = para_font(block, d.mono, sc, mono);
         let m = g.metrics(base_font);
         let lh = ((m.ascent + m.descent) * if d.mono { 1.25 } else { 1.4 }).round();
         let base = ((lh + m.ascent - m.descent) / 2.0).round();
@@ -263,7 +264,7 @@ fn layout_doc<B: TextBackend>(g: &mut Gfx<B>, d: &Doc, width: f32, sc: f32, widt
         };
         for ri in para.runs.clone() {
             let run = d.runs[ri as usize];
-            let font = run_font(&run, block, sc);
+            let font = run_font(&run, block, sc, mono);
             let text = d.run_text(&run);
             let mut at = run.start;
             for token in text.split_inclusive(' ') {
@@ -1024,13 +1025,13 @@ impl App {
     }
 
     fn draw_doc<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) -> f32 {
-        let (sc, dark) = (self.scale, self.dark);
+        let (sc, dark, mono) = (self.scale, self.dark, super::options::mono_px(self.opts.inspector_size));
         let b = self.preview.r.body;
         let note_font = self.ui_font(12.0);
         let p = &mut self.preview;
         let Content::Doc(d) = &p.content else { return 0.0 };
-        if p.doc.as_ref().is_none_or(|l| l.width != b.w || l.scale != sc) {
-            p.doc = Some(layout_doc(g, d, b.w, sc, &mut p.widths));
+        if p.doc.as_ref().is_none_or(|l| l.width != b.w || l.scale != sc || l.mono != mono) {
+            p.doc = Some(layout_doc(g, d, b.w, (sc, mono), &mut p.widths));
         }
         let lay = p.doc.as_ref().unwrap();
         let scroll = p.scroll;
@@ -1048,7 +1049,7 @@ impl App {
             }
             for piece in &lay.pieces[line.pieces.start as usize..line.pieces.end as usize] {
                 let run = &d.runs[piece.run as usize];
-                let font = run_font(run, line.block, sc);
+                let font = run_font(run, line.block, sc, mono);
                 let s = &d.text[piece.start as usize..piece.end as usize];
                 g.text(b.x + piece.x, top + line.base, s, font, tone_color(t, dark, run.tone), f32::INFINITY);
             }

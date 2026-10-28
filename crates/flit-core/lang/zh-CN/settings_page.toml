@@ -78,7 +78,6 @@ no_telemetry = "Flit 没有遥测，也没有用户标识符：它不会向任�
 libraries = "第三方库"
 keys_how = "按 Enter 或单击可更改快捷键，按 Delete 删除，+ 添加，箭头恢复默认值。"
 keys_rule = "一个按键只运行一个命令：使用已占用的按键会将其转移，settings.json 中的冲突将回退为默认值。"
-no_match = "没有与搜索匹配的设置。"
 needs_builtin_archives = "已停用：内置压缩文件处理已关闭。"
 
 [library]

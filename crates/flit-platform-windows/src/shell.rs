@@ -82,6 +82,26 @@ fn box_span(i: u32, dst: u32, src: u32) -> (u32, u32) {
     (start, ((i + 1) * src / dst).max(start + 1))
 }
 
+pub(crate) fn unpad(b: Bitmap) -> Bitmap {
+    let (mut right, mut bottom) = (0, 0);
+    for (k, px) in b.rgba.chunks_exact(4).enumerate() {
+        if px[3] != 0 {
+            let (x, y) = (k as u32 % b.width.max(1), k as u32 / b.width.max(1));
+            (right, bottom) = (right.max(x + 1), bottom.max(y + 1));
+        }
+    }
+    let side = right.max(bottom);
+    if side == 0 || side * 2 > b.width.min(b.height) {
+        return b;
+    }
+    let mut rgba = Vec::with_capacity((side * side * 4) as usize);
+    for y in 0..side {
+        let start = ((y * b.width) * 4) as usize;
+        rgba.extend_from_slice(&b.rgba[start..start + (side * 4) as usize]);
+    }
+    Bitmap { width: side, height: side, rgba }
+}
+
 pub(crate) fn fit(b: Bitmap, size: u32) -> Bitmap {
     let (size, longest) = (size.max(1), b.width.max(b.height));
     if longest <= size {
@@ -155,7 +175,7 @@ impl ShellCom {
         }
         let list = self.list_for(size)?;
         let icon = unsafe { list.GetIcon(info.iIcon, ILD_TRANSPARENT.0) }.ok()?;
-        unsafe { icon_bitmap(icon) }.map(|b| fit(b, size))
+        unsafe { icon_bitmap(icon) }.map(|b| fit(unpad(b), size))
     }
 
     fn item_image(&self, path: &FsPath, size: u32, flags: SIIGBF) -> Option<Bitmap> {
@@ -175,7 +195,8 @@ impl ShellCom {
                 rgba.chunks_exact_mut(4).for_each(|p| p[3] = 255);
             }
             bgra_to_rgba(&mut rgba, true);
-            Some(fit(Bitmap { width, height, rgba }, size))
+            let bitmap = Bitmap { width, height, rgba };
+            Some(fit(if flags == SIIGBF_ICONONLY { unpad(bitmap) } else { bitmap }, size))
         }
     }
 }

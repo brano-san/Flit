@@ -6,7 +6,6 @@ commands = "Команды"
 sidebar = "Область навигации"
 files = "Файлы"
 columns = "Столбцы"
-settings_pages = "Разделы"
 preview = "Просмотр"
 
 [button]

@@ -61,6 +61,7 @@ pub struct ShellMenu {
     pub menu: Vec<super::MenuItem>,
     pub inline: bool,
     pub shell: bool,
+    pub kind: super::MenuKind,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -787,7 +788,8 @@ impl App {
             Pick::Tags(t) => self.tag_input(t, text),
             Pick::Setting(p) => self.setting_input(p, text),
             Pick::Server => self.connect_server(text),
-            Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Encoding(_) | Pick::Toolbar(_) | Pick::GoTo | Pick::Crumb(_) => {}
+            Pick::SaveLayout => self.save_layout(text),
+            Pick::Tabs | Pick::LoadLayout | Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Encoding(_) | Pick::Toolbar(_) | Pick::GoTo | Pick::Crumb(_) => {}
         }
     }
 
@@ -868,7 +870,8 @@ impl App {
     fn shell_menu(&mut self, x: f32, y: f32, on_items: bool, extended: bool) {
         if self.in_bin() || self.archive_view().is_some() {
             let menu = self.build_menu(on_items);
-            return self.flit_menu(x, y, menu);
+            let kind = if on_items { self.selection_kind() } else { super::MenuKind::Background };
+            return self.context_flit_menu(x, y, menu, kind);
         }
         let t = self.tab();
         let Some(dir) = t.view_loc.to_windows() else { return self.status(S::UiOpsFolderNotShell.t()) };
@@ -882,7 +885,7 @@ impl App {
         };
         let inline = self.shell_items_inline || extended;
         let menu = self.build_menu(on_items);
-        self.effects.push(Effect::ShellMenu(ShellMenu { dir, items, x, y, extended, menu, inline, shell: true }));
+        self.effects.push(Effect::ShellMenu(ShellMenu { dir, items, x, y, extended, menu, inline, shell: true, kind: if on_items { self.selection_kind() } else { super::MenuKind::Background } }));
     }
 
     pub(super) fn shell_verb(&mut self, verb: &str) {

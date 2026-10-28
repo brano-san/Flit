@@ -21,16 +21,8 @@ fn every_setting_has_a_unique_id_a_title_a_description_and_a_page() {
     let mut seen = HashSet::new();
     for s in SETTINGS {
         assert!(seen.insert(s.id), "duplicate id {}", s.id);
-        let prefix = match s.page {
-            Page::General => "general",
-            Page::Appearance => "appearance",
-            Page::Files => "files",
-            Page::Layout => "layout",
-            Page::Advanced => "advanced",
-            Page::Actions => "keys",
-            Page::Tags | Page::About => "",
-        };
-        assert_eq!(s.id.split('.').next(), Some(prefix), "the id of {} starts with its page", s.id);
+        let prefix = s.id.split('.').next().unwrap_or_default();
+        assert!(["general", "appearance", "files", "layout", "advanced", "keys", "input", "windows", "menu"].contains(&prefix), "the id of {} starts with a known namespace", s.id);
         assert!(!s.title.t().is_empty() && !s.help.t().is_empty(), "{}", s.id);
         assert!(Page::ALL.contains(&s.page));
         if let Kind::Choice(c, ..) = s.kind {
@@ -79,6 +71,7 @@ fn every_toggle_and_choice_reads_back_what_was_set() {
     let mut a = app();
     for s in SETTINGS {
         match s.kind {
+            Kind::Toggle(..) if s.id == crate::ui::settings::LONG_PATHS => {}
             Kind::Toggle(..) => {
                 let Value::Bool(b) = s.get(&a) else { panic!() };
                 assert!(s.set(&mut a, Value::Bool(!b)));
@@ -102,7 +95,7 @@ fn every_toggle_and_choice_reads_back_what_was_set() {
                 assert!(s.set(&mut a, Value::Paths(pages.clone())));
                 assert_eq!(s.get(&a), Value::Paths(pages));
             }
-            Kind::Text(..) | Kind::Pick(..) | Kind::Keys(..) => {}
+            Kind::Text(..) | Kind::Pick(..) | Kind::Keys(..) | Kind::Strings(..) => {}
         }
         assert!(!s.set(&mut a, Value::Text("wrong kind".into())) || matches!(s.kind, Kind::Text(..) | Kind::Pick(..)));
     }
@@ -264,12 +257,12 @@ fn single_click_modes_follow_the_pointer_and_old_booleans_still_load() {
 #[test]
 fn the_schema_is_written_unmarked_files_read_as_current_and_newer_ones_are_flagged() {
     let text = render(defaults(), &Map::new(), None);
-    assert!(text.contains("\"schema\": 3"), "{text}");
+    assert!(text.contains(&format!("\"schema\": {SCHEMA}")), "{text}");
     let doc = parse(&text);
     assert_eq!((doc.schema, doc.newer(), doc.values.len(), doc.unknown.len()), (SCHEMA, false, SETTINGS.len(), 0));
     let today = parse("{\"files.show_hidden\": true}");
     assert_eq!((today.schema, today.newer(), today.value("files.show_hidden")), (SCHEMA, false, Some(&Value::Bool(true))));
-    let newer = parse("{\"schema\": 4, \"files.show_hidden\": true, \"future.key\": 1}");
+    let newer = parse("{\"schema\": 99, \"files.show_hidden\": true, \"future.key\": 1}");
     assert!(newer.newer() && !newer.problems.is_empty());
     assert!(render(defaults(), &newer.unknown, None).matches("\"schema\"").count() == 1);
 }

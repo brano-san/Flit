@@ -62,7 +62,9 @@ fn the_settings_page_exposes_pages_rows_values_and_toggles() {
     let d = t.by_name(S::SettingsPageLineTitle.t()).unwrap();
     assert_eq!(d.role, Role::Dialog);
     let files = t.by_name(crate::ui::settings::Page::Files.title()).unwrap();
-    assert!(files.role == Role::Tab && files.selected);
+    assert_eq!(files.role, Role::Group);
+    let describe = t.by_name(S::OptionsDescriptions.t()).unwrap();
+    assert!(describe.role == Role::Button && describe.selected, "descriptions are on by default");
     let hidden = t.by_name(setting_title("files.show_hidden")).unwrap();
     assert_eq!(hidden.role, Role::CheckBox);
     assert!(!hidden.selected && !hidden.help.is_empty());

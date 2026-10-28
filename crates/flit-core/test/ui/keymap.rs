@@ -161,8 +161,9 @@ fn remapped_keys_run_their_new_commands_and_text_fields_keep_their_keys() {
 fn hints_in_menus_and_the_palette_follow_the_keymap() {
     let mut a = app();
     a.edit_keys(|k| k.assign(at("options.open"), Some(ctrl(Key::Char(','))), ctrl(Key::F(9))));
-    let menu = a.build_tab_actions_menu();
-    assert!(menu.iter().any(|i| matches!(i, MenuItem::Command { label, keys, .. } if label == "Settings" && keys == "Ctrl+F9")), "{menu:?}");
+    a.open_main_menu();
+    let menu = a.drain_effects().find_map(|e| if let crate::ui::Effect::ShellMenu(m) = e { Some(m.menu) } else { None }).unwrap();
+    assert!(menu.iter().any(|i| matches!(i, MenuItem::Command { label, keys, .. } if label == "Options" && keys == "Ctrl+F9")), "{menu:?}");
     a.open_palette();
     let p = a.nav.palette.as_ref().unwrap();
     let row = p.titles.iter().position(|t| t == "Options").unwrap();

@@ -1,5 +1,4 @@
 use crate::i18n::S;
-use super::actions::{Group, ACTIONS};
 use super::menu::Cmd;
 use super::ops::TIMER_SLACK;
 use super::{centered, App, Effect, Hit};
@@ -186,6 +185,9 @@ impl App {
     }
 
     fn remember_typed(&mut self, text: &str) {
+        if self.opts.recents == super::options::Recents::Never {
+            return;
+        }
         let mut typed = self.addr.typed.lock().unwrap_or_else(|e| e.into_inner());
         typed.retain(|t| !t.eq_ignore_ascii_case(text));
         typed.insert(0, text.to_owned());
@@ -346,16 +348,6 @@ impl App {
         if !menu.is_empty() {
             self.button_menu(Hit::Nav(3), r.x, r.bottom(), menu);
         }
-    }
-
-    pub(super) fn panel_quick_menu(&mut self) {
-        let r = self.layout.more;
-        let menu = self.collect(|_, m| {
-            for a in ACTIONS.iter().filter(|a| a.group == Group::Quick) {
-                m.action(a.id, a.title.t());
-            }
-        });
-        self.button_menu(Hit::PanelMenu, r.x, r.bottom(), menu);
     }
 
     pub(super) fn history_menu(&mut self, i: usize) {

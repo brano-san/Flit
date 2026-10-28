@@ -222,12 +222,12 @@ impl App {
     pub(super) fn layout_look(&mut self) {
         let (mode, level) = self.shown_look();
         let depth = if mode == LayoutMode::Columns { pane_depth(&self.tab().view_loc) } else { 0 };
-        let sc = self.scale;
+        let (sc, spread) = (self.scale, super::options::spacing_factor(self.opts.spacing));
         let s = |v: f32| (v * sc).round();
         let l = &mut self.layout;
         l.mode = mode;
         let row = mode.rows();
-        l.row_h = if row { s(ROWS[level]) } else { s(ROW_H) };
+        l.row_h = if row { s(ROWS[level] * spread) } else { s(ROW_H) };
         let tile = s(tile_width(self.tab().zoom));
         let l = &mut self.layout;
         l.icon = match mode {
@@ -285,7 +285,8 @@ impl App {
     }
 
     pub(super) fn max_scroll_of(&self, f: &Flow) -> f32 {
-        (f.extent() - self.view_len()).max(0.0)
+        let beyond = if self.opts.scroll_beyond && f.extent() > 0.0 { (self.view_len() / 2.0).round() } else { 0.0 };
+        (f.extent() + beyond - self.view_len()).max(0.0)
     }
 
     pub(super) fn max_scroll(&self) -> f32 {

@@ -202,13 +202,13 @@ fn documents_wrap_to_the_pane_width() {
     let mut g = Gfx::new(Mono, 1024);
     let mut widths = FxHashMap::default();
     let d = preview::text_doc("aaaa bbbb cccc\nverylongwordthatbreaks", None);
-    let lay = layout_doc(&mut g, &d, 95.0, 1.0, &mut widths);
+    let lay = layout_doc(&mut g, &d, 95.0, (1.0, 12.5), &mut widths);
     let lines: Vec<String> = lay.lines.iter().map(|l| lay.pieces[l.pieces.start as usize..l.pieces.end as usize].iter().map(|p| &d.text[p.start as usize..p.end as usize]).collect()).collect();
     assert_eq!(lines, ["aaaa bbbb ", "cccc", "verylongw", "ordthatbr", "eaks"]);
     let code = preview::text_doc("fn main() { let x = 1; }", Some(preview::syntax::by_ext("rs").unwrap()));
-    assert_eq!(layout_doc(&mut g, &code, 50.0, 1.0, &mut widths).lines.len(), 1);
+    assert_eq!(layout_doc(&mut g, &code, 50.0, (1.0, 12.5), &mut widths).lines.len(), 1);
     let md = preview::markdown_doc("# Title\n\nbody text here");
-    let lay = layout_doc(&mut g, &md, 400.0, 1.0, &mut widths);
+    let lay = layout_doc(&mut g, &md, 400.0, (1.0, 12.5), &mut widths);
     assert_eq!(lay.lines.len(), 2);
     assert!(lay.lines[0].h > 0.0 && lay.height > lay.lines[1].y);
 }

@@ -74,6 +74,9 @@ pub trait TextBackend {
     fn families(&mut self) -> Vec<String> {
         Vec::new()
     }
+    fn set_mono_family(&mut self, name: &str) -> bool {
+        name.is_empty()
+    }
 }
 
 #[derive(Default)]
@@ -122,6 +125,7 @@ pub struct Gfx<B: TextBackend> {
     pub thumbs: ThumbAtlas,
     ui_family: String,
     ui_found: bool,
+    mono_family: String,
 }
 
 impl<B: TextBackend> Gfx<B> {
@@ -140,6 +144,16 @@ impl<B: TextBackend> Gfx<B> {
             thumbs: ThumbAtlas::default(),
             ui_family: String::new(),
             ui_found: true,
+            mono_family: String::new(),
+        }
+    }
+
+    pub fn set_mono_family(&mut self, name: &str) {
+        if self.mono_family != name {
+            self.text.set_mono_family(name);
+            self.mono_family = name.to_owned();
+            self.shapes.clear();
+            self.metrics.clear();
         }
     }
 

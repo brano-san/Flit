@@ -78,7 +78,6 @@ no_telemetry = "Flit n’a ni télémétrie ni identifiant utilisateur : il n’
 libraries = "Bibliothèques tierces"
 keys_how = "Entrée ou un clic modifie un raccourci, Suppr le supprime, + en ajoute un, la flèche rétablit les valeurs par défaut."
 keys_rule = "Une touche exécute une seule commande : prendre une touche utilisée la déplace, et les conflits dans settings.json reviennent aux valeurs par défaut."
-no_match = "Aucun paramètre ne correspond à la recherche."
 needs_builtin_archives = "Inactif : la gestion intégrée des archives est désactivée."
 
 [library]

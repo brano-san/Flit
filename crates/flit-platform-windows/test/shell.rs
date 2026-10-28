@@ -85,6 +85,27 @@ fn fit_box_filters_premultiplied_pixels() {
     assert_eq!(quarter.rgba, vec![50, 25, 0, 50]);
 }
 
+#[test]
+fn unpad_crops_a_small_icon_parked_in_the_top_left_corner_of_a_jumbo_canvas() {
+    let mut b = solid(256, [0, 0, 0, 0]);
+    for y in 0..16 {
+        for x in 0..16 {
+            let p = ((y * 256 + x) * 4) as usize;
+            b.rgba[p..p + 4].copy_from_slice(&[9, 9, 9, 255]);
+        }
+    }
+    let cropped = unpad(b);
+    assert_eq!((cropped.width, cropped.height), (16, 16));
+    assert!(cropped.rgba.chunks_exact(4).all(|p| p == [9, 9, 9, 255]));
+    let full = unpad(solid(48, [1, 1, 1, 255]));
+    assert_eq!((full.width, full.height), (48, 48));
+    let mut centered = solid(64, [0, 0, 0, 0]);
+    let p = ((32 * 64 + 32) * 4) as usize;
+    centered.rgba[p..p + 4].copy_from_slice(&[5, 5, 5, 255]);
+    assert_eq!(unpad(centered).width, 64);
+    assert_eq!(unpad(solid(32, [0, 0, 0, 0])).width, 32);
+}
+
 pub(crate) fn write_jpeg(path: &std::path::Path, width: u32, height: u32, seed: u32) {
     use windows::Win32::Graphics::Imaging::*;
     let name: Vec<u16> = path.as_os_str().to_string_lossy().encode_utf16().chain(Some(0)).collect();

@@ -99,7 +99,7 @@ pub enum Event {
     CloseRequested,
     ShellVerb(String),
     MenuCommand(usize),
-    ShowMenu { items: Vec<crate::ui::MenuItem>, x: f32, y: f32, launches: Vec<crate::provider::Launch> },
+    ShowMenu { items: Vec<crate::ui::MenuItem>, x: f32, y: f32, launches: Vec<crate::provider::Launch>, kind: crate::ui::MenuKind, shell: Vec<u32> },
     DevicesChanged,
     Timer,
     ClipboardChanged(u32),

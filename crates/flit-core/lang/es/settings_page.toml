@@ -78,7 +78,6 @@ no_telemetry = "Flit no tiene telemetría ni identificador de usuario: no envía
 libraries = "Bibliotecas de terceros"
 keys_how = "Enter o un clic cambia un método abreviado, Supr lo quita, + agrega uno, la flecha restaura los predeterminados."
 keys_rule = "Una tecla ejecuta un solo comando: tomar una tecla usada la mueve, y los conflictos en settings.json vuelven a los predeterminados."
-no_match = "Ninguna opción coincide con la búsqueda."
 needs_builtin_archives = "Inactivo: la gestión integrada de archivos comprimidos está desactivada."
 
 [library]

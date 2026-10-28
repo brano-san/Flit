@@ -130,7 +130,7 @@ impl App {
     pub(super) fn tip_text(&self, h: Hit) -> Option<TipText> {
         let quick = if self.nav.sidebar.state.sidebar { S::TooltipQuickShown } else { S::TooltipQuickHidden };
         let (line, command) = match h {
-            Hit::Menu => text(S::TooltipMenu, "palette.show"),
+            Hit::Menu => text(S::TooltipMenu, "menu.main"),
             Hit::QuickToggle => text(quick, "quick_access.toggle"),
             Hit::Caption(0) => text(S::TooltipMinimize, "window.minimize"),
             Hit::Caption(1) => text(if self.maximized { S::TooltipRestore } else { S::TooltipMaximize }, ""),
@@ -138,7 +138,7 @@ impl App {
             Hit::Tab(i) => (super::tabbar::full_name(self.tabs.get(i)?), None),
             Hit::TabClose(_) => text(S::TooltipCloseTab, "tab.close"),
             Hit::NewTab => text(S::TooltipNewTab, "tab.new"),
-            Hit::TabActions => text(S::TooltipTabActions, ""),
+            Hit::TabActions => text(S::TooltipTabActions, "tab.search"),
             Hit::Nav(0) => text(S::TooltipBack, "nav.back"),
             Hit::Nav(1) => text(S::TooltipForward, "nav.forward"),
             Hit::Nav(2) => text(S::TooltipUp, "nav.up"),

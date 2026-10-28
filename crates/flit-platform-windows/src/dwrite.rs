@@ -85,7 +85,8 @@ pub struct DWriteText {
     default_ui: PCWSTR,
     ui_family: Vec<u16>,
     icon_family: PCWSTR,
-    mono_family: PCWSTR,
+    default_mono: PCWSTR,
+    mono_family: Vec<u16>,
     formats: FxHashMap<FontStyle, IDWriteTextFormat>,
     primary: FxHashMap<(FontFamily, bool), Option<DWRITE_FONT_METRICS>>,
     faces: Vec<IDWriteFontFace>,
@@ -117,7 +118,8 @@ impl DWriteText {
                 default_ui,
                 ui_family: default_ui.as_wide().iter().copied().chain([0]).collect(),
                 icon_family,
-                mono_family,
+                default_mono: mono_family,
+                mono_family: mono_family.as_wide().iter().copied().chain([0]).collect(),
                 formats: FxHashMap::default(),
                 primary: FxHashMap::default(),
                 faces: Vec::new(),
@@ -133,7 +135,7 @@ impl DWriteText {
         match f {
             FontFamily::Ui => PCWSTR(self.ui_family.as_ptr()),
             FontFamily::Icons => self.icon_family,
-            FontFamily::Mono => self.mono_family,
+            FontFamily::Mono => PCWSTR(self.mono_family.as_ptr()),
         }
     }
 
@@ -215,6 +217,15 @@ impl TextBackend for DWriteText {
         self.ui_family = if found { wide } else { unsafe { self.default_ui.as_wide() }.iter().copied().chain([0]).collect() };
         self.formats.retain(|style, _| style.family != FontFamily::Ui);
         self.primary.retain(|(family, _), _| *family != FontFamily::Ui);
+        found || name.is_empty()
+    }
+
+    fn set_mono_family(&mut self, name: &str) -> bool {
+        let wide: Vec<u16> = name.encode_utf16().chain([0]).collect();
+        let found = !name.is_empty() && !name.contains(' ') && self.has_family(PCWSTR(wide.as_ptr()));
+        self.mono_family = if found { wide } else { unsafe { self.default_mono.as_wide() }.iter().copied().chain([0]).collect() };
+        self.formats.retain(|style, _| style.family != FontFamily::Mono);
+        self.primary.retain(|(family, _), _| *family != FontFamily::Mono);
         found || name.is_empty()
     }
 

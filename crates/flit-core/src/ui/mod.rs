@@ -40,6 +40,8 @@ mod describe;
 mod keymap;
 mod toolbar;
 mod popup;
+mod context;
+pub mod options;
 mod own_menu;
 mod confirm;
 mod fuzzy;
@@ -63,6 +65,7 @@ pub use jobs::JobState;
 pub use preview_pane::PaneState;
 pub use menu::{Mark, MenuItem};
 pub use popup::{MenuOutcome, MenuView};
+pub use context::MenuKind;
 pub use tab::Tab;
 pub use toolbar::{Show, ToolContext, ToolItem, ToolbarState, CONTEXTS};
 pub use address::Typed;
@@ -346,6 +349,15 @@ pub enum Effect {
     Settings(SettingsCmd),
     Share(Vec<FsPath>),
     Git(crate::git::GitRequest),
+    ShellPick(Option<u32>),
+    Layout(LayoutCmd),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LayoutCmd {
+    Save(String, Box<options::SavedLayout>),
+    Load(String),
+    Delete(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -625,6 +637,7 @@ pub struct App {
     panels: panels::Panels,
     toolbar: toolbar::Toolbar,
     keymap: Arc<Keymap>,
+    opts: options::Opts,
 }
 
 impl App {
@@ -732,6 +745,7 @@ impl App {
             panels: Default::default(),
             toolbar: Default::default(),
             keymap: keymap::defaults(),
+            opts: Default::default(),
         };
         let mut start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
         let total = start.len();
@@ -805,7 +819,7 @@ impl App {
     }
 
     pub fn ime_area(&self) -> Option<Rect> {
-        self.search_ime_area().or_else(|| self.settings_ime_area()).or_else(|| self.nav_ime_area()).or_else(|| self.rename_ime_area())
+        self.context_menu_open().map(|c| c.ime_area()).or_else(|| self.search_ime_area()).or_else(|| self.settings_ime_area()).or_else(|| self.nav_ime_area()).or_else(|| self.rename_ime_area())
     }
 
     pub fn ui_scale(&self) -> u32 {
@@ -1422,7 +1436,7 @@ impl App {
             self.tip_hide();
             self.quick_hide();
         }
-        if self.own_menu_event(ev, now) || self.confirm_event(ev, now) {
+        if self.confirm_event(ev, now) || self.own_menu_event(ev, now) {
             return;
         }
         if self.search.active && !self.jobs.modal() && self.search_event(ev, now) {
@@ -1464,6 +1478,11 @@ impl App {
             Event::MouseDown { x, y, button, clicks } => self.mouse_down(*x, *y, *button, *clicks, now),
             Event::MouseUp { x, y, button } => self.mouse_up(*x, *y, *button, now),
             Event::Wheel { dy, .. } => {
+                let dy = &if self.opts.reverse_scroll { -*dy } else { *dy };
+                if self.mods.alt && self.mods.shift && !self.mods.ctrl && !self.settings_open() {
+                    self.run_action(if *dy > 0.0 { "spacing.increase" } else { "spacing.decrease" }, now);
+                    return;
+                }
                 if self.mods.alt && !self.mods.ctrl && !self.mods.shift && !self.settings_open() {
                     self.run_action(if *dy > 0.0 { "font.increase" } else { "font.decrease" }, now);
                     return;
@@ -1666,7 +1685,7 @@ impl App {
     }
 
     fn mouse_up(&mut self, x: f32, y: f32, button: MouseButton, now: Instant) {
-        if self.autoscroll_up(button) {
+        if self.autoscroll_up(x, y, button) {
             return;
         }
         self.ops_mouse_up(x, y, button, now);
@@ -1697,7 +1716,7 @@ impl App {
     fn click(&mut self, h: Hit, x: f32, y: f32, now: Instant) {
         match h {
             Hit::TabClose(i) => self.close_tab(i),
-            Hit::NewTab => self.new_tab_here(now),
+            Hit::NewTab => self.open_new_tab(now),
             Hit::Nav(0) => self.go_history(false, now),
             Hit::Nav(1) => self.go_history(true, now),
             Hit::Nav(2) => self.go_up(now),
@@ -1746,7 +1765,7 @@ impl App {
             Hit::PaletteClose => self.close_palette(),
             Hit::PaletteDescribe => self.toggle_descriptions(),
             Hit::Tool(t) => self.toolbar_click(t, now),
-            Hit::TabActions => self.tab_actions_menu(),
+            Hit::TabActions => self.open_tab_search(),
             Hit::Eject => self.eject(),
             Hit::SideSettings => self.open_settings(None),
             Hit::Settings(s) => self.settings_click(s, x, y),
@@ -1851,6 +1870,11 @@ impl App {
         if c == ' ' && !self.tab().typing(now) {
             return;
         }
+        if self.opts.char_key == options::CharKey::Filter && self.focus == Focus::List {
+            self.open_filter();
+            self.filter_insert(c.encode_utf8(&mut [0; 4]));
+            return;
+        }
         if self.tab_mut().type_ahead(c, now) {
             self.reveal_focus(false);
         }
@@ -1859,6 +1883,9 @@ impl App {
     fn compute_dir_sizes(&mut self) {
         let t = self.tab();
         if t.view.as_ref().is_none_or(|v| v.snap().gen != t.gen) || t.view_loc.is_recycle_bin() || crate::library::is_library(t.view_loc.path()) {
+            return;
+        }
+        if !self.sizes_allowed(&t.view_loc) {
             return;
         }
         let items = t.size_items();
@@ -1895,6 +1922,7 @@ impl App {
         self.fit_parked(g, &arena);
         self.fit_sidebar(g);
         self.look.font_missing = !g.set_ui_family(&self.look.font);
+        g.set_mono_family(&self.opts.inspector_font);
         let palette = self.look.palette;
         let (th, files) = (&palette.base, palette.area(Area::Files));
         for _ in 0..2 {
@@ -2000,7 +2028,7 @@ impl App {
             w.icon_button(l.new_tab, G_ADD, self.icon_font(10.0), widgets::Button::of(self.hover == Hit::NewTab, false, true), t.text_dim);
         }
         if l.actions.w > 0.0 {
-            let state = widgets::Button::of(self.hover == Hit::TabActions, self.menu_open_from(Hit::TabActions), true);
+            let state = widgets::Button::of(self.hover == Hit::TabActions, self.nav.palette.as_ref().is_some_and(|p| p.pick == palette::Pick::Tabs), true);
             w.icon_button(l.actions, tabbar::G_TAB_ACTIONS, self.icon_font(12.0), state, t.text_dim);
         }
         self.request_icons(requests);
@@ -2081,7 +2109,8 @@ impl App {
         }
         let tab = &self.tabs[self.cur];
         let real = tab.crumbs.len();
-        let crumbs: Vec<&(String, Location)> = tab.crumbs.iter().chain(&tab.ghosts).collect();
+        let ghosts = if self.opts.breadcrumbs { &tab.ghosts[..] } else { &[] };
+        let crumbs: Vec<&(String, Location)> = tab.crumbs.iter().chain(ghosts).collect();
         let open = match self.nav.palette.as_ref().map(|p| &p.pick) {
             Some(palette::Pick::Crumb(i)) => Some(*i),
             _ => None,
@@ -2221,7 +2250,7 @@ impl App {
         let mut requests: Vec<IconRequest> = Vec::new();
         let mut thumb_requests: Vec<IconRequest> = Vec::new();
         let mut type_requests: Vec<Vec<u8>> = Vec::new();
-        let want_thumbs = self.prefs.thumbnails && matches!(mode, LayoutMode::Grid | LayoutMode::Cards) && !in_bin;
+        let want_thumbs = self.prefs.thumbnails && matches!(mode, LayoutMode::Grid | LayoutMode::Cards) && !in_bin && (self.opts.thumbs != options::Thumbs::Local || !options::remote(&tab.view_loc));
         let thumb_px = thumbs::class_px(icon_px as u32);
         if let Some(v) = &tab.view {
             if let Some(e) = v.snap().error.as_ref().filter(|_| v.total_rows() == 0) {
@@ -2270,6 +2299,8 @@ impl App {
                     g.dl.round_rect(rr, if list_focused { t.selection } else { t.selection_inactive }, self.s(4.0));
                 } else if self.hover == Hit::Row(row) && self.drag == Drag::None {
                     g.dl.round_rect(rr, t.hover, self.s(4.0));
+                } else if self.opts.alternating && mode.table() && row % 2 == 1 {
+                    g.dl.round_rect(rr, t.text.alpha(0x08), self.s(4.0));
                 }
                 if list_focused && v.focus == Some(i) {
                     g.dl.outline(rr, t.focus_ring, self.s(4.0), 1.0);

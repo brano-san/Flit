@@ -282,7 +282,7 @@ impl App {
             m.separator();
             m.place(S::MenuProperties.t(), PlaceCmd::Properties(path.clone()), false);
         });
-        self.show_place_menu(x, y, Some(path), menu);
+        self.show_place_menu(x, y, Some(path), menu, super::MenuKind::File);
     }
 
     fn home_page_menu(&mut self, x: f32, y: f32) {

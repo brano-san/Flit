@@ -277,7 +277,7 @@ impl Window for LinuxWindow {
             let (items, launches) = crate::apps::menu_with_apps(menu.menu, &menu.items);
             tracing::debug!(elapsed = ?start.elapsed(), apps = launches.len(), "menu ready");
             if !items.is_empty() {
-                QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((id, Event::ShowMenu { items, x: menu.x, y: menu.y, launches }));
+                QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((id, Event::ShowMenu { items, x: menu.x, y: menu.y, launches, kind: menu.kind, shell: Vec::new() }));
                 wake_loop();
             }
         });

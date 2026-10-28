@@ -367,6 +367,7 @@ pub(super) struct Item {
 
 #[derive(Default)]
 pub(super) struct Sidebar {
+    pub full_paths: bool,
     pub state: NavState,
     pub prefs: NavPrefs,
     pub places: Arc<Places>,
@@ -431,7 +432,7 @@ impl Sidebar {
 
     pub(super) fn section_items(&self, section: Section) -> Vec<Item> {
         let p = &self.places;
-        let home = self.known(KnownFolder::Home);
+        let home = self.known(KnownFolder::Home).filter(|_| !self.full_paths);
         let item = |label: String, glyph, loc: Location, usage| Item { section, label, glyph, path: short_path(&loc, home), loc, usage, marks: Vec::new() };
         match section {
             Section::Recents => self.recent().take(RECENT_MAX).map(|(_, r)| item(r.name.clone(), if r.dir { G_FOLDER } else { G_FILE }, Location::from_local(r.target.clone()), None)).collect(),
@@ -747,7 +748,7 @@ impl App {
     }
 
     pub(super) fn count_visit(&mut self, loc: &Location) {
-        if !loc.is_home_page() {
+        if !loc.is_home_page() && self.opts.recents != super::options::Recents::Never {
             self.nav.sidebar.prefs.count_visit(loc);
         }
     }
@@ -995,14 +996,14 @@ impl App {
                 m.place(S::MenuProperties.t(), PlaceCmd::Properties(p.clone()), false);
             }
         });
-        self.show_place_menu(x, y, path, menu);
+        self.show_place_menu(x, y, path, menu, super::MenuKind::Folder);
     }
 
-    pub(super) fn show_place_menu(&mut self, x: f32, y: f32, path: Option<FsPath>, menu: Vec<super::MenuItem>) {
-        let Some(p) = path else { return self.flit_menu(x, y, menu) };
+    pub(super) fn show_place_menu(&mut self, x: f32, y: f32, path: Option<FsPath>, menu: Vec<super::MenuItem>, kind: super::MenuKind) {
+        let Some(p) = path else { return self.context_flit_menu(x, y, menu, kind) };
         let shift = self.mods.shift;
         let dir = p.parent().unwrap_or_else(FsPath::computer);
-        self.effects.push(Effect::ShellMenu(ShellMenu { dir, items: vec![p], x, y, extended: shift, menu, inline: self.shell_items_inline || shift, shell: true }));
+        self.effects.push(Effect::ShellMenu(ShellMenu { dir, items: vec![p], x, y, extended: shift, menu, inline: self.shell_items_inline || shift, shell: true, kind }));
     }
 
     pub(super) fn build_section_menu(&mut self, s: Section) -> Vec<super::MenuItem> {

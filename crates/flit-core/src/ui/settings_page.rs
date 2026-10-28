@@ -4,9 +4,11 @@ use super::field::{Field, FieldKey};
 use super::menu::{Cmd, Mark, MenuItem};
 use super::widgets::Paint;
 use super::palette::{Palette, Pick};
-use super::settings::{self, Kind, Page, Picker, Value, SETTINGS};
-use super::a11y::{leaf, put, union};
-use super::{centered, App, Effect, Glide, Hit, SettingsCmd, G_CLOSE};
+use super::fuzzy::fuzzy;
+use super::settings::{self, Kind, Page, Picker, Setting, Value, SETTINGS};
+use super::widgets::Button;
+use super::a11y::{leaf, put};
+use super::{centered, App, Effect, Glide, Hit, SettingsCmd, G_CLOSE, TAB_H, TOOL_H};
 use crate::a11y::{Role, Tree};
 use crate::i18n::{P, S};
 use crate::input::{Key, Mods, MouseButton};
@@ -21,15 +23,16 @@ use crate::theme::Theme;
 use std::time::Instant;
 
 const SETTINGS_ID: u64 = 13;
-const PAGES_ID: u64 = 14;
 const LIST_ID: u64 = 15;
+const MIN_W: f32 = 560.0;
 const MAX_W: f32 = 960.0;
-const NAV_W: f32 = 210.0;
-const HEAD_H: f32 = 60.0;
-const PAGE_H: f32 = 36.0;
-const SEARCH_H: f32 = 32.0;
-const SETTING_H: f32 = 60.0;
-const GROUP_H: f32 = 40.0;
+const TOP_GAP: f32 = 45.0;
+const FIELD_H: f32 = 32.0;
+const HINT_H: f32 = 36.0;
+const EDGE: f32 = 12.0;
+const SETTING_H: f32 = 46.0;
+const SETTING_SHORT_H: f32 = 30.0;
+const GROUP_H: f32 = 34.0;
 const NOTE_H: f32 = 32.0;
 const ITEM_H: f32 = 32.0;
 const BUTTONS_H: f32 = 46.0;
@@ -38,16 +41,22 @@ const ACTION_H: f32 = 40.0;
 const CHIP_W: f32 = 124.0;
 const CHIP_SMALL: f32 = 30.0;
 const INFO_H: f32 = 28.0;
-const CONTROL_W: f32 = 250.0;
+const CONTROL_W: f32 = 200.0;
 const BUTTON_W: f32 = 190.0;
 const TAG_BUTTON_W: f32 = 92.0;
 const PAD: f32 = 16.0;
+const INDENT: f32 = 22.0;
+pub const NESTED: [&str; 9] = ["files.system", "files.dotfiles", "files.sizes_ssd", "files.sizes_hdd", "files.sizes_network", "files.single_click_files", "files.single_click_folders", "files.single_click_columns", "general.startup_pages"];
+pub const SLIDERS: [&str; 3] = [settings::SPACING, settings::OPACITY, settings::CACHE];
+pub const RESTART: [&str; 0] = [];
 const EXPORT_NAME: &str = "flit-settings.json";
 
 const G_PLUS: &str = "\u{E710}";
 const G_DOWN: &str = "\u{E70D}";
 const G_SEARCH: &str = "\u{E721}";
 const G_UNDO: &str = "\u{E7A7}";
+const G_DESCRIBE: &str = "\u{E8A5}";
+const G_RESTART: &str = "\u{E72C}";
 
 const DOCS_URL: &str = "https://github.com/brano-san/Flit#readme";
 const BUG_URL: &str = "https://github.com/brano-san/Flit/issues/new?labels=bug";
@@ -157,11 +166,12 @@ enum Line {
 }
 
 impl Line {
-    fn height(&self) -> f32 {
+    fn height(&self, describe: bool) -> f32 {
         match self {
             Line::Group(_) => GROUP_H,
             Line::Note(_) => NOTE_H,
-            Line::Setting(_) | Line::Off(_) => SETTING_H,
+            Line::Setting(_) | Line::Off(_) if describe => SETTING_H,
+            Line::Setting(_) | Line::Off(_) => SETTING_SHORT_H,
             Line::Path(..) => ITEM_H,
             Line::Buttons(..) => BUTTONS_H,
             Line::Tag(_) => TAG_H,
@@ -195,10 +205,11 @@ pub enum SHit {
     Outside,
     Panel,
     Close,
-    Page(usize),
+    Describe,
     Search,
     Line(usize),
     Control(usize),
+    Slide(usize),
     Step(usize, bool),
     Remove(usize),
     Button(usize, usize),
@@ -262,6 +273,8 @@ pub(super) struct SettingsUi {
     search: Field,
     searching: bool,
     lines: Vec<Line>,
+    starts: Vec<(usize, Page)>,
+    jump: Option<Page>,
     rects: Vec<Rect>,
     focus: usize,
     sub: usize,
@@ -271,10 +284,11 @@ pub(super) struct SettingsUi {
     tip: Option<(usize, (f32, f32))>,
     reveal: bool,
     panel: Rect,
-    nav: Vec<Rect>,
     search_rect: Rect,
     list: Rect,
+    describe: Rect,
     close: Rect,
+    hints: Rect,
 }
 
 impl SettingsUi {
@@ -284,6 +298,8 @@ impl SettingsUi {
             search: Field::default(),
             searching: false,
             lines: Vec::new(),
+            starts: Vec::new(),
+            jump: None,
             rects: Vec::new(),
             focus: 0,
             sub: 0,
@@ -293,10 +309,11 @@ impl SettingsUi {
             tip: None,
             reveal: false,
             panel: Rect::default(),
-            nav: Vec::new(),
             search_rect: Rect::default(),
             list: Rect::default(),
+            describe: Rect::default(),
             close: Rect::default(),
+            hints: Rect::default(),
         }
     }
 
@@ -322,6 +339,39 @@ impl SettingsUi {
 
 fn matches(query: &str, words: &str) -> bool {
     query.to_lowercase().split_whitespace().all(|w| words.contains(w))
+}
+
+fn help_limit(query: &str) -> usize {
+    query.split_whitespace().count() + 1
+}
+
+pub(super) fn option_matches(query: &str, set: &Setting) -> bool {
+    [set.title.t(), set.help.t()].iter().any(|t| fuzzy(query, t).is_some_and(|m| m.ranges.len() <= help_limit(query))) || matches(query, &set.words())
+}
+
+fn title_marks(query: &str, text: &str) -> Vec<std::ops::Range<usize>> {
+    help_marks(query, text)
+}
+
+fn help_marks(query: &str, text: &str) -> Vec<std::ops::Range<usize>> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    fuzzy(query, text).filter(|m| m.ranges.len() <= help_limit(query)).map(|m| m.ranges).unwrap_or_default()
+}
+
+fn indent(i: usize) -> f32 {
+    if NESTED.contains(&SETTINGS[i].id) { INDENT } else { 0.0 }
+}
+
+fn slider(i: usize) -> bool {
+    SLIDERS.contains(&SETTINGS[i].id)
+}
+
+fn slider_track(r: Rect, s: impl Fn(f32) -> f32) -> Rect {
+    let c = control_rect(r, &s);
+    let x = c.x + s(56.0);
+    Rect::new(x, c.y + c.h / 2.0 - s(2.0), c.right() - s(8.0) - x, s(4.0))
 }
 
 fn switch_rect(r: Rect, s: impl Fn(f32) -> f32) -> Rect {
@@ -456,11 +506,11 @@ impl App {
             return self.close_settings();
         }
         self.nav.palette = None;
-        let ui = self.settings.get_or_insert_with(|| SettingsUi::new(page.unwrap_or(Page::General)));
+        let ui = self.settings.get_or_insert_with(|| SettingsUi::new(page.unwrap_or(Page::Interface)));
         if let Some(p) = page {
             ui.page = p;
+            ui.jump = Some(p);
             ui.search.edit.set("");
-            ui.scroll.snap(0.0);
             ui.focus = usize::MAX;
         }
         self.effects.push(Effect::Settings(SettingsCmd::CacheSize));
@@ -621,7 +671,7 @@ impl App {
             self.setting_lines(i, out);
         }
         match page {
-            Page::Appearance => out.push(Line::Buttons(None, &[Btn::CustomizeToolbar])),
+            Page::Interface => out.push(Line::Buttons(None, &[Btn::CustomizeToolbar])),
             Page::Tags => {
                 if self.tag_defs().is_empty() {
                     out.push(Line::Note(S::SettingsPageLineNoTags.t()));
@@ -660,12 +710,12 @@ impl App {
                 out.push(Line::Buttons(None, &[Btn::RestoreKeys]));
                 out.extend((0..ACTIONS.len()).filter(|&i| ACTIONS[i].rebindable() && self.supports(ACTIONS[i].id)).map(|i| self.action_line(i)));
             }
-            Page::General | Page::Files | Page::Layout => {}
+            Page::Colors | Page::Files | Page::Data | Page::Input | Page::Windows => {}
         }
     }
 
     fn setting_lines(&self, i: usize, out: &mut Vec<Line>) {
-        if let Kind::Keys(..) = SETTINGS[i].kind {
+        if let Kind::Keys(..) | Kind::Strings(..) = SETTINGS[i].kind {
             return;
         }
         if !SETTINGS[i].enabled(self) {
@@ -681,11 +731,11 @@ impl App {
     fn search_lines(&self, query: &str, out: &mut Vec<Line>) {
         for page in Page::ALL {
             let start = out.len();
-            for (i, _) in SETTINGS.iter().enumerate().filter(|(_, s)| s.page == page && matches(query, &s.words())) {
+            for (i, _) in SETTINGS.iter().enumerate().filter(|(_, s)| s.page == page && option_matches(query, s)) {
                 self.setting_lines(i, out);
             }
             let extra: &[&'static [Btn]] = match page {
-                Page::Appearance => &[&[Btn::CustomizeToolbar]],
+                Page::Interface => &[&[Btn::CustomizeToolbar]],
                 Page::Tags => &[&[Btn::NewTag]],
                 Page::Advanced => &[&[Btn::ClearCache], FILE_BUTTONS, &[Btn::Reset], LOG_BUTTONS],
                 Page::About => &[&[Btn::CopyAbout], HELP_BUTTONS, LINK_BUTTONS],
@@ -703,43 +753,63 @@ impl App {
             }
         }
         if out.is_empty() {
-            out.push(Line::Note(S::SettingsPageLineNoMatch.t()));
+            out.push(Line::Note(S::OptionsNoMatch.t()));
         }
     }
 
     pub(super) fn layout_settings(&mut self) {
         let Some(mut ui) = self.settings.take() else { return };
         let mut lines = Vec::new();
+        ui.starts.clear();
         match ui.query() {
-            "" => self.page_lines(ui.page, &mut lines),
+            "" => {
+                for page in Page::ALL {
+                    ui.starts.push((lines.len(), page));
+                    lines.push(Line::Group(page.title()));
+                    self.page_lines(page, &mut lines);
+                }
+            }
             q => self.search_lines(q, &mut lines),
         }
         ui.lines = lines;
-        let (w, h, sc) = (self.size.0, self.size.1, self.scale);
+        let (w, h, sc, describe) = (self.size.0, self.size.1, self.scale, self.opts.describe);
         let s = |v: f32| (v * sc).round();
-        let top = self.s(super::TAB_H) + s(12.0);
-        let pw = s(MAX_W).min(w - s(24.0)).max(s(320.0));
-        let x = ((w - pw) / 2.0).round();
-        ui.panel = Rect::new(x, top, pw, (h - top - s(12.0)).max(s(200.0)));
-        let p = ui.panel;
-        let nav_w = s(NAV_W).min(pw * 0.3);
-        ui.nav = (0..Page::ALL.len()).map(|k| Rect::new(p.x + s(8.0), p.y + s(HEAD_H) + k as f32 * s(PAGE_H), nav_w - s(16.0), s(PAGE_H))).collect();
-        ui.close = Rect::new(p.right() - s(44.0), p.y + s(10.0), s(34.0), s(30.0));
-        let cx = p.x + nav_w;
-        ui.search_rect = Rect::new(cx + s(PAD), p.y + s(12.0), (p.right() - s(52.0) - cx - s(PAD)).max(s(80.0)), s(SEARCH_H));
-        ui.list = Rect::new(cx, p.y + s(HEAD_H), p.right() - cx - s(8.0), p.bottom() - p.y - s(HEAD_H) - s(8.0));
+        let mut y = 0.0;
+        let mut offsets = Vec::with_capacity(ui.lines.len());
+        for l in &ui.lines {
+            offsets.push((y, s(l.height(describe))));
+            y += s(l.height(describe));
+        }
+        ui.content_h = y;
+        if let Some(p) = ui.jump.take() {
+            if let Some(&(k, _)) = ui.starts.iter().find(|(_, q)| *q == p) {
+                ui.scroll.snap(offsets[k].0);
+                ui.focus = ui.focusable(k, 1).unwrap_or(k);
+                ui.sub = 0;
+            }
+        }
         if ui.focus >= ui.lines.len() || !ui.lines[ui.focus].focusable() {
             ui.focus = ui.first_focusable();
             ui.sub = 0;
         }
         ui.sub = ui.sub.min(ui.lines.get(ui.focus).map_or(0, |l| l.count().saturating_sub(1)));
-        let mut y = 0.0;
-        let mut offsets = Vec::with_capacity(ui.lines.len());
-        for l in &ui.lines {
-            offsets.push((y, s(l.height())));
-            y += s(l.height());
+        if let Some(&(_, p)) = ui.starts.iter().rev().find(|(k, _)| *k <= ui.focus) {
+            ui.page = p;
         }
-        ui.content_h = y;
+        let left = self.panels.left;
+        let area = (w - left).max(s(200.0));
+        let pw = (w / 2.0).round().max(s(MIN_W)).min(s(MAX_W)).min(area - 2.0 * s(EDGE)).max(s(320.0));
+        let x = (left + (area - pw) / 2.0).round().min(w - pw).max(0.0);
+        let fixed = s(8.0) + s(FIELD_H) + s(6.0) + s(HINT_H);
+        let top = (self.s(TAB_H) + self.s(TOOL_H) + s(TOP_GAP)).min((h - s(EDGE) - fixed - s(SETTING_H) * 4.0).max(s(EDGE)));
+        let room = (h - s(EDGE) - fixed - top).max(s(SETTING_H));
+        let list_h = ui.content_h.min(room);
+        ui.search_rect = Rect::new(x + s(8.0), top + s(8.0), pw - s(16.0) - 2.0 * (s(FIELD_H) + s(4.0)), s(FIELD_H));
+        ui.describe = Rect::new(ui.search_rect.right() + s(4.0), ui.search_rect.y, s(FIELD_H), s(FIELD_H));
+        ui.close = Rect::new(ui.describe.right() + s(4.0), ui.search_rect.y, s(FIELD_H), s(FIELD_H));
+        ui.list = Rect::new(x, ui.search_rect.bottom() + s(6.0), pw, list_h);
+        ui.hints = Rect::new(x, ui.list.bottom(), pw, s(HINT_H));
+        ui.panel = Rect::new(x, top, pw, ui.hints.bottom() - top);
         if std::mem::take(&mut ui.reveal) {
             if let Some(&(fy, fh)) = offsets.get(ui.focus) {
                 if fy < ui.scroll.target {
@@ -767,8 +837,8 @@ impl App {
         if ui.close.contains(x, y) {
             return h(SHit::Close);
         }
-        if let Some(k) = ui.nav.iter().position(|r| r.contains(x, y)) {
-            return h(SHit::Page(k));
+        if ui.describe.contains(x, y) {
+            return h(SHit::Describe);
         }
         if ui.search_rect.contains(x, y) {
             return h(SHit::Search);
@@ -784,6 +854,10 @@ impl App {
         match line {
             Line::Setting(i) => match SETTINGS[*i].kind {
                 Kind::Toggle(..) if switch_rect(r, s).contains(x, y) => h(SHit::Control(k)),
+                Kind::Number { .. } if slider(*i) => {
+                    let c = control_rect(r, s);
+                    if c.contains(x, y) { h(SHit::Slide(k)) } else { h(SHit::Line(k)) }
+                }
                 Kind::Number { .. } => {
                     let (minus, plus) = step_rects(r, s);
                     match (minus.contains(x, y), plus.contains(x, y)) {
@@ -809,11 +883,8 @@ impl App {
         let search = put(t, targets, d, at(SHit::Search), Role::Edit, S::SettingsPageLineSearch.t(), ui.search_rect);
         t.nodes[search].value = ui.search.text().to_owned();
         let searching = !ui.query().is_empty();
-        let pages = t.add(d, PAGES_ID, Role::TabList, S::A11yRegionSettingsPages.t(), union(ui.nav.iter().copied()));
-        for (k, r) in ui.nav.iter().enumerate() {
-            let p = put(t, targets, pages, at(SHit::Page(k)), Role::Tab, Page::ALL[k].title(), *r);
-            t.nodes[p].selected = !searching && Page::ALL[k] == ui.page;
-        }
+        let describe = put(t, targets, d, at(SHit::Describe), Role::Button, S::OptionsDescriptions.t(), ui.describe);
+        t.nodes[describe].selected = self.opts.describe;
         let list = t.add(d, LIST_ID, Role::Group, if searching { S::SettingsPageLineSearch.t() } else { ui.page.title() }, ui.list);
         let mut section = list;
         let mut focus = if ui.searching { search } else { d };
@@ -842,10 +913,10 @@ impl App {
                         _ => (Role::Group, SHit::Line(k)),
                     };
                     let n = put(t, targets, section, at(hit), role, set.title.t(), r);
-                    t.nodes[n].help = set.help.t().to_owned();
+                    t.nodes[n].help = if RESTART.contains(&set.id) { format!("{} {}", set.help.t(), S::OptionsRestart.t()) } else { set.help.t().to_owned() };
                     t.nodes[n].value = self.setting_value_text(*i);
                     t.nodes[n].selected = set.get(self) == Value::Bool(true);
-                    if let Kind::Number { .. } = set.kind {
+                    if let (Kind::Number { .. }, false) = (set.kind, slider(*i)) {
                         let (minus, plus) = step_rects(r, s);
                         put(t, targets, n, at(SHit::Step(k, false)), Role::Button, S::A11yButtonDecrease.t(), minus);
                         put(t, targets, n, at(SHit::Step(k, true)), Role::Button, S::A11yButtonIncrease.t(), plus);
@@ -902,7 +973,7 @@ impl App {
         let Some(ui) = &mut self.settings else { return };
         match sh {
             SHit::Search => ui.searching = true,
-            SHit::Line(k) | SHit::Control(k) | SHit::Step(k, _) | SHit::Remove(k) => (ui.searching, ui.focus, ui.sub) = (false, k, 0),
+            SHit::Line(k) | SHit::Control(k) | SHit::Slide(k) | SHit::Step(k, _) | SHit::Remove(k) => (ui.searching, ui.focus, ui.sub) = (false, k, 0),
             SHit::Button(k, b) => (ui.searching, ui.focus, ui.sub) = (false, k, b),
             _ => {}
         }
@@ -928,7 +999,7 @@ impl App {
                 ui.searching = true;
                 ui.search.click(x, clicks);
             }
-            SHit::Line(k) | SHit::Control(k) | SHit::Step(k, _) | SHit::Remove(k) => {
+            SHit::Line(k) | SHit::Control(k) | SHit::Slide(k) | SHit::Step(k, _) | SHit::Remove(k) => {
                 ui.searching = false;
                 ui.focus = k;
             }
@@ -946,17 +1017,22 @@ impl App {
         let line = |k: usize| ui.lines.get(k).cloned();
         match sh {
             SHit::Outside | SHit::Close => self.close_settings(),
-            SHit::Page(k) => {
-                ui.page = Page::ALL[k];
-                ui.search.edit.set("");
-                ui.scroll.snap(0.0);
-                ui.focus = usize::MAX;
-                ui.searching = false;
+            SHit::Describe => {
+                self.opts.describe = !self.opts.describe;
+                if let Some(ui) = &mut self.settings {
+                    ui.reveal = true;
+                }
                 self.layout();
             }
-            SHit::Line(k) if !ui.query().is_empty() => {
-                if let Some(Line::Setting(i) | Line::Path(i, _) | Line::Buttons(Some(i), _)) = line(k) {
-                    self.reveal_setting(i);
+            SHit::Slide(k) => {
+                if let Some(Line::Setting(i)) = line(k) {
+                    let track = ui.rects.get(k).map(|&r| slider_track(r, |v| (v * self.scale).round()));
+                    if let (Some(tr), Kind::Number { min, max, step, .. }) = (track, SETTINGS[i].kind) {
+                        let frac = ((x - tr.x) / tr.w.max(1.0)).clamp(0.0, 1.0);
+                        let raw = min as f32 + frac * (max - min) as f32;
+                        let v = ((raw / step as f32).round() as i64 * step).clamp(min, max);
+                        self.change_setting(i, Value::Number(v));
+                    }
                 }
             }
             SHit::Control(k) => {
@@ -982,19 +1058,6 @@ impl App {
             SHit::Line(_) | SHit::Panel | SHit::Search => {}
         }
         self.dirty = true;
-    }
-
-    fn reveal_setting(&mut self, i: usize) {
-        let Some(ui) = &mut self.settings else { return };
-        ui.page = SETTINGS[i].page;
-        ui.search.edit.set("");
-        ui.searching = false;
-        self.layout();
-        let Some(ui) = &mut self.settings else { return };
-        if let Some(k) = ui.lines.iter().position(|l| *l == Line::Setting(i)) {
-            (ui.focus, ui.sub, ui.reveal) = (k, 0, true);
-        }
-        self.layout();
     }
 
     pub(super) fn activate_setting(&mut self, i: usize, at: Option<(f32, f32)>) {
@@ -1107,9 +1170,8 @@ impl App {
 
     fn activate_line(&mut self, k: usize) {
         let Some(ui) = &self.settings else { return };
-        let (searching_results, sub) = (!ui.query().is_empty(), ui.sub);
+        let sub = ui.sub;
         match ui.lines.get(k).cloned() {
-            Some(Line::Setting(i)) if searching_results => self.reveal_setting(i),
             Some(Line::Setting(i)) => self.activate_setting(i, None),
             Some(Line::Path(i, n)) => self.remove_path(i, n),
             Some(l @ (Line::Buttons(..) | Line::Tag(_) | Line::Action(..))) => self.press_button(&l, sub),
@@ -1143,9 +1205,9 @@ impl App {
                 let at = Page::ALL.iter().position(|p| *p == ui.page).unwrap_or(0);
                 let n = Page::ALL.len();
                 ui.page = Page::ALL[if key == Key::PageUp { (at + n - 1) % n } else { (at + 1) % n }];
+                ui.jump = Some(ui.page);
                 ui.search.edit.set("");
                 (ui.focus, ui.searching) = (usize::MAX, false);
-                ui.scroll.snap(0.0);
             }
             Key::Up | Key::Down if plain => {
                 let step = if key == Key::Up { -1 } else { 1 };
@@ -1254,7 +1316,8 @@ impl App {
 
     fn setting_help(&self, line: &Line) -> std::borrow::Cow<'static, str> {
         match line {
-            Line::Off(i) => format!("{} {}", S::SettingsPageLineNeedsBuiltinArchives.t(), SETTINGS[*i].help.t()).into(),
+            Line::Off(i) if settings::NEEDS_BUILTIN_ARCHIVES.contains(&SETTINGS[*i].id) => format!("{} {}", S::SettingsPageLineNeedsBuiltinArchives.t(), SETTINGS[*i].help.t()).into(),
+            Line::Off(i) => SETTINGS[*i].help.t().into(),
             Line::Setting(i) => SETTINGS[*i].help.t().into(),
             _ => "".into(),
         }
@@ -1281,45 +1344,34 @@ impl App {
     fn paint_settings<B: TextBackend>(&self, g: &mut Gfx<B>, t: &Theme, ui: &mut SettingsUi) {
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
-        let (font, small, bold, head) = (self.ui_font(13.0), self.ui_font(12.0), FontStyle::new(FontFamily::Ui, 14.0 * sc, true), FontStyle::new(FontFamily::Ui, 20.0 * sc, true));
+        let (font, small, bold) = (self.ui_font(13.0), self.ui_font(12.0), FontStyle::new(FontFamily::Ui, 14.0 * sc, true));
         let icons = self.icon_font(10.0);
         let (s4, s6, s8) = (s(4.0), s(6.0), s(8.0));
         let p = ui.panel;
-        g.dl.round_rect(p, t.bg, s8);
-        g.dl.outline(p, t.popup_border, s8, 1.0);
-        let nav_w = ui.list.x - p.x;
-        g.dl.round_rect(Rect::new(p.x, p.y, nav_w, p.h), t.chrome, s8);
-        g.dl.rect(Rect::new(p.x + nav_w - s8, p.y, s8, p.h), t.chrome);
-        g.dl.rect(Rect::new(p.x + nav_w, p.y, 1.0, p.h), t.separator);
-        let mh = g.metrics(head);
+        Paint::new(g, t, sc).frame(p);
         let (mf, ms) = (g.metrics(font), g.metrics(small));
         let mid = |r: Rect, m: crate::text::FontMetrics| (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
         let hover = self.hover;
-        centered(g, Rect::new(p.x + s(14.0), p.y + s(14.0), s(24.0), s(30.0)), super::sidebar::G_SETTINGS, self.icon_font(16.0), t.accent);
-        g.text(p.x + s(44.0), (p.y + s(14.0) + (s(30.0) + mh.ascent - mh.descent) / 2.0).round(), S::SettingsPageLineTitle.t(), head, t.text, nav_w - s(52.0));
-        let searching = !ui.query().is_empty();
-        for (k, r) in ui.nav.iter().enumerate() {
-            let page = Page::ALL[k];
-            if page == ui.page && !searching {
-                g.dl.round_rect(*r, t.selection, s4);
-                g.dl.rect(Rect::new(r.x, r.y + s(9.0), s(3.0), r.h - s(18.0)), t.accent);
-            } else if hover == Hit::Settings(SHit::Page(k)) {
-                g.dl.round_rect(*r, t.button_hover, s4);
-            }
-            g.text(r.x + s(14.0), mid(*r, mf), page.title(), font, t.text, r.w - s(20.0));
-        }
-        if hover == Hit::Settings(SHit::Close) {
-            g.dl.round_rect(ui.close, t.button_hover, s4);
-        }
-        centered(g, ui.close, G_CLOSE, icons, t.text_dim);
+        let query = ui.query().to_owned();
+        let describe = self.opts.describe;
         let sr = ui.search_rect;
         let focused_search = ui.searching && self.active && self.nav.palette.is_none();
-        g.dl.round_rect(sr, t.input_bg, s4);
-        g.dl.outline(sr, if focused_search { t.accent } else { t.input_border }, s4, if focused_search { sc.round().max(1.0) } else { 1.0 });
+        Paint::new(g, t, sc).field(sr, focused_search);
         centered(g, Rect::new(sr.x + s4, sr.y, s(24.0), sr.h), G_SEARCH, icons, t.text_dim);
         let inner = Rect::new(sr.x + s(32.0), sr.y, sr.w - s(40.0), sr.h);
-        ui.search.draw(g, t, inner, font, focused_search, S::SettingsPageLineSearch.t(), sc, Some(&self.preedit));
+        ui.search.draw(g, t, inner, font, focused_search, S::OptionsPlaceholder.t(), sc, Some(&self.preedit));
+        let big_icons = self.icon_font(12.0);
+        Paint::new(g, t, sc).icon_button(ui.describe, G_DESCRIBE, big_icons, Button::of(hover == Hit::Settings(SHit::Describe), describe, true), t.text_dim);
+        Paint::new(g, t, sc).icon_button(ui.close, G_CLOSE, icons, Button::of(hover == Hit::Settings(SHit::Close), false, true), t.text_dim);
+        let hints = ui.hints;
+        {
+            let mut w = Paint::new(g, t, sc);
+            w.separator(hints.x + s(12.0), hints.y, hints.w - s(24.0));
+            let keys = [S::WidgetsKeyUp.t(), S::WidgetsKeyDown.t()];
+            w.hints(hints.x + hints.w / 2.0, hints.y + hints.h / 2.0, &[(&keys, S::WidgetsHintNavigate.t()), (&[S::WidgetsKeyEnter.t()], S::WidgetsHintUse.t()), (&[S::WidgetsKeyEscape.t()], S::WidgetsHintDismiss.t())], small);
+        }
         let list = ui.list;
+        g.dl.set_clip(Some(list));        let list = ui.list;
         g.dl.set_clip(Some(list));
         let mut cut = Vec::new();
         let list_focused = !ui.searching && self.active && self.nav.palette.is_none();
@@ -1334,7 +1386,7 @@ impl App {
                     g.dl.round_rect(row, t.hover, s6);
                 }
                 if focused {
-                    g.dl.outline(row, t.focus_ring, s6, 1.0);
+                    g.dl.outline(row, t.accent, s6, sc.round().max(1.0));
                 }
             }
             match line {
@@ -1351,17 +1403,33 @@ impl App {
                 }
                 Line::Setting(i) | Line::Off(i) => {
                     let set = &SETTINGS[*i];
-                    let text_w = r.w - s(PAD) * 3.0 - s(CONTROL_W);
-                    let ty = r.y + s(10.0) + mf.ascent;
-                    g.text(r.x + s(PAD), ty.round(), set.title.t(), font, t.text, text_w);
-                    let help_y = (ty + s(20.0)).round();
-                    let help = self.setting_help(line);
-                    g.text(r.x + s(PAD), help_y, &help, small, t.text_dim, text_w);
-                    if g.measure(&help, small) > text_w {
-                        cut.push((k, Rect::new(r.x + s(PAD), help_y - ms.ascent, text_w, ms.ascent + ms.descent)));
+                    let tx = r.x + s(PAD) + s(indent(*i));
+                    let restart = RESTART.contains(&set.id);
+                    let text_w = r.right() - tx - s(PAD) * 2.0 - s(CONTROL_W) - if restart { s(24.0) } else { 0.0 };
+                    let (tm, hm) = (title_marks(&query, set.title.t()), help_marks(&query, set.help.t()));
+                    let ty = if describe { r.y + s(7.0) + mf.ascent } else { mid(r, mf) };
+                    Paint::new(g, t, sc).marked((tx, ty.round()), set.title.t(), &tm, font, (t.text, t.accent), text_w);
+                    if describe {
+                        let help_y = (ty + s(18.0)).round();
+                        let help = self.setting_help(line);
+                        let marks = if matches!(line, Line::Setting(_)) { hm } else { Vec::new() };
+                        Paint::new(g, t, sc).marked((tx, help_y), &help, &marks, small, (t.text_dim, t.accent), text_w);
+                        if g.measure(&help, small) > text_w {
+                            cut.push((k, Rect::new(tx, help_y - ms.ascent, text_w, ms.ascent + ms.descent)));
+                        }
+                    }
+                    if restart {
+                        let c = control_rect(r, s);
+                        centered(g, Rect::new(c.x - s(24.0), r.y, s(20.0), r.h), G_RESTART, icons, t.text_dim);
                     }
                     let value = self.setting_value_text(*i);
                     match (set.kind, set.get(self)) {
+                        (Kind::Number { min, max, .. }, Value::Number(n)) if slider(*i) => {
+                            let c = control_rect(r, s);
+                            g.text(c.x, mid(c, ms), &value, small, t.text_dim, s(52.0));
+                            let frac = if max > min { (n - min) as f32 / (max - min) as f32 } else { 0.0 };
+                            Paint::new(g, t, sc).slider(slider_track(r, s), frac, hover == Hit::Settings(SHit::Slide(k)));
+                        }
                         (Kind::Toggle(..), Value::Bool(on)) => {
                             let hot = hover == Hit::Settings(SHit::Control(k));
                             Paint::new(g, t, sc).switch(switch_rect(r, s), on, hot, self.icon_font(8.0));

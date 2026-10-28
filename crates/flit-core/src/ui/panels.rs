@@ -19,7 +19,6 @@ use std::time::Instant;
 const MIN: f32 = 75.0;
 const GRIP: f32 = 3.0;
 const WHEEL_STEP: f32 = 24.0;
-const DIM: u8 = 0x66;
 const BUTTON_W: f32 = 36.0;
 const G_MENU: &str = "\u{E700}";
 const G_QUICK: &str = "\u{E8A0}";
@@ -717,6 +716,28 @@ impl App {
         super::WindowSession { tabs, cur, trails, panels }
     }
 
+    pub(super) fn reset_panels(&mut self, layout: &super::options::SavedLayout, now: Instant) {
+        for mut t in std::mem::take(&mut self.tabs) {
+            t.shutdown(&mut self.effects);
+        }
+        for p in &mut self.panels.list {
+            for mut t in std::mem::take(&mut p.tabs) {
+                t.shutdown(&mut self.effects);
+            }
+        }
+        let id = self.panels.next;
+        self.panels.list = vec![Panel { id, ..Default::default() }];
+        self.panels.root = Node::Leaf(id);
+        (self.panels.here, self.panels.active, self.panels.next) = (id, id, id + 1);
+        self.panels.seps.clear();
+        let (view, hidden) = (self.prefs.defaults, self.show_hidden);
+        for loc in &layout.tabs {
+            self.add_tab(super::Route { folder: loc.clone(), select: None }, view, hidden, now);
+        }
+        self.cur = layout.cur.min(self.tabs.len().saturating_sub(1));
+        self.after_tab_change();
+    }
+
     pub fn restore_panels(&mut self, s: &PanelsSession) {
         let mut counts = Vec::new();
         sizes(&s.root, &mut counts);
@@ -756,15 +777,6 @@ impl App {
         m.place(S::ActionsPanelOpenBottom.t(), PlaceCmd::Pane(loc.clone(), true), false);
     }
 
-    pub(super) fn tab_pane_items(&self, m: &mut Menu) {
-        m.separator();
-        m.action("panel.split_right", S::ActionsPanelSplitRight.t());
-        m.action("panel.split_bottom", S::ActionsPanelSplitBottom.t());
-        if self.panels.list.len() > 1 {
-            m.action("panel.even_all", S::ActionsPanelEvenAll.t());
-        }
-    }
-
     pub(super) fn draw_panels<B: TextBackend>(&mut self, g: &mut Gfx<B>, arena: &Bump, palette: &Palette) {
         let files = *palette.area(Area::Files);
         let saved = (self.hover, self.pressed, self.drag, self.active, self.focus, self.ops.dropping.take());
@@ -775,7 +787,7 @@ impl App {
                 (a.hover, a.pressed) = (hover, Hit::None);
                 a.draw_body(g, arena, palette);
                 let (r, top) = (a.panel_rect(), a.layout.toolbar.y);
-                g.dl.rect(Rect::new(r.x, top, r.w, (r.bottom() - top).max(0.0)), files.bg.alpha(DIM));
+                g.dl.rect(Rect::new(r.x, top, r.w, (r.bottom() - top).max(0.0)), files.bg.alpha(a.dim_alpha()));
                 a.visible_rows()
             });
             if let Some(i) = self.slot(id) {
@@ -807,7 +819,7 @@ impl App {
             g.dl.rect(Rect::new(0.0, 0.0, side, top), t.chrome);
         }
         let icons = self.icon_font(12.0);
-        let palette_open = self.nav.palette.as_ref().is_some_and(|p| p.pick == super::palette::Pick::Commands);
+        let palette_open = self.menu_open_from(Hit::Menu);
         let mut w = Paint::new(g, t, self.scale);
         for (r, glyph, hit, open) in [(p.menu, G_MENU, Hit::Menu, palette_open), (p.quick, G_QUICK, Hit::QuickToggle, false)] {
             w.icon_button(r, glyph, icons, Button::of(self.hover == hit, open, true), t.text_dim);

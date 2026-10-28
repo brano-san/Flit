@@ -135,10 +135,11 @@ fn background_menu_offers_sorting_new_items_paste_and_terminal() {
     let mut app = app_with(&[("a.txt", false)]);
     let menu = right_click(&mut app, None, false);
     assert!(menu.items.is_empty());
-    assert!(matches!(&menu.menu[0], MenuItem::Submenu { label, .. } if label == "Layout"));
-    assert!(matches!(&menu.menu[1], MenuItem::Submenu { label, .. } if label == "Sort by"));
+    assert!(matches!(&menu.menu[0], MenuItem::Submenu { label, .. } if label == "View"));
+    assert!(matches!(&menu.menu[1], MenuItem::Submenu { label, .. } if label == "Sort"));
+    assert!(matches!(&menu.menu[2], MenuItem::Submenu { label, .. } if label == "Group"));
     let labels = commands(&menu.menu);
-    for want in ["Details\tCtrl+Shift+1 *", "Tree\tCtrl+Shift+2", "List\tCtrl+Shift+3", "M Icons\tCtrl+Shift+4", "Cards", "Total Items", "Larger items\tCtrl+MouseWheelUp", "Name *", "Date modified", "Descending", "Refresh\tCtrl+R  F5", "Folder\tCtrl+Shift+N", "Shortcut", "Paste\tCtrl+V  Shift+Insert", "Open in terminal", "Pin to sidebar", "Copy path\tCtrl+Shift+C", "Properties\tShift+Alt+Enter"] {
+    for want in ["Details\tCtrl+Shift+1 *", "Tree\tCtrl+Shift+2", "List\tCtrl+Shift+3", "M Icons\tCtrl+Shift+4", "Cards", "Total Items", "Larger items\tCtrl+MouseWheelUp", "Name *", "Date Modified", "Refresh\tCtrl+R  F5", "Folder\tCtrl+Shift+N", "Shortcut", "Paste\tCtrl+V  Shift+Insert", "Open in terminal", "Pin to sidebar", "Copy path\tCtrl+Shift+C", "Properties\tShift+Alt+Enter"] {
         assert!(labels.iter().any(|l| l == want), "{want} missing from {labels:?}");
     }
     run(&mut app, &menu, "L Icons");
@@ -146,11 +147,11 @@ fn background_menu_offers_sorting_new_items_paste_and_terminal() {
     let menu = right_click(&mut app, None, false);
     assert!(commands(&menu.menu).iter().any(|l| l == "L Icons\tCtrl+Shift+5 *"));
     run(&mut app, &menu, "Details");
-    run(&mut app, &menu, "Date modified");
+    run(&mut app, &menu, "Date Modified");
     assert_eq!(app.tab().view_spec.sort.field, SortField::Modified);
     let menu = right_click(&mut app, None, false);
-    assert!(commands(&menu.menu).iter().any(|l| l == "Date modified *"));
-    run(&mut app, &menu, "Descending");
+    assert!(commands(&menu.menu).iter().any(|l| l == "Date Modified *"));
+    run(&mut app, &menu, "Date Modified");
     assert!(app.tab().view_spec.sort.descending);
     let menu = right_click(&mut app, None, false);
     run(&mut app, &menu, "Folder");

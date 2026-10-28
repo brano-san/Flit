@@ -337,6 +337,7 @@ impl<P: Platform> Handler<P> {
         app.set_tags(self.tags.current());
         app.set_date_patterns(self.dates.0.clone(), self.dates.1.clone());
         app.about = self.about.clone();
+        app.set_layouts(crate::layouts::dir(P::state_dir()).map(|d| crate::layouts::list(&d)).unwrap_or_default());
         if !self.settings.values.is_empty() {
             let all: Vec<(usize, Value)> = self.settings.values.iter().cloned().enumerate().collect();
             app.apply_settings(&all);
@@ -470,6 +471,32 @@ impl<P: Platform> Handler<P> {
         }
     }
 
+    fn layout_cmd(&mut self, id: WindowId, cmd: flit_core::ui::LayoutCmd) {
+        use flit_core::ui::LayoutCmd;
+        let Some(dir) = crate::layouts::dir(P::state_dir()) else { return };
+        let written = match &cmd {
+            LayoutCmd::Save(name, layout) => crate::layouts::save(&dir, name, layout),
+            LayoutCmd::Delete(name) => crate::layouts::delete(&dir, name),
+            LayoutCmd::Load(name) => {
+                let layout = crate::layouts::load(&dir, name);
+                if let Some(st) = self.windows.get_mut(&id) {
+                    match layout {
+                        Some(l) => st.app.apply_layout(&l, Instant::now()),
+                        None => st.app.status(flit_core::tr!(S::MenusLayoutMissing, name = name)),
+                    }
+                }
+                return;
+            }
+        };
+        if let Err(e) = written {
+            tracing::warn!("layout file: {e}");
+        }
+        let names = crate::layouts::list(&dir);
+        for st in self.windows.values_mut() {
+            st.app.set_layouts(names.clone());
+        }
+    }
+
     fn window_of_tab(&self, tab: TabId) -> Option<WindowId> {
         let base = tab / TAB_STRIDE * TAB_STRIDE;
         self.windows.iter().find(|(_, w)| w.app.tabs().first().is_some_and(|t| t.id / TAB_STRIDE * TAB_STRIDE == base)).map(|(&id, _)| id)
@@ -561,11 +588,13 @@ impl<P: Platform> Handler<P> {
                 Effect::SetClipboardFiles { paths, cut } => window.set_clipboard_files(&paths, cut),
                 Effect::ShellMenu(menu) if !menu.shell && menu.items.is_empty() => {
                     if let Some(st) = self.windows.get_mut(&id) {
-                        st.app.on_event(&Event::ShowMenu { items: menu.menu, x: menu.x, y: menu.y, launches: Vec::new() }, Instant::now());
+                        st.app.on_event(&Event::ShowMenu { items: menu.menu, x: menu.x, y: menu.y, launches: Vec::new(), kind: menu.kind, shell: Vec::new() }, Instant::now());
                     }
                     window.request_redraw();
                 }
                 Effect::ShellMenu(menu) => window.shell_menu(menu),
+                Effect::ShellPick(cmd) => window.shell_pick(cmd),
+                Effect::Layout(cmd) => self.layout_cmd(id, cmd),
                 Effect::Properties(paths) => window.properties(paths),
                 Effect::Share(paths) => window.share(paths),
                 Effect::StartDrag(paths) => window.start_drag(paths),

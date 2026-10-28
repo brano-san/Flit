@@ -484,6 +484,8 @@ pub(super) struct Details {
     pick: Option<Pick>,
     autoscroll: Option<Autoscroll>,
     swallow: Option<MouseButton>,
+    pub middle_at: Option<(f32, f32)>,
+    pub middle_on_empty: bool,
 }
 
 impl Column {
@@ -803,11 +805,15 @@ impl App {
     }
 
     pub(super) fn flit_menu(&mut self, x: f32, y: f32, menu: Vec<MenuItem>) {
+        self.context_flit_menu(x, y, menu, super::MenuKind::None);
+    }
+
+    pub(super) fn context_flit_menu(&mut self, x: f32, y: f32, menu: Vec<MenuItem>, kind: super::MenuKind) {
         self.menu_owner = None;
         self.menu_right = None;
         self.tip_hide();
         let dir = self.tab().view_loc.path().clone();
-        self.effects.push(Effect::ShellMenu(ShellMenu { dir, items: Vec::new(), x, y, extended: false, menu, inline: false, shell: false }));
+        self.effects.push(Effect::ShellMenu(ShellMenu { dir, items: Vec::new(), x, y, extended: false, menu, inline: false, shell: false, kind }));
     }
 
     pub(super) fn shown_name<'a>(&self, l: &'a Listing, i: u32) -> Cow<'a, str> {
@@ -1071,6 +1077,7 @@ impl App {
         if button != MouseButton::Middle || !matches!(h, Hit::Row(_) | Hit::ListEmpty | Hit::Group(_)) {
             return false;
         }
+        self.details.middle_on_empty = h == Hit::ListEmpty;
         self.details.autoscroll = Some(Autoscroll { anchor: along, y: along, moved: false });
         self.set_cursor(CursorIcon::Scroll);
         true
@@ -1085,13 +1092,19 @@ impl App {
         true
     }
 
-    pub(super) fn autoscroll_up(&mut self, button: MouseButton) -> bool {
+    pub(super) fn autoscroll_up(&mut self, x: f32, y: f32, button: MouseButton) -> bool {
         if self.details.swallow == Some(button) {
             self.details.swallow = None;
             return true;
         }
         if button == MouseButton::Middle && self.details.autoscroll.as_ref().is_some_and(|a| a.moved) {
             self.end_autoscroll();
+            return true;
+        }
+        if button == MouseButton::Middle && std::mem::take(&mut self.details.middle_on_empty) && self.details.autoscroll.is_some() {
+            self.end_autoscroll();
+            self.details.middle_at = Some((x, y));
+            self.quick_commands();
             return true;
         }
         self.details.autoscroll.is_some()

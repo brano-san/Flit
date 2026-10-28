@@ -310,12 +310,6 @@ impl App {
         self.flit_menu(r.x, r.bottom(), menu);
     }
 
-    pub(super) fn tab_actions_menu(&mut self) {
-        let r = self.layout.actions;
-        let menu = self.build_tab_actions_menu();
-        self.button_menu(Hit::TabActions, r.x, r.bottom(), menu);
-    }
-
     pub(super) fn open_many(&mut self, now: Instant) {
         let t = self.tab();
         let Some(v) = &t.view else { return };

@@ -212,7 +212,7 @@ fn folder_sizes_is_a_check_item_in_both_layout_menus() {
     let sizes = "Show folder sizes";
     let layout_items = |app: &mut App| {
         let menu = app.build_menu(false);
-        let Some(MenuItem::Submenu { items, .. }) = menu.into_iter().find(|i| matches!(i, MenuItem::Submenu { label, .. } if label == "Layout")) else { panic!("no Layout submenu") };
+        let Some(MenuItem::Submenu { items, .. }) = menu.into_iter().find(|i| matches!(i, MenuItem::Submenu { label, .. } if label == "View")) else { panic!("no View submenu") };
         items
     };
     let checked = |items: &[MenuItem]| items.iter().find_map(|i| match i {

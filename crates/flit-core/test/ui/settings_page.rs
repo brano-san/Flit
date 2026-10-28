@@ -25,7 +25,7 @@ fn app() -> App {
 fn settings_wheel_glides_toward_the_target_over_frames() {
     let t0 = Instant::now();
     let mut a = app();
-    a.open_settings(Some(Page::General));
+    a.open_settings(Some(Page::Interface));
     a.frame(&mut Gfx::new(Mono, 1024), t0);
     let list = a.settings.as_ref().unwrap().list;
     a.on_event(&Event::MouseMove { x: list.x + list.w / 2.0, y: list.y + list.h / 2.0 }, t0);
@@ -51,7 +51,7 @@ fn a_cut_description_shows_its_full_text_on_hover_and_hides_on_key_wheel_and_lea
     let t0 = Instant::now();
     let mut a = app();
     a.on_event(&Event::Resized { width: 760, height: 520 }, t0);
-    a.open_settings(Some(Page::General));
+    a.open_settings(Some(Page::Interface));
     a.frame(&mut Gfx::new(Mono, 1024), t0);
     let (k, r) = *a.settings.as_ref().unwrap().cut.first().expect("a narrow window cuts some description");
     let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
@@ -145,6 +145,20 @@ fn reveal(a: &mut App, k: usize) -> usize {
     k
 }
 
+fn page(a: &App, p: Page) -> Vec<String> {
+    let lines = a.settings_lines();
+    let titles: Vec<&str> = Page::ALL.iter().map(|p| p.title()).collect();
+    let start = lines.iter().position(|l| l == p.title()).map_or(0, |k| k + 1);
+    let end = lines[start..].iter().position(|l| titles.contains(&l.as_str())).map_or(lines.len(), |k| start + k);
+    lines[start..end].to_vec()
+}
+
+fn path_buttons(a: &mut App, i: usize) -> Vec<Rect> {
+    let k = ui(a).lines.iter().position(|l| *l == Line::Buttons(Some(i), PATH_BUTTONS)).unwrap();
+    reveal(a, k);
+    button_rects(&ui(a).lines[k].clone(), rect(a, k), s)
+}
+
 fn rect(a: &App, k: usize) -> Rect {
     ui(a).rects[k]
 }
@@ -170,7 +184,7 @@ fn tags_of(names: &[&str]) -> Arc<Tags> {
 fn opens_from_the_keyboard_the_palette_the_sidebar_and_the_tab_menu() {
     let mut a = app();
     key(&mut a, Key::Char(','), CTRL);
-    assert_eq!(a.settings_page(), Some(Page::General));
+    assert_eq!(a.settings_page(), Some(Page::Interface));
     assert!(a.drain_effects().any(|e| matches!(e, Effect::Settings(SettingsCmd::CacheSize))));
     key(&mut a, Key::Escape, NO);
     assert!(!a.settings_open());
@@ -187,8 +201,6 @@ fn opens_from_the_keyboard_the_palette_the_sidebar_and_the_tab_menu() {
     let at = (ui(&a).panel.x / 2.0, a.size.1 - 4.0);
     click_at(&mut a, at);
     assert!(!a.settings_open(), "a click outside the window closes it");
-    let items = a.build_tab_actions_menu();
-    assert!(items.iter().any(|i| matches!(i, MenuItem::Command { label, .. } if label == "Settings")));
     a.set_tags(tags_of(&["Work"]));
     let tag_menu = a.build_tag_menu(None);
     let k = tag_menu.iter().position(|i| matches!(i, MenuItem::Command { label, .. } if label == "Manage tags")).unwrap();
@@ -202,10 +214,10 @@ fn search_finds_settings_on_every_page_and_jumps_to_the_found_one() {
     a.open_settings(None);
     typed(&mut a, "hidden");
     let lines = a.settings_lines();
-    assert!(lines.contains(&"Files and folders".to_owned()) && lines.contains(&"files.show_hidden".to_owned()), "{lines:?}");
+    assert!(lines.contains(&Page::Files.title().to_owned()) && lines.contains(&"files.show_hidden".to_owned()), "{lines:?}");
     assert!(!lines.contains(&"general.startup".to_owned()));
     typed(&mut a, " zzzz");
-    assert_eq!(a.settings_lines(), ["No settings match the search."]);
+    assert_eq!(a.settings_lines(), [S::OptionsNoMatch.t()]);
     key(&mut a, Key::Escape, NO);
     assert!(a.settings_open() && ui(&a).query().is_empty(), "Escape clears the search first");
     typed(&mut a, "export");
@@ -215,11 +227,10 @@ fn search_finds_settings_on_every_page_and_jumps_to_the_found_one() {
     }
     typed(&mut a, "decimal");
     key(&mut a, Key::Enter, NO);
+    a.drain_effects().for_each(drop);
     key(&mut a, Key::Enter, NO);
-    assert_eq!(a.settings_page(), Some(Page::Files));
-    assert!(ui(&a).query().is_empty());
-    let focus = ui(&a).focus;
-    assert_eq!(focus, line(&mut a, "files.size_units"), "Enter on a result opens its page with the setting focused");
+    assert_eq!(ui(&a).lines[ui(&a).focus], Line::Setting(index("files.size_units").unwrap()));
+    assert!(a.drain_effects().any(|e| matches!(e, Effect::ShellMenu(_))), "Enter on a result uses it at once");
 }
 
 #[test]
@@ -243,17 +254,20 @@ fn controls_change_settings_with_the_mouse_and_the_keyboard() {
     ui_focus(&mut a, k);
     key(&mut a, Key::Left, NO);
     assert_eq!(a.confirm_delete, ConfirmDelete::Permanent, "Left picks the previous choice");
-    a.open_settings(Some(Page::Advanced));
-    let k = line(&mut a, "advanced.thumb_cache_mb");
-    let (minus, plus) = step_rects(rect(&a, k), s);
-    click_at(&mut a, center(plus));
-    assert_eq!(value(&a, "advanced.thumb_cache_mb"), Value::Number(600));
-    click_at(&mut a, center(minus));
-    click_at(&mut a, center(minus));
-    assert_eq!(value(&a, "advanced.thumb_cache_mb"), Value::Number(400));
+    let k = line(&mut a, settings::CACHE);
+    let track = slider_track(rect(&a, k), s);
+    click_at(&mut a, (track.right(), track.y + track.h / 2.0));
+    assert_eq!(value(&a, settings::CACHE), Value::Number(crate::ui::THUMB_CACHE_MB.2 as i64), "the slider sets the value where it is clicked");
+    click_at(&mut a, (track.x, track.y + track.h / 2.0));
+    let low = crate::ui::THUMB_CACHE_MB.0 as i64;
+    assert_eq!(value(&a, settings::CACHE), Value::Number(low));
     ui_focus(&mut a, k);
     key(&mut a, Key::Right, NO);
-    assert_eq!(a.prefs.thumb_cache_mb, 500);
+    assert_eq!(value(&a, settings::CACHE), Value::Number((low / 100 + 1) * 100));
+    let k = line(&mut a, "appearance.scale");
+    let (_, plus) = step_rects(rect(&a, k), s);
+    click_at(&mut a, center(plus));
+    assert_eq!(a.ui_scale(), 110, "the stepper adds a step");
     let k = line(&mut a, "advanced.flatten_in_menu");
     ui_focus(&mut a, k);
     key(&mut a, Key::Space, NO);
@@ -268,24 +282,22 @@ fn ui_focus(a: &mut App, k: usize) {
 #[test]
 fn startup_pages_are_added_and_removed_in_the_list() {
     let mut a = app();
-    a.open_settings(Some(Page::General));
+    a.open_settings(Some(Page::Windows));
     let i = index("general.startup_pages").unwrap();
-    let buttons = ui(&a).lines.iter().position(|l| *l == Line::Buttons(Some(i), PATH_BUTTONS)).unwrap();
-    let rects = button_rects(&ui(&a).lines[buttons].clone(), rect(&a, buttons), s);
+    let rects = path_buttons(&mut a, i);
     click_at(&mut a, center(rects[0]));
-    let buttons = ui(&a).lines.iter().position(|l| *l == Line::Buttons(Some(i), PATH_BUTTONS)).unwrap();
-    let rects = button_rects(&ui(&a).lines[buttons].clone(), rect(&a, buttons), s);
+    let rects = path_buttons(&mut a, i);
     click_at(&mut a, center(rects[1]));
     assert_eq!(a.startup_pages, [Location::home_page(), Location::parse(r"C:\x").unwrap()]);
     click_at(&mut a, center(rects[0]));
     assert_eq!(a.startup_pages.len(), 2, "a page is listed once");
-    let buttons = ui(&a).lines.iter().position(|l| *l == Line::Buttons(Some(i), PATH_BUTTONS)).unwrap();
-    let rects = button_rects(&ui(&a).lines[buttons].clone(), rect(&a, buttons), s);
+    let rects = path_buttons(&mut a, i);
     click_at(&mut a, center(rects[2]));
     typed(&mut a, r"D:\Projects");
     key(&mut a, Key::Enter, NO);
     assert_eq!(a.startup_pages.len(), 3);
     let first = ui(&a).lines.iter().position(|l| *l == Line::Path(i, 0)).unwrap();
+    reveal(&mut a, first);
     let at = center(remove_rect(rect(&a, first), s));
     click_at(&mut a, at);
     assert_eq!(a.startup_pages, [Location::parse(r"C:\x").unwrap(), Location::parse(r"D:\Projects").unwrap()]);
@@ -353,8 +365,10 @@ fn tags_page_lists_tags_and_runs_their_commands() {
     let mut a = app();
     a.set_tags(tags_of(&["Work", "Home"]));
     a.open_settings(Some(Page::Tags));
-    assert_eq!(a.settings_lines(), ["tag Work", "tag Home", "New tag"]);
-    let r = button_rects(&Line::Tag(1), rect(&a, 1), s);
+    assert_eq!(page(&a, Page::Tags), ["tag Work", "tag Home", "New tag"]);
+    let k = ui(&a).lines.iter().position(|l| *l == Line::Tag(1)).unwrap();
+    reveal(&mut a, k);
+    let r = button_rects(&Line::Tag(1), rect(&a, k), s);
     click_at(&mut a, center(r[0]));
     assert!(matches!(a.nav.palette.as_ref().map(|p| &p.pick), Some(Pick::Tags(super::super::tags::TagPick::Name { tag: Some(1), .. }))));
     key(&mut a, Key::Escape, NO);
@@ -368,11 +382,12 @@ fn about_page_shows_versions_and_libraries() {
     let mut a = app();
     a.set_about(About { os: "Windows 11 Pro 24H2 (build 26100.1)".into(), file: None, cache_bytes: None, logs: None });
     a.open_settings(Some(Page::About));
-    let lines = a.settings_lines();
+    let lines = page(&a, Page::About);
     assert!(lines[0].starts_with("Version: Flit ") && lines[1] == "Windows: Windows 11 Pro 24H2 (build 26100.1)");
     assert!(lines.contains(&"serde_json: settings file".to_owned()));
     assert_eq!(lines[3..7], ["Help", "Documentation | Report a bug | Request a feature", "GitHub repository | Privacy statement", NO_TELEMETRY.t()]);
     let k = ui(&a).lines.iter().position(|l| l.buttons().contains(&Btn::ReportBug)).unwrap();
+    reveal(&mut a, k);
     let r = button_rects(&ui(&a).lines[k].clone(), rect(&a, k), s)[1];
     a.drain_effects().for_each(drop);
     click_at(&mut a, center(r));
@@ -385,7 +400,7 @@ fn advanced_page_groups_the_log_level_folder_and_buttons() {
     let mut a = app();
     a.set_about(About { logs: FsPath::parse(r"C:\Users\me\AppData\Local\Flit\logs"), ..Default::default() });
     a.open_settings(Some(Page::Advanced));
-    let lines = a.settings_lines();
+    let lines = page(&a, Page::Advanced);
     let at = lines.iter().position(|l| l == "Log file").expect("a Log file group");
     assert_eq!(lines[at..], ["Log file", settings::LOG_LEVEL, r"Folder: C:\Users\me\AppData\Local\Flit\logs", "Open the log file | Open the log folder"]);
     assert_eq!(lines.iter().filter(|l| *l == settings::LOG_LEVEL).count(), 1);
@@ -416,9 +431,9 @@ fn system_integration_starts_off_on_every_platform() {
 #[test]
 fn appearance_page_hides_the_toolbar_and_opens_its_customization() {
     let mut a = listed(&[("a.txt", false)]);
-    a.open_settings(Some(Page::Appearance));
-    let lines = a.settings_lines();
-    assert_eq!(lines[..6], ["appearance.theme", "appearance.background", "appearance.background_image", "appearance.font", "appearance.scale", "appearance.toolbar"]);
+    a.open_settings(Some(Page::Interface));
+    let lines = page(&a, Page::Interface);
+    assert_eq!(lines[..6], ["appearance.font", "appearance.scale", "appearance.inspector_font", "appearance.inspector_font_size", settings::SPACING, "appearance.animations"]);
     assert_eq!(lines.last().map(String::as_str), Some("Customize the toolbar…"));
     let k = line(&mut a, "appearance.toolbar");
     let at = center(switch_rect(rect(&a, k), s));
@@ -427,7 +442,7 @@ fn appearance_page_hides_the_toolbar_and_opens_its_customization() {
     ui_focus(&mut a, k);
     key(&mut a, Key::Right, NO);
     assert!(a.toolbar.state.visible);
-    let b = ui(&a).lines.len() - 1;
+    let b = ui(&a).lines.iter().position(|l| l.buttons().contains(&Btn::CustomizeToolbar)).unwrap();
     let u = a.settings.as_mut().unwrap();
     (u.focus, u.reveal) = (b, true);
     a.layout();
@@ -630,7 +645,7 @@ fn inactive_archive_settings_are_dimmed_skipped_by_the_keyboard_and_ignore_click
     let before = a.archive.prefs.compression.format;
     let lines = a.settings_lines();
     let off: Vec<usize> = (0..lines.len()).filter(|&k| lines[k].starts_with("off ")).collect();
-    assert_eq!(off.len(), 2, "{lines:?}");
+    assert_eq!(off.len(), NEEDS_BUILTIN_ARCHIVES.len() + 1, "{lines:?}");
     assert!(off.iter().all(|&k| ui(&a).lines[k] != Line::Setting(index(&lines[k][4..]).unwrap()) && !ui(&a).lines[k].focusable()));
     for _ in 0..lines.len() + 4 {
         key(&mut a, Key::Down, NO);
@@ -642,13 +657,13 @@ fn inactive_archive_settings_are_dimmed_skipped_by_the_keyboard_and_ignore_click
     }
     assert!(a.menu.is_empty() && a.nav.palette.is_none() && a.archive.prefs.compression.format == before, "a click on an inactive row opens nothing");
     a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
-    let k = off[0];
+    let k = off.iter().copied().find(|&k| lines[k] != format!("off {}", settings::LONG_PATHS)).unwrap();
     assert_eq!(a.setting_help(&ui(&a).lines[k]).split(' ').next(), Some("Inactive:"));
     a.apply_doc(&settings::parse(r#"{"files.archive_format": "7z"}"#));
     assert_eq!(a.archive.prefs.compression.format, crate::archive::Format::SevenZ, "the settings file still applies");
     a.builtin_archives = true;
     a.layout();
-    assert!(!a.settings_lines().iter().any(|l| l.starts_with("off ")));
+    assert_eq!(a.settings_lines().into_iter().filter(|l| l.starts_with("off ")).collect::<Vec<_>>(), [format!("off {}", settings::LONG_PATHS)]);
     assert!(NEEDS_BUILTIN_ARCHIVES.iter().all(|id| SETTINGS[index(id).unwrap()].enabled(&a)));
 }
 
@@ -670,6 +685,7 @@ fn the_actions_page_lists_and_finds_every_command() {
     assert!(a.settings_lines().iter().any(|l| l.starts_with("action tab.reopen")), "a shortcut finds its command");
     key(&mut a, Key::Escape, NO);
     let k = ui(&a).lines.iter().position(|l| matches!(l, Line::Action(0, ..))).unwrap();
+    reveal(&mut a, k);
     let chips = button_rects(&ui(&a).lines[k], rect(&a, k), s);
     assert_eq!(chips.len(), 2, "one shortcut and the + chip");
     click_at(&mut a, center(chips[1]));

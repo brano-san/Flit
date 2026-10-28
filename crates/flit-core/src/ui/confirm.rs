@@ -17,12 +17,13 @@ const GAP: f32 = 8.0;
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Confirmed {
     Unpin(Location),
+    Pin(super::MenuKind, String, bool),
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Confirm {
-    question: String,
-    yes: String,
+    pub(super) question: String,
+    pub(super) yes: String,
     destructive: bool,
     then: Confirmed,
     pub anchor: Rect,
@@ -90,6 +91,7 @@ impl App {
         if yes {
             match c.then {
                 Confirmed::Unpin(loc) => self.unpin(loc, now),
+                Confirmed::Pin(kind, key, pin) => self.set_pin(kind, key, pin),
             }
         }
     }

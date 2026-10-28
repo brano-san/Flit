@@ -57,15 +57,44 @@ fn command(label: &str, keys: &str, checked: bool) -> MenuItem {
 
 fn flit_menu(t: &TempDir, inline: bool) -> ShellMenu {
     let menu = vec![command("Open", "Enter", false), MenuItem::Separator, MenuItem::Submenu { label: "Sort by".into(), items: vec![command("Name", "", true)] }, command("R&D", "", false)];
-    ShellMenu { dir: t.path(""), items: vec![t.path("a.txt")], x: 0.0, y: 0.0, extended: false, menu, inline, shell: true }
+    ShellMenu { dir: t.path(""), items: vec![t.path("a.txt")], x: 0.0, y: 0.0, extended: false, menu, inline, shell: true, kind: flit_core::ui::MenuKind::None }
 }
 
 #[test]
-fn toggles_are_found_by_the_same_ids_the_native_menu_gets() {
-    let toggle = |label: &str| MenuItem::command(label, String::new()).checked(true).staying();
-    let menu = vec![command("Collapse", "", false), MenuItem::Separator, MenuItem::Submenu { label: "Sections".into(), items: vec![toggle("Pinned"), toggle("Drives")] }, toggle("Compact")];
-    assert_eq!(toggle_ids(&menu), [FLIT_FIRST + 1, FLIT_FIRST + 2, FLIT_FIRST + 3]);
-    assert!(toggle_ids(&flit_menu(&TempDir::new("toggles"), false).menu).is_empty());
+fn shell_labels_lose_their_accelerators_and_split_off_their_keys() {
+    assert_eq!(plain_label("Open &with	Ctrl+O"), ("Open with".to_owned(), "Ctrl+O".to_owned()));
+    assert_eq!(plain_label("R&&D"), ("R&D".to_owned(), String::new()));
+}
+
+fn count(items: &[MenuItem]) -> usize {
+    items
+        .iter()
+        .map(|i| match i {
+            MenuItem::Command { .. } => 1,
+            MenuItem::Submenu { items, .. } => count(items),
+            _ => 0,
+        })
+        .sum()
+}
+
+#[test]
+fn the_own_menu_lists_flit_items_first_then_the_shell_with_one_id_per_command() {
+    crate::com_sta();
+    let t = TempDir::new("own");
+    std::fs::write(t.0.join("a.txt"), "x").unwrap();
+    let m = flit_menu(&t, false);
+    unsafe {
+        let hmenu = CreatePopupMenu().unwrap();
+        let _ = fill(HWND::default(), &m, hmenu).unwrap();
+        let (items, ids) = own_items(&m, hmenu);
+        assert_eq!(items[..4], m.menu[..]);
+        assert_eq!(items[4], MenuItem::Separator);
+        assert_eq!(ids[..3], [FLIT_FIRST, FLIT_FIRST + 1, FLIT_FIRST + 2]);
+        assert_eq!(count(&items), ids.len());
+        assert!(ids[3..].iter().all(|&id| id == 0 || (FIRST_ID..=LAST_ID).contains(&id)), "{ids:?}");
+        assert!(matches!(items.last(), Some(MenuItem::Submenu { label, .. }) if label == "Show more options"), "{items:?}");
+        let _ = DestroyMenu(hmenu);
+    }
 }
 
 fn fake(verb: &str) -> ShellItem<'_> {
@@ -179,7 +208,7 @@ fn bench_menu_prepare() {
         std::fs::write(t.0.join(format!("f{k}.txt")), "x").unwrap();
     }
     let flit: Vec<MenuItem> = (0..16).map(|k| if k % 5 == 4 { MenuItem::Separator } else { command(&format!("Item {k}"), "Ctrl+Shift+C", false) }).collect();
-    let shell_menu = |k: usize, inline: bool| ShellMenu { dir: t.path(""), items: vec![t.path(&format!("f{k}.txt"))], x: 0.0, y: 0.0, extended: false, menu: flit.clone(), inline, shell: true };
+    let shell_menu = |k: usize, inline: bool| ShellMenu { dir: t.path(""), items: vec![t.path(&format!("f{k}.txt"))], x: 0.0, y: 0.0, extended: false, menu: flit.clone(), inline, shell: true, kind: flit_core::ui::MenuKind::None };
     let report = |label: &str, mut ms: Vec<f64>| {
         let first = ms[0];
         ms.sort_by(f64::total_cmp);
@@ -213,11 +242,11 @@ fn bench_menu_prepare() {
 fn item_and_background_menus_offer_the_verbs_flit_takes_over() {
     let t = TempDir::new("verbs");
     std::fs::write(t.0.join("a.txt"), "x").unwrap();
-    let items = verbs(&ShellMenu { dir: t.path(""), items: vec![t.path("a.txt")], x: 0.0, y: 0.0, extended: false, menu: Vec::new(), inline: false, shell: true });
+    let items = verbs(&ShellMenu { dir: t.path(""), items: vec![t.path("a.txt")], x: 0.0, y: 0.0, extended: false, menu: Vec::new(), inline: false, shell: true, kind: flit_core::ui::MenuKind::None });
     for v in ["copy", "cut", "delete", "rename", "properties"] {
         assert!(items.iter().any(|i| i == v), "{v} missing from {items:?}");
     }
-    let background = verbs(&ShellMenu { dir: t.path(""), items: Vec::new(), x: 0.0, y: 0.0, extended: false, menu: Vec::new(), inline: false, shell: true });
+    let background = verbs(&ShellMenu { dir: t.path(""), items: Vec::new(), x: 0.0, y: 0.0, extended: false, menu: Vec::new(), inline: false, shell: true, kind: flit_core::ui::MenuKind::None });
     assert!(background.iter().any(|v| v == "properties"), "{background:?}");
     assert!(SHELL_VERBS.iter().all(|v| v.chars().all(|c| c.is_ascii_lowercase())));
 }
@@ -333,7 +362,7 @@ fn print_the_shell_menu_of_flit_menu_probe() {
     let items: Vec<FsPath> = probe.split('|').filter_map(FsPath::parse).collect();
     let dir = items[0].parent().unwrap();
     let inline = std::env::var("FLIT_MENU_INLINE").is_ok();
-    let m = ShellMenu { dir, items, x: 0.0, y: 0.0, extended: false, menu: vec![command("(Flit items)", "", false)], inline, shell: true };
+    let m = ShellMenu { dir, items, x: 0.0, y: 0.0, extended: false, menu: vec![command("(Flit items)", "", false)], inline, shell: true, kind: flit_core::ui::MenuKind::None };
     unsafe {
         let hmenu = CreatePopupMenu().unwrap();
         let started = Instant::now();

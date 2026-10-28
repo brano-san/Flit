@@ -4,6 +4,7 @@ mod app;
 mod diagnose;
 mod find;
 mod git;
+mod layouts;
 mod logs;
 mod metrics;
 mod places;

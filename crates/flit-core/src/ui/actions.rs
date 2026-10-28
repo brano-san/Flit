@@ -185,7 +185,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("inspector.toggle", G::Quick, S::ActionsInspectorToggle, S::DescribeInspectorToggle, &[key(Key::Space)], |a, _| a.toggle_preview_pane()),
     Action::new("panel.split_right", G::Quick, S::ActionsPanelSplitRight, S::DescribePanelSplitRight, &[ctrl_shift(c('S'))], |a, now| a.run_panel("panel.split_right", now)),
     Action::new("panel.split_bottom", G::Quick, S::ActionsPanelSplitBottom, S::DescribePanelSplitBottom, &[ctrl(c('S'))], |a, now| a.run_panel("panel.split_bottom", now)),
-    Action::new("tab.new", G::Quick, S::ActionsTabNew, S::DescribeTabNew, &[ctrl(c('T'))], |a, now| a.new_tab_here(now)),
+    Action::new("tab.new", G::Quick, S::ActionsTabNew, S::DescribeTabNew, &[ctrl(c('T'))], |a, now| a.open_new_tab(now)),
     Action::new("tab.close", G::Quick, S::ActionsTabClose, S::DescribeTabClose, &[ctrl(c('W')), ctrl(Key::F(4))], |a, _| a.close_tab(a.cur)).also(&["MouseMiddle"]),
     Action::new("options.open", G::Quick, S::ActionsOptionsOpen, S::DescribeOptionsOpen, &[ctrl(c(','))], |a, _| a.open_settings(None)),
     Action::new("folder.explorer", G::Quick, S::ActionsFolderExplorer, S::DescribeFolderExplorer, &[], |a, _| a.open_explorer()),
@@ -323,12 +323,12 @@ pub static ACTIONS: &[Action] = &[
     Action::new("tab.select_8", G::Tabs, S::ActionsTabSelect8, S::DescribeTabSelect8, &[ctrl(c('8'))], |a, _| a.select_tab(7)).also(&["Ctrl+Keypad8"]),
     Action::new("tab.select_last", G::Tabs, S::ActionsTabSelectLast, S::DescribeTabSelectLast, &[ctrl(c('9'))], |a, _| a.select_tab(a.tabs.len() - 1)).also(&["Ctrl+Keypad9"]),
     Action::new("tab.menu", G::Tabs, S::ActionsTabMenu, S::DescribeTabMenu, &[ctrl_shift(Key::Down)], |a, _| a.open_tab_menu()).also(&["MouseRight"]),
-    Action::later("tab.search", G::Tabs, S::ActionsTabSearch, S::DescribeTabSearch, &[ctrl_shift(c('A'))], 6),
+    Action::new("tab.search", G::Tabs, S::ActionsTabSearch, S::DescribeTabSearch, &[ctrl_shift(c('A'))], |a, _| a.open_tab_search()),
     Action::held("goto.select", G::GoTo, S::ActionsGotoSelect, S::DescribeGotoSelect, &[ctrl(Key::Enter)], Ctx::GoTo),
     Action::held("goto.back", G::GoTo, S::ActionsGotoBack, S::DescribeGotoBack, &[alt(Key::Left)], Ctx::GoTo).also(&["MouseX1"]),
     Action::held("goto.forward", G::GoTo, S::ActionsGotoForward, S::DescribeGotoForward, &[alt(Key::Right)], Ctx::GoTo).also(&["MouseX2"]),
     Action::held("goto.up", G::GoTo, S::ActionsGotoUp, S::DescribeGotoUp, &[alt(Key::Up)], Ctx::GoTo),
-    Action::later("config.create", G::Misc, S::ActionsConfigCreate, S::DescribeConfigCreate, &[], 6),
+    Action::new("config.create", G::Misc, S::ActionsConfigCreate, S::DescribeConfigCreate, &[], |a, _| a.create_config()),
     Action::new("config.open", G::Misc, S::ActionsConfigOpen, S::DescribeConfigOpen, &[], |a, _| a.open_settings_file()),
     Action::new("menu.main", G::Misc, S::ActionsMenuMain, S::DescribeMenuMain, &[key(Key::F(10))], |a, _| a.open_main_menu()),
     Action::new("quick_access.toggle", G::Misc, S::ActionsQuickAccessToggle, S::DescribeQuickAccessToggle, &[ctrl(c('B'))], |a, _| a.toggle_sidebar()),
@@ -336,20 +336,20 @@ pub static ACTIONS: &[Action] = &[
     Action::new("goto.open", G::Misc, S::ActionsGotoOpen, S::DescribeGotoOpen, &[ctrl(c('P')), key(Key::F(4))], |a, _| a.open_goto()),
     Action::new("palette.show", G::Misc, S::ActionsPaletteShow, S::DescribePaletteShow, &[ctrl_shift(c('P'))], |a, _| a.open_palette()),
     Action::new("item.context_menu", G::Misc, S::ActionsItemContextMenu, S::DescribeItemContextMenu, &[shift(Key::F(10)), key(Key::Apps)], |a, _| a.context_menu()),
-    Action::later("quick.commands", G::Misc, S::ActionsQuickCommands, S::DescribeQuickCommands, &[], 6).also(&["MouseMiddle"]),
+    Action::new("quick.commands", G::Misc, S::ActionsQuickCommands, S::DescribeQuickCommands, &[], |a, _| a.quick_commands()).also(&["MouseMiddle"]),
     Action::new("bookmarks.clear", G::Misc, S::ActionsBookmarksClear, S::DescribeBookmarksClear, &[], |a, _| a.clear_bookmarks()),
     Action::new("home.clear_recent", G::Misc, S::ActionsHomeClearRecent, S::DescribeHomeClearRecent, &[], |a, _| a.clear_recent()),
     Action::new("views.clear", G::Misc, S::ActionsViewsClear, S::DescribeViewsClear, &[], |a, _| a.clear_folder_views()),
-    Action::later("layout.save", G::Misc, S::ActionsLayoutSave, S::DescribeLayoutSave, &[], 6),
-    Action::later("layout.load", G::Misc, S::ActionsLayoutLoad, S::DescribeLayoutLoad, &[], 6),
+    Action::new("layout.save", G::Misc, S::ActionsLayoutSave, S::DescribeLayoutSave, &[], |a, _| a.ask_save_layout()),
+    Action::new("layout.load", G::Misc, S::ActionsLayoutLoad, S::DescribeLayoutLoad, &[], |a, _| a.ask_load_layout()),
     Action::new("window.minimize", G::Misc, S::ActionsWindowMinimize, S::DescribeWindowMinimize, &[alt(c('M'))], |a, _| a.effects.push(Effect::Window(WindowCmd::Minimize))),
     Action::new("window.fullscreen", G::Misc, S::ActionsWindowFullscreen, S::DescribeWindowFullscreen, &[key(Key::F(11))], |a, _| a.effects.push(Effect::Window(WindowCmd::Fullscreen))),
     Action::new("window.close", G::Misc, S::ActionsWindowClose, S::DescribeWindowClose, &[alt(Key::F(4))], |a, _| a.effects.push(Effect::Window(WindowCmd::Close))),
     Action::new("font.increase", G::Options, S::ActionsFontIncrease, S::DescribeFontIncrease, &[ctrl_shift(c('='))], |a, _| a.step_font(FONT_STEP)).also(&["Alt+MouseWheelUp"]),
     Action::new("font.decrease", G::Options, S::ActionsFontDecrease, S::DescribeFontDecrease, &[ctrl(c('-'))], |a, _| a.step_font(-FONT_STEP)).also(&["Alt+MouseWheelDown"]),
     Action::new("font.reset", G::Options, S::ActionsFontReset, S::DescribeFontReset, &[ctrl(c('0'))], |a, _| a.set_ui_scale(100)),
-    Action::later("spacing.increase", G::Options, S::ActionsSpacingIncrease, S::DescribeSpacingIncrease, &[], 6).also(&["Shift+Alt+MouseWheelUp"]),
-    Action::later("spacing.decrease", G::Options, S::ActionsSpacingDecrease, S::DescribeSpacingDecrease, &[], 6).also(&["Shift+Alt+MouseWheelDown"]),
+    Action::new("spacing.increase", G::Options, S::ActionsSpacingIncrease, S::DescribeSpacingIncrease, &[], |a, _| a.step_spacing(super::options::SPACING_STEP)).also(&["Shift+Alt+MouseWheelUp"]),
+    Action::new("spacing.decrease", G::Options, S::ActionsSpacingDecrease, S::DescribeSpacingDecrease, &[], |a, _| a.step_spacing(-super::options::SPACING_STEP)).also(&["Shift+Alt+MouseWheelDown"]),
     Action::later("rename.insert_id", G::Rename, S::ActionsRenameInsertId, S::DescribeRenameInsertId, &[], 7).within(Ctx::Rename),
     Action::later("rename.insert_date", G::Rename, S::ActionsRenameInsertDate, S::DescribeRenameInsertDate, &[], 7).within(Ctx::Rename),
     Action::later("rename.insert_created", G::Rename, S::ActionsRenameInsertCreated, S::DescribeRenameInsertCreated, &[], 7).within(Ctx::Rename),
@@ -654,6 +654,7 @@ impl App {
         match id.split('.').next().unwrap_or_default() {
             _ if id.ends_with("origin") || id.ends_with(".deleted") => bin,
             _ if id == "home.clear_recent" => true,
+            _ if id == "layout.load" => !self.opts.layouts.is_empty(),
             _ if id.starts_with("tab.select_") => id == "tab.select_last" || id.trim_start_matches("tab.select_").parse::<usize>().is_ok_and(|n| n <= self.tabs.len()),
             "bin" => bin,
             "home" => home,
@@ -674,6 +675,7 @@ impl App {
             self.nav.closed.remove(0);
         }
         self.nav.closed.push(loc);
+        self.note_closed(self.last_frame.unwrap_or_else(Instant::now));
     }
 
     fn reopen_tab(&mut self, now: Instant) {
@@ -832,10 +834,6 @@ impl App {
 
     fn step_font(&mut self, d: i32) {
         self.set_ui_scale((self.ui_scale() as i32 + d).max(0) as u32);
-    }
-
-    pub(super) fn open_main_menu(&mut self) {
-        self.open_palette();
     }
 }
 

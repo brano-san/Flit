@@ -298,7 +298,7 @@ fn tab_actions_button_follows_its_flag() {
     assert!(r.w > 0.0 && r.right() <= app.panels.caption[0].x);
     ev(&mut app, Event::MouseDown { x: r.x + 5.0, y: r.y + 5.0, button: MouseButton::Left, clicks: 1 });
     ev(&mut app, Event::MouseUp { x: r.x + 5.0, y: r.y + 5.0, button: MouseButton::Left });
-    assert_eq!(menu_labels(&mut app), ["New tab", "New window", "Move tab to a new window", "Mini window", "Full screen", "Split Right", "Split Bottom", "Close all tabs", "Settings"]);
+    assert!(matches!(app.nav.palette.as_ref().map(|p| &p.pick), Some(crate::ui::palette::Pick::Tabs)), "the button opens Search Tabs");
     app.tab_actions_button = false;
     app.layout();
     assert_eq!(app.layout.actions.w, 0.0);

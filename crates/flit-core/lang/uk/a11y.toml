@@ -6,7 +6,6 @@ commands = "Команди"
 sidebar = "Область переходів"
 files = "Файли"
 columns = "Стовпці"
-settings_pages = "Сторінки"
 preview = "Попередній перегляд"
 
 [button]
