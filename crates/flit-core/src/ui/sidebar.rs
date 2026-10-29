@@ -177,11 +177,13 @@ pub struct NavState {
     pub pinned: Vec<Location>,
     pub sidebar_w: f32,
     pub sidebar: bool,
+    #[serde(skip)]
+    pub files: Vec<Location>,
 }
 
 impl Default for NavState {
     fn default() -> Self {
-        Self { pinned: Vec::new(), sidebar_w: 220.0, sidebar: true }
+        Self { pinned: Vec::new(), sidebar_w: 220.0, sidebar: true, files: Vec::new() }
     }
 }
 
@@ -438,7 +440,8 @@ impl Sidebar {
             Section::Recents => self.recent().take(RECENT_MAX).map(|(_, r)| item(r.name.clone(), if r.dir { G_FOLDER } else { G_FILE }, Location::from_local(r.target.clone()), None)).collect(),
             Section::Bookmarks => {
                 let library_name = |l: &Location| p.libraries.iter().find(|lib| lib.path == *l.path()).map(|lib| lib.name.clone());
-                self.state.pinned.iter().map(|l| item(library_name(l).unwrap_or_else(|| pinned_label(l)), pinned_glyph(l), l.clone(), None)).collect()
+                let glyph = |l: &Location| if self.state.files.contains(l) { G_FILE } else { pinned_glyph(l) };
+                self.state.pinned.iter().map(|l| item(library_name(l).unwrap_or_else(|| pinned_label(l)), glyph(l), l.clone(), None)).collect()
             }
             Section::Storage => p.drives.iter().map(|d| item(d.title(), d.glyph(), Location::Local(d.path.clone()), (d.total > 0).then(|| (d.total.saturating_sub(d.free)) as f32 / d.total as f32))).collect(),
             Section::Places => {
@@ -572,6 +575,14 @@ impl App {
         self.nav.sidebar.rebuild();
         self.layout();
         self.dirty = true;
+    }
+
+    pub fn set_pinned_files(&mut self, files: Vec<Location>) {
+        if self.nav.sidebar.state.files != files {
+            self.nav.sidebar.state.files = files;
+            self.nav.sidebar.rebuild();
+            self.dirty = true;
+        }
     }
 
     pub fn set_pinned(&mut self, pinned: Vec<Location>) {
@@ -783,13 +794,23 @@ impl App {
     }
 
     pub fn pin_locations(&mut self, locs: Vec<Location>) {
-        let pinned = &mut self.nav.sidebar.state.pinned;
-        let before = pinned.len();
-        for l in locs {
-            if !pinned.contains(&l) {
-                pinned.push(l);
+        self.pin_entries(locs, Vec::new());
+    }
+
+    pub fn pin_entries(&mut self, folders: Vec<Location>, files: Vec<Location>) {
+        let state = &mut self.nav.sidebar.state;
+        let before = state.pinned.len();
+        for l in folders.into_iter().chain(files.iter().cloned()) {
+            if !state.pinned.contains(&l) {
+                state.pinned.push(l);
             }
         }
+        for f in files {
+            if !state.files.contains(&f) {
+                state.files.push(f);
+            }
+        }
+        let pinned = &state.pinned;
         if pinned.len() == before {
             return self.status(S::SidebarOnlyUnpinned.t());
         }
@@ -808,9 +829,13 @@ impl App {
     }
 
     fn pins_changed(&mut self) {
-        let list = self.nav.sidebar.state.pinned.clone();
+        let state = &mut self.nav.sidebar.state;
+        let pinned = &state.pinned;
+        state.files.retain(|f| pinned.contains(f));
+        let (list, files) = (state.pinned.clone(), state.files.clone());
         self.nav.sidebar.rebuild();
         self.effects.push(Effect::Pinned(list));
+        self.effects.push(Effect::PinnedFiles(files));
         self.layout();
         self.dirty = true;
     }
@@ -886,6 +911,10 @@ impl App {
             return self.show_tag(k);
         }
         if let Some(file) = self.nav.sidebar.recent_file(i) {
+            return self.place_command(PlaceCmd::OpenFile(file), now);
+        }
+        if let Some(it) = self.nav.sidebar.items.get(i).filter(|it| it.section == Section::Bookmarks && it.glyph == G_FILE) {
+            let file = it.loc.path().clone();
             return self.place_command(PlaceCmd::OpenFile(file), now);
         }
         let Some(folder) = self.nav.sidebar.items.get(i).map(|it| it.loc.clone()) else { return };
@@ -1464,6 +1493,7 @@ pub(super) fn place_icon_request(it: &Item, places: &Places, px: u32) -> Option<
     match (&it.loc, it.section) {
         (_, Section::Tags) | (Location::Wsl { .. }, Section::Recents) => None,
         (Location::Local(path), Section::Recents) => places.recent.iter().find(|r| r.target == *path).and_then(|r| recent_icon(r, places, px)),
+        (Location::Local(path), Section::Bookmarks) if it.glyph == G_FILE => Some((hash::hash(&("place", path.as_bytes(), px)), IconKind::File, path.clone())),
         (loc, _) => location_icon(loc, places, px),
     }
 }

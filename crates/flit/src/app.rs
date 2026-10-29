@@ -605,6 +605,12 @@ impl<P: Platform> Handler<P> {
                     self.saved.nav.pinned = pinned;
                     (self.wake)();
                 }
+                Effect::PinnedFiles(files) => {
+                    for (_, st) in self.windows.iter_mut().filter(|(w, _)| **w != id) {
+                        st.app.set_pinned_files(files.clone());
+                    }
+                    self.saved.nav.files = files;
+                }
                 Effect::RefreshPlaces => self.places.refresh(),
                 Effect::PinFolders(paths) => self.places.pin(paths),
                 Effect::Library(op) => self.places.library(op),
@@ -838,9 +844,9 @@ impl<P: Platform> Handler<P> {
                         st.app.library_failed(&message);
                     }
                 }
-                Reply::Pin(folders) => {
+                Reply::Pin(folders, files) => {
                     if let Some(st) = self.active.and_then(|id| self.windows.get_mut(&id)) {
-                        st.app.pin_locations(folders);
+                        st.app.pin_entries(folders, files);
                     }
                 }
             }

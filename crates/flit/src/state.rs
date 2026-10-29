@@ -226,7 +226,12 @@ impl Saved {
                                 if let Ok((q, tail)) = postcard::take_from_bytes::<QuickRecord>(tail) {
                                     saved.side.quick = q.quick;
                                     deep = q.deep;
-                                    zoom = postcard::take_from_bytes::<ZoomRecord>(tail).ok().map(|z| z.0);
+                                    if let Ok((z, tail)) = postcard::take_from_bytes::<ZoomRecord>(tail) {
+                                        zoom = Some(z);
+                                        if let Ok((files, _)) = postcard::take_from_bytes::<Vec<Location>>(tail) {
+                                            saved.nav.files = files;
+                                        }
+                                    }
                                 }
                             }
                             (p.view, p.prefs.defaults) = (with_git(p.view, g.view), with_git(p.prefs.defaults, g.defaults));
@@ -280,6 +285,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&p.prefs.command_descriptions).ok()?);
         bytes.extend(postcard::to_stdvec(&QuickRecord { quick: self.side.quick.clone(), deep: p.folders.deep_keys() }).ok()?);
         bytes.extend(postcard::to_stdvec(&zooms).ok()?);
+        bytes.extend(postcard::to_stdvec(&self.nav.files).ok()?);
         Some(bytes)
     }
 

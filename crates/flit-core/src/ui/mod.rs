@@ -335,6 +335,7 @@ pub enum Effect {
     Properties(Vec<FsPath>),
     StartDrag(Vec<FsPath>),
     Pinned(Vec<Location>),
+    PinnedFiles(Vec<Location>),
     PinFolders(Vec<FsPath>),
     Library(crate::library::LibraryOp),
     RefreshPlaces,

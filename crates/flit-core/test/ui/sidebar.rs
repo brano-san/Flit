@@ -334,6 +334,28 @@ fn item_menus_offer_place_commands() {
 }
 
 #[test]
+fn bookmarked_files_show_as_files_open_on_click_and_take_no_drops() {
+    let mut app = app_with_places();
+    let file = loc(r"D:\docs\plan.txt");
+    app.pin_entries(Vec::new(), vec![file.clone()]);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::PinnedFiles(f) if f == [file.clone()])));
+    let i = app.nav.sidebar.items.iter().position(|it| it.loc == file).unwrap();
+    assert_eq!((app.nav.sidebar.items[i].label.as_str(), app.nav.sidebar.items[i].glyph), ("plan.txt", "\u{E7C3}"));
+    let before = app.current_location().clone();
+    app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    let r = app.nav.sidebar.rects[i];
+    click(r, &mut app, MouseButton::Left);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } if path == *file.path())));
+    assert_eq!(app.current_location(), &before, "a file bookmark does not navigate");
+    let (x, y, t, none) = (r.x + 10.0, r.y + r.h / 2.0, Instant::now(), Mods::default());
+    app.drag(&DragEvent::Enter { paths: vec![FsPath::parse(r"C:\x.txt").unwrap()], x, y, mods: none, allowed: 7 }, t);
+    assert_eq!(app.drag(&DragEvent::Drop { x, y, mods: none, allowed: 7 }, t), 0, "nothing is copied into a file");
+    app.set_pinned(vec![loc(r"C:\a")]);
+    app.toggle_pin(loc(r"C:\a"));
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::PinnedFiles(f) if f.is_empty())), "unpinned files leave the file list");
+}
+
+#[test]
 fn dragging_folders_onto_pinned_pins_them_and_collapsed_sections_spring_open() {
     let mut app = app_with_places();
     let pinned = header(&app, Section::Bookmarks);

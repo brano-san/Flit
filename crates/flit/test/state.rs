@@ -42,7 +42,7 @@ fn loc(s: &str) -> Location {
 
 #[test]
 fn nav_state_and_views_ride_after_the_stage_one_record() {
-    let nav = NavState { pinned: vec![loc(r"C:\work"), loc("wsl://Ubuntu/home")], sidebar_w: 300.0, sidebar: false };
+    let nav = NavState { pinned: vec![loc(r"C:\work"), loc("wsl://Ubuntu/home")], sidebar_w: 300.0, sidebar: false, files: Vec::new() };
     let placement = Placement { x: 10, y: 20, width: 800, height: 600, maximized: true };
     let mut persisted = Persisted { path: loc(r"D:\x"), show_hidden: true, ..Default::default() };
     persisted.view.sort = SortSpec { field: SortField::Size, descending: true, ..Default::default() };
@@ -148,7 +148,7 @@ fn sidebar_and_home_preferences_ride_sixth_after_the_pane_so_older_files_still_l
 #[test]
 fn corrupted_nav_state_falls_back() {
     let mut s = Saved::new(Persisted::default(), None);
-    s.nav = NavState { pinned: vec![loc(r"C:\a"), loc(r"C:\b"), loc(r"C:\a")], sidebar_w: f32::INFINITY, sidebar: true };
+    s.nav = NavState { pinned: vec![loc(r"C:\a"), loc(r"C:\b"), loc(r"C:\a")], sidebar_w: f32::INFINITY, sidebar: true, files: Vec::new() };
     let s = s.sanitized();
     assert_eq!(s.nav.pinned, [loc(r"C:\a"), loc(r"C:\b")]);
     assert_eq!(s.nav.sidebar_w, NavState::default().sidebar_w);
@@ -200,7 +200,7 @@ fn the_old_dual_pane_record_stays_ninth_and_is_ignored_so_later_records_still_lo
     let mut persisted = Persisted::default();
     persisted.archive.open_after = true;
     persisted.prefs.show_streams = true;
-    let nav = NavState { pinned: vec![loc(r"C:\work")], sidebar_w: 280.0, sidebar: true };
+    let nav = NavState { pinned: vec![loc(r"C:\work")], sidebar_w: 280.0, sidebar: true, files: Vec::new() };
     let side = NavPrefs { compact: true, ..Default::default() };
     let pane = PaneState { visible: true, ..Default::default() };
     let s = Saved::new(persisted, None).with_nav(nav.clone()).with_pane(pane).with_side(side.clone()).with_tools(tools.clone());
@@ -325,7 +325,18 @@ fn older_encode(s: &Saved) -> Vec<u8> {
     let p = &s.persisted;
     let folders = p.folders.entries();
     let z = ZoomRecord { view: zoomed(&p.view), defaults: zoomed(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| zoomed(v)).collect(), retain_filter: p.prefs.retain_filter };
-    bytes[..bytes.len() - postcard::to_stdvec(&z).unwrap().len()].to_vec()
+    let tail = postcard::to_stdvec(&z).unwrap().len() + postcard::to_stdvec(&s.nav.files).unwrap().len();
+    bytes[..bytes.len() - tail].to_vec()
+}
+
+#[test]
+fn bookmarked_files_ride_last_and_older_files_have_none() {
+    let nav = NavState { pinned: vec![loc(r"C:\work"), loc(r"C:\work\notes.txt")], files: vec![loc(r"C:\work\notes.txt")], ..NavState::default() };
+    let s = Saved::new(Persisted { path: loc(r"D:\x"), ..Default::default() }, None).with_nav(nav.clone());
+    let bytes = s.encode().unwrap();
+    assert_eq!(Saved::decode(&bytes).unwrap().nav, nav);
+    let older = Saved::decode(&bytes[..bytes.len() - postcard::to_stdvec(&nav.files).unwrap().len()]).unwrap();
+    assert_eq!((older.nav.pinned, older.nav.files), (nav.pinned, Vec::new()));
 }
 
 #[test]

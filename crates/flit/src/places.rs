@@ -26,7 +26,7 @@ enum Job {
 pub enum Reply {
     Places(Arc<Places>),
     Failed(String),
-    Pin(Vec<Location>),
+    Pin(Vec<Location>, Vec<Location>),
 }
 
 pub struct PlacesWorker {
@@ -34,10 +34,6 @@ pub struct PlacesWorker {
     results: Receiver<Reply>,
     current: Arc<Places>,
     pending: Option<Box<dyn FnOnce() + Send>>,
-}
-
-fn is_dir(p: &FsPath) -> bool {
-    std::fs::metadata(flit_platform::std_path(p)).is_ok_and(|m| m.is_dir())
 }
 
 impl PlacesWorker {
@@ -80,7 +76,9 @@ impl PlacesWorker {
                             }
                         },
                         Job::Pin(paths) => {
-                            if !send(Reply::Pin(paths.iter().filter(|p| is_dir(p)).cloned().map(Location::from_local).collect())) {
+                            let kinds: Vec<_> = paths.into_iter().filter_map(|p| std::fs::metadata(flit_platform::std_path(&p)).ok().map(|m| (m.is_dir(), Location::from_local(p)))).collect();
+                            let (folders, files): (Vec<_>, Vec<_>) = kinds.into_iter().partition(|(dir, _)| *dir);
+                            if !send(Reply::Pin(folders.into_iter().map(|(_, l)| l).collect(), files.into_iter().map(|(_, l)| l).collect())) {
                                 return;
                             }
                         }
