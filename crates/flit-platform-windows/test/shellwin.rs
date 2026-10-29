@@ -2,7 +2,7 @@ use super::*;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use windows::core::w;
-use windows::Win32::UI::Shell::{ILFindLastID, SWFO_NEEDDISPATCH};
+use windows::Win32::UI::Shell::{ILFindLastID, SID_STopLevelBrowser, SWFO_NEEDDISPATCH};
 use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, HWND_MESSAGE, WINDOW_EX_STYLE, WINDOW_STYLE};
 
 fn variant(pidl: &[u8]) -> VARIANT {
@@ -63,7 +63,8 @@ fn a_registered_flit_window_receives_the_item_the_shell_asks_it_to_select() {
     let app: IWebBrowserApp = disp.cast().unwrap();
     let doc = unsafe { app.Document() }.unwrap();
     let provider: IServiceProvider = doc.cast().unwrap();
-    let view: IShellView = unsafe { provider.QueryService(&GUID::zeroed()) }.unwrap();
+    let browser: IShellBrowser = unsafe { provider.QueryService(&SID_STopLevelBrowser) }.unwrap();
+    let view = unsafe { browser.QueryActiveShellView() }.unwrap();
     let child = unsafe { ILFindLastID(item.as_ptr().cast()) };
     unsafe { view.SelectItem(child, SVSI_SELECT.0 as u32) }.unwrap();
     let open = rx.recv_timeout(Duration::from_secs(5)).unwrap();

@@ -7,16 +7,16 @@ use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 use windows::core::{BSTR, GUID, HRESULT, PCWSTR};
-use windows::Win32::Foundation::{E_NOINTERFACE, E_NOTIMPL, HWND, LPARAM, RECT, SHANDLE_PTR, S_FALSE, VARIANT_BOOL, VARIANT_TRUE};
-use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, IDispatch, IDispatch_Impl, IServiceProvider, IServiceProvider_Impl, ITypeInfo, CLSCTX_ALL, COINIT_MULTITHREADED, DISPATCH_FLAGS, DISPPARAMS, EXCEPINFO};
-use windows::Win32::System::Ole::IOleWindow_Impl;
+use windows::Win32::Foundation::{E_NOINTERFACE, E_NOTIMPL, HWND, LPARAM, LRESULT, RECT, SHANDLE_PTR, S_FALSE, VARIANT_BOOL, VARIANT_TRUE, WPARAM};
+use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, IDispatch, IDispatch_Impl, IServiceProvider, IServiceProvider_Impl, IStream, ITypeInfo, CLSCTX_ALL, COINIT_MULTITHREADED, DISPATCH_FLAGS, DISPPARAMS, EXCEPINFO};
+use windows::Win32::System::Ole::{IOleWindow_Impl, OLEMENUGROUPWIDTHS};
 use windows::Win32::System::Variant::{InitVariantFromBuffer, VARIANT};
-use windows::Win32::UI::Controls::LPFNSVADDPROPSHEETPAGE;
+use windows::Win32::UI::Controls::{LPFNSVADDPROPSHEETPAGE, TBBUTTON};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
-    ILCombine, ILFree, ILGetSize, IShellBrowser, IShellView, IShellView_Impl, IShellWindows, IWebBrowserApp, IWebBrowserApp_Impl, IWebBrowser_Impl, SHGetNameFromIDList, SHParseDisplayName, ShellWindows, FOLDERSETTINGS, SIGDN_FILESYSPATH, SVSI_SELECT, SWC_BROWSER, _SVGIO,
+    ILCombine, ILFree, ILGetSize, IShellBrowser, IShellBrowser_Impl, IShellView, IShellView_Impl, IShellWindows, IWebBrowserApp, IWebBrowserApp_Impl, IWebBrowser_Impl, SHGetNameFromIDList, SHParseDisplayName, ShellWindows, FOLDERSETTINGS, SIGDN_FILESYSPATH, SVSI_SELECT, SWC_BROWSER, _SVGIO,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, MSG};
+use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, HMENU, MSG};
 use windows_core::{implement, ComObject, IUnknownImpl, Interface, Ref};
 
 enum Msg {
@@ -188,7 +188,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-#[implement(IWebBrowserApp, IServiceProvider, IShellView)]
+#[implement(IWebBrowserApp, IServiceProvider, IShellBrowser, IShellView)]
 struct Browser {
     hwnd: isize,
     folder: Mutex<Vec<u8>>,
@@ -251,6 +251,48 @@ impl IShellView_Impl for Browser_Impl {
         Ok(())
     }
     fn GetItemObject(&self, _item: &_SVGIO, _riid: *const GUID, _out: *mut *mut core::ffi::c_void) -> windows::core::Result<()> {
+        unsupported()
+    }
+}
+
+impl IShellBrowser_Impl for Browser_Impl {
+    fn InsertMenusSB(&self, _menu: HMENU, _widths: *mut OLEMENUGROUPWIDTHS) -> windows::core::Result<()> {
+        unsupported()
+    }
+    fn SetMenuSB(&self, _menu: HMENU, _resource: isize, _active: HWND) -> windows::core::Result<()> {
+        unsupported()
+    }
+    fn RemoveMenusSB(&self, _menu: HMENU) -> windows::core::Result<()> {
+        unsupported()
+    }
+    fn SetStatusTextSB(&self, _text: &PCWSTR) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn EnableModelessSB(&self, _enable: windows_core::BOOL) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn TranslateAcceleratorSB(&self, _msg: *const MSG, _id: u16) -> windows::core::Result<()> {
+        Err(S_FALSE.into())
+    }
+    fn BrowseObject(&self, _pidl: *const ITEMIDLIST, _flags: u32) -> windows::core::Result<()> {
+        unsupported()
+    }
+    fn GetViewStateStream(&self, _mode: u32) -> windows::core::Result<IStream> {
+        unsupported()
+    }
+    fn GetControlWindow(&self, _id: u32) -> windows::core::Result<HWND> {
+        unsupported()
+    }
+    fn SendControlMsg(&self, _id: u32, _msg: u32, _wparam: WPARAM, _lparam: LPARAM, _ret: *mut LRESULT) -> windows::core::Result<()> {
+        unsupported()
+    }
+    fn QueryActiveShellView(&self) -> windows::core::Result<IShellView> {
+        Ok(self.to_object().to_interface())
+    }
+    fn OnViewWindowActive(&self, _view: Ref<IShellView>) -> windows::core::Result<()> {
+        Ok(())
+    }
+    fn SetToolbarItems(&self, _buttons: *const TBBUTTON, _count: u32, _flags: u32) -> windows::core::Result<()> {
         unsupported()
     }
 }
