@@ -115,8 +115,43 @@ fn the_default_manager_backup_survives_the_cleanup() {
     forget_open_in_flit(&sb.0).unwrap();
     assert!(exists(sb.0.hive, &sb.0.backup_of(MANAGER_BACKUP)));
     set(&sb.0, false, EXE).unwrap();
-    assert!(!exists(sb.0.hive, &sb.0.class("Folder")));
+    for class in ["Folder", r"Directory\shell", "Drive"] {
+        assert!(!exists(sb.0.hive, &sb.0.class(class)), "{class}");
+    }
     assert!(!exists(sb.0.hive, &sb.0.backup));
+}
+
+#[test]
+fn another_manager_on_directory_and_drive_is_taken_over_and_given_back() {
+    let sb = Sandbox::new("other");
+    let other = "\"C:\\Other\\fp.exe\" \"%1\"";
+    for class in ["Directory", "Drive"] {
+        sb.put(&format!(r"{class}\shell"), "", REG_SZ.0, &sz("open"));
+        sb.put(&format!(r"{class}\shell\open\command"), "", REG_SZ.0, &sz(other));
+    }
+    let before = sb.snapshot();
+    let text = |k: &str, n: &str| sb.get(k, n).map(|(_, d)| strings(&d).join(""));
+    set(&sb.0, true, EXE).unwrap();
+    for class in ["Directory", "Drive"] {
+        assert_eq!(text(&format!(r"{class}\shell\open\command"), ""), Some(format!("\"{EXE}\" \"%1\"")), "{class}");
+    }
+    set(&sb.0, false, EXE).unwrap();
+    assert_eq!(sb.snapshot(), before);
+    assert_eq!(text(r"Directory\shell\open\command", ""), Some(other.into()));
+}
+
+#[test]
+fn a_backup_from_an_older_plan_records_the_new_entries_before_writing_them() {
+    let sb = Sandbox::new("upgrade");
+    let other = "\"C:\\Other\\fp.exe\" \"%1\"";
+    sb.put(r"Directory\shell\open\command", "", REG_SZ.0, &sz(other));
+    let backup = sb.0.backup_of(MANAGER_BACKUP);
+    let old: Vec<String> = entries(EXE).iter().filter(|(k, _, _)| k.starts_with("Folder") || k.starts_with("CLSID")).map(|(k, n, _)| slot(k, n)).collect();
+    write(sb.0.hive, &backup, ABSENT, REG_MULTI_SZ.0, &multi_sz(&old)).unwrap();
+    write(sb.0.hive, &backup, CREATED, REG_MULTI_SZ.0, &multi_sz(&[])).unwrap();
+    set(&sb.0, true, EXE).unwrap();
+    set(&sb.0, false, EXE).unwrap();
+    assert_eq!(sb.get(r"Directory\shell\open\command", "").map(|(_, d)| strings(&d).join("")), Some(other.into()));
 }
 
 #[test]

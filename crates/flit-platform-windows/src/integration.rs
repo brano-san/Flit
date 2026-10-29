@@ -39,14 +39,20 @@ pub type Entry = (String, &'static str, String);
 
 pub fn entries(exe: &str) -> Vec<Entry> {
     let open = format!("\"{exe}\" \"%1\"");
-    vec![
+    let mut plan = vec![
         (r"Folder\shell\open\command".into(), "", open.clone()),
         (r"Folder\shell\open\command".into(), "DelegateExecute", String::new()),
-        (r"Folder\shell\explore\command".into(), "", open),
+        (r"Folder\shell\explore\command".into(), "", open.clone()),
         (r"Folder\shell\explore\command".into(), "DelegateExecute", String::new()),
         (WIN_E.into(), "", format!("\"{exe}\" \"{HOME}\"")),
         (WIN_E.into(), "DelegateExecute", String::new()),
-    ]
+    ];
+    for class in ["Directory", "Drive"] {
+        plan.push((format!(r"{class}\shell"), "", "open".into()));
+        plan.push((format!(r"{class}\shell\open\command"), "", open.clone()));
+        plan.push((format!(r"{class}\shell\open\command"), "DelegateExecute", String::new()));
+    }
+    plan
 }
 
 fn wide(s: &str) -> Vec<u16> {
@@ -133,9 +139,7 @@ pub fn set(root: &Root, on: bool, exe: &str) -> Result<bool, PlatformError> {
         if stale.is_empty() && exists(root.hive, &backup) {
             return Ok(false);
         }
-        if !exists(root.hive, &backup) {
-            save(root, &plan, &backup)?;
-        }
+        save(root, &plan, &backup)?;
         for (key, name, data) in stale {
             write(root.hive, &root.class(key), name, REG_SZ.0, &sz(data))?;
         }
@@ -149,8 +153,13 @@ pub fn set(root: &Root, on: bool, exe: &str) -> Result<bool, PlatformError> {
 }
 
 fn save(root: &Root, plan: &[Entry], backup: &str) -> Result<(), PlatformError> {
-    let (mut absent, mut created) = (Vec::new(), Vec::new());
+    let list = |name| read(root.hive, backup, name).map(|(_, d)| strings(&d)).unwrap_or_default();
+    let (mut absent, mut created) = (list(ABSENT), list(CREATED));
     for (key, name, _) in plan {
+        let recorded = absent.contains(&slot(key, name)) || read(root.hive, backup, &slot(key, name)).is_some();
+        if recorded {
+            continue;
+        }
         match read(root.hive, &root.class(key), name) {
             Some((kind, data)) => write(root.hive, backup, &slot(key, name), kind, &data)?,
             None => absent.push(slot(key, name)),
