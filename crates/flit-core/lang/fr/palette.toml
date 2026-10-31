@@ -19,7 +19,6 @@ folder_icon = "Entrée écrit l’icône dans le desktop.ini du dossier"
 new_library = "Entrée crée la bibliothèque dans le dossier Bibliothèques"
 library = "Aucun dossier correspondant"
 library_add = "Entrée ajoute le dossier à la bibliothèque"
-toolbar = "Aucun bouton correspondant"
 
 [group]
 quick = "Rapide"

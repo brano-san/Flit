@@ -19,7 +19,6 @@ folder_icon = "Enter writes the icon into desktop.ini of the folder"
 new_library = "Enter creates the library in the Libraries folder"
 library = "No matching folders"
 library_add = "Enter adds the folder to the library"
-toolbar = "No matching buttons"
 
 [group]
 quick = "Quick"

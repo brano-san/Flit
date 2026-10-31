@@ -19,7 +19,6 @@ folder_icon = "Enter записує піктограму в desktop.ini папк
 new_library = "Enter створює бібліотеку в папці «Бібліотеки»"
 library = "Немає відповідних папок"
 library_add = "Enter додає папку до бібліотеки"
-toolbar = "Немає відповідних кнопок"
 
 [group]
 quick = "Швидкі"

@@ -5,8 +5,7 @@ use super::fuzzy::fuzzy;
 use super::goto::Go;
 use super::settings_page::SettingPick;
 use super::tags::TagPick;
-use super::toolbar::ToolPick;
-use super::widgets::{baseline, Button, Paint, G_NEXT, G_OPEN};
+use super::widgets::{baseline, Button, Ghost, Paint, G_NEXT, G_OPEN};
 use super::{App, Effect, Glide, Hit, G_CLOSE, G_SORT_DOWN, G_SORT_UP, TAB_H, TOOL_H};
 use crate::i18n::S;
 use crate::input::{Key, Mods};
@@ -65,7 +64,6 @@ pub(super) enum Pick {
     LibraryAdd(FsPath),
     Tags(TagPick),
     Setting(SettingPick),
-    Toolbar(ToolPick),
     Server,
     GoTo,
     Crumb(usize),
@@ -89,7 +87,6 @@ impl Pick {
             Pick::LibraryAdd(_) => S::PalettePlaceholderLibraryAdd.t(),
             Pick::Tags(t) => t.placeholder(),
             Pick::Setting(p) => p.placeholder(),
-            Pick::Toolbar(t) => t.placeholder(),
             Pick::Server => S::SidebarDriveServerPrompt.t(),
             Pick::GoTo | Pick::Crumb(_) => S::AddressGotoPlaceholder.t(),
             Pick::Tabs => S::MenusSearchTabsShort.t(),
@@ -112,7 +109,6 @@ impl Pick {
             Pick::LibraryAdd(_) => S::PaletteEmptyLibraryAdd.t(),
             Pick::Tags(t) => t.empty(),
             Pick::Setting(p) => p.empty(),
-            Pick::Toolbar(_) => S::PaletteEmptyToolbar.t(),
             Pick::Server => S::SidebarDriveServerEnter.t(),
             Pick::GoTo | Pick::Crumb(_) => S::AddressGotoEmpty.t(),
             Pick::Tabs => S::MenusNoTabs.t(),
@@ -485,7 +481,6 @@ impl App {
                 self.shortcut_choose(a, id);
                 self.back_to_commands();
             }
-            Pick::Toolbar(t) => self.tool_choose(t, id),
             Pick::Tabs => self.choose_tab_row(id, now),
             Pick::LoadLayout => self.load_layout(&p.titles[id]),
             _ => self.new_item(id),
@@ -747,7 +742,7 @@ impl App {
         p.field.draw(w.g, t, inner, font, active, placeholder.as_deref().or(p.placeholder.as_deref()).unwrap_or(p.pick.placeholder()), sc, Some(&self.preedit));
         w.icon_button(p.close, G_CLOSE, close_font, Button::of(hover == Hit::PaletteClose, false, true), t.text_dim);
         if let Some(c) = &p.commands {
-            w.icon_button(p.describe, G_DESCRIBE, icons, Button::of(hover == Hit::PaletteDescribe, c.descriptions, true), t.text_dim);
+            w.toggle_button(p.describe, G_DESCRIBE, icons, c.descriptions, hover == Hit::PaletteDescribe);
         }
         if p.go.is_some() {
             self.draw_go_buttons(w.g, t, &p, icons);
@@ -874,6 +869,7 @@ impl App {
         }
         self.nav.palette = Some(p);
         self.request_icons(requests);
+        self.keep_ghost(g, Ghost::Palette, from, (r.x + r.w / 2.0, r.y));
         self.pop(g, from, opened, (r.x + r.w / 2.0, r.y));
     }
 }

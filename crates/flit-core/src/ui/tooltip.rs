@@ -2,7 +2,6 @@ use super::actions::{index, ACTIONS};
 use super::ops::TIMER_SLACK;
 use super::options::InspectorAt;
 use super::preview_pane::{PaneHit, PaneTool, Scale};
-use super::toolbar::ToolHit;
 use super::widgets::{Paint, RADIUS};
 use super::{App, Column, Drag, Hit, ViewMode};
 use crate::i18n::S;
@@ -125,7 +124,6 @@ impl App {
             Hit::FilterField => self.nav.filter.field,
             Hit::Bottom(b) => l.bar.iter().find(|x| x.0 == b)?.1,
             Hit::PaletteClose | Hit::PaletteDescribe | Hit::PaletteScroll(_) | Hit::PaletteKeys(_) => self.palette_button(h)?,
-            Hit::Tool(ToolHit::Button(_) | ToolHit::More) => self.tool_rect(h)?,
             Hit::Preview(ph) => self.preview_rect(ph)?,
             _ => return None,
         };
@@ -178,7 +176,6 @@ impl App {
             Hit::PaletteKeys(_) => text(S::TooltipShortcuts, ""),
             Hit::PaletteDescribe => text(if self.prefs.command_descriptions { S::TooltipPaletteDescriptionsOn } else { S::TooltipPaletteDescriptionsOff }, ""),
             Hit::PaletteScroll(down) => text(if down { S::TooltipScrollDown } else { S::TooltipScrollUp }, ""),
-            Hit::Tool(ToolHit::More) => text(S::TooltipMore, ""),
             Hit::Preview(ph) => match ph {
                 PaneHit::Close => text(S::TooltipInspectorClose, "inspector.toggle"),
                 PaneHit::At(InspectorAt::Auto) => text(S::TooltipInspectorAuto, "inspector.layout"),
@@ -199,10 +196,6 @@ impl App {
                 PaneHit::Filter => text(S::TooltipFilterBox, "inspector.filter"),
                 _ => return None,
             },
-            Hit::Tool(ToolHit::Button(i)) => {
-                let (id, line) = self.tool_tip(i)?;
-                (line.t().to_owned(), Some(id).filter(|id| index(id).is_some()))
-            }
             _ => return None,
         };
         let (command, keys) = match command.and_then(index) {

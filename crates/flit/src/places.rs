@@ -1,6 +1,7 @@
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use flit_core::library::LibraryOp;
 use flit_core::ui::{Bitmap, IconKind, IconRequest, KnownFolder, Places};
+use flit_core::path::PathKind;
 use flit_core::{FsPath, Location};
 use flit_platform::{Platform, Wake};
 use serde::de::DeserializeOwned;
@@ -21,12 +22,14 @@ enum Job {
     Refresh,
     Library(LibraryOp),
     Pin(Vec<FsPath>),
+    Check(Vec<FsPath>),
 }
 
 pub enum Reply {
     Places(Arc<Places>),
     Failed(String),
     Pin(Vec<Location>, Vec<Location>),
+    Missing(Vec<FsPath>),
 }
 
 pub struct PlacesWorker {
@@ -75,6 +78,17 @@ impl PlacesWorker {
                                 }
                             }
                         },
+                        Job::Check(paths) => {
+                            let gone: Vec<FsPath> = paths.into_iter().filter(gone).collect();
+                            if !gone.is_empty() && !send(Reply::Missing(gone)) {
+                                return;
+                            }
+                            let before = cached.recent.len();
+                            cached.recent.retain(|r| !self::gone(&r.target));
+                            if cached.recent.len() != before && !send(Reply::Places(Arc::new(cached.clone()))) {
+                                return;
+                            }
+                        }
                         Job::Pin(paths) => {
                             let kinds: Vec<_> = paths.into_iter().filter_map(|p| std::fs::metadata(flit_platform::std_path(&p)).ok().map(|m| (m.is_dir(), Location::from_local(p)))).collect();
                             let (folders, files): (Vec<_>, Vec<_>) = kinds.into_iter().partition(|(dir, _)| *dir);
@@ -99,6 +113,7 @@ impl PlacesWorker {
                 let libraries = t.elapsed();
                 let t = Instant::now();
                 (cached.recent, cached.recent_off) = P::recent(RECENT_LIMIT);
+                cached.recent.retain(|r| !gone(&r.target));
                 let recent = t.elapsed();
                 let t = Instant::now();
                 if !templates {
@@ -136,6 +151,10 @@ impl PlacesWorker {
         let _ = self.requests.send(Job::Library(op));
     }
 
+    pub fn check(&self, paths: Vec<FsPath>) {
+        let _ = self.requests.send(Job::Check(paths));
+    }
+
     pub fn pin(&self, paths: Vec<FsPath>) {
         let _ = self.requests.send(Job::Pin(paths));
     }
@@ -155,6 +174,16 @@ impl PlacesWorker {
     pub fn current(&self) -> Arc<Places> {
         self.current.clone()
     }
+}
+
+pub fn gone(p: &FsPath) -> bool {
+    let exists = |p: &FsPath| std::fs::symlink_metadata(flit_platform::std_path(p)).is_ok();
+    let anchor = match p.kind() {
+        PathKind::Drive | PathKind::Unc => FsPath::parse(&String::from_utf8_lossy(p.root_bytes())),
+        PathKind::Unix => p.parent(),
+        _ => return false,
+    };
+    !exists(p) && anchor.is_some_and(|a| exists(&a))
 }
 
 fn collect<P: Platform>() -> Places {

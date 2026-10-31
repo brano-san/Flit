@@ -33,7 +33,7 @@ fn key(a: &mut App, key: Key, mods: Mods) {
 }
 
 fn show(a: &mut App, m: ShellMenu) {
-    a.on_event(&Event::ShowMenu { items: m.menu, x: m.x, y: m.y, launches: Vec::new(), kind: m.kind, shell: Vec::new() }, Instant::now());
+    a.on_event(&Event::ShowMenu { items: m.menu, x: m.x, y: m.y, launches: Vec::new(), kind: m.kind, shell: Vec::new(), pending: false }, Instant::now());
     a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
 }
 
@@ -58,8 +58,9 @@ fn the_panel_menu_lists_the_quick_group_in_sections_and_opens_at_a_middle_click_
     a.panel_quick_menu();
     let m = shell_menu(&mut a);
     let l = labels(&m.menu);
-    let quick: Vec<String> = ACTIONS.iter().filter(|x| x.group == Group::Quick).map(|x| x.title.t().to_owned()).collect();
+    let quick: Vec<String> = ACTIONS.iter().filter(|x| x.group == Group::Quick).map(|x| a.quick_checked(x.id).map_or(x.title.t(), |(_, label)| label.t()).to_owned()).collect();
     assert_eq!(l.iter().filter(|x| *x != "-").cloned().collect::<Vec<_>>(), quick);
+    assert!(l.contains(&S::MenuShowInspector.t().to_owned()) && l.contains(&S::MenuShowHidden.t().to_owned()));
     assert!(l.iter().filter(|x| *x == "-").count() >= 4);
     let r = a.layout.list;
     let (x, y) = (r.x + 120.0, r.bottom() - 20.0);
@@ -235,4 +236,17 @@ fn create_config_exports_defaults_next_to_the_settings_file() {
     a.run_action("config.create", Instant::now());
     let path = a.drain_effects().find_map(|e| if let Effect::Settings(SettingsCmd::Export { path, .. }) = e { Some(path) } else { None }).expect("an export is asked for");
     assert_eq!(path.display(), "C:\\Profile\\settings.default.json");
+}
+
+#[test]
+fn checkbox_entries_of_the_panel_menu_name_what_the_tick_shows_in_every_language() {
+    let labels = [S::MenuShowInspector, S::MenuShowExtensions, S::MenuShowHidden, S::MenuShowSystem];
+    assert_eq!(labels.map(|s| s.in_lang(crate::i18n::Lang::Ru)), ["Показать инспектор", "Показать расширения файлов", "Показать скрытые файлы", "Показать системные файлы"]);
+    assert_eq!(labels.map(|s| s.in_lang(crate::i18n::Lang::En)), ["Show inspector", "Show file extensions", "Show hidden files", "Show system files"]);
+    for lang in crate::i18n::Lang::ALL {
+        for s in labels.into_iter().chain([S::MenuIncludeSubfolders]) {
+            let text = s.in_lang(lang).to_lowercase();
+            assert!(!["или скрыть", "або сховати", " or hide", "ein-/aus", "ou masquer", "u ocultar", "切换"].iter().any(|p| text.contains(p)), "{lang:?}: {text}");
+        }
+    }
 }

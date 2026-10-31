@@ -141,17 +141,35 @@ impl DrawList {
     }
 
     pub fn grow(&mut self, from: usize, t: f32, center: (f32, f32), start: f32) {
+        self.grow_range(from..self.instances.len(), t, center, start);
+    }
+
+    pub fn grow_range(&mut self, range: std::ops::Range<usize>, t: f32, center: (f32, f32), start: f32) {
         let t = t.clamp(0.0, 1.0);
         if t >= 1.0 {
             return;
         }
         let k = start + (1.0 - start) * t;
         let scale = |v: f32, c: f32| c + (v - c) * k;
-        for i in self.instances.iter_mut().skip(from) {
+        for i in &mut self.instances[range] {
             let [x, y, w, h] = i.rect;
             i.rect = [scale(x, center.0), scale(y, center.1), w * k, h * k];
             let a = ((i.color >> 24) as f32 * t).round() as u32;
             i.color = (i.color & 0x00FF_FFFF) | a << 24;
+        }
+    }
+
+    pub fn shift(&mut self, from: usize, dx: f32, dy: f32) {
+        self.shift_range(from..self.instances.len(), dx, dy);
+    }
+
+    pub fn shift_range(&mut self, range: std::ops::Range<usize>, dx: f32, dy: f32) {
+        for i in &mut self.instances[range] {
+            i.rect[0] += dx;
+            i.rect[1] += dy;
+            if i.clip != NO_CLIP {
+                i.clip = [i.clip[0] + dx, i.clip[1] + dy, i.clip[2] + dx, i.clip[3] + dy];
+            }
         }
     }
 

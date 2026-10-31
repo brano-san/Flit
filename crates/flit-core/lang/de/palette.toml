@@ -19,7 +19,6 @@ folder_icon = "Enter schreibt das Symbol in die desktop.ini des Ordners"
 new_library = "Enter erstellt die Bibliothek im Ordner „Bibliotheken“"
 library = "Keine passenden Ordner"
 library_add = "Enter fügt den Ordner zur Bibliothek hinzu"
-toolbar = "Keine passenden Schaltflächen"
 
 [group]
 quick = "Schnell"

@@ -7,15 +7,15 @@ fn tab_walks_every_shown_region_in_order_and_shift_tab_walks_back() {
     let mut a = app(&["a.txt", "b.txt"]);
     assert_eq!(a.focus, Focus::List);
     let mut seen = Vec::new();
-    for _ in 0..5 {
+    for _ in 0..4 {
         press(&mut a, Key::Tab, false);
         seen.push(a.focus);
     }
-    assert_eq!(seen, [Focus::TabBar, Focus::Nav, Focus::Toolbar, Focus::List, Focus::TabBar]);
+    assert_eq!(seen, [Focus::TabBar, Focus::Nav, Focus::List, Focus::TabBar]);
     press(&mut a, Key::Tab, true);
     assert_eq!(a.focus, Focus::List);
     press(&mut a, Key::Tab, true);
-    assert_eq!(a.focus, Focus::Toolbar);
+    assert_eq!(a.focus, Focus::Nav);
     a.preview.state.visible = true;
     crate::ui::harness::frame(&mut a);
     a.enter_focus(Focus::List);
@@ -33,10 +33,10 @@ fn entering_the_address_bar_opens_the_address_window() {
 }
 
 #[test]
-fn arrows_move_inside_the_toolbar_and_wrap() {
+fn arrows_move_inside_the_navigation_row_and_wrap() {
     let mut a = app(&["a.txt"]);
-    a.enter_focus(Focus::Toolbar);
-    let n = a.focus_targets(Focus::Toolbar).len();
+    a.enter_focus(Focus::Nav);
+    let n = a.focus_targets(Focus::Nav).len();
     assert!(n > 2);
     press(&mut a, Key::Right, false);
     assert_eq!(a.kb, 1);

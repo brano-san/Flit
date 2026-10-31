@@ -1,5 +1,4 @@
 use super::keymap::Keymap;
-use super::toolbar::{Overflow, ToolMenu};
 use super::layouts::{layout_of_zoom, zoom_title, ZOOM_DETAILS, ZOOM_ICONS, ZOOM_LARGE, ZOOM_LIST, ZOOM_TREE, ZOOM_XL};
 use super::{App, Column, LayoutMode, MENU_COLUMNS};
 use crate::archive::{self, Format};
@@ -77,36 +76,6 @@ pub(super) enum TypeCmd {
     Toggle(u64),
     All(bool),
 }
-
-const SORTS: [(SortField, &str, S); 11] = [
-    (SortField::Name, "view.sort.name", S::MenuSortName),
-    (SortField::Type, "view.sort.type", S::MenuSortType),
-    (SortField::Size, "view.sort.size", S::MenuSortSize),
-    (SortField::Folders, "view.sort.folders", S::DetailsColumnFolders),
-    (SortField::Files, "view.sort.files", S::DetailsColumnFiles),
-    (SortField::Created, "view.sort.created", S::MenuSortCreated),
-    (SortField::Modified, "view.sort.modified", S::MenuSortModified),
-    (SortField::Accessed, "view.sort.accessed", S::DetailsColumnAccessed),
-    (SortField::Volume, "view.sort.volume", S::DetailsColumnVolume),
-    (SortField::FolderUsage, "view.sort.folder_usage", S::DetailsColumnFolderUsage),
-    (SortField::Tag, "view.sort.tag", S::MenuSortTags),
-];
-
-const COMPUTER_SORTS: [(SortField, &str, S); 6] = [
-    (SortField::Name, "view.sort.name", S::MenuSortName),
-    (SortField::Type, "view.sort.type", S::MenuSortType),
-    (SortField::Size, "view.sort.size", S::MenuSortSize),
-    (SortField::Free, "view.sort.free", S::DetailsColumnFree),
-    (SortField::Percent, "view.sort.percent", S::DetailsColumnPercent),
-    (SortField::FileSystem, "view.sort.file_system", S::DetailsColumnFileSystem),
-];
-
-const BIN_SORTS: [(SortField, &str, S); 4] = [
-    (SortField::Name, "view.sort.name", S::MenuSortName),
-    (SortField::Origin, "view.sort.origin", S::MenuSortOrigin),
-    (SortField::Modified, "view.sort.modified", S::MenuSortDeleted),
-    (SortField::Size, "view.sort.size", S::MenuSortSize),
-];
 
 const FOLDERS: [(Folders, &str, S); 3] = [
     (Folders::First, "view.sort.folders_first", S::MenuSortFoldersFirst),
@@ -437,19 +406,7 @@ impl App {
         m.action("view.zoom_out", S::MenuSmallerItems.t());
         m.separator();
         m.check("view.thumbnails", S::MenuShowThumbnails.t(), self.prefs.thumbnails);
-        m.check("view.auto_sizes", S::ToolbarFlyoutFolderSizes.t(), self.prefs.auto_sizes);
-    }
-
-    fn sort_entries(&self, m: &mut Menu) {
-        let t = self.tab();
-        let sort = t.view_spec.sort;
-        let computer = t.view_loc.path().kind() == PathKind::Computer;
-        m.choices(if t.view_loc.is_recycle_bin() { &BIN_SORTS[..] } else if computer { &COMPUTER_SORTS[..] } else { &SORTS[..] }, sort.field);
-        m.separator();
-        m.radio("view.sort.ascending", S::MenuSortAscending.t(), String::new(), !sort.descending);
-        m.radio("view.sort.descending", S::MenuSortDescending.t(), String::new(), sort.descending);
-        m.separator();
-        m.choices(&FOLDERS, sort.folders);
+        m.check("view.auto_sizes", S::MenuShowFolderSizes.t(), self.prefs.auto_sizes);
     }
 
     fn group_entries(&self, m: &mut Menu) {
@@ -466,60 +423,6 @@ impl App {
         for (k, tpl) in self.nav.sidebar.places.templates.iter().enumerate() {
             m.command(Cmd::NewItem(k + 2), &tpl.label, String::new(), false);
         }
-    }
-
-    fn select_entries(&self, m: &mut Menu) {
-        m.action("select.all", S::MenuSelectAll.t());
-        m.action("select.invert", S::MenuInvertSelection.t());
-        m.action("select.none", S::MenuClearSelection.t());
-    }
-
-    fn tool_entries(&self, m: &mut Menu, tool: ToolMenu) {
-        match tool {
-            ToolMenu::New => self.new_entries(m),
-            ToolMenu::Select => self.select_entries(m),
-            ToolMenu::Sort => self.sort_entries(m),
-            ToolMenu::Group => self.group_entries(m),
-            ToolMenu::Layout => self.layout_entries(m),
-            ToolMenu::Extract if self.archive_view().is_some() => {
-                m.action("archive.extract", S::MenuExtractDialog.t());
-                m.action("archive.extract_here", S::MenuExtractNextToArchive.t());
-            }
-            ToolMenu::Extract => {
-                m.action("archive.extract", S::MenuExtractFiles.t());
-                m.action("archive.extract_here", S::MenuExtractHere.t());
-                m.action("archive.smart", S::MenuSmartExtract.t());
-                m.action("archive.extract_folder", S::MenuExtractToNamedFolder.t());
-                if self.selected_archives().len() == 1 {
-                    m.action("archive.open", S::MenuOpenAsFolder.t());
-                }
-            }
-        }
-    }
-
-    pub(super) fn build_tool_menu(&mut self, tool: ToolMenu) -> Vec<MenuItem> {
-        self.collect(|a, m| a.tool_entries(m, tool))
-    }
-
-    pub(super) fn build_overflow_menu(&mut self, items: &[Overflow]) -> Vec<MenuItem> {
-        self.collect(|a, m| {
-            for item in items {
-                match *item {
-                    Overflow::Action(id, label) => m.action(id, label),
-                    Overflow::Menu(tool, label) => m.submenu(label, |m| a.tool_entries(m, tool)),
-                    Overflow::Separator => m.separator(),
-                }
-            }
-        })
-    }
-
-    pub(super) fn build_toolbar_menu(&mut self) -> Vec<MenuItem> {
-        self.collect(|_, m| {
-            m.action("toolbar.customize", S::MenuCustomizeToolbar.t());
-            m.action("toolbar.reset", S::MenuResetToolbar.t());
-            m.separator();
-            m.action("toolbar.toggle", S::MenuHideToolbar.t());
-        })
     }
 
     fn item_menu(&self, m: &mut Menu) {

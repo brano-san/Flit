@@ -39,7 +39,6 @@ mod tags;
 mod panels;
 mod describe;
 mod keymap;
-mod toolbar;
 mod popup;
 mod context;
 pub mod options;
@@ -68,7 +67,6 @@ pub use menu::{Mark, MenuItem};
 pub use popup::{MenuOutcome, MenuView};
 pub use context::MenuKind;
 pub use tab::Tab;
-pub use toolbar::{Show, ToolContext, ToolItem, ToolbarState, CONTEXTS};
 pub use address::Typed;
 pub use tabbar::{MovedTab, Startup, WindowSession};
 pub use settings::{ConfirmDelete, Doc, Page, Setting, Value, SETTINGS};
@@ -341,6 +339,7 @@ pub enum Effect {
     Pinned(Vec<Location>),
     PinnedFiles(Vec<Location>),
     PinFolders(Vec<FsPath>),
+    CheckPlaces(Vec<FsPath>),
     Library(crate::library::LibraryOp),
     RefreshPlaces,
     Search(SearchRequest),
@@ -419,7 +418,6 @@ enum Focus {
     Sidebar,
     TabBar,
     Nav,
-    Toolbar,
     Preview,
 }
 
@@ -440,7 +438,6 @@ enum Hit {
     Group(usize),
     Pane(usize, Option<usize>),
     Preview(preview_pane::PaneHit),
-    Tool(toolbar::ToolHit),
     ListEmpty,
     Track,
     Thumb,
@@ -515,7 +512,6 @@ struct Layout {
     new_tab: Rect,
     actions: Rect,
     toolbar: Rect,
-    commands: Rect,
     nav: [Rect; 4],
     view: Rect,
     bookmark: Rect,
@@ -645,10 +641,11 @@ pub struct App {
     archive: archive::ArchiveUi,
     strip: tabbar::Strip,
     addr: address::Address,
+    ghosts: widgets::Ghosts,
+    bar_arrivals: widgets::Arrivals,
     tag_fixes: Vec<(FsPath, u32, Instant)>,
     preview: preview_pane::PreviewPane,
     panels: panels::Panels,
-    toolbar: toolbar::Toolbar,
     keymap: Arc<Keymap>,
     opts: options::Opts,
 }
@@ -754,10 +751,11 @@ impl App {
             archive: archive::ArchiveUi::new(state.archive),
             strip: Default::default(),
             addr: Default::default(),
+            ghosts: Default::default(),
+            bar_arrivals: Default::default(),
             tag_fixes: Vec::new(),
             preview: Default::default(),
             panels: Default::default(),
-            toolbar: Default::default(),
             keymap: keymap::defaults(),
             opts: Default::default(),
         };
@@ -1263,7 +1261,6 @@ impl App {
         let (right, inset) = self.panel_edges(area);
         let ops_button = active && self.ops_button_visible();
         let status_bar = active && (self.prefs.status_bar || self.tab().error.is_some() || self.tab().filter.is_some());
-        let tool_h = self.toolbar_h();
         let (n, cur, actions) = (self.tabs.len(), self.cur, self.tab_actions_button);
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
@@ -1272,7 +1269,8 @@ impl App {
         l.title = Rect::new(area.x, area.y, area.w, s(TAB_H));
         let limit = l.title.right() - if right { 3.0 * s(CAPTION_W) } else { 0.0 };
         let bh = l.title.h - s(8.0);
-        let button = |x: f32| Rect::new(x, area.y + s(4.0), s(30.0), bh);
+        let button_y = area.y + s(4.0) + ((l.title.h - s(4.0) - bh) / 2.0).round();
+        let button = |x: f32| Rect::new(x, button_y, s(30.0), bh);
         l.actions = if actions { button(limit - s(34.0)) } else { Rect::default() };
         let x0 = area.x + inset + s(6.0);
         let end = if actions { l.actions.x } else { limit };
@@ -1285,7 +1283,7 @@ impl App {
             let shown = (first..first + fit).contains(&i);
             let x = x0 + (i.clamp(first, first + fit) - first) as f32 * tw;
             let r = Rect::new(x, area.y + s(4.0), if shown { tw } else { 0.0 }, l.title.h - s(4.0));
-            let c = if shown { Rect::new(r.right() - s(26.0), r.y + (r.h - s(20.0)) / 2.0, s(20.0), s(20.0)) } else { Rect::default() };
+            let c = if shown { Rect::new(r.right() - s(26.0), r.y + ((r.h - s(20.0)) / 2.0).round(), s(20.0), s(20.0)) } else { Rect::default() };
             l.tabs.push((r, c));
         }
         l.new_tab = button(x0 + (n.min(first + fit) - first) as f32 * tw + s(4.0));
@@ -1302,8 +1300,7 @@ impl App {
         l.ops_button = if ops_button { Rect::new(l.more.x - s(NAV_W), l.nav[0].y, s(NAV_W), l.nav[0].h) } else { Rect::default() };
         let edge = if ops_button { l.ops_button.x } else { l.more.x };
         l.address = Rect::new(ax, l.toolbar.y + s(5.0), (edge - s(9.0) - ax).max(s(40.0)), s(TOOL_H - 10.0));
-        l.commands = Rect::new(area.x, l.toolbar.bottom(), area.w, tool_h);
-        l.header = Rect::new(area.x, l.commands.bottom(), area.w, s(HEADER_H));
+        l.header = Rect::new(area.x, l.toolbar.bottom(), area.w, s(HEADER_H));
         let status_h = if status_bar { s(STATUS_H) } else { 0.0 };
         l.status = Rect::new(area.x, area.bottom() - status_h, area.w, status_h);
         l.bottom = l.status.y;
@@ -1316,7 +1313,7 @@ impl App {
             self.layout_preview();
         }
         let l = &self.layout;
-        let content = Rect::new(l.header.x, l.commands.bottom(), l.header.w, (l.bottom - l.commands.bottom()).max(0.0));
+        let content = Rect::new(l.header.x, l.toolbar.bottom(), l.header.w, (l.bottom - l.toolbar.bottom()).max(0.0));
         self.layout_pane(content);
     }
 
@@ -1368,10 +1365,10 @@ impl App {
     }
 
     fn hit(&self, x: f32, y: f32) -> Hit {
-        if let Some(h) = self.jobs_hit(x, y).or_else(|| self.palette_hit(x, y)).or_else(|| self.settings_hit(x, y)).or_else(|| self.flyout_hit(x, y)) {
+        if let Some(h) = self.jobs_hit(x, y).or_else(|| self.palette_hit(x, y)).or_else(|| self.settings_hit(x, y)) {
             return h;
         }
-        if let Some(h) = self.chrome_hit(x, y).or_else(|| self.nav_hit(x, y)).or_else(|| self.preview_hit(x, y)).or_else(|| self.toolbar_hit(x, y)).or_else(|| self.sep_hit(x, y)) {
+        if let Some(h) = self.chrome_hit(x, y).or_else(|| self.nav_hit(x, y)).or_else(|| self.preview_hit(x, y)).or_else(|| self.sep_hit(x, y)) {
             return h;
         }
         let l = &self.layout;
@@ -1480,6 +1477,9 @@ impl App {
             Event::A11yFocus(id) => self.a11y_focus(*id),
             Event::A11ySelect(id) => self.a11y_select(*id, now),
             Event::Focus(f) => {
+                if *f && !self.active {
+                    self.check_places();
+                }
                 self.active = *f;
                 self.mods = Mods::default();
                 self.focused_at = f.then_some(now);
@@ -1552,7 +1552,7 @@ impl App {
             Event::CloseRequested => self.effects.push(Effect::Window(WindowCmd::Close)),
             Event::ShellVerb(verb) => self.shell_verb(verb),
             Event::MenuCommand(k) => self.menu_command(*k, now),
-            Event::ShowMenu { .. } => {}
+            Event::ShowMenu { .. } | Event::ShellItems { .. } => {}
             Event::DevicesChanged => self.effects.push(Effect::RefreshPlaces),
             Event::Timer => {
                 self.timer_at = None;
@@ -1578,7 +1578,7 @@ impl App {
     fn mouse_move(&mut self, x: f32, y: f32, now: Instant) {
         self.strip_pointer(x, y);
         self.settings_tip(x, y);
-        if self.toolbar_mouse_move(x) || self.autoscroll_move(self.along_of(x, y)) || self.ops_mouse_move(x, y) || self.marquee_move(x, y) {
+        if self.autoscroll_move(self.along_of(x, y)) || self.ops_mouse_move(x, y) || self.marquee_move(x, y) {
             return;
         }
         match self.drag {
@@ -1632,6 +1632,7 @@ impl App {
 
     fn mouse_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8, now: Instant) {
         self.dirty = true;
+        self.nav.sidebar.dragging_out = false;
         if self.form_down(x, y, clicks) {
             return;
         }
@@ -1642,7 +1643,7 @@ impl App {
             return;
         }
         let h = self.hit(x, y);
-        if self.nav_mouse_down(h, (x, y), button, clicks, now) || self.toolbar_mouse_down(h, x, button) {
+        if self.nav_mouse_down(h, (x, y), button, clicks, now) {
             return;
         }
         match (button, h) {
@@ -1737,7 +1738,7 @@ impl App {
                 return self.dock_tab(z.dock, self.mods.ctrl, now);
             }
         }
-        if self.toolbar_mouse_up(x, y, button) || button != MouseButton::Left || was != Drag::None {
+        if button != MouseButton::Left || was != Drag::None {
             return;
         }
         let h = self.hit(x, y);
@@ -1798,7 +1799,6 @@ impl App {
             Hit::PaletteKeys(i) => self.palette_shortcuts(i),
             Hit::PaletteClose => self.close_palette(),
             Hit::PaletteDescribe => self.toggle_descriptions(),
-            Hit::Tool(t) => self.toolbar_click(t, now),
             Hit::TabActions => self.open_tab_search(),
             Hit::Eject => self.eject(),
             Hit::Settings(s) => self.settings_click(s, x, y),
@@ -1870,7 +1870,7 @@ impl App {
 
     fn key(&mut self, key: Key, m: Mods, now: Instant) {
         self.dirty = true;
-        if self.toolbar_key(key) || self.jobs_key(key, m) || self.settings_key(key, m) || self.ops_key(key, m) || self.strip_key(key) || self.inspector_key(key, m) {
+        if self.jobs_key(key, m) || self.settings_key(key, m) || self.ops_key(key, m) || self.strip_key(key) || self.inspector_key(key, m) {
             return;
         }
         if self.focus_key(key, m, now) {
@@ -1946,6 +1946,8 @@ impl App {
         animating |= self.scroll_step(dt);
         animating |= self.glide_overlays(dt);
         animating |= self.step_parked(dt);
+        animating |= self.step_sidebar(now);
+        animating |= self.step_split(now);
         self.layout();
         self.sync_preview(now);
 
@@ -1974,7 +1976,6 @@ impl App {
                 self.draw_chrome(g, th);
                 self.draw_sidebar(g, palette.area(Area::Sidebar));
                 self.draw_kb_focus(g, th);
-                self.draw_toolbar_popups(g, th);
             }
             self.draw_settings(g, th);
             if !self.search.active {
@@ -1984,6 +1985,7 @@ impl App {
             self.draw_jobs(g, th);
             self.draw_confirm(g, th);
             self.draw_own_menu(g, th);
+            animating |= self.fade_ghosts(g, now);
             self.draw_tooltip(g, th);
             self.draw_quick_tip(g, th);
             if !g.atlas_reset {
@@ -2025,8 +2027,16 @@ impl App {
         let m = g.metrics(font);
         let close_font = self.icon_font(8.0);
         let drop = self.drop_spot();
+        let now = self.last_frame.unwrap_or_else(Instant::now);
+        let ids: Vec<TabId> = self.tabs.iter().map(|t| t.id).collect();
+        if self.strip.arrivals(&ids, self.animations, now) {
+            self.motion = true;
+        }
+        let l = &self.layout;
+        let mut new_tab_dx = 0.0;
         let mut requests: Vec<IconRequest> = Vec::new();
         for (i, &(r, c)) in l.tabs.iter().enumerate().filter(|(_, (r, _))| r.w > 0.0) {
+            let from = g.dl.instances.len();
             let active = i == self.cur;
             let hovered = matches!(self.hover, Hit::Tab(k) | Hit::TabClose(k) if k == i);
             let accented = self.menu_open_from(Hit::Tab(i)) || (active && self.docking.is_some());
@@ -2056,7 +2066,15 @@ impl App {
                 let state = widgets::Button::of(self.hover == Hit::TabClose(i), false, true);
                 widgets::Paint::new(g, t, self.scale).icon_button(c, G_CLOSE, close_font, state, if accented { color } else { t.text_dim });
             }
+            let shown = self.strip.arrival(self.tabs[i].id, now);
+            if shown < 1.0 {
+                g.dl.grow(from, shown, (r.x, r.y + r.h / 2.0), 0.6);
+                if i + 1 == self.tabs.len() {
+                    new_tab_dx = -(1.0 - shown) * r.w;
+                }
+            }
         }
+        let new_tab_from = g.dl.instances.len();
         let mut w = widgets::Paint::new(g, t, self.scale);
         if drop == Some(Spot::NewTab) {
             w.g.dl.round_rect(l.new_tab, t.teal, self.s(4.0));
@@ -2064,6 +2082,7 @@ impl App {
         } else {
             w.icon_button(l.new_tab, G_ADD, self.icon_font(10.0), widgets::Button::of(self.hover == Hit::NewTab, false, true), t.text_dim);
         }
+        w.g.dl.shift(new_tab_from, new_tab_dx.round(), 0.0);
         if l.actions.w > 0.0 {
             let state = widgets::Button::of(self.hover == Hit::TabActions, self.nav.palette.as_ref().is_some_and(|p| p.pick == palette::Pick::Tabs), true);
             w.icon_button(l.actions, tabbar::G_TAB_ACTIONS, self.icon_font(12.0), state, t.text_dim);
@@ -2090,7 +2109,6 @@ impl App {
         }
         self.draw_title(g, th);
         self.draw_toolbar(g, palette.area(Area::Toolbar));
-        self.draw_toolbar_row(g, palette.area(Area::Toolbar));
         if active && self.layout.status.h > 0.0 {
             self.draw_status(g, arena, th);
         }
@@ -2117,8 +2135,7 @@ impl App {
         let view = widgets::Button::of(self.hover == Hit::ViewMode, self.menu_open_from(Hit::ViewMode), true);
         w.icon_button(l.view.inset(self.s(2.0), 0.0), details::view_mode_glyph(self.view_mode()), icons, view, t.text);
         let marked = self.nav.sidebar.is_pinned(self.current_location());
-        let bookmark = widgets::Button::of(self.hover == Hit::Bookmark, marked, true);
-        w.icon_button(l.bookmark.inset(self.s(2.0), 0.0), sidebar::G_PIN, icons, bookmark, if marked { t.accent } else { t.text_dim });
+        w.toggle_button(l.bookmark.inset(self.s(2.0), 0.0), sidebar::G_PIN, icons, marked, self.hover == Hit::Bookmark);
         let more = widgets::Button::of(self.hover == Hit::PanelMenu, self.menu_open_from(Hit::PanelMenu), true);
         w.icon_button(l.more.inset(self.s(2.0), 0.0), G_MORE, icons, more, t.text);
         let address = *self.look.palette.area(Area::Address);

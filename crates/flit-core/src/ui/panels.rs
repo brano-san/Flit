@@ -78,11 +78,27 @@ pub(super) struct Panels {
     pub left: f32,
     inset: f32,
     hover: Option<(u32, Hit)>,
+    pub growing: Option<(u32, Instant)>,
+}
+
+pub(super) const SPLIT: std::time::Duration = std::time::Duration::from_millis(150);
+
+fn grown(root: &Node, id: u32, k: f32) -> Node {
+    let mut root = root.clone();
+    let mut path = Vec::new();
+    if path_of(&root, id, &mut path) {
+        if let Some((&at, parent)) = path.split_last() {
+            if let Node::Group { kids, .. } = node_mut(&mut root, parent) {
+                kids[at].1 *= k.max(0.02);
+            }
+        }
+    }
+    root
 }
 
 impl Default for Panels {
     fn default() -> Self {
-        Self { list: vec![Panel::default()], root: Node::Leaf(0), here: 0, active: 0, next: 1, seps: Vec::new(), caption: Default::default(), menu: Rect::default(), quick: Rect::default(), left: 0.0, inset: 0.0, hover: None }
+        Self { list: vec![Panel::default()], root: Node::Leaf(0), here: 0, active: 0, next: 1, seps: Vec::new(), caption: Default::default(), menu: Rect::default(), quick: Rect::default(), left: 0.0, inset: 0.0, hover: None, growing: None }
     }
 }
 
@@ -347,6 +363,13 @@ impl App {
         }
     }
 
+    pub(super) fn step_split(&mut self, now: Instant) -> bool {
+        if self.panels.growing.is_some_and(|(_, since)| now.saturating_duration_since(since) >= SPLIT) {
+            self.panels.growing = None;
+        }
+        self.panels.growing.is_some()
+    }
+
     pub(super) fn step_parked(&mut self, dt: f32) -> bool {
         if self.search.active {
             return false;
@@ -400,7 +423,12 @@ impl App {
         if self.search.active {
             rects.push((self.panels.active, area));
         } else {
-            place(&self.panels.root, area, self.s(1.0).max(1.0), &mut Vec::new(), &mut rects, &mut seps);
+            let now = self.last_frame.unwrap_or_else(Instant::now);
+            let root = match self.panels.growing {
+                Some((id, since)) => grown(&self.panels.root, id, super::widgets::eased(since, now, SPLIT)),
+                None => self.panels.root.clone(),
+            };
+            place(&root, area, self.s(1.0).max(1.0), &mut Vec::new(), &mut rects, &mut seps);
         }
         self.panels.seps = seps;
         for p in &mut self.panels.list {
@@ -584,6 +612,7 @@ impl App {
         self.panels.next += 1;
         self.panels.list.push(Panel { id, tabs: vec![tab], ..Default::default() });
         insert(&mut self.panels.root, self.panels.active, id, down, false);
+        self.panels.growing = self.animations.then(|| (id, Instant::now()));
         self.strip.rev += 1;
         self.activate_panel(id);
         if self.tab().gen == 0 {

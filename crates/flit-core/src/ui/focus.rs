@@ -1,4 +1,3 @@
-use super::toolbar::ToolHit;
 use super::{App, Focus, Hit};
 use crate::input::{Key, Mods};
 use crate::render::Rect;
@@ -6,7 +5,7 @@ use crate::text::{Gfx, TextBackend};
 use crate::theme::Theme;
 use std::time::Instant;
 
-pub(super) const ORDER: [Focus; 7] = [Focus::TabBar, Focus::Nav, Focus::Address, Focus::Toolbar, Focus::Sidebar, Focus::List, Focus::Preview];
+pub(super) const ORDER: [Focus; 6] = [Focus::TabBar, Focus::Nav, Focus::Address, Focus::Sidebar, Focus::List, Focus::Preview];
 
 impl App {
     pub(super) fn focus_targets(&self, region: Focus) -> Vec<(Hit, Rect)> {
@@ -15,7 +14,6 @@ impl App {
             Focus::TabBar => l.tabs.iter().enumerate().map(|(i, &(r, _))| (Hit::Tab(i), r)).chain([(Hit::NewTab, l.new_tab)]).collect(),
             Focus::Nav => (0..4).map(|i| (Hit::Nav(i), l.nav[i])).chain([(Hit::ViewMode, l.view), (Hit::Bookmark, l.bookmark), (Hit::PanelMenu, l.more)]).collect(),
             Focus::Address => vec![(Hit::Address, l.address)],
-            Focus::Toolbar => self.tool_buttons().into_iter().map(|(h, r, ..)| (Hit::Tool(h), r)).collect(),
             Focus::Sidebar => self.nav.sidebar.rects.iter().enumerate().map(|(i, &r)| (Hit::Side(i), r)).collect(),
             Focus::List => vec![(Hit::ListEmpty, l.list)],
             Focus::Preview => vec![(Hit::None, self.preview_area())],
@@ -63,7 +61,7 @@ impl App {
             self.cycle_focus(m.shift);
             return true;
         }
-        if !matches!(self.focus, Focus::TabBar | Focus::Nav | Focus::Toolbar | Focus::Preview) || m.ctrl || m.alt {
+        if !matches!(self.focus, Focus::TabBar | Focus::Nav | Focus::Preview) || m.ctrl || m.alt {
             return false;
         }
         if self.focus == Focus::Preview {
@@ -110,11 +108,6 @@ impl App {
                 }
             }
             Hit::Address => self.enter_focus(Focus::Address),
-            Hit::Tool(ToolHit::Button(_) | ToolHit::More) => {
-                if let Hit::Tool(t) = h {
-                    self.toolbar_click(t, now);
-                }
-            }
             _ if self.jobs_click(h, now) => {}
             _ => {
                 let r = self.focus_targets(self.focus).into_iter().find(|&(k, _)| k == h).map_or(Rect::default(), |(_, r)| r);
@@ -125,7 +118,7 @@ impl App {
     }
 
     pub(super) fn kb_rect(&self) -> Option<Rect> {
-        if !self.active || !matches!(self.focus, Focus::TabBar | Focus::Nav | Focus::Toolbar | Focus::Preview) {
+        if !self.active || !matches!(self.focus, Focus::TabBar | Focus::Nav | Focus::Preview) {
             return None;
         }
         self.focus_targets(self.focus).get(self.kb).map(|&(_, r)| r).filter(|r| r.w > 0.0)

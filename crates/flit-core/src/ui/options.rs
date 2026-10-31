@@ -190,14 +190,14 @@ impl App {
         self.button_menu(Hit::Menu, r.x, r.bottom(), menu);
     }
 
-    pub(super) fn quick_checked(&self, id: &str) -> Option<bool> {
+    pub(super) fn quick_checked(&self, id: &str) -> Option<(bool, S)> {
         let t = self.tab();
         Some(match id {
-            "subfolders.toggle" => t.subfolders,
-            "inspector.toggle" => self.preview.state.visible,
-            "view.extensions" => self.prefs.show_extensions,
-            "view.hidden" => t.view_spec.show_hidden,
-            "view.system" => self.prefs.show_system,
+            "subfolders.toggle" => (t.subfolders, S::MenuIncludeSubfolders),
+            "inspector.toggle" => (self.preview.state.visible, S::MenuShowInspector),
+            "view.extensions" => (self.prefs.show_extensions, S::MenuShowExtensions),
+            "view.hidden" => (t.view_spec.show_hidden, S::MenuShowHidden),
+            "view.system" => (self.prefs.show_system, S::MenuShowSystem),
             _ => return None,
         })
     }
@@ -221,7 +221,7 @@ impl App {
                 last = Some(section);
                 let keys = m.keys.all_text(act.id);
                 match check {
-                    Some(on) => m.entry(Cmd::Action(act.id), act.title.t(), keys, Mark::Check, on, false),
+                    Some((on, label)) => m.entry(Cmd::Action(act.id), label.t(), keys, Mark::Check, on, false),
                     None => m.action(act.id, act.title.t()),
                 }
             }

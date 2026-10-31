@@ -13,7 +13,7 @@ windows = "Fenster und Tabs"
 
 [title]
 font = "Schriftart"
-font_size = "Schriftgröße"
+scale = "Skalierung der Oberfläche"
 inspector_font = "Schriftart des Inspektors"
 inspector_font_size = "Schriftgröße des Inspektors"
 spacing = "Abstand"
@@ -53,7 +53,7 @@ pins_background = "Angeheftete Hintergrundbefehle"
 
 [help]
 font = "Name der installierten Systemschrift für die gesamte Oberfläche."
-font_size = "Bestimmt die Skalierung der gesamten Oberfläche."
+scale = "Bestimmt die Skalierung der gesamten Oberfläche."
 inspector_font = "Installierte Systemschrift für die Textvorschau im Inspektor."
 inspector_font_size = "Schriftgröße für Textinhalte im Inspektor."
 spacing = "Legt den Abstand zwischen den Elementen einer Liste fest."

@@ -171,7 +171,7 @@ fn core_icon_code_points() -> Vec<char> {
             files.extend(std::fs::read_dir(&p).unwrap().map(|e| e.unwrap().path()));
             continue;
         }
-        let text = std::fs::read_to_string(&p).unwrap();
+        let text = std::fs::read_to_string(&p).unwrap().lines().filter(|l| !l.trim_start().starts_with("#[cfg(windows)]")).collect::<Vec<_>>().join("\n");
         for (i, _) in text.match_indices("\\u{E") {
             let hex: String = text[i + 3..].chars().take_while(|c| c.is_ascii_hexdigit()).collect();
             if hex.len() == 4 {
@@ -188,7 +188,7 @@ fn core_icon_code_points() -> Vec<char> {
 fn every_icon_the_core_draws_resolves_to_a_centered_glyph() {
     let mut t = LinuxText::new();
     let points = core_icon_code_points();
-    assert!(points.len() >= 60, "{points:?}");
+    assert!(points.len() >= 50, "{points:?}");
     let mapped: Vec<char> = fonts::subset::icon_names().iter().map(|&(cp, _)| char::from_u32(cp).unwrap()).collect();
     assert_eq!(points, mapped, "the bundled icon font and the core agree");
     let style = FontStyle::new(FontFamily::Icons, 16.0, false);

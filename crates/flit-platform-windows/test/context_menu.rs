@@ -78,7 +78,7 @@ fn count(items: &[MenuItem]) -> usize {
 }
 
 #[test]
-fn the_own_menu_lists_flit_items_first_then_the_shell_with_one_id_per_command() {
+fn shell_items_carry_one_shell_id_per_command() {
     crate::com_sta();
     let t = TempDir::new("own");
     std::fs::write(t.0.join("a.txt"), "x").unwrap();
@@ -86,15 +86,55 @@ fn the_own_menu_lists_flit_items_first_then_the_shell_with_one_id_per_command() 
     unsafe {
         let hmenu = CreatePopupMenu().unwrap();
         let _ = fill(HWND::default(), &m, hmenu).unwrap();
-        let (items, ids) = own_items(&m, hmenu);
-        assert_eq!(items[..4], m.menu[..]);
-        assert_eq!(items[4], MenuItem::Separator);
-        assert_eq!(ids[..3], [FLIT_FIRST, FLIT_FIRST + 1, FLIT_FIRST + 2]);
+        let (items, ids) = shell_items(hmenu);
+        assert!(!matches!(items.first(), None | Some(MenuItem::Separator)), "{items:?}");
         assert_eq!(count(&items), ids.len());
-        assert!(ids[3..].iter().all(|&id| id == 0 || (FIRST_ID..=LAST_ID).contains(&id)), "{ids:?}");
+        assert!(ids.iter().all(|&id| id == 0 || (FIRST_ID..=LAST_ID).contains(&id)), "{ids:?}");
         assert!(matches!(items.last(), Some(MenuItem::Submenu { label, .. }) if label == "Show more options"), "{items:?}");
         let _ = DestroyMenu(hmenu);
     }
+}
+
+fn wait_done(owner: isize) -> Vec<(Option<u64>, Event)> {
+    let started = Instant::now();
+    loop {
+        let mut done = DONE.lock().unwrap();
+        let (mine, rest): (Vec<_>, Vec<_>) = done.drain(..).partition(|(h, _, _)| *h == owner);
+        *done = rest;
+        drop(done);
+        if !mine.is_empty() || started.elapsed() > Duration::from_secs(20) {
+            return mine.into_iter().map(|(_, g, e)| (g, e)).collect();
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn the_worker_thread_answers_only_the_latest_menu() {
+    let t = TempDir::new("worker");
+    std::fs::write(t.0.join("a.txt"), "x").unwrap();
+    let owner = HWND::default();
+    let ask = |m: ShellMenu| {
+        let gen = CURRENT.fetch_add(1, Ordering::SeqCst) + 1;
+        send_job(Job::Menu { owner: 0, gen, menu: m, pt: POINT::default() });
+        gen
+    };
+    let stale = ask(flit_menu(&t, true));
+    let latest = ask(flit_menu(&t, false));
+    let done = wait_done(0);
+    assert_ne!(stale, latest);
+    let [(gen, ev)] = &done[..] else { panic!("only the latest menu is answered: {done:?}") };
+    assert_eq!(*gen, Some(latest));
+    let Event::ShellItems { items, shell } = ev else { panic!("{ev:?}") };
+    assert_eq!(count(items), shell.len());
+    assert!(matches!(items.last(), Some(MenuItem::Submenu { label, .. }) if label == "Show more options"), "{items:?}");
+    let seen = std::cell::RefCell::new(Vec::new());
+    let send = |ev: Event| seen.borrow_mut().push(ev);
+    run(owner, ShellUi::Done(Some(latest), Event::Timer), &send);
+    pick_now(owner, None);
+    run(owner, ShellUi::Done(Some(latest), Event::Timer), &send);
+    run(owner, ShellUi::Done(None, Event::ShellVerb("copy".into())), &send);
+    assert_eq!(*seen.borrow(), [Event::Timer, Event::ShellVerb("copy".into())], "answers for a closed menu are dropped");
 }
 
 fn fake(verb: &str) -> ShellItem<'_> {
@@ -143,7 +183,7 @@ fn shell_items_from_programs_are_kept_and_duplicates_of_flit_and_windows_items_a
 }
 
 #[test]
-fn flit_items_come_first_then_program_items_then_the_rest_of_the_shell_in_a_submenu() {
+fn program_items_come_first_then_the_rest_of_the_shell_in_a_submenu() {
     crate::com_sta();
     let t = TempDir::new("lifted");
     std::fs::write(t.0.join("a.txt"), "x").unwrap();
@@ -155,14 +195,11 @@ fn flit_items_come_first_then_program_items_then_the_rest_of_the_shell_in_a_subm
             let hmenu = CreatePopupMenu().unwrap();
             let menu = fill(HWND::default(), &m, hmenu).unwrap().menu.expect("the shell menu is asked before the menu shows");
             let all = texts(hmenu);
-            assert_eq!(all[..5], ["Open\tEnter", "-", "Sort by", "R&&D", "-"], "{all:?}");
+            assert_ne!(all.first().map(String::as_str), Some("-"), "{all:?}");
             assert_eq!(all.last().map(String::as_str), Some("Show more options"));
             assert!(!all.windows(2).any(|w| w[0] == "-" && w[1] == "-"), "{all:?}");
-            let sort = GetSubMenu(hmenu, 2);
-            assert_eq!((GetMenuItemID(hmenu, 0), GetMenuItemID(sort, 0), GetMenuItemID(hmenu, 3)), (FLIT_FIRST, FLIT_FIRST + 1, FLIT_FIRST + 2));
-            assert_ne!(GetMenuState(sort, 0, MF_BYPOSITION) & MF_CHECKED.0, 0);
             let count = GetMenuItemCount(Some(hmenu));
-            for i in 5..count - 1 {
+            for i in 0..count - 1 {
                 if is_separator(hmenu, i) {
                     continue;
                 }
@@ -182,16 +219,15 @@ fn flit_items_come_first_then_program_items_then_the_rest_of_the_shell_in_a_subm
 }
 
 #[test]
-fn inline_shell_items_follow_flit_items_without_duplicates() {
+fn inline_shell_items_come_without_duplicates() {
     crate::com_sta();
     let t = TempDir::new("inline");
     std::fs::write(t.0.join("a.txt"), "x").unwrap();
     unsafe {
         let hmenu = CreatePopupMenu().unwrap();
-        let menu = fill(HWND::default(), &flit_menu(&t, true), hmenu).unwrap().menu.expect("inline menus query the shell up front");
+        let menu = fill(HWND::default(), &flit_menu(&t, true), hmenu).unwrap().menu.expect("inline menus query the shell");
         let all = texts(hmenu);
-        assert_eq!(all[..5], ["Open\tEnter", "-", "Sort by", "R&&D", "-"]);
-        assert!(all.len() > 5 && all.last().unwrap() != "-" && !all.windows(2).any(|w| w[0] == "-" && w[1] == "-"), "{all:?}");
+        assert!(!all.is_empty() && all[0] != "-" && all.last().unwrap() != "-" && !all.windows(2).any(|w| w[0] == "-" && w[1] == "-"), "{all:?}");
         let verbs = shell_verbs(&menu, hmenu);
         assert!(!verbs.is_empty() && !verbs.iter().any(|v| COVERED.contains(&v.as_str())), "{verbs:?}");
         let _ = DestroyMenu(hmenu);

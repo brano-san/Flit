@@ -138,7 +138,7 @@ enum Done {
 }
 
 fn tools(app: &App) -> Tools {
-    Tools { toolbar: app.toolbar_state(), searches: app.search_history().to_vec(), streams: false }
+    Tools::new(app.search_history().to_vec())
 }
 
 fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> Result<(), PlatformError> {
@@ -330,7 +330,6 @@ impl<P: Platform> Handler<P> {
         app.set_nav_state(self.saved.nav.clone());
         app.set_nav_prefs(self.saved.side.clone());
         app.set_pane_state(self.saved.pane);
-        app.set_toolbar_state(self.saved.tools.toolbar.clone());
         app.set_search_history(self.saved.tools.searches.clone());
         app.set_places(self.places.current());
         app.share_typed(self.typed.clone());
@@ -588,7 +587,7 @@ impl<P: Platform> Handler<P> {
                 Effect::SetClipboardFiles { paths, cut } => window.set_clipboard_files(&paths, cut),
                 Effect::ShellMenu(menu) if !menu.shell && menu.items.is_empty() => {
                     if let Some(st) = self.windows.get_mut(&id) {
-                        st.app.on_event(&Event::ShowMenu { items: menu.menu, x: menu.x, y: menu.y, launches: Vec::new(), kind: menu.kind, shell: Vec::new() }, Instant::now());
+                        st.app.on_event(&Event::ShowMenu { items: menu.menu, x: menu.x, y: menu.y, launches: Vec::new(), kind: menu.kind, shell: Vec::new(), pending: false }, Instant::now());
                     }
                     window.request_redraw();
                 }
@@ -613,6 +612,7 @@ impl<P: Platform> Handler<P> {
                 }
                 Effect::RefreshPlaces => self.places.refresh(),
                 Effect::PinFolders(paths) => self.places.pin(paths),
+                Effect::CheckPlaces(paths) => self.places.check(paths),
                 Effect::Library(op) => self.places.library(op),
                 Effect::Timer(d) => window.set_timer(d.as_millis().clamp(1, u32::MAX as u128) as u32),
                 Effect::Tags(req) => self.tags.submit(Some(id), req),
@@ -842,6 +842,11 @@ impl<P: Platform> Handler<P> {
                     tracing::warn!("library: {message}");
                     if let Some(st) = self.active.and_then(|id| self.windows.get_mut(&id)) {
                         st.app.library_failed(&message);
+                    }
+                }
+                Reply::Missing(gone) => {
+                    for st in self.windows.values_mut() {
+                        st.app.forget_missing(&gone);
                     }
                 }
                 Reply::Pin(folders, files) => {

@@ -81,11 +81,11 @@ fn send(job: Job) {
     }
 }
 
-fn hinst() -> HINSTANCE {
+pub(crate) fn hinst() -> HINSTANCE {
     unsafe { GetModuleHandleW(None).unwrap_or_default().into() }
 }
 
-fn register(class: PCWSTR, proc: WNDPROC) {
+pub(crate) fn register(class: PCWSTR, proc: WNDPROC) {
     unsafe {
         let wc = WNDCLASSEXW { cbSize: size_of::<WNDCLASSEXW>() as u32, lpfnWndProc: proc, hInstance: hinst(), lpszClassName: class, hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(), ..Default::default() };
         RegisterClassExW(&wc);

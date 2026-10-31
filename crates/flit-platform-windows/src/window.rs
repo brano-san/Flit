@@ -391,7 +391,7 @@ impl Window for Win32Window {
     }
 
     fn shell_pick(&self, cmd: Option<u32>) {
-        crate::context_menu::request(self.hwnd(), ShellUi::Pick(cmd));
+        crate::context_menu::pick_now(self.hwnd(), cmd);
     }
 
     fn properties(&self, paths: Vec<FsPath>) {
@@ -985,9 +985,6 @@ unsafe extern "system" fn wndproc<H: WindowHandler<Win32>>(hwnd: HWND, msg: u32,
 
 unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
     let w = &s.window;
-    if let Some(r) = crate::context_menu::forward(msg, wp, lp) {
-        return Some(r);
-    }
     let client_xy = || {
         let p = lparam_point(lp);
         (p.x as f32, p.y as f32)

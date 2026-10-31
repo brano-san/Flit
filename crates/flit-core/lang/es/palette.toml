@@ -19,7 +19,6 @@ folder_icon = "Enter escribe el icono en el desktop.ini de la carpeta"
 new_library = "Enter crea la biblioteca en la carpeta Bibliotecas"
 library = "No hay carpetas coincidentes"
 library_add = "Enter agrega la carpeta a la biblioteca"
-toolbar = "No hay botones coincidentes"
 
 [group]
 quick = "Rápido"

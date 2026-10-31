@@ -19,7 +19,6 @@ folder_icon = "按 Enter 将图标写入文件夹的 desktop.ini"
 new_library = "按 Enter 在库文件夹中创建库"
 library = "没有匹配的文件夹"
 library_add = "按 Enter 将文件夹添加到库"
-toolbar = "没有匹配的按钮"
 
 [group]
 quick = "快捷"

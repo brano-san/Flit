@@ -332,3 +332,19 @@ fn shortcuts_saved_under_old_command_ids_move_to_the_renamed_commands() {
     let out = k.to_json();
     assert!(["sidebar.toggle", "view.pane", "settings.open", "sidebar.compact"].iter().all(|old| out.get(*old).is_none()), "{out}");
 }
+
+#[test]
+fn the_interface_scale_steps_by_ten_percent_and_persists_in_the_settings_file() {
+    let mut a = app();
+    let (lo, hi) = crate::ui::UI_SCALE;
+    assert_eq!((lo, hi), (70, 200));
+    assert!(set(&mut a, "appearance.scale", Value::Number(130)));
+    let text = render(&a.setting_values(), &Map::new(), None);
+    assert!(text.contains("\"appearance.scale\": 130"), "{text}");
+    let mut b = app();
+    b.apply_doc(&parse(&text));
+    assert_eq!(b.ui_scale(), 130);
+    assert!((b.scale - 1.3).abs() < 1e-6);
+    assert_eq!(b.ui_font(13.0).size_q, a.ui_font(13.0).size_q, "glyphs are shaped at the new size, not stretched");
+    assert_eq!(S::OptionsTitleScale.in_lang(crate::i18n::Lang::Ru), "Масштаб интерфейса");
+}

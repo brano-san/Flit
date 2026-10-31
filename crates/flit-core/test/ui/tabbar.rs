@@ -441,3 +441,27 @@ fn dropping_a_tab_on_a_zone_splits_moves_or_copies_it() {
     key(&mut app, Key::Escape, NO);
     assert!(app.docking.is_none() && app.drag == Drag::None);
 }
+
+#[test]
+fn a_tab_close_button_and_the_new_tab_button_share_one_centre_line() {
+    let a = crate::ui::harness::app(&["a.txt"]);
+    let (_, close) = a.layout.tabs[0];
+    let add = a.layout.new_tab;
+    assert!((close.y + close.h / 2.0 - (add.y + add.h / 2.0)).abs() <= 0.5, "{close:?} {add:?}");
+}
+
+#[test]
+fn a_new_tab_slides_in_and_the_strip_settles_without_more_frames() {
+    let mut a = crate::ui::harness::app(&["a.txt"]);
+    let mut g = Gfx::new(crate::text::tests::Mono, 1024);
+    let t0 = Instant::now();
+    assert!(!a.frame(&mut g, t0), "restored tabs do not animate");
+    a.open_new_tab(t0);
+    let t1 = Instant::now();
+    assert!(a.frame(&mut g, t1), "the new tab slides in");
+    assert!(a.strip.arrival(a.tabs[a.tabs.len() - 1].id, t1 + std::time::Duration::from_millis(20)) < 1.0);
+    assert!(!a.frame(&mut g, t1 + std::time::Duration::from_millis(300)));
+    a.animations = false;
+    a.open_new_tab(t1);
+    assert!(!a.frame(&mut g, t1 + std::time::Duration::from_millis(310)), "without Animations it appears at once");
+}

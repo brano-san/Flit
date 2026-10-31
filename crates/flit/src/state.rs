@@ -1,6 +1,6 @@
 use flit_core::archive::Defaults;
 use flit_core::sort::SortField;
-use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavPrefs, NavState, PaneState, Persisted, QuickPrefs, Sizes, ToolbarState, ViewPrefs, EXTRA, MAX_HISTORY, ORDERED};
+use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavPrefs, NavState, PaneState, Persisted, QuickPrefs, Sizes, ViewPrefs, EXTRA, MAX_HISTORY, ORDERED};
 use flit_core::Location;
 use flit_platform::{Placement, Platform};
 use serde::{Deserialize, Serialize};
@@ -113,6 +113,15 @@ fn wide(v: &FolderView) -> Wide {
     (v.columns.extra_widths, v.columns.order)
 }
 
+const FILES_COLUMN_CHOSEN: u8 = 1;
+
+fn files_like_folders(mut v: FolderView) -> FolderView {
+    if v.columns.shown(Column::Files) != v.columns.shown(Column::Folders) {
+        v.columns.toggle(Column::Files);
+    }
+    v
+}
+
 fn with_wide(mut v: FolderView, (widths, order): Wide) -> FolderView {
     (v.columns.extra_widths, v.columns.order) = (widths, order);
     v.sanitized()
@@ -129,14 +138,36 @@ struct LayoutRecord {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct Tools {
-    pub toolbar: ToolbarState,
+    toolbar: RetiredToolbar,
     pub searches: Vec<String>,
     pub streams: bool,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+struct RetiredToolbar {
+    visible: bool,
+    sets: [Vec<RetiredTool>; 3],
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+enum RetiredTool {
+    Button(String, RetiredShow),
+    Separator,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+enum RetiredShow {
+    Icon,
+    Label,
+    Both,
+}
+
 impl Tools {
+    pub fn new(searches: Vec<String>) -> Self {
+        Self { searches, ..Default::default() }
+    }
+
     fn sanitized(mut self) -> Self {
-        self.toolbar = self.toolbar.sanitized();
         self.searches.truncate(MAX_HISTORY);
         self
     }
@@ -239,14 +270,14 @@ impl Saved {
                 }
             }
         }
-        let (mut deep, mut zoom, mut widened) = (Vec::new(), None, None);
+        let (mut deep, mut zoom, mut widened, mut files_chosen) = (Vec::new(), None, None, false);
         let p = &mut saved.persisted;
         (p.view, p.prefs, p.folders) = (r.view, r.prefs, FolderViews::from_entries(r.folders));
         if let Some((archive, tail)) = rest.and_then(|t| postcard::take_from_bytes::<Defaults>(t).ok()) {
             p.archive = archive.sanitized();
             if let Ok((tools, tail)) = postcard::take_from_bytes::<Tools>(tail) {
                 p.prefs.show_streams = tools.streams;
-                saved.tools = tools;
+                saved.tools = Tools { toolbar: RetiredToolbar::default(), ..tools };
                 if let Ok((_, tail)) = postcard::take_from_bytes::<SplitPrefs>(tail) {
                     if let Ok((word, tail)) = postcard::take_from_bytes::<u32>(tail) {
                         p.archive.compression.word = word;
@@ -261,7 +292,10 @@ impl Saved {
                                         zoom = Some(z);
                                         if let Ok((files, tail)) = postcard::take_from_bytes::<Vec<Location>>(tail) {
                                             saved.nav.files = files;
-                                            widened = postcard::take_from_bytes::<WideRecord>(tail).ok().map(|w| w.0);
+                                            if let Ok((w, tail)) = postcard::take_from_bytes::<WideRecord>(tail) {
+                                                widened = Some(w);
+                                                files_chosen = postcard::take_from_bytes::<u8>(tail).is_ok_and(|(v, _)| v >= FILES_COLUMN_CHOSEN);
+                                            }
                                         }
                                     }
                                 }
@@ -287,6 +321,11 @@ impl Saved {
                                     folders.iter_mut().zip(w.folders).for_each(|((_, v), wl)| *v = with_wide(*v, wl));
                                     p.folders = FolderViews::from_entries(folders);
                                 }
+                            }
+                            if !files_chosen {
+                                (p.view, p.prefs.defaults) = (files_like_folders(p.view), files_like_folders(p.prefs.defaults));
+                                let folders = p.folders.entries().into_iter().map(|(k, v)| (k, files_like_folders(v))).collect();
+                                p.folders = FolderViews::from_entries(folders);
                             }
                             p.folders.set_deep(std::mem::take(&mut deep));
                         }
@@ -328,6 +367,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&zooms).ok()?);
         bytes.extend(postcard::to_stdvec(&self.nav.files).ok()?);
         bytes.extend(postcard::to_stdvec(&wides).ok()?);
+        bytes.extend(postcard::to_stdvec(&FILES_COLUMN_CHOSEN).ok()?);
         Some(bytes)
     }
 

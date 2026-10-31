@@ -1,4 +1,4 @@
-use super::widgets::{baseline, Paint};
+use super::widgets::{baseline, Ghost, Paint};
 use super::App;
 use crate::i18n::S;
 use crate::input::{Event, Key, MouseButton};
@@ -110,6 +110,7 @@ impl App {
         p.button(c.buttons[0], &c.yes, font, (c.hot == Some(0)).then_some(yes_fill));
         p.button(c.buttons[1], S::WidgetsCancel.t(), font, (c.hot == Some(1)).then_some(t.teal));
         let (opened, r) = (c.opened, c.rect);
+        self.keep_ghost(g, Ghost::Confirm, from, (r.x + r.w / 2.0, r.y));
         self.pop(g, from, opened, (r.x + r.w / 2.0, r.y));
     }
 }

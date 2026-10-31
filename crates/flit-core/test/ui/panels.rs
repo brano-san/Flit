@@ -26,6 +26,7 @@ fn loc(s: &str) -> Location {
 
 fn app_at(path: &str) -> App {
     let mut app = App::new(Persisted { path: loc(path), ..Default::default() }, Vec::new(), 0, false, 1.0, (1200, 800), t0());
+    app.animations = false;
     app.drain_effects().for_each(drop);
     app
 }
@@ -438,4 +439,22 @@ fn a_tab_moved_out_of_a_panel_with_one_tab_closes_the_panel() {
     assert_eq!(app.panel_count(), 1);
     app.move_tab_to_window();
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::MoveTab { .. })), "the only tab of the window stays");
+}
+
+#[test]
+fn a_split_opens_the_new_panel_with_a_short_slide_and_then_rests() {
+    let mut app = app_at(r"C:\a");
+    app.animations = true;
+    deliver(&mut app, &[("sub", true)]);
+    let mut g = Gfx::new(crate::text::tests::Mono, 1024);
+    let t = Instant::now();
+    app.frame(&mut g, t);
+    key(&mut app, Key::Char('S'), CTRL_SHIFT);
+    assert!(app.frame(&mut g, Instant::now()), "the panes move apart over a few frames");
+    let early = rect(&app, 1).w;
+    let later = Instant::now() + std::time::Duration::from_millis(400);
+    app.frame(&mut g, later);
+    assert!(!app.frame(&mut g, later + std::time::Duration::from_millis(200)), "the loading note that arrived meanwhile has slid in too");
+    let settled = rect(&app, 1).w;
+    assert!(early < settled && (rect(&app, 0).w - settled).abs() <= 2.0, "{early} {settled}");
 }

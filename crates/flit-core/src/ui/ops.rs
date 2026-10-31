@@ -368,6 +368,17 @@ impl App {
         loc.to_windows().ok_or(S::UiOpsFolderNotShell.t())
     }
 
+    pub(super) fn share_selection(&mut self) {
+        let items = self.selected_items();
+        if items.is_empty() {
+            return self.status(S::UiOpsSelectShare.t());
+        }
+        match self.item_paths(&items) {
+            Ok(paths) => self.effects.push(Effect::Share(paths)),
+            Err(e) => self.status(e),
+        }
+    }
+
     pub(super) fn item_paths(&self, items: &[u32]) -> Result<Vec<FsPath>, &'static str> {
         if self.in_bin() {
             return Err(BIN_ONLY.t());
@@ -813,7 +824,7 @@ impl App {
             Pick::Setting(p) => self.setting_input(p, text),
             Pick::Server => self.connect_server(text),
             Pick::SaveLayout => self.save_layout(text),
-            Pick::Tabs | Pick::LoadLayout | Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Encoding(_) | Pick::Toolbar(_) | Pick::GoTo | Pick::Crumb(_) | Pick::Keys(_) => {}
+            Pick::Tabs | Pick::LoadLayout | Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Encoding(_) |Pick::GoTo | Pick::Crumb(_) | Pick::Keys(_) => {}
         }
     }
 
@@ -927,6 +938,9 @@ impl App {
     pub(super) fn op_done(&mut self, tab: TabId, id: OpId, error: Option<String>, report: Option<OpReport>, now: Instant) {
         let cancelled = error.as_deref().is_some_and(super::jobs::cancelled_error);
         self.job_done(id, error.as_deref().filter(|_| !cancelled), cancelled, now);
+        if report.is_some() {
+            self.check_places();
+        }
         let pending = self.ops.pending.iter().position(|p| p.id == id && p.tab == tab).map(|k| self.ops.pending.swap_remove(k));
         let k = self.tabs.iter().position(|t| t.id == tab);
         if let Some(message) = error.as_ref().filter(|_| !cancelled) {
@@ -1431,12 +1445,14 @@ impl App {
                 self.drag_over(*x, *y, *mods, *allowed)
             }
             DragEvent::Leave => {
+                self.nav.sidebar.dragging_out = false;
                 self.ops.dropping = None;
                 drop_effect::NONE
             }
             DragEvent::Drop { x, y, mods, allowed } => {
                 let effect = self.drag_over(*x, *y, *mods, *allowed);
                 let Some(d) = self.ops.dropping.take() else { return drop_effect::NONE };
+                self.nav.sidebar.dragging_out = false;
                 match d.target {
                     Some(Target::Reveal) if effect != drop_effect::NONE => self.on_event(&Event::DroppedFiles(d.paths), now),
                     Some(Target::NewTab) if effect != drop_effect::NONE => {
@@ -1493,6 +1509,7 @@ impl App {
             Hit::ListEmpty | Hit::Group(_) | Hit::Track | Hit::Thumb => here(),
             Hit::Tab(i) | Hit::TabClose(i) => into(self.tabs.get(i)?.location(), Spot::Tab(i)),
             Hit::Crumb(i) => into(&t.crumb(i)?.1, Spot::Crumb(i)),
+            Hit::Side(i) | Hit::SidePin(i) if self.nav.sidebar.dragging_out && self.nav.sidebar.items.get(i).is_some_and(|it| it.section == Section::Bookmarks) => Some(Target::Pin),
             Hit::Side(i) | Hit::SidePin(i) if self.nav.sidebar.items.get(i).is_some_and(|it| it.glyph != super::G_FILE) => into(&self.nav.sidebar.items.get(i)?.loc, Spot::Side(i)),
             Hit::Side(_) | Hit::SidePin(_) => None,
             Hit::NewTab => Some(Target::NewTab),
@@ -1610,7 +1627,7 @@ impl App {
             Target::Run { program, .. } => (S::UiDropOpenWith, name(program)),
             Target::NewTab if d.paths.len() == 1 => (S::UiDropNewTab, name(&d.paths[0])),
             Target::NewTab => (S::UiDropNewTabs, String::new()),
-            Target::Pin => (S::UiDropPin, S::ToolbarButtonSidebar.t().to_owned()),
+            Target::Pin => (S::UiDropPin, S::UiDropSidebar.t().to_owned()),
             Target::Reveal => return None,
         };
         Some((verb.t().to_owned(), target))

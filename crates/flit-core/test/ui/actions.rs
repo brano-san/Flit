@@ -546,3 +546,20 @@ fn open_containing_path_asks_the_provider_and_follows_the_answer() {
     assert_eq!(app.tabs().len(), 2);
     assert_eq!(app.current_location().path().display(), r"D:\real");
 }
+
+#[test]
+fn without_a_command_bar_its_commands_stay_on_keys_and_in_the_palette() {
+    let mut a = crate::ui::harness::app(&["a.txt"]);
+    assert_eq!(a.layout.header.y, a.layout.toolbar.bottom(), "the file list starts right under the navigation row");
+    for id in ["toolbar.toggle", "toolbar.customize", "toolbar.reset"] {
+        assert!(index(id).is_none(), "{id}");
+    }
+    for (id, keys) in [("file.cut", "Ctrl+X"), ("file.copy", "Ctrl+C"), ("file.paste", "Ctrl+V"), ("file.new_folder", "Ctrl+Shift+N")] {
+        assert_eq!(a.keymap.first_text(id).as_deref(), Some(keys), "{id}");
+    }
+    a.open_palette();
+    let ids: Vec<&str> = a.nav.palette.as_ref().unwrap().ids.iter().map(|&i| ACTIONS[i].id).collect();
+    for id in ["file.cut", "file.copy", "file.paste", "file.new_folder", "file.share", "item.properties", "inspector.toggle"] {
+        assert!(ids.contains(&id), "{id} not in the palette");
+    }
+}

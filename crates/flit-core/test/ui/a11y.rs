@@ -10,7 +10,7 @@ fn the_tree_names_regions_and_controls_with_their_bounds() {
     let root = &t.nodes[0];
     assert_eq!(root.role, Role::Window);
     let roles: Vec<Role> = root.children.iter().map(|&k| t.nodes[k].role).collect();
-    assert!(roles.starts_with(&[Role::TabList, Role::ToolBar, Role::ToolBar, Role::ToolBar, Role::Tree, Role::DataGrid]), "{roles:?}");
+    assert!(roles.starts_with(&[Role::TabList, Role::ToolBar, Role::ToolBar, Role::Tree, Role::DataGrid]), "{roles:?}");
     let back = t.by_name(action_title("nav.back")).unwrap();
     assert_eq!(back.role, Role::Button);
     assert_eq!(back.bounds, a.layout.nav[0]);
@@ -24,8 +24,6 @@ fn the_tree_names_regions_and_controls_with_their_bounds() {
     assert!(row.value.contains(S::DetailsColumnSize.t()));
     let header = t.by_name(S::DetailsColumnName.t()).unwrap();
     assert_eq!(header.role, Role::HeaderItem);
-    let paste = t.by_name(S::ToolbarButtonPaste.t()).unwrap();
-    assert_eq!(paste.help, description("file.paste"));
 }
 
 #[test]
@@ -108,17 +106,6 @@ fn each_option_of_a_checkbox_group_is_its_own_node() {
     let after = a.jobs.form.as_ref().unwrap().flags(0);
     assert_eq!(after[1], !before[1]);
     assert_eq!(after[0], before[0]);
-}
-
-#[test]
-fn command_bar_buttons_are_focusable_before_the_first_frame() {
-    let mut a = App::new(crate::ui::Persisted { path: crate::Location::parse("C:\\Work").unwrap(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 600), Instant::now());
-    a.enter_focus(Focus::Toolbar);
-    assert_eq!(a.focus, Focus::Toolbar);
-    let t = a.accessibility();
-    let paste = t.by_name(S::ToolbarButtonPaste.t()).unwrap();
-    assert_eq!(paste.role, Role::Button);
-    assert!(t.focus.is_some_and(|k| t.nodes[t.nodes[k].parent].role == Role::ToolBar));
 }
 
 #[test]

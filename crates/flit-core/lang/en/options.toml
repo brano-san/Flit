@@ -13,7 +13,7 @@ windows = "Windows and Tabs"
 
 [title]
 font = "Font"
-font_size = "Font Size"
+scale = "Interface Scale"
 inspector_font = "Inspector Font"
 inspector_font_size = "Inspector Font Size"
 spacing = "Spacing"
@@ -53,7 +53,7 @@ pins_background = "Pinned background commands"
 
 [help]
 font = "The system-installed font name that is applied to the entire UI."
-font_size = "Determines the scale of the whole UI."
+scale = "Determines the scale of the whole UI."
 inspector_font = "The system-installed font used when previewing text contents in the inspector."
 inspector_font_size = "Specifies the font size used to display text contents in the inspector."
 spacing = "Defines the space between items in a list."

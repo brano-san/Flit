@@ -2,8 +2,9 @@ use super::context::{ContextMenu, MenuKind};
 use super::edit::EditAction;
 use super::menu::MenuItem;
 use super::popup::{MenuOutcome, MenuView};
+use super::widgets::Ghost;
 use super::{App, Effect};
-use crate::input::Event;
+use crate::input::{Event, MouseButton};
 use crate::provider::Launch;
 use crate::render::Rect;
 use crate::text::{Gfx, TextBackend};
@@ -25,6 +26,23 @@ pub struct OwnMenu {
     opened: Instant,
     right: Option<f32>,
     pointer: Option<(f32, f32)>,
+    pending: bool,
+}
+
+impl OwnMenu {
+    fn holds_shell(&self) -> bool {
+        self.pending || !self.shell.is_empty()
+    }
+
+    fn add_shell(&mut self, items: &[MenuItem], shell: &[u32]) {
+        if !items.is_empty() && !self.items.is_empty() {
+            self.items.push(MenuItem::Separator);
+        }
+        self.items.extend_from_slice(items);
+        self.shell = shell.to_vec();
+        self.pending = false;
+        self.view = None;
+    }
 }
 
 pub fn commands(items: &[MenuItem]) -> usize {
@@ -40,16 +58,29 @@ pub fn commands(items: &[MenuItem]) -> usize {
 
 impl App {
     pub(super) fn own_menu_event(&mut self, ev: &Event, now: Instant) -> bool {
-        if let Event::ShowMenu { items, x, y, launches, kind, shell } = ev {
+        if let Event::ShowMenu { items, x, y, launches, kind, shell, pending } = ev {
             self.release_shell_menu();
-            self.own_menu = Some(OwnMenu { items: items.clone(), at: (*x, *y), launches: launches.clone(), shell: shell.clone(), kind: *kind, view: None, opened: now, right: self.menu_right.take(), pointer: None });
+            self.own_menu = Some(OwnMenu { items: items.clone(), at: (*x, *y), launches: launches.clone(), shell: shell.clone(), kind: *kind, view: None, opened: now, right: self.menu_right.take(), pointer: None, pending: *pending });
             self.tip_hide();
             self.dirty = true;
+            return true;
+        }
+        if let Event::ShellItems { items, shell } = ev {
+            if let Some(m) = self.own_menu.as_mut().filter(|m| m.pending) {
+                m.add_shell(items, shell);
+                self.dirty = true;
+            }
             return true;
         }
         if let (Some(m @ OwnMenu { view: None, .. }), Event::MouseMove { x, y }) = (self.own_menu.as_mut(), ev) {
             m.pointer = Some((*x, *y));
             return true;
+        }
+        if let Event::MouseDown { x, y, button: MouseButton::Right, .. } = ev {
+            if self.own_menu.as_ref().is_some_and(|m| m.view.is_some()) && !self.over_own_menu(*x, *y) {
+                self.close_own_menu();
+                return false;
+            }
         }
         let mods = self.mods;
         let Some(view) = self.own_menu.as_mut().and_then(|m| m.view.as_mut()) else { return false };
@@ -120,7 +151,7 @@ impl App {
                         }
                     }
                     _ => {
-                        if !m.shell.is_empty() {
+                        if m.holds_shell() {
                             self.effects.push(Effect::ShellPick(None));
                         }
                         self.on_event(&Event::MenuCommand(k), now);
@@ -132,7 +163,7 @@ impl App {
     }
 
     fn release_shell_menu(&mut self) {
-        if self.own_menu.as_ref().is_some_and(|m| !m.shell.is_empty()) {
+        if self.own_menu.as_ref().is_some_and(OwnMenu::holds_shell) {
             self.effects.push(Effect::ShellPick(None));
         }
     }
@@ -213,6 +244,7 @@ impl App {
             View::Plain(v) => v.draw(g, t),
             View::Context(c) => c.draw(g, t, active, &preedit),
         }
+        self.keep_ghost(g, Ghost::Menu, from, at);
         self.pop(g, from, opened, at);
     }
 }

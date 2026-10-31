@@ -6,6 +6,13 @@ use std::ops::Range;
 use std::time::{Duration, Instant};
 
 const POP: Duration = Duration::from_millis(120);
+const FADE: Duration = Duration::from_millis(100);
+const SLIDE: f32 = 6.0;
+
+pub(super) fn eased(since: Instant, now: Instant, span: Duration) -> f32 {
+    let p = (now.saturating_duration_since(since).as_secs_f32() / span.as_secs_f32()).min(1.0);
+    1.0 - (1.0 - p).powi(3)
+}
 
 pub(super) const RADIUS: f32 = 6.0;
 const BUTTON_RADIUS: f32 = 4.0;
@@ -49,6 +56,21 @@ pub(super) struct Paint<'a, B: TextBackend> {
 pub(super) fn baseline<B: TextBackend>(g: &mut Gfx<B>, r: Rect, font: FontStyle) -> f32 {
     let m = g.metrics(font);
     (r.y + (r.h + m.ascent - m.descent) / 2.0).round()
+}
+
+#[cfg(windows)] const G_PIN_FILLED: &str = "\u{E841}";
+
+#[cfg(windows)]
+pub(super) fn filled(glyph: &str) -> &str {
+    match glyph {
+        super::sidebar::G_PIN => G_PIN_FILLED,
+        other => other,
+    }
+}
+
+#[cfg(not(windows))]
+pub(super) fn filled(glyph: &str) -> &str {
+    glyph
 }
 
 impl<'a, B: TextBackend> Paint<'a, B> {
@@ -116,6 +138,14 @@ impl<'a, B: TextBackend> Paint<'a, B> {
             self.g.dl.round_rect(r, fill, self.px(BUTTON_RADIUS));
         }
         let ink = self.ink_of(state, idle);
+        self.centered(r, glyph, font, ink);
+    }
+
+    pub fn toggle_button(&mut self, r: Rect, glyph: &str, font: FontStyle, on: bool, hover: bool) {
+        if hover {
+            self.g.dl.round_rect(r, self.t.button_hover, self.px(BUTTON_RADIUS));
+        }
+        let (glyph, ink) = if on { (filled(glyph), self.t.text) } else { (glyph, self.t.text_dim) };
         self.centered(r, glyph, font, ink);
     }
 
@@ -262,7 +292,7 @@ impl<'a, B: TextBackend> Paint<'a, B> {
         (minus, plus)
     }
 
-    pub fn picker(&mut self, r: Rect, value: &str, font: FontStyle, icons: FontStyle, open: bool, hot: bool) {
+    pub fn picker(&mut self, r: Rect, value: &str, font: FontStyle, angle: f32, open: bool, hot: bool) {
         let radius = self.px(BUTTON_RADIUS);
         let fill = if open { self.t.accent_fill } else if hot { self.t.teal } else { self.t.button_pressed };
         self.g.dl.round_rect(r, fill, radius);
@@ -273,7 +303,7 @@ impl<'a, B: TextBackend> Paint<'a, B> {
         let x = if w <= r.w - 2.0 * arrow { r.x + arrow + (r.w - 2.0 * arrow - w) / 2.0 } else { r.x + lead };
         let y = baseline(self.g, r, font);
         self.g.text(x.round(), y, value, font, ink, r.right() - arrow - x.round());
-        self.centered(Rect::new(r.right() - arrow, r.y, arrow, r.h), if open { G_OPEN } else { G_NEXT }, icons, ink);
+        self.g.dl.chevron((r.right() - arrow / 2.0, r.y + r.h / 2.0), self.px(8.0), angle, self.px(1.25).max(1.0), ink);
     }
 
     pub fn marked(&mut self, (x, y): (f32, f32), text: &str, ranges: &[Range<usize>], font: FontStyle, (color, mark): (Color, Color), max_w: f32) -> f32 {
@@ -305,9 +335,80 @@ impl App {
         let t = now.saturating_duration_since(since).as_secs_f32() / POP.as_secs_f32();
         if t < 1.0 {
             g.dl.pop_in(from, t, center);
+            g.dl.shift(from, 0.0, -(1.0 - eased(since, now, POP)) * SLIDE * self.scale);
             self.motion = true;
         }
     }
+
+    pub(super) fn keep_ghost<B: TextBackend>(&mut self, g: &Gfx<B>, kind: Ghost, from: usize, center: (f32, f32)) {
+        let gh = &mut self.ghosts;
+        gh.drawn.push(kind);
+        let shot = g.dl.instances[from.min(g.dl.instances.len())..].to_vec();
+        match gh.shown.iter_mut().find(|s| s.0 == kind) {
+            Some(s) => (s.1, s.2) = (shot, center),
+            None => gh.shown.push((kind, shot, center)),
+        }
+    }
+
+    pub(super) fn fade_ghosts<B: TextBackend>(&mut self, g: &mut Gfx<B>, now: Instant) -> bool {
+        let animate = self.animations && !g.atlas_reset;
+        let gh = &mut self.ghosts;
+        let drawn = std::mem::take(&mut gh.drawn);
+        for (_, shot, center) in gh.shown.extract_if(.., |s| !drawn.contains(&s.0)) {
+            if animate {
+                gh.fading.push((shot, center, now));
+            }
+        }
+        if !animate {
+            gh.fading.clear();
+        }
+        gh.fading.retain(|f| now.saturating_duration_since(f.2) < FADE);
+        for (shot, center, since) in &gh.fading {
+            let from = g.dl.instances.len();
+            g.dl.instances.extend_from_slice(shot);
+            let t = eased(*since, now, FADE);
+            g.dl.grow(from, 1.0 - t, *center, 0.97);
+            g.dl.shift(from, 0.0, -t * SLIDE * self.scale);
+        }
+        !gh.fading.is_empty()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Ghost {
+    Menu,
+    Palette,
+    Confirm,
+}
+
+#[derive(Default)]
+pub(super) struct Arrivals {
+    owner: Option<u64>,
+    seen: Vec<u8>,
+    born: Vec<(u8, Instant)>,
+}
+
+impl Arrivals {
+    pub fn settle(&mut self, owner: u64, drawn: &[u8], animate: bool, now: Instant) -> bool {
+        if animate && self.owner == Some(owner) {
+            self.born.extend(drawn.iter().filter(|k| !self.seen.contains(k)).map(|&k| (k, now)));
+        }
+        self.owner = Some(owner);
+        self.born.retain(|b| animate && drawn.contains(&b.0) && now.saturating_duration_since(b.1) < POP);
+        self.seen = drawn.to_vec();
+        !self.born.is_empty()
+    }
+
+    pub fn shown(&self, key: u8, now: Instant) -> f32 {
+        self.born.iter().find(|b| b.0 == key).map_or(1.0, |b| eased(b.1, now, POP))
+    }
+}
+
+#[derive(Default)]
+pub(super) struct Ghosts {
+    shown: Vec<(Ghost, Vec<crate::render::Instance>, (f32, f32))>,
+    drawn: Vec<Ghost>,
+    fading: Vec<(Vec<crate::render::Instance>, (f32, f32), Instant)>,
 }
 
 #[cfg(test)]

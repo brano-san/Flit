@@ -5,7 +5,7 @@ use super::fuzzy::fuzzy;
 use super::home::{Recent, Widget};
 use super::menu::Menu;
 use super::tags::G_TAG;
-use super::widgets::{Button, Paint};
+use super::widgets::{eased, Button, Paint};
 use super::{centered, App, Drag, Effect, Focus, Hit, IconKind, IconRequest, Route, ShellMenu, G_CLOSE, G_DRIVE, G_FILE, G_FOLDER, TOOL_H};
 use crate::hash;
 use crate::i18n::S;
@@ -43,6 +43,7 @@ const RECENT_MAX: usize = 10;
 const MAX_VISITS: usize = 64;
 pub(super) const MOST_VISITED: usize = 5;
 const PATH_GAP: f32 = 6.0;
+pub(super) const FOLD: std::time::Duration = std::time::Duration::from_millis(150);
 
 pub(super) const G_HOME: &str = "\u{E80F}";
 const G_DESKTOP: &str = "\u{E7F4}";
@@ -366,6 +367,28 @@ pub(super) struct Item {
     pub marks: Vec<Range<usize>>,
 }
 
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) struct Fold {
+    pub section: Section,
+    pub opening: bool,
+    pub since: Instant,
+}
+
+impl Fold {
+    pub fn shown(&self, now: Instant) -> f32 {
+        let e = eased(self.since, now, FOLD);
+        if self.opening { e } else { 1.0 - e }
+    }
+}
+
+pub(super) struct Leaving {
+    pub index: usize,
+    pub h: f32,
+    pub label: String,
+    pub glyph: &'static str,
+    pub since: Instant,
+}
+
 #[derive(Default)]
 pub(super) struct Sidebar {
     pub full_paths: bool,
@@ -388,6 +411,11 @@ pub(super) struct Sidebar {
     content_h: f32,
     pub cursor: usize,
     pub press_y: f32,
+    pub dragging_out: bool,
+    pub fold: Option<Fold>,
+    pub fold_clip: Option<(Section, Rect)>,
+    pub leaving: Vec<Leaving>,
+    pub gaps: Vec<(Rect, usize)>,
     pub tags: Arc<Tags>,
     pub bar_w: f32,
 }
@@ -470,7 +498,7 @@ impl Sidebar {
         let query = self.filter.text().trim().to_owned();
         let mut items = Vec::new();
         for s in self.prefs.order() {
-            if self.is_hidden(s) || (query.is_empty() && self.is_collapsed(s)) {
+            if self.is_hidden(s) || (query.is_empty() && self.is_collapsed(s) && !self.fold.is_some_and(|f| f.section == s && !f.opening)) {
                 continue;
             }
             let mut found = self.section_items(s);
@@ -559,7 +587,38 @@ impl Sidebar {
 }
 
 impl App {
+    pub(super) fn check_places(&mut self) {
+        let paths: Vec<FsPath> = self.nav.sidebar.state.pinned.iter().filter_map(Location::to_windows).collect();
+        if !paths.is_empty() {
+            self.effects.push(Effect::CheckPlaces(paths));
+        }
+    }
+
+    pub fn forget_missing(&mut self, gone: &[FsPath]) {
+        let missing = |l: &Location| l.to_windows().is_some_and(|p| gone.iter().any(|g| g.same(&p)));
+        let sb = &mut self.nav.sidebar;
+        if !sb.state.pinned.iter().any(missing) {
+            return;
+        }
+        let now = Instant::now();
+        if self.animations && !sb.filtering() {
+            let mut kept = 0;
+            for (i, it) in sb.items.iter().enumerate().filter(|(_, it)| it.section == Section::Bookmarks) {
+                if !missing(&it.loc) {
+                    kept += 1;
+                    continue;
+                }
+                let h = sb.rects.get(i).map_or(0.0, |r| r.h);
+                let first = sb.items.iter().position(|it| it.section == Section::Bookmarks).unwrap_or(0);
+                sb.leaving.push(Leaving { index: first + kept, h, label: it.label.clone(), glyph: it.glyph, since: now });
+            }
+        }
+        sb.state.pinned.retain(|l| !missing(l));
+        self.pins_changed();
+    }
+
     pub fn set_places(&mut self, places: Arc<Places>) {
+        self.check_places();
         let old = std::mem::replace(&mut self.nav.sidebar.places, places);
         self.nav.sidebar.rebuild();
         self.places_changed(&old, Instant::now());
@@ -645,6 +704,8 @@ impl App {
     }
 
     pub(super) fn toggle_section(&mut self, s: Section) {
+        let sb = &mut self.nav.sidebar;
+        sb.fold = (self.animations && !sb.filtering()).then(|| Fold { section: s, opening: sb.is_collapsed(s), since: Instant::now() });
         toggle(&mut self.nav.sidebar.prefs.collapsed, s.id());
         self.nav_prefs_changed();
     }
@@ -879,10 +940,37 @@ impl App {
     pub(super) fn start_pin_drag(&mut self, y: f32) -> bool {
         let Hit::Side(i) = self.pressed else { return false };
         let sb = &self.nav.sidebar;
-        if !sb.removable(i) || sb.filtering() || (y - sb.press_y).abs() < self.s(5.0) {
+        if (y - sb.press_y).abs() < self.s(5.0) {
+            return false;
+        }
+        if !sb.removable(i) {
+            return self.drag_out_of_quick_access(i);
+        }
+        if sb.filtering() {
             return false;
         }
         self.drag_pin(i - sb.first_bookmark(), y);
+        true
+    }
+
+    pub(super) fn step_sidebar(&mut self, now: Instant) -> bool {
+        let sb = &mut self.nav.sidebar;
+        if sb.fold.is_some_and(|f| now.saturating_duration_since(f.since) >= FOLD) {
+            sb.fold = None;
+            sb.rebuild();
+        }
+        sb.leaving.retain(|l| now.saturating_duration_since(l.since) < FOLD);
+        sb.fold.is_some() || !sb.leaving.is_empty()
+    }
+
+    fn drag_out_of_quick_access(&mut self, i: usize) -> bool {
+        let sb = &self.nav.sidebar;
+        let Some(it) = sb.items.get(i).filter(|it| it.section != Section::Tags) else { return false };
+        let Some(path) = sb.recent_file(i).or_else(|| it.loc.to_windows()) else { return false };
+        self.nav.sidebar.dragging_out = true;
+        self.pressed = Hit::None;
+        self.hover = Hit::None;
+        self.effects.push(Effect::StartDrag(vec![path]));
         true
     }
 
@@ -1112,6 +1200,7 @@ impl App {
 
     pub(super) fn layout_sidebar(&mut self, top: f32, bottom: f32) {
         let width = self.sidebar_width();
+        let now = self.last_frame.unwrap_or_else(Instant::now);
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
         let sb = &mut self.nav.sidebar;
@@ -1136,28 +1225,48 @@ impl App {
         }
         let list_top = sb.bar.bottom().max(top);
         sb.list = Rect::new(0.0, list_top, width - 1.0, (sb.rect.bottom() - list_top).max(0.0));
+        let fold = sb.fold.map(|f| (f.section, f.shown(now)));
+        let gap_h = |l: &Leaving| (l.h * (1.0 - eased(l.since, now, FOLD))).round();
+        sb.fold_clip = None;
+        sb.gaps.clear();
         let mut y = s(4.0);
         let mut it = 0;
         for section in sb.shown_sections() {
             sb.headers.push((Rect::new(x, y, w, header_h), section));
             y += header_h;
+            let start = y;
             let count = sb.items.iter().filter(|it| it.section == section).count();
             if count == 0 && section == Section::Bookmarks && !compact && !sb.is_collapsed(section) {
                 sb.hint = Some(Rect::new(x, y, w, row_h));
                 y += row_h;
             }
-            while sb.items.get(it).is_some_and(|i| i.section == section) {
+            loop {
+                if section == Section::Bookmarks {
+                    for (k, l) in sb.leaving.iter().enumerate().filter(|(_, l)| l.index == it) {
+                        let h = gap_h(l);
+                        sb.gaps.push((Rect::new(x, y, w, h), k));
+                        y += h;
+                    }
+                }
+                if !sb.items.get(it).is_some_and(|i| i.section == section) {
+                    break;
+                }
                 let h = if sb.items[it].usage.is_some() && !compact { s(DRIVE_H) } else { row_h };
                 sb.rects.push(Rect::new(x, y, w, h));
                 y += h;
                 it += 1;
+            }
+            if let Some((_, shown)) = fold.filter(|f| f.0 == section) {
+                let visible = ((y - start) * shown).round();
+                sb.fold_clip = Some((section, Rect::new(x, start, w, visible)));
+                y = start + visible;
             }
             y += if compact { s(2.0) } else { s(SECTION_GAP) };
         }
         sb.content_h = y;
         sb.scroll = sb.scroll.clamp(0.0, (sb.content_h - sb.list.h).max(0.0));
         let dy = list_top - sb.scroll;
-        for r in sb.rects.iter_mut().chain(sb.headers.iter_mut().map(|(r, _)| r)).chain(sb.hint.iter_mut()) {
+        for r in sb.rects.iter_mut().chain(sb.headers.iter_mut().map(|(r, _)| r)).chain(sb.hint.iter_mut()).chain(sb.fold_clip.iter_mut().map(|(_, r)| r)).chain(sb.gaps.iter_mut().map(|(r, _)| r)) {
             r.y += dy;
         }
     }
@@ -1183,7 +1292,8 @@ impl App {
             return Some(Hit::SideEmpty);
         }
         for (i, r) in sb.rects.iter().enumerate() {
-            if r.contains(x, y) {
+            let folded = sb.fold_clip.is_some_and(|(s, c)| sb.items.get(i).is_some_and(|it| it.section == s) && !c.contains(x, y));
+            if r.contains(x, y) && !folded {
                 let button = !sb.prefs.compact && sb.pin_rect(*r, self.scale).contains(x, y) && sb.removable(i);
                 return Some(if button { Hit::SidePin(i) } else { Hit::Side(i) });
             }
@@ -1265,6 +1375,7 @@ impl App {
     }
 
     pub(super) fn draw_sidebar<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
+        let now = self.last_frame.unwrap_or_else(Instant::now);
         let sb = &self.nav.sidebar;
         let area = sb.rect;
         if area.w <= 0.0 {
@@ -1326,8 +1437,13 @@ impl App {
             let (icon_r, title_x, baseline, chevron_r) = header_parts(r, mh.ascent, mh.descent, self.scale);
             centered(g, icon_r, section.glyph(), header_icons, ink);
             g.text(title_x, baseline, section.title(), header_font, ink, chevron_r.x - title_x - s4);
-            let glyph = if sb.is_collapsed(section) && !sb.filtering() { G_COLLAPSED } else { G_EXPANDED };
-            centered(g, chevron_r, glyph, chevron, if lit { ink } else { t.text_dim });
+            let angle = match sb.fold.filter(|f| f.section == section) {
+                Some(f) => 90.0 * f.shown(now),
+                None if sb.is_collapsed(section) && !sb.filtering() => 0.0,
+                None => 90.0,
+            };
+            let center = (chevron_r.x + chevron_r.w / 2.0, chevron_r.y + chevron_r.h / 2.0);
+            g.dl.chevron(center, self.s(8.0), angle, self.s(1.25).max(1.0), if lit { ink } else { t.text_dim });
         }
         if let Some(r) = sb.hint {
             let baseline = (r.y + (r.h + ms.ascent - ms.descent) / 2.0).round();
@@ -1336,9 +1452,25 @@ impl App {
         }
         let mut requests: Vec<IconRequest> = Vec::new();
         let list = sb.list;
+        for &(r, k) in &sb.gaps {
+            let Some(l) = sb.leaving.get(k) else { continue };
+            let fade = (1.0 - eased(l.since, now, FOLD)).clamp(0.0, 1.0);
+            let alpha = |c: Color| c.alpha((fade * 255.0) as u8);
+            g.dl.set_clip(Some(clip_to(list, r)));
+            let text_h = self.s(ROW_H);
+            let (icon_r, text_x) = (item_icon(Rect::new(r.x, r.y, r.w, text_h), self.scale, false), item_parts(r, self.scale).1);
+            centered(g, icon_r, l.glyph, icons, alpha(t.accent));
+            g.text(text_x, (r.y + (text_h + m.ascent - m.descent) / 2.0).round(), &l.label, font, alpha(t.text), r.right() - text_x);
+        }
+        g.dl.set_clip(Some(list));
         for (i, (it, &r)) in sb.items.iter().zip(&sb.rects).enumerate() {
             if r.bottom() < list.y || r.y > list.bottom() {
                 continue;
+            }
+            match sb.fold_clip.filter(|(s, _)| *s == it.section) {
+                Some((_, c)) if r.y >= c.bottom() => continue,
+                Some((_, c)) => g.dl.set_clip(Some(clip_to(list, c))),
+                None => g.dl.set_clip(Some(list)),
             }
             let hovered = matches!(self.hover, Hit::Side(k) | Hit::SidePin(k) if k == i) && self.drag == Drag::None;
             let row = Rect::new(r.x, r.y + 1.0, r.w, r.h - 2.0);
@@ -1400,6 +1532,7 @@ impl App {
                 Paint::new(g, t, self.scale).icon_button(pin_r, G_TRASH, pin_font, Button::of(self.hover == Hit::SidePin(i), open, true), ink);
             }
         }
+        g.dl.set_clip(Some(list));
         if let Drag::PinMove { to, .. } = self.drag {
             let first = sb.first_bookmark();
             let n = sb.state.pinned.len().min(sb.rects.len().saturating_sub(first));
@@ -1444,6 +1577,11 @@ impl App {
         let px = self.s(PLACE_ICON);
         self.system_icon(g, place_icon_request(it, &self.nav.sidebar.places, px as u32), r, px, 0xFF, requests)
     }
+}
+
+fn clip_to(outer: Rect, inner: Rect) -> Rect {
+    let (x, y) = (outer.x.max(inner.x), outer.y.max(inner.y));
+    Rect::new(x, y, (outer.right().min(inner.right()) - x).max(0.0), (outer.bottom().min(inner.bottom()) - y).max(0.0))
 }
 
 fn header_parts(r: Rect, ascent: f32, descent: f32, scale: f32) -> (Rect, f32, f32, Rect) {

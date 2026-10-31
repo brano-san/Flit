@@ -95,3 +95,19 @@ fn loading_the_kept_sidebar_fits_in_a_frame() {
     assert_eq!((back.kept.len(), snapshot.is_some()), (KEPT_ICONS, true));
     assert!(took < Duration::from_millis(8), "{took:?}");
 }
+
+#[test]
+fn deleted_places_count_as_gone_but_places_on_an_offline_root_stay() {
+    let dir = temp("gone");
+    let kept = dir.0.join("kept");
+    std::fs::create_dir_all(&kept).unwrap();
+    let fs = |p: &Path| FsPath::parse(p.to_str().unwrap()).unwrap();
+    assert!(!gone(&fs(&kept)));
+    assert!(gone(&fs(&dir.0.join("deleted"))));
+    assert!(gone(&fs(&dir.0.join("deleted.txt"))));
+    if cfg!(windows) {
+        let free = (b'H'..=b'Z').rev().map(|c| format!("{}:\\", c as char)).find(|r| std::fs::metadata(r).is_err()).unwrap();
+        assert!(!gone(&FsPath::parse(&format!("{free}Photos")).unwrap()), "a bookmark on a drive that is not connected is kept");
+        assert!(!gone(&FsPath::parse(r"\\flit-offline-host.invalid\share\docs").unwrap()), "and so is one on an unreachable share");
+    }
+}

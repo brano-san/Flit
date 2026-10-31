@@ -576,3 +576,29 @@ fn a_selected_item_draws_its_box_instead_of_its_icon() {
     assert_eq!(glyphs_in(&g, boxed), 0, "no icon under the box");
     assert!(glyphs_in(&g, plain) > 0, "the other row keeps its icon");
 }
+
+#[test]
+fn clicking_icons_of_several_items_keeps_each_selected() {
+    let mut a = crate::ui::harness::app(&["a.txt", "b.txt", "c.txt"]);
+    a.prefs.checkboxes = true;
+    let mut g = Gfx::new(Mono, 1024);
+    let t0 = Instant::now();
+    a.frame(&mut g, t0);
+    let click_icon = |a: &mut App, row: usize, at: Instant| {
+        let icon = a.item_parts(a.row_rect(row).unwrap()).icon;
+        let (x, y) = (icon.x + icon.w / 2.0, icon.y + icon.h / 2.0);
+        a.on_event(&Event::MouseMove { x, y }, at);
+        a.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, at);
+        a.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, at);
+    };
+    click_icon(&mut a, 0, t0);
+    a.frame(&mut g, t0 + Duration::from_millis(50));
+    click_icon(&mut a, 1, t0 + Duration::from_millis(900));
+    a.frame(&mut g, t0 + Duration::from_millis(950));
+    click_icon(&mut a, 2, t0 + Duration::from_millis(1900));
+    let v = a.tab().view.as_ref().unwrap();
+    assert_eq!(v.selected_count(), 3, "each icon click adds its item");
+    click_icon(&mut a, 1, t0 + Duration::from_millis(2900));
+    let v = a.tab().view.as_ref().unwrap();
+    assert!(v.is_selected(v.rows()[0]) && !v.is_selected(v.rows()[1]) && v.is_selected(v.rows()[2]), "a second click on a box clears only that item");
+}

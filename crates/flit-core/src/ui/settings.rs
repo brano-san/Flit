@@ -256,8 +256,8 @@ pub static SETTINGS: &[Setting] = &[
     Setting {
         id: "appearance.scale",
         page: Page::Interface,
-        title: S::OptionsTitleFontSize,
-        help: S::OptionsHelpFontSize,
+        title: S::OptionsTitleScale,
+        help: S::OptionsHelpScale,
         kind: Kind::Number { min: super::UI_SCALE.0 as i64, max: super::UI_SCALE.1 as i64, step: 10, unit: S::SettingsUnitPercent, zero: None, get: |a| a.ui_scale() as i64, set: |a, v| a.set_ui_scale(v as u32) },
     },
     Setting { id: "appearance.inspector_font", page: Page::Interface, title: S::OptionsTitleInspectorFont, help: S::OptionsHelpInspectorFont, kind: Kind::Text(|a| a.opts.inspector_font.clone(), |a, v| a.set_inspector_font(v)) },
@@ -279,11 +279,6 @@ pub static SETTINGS: &[Setting] = &[
     toggle("appearance.round_corners", Page::Interface, S::OptionsTitleRoundCorners, S::OptionsHelpRoundCorners, |a| a.round_corners, |a, on| a.round_corners = on),
     choice(LANGUAGE, Page::Interface, S::SettingsTitleGeneralLanguage, S::SettingsHelpGeneralLanguage, LANGUAGE_CHOICES, |a| a.language, |a, i| a.set_language(i)),
     choice("general.date_format", Page::Interface, S::SettingsTitleGeneralDateFormat, S::SettingsHelpGeneralDateFormat, DATE_CHOICES, |a| pos(&DATES, &a.style.dates), |a, i| a.set_style(|s| s.dates = DATES[i])),
-    toggle("appearance.toolbar", Page::Interface, S::SettingsTitleAppearanceToolbar, S::SettingsHelpAppearanceToolbar, |a| a.toolbar.state.visible, |a, on| {
-        if a.toolbar.state.visible != on {
-            a.toggle_toolbar();
-        }
-    }),
     toggle("appearance.tab_actions", Page::Interface, S::SettingsTitleAppearanceTabActions, S::SettingsHelpAppearanceTabActions, |a| a.tab_actions_button, |a, on| a.tab_actions_button = on),
     choice("appearance.ops_button", Page::Interface, S::SettingsTitleAppearanceOpsButton, S::SettingsHelpAppearanceOpsButton, OPS_CHOICES, |a| usize::from(a.ops_button_always), |a, i| a.ops_button_always = i == 1),
     toggle("appearance.status_bar", Page::Interface, S::SettingsTitleAppearanceStatusBar, S::SettingsHelpAppearanceStatusBar, |a| a.prefs.status_bar, |a, on| a.set_pref(|p| &mut p.status_bar, on)),

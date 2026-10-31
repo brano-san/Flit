@@ -141,6 +141,7 @@ fn disabled(items: &[MenuItem]) -> Vec<String> {
 #[test]
 fn headers_fold_and_the_empty_area_menu_hides_sections() {
     let mut app = app_with_places();
+    app.animations = false;
     assert_eq!(side_labels(&app), ["a", "b", "Disk (C:)", "USB (E:)", "This PC", "Recycle Bin", "Home", "Debian"]);
     click(header(&app, Section::Storage), &mut app, MouseButton::Left);
     assert_eq!(side_labels(&app), ["a", "b", "This PC", "Recycle Bin", "Home", "Debian"]);
@@ -177,7 +178,7 @@ fn section_toggles_keep_the_menu_open_and_update_the_sidebar_behind_it() {
     click(empty_area(&app), &mut app, MouseButton::Right);
     let m = menu(&mut app);
     assert_eq!(stays(&m.menu), ["Recents", "Bookmarks", "Storage", "Places", "Libraries", "WSL", "Tags", "Compact sidebar"], "only the show/hide toggles stay open");
-    app.on_event(&Event::ShowMenu { items: m.menu, x: 300.0, y: 100.0, launches: Vec::new(), kind: m.kind, shell: Vec::new() }, Instant::now());
+    app.on_event(&Event::ShowMenu { items: m.menu, x: 300.0, y: 100.0, launches: Vec::new(), kind: m.kind, shell: Vec::new(), pending: false }, Instant::now());
     let mut g = Gfx::new(Mono, 1024);
     app.frame(&mut g, Instant::now());
     let key = |app: &mut App, key: Key| app.on_event(&Event::Key { key, mods: Mods::default(), pressed: true }, Instant::now());
@@ -646,4 +647,84 @@ fn both_the_empty_area_and_the_group_header_menus_offer_sections() {
     assert!(submenus(&m.menu).contains(&"Sections".to_owned()), "{:?}", labels(&m.menu));
     run(&mut app, &m, "WSL");
     assert!(app.nav.sidebar.is_hidden(Section::Wsl), "the header menu hides a group too");
+}
+
+#[test]
+fn dragging_a_recent_folder_or_file_onto_bookmarks_pins_it() {
+    let mut app = app_with_places();
+    let mut places = (*app.nav.sidebar.places).clone();
+    places.recent = vec![
+        Recent { name: "proj".into(), target: FsPath::parse(r"C:\r\proj").unwrap(), dir: true, at: 2 },
+        Recent { name: "notes.txt".into(), target: FsPath::parse(r"C:\r\notes.txt").unwrap(), dir: false, at: 1 },
+    ];
+    app.set_places(Arc::new(places));
+    app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    app.drain_effects().for_each(drop);
+    for (name, path) in [("proj", r"C:\r\proj"), ("notes.txt", r"C:\r\notes.txt")] {
+        let i = app.nav.sidebar.items.iter().position(|it| it.label == name && it.section == Section::Recents).unwrap();
+        let r = app.nav.sidebar.rects[i];
+        let (x, y, t, none) = (r.x + 20.0, r.y + r.h / 2.0, Instant::now(), Mods::default());
+        app.on_event(&Event::MouseMove { x, y }, t);
+        app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, t);
+        app.on_event(&Event::MouseMove { x, y: y + 30.0 }, t);
+        let dragged: Vec<FsPath> = app.drain_effects().find_map(|e| if let Effect::StartDrag(p) = e { Some(p) } else { None }).expect("the item leaves Quick Access as a drag");
+        assert_eq!(dragged, [FsPath::parse(path).unwrap()]);
+        let b = app.nav.sidebar.items.iter().position(|it| it.section == Section::Bookmarks).unwrap();
+        let target = app.nav.sidebar.rects[b];
+        let (bx, by) = (target.x + 20.0, target.y + target.h / 2.0);
+        app.drag(&DragEvent::Enter { paths: dragged.clone(), x: bx, y: by, mods: none, allowed: 7 }, t);
+        assert_ne!(app.drag(&DragEvent::Drop { x: bx, y: by, mods: none, allowed: 7 }, t), 0);
+        assert!(app.drain_effects().any(|e| matches!(e, Effect::PinFolders(p) if p == dragged)), "{name} is pinned rather than copied into the bookmark");
+        app.on_event(&Event::MouseUp { x: bx, y: by, button: MouseButton::Left }, t);
+    }
+}
+
+#[test]
+fn bookmarks_that_no_longer_exist_leave_while_the_list_closes_the_gap() {
+    let mut app = app_with_places();
+    app.set_pinned(vec![loc(r"C:\a"), loc(r"C:\gone"), loc(r"C:\b")]);
+    app.set_places(app.nav.sidebar.places.clone());
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::CheckPlaces(p) if p.len() == 3)), "the places worker is asked, the UI thread never stats");
+    let mut g = Gfx::new(Mono, 1024);
+    let t0 = Instant::now();
+    app.frame(&mut g, t0);
+    let b = |app: &App| app.nav.sidebar.items.iter().position(|it| it.loc == loc(r"C:\b")).unwrap();
+    let before = app.nav.sidebar.rects[b(&app)].y;
+    app.forget_missing(&[FsPath::parse(r"C:\gone").unwrap()]);
+    assert_eq!(app.nav_state().pinned, [loc(r"C:\a"), loc(r"C:\b")]);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Pinned(p) if p.len() == 2)));
+    assert!(app.frame(&mut g, Instant::now()), "the gap is animated");
+    let during = app.nav.sidebar.rects[b(&app)].y;
+    assert!(during > before - 26.0 && during <= before, "{before} {during}");
+    let later = Instant::now() + std::time::Duration::from_millis(400);
+    assert!(!app.frame(&mut g, later), "and then the list is idle");
+    assert!(app.nav.sidebar.rects[b(&app)].y < before - 20.0, "the next bookmark moved up into the gap");
+    app.animations = false;
+    app.forget_missing(&[FsPath::parse(r"C:\a").unwrap()]);
+    assert!(!app.frame(&mut g, later) && app.nav.sidebar.leaving.is_empty(), "without animations it goes at once");
+}
+
+#[test]
+fn a_section_folds_with_a_short_height_animation_and_its_chevron_turns() {
+    let mut app = app_with_places();
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, Instant::now());
+    let storage = |app: &App| header(app, Section::Storage).y;
+    let open_y = storage(&app);
+    app.toggle_section(Section::Bookmarks);
+    assert!(app.nav.sidebar.items.iter().any(|it| it.section == Section::Bookmarks), "the rows stay while they fold away");
+    assert!(app.frame(&mut g, Instant::now()));
+    let mid = storage(&app);
+    let end = Instant::now() + std::time::Duration::from_millis(400);
+    assert!(!app.frame(&mut g, end));
+    let closed_y = storage(&app);
+    assert!(closed_y < open_y && mid >= closed_y && mid <= open_y, "{open_y} {mid} {closed_y}");
+    assert!(!app.nav.sidebar.items.iter().any(|it| it.section == Section::Bookmarks));
+    app.toggle_section(Section::Bookmarks);
+    assert!(app.nav.sidebar.fold.is_some_and(|f| f.opening) && app.frame(&mut g, Instant::now()));
+    assert!(!app.frame(&mut g, Instant::now() + std::time::Duration::from_millis(400)));
+    assert_eq!(storage(&app), open_y);
+    app.animations = false;
+    app.toggle_section(Section::Bookmarks);
+    assert!(app.nav.sidebar.fold.is_none() && !app.frame(&mut g, Instant::now() + std::time::Duration::from_millis(800)));
 }

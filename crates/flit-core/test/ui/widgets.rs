@@ -85,3 +85,25 @@ fn a_focused_empty_field_draws_no_placeholder() {
     assert_eq!(glyphs(true, ""), 0, "focus hides the hint before any typing");
     assert!(glyphs(true, "ab") > 0);
 }
+
+#[test]
+fn closing_menus_and_lists_fade_out_briefly_and_then_stop_drawing() {
+    let mut a = crate::ui::harness::app(&["a.txt"]);
+    let mut g = Gfx::new(crate::text::tests::Mono, 1024);
+    let t0 = Instant::now();
+    a.on_event(&crate::input::Event::ShowMenu { items: vec![crate::ui::MenuItem::command("Open", String::new())], x: 100.0, y: 100.0, launches: Vec::new(), kind: crate::ui::MenuKind::None, shell: Vec::new(), pending: false }, t0);
+    assert!(a.frame(&mut g, t0), "the menu slides in");
+    let start = g.dl.instances.iter().map(|i| i.rect[1]).fold(f32::INFINITY, f32::min);
+    assert!(!a.frame(&mut g, t0 + Duration::from_millis(300)));
+    a.on_event(&crate::input::Event::Key { key: crate::input::Key::Escape, mods: crate::input::Mods::default(), pressed: true }, t0 + Duration::from_millis(300));
+    let shut = t0 + Duration::from_millis(310);
+    assert!(a.frame(&mut g, shut), "the closed menu fades out");
+    assert_eq!(a.ghosts.fading.len(), 1);
+    assert!(!a.frame(&mut g, shut + Duration::from_millis(200)), "and the window is idle again");
+    assert!(a.ghosts.fading.is_empty() && start.is_finite());
+    a.animations = false;
+    a.on_event(&crate::input::Event::ShowMenu { items: vec![crate::ui::MenuItem::command("Open", String::new())], x: 100.0, y: 100.0, launches: Vec::new(), kind: crate::ui::MenuKind::None, shell: Vec::new(), pending: false }, t0);
+    assert!(!a.frame(&mut g, shut + Duration::from_millis(300)));
+    a.on_event(&crate::input::Event::Key { key: crate::input::Key::Escape, mods: crate::input::Mods::default(), pressed: true }, t0);
+    assert!(!a.frame(&mut g, shut + Duration::from_millis(310)), "without Animations nothing lingers");
+}

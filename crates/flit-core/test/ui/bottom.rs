@@ -151,3 +151,18 @@ fn a_hidden_counter_is_marked_in_its_own_colour() {
     let red = crate::theme::DARK.error.0;
     assert!(!g.dl.instances.iter().any(|i| i.color == red && r.contains(i.rect[0], i.rect[1])), "no red cross on the counter");
 }
+
+#[test]
+fn a_message_that_appears_in_the_bottom_bar_slides_in_once() {
+    let mut a = crate::ui::harness::app(&["a.txt", "b.txt"]);
+    let mut g = Gfx::new(crate::text::tests::Mono, 1024);
+    let t0 = Instant::now();
+    assert!(!a.frame(&mut g, t0));
+    a.toggle_row(0);
+    let t1 = Instant::now();
+    assert!(a.frame(&mut g, t1), "the selection text slides in");
+    assert!(a.bar_arrivals.shown(3, t1 + std::time::Duration::from_millis(10)) < 1.0);
+    assert!(!a.frame(&mut g, t1 + std::time::Duration::from_millis(300)));
+    a.toggle_row(1);
+    assert!(!a.frame(&mut g, t1 + std::time::Duration::from_millis(310)), "a changed count does not slide again");
+}

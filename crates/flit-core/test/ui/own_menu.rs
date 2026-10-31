@@ -17,7 +17,7 @@ fn app() -> App {
 
 fn shown(app: &mut App, launches: Vec<Launch>) {
     let items = vec![cmd("Copy path"), MenuItem::Separator, MenuItem::Submenu { label: "Open with".into(), items: vec![cmd("Editor"), cmd("Viewer")] }];
-    app.on_event(&Event::ShowMenu { items, x: 100.0, y: 100.0, launches, kind: crate::ui::MenuKind::None, shell: Vec::new() }, Instant::now());
+    app.on_event(&Event::ShowMenu { items, x: 100.0, y: 100.0, launches, kind: crate::ui::MenuKind::None, shell: Vec::new(), pending: false }, Instant::now());
     let mut g = Gfx::new(Mono, 256);
     app.frame(&mut g, Instant::now());
 }
@@ -83,4 +83,82 @@ fn trailing_commands_launch_their_programs_and_the_rest_are_flit_commands() {
     key(&mut app, Key::Down);
     key(&mut app, Key::Enter);
     assert!(!app.own_menu_open());
+}
+
+fn pending(app: &mut App) {
+    let items = vec![cmd("Copy path"), cmd("Rename")];
+    app.on_event(&Event::ShowMenu { items, x: 100.0, y: 100.0, launches: Vec::new(), kind: crate::ui::MenuKind::None, shell: Vec::new(), pending: true }, Instant::now());
+    app.frame(&mut Gfx::new(Mono, 256), Instant::now());
+}
+
+fn late_shell_items(app: &mut App) {
+    let items = vec![cmd("Edit with Notepad++"), MenuItem::Submenu { label: "Show more options".into(), items: vec![cmd("Send to")] }];
+    app.on_event(&Event::ShellItems { items, shell: vec![7, 9] }, Instant::now());
+    app.frame(&mut Gfx::new(Mono, 256), Instant::now());
+}
+
+fn picks(app: &mut App) -> Vec<Option<u32>> {
+    app.drain_effects().filter_map(|e| if let Effect::ShellPick(p) = e { Some(p) } else { None }).collect()
+}
+
+#[test]
+fn shell_items_that_arrive_later_join_the_open_menu_with_their_ids() {
+    let mut app = app();
+    pending(&mut app);
+    late_shell_items(&mut app);
+    assert_eq!(app.own_menu.as_ref().map(|m| m.items.len()), Some(5), "flit items, a separator, then the shell's");
+    for k in [Key::Down, Key::Down, Key::Down, Key::Enter] {
+        key(&mut app, k);
+    }
+    assert!(!app.own_menu_open());
+    assert_eq!(picks(&mut app), [Some(7)]);
+    pending(&mut app);
+    late_shell_items(&mut app);
+    for k in [Key::Down, Key::Down, Key::Enter] {
+        key(&mut app, k);
+    }
+    assert_eq!(picks(&mut app), [None], "a Flit command releases the shell menu");
+}
+
+#[test]
+fn a_menu_still_waiting_for_shell_items_releases_them_and_ignores_late_ones() {
+    let mut app = app();
+    pending(&mut app);
+    key(&mut app, Key::Escape);
+    assert_eq!(picks(&mut app), [None]);
+    late_shell_items(&mut app);
+    assert!(!app.own_menu_open());
+    shown(&mut app, Vec::new());
+    late_shell_items(&mut app);
+    assert_eq!(app.own_menu.as_ref().map(|m| m.items.len()), Some(3), "a menu without shell items takes none");
+    pending(&mut app);
+    pending(&mut app);
+    assert_eq!(picks(&mut app), [None], "a new menu releases the one still waiting");
+}
+
+#[test]
+fn a_right_click_on_another_file_closes_the_open_menu_and_asks_for_that_file() {
+    let mut a = crate::ui::harness::app(&["a.txt", "b.txt", "c.txt"]);
+    let mut g = Gfx::new(Mono, 256);
+    let right = |a: &mut App, x: f32, y: f32| {
+        a.on_event(&Event::MouseMove { x, y }, Instant::now());
+        a.on_event(&Event::MouseDown { x, y, button: MouseButton::Right, clicks: 1 }, Instant::now());
+        a.on_event(&Event::MouseUp { x, y, button: MouseButton::Right }, Instant::now());
+        a.drain_effects().find_map(|e| match e {
+            Effect::ShellMenu(m) => Some(m.items),
+            _ => None,
+        })
+    };
+    let (r0, r2) = (a.row_rect(0).unwrap(), a.row_rect(2).unwrap());
+    let first = right(&mut a, r0.x + 700.0, r0.y + r0.h / 2.0).unwrap();
+    assert_eq!(first, [FsPath::parse(r"C:\Work\a.txt").unwrap()]);
+    a.on_event(&Event::ShowMenu { items: vec![cmd("Open")], x: r0.x + 700.0, y: r0.y, launches: Vec::new(), kind: crate::ui::MenuKind::File, shell: vec![1], pending: false }, Instant::now());
+    a.frame(&mut g, Instant::now());
+    let (x, y) = (r2.x + 60.0, r2.y + r2.h / 2.0);
+    assert!(a.own_menu_open() && !a.over_own_menu(x, y));
+    let second = right(&mut a, x, y);
+    assert!(!a.own_menu_open(), "the old menu closes");
+    assert_eq!(second, Some(vec![FsPath::parse(r"C:\Work\c.txt").unwrap()]), "the new menu is for the file under the pointer");
+    let v = a.tab().view.as_ref().unwrap();
+    assert!(v.is_selected(v.rows()[2]) && v.selected_count() == 1);
 }

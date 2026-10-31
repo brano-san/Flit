@@ -193,9 +193,30 @@ fn windows_only_actions_disappear_everywhere_on_linux() {
         assert!(!app.run_action(id, Instant::now()), "{id} runs");
     }
     assert!(app.available("file.rename"));
-    assert!(!app.toolbar_items().iter().any(|i| matches!(i, crate::ui::toolbar::ToolItem::Button(id, _) if id == "file.share")));
     app.open_palette();
     let ids: Vec<&str> = app.nav.palette.as_ref().unwrap().ids.iter().map(|&i| crate::ui::actions::ACTIONS[i].id).collect();
     assert!(ids.contains(&"file.rename"), "{ids:?}");
     assert!(!ids.iter().any(|id| crate::caps::WINDOWS_ONLY_ACTIONS.contains(id)), "{ids:?}");
+}
+
+#[test]
+fn folder_sizes_is_a_check_item_in_the_view_menu_and_keeps_its_shortcut() {
+    let mut app = app_with(&[("a.txt", false), ("sub", true)]);
+    let checked = |app: &mut App| {
+        let menu = app.build_menu(false);
+        let Some(MenuItem::Submenu { items, .. }) = menu.into_iter().find(|i| matches!(i, MenuItem::Submenu { label, .. } if label == "View")) else { panic!("no View submenu") };
+        items.iter().find_map(|i| match i {
+            MenuItem::Command { label, checked, .. } if label == "Show folder sizes" => Some(*checked),
+            _ => None,
+        })
+    };
+    assert_eq!(checked(&mut app), Some(false));
+    let k = app.menu.iter().position(|c| *c == Cmd::Action("view.auto_sizes")).expect("the item runs view.auto_sizes");
+    app.menu_command(k, Instant::now());
+    assert!(app.prefs.auto_sizes);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::DirSizes { .. }, .. })), "turning it on computes the sizes");
+    assert_eq!(checked(&mut app), Some(true));
+    assert_eq!(app.keymap.first_text("folder.refresh_stats").as_deref(), Some("Alt+R"));
+    app.on_event(&Event::Key { key: Key::Char('R'), mods: Mods { ctrl: false, shift: false, alt: true }, pressed: true }, Instant::now());
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::DirSizes { .. }, .. })));
 }

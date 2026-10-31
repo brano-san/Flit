@@ -63,8 +63,7 @@ impl Turn {
             return 0.0;
         }
         let Some(at) = self.at else { return self.to };
-        let p = (now.saturating_duration_since(at).as_secs_f32() / TURN.as_secs_f32()).min(1.0);
-        self.from + (self.to - self.from) * (1.0 - (1.0 - p).powi(3))
+        self.from + (self.to - self.from) * super::widgets::eased(at, now, TURN)
     }
 
     pub fn aim(&mut self, open: Option<usize>, animate: bool, now: Instant) -> bool {

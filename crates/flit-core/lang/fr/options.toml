@@ -13,7 +13,7 @@ windows = "Fenêtres et onglets"
 
 [title]
 font = "Police"
-font_size = "Taille de police"
+scale = "Échelle de l’interface"
 inspector_font = "Police de l’inspecteur"
 inspector_font_size = "Taille de police de l’inspecteur"
 spacing = "Espacement"
@@ -53,7 +53,7 @@ pins_background = "Commandes d’arrière-plan épinglées"
 
 [help]
 font = "Nom de la police installée utilisée pour toute l’interface."
-font_size = "Détermine l’échelle de toute l’interface."
+scale = "Détermine l’échelle de toute l’interface."
 inspector_font = "Police installée utilisée pour afficher le texte dans l’inspecteur."
 inspector_font_size = "Taille de police du texte affiché dans l’inspecteur."
 spacing = "Définit l’espace entre les éléments d’une liste."

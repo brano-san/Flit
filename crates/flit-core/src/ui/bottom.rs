@@ -9,6 +9,10 @@ use crate::theme::Theme;
 use bumpalo::Bump;
 
 pub(super) const ELAPSED_MIN_MS: u128 = 500;
+const ARRIVE_ELAPSED: u8 = 0;
+const ARRIVE_BUTTONS: u8 = 1;
+const ARRIVE_BRANCH: u8 = 2;
+const ARRIVE_MESSAGE: u8 = 3;
 const BUTTON_W: f32 = 26.0;
 const ZOOM_W: f32 = 46.0;
 const G_CLOCK: &str = "\u{E81C}";
@@ -114,12 +118,10 @@ impl App {
 
     fn bar_button<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, r: Rect, b: BottomHit, glyph: &str, on: bool) {
         let s3 = self.s(3.0);
-        if on {
-            g.dl.round_rect(r, t.accent.alpha(0x40), s3);
-        } else if self.hover == Hit::Bottom(b) {
+        if self.hover == Hit::Bottom(b) {
             g.dl.round_rect(r, t.button_hover, s3);
         }
-        centered(g, r, glyph, self.icon_font(12.0), if on { t.text } else { t.text_dim });
+        centered(g, r, if on { super::widgets::filled(glyph) } else { glyph }, self.icon_font(12.0), if on { t.text } else { t.text_dim });
         self.layout.bar.push((b, r));
     }
 
@@ -191,7 +193,9 @@ impl App {
             right = self.counter(g, t, right, BottomHit::Files, arena.alloc_str(&files));
             right = self.counter(g, t, right, BottomHit::Folders, arena.alloc_str(&dirs));
         }
+        let mut arrived: Vec<(u8, usize, usize)> = Vec::new();
         let stats = self.tab().stats;
+        let at = g.dl.instances.len();
         if let Some(done) = stats.op.or(stats.done).filter(|d| d.as_millis() > ELAPSED_MIN_MS) {
             let mut n = bumpalo::collections::String::new_in(arena);
             crate::i18n::decimal(&mut n, done.as_secs_f64(), 1);
@@ -203,7 +207,9 @@ impl App {
             g.text(right + icon + self.s(4.0), baseline, label, font, t.text_dim, f32::INFINITY);
             self.layout.bar.push((BottomHit::Elapsed, Rect::new(right, r.y, w + icon + self.s(4.0), r.h)));
             right -= self.s(6.0);
+            arrived.push((ARRIVE_ELAPSED, at, g.dl.instances.len()));
         }
+        let at = g.dl.instances.len();
 
         let in_bin = self.tab().view_loc.is_recycle_bin();
         let encoding = self.encoding_label();
@@ -222,6 +228,10 @@ impl App {
             g.text(b.x + self.s(8.0), baseline, label, font, t.text_dim, f32::INFINITY);
             right -= self.s(4.0);
         }
+        if !labels.is_empty() {
+            arrived.push((ARRIVE_BUTTONS, at, g.dl.instances.len()));
+        }
+        let at = g.dl.instances.len();
         self.layout.encoding = if in_bin { Rect::default() } else { buttons[0] };
         self.layout.bin = if in_bin { buttons } else { Default::default() };
         self.layout.branch = Rect::default();
@@ -235,6 +245,7 @@ impl App {
             }
             g.text(b.x + self.s(8.0), baseline, label, font, t.text_dim, f32::INFINITY);
             self.layout.branch = b;
+            arrived.push((ARRIVE_BRANCH, at, g.dl.instances.len()));
         }
 
         self.fit_filter(right - 2.0 * bw - pad - self.s(6.0));
@@ -286,7 +297,22 @@ impl App {
         let text_w = g.measure(&s, font).min(room);
         let text_x = right - text_w;
         if text_w > 0.0 {
+            let at = g.dl.instances.len();
             g.text(text_x, baseline, &s, font, color, text_w);
+            arrived.push((ARRIVE_MESSAGE, at, g.dl.instances.len()));
+        }
+        let now = self.last_frame.unwrap_or_else(std::time::Instant::now);
+        let keys: Vec<u8> = arrived.iter().map(|a| a.0).collect();
+        if self.bar_arrivals.settle(self.tab().id, &keys, self.animations, now) {
+            self.motion = true;
+        }
+        for &(key, from, to) in &arrived {
+            let shown = self.bar_arrivals.shown(key, now);
+            if shown < 1.0 {
+                let edge = g.dl.instances[from..to].iter().map(|i| i.rect[0] + i.rect[2]).fold(0.0, f32::max);
+                g.dl.grow_range(from..to, shown, (edge, r.y + r.h / 2.0), 0.9);
+                g.dl.shift_range(from..to, ((1.0 - shown) * self.s(12.0)).round(), 0.0);
+            }
         }
         let right_start = if text_w > 0.0 { text_x - pad } else { right - self.s(2.0) };
         let radius = self.s(6.0);

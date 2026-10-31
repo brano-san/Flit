@@ -693,7 +693,7 @@ impl App {
         let shown = st.visible && !self.search.active && !self.on_home();
         let l = &mut self.layout;
         l.bottom = l.status.y;
-        let (x0, w, top, end) = (l.header.x, l.header.right(), l.commands.bottom(), l.status.bottom());
+        let (x0, w, top, end) = (l.header.x, l.header.right(), l.toolbar.bottom(), l.status.bottom());
         let (room_w, room_h) = ((w - x0).max(0.0), (end - top).max(0.0));
         self.preview.room = (room_w, room_h);
         let right = self.inspector_right();
@@ -1105,6 +1105,12 @@ impl App {
         self.preview.buttons.push((r, hit));
     }
 
+    fn toggle_tool<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, r: Rect, glyph: &str, hit: PaneHit, on: bool) {
+        let font = if glyph.is_ascii() { self.ui_font(11.5) } else { self.icon_font(11.0) };
+        Paint::new(g, t, self.scale).toggle_button(r, glyph, font, on, self.hover == Hit::Preview(hit));
+        self.preview.buttons.push((r, hit));
+    }
+
     fn draw_inspector_tools<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
         let r = self.preview.r.tools;
         g.dl.rect(r, t.chrome);
@@ -1153,7 +1159,10 @@ impl App {
             if image && k == 3 {
                 x += self.s(8.0);
             }
-            self.tool_button(g, t, Rect::new(x, y, bw, bw), glyph, hit, on);
+            match image && k < 3 {
+                true => self.tool_button(g, t, Rect::new(x, y, bw, bw), glyph, hit, on),
+                false => self.toggle_tool(g, t, Rect::new(x, y, bw, bw), glyph, hit, on),
+            }
             x += bw;
         }
         let title = self.preview.subject.as_ref().map(|s| s.title.clone()).unwrap_or_default();
@@ -1287,7 +1296,7 @@ impl App {
         let details = Rect { x: close.x - bw, ..close };
         g.text(shown.x + self.s(10.0), (shown.y + (head_h + m.ascent - m.descent) / 2.0).round(), &s.title, bold, t.text, details.x - shown.x - self.s(14.0));
         let on = self.preview.state.details;
-        self.tool_button(g, t, details, if on { G_DETAILS_ON } else { G_DETAILS_OFF }, PaneHit::CardDetails, on);
+        self.toggle_tool(g, t, details, if on { G_DETAILS_ON } else { G_DETAILS_OFF }, PaneHit::CardDetails, on);
         self.tool_button(g, t, close, G_BELOW, PaneHit::CardClose, false);
         g.dl.rect(Rect::new(shown.x + 1.0, shown.y + head_h - 1.0, shown.w - 2.0, 1.0), t.separator);
         let _ = body;

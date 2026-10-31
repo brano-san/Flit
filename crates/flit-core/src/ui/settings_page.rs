@@ -77,7 +77,6 @@ pub(super) enum Btn {
     Import,
     Reset,
     CopyAbout,
-    CustomizeToolbar,
     Rename,
     Recolor,
     Delete,
@@ -103,7 +102,6 @@ impl Btn {
             Btn::Import => S::SettingsPageButtonImport.t(),
             Btn::Reset => S::SettingsPageButtonReset.t(),
             Btn::CopyAbout => S::SettingsPageButtonCopyAbout.t(),
-            Btn::CustomizeToolbar => S::SettingsPageButtonCustomizeToolbar.t(),
             Btn::Rename => S::SettingsPageButtonRename.t(),
             Btn::Recolor => S::SettingsPageButtonRecolor.t(),
             Btn::Delete => S::SettingsPageButtonDelete.t(),
@@ -242,6 +240,7 @@ pub struct About {
 }
 
 pub(super) struct SettingsUi {
+    pub turn: super::address::Turn,
     pub page: Page,
     search: Field,
     searching: bool,
@@ -289,6 +288,7 @@ impl SettingsUi {
             describe: Rect::default(),
             close: Rect::default(),
             hints: Rect::default(),
+            turn: super::address::Turn::default(),
         }
     }
 
@@ -655,7 +655,6 @@ impl App {
             self.setting_lines(i, out);
         }
         match page {
-            Page::Interface => out.push(Line::Buttons(None, &[Btn::CustomizeToolbar])),
             Page::Tags => {
                 if self.tag_defs().is_empty() {
                     out.push(Line::Note(S::SettingsPageLineNoTags.t()));
@@ -686,7 +685,7 @@ impl App {
                 out.push(Line::Buttons(None, LINK_BUTTONS));
                 out.push(Line::Note(NO_TELEMETRY.t()));
             }
-            Page::Colors | Page::Files | Page::Data | Page::Input | Page::Windows => {}
+            Page::Interface | Page::Colors | Page::Files | Page::Data | Page::Input | Page::Windows => {}
         }
     }
 
@@ -711,7 +710,6 @@ impl App {
                 self.setting_lines(i, out);
             }
             let extra: &[&'static [Btn]] = match page {
-                Page::Interface => &[&[Btn::CustomizeToolbar]],
                 Page::Tags => &[&[Btn::NewTag]],
                 Page::Advanced => &[&[Btn::ClearCache], FILE_BUTTONS, &[Btn::Reset], LOG_BUTTONS],
                 Page::About => &[&[Btn::CopyAbout], HELP_BUTTONS, LINK_BUTTONS],
@@ -1131,7 +1129,6 @@ impl App {
             (Btn::Export, ..) => self.ask_export_settings(),
             (Btn::Import, ..) => self.ask_import_settings(),
             (Btn::Reset, ..) => self.ask_reset_settings(),
-            (Btn::CustomizeToolbar, ..) => self.customize_toolbar(),
             (Btn::CopyAbout, ..) => {
                 let text = format!("Flit {}\r\n{}", env!("CARGO_PKG_VERSION"), self.about.os);
                 self.effects.push(Effect::SetClipboard(text));
@@ -1319,6 +1316,13 @@ impl App {
 
     pub(super) fn draw_settings<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
         let Some(mut ui) = self.settings.take() else { return };
+        let open = match self.menu_owner {
+            Some(Hit::Settings(SHit::Control(k))) if self.own_menu_open() => Some(k),
+            _ => None,
+        };
+        if ui.turn.aim(open, self.animations, self.last_frame.unwrap_or_else(Instant::now)) {
+            self.motion = true;
+        }
         self.paint_settings(g, t, &mut ui);
         self.settings = Some(ui);
     }
@@ -1343,7 +1347,7 @@ impl App {
         let inner = Rect::new(sr.x + s(32.0), sr.y, sr.w - s(40.0), sr.h);
         ui.search.draw(g, t, inner, font, focused_search, S::OptionsPlaceholder.t(), sc, Some(&self.preedit));
         let big_icons = self.icon_font(12.0);
-        Paint::new(g, t, sc).icon_button(ui.describe, G_DESCRIBE, big_icons, Button::of(hover == Hit::Settings(SHit::Describe), describe, true), t.text_dim);
+        Paint::new(g, t, sc).toggle_button(ui.describe, G_DESCRIBE, big_icons, describe, hover == Hit::Settings(SHit::Describe));
         Paint::new(g, t, sc).icon_button(ui.close, G_CLOSE, icons, Button::of(hover == Hit::Settings(SHit::Close), false, true), t.text_dim);
         let hints = ui.hints;
         {
@@ -1419,7 +1423,8 @@ impl App {
                         }
                         (Kind::Choice(..), _) => {
                             let h = Hit::Settings(SHit::Control(k));
-                            Paint::new(g, t, sc).picker(control_rect(r, s), &value, font, self.icon_font(8.0), self.menu_open_from(h), hover == h);
+                            let angle = ui.turn.angle(k, self.last_frame.unwrap_or_else(Instant::now));
+                            Paint::new(g, t, sc).picker(control_rect(r, s), &value, font, angle, self.menu_open_from(h), hover == h);
                         }
                         (Kind::Text(..) | Kind::Pick(..), _) => {
                             let c = control_rect(r, s);

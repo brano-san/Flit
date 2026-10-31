@@ -19,7 +19,6 @@ folder_icon = "Enter записывает значок в desktop.ini папки
 new_library = "Enter создает библиотеку в папке «Библиотеки»"
 library = "Подходящих папок нет"
 library_add = "Enter добавляет папку в библиотеку"
-toolbar = "Подходящих кнопок нет"
 
 [group]
 quick = "Быстрые"

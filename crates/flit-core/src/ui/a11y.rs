@@ -13,7 +13,6 @@ use std::time::Instant;
 const TABS: u64 = 2;
 const NAV: u64 = 3;
 const ADDRESS: u64 = 4;
-const COMMANDS: u64 = 5;
 const SIDEBAR: u64 = 6;
 const FILES: u64 = 7;
 const HEADER: u64 = 8;
@@ -52,7 +51,7 @@ impl App {
         let (w, h) = self.size;
         let mut t = Tree::new(self.tab().title(), Rect::new(0.0, 0.0, w, h));
         let l = self.layout.clone();
-        let kb = matches!(self.focus, Focus::TabBar | Focus::Nav | Focus::Toolbar).then_some(self.kb);
+        let kb = matches!(self.focus, Focus::TabBar | Focus::Nav).then_some(self.kb);
 
         let tabs = t.add(0, TABS, Role::TabList, S::A11yRegionTabs.t(), l.title);
         for (i, &(r, _)) in l.tabs.iter().enumerate() {
@@ -115,18 +114,6 @@ impl App {
                         };
                     }
                 }
-        }
-
-        if l.commands.h > 0.0 {
-            let bar = t.add(0, COMMANDS, Role::ToolBar, S::A11yRegionCommands.t(), l.commands);
-            for (n, (hit, r, label, id, on)) in self.tool_buttons().into_iter().enumerate() {
-                let k = put(&mut t, &mut targets, bar, Hit::Tool(hit), Role::Button, label, r);
-                t.nodes[k].help = description(id).into();
-                t.nodes[k].enabled = on;
-                if self.focus == Focus::Toolbar && kb == Some(n) {
-                    focus = Some(k);
-                }
-            }
         }
 
         let sb = &self.nav.sidebar;

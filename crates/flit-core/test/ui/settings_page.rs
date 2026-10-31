@@ -429,32 +429,13 @@ fn system_integration_starts_off_on_every_platform() {
 }
 
 #[test]
-fn appearance_page_hides_the_toolbar_and_opens_its_customization() {
+fn appearance_page_has_no_toolbar_options() {
     let mut a = listed(&[("a.txt", false)]);
     a.open_settings(Some(Page::Interface));
     let lines = page(&a, Page::Interface);
     assert_eq!(lines[..6], ["appearance.font", "appearance.scale", "appearance.inspector_font", "appearance.inspector_font_size", settings::SPACING, "appearance.animations"]);
-    assert_eq!(lines.last().map(String::as_str), Some("Customize the toolbar…"));
-    let k = line(&mut a, "appearance.toolbar");
-    let at = center(switch_rect(rect(&a, k), s));
-    click_at(&mut a, at);
-    assert!(!a.toolbar.state.visible);
-    ui_focus(&mut a, k);
-    key(&mut a, Key::Right, NO);
-    assert!(a.toolbar.state.visible);
-    let b = ui(&a).lines.iter().position(|l| l.buttons().contains(&Btn::CustomizeToolbar)).unwrap();
-    let u = a.settings.as_mut().unwrap();
-    (u.focus, u.reveal) = (b, true);
-    a.layout();
-    let u = a.settings.as_mut().unwrap();
-    u.scroll.snap(u.scroll.target);
-    a.layout();
-    let l =ui(&a).lines[b].clone();
-    let r = button_rects(&l, rect(&a, b), s)[0];
-    click_at(&mut a, center(r));
-    assert!(matches!(a.nav.palette.as_ref().map(|p| &p.pick), Some(Pick::Toolbar(_))), "the customization layer opens over the settings");
-    key(&mut a, Key::Escape, NO);
-    assert!(a.settings_open());
+    assert!(index("appearance.toolbar").is_none());
+    assert!(!lines.iter().any(|l| l.contains("toolbar")), "{lines:?}");
     a.drain_effects().for_each(drop);
     assert!(SETTINGS[index("files.streams").unwrap()].set(&mut a, Value::Bool(true)));
     assert!(a.prefs.show_streams);
@@ -760,7 +741,7 @@ fn choice_values_stay_inside_their_box() {
     let before = g.dl.instances.len();
     let c = control_rect(rect(&a, k), s);
     let t = crate::theme::DARK;
-    Paint::new(&mut g, &t, 1.0).picker(c, &"long value ".repeat(20), a.ui_font(13.0), a.icon_font(8.0), false, false);
+    Paint::new(&mut g, &t, 1.0).picker(c, &"long value ".repeat(20), a.ui_font(13.0), 0.0, false, false);
     let glyphs: Vec<_> = g.dl.instances[before..].iter().filter(|i| i.kind == crate::render::kind::GLYPH).collect();
     assert!(!glyphs.is_empty());
     assert!(glyphs.iter().all(|i| i.rect[0] >= c.x && i.rect[0] + i.rect[2] <= c.right() + 0.5), "every glyph stays inside {c:?}");

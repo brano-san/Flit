@@ -193,10 +193,7 @@ fn pane_state_rides_after_layouts_and_older_files_keep_the_default() {
 
 #[test]
 fn the_old_dual_pane_record_stays_ninth_and_is_ignored_so_later_records_still_load() {
-    use flit_core::ui::{Show, ToolItem, ToolbarState};
-    let mut toolbar = ToolbarState::default();
-    toolbar.sets[0] = vec![ToolItem::Button("nav.refresh".into(), Show::Icon)];
-    let tools = Tools { toolbar, searches: vec!["ext:txt".into()], streams: true };
+    let tools = Tools { streams: true, ..Tools::new(vec!["ext:txt".into()]) };
     let mut persisted = Persisted::default();
     persisted.archive.open_after = true;
     persisted.prefs.show_streams = true;
@@ -229,32 +226,29 @@ fn the_old_dual_pane_record_stays_ninth_and_is_ignored_so_later_records_still_lo
 }
 
 #[test]
-fn toolbar_and_search_history_ride_eighth_so_files_from_master_still_load() {
-    use flit_core::ui::{Show, ToolItem, ToolbarState, MAX_HISTORY};
-    let mut toolbar = ToolbarState { visible: false, ..Default::default() };
-    toolbar.sets[0] = vec![ToolItem::Button("nav.refresh".into(), Show::Both), ToolItem::Separator];
-    let tools = Tools { toolbar, searches: vec!["report".into(), "ext:pdf".into()], streams: true };
+fn the_retired_toolbar_record_still_rides_eighth_so_old_files_keep_their_search_history() {
+    use flit_core::ui::MAX_HISTORY;
+    let toolbar = RetiredToolbar { visible: false, sets: [vec![RetiredTool::Button("nav.refresh".into(), RetiredShow::Both), RetiredTool::Separator], vec![RetiredTool::Button("bin.empty".into(), RetiredShow::Label)], Vec::new()] };
+    let old = Tools { toolbar, searches: vec!["report".into(), "ext:pdf".into()], streams: true };
     let mut persisted = Persisted::default();
     persisted.archive.open_after = true;
     persisted.prefs.show_streams = true;
-    let s = Saved::new(persisted, None).with_tools(tools.clone());
+    let s = Saved::new(persisted, None).with_tools(old.clone());
     let bytes = older_encode(&s);
     let back = Saved::decode(&bytes).unwrap();
-    assert_eq!((&back.tools, &back.persisted.archive, back.persisted.prefs.show_streams), (&tools, &s.persisted.archive, true));
+    let kept = Tools { streams: true, ..Tools::new(old.searches.clone()) };
+    assert_eq!((&back.tools, &back.persisted.archive, back.persisted.prefs.show_streams), (&kept, &s.persisted.archive, true), "the old toolbar is read and dropped");
+    assert_eq!(Saved::decode(&back.encode().unwrap()).unwrap().tools, kept);
     let bytes = &bytes[..bytes.len() - postcard::to_stdvec(&SplitPrefs::default()).unwrap().len() - WORD_LEN];
-    let stored = postcard::to_stdvec(&tools).unwrap();
+    let stored = postcard::to_stdvec(&old).unwrap();
     assert!(bytes.ends_with(&stored));
     let master = &bytes[..bytes.len() - stored.len()];
     let older = Saved::decode(master).unwrap();
     assert_eq!(older.tools, Tools::default());
-    assert!(older.tools.toolbar.visible);
     assert_eq!(older.persisted, Persisted { prefs: ViewPrefs { show_streams: false, ..s.persisted.prefs.clone() }, ..s.persisted.clone() });
-    let mut junk = tools;
-    junk.toolbar.sets[1].push(ToolItem::Button("gone.button".into(), Show::Icon));
-    junk.searches = (0..100).map(|k| format!("q{k}")).collect();
+    let junk = Tools { searches: (0..100).map(|k| format!("q{k}")).collect(), ..old };
     let fixed = Saved { tools: junk, ..s }.sanitized();
     assert_eq!(fixed.tools.searches.len(), MAX_HISTORY);
-    assert!(!fixed.tools.toolbar.sets[1].contains(&ToolItem::Button("gone.button".into(), Show::Icon)));
 }
 
 #[test]
@@ -332,7 +326,7 @@ fn older_encode(s: &Saved) -> Vec<u8> {
 fn wide_len(s: &Saved) -> usize {
     let p = &s.persisted;
     let folders = p.folders.entries();
-    postcard::to_stdvec(&WideRecord { view: wide(&p.view), defaults: wide(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| wide(v)).collect() }).unwrap().len()
+    postcard::to_stdvec(&WideRecord { view: wide(&p.view), defaults: wide(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| wide(v)).collect() }).unwrap().len() + 1
 }
 
 #[test]
@@ -387,4 +381,25 @@ fn the_folders_and_files_columns_keep_their_widths_and_places_and_older_files_pu
     let k = order.iter().position(|&c| c == Column::Folders).unwrap();
     assert_eq!(order[k + 1], Column::Files, "{order:?}");
     assert!(older.columns.shown(Column::Files));
+}
+
+#[test]
+fn the_files_column_shows_by_default_while_files_saved_from_now_on_keep_their_choice() {
+    assert!(flit_core::ui::FolderView::default().columns.shown(Column::Files), "a fresh view shows Files next to Folders");
+    let mut persisted = Persisted { path: loc(r"D:\x"), ..Default::default() };
+    persisted.view.columns.toggle(Column::Files);
+    persisted.prefs.defaults.columns.toggle(Column::Files);
+    let key = folder_key(&loc(r"D:\x\y"));
+    let mut hidden_both = FolderView::default();
+    hidden_both.columns.toggle(Column::Files);
+    hidden_both.columns.toggle(Column::Folders);
+    persisted.folders.put(key, hidden_both);
+    let s = Saved::new(persisted, None);
+    let bytes = s.encode().unwrap();
+    let chosen = Saved::decode(&bytes).unwrap().sanitized().persisted;
+    assert!(!chosen.view.columns.shown(Column::Files), "a choice saved by this build stays");
+    let before = Saved::decode(&bytes[..bytes.len() - 1]).unwrap().sanitized().persisted;
+    assert!(before.view.columns.shown(Column::Files) && before.prefs.defaults.columns.shown(Column::Files), "a layout from before the split shows Files with Folders");
+    let folder = before.folders.get(key).unwrap();
+    assert!(!folder.columns.shown(Column::Folders) && !folder.columns.shown(Column::Files), "a folder that hid the counts keeps them hidden");
 }

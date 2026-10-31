@@ -56,6 +56,25 @@ pub(super) struct Strip {
     pub rev: u64,
     pub pointer: Option<(f32, f32)>,
     wheel: f32,
+    newest: Option<crate::provider::TabId>,
+    born: Vec<(crate::provider::TabId, Instant)>,
+}
+
+pub(super) const SLIDE_IN: std::time::Duration = std::time::Duration::from_millis(140);
+
+impl Strip {
+    pub fn arrivals(&mut self, ids: &[crate::provider::TabId], animate: bool, now: Instant) -> bool {
+        if let (true, Some(newest)) = (animate, self.newest) {
+            self.born.extend(ids.iter().filter(|&&id| id > newest).map(|&id| (id, now)));
+        }
+        self.newest = ids.iter().copied().chain(self.newest).max();
+        self.born.retain(|b| animate && now.saturating_duration_since(b.1) < SLIDE_IN);
+        self.born.iter().any(|b| ids.contains(&b.0))
+    }
+
+    pub fn arrival(&self, id: crate::provider::TabId, now: Instant) -> f32 {
+        self.born.iter().find(|b| b.0 == id).map_or(1.0, |b| super::widgets::eased(b.1, now, SLIDE_IN))
+    }
 }
 
 pub fn tab_glyph(loc: &Location) -> &'static str {
