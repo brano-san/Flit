@@ -77,6 +77,8 @@
 "view.sort.accessed" = "Ordena el contenido de la carpeta por fecha de último acceso."
 "view.sort.deleted" = "Ordena el contenido de la carpeta por fecha de eliminación. Disponible en la Papelera de reciclaje."
 "view.sort.items" = "Ordena el contenido de la carpeta por número de elementos que contiene."
+"view.sort.folders" = "Ordena el contenido de la carpeta por número de subcarpetas que contiene."
+"view.sort.files" = "Ordena el contenido de la carpeta por número de archivos que contiene."
 "view.sort.type" = "Ordena el contenido de la carpeta por tipo de archivo."
 "view.sort.origin" = "Ordena el contenido de la carpeta por ubicación original. Disponible en la Papelera de reciclaje."
 "view.sort.free" = "Ordena el contenido de la carpeta por espacio libre de la unidad. Disponible en Este equipo."

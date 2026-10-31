@@ -53,3 +53,35 @@ fn key_hints_and_buttons_take_their_colors_from_the_theme() {
     let two = p.keycaps_w(&["Up".to_owned(), "Up".to_owned()], crate::text::FontStyle::new(crate::text::FontFamily::Ui, 12.0, false));
     assert!(two > 2.0 * one, "caps keep a gap between them");
 }
+
+#[test]
+fn key_hints_drop_the_first_ones_when_the_row_is_too_narrow() {
+    let t = crate::theme::DARK;
+    let font = crate::text::FontStyle::new(crate::text::FontFamily::Ui, 12.0, false);
+    let items: [(&[&str], &str); 3] = [(&["Up", "Down"], "to navigate"), (&["Enter"], "to use"), (&["Escape"], "to dismiss")];
+    for w in [600.0, 260.0, 40.0] {
+        let r = crate::render::Rect::new(10.0, 0.0, w, 36.0);
+        let mut g = Gfx::new(Mono, 256);
+        Paint::new(&mut g, &t, 1.0).hints_within(r, &items, font);
+        let glyphs: Vec<_> = g.dl.instances.iter().filter(|i| i.kind == kind::GLYPH).collect();
+        assert_eq!(glyphs.is_empty(), w < 100.0, "only a row too narrow for any hint is left empty at {w}");
+        assert!(glyphs.iter().all(|i| i.rect[0] >= r.x && i.rect[0] + i.rect[2] <= r.right()), "the hints fit in {w}");
+    }
+}
+
+#[test]
+fn a_focused_empty_field_draws_no_placeholder() {
+    let t = crate::theme::DARK;
+    let font = crate::text::FontStyle::new(crate::text::FontFamily::Ui, 12.0, false);
+    let r = crate::render::Rect::new(10.0, 0.0, 300.0, 28.0);
+    let glyphs = |focused: bool, text: &str| {
+        let mut f = crate::ui::field::Field::default();
+        f.edit.insert(text);
+        let mut g = Gfx::new(Mono, 256);
+        f.draw(&mut g, &t, r, font, focused, "Filter 8 files...", 1.0, None);
+        g.dl.instances.iter().filter(|i| i.kind == kind::GLYPH).count()
+    };
+    assert!(glyphs(false, "") > 0, "an idle field shows its hint");
+    assert_eq!(glyphs(true, ""), 0, "focus hides the hint before any typing");
+    assert!(glyphs(true, "ab") > 0);
+}

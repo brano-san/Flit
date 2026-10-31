@@ -16,3 +16,8 @@ already = "{key} already runs «{command}»"
 reassign = "Reassign {key} from «{from}» to «{command}»"
 assign = "Assign {key} to «{command}»"
 remove = "Remove the shortcut {key}"
+
+[editor]
+title = "Shortcuts of «{command}»"
+change = "Change {key}"
+removes = "Delete removes it"

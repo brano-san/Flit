@@ -312,10 +312,26 @@ fn a_crash_report_without_a_session_only_opens_the_folder() {
 fn operations_longer_than_half_a_second_show_their_duration_in_the_status_block() {
     let mut app = app_at(r"C:\x");
     let (quick, _) = paste(&mut app);
-    app.job_done(quick, None, Instant::now());
+    app.job_done(quick, None, false, Instant::now());
     assert_eq!(app.tab().stats.op, None);
     let (slow, _) = paste(&mut app);
-    app.job_done(slow, None, Instant::now() + Duration::from_millis(1500));
+    app.job_done(slow, None, false, Instant::now() + Duration::from_millis(1500));
     assert!(app.tab().stats.op.is_some_and(|d| d >= Duration::from_millis(1400)));
     assert_eq!(app.bottom_tip(crate::ui::bottom::BottomHit::Elapsed), S::TooltipElapsedOp);
+}
+
+#[test]
+fn user_cancelled_operations_are_shown_as_cancelled_without_a_code() {
+    for e in ["(0x80270000)", "Cancelled by the user (0x800704C7)", "(0x80004004)", "The operation was cancelled (0xFFFFFFFF)", "Deletion was cancelled"] {
+        assert!(cancelled_error(e), "{e}");
+    }
+    assert!(!cancelled_error("Access is denied (0x80070005)"));
+    let mut app = app_at(r"C:\x");
+    let (id, _) = paste(&mut app);
+    finish(&mut app, id, Some("(0x80270000)"));
+    let (other, _) = paste(&mut app);
+    finish(&mut app, other, Some("Access is denied (0x80070005)"));
+    assert_eq!(states(&app), [JobState::Cancelled, JobState::Failed("Access is denied (0x80070005)".into())]);
+    assert_eq!(app.jobs.list[0].status(), "Cancelled");
+    assert_eq!(app.tab().error.as_deref(), Some("Access is denied (0x80070005)"), "only the real failure reaches the status bar");
 }

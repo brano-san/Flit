@@ -33,6 +33,7 @@ const HOVER_SELECT: Duration = Duration::from_millis(600);
 const AUTOSCROLL_DEAD: f32 = 12.0;
 const AUTOSCROLL_RATE: f32 = 8.0;
 pub(super) const CHECK: f32 = 14.0;
+const CHECK_IN: Duration = Duration::from_millis(140);
 pub const THUMB_CACHE_MB: (u32, u32, u32) = (100, 500, 5000);
 const SIZE_GROUPS: [S; 7] = [
     S::DetailsSizeGroupGigantic,
@@ -62,12 +63,12 @@ pub struct Columns {
 }
 
 pub const GIT_WIDTHS: [f32; 4] = [100.0, 260.0, 140.0, 150.0];
-pub const EXTRA: usize = 7;
-pub const ORDERED: usize = 15;
-const FIRST_EXTRA: u8 = Column::Items as u8;
-pub const EXTRA_WIDTHS: [f32; EXTRA] = [140.0, 150.0, 110.0, 110.0, 110.0, 90.0, 110.0];
+pub const EXTRA: usize = 8;
+pub const ORDERED: usize = 16;
+const FIRST_EXTRA: u8 = Column::Folders as u8;
+pub const EXTRA_WIDTHS: [f32; EXTRA] = [90.0, 150.0, 110.0, 110.0, 110.0, 90.0, 110.0, 90.0];
 const DEFAULT_HIDDEN: u8 = 1 << Column::Created as u8;
-const DEFAULT_EXTRA: u8 = 1 << (Column::Items as u8 - FIRST_EXTRA) | 1 << (Column::Free as u8 - FIRST_EXTRA) | 1 << (Column::FileSystem as u8 - FIRST_EXTRA) | 1 << (Column::Percent as u8 - FIRST_EXTRA);
+const DEFAULT_EXTRA: u8 = 1 << (Column::Folders as u8 - FIRST_EXTRA) | 1 << (Column::Free as u8 - FIRST_EXTRA) | 1 << (Column::FileSystem as u8 - FIRST_EXTRA) | 1 << (Column::Percent as u8 - FIRST_EXTRA) | 1 << (Column::Files as u8 - FIRST_EXTRA);
 const DEFAULT_WIDTHS: [f32; 7] = [0.0, 150.0, 140.0, 90.0, 220.0, 150.0, 150.0];
 pub const DEFAULT_ORDER: [Column; ORDERED] = [
     Column::Name,
@@ -75,7 +76,8 @@ pub const DEFAULT_ORDER: [Column; ORDERED] = [
     Column::Deleted,
     Column::Type,
     Column::Modified,
-    Column::Items,
+    Column::Folders,
+    Column::Files,
     Column::Size,
     Column::Volume,
     Column::Created,
@@ -95,13 +97,14 @@ const ALL_COLUMNS: [Column; ORDERED] = [
     Column::Deleted,
     Column::Created,
     Column::Tag,
-    Column::Items,
+    Column::Folders,
     Column::Accessed,
     Column::Volume,
     Column::FolderUsage,
     Column::Free,
     Column::FileSystem,
     Column::Percent,
+    Column::Files,
 ];
 
 fn git_widths() -> [f32; 4] {
@@ -480,7 +483,40 @@ struct Autoscroll {
 }
 
 #[derive(Default)]
+pub(super) struct Checks {
+    pub hover: Option<usize>,
+    seen: Vec<(u32, bool)>,
+    fresh: Vec<(u32, Instant)>,
+}
+
+impl Checks {
+    pub fn progress(&self, i: u32, now: Instant) -> f32 {
+        self.fresh.iter().find(|f| f.0 == i).map_or(1.0, |f| now.saturating_duration_since(f.1).as_secs_f32() / CHECK_IN.as_secs_f32())
+    }
+
+    pub fn settle(&mut self, mut drawn: Vec<(u32, bool)>, animate: bool, now: Instant) -> bool {
+        drawn.sort_unstable();
+        if animate {
+            for &(i, shown) in &drawn {
+                let was_hidden = self.seen.binary_search_by_key(&i, |s| s.0).is_ok_and(|k| !self.seen[k].1);
+                if shown && was_hidden && !self.fresh.iter().any(|f| f.0 == i) {
+                    self.fresh.push((i, now));
+                }
+            }
+        }
+        self.fresh.retain(|f| animate && now.saturating_duration_since(f.1) < CHECK_IN && drawn.binary_search(&(f.0, true)).is_ok());
+        self.seen = drawn;
+        !self.fresh.is_empty()
+    }
+}
+
+pub(super) fn shows_check(enabled: bool, selected: bool, icon_hovered: bool) -> bool {
+    enabled && (selected || icon_hovered)
+}
+
+#[derive(Default)]
 pub(super) struct Details {
+    pub checks: Checks,
     pick: Option<Pick>,
     autoscroll: Option<Autoscroll>,
     swallow: Option<MouseButton>,
@@ -866,14 +902,17 @@ impl App {
                     format::datetime_in(&mut s, e.accessed, self.utc_offset_min, &self.style);
                 }
             }
-            Column::Items => match l.stats(i) {
-                Some(st) if e.is_dir() && st.items() > 0 => {
-                    let _ = write!(s, "{}", st.items());
+            Column::Folders | Column::Files => {
+                let count = |st: &crate::listing::DirStats| if col == Column::Folders { st.folders } else { st.files };
+                match l.stats(i) {
+                    Some(st) if e.is_dir() && count(&st) > 0 => {
+                        let _ = write!(s, "{}", count(&st));
+                    }
+                    Some(_) => s.push_str(NO_ITEMS),
+                    None if !e.is_dir() => s.push_str(NO_ITEMS),
+                    None => {}
                 }
-                Some(_) => s.push_str(NO_ITEMS),
-                None if !e.is_dir() => s.push_str(NO_ITEMS),
-                None => {}
-            },
+            }
             Column::Volume => percent_text(&mut s, sort::known_size(e), l.volume),
             Column::FolderUsage => percent_text(&mut s, sort::known_size(e), l.total),
             Column::Free => {

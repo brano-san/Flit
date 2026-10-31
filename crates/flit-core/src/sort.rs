@@ -22,6 +22,8 @@ pub enum SortField {
     Percent,
     Volume,
     FolderUsage,
+    Folders,
+    Files,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash, serde::Serialize, serde::Deserialize)]
@@ -405,7 +407,7 @@ fn item_cmp(l: &Listing, k: &SortKeys, spec: SortSpec, a: u32, b: u32) -> Orderi
         SortField::Tag => tag_key(ea.tags).cmp(&tag_key(eb.tags)),
         SortField::Accessed => ea.accessed.cmp(&eb.accessed),
         SortField::Volume | SortField::FolderUsage => ea.size.cmp(&eb.size),
-        SortField::Items | SortField::Free | SortField::Percent => primary(l, spec.field, a).cmp(&primary(l, spec.field, b)),
+        SortField::Items | SortField::Folders | SortField::Files | SortField::Free | SortField::Percent => primary(l, spec.field, a).cmp(&primary(l, spec.field, b)),
         SortField::FileSystem => ext_cmp(file_system(l, a), file_system(l, b)),
     }
     .then_with(|| k.cmp(a, b))
@@ -456,6 +458,8 @@ fn primary(l: &Listing, field: SortField, i: u32) -> u64 {
         SortField::Origin => ext_prefix(recycle::origin(l, i)),
         SortField::Tag => tag_key(e.tags),
         SortField::Items => l.stats(i).filter(|_| e.is_dir()).map_or(0, |s| s.items() + 1),
+        SortField::Folders => l.stats(i).filter(|_| e.is_dir()).map_or(0, |s| u64::from(s.folders) + 1),
+        SortField::Files => l.stats(i).filter(|_| e.is_dir()).map_or(0, |s| u64::from(s.files) + 1),
         SortField::Free => l.drive(i).map_or(0, |d| d.0),
         SortField::FileSystem => ext_prefix(file_system(l, i)),
         SortField::Percent => used_permille(l, i).map_or(0, |p| p + 1),

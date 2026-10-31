@@ -813,7 +813,7 @@ impl App {
             Pick::Setting(p) => self.setting_input(p, text),
             Pick::Server => self.connect_server(text),
             Pick::SaveLayout => self.save_layout(text),
-            Pick::Tabs | Pick::LoadLayout | Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Encoding(_) | Pick::Toolbar(_) | Pick::GoTo | Pick::Crumb(_) => {}
+            Pick::Tabs | Pick::LoadLayout | Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Encoding(_) | Pick::Toolbar(_) | Pick::GoTo | Pick::Crumb(_) | Pick::Keys(_) => {}
         }
     }
 
@@ -925,10 +925,11 @@ impl App {
     }
 
     pub(super) fn op_done(&mut self, tab: TabId, id: OpId, error: Option<String>, report: Option<OpReport>, now: Instant) {
-        self.job_done(id, error.as_deref(), now);
+        let cancelled = error.as_deref().is_some_and(super::jobs::cancelled_error);
+        self.job_done(id, error.as_deref().filter(|_| !cancelled), cancelled, now);
         let pending = self.ops.pending.iter().position(|p| p.id == id && p.tab == tab).map(|k| self.ops.pending.swap_remove(k));
         let k = self.tabs.iter().position(|t| t.id == tab);
-        if let Some(message) = &error {
+        if let Some(message) = error.as_ref().filter(|_| !cancelled) {
             let k = k.unwrap_or(self.cur);
             self.tabs[k].error = Some(message.clone());
             self.dirty |= k == self.cur;
@@ -1499,7 +1500,7 @@ impl App {
             Hit::SideHeader(Section::Bookmarks) | Hit::SideEmpty => Some(Target::Pin),
             Hit::SideHeader(_) | Hit::HomeItem(_) | Hit::HomeEmpty => None,
             Hit::Splitter | Hit::FilterField | Hit::FilterClose | Hit::PanelSep(_) | Hit::Menu | Hit::QuickToggle => None,
-            Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside | Hit::PaletteClose | Hit::PaletteDescribe | Hit::PaletteScroll(_) => None,
+            Hit::PaletteRow(_) | Hit::PaletteKeys(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside | Hit::PaletteClose | Hit::PaletteDescribe | Hit::PaletteScroll(_) => None,
             Hit::OpsButton | Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsClear | Hit::OpsCancel(_) | Hit::OpsMore(_) | Hit::OpsMenu(_) => None,
             Hit::Dialog | Hit::DialogButton(_) | Hit::DialogCheck | Hit::Form(_) | Hit::Modal | Hit::Preview(_) => None,
             _ if self.layout.status.contains(x, y) => None,

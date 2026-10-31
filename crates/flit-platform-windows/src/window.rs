@@ -609,6 +609,8 @@ impl<H: WindowHandler<Win32>> Shared<H> {
         let title = wide(&opts.title);
         let hidden = crate::d3d::hidden();
         let (ex, at) = if hidden { (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, -32000) } else { (WS_EX_APPWINDOW, CW_USEDEFAULT) };
+        let wanted = std::env::var("FLIT_CAPTURE_SIZE").ok().filter(|_| hidden).and_then(|v| v.split_once(',').and_then(|(w, h)| Some((w.trim().parse::<f32>().ok()?, h.trim().parse::<f32>().ok()?))));
+        let (width, height) = wanted.unwrap_or((1100.0, 720.0));
         let hwnd = CreateWindowExW(
             WS_EX_NOREDIRECTIONBITMAP | ex,
             WINDOW_CLASS,
@@ -616,8 +618,8 @@ impl<H: WindowHandler<Win32>> Shared<H> {
             WS_OVERLAPPEDWINDOW,
             at,
             at,
-            (1100.0 * sys) as i32,
-            (720.0 * sys) as i32,
+            (width * sys) as i32,
+            (height * sys) as i32,
             None,
             None,
             Some(self.hinst),

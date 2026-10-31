@@ -11,6 +11,7 @@ up = "Up"
 down = "Down"
 enter = "Enter"
 escape = "Escape"
+f2 = "F2"
 
 [hint]
 expand = "to expand"
@@ -18,3 +19,4 @@ open_in_panel = "to open in panel"
 navigate = "to navigate"
 use = "to use"
 dismiss = "to dismiss"
+rebind = "to rebind"

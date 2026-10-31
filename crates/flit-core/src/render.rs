@@ -137,11 +137,15 @@ impl DrawList {
     }
 
     pub fn pop_in(&mut self, from: usize, t: f32, center: (f32, f32)) {
+        self.grow(from, t, center, 0.96);
+    }
+
+    pub fn grow(&mut self, from: usize, t: f32, center: (f32, f32), start: f32) {
         let t = t.clamp(0.0, 1.0);
         if t >= 1.0 {
             return;
         }
-        let k = 0.96 + 0.04 * t;
+        let k = start + (1.0 - start) * t;
         let scale = |v: f32, c: f32| c + (v - c) * k;
         for i in self.instances.iter_mut().skip(from) {
             let [x, y, w, h] = i.rect;
@@ -149,6 +153,13 @@ impl DrawList {
             let a = ((i.color >> 24) as f32 * t).round() as u32;
             i.color = (i.color & 0x00FF_FFFF) | a << 24;
         }
+    }
+
+    pub fn beneath(&mut self, at: usize, draw: impl FnOnce(&mut Self)) {
+        let before = self.instances.len();
+        draw(self);
+        let added = self.instances.len() - before;
+        self.instances[at.min(before)..].rotate_right(added);
     }
 
     pub fn glyph(&mut self, r: Rect, uv: [f32; 4], color: Color) {
@@ -172,9 +183,18 @@ impl DrawList {
     }
 
     pub fn check(&mut self, r: Rect, color: Color) {
-        let stroke = check_stroke(r);
-        let [a, b, c] = CHECK_POINTS.map(|(fx, fy)| (r.x + r.w * fx, r.y + r.h * fy));
-        for (from, to) in [(a, b), (b, c)] {
+        let points = CHECK_POINTS.map(|(fx, fy)| (r.x + r.w * fx, r.y + r.h * fy));
+        self.polyline(&points, check_stroke(r), color);
+    }
+
+    pub fn chevron(&mut self, center: (f32, f32), size: f32, degrees: f32, stroke: f32, color: Color) {
+        let (sin, cos) = degrees.to_radians().sin_cos();
+        let points = CHEVRON_POINTS.map(|(fx, fy)| (center.0 + size * (fx * cos - fy * sin), center.1 + size * (fx * sin + fy * cos)));
+        self.polyline(&points, stroke, color);
+    }
+
+    pub fn polyline(&mut self, points: &[(f32, f32)], stroke: f32, color: Color) {
+        for (&from, &to) in points.iter().zip(&points[1..]) {
             let steps = ((to.0 - from.0).hypot(to.1 - from.1) / (stroke * 0.5)).ceil().max(1.0) as usize;
             for k in 0..=steps {
                 let t = k as f32 / steps as f32;
@@ -186,6 +206,7 @@ impl DrawList {
 }
 
 const CHECK_POINTS: [(f32, f32); 3] = [(0.24, 0.52), (0.42, 0.70), (0.77, 0.32)];
+const CHEVRON_POINTS: [(f32, f32); 3] = [(-0.25, -0.5), (0.25, 0.0), (-0.25, 0.5)];
 
 pub fn check_stroke(r: Rect) -> f32 {
     (r.w.min(r.h) * 0.16).max(1.75)

@@ -380,13 +380,18 @@ impl App {
     }
 
     pub(super) fn on_checkbox(&self, x: f32, y: f32) -> bool {
-        if !self.prefs.checkboxes {
-            return false;
+        self.checkbox_row(x, y).is_some()
+    }
+
+    pub(super) fn checkbox_row(&self, x: f32, y: f32) -> Option<usize> {
+        if !self.prefs.checkboxes || !self.layout.list.contains(x, y) {
+            return None;
         }
         let f = self.flow();
-        let Some(line) = self.line_at(&f, x, y) else { return false };
+        let line = self.line_at(&f, x, y)?;
+        let Some(crate::view::Line::Row(row)) = self.tab().view.as_ref()?.line(line) else { return None };
         let r = self.item_parts(self.line_rect(&f, line)).icon;
-        r.inset(-self.s(2.0), -self.s(2.0)).contains(x, y)
+        r.inset(-self.s(2.0), -self.s(2.0)).contains(x, y).then_some(row)
     }
 
     pub(super) fn on_name(&self, x: f32, y: f32, row: usize) -> bool {

@@ -77,6 +77,8 @@
 "view.sort.accessed" = "Sort folder contents by file last access date."
 "view.sort.deleted" = "Sort folder contents by date file was deleted. Applicable in Recycle Bin."
 "view.sort.items" = "Sort folder contents by children item count."
+"view.sort.folders" = "Sort folder contents by the number of subfolders inside."
+"view.sort.files" = "Sort folder contents by the number of files inside."
 "view.sort.type" = "Sort folder contents by file type."
 "view.sort.origin" = "Sort folder contents by file original location. Applicable in Recycle Bin."
 "view.sort.free" = "Sort folder contents by drive free space. Applicable in Root folder."

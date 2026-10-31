@@ -16,3 +16,8 @@ already = "{key} 已在运行“{command}”"
 reassign = "将 {key} 从“{from}”重新分配给“{command}”"
 assign = "将 {key} 分配给“{command}”"
 remove = "删除快捷键 {key}"
+
+[editor]
+title = "“{command}”的快捷键"
+change = "更改 {key}"
+removes = "Delete 删除"

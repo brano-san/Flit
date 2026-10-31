@@ -77,6 +77,8 @@
 "view.sort.accessed" = "Trier le contenu du dossier par date de dernier accès aux fichiers."
 "view.sort.deleted" = "Trier le contenu du dossier par date de suppression des fichiers. Applicable dans la Corbeille."
 "view.sort.items" = "Trier le contenu du dossier par nombre d’éléments contenus."
+"view.sort.folders" = "Trier le contenu du dossier par nombre de sous-dossiers contenus."
+"view.sort.files" = "Trier le contenu du dossier par nombre de fichiers contenus."
 "view.sort.type" = "Trier le contenu du dossier par type de fichier."
 "view.sort.origin" = "Trier le contenu du dossier par emplacement d’origine des fichiers. Applicable dans la Corbeille."
 "view.sort.free" = "Trier le contenu du dossier par espace libre du lecteur. Applicable dans Ce PC."

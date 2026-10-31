@@ -1,5 +1,5 @@
 use super::actions::{chord_text, index, Chord, ACTIONS};
-use crate::i18n::{self, Lang, S};
+use crate::i18n::{self, S};
 use crate::{tr, tr_en};
 use super::palette::{Palette, Pick};
 use super::settings_page::SettingPick;
@@ -15,7 +15,6 @@ pub struct Keymap {
     custom: Vec<Option<Vec<Chord>>>,
     unknown: Map<String, Json>,
     owners: FxHashMap<Chord, usize>,
-    words: [OnceLock<Vec<String>>; 2],
 }
 
 impl PartialEq for Keymap {
@@ -28,7 +27,7 @@ impl Eq for Keymap {}
 
 impl Keymap {
     fn new(custom: Vec<Option<Vec<Chord>>>, unknown: Map<String, Json>) -> Self {
-        let mut k = Self { custom, unknown, owners: FxHashMap::default(), words: Default::default() };
+        let mut k = Self { custom, unknown, owners: FxHashMap::default() };
         k.reindex();
         k
     }
@@ -42,22 +41,6 @@ impl Keymap {
             }
         }
         self.owners = owners;
-        self.words = Default::default();
-    }
-
-    pub fn words(&self, i: usize) -> &str {
-        let l = i18n::lang();
-        let all = self.words[l as usize].get_or_init(|| {
-            ACTIONS
-                .iter()
-                .enumerate()
-                .map(|(k, a)| {
-                    let local = if l == Lang::En { String::new() } else { format!(" {} {}", a.title.t(), a.desc.t()) };
-                    format!("{} {} {} {}{local}", a.title.en(), a.id, a.desc.en(), self.text(k)).to_lowercase()
-                })
-                .collect()
-        });
-        &all[i]
     }
 
     pub fn keys(&self, i: usize) -> &[Chord] {
@@ -345,6 +328,41 @@ impl App {
 
     pub(super) fn open_capture(&mut self, action: usize, old: Option<Chord>) {
         self.show_capture(action, old, None);
+    }
+
+    pub(super) fn edit_shortcuts(&mut self, action: usize) {
+        if self.nav.palette.as_ref().is_some_and(|p| p.commands.is_some()) {
+            self.nav.back = self.nav.palette.take().map(Box::new);
+        }
+        let mut rows: Vec<(String, String)> = self.keymap.keys(action).iter().map(|c| (tr!(S::KeymapEditorChange, key = chord_text(c)), S::KeymapEditorRemoves.t().to_owned())).collect();
+        rows.push((S::A11yButtonAddShortcut.t().to_owned(), String::new()));
+        if self.keymap.is_custom(action) {
+            rows.push((S::A11yButtonRestoreShortcut.t().to_owned(), ACTIONS[action].keys.iter().map(chord_text).collect::<Vec<_>>().join(", ")));
+        }
+        rows.push((S::SettingsPageButtonRestoreKeys.t().to_owned(), String::new()));
+        let mut p = Palette::new(Pick::Keys(action), rows, "");
+        p.placeholder = Some(tr!(S::KeymapEditorTitle, command = ACTIONS[action].title));
+        self.nav.palette = Some(p);
+        self.layout();
+        self.dirty = true;
+    }
+
+    pub(super) fn shortcut_choose(&mut self, action: usize, row: usize) {
+        let keys = self.keymap.keys(action).to_vec();
+        let n = keys.len();
+        match row {
+            k if k < n => self.open_capture(action, Some(keys[k])),
+            k if k == n => self.open_capture(action, None),
+            k if k == n + 1 && self.keymap.is_custom(action) => self.restore_keys(action),
+            _ => self.ask_reset_keys(),
+        }
+    }
+
+    pub(super) fn shortcut_remove(&mut self, action: usize, row: usize) {
+        if let Some(&c) = self.keymap.keys(action).get(row) {
+            self.remove_chord(action, c);
+            self.edit_shortcuts(action);
+        }
     }
 
     fn show_capture(&mut self, action: usize, old: Option<Chord>, chord: Option<Chord>) {

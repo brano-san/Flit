@@ -77,6 +77,8 @@
 "view.sort.accessed" = "按文件最后访问日期排序文件夹内容。"
 "view.sort.deleted" = "按文件删除日期排序文件夹内容。适用于回收站。"
 "view.sort.items" = "按子项数量排序文件夹内容。"
+"view.sort.folders" = "按包含的子文件夹数量排序文件夹内容。"
+"view.sort.files" = "按包含的文件数量排序文件夹内容。"
 "view.sort.type" = "按文件类型排序文件夹内容。"
 "view.sort.origin" = "按文件原位置排序文件夹内容。适用于回收站。"
 "view.sort.free" = "按驱动器可用空间排序文件夹内容。适用于此电脑。"

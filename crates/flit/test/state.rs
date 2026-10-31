@@ -325,8 +325,14 @@ fn older_encode(s: &Saved) -> Vec<u8> {
     let p = &s.persisted;
     let folders = p.folders.entries();
     let z = ZoomRecord { view: zoomed(&p.view), defaults: zoomed(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| zoomed(v)).collect(), retain_filter: p.prefs.retain_filter };
-    let tail = postcard::to_stdvec(&z).unwrap().len() + postcard::to_stdvec(&s.nav.files).unwrap().len();
+    let tail = postcard::to_stdvec(&z).unwrap().len() + postcard::to_stdvec(&s.nav.files).unwrap().len() + wide_len(s);
     bytes[..bytes.len() - tail].to_vec()
+}
+
+fn wide_len(s: &Saved) -> usize {
+    let p = &s.persisted;
+    let folders = p.folders.entries();
+    postcard::to_stdvec(&WideRecord { view: wide(&p.view), defaults: wide(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| wide(v)).collect() }).unwrap().len()
 }
 
 #[test]
@@ -335,7 +341,7 @@ fn bookmarked_files_ride_last_and_older_files_have_none() {
     let s = Saved::new(Persisted { path: loc(r"D:\x"), ..Default::default() }, None).with_nav(nav.clone());
     let bytes = s.encode().unwrap();
     assert_eq!(Saved::decode(&bytes).unwrap().nav, nav);
-    let older = Saved::decode(&bytes[..bytes.len() - postcard::to_stdvec(&nav.files).unwrap().len()]).unwrap();
+    let older = Saved::decode(&bytes[..bytes.len() - wide_len(&s) - postcard::to_stdvec(&nav.files).unwrap().len()]).unwrap();
     assert_eq!((older.nav.pinned, older.nav.files), (nav.pinned, Vec::new()));
 }
 
@@ -346,7 +352,7 @@ fn zoom_subfolders_and_new_columns_ride_last_and_older_files_keep_defaults() {
     persisted.view.zoom = 75;
     persisted.view.subfolders = true;
     persisted.view.columns.toggle(Column::Accessed);
-    persisted.view.columns.set_width(Column::Items, 200.0);
+    persisted.view.columns.set_width(Column::Folders, 200.0);
     persisted.prefs.retain_filter = true;
     let key = folder_key(&loc(r"D:\x"));
     persisted.folders.put(key, FolderView { layout: LayoutMode::Tree, ..Default::default() });
@@ -355,11 +361,30 @@ fn zoom_subfolders_and_new_columns_ride_last_and_older_files_keep_defaults() {
     let v = back.persisted.view;
     assert_eq!((v.layout, v.zoom, v.subfolders), (LayoutMode::Grid, 75, true));
     assert!(v.columns.shown(Column::Accessed));
-    assert_eq!(v.columns.width(Column::Items), 200.0);
+    assert_eq!(v.columns.width(Column::Folders), 200.0);
     assert!(back.persisted.prefs.retain_filter);
     assert_eq!(back.persisted.folders.get(key).map(|f| (f.layout, f.zoom)), Some((LayoutMode::Tree, 10)));
     let older = Saved::decode(&older_encode(&s)).unwrap().sanitized();
     let o = older.persisted.view;
     assert_eq!((o.layout, o.zoom, o.subfolders), (LayoutMode::Grid, 30, false), "older files open icons at the medium size");
     assert!(!o.columns.shown(Column::Accessed) && !older.persisted.prefs.retain_filter);
+}
+
+#[test]
+fn the_folders_and_files_columns_keep_their_widths_and_places_and_older_files_put_files_after_folders() {
+    let mut persisted = Persisted { path: loc(r"D:\x"), ..Default::default() };
+    persisted.view.columns.set_width(Column::Files, 133.0);
+    persisted.view.columns.shift(Column::Files, &flit_core::ui::COLUMNS, false);
+    persisted.view.columns.shift(Column::Files, &flit_core::ui::COLUMNS, false);
+    let moved = persisted.view.columns.ordered(&flit_core::ui::COLUMNS);
+    let s = Saved::new(persisted, None);
+    let bytes = s.encode().unwrap();
+    let v = Saved::decode(&bytes).unwrap().sanitized().persisted.view;
+    assert_eq!(v.columns.width(Column::Files), 133.0);
+    assert_eq!(v.columns.ordered(&flit_core::ui::COLUMNS), moved);
+    let older = Saved::decode(&bytes[..bytes.len() - wide_len(&s)]).unwrap().sanitized().persisted.view;
+    let order = older.columns.ordered(&flit_core::ui::COLUMNS);
+    let k = order.iter().position(|&c| c == Column::Folders).unwrap();
+    assert_eq!(order[k + 1], Column::Files, "{order:?}");
+    assert!(older.columns.shown(Column::Files));
 }

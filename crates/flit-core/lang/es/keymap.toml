@@ -16,3 +16,8 @@ already = "{key} ya ejecuta «{command}»"
 reassign = "Reasignar {key} de «{from}» a «{command}»"
 assign = "Asignar {key} a «{command}»"
 remove = "Quitar el método abreviado {key}"
+
+[editor]
+title = "Métodos abreviados de «{command}»"
+change = "Cambiar {key}"
+removes = "Supr lo quita"

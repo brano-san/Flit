@@ -1,4 +1,4 @@
-use super::actions::{chord_text, Chord, ACTIONS};
+use super::actions::Chord;
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
 use super::menu::{Cmd, Mark, MenuItem};
@@ -8,7 +8,7 @@ use super::fuzzy::fuzzy;
 use super::settings::{self, Kind, Page, Picker, Setting, Value, SETTINGS};
 use super::widgets::Button;
 use super::a11y::{leaf, put};
-use super::{centered, App, Effect, Glide, Hit, SettingsCmd, G_CLOSE, TAB_H, TOOL_H};
+use super::{centered, App, Effect, Glide, Hit, SettingsCmd, G_CLOSE};
 use crate::a11y::{Role, Tree};
 use crate::i18n::{P, S};
 use crate::input::{Key, Mods, MouseButton};
@@ -26,7 +26,6 @@ const SETTINGS_ID: u64 = 13;
 const LIST_ID: u64 = 15;
 const MIN_W: f32 = 560.0;
 const MAX_W: f32 = 960.0;
-const TOP_GAP: f32 = 45.0;
 const FIELD_H: f32 = 32.0;
 const HINT_H: f32 = 36.0;
 const EDGE: f32 = 12.0;
@@ -37,11 +36,13 @@ const NOTE_H: f32 = 32.0;
 const ITEM_H: f32 = 32.0;
 const BUTTONS_H: f32 = 46.0;
 const TAG_H: f32 = 40.0;
-const ACTION_H: f32 = 40.0;
-const CHIP_W: f32 = 124.0;
-const CHIP_SMALL: f32 = 30.0;
 const INFO_H: f32 = 28.0;
-const CONTROL_W: f32 = 200.0;
+const CONTROL_MIN: f32 = 120.0;
+const CONTROL_MAX: f32 = 320.0;
+const LABEL_MIN: f32 = 120.0;
+const INFO_LABEL_W: f32 = 200.0;
+const BAR_W: f32 = 12.0;
+const BAR_THUMB_MIN: f32 = 24.0;
 const BUTTON_W: f32 = 190.0;
 const TAG_BUTTON_W: f32 = 92.0;
 const PAD: f32 = 16.0;
@@ -54,7 +55,6 @@ const EXPORT_NAME: &str = "flit-settings.json";
 const G_PLUS: &str = "\u{E710}";
 const G_DOWN: &str = "\u{E70D}";
 const G_SEARCH: &str = "\u{E721}";
-const G_UNDO: &str = "\u{E7A7}";
 const G_DESCRIBE: &str = "\u{E8A5}";
 const G_RESTART: &str = "\u{E72C}";
 
@@ -64,28 +64,6 @@ const FEATURE_URL: &str = "https://github.com/brano-san/Flit/issues/new?labels=e
 const REPOSITORY_URL: &str = "https://github.com/brano-san/Flit";
 const PRIVACY_URL: &str = "https://github.com/brano-san/Flit#конфиденциальность";
 pub(super) const LINKS: [(&str, &str); 5] = [("help.docs", DOCS_URL), ("help.bug", BUG_URL), ("help.feature", FEATURE_URL), ("help.repository", REPOSITORY_URL), ("help.privacy", PRIVACY_URL)];
-
-const LIBRARIES: [(&str, S); 19] = [
-    ("arc-swap", S::SettingsPageLibrarySharedSnapshots),
-    ("bumpalo", S::SettingsPageLibraryFrameMemory),
-    ("crc32fast", S::SettingsPageLibraryChecksums),
-    ("crossbeam-channel", S::SettingsPageLibraryThreads),
-    ("encoding_rs", S::SettingsPageLibraryOldArchiveNames),
-    ("flate2", S::SettingsPageLibraryGzip),
-    ("memchr", S::SettingsPageLibrarySearch),
-    ("postcard", S::SettingsPageLibraryStateFiles),
-    ("rayon", S::SettingsPageLibraryParallelWork),
-    ("regex", S::SettingsPageLibrarySearch),
-    ("serde", S::SettingsPageLibrarySerialization),
-    ("serde_json", S::SettingsPageLibrarySettingsFile),
-    ("sevenz-rust2", S::SettingsPageLibraryArchives7z),
-    ("smallvec", S::SettingsPageLibrarySmallLists),
-    ("tar", S::SettingsPageLibraryArchivesTar),
-    ("tracing", S::SettingsPageLibraryLogFile),
-    ("tracing-subscriber", S::SettingsPageLibraryLogFile),
-    ("unrar-ng", S::SettingsPageLibraryArchivesRar),
-    ("zip", S::SettingsPageLibraryArchivesZip),
-];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Btn {
@@ -103,7 +81,6 @@ pub(super) enum Btn {
     Rename,
     Recolor,
     Delete,
-    RestoreKeys,
     OpenLog,
     OpenLogs,
     Docs,
@@ -130,7 +107,6 @@ impl Btn {
             Btn::Rename => S::SettingsPageButtonRename.t(),
             Btn::Recolor => S::SettingsPageButtonRecolor.t(),
             Btn::Delete => S::SettingsPageButtonDelete.t(),
-            Btn::RestoreKeys => S::SettingsPageButtonRestoreKeys.t(),
             Btn::OpenLog => S::SettingsPageButtonOpenLog.t(),
             Btn::OpenLogs => S::SettingsPageButtonOpenLogs.t(),
             Btn::Docs => S::SettingsPageButtonDocs.t(),
@@ -162,7 +138,6 @@ enum Line {
     Buttons(Option<usize>, &'static [Btn]),
     Tag(usize),
     Info(&'static str, String),
-    Action(usize, usize, bool),
 }
 
 impl Line {
@@ -176,15 +151,11 @@ impl Line {
             Line::Buttons(..) => BUTTONS_H,
             Line::Tag(_) => TAG_H,
             Line::Info(..) => INFO_H,
-            Line::Action(..) => ACTION_H,
         }
     }
 
     fn count(&self) -> usize {
-        match self {
-            Line::Action(_, n, custom) => n + 1 + usize::from(*custom),
-            _ => self.buttons().len(),
-        }
+        self.buttons().len()
     }
 
     fn focusable(&self) -> bool {
@@ -210,6 +181,8 @@ pub enum SHit {
     Line(usize),
     Control(usize),
     Slide(usize),
+    Thumb,
+    Track,
     Step(usize, bool),
     Remove(usize),
     Button(usize, usize),
@@ -286,6 +259,7 @@ pub(super) struct SettingsUi {
     panel: Rect,
     search_rect: Rect,
     list: Rect,
+    bar: Rect,
     describe: Rect,
     close: Rect,
     hints: Rect,
@@ -311,6 +285,7 @@ impl SettingsUi {
             panel: Rect::default(),
             search_rect: Rect::default(),
             list: Rect::default(),
+            bar: Rect::default(),
             describe: Rect::default(),
             close: Rect::default(),
             hints: Rect::default(),
@@ -378,8 +353,43 @@ fn switch_rect(r: Rect, s: impl Fn(f32) -> f32) -> Rect {
     Rect::new(r.right() - s(PAD) - s(44.0), r.y + (r.h - s(22.0)) / 2.0, s(44.0), s(22.0))
 }
 
+fn control_w(r: Rect, s: impl Fn(f32) -> f32) -> f32 {
+    let room = r.w - 3.0 * s(PAD);
+    (room * 0.42).clamp(s(CONTROL_MIN), s(CONTROL_MAX)).min((room - s(LABEL_MIN)).max(s(CONTROL_MIN)))
+}
+
 fn control_rect(r: Rect, s: impl Fn(f32) -> f32) -> Rect {
-    Rect::new(r.right() - s(PAD) - s(CONTROL_W), r.y + (r.h - s(30.0)) / 2.0, s(CONTROL_W), s(30.0))
+    let w = control_w(r, &s);
+    Rect::new(r.right() - s(PAD) - w, r.y + (r.h - s(30.0)) / 2.0, w, s(30.0))
+}
+
+fn label_w(i: usize, r: Rect, s: impl Fn(f32) -> f32) -> f32 {
+    let control = match SETTINGS[i].kind {
+        Kind::Toggle(..) => switch_rect(r, &s).x,
+        _ => control_rect(r, &s).x,
+    };
+    let restart = if RESTART.contains(&SETTINGS[i].id) { s(24.0) } else { 0.0 };
+    (control - s(PAD) - restart - (r.x + s(PAD) + s(indent(i)))).max(0.0)
+}
+
+fn info_label_w(r: Rect, s: impl Fn(f32) -> f32) -> f32 {
+    s(INFO_LABEL_W).min((r.w * 0.4).round())
+}
+
+fn slide_value(i: usize, track: Rect, x: f32) -> Option<i64> {
+    let Kind::Number { min, max, step, .. } = SETTINGS[i].kind else { return None };
+    let frac = ((x - track.x) / track.w.max(1.0)).clamp(0.0, 1.0);
+    let raw = min as f32 + frac * (max - min) as f32;
+    Some(((raw / step as f32).round() as i64 * step).clamp(min, max))
+}
+
+fn scroll_thumb(list: Rect, content_h: f32, pos: f32, s: impl Fn(f32) -> f32) -> Option<Rect> {
+    if content_h <= list.h {
+        return None;
+    }
+    let th = (list.h * list.h / content_h).max(s(BAR_THUMB_MIN)).min(list.h);
+    let frac = (pos / (content_h - list.h)).clamp(0.0, 1.0);
+    Some(Rect::new(list.right() - s(BAR_W), list.y + (list.h - th) * frac, s(BAR_W), th))
 }
 
 const TIP_W: f32 = 380.0;
@@ -426,19 +436,6 @@ fn button_rects(line: &Line, r: Rect, s: impl Fn(f32) -> f32) -> Vec<Rect> {
     let h = s(30.0);
     let y = r.y + (r.h - h) / 2.0;
     match line {
-        Line::Action(_, n, custom) => {
-            let widths: Vec<f32> = std::iter::repeat_n(s(CHIP_W), *n).chain([s(CHIP_SMALL)]).chain(custom.then(|| s(CHIP_SMALL))).collect();
-            let (gap, ch) = (s(6.0), s(26.0));
-            let mut x = r.right() - s(PAD) - widths.iter().sum::<f32>() - gap * (widths.len() - 1) as f32;
-            widths
-                .into_iter()
-                .map(|w| {
-                    let chip = Rect::new(x, r.y + (r.h - ch) / 2.0, w, ch);
-                    x += w + gap;
-                    chip
-                })
-                .collect()
-        }
         Line::Tag(_) => {
             let w = s(TAG_BUTTON_W);
             let n = buttons.len();
@@ -496,7 +493,6 @@ impl App {
                 Line::Buttons(_, b) => b.iter().map(|b| b.label()).collect::<Vec<_>>().join(" | "),
                 Line::Tag(k) => self.tag_defs().get(*k).map_or_else(String::new, |t| format!("tag {}", t.name)),
                 Line::Info(label, value) => format!("{label}: {value}"),
-                Line::Action(i, ..) => format!("action {} {}", ACTIONS[*i].id, self.keymap.text(*i)),
             })
             .collect()
     }
@@ -636,18 +632,6 @@ impl App {
         self.open_pick(Palette::new(Pick::Setting(SettingPick::ResetKeys), items, ""));
     }
 
-    fn action_line(&self, i: usize) -> Line {
-        Line::Action(i, self.keymap.keys(i).len(), self.keymap.is_custom(i))
-    }
-
-    fn press_chip(&mut self, i: usize, n: usize, b: usize) {
-        match self.keymap.keys(i).get(b).copied() {
-            Some(c) if b < n => self.open_capture(i, Some(c)),
-            _ if b == n => self.open_capture(i, None),
-            _ => self.restore_keys(i),
-        }
-    }
-
     pub(super) fn setting_input(&mut self, pick: SettingPick, text: &str) {
         match pick {
             SettingPick::Text(i) => self.change_setting(i, Value::Text(text.to_owned())),
@@ -701,14 +685,6 @@ impl App {
                 out.push(Line::Buttons(None, HELP_BUTTONS));
                 out.push(Line::Buttons(None, LINK_BUTTONS));
                 out.push(Line::Note(NO_TELEMETRY.t()));
-                out.push(Line::Group(S::SettingsPageLineLibraries.t()));
-                out.extend(LIBRARIES.iter().map(|(name, what)| Line::Info(name, what.t().to_owned())));
-            }
-            Page::Actions => {
-                out.push(Line::Note(S::SettingsPageLineKeysHow.t()));
-                out.push(Line::Note(S::SettingsPageLineKeysRule.t()));
-                out.push(Line::Buttons(None, &[Btn::RestoreKeys]));
-                out.extend((0..ACTIONS.len()).filter(|&i| ACTIONS[i].rebindable() && self.supports(ACTIONS[i].id)).map(|i| self.action_line(i)));
             }
             Page::Colors | Page::Files | Page::Data | Page::Input | Page::Windows => {}
         }
@@ -739,12 +715,8 @@ impl App {
                 Page::Tags => &[&[Btn::NewTag]],
                 Page::Advanced => &[&[Btn::ClearCache], FILE_BUTTONS, &[Btn::Reset], LOG_BUTTONS],
                 Page::About => &[&[Btn::CopyAbout], HELP_BUTTONS, LINK_BUTTONS],
-                Page::Actions => &[&[Btn::RestoreKeys]],
                 _ => &[],
             };
-            if page == Page::Actions {
-                out.extend((0..ACTIONS.len()).filter(|&i| ACTIONS[i].rebindable() && self.supports(ACTIONS[i].id) && matches(query, self.keymap.words(i))).map(|i| self.action_line(i)));
-            }
             for b in extra.iter().filter(|b| b.iter().any(|b| matches(query, &b.label().to_lowercase()))) {
                 out.push(Line::Buttons(None, b));
             }
@@ -801,8 +773,8 @@ impl App {
         let pw = (w / 2.0).round().max(s(MIN_W)).min(s(MAX_W)).min(area - 2.0 * s(EDGE)).max(s(320.0));
         let x = (left + (area - pw) / 2.0).round().min(w - pw).max(0.0);
         let fixed = s(8.0) + s(FIELD_H) + s(6.0) + s(HINT_H);
-        let top = (self.s(TAB_H) + self.s(TOOL_H) + s(TOP_GAP)).min((h - s(EDGE) - fixed - s(SETTING_H) * 4.0).max(s(EDGE)));
-        let room = (h - s(EDGE) - fixed - top).max(s(SETTING_H));
+        let top = super::palette::popup_top(sc, h, fixed + s(SETTING_H) * 4.0);
+        let room = (h - s(EDGE) - fixed - top).max(0.0);
         let list_h = ui.content_h.min(room);
         ui.search_rect = Rect::new(x + s(8.0), top + s(8.0), pw - s(16.0) - 2.0 * (s(FIELD_H) + s(4.0)), s(FIELD_H));
         ui.describe = Rect::new(ui.search_rect.right() + s(4.0), ui.search_rect.y, s(FIELD_H), s(FIELD_H));
@@ -820,6 +792,7 @@ impl App {
             }
         }
         ui.scroll.clamp(ui.content_h - ui.list.h);
+        ui.bar = if ui.content_h > ui.list.h { Rect::new(ui.list.right() - s(BAR_W), ui.list.y, s(BAR_W), ui.list.h) } else { Rect::default() };
         ui.rects = offsets.into_iter().map(|(ly, lh)| Rect::new(ui.list.x, ui.list.y + ly - ui.scroll.pos, ui.list.w, lh)).collect();
         self.settings = Some(ui);
     }
@@ -846,6 +819,10 @@ impl App {
         if !ui.list.contains(x, y) {
             return h(SHit::Panel);
         }
+        if ui.bar.contains(x, y) {
+            let on_thumb = scroll_thumb(ui.list, ui.content_h, ui.scroll.pos, s).is_some_and(|t| y >= t.y && y < t.bottom());
+            return h(if on_thumb { SHit::Thumb } else { SHit::Track });
+        }
         let Some(k) = ui.rects.iter().position(|r| r.contains(x, y)) else { return h(SHit::Panel) };
         let (r, line) = (ui.rects[k], &ui.lines[k]);
         if let Some(b) = button_rects(line, r, s).iter().position(|b| b.contains(x, y)) {
@@ -855,8 +832,8 @@ impl App {
             Line::Setting(i) => match SETTINGS[*i].kind {
                 Kind::Toggle(..) if switch_rect(r, s).contains(x, y) => h(SHit::Control(k)),
                 Kind::Number { .. } if slider(*i) => {
-                    let c = control_rect(r, s);
-                    if c.contains(x, y) { h(SHit::Slide(k)) } else { h(SHit::Line(k)) }
+                    let grip = slider_track(r, s).inset(-s(8.0), -s(10.0));
+                    if grip.contains(x, y) { h(SHit::Slide(k)) } else { h(SHit::Line(k)) }
                 }
                 Kind::Number { .. } => {
                     let (minus, plus) = step_rects(r, s);
@@ -943,24 +920,12 @@ impl App {
                     Some(p)
                 }
                 Line::Tag(n) => Some(t.add(section, id, Role::Group, self.tag_defs().get(*n).map_or("", |tag| tag.name.as_str()), r)),
-                Line::Action(i, _, _) => {
-                    let n = t.add(section, id, Role::Group, ACTIONS[*i].title.t(), r);
-                    t.nodes[n].value = self.keymap.keys(*i).iter().map(chord_text).collect::<Vec<_>>().join(", ");
-                    Some(n)
-                }
                 Line::Buttons(..) => None,
             };
             let mut subs = Vec::new();
             for (b, br) in button_rects(line, r, s).into_iter().enumerate() {
-                let name = match line {
-                    Line::Action(i, n, _) => match self.keymap.keys(*i).get(b) {
-                        Some(c) if b < *n => chord_text(c),
-                        _ if b == *n => S::A11yButtonAddShortcut.t().to_owned(),
-                        _ => S::A11yButtonRestoreShortcut.t().to_owned(),
-                    },
-                    _ => line.buttons().get(b).map_or("", |btn| btn.label()).to_owned(),
-                };
-                subs.push(put(t, targets, row.unwrap_or(section), at(SHit::Button(k, b)), Role::Button, &name, br));
+                let name = line.buttons().get(b).map_or("", |btn| btn.label());
+                subs.push(put(t, targets, row.unwrap_or(section), at(SHit::Button(k, b)), Role::Button, name, br));
             }
             if !ui.searching && k == ui.focus {
                 focus = subs.get(ui.sub).copied().or(row).unwrap_or(focus);
@@ -983,7 +948,7 @@ impl App {
         self.settings.as_ref().filter(|s| s.searching && self.nav.palette.is_none()).map(|s| s.search_rect)
     }
 
-    pub(super) fn settings_mouse_down(&mut self, h: Hit, x: f32, button: MouseButton, clicks: u8) -> bool {
+    pub(super) fn settings_mouse_down(&mut self, h: Hit, (x, y): (f32, f32), button: MouseButton, clicks: u8) -> bool {
         let Hit::Settings(sh) = h else { return false };
         let Some(ui) = &mut self.settings else { return false };
         if self.nav.palette.is_some() {
@@ -999,7 +964,22 @@ impl App {
                 ui.searching = true;
                 ui.search.click(x, clicks);
             }
-            SHit::Line(k) | SHit::Control(k) | SHit::Slide(k) | SHit::Step(k, _) | SHit::Remove(k) => {
+            SHit::Slide(k) => {
+                (ui.searching, ui.focus) = (false, k);
+                self.drag = super::Drag::Slide(k);
+                self.slide_setting(k, x);
+            }
+            SHit::Thumb => {
+                let thumb = scroll_thumb(ui.list, ui.content_h, ui.scroll.pos, |v| (v * self.scale).round());
+                self.drag = super::Drag::OptionsThumb { grab: thumb.map_or(0.0, |t| y - t.y) };
+            }
+            SHit::Track => {
+                let down = scroll_thumb(ui.list, ui.content_h, ui.scroll.pos, |v| (v * self.scale).round()).is_some_and(|t| y >= t.bottom());
+                let page = if down { ui.list.h } else { -ui.list.h };
+                ui.scroll.by(page, ui.content_h - ui.list.h);
+                self.layout();
+            }
+            SHit::Line(k) | SHit::Control(k) | SHit::Step(k, _) | SHit::Remove(k) => {
                 ui.searching = false;
                 ui.focus = k;
             }
@@ -1024,17 +1004,7 @@ impl App {
                 }
                 self.layout();
             }
-            SHit::Slide(k) => {
-                if let Some(Line::Setting(i)) = line(k) {
-                    let track = ui.rects.get(k).map(|&r| slider_track(r, |v| (v * self.scale).round()));
-                    if let (Some(tr), Kind::Number { min, max, step, .. }) = (track, SETTINGS[i].kind) {
-                        let frac = ((x - tr.x) / tr.w.max(1.0)).clamp(0.0, 1.0);
-                        let raw = min as f32 + frac * (max - min) as f32;
-                        let v = ((raw / step as f32).round() as i64 * step).clamp(min, max);
-                        self.change_setting(i, Value::Number(v));
-                    }
-                }
-            }
+            SHit::Slide(k) => self.slide_setting(k, x),
             SHit::Control(k) => {
                 if let Some(Line::Setting(i)) = line(k) {
                     self.activate_setting(i, Some((x, y)));
@@ -1055,8 +1025,28 @@ impl App {
                     self.press_button(&l, b);
                 }
             }
-            SHit::Line(_) | SHit::Panel | SHit::Search => {}
+            SHit::Line(_) | SHit::Panel | SHit::Search | SHit::Thumb | SHit::Track => {}
         }
+        self.dirty = true;
+    }
+
+    pub(super) fn slide_setting(&mut self, k: usize, x: f32) {
+        let Some(ui) = &self.settings else { return };
+        let (Some(&Line::Setting(i)), Some(&r)) = (ui.lines.get(k), ui.rects.get(k)) else { return };
+        let track = slider_track(r, |v| (v * self.scale).round());
+        if let Some(v) = slide_value(i, track, x).filter(|&v| SETTINGS[i].get(self) != Value::Number(v)) {
+            self.change_setting(i, Value::Number(v));
+        }
+        self.dirty = true;
+    }
+
+    pub(super) fn drag_settings_thumb(&mut self, y: f32, grab: f32) {
+        let sc = self.scale;
+        let Some(ui) = &mut self.settings else { return };
+        let Some(t) = scroll_thumb(ui.list, ui.content_h, ui.scroll.pos, |v| (v * sc).round()) else { return };
+        let frac = ((y - grab - ui.list.y) / (ui.list.h - t.h).max(1.0)).clamp(0.0, 1.0);
+        ui.scroll.snap(frac * (ui.content_h - ui.list.h));
+        self.layout();
         self.dirty = true;
     }
 
@@ -1114,9 +1104,6 @@ impl App {
     }
 
     fn press_button(&mut self, line: &Line, b: usize) {
-        if let Line::Action(i, n, _) = *line {
-            return self.press_chip(i, n, b);
-        }
         let Some(&btn) = line.buttons().get(b) else { return };
         let owner = match line {
             Line::Buttons(Some(i), _) => Some(*i),
@@ -1144,7 +1131,6 @@ impl App {
             (Btn::Export, ..) => self.ask_export_settings(),
             (Btn::Import, ..) => self.ask_import_settings(),
             (Btn::Reset, ..) => self.ask_reset_settings(),
-            (Btn::RestoreKeys, ..) => self.ask_reset_keys(),
             (Btn::CustomizeToolbar, ..) => self.customize_toolbar(),
             (Btn::CopyAbout, ..) => {
                 let text = format!("Flit {}\r\n{}", env!("CARGO_PKG_VERSION"), self.about.os);
@@ -1174,7 +1160,7 @@ impl App {
         match ui.lines.get(k).cloned() {
             Some(Line::Setting(i)) => self.activate_setting(i, None),
             Some(Line::Path(i, n)) => self.remove_path(i, n),
-            Some(l @ (Line::Buttons(..) | Line::Tag(_) | Line::Action(..))) => self.press_button(&l, sub),
+            Some(l @ (Line::Buttons(..) | Line::Tag(_))) => self.press_button(&l, sub),
             _ => {}
         }
     }
@@ -1188,7 +1174,7 @@ impl App {
         let Some(ui) = &mut self.settings else { return false };
         self.dirty = true;
         let plain = !m.ctrl && !m.alt;
-        let (line, sub) = (ui.lines.get(ui.focus).cloned(), ui.sub);
+        let line = ui.lines.get(ui.focus).cloned();
         match key {
             Key::Escape if !ui.search.text().is_empty() => {
                 ui.search.edit.set("");
@@ -1253,7 +1239,7 @@ impl App {
                 Some(Line::Setting(i)) => {
                     self.turn_setting(i, key == Key::Left);
                 }
-                Some(l @ (Line::Buttons(..) | Line::Tag(_) | Line::Action(..))) => {
+                Some(l @ (Line::Buttons(..) | Line::Tag(_))) => {
                     let n = l.count().max(1);
                     ui.sub = if key == Key::Left { (ui.sub + n - 1) % n } else { (ui.sub + 1) % n };
                 }
@@ -1263,15 +1249,11 @@ impl App {
                 let k = ui.focus;
                 self.activate_line(k);
             }
-            Key::Delete if plain => match line {
-                Some(Line::Path(i, n)) => self.remove_path(i, n),
-                Some(Line::Action(i, n, _)) if sub < n => {
-                    if let Some(&c) = self.keymap.keys(i).get(sub) {
-                        self.remove_chord(i, c);
-                    }
+            Key::Delete if plain => {
+                if let Some(Line::Path(i, n)) = line {
+                    self.remove_path(i, n);
                 }
-                _ => {}
-            },
+            }
             _ => return true,
         }
         self.layout();
@@ -1368,10 +1350,9 @@ impl App {
             let mut w = Paint::new(g, t, sc);
             w.separator(hints.x + s(12.0), hints.y, hints.w - s(24.0));
             let keys = [S::WidgetsKeyUp.t(), S::WidgetsKeyDown.t()];
-            w.hints(hints.x + hints.w / 2.0, hints.y + hints.h / 2.0, &[(&keys, S::WidgetsHintNavigate.t()), (&[S::WidgetsKeyEnter.t()], S::WidgetsHintUse.t()), (&[S::WidgetsKeyEscape.t()], S::WidgetsHintDismiss.t())], small);
+            w.hints_within(hints, &[(&keys, S::WidgetsHintNavigate.t()), (&[S::WidgetsKeyEnter.t()], S::WidgetsHintUse.t()), (&[S::WidgetsKeyEscape.t()], S::WidgetsHintDismiss.t())], small);
         }
         let list = ui.list;
-        g.dl.set_clip(Some(list));        let list = ui.list;
         g.dl.set_clip(Some(list));
         let mut cut = Vec::new();
         let list_focused = !ui.searching && self.active && self.nav.palette.is_none();
@@ -1398,14 +1379,15 @@ impl App {
                     g.text(r.x + s(PAD), mid(r, mf), text, font, t.text_dim, r.w - 2.0 * s(PAD));
                 }
                 Line::Info(label, value) => {
-                    g.text(r.x + s(PAD), mid(r, ms), label, small, t.text_dim, s(200.0));
-                    g.text(r.x + s(PAD) + s(210.0), mid(r, ms), value, small, t.text, r.w - s(PAD) * 2.0 - s(210.0));
+                    let lw = info_label_w(r, s);
+                    g.text(r.x + s(PAD), mid(r, ms), label, small, t.text_dim, lw);
+                    g.text(r.x + s(PAD) + lw + s(10.0), mid(r, ms), value, small, t.text, r.w - s(PAD) * 2.0 - lw - s(10.0));
                 }
                 Line::Setting(i) | Line::Off(i) => {
                     let set = &SETTINGS[*i];
                     let tx = r.x + s(PAD) + s(indent(*i));
                     let restart = RESTART.contains(&set.id);
-                    let text_w = r.right() - tx - s(PAD) * 2.0 - s(CONTROL_W) - if restart { s(24.0) } else { 0.0 };
+                    let text_w = label_w(*i, r, s);
                     let (tm, hm) = (title_marks(&query, set.title.t()), help_marks(&query, set.help.t()));
                     let ty = if describe { r.y + s(7.0) + mf.ascent } else { mid(r, mf) };
                     Paint::new(g, t, sc).marked((tx, ty.round()), set.title.t(), &tm, font, (t.text, t.accent), text_w);
@@ -1428,7 +1410,8 @@ impl App {
                             let c = control_rect(r, s);
                             g.text(c.x, mid(c, ms), &value, small, t.text_dim, s(52.0));
                             let frac = if max > min { (n - min) as f32 / (max - min) as f32 } else { 0.0 };
-                            Paint::new(g, t, sc).slider(slider_track(r, s), frac, hover == Hit::Settings(SHit::Slide(k)));
+                            let hot = hover == Hit::Settings(SHit::Slide(k)) || self.drag == super::Drag::Slide(k);
+                            Paint::new(g, t, sc).slider(slider_track(r, s), frac, hot);
                         }
                         (Kind::Toggle(..), Value::Bool(on)) => {
                             let hot = hover == Hit::Settings(SHit::Control(k));
@@ -1460,8 +1443,9 @@ impl App {
                             Paint::new(g, t, sc).stepper(control_rect(r, s), &value, font, icons, hot);
                         }
                         _ => {
-                            let vw = g.measure(&value, small);
-                            g.text(r.right() - s(PAD) - vw, mid(r, ms), &value, small, t.text_dim, f32::INFINITY);
+                            let c = control_rect(r, s);
+                            let vw = g.measure(&value, small).min(c.w);
+                            g.text(c.right() - vw, mid(r, ms), &value, small, t.text_dim, c.w);
                         }
                     }
                     if let Line::Off(_) = line {
@@ -1487,24 +1471,6 @@ impl App {
                         g.text(r.x + s(PAD) + dot + s(24.0) + nw, mid(r, ms), &label, small, t.text_dim, s(220.0));
                     }
                 }
-                Line::Action(i, n, _) => {
-                    let a = &ACTIONS[*i];
-                    let chips = button_rects(line, r, s);
-                    let room = chips.first().map_or(r.right(), |c| c.x) - r.x - s(PAD) * 2.0;
-                    let tw = g.text(r.x + s(PAD), mid(r, mf), a.title.t(), font, t.text, room);
-                    g.text(r.x + s(PAD) + tw + s(10.0), mid(r, ms), a.id, small, t.text_dim, room - tw - s(10.0));
-                    let keys = self.keymap.keys(*i);
-                    for (b, chip) in chips.into_iter().enumerate() {
-                        let on = focused && ui.sub == b;
-                        g.dl.round_rect(chip, if hover == Hit::Settings(SHit::Button(k, b)) { t.button_pressed } else { t.button_hover }, s4);
-                        g.dl.outline(chip, if on { t.accent } else { t.input_border }, s4, if on { sc.round().max(1.0) } else { 1.0 });
-                        match keys.get(b) {
-                            Some(c) if b < *n => centered(g, chip, &chord_text(c), small, t.text),
-                            _ if b == *n => centered(g, chip, G_PLUS, self.icon_font(9.0), t.accent),
-                            _ => centered(g, chip, G_UNDO, self.icon_font(10.0), t.text_dim),
-                        }
-                    }
-                }
                 Line::Buttons(..) => {}
             }
             for btn in line.buttons() {
@@ -1513,7 +1479,7 @@ impl App {
             }
             for (b, (br, btn)) in button_rects(line, r, s).into_iter().zip(line.buttons()).enumerate() {
                 let hot = hover == Hit::Settings(SHit::Button(k, b));
-                let danger = matches!(btn, Btn::Reset | Btn::Delete | Btn::RestoreKeys);
+                let danger = matches!(btn, Btn::Reset | Btn::Delete);
                 g.dl.round_rect(br, if hot { t.button_pressed } else { t.button_hover }, s4);
                 g.dl.outline(br, if focused && ui.sub == b { t.accent } else { t.input_border }, s4, if focused && ui.sub == b { sc.round().max(1.0) } else { 1.0 });
                 let glyph_w = glyph_w(btn, s);
@@ -1525,11 +1491,10 @@ impl App {
             }
         }
         g.dl.set_clip(None);
-        if ui.content_h > list.h {
-            let frac = ui.scroll.pos / (ui.content_h - list.h);
-            let th = (list.h * list.h / ui.content_h).max(s(24.0));
-            let thumb = Rect::new(list.right() - s(6.0), list.y + (list.h - th) * frac, s(4.0), th);
-            g.dl.round_rect(thumb, t.scrollbar, s(2.0));
+        if let Some(th) = scroll_thumb(list, ui.content_h, ui.scroll.pos, s) {
+            let hot = matches!(hover, Hit::Settings(SHit::Thumb | SHit::Track)) || matches!(self.drag, super::Drag::OptionsThumb { .. });
+            let bar = if hot { s(6.0) } else { s(4.0) };
+            g.dl.round_rect(Rect::new(th.right() - s(3.0) - bar, th.y, bar, th.h), if hot { t.scrollbar_hover } else { t.scrollbar }, bar / 2.0);
         }
         ui.cut = cut;
         if let Some((k, (x, y))) = ui.tip {

@@ -22,7 +22,7 @@ const MIN_W: f32 = 360.0;
 const ROW_H: f32 = 30.0;
 const DESC_ROW_H: f32 = 46.0;
 const FIELD_H: f32 = 32.0;
-const TOP_GAP: f32 = 45.0;
+const TOP_GAP: f32 = 8.0;
 const EDGE: f32 = 12.0;
 const HINT_H: f32 = 36.0;
 const SCROLL_W: f32 = 14.0;
@@ -32,6 +32,8 @@ const GO_W: f32 = 720.0;
 const DESC_PENALTY: i32 = 100_000;
 const G_SEARCH: &str = "\u{E721}";
 const G_DESCRIBE: &str = "\u{E8A5}";
+const G_SHORTCUTS: &str = "\u{E8AC}";
+const CHIP: f32 = 24.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Line {
@@ -70,6 +72,7 @@ pub(super) enum Pick {
     Tabs,
     SaveLayout,
     LoadLayout,
+    Keys(usize),
 }
 
 impl Pick {
@@ -92,6 +95,7 @@ impl Pick {
             Pick::Tabs => S::MenusSearchTabsShort.t(),
             Pick::SaveLayout => S::MenusSaveLayoutPlaceholder.t(),
             Pick::LoadLayout => S::MenusLoadLayoutPlaceholder.t(),
+            Pick::Keys(_) => S::PalettePlaceholderCommands.t(),
         }
     }
 
@@ -114,7 +118,12 @@ impl Pick {
             Pick::Tabs => S::MenusNoTabs.t(),
             Pick::SaveLayout => S::MenusSaveLayoutHint.t(),
             Pick::LoadLayout => S::MenusNoLayouts.t(),
+            Pick::Keys(_) => S::PaletteEmptyCommands.t(),
         }
+    }
+
+    fn edits_keys(&self) -> bool {
+        matches!(self, Pick::Keys(_) | Pick::Setting(SettingPick::Capture { .. } | SettingPick::ResetKeys))
     }
 
     fn is_input(&self) -> bool {
@@ -131,7 +140,7 @@ pub(super) struct Palette {
     pub keys: Vec<String>,
     alts: Vec<&'static str>,
     descs: Vec<String>,
-    ids: Vec<usize>,
+    pub ids: Vec<usize>,
     pub sel: usize,
     pub first: usize,
     shift: f32,
@@ -181,6 +190,16 @@ fn searched_description(i: usize) -> String {
 fn desc_marks(query: &str, desc: &str) -> Vec<Range<usize>> {
     let limit = query.chars().filter(|c| !c.is_whitespace()).count().div_ceil(3).max(1);
     fuzzy(query, desc).filter(|m| m.ranges.len() <= limit).map(|m| m.ranges).unwrap_or_default()
+}
+
+fn keys_chip(row: Rect, scale: f32) -> Rect {
+    let s = |v: f32| (v * scale).round();
+    Rect::new(row.right() - s(8.0) - s(CHIP), row.y + ((row.h - s(CHIP)) / 2.0).round(), s(CHIP), s(CHIP))
+}
+
+pub(super) fn popup_top(scale: f32, h: f32, fixed: f32) -> f32 {
+    let s = |v: f32| (v * scale).round();
+    (s(TAB_H) + s(TOOL_H) + s(TOP_GAP)).min((h - s(EDGE) - fixed).max(s(EDGE)))
 }
 
 pub fn matches(query: &str) -> Vec<usize> {
@@ -342,11 +361,51 @@ impl Palette {
         self.select(k.min(self.matches.len().saturating_sub(1)) as isize);
     }
 
+    pub(super) fn row_action(&self, i: usize) -> Option<usize> {
+        let c = self.commands.as_ref()?;
+        match c.lines.get(*self.matches.get(i)?)? {
+            Line::Item(k, ..) => self.ids.get(*k).copied(),
+            Line::Header(_) => None,
+        }
+    }
+
+    fn rebinds(&self, i: usize) -> Option<usize> {
+        self.row_action(i).filter(|&a| ACTIONS[a].rebindable())
+    }
+
+    fn reload_keys(&mut self, keymap: &super::keymap::Keymap) {
+        self.keys = self.ids.iter().map(|&i| keymap.text(i)).collect();
+        if let Some(c) = &mut self.commands {
+            c.caps = self.ids.iter().map(|&i| keymap.shown(i)).collect();
+        }
+    }
+
 }
 
 impl App {
     pub(super) fn open_palette(&mut self) {
+        self.nav.back = None;
         self.open_pick(Palette::commands(self));
+    }
+
+    pub(super) fn palette_shortcuts(&mut self, i: usize) {
+        if let Some(a) = self.nav.palette.as_ref().and_then(|p| p.rebinds(i)) {
+            if let Some(p) = &mut self.nav.palette {
+                p.select_row(i);
+            }
+            self.edit_shortcuts(a);
+        }
+    }
+
+    fn back_to_commands(&mut self) {
+        if self.nav.palette.is_some() {
+            return;
+        }
+        let Some(mut p) = self.nav.back.take() else { return };
+        p.reload_keys(&self.keymap);
+        self.nav.palette = Some(*p);
+        self.layout();
+        self.dirty = true;
     }
 
     pub(super) fn open_pick(&mut self, p: Palette) {
@@ -375,7 +434,11 @@ impl App {
     }
 
     pub(super) fn close_palette(&mut self) {
-        self.nav.palette = None;
+        let editing = self.nav.palette.take().is_some_and(|p| p.pick.edits_keys());
+        match editing {
+            true => self.back_to_commands(),
+            false => self.nav.back = None,
+        }
         self.dirty = true;
     }
 
@@ -414,7 +477,14 @@ impl App {
             Pick::Encoding(archive) => self.set_encoding(&archive, id, now),
             Pick::Library(lib) => self.library_row(lib, &p.titles[id], false),
             Pick::Tags(t) => self.tag_choose(t, id, now),
-            Pick::Setting(p) => self.setting_choose(p, id),
+            Pick::Setting(p) => {
+                self.setting_choose(p, id);
+                self.back_to_commands();
+            }
+            Pick::Keys(a) => {
+                self.shortcut_choose(a, id);
+                self.back_to_commands();
+            }
             Pick::Toolbar(t) => self.tool_choose(t, id),
             Pick::Tabs => self.choose_tab_row(id, now),
             Pick::LoadLayout => self.load_layout(&p.titles[id]),
@@ -423,6 +493,13 @@ impl App {
     }
 
     fn remove_palette_item(&mut self) -> bool {
+        if let Some(p) = self.nav.palette.as_ref().filter(|p| matches!(p.pick, Pick::Keys(_))) {
+            if let (Pick::Keys(a), Some(&row)) = (&p.pick, p.matches.get(p.sel)) {
+                let a = *a;
+                self.shortcut_remove(a, row);
+            }
+            return true;
+        }
         if let Some(p) = self.nav.palette.take_if(|p| p.pick == Pick::LoadLayout && p.field.text().is_empty()) {
             if let Some(&id) = p.matches.get(p.sel) {
                 let name = p.titles[id].clone();
@@ -447,6 +524,12 @@ impl App {
         if key == Key::Delete && self.remove_palette_item() {
             self.layout();
             return true;
+        }
+        if key == Key::F(2) && m == Mods::default() {
+            if let Some(sel) = self.nav.palette.as_ref().filter(|p| p.commands.is_some()).map(|p| p.sel) {
+                self.palette_shortcuts(sel);
+                return true;
+            }
         }
         if self.go_key(key, m, now) {
             return true;
@@ -553,7 +636,7 @@ impl App {
             }
             None => {
                 let pw = (w / 2.0).round().max(s(if p.go.is_some() { GO_W } else { MIN_W })).min(area - 2.0 * s(EDGE)).max(s(120.0));
-                ((left + (area - pw) / 2.0).round().min(w - pw).max(0.0), (s(TAB_H) + s(TOOL_H) + s(TOP_GAP)).min((h - s(EDGE) - fixed - unit).max(s(EDGE))), pw)
+                ((left + (area - pw) / 2.0).round().min(w - pw).max(0.0), popup_top(sc, h, fixed + unit), pw)
             }
         };
         let extra = if p.commands.is_some() { s(FIELD_H) + s(4.0) } else { 0.0 };
@@ -599,6 +682,7 @@ impl App {
             Hit::PaletteClose => Some(p.close),
             Hit::PaletteDescribe => Some(p.describe).filter(|r| r.w > 0.0),
             Hit::PaletteScroll(down) => Some(p.arrows[usize::from(down)]),
+            Hit::PaletteKeys(i) => p.rows.get(i.checked_sub(p.first)?).map(|&r| keys_chip(r, self.scale)),
             Hit::GoButton(k) => p.go.as_ref().map(|g| g.buttons[k]),
             _ => None,
         }
@@ -630,7 +714,12 @@ impl App {
         if p.track.contains(x, y) {
             return Some(Hit::PaletteBox);
         }
-        Some(p.rows.iter().position(|r| r.contains(x, y) && p.list.contains(x, y)).map_or(Hit::PaletteBox, |i| Hit::PaletteRow(p.first + i)))
+        let row = p.rows.iter().position(|r| r.contains(x, y) && p.list.contains(x, y));
+        Some(match row {
+            Some(i) if p.rebinds(p.first + i).is_some() && keys_chip(p.rows[i], self.scale).contains(x, y) => Hit::PaletteKeys(p.first + i),
+            Some(i) => Hit::PaletteRow(p.first + i),
+            None => Hit::PaletteBox,
+        })
     }
 
     pub(super) fn draw_palette<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
@@ -648,8 +737,12 @@ impl App {
         w.frame(r);
         let fr = p.field_rect;
         w.field(fr, true);
-        let (lead, lead_ink) = if p.go.as_ref().is_some_and(|g| g.crumb.is_none()) { (super::G_FOLDER, t.accent) } else { (G_SEARCH, t.text_dim) };
-        w.centered(Rect::new(fr.x, fr.y, fr.h, fr.h), lead, icons, lead_ink);
+        let lead_rect = Rect::new(fr.x, fr.y, fr.h, fr.h);
+        let (lead, lead_ink) = match self.go_field_icon(&p) {
+            Some(icon) => (if self.system_icon(w.g, icon, lead_rect, s16, 0xFF, &mut requests) { "" } else { super::G_FOLDER }, t.accent),
+            None => (G_SEARCH, t.text_dim),
+        };
+        w.centered(lead_rect, lead, icons, lead_ink);
         let inner = Rect::new(fr.x + fr.h, fr.y, fr.w - fr.h - s12, fr.h);
         p.field.draw(w.g, t, inner, font, active, placeholder.as_deref().or(p.placeholder.as_deref()).unwrap_or(p.pick.placeholder()), sc, Some(&self.preedit));
         w.icon_button(p.close, G_CLOSE, close_font, Button::of(hover == Hit::PaletteClose, false, true), t.text_dim);
@@ -699,7 +792,10 @@ impl App {
                         (false, false) => (gray, gray, t.accent.alpha(0x90)),
                     };
                     let caps_w = w.keycaps_w(&c.caps[*n], small);
-                    let room = row.w - 3.0 * s12 - caps_w;
+                    let rebind = ACTIONS[p.ids[*n]].rebindable();
+                    let chip = keys_chip(row, sc);
+                    let caps_right = if rebind { chip.x - s6 } else { row.right() - s12 };
+                    let room = caps_right - caps_w - s12 - row.x - s12;
                     let line = if c.descriptions { Rect::new(row.x, row.y + s3, row.w, row.h / 2.0 - s3) } else { row };
                     let y = baseline(w.g, line, font);
                     w.marked((row.x + s12, y), &p.titles[*n], title_marks, font, (ink, mark), room);
@@ -708,7 +804,10 @@ impl App {
                         let y = baseline(w.g, below, small);
                         w.marked((row.x + s12, y), c.shown[*n], desc_marks, small, (dim, mark), room);
                     }
-                    w.keycaps_lit(row.right() - s12 - caps_w, row.y + row.h / 2.0, &c.caps[*n], small, live);
+                    w.keycaps_lit(caps_right - caps_w, row.y + row.h / 2.0, &c.caps[*n], small, live);
+                    if rebind && (selected || hover == Hit::PaletteRow(i) || hover == Hit::PaletteKeys(i)) {
+                        w.icon_button(chip, G_SHORTCUTS, icons, Button::of(hover == Hit::PaletteKeys(i), false, true), if selected { ink } else { t.text_dim });
+                    }
                 }
             }
         }
@@ -764,9 +863,13 @@ impl App {
             w.separator(hints.x + s12, hints.y, hints.w - 2.0 * s12);
             let keys = [S::WidgetsKeyUp.t(), S::WidgetsKeyDown.t()];
             if p.go.is_some() {
-                w.hints(hints.x + hints.w / 2.0, hints.y + hints.h / 2.0, &[(&keys, S::WidgetsHintNavigate.t()), (&[S::WidgetsKeyEnter.t()], S::WidgetsHintUse.t()), (&[S::WidgetsKeyTab.t()], S::WidgetsHintExpand.t()), (&[S::WidgetsKeyCtrlEnter.t()], S::WidgetsHintOpenInPanel.t()), (&[S::WidgetsKeyEscape.t()], S::WidgetsHintDismiss.t())], small);
+                w.hints_within(hints, &[(&keys, S::WidgetsHintNavigate.t()), (&[S::WidgetsKeyEnter.t()], S::WidgetsHintUse.t()), (&[S::WidgetsKeyTab.t()], S::WidgetsHintExpand.t()), (&[S::WidgetsKeyCtrlEnter.t()], S::WidgetsHintOpenInPanel.t()), (&[S::WidgetsKeyEscape.t()], S::WidgetsHintDismiss.t())], small);
             } else {
-                w.hints(hints.x + hints.w / 2.0, hints.y + hints.h / 2.0, &[(&keys, S::WidgetsHintNavigate.t()), (&[S::WidgetsKeyEnter.t()], S::WidgetsHintUse.t()), (&[S::WidgetsKeyEscape.t()], S::WidgetsHintDismiss.t())], small);
+                let (enter, f2, escape) = ([S::WidgetsKeyEnter.t()], [S::WidgetsKeyF2.t()], [S::WidgetsKeyEscape.t()]);
+                let base: [(&[&str], &str); 3] = [(&keys, S::WidgetsHintNavigate.t()), (&enter, S::WidgetsHintUse.t()), (&escape, S::WidgetsHintDismiss.t())];
+                let rebind: [(&[&str], &str); 4] = [base[0], base[1], (&f2, S::WidgetsHintRebind.t()), base[2]];
+                let items: &[(&[&str], &str)] = if p.commands.is_some() { &rebind } else { &base };
+                w.hints_within(hints, items, small);
             }
         }
         self.nav.palette = Some(p);

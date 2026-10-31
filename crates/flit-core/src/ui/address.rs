@@ -44,6 +44,40 @@ pub(super) struct Address {
     missing: Vec<Location>,
     pub shift: f32,
     pub shift_for: Option<Location>,
+    pub turn: Turn,
+}
+
+pub(super) const TURN: Duration = Duration::from_millis(150);
+
+#[derive(Default)]
+pub(super) struct Turn {
+    crumb: usize,
+    from: f32,
+    to: f32,
+    at: Option<Instant>,
+}
+
+impl Turn {
+    pub fn angle(&self, crumb: usize, now: Instant) -> f32 {
+        if crumb != self.crumb {
+            return 0.0;
+        }
+        let Some(at) = self.at else { return self.to };
+        let p = (now.saturating_duration_since(at).as_secs_f32() / TURN.as_secs_f32()).min(1.0);
+        self.from + (self.to - self.from) * (1.0 - (1.0 - p).powi(3))
+    }
+
+    pub fn aim(&mut self, open: Option<usize>, animate: bool, now: Instant) -> bool {
+        let (crumb, to) = open.map_or((self.crumb, 0.0), |i| (i, 90.0));
+        if crumb != self.crumb || to != self.to {
+            let from = if crumb == self.crumb { self.angle(crumb, now) } else { 0.0 };
+            *self = Turn { crumb, from, to, at: animate.then_some(now) };
+        }
+        if self.at.is_some_and(|at| now.saturating_duration_since(at) >= TURN) {
+            self.at = None;
+        }
+        self.at.is_some()
+    }
 }
 
 pub(super) enum Listed {

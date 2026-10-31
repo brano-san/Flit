@@ -11,6 +11,7 @@ up = "Up"
 down = "Down"
 enter = "Enter"
 escape = "Escape"
+f2 = "F2"
 
 [hint]
 expand = "展开"
@@ -18,3 +19,4 @@ open_in_panel = "在面板中打开"
 navigate = "移动"
 use = "执行"
 dismiss = "关闭"
+rebind = "快捷键"

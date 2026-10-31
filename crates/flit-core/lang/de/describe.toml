@@ -77,6 +77,8 @@
 "view.sort.accessed" = "Ordnerinhalt nach dem Datum des letzten Zugriffs auf die Dateien ordnen."
 "view.sort.deleted" = "Ordnerinhalt nach dem Löschdatum der Dateien ordnen. Gilt im Papierkorb."
 "view.sort.items" = "Ordnerinhalt nach der Anzahl der enthaltenen Elemente ordnen."
+"view.sort.folders" = "Ordnerinhalt nach der Anzahl der enthaltenen Unterordner ordnen."
+"view.sort.files" = "Ordnerinhalt nach der Anzahl der enthaltenen Dateien ordnen."
 "view.sort.type" = "Ordnerinhalt nach Dateityp ordnen."
 "view.sort.origin" = "Ordnerinhalt nach dem ursprünglichen Ort der Dateien ordnen. Gilt im Papierkorb."
 "view.sort.free" = "Ordnerinhalt nach freiem Speicherplatz des Laufwerks ordnen. Gilt in „Dieser PC“."

@@ -77,6 +77,8 @@
 "view.sort.accessed" = "Nach Zugriffsdatum ordnen"
 "view.sort.deleted" = "Nach Löschdatum ordnen"
 "view.sort.items" = "Nach Elementanzahl ordnen"
+"view.sort.folders" = "Nach Ordneranzahl ordnen"
+"view.sort.files" = "Nach Dateianzahl ordnen"
 "view.sort.type" = "Nach Typ ordnen"
 "view.sort.origin" = "Nach ursprünglichem Ort ordnen"
 "view.sort.free" = "Nach freiem Speicher ordnen"

@@ -16,3 +16,8 @@ already = "{key} exécute déjà « {command} »"
 reassign = "Réattribuer {key} de « {from} » à « {command} »"
 assign = "Attribuer {key} à « {command} »"
 remove = "Supprimer le raccourci {key}"
+
+[editor]
+title = "Raccourcis de « {command} »"
+change = "Modifier {key}"
+removes = "Suppr le retire"

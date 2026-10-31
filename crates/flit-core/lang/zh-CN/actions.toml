@@ -77,6 +77,8 @@
 "view.sort.accessed" = "按访问日期排序"
 "view.sort.deleted" = "按删除日期排序"
 "view.sort.items" = "按项目总数排序"
+"view.sort.folders" = "按文件夹数排序"
+"view.sort.files" = "按文件数排序"
 "view.sort.type" = "按类型排序"
 "view.sort.origin" = "按原位置排序"
 "view.sort.free" = "按可用空间排序"

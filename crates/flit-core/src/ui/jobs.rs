@@ -43,6 +43,13 @@ const CRASH_RESTORE_BUTTONS: [S; 3] = [S::UiButtonRestore, S::UiButtonOpenFolder
 const CRASH_BUTTONS: [S; 2] = [S::UiButtonOpenFolder, S::UiButtonNotNow];
 const REPLACE_BUTTONS: [S; 2] = [S::UiButtonReplace, S::UiButtonCancel];
 
+const CANCEL_CODES: [&str; 3] = ["(0x80270000)", "(0x800704C7)", "(0x80004004)"];
+
+pub fn cancelled_error(e: &str) -> bool {
+    let said = |s: S| e.starts_with(s.t()) || e.starts_with(s.en());
+    CANCEL_CODES.iter().any(|c| e.trim_end().ends_with(c)) || said(S::ErrorsEngineCancelled) || said(S::ErrorsEngineDeletionCancelled)
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum JobState {
     Running,
@@ -385,7 +392,7 @@ impl App {
         self.dirty = true;
     }
 
-    pub(super) fn job_done(&mut self, id: OpId, error: Option<&str>, now: Instant) {
+    pub(super) fn job_done(&mut self, id: OpId, error: Option<&str>, cancelled: bool, now: Instant) {
         let asked = |a: &Ask| matches!(a, Ask::Conflict { id: k, .. } if *k == id);
         if self.jobs.asks.front().is_some_and(asked) {
             self.jobs.all = false;
@@ -394,7 +401,7 @@ impl App {
         self.jobs.asks.retain(|a| !asked(a));
         let Some(j) = self.job_mut(id) else { return };
         j.state = match error {
-            _ if j.ctl.is_cancelled() => JobState::Cancelled,
+            _ if cancelled || j.ctl.is_cancelled() => JobState::Cancelled,
             Some(e) => JobState::Failed(e.to_owned()),
             None => JobState::Done,
         };

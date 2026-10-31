@@ -11,6 +11,7 @@ up = "Up"
 down = "Down"
 enter = "Enter"
 escape = "Escape"
+f2 = "F2"
 
 [hint]
 expand = "pour développer"
@@ -18,3 +19,4 @@ open_in_panel = "pour ouvrir dans le panneau"
 navigate = "pour naviguer"
 use = "pour valider"
 dismiss = "pour fermer"
+rebind = "pour réassigner"

@@ -176,3 +176,140 @@ fn unavailable_commands_are_listed_gray_and_never_run() {
     assert!(a.nav.palette.is_some(), "picking a gray command keeps the palette open");
     assert!(a.drain_effects().next().is_none() && !a.search_active());
 }
+
+fn press(a: &mut App, key: Key, mods: Mods) {
+    a.on_event(&Event::Key { key, mods, pressed: true }, Instant::now());
+}
+
+const NONE: Mods = Mods { ctrl: false, shift: false, alt: false };
+const CTRL: Mods = Mods { ctrl: true, shift: false, alt: false };
+
+fn rows(a: &App) -> Vec<String> {
+    a.nav.palette.as_ref().expect("a palette is open").titles.clone()
+}
+
+fn pick(a: &App) -> Pick {
+    a.nav.palette.as_ref().expect("a palette is open").pick.clone()
+}
+
+fn note(a: &App) -> String {
+    a.tab().error.clone().unwrap_or_default()
+}
+
+fn find_command(a: &mut App, id: &str) -> usize {
+    let i = crate::ui::actions::index(id).unwrap();
+    a.open_palette();
+    a.palette_insert(ACTIONS[i].title.t());
+    let p = a.nav.palette.as_mut().unwrap();
+    let k = (0..p.matches.len()).find(|&k| p.row_action(k) == Some(i)).unwrap_or_else(|| panic!("{id} is not listed"));
+    p.select_row(k);
+    i
+}
+
+fn caps_of(a: &App, i: usize) -> Vec<String> {
+    let p = a.nav.palette.as_ref().unwrap();
+    let k = p.ids.iter().position(|&j| j == i).unwrap();
+    commands(a).caps[k].clone()
+}
+
+#[test]
+fn shortcuts_are_added_reassigned_refused_edited_removed_and_restored_from_the_commands() {
+    let mut a = crate::ui::harness::app(&["a.txt"]);
+    let hidden = find_command(&mut a, "view.hidden");
+    press(&mut a, Key::F(2), NONE);
+    assert_eq!(pick(&a), Pick::Keys(hidden));
+    assert_eq!(rows(&a), ["Change Ctrl+H", "Add shortcut", "Restore all shortcuts"]);
+    press(&mut a, Key::Down, NONE);
+    press(&mut a, Key::Enter, NONE);
+    assert_eq!(rows(&a), ["Press the new shortcut for «Toggle Hidden Files»"]);
+    a.on_event(&Event::Char('q'), Instant::now());
+    assert_eq!(rows(&a).len(), 1, "typed letters are not recorded");
+    press(&mut a, Key::Char('G'), CTRL);
+    assert_eq!(rows(&a)[0], "Assign Ctrl+G to «Toggle Hidden Files»");
+    press(&mut a, Key::Enter, NONE);
+    assert_eq!(pick(&a), Pick::Commands, "the commands come back after the change");
+    assert_eq!(a.keymap.text_of("view.hidden"), "Ctrl+H, Ctrl+G");
+    assert_eq!(caps_of(&a, hidden), ["Ctrl+H", "Ctrl+G"], "the row shows the new keycaps");
+    assert_eq!(a.nav.palette.as_ref().unwrap().row_action(a.nav.palette.as_ref().unwrap().sel), Some(hidden), "the same command stays selected");
+    assert!(note(&a).starts_with("Ctrl+G runs «Toggle Hidden Files» now"), "{}", note(&a));
+
+    press(&mut a, Key::F(2), NONE);
+    assert_eq!(rows(&a), ["Change Ctrl+H", "Change Ctrl+G", "Add shortcut", "Restore default shortcut", "Restore all shortcuts"]);
+    a.nav.palette.as_mut().unwrap().select_row(2);
+    press(&mut a, Key::Enter, NONE);
+    press(&mut a, Key::Char('T'), CTRL);
+    assert_eq!(rows(&a)[0], "Reassign Ctrl+T from «Open New Tab» to «Toggle Hidden Files»", "the conflict is shown before it is applied");
+    assert_eq!(a.nav.palette.as_ref().unwrap().keys[0], "«Open New Tab» is left without a shortcut");
+    press(&mut a, Key::Enter, NONE);
+    assert_eq!(a.keymap.text_of("tab.new"), "");
+    assert_eq!(a.keymap.text_of("view.hidden"), "Ctrl+H, Ctrl+G, Ctrl+T");
+
+    press(&mut a, Key::F(2), NONE);
+    a.nav.palette.as_mut().unwrap().select_row(3);
+    press(&mut a, Key::Enter, NONE);
+    press(&mut a, Key::Char('Q'), Mods { shift: true, ..NONE });
+    assert!(rows(&a)[0].starts_with("Shift+Q cannot be used: letters"), "{:?}", rows(&a));
+    press(&mut a, Key::Enter, NONE);
+    assert!(rows(&a)[0].starts_with("Shift+Q cannot be used"), "Enter keeps the dialog open for refused keys");
+    press(&mut a, Key::Escape, NONE);
+    assert_eq!(pick(&a), Pick::Commands, "Escape returns to the commands");
+    assert_eq!(a.keymap.text_of("view.hidden"), "Ctrl+H, Ctrl+G, Ctrl+T");
+
+    press(&mut a, Key::F(2), NONE);
+    press(&mut a, Key::Enter, NONE);
+    assert_eq!(rows(&a).last().unwrap(), "Remove the shortcut Ctrl+H");
+    press(&mut a, Key::Char('M'), CTRL);
+    press(&mut a, Key::Enter, NONE);
+    assert_eq!(a.keymap.text_of("view.hidden"), "Ctrl+M, Ctrl+G, Ctrl+T", "changing replaces the shortcut in place");
+
+    press(&mut a, Key::F(2), NONE);
+    press(&mut a, Key::Down, NONE);
+    press(&mut a, Key::Delete, NONE);
+    assert_eq!(a.keymap.text_of("view.hidden"), "Ctrl+M, Ctrl+T", "Delete removes the selected shortcut");
+    assert_eq!(rows(&a)[..2], ["Change Ctrl+M", "Change Ctrl+T"]);
+    press(&mut a, Key::Escape, NONE);
+    assert_eq!(pick(&a), Pick::Commands);
+    press(&mut a, Key::Escape, NONE);
+    assert!(a.nav.palette.is_none());
+
+    find_command(&mut a, "tab.new");
+    press(&mut a, Key::F(2), NONE);
+    assert_eq!(rows(&a), ["Add shortcut", "Restore default shortcut", "Restore all shortcuts"]);
+    press(&mut a, Key::Down, NONE);
+    press(&mut a, Key::Enter, NONE);
+    assert_eq!(a.keymap.text_of("tab.new"), "Ctrl+T", "the defaults come back");
+    assert_eq!(a.keymap.text_of("view.hidden"), "Ctrl+M");
+    assert!(note(&a).contains("«Toggle Hidden Files» keeps Ctrl+M"), "{}", note(&a));
+
+    press(&mut a, Key::F(2), NONE);
+    press(&mut a, Key::Up, NONE);
+    press(&mut a, Key::Enter, NONE);
+    assert_eq!(pick(&a), Pick::Setting(SettingPick::ResetKeys));
+    press(&mut a, Key::Enter, NONE);
+    assert_eq!(a.keymap, crate::ui::keymap::defaults());
+    assert_eq!(note(&a), "All commands have their default shortcuts again");
+    assert_eq!(pick(&a), Pick::Commands);
+}
+
+#[test]
+fn the_pencil_on_a_command_row_opens_its_shortcuts_and_skips_other_contexts() {
+    let mut a = crate::ui::harness::app(&["a.txt"]);
+    let now = Instant::now();
+    let hidden = find_command(&mut a, "view.hidden");
+    draw(&mut a, now);
+    let p = a.nav.palette.as_ref().unwrap();
+    let chip = keys_chip(p.rows[p.sel - p.first], a.scale);
+    let (x, y) = (chip.x + chip.w / 2.0, chip.y + chip.h / 2.0);
+    a.on_event(&Event::MouseMove { x, y }, now);
+    assert_eq!(a.hover, Hit::PaletteKeys(a.nav.palette.as_ref().unwrap().sel));
+    a.on_event(&Event::MouseDown { x, y, button: crate::input::MouseButton::Left, clicks: 1 }, now);
+    a.on_event(&Event::MouseUp { x, y, button: crate::input::MouseButton::Left }, now);
+    assert_eq!(pick(&a), Pick::Keys(hidden));
+    press(&mut a, Key::Escape, NONE);
+    let field = ACTIONS.iter().position(|x| !x.rebindable() && a.supports(x.id) && x.title.t() != "").unwrap();
+    a.close_palette();
+    find_command(&mut a, ACTIONS[field].id);
+    press(&mut a, Key::F(2), NONE);
+    assert_eq!(pick(&a), Pick::Commands, "commands of other contexts are not rebound here");
+}
+

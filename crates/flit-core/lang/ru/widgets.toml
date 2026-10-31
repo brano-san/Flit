@@ -11,6 +11,7 @@ up = "Up"
 down = "Down"
 enter = "Enter"
 escape = "Escape"
+f2 = "F2"
 
 [hint]
 expand = "— раскрыть"
@@ -18,3 +19,4 @@ open_in_panel = "— открыть в панели"
 navigate = "— перемещение"
 use = "— выбрать"
 dismiss = "— закрыть"
+rebind = "— сочетания"

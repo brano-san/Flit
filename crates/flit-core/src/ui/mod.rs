@@ -60,7 +60,7 @@ pub use sidebar::{Drive, KnownFolder, NavPrefs, NavState, Places, QuickPrefs, Se
 pub use home::{Recent, Widget};
 pub const UI_SCALE: (u32, u32) = (70, 200);
 pub const SPRING_DELAY_MAX_MS: u32 = 3000;
-pub use details::{folder_key, Columns, FolderView, FolderViews, ViewMode, ViewPrefs, THUMB_CACHE_MB};
+pub use details::{folder_key, Columns, FolderView, FolderViews, ViewMode, ViewPrefs, EXTRA, ORDERED, THUMB_CACHE_MB};
 pub use layouts::{adaptive_layout, has_thumbnail, is_media, LayoutMode, Sizes, LAYOUTS};
 pub use jobs::JobState;
 pub use preview_pane::PaneState;
@@ -193,13 +193,14 @@ pub enum Column {
     Deleted,
     Created,
     Tag,
-    Items,
+    Folders,
     Accessed,
     Volume,
     FolderUsage,
     Free,
     FileSystem,
     Percent,
+    Files,
     GitStatus,
     GitMessage,
     GitAuthor,
@@ -207,11 +208,12 @@ pub enum Column {
 }
 
 pub const GIT_COLUMNS: [Column; 4] = [Column::GitStatus, Column::GitMessage, Column::GitAuthor, Column::GitDate];
-pub const REPO_COLUMNS: [Column; 14] = [
+pub const REPO_COLUMNS: [Column; 15] = [
     Column::Name,
     Column::Type,
     Column::Modified,
-    Column::Items,
+    Column::Folders,
+    Column::Files,
     Column::Size,
     Column::Volume,
     Column::Created,
@@ -223,10 +225,10 @@ pub const REPO_COLUMNS: [Column; 14] = [
     Column::GitAuthor,
     Column::GitDate,
 ];
-pub const COLUMNS: [Column; 10] = [Column::Name, Column::Type, Column::Modified, Column::Items, Column::Size, Column::Volume, Column::Created, Column::Accessed, Column::FolderUsage, Column::Tag];
+pub const COLUMNS: [Column; 11] = [Column::Name, Column::Type, Column::Modified, Column::Folders, Column::Files, Column::Size, Column::Volume, Column::Created, Column::Accessed, Column::FolderUsage, Column::Tag];
 pub const BIN_COLUMNS: [Column; 4] = [Column::Name, Column::Origin, Column::Deleted, Column::Size];
 pub const COMPUTER_COLUMNS: [Column; 6] = [Column::Name, Column::Type, Column::Size, Column::Free, Column::Percent, Column::FileSystem];
-pub const MENU_COLUMNS: [Column; 9] = [Column::Name, Column::Type, Column::Size, Column::Items, Column::Created, Column::Modified, Column::Accessed, Column::Volume, Column::FolderUsage];
+pub const MENU_COLUMNS: [Column; 10] = [Column::Name, Column::Type, Column::Size, Column::Folders, Column::Files, Column::Created, Column::Modified, Column::Accessed, Column::Volume, Column::FolderUsage];
 
 impl Column {
     pub(super) fn title(self) -> &'static str {
@@ -239,7 +241,8 @@ impl Column {
             Column::Origin => S::DetailsColumnOrigin,
             Column::Deleted => S::DetailsColumnDeleted,
             Column::Tag => S::DetailsColumnTag,
-            Column::Items => S::DetailsColumnItems,
+            Column::Folders => S::DetailsColumnFolders,
+            Column::Files => S::DetailsColumnFiles,
             Column::Accessed => S::DetailsColumnAccessed,
             Column::Volume => S::DetailsColumnVolume,
             Column::FolderUsage => S::DetailsColumnFolderUsage,
@@ -262,7 +265,8 @@ impl Column {
             Column::Size => SortField::Size,
             Column::Origin => SortField::Origin,
             Column::Tag => SortField::Tag,
-            Column::Items => SortField::Items,
+            Column::Folders => SortField::Folders,
+            Column::Files => SortField::Files,
             Column::Accessed => SortField::Accessed,
             Column::Volume => SortField::Volume,
             Column::FolderUsage => SortField::FolderUsage,
@@ -428,6 +432,7 @@ enum Hit {
     Nav(usize),
     Caption(usize),
     Crumb(usize),
+    CrumbChevron(usize),
     Address,
     Header(usize),
     ColSep(usize),
@@ -452,6 +457,7 @@ enum Hit {
     FilterField,
     FilterClose,
     PaletteRow(usize),
+    PaletteKeys(usize),
     PaletteField,
     PaletteBox,
     PaletteOutside,
@@ -480,7 +486,6 @@ enum Hit {
     QuickField,
     QuickClear,
     Eject,
-    SideSettings,
     Settings(settings_page::SHit),
     Menu,
     QuickToggle,
@@ -499,6 +504,8 @@ enum Drag {
     Marquee,
     Tab { origin: usize, x: f32, y: f32, moved: bool, torn: bool },
     PanelSep { sep: usize, start: f32, first: f32 },
+    Slide(usize),
+    OptionsThumb { grab: f32 },
 }
 
 #[derive(Default, Clone)]
@@ -524,10 +531,12 @@ struct Layout {
     thumb: Rect,
     status: Rect,
     bar: Vec<(bottom::BottomHit, Rect)>,
+    bar_pieces: [Rect; 2],
     encoding: Rect,
     branch: Rect,
     bin: [Rect; 3],
     crumbs: Vec<Rect>,
+    crumb_chevrons: Vec<Rect>,
     row_h: f32,
     mode: LayoutMode,
     icon: f32,
@@ -1386,6 +1395,9 @@ impl App {
                 if let Some(k) = l.crumb_arrows.iter().position(|r| r.contains(x, y)) {
                     return Hit::CrumbScroll(k == 1);
                 }
+                if let Some(i) = l.crumb_chevrons.iter().position(|r| r.contains(x, y)) {
+                    return Hit::CrumbChevron(i);
+                }
                 if let Some(i) = l.crumbs.iter().position(|r| r.contains(x, y)) {
                     return Hit::Crumb(i);
                 }
@@ -1587,6 +1599,8 @@ impl App {
             Drag::Tab { .. } => return self.drag_tab(x, y),
             Drag::Preview { hit, start, size } => return self.preview_drag(hit, x, y, start, size),
             Drag::PanelSep { sep, start, first } => return self.drag_sep(sep, x, y, start, first),
+            Drag::Slide(k) => return self.slide_setting(k, x),
+            Drag::OptionsThumb { grab } => return self.drag_settings_thumb(y, grab),
             Drag::Marquee | Drag::None => {}
         }
         if self.start_pin_drag(y) {
@@ -1601,6 +1615,11 @@ impl App {
             _ => CursorIcon::Default,
         };
         self.set_cursor(cursor);
+        let check = if matches!(h, Hit::Row(_)) { self.checkbox_row(x, y) } else { None };
+        if check != self.details.checks.hover {
+            self.details.checks.hover = check;
+            self.dirty = true;
+        }
         self.parked_hover(x, y);
         self.hover_pick(h, now);
         if h != self.hover {
@@ -1619,7 +1638,7 @@ impl App {
         if !self.settings_open() {
             self.panel_press(x, y);
         }
-        if self.jobs_mouse_down(self.hit(x, y)) || self.settings_mouse_down(self.hit(x, y), x, button, clicks) || self.strip_mouse_down(self.hit(x, y), button, clicks, now) || self.autoscroll_down(self.hit(x, y), self.along_of(x, y), button) || self.ops_mouse_down(x, y, button, clicks) {
+        if self.jobs_mouse_down(self.hit(x, y)) || self.settings_mouse_down(self.hit(x, y), (x, y), button, clicks) || self.strip_mouse_down(self.hit(x, y), button, clicks, now) || self.autoscroll_down(self.hit(x, y), self.along_of(x, y), button) || self.ops_mouse_down(x, y, button, clicks) {
             return;
         }
         let h = self.hit(x, y);
@@ -1748,12 +1767,11 @@ impl App {
             Hit::Menu => self.open_main_menu(),
             Hit::QuickToggle => self.toggle_sidebar(),
             Hit::Crumb(i) => {
-                if i < self.tab().crumbs.len() {
-                    self.open_crumb(i);
-                } else if let Some((_, p)) = self.tab().crumb(i).cloned() {
+                if let Some((_, p)) = self.tab().crumb(i).cloned().filter(|(_, p)| p != self.current_location()) {
                     self.navigate(p, now);
                 }
             }
+            Hit::CrumbChevron(i) => self.toggle_crumb(i),
             Hit::Header(c) => {
                 let (col, r) = (self.layout.columns[c], self.layout.cols[c]);
                 if col == Column::Type && self.funnel_rect(r).contains(x, y) {
@@ -1777,12 +1795,12 @@ impl App {
             Hit::HomeItem(i) => self.open_home_item(i, self.mods.ctrl, now),
             Hit::FilterClose => self.close_filter(),
             Hit::PaletteRow(i) => self.run_palette_item(i, now),
+            Hit::PaletteKeys(i) => self.palette_shortcuts(i),
             Hit::PaletteClose => self.close_palette(),
             Hit::PaletteDescribe => self.toggle_descriptions(),
             Hit::Tool(t) => self.toolbar_click(t, now),
             Hit::TabActions => self.open_tab_search(),
             Hit::Eject => self.eject(),
-            Hit::SideSettings => self.open_settings(None),
             Hit::Settings(s) => self.settings_click(s, x, y),
             _ => {}
         }
@@ -2125,7 +2143,8 @@ impl App {
     fn draw_crumbs<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, area: Rect, baseline: f32, font: FontStyle) {
         let chevron = self.icon_font(8.0);
         let gap = self.s(6.0);
-        let chev_w = g.measure(G_CHEVRON, chevron) + 2.0 * self.s(2.0);
+        let chev_w = self.s(16.0);
+        let now = self.last_frame.unwrap_or_else(Instant::now);
         let here = self.current_location().clone();
         if self.addr.shift_for.as_ref() != Some(&here) {
             self.addr.shift = 0.0;
@@ -2139,14 +2158,12 @@ impl App {
             Some(palette::Pick::Crumb(i)) => Some(*i),
             _ => None,
         };
+        if self.addr.turn.aim(open, self.animations, now) {
+            self.motion = true;
+        }
         let skip = self.compact_skip(&tab.crumbs);
         let marked = |i: usize| if tab.subfolders && i + 1 == real { tab::SUBFOLDERS_MARK } else { "" };
-        let mark_w = g.measure(sidebar::G_EXPANDED, chevron) + gap;
-        let widths: Vec<f32> = crumbs
-            .iter()
-            .enumerate()
-            .map(|(i, (label, _))| if i < skip { 0.0 } else { g.measure(label, font) + g.measure(marked(i), font) + 2.0 * gap + if open == Some(i) { mark_w } else { 0.0 } })
-            .collect();
+        let widths: Vec<f32> = crumbs.iter().enumerate().map(|(i, (label, _))| if i < skip { 0.0 } else { g.measure(label, font) + g.measure(marked(i), font) + 2.0 * gap }).collect();
         let n = widths.len();
         let span = |end: usize| widths[..end].iter().sum::<f32>() + chev_w * end.saturating_sub(1 + skip) as f32;
         let (all, upto) = (span(n), span(real));
@@ -2162,25 +2179,20 @@ impl App {
         let (left, right) = (x < view.x - 0.5, x + all > view.right() + 0.5);
         self.layout.crumb_arrows = if over { [Rect::new(area.x, area.y + s3, arrow_w, area.h - s6), Rect::new(area.x + arrow_w, area.y + s3, arrow_w, area.h - s6)] } else { [Rect::default(); 2] };
         let mut rects = vec![Rect::default(); n];
+        let mut chevrons = vec![Rect::default(); n];
+        let visible = |r: Rect| if r.right() > view.x && r.x < view.right() { Rect::new(r.x.max(view.x), r.y, r.right().min(view.right()) - r.x.max(view.x), r.h) } else { Rect::default() };
         g.dl.set_clip(Some(view));
         for i in skip..n {
             let w = widths[i];
             let cr = Rect::new(x, area.y + s3, w, area.h - s6);
-            if cr.right() > view.x && cr.x < view.right() {
-                let (a, b) = (cr.x.max(view.x), cr.right().min(view.right()));
-                rects[i] = Rect::new(a, cr.y, b - a, cr.h);
-            }
-            let lit = open == Some(i);
+            rects[i] = visible(cr);
             if drop == Some(Spot::Crumb(i)) {
                 g.dl.round_rect(cr, t.selection, s3);
                 g.dl.outline(cr, t.accent, s3, s1.max(1.0));
-            } else if lit {
-                g.dl.round_rect(cr, t.accent_fill, s3);
             } else if self.hover == Hit::Crumb(i) {
                 g.dl.round_rect(cr, t.button_hover, s3);
             }
             let ink = match () {
-                _ if lit => theme::ink_on(t.accent_fill),
                 _ if i + 1 == real => t.text,
                 _ if i >= real => t.text_dim.alpha(0x80),
                 _ => t.text_dim,
@@ -2189,17 +2201,21 @@ impl App {
             if !marked(i).is_empty() {
                 g.text(x + gap + label_w, baseline, marked(i), font, t.text_dim, f32::INFINITY);
             }
-            if lit {
-                g.text(x + w - mark_w, baseline - s1, sidebar::G_EXPANDED, chevron, ink, f32::INFINITY);
-            }
             x += w;
             if i + 1 < n {
-                g.text(x + self.s(2.0), baseline - s1, G_CHEVRON, chevron, t.text_dim.alpha(if i + 1 >= real { 0x80 } else { 0xFF }), f32::INFINITY);
+                let chev = Rect::new(x, cr.y, chev_w, cr.h);
+                chevrons[i] = visible(chev);
+                if open == Some(i) || self.hover == Hit::CrumbChevron(i) {
+                    g.dl.round_rect(chev, t.button_hover, s3);
+                }
+                let ink = t.text_dim.alpha(if i + 1 >= real { 0x80 } else { 0xFF });
+                g.dl.chevron((chev.x + chev.w / 2.0, chev.y + chev.h / 2.0), self.s(8.0), self.addr.turn.angle(i, now), self.s(1.25).max(1.0), ink);
                 x += chev_w;
             }
         }
         g.dl.set_clip(None);
         self.layout.crumbs = rects;
+        self.layout.crumb_chevrons = chevrons;
         if over {
             let mut w = widgets::Paint::new(g, t, self.scale);
             for (k, (glyph, on)) in [(G_CRUMB_LEFT, left), (G_CRUMB_RIGHT, right)].into_iter().enumerate() {
@@ -2214,7 +2230,8 @@ impl App {
     }
 
     pub(super) fn crumb_rect(&self, i: usize) -> Option<Rect> {
-        self.layout.crumbs.get(i).copied().filter(|r| r.w > 0.0).or(Some(self.layout.address))
+        let shown = |rects: &[Rect]| rects.get(i).copied().filter(|r| r.w > 0.0);
+        shown(&self.layout.crumb_chevrons).or_else(|| shown(&self.layout.crumbs)).or(Some(self.layout.address))
     }
 
     fn scroll_crumbs(&mut self, right: bool) {
@@ -2288,6 +2305,8 @@ impl App {
         let mut requests: Vec<IconRequest> = Vec::new();
         let mut thumb_requests: Vec<IconRequest> = Vec::new();
         let mut type_requests: Vec<Vec<u8>> = Vec::new();
+        let mut checks: Vec<(u32, bool)> = Vec::new();
+        let now = self.last_frame.unwrap_or_else(Instant::now);
         let want_thumbs = self.prefs.thumbnails && matches!(mode, LayoutMode::Grid | LayoutMode::Cards) && !in_bin && (self.opts.thumbs != options::Thumbs::Local || !options::remote(&tab.view_loc));
         let thumb_px = thumbs::class_px(icon_px as u32);
         if let Some(v) = &tab.view {
@@ -2343,8 +2362,13 @@ impl App {
                 if list_focused && v.focus == Some(i) {
                     g.dl.outline(rr, t.focus_ring, self.s(4.0), 1.0);
                 }
-                if self.prefs.checkboxes {
+                let boxed = details::shows_check(self.prefs.checkboxes, v.is_selected(i), self.details.checks.hover == Some(row));
+                checks.push((i, boxed));
+                if boxed {
+                    let from = g.dl.instances.len();
                     self.draw_checkbox(g, t, p.check, v.is_selected(i));
+                    let c = p.check;
+                    g.dl.grow(from, self.details.checks.progress(i, now), (c.x + c.w / 2.0, c.y + c.h / 2.0), 0.4);
                 }
 
                 let name = listing.name(i);
@@ -2356,7 +2380,7 @@ impl App {
                 let ir = p.icon;
                 let alpha = if faded { 0x70 } else { 0xFF };
                 let thumb = (want_thumbs && !e.is_dir() && has_thumbnail(listing.ext(i))).then(|| hash::hash(&("thumb", dir_key, name, e.modified, e.size, thumb_px)));
-                let thumbed = thumb.is_some_and(|k| g.thumb(k, ir, alpha));
+                let thumbed = !boxed && thumb.is_some_and(|k| g.thumb(k, ir, alpha));
                 if let (Some(k), false, Some(d)) = (thumb, thumbed, dir) {
                     if !self.thumbs.contains_key(&k) && !thumb_requests.iter().any(|r| r.key == k) {
                         thumb_requests.push(IconRequest { key: k, kind: IconKind::Thumbnail, path: d.join(name), size: thumb_px, gen: tab.gen, row: row as u32 });
@@ -2366,7 +2390,7 @@ impl App {
                     let d = (ir.h * 0.42).max(self.s(9.0)).round();
                     (Rect::new(ir.right() - d * 0.8, ir.bottom() - d * 0.8, d, d), st)
                 });
-                if !thumbed && !g.image_alpha(key, ir, alpha) {
+                if !boxed && !thumbed && !g.image_alpha(key, ir, alpha) {
                     icon_glyph(g, t, &e, ir);
                     let wanted = !self.icons.contains_key(&key) && !requests.iter().any(|r| r.key == key);
                     let path = match (wanted, in_bin) {
@@ -2429,6 +2453,9 @@ impl App {
             }
         }
         g.dl.set_clip(None);
+        if self.details.checks.settle(checks, self.animations && self.prefs.checkboxes, now) {
+            self.motion = true;
+        }
         self.request_icons(requests);
         for r in thumb_requests {
             self.thumbs.insert(r.key, IconState::Pending);

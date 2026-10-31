@@ -77,6 +77,8 @@
 "view.sort.accessed" = "Sort By Date Accessed"
 "view.sort.deleted" = "Sort By Date Deleted"
 "view.sort.items" = "Sort By Total Items"
+"view.sort.folders" = "Sort By Folders"
+"view.sort.files" = "Sort By Files"
 "view.sort.type" = "Sort By Type"
 "view.sort.origin" = "Sort By Original Location"
 "view.sort.free" = "Sort By Free Space"

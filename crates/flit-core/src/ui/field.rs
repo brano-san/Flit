@@ -71,9 +71,10 @@ impl Field {
         let composing = preedit.filter(|p| focused && !self.secret && !p.is_empty());
         if self.edit.text.is_empty() && composing.is_none() {
             self.scroll = 0.0;
-            g.text(inner.x, baseline, placeholder, font, t.text_dim, inner.w);
             if focused {
                 g.dl.rect(Rect::new(inner.x, line_y, scale.round().max(1.0), line_h), t.text);
+            } else {
+                g.text(inner.x, baseline, placeholder, font, t.text_dim, inner.w);
             }
         } else {
             let look = EditLook { font, baseline, line_y, line_h, stroke: scale.round().max(1.0), focused };

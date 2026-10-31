@@ -122,7 +122,7 @@ fn synthetic(n: u64) -> (Listing, SortKeys) {
 fn fast_sort_matches_comparator() {
     let (l, k) = synthetic(3000);
     let groups = [GroupField::None, GroupField::Name, GroupField::Type, GroupField::Size, GroupField::Modified, GroupField::Created, GroupField::Accessed, GroupField::Items, GroupField::Volume, GroupField::FolderUsage, GroupField::Tag];
-    for field in [SortField::Name, SortField::Size, SortField::Modified, SortField::Created, SortField::Accessed, SortField::Items, SortField::Volume, SortField::FolderUsage, SortField::Type, SortField::Tag] {
+    for field in [SortField::Name, SortField::Size, SortField::Modified, SortField::Created, SortField::Accessed, SortField::Items, SortField::Folders, SortField::Files, SortField::Volume, SortField::FolderUsage, SortField::Type, SortField::Tag] {
         for (descending, folders) in [(false, Folders::First), (true, Folders::First), (false, Folders::Last), (true, Folders::Mixed)] {
             for (g, &group) in groups.iter().enumerate() {
                 let view = ViewSpec {
@@ -298,4 +298,19 @@ fn bench_sort_and_group_100k() {
         println!("ui thread, group {group:?}: merge {merge:.2} ms, regroup {:.2} ms median over 100k, {} groups", runs[4].1, v.groups().len());
         assert!(merge < 8.0 && runs[4].1 < 8.0, "merge {merge:.2} ms, regroup {:.2} ms for group {group:?}", runs[4].1);
     }
+}
+#[test]
+fn folders_and_files_sort_by_their_own_counts() {
+    use crate::listing::DirStats;
+    let (mut l, k) = listing(&[("a", 0, true), ("b", 0, true)]);
+    let (a, b) = (0, 1);
+    l.set_stats(a, DirStats { size: 0, folders: 5, files: 1, partial: false });
+    l.set_stats(b, DirStats { size: 0, folders: 1, files: 9, partial: false });
+    let order = |field| {
+        let mut out = Vec::new();
+        sort(&l, &k, ViewSpec { sort: SortSpec { field, ..Default::default() }, ..Default::default() }, &mut out);
+        out
+    };
+    assert_eq!(order(SortField::Folders), [b, a]);
+    assert_eq!(order(SortField::Files), [a, b]);
 }

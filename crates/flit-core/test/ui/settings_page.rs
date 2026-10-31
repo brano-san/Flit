@@ -194,10 +194,10 @@ fn opens_from_the_keyboard_the_palette_the_sidebar_and_the_tab_menu() {
     assert!(a.settings_open(), "the palette command opens the settings");
     key(&mut a, Key::Char(','), CTRL);
     assert!(!a.settings_open(), "Ctrl+, closes them again");
-    let button = a.nav.sidebar.settings;
-    assert!(button.w > 0.0 && button.bottom() <= a.size.1);
-    click_at(&mut a, center(button));
-    assert!(a.settings_open(), "the button at the bottom of the sidebar opens them");
+    let sb = &a.nav.sidebar;
+    assert_eq!(sb.list.bottom(), sb.rect.bottom(), "Quick Access has no settings button at the bottom");
+    key(&mut a, Key::Char(','), CTRL);
+    assert!(a.settings_open());
     let at = (ui(&a).panel.x / 2.0, a.size.1 - 4.0);
     click_at(&mut a, at);
     assert!(!a.settings_open(), "a click outside the window closes it");
@@ -378,13 +378,13 @@ fn tags_page_lists_tags_and_runs_their_commands() {
 }
 
 #[test]
-fn about_page_shows_versions_and_libraries() {
+fn about_page_shows_versions_and_no_libraries() {
     let mut a = app();
     a.set_about(About { os: "Windows 11 Pro 24H2 (build 26100.1)".into(), file: None, cache_bytes: None, logs: None });
     a.open_settings(Some(Page::About));
     let lines = page(&a, Page::About);
     assert!(lines[0].starts_with("Version: Flit ") && lines[1] == "Windows: Windows 11 Pro 24H2 (build 26100.1)");
-    assert!(lines.contains(&"serde_json: settings file".to_owned()));
+    assert!(!lines.iter().any(|l| l.starts_with("serde_json")), "{lines:?}");
     assert_eq!(lines[3..7], ["Help", "Documentation | Report a bug | Request a feature", "GitHub repository | Privacy statement", NO_TELEMETRY.t()]);
     let k = ui(&a).lines.iter().position(|l| l.buttons().contains(&Btn::ReportBug)).unwrap();
     reveal(&mut a, k);
@@ -615,28 +615,6 @@ fn bench_settings_window() {
     );
 }
 
-fn focus_chip(a: &mut App, id: &str, chip: usize) {
-    let i = crate::ui::actions::index(id).unwrap();
-    let u = a.settings.as_mut().unwrap();
-    let k = u.lines.iter().position(|l| matches!(l, Line::Action(j, ..) if *j == i)).unwrap_or_else(|| panic!("{id} is not shown"));
-    (u.focus, u.sub, u.searching, u.reveal) = (k, chip, false, true);
-    a.layout();
-}
-
-fn capture_rows(a: &App) -> Vec<String> {
-    let p = a.nav.palette.as_ref().expect("the capture dialog is open");
-    assert!(matches!(p.pick, Pick::Setting(SettingPick::Capture { .. })));
-    p.titles.clone()
-}
-
-fn keys_of(a: &App, id: &str) -> String {
-    a.keymap.text_of(id)
-}
-
-fn note(a: &App) -> String {
-    a.tab().error.clone().unwrap_or_default()
-}
-
 #[test]
 fn inactive_archive_settings_are_dimmed_skipped_by_the_keyboard_and_ignore_clicks() {
     use crate::ui::settings::NEEDS_BUILTIN_ARCHIVES;
@@ -667,150 +645,144 @@ fn inactive_archive_settings_are_dimmed_skipped_by_the_keyboard_and_ignore_click
     assert!(NEEDS_BUILTIN_ARCHIVES.iter().all(|id| SETTINGS[index(id).unwrap()].enabled(&a)));
 }
 
+
 #[test]
-fn the_actions_page_lists_and_finds_every_command() {
+fn options_have_no_shortcuts_group() {
     let mut a = app();
-    a.open_settings(Some(Page::Actions));
+    a.open_settings(None);
     let lines = a.settings_lines();
-    assert_eq!(lines.iter().filter(|l| l.starts_with("action ")).count(), ACTIONS.iter().filter(|x| x.rebindable() && a.supports(x.id)).count());
-    assert!(!lines.iter().any(|l| l.starts_with("action text.") || l.starts_with("action tree.")), "commands of other contexts are not rebound here");
-    assert!(lines.contains(&"action file.copy Ctrl+C, Ctrl+Insert".to_owned()));
-    assert!(lines.contains(&"action nav.home ".to_owned()), "commands without shortcuts are listed too");
-    typed(&mut a, "copy path");
-    let found = a.settings_lines();
-    assert!(found.contains(&"Actions".to_owned()) && found.iter().any(|l| l.starts_with("action item.copy_path")), "{found:?}");
-    assert!(!found.iter().any(|l| l.starts_with("action tab.new")));
-    key(&mut a, Key::Escape, NO);
+    assert!(!lines.iter().any(|l| l == "Actions" || l.starts_with("action ")), "{lines:?}");
+    assert!(!ui(&a).lines.iter().any(|l| l.buttons().iter().any(|b| b.label() == "Restore all shortcuts")));
     typed(&mut a, "ctrl+shift+t");
-    assert!(a.settings_lines().iter().any(|l| l.starts_with("action tab.reopen")), "a shortcut finds its command");
+    assert!(!a.settings_lines().iter().any(|l| l.starts_with("action ")));
     key(&mut a, Key::Escape, NO);
-    let k = ui(&a).lines.iter().position(|l| matches!(l, Line::Action(0, ..))).unwrap();
-    reveal(&mut a, k);
-    let chips = button_rects(&ui(&a).lines[k], rect(&a, k), s);
-    assert_eq!(chips.len(), 2, "one shortcut and the + chip");
-    click_at(&mut a, center(chips[1]));
-    assert_eq!(capture_rows(&a), ["Press the new shortcut for «Toggle Subfolders»"]);
-    key(&mut a, Key::Escape, NO);
-    assert!(a.nav.palette.is_none() && a.settings_open());
+    a.apply_doc(&settings::parse(r#"{"keys": {"view.hidden": ["Ctrl+G"]}}"#));
+    assert_eq!(a.keymap.text_of("view.hidden"), "Ctrl+G", "saved shortcuts still load");
+    assert!(a.setting_values().iter().any(|v| matches!(v, Value::Keys(_))));
+}
+
+fn spacing_track(a: &mut App) -> (usize, Rect) {
+    let k = line(a, settings::SPACING);
+    reveal(a, k);
+    (k, slider_track(rect(a, k), s))
+}
+
+fn spacing(a: &App) -> i64 {
+    match value(a, settings::SPACING) {
+        Value::Number(n) => n,
+        v => panic!("{v:?}"),
+    }
 }
 
 #[test]
-fn shortcuts_are_added_reassigned_refused_edited_removed_and_restored() {
+fn sliders_jump_on_press_follow_the_drag_and_stop_on_release() {
+    let t0 = Instant::now();
     let mut a = app();
-    a.open_settings(Some(Page::Actions));
-    focus_chip(&mut a, "view.hidden", 1);
-    key(&mut a, Key::Enter, NO);
-    assert_eq!(capture_rows(&a), ["Press the new shortcut for «Toggle Hidden Files»"]);
-    typed(&mut a, "q");
-    let f = a.palette_field().unwrap();
-    let before = a.current_location().clone();
-    a.on_event(&Event::MouseDown { x: f.x + 4.0, y: f.y + 4.0, button: MouseButton::Back, clicks: 1 }, Instant::now());
-    assert_eq!(capture_rows(&a).len(), 1, "typed letters and mouse buttons are not recorded");
-    assert_eq!(a.current_location(), &before);
-    key(&mut a, Key::Char('G'), CTRL);
-    assert_eq!(capture_rows(&a)[0], "Assign Ctrl+G to «Toggle Hidden Files»");
-    key(&mut a, Key::Enter, NO);
-    assert!(a.nav.palette.is_none() && a.settings_open());
-    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+H, Ctrl+G");
-    assert!(note(&a).starts_with("Ctrl+G runs «Toggle Hidden Files» now"), "{}", note(&a));
-
-    focus_chip(&mut a, "view.hidden", 2);
-    key(&mut a, Key::Enter, NO);
-    key(&mut a, Key::Char('T'), CTRL);
-    assert_eq!(capture_rows(&a)[0], "Reassign Ctrl+T from «Open New Tab» to «Toggle Hidden Files»");
-    assert_eq!(a.nav.palette.as_ref().unwrap().keys[0], "«Open New Tab» is left without a shortcut");
-    key(&mut a, Key::Enter, NO);
-    assert_eq!(keys_of(&a, "tab.new"), "");
-    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+H, Ctrl+G, Ctrl+T");
-    assert!(note(&a).ends_with("«Open New Tab» is left without a shortcut"), "{}", note(&a));
-
-    focus_chip(&mut a, "view.hidden", 3);
-    key(&mut a, Key::Enter, NO);
-    key(&mut a, Key::Char('Q'), Mods { shift: true, ..NO });
-    assert!(capture_rows(&a)[0].starts_with("Shift+Q cannot be used: letters"), "{:?}", capture_rows(&a));
-    key(&mut a, Key::Enter, NO);
-    assert!(capture_rows(&a)[0].starts_with("Shift+Q cannot be used"), "Enter keeps the dialog open for other keys");
-    key(&mut a, Key::Char('A'), NO);
-    assert!(capture_rows(&a)[0].starts_with("A cannot be used"));
-    key(&mut a, Key::Escape, NO);
-    assert!(a.nav.palette.is_none() && a.settings_open());
-    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+H, Ctrl+G, Ctrl+T");
-
-    focus_chip(&mut a, "view.hidden", 0);
-    key(&mut a, Key::Enter, NO);
-    assert_eq!(capture_rows(&a).last().unwrap(), "Remove the shortcut Ctrl+H");
-    key(&mut a, Key::Char('M'), CTRL);
-    key(&mut a, Key::Enter, NO);
-    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+M, Ctrl+G, Ctrl+T", "editing replaces the shortcut in place");
-
-    focus_chip(&mut a, "view.hidden", 1);
-    key(&mut a, Key::Enter, NO);
-    a.run_palette_item(1, Instant::now());
-    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+M, Ctrl+T");
-    focus_chip(&mut a, "view.hidden", 0);
-    key(&mut a, Key::Delete, NO);
-    assert_eq!(keys_of(&a, "view.hidden"), "Ctrl+T");
-
-    focus_chip(&mut a, "tab.new", 1);
-    key(&mut a, Key::Enter, NO);
-    assert_eq!(keys_of(&a, "tab.new"), "Ctrl+T", "the arrow chip restores the defaults");
-    assert_eq!(keys_of(&a, "view.hidden"), "");
-    assert!(note(&a).contains("«Toggle Hidden Files» is left without a shortcut"), "{}", note(&a));
-
-    let k = ui(&a).lines.iter().position(|l| *l == Line::Buttons(None, &[Btn::RestoreKeys])).unwrap();
-    let u = a.settings.as_mut().unwrap();
-    (u.focus, u.sub) = (k, 0);
-    key(&mut a, Key::Enter, NO);
-    key(&mut a, Key::Enter, NO);
-    assert_eq!(a.keymap, crate::ui::keymap::defaults());
-    assert_eq!(note(&a), "All commands have their default shortcuts again");
+    a.open_settings(Some(Page::Interface));
+    a.frame(&mut Gfx::new(Mono, 1024), t0);
+    let (_, tr) = spacing_track(&mut a);
+    let y = tr.y + tr.h / 2.0;
+    a.on_event(&Event::MouseMove { x: tr.x + 2.0, y }, t0);
+    a.on_event(&Event::MouseDown { x: tr.x + 2.0, y, button: MouseButton::Left, clicks: 1 }, t0);
+    assert_eq!(spacing(&a), 0, "a press on the track jumps there");
+    let mut seen = Vec::new();
+    for k in 1..=10 {
+        a.on_event(&Event::MouseMove { x: tr.x + tr.w * k as f32 / 10.0, y: y + 40.0 }, t0);
+        seen.push(spacing(&a));
+    }
+    assert!(seen.windows(2).all(|w| w[1] >= w[0]) && seen[4] > 0 && seen[4] < 100, "the thumb follows the pointer even off the row: {seen:?}");
+    assert_eq!(*seen.last().unwrap(), 100);
+    a.on_event(&Event::MouseMove { x: tr.x + tr.w / 2.0, y }, t0);
+    a.on_event(&Event::MouseUp { x: tr.x + tr.w / 2.0, y, button: MouseButton::Left }, t0);
+    let released = spacing(&a);
+    assert_eq!(released, 50);
+    a.on_event(&Event::MouseMove { x: tr.x, y }, t0);
+    assert_eq!(spacing(&a), released, "after release moves change nothing");
+    key(&mut a, Key::Right, NO);
+    assert_eq!(spacing(&a), 60, "the keyboard still steps the slider");
 }
 
 #[test]
-#[ignore]
-fn bench_actions_page() {
-    let ms = |d: Duration| d.as_secs_f64() * 1e3;
-    let mut a = App::new(Persisted::default(), Vec::new(), 0, false, 1.0, (1400, 900), Instant::now());
-    let mut gfx = Gfx::new(Mono, 1024);
-    a.frame(&mut gfx, Instant::now());
-    let mut opens = Vec::new();
-    for _ in 0..50 {
-        let t = Instant::now();
-        a.open_settings(Some(Page::Actions));
-        a.frame(&mut gfx, Instant::now());
-        opens.push(t.elapsed());
-        a.close_settings();
-        a.frame(&mut gfx, Instant::now());
-    }
-    opens.sort();
-    a.open_settings(Some(Page::Actions));
-    let mut typing = Vec::new();
-    for _ in 0..20 {
-        for c in "copy path".chars() {
-            let t = Instant::now();
-            a.on_event(&Event::Char(c), Instant::now());
-            a.frame(&mut gfx, Instant::now());
-            typing.push(t.elapsed());
-        }
-        key(&mut a, Key::Escape, NO);
-    }
-    typing.sort();
-    let mut scrolls = Vec::new();
-    for k in 0..200 {
-        let t = Instant::now();
-        a.on_event(&Event::MouseMove { x: 700.0, y: 400.0 }, Instant::now());
-        a.on_event(&Event::Wheel { dx: 0.0, dy: if k % 40 < 20 { -1.0 } else { 1.0 } }, Instant::now());
-        a.frame(&mut gfx, Instant::now());
-        scrolls.push(t.elapsed());
-    }
-    scrolls.sort();
-    eprintln!(
-        "BENCH actions page: open to finished frame median {:.3} ms max {:.3} ms; keystroke in search to finished frame median {:.3} ms max {:.3} ms; wheel step median {:.3} ms p99 {:.3} ms",
-        ms(opens[opens.len() / 2]),
-        ms(*opens.last().unwrap()),
-        ms(typing[typing.len() / 2]),
-        ms(*typing.last().unwrap()),
-        ms(scrolls[100]),
-        ms(scrolls[198])
-    );
+fn the_scrollbar_drags_its_thumb_and_pages_on_the_track() {
+    let t0 = Instant::now();
+    let mut a = app();
+    a.on_event(&Event::Resized { width: 1100, height: 520 }, t0);
+    a.open_settings(Some(Page::Interface));
+    a.frame(&mut Gfx::new(Mono, 1024), t0);
+    let (list, content) = (ui(&a).list, ui(&a).content_h);
+    assert!(content > list.h);
+    let thumb = scroll_thumb(list, content, ui(&a).scroll.pos, s).unwrap();
+    let (x, y) = (thumb.x + thumb.w / 2.0, thumb.y + thumb.h / 2.0);
+    a.on_event(&Event::MouseMove { x, y }, t0);
+    assert_eq!(a.hover, Hit::Settings(SHit::Thumb));
+    a.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, t0);
+    a.on_event(&Event::MouseMove { x, y: y + (list.h - thumb.h) / 2.0 }, t0);
+    let half = ui(&a).scroll.pos;
+    assert!((half - (content - list.h) / 2.0).abs() < 2.0, "dragging the thumb halfway scrolls halfway: {half}");
+    a.on_event(&Event::MouseMove { x, y: list.bottom() + 200.0 }, t0);
+    assert_eq!(ui(&a).scroll.pos, content - list.h, "the end of the track is the end of the list");
+    a.on_event(&Event::MouseUp { x, y: list.bottom() + 200.0, button: MouseButton::Left }, t0);
+    a.on_event(&Event::MouseMove { x, y: list.y + 2.0 }, t0);
+    assert_eq!(a.hover, Hit::Settings(SHit::Track));
+    a.on_event(&Event::MouseDown { x, y: list.y + 2.0, button: MouseButton::Left, clicks: 1 }, t0);
+    a.on_event(&Event::MouseUp { x, y: list.y + 2.0, button: MouseButton::Left }, t0);
+    assert_eq!(ui(&a).scroll.target, content - 2.0 * list.h, "a click above the thumb pages up");
 }
+
+#[test]
+fn rows_keep_labels_and_controls_apart_at_any_width() {
+    for width in [520, 700, 900, 1400, 1920] {
+        let mut a = app();
+        a.on_event(&Event::Resized { width, height: 800 }, Instant::now());
+        a.open_settings(None);
+        a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+        let u = ui(&a);
+        for (line, &r) in u.lines.iter().zip(&u.rects) {
+            let (Line::Setting(i) | Line::Off(i)) = *line else { continue };
+            let c = control_rect(r, s);
+            let label_end = r.x + s(PAD) + s(indent(i)) + label_w(i, r, s);
+            let control_x = if matches!(SETTINGS[i].kind, Kind::Toggle(..)) { switch_rect(r, s).x } else { c.x };
+            assert!(label_end + s(PAD) <= control_x + 0.5, "{} overlaps its control at {width}", SETTINGS[i].id);
+            assert!(c.w >= s(CONTROL_MIN) && c.right() <= r.right(), "{} control {c:?} in {r:?}", SETTINGS[i].id);
+            assert!(label_w(i, r, s) > 40.0, "{} keeps room for its label at {width}", SETTINGS[i].id);
+        }
+    }
+}
+
+#[test]
+fn choice_values_stay_inside_their_box() {
+    let mut a = app();
+    a.on_event(&Event::Resized { width: 700, height: 800 }, Instant::now());
+    a.open_settings(Some(Page::Advanced));
+    let k = line(&mut a, settings::LOG_LEVEL);
+    reveal(&mut a, k);
+    let mut g = Gfx::new(Mono, 1024);
+    let before = g.dl.instances.len();
+    let c = control_rect(rect(&a, k), s);
+    let t = crate::theme::DARK;
+    Paint::new(&mut g, &t, 1.0).picker(c, &"long value ".repeat(20), a.ui_font(13.0), a.icon_font(8.0), false, false);
+    let glyphs: Vec<_> = g.dl.instances[before..].iter().filter(|i| i.kind == crate::render::kind::GLYPH).collect();
+    assert!(!glyphs.is_empty());
+    assert!(glyphs.iter().all(|i| i.rect[0] >= c.x && i.rect[0] + i.rect[2] <= c.right() + 0.5), "every glyph stays inside {c:?}");
+}
+
+#[test]
+fn options_open_where_the_command_palette_does_and_stay_inside_the_window() {
+    for (w, h) in [(1100, 720), (1400, 900), (800, 420), (700, 300)] {
+        let mut a = app();
+        a.on_event(&Event::Resized { width: w, height: h }, Instant::now());
+        a.open_settings(None);
+        a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+        let panel = ui(&a).panel;
+        assert!(panel.y >= 0.0 && panel.bottom() <= a.size.1, "{panel:?} at {w}x{h}");
+        a.close_settings();
+        a.open_palette();
+        a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+        let palette = a.nav.palette.as_ref().unwrap().rect;
+        if h >= 720 {
+            assert_eq!(panel.y, palette.y, "the same top as the commands at {w}x{h}");
+            assert!(panel.y < a.s(super::super::TAB_H + super::super::TOOL_H + 45.0), "higher than before at {w}x{h}");
+        }
+    }
+}
+

@@ -137,7 +137,7 @@ impl App {
         let ir = Rect::new(br.x + pad, br.y, icon, br.h);
         centered(g, ir, glyph, self.icon_font(12.0), t.text_dim);
         if hidden {
-            centered(g, ir, G_HIDDEN, self.icon_font(14.0), t.error);
+            centered(g, ir, G_HIDDEN, self.icon_font(7.0), t.text_dim);
         }
         let m = g.metrics(font);
         let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
@@ -149,8 +149,7 @@ impl App {
     pub(super) fn draw_status<B: TextBackend>(&mut self, g: &mut Gfx<B>, arena: &Bump, t: &Theme) {
         let r = self.layout.status;
         self.layout.bar.clear();
-        g.dl.rect(r, t.chrome);
-        g.dl.rect(Rect::new(r.x, r.y, r.w, 1.0), t.separator);
+        let right_from = g.dl.instances.len();
         let font = self.ui_font(12.0);
         let m = g.metrics(font);
         let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
@@ -239,13 +238,16 @@ impl App {
         }
 
         self.fit_filter(right - 2.0 * bw - pad - self.s(6.0));
+        let left_from = g.dl.instances.len();
         self.draw_filter(g, t);
         let mut x = self.nav.filter.field.right() + self.s(4.0);
         let (subfolders, retain) = (self.tab().subfolders, self.prefs.retain_filter);
         self.bar_button(g, t, br(x), BottomHit::Subfolders, G_SUBFOLDERS, subfolders);
         x += bw + self.s(2.0);
         self.bar_button(g, t, br(x), BottomHit::Retain, G_RETAIN, retain);
-        x += bw + pad;
+        x += bw + self.s(4.0);
+        let left_end = x;
+        x += pad;
 
         let tab = self.tab();
         let mut s = bumpalo::collections::String::new_in(arena);
@@ -280,7 +282,25 @@ impl App {
         } else if let Some(l) = &tab.loading {
             s.push_str(l.note.as_deref().unwrap_or(S::UiStatusLoading.t()));
         }
-        g.text(x, baseline, &s, font, color, (right - x - pad).max(0.0));
+        let room = (right - x - pad).max(0.0);
+        let text_w = g.measure(&s, font).min(room);
+        let text_x = right - text_w;
+        if text_w > 0.0 {
+            g.text(text_x, baseline, &s, font, color, text_w);
+        }
+        let right_start = if text_w > 0.0 { text_x - pad } else { right - self.s(2.0) };
+        let radius = self.s(6.0);
+        let (left, right) = (Rect::new(r.x, r.y, (left_end - r.x).max(0.0), r.h), Rect::new(right_start, r.y, (r.right() - right_start).max(0.0), r.h));
+        let piece = |dl: &mut crate::render::DrawList, p: Rect, open_left: bool| {
+            let shape = Rect::new(if open_left { p.x - radius } else { p.x }, p.y, p.w + radius, p.h + radius);
+            dl.set_clip(Some(r));
+            dl.round_rect(shape, t.chrome, radius);
+            dl.outline(shape, t.separator, radius, 1.0);
+            dl.set_clip(None);
+        };
+        g.dl.beneath(left_from, |dl| piece(dl, left, true));
+        g.dl.beneath(right_from, |dl| piece(dl, right, false));
+        self.layout.bar_pieces = [left, right];
     }
 }
 

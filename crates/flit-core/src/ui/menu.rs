@@ -78,11 +78,12 @@ pub(super) enum TypeCmd {
     All(bool),
 }
 
-const SORTS: [(SortField, &str, S); 10] = [
+const SORTS: [(SortField, &str, S); 11] = [
     (SortField::Name, "view.sort.name", S::MenuSortName),
     (SortField::Type, "view.sort.type", S::MenuSortType),
     (SortField::Size, "view.sort.size", S::MenuSortSize),
-    (SortField::Items, "view.sort.items", S::DetailsColumnItems),
+    (SortField::Folders, "view.sort.folders", S::DetailsColumnFolders),
+    (SortField::Files, "view.sort.files", S::DetailsColumnFiles),
     (SortField::Created, "view.sort.created", S::MenuSortCreated),
     (SortField::Modified, "view.sort.modified", S::MenuSortModified),
     (SortField::Accessed, "view.sort.accessed", S::DetailsColumnAccessed),

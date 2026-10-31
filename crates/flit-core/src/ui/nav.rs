@@ -12,6 +12,7 @@ use std::time::Instant;
 pub(super) struct Nav {
     pub sidebar: Sidebar,
     pub palette: Option<Palette>,
+    pub back: Option<Box<Palette>>,
     pub filter: FilterRects,
     pub closed: Vec<Location>,
     pub home: Home,
@@ -67,7 +68,7 @@ impl App {
     }
 
     pub(super) fn nav_mouse_down(&mut self, h: Hit, (x, y): (f32, f32), button: MouseButton, clicks: u8, now: Instant) -> bool {
-        let palette_hit = matches!(h, Hit::PaletteRow(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside | Hit::PaletteClose | Hit::PaletteDescribe | Hit::PaletteScroll(_) | Hit::GoButton(_));
+        let palette_hit = matches!(h, Hit::PaletteRow(_) | Hit::PaletteKeys(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside | Hit::PaletteClose | Hit::PaletteDescribe | Hit::PaletteScroll(_) | Hit::GoButton(_));
         if self.nav.palette.is_some() && !palette_hit {
             self.close_palette();
         }
@@ -78,7 +79,7 @@ impl App {
         if !matches!(button, MouseButton::Left | MouseButton::Middle | MouseButton::Right) {
             return palette_hit;
         }
-        let ours = palette_hit || matches!(h, Hit::Side(_) | Hit::SidePin(_) | Hit::SideEmpty | Hit::SideHeader(_) | Hit::SideSettings | Hit::HomeItem(_) | Hit::HomeEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose | Hit::QuickField | Hit::QuickClear);
+        let ours = palette_hit || matches!(h, Hit::Side(_) | Hit::SidePin(_) | Hit::SideEmpty | Hit::SideHeader(_) | Hit::HomeItem(_) | Hit::HomeEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose | Hit::QuickField | Hit::QuickClear);
         if !ours {
             return false;
         }
@@ -91,7 +92,7 @@ impl App {
             (MouseButton::Left, Hit::PaletteField) => self.palette_click(x, clicks),
             (MouseButton::Left, Hit::QuickField) => self.quick_filter_click(x, clicks),
             (MouseButton::Left, Hit::PaletteScroll(down)) => self.palette_step(down),
-            (MouseButton::Left, Hit::Side(_) | Hit::SidePin(_) | Hit::SideHeader(_) | Hit::SideSettings | Hit::HomeItem(_) | Hit::FilterClose | Hit::PaletteRow(_) | Hit::PaletteClose | Hit::PaletteDescribe | Hit::GoButton(_) | Hit::QuickClear) => {
+            (MouseButton::Left, Hit::Side(_) | Hit::SidePin(_) | Hit::SideHeader(_) | Hit::HomeItem(_) | Hit::FilterClose | Hit::PaletteRow(_) | Hit::PaletteKeys(_) | Hit::PaletteClose | Hit::PaletteDescribe | Hit::GoButton(_) | Hit::QuickClear) => {
                 self.pressed = h;
                 self.nav.sidebar.press_y = y;
             }

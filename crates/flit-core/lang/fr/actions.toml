@@ -77,6 +77,8 @@
 "view.sort.accessed" = "Trier par date d’accès"
 "view.sort.deleted" = "Trier par date de suppression"
 "view.sort.items" = "Trier par nombre d’éléments"
+"view.sort.folders" = "Trier par nombre de dossiers"
+"view.sort.files" = "Trier par nombre de fichiers"
 "view.sort.type" = "Trier par type"
 "view.sort.origin" = "Trier par emplacement d’origine"
 "view.sort.free" = "Trier par espace libre"

@@ -1,6 +1,6 @@
 use flit_core::archive::Defaults;
 use flit_core::sort::SortField;
-use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavPrefs, NavState, PaneState, Persisted, QuickPrefs, Sizes, ToolbarState, ViewPrefs, MAX_HISTORY};
+use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavPrefs, NavState, PaneState, Persisted, QuickPrefs, Sizes, ToolbarState, ViewPrefs, EXTRA, MAX_HISTORY, ORDERED};
 use flit_core::Location;
 use flit_platform::{Placement, Platform};
 use serde::{Deserialize, Serialize};
@@ -78,12 +78,43 @@ struct ZoomRecord {
 }
 
 fn zoomed(v: &FolderView) -> Zoomed {
-    (v.zoom, v.subfolders, v.columns.extra, v.columns.extra_widths, v.columns.order)
+    let c = &v.columns;
+    let mut widths = [0.0; 7];
+    widths.copy_from_slice(&c.extra_widths[..7]);
+    let mut order = [0; 15];
+    for (slot, id) in order.iter_mut().zip(c.order.iter().filter(|&&id| id != Column::Files as u8)) {
+        *slot = *id;
+    }
+    (v.zoom, v.subfolders, c.extra, widths, order)
 }
 
 fn with_zoom(mut v: FolderView, (zoom, subfolders, extra, widths, order): Zoomed) -> FolderView {
     (v.zoom, v.subfolders) = (zoom, subfolders);
-    (v.columns.extra, v.columns.extra_widths, v.columns.order) = (extra, widths, order);
+    v.columns.extra = extra;
+    v.columns.extra_widths[..7].copy_from_slice(&widths);
+    let folders = order.iter().position(|&id| id == Column::Folders as u8).map_or(order.len(), |k| k + 1);
+    let (head, tail) = order.split_at(folders);
+    for (slot, id) in v.columns.order.iter_mut().zip(head.iter().chain([&(Column::Files as u8)]).chain(tail)) {
+        *slot = *id;
+    }
+    v.sanitized()
+}
+
+type Wide = ([f32; EXTRA], [u8; ORDERED]);
+
+#[derive(Serialize, Deserialize)]
+struct WideRecord {
+    view: Wide,
+    defaults: Wide,
+    folders: Vec<Wide>,
+}
+
+fn wide(v: &FolderView) -> Wide {
+    (v.columns.extra_widths, v.columns.order)
+}
+
+fn with_wide(mut v: FolderView, (widths, order): Wide) -> FolderView {
+    (v.columns.extra_widths, v.columns.order) = (widths, order);
     v.sanitized()
 }
 
@@ -208,7 +239,7 @@ impl Saved {
                 }
             }
         }
-        let (mut deep, mut zoom) = (Vec::new(), None);
+        let (mut deep, mut zoom, mut widened) = (Vec::new(), None, None);
         let p = &mut saved.persisted;
         (p.view, p.prefs, p.folders) = (r.view, r.prefs, FolderViews::from_entries(r.folders));
         if let Some((archive, tail)) = rest.and_then(|t| postcard::take_from_bytes::<Defaults>(t).ok()) {
@@ -228,8 +259,9 @@ impl Saved {
                                     deep = q.deep;
                                     if let Ok((z, tail)) = postcard::take_from_bytes::<ZoomRecord>(tail) {
                                         zoom = Some(z);
-                                        if let Ok((files, _)) = postcard::take_from_bytes::<Vec<Location>>(tail) {
+                                        if let Ok((files, tail)) = postcard::take_from_bytes::<Vec<Location>>(tail) {
                                             saved.nav.files = files;
+                                            widened = postcard::take_from_bytes::<WideRecord>(tail).ok().map(|w| w.0);
                                         }
                                     }
                                 }
@@ -245,6 +277,14 @@ impl Saved {
                                 let mut folders = p.folders.entries();
                                 if folders.len() == z.folders.len() {
                                     folders.iter_mut().zip(z.folders).for_each(|((_, v), zl)| *v = with_zoom(*v, zl));
+                                    p.folders = FolderViews::from_entries(folders);
+                                }
+                            }
+                            if let Some(w) = widened.take() {
+                                (p.view, p.prefs.defaults) = (with_wide(p.view, w.view), with_wide(p.prefs.defaults, w.defaults));
+                                let mut folders = p.folders.entries();
+                                if folders.len() == w.folders.len() {
+                                    folders.iter_mut().zip(w.folders).for_each(|((_, v), wl)| *v = with_wide(*v, wl));
                                     p.folders = FolderViews::from_entries(folders);
                                 }
                             }
@@ -270,6 +310,7 @@ impl Saved {
         };
         let gits = GitRecord { view: git_look(&p.view), defaults: git_look(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| git_look(v)).collect() };
         let zooms = ZoomRecord { view: zoomed(&p.view), defaults: zoomed(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| zoomed(v)).collect(), retain_filter: p.prefs.retain_filter };
+        let wides = WideRecord { view: wide(&p.view), defaults: wide(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| wide(v)).collect() };
         let views = ViewRecord { view: legacy(p.view), prefs, folders: folders.into_iter().map(|(k, v)| (k, legacy(v))).collect() };
         let mut bytes = postcard::to_stdvec(&self.head()).ok()?;
         bytes.extend(postcard::to_stdvec(&self.nav).ok()?);
@@ -286,6 +327,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&QuickRecord { quick: self.side.quick.clone(), deep: p.folders.deep_keys() }).ok()?);
         bytes.extend(postcard::to_stdvec(&zooms).ok()?);
         bytes.extend(postcard::to_stdvec(&self.nav.files).ok()?);
+        bytes.extend(postcard::to_stdvec(&wides).ok()?);
         Some(bytes)
     }
 

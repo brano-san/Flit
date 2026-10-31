@@ -131,6 +131,14 @@ impl App {
         self.open_go(String::new(), Some(i));
     }
 
+    pub(super) fn toggle_crumb(&mut self, i: usize) {
+        if self.nav.palette.as_ref().is_some_and(|p| p.pick == Pick::Crumb(i)) {
+            self.close_palette();
+        } else {
+            self.open_crumb(i);
+        }
+    }
+
     pub(super) fn open_folder_dropdown(&mut self) {
         let last = self.tab().crumbs.len().saturating_sub(1);
         self.open_crumb(last);
@@ -413,6 +421,12 @@ impl App {
         }
     }
 
+    pub(super) fn go_field_icon(&self, p: &Palette) -> Option<Option<SystemIcon>> {
+        let go = p.go.as_ref().filter(|g| g.crumb.is_none())?;
+        let dir = go.dir.as_ref().unwrap_or_else(|| self.current_location());
+        Some(folder_icon(dir, &self.nav.sidebar, (ICON * self.scale).round() as u32))
+    }
+
     pub(super) fn go_buttons_enabled(&self) -> [bool; 3] {
         let h = &self.tab().history;
         let base = self.nav.palette.as_ref().and_then(|p| p.go.as_ref()?.dir.clone()).unwrap_or_else(|| self.current_location().clone());
@@ -462,7 +476,7 @@ impl App {
                     let (system, glyph) = match &r.kind {
                         Kind::Place(it) => (place_icon_request(it, &sb.places, px as u32), it.glyph),
                         Kind::Entry { loc, dir } => (entry_icon(loc, *dir, sb, px as u32), if *dir { G_FOLDER } else { G_FILE }),
-                        Kind::Typed(_) => (None, G_TYPED),
+                        Kind::Typed(t) => (Location::parse(t).filter(|_| t.ends_with(SEPS)).and_then(|l| folder_icon(&l, sb, px as u32)), G_TYPED),
                         Kind::Suggested(t) => (Location::parse(t).and_then(|l| folder_icon(&l, sb, px as u32)), G_FOLDER),
                     };
                     if !self.system_icon(g, system, icon, px, 0xFF, requests) {

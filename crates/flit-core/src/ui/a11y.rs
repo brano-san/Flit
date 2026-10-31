@@ -105,6 +105,10 @@ impl App {
                 for (i, r) in l.crumbs.iter().enumerate().filter(|(_, r)| r.w > 0.0) {
                     if let Some((label, target)) = tab.crumb(i) {
                         let k = put(&mut t, &mut targets, a, Hit::Crumb(i), Role::Button, label, *r);
+                        if let Some(&c) = l.crumb_chevrons.get(i).filter(|c| c.w > 0.0) {
+                            let k = put(&mut t, &mut targets, a, Hit::CrumbChevron(i), Role::Button, &format!("{label} ›"), c);
+                            t.nodes[k].help = S::TooltipCrumb.t().into();
+                        }
                         t.nodes[k].help = match i < tab.crumbs.len() {
                             true => target.display().into_owned(),
                             false => format!("{}: {}", S::AddressVisitedDeeper.t(), target.display()),

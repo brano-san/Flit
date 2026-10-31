@@ -270,9 +270,9 @@ fn a_crumb_drops_down_its_folder_with_the_next_crumb_marked() {
     deliver(&mut app, &[("inner", true), ("note.txt", false)], None);
     frame(&mut app);
     let n = app.tab().crumbs.len();
-    let r = app.layout.crumbs[n - 2];
+    let r = app.layout.crumb_chevrons[n - 2];
     assert!(r.w > 0.0);
-    assert_eq!(app.hit(r.x + r.w / 2.0, r.y + r.h / 2.0), Hit::Crumb(n - 2));
+    assert_eq!(app.hit(r.x + r.w / 2.0, r.y + r.h / 2.0), Hit::CrumbChevron(n - 2));
     click_at(&mut app, r);
     assert_eq!(app.nav.palette.as_ref().map(|p| p.pick.clone()), Some(Pick::Crumb(n - 2)));
     answer_probe(&mut app, r"C:\x", &[("y", true), ("z", true), ("x.txt", false)], None);
@@ -280,7 +280,7 @@ fn a_crumb_drops_down_its_folder_with_the_next_crumb_marked() {
     assert_eq!(selected(&app).as_deref(), Some("y"), "the folder the path goes through is marked and selected");
     let p = app.nav.palette.as_ref().unwrap();
     assert_eq!(app.go_placeholder(p), "Filter 3 files...");
-    assert!(p.rect.y >= r.bottom(), "the dropdown opens under its crumb");
+    assert!(p.rect.y >= r.bottom(), "the dropdown opens under its chevron");
     key(&mut app, Key::Down, NO);
     key(&mut app, Key::Enter, NO);
     assert_eq!(app.tab().location(), &loc(r"C:\x\z"));
@@ -299,6 +299,74 @@ fn a_crumb_drops_down_its_folder_with_the_next_crumb_marked() {
     key(&mut keys, Key::Right, ALT);
     assert_eq!(keys.nav.palette.as_ref().map(|p| p.pick.clone()), Some(Pick::Crumb(last)), "there is no crumb after the last one");
     assert_eq!(keys.tab().location(), &loc(r"C:\x\y"));
+}
+
+#[test]
+fn a_crumb_click_goes_to_its_folder_without_a_dropdown() {
+    let mut app = app_at(r"C:\x\y");
+    deliver(&mut app, &[("inner", true)], None);
+    frame(&mut app);
+    let n = app.tab().crumbs.len();
+    assert_eq!(app.layout.crumb_chevrons[n - 1].w, 0.0, "the current folder has no chevron of its own");
+    assert!(app.layout.crumb_chevrons[..n - 1].iter().all(|c| c.w > 0.0), "only the separators between crumbs");
+    let r = app.layout.crumbs[n - 1];
+    click_at(&mut app, r);
+    assert!(app.nav.palette.is_none(), "the current folder's crumb opens nothing");
+    let r = app.layout.crumbs[n - 2];
+    click_at(&mut app, r);
+    assert!(app.nav.palette.is_none());
+    assert_eq!(app.tab().location(), &loc(r"C:\x"));
+}
+
+#[test]
+fn the_chevron_right_of_a_crumb_opens_that_crumb_and_closes_on_a_second_click() {
+    let mut app = app_at(r"C:\x\y");
+    deliver(&mut app, &[("inner", true)], None);
+    frame(&mut app);
+    let n = app.tab().crumbs.len();
+    let (crumb, chev) = (app.layout.crumbs[n - 3], app.layout.crumb_chevrons[n - 3]);
+    assert!(chev.x >= crumb.right() - 0.5 && chev.right() <= app.layout.crumbs[n - 2].x + 0.5, "the chevron sits between its crumb and the next one");
+    click_at(&mut app, chev);
+    assert_eq!(app.nav.palette.as_ref().map(|p| p.pick.clone()), Some(Pick::Crumb(n - 3)));
+    assert_eq!(app.tab().location(), &loc(r"C:\x\y"));
+    frame(&mut app);
+    let chev = app.layout.crumb_chevrons[n - 3];
+    click_at(&mut app, chev);
+    assert!(app.nav.palette.is_none());
+}
+
+#[test]
+fn an_open_chevron_turns_down_and_back_over_a_short_animation() {
+    let t0 = Instant::now();
+    let mut app = app_at(r"C:\x\y");
+    deliver(&mut app, &[("inner", true)], None);
+    app.frame(&mut Gfx::new(Mono, 1024), t0);
+    let i = app.tab().crumbs.len() - 2;
+    assert_eq!(app.addr.turn.angle(i, t0), 0.0);
+    app.open_crumb(i);
+    app.frame(&mut Gfx::new(Mono, 1024), t0);
+    assert_eq!(app.addr.turn.angle(i, t0), 0.0, "it starts pointing right");
+    assert!(app.motion);
+    let mid = t0 + TURN / 2;
+    app.frame(&mut Gfx::new(Mono, 1024), mid);
+    let half = app.addr.turn.angle(i, mid);
+    assert!(half > 0.0 && half < 90.0, "{half}");
+    let end = t0 + TURN;
+    app.frame(&mut Gfx::new(Mono, 1024), end);
+    assert_eq!(app.addr.turn.angle(i, end), 90.0);
+    assert!(!app.motion, "no redraws once it points down");
+    app.close_palette();
+    app.frame(&mut Gfx::new(Mono, 1024), end);
+    assert!(app.motion);
+    let back = end + TURN;
+    app.frame(&mut Gfx::new(Mono, 1024), back);
+    assert_eq!(app.addr.turn.angle(i, back), 0.0);
+    assert!(!app.motion);
+    app.animations = false;
+    app.open_crumb(i);
+    app.frame(&mut Gfx::new(Mono, 1024), back);
+    assert_eq!(app.addr.turn.angle(i, back), 90.0, "without animations it turns at once");
+    assert!(!app.motion);
 }
 
 #[test]

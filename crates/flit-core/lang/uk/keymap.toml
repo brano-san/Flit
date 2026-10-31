@@ -16,3 +16,8 @@ already = "{key} уже виконує «{command}»"
 reassign = "Перепризначити {key} з «{from}» на «{command}»"
 assign = "Призначити {key} для «{command}»"
 remove = "Видалити сполучення клавіш {key}"
+
+[editor]
+title = "Сполучення клавіш «{command}»"
+change = "Змінити {key}"
+removes = "Delete видаляє його"

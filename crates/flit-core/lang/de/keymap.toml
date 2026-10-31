@@ -16,3 +16,8 @@ already = "{key} führt bereits „{command}“ aus"
 reassign = "{key} von „{from}“ zu „{command}“ neu zuweisen"
 assign = "{key} „{command}“ zuweisen"
 remove = "Tastenkombination {key} entfernen"
+
+[editor]
+title = "Tastenkombinationen für „{command}“"
+change = "{key} ändern"
+removes = "Entf entfernt sie"

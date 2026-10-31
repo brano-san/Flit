@@ -257,6 +257,8 @@ pub static ACTIONS: &[Action] = &[
     Action::new("view.sort.accessed", G::Sort, S::ActionsViewSortAccessed, S::DescribeViewSortAccessed, &[], |a, _| a.sort_by(SortField::Accessed)),
     Action::new("view.sort.deleted", G::Sort, S::ActionsViewSortDeleted, S::DescribeViewSortDeleted, &[], |a, _| a.sort_by(SortField::Modified)),
     Action::new("view.sort.items", G::Sort, S::ActionsViewSortItems, S::DescribeViewSortItems, &[], |a, _| a.sort_by(SortField::Items)),
+    Action::new("view.sort.folders", G::Sort, S::ActionsViewSortFolders, S::DescribeViewSortFolders, &[], |a, _| a.sort_by(SortField::Folders)),
+    Action::new("view.sort.files", G::Sort, S::ActionsViewSortFiles, S::DescribeViewSortFiles, &[], |a, _| a.sort_by(SortField::Files)),
     Action::new("view.sort.type", G::Sort, S::ActionsViewSortType, S::DescribeViewSortType, &[], |a, _| a.sort_by(SortField::Type)),
     Action::new("view.sort.origin", G::Sort, S::ActionsViewSortOrigin, S::DescribeViewSortOrigin, &[], |a, _| a.sort_by(SortField::Origin)),
     Action::new("view.sort.free", G::Sort, S::ActionsViewSortFree, S::DescribeViewSortFree, &[], |a, _| a.sort_by(SortField::Free)),

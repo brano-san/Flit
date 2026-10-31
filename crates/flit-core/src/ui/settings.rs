@@ -71,13 +71,12 @@ pub enum Page {
     Input,
     Windows,
     Tags,
-    Actions,
     Advanced,
     About,
 }
 
 impl Page {
-    pub const ALL: [Page; 10] = [Page::Interface, Page::Colors, Page::Files, Page::Data, Page::Input, Page::Windows, Page::Tags, Page::Actions, Page::Advanced, Page::About];
+    pub const ALL: [Page; 9] = [Page::Interface, Page::Colors, Page::Files, Page::Data, Page::Input, Page::Windows, Page::Tags, Page::Advanced, Page::About];
 
     pub fn label(self) -> S {
         match self {
@@ -88,7 +87,6 @@ impl Page {
             Page::Input => S::OptionsGroupInput,
             Page::Windows => S::OptionsGroupWindows,
             Page::Tags => S::SettingsPageTags,
-            Page::Actions => S::SettingsPageActions,
             Page::Advanced => S::SettingsPageAdvanced,
             Page::About => S::SettingsPageAbout,
         }
@@ -413,7 +411,7 @@ pub static SETTINGS: &[Setting] = &[
     toggle("general.home_recent", Page::Windows, S::SettingsTitleGeneralHomeRecent, S::SettingsHelpGeneralHomeRecent, |a| a.widget_shown(Widget::Recent), |a, on| set_widget(a, Widget::Recent, on)),
     toggle(DEFAULT_MANAGER, Page::Advanced, S::SettingsTitleAdvancedDefaultManager, S::SettingsHelpAdvancedDefaultManager, |a| a.default_manager, |a, on| a.default_manager = on),
     choice(LOG_LEVEL, Page::Advanced, S::SettingsTitleAdvancedLogLevel, S::SettingsHelpAdvancedLogLevel, LOG_CHOICES, |a| a.log_level, |a, i| a.log_level = i),
-    Setting { id: "keys", page: Page::Actions, title: S::SettingsTitleKeys, help: S::SettingsHelpKeys, kind: Kind::Keys(|a| a.keymap.clone(), |a, k| a.set_keymap(k)) },
+    Setting { id: "keys", page: Page::Advanced, title: S::SettingsTitleKeys, help: S::SettingsHelpKeys, kind: Kind::Keys(|a| a.keymap.clone(), |a, k| a.set_keymap(k)) },
     Setting { id: "menu.pins_file", page: Page::Advanced, title: S::OptionsTitlePinsFile, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.opts.pins[0].clone(), |a, v| a.opts.pins[0] = v) },
     Setting { id: "menu.pins_folder", page: Page::Advanced, title: S::OptionsTitlePinsFolder, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.opts.pins[1].clone(), |a, v| a.opts.pins[1] = v) },
     Setting { id: "menu.pins_background", page: Page::Advanced, title: S::OptionsTitlePinsBackground, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.opts.pins[2].clone(), |a, v| a.opts.pins[2] = v) },

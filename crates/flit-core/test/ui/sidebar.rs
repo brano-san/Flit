@@ -63,8 +63,8 @@ fn layout_shows_the_pin_hint_and_scrolls_long_lists() {
     app.on_event(&crate::input::Event::Wheel { dx: 0.0, dy: -1000.0 }, Instant::now());
     let sb = &app.nav.sidebar;
     let end = sb.rects.last().unwrap().bottom();
-    assert!(end <= sb.list.bottom() + 0.5 && end >= sb.list.bottom() - SECTION_GAP - 1.0, "clamped at the end of the list, above the Settings button: {end} {:?}", sb.list);
-    assert!(sb.rects.last().unwrap().bottom() < sb.settings.y);
+    assert!(end <= sb.list.bottom() + 0.5 && end >= sb.list.bottom() - SECTION_GAP - 1.0, "clamped at the end of the list: {end} {:?}", sb.list);
+    assert_eq!(sb.list.bottom(), sb.rect.bottom(), "the list runs to the bottom without a Settings button");
     assert!(matches!(app.sidebar_hit(sb.rects[23].x + 5.0, sb.rects[23].y + 5.0), Some(Hit::Side(23))));
     assert!(app.sidebar_hit(sb.rect.right() + 50.0, sb.rect.y + 5.0).is_none());
 }
@@ -205,7 +205,7 @@ fn the_header_menu_folds_shifts_shows_paths_and_clears() {
     let mut app = app_with_places();
     click(header(&app, Section::Bookmarks), &mut app, MouseButton::Right);
     let m = menu(&mut app);
-    assert_eq!(labels(&m.menu), ["Collapse All", "Expand All", "Show Paths", "Shift Group Up", "Shift Group Down", "Restore Groups Order", "Clear Bookmarks"]);
+    assert_eq!(labels(&m.menu), ["Collapse All", "Expand All", "Show Paths", "Recents *", "Bookmarks *", "Storage *", "Places *", "Libraries *", "WSL *", "Tags *", "Shift Group Up", "Shift Group Down", "Restore Groups Order", "Clear Bookmarks"]);
     assert_eq!(disabled(&m.menu), ["Expand All", "Shift Group Up", "Restore Groups Order"], "Recents is empty, so Bookmarks is the first group shown");
     run(&mut app, &m, "Shift Group Down");
     assert_eq!(app.nav_prefs().order()[..4], [Section::Recents, Section::Storage, Section::Bookmarks, Section::Places]);
@@ -630,4 +630,20 @@ fn quick_prefs_are_sanitized() {
 
 fn frame(app: &mut App) {
     app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+}
+
+fn submenus(items: &[MenuItem]) -> Vec<String> {
+    items.iter().filter_map(|i| if let MenuItem::Submenu { label, .. } = i { Some(label.clone()) } else { None }).collect()
+}
+
+#[test]
+fn both_the_empty_area_and_the_group_header_menus_offer_sections() {
+    let mut app = app_with_places();
+    click(empty_area(&app), &mut app, MouseButton::Right);
+    assert!(submenus(&menu(&mut app).menu).contains(&"Sections".to_owned()));
+    click(header(&app, Section::Storage), &mut app, MouseButton::Right);
+    let m = menu(&mut app);
+    assert!(submenus(&m.menu).contains(&"Sections".to_owned()), "{:?}", labels(&m.menu));
+    run(&mut app, &m, "WSL");
+    assert!(app.nav.sidebar.is_hidden(Section::Wsl), "the header menu hides a group too");
 }

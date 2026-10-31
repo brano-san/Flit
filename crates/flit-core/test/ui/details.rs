@@ -208,7 +208,8 @@ fn the_header_menu_shows_hides_and_fits_columns_and_the_bin_keeps_its_own() {
         ("Name", true),
         ("Type", true),
         ("Size", true),
-        ("Total Items", true),
+        ("Folders", true),
+        ("Files", true),
         ("Date Created", false),
         ("Date Modified", true),
         ("Date Accessed", false),
@@ -220,22 +221,22 @@ fn the_header_menu_shows_hides_and_fits_columns_and_the_bin_keeps_its_own() {
     assert_eq!(commands(&menu.menu), want.map(|(l, c)| (l.to_owned(), c)));
     let disabled: Vec<bool> = menu.menu.iter().filter_map(|m| if let MenuItem::Command { disabled, .. } = m { Some(*disabled) } else { None }).collect();
     assert_eq!((disabled[0], disabled[1], disabled[5], disabled[6]), (true, false, true, true), "Type cannot move left of Name, defaults cannot be restored, Name always shows");
-    app.on_event(&Event::MenuCommand(10), Instant::now());
-    assert_eq!(app.columns(), [Column::Name, Column::Type, Column::Modified, Column::Items, Column::Size, Column::Created]);
+    app.on_event(&Event::MenuCommand(11), Instant::now());
+    assert_eq!(app.columns(), [Column::Name, Column::Type, Column::Modified, Column::Folders, Column::Files, Column::Size, Column::Created]);
     assert_eq!(app.layout.columns, app.columns());
     let h = app.layout.cols[1];
     click(&mut app, h.x + 20.0, h.y + h.h / 2.0, MouseButton::Right);
     menu_of(&mut app);
     app.on_event(&Event::MenuCommand(1), Instant::now());
-    assert_eq!(app.columns(), [Column::Name, Column::Modified, Column::Type, Column::Items, Column::Size, Column::Created], "Shift Column Right");
+    assert_eq!(app.columns(), [Column::Name, Column::Modified, Column::Type, Column::Folders, Column::Files, Column::Size, Column::Created], "Shift Column Right");
     let t = app.layout.cols[2];
     app.on_event(&Event::MouseDown { x: t.x + 20.0, y: t.y + 5.0, button: MouseButton::Middle, clicks: 1 }, Instant::now());
     app.on_event(&Event::MouseUp { x: t.x + 20.0, y: t.y + 5.0, button: MouseButton::Middle }, Instant::now());
-    assert_eq!(app.columns(), [Column::Name, Column::Modified, Column::Items, Column::Size, Column::Created], "a middle click closes the column");
+    assert_eq!(app.columns(), [Column::Name, Column::Modified, Column::Folders, Column::Files, Column::Size, Column::Created], "a middle click closes the column");
     click(&mut app, h.x + 20.0, h.y + h.h / 2.0, MouseButton::Right);
     menu_of(&mut app);
     app.on_event(&Event::MenuCommand(5), Instant::now());
-    assert_eq!(app.columns(), [Column::Name, Column::Type, Column::Modified, Column::Items, Column::Size], "Restore Default Columns");
+    assert_eq!(app.columns(), [Column::Name, Column::Type, Column::Modified, Column::Folders, Column::Files, Column::Size], "Restore Default Columns");
     run(&mut app, "view.column.created");
     run(&mut app, "view.column.type");
     run(&mut app, "view.columns.fit");
@@ -516,7 +517,13 @@ fn new_columns_show_item_counts_usage_and_drive_space() {
     l.volume = 10_000;
     let arena = Bump::new();
     let cell = |l: &Listing, i, c| app.cell_text(&arena, l, i, c).to_owned();
-    assert_eq!([cell(&l, d, Column::Items), cell(&l, empty, Column::Items), cell(&l, f, Column::Items)], ["12", "--", "--"]);
+    assert_eq!([cell(&l, d, Column::Folders), cell(&l, empty, Column::Folders), cell(&l, f, Column::Folders)], ["2", "--", "--"]);
+    assert_eq!([cell(&l, d, Column::Files), cell(&l, empty, Column::Files), cell(&l, f, Column::Files)], ["10", "--", "--"]);
+    let only_files = l.push(b"docs", Meta { attrs: attr::DIR, ..Default::default() });
+    l.set_stats(only_files, DirStats { size: 1, folders: 0, files: 3, partial: false });
+    assert_eq!([cell(&l, only_files, Column::Folders), cell(&l, only_files, Column::Files)], ["--", "3"]);
+    assert_eq!([Column::Folders, Column::Files].map(|c| c.title()), ["Folders", "Files"]);
+    assert_eq!([Column::Folders, Column::Files].map(|c| c.field()), [Some(crate::sort::SortField::Folders), Some(crate::sort::SortField::Files)]);
     assert_eq!(cell(&l, f, Column::Volume), "2.5%");
     assert_eq!(cell(&l, f, Column::FolderUsage), "100.0%");
     let c = l.push(b"C:", Meta { attrs: attr::DIR | attr::VOLUME, size: 1000, ..Default::default() });
@@ -524,4 +531,48 @@ fn new_columns_show_item_counts_usage_and_drive_space() {
     assert_eq!([cell(&l, c, Column::Percent), cell(&l, c, Column::FileSystem)], ["75.0%", "NTFS"]);
     assert!(!cell(&l, c, Column::Free).is_empty());
     assert_eq!(cell(&l, f, Column::Accessed), "", "no access time, no text");
+}
+
+#[test]
+fn item_checkboxes_appear_only_on_selected_items_and_hovered_icons() {
+    assert!(!crate::ui::details::shows_check(true, false, false));
+    assert!(crate::ui::details::shows_check(true, true, false) && crate::ui::details::shows_check(true, false, true));
+    assert!(!crate::ui::details::shows_check(false, true, true), "the setting turns them off");
+    let mut a = crate::ui::harness::app(&["a.txt", "b.txt", "c.txt"]);
+    a.prefs.checkboxes = true;
+    let t0 = Instant::now();
+    let mut g = Gfx::new(Mono, 1024);
+    assert!(!a.frame(&mut g, t0));
+    assert!(a.details.checks.seen.len() == 3 && a.details.checks.seen.iter().all(|s| !s.1), "no boxes while nothing is selected or hovered");
+    a.toggle_row(0);
+    assert!(a.frame(&mut g, t0 + Duration::from_millis(1)), "the box grows in over a few frames");
+    assert!(a.details.checks.progress(a.tab().view.as_ref().unwrap().rows()[0], t0 + Duration::from_millis(2)) < 1.0);
+    assert!(!a.frame(&mut g, t0 + Duration::from_millis(400)), "and then the list is idle again");
+    let shown: Vec<bool> = a.details.checks.seen.iter().map(|s| s.1).collect();
+    assert_eq!(shown, [true, false, false]);
+    let icon = a.item_parts(a.row_rect(1).unwrap()).icon;
+    a.on_event(&Event::MouseMove { x: icon.x + icon.w / 2.0, y: icon.y + icon.h / 2.0 }, t0);
+    assert_eq!(a.details.checks.hover, Some(1));
+    a.frame(&mut g, t0 + Duration::from_millis(500));
+    assert_eq!(a.details.checks.seen.iter().filter(|s| s.1).count(), 2, "hovering the icon shows its box");
+    let name = a.item_parts(a.row_rect(1).unwrap()).name;
+    a.on_event(&Event::MouseMove { x: name.x + 20.0, y: name.y + name.h / 2.0 }, t0);
+    assert_eq!(a.details.checks.hover, None, "the rest of the row does not");
+    a.animations = false;
+    a.toggle_row(2);
+    assert!(!a.frame(&mut g, t0 + Duration::from_millis(600)), "with Animations off the box appears at once");
+}
+
+#[test]
+fn a_selected_item_draws_its_box_instead_of_its_icon() {
+    let mut a = crate::ui::harness::app(&["a.txt", "b.txt"]);
+    a.prefs.checkboxes = true;
+    a.animations = false;
+    a.toggle_row(0);
+    let mut g = Gfx::new(Mono, 1024);
+    a.frame(&mut g, Instant::now());
+    let glyphs_in = |g: &Gfx<Mono>, r: crate::render::Rect| g.dl.instances.iter().filter(|i| i.kind == crate::render::kind::GLYPH && r.contains(i.rect[0] + i.rect[2] / 2.0, i.rect[1] + i.rect[3] / 2.0)).count();
+    let (boxed, plain) = (a.item_parts(a.row_rect(0).unwrap()).icon, a.item_parts(a.row_rect(1).unwrap()).icon);
+    assert_eq!(glyphs_in(&g, boxed), 0, "no icon under the box");
+    assert!(glyphs_in(&g, plain) > 0, "the other row keeps its icon");
 }

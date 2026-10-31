@@ -65,7 +65,6 @@ const G_SEARCH: &str = "\u{E721}";
 const G_SHIFT_UP: &str = "\u{E70E}";
 const G_RESTORE_ORDER: &str = "\u{E777}";
 const G_PATHS: &str = "\u{E8FD}";
-pub(super) const G_SETTINGS: &str = "\u{E713}";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum KnownFolder {
@@ -380,7 +379,6 @@ pub(super) struct Sidebar {
     pub rect: Rect,
     pub list: Rect,
     pub splitter: Rect,
-    pub settings: Rect,
     pub bar: Rect,
     pub field: Rect,
     pub clear: Rect,
@@ -1045,6 +1043,7 @@ impl App {
             m.place_icon(S::SidebarExpandAll.t(), PlaceCmd::Fold(false), G_EXPANDED, none_collapsed);
             m.toggle(S::SidebarShowPaths.t(), PlaceCmd::ShowPaths, sb.prefs.quick.show_paths);
             m.iconed(G_PATHS);
+            sections_submenu(m, sb);
             m.separator();
             m.place_icon(S::SidebarShiftUp.t(), PlaceCmd::Shift(s, -1), G_SHIFT_UP, at == 0);
             m.place_icon(S::SidebarShiftDown.t(), PlaceCmd::Shift(s, 1), G_EXPANDED, at + 1 >= shown.len());
@@ -1082,11 +1081,7 @@ impl App {
             m.place(S::SidebarNewLibrary.t(), PlaceCmd::NewLibrary, false);
             m.place(S::SidebarRestoreLibraries.t(), PlaceCmd::RestoreLibraries, false);
             m.separator();
-            m.submenu(S::SidebarSections.t(), |m| {
-                for s in Section::ALL {
-                    m.toggle(s.title(), PlaceCmd::Hide(s), !sb.is_hidden(s));
-                }
-            });
+            sections_submenu(m, sb);
             m.toggle(S::SidebarCompact.t(), PlaceCmd::Compact, sb.prefs.compact);
         });
         self.flit_menu(x, y, menu);
@@ -1126,7 +1121,6 @@ impl App {
         sb.rects.clear();
         sb.headers.clear();
         sb.hint = None;
-        sb.settings = Rect::default();
         (sb.bar, sb.field, sb.clear) = (Rect::default(), Rect::default(), Rect::default());
         if width <= 0.0 {
             sb.list = Rect::default();
@@ -1141,8 +1135,7 @@ impl App {
             sb.clear = if sb.filtering() { Rect::new(sb.field.right() - c - s(4.0), sb.field.y + ((sb.field.h - c) / 2.0).round(), c, c) } else { Rect::default() };
         }
         let list_top = sb.bar.bottom().max(top);
-        sb.settings = Rect::new(x, sb.rect.bottom() - row_h - s(4.0), w, row_h);
-        sb.list = Rect::new(0.0, list_top, width - 1.0, (sb.settings.y - s(4.0) - list_top).max(0.0));
+        sb.list = Rect::new(0.0, list_top, width - 1.0, (sb.rect.bottom() - list_top).max(0.0));
         let mut y = s(4.0);
         let mut it = 0;
         for section in sb.shown_sections() {
@@ -1179,9 +1172,6 @@ impl App {
         }
         if !sb.rect.contains(x, y) {
             return None;
-        }
-        if sb.settings.contains(x, y) {
-            return Some(Hit::SideSettings);
         }
         if sb.clear.contains(x, y) {
             return Some(Hit::QuickClear);
@@ -1294,7 +1284,7 @@ impl App {
         let m = g.metrics(font);
         let ms = g.metrics(small);
         let mh = g.metrics(header_font);
-        let (s4, s8, s36) = (self.s(4.0), self.s(8.0), self.s(36.0));
+        let (s4, s8) = (self.s(4.0), self.s(8.0));
         let here = self.tabs[self.cur].location();
         let focused = self.active && self.focus == Focus::Sidebar;
         if sb.field.w > 0.0 {
@@ -1418,21 +1408,6 @@ impl App {
             g.dl.rect(Rect::new(area.x + s8, y - 1.0, area.w - 2.0 * s8, self.s(2.0)), t.accent);
         }
         g.dl.set_clip(None);
-        let r = sb.settings;
-        g.dl.rect(Rect::new(area.x + s8, r.y - self.s(4.0), area.w - 2.0 * s8, 1.0), t.separator);
-        let open = self.settings_open();
-        let hot = self.hover == Hit::SideSettings && !open;
-        if open || hot {
-            g.dl.round_rect(r, if open { t.accent_fill } else { t.teal }, s4);
-        }
-        let ink = if open { ink_on(t.accent_fill) } else if hot { ink_on(t.teal) } else { t.text_dim };
-        if compact {
-            centered(g, r, G_SETTINGS, icons, ink);
-        } else {
-            centered(g, Rect::new(r.x + s4, r.y, self.s(28.0), r.h), G_SETTINGS, icons, ink);
-            let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
-            g.text(r.x + s36, baseline, S::MenuSettings.t(), font, if open || hot { ink } else { t.text }, r.w - s36);
-        }
         self.request_icons(requests);
     }
 
@@ -1539,3 +1514,11 @@ pub(super) fn folder_icon(loc: &Location, sb: &Sidebar, px: u32) -> Option<Syste
 #[cfg(test)]
 #[path = "../../test/ui/sidebar.rs"]
 mod tests;
+
+fn sections_submenu(m: &mut Menu, sb: &Sidebar) {
+    m.submenu(S::SidebarSections.t(), |m| {
+        for s in Section::ALL {
+            m.toggle(s.title(), PlaceCmd::Hide(s), !sb.is_hidden(s));
+        }
+    });
+}

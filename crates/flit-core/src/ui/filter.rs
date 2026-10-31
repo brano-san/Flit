@@ -116,7 +116,7 @@ impl App {
 
     pub(super) fn layout_filter(&mut self) {
         let bar = self.layout.status;
-        let typing = self.tab().filter.as_ref().is_some_and(|f| !f.text().is_empty());
+        let typing = self.focus == Focus::Filter || self.tab().filter.as_ref().is_some_and(|f| !f.text().is_empty());
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
         let r = &mut self.nav.filter;

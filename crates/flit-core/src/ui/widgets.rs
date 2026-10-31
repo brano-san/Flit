@@ -159,6 +159,18 @@ impl<'a, B: TextBackend> Paint<'a, B> {
         x - start - if keys.is_empty() { 0.0 } else { gap }
     }
 
+    fn hints_w(&mut self, items: &[(&[&str], &str)], font: FontStyle) -> f32 {
+        let (gap, hint_gap) = (self.px(CAP_GAP), self.px(HINT_GAP));
+        let parts: f32 = items.iter().map(|(keys, label)| self.keycaps_w(&keys.iter().map(|k| (*k).to_owned()).collect::<Vec<_>>(), font) + gap + self.g.measure(label, font)).sum();
+        parts + hint_gap * items.len().saturating_sub(1) as f32
+    }
+
+    pub fn hints_within(&mut self, r: Rect, items: &[(&[&str], &str)], font: FontStyle) {
+        let room = r.w - 2.0 * self.px(12.0);
+        let skip = (0..items.len()).find(|&k| self.hints_w(&items[k..], font) <= room).unwrap_or(items.len());
+        self.hints(r.x + r.w / 2.0, r.y + r.h / 2.0, &items[skip..], font);
+    }
+
     pub fn hints(&mut self, center: f32, cy: f32, items: &[(&[&str], &str)], font: FontStyle) {
         let caps: Vec<Vec<String>> = items.iter().map(|(keys, _)| keys.iter().map(|k| (*k).to_owned()).collect()).collect();
         let (gap, hint_gap) = (self.px(CAP_GAP), self.px(HINT_GAP));
@@ -256,7 +268,11 @@ impl<'a, B: TextBackend> Paint<'a, B> {
         self.g.dl.round_rect(r, fill, radius);
         let ink = if open || hot { ink_on(fill) } else { self.t.text };
         let arrow = self.px(22.0);
-        self.centered(Rect::new(r.x + arrow, r.y, r.w - 2.0 * arrow, r.h), value, font, ink);
+        let lead = self.px(10.0);
+        let w = self.g.measure(value, font);
+        let x = if w <= r.w - 2.0 * arrow { r.x + arrow + (r.w - 2.0 * arrow - w) / 2.0 } else { r.x + lead };
+        let y = baseline(self.g, r, font);
+        self.g.text(x.round(), y, value, font, ink, r.right() - arrow - x.round());
         self.centered(Rect::new(r.right() - arrow, r.y, arrow, r.h), if open { G_OPEN } else { G_NEXT }, icons, ink);
     }
 

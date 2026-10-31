@@ -94,6 +94,8 @@ const SECTION_9: &[(&str, &[(&str, &str)])] = &[
         ("Sort By Date Accessed", ""),
         ("Sort By Date Deleted", ""),
         ("Sort By Total Items", ""),
+        ("Sort By Folders", ""),
+        ("Sort By Files", ""),
         ("Sort By Type", ""),
         ("Sort By Original Location", ""),
         ("Sort By Free Space", ""),

@@ -100,3 +100,54 @@ fn the_subfolders_and_retain_toggles_switch_and_the_slow_folders_show_their_time
     app.on_event(&Event::Key { key: Key::Char('F'), mods: Mods { ctrl: true, ..Mods::default() }, pressed: true }, Instant::now());
     assert_eq!(app.focus, crate::ui::Focus::Filter);
 }
+
+#[test]
+fn every_bottom_bar_element_shows_a_tooltip() {
+    let mut app = harness::app(&["a.txt", "b.txt", "c.png"]);
+    let mut hits: Vec<Hit> = app.layout.bar.iter().map(|x| Hit::Bottom(x.0)).collect();
+    hits.push(Hit::FilterField);
+    assert!(hits.len() >= 8, "{hits:?}");
+    let t0 = Instant::now();
+    for h in hits {
+        app.hover = h;
+        app.tip_hover(h, t0);
+        app.tip_timer(t0 + Duration::from_secs(2));
+        assert!(app.tooltip().is_some(), "{h:?} has a tooltip");
+        app.tip_hide();
+    }
+    app.hover = Hit::Bottom(BottomHit::Folders);
+    app.tip_hover(app.hover, t0);
+    app.tip_timer(t0 + Duration::from_secs(2));
+    assert!(app.tooltip().is_some_and(|t| t.command.is_some()), "a counter names its command too");
+}
+
+#[test]
+fn the_bar_is_two_pieces_with_the_list_between_and_the_filter_piece_widens_on_focus() {
+    let mut app = harness::app(&["a.txt", "b.txt", "c.png"]);
+    let [left, right] = app.layout.bar_pieces;
+    let status = app.layout.status;
+    assert_eq!(left.x, status.x);
+    assert_eq!(right.right(), status.right());
+    assert!(left.right() + 100.0 < right.x, "the list shows between {left:?} and {right:?}");
+    assert!(left.right() >= bar(&app, BottomHit::Retain).unwrap().right());
+    assert!(right.x <= bar(&app, BottomHit::Folders).unwrap().x);
+    let f = app.nav.filter.field;
+    app.on_event(&Event::MouseMove { x: f.x + 30.0, y: f.y + 4.0 }, Instant::now());
+    app.on_event(&Event::MouseDown { x: f.x + 30.0, y: f.y + 4.0, button: MouseButton::Left, clicks: 1 }, Instant::now());
+    app.on_event(&Event::MouseUp { x: f.x + 30.0, y: f.y + 4.0, button: MouseButton::Left }, Instant::now());
+    harness::frame(&mut app);
+    assert!(app.layout.bar_pieces[0].right() > left.right(), "focus widens the filter piece");
+    assert!(app.nav.filter.close.w > 0.0, "and shows its close button");
+}
+
+#[test]
+fn a_hidden_counter_is_marked_in_its_own_colour() {
+    let mut app = harness::app(&["a.txt", "b.txt"]);
+    click(&mut app, BottomHit::Files);
+    resort(&mut app);
+    let r = bar(&app, BottomHit::Files).unwrap();
+    let mut g = crate::text::Gfx::new(crate::text::tests::Mono, 1024);
+    app.frame(&mut g, Instant::now());
+    let red = crate::theme::DARK.error.0;
+    assert!(!g.dl.instances.iter().any(|i| i.color == red && r.contains(i.rect[0], i.rect[1])), "no red cross on the counter");
+}
