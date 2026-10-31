@@ -95,13 +95,14 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: flit-windows
+          pattern: flit-*
+          merge-multiple: true
       - env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" *.zip --clobber
+            gh release upload "$GITHUB_REF_NAME" *.zip *.tar.gz --clobber
           else
-            gh release create "$GITHUB_REF_NAME" *.zip --title "Flit ${GITHUB_REF_NAME#v}" --generate-notes
+            gh release create "$GITHUB_REF_NAME" *.zip *.tar.gz --title "Flit ${GITHUB_REF_NAME#v}" --generate-notes
           fi
