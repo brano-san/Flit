@@ -287,7 +287,7 @@
 "quick_access.compact" = "Alternar entre la barra lateral completa y la compacta"
 "quick_access.sections" = "Mostrar y expandir todas las secciones de la barra lateral"
 "home.quick_access" = "Mostrar u ocultar Acceso rápido en la página Inicio"
-"home.drives" = "Mostrar u ocultar Unidades en la página Inicio"
+"home.drives" = "Mostrar u ocultar Almacenamiento en la página Inicio"
 "home.tags" = "Mostrar u ocultar Etiquetas en la página Inicio"
 "home.recent" = "Mostrar u ocultar Archivos recientes en la página Inicio"
 "libraries.new" = "Nueva biblioteca"

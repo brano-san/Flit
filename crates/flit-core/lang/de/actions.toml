@@ -287,7 +287,7 @@
 "quick_access.compact" = "Zwischen voller und kompakter Seitenleiste wechseln"
 "quick_access.sections" = "Alle Abschnitte der Seitenleiste anzeigen und erweitern"
 "home.quick_access" = "Schnellzugriff auf der Startseite ein-/ausblenden"
-"home.drives" = "Laufwerke auf der Startseite ein-/ausblenden"
+"home.drives" = "Speicher auf der Startseite ein-/ausblenden"
 "home.tags" = "Tags auf der Startseite ein-/ausblenden"
 "home.recent" = "Zuletzt verwendete Dateien auf der Startseite ein-/ausblenden"
 "libraries.new" = "Neue Bibliothek"

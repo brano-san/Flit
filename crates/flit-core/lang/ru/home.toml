@@ -8,6 +8,5 @@ drive_free = "{free} свободно из {total}"
 
 [widget]
 quick_access = "Быстрый доступ"
-drives = "Диски"
 tags = "Теги"
 recent = "Последние файлы"

@@ -287,7 +287,7 @@
 "quick_access.compact" = "Basculer entre la barre latérale complète et compacte"
 "quick_access.sections" = "Afficher et développer toutes les sections de la barre latérale"
 "home.quick_access" = "Afficher ou masquer Accès rapide sur la page Accueil"
-"home.drives" = "Afficher ou masquer Lecteurs sur la page Accueil"
+"home.drives" = "Afficher ou masquer Stockage sur la page Accueil"
 "home.tags" = "Afficher ou masquer Balises sur la page Accueil"
 "home.recent" = "Afficher ou masquer Fichiers récents sur la page Accueil"
 "libraries.new" = "Nouvelle bibliothèque"

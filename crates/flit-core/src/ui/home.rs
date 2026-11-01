@@ -35,7 +35,7 @@ impl Widget {
     pub fn title(self) -> &'static str {
         match self {
             Widget::QuickAccess => S::HomeWidgetQuickAccess.t(),
-            Widget::Drives => S::HomeWidgetDrives.t(),
+            Widget::Drives => S::SidebarSectionStorage.t(),
             Widget::Tags => S::HomeWidgetTags.t(),
             Widget::Recent => S::HomeWidgetRecent.t(),
         }
@@ -140,6 +140,15 @@ impl App {
                 cards.push(Card::Folder { label: k.label().to_owned(), loc: loc.clone() });
             }
         }
+        let mut seen: Vec<Location> = Vec::with_capacity(cards.len());
+        cards.retain(|c| match c {
+            Card::Folder { loc, .. } if seen.contains(loc) => false,
+            Card::Folder { loc, .. } => {
+                seen.push(loc.clone());
+                true
+            }
+            _ => true,
+        });
         cards
     }
 

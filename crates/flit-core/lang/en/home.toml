@@ -8,6 +8,5 @@ drive_free = "{free} free of {total}"
 
 [widget]
 quick_access = "Quick access"
-drives = "Drives"
 tags = "Tags"
 recent = "Recent files"

@@ -118,14 +118,30 @@ fn quick_access_shows_pinned_folders_first_and_cards_open_where_asked() {
 }
 
 #[test]
+fn quick_access_lists_a_folder_once_even_when_it_is_recent_bookmarked_and_a_place() {
+    let mut app = home_app();
+    app.set_pinned(vec![loc(r"C:\work\proj"), loc(r"C:\Users\u\Downloads")]);
+    app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    let shows = |l: &str| app.nav.sidebar.items.iter().filter(|it| it.loc == loc(l)).count();
+    assert_eq!((shows(r"C:\work\proj"), shows(r"C:\Users\u\Downloads")), (2, 2), "Quick Access itself lists each twice");
+    let folders: Vec<String> = cards(&app).into_iter().filter(|c| c.starts_with("folder")).collect();
+    assert_eq!(folders, ["folder proj", "folder Downloads"], "the first entry wins");
+}
+
+#[test]
+fn the_drives_widget_takes_the_quick_access_name() {
+    assert_eq!(Widget::Drives.title(), super::super::sidebar::Section::Storage.title());
+}
+
+#[test]
 fn widgets_toggle_from_the_page_menu_and_are_remembered() {
     let mut app = home_app();
     let empty = Rect::new(app.nav.home.area.right() - 30.0, app.nav.home.area.bottom() - 30.0, 4.0, 4.0);
     click(empty, &mut app, MouseButton::Right);
     let menu = menu_of(&mut app);
     assert!(!menu.shell);
-    assert_eq!(labels(&menu.menu), ["Split Right", "Split Bottom", "Quick access *", "Drives *", "Tags *", "Recent files *", "Clear recent files"]);
-    run(&mut app, &menu, "Drives");
+    assert_eq!(labels(&menu.menu), ["Split Right", "Split Bottom", "Quick access *", "Storage *", "Tags *", "Recent files *", "Clear recent files"]);
+    run(&mut app, &menu, "Storage");
     assert!(!cards(&app).iter().any(|c| c.starts_with("drive")));
     assert_eq!(app.nav_prefs().widgets_off, ["drives"]);
     let mut other = App::new(Persisted { path: Location::home_page(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 700), Instant::now());

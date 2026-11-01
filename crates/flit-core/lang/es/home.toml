@@ -8,6 +8,5 @@ drive_free = "{free} disponibles de {total}"
 
 [widget]
 quick_access = "Acceso rápido"
-drives = "Unidades"
 tags = "Etiquetas"
 recent = "Archivos recientes"

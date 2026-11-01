@@ -8,6 +8,5 @@ drive_free = "{free} frei von {total}"
 
 [widget]
 quick_access = "Schnellzugriff"
-drives = "Laufwerke"
 tags = "Tags"
 recent = "Zuletzt verwendete Dateien"
