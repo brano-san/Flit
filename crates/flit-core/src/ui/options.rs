@@ -236,7 +236,7 @@ impl App {
         let r = self.layout.more;
         let right = self.layout.title.right().max(r.right());
         self.panel_menu_at(r.x, r.bottom(), Some(right.min(self.panel_right())));
-        self.menu_owner = Some(Hit::PanelMenu);
+        (self.menu_owner, self.menu_panel) = (Some(Hit::PanelMenu), self.panels.here);
     }
 
     fn panel_right(&self) -> f32 {

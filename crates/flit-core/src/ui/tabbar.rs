@@ -374,7 +374,7 @@ impl App {
             return;
         }
         match self.hit(x, y) {
-            Hit::Tab(i) | Hit::TabClose(i) => {
+            Hit::Tab(i) | Hit::TabClose(i) if !self.menu_open_from(Hit::Tab(i)) => {
                 self.select_tab(i);
                 self.open_tab_menu();
             }

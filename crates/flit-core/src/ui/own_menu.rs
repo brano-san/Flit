@@ -71,7 +71,7 @@ pub struct OwnMenu {
     shell: Vec<u32>,
     kind: MenuKind,
     view: Option<View>,
-    opened: Instant,
+    pub(super) opened: Instant,
     right: Option<f32>,
     pointer: Option<(f32, f32)>,
     pending: bool,
@@ -155,6 +155,9 @@ impl App {
         }
         if let Event::MouseDown { x, y, button: MouseButton::Right, .. } = ev {
             if self.own_menu.as_ref().is_some_and(|m| m.view.is_some()) && !self.over_own_menu(*x, *y) {
+                if self.owner_under(*x, *y) {
+                    return true;
+                }
                 self.close_own_menu();
                 return false;
             }
@@ -280,11 +283,18 @@ impl App {
 
     pub(super) fn button_menu(&mut self, owner: super::Hit, x: f32, y: f32, menu: Vec<MenuItem>) {
         self.flit_menu(x, y, menu);
-        self.menu_owner = Some(owner);
+        (self.menu_owner, self.menu_panel) = (Some(owner), self.panels.here);
     }
 
     pub(super) fn menu_open_from(&self, owner: super::Hit) -> bool {
-        self.own_menu.is_some() && self.menu_owner == Some(owner)
+        self.own_menu.is_some() && self.menu_owner == Some(owner) && self.menu_panel == self.panels.here
+    }
+
+    fn owner_under(&self, x: f32, y: f32) -> bool {
+        match self.hit(x, y) {
+            super::Hit::TabClose(i) => self.menu_open_from(super::Hit::Tab(i)),
+            h => self.menu_open_from(h),
+        }
     }
 
     pub(super) fn over_own_menu(&self, x: f32, y: f32) -> bool {

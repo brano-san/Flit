@@ -465,3 +465,59 @@ fn a_new_tab_slides_in_and_the_strip_settles_without_more_frames() {
     a.open_new_tab(t1);
     assert!(!a.frame(&mut g, t1 + std::time::Duration::from_millis(310)), "without Animations it appears at once");
 }
+
+#[test]
+fn a_new_tab_of_the_open_folder_shows_its_rows_at_once_and_refreshes_behind_them() {
+    let mut app = app_with(&[r"C:\a"]);
+    deliver(&mut app, &[("x.txt", false), ("y.txt", false), ("sub", true)]);
+    app.open_new_tab(Instant::now());
+    assert_eq!(app.tabs.len(), 2);
+    assert_eq!(app.cur, 1);
+    assert_eq!(app.tab().view.as_ref().map(|v| v.rows().len()), Some(3), "the new tab draws the listing it duplicates on its first frame");
+    assert_eq!(listed(&mut app), [r"C:\a"], "and still reads the folder in the background");
+    deliver(&mut app, &[("x.txt", false), ("y.txt", false), ("sub", true), ("z.txt", false)]);
+    assert_eq!(app.tab().view.as_ref().map(|v| v.rows().len()), Some(4));
+    app.select_tab(0);
+    app.dispatch(vec![Route { folder: loc(r"C:\b"), select: None }], crate::open::OpenTarget::NewTab, Instant::now());
+    assert!(app.tab().view.is_none(), "another folder starts empty as before");
+}
+
+#[test]
+fn a_second_right_click_on_the_tab_keeps_its_menu_open_and_only_that_tab_is_lit() {
+    let mut app = app_with(&[r"C:\a", r"C:\b"]);
+    let mut g = crate::text::Gfx::new(crate::text::tests::Mono, 1024);
+    app.frame(&mut g, Instant::now());
+    let (x, y) = tab_xy(&app, 1);
+    let right = |app: &mut App| {
+        ev(app, Event::MouseMove { x, y });
+        ev(app, Event::MouseDown { x, y, button: crate::input::MouseButton::Right, clicks: 1 });
+        ev(app, Event::MouseUp { x, y, button: crate::input::MouseButton::Right });
+        let shown: Vec<Effect> = app.drain_effects().collect();
+        for e in shown {
+            if let Effect::ShellMenu(m) = e {
+                ev(app, Event::ShowMenu { items: m.menu, x: m.x, y: m.y, launches: Vec::new(), kind: m.kind, shell: Vec::new(), pending: false });
+            }
+        }
+    };
+    right(&mut app);
+    app.frame(&mut g, Instant::now());
+    assert!(app.menu_open_from(Hit::Tab(1)));
+    let opened = app.own_menu.as_ref().map(|m| m.opened);
+    right(&mut app);
+    assert!(app.menu_open_from(Hit::Tab(1)), "the menu stays open");
+    assert_eq!(app.own_menu.as_ref().map(|m| m.opened), opened, "it is the same menu, not closed and opened again");
+    assert!(!app.menu_open_from(Hit::Tab(0)));
+    key(&mut app, Key::Escape, Mods::default());
+    key(&mut app, Key::Char('S'), Mods { ctrl: true, shift: true, alt: false });
+    app.frame(&mut g, Instant::now());
+    app.activate_panel(0);
+    let (x, y) = tab_xy(&app, 0);
+    ev(&mut app, Event::MouseMove { x, y });
+    ev(&mut app, Event::MouseDown { x, y, button: crate::input::MouseButton::Right, clicks: 1 });
+    ev(&mut app, Event::MouseUp { x, y, button: crate::input::MouseButton::Right });
+    let m = app.drain_effects().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m) } else { None }).unwrap();
+    ev(&mut app, Event::ShowMenu { items: m.menu, x: m.x, y: m.y, launches: Vec::new(), kind: m.kind, shell: Vec::new(), pending: false });
+    assert!(app.menu_open_from(Hit::Tab(0)));
+    let other = app.parked_ids()[0];
+    assert!(!app.visit(other, |a| a.menu_open_from(Hit::Tab(0))), "the first tab of the other panel is not lit");
+}

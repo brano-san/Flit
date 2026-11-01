@@ -664,3 +664,21 @@ fn a_shown_or_hidden_column_resizes_smoothly_and_its_neighbours_slide() {
     app.frame(&mut Gfx::new(Mono, 1024), t + std::time::Duration::from_millis(410));
     assert_eq!(width(&app), full, "without Animations the column is there at once");
 }
+
+#[test]
+fn a_selected_tile_keeps_its_picture_and_shows_its_box_in_the_corner() {
+    let mut a = crate::ui::harness::app(&["a.jpg", "b.jpg"]);
+    a.prefs.checkboxes = true;
+    a.animations = false;
+    a.run_action("view.layout.grid", Instant::now());
+    a.toggle_row(0);
+    let mut g = Gfx::new(Mono, 1024);
+    a.frame(&mut g, Instant::now());
+    let glyphs_in = |g: &Gfx<Mono>, r: crate::render::Rect| g.dl.instances.iter().filter(|i| i.kind == crate::render::kind::GLYPH && r.contains(i.rect[0] + i.rect[2] / 2.0, i.rect[1] + i.rect[3] / 2.0)).count();
+    let p = a.item_parts(a.row_rect(0).unwrap());
+    assert!(glyphs_in(&g, p.icon) > 0, "the picture or icon of a selected tile stays visible");
+    assert!(p.check.x < p.icon.x && p.check.y < p.icon.y && p.body.contains(p.check.x, p.check.y), "the box sits in the tile's corner, off the picture's centre");
+    let other = a.item_parts(a.row_rect(1).unwrap());
+    a.on_event(&Event::MouseMove { x: other.name.x + 4.0, y: other.name.y + 4.0 }, Instant::now());
+    assert_eq!(a.details.checks.hover, Some(1), "hovering a tile shows its box");
+}

@@ -347,6 +347,7 @@ impl App {
         let icon = self.layout.icon;
         let box_px = self.cs(CHECK);
         let mid = |r: Rect, h: f32| r.y + ((r.h - h) / 2.0).round();
+        let corner = |b: Rect| Rect::new(b.x + s4, b.y + s4, box_px, box_px);
         let boxed = |ir: Rect| Rect::new(ir.x + ((ir.w - box_px) / 2.0).round(), ir.y + ((ir.h - box_px) / 2.0).round(), box_px, box_px);
         match self.layout.mode {
             LayoutMode::Cards => {
@@ -355,13 +356,13 @@ impl App {
                 let nx = ir.right() + s10;
                 let line = self.cs(CARD_LINE);
                 let name = Rect::new(nx, mid(b, 3.0 * line), (b.right() - s8 - nx).max(0.0), line);
-                Parts { body: b, icon: ir, check: boxed(ir), name, center: false }
+                Parts { body: b, icon: ir, check: corner(b), name, center: false }
             }
             LayoutMode::Grid => {
                 let b = c.inset(s4, s4);
                 let ir = Rect::new(b.x + ((b.w - icon) / 2.0).round(), b.y + s8, icon, icon);
                 let name = Rect::new(b.x + s4, ir.bottom() + s4, (b.w - s8).max(0.0), self.cs(20.0));
-                Parts { body: b, icon: ir, check: boxed(ir), name, center: true }
+                Parts { body: b, icon: ir, check: corner(b), name, center: true }
             }
             mode => {
                 let shift = match self.tree_slot(c) {
@@ -395,7 +396,8 @@ impl App {
         let f = self.flow();
         let line = self.line_at(&f, x, y)?;
         let Some(crate::view::Line::Row(row)) = self.tab().view.as_ref()?.line(line) else { return None };
-        let r = self.item_parts(self.line_rect(&f, line)).icon;
+        let p = self.item_parts(self.line_rect(&f, line));
+        let r = if self.layout.mode.rows() { p.icon } else { p.check };
         r.inset(-self.cs(2.0), -self.cs(2.0)).contains(x, y).then_some(row)
     }
 

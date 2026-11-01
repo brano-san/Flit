@@ -619,6 +619,7 @@ pub struct App {
     timer_at: Option<Instant>,
     own_menu: Option<own_menu::OwnMenu>,
     menu_owner: Option<Hit>,
+    menu_panel: u32,
     menu_right: Option<f32>,
     tip: Option<tooltip::Tip>,
     quick: Option<quick::QuickTip>,
@@ -739,6 +740,7 @@ impl App {
             timer_at: None,
             own_menu: None,
             menu_owner: None,
+            menu_panel: 0,
             menu_right: None,
             tip: None,
             quick: None,
@@ -1004,8 +1006,12 @@ impl App {
     fn add_tab(&mut self, r: Route, view: FolderView, show_hidden: bool, now: Instant) {
         let id = self.next_tab;
         self.next_tab += 1;
+        let shown = self.tabs.get(self.cur).and_then(|c| c.view.as_ref().filter(|v| v.snap().done && v.snap().error.is_none() && c.view_loc == r.folder && *c.location() == r.folder).map(|v| v.snap().clone()));
         let mut t = Tab::new(id, r.folder, ViewSpec { show_hidden, ..ViewSpec::default() });
         t.set_folder_view(view);
+        if let Some(snap) = shown {
+            t.view = Some(crate::view::DirView::new(snap));
+        }
         self.tabs.push(t);
         self.cur = self.tabs.len() - 1;
         self.load_tab(self.cur, r.select, now);
@@ -1673,7 +1679,11 @@ impl App {
             _ => CursorIcon::Default,
         };
         self.set_cursor(cursor);
-        let check = if matches!(h, Hit::Row(_)) { self.checkbox_row(x, y) } else { None };
+        let check = match h {
+            Hit::Row(r) if self.prefs.checkboxes && !self.layout.mode.rows() => Some(r),
+            Hit::Row(_) => self.checkbox_row(x, y),
+            _ => None,
+        };
         if check != self.details.checks.hover {
             self.details.checks.hover = check;
             self.dirty = true;
@@ -2504,8 +2514,13 @@ impl App {
                 }
                 let boxed = details::shows_check(self.prefs.checkboxes, v.is_selected(i), self.details.checks.hover == Some(row));
                 checks.push((i, boxed));
+                let corner = !mode.rows();
+                let replaces = boxed && !corner;
                 if boxed {
                     let from = g.dl.instances.len();
+                    if corner && !v.is_selected(i) {
+                        g.dl.round_rect(p.check, t.bg.alpha(0xC0), self.cs(3.0));
+                    }
                     self.draw_checkbox(g, t, p.check, v.is_selected(i));
                     let c = p.check;
                     g.dl.grow(from, self.details.checks.progress(i, now), (c.x + c.w / 2.0, c.y + c.h / 2.0), 0.4);
@@ -2520,7 +2535,7 @@ impl App {
                 let ir = p.icon;
                 let alpha = if faded { 0x70 } else { 0xFF };
                 let thumb = (want_thumbs && !e.is_dir() && has_thumbnail(listing.ext(i))).then(|| hash::hash(&("thumb", dir_key, name, e.modified, e.size, thumb_px)));
-                let thumbed = !boxed && thumb.is_some_and(|k| g.thumb(k, ir, alpha));
+                let thumbed = !replaces && thumb.is_some_and(|k| g.thumb(k, ir, alpha));
                 if let (Some(k), false, Some(d)) = (thumb, thumbed, dir) {
                     if !self.thumbs.contains_key(&k) && !thumb_requests.iter().any(|r| r.key == k) {
                         thumb_requests.push(IconRequest { key: k, kind: IconKind::Thumbnail, path: d.join(name), size: thumb_px, gen: tab.gen, row: row as u32 });
@@ -2530,7 +2545,7 @@ impl App {
                     let d = (ir.h * 0.42).max(self.cs(9.0)).round();
                     (Rect::new(ir.right() - d * 0.8, ir.bottom() - d * 0.8, d, d), st)
                 });
-                if !boxed && !thumbed && !g.image_alpha(key, ir, alpha) {
+                if !replaces && !thumbed && !g.image_alpha(key, ir, alpha) {
                     icon_glyph(g, t, &e, ir);
                     let wanted = !self.icons.contains_key(&key) && !requests.iter().any(|r| r.key == key);
                     let path = match (wanted, in_bin) {
