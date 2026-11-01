@@ -314,3 +314,18 @@ fn folders_and_files_sort_by_their_own_counts() {
     assert_eq!(order(SortField::Folders), [b, a]);
     assert_eq!(order(SortField::Files), [a, b]);
 }
+
+#[test]
+fn a_swap_at_any_chunk_boundary_breaks_sortedness() {
+    let (l, k) = synthetic(40_000);
+    let view = ViewSpec { show_hidden: true, ..Default::default() };
+    let mut o = Vec::new();
+    sort(&l, &k, view, &mut o);
+    assert!(is_sorted(&l, &k, &view, &o));
+    for threads in 2..=64 {
+        let p = o.len().div_ceil(threads) - 1;
+        o.swap(p, p + 1);
+        assert!(!is_sorted(&l, &k, &view, &o), "swap at {p}");
+        o.swap(p, p + 1);
+    }
+}

@@ -2,6 +2,7 @@ use crate::listing::Listing;
 use crate::name;
 
 const PARALLEL_FROM: usize = 1 << 15;
+const NAMES_PER_THREAD: usize = 1 << 14;
 
 #[derive(Clone, Debug)]
 pub struct NameFilter {
@@ -62,7 +63,7 @@ impl NameFilter {
             let mut buf = String::new();
             (start..end).map(|i| keep(i) && self.matches_name(listing.name(i as u32), &mut buf)).collect::<Vec<bool>>()
         };
-        let threads = if to - from < PARALLEL_FROM { 1 } else { std::thread::available_parallelism().map_or(1, |n| n.get()) };
+        let threads = if to - from < PARALLEL_FROM { 1 } else { std::thread::available_parallelism().map_or(1, |n| n.get()).min((to - from) / NAMES_PER_THREAD) };
         if threads == 1 {
             return one(from, to);
         }

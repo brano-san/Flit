@@ -1,4 +1,4 @@
-use super::address::{place_key, Listed, SEPS};
+use super::address::{place_key, Entries, Listed, SEPS};
 use super::fuzzy::fuzzy;
 use super::palette::{Palette, Pick};
 use super::sidebar::{folder_icon, place_icon_request, Item, Section, SystemIcon, G_COLLAPSED, G_EXPANDED};
@@ -15,7 +15,9 @@ use crate::provider::ProviderRequest;
 use crate::render::Rect;
 use crate::text::{FontStyle, Gfx, TextBackend};
 use crate::theme::{ink_on, Theme};
+use std::borrow::Cow;
 use std::ops::Range;
+use std::sync::Arc;
 use std::time::Instant;
 
 const QUICK: [Section; 4] = [Section::Recents, Section::Bookmarks, Section::Storage, Section::Places];
@@ -27,7 +29,7 @@ const BAR_W: f32 = 60.0;
 #[derive(Clone, Debug)]
 pub(super) enum Kind {
     Place(Item),
-    Entry { loc: Location, dir: bool },
+    Entry { parent: Arc<Location>, raw: Option<Vec<u8>>, dir: bool },
     Typed(String),
     Suggested(String),
 }
@@ -40,10 +42,17 @@ pub(super) struct Row {
 }
 
 impl Row {
+    fn entry(&self) -> Option<(&Location, &[u8], bool)> {
+        match &self.kind {
+            Kind::Entry { parent, raw, dir } => Some((parent, raw.as_deref().unwrap_or(self.label.as_bytes()), *dir)),
+            _ => None,
+        }
+    }
+
     fn loc(&self) -> Option<Location> {
         match &self.kind {
             Kind::Place(it) => Some(it.loc.clone()),
-            Kind::Entry { loc, .. } => Some(loc.clone()),
+            Kind::Entry { .. } => self.entry().map(|(parent, name, _)| parent.join(name)),
             Kind::Typed(t) | Kind::Suggested(t) => Location::parse(t),
         }
     }
@@ -99,6 +108,20 @@ fn ranked(query: &str, rows: &[Row], from: usize) -> Vec<Line> {
 
 fn place_row(it: Item) -> Row {
     Row { label: it.label.clone(), path: it.path.clone(), kind: Kind::Place(it) }
+}
+
+fn entry_rows(dir: &Location, entries: &Entries) -> Vec<Row> {
+    let parent = Arc::new(dir.clone());
+    entries
+        .iter()
+        .map(|(n, d)| {
+            let (label, raw) = match name::display(n) {
+                Cow::Borrowed(s) => (s.to_owned(), None),
+                Cow::Owned(s) => (s, Some(n.to_vec())),
+            };
+            Row { label, path: String::new(), kind: Kind::Entry { parent: parent.clone(), raw, dir: d } }
+        })
+        .collect()
 }
 
 fn entry_icon(loc: &Location, dir: bool, sb: &super::sidebar::Sidebar, px: u32) -> Option<SystemIcon> {
@@ -187,7 +210,7 @@ impl App {
             let (head, rest) = (&text[..=c], &text[c + 1..]);
             if let Some(dir) = self.resolve_typed(head) {
                 if let Listed::Found(entries) = self.listing(&dir) {
-                    rows.extend(entries.into_iter().map(|(n, d)| Row { label: name::display(&n).into_owned(), path: String::new(), kind: Kind::Entry { loc: dir.join(&n), dir: d } }));
+                    rows.extend(entry_rows(&dir, &entries));
                     lines = ranked(rest, &rows, 0);
                     complete = rest.is_empty();
                 }
@@ -225,7 +248,7 @@ impl App {
         let t = self.tab();
         let (Some(loc), mark) = (t.crumb(i).map(|c| c.1.clone()), t.crumb(i + 1).map(|c| c.1.file_name().to_vec())) else { return Default::default() };
         let rows: Vec<Row> = match self.listing(&loc) {
-            Listed::Found(entries) => entries.into_iter().map(|(n, d)| Row { label: name::display(&n).into_owned(), path: String::new(), kind: Kind::Entry { loc: loc.join(&n), dir: d } }).collect(),
+            Listed::Found(entries) => entry_rows(&loc, &entries),
             _ => Vec::new(),
         };
         let lines = ranked(text.trim(), &rows, 0);
@@ -244,7 +267,7 @@ impl App {
         let Some(p) = self.nav.palette.as_mut() else { return };
         let fresh = p.go.as_ref().is_none_or(|g| g.seen.as_deref() != Some(text.as_str()) || (g.rows.is_empty() && !rows.is_empty()));
         let first = lines.iter().position(|l| matches!(l, Line::Row(..)));
-        let marked = mark.as_ref().and_then(|m| lines.iter().position(|l| matches!(l, Line::Row(k, _) if matches!(&rows[*k].kind, Kind::Entry { loc, .. } if loc.file_name() == m.as_slice()))));
+        let marked = mark.as_ref().and_then(|m| lines.iter().position(|l| matches!(l, Line::Row(k, _) if rows[*k].entry().is_some_and(|e| e.1 == m.as_slice()))));
         let count = rows.len();
         p.matches = (0..lines.len()).collect();
         p.marks = vec![Vec::new(); lines.len()];
@@ -304,15 +327,16 @@ impl App {
         g.picked = true;
         let Some(row) = self.picked_row() else { return };
         self.close_palette();
-        match row.kind {
-            Kind::Place(it) if it.glyph == G_FILE => self.place_command(super::sidebar::PlaceCmd::OpenFile(it.loc.path().clone()), now),
-            Kind::Place(it) => self.dispatch(vec![Route { folder: it.loc, select: None }], OpenTarget::CurrentTab, now),
-            Kind::Entry { loc, dir: true } => self.navigate(loc, now),
-            Kind::Entry { loc, dir: false } => {
+        match (row.loc(), row.kind) {
+            (_, Kind::Place(it)) if it.glyph == G_FILE => self.place_command(super::sidebar::PlaceCmd::OpenFile(it.loc.path().clone()), now),
+            (_, Kind::Place(it)) => self.dispatch(vec![Route { folder: it.loc, select: None }], OpenTarget::CurrentTab, now),
+            (Some(loc), Kind::Entry { dir: true, .. }) => self.navigate(loc, now),
+            (Some(loc), Kind::Entry { dir: false, .. }) => {
                 let tab = self.tab().id;
                 self.effects.push(Effect::Provider { provider: loc.provider(), req: ProviderRequest::Open { tab, path: loc.path().clone() } });
             }
-            Kind::Typed(t) | Kind::Suggested(t) => self.submit_address(&t, now),
+            (None, Kind::Entry { .. }) => {}
+            (_, Kind::Typed(t) | Kind::Suggested(t)) => self.submit_address(&t, now),
         }
     }
 
@@ -464,7 +488,7 @@ impl App {
                 }
                 Line::Row(n, marks) => {
                     let r = &go.rows[*n];
-                    let marked = matches!(&r.kind, Kind::Entry { loc, .. } if go.mark.as_deref() == Some(loc.file_name()));
+                    let marked = r.entry().is_some_and(|e| go.mark.as_deref() == Some(e.1));
                     if selected || (marked && !go.picked) {
                         g.dl.round_rect(row, t.accent_fill, s4);
                     } else if hover {
@@ -475,7 +499,7 @@ impl App {
                     let icon = Rect::new(row.x + s(10.0), row.y, px, row.h);
                     let (system, glyph) = match &r.kind {
                         Kind::Place(it) => (place_icon_request(it, &sb.places, px as u32), it.glyph),
-                        Kind::Entry { loc, dir } => (entry_icon(loc, *dir, sb, px as u32), if *dir { G_FOLDER } else { G_FILE }),
+                        Kind::Entry { parent, dir, .. } => (r.entry().and_then(|e| entry_icon(&parent.join(e.1), *dir, sb, px as u32)), if *dir { G_FOLDER } else { G_FILE }),
                         Kind::Typed(t) => (Location::parse(t).filter(|_| t.ends_with(SEPS)).and_then(|l| folder_icon(&l, sb, px as u32)), G_TYPED),
                         Kind::Suggested(t) => (Location::parse(t).and_then(|l| folder_icon(&l, sb, px as u32)), G_FOLDER),
                     };

@@ -479,11 +479,11 @@ impl App {
             return;
         }
         let count = v.selected_count();
-        let folders = self.selected_folders();
+        let folders = v.selected().filter(|&i| v.listing().entries[i as usize].is_dir()).count();
         let inside = self.archive_view().is_some();
         let files = t.view_loc.path().kind() != PathKind::Computer;
         m.action("item.open", S::MenuOpen.t());
-        if !folders.is_empty() {
+        if folders > 0 {
             m.action("item.open_tab", S::MenuOpenInNewTab.t());
             m.action("item.open_window", S::MenuOpenInNewWindow.t());
             if m.shown("pane.menu") {
@@ -496,7 +496,7 @@ impl App {
                 m.action("file.cut", S::MenuCut.t());
             }
             m.action("file.copy", S::MenuCopy.t());
-            if count == 1 && folders.len() == 1 {
+            if count == 1 && folders == 1 {
                 m.action("file.paste_into", S::MenuPaste.t());
             }
         }
@@ -513,8 +513,8 @@ impl App {
             m.action("item.trash", S::MenuDelete.t());
         }
         m.separator();
-        if folders.len() == count {
-            let pinned = folders.iter().all(|l| self.nav.sidebar.state.pinned.contains(l));
+        if folders == count {
+            let pinned = self.selected_folders().iter().all(|l| self.nav.sidebar.state.pinned.contains(l));
             m.action("item.pin", if pinned { S::MenuUnpinFromSidebar.t() } else { S::MenuPinToSidebar.t() });
         }
         if t.view_loc.path().kind() == PathKind::Drive && m.shown("tags.edit") {
@@ -532,20 +532,20 @@ impl App {
         }
         if files {
             m.action("file.new_folder_with_selection", S::MenuNewFolderWithSelection.t());
-            if count == 1 && folders.is_empty() {
+            if count == 1 && folders == 0 {
                 m.action("file.new_stream", S::MenuNewStream.t());
             }
-            if !folders.is_empty() {
+            if folders > 0 {
                 m.action("app.terminal", S::MenuOpenInTerminal.t());
             }
-            if count == 1 && folders.len() == 1 {
+            if count == 1 && folders == 1 {
                 m.action("file.folder_icon", S::MenuChangeIcon.t());
                 let custom = attr::READONLY | attr::SYSTEM;
                 if self.rename_target().is_some_and(|i| v.listing().entries[i as usize].attrs & custom != 0) {
                     m.action("file.folder_icon_reset", S::MenuRestoreDefaultIcon.t());
                 }
             }
-            if self.show_flatten && !folders.is_empty() && folders.len() == count {
+            if self.show_flatten && folders > 0 && folders == count {
                 m.action("file.flatten", S::MenuFlattenFolder.t());
             }
             self.media_entries(m);
@@ -553,7 +553,7 @@ impl App {
             if m.shown("archive.menu") {
                 self.archive_menu(m);
             }
-            if count == 1 && folders.is_empty() {
+            if count == 1 && folders == 0 {
                 m.action("file.hashes", S::MenuHashes.t());
             }
         }

@@ -655,7 +655,7 @@ impl DirView {
         let snap = Arc::make_mut(&mut self.snap);
         let l = &snap.listing;
         order.retain(|&i| sort::visible(l, i, &view));
-        let sorted = order.windows(2).all(|w| sort::cmp(l, &snap.keys, &view, w[0], w[1]).is_lt());
+        let sorted = sort::is_sorted(l, &snap.keys, &view, &order);
         snap.order = order;
         snap.view = view;
         if sorted {
