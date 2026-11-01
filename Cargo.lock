@@ -735,6 +735,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-tracy",
+ "windows",
 ]
 
 [[package]]
