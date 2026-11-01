@@ -1,6 +1,7 @@
 use flit_core::attr;
 use flit_core::hash::{self, FxHashMap};
 use flit_core::name;
+use hashbrown::hash_table::Entry;
 use hashbrown::HashTable;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -63,6 +64,22 @@ pub fn lowercase_into(s: &[u8], out: &mut Vec<u8>) {
         }
         i += n;
     }
+}
+
+fn store_name(name: &[u8], lower: &mut Vec<u8>, names: &mut Vec<u8>) -> (u32, u16, u32, u16) {
+    let name = &name[..name.len().min(MAX_NAME)];
+    let at = lower.len();
+    lowercase_into(name, lower);
+    let len = (lower.len() - at).min(MAX_NAME);
+    lower.truncate(at + len);
+    let off = if lower[at..] == *name {
+        SAME
+    } else {
+        names.extend_from_slice(name);
+        (names.len() - name.len()) as u32
+    };
+    lower.push(0);
+    (off, name.len() as u16, at as u32, len as u16)
 }
 
 pub fn lowercase(s: &[u8]) -> Vec<u8> {
@@ -301,23 +318,71 @@ impl VolumeIndex {
     }
 
     fn put_name(&mut self, i: usize, name: &[u8]) {
-        let name = &name[..name.len().min(MAX_NAME)];
-        let at = self.lower.len();
-        lowercase_into(name, &mut self.lower);
-        let len = (self.lower.len() - at).min(MAX_NAME);
-        self.lower.truncate(at + len);
-        self.name_len[i] = name.len() as u16;
-        if self.lower[at..] == *name {
-            self.name_off[i] = SAME;
-        } else {
-            self.name_off[i] = self.names.len() as u32;
-            self.names.extend_from_slice(name);
-        }
-        self.lower.push(0);
-        self.lower_off[i] = at as u32;
-        self.lower_len[i] = len as u16;
-        self.seg_start.push(at as u32);
+        let stored = store_name(name, &mut self.lower, &mut self.names);
+        (self.name_off[i], self.name_len[i], self.lower_off[i], self.lower_len[i]) = stored;
+        self.seg_start.push(stored.2);
         self.seg_entry.push(i as u32);
+    }
+
+    pub fn load_fresh(&mut self, records: &[IndexRecord<'_>]) -> bool {
+        const CHUNK: usize = 1 << 14;
+        if !self.is_empty() || records.len() >= NONE as usize {
+            return false;
+        }
+        let n = records.len();
+        let mut by_id: HashTable<u32> = HashTable::with_capacity(n);
+        for (i, r) in records.iter().enumerate() {
+            match by_id.entry(hash::hash(&r.id), |&j| records[j as usize].id == r.id, |&j| hash::hash(&records[j as usize].id)) {
+                Entry::Occupied(_) => return false,
+                Entry::Vacant(e) => {
+                    e.insert(i as u32);
+                }
+            }
+        }
+        let lookup = |id: u64| by_id.find(hash::hash(&id), |&j| records[j as usize].id == id).copied();
+        let rooted = |r: &IndexRecord<'_>| r.parent == r.id;
+        self.parents = records.par_iter().map(|r| if rooted(r) { NONE } else { lookup(r.parent).unwrap_or(NONE) }).collect();
+        self.attrs = records.par_iter().map(|r| (r.attrs & KEPT_ATTRS) | if rooted(r) { ROOT } else { 0 }).collect();
+        self.ids = records.iter().map(|r| r.id).collect();
+        self.sizes = records.iter().map(|r| r.size).collect();
+        self.modified = records.iter().map(|r| r.modified).collect();
+        let parts: Vec<_> = records
+            .par_chunks(CHUNK)
+            .map(|chunk| {
+                let (mut lower, mut names) = (Vec::new(), Vec::new());
+                let stored: Vec<_> = chunk.iter().map(|r| store_name(r.name, &mut lower, &mut names)).collect();
+                (lower, names, stored)
+            })
+            .collect();
+        self.lower = Vec::with_capacity(parts.iter().map(|p| p.0.len()).sum());
+        self.names = Vec::with_capacity(parts.iter().map(|p| p.1.len()).sum());
+        for (lower, names, stored) in parts {
+            let (lower_base, names_base) = (self.lower.len() as u32, self.names.len() as u32);
+            for (name_off, name_len, lower_off, lower_len) in stored {
+                self.name_off.push(if name_off == SAME { SAME } else { name_off + names_base });
+                self.name_len.push(name_len);
+                self.lower_off.push(lower_off + lower_base);
+                self.lower_len.push(lower_len);
+            }
+            self.lower.extend_from_slice(&lower);
+            self.names.extend_from_slice(&names);
+        }
+        self.seg_start = self.lower_off.clone();
+        self.seg_entry = (0..n as u32).collect();
+        for (i, r) in records.iter().enumerate() {
+            if self.parents[i] == NONE && !rooted(r) {
+                self.orphan_parents.insert(i as u32, r.parent);
+                self.orphans.push(i as u32);
+            }
+        }
+        self.by_id = by_id;
+        self.live = self.attrs.iter().filter(|&&a| a & ROOT == 0).count();
+        self.changed = (0..n as u32).collect();
+        self.changed_bits = vec![u64::MAX; n / 64];
+        if !n.is_multiple_of(64) {
+            self.changed_bits.push((1 << (n % 64)) - 1);
+        }
+        true
     }
 
     fn resolve(&mut self, i: u32, pid: u64) {

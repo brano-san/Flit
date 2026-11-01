@@ -105,3 +105,64 @@ fn snapshots_larger_than_one_write_chunk_stream_with_the_same_checksum() {
     assert_eq!((cp.journal, cp.next), (3, 4));
     assert_eq!(rows(&back), rows(&v));
 }
+
+fn same_index(a: &VolumeIndex, b: &VolumeIndex) {
+    assert_eq!((a.len(), a.live()), (b.len(), b.live()));
+    assert_eq!(a.ids, b.ids);
+    assert_eq!(a.parents, b.parents);
+    assert_eq!((&a.names, &a.name_off, &a.name_len), (&b.names, &b.name_off, &b.name_len));
+    assert_eq!((&a.lower, &a.lower_off, &a.lower_len), (&b.lower, &b.lower_off, &b.lower_len));
+    assert_eq!((&a.seg_start, &a.seg_entry), (&b.seg_start, &b.seg_entry));
+    assert_eq!((&a.sizes, &a.modified, &a.attrs), (&b.sizes, &b.modified, &b.attrs));
+    assert_eq!((&a.perms, &a.ranks), (&b.perms, &b.ranks));
+    for i in 0..a.len() as u32 {
+        assert_eq!(a.parent_id(i), b.parent_id(i));
+        assert_eq!(a.lookup(a.ids[i as usize]), b.lookup(a.ids[i as usize]));
+    }
+}
+
+#[test]
+fn the_bulk_loader_builds_the_same_index_as_record_by_record_upserts() {
+    let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+    let mut rnd = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    let stems = ["Report", "ДОКУМЕНТ", "ﬁle", "readme.md", "İstanbul", "x", "ǅungla", "Straße"];
+    let mut v = VolumeIndex::new("C:", br"C:\", b'\\');
+    v.upsert(&IndexRecord { id: 5, parent: 5, name: b".", size: 0, modified: 0, attrs: attr::DIR });
+    let n = 70_000u64;
+    for k in 0..n {
+        let r = rnd();
+        let id = 100 + (k * 7919) % n;
+        let parent = match r % 50 {
+            0 => 5,
+            1 => 1_000_000 + r % 7,
+            _ => 100 + (r >> 8) % n,
+        };
+        let long = if r % 997 == 0 { "Ä".repeat(40_000) } else { String::new() };
+        let name = format!("{}{}{long}", stems[(r >> 20) as usize % stems.len()], k % 501);
+        let attrs = if r % 4 == 0 { attr::DIR | attr::HIDDEN } else { attr::READONLY };
+        v.upsert(&IndexRecord { id, parent, name: name.as_bytes(), size: r % 9999, modified: (r % 1000) as i64, attrs });
+    }
+    v.commit();
+    for k in 0..500u64 {
+        v.remove(100 + k * 13);
+    }
+    v.commit();
+    let mut bytes = Vec::new();
+    save(&v, Checkpoint::default(), &mut bytes);
+    let (mut bulk, _) = load_with(&bytes, true).unwrap();
+    let (mut plain, _) = load_with(&bytes, false).unwrap();
+    same_index(&bulk, &plain);
+    for w in [&mut bulk, &mut plain] {
+        w.upsert(&IndexRecord { id: 1_000_003, parent: 5, name: b"Late Parent", size: 0, modified: 0, attrs: attr::DIR });
+        w.remove(100 + 77);
+        w.commit();
+        w.build_order(Order::Size);
+        w.build_order(Order::Path);
+    }
+    same_index(&bulk, &plain);
+}
