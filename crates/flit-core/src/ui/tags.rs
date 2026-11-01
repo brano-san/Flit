@@ -271,7 +271,7 @@ impl App {
         let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
         let marks = || tags::bits(mask).filter_map(|k| self.tag_defs().get(k)).take(MAX_MARKS);
         let count = if mask == 0 { 0 } else { marks().count() };
-        let (d, gap) = (self.s(MARK), self.s(MARK_GAP));
+        let (d, gap) = (self.cs(MARK), self.cs(MARK_GAP));
         let reserve = if count == 0 { 0.0 } else { count as f32 * (d + gap) + gap };
         let x = if p.center { r.x + ((r.w - reserve - g.measure(text, font)) / 2.0).max(0.0).round() } else { r.x };
         let max_w = (r.right() - x - reserve).max(0.0);

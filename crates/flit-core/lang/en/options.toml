@@ -14,6 +14,7 @@ windows = "Windows and Tabs"
 [title]
 font = "Font"
 scale = "Interface Scale"
+content_scale = "Content Size"
 inspector_font = "Inspector Font"
 inspector_font_size = "Inspector Font Size"
 spacing = "Spacing"
@@ -53,7 +54,8 @@ pins_background = "Pinned background commands"
 
 [help]
 font = "The system-installed font name that is applied to the entire UI."
-scale = "Determines the scale of the whole UI."
+scale = "Determines the scale of the toolbars, tabs, Quick Access, menus, the bottom bar and Options. File lists follow Content Size."
+content_scale = "Scales the file views only: rows, their text and icons, and the column headers. The rest of the interface keeps Interface Scale."
 inspector_font = "The system-installed font used when previewing text contents in the inspector."
 inspector_font_size = "Specifies the font size used to display text contents in the inspector."
 spacing = "Defines the space between items in a list."

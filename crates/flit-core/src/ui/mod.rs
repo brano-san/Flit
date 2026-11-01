@@ -607,6 +607,7 @@ pub struct App {
     scale: f32,
     system_scale: f32,
     ui_scale: u32,
+    content_scale: u32,
     size: (f32, f32),
     maximized: bool,
     active: bool,
@@ -727,6 +728,7 @@ impl App {
             scale,
             system_scale: scale,
             ui_scale: 100,
+            content_scale: 100,
             size: (size.0 as f32, size.1 as f32),
             maximized: false,
             active: true,
@@ -867,6 +869,32 @@ impl App {
     pub fn set_ui_scale(&mut self, percent: u32) {
         self.ui_scale = percent.clamp(UI_SCALE.0, UI_SCALE.1);
         self.rescale();
+    }
+
+    pub fn content_scale(&self) -> u32 {
+        self.content_scale
+    }
+
+    pub fn set_content_scale(&mut self, percent: u32) {
+        self.content_scale = percent.clamp(UI_SCALE.0, UI_SCALE.1);
+        self.layout();
+        self.dirty = true;
+    }
+
+    fn content_px(&self) -> f32 {
+        self.system_scale * self.content_scale as f32 / 100.0
+    }
+
+    fn cs(&self, v: f32) -> f32 {
+        (v * self.content_px()).round()
+    }
+
+    fn content_font(&self, px: f32) -> FontStyle {
+        FontStyle::new(FontFamily::Ui, px * self.content_px(), false)
+    }
+
+    fn content_icons(&self, px: f32) -> FontStyle {
+        FontStyle::new(FontFamily::Icons, px * self.content_px(), false)
     }
 
     fn rescale(&mut self) {
@@ -1345,7 +1373,7 @@ impl App {
 
     fn layout_pane(&mut self, area: Rect) {
         let (kinds, widths) = (self.column_kinds(), self.tab().columns);
-        let sc = self.scale;
+        let sc = self.content_px();
         let s = |v: f32| (v * sc).round();
         let l = &mut self.layout;
         l.header = Rect::new(area.x, area.y, area.w, s(HEADER_H));
@@ -1623,7 +1651,7 @@ impl App {
                 self.dirty = true;
                 return;
             }
-            Drag::ColSep { col, start_x, start_w } => return self.set_column_width(col, start_w - (x - start_x) / self.scale),
+            Drag::ColSep { col, start_x, start_w } => return self.set_column_width(col, start_w - (x - start_x) / (self.content_px())),
             Drag::Splitter { start_x, start_w } => return self.drag_splitter(x, start_x, start_w),
             Drag::PinMove { from, .. } => return self.drag_pin(from, y),
             Drag::Tab { .. } => return self.drag_tab(x, y),
@@ -2320,10 +2348,10 @@ impl App {
         let l = &self.layout;
         g.dl.rect(l.header, t.header);
         g.dl.rect(Rect::new(l.header.x, l.header.bottom() - 1.0, l.header.w, 1.0), t.separator);
-        let font = self.ui_font(12.0);
+        let font = self.content_font(12.0);
         let m = g.metrics(font);
         let baseline = (l.header.y + (l.header.h + m.ascent - m.descent) / 2.0).round();
-        let pad = self.s(10.0);
+        let pad = self.cs(10.0);
         let sort = self.tab().view_spec.sort;
         for (i, col) in l.columns.iter().enumerate() {
             let r = l.cols[i];
@@ -2331,7 +2359,7 @@ impl App {
                 g.dl.rect(r, t.button_hover);
             }
             if i > 0 {
-                g.dl.rect(Rect::new(r.x, r.y + self.s(6.0), 1.0, r.h - self.s(12.0)), t.separator);
+                g.dl.rect(Rect::new(r.x, r.y + self.cs(6.0), 1.0, r.h - self.cs(12.0)), t.separator);
             }
             g.dl.set_clip(Some(r));
             let sorted = Some(sort.field) == col.field();
@@ -2340,19 +2368,19 @@ impl App {
                 let b = self.header_check(r);
                 let all = self.tab().view.as_ref().is_some_and(|v| !v.rows().is_empty() && v.selected_count() == v.rows().len());
                 self.draw_checkbox(g, t, b, all);
-                x = b.right() + self.s(6.0);
+                x = b.right() + self.cs(6.0);
             }
             let mut room = r.right() - pad - x;
             if *col == Column::Type {
                 let fr = self.funnel_rect(r);
                 let active = !self.tab().hidden_types.is_empty();
-                centered(g, fr, G_FUNNEL, self.icon_font(11.0), if active { t.accent } else { t.text_dim });
+                centered(g, fr, G_FUNNEL, self.content_icons(11.0), if active { t.accent } else { t.text_dim });
                 room = fr.x - x;
             }
             if sorted {
-                let gw = self.s(14.0);
+                let gw = self.cs(14.0);
                 let right = if *col == Column::Type { self.funnel_rect(r).x } else { r.right() - pad };
-                g.dl.chevron((right - gw / 2.0, r.y + r.h / 2.0), self.s(8.0), arrow_angle, self.s(1.25).max(1.0), widgets::faded(t.text, arrow_alpha));
+                g.dl.chevron((right - gw / 2.0, r.y + r.h / 2.0), self.cs(8.0), arrow_angle, self.cs(1.25).max(1.0), widgets::faded(t.text, arrow_alpha));
                 room = room.min(right - gw - x);
             }
             g.text(x, baseline, col.title(), font, if sorted { t.text } else { t.text_dim }, room.max(0.0));
@@ -2378,10 +2406,10 @@ impl App {
         self.motion |= fold.is_some();
         let l = &self.layout;
         let (list, mode) = (l.list, l.mode);
-        let font = self.ui_font(13.0);
+        let font = self.content_font(13.0);
         let m = g.metrics(font);
         let baseline = |r: Rect| (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
-        let pad = self.s(10.0);
+        let pad = self.cs(10.0);
         let icon_px = l.icon;
         let list_focused = self.active && self.focus == Focus::List;
         let tab = &self.tabs[self.cur];
@@ -2421,7 +2449,7 @@ impl App {
                 }
                 .t();
                 let w = g.measure(msg, font);
-                g.text(list.x + (list.w - w) / 2.0, list.y + self.s(40.0), msg, font, t.text_dim, f32::INFINITY);
+                g.text(list.x + (list.w - w) / 2.0, list.y + self.cs(40.0), msg, font, t.text_dim, f32::INFINITY);
             }
             let loc = &tab.view_loc;
             let shell_dir = loc.to_windows();
@@ -2462,17 +2490,17 @@ impl App {
                 let rr = p.body;
                 let glow = self.row_glow.alpha((tab_id, i), now);
                 if v.is_selected(i) {
-                    g.dl.round_rect(rr, if list_focused { t.selection } else { t.selection_inactive }, self.s(4.0));
+                    g.dl.round_rect(rr, if list_focused { t.selection } else { t.selection_inactive }, self.cs(4.0));
                 } else {
                     if self.opts.alternating && mode.table() && row % 2 == 1 && glow < 1.0 {
-                        g.dl.round_rect(rr, t.text.alpha(0x08), self.s(4.0));
+                        g.dl.round_rect(rr, t.text.alpha(0x08), self.cs(4.0));
                     }
                     if glow > 0.0 {
-                        g.dl.round_rect(rr, widgets::faded(t.hover, glow), self.s(4.0));
+                        g.dl.round_rect(rr, widgets::faded(t.hover, glow), self.cs(4.0));
                     }
                 }
                 if list_focused && v.focus == Some(i) {
-                    g.dl.outline(rr, t.focus_ring, self.s(4.0), 1.0);
+                    g.dl.outline(rr, t.focus_ring, self.cs(4.0), 1.0);
                 }
                 let boxed = details::shows_check(self.prefs.checkboxes, v.is_selected(i), self.details.checks.hover == Some(row));
                 checks.push((i, boxed));
@@ -2499,7 +2527,7 @@ impl App {
                     }
                 }
                 let badge = tab.git_status(name).map(|st| {
-                    let d = (ir.h * 0.42).max(self.s(9.0)).round();
+                    let d = (ir.h * 0.42).max(self.cs(9.0)).round();
                     (Rect::new(ir.right() - d * 0.8, ir.bottom() - d * 0.8, d, d), st)
                 });
                 if !boxed && !thumbed && !g.image_alpha(key, ir, alpha) {
@@ -2530,13 +2558,13 @@ impl App {
                             None if self.is_open_in_tree(i) => 90.0,
                             None => 0.0,
                         };
-                        g.dl.chevron((cr.x + cr.w / 2.0, cr.y + cr.h / 2.0), self.s(8.0), angle, self.s(1.25).max(1.0), t.text_dim);
+                        g.dl.chevron((cr.x + cr.w / 2.0, cr.y + cr.h / 2.0), self.cs(8.0), angle, self.cs(1.25).max(1.0), t.text_dim);
                     }
                 }
                 let folder = listing.folder(i);
                 if !folder.is_empty() && mode != LayoutMode::Tree && !p.center {
                     let label = arena.alloc_str(&format!("{NESTED_MARK}{}", crate::name::display(folder)));
-                    let x = end + self.s(8.0);
+                    let x = end + self.cs(8.0);
                     g.text(x, ty, label, font, t.text_dim.alpha(0xA0), (p.name.right() - x).max(0.0));
                 }
                 want_type(i);
@@ -2554,13 +2582,13 @@ impl App {
                         let last = if size.is_empty() { self.cell_text(arena, listing, i, Column::Modified) } else { size };
                         for (k, s) in [self.type_text(arena, listing, i), last].into_iter().enumerate() {
                             let r = Rect { y: p.name.y + (k + 1) as f32 * p.name.h, ..p.name };
-                            g.text(r.x, baseline(r), s, self.ui_font(12.0), t.text_dim, r.w);
+                            g.text(r.x, baseline(r), s, self.content_font(12.0), t.text_dim, r.w);
                         }
                     }
                     LayoutMode::Grid if tab.mode.zoomed() => {
                         let size = self.cell_text(arena, listing, i, Column::Size);
-                        let small = self.ui_font(11.0);
-                        let r = Rect { y: p.name.bottom(), h: self.s(14.0), ..p.name };
+                        let small = self.content_font(11.0);
+                        let r = Rect { y: p.name.bottom(), h: self.cs(14.0), ..p.name };
                         let w = g.measure(size, small);
                         g.text(r.x + ((r.w - w) / 2.0).max(0.0).round(), baseline(r), size, small, t.text_dim, r.w);
                     }

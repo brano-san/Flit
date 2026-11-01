@@ -14,6 +14,7 @@ windows = "Fenêtres et onglets"
 [title]
 font = "Police"
 scale = "Échelle de l’interface"
+content_scale = "Taille du contenu"
 inspector_font = "Police de l’inspecteur"
 inspector_font_size = "Taille de police de l’inspecteur"
 spacing = "Espacement"
@@ -53,7 +54,8 @@ pins_background = "Commandes d’arrière-plan épinglées"
 
 [help]
 font = "Nom de la police installée utilisée pour toute l’interface."
-scale = "Détermine l’échelle de toute l’interface."
+scale = "Détermine l’échelle des barres d’outils, des onglets, de l’accès rapide, des menus, de la barre du bas et des options. Les listes de fichiers suivent la taille du contenu."
+content_scale = "Met à l’échelle les vues de fichiers seulement : lignes, leur texte et leurs icônes, en-têtes de colonnes. Le reste de l’interface suit l’échelle de l’interface."
 inspector_font = "Police installée utilisée pour afficher le texte dans l’inspecteur."
 inspector_font_size = "Taille de police du texte affiché dans l’inspecteur."
 spacing = "Définit l’espace entre les éléments d’une liste."

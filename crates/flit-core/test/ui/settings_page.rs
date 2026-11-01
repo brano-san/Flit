@@ -433,7 +433,7 @@ fn appearance_page_has_no_toolbar_options() {
     let mut a = listed(&[("a.txt", false)]);
     a.open_settings(Some(Page::Interface));
     let lines = page(&a, Page::Interface);
-    assert_eq!(lines[..6], ["appearance.font", "appearance.scale", "appearance.inspector_font", "appearance.inspector_font_size", settings::SPACING, "appearance.animations"]);
+    assert_eq!(lines[..6], ["appearance.font", "appearance.scale", settings::CONTENT_SCALE, "appearance.inspector_font", "appearance.inspector_font_size", settings::SPACING]);
     assert!(index("appearance.toolbar").is_none());
     assert!(!lines.iter().any(|l| l.contains("toolbar")), "{lines:?}");
     a.drain_effects().for_each(drop);

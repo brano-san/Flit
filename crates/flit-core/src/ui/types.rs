@@ -27,13 +27,13 @@ impl App {
     }
 
     pub(super) fn funnel_rect(&self, header: Rect) -> Rect {
-        let w = self.s(22.0);
-        Rect::new(header.right() - w - self.s(4.0), header.y, w, header.h)
+        let w = self.cs(22.0);
+        Rect::new(header.right() - w - self.cs(4.0), header.y, w, header.h)
     }
 
     pub(super) fn header_check(&self, header: Rect) -> Rect {
-        let d = self.s(CHECK);
-        Rect::new(header.x + self.s(10.0), header.y + ((header.h - d) / 2.0).round(), d, d)
+        let d = self.cs(CHECK);
+        Rect::new(header.x + self.cs(10.0), header.y + ((header.h - d) / 2.0).round(), d, d)
     }
 
     pub(super) fn toggle_select_all(&mut self) {

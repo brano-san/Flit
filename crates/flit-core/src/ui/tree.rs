@@ -79,7 +79,7 @@ impl App {
         let c = self.row_rect(row)?;
         let (depth, dir) = self.tree_slot(c)?;
         let ind = self.tree_indent();
-        dir.then(|| Rect::new(c.x + self.s(10.0) + ind * depth as f32, c.y, ind, c.h))
+        dir.then(|| Rect::new(c.x + self.cs(10.0) + ind * depth as f32, c.y, ind, c.h))
     }
 
     pub(super) fn on_chevron(&self, x: f32, y: f32, row: usize) -> bool {

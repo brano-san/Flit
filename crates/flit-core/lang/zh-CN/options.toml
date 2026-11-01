@@ -14,6 +14,7 @@ windows = "窗口和标签页"
 [title]
 font = "字体"
 scale = "界面缩放"
+content_scale = "内容大小"
 inspector_font = "检查器字体"
 inspector_font_size = "检查器字号"
 spacing = "间距"
@@ -53,7 +54,8 @@ pins_background = "已固定的背景命令"
 
 [help]
 font = "用于整个界面的系统已安装字体名称。"
-scale = "决定整个界面的缩放比例。"
+scale = "决定工具栏、标签页、快速访问、菜单、底栏和选项的缩放比例。文件列表跟随内容大小。"
+content_scale = "只缩放文件视图：行及其文字和图标、列标题。界面其余部分跟随界面缩放。"
 inspector_font = "在检查器中预览文本内容时使用的系统字体。"
 inspector_font_size = "检查器中显示文本内容的字号。"
 spacing = "定义列表中各项之间的间距。"

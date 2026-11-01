@@ -72,7 +72,7 @@ fn layout_scrolls_long_lists() {
     settle(&mut app, 42);
     let sb = &app.nav.sidebar;
     let end = sb.rects.last().unwrap().bottom();
-    assert!(end <= sb.list.bottom() + 0.5 && end >= sb.list.bottom() - SECTION_GAP - 1.0, "clamped at the end of the list: {end} {:?}", sb.list);
+    assert!(end <= sb.list.bottom() + 0.5 && end >= sb.list.bottom() - SECTION_GAP - ROW_GAP - 1.0, "clamped at the end of the list: {end} {:?}", sb.list);
     assert_eq!(sb.list.bottom(), sb.rect.bottom(), "the list runs to the bottom without a Settings button");
     assert!(matches!(app.sidebar_hit(sb.rects[23].x + 5.0, sb.rects[23].y + 5.0), Some(Hit::Side(23))));
     assert!(app.sidebar_hit(sb.rect.right() + 50.0, sb.rect.y + 5.0).is_none());
@@ -532,7 +532,7 @@ fn places_ask_the_system_for_their_icons_and_keep_glyphs_until_then() {
     app.set_tags(Arc::new(Tags::new(1, &store, &Default::default())));
     app.drain_effects().for_each(drop);
     app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
-    let asked: Vec<(Vec<u8>, IconKind)> = app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { (r.size == 20).then_some((r.path.as_bytes().to_vec(), r.kind)) } else { None }).collect();
+    let asked: Vec<(Vec<u8>, IconKind)> = app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { (r.size == 16).then_some((r.path.as_bytes().to_vec(), r.kind)) } else { None }).collect();
     for want in [
         (br"C:\a".to_vec(), IconKind::Place),
         (downloads.path().as_bytes().to_vec(), IconKind::Place),
@@ -586,10 +586,10 @@ fn drive_icons_center_on_the_whole_row_with_its_bar_and_other_icons_on_the_label
         let mut app = App::new(Persisted::default(), Vec::new(), 0, false, scale, (1200, 900), Instant::now());
         app.set_places(Arc::new(Places { drives: vec![drive('C')], recycle_bin: true, ..Default::default() }));
         let sb = &app.nav.sidebar;
-        let tall = sb.rects.iter().copied().find(|r| r.h > (28.0 * scale).round()).expect("a drive row with a bar");
+        let tall = sb.rects.iter().copied().find(|r| r.h > (24.0 * scale).round()).expect("a drive row with a bar");
         let icon = item_icon(tall, scale, true);
         assert_eq!(icon.y + icon.h / 2.0, tall.y + tall.h / 2.0, "{scale}: the drive icon sits between its label and its bar");
-        let plain = sb.rects.iter().copied().find(|r| r.h <= (28.0 * scale).round()).unwrap();
+        let plain = sb.rects.iter().copied().find(|r| r.h <= (24.0 * scale).round()).unwrap();
         assert_eq!(item_icon(plain, scale, false), item_parts(plain, scale).0);
     }
 }
@@ -844,4 +844,26 @@ fn a_section_folds_with_a_short_height_animation_and_its_chevron_turns() {
     app.animations = false;
     app.toggle_section(Section::Bookmarks);
     assert!(app.nav.sidebar.fold.is_none() && !app.frame(&mut g, Instant::now() + std::time::Duration::from_millis(800)));
+}
+
+#[test]
+fn quick_access_rows_match_details_rows_at_default_settings_and_space_out_between_them() {
+    let mut app = app_with_places();
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, Instant::now());
+    assert_eq!(app.layout.mode, crate::ui::LayoutMode::Details);
+    let sb = &app.nav.sidebar;
+    let plain: Vec<Rect> = sb.items.iter().zip(&sb.rects).filter(|(i, _)| i.usage.is_none()).map(|(_, r)| *r).collect();
+    assert!(plain.len() >= 3);
+    assert!(plain.iter().all(|r| r.h == app.layout.row_h), "Quick Access rows are as tall as Details rows: {} vs {}", plain[0].h, app.layout.row_h);
+    assert_eq!(app.s(PLACE_ICON), app.layout.icon, "and their icons are the same size");
+    assert_eq!(app.ui_font(13.0), app.content_font(13.0), "and their text the same font");
+    let pitch = plain[1].y - plain[0].y;
+    assert!(pitch > plain[0].h, "the extra room goes between rows, not into them");
+    app.set_ui_scale(150);
+    app.set_content_scale(150);
+    app.frame(&mut g, Instant::now());
+    let sb = &app.nav.sidebar;
+    let r = sb.items.iter().zip(&sb.rects).find(|(i, _)| i.usage.is_none()).unwrap().1;
+    assert_eq!(r.h, app.layout.row_h, "equal scales keep them equal");
 }

@@ -802,8 +802,8 @@ impl App {
             return;
         }
         let only = self.tabs[k].fit_column.take();
-        let (font, hfont) = (self.ui_font(13.0), self.ui_font(12.0));
-        let (pad, glyph) = (self.s(10.0), self.s(20.0));
+        let (font, hfont) = (self.content_font(13.0), self.content_font(12.0));
+        let (pad, glyph) = (self.cs(10.0), self.cs(20.0));
         let lines = self.visible_lines(&self.flow());
         let t = &self.tabs[k];
         let Some(v) = &t.view else { return };
@@ -816,7 +816,7 @@ impl App {
                     w = w.max(g.measure(self.cell_text(arena, v.listing(), v.rows()[r], c), font));
                 }
             }
-            cols.set_width(c, ((w + 2.0 * pad) / self.scale).clamp(MIN_COL_W, MAX_COL_W).ceil());
+            cols.set_width(c, ((w + 2.0 * pad) / (self.content_px())).clamp(MIN_COL_W, MAX_COL_W).ceil());
         }
         self.change_view(|t| t.columns = cols);
     }
@@ -960,30 +960,30 @@ impl App {
         let gr = v.groups()[k];
         let (y, rh, right) = (r.y, r.h, r.right());
         if self.hover == Hit::Group(k) && self.drag == Drag::None {
-            g.dl.outline(r.inset(self.s(4.0), 1.0), th.accent, self.s(4.0), self.s(1.0).max(1.0));
+            g.dl.outline(r.inset(self.cs(4.0), 1.0), th.accent, self.cs(4.0), self.cs(1.0).max(1.0));
         }
-        let x0 = r.x + self.s(10.0);
-        centered(g, Rect::new(x0, y, self.s(16.0), rh), if gr.collapsed { G_CHEVRON } else { G_SORT_DOWN }, self.icon_font(8.0), th.text_dim);
-        let mut tx = x0 + self.s(24.0);
+        let x0 = r.x + self.cs(10.0);
+        centered(g, Rect::new(x0, y, self.cs(16.0), rh), if gr.collapsed { G_CHEVRON } else { G_SORT_DOWN }, self.content_icons(8.0), th.text_dim);
+        let mut tx = x0 + self.cs(24.0);
         if let Some(color) = self.group_color(v, &gr) {
-            centered(g, Rect::new(tx, y, self.s(16.0), rh), super::tags::G_TAG, self.icon_font(12.0), color);
-            tx += self.s(22.0);
+            centered(g, Rect::new(tx, y, self.cs(16.0), rh), super::tags::G_TAG, self.content_icons(12.0), color);
+            tx += self.cs(22.0);
         } else if v.snap().view.group.field.is_date() {
-            centered(g, Rect::new(tx, y, self.s(16.0), rh), G_CALENDAR, self.icon_font(12.0), th.text_dim);
-            tx += self.s(22.0);
+            centered(g, Rect::new(tx, y, self.cs(16.0), rh), G_CALENDAR, self.content_icons(12.0), th.text_dim);
+            tx += self.cs(22.0);
         }
-        let bold = FontStyle::new(FontFamily::Ui, 14.0 * self.scale, true);
+        let bold = FontStyle::new(FontFamily::Ui, 14.0 * self.content_px(), true);
         let m = g.metrics(bold);
         let baseline = (y + (rh + m.ascent - m.descent) / 2.0).round();
         let room = right - tx;
-        let w = g.text(tx, baseline, self.group_label(arena, v, &gr), bold, th.text, (room - self.s(80.0)).max(room * 0.6));
+        let w = g.text(tx, baseline, self.group_label(arena, v, &gr), bold, th.text, (room - self.cs(80.0)).max(room * 0.6));
         let mut count = bumpalo::collections::String::new_in(arena);
         let _ = write!(count, "({})", gr.count);
-        let cx = tx + w + self.s(8.0);
-        let cw = g.text(cx, baseline, &count, self.ui_font(12.0), th.text_dim, f32::INFINITY);
-        let sx = cx + cw + self.s(10.0);
-        if sx < right - self.s(12.0) {
-            g.dl.rect(Rect::new(sx, (y + rh / 2.0).round(), right - self.s(12.0) - sx, 1.0), th.separator);
+        let cx = tx + w + self.cs(8.0);
+        let cw = g.text(cx, baseline, &count, self.content_font(12.0), th.text_dim, f32::INFINITY);
+        let sx = cx + cw + self.cs(10.0);
+        if sx < right - self.cs(12.0) {
+            g.dl.rect(Rect::new(sx, (y + rh / 2.0).round(), right - self.cs(12.0) - sx, 1.0), th.separator);
         }
     }
 
@@ -1015,22 +1015,22 @@ impl App {
         }
         .t();
         let detail = crate::tr!(if e.kind == FsErrorKind::NoMedia { S::ErrorsFsInsertMedia } else { S::ErrorsFsRetry }, error = e);
-        let (big, small) = (self.ui_font(16.0), self.ui_font(13.0));
-        let y = list.y + self.s(48.0);
-        centered(g, Rect::new(list.x, y, list.w, self.s(32.0)), G_WARNING, self.icon_font(24.0), th.error);
+        let (big, small) = (self.content_font(16.0), self.content_font(13.0));
+        let y = list.y + self.cs(48.0);
+        centered(g, Rect::new(list.x, y, list.w, self.cs(32.0)), G_WARNING, self.content_icons(24.0), th.error);
         for (k, (text, font, color)) in [(title, big, th.text), (detail.as_str(), small, th.text_dim)].into_iter().enumerate() {
             let w = g.measure(text, font).min(list.w);
-            g.text(list.x + (list.w - w) / 2.0, y + self.s(56.0 + 24.0 * k as f32), text, font, color, list.w);
+            g.text(list.x + (list.w - w) / 2.0, y + self.cs(56.0 + 24.0 * k as f32), text, font, color, list.w);
         }
         self.draw_eject(g, th);
     }
 
     pub(super) fn draw_checkbox<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme, r: Rect, on: bool) {
         if on {
-            g.dl.round_rect(r, th.accent, self.s(3.0));
+            g.dl.round_rect(r, th.accent, self.cs(3.0));
             g.dl.check(r, crate::theme::ink_on(th.accent));
         } else {
-            g.dl.outline(r, th.text_dim, self.s(3.0), self.s(1.0).max(1.0));
+            g.dl.outline(r, th.text_dim, self.cs(3.0), self.cs(1.0).max(1.0));
         }
     }
 

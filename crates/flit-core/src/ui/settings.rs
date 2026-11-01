@@ -27,6 +27,7 @@ pub type Migration = fn(&mut Map<String, Json>);
 const MIGRATIONS: [Migration; 4] = [browsed_archives_keep_builtin_handling, renamed_commands_keep_their_keys, theme_splits_into_scheme_and_system, unchosen_checkboxes_take_the_new_default];
 pub const CHECKBOXES: &str = "files.checkboxes";
 pub const SPACING: &str = "appearance.spacing";
+pub const CONTENT_SCALE: &str = "appearance.content_scale";
 pub const OPACITY: &str = "appearance.inactive_opacity";
 pub const CACHE: &str = "advanced.thumb_cache_mb";
 pub const LONG_PATHS: &str = "files.long_paths";
@@ -269,6 +270,13 @@ pub static SETTINGS: &[Setting] = &[
         title: S::OptionsTitleScale,
         help: S::OptionsHelpScale,
         kind: Kind::Number { min: super::UI_SCALE.0 as i64, max: super::UI_SCALE.1 as i64, step: 10, unit: S::SettingsUnitPercent, zero: None, get: |a| a.ui_scale() as i64, set: |a, v| a.set_ui_scale(v as u32) },
+    },
+    Setting {
+        id: CONTENT_SCALE,
+        page: Page::Interface,
+        title: S::OptionsTitleContentScale,
+        help: S::OptionsHelpContentScale,
+        kind: Kind::Number { min: super::UI_SCALE.0 as i64, max: super::UI_SCALE.1 as i64, step: 10, unit: S::SettingsUnitPercent, zero: None, get: |a| a.content_scale() as i64, set: |a, v| a.set_content_scale(v as u32) },
     },
     Setting { id: "appearance.inspector_font", page: Page::Interface, title: S::OptionsTitleInspectorFont, help: S::OptionsHelpInspectorFont, kind: Kind::Text(|a| a.opts.inspector_font.clone(), |a, v| a.set_inspector_font(v)) },
     Setting {

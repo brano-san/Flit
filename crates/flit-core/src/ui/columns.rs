@@ -133,9 +133,9 @@ impl App {
             return;
         }
         let (rh, icon_px) = (l.row_h.max(1.0), l.icon);
-        let font = self.ui_font(13.0);
+        let font = self.content_font(13.0);
         let m = g.metrics(font);
-        let (s4, s8, s10) = (self.s(4.0), self.s(8.0), self.s(10.0));
+        let (s4, s8, s10) = (self.cs(4.0), self.cs(8.0), self.cs(10.0));
         let t = &self.tabs[self.cur];
         let mut requests: Vec<IconRequest> = Vec::new();
         for (i, (&r, p)) in l.panes.iter().zip(&t.panes).enumerate() {

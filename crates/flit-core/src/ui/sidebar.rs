@@ -27,15 +27,17 @@ use std::time::Instant;
 pub const SIDEBAR_MIN_W: f32 = 160.0;
 pub const SIDEBAR_MAX_W: f32 = 480.0;
 const COMPACT_W: f32 = 48.0;
-const ROW_H: f32 = 27.0;
+pub(super) const ROW_H: f32 = 24.0;
+const ROW_GAP: f32 = 3.0;
+const ROW_ICON: f32 = 16.0;
 const COMPACT_ROW_H: f32 = 32.0;
-const DRIVE_H: f32 = 31.0;
+const DRIVE_H: f32 = 28.0;
 const HEADER_H: f32 = 26.0;
 const COMPACT_HEADER_H: f32 = 12.0;
 const PIN_W: f32 = 22.0;
 const SECTION_GAP: f32 = 18.0;
 const ITEM_INDENT: f32 = 18.0;
-pub(super) const PLACE_ICON: f32 = 20.0;
+pub(super) const PLACE_ICON: f32 = ROW_ICON;
 const HEADER_TITLE_X: f32 = 28.0;
 const BAR_MARGIN: f32 = 12.0;
 const MAX_LIST: usize = 256;
@@ -1255,7 +1257,7 @@ impl App {
                 }
                 let h = if sb.items[it].usage.is_some() && !compact { s(DRIVE_H) } else { row_h };
                 sb.rects.push(Rect::new(x, y, w, h));
-                y += h;
+                y += h + if compact { 0.0 } else { s(ROW_GAP) };
                 it += 1;
             }
             if let Some((_, shown)) = fold.filter(|f| f.0 == section) {
@@ -1308,7 +1310,7 @@ impl App {
 
     pub(super) fn sidebar_wheel(&mut self, dy: f32) {
         let sb = &mut self.nav.sidebar;
-        let step = 3.0 * (ROW_H * self.scale).round();
+        let step = 3.0 * ((ROW_H + ROW_GAP) * self.scale).round();
         sb.scroll.by(-dy * step, sb.content_h - sb.list.h);
         self.layout();
         self.dirty = true;
@@ -1394,7 +1396,7 @@ impl App {
         g.dl.rect(Rect::new(area.right() - 1.0, area.y, 1.0, area.h), line);
         let font = self.ui_font(13.0);
         let small = self.ui_font(12.0);
-        let icons = self.icon_font(14.0);
+        let icons = self.icon_font(ROW_ICON * 0.85);
         let pin_font = self.icon_font(11.0);
         let chevron = self.icon_font(8.0);
         let header_font = self.header_font();

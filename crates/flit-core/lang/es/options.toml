@@ -14,6 +14,7 @@ windows = "Ventanas y pestañas"
 [title]
 font = "Fuente"
 scale = "Escala de la interfaz"
+content_scale = "Tamaño del contenido"
 inspector_font = "Fuente del inspector"
 inspector_font_size = "Tamaño de fuente del inspector"
 spacing = "Espaciado"
@@ -53,7 +54,8 @@ pins_background = "Comandos de fondo anclados"
 
 [help]
 font = "Nombre de la fuente instalada que se usa en toda la interfaz."
-scale = "Determina la escala de toda la interfaz."
+scale = "Determina la escala de las barras de herramientas, pestañas, acceso rápido, menús, barra inferior y opciones. Las listas de archivos siguen el tamaño del contenido."
+content_scale = "Escala solo las vistas de archivos: filas, su texto e iconos, y los encabezados de columna. El resto de la interfaz sigue la escala de la interfaz."
 inspector_font = "Fuente instalada para ver el contenido de texto en el inspector."
 inspector_font_size = "Tamaño de fuente del texto en el inspector."
 spacing = "Define el espacio entre los elementos de una lista."

@@ -295,10 +295,10 @@ fn the_interface_scale_multiplies_the_display_scale_for_layout_fonts_and_hits() 
     let mut a = app();
     a.on_event(&crate::input::Event::ScaleChanged(1.5), Instant::now());
     assert_eq!(get(&a, "appearance.scale"), Value::Number(100));
-    let (row, title, font) = (a.layout.row_h, a.layout.title, a.ui_font(13.0).size_q);
+    let (row, title, font) = (a.layout.toolbar.h, a.layout.title, a.ui_font(13.0).size_q);
     assert!(set(&mut a, "appearance.scale", Value::Number(200)));
     assert_eq!(a.scale, 3.0);
-    assert!((a.layout.row_h - 2.0 * row).abs() <= 1.0, "{} vs {row}", a.layout.row_h);
+    assert!((a.layout.toolbar.h - 2.0 * row).abs() <= 1.0, "{} vs {row}", a.layout.toolbar.h);
     assert!((a.layout.title.h - 2.0 * title.h).abs() <= 1.0);
     assert_eq!(a.ui_font(13.0).size_q, 2 * font);
     assert!(a.in_title(title.bottom() + 2.0));
@@ -308,7 +308,7 @@ fn the_interface_scale_multiplies_the_display_scale_for_layout_fonts_and_hits() 
     assert!(set(&mut a, "appearance.scale", Value::Number(110)));
     assert!((a.scale - 1.1).abs() < 1e-6);
     assert!(set(&mut a, "appearance.scale", Value::Number(70)));
-    assert!(a.layout.row_h < row);
+    assert!(a.layout.toolbar.h < row);
     assert!(!set(&mut a, "appearance.scale", Value::Number(250)));
     let doc = parse(r#"{"appearance.scale": 50}"#);
     assert_eq!(doc.bad, [index("appearance.scale").unwrap()]);
@@ -359,4 +359,28 @@ fn selection_checkboxes_are_on_by_default_and_an_old_unchosen_off_takes_the_new_
     assert_eq!(old_on.value(CHECKBOXES), Some(&Value::Bool(true)));
     let chosen_off = parse(r#"{"schema": 5, "files.checkboxes": false}"#);
     assert_eq!(chosen_off.value(CHECKBOXES), Some(&Value::Bool(false)));
+}
+
+#[test]
+fn content_size_scales_the_file_view_only_and_persists_next_to_the_interface_scale() {
+    let mut a = app();
+    let (row, icon, header, title, side) = (a.layout.row_h, a.layout.icon, a.layout.header.h, a.layout.title, a.sidebar_width());
+    let (list_font, ui_font) = (a.content_font(13.0).size_q, a.ui_font(13.0).size_q);
+    assert_eq!((list_font, a.content_scale()), (ui_font, 100), "both scales start equal");
+    assert!(set(&mut a, CONTENT_SCALE, Value::Number(150)));
+    assert!((a.layout.row_h - 1.5 * row).abs() <= 1.0 && (a.layout.icon - 1.5 * icon).abs() <= 1.0 && (a.layout.header.h - 1.5 * header).abs() <= 1.0);
+    assert_eq!(a.content_font(13.0).size_q, a.ui_font(19.5).size_q, "list text is shaped at the larger size");
+    assert_eq!((a.layout.title, a.sidebar_width(), a.ui_font(13.0).size_q), (title, side, ui_font), "tabs, Quick Access and other chrome keep the interface scale");
+    assert!(!set(&mut a, CONTENT_SCALE, Value::Number(55)) && set(&mut a, CONTENT_SCALE, Value::Number(70)));
+    assert!(set(&mut a, CONTENT_SCALE, Value::Number(120)));
+    let text = render(&a.setting_values(), &Map::new(), None);
+    assert!(text.contains("\"appearance.content_scale\": 120") && text.contains("\"appearance.scale\": 100"), "{text}");
+    let mut b = app();
+    b.apply_doc(&parse(&text));
+    assert_eq!((b.content_scale(), b.ui_scale()), (120, 100));
+    let old = parse(r#"{"schema": 4, "appearance.scale": 130}"#);
+    let mut c = app();
+    c.apply_doc(&old);
+    assert_eq!((c.ui_scale(), c.content_scale()), (130, 100), "a saved scale stays the interface scale");
+    assert_eq!(S::OptionsTitleContentScale.in_lang(crate::i18n::Lang::Ru), "Масштаб содержимого");
 }

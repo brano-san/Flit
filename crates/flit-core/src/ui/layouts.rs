@@ -211,7 +211,7 @@ enum Step {
 
 impl App {
     pub(super) fn tree_indent(&self) -> f32 {
-        self.s(TREE_INDENT)
+        self.cs(TREE_INDENT)
     }
 
     fn shown_look(&self) -> (LayoutMode, usize) {
@@ -225,7 +225,7 @@ impl App {
     pub(super) fn layout_look(&mut self) {
         let (mode, level) = self.shown_look();
         let depth = if mode == LayoutMode::Columns { pane_depth(&self.tab().view_loc) } else { 0 };
-        let (sc, spread) = (self.scale, super::options::spacing_factor(self.opts.spacing));
+        let (sc, spread) = (self.content_px(), super::options::spacing_factor(self.opts.spacing));
         let s = |v: f32| (v * sc).round();
         let l = &mut self.layout;
         l.mode = mode;
@@ -343,9 +343,9 @@ impl App {
     }
 
     pub(super) fn item_parts(&self, c: Rect) -> Parts {
-        let (s4, s8, s10) = (self.s(4.0), self.s(8.0), self.s(10.0));
+        let (s4, s8, s10) = (self.cs(4.0), self.cs(8.0), self.cs(10.0));
         let icon = self.layout.icon;
-        let box_px = self.s(CHECK);
+        let box_px = self.cs(CHECK);
         let mid = |r: Rect, h: f32| r.y + ((r.h - h) / 2.0).round();
         let boxed = |ir: Rect| Rect::new(ir.x + ((ir.w - box_px) / 2.0).round(), ir.y + ((ir.h - box_px) / 2.0).round(), box_px, box_px);
         match self.layout.mode {
@@ -353,14 +353,14 @@ impl App {
                 let b = c.inset(s4, s4);
                 let ir = Rect::new(b.x + s8, mid(b, icon), icon, icon);
                 let nx = ir.right() + s10;
-                let line = self.s(CARD_LINE);
+                let line = self.cs(CARD_LINE);
                 let name = Rect::new(nx, mid(b, 3.0 * line), (b.right() - s8 - nx).max(0.0), line);
                 Parts { body: b, icon: ir, check: boxed(ir), name, center: false }
             }
             LayoutMode::Grid => {
                 let b = c.inset(s4, s4);
                 let ir = Rect::new(b.x + ((b.w - icon) / 2.0).round(), b.y + s8, icon, icon);
-                let name = Rect::new(b.x + s4, ir.bottom() + s4, (b.w - s8).max(0.0), self.s(20.0));
+                let name = Rect::new(b.x + s4, ir.bottom() + s4, (b.w - s8).max(0.0), self.cs(20.0));
                 Parts { body: b, icon: ir, check: boxed(ir), name, center: true }
             }
             mode => {
@@ -396,26 +396,26 @@ impl App {
         let line = self.line_at(&f, x, y)?;
         let Some(crate::view::Line::Row(row)) = self.tab().view.as_ref()?.line(line) else { return None };
         let r = self.item_parts(self.line_rect(&f, line)).icon;
-        r.inset(-self.s(2.0), -self.s(2.0)).contains(x, y).then_some(row)
+        r.inset(-self.cs(2.0), -self.cs(2.0)).contains(x, y).then_some(row)
     }
 
     pub(super) fn on_name(&self, x: f32, y: f32, row: usize) -> bool {
         match self.layout.mode {
             LayoutMode::Details | LayoutMode::Tree => self.layout.cols.first().is_some_and(|c| x < c.right()),
-            _ => self.row_rect(row).is_some_and(|c| self.item_parts(c).name.inset(0.0, -self.s(4.0)).contains(x, y)),
+            _ => self.row_rect(row).is_some_and(|c| self.item_parts(c).name.inset(0.0, -self.cs(4.0)).contains(x, y)),
         }
     }
 
     pub(super) fn name_edit_rect(&self, cell: Rect) -> Rect {
         let p = self.item_parts(cell);
-        let (s2, s4) = (self.s(2.0), self.s(4.0));
+        let (s2, s4) = (self.cs(2.0), self.cs(4.0));
         match self.layout.mode {
             LayoutMode::Cards => Rect::new(p.name.x - s4, p.name.y - s2, p.name.w + s4, p.name.h + 2.0 * s2),
             LayoutMode::Grid => Rect::new(p.body.x, p.name.y - s2, p.body.w, p.name.h + 2.0 * s2),
             _ => {
                 let x0 = p.icon.right() + s4;
-                let right = p.name.right() + self.s(10.0) - s4;
-                Rect::new(x0, cell.y + 1.0, (right - x0).max(self.s(60.0)), cell.h - 2.0)
+                let right = p.name.right() + self.cs(10.0) - s4;
+                Rect::new(x0, cell.y + 1.0, (right - x0).max(self.cs(60.0)), cell.h - 2.0)
             }
         }
     }

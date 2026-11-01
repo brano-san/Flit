@@ -1676,10 +1676,10 @@ impl App {
         let mut th = *th;
         th.text_selection = th.accent;
         let th = &th;
-        let font = self.ui_font(13.0);
+        let font = self.content_font(13.0);
         let m = g.metrics(font);
         let baseline = (rect.y + (rect.h + m.ascent - m.descent) / 2.0).round();
-        let (pad, radius, caret_w, inset) = (self.s(4.0), self.s(3.0), self.s(1.0).max(1.0), self.s(3.0));
+        let (pad, radius, caret_w, inset) = (self.cs(4.0), self.cs(3.0), self.cs(1.0).max(1.0), self.cs(3.0));
         let Some(r) = self.ops.rename.as_mut() else { return };
         r.rect = rect;
         let inner = Rect::new(rect.x + pad, rect.y, rect.w - 2.0 * pad, rect.h);
