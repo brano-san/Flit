@@ -285,6 +285,46 @@ fn inline_shell_items_come_without_duplicates() {
     }
 }
 
+unsafe fn solid_bitmap(bgra: [u8; 4]) -> windows::Win32::Graphics::Gdi::HBITMAP {
+    use windows::Win32::Graphics::Gdi::{CreateDIBSection, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS};
+    let bi = BITMAPINFO { bmiHeader: BITMAPINFOHEADER { biSize: size_of::<BITMAPINFOHEADER>() as u32, biWidth: 16, biHeight: -16, biPlanes: 1, biBitCount: 32, biCompression: BI_RGB.0, ..Default::default() }, ..Default::default() };
+    let mut bits = std::ptr::null_mut();
+    let hbm = CreateDIBSection(None, &bi, DIB_RGB_COLORS, &mut bits, None, 0).unwrap();
+    std::slice::from_raw_parts_mut(bits as *mut u8, 16 * 16 * 4).chunks_exact_mut(4).for_each(|p| p.copy_from_slice(&bgra));
+    hbm
+}
+
+unsafe fn add_item(hmenu: HMENU, id: u32, label: &str, bitmap: windows::Win32::Graphics::Gdi::HBITMAP) {
+    let mut text: Vec<u16> = label.encode_utf16().chain(Some(0)).collect();
+    let info = MENUITEMINFOW { cbSize: size_of::<MENUITEMINFOW>() as u32, fMask: MIIM_STRING | MIIM_ID | MIIM_BITMAP, wID: id, hbmpItem: bitmap, dwTypeData: windows::core::PWSTR(text.as_mut_ptr()), ..Default::default() };
+    InsertMenuItemW(hmenu, id, false, &info).unwrap();
+}
+
+#[test]
+fn shell_item_bitmaps_become_premultiplied_rgba_icons_and_callbacks_stay_bare() {
+    unsafe {
+        let hmenu = CreatePopupMenu().unwrap();
+        let icon = solid_bitmap([0x10, 0x20, 0xF0, 0x80]);
+        add_item(hmenu, 1, "Scan with Tool", icon);
+        add_item(hmenu, 2, "Drawn by its owner", HBMMENU_CALLBACK);
+        add_item(hmenu, 3, "Plain", windows::Win32::Graphics::Gdi::HBITMAP::default());
+        let (items, ids) = shell_items(None, hmenu);
+        assert_eq!(ids, [1, 2, 3]);
+        let images: Vec<Option<MenuImage>> = items.iter().map(|i| match i {
+            MenuItem::Command { image, .. } => image.clone(),
+            _ => None,
+        }).collect();
+        let Some(MenuImage::Pixels { bitmap, key }) = &images[0] else { panic!("{images:?}") };
+        assert_eq!((bitmap.width, bitmap.height), (16, 16));
+        assert_eq!(&bitmap.rgba[..4], [0x80, 0x20, 0x10, 0x80], "BGRA turns RGBA and no channel exceeds alpha");
+        assert!(images[1].is_none() && images[2].is_none());
+        let again = shell_items(None, hmenu).0;
+        assert!(matches!(&again[0], MenuItem::Command { image: Some(MenuImage::Pixels { key: k, .. }), .. } if k == key), "the second menu reuses the cached icon");
+        let _ = DestroyMenu(hmenu);
+        let _ = windows::Win32::Graphics::Gdi::DeleteObject(HGDIOBJ(icon.0));
+    }
+}
+
 #[test]
 fn a_command_picked_at_once_from_a_prepared_menu_reaches_the_worker_that_owns_it() {
     let _serial = serial();

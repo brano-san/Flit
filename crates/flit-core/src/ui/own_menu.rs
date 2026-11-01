@@ -147,9 +147,11 @@ impl App {
             }
             return true;
         }
-        if let (Some(m @ OwnMenu { view: None, .. }), Event::MouseMove { x, y }) = (self.own_menu.as_mut(), ev) {
+        if let (Some(m), Event::MouseMove { x, y }) = (self.own_menu.as_mut(), ev) {
             m.pointer = Some((*x, *y));
-            return true;
+            if m.view.is_none() {
+                return true;
+            }
         }
         if let Event::MouseDown { x, y, button: MouseButton::Right, .. } = ev {
             if self.own_menu.as_ref().is_some_and(|m| m.view.is_some()) && !self.over_own_menu(*x, *y) {
@@ -297,6 +299,13 @@ impl App {
         let (scale, bounds) = (self.scale, Rect::new(0.0, 0.0, self.size.0, self.size.1));
         let pins = self.own_menu.as_ref().and_then(|m| m.kind.pins()).map(|k| self.opts.pins[k].clone());
         let (active, preedit) = (self.active, self.preedit.clone());
+        let mut files = Vec::new();
+        if let Some(m) = &self.own_menu {
+            super::user_menu::file_images(&m.items, &mut files);
+        }
+        if !files.is_empty() {
+            self.request_menu_images(&files, super::context::image_px(scale), |k| g.has_image(k));
+        }
         let Some(m) = self.own_menu.as_mut() else { return };
         let view = m.view.get_or_insert_with(|| match m.kind {
             MenuKind::None => {

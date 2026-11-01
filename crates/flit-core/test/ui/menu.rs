@@ -135,18 +135,13 @@ fn background_menu_offers_sorting_new_items_paste_and_terminal() {
     let mut app = app_with(&[("a.txt", false)]);
     let menu = right_click(&mut app, None, false);
     assert!(menu.items.is_empty());
-    assert!(matches!(&menu.menu[0], MenuItem::Submenu { label, .. } if label == "View"));
-    assert!(matches!(&menu.menu[1], MenuItem::Submenu { label, .. } if label == "Sort"));
-    assert!(matches!(&menu.menu[2], MenuItem::Submenu { label, .. } if label == "Group"));
+    assert!(matches!(&menu.menu[0], MenuItem::Submenu { label, .. } if label == "Sort"));
+    assert!(matches!(&menu.menu[1], MenuItem::Submenu { label, .. } if label == "Group"));
     let labels = commands(&menu.menu);
-    for want in ["Details\tCtrl+Shift+1 *", "Tree\tCtrl+Shift+2", "List\tCtrl+Shift+3", "M Icons\tCtrl+Shift+4", "Cards", "Total Items", "Larger items\tCtrl+MouseWheelUp", "Name *", "Date Modified", "Refresh\tCtrl+R  F5", "Folder\tCtrl+Shift+N", "Shortcut", "Paste\tCtrl+V  Shift+Insert", "Open in terminal", "Pin to sidebar", "Copy path\tCtrl+Shift+C", "Properties\tShift+Alt+Enter"] {
+    for want in ["Total Items", "Name *", "Date Modified", "Refresh\tCtrl+R  F5", "Folder\tCtrl+Shift+N", "Shortcut", "Paste\tCtrl+V  Shift+Insert", "Open in terminal", "Pin to sidebar", "Copy path\tCtrl+Shift+C", "Properties\tShift+Alt+Enter"] {
         assert!(labels.iter().any(|l| l == want), "{want} missing from {labels:?}");
     }
-    run(&mut app, &menu, "L Icons");
-    assert_eq!((app.tab().mode, app.layout.mode, app.tab().zoom), (LayoutMode::Grid, LayoutMode::Grid, 60));
-    let menu = right_click(&mut app, None, false);
-    assert!(commands(&menu.menu).iter().any(|l| l == "L Icons\tCtrl+Shift+5 *"));
-    run(&mut app, &menu, "Details");
+    assert!(!labels.iter().any(|l| l.starts_with("Details") || l.starts_with("Cards")), "the bottom bar switches layouts, so the menu has no View submenu");
     run(&mut app, &menu, "Date Modified");
     assert_eq!(app.tab().view_spec.sort.field, SortField::Modified);
     let menu = right_click(&mut app, None, false);
@@ -156,6 +151,16 @@ fn background_menu_offers_sorting_new_items_paste_and_terminal() {
     let menu = right_click(&mut app, None, false);
     run(&mut app, &menu, "Folder");
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Op { op: crate::provider::FileOp::NewFolder { .. }, .. }, .. })));
+}
+
+#[test]
+fn background_properties_show_the_current_folder_even_with_a_selection() {
+    let mut app = app_with(&[("a.txt", false), ("sub", true)]);
+    let menu = right_click(&mut app, None, false);
+    app.tab_mut().view.as_mut().unwrap().select_all();
+    run(&mut app, &menu, "Properties");
+    let shown: Vec<Vec<FsPath>> = app.drain_effects().filter_map(|e| if let Effect::Properties(p) = e { Some(p) } else { None }).collect();
+    assert_eq!(shown, [vec![FsPath::parse(r"C:\x").unwrap()]]);
 }
 
 #[test]
@@ -200,11 +205,10 @@ fn windows_only_actions_disappear_everywhere_on_linux() {
 }
 
 #[test]
-fn folder_sizes_is_a_check_item_in_the_view_menu_and_keeps_its_shortcut() {
+fn folder_sizes_is_a_check_item_in_the_layout_menu_and_keeps_its_shortcut() {
     let mut app = app_with(&[("a.txt", false), ("sub", true)]);
     let checked = |app: &mut App| {
-        let menu = app.build_menu(false);
-        let Some(MenuItem::Submenu { items, .. }) = menu.into_iter().find(|i| matches!(i, MenuItem::Submenu { label, .. } if label == "View")) else { panic!("no View submenu") };
+        let items = app.build_layout_menu();
         items.iter().find_map(|i| match i {
             MenuItem::Command { label, checked, .. } if label == "Show folder sizes" => Some(*checked),
             _ => None,

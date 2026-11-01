@@ -72,7 +72,7 @@ fn the_panel_menu_lists_the_quick_group_in_sections_and_opens_at_a_middle_click_
 }
 
 #[test]
-fn the_background_menu_starts_with_own_view_sort_and_group_submenus() {
+fn the_background_menu_starts_with_own_sort_and_group_submenus() {
     let mut a = harness::app(&["a.txt"]);
     let r = a.layout.list;
     let (x, y) = (r.x + 120.0, r.bottom() - 20.0);
@@ -80,8 +80,8 @@ fn the_background_menu_starts_with_own_view_sort_and_group_submenus() {
     a.on_event(&Event::MouseUp { x, y, button: MouseButton::Right }, Instant::now());
     let m = shell_menu(&mut a);
     assert_eq!(m.kind, MenuKind::Background);
-    assert_eq!(labels(&m.menu)[..3], [format!("{} >", S::MenusView.t()), format!("{} >", S::MenusSort.t()), format!("{} >", S::MenusGroup.t())]);
-    let MenuItem::Submenu { items, .. } = &m.menu[1] else { panic!() };
+    assert_eq!(labels(&m.menu)[..2], [format!("{} >", S::MenusSort.t()), format!("{} >", S::MenusGroup.t())]);
+    let MenuItem::Submenu { items, .. } = &m.menu[0] else { panic!() };
     assert!(items.iter().any(|i| matches!(i, MenuItem::Command { mark: crate::ui::Mark::Sort(_), checked: true, .. })), "the sorted column is marked with its direction");
 }
 
@@ -92,7 +92,7 @@ fn pinning_asks_first_and_the_pins_persist_per_menu_kind() {
     let dir = a.tab().view_loc.path().clone();
     show(&mut a, ShellMenu { dir, items: Vec::new(), x: 200.0, y: 150.0, extended: false, menu, inline: false, shell: false, kind: MenuKind::Folder });
     let c = a.context_menu_open().expect("folder menus are own context menus");
-    let star = c.star_rect(c.rects[1]);
+    let star = c.star_rect(1);
     let (x, y) = (star.x + star.w / 2.0, star.y + star.h / 2.0);
     for ev in [Event::MouseMove { x, y }, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, Event::MouseUp { x, y, button: MouseButton::Left }] {
         a.on_event(&ev, Instant::now());
@@ -126,7 +126,7 @@ fn options_list_every_group_in_order_with_every_setting_and_search_highlights_ma
     let groups: Vec<&str> = Page::ALL.iter().map(|p| p.title()).collect();
     let shown: Vec<&str> = lines.iter().map(String::as_str).filter(|l| groups.contains(l)).collect();
     assert_eq!(shown, groups);
-    for s in SETTINGS.iter().filter(|s| !matches!(s.kind, Kind::Keys(..) | Kind::Strings(..))) {
+    for s in SETTINGS.iter().filter(|s| !matches!(s.kind, Kind::Keys(..) | Kind::Strings(..) | Kind::Menu(..))) {
         assert!(lines.iter().any(|l| l == s.id || *l == format!("off {}", s.id)), "{} is listed", s.id);
     }
     let at = |id: &str| lines.iter().position(|l| l == id || *l == format!("off {id}")).unwrap();

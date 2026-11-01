@@ -65,6 +65,20 @@ unsafe fn dib_bits(hbm: HBITMAP) -> Option<(u32, u32, Vec<u8>)> {
     (lines == h).then_some((w as u32, h as u32, buf))
 }
 
+pub(crate) unsafe fn menu_bitmap(hbm: HBITMAP) -> Option<Bitmap> {
+    let (width, height, mut rgba) = dib_bits(hbm)?;
+    let opaque = !rgba.chunks_exact(4).any(|p| p[3] != 0);
+    for p in rgba.chunks_exact_mut(4) {
+        p.swap(0, 2);
+        if opaque {
+            p[3] = 255;
+        }
+        let a = p[3];
+        p[..3].iter_mut().for_each(|c| *c = (*c).min(a));
+    }
+    Some(Bitmap { width, height, rgba })
+}
+
 fn bgra_to_rgba(px: &mut [u8], premultiply: bool) {
     for p in px.chunks_exact_mut(4) {
         p.swap(0, 2);

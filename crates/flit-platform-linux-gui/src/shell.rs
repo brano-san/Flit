@@ -129,7 +129,8 @@ impl Shell for LinuxShell {
     }
 
     fn icon(&mut self, req: &IconRequest) -> Option<Bitmap> {
-        crate::icons::icon(&icon_names(req), req.size)
+        let picture = (req.kind == IconKind::Thumbnail).then(|| self.thumbnail(req)).flatten();
+        picture.or_else(|| crate::icons::icon(&icon_names(req), req.size))
     }
 
     fn thumbnail(&mut self, req: &IconRequest) -> Option<Bitmap> {

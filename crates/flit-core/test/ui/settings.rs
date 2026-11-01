@@ -95,7 +95,7 @@ fn every_toggle_and_choice_reads_back_what_was_set() {
                 assert!(s.set(&mut a, Value::Paths(pages.clone())));
                 assert_eq!(s.get(&a), Value::Paths(pages));
             }
-            Kind::Text(..) | Kind::Pick(..) | Kind::Keys(..) | Kind::Strings(..) => {}
+            Kind::Text(..) | Kind::Pick(..) | Kind::Keys(..) | Kind::Strings(..) | Kind::Menu(..) => {}
         }
         assert!(!s.set(&mut a, Value::Text("wrong kind".into())) || matches!(s.kind, Kind::Text(..) | Kind::Pick(..)));
     }

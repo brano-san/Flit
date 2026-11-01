@@ -141,7 +141,7 @@ fn draws_labels_keys_checks_and_arrows() {
 
 #[test]
 fn headers_and_disabled_commands_are_shown_but_never_picked() {
-    let later = MenuItem::Command { label: "Later".into(), keys: "Ctrl+E".into(), checked: false, stay: false, mark: Mark::None, icon: "\u{E8B7}", disabled: true };
+    let later = MenuItem::Command { label: "Later".into(), keys: "Ctrl+E".into(), checked: false, stay: false, mark: Mark::None, icon: "\u{E8B7}", image: None, disabled: true };
     let items = vec![MenuItem::Header("Folder".into()), later, cmd("Open")];
     let mut v = MenuView::new(&items, 100.0, 100.0, screen(), 1.0, &mut Gfx::new(Mono, 256));
     assert_eq!(v.key(Key::Down), MenuOutcome::Open);

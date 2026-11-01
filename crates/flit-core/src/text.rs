@@ -249,6 +249,10 @@ impl<B: TextBackend> Gfx<B> {
         self.images.contains_key(&key)
     }
 
+    pub fn image_size(&self, key: u64) -> Option<(u32, u32)> {
+        self.images.get(&key).map(|i| (i.w, i.h))
+    }
+
     pub fn add_image(&mut self, key: u64, w: u32, h: u32, rgba: Vec<u8>) {
         debug_assert_eq!(rgba.len(), (w * h * 4) as usize);
         self.images.insert(key, Image { w, h, rgba, slot: None });

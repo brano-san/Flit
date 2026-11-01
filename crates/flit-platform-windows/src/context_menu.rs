@@ -1,18 +1,18 @@
 use crate::err;
 use flit_core::input::Event;
 use flit_core::path::PathKind;
-use flit_core::ui::{MenuItem, ShellMenu, SHELL_VERBS};
+use flit_core::ui::{MenuImage, MenuItem, ShellMenu, SHELL_VERBS};
 use flit_core::FsPath;
 use flit_platform::PlatformError;
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::CStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use windows::core::{w, Interface, PCSTR, PCWSTR, PSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
-use windows::Win32::Graphics::Gdi::ClientToScreen;
+use windows::Win32::Graphics::Gdi::{ClientToScreen, GetObjectW, BITMAP, HGDIOBJ};
 use windows::Win32::System::Com::IDataObject;
 use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL, THREAD_PRIORITY_NORMAL};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_SHIFT};
@@ -63,6 +63,8 @@ const WINDOWS_VERBS: [&str; 29] = [
     "wsl",
 ];
 const CMIC_MASK_UNICODE: u32 = 0x4000;
+const LAST_MENU_BITMAP: isize = 11;
+const MAX_IMAGES: usize = 256;
 const THIS_PC: &str = "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
 const RECYCLE_BIN: &str = "::{645FF040-5081-101B-9F08-00AA002F954E}";
 
@@ -141,6 +143,7 @@ thread_local! {
     static SHOWN: RefCell<Option<Shown>> = const { RefCell::new(None) };
     static PREPARED: RefCell<Option<Prepared>> = const { RefCell::new(None) };
     static BUSY: Cell<bool> = const { Cell::new(false) };
+    static IMAGES: RefCell<HashMap<(String, i32, i32), Option<MenuImage>>> = RefCell::new(HashMap::new());
 }
 
 static CURRENT: AtomicU64 = AtomicU64::new(0);
@@ -685,6 +688,28 @@ unsafe fn item_text(hmenu: HMENU, i: i32) -> String {
     String::from_utf16_lossy(&buf[..info.cch as usize])
 }
 
+pub(crate) unsafe fn item_image(hmenu: HMENU, i: i32, label: &str) -> Option<MenuImage> {
+    let mut info = MENUITEMINFOW { cbSize: size_of::<MENUITEMINFOW>() as u32, fMask: MIIM_BITMAP | MIIM_CHECKMARKS, ..Default::default() };
+    GetMenuItemInfoW(hmenu, i as u32, true, &mut info).ok()?;
+    let hbm = [info.hbmpItem, info.hbmpUnchecked].into_iter().find(|h| !(-1..=LAST_MENU_BITMAP).contains(&(h.0 as isize)))?;
+    let mut bm = BITMAP::default();
+    if GetObjectW(HGDIOBJ(hbm.0), size_of::<BITMAP>() as i32, Some(&mut bm as *mut BITMAP as *mut _)) == 0 {
+        return None;
+    }
+    let key = (label.to_owned(), bm.bmWidth, bm.bmHeight);
+    if let Some(hit) = IMAGES.with_borrow(|c| c.get(&key).cloned()) {
+        return hit;
+    }
+    let image = crate::shell::menu_bitmap(hbm).map(MenuImage::pixels);
+    IMAGES.with_borrow_mut(|c| {
+        if c.len() >= MAX_IMAGES {
+            c.clear();
+        }
+        c.insert(key, image.clone());
+    });
+    image
+}
+
 pub(crate) unsafe fn convert(menu: Option<&IContextMenu>, hmenu: HMENU, from: i32, depth: usize, items: &mut Vec<MenuItem>, ids: &mut Vec<u32>) {
     for i in from.max(0)..GetMenuItemCount(Some(hmenu)) {
         let mut info = MENUITEMINFOW { cbSize: size_of::<MENUITEMINFOW>() as u32, fMask: MIIM_ID | MIIM_SUBMENU | MIIM_STATE | MIIM_FTYPE, ..Default::default() };
@@ -719,7 +744,8 @@ pub(crate) unsafe fn convert(menu: Option<&IContextMenu>, hmenu: HMENU, from: i3
             continue;
         }
         let disabled = info.fState.0 & MFS_DISABLED.0 != 0;
-        items.push(MenuItem::Command { label, keys, checked: info.fState.0 & MFS_CHECKED.0 != 0, stay: false, mark: flit_core::ui::Mark::None, icon: "", disabled });
+        let image = item_image(hmenu, i, &label);
+        items.push(MenuItem::Command { label, keys, checked: info.fState.0 & MFS_CHECKED.0 != 0, stay: false, mark: flit_core::ui::Mark::None, icon: "", image, disabled });
         ids.push(info.wID);
     }
     if matches!(items.last(), Some(MenuItem::Separator)) {

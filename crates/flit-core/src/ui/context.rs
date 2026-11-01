@@ -1,7 +1,7 @@
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
 use super::fuzzy::fuzzy;
-use super::menu::{Mark, MenuItem};
+use super::menu::{Mark, MenuImage, MenuItem};
 use super::popup::MenuOutcome;
 use super::widgets::{baseline, Button, Paint};
 use crate::i18n::S;
@@ -12,18 +12,19 @@ use crate::theme::{ink_on, Theme};
 use std::cmp::Reverse;
 use std::ops::Range;
 
-const ROW_H: f32 = 28.0;
-const SEPARATOR_H: f32 = 9.0;
-const FIELD_H: f32 = 30.0;
+const ROW_H: f32 = 24.0;
+const SEPARATOR_H: f32 = 7.0;
+const FIELD_H: f32 = 28.0;
 const PAD: f32 = 4.0;
-const ICON_W: f32 = 28.0;
-const INDENT: f32 = 20.0;
-const SIDE_W: f32 = 28.0;
-const STAR_W: f32 = 24.0;
-const KEYS_GAP: f32 = 32.0;
-const MIN_W: f32 = 280.0;
-const MAX_W: f32 = 560.0;
-const SCROLL_W: f32 = 12.0;
+const ICON_W: f32 = 26.0;
+const INDENT: f32 = 16.0;
+const SIDE_W: f32 = 22.0;
+const STAR_W: f32 = 22.0;
+const KEYS_GAP: f32 = 24.0;
+const MIN_W: f32 = 232.0;
+const IMAGE_PX: f32 = 16.0;
+const MAX_W: f32 = 480.0;
+const SCROLL_W: f32 = 10.0;
 const FONT_PX: f32 = 13.0;
 const ICON_PX: f32 = 11.0;
 const ARM_DISTANCE: f32 = 4.0;
@@ -59,7 +60,7 @@ impl MenuKind {
 
 #[derive(Clone, Debug, PartialEq)]
 enum What {
-    Command { id: usize, checked: bool, stay: bool, mark: Mark, icon: &'static str, disabled: bool },
+    Command { id: usize, checked: bool, stay: bool, mark: Mark, icon: &'static str, image: Option<MenuImage>, disabled: bool },
     Submenu { end: usize },
     Header,
     Separator,
@@ -115,6 +116,7 @@ pub struct ContextMenu {
     width: f32,
     pub floor_w: f32,
     glow: super::widgets::Glow<usize>,
+    star_glow: super::widgets::Glow<usize>,
     glow_at: Option<std::time::Instant>,
 }
 
@@ -126,8 +128,8 @@ fn flatten(items: &[MenuItem], depth: usize, parent: &str, next: &mut usize, out
         };
         let path = if parent.is_empty() || label.is_empty() { label.clone() } else { format!("{parent}{PATH_SEP}{label}") };
         match item {
-            MenuItem::Command { keys, checked, stay, mark, icon, disabled, .. } => {
-                out.push(Node { label, path, keys: keys.clone(), depth, what: What::Command { id: *next, checked: *checked, stay: *stay, mark: *mark, icon, disabled: *disabled } });
+            MenuItem::Command { keys, checked, stay, mark, icon, image, disabled, .. } => {
+                out.push(Node { label, path, keys: keys.clone(), depth, what: What::Command { id: *next, checked: *checked, stay: *stay, mark: *mark, icon, image: image.clone(), disabled: *disabled } });
                 *next += 1;
             }
             MenuItem::Submenu { items, .. } => {
@@ -177,6 +179,7 @@ impl ContextMenu {
             width: 0.0,
             floor_w: 0.0,
             glow: Default::default(),
+            star_glow: Default::default(),
             glow_at: None,
         };
         m.rebuild();
@@ -302,8 +305,7 @@ impl ContextMenu {
             }
             let keys = if n.keys.is_empty() { 0.0 } else { KEYS_GAP * s + g.measure(&n.keys, font) };
             let own = (ICON_W + INDENT * n.depth as f32) * s + g.measure(&n.label, font);
-            let path = ICON_W * s + g.measure(&n.path, font);
-            w = w.max(own.max(path) + keys + (STAR_W + SIDE_W + 2.0 * PAD + SCROLL_W) * s);
+            w = w.max(own + keys + (STAR_W + SIDE_W + 2.0 * PAD + SCROLL_W) * s);
         }
         self.width = w.min(MAX_W * s).min(self.bounds.w).ceil();
         self.layout();
@@ -358,8 +360,21 @@ impl ContextMenu {
             .collect()
     }
 
-    pub(super) fn star_rect(&self, row: Rect) -> Rect {
-        Rect::new(row.right() - SIDE_W * self.scale - STAR_W * self.scale, row.y, STAR_W * self.scale, row.h)
+    fn side_used(&self, k: usize) -> bool {
+        match self.rows.get(k) {
+            Some(Row::Node { node, .. }) => match &self.nodes[*node].what {
+                What::Command { mark, checked, .. } => *mark != Mark::None || *checked,
+                What::Submenu { .. } => true,
+                What::Header | What::Separator => false,
+            },
+            _ => false,
+        }
+    }
+
+    pub(super) fn star_rect(&self, k: usize) -> Rect {
+        let row = self.rects.get(k).copied().unwrap_or_default();
+        let side = if self.side_used(k) { SIDE_W * self.scale } else { 0.0 };
+        Rect::new(row.right() - side - STAR_W * self.scale, row.y, STAR_W * self.scale, row.h)
     }
 
     fn pinnable(&self, row: usize) -> bool {
@@ -383,7 +398,7 @@ impl ContextMenu {
             return Some(CtxHit::Box);
         }
         let Some(k) = self.rects.iter().position(|r| r.contains(x, y)) else { return Some(CtxHit::Box) };
-        if self.pinnable(k) && self.star_rect(self.rects[k]).contains(x, y) {
+        if self.pinnable(k) && self.star_rect(k).contains(x, y) {
             return Some(CtxHit::Star(k));
         }
         Some(CtxHit::Row(k))
@@ -453,7 +468,7 @@ impl ContextMenu {
 
     fn pin_outcome(&self, k: usize) -> MenuOutcome {
         let Some(Row::Node { node, pinned, .. }) = self.rows.get(k) else { return MenuOutcome::Open };
-        MenuOutcome::Pin(self.nodes[*node].path.clone(), !pinned, self.star_rect(self.rects[k]))
+        MenuOutcome::Pin(self.nodes[*node].path.clone(), !pinned, self.star_rect(k))
     }
 
     fn activate(&mut self, k: usize) -> MenuOutcome {
@@ -600,8 +615,15 @@ impl ContextMenu {
             Some(Row::Node { node, .. }) => Some(*node),
             _ => None,
         });
+        let star = match self.hover {
+            Some(CtxHit::Star(k)) => match self.rows.get(k) {
+                Some(Row::Node { node, .. }) => Some(*node),
+                _ => None,
+            },
+            _ => None,
+        };
         self.glow_at = Some(now);
-        self.glow.aim(hot, animate, now)
+        self.glow.aim(hot, animate, now) | self.star_glow.aim(star, animate, now)
     }
 
     pub fn draw<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, active: bool, preedit: &Preedit) {
@@ -647,7 +669,7 @@ impl ContextMenu {
             let depth = if *path { 0.0 } else { n.depth as f32 };
             let x0 = r.x + depth * INDENT * s;
             let side = Rect::new(r.right() - SIDE_W * s, r.y, SIDE_W * s, r.h);
-            let star = self.star_rect(r);
+            let star = self.star_rect(k);
             let text_y = baseline(p.g, r, font);
             let keys_w = if n.keys.is_empty() { 0.0 } else { p.g.measure(&n.keys, font) };
             let star_on = *pinned || (hot && self.pinnable(k) && self.hover.is_some());
@@ -656,15 +678,26 @@ impl ContextMenu {
             let room = keys_right - label_x - if keys_w > 0.0 { keys_w + KEYS_GAP * s } else { 0.0 };
             let text = if *path { &n.path } else { &n.label };
             p.marked((label_x, text_y), text, marks, font, (ink, mark), room);
-            if let What::Command { icon, .. } = &n.what {
-                if !icon.is_empty() {
-                    p.centered(Rect::new(x0, r.y, ICON_W * s, r.h), icon, icons, if off && !hot { dim } else { ink });
+            if let What::Command { icon, image, .. } = &n.what {
+                let slot = Rect::new(x0, r.y, ICON_W * s, r.h);
+                let shown = image.as_ref().is_some_and(|i| draw_image(p.g, i, slot, s, if off && !hot { OFF } else { 0xFF }));
+                if !shown && !icon.is_empty() {
+                    p.centered(slot, icon, icons, if off && !hot { dim } else { ink });
                 }
             }
             if keys_w > 0.0 {
                 p.g.text(keys_right - keys_w - PAD * s, text_y, &n.keys, font, dim, f32::INFINITY);
             }
             if star_on {
+                let lit = match self.glow_at {
+                    Some(now) => self.star_glow.alpha(*node, now),
+                    None => f32::from(u8::from(self.hover == Some(CtxHit::Star(k)))),
+                };
+                if lit > 0.0 {
+                    let pad = (3.0 * s).round();
+                    let back = if hot { ink_on(t.accent_fill).alpha(0x38) } else { t.button_hover };
+                    p.g.dl.round_rect(Rect::new(star.x + 1.0, star.y + pad, star.w - 2.0, star.h - 2.0 * pad), super::widgets::faded(back, lit), 3.0 * s);
+                }
                 let ink = if *pinned && !hot { t.accent } else { dim };
                 p.centered(star, G_PIN, icons, ink);
             }
@@ -694,6 +727,24 @@ impl ContextMenu {
             }
         }
     }
+}
+
+pub(super) fn image_px(scale: f32) -> u32 {
+    (IMAGE_PX * scale).round() as u32
+}
+
+pub(super) fn draw_image<B: TextBackend>(g: &mut Gfx<B>, image: &MenuImage, slot: Rect, scale: f32, alpha: u8) -> bool {
+    let px = image_px(scale);
+    let key = image.key(px);
+    if let MenuImage::Pixels { bitmap, .. } = image {
+        if !g.has_image(key) {
+            g.add_image(key, bitmap.width, bitmap.height, bitmap.rgba.clone());
+        }
+    }
+    let Some((w, h)) = g.image_size(key).map(|(w, h)| (w.max(1) as f32, h.max(1) as f32)) else { return false };
+    let k = px as f32 / w.max(h);
+    let (dw, dh) = ((w * k).round(), (h * k).round());
+    g.image_alpha(key, Rect::new((slot.x + (slot.w - dw) / 2.0).round(), (slot.y + (slot.h - dh) / 2.0).round(), dw, dh), alpha)
 }
 
 fn font(scale: f32) -> FontStyle {

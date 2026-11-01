@@ -2,6 +2,7 @@ pub mod a11y;
 pub mod archive;
 pub mod atlas;
 pub mod caps;
+pub mod cmdline;
 pub mod digest;
 pub mod desktop_ini;
 pub mod filter;

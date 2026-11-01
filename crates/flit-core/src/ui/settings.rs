@@ -1,4 +1,5 @@
 use super::home::Widget;
+use super::user_menu::{self, UserEntry};
 use super::layouts::LAYOUTS;
 use super::tabbar::Startup;
 use super::options::{self, CharKey, InspectorAt, NewTabShow, Recents};
@@ -137,6 +138,7 @@ pub enum Kind {
     Pick(Picker, fn(&App) -> String, fn(&mut App, String)),
     Keys(fn(&App) -> Arc<Keymap>, fn(&mut App, Arc<Keymap>)),
     Strings(fn(&App) -> Vec<String>, fn(&mut App, Vec<String>)),
+    Menu(fn(&App) -> Vec<UserEntry>, fn(&mut App, Vec<UserEntry>)),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -162,6 +164,7 @@ pub enum Value {
     Text(String),
     Keys(Arc<Keymap>),
     Strings(Vec<String>),
+    Menu(Vec<UserEntry>),
 }
 
 const fn toggle(id: &'static str, page: Page, title: S, help: S, get: fn(&App) -> bool, set: fn(&mut App, bool)) -> Setting {
@@ -410,6 +413,7 @@ pub static SETTINGS: &[Setting] = &[
     Setting { id: "menu.pins_file", page: Page::Advanced, title: S::OptionsTitlePinsFile, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.opts.pins[0].clone(), |a, v| a.opts.pins[0] = v) },
     Setting { id: "menu.pins_folder", page: Page::Advanced, title: S::OptionsTitlePinsFolder, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.opts.pins[1].clone(), |a, v| a.opts.pins[1] = v) },
     Setting { id: "menu.pins_background", page: Page::Advanced, title: S::OptionsTitlePinsBackground, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.opts.pins[2].clone(), |a, v| a.opts.pins[2] = v) },
+    Setting { id: "menu.custom", page: Page::Interface, title: S::UserMenuGroup, help: S::UserMenuHelp, kind: Kind::Menu(|a| a.opts.user_menu.clone(), |a, v| a.opts.user_menu = v) },
 ];
 
 impl Setting {
@@ -426,6 +430,7 @@ impl Setting {
             Kind::Text(get, _) | Kind::Pick(_, get, _) => Value::Text(get(a)),
             Kind::Keys(get, _) => Value::Keys(get(a)),
             Kind::Strings(get, _) => Value::Strings(get(a)),
+            Kind::Menu(get, _) => Value::Menu(get(a)),
         }
     }
 
@@ -439,6 +444,7 @@ impl Setting {
             (Kind::Pick(picker, _, set), Value::Text(t)) if picker.accepts(&t) => set(a, t),
             (Kind::Keys(_, set), Value::Keys(k)) => set(a, k),
             (Kind::Strings(_, set), Value::Strings(v)) if v.len() <= MAX_PATHS && v.iter().all(|t| t.len() <= MAX_TEXT) => set(a, v),
+            (Kind::Menu(_, set), Value::Menu(v)) if v.len() <= user_menu::MAX_ENTRIES => set(a, v),
             _ => return false,
         }
         true
@@ -454,6 +460,7 @@ impl Setting {
             (_, Value::Choice(i)) => Json::from(*i),
             (_, Value::Keys(k)) => k.to_json(),
             (_, Value::Strings(v)) => Json::Array(v.iter().map(|t| Json::String(t.clone())).collect()),
+            (_, Value::Menu(v)) => user_menu::to_json(v),
         }
     }
 
@@ -476,6 +483,7 @@ impl Setting {
                 let items = j.as_array().filter(|a| a.len() <= MAX_PATHS)?;
                 items.iter().map(|t| t.as_str().filter(|t| t.len() <= MAX_TEXT).map(str::to_owned)).collect::<Option<Vec<_>>>().map(Value::Strings)
             }
+            Kind::Menu(..) => user_menu::from_json(j).map(Value::Menu),
         }
     }
 

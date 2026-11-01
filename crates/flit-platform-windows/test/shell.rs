@@ -187,3 +187,17 @@ fn shell_icons_match_requested_size() {
         assert_eq!(b.rgba.len(), (b.width * b.height * 4) as usize);
     }
 }
+
+#[test]
+fn quoted_arguments_come_back_whole_through_command_line_to_argv() {
+    let args: Vec<String> = [r"C:\plain", "a b", "", r"C:\My Folder\", r#"say "hi""#, r#"a\"b"#, r"tail\\", "tab\there", "%PATH% & echo ^x"].iter().map(|s| (*s).to_owned()).collect();
+    let line = format!("x.exe {}", flit_core::cmdline::join(&args, false));
+    let wide: Vec<u16> = line.encode_utf16().chain(Some(0)).collect();
+    let mut n = 0;
+    let argv = unsafe { CommandLineToArgvW(PCWSTR(wide.as_ptr()), &mut n) };
+    let parsed: Vec<String> = (1..n as usize).map(|k| unsafe { (*argv.add(k)).to_string().unwrap() }).collect();
+    unsafe {
+        let _ = windows::Win32::Foundation::LocalFree(Some(windows::Win32::Foundation::HLOCAL(argv as _)));
+    }
+    assert_eq!(parsed, args, "{line}");
+}

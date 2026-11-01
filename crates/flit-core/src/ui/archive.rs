@@ -63,6 +63,7 @@ pub(super) enum Kind {
     Hashes(Hashing),
     Properties(super::properties::Measuring),
     GitClone,
+    UserMenu { at: Option<super::user_menu::EntryAt>, submenu: bool },
 }
 
 impl Kind {
@@ -74,6 +75,7 @@ impl Kind {
             Kind::Hashes(_) => "hashes",
             Kind::Properties(_) => "properties",
             Kind::GitClone => "git_clone",
+            Kind::UserMenu { .. } => "user_menu",
         }
     }
 }
@@ -679,6 +681,7 @@ impl App {
             Kind::Hashes(_) => self.submit_hashes(f),
             Kind::Properties(_) => None,
             Kind::GitClone => self.submit_clone(f),
+            Kind::UserMenu { .. } => self.submit_user_entry(f),
         };
         if self.jobs.form.is_none() {
             self.jobs.form = keep;

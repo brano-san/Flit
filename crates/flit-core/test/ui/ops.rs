@@ -854,10 +854,10 @@ fn right_click_on_the_bin_background_empties_restores_sorts_and_shows_properties
     select(&mut app, &[]);
     let menu = app.build_menu(false);
     let rows = menu_rows(&menu);
-    assert_eq!(rows[..4], ["View >", "Sort >", "Group >", "Refresh"], "{rows:?}");
+    assert_eq!(rows[..3], ["Sort >", "Group >", "Refresh"], "{rows:?}");
     let tail = &rows[rows.len() - 4..];
     assert_eq!(tail, ["Empty Recycle Bin", "Restore all items", "-", "Properties"], "{rows:?}");
-    let MenuItem::Submenu { items: sorts, .. } = &menu[1] else { panic!() };
+    let MenuItem::Submenu { items: sorts, .. } = &menu[0] else { panic!() };
     assert!(menu_rows(sorts).iter().any(|l| l == "Original Location"), "{:?}", menu_rows(sorts));
     run_menu(&mut app, &menu, "Restore all items");
     key(&mut app, Key::Enter, NO);

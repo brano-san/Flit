@@ -64,12 +64,12 @@ fn the_star_of_a_command_asks_to_pin_it_and_of_a_pinned_one_to_unpin_it() {
     let mut g = crate::text::Gfx::new(crate::text::tests::Mono, 256);
     c.measure(&mut g);
     let row = c.rows.iter().position(|r| matches!(r, Row::Node { node, .. } if c.nodes[*node].label == "Open")).unwrap();
-    let star = c.star_rect(c.rects[row]);
+    let star = c.star_rect(row);
     let (x, y) = (star.x + star.w / 2.0, star.y + star.h / 2.0);
     c.mouse_move(x, y);
     c.mouse_down(x, y, 1);
     assert!(matches!(c.mouse_up(x, y), MenuOutcome::Pin(k, true, _) if k == "Open"));
-    let star = c.star_rect(c.rects[0]);
+    let star = c.star_rect(0);
     let (x, y) = (star.x + star.w / 2.0, star.y + star.h / 2.0);
     c.mouse_move(x, y);
     c.mouse_down(x, y, 1);
@@ -89,4 +89,52 @@ fn long_menus_scroll_inside_the_window() {
     press(&mut c, Key::End);
     let last = *c.rects.last().unwrap();
     assert!(last.bottom() <= c.list.bottom() + 0.5, "End reveals the last command");
+}
+
+#[test]
+fn the_pin_sits_flush_with_the_row_edge_unless_a_mark_or_arrow_takes_it() {
+    let mut c = menu(&[]);
+    c.measure(&mut crate::text::Gfx::new(crate::text::tests::Mono, 256));
+    assert_eq!(c.star_rect(0).right(), c.rects[0].right(), "a plain command has nothing at its edge");
+    let view = c.labels().iter().position(|l| l == "View >").unwrap();
+    assert_eq!(c.star_rect(view).right(), c.rects[view].right() - SIDE_W, "the submenu arrow keeps its column");
+}
+
+#[test]
+fn hovering_the_pin_fades_its_button_in_and_settles() {
+    let fade = crate::ui::widgets::HOVER_FADE;
+    let mut c = menu(&[]);
+    c.measure(&mut crate::text::Gfx::new(crate::text::tests::Mono, 256));
+    let star = c.star_rect(0);
+    let t0 = std::time::Instant::now();
+    c.mouse_move(star.x + star.w / 2.0, star.y + star.h / 2.0);
+    assert!(c.settle_glow(t0, true), "the pin button starts fading in");
+    assert!(c.star_glow.alpha(0, t0 + fade / 2) < 1.0);
+    assert!(!c.settle_glow(t0 + fade, true), "and stops asking for frames");
+    assert_eq!(c.star_glow.alpha(0, t0 + fade), 1.0);
+    c.mouse_move(c.rects[0].x + 40.0, c.rects[0].y + 4.0);
+    assert!(!c.settle_glow(t0, false), "without animations the glow is instant");
+    assert_eq!(c.star_glow.alpha(0, t0), 0.0);
+}
+
+#[test]
+fn commands_with_bitmaps_upload_and_draw_them_in_the_icon_slot() {
+    let image = MenuImage::pixels(crate::ui::Bitmap { width: 2, height: 2, rgba: vec![255; 16] });
+    let key = image.key(16);
+    let item = MenuItem::Command { label: "Scan".into(), keys: String::new(), checked: false, stay: false, mark: Mark::None, icon: "", image: Some(image), disabled: false };
+    let mut c = ContextMenu::new(&[item], MenuKind::File, Vec::new(), (10.0, 10.0), Rect::new(0.0, 0.0, 600.0, 400.0), 1.0);
+    let mut g = crate::text::Gfx::new(crate::text::tests::Mono, 256);
+    c.measure(&mut g);
+    let before = g.dl.instances.len();
+    c.draw(&mut g, &crate::theme::DARK, true, &Default::default());
+    assert!(g.has_image(key) && g.dl.instances.len() > before);
+    assert_eq!(g.image_size(key), Some((2, 2)));
+}
+
+#[test]
+fn rows_are_compact() {
+    let mut c = menu(&[]);
+    c.measure(&mut crate::text::Gfx::new(crate::text::tests::Mono, 256));
+    assert_eq!(c.rects[0].h, 24.0);
+    assert!(c.rect.w <= 240.0, "{}", c.rect.w);
 }

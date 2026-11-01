@@ -93,6 +93,10 @@ pub(super) enum Btn {
     RequestFeature,
     Repository,
     Privacy,
+    NewEntry,
+    NewSubmenu,
+    Edit,
+    Up,
 }
 
 impl Btn {
@@ -141,12 +145,18 @@ impl Btn {
             Btn::RequestFeature => S::SettingsPageButtonRequestFeature.t(),
             Btn::Repository => S::SettingsPageButtonRepository.t(),
             Btn::Privacy => S::SettingsPageButtonPrivacy.t(),
+            Btn::NewEntry => S::UserMenuNewEntry.t(),
+            Btn::NewSubmenu => S::UserMenuNewSubmenu.t(),
+            Btn::Edit => S::UserMenuEdit.t(),
+            Btn::Up => S::UserMenuUp.t(),
         }
     }
 }
 
 const PATH_BUTTONS: &[Btn] = &[Btn::AddHome, Btn::AddCurrent, Btn::AddTyped];
 const TAG_BUTTONS: &[Btn] = &[Btn::Rename, Btn::Recolor, Btn::Delete];
+const ENTRY_BUTTONS: &[Btn] = &[Btn::Up, Btn::Edit, Btn::Delete];
+const USER_BUTTONS: &[Btn] = &[Btn::NewEntry, Btn::NewSubmenu];
 const FILE_BUTTONS: &[Btn] = &[Btn::OpenFile, Btn::Export, Btn::Import];
 const LOG_BUTTONS: &[Btn] = &[Btn::OpenLog, Btn::OpenLogs];
 const HELP_BUTTONS: &[Btn] = &[Btn::Docs, Btn::ReportBug, Btn::RequestFeature];
@@ -164,6 +174,7 @@ enum Line {
     Path(usize, usize),
     Buttons(Option<usize>, &'static [Btn]),
     Tag(usize),
+    Entry(super::user_menu::EntryAt),
     Info(&'static str, String),
 }
 
@@ -207,7 +218,7 @@ impl Line {
             Line::Setting(_) | Line::Off(_) => room(0.0, fit.body).max(control),
             Line::Path(..) => room(ITEM_H, fit.body),
             Line::Buttons(..) => 0.0,
-            Line::Tag(_) => room(TAG_H, fit.body).max(control + s(4.0)),
+            Line::Tag(_) | Line::Entry(_) => room(TAG_H, fit.body).max(control + s(4.0)),
             Line::Info(..) => room(INFO_H, fit.small),
         }
     }
@@ -224,6 +235,7 @@ impl Line {
         match self {
             Line::Buttons(_, b) => b,
             Line::Tag(_) => TAG_BUTTONS,
+            Line::Entry(_) => ENTRY_BUTTONS,
             _ => &[],
         }
     }
@@ -494,7 +506,7 @@ fn remove_rect(r: Rect, s: impl Fn(f32) -> f32) -> Rect {
 }
 
 fn glyph_w(btn: &Btn, s: impl Fn(f32) -> f32) -> f32 {
-    if matches!(btn, Btn::AddHome | Btn::AddCurrent | Btn::NewTag) { s(18.0) } else { 0.0 }
+    if matches!(btn, Btn::AddHome | Btn::AddCurrent | Btn::NewTag | Btn::NewEntry | Btn::NewSubmenu) { s(18.0) } else { 0.0 }
 }
 
 fn button_rects(line: &Line, r: Rect, fit: &Fit, s: impl Fn(f32) -> f32) -> Vec<Rect> {
@@ -502,10 +514,11 @@ fn button_rects(line: &Line, r: Rect, fit: &Fit, s: impl Fn(f32) -> f32) -> Vec<
     let gap = s(BUTTON_GAP);
     let natural = |btn: &Btn| (fit.label(*btn) + s(BUTTON_PAD) + glyph_w(btn, &s)).ceil();
     match line {
-        Line::Tag(_) => {
+        Line::Tag(_) | Line::Entry(_) => {
             let y = r.y + ((r.h - h) / 2.0).round();
             let mut right = r.right() - s(PAD);
-            let mut out: Vec<Rect> = TAG_BUTTONS
+            let mut out: Vec<Rect> = line
+                .buttons()
                 .iter()
                 .rev()
                 .map(|btn| {
@@ -580,6 +593,7 @@ impl App {
                 Line::Path(i, k) => format!("{} #{k}", SETTINGS[*i].id),
                 Line::Buttons(_, b) => b.iter().map(|b| b.label()).collect::<Vec<_>>().join(" | "),
                 Line::Tag(k) => self.tag_defs().get(*k).map_or_else(String::new, |t| format!("tag {}", t.name)),
+                Line::Entry(at) => self.user_line_text(*at),
                 Line::Info(label, value) => format!("{label}: {value}"),
             })
             .collect()
@@ -765,12 +779,20 @@ impl App {
                 out.push(Line::Buttons(None, LINK_BUTTONS));
                 out.push(Line::Note(NO_TELEMETRY.t()));
             }
-            Page::Interface | Page::Colors | Page::Files | Page::Data | Page::Input | Page::Windows => {}
+            Page::Interface => {
+                out.push(Line::Group(S::UserMenuGroup.t()));
+                if self.opts.user_menu.is_empty() {
+                    out.push(Line::Note(S::UserMenuEmpty.t()));
+                }
+                out.extend(self.user_lines().into_iter().map(Line::Entry));
+                out.push(Line::Buttons(None, USER_BUTTONS));
+            }
+            Page::Colors | Page::Files | Page::Data | Page::Input | Page::Windows => {}
         }
     }
 
     fn setting_lines(&self, i: usize, out: &mut Vec<Line>) {
-        if let Kind::Keys(..) | Kind::Strings(..) = SETTINGS[i].kind {
+        if let Kind::Keys(..) | Kind::Strings(..) | Kind::Menu(..) = SETTINGS[i].kind {
             return;
         }
         if !SETTINGS[i].enabled(self) {
@@ -1002,6 +1024,7 @@ impl App {
                     Some(p)
                 }
                 Line::Tag(n) => Some(t.add(section, id, Role::Group, self.tag_defs().get(*n).map_or("", |tag| tag.name.as_str()), r)),
+                Line::Entry(e) => Some(t.add(section, id, Role::Group, self.user_entry_name(*e), r)),
                 Line::Buttons(..) => None,
             };
             let mut subs = Vec::new();
@@ -1184,6 +1207,13 @@ impl App {
 
     fn press_button(&mut self, line: &Line, b: usize) {
         let Some(&btn) = line.buttons().get(b) else { return };
+        if let Line::Entry(at) = line {
+            return match btn {
+                Btn::Up => self.raise_user_entry(*at),
+                Btn::Edit => self.edit_user_entry(*at),
+                _ => self.delete_user_entry(*at),
+            };
+        }
         let owner = match line {
             Line::Buttons(Some(i), _) => Some(*i),
             _ => None,
@@ -1200,6 +1230,8 @@ impl App {
             }
             (Btn::AddTyped, Some(i), _) => self.open_setting_editor(SettingPick::AddPath(i), ""),
             (Btn::NewTag, ..) => self.new_tag(false),
+            (Btn::NewEntry, ..) => self.new_user_entry(false),
+            (Btn::NewSubmenu, ..) => self.new_user_entry(true),
             (Btn::ClearCache, ..) => {
                 self.clear_thumbnails();
                 self.about.cache_bytes = Some(0);
@@ -1238,7 +1270,7 @@ impl App {
         match ui.lines.get(k).cloned() {
             Some(Line::Setting(i)) => self.activate_setting(i, None),
             Some(Line::Path(i, n)) => self.remove_path(i, n),
-            Some(l @ (Line::Buttons(..) | Line::Tag(_))) => self.press_button(&l, sub),
+            Some(l @ (Line::Buttons(..) | Line::Tag(_) | Line::Entry(_))) => self.press_button(&l, sub),
             _ => {}
         }
     }
@@ -1317,7 +1349,7 @@ impl App {
                 Some(Line::Setting(i)) => {
                     self.turn_setting(i, key == Key::Left);
                 }
-                Some(l @ (Line::Buttons(..) | Line::Tag(_))) => {
+                Some(l @ (Line::Buttons(..) | Line::Tag(_) | Line::Entry(_))) => {
                     let n = l.count().max(1);
                     ui.sub = if key == Key::Left { (ui.sub + n - 1) % n } else { (ui.sub + 1) % n };
                 }
@@ -1422,6 +1454,9 @@ impl App {
             self.motion = true;
         }
         ui.knob_motion = false;
+        if ui.lines.iter().any(|l| matches!(l, Line::Entry(_))) {
+            self.request_user_line_images(g);
+        }
         self.paint_settings(g, t, &mut ui);
         self.motion |= ui.knob_motion;
         self.settings = Some(ui);
@@ -1588,6 +1623,7 @@ impl App {
                         g.text(lx, mid(r, ms), &label, small, t.text_dim, s(220.0).min(limit - lx).max(0.0));
                     }
                 }
+                Line::Entry(at) => self.draw_user_line(g, t, r, *at, (font, small, icons)),
                 Line::Buttons(..) => {}
             }
             for (b, (br, btn)) in button_rects(line, r, &ui.fit, s).into_iter().zip(line.buttons()).enumerate() {

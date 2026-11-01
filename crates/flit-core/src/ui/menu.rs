@@ -18,9 +18,38 @@ pub enum Mark {
     Sort(bool),
 }
 
+#[derive(Clone, Debug)]
+pub enum MenuImage {
+    Pixels { key: u64, bitmap: std::sync::Arc<super::Bitmap> },
+    File(crate::FsPath),
+}
+
+impl MenuImage {
+    pub fn pixels(bitmap: super::Bitmap) -> Self {
+        MenuImage::Pixels { key: crate::hash::hash(&("menu-pixels", bitmap.width, bitmap.height, bitmap.rgba.as_slice())), bitmap: std::sync::Arc::new(bitmap) }
+    }
+
+    pub fn key(&self, px: u32) -> u64 {
+        match self {
+            MenuImage::Pixels { key, .. } => *key,
+            MenuImage::File(path) => crate::hash::hash(&("menu-file", path.as_bytes(), px)),
+        }
+    }
+}
+
+impl PartialEq for MenuImage {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (MenuImage::Pixels { key: a, .. }, MenuImage::Pixels { key: b, .. }) => a == b,
+            (MenuImage::File(a), MenuImage::File(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuItem {
-    Command { label: String, keys: String, checked: bool, stay: bool, mark: Mark, icon: &'static str, disabled: bool },
+    Command { label: String, keys: String, checked: bool, stay: bool, mark: Mark, icon: &'static str, image: Option<MenuImage>, disabled: bool },
     Submenu { label: String, items: Vec<MenuItem> },
     Header(String),
     Separator,
@@ -28,7 +57,7 @@ pub enum MenuItem {
 
 impl MenuItem {
     pub fn command(label: impl Into<String>, keys: impl Into<String>) -> Self {
-        MenuItem::Command { label: label.into(), keys: keys.into(), checked: false, stay: false, mark: Mark::None, icon: "", disabled: false }
+        MenuItem::Command { label: label.into(), keys: keys.into(), checked: false, stay: false, mark: Mark::None, icon: "", image: None, disabled: false }
     }
 
     pub fn checked(mut self, on: bool) -> Self {
@@ -61,6 +90,8 @@ pub(super) enum Cmd {
     Column(ColumnCmd),
     Types(TypeCmd),
     SortColumn(SortField),
+    FolderProperties(crate::FsPath),
+    User(crate::provider::Launch),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -153,13 +184,18 @@ impl Menu<'_> {
     }
 
     pub(super) fn place_icon(&mut self, label: &str, cmd: super::sidebar::PlaceCmd, icon: &'static str, disabled: bool) {
-        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked: false, stay: false, mark: Mark::None, icon, disabled });
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked: false, stay: false, mark: Mark::None, icon, image: None, disabled });
         self.cmds.push(Cmd::Place(cmd));
     }
 
     pub(super) fn go(&mut self, label: &str, k: usize, icon: &'static str) {
-        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked: false, stay: false, mark: Mark::None, icon, disabled: false });
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked: false, stay: false, mark: Mark::None, icon, image: None, disabled: false });
         self.cmds.push(Cmd::Go(k));
+    }
+
+    pub(super) fn user(&mut self, label: &str, icon: &'static str, image: Option<MenuImage>, launch: crate::provider::Launch) {
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked: false, stay: false, mark: Mark::None, icon, image, disabled: false });
+        self.cmds.push(Cmd::User(launch));
     }
 
     pub(super) fn header(&mut self, label: &str) {
@@ -167,12 +203,12 @@ impl Menu<'_> {
     }
 
     pub(super) fn radio_place(&mut self, label: &str, cmd: super::sidebar::PlaceCmd, icon: &'static str, checked: bool) {
-        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked, stay: false, mark: Mark::Radio, icon, disabled: false });
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked, stay: false, mark: Mark::Radio, icon, image: None, disabled: false });
         self.cmds.push(Cmd::Place(cmd));
     }
 
     pub(super) fn toggle(&mut self, label: &str, cmd: super::sidebar::PlaceCmd, checked: bool) {
-        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked, stay: true, mark: Mark::Check, icon: "", disabled: false });
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked, stay: true, mark: Mark::Check, icon: "", image: None, disabled: false });
         self.cmds.push(Cmd::Place(cmd));
     }
 
@@ -181,7 +217,7 @@ impl Menu<'_> {
     }
 
     pub(super) fn entry(&mut self, cmd: Cmd, label: &str, keys: String, mark: Mark, checked: bool, disabled: bool) {
-        self.items.push(MenuItem::Command { label: label.to_owned(), keys, checked, stay: mark == Mark::Check && !disabled, mark, icon: "", disabled });
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys, checked, stay: mark == Mark::Check && !disabled, mark, icon: "", image: None, disabled });
         self.cmds.push(cmd);
     }
 
@@ -190,7 +226,7 @@ impl Menu<'_> {
             return;
         }
         let disabled = matches!(cmd, Cmd::Action(id) if super::actions::ACTIONS.iter().any(|a| a.id == id && a.run.is_none()));
-        self.items.push(MenuItem::Command { label: label.to_owned(), keys, checked, stay: false, mark, icon: "", disabled });
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys, checked, stay: false, mark, icon: "", image: None, disabled });
         self.cmds.push(cmd);
     }
 
@@ -369,7 +405,6 @@ impl App {
     }
 
     fn view_menus(&self, m: &mut Menu) {
-        m.submenu(S::MenusView.t(), |m| self.layout_entries(m));
         m.submenu(S::MenusSort.t(), |m| self.column_sort_entries(m));
         m.submenu(S::MenusGroup.t(), |m| self.group_entries(m));
     }
@@ -523,6 +558,8 @@ impl App {
             }
         }
         m.separator();
+        self.user_entries(m, true);
+        m.separator();
         m.action("item.properties", S::MenuProperties.t());
     }
 
@@ -588,8 +625,11 @@ impl App {
         m.action("folder.bookmark", if pinned { S::MenuUnpinFromSidebar.t() } else { S::MenuPinToSidebar.t() });
         m.action("item.copy_path", S::MenuCopyPath.t());
         m.separator();
-        if files {
-            m.action("item.properties", S::MenuProperties.t());
+        self.user_entries(m, false);
+        m.separator();
+        if let Some(dir) = t.view_loc.to_windows().filter(|_| files) {
+            let keys = m.keys.all_text("item.properties");
+            m.entry(Cmd::FolderProperties(dir), S::MenuProperties.t(), keys, Mark::None, false, false);
         }
     }
 
@@ -610,6 +650,8 @@ impl App {
             Some(Cmd::Column(c)) => self.column_command(c),
             Some(Cmd::Types(c)) => self.types_command(c),
             Some(Cmd::SortColumn(f)) => self.sort_column(f),
+            Some(Cmd::FolderProperties(dir)) => self.effects.push(super::Effect::Properties(vec![dir])),
+            Some(Cmd::User(launch)) => self.launch(launch),
             None => {}
         }
     }

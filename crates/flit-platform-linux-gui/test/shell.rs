@@ -54,6 +54,12 @@ fn arguments_split_on_spaces_and_respect_quotes() {
 }
 
 #[test]
+fn quoted_menu_arguments_come_back_whole_through_split_args() {
+    let args: Vec<String> = ["/home/u/a b.txt", "it's", r#"x"'y"#, "", "''", "tab\there", "$(rm -rf ~) `x` ; |"].iter().map(|s| (*s).to_owned()).collect();
+    assert_eq!(split_args(&flit_core::cmdline::join(&args, true)), args);
+}
+
+#[test]
 fn color_scheme_replies_from_portal_and_gsettings() {
     assert_eq!(parse_color_scheme(b"(<<uint32 1>>,)\n"), Some(true));
     assert_eq!(parse_color_scheme(b"(<<uint32 2>>,)\n"), Some(false));

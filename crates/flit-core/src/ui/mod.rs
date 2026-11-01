@@ -54,6 +54,7 @@ mod git;
 mod tree;
 mod bottom;
 mod types;
+mod user_menu;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource, MAX_HISTORY};
@@ -65,7 +66,8 @@ pub use details::{folder_key, Columns, FolderView, FolderViews, ViewMode, ViewPr
 pub use layouts::{adaptive_layout, has_thumbnail, is_media, LayoutMode, Sizes, LAYOUTS};
 pub use jobs::JobState;
 pub use preview_pane::PaneState;
-pub use menu::{Mark, MenuItem};
+pub use menu::{Mark, MenuImage, MenuItem};
+pub use user_menu::UserEntry;
 pub use popup::{MenuOutcome, MenuView};
 pub use context::MenuKind;
 pub use tab::Tab;
@@ -2003,8 +2005,8 @@ impl App {
             }
             self.draw_tab_dock(g, th);
             self.draw_jobs(g, th);
-            self.draw_confirm(g, th);
             self.draw_own_menu(g, th);
+            self.draw_confirm(g, th);
             self.draw_tooltip(g, th);
             self.draw_quick_tip(g, th);
             animating |= self.fade_ghosts(g, now);

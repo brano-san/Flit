@@ -58,15 +58,7 @@ fn capture_pointer(q: &mut std::collections::VecDeque<Event>) {
     if wheel != 0.0 {
         q.push_back(Event::Wheel { dx: 0.0, dy: -wheel });
     }
-    let clicks = std::env::var("FLIT_CAPTURE_CLICKS").unwrap_or_default();
-    for p in clicks.split(';') {
-        let (button, p) = match p.trim().strip_prefix('r') {
-            Some(rest) => (MouseButton::Right, rest),
-            None => (MouseButton::Left, p),
-        };
-        let Some((x, y)) = p.split_once(',').and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?))) else { continue };
-        q.extend([Event::MouseMove { x, y }, Event::MouseDown { x, y, button, clicks: 1 }, Event::MouseUp { x, y, button }]);
-    }
+    capture_clicks(q, "FLIT_CAPTURE_CLICKS");
     let drag: Vec<(f32, f32)> = std::env::var("FLIT_CAPTURE_DRAG").unwrap_or_default().split(';').filter_map(|p| p.split_once(',').and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?)))).collect();
     if let Some(&(x, y)) = drag.first() {
         q.extend([Event::MouseMove { x, y }, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }]);
@@ -76,6 +68,22 @@ fn capture_pointer(q: &mut std::collections::VecDeque<Event>) {
         q.push_back(Event::MouseMove { x, y });
     }
 }
+fn capture_clicks(q: &mut std::collections::VecDeque<Event>, var: &str) {
+    for p in std::env::var(var).unwrap_or_default().split(';') {
+        let p = p.trim();
+        let (button, p) = match (p.strip_prefix('r'), p.strip_prefix('m')) {
+            (Some(rest), _) => (Some(MouseButton::Right), rest),
+            (_, Some(rest)) => (None, rest),
+            _ => (Some(MouseButton::Left), p),
+        };
+        let Some((x, y)) = p.split_once(',').and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?))) else { continue };
+        q.push_back(Event::MouseMove { x, y });
+        if let Some(button) = button {
+            q.extend([Event::MouseDown { x, y, button, clicks: 1 }, Event::MouseUp { x, y, button }]);
+        }
+    }
+}
+
 fn capture_key(text: &str) -> Event {
     let (mods, name) = text.rsplit_once('+').unwrap_or(("", text));
     let has = |m: &str| mods.split('+').any(|x| x.eq_ignore_ascii_case(m));
@@ -1294,6 +1302,7 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
         WM_TIMER if wp.0 == CAPTURE_LATE_TIMER_ID => {
             let _ = KillTimer(Some(hwnd), CAPTURE_LATE_TIMER_ID);
             s.queue.borrow_mut().extend(capture_keys(&std::env::var("FLIT_CAPTURE_LATE").unwrap_or_default()));
+            capture_clicks(&mut s.queue.borrow_mut(), "FLIT_CAPTURE_LATE_CLICKS");
             s.shared().flush();
             s.redraw_now();
             Some(LRESULT(0))

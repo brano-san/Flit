@@ -93,7 +93,7 @@ impl<B: TextBackend> Measure<'_, B> {
         let mut nodes = Vec::with_capacity(items.len());
         for item in items {
             let node = match item {
-                MenuItem::Command { label, keys, checked, stay, mark, icon, disabled } => {
+                MenuItem::Command { label, keys, checked, stay, mark, icon, disabled, .. } => {
                     self.next_id += 1;
                     Node::Command { label: label.clone(), keys: keys.clone(), checked: *checked, stay: *stay, mark: *mark, id: self.next_id - 1, icon, disabled: *disabled }
                 }
