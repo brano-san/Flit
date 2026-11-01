@@ -101,7 +101,7 @@ pub struct VolumeIndex {
     changed: Vec<u32>,
     changed_bits: Vec<u64>,
     dead_bytes: usize,
-    removed_dirs: bool,
+    removed_dirs: usize,
     live: usize,
 }
 
@@ -344,6 +344,7 @@ impl VolumeIndex {
         let i = self.removed_now.remove(&id)?;
         self.attrs[i as usize] &= !attr::DELETED;
         self.dead_bytes -= self.lower_len[i as usize] as usize + 1;
+        self.removed_dirs -= self.is_dir(i) as usize;
         self.index_id(i);
         self.live += (self.attrs[i as usize] & ROOT == 0) as usize;
         Some(i)
@@ -566,9 +567,9 @@ impl VolumeIndex {
 
     pub fn commit(&mut self) -> bool {
         self.resolve_orphans();
-        if self.removed_dirs {
+        if self.removed_dirs > 0 {
             self.cascade();
-            self.removed_dirs = false;
+            self.removed_dirs = 0;
         }
         if self.changed.is_empty() {
             return false;
@@ -619,7 +620,7 @@ impl IndexSink for VolumeIndex {
                 self.modified[k] = r.modified;
                 let was_dir = self.attrs[k] & attr::DIR != 0;
                 self.attrs[k] = attrs;
-                self.removed_dirs |= was_dir && attrs & attr::DIR == 0;
+                self.removed_dirs += (was_dir && attrs & attr::DIR == 0) as usize;
                 if self.parent_id(i) != r.parent || self.parents[k] == NONE {
                     self.resolve(i, r.parent);
                 }
@@ -652,7 +653,7 @@ impl IndexSink for VolumeIndex {
         let k = i as usize;
         self.attrs[k] |= attr::DELETED;
         self.dead_bytes += self.lower_len[k] as usize + 1;
-        self.removed_dirs |= self.attrs[k] & attr::DIR != 0;
+        self.removed_dirs += (self.attrs[k] & attr::DIR != 0) as usize;
         self.live -= (self.attrs[k] & ROOT == 0) as usize;
         self.removed_now.insert(id, i);
         self.touch(i);
