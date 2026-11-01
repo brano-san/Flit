@@ -60,6 +60,7 @@ fontconfig = "*"
 
 [target.'cfg(windows)'.dependencies]
 flit-platform-windows.workspace = true
+windows = { workspace = true, features = ["Win32_Storage_FileSystem"] }
 
 [target.'cfg(not(windows))'.dependencies]
 flit-platform-linux-gui.workspace = true

@@ -44,8 +44,8 @@ fn header(key: u64, w: u32, h: u32) -> [u8; HEAD as usize] {
 #[cfg(windows)]
 fn open_shared(path: &Path) -> std::io::Result<File> {
     use std::os::windows::fs::OpenOptionsExt;
-    const SHARE_READ_WRITE_DELETE: u32 = 7;
-    OpenOptions::new().read(true).share_mode(SHARE_READ_WRITE_DELETE).open(path)
+    use windows::Win32::Storage::FileSystem::{FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE};
+    OpenOptions::new().read(true).share_mode((FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE).0).open(path)
 }
 
 #[cfg(not(windows))]
