@@ -35,7 +35,7 @@ pub trait IndexSink {
 pub const NONE: u32 = u32::MAX;
 pub const ROOT: u32 = 1 << 30;
 pub const KEPT_ATTRS: u32 = attr::DIR | attr::HIDDEN | attr::SYSTEM | attr::READONLY | attr::LINK;
-const MAX_DEPTH: usize = 1024;
+pub const MAX_DEPTH: usize = 1024;
 const MAX_NAME: usize = u16::MAX as usize;
 const SAME: u32 = u32::MAX;
 
@@ -247,20 +247,33 @@ impl VolumeIndex {
     }
 
     pub fn path_into(&self, i: u32, lower: bool, chain: &mut Vec<u32>, out: &mut Vec<u8>) {
+        self.path_tail_into(i, lower, usize::MAX, chain, out);
+    }
+
+    pub fn path_tail_into(&self, i: u32, lower: bool, at_least: usize, chain: &mut Vec<u32>, out: &mut Vec<u8>) {
         chain.clear();
         let mut cur = i;
+        let mut got = 0;
+        let mut whole = true;
         while chain.len() < MAX_DEPTH {
             if self.attrs[cur as usize] & ROOT != 0 {
                 break;
             }
             chain.push(cur);
+            got += 1 + if lower { self.lower_len[cur as usize] } else { self.name_len[cur as usize] } as usize;
             let p = self.parents[cur as usize];
             if p == NONE {
                 break;
             }
+            if got >= at_least {
+                whole = false;
+                break;
+            }
             cur = p;
         }
-        out.extend_from_slice(if lower { &self.root_lower } else { &self.root });
+        if whole {
+            out.extend_from_slice(if lower { &self.root_lower } else { &self.root });
+        }
         for &c in chain.iter().rev() {
             if out.last() != Some(&self.sep) {
                 out.push(self.sep);
