@@ -509,6 +509,15 @@ pub fn sort(l: &Listing, k: &SortKeys, view: ViewSpec, out: &mut Vec<u32>) {
     out.extend(items.iter().map(|it| it.idx));
 }
 
+pub fn is_sorted(l: &Listing, k: &SortKeys, v: &ViewSpec, order: &[u32]) -> bool {
+    let ordered = |w: &[u32]| cmp(l, k, v, w[0], w[1]).is_lt();
+    if order.len() < PARALLEL_SORT {
+        order.windows(2).all(ordered)
+    } else {
+        order.par_windows(2).all(ordered)
+    }
+}
+
 pub fn insert_pos(l: &Listing, k: &SortKeys, v: &ViewSpec, order: &[u32], i: u32) -> usize {
     order.partition_point(|&p| cmp(l, k, v, p, i) == Ordering::Less)
 }
