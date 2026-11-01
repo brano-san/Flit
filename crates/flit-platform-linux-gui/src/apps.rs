@@ -149,7 +149,7 @@ fn collect(dir: &Path, prefix: &str, lang: &str, seen: &mut HashSet<String>, out
     for e in list.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         let path = e.path();
-        if path.is_dir() {
+        if e.file_type().is_ok_and(|t| t.is_dir() || t.is_symlink() && path.is_dir()) {
             collect(&path, &format!("{prefix}{name}-"), lang, seen, out, stamps);
         } else if let Some(stem) = name.strip_suffix(".desktop") {
             let id = format!("{prefix}{stem}.desktop");
