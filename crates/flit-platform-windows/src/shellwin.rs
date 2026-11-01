@@ -14,7 +14,7 @@ use windows::Win32::System::Variant::{InitVariantFromBuffer, VARIANT};
 use windows::Win32::UI::Controls::{LPFNSVADDPROPSHEETPAGE, TBBUTTON};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
-    ILCombine, ILFree, ILGetSize, IShellBrowser, IShellBrowser_Impl, IShellView, IShellView_Impl, IShellWindows, IWebBrowserApp, IWebBrowserApp_Impl, IWebBrowser_Impl, SHGetNameFromIDList, SHParseDisplayName, ShellWindows, FOLDERSETTINGS, SIGDN_FILESYSPATH, SVSI_SELECT, SWC_BROWSER, _SVGIO,
+    ILCombine, ILCreateFromPathW, ILFree, ILGetSize, IShellBrowser, IShellBrowser_Impl, IShellView, IShellView_Impl, IShellWindows, IWebBrowserApp, IWebBrowserApp_Impl, IWebBrowser_Impl, SHGetNameFromIDList, ShellWindows, FOLDERSETTINGS, SIGDN_FILESYSPATH, SVSI_SELECT, SWC_BROWSER, _SVGIO,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, HMENU, MSG};
 use windows_core::{implement, ComObject, IUnknownImpl, Interface, Ref};
@@ -177,8 +177,10 @@ fn set(windows: &IShellWindows, registered: &mut HashMap<isize, Registration>, h
 }
 
 pub(crate) fn parse(folder: &[u16]) -> Option<Vec<u8>> {
-    let mut pidl: *mut ITEMIDLIST = std::ptr::null_mut();
-    unsafe { SHParseDisplayName(PCWSTR(folder.as_ptr()), None, &mut pidl, 0, None) }.ok()?;
+    let pidl = unsafe { ILCreateFromPathW(PCWSTR(folder.as_ptr())) };
+    if pidl.is_null() {
+        return None;
+    }
     let bytes = unsafe { std::slice::from_raw_parts(pidl.cast::<u8>(), ILGetSize(Some(pidl)) as usize) }.to_vec();
     unsafe { ILFree(Some(pidl)) };
     Some(bytes)

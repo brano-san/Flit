@@ -15,6 +15,14 @@ fn find(windows: &IShellWindows, folder: &[u8]) -> Option<(i32, IDispatch)> {
     Some((hwnd, disp))
 }
 
+fn browser_pidl(path: &[u16]) -> Vec<u8> {
+    let pidl = unsafe { windows::Win32::UI::Shell::ILCreateFromPathW(PCWSTR(path.as_ptr())) };
+    assert!(!pidl.is_null());
+    let bytes = unsafe { std::slice::from_raw_parts(pidl.cast::<u8>(), ILGetSize(Some(pidl)) as usize) }.to_vec();
+    unsafe { ILFree(Some(pidl)) };
+    bytes
+}
+
 fn wait_for<T>(mut f: impl FnMut() -> Option<T>) -> Option<T> {
     let until = Instant::now() + Duration::from_secs(5);
     while Instant::now() < until {
@@ -37,7 +45,7 @@ fn a_registered_flit_window_receives_the_item_the_shell_asks_it_to_select() {
     let file = dir.join("a b.txt");
     std::fs::write(&file, b"x").unwrap();
     let folder_path = FsPath::parse(&dir.to_string_lossy()).unwrap();
-    let folder = parse(&folder_path.to_wide(false)).unwrap();
+    let folder = browser_pidl(&folder_path.to_wide(false));
     let wide_file: Vec<u16> = file.to_string_lossy().encode_utf16().chain([0]).collect();
     let item = parse(&wide_file).unwrap();
     let hwnd = unsafe { CreateWindowExW(WINDOW_EX_STYLE(0), w!("STATIC"), PCWSTR::null(), WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, None, None) }.unwrap();
