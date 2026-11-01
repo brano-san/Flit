@@ -53,7 +53,9 @@ fn edits_from_outside_are_reported_once_and_broken_files_are_backed_up() {
     let (jobs, replies, thread) = worker(&file, "{}");
     jobs.send(Job::Check).unwrap();
     jobs.send(Job::Check).unwrap();
+    jobs.send(Job::Import(d.0.join("missing.json"))).unwrap();
     assert!(matches!(reply(&replies), Reply::Changed(t) if t.contains("show_hidden")));
+    assert!(matches!(reply(&replies), Reply::Imported(Err(_))), "both checks ran before the file changes again");
     std::fs::write(&file, "{ broken").unwrap();
     jobs.send(Job::Backup).unwrap();
     jobs.send(Job::Write("{\"fresh\": 1}".into())).unwrap();
