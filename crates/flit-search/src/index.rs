@@ -441,7 +441,7 @@ impl VolumeIndex {
 
     fn merge_into(&mut self, order: Order, fresh: &[u32]) -> usize {
         let o = order as usize;
-        let old = std::mem::take(&mut self.perms[o]);
+        let mut perm = std::mem::take(&mut self.perms[o]);
         let ranks = &mut self.ranks[o];
         let mut dropped: Vec<usize> = Vec::with_capacity(self.changed.len());
         for &i in &self.changed {
@@ -451,27 +451,31 @@ impl VolumeIndex {
             }
         }
         dropped.sort_unstable();
-        let mut kept = Vec::with_capacity(old.len());
-        let mut at = 0;
-        for &d in &dropped {
-            kept.extend_from_slice(&old[at..d]);
-            at = d + 1;
+        let first_dropped = dropped.first().copied().unwrap_or(usize::MAX);
+        let mut kept = first_dropped.min(perm.len());
+        for (k, &d) in dropped.iter().enumerate() {
+            let end = dropped.get(k + 1).copied().unwrap_or(perm.len());
+            perm.copy_within(d + 1..end, kept);
+            kept += end - d - 1;
         }
-        kept.extend_from_slice(&old[at..]);
-        drop(old);
-        let mut first = dropped.first().copied().unwrap_or(usize::MAX);
-        let mut out = Vec::with_capacity(kept.len() + fresh.len());
+        perm.truncate(kept);
         let mut at = 0;
-        for &j in fresh {
-            let p = at + kept[at..].partition_point(|&i| self.before(order, i, j));
-            out.extend_from_slice(&kept[at..p]);
-            first = first.min(out.len());
-            out.push(j);
-            at = p;
+        let points: Vec<usize> = fresh
+            .iter()
+            .map(|&j| {
+                at += perm[at..].partition_point(|&i| self.before(order, i, j));
+                at
+            })
+            .collect();
+        perm.resize(kept + fresh.len(), 0);
+        let mut end = kept;
+        for (k, (&j, &p)) in fresh.iter().zip(&points).enumerate().rev() {
+            perm.copy_within(p..end, p + k + 1);
+            perm[p + k] = j;
+            end = p;
         }
-        out.extend_from_slice(&kept[at..]);
-        self.perms[o] = out;
-        first
+        self.perms[o] = perm;
+        first_dropped.min(points.first().copied().unwrap_or(usize::MAX))
     }
 
     fn before(&self, order: Order, a: u32, b: u32) -> bool {
