@@ -339,7 +339,7 @@ fn fresh(d: &Dir, rel: &str) -> FsPath {
 #[test]
 #[ignore]
 fn bench_thumbnails_without_any_cache() {
-    let d = Dir::temp("thumbs");
+    let d = Dir::temp("fresh-thumbs");
     let walls: Vec<PathBuf> = [r"C:\Windows\Web\Wallpaper", r"C:\Windows\Web\4K\Wallpaper"]
         .iter()
         .flat_map(|r| walkdir(Path::new(r)))
