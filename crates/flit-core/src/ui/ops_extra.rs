@@ -14,10 +14,13 @@ fn is_image(p: &FsPath) -> bool {
 }
 
 impl App {
-    fn selected_files(&self) -> Vec<FsPath> {
+    fn selected_file_items(&self) -> Vec<u32> {
         let Some(v) = &self.tab().view else { return Vec::new() };
-        let files: Vec<u32> = self.selected_items().into_iter().filter(|&i| !v.listing().entries[i as usize].is_dir()).collect();
-        self.item_paths(&files).unwrap_or_default()
+        self.selected_items().into_iter().filter(|&i| !v.listing().entries[i as usize].is_dir()).collect()
+    }
+
+    fn selected_files(&self) -> Vec<FsPath> {
+        self.item_paths(&self.selected_file_items()).unwrap_or_default()
     }
 
     pub(super) fn install_fonts_selection(&mut self) {
@@ -43,7 +46,12 @@ impl App {
     }
 
     pub(super) fn media_entries(&self, m: &mut Menu) {
-        let files = self.selected_files();
+        let items = self.selected_file_items();
+        let Some(v) = &self.tab().view else { return };
+        if items.len() != 1 && !items.iter().all(|&i| install::is_font(v.listing().name(i))) {
+            return;
+        }
+        let files = self.item_paths(&items).unwrap_or_default();
         if !files.is_empty() && files.iter().all(|p| install::is_font(p.file_name())) {
             m.action("file.install_fonts", S::OpsExtraInstallFonts.t());
         }
