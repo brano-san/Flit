@@ -98,3 +98,19 @@ fn bench_an_icon_from_the_cache() {
     }
     eprintln!("measure: system theme icon cold {cold:?}, from the cache {:?} each, found {}", start.elapsed() / 1000, first.is_some());
 }
+
+#[test]
+#[ignore]
+fn bench_twenty_distinct_lookups_in_the_system_theme() {
+    let names = ["folder", "text-x-generic", "image-x-generic", "image-png", "application-pdf", "audio-x-generic", "video-x-generic", "application-x-executable", "text-x-script", "application-zip", "package-x-generic", "x-office-document", "unknown", "user-home", "drive-harddisk", "user-trash", "text-html", "text-x-rust", "application-json", "no-such-icon"];
+    let mut runs = Vec::new();
+    let mut found = Vec::new();
+    for _ in 0..5 {
+        let start = Instant::now();
+        let themes = chain(&base_dirs(), &theme_name());
+        found = names.iter().map(|n| find(&themes, &[n.to_string()], 32)).collect();
+        runs.push(start.elapsed());
+    }
+    runs.sort();
+    eprintln!("measure: theme chain and 20 distinct icon lookups median {:?}, found {:?}", runs[2], found);
+}

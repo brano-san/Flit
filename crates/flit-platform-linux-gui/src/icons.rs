@@ -1,5 +1,5 @@
 use flit_core::ui::Bitmap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
@@ -26,6 +26,18 @@ pub struct Theme {
     pub roots: Vec<PathBuf>,
     pub inherits: Vec<String>,
     pub dirs: Vec<Dir>,
+    files: OnceLock<HashSet<PathBuf>>,
+}
+
+impl Theme {
+    fn has(&self, file: &Path) -> bool {
+        self.files
+            .get_or_init(|| {
+                let dirs = self.roots.iter().flat_map(|r| self.dirs.iter().filter(|d| d.scale == 1).map(move |d| r.join(&d.path)));
+                dirs.filter_map(|d| std::fs::read_dir(d).ok()).flatten().flatten().filter(|e| e.file_type().is_ok_and(|t| !t.is_dir())).map(|e| e.path()).collect()
+            })
+            .contains(file)
+    }
 }
 
 impl Dir {
@@ -78,7 +90,7 @@ pub fn parse_index(text: &str) -> Theme {
             Some(Dir { size, scale: num("Scale").unwrap_or(1), min: num("MinSize").unwrap_or(size), max: num("MaxSize").unwrap_or(size), threshold: num("Threshold").unwrap_or(2), kind, path })
         })
         .collect();
-    Theme { roots: Vec::new(), inherits: list("Inherits"), dirs }
+    Theme { inherits: list("Inherits"), dirs, ..Default::default() }
 }
 
 pub fn base_dirs() -> Vec<PathBuf> {
@@ -118,7 +130,7 @@ pub fn chain(bases: &[PathBuf], first: &str) -> Vec<Theme> {
 
 pub fn find(themes: &[Theme], names: &[String], size: u32) -> Option<PathBuf> {
     let exts: &[&str] = if crate::svg::available() { &["png", "svg"] } else { &["png"] };
-    let file = |t: &Theme, d: &Dir, name: &str| t.roots.iter().flat_map(|r| exts.iter().map(move |e| r.join(&d.path).join(format!("{name}.{e}")))).find(|p| p.is_file());
+    let file = |t: &Theme, d: &Dir, name: &str| t.roots.iter().flat_map(|r| exts.iter().map(move |e| r.join(&d.path).join(format!("{name}.{e}")))).find(|p| t.has(p));
     for name in names {
         for t in themes {
             let dirs = t.dirs.iter().filter(|d| d.scale == 1);
