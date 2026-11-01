@@ -403,6 +403,25 @@ impl App {
         (t.id, t.gen, v.map_or(0, |v| v.selection_rev()), v.and_then(|v| v.focus))
     }
 
+    pub fn selection_source(&self) -> std::sync::Arc<dyn Fn() -> (Vec<FsPath>, Option<FsPath>) + Send + Sync> {
+        let t = self.tab();
+        let plain = match (&t.view, &t.view_loc) {
+            (Some(v), Location::Local(dir)) if !self.in_bin() && !library::is_library(dir) && !matches!(dir.kind(), PathKind::Home | PathKind::Computer) => Some((v.snap().clone(), dir.clone(), v.focus)),
+            _ => None,
+        };
+        let Some((snap, dir, focus)) = plain else {
+            let picked = self.selection_paths();
+            return std::sync::Arc::new(move || picked.clone());
+        };
+        let items = self.selected_items();
+        std::sync::Arc::new(move || {
+            let l = &snap.listing;
+            let path = |i: u32| (l.entries[i as usize].attrs & attr::STREAM == 0).then(|| dir.join(l.name(i)));
+            let paths = items.iter().map(|&i| path(i)).collect::<Option<Vec<_>>>().unwrap_or_default();
+            (paths, focus.and_then(path))
+        })
+    }
+
     pub fn selection_paths(&self) -> (Vec<FsPath>, Option<FsPath>) {
         let focused = self.tab().view.as_ref().and_then(|v| v.focus).and_then(|i| self.item_paths(&[i]).ok()?.pop());
         (self.item_paths(&self.selected_items()).unwrap_or_default(), focused)

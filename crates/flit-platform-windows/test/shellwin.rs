@@ -93,7 +93,11 @@ fn a_registered_flit_window_receives_the_item_the_shell_asks_it_to_select() {
     let picked = [file.clone(), dir.join("c.txt")];
     std::fs::write(&picked[1], b"x").unwrap();
     let as_path = |p: &std::path::PathBuf| FsPath::parse(&p.to_string_lossy()).unwrap();
-    assert!(select(hwnd, &|| (picked.iter().map(as_path).collect(), Some(as_path(&picked[1])))));
+    let (paths, focused) = (picked.iter().map(as_path).collect::<Vec<_>>(), as_path(&picked[1]));
+    assert!(select(hwnd, &|| {
+        let (paths, focused) = (paths.clone(), focused.clone());
+        Arc::new(move || (paths.clone(), Some(focused.clone())))
+    }));
     let shown: IFolderView = view.cast().unwrap();
     let items: IShellItemArray = unsafe { shown.Items(SVGIO_SELECTION) }.unwrap();
     let names: Vec<String> = (0..unsafe { items.GetCount() }.unwrap()).map(|i| unsafe { items.GetItemAt(i).unwrap().GetDisplayName(SIGDN_FILESYSPATH).unwrap().to_string() }.unwrap()).collect();

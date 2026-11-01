@@ -648,7 +648,7 @@ impl<P: Platform> Handler<P> {
                 window.set_ime_area(area);
             }
             let key = st.app.selection_key();
-            if st.selection_key != Some(key) && window.set_selection(&|| st.app.selection_paths()) {
+            if st.selection_key != Some(key) && window.set_selection(&|| st.app.selection_source()) {
                 st.selection_key = Some(key);
             }
             if st.app.needs_redraw() {

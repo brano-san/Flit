@@ -42,7 +42,7 @@ struct Selection {
 struct State {
     on: bool,
     folders: HashMap<isize, Vec<u16>>,
-    selections: HashMap<isize, Selection>,
+    selections: HashMap<isize, flit_platform::SelectionSource>,
     worker: Option<Sender<Msg>>,
 }
 
@@ -108,13 +108,12 @@ pub fn show(hwnd: HWND, folder: Option<&FsPath>) {
     }
 }
 
-pub fn select(hwnd: HWND, selection: &dyn Fn() -> (Vec<FsPath>, Option<FsPath>)) -> bool {
+pub fn select(hwnd: HWND, selection: &dyn Fn() -> flit_platform::SelectionSource) -> bool {
     if !with(|s| s.on) {
         return false;
     }
-    let (items, focused) = selection();
-    let picked = Selection { items: items.iter().map(|p| p.to_wide(false)).collect(), focused: focused.map(|p| p.to_wide(false)) };
-    with(|s| s.selections.insert(hwnd.0 as isize, picked));
+    let source = selection();
+    with(|s| s.selections.insert(hwnd.0 as isize, source));
     true
 }
 
@@ -256,7 +255,9 @@ impl Browser_Impl {
     }
 
     fn selection(&self) -> Selection {
-        with(|s| s.selections.get(&self.hwnd).cloned().unwrap_or_default())
+        let Some(source) = with(|s| s.selections.get(&self.hwnd).cloned()) else { return Selection::default() };
+        let (items, focused) = source();
+        Selection { items: items.iter().map(|p| p.to_wide(false)).collect(), focused: focused.map(|p| p.to_wide(false)) }
     }
 
     fn listed(&self) -> Vec<Vec<u16>> {

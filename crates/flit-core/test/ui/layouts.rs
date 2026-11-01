@@ -509,3 +509,25 @@ fn a_band_through_empty_grid_space_selects_nothing_and_leaves_the_focus_alone() 
     assert!(!selected(&app).is_empty(), "touching a tile selects it");
     app.on_event(&Event::MouseUp { x: body.x + 10.0, y: body.y + 10.0, button: MouseButton::Left }, Instant::now());
 }
+
+#[test]
+#[ignore]
+fn bench_selection_source_on_100k() {
+    let mut app = app_at(r"C:\big");
+    let mut gfx = Gfx::new(Mono, 1024);
+    publish(&mut app, &files(100_000, "jpg"), true);
+    app.frame(&mut gfx, Instant::now());
+    for n in [1usize, 1_000, 100_000] {
+        let v = app.tab_mut().view.as_mut().unwrap();
+        v.select_rows(0, n - 1);
+        let mut times = Vec::new();
+        for _ in 0..9 {
+            let t = Instant::now();
+            let source = app.selection_source();
+            times.push(t.elapsed());
+            assert_eq!(source(), app.selection_paths());
+        }
+        times.sort();
+        eprintln!("BENCH selection_source {n:>6} selected, UI thread  median {:.3} ms", ms(times[4]));
+    }
+}

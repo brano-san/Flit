@@ -84,6 +84,8 @@ pub trait Waker: Clone + Send + Sync + 'static {
     fn wake(&self);
 }
 
+pub type SelectionSource = std::sync::Arc<dyn Fn() -> (Vec<FsPath>, Option<FsPath>) + Send + Sync>;
+
 pub trait Window {
     fn id(&self) -> WindowId;
     fn size(&self) -> (u32, u32);
@@ -91,7 +93,7 @@ pub trait Window {
     fn request_redraw(&self);
     fn set_title(&self, title: &str);
     fn set_folder(&self, _folder: Option<&FsPath>) {}
-    fn set_selection(&self, _selection: &dyn Fn() -> (Vec<FsPath>, Option<FsPath>)) -> bool {
+    fn set_selection(&self, _selection: &dyn Fn() -> SelectionSource) -> bool {
         true
     }
     fn set_cursor(&self, cursor: CursorIcon);

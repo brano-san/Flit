@@ -310,7 +310,7 @@ impl Window for Win32Window {
         crate::shellwin::show(self.hwnd(), folder);
     }
 
-    fn set_selection(&self, selection: &dyn Fn() -> (Vec<FsPath>, Option<FsPath>)) -> bool {
+    fn set_selection(&self, selection: &dyn Fn() -> flit_platform::SelectionSource) -> bool {
         crate::shellwin::select(self.hwnd(), selection)
     }
 
