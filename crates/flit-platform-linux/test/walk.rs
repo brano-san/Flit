@@ -104,6 +104,25 @@ fn a_sweep_picks_up_new_removed_and_moved_entries_by_directory_mtime() {
 }
 
 #[test]
+fn media_comes_from_the_rotational_flag_of_the_whole_disk() {
+    let t = Temp::new("media");
+    let sys = t.path().join("block");
+    std::fs::create_dir_all(t.path().join("devices/sda/sda1")).unwrap();
+    std::fs::create_dir_all(t.path().join("devices/sda/queue")).unwrap();
+    std::fs::create_dir_all(t.path().join("devices/nvme0n1/queue")).unwrap();
+    std::fs::create_dir_all(&sys).unwrap();
+    std::fs::write(t.path().join("devices/sda/queue/rotational"), b"1\n").unwrap();
+    std::fs::write(t.path().join("devices/nvme0n1/queue/rotational"), b"0\n").unwrap();
+    symlink("../devices/sda/sda1", sys.join("8:1")).unwrap();
+    symlink("../devices/sda", sys.join("8:0")).unwrap();
+    symlink("../devices/nvme0n1", sys.join("259:0")).unwrap();
+    assert_eq!(media(&sys, libc::makedev(8, 1)), Media::Spinning);
+    assert_eq!(media(&sys, libc::makedev(8, 0)), Media::Spinning);
+    assert_eq!(media(&sys, libc::makedev(259, 0)), Media::Solid);
+    assert_eq!(media(&sys, libc::makedev(0, 42)), Media::Unknown);
+}
+
+#[test]
 #[ignore]
 fn bench_walk_and_snapshot_of_four_hundred_thousand_entries() {
     let t = Temp::new("walk-bench");
@@ -114,17 +133,21 @@ fn bench_walk_and_snapshot_of_four_hundred_thousand_entries() {
             std::fs::File::create(dir.join(format!("file-{f}.txt"))).unwrap();
         }
     }
+    let mode = std::env::var("FLIT_WALK_BENCH").unwrap_or_else(|_| "adaptive".into());
+    let fixed = mode.strip_prefix("fixed").and_then(|n| n.parse().ok()).map(Throttle::fixed);
     let mut runs = Vec::new();
     let mut v = None;
     for _ in 0..3 {
         let start = Instant::now();
-        let built = index_of(t.path());
+        let mut built = VolumeIndex::new("t", t.path().as_os_str().as_bytes(), b'/');
+        walk_with(t.path(), &mut built, &mut Tree::default(), fixed.clone()).unwrap();
+        built.commit();
         runs.push(start.elapsed());
         v = Some(built);
     }
     runs.sort();
     let v = v.unwrap();
-    eprintln!("measure: walk of {} entries median {:?}", v.live(), runs[1]);
+    eprintln!("measure: {mode} walk of {} entries median {:?}", v.live(), runs[1]);
     let mut bytes = Vec::new();
     flit_search::snapshot::save(&v, Checkpoint::default(), &mut bytes);
     let start = Instant::now();

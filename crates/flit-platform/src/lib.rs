@@ -1,6 +1,7 @@
 mod digest;
 mod indexer;
 mod local;
+pub mod walk;
 mod wsl;
 
 pub use digest::hash_file;

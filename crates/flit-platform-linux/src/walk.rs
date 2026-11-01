@@ -1,7 +1,7 @@
-use crate::fs::{dents, filetime, node_at, open_dir, stat_path};
+use crate::fs::{dents, filetime, node_at, open_dir, stat_path, DENTS_BUFFER};
 use crate::mounts::{self, Mount};
-use crossbeam_channel::unbounded;
 use flit_core::attr;
+use flit_platform::walk::{Media, Throttle};
 use flit_platform::{IndexSource, PlatformError};
 use flit_search::index::{Checkpoint, IndexRecord, IndexSink};
 use flit_search::proto::{VolumeInfo, VolumeState};
@@ -10,10 +10,9 @@ use std::ffi::OsStr;
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-const WALK_THREADS: usize = 8;
+const SYS_BLOCK: &str = "/sys/dev/block";
 const REWALK: Duration = Duration::from_secs(15 * 60);
 const SWEEP: Duration = Duration::from_secs(30);
 const SETTLE_TICKS: i64 = 20_000_000;
@@ -146,52 +145,41 @@ fn read_dir(job: &Job, dev: u64, subdirs: &mut Vec<Job>) -> Batch {
 }
 
 pub fn walk<S: IndexSink>(root: &Path, sink: &mut S, tree: &mut Tree) -> Result<u64, PlatformError> {
+    walk_with(root, sink, tree, None)
+}
+
+fn walk_with<S: IndexSink>(root: &Path, sink: &mut S, tree: &mut Tree, throttle: Option<Throttle>) -> Result<u64, PlatformError> {
     let fail = |e: std::io::Error| PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("cannot open {}: {e}", root.display()));
     let dir = open_dir(root).map_err(fail)?;
     let top = node_at(dir.as_raw_fd(), c".", false).map_err(fail)?;
     sink.upsert(&IndexRecord { id: top.ino, parent: top.ino, name: b".", size: 0, modified: 0, attrs: attr::DIR });
-    let (job_tx, job_rx) = unbounded::<Job>();
-    let (out_tx, out_rx) = unbounded::<Batch>();
-    let pending = AtomicUsize::new(1);
-    let stop = AtomicBool::new(false);
     drop(dir);
     tree.dev = top.dev;
     tree.dirs.clear();
-    let _ = job_tx.send(Job { dir: root.to_path_buf(), id: top.ino, modified: top.meta(b".").modified });
-    std::thread::scope(|s| {
-        for k in 0..WALK_THREADS {
-            let (job_tx, job_rx, out_tx, pending, stop) = (job_tx.clone(), job_rx.clone(), out_tx.clone(), &pending, &stop);
-            let _ = std::thread::Builder::new().name(format!("flit-walk-{k}")).spawn_scoped(s, move || {
-                let mut subdirs = Vec::new();
-                while pending.load(Ordering::Acquire) > 0 && !stop.load(Ordering::Relaxed) {
-                    let Ok(job) = job_rx.recv_timeout(Duration::from_millis(10)) else { continue };
-                    let batch = read_dir(&job, top.dev, &mut subdirs);
-                    pending.fetch_add(subdirs.len(), Ordering::AcqRel);
-                    for sub in subdirs.drain(..) {
-                        let _ = job_tx.send(sub);
-                    }
-                    let _ = out_tx.send(batch);
-                    pending.fetch_sub(1, Ordering::AcqRel);
-                }
-            });
+    let first = Job { dir: root.to_path_buf(), id: top.ino, modified: top.meta(b".").modified };
+    let list = |job: &Job, subdirs: &mut Vec<Job>| read_dir(job, top.dev, subdirs);
+    let throttle = throttle.unwrap_or_else(|| Throttle::new(media(Path::new(SYS_BLOCK), top.dev), DENTS_BUFFER));
+    flit_platform::walk::walk(first, throttle, list, |batch, done, total| {
+        let mut start = 0;
+        for &(id, end, size, modified, attrs) in &batch.items {
+            sink.upsert(&IndexRecord { id, parent: batch.parent, name: &batch.names[start..end], size, modified, attrs });
+            start = end;
         }
-        drop(out_tx);
-        let mut done = 0u64;
-        for batch in out_rx {
-            let mut start = 0;
-            for &(id, end, size, modified, attrs) in &batch.items {
-                sink.upsert(&IndexRecord { id, parent: batch.parent, name: &batch.names[start..end], size, modified, attrs });
-                start = end;
-            }
-            tree.record(&batch);
-            done += 1;
-            sink.progress(done, done + pending.load(Ordering::Relaxed) as u64);
-            if sink.cancelled() {
-                stop.store(true, Ordering::Relaxed);
-            }
-        }
+        tree.record(&batch);
+        sink.progress(done, total);
+        !sink.cancelled()
     });
     Ok(top.ino)
+}
+
+fn media(sys_block: &Path, dev: u64) -> Media {
+    let block = sys_block.join(format!("{}:{}", libc::major(dev), libc::minor(dev)));
+    let flag = ["queue/rotational", "../queue/rotational"].iter().find_map(|p| std::fs::read_to_string(block.join(p)).ok());
+    match flag.as_deref().map(str::trim) {
+        Some("0") => Media::Solid,
+        Some("1") => Media::Spinning,
+        _ => Media::Unknown,
+    }
 }
 
 fn volume_key(m: &Mount, uuids: &HashMap<PathBuf, String>) -> Option<String> {

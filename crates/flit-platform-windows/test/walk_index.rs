@@ -1,6 +1,6 @@
 use super::*;
 use flit_search::index::VolumeIndex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 fn record(action: FILE_ACTION, path: &str, id: i64, parent: i64, attrs: u32, next: u32) -> Vec<u8> {
     let wide: Vec<u16> = path.encode_utf16().collect();
@@ -181,4 +181,36 @@ fn a_restart_catches_up_from_the_journal_without_walking_again() {
     drop(w);
     std::fs::remove_dir_all(&root).unwrap();
     let _ = std::fs::remove_dir_all(&outside);
+}
+
+#[test]
+fn fixed_drives_are_local_media() {
+    for root in fixed_drives() {
+        assert_ne!(media(&root), Media::Network, "{}", root.display());
+    }
+}
+
+#[test]
+#[ignore]
+fn bench_walk_of_every_fixed_drive() {
+    let mode = std::env::var("FLIT_WALK_BENCH").unwrap_or_else(|_| "adaptive".into());
+    BACKGROUND_WALK.store(mode.ends_with("background"), Ordering::Relaxed);
+    let started = Instant::now();
+    let mut records = 0;
+    for root in fixed_drives() {
+        let id = volume_id(&root);
+        let mut v = VolumeIndex::new(&id, root.display().as_bytes(), b'\\');
+        let fixed = mode.strip_prefix("fixed").and_then(|n| n.trim_end_matches(|c: char| !c.is_ascii_digit()).parse().ok());
+        let throttle = fixed.map_or_else(|| Throttle::new(media(&root), DIR_BUFFER), Throttle::fixed);
+        let at = Instant::now();
+        let done = walk_with(&root, file_id(&root).unwrap(), &mut v, &AtomicU64::new(1), throttle);
+        let mut trail = done.trail().to_vec();
+        eprintln!("trail: {id} {trail:?}");
+        trail.sort();
+        let median = trail.get(trail.len() / 2).copied().unwrap_or(done.threads());
+        eprintln!("measure: {mode} {id} {:?} {} records in {:.2} s, median {median} threads, range {:?}..{:?}", media(&root), v.len(), at.elapsed().as_secs_f64(), trail.first(), trail.last());
+        records += v.len();
+    }
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    eprintln!("measure: {mode} total {records} records in {:.2} s on {cores} cores", started.elapsed().as_secs_f64());
 }
