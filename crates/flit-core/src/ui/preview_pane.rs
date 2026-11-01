@@ -1232,8 +1232,8 @@ impl App {
             let w = g.measure(&label, font) + self.s(14.0) + icon_w;
             let br = Rect::new(right - w, r.y + self.s(2.0), w, block_h);
             if let Some(h) = hit {
-                let fill = if self.hover == Hit::Preview(h) { t.button_hover } else { t.input_bg };
-                g.dl.round_rect(br, fill, self.s(3.0));
+                g.dl.round_rect(br, t.input_bg, self.s(3.0));
+                g.dl.round_rect(br, super::widgets::faded(t.button_hover, self.lit(Hit::Preview(h))), self.s(3.0));
                 g.dl.round_rect(br, t.accent.alpha(0x40), self.s(3.0));
                 self.preview.buttons.push((br, h));
             }
@@ -1447,8 +1447,8 @@ impl App {
             let b = self.preview.r.body;
             y += self.s(6.0);
             let br = Rect::new(b.x, b.y + y - self.preview.scroll, self.s(110.0).min(b.w), self.s(BUTTON_H));
-            let c = if self.hover == Hit::Preview(PaneHit::Properties) { t.button_hover } else { t.input_bg };
-            g.dl.round_rect(br, c, self.s(4.0));
+            g.dl.round_rect(br, t.input_bg, self.s(4.0));
+            g.dl.round_rect(br, super::widgets::faded(t.button_hover, self.lit(Hit::Preview(PaneHit::Properties))), self.s(4.0));
             g.dl.outline(br, t.input_border, self.s(4.0), 1.0);
             centered(g, br, S::PreviewProperties.t(), self.ui_font(12.5), t.text);
             self.preview.r.button = br;
@@ -1711,8 +1711,9 @@ impl App {
         let m = &self.preview.media;
         let play = Rect::new(row.x, row.y, ch, ch);
         let icons = self.icon_font(12.0);
-        if self.hover == Hit::Preview(PaneHit::Play) {
-            g.dl.round_rect(play, t.button_hover, self.s(4.0));
+        let lit = self.lit(Hit::Preview(PaneHit::Play));
+        if lit > 0.0 {
+            g.dl.round_rect(play, super::widgets::faded(t.button_hover, lit), self.s(4.0));
         }
         centered(g, play, if m.playing { G_PAUSE } else { G_PLAY }, icons, t.text);
         let font = self.ui_font(12.0);

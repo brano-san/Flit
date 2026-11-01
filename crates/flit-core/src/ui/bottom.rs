@@ -269,8 +269,9 @@ impl App {
             right -= w;
             let b = Rect::new(right, r.y + self.s(2.0), w, r.h - self.s(4.0));
             buttons[k] = b;
-            if self.hover == if in_bin { Hit::Bin(k) } else { Hit::Encoding } {
-                g.dl.round_rect(b, t.button_hover, self.s(3.0));
+            let lit = self.lit(if in_bin { Hit::Bin(k) } else { Hit::Encoding });
+            if lit > 0.0 {
+                g.dl.round_rect(b, super::widgets::faded(t.button_hover, lit), self.s(3.0));
             }
             g.text(b.x + self.s(8.0), baseline, label, font, t.text_dim, f32::INFINITY);
             right -= self.s(4.0);

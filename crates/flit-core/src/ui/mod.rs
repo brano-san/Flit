@@ -2103,11 +2103,7 @@ impl App {
 
     fn button(&self, h: Hit, open: bool, enabled: bool) -> widgets::Button {
         match widgets::Button::of(false, open, enabled) {
-            widgets::Button::Idle => match self.lit(h) {
-                a if a >= 1.0 => widgets::Button::Hover,
-                a if a > 0.0 => widgets::Button::Glow((a * 255.0).round() as u8),
-                _ => widgets::Button::Idle,
-            },
+            widgets::Button::Idle => widgets::Button::lit(self.lit(h)),
             other => other,
         }
     }

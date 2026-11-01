@@ -1552,11 +1552,11 @@ impl App {
                             let c = control_rect(r, s);
                             g.text(c.x, mid(c, ms), &value, small, t.text_dim, s(52.0));
                             let frac = if max > min { (n - min) as f32 / (max - min) as f32 } else { 0.0 };
-                            let hot = hover == Hit::Settings(SHit::Slide(k)) || self.drag == super::Drag::Slide(k);
+                            let hot = if self.drag == super::Drag::Slide(k) { 1.0 } else { self.lit(Hit::Settings(SHit::Slide(k))) };
                             Paint::new(g, t, sc).slider(slider_track(r, s), frac, hot);
                         }
                         (Kind::Toggle(..), Value::Bool(on)) => {
-                            let hot = hover == Hit::Settings(SHit::Control(k));
+                            let hot = self.lit(Hit::Settings(SHit::Control(k)));
                             let to = if on { 1.0 } else { 0.0 };
                             let now = self.last_frame.unwrap_or_else(Instant::now);
                             let knob = match ui.knobs.iter().position(|(x, _)| x == i) {
@@ -1589,11 +1589,8 @@ impl App {
                             centered(g, Rect::new(c.right() - s(30.0), c.y, s(24.0), c.h), G_DOWN, icons, t.text_dim);
                         }
                         (Kind::Number { .. }, _) => {
-                            let hot = match hover {
-                                Hit::Settings(SHit::Step(j, up)) if j == k => Some(up),
-                                _ => None,
-                            };
-                            Paint::new(g, t, sc).stepper(control_rect(r, s), &value, font, icons, hot);
+                            let lit = [false, true].map(|up| self.lit(Hit::Settings(SHit::Step(k, up))));
+                            Paint::new(g, t, sc).stepper(control_rect(r, s), &value, font, icons, lit);
                         }
                         _ => {
                             let c = control_rect(r, s);

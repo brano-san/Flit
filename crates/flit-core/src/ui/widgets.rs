@@ -128,6 +128,14 @@ impl Button {
             _ => Button::Idle,
         }
     }
+
+    pub fn lit(a: f32) -> Self {
+        match a {
+            a if a >= 1.0 => Button::Hover,
+            a if a > 0.0 => Button::Glow((a * 255.0).round() as u8),
+            _ => Button::Idle,
+        }
+    }
 }
 
 pub(super) struct Paint<'a, B: TextBackend> {
@@ -326,12 +334,12 @@ impl<'a, B: TextBackend> Paint<'a, B> {
         }
     }
 
-    pub fn switch(&mut self, r: Rect, pos: f32, hot: bool, icons: FontStyle) {
+    pub fn switch(&mut self, r: Rect, pos: f32, hot: f32, icons: FontStyle) {
         let pos = pos.clamp(0.0, 1.0);
         let pad = self.px(3.0);
         let knob = r.h - 2.0 * pad;
         let track = crate::theme::mix(self.t.text_dim.alpha(0x60), self.t.accent_fill, pos);
-        self.g.dl.round_rect(r, if hot { crate::theme::mix(track, ink_on(track), 0.12) } else { track }, r.h / 2.0);
+        self.g.dl.round_rect(r, crate::theme::mix(track, ink_on(track), 0.12 * hot), r.h / 2.0);
         let kx = (r.x + pad + (r.w - 2.0 * pad - knob) * pos).round();
         let k = Rect::new(kx, r.y + pad, knob, knob);
         self.g.dl.circle(k, Color::rgb(0xFFFFFF));
@@ -339,7 +347,7 @@ impl<'a, B: TextBackend> Paint<'a, B> {
         self.centered(k, mark.0, icons, faded(mark.1, (2.0 * pos - 1.0).abs()));
     }
 
-    pub fn slider(&mut self, track: Rect, frac: f32, hot: bool) {
+    pub fn slider(&mut self, track: Rect, frac: f32, hot: f32) {
         let frac = frac.clamp(0.0, 1.0);
         let vertical = track.h > track.w;
         let thick = track.w.min(track.h);
@@ -352,7 +360,7 @@ impl<'a, B: TextBackend> Paint<'a, B> {
             (Rect::new(track.x, track.y, x - track.x, track.h), (x, track.y + track.h / 2.0))
         };
         self.g.dl.round_rect(fill, self.t.accent_fill, thick / 2.0);
-        let knob = self.px(if hot { 16.0 } else { 14.0 });
+        let knob = self.px(14.0 + 2.0 * hot);
         let k = Rect::new(center.0 - knob / 2.0, center.1 - knob / 2.0, knob, knob);
         self.g.dl.circle(k, Color::rgb(0xFFFFFF));
         self.g.dl.ring(k, self.t.accent_fill, self.px(2.0));
@@ -364,14 +372,13 @@ impl<'a, B: TextBackend> Paint<'a, B> {
         self.g.dl.outline(r, if focused { self.t.accent } else { self.t.input_border }, radius, if focused { self.s.round().max(1.0) } else { 1.0 });
     }
 
-    pub fn stepper(&mut self, r: Rect, value: &str, font: FontStyle, icons: FontStyle, hot: Option<bool>) -> (Rect, Rect) {
+    pub fn stepper(&mut self, r: Rect, value: &str, font: FontStyle, icons: FontStyle, lit: [f32; 2]) -> (Rect, Rect) {
         let radius = self.px(BUTTON_RADIUS);
         self.g.dl.round_rect(r, self.t.button_pressed, radius);
         let side = self.px(STEP_W).min(r.w / 3.0);
         let (minus, plus) = (Rect::new(r.x, r.y, side, r.h), Rect::new(r.right() - side, r.y, side, r.h));
         for (b, glyph, up) in [(minus, G_MINUS, false), (plus, G_PLUS, true)] {
-            let state = if hot == Some(up) { Button::Hover } else { Button::Idle };
-            self.icon_button(b, glyph, icons, state, self.t.text);
+            self.icon_button(b, glyph, icons, Button::lit(lit[usize::from(up)]), self.t.text);
         }
         let line = self.t.separator;
         self.g.dl.rect(Rect::new(minus.right(), r.y + self.px(4.0), 1.0, r.h - self.px(8.0)), line);

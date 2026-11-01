@@ -893,8 +893,9 @@ impl App {
                 if !show {
                     continue;
                 }
-                if self.hover == hit || (hit == Hit::OpsMore(i) && self.jobs.menu == Some(i)) {
-                    g.dl.round_rect(b, t.button_hover, s4);
+                let lit = if hit == Hit::OpsMore(i) && self.jobs.menu == Some(i) { 1.0 } else { self.lit(hit) };
+                if lit > 0.0 {
+                    g.dl.round_rect(b, super::widgets::faded(t.button_hover, lit), s4);
                 }
                 centered(g, b, glyph, icons, t.text_dim);
             }
