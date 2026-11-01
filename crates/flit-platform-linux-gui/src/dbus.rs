@@ -2,7 +2,6 @@ use flit_core::open::OpenTarget;
 use flit_core::Open;
 use flit_platform::{OpenSink, Wake};
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
-use std::sync::{Condvar, Mutex, MutexGuard};
 
 pub const NAME: &CStr = c"org.freedesktop.FileManager1";
 const INTROSPECTION: &CStr = c"<node><interface name=\"org.freedesktop.FileManager1\">\
@@ -13,9 +12,7 @@ const INTROSPECTION: &CStr = c"<node><interface name=\"org.freedesktop.FileManag
 const TYPE_METHOD_CALL: c_int = 1;
 const TYPE_ARRAY: c_int = b'a' as c_int;
 const TYPE_STRING: c_int = b's' as c_int;
-const NAME_REPLACE_EXISTING: u32 = 2;
 const NAME_DO_NOT_QUEUE: u32 = 4;
-const POLL_MS: c_int = 250;
 const PRIMARY_OWNER: c_int = 1;
 
 #[repr(C)]
@@ -143,7 +140,8 @@ pub fn request(method: &str, uris: &[Vec<u8>]) -> Option<Open> {
     let open = Open { target: OpenTarget::NewTab, ..Default::default() };
     match method {
         "ShowFolders" => Some(Open { paths, ..open }),
-        "ShowItems" | "ShowItemProperties" => Some(Open { select: paths, ..open }),
+        "ShowItems" => Some(Open { select: paths, ..open }),
+        "ShowItemProperties" => Some(Open { select: paths, properties: true, ..open }),
         _ => None,
     }
 }
@@ -155,24 +153,30 @@ pub(crate) fn text(p: *const c_char) -> String {
     unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
 }
 
-unsafe fn uris(api: &Api, msg: *mut c_void) -> Vec<Vec<u8>> {
+unsafe fn string(api: &Api, it: &mut Iter) -> Option<Vec<u8>> {
+    if (api.iter_type)(it) != TYPE_STRING {
+        return None;
+    }
+    let mut s: *const c_char = std::ptr::null();
+    (api.iter_basic)(it, (&mut s as *mut *const c_char).cast());
+    (!s.is_null()).then(|| CStr::from_ptr(s).to_bytes().to_vec())
+}
+
+unsafe fn uris_and_startup_id(api: &Api, msg: *mut c_void) -> (Vec<Vec<u8>>, String) {
     let (mut top, mut inner) = (Iter::new(), Iter::new());
     if (api.iter_init)(msg, &mut top) == 0 || (api.iter_type)(&mut top) != TYPE_ARRAY {
-        return Vec::new();
+        return (Vec::new(), String::new());
     }
     (api.iter_recurse)(&mut top, &mut inner);
     let mut out = Vec::new();
-    while (api.iter_type)(&mut inner) == TYPE_STRING {
-        let mut s: *const c_char = std::ptr::null();
-        (api.iter_basic)(&mut inner, (&mut s as *mut *const c_char).cast());
-        if !s.is_null() {
-            out.push(CStr::from_ptr(s).to_bytes().to_vec());
-        }
+    while let Some(s) = string(api, &mut inner) {
+        out.push(s);
         if (api.iter_next)(&mut inner) == 0 {
             break;
         }
     }
-    out
+    let startup_id = if (api.iter_next)(&mut top) != 0 { string(api, &mut top) } else { None };
+    (out, startup_id.map(|s| String::from_utf8_lossy(&s).into_owned()).unwrap_or_default())
 }
 
 unsafe fn reply(api: &Api, conn: *mut c_void, msg: *mut c_void, xml: Option<&CStr>) {
@@ -198,14 +202,14 @@ pub fn session_address() -> Option<String> {
         .or_else(|| Some(format!("unix:path={}/bus", crate::xdg::runtime_dir()?.display())))
 }
 
-pub fn serve(address: &str, opens: OpenSink, wake: Wake, ready: impl FnOnce(bool), keep: impl Fn() -> bool) {
+pub fn serve(address: &str, opens: OpenSink, wake: Wake, ready: impl FnOnce(bool)) {
     let Some(api) = load() else { return ready(false) };
     let Ok(addr) = CString::new(address) else { return ready(false) };
     unsafe {
         let mut err = std::mem::zeroed::<Error>();
         (api.error_init)(&mut err);
         let conn = (api.open_private)(addr.as_ptr(), &mut err);
-        let owned = !conn.is_null() && (api.register)(conn, &mut err) != 0 && (api.request_name)(conn, NAME.as_ptr(), NAME_DO_NOT_QUEUE | NAME_REPLACE_EXISTING, &mut err) == PRIMARY_OWNER;
+        let owned = !conn.is_null() && (api.register)(conn, &mut err) != 0 && (api.request_name)(conn, NAME.as_ptr(), NAME_DO_NOT_QUEUE, &mut err) == PRIMARY_OWNER;
         if !owned {
             tracing::info!("not serving {}: {}", NAME.to_string_lossy(), text(err.message));
             (api.error_free)(&mut err);
@@ -216,7 +220,7 @@ pub fn serve(address: &str, opens: OpenSink, wake: Wake, ready: impl FnOnce(bool
             return ready(false);
         }
         ready(true);
-        while keep() {
+        loop {
             loop {
                 let msg = (api.pop)(conn);
                 if msg.is_null() {
@@ -227,7 +231,9 @@ pub fn serve(address: &str, opens: OpenSink, wake: Wake, ready: impl FnOnce(bool
                     if member == "Introspect" {
                         reply(&api, conn, msg, Some(INTROSPECTION));
                     } else if iface.is_empty() || iface == "org.freedesktop.FileManager1" {
-                        if let Some(open) = request(&member, &uris(&api, msg)) {
+                        let (uris, startup_id) = uris_and_startup_id(&api, msg);
+                        if let Some(open) = request(&member, &uris) {
+                            crate::window::startup_token(startup_id);
                             let sent = opens.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|tx| tx.send(open).is_ok());
                             if sent {
                                 wake();
@@ -238,7 +244,7 @@ pub fn serve(address: &str, opens: OpenSink, wake: Wake, ready: impl FnOnce(bool
                 }
                 (api.unref)(msg);
             }
-            if (api.read_write)(conn, POLL_MS) == 0 {
+            if (api.read_write)(conn, -1) == 0 {
                 break;
             }
         }
@@ -247,43 +253,9 @@ pub fn serve(address: &str, opens: OpenSink, wake: Wake, ready: impl FnOnce(bool
     }
 }
 
-static WANTED: Mutex<(bool, u64)> = Mutex::new((false, 0));
-static CHANGED: Condvar = Condvar::new();
-
-fn wanted() -> MutexGuard<'static, (bool, u64)> {
-    WANTED.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-fn wait_until(ok: impl Fn(&(bool, u64)) -> bool) -> u64 {
-    let mut w = wanted();
-    while !ok(&w) {
-        w = CHANGED.wait(w).unwrap_or_else(|e| e.into_inner());
-    }
-    w.1
-}
-
-pub fn want(on: bool) {
-    let mut w = wanted();
-    if w.0 != on {
-        *w = (on, w.1 + 1);
-        CHANGED.notify_all();
-    }
-}
-
-pub fn run(address: &str, opens: OpenSink, wake: Wake) {
-    loop {
-        let turn = wait_until(|w| w.0);
-        serve(address, opens.clone(), wake.clone(), |_| {}, || *wanted() == (true, turn));
-        wait_until(|w| w.1 != turn);
-    }
-}
-
 pub fn start(opens: OpenSink, wake: Wake) {
     let Some(address) = session_address() else { return };
-    if std::env::args_os().any(|a| a == "--dbus-activated") {
-        want(true);
-    }
-    let _ = std::thread::Builder::new().name("flit-dbus".into()).spawn(move || run(&address, opens, wake));
+    let _ = std::thread::Builder::new().name("flit-dbus".into()).spawn(move || serve(&address, opens, wake, |_| {}));
 }
 
 #[cfg(test)]

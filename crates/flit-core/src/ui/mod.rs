@@ -941,6 +941,9 @@ impl App {
         }
         let watched = !routes.is_empty();
         self.dispatch(routes, target, now);
+        if let Some(l) = self.tab_mut().loading.as_mut().filter(|l| cmd.properties && l.select.is_some()) {
+            l.properties = true;
+        }
         if let Some(text) = typed.filter(|_| watched) {
             self.watch_typed(text);
         }
@@ -1166,6 +1169,9 @@ impl App {
             self.keep_as_pane(k);
         }
         let resort = self.tabs[k].on_snapshot(snap);
+        if std::mem::take(&mut self.tabs[k].properties_due) && k == self.cur {
+            self.properties_dialog();
+        }
         if fresh || loaded {
             self.settle_look(k, fresh, loaded);
         }
