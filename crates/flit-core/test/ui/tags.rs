@@ -214,6 +214,7 @@ fn sidebar_tags_search_and_open_their_items() {
 #[test]
 fn tag_column_is_opt_in_and_shows_names_and_marks() {
     let mut app = app_with(&[("a.txt", 0b011), ("b.txt", 0)]);
+    app.animations = false;
     assert!(!app.columns().contains(&Column::Tag));
     app.run_action("view.column.tag", Instant::now());
     assert_eq!(app.columns().last(), Some(&Column::Tag));
