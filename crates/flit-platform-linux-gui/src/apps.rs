@@ -23,10 +23,10 @@ pub struct Assoc {
     pub removed: HashMap<String, Vec<String>>,
 }
 
-fn localized<'a>(fields: &'a HashMap<String, String>, key: &str, lang: &str) -> Option<&'a String> {
+fn localized<'a>(fields: &HashMap<&str, &'a str>, key: &str, lang: &str) -> Option<&'a str> {
     let short = lang.split(['_', '.', '@']).next().unwrap_or("");
     let country = lang.split(['.', '@']).next().unwrap_or("");
-    [format!("{key}[{country}]"), format!("{key}[{short}]"), key.to_owned()].iter().find_map(|k| fields.get(k))
+    [format!("{key}[{country}]"), format!("{key}[{short}]"), key.to_owned()].iter().find_map(|k| fields.get(k.as_str()).copied())
 }
 
 pub fn parse_desktop(id: &str, path: &Path, text: &str, lang: &str) -> Option<Entry> {
@@ -36,20 +36,22 @@ pub fn parse_desktop(id: &str, path: &Path, text: &str, lang: &str) -> Option<En
         if line.starts_with('[') {
             inside = line == "[Desktop Entry]";
         } else if inside {
-            if let Some((k, v)) = line.split_once('=') {
-                fields.insert(k.trim().to_owned(), v.trim().to_owned());
+            if let Some((k, v)) = line.split_once('=').map(|(k, v)| (k.trim(), v.trim())) {
+                if !k.ends_with(']') || k.starts_with("Name[") {
+                    fields.insert(k, v);
+                }
             }
         }
     }
-    if fields.get("Type").map(String::as_str) != Some("Application") {
+    if fields.get("Type") != Some(&"Application") {
         return None;
     }
-    let yes = |k: &str| fields.get(k).is_some_and(|v| v == "true");
+    let yes = |k: &str| fields.get(k) == Some(&"true");
     Some(Entry {
         id: id.to_owned(),
         path: path.to_path_buf(),
-        name: localized(&fields, "Name", lang)?.clone(),
-        exec: fields.get("Exec")?.clone(),
+        name: localized(&fields, "Name", lang)?.to_owned(),
+        exec: fields.get("Exec")?.to_string(),
         mimes: fields.get("MimeType").map(|m| m.split(';').filter(|s| !s.is_empty()).map(str::to_owned).collect()).unwrap_or_default(),
         terminal: yes("Terminal"),
         hidden: yes("Hidden"),

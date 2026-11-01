@@ -69,9 +69,11 @@ fn applications(t: &Temp, count: usize) -> (PathBuf, PathBuf) {
     let apps = data.join("applications");
     std::fs::create_dir_all(apps.join("kde")).unwrap();
     std::fs::create_dir_all(&config).unwrap();
+    let langs = ["fr", "es", "it", "pt_BR", "pl", "cs", "ru", "uk", "ja", "ko", "zh_CN", "zh_TW", "nl", "sv", "fi", "hu", "tr", "el", "he", "ar", "ca", "vi", "id", "sr@latin"];
+    let translated: String = langs.iter().map(|l| format!("Name[{l}]=App {l}\nGenericName[{l}]=Tool {l}\nComment[{l}]=Does something useful in {l}\nKeywords[{l}]=one;two;three;\n")).collect();
     for i in 0..count {
         let mime = if i % 3 == 0 { "text/plain;image/png;" } else { "application/pdf;" };
-        std::fs::write(apps.join(format!("app{i}.desktop")), format!("[Desktop Entry]\nType=Application\nName=App {i}\nName[de]=Programm {i}\nComment=Something {i}\nIcon=app{i}\nExec=app{i} %F\nMimeType={mime}\nCategories=Utility;\n")).unwrap();
+        std::fs::write(apps.join(format!("app{i}.desktop")), format!("[Desktop Entry]\nType=Application\nName=App {i}\nName[de]=Programm {i}\nComment=Something {i}\n{translated}Icon=app{i}\nExec=app{i} %F\nMimeType={mime}\nCategories=Utility;\n")).unwrap();
     }
     std::fs::write(apps.join("kde/viewer.desktop"), VIEWER).unwrap();
     std::fs::write(config.join("mimeapps.list"), "[Default Applications]\ntext/plain=kde-viewer.desktop;\n").unwrap();
