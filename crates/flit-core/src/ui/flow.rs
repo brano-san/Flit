@@ -21,13 +21,13 @@ struct Span {
     line: usize,
     rows: usize,
     head: bool,
-    at: f32,
+    at: f64,
 }
 
 pub(super) struct Flow {
     p: FlowParams,
     spans: Vec<Span>,
-    end: f32,
+    end: f64,
 }
 
 impl Flow {
@@ -53,7 +53,7 @@ impl Flow {
     }
 
     pub fn extent(&self) -> f32 {
-        self.end
+        self.end as f32
     }
 
     fn ext(&self) -> f32 {
@@ -80,16 +80,17 @@ impl Flow {
         s.head && b == 0 && !self.p.across
     }
 
-    fn span_extent(&self, s: &Span) -> f32 {
-        let n = self.bands(s);
-        if s.head && !self.p.across { self.p.head + (n - 1) as f32 * self.ext() } else { n as f32 * self.ext() }
+    fn span_extent(&self, s: &Span) -> f64 {
+        let (n, ext) = (self.bands(s) as f64, self.ext() as f64);
+        if s.head && !self.p.across { self.p.head as f64 + (n - 1.0) * ext } else { n * ext }
     }
 
-    fn band_span(&self, s: &Span, b: usize) -> (f32, f32) {
+    fn band_span(&self, s: &Span, b: usize) -> (f64, f32) {
+        let ext = self.ext() as f64;
         match (self.head_band(s, b), s.head && !self.p.across) {
             (true, _) => (s.at, self.p.head),
-            (false, true) => (s.at + self.p.head + (b - 1) as f32 * self.ext(), self.ext()),
-            (false, false) => (s.at + b as f32 * self.ext(), self.ext()),
+            (false, true) => (s.at + self.p.head as f64 + (b - 1) as f64 * ext, self.ext()),
+            (false, false) => (s.at + b as f64 * ext, self.ext()),
         }
     }
 
@@ -121,11 +122,16 @@ impl Flow {
     }
 
     pub fn cell(&self, line: usize) -> Rect {
+        self.cell_from(line, 0.0)
+    }
+
+    pub fn cell_from(&self, line: usize, origin: f32) -> Rect {
         let Some(k) = self.span_of(line) else { return Rect::default() };
         let s = &self.spans[k];
         let pos = self.pos_of(s, line);
         let (b, slot) = (pos / self.p.per, pos % self.p.per);
         let (at, ext) = self.band_span(s, b);
+        let at = (at - origin as f64) as f32;
         if self.head_band(s, b) {
             return Rect::new(0.0, at, self.p.per as f32 * self.p.cell.0, ext);
         }
@@ -133,23 +139,23 @@ impl Flow {
         if self.p.across { Rect::new(at, cross, ext, self.p.cell.1) } else { Rect::new(cross, at, self.p.cell.0, ext) }
     }
 
-    fn locate(&self, along: f32) -> Option<(usize, usize)> {
+    fn locate(&self, along: f64) -> Option<(usize, usize)> {
         if along < 0.0 || along >= self.end {
             return None;
         }
         let k = self.spans.partition_point(|s| s.at <= along).checked_sub(1)?;
         let s = &self.spans[k];
-        let rel = along - s.at;
+        let (rel, head, ext) = (along - s.at, self.p.head as f64, self.ext() as f64);
         let b = match s.head && !self.p.across {
-            true if rel < self.p.head => 0,
-            true => 1 + ((rel - self.p.head) / self.ext()) as usize,
-            false => (rel / self.ext()) as usize,
+            true if rel < head => 0,
+            true => 1 + ((rel - head) / ext) as usize,
+            false => (rel / ext) as usize,
         };
         Some((k, b.min(self.bands(s) - 1)))
     }
 
     pub fn line_at(&self, along: f32, cross: f32) -> Option<usize> {
-        let (k, b) = self.locate(along)?;
+        let (k, b) = self.locate(along as f64)?;
         let s = &self.spans[k];
         if self.head_band(s, b) {
             return Some(s.line);
@@ -163,7 +169,7 @@ impl Flow {
     }
 
     pub fn nearest(&self, along: f32, cross: f32) -> Option<usize> {
-        let (k, b) = self.locate(along.clamp(0.0, (self.end - 0.5).max(0.0)))?;
+        let (k, b) = self.locate((along as f64).clamp(0.0, (self.end - 0.5).max(0.0)))?;
         let s = &self.spans[k];
         let slot = ((cross / self.slot_ext()).floor().max(0.0) as usize).min(self.p.per - 1);
         Some(self.line_of(s, (b * self.p.per + slot).min(self.last_pos(s))))
@@ -178,6 +184,7 @@ impl Flow {
     }
 
     pub fn lines_in(&self, a: f32, b: f32) -> Range<usize> {
+        let (a, b) = (a as f64, b as f64);
         if self.spans.is_empty() || b <= 0.0 || a >= self.end {
             return 0..0;
         }

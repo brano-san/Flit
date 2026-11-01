@@ -818,6 +818,7 @@ name = "flit-platform-linux-gui"
 version = "0.2.5"
 dependencies = [
  "crossbeam-channel",
+ "flit-archive",
  "flit-core",
  "flit-platform",
  "flit-platform-linux",

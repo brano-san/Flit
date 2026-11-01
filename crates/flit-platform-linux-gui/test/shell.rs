@@ -70,6 +70,15 @@ fn color_scheme_replies_from_portal_and_gsettings() {
 }
 
 #[test]
+fn kde_color_schemes_are_dark_when_the_window_background_is() {
+    let breeze_dark = "[General]\nColorScheme=BreezeDark\n\n[Colors:View]\nBackgroundNormal=250,250,250\n\n[Colors:Window]\nBackgroundAlternate=49,54,59\nBackgroundNormal=32,35,38\n";
+    assert_eq!(kde_dark(breeze_dark), Some(true));
+    assert_eq!(kde_dark("[Colors:Window]\nBackgroundNormal=239,240,241\n"), Some(false));
+    assert_eq!(kde_dark("[Colors:View]\nBackgroundNormal=20,20,20\n"), None);
+    assert_eq!(kde_dark("[Colors:Window]\nBackgroundNormal=broken\n"), None);
+}
+
+#[test]
 fn programs_are_found_on_path_and_spawned_without_a_shell() {
     assert!(on_path(OsStr::new("sh")).is_some());
     assert!(on_path(OsStr::new("flit-no-such-program")).is_none());

@@ -1,5 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime};
+
+const SETTLE: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Entry {
@@ -128,19 +132,30 @@ fn data_dirs() -> Vec<PathBuf> {
     crate::xdg::data_home().into_iter().chain(system.split(':').filter(|d| d.starts_with('/')).map(PathBuf::from)).collect()
 }
 
-fn collect(dir: &Path, prefix: &str, lang: &str, seen: &mut Vec<String>, out: &mut Vec<Entry>) {
+fn config_dirs() -> Vec<PathBuf> {
+    let system = std::env::var("XDG_CONFIG_DIRS").unwrap_or_else(|_| "/etc/xdg".into());
+    crate::xdg::config_home().into_iter().chain(system.split(':').map(PathBuf::from)).collect()
+}
+
+type Stamps = Vec<(PathBuf, Option<SystemTime>)>;
+
+fn stamp(p: &Path) -> Option<SystemTime> {
+    std::fs::metadata(p).and_then(|m| m.modified()).ok()
+}
+
+fn collect(dir: &Path, prefix: &str, lang: &str, seen: &mut HashSet<String>, out: &mut Vec<Entry>, stamps: &mut Stamps) {
+    stamps.push((dir.to_path_buf(), stamp(dir)));
     let Ok(list) = std::fs::read_dir(dir) else { return };
     for e in list.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         let path = e.path();
         if path.is_dir() {
-            collect(&path, &format!("{prefix}{name}-"), lang, seen, out);
+            collect(&path, &format!("{prefix}{name}-"), lang, seen, out, stamps);
         } else if let Some(stem) = name.strip_suffix(".desktop") {
             let id = format!("{prefix}{stem}.desktop");
-            if seen.contains(&id) {
+            if !seen.insert(id.clone()) {
                 continue;
             }
-            seen.push(id.clone());
             if let Some(entry) = std::fs::read_to_string(&path).ok().and_then(|t| parse_desktop(&id, &path, &t, lang)) {
                 out.push(entry);
             }
@@ -148,35 +163,60 @@ fn collect(dir: &Path, prefix: &str, lang: &str, seen: &mut Vec<String>, out: &m
     }
 }
 
-pub fn entries() -> Vec<Entry> {
-    let lang = std::env::var("LC_MESSAGES").or_else(|_| std::env::var("LANG")).unwrap_or_default();
-    let (mut seen, mut out) = (Vec::new(), Vec::new());
-    for d in data_dirs() {
-        collect(&d.join("applications"), "", &lang, &mut seen, &mut out);
-    }
-    out
+pub struct Catalog {
+    pub entries: Vec<Entry>,
+    pub assoc: Assoc,
+    stamps: Stamps,
+    racy: bool,
 }
 
-pub fn associations() -> Assoc {
-    let mut files = Vec::new();
-    let desktops: Vec<String> = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().split(':').filter(|d| !d.is_empty()).map(str::to_lowercase).collect();
-    let system = std::env::var("XDG_CONFIG_DIRS").unwrap_or_else(|_| "/etc/xdg".into());
-    let configs = crate::xdg::config_home().into_iter().chain(system.split(':').map(PathBuf::from));
-    for c in configs {
-        files.extend(desktops.iter().map(|d| c.join(format!("{d}-mimeapps.list"))));
-        files.push(c.join("mimeapps.list"));
+impl Catalog {
+    pub fn load(data: &[PathBuf], config: &[PathBuf]) -> Self {
+        let lang = std::env::var("LC_MESSAGES").or_else(|_| std::env::var("LANG")).unwrap_or_default();
+        let (mut seen, mut entries, mut stamps) = (HashSet::new(), Vec::new(), Vec::new());
+        for d in data {
+            collect(&d.join("applications"), "", &lang, &mut seen, &mut entries, &mut stamps);
+        }
+        let desktops: Vec<String> = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().split(':').filter(|d| !d.is_empty()).map(str::to_lowercase).collect();
+        let mut files = Vec::new();
+        for c in config {
+            files.extend(desktops.iter().map(|d| c.join(format!("{d}-mimeapps.list"))));
+            files.push(c.join("mimeapps.list"));
+        }
+        for d in data {
+            files.push(d.join("applications/mimeapps.list"));
+            files.push(d.join("applications/defaults.list"));
+        }
+        let mut assoc = Assoc::default();
+        for f in files {
+            if let Ok(text) = std::fs::read_to_string(&f) {
+                parse_mimeapps(&text, &mut assoc);
+            }
+            stamps.push((f.clone(), stamp(&f)));
+        }
+        let settled = SystemTime::now() - SETTLE;
+        let racy = stamps.iter().any(|(_, t)| t.is_some_and(|t| t > settled));
+        Self { entries, assoc, stamps, racy }
     }
-    for d in data_dirs() {
-        files.push(d.join("applications/mimeapps.list"));
-        files.push(d.join("applications/defaults.list"));
+
+    pub fn fresh(&self) -> bool {
+        !self.racy && self.stamps.iter().all(|(p, t)| stamp(p) == *t)
     }
-    let mut assoc = Assoc::default();
-    for f in files {
-        if let Ok(text) = std::fs::read_to_string(f) {
-            parse_mimeapps(&text, &mut assoc);
+}
+
+pub fn catalog() -> Arc<Catalog> {
+    static CATALOG: Mutex<Option<Arc<Catalog>>> = Mutex::new(None);
+    let mut slot = CATALOG.lock().unwrap_or_else(|e| e.into_inner());
+    match slot.as_ref().filter(|c| c.fresh()) {
+        Some(c) => c.clone(),
+        None => {
+            let started = Instant::now();
+            let c = Arc::new(Catalog::load(&data_dirs(), &config_dirs()));
+            tracing::debug!(elapsed = ?started.elapsed(), apps = c.entries.len(), "application catalog loaded");
+            *slot = Some(c.clone());
+            c
         }
     }
-    assoc
 }
 
 pub fn open_with(files: &[flit_core::FsPath], entries: &[Entry], assoc: &Assoc) -> (Vec<flit_core::ui::MenuItem>, Vec<flit_core::provider::Launch>) {
@@ -184,21 +224,31 @@ pub fn open_with(files: &[flit_core::FsPath], entries: &[Entry], assoc: &Assoc) 
     if paths.is_empty() || paths.len() != files.len() || paths.iter().any(|p| p.is_dir()) {
         return (Vec::new(), Vec::new());
     }
-    let mimes: Vec<String> = paths
-        .iter()
-        .map(|p| p.extension().and_then(|e| crate::mime::mime_of(e.as_encoded_bytes())).unwrap_or_else(|| "application/octet-stream".into()))
-        .collect();
-    let apps: Vec<&Entry> = handlers(&mimes[0], entries, assoc).into_iter().filter(|e| mimes.iter().all(|m| handlers(m, entries, assoc).iter().any(|h| h.id == e.id))).collect();
+    let mut mimes: Vec<String> = Vec::new();
+    for p in &paths {
+        let mime = p.extension().and_then(|e| crate::mime::mime_of(e.as_encoded_bytes())).unwrap_or_else(|| "application/octet-stream".into());
+        if !mimes.contains(&mime) {
+            mimes.push(mime);
+        }
+    }
+    let sets: Vec<Vec<&Entry>> = mimes.iter().map(|m| handlers(m, entries, assoc)).collect();
+    let apps: Vec<&Entry> = sets[0].iter().copied().filter(|e| sets[1..].iter().all(|s| s.iter().any(|h| h.id == e.id))).collect();
     let items = apps.iter().map(|e| flit_core::ui::MenuItem::command(e.name.clone(), String::new())).collect();
     let launches = apps.iter().filter_map(|e| Some(flit_core::provider::Launch::With { program: crate::xdg::fs_path(&e.path)?, args: files.to_vec() })).collect();
     (items, launches)
 }
 
-pub fn menu_with_apps(mut items: Vec<flit_core::ui::MenuItem>, files: &[flit_core::FsPath]) -> (Vec<flit_core::ui::MenuItem>, Vec<flit_core::provider::Launch>) {
+pub type OpenWith = (Vec<flit_core::ui::MenuItem>, Vec<flit_core::provider::Launch>);
+
+pub fn menu_with_apps(items: Vec<flit_core::ui::MenuItem>, files: &[flit_core::FsPath]) -> OpenWith {
     if files.is_empty() {
         return (items, Vec::new());
     }
-    let (apps, launches) = open_with(files, &entries(), &associations());
+    let c = catalog();
+    with_apps(items, open_with(files, &c.entries, &c.assoc))
+}
+
+pub fn with_apps(mut items: Vec<flit_core::ui::MenuItem>, (apps, launches): OpenWith) -> OpenWith {
     if !apps.is_empty() && apps.len() == launches.len() {
         if !items.is_empty() {
             items.push(flit_core::ui::MenuItem::Separator);

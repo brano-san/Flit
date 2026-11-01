@@ -1,5 +1,6 @@
 use super::*;
 use crate::temp::Temp;
+use std::time::{Duration, SystemTime};
 
 const EDITOR: &str = "[Desktop Entry]\nType=Application\nName=Editor\nName[ru]=Редактор\nExec=editor --new %F\nMimeType=text/plain;text/markdown;\n\n[Desktop Action New]\nName=Ignored\nExec=ignored\n";
 const VIEWER: &str = "[Desktop Entry]\nType=Application\nName=Viewer\nExec=\"/opt/my viewer/view\" %u --title %c\nMimeType=text/plain;image/png;\nTerminal=true\n";
@@ -54,6 +55,71 @@ fn the_open_with_menu_lists_apps_for_every_selected_file() {
     assert_eq!(launches, [flit_core::provider::Launch::With { program: fp(Path::new("/usr/share/applications/viewer.desktop")), args: vec![fp(&a), fp(&b)] }]);
     assert_eq!(open_with(&[fp(&a)], &entries, &Assoc::default()).0.len(), 2);
     assert!(open_with(&[fp(t.path())], &entries, &Assoc::default()).0.is_empty(), "folders get no Open with");
+}
+
+fn backdate(paths: &[PathBuf]) {
+    let old = SystemTime::now() - Duration::from_secs(60);
+    for p in paths {
+        std::fs::File::open(p).unwrap().set_modified(old).unwrap();
+    }
+}
+
+fn applications(t: &Temp, count: usize) -> (PathBuf, PathBuf) {
+    let (data, config) = (t.path().join("data"), t.path().join("config"));
+    let apps = data.join("applications");
+    std::fs::create_dir_all(apps.join("kde")).unwrap();
+    std::fs::create_dir_all(&config).unwrap();
+    for i in 0..count {
+        let mime = if i % 3 == 0 { "text/plain;image/png;" } else { "application/pdf;" };
+        std::fs::write(apps.join(format!("app{i}.desktop")), format!("[Desktop Entry]\nType=Application\nName=App {i}\nName[de]=Programm {i}\nComment=Something {i}\nIcon=app{i}\nExec=app{i} %F\nMimeType={mime}\nCategories=Utility;\n")).unwrap();
+    }
+    std::fs::write(apps.join("kde/viewer.desktop"), VIEWER).unwrap();
+    std::fs::write(config.join("mimeapps.list"), "[Default Applications]\ntext/plain=kde-viewer.desktop;\n").unwrap();
+    backdate(&[apps.clone(), apps.join("kde"), config.join("mimeapps.list")]);
+    (data, config)
+}
+
+#[test]
+fn the_application_catalog_is_kept_until_an_application_folder_or_mimeapps_changes() {
+    let t = Temp::new("apps-catalog");
+    let (data, config) = applications(&t, 3);
+    let c = Catalog::load(std::slice::from_ref(&data), std::slice::from_ref(&config));
+    assert_eq!(c.entries.len(), 4);
+    assert_eq!(handlers("text/plain", &c.entries, &c.assoc)[0].id, "kde-viewer.desktop");
+    assert!(c.fresh());
+    std::fs::write(data.join("applications/new.desktop"), EDITOR).unwrap();
+    assert!(!c.fresh(), "a new desktop file is seen");
+    let c = Catalog::load(std::slice::from_ref(&data), std::slice::from_ref(&config));
+    assert_eq!(c.entries.len(), 5);
+    assert!(!c.fresh(), "a folder changed within the last seconds is read again");
+    backdate(&[data.join("applications")]);
+    let c = Catalog::load(std::slice::from_ref(&data), std::slice::from_ref(&config));
+    std::fs::write(config.join("mimeapps.list"), "[Default Applications]\ntext/plain=new.desktop;\n").unwrap();
+    assert!(!c.fresh(), "mimeapps.list edits are seen");
+}
+
+#[test]
+#[ignore]
+fn bench_the_open_with_menu_for_six_hundred_applications() {
+    let t = Temp::new("apps-bench");
+    let (data, config) = applications(&t, 600);
+    let file = t.file("note.txt", 1);
+    let files = [crate::xdg::fs_path(&file).unwrap()];
+    let runs = 50;
+    let started = std::time::Instant::now();
+    for _ in 0..runs {
+        let c = Catalog::load(std::slice::from_ref(&data), std::slice::from_ref(&config));
+        assert!(!open_with(&files, &c.entries, &c.assoc).0.is_empty());
+    }
+    let parsed = started.elapsed() / runs;
+    let c = Catalog::load(std::slice::from_ref(&data), std::slice::from_ref(&config));
+    let started = std::time::Instant::now();
+    for _ in 0..runs {
+        assert!(c.fresh());
+        assert!(!open_with(&files, &c.entries, &c.assoc).0.is_empty());
+    }
+    let cached = started.elapsed() / runs;
+    eprintln!("open with for 600 applications: parsing every time {parsed:?}, cached catalog {cached:?}");
 }
 
 #[test]

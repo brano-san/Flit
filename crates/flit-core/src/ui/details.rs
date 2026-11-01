@@ -643,13 +643,18 @@ impl App {
 
     pub(super) fn load_tab(&mut self, k: usize, select: Option<Vec<u8>>, now: Instant) {
         let gen = self.gen();
-        if self.tabs[k].view_loc != *self.tabs[k].location() {
+        let arriving = self.tabs[k].view_loc != *self.tabs[k].location();
+        let fresh = arriving || self.tabs[k].view.is_none();
+        if arriving {
             let loc = self.tabs[k].location().clone();
             self.count_visit(&loc);
         }
         if !self.prefs.same_for_all {
             let fv = self.view_for(&self.tabs[k]);
             self.tabs[k].set_folder_view(fv);
+        }
+        if fresh && self.tabs[k].location().is_root() {
+            self.tabs[k].subfolders = false;
         }
         self.sync_spec(k);
         self.tabs[k].retain_filter = self.prefs.retain_filter;

@@ -250,3 +250,45 @@ fn a_real_atspi_client_walks_invokes_and_hears_focus() {
     gdbus(&address, false);
     wait("the bridge to stop listening", || !listening());
 }
+
+#[test]
+fn only_the_appearance_color_scheme_setting_counts() {
+    let s = |v: &str| Arg::S(v.into());
+    assert_eq!(color_scheme_change(&[s(APPEARANCE), s("color-scheme"), Arg::L(vec![Arg::I(1)])]), Some(1));
+    assert_eq!(color_scheme_change(&[s(APPEARANCE), s("accent-color"), Arg::L(vec![Arg::I(1)])]), None);
+    assert_eq!(color_scheme_change(&[s("org.gnome.desktop.interface"), s("color-scheme"), Arg::L(vec![Arg::I(1)])]), None);
+}
+
+#[test]
+fn the_portal_setting_changed_signal_switches_the_theme_live() {
+    if !tool("dbus-daemon") || !tool("dbus-send") {
+        eprintln!("skipped: dbus-daemon or dbus-send is missing");
+        return;
+    }
+    let mut daemon = Command::new("dbus-daemon").args(["--session", "--nofork", "--print-address=1"]).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut address = String::new();
+    BufReader::new(daemon.stdout.take().unwrap()).read_line(&mut address).unwrap();
+    let daemon = Kill(daemon);
+    let address = address.trim().to_owned();
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let bus = address.clone();
+    let watcher = std::thread::spawn(move || watch_color_scheme(&bus, &move |scheme| tx.send(scheme).unwrap()));
+    let signal = |scheme: u32| {
+        Command::new("dbus-send")
+            .args([&format!("--bus={address}"), "--type=signal", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Settings.SettingChanged", "string:org.freedesktop.appearance", "string:color-scheme", &format!("variant:uint32:{scheme}")])
+            .status()
+            .unwrap()
+    };
+    let mut heard = None;
+    let until = Instant::now() + Duration::from_secs(10);
+    while heard.is_none() && Instant::now() < until {
+        assert!(signal(1).success());
+        heard = rx.recv_timeout(Duration::from_millis(100)).ok();
+    }
+    assert_eq!(heard, Some(1));
+    assert!(signal(2).success());
+    let next = (0..50).find_map(|_| rx.recv_timeout(Duration::from_millis(200)).ok().filter(|&s| s != 1));
+    assert_eq!(next, Some(2));
+    drop(daemon);
+    watcher.join().unwrap();
+}

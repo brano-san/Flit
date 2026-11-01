@@ -767,6 +767,17 @@ fn both_the_empty_area_and_the_group_header_menus_offer_sections() {
 }
 
 #[test]
+fn without_wsl_distributions_the_sections_menu_has_no_wsl_toggle() {
+    let mut app = app_with_places();
+    let mut places = (*app.nav.sidebar.places).clone();
+    places.wsl.clear();
+    app.set_places(Arc::new(places));
+    app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    click(empty_area(&app), &mut app, MouseButton::Right);
+    assert_eq!(stays(&menu(&mut app).menu), ["Recents", "Bookmarks", "Storage", "Places", "Libraries", "Tags", "Compact sidebar"]);
+}
+
+#[test]
 fn dragging_a_recent_folder_or_file_onto_bookmarks_pins_it() {
     let mut app = app_with_places();
     let mut places = (*app.nav.sidebar.places).clone();

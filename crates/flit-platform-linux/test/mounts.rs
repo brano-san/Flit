@@ -78,6 +78,45 @@ fn without_a_user_name_media_folders_stay_hidden() {
     assert!(!shown.iter().any(|p| p.starts_with("/media") || p.starts_with("/run/media")), "{shown:?}");
 }
 
+const CACHYOS: &str = r"22 1 0:21 / /proc rw,nosuid shared:5 - proc proc rw
+23 1 0:22 / /sys rw,nosuid shared:6 - sysfs sysfs rw
+24 1 0:5 / /dev rw,nosuid shared:2 - devtmpfs devtmpfs rw
+25 23 0:23 / /sys/firmware/efi/efivars rw,nosuid shared:7 - efivarfs efivarfs rw
+26 1 0:24 / /run rw,nosuid,nodev shared:12 - tmpfs tmpfs rw
+1 0 0:26 /@ / rw,noatime shared:1 - btrfs /dev/nvme0n1p2 rw,ssd,subvol=/@
+40 1 0:26 /@home /home rw,noatime shared:40 - btrfs /dev/nvme0n1p2 rw,ssd,subvol=/@home
+41 1 0:26 /@root /root rw,noatime shared:41 - btrfs /dev/nvme0n1p2 rw,ssd,subvol=/@root
+42 1 0:26 /@srv /srv rw,noatime shared:42 - btrfs /dev/nvme0n1p2 rw,ssd,subvol=/@srv
+43 1 0:26 /@cache /var/cache rw,noatime shared:43 - btrfs /dev/nvme0n1p2 rw,ssd,subvol=/@cache
+44 1 0:26 /@log /var/log rw,noatime shared:44 - btrfs /dev/nvme0n1p2 rw,ssd,subvol=/@log
+45 1 0:26 /@tmp /var/tmp rw,noatime shared:45 - btrfs /dev/nvme0n1p2 rw,ssd,subvol=/@tmp
+46 1 259:1 / /boot rw,relatime shared:46 - vfat /dev/nvme0n1p1 rw,fmask=0022
+47 1 0:47 / /tmp rw,nosuid,nodev shared:47 - tmpfs tmpfs rw
+50 40 8:1 / /home/maikun/HDD rw,relatime shared:50 - ext4 /dev/sda1 rw
+51 26 8:17 / /run/media/maikun/Stick rw,nosuid,nodev,relatime shared:51 - exfat /dev/sdb1 rw
+52 26 0:52 / /run/user/1000/doc rw,nosuid,nodev,relatime shared:52 - fuse.portal portal rw
+53 1 8:33 / /mnt/games rw,relatime shared:53 - ntfs3 /dev/sdc1 rw
+54 53 8:33 /Steam /mnt/games-steam rw,relatime shared:54 - ntfs3 /dev/sdc1 rw
+55 1 8:49 / /media/Backup rw,relatime shared:55 - xfs /dev/sdd1 rw
+56 1 8:65 / /media/guest/Other rw,relatime shared:56 - ext4 /dev/sde1 rw
+57 1 0:57 / /var/lib/docker/overlay2/x/merged rw - overlay overlay rw
+";
+
+#[test]
+fn storage_shows_each_file_system_once_and_only_real_disks() {
+    let shown = points(&disks(&parse(CACHYOS.as_bytes()), b"maikun"));
+    assert_eq!(shown, ["/", "/home/maikun/HDD", "/media/Backup", "/mnt/games", "/run/media/maikun/Stick"]);
+    let desktop = points(&disks(&parse(DESKTOP.as_bytes()), b"ann"));
+    assert_eq!(desktop, ["/", "/media/ann/My Disk", "/mnt/deep/inside", "/mnt/old", "/run/media/ann/USB\\Stick"]);
+    assert_eq!(points(&disks(&parse(WSL.as_bytes()), b"cogitci")), ["/", "/mnt/c", "/mnt/d"]);
+}
+
+#[test]
+fn a_separate_home_partition_stays_next_to_the_root() {
+    let table = "1 0 259:2 / / rw - ext4 /dev/nvme0n1p2 rw\n2 1 259:3 / /home rw - ext4 /dev/nvme0n1p3 rw\n3 1 259:1 / /boot/efi rw - vfat /dev/nvme0n1p1 rw\n";
+    assert_eq!(points(&disks(&parse(table.as_bytes()), b"ann")), ["/", "/home"]);
+}
+
 #[test]
 fn overmounted_point_keeps_the_top_mount() {
     let ms = visible(&parse(DESKTOP.as_bytes()), b"ann");

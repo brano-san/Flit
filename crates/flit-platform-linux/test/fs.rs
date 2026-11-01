@@ -116,6 +116,43 @@ fn folder_sizes_skip_links_and_honour_cancellation() {
     assert!(none.into_inner().unwrap().is_empty());
 }
 
+fn deep(root: &Path, walls: &HashMap<Vec<u8>, bool>, limit: usize, keep_going: &dyn Fn() -> bool) -> Vec<String> {
+    let mut go = |_: &ListingBuilder<'_>| true;
+    let mut b = ListingBuilder::new(flit_core::sort::CaseMode::Sensitive, &mut go);
+    LinuxFs.read_dir(&FsPath::parse(root.to_str().unwrap()).unwrap(), &mut b).unwrap();
+    read_deep(root, &mut b, walls, limit, keep_going);
+    let l = &b.listing;
+    let full = |i: u32| if l.folder(i).is_empty() { l.name(i).to_vec() } else { [l.folder(i), b"/", l.name(i)].concat() };
+    let mut names: Vec<String> = (0..l.len() as u32).map(|i| String::from_utf8_lossy(&full(i)).into_owned()).collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn subfolders_never_follow_links_or_enter_walled_mounts_and_stop_on_cancel_or_limit() {
+    let t = Temp::new("deep");
+    for dir in ["a/b", "proc/1", "c"] {
+        std::fs::create_dir_all(t.path().join(dir)).unwrap();
+    }
+    t.file("a/b/f.txt", 1);
+    t.file("proc/1/status", 1);
+    symlink(t.path(), t.path().join("a/up")).unwrap();
+    let walls = HashMap::from([(t.path().join("proc").as_os_str().as_bytes().to_vec(), true)]);
+    assert_eq!(deep(t.path(), &walls, usize::MAX, &|| true), ["a", "a/b", "a/b/f.txt", "a/up", "c", "proc"]);
+    assert_eq!(deep(t.path(), &walls, 4, &|| true).len(), 4);
+    assert_eq!(deep(t.path(), &walls, usize::MAX, &|| false), ["a", "c", "proc"]);
+    assert_eq!(deep(&t.path().join("proc"), &walls, usize::MAX, &|| true), ["1"], "a walled folder lists only its own entries");
+}
+
+#[test]
+fn virtual_and_network_file_systems_are_walled_off() {
+    let table = crate::mounts::parse(b"1 0 8:2 / / rw - ext4 /dev/sda2 rw\n2 1 0:21 / /proc rw - proc proc rw\n3 1 0:22 / /sys rw - sysfs sysfs rw\n4 1 0:24 / /run rw - tmpfs tmpfs rw\n5 4 8:17 / /run/media/u/S rw - exfat /dev/sdb1 rw\n6 1 0:60 / /mnt/nas rw - nfs4 nas:/x rw\n7 1 0:61 / /home/u/remote rw - fuse.rclone r: rw\n8 1 0:62 / /mnt/sshfs rw - fuse.sshfs h:/ rw\n");
+    let w = walls(&table);
+    for (path, wall) in [("/proc/1/task", true), ("/sys", true), ("/run/user/1000", true), ("/run/media/u/S/photos", false), ("/mnt/nas", true), ("/home/u/remote", true), ("/home/u", false), ("/", false)] {
+        assert_eq!(walled(path.as_bytes(), &w), wall, "{path}");
+    }
+}
+
 #[test]
 fn names_the_file_system_of_a_path() {
     let t = Temp::new("fstype");

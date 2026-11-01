@@ -40,6 +40,20 @@ fn has_rect(g: &Gfx<Mono>, c: Color) -> bool {
 }
 
 #[test]
+fn picking_a_color_scheme_applies_it_at_once_even_while_following_the_system() {
+    let mut a = app();
+    a.on_event(&Event::ThemeChanged { dark: true }, Instant::now());
+    a.choose_setting(index("appearance.color_scheme").unwrap(), 1);
+    assert!(!a.is_dark() && *a.theme() == LIGHT);
+    assert_eq!(get(&a, "appearance.system_scheme"), Value::Bool(false));
+    a.choose_setting(index("appearance.color_scheme").unwrap(), 0);
+    assert!(a.is_dark());
+    assert!(set(&mut a, "appearance.system_scheme", Value::Bool(true)));
+    a.on_event(&Event::ThemeChanged { dark: false }, Instant::now());
+    assert!(!a.is_dark(), "the system scheme follows the desktop again");
+}
+
+#[test]
 fn the_theme_follows_windows_or_the_setting_and_ctrl_alt_t_switches_it() {
     let mut a = app();
     assert!(!a.is_dark() && *a.theme() == LIGHT);

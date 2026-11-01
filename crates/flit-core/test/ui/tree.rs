@@ -165,6 +165,34 @@ fn subfolders_mode_lists_nested_items_and_marks_the_tab() {
     assert!(!app.tab().title().ends_with(" [...]"));
 }
 
+fn listed_deep(app: &mut App) -> Option<bool> {
+    app.drain_effects().find_map(|e| match e {
+        Effect::Provider { req: ProviderRequest::List { view, .. }, .. } => Some(view.deep),
+        _ => None,
+    })
+}
+
+#[test]
+fn a_drive_root_never_opens_with_subfolders_but_can_still_switch_them_on() {
+    let mut app = app();
+    let (root, work) = (Location::parse(r"C:\").unwrap(), Location::parse(r"C:\Work").unwrap());
+    app.navigate(root.clone(), Instant::now());
+    deliver(&mut app, &["Work"], &[]);
+    app.drain_effects().for_each(drop);
+    assert!(app.run_action("subfolders.toggle", Instant::now()));
+    assert_eq!(listed_deep(&mut app), Some(true), "switching subfolders on at the root still works");
+    app.navigate(work, Instant::now());
+    assert_eq!(listed_deep(&mut app), Some(true), "other folders keep the remembered view");
+    deliver(&mut app, &["a.txt"], &[]);
+    app.navigate(root.clone(), Instant::now());
+    assert_eq!(listed_deep(&mut app), Some(false), "arriving at a root lists only its own items");
+    assert!(!app.tab().subfolders);
+    let mut saved = Persisted { path: root, ..Default::default() };
+    saved.prefs.defaults.subfolders = true;
+    let mut restored = App::new(saved, Vec::new(), 0, false, 1.0, (1000, 600), Instant::now());
+    assert_eq!(listed_deep(&mut restored), Some(false), "a root restored at startup never walks its whole tree");
+}
+
 #[test]
 fn folders_and_files_can_be_hidden_separately() {
     let mut app = app();

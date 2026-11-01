@@ -24,7 +24,7 @@ fn name_of(m: &Mount, l: flit_core::i18n::Lang) -> String {
 
 pub fn volumes_from(table: &[Mount], user: &[u8], by_label: &Path) -> Vec<Volume> {
     let labels = mounts::labels(by_label);
-    mounts::visible(table, user)
+    mounts::disks(table, user)
         .into_iter()
         .map(|m| {
             let (total, free) = mounts::space(m.path()).unwrap_or_default();
@@ -87,8 +87,24 @@ pub fn connect(uri: &str) -> std::io::Result<PathBuf> {
 }
 
 fn unmounted() -> Vec<Drive> {
-    let out = std::process::Command::new("lsblk").args(["-P", "-b", "-o", "PATH,LABEL,MOUNTPOINT,HOTPLUG,FSTYPE"]).stderr(std::process::Stdio::null()).output();
+    let out = std::process::Command::new("lsblk").args(["-P", "-b", "-o", "PATH,LABEL,MOUNTPOINT,HOTPLUG,FSTYPE,TYPE,PARTTYPE"]).stderr(std::process::Stdio::null()).output();
     out.map(|o| unmounted_from(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default()
+}
+
+const NOT_DATA: [&str; 9] = ["", "swap", "crypto_LUKS", "LVM2_member", "linux_raid_member", "zfs_member", "bcache", "squashfs", "BitLocker"];
+const SYSTEM_PARTITIONS: [&str; 7] = [
+    "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+    "0xef",
+    "e3c9e316-0b5c-4db8-817d-f92df00215ae",
+    "de94bba4-06d1-4d40-a16a-bfd50179d6ac",
+    "21686148-6449-6e6f-744e-656564454649",
+    "bc13c2ff-59e6-4262-a352-b275fd6f7172",
+    "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f",
+];
+
+fn data_partition(f: &HashMap<&str, &str>) -> bool {
+    let get = |k: &str| f.get(k).copied().unwrap_or("");
+    get("MOUNTPOINT").is_empty() && !NOT_DATA.contains(&get("FSTYPE")) && get("TYPE") != "loop" && !SYSTEM_PARTITIONS.contains(&get("PARTTYPE").to_ascii_lowercase().as_str())
 }
 
 pub fn unmounted_from(lsblk: &str) -> Vec<Drive> {
@@ -102,10 +118,10 @@ pub fn unmounted_from(lsblk: &str) -> Vec<Drive> {
             rest = after;
         }
         let get = |k: &str| f.get(k).copied().unwrap_or("");
-        if get("MOUNTPOINT").is_empty() && get("HOTPLUG") == "1" && !matches!(get("FSTYPE"), "" | "swap" | "crypto_LUKS") {
+        if data_partition(&f) {
             let Some(path) = flit_core::FsPath::parse_exact(get("PATH").as_bytes()) else { continue };
             let label = if get("LABEL").is_empty() { get("PATH").rsplit('/').next().unwrap_or("").to_owned() } else { get("LABEL").to_owned() };
-            out.push(Drive { path, label, total: 0, free: 0, removable: true, unmounted: true, kind: None, remote: None });
+            out.push(Drive { path, label, total: 0, free: 0, removable: get("HOTPLUG") == "1", unmounted: true, kind: None, remote: None });
         }
     }
     out
@@ -145,7 +161,7 @@ pub fn eject(point: &Path) -> std::io::Result<()> {
 
 pub fn list_computer(out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
     let table = mounts::read().map_err(|e| FsError { kind: FsErrorKind::Unavailable, code: e.raw_os_error().unwrap_or(-1) as i64 })?;
-    for m in mounts::visible(&table, &mounts::user_name()) {
+    for m in mounts::disks(&table, &mounts::user_name()) {
         let mut meta = Meta { attrs: attr::DIR | attr::VOLUME, ..Default::default() };
         let space = mounts::space(m.path());
         if let Some((total, _)) = space {

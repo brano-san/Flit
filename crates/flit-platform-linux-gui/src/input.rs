@@ -1,4 +1,4 @@
-use flit_core::input::{CursorIcon, Key, Mods, MouseButton};
+use flit_core::input::{CursorIcon, Event, Key, Mods, MouseButton};
 use std::time::{Duration, Instant};
 use winit::event::{MouseButton as WinitButton, MouseScrollDelta};
 use winit::keyboard::{Key as WinitKey, KeyCode, ModifiersState, NamedKey, PhysicalKey};
@@ -155,6 +155,11 @@ fn key_at_us_position(code: KeyCode) -> Key {
 
 pub(crate) fn mods(state: ModifiersState) -> Mods {
     Mods { ctrl: state.control_key(), shift: state.shift_key(), alt: state.alt_key() }
+}
+
+pub(crate) fn modifiers_changed(old: ModifiersState, new: ModifiersState) -> Option<Event> {
+    let held = mods(new);
+    (held != mods(old)).then_some(Event::Key { key: Key::Other, mods: held, pressed: false })
 }
 
 pub(crate) fn mouse_button(button: WinitButton) -> Option<MouseButton> {

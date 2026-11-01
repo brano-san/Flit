@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const IO_TIMEOUT: Duration = Duration::from_secs(2);
+const ANSWER_WAIT: Duration = Duration::from_millis(1500);
 const MAX_CLIENTS: usize = 4;
 pub const SHUTDOWN_SIGNALS: [libc::c_int; 3] = [libc::SIGTERM, libc::SIGHUP, libc::SIGINT];
 
@@ -94,11 +95,17 @@ fn serve(mut s: UnixStream, opens: &OpenSink, wake: &Wake) -> Result<(), ProtoEr
     write_frame(&mut s, &ours)?;
     theirs?;
     let Request::Open(open) = read_frame_limited::<_, Request>(&mut s, &mut Vec::new(), MAX_FRAME)?;
-    let sink = opens.lock().unwrap_or_else(|e| e.into_inner());
-    if sink.as_ref().is_some_and(|tx| tx.send(open).is_ok()) {
-        wake();
-        write_frame(&mut s, &Reply::Accepted)?;
+    let (running, turns) = (&crate::window::LOOP_RUNNING, &crate::window::TURNS);
+    let seen = turns.load(Ordering::Acquire);
+    let sent = opens.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|tx| tx.send(open).is_ok());
+    if !sent {
+        return Ok(());
     }
+    wake();
+    if !crate::window::turned_since(running, turns, seen, ANSWER_WAIT) {
+        return Err(ProtoError::Invalid("this Flit window does not respond, so the new one starts on its own"));
+    }
+    write_frame(&mut s, &Reply::Accepted)?;
     Ok(())
 }
 

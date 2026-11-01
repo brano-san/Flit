@@ -1,3 +1,4 @@
+use crate::apps::OpenWith;
 use crate::input::{self, Clicks};
 use flit_core::input::{CursorIcon, Event, HitArea, MouseButton};
 use flit_core::render::Rect;
@@ -7,7 +8,7 @@ use flit_platform::{Placement, PlatformError, Waker, Window, WindowHandler, Wind
 use std::cell::{Cell, RefCell};
 use std::ffi::CStr;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
@@ -43,6 +44,21 @@ static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 static A11Y_REFRESH: AtomicBool = AtomicBool::new(false);
 static QUEUED: Mutex<Vec<(WindowId, Event)>> = Mutex::new(Vec::new());
 static TOKEN: Mutex<Option<String>> = Mutex::new(None);
+static PREFETCHED: Mutex<Option<(Vec<FsPath>, OpenWith)>> = Mutex::new(None);
+
+pub(crate) static LOOP_RUNNING: AtomicBool = AtomicBool::new(false);
+pub(crate) static TURNS: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn turned_since(running: &AtomicBool, turns: &AtomicU64, seen: u64, wait: Duration) -> bool {
+    let until = Instant::now() + wait;
+    while running.load(Ordering::Acquire) && turns.load(Ordering::Acquire) == seen {
+        if Instant::now() >= until {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    true
+}
 
 pub(crate) fn activation_token() -> Option<String> {
     TOKEN.lock().unwrap_or_else(|e| e.into_inner()).take()
@@ -175,6 +191,11 @@ impl LinuxWindow {
         self.raw.set_cursor(icon.into());
     }
 
+    fn restore_cursor(&self) {
+        self.edge.set(None);
+        self.raw.set_cursor(input::cursor(self.cursor.get()).into());
+    }
+
     fn leave_compact(&self) {
         let Some((w, h)) = self.compact_from.take() else { return };
         self.raw.set_window_level(WindowLevel::Normal);
@@ -263,7 +284,7 @@ impl Window for LinuxWindow {
     }
 
     fn is_dark_mode(&self) -> bool {
-        preferred_dark().or_else(|| self.raw.theme().map(|t| t == Theme::Dark)).unwrap_or(false)
+        preferred_dark().unwrap_or(false)
     }
 
     fn set_clipboard_files(&self, paths: &[FsPath], cut: bool) {
@@ -271,16 +292,35 @@ impl Window for LinuxWindow {
     }
 
     fn shell_menu(&self, menu: ShellMenu) {
-        let id = self.id;
-        let start = Instant::now();
-        background("flit-menu", move || {
-            let (items, launches) = crate::apps::menu_with_apps(menu.menu, &menu.items);
+        let (id, start, x, y, kind) = (self.id, Instant::now(), menu.x, menu.y, menu.kind);
+        let show = move |(items, launches): OpenWith| {
             tracing::debug!(elapsed = ?start.elapsed(), apps = launches.len(), "menu ready");
             if !items.is_empty() {
-                QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((id, Event::ShowMenu { items, x: menu.x, y: menu.y, launches, kind: menu.kind, shell: Vec::new(), pending: false }));
+                QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((id, Event::ShowMenu { items, x, y, launches, kind, shell: Vec::new(), pending: false }));
                 wake_loop();
             }
+        };
+        let ready = PREFETCHED.lock().unwrap_or_else(|e| e.into_inner()).take().filter(|(files, _)| *files == menu.items);
+        match ready {
+            Some((_, apps)) => show(crate::apps::with_apps(menu.menu, apps)),
+            None => background("flit-menu", move || show(crate::apps::menu_with_apps(menu.menu, &menu.items))),
+        }
+    }
+
+    fn shell_prefetch(&self, menu: Option<ShellMenu>) {
+        let Some(items) = menu.map(|m| m.items).filter(|items| !items.is_empty()) else { return };
+        if PREFETCHED.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|(done, _)| *done == items) {
+            return;
+        }
+        background("flit-menu-prefetch", move || {
+            let c = crate::apps::catalog();
+            let apps = crate::apps::open_with(&items, &c.entries, &c.assoc);
+            *PREFETCHED.lock().unwrap_or_else(|e| e.into_inner()) = Some((items, apps));
         });
+    }
+
+    fn shell_warm(&self, _menus: Vec<ShellMenu>) {
+        background("flit-menu-warm", || drop(crate::apps::catalog()));
     }
 
     fn properties(&self, _paths: Vec<FsPath>) {}
@@ -372,7 +412,10 @@ impl WindowSystem for LinuxWindows {
     fn run<H: WindowHandler<Self>>(mut self, first: WindowOptions, handler: H) -> Result<(), PlatformError> {
         let commands: Commands = Rc::new(RefCell::new(vec![Command::Open(first)]));
         let mut app = Loop { handler, nodes: Vec::new(), commands, pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None };
-        self.event_loop.run_app_on_demand(&mut app).map_err(|e| PlatformError::new(-1, format!("event loop: {e}")))?;
+        LOOP_RUNNING.store(true, Ordering::Release);
+        let ran = self.event_loop.run_app_on_demand(&mut app);
+        LOOP_RUNNING.store(false, Ordering::Release);
+        ran.map_err(|e| PlatformError::new(-1, format!("event loop: {e}")))?;
         app.error.map_or(Ok(()), Err)
     }
 }
@@ -661,9 +704,14 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             WindowEvent::CloseRequested => handler.event(w, Event::CloseRequested),
             WindowEvent::Focused(focused) => {
                 node.clicks.reset();
+                self.mods = ModifiersState::empty();
                 handler.event(w, Event::Focus(focused));
             }
-            WindowEvent::ModifiersChanged(m) => self.mods = m.state(),
+            WindowEvent::ModifiersChanged(m) => {
+                if let Some(ev) = input::modifiers_changed(std::mem::replace(&mut self.mods, m.state()), m.state()) {
+                    handler.event(w, ev);
+                }
+            }
             WindowEvent::KeyboardInput { event, is_synthetic: false, .. } => {
                 let pressed = event.state == ElementState::Pressed;
                 handler.event(w, Event::Key { key: input::key(event.physical_key, &event.key_without_modifiers), mods: input::mods(self.mods), pressed });
@@ -682,8 +730,9 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                 w.track_edge(x, y);
                 handler.event(w, Event::MouseMove { x, y });
             }
+            WindowEvent::PointerEntered { .. } => w.restore_cursor(),
             WindowEvent::PointerLeft { .. } => {
-                w.edge.set(None);
+                w.restore_cursor();
                 handler.event(w, Event::MouseLeave);
             }
             WindowEvent::ActivationTokenDone { token, .. } => *TOKEN.lock().unwrap_or_else(|e| e.into_inner()) = Some(token.into_raw()),
@@ -756,6 +805,7 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
     }
 
     fn about_to_wait(&mut self, el: &dyn ActiveEventLoop) {
+        TURNS.fetch_add(1, Ordering::AcqRel);
         self.fire_timers();
         self.settle(el);
         let next = self.nodes.iter().filter_map(|n| n.window.timer.get()).min();

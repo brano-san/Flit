@@ -633,6 +633,9 @@ impl App {
     }
 
     pub(super) fn choose_setting(&mut self, i: usize, choice: usize) {
+        if SETTINGS[i].id == "appearance.color_scheme" {
+            self.set_system_scheme(false);
+        }
         self.change_setting(i, Value::Choice(choice));
     }
 

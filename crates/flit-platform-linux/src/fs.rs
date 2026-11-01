@@ -2,6 +2,7 @@ use flit_core::listing::{attr, DirStats};
 use flit_core::path::PathKind;
 use flit_core::{FsError, FsErrorKind, FsPath, ListingBuilder, Meta};
 use flit_platform::Fs;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString, OsStr};
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -11,6 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 const DENTS_BUFFER: usize = 64 << 10;
 const BATCH: usize = 1024;
+pub const DEEP_LIMIT: usize = 2_000_000;
 const EPOCH_GAP_SECS: i64 = 11_644_473_600;
 const STATX_BASIC_STATS: u32 = 0x7ff;
 const STATX_BTIME: u32 = 0x800;
@@ -307,6 +309,69 @@ pub fn dir_sizes(dir: &Path, items: &[(u32, PathBuf)], keep_going: &(dyn Fn() ->
     });
 }
 
+fn identity(fd: libc::c_int) -> Option<(u64, u64)> {
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    (unsafe { libc::fstat(fd, &mut st) } == 0).then_some((st.st_dev, st.st_ino))
+}
+
+fn joined(dir: &[u8], name: &[u8]) -> Vec<u8> {
+    let mut out = dir.to_vec();
+    if !out.ends_with(b"/") {
+        out.push(b'/');
+    }
+    out.extend_from_slice(name);
+    out
+}
+
+pub fn walls(mounts: &[crate::mounts::Mount]) -> HashMap<Vec<u8>, bool> {
+    mounts.iter().map(|m| (m.point.clone(), !m.is_storage() || m.fstype.starts_with("fuse."))).collect()
+}
+
+fn walled(root: &[u8], walls: &HashMap<Vec<u8>, bool>) -> bool {
+    let inside = |p: &[u8]| root.starts_with(p) && (p == b"/" || root.len() == p.len() || root[p.len()] == b'/');
+    walls.iter().filter(|(p, _)| inside(p)).max_by_key(|(p, _)| p.len()).is_some_and(|(_, &w)| w)
+}
+
+pub fn read_deep(root: &Path, b: &mut ListingBuilder<'_>, walls: &HashMap<Vec<u8>, bool>, limit: usize, keep_going: &dyn Fn() -> bool) {
+    let base = root.as_os_str().as_bytes();
+    if walled(base, walls) {
+        return;
+    }
+    let Some(top) = open_dir(root).ok().and_then(|fd| identity(fd.as_raw_fd())) else { return };
+    let mut seen = HashSet::from([top]);
+    let l = &b.listing;
+    let mut stack: Vec<Vec<u8>> = (0..l.len() as u32).filter(|&i| l.entries[i as usize].attrs & (attr::DIR | attr::LINK | attr::NESTED) == attr::DIR).map(|i| l.name(i).to_vec()).collect();
+    while let Some(rel) = stack.pop() {
+        if !keep_going() || b.listing.len() >= limit {
+            return;
+        }
+        let abs = joined(base, &rel);
+        if walls.get(&abs) == Some(&true) {
+            continue;
+        }
+        let Ok(fd) = open_dir(Path::new(OsStr::from_bytes(&abs))) else { continue };
+        if !identity(fd.as_raw_fd()).is_some_and(|id| seen.insert(id)) {
+            continue;
+        }
+        let mut n = 0usize;
+        let _ = dents(fd.as_raw_fd(), |name, d_type| {
+            if b.listing.len() >= limit {
+                return false;
+            }
+            let (meta, accessed) = entry_meta_at(fd.as_raw_fd(), name, d_type);
+            b.push_nested(name.to_bytes(), meta, accessed, &rel);
+            if meta.attrs & (attr::DIR | attr::LINK) == attr::DIR {
+                stack.push(joined(&rel, name.to_bytes()));
+            }
+            n += 1;
+            !n.is_multiple_of(BATCH) || keep_going()
+        });
+        if !b.batch_done() {
+            return;
+        }
+    }
+}
+
 pub struct LinuxFs;
 
 impl Fs for LinuxFs {
@@ -328,6 +393,12 @@ impl Fs for LinuxFs {
 
     fn seek_penalty(&self, _: &FsPath) -> Option<bool> {
         None
+    }
+
+    fn read_deep(&self, root: &FsPath, out: &mut ListingBuilder<'_>, keep_going: &dyn Fn() -> bool) {
+        if let Some(path) = host(root) {
+            read_deep(path, out, &walls(&crate::mounts::read().unwrap_or_default()), DEEP_LIMIT, keep_going);
+        }
     }
 
     fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, DirStats) + Sync)) {
