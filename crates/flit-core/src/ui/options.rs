@@ -437,8 +437,10 @@ impl App {
             return;
         }
         self.reset_panels(layout, now);
+        if self.nav.sidebar.state.sidebar != layout.quick_access {
+            self.toggle_sidebar();
+        }
         let side = &mut self.nav.sidebar.state;
-        side.sidebar = layout.quick_access;
         if layout.quick_width > 0.0 {
             side.sidebar_w = layout.quick_width;
             *side = std::mem::take(side).sanitized();

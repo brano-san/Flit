@@ -47,9 +47,8 @@ fn known_folders_map_to_shell_names() {
 }
 
 #[test]
-fn layout_shows_the_pin_hint_and_scrolls_long_lists() {
+fn layout_scrolls_long_lists() {
     let mut app = App::new(Persisted::default(), Vec::new(), 0, false, 1.0, (900, 400), Instant::now());
-    assert!(app.nav.sidebar.hint.is_some());
     assert!(app.nav.sidebar.rects.is_empty());
     let drives = ('C'..='Z').map(drive).collect();
     app.set_places(Arc::new(Places { drives, ..Default::default() }));
@@ -151,9 +150,10 @@ fn headers_fold_and_the_empty_area_menu_hides_sections() {
     let m = menu(&mut app);
     assert!(!m.shell);
     let all = labels(&m.menu);
-    for want in ["Recents *", "Bookmarks *", "Storage *", "Places *", "Libraries *", "WSL *", "Tags *", "Compact sidebar"] {
+    for want in ["Recents *", "Bookmarks *", "Storage *", "Places *", "WSL *", "Compact sidebar"] {
         assert!(all.contains(&want.to_owned()), "{want} not in {all:?}");
     }
+    assert!(!all.iter().any(|l| l.starts_with("Libraries") || l.starts_with("Tags")), "sections with nothing to show are not offered: {all:?}");
     run(&mut app, &m, "WSL");
     assert!(!app.nav.sidebar.headers.iter().any(|h| h.1 == Section::Wsl));
     assert!(app.run_action("quick_access.sections", Instant::now()));
@@ -177,7 +177,7 @@ fn section_toggles_keep_the_menu_open_and_update_the_sidebar_behind_it() {
     let mut app = app_with_places();
     click(empty_area(&app), &mut app, MouseButton::Right);
     let m = menu(&mut app);
-    assert_eq!(stays(&m.menu), ["Recents", "Bookmarks", "Storage", "Places", "Libraries", "WSL", "Tags", "Compact sidebar"], "only the show/hide toggles stay open");
+    assert_eq!(stays(&m.menu), ["Recents", "Bookmarks", "Storage", "Places", "WSL", "Compact sidebar"], "only the show/hide toggles stay open");
     app.on_event(&Event::ShowMenu { items: m.menu, x: 300.0, y: 100.0, launches: Vec::new(), kind: m.kind, shell: Vec::new(), pending: false }, Instant::now());
     let mut g = Gfx::new(Mono, 1024);
     app.frame(&mut g, Instant::now());
@@ -206,8 +206,8 @@ fn the_header_menu_folds_shifts_shows_paths_and_clears() {
     let mut app = app_with_places();
     click(header(&app, Section::Bookmarks), &mut app, MouseButton::Right);
     let m = menu(&mut app);
-    assert_eq!(labels(&m.menu), ["Collapse All", "Expand All", "Show Paths", "Recents *", "Bookmarks *", "Storage *", "Places *", "Libraries *", "WSL *", "Tags *", "Shift Group Up", "Shift Group Down", "Restore Groups Order", "Clear Bookmarks"]);
-    assert_eq!(disabled(&m.menu), ["Expand All", "Shift Group Up", "Restore Groups Order"], "Recents is empty, so Bookmarks is the first group shown");
+    assert_eq!(labels(&m.menu), ["Collapse All", "Expand All", "Show Paths", "Recents *", "Bookmarks *", "Storage *", "Places *", "WSL *", "Shift Group Up", "Shift Group Down", "Restore Groups Order", "Clear Bookmarks"]);
+    assert_eq!(disabled(&m.menu), ["Expand All", "Restore Groups Order"], "an empty Recents still heads the list");
     run(&mut app, &m, "Shift Group Down");
     assert_eq!(app.nav_prefs().order()[..4], [Section::Recents, Section::Storage, Section::Bookmarks, Section::Places]);
     assert_eq!(side_labels(&app)[..3], ["Disk (C:)", "USB (E:)", "a"]);
@@ -269,6 +269,113 @@ fn recent_files_and_folders_have_their_own_capped_group() {
     let m = menu(&mut app);
     run(&mut app, &m, "Clear Recents");
     assert!(!app.nav.sidebar.items.iter().any(|it| it.section == Section::Recents));
+    assert!(app.nav.sidebar.headers.iter().any(|h| h.1 == Section::Recents), "a cleared Recents keeps its header");
+}
+
+fn section_toggles(app: &mut App) -> Vec<String> {
+    click(empty_area(app), app, MouseButton::Right);
+    let m = menu(app);
+    labels(&m.menu)
+        .into_iter().filter(|l| Section::ALL.iter().any(|s| l.trim_end_matches(" *") == s.title())).collect()
+}
+
+fn shown_headers(app: &App) -> Vec<String> {
+    app.nav.sidebar.headers.iter().map(|h| format!("{} *", h.1.title())).collect()
+}
+
+#[test]
+fn recents_cleared_with_history_off_stay_visible_and_follow_the_sections_toggle() {
+    let mut app = app_with_places();
+    app.animations = false;
+    app.opts.recents = crate::ui::options::Recents::Never;
+    let mut places = (*app.nav.sidebar.places).clone();
+    places.recent = vec![Recent { name: "r".into(), target: FsPath::parse(r"C:\r").unwrap(), dir: true, at: 5 }];
+    app.set_places(Arc::new(places));
+    app.drain_effects().for_each(drop);
+    click(header(&app, Section::Recents), &mut app, MouseButton::Right);
+    let m = menu(&mut app);
+    run(&mut app, &m, "Clear Recents");
+    assert!(!app.nav.sidebar.items.iter().any(|it| it.section == Section::Recents));
+    assert_eq!(section_toggles(&mut app), shown_headers(&app), "the Sections menu ticks exactly what is shown");
+    assert!(shown_headers(&app).contains(&"Recents *".to_owned()), "the empty section shows its header");
+    app.place_command(PlaceCmd::Hide(Section::Recents), Instant::now());
+    assert!(!app.nav.sidebar.headers.iter().any(|h| h.1 == Section::Recents));
+    assert!(section_toggles(&mut app).contains(&"Recents".to_owned()), "a hidden section stays in the menu, unticked");
+    app.place_command(PlaceCmd::Hide(Section::Recents), Instant::now());
+    assert_eq!(section_toggles(&mut app), shown_headers(&app));
+    let mut places = (*app.nav.sidebar.places).clone();
+    places.recent_off = true;
+    places.recent.clear();
+    app.set_places(Arc::new(places));
+    assert_eq!(section_toggles(&mut app), shown_headers(&app), "recents turned off in Windows still show the header");
+}
+
+#[test]
+fn an_empty_bookmarks_section_folds_with_its_chevron_and_keeps_its_height() {
+    let mut app = App::new(Persisted::default(), Vec::new(), 0, false, 1.0, (1000, 700), Instant::now());
+    app.set_places(Arc::new(Places { drives: vec![drive('C')], ..Default::default() }));
+    let mut g = Gfx::new(Mono, 1024);
+    let t = app.clock();
+    app.frame(&mut g, t);
+    let below = |app: &App| header(app, Section::Storage).y;
+    let (bookmarks, storage) = (header(&app, Section::Bookmarks), below(&app));
+    assert_eq!(storage - bookmarks.bottom(), (SECTION_GAP * app.scale).round(), "an empty section is its header alone, with no hint row");
+    for (k, collapsing) in [(0, true), (1, false)] {
+        let at = t + Duration::from_millis(1000 * k + 500);
+        app.last_frame = Some(at);
+        app.toggle_section(Section::Bookmarks);
+        assert_eq!(app.nav.sidebar.is_collapsed(Section::Bookmarks), collapsing);
+        let fold = app.nav.sidebar.fold.expect("folding an empty section animates both ways");
+        assert_eq!(fold.opening, !collapsing);
+        assert!(app.frame(&mut g, at + Duration::from_millis(60)), "frames run while the chevron turns");
+        let turned = fold.shown(at + Duration::from_millis(60));
+        assert!(turned > 0.0 && turned < 1.0, "{turned}");
+        assert_eq!(below(&app), storage, "the section keeps its height mid-fold");
+        app.frame(&mut g, at + FOLD + Duration::from_millis(10));
+        assert!(app.nav.sidebar.fold.is_none());
+        assert_eq!(below(&app), storage, "collapsed and expanded are the same height");
+    }
+}
+
+type Toggle = fn(&mut App, Instant);
+
+#[test]
+fn every_way_of_toggling_quick_access_slides_it() {
+    let mut app = app_with_places();
+    let mut g = Gfx::new(Mono, 1024);
+    let mut t = app.clock();
+    app.frame(&mut g, t);
+    let full = app.nav.sidebar.rect.w;
+    let ways: [(&str, Toggle); 5] = [
+        ("toolbar button", |a, _| {
+            let r = a.panels.quick;
+            click(r, a, MouseButton::Left);
+        }),
+        ("shortcut", |a, now| a.on_event(&Event::Key { key: Key::Char('B'), mods: Mods { ctrl: true, ..Mods::default() }, pressed: true }, now)),
+        ("command", |a, now| assert!(a.run_action("quick_access.toggle", now))),
+        ("filter", |a, _| a.focus_quick_filter()),
+        ("layout", |a, now| {
+            let mut l = a.saved_layout();
+            l.quick_access = !a.nav_state().sidebar;
+            a.apply_layout(&l, now);
+        }),
+    ];
+    for (name, toggle) in ways {
+        t += Duration::from_secs(1);
+        app.last_frame = Some(t);
+        let was = app.nav_state().sidebar;
+        toggle(&mut app, t);
+        let t0 = app.clock();
+        assert_ne!(app.nav_state().sidebar, was, "{name} toggles Quick Access");
+        assert!(app.nav.sidebar.slide.is_some(), "{name} slides");
+        app.frame(&mut g, t0 + Duration::from_millis(60));
+        let mid = app.nav.sidebar.rect.w;
+        assert!(mid > 0.0 && mid < full, "{name}: {mid} of {full}");
+        app.frame(&mut g, t0 + FOLD + Duration::from_millis(10));
+        assert!(app.nav.sidebar.slide.is_none(), "{name} settles");
+        assert_eq!(app.nav.sidebar.rect.w, if app.nav_state().sidebar { full } else { 0.0 }, "{name}");
+        t = t0 + FOLD + Duration::from_millis(10);
+    }
 }
 
 #[test]
@@ -722,7 +829,7 @@ fn a_section_folds_with_a_short_height_animation_and_its_chevron_turns() {
     assert!(!app.nav.sidebar.items.iter().any(|it| it.section == Section::Bookmarks));
     app.toggle_section(Section::Bookmarks);
     assert!(app.nav.sidebar.fold.is_some_and(|f| f.opening) && app.frame(&mut g, Instant::now()));
-    assert!(!app.frame(&mut g, Instant::now() + std::time::Duration::from_millis(400)));
+    assert!(!app.frame(&mut g, end + std::time::Duration::from_millis(400)), "the fold runs on the frame clock");
     assert_eq!(storage(&app), open_y);
     app.animations = false;
     app.toggle_section(Section::Bookmarks);

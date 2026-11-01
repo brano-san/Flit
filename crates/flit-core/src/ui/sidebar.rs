@@ -27,13 +27,13 @@ use std::time::Instant;
 pub const SIDEBAR_MIN_W: f32 = 160.0;
 pub const SIDEBAR_MAX_W: f32 = 480.0;
 const COMPACT_W: f32 = 48.0;
-const ROW_H: f32 = 25.0;
+const ROW_H: f32 = 27.0;
 const COMPACT_ROW_H: f32 = 32.0;
-const DRIVE_H: f32 = 29.0;
+const DRIVE_H: f32 = 31.0;
 const HEADER_H: f32 = 26.0;
 const COMPACT_HEADER_H: f32 = 12.0;
 const PIN_W: f32 = 22.0;
-const SECTION_GAP: f32 = 11.0;
+const SECTION_GAP: f32 = 18.0;
 const ITEM_INDENT: f32 = 18.0;
 pub(super) const PLACE_ICON: f32 = 20.0;
 const HEADER_TITLE_X: f32 = 28.0;
@@ -398,7 +398,6 @@ pub(super) struct Sidebar {
     pub items: Vec<Item>,
     pub rects: Vec<Rect>,
     pub headers: Vec<(Rect, Section)>,
-    pub hint: Option<Rect>,
     pub rect: Rect,
     pub list: Rect,
     pub splitter: Rect,
@@ -517,7 +516,7 @@ impl Sidebar {
     }
 
     pub(super) fn shown_sections(&self) -> Vec<Section> {
-        self.prefs.order().into_iter().filter(|&s| !self.is_hidden(s) && self.has_items(s) && (!self.filtering() || self.items.iter().any(|it| it.section == s))).collect()
+        self.prefs.order().into_iter().filter(|&s| !self.is_hidden(s) && self.available(s) && (!self.filtering() || self.items.iter().any(|it| it.section == s))).collect()
     }
 
     pub(super) fn recent(&self) -> impl Iterator<Item = (usize, &Recent)> {
@@ -560,12 +559,10 @@ impl Sidebar {
         self.prefs.hidden.iter().any(|c| c == s.id())
     }
 
-    fn has_items(&self, s: Section) -> bool {
+    pub(super) fn available(&self, s: Section) -> bool {
         let p = &self.places;
         match s {
-            Section::Bookmarks => true,
-            Section::Recents => self.recent().next().is_some(),
-            Section::Places => true,
+            Section::Recents | Section::Bookmarks | Section::Places => true,
             Section::Libraries => !p.libraries.is_empty(),
             Section::Storage => !p.drives.is_empty(),
             Section::Wsl => !p.wsl.is_empty(),
@@ -711,8 +708,9 @@ impl App {
     }
 
     pub(super) fn toggle_section(&mut self, s: Section) {
+        let now = self.clock();
         let sb = &mut self.nav.sidebar;
-        sb.fold = (self.animations && !sb.filtering()).then(|| Fold { section: s, opening: sb.is_collapsed(s), since: Instant::now() });
+        sb.fold = (self.animations && !sb.filtering()).then(|| Fold { section: s, opening: sb.is_collapsed(s), since: now });
         toggle(&mut self.nav.sidebar.prefs.collapsed, s.id());
         self.nav_prefs_changed();
     }
@@ -1219,7 +1217,6 @@ impl App {
         sb.splitter = if width > 0.0 && !compact { Rect::new(width - s(3.0), top, s(6.0), sb.rect.h) } else { Rect::default() };
         sb.rects.clear();
         sb.headers.clear();
-        sb.hint = None;
         (sb.bar, sb.field, sb.clear) = (Rect::default(), Rect::default(), Rect::default());
         if width <= 0.0 {
             sb.list = Rect::default();
@@ -1245,11 +1242,6 @@ impl App {
             sb.headers.push((Rect::new(x, y, w, header_h), section));
             y += header_h;
             let start = y;
-            let count = sb.items.iter().filter(|it| it.section == section).count();
-            if count == 0 && section == Section::Bookmarks && !compact && !sb.is_collapsed(section) {
-                sb.hint = Some(Rect::new(x, y, w, row_h));
-                y += row_h;
-            }
             loop {
                 if section == Section::Bookmarks {
                     for (k, l) in sb.leaving.iter().enumerate().filter(|(_, l)| l.index == it) {
@@ -1276,7 +1268,7 @@ impl App {
         sb.content_h = y;
         sb.scroll = sb.scroll.clamp(0.0, (sb.content_h - sb.list.h).max(0.0));
         let dy = list_top - sb.scroll;
-        for r in sb.rects.iter_mut().chain(sb.headers.iter_mut().map(|(r, _)| r)).chain(sb.hint.iter_mut()).chain(sb.fold_clip.iter_mut().map(|(_, r)| r)).chain(sb.gaps.iter_mut().map(|(r, _)| r)) {
+        for r in sb.rects.iter_mut().chain(sb.headers.iter_mut().map(|(r, _)| r)).chain(sb.fold_clip.iter_mut().map(|(_, r)| r)).chain(sb.gaps.iter_mut().map(|(r, _)| r)) {
             r.y += dy;
         }
     }
@@ -1408,7 +1400,6 @@ impl App {
         let header_font = self.header_font();
         let header_icons = self.icon_font(13.0);
         let m = g.metrics(font);
-        let ms = g.metrics(small);
         let mh = g.metrics(header_font);
         let (s4, s8) = (self.s(4.0), self.s(8.0));
         let here = self.tabs[self.cur].location();
@@ -1459,11 +1450,6 @@ impl App {
             };
             let center = (chevron_r.x + chevron_r.w / 2.0, chevron_r.y + chevron_r.h / 2.0);
             g.dl.chevron(center, self.s(8.0), angle, self.s(1.25).max(1.0), if lit { ink } else { t.text_dim });
-        }
-        if let Some(r) = sb.hint {
-            let baseline = (r.y + (r.h + ms.ascent - ms.descent) / 2.0).round();
-            let x = r.x + self.s(HEADER_TITLE_X);
-            g.text(x, baseline, S::SidebarPinHint.t(), small, t.text_dim.alpha(0xA0), r.right() - x);
         }
         let mut requests: Vec<IconRequest> = Vec::new();
         let list = sb.list;
@@ -1674,7 +1660,7 @@ mod tests;
 
 fn sections_submenu(m: &mut Menu, sb: &Sidebar) {
     m.submenu(S::SidebarSections.t(), |m| {
-        for s in Section::ALL {
+        for s in Section::ALL.into_iter().filter(|&s| sb.available(s)) {
             m.toggle(s.title(), PlaceCmd::Hide(s), !sb.is_hidden(s));
         }
     });
