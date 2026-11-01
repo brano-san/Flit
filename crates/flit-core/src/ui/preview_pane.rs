@@ -48,7 +48,6 @@ const G_SPACES: &str = "\u{E8D2}";
 const G_FIT: &str = "\u{E922}";
 const G_CUSTOM: &str = "\u{E721}";
 const G_GRID: &str = "\u{E8A9}";
-const G_NEXT: &str = "\u{E76C}";
 const G_DETAILS_OFF: &str = "\u{E946}";
 const G_DETAILS_ON: &str = "\u{E8A5}";
 const SPACE_DOT: &str = "\u{B7}";
@@ -233,6 +232,7 @@ struct Rects {
 pub(super) struct PreviewPane {
     pub state: PaneState,
     pub look: Look,
+    pub turn: super::widgets::Tween,
     key: u64,
     gen: u64,
     cancel: GenToken,
@@ -1167,7 +1167,6 @@ impl App {
         }
         let title = self.preview.subject.as_ref().map(|s| s.title.clone()).unwrap_or_default();
         let font = self.ui_font(12.5);
-        let chev = self.icon_font(8.0);
         let room = (r.right() - x - self.s(16.0)).max(0.0);
         let tw = g.measure(&title, font).min((room - self.s(20.0)).max(0.0));
         let w = tw + self.s(22.0);
@@ -1181,7 +1180,10 @@ impl App {
         let ink = p.ink_of(state, t.text);
         let m = g.metrics(font);
         g.text(tr.x + self.s(6.0), (tr.y + (tr.h + m.ascent - m.descent) / 2.0).round(), &title, font, ink, tw);
-        centered(g, Rect::new(tr.right() - self.s(16.0), tr.y, self.s(14.0), tr.h), if open { G_BELOW } else { G_NEXT }, chev, ink);
+        let now = self.last_frame.unwrap_or_else(std::time::Instant::now);
+        self.motion |= self.preview.turn.aim(if open { 90.0 } else { 0.0 }, self.animations, now, super::address::TURN);
+        let cr = Rect::new(tr.right() - self.s(16.0), tr.y, self.s(14.0), tr.h);
+        g.dl.chevron((cr.x + cr.w / 2.0, cr.y + cr.h / 2.0), self.s(8.0), self.preview.turn.value(now, super::address::TURN), self.s(1.25).max(1.0), ink);
         self.preview.r.title = tr;
         self.preview.buttons.push((tr, PaneHit::Title));
     }

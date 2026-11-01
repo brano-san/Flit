@@ -313,3 +313,24 @@ fn the_pencil_on_a_command_row_opens_its_shortcuts_and_skips_other_contexts() {
     assert_eq!(pick(&a), Pick::Commands, "commands of other contexts are not rebound here");
 }
 
+
+#[test]
+fn a_group_chevron_turns_when_its_group_folds() {
+    let mut a = crate::ui::harness::app(&["a.txt"]);
+    let now = Instant::now();
+    a.on_event(&Event::Key { key: Key::Char('P'), mods: Mods { ctrl: true, shift: true, alt: false }, pressed: true }, now);
+    draw(&mut a, now);
+    let angle = |a: &App, at: Instant| commands(a).turns.iter().find(|t| t.0 == Group::Quick).unwrap().1.value(at, crate::ui::address::TURN);
+    assert_eq!(angle(&a, now), 90.0, "an open group points down");
+    a.run_palette_item(0, now);
+    let t = Instant::now();
+    draw(&mut a, t);
+    let mid = angle(&a, t + Duration::from_millis(50));
+    assert!(mid > 0.0 && mid < 90.0, "{mid}");
+    draw(&mut a, t + Duration::from_millis(400));
+    assert_eq!(angle(&a, t + Duration::from_millis(400)), 0.0);
+    a.animations = false;
+    a.run_palette_item(0, now);
+    draw(&mut a, t + Duration::from_millis(410));
+    assert_eq!(angle(&a, t + Duration::from_millis(410)), 90.0, "without Animations it turns at once");
+}

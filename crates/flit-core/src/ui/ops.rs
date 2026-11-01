@@ -352,7 +352,7 @@ impl App {
         self.dirty = true;
     }
 
-    fn in_bin(&self) -> bool {
+    pub(super) fn in_bin(&self) -> bool {
         self.tab().view_loc.is_recycle_bin()
     }
 
@@ -908,19 +908,16 @@ impl App {
             let kind = if on_items { self.selection_kind() } else { super::MenuKind::Background };
             return self.context_flit_menu(x, y, menu, kind);
         }
-        let t = self.tab();
-        let Some(dir) = t.view_loc.to_windows() else { return self.status(S::UiOpsFolderNotShell.t()) };
-        let items: Vec<u32> = match (&t.view, on_items) {
+        let items: Vec<u32> = match (&self.tab().view, on_items) {
             (Some(v), true) => v.selected().collect(),
             _ => Vec::new(),
         };
-        let items = match self.item_paths(&items) {
-            Ok(p) => p,
+        let target = match self.shell_target(&items, on_items, extended) {
+            Ok(m) => m,
             Err(e) => return self.status(e),
         };
-        let inline = self.shell_items_inline || extended;
         let menu = self.build_menu(on_items);
-        self.effects.push(Effect::ShellMenu(ShellMenu { dir, items, x, y, extended, menu, inline, shell: true, kind: if on_items { self.selection_kind() } else { super::MenuKind::Background } }));
+        self.push_shell_menu(ShellMenu { x, y, menu, ..target });
     }
 
     pub(super) fn shell_verb(&mut self, verb: &str) {

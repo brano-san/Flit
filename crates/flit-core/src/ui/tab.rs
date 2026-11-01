@@ -57,6 +57,7 @@ pub struct Tab {
     pub(super) scroll: f32,
     pub(super) scroll_target: f32,
     pub(super) reveal_pending: bool,
+    pub(super) motion: TabMotion,
     type_ahead: String,
     type_ahead_at: Option<Instant>,
     pub(super) filter: Option<Field>,
@@ -98,6 +99,7 @@ impl Tab {
             scroll: 0.0,
             scroll_target: 0.0,
             reveal_pending: false,
+            motion: TabMotion::default(),
             type_ahead: String::new(),
             type_ahead_at: None,
             filter: None,
@@ -371,3 +373,52 @@ impl Tab {
             .collect()
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct TreeFold {
+    pub line: usize,
+    pub lines: isize,
+    pub parent: u32,
+    pub since: Instant,
+}
+
+pub(super) const RESIZE: Duration = Duration::from_millis(140);
+
+impl TabMotion {
+    pub fn column_widths(&mut self, kinds: &[super::Column], targets: impl Iterator<Item = (super::Column, f32)>, animate: bool, now: Instant) -> (Vec<(super::Column, f32)>, bool) {
+        if self.kinds != kinds {
+            self.kinds = kinds.to_vec();
+            self.widths.clear();
+        }
+        let mut moving = false;
+        let mut out = Vec::new();
+        for (c, w) in targets {
+            let k = match self.widths.iter().position(|x| x.0 == c) {
+                Some(k) => k,
+                None => {
+                    self.widths.push((c, super::widgets::Tween::at(w)));
+                    self.widths.len() - 1
+                }
+            };
+            let tw = &mut self.widths[k].1;
+            moving |= tw.aim(w, animate, now, RESIZE);
+            let v = tw.value(now, RESIZE).round();
+            if c == super::Column::Name || v >= 1.0 {
+                out.push((c, v));
+            }
+        }
+        (out, moving)
+    }
+}
+
+#[derive(Default)]
+pub(super) struct TabMotion {
+    pub sort: Option<crate::sort::SortField>,
+    pub sort_turn: super::widgets::Tween,
+    pub sort_born: Option<Instant>,
+    pub widths: Vec<(super::Column, super::widgets::Tween)>,
+    pub kinds: Vec<super::Column>,
+    pub fold: Option<TreeFold>,
+    pub fold_parent: Option<u32>,
+}
+

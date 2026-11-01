@@ -1,3 +1,4 @@
+use super::tab::TreeFold;
 use super::{App, Effect, LayoutMode, Tab};
 use crate::hash::FxHashSet;
 use crate::input::Mods;
@@ -128,37 +129,58 @@ impl App {
         (0..l.len() as u32).find(|&p| l.entries[p as usize].attrs & (crate::listing::attr::DIR | crate::listing::attr::DELETED) == crate::listing::attr::DIR && l.name(p) == name && l.folder(p) == up)
     }
 
+    fn shown_rows(&self) -> usize {
+        self.tab().view.as_ref().map_or(0, |v| v.rows().len())
+    }
+
+    fn fold_tree(&mut self, parent: Option<u32>, before: usize) {
+        let after = self.shown_rows();
+        let animate = self.animations;
+        let t = self.tab_mut();
+        let Some(parent) = parent.filter(|_| animate) else { return };
+        if after == before {
+            t.motion.fold_parent = Some(parent);
+            return;
+        }
+        let Some(line) = t.view.as_ref().and_then(|v| v.row_of(parent)).map(|r| t.view.as_ref().map_or(0, |v| v.line_of_row(r)) + 1) else { return };
+        t.motion.fold = Some(TreeFold { line, lines: after as isize - before as isize, parent, since: std::time::Instant::now() });
+    }
+
     pub(super) fn tree_open(&mut self, all: bool) {
-        for i in self.tree_targets(false) {
+        let (before, targets) = (self.shown_rows(), self.tree_targets(false));
+        for &i in &targets {
             if let Some(rel) = self.rel_of(i) {
                 self.expand(rel, all);
             }
         }
         self.shape_view();
+        self.fold_tree(targets.first().copied(), before);
     }
 
     pub(super) fn tree_close(&mut self, all: bool) {
-        let targets = self.tree_targets(true);
+        let (before, targets) = (self.shown_rows(), self.tree_targets(true));
         let sep = self.tab().view.as_ref().map_or(b'\\', |v| v.separator());
-        for i in targets {
+        for &i in &targets {
             if let Some(rel) = self.rel_of(i) {
                 self.tab_mut().tree.close(&rel, sep, all);
             }
         }
         self.shape_view();
+        self.fold_tree(targets.first().copied(), before);
         self.reveal_focus(false);
     }
 
     pub(super) fn tree_toggle_row(&mut self, row: usize, all: bool) {
         let Some(i) = self.tab().view.as_ref().and_then(|v| v.rows().get(row).copied()) else { return };
         let Some(rel) = self.rel_of(i) else { return };
-        let sep = self.tab().view.as_ref().map_or(b'\\', |v| v.separator());
+        let (before, sep) = (self.shown_rows(), self.tab().view.as_ref().map_or(b'\\', |v| v.separator()));
         if self.tab().tree.open.contains(&rel) {
             self.tab_mut().tree.close(&rel, sep, all);
         } else {
             self.expand(rel, all);
         }
         self.shape_view();
+        self.fold_tree(Some(i), before);
     }
 
     pub(super) fn tree_key(&mut self, right: bool, m: Mods) -> bool {
@@ -176,6 +198,7 @@ impl App {
             (false, all) if open || (all && dir) => self.tree_close(all),
             (false, all) => {
                 if let Some(p) = self.parent_of(i) {
+                    let before = self.shown_rows();
                     if all {
                         if let Some(rel) = self.rel_of(p) {
                             let sep = self.tab().view.as_ref().map_or(b'\\', |v| v.separator());
@@ -191,6 +214,7 @@ impl App {
                         v.anchor = Some(p);
                     }
                     self.shape_view();
+                    self.fold_tree(Some(p), before);
                     self.reveal_focus(false);
                 }
             }
@@ -254,6 +278,7 @@ impl App {
 
     pub(super) fn poll_tree(&mut self) -> bool {
         let mut changed = false;
+        let before = self.shown_rows();
         for k in 0..self.tabs.len() {
             let t = &mut self.tabs[k];
             let mut done = Vec::new();
@@ -283,6 +308,8 @@ impl App {
         }
         if changed {
             self.layout();
+            let parent = self.tab_mut().motion.fold_parent.take();
+            self.fold_tree(parent, before);
         }
         changed
     }

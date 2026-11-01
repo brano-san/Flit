@@ -181,3 +181,34 @@ fn folders_and_files_can_be_hidden_separately() {
     let shown = app.tab().view.as_ref().unwrap().shown_counts();
     assert_eq!((shown.dirs, shown.files), (2, 0));
 }
+
+fn lowest_text(app: &mut App, now: Instant) -> f32 {
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, now);
+    let list = app.layout.list;
+    g.dl.instances.iter().filter(|i| i.kind == crate::render::kind::GLYPH && list.contains(i.rect[0], i.rect[1])).map(|i| i.rect[1]).fold(0.0, f32::max)
+}
+
+#[test]
+fn tree_folders_fold_their_rows_in_and_out_and_the_rows_below_follow() {
+    let mut app = tree_app();
+    focus(&mut app, "alpha");
+    key(&mut app, Key::Right, false);
+    answer_probes(&mut app, &[("alpha", &["inner", "a.txt"])]);
+    let fold = app.tab().motion.fold.expect("the new rows fold in");
+    assert_eq!((fold.line, fold.lines), (1, 2));
+    let t = fold.since;
+    let (start, mid, end) = (lowest_text(&mut app, t), lowest_text(&mut app, t + Duration::from_millis(50)), lowest_text(&mut app, t + Duration::from_millis(400)));
+    assert!(start < mid && mid < end, "rows below slide down: {start} {mid} {end}");
+    assert!(app.tab().motion.fold.is_none());
+    key(&mut app, Key::Left, false);
+    let fold = app.tab().motion.fold.expect("the rows fold out");
+    assert_eq!(fold.lines, -2);
+    let t = fold.since;
+    let (start, mid, end) = (lowest_text(&mut app, t), lowest_text(&mut app, t + Duration::from_millis(50)), lowest_text(&mut app, t + Duration::from_millis(400)));
+    assert!(start > mid && mid > end, "rows below slide up into the gap: {start} {mid} {end}");
+    app.animations = false;
+    key(&mut app, Key::Right, false);
+    assert_eq!(rows(&app), ["alpha", "inner", "a.txt", "beta", "z.txt"]);
+    assert!(app.tab().motion.fold.is_none(), "without Animations the rows are there at once");
+}

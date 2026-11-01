@@ -239,8 +239,12 @@ pub struct About {
     pub logs: Option<FsPath>,
 }
 
+pub(super) const KNOB: std::time::Duration = std::time::Duration::from_millis(140);
+
 pub(super) struct SettingsUi {
     pub turn: super::address::Turn,
+    pub knobs: Vec<(usize, super::widgets::Tween)>,
+    pub knob_motion: bool,
     pub page: Page,
     search: Field,
     searching: bool,
@@ -289,6 +293,8 @@ impl SettingsUi {
             close: Rect::default(),
             hints: Rect::default(),
             turn: super::address::Turn::default(),
+            knobs: Vec::new(),
+            knob_motion: false,
         }
     }
 
@@ -1323,7 +1329,9 @@ impl App {
         if ui.turn.aim(open, self.animations, self.last_frame.unwrap_or_else(Instant::now)) {
             self.motion = true;
         }
+        ui.knob_motion = false;
         self.paint_settings(g, t, &mut ui);
+        self.motion |= ui.knob_motion;
         self.settings = Some(ui);
     }
 
@@ -1419,7 +1427,17 @@ impl App {
                         }
                         (Kind::Toggle(..), Value::Bool(on)) => {
                             let hot = hover == Hit::Settings(SHit::Control(k));
-                            Paint::new(g, t, sc).switch(switch_rect(r, s), on, hot, self.icon_font(8.0));
+                            let to = if on { 1.0 } else { 0.0 };
+                            let now = self.last_frame.unwrap_or_else(Instant::now);
+                            let knob = match ui.knobs.iter().position(|(x, _)| x == i) {
+                                Some(n) => n,
+                                None => {
+                                    ui.knobs.push((*i, super::widgets::Tween::at(to)));
+                                    ui.knobs.len() - 1
+                                }
+                            };
+                            ui.knob_motion |= ui.knobs[knob].1.aim(to, self.animations, now, KNOB);
+                            Paint::new(g, t, sc).switch(switch_rect(r, s), ui.knobs[knob].1.value(now, KNOB), hot, self.icon_font(8.0));
                         }
                         (Kind::Choice(..), _) => {
                             let h = Hit::Settings(SHit::Control(k));

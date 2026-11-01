@@ -219,9 +219,17 @@ pub(super) struct Jobs {
     first: usize,
     unseen_failure: bool,
     r: Rects,
+    opened: Option<Instant>,
 }
 
 impl Jobs {
+    pub fn opened(&mut self, now: Instant) -> Option<Instant> {
+        match self.open {
+            true => Some(*self.opened.get_or_insert(now)),
+            false => self.opened.take().and(None),
+        }
+    }
+
     pub fn running(&self) -> bool {
         self.list.iter().any(|j| j.state == JobState::Running)
     }
@@ -782,8 +790,13 @@ impl App {
     }
 
     pub(super) fn draw_jobs<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
-        if self.jobs.open && !self.search.active {
+        let now = self.last_frame.unwrap_or_else(Instant::now);
+        if let Some(since) = self.jobs.opened(now).filter(|_| !self.search.active) {
+            let from = g.dl.instances.len();
             self.draw_panel(g, t);
+            let p = self.jobs.r.panel;
+            self.keep_ghost(g, super::widgets::Ghost::Jobs, from, (p.right(), p.y));
+            self.pop(g, from, since, (p.right(), p.y));
         }
         if self.jobs.form.is_some() {
             self.draw_form(g, t);

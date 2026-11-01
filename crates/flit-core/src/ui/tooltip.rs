@@ -246,7 +246,9 @@ impl App {
             p.keycaps(cx, cy, &text.keys, small);
         }
         let since = tip.shown.unwrap_or(tip.at);
-        self.pop(g, from, since, (r.x + r.w / 2.0, if r.y > anchor.y { r.y } else { r.bottom() }));
+        let center = (r.x + r.w / 2.0, if r.y > anchor.y { r.y } else { r.bottom() });
+        self.keep_ghost(g, super::widgets::Ghost::Tooltip, from, center);
+        self.pop(g, from, since, center);
     }
 }
 

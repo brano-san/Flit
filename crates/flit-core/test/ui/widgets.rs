@@ -107,3 +107,34 @@ fn closing_menus_and_lists_fade_out_briefly_and_then_stop_drawing() {
     a.on_event(&crate::input::Event::Key { key: crate::input::Key::Escape, mods: crate::input::Mods::default(), pressed: true }, t0);
     assert!(!a.frame(&mut g, shut + Duration::from_millis(310)), "without Animations nothing lingers");
 }
+
+#[test]
+fn a_hover_glow_fades_in_and_out_and_fast_moves_light_two_rows_at_most() {
+    let t = Instant::now();
+    let ms = |n: u64| t + Duration::from_millis(n);
+    let mut glow = Glow::<u32>::default();
+    assert!(glow.aim(Some(1), true, t));
+    assert_eq!(glow.alpha(1, t), 0.0);
+    let mid = glow.alpha(1, ms(40));
+    assert!(mid > 0.0 && mid < 1.0);
+    assert!(!glow.aim(Some(1), true, ms(200)));
+    assert_eq!(glow.alpha(1, ms(200)), 1.0);
+    glow.aim(Some(2), true, ms(210));
+    assert!(glow.alpha(1, ms(240)) > 0.0 && glow.alpha(2, ms(240)) > 0.0, "the old row fades while the new one lights");
+    for (k, at) in [(3, 215), (4, 220), (5, 225)] {
+        glow.aim(Some(k), true, ms(at));
+    }
+    let lit = (1..=5).filter(|&k| glow.alpha(k, ms(230)) > 0.0).count();
+    assert!(lit <= 2, "no trail of rows: {lit}");
+    assert!(!glow.aim(None, true, ms(500)) || glow.alpha(5, ms(700)) == 0.0);
+    let mut off = Glow::<u32>::default();
+    assert!(!off.aim(Some(7), false, t));
+    assert_eq!(off.alpha(7, t), 1.0);
+    assert!(!off.aim(None, false, t));
+    assert_eq!(off.alpha(7, t), 0.0, "without Animations the highlight just switches");
+    let mut a = harness::app(&["a.txt", "b.txt"]);
+    let r = a.row_rect(1).unwrap();
+    a.on_event(&crate::input::Event::MouseMove { x: r.x + 40.0, y: r.y + r.h / 2.0 }, t);
+    assert!(a.frame(&mut Gfx::new(Mono, 1024), t), "a hovered row fades in");
+    assert!(!a.frame(&mut Gfx::new(Mono, 1024), ms(300)));
+}

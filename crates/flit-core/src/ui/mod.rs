@@ -43,6 +43,7 @@ mod popup;
 mod context;
 pub mod options;
 mod own_menu;
+mod prefetch;
 mod confirm;
 mod fuzzy;
 mod tooltip;
@@ -334,6 +335,8 @@ pub enum Effect {
     Open(Open),
     SetClipboardFiles { paths: Vec<FsPath>, cut: bool },
     ShellMenu(ShellMenu),
+    ShellPrefetch(Option<ShellMenu>),
+    ShellWarm(Vec<ShellMenu>),
     Properties(Vec<FsPath>),
     StartDrag(Vec<FsPath>),
     Pinned(Vec<Location>),
@@ -643,6 +646,11 @@ pub struct App {
     addr: address::Address,
     ghosts: widgets::Ghosts,
     bar_arrivals: widgets::Arrivals,
+    rolls: [bottom::Roll; 2],
+    row_glow: widgets::Glow<(TabId, u32)>,
+    side_glow: widgets::Glow<usize>,
+    prefetch: prefetch::Prefetch,
+    shapes: own_menu::Shapes,
     tag_fixes: Vec<(FsPath, u32, Instant)>,
     preview: preview_pane::PreviewPane,
     panels: panels::Panels,
@@ -753,6 +761,11 @@ impl App {
             addr: Default::default(),
             ghosts: Default::default(),
             bar_arrivals: Default::default(),
+            rolls: Default::default(),
+            row_glow: Default::default(),
+            side_glow: Default::default(),
+            prefetch: Default::default(),
+            shapes: Default::default(),
             tag_fixes: Vec::new(),
             preview: Default::default(),
             panels: Default::default(),
@@ -1325,15 +1338,19 @@ impl App {
         l.header = Rect::new(area.x, area.y, area.w, s(HEADER_H));
         l.bottom = area.bottom();
         self.layout_look();
+        let now = self.clock();
+        let animate = self.animations && !matches!(self.drag, Drag::ColSep { .. });
+        let shown = self.tab_mut().motion.column_widths(kinds, widths.ordered(kinds).into_iter().map(|c| (c, if widths.shown(c) { s(widths.width(c)) } else { 0.0 })), animate, now);
+        self.motion |= shown.1;
         let l = &mut self.layout;
         l.columns.clear();
-        l.columns.extend(widths.ordered(kinds).into_iter().filter(|&c| widths.shown(c)));
-        let fixed: f32 = l.columns.iter().skip(1).map(|&c| s(widths.width(c))).sum();
+        l.columns.extend(shown.0.iter().map(|&(c, _)| c));
+        let fixed: f32 = shown.0.iter().filter(|&&(c, _)| c != Column::Name).map(|&(_, w)| w).sum();
         let name_w = (l.list.w - fixed).max(s(NAME_MIN_W));
         let mut x = l.header.x;
         l.cols.clear();
-        for &c in &l.columns {
-            let cw = if c == Column::Name { name_w } else { s(widths.width(c)) };
+        for &(c, w) in &shown.0 {
+            let cw = if c == Column::Name { name_w } else { w };
             l.cols.push(Rect::new(x, l.header.y, cw, l.header.h));
             x += cw;
         }
@@ -1985,14 +2002,15 @@ impl App {
             self.draw_jobs(g, th);
             self.draw_confirm(g, th);
             self.draw_own_menu(g, th);
-            animating |= self.fade_ghosts(g, now);
             self.draw_tooltip(g, th);
             self.draw_quick_tip(g, th);
+            animating |= self.fade_ghosts(g, now);
             if !g.atlas_reset {
                 break;
             }
         }
         self.arena = arena;
+        self.prefetch_shell();
 
         let t = self.tab();
         if let Some(l) = &t.loading {
@@ -2003,7 +2021,12 @@ impl App {
         animating || self.motion || g.atlas_reset
     }
 
-    fn smooth(&self) -> bool {
+    pub(super) fn clock(&self) -> Instant {
+        let now = Instant::now();
+        self.last_frame.map_or(now, |t| t.max(now))
+    }
+
+    pub(super) fn smooth(&self) -> bool {
         self.smooth_scroll && self.animations
     }
 
@@ -2258,10 +2281,26 @@ impl App {
     }
 
     fn draw_header<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
-        let l = &self.layout;
-        if l.header.h <= 0.0 {
+        if self.layout.header.h <= 0.0 {
             return;
         }
+        let now = self.last_frame.unwrap_or_else(Instant::now);
+        let (field, angle) = (self.tab().view_spec.sort.field, if self.tab().view_spec.sort.descending { 90.0 } else { -90.0 });
+        let animate = self.animations;
+        let m = &mut self.tab_mut().motion;
+        if m.sort != Some(field) {
+            m.sort_born = (m.sort.is_some() && animate).then_some(now);
+            m.sort = Some(field);
+            m.sort_turn = widgets::Tween::at(angle);
+        }
+        let mut moving = m.sort_turn.aim(angle, animate, now, address::TURN);
+        if m.sort_born.is_some_and(|b| now.saturating_duration_since(b) >= address::TURN) {
+            m.sort_born = None;
+        }
+        moving |= m.sort_born.is_some();
+        let (arrow_angle, arrow_alpha) = (m.sort_turn.value(now, address::TURN), m.sort_born.map_or(1.0, |b| widgets::eased(b, now, address::TURN)));
+        self.motion |= moving;
+        let l = &self.layout;
         g.dl.rect(l.header, t.header);
         g.dl.rect(Rect::new(l.header.x, l.header.bottom() - 1.0, l.header.w, 1.0), t.separator);
         let font = self.ui_font(12.0);
@@ -2294,10 +2333,9 @@ impl App {
                 room = fr.x - x;
             }
             if sorted {
-                let glyph = if sort.descending { G_SORT_DOWN } else { G_SORT_UP };
                 let gw = self.s(14.0);
                 let right = if *col == Column::Type { self.funnel_rect(r).x } else { r.right() - pad };
-                g.text(right - gw, baseline, glyph, self.icon_font(8.0), t.text, f32::INFINITY);
+                g.dl.chevron((right - gw / 2.0, r.y + r.h / 2.0), self.s(8.0), arrow_angle, self.s(1.25).max(1.0), widgets::faded(t.text, arrow_alpha));
                 room = room.min(right - gw - x);
             }
             g.text(x, baseline, col.title(), font, if sorted { t.text } else { t.text_dim }, room.max(0.0));
@@ -2306,6 +2344,21 @@ impl App {
     }
 
     fn draw_list<B: TextBackend>(&mut self, g: &mut Gfx<B>, arena: &Bump, t: &Theme) {
+        let now = self.last_frame.unwrap_or_else(Instant::now);
+        let tab_id = self.tab().id;
+        let hovered = match self.hover {
+            Hit::Row(r) if self.drag == Drag::None => self.tab().view.as_ref().and_then(|v| v.rows().get(r)).map(|&i| (tab_id, i)),
+            _ => None,
+        };
+        if hovered.is_some() || self.row_glow.touches(|k| k.0 == tab_id) {
+            self.motion |= self.row_glow.aim(hovered, self.animations, now);
+        }
+        let tm = &mut self.tab_mut().motion;
+        if tm.fold.is_some_and(|f| now.saturating_duration_since(f.since) >= sidebar::FOLD) {
+            tm.fold = None;
+        }
+        let fold = tm.fold.filter(|_| self.layout.mode == LayoutMode::Tree);
+        self.motion |= fold.is_some();
         let l = &self.layout;
         let (list, mode) = (l.list, l.mode);
         let font = self.ui_font(13.0);
@@ -2318,12 +2371,24 @@ impl App {
         let in_bin = tab.view_loc.is_recycle_bin();
         let f = self.flow();
         let lines = self.visible_lines(&f);
+        let shown_lines = lines.len();
+        let fold = fold.map(|fd| {
+            let parent = self.line_rect(&f, fd.line.saturating_sub(1));
+            let n = fd.lines.unsigned_abs().min(shown_lines + 1) as f32;
+            let e = widgets::eased(fd.since, now, sidebar::FOLD);
+            let dy = (if fd.lines > 0 { -(1.0 - e) } else { 1.0 - e } * n * parent.h).round();
+            (fd, dy, parent.bottom(), e)
+        });
+        let lines = match fold {
+            Some((fd, _, _, _)) if fd.lines > 0 => lines.start..lines.end + (fd.lines as usize).min(shown_lines + 1),
+            _ => lines,
+        };
+        let mut moved: Option<(usize, f32)> = None;
         g.dl.set_clip(Some(list));
         let mut requests: Vec<IconRequest> = Vec::new();
         let mut thumb_requests: Vec<IconRequest> = Vec::new();
         let mut type_requests: Vec<Vec<u8>> = Vec::new();
         let mut checks: Vec<(u32, bool)> = Vec::new();
-        let now = self.last_frame.unwrap_or_else(Instant::now);
         let want_thumbs = self.prefs.thumbnails && matches!(mode, LayoutMode::Grid | LayoutMode::Cards) && !in_bin && (self.opts.thumbs != options::Thumbs::Local || !options::remote(&tab.view_loc));
         let thumb_px = thumbs::class_px(icon_px as u32);
         if let Some(v) = &tab.view {
@@ -2355,6 +2420,15 @@ impl App {
                 }
             };
             for line in lines {
+                if let Some((from, dy)) = moved.take() {
+                    g.dl.shift_range(from..g.dl.instances.len(), 0.0, dy);
+                }
+                if let Some((fd, dy, top, _)) = fold.filter(|(fd, dy, _, _)| line >= fd.line && *dy != 0.0) {
+                    moved = Some((g.dl.instances.len(), dy));
+                    let child = fd.lines > 0 && line < fd.line + fd.lines as usize;
+                    let floor = if child { top.max(list.y) } else { list.y };
+                    g.dl.set_clip(Some(Rect::new(list.x, floor - dy, list.w, (list.bottom() - floor).max(0.0))));
+                }
                 let cell = self.line_rect(&f, line);
                 let row = match v.line(line) {
                     Some(Line::Row(r)) => r,
@@ -2369,12 +2443,16 @@ impl App {
                 let e = listing.entries[i as usize];
                 let p = self.item_parts(cell);
                 let rr = p.body;
+                let glow = self.row_glow.alpha((tab_id, i), now);
                 if v.is_selected(i) {
                     g.dl.round_rect(rr, if list_focused { t.selection } else { t.selection_inactive }, self.s(4.0));
-                } else if self.hover == Hit::Row(row) && self.drag == Drag::None {
-                    g.dl.round_rect(rr, t.hover, self.s(4.0));
-                } else if self.opts.alternating && mode.table() && row % 2 == 1 {
-                    g.dl.round_rect(rr, t.text.alpha(0x08), self.s(4.0));
+                } else {
+                    if self.opts.alternating && mode.table() && row % 2 == 1 && glow < 1.0 {
+                        g.dl.round_rect(rr, t.text.alpha(0x08), self.s(4.0));
+                    }
+                    if glow > 0.0 {
+                        g.dl.round_rect(rr, widgets::faded(t.hover, glow), self.s(4.0));
+                    }
                 }
                 if list_focused && v.focus == Some(i) {
                     g.dl.outline(rr, t.focus_ring, self.s(4.0), 1.0);
@@ -2430,8 +2508,12 @@ impl App {
                 let end = self.draw_name(g, &p, &self.shown_name(listing, i), e.tags, font, name_color);
                 if mode == LayoutMode::Tree && e.is_dir() {
                     if let Some(cr) = self.chevron_rect(row) {
-                        let open = self.is_open_in_tree(i);
-                        centered(g, cr, if open { G_SORT_DOWN } else { G_CHEVRON }, self.icon_font(8.0), t.text_dim);
+                        let angle = match fold.filter(|(fd, ..)| fd.parent == i) {
+                            Some((fd, _, _, e)) => 90.0 * if fd.lines > 0 { e } else { 1.0 - e },
+                            None if self.is_open_in_tree(i) => 90.0,
+                            None => 0.0,
+                        };
+                        g.dl.chevron((cr.x + cr.w / 2.0, cr.y + cr.h / 2.0), self.s(8.0), angle, self.s(1.25).max(1.0), t.text_dim);
                     }
                 }
                 let folder = listing.folder(i);
@@ -2467,6 +2549,9 @@ impl App {
                     }
                     _ => {}
                 }
+            }
+            if let Some((from, dy)) = moved.take() {
+                g.dl.shift_range(from..g.dl.instances.len(), 0.0, dy);
             }
         }
         g.dl.set_clip(None);

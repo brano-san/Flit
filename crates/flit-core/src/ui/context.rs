@@ -113,6 +113,9 @@ pub struct ContextMenu {
     start: (f32, f32),
     armed: bool,
     width: f32,
+    pub floor_w: f32,
+    glow: super::widgets::Glow<usize>,
+    glow_at: Option<std::time::Instant>,
 }
 
 fn flatten(items: &[MenuItem], depth: usize, parent: &str, next: &mut usize, out: &mut Vec<Node>) {
@@ -172,6 +175,9 @@ impl ContextMenu {
             start: at,
             armed: false,
             width: 0.0,
+            floor_w: 0.0,
+            glow: Default::default(),
+            glow_at: None,
         };
         m.rebuild();
         m
@@ -289,7 +295,7 @@ impl ContextMenu {
     pub fn measure<B: TextBackend>(&mut self, g: &mut Gfx<B>) {
         let s = self.scale;
         let font = font(s);
-        let mut w = MIN_W * s;
+        let mut w = (MIN_W * s).max(self.floor_w);
         for n in &self.nodes {
             if matches!(n.what, What::Separator) {
                 continue;
@@ -301,6 +307,10 @@ impl ContextMenu {
         }
         self.width = w.min(MAX_W * s).min(self.bounds.w).ceil();
         self.layout();
+    }
+
+    pub fn width(&self) -> f32 {
+        self.width
     }
 
     fn layout(&mut self) {
@@ -585,6 +595,15 @@ impl ContextMenu {
         self.field_inner()
     }
 
+    pub fn settle_glow(&mut self, now: std::time::Instant, animate: bool) -> bool {
+        let hot = self.hot.and_then(|k| match self.rows.get(k) {
+            Some(Row::Node { node, .. }) => Some(*node),
+            _ => None,
+        });
+        self.glow_at = Some(now);
+        self.glow.aim(hot, animate, now)
+    }
+
     pub fn draw<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, active: bool, preedit: &Preedit) {
         let s = self.scale;
         let (font, icons) = (font(s), FontStyle::new(FontFamily::Icons, ICON_PX * s, false));
@@ -606,9 +625,18 @@ impl ContextMenu {
                 continue;
             };
             let n = &self.nodes[*node];
-            let hot = self.hot == Some(k);
-            if hot {
-                p.g.dl.round_rect(r, t.accent_fill, 4.0 * s);
+            if n.label.is_empty() && n.what == What::Header {
+                let bar = Rect::new(r.x + ICON_W * s, r.y + (r.h * 0.36).round(), (r.w * 0.5 - (k % 3) as f32 * 24.0 * s).max(r.w * 0.2), (r.h * 0.28).round());
+                p.g.dl.round_rect(bar, t.text_dim.alpha(0x24), 3.0 * s);
+                continue;
+            }
+            let lit = match self.glow_at {
+                Some(now) => self.glow.alpha(*node, now),
+                None => f32::from(u8::from(self.hot == Some(k))),
+            };
+            let hot = lit >= 0.5;
+            if lit > 0.0 {
+                p.g.dl.round_rect(r, super::widgets::faded(t.accent_fill, lit), 4.0 * s);
             }
             let off = matches!(n.what, What::Command { disabled: true, .. } | What::Header);
             let (ink, dim, mark) = match (hot, off) {

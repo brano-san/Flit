@@ -162,3 +162,37 @@ fn a_right_click_on_another_file_closes_the_open_menu_and_asks_for_that_file() {
     let v = a.tab().view.as_ref().unwrap();
     assert!(v.is_selected(v.rows()[2]) && v.selected_count() == 1);
 }
+
+#[test]
+fn a_menu_opens_at_the_size_its_kind_had_and_text_typed_early_survives_the_shell_items() {
+    let mut app = app();
+    let mut g = Gfx::new(Mono, 256);
+    let target = crate::ui::ShellMenu { dir: FsPath::parse(r"C:\x").unwrap(), items: vec![FsPath::parse(r"C:\x\a.TXT").unwrap()], x: 100.0, y: 100.0, extended: false, menu: Vec::new(), inline: false, shell: true, kind: crate::ui::MenuKind::File };
+    assert_eq!(shape_key(&target), "file.txt");
+    let mut open = |app: &mut App| {
+        app.remember_shape_key(&target);
+        app.on_event(&Event::ShowMenu { items: vec![cmd("Open")], x: 100.0, y: 100.0, launches: Vec::new(), kind: crate::ui::MenuKind::File, shell: Vec::new(), pending: true }, Instant::now());
+        app.frame(&mut g, Instant::now());
+        app.context_menu_open().map(|c| c.rect).unwrap()
+    };
+    let arrive = |app: &mut App| {
+        let items = vec![cmd("Scan"), MenuItem::Separator, MenuItem::Submenu { label: "Show more options".into(), items: vec![cmd("Send to")] }];
+        app.on_event(&Event::ShellItems { items, shell: vec![7, 9] }, Instant::now());
+        app.frame(&mut Gfx::new(Mono, 256), Instant::now());
+        app.context_menu_open().map(|c| c.rect).unwrap()
+    };
+    let unknown = open(&mut app);
+    let full = arrive(&mut app);
+    assert!(full.h > unknown.h, "the first menu of a kind grows when the shell joins");
+    key(&mut app, Key::Escape);
+    let early = open(&mut app);
+    assert_eq!((early.h, early.w), (full.h, full.w), "the next one opens at the size it will have");
+    assert_eq!(app.context_menu_open().unwrap().labels(), ["Open", "-", "", "-", ""], "neutral rows hold the shell's places");
+    app.on_event(&Event::Char('s'), Instant::now());
+    let late = arrive(&mut app);
+    let c = app.context_menu_open().unwrap();
+    assert_eq!(c.query.text(), "s", "text typed before the shell items is kept");
+    assert!(c.labels().iter().any(|l| l.contains("Scan")), "{:?}", c.labels());
+    assert!(late.h <= full.h);
+    assert_eq!(commands(&app.own_menu.as_ref().unwrap().items), 3, "no placeholder is a command");
+}

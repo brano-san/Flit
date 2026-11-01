@@ -3,13 +3,61 @@ use super::edit::EditAction;
 use super::menu::MenuItem;
 use super::popup::{MenuOutcome, MenuView};
 use super::widgets::Ghost;
-use super::{App, Effect};
+use super::{App, Effect, ShellMenu};
 use crate::input::{Event, MouseButton};
 use crate::provider::Launch;
 use crate::render::Rect;
 use crate::text::{Gfx, TextBackend};
 use crate::theme::Theme;
 use std::time::Instant;
+
+const MAX_SHAPES: usize = 24;
+const SHAPE_ROW: u8 = 0;
+const SHAPE_SEPARATOR: u8 = 1;
+const SHAPE_SUBMENU: u8 = 2;
+
+#[derive(Default)]
+pub(super) struct Shapes {
+    list: Vec<(String, Vec<u8>, f32)>,
+    next: Option<String>,
+}
+
+impl Shapes {
+    pub fn get(&self, key: &str) -> Option<&(String, Vec<u8>, f32)> {
+        self.list.iter().find(|s| s.0 == key)
+    }
+
+    fn put(&mut self, key: String, rows: Vec<u8>, width: f32) {
+        self.list.retain(|s| s.0 != key);
+        self.list.insert(0, (key, rows, width));
+        self.list.truncate(MAX_SHAPES);
+    }
+}
+
+pub(super) fn shape_key(m: &ShellMenu) -> String {
+    match &m.items[..] {
+        [] => "background".into(),
+        [one] if one.kind() == crate::path::PathKind::Drive && one.parent().is_none() => "drive".into(),
+        [_] if m.kind == MenuKind::Folder => "folder".into(),
+        [one] => {
+            let name = one.file_name();
+            let ext = name.iter().rposition(|&c| c == b'.').map_or(&[][..], |k| &name[k + 1..]);
+            format!("file.{}", String::from_utf8_lossy(ext).to_lowercase())
+        }
+        _ => "multi".into(),
+    }
+}
+
+fn shape_of(items: &[MenuItem]) -> Vec<u8> {
+    items
+        .iter()
+        .map(|i| match i {
+            MenuItem::Separator => SHAPE_SEPARATOR,
+            MenuItem::Submenu { .. } => SHAPE_SUBMENU,
+            _ => SHAPE_ROW,
+        })
+        .collect()
+}
 
 pub(super) enum View {
     Plain(MenuView),
@@ -27,6 +75,10 @@ pub struct OwnMenu {
     right: Option<f32>,
     pointer: Option<(f32, f32)>,
     pending: bool,
+    own: usize,
+    shape: Option<(String, Vec<u8>)>,
+    floor_w: f32,
+    carry: String,
 }
 
 impl OwnMenu {
@@ -34,7 +86,21 @@ impl OwnMenu {
         self.pending || !self.shell.is_empty()
     }
 
+    fn placeholders(&mut self, rows: &[u8]) {
+        if !rows.is_empty() && !self.items.is_empty() {
+            self.items.push(MenuItem::Separator);
+        }
+        self.items.extend(rows.iter().map(|&r| if r == SHAPE_SEPARATOR { MenuItem::Separator } else { MenuItem::Header(String::new()) }));
+    }
+
     fn add_shell(&mut self, items: &[MenuItem], shell: &[u32]) {
+        self.items.truncate(self.own);
+        if let Some(View::Context(c)) = &self.view {
+            self.carry = c.query.text().to_owned();
+        }
+        if let Some(s) = self.shape.as_mut() {
+            s.1 = shape_of(items);
+        }
         if !items.is_empty() && !self.items.is_empty() {
             self.items.push(MenuItem::Separator);
         }
@@ -60,7 +126,16 @@ impl App {
     pub(super) fn own_menu_event(&mut self, ev: &Event, now: Instant) -> bool {
         if let Event::ShowMenu { items, x, y, launches, kind, shell, pending } = ev {
             self.release_shell_menu();
-            self.own_menu = Some(OwnMenu { items: items.clone(), at: (*x, *y), launches: launches.clone(), shell: shell.clone(), kind: *kind, view: None, opened: now, right: self.menu_right.take(), pointer: None, pending: *pending });
+            let key = self.shapes.next.take().filter(|_| *pending);
+            let mut m = OwnMenu { items: items.clone(), at: (*x, *y), launches: launches.clone(), shell: shell.clone(), kind: *kind, view: None, opened: now, right: self.menu_right.take(), pointer: None, pending: *pending, own: items.len(), shape: None, floor_w: 0.0, carry: String::new() };
+            if let Some(key) = key {
+                if let Some((_, rows, w)) = self.shapes.get(&key) {
+                    m.placeholders(rows);
+                    m.floor_w = w * self.scale;
+                }
+                m.shape = Some((key, Vec::new()));
+            }
+            self.own_menu = Some(m);
             self.tip_hide();
             self.dirty = true;
             return true;
@@ -168,6 +243,10 @@ impl App {
         }
     }
 
+    pub(super) fn remember_shape_key(&mut self, m: &ShellMenu) {
+        self.shapes.next = m.shell.then(|| shape_key(m));
+    }
+
     fn close_own_menu(&mut self) {
         self.release_shell_menu();
         self.own_menu = None;
@@ -232,18 +311,37 @@ impl App {
             }
             kind => {
                 let mut c = ContextMenu::new(&m.items, kind, pins.unwrap_or_default(), m.at, bounds, scale);
+                c.floor_w = m.floor_w;
                 c.measure(g);
+                if !m.carry.is_empty() {
+                    c.insert(&std::mem::take(&mut m.carry));
+                }
                 if let Some((x, y)) = m.pointer {
                     c.mouse_move(x, y);
+                }
+                if !m.pending {
+                    if let Some((key, rows)) = m.shape.take() {
+                        self.shapes.put(key, rows, c.width() / scale);
+                    }
                 }
                 View::Context(Box::new(c))
             }
         });
         let (from, opened, at) = (g.dl.instances.len(), m.opened, m.at);
-        match view {
-            View::Plain(v) => v.draw(g, t),
-            View::Context(c) => c.draw(g, t, active, &preedit),
-        }
+        let (now, animate) = (self.last_frame.unwrap_or_else(Instant::now), self.animations);
+        let glowing = match view {
+            View::Plain(v) => {
+                let moving = v.settle_glow(now, animate);
+                v.draw(g, t);
+                moving
+            }
+            View::Context(c) => {
+                let moving = c.settle_glow(now, animate);
+                c.draw(g, t, active, &preedit);
+                moving
+            }
+        };
+        self.motion |= glowing;
         self.keep_ghost(g, Ghost::Menu, from, at);
         self.pop(g, from, opened, at);
     }

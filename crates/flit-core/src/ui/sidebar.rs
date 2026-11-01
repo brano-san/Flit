@@ -412,6 +412,7 @@ pub(super) struct Sidebar {
     pub cursor: usize,
     pub press_y: f32,
     pub dragging_out: bool,
+    pub slide: Option<super::widgets::Tween>,
     pub fold: Option<Fold>,
     pub fold_clip: Option<(Section, Rect)>,
     pub leaving: Vec<Leaving>,
@@ -679,15 +680,21 @@ impl App {
     }
 
     pub(super) fn sidebar_width(&self) -> f32 {
-        let st = &self.nav.sidebar.state;
-        match (st.sidebar, self.nav.sidebar.prefs.compact) {
-            (false, _) => 0.0,
-            (true, true) => self.s(COMPACT_W),
-            (true, false) => self.s(st.sidebar_w).min((self.size.0 / 2.0).round()),
+        let sb = &self.nav.sidebar;
+        let full = if sb.prefs.compact { self.s(COMPACT_W) } else { self.s(sb.state.sidebar_w).min((self.size.0 / 2.0).round()) };
+        match sb.slide {
+            Some(tw) => (full * tw.value(self.clock(), FOLD)).round(),
+            None if sb.state.sidebar => full,
+            None => 0.0,
         }
     }
 
     pub(super) fn toggle_sidebar(&mut self) {
+        let now = self.clock();
+        let sb = &mut self.nav.sidebar;
+        let mut slide = sb.slide.unwrap_or(super::widgets::Tween::at(if sb.state.sidebar { 1.0 } else { 0.0 }));
+        let moving = slide.aim(if sb.state.sidebar { 0.0 } else { 1.0 }, self.animations, now, FOLD);
+        sb.slide = moving.then_some(slide);
         let st = &mut self.nav.sidebar.state;
         st.sidebar = !st.sidebar;
         if !st.sidebar && self.focus == Focus::Sidebar {
@@ -960,7 +967,10 @@ impl App {
             sb.rebuild();
         }
         sb.leaving.retain(|l| now.saturating_duration_since(l.since) < FOLD);
-        sb.fold.is_some() || !sb.leaving.is_empty()
+        if sb.slide.as_mut().is_some_and(|tw| !tw.aim(tw.target(), true, now, FOLD)) {
+            sb.slide = None;
+        }
+        sb.fold.is_some() || !sb.leaving.is_empty() || sb.slide.is_some()
     }
 
     fn drag_out_of_quick_access(&mut self, i: usize) -> bool {
@@ -1118,7 +1128,7 @@ impl App {
         let Some(p) = path else { return self.context_flit_menu(x, y, menu, kind) };
         let shift = self.mods.shift;
         let dir = p.parent().unwrap_or_else(FsPath::computer);
-        self.effects.push(Effect::ShellMenu(ShellMenu { dir, items: vec![p], x, y, extended: shift, menu, inline: self.shell_items_inline || shift, shell: true, kind }));
+        self.push_shell_menu(ShellMenu { dir, items: vec![p], x, y, extended: shift, menu, inline: self.shell_items_inline || shift, shell: true, kind });
     }
 
     pub(super) fn build_section_menu(&mut self, s: Section) -> Vec<super::MenuItem> {
@@ -1376,6 +1386,11 @@ impl App {
 
     pub(super) fn draw_sidebar<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
         let now = self.last_frame.unwrap_or_else(Instant::now);
+        let hovered = match self.hover {
+            Hit::Side(k) | Hit::SidePin(k) if self.drag == Drag::None => Some(k),
+            _ => None,
+        };
+        self.motion |= self.side_glow.aim(hovered, self.animations, now);
         let sb = &self.nav.sidebar;
         let area = sb.rect;
         if area.w <= 0.0 {
@@ -1472,20 +1487,24 @@ impl App {
                 Some((_, c)) => g.dl.set_clip(Some(clip_to(list, c))),
                 None => g.dl.set_clip(Some(list)),
             }
-            let hovered = matches!(self.hover, Hit::Side(k) | Hit::SidePin(k) if k == i) && self.drag == Drag::None;
+            let hovered = hovered == Some(i);
+            let glow = self.side_glow.alpha(i, now);
             let row = Rect::new(r.x, r.y + 1.0, r.w, r.h - 2.0);
             let tag = sb.tag_of(i).and_then(|k| sb.tags.defs.get(k));
             if drop == Some(i) {
                 g.dl.round_rect(row, target, s4);
-            } else if hovered {
-                g.dl.round_rect(row, t.accent_fill, s4);
-            } else if it.loc == *here && tag.is_none() {
-                g.dl.round_rect(row, t.selection, s4);
+            } else {
+                if it.loc == *here && tag.is_none() && glow < 1.0 {
+                    g.dl.round_rect(row, t.selection, s4);
+                }
+                if glow > 0.0 {
+                    g.dl.round_rect(row, super::widgets::faded(t.accent_fill, glow), s4);
+                }
             }
             if focused && !sb.typing && sb.cursor == i && drop != Some(i) {
                 g.dl.outline(row, t.focus_ring, s4, 1.0);
             }
-            let lit = hovered && drop != Some(i);
+            let lit = glow >= 0.5 && drop != Some(i);
             let ink = if lit { ink_on(t.accent_fill) } else { t.text };
             let color = match tag {
                 Some(tag) => Color::rgb(tag.color),

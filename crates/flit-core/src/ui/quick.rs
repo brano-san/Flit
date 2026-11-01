@@ -267,6 +267,7 @@ impl App {
             let cw = p.g.text(col, base.round(), c, small, t.text_dim, room);
             p.keycaps(col + cw + s(8.0), base - m.ascent / 2.0 + s(1.0), keys, small);
         }
+        self.keep_ghost(g, super::widgets::Ghost::QuickTip, from, (r.x, r.y + r.h / 2.0));
         self.pop(g, from, since, (r.x, r.y + r.h / 2.0));
     }
 }

@@ -348,3 +348,24 @@ fn volumes_of_unknown_size_show_no_size_instead_of_zero_bytes() {
         assert_eq!(app.subject().unwrap().drive, want, "{name}");
     }
 }
+
+#[test]
+fn the_inspector_title_chevron_turns_with_the_card() {
+    let mut a = app((1200, 700));
+    press(&mut a, Key::Space, NO);
+    select(&mut a, "c.docx");
+    frame(&mut a);
+    let turn = super::super::address::TURN;
+    assert_eq!(a.preview.turn.value(Instant::now(), turn), 0.0);
+    press(&mut a, Key::Char('I'), Mods { ctrl: true, ..Mods::default() });
+    let t = Instant::now();
+    a.frame(&mut Gfx::new(Mono, 2048), t);
+    let mid = a.preview.turn.value(t + Duration::from_millis(50), turn);
+    assert!(mid > 0.0 && mid < 90.0, "{mid}");
+    a.frame(&mut Gfx::new(Mono, 2048), t + Duration::from_millis(400));
+    assert_eq!(a.preview.turn.value(t + Duration::from_millis(400), turn), 90.0);
+    a.animations = false;
+    a.preview_click(PaneHit::CardClose);
+    a.frame(&mut Gfx::new(Mono, 2048), t + Duration::from_millis(410));
+    assert_eq!(a.preview.turn.value(t + Duration::from_millis(410), turn), 0.0, "without Animations it turns at once");
+}

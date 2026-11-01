@@ -8,6 +8,8 @@ use crate::input::{Key, Mods};
 use crate::render::Rect;
 use crate::view::DirView;
 use serde::{Deserialize, Serialize};
+
+const REVEAL_SNAP: f32 = 2.0;
 use std::ops::Range;
 use std::time::Instant;
 
@@ -421,7 +423,7 @@ impl App {
         let Some(line) = t.view.as_ref().and_then(|v| v.focus.and_then(|i| v.row_of(i)).map(|r| v.line_of_row(r))) else { return };
         let c = f.cell(line);
         let (top, ext) = if self.layout.flow.across { (c.x, c.w) } else { (c.y, c.h) };
-        let (len, max) = (self.view_len(), self.max_scroll_of(&f));
+        let (len, max, smooth) = (self.view_len(), self.max_scroll_of(&f), self.smooth());
         let t = self.tab_mut();
         let bottom = top + ext;
         let mut s = t.scroll_target;
@@ -433,7 +435,12 @@ impl App {
             s = bottom - len;
         }
         t.scroll_target = s.clamp(0.0, max);
-        t.scroll = t.scroll_target;
+        let gap = t.scroll_target - t.scroll;
+        if !smooth {
+            t.scroll = t.scroll_target;
+        } else if gap.abs() > len * REVEAL_SNAP {
+            t.scroll = t.scroll_target - gap.signum() * len / 2.0;
+        }
     }
 
     pub(super) fn page_rows(&self) -> isize {

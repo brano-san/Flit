@@ -9,9 +9,93 @@ const POP: Duration = Duration::from_millis(120);
 const FADE: Duration = Duration::from_millis(100);
 const SLIDE: f32 = 6.0;
 
+pub(super) const HOVER_FADE: Duration = Duration::from_millis(100);
+
 pub(super) fn eased(since: Instant, now: Instant, span: Duration) -> f32 {
     let p = (now.saturating_duration_since(since).as_secs_f32() / span.as_secs_f32()).min(1.0);
     1.0 - (1.0 - p).powi(3)
+}
+
+pub(super) fn faded(c: Color, k: f32) -> Color {
+    c.alpha(((c.0 >> 24) as f32 * k.clamp(0.0, 1.0)).round() as u8)
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct Tween {
+    from: f32,
+    to: f32,
+    at: Option<Instant>,
+}
+
+impl Tween {
+    pub fn at(v: f32) -> Self {
+        Self { from: v, to: v, at: None }
+    }
+
+    pub fn target(&self) -> f32 {
+        self.to
+    }
+
+    pub fn value(&self, now: Instant, span: Duration) -> f32 {
+        match self.at {
+            Some(at) => self.from + (self.to - self.from) * eased(at, now, span),
+            None => self.to,
+        }
+    }
+
+    pub fn aim(&mut self, to: f32, animate: bool, now: Instant, span: Duration) -> bool {
+        if to != self.to {
+            self.from = if animate { self.value(now, span) } else { to };
+            self.to = to;
+            self.at = animate.then_some(now);
+        }
+        if self.at.is_some_and(|at| now.saturating_duration_since(at) >= span) {
+            self.at = None;
+        }
+        self.at.is_some()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Glow<K> {
+    cur: Option<(K, Option<Instant>)>,
+    prev: Option<(K, f32, Instant)>,
+}
+
+impl<K> Default for Glow<K> {
+    fn default() -> Self {
+        Self { cur: None, prev: None }
+    }
+}
+
+impl<K: Copy + PartialEq> Glow<K> {
+    pub fn aim(&mut self, key: Option<K>, animate: bool, now: Instant) -> bool {
+        if self.cur.map(|c| c.0) != key {
+            let left = self.cur.map(|(k, _)| (k, self.alpha(k, now), now));
+            self.prev = left.filter(|_| animate);
+            self.cur = key.map(|k| (k, animate.then_some(now)));
+        }
+        let moving = |at: Instant| now.saturating_duration_since(at) < HOVER_FADE;
+        if !animate || self.prev.is_some_and(|p| !moving(p.2)) {
+            self.prev = None;
+        }
+        if let Some(c) = self.cur.as_mut().filter(|c| !animate || c.1.is_some_and(|at| !moving(at))) {
+            c.1 = None;
+        }
+        self.prev.is_some() || self.cur.is_some_and(|c| c.1.is_some())
+    }
+
+    pub fn touches(&self, f: impl Fn(K) -> bool) -> bool {
+        self.cur.is_some_and(|c| f(c.0)) || self.prev.is_some_and(|p| f(p.0))
+    }
+
+    pub fn alpha(&self, key: K, now: Instant) -> f32 {
+        match (self.cur, self.prev) {
+            (Some((k, at)), _) if k == key => at.map_or(1.0, |at| eased(at, now, HOVER_FADE)),
+            (_, Some((k, from, at))) if k == key => from * (1.0 - eased(at, now, HOVER_FADE)),
+            _ => 0.0,
+        }
+    }
 }
 
 pub(super) const RADIUS: f32 = 6.0;
@@ -23,8 +107,6 @@ const DISABLED: u8 = 0x70;
 const STEP_W: f32 = 34.0;
 pub(super) const G_CHECK_MARK: &str = "\u{E73E}";
 pub(super) const G_CROSS: &str = "\u{E8BB}";
-pub(super) const G_NEXT: &str = "\u{E76C}";
-pub(super) const G_OPEN: &str = "\u{E70D}";
 pub(super) const G_MINUS: &str = "\u{E738}";
 pub(super) const G_PLUS: &str = "\u{E710}";
 
@@ -239,16 +321,17 @@ impl<'a, B: TextBackend> Paint<'a, B> {
         }
     }
 
-    pub fn switch(&mut self, r: Rect, on: bool, hot: bool, icons: FontStyle) {
+    pub fn switch(&mut self, r: Rect, pos: f32, hot: bool, icons: FontStyle) {
+        let pos = pos.clamp(0.0, 1.0);
         let pad = self.px(3.0);
         let knob = r.h - 2.0 * pad;
-        let track = if on { self.t.accent_fill } else { self.t.text_dim.alpha(0x60) };
+        let track = crate::theme::mix(self.t.text_dim.alpha(0x60), self.t.accent_fill, pos);
         self.g.dl.round_rect(r, if hot { crate::theme::mix(track, ink_on(track), 0.12) } else { track }, r.h / 2.0);
-        let kx = if on { r.right() - pad - knob } else { r.x + pad };
+        let kx = (r.x + pad + (r.w - 2.0 * pad - knob) * pos).round();
         let k = Rect::new(kx, r.y + pad, knob, knob);
         self.g.dl.circle(k, Color::rgb(0xFFFFFF));
-        let mark = if on { (G_CHECK_MARK, self.t.accent_fill) } else { (G_CROSS, self.t.text_dim) };
-        self.centered(k, mark.0, icons, mark.1);
+        let mark = if pos >= 0.5 { (G_CHECK_MARK, self.t.accent_fill) } else { (G_CROSS, self.t.text_dim) };
+        self.centered(k, mark.0, icons, faded(mark.1, (2.0 * pos - 1.0).abs()));
     }
 
     pub fn slider(&mut self, track: Rect, frac: f32, hot: bool) {
@@ -379,6 +462,9 @@ pub(super) enum Ghost {
     Menu,
     Palette,
     Confirm,
+    Tooltip,
+    QuickTip,
+    Jobs,
 }
 
 #[derive(Default)]
@@ -409,6 +495,13 @@ pub(super) struct Ghosts {
     shown: Vec<(Ghost, Vec<crate::render::Instance>, (f32, f32))>,
     drawn: Vec<Ghost>,
     fading: Vec<(Vec<crate::render::Instance>, (f32, f32), Instant)>,
+}
+
+impl Ghosts {
+    #[cfg(test)]
+    pub fn fading_count(&self) -> usize {
+        self.fading.len()
+    }
 }
 
 #[cfg(test)]

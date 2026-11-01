@@ -297,6 +297,7 @@ fn pins_removed_by_another_window_mid_drag_are_harmless() {
 #[test]
 fn sidebar_toggle_splitter_and_persisted_width() {
     let mut app = app_at(r"C:\x");
+    app.animations = false;
     let shown = app.layout.list.x;
     assert_eq!(shown, app.nav_state().sidebar_w);
     key(&mut app, Key::Char('B'), CTRL);
@@ -439,4 +440,29 @@ fn opened_wsl_folders_take_the_registry_spelling() {
     app.dispatch(vec![crate::open::Route { folder: loc(r"\\wsl$\UBUNTU\etc"), select: None }], crate::open::OpenTarget::NewTab, t0());
     assert_eq!(listed(&mut app), [(2, loc("wsl://Ubuntu/etc"))]);
     assert_eq!(app.tab().location(), &loc("wsl://Ubuntu/etc"));
+}
+
+#[test]
+fn quick_access_slides_shut_and_open_with_ctrl_b() {
+    let mut app = app_at(r"C:\x");
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, Instant::now());
+    let w = app.layout.list.x;
+    key(&mut app, Key::Char('B'), CTRL);
+    let t = Instant::now();
+    app.frame(&mut g, t + Duration::from_millis(50));
+    let mid = app.layout.list.x;
+    assert!(mid > 0.0 && mid < w, "the panels follow the sidebar: {mid} {w}");
+    app.frame(&mut g, t + Duration::from_millis(400));
+    assert_eq!(app.layout.list.x, 0.0);
+    key(&mut app, Key::Char('B'), CTRL);
+    let t = Instant::now().max(t + Duration::from_millis(400));
+    app.frame(&mut g, t + Duration::from_millis(50));
+    let back = app.layout.list.x;
+    assert!(back > 0.0 && back < w, "{back}");
+    app.frame(&mut g, t + Duration::from_millis(400));
+    assert_eq!(app.layout.list.x, w);
+    app.animations = false;
+    key(&mut app, Key::Char('B'), CTRL);
+    assert_eq!(app.layout.list.x, 0.0, "without Animations it hides at once");
 }

@@ -52,9 +52,7 @@ pub(super) const TURN: Duration = Duration::from_millis(150);
 #[derive(Default)]
 pub(super) struct Turn {
     crumb: usize,
-    from: f32,
-    to: f32,
-    at: Option<Instant>,
+    tween: super::widgets::Tween,
 }
 
 impl Turn {
@@ -62,20 +60,15 @@ impl Turn {
         if crumb != self.crumb {
             return 0.0;
         }
-        let Some(at) = self.at else { return self.to };
-        self.from + (self.to - self.from) * super::widgets::eased(at, now, TURN)
+        self.tween.value(now, TURN)
     }
 
     pub fn aim(&mut self, open: Option<usize>, animate: bool, now: Instant) -> bool {
         let (crumb, to) = open.map_or((self.crumb, 0.0), |i| (i, 90.0));
-        if crumb != self.crumb || to != self.to {
-            let from = if crumb == self.crumb { self.angle(crumb, now) } else { 0.0 };
-            *self = Turn { crumb, from, to, at: animate.then_some(now) };
+        if crumb != self.crumb {
+            *self = Turn { crumb, tween: Default::default() };
         }
-        if self.at.is_some_and(|at| now.saturating_duration_since(at) >= TURN) {
-            self.at = None;
-        }
-        self.at.is_some()
+        self.tween.aim(to, animate, now, TURN)
     }
 }
 

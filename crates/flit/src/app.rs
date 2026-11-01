@@ -593,6 +593,8 @@ impl<P: Platform> Handler<P> {
                 }
                 Effect::ShellMenu(menu) => window.shell_menu(menu),
                 Effect::ShellPick(cmd) => window.shell_pick(cmd),
+                Effect::ShellPrefetch(menu) => window.shell_prefetch(menu),
+                Effect::ShellWarm(menus) => window.shell_warm(menus),
                 Effect::Layout(cmd) => self.layout_cmd(id, cmd),
                 Effect::Properties(paths) => window.properties(paths),
                 Effect::Share(paths) => window.share(paths),

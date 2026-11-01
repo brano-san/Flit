@@ -192,6 +192,7 @@ fn the_folder_store_is_bounded_and_keeps_recent_folders() {
 #[test]
 fn the_header_menu_shows_hides_and_fits_columns_and_the_bin_keeps_its_own() {
     let mut app = app_at(r"C:\x");
+    app.animations = false;
     app.set_view_mode(ViewMode::Folder);
     deliver(&mut app, &[("a.txt", 10, false)]);
     let h = app.layout.cols[1];
@@ -601,4 +602,64 @@ fn clicking_icons_of_several_items_keeps_each_selected() {
     click_icon(&mut a, 1, t0 + Duration::from_millis(2900));
     let v = a.tab().view.as_ref().unwrap();
     assert!(v.is_selected(v.rows()[0]) && !v.is_selected(v.rows()[1]) && v.is_selected(v.rows()[2]), "a second click on a box clears only that item");
+}
+
+#[test]
+fn the_sort_arrow_turns_over_on_a_new_direction_and_fades_in_on_a_new_column() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", 10, false)]);
+    frame(&mut app);
+    let turn = crate::ui::address::TURN;
+    let from = if app.tab().view_spec.sort.descending { 90.0 } else { -90.0 };
+    app.tab_mut().view_spec.sort.descending ^= true;
+    let t = Instant::now();
+    assert!(app.frame(&mut Gfx::new(Mono, 1024), t));
+    let mid = app.tab().motion.sort_turn.value(t + std::time::Duration::from_millis(50), turn);
+    assert!(mid.abs() < 90.0 && mid != 0.0, "{mid}");
+    app.frame(&mut Gfx::new(Mono, 1024), t + std::time::Duration::from_millis(400));
+    assert_eq!(app.tab().motion.sort_turn.value(t + std::time::Duration::from_millis(400), turn), -from);
+    app.tab_mut().view_spec.sort.field = crate::sort::SortField::Size;
+    let t = t + std::time::Duration::from_millis(500);
+    app.frame(&mut Gfx::new(Mono, 1024), t);
+    assert!(app.tab().motion.sort_born.is_some(), "a new sort column fades its arrow in");
+    app.frame(&mut Gfx::new(Mono, 1024), t + std::time::Duration::from_millis(400));
+    assert!(app.tab().motion.sort_born.is_none());
+    app.animations = false;
+    app.tab_mut().view_spec.sort.descending ^= true;
+    app.frame(&mut Gfx::new(Mono, 1024), t + std::time::Duration::from_millis(410));
+    assert_eq!(app.tab().motion.sort_turn.value(t + std::time::Duration::from_millis(410), turn), from, "without Animations it flips at once");
+}
+
+#[test]
+fn a_shown_or_hidden_column_resizes_smoothly_and_its_neighbours_slide() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", 10, false)]);
+    frame(&mut app);
+    let width = |app: &App| app.layout.columns.iter().position(|&c| c == Column::Created).map_or(0.0, |k| app.layout.cols[k].w);
+    let toggle = |app: &mut App| {
+        let mut cols = app.tab().columns;
+        cols.toggle(Column::Created);
+        app.tab_mut().columns = cols;
+    };
+    toggle(&mut app);
+    let t = Instant::now();
+    app.frame(&mut Gfx::new(Mono, 1024), t);
+    assert_eq!(width(&app), 0.0, "it starts closed");
+    app.frame(&mut Gfx::new(Mono, 1024), t + std::time::Duration::from_millis(50));
+    let mid = width(&app);
+    app.frame(&mut Gfx::new(Mono, 1024), t + std::time::Duration::from_millis(400));
+    let full = width(&app);
+    assert!(mid > 0.0 && mid < full, "{mid} {full}");
+    toggle(&mut app);
+    let t = t + std::time::Duration::from_millis(400);
+    app.frame(&mut Gfx::new(Mono, 1024), t);
+    app.frame(&mut Gfx::new(Mono, 1024), t + std::time::Duration::from_millis(50));
+    let closing = width(&app);
+    assert!(closing > 0.0 && closing < full, "{closing}");
+    app.frame(&mut Gfx::new(Mono, 1024), t + std::time::Duration::from_millis(400));
+    assert!(!app.layout.columns.contains(&Column::Created));
+    app.animations = false;
+    toggle(&mut app);
+    app.frame(&mut Gfx::new(Mono, 1024), t + std::time::Duration::from_millis(410));
+    assert_eq!(width(&app), full, "without Animations the column is there at once");
 }

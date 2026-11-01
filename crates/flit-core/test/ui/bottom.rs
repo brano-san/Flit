@@ -166,3 +166,26 @@ fn a_message_that_appears_in_the_bottom_bar_slides_in_once() {
     a.toggle_row(1);
     assert!(!a.frame(&mut g, t1 + std::time::Duration::from_millis(310)), "a changed count does not slide again");
 }
+
+#[test]
+fn a_changed_counter_rolls_once_to_the_latest_number() {
+    let mut r = super::Roll::default();
+    let t = Instant::now();
+    assert!(r.show(1, "3", true, t).is_none());
+    let (old, e) = r.show(1, "4", true, t).unwrap();
+    assert_eq!((old.as_str(), e), ("3", 0.0));
+    let (_, mid) = r.show(1, "4", true, t + Duration::from_millis(50)).unwrap();
+    assert!(mid > 0.0 && mid < 1.0);
+    let (old, _) = r.show(1, "5", true, t + Duration::from_millis(60)).unwrap();
+    assert_eq!(old, "4", "a quick update rolls from what is shown and nothing queues");
+    assert!(r.show(1, "5", true, t + Duration::from_millis(400)).is_none());
+    assert!(r.show(2, "9", true, t + Duration::from_millis(410)).is_none(), "another tab shows its own count at once");
+    assert!(r.show(2, "10", false, t + Duration::from_millis(420)).is_none(), "no roll while loading or without Animations");
+    let mut a = harness::app(&["a.txt", "b.txt"]);
+    let mut g = Gfx::new(crate::text::tests::Mono, 1024);
+    a.frame(&mut g, t);
+    a.open_filter();
+    a.filter_insert("a.");
+    assert!(a.frame(&mut g, t + Duration::from_millis(10)), "the files counter rolls");
+    assert!(!a.frame(&mut g, t + Duration::from_millis(400)));
+}

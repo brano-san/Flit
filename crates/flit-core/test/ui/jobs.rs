@@ -335,3 +335,27 @@ fn user_cancelled_operations_are_shown_as_cancelled_without_a_code() {
     assert_eq!(app.jobs.list[0].status(), "Cancelled");
     assert_eq!(app.tab().error.as_deref(), Some("Access is denied (0x80070005)"), "only the real failure reaches the status bar");
 }
+
+#[test]
+fn the_jobs_panel_slides_open_and_fades_out_when_closed() {
+    let mut app = app_at(r"C:\x");
+    let (_id, _ctl) = paste(&mut app);
+    click(&mut app, |a| a.layout.ops_button);
+    assert!(app.jobs_open());
+    let mut g = crate::text::Gfx::new(crate::text::tests::Mono, 1024);
+    let t = Instant::now();
+    assert!(app.frame(&mut g, t), "it slides in");
+    app.frame(&mut g, t + Duration::from_millis(400));
+    click(&mut app, |a| a.layout.ops_button);
+    assert!(!app.jobs_open());
+    app.frame(&mut g, t + Duration::from_millis(410));
+    assert_eq!(app.ghosts.fading_count(), 1, "and fades out");
+    app.frame(&mut g, t + Duration::from_millis(700));
+    assert!(app.ghosts.fading_count() == 0);
+    app.animations = false;
+    click(&mut app, |a| a.layout.ops_button);
+    app.frame(&mut g, t + Duration::from_millis(710));
+    click(&mut app, |a| a.layout.ops_button);
+    app.frame(&mut g, t + Duration::from_millis(720));
+    assert!(app.ghosts.fading_count() == 0, "without Animations nothing lingers");
+}

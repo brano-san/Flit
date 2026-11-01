@@ -14,6 +14,30 @@ const ARRIVE_BUTTONS: u8 = 1;
 const ARRIVE_BRANCH: u8 = 2;
 const ARRIVE_MESSAGE: u8 = 3;
 const BUTTON_W: f32 = 26.0;
+const ROLL_LIFT: f32 = 8.0;
+const ROLL: std::time::Duration = std::time::Duration::from_millis(120);
+
+#[derive(Default)]
+pub(super) struct Roll {
+    tab: Option<u64>,
+    shown: String,
+    old: Option<(String, std::time::Instant)>,
+}
+
+impl Roll {
+    pub fn show(&mut self, tab: u64, label: &str, animate: bool, now: std::time::Instant) -> Option<(String, f32)> {
+        if self.tab != Some(tab) {
+            *self = Roll { tab: Some(tab), shown: label.to_owned(), old: None };
+        } else if self.shown != label {
+            let old = std::mem::replace(&mut self.shown, label.to_owned());
+            self.old = animate.then_some((old, now));
+        }
+        if !animate || self.old.as_ref().is_some_and(|o| now.saturating_duration_since(o.1) >= ROLL) {
+            self.old = None;
+        }
+        self.old.as_ref().map(|(o, at)| (o.clone(), super::widgets::eased(*at, now, ROLL)))
+    }
+}
 const ZOOM_W: f32 = 46.0;
 const G_CLOCK: &str = "\u{E81C}";
 const G_FOLDER: &str = "\u{E8B7}";
@@ -125,8 +149,13 @@ impl App {
         self.layout.bar.push((b, r));
     }
 
-    fn counter<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, right: f32, b: BottomHit, label: &str) -> f32 {
+    fn counter<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, right: f32, b: BottomHit, label: &str, settled: bool) -> f32 {
         let r = self.layout.status;
+        let now = self.last_frame.unwrap_or_else(std::time::Instant::now);
+        let (tab, animate) = (self.tab().id, self.animations && settled);
+        let roll = &mut self.rolls[usize::from(b == BottomHit::Folders)];
+        let rolling = roll.show(tab, label, animate, now);
+        self.motion |= rolling.is_some();
         let spec = self.tab().view_spec;
         let (glyph, hidden) = if b == BottomHit::Folders { (G_FOLDER, spec.hide_dirs) } else { (G_FILE, spec.hide_files) };
         let font = self.ui_font(12.0);
@@ -143,7 +172,19 @@ impl App {
         }
         let m = g.metrics(font);
         let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
-        g.text(ir.right() + pad, baseline, label, font, if hidden { t.text_dim.alpha(0x90) } else { t.text_dim }, f32::INFINITY);
+        let ink = if hidden { t.text_dim.alpha(0x90) } else { t.text_dim };
+        match rolling {
+            Some((old, e)) => {
+                let lift = self.s(ROLL_LIFT);
+                g.dl.set_clip(Some(br));
+                g.text(ir.right() + pad, (baseline - e * lift).round(), &old, font, super::widgets::faded(ink, 1.0 - e), f32::INFINITY);
+                g.text(ir.right() + pad, (baseline + (1.0 - e) * lift).round(), label, font, super::widgets::faded(ink, e), f32::INFINITY);
+                g.dl.set_clip(None);
+            }
+            None => {
+                g.text(ir.right() + pad, baseline, label, font, ink, f32::INFINITY);
+            }
+        }
         self.layout.bar.push((b, br));
         br.x - self.s(2.0)
     }
@@ -190,8 +231,9 @@ impl App {
                 false => format!("{n}/{total}"),
             };
             let (files, dirs) = (label(shown.files, all.files, spec.hide_files), label(shown.dirs, all.dirs, spec.hide_dirs));
-            right = self.counter(g, t, right, BottomHit::Files, arena.alloc_str(&files));
-            right = self.counter(g, t, right, BottomHit::Folders, arena.alloc_str(&dirs));
+            let settled = v.snap().done && tab.loading.is_none();
+            right = self.counter(g, t, right, BottomHit::Files, arena.alloc_str(&files), settled);
+            right = self.counter(g, t, right, BottomHit::Folders, arena.alloc_str(&dirs), settled);
         }
         let mut arrived: Vec<(u8, usize, usize)> = Vec::new();
         let stats = self.tab().stats;

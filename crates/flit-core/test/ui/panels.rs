@@ -458,3 +458,29 @@ fn a_split_opens_the_new_panel_with_a_short_slide_and_then_rests() {
     let settled = rect(&app, 1).w;
     assert!(early < settled && (rect(&app, 0).w - settled).abs() <= 2.0, "{early} {settled}");
 }
+
+#[test]
+fn closing_a_split_panel_slides_it_shut_and_the_neighbour_takes_the_room() {
+    let mut app = app_at(r"C:\a");
+    deliver(&mut app, &[("sub", true)]);
+    key(&mut app, Key::Char('S'), CTRL_SHIFT);
+    let mut g = Gfx::new(crate::text::tests::Mono, 1024);
+    app.frame(&mut g, Instant::now());
+    let half = rect(&app, 0).w;
+    app.animations = true;
+    app.close_panel();
+    let t = Instant::now();
+    app.frame(&mut g, t);
+    let start = rect(&app, 0).w;
+    app.frame(&mut g, t + Duration::from_millis(50));
+    let mid = rect(&app, 0).w;
+    app.frame(&mut g, t + Duration::from_millis(400));
+    let end = rect(&app, 0).w;
+    assert!(start <= half + 1.0 && start < mid && mid < end, "{half} {start} {mid} {end}");
+    assert!(app.panels.closing.is_none());
+    key(&mut app, Key::Char('S'), CTRL_SHIFT);
+    app.animations = false;
+    app.close_panel();
+    app.frame(&mut g, t + Duration::from_millis(500));
+    assert_eq!(rect(&app, 0).w, end, "without Animations it closes at once");
+}

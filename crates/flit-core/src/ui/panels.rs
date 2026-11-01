@@ -79,6 +79,7 @@ pub(super) struct Panels {
     inset: f32,
     hover: Option<(u32, Hit)>,
     pub growing: Option<(u32, Instant)>,
+    pub closing: Option<(Node, u32, Instant)>,
 }
 
 pub(super) const SPLIT: std::time::Duration = std::time::Duration::from_millis(150);
@@ -89,7 +90,7 @@ fn grown(root: &Node, id: u32, k: f32) -> Node {
     if path_of(&root, id, &mut path) {
         if let Some((&at, parent)) = path.split_last() {
             if let Node::Group { kids, .. } = node_mut(&mut root, parent) {
-                kids[at].1 *= k.max(0.02);
+                kids[at].1 *= k;
             }
         }
     }
@@ -98,7 +99,7 @@ fn grown(root: &Node, id: u32, k: f32) -> Node {
 
 impl Default for Panels {
     fn default() -> Self {
-        Self { list: vec![Panel::default()], root: Node::Leaf(0), here: 0, active: 0, next: 1, seps: Vec::new(), caption: Default::default(), menu: Rect::default(), quick: Rect::default(), left: 0.0, inset: 0.0, hover: None, growing: None }
+        Self { list: vec![Panel::default()], root: Node::Leaf(0), here: 0, active: 0, next: 1, seps: Vec::new(), caption: Default::default(), menu: Rect::default(), quick: Rect::default(), left: 0.0, inset: 0.0, hover: None, growing: None, closing: None }
     }
 }
 
@@ -367,7 +368,10 @@ impl App {
         if self.panels.growing.is_some_and(|(_, since)| now.saturating_duration_since(since) >= SPLIT) {
             self.panels.growing = None;
         }
-        self.panels.growing.is_some()
+        if self.panels.closing.as_ref().is_some_and(|c| now.saturating_duration_since(c.2) >= SPLIT) {
+            self.panels.closing = None;
+        }
+        self.panels.growing.is_some() || self.panels.closing.is_some()
     }
 
     pub(super) fn step_parked(&mut self, dt: f32) -> bool {
@@ -424,9 +428,10 @@ impl App {
             rects.push((self.panels.active, area));
         } else {
             let now = self.last_frame.unwrap_or_else(Instant::now);
-            let root = match self.panels.growing {
-                Some((id, since)) => grown(&self.panels.root, id, super::widgets::eased(since, now, SPLIT)),
-                None => self.panels.root.clone(),
+            let root = match (&self.panels.closing, self.panels.growing) {
+                (Some((before, id, since)), _) => grown(before, *id, 1.0 - super::widgets::eased(*since, now, SPLIT)),
+                (None, Some((id, since))) => grown(&self.panels.root, id, super::widgets::eased(since, now, SPLIT).max(0.02)),
+                (None, None) => self.panels.root.clone(),
             };
             place(&root, area, self.s(1.0).max(1.0), &mut Vec::new(), &mut rects, &mut seps);
         }
@@ -613,6 +618,7 @@ impl App {
         self.panels.list.push(Panel { id, tabs: vec![tab], ..Default::default() });
         insert(&mut self.panels.root, self.panels.active, id, down, false);
         self.panels.growing = self.animations.then(|| (id, Instant::now()));
+        self.panels.closing = None;
         self.strip.rev += 1;
         self.activate_panel(id);
         if self.tab().gen == 0 {
@@ -713,6 +719,8 @@ impl App {
         self.enter(next);
         self.panels.active = next;
         self.panels.list.retain(|p| p.id != gone);
+        self.panels.growing = None;
+        self.panels.closing = self.animations.then(|| (self.panels.root.clone(), gone, Instant::now()));
         remove(&mut self.panels.root, gone);
         self.strip.rev += 1;
         self.panel_changed();

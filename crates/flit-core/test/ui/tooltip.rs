@@ -55,3 +55,28 @@ fn a_tooltip_waits_for_the_delay_and_respects_the_setting() {
     assert_eq!(a.tooltip(), None, "Show Tooltips off suppresses them");
     assert!(a.tip.is_none());
 }
+
+#[test]
+fn a_tooltip_fades_out_when_it_hides() {
+    let mut a = harness::app(&["a.txt"]);
+    let mut g = crate::text::Gfx::new(crate::text::tests::Mono, 1024);
+    let t0 = Instant::now();
+    let r = a.layout.new_tab;
+    hover(&mut a, r, t0);
+    a.on_event(&Event::Timer, t0 + DELAY);
+    a.frame(&mut g, t0 + DELAY + Duration::from_millis(300));
+    let list = a.layout.list;
+    let gone = t0 + DELAY + Duration::from_millis(310);
+    a.on_event(&Event::MouseMove { x: list.x + list.w / 2.0, y: list.bottom() - 4.0 }, gone);
+    assert_eq!(a.tooltip(), None);
+    assert!(a.frame(&mut g, gone), "the tip fades out");
+    assert_eq!(a.ghosts.fading_count(), 1);
+    assert!(!a.frame(&mut g, gone + Duration::from_millis(200)));
+    a.animations = false;
+    hover(&mut a, r, gone);
+    a.on_event(&Event::Timer, gone + DELAY);
+    a.frame(&mut g, gone + DELAY);
+    a.on_event(&Event::MouseMove { x: list.x + list.w / 2.0, y: list.bottom() - 4.0 }, gone + DELAY);
+    assert!(!a.frame(&mut g, gone + DELAY + Duration::from_millis(10)), "without Animations it just goes");
+    assert!(a.ghosts.fading_count() == 0);
+}

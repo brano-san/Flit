@@ -158,6 +158,7 @@ fn zoom_steps_walk_details_tree_list_and_icons_and_ctrl_equals_fits_columns() {
 #[test]
 fn grid_tiles_take_clicks_gaps_clear_the_selection_and_arrows_move_by_tile_and_band() {
     let mut app = app_at(r"C:\x");
+    app.animations = false;
     let names = files(30, "txt");
     publish(&mut app, &names, true);
     key(&mut app, Key::Char('5'), CTRL_SHIFT);
@@ -206,6 +207,7 @@ fn marquee_in_grid_selects_the_tiles_the_band_touches() {
 #[test]
 fn list_flows_down_columns_and_scrolls_sideways() {
     let mut app = app_at(r"C:\x");
+    app.animations = false;
     let names = files(300, "txt");
     publish(&mut app, &names, true);
     key(&mut app, Key::Char('3'), CTRL_SHIFT);
@@ -402,4 +404,27 @@ fn grid_asks_for_each_thumbnail_once_and_draws_it_while_details_never_asks() {
     app.run_action("view.thumbnails", Instant::now());
     app.frame(&mut gfx, Instant::now());
     assert_eq!(thumb_quads(&gfx), 0, "the toggle turns thumbnails off");
+}
+
+#[test]
+fn a_keyboard_jump_scrolls_smoothly_and_a_long_one_snaps_close_first() {
+    let mut app = app_at(r"C:\x");
+    publish(&mut app, &files(3000, "txt"), true);
+    let len = app.view_len();
+    key(&mut app, Key::End, Mods::default());
+    let (scroll, target) = (app.tab().scroll, app.tab().scroll_target);
+    assert!(target > 10.0 * len && scroll < target && target - scroll <= len, "a long jump lands near the end at once: {scroll} {target}");
+    let t = Instant::now();
+    app.frame(&mut Gfx::new(Mono, 1024), t + Duration::from_millis(16));
+    let mid = app.tab().scroll;
+    assert!(mid > scroll && mid < target, "and eases the rest: {mid}");
+    for k in 2..40 {
+        app.frame(&mut Gfx::new(Mono, 1024), t + Duration::from_millis(16 * k));
+    }
+    assert_eq!(app.tab().scroll, target);
+    key(&mut app, Key::PageUp, Mods::default());
+    assert!(app.tab().scroll > app.tab().scroll_target, "a short jump eases all the way");
+    app.animations = false;
+    key(&mut app, Key::Home, Mods::default());
+    assert_eq!((app.tab().scroll, app.tab().scroll_target), (0.0, 0.0), "without Animations it jumps");
 }

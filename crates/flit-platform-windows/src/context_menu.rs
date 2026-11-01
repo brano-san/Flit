@@ -14,6 +14,7 @@ use windows::core::{w, Interface, PCSTR, PCWSTR, PSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::System::Com::IDataObject;
+use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL, THREAD_PRIORITY_NORMAL};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_SHIFT};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::*;
@@ -24,7 +25,11 @@ pub(crate) const WM_SHELL_UI: u32 = WM_APP + 0x40;
 const FIRST_ID: u32 = 1;
 const LAST_ID: u32 = 0x7FFF;
 const WORKER_CLASS: PCWSTR = w!("FlitShellMenuWorker");
-const WARM_TIMER: usize = 1;
+const PREP_TIMER: usize = 2;
+const STALE_TIMER: usize = 3;
+const PREFETCH: usize = 1;
+const PREP_REST: Duration = Duration::from_millis(90);
+const PREP_STALE: Duration = Duration::from_secs(20);
 const COVERED: [&str; 11] = ["open", "cut", "copy", "paste", "delete", "rename", "link", "properties", "copyaspath", "opennewwindow", "opennewtab"];
 const WINDOWS_VERBS: [&str; 29] = [
     "edit",
@@ -60,7 +65,6 @@ const WINDOWS_VERBS: [&str; 29] = [
 const CMIC_MASK_UNICODE: u32 = 0x4000;
 const THIS_PC: &str = "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
 const RECYCLE_BIN: &str = "::{645FF040-5081-101B-9F08-00AA002F954E}";
-const PREWARM_DELAY: Duration = Duration::from_millis(500);
 
 pub(crate) enum ShellUi {
     Menu(ShellMenu),
@@ -72,7 +76,24 @@ pub(crate) enum ShellUi {
 
 enum Job {
     Menu { owner: isize, gen: u64, menu: ShellMenu, pt: POINT },
+    Adopt { owner: isize, prep: u64, menu: ShellMenu, pt: POINT },
     Pick { owner: isize, cmd: Option<u32>, shift: bool, ctrl: bool },
+    Warm(Vec<ShellMenu>),
+}
+
+struct Prepared {
+    gen: u64,
+    menu: ShellMenu,
+    hmenu: HMENU,
+    active: Active,
+}
+
+struct Ready {
+    gen: u64,
+    menu: ShellMenu,
+    items: Vec<MenuItem>,
+    ids: Vec<u32>,
+    at: Instant,
 }
 
 struct Shown {
@@ -118,6 +139,7 @@ thread_local! {
     static QUEUE: RefCell<Vec<(isize, ShellUi)>> = const { RefCell::new(Vec::new()) };
     static ACTIVE: RefCell<Option<Active>> = const { RefCell::new(None) };
     static SHOWN: RefCell<Option<Shown>> = const { RefCell::new(None) };
+    static PREPARED: RefCell<Option<Prepared>> = const { RefCell::new(None) };
     static BUSY: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -125,6 +147,9 @@ static CURRENT: AtomicU64 = AtomicU64::new(0);
 static JOBS: Mutex<VecDeque<Job>> = Mutex::new(VecDeque::new());
 static DONE: Mutex<Vec<(isize, Option<u64>, Event)>> = Mutex::new(Vec::new());
 static WORKER: OnceLock<isize> = OnceLock::new();
+static PREP_GEN: AtomicU64 = AtomicU64::new(0);
+static WANT: Mutex<Option<(u64, isize, ShellMenu)>> = Mutex::new(None);
+static READY: Mutex<Option<Ready>> = Mutex::new(None);
 
 pub(crate) fn request(hwnd: HWND, req: ShellUi) {
     QUEUE.with_borrow_mut(|q| q.push((hwnd.0 as isize, req)));
@@ -162,8 +187,9 @@ fn worker() -> isize {
             crate::prevhost::register(WORKER_CLASS, Some(worker_proc));
             let hwnd = CreateWindowExW(WINDOW_EX_STYLE(0), WORKER_CLASS, PCWSTR::null(), WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, Some(crate::prevhost::hinst()), None);
             let _ = tx.send(hwnd.as_ref().map_or(0, |h| h.0 as isize));
-            let Ok(hwnd) = hwnd else { return };
-            SetTimer(Some(hwnd), WARM_TIMER, PREWARM_DELAY.as_millis() as u32, None);
+            if hwnd.is_err() {
+                return;
+            }
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                 let _ = TranslateMessage(&msg);
@@ -188,20 +214,124 @@ fn send_job(job: Job) {
     }
 }
 
+fn locked<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+pub(crate) fn prefetch(owner: HWND, menu: Option<ShellMenu>) {
+    let gen = PREP_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    {
+        let mut ready = locked(&READY);
+        if ready.as_ref().is_some_and(|r| !menu.as_ref().is_some_and(|m| m.same_target(&r.menu))) {
+            *ready = None;
+        }
+    }
+    *locked(&WANT) = menu.map(|m| (gen, owner.0 as isize, m));
+    let hwnd = worker();
+    if hwnd != 0 {
+        unsafe {
+            let _ = PostMessageW(Some(HWND(hwnd as _)), WM_SHELL_UI, WPARAM(PREFETCH), LPARAM(0));
+        }
+    }
+}
+
+pub(crate) fn warm_up(menus: Vec<ShellMenu>) {
+    send_job(Job::Warm(menus));
+}
+
+fn take_ready(m: &ShellMenu) -> Option<Ready> {
+    let mut ready = locked(&READY);
+    match ready.take() {
+        Some(r) if r.menu.same_target(m) && r.at.elapsed() < PREP_STALE => Some(r),
+        _ => None,
+    }
+}
+
 unsafe extern "system" fn worker_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
+        WM_SHELL_UI if wp.0 == PREFETCH => {
+            SetTimer(Some(hwnd), PREP_TIMER, PREP_REST.as_millis() as u32, None);
+        }
         WM_SHELL_UI => serve(),
-        WM_TIMER if wp.0 == WARM_TIMER => {
-            let _ = KillTimer(Some(hwnd), WARM_TIMER);
-            if !BUSY.replace(true) {
-                warm();
+        WM_TIMER if wp.0 == PREP_TIMER => {
+            if BUSY.replace(true) {
+                SetTimer(Some(hwnd), PREP_TIMER, PREP_REST.as_millis() as u32, None);
+            } else {
+                let _ = KillTimer(Some(hwnd), PREP_TIMER);
+                prepare(hwnd);
                 BUSY.set(false);
                 serve();
             }
         }
+        WM_TIMER if wp.0 == STALE_TIMER => {
+            let _ = KillTimer(Some(hwnd), STALE_TIMER);
+            drop_prepared();
+        }
         _ => return DefWindowProcW(hwnd, msg, wp, lp),
     }
     LRESULT(0)
+}
+
+fn drop_prepared() {
+    if let Some(p) = PREPARED.take() {
+        let _ = unsafe { DestroyMenu(p.hmenu) };
+        let mut ready = locked(&READY);
+        if ready.as_ref().is_some_and(|r| r.gen == p.gen) {
+            *ready = None;
+        }
+    }
+}
+
+unsafe fn prepare(worker: HWND) {
+    let want = locked(&WANT).clone();
+    let current = |m: &ShellMenu| PREPARED.with_borrow(|p| p.as_ref().is_some_and(|p| p.menu.same_target(m)));
+    if want.as_ref().is_some_and(|(_, _, m)| current(m)) {
+        return;
+    }
+    drop_prepared();
+    let Some((gen, owner, menu)) = want else { return };
+    let started = Instant::now();
+    let Ok(hmenu) = CreatePopupMenu() else { return };
+    let active = match fill(HWND(owner as _), &menu, hmenu) {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!("shell menu prefetch: {e}");
+            let _ = DestroyMenu(hmenu);
+            return;
+        }
+    };
+    let (items, ids) = shell_items(active.menu.as_ref(), hmenu);
+    tracing::info!("context menu prepared in {:.1} ms, {} commands", started.elapsed().as_secs_f64() * 1e3, ids.len());
+    PREPARED.set(Some(Prepared { gen, menu: menu.clone(), hmenu, active }));
+    if locked(&WANT).as_ref().is_none_or(|w| w.0 != gen) {
+        drop_prepared();
+        return;
+    }
+    *locked(&READY) = Some(Ready { gen, menu, items, ids, at: Instant::now() });
+    SetTimer(Some(worker), STALE_TIMER, PREP_STALE.as_millis() as u32, None);
+}
+
+unsafe fn adopt(owner: isize, prep: u64, m: &ShellMenu, pt: POINT) -> Result<(), PlatformError> {
+    release();
+    let (hmenu, active) = match PREPARED.take() {
+        Some(p) if p.gen == prep => (p.hmenu, p.active),
+        other => {
+            if let Some(p) = other {
+                let _ = DestroyMenu(p.hmenu);
+            }
+            let hmenu = CreatePopupMenu().map_err(err)?;
+            match fill(HWND(owner as _), m, hmenu) {
+                Ok(a) => (hmenu, a),
+                Err(e) => {
+                    let _ = DestroyMenu(hmenu);
+                    return Err(e);
+                }
+            }
+        }
+    };
+    ACTIVE.set(Some(active));
+    SHOWN.set(Some(Shown { hmenu, menu: m.clone(), pt }));
+    Ok(())
 }
 
 fn serve() {
@@ -217,11 +347,17 @@ fn serve() {
                     deliver(owner, Some(gen), Event::ShellItems { items: Vec::new(), shell: Vec::new() });
                 }
             }
+            Job::Adopt { owner, prep, menu, pt } => {
+                if let Err(e) = unsafe { adopt(owner, prep, &menu, pt) } {
+                    tracing::warn!("shell menu: {e}");
+                }
+            }
             Job::Pick { owner, cmd, shift, ctrl } => {
                 if let Err(e) = unsafe { pick(owner, cmd, shift, ctrl) } {
                     tracing::warn!("shell: {e}");
                 }
             }
+            Job::Warm(menus) => warm(&menus),
         }
     }
     BUSY.set(false);
@@ -314,11 +450,10 @@ impl Pidls {
 }
 
 
-fn forward(msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
+fn forward(menu: &IContextMenu, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
     if !matches!(msg, WM_INITMENUPOPUP | WM_DRAWITEM | WM_MEASUREITEM | WM_MENUCHAR) {
         return None;
     }
-    let menu = ACTIVE.with_borrow(|a| a.as_ref()?.menu.clone())?;
     unsafe {
         if let Ok(m) = menu.cast::<IContextMenu3>() {
             let mut r = LRESULT(0);
@@ -365,6 +500,7 @@ unsafe fn query_into(hwnd: HWND, m: &ShellMenu, hmenu: HMENU, at: u32) -> Result
     Ok(menu)
 }
 
+#[cfg(test)]
 unsafe fn query(hwnd: HWND, m: &ShellMenu) -> Result<(IContextMenu, HMENU), PlatformError> {
     let hmenu = CreatePopupMenu().map_err(err)?;
     match query_into(hwnd, m, hmenu, 0) {
@@ -380,15 +516,22 @@ pub(crate) fn prewarm() {
     worker();
 }
 
-fn warm() {
-    let Some(exe) = std::env::current_exe().ok().and_then(|p| FsPath::parse(p.to_str()?)) else { return };
-    let Some(dir) = exe.parent() else { return };
-    let menu = |dir: &FsPath, items: Vec<FsPath>| ShellMenu { dir: dir.clone(), items, x: 0.0, y: 0.0, extended: false, menu: Vec::new(), inline: false, shell: true, kind: flit_core::ui::MenuKind::None };
-    for m in [menu(&dir, vec![exe.clone()]), menu(&dir, Vec::new()), menu(&dir, vec![dir.clone()])] {
-        if let Ok((_, hmenu)) = unsafe { query(HWND::default(), &m) } {
-            let _ = unsafe { DestroyMenu(hmenu) };
+fn warm(menus: &[ShellMenu]) {
+    let thread = unsafe { GetCurrentThread() };
+    let _ = unsafe { SetThreadPriority(thread, THREAD_PRIORITY_BELOW_NORMAL) };
+    for m in menus {
+        if !locked(&JOBS).is_empty() {
+            break;
         }
+        let started = Instant::now();
+        let Ok(hmenu) = (unsafe { CreatePopupMenu() }) else { break };
+        if let Ok(active) = unsafe { fill(HWND::default(), m, hmenu) } {
+            let (_, ids) = unsafe { shell_items(active.menu.as_ref(), hmenu) };
+            tracing::info!("shell menu warmed in {:.1} ms, {} commands", started.elapsed().as_secs_f64() * 1e3, ids.len());
+        }
+        let _ = unsafe { DestroyMenu(hmenu) };
     }
+    let _ = unsafe { SetThreadPriority(thread, THREAD_PRIORITY_NORMAL) };
 }
 
 unsafe fn is_separator(hmenu: HMENU, i: i32) -> bool {
@@ -542,7 +685,7 @@ unsafe fn item_text(hmenu: HMENU, i: i32) -> String {
     String::from_utf16_lossy(&buf[..info.cch as usize])
 }
 
-pub(crate) unsafe fn convert(hmenu: HMENU, from: i32, depth: usize, items: &mut Vec<MenuItem>, ids: &mut Vec<u32>) {
+pub(crate) unsafe fn convert(menu: Option<&IContextMenu>, hmenu: HMENU, from: i32, depth: usize, items: &mut Vec<MenuItem>, ids: &mut Vec<u32>) {
     for i in from.max(0)..GetMenuItemCount(Some(hmenu)) {
         let mut info = MENUITEMINFOW { cbSize: size_of::<MENUITEMINFOW>() as u32, fMask: MIIM_ID | MIIM_SUBMENU | MIIM_STATE | MIIM_FTYPE, ..Default::default() };
         if GetMenuItemInfoW(hmenu, i as u32, true, &mut info).is_err() {
@@ -562,9 +705,11 @@ pub(crate) unsafe fn convert(hmenu: HMENU, from: i32, depth: usize, items: &mut 
             if depth > 4 {
                 continue;
             }
-            let _ = forward(WM_INITMENUPOPUP, WPARAM(info.hSubMenu.0 as usize), LPARAM(i as isize));
+            if let Some(m) = menu {
+                let _ = forward(m, WM_INITMENUPOPUP, WPARAM(info.hSubMenu.0 as usize), LPARAM(i as isize));
+            }
             let mut sub = Vec::new();
-            convert(info.hSubMenu, 0, depth + 1, &mut sub, ids);
+            convert(menu, info.hSubMenu, 0, depth + 1, &mut sub, ids);
             if matches!(sub.last(), Some(MenuItem::Separator)) {
                 sub.pop();
             }
@@ -582,9 +727,9 @@ pub(crate) unsafe fn convert(hmenu: HMENU, from: i32, depth: usize, items: &mut 
     }
 }
 
-pub(crate) unsafe fn shell_items(hmenu: HMENU) -> (Vec<MenuItem>, Vec<u32>) {
+pub(crate) unsafe fn shell_items(menu: Option<&IContextMenu>, hmenu: HMENU) -> (Vec<MenuItem>, Vec<u32>) {
     let (mut items, mut ids) = (Vec::new(), Vec::new());
-    convert(hmenu, 0, 0, &mut items, &mut ids);
+    convert(menu, hmenu, 0, 0, &mut items, &mut ids);
     (items, ids)
 }
 
@@ -602,8 +747,8 @@ unsafe fn show_menu(owner: isize, gen: u64, m: &ShellMenu, pt: POINT) -> Result<
             return Err(e);
         }
     };
+    let (items, ids) = shell_items(active.menu.as_ref(), hmenu);
     ACTIVE.set(Some(active));
-    let (items, ids) = shell_items(hmenu);
     tracing::info!("context menu shell items ready in {:.1} ms, {} commands, {}", started.elapsed().as_secs_f64() * 1e3, ids.len(), if m.inline { "inline" } else { "in a submenu" });
     SHOWN.set(Some(Shown { hmenu, menu: m.clone(), pt }));
     if CURRENT.load(Ordering::SeqCst) != gen {
@@ -703,7 +848,17 @@ fn show(hwnd: HWND, m: &ShellMenu, send: &dyn Fn(Event)) {
     let gen = CURRENT.fetch_add(1, Ordering::SeqCst) + 1;
     let mut pt = POINT { x: m.x as i32, y: m.y as i32 };
     let _ = unsafe { ClientToScreen(hwnd, &mut pt) };
-    send_job(Job::Menu { owner: hwnd.0 as isize, gen, menu: m.clone(), pt });
+    let ready = take_ready(m);
+    *locked(&WANT) = None;
+    let owner = hwnd.0 as isize;
+    match ready {
+        Some(r) => {
+            tracing::info!("context menu complete from the prepared menu, {} commands", r.ids.len());
+            send(Event::ShellItems { items: r.items, shell: r.ids });
+            send_job(Job::Adopt { owner, prep: r.gen, menu: m.clone(), pt });
+        }
+        None => send_job(Job::Menu { owner, gen, menu: m.clone(), pt }),
+    }
 }
 
 pub(crate) fn run(hwnd: HWND, req: ShellUi, send: &dyn Fn(Event)) {

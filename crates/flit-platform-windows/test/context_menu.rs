@@ -1,6 +1,12 @@
 use super::*;
 use std::path::PathBuf;
 
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 struct TempDir(PathBuf);
 
 impl TempDir {
@@ -85,8 +91,8 @@ fn shell_items_carry_one_shell_id_per_command() {
     let m = flit_menu(&t, false);
     unsafe {
         let hmenu = CreatePopupMenu().unwrap();
-        let _ = fill(HWND::default(), &m, hmenu).unwrap();
-        let (items, ids) = shell_items(hmenu);
+        let active = fill(HWND::default(), &m, hmenu).unwrap();
+        let (items, ids) = shell_items(active.menu.as_ref(), hmenu);
         assert!(!matches!(items.first(), None | Some(MenuItem::Separator)), "{items:?}");
         assert_eq!(count(&items), ids.len());
         assert!(ids.iter().all(|&id| id == 0 || (FIRST_ID..=LAST_ID).contains(&id)), "{ids:?}");
@@ -105,12 +111,57 @@ fn wait_done(owner: isize) -> Vec<(Option<u64>, Event)> {
         if !mine.is_empty() || started.elapsed() > Duration::from_secs(20) {
             return mine.into_iter().map(|(_, g, e)| (g, e)).collect();
         }
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(1));
     }
+}
+
+fn wait_ready() -> bool {
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(20) {
+        if READY.lock().unwrap().is_some() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    false
+}
+
+fn target(t: &TempDir, items: &[&str]) -> ShellMenu {
+    ShellMenu { items: items.iter().map(|n| t.path(n)).collect(), menu: vec![command("Open", "", false)], ..flit_menu(t, false) }
+}
+
+#[test]
+fn a_prepared_menu_opens_complete_and_a_different_target_takes_the_usual_path() {
+    let _serial = serial();
+    let t = TempDir::new("prepared");
+    std::fs::write(t.0.join("a.txt"), "x").unwrap();
+    std::fs::write(t.0.join("b.txt"), "x").unwrap();
+    let owner = HWND::default();
+    prefetch(owner, Some(target(&t, &["b.txt"])));
+    prefetch(owner, Some(target(&t, &["a.txt"])));
+    assert!(wait_ready(), "the latest target is prepared");
+    assert!(READY.lock().unwrap().as_ref().is_some_and(|r| r.menu.same_target(&target(&t, &["a.txt"]))), "the superseded target is not");
+    let seen = std::cell::RefCell::new(Vec::new());
+    show(owner, &ShellMenu { x: 5.0, y: 7.0, ..target(&t, &["a.txt"]) }, &|ev| seen.borrow_mut().push(ev));
+    let seen = seen.take();
+    assert!(matches!(&seen[..], [Event::ShowMenu { pending: true, .. }, Event::ShellItems { items, shell }] if !shell.is_empty() && count(items) == shell.len()), "{seen:?}");
+    assert!(READY.lock().unwrap().is_none() && WANT.lock().unwrap().is_none());
+    pick_now(owner, None);
+    let seen = std::cell::RefCell::new(Vec::new());
+    show(owner, &target(&t, &["b.txt"]), &|ev| seen.borrow_mut().push(ev));
+    assert!(matches!(&seen.borrow()[..], [Event::ShowMenu { pending: true, .. }]), "no prepared menu, so the shell items come later");
+    let done = wait_done(0);
+    assert!(matches!(&done[..], [(Some(_), Event::ShellItems { shell, .. })] if !shell.is_empty()), "{done:?}");
+    pick_now(owner, None);
+    prefetch(owner, Some(target(&t, &["b.txt"])));
+    prefetch(owner, None);
+    std::thread::sleep(PREP_REST * 3);
+    assert!(READY.lock().unwrap().is_none(), "a cancelled target leaves nothing prepared");
 }
 
 #[test]
 fn the_worker_thread_answers_only_the_latest_menu() {
+    let _serial = serial();
     let t = TempDir::new("worker");
     std::fs::write(t.0.join("a.txt"), "x").unwrap();
     let owner = HWND::default();
@@ -232,6 +283,82 @@ fn inline_shell_items_come_without_duplicates() {
         assert!(!verbs.is_empty() && !verbs.iter().any(|v| COVERED.contains(&v.as_str())), "{verbs:?}");
         let _ = DestroyMenu(hmenu);
     }
+}
+
+#[test]
+fn a_command_picked_at_once_from_a_prepared_menu_reaches_the_worker_that_owns_it() {
+    let _serial = serial();
+    crate::com_sta();
+    let t = TempDir::new("invoke");
+    std::fs::write(t.0.join("a.txt"), "x").unwrap();
+    let m = target(&t, &["a.txt"]);
+    let id = unsafe {
+        let (menu, hmenu) = query(HWND::default(), &m).unwrap();
+        let id = (FIRST_ID..LAST_ID).find(|&id| verb(&menu, (id - FIRST_ID) as usize).is_some_and(|v| v.eq_ignore_ascii_case("copy")));
+        let _ = DestroyMenu(hmenu);
+        id.expect("Copy is offered for a text file")
+    };
+    let owner = HWND::default();
+    prefetch(owner, Some(m.clone()));
+    assert!(wait_ready());
+    show(owner, &m, &|_| {});
+    pick_now(owner, Some(id));
+    let done = wait_done(0);
+    assert!(matches!(&done[..], [(None, Event::ShellVerb(v))] if v == "copy"), "{done:?}");
+}
+
+#[test]
+#[ignore]
+fn bench_right_click_to_complete_menu() {
+    let _serial = serial();
+    let kind = std::env::var("FLIT_MENU_BENCH").unwrap_or_else(|_| "txt".into());
+    let t = TempDir::new(&format!("click-{kind}"));
+    for k in 0..8 {
+        std::fs::write(t.0.join(format!("f{k}.txt")), "x").unwrap();
+        std::fs::write(t.0.join(format!("p{k}.png")), "x").unwrap();
+        std::fs::create_dir(t.0.join(format!("d{k}"))).unwrap();
+    }
+    let owner = HWND::default();
+    let menu = |k: usize| match kind.as_str() {
+        "folder" => target(&t, &[&format!("d{k}")]),
+        "background" => target(&t, &[]),
+        "multi" => target(&t, &[&format!("f{k}.txt"), &format!("p{k}.png")]),
+        _ => target(&t, &[&format!("f{k}.txt")]),
+    };
+    let click = |m: &ShellMenu| {
+        let started = Instant::now();
+        let complete = std::cell::Cell::new(false);
+        show(owner, m, &|ev| complete.set(complete.get() || matches!(ev, Event::ShellItems { .. })));
+        if !complete.get() {
+            wait_done(0);
+        }
+        let ms = started.elapsed().as_secs_f64() * 1e3;
+        pick_now(owner, None);
+        std::thread::sleep(Duration::from_millis(30));
+        ms
+    };
+    let warmed = std::env::var("FLIT_MENU_BENCH_WARM").is_ok();
+    if warmed {
+        warm_up(vec![target(&t, &["d7"]), target(&t, &["f7.txt"]), target(&t, &[])]);
+        std::thread::sleep(Duration::from_secs(3));
+    }
+    let cold = click(&menu(0));
+    let mut warm: Vec<f64> = (1..6).map(|k| click(&menu(k))).collect();
+    warm.sort_by(f64::total_cmp);
+    let mut prepared = Vec::new();
+    let mut ready = Vec::new();
+    for k in 1..6 {
+        let m = menu(k);
+        let started = Instant::now();
+        prefetch(owner, Some(m.clone()));
+        assert!(wait_ready());
+        ready.push(started.elapsed().as_secs_f64() * 1e3);
+        prepared.push(click(&m));
+    }
+    prepared.sort_by(f64::total_cmp);
+    ready.sort_by(f64::total_cmp);
+    let first = if warmed { "after warm-up" } else { "cold" };
+    eprintln!("BENCH {kind:<10} {first:<13} first click {cold:>7.1} ms   warm median {:>6.1} ms (max {:>6.1})   prefetched median {:>6.3} ms (max {:>6.3})   prepare after rest {:>6.1} ms", warm[2], warm[4], prepared[2], prepared[4], ready[2]);
 }
 
 #[test]

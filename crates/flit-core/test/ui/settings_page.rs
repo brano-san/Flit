@@ -767,3 +767,25 @@ fn options_open_where_the_command_palette_does_and_stay_inside_the_window() {
     }
 }
 
+
+#[test]
+fn a_switch_slides_its_knob_and_blends_its_track() {
+    let t0 = Instant::now();
+    let mut a = app();
+    a.open_settings(Some(Page::Interface));
+    a.frame(&mut Gfx::new(Mono, 1024), t0);
+    let knob = |a: &App, i: usize, at: Instant| a.settings.as_ref().unwrap().knobs.iter().find(|k| k.0 == i).unwrap().1.value(at, KNOB);
+    let i = a.settings.as_ref().unwrap().knobs.iter().map(|k| k.0).find(|&i| SETTINGS[i].id != "appearance.animations").expect("the page shows a switch");
+    let on = knob(&a, i, t0) == 1.0;
+    assert!(SETTINGS[i].set(&mut a, Value::Bool(!on)));
+    let t = Instant::now();
+    assert!(a.frame(&mut Gfx::new(Mono, 1024), t), "the knob moves");
+    let mid = knob(&a, i, t + Duration::from_millis(50));
+    assert!(mid > 0.0 && mid < 1.0, "{mid}");
+    a.frame(&mut Gfx::new(Mono, 1024), t + Duration::from_millis(400));
+    assert_eq!(knob(&a, i, t + Duration::from_millis(400)), if on { 0.0 } else { 1.0 });
+    a.animations = false;
+    assert!(SETTINGS[i].set(&mut a, Value::Bool(on)));
+    a.frame(&mut Gfx::new(Mono, 1024), t + Duration::from_millis(410));
+    assert_eq!(knob(&a, i, t + Duration::from_millis(410)), if on { 1.0 } else { 0.0 }, "without Animations it snaps");
+}

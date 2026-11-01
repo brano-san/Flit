@@ -5,7 +5,7 @@ use super::fuzzy::fuzzy;
 use super::goto::Go;
 use super::settings_page::SettingPick;
 use super::tags::TagPick;
-use super::widgets::{baseline, Button, Ghost, Paint, G_NEXT, G_OPEN};
+use super::widgets::{baseline, Button, Ghost, Paint};
 use super::{App, Effect, Glide, Hit, G_CLOSE, G_SORT_DOWN, G_SORT_UP, TAB_H, TOOL_H};
 use crate::i18n::S;
 use crate::input::{Key, Mods};
@@ -49,6 +49,7 @@ pub(super) struct Commands {
     shown: Vec<&'static str>,
     caps: Vec<Vec<String>>,
     pub live: Vec<bool>,
+    pub turns: Vec<(Group, super::widgets::Tween)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -751,6 +752,8 @@ impl App {
         if p.go.is_some() {
             self.draw_go_rows(w.g, t, &p, font, small, self.icon_font(14.0), &mut requests);
         }
+        let mut turns = p.commands.as_mut().map(|c| std::mem::take(&mut c.turns)).unwrap_or_default();
+        let (animate, mut turning) = (self.animations, false);
         for (k, &row) in p.rows.iter().enumerate() {
             let i = p.first + k;
             let Some(c) = &p.commands else { break };
@@ -766,8 +769,17 @@ impl App {
                     w.centered(Rect::new(head.x + s6, head.y, s16 + s6, head.h), g.icon(), icons, ink);
                     let y = baseline(w.g, head, font);
                     w.g.text(head.x + s16 + 2.0 * s12, y, g.title().t(), font, ink, head.w);
-                    let chevron = if c.collapsed.contains(g) { G_NEXT } else { G_OPEN };
-                    w.centered(Rect::new(head.right() - s12 - s16, head.y, s16, head.h), chevron, icons, ink);
+                    let to = if c.collapsed.contains(g) { 0.0 } else { 90.0 };
+                    let k = match turns.iter().position(|(x, _)| x == g) {
+                        Some(k) => k,
+                        None => {
+                            turns.push((*g, super::widgets::Tween::at(to)));
+                            turns.len() - 1
+                        }
+                    };
+                    turning |= turns[k].1.aim(to, animate, now, super::address::TURN);
+                    let cr = Rect::new(head.right() - s12 - s16, head.y, s16, head.h);
+                    w.g.dl.chevron((cr.x + cr.w / 2.0, cr.y + cr.h / 2.0), s4 * 2.0, turns[k].1.value(now, super::address::TURN), (sc * 1.25).round().max(1.0), ink);
                 }
                 Line::Item(n, title_marks, desc_marks) => {
                     let live = c.live[*n];
@@ -837,6 +849,10 @@ impl App {
             w.marked((row.x + s12, y), &p.titles[p.matches[i]], &p.marks[i], font, (ink, mark), row.w - 3.0 * s12 - kw);
         }
         w.g.dl.set_clip(None);
+        if let Some(c) = p.commands.as_mut() {
+            c.turns = turns;
+        }
+        self.motion |= turning;
         if p.matches.is_empty() {
             let row = Rect::new(r.x + s12, p.list.y, r.w - 2.0 * s12, p.list.h);
             let y = baseline(w.g, row, font);

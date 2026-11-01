@@ -73,6 +73,8 @@ pub struct MenuView {
     scale: f32,
     start: (f32, f32),
     armed: bool,
+    glow: super::widgets::Glow<(usize, usize)>,
+    glow_at: Option<std::time::Instant>,
 }
 
 struct Measure<'a, B: TextBackend> {
@@ -121,7 +123,7 @@ impl MenuView {
         let (w, h) = (lists[0].width, lists[0].height);
         let below = y + h <= bounds.bottom();
         let top = if below { y } else if y - h >= bounds.y { y - h } else { bounds.bottom() - h };
-        let mut view = Self { lists, panels: Vec::new(), bounds, scale, start: (x, y), armed: false };
+        let mut view = Self { lists, panels: Vec::new(), bounds, scale, start: (x, y), armed: false, glow: Default::default(), glow_at: None };
         let rect = view.fit(w, h, x, x, top);
         view.panels.push(Panel { list: 0, rect, hot: None });
         view
@@ -216,11 +218,18 @@ impl MenuView {
         }
     }
 
+    pub fn settle_glow(&mut self, now: std::time::Instant, animate: bool) -> bool {
+        let top = self.panels.last().and_then(|p| p.hot.filter(|&i| self.lists[p.list].nodes[i].selectable()).map(|i| (p.list, i)));
+        self.glow_at = Some(now);
+        self.glow.aim(top, animate, now)
+    }
+
     pub fn draw<B: TextBackend>(&self, g: &mut Gfx<B>, t: &Theme) {
         let s = self.scale;
         let (font, icons) = (font(s), FontStyle::new(FontFamily::Icons, ICON_PX * s, false));
         let mut p = Paint::new(g, t, s);
-        for panel in &self.panels {
+        let last = self.panels.len().saturating_sub(1);
+        for (n, panel) in self.panels.iter().enumerate() {
             let r = panel.rect;
             p.frame(r);
             for (i, row) in self.rows(panel) {
@@ -229,9 +238,13 @@ impl MenuView {
                     p.separator(row.x + PAD * s, row.y + row.h / 2.0, row.w - 2.0 * PAD * s);
                     continue;
                 }
-                let hot = panel.hot == Some(i) && node.selectable();
-                if hot {
-                    p.g.dl.round_rect(row, t.accent_fill, RADIUS * s * 0.66);
+                let lit = match self.glow_at {
+                    Some(now) if n == last => self.glow.alpha((panel.list, i), now),
+                    _ => f32::from(u8::from(panel.hot == Some(i) && node.selectable())),
+                };
+                let hot = lit >= 0.5;
+                if lit > 0.0 {
+                    p.g.dl.round_rect(row, super::widgets::faded(t.accent_fill, lit), RADIUS * s * 0.66);
                 }
                 let off = matches!(node, Node::Command { disabled: true, .. } | Node::Header(_));
                 let (ink, dim) = match (hot, off) {

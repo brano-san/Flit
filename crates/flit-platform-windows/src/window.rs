@@ -394,6 +394,14 @@ impl Window for Win32Window {
         crate::context_menu::pick_now(self.hwnd(), cmd);
     }
 
+    fn shell_prefetch(&self, menu: Option<ShellMenu>) {
+        crate::context_menu::prefetch(self.hwnd(), menu);
+    }
+
+    fn shell_warm(&self, menus: Vec<ShellMenu>) {
+        crate::context_menu::warm_up(menus);
+    }
+
     fn properties(&self, paths: Vec<FsPath>) {
         crate::context_menu::request(self.hwnd(), ShellUi::Properties(paths));
     }

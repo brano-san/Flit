@@ -154,6 +154,7 @@ impl DrawList {
         for i in &mut self.instances[range] {
             let [x, y, w, h] = i.rect;
             i.rect = [scale(x, center.0), scale(y, center.1), w * k, h * k];
+            i.radius *= k;
             let a = ((i.color >> 24) as f32 * t).round() as u32;
             i.color = (i.color & 0x00FF_FFFF) | a << 24;
         }

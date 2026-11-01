@@ -87,6 +87,7 @@ pub struct DirView {
     snap: Arc<DirSnapshot>,
     sel: Vec<u64>,
     sel_count: usize,
+    sel_rev: u64,
     pub focus: Option<u32>,
     pub anchor: Option<u32>,
     names: Option<FxHashMap<u64, SmallVec<[u32; 1]>>>,
@@ -112,6 +113,7 @@ impl DirView {
             snap,
             sel: Vec::new(),
             sel_count: 0,
+            sel_rev: 0,
             focus: None,
             anchor: None,
             names: None,
@@ -425,12 +427,14 @@ impl DirView {
             self.sel[w] ^= bit;
             self.selected_size.clear();
             if on { self.sel_count += 1 } else { self.sel_count -= 1 }
+            self.sel_rev += 1;
         }
     }
 
     pub fn clear_selection(&mut self) {
         self.sel.clear();
         self.sel_count = 0;
+        self.sel_rev += 1;
         self.selected_size.clear();
     }
 
@@ -460,6 +464,10 @@ impl DirView {
 
     pub fn selected_count(&self) -> usize {
         self.sel_count
+    }
+
+    pub fn selection_rev(&self) -> u64 {
+        self.sel_rev
     }
 
     fn marked(&self) -> impl Iterator<Item = u32> + '_ {
