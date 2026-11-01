@@ -1,5 +1,6 @@
 use flit_core::hash::FxHashMap;
 use flit_core::ui::Bitmap;
+use std::collections::hash_map::Entry;
 use std::collections::VecDeque;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
@@ -24,11 +25,32 @@ pub struct ThumbCache {
     index: FxHashMap<u64, Rec>,
     segs: VecDeque<(u32, u64)>,
     out: Option<File>,
+    readers: FxHashMap<u32, File>,
     loaded: bool,
 }
 
 fn seg_path(dir: &Path, n: u32) -> PathBuf {
     dir.join(format!("{n:08}.thumbs"))
+}
+
+fn header(key: u64, w: u32, h: u32) -> [u8; HEAD as usize] {
+    let mut head = [0u8; HEAD as usize];
+    head[..8].copy_from_slice(&key.to_le_bytes());
+    head[8..12].copy_from_slice(&w.to_le_bytes());
+    head[12..].copy_from_slice(&h.to_le_bytes());
+    head
+}
+
+#[cfg(windows)]
+fn open_shared(path: &Path) -> std::io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const SHARE_READ_WRITE_DELETE: u32 = 7;
+    OpenOptions::new().read(true).share_mode(SHARE_READ_WRITE_DELETE).open(path)
+}
+
+#[cfg(not(windows))]
+fn open_shared(path: &Path) -> std::io::Result<File> {
+    File::open(path)
 }
 
 fn sane(w: u32, h: u32) -> bool {
@@ -37,7 +59,7 @@ fn sane(w: u32, h: u32) -> bool {
 
 impl ThumbCache {
     pub fn new(dir: PathBuf, limit_mb: u32) -> Self {
-        Self { dir, limit: (limit_mb as u64) << 20, index: FxHashMap::default(), segs: VecDeque::new(), out: None, loaded: false }
+        Self { dir, limit: (limit_mb as u64) << 20, index: FxHashMap::default(), segs: VecDeque::new(), out: None, readers: FxHashMap::default(), loaded: false }
     }
 
     fn load(&mut self) {
@@ -74,16 +96,25 @@ impl ThumbCache {
     pub fn get(&mut self, key: u64) -> Option<Bitmap> {
         self.load();
         let rec = *self.index.get(&key)?;
-        let read = || -> std::io::Result<Vec<u8>> {
-            let mut f = File::open(seg_path(&self.dir, rec.seg))?;
-            f.seek(SeekFrom::Start(rec.at + HEAD))?;
+        let read = |readers: &mut FxHashMap<u32, File>| -> std::io::Result<Vec<u8>> {
+            let f = match readers.entry(rec.seg) {
+                Entry::Occupied(e) => e.into_mut(),
+                Entry::Vacant(e) => e.insert(open_shared(&seg_path(&self.dir, rec.seg))?),
+            };
+            f.seek(SeekFrom::Start(rec.at))?;
+            let mut head = [0u8; HEAD as usize];
+            f.read_exact(&mut head)?;
+            if head != header(key, rec.w, rec.h) {
+                return Err(std::io::ErrorKind::InvalidData.into());
+            }
             let mut rgba = vec![0; (rec.w * rec.h * 4) as usize];
             f.read_exact(&mut rgba)?;
             Ok(rgba)
         };
-        match read() {
+        match read(&mut self.readers) {
             Ok(rgba) => Some(Bitmap { width: rec.w, height: rec.h, rgba }),
             Err(_) => {
+                self.readers.remove(&rec.seg);
                 self.index.remove(&key);
                 None
             }
@@ -121,9 +152,7 @@ impl ThumbCache {
         }
         let Some((n, at)) = self.writer() else { return };
         let mut rec = Vec::with_capacity(HEAD as usize + b.rgba.len());
-        rec.extend(key.to_le_bytes());
-        rec.extend(b.width.to_le_bytes());
-        rec.extend(b.height.to_le_bytes());
+        rec.extend(header(key, b.width, b.height));
         rec.extend(&b.rgba);
         if self.out.as_mut().is_none_or(|f| f.write_all(&rec).is_err()) {
             self.out = None;
@@ -139,6 +168,7 @@ impl ThumbCache {
     fn trim(&mut self) {
         while self.segs.iter().map(|s| s.1).sum::<u64>() > self.limit && self.segs.len() > 1 {
             let Some((n, _)) = self.segs.pop_front() else { break };
+            self.readers.remove(&n);
             let _ = fs::remove_file(seg_path(&self.dir, n));
             self.index.retain(|_, r| r.seg != n);
         }
@@ -159,6 +189,7 @@ impl ThumbCache {
     pub fn clear(&mut self) {
         self.load();
         self.out = None;
+        self.readers.clear();
         for (n, _) in self.segs.drain(..) {
             let _ = fs::remove_file(seg_path(&self.dir, n));
         }

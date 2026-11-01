@@ -1,10 +1,11 @@
-use crate::fs::{map_attrs, DRIVE_FIXED};
+use crate::fs::{map_attrs, NtFs, DRIVE_FIXED};
 use crate::walk_index::Handle;
 use flit_core::listing::Meta;
 use flit_core::path::PathKind;
 use flit_core::tags::FileKey;
 use flit_core::FsPath;
-use flit_platform::Resolved;
+use flit_platform::{Fs, Resolved};
+use rayon::prelude::*;
 use std::collections::HashMap;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
@@ -71,16 +72,22 @@ fn final_path(h: &Handle) -> Option<FsPath> {
     }
 }
 
-fn volume_roots() -> HashMap<u32, Handle> {
+struct Root {
+    handle: Handle,
+    spinning: bool,
+}
+
+fn volume_roots() -> HashMap<u32, Root> {
     let mask = unsafe { GetLogicalDrives() };
     let mut roots = HashMap::new();
     for i in 0..26u8 {
         if mask & (1 << i) == 0 || !local_drive(b'A' + i) {
             continue;
         }
-        let Some(h) = FsPath::parse(&format!("{}:\\", (b'A' + i) as char)).and_then(|r| open(&r)).filter(is_ntfs) else { continue };
+        let Some(path) = FsPath::parse(&format!("{}:\\", (b'A' + i) as char)) else { continue };
+        let Some(h) = open(&path).filter(is_ntfs) else { continue };
         if let Some(info) = info(&h) {
-            roots.entry(info.dwVolumeSerialNumber).or_insert(h);
+            roots.entry(info.dwVolumeSerialNumber).or_insert_with(|| Root { handle: h, spinning: NtFs.seek_penalty(&path) == Some(true) });
         }
     }
     roots
@@ -101,7 +108,13 @@ fn resolve(root: &Handle, id: u64) -> Resolved {
 
 pub(crate) fn resolve_files(keys: &[FileKey]) -> Vec<Resolved> {
     let roots = volume_roots();
-    keys.iter().map(|k| roots.get(&k.volume).map_or(Resolved::Unavailable, |r| resolve(r, k.id))).collect()
+    let on_ssd = |k: &FileKey| match roots.get(&k.volume) {
+        Some(r) if r.spinning => None,
+        Some(r) => Some(resolve(&r.handle, k.id)),
+        None => Some(Resolved::Unavailable),
+    };
+    let found: Vec<Option<Resolved>> = keys.par_iter().map(on_ssd).collect();
+    found.into_iter().zip(keys).map(|(r, k)| r.unwrap_or_else(|| resolve(&roots[&k.volume].handle, k.id))).collect()
 }
 
 #[cfg(test)]

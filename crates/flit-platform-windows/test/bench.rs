@@ -227,21 +227,13 @@ fn bench_file_ops() {
     measure("rename 1 file", RUNS, |k| c.file(&format!("rn{k}.txt"), 10), |f| ok(run(&mut sh, &FileOp::Rename { item: f, name: format!("renamed{}.txt", rand_tag()).into_bytes() })));
     measure("new folder", RUNS, |k| format!("nf{k}"), |n| ok(run(&mut sh, &FileOp::NewFolder { dir: c.path(""), name: n.into_bytes() })));
     measure("shortcut 1 file", RUNS, |k| c.file(&format!("ln{k}.txt"), 10), |f| ok(run(&mut sh, &FileOp::Link { items: vec![f], dest: c.path("dst") })));
-    let mut recycled = Vec::new();
-    measure("trash 1 file", RUNS, |k| c.file(&format!("tr{k}.txt"), 4096), |f| {
-        let out = run(&mut sh, &FileOp::Trash(vec![f]));
-        assert!(out.error.is_none(), "{:?}", out.error);
-        recycled.extend(out.items);
+    let bin = crate::recycle::tests::FakeBin::new("bench-ops");
+    let (mut recycled, mut budget, mut seed) = (Vec::new(), u64::MAX, 1u64);
+    measure("recycle 1 file into a fake bin", RUNS, |k| c.file(&format!("tr{k}.txt"), 4096), |f| {
+        let payload = crate::recycle::recycle_into(&bin.path(), &f, &mut budget, &mut seed).unwrap();
+        recycled.push((payload, f));
     });
-    measure("trash 20 files", 3, |k| (0..20).map(|i| c.file(&format!("t{k}_{i}.txt"), 4096)).collect::<Vec<_>>(), |items| {
-        let out = run(&mut sh, &FileOp::Trash(items));
-        assert!(out.error.is_none(), "{:?}", out.error);
-        recycled.extend(out.items);
-    });
-    let bin = recycle_bin_len();
-    eprintln!("      recycle bin holds {bin} items");
-    let pairs: Vec<(FsPath, FsPath)> = recycled.iter().map(|(from, to)| (to.clone(), from.clone())).collect();
-    measure("restore 1 file from recycle bin", pairs.len(), |k| pairs[k].clone(), |p| ok(run(&mut sh, &FileOp::Restore(vec![p]))));
+    measure("restore 1 file from a fake bin", recycled.len(), |k| recycled[k].clone(), |p| ok(run(&mut sh, &FileOp::Restore(vec![p]))));
 }
 
 #[test]
@@ -339,7 +331,7 @@ fn fresh(d: &Dir, rel: &str) -> FsPath {
 #[test]
 #[ignore]
 fn bench_thumbnails_without_any_cache() {
-    let d = Dir::temp("thumbs");
+    let d = Dir::temp("fresh-thumbs");
     let walls: Vec<PathBuf> = [r"C:\Windows\Web\Wallpaper", r"C:\Windows\Web\4K\Wallpaper"]
         .iter()
         .flat_map(|r| walkdir(Path::new(r)))
@@ -445,23 +437,6 @@ fn bench_engine() {
 
 fn rand_tag() -> u128 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-}
-
-fn recycle_bin_len() -> usize {
-    use windows::Win32::UI::Shell::{IEnumShellItems, IShellItem, SHGetKnownFolderItem, BHID_EnumItems, FOLDERID_RecycleBinFolder, KF_FLAG_DEFAULT};
-    unsafe {
-        let bin: IShellItem = SHGetKnownFolderItem(&FOLDERID_RecycleBinFolder, KF_FLAG_DEFAULT, None).unwrap();
-        let items: IEnumShellItems = bin.BindToHandler(None, &BHID_EnumItems).unwrap();
-        let mut n = 0;
-        loop {
-            let mut one = [None];
-            let mut got = 0;
-            if items.Next(&mut one, Some(&mut got)).is_err() || got == 0 {
-                return n;
-            }
-            n += 1;
-        }
-    }
 }
 
 fn query_menu(menu: IContextMenu) {
@@ -826,7 +801,7 @@ fn bench_archives() {
     }
 }
 
-fn bulk_delete(label: &str, op: fn(Vec<FsPath>) -> FileOp, n: usize) {
+fn bulk_delete(n: usize) {
     use flit_platform::Watcher;
     let d = Dir::temp("bulk");
     let files: Vec<FsPath> = (0..n).map(|i| d.file(&format!("IMG_{i:05}.jpg"), 2048)).collect();
@@ -856,25 +831,20 @@ fn bulk_delete(label: &str, op: fn(Vec<FsPath>) -> FileOp, n: usize) {
         }
         (removed, batches, first, last)
     });
-    let out = run(&mut sh, &op(files));
+    let out = run(&mut sh, &FileOp::Delete(files));
     let shell = start.elapsed();
     assert!(out.error.is_none(), "{:?}", out.error);
     let (removed, batches, first, last) = collector.join().unwrap();
     drop(w);
     let ms = |d: Duration| d.as_secs_f64() * 1e3;
-    eprintln!("BENCH {label} {n} files: shell {:.1} ms, {removed} removals in {batches} watcher batches from {:.1} to {:.1} ms", ms(shell), ms(first.unwrap_or_default()), ms(last));
-    let recycled: Vec<(FsPath, FsPath)> = out.items.into_iter().filter(|(a, b)| a != b).map(|(from, to)| (to, from)).collect();
-    if !recycled.is_empty() {
-        ok(run(&mut sh, &FileOp::Purge(recycled)));
-    }
+    eprintln!("BENCH delete {n} files: shell {:.1} ms, {removed} removals in {batches} watcher batches from {:.1} to {:.1} ms", ms(shell), ms(first.unwrap_or_default()), ms(last));
 }
 
 #[test]
 #[ignore]
 fn bench_bulk_delete() {
     crate::com_sta();
-    bulk_delete("delete", FileOp::Delete, 1250);
-    bulk_delete("trash", FileOp::Trash, 1250);
+    bulk_delete(1250);
 }
 
 #[test]

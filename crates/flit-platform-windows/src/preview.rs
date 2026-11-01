@@ -2,7 +2,7 @@ use crate::take_pwstr;
 use flit_core::preview::{PropGroup, MAX_PROPS};
 use flit_core::ui::Bitmap;
 use flit_core::FsPath;
-use windows::core::{w, GUID, PCWSTR, PWSTR};
+use windows::core::{w, Interface, GUID, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{GENERIC_READ, LPARAM, PROPERTYKEY, WPARAM};
 use windows::Win32::Graphics::Imaging::*;
 use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PropVariantToUInt16, PROPVARIANT};
@@ -33,8 +33,12 @@ pub(crate) fn decode_image(path: &FsPath, max: u32) -> Option<Bitmap> {
         }
         let k = (max.max(1) as f64 / w.max(h) as f64).min(1.0);
         let (sw, sh) = (((w as f64 * k).round() as u32).max(1), ((h as f64 * k).round() as u32).max(1));
+        let reduced = reduce(&factory, &frame, (w, h), (sw, sh));
         let scaler = factory.CreateBitmapScaler().ok()?;
-        scaler.Initialize(&frame, sw, sh, WICBitmapInterpolationModeFant).ok()?;
+        match &reduced {
+            Some(b) => scaler.Initialize(b, sw, sh, WICBitmapInterpolationModeFant).ok()?,
+            None => scaler.Initialize(&frame, sw, sh, WICBitmapInterpolationModeFant).ok()?,
+        }
         let mut source: IWICBitmapSource = scaler.into();
         let turn = match orientation(&frame) {
             2 => WICBitmapTransformFlipHorizontal,
@@ -59,6 +63,23 @@ pub(crate) fn decode_image(path: &FsPath, max: u32) -> Option<Bitmap> {
         conv.CopyPixels(std::ptr::null(), width * 4, &mut rgba).ok()?;
         Some(Bitmap { width, height, rgba })
     }
+}
+
+unsafe fn reduce(factory: &IWICImagingFactory, frame: &IWICBitmapFrameDecode, (w, h): (u32, u32), (sw, sh): (u32, u32)) -> Option<IWICBitmap> {
+    let shrink = [8, 4, 2].into_iter().find(|&d| w / d >= sw && h / d >= sh)?;
+    let native: IWICBitmapSourceTransform = frame.cast().ok()?;
+    let (mut cw, mut ch) = (w.div_ceil(shrink), h.div_ceil(shrink));
+    native.GetClosestSize(&mut cw, &mut ch).ok()?;
+    if cw < sw || ch < sh || cw >= w || ch >= h {
+        return None;
+    }
+    let mut format = frame.GetPixelFormat().ok()?;
+    native.GetClosestPixelFormat(&mut format).ok()?;
+    let info: IWICPixelFormatInfo = factory.CreateComponentInfo(&format).ok()?.cast().ok()?;
+    let stride = (cw * info.GetBitsPerPixel().ok()?).div_ceil(32) * 4;
+    let mut pixels = vec![0u8; (stride * ch) as usize];
+    native.CopyPixels(std::ptr::null(), cw, ch, &format, WICBitmapTransformRotate0, stride, &mut pixels).ok()?;
+    factory.CreateBitmapFromMemory(cw, ch, &format, stride, &pixels).ok()
 }
 
 unsafe fn orientation(frame: &IWICBitmapFrameDecode) -> u16 {
