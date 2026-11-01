@@ -113,6 +113,24 @@ fn a_bus_activation_file_replaced_by_someone_else_is_left_alone() {
 }
 
 #[test]
+fn the_desktop_entry_runs_this_executable_and_handles_folders() {
+    let text = desktop_text(Path::new("/opt/my apps/100%/a\"b$c\\d"));
+    assert!(text.contains("\nExec=\"/opt/my apps/100%%/a\\\\\"b\\\\$c\\\\\\\\d\" %U\n"), "{text}");
+    assert!(text.contains("\nMimeType=inode/directory;\n") && text.starts_with("[Desktop Entry]\n"), "{text}");
+    assert_eq!(text.lines().filter(|l| l.starts_with("Exec=")).count(), 1);
+}
+
+#[test]
+fn the_desktop_entry_lands_in_the_test_data_home_and_goes_away() {
+    let entry = data_home().unwrap().join("applications/flit.desktop");
+    desktop_entry(true).unwrap();
+    let text = std::fs::read_to_string(&entry).unwrap();
+    assert!(under_test_root(&entry) && text.contains(&format!("Exec=\"{}\" %U", std::env::current_exe().unwrap().display())), "{text}");
+    desktop_entry(false).unwrap();
+    assert!(!entry.exists());
+}
+
+#[test]
 fn turning_the_default_manager_on_and_off_restores_the_test_home() {
     let config = config_home().unwrap();
     let list = config.join("mimeapps.list");
