@@ -1,30 +1,30 @@
-use crate::fs::{map_attrs, open_dir};
+use crate::fs::{map_attrs, open_dir, NtFs};
 use crate::mft::{query_journal, usn_records, UsnRecord};
-use crossbeam_channel::{bounded, unbounded};
+use crossbeam_channel::bounded;
 use flit_core::listing::attr;
 use flit_core::path::PathKind;
 use flit_core::{name, FsPath};
-use flit_platform::{IndexSource, PlatformError};
+use flit_platform::walk::{Media, Throttle};
+use flit_platform::{Fs, IndexSource, PlatformError};
 use flit_search::index::{Checkpoint, IndexRecord, IndexSink};
 use flit_search::proto::{VolumeInfo, VolumeState};
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::mem::{offset_of, size_of};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use windows::core::PCWSTR;
 use windows::Wdk::Storage::FileSystem::{FileIdBothDirectoryInformation, NtQueryDirectoryFile, FILE_ID_BOTH_DIR_INFORMATION};
 use windows::Win32::Foundation::*;
 use windows::Win32::Storage::FileSystem::*;
-use windows::Win32::System::Threading::{CreateEventW, ResetEvent, SetEvent, WaitForMultipleObjects, INFINITE};
 use windows::Win32::System::Ioctl::{FSCTL_READ_UNPRIVILEGED_USN_JOURNAL, READ_USN_JOURNAL_DATA_V0, USN_JOURNAL_DATA_V0, USN_REASON_FILE_DELETE, USN_REASON_RENAME_NEW_NAME};
+use windows::Win32::System::Threading::{CreateEventW, GetCurrentThread, ResetEvent, SetEvent, SetThreadPriority, WaitForMultipleObjects, INFINITE, THREAD_MODE_BACKGROUND_BEGIN};
 use windows::Win32::System::IO::{CancelIoEx, DeviceIoControl, GetOverlappedResult, IO_STATUS_BLOCK, OVERLAPPED};
 
 const DIR_BUFFER: usize = 64 * 1024;
 const WATCH_BUFFER: usize = 512 * 1024;
 const JOURNAL_BUFFER: usize = 1 << 20;
 const DRIVE_FIXED: u32 = 3;
-const WALK_THREADS: usize = 16;
 const SYNTHETIC: u64 = 1 << 63;
 
 type Record = FILE_NOTIFY_EXTENDED_INFORMATION;
@@ -190,6 +190,11 @@ impl Batch {
 }
 
 fn read_dir_ids(job: &Job, synthetic: &AtomicU64, subdirs: &mut Vec<Job>) -> Batch {
+    if BACKGROUND_WALK.load(Ordering::Relaxed) && !IN_BACKGROUND.replace(true) {
+        unsafe {
+            let _ = SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
+        }
+    }
     let Ok(h) = open_dir(&job.path, FILE_LIST_DIRECTORY.0, false) else { return Batch { parent: job.id, ..Default::default() } };
     let batch = list(&Handle(h), job.id, synthetic);
     subdirs.extend(batch.subdirs().map(|(name, id)| Job { path: job.path.join(name), id }));
@@ -198,7 +203,10 @@ fn read_dir_ids(job: &Job, synthetic: &AtomicU64, subdirs: &mut Vec<Job>) -> Bat
 
 thread_local! {
     static LIST_BUFFER: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
+    static IN_BACKGROUND: Cell<bool> = const { Cell::new(false) };
 }
+
+static BACKGROUND_WALK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 fn list(h: &Handle, parent: u64, synthetic: &AtomicU64) -> Batch {
     let mut batch = Batch { parent, ..Default::default() };
@@ -240,39 +248,27 @@ fn list(h: &Handle, parent: u64, synthetic: &AtomicU64) -> Batch {
 }
 
 fn walk<S: IndexSink>(root: &FsPath, root_id: u64, sink: &mut S, synthetic: &AtomicU64) {
-    let (job_tx, job_rx) = unbounded::<Job>();
-    let (out_tx, out_rx) = unbounded::<Batch>();
-    let pending = AtomicUsize::new(1);
-    let stop = AtomicBool::new(false);
-    let _ = job_tx.send(Job { path: root.clone(), id: root_id });
-    std::thread::scope(|s| {
-        for _ in 0..WALK_THREADS {
-            let (job_tx, job_rx, out_tx, pending, stop) = (job_tx.clone(), job_rx.clone(), out_tx.clone(), &pending, &stop);
-            s.spawn(move || {
-                let mut subdirs = Vec::new();
-                while pending.load(Ordering::Acquire) > 0 && !stop.load(Ordering::Relaxed) {
-                    let Ok(job) = job_rx.recv_timeout(Duration::from_millis(10)) else { continue };
-                    let batch = read_dir_ids(&job, synthetic, &mut subdirs);
-                    pending.fetch_add(subdirs.len(), Ordering::AcqRel);
-                    for sub in subdirs.drain(..) {
-                        let _ = job_tx.send(sub);
-                    }
-                    let _ = out_tx.send(batch);
-                    pending.fetch_sub(1, Ordering::AcqRel);
-                }
-            });
-        }
-        drop(out_tx);
-        let mut done = 0u64;
-        for batch in out_rx {
-            batch.feed(sink);
-            done += 1;
-            sink.progress(done, done + pending.load(Ordering::Relaxed) as u64);
-            if sink.cancelled() {
-                stop.store(true, Ordering::Relaxed);
-            }
-        }
-    });
+    walk_with(root, root_id, sink, synthetic, Throttle::new(media(root), DIR_BUFFER));
+}
+
+fn walk_with<S: IndexSink>(root: &FsPath, root_id: u64, sink: &mut S, synthetic: &AtomicU64, throttle: Throttle) -> Throttle {
+    let list = |job: &Job, subdirs: &mut Vec<Job>| read_dir_ids(job, synthetic, subdirs);
+    flit_platform::walk::walk(Job { path: root.clone(), id: root_id }, throttle, list, |batch, done, total| {
+        batch.feed(sink);
+        sink.progress(done, total);
+        !sink.cancelled()
+    })
+}
+
+fn media(root: &FsPath) -> Media {
+    if crate::network::remote(root) {
+        return Media::Network;
+    }
+    match NtFs.seek_penalty(root) {
+        Some(true) => Media::Spinning,
+        Some(false) => Media::Solid,
+        None => Media::Unknown,
+    }
 }
 
 pub(crate) fn file_id(path: &FsPath) -> Option<u64> {

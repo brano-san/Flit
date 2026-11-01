@@ -10,7 +10,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-const DENTS_BUFFER: usize = 64 << 10;
+pub(crate) const DENTS_BUFFER: usize = 64 << 10;
 const BATCH: usize = 1024;
 pub const DEEP_LIMIT: usize = 2_000_000;
 const EPOCH_GAP_SECS: i64 = 11_644_473_600;
