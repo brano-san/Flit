@@ -1207,6 +1207,7 @@ impl App {
                     if let Some(v) = self.tabs[k].view.as_mut().filter(|v| v.snap().gen == gen) {
                         v.set_dir_stats(idx, stats);
                     }
+                    self.tabs[k].sizing.1.remove(&idx);
                     self.dirty |= k == self.cur;
                 }
             }
@@ -2007,8 +2008,14 @@ impl App {
         if items.is_empty() {
             return;
         }
-        let loc = t.location();
-        let req = ProviderRequest::DirSizes { tab: t.id, gen: t.gen, dir: loc.path().clone(), items, cancel: t.cancel.clone() };
+        let (id, gen, cancel, loc) = (t.id, t.gen, t.cancel.clone(), t.location().clone());
+        let pending = items.iter().map(|(i, _)| *i);
+        let t = self.tab_mut();
+        if t.sizing.0 != gen {
+            t.sizing = (gen, Default::default());
+        }
+        t.sizing.1.extend(pending);
+        let req = ProviderRequest::DirSizes { tab: id, gen, dir: loc.path().clone(), items, cancel };
         self.effects.push(Effect::Provider { provider: loc.provider(), req });
     }
 
@@ -2466,6 +2473,8 @@ impl App {
         let icon_px = l.icon;
         let list_focused = self.active && self.focus == Focus::List;
         let tab = &self.tabs[self.cur];
+        let spin = widgets::spin_phase(now, self.animations);
+        let mut spinning = false;
         let in_bin = tab.view_loc.is_recycle_bin();
         let f = self.flow();
         let lines = self.visible_lines(&f);
@@ -2631,6 +2640,13 @@ impl App {
                         for (c, &col) in l.columns.iter().enumerate().skip(1) {
                             let r = l.cols[c];
                             let s = self.cell_text(arena, listing, i, col);
+                            if s.is_empty() && matches!(col, Column::Size | Column::Folders | Column::Files) && tab.sizing(i) {
+                                let d = self.cs(12.0);
+                                let at = if col == Column::Size { r.right() - pad - d } else { r.x + pad };
+                                widgets::spinner(g, Rect::new(at, (p.name.y + (p.name.h - d) / 2.0).round(), d, d), spin, if picked { t.selection_text } else { t.text_dim });
+                                spinning = true;
+                                continue;
+                            }
                             let x = if col == Column::Size { (r.right() - pad - g.measure(s, font)).max(r.x + pad) } else { r.x + pad };
                             g.text(x, ty, s, font, if picked { t.selection_text } else { t.text_dim }, r.w - 2.0 * pad);
                         }
@@ -2658,6 +2674,7 @@ impl App {
             }
         }
         g.dl.set_clip(None);
+        self.motion |= spinning && self.animations;
         if self.details.checks.settle(checks, self.animations && self.prefs.checkboxes, now) {
             self.motion = true;
         }

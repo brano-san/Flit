@@ -69,6 +69,7 @@ pub struct Tab {
     pub(super) tree: TreeState,
     pub(super) hidden_types: FxHashSet<u64>,
     pub(super) retain_filter: bool,
+    pub(super) sizing: (u64, FxHashSet<u32>),
 }
 
 impl Tab {
@@ -91,6 +92,7 @@ impl Tab {
             fit_pending: false,
             fit_column: None,
             loading: None,
+            sizing: (0, FxHashSet::default()),
             view: None,
             error: None,
             pending_diffs: VecDeque::new(),
@@ -354,6 +356,10 @@ impl Tab {
         v.focus = Some(i);
         v.anchor = Some(i);
         true
+    }
+
+    pub(super) fn sizing(&self, i: u32) -> bool {
+        self.sizing.0 == self.gen && self.sizing.1.contains(&i)
     }
 
     pub(super) fn size_items(&self) -> Vec<(u32, Vec<u8>)> {

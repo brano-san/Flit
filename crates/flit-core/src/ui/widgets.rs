@@ -512,3 +512,23 @@ impl Ghosts {
 #[cfg(test)]
 #[path = "../../test/ui/widgets.rs"]
 mod tests;
+
+const SPIN: Duration = Duration::from_millis(900);
+
+pub(super) fn spin_phase(now: Instant, animate: bool) -> f32 {
+    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let epoch = *EPOCH.get_or_init(|| now);
+    match animate {
+        true => (now.saturating_duration_since(epoch).as_secs_f32() / SPIN.as_secs_f32()).fract(),
+        false => 0.0,
+    }
+}
+
+pub(super) fn spinner<B: TextBackend>(g: &mut Gfx<B>, r: Rect, phase: f32, color: Color) {
+    let stroke = (r.w * 0.14).max(1.0);
+    let radius = (r.w - stroke) / 2.0;
+    let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    let start = phase * std::f32::consts::TAU;
+    let points: Vec<(f32, f32)> = (0..=12).map(|k| start + k as f32 / 12.0 * 1.5 * std::f32::consts::PI).map(|a| (cx + radius * a.cos(), cy + radius * a.sin())).collect();
+    g.dl.polyline(&points, stroke, color);
+}

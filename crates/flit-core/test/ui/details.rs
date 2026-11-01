@@ -1,7 +1,7 @@
 use super::*;
 use crate::input::{Event, Mods};
 use crate::listing::{DirSnapshot, Meta};
-use crate::provider::ProviderRequest;
+use crate::provider::{ProviderEvent, ProviderRequest};
 use crate::sort::{CaseMode, SortKeys};
 use crate::text::tests::Mono;
 use crate::ui::{Persisted, SearchKey, SearchRequest};
@@ -734,4 +734,25 @@ fn chrome_hovers_fade_in_and_out_and_snap_without_animations() {
     a.on_event(&Event::MouseMove { x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 }, t0 + Duration::from_millis(300));
     assert!(!a.frame(&mut g, t0 + Duration::from_millis(301)));
     assert_eq!(a.lit(Hit::NewTab), 1.0, "without Animations the hover is there at once");
+}
+
+#[test]
+fn folder_cells_spin_while_their_sizes_load_and_settle_when_they_arrive() {
+    let mut app = app_at(r"C:\x");
+    run(&mut app, "view.auto_sizes");
+    let fx = deliver_with(&mut app, &[("src", 0, true), ("a.txt", 1, false)], None);
+    assert!(fx.iter().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::DirSizes { .. }, .. })));
+    let src = app.tab().view.as_ref().unwrap().rows()[0];
+    assert!(app.tab().sizing(src));
+    let mut g = Gfx::new(Mono, 1024);
+    let row = app.row_rect(0).unwrap();
+    let dots = |g: &Gfx<Mono>| g.dl.instances.iter().filter(|i| i.rect[1] >= row.y && i.rect[1] + i.rect[3] <= row.bottom() && i.rect[2] < 3.0 && i.rect[2] == i.rect[3]).count();
+    assert!(app.frame(&mut g, Instant::now()), "a spinning cell asks for the next frame");
+    let spinning = dots(&g);
+    assert!(spinning >= 10, "the loading folder cells draw a spinner");
+    let (tab, gen) = (app.tab().id, app.tab().gen);
+    app.on_provider_event(ProviderEvent::DirSize { tab, gen, idx: src, stats: crate::listing::DirStats { size: 4096, folders: 2, files: 3, partial: false } }, Instant::now());
+    assert!(!app.tab().sizing(src));
+    app.frame(&mut g, Instant::now());
+    assert!(dots(&g) + 10 <= spinning, "known sizes replace the spinner");
 }
