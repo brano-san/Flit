@@ -13,7 +13,7 @@ use windows::Win32::System::Registry::{
     RegCloseKey, RegEnumKeyExW, RegGetValueW, RegNotifyChangeKeyValue, RegOpenKeyExW, HKEY, HKEY_CLASSES_ROOT, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_NOTIFY, KEY_READ, REG_NOTIFY_CHANGE_LAST_SET, REG_NOTIFY_CHANGE_NAME, REG_ROUTINE_FLAGS, RRF_RT_ANY,
     RRF_RT_REG_BINARY, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
 };
-use windows::Win32::UI::Shell::{AssocQueryStringW, IShellLinkW, SHGetKnownFolderPath, SHLoadIndirectString, ShellLink, ASSOCF_NONE, ASSOCSTR_FRIENDLYDOCNAME, FOLDERID_Recent, KF_FLAG_DEFAULT};
+use windows::Win32::UI::Shell::{AssocQueryStringW, ILFree, IShellLinkW, SHGetKnownFolderPath, SHGetNameFromIDList, SHLoadIndirectString, ShellLink, ASSOCF_NONE, ASSOCSTR_FRIENDLYDOCNAME, FOLDERID_Recent, KF_FLAG_DEFAULT, SIGDN_DESKTOPABSOLUTEPARSING};
 
 const DRIVE_REMOVABLE: u32 = 2;
 const DRIVE_FIXED: u32 = 3;
@@ -107,9 +107,20 @@ fn shortcut(link: &Path) -> Option<(FsPath, bool)> {
         let sl: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
         sl.cast::<IPersistFile>().ok()?.Load(PCWSTR(wide.as_ptr()), STGM_READ).ok()?;
         sl.GetPath(&mut buf, &mut found, 0).ok()?;
+        let n = buf.iter().position(|&c| c == 0)?;
+        if n == 0 {
+            return this_pc(&sl).then(|| (FsPath::computer(), true));
+        }
+        Some((FsPath::from_utf16(&buf[..n])?, found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY.0 != 0))
     }
-    let n = buf.iter().position(|&c| c == 0)?;
-    Some((FsPath::from_utf16(&buf[..n])?, found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY.0 != 0))
+}
+
+unsafe fn this_pc(sl: &IShellLinkW) -> bool {
+    let Ok(pidl) = sl.GetIDList() else { return false };
+    let name = SHGetNameFromIDList(pidl, SIGDN_DESKTOPABSOLUTEPARSING).ok().and_then(|p| crate::take_pwstr(p));
+    ILFree(Some(pidl));
+    let this_pc = flit_core::path::SHELL_COMPUTER.trim_start_matches("shell:");
+    name.is_some_and(|w| String::from_utf16_lossy(&w).eq_ignore_ascii_case(this_pc))
 }
 
 pub fn recent_files(dir: &Path, limit: usize) -> Vec<Recent> {
