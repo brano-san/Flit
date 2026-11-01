@@ -105,6 +105,24 @@ pub fn bus_activation(on: bool) -> std::io::Result<()> {
     swap_file(on, &target, &saved, &activation_text(&std::env::current_exe()?))
 }
 
+pub fn desktop_text(exe: &Path) -> String {
+    let quoted: String = exe.to_string_lossy().chars().map(|c| match c {
+        '"' | '`' | '$' => format!("\\\\{c}"),
+        '\\' => "\\\\\\\\".to_owned(),
+        '%' => "%%".to_owned(),
+        _ => c.to_string(),
+    }).collect();
+    let exec = format!("Exec=\"{quoted}\" %U");
+    include_str!("../../../assets/flit.desktop").lines().map(|l| format!("{}\n", if l.starts_with("Exec=") { &exec } else { l })).collect()
+}
+
+pub fn desktop_entry(on: bool) -> std::io::Result<()> {
+    let missing = || std::io::Error::new(std::io::ErrorKind::NotFound, "no HOME or XDG_DATA_HOME");
+    let target = data_home().ok_or_else(missing)?.join("applications").join(flit_core::mimeapps::FLIT_DESKTOP);
+    let saved = config_dir().ok_or_else(missing)?.join("desktop-entry.backup");
+    swap_file(on, &target, &saved, &desktop_text(&std::env::current_exe()?))
+}
+
 pub fn runtime_dir() -> Option<PathBuf> {
     absolute_var("XDG_RUNTIME_DIR")
 }

@@ -29,6 +29,7 @@ pub(super) struct Loading {
     pub select: Option<Vec<u8>>,
     scanned: u32,
     pub note: Option<String>,
+    pub properties: bool,
 }
 
 pub struct Tab {
@@ -57,6 +58,7 @@ pub struct Tab {
     pub(super) scroll: f32,
     pub(super) scroll_target: f32,
     pub(super) reveal_pending: bool,
+    pub(super) properties_due: bool,
     pub(super) motion: TabMotion,
     type_ahead: String,
     type_ahead_at: Option<Instant>,
@@ -101,6 +103,7 @@ impl Tab {
             scroll: 0.0,
             scroll_target: 0.0,
             reveal_pending: false,
+            properties_due: false,
             motion: TabMotion::default(),
             type_ahead: String::new(),
             type_ahead_at: None,
@@ -154,7 +157,7 @@ impl Tab {
             fx.push(Effect::Provider { provider: old, req: ProviderRequest::Watch { tab: self.id, gen, path: None } });
         }
         self.watching = Some(provider.clone());
-        self.loading = Some(Loading { gen, since: now, select, scanned: 0, note: None });
+        self.loading = Some(Loading { gen, since: now, select, scanned: 0, note: None, properties: false });
         self.pending_diffs.clear();
         self.error = None;
         self.crumbs = loc.crumbs();
@@ -222,6 +225,7 @@ impl Tab {
                     v.set_selected(i, true);
                     l.select = None;
                     self.reveal_pending = true;
+                    self.properties_due = std::mem::take(&mut l.properties);
                 }
             }
         }

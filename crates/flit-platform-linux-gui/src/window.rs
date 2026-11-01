@@ -23,7 +23,7 @@ use winit::platform::startup_notify::WindowExtStartupNotify;
 use winit::platform::x11::WindowAttributesX11;
 use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
 use winit::monitor::Fullscreen;
-use winit::window::{ImeCapabilities, ImeEnableRequest, ImeRequest, ImeRequestData, PlatformWindowAttributes, ResizeDirection, Theme, WindowAttributes, WindowLevel};
+use winit::window::{ActivationToken, ImeCapabilities, ImeEnableRequest, ImeRequest, ImeRequestData, PlatformWindowAttributes, ResizeDirection, Theme, WindowAttributes, WindowLevel};
 
 const APP_ID: &str = "flit";
 const DEFAULT_SIZE: (f64, f64) = (1100.0, 720.0);
@@ -44,6 +44,7 @@ static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 static A11Y_REFRESH: AtomicBool = AtomicBool::new(false);
 static QUEUED: Mutex<Vec<(WindowId, Event)>> = Mutex::new(Vec::new());
 static TOKEN: Mutex<Option<String>> = Mutex::new(None);
+static STARTUP: Mutex<Option<String>> = Mutex::new(None);
 static PREFETCHED: Mutex<Option<(Vec<FsPath>, OpenWith)>> = Mutex::new(None);
 
 pub(crate) static LOOP_RUNNING: AtomicBool = AtomicBool::new(false);
@@ -62,6 +63,14 @@ pub(crate) fn turned_since(running: &AtomicBool, turns: &AtomicU64, seen: u64, w
 
 pub(crate) fn activation_token() -> Option<String> {
     TOKEN.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
+
+pub(crate) fn startup_token(token: String) {
+    *STARTUP.lock().unwrap_or_else(|e| e.into_inner()) = Some(token).filter(|t| !t.is_empty());
+}
+
+pub(crate) fn take_startup_token() -> Option<String> {
+    STARTUP.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
 
 pub(crate) fn display() -> Option<OwnedDisplayHandle> {
@@ -253,6 +262,7 @@ impl Window for LinuxWindow {
     }
 
     fn activate(&self) {
+        take_startup_token();
         self.raw.focus_window();
     }
 
@@ -438,10 +448,19 @@ struct Loop<H> {
 }
 
 fn platform_attributes(el: &dyn ActiveEventLoop) -> Box<dyn PlatformWindowAttributes> {
+    let token = take_startup_token().map(ActivationToken::from_raw);
     if el.is_wayland() {
-        Box::new(WindowAttributesWayland::default().with_name(APP_ID, APP_ID))
+        let attrs = WindowAttributesWayland::default().with_name(APP_ID, APP_ID);
+        Box::new(match token {
+            Some(t) => attrs.with_activation_token(t),
+            None => attrs,
+        })
     } else {
-        Box::new(WindowAttributesX11::default().with_name(APP_ID, APP_ID))
+        let attrs = WindowAttributesX11::default().with_name(APP_ID, APP_ID);
+        Box::new(match token {
+            Some(t) => attrs.with_activation_token(t),
+            None => attrs,
+        })
     }
 }
 

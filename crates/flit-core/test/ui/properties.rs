@@ -87,6 +87,24 @@ fn a_folder_counts_in_the_background_and_esc_closes() {
 }
 
 #[test]
+fn an_open_asking_for_properties_shows_them_once_the_item_is_selected() {
+    let mut app = app_at(r"C:\work");
+    deliver(&mut app, &[("b.txt", 0, 7)]);
+    let open = crate::open::Open { select: vec![br"C:\other\a.txt".to_vec()], target: crate::open::OpenTarget::NewTab, properties: true, ..Default::default() };
+    app.open(&open, &|_| None, Instant::now());
+    assert_eq!(app.asking(), None);
+    deliver(&mut app, &[("a.txt", 0, 5), ("c.txt", 0, 1)]);
+    assert_eq!(app.asking(), Some("properties"));
+    assert_eq!(value(&app, S::PropertiesName).as_deref(), Some("a.txt"));
+    app.jobs.form = None;
+    deliver(&mut app, &[("a.txt", 0, 5), ("c.txt", 0, 1)]);
+    assert_eq!(app.asking(), None);
+    app.open(&crate::open::Open { properties: false, ..open }, &|_| None, Instant::now());
+    deliver(&mut app, &[("a.txt", 0, 5)]);
+    assert_eq!(app.asking(), None);
+}
+
+#[test]
 fn a_single_file_shows_the_shell_details_and_no_leftover_note() {
     let mut app = app_at(r"C:\work");
     deliver(&mut app, &[("a.txt", 0, 5), ("b.txt", 0, 7)]);

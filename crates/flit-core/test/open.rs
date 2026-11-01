@@ -131,7 +131,7 @@ fn select_routes_to_parent() {
 
 #[test]
 fn open_serializes() {
-    let o = Open { paths: vec![b"C:\\x".to_vec(), vec![0xED, 0xA0, 0x80]], select: vec![b"/tmp/a:b".to_vec()], target: OpenTarget::NewTab, cwd: Some(b"C:\\".to_vec()), tag: Some("Work".into()) };
+    let o = Open { paths: vec![b"C:\\x".to_vec(), vec![0xED, 0xA0, 0x80]], select: vec![b"/tmp/a:b".to_vec()], target: OpenTarget::NewTab, cwd: Some(b"C:\\".to_vec()), tag: Some("Work".into()), properties: true };
     let bytes = postcard::to_allocvec(&o).unwrap();
     assert_eq!(postcard::from_bytes::<Open>(&bytes).unwrap(), o);
 }

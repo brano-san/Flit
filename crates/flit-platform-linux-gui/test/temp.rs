@@ -15,7 +15,7 @@ extern "C" fn isolate() {
     let _ = std::fs::set_permissions(&runtime, std::os::unix::fs::PermissionsExt::from_mode(0o700));
     std::env::set_var("HOME", &home);
     std::env::set_var("XDG_RUNTIME_DIR", &runtime);
-    for var in ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "WAYLAND_DISPLAY"] {
+    for var in ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "DBUS_STARTER_ADDRESS"] {
         std::env::remove_var(var);
     }
     if std::env::var("DISPLAY").is_ok_and(|d| d == ":0" || d.starts_with(":0.")) {

@@ -143,9 +143,7 @@ impl Platform for Linux {
     }
 
     fn integrate(on: bool) -> Result<(), PlatformError> {
-        xdg::default_manager(on).and_then(|_| xdg::bus_activation(on)).map_err(handle_error)?;
-        dbus::want(on);
-        Ok(())
+        xdg::desktop_entry(on).and_then(|_| xdg::default_manager(on)).and_then(|_| xdg::bus_activation(on)).map_err(handle_error)
     }
 }
 pub struct LinuxRenderer {

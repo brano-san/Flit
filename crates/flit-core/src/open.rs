@@ -19,6 +19,7 @@ pub struct Open {
     pub target: OpenTarget,
     pub cwd: Option<Vec<u8>>,
     pub tag: Option<String>,
+    pub properties: bool,
 }
 
 impl Open {
