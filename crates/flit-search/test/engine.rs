@@ -260,6 +260,46 @@ fn every_scan_path_agrees_with_the_plain_matcher() {
     }
 }
 
+#[test]
+fn path_text_terms_agree_with_matching_the_whole_path() {
+    let mut v = VolumeIndex::new("C:", b"C:\\", b'\\');
+    put(&mut v, 5, 5, ".", 0, 0, true);
+    let words = ["src", "Ab", "b", "srcab", "x", "Документ", "a b"];
+    let mut id = 10u64;
+    let mut dirs = vec![5u64];
+    for k in 0..400u64 {
+        let parent = dirs[(k * 7919 % dirs.len() as u64) as usize];
+        let dir = k % 3 != 2;
+        put(&mut v, id, parent, words[(k % 7) as usize], k, 1, dir);
+        if dir {
+            dirs.push(id);
+        }
+        id += 1;
+    }
+    put(&mut v, id, 99_999, "orphan src", 0, 1, false);
+    v.commit();
+    let e = ready(Engine { volumes: vec![v], version: 1 });
+    let v = &e.volumes[0];
+    for text in ["path:src", "path:c:\\src", "path:\\ab\\", "path:b\\s", "path:rcab\\x", "!path:src", "path:документ\\a", "path:a b\\b", "path:\\", "path:c:\\", "path:src path:\\x", "path:zzz", "path:ab\\b\\src", "path:\\b", "path:c:\\ab\\", "!path:b\\", "path:src\\"] {
+        let q = parse(text, clock()).unwrap();
+        let expected: Vec<u32> = (0..v.len() as u32)
+            .filter(|&i| v.listed(i))
+            .filter(|&i| {
+                let (mut path, mut lower_path) = (Vec::new(), Vec::new());
+                v.path_into(i, false, &mut Vec::new(), &mut path);
+                v.path_into(i, true, &mut Vec::new(), &mut lower_path);
+                let plain = crate::query::Plain { name: v.name(i), lower_name: v.lower_name(i), path: &path, lower_path: &lower_path, size: v.sizes[i as usize], modified: v.modified[i as usize], dir: v.is_dir(i) };
+                q.matches(&plain, &|_| false)
+            })
+            .collect();
+        let mut rs = e.search(&q, Sort { key: SortKey::Name, descending: false }, &|| false).unwrap();
+        rs.ensure(&e, expected.len());
+        let mut got: Vec<u32> = rs.rows.iter().map(|&(_, i)| i).collect();
+        got.sort_unstable();
+        assert_eq!(got, expected, "{text}");
+    }
+}
+
 fn ready(mut e: Engine) -> Engine {
     for order in [Order::Size, Order::Modified, Order::Path] {
         e.build_order(order);

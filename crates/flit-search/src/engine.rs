@@ -1,4 +1,4 @@
-use crate::index::{Order, VolumeIndex, KEPT_ATTRS, ROOT};
+use crate::index::{Order, VolumeIndex, KEPT_ATTRS, MAX_DEPTH, NONE, ROOT};
 use crate::proto::{Sort, SortKey};
 use crate::query::{glob, Filter, Pattern, Query, Scope};
 use flit_core::{attr, Meta};
@@ -6,8 +6,8 @@ use flit_proto::listing::EntryBatch;
 use memchr::memmem::Finder;
 use rayon::prelude::*;
 use std::cmp::Ordering;
-use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicU64, AtomicU8};
 
 const MIN_CHUNK: usize = 4096;
 const LIGHT_TASKS: usize = 16;
@@ -41,8 +41,14 @@ struct Scratch {
     chain: Vec<u32>,
     lower_path: Vec<u8>,
     path: Vec<u8>,
+    tail: Vec<u8>,
     keep: Vec<bool>,
 }
+
+const UNKNOWN: u8 = 0;
+const KNOWN: u8 = 1;
+const HIT: u8 = 2;
+const ENDS: u8 = 4;
 
 fn has_ext(name: &[u8], list: &[Vec<u8>]) -> bool {
     list.iter().any(|e| match e.as_slice() {
@@ -90,7 +96,78 @@ impl<'q> Prepared<'q> {
         }
     }
 
-    fn filter_range(&self, v: &VolumeIndex, a: usize, b: usize, sc: &mut Scratch) -> Vec<u32> {
+    fn path_state(&self, k: usize, v: &VolumeIndex, i: u32, dirs: &[AtomicU8], dir: bool, sc: &mut Scratch) -> u8 {
+        let Some(finder) = &self.finders[k] else { return KNOWN };
+        let needle = finder.needle();
+        let last_sep = memchr::memrchr(v.sep, needle);
+        let parent = match v.parents[i as usize] {
+            _ if v.attrs[i as usize] & ROOT != 0 => UNKNOWN,
+            NONE => UNKNOWN,
+            p if v.attrs[p as usize] & ROOT != 0 => UNKNOWN,
+            p => dirs.get(p as usize).map_or(UNKNOWN, |s| s.load(Relaxed)),
+        };
+        let name = v.lower_name(i);
+        let hit = match (parent, last_sep) {
+            (UNKNOWN, _) => {
+                sc.tail.clear();
+                v.path_into(i, true, &mut sc.chain, &mut sc.tail);
+                finder.find(&sc.tail).is_some()
+            }
+            (s, _) if s & HIT != 0 => true,
+            (_, None) => finder.find(name).is_some(),
+            (s, Some(at)) => s & ENDS != 0 && name.starts_with(&needle[at + 1..]),
+        };
+        let ends = dir
+            && last_sep.is_some_and(|at| {
+                sc.tail.clear();
+                v.path_tail_into(i, true, at, &mut sc.chain, &mut sc.tail);
+                sc.tail.ends_with(&needle[..at])
+            });
+        KNOWN | if hit { HIT } else { 0 } | if ends { ENDS } else { 0 }
+    }
+
+    fn dir_states(&self, k: usize, v: &VolumeIndex) -> Vec<AtomicU8> {
+        let state: Vec<AtomicU8> = (0..v.len()).map(|_| AtomicU8::new(UNKNOWN)).collect();
+        let known = |i: u32| state[i as usize].load(Relaxed) & KNOWN != 0;
+        chunks(v.len(), self.tasks).into_par_iter().for_each_init(
+            || (Vec::new(), Scratch::default()),
+            |(stack, sc), (a, b)| {
+                for d in a as u32..b as u32 {
+                    if !v.is_dir(d) || known(d) {
+                        continue;
+                    }
+                    stack.clear();
+                    let mut cur = d;
+                    loop {
+                        stack.push(cur);
+                        let p = v.parents[cur as usize];
+                        if p == NONE || v.attrs[cur as usize] & ROOT != 0 || !v.is_dir(p) || known(p) || stack.len() > MAX_DEPTH {
+                            break;
+                        }
+                        cur = p;
+                    }
+                    for &c in stack.iter().rev() {
+                        state[c as usize].store(self.path_state(k, v, c, &state, true, sc), Relaxed);
+                    }
+                }
+            },
+        );
+        state
+    }
+
+    fn path_memo(&self, v: &VolumeIndex) -> Vec<Vec<AtomicU8>> {
+        self.query
+            .terms
+            .iter()
+            .enumerate()
+            .map(|(k, t)| match &t.filter {
+                Filter::Match(Scope::Path, Pattern::Text(_)) if self.driver.is_none() => self.dir_states(k, v),
+                _ => Vec::new(),
+            })
+            .collect()
+    }
+
+    fn filter_range(&self, v: &VolumeIndex, a: usize, b: usize, memo: &[Vec<AtomicU8>], sc: &mut Scratch) -> Vec<u32> {
         let attrs = &v.attrs[a..b];
         sc.keep.clear();
         sc.keep.extend(attrs.iter().map(|&x| x & (attr::DELETED | ROOT) == 0));
@@ -116,7 +193,7 @@ impl<'q> Prepared<'q> {
             let keep = std::mem::take(&mut sc.keep);
             for (j, _) in keep.iter().enumerate().filter(|(_, &k)| k) {
                 let i = (a + j) as u32;
-                if self.matches(v, i, None, true, sc) {
+                if self.matches(v, i, None, true, memo, sc) {
                     out[n] = i;
                     n += 1;
                 }
@@ -132,7 +209,7 @@ impl<'q> Prepared<'q> {
         out
     }
 
-    fn matches(&self, v: &VolumeIndex, i: u32, skip: Option<usize>, columns_done: bool, sc: &mut Scratch) -> bool {
+    fn matches(&self, v: &VolumeIndex, i: u32, skip: Option<usize>, columns_done: bool, memo: &[Vec<AtomicU8>], sc: &mut Scratch) -> bool {
         let (mut lower_built, mut path_built) = (false, false);
         let k_ = i as usize;
         for (k, t) in self.query.terms.iter().enumerate() {
@@ -141,6 +218,7 @@ impl<'q> Prepared<'q> {
             }
             let ok = match &t.filter {
                 Filter::Match(Scope::Name, p) => self.pattern(k, p, v.lower_name(i), v.name(i)),
+                Filter::Match(Scope::Path, Pattern::Text(_)) => self.path_state(k, v, i, &memo[k], false, sc) & HIT != 0,
                 Filter::Match(Scope::Path, p) => {
                     if matches!(p, Pattern::Regex(_)) {
                         if !path_built {
@@ -203,6 +281,8 @@ fn mark(part: Vec<u32>, rank: &[u32], bits: &[AtomicU64]) -> (Vec<u32>, u32, u32
 fn scan(v: &VolumeIndex, p: &Prepared<'_>, rank: &[u32], access: Option<&dyn Visibility>, cancel: Cancel<'_>) -> Option<Found> {
     let bits: Vec<AtomicU64> = (0..v.len().div_ceil(64)).map(|_| AtomicU64::new(0)).collect();
     let visible = |i: u32| access.is_none_or(|a| a.can_list(v, v.parents[i as usize]));
+    let memo = p.path_memo(v);
+    let memo = memo.as_slice();
     let parts: Vec<Option<(Vec<u32>, u32, u32)>> = match &p.driver {
         Some((k, finder, exact)) => {
             let skip = exact.then_some(*k);
@@ -226,7 +306,7 @@ fn scan(v: &VolumeIndex, p: &Prepared<'_>, rank: &[u32], access: Option<&dyn Vis
                         s = segment_at(starts, s, at);
                         end = starts.get(s + 1).copied().unwrap_or(u32::MAX);
                         let e = v.seg_entry[a + s];
-                        if v.lower_off[e as usize] == starts[s] && v.listed(e) && p.matches(v, e, skip, false, sc) && visible(e) {
+                        if v.lower_off[e as usize] == starts[s] && v.listed(e) && p.matches(v, e, skip, false, memo, sc) && visible(e) {
                             out.push(e);
                         }
                     }
@@ -240,7 +320,7 @@ fn scan(v: &VolumeIndex, p: &Prepared<'_>, rank: &[u32], access: Option<&dyn Vis
                 if cancel() {
                     return None;
                 }
-                let mut hits = p.filter_range(v, a, b, sc);
+                let mut hits = p.filter_range(v, a, b, memo, sc);
                 if access.is_some() {
                     hits.retain(|&i| visible(i));
                 }

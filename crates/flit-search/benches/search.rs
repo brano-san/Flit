@@ -82,7 +82,42 @@ fn bench_size(c: &mut Criterion, n: usize, label: &str) {
     g.finish();
 }
 
+fn bench_maintenance(c: &mut Criterion) {
+    let mut v = synthetic(1_000_000);
+    for order in [Order::Size, Order::Modified] {
+        v.build_order(order);
+    }
+    let mut g = c.benchmark_group("index_1m");
+    g.sample_size(20).measurement_time(Duration::from_secs(4));
+    let mut next = 50_000_000u64;
+    g.bench_function("commit_one_new_file", |b| {
+        b.iter(|| {
+            next += 1;
+            v.upsert(&IndexRecord { id: next, parent: 100 + next % 1000, name: b"Fresh.txt", size: next, modified: NOW, attrs: 0 });
+            black_box(v.commit());
+        })
+    });
+    g.bench_function("commit_hundred_renames", |b| {
+        b.iter(|| {
+            next += 1;
+            for k in 0..100u64 {
+                let id = 200_000 + (next * 7919 + k * 104_729) % 700_000;
+                let name = format!("renamed {next} {k}.txt");
+                v.upsert(&IndexRecord { id, parent: 100 + id % 1000, name: name.as_bytes(), size: k, modified: NOW, attrs: 0 });
+            }
+            black_box(v.commit());
+        })
+    });
+    let mut bytes = Vec::new();
+    flit_search::snapshot::save(&v, Default::default(), &mut bytes);
+    g.bench_function("snapshot_save", |b| b.iter(|| flit_search::snapshot::save(black_box(&v), Default::default(), &mut bytes)));
+    g.sample_size(10).measurement_time(Duration::from_secs(8));
+    g.bench_function("snapshot_load", |b| b.iter(|| black_box(flit_search::snapshot::load(black_box(&bytes)).unwrap())));
+    g.finish();
+}
+
 fn benches(c: &mut Criterion) {
+    bench_maintenance(c);
     bench_size(c, 1_000_000, "search_1m");
     if std::env::var_os("FLIT_BENCH_10M").is_some() {
         bench_size(c, 10_000_000, "search_10m");
