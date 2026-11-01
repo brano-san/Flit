@@ -75,7 +75,7 @@ impl Turn {
 pub(super) enum Listed {
     Pending,
     Missing,
-    Found(Vec<(Vec<u8>, bool)>),
+    Found(Entries),
 }
 
 pub(super) fn is_url(text: &str) -> bool {
@@ -98,9 +98,20 @@ pub(super) fn split_command(text: &str) -> (String, String) {
     }
 }
 
-fn entries(v: &DirView) -> Vec<(Vec<u8>, bool)> {
-    let l = v.listing();
-    v.rows().iter().map(|&i| (l.name(i).to_vec(), l.entries[i as usize].is_dir())).collect()
+pub(super) struct Entries {
+    snap: Arc<DirSnapshot>,
+    rows: Vec<u32>,
+}
+
+impl Entries {
+    pub(super) fn iter(&self) -> impl Iterator<Item = (&[u8], bool)> {
+        let l = &self.snap.listing;
+        self.rows.iter().map(move |&i| (l.name(i), l.entries[i as usize].is_dir()))
+    }
+}
+
+pub(super) fn entries(v: &DirView) -> Entries {
+    Entries { snap: v.snap().clone(), rows: v.rows().to_vec() }
 }
 
 type Rank = (u8, usize, usize, usize);
