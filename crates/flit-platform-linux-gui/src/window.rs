@@ -1,3 +1,4 @@
+use crate::apps::OpenWith;
 use crate::input::{self, Clicks};
 use flit_core::input::{CursorIcon, Event, HitArea, MouseButton};
 use flit_core::render::Rect;
@@ -43,6 +44,7 @@ static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 static A11Y_REFRESH: AtomicBool = AtomicBool::new(false);
 static QUEUED: Mutex<Vec<(WindowId, Event)>> = Mutex::new(Vec::new());
 static TOKEN: Mutex<Option<String>> = Mutex::new(None);
+static PREFETCHED: Mutex<Option<(Vec<FsPath>, OpenWith)>> = Mutex::new(None);
 
 pub(crate) fn activation_token() -> Option<String> {
     TOKEN.lock().unwrap_or_else(|e| e.into_inner()).take()
@@ -276,16 +278,35 @@ impl Window for LinuxWindow {
     }
 
     fn shell_menu(&self, menu: ShellMenu) {
-        let id = self.id;
-        let start = Instant::now();
-        background("flit-menu", move || {
-            let (items, launches) = crate::apps::menu_with_apps(menu.menu, &menu.items);
+        let (id, start, x, y, kind) = (self.id, Instant::now(), menu.x, menu.y, menu.kind);
+        let show = move |(items, launches): OpenWith| {
             tracing::debug!(elapsed = ?start.elapsed(), apps = launches.len(), "menu ready");
             if !items.is_empty() {
-                QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((id, Event::ShowMenu { items, x: menu.x, y: menu.y, launches, kind: menu.kind, shell: Vec::new(), pending: false }));
+                QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((id, Event::ShowMenu { items, x, y, launches, kind, shell: Vec::new(), pending: false }));
                 wake_loop();
             }
+        };
+        let ready = PREFETCHED.lock().unwrap_or_else(|e| e.into_inner()).take().filter(|(files, _)| *files == menu.items);
+        match ready {
+            Some((_, apps)) => show(crate::apps::with_apps(menu.menu, apps)),
+            None => background("flit-menu", move || show(crate::apps::menu_with_apps(menu.menu, &menu.items))),
+        }
+    }
+
+    fn shell_prefetch(&self, menu: Option<ShellMenu>) {
+        let Some(items) = menu.map(|m| m.items).filter(|items| !items.is_empty()) else { return };
+        if PREFETCHED.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|(done, _)| *done == items) {
+            return;
+        }
+        background("flit-menu-prefetch", move || {
+            let c = crate::apps::catalog();
+            let apps = crate::apps::open_with(&items, &c.entries, &c.assoc);
+            *PREFETCHED.lock().unwrap_or_else(|e| e.into_inner()) = Some((items, apps));
         });
+    }
+
+    fn shell_warm(&self, _menus: Vec<ShellMenu>) {
+        background("flit-menu-warm", || drop(crate::apps::catalog()));
     }
 
     fn properties(&self, _paths: Vec<FsPath>) {}
