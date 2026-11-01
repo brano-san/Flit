@@ -162,11 +162,15 @@ fn save_snapshot(dir: &Path, shared: &SharedIndex, id: &str, key: &str, cp: Chec
     std::fs::create_dir_all(dir)?;
     let path = dir.join(snapshot::file_name(key));
     let tmp = path.with_extension("tmp");
+    let mut bytes = Vec::new();
     {
         let e = shared.read();
         let Some(v) = e.volumes.iter().find(|v| v.id == id) else { return Ok(()) };
-        snapshot::save_to(v, cp, std::fs::File::create(&tmp)?)?;
+        bytes.reserve(v.len() * 48 + v.names.len() + v.lower.len());
+        snapshot::save(v, cp, &mut bytes);
     }
+    std::fs::write(&tmp, &bytes)?;
+    drop(bytes);
     std::fs::rename(&tmp, &path)
 }
 

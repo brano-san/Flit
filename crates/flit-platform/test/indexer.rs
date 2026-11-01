@@ -121,6 +121,43 @@ fn snapshots_let_a_restart_resume_without_scanning() {
 }
 
 #[test]
+#[cfg_attr(debug_assertions, ignore)]
+fn saving_a_snapshot_does_not_hold_the_index_during_disk_io() {
+    let dir = std::env::temp_dir().join(format!("flit-snapshot-lock-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut v = empty_volume("T:");
+    v.upsert(&IndexRecord { id: 5, parent: 5, name: b".", size: 0, modified: 0, attrs: attr::DIR });
+    for k in 0..1_000_000u64 {
+        let name = format!("some fairly long file name number {k}.txt");
+        v.upsert(&IndexRecord { id: 100 + k, parent: 5, name: name.as_bytes(), size: k, modified: 0, attrs: 0 });
+    }
+    v.commit();
+    let shared = SharedIndex::new();
+    shared.write().volumes.push(v);
+    let done = std::sync::atomic::AtomicBool::new(false);
+    let (saved, waited) = std::thread::scope(|s| {
+        let probe = s.spawn(|| {
+            let mut worst = Duration::ZERO;
+            while !done.load(std::sync::atomic::Ordering::Acquire) {
+                let t = Instant::now();
+                drop(shared.write());
+                worst = worst.max(t.elapsed());
+                std::thread::yield_now();
+            }
+            worst
+        });
+        let t = Instant::now();
+        save_snapshot(&dir, &shared, "T:", "T:", Checkpoint::default()).unwrap();
+        let saved = t.elapsed();
+        done.store(true, std::sync::atomic::Ordering::Release);
+        (saved, probe.join().unwrap())
+    });
+    std::fs::remove_dir_all(&dir).unwrap();
+    eprintln!("BENCH snapshot save took {saved:?}, a writer waited at most {waited:?}");
+    assert!(waited * 4 < saved * 3, "a writer waited {waited:?} of a {saved:?} save");
+}
+
+#[test]
 fn volume_ids_map_to_roots() {
     assert_eq!(root_of("C:"), (br"C:\".to_vec(), b'\\'));
     assert_eq!(root_of(r"D:\data\tree"), (br"D:\data\tree".to_vec(), b'\\'));
