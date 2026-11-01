@@ -60,6 +60,18 @@ fn decodes_and_scales_images_into_premultiplied_rgba() {
 }
 
 #[test]
+fn large_jpegs_shrink_in_the_decoder_and_keep_their_layout() {
+    let d = temp("wic-jpeg");
+    let p = d.0.join("gradient.jpg");
+    crate::shell::tests::write_jpeg(&p, 802, 601, 0);
+    let b = decode_image(&fs(&p), 100).unwrap();
+    assert_eq!((b.width, b.height), (100, 75));
+    let green = |y: u32| (0..b.width).map(|x| b.rgba[((y * b.width + x) * 4 + 1) as usize] as u32).sum::<u32>() / b.width;
+    assert!(green(0) < 40 && green(b.height - 1) > 215, "top {} bottom {}", green(0), green(b.height - 1));
+    assert!(b.rgba.chunks_exact(4).all(|px| px[3] == 255));
+}
+
+#[test]
 fn reads_grouped_properties_and_finds_no_handler_for_unknown_types() {
     com_sta();
     let d = temp("props");
