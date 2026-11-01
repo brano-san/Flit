@@ -111,6 +111,7 @@ const LETTERS: u8 = 0x50;
 const SIZE_LIMITS: [u64; 6] = [1, 16 << 10, 1 << 20, 128 << 20, 1 << 30, 4 << 30];
 pub const UNSPECIFIED: u64 = u64::MAX;
 const PARALLEL_SORT: usize = 1 << 15;
+const CHECKS_PER_THREAD: usize = 1 << 14;
 
 #[derive(Clone, Debug)]
 pub struct SortKeys {
@@ -510,12 +511,16 @@ pub fn sort(l: &Listing, k: &SortKeys, view: ViewSpec, out: &mut Vec<u32>) {
 }
 
 pub fn is_sorted(l: &Listing, k: &SortKeys, v: &ViewSpec, order: &[u32]) -> bool {
-    let ordered = |w: &[u32]| cmp(l, k, v, w[0], w[1]).is_lt();
-    if order.len() < PARALLEL_SORT {
-        order.windows(2).all(ordered)
-    } else {
-        order.par_windows(2).all(ordered)
+    let ordered = |part: &[u32]| part.windows(2).all(|w| cmp(l, k, v, w[0], w[1]).is_lt());
+    let threads = if order.len() < PARALLEL_SORT { 1 } else { std::thread::available_parallelism().map_or(1, |n| n.get()).min(order.len() / CHECKS_PER_THREAD) };
+    if threads <= 1 {
+        return ordered(order);
     }
+    let chunk = order.len().div_ceil(threads);
+    std::thread::scope(|s| {
+        let parts: Vec<_> = (0..order.len()).step_by(chunk).map(|start| s.spawn(move || ordered(&order[start..(start + chunk + 1).min(order.len())]))).collect();
+        parts.into_iter().all(|p| p.join().unwrap_or(false))
+    })
 }
 
 pub fn insert_pos(l: &Listing, k: &SortKeys, v: &ViewSpec, order: &[u32], i: u32) -> usize {
