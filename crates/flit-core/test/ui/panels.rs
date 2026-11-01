@@ -168,6 +168,29 @@ fn every_panel_has_its_own_tab_row_and_only_the_active_one_a_status_bar() {
 }
 
 #[test]
+fn the_status_bar_slides_out_of_the_old_panel_and_into_the_new_one() {
+    let mut app = app_at(r"C:\a");
+    key(&mut app, Key::Char('S'), CTRL_SHIFT);
+    app.animations = true;
+    let t = t0();
+    app.frame(&mut Gfx::new(Mono, 1024), t);
+    let full = app.s(24.0);
+    assert_eq!((layout_of(&app, 0).status.h, layout_of(&app, 1).status.h), (0.0, full));
+    app.activate_panel(0);
+    app.frame(&mut Gfx::new(Mono, 1024), t + Duration::from_millis(60));
+    let (a, b) = (layout_of(&app, 0).status, layout_of(&app, 1).status);
+    assert!(a.h > 0.0 && a.h < full, "the new panel's bar is on its way in: {}", a.h);
+    assert!(b.h > 0.0 && b.h < full, "the old panel's bar is on its way out: {}", b.h);
+    assert_eq!(layout_of(&app, 0).bottom, a.y, "the list ends where the bar begins");
+    app.frame(&mut Gfx::new(Mono, 1024), t + Duration::from_millis(400));
+    assert_eq!((layout_of(&app, 0).status.h, layout_of(&app, 1).status.h), (full, 0.0));
+    app.animations = false;
+    app.activate_panel(1);
+    app.frame(&mut Gfx::new(Mono, 1024), t + Duration::from_millis(410));
+    assert_eq!((layout_of(&app, 0).status.h, layout_of(&app, 1).status.h), (0.0, full), "without Animations it switches at once");
+}
+
+#[test]
 fn clicks_tab_and_directions_select_panels() {
     let mut app = three(r"C:\a");
     frame(&mut app);

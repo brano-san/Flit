@@ -155,6 +155,7 @@ fn the_font_comes_from_the_installed_families_and_falls_back() {
 #[test]
 fn bars_and_buttons_follow_their_settings() {
     let mut a = app();
+    a.animations = false;
     assert!(a.layout.status.h > 0.0 && a.layout.actions.w > 0.0 && a.layout.ops_button.w == 0.0);
     assert!(set(&mut a, "appearance.status_bar", Value::Bool(false)));
     assert!(set(&mut a, "appearance.tab_actions", Value::Bool(false)));

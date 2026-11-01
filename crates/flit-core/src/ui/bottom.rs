@@ -154,7 +154,7 @@ impl App {
     }
 
     fn counter<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, right: f32, b: BottomHit, label: &str, settled: bool) -> f32 {
-        let r = self.layout.status;
+        let r = self.status_face();
         let now = self.last_frame.unwrap_or_else(std::time::Instant::now);
         let (tab, animate) = (self.tab().id, self.animations && settled);
         let roll = &mut self.rolls[usize::from(b == BottomHit::Folders)];
@@ -195,7 +195,7 @@ impl App {
     }
 
     pub(super) fn draw_status<B: TextBackend>(&mut self, g: &mut Gfx<B>, arena: &Bump, t: &Theme) {
-        let r = self.layout.status;
+        let r = self.status_face();
         self.layout.bar.clear();
         let right_from = g.dl.instances.len();
         let font = self.ui_font(12.0);

@@ -1331,6 +1331,7 @@ impl App {
         let (n, cur, actions) = (self.tabs.len(), self.cur, self.tab_actions_button);
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
+        let status_h = self.status_slide(if status_bar { s(STATUS_H) } else { 0.0 });
         let l = &mut self.layout;
         l.row_h = s(ROW_H);
         l.title = Rect::new(area.x, area.y, area.w, s(TAB_H));
@@ -1368,7 +1369,6 @@ impl App {
         let edge = if ops_button { l.ops_button.x } else { l.more.x };
         l.address = Rect::new(ax, l.toolbar.y + s(5.0), (edge - s(9.0) - ax).max(s(40.0)), s(TOOL_H - 10.0));
         l.header = Rect::new(area.x, l.toolbar.bottom(), area.w, s(HEADER_H));
-        let status_h = if status_bar { s(STATUS_H) } else { 0.0 };
         l.status = Rect::new(area.x, area.bottom() - status_h, area.w, status_h);
         l.bottom = l.status.y;
         if !status_bar {
@@ -2228,8 +2228,10 @@ impl App {
         }
         self.draw_title(g, th);
         self.draw_toolbar(g, palette.area(Area::Toolbar));
-        if active && self.layout.status.h > 0.0 {
+        if self.layout.status.h > 0.0 {
+            let from = g.dl.instances.len();
             self.draw_status(g, arena, th);
+            g.dl.confine(from, self.layout.status);
         }
         if active {
             self.draw_drop_panel(g, files);

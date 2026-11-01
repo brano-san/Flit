@@ -80,6 +80,7 @@ pub(super) struct Panels {
     hover: Option<(u32, Hit)>,
     pub growing: Option<(u32, Instant)>,
     pub closing: Option<(Node, u32, Instant)>,
+    pub status: Vec<(u32, super::widgets::Tween)>,
 }
 
 pub(super) const SPLIT: std::time::Duration = std::time::Duration::from_millis(150);
@@ -99,7 +100,7 @@ fn grown(root: &Node, id: u32, k: f32) -> Node {
 
 impl Default for Panels {
     fn default() -> Self {
-        Self { list: vec![Panel::default()], root: Node::Leaf(0), here: 0, active: 0, next: 1, seps: Vec::new(), caption: Default::default(), menu: Rect::default(), quick: Rect::default(), left: 0.0, inset: 0.0, hover: None, growing: None, closing: None }
+        Self { list: vec![Panel::default()], root: Node::Leaf(0), here: 0, active: 0, next: 1, seps: Vec::new(), caption: Default::default(), menu: Rect::default(), quick: Rect::default(), left: 0.0, inset: 0.0, hover: None, growing: None, closing: None, status: Vec::new() }
     }
 }
 
@@ -280,6 +281,24 @@ impl App {
 
     pub fn parked_rows(&self) -> impl Iterator<Item = (u64, u32, u32)> + '_ {
         self.panels.list.iter().filter_map(|p| p.rows)
+    }
+
+    pub(super) fn status_slide(&mut self, to: f32) -> f32 {
+        let (id, now, animate) = (self.panels.here, self.clock(), self.animations);
+        let slides = &mut self.panels.status;
+        let k = slides.iter().position(|e| e.0 == id).unwrap_or_else(|| {
+            slides.push((id, super::widgets::Tween::at(to)));
+            slides.len() - 1
+        });
+        let moving = slides[k].1.aim(to, animate, now, SPLIT);
+        let h = slides[k].1.value(now, SPLIT).round();
+        self.motion |= moving;
+        h
+    }
+
+    pub(super) fn status_face(&self) -> Rect {
+        let r = self.layout.status;
+        Rect::new(r.x, r.y, r.w, if r.h > 0.0 { self.s(super::STATUS_H) } else { 0.0 })
     }
 
     fn slot(&self, id: u32) -> Option<usize> {

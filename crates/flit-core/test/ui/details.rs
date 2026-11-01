@@ -341,6 +341,7 @@ fn display_switches_hide_dotfiles_extensions_and_the_status_bar_and_split_the_co
     assert_eq!(shown, ["src", "notes"]);
     let c = app.tab().view.as_ref().unwrap().shown_counts();
     assert_eq!((c.dirs, c.files), (1, 1));
+    app.animations = false;
     run(&mut app, "view.status_bar");
     frame(&mut app);
     assert_eq!((app.layout.status.h, app.layout.list.bottom()), (0.0, 600.0));
