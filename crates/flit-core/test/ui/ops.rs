@@ -51,7 +51,7 @@ fn typed(app: &mut App, s: &str) {
 
 fn row_xy(app: &App, row: usize) -> (f32, f32) {
     let l = &app.layout;
-    (l.cols[0].x + 200.0, l.list.y + (row as f32 + 0.5) * l.row_h)
+    (l.cols[0].x + 100.0, l.list.y + (row as f32 + 0.5) * l.row_h)
 }
 
 fn press(app: &mut App, (x, y): (f32, f32), button: MouseButton, mods: Mods) {

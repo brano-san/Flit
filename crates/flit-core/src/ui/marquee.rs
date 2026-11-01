@@ -70,7 +70,8 @@ impl App {
         let end = self.to_content(m.last.0, m.last.1);
         let band = Rect::new(m.start.0.min(end.0), m.start.1.min(end.1), (m.start.0 - end.0).abs(), (m.start.1 - end.1).abs());
         let (a, b) = if across { (band.x, band.right()) } else { (band.y, band.bottom()) };
-        let hits: Vec<usize> = f.lines_in(a, b).filter(|&n| overlaps(f.cell(n), band)).collect();
+        let rows = self.layout.mode.rows();
+        let hits: Vec<usize> = f.lines_in(a, b).filter(|&n| overlaps(if rows { f.cell(n) } else { self.item_parts(f.cell(n)).body }, band)).collect();
         let (start, stop) = (self.nearest_line(&f, m.start.0, m.start.1), self.nearest_line(&f, end.0, end.1));
         let App { marquee, tabs, cur, .. } = self;
         let Some(m) = marquee.as_ref() else { return };
@@ -83,15 +84,21 @@ impl App {
         if n == 0 {
             return;
         }
-        for line in hits {
+        if hits.is_empty() {
+            return;
+        }
+        for &line in &hits {
             if let Some(Line::Row(row)) = v.line(line) {
                 let i = v.rows()[row];
                 let on = !(m.toggle && v.is_selected(i));
                 v.set_selected(i, on);
             }
         }
-        let row_at = |line: Option<usize>| v.rows()[line.map_or(0, |l| v.row_at_line(l)).min(n - 1)];
-        let (anchor, focus) = (row_at(start), row_at(stop));
+        let (first, last) = (hits[0], hits[hits.len() - 1]);
+        let (near, far) = if stop < start { (last, first) } else { (first, last) };
+        let pick = |line: Option<usize>, fallback: usize| line.filter(|l| hits.contains(l)).unwrap_or(fallback);
+        let row_at = |line: usize| v.rows()[v.row_at_line(line).min(n - 1)];
+        let (anchor, focus) = (row_at(pick(start, near)), row_at(pick(stop, far)));
         v.anchor = Some(anchor);
         v.focus = Some(focus);
     }
@@ -120,7 +127,7 @@ impl App {
 
     pub(super) fn draw_marquee<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme) {
         let Some(m) = self.marquee.as_ref().filter(|m| m.active) else { return };
-        let list = self.layout.list;
+        let list = self.layout.list.inset(-self.layout.gutter, 0.0);
         let (x0, y0) = self.to_screen(m.start.0, m.start.1);
         let (x1, y1) = (m.last.0.clamp(list.x, list.right()), m.last.1.clamp(list.y, list.bottom()));
         let r = Rect::new(x0.min(x1), y0.min(y1), (x1 - x0).abs(), (y1 - y0).abs());

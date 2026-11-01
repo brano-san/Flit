@@ -21,10 +21,11 @@ use std::time::Instant;
 
 const MAX_PATHS: usize = 64;
 const MAX_TEXT: usize = 4096;
-pub const SCHEMA: u64 = 4;
+pub const SCHEMA: u64 = 5;
 pub const SCHEMA_KEY: &str = "schema";
 pub type Migration = fn(&mut Map<String, Json>);
-const MIGRATIONS: [Migration; 3] = [browsed_archives_keep_builtin_handling, renamed_commands_keep_their_keys, theme_splits_into_scheme_and_system];
+const MIGRATIONS: [Migration; 4] = [browsed_archives_keep_builtin_handling, renamed_commands_keep_their_keys, theme_splits_into_scheme_and_system, unchosen_checkboxes_take_the_new_default];
+pub const CHECKBOXES: &str = "files.checkboxes";
 pub const SPACING: &str = "appearance.spacing";
 pub const OPACITY: &str = "appearance.inactive_opacity";
 pub const CACHE: &str = "advanced.thumb_cache_mb";
@@ -35,6 +36,12 @@ pub const NEEDS_BUILTIN_ARCHIVES: [&str; 3] = ["general.menu_compress", "files.a
 fn browsed_archives_keep_builtin_handling(map: &mut Map<String, Json>) {
     if map.get("files.archives_as_folders") == Some(&Json::Bool(true)) {
         map.entry(BUILTIN_ARCHIVES).or_insert(Json::Bool(true));
+    }
+}
+
+fn unchosen_checkboxes_take_the_new_default(map: &mut Map<String, Json>) {
+    if map.get(CHECKBOXES) == Some(&Json::Bool(false)) {
+        map.remove(CHECKBOXES);
     }
 }
 
@@ -369,7 +376,7 @@ pub static SETTINGS: &[Setting] = &[
     toggle("files.sizes_network", Page::Data, S::OptionsTitleSizesNetwork, S::OptionsHelpSizesNetwork, |a| a.opts.sizes_network, |a, on| a.opts.sizes_network = on),
     toggle("advanced.indexing", Page::Data, S::SettingsTitleAdvancedIndexing, S::SettingsHelpAdvancedIndexing, |a| a.indexing, |a, on| a.set_indexing(on)),
     toggle("input.act_on_press", Page::Input, S::OptionsTitleActOnPress, S::OptionsHelpActOnPress, |a| a.opts.act_on_press, |a, on| a.opts.act_on_press = on),
-    toggle("files.checkboxes", Page::Input, S::OptionsTitleSelectionBoxes, S::OptionsHelpSelectionBoxes, |a| a.prefs.checkboxes, |a, on| a.set_pref(|p| &mut p.checkboxes, on)),
+    toggle(CHECKBOXES, Page::Input, S::OptionsTitleSelectionBoxes, S::OptionsHelpSelectionBoxes, |a| a.prefs.checkboxes, |a, on| a.set_pref(|p| &mut p.checkboxes, on)),
     toggle("input.single_click", Page::Input, S::OptionsTitleSingleClick, S::OptionsHelpSingleClick, |a| a.single_click_files == ClickOpen::Always && a.single_click_folders == ClickOpen::Always, |a, on| {
         let mode = if on { ClickOpen::Always } else { ClickOpen::Never };
         (a.single_click_files, a.single_click_folders) = (mode, mode);

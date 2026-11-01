@@ -348,3 +348,15 @@ fn the_interface_scale_steps_by_ten_percent_and_persists_in_the_settings_file() 
     assert_eq!(b.ui_font(13.0).size_q, a.ui_font(13.0).size_q, "glyphs are shaped at the new size, not stretched");
     assert_eq!(S::OptionsTitleScale.in_lang(crate::i18n::Lang::Ru), "Масштаб интерфейса");
 }
+
+#[test]
+fn selection_checkboxes_are_on_by_default_and_an_old_unchosen_off_takes_the_new_default() {
+    assert!(crate::ui::ViewPrefs::default().checkboxes);
+    assert_eq!(get(&app(), CHECKBOXES), Value::Bool(true));
+    let old_off = parse(r#"{"schema": 4, "files.checkboxes": false}"#);
+    assert_eq!((old_off.schema, old_off.value(CHECKBOXES)), (SCHEMA, None));
+    let old_on = parse(r#"{"schema": 4, "files.checkboxes": true}"#);
+    assert_eq!(old_on.value(CHECKBOXES), Some(&Value::Bool(true)));
+    let chosen_off = parse(r#"{"schema": 5, "files.checkboxes": false}"#);
+    assert_eq!(chosen_off.value(CHECKBOXES), Some(&Value::Bool(false)));
+}

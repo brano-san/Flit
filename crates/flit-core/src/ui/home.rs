@@ -73,7 +73,7 @@ pub(super) struct Home {
     pub titles: Vec<(Rect, Widget)>,
     pub notes: Vec<(Rect, S, bool)>,
     pub area: Rect,
-    scroll: f32,
+    pub(super) scroll: super::Glide,
     content_h: f32,
 }
 
@@ -208,8 +208,8 @@ impl App {
             y += s(16.0);
         }
         h.content_h = y - area.y;
-        h.scroll = h.scroll.clamp(0.0, (h.content_h - area.h).max(0.0));
-        let dy = -h.scroll;
+        h.scroll.clamp(h.content_h - area.h);
+        let dy = -h.scroll.pos.round();
         for r in h.cards.iter_mut().map(|(r, _)| r).chain(h.titles.iter_mut().map(|(r, _)| r)).chain(h.notes.iter_mut().map(|(r, _, _)| r)) {
             r.y += dy;
         }
@@ -225,7 +225,7 @@ impl App {
 
     pub(super) fn home_wheel(&mut self, dy: f32) {
         let h = &mut self.nav.home;
-        h.scroll = (h.scroll - dy * 3.0 * (RECENT_H * self.scale).round()).clamp(0.0, (h.content_h - h.area.h).max(0.0));
+        h.scroll.by(-dy * 3.0 * (RECENT_H * self.scale).round(), h.content_h - h.area.h);
         self.layout();
         self.dirty = true;
     }

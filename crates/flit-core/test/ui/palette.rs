@@ -28,8 +28,12 @@ fn wheel_frame(a: &mut App, dy: f32, now: Instant) -> f32 {
 
 #[test]
 fn palette_wheel_up_and_down_move_on_the_same_frame() {
-    let t0 = Instant::now();
-    let mut a = long_pick(t0);
+    let start = Instant::now();
+    let mut a = long_pick(start);
+    for k in 1..30 {
+        draw(&mut a, start + Duration::from_millis(16 * k));
+    }
+    let t0 = start + Duration::from_millis(16 * 30);
     let down = wheel_frame(&mut a, -1.0, t0);
     assert!(down > 0.0, "wheel down moves on its first frame");
     for k in 1..60 {

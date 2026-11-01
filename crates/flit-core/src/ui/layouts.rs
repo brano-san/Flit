@@ -14,6 +14,7 @@ use std::ops::Range;
 use std::time::Instant;
 
 const LEVELS: [u8; 5] = [5, 5, 4, 5, 12];
+const TABLE_GUTTER: f32 = 11.0;
 const ROWS: [f32; 5] = [20.0, 24.0, 28.0, 32.0, 40.0];
 const ROW_ICONS: [f32; 5] = [16.0, 16.0, 20.0, 24.0, 32.0];
 const LIST_W: f32 = 300.0;
@@ -99,7 +100,7 @@ impl LayoutMode {
         LEVELS[self.slot()]
     }
 
-    fn rows(self) -> bool {
+    pub(super) fn rows(self) -> bool {
         matches!(self, LayoutMode::Details | LayoutMode::List | LayoutMode::Columns | LayoutMode::Adaptive | LayoutMode::Tree)
     }
 }
@@ -250,12 +251,14 @@ impl App {
         l.panes.clear();
         l.panes.extend((0..panes).map(|k| Rect::new(x + k as f32 * cw, top, cw, avail)));
         let (x, w) = (x + panes as f32 * cw, w - panes as f32 * cw);
+        l.gutter = if mode.table() { s(TABLE_GUTTER).min((w / 8.0).floor()) } else { 0.0 };
+        let (x, w) = (x + l.gutter, (w - 2.0 * l.gutter).max(0.0));
         if across {
             l.list = Rect::new(x, top, w, (avail - bar).max(0.0));
             l.track = Rect::new(x, l.list.bottom(), w, bar.min(avail));
         } else {
             l.list = Rect::new(x, top, (w - bar).max(0.0), avail);
-            l.track = Rect::new(l.list.right(), top, bar, avail);
+            l.track = Rect::new(l.list.right() + l.gutter, top, bar, avail);
         }
         let list = l.list;
         let per = |cell: f32, room: f32| ((room / cell.max(1.0)).floor() as usize).max(1);

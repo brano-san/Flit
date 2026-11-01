@@ -275,6 +275,7 @@ fn the_recycle_bin_background_menu_offers_view_commands_without_shell_items() {
 #[test]
 fn selection_commands_checkboxes_and_hover_select() {
     let mut app = app_at(r"C:\x");
+    app.prefs.checkboxes = false;
     deliver(&mut app, &[("a", 1, false), ("b", 1, false), ("c", 1, false)]);
     app.run_action("select.invert", Instant::now());
     assert_eq!(selected(&app), ["a", "b", "c"]);

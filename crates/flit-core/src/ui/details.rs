@@ -302,7 +302,7 @@ impl Default for ViewPrefs {
             auto_sizes: false,
             status_bar: true,
             split_count: false,
-            checkboxes: false,
+            checkboxes: true,
             hover_select: false,
             command_descriptions: true,
             thumbnails: true,

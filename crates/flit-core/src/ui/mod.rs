@@ -120,6 +120,12 @@ const TAB_MIN_W: f32 = 72.0;
 
 const MAX_PENDING_DIFFS: usize = 1 << 16;
 const SCROLL_TAU: f32 = 0.045;
+const IDLE_DT: f32 = 1.0 / 120.0;
+
+fn frame_dt(last: Option<Instant>, now: Instant, moving: bool) -> f32 {
+    let dt = last.map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f32());
+    dt.min(if moving { 0.1 } else { IDLE_DT })
+}
 
 fn glide(pos: &mut f32, target: f32, dt: f32, smooth: bool) -> bool {
     let diff = target - *pos;
@@ -546,6 +552,7 @@ struct Layout {
     flow: flow::FlowParams,
     panes: Vec<Rect>,
     bottom: f32,
+    gutter: f32,
 }
 
 pub struct App {
@@ -638,6 +645,7 @@ pub struct App {
     effects: Vec<Effect>,
     arena: Bump,
     last_frame: Option<Instant>,
+    moving: bool,
     dirty: bool,
     ops: ops::Ops,
     nav: nav::Nav,
@@ -753,6 +761,7 @@ impl App {
             effects: Vec::new(),
             arena: Bump::new(),
             last_frame: None,
+            moving: false,
             dirty: true,
             ops: ops::Ops::default(),
             nav: nav::Nav::default(),
@@ -1351,7 +1360,7 @@ impl App {
         l.columns.extend(shown.0.iter().map(|&(c, _)| c));
         let fixed: f32 = shown.0.iter().filter(|&&(c, _)| c != Column::Name).map(|&(_, w)| w).sum();
         let name_w = (l.list.w - fixed).max(s(NAME_MIN_W));
-        let mut x = l.header.x;
+        let mut x = l.list.x;
         l.cols.clear();
         for &(c, w) in &shown.0 {
             let cw = if c == Column::Name { name_w } else { w };
@@ -1440,7 +1449,7 @@ impl App {
         if self.eject_rect().is_some_and(|r| r.contains(x, y)) {
             return Hit::Eject;
         }
-        if l.list.contains(x, y) {
+        if l.list.inset(-l.gutter, 0.0).contains(x, y) {
             return self.list_hit(x, y);
         }
         if let Some(h) = self.bottom_hit(x, y) {
@@ -1954,7 +1963,7 @@ impl App {
 
     pub fn frame<B: TextBackend>(&mut self, g: &mut Gfx<B>, now: Instant) -> bool {
         let _span = tracing::trace_span!("ui_frame").entered();
-        let dt = self.last_frame.map_or(0.0, |t| now.duration_since(t).as_secs_f32()).min(0.1);
+        let dt = frame_dt(self.last_frame, now, self.moving);
         self.last_frame = Some(now);
         self.poll();
         self.dirty = false;
@@ -2023,7 +2032,8 @@ impl App {
                 animating = true;
             }
         }
-        animating || self.motion || g.atlas_reset
+        self.moving = animating || self.motion || g.atlas_reset;
+        self.moving
     }
 
     pub(super) fn clock(&self) -> Instant {
@@ -2045,7 +2055,9 @@ impl App {
         let smooth = self.smooth();
         let settings = self.settings.as_mut().is_some_and(|ui| ui.scroll.step(dt, smooth));
         let palette = self.nav.palette.as_mut().is_some_and(|p| p.scroll.step(dt, smooth));
-        settings | palette
+        let side = self.nav.sidebar.scroll.step(dt, smooth);
+        let home = self.nav.home.scroll.step(dt, smooth);
+        settings | palette | side | home
     }
 
     fn draw_title<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {

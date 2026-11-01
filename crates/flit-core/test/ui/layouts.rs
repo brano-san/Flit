@@ -428,3 +428,84 @@ fn a_keyboard_jump_scrolls_smoothly_and_a_long_one_snaps_close_first() {
     key(&mut app, Key::Home, Mods::default());
     assert_eq!((app.tab().scroll, app.tab().scroll_target), (0.0, 0.0), "without Animations it jumps");
 }
+
+#[test]
+fn a_single_wheel_notch_after_idle_glides_instead_of_jumping() {
+    let names = files(400, "txt");
+    let mut app = app_at(r"C:\x");
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    deliver(&mut app, &refs);
+    let mut g = Gfx::new(Mono, 1024);
+    let t0 = Instant::now();
+    app.frame(&mut g, t0);
+    let idle = t0 + Duration::from_secs(5);
+    app.on_event(&Event::Wheel { dx: 0.0, dy: -1.0 }, idle);
+    let notch = app.tab().scroll_target;
+    assert!(notch > 0.0);
+    assert!(app.frame(&mut g, idle + Duration::from_millis(1)), "the glide asks for frames");
+    let first = app.tab().scroll;
+    assert!(first > 0.0 && first < notch * 0.5, "the first frame after a long idle moves a little, not most of the way: {first} of {notch}");
+    let mut t = idle;
+    for _ in 0..60 {
+        t += Duration::from_millis(16);
+        app.frame(&mut g, t);
+    }
+    assert_eq!(app.tab().scroll, notch);
+    assert!(!app.frame(&mut g, t + Duration::from_millis(16)), "no frames once it settles");
+    app.smooth_scroll = false;
+    app.on_event(&Event::Wheel { dx: 0.0, dy: -1.0 }, t);
+    app.frame(&mut g, t + Duration::from_secs(1));
+    assert_eq!(app.tab().scroll, 2.0 * notch, "without smooth scrolling a notch lands at once");
+}
+
+#[test]
+fn details_rows_keep_a_gutter_where_a_rubber_band_can_start() {
+    let names = files(5, "txt");
+    let mut app = app_at(r"C:\x");
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    deliver(&mut app, &refs);
+    let l = &app.layout;
+    assert_eq!(l.mode, LayoutMode::Details);
+    assert_eq!(l.gutter, 11.0);
+    assert_eq!(l.list.x, l.header.x + l.gutter);
+    assert_eq!(l.cols[0].x, l.list.x);
+    assert!(l.track.x >= l.list.right() + l.gutter);
+    let (x, y) = (l.header.x + 4.0, l.list.y + l.row_h / 2.0);
+    assert_eq!(app.hit(x, y), Hit::ListEmpty, "the gutter beside a row is empty space");
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, Instant::now());
+    let (x2, y2) = (app.layout.cols[0].x + 60.0, app.layout.list.y + 2.5 * app.layout.row_h);
+    app.on_event(&Event::MouseMove { x: x2, y: y2 }, Instant::now());
+    app.on_event(&Event::MouseUp { x: x2, y: y2, button: MouseButton::Left }, Instant::now());
+    assert_eq!(app.tab().view.as_ref().unwrap().selected().count(), 3, "a band started in the gutter selects the rows it crosses");
+}
+
+#[test]
+fn a_band_through_empty_grid_space_selects_nothing_and_leaves_the_focus_alone() {
+    let mut app = app_at(r"C:\x");
+    let names = files(3, "jpg");
+    publish(&mut app, &names, true);
+    key(&mut app, Key::Char('5'), CTRL_SHIFT);
+    frame(&mut app);
+    let focus = app.tab().view.as_ref().unwrap().focus;
+    let last = app.row_rect(names.len() - 1).unwrap();
+    let below = last.bottom() + 30.0;
+    let x0 = app.layout.list.x + 8.0;
+    assert!(below < app.layout.list.bottom() && app.layout.flow.per > names.len());
+    app.on_event(&Event::MouseDown { x: x0, y: below, button: MouseButton::Left, clicks: 1 }, Instant::now());
+    for k in 1..40 {
+        let x = x0 + 12.0 * k as f32;
+        app.on_event(&Event::MouseMove { x, y: below + 6.0 }, Instant::now());
+        assert_eq!(app.tab().view.as_ref().unwrap().focus, focus, "the focus outline does not chase the pointer at {x}");
+    }
+    assert!(selected(&app).is_empty());
+    app.on_event(&Event::MouseUp { x: x0, y: below, button: MouseButton::Left }, Instant::now());
+    let a = app.row_rect(0).unwrap();
+    let body = app.item_parts(a).body;
+    let gap = a.right();
+    app.on_event(&Event::MouseDown { x: gap, y: below, button: MouseButton::Left, clicks: 1 }, Instant::now());
+    app.on_event(&Event::MouseMove { x: gap, y: a.y + 1.0 }, Instant::now());
+    assert!(selected(&app).is_empty(), "a band in the padding beside the tiles touches none");
+    app.on_event(&Event::MouseMove { x: body.x + 10.0, y: body.y + 10.0 }, Instant::now());
+    assert!(!selected(&app).is_empty(), "touching a tile selects it");
+    app.on_event(&Event::MouseUp { x: body.x + 10.0, y: body.y + 10.0, button: MouseButton::Left }, Instant::now());
+}

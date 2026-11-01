@@ -100,7 +100,7 @@ pub(super) enum Btn {
 }
 
 impl Btn {
-    const ALL: [Btn; 20] = [
+    const ALL: [Btn; 24] = [
         Btn::AddHome,
         Btn::AddCurrent,
         Btn::AddTyped,
@@ -121,6 +121,10 @@ impl Btn {
         Btn::RequestFeature,
         Btn::Repository,
         Btn::Privacy,
+        Btn::NewEntry,
+        Btn::NewSubmenu,
+        Btn::Edit,
+        Btn::Up,
     ];
 
     fn label(self) -> &'static str {

@@ -155,6 +155,7 @@ fn a_hidden_counter_is_marked_in_its_own_colour() {
 #[test]
 fn a_message_that_appears_in_the_bottom_bar_slides_in_once() {
     let mut a = crate::ui::harness::app(&["a.txt", "b.txt"]);
+    a.prefs.checkboxes = false;
     let mut g = Gfx::new(crate::text::tests::Mono, 1024);
     let t0 = Instant::now();
     assert!(!a.frame(&mut g, t0));

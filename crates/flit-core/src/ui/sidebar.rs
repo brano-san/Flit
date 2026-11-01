@@ -406,7 +406,7 @@ pub(super) struct Sidebar {
     pub clear: Rect,
     pub filter: Field,
     pub typing: bool,
-    scroll: f32,
+    pub(super) scroll: super::Glide,
     content_h: f32,
     pub cursor: usize,
     pub press_y: f32,
@@ -773,7 +773,7 @@ impl App {
 
     fn quick_filter_changed(&mut self) {
         let sb = &mut self.nav.sidebar;
-        sb.scroll = 0.0;
+        sb.scroll.snap(0.0);
         sb.cursor = 0;
         self.nav_prefs_changed();
     }
@@ -1266,8 +1266,8 @@ impl App {
             y += if compact { s(2.0) } else { s(SECTION_GAP) };
         }
         sb.content_h = y;
-        sb.scroll = sb.scroll.clamp(0.0, (sb.content_h - sb.list.h).max(0.0));
-        let dy = list_top - sb.scroll;
+        sb.scroll.clamp(sb.content_h - sb.list.h);
+        let dy = list_top - sb.scroll.pos.round();
         for r in sb.rects.iter_mut().chain(sb.headers.iter_mut().map(|(r, _)| r)).chain(sb.fold_clip.iter_mut().map(|(_, r)| r)).chain(sb.gaps.iter_mut().map(|(r, _)| r)) {
             r.y += dy;
         }
@@ -1309,7 +1309,7 @@ impl App {
     pub(super) fn sidebar_wheel(&mut self, dy: f32) {
         let sb = &mut self.nav.sidebar;
         let step = 3.0 * (ROW_H * self.scale).round();
-        sb.scroll = (sb.scroll - dy * step).clamp(0.0, (sb.content_h - sb.list.h).max(0.0));
+        sb.scroll.by(-dy * step, sb.content_h - sb.list.h);
         self.layout();
         self.dirty = true;
     }
@@ -1330,9 +1330,9 @@ impl App {
         let sb = &mut self.nav.sidebar;
         let Some(r) = sb.rects.get(sb.cursor).copied() else { return };
         if r.y < sb.list.y {
-            sb.scroll -= sb.list.y - r.y;
+            sb.scroll.snap(sb.scroll.pos - (sb.list.y - r.y));
         } else if r.bottom() > sb.list.bottom() {
-            sb.scroll += r.bottom() - sb.list.bottom();
+            sb.scroll.snap(sb.scroll.pos + r.bottom() - sb.list.bottom());
         }
         self.layout();
     }

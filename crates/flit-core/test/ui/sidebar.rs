@@ -56,10 +56,20 @@ fn layout_scrolls_long_lists() {
     assert_eq!(sb.rects.len(), 26, "24 drives, This PC and Home");
     assert!(sb.content_h > sb.rect.h);
     let first = sb.rects[0].y;
+    let mut g = Gfx::new(Mono, 1024);
+    let t0 = Instant::now();
+    let mut settle = |app: &mut App, from: u64| {
+        for k in from..from + 40 {
+            app.frame(&mut g, t0 + Duration::from_millis(16 * k));
+        }
+    };
     app.hover = Hit::Side(0);
-    app.on_event(&crate::input::Event::Wheel { dx: 0.0, dy: -2.0 }, Instant::now());
+    app.on_event(&crate::input::Event::Wheel { dx: 0.0, dy: -2.0 }, t0);
+    settle(&mut app, 1);
     assert!(app.nav.sidebar.rects[0].y < first, "the wheel scrolls the sidebar, not the list");
-    app.on_event(&crate::input::Event::Wheel { dx: 0.0, dy: -1000.0 }, Instant::now());
+    app.hover = Hit::Side(0);
+    app.on_event(&crate::input::Event::Wheel { dx: 0.0, dy: -1000.0 }, t0 + Duration::from_millis(16 * 41));
+    settle(&mut app, 42);
     let sb = &app.nav.sidebar;
     let end = sb.rects.last().unwrap().bottom();
     assert!(end <= sb.list.bottom() + 0.5 && end >= sb.list.bottom() - SECTION_GAP - 1.0, "clamped at the end of the list: {end} {:?}", sb.list);
@@ -400,11 +410,11 @@ fn section_header_labels_and_chevrons_sit_in_the_middle_of_their_hover_rect() {
 #[test]
 fn compact_mode_shows_icons_only_and_is_a_core_flag() {
     let mut app = app_with_places();
-    let full = app.layout.list.x;
+    let full = app.layout.header.x;
     assert!(app.run_action("quick_access.compact", Instant::now()));
     assert!(app.nav_prefs().compact);
-    assert_eq!(app.layout.list.x, COMPACT_W);
-    assert!(app.layout.list.x < full);
+    assert_eq!(app.layout.header.x, COMPACT_W);
+    assert!(app.layout.header.x < full);
     assert_eq!(app.nav.sidebar.splitter, Rect::default(), "no splitter in compact mode");
     let r = app.nav.sidebar.rects[0];
     assert!(matches!(app.sidebar_hit(r.right() - 3.0, r.y + 3.0), Some(Hit::Side(0))), "no pin button in compact mode");

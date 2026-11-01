@@ -1186,6 +1186,9 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     if let Some(startup) = doc.startup() {
         saved.persisted.startup = startup;
     }
+    if doc.value(flit_core::ui::settings::CHECKBOXES).is_none() {
+        saved.persisted.prefs.checkboxes = true;
+    }
     if let Some(mb) = settings::thumb_cache_mb(&doc) {
         saved.persisted.prefs.thumb_cache_mb = mb;
     }

@@ -298,13 +298,13 @@ fn pins_removed_by_another_window_mid_drag_are_harmless() {
 fn sidebar_toggle_splitter_and_persisted_width() {
     let mut app = app_at(r"C:\x");
     app.animations = false;
-    let shown = app.layout.list.x;
+    let shown = app.layout.header.x;
     assert_eq!(shown, app.nav_state().sidebar_w);
     key(&mut app, Key::Char('B'), CTRL);
-    assert_eq!(app.layout.list.x, 0.0);
+    assert_eq!(app.layout.header.x, 0.0);
     assert!(!app.nav_state().sidebar);
     key(&mut app, Key::Char('B'), CTRL);
-    assert_eq!(app.layout.list.x, shown);
+    assert_eq!(app.layout.header.x, shown);
     let sp = app.nav.sidebar.splitter;
     let (x, y) = (sp.x + sp.w / 2.0, sp.y + 40.0);
     app.on_event(&Event::MouseMove { x, y }, t0());
@@ -313,7 +313,7 @@ fn sidebar_toggle_splitter_and_persisted_width() {
     app.on_event(&Event::MouseMove { x: x + 60.0, y }, t0());
     app.on_event(&Event::MouseUp { x: x + 60.0, y, button: MouseButton::Left }, t0());
     assert_eq!(app.nav_state().sidebar_w, 280.0);
-    assert_eq!(app.layout.list.x, 280.0);
+    assert_eq!(app.layout.header.x, 280.0);
     app.on_event(&Event::MouseDown { x: 280.0, y, button: MouseButton::Left, clicks: 1 }, t0());
     app.on_event(&Event::MouseMove { x: 5000.0, y }, t0());
     app.on_event(&Event::MouseUp { x: 5000.0, y, button: MouseButton::Left }, t0());
@@ -447,22 +447,22 @@ fn quick_access_slides_shut_and_open_with_ctrl_b() {
     let mut app = app_at(r"C:\x");
     let mut g = Gfx::new(Mono, 1024);
     app.frame(&mut g, Instant::now());
-    let w = app.layout.list.x;
+    let w = app.layout.header.x;
     key(&mut app, Key::Char('B'), CTRL);
     let t = Instant::now();
     app.frame(&mut g, t + Duration::from_millis(50));
-    let mid = app.layout.list.x;
+    let mid = app.layout.header.x;
     assert!(mid > 0.0 && mid < w, "the panels follow the sidebar: {mid} {w}");
     app.frame(&mut g, t + Duration::from_millis(400));
-    assert_eq!(app.layout.list.x, 0.0);
+    assert_eq!(app.layout.header.x, 0.0);
     key(&mut app, Key::Char('B'), CTRL);
     let t = Instant::now().max(t + Duration::from_millis(400));
     app.frame(&mut g, t + Duration::from_millis(50));
-    let back = app.layout.list.x;
+    let back = app.layout.header.x;
     assert!(back > 0.0 && back < w, "{back}");
     app.frame(&mut g, t + Duration::from_millis(400));
-    assert_eq!(app.layout.list.x, w);
+    assert_eq!(app.layout.header.x, w);
     app.animations = false;
     key(&mut app, Key::Char('B'), CTRL);
-    assert_eq!(app.layout.list.x, 0.0, "without Animations it hides at once");
+    assert_eq!(app.layout.header.x, 0.0, "without Animations it hides at once");
 }
