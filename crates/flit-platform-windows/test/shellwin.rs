@@ -2,6 +2,7 @@ use super::*;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use windows::core::w;
+use windows::Win32::System::Com::DISPATCH_PROPERTYGET;
 use windows::Win32::UI::Shell::{ILFindLastID, SID_STopLevelBrowser, SWFO_NEEDDISPATCH};
 use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, HWND_MESSAGE, WINDOW_EX_STYLE, WINDOW_STYLE};
 
@@ -13,6 +14,15 @@ fn find(windows: &IShellWindows, folder: &[u8]) -> Option<(i32, IDispatch)> {
     let mut hwnd = 0i32;
     let disp = unsafe { windows.FindWindowSW(&variant(folder), &VARIANT::default(), SWC_BROWSER, &mut hwnd, SWFO_NEEDDISPATCH) }.ok()?;
     Some((hwnd, disp))
+}
+
+fn location_url(disp: &IDispatch) -> String {
+    let name = w!("LocationURL");
+    let mut id = 0;
+    unsafe { disp.GetIDsOfNames(&GUID::zeroed(), &name, 1, 0, &mut id) }.unwrap();
+    let mut result = VARIANT::default();
+    unsafe { disp.Invoke(id, &GUID::zeroed(), 0, DISPATCH_PROPERTYGET, &DISPPARAMS::default(), Some(&mut result), None, None) }.unwrap();
+    BSTR::try_from(&result).unwrap().to_string()
 }
 
 fn browser_pidl(path: &[u16]) -> Vec<u8> {
@@ -68,7 +78,7 @@ fn a_registered_flit_window_receives_the_item_the_shell_asks_it_to_select() {
         panic!("the window never appeared among the shell windows");
     };
     assert_eq!(found_hwnd, hwnd.0 as i32);
-    let app: IWebBrowserApp = disp.cast().unwrap();
+    let app: IWebBrowser2 = disp.cast().unwrap();
     let doc = unsafe { app.Document() }.unwrap();
     let provider: IServiceProvider = doc.cast().unwrap();
     let browser: IShellBrowser = unsafe { provider.QueryService(&SID_STopLevelBrowser) }.unwrap();
@@ -78,6 +88,20 @@ fn a_registered_flit_window_receives_the_item_the_shell_asks_it_to_select() {
     let open = rx.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(open.target, OpenTarget::CurrentTab);
     assert_eq!(open.select, [FsPath::parse(&file.to_string_lossy()).unwrap().as_bytes().to_vec()]);
+    assert_eq!(location_url(&disp), unsafe { app.LocationURL() }.unwrap().to_string());
+    assert!(location_url(&disp).starts_with("file:///") && location_url(&disp).ends_with(&format!("flit-shellwin-{}", std::process::id())));
+    let picked = [file.clone(), dir.join("c.txt")];
+    std::fs::write(&picked[1], b"x").unwrap();
+    let as_path = |p: &std::path::PathBuf| FsPath::parse(&p.to_string_lossy()).unwrap();
+    assert!(select(hwnd, &|| (picked.iter().map(as_path).collect(), Some(as_path(&picked[1])))));
+    let shown: IFolderView = view.cast().unwrap();
+    let items: IShellItemArray = unsafe { shown.Items(SVGIO_SELECTION) }.unwrap();
+    let names: Vec<String> = (0..unsafe { items.GetCount() }.unwrap()).map(|i| unsafe { items.GetItemAt(i).unwrap().GetDisplayName(SIGDN_FILESYSPATH).unwrap().to_string() }.unwrap()).collect();
+    assert_eq!(names, picked.iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>());
+    assert_eq!(unsafe { shown.GetFocusedItem() }.unwrap(), 1);
+    let scripted: IShellFolderViewDual = doc.cast().unwrap();
+    assert_eq!(unsafe { scripted.SelectedItems().unwrap().Count() }.unwrap(), 2);
+    assert_eq!(unsafe { scripted.FocusedItem().unwrap().Path() }.unwrap().to_string(), picked[1].to_string_lossy());
     enable(false);
     let gone = wait_for(|| find(&windows, &folder).is_none().then_some(()));
     cleanup();

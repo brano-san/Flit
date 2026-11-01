@@ -91,6 +91,9 @@ pub trait Window {
     fn request_redraw(&self);
     fn set_title(&self, title: &str);
     fn set_folder(&self, _folder: Option<&FsPath>) {}
+    fn set_selection(&self, _selection: &dyn Fn() -> (Vec<FsPath>, Option<FsPath>)) -> bool {
+        true
+    }
     fn set_cursor(&self, cursor: CursorIcon);
     fn minimize(&self);
     fn toggle_maximize(&self);

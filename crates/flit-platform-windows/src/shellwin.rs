@@ -7,17 +7,22 @@ use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 use windows::core::{BSTR, GUID, HRESULT, PCWSTR};
-use windows::Win32::Foundation::{E_NOINTERFACE, E_NOTIMPL, HWND, LPARAM, LRESULT, RECT, SHANDLE_PTR, S_FALSE, VARIANT_BOOL, VARIANT_TRUE, WPARAM};
+use windows::Win32::Foundation::{DISP_E_BADINDEX, E_FAIL, E_INVALIDARG, E_NOINTERFACE, E_NOTIMPL, HWND, LPARAM, LRESULT, POINT, RECT, SHANDLE_PTR, S_FALSE, S_OK, VARIANT_BOOL, VARIANT_FALSE, VARIANT_TRUE, WPARAM};
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, IDispatch, IDispatch_Impl, IServiceProvider, IServiceProvider_Impl, IStream, ITypeInfo, CLSCTX_ALL, COINIT_MULTITHREADED, DISPATCH_FLAGS, DISPPARAMS, EXCEPINFO};
-use windows::Win32::System::Ole::{IOleWindow_Impl, OLEMENUGROUPWIDTHS};
+use windows::Win32::System::Ole::{DispGetIDsOfNames, DispInvoke, IEnumVARIANT, IEnumVARIANT_Impl, IOleWindow_Impl, LoadRegTypeLib, OLECMDEXECOPT, OLECMDF, OLECMDID, OLEMENUGROUPWIDTHS, READYSTATE, READYSTATE_COMPLETE};
 use windows::Win32::System::Variant::{InitVariantFromBuffer, VARIANT};
 use windows::Win32::UI::Controls::{LPFNSVADDPROPSHEETPAGE, TBBUTTON};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
-    ILCombine, ILCreateFromPathW, ILFree, ILGetSize, IShellBrowser, IShellBrowser_Impl, IShellView, IShellView_Impl, IShellWindows, IWebBrowserApp, IWebBrowserApp_Impl, IWebBrowser_Impl, SHGetNameFromIDList, ShellWindows, FOLDERSETTINGS, SIGDN_FILESYSPATH, SVSI_SELECT, SWC_BROWSER, _SVGIO,
+    Folder, FolderItem, FolderItems, FolderItems_Impl, IShellDispatch, IShellFolderViewDual, IShellFolderViewDual_Impl, Shell, ILClone, ILCombine, ILCreateFromPathW, ILFindLastID, ILFree, ILGetSize, IFolderView, IFolderView_Impl, IShellBrowser, IShellBrowser_Impl, IShellItem, IShellItemArray, IShellView, IShellView_Impl, IShellWindows, IWebBrowser2, IWebBrowser2_Impl, IWebBrowserApp_Impl,
+    IWebBrowser_Impl, SHCreateItemFromIDList, SHCreateShellItemArrayFromIDLists, SHGetNameFromIDList, ShellWindows, BHID_DataObject, BHID_SFObject, FOLDERSETTINGS, FVM_DETAILS, SIGDN, SIGDN_FILESYSPATH, SIGDN_NORMALDISPLAY, SIGDN_URL, SVGIO_ALLVIEW, SVGIO_SELECTION,
+    SVGIO_TYPE_MASK, SVSI_SELECT, SWC_BROWSER, _SVGIO,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, HMENU, MSG};
-use windows_core::{implement, ComObject, IUnknownImpl, Interface, Ref};
+use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, GetWindowThreadProcessId, HMENU, MSG};
+use windows_core::{implement, ComObject, IUnknown, IUnknownImpl, Interface, Ref};
+
+const LIBID_SHDOCVW: GUID = GUID::from_u128(0xeab22ac0_30c1_11cf_a7eb_0000c05bae0b);
+const LIBID_SHELL32: GUID = GUID::from_u128(0x50a7e9b0_70ef_11d1_b75a_00a0c90564fe);
 
 enum Msg {
     Set(isize, Option<Vec<u16>>),
@@ -27,10 +32,17 @@ enum Msg {
 
 const REVOKE_WAIT: Duration = Duration::from_millis(500);
 
+#[derive(Clone, Default)]
+struct Selection {
+    items: Vec<Vec<u16>>,
+    focused: Option<Vec<u16>>,
+}
+
 #[derive(Default)]
 struct State {
     on: bool,
     folders: HashMap<isize, Vec<u16>>,
+    selections: HashMap<isize, Selection>,
     worker: Option<Sender<Msg>>,
 }
 
@@ -75,7 +87,10 @@ pub fn show(hwnd: HWND, folder: Option<&FsPath>) {
         }
         match &folder {
             Some(f) => s.folders.insert(key, f.clone()),
-            None => s.folders.remove(&key),
+            None => {
+                s.selections.remove(&key);
+                s.folders.remove(&key)
+            }
         };
         if !s.on {
             return None;
@@ -91,6 +106,16 @@ pub fn show(hwnd: HWND, folder: Option<&FsPath>) {
     if let Some(rx) = ack {
         let _ = rx.recv_timeout(REVOKE_WAIT);
     }
+}
+
+pub fn select(hwnd: HWND, selection: &dyn Fn() -> (Vec<FsPath>, Option<FsPath>)) -> bool {
+    if !with(|s| s.on) {
+        return false;
+    }
+    let (items, focused) = selection();
+    let picked = Selection { items: items.iter().map(|p| p.to_wide(false)).collect(), focused: focused.map(|p| p.to_wide(false)) };
+    with(|s| s.selections.insert(hwnd.0 as isize, picked));
+    true
 }
 
 impl State {
@@ -164,10 +189,10 @@ fn set(windows: &IShellWindows, registered: &mut HashMap<isize, Registration>, h
         }
         return Ok(());
     }
-    let object = ComObject::new(Browser { hwnd, folder: Mutex::new(pidl) });
+    let object = ComObject::new(Browser { hwnd, folder: Mutex::new(pidl), dispatch: browser_type() });
     let thread = unsafe { GetWindowThreadProcessId(HWND(hwnd as _), None) };
     let cookie = unsafe { windows.RegisterPending(thread as i32, &location, &VARIANT::default(), SWC_BROWSER)? };
-    let app: IWebBrowserApp = object.to_interface();
+    let app: IWebBrowser2 = object.to_interface();
     if let Err(e) = unsafe { windows.Register(&app.cast::<IDispatch>()?, hwnd as i32, SWC_BROWSER) } {
         let _ = unsafe { windows.Revoke(cookie) };
         return Err(e);
@@ -190,10 +215,19 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-#[implement(IWebBrowserApp, IServiceProvider, IShellBrowser, IShellView)]
+fn browser_type() -> Option<ITypeInfo> {
+    unsafe { LoadRegTypeLib(&LIBID_SHDOCVW, 1, 1, 0).and_then(|lib| lib.GetTypeInfoOfGuid(&IWebBrowser2::IID)) }.inspect_err(|e| tracing::info!("no browser type library: {e}")).ok()
+}
+
+fn pidls(paths: &[Vec<u16>]) -> Vec<Vec<u8>> {
+    paths.iter().filter_map(|p| parse(p)).collect()
+}
+
+#[implement(IWebBrowser2, IServiceProvider, IShellBrowser, IShellView, IFolderView)]
 struct Browser {
     hwnd: isize,
     folder: Mutex<Vec<u8>>,
+    dispatch: Option<ITypeInfo>,
 }
 
 impl Browser_Impl {
@@ -207,10 +241,122 @@ impl Browser_Impl {
         unsafe { ILFree(Some(full)) };
         unsafe { take_pwstr(name.ok()?) }.and_then(|w| FsPath::from_utf16(&w))
     }
+
+    fn folder_name(&self, form: SIGDN) -> windows::core::Result<BSTR> {
+        let folder = lock(&self.folder);
+        let name = unsafe { SHGetNameFromIDList(folder.as_ptr().cast(), form)? };
+        let wide = unsafe { take_pwstr(name) }.unwrap_or_default();
+        Ok(BSTR::from_wide(wide.strip_suffix(&[0]).unwrap_or(&wide)))
+    }
+
+    fn rect(&self) -> windows::core::Result<RECT> {
+        let mut r = RECT::default();
+        unsafe { GetWindowRect(HWND(self.hwnd as _), &mut r)? };
+        Ok(r)
+    }
+
+    fn selection(&self) -> Selection {
+        with(|s| s.selections.get(&self.hwnd).cloned().unwrap_or_default())
+    }
+
+    fn listed(&self) -> Vec<Vec<u16>> {
+        let Selection { mut items, focused } = self.selection();
+        if let Some(f) = focused.filter(|f| !items.contains(f)) {
+            items.push(f);
+        }
+        items
+    }
+
+    fn paths(&self, flags: &_SVGIO) -> windows::core::Result<Vec<Vec<u16>>> {
+        match _SVGIO(flags.0 & SVGIO_TYPE_MASK.0) {
+            SVGIO_SELECTION => Ok(self.selection().items),
+            SVGIO_ALLVIEW => Ok(self.listed()),
+            _ => unsupported(),
+        }
+    }
+
+    fn items(&self, flags: &_SVGIO, riid: *const GUID, out: *mut *mut core::ffi::c_void) -> windows::core::Result<()> {
+        let pidls = pidls(&self.paths(flags)?);
+        if pidls.is_empty() {
+            return Err(E_FAIL.into());
+        }
+        let list: Vec<*const ITEMIDLIST> = pidls.iter().map(|p| p.as_ptr().cast()).collect();
+        let array: IShellItemArray = unsafe { SHCreateShellItemArrayFromIDLists(&list)? };
+        if unsafe { array.query(riid, out) }.is_ok() {
+            return Ok(());
+        }
+        unsafe { (Interface::vtable(&array).BindToHandler)(array.as_raw(), std::ptr::null_mut(), &BHID_DataObject, riid, out).ok() }
+    }
+
+    fn select_path(&self, path: FsPath) {
+        let Some((opens, wake)) = DELIVERY.get() else { return };
+        let open = Open { select: vec![path.as_bytes().to_vec()], target: OpenTarget::CurrentTab, ..Default::default() };
+        if lock(opens).as_ref().is_some_and(|tx| tx.send(open).is_ok()) {
+            wake();
+        }
+    }
 }
 
 fn unsupported<T>() -> windows::core::Result<T> {
     Err(E_NOTIMPL.into())
+}
+
+impl IFolderView_Impl for Browser_Impl {
+    fn GetCurrentViewMode(&self) -> windows::core::Result<u32> {
+        Ok(FVM_DETAILS.0 as u32)
+    }
+    fn SetCurrentViewMode(&self, _mode: u32) -> windows::core::Result<()> {
+        unsupported()
+    }
+    fn GetFolder(&self, riid: *const GUID, out: *mut *mut core::ffi::c_void) -> windows::core::Result<()> {
+        let item: IShellItem = unsafe { SHCreateItemFromIDList(lock(&self.folder).as_ptr().cast())? };
+        if unsafe { item.query(riid, out) }.is_ok() {
+            return Ok(());
+        }
+        unsafe { (Interface::vtable(&item).BindToHandler)(item.as_raw(), std::ptr::null_mut(), &BHID_SFObject, riid, out).ok() }
+    }
+    fn Item(&self, index: i32) -> windows::core::Result<*mut ITEMIDLIST> {
+        let listed = self.listed();
+        let pidl = usize::try_from(index).ok().and_then(|i| listed.get(i)).and_then(|p| parse(p)).ok_or(windows::core::Error::from(E_FAIL))?;
+        Ok(unsafe { ILClone(ILFindLastID(pidl.as_ptr().cast())) })
+    }
+    fn ItemCount(&self, flags: &_SVGIO) -> windows::core::Result<i32> {
+        Ok(self.paths(flags)?.len() as i32)
+    }
+    fn Items(&self, flags: &_SVGIO, riid: *const GUID, out: *mut *mut core::ffi::c_void) -> windows::core::Result<()> {
+        self.items(flags, riid, out)
+    }
+    fn GetSelectionMarkedItem(&self) -> windows::core::Result<i32> {
+        unsupported()
+    }
+    fn GetFocusedItem(&self) -> windows::core::Result<i32> {
+        let Selection { items, focused } = self.selection();
+        let focused = focused.ok_or(windows::core::Error::from(E_FAIL))?;
+        Ok(items.iter().position(|i| *i == focused).unwrap_or(items.len()) as i32)
+    }
+    fn GetItemPosition(&self, _item: *const ITEMIDLIST) -> windows::core::Result<POINT> {
+        unsupported()
+    }
+    fn GetSpacing(&self, _spacing: *mut POINT) -> windows::core::Result<()> {
+        unsupported()
+    }
+    fn GetDefaultSpacing(&self) -> windows::core::Result<POINT> {
+        unsupported()
+    }
+    fn GetAutoArrange(&self) -> windows::core::Result<()> {
+        Err(S_FALSE.into())
+    }
+    fn SelectItem(&self, index: i32, flags: u32) -> windows::core::Result<()> {
+        let listed = self.listed();
+        let path = usize::try_from(index).ok().and_then(|i| listed.get(i)).and_then(|p| FsPath::from_utf16(p.strip_suffix(&[0]).unwrap_or(p)));
+        if let Some(path) = path.filter(|_| flags & SVSI_SELECT.0 as u32 != 0) {
+            self.select_path(path);
+        }
+        Ok(())
+    }
+    fn SelectAndPositionItems(&self, _count: u32, _items: *const *const ITEMIDLIST, _points: *const POINT, _flags: u32) -> windows::core::Result<()> {
+        unsupported()
+    }
 }
 
 impl IShellView_Impl for Browser_Impl {
@@ -245,15 +391,13 @@ impl IShellView_Impl for Browser_Impl {
         if flags & SVSI_SELECT.0 as u32 == 0 || item.is_null() {
             return Ok(());
         }
-        let (Some(path), Some((opens, wake))) = (self.item_path(item), DELIVERY.get()) else { return Ok(()) };
-        let open = Open { select: vec![path.as_bytes().to_vec()], target: OpenTarget::CurrentTab, ..Default::default() };
-        if lock(opens).as_ref().is_some_and(|tx| tx.send(open).is_ok()) {
-            wake();
+        if let Some(path) = self.item_path(item) {
+            self.select_path(path);
         }
         Ok(())
     }
-    fn GetItemObject(&self, _item: &_SVGIO, _riid: *const GUID, _out: *mut *mut core::ffi::c_void) -> windows::core::Result<()> {
-        unsupported()
+    fn GetItemObject(&self, item: &_SVGIO, riid: *const GUID, out: *mut *mut core::ffi::c_void) -> windows::core::Result<()> {
+        self.items(item, riid, out)
     }
 }
 
@@ -318,20 +462,198 @@ impl IServiceProvider_Impl for Browser_Impl {
     }
 }
 
+fn shell_type(iid: &GUID) -> Option<ITypeInfo> {
+    unsafe { LoadRegTypeLib(&LIBID_SHELL32, 1, 0, 0).and_then(|lib| lib.GetTypeInfoOfGuid(iid)) }.ok()
+}
+
+fn type_info(dispatch: &Option<ITypeInfo>, index: u32) -> windows::core::Result<ITypeInfo> {
+    match dispatch {
+        Some(t) if index == 0 => Ok(t.clone()),
+        Some(_) => Err(DISP_E_BADINDEX.into()),
+        None => unsupported(),
+    }
+}
+
+fn ids_of(dispatch: &Option<ITypeInfo>, names: *const PCWSTR, count: u32, ids: *mut i32) -> windows::core::Result<()> {
+    let Some(t) = dispatch else { return unsupported() };
+    unsafe { DispGetIDsOfNames(t, names, count, ids) }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn invoke(dispatch: &Option<ITypeInfo>, this: *mut core::ffi::c_void, id: i32, flags: DISPATCH_FLAGS, params: *const DISPPARAMS, result: *mut VARIANT, exception: *mut EXCEPINFO, arg: *mut u32) -> windows::core::Result<()> {
+    let Some(t) = dispatch else { return unsupported() };
+    unsafe { DispInvoke(this, t, id, flags.0, params.cast_mut(), result, exception, arg) }
+}
+
 impl IDispatch_Impl for Browser_Impl {
     fn GetTypeInfoCount(&self) -> windows::core::Result<u32> {
-        Ok(0)
+        Ok(u32::from(self.dispatch.is_some()))
     }
-    fn GetTypeInfo(&self, _index: u32, _lcid: u32) -> windows::core::Result<ITypeInfo> {
+    fn GetTypeInfo(&self, index: u32, _lcid: u32) -> windows::core::Result<ITypeInfo> {
+        type_info(&self.dispatch, index)
+    }
+    fn GetIDsOfNames(&self, _riid: *const GUID, names: *const PCWSTR, count: u32, _lcid: u32, ids: *mut i32) -> windows::core::Result<()> {
+        ids_of(&self.dispatch, names, count, ids)
+    }
+    fn Invoke(&self, id: i32, _riid: *const GUID, _lcid: u32, flags: DISPATCH_FLAGS, params: *const DISPPARAMS, result: *mut VARIANT, exception: *mut EXCEPINFO, arg: *mut u32) -> windows::core::Result<()> {
+        invoke(&self.dispatch, self.to_interface::<IWebBrowser2>().as_raw(), id, flags, params, result, exception, arg)
+    }
+}
+
+fn shell() -> windows::core::Result<IShellDispatch> {
+    unsafe { CoCreateInstance(&Shell, None, CLSCTX_ALL) }
+}
+
+fn folder_item(shell: &IShellDispatch, path: &[u16]) -> Option<FolderItem> {
+    let path = std::path::PathBuf::from(String::from_utf16_lossy(path.strip_suffix(&[0]).unwrap_or(path)));
+    let folder = unsafe { shell.NameSpace(&VARIANT::from(path.parent()?.to_str()?)) }.ok()?;
+    unsafe { folder.ParseName(&BSTR::from(path.file_name()?.to_str()?)) }.ok()
+}
+
+#[implement(IShellFolderViewDual, IServiceProvider)]
+struct View {
+    owner: ComObject<Browser>,
+    dispatch: Option<ITypeInfo>,
+}
+
+impl IServiceProvider_Impl for View_Impl {
+    fn QueryService(&self, service: *const GUID, riid: *const GUID, out: *mut *mut core::ffi::c_void) -> windows::core::Result<()> {
+        IServiceProvider_Impl::QueryService(&*self.owner, service, riid, out)
+    }
+}
+
+impl IDispatch_Impl for View_Impl {
+    fn GetTypeInfoCount(&self) -> windows::core::Result<u32> {
+        Ok(u32::from(self.dispatch.is_some()))
+    }
+    fn GetTypeInfo(&self, index: u32, _lcid: u32) -> windows::core::Result<ITypeInfo> {
+        type_info(&self.dispatch, index)
+    }
+    fn GetIDsOfNames(&self, _riid: *const GUID, names: *const PCWSTR, count: u32, _lcid: u32, ids: *mut i32) -> windows::core::Result<()> {
+        ids_of(&self.dispatch, names, count, ids)
+    }
+    fn Invoke(&self, id: i32, _riid: *const GUID, _lcid: u32, flags: DISPATCH_FLAGS, params: *const DISPPARAMS, result: *mut VARIANT, exception: *mut EXCEPINFO, arg: *mut u32) -> windows::core::Result<()> {
+        invoke(&self.dispatch, self.to_interface::<IShellFolderViewDual>().as_raw(), id, flags, params, result, exception, arg)
+    }
+}
+
+impl IShellFolderViewDual_Impl for View_Impl {
+    fn Application(&self) -> windows::core::Result<IDispatch> {
+        shell()?.cast()
+    }
+    fn Parent(&self) -> windows::core::Result<IDispatch> {
+        self.owner.to_interface::<IWebBrowser2>().cast()
+    }
+    fn Folder(&self) -> windows::core::Result<Folder> {
+        let path = self.owner.folder_name(SIGDN_FILESYSPATH)?;
+        unsafe { shell()?.NameSpace(&VARIANT::from(path.to_string().as_str())) }
+    }
+    fn SelectedItems(&self) -> windows::core::Result<FolderItems> {
+        let shell = shell()?;
+        let list = self.owner.selection().items.iter().filter_map(|p| folder_item(&shell, p)).collect();
+        Ok(ComObject::new(Items { list, view: self.to_interface::<IShellFolderViewDual>().cast()?, dispatch: shell_type(&FolderItems::IID) }).to_interface())
+    }
+    fn FocusedItem(&self) -> windows::core::Result<FolderItem> {
+        let focused = self.owner.selection().focused.ok_or(windows::core::Error::from(S_FALSE))?;
+        folder_item(&shell()?, &focused).ok_or(S_FALSE.into())
+    }
+    fn SelectItem(&self, item: *const VARIANT, flags: i32) -> windows::core::Result<()> {
+        let item = unsafe { item.as_ref() }.ok_or(windows::core::Error::from(E_INVALIDARG))?;
+        let path = match IDispatch::try_from(item) {
+            Ok(d) => unsafe { d.cast::<FolderItem>()?.Path()? },
+            Err(_) => BSTR::try_from(item)?,
+        };
+        if let Some(path) = FsPath::parse(&path.to_string()).filter(|_| flags & SVSI_SELECT.0 != 0) {
+            self.owner.select_path(path);
+        }
+        Ok(())
+    }
+    fn PopupItemMenu(&self, _item: Ref<FolderItem>, _x: &VARIANT, _y: &VARIANT) -> windows::core::Result<BSTR> {
         unsupported()
     }
-    fn GetIDsOfNames(&self, _riid: *const GUID, _names: *const PCWSTR, _count: u32, _lcid: u32, _ids: *mut i32) -> windows::core::Result<()> {
+    fn Script(&self) -> windows::core::Result<IDispatch> {
         unsupported()
     }
-    fn Invoke(&self, _id: i32, _riid: *const GUID, _lcid: u32, _flags: DISPATCH_FLAGS, _params: *const DISPPARAMS, _result: *mut VARIANT, _exception: *mut EXCEPINFO, _arg: *mut u32) -> windows::core::Result<()> {
+    fn ViewOptions(&self) -> windows::core::Result<i32> {
         unsupported()
     }
 }
+
+#[implement(FolderItems)]
+struct Items {
+    list: Vec<FolderItem>,
+    view: IDispatch,
+    dispatch: Option<ITypeInfo>,
+}
+
+impl IDispatch_Impl for Items_Impl {
+    fn GetTypeInfoCount(&self) -> windows::core::Result<u32> {
+        Ok(u32::from(self.dispatch.is_some()))
+    }
+    fn GetTypeInfo(&self, index: u32, _lcid: u32) -> windows::core::Result<ITypeInfo> {
+        type_info(&self.dispatch, index)
+    }
+    fn GetIDsOfNames(&self, _riid: *const GUID, names: *const PCWSTR, count: u32, _lcid: u32, ids: *mut i32) -> windows::core::Result<()> {
+        ids_of(&self.dispatch, names, count, ids)
+    }
+    fn Invoke(&self, id: i32, _riid: *const GUID, _lcid: u32, flags: DISPATCH_FLAGS, params: *const DISPPARAMS, result: *mut VARIANT, exception: *mut EXCEPINFO, arg: *mut u32) -> windows::core::Result<()> {
+        invoke(&self.dispatch, self.to_interface::<FolderItems>().as_raw(), id, flags, params, result, exception, arg)
+    }
+}
+
+impl FolderItems_Impl for Items_Impl {
+    fn Count(&self) -> windows::core::Result<i32> {
+        Ok(self.list.len() as i32)
+    }
+    fn Application(&self) -> windows::core::Result<IDispatch> {
+        shell()?.cast()
+    }
+    fn Parent(&self) -> windows::core::Result<IDispatch> {
+        Ok(self.view.clone())
+    }
+    fn Item(&self, index: &VARIANT) -> windows::core::Result<FolderItem> {
+        let at = i32::try_from(index).ok().and_then(|i| usize::try_from(i).ok());
+        at.and_then(|i| self.list.get(i)).cloned().ok_or(S_FALSE.into())
+    }
+    fn _NewEnum(&self) -> windows::core::Result<IUnknown> {
+        Ok(ComObject::new(Walk { list: self.list.clone(), at: Mutex::new(0) }).to_interface::<IEnumVARIANT>().into())
+    }
+}
+
+#[implement(IEnumVARIANT)]
+struct Walk {
+    list: Vec<FolderItem>,
+    at: Mutex<usize>,
+}
+
+impl IEnumVARIANT_Impl for Walk_Impl {
+    fn Next(&self, count: u32, out: *mut VARIANT, fetched: *mut u32) -> HRESULT {
+        let mut at = lock(&self.at);
+        let taken: Vec<&FolderItem> = self.list.iter().skip(*at).take(count as usize).collect();
+        for (k, item) in taken.iter().enumerate() {
+            let value = item.cast::<IDispatch>().map(VARIANT::from).unwrap_or_default();
+            unsafe { out.add(k).write(value) };
+        }
+        *at += taken.len();
+        if let Some(f) = unsafe { fetched.as_mut() } {
+            *f = taken.len() as u32;
+        }
+        if taken.len() == count as usize { S_OK } else { S_FALSE }
+    }
+    fn Skip(&self, count: u32) -> HRESULT {
+        let mut at = lock(&self.at);
+        *at += count as usize;
+        if *at <= self.list.len() { S_OK } else { S_FALSE }
+    }
+    fn Reset(&self) -> windows::core::Result<()> {
+        *lock(&self.at) = 0;
+        Ok(())
+    }
+    fn Clone(&self) -> windows::core::Result<IEnumVARIANT> {
+        Ok(ComObject::new(Walk { list: self.list.clone(), at: Mutex::new(*lock(&self.at)) }).to_interface())
+    }
+}
+
 
 impl IWebBrowser_Impl for Browser_Impl {
     fn GoBack(&self) -> windows::core::Result<()> {
@@ -359,16 +681,16 @@ impl IWebBrowser_Impl for Browser_Impl {
         Ok(())
     }
     fn Application(&self) -> windows::core::Result<IDispatch> {
-        self.Document()
+        self.to_interface::<IWebBrowser2>().cast()
     }
     fn Parent(&self) -> windows::core::Result<IDispatch> {
-        self.Document()
+        self.to_interface::<IWebBrowser2>().cast()
     }
     fn Container(&self) -> windows::core::Result<IDispatch> {
         unsupported()
     }
     fn Document(&self) -> windows::core::Result<IDispatch> {
-        self.to_object().to_interface::<IWebBrowserApp>().cast()
+        ComObject::new(View { owner: self.to_object(), dispatch: shell_type(&IShellFolderViewDual::IID) }).to_interface::<IShellFolderViewDual>().cast()
     }
     fn TopLevelContainer(&self) -> windows::core::Result<VARIANT_BOOL> {
         Ok(VARIANT_TRUE)
@@ -377,37 +699,37 @@ impl IWebBrowser_Impl for Browser_Impl {
         unsupported()
     }
     fn Left(&self) -> windows::core::Result<i32> {
-        unsupported()
+        Ok(self.rect()?.left)
     }
     fn SetLeft(&self, _left: i32) -> windows::core::Result<()> {
         unsupported()
     }
     fn Top(&self) -> windows::core::Result<i32> {
-        unsupported()
+        Ok(self.rect()?.top)
     }
     fn SetTop(&self, _top: i32) -> windows::core::Result<()> {
         unsupported()
     }
     fn Width(&self) -> windows::core::Result<i32> {
-        unsupported()
+        self.rect().map(|r| r.right - r.left)
     }
     fn SetWidth(&self, _width: i32) -> windows::core::Result<()> {
         unsupported()
     }
     fn Height(&self) -> windows::core::Result<i32> {
-        unsupported()
+        self.rect().map(|r| r.bottom - r.top)
     }
     fn SetHeight(&self, _height: i32) -> windows::core::Result<()> {
         unsupported()
     }
     fn LocationName(&self) -> windows::core::Result<BSTR> {
-        unsupported()
+        self.folder_name(SIGDN_NORMALDISPLAY)
     }
     fn LocationURL(&self) -> windows::core::Result<BSTR> {
-        unsupported()
+        self.folder_name(SIGDN_URL)
     }
     fn Busy(&self) -> windows::core::Result<VARIANT_BOOL> {
-        Ok(VARIANT_BOOL(0))
+        Ok(VARIANT_FALSE)
     }
 }
 
@@ -431,10 +753,13 @@ impl IWebBrowserApp_Impl for Browser_Impl {
         Ok(SHANDLE_PTR(self.hwnd))
     }
     fn FullName(&self) -> windows::core::Result<BSTR> {
-        unsupported()
+        let exe = std::env::current_exe().map_err(|_| windows::core::Error::from(E_FAIL))?;
+        Ok(BSTR::from(exe.to_string_lossy().as_ref()))
     }
     fn Path(&self) -> windows::core::Result<BSTR> {
-        unsupported()
+        let exe = std::env::current_exe().map_err(|_| windows::core::Error::from(E_FAIL))?;
+        let dir = exe.parent().ok_or(windows::core::Error::from(E_FAIL))?;
+        Ok(BSTR::from(format!("{}\\", dir.to_string_lossy().trim_end_matches('\\'))))
     }
     fn Visible(&self) -> windows::core::Result<VARIANT_BOOL> {
         Ok(VARIANT_TRUE)
@@ -470,6 +795,66 @@ impl IWebBrowserApp_Impl for Browser_Impl {
         unsupported()
     }
     fn SetFullScreen(&self, _value: VARIANT_BOOL) -> windows::core::Result<()> {
+        unsupported()
+    }
+}
+
+impl IWebBrowser2_Impl for Browser_Impl {
+    fn Navigate2(&self, _url: *const VARIANT, _flags: *const VARIANT, _frame: *const VARIANT, _post: *const VARIANT, _headers: *const VARIANT) -> windows::core::Result<()> {
+        unsupported()
+    }
+    fn QueryStatusWB(&self, _cmd: OLECMDID) -> windows::core::Result<OLECMDF> {
+        unsupported()
+    }
+    fn ExecWB(&self, _cmd: OLECMDID, _option: OLECMDEXECOPT, _input: *const VARIANT, _output: *mut VARIANT) -> windows::core::Result<()> {
+        unsupported()
+    }
+    fn ShowBrowserBar(&self, _clsid: *const VARIANT, _show: *const VARIANT, _size: *const VARIANT) -> windows::core::Result<()> {
+        unsupported()
+    }
+    fn ReadyState(&self) -> windows::core::Result<READYSTATE> {
+        Ok(READYSTATE_COMPLETE)
+    }
+    fn Offline(&self) -> windows::core::Result<VARIANT_BOOL> {
+        Ok(VARIANT_FALSE)
+    }
+    fn SetOffline(&self, _value: VARIANT_BOOL) -> windows::core::Result<()> {
+        unsupported()
+    }
+    fn Silent(&self) -> windows::core::Result<VARIANT_BOOL> {
+        Ok(VARIANT_FALSE)
+    }
+    fn SetSilent(&self, _value: VARIANT_BOOL) -> windows::core::Result<()> {
+        unsupported()
+    }
+    fn RegisterAsBrowser(&self) -> windows::core::Result<VARIANT_BOOL> {
+        Ok(VARIANT_TRUE)
+    }
+    fn SetRegisterAsBrowser(&self, _value: VARIANT_BOOL) -> windows::core::Result<()> {
+        unsupported()
+    }
+    fn RegisterAsDropTarget(&self) -> windows::core::Result<VARIANT_BOOL> {
+        Ok(VARIANT_FALSE)
+    }
+    fn SetRegisterAsDropTarget(&self, _value: VARIANT_BOOL) -> windows::core::Result<()> {
+        unsupported()
+    }
+    fn TheaterMode(&self) -> windows::core::Result<VARIANT_BOOL> {
+        Ok(VARIANT_FALSE)
+    }
+    fn SetTheaterMode(&self, _value: VARIANT_BOOL) -> windows::core::Result<()> {
+        unsupported()
+    }
+    fn AddressBar(&self) -> windows::core::Result<VARIANT_BOOL> {
+        Ok(VARIANT_TRUE)
+    }
+    fn SetAddressBar(&self, _value: VARIANT_BOOL) -> windows::core::Result<()> {
+        unsupported()
+    }
+    fn Resizable(&self) -> windows::core::Result<VARIANT_BOOL> {
+        Ok(VARIANT_TRUE)
+    }
+    fn SetResizable(&self, _value: VARIANT_BOOL) -> windows::core::Result<()> {
         unsupported()
     }
 }

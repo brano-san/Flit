@@ -254,6 +254,7 @@ struct WinState<P: Platform> {
     preview_rev: u64,
     backdrop_rev: u64,
     dark: Option<bool>,
+    selection_key: Option<(TabId, u64, u64, Option<u32>)>,
 }
 
 struct Handler<P: Platform> {
@@ -645,6 +646,10 @@ impl<P: Platform> Handler<P> {
         if let Some(st) = self.windows.get_mut(&id) {
             if let Some(area) = st.app.ime_area() {
                 window.set_ime_area(area);
+            }
+            let key = st.app.selection_key();
+            if st.selection_key != Some(key) && window.set_selection(&|| st.app.selection_paths()) {
+                st.selection_key = Some(key);
             }
             if st.app.needs_redraw() {
                 window.request_redraw();
@@ -1058,7 +1063,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         for k in &self.kept.kept {
             gfx.add_image(k.key, k.image.width, k.image.height, k.image.rgba.clone());
         }
-        let st = WinState { app, gfx, renderer: None, software: false, device_gen: 0, visible: Arc::default(), session_rev: 0, placement: Some(window.placement()), born, preview_rev: u64::MAX, backdrop_rev: u64::MAX, dark: None };
+        let st = WinState { app, gfx, renderer: None, software: false, device_gen: 0, visible: Arc::default(), session_rev: 0, placement: Some(window.placement()), born, preview_rev: u64::MAX, backdrop_rev: u64::MAX, dark: None, selection_key: None };
         self.windows.insert(id, st);
         self.active = Some(id);
         self.flush(window);

@@ -310,6 +310,10 @@ impl Window for Win32Window {
         crate::shellwin::show(self.hwnd(), folder);
     }
 
+    fn set_selection(&self, selection: &dyn Fn() -> (Vec<FsPath>, Option<FsPath>)) -> bool {
+        crate::shellwin::select(self.hwnd(), selection)
+    }
+
     fn placement(&self) -> Placement {
         let mut wp = WINDOWPLACEMENT { length: size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
         match self.restore.get() {

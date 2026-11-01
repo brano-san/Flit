@@ -397,6 +397,17 @@ impl App {
         }
     }
 
+    pub fn selection_key(&self) -> (TabId, u64, u64, Option<u32>) {
+        let t = self.tab();
+        let v = t.view.as_ref();
+        (t.id, t.gen, v.map_or(0, |v| v.selection_rev()), v.and_then(|v| v.focus))
+    }
+
+    pub fn selection_paths(&self) -> (Vec<FsPath>, Option<FsPath>) {
+        let focused = self.tab().view.as_ref().and_then(|v| v.focus).and_then(|i| self.item_paths(&[i]).ok()?.pop());
+        (self.item_paths(&self.selected_items()).unwrap_or_default(), focused)
+    }
+
     pub(super) fn selected_items(&self) -> Vec<u32> {
         let t = self.tab();
         match &t.view {

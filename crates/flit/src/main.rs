@@ -47,6 +47,15 @@ fn wtf8(s: &OsStr) -> Vec<u8> {
     }
 }
 
+#[cfg(windows)]
+fn hand_to_explorer(open: &flit_core::open::Open) -> bool {
+    let locations = flit_core::open::explorer_only(open, &P::known_folder);
+    for location in &locations {
+        let _ = std::process::Command::new("explorer.exe").arg(location).spawn();
+    }
+    !locations.is_empty()
+}
+
 fn main() {
     let started = Instant::now();
     let mut args: Vec<Vec<u8>> = Vec::new();
@@ -75,6 +84,10 @@ fn main() {
     }
     let cwd = std::env::current_dir().ok().map(|d| wtf8(d.as_os_str()));
     let open = parse_args(&args, cwd);
+    #[cfg(windows)]
+    if hand_to_explorer(&open) {
+        return;
+    }
     let mut standalone = None;
     let instance = match metrics {
         Some(_) => None,

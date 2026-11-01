@@ -225,6 +225,19 @@ pub fn routes(open: &Open, shell_folder: &dyn Fn(&str) -> Option<Location>) -> (
     (ok, failed)
 }
 
+pub fn explorer_only(open: &Open, shell_folder: &dyn Fn(&str) -> Option<Location>) -> Vec<String> {
+    if open.tag.is_some() {
+        return Vec::new();
+    }
+    let (routes, errors) = routes(open, shell_folder);
+    let shell: Vec<String> = errors.iter().filter_map(|e| if let ResolveError::UnknownShellLocation(s) = e { Some(s.clone()) } else { None }).collect();
+    if routes.is_empty() && shell.len() == errors.len() {
+        shell
+    } else {
+        Vec::new()
+    }
+}
+
 #[cfg(test)]
 #[path = "../test/open.rs"]
 mod tests;

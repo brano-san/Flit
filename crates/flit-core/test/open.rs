@@ -77,6 +77,20 @@ fn resolution() {
 }
 
 #[test]
+fn only_virtual_folders_go_straight_to_explorer() {
+    let none = |_: &str| None;
+    let only = |a: &[&str]| explorer_only(&parse_args(&args(a), None), &none);
+    let panel = "::{26EE0668-A00A-44D7-9371-BEB064C98683}";
+    assert_eq!(only(&[panel]), [panel]);
+    assert_eq!(only(&["shell:Fonts", panel]), ["shell:Fonts", panel]);
+    assert!(only(&[panel, r"C:\Windows"]).is_empty(), "a real folder opens Flit, which hands the rest over");
+    assert!(only(&["::{645FF040-5081-101B-9F08-00AA002F954E}"]).is_empty(), "Flit shows the Recycle Bin itself");
+    assert!(only(&["::{20D04FE0-3AEA-1069-A2D8-08002B30309D}"]).is_empty());
+    assert!(only(&[]).is_empty());
+    assert!(only(&["-tag", "red", panel]).is_empty());
+}
+
+#[test]
 fn multibyte_paths_do_not_split_chars() {
     let none = |_: &str| None;
     for p in [r"C:\Пользователи", r"D:\Документы", r"C:\日本語", "shelЖ", "fileЖ:///"] {
