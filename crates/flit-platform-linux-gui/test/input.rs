@@ -61,3 +61,13 @@ fn wheel_notches_follow_windows_signs() {
     assert_eq!(wheel(MouseScrollDelta::LineDelta(0.0, 1.0), 1.0), (-0.0, 1.0));
     assert_eq!(wheel(MouseScrollDelta::LineDelta(1.0, 0.0), 1.0), (-1.0, 0.0));
 }
+
+#[test]
+fn a_ctrl_release_reaches_the_app_through_the_compositor_modifiers() {
+    let ctrl = ModifiersState::CONTROL;
+    let event = |mods: Mods| Some(Event::Key { key: Key::Other, mods, pressed: false });
+    assert_eq!(modifiers_changed(ctrl, ModifiersState::empty()), event(Mods::default()));
+    assert_eq!(modifiers_changed(ModifiersState::empty(), ctrl), event(Mods { ctrl: true, ..Mods::default() }));
+    assert_eq!(modifiers_changed(ctrl, ctrl), None);
+    assert_eq!(modifiers_changed(ModifiersState::META, ModifiersState::empty()), None, "keys Flit ignores change nothing");
+}

@@ -175,6 +175,11 @@ impl LinuxWindow {
         self.raw.set_cursor(icon.into());
     }
 
+    fn restore_cursor(&self) {
+        self.edge.set(None);
+        self.raw.set_cursor(input::cursor(self.cursor.get()).into());
+    }
+
     fn leave_compact(&self) {
         let Some((w, h)) = self.compact_from.take() else { return };
         self.raw.set_window_level(WindowLevel::Normal);
@@ -661,9 +666,14 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             WindowEvent::CloseRequested => handler.event(w, Event::CloseRequested),
             WindowEvent::Focused(focused) => {
                 node.clicks.reset();
+                self.mods = ModifiersState::empty();
                 handler.event(w, Event::Focus(focused));
             }
-            WindowEvent::ModifiersChanged(m) => self.mods = m.state(),
+            WindowEvent::ModifiersChanged(m) => {
+                if let Some(ev) = input::modifiers_changed(std::mem::replace(&mut self.mods, m.state()), m.state()) {
+                    handler.event(w, ev);
+                }
+            }
             WindowEvent::KeyboardInput { event, is_synthetic: false, .. } => {
                 let pressed = event.state == ElementState::Pressed;
                 handler.event(w, Event::Key { key: input::key(event.physical_key, &event.key_without_modifiers), mods: input::mods(self.mods), pressed });
@@ -682,8 +692,9 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                 w.track_edge(x, y);
                 handler.event(w, Event::MouseMove { x, y });
             }
+            WindowEvent::PointerEntered { .. } => w.restore_cursor(),
             WindowEvent::PointerLeft { .. } => {
-                w.edge.set(None);
+                w.restore_cursor();
                 handler.event(w, Event::MouseLeave);
             }
             WindowEvent::ActivationTokenDone { token, .. } => *TOKEN.lock().unwrap_or_else(|e| e.into_inner()) = Some(token.into_raw()),
