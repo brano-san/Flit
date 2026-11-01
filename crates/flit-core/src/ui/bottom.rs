@@ -92,9 +92,12 @@ impl App {
             }
             BottomHit::Elapsed => {}
             BottomHit::Layout | BottomHit::Zoom => {
-                let r = self.layout.bar.iter().find(|x| x.0 == BottomHit::Layout).map_or(Rect::default(), |x| x.1);
+                let r = self.layout.bar.iter().find(|x| x.0 == b).map_or(Rect::default(), |x| x.1);
                 let menu = self.build_layout_menu();
-                self.flit_menu(r.x, r.y, menu);
+                self.button_menu(Hit::Bottom(b), r.x, r.y, menu);
+                if b == BottomHit::Zoom {
+                    self.menu_right = Some(r.right());
+                }
             }
         }
         self.dirty = true;
@@ -142,8 +145,9 @@ impl App {
 
     fn bar_button<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, r: Rect, b: BottomHit, glyph: &str, on: bool) {
         let s3 = self.s(3.0);
-        if self.hover == Hit::Bottom(b) {
-            g.dl.round_rect(r, t.button_hover, s3);
+        let lit = self.lit(Hit::Bottom(b));
+        if lit > 0.0 {
+            g.dl.round_rect(r, super::widgets::faded(t.button_hover, lit), s3);
         }
         centered(g, r, if on { super::widgets::filled(glyph) } else { glyph }, self.icon_font(12.0), if on { t.text } else { t.text_dim });
         self.layout.bar.push((b, r));
@@ -162,8 +166,9 @@ impl App {
         let (pad, icon) = (self.s(6.0), self.s(16.0));
         let w = g.measure(label, font) + icon + 3.0 * pad;
         let br = Rect::new(right - w, r.y + self.s(2.0), w, r.h - self.s(4.0));
-        if self.hover == Hit::Bottom(b) {
-            g.dl.round_rect(br, t.button_hover, self.s(3.0));
+        let lit = self.lit(Hit::Bottom(b));
+        if lit > 0.0 {
+            g.dl.round_rect(br, super::widgets::faded(t.button_hover, lit), self.s(3.0));
         }
         let ir = Rect::new(br.x + pad, br.y, icon, br.h);
         centered(g, ir, glyph, self.icon_font(12.0), t.text_dim);
@@ -204,7 +209,7 @@ impl App {
         let zr = Rect::new(right - self.s(ZOOM_W), r.y + self.s(2.0), self.s(ZOOM_W), r.h - self.s(4.0));
         if mode.zoomed() {
             let fill = Rect::new(zr.x, zr.y, zr.w * zoom.min(100) as f32 / 100.0, zr.h);
-            g.dl.round_rect(zr, if self.hover == Hit::Bottom(BottomHit::Zoom) { t.button_hover } else { t.input_bg }, self.s(3.0));
+            g.dl.round_rect(zr, crate::theme::mix(t.input_bg, t.button_hover, self.lit(Hit::Bottom(BottomHit::Zoom)).max(f32::from(u8::from(self.menu_open_from(Hit::Bottom(BottomHit::Zoom)))))), self.s(3.0));
             if fill.w > 0.0 {
                 g.dl.round_rect(fill, t.accent.alpha(0x60), self.s(3.0));
             }
@@ -282,8 +287,9 @@ impl App {
             let w = g.measure(label, font) + self.s(16.0);
             right -= w;
             let b = Rect::new(right, r.y + self.s(2.0), w, r.h - self.s(4.0));
-            if self.hover == Hit::Branch {
-                g.dl.round_rect(b, t.button_hover, self.s(3.0));
+            let lit = self.lit(Hit::Branch);
+            if lit > 0.0 {
+                g.dl.round_rect(b, super::widgets::faded(t.button_hover, lit), self.s(3.0));
             }
             g.text(b.x + self.s(8.0), baseline, label, font, t.text_dim, f32::INFINITY);
             self.layout.branch = b;

@@ -758,7 +758,7 @@ impl App {
         p.field.draw(w.g, t, inner, font, active, placeholder.as_deref().or(p.placeholder.as_deref()).unwrap_or(p.pick.placeholder()), sc, Some(&self.preedit));
         w.icon_button(p.close, G_CLOSE, close_font, Button::of(hover == Hit::PaletteClose, false, true), t.text_dim);
         if let Some(c) = &p.commands {
-            w.toggle_button(p.describe, G_DESCRIBE, icons, c.descriptions, hover == Hit::PaletteDescribe);
+            w.toggle_button(p.describe, G_DESCRIBE, icons, c.descriptions, self.lit(Hit::PaletteDescribe));
         }
         if p.go.is_some() {
             self.draw_go_buttons(w.g, t, &p, icons);

@@ -1,6 +1,6 @@
 use super::field::Field;
 use super::options::{InspectorAt, INSPECTOR_SIZE};
-use super::widgets::{Button, Paint};
+use super::widgets::Paint;
 use super::{centered, icon_key, App, Bitmap, Drag, Effect, Focus, Hit, IconRequest, IconState};
 use crate::fmt as format;
 use crate::hash::{self, FxHashMap};
@@ -1107,7 +1107,7 @@ impl App {
     }
 
     fn tool_button<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, r: Rect, glyph: &str, hit: PaneHit, on: bool) {
-        let state = Button::of(self.hover == Hit::Preview(hit), on, true);
+        let state = self.button(Hit::Preview(hit), on, true);
         let font = if glyph.is_ascii() { self.ui_font(11.5) } else { self.icon_font(11.0) };
         Paint::new(g, t, self.scale).icon_button(r, glyph, font, state, t.text_dim);
         self.preview.buttons.push((r, hit));
@@ -1115,7 +1115,7 @@ impl App {
 
     fn toggle_tool<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, r: Rect, glyph: &str, hit: PaneHit, on: bool) {
         let font = if glyph.is_ascii() { self.ui_font(11.5) } else { self.icon_font(11.0) };
-        Paint::new(g, t, self.scale).toggle_button(r, glyph, font, on, self.hover == Hit::Preview(hit));
+        Paint::new(g, t, self.scale).toggle_button(r, glyph, font, on, self.lit(Hit::Preview(hit)));
         self.preview.buttons.push((r, hit));
     }
 
@@ -1180,7 +1180,7 @@ impl App {
         let w = tw + self.s(22.0);
         let tr = Rect::new(r.right() - self.s(4.0) - w, y, w, bw);
         let open = self.preview.look.card;
-        let state = Button::of(self.hover == Hit::Preview(PaneHit::Title), open, true);
+        let state = self.button(Hit::Preview(PaneHit::Title), open, true);
         let p = Paint::new(g, t, self.scale);
         if let Some(fill) = p.fill_of(state) {
             p.g.dl.round_rect(tr, fill, self.s(4.0));

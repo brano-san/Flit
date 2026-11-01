@@ -114,6 +114,7 @@ pub(super) const G_PLUS: &str = "\u{E710}";
 pub(super) enum Button {
     Idle,
     Hover,
+    Glow(u8),
     Open,
     Off,
 }
@@ -202,12 +203,16 @@ impl<'a, B: TextBackend> Paint<'a, B> {
     pub fn fill_of(&self, state: Button) -> Option<Color> {
         match state {
             Button::Hover => Some(self.t.teal),
+            Button::Glow(a) => Some(self.t.teal.alpha(((self.t.teal.0 >> 24) * u32::from(a) / 255) as u8)),
             Button::Open => Some(self.t.accent_fill),
             Button::Idle | Button::Off => None,
         }
     }
 
     pub fn ink_of(&self, state: Button, idle: Color) -> Color {
+        if let Button::Glow(a) = state {
+            return crate::theme::mix(idle, ink_on(self.t.teal), f32::from(a) / 255.0);
+        }
         match self.fill_of(state) {
             Some(fill) => ink_on(fill),
             None if state == Button::Off => self.t.text_dim.alpha(DISABLED),
@@ -223,9 +228,9 @@ impl<'a, B: TextBackend> Paint<'a, B> {
         self.centered(r, glyph, font, ink);
     }
 
-    pub fn toggle_button(&mut self, r: Rect, glyph: &str, font: FontStyle, on: bool, hover: bool) {
-        if hover {
-            self.g.dl.round_rect(r, self.t.button_hover, self.px(BUTTON_RADIUS));
+    pub fn toggle_button(&mut self, r: Rect, glyph: &str, font: FontStyle, on: bool, lit: f32) {
+        if lit > 0.0 {
+            self.g.dl.round_rect(r, faded(self.t.button_hover, lit), self.px(BUTTON_RADIUS));
         }
         let (glyph, ink) = if on { (filled(glyph), self.t.text) } else { (glyph, self.t.text_dim) };
         self.centered(r, glyph, font, ink);

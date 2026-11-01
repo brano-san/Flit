@@ -47,9 +47,11 @@ impl App {
         }
         let types = self.folder_types();
         let l = &self.layout;
-        let at = l.columns.iter().position(|&c| c == Column::Type).map_or((l.list.x, l.list.y), |k| (l.cols[k].x, l.cols[k].bottom()));
+        let funnel = l.columns.iter().position(|&c| c == Column::Type).map(|k| self.funnel_rect(l.cols[k]));
+        let at = funnel.map_or((l.list.x, l.list.y), |f| (f.x, f.bottom()));
         let menu = self.build_types_menu(&types);
         self.flit_menu(at.0, at.1, menu);
+        self.menu_right = funnel.map(|f| f.right());
     }
 
     pub(super) fn types_command(&mut self, c: TypeCmd) {

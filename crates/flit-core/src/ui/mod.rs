@@ -663,6 +663,9 @@ pub struct App {
     rolls: [bottom::Roll; 2],
     row_glow: widgets::Glow<(TabId, u32)>,
     side_glow: widgets::Glow<usize>,
+    head_hot: Option<(usize, bool)>,
+    hover_glow: widgets::Glow<(u32, Hit)>,
+    head_glow: widgets::Glow<(usize, bool)>,
     prefetch: prefetch::Prefetch,
     shapes: own_menu::Shapes,
     tag_fixes: Vec<(FsPath, u32, Instant)>,
@@ -781,6 +784,9 @@ impl App {
             rolls: Default::default(),
             row_glow: Default::default(),
             side_glow: Default::default(),
+            head_hot: None,
+            hover_glow: Default::default(),
+            head_glow: Default::default(),
             prefetch: Default::default(),
             shapes: Default::default(),
             tag_fixes: Vec::new(),
@@ -1688,6 +1694,14 @@ impl App {
             self.details.checks.hover = check;
             self.dirty = true;
         }
+        let head = match h {
+            Hit::Header(i) => Some((i, self.layout.columns.get(i) == Some(&Column::Type) && self.funnel_rect(self.layout.cols[i]).contains(x, y))),
+            _ => None,
+        };
+        if head != self.head_hot {
+            self.head_hot = head;
+            self.dirty = true;
+        }
         self.parked_hover(x, y);
         self.hover_pick(h, now);
         if h != self.hover {
@@ -2027,6 +2041,8 @@ impl App {
         self.fit_settings(g);
         self.look.font_missing = !g.set_ui_family(&self.look.font);
         g.set_mono_family(&self.opts.inspector_font);
+        let hot = (self.drag == Drag::None && self.hover != Hit::None).then_some((self.panels.active, self.hover));
+        self.motion |= self.hover_glow.aim(hot, self.animations, now);
         let palette = self.look.palette;
         let (th, files) = (&palette.base, palette.area(Area::Files));
         for _ in 0..2 {
@@ -2074,6 +2090,21 @@ impl App {
         self.moving
     }
 
+    fn lit(&self, h: Hit) -> f32 {
+        self.hover_glow.alpha((self.panels.here, h), self.last_frame.unwrap_or_else(Instant::now))
+    }
+
+    fn button(&self, h: Hit, open: bool, enabled: bool) -> widgets::Button {
+        match widgets::Button::of(false, open, enabled) {
+            widgets::Button::Idle => match self.lit(h) {
+                a if a >= 1.0 => widgets::Button::Hover,
+                a if a > 0.0 => widgets::Button::Glow((a * 255.0).round() as u8),
+                _ => widgets::Button::Idle,
+            },
+            other => other,
+        }
+    }
+
     pub(super) fn clock(&self) -> Instant {
         let now = Instant::now();
         self.last_frame.map_or(now, |t| t.max(now))
@@ -2116,14 +2147,14 @@ impl App {
         for (i, &(r, c)) in l.tabs.iter().enumerate().filter(|(_, (r, _))| r.w > 0.0) {
             let from = g.dl.instances.len();
             let active = i == self.cur;
-            let hovered = matches!(self.hover, Hit::Tab(k) | Hit::TabClose(k) if k == i);
+            let hovered = self.lit(Hit::Tab(i)).max(self.lit(Hit::TabClose(i)));
             let accented = self.menu_open_from(Hit::Tab(i)) || (active && self.docking.is_some());
             if accented {
                 g.dl.round_rect(r.inset(0.0, self.s(2.0)), t.accent, self.s(6.0));
             } else if active {
                 g.dl.round_rect(Rect::new(r.x, r.y, r.w, r.h + self.s(8.0)), t.bg, self.s(6.0));
-            } else if hovered {
-                g.dl.round_rect(r.inset(0.0, self.s(2.0)), t.button_hover, self.s(6.0));
+            } else if hovered > 0.0 {
+                g.dl.round_rect(r.inset(0.0, self.s(2.0)), widgets::faded(t.button_hover, hovered), self.s(6.0));
             }
             if drop == Some(Spot::Tab(i)) {
                 let target = r.inset(0.0, self.s(2.0));
@@ -2140,9 +2171,10 @@ impl App {
                 centered(g, icon, tabbar::tab_glyph(loc), self.icon_font(12.0), if torn || accented { color } else { t.accent.alpha(0xC0) });
             }
             g.text(icon.right() + self.s(6.0), baseline, &label, font, color, c.x - icon.right() - self.s(10.0));
-            if active || hovered {
-                let state = widgets::Button::of(self.hover == Hit::TabClose(i), false, true);
-                widgets::Paint::new(g, t, self.scale).icon_button(c, G_CLOSE, close_font, state, if accented { color } else { t.text_dim });
+            if active || hovered > 0.0 {
+                let state = self.button(Hit::TabClose(i), false, true);
+                let ink = if accented { color } else { t.text_dim };
+                widgets::Paint::new(g, t, self.scale).icon_button(c, G_CLOSE, close_font, state, if active { ink } else { widgets::faded(ink, hovered) });
             }
             let shown = self.strip.arrival(self.tabs[i].id, now);
             if shown < 1.0 {
@@ -2158,11 +2190,11 @@ impl App {
             w.g.dl.round_rect(l.new_tab, t.teal, self.s(4.0));
             w.centered(l.new_tab, G_ADD, self.icon_font(10.0), theme::ink_on(t.teal));
         } else {
-            w.icon_button(l.new_tab, G_ADD, self.icon_font(10.0), widgets::Button::of(self.hover == Hit::NewTab, false, true), t.text_dim);
+            w.icon_button(l.new_tab, G_ADD, self.icon_font(10.0), self.button(Hit::NewTab, false, true), t.text_dim);
         }
         w.g.dl.shift(new_tab_from, new_tab_dx.round(), 0.0);
         if l.actions.w > 0.0 {
-            let state = widgets::Button::of(self.hover == Hit::TabActions, self.nav.palette.as_ref().is_some_and(|p| p.pick == palette::Pick::Tabs), true);
+            let state = self.button(Hit::TabActions, self.nav.palette.as_ref().is_some_and(|p| p.pick == palette::Pick::Tabs), true);
             w.icon_button(l.actions, tabbar::G_TAB_ACTIONS, self.icon_font(12.0), state, t.text_dim);
         }
         self.request_icons(requests);
@@ -2203,18 +2235,18 @@ impl App {
         let enabled = [tab.history.can_back(), tab.history.can_forward(), tab.location().parent().is_some(), !self.nav.sidebar.prefs.quick.visits.is_empty()];
         let mut w = widgets::Paint::new(g, t, self.scale);
         for (i, glyph) in [G_BACK, G_FORWARD, G_UP, sidebar::G_EXPANDED].into_iter().enumerate() {
-            let state = widgets::Button::of(self.hover == Hit::Nav(i), self.menu_open_from(Hit::Nav(i)), enabled[i]);
+            let state = self.button(Hit::Nav(i), self.menu_open_from(Hit::Nav(i)), enabled[i]);
             let font = if i == 3 { self.icon_font(8.0) } else { icons };
             w.icon_button(l.nav[i].inset(self.s(2.0), 0.0), glyph, font, state, t.text);
         }
         let sep = |r: Rect| Rect::new(r.x - self.s(5.0), r.y + self.s(8.0), 1.0, r.h - self.s(16.0));
         w.g.dl.rect(sep(l.view), t.separator);
         w.g.dl.rect(sep(Rect::new(l.address.x, l.view.y, 0.0, l.view.h)), t.separator);
-        let view = widgets::Button::of(self.hover == Hit::ViewMode, self.menu_open_from(Hit::ViewMode), true);
+        let view = self.button(Hit::ViewMode, self.menu_open_from(Hit::ViewMode), true);
         w.icon_button(l.view.inset(self.s(2.0), 0.0), details::view_mode_glyph(self.view_mode()), icons, view, t.text);
         let marked = self.nav.sidebar.is_pinned(self.current_location());
-        w.toggle_button(l.bookmark.inset(self.s(2.0), 0.0), sidebar::G_PIN, icons, marked, self.hover == Hit::Bookmark);
-        let more = widgets::Button::of(self.hover == Hit::PanelMenu, self.menu_open_from(Hit::PanelMenu), true);
+        w.toggle_button(l.bookmark.inset(self.s(2.0), 0.0), sidebar::G_PIN, icons, marked, self.lit(Hit::Bookmark));
+        let more = self.button(Hit::PanelMenu, self.menu_open_from(Hit::PanelMenu), true);
         w.icon_button(l.more.inset(self.s(2.0), 0.0), G_MORE, icons, more, t.text);
         let address = *self.look.palette.area(Area::Address);
         self.draw_address(g, &address);
@@ -2226,8 +2258,9 @@ impl App {
         if t.bg != self.look.palette.area(Area::Toolbar).bg {
             g.dl.round_rect(r, t.bg, self.s(4.0));
         }
-        if self.hover == Hit::Address {
-            g.dl.round_rect(r, t.hover, self.s(4.0));
+        let lit = self.lit(Hit::Address);
+        if lit > 0.0 {
+            g.dl.round_rect(r, widgets::faded(t.hover, lit), self.s(4.0));
         }
         let font = self.ui_font(13.0);
         let m = g.metrics(font);
@@ -2284,8 +2317,8 @@ impl App {
             if drop == Some(Spot::Crumb(i)) {
                 g.dl.round_rect(cr, t.selection, s3);
                 g.dl.outline(cr, t.accent, s3, s1.max(1.0));
-            } else if self.hover == Hit::Crumb(i) {
-                g.dl.round_rect(cr, t.button_hover, s3);
+            } else if self.lit(Hit::Crumb(i)) > 0.0 {
+                g.dl.round_rect(cr, widgets::faded(t.button_hover, self.lit(Hit::Crumb(i))), s3);
             }
             let ink = match () {
                 _ if i + 1 == real => t.text,
@@ -2300,8 +2333,9 @@ impl App {
             if i + 1 < n {
                 let chev = Rect::new(x, cr.y, chev_w, cr.h);
                 chevrons[i] = visible(chev);
-                if open == Some(i) || self.hover == Hit::CrumbChevron(i) {
-                    g.dl.round_rect(chev, t.button_hover, s3);
+                let lit = if open == Some(i) { 1.0 } else { self.lit(Hit::CrumbChevron(i)) };
+                if lit > 0.0 {
+                    g.dl.round_rect(chev, widgets::faded(t.button_hover, lit), s3);
                 }
                 let ink = t.text_dim.alpha(if i + 1 >= real { 0x80 } else { 0xFF });
                 g.dl.chevron((chev.x + chev.w / 2.0, chev.y + chev.h / 2.0), self.s(8.0), self.addr.turn.angle(i, now), self.s(1.25).max(1.0), ink);
@@ -2314,7 +2348,7 @@ impl App {
         if over {
             let mut w = widgets::Paint::new(g, t, self.scale);
             for (k, (glyph, on)) in [(G_CRUMB_LEFT, left), (G_CRUMB_RIGHT, right)].into_iter().enumerate() {
-                w.icon_button(self.layout.crumb_arrows[k], glyph, chevron, widgets::Button::of(self.hover == Hit::CrumbScroll(k == 1), false, on), t.text_dim);
+                w.icon_button(self.layout.crumb_arrows[k], glyph, chevron, self.button(Hit::CrumbScroll(k == 1), false, on), t.text_dim);
             }
         }
     }
@@ -2363,10 +2397,14 @@ impl App {
         let baseline = (l.header.y + (l.header.h + m.ascent - m.descent) / 2.0).round();
         let pad = self.cs(10.0);
         let sort = self.tab().view_spec.sort;
+        let hot = self.head_hot.filter(|h| self.hover == Hit::Header(h.0) && self.drag == Drag::None);
+        self.motion |= self.head_glow.aim(hot, self.animations, now);
+        let l = &self.layout;
         for (i, col) in l.columns.iter().enumerate() {
             let r = l.cols[i];
-            if self.hover == Hit::Header(i) {
-                g.dl.rect(r, t.button_hover);
+            let lit = self.head_glow.alpha((i, false), now);
+            if lit > 0.0 {
+                g.dl.rect(r, widgets::faded(t.button_hover, lit));
             }
             if i > 0 {
                 g.dl.rect(Rect::new(r.x, r.y + self.cs(6.0), 1.0, r.h - self.cs(12.0)), t.separator);
@@ -2383,6 +2421,11 @@ impl App {
             let mut room = r.right() - pad - x;
             if *col == Column::Type {
                 let fr = self.funnel_rect(r);
+                let lit = self.head_glow.alpha((i, true), now);
+                if lit > 0.0 {
+                    let d = fr.h.min(fr.w) - self.cs(4.0);
+                    g.dl.round_rect(Rect::new(fr.x + (fr.w - d) / 2.0, fr.y + (fr.h - d) / 2.0, d, d).snap(), widgets::faded(t.button_hover, lit), self.cs(4.0));
+                }
                 let active = !self.tab().hidden_types.is_empty();
                 centered(g, fr, G_FUNNEL, self.content_icons(11.0), if active { t.accent } else { t.text_dim });
                 room = fr.x - x;

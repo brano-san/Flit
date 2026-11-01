@@ -3,7 +3,7 @@ use super::filter::FilterRects;
 use super::home::Home;
 use super::menu::Menu;
 use super::sidebar::PlaceCmd;
-use super::widgets::{Button, Paint};
+use super::widgets::Paint;
 use super::{row_hit, App, Drag, DragEvent, Effect, Focus, Hit, Layout, Tab, WindowCmd, CAPTION_W, G_CLOSE, G_MAX, G_MIN, G_RESTORE, MAX_OPEN, TAB_H};
 use crate::i18n::S;
 use crate::input::{CursorIcon, Event};
@@ -943,23 +943,19 @@ impl App {
         let palette_open = self.menu_open_from(Hit::Menu);
         let mut w = Paint::new(g, t, self.scale);
         for (r, glyph, hit, open) in [(p.menu, G_MENU, Hit::Menu, palette_open), (p.quick, G_QUICK, Hit::QuickToggle, false)] {
-            w.icon_button(r, glyph, icons, Button::of(self.hover == hit, open, true), t.text_dim);
+            w.icon_button(r, glyph, icons, self.button(hit, open, true), t.text_dim);
         }
         let caption_icons = self.icon_font(10.0);
         let max_glyph = if self.maximized { G_RESTORE } else { G_MAX };
         for (i, glyph) in [G_MIN, max_glyph, G_CLOSE].into_iter().enumerate() {
             let r = self.panels.caption[i];
             let idle = if self.active { t.text } else { t.text_dim };
-            let hot = self.hover == Hit::Caption(i);
-            let fill = match (hot, i) {
-                (true, 2) => Some(t.close_hover),
-                (true, _) => Some(t.teal),
-                _ => None,
-            };
-            if let Some(c) = fill {
-                w.g.dl.rect(r, c);
+            let lit = self.lit(Hit::Caption(i));
+            let fill = if i == 2 { t.close_hover } else { t.teal };
+            if lit > 0.0 {
+                w.g.dl.rect(r, super::widgets::faded(fill, lit));
             }
-            w.centered(r, glyph, caption_icons, fill.map_or(idle, crate::theme::ink_on));
+            w.centered(r, glyph, caption_icons, crate::theme::mix(idle, crate::theme::ink_on(fill), lit));
         }
     }
 }

@@ -161,13 +161,16 @@ impl App {
         let focused = self.active && self.focus == Focus::Filter;
         let (s4, scale) = (self.s(4.0), self.scale);
         let font = self.ui_font(12.0);
-        let hot = matches!(self.hover, Hit::FilterField | Hit::FilterClose);
-        g.dl.round_rect(field, if hot && !focused { t.button_hover } else { t.input_bg }, s4);
+        let lit = if focused { 0.0 } else { self.lit(Hit::FilterField).max(self.lit(Hit::FilterClose)) };
+        if lit > 0.0 {
+            g.dl.round_rect(field, super::widgets::faded(t.button_hover, lit), s4);
+        }
         g.dl.outline(field, if focused { t.accent } else { t.input_border }, s4, scale.round().max(1.0));
         centered(g, Rect::new(field.x + s4, field.y, self.s(18.0), field.h), G_FILTER, self.icon_font(11.0), t.text_dim);
         if close.w > 0.0 {
-            if self.hover == Hit::FilterClose {
-                g.dl.round_rect(close, t.button_hover, s4);
+            let lit = self.lit(Hit::FilterClose);
+            if lit > 0.0 {
+                g.dl.round_rect(close, super::widgets::faded(t.button_hover, lit), s4);
             }
             centered(g, close, G_CLOSE, self.icon_font(8.0), t.text_dim);
         }

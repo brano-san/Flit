@@ -190,3 +190,36 @@ fn a_changed_counter_rolls_once_to_the_latest_number() {
     assert!(a.frame(&mut g, t + Duration::from_millis(10)), "the files counter rolls");
     assert!(!a.frame(&mut g, t + Duration::from_millis(400)));
 }
+
+#[test]
+fn the_zoom_menu_opens_at_the_zoom_block_right_aligned_inside_the_window_and_scrolls_when_tall() {
+    let mut app = harness::app(&["a.txt"]);
+    app.on_event(&Event::Resized { width: 1000, height: 300 }, Instant::now());
+    harness::frame(&mut app);
+    let z = bar(&app, BottomHit::Zoom).unwrap();
+    click(&mut app, BottomHit::Zoom);
+    let m = app.drain_effects().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m) } else { None }).expect("the picker opens");
+    app.on_event(&Event::ShowMenu { items: m.menu, x: m.x, y: m.y, launches: Vec::new(), kind: m.kind, shell: Vec::new(), pending: false }, Instant::now());
+    let mut g = crate::text::Gfx::new(crate::text::tests::Mono, 1024);
+    app.frame(&mut g, Instant::now());
+    let panel = app.menu_panels()[0];
+    assert!((panel.right() - z.right()).abs() <= 1.0, "right-aligned to the zoom block: {panel:?} {z:?}");
+    assert!(panel.y >= 0.0 && panel.bottom() <= 300.0 && panel.x >= 0.0, "inside the window: {panel:?}");
+    let before = g.dl.instances.len();
+    assert!(before > 0);
+    app.on_event(&Event::MouseMove { x: panel.x + 20.0, y: panel.y + 20.0 }, Instant::now());
+    app.on_event(&Event::Wheel { dx: 0.0, dy: -1.0 }, Instant::now());
+    assert!(app.menu_scroll() > 0.0, "a menu taller than the window scrolls");
+}
+
+#[test]
+fn the_filter_field_has_no_fill_of_its_own_and_reads_as_one_field_with_its_piece() {
+    let mut app = harness::app(&["a.txt"]);
+    let mut g = crate::text::Gfx::new(crate::text::tests::Mono, 1024);
+    app.frame(&mut g, Instant::now());
+    let f = app.nav.filter.field;
+    assert!(f.w > 0.0);
+    let t = app.look.palette.base;
+    let filled = g.dl.instances.iter().any(|i| i.color == t.input_bg.0 && (i.rect[0] - f.x).abs() < 1.0 && (i.rect[2] - f.w).abs() < 1.0);
+    assert!(!filled, "the field is drawn as an outline on the bar piece, without a second colour");
+}

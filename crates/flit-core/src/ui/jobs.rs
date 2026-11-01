@@ -818,8 +818,9 @@ impl App {
         g.text(p.x + s12 + s6, head, S::UiJobOperations.t(), bold, t.text, p.w / 2.0);
         let clear = self.jobs.r.clear;
         let done = self.jobs.list.iter().any(|j| j.state != JobState::Running);
-        if self.hover == Hit::OpsClear && done {
-            g.dl.round_rect(clear, t.button_hover, s4);
+        let lit = self.lit(Hit::OpsClear);
+        if lit > 0.0 && done {
+            g.dl.round_rect(clear, super::widgets::faded(t.button_hover, lit), s4);
         }
         let label = S::UiJobClearCompleted.t();
         let lw = g.measure(label, small);
@@ -894,8 +895,9 @@ impl App {
                 let bg = Rect::new(first.x, first.y, first.w, last.bottom() - first.y);
                 super::widgets::Paint::new(g, t, self.scale).frame(bg);
                 for (k, (r, label)) in menu.iter().zip(items).enumerate() {
-                    if self.hover == Hit::OpsMenu(k) {
-                        g.dl.round_rect(r.inset(s(3.0), s(2.0)), t.hover, s4);
+                    let lit = self.lit(Hit::OpsMenu(k));
+                    if lit > 0.0 {
+                        g.dl.round_rect(r.inset(s(3.0), s(2.0)), super::widgets::faded(t.hover, lit), s4);
                     }
                     let baseline = (r.y + (r.h + g.metrics(font).ascent - g.metrics(font).descent) / 2.0).round();
                     g.text(r.x + s12, baseline, label, font, t.text, r.w - 2.0 * s12);

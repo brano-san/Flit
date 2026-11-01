@@ -337,10 +337,10 @@ impl App {
             if r.bottom() < area.y || r.y > area.bottom() {
                 continue;
             }
-            let hovered = self.hover == Hit::HomeItem(i);
+            let hovered = self.lit(Hit::HomeItem(i));
             match card {
                 Card::Folder { label, loc } => {
-                    g.dl.round_rect(*r, if hovered { t.button_hover } else { t.chrome }, s6);
+                    g.dl.round_rect(*r, crate::theme::mix(t.chrome, t.button_hover, hovered), s6);
                     let ir = Rect::new(r.x + s4, r.y, s40, r.h);
                     if !self.system_icon(g, location_icon(loc, places, card_px as u32), ir, card_px, 0xFF, &mut requests) {
                         centered(g, ir, if loc.is_home_page() { G_HOME } else { G_FOLDER }, big_icons, t.accent);
@@ -349,7 +349,7 @@ impl App {
                 }
                 Card::Drive(d) => {
                     let Some(d) = places.drives.get(*d) else { continue };
-                    g.dl.round_rect(*r, if hovered { t.button_hover } else { t.chrome }, s6);
+                    g.dl.round_rect(*r, crate::theme::mix(t.chrome, t.button_hover, hovered), s6);
                     let ir = Rect::new(r.x + s4, r.y, s40, r.h);
                     if !self.system_icon(g, location_icon(&Location::Local(d.path.clone()), places, card_px as u32), ir, card_px, 0xFF, &mut requests) {
                         centered(g, ir, G_DRIVE, big_icons, t.text_dim);
@@ -373,14 +373,14 @@ impl App {
                 }
                 Card::Tag(k) => {
                     let Some(tag) = self.nav.sidebar.tags.defs.get(*k) else { continue };
-                    g.dl.round_rect(*r, if hovered { t.button_hover } else { t.chrome }, s6);
+                    g.dl.round_rect(*r, crate::theme::mix(t.chrome, t.button_hover, hovered), s6);
                     centered(g, Rect::new(r.x + s4, r.y, s40, r.h), G_TAG, big_icons, Color::rgb(tag.color));
                     g.text(r.x + s40 + s8, mid(*r, m), &tag.name, font, t.text, r.w - s40 - s12);
                 }
                 Card::Recent(k) => {
                     let Some(e) = places.recent.get(*k) else { continue };
-                    if hovered {
-                        g.dl.round_rect(*r, t.button_hover, s4);
+                    if hovered > 0.0 {
+                        g.dl.round_rect(*r, super::widgets::faded(t.button_hover, hovered), s4);
                     }
                     let ir = Rect::new(r.x, r.y, self.s(28.0), r.h);
                     if !self.system_icon(g, recent_icon(e, places, row_px as u32), ir, row_px, 0xFF, &mut requests) {

@@ -163,6 +163,7 @@ impl App {
             }
         }
         let mods = self.mods;
+        let pointer = self.own_menu.as_ref().and_then(|m| m.pointer);
         let Some(view) = self.own_menu.as_mut().and_then(|m| m.view.as_mut()) else { return false };
         let outcome = match (view, ev) {
             (View::Plain(v), Event::MouseMove { x, y }) => {
@@ -199,12 +200,16 @@ impl App {
                 }
                 MenuOutcome::Open
             }
+            (View::Plain(v), Event::Wheel { dy, .. }) => {
+                self.dirty |= v.wheel(pointer, *dy);
+                MenuOutcome::Open
+            }
             (View::Context(c), Event::Wheel { dy, .. }) => {
                 c.wheel(*dy);
                 self.dirty = true;
                 MenuOutcome::Open
             }
-            (_, Event::Key { .. } | Event::Char(_) | Event::Wheel { .. }) => MenuOutcome::Open,
+            (_, Event::Key { .. } | Event::Char(_)) => MenuOutcome::Open,
             (_, Event::Focus(false) | Event::Resized { .. } | Event::ScaleChanged(_)) => MenuOutcome::Closed,
             _ => return false,
         };
@@ -284,6 +289,22 @@ impl App {
     pub(super) fn button_menu(&mut self, owner: super::Hit, x: f32, y: f32, menu: Vec<MenuItem>) {
         self.flit_menu(x, y, menu);
         (self.menu_owner, self.menu_panel) = (Some(owner), self.panels.here);
+    }
+
+    #[cfg(test)]
+    pub(super) fn menu_panels(&self) -> Vec<Rect> {
+        match self.own_menu.as_ref().and_then(|m| m.view.as_ref()) {
+            Some(View::Plain(v)) => v.panels().collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn menu_scroll(&self) -> f32 {
+        match self.own_menu.as_ref().and_then(|m| m.view.as_ref()) {
+            Some(View::Plain(v)) => v.scrolled(),
+            _ => 0.0,
+        }
     }
 
     pub(super) fn menu_open_from(&self, owner: super::Hit) -> bool {

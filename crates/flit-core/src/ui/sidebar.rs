@@ -5,7 +5,7 @@ use super::fuzzy::fuzzy;
 use super::home::{Recent, Widget};
 use super::menu::Menu;
 use super::tags::G_TAG;
-use super::widgets::{eased, Button, Paint};
+use super::widgets::{eased, Paint};
 use super::{centered, App, Drag, Effect, Focus, Hit, IconKind, IconRequest, Route, ShellMenu, G_CLOSE, G_DRIVE, G_FILE, G_FOLDER, TOOL_H};
 use crate::hash;
 use crate::i18n::S;
@@ -1418,7 +1418,7 @@ impl App {
             self.nav.sidebar.filter.draw(g, t, inner, font, typing, S::SidebarFilter.t(), self.scale, preedit);
             let sb = &self.nav.sidebar;
             if sb.clear.w > 0.0 {
-                Paint::new(g, t, self.scale).icon_button(sb.clear, G_CLOSE, self.icon_font(8.0), Button::of(self.hover == Hit::QuickClear, false, true), t.text_dim);
+                Paint::new(g, t, self.scale).icon_button(sb.clear, G_CLOSE, self.icon_font(8.0), self.button(Hit::QuickClear, false, true), t.text_dim);
             }
         }
         let sb = &self.nav.sidebar;
@@ -1431,11 +1431,12 @@ impl App {
         let target = t.teal.alpha(0x70);
         for &(r, section) in &sb.headers {
             let open = self.menu_open_from(Hit::SideHeader(section));
-            let lit = open || self.hover == Hit::SideHeader(section);
+            let glow = if open { 1.0 } else { self.lit(Hit::SideHeader(section)) };
+            let lit = glow >= 0.5;
             if drop_header == Some(section) {
                 g.dl.round_rect(r, target, s4);
-            } else if lit {
-                g.dl.round_rect(r, t.accent_fill, s4);
+            } else if glow > 0.0 {
+                g.dl.round_rect(r, super::widgets::faded(t.accent_fill, glow), s4);
             }
             if compact {
                 g.dl.rect(Rect::new(r.x + s8, (r.y + r.h / 2.0).round(), r.w - 2.0 * s8, 1.0), t.separator);
@@ -1536,7 +1537,7 @@ impl App {
             }
             if trash {
                 let open = self.confirm.as_ref().is_some_and(|c| c.anchor == pin_r);
-                Paint::new(g, t, self.scale).icon_button(pin_r, G_TRASH, pin_font, Button::of(self.hover == Hit::SidePin(i), open, true), ink);
+                Paint::new(g, t, self.scale).icon_button(pin_r, G_TRASH, pin_font, self.button(Hit::SidePin(i), open, true), ink);
             }
         }
         g.dl.set_clip(Some(list));

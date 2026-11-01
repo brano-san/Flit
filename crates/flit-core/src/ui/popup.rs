@@ -19,6 +19,7 @@ const FONT_PX: f32 = 13.0;
 const ICON_PX: f32 = 11.0;
 const G_SUBMENU: &str = "\u{E76C}";
 const OFF: u8 = 0x70;
+const SCROLLBAR_W: f32 = 6.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuOutcome {
@@ -64,6 +65,7 @@ struct Panel {
     list: usize,
     rect: Rect,
     hot: Option<usize>,
+    scroll: f32,
 }
 
 pub struct MenuView {
@@ -120,12 +122,12 @@ impl MenuView {
     pub fn new<B: TextBackend>(items: &[MenuItem], x: f32, y: f32, bounds: Rect, scale: f32, g: &mut Gfx<B>) -> Self {
         let mut lists = Vec::new();
         Measure { g, font: font(scale), scale, next_id: 0 }.flatten(items, &mut lists);
-        let (w, h) = (lists[0].width, lists[0].height);
+        let (w, h) = (lists[0].width, lists[0].height.min(bounds.h));
         let below = y + h <= bounds.bottom();
         let top = if below { y } else if y - h >= bounds.y { y - h } else { bounds.bottom() - h };
         let mut view = Self { lists, panels: Vec::new(), bounds, scale, start: (x, y), armed: false, glow: Default::default(), glow_at: None };
         let rect = view.fit(w, h, x, x, top);
-        view.panels.push(Panel { list: 0, rect, hot: None });
+        view.panels.push(Panel { list: 0, rect, hot: None, scroll: 0.0 });
         view
     }
 
@@ -138,6 +140,34 @@ impl MenuView {
 
     pub fn panels(&self) -> impl Iterator<Item = Rect> + '_ {
         self.panels.iter().map(|p| p.rect)
+    }
+
+    #[cfg(test)]
+    pub fn scrolled(&self) -> f32 {
+        self.panels.first().map_or(0.0, |p| p.scroll)
+    }
+
+    pub fn wheel(&mut self, at: Option<(f32, f32)>, dy: f32) -> bool {
+        let k = at.and_then(|(x, y)| self.panels.iter().rposition(|p| p.rect.contains(x, y))).unwrap_or(self.panels.len().saturating_sub(1));
+        let Some(p) = self.panels.get(k).copied() else { return false };
+        let max = self.max_scroll(&p);
+        let to = (p.scroll - dy * 3.0 * ROW_H * self.scale).clamp(0.0, max);
+        self.panels[k].scroll = to;
+        self.panels.truncate(k + 1);
+        to != p.scroll
+    }
+
+    fn max_scroll(&self, p: &Panel) -> f32 {
+        (self.lists[p.list].height - p.rect.h).max(0.0)
+    }
+
+    fn reveal(&mut self, k: usize) {
+        let p = self.panels[k];
+        let Some((_, row)) = p.hot.and_then(|h| self.rows(&p).nth(h)) else { return };
+        let s = self.scale;
+        let (top, bottom) = (p.rect.y + PAD * s, p.rect.bottom() - PAD * s);
+        let shift = if row.y < top { row.y - top } else if row.bottom() > bottom { row.bottom() - bottom } else { 0.0 };
+        self.panels[k].scroll = (p.scroll + shift).clamp(0.0, self.max_scroll(&p));
     }
 
     pub fn contains(&self, x: f32, y: f32) -> bool {
@@ -232,7 +262,11 @@ impl MenuView {
         for (n, panel) in self.panels.iter().enumerate() {
             let r = panel.rect;
             p.frame(r);
-            for (i, row) in self.rows(panel) {
+            let max = self.max_scroll(panel);
+            if max > 0.0 {
+                p.g.dl.set_clip(Some(r.inset(0.0, PAD * s)));
+            }
+            for (i, row) in self.rows(panel).filter(|(_, row)| row.bottom() > r.y && row.y < r.bottom()) {
                 let node = &self.lists[panel.list].nodes[i];
                 if let Node::Separator = node {
                     p.separator(row.x + PAD * s, row.y + row.h / 2.0, row.w - 2.0 * PAD * s);
@@ -279,13 +313,21 @@ impl MenuView {
                     Node::Header(_) | Node::Separator => {}
                 }
             }
+            if max > 0.0 {
+                p.g.dl.set_clip(None);
+                let track = Rect::new(r.right() - SCROLLBAR_W * s, r.y + PAD * s, SCROLLBAR_W * s - 2.0 * s, r.h - 2.0 * PAD * s);
+                let content = self.lists[panel.list].height;
+                let th = (track.h * r.h / content).max(16.0 * s).min(track.h);
+                let thumb = Rect::new(track.x, track.y + (track.h - th) * panel.scroll / max, track.w, th);
+                p.g.dl.round_rect(thumb, t.scrollbar, thumb.w / 2.0);
+            }
         }
     }
 
     fn rows(&self, p: &Panel) -> impl Iterator<Item = (usize, Rect)> + '_ {
         let s = self.scale;
         let (x, w) = (p.rect.x + PAD * s, p.rect.w - 2.0 * PAD * s);
-        let mut y = p.rect.y + PAD * s;
+        let mut y = p.rect.y + PAD * s - p.scroll;
         self.lists[p.list].nodes.iter().enumerate().map(move |(i, n)| {
             let h = n.height(s);
             y += h;
@@ -317,9 +359,10 @@ impl MenuView {
             let anchor = self.rows(&p).nth(i).map_or(p.rect, |(_, r)| r);
             let (w, h) = (self.lists[list].width, self.lists[list].height);
             let s = self.scale;
+            let h = h.min(self.bounds.h);
             let top = if anchor.y - PAD * s + h <= self.bounds.bottom() { anchor.y - PAD * s } else { self.bounds.bottom() - h };
             let rect = self.fit(w, h, p.rect.right() - PAD * s, p.rect.x + PAD * s, top);
-            self.panels.push(Panel { list, rect, hot: None });
+            self.panels.push(Panel { list, rect, hot: None, scroll: 0.0 });
         }
     }
 
@@ -349,6 +392,7 @@ impl MenuView {
             _ => return,
         };
         self.panels[top].hot = Some(rows[next]);
+        self.reveal(top);
     }
 
     fn jump(&mut self, c: char) {
@@ -359,6 +403,7 @@ impl MenuView {
         let starts = |i: &usize| self.lists[p.list].nodes[*i].label().chars().next().is_some_and(|f| f.to_lowercase().eq(c.to_lowercase()));
         if let Some(&row) = rows.iter().cycle().skip(from).take(rows.len()).find(|i| starts(i)) {
             self.panels[top].hot = Some(row);
+            self.reveal(top);
         }
     }
 }

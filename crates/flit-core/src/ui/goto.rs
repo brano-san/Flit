@@ -2,7 +2,7 @@ use super::address::{place_key, Listed, SEPS};
 use super::fuzzy::fuzzy;
 use super::palette::{Palette, Pick};
 use super::sidebar::{folder_icon, place_icon_request, Item, Section, SystemIcon, G_COLLAPSED, G_EXPANDED};
-use super::widgets::{baseline, Button, Paint};
+use super::widgets::{baseline, Paint};
 use super::{App, Effect, Hit, IconKind, IconRequest, Route, G_BACK, G_FILE, G_FOLDER, G_FORWARD, G_UP, PER_FILE_ICON_EXT};
 use crate::hash;
 use crate::i18n::{P, S};
@@ -510,7 +510,7 @@ impl App {
         let enabled = self.go_buttons_enabled();
         let mut w = Paint::new(g, t, self.scale);
         for (k, glyph) in [G_BACK, G_FORWARD, G_UP].into_iter().enumerate() {
-            w.icon_button(go.buttons[k], glyph, icons, Button::of(self.hover == Hit::GoButton(k), false, enabled[k]), t.text_dim);
+            w.icon_button(go.buttons[k], glyph, icons, self.button(Hit::GoButton(k), false, enabled[k]), t.text_dim);
         }
         let last = go.buttons[2];
         w.g.dl.rect(Rect::new(last.right() + self.s(4.0), last.y + self.s(6.0), 1.0, last.h - self.s(12.0)), t.separator);

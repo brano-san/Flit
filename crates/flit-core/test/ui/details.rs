@@ -682,3 +682,56 @@ fn a_selected_tile_keeps_its_picture_and_shows_its_box_in_the_corner() {
     a.on_event(&Event::MouseMove { x: other.name.x + 4.0, y: other.name.y + 4.0 }, Instant::now());
     assert_eq!(a.details.checks.hover, Some(1), "hovering a tile shows its box");
 }
+
+#[test]
+fn the_type_funnel_lights_on_hover_and_opens_its_menu_under_itself_right_aligned() {
+    let mut a = crate::ui::harness::app(&["a.txt", "b.jpg"]);
+    let k = a.layout.columns.iter().position(|&c| c == Column::Type).expect("a Type column");
+    let f = a.funnel_rect(a.layout.cols[k]);
+    let (x, y) = (f.x + f.w / 2.0, f.y + f.h / 2.0);
+    a.on_event(&Event::MouseMove { x, y }, Instant::now());
+    assert_eq!(a.head_hot, Some((k, true)));
+    let mut g = Gfx::new(Mono, 1024);
+    let t0 = Instant::now();
+    assert!(a.frame(&mut g, t0), "the funnel's hover fades in");
+    assert!(!a.frame(&mut g, t0 + Duration::from_millis(300)));
+    assert_eq!(a.head_glow.alpha((k, true), t0 + Duration::from_millis(300)), 1.0);
+    let x0 = a.layout.cols[k].x + 6.0;
+    a.on_event(&Event::MouseMove { x: x0, y }, Instant::now());
+    assert_eq!(a.head_hot, Some((k, false)), "the rest of the header lights as a column, not the funnel");
+    a.on_event(&Event::MouseMove { x, y }, Instant::now());
+    a.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, Instant::now());
+    a.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, Instant::now());
+    let m = a.drain_effects().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m) } else { None }).expect("the types menu opens");
+    assert_eq!((m.x, m.y), (f.x, f.bottom()));
+    a.on_event(&Event::ShowMenu { items: m.menu, x: m.x, y: m.y, launches: Vec::new(), kind: m.kind, shell: Vec::new(), pending: false }, Instant::now());
+    a.frame(&mut g, Instant::now());
+    let panel = a.menu_panels()[0];
+    assert!((panel.right() - f.right()).abs() <= 1.0, "{panel:?} {f:?}");
+}
+
+#[test]
+fn chrome_hovers_fade_in_and_out_and_snap_without_animations() {
+    let mut a = crate::ui::harness::app(&["a.txt"]);
+    let mut g = Gfx::new(Mono, 1024);
+    let t0 = Instant::now();
+    a.frame(&mut g, t0);
+    let r = a.layout.new_tab;
+    a.on_event(&Event::MouseMove { x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 }, t0);
+    assert!(a.frame(&mut g, t0 + Duration::from_millis(1)));
+    assert!(a.frame(&mut g, t0 + Duration::from_millis(40)));
+    let mid = a.lit(Hit::NewTab);
+    assert!(mid > 0.0 && mid < 1.0, "{mid}");
+    assert!(matches!(a.button(Hit::NewTab, false, true), crate::ui::widgets::Button::Glow(_)));
+    assert!(!a.frame(&mut g, t0 + Duration::from_millis(200)));
+    assert_eq!(a.lit(Hit::NewTab), 1.0);
+    a.on_event(&Event::MouseMove { x: 5.0, y: 500.0 }, t0 + Duration::from_millis(200));
+    assert!(a.frame(&mut g, t0 + Duration::from_millis(201)), "and fades out");
+    assert!(a.frame(&mut g, t0 + Duration::from_millis(240)));
+    let out = a.lit(Hit::NewTab);
+    assert!(out > 0.0 && out < 1.0);
+    a.animations = false;
+    a.on_event(&Event::MouseMove { x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 }, t0 + Duration::from_millis(300));
+    assert!(!a.frame(&mut g, t0 + Duration::from_millis(301)));
+    assert_eq!(a.lit(Hit::NewTab), 1.0, "without Animations the hover is there at once");
+}

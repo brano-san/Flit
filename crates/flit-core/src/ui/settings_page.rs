@@ -6,7 +6,6 @@ use super::widgets::Paint;
 use super::palette::{Palette, Pick};
 use super::fuzzy::fuzzy;
 use super::settings::{self, Kind, Page, Picker, Setting, Value, SETTINGS};
-use super::widgets::Button;
 use super::a11y::{leaf, put};
 use super::setting_editor::BROWSE;
 use super::{centered, App, Effect, Glide, Hit, SettingsCmd, G_CLOSE};
@@ -1486,8 +1485,8 @@ impl App {
         let inner = Rect::new(sr.x + s(32.0), sr.y, sr.w - s(40.0), sr.h);
         ui.search.draw(g, t, inner, font, focused_search, S::OptionsPlaceholder.t(), sc, Some(&self.preedit));
         let big_icons = self.icon_font(12.0);
-        Paint::new(g, t, sc).toggle_button(ui.describe, G_DESCRIBE, big_icons, describe, hover == Hit::Settings(SHit::Describe));
-        Paint::new(g, t, sc).icon_button(ui.close, G_CLOSE, icons, Button::of(hover == Hit::Settings(SHit::Close), false, true), t.text_dim);
+        Paint::new(g, t, sc).toggle_button(ui.describe, G_DESCRIBE, big_icons, describe, self.lit(Hit::Settings(SHit::Describe)));
+        Paint::new(g, t, sc).icon_button(ui.close, G_CLOSE, icons, self.button(Hit::Settings(SHit::Close), false, true), t.text_dim);
         let hints = ui.hints;
         {
             let mut w = Paint::new(g, t, sc);
@@ -1506,8 +1505,9 @@ impl App {
             let focused = list_focused && k == ui.focus;
             let row = Rect::new(r.x + s4, r.y + 1.0, r.w - s8, r.h - 2.0);
             if line.focusable() && !matches!(line, Line::Buttons(..)) {
-                if hover == Hit::Settings(SHit::Line(k)) {
-                    g.dl.round_rect(row, t.hover, s6);
+                let lit = self.lit(Hit::Settings(SHit::Line(k)));
+                if lit > 0.0 {
+                    g.dl.round_rect(row, super::widgets::faded(t.hover, lit), s6);
                 }
                 if focused {
                     g.dl.outline(row, t.accent, s6, sc.round().max(1.0));
@@ -1576,7 +1576,7 @@ impl App {
                         }
                         (Kind::Text(..) | Kind::Pick(..), _) => {
                             let c = control_rect(r, s);
-                            g.dl.round_rect(c, if hover == Hit::Settings(SHit::Control(k)) { t.button_hover } else { t.input_bg }, s4);
+                            g.dl.round_rect(c, crate::theme::mix(t.input_bg, t.button_hover, self.lit(Hit::Settings(SHit::Control(k)))), s4);
                             g.dl.outline(c, t.input_border, s4, 1.0);
                             let mut tx = c.x + s(10.0);
                             if let Some(color) = self.swatch(*i) {
@@ -1609,8 +1609,9 @@ impl App {
                     let text = self.paths_of(*i).get(*n).map(settings::path_text).unwrap_or_default();
                     g.text(r.x + s(32.0), mid(r, mf), &text, font, t.text, r.w - s(PAD) * 2.0 - s(60.0));
                     let rr = remove_rect(r, s);
-                    if hover == Hit::Settings(SHit::Remove(k)) {
-                        g.dl.round_rect(rr, t.button_hover, s4);
+                    let lit = self.lit(Hit::Settings(SHit::Remove(k)));
+                    if lit > 0.0 {
+                        g.dl.round_rect(rr, super::widgets::faded(t.button_hover, lit), s4);
                     }
                     centered(g, rr, G_CLOSE, self.icon_font(8.0), t.text_dim);
                 }
@@ -1631,9 +1632,9 @@ impl App {
                 Line::Buttons(..) => {}
             }
             for (b, (br, btn)) in button_rects(line, r, &ui.fit, s).into_iter().zip(line.buttons()).enumerate() {
-                let hot = hover == Hit::Settings(SHit::Button(k, b));
+                let hot = self.lit(Hit::Settings(SHit::Button(k, b)));
                 let danger = matches!(btn, Btn::Reset | Btn::Delete);
-                g.dl.round_rect(br, if hot { t.button_pressed } else { t.button_hover }, s4);
+                g.dl.round_rect(br, crate::theme::mix(t.button_hover, t.button_pressed, hot), s4);
                 g.dl.outline(br, if focused && ui.sub == b { t.accent } else { t.input_border }, s4, if focused && ui.sub == b { sc.round().max(1.0) } else { 1.0 });
                 let glyph_w = glyph_w(btn, s);
                 if glyph_w > 0.0 {
