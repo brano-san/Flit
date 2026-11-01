@@ -510,6 +510,18 @@ pub fn sort(l: &Listing, k: &SortKeys, view: ViewSpec, out: &mut Vec<u32>) {
     out.extend(items.iter().map(|it| it.idx));
 }
 
+fn own_pool() -> Option<&'static rayon::ThreadPool> {
+    static POOL: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| rayon::ThreadPoolBuilder::new().thread_name(|k| format!("flit-ui-sort-{k}")).build().ok()).as_ref()
+}
+
+pub fn sort_apart(l: &Listing, k: &SortKeys, view: ViewSpec, out: &mut Vec<u32>) {
+    match own_pool().filter(|_| l.len() >= PARALLEL_SORT) {
+        Some(pool) => pool.install(|| sort(l, k, view, out)),
+        None => sort(l, k, view, out),
+    }
+}
+
 pub fn is_sorted(l: &Listing, k: &SortKeys, v: &ViewSpec, order: &[u32]) -> bool {
     let ordered = |part: &[u32]| part.windows(2).all(|w| cmp(l, k, v, w[0], w[1]).is_lt());
     let threads = if order.len() < PARALLEL_SORT { 1 } else { std::thread::available_parallelism().map_or(1, |n| n.get()).min(order.len() / CHECKS_PER_THREAD) };

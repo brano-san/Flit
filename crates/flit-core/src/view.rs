@@ -554,7 +554,7 @@ impl DirView {
     fn full_sort(&mut self) {
         let snap = Arc::make_mut(&mut self.snap);
         let mut o = std::mem::take(&mut snap.order);
-        sort::sort(&snap.listing, &snap.keys, snap.view, &mut o);
+        sort::sort_apart(&snap.listing, &snap.keys, snap.view, &mut o);
         snap.order = o;
     }
 
@@ -662,7 +662,7 @@ impl DirView {
             self.reorder((base_len as u32..self.snap.listing.len() as u32).collect());
         } else {
             let mut o = std::mem::take(&mut snap.order);
-            sort::sort(&snap.listing, &snap.keys, view, &mut o);
+            sort::sort_apart(&snap.listing, &snap.keys, view, &mut o);
             snap.order = o;
         }
         self.rows_changed();

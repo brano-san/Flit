@@ -316,6 +316,48 @@ fn folders_and_files_sort_by_their_own_counts() {
 }
 
 #[test]
+fn ui_thread_sorts_do_not_wait_for_a_busy_global_pool() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
+    use std::time::{Duration, Instant};
+    let (l, k) = synthetic(100_000);
+    let view = ViewSpec { show_hidden: true, ..Default::default() };
+    let usage = ViewSpec { group: GroupSpec { field: GroupField::FolderUsage, ..Default::default() }, ..view };
+    let (mut sorted, mut by_usage) = (Vec::new(), Vec::new());
+    sort(&l, &k, view, &mut sorted);
+    sort(&l, &k, usage, &mut by_usage);
+    let path = crate::path::FsPath::parse(r"C:\x").unwrap();
+    let snap = crate::listing::DirSnapshot { gen: 1, path, listing: l.clone(), keys: k.clone(), order: sorted.clone(), view, done: true, error: None, elapsed: Default::default() };
+    let mut v = crate::view::DirView::new(std::sync::Arc::new(snap));
+    v.merge_order(Vec::new(), view, l.len());
+    let release = std::sync::Arc::new(AtomicBool::new(false));
+    let busy = std::sync::Arc::new(AtomicUsize::new(0));
+    let workers = rayon::current_num_threads();
+    for _ in 0..workers {
+        let (release, busy) = (release.clone(), busy.clone());
+        rayon::spawn(move || {
+            busy.fetch_add(1, AtomicOrdering::SeqCst);
+            let start = Instant::now();
+            while !release.load(AtomicOrdering::SeqCst) && start.elapsed() < Duration::from_secs(10) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        });
+    }
+    let start = Instant::now();
+    while busy.load(AtomicOrdering::SeqCst) < workers && start.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let t = Instant::now();
+    v.merge_order(sorted.iter().rev().copied().collect(), view, l.len());
+    let resorted = t.elapsed();
+    let t = Instant::now();
+    v.merge_order(by_usage.clone(), usage, l.len());
+    let full = t.elapsed();
+    release.store(true, AtomicOrdering::SeqCst);
+    assert_eq!(v.rows(), by_usage.as_slice());
+    assert!(resorted < Duration::from_secs(2) && full < Duration::from_secs(2), "merge resort {resorted:?}, full sort {full:?} waited for the global pool");
+}
+
+#[test]
 fn a_swap_at_any_chunk_boundary_breaks_sortedness() {
     let (l, k) = synthetic(40_000);
     let view = ViewSpec { show_hidden: true, ..Default::default() };
