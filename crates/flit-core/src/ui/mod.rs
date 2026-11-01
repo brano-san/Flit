@@ -1400,11 +1400,17 @@ impl App {
         l.columns.clear();
         l.columns.extend(shown.0.iter().map(|&(c, _)| c));
         let fixed: f32 = shown.0.iter().filter(|&&(c, _)| c != Column::Name).map(|&(_, w)| w).sum();
-        let name_w = (l.list.w - fixed).max(s(NAME_MIN_W));
+        let room = (l.list.w - s(NAME_MIN_W)).max(0.0);
+        let squeeze = if fixed > room { room / fixed } else { 1.0 };
+        let fit = |w: f32| if squeeze < 1.0 { (w * squeeze).floor().max(s(details::MIN_COL_W).min(w)) } else { w };
+        let fitted: f32 = shown.0.iter().filter(|&&(c, _)| c != Column::Name).map(|&(_, w)| fit(w)).sum();
+        let name_w = (l.list.w - fitted).max(s(NAME_MIN_W));
+        let total = name_w + fitted;
+        let tight = if total > l.list.w && total > 0.0 { l.list.w / total } else { 1.0 };
         let mut x = l.list.x;
         l.cols.clear();
         for &(c, w) in &shown.0 {
-            let cw = if c == Column::Name { name_w } else { w };
+            let cw = (if c == Column::Name { name_w } else { fit(w) } * tight).floor();
             l.cols.push(Rect::new(x, l.header.y, cw, l.header.h));
             x += cw;
         }
