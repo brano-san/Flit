@@ -1,5 +1,6 @@
 use flit_core::hash::FxHashMap;
 use flit_core::ui::Bitmap;
+use std::collections::hash_map::Entry;
 use std::collections::VecDeque;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
@@ -24,6 +25,7 @@ pub struct ThumbCache {
     index: FxHashMap<u64, Rec>,
     segs: VecDeque<(u32, u64)>,
     out: Option<File>,
+    readers: FxHashMap<u32, File>,
     loaded: bool,
 }
 
@@ -37,7 +39,7 @@ fn sane(w: u32, h: u32) -> bool {
 
 impl ThumbCache {
     pub fn new(dir: PathBuf, limit_mb: u32) -> Self {
-        Self { dir, limit: (limit_mb as u64) << 20, index: FxHashMap::default(), segs: VecDeque::new(), out: None, loaded: false }
+        Self { dir, limit: (limit_mb as u64) << 20, index: FxHashMap::default(), segs: VecDeque::new(), out: None, readers: FxHashMap::default(), loaded: false }
     }
 
     fn load(&mut self) {
@@ -74,16 +76,20 @@ impl ThumbCache {
     pub fn get(&mut self, key: u64) -> Option<Bitmap> {
         self.load();
         let rec = *self.index.get(&key)?;
-        let read = || -> std::io::Result<Vec<u8>> {
-            let mut f = File::open(seg_path(&self.dir, rec.seg))?;
+        let read = |readers: &mut FxHashMap<u32, File>| -> std::io::Result<Vec<u8>> {
+            let f = match readers.entry(rec.seg) {
+                Entry::Occupied(e) => e.into_mut(),
+                Entry::Vacant(e) => e.insert(File::open(seg_path(&self.dir, rec.seg))?),
+            };
             f.seek(SeekFrom::Start(rec.at + HEAD))?;
             let mut rgba = vec![0; (rec.w * rec.h * 4) as usize];
             f.read_exact(&mut rgba)?;
             Ok(rgba)
         };
-        match read() {
+        match read(&mut self.readers) {
             Ok(rgba) => Some(Bitmap { width: rec.w, height: rec.h, rgba }),
             Err(_) => {
+                self.readers.remove(&rec.seg);
                 self.index.remove(&key);
                 None
             }
@@ -139,6 +145,7 @@ impl ThumbCache {
     fn trim(&mut self) {
         while self.segs.iter().map(|s| s.1).sum::<u64>() > self.limit && self.segs.len() > 1 {
             let Some((n, _)) = self.segs.pop_front() else { break };
+            self.readers.remove(&n);
             let _ = fs::remove_file(seg_path(&self.dir, n));
             self.index.retain(|_, r| r.seg != n);
         }
@@ -159,6 +166,7 @@ impl ThumbCache {
     pub fn clear(&mut self) {
         self.load();
         self.out = None;
+        self.readers.clear();
         for (n, _) in self.segs.drain(..) {
             let _ = fs::remove_file(seg_path(&self.dir, n));
         }
