@@ -5,6 +5,7 @@ use flit_core::path::PathKind;
 use flit_core::tags::FileKey;
 use flit_core::FsPath;
 use flit_platform::Resolved;
+use rayon::prelude::*;
 use std::collections::HashMap;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
@@ -101,7 +102,7 @@ fn resolve(root: &Handle, id: u64) -> Resolved {
 
 pub(crate) fn resolve_files(keys: &[FileKey]) -> Vec<Resolved> {
     let roots = volume_roots();
-    keys.iter().map(|k| roots.get(&k.volume).map_or(Resolved::Unavailable, |r| resolve(r, k.id))).collect()
+    keys.par_iter().map(|k| roots.get(&k.volume).map_or(Resolved::Unavailable, |r| resolve(r, k.id))).collect()
 }
 
 #[cfg(test)]
