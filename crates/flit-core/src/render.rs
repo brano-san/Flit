@@ -96,6 +96,14 @@ impl DrawList {
         self.clip = r.map_or(NO_CLIP, |r| [r.x, r.y, r.right(), r.bottom()]);
     }
 
+    pub fn confine(&mut self, from: usize, r: Rect) {
+        let [x0, y0, x1, y1] = [r.x, r.y, r.right(), r.bottom()];
+        for i in self.instances.iter_mut().skip(from) {
+            let c = i.clip;
+            i.clip = [c[0].max(x0), c[1].max(y0), c[2].min(x1), c[3].min(y1)];
+        }
+    }
+
     fn push(&mut self, r: Rect, uv: [f32; 4], color: Color, radius: f32, border: f32, kind: u32) {
         self.instances.push(Instance {
             rect: [r.x, r.y, r.w, r.h],

@@ -900,9 +900,11 @@ impl App {
             let hover = self.panels.hover.filter(|h| h.0 == id).map_or(Hit::None, |h| h.1);
             let rows = self.visit(id, |a| {
                 (a.hover, a.pressed) = (hover, Hit::None);
+                let from = g.dl.instances.len();
                 a.draw_body(g, arena, palette);
                 let (r, top) = (a.panel_rect(), a.layout.toolbar.y);
                 g.dl.rect(Rect::new(r.x, top, r.w, (r.bottom() - top).max(0.0)), files.bg.alpha(a.dim_alpha()));
+                g.dl.confine(from, r);
                 a.visible_rows()
             });
             if let Some(i) = self.slot(id) {
@@ -910,7 +912,11 @@ impl App {
             }
         }
         (self.hover, self.pressed, self.drag, self.active, self.focus, self.ops.dropping) = saved;
+        let from = g.dl.instances.len();
         self.draw_body(g, arena, palette);
+        if self.panels.list.len() > 1 {
+            g.dl.confine(from, self.panel_rect());
+        }
         if let Some(i) = self.slot(self.panels.here) {
             self.panels.list[i].rows = None;
         }

@@ -369,3 +369,32 @@ fn the_inspector_title_chevron_turns_with_the_card() {
     a.frame(&mut Gfx::new(Mono, 2048), t + Duration::from_millis(410));
     assert_eq!(a.preview.turn.value(t + Duration::from_millis(410), turn), 0.0, "without Animations it turns at once");
 }
+
+#[test]
+fn the_inspector_opens_at_half_of_the_area_it_shares_until_the_divider_is_dragged() {
+    let mut a = app((1200, 700));
+    press(&mut a, Key::Space, NO);
+    let half = |a: &App| {
+        let (p, l) = (a.preview.r.pane, &a.layout);
+        (p.w - (p.right() - l.header.x) / 2.0).abs() <= 1.0
+    };
+    assert!(half(&a), "{:?} {:?}", a.preview.r.pane, a.layout.header);
+    a.on_event(&Event::Resized { width: 1500, height: 700 }, Instant::now());
+    frame(&mut a);
+    assert!(half(&a), "half of the new width after a resize");
+    let split = a.preview.r.split;
+    let (x, y) = (split.x + split.w / 2.0, split.y + 40.0);
+    a.on_event(&Event::MouseMove { x, y }, Instant::now());
+    a.on_event(&Event::MouseDown { x, y, button: crate::input::MouseButton::Left, clicks: 1 }, Instant::now());
+    a.on_event(&Event::MouseMove { x: x - 100.0, y }, Instant::now());
+    a.on_event(&Event::MouseUp { x: x - 100.0, y, button: crate::input::MouseButton::Left }, Instant::now());
+    let dragged = a.pane_state().right_w;
+    assert!(dragged != HALF && (dragged - a.preview.r.pane.w).abs() <= 1.0, "{dragged}");
+    a.on_event(&Event::Resized { width: 1700, height: 700 }, Instant::now());
+    frame(&mut a);
+    assert_eq!(a.preview.r.pane.w, dragged, "a dragged size stays");
+    let old = PaneState { right_w: 340.0, bottom_h: 260.0, ..Default::default() }.sanitized();
+    assert_eq!((old.right_w, old.bottom_h), (HALF, HALF), "the old untouched defaults become half");
+    let kept = PaneState { right_w: 410.0, bottom_h: 300.0, ..Default::default() }.sanitized();
+    assert_eq!((kept.right_w, kept.bottom_h), (410.0, 300.0));
+}

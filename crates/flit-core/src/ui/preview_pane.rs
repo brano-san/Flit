@@ -22,6 +22,9 @@ use std::time::Instant;
 
 const MIN_RIGHT: f32 = 200.0;
 const MIN_BOTTOM: f32 = 120.0;
+pub const HALF: f32 = 0.0;
+const OLD_RIGHT_W: f32 = 340.0;
+const OLD_BOTTOM_H: f32 = 260.0;
 const MAX_SIDE: f32 = 4000.0;
 const TOOLS_H: f32 = 30.0;
 const FOOT_H: f32 = 24.0;
@@ -64,16 +67,16 @@ pub struct PaneState {
 
 impl Default for PaneState {
     fn default() -> Self {
-        Self { visible: false, details: false, right_w: 340.0, bottom_h: 260.0, volume: 0.8 }
+        Self { visible: false, details: false, right_w: HALF, bottom_h: HALF, volume: 0.8 }
     }
 }
 
 impl PaneState {
     pub fn sanitized(self) -> Self {
         let d = Self::default();
-        let fix = |v: f32, min: f32, def: f32| if v.is_finite() && (min..=MAX_SIDE).contains(&v) { v } else { def };
+        let fix = |v: f32, min: f32, old: f32| if v.is_finite() && (min..=MAX_SIDE).contains(&v) && v != old { v } else { HALF };
         let volume = if (0.0..=1.0).contains(&self.volume) { self.volume } else { d.volume };
-        Self { right_w: fix(self.right_w, MIN_RIGHT, d.right_w), bottom_h: fix(self.bottom_h, MIN_BOTTOM, d.bottom_h), volume, ..self }
+        Self { right_w: fix(self.right_w, MIN_RIGHT, OLD_RIGHT_W), bottom_h: fix(self.bottom_h, MIN_BOTTOM, OLD_BOTTOM_H), volume, ..self }
     }
 }
 
@@ -687,6 +690,9 @@ impl App {
     }
 
     pub(super) fn layout_preview(&mut self) {
+        fn sized(saved: f32, room: f32, min: f32, s: impl Fn(f32) -> f32) -> f32 {
+            if saved == HALF { (room / 2.0).round().clamp(min.min(room), s(MAX_SIDE)) } else { s(saved) }
+        }
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
         let st = self.preview.state;
@@ -704,14 +710,14 @@ impl App {
             return;
         }
         if right {
-            let pw = s(st.right_w).min((room_w * 0.7).round());
+            let pw = sized(st.right_w, room_w, s(MIN_RIGHT), s).min((room_w * 0.7).round());
             r.pane = Rect::new(w - pw, top, pw, room_h);
             r.split = Rect::new(r.pane.x - s(3.0), top, s(6.0), room_h);
             l.header.w = (l.header.w - pw).max(0.0);
             l.status.w = (r.pane.x - l.status.x).max(0.0);
         } else {
             let status_h = l.status.h;
-            let ph = s(st.bottom_h).min((room_h * 0.7).round());
+            let ph = sized(st.bottom_h, room_h, s(MIN_BOTTOM), s).min((room_h * 0.7).round());
             r.pane = Rect::new(x0, end - ph, room_w, ph);
             r.split = Rect::new(x0, r.pane.y - status_h - s(3.0), room_w, s(6.0));
             l.status.y = r.pane.y - status_h;
@@ -766,7 +772,9 @@ impl App {
 
     pub(super) fn preview_mouse_down(&mut self, h: PaneHit, x: f32, y: f32) {
         let st = self.preview.state;
-        let (at, size) = if self.right_side() { (x, st.right_w) } else { (y, st.bottom_h) };
+        let pane = self.preview.r.pane;
+        let shown = |v: f32, px: f32| if v == HALF { px / self.scale } else { v };
+        let (at, size) = if self.right_side() { (x, shown(st.right_w, pane.w)) } else { (y, shown(st.bottom_h, pane.h)) };
         match h {
             PaneHit::Split => self.drag = Drag::Preview { hit: h, start: at, size },
             PaneHit::Seek | PaneHit::Volume => {

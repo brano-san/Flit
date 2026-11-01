@@ -484,3 +484,23 @@ fn closing_a_split_panel_slides_it_shut_and_the_neighbour_takes_the_room() {
     app.frame(&mut g, t + Duration::from_millis(500));
     assert_eq!(rect(&app, 0).w, end, "without Animations it closes at once");
 }
+
+#[test]
+fn every_panel_draws_inside_its_own_rect_even_mid_split_with_wide_columns() {
+    let mut app = app_at(r"C:\a");
+    app.animations = true;
+    deliver(&mut app, &[("sub", true), ("file.txt", false)]);
+    let mut g = Gfx::new(Mono, 1024);
+    let t = Instant::now();
+    app.frame(&mut g, t);
+    key(&mut app, Key::Char('S'), CTRL_SHIFT);
+    for ms in [16u64, 60, 400] {
+        app.frame(&mut g, t + Duration::from_millis(ms));
+        let rects: Vec<Rect> = [0, 1].map(|id| rect(&app, id)).to_vec();
+        let content_top = app.s(TAB_H);
+        let inside = |i: &crate::render::Instance| rects.iter().any(|r| i.clip[0] >= r.x - 0.5 && i.clip[2] <= r.right() + 0.5);
+        let stray = g.dl.instances.iter().filter(|i| i.rect[1] >= content_top && i.rect[0] >= rects[0].x && i.rect[0] < rects[1].right() && !inside(i)).count();
+        let crossing = g.dl.instances.iter().filter(|i| i.clip[0] < rects[1].x - 0.5 && i.clip[2] > rects[1].x + 0.5 && i.rect[1] >= content_top && i.rect[0] >= rects[0].x).count();
+        assert_eq!(crossing, 0, "nothing of one panel is drawn across the other at {ms} ms ({stray} unclipped)");
+    }
+}
