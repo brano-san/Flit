@@ -45,6 +45,13 @@ impl Fs for LinuxGuiFs {
         LinuxFs.dir_sizes(dir, items, keep_going, report)
     }
 
+    fn read_deep(&self, root: &FsPath, out: &mut ListingBuilder<'_>, keep_going: &dyn Fn() -> bool) {
+        match flit_archive::locate(root) {
+            Some(_) => flit_platform::read_deep(self, root, out, keep_going),
+            None => LinuxFs.read_deep(root, out, keep_going),
+        }
+    }
+
     fn volume_size(&self, path: &FsPath) -> u64 {
         LinuxFs.volume_size(path)
     }

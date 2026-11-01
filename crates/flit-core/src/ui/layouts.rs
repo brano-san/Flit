@@ -296,11 +296,11 @@ impl App {
     }
 
     pub(super) fn line_rect(&self, f: &Flow, line: usize) -> Rect {
-        let (c, l, s) = (f.cell(line), self.layout.list, self.tab().scroll);
+        let (c, l) = (f.cell_from(line, self.tab().scroll), self.layout.list);
         if self.layout.flow.across {
-            Rect::new((l.x + c.x - s).round(), l.y + c.y, c.w, c.h)
+            Rect::new((l.x + c.x).round(), l.y + c.y, c.w, c.h)
         } else {
-            Rect::new(l.x + c.x, (l.y + c.y - s).round(), c.w, c.h)
+            Rect::new(l.x + c.x, (l.y + c.y).round(), c.w, c.h)
         }
     }
 

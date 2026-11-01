@@ -69,6 +69,25 @@ fn second_process_forwards_its_open_to_the_first() {
 }
 
 #[test]
+fn a_frozen_window_does_not_swallow_the_next_start() {
+    use crate::window::turned_since;
+    use std::sync::atomic::{AtomicBool, AtomicU64};
+    let (running, turns) = (AtomicBool::new(false), AtomicU64::new(7));
+    assert!(turned_since(&running, &turns, 7, Duration::from_millis(50)), "before the event loop runs nothing waits");
+    running.store(true, Ordering::Release);
+    let started = Instant::now();
+    assert!(!turned_since(&running, &turns, 7, Duration::from_millis(50)), "a loop that never turns is not answering");
+    assert!(started.elapsed() >= Duration::from_millis(50));
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            std::thread::sleep(Duration::from_millis(20));
+            turns.fetch_add(1, Ordering::AcqRel);
+        });
+        assert!(turned_since(&running, &turns, 7, Duration::from_secs(5)));
+    });
+}
+
+#[test]
 fn a_dead_primary_leaves_no_lock_behind() {
     let t = Temp::new("instance-stale");
     let (_, socket) = endpoints(t.path());

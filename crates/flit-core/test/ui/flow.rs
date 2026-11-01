@@ -78,3 +78,19 @@ fn list_columns_give_group_headers_one_slot_and_start_each_group_in_a_new_column
     assert_eq!(f.step(3, 1), Some(5));
     assert_eq!(f.lines_in(100.0, 250.0), 0..7);
 }
+
+#[test]
+fn millions_of_rows_keep_even_spacing_and_the_last_rows_stay_visible() {
+    let rows = 3_000_000;
+    let mut f = Flow { p: FlowParams { across: false, per: 1, cell: (500.0, 19.0), head: 19.0 }, spans: Vec::new(), end: 0.0 };
+    f.push(Span { line: 0, rows, head: false, at: 0.0 });
+    let first = rows - 40;
+    let scroll = f.cell(first).y;
+    let tops: Vec<f32> = (first..first + 30).map(|n| f.cell_from(n, scroll).y).collect();
+    assert!(tops.windows(2).all(|w| w[1] - w[0] == 19.0), "{tops:?}");
+    assert!(tops[0].abs() < 8.0);
+    let bottom = f.lines_in(f.extent() - 600.0, f.extent());
+    assert_eq!(bottom.end, rows);
+    assert!(bottom.len() >= 30, "{bottom:?}");
+    assert_eq!(f.line_at(f.cell(first).y + 5.0, 10.0), Some(first));
+}

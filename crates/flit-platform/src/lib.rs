@@ -5,7 +5,7 @@ mod wsl;
 
 pub use digest::hash_file;
 pub use indexer::{root_of, start_indexer};
-pub use local::{via_unc, LocalProvider, CANCELLED};
+pub use local::{read_deep, via_unc, LocalProvider, CANCELLED};
 pub use wsl::{AgentImage, AgentImages, AgentLauncher, AgentProcess, Clipboard, Timing, WslProvider, UNMAPPABLE};
 
 use crossbeam_channel::Sender;
@@ -184,6 +184,9 @@ pub trait Fs: Send + Sync + 'static {
     }
     fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, DirStats) + Sync)) {
         local::dir_sizes(self, dir, items, keep_going, report)
+    }
+    fn read_deep(&self, root: &FsPath, out: &mut ListingBuilder<'_>, keep_going: &dyn Fn() -> bool) {
+        local::read_deep(self, root, out, keep_going)
     }
     fn hash(&self, file: &FsPath, kinds: &[HashKind], job: &Job) -> Result<Vec<String>, PlatformError> {
         hash_file(file, kinds, job)

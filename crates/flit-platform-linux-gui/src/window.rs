@@ -8,7 +8,7 @@ use flit_platform::{Placement, PlatformError, Waker, Window, WindowHandler, Wind
 use std::cell::{Cell, RefCell};
 use std::ffi::CStr;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
@@ -45,6 +45,20 @@ static A11Y_REFRESH: AtomicBool = AtomicBool::new(false);
 static QUEUED: Mutex<Vec<(WindowId, Event)>> = Mutex::new(Vec::new());
 static TOKEN: Mutex<Option<String>> = Mutex::new(None);
 static PREFETCHED: Mutex<Option<(Vec<FsPath>, OpenWith)>> = Mutex::new(None);
+
+pub(crate) static LOOP_RUNNING: AtomicBool = AtomicBool::new(false);
+pub(crate) static TURNS: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn turned_since(running: &AtomicBool, turns: &AtomicU64, seen: u64, wait: Duration) -> bool {
+    let until = Instant::now() + wait;
+    while running.load(Ordering::Acquire) && turns.load(Ordering::Acquire) == seen {
+        if Instant::now() >= until {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    true
+}
 
 pub(crate) fn activation_token() -> Option<String> {
     TOKEN.lock().unwrap_or_else(|e| e.into_inner()).take()
@@ -398,7 +412,10 @@ impl WindowSystem for LinuxWindows {
     fn run<H: WindowHandler<Self>>(mut self, first: WindowOptions, handler: H) -> Result<(), PlatformError> {
         let commands: Commands = Rc::new(RefCell::new(vec![Command::Open(first)]));
         let mut app = Loop { handler, nodes: Vec::new(), commands, pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None };
-        self.event_loop.run_app_on_demand(&mut app).map_err(|e| PlatformError::new(-1, format!("event loop: {e}")))?;
+        LOOP_RUNNING.store(true, Ordering::Release);
+        let ran = self.event_loop.run_app_on_demand(&mut app);
+        LOOP_RUNNING.store(false, Ordering::Release);
+        ran.map_err(|e| PlatformError::new(-1, format!("event loop: {e}")))?;
         app.error.map_or(Ok(()), Err)
     }
 }
@@ -788,6 +805,7 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
     }
 
     fn about_to_wait(&mut self, el: &dyn ActiveEventLoop) {
+        TURNS.fetch_add(1, Ordering::AcqRel);
         self.fire_timers();
         self.settle(el);
         let next = self.nodes.iter().filter_map(|n| n.window.timer.get()).min();

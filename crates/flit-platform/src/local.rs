@@ -516,7 +516,7 @@ fn list<F: Fs + ?Sized>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: C
         tracing::warn!("cannot list {}: {e}", path.display());
     }
     if view.deep && result.is_ok() && matches!(path.kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim | PathKind::Unix) {
-        read_deep(fs, path, &mut b, &|| cancel.is_current(gen));
+        fs.read_deep(path, &mut b, &|| cancel.is_current(gen));
     }
     let mut listing = std::mem::take(&mut b.listing);
     let mut keys = std::mem::replace(&mut b.keys, SortKeys::new(case));
@@ -595,7 +595,7 @@ pub(crate) fn measure<F: Fs + ?Sized>(fs: &F, items: &[(FsPath, Option<u64>)], k
     t
 }
 
-pub(crate) fn read_deep<F: Fs + ?Sized>(fs: &F, root: &FsPath, b: &mut ListingBuilder<'_>, keep_going: &dyn Fn() -> bool) {
+pub fn read_deep<F: Fs + ?Sized>(fs: &F, root: &FsPath, b: &mut ListingBuilder<'_>, keep_going: &dyn Fn() -> bool) {
     let sep = flit_core::view::separator(root.kind());
     let case = b.keys.case();
     let l = &b.listing;
