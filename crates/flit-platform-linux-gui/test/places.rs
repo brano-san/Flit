@@ -29,6 +29,19 @@ PATH=\"/dev/sdd1\" LABEL=\"Mounted\" SIZE=\"1\" MOUNTPOINT=\"/media/u/M\" HOTPLU
 }
 
 #[test]
+fn unmounted_internal_data_partitions_show_and_system_partitions_do_not() {
+    let lsblk = "PATH=\"/dev/nvme0n1p1\" LABEL=\"\" MOUNTPOINT=\"\" HOTPLUG=\"0\" FSTYPE=\"vfat\" TYPE=\"part\" PARTTYPE=\"C12A7328-F81F-11D2-BA4B-00A0C93EC93B\"\n\
+PATH=\"/dev/nvme0n1p2\" LABEL=\"\" MOUNTPOINT=\"/\" HOTPLUG=\"0\" FSTYPE=\"btrfs\" TYPE=\"part\" PARTTYPE=\"0fc63daf-8483-4772-8e79-3d69d8477de4\"\n\
+PATH=\"/dev/nvme1n1p3\" LABEL=\"Windows\" MOUNTPOINT=\"\" HOTPLUG=\"0\" FSTYPE=\"ntfs\" TYPE=\"part\" PARTTYPE=\"ebd0a0a2-b9e5-4433-87c0-68b6b72699c7\"\n\
+PATH=\"/dev/nvme1n1p4\" LABEL=\"\" MOUNTPOINT=\"\" HOTPLUG=\"0\" FSTYPE=\"ntfs\" TYPE=\"part\" PARTTYPE=\"de94bba4-06d1-4d40-a16a-bfd50179d6ac\"\n\
+PATH=\"/dev/sda2\" LABEL=\"\" MOUNTPOINT=\"\" HOTPLUG=\"0\" FSTYPE=\"swap\" TYPE=\"part\" PARTTYPE=\"0657fd6d-a4ab-43c4-84e5-0933c84b4f4f\"\n\
+PATH=\"/dev/loop0\" LABEL=\"\" MOUNTPOINT=\"\" HOTPLUG=\"0\" FSTYPE=\"ext4\" TYPE=\"loop\" PARTTYPE=\"\"\n\
+PATH=\"/dev/sdb1\" LABEL=\"Stick\" MOUNTPOINT=\"\" HOTPLUG=\"1\" FSTYPE=\"exfat\" TYPE=\"part\" PARTTYPE=\"0x7\"\n";
+    let got: Vec<(String, bool)> = unmounted_from(lsblk).into_iter().map(|d| (d.label, d.removable)).collect();
+    assert_eq!(got, [("Windows".to_owned(), false), ("Stick".to_owned(), true)]);
+}
+
+#[test]
 fn eject_unmounts_then_powers_off_the_block_device_behind_the_mount() {
     let table = parse(b"40 1 8:17 / /media/u/STICK rw,nosuid - vfat /dev/sdb1 rw\n41 1 0:50 / /media/u/net rw - fuse.sshfs host:/ rw\n");
     let steps = eject_steps(&table, Path::new("/media/u/STICK")).unwrap();

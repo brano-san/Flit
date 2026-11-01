@@ -11,6 +11,7 @@ pub const BY_LABEL: &str = "/dev/disk/by-label";
 const PSEUDO: [&str; 29] = [
     "proc", "sysfs", "tmpfs", "devtmpfs", "devpts", "cgroup", "cgroup2", "mqueue", "debugfs", "tracefs", "securityfs", "pstore", "bpf", "fusectl", "configfs", "hugetlbfs", "autofs", "binfmt_misc", "nsfs", "ramfs", "efivarfs", "rpc_pipefs", "selinuxfs", "rootfs", "squashfs", "fuse.portal", "fuse.gvfsd-fuse", "fuse.snapfuse", "nfsd",
 ];
+const SYSTEM_DIRS: [&[u8]; 18] = [b"/boot", b"/efi", b"/proc", b"/sys", b"/dev", b"/run", b"/tmp", b"/var", b"/usr", b"/etc", b"/root", b"/snap", b"/srv", b"/opt", b"/nix", b"/gnu", b"/mnt/wsl", b"/mnt/wslg"];
 const NETWORK: [&str; 16] = ["nfs", "nfs4", "cifs", "smb3", "smbfs", "ncpfs", "afs", "ceph", "glusterfs", "fuse.glusterfs", "fuse.sshfs", "sshfs", "fuse.rclone", "davfs", "fuse.davfs2", "fuse.s3fs"];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,13 +102,30 @@ fn shown_point(point: &[u8], user: &[u8]) -> bool {
     point == b"/" || point == b"/home" || child_of(b"/mnt/") || (!user.is_empty() && (child_of(&media) || child_of(&run_media)))
 }
 
-pub fn visible(mounts: &[Mount], user: &[u8]) -> Vec<Mount> {
+fn on_top(mounts: &[Mount]) -> Vec<&Mount> {
     let mut top: Vec<&Mount> = Vec::new();
     for m in mounts {
         top.retain(|t| t.point != m.point);
         top.push(m);
     }
-    let mut candidates: Vec<&Mount> = top.into_iter().filter(|m| m.is_storage() && shown_point(&m.point, user)).collect();
+    top
+}
+
+fn rank(m: &Mount) -> u8 {
+    match m.point.as_slice() {
+        b"/" => 0,
+        b"/home" => 1,
+        _ => 2,
+    }
+}
+
+fn in_order(mut kept: Vec<&Mount>) -> Vec<Mount> {
+    kept.sort_by(|a, b| rank(a).cmp(&rank(b)).then_with(|| a.point.cmp(&b.point)));
+    kept.into_iter().cloned().collect()
+}
+
+pub fn visible(mounts: &[Mount], user: &[u8]) -> Vec<Mount> {
+    let mut candidates: Vec<&Mount> = on_top(mounts).into_iter().filter(|m| m.is_storage() && shown_point(&m.point, user)).collect();
     candidates.sort_by_key(|m| m.root.len());
     let mut kept: Vec<&Mount> = Vec::new();
     for m in candidates {
@@ -115,13 +133,34 @@ pub fn visible(mounts: &[Mount], user: &[u8]) -> Vec<Mount> {
             kept.push(m);
         }
     }
-    let rank = |m: &Mount| match m.point.as_slice() {
-        b"/" => 0,
-        b"/home" => 1,
-        _ => 2,
-    };
-    kept.sort_by(|a, b| rank(a).cmp(&rank(b)).then_with(|| a.point.cmp(&b.point)));
-    kept.into_iter().cloned().collect()
+    in_order(kept)
+}
+
+fn under(point: &[u8], dir: &[u8]) -> bool {
+    point.strip_prefix(dir).is_some_and(|rest| rest.is_empty() || rest.starts_with(b"/"))
+}
+
+fn disk_point(point: &[u8], user: &[u8]) -> bool {
+    let users_own = |base: &[u8]| !user.is_empty() && point.strip_prefix(base).and_then(|r| r.strip_prefix(user)).is_some_and(|r| r.len() > 1 && r.starts_with(b"/"));
+    if users_own(b"/run/media/") || users_own(b"/media/") {
+        return true;
+    }
+    if under(point, b"/media") {
+        return point.get(b"/media/".len()..).is_some_and(|r| !r.is_empty() && !r.contains(&b'/'));
+    }
+    !SYSTEM_DIRS.iter().any(|d| under(point, d))
+}
+
+pub fn disks(mounts: &[Mount], user: &[u8]) -> Vec<Mount> {
+    let mut candidates: Vec<&Mount> = on_top(mounts).into_iter().filter(|m| m.is_storage() && disk_point(&m.point, user)).collect();
+    candidates.sort_by_key(|m| (rank(m), m.root.len(), m.point.len()));
+    let mut kept: Vec<&Mount> = Vec::new();
+    for m in candidates {
+        if !kept.iter().any(|k| k.dev == m.dev) {
+            kept.push(m);
+        }
+    }
+    in_order(kept)
 }
 
 pub fn user_name() -> Vec<u8> {
