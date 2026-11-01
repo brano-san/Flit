@@ -33,6 +33,26 @@ fn seg_path(dir: &Path, n: u32) -> PathBuf {
     dir.join(format!("{n:08}.thumbs"))
 }
 
+fn header(key: u64, w: u32, h: u32) -> [u8; HEAD as usize] {
+    let mut head = [0u8; HEAD as usize];
+    head[..8].copy_from_slice(&key.to_le_bytes());
+    head[8..12].copy_from_slice(&w.to_le_bytes());
+    head[12..].copy_from_slice(&h.to_le_bytes());
+    head
+}
+
+#[cfg(windows)]
+fn open_shared(path: &Path) -> std::io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const SHARE_READ_WRITE_DELETE: u32 = 7;
+    OpenOptions::new().read(true).share_mode(SHARE_READ_WRITE_DELETE).open(path)
+}
+
+#[cfg(not(windows))]
+fn open_shared(path: &Path) -> std::io::Result<File> {
+    File::open(path)
+}
+
 fn sane(w: u32, h: u32) -> bool {
     (1..=MAX_SIDE).contains(&w) && (1..=MAX_SIDE).contains(&h)
 }
@@ -79,9 +99,14 @@ impl ThumbCache {
         let read = |readers: &mut FxHashMap<u32, File>| -> std::io::Result<Vec<u8>> {
             let f = match readers.entry(rec.seg) {
                 Entry::Occupied(e) => e.into_mut(),
-                Entry::Vacant(e) => e.insert(File::open(seg_path(&self.dir, rec.seg))?),
+                Entry::Vacant(e) => e.insert(open_shared(&seg_path(&self.dir, rec.seg))?),
             };
-            f.seek(SeekFrom::Start(rec.at + HEAD))?;
+            f.seek(SeekFrom::Start(rec.at))?;
+            let mut head = [0u8; HEAD as usize];
+            f.read_exact(&mut head)?;
+            if head != header(key, rec.w, rec.h) {
+                return Err(std::io::ErrorKind::InvalidData.into());
+            }
             let mut rgba = vec![0; (rec.w * rec.h * 4) as usize];
             f.read_exact(&mut rgba)?;
             Ok(rgba)
@@ -127,9 +152,7 @@ impl ThumbCache {
         }
         let Some((n, at)) = self.writer() else { return };
         let mut rec = Vec::with_capacity(HEAD as usize + b.rgba.len());
-        rec.extend(key.to_le_bytes());
-        rec.extend(b.width.to_le_bytes());
-        rec.extend(b.height.to_le_bytes());
+        rec.extend(header(key, b.width, b.height));
         rec.extend(&b.rgba);
         if self.out.as_mut().is_none_or(|f| f.write_all(&rec).is_err()) {
             self.out = None;

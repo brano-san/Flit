@@ -24,6 +24,25 @@ fn bitmap(side: u32, seed: u8) -> Bitmap {
 }
 
 #[test]
+fn another_instance_can_replace_a_segment_this_one_is_reading() {
+    let d = temp("shared");
+    let (one, two) = (bitmap(64, 1), bitmap(64, 2));
+    let mut reading = ThumbCache::new(d.0.clone(), 100);
+    reading.put(1, &one);
+    assert_eq!(reading.get(1).unwrap().rgba, one.rgba);
+    let mut indexed = ThumbCache::new(d.0.clone(), 100);
+    assert_eq!(indexed.used(), reading.used());
+    let mut other = ThumbCache::new(d.0.clone(), 100);
+    other.clear();
+    assert!(!seg_path(&d.0, 1).exists(), "the segment is deleted while a read handle is open");
+    other.put(2, &two);
+    assert_eq!(other.get(2).unwrap().rgba, two.rgba, "the segment is recreated under the same name");
+    assert!(reading.get(1).is_none_or(|b| b.rgba == one.rgba));
+    assert!(indexed.get(1).is_none(), "a record of another key at the same place is a miss");
+    assert!(indexed.get(1).is_none());
+}
+
+#[test]
 fn thumbnails_come_back_after_a_restart_and_a_torn_tail_is_ignored() {
     let d = temp("restart");
     let mut c = ThumbCache::new(d.0.clone(), 100);
