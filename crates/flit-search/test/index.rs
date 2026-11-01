@@ -222,3 +222,16 @@ fn a_single_change_commits_without_touching_every_record() {
     times.sort_by(f64::total_cmp);
     assert!(times[3] < 8.0, "one new file took {:.1} ms to commit into 1M records", times[3]);
 }
+
+#[test]
+fn a_record_removed_and_restored_before_commit_leaves_no_dead_bytes() {
+    let mut v = volume();
+    v.upsert(&rec(10, 5, "kept.txt", false));
+    v.commit();
+    v.remove(10);
+    v.upsert(&rec(10, 5, "kept.txt", false));
+    assert_eq!(v.dead_bytes, 0);
+    v.remove(10);
+    v.upsert(&rec(10, 5, "renamed.txt", false));
+    assert_eq!(v.dead_bytes, "kept.txt".len() + 1);
+}

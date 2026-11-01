@@ -330,6 +330,7 @@ impl VolumeIndex {
     fn revive(&mut self, id: u64) -> Option<u32> {
         let i = self.removed_now.remove(&id)?;
         self.attrs[i as usize] &= !attr::DELETED;
+        self.dead_bytes -= self.lower_len[i as usize] as usize + 1;
         self.index_id(i);
         self.live += (self.attrs[i as usize] & ROOT == 0) as usize;
         Some(i)
