@@ -1674,7 +1674,7 @@ mod tests;
 
 fn sections_submenu(m: &mut Menu, sb: &Sidebar) {
     m.submenu(S::SidebarSections.t(), |m| {
-        for s in Section::ALL {
+        for s in Section::ALL.into_iter().filter(|&s| s != Section::Wsl || !sb.places.wsl.is_empty()) {
             m.toggle(s.title(), PlaceCmd::Hide(s), !sb.is_hidden(s));
         }
     });
