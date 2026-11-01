@@ -34,6 +34,8 @@ const CALL_TIMEOUT_MS: c_int = 5000;
 const TYPE_METHOD_CALL: c_int = 1;
 const TYPE_SIGNAL: c_int = 4;
 const DATA_REMAINS: c_int = 0;
+const APPEARANCE: &str = "org.freedesktop.appearance";
+const SETTING_MATCH: &str = "type='signal',interface='org.freedesktop.portal.Settings',member='SettingChanged',arg0='org.freedesktop.appearance'";
 const ROLE_APPLICATION: (u32, &str) = (75, "application");
 const LAYER_WIDGET: u32 = 3;
 const LAYER_WINDOW: u32 = 7;
@@ -1096,6 +1098,37 @@ pub(crate) fn run(address: &str, refresh: &dyn Fn(), act: &dyn Fn(WindowId, Even
     unsafe {
         libc::close(pipe[0]);
         libc::close(pipe[1]);
+    }
+}
+
+pub(crate) fn color_scheme_change(args: &[Arg]) -> Option<i64> {
+    match args {
+        [Arg::S(ns), Arg::S(key), value] if ns == APPEARANCE && key == "color-scheme" => Some(int(Some(value))),
+        _ => None,
+    }
+}
+
+pub(crate) fn watch_color_scheme(address: &str, changed: &dyn Fn(i64)) {
+    let Some(api) = dbus::load() else { return };
+    let Some(conn) = Conn::open(&api, address) else { return };
+    conn.add_match(SETTING_MATCH);
+    loop {
+        let mut latest = None;
+        let alive = conn.drain(|msg| unsafe {
+            if (api.msg_type)(msg) == TYPE_SIGNAL && text((api.member)(msg)) == "SettingChanged" {
+                latest = color_scheme_change(&args(&api, msg)).or(latest);
+            }
+        });
+        if !alive {
+            return;
+        }
+        if let Some(scheme) = latest {
+            changed(scheme);
+        }
+        if !conn.pending() {
+            let mut fd = watch(conn.fd());
+            unsafe { libc::poll(&mut fd, 1, -1) };
+        }
     }
 }
 

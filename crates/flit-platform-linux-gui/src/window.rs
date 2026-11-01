@@ -268,7 +268,7 @@ impl Window for LinuxWindow {
     }
 
     fn is_dark_mode(&self) -> bool {
-        preferred_dark().or_else(|| self.raw.theme().map(|t| t == Theme::Dark)).unwrap_or(false)
+        preferred_dark().unwrap_or(false)
     }
 
     fn set_clipboard_files(&self, paths: &[FsPath], cut: bool) {

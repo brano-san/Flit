@@ -39,6 +39,20 @@ fn has_rect(g: &Gfx<Mono>, c: Color) -> bool {
     g.dl.instances.iter().any(|i| i.kind == crate::render::kind::SOLID && i.color == c.0)
 }
 
+#[test]
+fn picking_a_color_scheme_applies_it_at_once_even_while_following_the_system() {
+    let mut a = app();
+    a.on_event(&Event::ThemeChanged { dark: true }, Instant::now());
+    a.choose_setting(index("appearance.color_scheme").unwrap(), 1);
+    assert!(!a.is_dark() && *a.theme() == LIGHT);
+    assert_eq!(get(&a, "appearance.system_scheme"), Value::Bool(false));
+    a.choose_setting(index("appearance.color_scheme").unwrap(), 0);
+    assert!(a.is_dark());
+    assert!(set(&mut a, "appearance.system_scheme", Value::Bool(true)));
+    a.on_event(&Event::ThemeChanged { dark: false }, Instant::now());
+    assert!(!a.is_dark(), "the system scheme follows the desktop again");
+}
+
 fn menu_after(a: &mut App, f: impl FnOnce(&mut App)) -> Vec<MenuItem> {
     a.drain_effects().for_each(drop);
     f(a);

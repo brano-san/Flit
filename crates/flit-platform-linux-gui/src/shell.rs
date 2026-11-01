@@ -370,11 +370,7 @@ pub fn parse_color_scheme(reply: &[u8]) -> Option<bool> {
         return Some(false);
     }
     let n = text.rsplit("uint32 ").next()?.trim_start().chars().next()?.to_digit(10)?;
-    match n {
-        1 => Some(true),
-        2 => Some(false),
-        _ => None,
-    }
+    scheme_dark(n.into())
 }
 
 fn gtk_theme_dark() -> Option<bool> {
@@ -398,13 +394,44 @@ fn probe_dark() -> Option<bool> {
     let portal = ["gdbus", "call", "--session", "--timeout", "1", "--dest", "org.freedesktop.portal.Desktop", "--object-path", "/org/freedesktop/portal/desktop", "--method", "org.freedesktop.portal.Settings.Read", "org.freedesktop.appearance", "color-scheme"];
     let gsettings = ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"];
     let ask = |args: &[&str]| helper(args).and_then(|mut c| c.stdout(Stdio::piped()).spawn().ok()).and_then(|child| wait_output(child, HELPER_TIMEOUT)).and_then(|r| parse_color_scheme(&r));
-    session_bus().then(|| ask(&portal)).flatten().or_else(|| ask(&gsettings))
+    let kde = || crate::xdg::config_home().and_then(|c| std::fs::read_to_string(c.join("kdeglobals")).ok()).and_then(|t| kde_dark(&t));
+    session_bus().then(|| ask(&portal)).flatten().or_else(kde).or_else(|| ask(&gsettings))
 }
 
-pub fn dark_preference(found: impl FnOnce(bool) + Send + 'static) {
+pub fn kde_dark(kdeglobals: &str) -> Option<bool> {
+    let mut window = false;
+    for line in kdeglobals.lines().map(str::trim) {
+        if line.starts_with('[') {
+            window = line == "[Colors:Window]";
+        } else if let Some(rgb) = line.strip_prefix("BackgroundNormal=").filter(|_| window) {
+            let c: Vec<u32> = rgb.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+            if let [r, g, b, ..] = c[..] {
+                return Some(r * 299 + g * 587 + b * 114 < 128_000);
+            }
+        }
+    }
+    None
+}
+
+pub fn scheme_dark(scheme: i64) -> Option<bool> {
+    match scheme {
+        1 => Some(true),
+        2 => Some(false),
+        _ => None,
+    }
+}
+
+pub fn dark_preference(found: impl Fn(bool) + Send + 'static) {
     let _ = std::thread::Builder::new().name("flit-theme".into()).spawn(move || {
         if let Some(dark) = probe_dark() {
             found(dark);
+        }
+        if let Some(address) = crate::dbus::session_address() {
+            crate::atspi::watch_color_scheme(&address, &|scheme| {
+                if let Some(dark) = scheme_dark(scheme).or_else(probe_dark) {
+                    found(dark);
+                }
+            });
         }
     });
 }

@@ -540,6 +540,9 @@ impl App {
             }
             return;
         }
+        if SETTINGS[i].id == "appearance.color_scheme" {
+            self.set_system_scheme(false);
+        }
         self.change_setting(i, Value::Choice(choice));
     }
 
