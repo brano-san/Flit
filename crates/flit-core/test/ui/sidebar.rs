@@ -774,7 +774,7 @@ fn without_wsl_distributions_the_sections_menu_has_no_wsl_toggle() {
     app.set_places(Arc::new(places));
     app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
     click(empty_area(&app), &mut app, MouseButton::Right);
-    assert_eq!(stays(&menu(&mut app).menu), ["Recents", "Bookmarks", "Storage", "Places", "Libraries", "Tags", "Compact sidebar"]);
+    assert_eq!(stays(&menu(&mut app).menu), ["Recents", "Bookmarks", "Storage", "Places", "Compact sidebar"]);
 }
 
 #[test]
