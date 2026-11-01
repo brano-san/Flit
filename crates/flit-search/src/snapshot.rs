@@ -141,6 +141,10 @@ impl<'a> Reader<'a> {
 }
 
 pub fn load(bytes: &[u8]) -> Result<(VolumeIndex, Checkpoint), String> {
+    load_with(bytes, true)
+}
+
+fn load_with(bytes: &[u8], bulk: bool) -> Result<(VolumeIndex, Checkpoint), String> {
     if bytes.len() < MAGIC.len() + 8 {
         return Err("the snapshot is truncated".into());
     }
@@ -164,19 +168,24 @@ pub fn load(bytes: &[u8]) -> Result<(VolumeIndex, Checkpoint), String> {
     if count > (body.len() / RECORD_FIXED) as u64 {
         return Err("the snapshot record count is impossible".into());
     }
-    let mut v = VolumeIndex::new(&id, &root, sep);
-    v.reserve(count as usize, body.len().saturating_sub(r.at + count as usize * RECORD_FIXED));
+    let mut records = Vec::with_capacity(count as usize);
     for _ in 0..count {
         let (id, parent, size, modified, attrs) = (r.u64()?, r.u64()?, r.u64()?, r.u64()? as i64, r.u32()? & KEPT_ATTRS);
         let name = r.bytes()?;
         if name.is_empty() {
             return Err("the snapshot has an empty name".into());
         }
-        v.upsert(&IndexRecord { id, parent, name, size, modified, attrs });
+        records.push(IndexRecord { id, parent, name, size, modified, attrs });
     }
     if r.at != body.len() {
         return Err("the snapshot has trailing bytes".into());
     }
+    let mut v = VolumeIndex::new(&id, &root, sep);
+    if !(bulk && v.load_fresh(&records)) {
+        v.reserve(records.len(), body.len().saturating_sub(records.len() * RECORD_FIXED));
+        records.iter().for_each(|r| v.upsert(r));
+    }
+    drop(records);
     v.commit();
     v.shrink();
     Ok((v, cp))

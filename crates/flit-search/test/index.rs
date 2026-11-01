@@ -235,3 +235,24 @@ fn a_record_removed_and_restored_before_commit_leaves_no_dead_bytes() {
     v.upsert(&rec(10, 5, "renamed.txt", false));
     assert_eq!(v.dead_bytes, "kept.txt".len() + 1);
 }
+
+#[test]
+fn a_folder_removed_and_restored_before_commit_needs_no_cascade() {
+    let mut v = volume();
+    v.upsert(&rec(10, 5, "a", true));
+    v.upsert(&rec(11, 5, "b", true));
+    v.upsert(&rec(12, 10, "c.txt", false));
+    v.commit();
+    v.remove(10);
+    v.remove(11);
+    v.upsert(&rec(10, 5, "a", true));
+    assert_eq!(v.removed_dirs, 1);
+    v.upsert(&rec(11, 5, "b", true));
+    assert_eq!(v.removed_dirs, 0);
+    v.commit();
+    assert_eq!(path(&v, 12), r"C:\a\c.txt");
+    v.remove(10);
+    v.commit();
+    assert_eq!(v.removed_dirs, 0);
+    assert!(v.lookup(12).is_none());
+}
