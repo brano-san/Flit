@@ -124,6 +124,7 @@ enum PreviewJob {
     Load { window: WindowId, req: PreviewRequest },
     QuickView { window: WindowId, path: FsPath },
     Backdrop { window: WindowId, gen: u64, path: FsPath },
+    Browse { window: WindowId, exts: &'static [&'static str], folder: bool, start: Option<FsPath> },
 }
 
 enum Done {
@@ -135,6 +136,7 @@ enum Done {
     Preview { window: WindowId, gen: u64, data: PreviewData },
     QuickView { window: WindowId, shown: bool },
     Backdrop { window: WindowId, gen: u64, image: Option<flit_core::ui::Bitmap> },
+    Browsed { window: WindowId, path: Option<FsPath> },
 }
 
 fn tools(app: &App) -> Tools {
@@ -171,6 +173,7 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest
                     },
                     PreviewJob::QuickView { window, path } => Done::QuickView { window, shown: shell.quick_view(&path) },
                     PreviewJob::Backdrop { window, gen, path } => Done::Backdrop { window, gen, image: shell.preview_image(&path, BACKDROP_PX) },
+                    PreviewJob::Browse { window, exts, folder, start } => Done::Browsed { window, path: shell.browse(exts, folder, start.as_ref()) },
                 };
                 if tx.send(done).is_err() {
                     return;
@@ -630,6 +633,9 @@ impl<P: Platform> Handler<P> {
                         st.app.set_fonts(fonts);
                     }
                 }
+                Effect::Settings(SettingsCmd::Browse { exts, folder, start }) => {
+                    let _ = self.previews.send(PreviewJob::Browse { window: id, exts, folder, start });
+                }
             }
         }
         self.sync_settings(id);
@@ -797,6 +803,11 @@ impl<P: Platform> Handler<P> {
                 Done::Backdrop { window, gen, image } => {
                     if let Some(st) = self.windows.get_mut(&window) {
                         st.app.on_backdrop(gen, image);
+                    }
+                }
+                Done::Browsed { window, path } => {
+                    if let Some(st) = self.windows.get_mut(&window) {
+                        st.app.on_browsed(path);
                     }
                 }
                 Done::Sorted { window, tab, gen, view, base_len, order, ms } => {

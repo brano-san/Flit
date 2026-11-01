@@ -322,7 +322,11 @@ impl Palette {
         }
         let alts = self.alts.iter().copied().chain(std::iter::repeat(""));
         let descs = self.descs.iter().map(String::as_str).chain(std::iter::repeat(""));
-        let ranked = if self.pick.is_input() {
+        let suggests = self.pick.is_input() && !self.titles.is_empty();
+        let ranked = if suggests {
+            let found = rank(self.field.text(), self.titles.iter().map(String::as_str).zip(alts).zip(descs).map(|((t, a), d)| (t, a, d)));
+            if found.is_empty() { (0..self.titles.len()).map(|i| (i, Vec::new())).collect() } else { found }
+        } else if self.pick.is_input() {
             Vec::new()
         } else if matches!(self.pick, Pick::Setting(SettingPick::Capture { .. })) {
             (0..self.titles.len()).map(|i| (i, Vec::new())).collect()
@@ -330,8 +334,12 @@ impl Palette {
             rank(self.field.text(), self.titles.iter().map(String::as_str).zip(alts).zip(descs).map(|((t, a), d)| (t, a, d)))
         };
         (self.matches, self.marks) = ranked.into_iter().unzip();
-        self.sel = 0;
+        self.sel = if suggests { usize::MAX } else { 0 };
         self.scroll.snap(0.0);
+    }
+
+    pub(super) fn chosen(&self, row: usize) -> Option<&str> {
+        self.matches.get(row).and_then(|&k| self.descs.get(k)).map(String::as_str)
     }
 
     fn max_scroll(&self) -> f32 {
@@ -343,6 +351,7 @@ impl Palette {
         if n == 0 {
             return;
         }
+        let to = if self.sel == usize::MAX { to.max(-1) } else { to };
         self.sel = to.rem_euclid(n) as usize;
         let unit = self.unit();
         let top = self.sel as f32 * unit;
@@ -446,7 +455,12 @@ impl App {
         let Some(p) = self.nav.palette.take() else { return };
         self.dirty = true;
         if p.pick.is_input() {
-            return self.submit_pick(p.pick, p.field.text().trim());
+            let text = p.chosen(index).unwrap_or(p.field.text().trim()).to_owned();
+            if matches!(&p.pick, Pick::Setting(sp) if !self.setting_accepts(sp, &text)) {
+                self.nav.palette = Some(p);
+                return;
+            }
+            return self.submit_pick(p.pick, &text);
         }
         let Some(&id) = p.matches.get(index) else {
             self.nav.palette = Some(p);
@@ -618,12 +632,13 @@ impl App {
             _ => None,
         };
         let tabs = self.nav.palette.as_ref().is_some_and(|p| p.pick == Pick::Tabs);
+        let notes = self.nav.palette.as_ref().map_or(0.0, |p| App::note_lines(&p.pick) as f32 * self.note_h());
         let Some(p) = &mut self.nav.palette else { return };
         let row_h = p.unit();
         let area = (w - left).max(s(200.0));
         let unit = s(row_h);
         let hint_h = if anchor.is_some() && !tabs { 0.0 } else { s(HINT_H) };
-        let fixed = s(8.0) + s(FIELD_H) + s(6.0) + hint_h;
+        let fixed = s(8.0) + s(FIELD_H) + s(6.0) + notes + hint_h;
         let (x, y, pw) = match anchor {
             Some(a) => {
                 let pw = a.w.max(s(if tabs { TABS_W } else { CRUMB_W })).min(w - 2.0 * s(EDGE));
@@ -643,7 +658,7 @@ impl App {
         p.field_rect = Rect::new(x + s(8.0), y + s(8.0), pw - s(16.0) - s(FIELD_H) - s(4.0) - extra - lead, s(FIELD_H));
         p.describe = if extra > 0.0 { Rect::new(p.field_rect.right() + s(4.0), p.field_rect.y, s(FIELD_H), s(FIELD_H)) } else { Rect::default() };
         p.close = Rect::new(p.field_rect.right() + s(4.0) + extra + lead, p.field_rect.y, s(FIELD_H), s(FIELD_H));
-        let top = p.field_rect.bottom() + s(6.0);
+        let top = p.field_rect.bottom() + s(6.0) + notes;
         let room = (h - s(EDGE) - hint_h - top).max(unit);
         p.page = ((room / unit).floor() as usize).max(1);
         let max = p.max_scroll();
@@ -748,6 +763,10 @@ impl App {
         if p.go.is_some() {
             self.draw_go_buttons(w.g, t, &p, icons);
         }
+        let notes = App::note_lines(&p.pick) as f32 * self.note_h();
+        if notes > 0.0 {
+            self.draw_notes(w.g, t, &p, Rect::new(r.x, p.list.y - notes, r.w, notes));
+        }
         w.g.dl.set_clip(Some(p.list));
         if p.go.is_some() {
             self.draw_go_rows(w.g, t, &p, font, small, self.icon_font(14.0), &mut requests);
@@ -846,7 +865,9 @@ impl App {
             let keys = &p.keys[p.matches[i]];
             let kw = if keys.is_empty() { 0.0 } else { w.g.measure(keys, small) };
             w.g.text(row.right() - s12 - kw, y, keys, small, dim, f32::INFINITY);
-            w.marked((row.x + s12, y), &p.titles[p.matches[i]], &p.marks[i], font, (ink, mark), row.w - 3.0 * s12 - kw);
+            let swatch = p.descs.get(p.matches[i]).and_then(|v| self.editor_swatch(&p.pick, v));
+            let lead = swatch.map_or(0.0, |c| self.paint_swatch(w.g, t, Rect::new(row.x + s12, row.y, 0.0, row.h), c));
+            w.marked((row.x + s12 + lead, y), &p.titles[p.matches[i]], &p.marks[i], font, (ink, mark), row.w - 3.0 * s12 - kw - lead);
         }
         w.g.dl.set_clip(None);
         if let Some(c) = p.commands.as_mut() {

@@ -21,7 +21,7 @@ pub const FOLDER_SCAN: usize = 20_000;
 pub const MAX_PROPS: usize = 120;
 pub const FOLDER_ROWS: usize = 2_000;
 
-const IMAGES: &[&str] = &["jpg", "jpeg", "jpe", "jfif", "png", "gif", "bmp", "dib", "tif", "tiff", "ico", "webp", "heic", "heif", "avif", "jxr", "wdp", "dds", "jxl"];
+pub const IMAGES: &[&str] = &["jpg", "jpeg", "jpe", "jfif", "png", "gif", "bmp", "dib", "tif", "tiff", "ico", "webp", "heic", "heif", "avif", "jxr", "wdp", "dds", "jxl"];
 const AUDIO: &[&str] = &["mp3", "wav", "wma", "flac", "m4a", "aac", "ogg", "oga", "opus", "aif", "aiff", "amr", "ac3"];
 const VIDEO: &[&str] = &["mp4", "m4v", "mov", "wmv", "avi", "mkv", "webm", "mpg", "mpeg", "3gp", "3g2", "m2ts", "mts", "asf"];
 const TEXT: &[&str] = &["txt", "log", "csv", "tsv", "nfo", "diz", "srt", "vtt", "lst", "text", "readme", "gitignore", "gitattributes"];

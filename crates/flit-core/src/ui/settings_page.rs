@@ -8,6 +8,7 @@ use super::fuzzy::fuzzy;
 use super::settings::{self, Kind, Page, Picker, Setting, Value, SETTINGS};
 use super::widgets::Button;
 use super::a11y::{leaf, put};
+use super::setting_editor::BROWSE;
 use super::{centered, App, Effect, Glide, Hit, SettingsCmd, G_CLOSE};
 use crate::a11y::{Role, Tree};
 use crate::i18n::{P, S};
@@ -30,11 +31,15 @@ const FIELD_H: f32 = 32.0;
 const HINT_H: f32 = 36.0;
 const EDGE: f32 = 12.0;
 const SETTING_H: f32 = 46.0;
-const SETTING_SHORT_H: f32 = 30.0;
+const CONTROL_H: f32 = 30.0;
+const ROW_GAP: f32 = 6.0;
+const TEXT_GAP: f32 = 3.0;
+const TEXT_PAD: f32 = 10.0;
+const BUTTON_GAP: f32 = 8.0;
+const BUTTON_PAD: f32 = 24.0;
 const GROUP_H: f32 = 34.0;
 const NOTE_H: f32 = 32.0;
 const ITEM_H: f32 = 32.0;
-const BUTTONS_H: f32 = 46.0;
 const TAG_H: f32 = 40.0;
 const INFO_H: f32 = 28.0;
 const CONTROL_MIN: f32 = 120.0;
@@ -50,7 +55,8 @@ const INDENT: f32 = 22.0;
 pub const NESTED: [&str; 9] = ["files.system", "files.dotfiles", "files.sizes_ssd", "files.sizes_hdd", "files.sizes_network", "files.single_click_files", "files.single_click_folders", "files.single_click_columns", "general.startup_pages"];
 pub const SLIDERS: [&str; 3] = [settings::SPACING, settings::OPACITY, settings::CACHE];
 pub const RESTART: [&str; 0] = [];
-const EXPORT_NAME: &str = "flit-settings.json";
+pub(super) const EXPORT_NAME: &str = "flit-settings.json";
+const OS_NAME: &str = if cfg!(windows) { "Windows" } else { "Linux" };
 
 const G_PLUS: &str = "\u{E710}";
 const G_DOWN: &str = "\u{E70D}";
@@ -90,6 +96,29 @@ pub(super) enum Btn {
 }
 
 impl Btn {
+    const ALL: [Btn; 20] = [
+        Btn::AddHome,
+        Btn::AddCurrent,
+        Btn::AddTyped,
+        Btn::NewTag,
+        Btn::ClearCache,
+        Btn::OpenFile,
+        Btn::Export,
+        Btn::Import,
+        Btn::Reset,
+        Btn::CopyAbout,
+        Btn::Rename,
+        Btn::Recolor,
+        Btn::Delete,
+        Btn::OpenLog,
+        Btn::OpenLogs,
+        Btn::Docs,
+        Btn::ReportBug,
+        Btn::RequestFeature,
+        Btn::Repository,
+        Btn::Privacy,
+    ];
+
     fn label(self) -> &'static str {
         match self {
             Btn::AddHome => S::SettingsPageButtonAddHome.t(),
@@ -138,17 +167,48 @@ enum Line {
     Info(&'static str, String),
 }
 
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) struct Fit {
+    pub(super) body: f32,
+    pub(super) small: f32,
+    bold: f32,
+    labels: [f32; Btn::ALL.len()],
+}
+
+impl Fit {
+    fn guess(sc: f32) -> Self {
+        let line = |px: f32| (px * 1.35 * sc).ceil();
+        Self { body: line(13.0), small: line(12.0), bold: line(14.0), labels: [0.0; Btn::ALL.len()] }
+    }
+
+    fn label(&self, b: Btn) -> f32 {
+        self.labels[b as usize]
+    }
+}
+
+fn line_h(m: crate::text::FontMetrics) -> f32 {
+    (m.ascent + m.descent).ceil()
+}
+
+fn text_baselines(r: Rect, title: crate::text::FontMetrics, help: crate::text::FontMetrics, s: impl Fn(f32) -> f32) -> (f32, f32) {
+    let block = line_h(title) + s(TEXT_GAP) + line_h(help);
+    let top = r.y + ((r.h - block) / 2.0).max(0.0);
+    ((top + title.ascent).round(), (top + line_h(title) + s(TEXT_GAP) + help.ascent).round())
+}
+
 impl Line {
-    fn height(&self, describe: bool) -> f32 {
+    fn height(&self, describe: bool, fit: &Fit, s: impl Fn(f32) -> f32) -> f32 {
+        let room = |min: f32, text: f32| s(min).max(text + s(TEXT_PAD));
+        let control = s(CONTROL_H) + s(ROW_GAP);
         match self {
-            Line::Group(_) => GROUP_H,
-            Line::Note(_) => NOTE_H,
-            Line::Setting(_) | Line::Off(_) if describe => SETTING_H,
-            Line::Setting(_) | Line::Off(_) => SETTING_SHORT_H,
-            Line::Path(..) => ITEM_H,
-            Line::Buttons(..) => BUTTONS_H,
-            Line::Tag(_) => TAG_H,
-            Line::Info(..) => INFO_H,
+            Line::Group(_) => room(GROUP_H, fit.bold + s(TEXT_PAD)),
+            Line::Note(_) => room(NOTE_H, fit.body),
+            Line::Setting(_) | Line::Off(_) if describe => room(SETTING_H, fit.body + s(TEXT_GAP) + fit.small).max(control),
+            Line::Setting(_) | Line::Off(_) => room(0.0, fit.body).max(control),
+            Line::Path(..) => room(ITEM_H, fit.body),
+            Line::Buttons(..) => 0.0,
+            Line::Tag(_) => room(TAG_H, fit.body).max(control + s(4.0)),
+            Line::Info(..) => room(INFO_H, fit.small),
         }
     }
 
@@ -266,12 +326,16 @@ pub(super) struct SettingsUi {
     describe: Rect,
     close: Rect,
     hints: Rect,
+    pub(super) fit: Fit,
+    pub(super) browsing: Option<SettingPick>,
 }
 
 impl SettingsUi {
-    fn new(page: Page) -> Self {
+    fn new(page: Page, sc: f32) -> Self {
         Self {
             page,
+            fit: Fit::guess(sc),
+            browsing: None,
             search: Field::default(),
             searching: false,
             lines: Vec::new(),
@@ -400,7 +464,7 @@ fn scroll_thumb(list: Rect, content_h: f32, pos: f32, s: impl Fn(f32) -> f32) ->
 
 const TIP_W: f32 = 380.0;
 
-fn wrap<'a, B: TextBackend>(g: &mut Gfx<B>, text: &'a str, font: FontStyle, max_w: f32) -> Vec<&'a str> {
+pub(super) fn wrap<'a, B: TextBackend>(g: &mut Gfx<B>, text: &'a str, font: FontStyle, max_w: f32) -> Vec<&'a str> {
     let mut lines = Vec::new();
     let (mut start, mut end) = (0, 0);
     for word in text.split_whitespace() {
@@ -429,38 +493,56 @@ fn remove_rect(r: Rect, s: impl Fn(f32) -> f32) -> Rect {
     Rect::new(r.right() - s(PAD) - s(28.0), r.y + (r.h - s(24.0)) / 2.0, s(28.0), s(24.0))
 }
 
-thread_local! {
-    static LABEL_W: std::cell::RefCell<std::collections::HashMap<&'static str, f32>> = std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
 fn glyph_w(btn: &Btn, s: impl Fn(f32) -> f32) -> f32 {
     if matches!(btn, Btn::AddHome | Btn::AddCurrent | Btn::NewTag) { s(18.0) } else { 0.0 }
 }
 
-fn button_rects(line: &Line, r: Rect, s: impl Fn(f32) -> f32) -> Vec<Rect> {
-    let buttons = line.buttons();
-    let h = s(30.0);
-    let y = r.y + (r.h - h) / 2.0;
+fn button_rects(line: &Line, r: Rect, fit: &Fit, s: impl Fn(f32) -> f32) -> Vec<Rect> {
+    let h = s(CONTROL_H);
+    let gap = s(BUTTON_GAP);
+    let natural = |btn: &Btn| (fit.label(*btn) + s(BUTTON_PAD) + glyph_w(btn, &s)).ceil();
     match line {
         Line::Tag(_) => {
-            let w = s(TAG_BUTTON_W);
-            let n = buttons.len();
-            (0..n).map(|k| Rect::new(r.right() - s(PAD) - (n - k) as f32 * (w + s(8.0)) + s(8.0), y, w, h)).collect()
+            let y = r.y + ((r.h - h) / 2.0).round();
+            let mut right = r.right() - s(PAD);
+            let mut out: Vec<Rect> = TAG_BUTTONS
+                .iter()
+                .rev()
+                .map(|btn| {
+                    let w = s(TAG_BUTTON_W).max(natural(btn));
+                    right -= w;
+                    let b = Rect::new(right, y, w, h);
+                    right -= gap;
+                    b
+                })
+                .collect();
+            out.reverse();
+            out
         }
         _ => {
-            let mut x = r.x + if matches!(line, Line::Buttons(Some(_), _)) { s(32.0) } else { s(PAD) };
-            buttons
+            let left = r.x + if matches!(line, Line::Buttons(Some(_), _)) { s(32.0) } else { s(PAD) };
+            let end = r.right() - s(PAD);
+            let room = (end - left).max(s(BUTTON_W) / 2.0);
+            let (mut x, mut y) = (left, r.y + s(BUTTON_GAP));
+            line.buttons()
                 .iter()
                 .map(|btn| {
-                    let label = LABEL_W.with(|m| m.borrow().get(btn.label()).copied()).unwrap_or(0.0);
-                    let w = s(BUTTON_W).max(label + s(16.0) + glyph_w(btn, &s));
+                    let w = s(BUTTON_W).min(room).max(natural(btn)).min(room);
+                    if x > left && x + w > end {
+                        (x, y) = (left, y + h + gap);
+                    }
                     let b = Rect::new(x, y, w, h);
-                    x += w + s(8.0);
+                    x += w + gap;
                     b
                 })
                 .collect()
         }
     }
+}
+
+fn buttons_height(line: &Line, w: f32, fit: &Fit, s: impl Fn(f32) -> f32) -> f32 {
+    let bottom = button_rects(line, Rect::new(0.0, 0.0, w, 0.0), fit, &s).iter().map(|b| b.bottom()).fold(0.0, f32::max);
+    bottom + s(BUTTON_GAP)
 }
 
 fn size_text(bytes: Option<u64>, decimal: bool) -> String {
@@ -508,7 +590,7 @@ impl App {
             return self.close_settings();
         }
         self.nav.palette = None;
-        let ui = self.settings.get_or_insert_with(|| SettingsUi::new(page.unwrap_or(Page::Interface)));
+        let ui = self.settings.get_or_insert_with(|| SettingsUi::new(page.unwrap_or(Page::Interface), self.scale));
         if let Some(p) = page {
             ui.page = p;
             ui.jump = Some(p);
@@ -534,16 +616,10 @@ impl App {
     }
 
     pub(super) fn choose_setting(&mut self, i: usize, choice: usize) {
-        if matches!(SETTINGS[i].kind, Kind::Pick(..)) {
-            if self.choose_color(i, choice) {
-                self.layout();
-            }
-            return;
-        }
         self.change_setting(i, Value::Choice(choice));
     }
 
-    fn paths_of(&self, i: usize) -> Vec<crate::location::Location> {
+    pub(super) fn paths_of(&self, i: usize) -> Vec<crate::location::Location> {
         match SETTINGS[i].get(self) {
             Value::Paths(p) => p,
             _ => Vec::new(),
@@ -601,21 +677,16 @@ impl App {
         self.dispatch(vec![Route { folder: Location::from_local(dir), select: Some(LOG_FILE.as_bytes().to_vec()) }], OpenTarget::NewTab, now);
     }
 
-    fn export_default(&self) -> String {
-        let here = self.tab().view_loc.to_windows().filter(|p| self.caps.is_native(p));
-        here.map(|p| p.join(EXPORT_NAME.as_bytes()).display().into_owned()).unwrap_or_default()
-    }
-
     pub(super) fn ask_export_settings(&mut self) {
-        let text = self.export_default();
-        self.open_pick(Palette::new(Pick::Setting(SettingPick::Export), Vec::new(), &text));
+        let text = self.export_path().unwrap_or_default();
+        self.open_setting_editor(SettingPick::Export, &text);
     }
 
     pub(super) fn ask_import_settings(&mut self) {
         let t = self.tab();
         let focused = t.view.as_ref().and_then(|v| v.focus).map(|i| t.entry_location(i)).filter(|l| l.file_name().to_ascii_lowercase().ends_with(b".json"));
-        let text = focused.and_then(|l| l.to_windows()).map(|p| p.display().into_owned()).unwrap_or_else(|| self.export_default());
-        self.open_pick(Palette::new(Pick::Setting(SettingPick::Import), Vec::new(), &text));
+        let text = focused.and_then(|l| l.to_windows()).map(|p| p.display().into_owned()).or_else(|| self.export_path()).unwrap_or_default();
+        self.open_setting_editor(SettingPick::Import, &text);
     }
 
     pub(super) fn ask_reset_settings(&mut self) {
@@ -639,6 +710,9 @@ impl App {
     }
 
     pub(super) fn setting_input(&mut self, pick: SettingPick, text: &str) {
+        if text == BROWSE {
+            return self.browse_for(pick);
+        }
         match pick {
             SettingPick::Text(i) => self.change_setting(i, Value::Text(text.to_owned())),
             SettingPick::Color(i) if Picker::Color.accepts(text) => self.change_setting(i, Value::Text(text.to_owned())),
@@ -684,7 +758,7 @@ impl App {
             }
             Page::About => {
                 out.push(Line::Info(S::SettingsPageLineVersion.t(), format!("Flit {}", env!("CARGO_PKG_VERSION"))));
-                out.push(Line::Info("Windows", if self.about.os.is_empty() { S::SettingsPageLineUnknown.t().into() } else { self.about.os.clone() }));
+                out.push(Line::Info(OS_NAME, if self.about.os.is_empty() { S::SettingsPageLineUnknown.t().into() } else { self.about.os.clone() }));
                 out.push(Line::Buttons(None, &[Btn::CopyAbout]));
                 out.push(Line::Group(S::SettingsPageLineHelp.t()));
                 out.push(Line::Buttons(None, HELP_BUTTONS));
@@ -750,11 +824,18 @@ impl App {
         ui.lines = lines;
         let (w, h, sc, describe) = (self.size.0, self.size.1, self.scale, self.opts.describe);
         let s = |v: f32| (v * sc).round();
+        let left = self.panels.left;
+        let area = (w - left).max(s(200.0));
+        let pw = (w / 2.0).round().max(s(MIN_W)).min(s(MAX_W)).min(area - 2.0 * s(EDGE)).max(s(320.0));
         let mut y = 0.0;
         let mut offsets = Vec::with_capacity(ui.lines.len());
         for l in &ui.lines {
-            offsets.push((y, s(l.height(describe))));
-            y += s(l.height(describe));
+            let lh = match l {
+                Line::Buttons(..) => buttons_height(l, pw, &ui.fit, s),
+                _ => l.height(describe, &ui.fit, s),
+            };
+            offsets.push((y, lh));
+            y += lh;
         }
         ui.content_h = y;
         if let Some(p) = ui.jump.take() {
@@ -772,9 +853,6 @@ impl App {
         if let Some(&(_, p)) = ui.starts.iter().rev().find(|(k, _)| *k <= ui.focus) {
             ui.page = p;
         }
-        let left = self.panels.left;
-        let area = (w - left).max(s(200.0));
-        let pw = (w / 2.0).round().max(s(MIN_W)).min(s(MAX_W)).min(area - 2.0 * s(EDGE)).max(s(320.0));
         let x = (left + (area - pw) / 2.0).round().min(w - pw).max(0.0);
         let fixed = s(8.0) + s(FIELD_H) + s(6.0) + s(HINT_H);
         let top = super::palette::popup_top(sc, h, fixed + s(SETTING_H) * 4.0);
@@ -829,7 +907,7 @@ impl App {
         }
         let Some(k) = ui.rects.iter().position(|r| r.contains(x, y)) else { return h(SHit::Panel) };
         let (r, line) = (ui.rects[k], &ui.lines[k]);
-        if let Some(b) = button_rects(line, r, s).iter().position(|b| b.contains(x, y)) {
+        if let Some(b) = button_rects(line, r, &ui.fit, s).iter().position(|b| b.contains(x, y)) {
             return h(SHit::Button(k, b));
         }
         match line {
@@ -927,7 +1005,7 @@ impl App {
                 Line::Buttons(..) => None,
             };
             let mut subs = Vec::new();
-            for (b, br) in button_rects(line, r, s).into_iter().enumerate() {
+            for (b, br) in button_rects(line, r, &ui.fit, s).into_iter().enumerate() {
                 let name = line.buttons().get(b).map_or("", |btn| btn.label());
                 subs.push(put(t, targets, row.unwrap_or(section), at(SHit::Button(k, b)), Role::Button, name, br));
             }
@@ -1075,13 +1153,10 @@ impl App {
                     None => self.flit_menu(x, y, items.collect()),
                 }
             }
-            (Kind::Pick(Picker::Color, ..), _) => {
-                let (x, y) = self.menu_spot(i, at);
-                self.color_menu(i, x, y);
-            }
+            (Kind::Pick(Picker::Color, ..), Value::Text(t)) => self.open_setting_editor(SettingPick::Color(i), &t),
             (Kind::Pick(Picker::Font, ..), _) => self.pick_font(i),
-            (Kind::Text(..), Value::Text(t)) => self.open_pick(Palette::new(Pick::Setting(SettingPick::Text(i)), Vec::new(), &t)),
-            (Kind::Paths(..), _) => self.open_pick(Palette::new(Pick::Setting(SettingPick::AddPath(i)), Vec::new(), "")),
+            (Kind::Text(..), _) => self.edit_text_setting(i),
+            (Kind::Paths(..), _) => self.open_setting_editor(SettingPick::AddPath(i), ""),
             _ => {}
         }
     }
@@ -1123,7 +1198,7 @@ impl App {
                 let here = self.current_location().clone();
                 self.add_path(i, here);
             }
-            (Btn::AddTyped, Some(i), _) => self.open_pick(Palette::new(Pick::Setting(SettingPick::AddPath(i)), Vec::new(), "")),
+            (Btn::AddTyped, Some(i), _) => self.open_setting_editor(SettingPick::AddPath(i), ""),
             (Btn::NewTag, ..) => self.new_tag(false),
             (Btn::ClearCache, ..) => {
                 self.clear_thumbnails();
@@ -1313,10 +1388,27 @@ impl App {
             (Kind::Choice(c, ..), Value::Choice(k)) => c.get(k).map_or("", |c| c.1.t()).to_owned(),
             (Kind::Number { zero: Some(off), .. }, Value::Number(0)) => off.t().to_owned(),
             (Kind::Number { unit, .. }, Value::Number(n)) => format!("{n} {unit}"),
-            (Kind::Text(..), Value::Text(t)) => t,
+            (Kind::Text(..), _) => self.text_value(i),
             (Kind::Paths(..), Value::Paths(p)) => crate::trn!(P::SettingsPagePages, p.len()),
             (Kind::Pick(..), _) => self.pick_text(i).unwrap_or_default(),
             _ => String::new(),
+        }
+    }
+
+    pub(super) fn fit_settings<B: TextBackend>(&mut self, g: &mut Gfx<B>) {
+        if self.settings.is_none() {
+            return;
+        }
+        let font = self.ui_font(13.0);
+        let fit = Fit {
+            body: line_h(g.metrics(font)),
+            small: line_h(g.metrics(self.ui_font(12.0))),
+            bold: line_h(g.metrics(FontStyle::new(FontFamily::Ui, 14.0 * self.scale, true))),
+            labels: Btn::ALL.map(|b| g.measure(b.label(), font)),
+        };
+        if let Some(ui) = self.settings.as_mut().filter(|ui| ui.fit != fit) {
+            ui.fit = fit;
+            self.layout_settings();
         }
     }
 
@@ -1401,10 +1493,9 @@ impl App {
                     let restart = RESTART.contains(&set.id);
                     let text_w = label_w(*i, r, s);
                     let (tm, hm) = (title_marks(&query, set.title.t()), help_marks(&query, set.help.t()));
-                    let ty = if describe { r.y + s(7.0) + mf.ascent } else { mid(r, mf) };
-                    Paint::new(g, t, sc).marked((tx, ty.round()), set.title.t(), &tm, font, (t.text, t.accent), text_w);
+                    let (ty, help_y) = if describe { text_baselines(r, mf, ms, s) } else { (mid(r, mf), 0.0) };
+                    Paint::new(g, t, sc).marked((tx, ty), set.title.t(), &tm, font, (t.text, t.accent), text_w);
                     if describe {
-                        let help_y = (ty + s(18.0)).round();
                         let help = self.setting_help(line);
                         let marks = if matches!(line, Line::Setting(_)) { hm } else { Vec::new() };
                         Paint::new(g, t, sc).marked((tx, help_y), &help, &marks, small, (t.text_dim, t.accent), text_w);
@@ -1490,17 +1581,16 @@ impl App {
                         g.dl.round_rect(Rect::new(r.x + s(PAD), r.y + (r.h - dot) / 2.0, dot, dot), Color::rgb(tag.color), dot / 2.0);
                         let count = self.tags().count(*n);
                         let label = crate::trn!(P::SettingsPageTagItems, count, color = tags::color_name(tag.color));
-                        let nw = g.text(r.x + s(PAD) + dot + s(10.0), mid(r, mf), &tag.name, font, t.text, s(220.0));
-                        g.text(r.x + s(PAD) + dot + s(24.0) + nw, mid(r, ms), &label, small, t.text_dim, s(220.0));
+                        let limit = button_rects(line, r, &ui.fit, s).first().map_or(r.right(), |b| b.x) - s(BUTTON_GAP);
+                        let nx = r.x + s(PAD) + dot + s(10.0);
+                        let nw = g.text(nx, mid(r, mf), &tag.name, font, t.text, s(220.0).min(limit - nx).max(0.0));
+                        let lx = nx + nw + s(14.0);
+                        g.text(lx, mid(r, ms), &label, small, t.text_dim, s(220.0).min(limit - lx).max(0.0));
                     }
                 }
                 Line::Buttons(..) => {}
             }
-            for btn in line.buttons() {
-                let w = g.measure(btn.label(), font);
-                LABEL_W.with(|m| m.borrow_mut().insert(btn.label(), w));
-            }
-            for (b, (br, btn)) in button_rects(line, r, s).into_iter().zip(line.buttons()).enumerate() {
+            for (b, (br, btn)) in button_rects(line, r, &ui.fit, s).into_iter().zip(line.buttons()).enumerate() {
                 let hot = hover == Hit::Settings(SHit::Button(k, b));
                 let danger = matches!(btn, Btn::Reset | Btn::Delete);
                 g.dl.round_rect(br, if hot { t.button_pressed } else { t.button_hover }, s4);

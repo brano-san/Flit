@@ -29,6 +29,7 @@ pub mod palette;
 mod preview_pane;
 pub mod settings;
 mod settings_page;
+mod setting_editor;
 pub mod sidebar;
 mod address;
 mod goto;
@@ -374,6 +375,7 @@ pub enum SettingsCmd {
     Import(FsPath),
     CacheSize,
     Fonts,
+    Browse { exts: &'static [&'static str], folder: bool, start: Option<FsPath> },
 }
 
 pub enum IconResult {
@@ -1973,6 +1975,7 @@ impl App {
         self.fit_columns(g, &arena);
         self.fit_parked(g, &arena);
         self.fit_sidebar(g);
+        self.fit_settings(g);
         self.look.font_missing = !g.set_ui_family(&self.look.font);
         g.set_mono_family(&self.opts.inspector_font);
         let palette = self.look.palette;

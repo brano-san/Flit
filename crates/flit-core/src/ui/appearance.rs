@@ -1,4 +1,3 @@
-use super::menu::Cmd;
 use super::palette::{Palette as PickList, Pick};
 use super::settings::{Kind, Picker, Value, SETTINGS};
 use super::settings_page::SettingPick;
@@ -7,7 +6,7 @@ use crate::i18n::S;
 use super::Bitmap;
 use crate::path::FsPath;
 use crate::render::{DrawList, Rect};
-use crate::theme::{Area, Mode, Palette, SystemColors, Tint, PRESETS};
+use crate::theme::{Area, Mode, Palette, SystemColors, Tint};
 
 const MAX_FONT: usize = 64;
 const BACKDROP_ALPHA: u8 = 0x48;
@@ -29,11 +28,12 @@ pub struct Look {
     pub font: String,
     pub palette: Palette,
     pub font_missing: bool,
-    fonts: Option<Vec<String>>,
-    font_pick: Option<usize>,
+    pub(super) fonts: Option<Vec<String>>,
+    pub(super) font_pick: Option<usize>,
     system_dark: bool,
     pub contrast: Option<SystemColors>,
     pub backdrop_path: String,
+    pub backdrop_failed: bool,
     backdrop: Option<Bitmap>,
     backdrop_gen: u64,
     backdrop_rev: u64,
@@ -53,6 +53,7 @@ impl Look {
             system_dark,
             contrast: None,
             backdrop_path: String::new(),
+            backdrop_failed: false,
             backdrop: None,
             backdrop_gen: 0,
             backdrop_rev: 0,
@@ -118,6 +119,7 @@ impl App {
         l.backdrop_gen += 1;
         l.backdrop_rev += 1;
         l.backdrop = None;
+        l.backdrop_failed = false;
         l.backdrop_path = path;
         if let Some(p) = FsPath::parse(&l.backdrop_path).filter(|_| !l.backdrop_path.is_empty()) {
             self.effects.push(Effect::Backdrop { gen: l.backdrop_gen, path: p });
@@ -132,6 +134,7 @@ impl App {
         if image.is_none() {
             self.status(crate::tr!(S::AppearanceBackdropFailed, path = self.look.backdrop_path));
         }
+        self.look.backdrop_failed = image.is_none();
         self.look.backdrop = image;
         self.look.backdrop_rev += 1;
         self.dirty = true;
@@ -160,34 +163,6 @@ impl App {
         self.set_theme_mode(if dark { Mode::Light } else { Mode::Dark });
     }
 
-    pub(super) fn color_menu(&mut self, i: usize, x: f32, y: f32) {
-        let cur = match SETTINGS[i].get(self) {
-            Value::Text(t) => Tint::parse(&t).unwrap_or_default(),
-            _ => Tint::Default,
-        };
-        let mut entries = vec![(S::AppearanceDefault.t().to_owned(), Cmd::Setting(i, 0), cur == Tint::Default)];
-        entries.extend(PRESETS.iter().enumerate().map(|(k, p)| (p.label.t().to_owned(), Cmd::Setting(i, k + 1), cur == Tint::Preset(k))));
-        entries.push((S::AppearanceCustomColor.t().to_owned(), Cmd::Setting(i, PRESETS.len() + 1), matches!(cur, Tint::Custom(_))));
-        let items = self.list_menu(entries);
-        self.flit_menu(x, y, items);
-    }
-
-    pub(super) fn choose_color(&mut self, i: usize, k: usize) -> bool {
-        let key = match k {
-            0 => String::new(),
-            _ if k <= PRESETS.len() => PRESETS[k - 1].id.to_owned(),
-            _ => {
-                let cur = match SETTINGS[i].get(self) {
-                    Value::Text(t) if t.starts_with('#') => t,
-                    _ => String::new(),
-                };
-                self.open_pick(PickList::new(Pick::Setting(SettingPick::Color(i)), Vec::new(), &cur));
-                return false;
-            }
-        };
-        SETTINGS[i].set(self, Value::Text(key))
-    }
-
     pub(super) fn pick_font(&mut self, i: usize) {
         let Some(fonts) = &self.look.fonts else {
             self.look.font_pick = Some(i);
@@ -201,7 +176,7 @@ impl App {
     pub fn set_fonts(&mut self, fonts: Vec<String>) {
         self.look.fonts = Some(fonts);
         if let Some(i) = self.look.font_pick.take() {
-            self.pick_font(i);
+            self.activate_setting(i, None);
         }
     }
 

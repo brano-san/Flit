@@ -307,6 +307,24 @@ impl Shell for ShellCom {
     fn quick_view(&mut self, path: &FsPath) -> bool {
         crate::preview::quick_view(path)
     }
+
+    fn browse(&mut self, exts: &[&str], folder: bool, start: Option<&FsPath>) -> Option<FsPath> {
+        let spec: Vec<u16> = exts.iter().map(|e| format!("*.{e}")).collect::<Vec<_>>().join(";").encode_utf16().chain(Some(0)).collect();
+        unsafe {
+            let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+            let pick = if folder { FOS_PICKFOLDERS } else { FOS_FILEMUSTEXIST };
+            dialog.SetOptions(dialog.GetOptions().ok()? | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | pick).ok()?;
+            if !exts.is_empty() {
+                dialog.SetFileTypes(&[windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC { pszName: PCWSTR(spec.as_ptr()), pszSpec: PCWSTR(spec.as_ptr()) }]).ok()?;
+            }
+            if let Some(item) = start.and_then(|dir| SHCreateItemFromParsingName::<_, _, IShellItem>(PCWSTR(wide(dir).as_ptr()), None).ok()) {
+                let _ = dialog.SetFolder(&item);
+            }
+            dialog.Show(owner_window()).ok()?;
+            let chosen = dialog.GetResult().ok()?;
+            FsPath::from_utf16(&crate::take_pwstr(chosen.GetDisplayName(SIGDN_FILESYSPATH).ok()?)?)
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]

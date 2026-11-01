@@ -156,7 +156,7 @@ fn page(a: &App, p: Page) -> Vec<String> {
 fn path_buttons(a: &mut App, i: usize) -> Vec<Rect> {
     let k = ui(a).lines.iter().position(|l| *l == Line::Buttons(Some(i), PATH_BUTTONS)).unwrap();
     reveal(a, k);
-    button_rects(&ui(a).lines[k].clone(), rect(a, k), s)
+    button_rects(&ui(a).lines[k].clone(), rect(a, k), &ui(a).fit, s)
 }
 
 fn rect(a: &App, k: usize) -> Rect {
@@ -315,7 +315,7 @@ fn advanced_page_exports_imports_resets_and_clears_the_cache() {
         let k = row(a, b);
         let l = ui(a).lines[k].clone();
         let at = l.buttons().iter().position(|x| *x == b).unwrap();
-        let r = button_rects(&l, rect(a, k), s)[at];
+        let r = button_rects(&l, rect(a, k), &ui(a).fit, s)[at];
         click_at(a, center(r));
     };
     a.drain_effects().for_each(drop);
@@ -368,7 +368,7 @@ fn tags_page_lists_tags_and_runs_their_commands() {
     assert_eq!(page(&a, Page::Tags), ["tag Work", "tag Home", "New tag"]);
     let k = ui(&a).lines.iter().position(|l| *l == Line::Tag(1)).unwrap();
     reveal(&mut a, k);
-    let r = button_rects(&Line::Tag(1), rect(&a, k), s);
+    let r = button_rects(&Line::Tag(1), rect(&a, k), &ui(&a).fit, s);
     click_at(&mut a, center(r[0]));
     assert!(matches!(a.nav.palette.as_ref().map(|p| &p.pick), Some(Pick::Tags(super::super::tags::TagPick::Name { tag: Some(1), .. }))));
     key(&mut a, Key::Escape, NO);
@@ -383,12 +383,12 @@ fn about_page_shows_versions_and_no_libraries() {
     a.set_about(About { os: "Windows 11 Pro 24H2 (build 26100.1)".into(), file: None, cache_bytes: None, logs: None });
     a.open_settings(Some(Page::About));
     let lines = page(&a, Page::About);
-    assert!(lines[0].starts_with("Version: Flit ") && lines[1] == "Windows: Windows 11 Pro 24H2 (build 26100.1)");
+    assert!(lines[0].starts_with("Version: Flit ") && lines[1] == format!("{OS_NAME}: Windows 11 Pro 24H2 (build 26100.1)"));
     assert!(!lines.iter().any(|l| l.starts_with("serde_json")), "{lines:?}");
     assert_eq!(lines[3..7], ["Help", "Documentation | Report a bug | Request a feature", "GitHub repository | Privacy statement", NO_TELEMETRY.t()]);
     let k = ui(&a).lines.iter().position(|l| l.buttons().contains(&Btn::ReportBug)).unwrap();
     reveal(&mut a, k);
-    let r = button_rects(&ui(&a).lines[k].clone(), rect(&a, k), s)[1];
+    let r = button_rects(&ui(&a).lines[k].clone(), rect(&a, k), &ui(&a).fit, s)[1];
     a.drain_effects().for_each(drop);
     click_at(&mut a, center(r));
     let wanted = crate::provider::Launch::Run { program: "https://github.com/brano-san/Flit/issues/new?labels=bug".into(), args: String::new(), dir: None };
@@ -407,7 +407,7 @@ fn advanced_page_groups_the_log_level_folder_and_buttons() {
     assert_eq!(a.log_level, settings::LOG_DEFAULT);
     let k = ui(&a).lines.iter().position(|l| l.buttons().contains(&Btn::OpenLogs)).unwrap();
     reveal(&mut a, k);
-    let r = button_rects(&ui(&a).lines[k].clone(), rect(&a, k), s)[1];
+    let r = button_rects(&ui(&a).lines[k].clone(), rect(&a, k), &ui(&a).fit, s)[1];
     click_at(&mut a, center(r));
     assert!(!a.settings_open(), "the folder opens in a tab the settings window would hide");
     assert_eq!(a.current_location().display(), r"C:\Users\me\AppData\Local\Flit\logs");
@@ -788,4 +788,112 @@ fn a_switch_slides_its_knob_and_blends_its_track() {
     assert!(SETTINGS[i].set(&mut a, Value::Bool(on)));
     a.frame(&mut Gfx::new(Mono, 1024), t + Duration::from_millis(410));
     assert_eq!(knob(&a, i, t + Duration::from_millis(410)), if on { 1.0 } else { 0.0 }, "without Animations it snaps");
+}
+
+struct Tall;
+
+impl crate::text::TextBackend for Tall {
+    fn shape(&mut self, text: &str, style: FontStyle, out: &mut crate::text::ShapedText) {
+        let advance = (style.px() * 0.62).round();
+        out.glyphs.clear();
+        for (i, (b, c)) in text.char_indices().enumerate() {
+            out.glyphs.push(crate::text::ShapedGlyph { font: 0, id: c as u16, x: i as f32 * advance, y: 0.0, cluster: b as u32 });
+        }
+        out.width = out.glyphs.len() as f32 * advance;
+    }
+    fn rasterize(&mut self, _: crate::text::GlyphKey, _: &mut crate::text::GlyphBitmap) -> bool {
+        false
+    }
+    fn metrics(&mut self, style: FontStyle) -> crate::text::FontMetrics {
+        crate::text::FontMetrics { ascent: style.px() * 1.25, descent: style.px() * 0.45 }
+    }
+}
+
+fn check_layout<B: crate::text::TextBackend>(mut g: Gfx<B>, (w, h): (u32, u32), describe: bool) {
+    let mut a = app();
+    a.on_event(&Event::Resized { width: w, height: h }, Instant::now());
+    a.opts.describe = describe;
+    a.open_settings(Some(Page::Interface));
+    a.frame(&mut g, Instant::now());
+    a.frame(&mut g, Instant::now());
+    let (mf, ms) = (g.metrics(a.ui_font(13.0)), g.metrics(a.ui_font(12.0)));
+    let font = a.ui_font(13.0);
+    let u = ui(&a);
+    let at = format!("{w}x{h} describe {describe}");
+    for (k, line) in u.lines.iter().enumerate() {
+        let r = u.rects[k];
+        if let Line::Setting(i) | Line::Off(i) = line {
+            let c = match SETTINGS[*i].kind {
+                Kind::Toggle(..) => switch_rect(r, s),
+                _ => control_rect(r, s),
+            };
+            assert!(c.y - r.y >= 2.0 && r.bottom() - c.bottom() >= 2.0, "{at}: {} {c:?} has no gap inside {r:?}", SETTINGS[*i].id);
+            if describe {
+                let (title, help) = text_baselines(r, mf, ms, s);
+                assert!(title - mf.ascent >= r.y && help + ms.descent <= r.bottom() + 0.5, "{at}: {} text leaves {r:?}", SETTINGS[*i].id);
+                assert!(title + mf.descent + 2.0 <= help - ms.ascent, "{at}: {} title and help collide", SETTINGS[*i].id);
+            } else {
+                assert!(line_h(mf) + 4.0 <= r.h, "{at}: {} title taller than its row", SETTINGS[*i].id);
+            }
+        }
+        let rects = button_rects(line, r, &u.fit, s);
+        for (b, (br, btn)) in rects.iter().zip(line.buttons()).enumerate() {
+            assert!(br.x >= r.x + s(PAD) - 0.5 && br.right() <= r.right() - s(PAD) + 0.5, "{at}: {btn:?} {br:?} leaves the row {r:?}");
+            assert!(br.y >= r.y && br.bottom() <= r.bottom(), "{at}: {btn:?} {br:?} leaves the row {r:?}");
+            assert!(g.measure(btn.label(), font) + s(16.0) + glyph_w(btn, s) <= br.w, "{at}: {btn:?} is cut");
+            for other in &rects[b + 1..] {
+                assert!(br.right() <= other.x || br.bottom() <= other.y, "{at}: {btn:?} overlaps the next button");
+            }
+        }
+    }
+}
+
+#[test]
+fn rows_and_buttons_fit_any_font_metrics() {
+    for size in [(1100, 720), (760, 520), (600, 700), (1600, 900)] {
+        for describe in [false, true] {
+            check_layout(Gfx::new(Mono, 1024), size, describe);
+            check_layout(Gfx::new(Tall, 1024), size, describe);
+        }
+    }
+}
+
+#[test]
+fn help_buttons_wrap_to_a_second_row_in_a_narrow_window() {
+    let mut a = app();
+    a.on_event(&Event::Resized { width: 600, height: 700 }, Instant::now());
+    a.open_settings(Some(Page::About));
+    a.frame(&mut Gfx::new(Tall, 1024), Instant::now());
+    let k = ui(&a).lines.iter().position(|l| l.buttons().contains(&Btn::RequestFeature)).unwrap();
+    let r = button_rects(&ui(&a).lines[k].clone(), rect(&a, k), &ui(&a).fit, s);
+    assert!(r[2].y > r[0].y, "the third button moves below: {r:?}");
+    assert!(rect(&a, k).h >= r[2].bottom() - rect(&a, k).y, "the row grows with its buttons");
+    let mut wide = app();
+    wide.on_event(&Event::Resized { width: 1600, height: 900 }, Instant::now());
+    wide.open_settings(Some(Page::About));
+    wide.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    let r = button_rects(&ui(&wide).lines[k].clone(), rect(&wide, k), &ui(&wide).fit, s);
+    assert!(r.iter().all(|b| b.y == r[0].y), "a wide window keeps one row");
+}
+
+#[test]
+fn tall_metrics_make_rows_taller_than_short_ones() {
+    let height = |g: Gfx<Tall>| {
+        let mut a = app();
+        a.opts.describe = true;
+        a.open_settings(Some(Page::Interface));
+        let mut g = g;
+        a.frame(&mut g, Instant::now());
+        let k = ui(&a).lines.iter().position(|l| matches!(l, Line::Setting(_))).unwrap();
+        rect(&a, k).h
+    };
+    let mono = {
+        let mut a = app();
+        a.opts.describe = true;
+        a.open_settings(Some(Page::Interface));
+        a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+        let k = ui(&a).lines.iter().position(|l| matches!(l, Line::Setting(_))).unwrap();
+        rect(&a, k).h
+    };
+    assert!(height(Gfx::new(Tall, 1024)) > mono, "rows follow the measured line height");
 }

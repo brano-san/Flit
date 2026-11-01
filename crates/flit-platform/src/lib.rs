@@ -259,6 +259,9 @@ pub trait Shell: Sized {
     fn quick_view(&mut self, _path: &FsPath) -> bool {
         false
     }
+    fn browse(&mut self, _exts: &[&str], _folder: bool, _start: Option<&FsPath>) -> Option<FsPath> {
+        None
+    }
 }
 
 #[derive(Debug, Default)]

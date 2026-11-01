@@ -4,9 +4,9 @@ use crate::location::Location;
 use crate::render::Color;
 use crate::text::tests::Mono;
 use crate::text::Gfx;
-use crate::theme::{DARK, LIGHT};
+use crate::theme::{DARK, LIGHT, PRESETS};
 use crate::ui::settings::index;
-use crate::ui::{MenuItem, Page, Persisted};
+use crate::ui::{Page, Persisted};
 use std::time::Instant;
 
 const CTRL_ALT: Mods = Mods { ctrl: true, shift: false, alt: true };
@@ -37,12 +37,6 @@ fn frame(a: &mut App) -> Gfx<Mono> {
 
 fn has_rect(g: &Gfx<Mono>, c: Color) -> bool {
     g.dl.instances.iter().any(|i| i.kind == crate::render::kind::SOLID && i.color == c.0)
-}
-
-fn menu_after(a: &mut App, f: impl FnOnce(&mut App)) -> Vec<MenuItem> {
-    a.drain_effects().for_each(drop);
-    f(a);
-    a.drain_effects().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m.menu) } else { None }).expect("a menu")
 }
 
 #[test]
@@ -76,10 +70,10 @@ fn colors_are_picked_from_presets_or_typed_and_checked() {
     let mut a = app();
     a.open_settings(Some(Page::Interface));
     let i = index("appearance.background").unwrap();
-    let menu = menu_after(&mut a, |a| a.activate_setting(i, None));
-    assert_eq!(menu.len(), PRESETS.len() + 2);
-    assert!(matches!(&menu[0], MenuItem::Command { checked: true, .. }));
-    a.on_event(&Event::MenuCommand(11), Instant::now());
+    a.activate_setting(i, None);
+    assert_eq!(a.nav.palette.as_ref().map(|p| p.matches.len()), Some(PRESETS.len() + 1), "the default and every preset are offered");
+    let storm = PRESETS.iter().position(|p| p.id == "storm").unwrap();
+    a.run_palette_item(storm + 1, Instant::now());
     assert_eq!(get(&a, "appearance.background"), text("storm"));
     assert_eq!(a.theme().bg, Color::rgb(0xD9DFE8));
     assert_eq!(a.pick_text(i).as_deref(), Some("Storm"));
@@ -87,7 +81,6 @@ fn colors_are_picked_from_presets_or_typed_and_checked() {
     a.on_event(&Event::ThemeChanged { dark: true }, Instant::now());
     assert_eq!(a.theme().bg, Color::rgb(0x1D2533), "the preset has a dark shade");
     a.activate_setting(i, None);
-    a.on_event(&Event::MenuCommand(PRESETS.len() + 1), Instant::now());
     assert!(matches!(a.nav.palette.as_ref().map(|p| &p.pick), Some(Pick::Setting(SettingPick::Color(_)))));
     a.setting_input(SettingPick::Color(i), "#F5F0E1");
     assert_eq!(get(&a, "appearance.background"), text("#F5F0E1"));
