@@ -632,6 +632,20 @@ fn the_sort_arrow_turns_over_on_a_new_direction_and_fades_in_on_a_new_column() {
 }
 
 #[test]
+fn a_narrow_pane_squeezes_the_columns_to_fit_its_width() {
+    let mut app = App::new(Persisted { path: loc(r"C:\x"), ..Default::default() }, Vec::new(), 0, false, 1.0, (560, 600), Instant::now());
+    app.animations = false;
+    let mut cols = app.tab().columns;
+    cols.toggle(Column::Created);
+    app.tab_mut().columns = cols;
+    deliver(&mut app, &[("a.txt", 10, false)]);
+    frame(&mut app);
+    let (list, last) = (app.layout.list, *app.layout.cols.last().unwrap());
+    assert!(app.layout.cols.len() > 3, "{:?}", app.layout.columns);
+    assert!(last.right() <= list.right() + 0.5, "the table ends at {} past the pane edge {}: {:?} {:?}", last.right(), list.right(), app.layout.columns, app.layout.cols);
+}
+
+#[test]
 fn a_shown_or_hidden_column_resizes_smoothly_and_its_neighbours_slide() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &[("a.txt", 10, false)]);
