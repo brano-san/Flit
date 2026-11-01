@@ -1,6 +1,6 @@
 use super::*;
 use crate::temp::Temp;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const INDEX: &str = "[Icon Theme]\nName=Mine\nInherits=Base\nDirectories=16x16/mimetypes,48x48/mimetypes,scalable/places,48x48@2/mimetypes\n\n[16x16/mimetypes]\nSize=16\nType=Fixed\n\n[48x48/mimetypes]\nSize=48\nType=Threshold\n\n[scalable/places]\nSize=64\nMinSize=8\nMaxSize=512\nType=Scalable\n\n[48x48@2/mimetypes]\nSize=48\nScale=2\nType=Fixed\n";
 const SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#00ff00"/></svg>"##;
@@ -67,6 +67,20 @@ fn lookups_take_the_exact_size_then_the_nearest_then_inherited_themes() {
 }
 
 #[test]
+fn an_icon_installed_while_running_is_found_after_the_recheck() {
+    let t = Temp::new("icons-install");
+    let base = fixture(&t);
+    let themes = chain(std::slice::from_ref(&base), "Mine");
+    let new = vec!["text-x-new".to_string()];
+    assert!(find(&themes, &new, 48).is_none());
+    png(&base.join("Mine/48x48/mimetypes/text-x-new.png"), 48);
+    assert!(find(&themes, &new, 48).is_none(), "misses recheck the folders at most once per {RECHECK:?}");
+    std::thread::sleep(RECHECK + Duration::from_millis(100));
+    assert!(find(&themes, &new, 48).unwrap().ends_with("Mine/48x48/mimetypes/text-x-new.png"));
+    assert!(find(&themes, &new, 16).unwrap().ends_with("Mine/48x48/mimetypes/text-x-new.png"));
+}
+
+#[test]
 fn file_kinds_map_to_freedesktop_icon_names() {
     let req = |kind, path: &str| flit_core::ui::IconRequest { key: 0, kind, path: flit_core::FsPath::parse(path).unwrap(), size: 32, gen: 0, row: 0 };
     assert_eq!(crate::shell::icon_names(&req(flit_core::ui::IconKind::Volume, "/media/ann/USB")), ["drive-removable-media", "drive-harddisk"]);
@@ -105,12 +119,13 @@ fn bench_twenty_distinct_lookups_in_the_system_theme() {
     let names = ["folder", "text-x-generic", "image-x-generic", "image-png", "application-pdf", "audio-x-generic", "video-x-generic", "application-x-executable", "text-x-script", "application-zip", "package-x-generic", "x-office-document", "unknown", "user-home", "drive-harddisk", "user-trash", "text-html", "text-x-rust", "application-json", "no-such-icon"];
     let mut runs = Vec::new();
     let mut found = Vec::new();
-    for _ in 0..5 {
+    let theme = theme_name();
+    for _ in 0..15 {
         let start = Instant::now();
-        let themes = chain(&base_dirs(), &theme_name());
+        let themes = chain(&base_dirs(), &theme);
         found = names.iter().map(|n| find(&themes, &[n.to_string()], 32)).collect();
         runs.push(start.elapsed());
     }
     runs.sort();
-    eprintln!("measure: theme chain and 20 distinct icon lookups median {:?}, found {:?}", runs[2], found);
+    eprintln!("measure: theme chain and 20 distinct icon lookups median {:?}, found {:?}", runs[7], found);
 }

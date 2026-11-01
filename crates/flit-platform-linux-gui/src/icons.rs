@@ -1,7 +1,9 @@
 use flit_core::ui::Bitmap;
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::time::{Duration, Instant, SystemTime};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Dir {
@@ -21,22 +23,64 @@ pub enum Kind {
     Threshold,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+pub const RECHECK: Duration = Duration::from_secs(1);
+const TIMESTAMP_SLACK: Duration = Duration::from_secs(2);
+
+#[derive(Debug, Default)]
 pub struct Theme {
     pub roots: Vec<PathBuf>,
     pub inherits: Vec<String>,
     pub dirs: Vec<Dir>,
-    files: OnceLock<HashSet<PathBuf>>,
+    listing: Mutex<Listing>,
+}
+
+#[derive(Debug, Default)]
+struct Listing {
+    folders: Vec<Option<PathBuf>>,
+    files: Vec<HashSet<OsString>>,
+    checked: Option<(Instant, SystemTime)>,
+}
+
+impl Listing {
+    fn refresh(&mut self) {
+        let since = self.checked.map(|(_, wall)| wall - TIMESTAMP_SLACK);
+        let started = SystemTime::now();
+        for (dir, files) in self.folders.iter().zip(&mut self.files) {
+            let Some(dir) = dir else { continue };
+            if let Some(since) = since {
+                match std::fs::metadata(dir).and_then(|m| m.modified()) {
+                    Ok(modified) if modified >= since => {}
+                    Ok(_) => continue,
+                    Err(_) => {
+                        files.clear();
+                        continue;
+                    }
+                }
+            }
+            *files = std::fs::read_dir(dir).into_iter().flatten().flatten().filter(|e| e.file_type().is_ok_and(|t| !t.is_dir())).map(|e| e.file_name()).collect();
+        }
+        self.checked = Some((Instant::now(), started));
+    }
 }
 
 impl Theme {
-    fn has(&self, file: &Path) -> bool {
-        self.files
-            .get_or_init(|| {
-                let dirs = self.roots.iter().flat_map(|r| self.dirs.iter().filter(|d| d.scale == 1).map(move |d| r.join(&d.path)));
-                dirs.filter_map(|d| std::fs::read_dir(d).ok()).flatten().flatten().filter(|e| e.file_type().is_ok_and(|t| !t.is_dir())).map(|e| e.path()).collect()
-            })
-            .contains(file)
+    fn listing(&self) -> MutexGuard<'_, Listing> {
+        let mut l = self.listing.lock().unwrap_or_else(|e| e.into_inner());
+        if l.checked.is_none() {
+            l.folders = self.roots.iter().flat_map(|r| self.dirs.iter().map(move |d| (d.scale == 1).then(|| r.join(&d.path)))).collect();
+            l.files = vec![HashSet::new(); l.folders.len()];
+            l.refresh();
+        }
+        l
+    }
+
+    fn recheck(&self) -> bool {
+        let mut l = self.listing();
+        if l.checked.is_some_and(|(at, _)| at.elapsed() < RECHECK) {
+            return false;
+        }
+        l.refresh();
+        true
     }
 }
 
@@ -128,20 +172,39 @@ pub fn chain(bases: &[PathBuf], first: &str) -> Vec<Theme> {
     themes
 }
 
+fn search(themes: &[Theme], names: &[String], size: u32, exts: &[&str]) -> Option<PathBuf> {
+    let lists: Vec<MutexGuard<'_, Listing>> = themes.iter().map(Theme::listing).collect();
+    for name in names {
+        let wanted: Vec<OsString> = exts.iter().map(|e| format!("{name}.{e}").into()).collect();
+        for (t, l) in themes.iter().zip(&lists) {
+            let file = |d: usize| {
+                (0..t.roots.len()).find_map(|r| {
+                    let present = &l.files[r * t.dirs.len() + d];
+                    wanted.iter().find(|w| present.contains(*w)).map(|w| t.roots[r].join(&t.dirs[d].path).join(w))
+                })
+            };
+            let dirs = (0..t.dirs.len()).filter(|&d| t.dirs[d].scale == 1);
+            if let Some(p) = dirs.clone().filter(|&d| t.dirs[d].matches(size)).find_map(file) {
+                return Some(p);
+            }
+            let mut near: Vec<usize> = dirs.collect();
+            near.sort_by_key(|&d| (t.dirs[d].distance(size), t.dirs[d].kind != Kind::Scalable, u32::MAX - t.dirs[d].size));
+            if let Some(p) = near.into_iter().find_map(file) {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
 pub fn find(themes: &[Theme], names: &[String], size: u32) -> Option<PathBuf> {
     let exts: &[&str] = if crate::svg::available() { &["png", "svg"] } else { &["png"] };
-    let file = |t: &Theme, d: &Dir, name: &str| t.roots.iter().flat_map(|r| exts.iter().map(move |e| r.join(&d.path).join(format!("{name}.{e}")))).find(|p| t.has(p));
-    for name in names {
-        for t in themes {
-            let dirs = t.dirs.iter().filter(|d| d.scale == 1);
-            if let Some(p) = dirs.clone().filter(|d| d.matches(size)).find_map(|d| file(t, d, name)) {
-                return Some(p);
-            }
-            let mut near: Vec<&Dir> = dirs.collect();
-            near.sort_by_key(|d| (d.distance(size), d.kind != Kind::Scalable, u32::MAX - d.size));
-            if let Some(p) = near.into_iter().find_map(|d| file(t, d, name)) {
-                return Some(p);
-            }
+    if let Some(p) = search(themes, names, size, exts) {
+        return Some(p);
+    }
+    if themes.iter().fold(false, |any, t| t.recheck() | any) {
+        if let Some(p) = search(themes, names, size, exts) {
+            return Some(p);
         }
     }
     names.iter().find_map(|n| exts.iter().map(|e| PathBuf::from(format!("/usr/share/pixmaps/{n}.{e}"))).find(|p| p.is_file()))
@@ -170,16 +233,18 @@ fn themes() -> &'static [Theme] {
     THEMES.get_or_init(|| chain(&base_dirs(), &theme_name()))
 }
 
-type Rendered = HashMap<(Vec<String>, u32), Option<Bitmap>>;
+type Rendered = HashMap<(Vec<String>, u32), (Option<Bitmap>, Instant)>;
 
 pub fn icon(names: &[String], size: u32) -> Option<Bitmap> {
     static CACHE: Mutex<Option<Rendered>> = Mutex::new(None);
     let key = (names.to_vec(), size);
-    if let Some(hit) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get(&key) {
-        return hit.clone();
+    if let Some((hit, at)) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get(&key) {
+        if hit.is_some() || at.elapsed() < RECHECK {
+            return hit.clone();
+        }
     }
     let made = find(themes(), names, size).and_then(|p| render(&p, size));
-    CACHE.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(key, made.clone());
+    CACHE.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(key, (made.clone(), Instant::now()));
     made
 }
 
