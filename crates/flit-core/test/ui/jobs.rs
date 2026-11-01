@@ -359,3 +359,27 @@ fn the_jobs_panel_slides_open_and_fades_out_when_closed() {
     app.frame(&mut g, t + Duration::from_millis(720));
     assert!(app.ghosts.fading_count() == 0, "without Animations nothing lingers");
 }
+
+#[test]
+fn the_operations_button_shows_a_warning_after_a_failure_and_the_list_marks_the_failed_row() {
+    let mut app = app_at(r"C:\x");
+    let mut g = Gfx::new(Mono, 1024);
+    let (id, _) = paste(&mut app);
+    assert_eq!(app.jobs.outcome(), Outcome::None);
+    finish(&mut app, id, Some("Access is denied"));
+    assert_eq!(app.jobs.outcome(), Outcome::Failed);
+    app.frame(&mut g, t0());
+    let error = app.look.palette.base.error.0;
+    let b = app.layout.ops_button;
+    let red_in = |g: &Gfx<Mono>, r: Rect| g.dl.instances.iter().filter(|i| i.color == error && r.contains(i.rect[0] + i.rect[2] / 2.0, i.rect[1] + i.rect[3] / 2.0)).count();
+    assert!(red_in(&g, b) >= 2, "a red warning glyph and the unseen badge");
+    click(&mut app, |a| a.layout.ops_button);
+    for s in 1..3 {
+        app.frame(&mut g, t0() + Duration::from_secs(s));
+    }
+    let row = app.jobs.r.rows[0];
+    assert!(red_in(&g, row) >= 3, "the failed row has a red stripe, a warning glyph and a red status");
+    let (id, _) = paste(&mut app);
+    finish(&mut app, id, None);
+    assert_eq!(app.jobs.outcome(), Outcome::Done, "the latest outcome decides the icon");
+}

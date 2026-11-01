@@ -30,6 +30,8 @@ const SAMPLE_EVERY: Duration = Duration::from_millis(250);
 const MAX_JOBS: usize = 100;
 
 const G_OPS: &str = "\u{E896}";
+const G_WARNING: &str = "\u{E7BA}";
+const G_DONE: &str = "\u{E73E}";
 const G_CLOSE: &str = "\u{E8BB}";
 const G_MORE: &str = "\u{E712}";
 
@@ -207,6 +209,13 @@ struct Rects {
     check: Rect,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Outcome {
+    None,
+    Done,
+    Failed,
+}
+
 #[derive(Default)]
 pub(super) struct Jobs {
     pub list: Vec<Job>,
@@ -232,6 +241,14 @@ impl Jobs {
 
     pub fn running(&self) -> bool {
         self.list.iter().any(|j| j.state == JobState::Running)
+    }
+
+    pub fn outcome(&self) -> Outcome {
+        match self.list.iter().filter(|j| j.finished.is_some()).max_by_key(|j| j.finished).map(|j| &j.state) {
+            Some(JobState::Failed(_)) => Outcome::Failed,
+            Some(JobState::Done) => Outcome::Done,
+            _ => Outcome::None,
+        }
     }
 
     pub fn modal(&self) -> bool {
@@ -770,13 +787,19 @@ impl App {
             return;
         }
         let (s2, s4) = (self.s(2.0), self.s(4.0));
-        if self.hover == Hit::OpsButton || self.jobs.open {
-            let c = if self.pressed == Hit::OpsButton || self.jobs.open { t.button_pressed } else { t.button_hover };
+        let lit = if self.jobs.open { 1.0 } else { self.lit(Hit::OpsButton) };
+        if lit > 0.0 {
+            let c = if self.pressed == Hit::OpsButton || self.jobs.open { t.button_pressed } else { super::widgets::faded(t.button_hover, lit) };
             g.dl.round_rect(r.inset(s2, 0.0), c, s4);
         }
         let running: Vec<f32> = self.jobs.list.iter().filter(|j| j.state == JobState::Running).map(Job::fraction).collect();
-        let color = if running.is_empty() { t.text } else { t.accent };
-        centered(g, r, G_OPS, self.icon_font(12.0), color);
+        let (glyph, color) = match (running.is_empty(), self.jobs.outcome()) {
+            (false, _) => (G_OPS, t.accent),
+            (true, Outcome::Failed) => (G_WARNING, t.error),
+            (true, Outcome::Done) => (G_DONE, t.text),
+            (true, Outcome::None) => (G_OPS, t.text),
+        };
+        centered(g, r, glyph, self.icon_font(12.0), color);
         if !running.is_empty() {
             let f = running.iter().sum::<f32>() / running.len() as f32;
             let bar = Rect::new(r.x + self.s(8.0), r.bottom() - self.s(5.0), r.w - self.s(16.0), s2.max(2.0));
@@ -834,8 +857,14 @@ impl App {
         for (k, &row) in rows.iter().enumerate() {
             let i = self.jobs.first + k;
             let Some(j) = self.jobs.list.get(self.jobs.row_of(i)) else { continue };
-            if matches!(self.hover, Hit::OpsRow(h) | Hit::OpsCancel(h) | Hit::OpsMore(h) if h == i) || self.jobs.menu == Some(i) {
-                g.dl.round_rect(row, t.hover, s4);
+            let failed = matches!(j.state, JobState::Failed(_));
+            if failed {
+                g.dl.round_rect(row, t.error.alpha(0x1C), s4);
+                g.dl.round_rect(Rect::new(row.x + s(2.0), row.y + s(6.0), s(3.0), row.h - s(12.0)), t.error, s(1.5));
+            }
+            let lit = if self.jobs.menu == Some(i) { 1.0 } else { self.lit(Hit::OpsRow(i)).max(self.lit(Hit::OpsCancel(i))).max(self.lit(Hit::OpsMore(i))) };
+            if lit > 0.0 {
+                g.dl.round_rect(row, super::widgets::faded(t.hover, lit), s4);
             }
             if k > 0 {
                 g.dl.rect(Rect::new(row.x + s12, row.y, row.w - 2.0 * s12, 1.0), t.separator);
@@ -847,7 +876,13 @@ impl App {
             let title_end = if running { cancel.x } else { more.x } - s(8.0) - sw;
             let mt = g.metrics(font);
             let title_y = (row.y + s(6.0) + (s(24.0) + mt.ascent - mt.descent) / 2.0).round();
-            g.text(row.x + s12, title_y, &j.title(), font, t.text, title_end - row.x - s12 - s(8.0));
+            let title_x = if failed {
+                centered(g, Rect::new(row.x + s12, row.y + s(6.0), s(16.0), s(24.0)), G_WARNING, icons, t.error);
+                row.x + s12 + s(20.0)
+            } else {
+                row.x + s12
+            };
+            g.text(title_x, title_y, &j.title(), font, t.text, title_end - title_x - s(8.0));
             let status_color = match j.state {
                 JobState::Failed(_) => t.error,
                 JobState::Done => t.text_dim,
