@@ -33,7 +33,7 @@ impl Fs for LinuxGuiFs {
         match dir.kind() {
             PathKind::Computer => places::list_computer(out),
             PathKind::RecycleBin => places::list_trash(out),
-            _ => LinuxFs.read_dir(dir, out),
+            _ => flit_archive::read_dir(dir, out, <crate::Linux as flit_platform::Platform>::utc_offset_minutes()).unwrap_or_else(|| LinuxFs.read_dir(dir, out)),
         }
     }
 

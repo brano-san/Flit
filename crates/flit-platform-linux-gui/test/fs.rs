@@ -31,6 +31,45 @@ fn read_dir_lists_folders_with_hidden_dotfiles() {
     assert_ne!(attrs(b"sub") & flit_core::attr::DIR, 0);
 }
 
+fn names_in(dir: &FsPath) -> Result<Vec<(String, bool)>, flit_core::FsError> {
+    let mut go = |_: &ListingBuilder<'_>| true;
+    let mut b = ListingBuilder::new(CaseMode::Sensitive, &mut go);
+    LinuxGuiFs.read_dir(dir, &mut b)?;
+    let l = b.listing;
+    let mut v: Vec<(String, bool)> = (0..l.len() as u32).map(|i| (String::from_utf8_lossy(l.name(i)).into_owned(), l.entries[i as usize].is_dir())).collect();
+    v.sort();
+    Ok(v)
+}
+
+#[test]
+fn zip_7z_and_tar_gz_archives_open_as_folders_and_extract() {
+    use flit_core::archive::{ArchiveOp, Compression, Format, Place};
+    use flit_core::provider::{FileOp, Resolve};
+    use flit_platform::{FileOps, Job};
+    let t = Temp::new("archives");
+    t.file("src/docs/report.txt", 7);
+    t.file("src/readme.md", 3);
+    let items = vec![fs_path(&t.path().join("src/docs")), fs_path(&t.path().join("src/readme.md"))];
+    let mut shell = crate::shell::LinuxShell;
+    let job = Job::detached(Resolve::Replace);
+    for (format, ext) in [(Format::Zip, "zip"), (Format::SevenZ, "7z"), (Format::TarGz, "tar.gz")] {
+        let archive = fs_path(&t.path().join(format!("pack.{ext}")));
+        let options = Compression { format, level: format.default_level(), ..Compression::default() };
+        let made = shell.file_op(&FileOp::Archive(ArchiveOp::Compress { items: items.clone(), archive: archive.clone(), options }), &job);
+        assert!(made.error.is_none(), "{ext}: {:?}", made.error);
+        assert_eq!(names_in(&archive).unwrap(), [("docs".to_owned(), true), ("readme.md".to_owned(), false)], "{ext}");
+        assert_eq!(names_in(&archive.join(b"docs")).unwrap(), [("report.txt".to_owned(), false)], "{ext}");
+        let dest = fs_path(&t.path().join(format!("out-{ext}")));
+        let out = shell.file_op(&FileOp::Archive(ArchiveOp::Extract { archives: vec![archive.clone()], dest: Some(dest), place: Place::Here }), &job);
+        assert!(out.error.is_none(), "{ext}: {:?}", out.error);
+        assert_eq!(std::fs::read(t.path().join(format!("out-{ext}/docs/report.txt"))).unwrap(), b"xxxxxxx", "{ext}");
+        let copied = shell.file_op(&FileOp::Copy { items: vec![archive.join(b"readme.md")], dest: fs_path(&t.path().join(format!("out-{ext}/docs"))) }, &job);
+        assert!(copied.error.is_none(), "{ext}: {:?}", copied.error);
+        assert_eq!(std::fs::read(t.path().join(format!("out-{ext}/docs/readme.md"))).unwrap(), b"xxx", "{ext}");
+    }
+    assert!(names_in(&fs_path(&t.path().join("pack.zip/missing"))).is_err());
+}
+
 #[test]
 fn volume_key_follows_the_device_of_the_nearest_existing_folder() {
     let t = Temp::new("volume");

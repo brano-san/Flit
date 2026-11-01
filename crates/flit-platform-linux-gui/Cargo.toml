@@ -7,6 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+flit-archive.workspace = true
 flit-core.workspace = true
 flit-platform.workspace = true
 flit-platform-linux.workspace = true
