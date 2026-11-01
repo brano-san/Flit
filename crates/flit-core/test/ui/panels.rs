@@ -191,6 +191,27 @@ fn the_status_bar_slides_out_of_the_old_panel_and_into_the_new_one() {
 }
 
 #[test]
+fn checkboxes_of_one_panel_do_not_replay_their_animation_while_another_panel_has_a_selection() {
+    let mut app = app_at(r"C:\a");
+    let items = [("a.txt", false), ("b.txt", false), ("c.txt", false)];
+    deliver(&mut app, &items);
+    key(&mut app, Key::Char('S'), CTRL_SHIFT);
+    deliver(&mut app, &items);
+    app.tab_mut().view.as_mut().unwrap().set_selected(1, true);
+    app.activate_panel(0);
+    app.tab_mut().view.as_mut().unwrap().set_selected(0, true);
+    app.animations = true;
+    let t = t0();
+    for ms in [0, 100, 300, 500, 700] {
+        app.frame(&mut Gfx::new(Mono, 1024), t + Duration::from_millis(ms));
+    }
+    let now = t + Duration::from_millis(700);
+    assert_eq!(app.details.checks.progress(0, now), 1.0, "the active panel's box stays drawn");
+    let other = app.visit(1, |a| a.details.checks.progress(1, now));
+    assert_eq!(other, 1.0, "the other panel's box stays drawn too");
+}
+
+#[test]
 fn clicks_tab_and_directions_select_panels() {
     let mut app = three(r"C:\a");
     frame(&mut app);

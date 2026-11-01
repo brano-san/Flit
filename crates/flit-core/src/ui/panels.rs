@@ -52,6 +52,7 @@ pub(super) struct Panel {
     pub layout: Layout,
     filter: FilterRects,
     home: Home,
+    checks: super::details::Checks,
     pub rect: Rect,
     rows: Option<(u64, u32, u32)>,
 }
@@ -312,6 +313,7 @@ impl App {
         std::mem::swap(&mut self.layout, &mut p.layout);
         std::mem::swap(&mut self.nav.filter, &mut p.filter);
         std::mem::swap(&mut self.nav.home, &mut p.home);
+        std::mem::swap(&mut self.details.checks, &mut p.checks);
     }
 
     fn enter(&mut self, id: u32) {
