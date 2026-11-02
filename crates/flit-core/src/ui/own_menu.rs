@@ -179,8 +179,14 @@ impl App {
                 self.dirty = true;
                 c.mouse_down(*x, *y, *clicks)
             }
-            (View::Plain(v), Event::MouseUp { x, y, .. }) => v.mouse_up(*x, *y),
-            (View::Context(c), Event::MouseUp { x, y, .. }) => c.mouse_up(*x, *y),
+            (View::Plain(v), Event::MouseUp { x, y, .. }) => {
+                self.dirty = true;
+                v.mouse_up(*x, *y)
+            }
+            (View::Context(c), Event::MouseUp { x, y, .. }) => {
+                self.dirty = true;
+                c.mouse_up(*x, *y)
+            }
             (View::Plain(v), Event::Key { key, pressed: true, .. }) => v.key(*key),
             (View::Context(c), Event::Key { key, mods: m, pressed: true }) => {
                 self.mods = *m;

@@ -196,3 +196,23 @@ fn a_menu_opens_at_the_size_its_kind_had_and_text_typed_early_survives_the_shell
     assert!(late.h <= full.h);
     assert_eq!(commands(&app.own_menu.as_ref().unwrap().items), 3, "no placeholder is a command");
 }
+
+#[test]
+fn a_click_on_a_submenu_of_the_context_menu_redraws_it_open_at_once() {
+    let mut app = app();
+    let mut g = Gfx::new(Mono, 256);
+    let items = vec![cmd("Paste"), MenuItem::Submenu { label: "New".into(), items: vec![cmd("Folder"), cmd("Text Document")] }];
+    app.on_event(&Event::ShowMenu { items, x: 100.0, y: 100.0, launches: Vec::new(), kind: crate::ui::MenuKind::Background, shell: Vec::new(), pending: false }, Instant::now());
+    app.frame(&mut g, Instant::now());
+    let c = app.context_menu_open().unwrap();
+    let x = c.rect.x + c.rect.w / 2.0;
+    let new_row = c.labels().iter().position(|l| l == "New >").unwrap();
+    let y = (0..c.rect.h as i32).map(|dy| c.rect.y + dy as f32).find(|&y| c.hit(x, y) == Some(crate::ui::context::CtxHit::Row(new_row))).unwrap();
+    for ev in [Event::MouseMove { x, y }, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }] {
+        app.on_event(&ev, Instant::now());
+        app.frame(&mut g, Instant::now());
+    }
+    app.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, Instant::now());
+    assert!(app.context_menu_open().unwrap().is_open("New"));
+    assert!(app.dirty, "the opened submenu is drawn on the next frame, not after the pointer moves again");
+}
