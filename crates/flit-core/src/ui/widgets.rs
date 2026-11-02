@@ -5,7 +5,7 @@ use crate::theme::{ink_on, Theme};
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
-const POP: Duration = Duration::from_millis(120);
+const POP: Duration = Duration::from_millis(90);
 const FADE: Duration = Duration::from_millis(100);
 const SLIDE: f32 = 6.0;
 

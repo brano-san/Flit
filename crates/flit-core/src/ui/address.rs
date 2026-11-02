@@ -47,7 +47,7 @@ pub(super) struct Address {
     pub turn: Turn,
 }
 
-pub(super) const TURN: Duration = Duration::from_millis(150);
+pub(super) const TURN: Duration = Duration::from_millis(90);
 
 #[derive(Default)]
 pub(super) struct Turn {

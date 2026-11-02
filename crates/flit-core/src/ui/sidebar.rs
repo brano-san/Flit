@@ -45,7 +45,7 @@ const RECENT_MAX: usize = 10;
 const MAX_VISITS: usize = 64;
 pub(super) const MOST_VISITED: usize = 5;
 const PATH_GAP: f32 = 6.0;
-pub(super) const FOLD: std::time::Duration = std::time::Duration::from_millis(150);
+pub(super) const FOLD: std::time::Duration = std::time::Duration::from_millis(90);
 
 pub(super) const G_HOME: &str = "\u{E80F}";
 const G_DESKTOP: &str = "\u{E7F4}";
