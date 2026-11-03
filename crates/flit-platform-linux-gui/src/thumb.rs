@@ -221,11 +221,11 @@ pub fn fit(b: Bitmap, size: u32) -> Bitmap {
 }
 
 pub fn thumbnail(path: &Path, size: u32, cache: Option<PathBuf>) -> Option<Bitmap> {
-    if !supported(path) || std::fs::metadata(path).ok()?.len() > MAX_SOURCE_BYTES {
-        return None;
-    }
     if let Some(b) = cache.and_then(|c| cached(path, &c, size)) {
         return Some(fit(b, size));
+    }
+    if !supported(path) || std::fs::metadata(path).ok()?.len() > MAX_SOURCE_BYTES {
+        return None;
     }
     let b = if lower_ext(path) == b"png" { decode_png(path)? } else { decode_jpeg(path, size)? };
     Some(fit(b, size))

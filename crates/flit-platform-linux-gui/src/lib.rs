@@ -16,6 +16,7 @@ pub mod places;
 pub mod shell;
 mod text;
 mod thumb;
+mod thumbnailers;
 mod turbo;
 mod window;
 mod xdnd;

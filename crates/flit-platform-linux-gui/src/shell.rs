@@ -135,7 +135,8 @@ impl Shell for LinuxShell {
 
     fn thumbnail(&mut self, req: &IconRequest) -> Option<Bitmap> {
         let cache = crate::xdg::cache_dir().and_then(|d| d.parent().map(|p| p.join("thumbnails")));
-        crate::thumb::thumbnail(host(&req.path)?, req.size, cache)
+        let path = host(&req.path)?;
+        crate::thumb::thumbnail(path, req.size, cache).or_else(|| crate::thumbnailers::thumbnail(path, req.size)).or_else(|| poster(path, req.size))
     }
 
     fn preview_image(&mut self, path: &FsPath, max: u32) -> Option<Bitmap> {
@@ -313,7 +314,7 @@ pub fn set_clipboard_files(list: &str) -> bool {
     written
 }
 
-fn wait_output(mut child: Child, limit: Duration) -> Option<Vec<u8>> {
+pub(crate) fn wait_output(mut child: Child, limit: Duration) -> Option<Vec<u8>> {
     let mut out = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
         let mut buf = Vec::new();

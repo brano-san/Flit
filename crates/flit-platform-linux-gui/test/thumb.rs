@@ -167,3 +167,16 @@ fn bench_a_twelve_megapixel_jpeg_thumbnail() {
         eprintln!("measure: 12 MP {label} JPEG of {} bytes to a 256 px thumbnail median {:?}", std::fs::metadata(&src).unwrap().len(), took[3]);
     }
 }
+
+#[test]
+fn thumbnails_other_programs_cached_serve_formats_flit_cannot_decode() {
+    let t = Temp::new("thumb-cached");
+    let src = t.path().join("phone.HEIC");
+    std::fs::write(&src, b"not a picture flit reads").unwrap();
+    assert!(thumbnail(&src, 96, None).is_none());
+    let cache = t.path().join("thumbnails");
+    std::fs::create_dir_all(cache.join("normal")).unwrap();
+    let mtime = std::fs::metadata(&src).unwrap().mtime().to_string();
+    write_png(&cache.join("normal").join(freedesktop_name(&src)), 128, 96, Some(("Thumb::MTime", mtime)));
+    assert_eq!(thumbnail(&src, 96, Some(cache)).map(|b| (b.width, b.height)), Some((96, 72)));
+}
