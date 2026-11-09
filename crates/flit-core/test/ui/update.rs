@@ -171,3 +171,18 @@ fn release_notes_are_trimmed_and_capped() {
     assert!(note_lines("").is_empty());
     assert_eq!(note_lines("## What's Changed\n* Faster copies\n- **Bold** fix"), vec!["What's Changed", "• Faster copies", "• Bold fix"]);
 }
+
+#[test]
+fn the_dialog_leaves_room_between_its_parts_and_keeps_buttons_to_their_text() {
+    let mut a = app();
+    a.on_update(found(true, Some("9.0.0")));
+    a.frame(&mut crate::text::Gfx::new(crate::text::tests::Mono, 1024), Instant::now());
+    let f = a.jobs.form.as_ref().unwrap();
+    let values = f.controls.iter().position(|c| matches!(c, Control::Line(_))).unwrap();
+    assert!(f.rows[values].y >= f.rows[values - 1].bottom() + 8.0, "release notes are set apart from the versions");
+    let last = f.rows.last().unwrap();
+    assert!(f.button_rects[0].y - last.bottom() >= 40.0, "the note and a gap sit between the rows and the buttons");
+    assert!((f.rect.right() - 20.0 - f.button_rects.last().unwrap().right()).abs() < 1.0, "buttons end at the right edge");
+    assert!(f.button_rects.windows(2).all(|w| (w[1].x - w[0].right() - 8.0).abs() < 1.0));
+    assert!(f.button_rects.iter().map(|r| r.w).sum::<f32>() < f.rect.w - 80.0, "buttons are as wide as their text, not stretched across");
+}

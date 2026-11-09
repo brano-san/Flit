@@ -548,3 +548,16 @@ fn every_panel_draws_inside_its_own_rect_even_mid_split_with_wide_columns() {
         assert_eq!(crossing, 0, "nothing of one panel is drawn across the other at {ms} ms ({stray} unclipped)");
     }
 }
+
+#[test]
+fn the_tab_search_button_lines_up_with_the_window_buttons() {
+    let mut a = crate::ui::harness::app(&["a.txt"]);
+    for scale in [1.0, 0.9, 1.25, 1.5] {
+        a.on_event(&Event::ScaleChanged(scale), Instant::now());
+        a.layout();
+        let (actions, close) = (a.layout.actions, a.panels.caption[2]);
+        assert!(actions.w > 0.0);
+        let centre = |r: crate::render::Rect| r.y + r.h / 2.0;
+        assert!((centre(actions) - centre(close)).abs() <= 0.5, "at {scale}: {} vs {}", centre(actions), centre(close));
+    }
+}

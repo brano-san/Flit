@@ -166,7 +166,8 @@ impl App {
             g.dl.round_rect(field, super::widgets::faded(t.button_hover, lit), s4);
         }
         if focused {
-            g.dl.outline(field, t.accent, s4, scale.round().max(1.0));
+            g.dl.round_rect(field, t.input_bg, s4);
+            g.dl.outline(field, t.input_border, s4, 1.0);
         }
         centered(g, Rect::new(field.x + s4, field.y, self.s(18.0), field.h), G_FILTER, self.icon_font(11.0), t.text_dim);
         if close.w > 0.0 {

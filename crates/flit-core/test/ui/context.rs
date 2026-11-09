@@ -162,3 +162,14 @@ fn submenus_start_folded_stay_folded_under_the_pointer_and_open_on_a_click() {
     c.mouse_up(x, y);
     assert!(!c.is_open("Send to"), "the next click folds it");
 }
+
+#[test]
+fn a_menu_that_fits_has_no_scroll_at_fractional_scales() {
+    for scale in [0.9, 1.1, 1.25, 1.5, 1.75] {
+        let mut c = ContextMenu::new(&items(), MenuKind::File, Vec::new(), (100.0, 100.0), Rect::new(0.0, 0.0, 1000.0, 800.0), scale);
+        assert_eq!(c.arrows[0].w, 0.0, "no scroll arrows at {scale}");
+        let before = c.rects[0].y;
+        c.wheel(-5.0);
+        assert_eq!(c.rects[0].y, before, "the wheel does not move a menu that fits at {scale}");
+    }
+}

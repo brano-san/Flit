@@ -1264,3 +1264,17 @@ fn the_editor_has_accessible_rows_and_draws_in_both_themes() {
         assert!(g.dl.instances.len() > 50);
     }
 }
+
+#[test]
+fn settings_sit_in_the_middle_of_the_whole_window_and_rows_stay_clear_of_the_scrollbar() {
+    let mut a = app();
+    a.open_settings(Some(Page::Interface));
+    a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    let ui = a.settings.as_ref().unwrap();
+    let (w, h) = a.size;
+    let p = ui.panel;
+    assert!((p.x - (w - p.right())).abs() <= 1.0, "left {} right {}", p.x, w - p.right());
+    assert!((p.y - (h - p.bottom())).abs() <= 1.0, "top {} bottom {}", p.y, h - p.bottom());
+    assert!(ui.bar.w > 0.0, "the list scrolls here");
+    assert!(ui.rects.iter().all(|r| r.right() <= ui.bar.x), "no row runs under the scrollbar");
+}

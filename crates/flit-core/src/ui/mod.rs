@@ -1354,7 +1354,7 @@ impl App {
         let bh = l.title.h - s(8.0);
         let button_y = area.y + s(4.0) + ((l.title.h - s(4.0) - bh) / 2.0).round();
         let button = |x: f32| Rect::new(x, button_y, s(30.0), bh);
-        l.actions = if actions { button(limit - s(34.0)) } else { Rect::default() };
+        l.actions = if actions { Rect::new(limit - s(34.0), area.y + ((l.title.h - bh) / 2.0).round(), s(30.0), bh) } else { Rect::default() };
         let x0 = area.x + inset + s(6.0);
         let end = if actions { l.actions.x } else { limit };
         let room = (end - s(40.0) - x0).max(0.0);

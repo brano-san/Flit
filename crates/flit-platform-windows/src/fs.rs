@@ -21,6 +21,7 @@ use windows::Win32::System::IO::{DeviceIoControl, IO_STATUS_BLOCK};
 
 const BUFFER: usize = 64 * 1024;
 pub(crate) const DRIVE_FIXED: u32 = 3;
+const DRIVE_REMOVABLE: u32 = 2;
 
 pub struct NtFs;
 
@@ -109,7 +110,7 @@ fn volumes(out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
         let mut meta = Meta { attrs: attr::DIR | attr::VOLUME, ..Default::default() };
         let mut free = None;
         unsafe {
-            if GetDriveTypeW(PCWSTR(root.as_ptr())) == DRIVE_FIXED {
+            if matches!(GetDriveTypeW(PCWSTR(root.as_ptr())), DRIVE_FIXED | DRIVE_REMOVABLE) {
                 let (mut total, mut avail) = (0u64, 0u64);
                 if GetDiskFreeSpaceExW(PCWSTR(root.as_ptr()), Some(&mut avail), Some(&mut total), None).is_ok() {
                     meta.size = total;

@@ -18,6 +18,8 @@ const LABEL_W: f32 = 170.0;
 const BUTTON_W: f32 = 112.0;
 const BUTTON_H: f32 = 32.0;
 const NOTE_H: f32 = 34.0;
+const SECTION_GAP: f32 = 10.0;
+const BUTTON_GAP: f32 = 16.0;
 const FLAGS_PER_LINE: usize = 4;
 
 const G_LEFT: &str = "\u{E76B}";
@@ -77,6 +79,11 @@ impl Control {
     }
 }
 
+fn section_gaps(controls: &[Control]) -> Vec<bool> {
+    let line = |c: &Control| matches!(c, Control::Line(_));
+    controls.iter().enumerate().map(|(k, c)| k > 0 && line(c) != line(&controls[k - 1])).collect()
+}
+
 fn flag_grid(n: usize) -> (usize, usize) {
     let lines = n.div_ceil(FLAGS_PER_LINE).max(1);
     (lines, n.div_ceil(lines).max(1))
@@ -93,7 +100,7 @@ pub(super) struct Form {
     pub progress: Option<f32>,
     pub rows: Vec<Rect>,
     pub button_rects: Vec<Rect>,
-    rect: Rect,
+    pub(super) rect: Rect,
 }
 
 impl Form {
@@ -392,9 +399,10 @@ impl App {
         let s = |v: f32| (v * sc).round();
         let Some(f) = &mut self.jobs.form else { return };
         let fw = s(WIDTH).min(w - s(32.0));
-        let body: f32 = f.controls.iter().map(|c| s(c.height())).sum();
+        let gaps = section_gaps(&f.controls);
+        let body: f32 = f.controls.iter().map(|c| s(c.height())).sum::<f32>() + gaps.iter().filter(|&&g| g).count() as f32 * s(SECTION_GAP);
         let note = if f.note.is_empty() && f.progress.is_none() { s(8.0) } else { s(NOTE_H) };
-        let fh = s(HEAD) + body + note + s(BUTTON_H) + s(20.0);
+        let fh = s(HEAD) + body + note + s(BUTTON_GAP) + s(BUTTON_H) + s(20.0);
         let x = ((w - fw) / 2.0).round();
         let y = ((h - fh) / 2.0).round().max(s(40.0));
         f.rect = Rect::new(x, y, fw, fh);
@@ -402,7 +410,11 @@ impl App {
         f.rows = f
             .controls
             .iter()
-            .map(|c| {
+            .zip(&gaps)
+            .map(|(c, &gap)| {
+                if gap {
+                    ry += s(SECTION_GAP);
+                }
                 let r = Rect::new(x + s(20.0), ry, fw - s(40.0), s(c.height()));
                 ry += r.h;
                 r
@@ -410,10 +422,23 @@ impl App {
             .collect();
         let n = f.buttons.len();
         let gap = s(8.0);
-        let widest = f.buttons.iter().map(|b| b.chars().map(|c| if c >= '\u{2E80}' { 13.0 } else { 7.5 }).sum::<f32>() + 28.0).fold(BUTTON_W, f32::max);
-        let bw = s(widest).min((fw - s(40.0) - gap * (n as f32 - 1.0)) / n.max(1) as f32);
-        let right = f.rect.right() - s(20.0);
-        f.button_rects = (0..n).map(|k| Rect::new(right - (n - k) as f32 * bw - (n - 1 - k) as f32 * gap, f.rect.bottom() - s(20.0) - s(BUTTON_H), bw, s(BUTTON_H))).collect();
+        let room = (fw - s(40.0) - gap * (n as f32 - 1.0)) / n.max(1) as f32;
+        let top = f.rect.bottom() - s(20.0) - s(BUTTON_H);
+        let mut right = f.rect.right() - s(20.0);
+        let mut rects: Vec<Rect> = f
+            .buttons
+            .iter()
+            .rev()
+            .map(|b| {
+                let bw = s(b.chars().map(|c| if c >= '\u{2E80}' { 13.0 } else { 7.5 }).sum::<f32>() + 32.0).max(s(BUTTON_W)).min(room);
+                right -= bw;
+                let r = Rect::new(right, top, bw, s(BUTTON_H));
+                right -= gap;
+                r
+            })
+            .collect();
+        rects.reverse();
+        f.button_rects = rects;
     }
 
     pub(super) fn draw_form<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
@@ -483,7 +508,7 @@ impl App {
                 Control::Line(text) => {
                     let ms = g.metrics(small);
                     let base = (row.y + (row.h + ms.ascent - ms.descent) / 2.0).round();
-                    g.text(row.x, base, text, small, t.text, row.w);
+                    g.text(row.x + s8, base, text, small, t.text, row.w - s8);
                 }
                 Control::Value { label, value } => {
                     if hover == Hit::Form(k) || focused {
@@ -503,7 +528,7 @@ impl App {
             g.dl.round_rect(Rect::new(bar.x, bar.y, (bar.w * p.clamp(0.0, 1.0)).max(s4), bar.h), t.accent, s(2.0));
         }
         if !f.note.is_empty() {
-            let base = (note_y + s(10.0) + mf.ascent).round();
+            let base = (note_y + s(6.0) + mf.ascent).round();
             g.text(d.x + s20, base, &f.note, small, if f.error { t.error } else { t.text_dim }, d.w - 2.0 * s20);
         }
         for (b, (r, label)) in f.button_rects.iter().zip(&f.buttons).enumerate() {

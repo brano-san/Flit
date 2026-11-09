@@ -381,7 +381,8 @@ impl ContextMenu {
         self.field = Rect::new(r.x + PAD * s, r.y + PAD * s, r.w - 2.0 * PAD * s, FIELD_H * s);
         self.close = Rect::new(self.field.right() - FIELD_H * s, self.field.y, FIELD_H * s, FIELD_H * s);
         self.list = Rect::new(r.x + PAD * s, self.field.bottom() + PAD * s, r.w - 2.0 * PAD * s, r.bottom() - self.field.bottom() - 2.0 * PAD * s);
-        let max = (self.content_h - self.list.h).max(0.0);
+        let overflow = self.content_h - self.list.h;
+        let max = if overflow > 0.5 { overflow } else { 0.0 };
         self.scroll = self.scroll.clamp(0.0, max);
         let scrolls = max > 0.0;
         let sw = SCROLL_W * s;

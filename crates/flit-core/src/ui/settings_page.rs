@@ -965,9 +965,7 @@ impl App {
         ui.starts = starts;
         let (w, h, sc, describe) = (self.size.0, self.size.1, self.scale, self.opts.describe);
         let s = |v: f32| (v * sc).round();
-        let left = self.panels.left;
-        let area = (w - left).max(s(200.0));
-        let room_w = area - 2.0 * s(EDGE);
+        let room_w = w - 2.0 * s(EDGE);
         let want = (w / 2.0).round().max(s(MIN_W)).min(s(MAX_W));
         let full = ui.fit.nav_w(s);
         let nav_w = match room_w {
@@ -989,10 +987,10 @@ impl App {
             y += lh;
         }
         ui.content_h = y;
-        let x = (left + (area - total) / 2.0).round().min(w - total).max(0.0);
+        let x = ((w - total) / 2.0).round().max(0.0);
         let fixed = s(8.0) + s(FIELD_H) + s(6.0) + s(HINT_H);
         let top = super::palette::popup_top(sc, h, fixed + s(SETTING_H) * 4.0);
-        let list_h = (h - s(EDGE) - fixed - top).max(0.0);
+        let list_h = (h - 2.0 * top - fixed).max(s(SETTING_H) * 4.0).min((h - top - s(EDGE) - fixed).max(0.0));
         ui.search_rect = Rect::new(x + s(8.0), top + s(8.0), total - s(16.0) - 2.0 * (s(FIELD_H) + s(4.0)), s(FIELD_H));
         ui.describe = Rect::new(ui.search_rect.right() + s(4.0), ui.search_rect.y, s(FIELD_H), s(FIELD_H));
         ui.close = Rect::new(ui.describe.right() + s(4.0), ui.search_rect.y, s(FIELD_H), s(FIELD_H));
@@ -1052,11 +1050,12 @@ impl App {
             ui.zone = Zone::List;
         }
         ui.bar = if ui.content_h > ui.list.h { Rect::new(ui.list.right() - s(BAR_W), ui.list.y, s(BAR_W), ui.list.h) } else { Rect::default() };
-        ui.rects = offsets.into_iter().map(|(ly, lh)| Rect::new(ui.list.x, ui.list.y + ly - ui.scroll.pos, ui.list.w, lh)).collect();
+        let row_w = ui.list.w - ui.bar.w;
+        ui.rects = offsets.into_iter().map(|(ly, lh)| Rect::new(ui.list.x, ui.list.y + ly - ui.scroll.pos, row_w, lh)).collect();
         ui.sticky = ui.starts.iter().rposition(|st| ui.rects[st.line].y <= ui.list.y + 0.5).filter(|&at| ui.rects[ui.starts[at].line].y < ui.list.y - 0.5).map(|at| {
             let line = ui.starts[at].line;
             let next = ui.starts.get(at + 1).map_or(f32::INFINITY, |st| ui.rects[st.line].y);
-            (line, Rect::new(ui.list.x, ui.list.y.min(next - group_h), ui.list.w, group_h))
+            (line, Rect::new(ui.list.x, ui.list.y.min(next - group_h), row_w, group_h))
         });
         self.settings = Some(ui);
     }
