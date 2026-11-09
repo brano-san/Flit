@@ -1040,7 +1040,7 @@ fn narrow_windows_fold_the_categories_to_icons_and_then_hide_them() {
         assert!(u.list.w >= floor, "{width}: {} is squeezed below {floor}", u.list.w);
         assert!(u.panel.x >= 0.0 && u.panel.right() <= a.size.0 + 0.5, "{width}: {:?}", u.panel);
         let tip = a.tip_text(Hit::Settings(SHit::Nav(1)));
-        assert_eq!(tip.map(|t| t.line), (mode == 1).then(|| Page::Colors.title().to_owned()), "{width}: only icons explain themselves");
+        assert_eq!(tip.map(|t| t.line), (mode == 1).then(|| Page::ALL[1].title().to_owned()), "{width}: only icons explain themselves");
     }
     assert_eq!(seen, [true; 3], "every width class is covered");
 }
@@ -1059,10 +1059,11 @@ fn tab_reaches_the_categories_and_enter_jumps() {
     let before = a.setting_values();
     key(&mut a, Key::Down, NO);
     key(&mut a, Key::Down, NO);
+    key(&mut a, Key::Down, NO);
     key(&mut a, Key::Left, NO);
     key(&mut a, Key::Delete, NO);
     assert_eq!(a.setting_values(), before, "keys in the categories change no setting");
-    assert_eq!(ui(&a).nav_at, 2);
+    assert_eq!(ui(&a).nav_at, 3);
     key(&mut a, Key::Enter, NO);
     a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
     assert_eq!(a.settings_page(), Some(Page::Files));
@@ -1079,7 +1080,7 @@ fn tab_reaches_the_categories_and_enter_jumps() {
     assert_eq!(ui(&a).zone, Zone::List);
     assert!(matches!(ui(&a).lines[ui(&a).focus], Line::Setting(i) if SETTINGS[i].page == Page::Files), "Tab lands in the section it jumped to");
     key(&mut a, Key::Tab, SHIFT);
-    assert_eq!((ui(&a).zone, ui(&a).nav_at), (Zone::Nav, 2), "Shift+Tab goes back to the lit category");
+    assert_eq!((ui(&a).zone, ui(&a).nav_at), (Zone::Nav, 3), "Shift+Tab goes back to the lit category");
     typed(&mut a, "dec");
     assert_eq!((ui(&a).zone, ui(&a).query()), (Zone::Search, "dec"), "typing in the categories searches");
     let t = a.accessibility();
@@ -1115,4 +1116,150 @@ fn section_titles_stick_to_the_top_and_keyboard_rows_stay_below_them() {
         }
     }
     a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+}
+
+const ALT: Mods = Mods { ctrl: false, shift: false, alt: true };
+
+fn menu_app() -> App {
+    let mut a = wide();
+    a.animations = false;
+    let seen = |list: &[&str]| list.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+    a.opts.menu.seen[0] = seen(&["Open", "Rename", "Send to", "Send to \u{203A} Desktop", "Properties"]);
+    a.opts.menu.seen[1] = seen(&["Open in new tab"]);
+    a.open_settings(Some(Page::Menu));
+    a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    a
+}
+
+fn menu_lines(a: &App) -> Vec<String> {
+    a.settings_lines().into_iter().filter(|l| l.starts_with("menu ")).collect()
+}
+
+fn menu_row(a: &mut App, label: &str) -> usize {
+    let k = ui(a).lines.iter().position(|l| matches!(l, Line::MenuItem(r) if r.label() == label)).unwrap_or_else(|| panic!("{label} is not listed"));
+    reveal(a, k)
+}
+
+#[test]
+fn the_context_menu_section_lists_every_kind_and_holds_its_options() {
+    let mut a = app();
+    a.open_settings(Some(Page::Menu));
+    let lines = page(&a, Page::Menu);
+    assert_eq!(lines[..2], [settings::MENU_KIND.to_owned(), S::MenuEditorEmpty.t().to_owned()], "{lines:?}");
+    for id in ["general.shell_submenu", "general.menu_open_tab", "advanced.flatten_in_menu"] {
+        assert!(lines.contains(&id.to_owned()), "{id} moved into the section");
+    }
+    assert!(lines.contains(&S::MenuEditorOwn.t().to_owned()) && lines.iter().any(|l| l.contains(S::UserMenuNewEntry.t())));
+    assert!(!lines.iter().any(|l| l.contains("menu.pins") || l.contains("menu.seen")), "raw lists stay out of the window");
+    assert!(!page(&a, Page::Interface).iter().any(|l| l.starts_with("general.menu")));
+    let mut a = menu_app();
+    assert_eq!(menu_lines(&a), ["menu [x] Open", "menu [x] Rename", "menu [x] Send to >", "menu [x] Properties"]);
+    let k = line(&mut a, settings::MENU_KIND);
+    key(&mut a, Key::Right, NO);
+    assert_eq!(ui(&a).focus, k);
+    assert_eq!(menu_lines(&a), ["menu [x] Open in new tab"], "the folder menu has its own list");
+    key(&mut a, Key::Right, NO);
+    assert!(menu_lines(&a).is_empty());
+    assert!(a.settings_lines().contains(&S::MenuEditorEmpty.t().to_owned()));
+}
+
+#[test]
+fn space_hides_enter_pins_or_folds_and_the_mouse_does_the_same() {
+    let mut a = menu_app();
+    menu_row(&mut a, "Rename");
+    key(&mut a, Key::Space, NO);
+    assert_eq!(a.opts.menu.hidden[0], ["Rename"]);
+    assert!(menu_lines(&a).contains(&"menu [ ] Rename".to_owned()));
+    let k = menu_row(&mut a, "Rename");
+    let target = center(menu_editor::check_rect(rect(&a, k), 0, s));
+    click_at(&mut a, target);
+    assert!(a.opts.menu.hidden[0].is_empty(), "a click on the box shows it again");
+    menu_row(&mut a, "Open");
+    key(&mut a, Key::Enter, NO);
+    assert_eq!(a.opts.pins[0], ["Open"]);
+    let k = menu_row(&mut a, "Properties");
+    let target = center(menu_editor::star_rect(rect(&a, k), s));
+    click_at(&mut a, target);
+    assert_eq!(a.opts.pins[0], ["Properties", "Open"]);
+    assert!(menu_lines(&a).contains(&"menu [x] Properties *".to_owned()));
+    menu_row(&mut a, "Send to");
+    key(&mut a, Key::Enter, NO);
+    assert!(menu_lines(&a).contains(&"menu   [x] Desktop".to_owned()), "{:?}", menu_lines(&a));
+    let k = menu_row(&mut a, "Desktop");
+    key(&mut a, Key::Space, NO);
+    assert_eq!(a.opts.menu.hidden[0], ["Send to \u{203A} Desktop"]);
+    let target = center(menu_editor::star_rect(rect(&a, k), s));
+    click_at(&mut a, target);
+    assert_eq!(a.opts.pins[0][0], "Send to \u{203A} Desktop", "nested commands pin by their path");
+    let k = menu_row(&mut a, "Send to");
+    let target = center(menu_editor::fold_rect(rect(&a, k), 0, s));
+    click_at(&mut a, target);
+    assert!(!menu_lines(&a).iter().any(|l| l.contains("Desktop")), "the chevron folds it again");
+}
+
+#[test]
+fn rows_move_with_alt_arrows_and_by_dragging() {
+    let mut a = menu_app();
+    menu_row(&mut a, "Properties");
+    key(&mut a, Key::Up, ALT);
+    assert_eq!(a.opts.menu.order[0], ["Open", "Rename", "Properties", "Send to"]);
+    assert!(matches!(&ui(&a).lines[ui(&a).focus], Line::MenuItem(r) if r.label() == "Properties"), "the moved row keeps the focus");
+    key(&mut a, Key::Up, ALT);
+    key(&mut a, Key::Up, ALT);
+    key(&mut a, Key::Up, ALT);
+    assert_eq!(a.opts.menu.order[0], ["Properties", "Open", "Rename", "Send to"], "the top stops the row");
+    key(&mut a, Key::Down, ALT);
+    assert_eq!(a.opts.menu.order[0], ["Open", "Properties", "Rename", "Send to"]);
+    let at = menu_row(&mut a, "Send to");
+    let from = rect(&a, at);
+    let at = menu_row(&mut a, "Open");
+    let onto = rect(&a, at);
+    let (x, y) = (from.x + from.w / 2.0, from.y + from.h / 2.0);
+    a.on_event(&Event::MouseMove { x, y }, Instant::now());
+    a.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, Instant::now());
+    a.on_event(&Event::MouseMove { x, y: onto.y + 3.0 }, Instant::now());
+    let dragged = menu_row(&mut a, "Send to");
+    assert_eq!(a.drag, super::super::Drag::MenuMove { from: dragged, to: Some(0) });
+    a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    a.on_event(&Event::MouseUp { x, y: onto.y + 3.0, button: MouseButton::Left }, Instant::now());
+    assert_eq!(a.opts.menu.order[0], ["Send to", "Open", "Properties", "Rename"]);
+    let at = menu_row(&mut a, "Rename");
+    let r = rect(&a, at);
+    click_at(&mut a, center(r));
+    assert_eq!(a.opts.menu.order[0], ["Send to", "Open", "Properties", "Rename"], "a click without a drag moves nothing");
+}
+
+#[test]
+fn reset_restores_one_menu_and_leaves_the_others() {
+    let mut a = menu_app();
+    a.opts.menu.hidden = [vec!["Rename".into()], vec!["Open in new tab".into()], Vec::new()];
+    a.opts.menu.order[0] = vec!["Properties".into()];
+    a.opts.pins[0] = vec!["Open".into()];
+    a.layout();
+    let k = ui(&a).lines.iter().position(|l| *l == Line::Buttons(None, &[Btn::MenuReset])).expect("the section has a reset button");
+    reveal(&mut a, k);
+    key(&mut a, Key::Enter, NO);
+    assert!(a.opts.menu.hidden[0].is_empty() && a.opts.menu.order[0].is_empty());
+    assert_eq!(a.opts.menu.hidden[1], ["Open in new tab"], "the folder menu keeps its layout");
+    assert_eq!(a.opts.pins[0], ["Open"], "pins stay: they have their own star");
+    assert_eq!(menu_lines(&a), ["menu [x] Open *", "menu [x] Rename", "menu [x] Send to >", "menu [x] Properties"]);
+}
+
+#[test]
+fn the_editor_has_accessible_rows_and_draws_in_both_themes() {
+    let mut a = menu_app();
+    let k = menu_row(&mut a, "Open");
+    let mut t = crate::a11y::Tree::new("Flit", Rect::new(0.0, 0.0, 1400.0, 900.0));
+    let mut targets = Vec::new();
+    a.settings_a11y(&mut t, &mut targets);
+    let row = t.nodes.iter().find(|n| n.name == "Open" && n.role == Role::CheckBox).expect("a row is a checkbox");
+    assert!(row.selected);
+    assert!(t.nodes.iter().any(|n| n.name == S::MenuEditorPin.t() && n.role == Role::Button));
+    assert!(targets.iter().any(|(_, h)| *h == Hit::Settings(SHit::Check(k))));
+    for dark in [false, true] {
+        a.on_event(&Event::ThemeChanged { dark }, Instant::now());
+        let mut g = Gfx::new(Mono, 1024);
+        a.frame(&mut g, Instant::now());
+        assert!(g.dl.instances.len() > 50);
+    }
 }

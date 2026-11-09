@@ -335,6 +335,8 @@ impl App {
     pub(super) fn draw_own_menu<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
         let (scale, bounds) = (self.scale, Rect::new(0.0, 0.0, self.size.0, self.size.1));
         let pins = self.own_menu.as_ref().and_then(|m| m.kind.pins()).map(|k| self.opts.pins[k].clone());
+        let arrangement = self.own_menu.as_ref().filter(|m| m.view.is_none()).and_then(|m| m.kind.pins()).map(|k| (self.opts.menu.hidden[k].clone(), self.opts.menu.order[k].clone()));
+        let mut seen = None;
         let (active, preedit) = (self.active, self.preedit.clone());
         let mut files = Vec::new();
         if let Some(m) = &self.own_menu {
@@ -357,6 +359,12 @@ impl App {
             }
             kind => {
                 let mut c = ContextMenu::new(&m.items, kind, pins.unwrap_or_default(), m.at, bounds, scale);
+                if let Some((hidden, order)) = &arrangement {
+                    c.arrange(hidden, order);
+                }
+                if !m.pending {
+                    seen = Some(c.seen());
+                }
                 c.floor_w = m.floor_w;
                 c.measure(g);
                 if !m.carry.is_empty() {
@@ -390,6 +398,9 @@ impl App {
         self.motion |= glowing;
         self.keep_ghost(g, Ghost::Menu, from, at);
         self.pop(g, from, opened, at);
+        if let (Some(latest), Some(kind)) = (seen, self.own_menu_kind()) {
+            self.remember_menu(kind, latest);
+        }
     }
 }
 

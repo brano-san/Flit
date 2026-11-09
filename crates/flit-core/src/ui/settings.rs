@@ -20,6 +20,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 const MAX_PATHS: usize = 64;
+const MAX_STRINGS: usize = 256;
 const MAX_TEXT: usize = 4096;
 pub const SCHEMA: u64 = 5;
 pub const SCHEMA_KEY: &str = "schema";
@@ -74,6 +75,7 @@ pub fn migrate(map: &mut Map<String, Json>, from: u64, current: u64, steps: &[Mi
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {
     Interface,
+    Menu,
     Colors,
     Files,
     Data,
@@ -85,11 +87,12 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 9] = [Page::Interface, Page::Colors, Page::Files, Page::Data, Page::Input, Page::Windows, Page::Tags, Page::Advanced, Page::About];
+    pub const ALL: [Page; 10] = [Page::Interface, Page::Menu, Page::Colors, Page::Files, Page::Data, Page::Input, Page::Windows, Page::Tags, Page::Advanced, Page::About];
 
     pub fn label(self) -> S {
         match self {
             Page::Interface => S::OptionsGroupInterface,
+            Page::Menu => S::MenuEditorPage,
             Page::Colors => S::OptionsGroupColors,
             Page::Files => S::OptionsGroupFiles,
             Page::Data => S::OptionsGroupData,
@@ -250,6 +253,12 @@ const OPS_CHOICES: Choices = &[("during", S::SettingsChoiceOpsDuring), ("always"
 const CLICKS: [ClickOpen; 4] = [ClickOpen::Never, ClickOpen::Touch, ClickOpen::Mouse, ClickOpen::Always];
 const CLICK_CHOICES: Choices = &[("never", S::SettingsChoiceClickNever), ("touch", S::SettingsChoiceClickTouch), ("mouse", S::SettingsChoiceClickMouse), ("always", S::SettingsChoiceClickAlways)];
 const AREA_HELP: S = S::SettingsHelpAreaColor;
+pub const MENU_KIND: &str = "menu.edit_kind";
+const MENU_KINDS: Choices = &[("file", S::UserMenuFiles), ("folder", S::UserMenuFolders), ("background", S::UserMenuBackground)];
+
+const fn menu_list(id: &'static str, get: fn(&App) -> Vec<String>, set: fn(&mut App, Vec<String>)) -> Setting {
+    Setting { id, page: Page::Menu, title: S::MenuEditorStoredTitle, help: S::MenuEditorStoredHelp, kind: Kind::Strings(get, set) }
+}
 pub const LOG_LEVEL: &str = "advanced.log_level";
 pub const LOG_DEFAULT: usize = 1;
 pub const DEFAULT_MANAGER: &str = "advanced.default_manager";
@@ -300,19 +309,19 @@ pub static SETTINGS: &[Setting] = &[
     toggle("appearance.tab_actions", Page::Interface, S::SettingsTitleAppearanceTabActions, S::SettingsHelpAppearanceTabActions, |a| a.tab_actions_button, |a, on| a.tab_actions_button = on),
     choice("appearance.ops_button", Page::Interface, S::SettingsTitleAppearanceOpsButton, S::SettingsHelpAppearanceOpsButton, OPS_CHOICES, |a| usize::from(a.ops_button_always), |a, i| a.ops_button_always = i == 1),
     toggle("appearance.status_bar", Page::Interface, S::SettingsTitleAppearanceStatusBar, S::SettingsHelpAppearanceStatusBar, |a| a.prefs.status_bar, |a, on| a.set_pref(|p| &mut p.status_bar, on)),
-    toggle("general.shell_submenu", Page::Interface, S::SettingsTitleGeneralShellSubmenu, S::SettingsHelpGeneralShellSubmenu, |a| !a.shell_items_inline, |a, on| a.shell_items_inline = !on),
-    toggle("general.menu_open_tab", Page::Interface, S::SettingsTitleGeneralMenuOpenTab, S::SettingsHelpGeneralMenuOpenTab, |a| shown_in_menu(a, "item.open_tab"), |a, on| show_in_menu(a, "item.open_tab", on)),
-    toggle("general.menu_open_window", Page::Interface, S::SettingsTitleGeneralMenuOpenWindow, S::SettingsHelpGeneralMenuOpenWindow, |a| shown_in_menu(a, "item.open_window"), |a, on| show_in_menu(a, "item.open_window", on)),
-    toggle("general.menu_copy_path", Page::Interface, S::SettingsTitleGeneralMenuCopyPath, S::SettingsHelpGeneralMenuCopyPath, |a| shown_in_menu(a, "item.copy_path"), |a, on| show_in_menu(a, "item.copy_path", on)),
-    toggle("general.menu_shortcut", Page::Interface, S::SettingsTitleGeneralMenuShortcut, S::SettingsHelpGeneralMenuShortcut, |a| shown_in_menu(a, "file.shortcut"), |a, on| show_in_menu(a, "file.shortcut", on)),
-    toggle("general.menu_new_folder_with_selection", Page::Interface, S::SettingsTitleGeneralMenuNewFolderWithSelection, S::SettingsHelpGeneralMenuNewFolderWithSelection, |a| shown_in_menu(a, "file.new_folder_with_selection"), |a, on| show_in_menu(a, "file.new_folder_with_selection", on)),
-    toggle("general.menu_stream", Page::Interface, S::SettingsTitleGeneralMenuStream, S::SettingsHelpGeneralMenuStream, |a| shown_in_menu(a, "file.new_stream"), |a, on| show_in_menu(a, "file.new_stream", on)),
-    toggle("general.menu_panes", Page::Interface, S::SettingsTitleGeneralMenuPanes, S::SettingsHelpGeneralMenuPanes, |a| shown_in_menu(a, "pane.menu"), |a, on| show_in_menu(a, "pane.menu", on)),
-    toggle("general.menu_pin", Page::Interface, S::SettingsTitleGeneralMenuPin, S::SettingsHelpGeneralMenuPin, |a| shown_in_menu(a, "item.pin"), |a, on| show_in_menu(a, "item.pin", on)),
-    toggle("general.menu_terminal", Page::Interface, S::SettingsTitleGeneralMenuTerminal, S::SettingsHelpGeneralMenuTerminal, |a| shown_in_menu(a, "app.terminal"), |a, on| show_in_menu(a, "app.terminal", on)),
-    toggle("general.menu_tags", Page::Interface, S::SettingsTitleGeneralMenuTags, S::SettingsHelpGeneralMenuTags, |a| shown_in_menu(a, "tags.edit"), |a, on| show_in_menu(a, "tags.edit", on)),
-    toggle("general.menu_compress", Page::Interface, S::SettingsTitleGeneralMenuCompress, S::SettingsHelpGeneralMenuCompress, |a| shown_in_menu(a, "archive.menu"), |a, on| show_in_menu(a, "archive.menu", on)),
-    toggle("advanced.flatten_in_menu", Page::Interface, S::SettingsTitleAdvancedFlattenInMenu, S::SettingsHelpAdvancedFlattenInMenu, |a| a.show_flatten, |a, on| a.show_flatten = on),
+    toggle("general.shell_submenu", Page::Menu, S::SettingsTitleGeneralShellSubmenu, S::SettingsHelpGeneralShellSubmenu, |a| !a.shell_items_inline, |a, on| a.shell_items_inline = !on),
+    toggle("general.menu_open_tab", Page::Menu, S::SettingsTitleGeneralMenuOpenTab, S::SettingsHelpGeneralMenuOpenTab, |a| shown_in_menu(a, "item.open_tab"), |a, on| show_in_menu(a, "item.open_tab", on)),
+    toggle("general.menu_open_window", Page::Menu, S::SettingsTitleGeneralMenuOpenWindow, S::SettingsHelpGeneralMenuOpenWindow, |a| shown_in_menu(a, "item.open_window"), |a, on| show_in_menu(a, "item.open_window", on)),
+    toggle("general.menu_copy_path", Page::Menu, S::SettingsTitleGeneralMenuCopyPath, S::SettingsHelpGeneralMenuCopyPath, |a| shown_in_menu(a, "item.copy_path"), |a, on| show_in_menu(a, "item.copy_path", on)),
+    toggle("general.menu_shortcut", Page::Menu, S::SettingsTitleGeneralMenuShortcut, S::SettingsHelpGeneralMenuShortcut, |a| shown_in_menu(a, "file.shortcut"), |a, on| show_in_menu(a, "file.shortcut", on)),
+    toggle("general.menu_new_folder_with_selection", Page::Menu, S::SettingsTitleGeneralMenuNewFolderWithSelection, S::SettingsHelpGeneralMenuNewFolderWithSelection, |a| shown_in_menu(a, "file.new_folder_with_selection"), |a, on| show_in_menu(a, "file.new_folder_with_selection", on)),
+    toggle("general.menu_stream", Page::Menu, S::SettingsTitleGeneralMenuStream, S::SettingsHelpGeneralMenuStream, |a| shown_in_menu(a, "file.new_stream"), |a, on| show_in_menu(a, "file.new_stream", on)),
+    toggle("general.menu_panes", Page::Menu, S::SettingsTitleGeneralMenuPanes, S::SettingsHelpGeneralMenuPanes, |a| shown_in_menu(a, "pane.menu"), |a, on| show_in_menu(a, "pane.menu", on)),
+    toggle("general.menu_pin", Page::Menu, S::SettingsTitleGeneralMenuPin, S::SettingsHelpGeneralMenuPin, |a| shown_in_menu(a, "item.pin"), |a, on| show_in_menu(a, "item.pin", on)),
+    toggle("general.menu_terminal", Page::Menu, S::SettingsTitleGeneralMenuTerminal, S::SettingsHelpGeneralMenuTerminal, |a| shown_in_menu(a, "app.terminal"), |a, on| show_in_menu(a, "app.terminal", on)),
+    toggle("general.menu_tags", Page::Menu, S::SettingsTitleGeneralMenuTags, S::SettingsHelpGeneralMenuTags, |a| shown_in_menu(a, "tags.edit"), |a, on| show_in_menu(a, "tags.edit", on)),
+    toggle("general.menu_compress", Page::Menu, S::SettingsTitleGeneralMenuCompress, S::SettingsHelpGeneralMenuCompress, |a| shown_in_menu(a, "archive.menu"), |a, on| show_in_menu(a, "archive.menu", on)),
+    toggle("advanced.flatten_in_menu", Page::Menu, S::SettingsTitleAdvancedFlattenInMenu, S::SettingsHelpAdvancedFlattenInMenu, |a| a.show_flatten, |a, on| a.show_flatten = on),
     toggle("appearance.system_scheme", Page::Colors, S::OptionsTitleSystemScheme, S::OptionsHelpSystemScheme, |a| a.look.mode == Mode::System, |a, on| a.set_system_scheme(on)),
     choice("appearance.color_scheme", Page::Colors, S::OptionsTitleColorScheme, S::OptionsHelpColorScheme, SCHEME_CHOICES, |a| pos(&SCHEMES, &a.scheme()), |a, i| a.set_scheme(SCHEMES[i])),
     toggle("appearance.alternating_rows", Page::Colors, S::OptionsTitleAlternatingRows, S::OptionsHelpAlternatingRows, |a| a.opts.alternating, |a, on| a.opts.alternating = on),
@@ -425,10 +434,20 @@ pub static SETTINGS: &[Setting] = &[
     toggle(DEFAULT_MANAGER, Page::Advanced, S::SettingsTitleAdvancedDefaultManager, S::SettingsHelpAdvancedDefaultManager, |a| a.default_manager, |a, on| a.default_manager = on),
     choice(LOG_LEVEL, Page::Advanced, S::SettingsTitleAdvancedLogLevel, S::SettingsHelpAdvancedLogLevel, LOG_CHOICES, |a| a.log_level, |a, i| a.log_level = i),
     Setting { id: "keys", page: Page::Advanced, title: S::SettingsTitleKeys, help: S::SettingsHelpKeys, kind: Kind::Keys(|a| a.keymap.clone(), |a, k| a.set_keymap(k)) },
-    Setting { id: "menu.pins_file", page: Page::Advanced, title: S::OptionsTitlePinsFile, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.opts.pins[0].clone(), |a, v| a.opts.pins[0] = v) },
-    Setting { id: "menu.pins_folder", page: Page::Advanced, title: S::OptionsTitlePinsFolder, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.opts.pins[1].clone(), |a, v| a.opts.pins[1] = v) },
-    Setting { id: "menu.pins_background", page: Page::Advanced, title: S::OptionsTitlePinsBackground, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.opts.pins[2].clone(), |a, v| a.opts.pins[2] = v) },
-    Setting { id: "menu.custom", page: Page::Interface, title: S::UserMenuGroup, help: S::UserMenuHelp, kind: Kind::Menu(|a| a.opts.user_menu.clone(), |a, v| a.opts.user_menu = v) },
+    Setting { id: "menu.pins_file", page: Page::Menu, title: S::OptionsTitlePinsFile, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.opts.pins[0].clone(), |a, v| a.opts.pins[0] = v) },
+    Setting { id: "menu.pins_folder", page: Page::Menu, title: S::OptionsTitlePinsFolder, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.opts.pins[1].clone(), |a, v| a.opts.pins[1] = v) },
+    Setting { id: "menu.pins_background", page: Page::Menu, title: S::OptionsTitlePinsBackground, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.opts.pins[2].clone(), |a, v| a.opts.pins[2] = v) },
+    choice(MENU_KIND, Page::Menu, S::MenuEditorKindTitle, S::MenuEditorKindHelp, MENU_KINDS, |a| a.opts.menu.kind, |a, i| a.opts.menu.kind = i),
+    menu_list("menu.hidden_file", |a| a.opts.menu.hidden[0].clone(), |a, v| a.opts.menu.hidden[0] = v),
+    menu_list("menu.hidden_folder", |a| a.opts.menu.hidden[1].clone(), |a, v| a.opts.menu.hidden[1] = v),
+    menu_list("menu.hidden_background", |a| a.opts.menu.hidden[2].clone(), |a, v| a.opts.menu.hidden[2] = v),
+    menu_list("menu.order_file", |a| a.opts.menu.order[0].clone(), |a, v| a.opts.menu.order[0] = v),
+    menu_list("menu.order_folder", |a| a.opts.menu.order[1].clone(), |a, v| a.opts.menu.order[1] = v),
+    menu_list("menu.order_background", |a| a.opts.menu.order[2].clone(), |a, v| a.opts.menu.order[2] = v),
+    menu_list("menu.seen_file", |a| a.opts.menu.seen[0].clone(), |a, v| a.opts.menu.seen[0] = v),
+    menu_list("menu.seen_folder", |a| a.opts.menu.seen[1].clone(), |a, v| a.opts.menu.seen[1] = v),
+    menu_list("menu.seen_background", |a| a.opts.menu.seen[2].clone(), |a, v| a.opts.menu.seen[2] = v),
+    Setting { id: "menu.custom", page: Page::Menu, title: S::UserMenuGroup, help: S::UserMenuHelp, kind: Kind::Menu(|a| a.opts.user_menu.clone(), |a, v| a.opts.user_menu = v) },
 ];
 
 impl Setting {
@@ -458,7 +477,7 @@ impl Setting {
             (Kind::Text(_, set), Value::Text(t)) if t.len() <= MAX_TEXT => set(a, t),
             (Kind::Pick(picker, _, set), Value::Text(t)) if picker.accepts(&t) => set(a, t),
             (Kind::Keys(_, set), Value::Keys(k)) => set(a, k),
-            (Kind::Strings(_, set), Value::Strings(v)) if v.len() <= MAX_PATHS && v.iter().all(|t| t.len() <= MAX_TEXT) => set(a, v),
+            (Kind::Strings(_, set), Value::Strings(v)) if v.len() <= MAX_STRINGS && v.iter().all(|t| t.len() <= MAX_TEXT) => set(a, v),
             (Kind::Menu(_, set), Value::Menu(v)) if v.len() <= user_menu::MAX_ENTRIES => set(a, v),
             _ => return false,
         }
@@ -495,7 +514,7 @@ impl Setting {
             Kind::Pick(picker, ..) => j.as_str().filter(|t| picker.accepts(t)).map(|t| Value::Text(t.to_owned())),
             Kind::Keys(..) => keymap::parse(j).map(|(k, _)| Value::Keys(k)),
             Kind::Strings(..) => {
-                let items = j.as_array().filter(|a| a.len() <= MAX_PATHS)?;
+                let items = j.as_array().filter(|a| a.len() <= MAX_STRINGS)?;
                 items.iter().map(|t| t.as_str().filter(|t| t.len() <= MAX_TEXT).map(str::to_owned)).collect::<Option<Vec<_>>>().map(Value::Strings)
             }
             Kind::Menu(..) => user_menu::from_json(j).map(Value::Menu),

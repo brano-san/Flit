@@ -149,9 +149,9 @@ fn form_texts(a: &mut App, texts: &[(usize, &str)], choices: &[(usize, usize)]) 
 #[test]
 fn the_options_editor_adds_moves_edits_and_deletes_entries() {
     let mut a = app(&[("a.txt", false)]);
-    a.open_settings(Some(crate::ui::Page::Interface));
+    a.open_settings(Some(crate::ui::Page::Menu));
     a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
-    assert!(a.settings_lines().contains(&S::UserMenuGroup.t().to_owned()));
+    assert!(a.settings_lines().contains(&S::MenuEditorOwn.t().to_owned()));
     a.new_user_entry(true);
     form_texts(&mut a, &[(NAME, "Dev")], &[]);
     a.form_submit(0);

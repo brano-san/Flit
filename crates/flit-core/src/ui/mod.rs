@@ -23,6 +23,7 @@ mod libraries;
 mod layouts;
 mod marquee;
 mod menu;
+mod menu_editor;
 mod nav;
 mod network;
 pub mod palette;
@@ -516,6 +517,7 @@ enum Drag {
     PanelSep { sep: usize, start: f32, first: f32 },
     Slide(usize),
     OptionsThumb { grab: f32 },
+    MenuMove { from: usize, to: Option<usize> },
 }
 
 #[derive(Default, Clone)]
@@ -1694,6 +1696,7 @@ impl App {
             Drag::PanelSep { sep, start, first } => return self.drag_sep(sep, x, y, start, first),
             Drag::Slide(k) => return self.slide_setting(k, x),
             Drag::OptionsThumb { grab } => return self.drag_settings_thumb(y, grab),
+            Drag::MenuMove { from, .. } => return self.drag_menu_row(from, y),
             Drag::Marquee | Drag::None => {}
         }
         if self.start_pin_drag(y) {
@@ -1831,6 +1834,9 @@ impl App {
         self.dirty = true;
         if let Drag::PinMove { from, to } = was {
             return self.drop_pin(from, to);
+        }
+        if let Drag::MenuMove { from, to } = was {
+            return self.drop_menu_row(from, to);
         }
         if let Drag::PanelSep { .. } = was {
             self.strip.rev += 1;

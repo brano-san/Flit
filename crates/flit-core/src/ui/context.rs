@@ -72,6 +72,7 @@ struct Node {
     path: String,
     keys: String,
     depth: usize,
+    hidden: bool,
     what: What,
 }
 
@@ -93,6 +94,7 @@ pub enum CtxHit {
 
 pub struct ContextMenu {
     nodes: Vec<Node>,
+    top: Vec<Option<usize>>,
     open: Vec<usize>,
     hover_opened: Option<usize>,
     pins: Vec<String>,
@@ -130,17 +132,17 @@ fn flatten(items: &[MenuItem], depth: usize, parent: &str, next: &mut usize, out
         let path = if parent.is_empty() || label.is_empty() { label.clone() } else { format!("{parent}{PATH_SEP}{label}") };
         match item {
             MenuItem::Command { keys, checked, stay, mark, icon, image, disabled, .. } => {
-                out.push(Node { label, path, keys: keys.clone(), depth, what: What::Command { id: *next, checked: *checked, stay: *stay, mark: *mark, icon, image: image.clone(), disabled: *disabled } });
+                out.push(Node { label, path, keys: keys.clone(), depth, hidden: false, what: What::Command { id: *next, checked: *checked, stay: *stay, mark: *mark, icon, image: image.clone(), disabled: *disabled } });
                 *next += 1;
             }
             MenuItem::Submenu { items, .. } => {
                 let at = out.len();
-                out.push(Node { label, path: path.clone(), keys: String::new(), depth, what: What::Submenu { end: 0 } });
+                out.push(Node { label, path: path.clone(), keys: String::new(), depth, hidden: false, what: What::Submenu { end: 0 } });
                 flatten(items, depth + 1, &path, next, out);
                 out[at].what = What::Submenu { end: out.len() };
             }
-            MenuItem::Header(_) => out.push(Node { label, path, keys: String::new(), depth, what: What::Header }),
-            MenuItem::Separator => out.push(Node { label, path, keys: String::new(), depth, what: What::Separator }),
+            MenuItem::Header(_) => out.push(Node { label, path, keys: String::new(), depth, hidden: false, what: What::Header }),
+            MenuItem::Separator => out.push(Node { label, path, keys: String::new(), depth, hidden: false, what: What::Separator }),
         }
     }
 }
@@ -157,6 +159,7 @@ impl ContextMenu {
         flatten(items, 0, "", &mut 0, &mut nodes);
         let mut m = Self {
             nodes,
+            top: Vec::new(),
             open: Vec::new(),
             hover_opened: None,
             pins,
@@ -184,8 +187,48 @@ impl ContextMenu {
             star_glow: Default::default(),
             glow_at: None,
         };
-        m.rebuild();
+        m.arrange(&[], &[]);
         m
+    }
+
+    pub fn arrange(&mut self, hidden: &[String], order: &[String]) {
+        for n in &mut self.nodes {
+            n.hidden = !n.path.is_empty() && hidden.contains(&n.path);
+        }
+        let mut items = Vec::new();
+        let (mut group, mut anchor, mut i) = (0, -1, 0);
+        while i < self.nodes.len() {
+            let n = &self.nodes[i];
+            if n.what == What::Separator {
+                group += 1;
+            } else {
+                if let Some(p) = order.iter().position(|o| *o == n.path) {
+                    anchor = p as isize;
+                }
+                if !n.hidden {
+                    items.push((anchor, group, i));
+                }
+            }
+            i = match n.what {
+                What::Submenu { end } => end,
+                _ => i + 1,
+            };
+        }
+        items.sort_by_key(|&(anchor, ..)| anchor);
+        self.top.clear();
+        let mut last = None;
+        for (_, group, node) in items {
+            if last.is_some_and(|g| g != group) {
+                self.top.push(None);
+            }
+            last = Some(group);
+            self.top.push(Some(node));
+        }
+        self.rebuild();
+    }
+
+    pub fn seen(&self) -> Vec<String> {
+        self.nodes.iter().filter(|n| !n.label.is_empty() && matches!(n.what, What::Command { .. } | What::Submenu { .. })).map(|n| n.path.clone()).collect()
     }
 
     #[cfg(test)]
@@ -232,27 +275,30 @@ impl ContextMenu {
         let mut i = from;
         while i < end {
             let n = &self.nodes[i];
-            match n.what {
-                What::Separator => {
+            if n.what == What::Separator {
+                push_separator(rows);
+            } else if !n.hidden {
+                self.push_node(i, pinned, rows);
+            }
+            i = match n.what {
+                What::Submenu { end: sub } => sub,
+                _ => i + 1,
+            };
+        }
+    }
+
+    fn push_node(&self, i: usize, pinned: &[usize], rows: &mut Vec<Row>) {
+        match self.nodes[i].what {
+            What::Submenu { end } => {
+                rows.push(Row::Node { node: i, marks: Vec::new(), pinned: false, path: false });
+                if self.open.contains(&i) {
                     push_separator(rows);
-                    i += 1;
-                }
-                What::Submenu { end: sub } => {
-                    rows.push(Row::Node { node: i, marks: Vec::new(), pinned: false, path: false });
-                    if self.open.contains(&i) {
-                        push_separator(rows);
-                        self.walk(i + 1, sub, pinned, rows);
-                        push_separator(rows);
-                    }
-                    i = sub;
-                }
-                _ => {
-                    if !pinned.contains(&i) {
-                        rows.push(Row::Node { node: i, marks: Vec::new(), pinned: false, path: false });
-                    }
-                    i += 1;
+                    self.walk(i + 1, end, pinned, rows);
+                    push_separator(rows);
                 }
             }
+            _ if pinned.contains(&i) => {}
+            _ => rows.push(Row::Node { node: i, marks: Vec::new(), pinned: false, path: false }),
         }
     }
 
@@ -267,7 +313,12 @@ impl ContextMenu {
         if query.is_empty() {
             rows.extend(pinned.iter().map(|&i| Row::Node { node: i, marks: Vec::new(), pinned: true, path: self.nodes[i].depth > 0 }));
             push_separator(&mut rows);
-            self.walk(0, self.nodes.len(), &pinned, &mut rows);
+            for top in &self.top {
+                match top {
+                    Some(i) => self.push_node(*i, &pinned, &mut rows),
+                    None => push_separator(&mut rows),
+                }
+            }
         } else {
             let mut scored: Vec<(i32, usize, Vec<Range<usize>>)> = self
                 .nodes

@@ -2,6 +2,7 @@ use super::actions::Chord;
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
 use super::menu::{Cmd, Mark, MenuItem};
+use super::menu_editor::{self, MenuRow};
 use super::widgets::Paint;
 use super::palette::{Palette, Pick};
 use super::fuzzy::fuzzy;
@@ -75,6 +76,7 @@ const G_RESTART: &str = "\u{E72C}";
 fn page_glyph(page: Page) -> &'static str {
     match page {
         Page::Interface => "\u{E7F4}",
+        Page::Menu => "\u{E8FD}",
         Page::Colors => "\u{E8B9}",
         Page::Files => "\u{E8B7}",
         Page::Data => "\u{EDA2}",
@@ -119,10 +121,11 @@ pub(super) enum Btn {
     NewSubmenu,
     Edit,
     Up,
+    MenuReset,
 }
 
 impl Btn {
-    const ALL: [Btn; 24] = [
+    const ALL: [Btn; 25] = [
         Btn::AddHome,
         Btn::AddCurrent,
         Btn::AddTyped,
@@ -147,6 +150,7 @@ impl Btn {
         Btn::NewSubmenu,
         Btn::Edit,
         Btn::Up,
+        Btn::MenuReset,
     ];
 
     fn label(self) -> &'static str {
@@ -175,6 +179,7 @@ impl Btn {
             Btn::NewSubmenu => S::UserMenuNewSubmenu.t(),
             Btn::Edit => S::UserMenuEdit.t(),
             Btn::Up => S::UserMenuUp.t(),
+            Btn::MenuReset => S::MenuEditorReset.t(),
         }
     }
 }
@@ -201,6 +206,7 @@ enum Line {
     Buttons(Option<usize>, &'static [Btn]),
     Tag(usize),
     Entry(super::user_menu::EntryAt),
+    MenuItem(MenuRow),
     Info(&'static str, String),
 }
 
@@ -247,7 +253,7 @@ impl Line {
             Line::Note(_) => room(NOTE_H, fit.body),
             Line::Setting(_) | Line::Off(_) if describe => room(SETTING_H, fit.body + s(TEXT_GAP) + fit.small).max(control),
             Line::Setting(_) | Line::Off(_) => room(0.0, fit.body).max(control),
-            Line::Path(..) => room(ITEM_H, fit.body),
+            Line::Path(..) | Line::MenuItem(_) => room(ITEM_H, fit.body),
             Line::Buttons(..) => 0.0,
             Line::Tag(_) | Line::Entry(_) => room(TAG_H, fit.body).max(control + s(4.0)),
             Line::Info(..) => room(INFO_H, fit.small),
@@ -288,6 +294,9 @@ pub enum SHit {
     Step(usize, bool),
     Remove(usize),
     Button(usize, usize),
+    Check(usize),
+    Star(usize),
+    Fold(usize),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -675,6 +684,7 @@ impl App {
                 Line::Buttons(_, b) => b.iter().map(|b| b.label()).collect::<Vec<_>>().join(" | "),
                 Line::Tag(k) => self.tag_defs().get(*k).map_or_else(String::new, |t| format!("tag {}", t.name)),
                 Line::Entry(at) => self.user_line_text(*at),
+                Line::MenuItem(row) => App::menu_line_text(row),
                 Line::Info(label, value) => format!("{label}: {value}"),
             })
             .collect()
@@ -829,7 +839,7 @@ impl App {
     }
 
     fn page_lines(&self, page: Page, out: &mut Vec<Line>) {
-        for (i, _) in SETTINGS.iter().enumerate().filter(|(_, s)| s.page == page && s.id != settings::LOG_LEVEL) {
+        for (i, _) in SETTINGS.iter().enumerate().filter(|(_, s)| s.page == page && page != Page::Menu && s.id != settings::LOG_LEVEL) {
             self.setting_lines(i, out);
         }
         match page {
@@ -863,15 +873,29 @@ impl App {
                 out.push(Line::Buttons(None, LINK_BUTTONS));
                 out.push(Line::Note(NO_TELEMETRY.t()));
             }
-            Page::Interface => {
-                out.push(Line::Group(S::UserMenuGroup.t()));
+            Page::Menu => {
+                if let Some(i) = settings::index(settings::MENU_KIND) {
+                    self.setting_lines(i, out);
+                }
+                let rows = self.menu_rows();
+                match rows.is_empty() {
+                    true => out.push(Line::Note(S::MenuEditorEmpty.t())),
+                    false => out.extend([Line::Note(S::MenuEditorHint.t()), Line::Note(S::MenuEditorKeys.t())]),
+                }
+                out.extend(rows.into_iter().map(Line::MenuItem));
+                out.push(Line::Buttons(None, &[Btn::MenuReset]));
+                out.push(Line::Group(S::MenuEditorOptions.t()));
+                for (i, _) in SETTINGS.iter().enumerate().filter(|(_, s)| s.page == Page::Menu && s.id != settings::MENU_KIND) {
+                    self.setting_lines(i, out);
+                }
+                out.push(Line::Group(S::MenuEditorOwn.t()));
                 if self.opts.user_menu.is_empty() {
                     out.push(Line::Note(S::UserMenuEmpty.t()));
                 }
                 out.extend(self.user_lines().into_iter().map(Line::Entry));
                 out.push(Line::Buttons(None, USER_BUTTONS));
             }
-            Page::Colors | Page::Files | Page::Data | Page::Input | Page::Windows => {}
+            Page::Interface | Page::Colors | Page::Files | Page::Data | Page::Input | Page::Windows => {}
         }
     }
 
@@ -1085,6 +1109,7 @@ impl App {
                 _ => h(SHit::Line(k)),
             },
             Line::Path(..) if remove_rect(r, s).contains(x, y) => h(SHit::Remove(k)),
+            Line::MenuItem(row) => h(menu_editor::row_hit(row, r, k, (x, y), s)),
             _ => h(SHit::Line(k)),
         }
     }
@@ -1172,6 +1197,17 @@ impl App {
                 }
                 Line::Tag(n) => Some(t.add(section, id, Role::Group, self.tag_defs().get(*n).map_or("", |tag| tag.name.as_str()), r)),
                 Line::Entry(e) => Some(t.add(section, id, Role::Group, self.user_entry_name(*e), r)),
+                Line::MenuItem(row) => {
+                    let n = put(t, targets, section, at(SHit::Check(k)), Role::CheckBox, row.label(), r);
+                    t.nodes[n].selected = !row.hidden;
+                    if row.submenu {
+                        t.nodes[n].value = if row.open { S::MenuEditorOpen.t() } else { S::MenuEditorClosed.t() }.to_owned();
+                    } else {
+                        let star = put(t, targets, n, at(SHit::Star(k)), Role::Button, S::MenuEditorPin.t(), menu_editor::star_rect(r, s));
+                        t.nodes[star].selected = row.pinned;
+                    }
+                    Some(n)
+                }
                 Line::Buttons(..) => None,
             };
             let mut subs = Vec::new();
@@ -1191,7 +1227,7 @@ impl App {
         match sh {
             SHit::Search => ui.zone = Zone::Search,
             SHit::Nav(k) => (ui.zone, ui.nav_at) = (Zone::Nav, k),
-            SHit::Line(k) | SHit::Control(k) | SHit::Slide(k) | SHit::Step(k, _) | SHit::Remove(k) => (ui.zone, ui.focus, ui.sub) = (Zone::List, k, 0),
+            SHit::Line(k) | SHit::Control(k) | SHit::Slide(k) | SHit::Step(k, _) | SHit::Remove(k) | SHit::Check(k) | SHit::Star(k) | SHit::Fold(k) => (ui.zone, ui.focus, ui.sub) = (Zone::List, k, 0),
             SHit::Button(k, b) => (ui.zone, ui.focus, ui.sub) = (Zone::List, k, b),
             _ => {}
         }
@@ -1250,9 +1286,12 @@ impl App {
                 ui.scroll.by(page, ui.content_h - ui.list.h);
                 self.layout();
             }
-            SHit::Line(k) | SHit::Control(k) | SHit::Step(k, _) | SHit::Remove(k) => {
+            SHit::Line(k) | SHit::Control(k) | SHit::Step(k, _) | SHit::Remove(k) | SHit::Check(k) | SHit::Star(k) | SHit::Fold(k) => {
                 ui.zone = Zone::List;
                 ui.focus = k;
+                if matches!((sh, ui.lines.get(k)), (SHit::Line(_), Some(Line::MenuItem(row))) if row.depth == 0) {
+                    self.drag = super::Drag::MenuMove { from: k, to: None };
+                }
             }
             SHit::Button(k, b) => {
                 ui.zone = Zone::List;
@@ -1302,6 +1341,15 @@ impl App {
             SHit::Button(k, b) => {
                 if let Some(l) = line(k) {
                     self.press_button(&l, b);
+                }
+            }
+            SHit::Check(k) | SHit::Star(k) | SHit::Fold(k) => {
+                if let Some(Line::MenuItem(row)) = line(k) {
+                    match sh {
+                        SHit::Check(_) => self.toggle_menu_item(&row.path),
+                        SHit::Star(_) => self.pin_menu_item(&row.path),
+                        _ => self.fold_menu_item(&row.path, None),
+                    }
                 }
             }
             SHit::Line(_) | SHit::Panel | SHit::Search | SHit::Thumb | SHit::Track => {}
@@ -1416,6 +1464,7 @@ impl App {
             (Btn::Export, ..) => self.ask_export_settings(),
             (Btn::Import, ..) => self.ask_import_settings(),
             (Btn::Reset, ..) => self.ask_reset_settings(),
+            (Btn::MenuReset, ..) => self.reset_menu(),
             (Btn::CopyAbout, ..) => {
                 let text = format!("Flit {}\r\n{}", env!("CARGO_PKG_VERSION"), self.about.os);
                 self.effects.push(Effect::SetClipboard(text));
@@ -1535,6 +1584,27 @@ impl App {
                 let _ = ui.search.key(key, m);
             }
             _ if ui.zone == Zone::Nav => return true,
+            Key::Up | Key::Down if m.alt && !m.ctrl && matches!(line, Some(Line::MenuItem(_))) => {
+                if let Some(Line::MenuItem(row)) = line {
+                    self.shift_menu_item(&row.path, key == Key::Down);
+                    self.focus_menu_row(&row.path);
+                }
+            }
+            Key::Space if plain && matches!(line, Some(Line::MenuItem(_))) => {
+                if let Some(Line::MenuItem(row)) = line {
+                    self.toggle_menu_item(&row.path);
+                }
+            }
+            Key::Enter if plain && matches!(line, Some(Line::MenuItem(_))) => match line {
+                Some(Line::MenuItem(row)) if row.submenu => self.fold_menu_item(&row.path, None),
+                Some(Line::MenuItem(row)) => self.pin_menu_item(&row.path),
+                _ => {}
+            },
+            Key::Left | Key::Right if plain && matches!(&line, Some(Line::MenuItem(row)) if row.submenu) => {
+                if let Some(Line::MenuItem(row)) = line {
+                    self.fold_menu_item(&row.path, Some(key == Key::Right));
+                }
+            }
             Key::Left | Key::Right if plain => match line {
                 Some(Line::Setting(i)) => {
                     self.turn_setting(i, key == Key::Left);
@@ -1558,6 +1628,35 @@ impl App {
         }
         self.layout();
         true
+    }
+
+    fn focus_menu_row(&mut self, path: &str) {
+        self.layout();
+        let Some(ui) = &mut self.settings else { return };
+        if let Some(k) = ui.lines.iter().position(|l| matches!(l, Line::MenuItem(row) if row.path == path)) {
+            (ui.focus, ui.reveal) = (k, true);
+            self.layout();
+        }
+    }
+
+    fn menu_top_lines(&self) -> Vec<(usize, Rect)> {
+        let Some(ui) = &self.settings else { return Vec::new() };
+        ui.lines.iter().zip(&ui.rects).enumerate().filter(|(_, (l, _))| matches!(l, Line::MenuItem(row) if row.depth == 0)).map(|(k, (_, r))| (k, *r)).collect()
+    }
+
+    pub(super) fn drag_menu_row(&mut self, from: usize, y: f32) {
+        let to = self.menu_top_lines().iter().filter(|(_, r)| r.y + r.h / 2.0 < y).count();
+        self.drag = super::Drag::MenuMove { from, to: Some(to) };
+        self.dirty = true;
+    }
+
+    pub(super) fn drop_menu_row(&mut self, from: usize, to: Option<usize>) {
+        let tops = self.menu_top_lines();
+        let (Some(to), Some(at)) = (to, tops.iter().position(|(k, _)| *k == from)) else { return };
+        let Some(Line::MenuItem(row)) = self.settings.as_ref().and_then(|ui| ui.lines.get(from).cloned()) else { return };
+        let target = if to > at { to - 1 } else { to };
+        self.move_menu_item(&row.path, target);
+        self.focus_menu_row(&row.path);
     }
 
     fn close_settings_handled(&mut self) -> bool {
@@ -1813,6 +1912,7 @@ impl App {
                     }
                 }
                 Line::Entry(at) => self.draw_user_line(g, t, r, *at, (font, small, icons)),
+                Line::MenuItem(row) => self.draw_menu_row(g, t, r, k, row, (font, icons)),
                 Line::Buttons(..) => {}
             }
             for (b, (br, btn)) in button_rects(line, r, &ui.fit, s).into_iter().zip(line.buttons()).enumerate() {
@@ -1826,6 +1926,13 @@ impl App {
                 }
                 let lw = g.measure(btn.label(), font).min(br.w - s(16.0) - glyph_w);
                 g.text((br.x + glyph_w + (br.w - glyph_w - lw) / 2.0).round(), mid(br, mf), btn.label(), font, if danger { t.error } else { t.text }, br.w - s(16.0) - glyph_w);
+            }
+        }
+        if let super::Drag::MenuMove { to: Some(to), .. } = self.drag {
+            let rows = || ui.lines.iter().zip(&ui.rects).filter_map(|(l, r)| if let Line::MenuItem(row) = l { Some((row.depth, *r)) } else { None });
+            let at = rows().filter(|(depth, _)| *depth == 0).nth(to).map(|(_, r)| r.y);
+            if let Some(y) = at.or_else(|| rows().next_back().map(|(_, r)| r.bottom())) {
+                g.dl.rect(Rect::new(list.x + s(PAD), y - 1.0, list.w - 2.0 * s(PAD), s(2.0)), t.accent);
             }
         }
         if let Some((k, r)) = ui.sticky {
