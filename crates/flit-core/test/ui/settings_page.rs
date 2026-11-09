@@ -276,7 +276,7 @@ fn controls_change_settings_with_the_mouse_and_the_keyboard() {
 
 fn ui_focus(a: &mut App, k: usize) {
     let u = a.settings.as_mut().unwrap();
-    (u.focus, u.searching) = (k, false);
+    (u.focus, u.zone) = (k, Zone::List);
 }
 
 #[test]
@@ -896,4 +896,223 @@ fn tall_metrics_make_rows_taller_than_short_ones() {
         rect(&a, k).h
     };
     assert!(height(Gfx::new(Tall, 1024)) > mono, "rows follow the measured line height");
+}
+
+fn wide() -> App {
+    let mut a = app();
+    a.on_event(&Event::Resized { width: 1400, height: 900 }, Instant::now());
+    a
+}
+
+fn start_of(a: &App, page: Page) -> Start {
+    *ui(a).starts.iter().find(|st| st.page == page).unwrap_or_else(|| panic!("{page:?} has no category"))
+}
+
+fn offset(a: &App, page: Page) -> f32 {
+    let u = ui(a);
+    u.rects[start_of(a, page).line].y - u.list.y + u.scroll.pos
+}
+
+fn scroll_to(a: &mut App, pos: f32) {
+    a.settings.as_mut().unwrap().scroll.snap(pos);
+    a.layout();
+}
+
+fn nav_item(a: &App, page: Page) -> Rect {
+    let k = ui(a).starts.iter().position(|st| st.page == page).unwrap();
+    ui(a).nav_rects[k]
+}
+
+fn click_nav(a: &mut App, page: Page) {
+    let at = center(nav_item(a, page));
+    click_at(a, at);
+}
+
+#[test]
+fn the_categories_are_the_setting_groups_in_order() {
+    let mut a = wide();
+    a.open_settings(None);
+    a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    let u = ui(&a);
+    assert_eq!(u.starts.iter().map(|st| st.page).collect::<Vec<_>>(), Page::ALL);
+    assert!(u.starts.iter().all(|st| u.lines[st.line] == Line::Group(st.page.title())));
+    assert_eq!(u.nav_rects.len(), Page::ALL.len());
+    assert!(!u.rail && u.nav.w == u.fit.nav_w(s) && u.list.x == u.nav.right());
+    assert!(u.fit.titles > 0.0 && (u.fit.titles + s(NAV_TEXT_ROOM) <= u.nav.w + 0.5 || u.nav.w == s(NAV_MAX)), "the longest title fits its column");
+    assert!(u.list.w >= s(MIN_W), "the categories never take room from the settings");
+    assert!(u.nav_rects.windows(2).all(|w| w[0].bottom() <= w[1].y) && u.nav_rects.last().unwrap().bottom() <= u.nav.bottom());
+    assert_eq!(a.settings_page(), Some(Page::Interface));
+}
+
+#[test]
+fn a_category_click_glides_to_its_section_and_lights_it() {
+    let t0 = Instant::now();
+    let mut a = wide();
+    a.open_settings(None);
+    a.frame(&mut Gfx::new(Mono, 1024), t0);
+    let goal = offset(&a, Page::Files);
+    click_nav(&mut a, Page::Files);
+    assert_eq!(ui(&a).scroll.target, goal);
+    assert_eq!(a.settings_page(), Some(Page::Files), "the clicked category lights at once");
+    a.frame(&mut Gfx::new(Mono, 1024), t0 + Duration::from_millis(16));
+    let first = ui(&a).scroll.pos;
+    assert!(first > 0.0 && first < goal, "the list glides: {first} of {goal}");
+    for k in 2..80 {
+        a.frame(&mut Gfx::new(Mono, 1024), t0 + Duration::from_millis(16 * k));
+    }
+    let start = start_of(&a, Page::Files).line;
+    assert_eq!(rect(&a, start).y, ui(&a).list.y, "the section title lands at the top");
+    assert!(matches!(ui(&a).lines[ui(&a).focus], Line::Setting(i) if SETTINGS[i].page == Page::Files), "the keyboard continues in the section");
+    click_nav(&mut a, Page::About);
+    a.frame(&mut Gfx::new(Mono, 1024), t0 + Duration::from_secs(5));
+    assert_eq!(a.settings_page(), Some(Page::About), "the last category stays lit although its section cannot reach the top");
+    a.animations = false;
+    click_nav(&mut a, Page::Colors);
+    a.frame(&mut Gfx::new(Mono, 1024), t0 + Duration::from_secs(6));
+    assert_eq!(ui(&a).scroll.pos, offset(&a, Page::Colors), "without animations the jump is instant");
+    assert_eq!(rect(&a, start_of(&a, Page::Colors).line).y, ui(&a).list.y);
+}
+
+#[test]
+fn the_category_at_the_top_of_the_list_is_lit_while_scrolling() {
+    let mut a = wide();
+    a.open_settings(None);
+    a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    let files = offset(&a, Page::Files);
+    let data = offset(&a, Page::Data);
+    for (pos, page) in [(0.0, Page::Interface), (files - 1.0, Page::Colors), (files, Page::Files), ((files + data) / 2.0, Page::Files), (data, Page::Data)] {
+        scroll_to(&mut a, pos);
+        assert_eq!(a.settings_page(), Some(page), "at {pos}");
+    }
+    let list = ui(&a).list;
+    a.on_event(&Event::MouseMove { x: list.x + list.w / 2.0, y: list.y + list.h / 2.0 }, Instant::now());
+    a.on_event(&Event::Wheel { dx: 0.0, dy: 30.0 }, Instant::now());
+    assert_eq!(a.settings_page(), Some(Page::Interface), "the wheel moves the light too");
+}
+
+#[test]
+fn a_search_keeps_only_categories_with_matches_and_counts_them() {
+    let mut a = wide();
+    a.open_settings(None);
+    typed(&mut a, "hidden");
+    a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    let u = ui(&a);
+    assert!(!u.starts.is_empty() && u.starts.len() < Page::ALL.len(), "{:?}", u.starts);
+    assert_eq!(u.nav_rects.len(), u.starts.len());
+    for (k, st) in u.starts.iter().enumerate() {
+        let end = u.starts.get(k + 1).map_or(u.lines.len(), |n| n.line);
+        let shown = u.lines[st.line..end].iter().filter(|l| matches!(l, Line::Setting(_) | Line::Off(_) | Line::Buttons(None, _))).count();
+        assert_eq!(st.matches, shown, "{:?}", st.page);
+        assert!(st.matches > 0);
+    }
+    assert!(start_of(&a, Page::Files).matches >= 1);
+    let height = ui(&a).list.h;
+    typed(&mut a, " zzzz");
+    assert!(ui(&a).nav_rects.is_empty());
+    assert_eq!(ui(&a).list.h, height, "the window keeps its height while typing");
+    for _ in 0..5 {
+        key(&mut a, Key::Backspace, NO);
+    }
+    let last = *ui(&a).starts.last().unwrap();
+    click_nav(&mut a, last.page);
+    assert_eq!(ui(&a).query(), "hidden", "a jump keeps the search");
+    assert_eq!(a.settings_page(), Some(last.page));
+}
+
+#[test]
+fn narrow_windows_fold_the_categories_to_icons_and_then_hide_them() {
+    let mut seen = [false; 3];
+    for width in (320..=1600).step_by(20) {
+        let mut a = app();
+        a.on_event(&Event::Resized { width, height: 700 }, Instant::now());
+        a.open_settings(None);
+        a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+        let u = ui(&a);
+        let mode = match u.nav.w {
+            w if w == u.fit.nav_w(s) => 0,
+            w if w == s(RAIL_W) => 1,
+            _ => 2,
+        };
+        seen[mode] = true;
+        assert_eq!(u.rail, mode == 1);
+        assert_eq!(u.nav_rects.is_empty(), mode == 2);
+        let floor = [s(MIN_W), s(RAIL_CONTENT_MIN), 0.0][mode];
+        assert!(u.list.w >= floor, "{width}: {} is squeezed below {floor}", u.list.w);
+        assert!(u.panel.x >= 0.0 && u.panel.right() <= a.size.0 + 0.5, "{width}: {:?}", u.panel);
+        let tip = a.tip_text(Hit::Settings(SHit::Nav(1)));
+        assert_eq!(tip.map(|t| t.line), (mode == 1).then(|| Page::Colors.title().to_owned()), "{width}: only icons explain themselves");
+    }
+    assert_eq!(seen, [true; 3], "every width class is covered");
+}
+
+#[test]
+fn tab_reaches_the_categories_and_enter_jumps() {
+    let mut a = wide();
+    a.animations = false;
+    a.open_settings(None);
+    a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    assert_eq!(ui(&a).zone, Zone::List);
+    key(&mut a, Key::Tab, NO);
+    assert_eq!(ui(&a).zone, Zone::Search);
+    key(&mut a, Key::Tab, NO);
+    assert_eq!((ui(&a).zone, ui(&a).nav_at), (Zone::Nav, 0));
+    let before = a.setting_values();
+    key(&mut a, Key::Down, NO);
+    key(&mut a, Key::Down, NO);
+    key(&mut a, Key::Left, NO);
+    key(&mut a, Key::Delete, NO);
+    assert_eq!(a.setting_values(), before, "keys in the categories change no setting");
+    assert_eq!(ui(&a).nav_at, 2);
+    key(&mut a, Key::Enter, NO);
+    a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    assert_eq!(a.settings_page(), Some(Page::Files));
+    assert_eq!(ui(&a).scroll.pos, offset(&a, Page::Files));
+    assert_eq!(ui(&a).zone, Zone::Nav, "Enter keeps the categories focused for the next jump");
+    key(&mut a, Key::End, NO);
+    assert_eq!(ui(&a).nav_at, Page::ALL.len() - 1);
+    key(&mut a, Key::Home, NO);
+    key(&mut a, Key::Up, NO);
+    assert_eq!(ui(&a).nav_at, 0);
+    key(&mut a, Key::Down, NO);
+    key(&mut a, Key::Down, NO);
+    key(&mut a, Key::Tab, NO);
+    assert_eq!(ui(&a).zone, Zone::List);
+    assert!(matches!(ui(&a).lines[ui(&a).focus], Line::Setting(i) if SETTINGS[i].page == Page::Files), "Tab lands in the section it jumped to");
+    key(&mut a, Key::Tab, SHIFT);
+    assert_eq!((ui(&a).zone, ui(&a).nav_at), (Zone::Nav, 2), "Shift+Tab goes back to the lit category");
+    typed(&mut a, "dec");
+    assert_eq!((ui(&a).zone, ui(&a).query()), (Zone::Search, "dec"), "typing in the categories searches");
+    let t = a.accessibility();
+    assert_eq!(t.by_name(S::SettingsPageLineCategories.t()).unwrap().role, crate::a11y::Role::List);
+}
+
+#[test]
+fn section_titles_stick_to_the_top_and_keyboard_rows_stay_below_them() {
+    let mut a = wide();
+    a.open_settings(None);
+    a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    let files = offset(&a, Page::Files);
+    scroll_to(&mut a, files);
+    assert_eq!(ui(&a).sticky, None, "a title already at the top needs no copy");
+    scroll_to(&mut a, files + 60.0);
+    let (k, r) = ui(&a).sticky.expect("the Files title sticks");
+    assert_eq!((k, r.y), (start_of(&a, Page::Files).line, ui(&a).list.y));
+    assert_eq!(a.settings_hit(r.x + r.w / 2.0, r.y + r.h / 2.0), Some(Hit::Settings(SHit::Panel)), "rows under the title take no clicks");
+    let next = offset(&a, Page::Data);
+    scroll_to(&mut a, next - r.h / 2.0);
+    let (_, pushed) = ui(&a).sticky.unwrap();
+    assert!(pushed.y < ui(&a).list.y && pushed.bottom() <= rect(&a, start_of(&a, Page::Data).line).y + 0.5, "the next title pushes it up");
+    scroll_to(&mut a, 0.0);
+    let first = ui(&a).first_focusable();
+    ui_focus(&mut a, first);
+    for k in 0..80 {
+        key(&mut a, if k < 40 { Key::Down } else { Key::Up }, NO);
+        let u = a.settings.as_mut().unwrap();
+        u.scroll.snap(u.scroll.target);
+        a.layout();
+        if let Some((_, top)) = ui(&a).sticky {
+            assert!(rect(&a, ui(&a).focus).y >= top.bottom() - 0.5, "the focused row is not under the title");
+        }
+    }
+    a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
 }

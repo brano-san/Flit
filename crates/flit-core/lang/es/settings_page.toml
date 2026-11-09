@@ -1,5 +1,6 @@
 pages = ["{n} página", "{n} de páginas", "{n} páginas"]
 tag_items = ["{color} · {n} elemento", "{color} · {n} de elementos", "{color} · {n} elementos"]
+matches = ["{n} coincidencia", "{n} de coincidencias", "{n} coincidencias"]
 
 [button]
 add_home = "Agregar la página Inicio"
@@ -61,6 +62,8 @@ bad_file = "Escribe la ruta completa de un archivo"
 
 [line]
 title = "Configuración"
+categories = "Categorías"
+switch_area = "para cambiar de zona"
 search = "Buscar en la configuración"
 no_tags = "Aún no hay etiquetas."
 cache = "Caché de miniaturas en uso"

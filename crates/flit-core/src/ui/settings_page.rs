@@ -24,6 +24,15 @@ use std::time::Instant;
 
 const SETTINGS_ID: u64 = 13;
 const LIST_ID: u64 = 15;
+const CATEGORIES_ID: u64 = 16;
+const NAV_MIN: f32 = 168.0;
+const NAV_MAX: f32 = 280.0;
+const NAV_TEXT_ROOM: f32 = 88.0;
+const RAIL_W: f32 = 48.0;
+const RAIL_CONTENT_MIN: f32 = 400.0;
+const NAV_ITEM_H: f32 = 34.0;
+const NAV_ITEM_MIN: f32 = 24.0;
+const NAV_PAD: f32 = 6.0;
 const MIN_W: f32 = 560.0;
 const MAX_W: f32 = 960.0;
 const FIELD_H: f32 = 32.0;
@@ -62,6 +71,20 @@ const G_DOWN: &str = "\u{E70D}";
 const G_SEARCH: &str = "\u{E721}";
 const G_DESCRIBE: &str = "\u{E8A5}";
 const G_RESTART: &str = "\u{E72C}";
+
+fn page_glyph(page: Page) -> &'static str {
+    match page {
+        Page::Interface => "\u{E7F4}",
+        Page::Colors => "\u{E8B9}",
+        Page::Files => "\u{E8B7}",
+        Page::Data => "\u{EDA2}",
+        Page::Input => "\u{E8CB}",
+        Page::Windows => "\u{E923}",
+        Page::Tags => "\u{E8EC}",
+        Page::Advanced => "\u{E713}",
+        Page::About => "\u{E946}",
+    }
+}
 
 const DOCS_URL: &str = "https://github.com/brano-san/Flit#readme";
 const BUG_URL: &str = "https://github.com/brano-san/Flit/issues/new?labels=bug";
@@ -187,12 +210,17 @@ pub(super) struct Fit {
     pub(super) small: f32,
     bold: f32,
     labels: [f32; Btn::ALL.len()],
+    titles: f32,
 }
 
 impl Fit {
     fn guess(sc: f32) -> Self {
         let line = |px: f32| (px * 1.35 * sc).ceil();
-        Self { body: line(13.0), small: line(12.0), bold: line(14.0), labels: [0.0; Btn::ALL.len()] }
+        Self { body: line(13.0), small: line(12.0), bold: line(14.0), labels: [0.0; Btn::ALL.len()], titles: 0.0 }
+    }
+
+    fn nav_w(&self, s: impl Fn(f32) -> f32) -> f32 {
+        (self.titles.ceil() + s(NAV_TEXT_ROOM)).clamp(s(NAV_MIN), s(NAV_MAX))
     }
 
     fn label(&self, b: Btn) -> f32 {
@@ -251,6 +279,7 @@ pub enum SHit {
     Close,
     Describe,
     Search,
+    Nav(usize),
     Line(usize),
     Control(usize),
     Slide(usize),
@@ -314,6 +343,20 @@ pub struct About {
     pub logs: Option<FsPath>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Zone {
+    Search,
+    Nav,
+    List,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) struct Start {
+    pub(super) line: usize,
+    pub(super) page: Page,
+    pub(super) matches: usize,
+}
+
 pub(super) const KNOB: std::time::Duration = std::time::Duration::from_millis(140);
 
 pub(super) struct SettingsUi {
@@ -322,10 +365,16 @@ pub(super) struct SettingsUi {
     pub knob_motion: bool,
     pub page: Page,
     search: Field,
-    searching: bool,
+    zone: Zone,
     lines: Vec<Line>,
-    starts: Vec<(usize, Page)>,
-    jump: Option<Page>,
+    starts: Vec<Start>,
+    jump: Option<(Page, bool)>,
+    held: Option<(Page, f32)>,
+    nav: Rect,
+    nav_rects: Vec<Rect>,
+    nav_at: usize,
+    rail: bool,
+    sticky: Option<(usize, Rect)>,
     rects: Vec<Rect>,
     focus: usize,
     sub: usize,
@@ -352,10 +401,16 @@ impl SettingsUi {
             fit: Fit::guess(sc),
             browsing: None,
             search: Field::default(),
-            searching: false,
+            zone: Zone::List,
             lines: Vec::new(),
             starts: Vec::new(),
             jump: None,
+            held: None,
+            nav: Rect::default(),
+            nav_rects: Vec::new(),
+            nav_at: 0,
+            rail: false,
+            sticky: None,
             rects: Vec::new(),
             focus: 0,
             sub: 0,
@@ -379,6 +434,24 @@ impl SettingsUi {
 
     pub fn query(&self) -> &str {
         self.search.text().trim()
+    }
+
+    fn searching(&self) -> bool {
+        self.zone == Zone::Search
+    }
+
+    fn page_at(&self) -> usize {
+        self.starts.iter().position(|st| st.page == self.page).unwrap_or(0)
+    }
+
+    fn cycle_zone(&mut self, back: bool) {
+        let order: &[Zone] = if self.nav_rects.is_empty() { &[Zone::Search, Zone::List] } else { &[Zone::Search, Zone::Nav, Zone::List] };
+        let n = order.len();
+        let at = order.iter().position(|z| *z == self.zone).unwrap_or(0);
+        self.zone = order[if back { (at + n - 1) % n } else { (at + 1) % n }];
+        if self.zone == Zone::Nav {
+            self.nav_at = self.page_at();
+        }
     }
 
     fn focusable(&self, from: usize, step: isize) -> Option<usize> {
@@ -499,6 +572,11 @@ pub(super) fn wrap<'a, B: TextBackend>(g: &mut Gfx<B>, text: &'a str, font: Font
     lines
 }
 
+fn paint_group<B: TextBackend>(g: &mut Gfx<B>, t: &Theme, r: Rect, title: &str, bold: FontStyle, s: impl Fn(f32) -> f32) {
+    let mb = g.metrics(bold);
+    g.text(r.x + s(PAD), (r.bottom() - s(10.0) - mb.descent).round(), title, bold, t.text, r.w - 2.0 * s(PAD));
+}
+
 fn step_rects(r: Rect, s: impl Fn(f32) -> f32) -> (Rect, Rect) {
     let c = control_rect(r, &s);
     (Rect::new(c.x, c.y, s(34.0), c.h), Rect::new(c.right() - s(34.0), c.y, s(34.0), c.h))
@@ -610,7 +688,7 @@ impl App {
         let ui = self.settings.get_or_insert_with(|| SettingsUi::new(page.unwrap_or(Page::Interface), self.scale));
         if let Some(p) = page {
             ui.page = p;
-            ui.jump = Some(p);
+            ui.jump = Some((p, false));
             ui.search.edit.set("");
             ui.focus = usize::MAX;
         }
@@ -811,7 +889,7 @@ impl App {
         }
     }
 
-    fn search_lines(&self, query: &str, out: &mut Vec<Line>) {
+    fn search_lines(&self, query: &str, out: &mut Vec<Line>, starts: &mut Vec<Start>) {
         for page in Page::ALL {
             let start = out.len();
             for (i, _) in SETTINGS.iter().enumerate().filter(|(_, s)| s.page == page && option_matches(query, s)) {
@@ -827,6 +905,8 @@ impl App {
                 out.push(Line::Buttons(None, b));
             }
             if out.len() > start {
+                let matches = out[start..].iter().filter(|l| matches!(l, Line::Setting(_) | Line::Off(_) | Line::Buttons(None, _))).count();
+                starts.push(Start { line: start, page, matches });
                 out.insert(start, Line::Group(page.title()));
             }
         }
@@ -838,23 +918,34 @@ impl App {
     pub(super) fn layout_settings(&mut self) {
         let Some(mut ui) = self.settings.take() else { return };
         let mut lines = Vec::new();
-        ui.starts.clear();
-        match ui.query() {
+        let mut starts = Vec::new();
+        match ui.query().to_owned().as_str() {
             "" => {
                 for page in Page::ALL {
-                    ui.starts.push((lines.len(), page));
+                    starts.push(Start { line: lines.len(), page, matches: 0 });
                     lines.push(Line::Group(page.title()));
                     self.page_lines(page, &mut lines);
                 }
             }
-            q => self.search_lines(q, &mut lines),
+            q => self.search_lines(q, &mut lines, &mut starts),
         }
         ui.lines = lines;
+        ui.starts = starts;
         let (w, h, sc, describe) = (self.size.0, self.size.1, self.scale, self.opts.describe);
         let s = |v: f32| (v * sc).round();
         let left = self.panels.left;
         let area = (w - left).max(s(200.0));
-        let pw = (w / 2.0).round().max(s(MIN_W)).min(s(MAX_W)).min(area - 2.0 * s(EDGE)).max(s(320.0));
+        let room_w = area - 2.0 * s(EDGE);
+        let want = (w / 2.0).round().max(s(MIN_W)).min(s(MAX_W));
+        let full = ui.fit.nav_w(s);
+        let nav_w = match room_w {
+            r if r - full >= s(MIN_W) => full,
+            r if r - s(RAIL_W) >= s(RAIL_CONTENT_MIN) => s(RAIL_W),
+            _ => 0.0,
+        };
+        ui.rail = nav_w == s(RAIL_W);
+        let pw = want.min(room_w - nav_w).max(s(320.0));
+        let total = pw + nav_w;
         let mut y = 0.0;
         let mut offsets = Vec::with_capacity(ui.lines.len());
         for l in &ui.lines {
@@ -866,9 +957,28 @@ impl App {
             y += lh;
         }
         ui.content_h = y;
-        if let Some(p) = ui.jump.take() {
-            if let Some(&(k, _)) = ui.starts.iter().find(|(_, q)| *q == p) {
-                ui.scroll.snap(offsets[k].0);
+        let x = (left + (area - total) / 2.0).round().min(w - total).max(0.0);
+        let fixed = s(8.0) + s(FIELD_H) + s(6.0) + s(HINT_H);
+        let top = super::palette::popup_top(sc, h, fixed + s(SETTING_H) * 4.0);
+        let list_h = (h - s(EDGE) - fixed - top).max(0.0);
+        ui.search_rect = Rect::new(x + s(8.0), top + s(8.0), total - s(16.0) - 2.0 * (s(FIELD_H) + s(4.0)), s(FIELD_H));
+        ui.describe = Rect::new(ui.search_rect.right() + s(4.0), ui.search_rect.y, s(FIELD_H), s(FIELD_H));
+        ui.close = Rect::new(ui.describe.right() + s(4.0), ui.search_rect.y, s(FIELD_H), s(FIELD_H));
+        let body = ui.search_rect.bottom() + s(6.0);
+        ui.nav = Rect::new(x, body, nav_w, list_h);
+        ui.list = Rect::new(x + nav_w, body, pw, list_h);
+        ui.hints = Rect::new(x, ui.list.bottom(), total, s(HINT_H));
+        ui.panel = Rect::new(x, top, total, ui.hints.bottom() - top);
+        let max = (ui.content_h - ui.list.h).max(0.0);
+        if let Some((p, smooth)) = ui.jump.take() {
+            if let Some(&Start { line: k, .. }) = ui.starts.iter().find(|st| st.page == p) {
+                let to = offsets[k].0.min(max);
+                if smooth {
+                    ui.scroll.target = to;
+                } else {
+                    ui.scroll.snap(to);
+                }
+                ui.held = Some((p, to));
                 ui.focus = ui.focusable(k, 1).unwrap_or(k);
                 ui.sub = 0;
             }
@@ -878,32 +988,44 @@ impl App {
             ui.sub = 0;
         }
         ui.sub = ui.sub.min(ui.lines.get(ui.focus).map_or(0, |l| l.count().saturating_sub(1)));
-        if let Some(&(_, p)) = ui.starts.iter().rev().find(|(k, _)| *k <= ui.focus) {
-            ui.page = p;
-        }
-        let x = (left + (area - pw) / 2.0).round().min(w - pw).max(0.0);
-        let fixed = s(8.0) + s(FIELD_H) + s(6.0) + s(HINT_H);
-        let top = super::palette::popup_top(sc, h, fixed + s(SETTING_H) * 4.0);
-        let room = (h - s(EDGE) - fixed - top).max(0.0);
-        let list_h = ui.content_h.min(room);
-        ui.search_rect = Rect::new(x + s(8.0), top + s(8.0), pw - s(16.0) - 2.0 * (s(FIELD_H) + s(4.0)), s(FIELD_H));
-        ui.describe = Rect::new(ui.search_rect.right() + s(4.0), ui.search_rect.y, s(FIELD_H), s(FIELD_H));
-        ui.close = Rect::new(ui.describe.right() + s(4.0), ui.search_rect.y, s(FIELD_H), s(FIELD_H));
-        ui.list = Rect::new(x, ui.search_rect.bottom() + s(6.0), pw, list_h);
-        ui.hints = Rect::new(x, ui.list.bottom(), pw, s(HINT_H));
-        ui.panel = Rect::new(x, top, pw, ui.hints.bottom() - top);
+        let group_h = Line::Group("").height(describe, &ui.fit, s);
         if std::mem::take(&mut ui.reveal) {
             if let Some(&(fy, fh)) = offsets.get(ui.focus) {
-                if fy < ui.scroll.target {
-                    ui.scroll.target = fy;
+                let lead = if matches!(ui.lines[ui.focus], Line::Group(_)) { 0.0 } else { group_h };
+                if fy - lead < ui.scroll.target {
+                    ui.scroll.target = (fy - lead).max(0.0);
                 } else if fy + fh > ui.scroll.target + ui.list.h {
                     ui.scroll.target = fy + fh - ui.list.h;
                 }
             }
         }
-        ui.scroll.clamp(ui.content_h - ui.list.h);
+        ui.scroll.clamp(max);
+        ui.page = match ui.held {
+            Some((p, at)) if (ui.scroll.target - at).abs() < 0.5 => p,
+            _ => {
+                ui.held = None;
+                let target = ui.scroll.target;
+                ui.starts.iter().rev().find(|st| offsets[st.line].0 <= target + 0.5).or(ui.starts.first()).map_or(ui.page, |st| st.page)
+            }
+        };
+        let n = ui.starts.len();
+        ui.nav_rects = if nav_w > 0.0 && n > 0 {
+            let item_h = ((list_h - 2.0 * s(NAV_PAD)) / n as f32).floor().clamp(s(NAV_ITEM_MIN), s(NAV_ITEM_H));
+            (0..n).map(|k| Rect::new(ui.nav.x + s(NAV_PAD), ui.nav.y + s(NAV_PAD) + k as f32 * item_h, nav_w - 2.0 * s(NAV_PAD), item_h)).collect()
+        } else {
+            Vec::new()
+        };
+        ui.nav_at = ui.nav_at.min(n.saturating_sub(1));
+        if ui.zone == Zone::Nav && ui.nav_rects.is_empty() {
+            ui.zone = Zone::List;
+        }
         ui.bar = if ui.content_h > ui.list.h { Rect::new(ui.list.right() - s(BAR_W), ui.list.y, s(BAR_W), ui.list.h) } else { Rect::default() };
         ui.rects = offsets.into_iter().map(|(ly, lh)| Rect::new(ui.list.x, ui.list.y + ly - ui.scroll.pos, ui.list.w, lh)).collect();
+        ui.sticky = ui.starts.iter().rposition(|st| ui.rects[st.line].y <= ui.list.y + 0.5).filter(|&at| ui.rects[ui.starts[at].line].y < ui.list.y - 0.5).map(|at| {
+            let line = ui.starts[at].line;
+            let next = ui.starts.get(at + 1).map_or(f32::INFINITY, |st| ui.rects[st.line].y);
+            (line, Rect::new(ui.list.x, ui.list.y.min(next - group_h), ui.list.w, group_h))
+        });
         self.settings = Some(ui);
     }
 
@@ -926,12 +1048,18 @@ impl App {
         if ui.search_rect.contains(x, y) {
             return h(SHit::Search);
         }
+        if let Some(k) = ui.nav_rects.iter().position(|r| r.contains(x, y)) {
+            return h(SHit::Nav(k));
+        }
         if !ui.list.contains(x, y) {
             return h(SHit::Panel);
         }
         if ui.bar.contains(x, y) {
             let on_thumb = scroll_thumb(ui.list, ui.content_h, ui.scroll.pos, s).is_some_and(|t| y >= t.y && y < t.bottom());
             return h(if on_thumb { SHit::Thumb } else { SHit::Track });
+        }
+        if ui.sticky.is_some_and(|(_, r)| r.contains(x, y)) {
+            return h(SHit::Panel);
         }
         let Some(k) = ui.rects.iter().position(|r| r.contains(x, y)) else { return h(SHit::Panel) };
         let (r, line) = (ui.rects[k], &ui.lines[k]);
@@ -972,9 +1100,22 @@ impl App {
         let searching = !ui.query().is_empty();
         let describe = put(t, targets, d, at(SHit::Describe), Role::Button, S::OptionsDescriptions.t(), ui.describe);
         t.nodes[describe].selected = self.opts.describe;
+        let mut focus = if ui.searching() { search } else { d };
+        if !ui.nav_rects.is_empty() {
+            let nav = t.add(d, CATEGORIES_ID, Role::List, S::SettingsPageLineCategories.t(), ui.nav);
+            for (k, (&r, st)) in ui.nav_rects.iter().zip(&ui.starts).enumerate() {
+                let n = put(t, targets, nav, at(SHit::Nav(k)), Role::ListItem, st.page.title(), r);
+                t.nodes[n].selected = st.page == ui.page;
+                if searching {
+                    t.nodes[n].value = crate::trn!(P::SettingsPageMatches, st.matches);
+                }
+                if ui.zone == Zone::Nav && k == ui.nav_at {
+                    focus = n;
+                }
+            }
+        }
         let list = t.add(d, LIST_ID, Role::Group, if searching { S::SettingsPageLineSearch.t() } else { ui.page.title() }, ui.list);
         let mut section = list;
-        let mut focus = if ui.searching { search } else { d };
         for (k, (line, &r)) in ui.lines.iter().zip(&ui.rects).enumerate() {
             if r.bottom() < ui.list.y || r.y > ui.list.bottom() {
                 continue;
@@ -1038,7 +1179,7 @@ impl App {
                 let name = line.buttons().get(b).map_or("", |btn| btn.label());
                 subs.push(put(t, targets, row.unwrap_or(section), at(SHit::Button(k, b)), Role::Button, name, br));
             }
-            if !ui.searching && k == ui.focus {
+            if ui.zone == Zone::List && k == ui.focus {
                 focus = subs.get(ui.sub).copied().or(row).unwrap_or(focus);
             }
         }
@@ -1048,15 +1189,34 @@ impl App {
     pub(super) fn settings_a11y_focus(&mut self, sh: SHit) {
         let Some(ui) = &mut self.settings else { return };
         match sh {
-            SHit::Search => ui.searching = true,
-            SHit::Line(k) | SHit::Control(k) | SHit::Slide(k) | SHit::Step(k, _) | SHit::Remove(k) => (ui.searching, ui.focus, ui.sub) = (false, k, 0),
-            SHit::Button(k, b) => (ui.searching, ui.focus, ui.sub) = (false, k, b),
+            SHit::Search => ui.zone = Zone::Search,
+            SHit::Nav(k) => (ui.zone, ui.nav_at) = (Zone::Nav, k),
+            SHit::Line(k) | SHit::Control(k) | SHit::Slide(k) | SHit::Step(k, _) | SHit::Remove(k) => (ui.zone, ui.focus, ui.sub) = (Zone::List, k, 0),
+            SHit::Button(k, b) => (ui.zone, ui.focus, ui.sub) = (Zone::List, k, b),
             _ => {}
         }
     }
 
     pub(super) fn settings_ime_area(&self) -> Option<Rect> {
-        self.settings.as_ref().filter(|s| s.searching && self.nav.palette.is_none()).map(|s| s.search_rect)
+        self.settings.as_ref().filter(|s| s.searching() && self.nav.palette.is_none()).map(|s| s.search_rect)
+    }
+
+    pub(super) fn settings_nav_tip(&self, k: usize) -> Option<(Rect, String)> {
+        let ui = self.settings.as_ref().filter(|ui| ui.rail)?;
+        let (r, st) = (*ui.nav_rects.get(k)?, ui.starts.get(k)?);
+        let text = match ui.query() {
+            "" => st.page.title().to_owned(),
+            _ => format!("{} · {}", st.page.title(), crate::trn!(P::SettingsPageMatches, st.matches)),
+        };
+        Some((r, text))
+    }
+
+    fn jump_to(&mut self, page: Page) {
+        self.hide_settings_tip();
+        let Some(ui) = &mut self.settings else { return };
+        ui.jump = Some((page, true));
+        self.layout();
+        self.dirty = true;
     }
 
     pub(super) fn settings_mouse_down(&mut self, h: Hit, (x, y): (f32, f32), button: MouseButton, clicks: u8) -> bool {
@@ -1072,11 +1232,11 @@ impl App {
         self.pressed = h;
         match sh {
             SHit::Search => {
-                ui.searching = true;
+                ui.zone = Zone::Search;
                 ui.search.click(x, clicks);
             }
             SHit::Slide(k) => {
-                (ui.searching, ui.focus) = (false, k);
+                (ui.zone, ui.focus) = (Zone::List, k);
                 self.drag = super::Drag::Slide(k);
                 self.slide_setting(k, x);
             }
@@ -1091,12 +1251,15 @@ impl App {
                 self.layout();
             }
             SHit::Line(k) | SHit::Control(k) | SHit::Step(k, _) | SHit::Remove(k) => {
-                ui.searching = false;
+                ui.zone = Zone::List;
                 ui.focus = k;
             }
             SHit::Button(k, b) => {
-                ui.searching = false;
+                ui.zone = Zone::List;
                 (ui.focus, ui.sub) = (k, b);
+            }
+            SHit::Nav(k) => {
+                (ui.zone, ui.nav_at) = (Zone::List, k);
             }
             _ => {}
         }
@@ -1116,6 +1279,11 @@ impl App {
                 self.layout();
             }
             SHit::Slide(k) => self.slide_setting(k, x),
+            SHit::Nav(k) => {
+                if let Some(st) = ui.starts.get(k).copied() {
+                    self.jump_to(st.page);
+                }
+            }
             SHit::Control(k) => {
                 if let Some(Line::Setting(i)) = line(k) {
                     self.activate_setting(i, Some((x, y)));
@@ -1299,27 +1467,42 @@ impl App {
             Key::Escape => return self.close_settings_handled(),
             _ if closes => return self.close_settings_handled(),
             Key::Char('F') if m.ctrl => {
-                ui.searching = true;
+                ui.zone = Zone::Search;
                 ui.search.edit.select_all();
             }
-            Key::Tab if !m.ctrl => ui.searching = !ui.searching,
+            Key::Tab if !m.ctrl => ui.cycle_zone(m.shift),
             Key::PageUp | Key::PageDown if m.ctrl => {
                 let at = Page::ALL.iter().position(|p| *p == ui.page).unwrap_or(0);
                 let n = Page::ALL.len();
                 ui.page = Page::ALL[if key == Key::PageUp { (at + n - 1) % n } else { (at + 1) % n }];
-                ui.jump = Some(ui.page);
+                ui.jump = Some((ui.page, true));
                 ui.search.edit.set("");
-                (ui.focus, ui.searching) = (usize::MAX, false);
+                (ui.focus, ui.zone) = (usize::MAX, Zone::List);
             }
+            Key::Up | Key::Down | Key::Home | Key::End if plain && ui.zone == Zone::Nav => {
+                let last = ui.starts.len().saturating_sub(1);
+                ui.nav_at = match key {
+                    Key::Up => ui.nav_at.saturating_sub(1),
+                    Key::Down => (ui.nav_at + 1).min(last),
+                    Key::Home => 0,
+                    _ => last,
+                };
+            }
+            Key::Enter | Key::Space if plain && ui.zone == Zone::Nav => {
+                if let Some(st) = ui.starts.get(ui.nav_at).copied() {
+                    ui.jump = Some((st.page, true));
+                }
+            }
+            Key::Right if plain && ui.zone == Zone::Nav => ui.zone = Zone::List,
             Key::Up | Key::Down if plain => {
                 let step = if key == Key::Up { -1 } else { 1 };
-                match (ui.searching, key) {
+                match (ui.searching(), key) {
                     (true, Key::Down) => {
-                        ui.searching = false;
+                        ui.zone = Zone::List;
                         ui.focus = ui.first_focusable();
                     }
                     (true, _) => {}
-                    (false, Key::Up) if ui.focusable(ui.focus, step).is_none() => ui.searching = true,
+                    (false, Key::Up) if ui.focusable(ui.focus, step).is_none() => ui.zone = Zone::Search,
                     _ => {
                         if let Some(k) = ui.focusable(ui.focus, step) {
                             ui.focus = k;
@@ -1329,16 +1512,16 @@ impl App {
                 ui.sub = 0;
                 ui.reveal = true;
             }
-            Key::Enter if ui.searching => {
-                ui.searching = false;
+            Key::Enter if ui.searching() => {
+                ui.zone = Zone::List;
                 ui.focus = ui.first_focusable();
                 ui.reveal = true;
             }
-            _ if ui.searching => {
+            _ if ui.searching() => {
                 if let FieldKey::Edited { changed, action } = ui.search.key(key, m) {
                     if changed {
                         ui.focus = usize::MAX;
-        ui.scroll.snap(0.0);
+                        ui.scroll.snap(0.0);
                     }
                     match action {
                         EditAction::Copy(s) => self.effects.push(Effect::SetClipboard(s)),
@@ -1348,9 +1531,10 @@ impl App {
                 }
             }
             Key::Backspace => {
-                ui.searching = true;
+                ui.zone = Zone::Search;
                 let _ = ui.search.key(key, m);
             }
+            _ if ui.zone == Zone::Nav => return true,
             Key::Left | Key::Right if plain => match line {
                 Some(Line::Setting(i)) => {
                     self.turn_setting(i, key == Key::Left);
@@ -1386,10 +1570,10 @@ impl App {
             return false;
         }
         let Some(ui) = &mut self.settings else { return false };
-        if s.is_empty() || (s == " " && !ui.searching) {
+        if s.is_empty() || (s == " " && !ui.searching()) {
             return true;
         }
-        ui.searching = true;
+        ui.zone = Zone::Search;
         ui.search.insert(s);
         ui.focus = usize::MAX;
         ui.scroll.snap(0.0);
@@ -1443,6 +1627,7 @@ impl App {
             small: line_h(g.metrics(self.ui_font(12.0))),
             bold: line_h(g.metrics(FontStyle::new(FontFamily::Ui, 14.0 * self.scale, true))),
             labels: Btn::ALL.map(|b| g.measure(b.label(), font)),
+            titles: Page::ALL.iter().map(|p| g.measure(p.title(), font)).fold(0.0, f32::max),
         };
         if let Some(ui) = self.settings.as_mut().filter(|ui| ui.fit != fit) {
             ui.fit = fit;
@@ -1482,7 +1667,7 @@ impl App {
         let query = ui.query().to_owned();
         let describe = self.opts.describe;
         let sr = ui.search_rect;
-        let focused_search = ui.searching && self.active && self.nav.palette.is_none();
+        let focused_search = ui.searching() && self.active && self.nav.palette.is_none();
         Paint::new(g, t, sc).field(sr, focused_search);
         centered(g, Rect::new(sr.x + s4, sr.y, s(24.0), sr.h), G_SEARCH, icons, t.text_dim);
         let inner = Rect::new(sr.x + s(32.0), sr.y, sr.w - s(40.0), sr.h);
@@ -1495,12 +1680,14 @@ impl App {
             let mut w = Paint::new(g, t, sc);
             w.separator(hints.x + s(12.0), hints.y, hints.w - s(24.0));
             let keys = [S::WidgetsKeyUp.t(), S::WidgetsKeyDown.t()];
-            w.hints_within(hints, &[(&keys, S::WidgetsHintNavigate.t()), (&[S::WidgetsKeyEnter.t()], S::WidgetsHintUse.t()), (&[S::WidgetsKeyEscape.t()], S::WidgetsHintDismiss.t())], small);
+            let all: [(&[&str], &str); 4] = [(&[S::WidgetsKeyTab.t()], S::SettingsPageLineSwitchArea.t()), (&keys, S::WidgetsHintNavigate.t()), (&[S::WidgetsKeyEnter.t()], S::WidgetsHintUse.t()), (&[S::WidgetsKeyEscape.t()], S::WidgetsHintDismiss.t())];
+            w.hints_within(hints, &all[usize::from(ui.nav_rects.is_empty())..], small);
         }
+        self.paint_settings_nav(g, t, ui, (font, small), (mf, ms));
         let list = ui.list;
         g.dl.set_clip(Some(list));
         let mut cut = Vec::new();
-        let list_focused = !ui.searching && self.active && self.nav.palette.is_none();
+        let list_focused = ui.zone == Zone::List && self.active && self.nav.palette.is_none();
         for (k, (line, &r)) in ui.lines.iter().zip(&ui.rects).enumerate() {
             if r.bottom() < list.y || r.y > list.bottom() {
                 continue;
@@ -1517,10 +1704,7 @@ impl App {
                 }
             }
             match line {
-                Line::Group(title) => {
-                    let mb = g.metrics(bold);
-                    g.text(r.x + s(PAD), (r.bottom() - s(10.0) - mb.descent).round(), title, bold, t.text, r.w - 2.0 * s(PAD));
-                }
+                Line::Group(title) => paint_group(g, t, r, title, bold, s),
                 Line::Note(text) => {
                     g.text(r.x + s(PAD), mid(r, mf), text, font, t.text_dim, r.w - 2.0 * s(PAD));
                 }
@@ -1644,6 +1828,13 @@ impl App {
                 g.text((br.x + glyph_w + (br.w - glyph_w - lw) / 2.0).round(), mid(br, mf), btn.label(), font, if danger { t.error } else { t.text }, br.w - s(16.0) - glyph_w);
             }
         }
+        if let Some((k, r)) = ui.sticky {
+            g.dl.rect(r, t.popup);
+            if let Some(Line::Group(title)) = ui.lines.get(k) {
+                paint_group(g, t, r, title, bold, s);
+            }
+            Paint::new(g, t, sc).separator(r.x + s(12.0), r.bottom() - 1.0, r.w - s(24.0));
+        }
         g.dl.set_clip(None);
         if let Some(th) = scroll_thumb(list, ui.content_h, ui.scroll.pos, s) {
             let hot = matches!(hover, Hit::Settings(SHit::Thumb | SHit::Track)) || matches!(self.drag, super::Drag::OptionsThumb { .. });
@@ -1656,6 +1847,50 @@ impl App {
                 self.paint_tip(g, t, &self.setting_help(line), (x, y));
             }
         }
+    }
+
+    fn paint_settings_nav<B: TextBackend>(&self, g: &mut Gfx<B>, t: &Theme, ui: &SettingsUi, (font, small): (FontStyle, FontStyle), (mf, ms): (crate::text::FontMetrics, crate::text::FontMetrics)) {
+        if ui.nav.w <= 0.0 {
+            return;
+        }
+        let s = |v: f32| (v * self.scale).round();
+        let nav = ui.nav;
+        g.dl.rect(Rect::new(nav.right() - 1.0, nav.y + s(NAV_PAD), 1.0, (nav.h - 2.0 * s(NAV_PAD)).max(0.0)), t.separator);
+        let icons = self.icon_font(13.0);
+        let mid = |r: Rect, m: crate::text::FontMetrics| (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
+        let focused = ui.zone == Zone::Nav && self.active && self.nav.palette.is_none();
+        let searching = !ui.query().is_empty();
+        g.dl.set_clip(Some(nav));
+        for (k, (&r, st)) in ui.nav_rects.iter().zip(&ui.starts).enumerate() {
+            let glow = self.lit(Hit::Settings(SHit::Nav(k)));
+            if st.page == ui.page && glow < 1.0 {
+                g.dl.round_rect(r, t.selection, s(4.0));
+            }
+            if glow > 0.0 {
+                g.dl.round_rect(r, super::widgets::faded(t.accent_fill, glow), s(4.0));
+            }
+            if focused && ui.nav_at == k {
+                g.dl.outline(r, t.focus_ring, s(4.0), 1.0);
+            }
+            let ink = if glow >= 0.5 { crate::theme::ink_on(t.accent_fill) } else { t.text };
+            let mark = if glow >= 0.5 { ink } else { t.accent };
+            if ui.rail {
+                centered(g, r, page_glyph(st.page), icons, mark);
+                continue;
+            }
+            let icon = Rect::new(r.x + s(6.0), r.y, s(22.0), r.h);
+            centered(g, icon, page_glyph(st.page), icons, mark);
+            let tx = icon.right() + s(8.0);
+            let mut right = r.right() - s(8.0);
+            if searching {
+                let count = st.matches.to_string();
+                let cw = g.measure(&count, small);
+                g.text(right - cw, mid(r, ms), &count, small, if glow >= 0.5 { ink } else { t.text_dim }, cw + 1.0);
+                right -= cw + s(8.0);
+            }
+            g.text(tx, mid(r, mf), st.page.title(), font, ink, (right - tx).max(0.0));
+        }
+        g.dl.set_clip(None);
     }
 
     fn paint_tip<B: TextBackend>(&self, g: &mut Gfx<B>, t: &Theme, text: &str, (x, y): (f32, f32)) {

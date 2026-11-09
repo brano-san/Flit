@@ -59,8 +59,11 @@ fn the_settings_page_exposes_pages_rows_values_and_toggles() {
     let t = a.accessibility();
     let d = t.by_name(S::SettingsPageLineTitle.t()).unwrap();
     assert_eq!(d.role, Role::Dialog);
-    let files = t.by_name(crate::ui::settings::Page::Files.title()).unwrap();
-    assert_eq!(files.role, Role::Group);
+    let named = |role: Role| t.nodes.iter().any(|n| n.name == crate::ui::settings::Page::Files.title() && n.role == role);
+    assert!(named(Role::Group), "the Files section is a group");
+    let category = t.nodes.iter().find(|n| n.name == crate::ui::settings::Page::Files.title() && n.role == Role::ListItem).expect("the categories list names Files");
+    assert!(category.selected, "the category on screen is selected");
+    assert_eq!(t.by_name(S::SettingsPageLineCategories.t()).unwrap().role, Role::List);
     let describe = t.by_name(S::OptionsDescriptions.t()).unwrap();
     assert!(describe.role == Role::Button && describe.selected, "descriptions are on by default");
     let hidden = t.by_name(setting_title("files.show_hidden")).unwrap();
