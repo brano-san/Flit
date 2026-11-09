@@ -1,5 +1,6 @@
 pages = ["{n} 个页面"]
 tag_items = ["{color} · {n} 个项目"]
+matches = ["{n} 个匹配项"]
 
 [button]
 add_home = "添加主页"
@@ -61,6 +62,8 @@ bad_file = "请输入文件的完整路径"
 
 [line]
 title = "设置"
+categories = "分类"
+switch_area = "切换区域"
 search = "搜索设置"
 no_tags = "还没有标记。"
 cache = "已用缩略图缓存"

@@ -1,5 +1,6 @@
 pages = ["{n} page", "{n} pages"]
 tag_items = ["{color} · {n} item", "{color} · {n} items"]
+matches = ["{n} match", "{n} matches"]
 
 [button]
 add_home = "Add the Home page"
@@ -61,6 +62,8 @@ bad_file = "Enter the full path of a file"
 
 [line]
 title = "Settings"
+categories = "Categories"
+switch_area = "to switch area"
 search = "Search settings"
 no_tags = "There are no tags yet."
 cache = "Thumbnail cache in use"

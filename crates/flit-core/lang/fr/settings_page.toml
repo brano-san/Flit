@@ -1,5 +1,6 @@
 pages = ["{n} page", "{n} de pages", "{n} pages"]
 tag_items = ["{color} · {n} élément", "{color} · {n} d’éléments", "{color} · {n} éléments"]
+matches = ["{n} résultat", "{n} de résultats", "{n} résultats"]
 
 [button]
 add_home = "Ajouter la page Accueil"
@@ -61,6 +62,8 @@ bad_file = "Entrez le chemin complet d’un fichier"
 
 [line]
 title = "Paramètres"
+categories = "Catégories"
+switch_area = "pour changer de zone"
 search = "Rechercher dans les paramètres"
 no_tags = "Il n’y a encore aucune balise."
 cache = "Cache des miniatures utilisé"

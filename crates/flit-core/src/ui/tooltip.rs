@@ -2,6 +2,7 @@ use super::actions::{index, ACTIONS};
 use super::ops::TIMER_SLACK;
 use super::options::InspectorAt;
 use super::preview_pane::{PaneHit, PaneTool, Scale};
+use super::settings_page::SHit;
 use super::widgets::{Paint, RADIUS};
 use super::{App, Column, Drag, Hit, ViewMode};
 use crate::i18n::S;
@@ -125,6 +126,7 @@ impl App {
             Hit::Bottom(b) => l.bar.iter().find(|x| x.0 == b)?.1,
             Hit::PaletteClose | Hit::PaletteDescribe | Hit::PaletteScroll(_) | Hit::PaletteKeys(_) => self.palette_button(h)?,
             Hit::Preview(ph) => self.preview_rect(ph)?,
+            Hit::Settings(SHit::Nav(k)) => self.settings_nav_tip(k)?.0,
             _ => return None,
         };
         (r.w > 0.0 && r.h > 0.0).then_some(r)
@@ -196,6 +198,7 @@ impl App {
                 PaneHit::Filter => text(S::TooltipFilterBox, "inspector.filter"),
                 _ => return None,
             },
+            Hit::Settings(SHit::Nav(k)) => (self.settings_nav_tip(k)?.1, None),
             _ => return None,
         };
         let (command, keys) = match command.and_then(index) {
