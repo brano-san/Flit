@@ -1127,7 +1127,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
 
     fn drag(&mut self, window: &Win<P>, event: DragEvent) -> DropReply {
         let Some(st) = self.windows.get_mut(&window.id()) else { return DropReply::default() };
-        let reply = DropReply { effect: st.app.drag(&event, Instant::now()), caption: st.app.drop_caption() };
+        let reply = DropReply { effect: st.app.drag(&event, Instant::now()), caption: st.app.drop_caption(), folder: st.app.drop_folder() };
         self.flush(window);
         reply
     }
