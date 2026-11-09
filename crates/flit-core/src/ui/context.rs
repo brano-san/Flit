@@ -96,7 +96,6 @@ pub struct ContextMenu {
     nodes: Vec<Node>,
     top: Vec<Option<usize>>,
     open: Vec<usize>,
-    hover_opened: Option<usize>,
     pins: Vec<String>,
     pub kind: MenuKind,
     pub query: Field,
@@ -161,7 +160,6 @@ impl ContextMenu {
             nodes,
             top: Vec::new(),
             open: Vec::new(),
-            hover_opened: None,
             pins,
             kind,
             query: Field::default(),
@@ -472,22 +470,7 @@ impl ContextMenu {
                 self.hot = Some(k);
             }
         }
-        let opened = match self.hover {
-            Some(CtxHit::Row(k)) => self.open_on_hover(k),
-            _ => false,
-        };
-        opened || before != (self.hover, self.hot)
-    }
-
-    fn open_on_hover(&mut self, k: usize) -> bool {
-        let Some(&Row::Node { node, .. }) = self.rows.get(k) else { return false };
-        if !matches!(self.nodes[node].what, What::Submenu { .. }) || self.open.contains(&node) {
-            return false;
-        }
-        self.open.push(node);
-        self.hover_opened = Some(node);
-        self.rebuild();
-        true
+        before != (self.hover, self.hot)
     }
 
     pub fn mouse_down(&mut self, x: f32, y: f32, clicks: u8) -> MenuOutcome {
@@ -542,7 +525,6 @@ impl ContextMenu {
     fn activate(&mut self, k: usize) -> MenuOutcome {
         let Some(Row::Node { node, .. }) = self.rows.get(k) else { return MenuOutcome::Open };
         let node = *node;
-        let hover_opened = self.hover_opened.take();
         match &mut self.nodes[node].what {
             What::Command { disabled: true, .. } => MenuOutcome::Open,
             What::Command { stay: true, checked, id, .. } => {
@@ -550,7 +532,6 @@ impl ContextMenu {
                 MenuOutcome::Toggled(*id)
             }
             What::Command { id, .. } => MenuOutcome::Command(*id),
-            What::Submenu { .. } if hover_opened == Some(node) => MenuOutcome::Open,
             What::Submenu { .. } => {
                 self.toggle(node);
                 MenuOutcome::Open

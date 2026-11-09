@@ -140,7 +140,7 @@ fn rows_are_compact() {
 }
 
 #[test]
-fn hovering_a_submenu_opens_it_below_the_pointer_without_moving_rows_above() {
+fn submenus_start_folded_stay_folded_under_the_pointer_and_open_on_a_click() {
     let items = vec![cmd("Open"), MenuItem::Submenu { label: "New".into(), items: vec![cmd("Folder"), MenuItem::Submenu { label: "More".into(), items: vec![cmd("Zip")] }] }, MenuItem::Submenu { label: "Send to".into(), items: vec![cmd("Desktop")] }];
     let mut c = ContextMenu::new(&items, MenuKind::Background, Vec::new(), (100.0, 100.0), Rect::new(0.0, 0.0, 1000.0, 800.0), 1.0);
     let x = c.rect.x + c.rect.w / 2.0;
@@ -148,19 +148,16 @@ fn hovering_a_submenu_opens_it_below_the_pointer_without_moving_rows_above() {
         let k = c.labels().iter().position(|l| l.trim_start().trim_end_matches([' ', '>', 'v']) == label).unwrap();
         (0..c.rect.h as i32).map(|dy| c.rect.y + dy as f32).find(|&y| c.hit(x, y) == Some(CtxHit::Row(k))).unwrap()
     };
-    let y = row(&c, "New");
-    assert!(c.mouse_move(x, y));
-    assert!(c.is_open("New"), "no click is needed");
-    let y = row(&c, "More");
-    c.mouse_move(x, y);
-    assert!(c.is_open("New") && c.is_open("New \u{203A} More"), "a nested submenu keeps its parent open");
+    assert_eq!(c.labels(), ["Open", "New >", "Send to >"], "everything starts folded");
+    for label in ["New", "Send to"] {
+        let y = row(&c, label);
+        c.mouse_move(x, y);
+    }
+    assert_eq!(c.labels(), ["Open", "New >", "Send to >"], "passing over a submenu does not unfold it");
     let y = row(&c, "Send to");
-    c.mouse_move(x, y);
-    assert!(c.is_open("Send to") && c.is_open("New"), "rows above stay where they are");
-    assert_eq!(c.hit(x, y), Some(CtxHit::Row(c.labels().iter().position(|l| l.starts_with("Send to")).unwrap())), "the pointer stays on the row it opened");
     c.mouse_down(x, y, 1);
     c.mouse_up(x, y);
-    assert!(c.is_open("Send to"), "a click right after the hover keeps it open");
+    assert!(c.is_open("Send to") && !c.is_open("New"), "a click unfolds it");
     c.mouse_down(x, y, 1);
     c.mouse_up(x, y);
     assert!(!c.is_open("Send to"), "the next click folds it");
