@@ -53,6 +53,23 @@ fn wsl_escape(component: &[u8], out: &mut Vec<u8>) -> Option<()> {
     Some(())
 }
 
+pub fn wsl_drive_path(unc: &[u8]) -> Option<FsPath> {
+    let rest = [&br"\\wsl.localhost\"[..], br"\\wsl$\"].iter().find_map(|p| unc.get(..p.len()).filter(|h| h.eq_ignore_ascii_case(p)).map(|_| &unc[p.len()..]))?;
+    let mut parts = rest.split(|&b| b == b'\\');
+    let (_distro, mnt, letter) = (parts.next()?, parts.next()?, parts.next()?);
+    if mnt != b"mnt" || letter.len() != 1 || !letter[0].is_ascii_alphabetic() {
+        return None;
+    }
+    let mut out = vec![letter[0].to_ascii_uppercase(), b':', b'\\'];
+    for (k, part) in parts.filter(|p| !p.is_empty()).enumerate() {
+        if k > 0 {
+            out.push(b'\\');
+        }
+        out.extend_from_slice(part);
+    }
+    FsPath::parse_exact(&out)
+}
+
 impl Location {
     pub fn computer() -> Self {
         Location::Local(FsPath::computer())

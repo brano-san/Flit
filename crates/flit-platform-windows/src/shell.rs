@@ -228,6 +228,9 @@ impl Shell for ShellCom {
     }
 
     fn icon(&mut self, req: &IconRequest) -> Option<Bitmap> {
+        if let Some(path) = flit_core::location::wsl_drive_path(req.path.as_bytes()) {
+            return self.icon(&IconRequest { path, ..req.clone() });
+        }
         match req.kind {
             IconKind::Type => self.generic_icon(&req.path, false, req.size),
             IconKind::Folder => self.generic_icon(&req.path, true, req.size),
@@ -246,7 +249,8 @@ impl Shell for ShellCom {
     }
 
     fn thumbnail(&mut self, req: &IconRequest) -> Option<Bitmap> {
-        self.item_image(&req.path, req.size, SIIGBF_THUMBNAILONLY)
+        let path = flit_core::location::wsl_drive_path(req.path.as_bytes()).unwrap_or_else(|| req.path.clone());
+        self.item_image(&path, req.size, SIIGBF_THUMBNAILONLY)
     }
 
     fn type_name(&mut self, ext: &[u8]) -> Option<String> {
@@ -303,11 +307,11 @@ impl Shell for ShellCom {
     }
 
     fn preview_image(&mut self, path: &FsPath, max: u32) -> Option<Bitmap> {
-        crate::preview::decode_image(path, max)
+        crate::preview::decode_image(&flit_core::location::wsl_drive_path(path.as_bytes()).unwrap_or_else(|| path.clone()), max)
     }
 
     fn poster(&mut self, path: &FsPath, size: u32) -> Option<Bitmap> {
-        self.item_image(path, size, SIIGBF_THUMBNAILONLY)
+        self.item_image(&flit_core::location::wsl_drive_path(path.as_bytes()).unwrap_or_else(|| path.clone()), size, SIIGBF_THUMBNAILONLY)
     }
 
     fn properties(&mut self, path: &FsPath) -> Vec<PropGroup> {

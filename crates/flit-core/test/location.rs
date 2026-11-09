@@ -96,3 +96,15 @@ fn this_pc_rows_open_drives_and_distros() {
     assert_eq!(pc.join(b"Ubuntu-22.04"), wsl("Ubuntu-22.04", b"/"));
     assert_eq!(pc.join(b"a b"), pc);
 }
+
+#[test]
+fn wsl_paths_under_mnt_drive_letters_lead_back_to_the_windows_drive() {
+    let drive = |s: &str| wsl_drive_path(s.as_bytes()).map(|p| p.display().into_owned());
+    assert_eq!(drive(r"\\wsl.localhost\Ubuntu\mnt\c\Users\me\Downloads").as_deref(), Some(r"C:\Users\me\Downloads"));
+    assert_eq!(drive(r"\\WSL$\Ubuntu-22.04\mnt\d").as_deref(), Some(r"D:\"));
+    assert_eq!(drive(r"\\wsl.localhost\Ubuntu\mnt\d\").as_deref(), Some(r"D:\"));
+    assert_eq!(drive(r"\\wsl.localhost\Ubuntu\home\me"), None);
+    assert_eq!(drive(r"\\wsl.localhost\Ubuntu\mnt\wsl\x"), None);
+    assert_eq!(drive(r"C:\mnt\c\x"), None);
+    assert_eq!(wsl("Ubuntu", b"/mnt/c/Users").to_windows().and_then(|p| wsl_drive_path(p.as_bytes())).map(|p| p.display().into_owned()).as_deref(), Some(r"C:\Users"));
+}
