@@ -32,6 +32,7 @@ pub mod theme;
 pub mod thumbs;
 pub mod ui;
 pub mod undo;
+pub mod update;
 pub mod view;
 
 pub use listing::{attr, DirChange, DirSnapshot, Entry, FsError, FsErrorKind, Listing, ListingBuilder, Meta};

@@ -15,6 +15,7 @@ mod settings;
 mod search_client;
 mod state;
 mod tags;
+mod update;
 mod thumbs;
 
 #[cfg(not(target_os = "linux"))]
@@ -88,6 +89,7 @@ fn main() {
     if hand_to_explorer(&open) {
         return;
     }
+    update::on_start::<P>();
     let mut standalone = None;
     let instance = match metrics {
         Some(_) => None,
@@ -145,5 +147,6 @@ fn main() {
         std::process::exit(1);
     }
     tracing::info!("Flit exits");
+    update::relaunch_if_installed();
     logs::flush();
 }

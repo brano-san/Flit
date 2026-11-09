@@ -12,6 +12,7 @@ mod dwrite;
 mod engine;
 mod fileops;
 mod fs;
+mod update;
 mod install;
 mod integration;
 mod instance;
@@ -238,6 +239,14 @@ impl Platform for Windows {
 
     fn resolve_files(keys: &[flit_core::tags::FileKey]) -> Vec<flit_platform::Resolved> {
         tags::resolve_files(keys)
+    }
+
+    fn download(url: &str, out: &mut dyn std::io::Write, progress: &mut dyn FnMut(u64, Option<u64>) -> bool) -> Result<(), PlatformError> {
+        update::download(url, out, progress)
+    }
+
+    fn wait_exit(pid: u32, limit: std::time::Duration) {
+        update::wait_exit(pid, limit)
     }
 }
 

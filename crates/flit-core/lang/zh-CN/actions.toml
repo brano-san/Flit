@@ -344,3 +344,4 @@
 "status.select_folders" = "选择要打开的文件夹"
 "status.select_item" = "请先选择一个项目。"
 "status.no_real_path" = "此项目在磁盘上没有实际位置。"
+"app.check_updates" = "检查更新"

@@ -76,7 +76,7 @@ folder = "Dossier"
 version = "Version"
 unknown = "Inconnu"
 help = "Aide"
-no_telemetry = "Flit n’a ni télémétrie ni identifiant utilisateur : il n’envoie rien nulle part."
+no_telemetry = "Flit n’a ni télémétrie ni identifiant utilisateur. La seule requête qu’il fait de lui-même est la recherche de mises à jour, qui demande latest.json à GitHub."
 needs_builtin_archives = "Inactif : la gestion intégrée des archives est désactivée."
 
 [guide]

@@ -509,6 +509,10 @@ impl App {
         !self.ops.pending.is_empty()
     }
 
+    pub(super) fn ops_in_flight(&self) -> usize {
+        self.ops.pending.len()
+    }
+
     fn delete_with(&mut self, permanent: bool) {
         if self.in_bin() {
             return self.purge_selection();

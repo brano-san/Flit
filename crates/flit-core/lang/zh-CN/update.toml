@@ -1,0 +1,34 @@
+[error]
+manifest = "无法读取 GitHub 上的更新信息"
+no_build = "Flit {version} 没有适用于 {platform} 的版本"
+signature = "下载的文件没有 Flit 开发者的签名"
+missing = "下载的压缩包中没有 {name}"
+off = "FLIT_NO_UPDATE 已关闭更新检查"
+cancelled = "下载已取消"
+other_window = "另一个 Flit 窗口中仍有文件操作在进行"
+
+[status]
+checking = "正在检查更新…"
+up_to_date = "Flit {version} 已是最新版本"
+check_failed = "无法检查更新：{error}"
+available = "Flit {version} 已发布：使用“检查更新”即可安装"
+failed = "无法安装更新：{error}"
+
+[dialog]
+title = "Flit {version} 已发布"
+installed = "已安装版本"
+new = "新版本"
+restart = "Flit 将重新启动，并重新打开相同的窗口和标签页。"
+install = "安装并重新启动"
+skip = "跳过此版本"
+later = "稍后"
+open_releases = "打开发布页面"
+downloading = "正在下载 Flit {version}… {percent}%"
+downloading_plain = "正在下载 Flit {version}…"
+installing = "正在安装 Flit {version}…"
+read_only = "Flit 无法替换 {dir} 中的文件。请从发布页面下载新版本。"
+jobs = ["仍有 {n} 个文件操作在进行。请在完成后再安装更新。"]
+
+[page]
+group = "更新"
+check = "检查更新"

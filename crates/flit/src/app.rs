@@ -6,6 +6,8 @@ use crate::settings::{self, Job, Settings};
 use crate::state::{self, Saved, Tools};
 use crate::tags::{self, TagWorker};
 use crate::thumbs::ThumbCache;
+use crate::update::{self, UpdateWorker};
+use flit_core::update::{UpdateEvent, UpdateRequest};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use flit_core::i18n::S;
 use flit_core::input::Event;
@@ -302,6 +304,9 @@ struct Handler<P: Platform> {
     settings: Settings,
     dates: (String, String),
     about: About,
+    updates: update::UpdateWorker,
+    update_window: Option<WindowId>,
+    restarting: bool,
 }
 
 impl<P: Platform> Handler<P> {
@@ -637,6 +642,7 @@ impl<P: Platform> Handler<P> {
                 Effect::Settings(SettingsCmd::Browse { exts, folder, start }) => {
                     let _ = self.previews.send(PreviewJob::Browse { window: id, exts, folder, start });
                 }
+                Effect::Update(req) => self.update_request(id, req),
             }
         }
         self.sync_settings(id);
@@ -656,6 +662,42 @@ impl<P: Platform> Handler<P> {
             }
         }
         self.note_session(window);
+    }
+
+    fn update_request(&mut self, id: WindowId, req: UpdateRequest) {
+        let busy_elsewhere = matches!(req, UpdateRequest::Install(_)) && self.windows.iter().any(|(w, st)| *w != id && st.app.file_jobs_running() > 0);
+        if busy_elsewhere {
+            if let Some(st) = self.windows.get_mut(&id) {
+                st.app.on_update(UpdateEvent::Failed(S::UpdateErrorOtherWindow.t().to_owned()));
+            }
+            return;
+        }
+        self.update_window = Some(id);
+        self.updates.submit(req);
+    }
+
+    fn update_replies(&mut self) {
+        while let Ok(reply) = self.updates.events.try_recv() {
+            let ev = match reply {
+                update::Reply::Ui(ev) => ev,
+                update::Reply::Restart => {
+                    let s = self.session();
+                    self.final_session(Some(s));
+                    self.ending = true;
+                    self.restarting = true;
+                    continue;
+                }
+            };
+            let target = self.update_window.filter(|w| self.windows.contains_key(w)).or(self.active).or_else(|| self.windows.keys().next().copied());
+            match target.and_then(|w| self.windows.get_mut(&w)) {
+                Some(st) => st.app.on_update(ev),
+                None => {
+                    if let Some(app) = self.pending.front_mut() {
+                        app.on_update(ev);
+                    }
+                }
+            }
+        }
     }
 
     fn sync_settings(&mut self, id: WindowId) {
@@ -1112,6 +1154,10 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
             window.activate();
         }
         self.drain();
+        self.update_replies();
+        if self.restarting {
+            return window.close();
+        }
         self.settings_replies(window);
         self.inject_due(window);
         self.poll_gpu(false);
@@ -1238,12 +1284,15 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let typed: Typed = Arc::new(Mutex::new(previous.as_ref().map(|s| s.typed.clone()).unwrap_or_default()));
     let mut restore: VecDeque<(WindowSession, Option<Placement>)> = match &saved.persisted.startup {
         _ if !open.is_empty() || crashed => VecDeque::new(),
+        _ if update::restarted() => previous.iter().flat_map(Session::windows).collect(),
         Startup::Continue => previous.iter().flat_map(Session::windows).collect(),
         Startup::NewTab => VecDeque::from([(WindowSession { tabs: vec![Location::home_page()], cur: 0, ..Default::default() }, None)]),
         Startup::Folders(tabs) => VecDeque::from([(WindowSession { tabs: tabs.clone(), cur: 0, ..Default::default() }, None)]),
     };
     let first_window = restore.pop_front().filter(|(w, _)| !w.tabs.is_empty());
     let h_wake = wake.clone();
+    let update_wake = wake.clone();
+    let headless = metrics.is_some();
     let mut h = Handler::<P> {
         windows: HashMap::new(),
         pending: VecDeque::new(),
@@ -1289,6 +1338,9 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         settings,
         dates: ("yyyy-MM-dd".into(), "HH:mm".into()),
         about,
+        updates: UpdateWorker::start::<P>(update_wake, headless)?,
+        update_window: None,
+        restarting: false,
     };
     let (mut first, placement) = match &first_window {
         Some((ws, placement)) => (h.restored_app(ws), *placement),
@@ -1301,6 +1353,9 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     first.apply_doc(&doc);
     let values = first.setting_values();
     h.settings.adopt(&doc, values);
+    if first.checks_updates_on_start() && !update::restarted() {
+        h.updates.submit(UpdateRequest::Check { manual: false });
+    }
     match dump {
         Some(d) => first.offer_crash_report(h.crashed.is_some(), d),
         None if h.crashed.is_some() => first.offer_restore(),

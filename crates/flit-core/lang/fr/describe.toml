@@ -345,3 +345,4 @@
 "view.pane.details" = "Afficher les détails de la sélection dans le panneau latéral"
 "item.quick_view" = "Afficher un aperçu de la sélection dans une fenêtre séparée, espace"
 "preview.play" = "Lancer ou arrêter l’audio ou la vidéo de l’aperçu"
+"app.check_updates" = "Demander à GitHub si une version plus récente de Flit est sortie, puis la télécharger, l’installer et redémarrer, mise à jour, nouvelle version"

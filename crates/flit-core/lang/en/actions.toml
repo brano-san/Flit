@@ -344,3 +344,4 @@
 "status.select_folders" = "Select the folders to open"
 "status.select_item" = "Select an item first."
 "status.no_real_path" = "This item has no real location on disk."
+"app.check_updates" = "Check for updates"

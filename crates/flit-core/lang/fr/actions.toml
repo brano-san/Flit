@@ -344,3 +344,4 @@
 "status.select_folders" = "Sélectionnez les dossiers à ouvrir"
 "status.select_item" = "Sélectionnez d’abord un élément."
 "status.no_real_path" = "Cet élément n’a pas d’emplacement réel sur le disque."
+"app.check_updates" = "Rechercher les mises à jour"

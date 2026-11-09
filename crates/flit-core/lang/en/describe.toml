@@ -345,3 +345,4 @@
 "view.pane.details" = "Show the details of the selection in the side panel"
 "item.quick_view" = "Preview the selection in a separate window, space"
 "preview.play" = "Start or stop the audio or video in the preview"
+"app.check_updates" = "Ask GitHub whether a newer Flit is out, then download, install and restart, update, upgrade, new version, release"

@@ -385,7 +385,8 @@ fn about_page_shows_versions_and_no_libraries() {
     let lines = page(&a, Page::About);
     assert!(lines[0].starts_with("Version: Flit ") && lines[1] == format!("{OS_NAME}: Windows 11 Pro 24H2 (build 26100.1)"));
     assert!(!lines.iter().any(|l| l.starts_with("serde_json")), "{lines:?}");
-    assert_eq!(lines[3..7], ["Help", "Documentation | Report a bug | Request a feature", "GitHub repository | Privacy statement", NO_TELEMETRY.t()]);
+    assert_eq!(lines[3..6], ["Updates", crate::ui::settings::CHECK_UPDATES, "Check for updates"]);
+    assert_eq!(lines[6..10], ["Help","Documentation | Report a bug | Request a feature", "GitHub repository | Privacy statement", NO_TELEMETRY.t()]);
     let k = ui(&a).lines.iter().position(|l| l.buttons().contains(&Btn::ReportBug)).unwrap();
     reveal(&mut a, k);
     let r = button_rects(&ui(&a).lines[k].clone(), rect(&a, k), &ui(&a).fit, s)[1];

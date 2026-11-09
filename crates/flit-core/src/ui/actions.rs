@@ -493,6 +493,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("help.feature", G::Flit, S::ActionsHelpFeature, S::DescribeHelpFeature, &[], |a, _| a.open_link("help.feature")),
     Action::new("help.repository", G::Flit, S::ActionsHelpRepository, S::DescribeHelpRepository, &[], |a, _| a.open_link("help.repository")),
     Action::new("help.privacy", G::Flit, S::ActionsHelpPrivacy, S::DescribeHelpPrivacy, &[], |a, _| a.open_link("help.privacy")),
+    Action::new("app.check_updates", G::Flit, S::ActionsAppCheckUpdates, S::DescribeAppCheckUpdates, &[], |a, _| a.check_updates(true)),
     Action::new("logs.file", G::Flit, S::ActionsLogsFile, S::DescribeLogsFile, &[ctrl(c('.'))], |a, _| a.open_log_file()),
     Action::new("logs.folder", G::Flit, S::ActionsLogsFolder, S::DescribeLogsFolder, &[ctrl_shift(c('.'))], |a, now| a.open_log_folder(now)),
     Action::new("item.copy_quoted_path", G::Flit, S::ActionsItemCopyQuotedPath, S::DescribeItemCopyQuotedPath, &[ctrl_alt(c('C'))], |a, _| a.copy_paths(Quote::Always)),

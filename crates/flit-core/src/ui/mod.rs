@@ -56,6 +56,7 @@ mod tree;
 mod bottom;
 mod types;
 mod user_menu;
+mod update;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource, MAX_HISTORY};
@@ -69,6 +70,7 @@ pub use jobs::JobState;
 pub use preview_pane::PaneState;
 pub use menu::{Mark, MenuImage, MenuItem};
 pub use user_menu::UserEntry;
+pub use update::UpdatePrefs;
 pub use popup::{MenuOutcome, MenuView};
 pub use context::MenuKind;
 pub use tab::Tab;
@@ -369,6 +371,7 @@ pub enum Effect {
     Git(crate::git::GitRequest),
     ShellPick(Option<u32>),
     Layout(LayoutCmd),
+    Update(crate::update::UpdateRequest),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -596,6 +599,7 @@ pub struct App {
     pub about: About,
     pub log_level: usize,
     pub default_manager: bool,
+    pub updates: update::UpdatePrefs,
     pub language: usize,
     shown_lang: crate::i18n::Lang,
     pub prefs: ViewPrefs,
@@ -722,6 +726,7 @@ impl App {
             about: About::default(),
             log_level: settings::LOG_DEFAULT,
             default_manager: false,
+            updates: update::UpdatePrefs::default(),
             language: 0,
             shown_lang: crate::i18n::lang(),
             prefs: state.prefs,

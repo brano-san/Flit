@@ -22,7 +22,7 @@ fn every_setting_has_a_unique_id_a_title_a_description_and_a_page() {
     for s in SETTINGS {
         assert!(seen.insert(s.id), "duplicate id {}", s.id);
         let prefix = s.id.split('.').next().unwrap_or_default();
-        assert!(["general", "appearance", "files", "layout", "advanced", "keys", "input", "windows", "menu"].contains(&prefix), "the id of {} starts with a known namespace", s.id);
+        assert!(["general", "appearance", "files", "layout", "advanced", "keys", "input", "windows", "menu", "updates"].contains(&prefix), "the id of {} starts with a known namespace", s.id);
         assert!(!s.title.t().is_empty() && !s.help.t().is_empty(), "{}", s.id);
         assert!(Page::ALL.contains(&s.page));
         if let Kind::Choice(c, ..) = s.kind {

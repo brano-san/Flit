@@ -29,6 +29,7 @@ pub(super) enum Control {
     Check { label: String, on: bool },
     Flags { label: String, items: Vec<(String, bool)>, cur: usize, spots: Vec<Rect> },
     Value { label: String, value: String },
+    Line(String),
 }
 
 impl Control {
@@ -63,9 +64,13 @@ impl Control {
         Control::Value { label: label.to_owned(), value: value.to_owned() }
     }
 
+    pub fn line(text: &str) -> Self {
+        Control::Line(text.to_owned())
+    }
+
     fn height(&self) -> f32 {
         match self {
-            Control::Value { .. } => VALUE_ROW,
+            Control::Value { .. } | Control::Line(_) => VALUE_ROW,
             Control::Flags { items, .. } => ROW * flag_grid(items.len()).0 as f32,
             _ => ROW,
         }
@@ -93,7 +98,7 @@ pub(super) struct Form {
 
 impl Form {
     pub fn new(kind: Kind, title: &str, controls: Vec<Control>, buttons: Vec<&'static str>) -> Self {
-        let focus = controls.iter().position(|c| !matches!(c, Control::Value { .. })).unwrap_or(controls.len());
+        let focus = controls.iter().position(|c| !matches!(c, Control::Value { .. } | Control::Line(_))).unwrap_or(controls.len());
         Self { kind, title: title.to_owned(), controls, buttons, focus, note: String::new(), error: false, progress: None, rect: Rect::default(), rows: Vec::new(), button_rects: Vec::new() }
     }
 
@@ -139,7 +144,12 @@ impl Form {
 
     fn step(&mut self, back: bool) {
         let n = self.slots();
-        self.focus = if back { (self.focus + n - 1) % n } else { (self.focus + 1) % n };
+        for _ in 0..n {
+            self.focus = if back { (self.focus + n - 1) % n } else { (self.focus + 1) % n };
+            if !matches!(self.controls.get(self.focus), Some(Control::Line(_))) {
+                break;
+            }
+        }
     }
 }
 
@@ -305,6 +315,7 @@ impl App {
                 Control::Check { label, .. } => (Role::CheckBox, label, String::new()),
                 Control::Flags { label, items, .. } => (Role::Group, label, items.iter().filter(|i| i.1).map(|i| i.0.as_str()).collect::<Vec<_>>().join(", ")),
                 Control::Value { label, value } => (Role::Text, label, value.clone()),
+                Control::Line(text) => (Role::Text, text, String::new()),
             };
             let node = put(t, targets, d, Hit::Form(k), role, label, r);
             t.nodes[node].value = value;
@@ -399,7 +410,8 @@ impl App {
             .collect();
         let n = f.buttons.len();
         let gap = s(8.0);
-        let bw = s(BUTTON_W).min((fw - s(40.0) - gap * (n as f32 - 1.0)) / n.max(1) as f32);
+        let widest = f.buttons.iter().map(|b| b.chars().map(|c| if c >= '\u{2E80}' { 13.0 } else { 7.5 }).sum::<f32>() + 28.0).fold(BUTTON_W, f32::max);
+        let bw = s(widest).min((fw - s(40.0) - gap * (n as f32 - 1.0)) / n.max(1) as f32);
         let right = f.rect.right() - s(20.0);
         f.button_rects = (0..n).map(|k| Rect::new(right - (n - k) as f32 * bw - (n - 1 - k) as f32 * gap, f.rect.bottom() - s(20.0) - s(BUTTON_H), bw, s(BUTTON_H))).collect();
     }
@@ -467,6 +479,11 @@ impl App {
                         }
                         spots.push(spot);
                     }
+                }
+                Control::Line(text) => {
+                    let ms = g.metrics(small);
+                    let base = (row.y + (row.h + ms.ascent - ms.descent) / 2.0).round();
+                    g.text(row.x, base, text, small, t.text, row.w);
                 }
                 Control::Value { label, value } => {
                     if hover == Hit::Form(k) || focused {

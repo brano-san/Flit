@@ -262,6 +262,7 @@ const fn menu_list(id: &'static str, get: fn(&App) -> Vec<String>, set: fn(&mut 
 pub const LOG_LEVEL: &str = "advanced.log_level";
 pub const LOG_DEFAULT: usize = 1;
 pub const DEFAULT_MANAGER: &str = "advanced.default_manager";
+pub const CHECK_UPDATES: &str = "updates.check_on_start";
 const LOG_CHOICES: Choices = &[("off", S::SettingsChoiceLogOff), ("error", S::SettingsChoiceLogError), ("warn", S::SettingsChoiceLogWarn), ("info", S::SettingsChoiceLogInfo), ("debug", S::SettingsChoiceLogDebug)];
 
 pub const LANGUAGE: &str = "general.language";
@@ -433,6 +434,8 @@ pub static SETTINGS: &[Setting] = &[
     toggle("general.home_recent", Page::Windows, S::SettingsTitleGeneralHomeRecent, S::SettingsHelpGeneralHomeRecent, |a| a.widget_shown(Widget::Recent), |a, on| set_widget(a, Widget::Recent, on)),
     toggle(DEFAULT_MANAGER, Page::Advanced, S::SettingsTitleAdvancedDefaultManager, S::SettingsHelpAdvancedDefaultManager, |a| a.default_manager, |a, on| a.default_manager = on),
     choice(LOG_LEVEL, Page::Advanced, S::SettingsTitleAdvancedLogLevel, S::SettingsHelpAdvancedLogLevel, LOG_CHOICES, |a| a.log_level, |a, i| a.log_level = i),
+    toggle(CHECK_UPDATES, Page::About, S::SettingsTitleUpdatesCheckOnStart, S::SettingsHelpUpdatesCheckOnStart, |a| a.updates.on_start, |a, on| a.updates.on_start = on),
+    Setting { id: "updates.skipped", page: Page::About, title: S::SettingsTitleUpdatesSkipped, help: S::SettingsHelpUpdatesSkipped, kind: Kind::Strings(|a| a.updates.skipped.clone(), |a, v| a.updates.skipped = v) },
     Setting { id: "keys", page: Page::Advanced, title: S::SettingsTitleKeys, help: S::SettingsHelpKeys, kind: Kind::Keys(|a| a.keymap.clone(), |a, k| a.set_keymap(k)) },
     Setting { id: "menu.pins_file", page: Page::Menu, title: S::OptionsTitlePinsFile, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.opts.pins[0].clone(), |a, v| a.opts.pins[0] = v) },
     Setting { id: "menu.pins_folder", page: Page::Menu, title: S::OptionsTitlePinsFolder, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.opts.pins[1].clone(), |a, v| a.opts.pins[1] = v) },

@@ -76,7 +76,7 @@ folder = "文件夹"
 version = "版本"
 unknown = "未知"
 help = "帮助"
-no_telemetry = "Flit 没有遥测，也没有用户标识符：它不会向任何地方发送任何内容。"
+no_telemetry = "Flit 没有遥测，也没有用户标识符。它自行发出的唯一请求是检查更新：向 GitHub 请求 latest.json。"
 needs_builtin_archives = "已停用：内置压缩文件处理已关闭。"
 
 [guide]

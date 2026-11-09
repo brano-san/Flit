@@ -639,6 +639,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
+name = "ed25519-compact"
+version = "2.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9547879431a90e352a35863a54416d92898a787b9af09e6ae2e09a96bd78be80"
+
+[[package]]
 name = "either"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -722,6 +728,8 @@ name = "flit"
 version = "0.3.2"
 dependencies = [
  "crossbeam-channel",
+ "ed25519-compact",
+ "flate2",
  "flit-core",
  "flit-platform",
  "flit-platform-linux-gui",
@@ -732,10 +740,12 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "tar",
  "tracing",
  "tracing-subscriber",
  "tracing-tracy",
  "windows",
+ "zip",
 ]
 
 [[package]]
@@ -883,6 +893,15 @@ dependencies = [
  "rayon",
  "regex",
  "serde",
+]
+
+[[package]]
+name = "flit-sign"
+version = "0.3.2"
+dependencies = [
+ "ed25519-compact",
+ "flit-core",
+ "windows",
 ]
 
 [[package]]

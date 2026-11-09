@@ -1,0 +1,34 @@
+[error]
+manifest = "The update information on GitHub cannot be read"
+no_build = "Flit {version} has no build for {platform}"
+signature = "The downloaded file is not signed by the Flit developers"
+missing = "The downloaded archive has no {name}"
+off = "Update checks are turned off by FLIT_NO_UPDATE"
+cancelled = "The download was cancelled"
+other_window = "File operations are still running in another Flit window"
+
+[status]
+checking = "Checking for updates…"
+up_to_date = "Flit {version} is up to date"
+check_failed = "Cannot check for updates: {error}"
+available = "Flit {version} is available: Check for updates installs it"
+failed = "Cannot install the update: {error}"
+
+[dialog]
+title = "Flit {version} is available"
+installed = "Installed version"
+new = "New version"
+restart = "Flit restarts and reopens your windows and tabs."
+install = "Install and restart"
+skip = "Skip this version"
+later = "Later"
+open_releases = "Open releases page"
+downloading = "Downloading Flit {version}… {percent}%"
+downloading_plain = "Downloading Flit {version}…"
+installing = "Installing Flit {version}…"
+read_only = "Flit cannot replace its files in {dir}. Download the new version from the releases page."
+jobs = ["{n} file operation is still running. Install the update after it finishes.", "{n} file operations are still running. Install the update after they finish."]
+
+[page]
+group = "Updates"
+check = "Check for updates"

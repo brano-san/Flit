@@ -1,0 +1,34 @@
+[error]
+manifest = "No se puede leer la información de actualización de GitHub"
+no_build = "Flit {version} no tiene compilación para {platform}"
+signature = "El archivo descargado no está firmado por los desarrolladores de Flit"
+missing = "Al archivo comprimido descargado le falta {name}"
+off = "La búsqueda de actualizaciones está desactivada por FLIT_NO_UPDATE"
+cancelled = "Se canceló la descarga"
+other_window = "Todavía hay operaciones con archivos en otra ventana de Flit"
+
+[status]
+checking = "Buscando actualizaciones…"
+up_to_date = "Flit {version} está actualizado"
+check_failed = "No se pueden buscar actualizaciones: {error}"
+available = "Flit {version} está disponible: «Buscar actualizaciones» lo instala"
+failed = "No se puede instalar la actualización: {error}"
+
+[dialog]
+title = "Flit {version} está disponible"
+installed = "Versión instalada"
+new = "Nueva versión"
+restart = "Flit se reinicia y vuelve a abrir las mismas ventanas y pestañas."
+install = "Instalar y reiniciar"
+skip = "Omitir esta versión"
+later = "Más tarde"
+open_releases = "Abrir la página de versiones"
+downloading = "Descargando Flit {version}… {percent} %"
+downloading_plain = "Descargando Flit {version}…"
+installing = "Instalando Flit {version}…"
+read_only = "Flit no puede reemplazar sus archivos en {dir}. Descargue la nueva versión desde la página de versiones."
+jobs = ["Todavía hay {n} operación con archivos en curso. Instale la actualización cuando termine.", "Todavía hay {n} de operaciones con archivos en curso. Instale la actualización cuando terminen.", "Todavía hay {n} operaciones con archivos en curso. Instale la actualización cuando terminen."]
+
+[page]
+group = "Actualizaciones"
+check = "Buscar actualizaciones"

@@ -1,0 +1,34 @@
+[error]
+manifest = "Les informations de mise à jour sur GitHub sont illisibles"
+no_build = "Flit {version} n’a pas de version pour {platform}"
+signature = "Le fichier téléchargé n’est pas signé par les développeurs de Flit"
+missing = "L’archive téléchargée ne contient pas {name}"
+off = "La recherche de mises à jour est désactivée par FLIT_NO_UPDATE"
+cancelled = "Le téléchargement a été annulé"
+other_window = "Des opérations sur les fichiers sont encore en cours dans une autre fenêtre Flit"
+
+[status]
+checking = "Recherche de mises à jour…"
+up_to_date = "Flit {version} est à jour"
+check_failed = "Impossible de rechercher les mises à jour : {error}"
+available = "Flit {version} est disponible : « Rechercher les mises à jour » l’installe"
+failed = "Impossible d’installer la mise à jour : {error}"
+
+[dialog]
+title = "Flit {version} est disponible"
+installed = "Version installée"
+new = "Nouvelle version"
+restart = "Flit redémarre et rouvre les mêmes fenêtres et onglets."
+install = "Installer et redémarrer"
+skip = "Ignorer cette version"
+later = "Plus tard"
+open_releases = "Ouvrir la page des versions"
+downloading = "Téléchargement de Flit {version}… {percent} %"
+downloading_plain = "Téléchargement de Flit {version}…"
+installing = "Installation de Flit {version}…"
+read_only = "Flit ne peut pas remplacer ses fichiers dans {dir}. Téléchargez la nouvelle version depuis la page des versions."
+jobs = ["{n} opération sur les fichiers est encore en cours. Installez la mise à jour quand elle sera terminée.", "{n} d’opérations sur les fichiers sont encore en cours. Installez la mise à jour quand elles seront terminées.", "{n} opérations sur les fichiers sont encore en cours. Installez la mise à jour quand elles seront terminées."]
+
+[page]
+group = "Mises à jour"
+check = "Rechercher les mises à jour"

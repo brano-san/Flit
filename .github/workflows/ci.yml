@@ -93,6 +93,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
         with:
           pattern: flit-*
@@ -106,3 +107,15 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" *.zip *.tar.gz --title "Flit ${GITHUB_REF_NAME#v}" --generate-notes
           fi
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          FLIT_UPDATE_KEY: ${{ secrets.FLIT_UPDATE_KEY }}
+        run: |
+          if [ -z "$FLIT_UPDATE_KEY" ]; then
+            echo "::notice::No FLIT_UPDATE_KEY: archives are not signed and latest.json is not published"
+            exit 0
+          fi
+          gh release view "$GITHUB_REF_NAME" --json body --jq .body > notes.txt || : > notes.txt
+          cargo run --quiet --release -p flit-sign -- manifest "${GITHUB_REF_NAME#v}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "https://github.com/$GH_REPO/releases/download/$GITHUB_REF_NAME" notes.txt *.zip *.tar.gz > latest.json
+          gh release upload "$GITHUB_REF_NAME" latest.json --clobber

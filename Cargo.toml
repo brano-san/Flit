@@ -12,6 +12,7 @@ members = [
     "crates/flit",
     "crates/flit-indexd",
     "tools/flit-gen",
+    "tools/flit-sign",
 ]
 
 [workspace.package]
@@ -53,6 +54,7 @@ windows = "0.62"
 windows-core = "0.62"
 libc = "0.2"
 proptest = { version = "1.5", default-features = false, features = ["std"] }
+ed25519-compact = { version = "2.6", default-features = false, features = ["std"] }
 
 [profile.release]
 opt-level = 3

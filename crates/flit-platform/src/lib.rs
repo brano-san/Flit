@@ -464,4 +464,8 @@ pub trait Platform: 'static {
     fn shell_search(_folder: Option<&FsPath>, _query: &str, _keep_going: &dyn Fn() -> bool, _found: &mut dyn FnMut(FsPath, flit_core::Meta)) -> Result<(), PlatformError> {
         Err(PlatformError::new(-1, flit_core::i18n::S::ErrorsEngineNoWindowsSearch.en()))
     }
+    fn download(_url: &str, _out: &mut dyn std::io::Write, _progress: &mut dyn FnMut(u64, Option<u64>) -> bool) -> Result<(), PlatformError> {
+        Err(PlatformError::unsupported("downloads"))
+    }
+    fn wait_exit(_pid: u32, _limit: std::time::Duration) {}
 }

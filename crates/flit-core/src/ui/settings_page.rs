@@ -122,10 +122,11 @@ pub(super) enum Btn {
     Edit,
     Up,
     MenuReset,
+    CheckUpdates,
 }
 
 impl Btn {
-    const ALL: [Btn; 25] = [
+    const ALL: [Btn; 26] = [
         Btn::AddHome,
         Btn::AddCurrent,
         Btn::AddTyped,
@@ -151,6 +152,7 @@ impl Btn {
         Btn::Edit,
         Btn::Up,
         Btn::MenuReset,
+        Btn::CheckUpdates,
     ];
 
     fn label(self) -> &'static str {
@@ -180,6 +182,7 @@ impl Btn {
             Btn::Edit => S::UserMenuEdit.t(),
             Btn::Up => S::UserMenuUp.t(),
             Btn::MenuReset => S::MenuEditorReset.t(),
+            Btn::CheckUpdates => S::UpdatePageCheck.t(),
         }
     }
 }
@@ -839,7 +842,7 @@ impl App {
     }
 
     fn page_lines(&self, page: Page, out: &mut Vec<Line>) {
-        for (i, _) in SETTINGS.iter().enumerate().filter(|(_, s)| s.page == page && page != Page::Menu && s.id != settings::LOG_LEVEL) {
+        for (i, _) in SETTINGS.iter().enumerate().filter(|(_, s)| s.page == page && page != Page::Menu && s.id != settings::LOG_LEVEL && s.id != settings::CHECK_UPDATES) {
             self.setting_lines(i, out);
         }
         match page {
@@ -868,6 +871,11 @@ impl App {
                 out.push(Line::Info(S::SettingsPageLineVersion.t(), format!("Flit {}", env!("CARGO_PKG_VERSION"))));
                 out.push(Line::Info(OS_NAME, if self.about.os.is_empty() { S::SettingsPageLineUnknown.t().into() } else { self.about.os.clone() }));
                 out.push(Line::Buttons(None, &[Btn::CopyAbout]));
+                out.push(Line::Group(S::UpdatePageGroup.t()));
+                if let Some(i) = settings::index(settings::CHECK_UPDATES) {
+                    self.setting_lines(i, out);
+                }
+                out.push(Line::Buttons(None, &[Btn::CheckUpdates]));
                 out.push(Line::Group(S::SettingsPageLineHelp.t()));
                 out.push(Line::Buttons(None, HELP_BUTTONS));
                 out.push(Line::Buttons(None, LINK_BUTTONS));
@@ -922,7 +930,7 @@ impl App {
             let extra: &[&'static [Btn]] = match page {
                 Page::Tags => &[&[Btn::NewTag]],
                 Page::Advanced => &[&[Btn::ClearCache], FILE_BUTTONS, &[Btn::Reset], LOG_BUTTONS],
-                Page::About => &[&[Btn::CopyAbout], HELP_BUTTONS, LINK_BUTTONS],
+                Page::About => &[&[Btn::CopyAbout], &[Btn::CheckUpdates], HELP_BUTTONS, LINK_BUTTONS],
                 _ => &[],
             };
             for b in extra.iter().filter(|b| b.iter().any(|b| matches(query, &b.label().to_lowercase()))) {
@@ -1465,6 +1473,7 @@ impl App {
             (Btn::Import, ..) => self.ask_import_settings(),
             (Btn::Reset, ..) => self.ask_reset_settings(),
             (Btn::MenuReset, ..) => self.reset_menu(),
+            (Btn::CheckUpdates, ..) => self.check_updates(true),
             (Btn::CopyAbout, ..) => {
                 let text = format!("Flit {}\r\n{}", env!("CARGO_PKG_VERSION"), self.about.os);
                 self.effects.push(Effect::SetClipboard(text));

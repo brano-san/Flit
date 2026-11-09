@@ -64,6 +64,7 @@ pub(super) enum Kind {
     Properties(super::properties::Measuring),
     GitClone,
     UserMenu { at: Option<super::user_menu::EntryAt>, submenu: bool },
+    Update(super::update::Updating),
 }
 
 impl Kind {
@@ -76,6 +77,7 @@ impl Kind {
             Kind::Properties(_) => "properties",
             Kind::GitClone => "git_clone",
             Kind::UserMenu { .. } => "user_menu",
+            Kind::Update(_) => "update",
         }
     }
 }
@@ -124,6 +126,7 @@ impl App {
                     }
                 }
                 Control::Check { label, .. } | Control::Value { label, .. } => moved(label),
+                Control::Line(_) => {}
                 Control::Flags { label, items, .. } => {
                     moved(label);
                     items.iter_mut().for_each(|(s, _)| moved(s));
@@ -682,6 +685,7 @@ impl App {
             Kind::Properties(_) => None,
             Kind::GitClone => self.submit_clone(f),
             Kind::UserMenu { .. } => self.submit_user_entry(f),
+            Kind::Update(_) => self.submit_update(f, b),
         };
         if self.jobs.form.is_none() {
             self.jobs.form = keep;
@@ -692,6 +696,7 @@ impl App {
         match &f.kind {
             Kind::Hashes(Hashing { run: Some(r), .. }) => r.ctl.cancel(),
             Kind::Properties(m) => m.ctl.cancel(),
+            Kind::Update(u) => self.cancel_update(u),
             _ => {}
         }
     }

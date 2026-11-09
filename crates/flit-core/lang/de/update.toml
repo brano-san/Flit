@@ -1,0 +1,34 @@
+[error]
+manifest = "Die Update-Informationen auf GitHub können nicht gelesen werden"
+no_build = "Für Flit {version} gibt es keinen Build für {platform}"
+signature = "Die heruntergeladene Datei ist nicht von den Flit-Entwicklern signiert"
+missing = "Im heruntergeladenen Archiv fehlt {name}"
+off = "Die Suche nach Updates ist durch FLIT_NO_UPDATE abgeschaltet"
+cancelled = "Der Download wurde abgebrochen"
+other_window = "In einem anderen Flit-Fenster laufen noch Dateivorgänge"
+
+[status]
+checking = "Suche nach Updates…"
+up_to_date = "Flit {version} ist aktuell"
+check_failed = "Die Suche nach Updates ist fehlgeschlagen: {error}"
+available = "Flit {version} ist verfügbar: „Nach Updates suchen“ installiert es"
+failed = "Das Update kann nicht installiert werden: {error}"
+
+[dialog]
+title = "Flit {version} ist verfügbar"
+installed = "Installierte Version"
+new = "Neue Version"
+restart = "Flit startet neu und öffnet dieselben Fenster und Tabs."
+install = "Installieren und neu starten"
+skip = "Diese Version überspringen"
+later = "Später"
+open_releases = "Release-Seite öffnen"
+downloading = "Flit {version} wird heruntergeladen… {percent} %"
+downloading_plain = "Flit {version} wird heruntergeladen…"
+installing = "Flit {version} wird installiert…"
+read_only = "Flit kann seine Dateien in {dir} nicht ersetzen. Laden Sie die neue Version von der Release-Seite herunter."
+jobs = ["{n} Dateivorgang läuft noch. Installieren Sie das Update, wenn er fertig ist.", "{n} Dateivorgänge laufen noch. Installieren Sie das Update, wenn sie fertig sind."]
+
+[page]
+group = "Updates"
+check = "Nach Updates suchen"

@@ -18,6 +18,7 @@ mod text;
 mod thumb;
 mod thumbnailers;
 mod turbo;
+mod update;
 mod window;
 mod xdnd;
 pub mod xdg;
@@ -145,6 +146,14 @@ impl Platform for Linux {
 
     fn integrate(on: bool) -> Result<(), PlatformError> {
         xdg::desktop_entry(on).and_then(|_| xdg::default_manager(on)).and_then(|_| xdg::bus_activation(on)).map_err(handle_error)
+    }
+
+    fn download(url: &str, out: &mut dyn std::io::Write, progress: &mut dyn FnMut(u64, Option<u64>) -> bool) -> Result<(), PlatformError> {
+        update::download(url, out, progress)
+    }
+
+    fn wait_exit(pid: u32, limit: std::time::Duration) {
+        update::wait_exit(pid, limit)
     }
 }
 pub struct LinuxRenderer {

@@ -76,7 +76,7 @@ folder = "Ordner"
 version = "Version"
 unknown = "Unbekannt"
 help = "Hilfe"
-no_telemetry = "Flit hat keine Telemetrie und keine Benutzerkennung: Es sendet nichts irgendwohin."
+no_telemetry = "Flit hat keine Telemetrie und keine Benutzerkennung. Die einzige Anfrage, die es von sich aus stellt, ist die Suche nach Updates: Sie fragt GitHub nach latest.json."
 needs_builtin_archives = "Inaktiv: Die integrierte Archivverwaltung ist aus."
 
 [guide]

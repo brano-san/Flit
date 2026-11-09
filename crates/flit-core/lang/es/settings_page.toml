@@ -76,7 +76,7 @@ folder = "Carpeta"
 version = "Versión"
 unknown = "Desconocida"
 help = "Ayuda"
-no_telemetry = "Flit no tiene telemetría ni identificador de usuario: no envía nada a ningún sitio."
+no_telemetry = "Flit no tiene telemetría ni identificador de usuario. La única solicitud que hace por su cuenta es la búsqueda de actualizaciones, que pide latest.json a GitHub."
 needs_builtin_archives = "Inactivo: la gestión integrada de archivos comprimidos está desactivada."
 
 [guide]

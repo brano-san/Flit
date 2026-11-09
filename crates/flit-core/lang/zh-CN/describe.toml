@@ -345,3 +345,4 @@
 "view.pane.details" = "在侧面板中显示所选内容的详细信息"
 "item.quick_view" = "在单独窗口中预览所选内容，空格"
 "preview.play" = "开始或停止预览中的音频或视频"
+"app.check_updates" = "向 GitHub 查询是否有更新的 Flit，然后下载、安装并重新启动，升级，新版本，发布"

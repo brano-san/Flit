@@ -76,7 +76,7 @@ folder = "Folder"
 version = "Version"
 unknown = "Unknown"
 help = "Help"
-no_telemetry = "Flit has no telemetry and no user identifier: it sends nothing anywhere."
+no_telemetry = "Flit has no telemetry and no user identifier. The only request it makes on its own is the update check, which asks GitHub for latest.json."
 needs_builtin_archives = "Inactive: built-in archive handling is off."
 
 [guide]

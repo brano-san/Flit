@@ -183,6 +183,7 @@ impl App {
             m.entry(Cmd::Action("layout.load"), title("layout.load"), String::new(), Mark::None, false, a.opts.layouts.is_empty());
             m.action("layout.save", title("layout.save"));
             m.action("options.open", title("options.open"));
+            m.action("app.check_updates", title("app.check_updates"));
             m.separator();
             m.action("tab.duplicate_window", S::MenuNewWindow.t());
             if a.tabs.len() > 1 {

@@ -1,0 +1,15 @@
+[package]
+name = "flit-sign"
+description = "Signs Flit release archives for the updater and writes latest.json"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+flit-core.workspace = true
+ed25519-compact.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_Security_Cryptography"] }
