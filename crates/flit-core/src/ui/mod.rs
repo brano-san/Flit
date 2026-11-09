@@ -1636,7 +1636,14 @@ impl App {
             Event::ShellVerb(verb) => self.shell_verb(verb),
             Event::MenuCommand(k) => self.menu_command(*k, now),
             Event::ShowMenu { .. } | Event::ShellItems { .. } => {}
-            Event::DevicesChanged => self.effects.push(Effect::RefreshPlaces),
+            Event::DevicesChanged => {
+                self.effects.push(Effect::RefreshPlaces);
+                self.each_pane(|a, k| {
+                    if a.tabs[k].location().path().kind() == PathKind::Computer {
+                        a.reload(k, now);
+                    }
+                });
+            }
             Event::Timer => {
                 self.timer_at = None;
                 self.ops_timer(now);

@@ -234,6 +234,18 @@ fn sidebar_lists_places_and_opens_items() {
 }
 
 #[test]
+fn a_drive_plugged_in_or_out_relists_this_pc_and_leaves_folders_alone() {
+    let mut app = app_at(r"C:\work");
+    app.drain_effects().for_each(drop);
+    app.on_event(&Event::DevicesChanged, t0());
+    assert_eq!(listed(&mut app), []);
+    app.navigate(Location::Local(FsPath::computer()), t0());
+    assert_eq!(listed(&mut app), [(app.tab().id, Location::Local(FsPath::computer()))]);
+    app.on_event(&Event::DevicesChanged, t0());
+    assert_eq!(listed(&mut app), [(app.tab().id, Location::Local(FsPath::computer()))]);
+}
+
+#[test]
 fn pinning_from_keyboard_and_hover_button() {
     let mut app = app_at(r"C:\work\proj");
     app.set_places(places());
