@@ -1643,6 +1643,14 @@ impl App {
         }
     }
 
+    pub fn drop_folder(&self) -> Option<FsPath> {
+        let d = self.ops.dropping.as_ref().filter(|d| matches!(d.effect, drop_effect::COPY | drop_effect::MOVE))?;
+        match d.target.as_ref()? {
+            Target::Into { dest, .. } if archive::split(dest).is_none() => Some(dest.clone()),
+            _ => None,
+        }
+    }
+
     pub fn drop_caption(&self) -> Option<(String, String)> {
         let d = self.ops.dropping.as_ref().filter(|d| d.effect != drop_effect::NONE)?;
         let name = |p: &FsPath| crate::name::display(p.file_name()).into_owned();

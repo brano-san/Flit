@@ -539,11 +539,13 @@ fn drops_copy_or_move_by_volume_and_modifiers() {
     let sub = row_xy(&app, 0);
     assert_eq!(enter(&mut app, vec![p(r"C:\y\g.txt")], sub, NO), MOVE);
     assert_eq!(app.drop_spot(), Some(Spot::Row(0)));
+    assert_eq!(app.drop_folder(), Some(p(r"C:\x\sub")), "the folder under the cursor is offered to a source that extracts itself");
     assert_eq!(app.drag(&DragEvent::Drop { x: sub.0, y: sub.1, mods: CTRL, allowed: all }, t0()), COPY);
     assert_eq!(ops(&mut app).into_iter().map(|(_, op)| op).collect::<Vec<_>>(), [FileOp::Copy { items: vec![p(r"C:\y\g.txt")], dest: p(r"C:\x\sub") }]);
 
     assert_eq!(enter(&mut app, vec![p(r"C:\x\a.txt")], empty, NO), NONE, "moving into its own folder does nothing");
     assert_eq!(app.drag(&DragEvent::Over { x: empty.0, y: empty.1, mods: ALT, allowed: all }, t0()), LINK);
+    assert_eq!(app.drop_folder(), None, "a link is never handed to the source");
     assert_eq!(app.drag(&DragEvent::Over { x: sub.0, y: sub.1, mods: NO, allowed: all }, t0()), MOVE);
     app.drag(&DragEvent::Leave, t0());
     assert_eq!(enter(&mut app, vec![p(r"C:\x\sub")], sub, NO), NONE, "a folder cannot go into itself");

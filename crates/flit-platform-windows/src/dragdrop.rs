@@ -8,7 +8,8 @@ use flit_platform::{DropReply, PlatformError};
 use std::cell::{Cell, RefCell};
 use std::mem::ManuallyDrop;
 use std::time::{Duration, Instant};
-use windows::Win32::Foundation::{GlobalFree, HWND, POINT, POINTL};
+use windows::core::w;
+use windows::Win32::Foundation::{GlobalFree, HWND, POINT, POINTL, S_OK};
 use windows::Win32::Graphics::Gdi::ScreenToClient;
 use windows::Win32::System::Com::{CoCreateInstance, IDataObject, CLSCTX_INPROC_SERVER, DVASPECT_CONTENT, FORMATETC, STGMEDIUM, STGMEDIUM_0, TYMED_HGLOBAL};
 use windows::Win32::System::DataExchange::RegisterClipboardFormatW;
@@ -38,6 +39,66 @@ struct Target {
     active: Cell<bool>,
     data: RefCell<Option<IDataObject>>,
     shown: RefCell<Option<Caption>>,
+    effect: Cell<DROPEFFECT>,
+    offered: RefCell<Option<FsPath>>,
+    source_took_folder: Cell<bool>,
+}
+
+impl Target {
+    fn interface(hwnd: HWND, node: *const (), call: DragCall, helper: Option<IDropTargetHelper>) -> IDropTarget {
+        let target = Target {
+            hwnd,
+            node,
+            call,
+            helper,
+            active: Cell::new(false),
+            data: RefCell::new(None),
+            shown: RefCell::new(None),
+            effect: Cell::new(DROPEFFECT_NONE),
+            offered: RefCell::new(None),
+            source_took_folder: Cell::new(false),
+        };
+        target.into()
+    }
+}
+
+const SEVEN_ZIP_GET_TRANSFER_ID: u32 = 3;
+const SEVEN_ZIP_GET_TRANSFER_SIZE: u32 = 112;
+const SEVEN_ZIP_GET_TRANSFER_FLAGS_AT: usize = 64;
+const SEVEN_ZIP_SOURCE_EXTRACTS_ITSELF: u32 = 1 << 1;
+
+fn hglobal_format(cf: u32) -> FORMATETC {
+    FORMATETC { cfFormat: cf as u16, ptd: std::ptr::null_mut(), dwAspect: DVASPECT_CONTENT.0, lindex: -1, tymed: TYMED_HGLOBAL.0 as u32 }
+}
+
+fn offer_target_folder(data: &IDataObject, folder: Option<&FsPath>) -> bool {
+    let wide = folder.map_or_else(|| vec![0], |f| f.to_wide(false));
+    let bytes: Vec<u8> = wide.iter().flat_map(|u| u.to_le_bytes()).collect();
+    let format = hglobal_format(unsafe { RegisterClipboardFormatW(w!("7-Zip::SetTargetFolder")) });
+    unsafe {
+        let Some(h) = global(&bytes) else { return false };
+        let medium = STGMEDIUM { tymed: TYMED_HGLOBAL.0 as u32, u: STGMEDIUM_0 { hGlobal: h }, pUnkForRelease: ManuallyDrop::new(None) };
+        let accepted = data.SetData(&format, &medium, false).is_ok();
+        let _ = GlobalFree(Some(h));
+        accepted && data.QueryGetData(&format) != S_OK
+    }
+}
+
+fn seven_zip_extracts_itself(data: &IDataObject) -> bool {
+    let format = hglobal_format(unsafe { RegisterClipboardFormatW(w!("7-Zip::GetTransfer")) });
+    let Some(bytes) = (unsafe {
+        let Ok(mut medium) = data.GetData(&format) else { return true };
+        let bytes = if medium.tymed == TYMED_HGLOBAL.0 as u32 { global_bytes(medium.u.hGlobal) } else { None };
+        ReleaseStgMedium(&mut medium);
+        bytes
+    }) else {
+        return true;
+    };
+    let word = |at: usize| bytes.get(at..at + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    match (word(0), word(4), word(SEVEN_ZIP_GET_TRANSFER_FLAGS_AT)) {
+        (Some(SEVEN_ZIP_GET_TRANSFER_ID), Some(size), Some(flags)) if size >= SEVEN_ZIP_GET_TRANSFER_SIZE => flags & SEVEN_ZIP_SOURCE_EXTRACTS_ITSELF != 0,
+        _ => true,
+    }
 }
 
 pub(crate) fn data_paths(data: &IDataObject) -> Vec<FsPath> {
@@ -99,10 +160,15 @@ impl Target_Impl {
             DragEvent::Leave => "leave",
             DragEvent::Drop { .. } => "drop",
         };
+        let hovering = matches!(ev, DragEvent::Enter { .. } | DragEvent::Over { .. });
         let reply = unsafe { (self.call)(self.node, ev) };
         if started.elapsed() > SLOW_DROP_TARGET {
             tracing::warn!("drop target {kind} took {:.1} ms", started.elapsed().as_secs_f64() * 1e3);
         }
+        if hovering {
+            self.offer_folder(reply.folder.clone());
+        }
+        self.effect.set(DROPEFFECT(reply.effect));
         let caption = reply.caption.map(|(message, insert)| (reply.effect, message, insert));
         if *self.shown.borrow() != caption {
             if let Some(data) = &*self.data.borrow() {
@@ -111,6 +177,15 @@ impl Target_Impl {
             *self.shown.borrow_mut() = caption;
         }
         DROPEFFECT(reply.effect)
+    }
+
+    fn offer_folder(&self, folder: Option<FsPath>) {
+        if *self.offered.borrow() == folder {
+            return;
+        }
+        let Some(data) = self.data.borrow().clone() else { return };
+        self.source_took_folder.set(offer_target_folder(&data, folder.as_ref()) && folder.is_some());
+        *self.offered.borrow_mut() = folder;
     }
 
     fn finish(&self, ev: DragEvent) -> DROPEFFECT {
@@ -126,6 +201,8 @@ impl IDropTarget_Impl for Target_Impl {
         let (x, y) = self.client(pt);
         *self.data.borrow_mut() = data.as_ref().cloned();
         *self.shown.borrow_mut() = None;
+        *self.offered.borrow_mut() = None;
+        self.source_took_folder.set(false);
         unsafe {
             self.active.set(!paths.is_empty());
             *effect = if paths.is_empty() { DROPEFFECT_NONE } else { self.deliver(DragEvent::Enter { paths, x, y, mods: mods(keys), allowed: (*effect).0 }) };
@@ -148,6 +225,7 @@ impl IDropTarget_Impl for Target_Impl {
     }
 
     fn DragLeave(&self) -> windows_core::Result<()> {
+        self.offer_folder(None);
         self.finish(DragEvent::Leave);
         if let Some(h) = &self.helper {
             let _ = unsafe { h.DragLeave() };
@@ -157,8 +235,15 @@ impl IDropTarget_Impl for Target_Impl {
 
     fn Drop(&self, data: Ref<IDataObject>, keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> windows_core::Result<()> {
         let (x, y) = self.client(pt);
+        let source_extracts = self.active.get() && self.source_took_folder.get() && data.as_ref().is_some_and(seven_zip_extracts_itself);
+        let shown = self.effect.get();
         unsafe {
-            *effect = self.finish(DragEvent::Drop { x, y, mods: mods(keys), allowed: (*effect).0 });
+            *effect = if source_extracts {
+                self.finish(DragEvent::Leave);
+                shown
+            } else {
+                self.finish(DragEvent::Drop { x, y, mods: mods(keys), allowed: (*effect).0 })
+            };
             if let (Some(h), Some(d)) = (&self.helper, data.as_ref()) {
                 let _ = h.Drop(d, &POINT { x: pt.x, y: pt.y }, *effect);
             }
@@ -174,7 +259,7 @@ pub(crate) fn register(hwnd: HWND, node: *const (), call: DragCall) {
             let _ = OleInitialize(None);
         }
         let helper = CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER).ok();
-        let target: IDropTarget = Target { hwnd, node, call, helper, active: Cell::new(false), data: RefCell::new(None), shown: RefCell::new(None) }.into();
+        let target = Target::interface(hwnd, node, call, helper);
         if let Err(e) = RegisterDragDrop(hwnd, &target) {
             tracing::warn!("drop target: {e}");
         }
