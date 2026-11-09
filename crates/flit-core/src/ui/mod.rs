@@ -617,6 +617,7 @@ pub struct App {
     next_tab: TabId,
     next_gen: u64,
     timer_at: Option<Instant>,
+    error_shown: Option<(TabId, String, Instant)>,
     own_menu: Option<own_menu::OwnMenu>,
     menu_owner: Option<Hit>,
     menu_panel: u32,
@@ -741,6 +742,7 @@ impl App {
             next_tab: tab_base + 1,
             next_gen: 0,
             timer_at: None,
+            error_shown: None,
             own_menu: None,
             menu_owner: None,
             menu_panel: 0,
@@ -1644,6 +1646,7 @@ impl App {
                 self.history_timer(now);
                 self.tip_timer(now);
                 self.quick_timer(now);
+                self.expire_error(now);
             }
             Event::ClipboardChanged(seq) => self.clipboard_changed(*seq),
             Event::SessionEnding => {}
@@ -2038,6 +2041,7 @@ impl App {
         self.last_frame = Some(now);
         self.poll();
         self.dirty = false;
+        self.expire_error(now);
         self.motion = false;
         g.dl.round = self.round_corners;
         self.apply_tag_fixes(now);
@@ -2622,7 +2626,12 @@ impl App {
 
                 let ty = baseline(p.name);
                 let picked = v.is_selected(i) && list_focused;
-                let name_color = if picked { t.selection_text } else if faded { t.text_dim } else { t.text };
+                let name_color = match (picked, faded) {
+                    (true, true) => t.selection_text.alpha(0x99),
+                    (true, false) => t.selection_text,
+                    (false, true) => t.text_dim,
+                    (false, false) => t.text,
+                };
                 if let Some((br, st)) = badge {
                     g.dl.round_rect(br, git::status_color(st), br.w / 2.0);
                     centered(g, br, st.letter(), FontStyle::new(FontFamily::Ui, br.h * 0.72, true), Color::rgb(0xFF_FF_FF));

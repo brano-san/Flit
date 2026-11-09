@@ -45,6 +45,7 @@ const MIXED_PATHS: S = S::UiOpsMixedPaths;
 const MAX_TERMINALS: usize = 5;
 const RUNNABLE: [&[u8]; 4] = [b"exe", b"com", b"bat", b"cmd"];
 pub(super) const TIMER_SLACK: Duration = Duration::from_millis(16);
+pub(super) const ERROR_FOR: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NewTemplate {
@@ -350,6 +351,30 @@ impl App {
         let msg = msg.into();
         self.tab_mut().error = Some(crate::i18n::localize(&msg).into_owned());
         self.dirty = true;
+    }
+
+    pub(super) fn expire_error(&mut self, now: Instant) {
+        let (id, error) = (self.tab().id, self.tab().error.clone());
+        let Some(error) = error else {
+            self.error_shown = None;
+            return;
+        };
+        match &self.error_shown {
+            Some((at, shown, since)) if *at == id && *shown == error => {
+                let until = *since + ERROR_FOR;
+                if now >= until {
+                    self.tab_mut().error = None;
+                    self.error_shown = None;
+                    self.dirty = true;
+                } else {
+                    self.arm_timer(now, until);
+                }
+            }
+            _ => {
+                self.error_shown = Some((id, error, now));
+                self.arm_timer(now, now + ERROR_FOR);
+            }
+        }
     }
 
     pub(super) fn in_bin(&self) -> bool {

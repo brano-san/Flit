@@ -1242,6 +1242,10 @@ fn cut_items_stay_dimmed_until_the_clipboard_changes() {
     select(&mut app, &["a.txt"]);
     key(&mut app, Key::Char('X'), CTRL);
     assert!(app.is_cut(b"a.txt") && !app.is_cut(b"b.txt"));
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, t0());
+    let dim = app.theme().selection_text.alpha(0x99).0;
+    assert!(g.dl.instances.iter().any(|i| i.color == dim), "a cut item still selected after Ctrl+X is dimmed too");
     app.on_event(&Event::ClipboardChanged(7), t0());
     app.on_event(&Event::ClipboardChanged(7), t0());
     assert!(app.is_cut(b"a.txt"), "the first change is the cut itself");
@@ -1560,4 +1564,22 @@ fn the_rename_menu_opens_with_the_mouse_or_the_menu_key() {
         .collect();
     assert_eq!(labels, ["Insert Incremental ID", "Insert Current Date", "Insert File Create Date", "Insert File Last Modified Date", "Uppercase", "Lowercase"]);
     assert!(app.is_renaming());
+}
+
+#[test]
+fn an_error_in_the_status_bar_goes_away_after_five_seconds() {
+    let mut a = crate::ui::harness::app(&["a.txt"]);
+    let mut g = Gfx::new(crate::text::tests::Mono, 256);
+    let t0 = Instant::now();
+    a.status("Something failed");
+    a.frame(&mut g, t0);
+    a.on_event(&Event::Timer, t0 + ERROR_FOR - Duration::from_millis(1));
+    assert!(a.tab().error.is_some(), "it stays for the full five seconds");
+    a.status("Something else failed");
+    a.frame(&mut g, t0 + ERROR_FOR - Duration::from_millis(1));
+    a.on_event(&Event::Timer, t0 + ERROR_FOR);
+    assert!(a.tab().error.is_some(), "a new error starts its own five seconds");
+    a.on_event(&Event::Timer, t0 + ERROR_FOR * 2);
+    assert!(a.tab().error.is_none());
+    assert!(a.dirty);
 }
