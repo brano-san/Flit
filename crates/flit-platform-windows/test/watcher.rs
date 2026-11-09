@@ -120,7 +120,7 @@ fn a_stopped_watch_lives_until_its_queued_completion_is_dequeued() {
     let key = 7;
     unsafe { CreateIoCompletionPort(h, Some(port), key, 0) }.unwrap();
     let mut st = State::default();
-    st.slots.insert(key, Watch { tab: 1, gen: 1, path: dir, dir: h, ov: Box::default(), buf: vec![0u64; BUFFER / 8], closing: false, rescan: false });
+    st.slots.insert(key, Watch { tab: 1, gen: 1, path: dir, dir: h, ov: Box::default(), buf: vec![0u64; BUFFER / 8], closing: false, rescan: false, extended: true });
     assert!(st.slots.get_mut(&key).unwrap().issue());
     std::fs::write(root.join("x"), b"1").unwrap();
     std::thread::sleep(Duration::from_millis(300));
@@ -162,4 +162,77 @@ fn bin_watches_cover_every_root_and_only_ask_for_a_rescan() {
     drop(w);
     let _ = std::fs::remove_dir_all(&a);
     let _ = std::fs::remove_dir_all(&b);
+}
+
+#[test]
+fn a_share_that_refuses_extended_notices_is_still_watched() {
+    let (root, _) = temp_dir("share");
+    let drive = root.to_str().unwrap();
+    let Some(share) = drive.get(..1).map(|letter| format!(r"\\localhost\{letter}${}", &drive[2..])) else { return };
+    let dir = FsPath::parse(&share).unwrap();
+    if std::fs::metadata(&share).is_err() {
+        return;
+    }
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let mut w = DirWatcher::new(tx, Arc::new(|| {})).unwrap();
+    w.watch(6, 1, Some(&dir));
+    assert_eq!(lock(&w.state).by_tab.get(&6).map(Vec::len), Some(1));
+    std::fs::write(root.join("on-share.txt"), b"abc").unwrap();
+    assert!(wait_for(&rx, |c| c.name == b"on-share.txt" && c.meta.as_ref().is_some_and(|m| m.size == 3)));
+    drop(w);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+fn plain_record(action: FILE_ACTION, name: &str, next: u32) -> Vec<u8> {
+    let wide: Vec<u16> = name.encode_utf16().collect();
+    let mut r = vec![0u8; offset_of!(FILE_NOTIFY_INFORMATION, FileName)];
+    r[offset_of!(FILE_NOTIFY_INFORMATION, NextEntryOffset)..][..4].copy_from_slice(&next.to_le_bytes());
+    r[offset_of!(FILE_NOTIFY_INFORMATION, Action)..][..4].copy_from_slice(&action.0.to_le_bytes());
+    r[offset_of!(FILE_NOTIFY_INFORMATION, FileNameLength)..][..4].copy_from_slice(&(wide.len() as u32 * 2).to_le_bytes());
+    r.extend(wide.iter().flat_map(|c| c.to_le_bytes()));
+    if next != 0 {
+        r.resize(next as usize, 0);
+    }
+    r
+}
+
+#[test]
+fn plain_records_from_fat_and_network_volumes_are_parsed() {
+    let mut buf = plain_record(FILE_ACTION_RENAMED_NEW_NAME, "photo.jpg", 32);
+    buf.extend(plain_record(FILE_ACTION_REMOVED, "b", 0));
+    let got = plain_notices(&buf).unwrap();
+    let got: Vec<(String, ChangeKind)> = got.into_iter().map(|n| (String::from_utf16(&n.name).unwrap(), n.kind)).collect();
+    assert_eq!(got, [("photo.jpg".to_string(), ChangeKind::Added), ("b".to_string(), ChangeKind::Removed)]);
+    let cut = plain_record(FILE_ACTION_ADDED, "abc", 0);
+    assert!(plain_notices(&cut[..cut.len() - 1]).is_none());
+}
+
+#[test]
+fn a_volume_without_extended_notices_still_reports_changes_with_metadata() {
+    let (root, dir) = temp_dir("plain");
+    let port = unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, None, 0, 1) }.unwrap();
+    let h = open_dir(&dir, FILE_LIST_DIRECTORY.0, true).unwrap();
+    let key = 5;
+    unsafe { CreateIoCompletionPort(h, Some(port), key, 0) }.unwrap();
+    let state = Arc::new(Mutex::new(State::default()));
+    {
+        let mut st = lock(&state);
+        st.slots.insert(key, Watch { tab: 2, gen: 4, path: dir, dir: h, ov: Box::default(), buf: vec![0u64; BUFFER / 8], closing: false, rescan: false, extended: false });
+        assert!(st.slots.get_mut(&key).unwrap().issue());
+        st.by_tab.insert(2, vec![key]);
+    }
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let (thread_port, thread_state) = (Port(port), state.clone());
+    let worker = std::thread::spawn(move || {
+        let port = thread_port;
+        run(port.0, &thread_state, tx, Arc::new(|| {}))
+    });
+    std::fs::write(root.join("pasted.bin"), b"12345").unwrap();
+    assert!(wait_for(&rx, |c| c.name == b"pasted.bin" && c.kind != ChangeKind::Removed && c.meta.as_ref().is_some_and(|m| m.size == 5)));
+    assert!(!lock(&state).slots[&key].extended);
+    unsafe {
+        let _ = PostQueuedCompletionStatus(port, 0, QUIT, None);
+    }
+    worker.join().unwrap();
+    let _ = std::fs::remove_dir_all(&root);
 }

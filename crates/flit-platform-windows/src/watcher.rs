@@ -112,7 +112,7 @@ impl DirWatcher {
                 }
                 continue;
             }
-            st.slots.insert(key, Watch { tab, gen, path: path.clone(), dir: h, ov: Box::default(), buf: vec![0u64; BUFFER / 8], closing: false, rescan });
+            st.slots.insert(key, Watch { tab, gen, path: path.clone(), dir: h, ov: Box::default(), buf: vec![0u64; BUFFER / 8], closing: false, rescan, extended: true });
             if st.slots.get_mut(&key).is_some_and(Watch::issue) {
                 keys.push(key);
             } else {
@@ -142,12 +142,21 @@ struct Watch {
     buf: Vec<u64>,
     closing: bool,
     rescan: bool,
+    extended: bool,
 }
 
 unsafe impl Send for Watch {}
 
 impl Watch {
     fn issue(&mut self) -> bool {
+        if self.extended && self.read(ReadDirectoryNotifyExtendedInformation) {
+            return true;
+        }
+        self.extended = false;
+        self.read(ReadDirectoryNotifyInformation)
+    }
+
+    fn read(&mut self, class: READ_DIRECTORY_NOTIFY_INFORMATION_CLASS) -> bool {
         let filter = FILE_NOTIFY_CHANGE_FILE_NAME
             | FILE_NOTIFY_CHANGE_DIR_NAME
             | FILE_NOTIFY_CHANGE_ATTRIBUTES
@@ -155,7 +164,7 @@ impl Watch {
             | FILE_NOTIFY_CHANGE_LAST_WRITE
             | FILE_NOTIFY_CHANGE_CREATION;
         *self.ov = OVERLAPPED::default();
-        unsafe { ReadDirectoryChangesExW(self.dir, self.buf.as_mut_ptr() as _, BUFFER as u32, false, filter, None, Some(&mut *self.ov), None, ReadDirectoryNotifyExtendedInformation).is_ok() }
+        unsafe { ReadDirectoryChangesExW(self.dir, self.buf.as_mut_ptr() as _, BUFFER as u32, false, filter, None, Some(&mut *self.ov), None, class).is_ok() }
     }
 
     fn cancel(&mut self) {
@@ -195,18 +204,38 @@ fn notice_at(buf: &[u8], off: usize) -> Option<(Option<Notice>, u32)> {
         created: i64_at(buf, off + offset_of!(Record, CreationTime))?,
         attrs,
     };
-    let kind = match FILE_ACTION(u32_at(buf, off + offset_of!(Record, Action))?) {
+    let kind = change_kind(u32_at(buf, off + offset_of!(Record, Action))?);
+    Some((kind.map(|kind| Notice { kind, name: wide_name(name), meta }), u32_at(buf, off + offset_of!(Record, NextEntryOffset))?))
+}
+
+fn change_kind(action: u32) -> Option<ChangeKind> {
+    match FILE_ACTION(action) {
         FILE_ACTION_ADDED | FILE_ACTION_RENAMED_NEW_NAME => Some(ChangeKind::Added),
         FILE_ACTION_REMOVED | FILE_ACTION_RENAMED_OLD_NAME => Some(ChangeKind::Removed),
         FILE_ACTION_MODIFIED => Some(ChangeKind::Modified),
         _ => None,
-    };
-    let name = name.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-    Some((kind.map(|kind| Notice { kind, name, meta }), u32_at(buf, off + offset_of!(Record, NextEntryOffset))?))
+    }
+}
+
+fn wide_name(bytes: &[u8]) -> Vec<u16> {
+    bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect()
+}
+
+fn plain_notice_at(buf: &[u8], off: usize) -> Option<(Option<Notice>, u32)> {
+    type Plain = FILE_NOTIFY_INFORMATION;
+    let name_len = u32_at(buf, off + offset_of!(Plain, FileNameLength))? as usize;
+    let name_at = off + offset_of!(Plain, FileName);
+    let name = buf.get(name_at..name_at + name_len)?;
+    let kind = change_kind(u32_at(buf, off + offset_of!(Plain, Action))?);
+    Some((kind.map(|kind| Notice { kind, name: wide_name(name), meta: Meta::default() }), u32_at(buf, off + offset_of!(Plain, NextEntryOffset))?))
 }
 
 pub(crate) fn notices(buf: &[u8]) -> Option<Vec<Notice>> {
     records(buf, notice_at)
+}
+
+pub(crate) fn plain_notices(buf: &[u8]) -> Option<Vec<Notice>> {
+    records(buf, plain_notice_at)
 }
 
 pub(crate) fn records<T>(buf: &[u8], at: impl Fn(&[u8], usize) -> Option<(Option<T>, u32)>) -> Option<Vec<T>> {
@@ -250,7 +279,7 @@ fn long_name(dir: &FsPath, alias: &[u16]) -> Option<Vec<u16>> {
     Some(full[start..n].to_vec()).filter(|n| !n.is_empty())
 }
 
-fn changes(dir: &FsPath, notices: Vec<Notice>) -> Option<Vec<DirChange>> {
+fn changes(dir: &FsPath, notices: Vec<Notice>, extended: bool) -> Option<Vec<DirChange>> {
     notices
         .into_iter()
         .map(|n| {
@@ -261,7 +290,11 @@ fn changes(dir: &FsPath, notices: Vec<Notice>) -> Option<Vec<DirChange>> {
             };
             let mut name = Vec::with_capacity(wide.len());
             name::push_utf16(&mut name, &wide);
-            let meta = (n.kind != ChangeKind::Removed).then_some(n.meta);
+            let meta = match n.kind {
+                ChangeKind::Removed => None,
+                _ if extended => Some(n.meta),
+                _ => Some(crate::engine::stat(&dir.join(&name))?),
+            };
             Some(DirChange { kind: n.kind, name, meta })
         })
         .collect()
@@ -294,8 +327,15 @@ fn run(port: HANDLE, state: &Mutex<State>, events: Sender<ProviderEvent>, wake: 
             st.close(key);
             continue;
         }
-        let (tab, gen) = (w.tab, w.gen);
-        let found = if ok && n > 0 && !w.rescan { notices(w.bytes(n as usize)).map(|list| (list, w.path.clone())) } else { None };
+        let (tab, gen, extended) = (w.tab, w.gen, w.extended);
+        if !ok && extended {
+            w.extended = false;
+            if w.issue() {
+                continue;
+            }
+        }
+        let parse = if extended { notices } else { plain_notices };
+        let found = if ok && n > 0 && !w.rescan { parse(w.bytes(n as usize)).map(|list| (list, w.path.clone())) } else { None };
         if !ok || !w.issue() {
             st.by_tab.retain(|_, v| {
                 v.retain(|k| *k != key);
@@ -304,7 +344,7 @@ fn run(port: HANDLE, state: &Mutex<State>, events: Sender<ProviderEvent>, wake: 
             st.close(key);
         }
         drop(st);
-        let ev = match found.and_then(|(list, dir)| changes(&dir, list)) {
+        let ev = match found.and_then(|(list, dir)| changes(&dir, list, extended)) {
             Some(changes) => ProviderEvent::Changes { tab, gen, changes },
             None => ProviderEvent::Rescan { tab, gen },
         };
