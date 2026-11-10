@@ -1469,7 +1469,20 @@ impl App {
         let compact = sb.prefs.compact;
         g.dl.rect(area, t.chrome);
         let line = if matches!(self.hover, Hit::Splitter) || matches!(self.drag, Drag::Splitter { .. }) { t.accent } else { t.separator };
-        g.dl.rect(Rect::new(area.right() - 1.0, area.y, 1.0, area.h), line);
+        let radius = self.s(3.0);
+        let border = self.s(1.0).max(1.0);
+        if g.dl.round {
+            g.dl.rect(Rect::new(area.right() - border, area.y + radius, border, (area.h - radius).max(0.0)), line);
+            let corner = Rect::new(area.right() - border, area.y - border, radius + border, radius + border);
+            g.dl.rect(corner, self.look.palette.base.chrome);
+            let from = g.dl.instances.len();
+            let circle = Rect::new(corner.x, corner.y, 2.0 * (radius + border), 2.0 * (radius + border));
+            g.dl.circle(circle, self.look.palette.area(crate::theme::Area::Toolbar).bg);
+            g.dl.ring(circle, line, border);
+            g.dl.confine(from, corner);
+        } else {
+            g.dl.rect(Rect::new(area.right() - border, area.y, border, area.h), line);
+        }
         let font = self.ui_font(13.0);
         let small = self.ui_font(12.0);
         let icons = self.icon_font(ROW_ICON * 0.85);

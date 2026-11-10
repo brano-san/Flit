@@ -280,6 +280,8 @@ impl Saved {
         let (mut deep, mut zoom, mut widened, mut files_chosen) = (Vec::new(), None, None, false);
         let p = &mut saved.persisted;
         (p.view, p.prefs, p.folders) = (r.view, r.prefs, FolderViews::from_entries(r.folders));
+        p.prefs.count_folders = p.prefs.auto_sizes;
+        p.prefs.count_files = p.prefs.auto_sizes;
         if let Some((archive, tail)) = rest.and_then(|t| postcard::take_from_bytes::<Defaults>(t).ok()) {
             p.archive = archive.sanitized();
             if let Ok((tools, tail)) = postcard::take_from_bytes::<Tools>(tail) {
@@ -303,10 +305,14 @@ impl Saved {
                                                 widened = Some(w);
                                                 if let Ok((v, tail)) = postcard::take_from_bytes::<u8>(tail) {
                                                     files_chosen = v >= FILES_COLUMN_CHOSEN;
-                                                    if let Ok((r, _)) = postcard::take_from_bytes::<IntegrationRecord>(tail) {
+                                                    if let Ok((r, tail)) = postcard::take_from_bytes::<IntegrationRecord>(tail) {
                                                         p.prefs.git_integration = r.git;
                                                         saved.side.quick.places = r.places;
                                                         saved.side.quick.places_hidden = r.places_hidden;
+                                                        if let Ok(((folders, files), _)) = postcard::take_from_bytes::<(bool, bool)>(tail) {
+                                                            p.prefs.count_folders = folders;
+                                                            p.prefs.count_files = files;
+                                                        }
                                                     }
                                                 }
                                             }
@@ -383,6 +389,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&wides).ok()?);
         bytes.extend(postcard::to_stdvec(&FILES_COLUMN_CHOSEN).ok()?);
         bytes.extend(postcard::to_stdvec(&IntegrationRecord { git: p.prefs.git_integration, places: self.side.quick.places.clone(), places_hidden: self.side.quick.places_hidden.clone() }).ok()?);
+        bytes.extend(postcard::to_stdvec(&(p.prefs.count_folders, p.prefs.count_files)).ok()?);
         Some(bytes)
     }
 

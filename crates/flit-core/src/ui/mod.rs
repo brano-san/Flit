@@ -57,6 +57,7 @@ mod bottom;
 mod types;
 mod user_menu;
 mod update;
+mod update_dialog;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource, MAX_HISTORY};
@@ -1614,7 +1615,7 @@ impl App {
                     self.run_action(if *dy > 0.0 { "font.increase" } else { "font.decrease" }, now);
                     return;
                 }
-                if self.settings_wheel(*dy) || self.panel_wheel(ev, *dy, now) || self.jobs_wheel(*dy) || self.nav_wheel(*dy) || self.pane_wheel(*dy) || self.preview_wheel(*dy) || self.strip_wheel(*dy) {
+                if self.update_wheel(*dy) || self.settings_wheel(*dy) || self.panel_wheel(ev, *dy, now) || self.jobs_wheel(*dy) || self.nav_wheel(*dy) || self.pane_wheel(*dy) || self.preview_wheel(*dy) || self.strip_wheel(*dy) {
                     return;
                 }
                 if self.bottom_wheel(*dy) {
@@ -1689,6 +1690,9 @@ impl App {
     }
 
     fn mouse_move(&mut self, x: f32, y: f32, now: Instant) {
+        if self.update_scroll_move(x, y) {
+            return;
+        }
         self.strip_pointer(x, y);
         self.settings_tip(x, y);
         if self.autoscroll_move(self.along_of(x, y)) || self.ops_mouse_move(x, y) || self.marquee_move(x, y) {
@@ -1853,6 +1857,9 @@ impl App {
     }
 
     fn mouse_up(&mut self, x: f32, y: f32, button: MouseButton, now: Instant) {
+        if let Some(f) = &mut self.jobs.form {
+            f.document.grab = None;
+        }
         if self.autoscroll_up(x, y, button) {
             return;
         }
@@ -2101,16 +2108,26 @@ impl App {
     }
 
     pub(super) fn folder_stats_visible(&self) -> bool {
-        let t = self.tab();
-        if !self.prefs.auto_sizes {
-            false
-        } else if t.look.table() {
-            t.columns.shown(Column::Folders) || t.columns.shown(Column::Files) || (self.prefs.auto_sizes && t.columns.shown(Column::Size))
+        self.folder_stats_visible_in(self.cur)
+    }
+
+    fn folder_stats_visible_in(&self, k: usize) -> bool {
+        let t = &self.tabs[k];
+        if t.look.table() {
+            [Column::Folders, Column::Files, Column::Size].into_iter().any(|c| self.stat_enabled(c) && t.columns.shown(c))
         } else {
             self.prefs.auto_sizes
         }
     }
 
+    fn stat_enabled(&self, column: Column) -> bool {
+        match column {
+            Column::Size => self.prefs.auto_sizes,
+            Column::Folders => self.prefs.count_folders,
+            Column::Files => self.prefs.count_files,
+            _ => false,
+        }
+    }
 
     pub fn frame<B: TextBackend>(&mut self, g: &mut Gfx<B>, now: Instant) -> bool {
         let _span = tracing::trace_span!("ui_frame").entered();
@@ -2222,7 +2239,8 @@ impl App {
         let palette = self.nav.palette.as_mut().is_some_and(|p| p.scroll.step(dt, smooth));
         let side = self.nav.sidebar.scroll.step(dt, smooth);
         let home = self.nav.home.scroll.step(dt, smooth);
-        settings | palette | side | home
+        let update = self.jobs.form.as_mut().is_some_and(|f| f.document.scroll.step(dt, smooth));
+        settings | palette | side | home | update
     }
 
     fn draw_title<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
@@ -2230,12 +2248,16 @@ impl App {
         g.dl.rect(l.title, t.chrome);
         let border = self.s(1.0).max(1.0);
         let base = l.title.bottom() - border;
+        let foot = if g.dl.round { self.s(3.0) } else { 0.0 };
+        let start = l.title.x + if l.title.x == self.nav.sidebar.rect.right() && l.title.x > 0.0 { foot } else { 0.0 };
         if let Some((r, _)) = l.tabs.get(self.cur).filter(|(r, _)| r.w > 0.0) {
-            g.dl.rect(Rect::new(l.title.x, base, (r.x - l.title.x).max(0.0), border), t.separator);
+            g.dl.rect(Rect::new(start, base, (r.x - foot - start).max(0.0), border), t.separator);
+            let from = g.dl.instances.len();
             g.dl.outline(Rect::new(r.x, r.y, r.w, r.h + self.s(8.0)), t.separator, self.s(6.0), border);
-            g.dl.rect(Rect::new(r.right(), base, (l.title.right() - r.right()).max(0.0), border), t.separator);
+            g.dl.confine(from, Rect::new(r.x, r.y, r.w, base - foot - r.y + border));
+            g.dl.rect(Rect::new(r.right() + foot, base, (l.title.right() - r.right() - foot).max(0.0), border), t.separator);
         } else {
-            g.dl.rect(Rect::new(l.title.x, base, l.title.w, border), t.separator);
+            g.dl.rect(Rect::new(start, base, l.title.right() - start, border), t.separator);
         }
         let font = self.ui_font(12.5);
         let m = g.metrics(font);
@@ -2260,6 +2282,18 @@ impl App {
                 g.dl.round_rect(Rect::new(r.x + border, r.y + border, r.w - 2.0 * border, r.h + self.s(8.0)), t.bg, self.s(6.0));
             } else if hovered > 0.0 {
                 g.dl.round_rect(r.inset(0.0, self.s(2.0)), widgets::faded(t.button_hover, hovered), self.s(6.0));
+            }
+            if active && foot > 0.0 {
+                for left in [true, false] {
+                    let x = if left { r.x - foot } else { r.right() - border };
+                    let clip = Rect::new(x, base - foot, foot + border, foot + border);
+                    g.dl.rect(clip, t.bg);
+                    let circle = Rect::new(if left { x - foot - border } else { x }, base - 2.0 * foot - border, 2.0 * (foot + border), 2.0 * (foot + border));
+                    let from = g.dl.instances.len();
+                    g.dl.circle(circle, t.chrome);
+                    g.dl.ring(circle, t.separator, border);
+                    g.dl.confine(from, clip);
+                }
             }
             if drop == Some(Spot::Tab(i)) {
                 let target = r.inset(0.0, self.s(2.0));
@@ -2752,7 +2786,7 @@ impl App {
                         for (c, &col) in l.columns.iter().enumerate().skip(1) {
                             let r = l.cols[c];
                             let s = self.cell_text(arena, listing, i, col);
-                            if s.is_empty() && matches!(col, Column::Size | Column::Folders | Column::Files) && tab.sizing(i) {
+                            if s.is_empty() && self.stat_enabled(col) && tab.sizing(i) {
                                 let d = self.cs(12.0);
                                 let at = if col == Column::Size { r.right() - pad - d } else { r.x + pad };
                                 widgets::spinner(g, Rect::new(at, (p.name.y + (p.name.h - d) / 2.0).round(), d, d), spin, if picked { t.selection_text } else { t.text_dim });

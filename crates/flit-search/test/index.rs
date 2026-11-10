@@ -24,6 +24,19 @@ fn lowercase_folds_unicode_and_keeps_invalid_bytes() {
 }
 
 #[test]
+fn corrupt_parent_cycles_never_expand_into_repeated_paths() {
+    let mut v = volume();
+    v.upsert(&rec(10, 11, "machines", true));
+    v.upsert(&rec(11, 10, "lib", true));
+    v.upsert(&rec(12, 10, "kde-mimeapps.list", false));
+    v.commit();
+    assert_eq!(path(&v, 12), "");
+    v.upsert(&rec(10, 5, "applications", true));
+    v.commit();
+    assert_eq!(path(&v, 12), r"C:\applications\kde-mimeapps.list");
+}
+
+#[test]
 fn paths_follow_renames_and_moves() {
     let mut v = volume();
     v.upsert(&rec(10, 5, "Users", true));

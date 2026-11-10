@@ -45,6 +45,62 @@ fn frame(app: &mut App) {
 }
 
 #[test]
+fn tab_toggles_scope_only_in_search_and_keeps_the_query() {
+    let mut a = app();
+    key(&mut a, Key::Char('F'), CTRL_SHIFT);
+    a.search.edit.set("mimeapps");
+    let before = a.search.within.clone();
+    key(&mut a, Key::Tab, NO);
+    assert_ne!(a.search.within, before);
+    assert_eq!(a.search.edit.text, "mimeapps");
+    key(&mut a, Key::Tab, NO);
+    assert_eq!(a.search.within, before);
+    assert!(a.search.active);
+    key(&mut a, Key::Tab, CTRL);
+    assert!(!a.search.active);
+}
+
+#[test]
+fn resizing_search_columns_changes_only_one_width_and_supports_overflow() {
+    let mut a = app();
+    key(&mut a, Key::Char('F'), CTRL_SHIFT);
+    a.search.recent_open = false;
+    let before = a.search_layout().cols;
+    let (x, y) = (before[1].right(), before[1].y + 8.0);
+    a.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, t0());
+    a.on_event(&Event::MouseMove { x: x + 180.0, y }, t0());
+    a.on_event(&Event::MouseUp { x: x + 180.0, y, button: MouseButton::Left }, t0());
+    let after = a.search_layout();
+    assert_eq!(after.cols[1].w, before[1].w + 180.0);
+    for i in [0, 2, 3] { assert_eq!(after.cols[i].w, before[i].w); }
+    assert!(after.hthumb.w > 0.0 && after.max_x > 0.0);
+    a.on_event(&Event::Wheel { dx: 10.0, dy: 0.0 }, t0());
+    assert_eq!(a.search.scroll_x, a.search_layout().max_x);
+    assert!(a.search_layout().cols[3].right() <= a.search_layout().list.right() + 1.0);
+    assert_eq!(a.search.sort, SearchSort::default());
+}
+
+#[test]
+fn search_menu_actions_use_the_result_not_the_background_folder() {
+    use crate::ui::menu::Cmd;
+    let mut a = app();
+    key(&mut a, Key::Char('F'), CTRL_SHIFT);
+    a.search.rows.insert(0, row("note.txt", r"D:\Found", false));
+    a.search.focus = Some(0);
+    a.build_search_menu(true);
+    let actions: Vec<_> = a.menu.iter().filter_map(|c| if let Cmd::Search { action, .. } = c { Some(*action) } else { None }).collect();
+    assert_eq!(actions, ["open", "reveal", "reveal_tab", "copy", "path", "quoted"]);
+    let path = a.menu.iter().position(|c| matches!(c, Cmd::Search { action: "path", .. })).unwrap();
+    a.search.focus = None;
+    a.menu_command(path, t0());
+    assert!(a.drain_effects().any(|e| matches!(e, Effect::SetClipboard(s) if s == r"D:\Found\note.txt")));
+    let open = a.menu.iter().position(|c| matches!(c, Cmd::Search { action: "open", .. })).unwrap();
+    a.menu_command(open, t0());
+    assert!(a.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } if path.display() == r"D:\Found\note.txt")));
+    assert!(a.search.active);
+}
+
+#[test]
 fn ctrl_alt_f_opens_search_and_every_keystroke_is_a_new_query() {
     let mut app = app();
     key(&mut app, Key::Char('F'), CTRL_ALT);

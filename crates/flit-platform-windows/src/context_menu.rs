@@ -30,7 +30,7 @@ const STALE_TIMER: usize = 3;
 const PREFETCH: usize = 1;
 const PREP_REST: Duration = Duration::from_millis(90);
 const PREP_STALE: Duration = Duration::from_secs(20);
-const COVERED: [&str; 11] = ["open", "cut", "copy", "paste", "delete", "rename", "link", "properties", "copyaspath", "opennewwindow", "opennewtab"];
+const COVERED: [&str; 14] = ["open", "cut", "copy", "paste", "delete", "rename", "link", "properties", "copyaspath", "opennewwindow", "opennewtab", "new", "newfolder", "newlink"];
 const WINDOWS_VERBS: [&str; 29] = [
     "edit",
     "openas",
@@ -127,6 +127,9 @@ fn named(list: &[&str], verb: &str) -> bool {
 
 pub(crate) fn place(item: &ShellItem) -> Place {
     if named(&COVERED, item.verb) {
+        return Place::Duplicate;
+    }
+    if item.verb.is_empty() && item.children.is_some_and(|children| children.iter().any(|v| v.eq_ignore_ascii_case("newfolder")) && children.iter().any(|v| v.eq_ignore_ascii_case("newlink"))) {
         return Place::Duplicate;
     }
     let open_with = |verb: &str| verb.eq_ignore_ascii_case("openas") || verb.eq_ignore_ascii_case("openwith");

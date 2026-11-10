@@ -79,6 +79,7 @@ impl MenuItem {
 pub(super) enum Cmd {
     Action(&'static str),
     NewItem(usize),
+    Search { action: &'static str, location: crate::location::Location, folder: bool },
     Go(usize),
     Jump(isize),
     Place(super::sidebar::PlaceCmd),
@@ -339,7 +340,18 @@ impl App {
     pub(super) fn build_search_menu(&mut self, on_row: bool) -> Vec<MenuItem> {
         self.collect(|a, m| {
             if on_row {
-                m.command(Cmd::Action("search.reveal"), S::MenuOpenFileLocation.t(), "Ctrl+Enter".into(), false);
+                if let Some((location, folder)) = a.search_target() {
+                    for (action, label, keys) in [
+                        ("open", S::MenuOpen, "Enter"),
+                        ("reveal", S::MenuOpenFileLocation, "Ctrl+Enter"),
+                        ("reveal_tab", S::ActionsItemOpenContainingTab, ""),
+                        ("copy", S::MenuCopy, ""),
+                        ("path", S::MenuCopyPath, "Ctrl+Shift+C"),
+                        ("quoted", S::ActionsItemCopyQuotedPath, ""),
+                    ] {
+                        m.command(Cmd::Search { action, location: location.clone(), folder }, label.t(), keys.into(), false);
+                    }
+                }
                 m.separator();
             }
             m.check("search.group_folder", S::MenuGroupByFolder.t(), a.search.group_folder);
@@ -639,6 +651,7 @@ impl App {
                 self.run_action(id, now);
             }
             Some(Cmd::NewItem(n)) => self.new_item(n),
+            Some(Cmd::Search { action, location, folder }) => self.search_command(action, location, folder, now),
             Some(Cmd::Go(k)) => self.go_target(k, now),
             Some(Cmd::Jump(n)) => self.jump_history(n, now),
             Some(Cmd::Place(c)) => self.place_command(c, now),

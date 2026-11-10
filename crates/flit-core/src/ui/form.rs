@@ -101,12 +101,13 @@ pub(super) struct Form {
     pub rows: Vec<Rect>,
     pub button_rects: Vec<Rect>,
     pub(super) rect: Rect,
+    pub document: super::update_dialog::Document,
 }
 
 impl Form {
     pub fn new(kind: Kind, title: &str, controls: Vec<Control>, buttons: Vec<&'static str>) -> Self {
         let focus = controls.iter().position(|c| !matches!(c, Control::Value { .. } | Control::Line(_))).unwrap_or(controls.len());
-        Self { kind, title: title.to_owned(), controls, buttons, focus, note: String::new(), error: false, progress: None, rect: Rect::default(), rows: Vec::new(), button_rects: Vec::new() }
+        Self { kind, title: title.to_owned(), controls, buttons, focus, note: String::new(), error: false, progress: None, rect: Rect::default(), rows: Vec::new(), button_rects: Vec::new(), document: Default::default() }
     }
 
     pub fn text(&self, k: usize) -> &str {
@@ -178,7 +179,12 @@ impl App {
         let Some(f) = &mut self.jobs.form else { return };
         if let Some(Control::Value { label, value }) = f.controls.get(k) {
             let text = value.clone();
-            f.say(crate::tr!(crate::i18n::S::FormCopied, label = label), false);
+            let feedback = crate::tr!(crate::i18n::S::FormCopied, label = label);
+            if matches!(f.kind, Kind::Update(_)) {
+                f.document.copied = Some((feedback, std::time::Instant::now()));
+            } else {
+                f.say(feedback, false);
+            }
             self.effects.push(Effect::SetClipboard(text));
         }
     }
@@ -220,6 +226,9 @@ impl App {
     }
 
     pub(super) fn form_key(&mut self, key: Key, m: Mods) -> bool {
+        if self.update_scroll_key(key, m) {
+            return true;
+        }
         let Some(f) = &mut self.jobs.form else { return false };
         let k = f.focus;
         let n = f.controls.len();
@@ -277,6 +286,9 @@ impl App {
     pub(super) fn form_down(&mut self, x: f32, y: f32, clicks: u8) -> bool {
         if self.jobs.form.is_none() || !self.jobs.asks.is_empty() {
             return false;
+        }
+        if self.update_scroll_down(x, y) {
+            return true;
         }
         let Some(Hit::Form(k)) = self.form_hit(x, y) else { return false };
         let Some(f) = &mut self.jobs.form else { return false };
@@ -385,7 +397,7 @@ impl App {
         if let Some(b) = f.button_rects.iter().position(|r| r.contains(x, y)) {
             return Some(Hit::Form(f.controls.len() + b));
         }
-        if let Some(k) = f.rows.iter().position(|r| r.contains(x, y)) {
+        if let Some(k) = f.rows.iter().take(if matches!(f.kind, Kind::Update(_)) { 2 } else { f.rows.len() }).position(|r| r.contains(x, y)) {
             return Some(Hit::Form(k));
         }
         if self.in_title(y) {
@@ -398,6 +410,10 @@ impl App {
         let (w, h, sc) = (self.size.0, self.size.1, self.scale);
         let s = |v: f32| (v * sc).round();
         let Some(f) = &mut self.jobs.form else { return };
+        if matches!(f.kind, Kind::Update(_)) {
+            f.layout_update(w, h, sc);
+            return;
+        }
         let fw = s(WIDTH).min(w - s(32.0));
         let gaps = section_gaps(&f.controls);
         let body: f32 = f.controls.iter().map(|c| s(c.height())).sum::<f32>() + gaps.iter().filter(|&&g| g).count() as f32 * s(SECTION_GAP);
@@ -442,6 +458,9 @@ impl App {
     }
 
     pub(super) fn draw_form<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
+        if self.draw_update_dialog(g, t) {
+            return;
+        }
         let (font, small, bold) = (self.ui_font(13.0), self.ui_font(12.0), FontStyle::new(FontFamily::Ui, 16.0 * self.scale, true));
         let icons = self.icon_font(10.0);
         let sc = self.scale;

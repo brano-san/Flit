@@ -395,6 +395,31 @@ fn hidden_statistics_columns_cancel_work_and_new_entries_do_not_recount_their_ne
 }
 
 #[test]
+fn statistics_switches_compute_only_visible_requested_data_and_share_one_scan() {
+    use crate::ui::settings::{index, SETTINGS};
+    let ids = ["files.auto_sizes", "files.count_folders", "files.count_files"];
+    let columns = [Column::Size, Column::Folders, Column::Files];
+    for mask in 0..8 {
+        let mut app = app_at(r"C:\x");
+        for (k, id) in ids.iter().enumerate() {
+            SETTINGS[index(id).unwrap()].set(&mut app, crate::ui::Value::Bool(mask & (1 << k) != 0));
+        }
+        let fx = deliver_with(&mut app, &[("src", 0, true)], None);
+        assert_eq!(fx.iter().filter(|e| matches!(e, Effect::Provider { req: ProviderRequest::DirSizes { .. }, .. })).count(), usize::from(mask != 0));
+        app.tab_mut().view.as_mut().unwrap().set_dir_stats(0, crate::listing::DirStats { size: 42, folders: 2, files: 3, partial: false });
+        let arena = Bump::new();
+        for (k, col) in columns.iter().enumerate() {
+            let text = app.cell_text(&arena, app.tab().view.as_ref().unwrap().listing(), 0, *col);
+            assert_eq!(!text.is_empty(), mask & (1 << k) != 0, "mask={mask}, column={col:?}");
+        }
+        for col in columns {
+            if app.tab().columns.shown(col) { app.toggle_column(col); }
+        }
+        assert!(!app.folder_stats_visible());
+    }
+}
+
+#[test]
 fn checkbox_animation_starts_at_zero_and_finishes_once() {
     let now = Instant::now();
     let mut checks = Checks::default();
@@ -425,7 +450,7 @@ fn search_results_can_be_grouped_by_folder() {
     let menu = app.build_search_menu(false);
     assert_eq!(commands(&menu), [("Group by folder".to_owned(), true)]);
     let menu = app.build_search_menu(true);
-    assert_eq!(commands(&menu), [("Open file location".to_owned(), false), ("Group by folder".to_owned(), true)]);
+    assert_eq!(commands(&menu), [("Group by folder".to_owned(), true)]);
 }
 
 #[test]
@@ -561,7 +586,9 @@ fn the_saved_view_menu_has_a_header_three_modes_and_set_as_default() {
 #[test]
 fn new_columns_show_item_counts_usage_and_drive_space() {
     use crate::listing::{attr, DirStats, Listing};
-    let app = app_at(r"C:\x");
+    let mut app = app_at(r"C:\x");
+    app.prefs.count_folders = true;
+    app.prefs.count_files = true;
     let mut l = Listing::default();
     let d = l.push(b"dir", Meta { attrs: attr::DIR, ..Default::default() });
     let empty = l.push(b"none", Meta { attrs: attr::DIR, ..Default::default() });

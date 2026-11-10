@@ -260,6 +260,10 @@ pub struct ViewPrefs {
     pub show_system: bool,
     pub show_extensions: bool,
     pub auto_sizes: bool,
+    #[serde(skip)]
+    pub count_folders: bool,
+    #[serde(skip)]
+    pub count_files: bool,
     pub status_bar: bool,
     pub split_count: bool,
     pub checkboxes: bool,
@@ -303,6 +307,8 @@ impl Default for ViewPrefs {
             show_system: false,
             show_extensions: true,
             auto_sizes: false,
+            count_folders: false,
+            count_files: false,
             status_bar: true,
             split_count: false,
             checkboxes: true,
@@ -776,11 +782,11 @@ impl App {
     }
 
     pub(super) fn toggle_pref(&mut self, f: fn(&mut ViewPrefs) -> &mut bool) {
-        let sizes = self.prefs.auto_sizes;
+        let stats = (self.prefs.auto_sizes, self.prefs.count_folders, self.prefs.count_files);
         let p = f(&mut self.prefs);
         *p = !*p;
         self.each_pane(|a, k| {
-            if !a.prefs.auto_sizes && sizes {
+            if !a.folder_stats_visible_in(k) {
                 a.tabs[k].stop_sizes();
             }
             let before = a.tabs[k].view_spec;
@@ -789,7 +795,7 @@ impl App {
                 a.resort(k);
             }
         });
-        if self.prefs.auto_sizes != sizes {
+        if (self.prefs.auto_sizes, self.prefs.count_folders, self.prefs.count_files) != stats {
             self.compute_dir_sizes();
         }
         self.layout();
@@ -923,6 +929,9 @@ impl App {
                 }
             }
             Column::Folders | Column::Files => {
+                if !self.stat_enabled(col) {
+                    return s.into_bump_str();
+                }
                 let count = |st: &crate::listing::DirStats| if col == Column::Folders { st.folders } else { st.files };
                 match l.stats(i) {
                     Some(st) if e.is_dir() && count(&st) > 0 => {
@@ -1010,7 +1019,7 @@ impl App {
     pub(super) fn on_loaded(&mut self, k: usize) {
         self.archive_loaded(k);
         self.tabs[k].fit_pending |= self.prefs.auto_fit;
-        if self.prefs.auto_sizes && k == self.cur {
+        if k == self.cur {
             self.compute_dir_sizes();
         }
     }

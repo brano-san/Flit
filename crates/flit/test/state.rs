@@ -328,6 +328,23 @@ fn wide_len(s: &Saved) -> usize {
     let folders = p.folders.entries();
     postcard::to_stdvec(&WideRecord { view: wide(&p.view), defaults: wide(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| wide(v)).collect() }).unwrap().len() + 1
         + postcard::to_stdvec(&IntegrationRecord { git: p.prefs.git_integration, places: s.side.quick.places.clone(), places_hidden: s.side.quick.places_hidden.clone() }).unwrap().len()
+        + 2
+}
+
+#[test]
+fn folder_statistics_are_independent_and_migrate_the_old_switch() {
+    for mask in 0..8 {
+        let mut saved = Saved::new(Persisted::default(), None);
+        let prefs = &mut saved.persisted.prefs;
+        prefs.auto_sizes = mask & 1 != 0;
+        prefs.count_folders = mask & 2 != 0;
+        prefs.count_files = mask & 4 != 0;
+        let bytes = saved.encode().unwrap();
+        let p = Saved::decode(&bytes).unwrap().persisted.prefs;
+        assert_eq!((p.auto_sizes, p.count_folders, p.count_files), (mask & 1 != 0, mask & 2 != 0, mask & 4 != 0));
+        let legacy = Saved::decode(&bytes[..bytes.len() - 2]).unwrap().persisted.prefs;
+        assert_eq!((legacy.auto_sizes, legacy.count_folders, legacy.count_files), (mask & 1 != 0, mask & 1 != 0, mask & 1 != 0));
+    }
 }
 
 #[test]
@@ -342,7 +359,7 @@ fn integration_and_places_roundtrip_without_changing_older_records() {
     assert!(restored.persisted.prefs.git_integration);
     assert_eq!(restored.side.quick, saved.side.quick);
     let len = postcard::to_stdvec(&IntegrationRecord { git: true, places: saved.side.quick.places.clone(), places_hidden: saved.side.quick.places_hidden.clone() }).unwrap().len();
-    let older = Saved::decode(&bytes[..bytes.len() - len]).unwrap();
+    let older = Saved::decode(&bytes[..bytes.len() - len - 2]).unwrap();
     assert!(!older.persisted.prefs.git_integration);
     assert!(older.side.quick.places.is_empty());
     assert!(older.side.quick.show_paths);
@@ -418,7 +435,7 @@ fn the_files_column_shows_by_default_while_files_saved_from_now_on_keep_their_ch
     let chosen = Saved::decode(&bytes).unwrap().sanitized().persisted;
     assert!(!chosen.view.columns.shown(Column::Files), "a choice saved by this build stays");
     let added = postcard::to_stdvec(&IntegrationRecord { git: false, places: Vec::new(), places_hidden: Vec::new() }).unwrap().len();
-    let before = Saved::decode(&bytes[..bytes.len() - added - 1]).unwrap().sanitized().persisted;
+    let before = Saved::decode(&bytes[..bytes.len() - added - 3]).unwrap().sanitized().persisted;
     assert!(before.view.columns.shown(Column::Files) && before.prefs.defaults.columns.shown(Column::Files), "a layout from before the split shows Files with Folders");
     let folder = before.folders.get(key).unwrap();
     assert!(!folder.columns.shown(Column::Folders) && !folder.columns.shown(Column::Files), "a folder that hid the counts keeps them hidden");

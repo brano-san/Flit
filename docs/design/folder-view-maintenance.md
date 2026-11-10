@@ -10,7 +10,9 @@ The previous decision is cached per folder while a new listing loads. The comple
 
 ## Folder statistics
 
-Automatic walks require Show folder sizes. In Details and Tree, at least one of Size, Folders or Files must be visible. Hiding all three cancels pending work. The size toggle does not alter which count columns are selected. Already available counts are displayed independently.
+Folder size, nested-folder count and nested-file count have independent switches on the Data and Performance settings page. In Details and Tree, a scan requires at least one enabled statistic whose column is visible. Other layouts request folder sizes only. Disabled statistics do not display cached values or loading indicators. Hiding every enabled statistic cancels pending work. Multiple enabled statistics share one traversal and the same cached result.
+
+The two count switches live in an appended state record. Older preferences initialize both from the former shared size switch, preserving the user's previous choice. The size switch keeps its existing shortcut and menu command.
 
 Watcher changes and completed file operations invalidate affected directories. Other calculated directories retain their cached statistics. New and invalidated rows enter the existing loading animation. Repeated requests do not duplicate pending walks; Alt+R explicitly invalidates cached statistics for the current view.
 

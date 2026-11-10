@@ -54,6 +54,22 @@ fn volumes_skip_pseudo_network_and_windows_drive_mounts() {
 }
 
 #[test]
+fn mount_roots_and_foreign_inodes_cannot_replace_local_parents() {
+    use crate::fs::Node;
+    let local = Node { mode: libc::S_IFDIR, dev: 1, ino: 256, mount_root: Some(false), ..Default::default() };
+    assert!(indexable(&local, 1, 5));
+    assert!(!indexable(&Node { dev: 2, ..local }, 1, 5));
+    assert!(!indexable(&Node { mount_root: Some(true), ..local }, 1, 5));
+    assert!(!indexable(&Node { ino: 5, ..local }, 1, 5));
+    let t = Temp::new("foreign-index");
+    t.file("a", 1);
+    let mut children = Vec::new();
+    let batch = read_dir(&Job { dir: t.path().to_owned(), id: 5, modified: 0 }, u64::MAX, &mut children);
+    assert!(batch.items.is_empty() && children.is_empty());
+    assert!(WalkIndex::with_roots(Vec::new()).snapshot_key("/").starts_with("walk-v2:"));
+}
+
+#[test]
 fn a_volume_is_rewalked_only_after_its_period() {
     let t = Temp::new("rewalk");
     let mut w = WalkIndex::with_roots(vec![("v".into(), t.path().to_path_buf(), "ext4".into())]);

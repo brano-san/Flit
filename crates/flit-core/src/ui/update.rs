@@ -6,7 +6,6 @@ use crate::i18n::{P, S};
 use crate::provider::Launch;
 use crate::update::{percent, Release, UpdateEvent, UpdateRequest, CURRENT, RELEASES_URL};
 
-const NOTE_LINES: usize = 10;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpdatePrefs {
@@ -41,7 +40,7 @@ fn buttons(stage: Stage) -> Vec<&'static str> {
     }
 }
 
-fn plain(markdown: &str) -> String {
+pub(super) fn plain(markdown: &str) -> String {
     let line = markdown.trim_end().replace("**", "");
     let heading = line.trim_start_matches('#');
     if heading.len() < line.len() {
@@ -63,10 +62,6 @@ fn note_lines(notes: &str) -> Vec<String> {
     }
     while lines.last().is_some_and(|l| l.is_empty()) {
         lines.pop();
-    }
-    if lines.len() > NOTE_LINES {
-        lines.truncate(NOTE_LINES - 1);
-        lines.push("…".to_owned());
     }
     lines
 }

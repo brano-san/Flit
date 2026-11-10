@@ -124,11 +124,14 @@ enum SHit {
     Scope,
     Recent(usize),
     Header(usize),
+    ColSep(usize),
     Group(usize),
     Row(u64),
     Empty,
     Track,
     Thumb,
+    HTrack,
+    HThumb,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -157,7 +160,9 @@ enum SDrag {
     #[default]
     None,
     Thumb(f32),
+    HThumb(f32),
     Select,
+    ColSep { col: usize, x: f32, width: f32 },
 }
 
 #[derive(Default)]
@@ -196,6 +201,8 @@ pub(super) struct SearchView {
     recent_sel: Option<usize>,
     recent_rects: Vec<Rect>,
     chip: Rect,
+    widths: Option<[f32; 4]>,
+    scroll_x: f32,
 }
 
 struct SLayout {
@@ -205,6 +212,9 @@ struct SLayout {
     list: Rect,
     track: Rect,
     thumb: Rect,
+    htrack: Rect,
+    hthumb: Rect,
+    max_x: f32,
     row_h: f32,
 }
 
@@ -546,14 +556,23 @@ impl App {
     fn search_layout(&self) -> SLayout {
         let l = &self.layout;
         let field = Rect::new(l.nav[1].x, l.address.y, (l.address.right() - l.nav[1].x).max(self.s(40.0)), l.address.h);
-        let list = l.list;
+        let mut list = l.list;
         let size_w = self.s(90.0).min(list.w / 4.0);
         let date_w = self.s(140.0).min(list.w / 4.0);
         let name_w = (list.w * 0.32).max(self.s(140.0)).min(list.w - size_w - date_w);
         let folder_w = (list.w - name_w - size_w - date_w).max(0.0);
-        let mut x = list.x;
         let mut cols = [Rect::default(); 4];
-        for (c, w) in cols.iter_mut().zip([name_w, folder_w, size_w, date_w]) {
+        let widths = self.search.widths.map(|widths| widths.map(|w| w * self.scale)).unwrap_or([name_w, folder_w, size_w, date_w]);
+        let content_w = widths.iter().sum::<f32>();
+        let max_x = (content_w - list.w).max(0.0);
+        let mut x = list.x - self.search.scroll_x.clamp(0.0, max_x);
+        let htrack = if max_x > 0.0 { Rect::new(list.x, list.bottom() - self.s(14.0), list.w, self.s(14.0)) } else { Rect::default() };
+        let hthumb = if max_x > 0.0 {
+            list.h = (list.h - htrack.h).max(0.0);
+            let width = (htrack.w * htrack.w / content_w).max(self.s(24.0)).min(htrack.w);
+            Rect::new(htrack.x + (htrack.w - width) * self.search.scroll_x.clamp(0.0, max_x) / max_x, htrack.y + self.s(4.0), width, self.s(6.0))
+        } else { Rect::default() };
+        for (c, w) in cols.iter_mut().zip(widths) {
             *c = Rect::new(x, l.header.y, w, l.header.h);
             x += w;
         }
@@ -567,12 +586,12 @@ impl App {
         } else {
             Rect::default()
         };
-        SLayout { field, header: l.header, cols, list, track: l.track, thumb, row_h: rh }
+        SLayout { field, header: l.header, cols, list, track: l.track, thumb, htrack, hthumb, max_x, row_h: rh }
     }
 
     fn search_max_scroll(&self) -> f64 {
         let l = &self.layout;
-        (self.search.lines() as f64 * l.row_h.max(1.0) as f64 - l.list.h as f64).max(0.0)
+        (self.search.lines() as f64 * l.row_h.max(1.0) as f64 - self.search_layout().list.h as f64).max(0.0)
     }
 
     fn search_range(&self) -> (u64, u64) {
@@ -612,11 +631,17 @@ impl App {
             return SHit::Field;
         }
         if sl.header.contains(x, y) {
+            if let Some(c) = (0..4).find(|&c| (x - sl.cols[c].right()).abs() <= self.s(4.0)) {
+                return SHit::ColSep(c);
+            }
             return sl.cols.iter().position(|c| c.contains(x, y)).map_or(SHit::None, SHit::Header);
         }
         if sl.track.contains(x, y) {
             let t = sl.thumb;
             return if t.h > 0.0 && y >= t.y && y < t.bottom() { SHit::Thumb } else { SHit::Track };
+        }
+        if sl.htrack.contains(x, y) {
+            return if sl.hthumb.contains(x, y) { SHit::HThumb } else { SHit::HTrack };
         }
         if sl.list.contains(x, y) {
             let line = ((self.search.scroll + (y - sl.list.y) as f64) / sl.row_h as f64).floor() as u64;
@@ -648,7 +673,13 @@ impl App {
             Event::MouseDown { x, y, button, clicks } => self.search_mouse_down(*x, *y, *button, *clicks, now),
             Event::MouseUp { x, y, button } => self.search_mouse_up(*x, *y, *button),
             Event::MouseMove { x, y } => self.search_mouse_move(*x, *y),
-            Event::Wheel { dy, .. } => {
+            Event::Wheel { dx, dy } => {
+                if *dx != 0.0 || self.mods.shift {
+                    let delta = if *dx != 0.0 { *dx } else { -*dy };
+                    self.search.scroll_x = (self.search.scroll_x + delta * self.s(48.0)).clamp(0.0, self.search_layout().max_x);
+                    self.dirty = true;
+                    return true;
+                }
                 let rh = self.layout.row_h as f64;
                 let max = self.search_max_scroll();
                 self.search.scroll = (self.search.scroll - *dy as f64 * 3.0 * rh).clamp(0.0, max);
@@ -724,6 +755,10 @@ impl App {
             return true;
         }
         match (key, m.ctrl, m.alt) {
+            (Key::Tab, false, false) => {
+                self.toggle_scope();
+                return true;
+            }
             (Key::Escape, ..) => {
                 self.close_search();
                 return true;
@@ -780,7 +815,7 @@ impl App {
 
     fn search_reveal(&mut self, row: u64) {
         let rh = self.layout.row_h as f64;
-        let lh = self.layout.list.h as f64;
+        let lh = self.search_layout().list.h as f64;
         let line = self.search.line_of_row(row);
         let (top, bottom) = (line as f64 * rh, (line + 1) as f64 * rh);
         let max = self.search_max_scroll();
@@ -799,6 +834,34 @@ impl App {
             return None;
         }
         Some(Location::parse_exact(&r.dir)?.join(&r.name))
+    }
+
+    pub(super) fn search_target(&self) -> Option<(Location, bool)> {
+        let row = self.search.focus?;
+        Some((self.search_row_location(row)?, self.search.row(row)?.meta.attrs & attr::DIR != 0))
+    }
+
+    pub(super) fn search_command(&mut self, action: &str, location: Location, folder: bool, now: Instant) {
+        match action {
+            "open" if !folder => self.effects.push(Effect::Provider { provider: location.provider(), req: ProviderRequest::Open { tab: self.tab().id, path: location.path().clone() } }),
+            "open" | "reveal" | "reveal_tab" => {
+                let (folder, select) = if action == "open" { (location, None) } else {
+                    let Some(parent) = location.parent() else { return };
+                    (parent, Some(location.file_name().to_vec()))
+                };
+                self.remember_query();
+                self.close_search();
+                self.dispatch(vec![Route { folder, select }], if action == "reveal_tab" { OpenTarget::NewTab } else { OpenTarget::CurrentTab }, now);
+            }
+            "path" => self.effects.push(Effect::SetClipboard(location.display().into_owned())),
+            "quoted" => self.effects.push(Effect::SetClipboard(format!("\"{}\"", location.display()))),
+            "copy" => {
+                if let Some(path) = location.to_windows() {
+                    self.effects.push(Effect::SetClipboardFiles { paths: vec![path], cut: false });
+                }
+            }
+            _ => {}
+        }
     }
 
     fn open_search_row(&mut self, row: u64, now: Instant) {
@@ -856,6 +919,12 @@ impl App {
             self.search.recent_open = false;
         }
         match h {
+            SHit::ColSep(col) if button == MouseButton::Left => {
+                let widths = self.search_layout().cols.map(|c| c.w / self.scale);
+                self.search.widths = Some(widths);
+                self.search.drag = SDrag::ColSep { col, x, width: widths[col] };
+                self.set_cursor(CursorIcon::ResizeHorizontal);
+            }
             SHit::Field => {
                 if clicks >= 2 {
                     self.search.edit.select_all();
@@ -877,6 +946,11 @@ impl App {
             }
             SHit::Group(k) if clicks >= 2 && button == MouseButton::Left => self.open_group(k, now),
             SHit::Thumb => self.search.drag = SDrag::Thumb(y - self.search_layout().thumb.y),
+            SHit::HThumb => self.search.drag = SDrag::HThumb(x - self.search_layout().hthumb.x),
+            SHit::HTrack => {
+                let sl = self.search_layout();
+                self.search.scroll_x = (self.search.scroll_x + if x < sl.hthumb.x { -sl.list.w } else { sl.list.w }).clamp(0.0, sl.max_x);
+            }
             SHit::Track => {
                 let dir = if y < self.search_layout().thumb.y { -1.0 } else { 1.0 };
                 let max = self.search_max_scroll();
@@ -900,7 +974,7 @@ impl App {
             self.flit_menu(x, y, menu);
             return true;
         }
-        if button != MouseButton::Left || matches!(was, SDrag::Thumb(_)) {
+        if button != MouseButton::Left || matches!(was, SDrag::Thumb(_) | SDrag::HThumb(_) | SDrag::ColSep { .. }) {
             return true;
         }
         if h != pressed {
@@ -924,6 +998,19 @@ impl App {
 
     fn search_mouse_move(&mut self, x: f32, y: f32) -> bool {
         match self.search.drag {
+            SDrag::HThumb(grab) => {
+                let sl = self.search_layout();
+                self.search.scroll_x = ((x - grab - sl.htrack.x) / (sl.htrack.w - sl.hthumb.w).max(1.0)).clamp(0.0, 1.0) * sl.max_x;
+                self.dirty = true;
+                return true;
+            }
+            SDrag::ColSep { col, x: start, width } => {
+                if let Some(widths) = &mut self.search.widths {
+                    widths[col] = (width + (x - start) / self.scale).clamp(48.0, 2400.0);
+                }
+                self.dirty = true;
+                return true;
+            }
             SDrag::Thumb(grab) => {
                 let sl = self.search_layout();
                 let range = (sl.track.h - sl.thumb.h).max(1.0);
@@ -947,7 +1034,7 @@ impl App {
             return false;
         }
         let h = self.search_hit(x, y);
-        self.set_cursor(if h == SHit::Field { CursorIcon::Text } else { CursorIcon::Default });
+        self.set_cursor(match h { SHit::Field => CursorIcon::Text, SHit::ColSep(_) => CursorIcon::ResizeHorizontal, _ => CursorIcon::Default });
         if h != self.search.hover {
             self.search.hover = h;
             self.dirty = true;
@@ -985,6 +1072,7 @@ impl App {
     }
 
     pub(super) fn draw_search<B: TextBackend>(&mut self, g: &mut Gfx<B>, arena: &Bump, t: &Theme) {
+        self.search.scroll_x = self.search.scroll_x.clamp(0.0, self.search_layout().max_x);
         self.search.scroll = self.search.scroll.clamp(0.0, self.search_max_scroll());
         self.request_visible_pages();
         let sl = self.search_layout();
@@ -1065,6 +1153,11 @@ impl App {
             let hot = matches!(s.hover, SHit::Thumb | SHit::Track) || matches!(s.drag, SDrag::Thumb(_));
             g.dl.round_rect(sl.thumb, if hot { t.scrollbar_hover } else { t.scrollbar }, sl.thumb.w / 2.0);
         }
+        if sl.max_x > 0.0 {
+            g.dl.rect(sl.htrack, t.bg);
+            g.dl.round_rect(sl.hthumb, if matches!(s.hover, SHit::HThumb) || matches!(s.drag, SDrag::HThumb(_)) { t.scrollbar_hover } else { t.scrollbar }, sl.hthumb.h / 2.0);
+        }
+        let head_from = g.dl.instances.len();
         g.dl.rect(sl.header, t.header);
         g.dl.rect(Rect::new(0.0, sl.header.bottom() - 1.0, sl.header.w, 1.0), t.separator);
         let hfont = self.ui_font(12.0);
@@ -1086,6 +1179,7 @@ impl App {
             }
             g.dl.set_clip(None);
         }
+        g.dl.confine(head_from, sl.header);
     }
 
     fn draw_search_group<B: TextBackend>(&self, g: &mut Gfx<B>, arena: &Bump, t: &Theme, k: usize, r: Rect, requests: &mut Vec<IconRequest>) {

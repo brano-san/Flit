@@ -389,6 +389,8 @@ pub static SETTINGS: &[Setting] = &[
     choice("general.recents", Page::Data, S::OptionsTitleStoreRecents, S::OptionsHelpStoreRecents, RECENT_CHOICES, |a| pos(&RECENTS, &a.opts.recents), |a, i| a.opts.recents = RECENTS[i]),
     toggle("appearance.tooltips", Page::Data, S::OptionsTitleTooltips, S::OptionsHelpTooltips, |a| a.tooltips, |a, on| a.set_tooltips(on)),
     toggle("files.auto_sizes", Page::Data, S::OptionsTitleFolderSizes, S::OptionsHelpFolderSizes, |a| a.prefs.auto_sizes, |a, on| a.set_pref(|p| &mut p.auto_sizes, on)),
+    toggle("files.count_folders", Page::Data, S::OptionsTitleCountFolders, S::OptionsHelpCountFolders, |a| a.prefs.count_folders, |a, on| a.set_pref(|p| &mut p.count_folders, on)),
+    toggle("files.count_files", Page::Data, S::OptionsTitleCountFiles, S::OptionsHelpCountFiles, |a| a.prefs.count_files, |a, on| a.set_pref(|p| &mut p.count_files, on)),
     toggle("files.sizes_ssd", Page::Data, S::OptionsTitleSizesSsd, S::OptionsHelpSizesSsd, |a| a.opts.sizes_ssd, |a, on| a.set_sizes_allowed(0, on)),
     toggle("files.sizes_hdd", Page::Data, S::OptionsTitleSizesHdd, S::OptionsHelpSizesHdd, |a| a.opts.sizes_hdd, |a, on| a.set_sizes_allowed(1, on)),
     toggle("files.sizes_network", Page::Data, S::OptionsTitleSizesNetwork, S::OptionsHelpSizesNetwork, |a| a.opts.sizes_network, |a, on| a.set_sizes_allowed(2, on)),

@@ -273,6 +273,11 @@ impl VolumeIndex {
         let mut got = 0;
         let mut whole = true;
         while chain.len() < MAX_DEPTH {
+            if chain.contains(&cur) {
+                chain.clear();
+                out.clear();
+                return;
+            }
             if self.attrs[cur as usize] & ROOT != 0 {
                 break;
             }

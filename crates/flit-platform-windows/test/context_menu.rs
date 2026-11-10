@@ -193,6 +193,17 @@ fn fake(verb: &str) -> ShellItem<'_> {
 }
 
 #[test]
+fn shell_new_submenus_are_replaced_by_flits_new_menu() {
+    for verb in ["New", "newfolder", "NewLink"] {
+        assert_eq!(place(&fake(verb)), Place::Duplicate);
+    }
+    let children = vec!["NewFolder".into(), "NewLink".into(), ".txt".into()];
+    assert_eq!(place(&ShellItem { verb: "", usable: true, children: Some(&children) }), Place::Duplicate);
+    let other = vec!["custom-action".into()];
+    assert_eq!(place(&ShellItem { verb: "", usable: true, children: Some(&other) }), Place::App);
+}
+
+#[test]
 fn shell_items_from_programs_are_kept_and_duplicates_of_flit_and_windows_items_are_not() {
     let seven_zip = ["SevenZipCompress".to_owned(), "SevenZip.Checksum".to_owned(), "SevenZip.Checksum.Calc.CRC32".to_owned()];
     let send_to = [String::new(), String::new()];

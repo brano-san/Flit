@@ -126,12 +126,19 @@ pub fn indexed(mounts: &[Mount], user: &[u8]) -> Vec<Mount> {
     mounts::visible(mounts, user).into_iter().filter(|m| !SKIPPED.contains(&m.fstype.as_str())).collect()
 }
 
+fn indexable(node: &crate::fs::Node, dev: u64, parent: u64) -> bool {
+    node.dev == dev && !node.mounted_on(dev) && node.ino != parent
+}
+
 fn read_dir(job: &Job, dev: u64, subdirs: &mut Vec<Job>) -> Batch {
     let mut batch = Batch { parent: job.id, dir: job.dir.clone(), modified: job.modified, ..Default::default() };
     let Ok(dir) = open_dir(&job.dir) else { return batch };
     let fd = dir.as_raw_fd();
     let _ = dents(fd, |name, _| {
         let Ok(node) = node_at(fd, name, false) else { return true };
+        if !indexable(&node, dev, job.id) {
+            return true;
+        }
         let bytes = name.to_bytes();
         let meta = node.meta(bytes);
         batch.names.extend_from_slice(bytes);
@@ -256,7 +263,7 @@ impl IndexSource for WalkIndex {
     }
 
     fn snapshot_key(&self, volume: &str) -> String {
-        self.keys.get(volume).map_or_else(|| volume.to_owned(), |k| format!("{k}{volume}"))
+        format!("walk-v2:{}", self.keys.get(volume).map_or_else(|| volume.to_owned(), |k| format!("{k}{volume}")))
     }
 }
 

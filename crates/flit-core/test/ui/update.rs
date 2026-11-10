@@ -162,12 +162,12 @@ fn start_up_setting_defaults_on_and_round_trips() {
 }
 
 #[test]
-fn release_notes_are_trimmed_and_capped() {
+fn release_notes_are_trimmed_without_losing_content() {
     assert_eq!(note_lines("\n\nA\n\n\nB  \n\n"), vec!["A", "", "B"]);
     let long: String = (0..30).map(|k| format!("line {k}\n")).collect();
     let lines = note_lines(&long);
-    assert_eq!(lines.len(), NOTE_LINES);
-    assert_eq!(lines.last().map(String::as_str), Some("…"));
+    assert_eq!(lines.len(), 30);
+    assert_eq!(lines.last().map(String::as_str), Some("line 29"));
     assert!(note_lines("").is_empty());
     assert_eq!(note_lines("## What's Changed\n* Faster copies\n- **Bold** fix"), vec!["What's Changed", "• Faster copies", "• Bold fix"]);
 }

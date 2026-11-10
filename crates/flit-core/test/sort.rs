@@ -187,8 +187,7 @@ fn hidden_last_keeps_folders_first_and_sinks_hidden_items_below_everything() {
     l.entries[0].attrs |= attr::HIDDEN;
     l.entries[2].attrs |= attr::HIDDEN;
     let mut o = Vec::new();
-    let mut v = ViewSpec::default();
-    v.show_hidden = true;
+    let mut v = ViewSpec { show_hidden: true, ..Default::default() };
     v.sort.folders = Folders::HiddenLast;
     for descending in [false, true] {
         v.sort.descending = descending;
