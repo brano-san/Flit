@@ -108,10 +108,11 @@ pub(super) enum TypeCmd {
     All(bool),
 }
 
-const FOLDERS: [(Folders, &str, S); 3] = [
+const FOLDERS: [(Folders, &str, S); 4] = [
     (Folders::First, "view.sort.folders_first", S::MenuSortFoldersFirst),
     (Folders::Last, "view.sort.files_first", S::MenuSortFilesFirst),
     (Folders::Mixed, "view.sort.mixed", S::MenuSortMixed),
+    (Folders::HiddenLast, "view.sort.hidden_last", S::MenuSortHiddenLast),
 ];
 
 const GROUPS: [(GroupField, &str, S); 11] = [

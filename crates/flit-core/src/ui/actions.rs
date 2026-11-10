@@ -426,6 +426,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("view.sort.folders_first", G::Flit, S::ActionsViewSortFoldersFirst, S::DescribeViewSortFoldersFirst, &[], |a, _| a.set_folders(Folders::First)),
     Action::new("view.sort.files_first", G::Flit, S::ActionsViewSortFilesFirst, S::DescribeViewSortFilesFirst, &[], |a, _| a.set_folders(Folders::Last)),
     Action::new("view.sort.mixed", G::Flit, S::ActionsViewSortMixed, S::DescribeViewSortMixed, &[], |a, _| a.set_folders(Folders::Mixed)),
+    Action::new("view.sort.hidden_last", G::Flit, S::ActionsViewSortHiddenLast, S::DescribeViewSortHiddenLast, &[], |a, _| a.set_folders(Folders::HiddenLast)),
     Action::new("view.group.tag", G::Flit, S::ActionsViewGroupTag, S::DescribeViewGroupTag, &[], |a, _| a.group_by(GroupField::Tag)),
     Action::new("view.layout.cards", G::Flit, S::ActionsViewLayoutCards, S::DescribeViewLayoutCards, &[], |a, _| a.set_layout(LayoutMode::Cards)),
     Action::new("view.layout.columns", G::Flit, S::ActionsViewLayoutColumns, S::DescribeViewLayoutColumns, &[], |a, _| a.set_layout(LayoutMode::Columns)),
@@ -805,7 +806,8 @@ impl App {
         let next = match self.tab().view_spec.sort.folders {
             Folders::First => Folders::Last,
             Folders::Last => Folders::Mixed,
-            Folders::Mixed => Folders::First,
+            Folders::Mixed => Folders::HiddenLast,
+            Folders::HiddenLast => Folders::First,
         };
         self.set_folders(next);
     }

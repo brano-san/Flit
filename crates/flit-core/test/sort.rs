@@ -123,7 +123,7 @@ fn fast_sort_matches_comparator() {
     let (l, k) = synthetic(3000);
     let groups = [GroupField::None, GroupField::Name, GroupField::Type, GroupField::Size, GroupField::Modified, GroupField::Created, GroupField::Accessed, GroupField::Items, GroupField::Volume, GroupField::FolderUsage, GroupField::Tag];
     for field in [SortField::Name, SortField::Size, SortField::Modified, SortField::Created, SortField::Accessed, SortField::Items, SortField::Folders, SortField::Files, SortField::Volume, SortField::FolderUsage, SortField::Type, SortField::Tag] {
-        for (descending, folders) in [(false, Folders::First), (true, Folders::First), (false, Folders::Last), (true, Folders::Mixed)] {
+        for (descending, folders) in [(false, Folders::First), (true, Folders::First), (false, Folders::Last), (true, Folders::Mixed), (false, Folders::HiddenLast), (true, Folders::HiddenLast)] {
             for (g, &group) in groups.iter().enumerate() {
                 let view = ViewSpec {
                     sort: SortSpec { field, descending, folders },
@@ -179,6 +179,26 @@ fn folders_go_first_last_or_mix_and_created_has_its_own_order() {
     v.sort.descending = true;
     sort(&l, &k, v, &mut o);
     assert_eq!(names(&l, &o), ["b.txt", "a.rs", "Dir10"]);
+}
+
+#[test]
+fn hidden_last_keeps_folders_first_and_sinks_hidden_items_below_everything() {
+    let (mut l, k) = listing(&[(".git", 0, true), ("b.txt", 30, false), (".env", 5, false), ("Dir", 0, true), ("a.rs", 20, false)]);
+    l.entries[0].attrs |= attr::HIDDEN;
+    l.entries[2].attrs |= attr::HIDDEN;
+    let mut o = Vec::new();
+    let mut v = ViewSpec::default();
+    v.show_hidden = true;
+    v.sort.folders = Folders::HiddenLast;
+    for descending in [false, true] {
+        v.sort.descending = descending;
+        sort(&l, &k, v, &mut o);
+        let want = if descending { ["Dir", "b.txt", "a.rs", ".git", ".env"] } else { ["Dir", "a.rs", "b.txt", ".git", ".env"] };
+        assert_eq!(names(&l, &o), want);
+        for (row, &i) in o.iter().enumerate() {
+            assert_eq!(find_row(&l, &k, &v, &o, i), Some(row), "{descending}");
+        }
+    }
 }
 
 #[test]

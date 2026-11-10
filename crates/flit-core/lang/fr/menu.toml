@@ -81,6 +81,7 @@ origin = "Emplacement d’origine"
 deleted = "Date de suppression"
 folders_first = "Afficher les dossiers en premier"
 files_first = "Afficher les fichiers en premier"
+hidden_last = "Dossiers d'abord, masqués en bas"
 mixed = "Mélanger fichiers et dossiers"
 
 [group]

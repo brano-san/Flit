@@ -245,6 +245,7 @@
 "view.sort.descending" = "Absteigend sortieren"
 "view.sort.folders_first" = "Ordner vor Dateien anzeigen"
 "view.sort.files_first" = "Dateien vor Ordnern anzeigen"
+"view.sort.hidden_last" = "Ordner vor Dateien, versteckte ganz unten anzeigen"
 "view.sort.mixed" = "Dateien und Ordner gemischt sortieren"
 "view.group.tag" = "Nach Tags gruppieren"
 "view.layout.cards" = "Layout „Karten“"

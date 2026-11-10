@@ -245,6 +245,7 @@
 "view.sort.descending" = "最大、最新或末字母在前"
 "view.sort.folders_first" = "目录显示在文件之上"
 "view.sort.files_first" = "文件显示在目录之上"
+"view.sort.hidden_last" = "目录显示在文件之上，隐藏项放在最底部"
 "view.sort.mixed" = "将目录与文件一起排序"
 "view.group.tag" = "按颜色标记对项目分组"
 "view.layout.cards" = "大磁贴，详细信息位于图标旁"

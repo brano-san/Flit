@@ -245,6 +245,7 @@
 "view.sort.descending" = "Сортировать по убыванию"
 "view.sort.folders_first" = "Показывать папки перед файлами"
 "view.sort.files_first" = "Показывать файлы перед папками"
+"view.sort.hidden_last" = "Показывать папки перед файлами, скрытые в конце"
 "view.sort.mixed" = "Сортировать файлы и папки вместе"
 "view.group.tag" = "Группировать по тегам"
 "view.layout.cards" = "Макет «Карточки»"

@@ -245,6 +245,7 @@
 "view.sort.descending" = "递减排序"
 "view.sort.folders_first" = "文件夹显示在文件之前"
 "view.sort.files_first" = "文件显示在文件夹之前"
+"view.sort.hidden_last" = "文件夹优先，隐藏项放在最后"
 "view.sort.mixed" = "排序时混合文件和文件夹"
 "view.group.tag" = "按标记分组"
 "view.layout.cards" = "卡片布局"

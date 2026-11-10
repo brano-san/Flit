@@ -81,6 +81,7 @@ origin = "Ubicación original"
 deleted = "Fecha de eliminación"
 folders_first = "Mostrar primero las carpetas"
 files_first = "Mostrar primero los archivos"
+hidden_last = "Carpetas primero, ocultos al final"
 mixed = "Mezclar archivos y carpetas"
 
 [group]

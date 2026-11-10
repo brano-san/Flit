@@ -81,6 +81,7 @@ origin = "原位置"
 deleted = "删除日期"
 folders_first = "文件夹优先"
 files_first = "文件优先"
+hidden_last = "文件夹优先，隐藏项置底"
 mixed = "混合文件和文件夹"
 
 [group]

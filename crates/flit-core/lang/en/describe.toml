@@ -245,6 +245,7 @@
 "view.sort.descending" = "Largest, newest or last letter first"
 "view.sort.folders_first" = "Keep directories above files"
 "view.sort.files_first" = "Keep files above directories"
+"view.sort.hidden_last" = "Keep directories above files and hidden items at the very bottom"
 "view.sort.mixed" = "Sort directories together with files"
 "view.group.tag" = "Group items by their color tags"
 "view.layout.cards" = "Large tiles with details next to the icon"

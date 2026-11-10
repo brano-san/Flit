@@ -81,6 +81,7 @@ origin = "Original location"
 deleted = "Date deleted"
 folders_first = "Show folders first"
 files_first = "Show files first"
+hidden_last = "Folders first, hidden at the bottom"
 mixed = "Mix files and folders"
 
 [group]

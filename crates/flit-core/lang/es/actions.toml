@@ -245,6 +245,7 @@
 "view.sort.descending" = "Orden descendente"
 "view.sort.folders_first" = "Mostrar las carpetas antes que los archivos"
 "view.sort.files_first" = "Mostrar los archivos antes que las carpetas"
+"view.sort.hidden_last" = "Mostrar primero las carpetas y los ocultos al final"
 "view.sort.mixed" = "Mezclar archivos y carpetas al ordenar"
 "view.group.tag" = "Agrupar por etiquetas"
 "view.layout.cards" = "Diseño Tarjetas"

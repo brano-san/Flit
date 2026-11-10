@@ -245,6 +245,7 @@
 "view.sort.descending" = "Primero lo más grande, lo más reciente o la última letra"
 "view.sort.folders_first" = "Mantener los directorios encima de los archivos"
 "view.sort.files_first" = "Mantener los archivos encima de los directorios"
+"view.sort.hidden_last" = "Mantener los directorios encima de los archivos y los elementos ocultos al final"
 "view.sort.mixed" = "Ordenar los directorios junto con los archivos"
 "view.group.tag" = "Agrupar los elementos por sus etiquetas de color"
 "view.layout.cards" = "Mosaicos grandes con detalles junto al icono"

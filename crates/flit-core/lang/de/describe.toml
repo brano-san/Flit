@@ -245,6 +245,7 @@
 "view.sort.descending" = "Größte, neueste oder letzter Buchstabe zuerst"
 "view.sort.folders_first" = "Verzeichnisse über Dateien halten"
 "view.sort.files_first" = "Dateien über Verzeichnissen halten"
+"view.sort.hidden_last" = "Verzeichnisse über Dateien und versteckte Elemente ganz unten halten"
 "view.sort.mixed" = "Verzeichnisse zusammen mit Dateien sortieren"
 "view.group.tag" = "Elemente nach ihren Farbtags gruppieren"
 "view.layout.cards" = "Große Kacheln mit Details neben dem Symbol"

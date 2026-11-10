@@ -245,6 +245,7 @@
 "view.sort.descending" = "Sort in descending order"
 "view.sort.folders_first" = "Show folders before files"
 "view.sort.files_first" = "Show files before folders"
+"view.sort.hidden_last" = "Show folders first, hidden at the bottom"
 "view.sort.mixed" = "Mix files and folders when sorting"
 "view.group.tag" = "Group by tags"
 "view.layout.cards" = "Cards layout"

@@ -127,6 +127,7 @@ impl App {
                 Folders::First => S::TooltipOrderFirst,
                 Folders::Last => S::TooltipOrderLast,
                 Folders::Mixed => S::TooltipOrderMixed,
+                Folders::HiddenLast => S::TooltipOrderHiddenLast,
             },
             BottomHit::Layout => S::TooltipLayoutPicker,
             BottomHit::Zoom => S::TooltipZoom,

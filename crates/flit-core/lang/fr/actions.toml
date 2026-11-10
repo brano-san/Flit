@@ -245,6 +245,7 @@
 "view.sort.descending" = "Trier par ordre décroissant"
 "view.sort.folders_first" = "Afficher les dossiers avant les fichiers"
 "view.sort.files_first" = "Afficher les fichiers avant les dossiers"
+"view.sort.hidden_last" = "Afficher les dossiers en premier, les masqués en bas"
 "view.sort.mixed" = "Mélanger fichiers et dossiers lors du tri"
 "view.group.tag" = "Regrouper par balises"
 "view.layout.cards" = "Disposition Cartes"

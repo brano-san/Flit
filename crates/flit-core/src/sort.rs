@@ -32,6 +32,7 @@ pub enum Folders {
     First,
     Last,
     Mixed,
+    HiddenLast,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash, serde::Serialize, serde::Deserialize)]
@@ -390,11 +391,7 @@ pub fn cmp(l: &Listing, k: &SortKeys, v: &ViewSpec, a: u32, b: u32) -> Ordering 
 #[inline]
 fn item_cmp(l: &Listing, k: &SortKeys, spec: SortSpec, a: u32, b: u32) -> Ordering {
     let (ea, eb) = (&l.entries[a as usize], &l.entries[b as usize]);
-    let dirs = match spec.folders {
-        Folders::First => eb.is_dir().cmp(&ea.is_dir()),
-        Folders::Last => ea.is_dir().cmp(&eb.is_dir()),
-        Folders::Mixed => Ordering::Equal,
-    };
+    let dirs = folder_rank(spec.folders, ea).cmp(&folder_rank(spec.folders, eb));
     if dirs != Ordering::Equal {
         return dirs;
     }
@@ -415,6 +412,16 @@ fn item_cmp(l: &Listing, k: &SortKeys, spec: SortSpec, a: u32, b: u32) -> Orderi
     .then_with(|| l.name(a).cmp(l.name(b)));
     let o = if spec.descending { o.reverse() } else { o };
     o.then(a.cmp(&b))
+}
+
+#[inline]
+fn folder_rank(folders: Folders, e: &Entry) -> u16 {
+    match folders {
+        Folders::First => !e.is_dir() as u16,
+        Folders::Last => e.is_dir() as u16,
+        Folders::Mixed => 0,
+        Folders::HiddenLast => !e.is_dir() as u16 | (u16::from(e.attrs & attr::HIDDEN != 0) << 1),
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -480,11 +487,7 @@ pub fn sort(l: &Listing, k: &SortKeys, view: ViewSpec, out: &mut Vec<u32>) {
                 SortField::FileSystem => file_system(l, i).len() <= 8,
                 _ => true,
             };
-            let group = match spec.folders {
-                Folders::First => !e.is_dir() as u16,
-                Folders::Last => e.is_dir() as u16,
-                Folders::Mixed => 0,
-            };
+            let group = folder_rank(spec.folders, e);
             let (gkey, gexact) = group_key(l, i, &view);
             let name2 = inv(key_word(k.key(i), 8));
             Item { gkey, primary: inv(primary), name: inv(k.prefix[i as usize]), name2, idx: i, group, exact, gexact }

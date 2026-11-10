@@ -410,10 +410,10 @@ fn new_commands_work_on_the_list() {
     press(&mut app, ctrl(Key::Char('0')));
     assert_eq!(app.ui_scale(), 100);
     let folders = app.tab().view_spec.sort.folders;
-    for _ in 0..3 {
+    for _ in 0..4 {
         app.run_action("view.sort.cycle_folders", Instant::now());
     }
-    assert_eq!(app.tab().view_spec.sort.folders, folders, "three steps go round");
+    assert_eq!(app.tab().view_spec.sort.folders, folders, "four steps go round");
 }
 
 #[test]

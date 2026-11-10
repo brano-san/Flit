@@ -59,11 +59,11 @@ fn counters_hide_folders_and_files_and_show_what_is_left() {
 fn the_order_button_cycles_folders_first_last_and_mixed() {
     let mut app = harness::app(&["a.txt"]);
     let mut seen = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..4 {
         click(&mut app, BottomHit::Order);
         seen.push(app.tab().view_spec.sort.folders);
     }
-    assert_eq!(seen, [Folders::Last, Folders::Mixed, Folders::First]);
+    assert_eq!(seen, [Folders::Last, Folders::Mixed, Folders::HiddenLast, Folders::First]);
     assert_eq!(app.bottom_tip(BottomHit::Order), S::TooltipOrderFirst);
 }
 

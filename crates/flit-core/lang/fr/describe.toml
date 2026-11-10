@@ -245,6 +245,7 @@
 "view.sort.descending" = "Le plus grand, le plus récent ou la dernière lettre en premier"
 "view.sort.folders_first" = "Garder les répertoires au-dessus des fichiers"
 "view.sort.files_first" = "Garder les fichiers au-dessus des répertoires"
+"view.sort.hidden_last" = "Garder les répertoires au-dessus des fichiers et les éléments masqués tout en bas"
 "view.sort.mixed" = "Trier les répertoires avec les fichiers"
 "view.group.tag" = "Regrouper les éléments selon leurs balises de couleur"
 "view.layout.cards" = "Grandes vignettes avec détails à côté de l’icône"
