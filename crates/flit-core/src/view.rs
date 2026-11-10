@@ -609,6 +609,19 @@ impl DirView {
         self.prune();
     }
 
+    pub fn invalidate_dir_stats(&mut self, i: u32) {
+        let Some(e) = self.listing().entries.get(i as usize) else { return };
+        if !e.is_dir() || e.attrs & (attr::VOLUME | attr::DELETED) != 0 {
+            return;
+        }
+        let mut meta = e.meta();
+        meta.attrs &= !attr::SIZE_KNOWN;
+        meta.size = 0;
+        let snap = Arc::make_mut(&mut self.snap);
+        snap.listing.set_meta(i, meta);
+        self.rows_changed();
+    }
+
     pub fn graft(&mut self, folder: &[u8], child: &Listing) -> usize {
         let snap = Arc::make_mut(&mut self.snap);
         let start = snap.listing.len() as u32;

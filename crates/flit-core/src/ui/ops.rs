@@ -85,6 +85,7 @@ pub(super) enum Then {
     Reveal(Vec<u8>),
     Open(FsPath),
     Launch,
+    TrashArchives(Vec<FsPath>),
 }
 
 struct Pending {
@@ -472,7 +473,7 @@ impl App {
         self.start_op_for(self.tab().id, op, origin, then);
     }
 
-    fn start_op_for(&mut self, tab: TabId, op: FileOp, origin: Origin, then: Then) {
+    pub(super) fn start_op_for(&mut self, tab: TabId, op: FileOp, origin: Origin, then: Then) {
         self.start_op_on(ProviderId::Local, tab, op, origin, then);
     }
 
@@ -1050,8 +1051,6 @@ impl App {
         let (Some(report), Some(p)) = (report, pending) else { return };
         let incomplete_removal = p.optimistic_removal && (error.is_some() || report.items.len() != removal_count(&report.op));
         if incomplete_removal {
-            // A skipped or failed item was hidden optimistically.  Reload to
-            // put back precisely the items Windows kept.
             if let Some(k) = k {
                 self.reload(k, now);
             }
@@ -1061,12 +1060,31 @@ impl App {
             }
         }
         self.ops.journal.record(p.origin, p.provider.clone(), &report);
-        // A watcher can add a pasted/moved folder after the normal initial
-        // size pass.  Reloading the destination makes the table schedule a
-        // fresh directory-size walk, rather than leaving its Size cell blank.
-        if self.prefs.auto_sizes && k == Some(self.cur) && matches!(report.op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Restore(_)) {
-            self.reload(self.cur, now);
-        }
+        self.each_pane(|a, k| {
+            let t = &mut a.tabs[k];
+            if t.view_loc.provider() != p.provider {
+                return;
+            }
+            let root = t.view_loc.path().clone();
+            let Some(v) = &mut t.view else { return };
+            let changes_source = matches!(report.op, FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Rename { .. } | FileOp::Trash(_) | FileOp::Delete(_) | FileOp::Restore(_) | FileOp::Flatten(_));
+            for path in report.items.iter().flat_map(|(from, to)| std::iter::once(to).chain(changes_source.then_some(from))) {
+                let mut child = path.clone();
+                while let Some(parent) = child.parent() {
+                    if parent.same(&root) {
+                        if let Some(i) = v.find(child.file_name()) {
+                            v.invalidate_dir_stats(i);
+                        }
+                        break;
+                    }
+                    if !parent.is_inside(&root) {
+                        break;
+                    }
+                    child = parent;
+                }
+            }
+        });
+        self.compute_dir_sizes();
         if self.archive_then(tab, &p.then, &report, error.as_deref(), now) {
             return;
         }

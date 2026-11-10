@@ -30,6 +30,35 @@ impl Fs for MemFs {
 }
 
 struct NoWatch;
+
+#[test]
+fn size_policy_distinguishes_ssd_hdd_and_mounted_network_paths() {
+    struct MediaFs { spinning: bool, network: bool }
+    impl Fs for MediaFs {
+        fn read_dir(&self, _: &FsPath, _: &mut ListingBuilder<'_>) -> Result<(), FsError> { panic!("unexpected directory walk") }
+        fn seek_penalty(&self, _: &FsPath) -> Option<bool> { Some(self.spinning) }
+        fn remote(&self, _: &FsPath) -> bool { self.network }
+        fn dir_sizes(&self, _: &FsPath, items: &[(u32, Vec<u8>)], _: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, DirStats) + Sync)) {
+            for (i, _) in items { report(*i, DirStats::default()); }
+        }
+    }
+    for (spinning, network, kind) in [(false, false, 0), (true, false, 1), (false, true, 2), (true, true, 2)] {
+        for enabled in 0..3 {
+            let (tx, rx) = unbounded();
+            let cancel = GenToken::default();
+            let gen = 1;
+            cancel.set(gen);
+            let mut allowed = [false; 3];
+            allowed[enabled] = true;
+            let job = SizesJob { tab: 1, gen, dir: FsPath::parse("/home/user/HDD").unwrap(), items: vec![(4, b"child".to_vec())], cancel, allowed };
+            let wake: Wake = Arc::new(|| {});
+            run_sizes(&MediaFs { spinning, network }, job, &tx, &wake);
+            let event = rx.try_recv().unwrap();
+            assert_eq!(matches!(event, ProviderEvent::DirSize { idx: 4, .. }), enabled == kind);
+            assert_eq!(matches!(event, ProviderEvent::SizesSkipped { .. }), enabled != kind);
+        }
+    }
+}
 impl Watcher for NoWatch {
     fn new(_: Sender<ProviderEvent>, _: Wake) -> Result<Self, PlatformError> {
         Ok(NoWatch)
@@ -95,7 +124,7 @@ fn list_streams_sorted_snapshots_and_sizes() {
     let names: Vec<_> = snap.order.iter().map(|&i| String::from_utf8_lossy(snap.listing.name(i)).into_owned()).collect();
     assert_eq!(names, ["sub", "a.txt", "b.txt", "c", "d"]);
     assert_eq!(snap.gen, 3);
-    provider.submit(ProviderRequest::DirSizes { tab: 1, gen: 3, dir: p(r"C:\r"), items: vec![(1, b"sub".to_vec())], cancel: cancel.clone() });
+    provider.submit(ProviderRequest::DirSizes { tab: 1, gen: 3, dir: p(r"C:\r"), items: vec![(1, b"sub".to_vec())], cancel: cancel.clone(), allowed: [true; 3] });
     let ProviderEvent::DirSize { tab: 1, gen: 3, idx: 1, stats } = rx.recv_timeout(Duration::from_secs(5)).unwrap() else { panic!("folder size expected") };
     assert_eq!((stats.size, stats.partial), (120, false));
     provider.submit(ProviderRequest::Open { tab: 4, path: p(r"C:\r\a.txt") });

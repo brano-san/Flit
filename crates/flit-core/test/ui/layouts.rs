@@ -320,7 +320,7 @@ fn adaptive_shows_media_folders_as_a_grid_and_keeps_its_first_choice_while_loadi
     let mut mixed = media.clone();
     mixed.extend(files(200, "txt"));
     publish(&mut app, &mixed, true);
-    assert_eq!(app.tab().look, LayoutMode::Grid, "no jump once the listing grows");
+    assert_eq!(app.tab().look, LayoutMode::Details, "the completed listing determines the final layout");
     app.refresh(Instant::now());
     publish(&mut app, &mixed[..10], false);
     assert_eq!(app.tab().look, LayoutMode::Details, "the next visit starts from the final decision");

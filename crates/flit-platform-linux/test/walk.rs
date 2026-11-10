@@ -120,6 +120,10 @@ fn media_comes_from_the_rotational_flag_of_the_whole_disk() {
     assert_eq!(media(&sys, libc::makedev(8, 0)), Media::Spinning);
     assert_eq!(media(&sys, libc::makedev(259, 0)), Media::Solid);
     assert_eq!(media(&sys, libc::makedev(0, 42)), Media::Unknown);
+    std::fs::create_dir_all(t.path().join("devices/dm-0/slaves")).unwrap();
+    symlink("../../sda/sda1", t.path().join("devices/dm-0/slaves/sda1")).unwrap();
+    symlink("../devices/dm-0", sys.join("253:0")).unwrap();
+    assert_eq!(media(&sys, libc::makedev(253, 0)), Media::Spinning);
 }
 
 #[test]

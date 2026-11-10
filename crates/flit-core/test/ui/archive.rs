@@ -80,6 +80,26 @@ fn only(app: &mut App) -> (OpId, FileOp) {
     v.remove(0)
 }
 
+#[test]
+fn extract_delete_keeps_the_archive_on_failure_and_trashes_it_only_on_success() {
+    for error in [None, Some("Cancelled".to_owned()), Some("Skipped 1 items".to_owned())] {
+        let mut app = app_at(r"C:\x");
+        deliver(&mut app, &[("a.zip", FILE)]);
+        select(&mut app, &["a.zip"]);
+        app.extract_and_delete();
+        let (id, op) = only(&mut app);
+        assert!(matches!(&op, FileOp::Archive(ArchiveOp::Extract { place: Place::Smart, .. })));
+        let tab = app.tab().id;
+        app.op_done(tab, id, error.clone(), Some(OpReport { op, items: vec![(p(r"C:\x\a.zip"), p(r"C:\x\a"))] }), t0());
+        let next = ops(&mut app);
+        if error.is_none() {
+            assert!(matches!(next.as_slice(), [(_, FileOp::Trash(paths))] if paths == &[p(r"C:\x\a.zip")]));
+        } else {
+            assert!(next.is_empty());
+        }
+    }
+}
+
 fn form(app: &App) -> &Form {
     app.jobs.form.as_ref().unwrap()
 }
@@ -419,7 +439,7 @@ fn the_context_menu_offers_extract_and_compress_by_selection() {
             _ => None,
         })
     };
-    assert_eq!(sub("Extract").unwrap(), ["Extract files…", "Extract here", "Smart extract", "Extract to \u{201C}a\\\u{201D}", "Open as folder"]);
+    assert_eq!(sub("Extract").unwrap(), ["Extract files…", "Extract here", "Smart extract", "Extract to \u{201C}a\\\u{201D}", "Extract and delete archive", "Open as folder"]);
     assert_eq!(sub("Compress").unwrap(), ["Add to archive…", "Compress to \u{201C}a (2).zip\u{201D}", "Compress to \u{201C}a.7z\u{201D}"]);
     select(&mut app, &["b.txt"]);
     let menu = app.build_menu(true);

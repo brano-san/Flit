@@ -55,7 +55,18 @@ impl Tab {
 }
 
 impl App {
+    pub(super) fn set_git_integration(&mut self, on: bool) {
+        self.prefs.git_integration = on;
+        self.each_pane(|a, k| {
+            a.tabs[k].git = None;
+            if on { a.git_refresh(k, false); }
+        });
+        self.layout();
+        self.dirty = true;
+    }
+
     pub(super) fn git_refresh(&mut self, k: usize, changed: bool) {
+        if !self.prefs.git_integration { return; }
         let t = &self.tabs[k];
         if changed && t.git.as_ref().is_none_or(|g| g.root.is_none()) {
             return;
@@ -128,6 +139,7 @@ impl App {
     }
 
     fn git_status_arrived(&mut self, tab: TabId, gen: u64, info: Option<Arc<GitInfo>>) {
+        if !self.prefs.git_integration { return; }
         let info = info.filter(|g| g.root.is_some());
         if let Some(k) = self.tabs.iter().position(|t| t.id == tab && t.gen == gen) {
             self.tabs[k].git = info;

@@ -437,10 +437,6 @@ impl App {
             m.radio(id, mode.title(), keys, mode == t.mode);
             m.iconed(mode.icon());
         }
-        m.separator();
-        m.action("view.zoom_in", S::MenuLargerItems.t());
-        m.action("view.zoom_out", S::MenuSmallerItems.t());
-        m.separator();
         m.check("view.thumbnails", S::MenuShowThumbnails.t(), self.prefs.thumbnails);
         m.check("view.auto_sizes", S::MenuShowFolderSizes.t(), self.prefs.auto_sizes);
     }
@@ -578,6 +574,7 @@ impl App {
                 m.action("archive.extract_here", S::MenuExtractHere.t());
                 m.action("archive.smart", S::MenuSmartExtract.t());
                 m.action("archive.extract_folder", &own);
+                m.action("archive.extract_delete", S::ArchiveExtractDelete.t());
                 if archives.len() == 1 {
                     m.action("archive.open", S::MenuOpenAsFolder.t());
                 }
@@ -653,7 +650,8 @@ impl App {
             Some(Cmd::Column(c)) => self.column_command(c),
             Some(Cmd::Types(c)) => self.types_command(c),
             Some(Cmd::SortColumn(f)) => self.sort_column(f),
-            Some(Cmd::FolderProperties(dir)) => self.effects.push(super::Effect::Properties(vec![dir])),
+            Some(Cmd::FolderProperties(dir)) if !self.caps.unix_paths => self.effects.push(super::Effect::Properties(vec![dir])),
+            Some(Cmd::FolderProperties(dir)) => self.properties_for(Some(dir)),
             Some(Cmd::User(launch)) => self.launch(launch),
             None => {}
         }

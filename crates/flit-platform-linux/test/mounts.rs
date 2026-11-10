@@ -1,6 +1,17 @@
 use super::*;
 use crate::temp::Temp;
 
+#[test]
+fn mounted_network_folders_use_the_deepest_mount_and_path_boundaries() {
+    let table = parse(b"1 0 8:1 / / rw - ext4 /dev/sda1 rw\n2 1 0:2 / /home/user/NAS rw - cifs //server/share rw\n3 1 0:3 / /home/user/ssh rw - fuse.sshfs user@host:/ rw\n4 2 8:2 / /home/user/NAS/local rw - ext4 /dev/sda2 rw\n5 1 0:4 / /run/user/1000/gvfs rw - fuse.gvfsd-fuse gvfs rw\n");
+    for path in ["/home/user/NAS", "/home/user/NAS/folder", "/home/user/ssh/docs", "/run/user/1000/gvfs/smb-share:server=a"] {
+        assert!(remote_path(Path::new(path), &table), "{path}");
+    }
+    for path in ["/", "/home/user/HDD", "/home/user/NAS-backup", "/home/user/NAS/local/docs"] {
+        assert!(!remote_path(Path::new(path), &table), "{path}");
+    }
+}
+
 const WSL: &str = r"75 80 0:29 / /usr/lib/modules/6.6.87.2-microsoft-standard-WSL2 rw,nosuid,nodev,noatime - overlay none rw,lowerdir=/modules
 76 80 0:32 / /mnt/wsl rw,relatime shared:1 - tmpfs none rw
 80 65 8:48 / / rw,relatime - ext4 /dev/sdd rw,discard,errors=remount-ro,data=ordered

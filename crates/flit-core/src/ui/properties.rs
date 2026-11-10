@@ -65,18 +65,30 @@ impl App {
     }
 
     pub fn properties_dialog(&mut self) {
+        self.properties_for(None);
+    }
+
+    pub(super) fn properties_for(&mut self, folder_path: Option<FsPath>) {
         let t = self.tab();
         let Some(v) = &t.view else { return };
-        let items: Vec<u32> = v.selected().collect();
-        if items.is_empty() || self.shell_bin() {
+        let items: Vec<u32> = if folder_path.is_some() { Vec::new() } else { v.selected().collect() };
+        if self.shell_bin() || items.is_empty() && !self.caps.unix_paths {
             return self.properties();
         }
-        let paths = match self.item_paths(&items) {
-            Ok(p) => p,
-            Err(e) => return self.status(e),
+        let folder = items.is_empty();
+        let paths = if folder {
+            match folder_path.or_else(|| t.view_loc.to_windows()).filter(|p| p.kind() != crate::path::PathKind::Computer) {
+                Some(p) => vec![p],
+                None => return,
+            }
+        } else {
+            match self.item_paths(&items) {
+                Ok(p) => p,
+                Err(e) => return self.status(e),
+            }
         };
         let l = v.listing();
-        let entries: Vec<Entry> = items.iter().map(|&i| l.entries[i as usize]).collect();
+        let entries: Vec<Entry> = if folder { vec![Entry { attrs: attr::DIR, ..Default::default() }] } else { items.iter().map(|&i| l.entries[i as usize]).collect() };
         let packed = self.archive_view().is_some();
         let folders = entries.iter().filter(|e| e.is_dir()).count() as u64;
         let files = entries.len() as u64 - folders;
@@ -89,7 +101,12 @@ impl App {
             c.push(Control::value(label.t(), value));
             Some(c.len() - 1)
         };
-        let title = match items.as_slice() {
+        let title = if folder {
+            let shown = name::display(paths[0].file_name()).into_owned();
+            add(&mut controls, S::PropertiesName, &shown);
+            add(&mut controls, S::PropertiesType, S::DetailsTypeFolder.t());
+            crate::tr!(S::PropertiesTitle, name = shown)
+        } else { match items.as_slice() {
             &[i] => {
                 let arena = Bump::new();
                 let shown = name::display(l.name(i)).into_owned();
@@ -101,7 +118,7 @@ impl App {
                 add(&mut controls, S::PropertiesSelected, &contains_text(files, folders));
                 S::PropertiesTitleMany.t().to_owned()
             }
-        };
+        } };
         add(&mut controls, S::PropertiesLocation, &location);
         if !packed {
             rows.file_system = add(&mut controls, S::PropertiesFileSystem, counting);

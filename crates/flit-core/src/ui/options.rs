@@ -504,7 +504,18 @@ impl App {
     }
 
     pub(super) fn sizes_allowed(&self, loc: &Location) -> bool {
-        if remote(loc) { self.opts.sizes_network } else { self.opts.sizes_ssd }
+        if remote(loc) { self.opts.sizes_network } else { self.opts.sizes_ssd || self.opts.sizes_hdd || self.opts.sizes_network }
+    }
+
+    pub(super) fn set_sizes_allowed(&mut self, kind: usize, on: bool) {
+        match kind {
+            0 => self.opts.sizes_ssd = on,
+            1 => self.opts.sizes_hdd = on,
+            _ => self.opts.sizes_network = on,
+        }
+        self.each_pane(|a, k| a.tabs[k].stop_sizes());
+        self.compute_dir_sizes();
+        self.dirty = true;
     }
 
     pub(super) fn dim_alpha(&self) -> u8 {

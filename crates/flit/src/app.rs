@@ -810,7 +810,7 @@ impl<P: Platform> Handler<P> {
                 _ => {}
             }
             let target = match &ev {
-                ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } => self.window_of_tab(*tab),
+                ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } | ProviderEvent::SizesSkipped { tab, .. } => self.window_of_tab(*tab),
                 ProviderEvent::OpDone { tab, .. } => self.window_of_tab(*tab).or(self.active),
                 ProviderEvent::Navigate { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } | ProviderEvent::Hashed { tab, .. } | ProviderEvent::Measured { tab, .. } | ProviderEvent::Status { tab, .. } => self.window_of_tab(*tab),
             };

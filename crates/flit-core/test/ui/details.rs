@@ -245,17 +245,23 @@ fn the_header_menu_shows_hides_and_fits_columns_and_the_bin_keeps_its_own() {
     let w = app.tab().columns.widths;
     assert_eq!([Column::Modified, Column::Created, Column::Size].map(|c| w[c as usize]), [170.0, 160.0, 80.0]);
     let k = app.layout.columns.iter().position(|&c| c == Column::Size).unwrap();
+    let displayed = app.layout.cols[k].w / app.content_px();
+    let other_widths: Vec<_> = app.layout.columns.iter().zip(&app.layout.cols).filter(|(c, _)| **c != Column::Name && **c != Column::Size).map(|(&c, r)| (c, r.w / app.content_px())).collect();
+    let expected = (displayed + 25.0).min(app.layout.list.w / app.content_px() - crate::ui::NAME_MIN_W - other_widths.iter().map(|(_, w)| w).sum::<f32>());
     let (sx, sy) = (app.layout.cols[k].x, h.y + h.h / 2.0);
     app.on_event(&Event::MouseDown { x: sx, y: sy, button: MouseButton::Left, clicks: 1 }, Instant::now());
     app.on_event(&Event::MouseMove { x: sx - 25.0, y: sy }, Instant::now());
     app.on_event(&Event::MouseUp { x: sx - 25.0, y: sy, button: MouseButton::Left }, Instant::now());
-    assert_eq!(app.tab().columns.width(Column::Size), 105.0);
+    assert_eq!(app.tab().columns.width(Column::Size), expected);
+    for (col, width) in other_widths {
+        assert_eq!(app.tab().columns.width(col), width);
+    }
     app.navigate(Location::recycle_bin(), Instant::now());
     deliver(&mut app, &[]);
     assert_eq!(app.columns(), BIN_COLUMNS);
     assert_eq!(app.tab().columns.width(Column::Size), 90.0);
     app.go_history(false, Instant::now());
-    assert_eq!((app.tab().columns.width(Column::Size), app.tab().columns.shown(Column::Type)), (105.0, false));
+    assert_eq!((app.tab().columns.width(Column::Size), app.tab().columns.shown(Column::Type)), (expected, false));
 }
 
 #[test]
@@ -360,6 +366,51 @@ fn unavailable_folders_explain_themselves_and_auto_sizes_measure_loaded_folders(
     let fx = deliver_with(&mut app, &[], Some(FsError { kind: FsErrorKind::NotFound, code: 3 }));
     assert!(!fx.iter().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::DirSizes { .. }, .. })));
     assert_eq!(app.tab().error.as_deref(), Some("Path not found (0x00000003)"));
+}
+
+#[test]
+fn hidden_statistics_columns_cancel_work_and_new_entries_do_not_recount_their_neighbors() {
+    let mut app = app_at(r"C:\x");
+    run(&mut app, "view.auto_sizes");
+    let fx = deliver_with(&mut app, &[("old", 0, true)], None);
+    let token = fx.iter().find_map(|e| match e { Effect::Provider { req: ProviderRequest::DirSizes { cancel, .. }, .. } => Some(cancel.clone()), _ => None }).unwrap();
+    let gen = app.tab().gen;
+    for c in [Column::Size, Column::Folders, Column::Files] {
+        if app.tab().columns.shown(c) { app.toggle_column(c); }
+    }
+    assert!(!token.is_current(gen));
+    assert!(!app.tab().sizing(0));
+    app.drain_effects().for_each(drop);
+    app.compute_dir_sizes();
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::DirSizes { .. }, .. })));
+    app.tab_mut().view.as_mut().unwrap().set_dir_stats(0, crate::listing::DirStats { size: 42, ..Default::default() });
+    app.toggle_column(Column::Size);
+    app.drain_effects().for_each(drop);
+    app.tab_mut().view.as_mut().unwrap().apply(&crate::listing::DirChange { name: b"new".to_vec(), kind: crate::listing::ChangeKind::Added, meta: Some(Meta { attrs: attr::DIR, ..Default::default() }) });
+    app.compute_dir_sizes();
+    let wanted: Vec<_> = app.drain_effects().filter_map(|e| match e { Effect::Provider { req: ProviderRequest::DirSizes { items, .. }, .. } => Some(items), _ => None }).flatten().collect();
+    assert_eq!(wanted, [(1, b"new".to_vec())]);
+    assert!(app.tab().sizing(1));
+    assert_eq!(app.tab().view.as_ref().unwrap().listing().entries[0].size, 42);
+}
+
+#[test]
+fn checkbox_animation_starts_at_zero_and_finishes_once() {
+    let now = Instant::now();
+    let mut checks = Checks::default();
+    checks.settle(vec![(1, false)], true, now);
+    assert_eq!(checks.progress(1, now), 0.0);
+    checks.settle(vec![(1, true)], true, now);
+    let mut previous = 0.0;
+    for ms in [20, 60, 100, 160, 300, 600] {
+        let time = now + Duration::from_millis(ms);
+        let progress = checks.progress(1, time);
+        assert!(progress >= previous);
+        previous = progress;
+        checks.settle(vec![(1, true)], true, time);
+    }
+    assert_eq!(previous, 1.0);
+    assert!(checks.fresh.is_empty());
 }
 
 #[test]

@@ -514,6 +514,7 @@ enum Drag {
     ColSep { col: Column, start_x: f32, start_w: f32 },
     Splitter { start_x: f32, start_w: f32 },
     PinMove { from: usize, to: usize },
+    PlaceMove { from: usize, to: usize },
     Preview { hit: preview_pane::PaneHit, start: f32, size: f32 },
     Marquee,
     Tab { origin: usize, x: f32, y: f32, moved: bool, torn: bool },
@@ -1161,7 +1162,11 @@ impl App {
         let mut visible = false;
         for k in 0..self.tabs.len() {
             visible |= self.poll_tab(k);
-            visible |= self.tabs[k].apply_diffs() && k == self.cur;
+            let changed = self.tabs[k].apply_diffs();
+            if changed && k == self.cur {
+                self.compute_dir_sizes();
+                visible = true;
+            }
         }
         visible | self.poll_panes() | self.poll_tree()
     }
@@ -1215,6 +1220,14 @@ impl App {
             ProviderEvent::Rescan { tab, gen } => {
                 if let Some(k) = tab_of(&self.tabs, tab, gen) {
                     self.reload(k, now);
+                }
+            }
+            ProviderEvent::SizesSkipped { tab, gen, items } => {
+                if let Some(k) = tab_of(&self.tabs, tab, gen) {
+                    for idx in items {
+                        self.tabs[k].sizing.1.remove(&idx);
+                    }
+                    self.dirty |= k == self.cur;
                 }
             }
             ProviderEvent::DirSize { tab, gen, idx, stats } => {
@@ -1696,6 +1709,13 @@ impl App {
             Drag::ColSep { col, start_x, start_w } => return self.set_column_width(col, start_w - (x - start_x) / (self.content_px())),
             Drag::Splitter { start_x, start_w } => return self.drag_splitter(x, start_x, start_w),
             Drag::PinMove { from, .. } => return self.drag_pin(from, y),
+            Drag::PlaceMove { from, .. } => {
+                if x > self.nav.sidebar.rect.right() + self.s(8.0) && self.drag_place_out(from) {
+                    self.drag = Drag::None;
+                    return;
+                }
+                return self.drag_place(from, y);
+            }
             Drag::Tab { .. } => return self.drag_tab(x, y),
             Drag::Preview { hit, start, size } => return self.preview_drag(hit, x, y, start, size),
             Drag::PanelSep { sep, start, first } => return self.drag_sep(sep, x, y, start, first),
@@ -1820,6 +1840,11 @@ impl App {
             Hit::Preview(p) => self.preview_mouse_down(p, x, y),
             Hit::ColSep(i) => {
                 let col = self.layout.columns[i];
+                let scale = self.content_px();
+                let widths: Vec<_> = self.layout.columns.iter().zip(&self.layout.cols).filter(|(c, _)| **c != Column::Name).map(|(&c, r)| (c, r.w / scale)).collect();
+                for (c, w) in widths {
+                    self.tab_mut().columns.set_width(c, w);
+                }
                 self.drag = Drag::ColSep { col, start_x: x, start_w: self.tab().columns.width(col) };
             }
             Hit::PanelSep(k) if button == MouseButton::Left => self.press_sep(k, x, y, clicks),
@@ -1839,6 +1864,9 @@ impl App {
         self.dirty = true;
         if let Drag::PinMove { from, to } = was {
             return self.drop_pin(from, to);
+        }
+        if let Drag::PlaceMove { from, to } = was {
+            return self.drop_place(from, to);
         }
         if let Drag::MenuMove { from, to } = was {
             return self.drop_menu_row(from, to);
@@ -2030,6 +2058,10 @@ impl App {
     }
 
     fn compute_dir_sizes(&mut self) {
+        if !self.folder_stats_visible() {
+            self.tab_mut().stop_sizes();
+            return;
+        }
         let t = self.tab();
         if t.view.as_ref().is_none_or(|v| v.snap().gen != t.gen) || t.view_loc.is_recycle_bin() || crate::library::is_library(t.view_loc.path()) {
             return;
@@ -2041,15 +2073,42 @@ impl App {
         if items.is_empty() {
             return;
         }
-        let (id, gen, cancel, loc) = (t.id, t.gen, t.cancel.clone(), t.location().clone());
+        t.sizes_cancel.set(t.gen);
+        let (id, gen, cancel, loc) = (t.id, t.gen, t.sizes_cancel.clone(), t.location().clone());
         let pending = items.iter().map(|(i, _)| *i);
         let t = self.tab_mut();
         if t.sizing.0 != gen {
             t.sizing = (gen, Default::default());
         }
         t.sizing.1.extend(pending);
-        let req = ProviderRequest::DirSizes { tab: id, gen, dir: loc.path().clone(), items, cancel };
+        let allowed = [self.opts.sizes_ssd, self.opts.sizes_hdd, self.opts.sizes_network];
+        let req = ProviderRequest::DirSizes { tab: id, gen, dir: loc.path().clone(), items, cancel, allowed };
         self.effects.push(Effect::Provider { provider: loc.provider(), req });
+    }
+
+    fn refresh_dir_sizes(&mut self) {
+        if !self.folder_stats_visible() {
+            return;
+        }
+        if let Some(v) = &mut self.tab_mut().view {
+            let rows = v.rows().to_vec();
+            for i in rows {
+                v.invalidate_dir_stats(i);
+            }
+        }
+        self.compute_dir_sizes();
+        self.dirty = true;
+    }
+
+    pub(super) fn folder_stats_visible(&self) -> bool {
+        let t = self.tab();
+        if !self.prefs.auto_sizes {
+            false
+        } else if t.look.table() {
+            t.columns.shown(Column::Folders) || t.columns.shown(Column::Files) || (self.prefs.auto_sizes && t.columns.shown(Column::Size))
+        } else {
+            self.prefs.auto_sizes
+        }
     }
 
 
@@ -2169,6 +2228,15 @@ impl App {
     fn draw_title<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
         let l = &self.layout;
         g.dl.rect(l.title, t.chrome);
+        let border = self.s(1.0).max(1.0);
+        let base = l.title.bottom() - border;
+        if let Some((r, _)) = l.tabs.get(self.cur).filter(|(r, _)| r.w > 0.0) {
+            g.dl.rect(Rect::new(l.title.x, base, (r.x - l.title.x).max(0.0), border), t.separator);
+            g.dl.outline(Rect::new(r.x, r.y, r.w, r.h + self.s(8.0)), t.separator, self.s(6.0), border);
+            g.dl.rect(Rect::new(r.right(), base, (l.title.right() - r.right()).max(0.0), border), t.separator);
+        } else {
+            g.dl.rect(Rect::new(l.title.x, base, l.title.w, border), t.separator);
+        }
         let font = self.ui_font(12.5);
         let m = g.metrics(font);
         let close_font = self.icon_font(8.0);
@@ -2189,7 +2257,7 @@ impl App {
             if accented {
                 g.dl.round_rect(r.inset(0.0, self.s(2.0)), t.accent, self.s(6.0));
             } else if active {
-                g.dl.round_rect(Rect::new(r.x, r.y, r.w, r.h + self.s(8.0)), t.bg, self.s(6.0));
+                g.dl.round_rect(Rect::new(r.x + border, r.y + border, r.w - 2.0 * border, r.h + self.s(8.0)), t.bg, self.s(6.0));
             } else if hovered > 0.0 {
                 g.dl.round_rect(r.inset(0.0, self.s(2.0)), widgets::faded(t.button_hover, hovered), self.s(6.0));
             }
@@ -2600,18 +2668,15 @@ impl App {
                 checks.push((i, boxed));
                 let corner = !mode.rows();
                 let replaces = boxed && !corner;
-                if boxed {
+                if boxed && !corner {
                     let from = g.dl.instances.len();
-                    if corner && !v.is_selected(i) {
-                        g.dl.round_rect(p.check, t.bg.alpha(0xC0), self.cs(3.0));
-                    }
                     self.draw_checkbox(g, t, p.check, v.is_selected(i));
                     let c = p.check;
                     g.dl.grow(from, self.details.checks.progress(i, now), (c.x + c.w / 2.0, c.y + c.h / 2.0), 0.4);
                 }
 
                 let name = listing.name(i);
-                let faded = e.attrs & attr::HIDDEN != 0 || cut.is_some_and(|c| c.contains(name));
+                let faded = e.attrs & attr::HIDDEN != 0 || name.starts_with(b".") || cut.is_some_and(|c| c.contains(name));
                 let row_dir = if in_library { FsPath::parse_exact(crate::library::folder(listing, i)) } else { None };
                 let dir = row_dir.as_ref().or(shell_dir.as_ref());
                 let dir_key = if in_bin { recycle::origin(listing, i) } else { dir.map_or(&b""[..], |d| d.as_bytes()) };
@@ -2640,6 +2705,16 @@ impl App {
                     if let Some(path) = path {
                         requests.push(IconRequest { key, kind, path, size: icon_px as u32, gen: tab.gen, row: row as u32 });
                     }
+                }
+
+                if boxed && corner {
+                    let from = g.dl.instances.len();
+                    if !v.is_selected(i) {
+                        g.dl.round_rect(p.check, t.bg.alpha(0xC0), self.cs(3.0));
+                    }
+                    self.draw_checkbox(g, t, p.check, v.is_selected(i));
+                    let c = p.check;
+                    g.dl.grow(from, self.details.checks.progress(i, now), (c.x + c.w / 2.0, c.y + c.h / 2.0), 0.4);
                 }
 
                 let ty = baseline(p.name);
@@ -2696,7 +2771,7 @@ impl App {
                             g.text(r.x, baseline(r), s, self.content_font(12.0), t.text_dim, r.w);
                         }
                     }
-                    LayoutMode::Grid if tab.mode.zoomed() => {
+                    LayoutMode::Grid => {
                         let size = self.cell_text(arena, listing, i, Column::Size);
                         let small = self.content_font(11.0);
                         let r = Rect { y: p.name.bottom(), h: self.cs(14.0), ..p.name };

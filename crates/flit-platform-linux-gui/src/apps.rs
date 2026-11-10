@@ -234,7 +234,12 @@ pub fn open_with(files: &[flit_core::FsPath], entries: &[Entry], assoc: &Assoc) 
         }
     }
     let sets: Vec<Vec<&Entry>> = mimes.iter().map(|m| handlers(m, entries, assoc)).collect();
-    let apps: Vec<&Entry> = sets[0].iter().copied().filter(|e| sets[1..].iter().all(|s| s.iter().any(|h| h.id == e.id))).collect();
+    let mut apps: Vec<&Entry> = sets[0].iter().copied().filter(|e| sets[1..].iter().all(|s| s.iter().any(|h| h.id == e.id))).collect();
+    let mut others: Vec<_> = entries.iter().filter(|e| !e.hidden && !apps.iter().any(|a| a.id == e.id) && ["%f", "%F", "%u", "%U"].iter().any(|arg| e.exec.contains(arg))).collect();
+    others.sort_by_key(|a| a.name.to_lowercase());
+    if apps.is_empty() {
+        apps.append(&mut others);
+    }
     let items = apps.iter().map(|e| flit_core::ui::MenuItem::command(e.name.clone(), String::new())).collect();
     let launches = apps.iter().filter_map(|e| Some(flit_core::provider::Launch::With { program: crate::xdg::fs_path(&e.path)?, args: files.to_vec() })).collect();
     (items, launches)

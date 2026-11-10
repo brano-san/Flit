@@ -304,7 +304,7 @@ fn quick_access_order_paths_visits_and_deep_views_ride_last() {
     let deep = folder_key(&loc(r"D:\x"));
     persisted.folders.put(deep, FolderView::default());
     persisted.folders.set_deep(vec![deep, 42]);
-    let side = NavPrefs { quick: QuickPrefs { order: vec!["drives".into(), "pinned".into()], show_paths: true, visits: vec![(loc(r"D:\x"), 7)] }, ..Default::default() };
+    let side = NavPrefs { quick: QuickPrefs { order: vec!["drives".into(), "pinned".into()], show_paths: true, visits: vec![(loc(r"D:\x"), 7)], ..Default::default() }, ..Default::default() };
     let bytes = older_encode(&Saved::new(persisted, None).with_side(side.clone()));
     let back = Saved::decode(&bytes).unwrap();
     assert_eq!(back.side.quick, side.quick);
@@ -327,6 +327,25 @@ fn wide_len(s: &Saved) -> usize {
     let p = &s.persisted;
     let folders = p.folders.entries();
     postcard::to_stdvec(&WideRecord { view: wide(&p.view), defaults: wide(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| wide(v)).collect() }).unwrap().len() + 1
+        + postcard::to_stdvec(&IntegrationRecord { git: p.prefs.git_integration, places: s.side.quick.places.clone(), places_hidden: s.side.quick.places_hidden.clone() }).unwrap().len()
+}
+
+#[test]
+fn integration_and_places_roundtrip_without_changing_older_records() {
+    let mut saved = Saved::new(Persisted { path: loc(r"D:\x"), ..Default::default() }, None);
+    saved.persisted.prefs.git_integration = true;
+    saved.side.quick.places = vec![loc(r"C:\Users\u\Downloads"), loc(r"C:\Users\u")];
+    saved.side.quick.places_hidden = vec![Location::computer()];
+    saved.side.quick.show_paths = true;
+    let bytes = saved.encode().unwrap();
+    let restored = Saved::decode(&bytes).unwrap();
+    assert!(restored.persisted.prefs.git_integration);
+    assert_eq!(restored.side.quick, saved.side.quick);
+    let len = postcard::to_stdvec(&IntegrationRecord { git: true, places: saved.side.quick.places.clone(), places_hidden: saved.side.quick.places_hidden.clone() }).unwrap().len();
+    let older = Saved::decode(&bytes[..bytes.len() - len]).unwrap();
+    assert!(!older.persisted.prefs.git_integration);
+    assert!(older.side.quick.places.is_empty());
+    assert!(older.side.quick.show_paths);
 }
 
 #[test]
@@ -398,7 +417,8 @@ fn the_files_column_shows_by_default_while_files_saved_from_now_on_keep_their_ch
     let bytes = s.encode().unwrap();
     let chosen = Saved::decode(&bytes).unwrap().sanitized().persisted;
     assert!(!chosen.view.columns.shown(Column::Files), "a choice saved by this build stays");
-    let before = Saved::decode(&bytes[..bytes.len() - 1]).unwrap().sanitized().persisted;
+    let added = postcard::to_stdvec(&IntegrationRecord { git: false, places: Vec::new(), places_hidden: Vec::new() }).unwrap().len();
+    let before = Saved::decode(&bytes[..bytes.len() - added - 1]).unwrap().sanitized().persisted;
     assert!(before.view.columns.shown(Column::Files) && before.prefs.defaults.columns.shown(Column::Files), "a layout from before the split shows Files with Folders");
     let folder = before.folders.get(key).unwrap();
     assert!(!folder.columns.shown(Column::Folders) && !folder.columns.shown(Column::Files), "a folder that hid the counts keeps them hidden");

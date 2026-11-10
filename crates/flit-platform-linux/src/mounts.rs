@@ -91,6 +91,11 @@ pub fn read() -> io::Result<Vec<Mount>> {
     Ok(parse(&std::fs::read(MOUNTINFO)?))
 }
 
+pub fn remote_path(path: &Path, mounts: &[Mount]) -> bool {
+    mounts.iter().rev().filter(|m| path.starts_with(m.path())).max_by_key(|m| m.point.len())
+        .is_some_and(|m| m.is_network() || m.fstype == "fuse.gvfsd-fuse")
+}
+
 fn within(root: &[u8], of: &[u8]) -> bool {
     of == b"/" || root == of || (root.starts_with(of) && root.get(of.len()) == Some(&b'/'))
 }

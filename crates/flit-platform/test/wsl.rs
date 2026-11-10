@@ -345,7 +345,7 @@ fn trash_goes_to_the_agent_and_the_rest_to_the_share() {
     assert_eq!(done, (Some("nope".into()), Some(OpReport { op: FileOp::Trash(vec![unix("/tmp/a")]), items: Vec::new() })));
     let token = GenToken::default();
     token.set(1);
-    s.wsl.submit(ProviderRequest::DirSizes { tab: 2, gen: 1, dir: unix("/"), items: vec![(3, b"usr".to_vec())], cancel: token });
+    s.wsl.submit(ProviderRequest::DirSizes { tab: 2, gen: 1, dir: unix("/"), items: vec![(3, b"usr".to_vec())], cancel: token, allowed: [true; 3] });
     let size = event(&s.events, |e| if let ProviderEvent::DirSize { idx, stats, .. } = e { Some((idx, stats.size)) } else { None });
     assert_eq!(size, (3, 5));
     s.wsl.submit(ProviderRequest::Op { tab: 2, id: 12, op: FileOp::NewFile { dir: unix("/tmp"), name: b"n".to_vec(), template: Template::Empty }, ctl: OpCtl::default() });

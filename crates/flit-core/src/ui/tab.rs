@@ -37,6 +37,7 @@ pub struct Tab {
     pub(super) history: History,
     pub(super) gen: u64,
     pub(super) cancel: GenToken,
+    pub(super) sizes_cancel: GenToken,
     pub(super) slot: Arc<SnapshotSlot>,
     pub(super) watching: Option<ProviderId>,
     pub(super) view_spec: ViewSpec,
@@ -95,6 +96,7 @@ impl Tab {
             fit_column: None,
             loading: None,
             sizing: (0, FxHashSet::default()),
+            sizes_cancel: GenToken::default(),
             view: None,
             error: None,
             pending_diffs: VecDeque::new(),
@@ -137,6 +139,7 @@ impl Tab {
     pub(super) fn load(&mut self, gen: u64, select: Option<Vec<u8>>, case: CaseMode, now: Instant, fx: &mut Vec<Effect>) {
         self.gen = gen;
         self.cancel.set(gen);
+        self.stop_sizes();
         let loc = self.location().clone();
         if loc != self.view_loc {
             if !self.retain_filter {
@@ -182,6 +185,7 @@ impl Tab {
 
     pub(super) fn shutdown(&mut self, fx: &mut Vec<Effect>) {
         self.cancel.set(u64::MAX);
+        self.stop_sizes();
         if let Some(p) = self.watching.take() {
             fx.push(Effect::Provider { provider: p, req: ProviderRequest::Watch { tab: self.id, gen: self.gen, path: None } });
         }
@@ -366,6 +370,12 @@ impl Tab {
         self.sizing.0 == self.gen && self.sizing.1.contains(&i)
     }
 
+    pub(super) fn stop_sizes(&mut self) {
+        self.sizes_cancel.set(u64::MAX);
+        self.sizes_cancel = GenToken::default();
+        self.sizing.1.clear();
+    }
+
     pub(super) fn size_items(&self) -> Vec<(u32, Vec<u8>)> {
         let Some(v) = &self.view else { return Vec::new() };
         let l = v.listing();
@@ -373,7 +383,7 @@ impl Tab {
             .iter()
             .filter(|&&i| {
                 let e = &l.entries[i as usize];
-                e.is_dir() && e.attrs & (attr::LINK | attr::VOLUME) == 0
+                e.is_dir() && e.attrs & (attr::LINK | attr::VOLUME | attr::SIZE_KNOWN) == 0 && !self.sizing(i)
             })
             .map(|&i| {
                 let mut rel = Vec::new();

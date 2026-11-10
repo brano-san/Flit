@@ -29,7 +29,7 @@ pub const SIDEBAR_MAX_W: f32 = 480.0;
 const COMPACT_W: f32 = 48.0;
 pub(super) const ROW_H: f32 = 24.0;
 const ROW_GAP: f32 = 3.0;
-const ROW_ICON: f32 = 16.0;
+const ROW_ICON: f32 = 20.0;
 const COMPACT_ROW_H: f32 = 32.0;
 const DRIVE_H: f32 = 28.0;
 const HEADER_H: f32 = 26.0;
@@ -221,6 +221,10 @@ pub struct NavPrefs {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct QuickPrefs {
     pub order: Vec<String>,
+    #[serde(skip)]
+    pub places: Vec<Location>,
+    #[serde(skip)]
+    pub places_hidden: Vec<Location>,
     pub show_paths: bool,
     pub visits: Vec<(Location, u32)>,
 }
@@ -230,6 +234,8 @@ impl NavPrefs {
         for v in [&mut self.collapsed, &mut self.hidden, &mut self.widgets_off, &mut self.quick.order] {
             v.truncate(MAX_LIST);
         }
+        self.quick.places.truncate(MAX_LIST);
+        self.quick.places_hidden.truncate(MAX_LIST);
         let n = self.recent_hidden.len();
         self.recent_hidden.drain(..n.saturating_sub(MAX_LIST));
         self.quick.visits.truncate(MAX_VISITS);
@@ -338,6 +344,9 @@ pub(super) enum PlaceCmd {
     Terminal(FsPath),
     Pin(Location),
     MovePin(Location, isize),
+    MovePlace(Location, isize),
+    HidePlace(Location),
+    RestorePlaces,
     Eject(FsPath),
     Properties(FsPath),
     Hide(Section),
@@ -490,6 +499,9 @@ impl Sidebar {
                     out.push(item(KnownFolder::Favorites.label().to_owned(), G_PIN, l.clone(), None));
                 }
                 out.push(item(S::PathHome.t().to_owned(), G_HOME, Location::home_page(), None));
+                let order = &self.prefs.quick.places;
+                out.sort_by_key(|item| order.iter().position(|loc| loc == &item.loc).unwrap_or(usize::MAX));
+                out.retain(|it| !self.prefs.quick.places_hidden.contains(&it.loc));
                 out
             }
             Section::Libraries => p.libraries.iter().map(|l| item(l.name.clone(), G_LIBRARY, Location::Local(l.path.clone()), None)).collect(),
@@ -546,6 +558,10 @@ impl Sidebar {
         self.items.iter().position(|it| it.section == Section::Bookmarks).unwrap_or(0)
     }
 
+    fn first_place(&self) -> usize {
+        self.items.iter().position(|it| it.section == Section::Places).unwrap_or(0)
+    }
+
     pub fn tag_of(&self, i: usize) -> Option<usize> {
         let first = self.items.iter().position(|it| it.section == Section::Tags)?;
         (self.items.get(i)?.section == Section::Tags).then(|| i - first)
@@ -570,7 +586,7 @@ impl Sidebar {
             Section::Libraries => !p.libraries.is_empty(),
             Section::Storage => !p.drives.is_empty(),
             Section::Wsl => !p.wsl.is_empty(),
-            Section::Tags => !self.tags.defs.is_empty(),
+            Section::Tags => true,
         }
     }
 
@@ -772,6 +788,7 @@ impl App {
         sb.filter.edit.select_all();
         sb.cursor = 0;
         self.focus = Focus::Sidebar;
+        self.layout();
         self.dirty = true;
     }
 
@@ -952,14 +969,20 @@ impl App {
         if (y - sb.press_y).abs() < self.s(5.0) {
             return false;
         }
-        if !sb.removable(i) {
-            return self.drag_out_of_quick_access(i);
-        }
         if sb.filtering() {
             return false;
         }
-        self.drag_pin(i - sb.first_bookmark(), y);
-        true
+        match sb.items.get(i).map(|it| it.section) {
+            Some(Section::Bookmarks) => {
+                self.drag_pin(i - sb.first_bookmark(), y);
+                true
+            }
+            Some(Section::Places) => {
+                self.drag_place(i - sb.first_place(), y);
+                true
+            }
+            _ => self.drag_out_of_quick_access(i),
+        }
     }
 
     pub(super) fn step_sidebar(&mut self, now: Instant) -> bool {
@@ -1004,6 +1027,29 @@ impl App {
         self.pins_changed();
     }
 
+    pub(super) fn drag_place(&mut self, from: usize, y: f32) {
+        let sb = &self.nav.sidebar;
+        let to = sb.items.iter().enumerate().filter(|(i, it)| it.section == Section::Places && sb.rects.get(*i).is_some_and(|r| r.y + r.h / 2.0 < y)).count();
+        self.drag = Drag::PlaceMove { from, to };
+        self.dirty = true;
+    }
+
+    pub(super) fn drag_place_out(&mut self, from: usize) -> bool {
+        self.drag_out_of_quick_access(self.nav.sidebar.first_place() + from)
+    }
+
+    pub(super) fn drop_place(&mut self, from: usize, to: usize) {
+        let mut places: Vec<Location> = self.nav.sidebar.section_items(Section::Places).into_iter().map(|it| it.loc).collect();
+        let target = if to > from { to - 1 } else { to };
+        if from >= places.len() || target == from {
+            return;
+        }
+        let item = places.remove(from);
+        places.insert(target.min(places.len()), item);
+        self.nav.sidebar.prefs.quick.places = places;
+        self.nav_prefs_changed();
+    }
+
     pub(super) fn open_side_item(&mut self, i: usize, new_tab: bool, now: Instant) {
         if let Some(k) = self.nav.sidebar.tag_of(i) {
             return self.show_tag(k);
@@ -1046,6 +1092,22 @@ impl App {
             PlaceCmd::Terminal(dir) => self.effects.push(launch(Launch::Terminal { dirs: vec![dir], admin: false })),
             PlaceCmd::Pin(loc) => self.toggle_pin(loc),
             PlaceCmd::MovePin(loc, by) => self.move_pin(loc, by),
+            PlaceCmd::MovePlace(loc, by) => {
+                let items = self.nav.sidebar.section_items(Section::Places);
+                if let Some(from) = items.iter().position(|it| it.loc == loc) {
+                    let to = (from as isize + if by > 0 { 2 } else { -1 }).clamp(0, items.len() as isize) as usize;
+                    self.drop_place(from, to);
+                }
+            }
+            PlaceCmd::HidePlace(loc) => {
+                self.nav.sidebar.prefs.quick.places_hidden.push(loc);
+                self.nav_prefs_changed();
+            }
+            PlaceCmd::RestorePlaces => {
+                self.nav.sidebar.prefs.quick.places.clear();
+                self.nav.sidebar.prefs.quick.places_hidden.clear();
+                self.nav_prefs_changed();
+            }
             PlaceCmd::Eject(drive) => self.effects.push(launch(Launch::Eject(drive))),
             PlaceCmd::Launch(l) => self.effects.push(launch(l)),
             PlaceCmd::Properties(path) => self.effects.push(Effect::Properties(vec![path])),
@@ -1104,6 +1166,17 @@ impl App {
                     m.place(S::SidebarMoveDown.t(), PlaceCmd::MovePin(loc.clone(), 1), false);
                 }
             }
+            let places = a.nav.sidebar.section_items(Section::Places);
+            if let Some(i) = places.iter().position(|it| it.loc == loc) {
+                m.separator();
+                if i > 0 {
+                    m.place(S::SidebarMoveUp.t(), PlaceCmd::MovePlace(loc.clone(), -1), false);
+                }
+                if i + 1 < places.len() {
+                    m.place(S::SidebarMoveDown.t(), PlaceCmd::MovePlace(loc.clone(), 1), false);
+                }
+                m.place(S::WidgetsRemoveItem.t(), PlaceCmd::HidePlace(loc.clone()), false);
+            }
             if a.nav.sidebar.places.drives.iter().any(|d| d.removable && d.path == *loc.path()) {
                 m.place(S::MenuEject.t(), PlaceCmd::Eject(loc.path().clone()), false);
             }
@@ -1150,6 +1223,7 @@ impl App {
             m.place_icon(S::SidebarRestoreOrder.t(), PlaceCmd::RestoreOrder, G_RESTORE_ORDER, sb.prefs.order() == Section::ALL);
             m.separator();
             match s {
+                Section::Places => m.place(S::SidebarRestoreOrder.t(), PlaceCmd::RestorePlaces, false),
                 Section::Recents => {
                     m.action("home.clear_recent", S::SidebarClearRecents.t());
                     m.iconed(G_TRASH);
@@ -1166,7 +1240,7 @@ impl App {
                     m.place(S::SidebarNewLibrary.t(), PlaceCmd::NewLibrary, false);
                     m.place(S::SidebarRestoreLibraries.t(), PlaceCmd::RestoreLibraries, false);
                 }
-                Section::Storage | Section::Places | Section::Wsl => {}
+                Section::Storage | Section::Wsl => {}
             }
         })
     }
@@ -1228,7 +1302,7 @@ impl App {
         }
         let (x, w) = if compact { (s(4.0), (width - s(8.0)).max(0.0)) } else { (s(6.0), (width - s(12.0)).max(0.0)) };
         let (header_h, row_h) = if compact { (s(COMPACT_HEADER_H), s(COMPACT_ROW_H)) } else { (s(HEADER_H), s(ROW_H)) };
-        if !compact {
+        if !compact && sb.typing {
             sb.bar = Rect::new(0.0, top, width - 1.0, s(TOOL_H));
             sb.field = Rect::new(x, top + s(5.0), w, s(TOOL_H - 10.0));
             let c = s(22.0);
@@ -1543,14 +1617,29 @@ impl App {
             }
         }
         g.dl.set_clip(Some(list));
-        if let Drag::PinMove { to, .. } = self.drag {
-            let first = sb.first_bookmark();
-            let n = sb.state.pinned.len().min(sb.rects.len().saturating_sub(first));
+        if let Some((first, n, to)) = match self.drag {
+            Drag::PinMove { to, .. } => Some((sb.first_bookmark(), sb.state.pinned.len(), to)),
+            Drag::PlaceMove { to, .. } => Some((sb.first_place(), sb.items.iter().filter(|it| it.section == Section::Places).count(), to)),
+            _ => None,
+        } {
+            let n = n.min(sb.rects.len().saturating_sub(first));
             let before = sb.rects.get(first + to).filter(|_| to < n).map(|r| r.y);
             let y = before.or_else(|| sb.rects.get((first + n).saturating_sub(1)).map(|r| r.bottom())).unwrap_or(list.y);
             g.dl.rect(Rect::new(area.x + s8, y - 1.0, area.w - 2.0 * s8, self.s(2.0)), t.accent);
         }
         g.dl.set_clip(None);
+        let moving = match self.drag {
+            Drag::PinMove { from, .. } => sb.items.get(sb.first_bookmark() + from),
+            Drag::PlaceMove { from, .. } => sb.items.get(sb.first_place() + from),
+            _ => None,
+        };
+        if let (Some(it), Some((x, y))) = (moving, self.strip.pointer) {
+            let r = Rect::new(x + s8, y + s8, area.w.min(self.s(240.0)), self.s(ROW_H));
+            g.dl.round_rect(r, t.bg, s4);
+            g.dl.outline(r, t.accent, s4, 1.0);
+            centered(g, Rect::new(r.x, r.y, self.s(32.0), r.h), it.glyph, icons, t.accent);
+            g.text(r.x + self.s(34.0), r.y + (r.h + m.ascent - m.descent) / 2.0, &it.label, font, t.text, r.w - self.s(42.0));
+        }
         self.request_icons(requests);
     }
 

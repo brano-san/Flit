@@ -52,6 +52,13 @@ struct QuickRecord {
 }
 
 #[derive(Serialize, Deserialize)]
+struct IntegrationRecord {
+    git: bool,
+    places: Vec<Location>,
+    places_hidden: Vec<Location>,
+}
+
+#[derive(Serialize, Deserialize)]
 struct GitRecord {
     view: GitLook,
     defaults: GitLook,
@@ -294,7 +301,14 @@ impl Saved {
                                             saved.nav.files = files;
                                             if let Ok((w, tail)) = postcard::take_from_bytes::<WideRecord>(tail) {
                                                 widened = Some(w);
-                                                files_chosen = postcard::take_from_bytes::<u8>(tail).is_ok_and(|(v, _)| v >= FILES_COLUMN_CHOSEN);
+                                                if let Ok((v, tail)) = postcard::take_from_bytes::<u8>(tail) {
+                                                    files_chosen = v >= FILES_COLUMN_CHOSEN;
+                                                    if let Ok((r, _)) = postcard::take_from_bytes::<IntegrationRecord>(tail) {
+                                                        p.prefs.git_integration = r.git;
+                                                        saved.side.quick.places = r.places;
+                                                        saved.side.quick.places_hidden = r.places_hidden;
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -368,6 +382,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&self.nav.files).ok()?);
         bytes.extend(postcard::to_stdvec(&wides).ok()?);
         bytes.extend(postcard::to_stdvec(&FILES_COLUMN_CHOSEN).ok()?);
+        bytes.extend(postcard::to_stdvec(&IntegrationRecord { git: p.prefs.git_integration, places: self.side.quick.places.clone(), places_hidden: self.side.quick.places_hidden.clone() }).ok()?);
         Some(bytes)
     }
 

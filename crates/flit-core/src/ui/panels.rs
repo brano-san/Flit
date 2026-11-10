@@ -266,7 +266,7 @@ fn sizes(s: &Shape, out: &mut Vec<(usize, usize)>) {
 
 fn event_tab(ev: &ProviderEvent) -> Option<TabId> {
     match ev {
-        ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } | ProviderEvent::OpDone { tab, .. } | ProviderEvent::Navigate { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::Status { tab, .. } => Some(*tab),
+        ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } | ProviderEvent::SizesSkipped { tab, .. } | ProviderEvent::OpDone { tab, .. } | ProviderEvent::Navigate { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::Status { tab, .. } => Some(*tab),
         _ => None,
     }
 }

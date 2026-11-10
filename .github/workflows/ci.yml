@@ -41,6 +41,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace
+      - run: sh scripts/test-install-linux.sh
       - run: cargo test -p flit-core -p flit-search -p flit-platform -p flit-proto -p flit-platform-linux
 
   linux-gui:

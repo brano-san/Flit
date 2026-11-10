@@ -410,6 +410,18 @@ impl App {
         self.start_op(op, Origin::Fresh, Then::Select);
     }
 
+    pub fn extract_and_delete(&mut self) {
+        if self.archive_view().is_some() {
+            return;
+        }
+        let archives = self.selected_archives();
+        if archives.is_empty() {
+            return;
+        }
+        let op = FileOp::Archive(ArchiveOp::Extract { archives: archives.clone(), dest: None, place: Place::Smart });
+        self.start_op(op, Origin::Fresh, Then::TrashArchives(archives));
+    }
+
     pub fn open_as_folder(&mut self, now: Instant) {
         match self.selected_archives().as_slice() {
             [one] => self.navigate(Location::from_local(one.clone()), now),
@@ -478,6 +490,11 @@ impl App {
             }
         }
         match then {
+            Then::TrashArchives(archives) => {
+                if error.is_none() {
+                    self.start_op_for(tab, FileOp::Trash(archives.clone()), Origin::Fresh, Then::Nothing);
+                }
+            }
             Then::Open(dir) if error.is_none() => self.dispatch(vec![Route { folder: Location::from_local(dir.clone()), select: None }], self.open_target, now),
             Then::Launch => {
                 for (_, to) in &report.items {

@@ -251,6 +251,8 @@ impl FolderView {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ViewPrefs {
+    #[serde(skip)]
+    pub git_integration: bool,
     pub same_for_all: bool,
     pub defaults: FolderView,
     pub auto_fit: bool,
@@ -293,6 +295,7 @@ impl ViewPrefs {
 impl Default for ViewPrefs {
     fn default() -> Self {
         Self {
+            git_integration: false,
             same_for_all: false,
             defaults: FolderView::default(),
             auto_fit: false,
@@ -491,7 +494,8 @@ pub(super) struct Checks {
 
 impl Checks {
     pub fn progress(&self, i: u32, now: Instant) -> f32 {
-        self.fresh.iter().find(|f| f.0 == i).map_or(1.0, |f| now.saturating_duration_since(f.1).as_secs_f32() / CHECK_IN.as_secs_f32())
+        let initial = if self.seen.binary_search_by_key(&i, |s| s.0).is_ok_and(|k| !self.seen[k].1) { 0.0 } else { 1.0 };
+        self.fresh.iter().find(|f| f.0 == i).map_or(initial, |f| (now.saturating_duration_since(f.1).as_secs_f32() / CHECK_IN.as_secs_f32()).min(1.0))
     }
 
     pub fn settle(&mut self, mut drawn: Vec<(u32, bool)>, animate: bool, now: Instant) -> bool {
@@ -703,6 +707,9 @@ impl App {
         }
         self.remember_view();
         self.layout();
+        if !self.folder_stats_visible() {
+            self.tab_mut().stop_sizes();
+        }
         self.dirty = true;
     }
 
@@ -744,11 +751,16 @@ impl App {
             if self.prefs.auto_fit {
                 self.request_fit();
             }
+            if matches!(c, Column::Size | Column::Folders | Column::Files) {
+                self.compute_dir_sizes();
+            }
         }
     }
 
     pub(super) fn set_column_width(&mut self, c: Column, w: f32) {
-        self.change_view(|t| t.columns.set_width(c, w.clamp(MIN_COL_W, MAX_COL_W).round()));
+        let others: f32 = self.layout.columns.iter().filter(|&&col| col != Column::Name && col != c).map(|&col| self.tab().columns.width(col)).sum();
+        let max = if matches!(self.drag, super::Drag::ColSep { .. }) { (self.layout.list.w / self.content_px() - super::NAME_MIN_W - others).clamp(MIN_COL_W, MAX_COL_W) } else { MAX_COL_W };
+        self.change_view(|t| t.columns.set_width(c, w.clamp(MIN_COL_W, max).round()));
     }
 
     pub(super) fn request_fit(&mut self) {
@@ -768,13 +780,16 @@ impl App {
         let p = f(&mut self.prefs);
         *p = !*p;
         self.each_pane(|a, k| {
+            if !a.prefs.auto_sizes && sizes {
+                a.tabs[k].stop_sizes();
+            }
             let before = a.tabs[k].view_spec;
             a.sync_spec(k);
             if a.tabs[k].view_spec != before {
                 a.resort(k);
             }
         });
-        if self.prefs.auto_sizes && !sizes {
+        if self.prefs.auto_sizes != sizes {
             self.compute_dir_sizes();
         }
         self.layout();
@@ -898,7 +913,7 @@ impl App {
             Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => self.git_text(&mut s, l.name(i), col),
             Column::Type => return self.type_text(arena, l, i),
             Column::Size => {
-                if !e.is_dir() || e.attrs & attr::SIZE_KNOWN != 0 {
+                if !e.is_dir() || e.attrs & attr::SIZE_KNOWN != 0 && (self.prefs.auto_sizes || e.attrs & attr::VOLUME != 0) {
                     format::size_in(&mut s, e.size, self.style.decimal);
                 }
             }

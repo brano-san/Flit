@@ -37,6 +37,7 @@ struct SizesJob {
     dir: FsPath,
     items: Vec<(u32, Vec<u8>)>,
     cancel: GenToken,
+    allowed: [bool; 3],
 }
 
 enum ShellJob {
@@ -344,7 +345,7 @@ impl Provider for LocalProvider {
                     false => self.jobs.send(job).map_err(drop),
                 }
             }
-            ProviderRequest::DirSizes { tab, gen, dir, items, cancel } => self.sizes.send(SizesJob { tab, gen, dir, items, cancel }).map_err(drop),
+            ProviderRequest::DirSizes { tab, gen, dir, items, cancel, allowed } => self.sizes.send(SizesJob { tab, gen, dir, items, cancel, allowed }).map_err(drop),
             ProviderRequest::Watch { tab, gen, path: Some(path) } => {
                 pending.insert(tab, (gen, path));
                 Ok(())
@@ -453,7 +454,24 @@ fn run_list<F: Fs + ?Sized>(fs: &F, job: ListJob, watch: &Sender<WatchCmd>, wake
 }
 
 fn run_sizes<F: Fs>(fs: &F, job: SizesJob, events: &Sender<ProviderEvent>, wake: &Wake) {
-    let SizesJob { tab, gen, dir, items, cancel } = job;
+    let SizesJob { tab, gen, dir, mut items, cancel, allowed } = job;
+    if !cancel.is_current(gen) {
+        return;
+    }
+    let mut skipped = Vec::new();
+    items.retain(|(i, name)| {
+        let path = dir.join(name);
+        let kind = if path.is_network() || fs.remote(&path) { 2 } else if fs.seek_penalty(&path) == Some(true) { 1 } else { 0 };
+        if !allowed[kind] { skipped.push(*i); }
+        allowed[kind]
+    });
+    if !skipped.is_empty() {
+        let _ = events.send(ProviderEvent::SizesSkipped { tab, gen, items: skipped });
+        wake();
+    }
+    if items.is_empty() {
+        return;
+    }
     let keep_going = || cancel.is_current(gen);
     fs.dir_sizes(&dir, &items, &keep_going, &|idx, stats| {
         if keep_going() {
@@ -671,7 +689,7 @@ pub fn via_unc(distro: &str, req: ProviderRequest) -> Option<ProviderRequest> {
             }
         },
         ProviderRequest::Watch { tab, gen, path } => ProviderRequest::Watch { tab, gen, path: path.and_then(|p| unc(&p)) },
-        ProviderRequest::DirSizes { tab, gen, dir, items, cancel } => ProviderRequest::DirSizes { tab, gen, dir: unc(&dir)?, items, cancel },
+        ProviderRequest::DirSizes { tab, gen, dir, items, cancel, allowed } => ProviderRequest::DirSizes { tab, gen, dir: unc(&dir)?, items, cancel, allowed },
         ProviderRequest::Op { tab, id, op, ctl } => ProviderRequest::Op { tab, id, op: op.map_paths(unc)?, ctl },
         ProviderRequest::Open { tab, path } => ProviderRequest::Open { tab, path: unc(&path)? },
         ProviderRequest::Launch { tab, launch } => ProviderRequest::Launch { tab, launch: launch.map_paths(unc)? },

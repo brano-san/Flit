@@ -18,6 +18,21 @@ fn press(c: &mut ContextMenu, key: Key) -> MenuOutcome {
 }
 
 #[test]
+fn expanding_near_the_screen_edge_keeps_the_parent_under_the_pointer() {
+    let mut c = ContextMenu::new(&[MenuItem::Submenu { label: "Create".into(), items: (0..40).map(|i| cmd(&format!("Item {i}"))).collect() }], MenuKind::File, Vec::new(), (800.0, 600.0), Rect::new(0.0, 0.0, 1000.0, 700.0), 1.0);
+    c.measure(&mut crate::text::Gfx::new(crate::text::tests::Mono, 1024));
+    let before = c.rect;
+    let parent = c.rects[0];
+    c.mouse_move(parent.x + 10.0, parent.y + 10.0);
+    c.mouse_down(parent.x + 10.0, parent.y + 10.0, 1);
+    c.mouse_up(parent.x + 10.0, parent.y + 10.0);
+    assert_eq!((c.rect.x, c.rect.y), (before.x, before.y));
+    assert_eq!(c.rects[0].y, parent.y);
+    assert!(c.content_h > c.list.h);
+    assert!(c.rect.bottom() <= 700.0);
+}
+
+#[test]
 fn submenus_expand_inline_under_their_parent_and_collapse_again() {
     let mut c = menu(&[]);
     assert_eq!(c.labels(), ["Open", "-", "View >", "Delete"]);

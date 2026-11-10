@@ -16,7 +16,7 @@ use std::time::Instant;
 const LEVELS: [u8; 5] = [5, 5, 4, 5, 12];
 const TABLE_GUTTER: f32 = 11.0;
 const ROWS: [f32; 5] = [20.0, 24.0, 28.0, 32.0, 40.0];
-const ROW_ICONS: [f32; 5] = [16.0, 16.0, 20.0, 24.0, 32.0];
+const ROW_ICONS: [f32; 5] = [18.0, 20.0, 22.0, 26.0, 34.0];
 const LIST_W: f32 = 300.0;
 const TREE_INDENT: f32 = 16.0;
 pub const ZOOM_DETAILS: u8 = 0;
@@ -588,10 +588,11 @@ impl App {
         };
         let key = folder_key(&t.view_loc);
         let decided = adaptive_layout(t.slot.kind(v.snap().gen), v);
-        if fresh {
+        if fresh || done {
             self.tabs[k].look = self.adaptive.get(&key).copied().unwrap_or(decided);
         }
         if done {
+            self.tabs[k].look = decided;
             if self.adaptive.len() >= ADAPTIVE_CAP {
                 self.adaptive.clear();
             }

@@ -293,7 +293,7 @@ fn recent_rows_ask_for_file_and_folder_icons() {
     use crate::ui::IconKind::{File, Place};
     let mut app = home_app();
     app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
-    let rows = asked(&mut app, 16);
+    let rows = asked(&mut app, 20);
     for want in [(r"C:\Users\u\Documents\report.docx", File), (r"C:\work\proj", Place), (r"C:\old.txt", File)] {
         assert!(rows.contains(&(want.0.to_owned(), want.1)), "{want:?} not in {rows:?}");
     }

@@ -107,7 +107,7 @@ fn dir_sizes(provider: &LocalProvider, events: &crossbeam_channel::Receiver<Prov
     let items: Vec<(u32, Vec<u8>)> = (0..b.listing.len() as u32).filter(|&i| b.listing.entries[i as usize].is_dir()).map(|i| (i, b.listing.name(i).to_vec())).collect();
     let n = items.len();
     cancel.set(gen);
-    provider.submit(ProviderRequest::DirSizes { tab: 1, gen, dir: dir.clone(), items, cancel: cancel.clone() });
+    provider.submit(ProviderRequest::DirSizes { tab: 1, gen, dir: dir.clone(), items, cancel: cancel.clone(), allowed: [true; 3] });
     let mut total = 0;
     let mut got = 0;
     while got < n {

@@ -116,6 +116,7 @@ pub struct ContextMenu {
     start: (f32, f32),
     armed: bool,
     width: f32,
+    anchored: bool,
     pub floor_w: f32,
     glow: super::widgets::Glow<usize>,
     star_glow: super::widgets::Glow<usize>,
@@ -181,6 +182,7 @@ impl ContextMenu {
             start: at,
             armed: false,
             width: 0.0,
+            anchored: false,
             floor_w: 0.0,
             glow: Default::default(),
             star_glow: Default::default(),
@@ -385,6 +387,7 @@ impl ContextMenu {
         }
         self.width = w.min(MAX_W * s).min(self.bounds.w).ceil();
         self.layout();
+        self.anchored = true;
     }
 
     pub fn width(&self) -> f32 {
@@ -395,12 +398,14 @@ impl ContextMenu {
         let s = self.scale;
         let b = self.bounds;
         let w = if self.width > 0.0 { self.width } else { (MIN_W * s).min(b.w) };
+        let w = if self.anchored { w.min(b.right() - self.rect.x) } else { w };
         self.content_h = self.rows.iter().map(|r| self.row_h(r)).sum::<f32>().max(ROW_H * s);
         let head = FIELD_H * s + 2.0 * PAD * s;
-        let total = (head + self.content_h + PAD * s).min(b.h);
+        let anchored = self.anchored;
+        let total = (head + self.content_h + PAD * s).min(if anchored { b.bottom() - self.rect.y } else { b.h });
         let (x, y) = self.start;
-        let x = if x + w <= b.right() { x } else { (x - w).max(b.x) };
-        let y = if y + total <= b.bottom() { y } else if y - total >= b.y { y - total } else { b.bottom() - total };
+        let x = if anchored { self.rect.x } else if x + w <= b.right() { x } else { (x - w).max(b.x) };
+        let y = if anchored { self.rect.y } else if y + total <= b.bottom() { y } else if y - total >= b.y { y - total } else { b.bottom() - total };
         self.rect = Rect::new(x.min(b.right() - w).max(b.x), y.max(b.y), w, total);
         let r = self.rect;
         self.field = Rect::new(r.x + PAD * s, r.y + PAD * s, r.w - 2.0 * PAD * s, FIELD_H * s);

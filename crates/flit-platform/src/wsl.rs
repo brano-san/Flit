@@ -555,7 +555,11 @@ impl Ctl {
                     self.send(Request::Cancel { id: old });
                 }
             }
-            ProviderRequest::DirSizes { tab, gen, dir, items, cancel } => {
+            ProviderRequest::DirSizes { tab, gen, dir, items, cancel, allowed } => {
+                if !allowed[0] {
+                    self.emit(ProviderEvent::SizesSkipped { tab, gen, items: items.iter().map(|(i, _)| *i).collect() });
+                    return;
+                }
                 if !cancel.is_current(gen) || items.is_empty() {
                     return;
                 }

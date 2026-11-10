@@ -59,6 +59,7 @@ struct Source {
     conn: XCBConnection,
     root: Window,
     window: Window,
+    ghost: Window,
     atoms: Atoms,
     data: Vec<u8>,
 }
@@ -79,7 +80,24 @@ impl Source {
         let window = conn.generate_id()?;
         conn.create_window(0, window, root, -10, -10, 1, 1, 0, WindowClass::INPUT_ONLY, 0, &CreateWindowAux::new().override_redirect(1))?;
         conn.set_selection_owner(window, atoms.XdndSelection, CURRENT_TIME)?;
-        Ok(Self { conn, root, window, atoms, data })
+        let ghost = conn.generate_id()?;
+        let screen = &conn.setup().roots[screen];
+        conn.create_window(screen.root_depth, ghost, root, -100, -100, 40, 40, 1, WindowClass::INPUT_OUTPUT, screen.root_visual, &CreateWindowAux::new().override_redirect(1).background_pixel(0xf4f4f4).border_pixel(0x808080).event_mask(EventMask::EXPOSURE))?;
+        let pointer = conn.query_pointer(root)?.reply()?;
+        conn.configure_window(ghost, &x11rb::protocol::xproto::ConfigureWindowAux::new().x(i32::from(pointer.root_x) + 16).y(i32::from(pointer.root_y) + 16))?;
+        conn.map_window(ghost)?;
+        conn.flush()?;
+        Ok(Self { conn, root, window, ghost, atoms, data })
+    }
+
+    fn paint(&self) -> R<()> {
+        use x11rb::protocol::xproto::{CreateGCAux, Rectangle};
+        let gc = self.conn.generate_id()?;
+        self.conn.create_gc(gc, self.ghost, &CreateGCAux::new().foreground(0xf0bc48))?;
+        self.conn.poly_fill_rectangle(self.ghost, gc, &[Rectangle { x: 4, y: 6, width: 15, height: 9 }, Rectangle { x: 4, y: 12, width: 32, height: 22 }])?;
+        self.conn.free_gc(gc)?;
+        self.conn.flush()?;
+        Ok(())
     }
 
     fn grab(&self) -> R<bool> {
@@ -174,7 +192,10 @@ impl Source {
         loop {
             let event = self.conn.wait_for_event()?;
             match event {
+                Event::Expose(e) if e.window == self.ghost => self.paint()?,
                 Event::MotionNotify(m) => {
+                    self.conn.configure_window(self.ghost, &x11rb::protocol::xproto::ConfigureWindowAux::new().x(i32::from(m.root_x) + 16).y(i32::from(m.root_y) + 16))?;
+                    self.conn.flush()?;
                     let found = self.target_at();
                     if target.as_ref().map(|t| t.window) != found.map(|f| f.0) {
                         if let Some(old) = target.take() {
@@ -202,6 +223,7 @@ impl Source {
                 }
                 Event::SelectionRequest(req) => self.answer(&req)?,
                 Event::ButtonRelease(b) => {
+                    self.conn.unmap_window(self.ghost)?;
                     let Some(t) = target else { return Ok(Outcome::Nowhere) };
                     if !t.accepted {
                         self.leave(&t)?;
@@ -234,6 +256,7 @@ impl Drop for Source {
     fn drop(&mut self) {
         let _ = self.conn.ungrab_pointer(CURRENT_TIME);
         let _ = self.conn.destroy_window(self.window);
+        let _ = self.conn.destroy_window(self.ghost);
         let _ = self.conn.flush();
     }
 }

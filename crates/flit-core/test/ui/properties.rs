@@ -28,6 +28,20 @@ fn deliver(app: &mut App, items: &[(&str, u32, u64)]) {
     app.poll();
 }
 
+#[test]
+fn linux_background_properties_keep_selection_and_measure_the_current_folder() {
+    let mut app = app_at("/home/user/folder");
+    app.caps.unix_paths = true;
+    deliver(&mut app, &[("selected.txt", 0, 5)]);
+    app.tab_mut().view.as_mut().unwrap().set_selected(0, true);
+    let path = app.current_location().path().clone();
+    app.drain_effects().for_each(drop);
+    app.properties_for(Some(path.clone()));
+    assert!(app.jobs.form.is_some());
+    assert!(app.tab().view.as_ref().unwrap().is_selected(0));
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Measure { items, .. }, .. } if items.iter().any(|(p, _)| p == &path))));
+}
+
 fn select(app: &mut App, names: &[&str]) {
     let v = app.tabs[app.cur].view.as_mut().unwrap();
     v.clear_selection();

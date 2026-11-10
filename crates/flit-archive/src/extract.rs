@@ -141,6 +141,7 @@ impl Out<'_> {
                 Ok(Some((parent.join(name), false)))
             }
             Some(Resolve::Skip) => {
+                self.skipped.push(rel);
                 self.job.update(|p| {
                     p.items += 1;
                     p.bytes += item.size;
@@ -420,7 +421,7 @@ fn run(plan: &Plan<'_>, job: &Job, env: &Env<'_>) -> Result<Created, (Created, P
     created.extend(out.renamed.iter().filter(|(_, new)| target.join(new).exists()).map(|(old, new)| (old.clone(), new.clone())));
     match result {
         Err(e) => Err((created, e)),
-        Ok(()) if !out.skipped.is_empty() => Err((created, PlatformError::new(-1, format!("Skipped {} items because folders with the same names exist: {}", out.skipped.len(), out.skipped.join(", "))))),
+        Ok(()) if !out.skipped.is_empty() => Err((created, PlatformError::new(-1, format!("Skipped {} items: {}", out.skipped.len(), out.skipped.join(", "))))),
         Ok(()) => Ok(created),
     }
 }

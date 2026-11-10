@@ -391,8 +391,30 @@ impl Fs for LinuxFs {
         Ok(())
     }
 
-    fn seek_penalty(&self, _: &FsPath) -> Option<bool> {
-        None
+    fn seek_penalty(&self, path: &FsPath) -> Option<bool> {
+        use std::os::unix::fs::MetadataExt;
+        let path = host(path)?;
+        let dev = std::fs::metadata(path).ok()?.dev();
+        let mut media = crate::walk::media(Path::new("/sys/dev/block"), dev);
+        if media == flit_platform::walk::Media::Unknown {
+            if let Some(mount) = crate::mounts::read().ok()?.iter().filter(|m| path.starts_with(m.path())).max_by_key(|m| m.point.len()) {
+                if mount.source.starts_with(b"/dev/") {
+                    if let Ok(meta) = std::fs::metadata(OsStr::from_bytes(&mount.source)) {
+                        media = crate::walk::media(Path::new("/sys/dev/block"), meta.rdev());
+                    }
+                }
+            }
+        }
+        match media {
+            flit_platform::walk::Media::Spinning => Some(true),
+            flit_platform::walk::Media::Solid => Some(false),
+            _ => None,
+        }
+    }
+
+    fn remote(&self, path: &FsPath) -> bool {
+        let Some(path) = host(path) else { return false };
+        crate::mounts::remote_path(path, &crate::mounts::read().unwrap_or_default())
     }
 
     fn read_deep(&self, root: &FsPath, out: &mut ListingBuilder<'_>, keep_going: &dyn Fn() -> bool) {

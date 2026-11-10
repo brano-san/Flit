@@ -37,8 +37,12 @@ impl Fs for LinuxGuiFs {
         }
     }
 
-    fn seek_penalty(&self, _: &FsPath) -> Option<bool> {
-        None
+    fn seek_penalty(&self, path: &FsPath) -> Option<bool> {
+        LinuxFs.seek_penalty(path)
+    }
+
+    fn remote(&self, path: &FsPath) -> bool {
+        LinuxFs.remote(path)
     }
 
     fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, DirStats) + Sync)) {

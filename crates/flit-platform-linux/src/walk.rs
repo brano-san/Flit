@@ -172,8 +172,22 @@ fn walk_with<S: IndexSink>(root: &Path, sink: &mut S, tree: &mut Tree, throttle:
     Ok(top.ino)
 }
 
-fn media(sys_block: &Path, dev: u64) -> Media {
+pub(crate) fn media(sys_block: &Path, dev: u64) -> Media {
     let block = sys_block.join(format!("{}:{}", libc::major(dev), libc::minor(dev)));
+    block_media(&block, 0)
+}
+
+fn block_media(block: &Path, depth: u8) -> Media {
+    if depth >= 16 {
+        return Media::Unknown;
+    }
+    let slaves: Vec<_> = std::fs::read_dir(block.join("slaves")).into_iter().flatten().filter_map(Result::ok).map(|e| block_media(&e.path(), depth + 1)).collect();
+    if slaves.contains(&Media::Spinning) {
+        return Media::Spinning;
+    }
+    if !slaves.is_empty() {
+        return if slaves.iter().all(|m| *m == Media::Solid) { Media::Solid } else { Media::Unknown };
+    }
     let flag = ["queue/rotational", "../queue/rotational"].iter().find_map(|p| std::fs::read_to_string(block.join(p)).ok());
     match flag.as_deref().map(str::trim) {
         Some("0") => Media::Solid,

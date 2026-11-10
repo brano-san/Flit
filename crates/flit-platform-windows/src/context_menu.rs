@@ -129,6 +129,10 @@ pub(crate) fn place(item: &ShellItem) -> Place {
     if named(&COVERED, item.verb) {
         return Place::Duplicate;
     }
+    let open_with = |verb: &str| verb.eq_ignore_ascii_case("openas") || verb.eq_ignore_ascii_case("openwith");
+    if item.usable && (open_with(item.verb) || item.children.is_some_and(|children| children.iter().any(|v| open_with(v)))) {
+        return Place::App;
+    }
     let app_verb = |v: &String| !v.is_empty() && !named(&WINDOWS_VERBS, v) && !named(&COVERED, v);
     match item.children {
         _ if !item.usable || named(&WINDOWS_VERBS, item.verb) => Place::Windows,

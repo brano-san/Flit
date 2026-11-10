@@ -225,11 +225,11 @@ fn shell_items_from_programs_are_kept_and_duplicates_of_flit_and_windows_items_a
         ("blank", ShellItem { verb: "", usable: false, children: None }),
     ];
     let by = |want: Place| items.iter().filter(|(_, i)| place(i) == want).map(|(l, _)| *l).collect::<Vec<_>>();
-    assert_eq!(by(Place::App), ["Copilot", "Edit with Notepad++", "Open with Code", "Git Bash here", "7-Zip", "What's locking this file?"]);
+    assert_eq!(by(Place::App), ["Copilot", "Edit with Notepad++", "Open with Code", "Git Bash here", "7-Zip", "What's locking this file?", "Open with"]);
     assert_eq!(by(Place::Duplicate), ["Open", "Copy as path", "Cut", "Copy", "Create shortcut", "Delete", "Rename", "Properties", "Open in new tab"]);
     assert_eq!(
         by(Place::Windows),
-        ["Edit", "Edit with Notepad++ (legacy)", "Add to Favorites", "Open with", "Give access to", "Share", "Restore previous versions", "Include in library", "Send to", "blank"]
+        ["Edit", "Edit with Notepad++ (legacy)", "Add to Favorites", "Give access to", "Share", "Restore previous versions", "Include in library", "Send to", "blank"]
     );
 }
 

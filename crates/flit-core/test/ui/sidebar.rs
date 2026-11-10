@@ -71,7 +71,7 @@ fn layout_scrolls_long_lists() {
     app.on_event(&crate::input::Event::Wheel { dx: 0.0, dy: -1000.0 }, t0 + Duration::from_millis(16 * 41));
     settle(&mut app, 42);
     let sb = &app.nav.sidebar;
-    let end = sb.rects.last().unwrap().bottom();
+    let end = sb.rects.last().unwrap().bottom().max(sb.headers.last().unwrap().0.bottom());
     assert!(end <= sb.list.bottom() + 0.5 && end >= sb.list.bottom() - SECTION_GAP - ROW_GAP - 1.0, "clamped at the end of the list: {end} {:?}", sb.list);
     assert_eq!(sb.list.bottom(), sb.rect.bottom(), "the list runs to the bottom without a Settings button");
     assert!(matches!(app.sidebar_hit(sb.rects[23].x + 5.0, sb.rects[23].y + 5.0), Some(Hit::Side(23))));
@@ -163,7 +163,8 @@ fn headers_fold_and_the_empty_area_menu_hides_sections() {
     for want in ["Recents *", "Bookmarks *", "Storage *", "Places *", "WSL *", "Compact sidebar"] {
         assert!(all.contains(&want.to_owned()), "{want} not in {all:?}");
     }
-    assert!(!all.iter().any(|l| l.starts_with("Libraries") || l.starts_with("Tags")), "sections with nothing to show are not offered: {all:?}");
+    assert!(!all.iter().any(|l| l.starts_with("Libraries")), "unavailable libraries are not offered: {all:?}");
+    assert!(all.iter().any(|l| l.starts_with("Tags")));
     run(&mut app, &m, "WSL");
     assert!(!app.nav.sidebar.headers.iter().any(|h| h.1 == Section::Wsl));
     assert!(app.run_action("quick_access.sections", Instant::now()));
@@ -187,7 +188,7 @@ fn section_toggles_keep_the_menu_open_and_update_the_sidebar_behind_it() {
     let mut app = app_with_places();
     click(empty_area(&app), &mut app, MouseButton::Right);
     let m = menu(&mut app);
-    assert_eq!(stays(&m.menu), ["Recents", "Bookmarks", "Storage", "Places", "WSL", "Compact sidebar"], "only the show/hide toggles stay open");
+    assert_eq!(stays(&m.menu), ["Recents", "Bookmarks", "Storage", "Places", "WSL", "Tags", "Compact sidebar"], "only the show/hide toggles stay open");
     app.on_event(&Event::ShowMenu { items: m.menu, x: 300.0, y: 100.0, launches: Vec::new(), kind: m.kind, shell: Vec::new(), pending: false }, Instant::now());
     let mut g = Gfx::new(Mono, 1024);
     app.frame(&mut g, Instant::now());
@@ -216,7 +217,7 @@ fn the_header_menu_folds_shifts_shows_paths_and_clears() {
     let mut app = app_with_places();
     click(header(&app, Section::Bookmarks), &mut app, MouseButton::Right);
     let m = menu(&mut app);
-    assert_eq!(labels(&m.menu), ["Collapse All", "Expand All", "Show Paths", "Recents *", "Bookmarks *", "Storage *", "Places *", "WSL *", "Shift Group Up", "Shift Group Down", "Restore Groups Order", "Clear Bookmarks"]);
+    assert_eq!(labels(&m.menu), ["Collapse All", "Expand All", "Show Paths", "Recents *", "Bookmarks *", "Storage *", "Places *", "WSL *", "Tags *", "Shift Group Up", "Shift Group Down", "Restore Groups Order", "Clear Bookmarks"]);
     assert_eq!(disabled(&m.menu), ["Expand All", "Restore Groups Order"], "an empty Recents still heads the list");
     run(&mut app, &m, "Shift Group Down");
     assert_eq!(app.nav_prefs().order()[..4], [Section::Recents, Section::Storage, Section::Bookmarks, Section::Places]);
@@ -448,7 +449,22 @@ fn item_menus_offer_place_commands() {
     click(app.nav.sidebar.rects[bin], &mut app, MouseButton::Right);
     let m = menu(&mut app);
     assert!(!m.shell);
-    assert_eq!(labels(&m.menu), ["Open", "Open in new tab", "Open in new window", "Open In Right Split", "Open In Bottom Split", "Restore all items", "Empty Recycle Bin"]);
+    assert_eq!(labels(&m.menu), ["Open", "Open in new tab", "Open in new window", "Open In Right Split", "Open In Bottom Split", "Move up", "Move down", "Remove item from list?", "Restore all items", "Empty Recycle Bin"]);
+}
+
+#[test]
+fn places_can_be_reordered_removed_and_restored_without_changing_bookmarks() {
+    let mut app = app_with_places();
+    let original: Vec<_> = app.nav.sidebar.section_items(Section::Places).into_iter().map(|i| i.loc).collect();
+    let bookmarks = app.nav.sidebar.state.pinned.clone();
+    app.drop_place(0, original.len());
+    let moved: Vec<_> = app.nav.sidebar.section_items(Section::Places).into_iter().map(|i| i.loc).collect();
+    assert_eq!(moved.last(), original.first());
+    app.place_command(PlaceCmd::HidePlace(original[0].clone()), Instant::now());
+    assert!(!app.nav.sidebar.section_items(Section::Places).iter().any(|i| i.loc == original[0]));
+    app.place_command(PlaceCmd::RestorePlaces, Instant::now());
+    assert_eq!(app.nav.sidebar.section_items(Section::Places).into_iter().map(|i| i.loc).collect::<Vec<_>>(), original);
+    assert_eq!(app.nav.sidebar.state.pinned, bookmarks);
 }
 
 #[test]
@@ -532,7 +548,7 @@ fn places_ask_the_system_for_their_icons_and_keep_glyphs_until_then() {
     app.set_tags(Arc::new(Tags::new(1, &store, &Default::default())));
     app.drain_effects().for_each(drop);
     app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
-    let asked: Vec<(Vec<u8>, IconKind)> = app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { (r.size == 16).then_some((r.path.as_bytes().to_vec(), r.kind)) } else { None }).collect();
+    let asked: Vec<(Vec<u8>, IconKind)> = app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { (r.size == 20).then_some((r.path.as_bytes().to_vec(), r.kind)) } else { None }).collect();
     for want in [
         (br"C:\a".to_vec(), IconKind::Place),
         (downloads.path().as_bytes().to_vec(), IconKind::Place),
@@ -674,6 +690,8 @@ fn alt_f_filters_quick_access_with_marks_and_escape_clears_it() {
     app.on_event(&Event::Key { key: Key::Escape, mods: Mods::default(), pressed: true }, Instant::now());
     assert!(app.nav.sidebar.filter.text().is_empty());
     assert!(!side_labels(&app).contains(&"Disk (C:)"), "the fold applies again once the filter is gone");
+    assert_eq!(app.nav.sidebar.field.w, 0.0);
+    app.focus_quick_filter();
     let f = app.nav.sidebar.field;
     assert_eq!(app.hit(f.x + f.w / 2.0, f.y + f.h / 2.0), Hit::QuickField);
     click(f, &mut app, MouseButton::Left);
@@ -774,7 +792,7 @@ fn without_wsl_distributions_the_sections_menu_has_no_wsl_toggle() {
     app.set_places(Arc::new(places));
     app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
     click(empty_area(&app), &mut app, MouseButton::Right);
-    assert_eq!(stays(&menu(&mut app).menu), ["Recents", "Bookmarks", "Storage", "Places", "Compact sidebar"]);
+    assert_eq!(stays(&menu(&mut app).menu), ["Recents", "Bookmarks", "Storage", "Places", "Tags", "Compact sidebar"]);
 }
 
 #[test]

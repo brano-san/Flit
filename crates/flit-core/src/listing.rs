@@ -29,7 +29,7 @@ pub struct Meta {
     pub attrs: u32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 #[repr(C)]
 pub struct Entry {
     pub size: u64,
@@ -211,6 +211,11 @@ impl Listing {
     }
 
     pub fn set_meta(&mut self, i: u32, m: Meta) {
+        if m.attrs & (attr::DIR | attr::SIZE_KNOWN) == attr::DIR {
+            if let Some(stats) = self.items.get_mut(i as usize) {
+                *stats = 0;
+            }
+        }
         let e = &mut self.entries[i as usize];
         if e.attrs & (attr::NESTED | attr::DELETED) == 0 {
             self.total = self.total.saturating_sub(e.size) + m.size;

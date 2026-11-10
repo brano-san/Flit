@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 fn app_in(path: &str, names: &[&str]) -> (App, Vec<Effect>) {
     let mut app = App::new(Persisted { path: Location::parse(path).unwrap(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 600), Instant::now());
+    app.set_git_integration(true);
     let t = app.tab();
     let mut listing = Listing::default();
     let mut keys = SortKeys::new(CaseMode::Insensitive);
@@ -27,6 +28,19 @@ fn app_in(path: &str, names: &[&str]) -> (App, Vec<Effect>) {
 
 fn git_requests(fx: &[Effect]) -> Vec<GitRequest> {
     fx.iter().filter_map(|e| if let Effect::Git(r) = e { Some(r.clone()) } else { None }).collect()
+}
+
+#[test]
+fn integration_is_off_by_default_and_late_status_is_ignored_after_disabling() {
+    let mut app = App::new(Persisted { path: Location::parse(r"C:\x").unwrap(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 600), Instant::now());
+    assert!(!app.prefs.git_integration);
+    assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty());
+    app.set_git_integration(true);
+    assert!(!git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty());
+    let status = repo(&app);
+    app.set_git_integration(false);
+    app.on_git(status);
+    assert!(app.git_info().is_none());
 }
 
 fn repo(app: &App) -> GitEvent {

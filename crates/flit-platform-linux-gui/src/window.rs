@@ -519,7 +519,17 @@ fn drag_out(el: &dyn ActiveEventLoop, source: winit::window::WindowId, list: Str
         return;
     }
     let data = DataTransferSendBuilder::new(list).with_type(TypeHint::UriList, |list: &String, _| Some(list.clone())).build();
-    if let Err(e) = el.start_drag(source, data, &[DndAction::Copy, DndAction::Move], None) {
+    let mut rgba = vec![0; 40 * 40 * 4];
+    for y in 5..35 {
+        for x in 4..36 {
+            if y >= 11 || x < 19 {
+                let at = (y * 40 + x) * 4;
+                rgba[at..at + 4].copy_from_slice(&[240, 188, 72, 235]);
+            }
+        }
+    }
+    let icon = winit::icon::RgbaIcon::new(rgba, 40, 40).ok().map(|icon| winit::event_loop::DragIcon { icon: icon.into(), offset_x: 12, offset_y: 12 });
+    if let Err(e) = el.start_drag(source, data, &[DndAction::Copy, DndAction::Move], icon) {
         tracing::info!("cannot drag files out of Flit here: {e}");
     }
 }
@@ -734,7 +744,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             WindowEvent::KeyboardInput { event, is_synthetic: false, .. } => {
                 let pressed = event.state == ElementState::Pressed;
                 handler.event(w, Event::Key { key: input::key(event.physical_key, &event.key_without_modifiers), mods: input::mods(self.mods), pressed });
-                for c in event.text.iter().filter(|_| pressed).flat_map(|t| t.chars()) {
+                for c in event.text.iter().filter(|_| pressed && !self.mods.control_key() && !self.mods.meta_key()).flat_map(|t| t.chars()) {
                     handler.event(w, Event::Char(c));
                 }
             }
