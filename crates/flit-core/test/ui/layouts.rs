@@ -187,6 +187,19 @@ fn grid_tiles_take_clicks_gaps_clear_the_selection_and_arrows_move_by_tile_and_b
 }
 
 #[test]
+fn the_size_line_under_a_tile_name_stays_inside_the_tile_at_every_zoom() {
+    let mut app = app_at(r"C:\x");
+    publish(&mut app, &files(4, "txt"), true);
+    for zoom in [ZOOM_ICONS, ZOOM_LARGE, ZOOM_XL] {
+        app.set_zoom(zoom);
+        frame(&mut app);
+        let p = app.item_parts(app.row_rect(0).unwrap());
+        let size_bottom = p.name.bottom() + app.cs(14.0);
+        assert!(size_bottom <= p.body.bottom() - app.cs(2.0), "zoom {zoom}: size line ends at {size_bottom}, tile at {}", p.body.bottom());
+    }
+}
+
+#[test]
 fn marquee_in_grid_selects_the_tiles_the_band_touches() {
     let mut app = app_at(r"C:\x");
     let names = files(12, "txt");
