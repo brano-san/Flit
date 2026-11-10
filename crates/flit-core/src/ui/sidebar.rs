@@ -131,6 +131,8 @@ pub struct Drive {
     pub label: String,
     pub total: u64,
     pub free: u64,
+    #[serde(default)]
+    pub file_system: String,
     pub removable: bool,
     pub unmounted: bool,
     pub kind: Option<S>,

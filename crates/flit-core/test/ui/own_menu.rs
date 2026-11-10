@@ -121,6 +121,24 @@ fn shell_items_that_arrive_later_join_the_open_menu_with_their_ids() {
 }
 
 #[test]
+fn windows_items_join_the_open_group_and_show_more_options_stays_last() {
+    let mut app = app();
+    let own = vec![cmd("Open"), MenuItem::Submenu { label: "Open in".into(), items: vec![cmd("New tab")] }, MenuItem::Separator, cmd("Copy")];
+    app.on_event(&Event::ShowMenu { items: own, x: 100.0, y: 100.0, launches: Vec::new(), kind: crate::ui::MenuKind::File, shell: Vec::new(), pending: true }, Instant::now());
+    app.frame(&mut Gfx::new(Mono, 256), Instant::now());
+    let shell = vec![cmd("Terminal"), MenuItem::Separator, MenuItem::Submenu { label: "7-Zip".into(), items: vec![cmd("Add")] }, MenuItem::Submenu { label: "Show more options".into(), items: vec![cmd("Send to")] }];
+    app.on_event(&Event::ShellItems { items: shell, shell: vec![4, 5, 6] }, Instant::now());
+    app.frame(&mut Gfx::new(Mono, 256), Instant::now());
+    let labels = app.context_menu_open().unwrap().labels();
+    assert_eq!(labels, ["Open", "Open in >", "Terminal", "7-Zip >", "-", "Copy", "-", "Show more options >"]);
+    for k in [Key::Down, Key::Down, Key::Down, Key::Enter] {
+        key(&mut app, k);
+    }
+    assert!(!app.own_menu_open());
+    assert_eq!(picks(&mut app), [Some(4)], "a lifted Windows item still runs its own verb");
+}
+
+#[test]
 fn a_menu_still_waiting_for_shell_items_releases_them_and_ignores_late_ones() {
     let mut app = app();
     pending(&mut app);
@@ -187,7 +205,7 @@ fn a_menu_opens_at_the_size_its_kind_had_and_text_typed_early_survives_the_shell
     key(&mut app, Key::Escape);
     let early = open(&mut app);
     assert_eq!((early.h, early.w), (full.h, full.w), "the next one opens at the size it will have");
-    assert_eq!(app.context_menu_open().unwrap().labels(), ["Open", "-", "", "-", ""], "neutral rows hold the shell's places");
+    assert_eq!(app.context_menu_open().unwrap().labels(), ["Open", "", "-", ""], "neutral rows hold the shell's places");
     app.on_event(&Event::Char('s'), Instant::now());
     let late = arrive(&mut app);
     let c = app.context_menu_open().unwrap();

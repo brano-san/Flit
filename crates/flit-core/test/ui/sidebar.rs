@@ -9,7 +9,7 @@ fn loc(s: &str) -> Location {
 }
 
 fn drive(letter: char) -> Drive {
-    Drive { path: FsPath::parse(&format!("{letter}:\\")).unwrap(), label: format!("Disk ({letter}:)"), total: 100, free: 100, removable: false, unmounted: false, kind: None, remote: None }
+    Drive { path: FsPath::parse(&format!("{letter}:\\")).unwrap(), label: format!("Disk ({letter}:)"), total: 100, free: 100, file_system: String::new(), removable: false, unmounted: false, kind: None, remote: None }
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn layout_scrolls_long_lists() {
 fn opening_an_unmounted_volume_asks_the_platform_to_mount_it() {
     let mut app = App::new(Persisted::default(), Vec::new(), 0, false, 1.0, (1000, 700), Instant::now());
     let dev = FsPath::parse("/dev/sdb1").unwrap();
-    app.set_places(Arc::new(Places { drives: vec![Drive { path: dev.clone(), label: "STICK".into(), total: 0, free: 0, removable: true, unmounted: true, kind: None, remote: None }], ..Default::default() }));
+    app.set_places(Arc::new(Places { drives: vec![Drive { path: dev.clone(), label: "STICK".into(), total: 0, free: 0, file_system: String::new(), removable: true, unmounted: true, kind: None, remote: None }], ..Default::default() }));
     app.drain_effects().for_each(drop);
     let i = app.nav.sidebar.items.iter().position(|it| it.loc.path() == &dev).unwrap();
     app.open_side_item(i, false, Instant::now());
@@ -95,7 +95,7 @@ fn opening_an_unmounted_volume_asks_the_platform_to_mount_it() {
 
 fn app_with_places() -> App {
     let mut app = App::new(Persisted::default(), Vec::new(), 0, false, 1.0, (1000, 700), Instant::now());
-    let usb = Drive { removable: true, label: "USB (E:)".into(), path: FsPath::parse(r"E:\").unwrap(), total: 10, free: 5, unmounted: false, kind: None, remote: None };
+    let usb = Drive { removable: true, label: "USB (E:)".into(), path: FsPath::parse(r"E:\").unwrap(), total: 10, free: 5, file_system: String::new(), unmounted: false, kind: None, remote: None };
     app.set_places(Arc::new(Places { drives: vec![drive('C'), usb], wsl: vec!["Debian".into()], recycle_bin: true, ..Default::default() }));
     app.set_pinned(vec![loc(r"C:\a"), loc(r"C:\b")]);
     app.drain_effects().for_each(drop);
@@ -521,7 +521,7 @@ fn distros_in_the_sidebar_show_their_own_icons() {
 #[test]
 fn places_ask_the_system_for_their_icons_and_keep_glyphs_until_then() {
     let mut app = app_with_places();
-    let offline = Drive { path: FsPath::parse(r"Z:\").unwrap(), label: "Share (Z:)".into(), total: 0, free: 0, removable: false, unmounted: true, kind: None, remote: Some(r"\\srv\share".into()) };
+    let offline = Drive { path: FsPath::parse(r"Z:\").unwrap(), label: "Share (Z:)".into(), total: 0, free: 0, file_system: String::new(), removable: false, unmounted: true, kind: None, remote: Some(r"\\srv\share".into()) };
     let downloads = loc(r"C:\Users\u\Downloads");
     let mut places = (*app.nav.sidebar.places).clone();
     places.folders = vec![(KnownFolder::Downloads, downloads.clone())];

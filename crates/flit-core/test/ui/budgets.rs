@@ -44,7 +44,7 @@ fn snapshot(app: &App, names: &[String]) -> Arc<DirSnapshot> {
 fn places() -> Arc<Places> {
     Arc::new(Places {
         folders: vec![(KnownFolder::Home, loc(r"C:\Users\u")), (KnownFolder::Downloads, loc(r"C:\Users\u\Downloads")), (KnownFolder::Documents, loc(r"C:\Users\u\Documents"))],
-        drives: (0..6).map(|k| Drive { path: fs(&format!("{}:\\", (b'C' + k) as char)), label: format!("Disk {k} ({}:)", (b'C' + k) as char), total: 1000, free: 300, removable: false, unmounted: false, kind: None, remote: None }).collect(),
+        drives: (0..6).map(|k| Drive { path: fs(&format!("{}:\\", (b'C' + k) as char)), label: format!("Disk {k} ({}:)", (b'C' + k) as char), total: 1000, free: 300, file_system: String::new(), removable: false, unmounted: false, kind: None, remote: None }).collect(),
         recent: (0..24).map(|k| Recent { name: format!("file {k}.docx"), target: fs(&format!(r"C:\Users\u\Documents\file {k}.docx")), dir: k % 3 == 0, at: 1000 - k }).collect(),
         ..Default::default()
     })

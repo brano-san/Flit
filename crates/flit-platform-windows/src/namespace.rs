@@ -195,5 +195,5 @@ pub(crate) fn is_device(parsing: &str) -> bool {
 }
 
 pub(crate) fn device_drive(path: FsPath, label: String) -> flit_core::ui::Drive {
-    flit_core::ui::Drive { path, label, total: 0, free: 0, removable: false, unmounted: false, kind: None, remote: None }
+    flit_core::ui::Drive { path, label, total: 0, free: 0, file_system: String::new(), removable: false, unmounted: false, kind: None, remote: None }
 }

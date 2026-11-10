@@ -14,7 +14,7 @@ fn loc(s: &str) -> Location {
 
 fn app() -> App {
     let mut app = App::new(Persisted { path: loc(r"C:\start"), ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 700), Instant::now());
-    let c = Drive { path: crate::path::FsPath::parse(r"C:\").unwrap(), label: "Disk (C:)".into(), total: 1 << 30, free: 1 << 29, removable: false, unmounted: false, kind: None, remote: None };
+    let c = Drive { path: crate::path::FsPath::parse(r"C:\").unwrap(), label: "Disk (C:)".into(), total: 1 << 30, free: 1 << 29, file_system: "NTFS".into(), removable: false, unmounted: false, kind: None, remote: None };
     let note = Recent { name: "note.txt".into(), target: crate::path::FsPath::parse(r"C:\docs\note.txt").unwrap(), dir: false, at: 5 };
     app.set_places(Arc::new(Places { drives: vec![c], folders: vec![(KnownFolder::Downloads, loc(r"C:\Users\u\Downloads"))], recent: vec![note], ..Default::default() }));
     app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
@@ -93,7 +93,7 @@ fn drives_show_their_size_and_tags_or_this_pc_show_nothing() {
     hover(&mut app, "Disk (C:)", t0);
     app.on_event(&Event::Timer, t0 + QUICK_DELAY);
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Measure { .. }, .. })));
-    assert_eq!(app.quick_rows().iter().map(|r| r.0.as_str()).collect::<Vec<_>>(), ["Size:"]);
+    assert_eq!(app.quick_rows().iter().map(|r| r.0.as_str()).collect::<Vec<_>>(), ["File system", "Size:", "Free"]);
     hover(&mut app, "This PC", t0);
     assert!(app.quick.is_none());
     assert_eq!(compact_count(999), "999");

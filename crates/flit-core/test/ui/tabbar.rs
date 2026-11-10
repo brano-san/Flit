@@ -339,7 +339,7 @@ fn tabs_show_the_system_icon_of_their_location() {
     use crate::ui::IconKind::{Folder, Place, Volume};
     use crate::ui::{Drive, KnownFolder, Places};
     let mut app = app_with(&[r"C:\Users\u\Downloads", r"C:\", r"C:\work\sub", "wsl://Debian/", r"C:\work\pinned"]);
-    let drive = Drive { path: FsPath::parse(r"C:\").unwrap(), label: "Local Disk (C:)".into(), total: 10, free: 5, removable: false, unmounted: false, kind: None, remote: None };
+    let drive = Drive { path: FsPath::parse(r"C:\").unwrap(), label: "Local Disk (C:)".into(), total: 10, free: 5, file_system: String::new(), removable: false, unmounted: false, kind: None, remote: None };
     app.set_places(Arc::new(Places { folders: vec![(KnownFolder::Downloads, loc(r"C:\Users\u\Downloads"))], drives: vec![drive], ..Default::default() }));
     app.set_pinned(vec![loc(r"C:\work\pinned")]);
     app.open_in_tabs([Location::computer(), Location::recycle_bin(), Location::home_page()].into_iter().map(|folder| Route { folder, select: None }).collect(), Instant::now());

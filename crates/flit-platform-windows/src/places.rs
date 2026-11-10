@@ -35,10 +35,11 @@ pub fn drives() -> Vec<Drive> {
             let root = PCWSTR(root.as_ptr());
             let kind = unsafe { GetDriveTypeW(root) };
             let mut label = [0u16; 261];
+            let mut file_system = [0u16; 261];
             let (mut total, mut free) = (0u64, 0u64);
             if kind != DRIVE_REMOTE {
                 unsafe {
-                    let _ = GetVolumeInformationW(root, Some(&mut label), None, None, None, None);
+                    let _ = GetVolumeInformationW(root, Some(&mut label), None, None, None, Some(&mut file_system));
                     let _ = GetDiskFreeSpaceExW(root, None, Some(&mut total), Some(&mut free));
                 }
             }
@@ -57,7 +58,7 @@ pub fn drives() -> Vec<Drive> {
             });
             let name = default_kind.map_or(volume_label, |k| k.en().to_owned());
             let path = FsPath::parse(&format!("{letter}:\\"))?;
-            Some(Drive { path, label: flit_core::tr_en!(S::SidebarDriveLabel, name = name, letter = letter), total, free, removable: matches!(kind, DRIVE_REMOVABLE | DRIVE_CDROM), unmounted: false, kind: default_kind, remote: None })
+            Some(Drive { path, label: flit_core::tr_en!(S::SidebarDriveLabel, name = name, letter = letter), total, free, file_system: wide_str(&file_system), removable: matches!(kind, DRIVE_REMOVABLE | DRIVE_CDROM), unmounted: false, kind: default_kind, remote: None })
         })
         .collect();
     for (local, remote) in crate::network::remembered() {
@@ -68,7 +69,7 @@ pub fn drives() -> Vec<Drive> {
     }
     out.sort_by(|a, b| a.path.as_bytes().cmp(b.path.as_bytes()));
     out.extend(crate::namespace::devices());
-    out.push(Drive { path: FsPath::network(), label: S::PathNetwork.en().to_owned(), total: 0, free: 0, removable: false, unmounted: false, kind: Some(S::PathNetwork), remote: None });
+    out.push(Drive { path: FsPath::network(), label: S::PathNetwork.en().to_owned(), total: 0, free: 0, file_system: String::new(), removable: false, unmounted: false, kind: Some(S::PathNetwork), remote: None });
     out
 }
 
@@ -82,7 +83,7 @@ pub(crate) fn share_name(remote: &str) -> String {
 fn network_drive(letter: char, remote: String, online: bool) -> Option<Drive> {
     let path = FsPath::parse(&format!("{letter}:\\"))?;
     let label = flit_core::tr_en!(S::SidebarDriveLabel, name = share_name(&remote), letter = letter);
-    Some(Drive { path, label, total: 0, free: 0, removable: false, unmounted: !online, kind: None, remote: Some(remote) })
+    Some(Drive { path, label, total: 0, free: 0, file_system: String::new(), removable: false, unmounted: !online, kind: None, remote: Some(remote) })
 }
 
 fn dword(sub: &str, name: &str) -> Option<u32> {

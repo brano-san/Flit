@@ -127,7 +127,8 @@ pub enum ResolveError {
 }
 
 pub fn resolve(raw: &[u8], cwd: Option<&[u8]>, shell_folder: &dyn Fn(&str) -> Option<Location>) -> Result<Location, ResolveError> {
-    let raw = unquote(raw);
+    let expanded = expand_environment(unquote(raw));
+    let raw = expanded.as_deref().unwrap_or_else(|| unquote(raw));
     let text = name::display(raw);
     if THIS_PC.iter().any(|t| text.eq_ignore_ascii_case(t)) {
         return Ok(Location::computer());
@@ -146,6 +147,44 @@ pub fn resolve(raw: &[u8], cwd: Option<&[u8]>, shell_folder: &dyn Fn(&str) -> Op
         None => Some(raw.to_vec()),
     };
     path.and_then(|p| resolve_path(&p, cwd.and_then(FsPath::parse_bytes))).ok_or_else(|| ResolveError::Invalid(text.into_owned()))
+}
+
+/// Expands Windows-style `%NAME%` variables before a path is parsed.  Keeping
+/// this next to path resolution makes the address bar and command-line opens
+/// behave identically, while leaving unknown variables untouched.
+fn expand_environment(raw: &[u8]) -> Option<Vec<u8>> {
+    let text = std::str::from_utf8(raw).ok()?;
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut changed = false;
+    while let Some(open) = rest.find('%') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('%') else {
+            out.push('%');
+            out.push_str(after);
+            break;
+        };
+        let name = &after[..close];
+        let value = (!name.is_empty()).then(|| std::env::vars_os().find_map(|(key, value)| key.to_string_lossy().eq_ignore_ascii_case(name).then(|| value.to_string_lossy().into_owned()))).flatten();
+        match value {
+            Some(value) => {
+                out.push_str(&value);
+                changed = true;
+            }
+            None => {
+                out.push('%');
+                out.push_str(name);
+                out.push('%');
+            }
+        }
+        rest = &after[close + 1..];
+    }
+    if rest.is_empty() || !changed {
+        return changed.then_some(out.into_bytes());
+    }
+    out.push_str(rest);
+    Some(out.into_bytes())
 }
 
 fn strip_prefix_ci<'a>(b: &'a [u8], prefix: &[u8]) -> Option<&'a [u8]> {

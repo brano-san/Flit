@@ -41,7 +41,7 @@ pub fn volumes() -> Vec<Volume> {
 pub fn drives() -> Vec<Drive> {
     volumes()
         .into_iter()
-        .filter_map(|v| Some(Drive { path: crate::xdg::fs_path(v.mount.path())?, label: v.label, total: v.total, free: v.free, removable: v.mount.removable(), unmounted: false, kind: None, remote: None }))
+        .filter_map(|v| Some(Drive { path: crate::xdg::fs_path(v.mount.path())?, label: v.label, total: v.total, free: v.free, file_system: v.mount.fstype.clone(), removable: v.mount.removable(), unmounted: false, kind: None, remote: None }))
         .chain(unmounted())
         .chain(gvfs(&gvfs_root()))
         .collect()
@@ -68,7 +68,7 @@ pub fn gvfs(root: &Path) -> Vec<Drive> {
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
             let path = crate::xdg::fs_path(&e.path())?;
-            Some(Drive { path, label: gvfs_label(&name), total: 0, free: 0, removable: false, unmounted: false, kind: None, remote: Some(name) })
+            Some(Drive { path, label: gvfs_label(&name), total: 0, free: 0, file_system: String::new(), removable: false, unmounted: false, kind: None, remote: Some(name) })
         })
         .collect();
     out.sort_by(|a, b| a.label.cmp(&b.label));
@@ -121,7 +121,7 @@ pub fn unmounted_from(lsblk: &str) -> Vec<Drive> {
         if data_partition(&f) {
             let Some(path) = flit_core::FsPath::parse_exact(get("PATH").as_bytes()) else { continue };
             let label = if get("LABEL").is_empty() { get("PATH").rsplit('/').next().unwrap_or("").to_owned() } else { get("LABEL").to_owned() };
-            out.push(Drive { path, label, total: 0, free: 0, removable: get("HOTPLUG") == "1", unmounted: true, kind: None, remote: None });
+            out.push(Drive { path, label, total: 0, free: 0, file_system: get("FSTYPE").to_owned(), removable: get("HOTPLUG") == "1", unmounted: true, kind: None, remote: None });
         }
     }
     out

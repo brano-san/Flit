@@ -52,7 +52,7 @@ fn network_goes_to_the_network_place() {
 
 #[test]
 fn a_disconnected_mapped_drive_says_so() {
-    let mut d = Drive { path: FsPath::parse(r"Z:\").unwrap(), label: r"share (\\nas) (Z:)".into(), total: 0, free: 0, removable: false, unmounted: true, kind: None, remote: Some(r"\\nas\share".into()) };
+    let mut d = Drive { path: FsPath::parse(r"Z:\").unwrap(), label: r"share (\\nas) (Z:)".into(), total: 0, free: 0, file_system: String::new(), removable: false, unmounted: true, kind: None, remote: Some(r"\\nas\share".into()) };
     assert!(d.offline());
     assert_eq!(d.title(), format!("share (\\\\nas) (Z:) \u{2014} {}", S::SidebarDriveOffline.t()));
     d.unmounted = false;

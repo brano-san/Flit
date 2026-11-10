@@ -321,7 +321,10 @@ fn flags(op: &FileOp) -> FILEOPERATION_FLAGS {
         FileOp::Copy { items, dest } if duplicates(items, dest) => FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR | FOF_RENAMEONCOLLISION,
         _ => FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR,
     };
-    if matches!(op, FileOp::Trash(_)) || quiet(op) { flags | FOF_SILENT } else { flags }
+    // Let Explorer own the progress and conflict UI for substantial deletes.
+    // Suppressing it for every recycle operation made a large folder look
+    // frozen until IFileOperation finally completed.
+    if quiet(op) { flags | FOF_SILENT } else { flags }
 }
 
 fn cancelled(op: &FileOp) -> PlatformError {

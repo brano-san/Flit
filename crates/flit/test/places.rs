@@ -23,7 +23,7 @@ fn path(s: &str) -> FsPath {
 fn places() -> Places {
     Places {
         folders: vec![(KnownFolder::Downloads, Location::from_local(path(r"C:\Users\me\Downloads")))],
-        drives: vec![Drive { path: path(r"D:\"), label: "Data".into(), total: 0, free: 0, removable: false, unmounted: false, kind: None, remote: None }],
+        drives: vec![Drive { path: path(r"D:\"), label: "Data".into(), total: 0, free: 0, file_system: String::new(), removable: false, unmounted: false, kind: None, remote: None }],
         wsl: vec!["Ubuntu".into()],
         recycle_bin: true,
         recent: vec![Recent { name: "notes.txt".into(), target: path(r"C:\notes.txt"), dir: false, at: 7 }],

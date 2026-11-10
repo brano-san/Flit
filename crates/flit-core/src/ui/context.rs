@@ -120,6 +120,7 @@ pub struct ContextMenu {
     glow: super::widgets::Glow<usize>,
     star_glow: super::widgets::Glow<usize>,
     glow_at: Option<std::time::Instant>,
+    shell: Option<(usize, Option<usize>)>,
 }
 
 fn flatten(items: &[MenuItem], depth: usize, parent: &str, next: &mut usize, out: &mut Vec<Node>) {
@@ -184,6 +185,7 @@ impl ContextMenu {
             glow: Default::default(),
             star_glow: Default::default(),
             glow_at: None,
+            shell: None,
         };
         m.arrange(&[], &[]);
         m
@@ -193,6 +195,7 @@ impl ContextMenu {
         for n in &mut self.nodes {
             n.hidden = !n.path.is_empty() && hidden.contains(&n.path);
         }
+        let shell = if order.is_empty() { self.shell } else { None };
         let mut items = Vec::new();
         let (mut group, mut anchor, mut i) = (0, -1, 0);
         while i < self.nodes.len() {
@@ -204,7 +207,13 @@ impl ContextMenu {
                     anchor = p as isize;
                 }
                 if !n.hidden {
-                    items.push((anchor, group, i));
+                    let (slot, group) = match shell {
+                        Some((_, Some(tail))) if i == tail => (3, group),
+                        Some((from, _)) if i >= from => (1, 0),
+                        _ if group == 0 => (0, 0),
+                        _ => (2, group),
+                    };
+                    items.push((anchor, slot, group, i));
                 }
             }
             i = match n.what {
@@ -212,10 +221,10 @@ impl ContextMenu {
                 _ => i + 1,
             };
         }
-        items.sort_by_key(|&(anchor, ..)| anchor);
+        items.sort_by_key(|&(anchor, slot, ..)| (anchor, slot));
         self.top.clear();
         let mut last = None;
-        for (_, group, node) in items {
+        for (_, _, group, node) in items {
             if last.is_some_and(|g| g != group) {
                 self.top.push(None);
             }
@@ -223,6 +232,22 @@ impl ContextMenu {
             self.top.push(Some(node));
         }
         self.rebuild();
+    }
+
+    pub fn lift_shell(&mut self, own: usize, keep_tail: bool) {
+        let mut tops = Vec::new();
+        let mut i = 0;
+        while i < self.nodes.len() {
+            tops.push(i);
+            i = match self.nodes[i].what {
+                What::Submenu { end } => end,
+                _ => i + 1,
+            };
+        }
+        let Some(&from) = tops.get(own) else { return };
+        let tail = tops.last().copied().filter(|_| keep_tail).filter(|&t| t > from);
+        self.shell = Some((from, tail));
+        self.arrange(&[], &[]);
     }
 
     pub fn seen(&self) -> Vec<String> {

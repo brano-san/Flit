@@ -318,8 +318,8 @@ fn details_tab_shows_and_edits_the_selection_tags() {
 #[test]
 fn volumes_of_unknown_size_show_no_size_instead_of_zero_bytes() {
     let mut app = App::new(Persisted { path: Location::computer(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 600), Instant::now());
-    let share = crate::ui::Drive { path: crate::path::FsPath::parse(r"Z:\").unwrap(), label: "Share (Z:)".into(), total: 0, free: 0, removable: false, unmounted: false, kind: None, remote: Some(r"\\srv\s".into()) };
-    let fixed = crate::ui::Drive { path: crate::path::FsPath::parse(r"C:\").unwrap(), label: "C".into(), total: 1000, free: 400, removable: false, unmounted: false, kind: None, remote: None };
+    let share = crate::ui::Drive { path: crate::path::FsPath::parse(r"Z:\").unwrap(), label: "Share (Z:)".into(), total: 0, free: 0, file_system: String::new(), removable: false, unmounted: false, kind: None, remote: Some(r"\\srv\s".into()) };
+    let fixed = crate::ui::Drive { path: crate::path::FsPath::parse(r"C:\").unwrap(), label: "C".into(), total: 1000, free: 400, file_system: String::new(), removable: false, unmounted: false, kind: None, remote: None };
     app.set_places(Arc::new(crate::ui::Places { drives: vec![fixed, share], ..Default::default() }));
     let t = app.tab();
     let mut listing = Listing::default();

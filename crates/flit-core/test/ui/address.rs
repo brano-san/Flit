@@ -211,7 +211,7 @@ fn the_address_window_lists_the_folder_then_typed_paths_and_tab_expands() {
 #[test]
 fn goto_starts_with_quick_access_groups_that_fold() {
     let mut app = app_at(r"C:\x");
-    let c = Drive { path: FsPath::parse(r"C:\").unwrap(), label: "Disk (C:)".into(), total: 100, free: 25, removable: false, unmounted: false, kind: None, remote: None };
+    let c = Drive { path: FsPath::parse(r"C:\").unwrap(), label: "Disk (C:)".into(), total: 100, free: 25, file_system: String::new(), removable: false, unmounted: false, kind: None, remote: None };
     app.set_places(Arc::new(Places { drives: vec![c], folders: vec![(KnownFolder::Downloads, loc(r"C:\Users\u\Downloads"))], ..Default::default() }));
     app.nav.sidebar.state.pinned = vec![loc(r"C:\work")];
     app.nav.sidebar.rebuild();

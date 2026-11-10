@@ -79,6 +79,7 @@ pub struct OwnMenu {
     shape: Option<(String, Vec<u8>)>,
     floor_w: f32,
     carry: String,
+    tail: bool,
 }
 
 impl OwnMenu {
@@ -90,6 +91,7 @@ impl OwnMenu {
         if !rows.is_empty() && !self.items.is_empty() {
             self.items.push(MenuItem::Separator);
         }
+        self.tail = rows.last() == Some(&SHAPE_SUBMENU);
         self.items.extend(rows.iter().map(|&r| if r == SHAPE_SEPARATOR { MenuItem::Separator } else { MenuItem::Header(String::new()) }));
     }
 
@@ -104,6 +106,7 @@ impl OwnMenu {
         if !items.is_empty() && !self.items.is_empty() {
             self.items.push(MenuItem::Separator);
         }
+        self.tail = matches!(items.last(), Some(MenuItem::Submenu { .. }));
         self.items.extend_from_slice(items);
         self.shell = shell.to_vec();
         self.pending = false;
@@ -127,7 +130,7 @@ impl App {
         if let Event::ShowMenu { items, x, y, launches, kind, shell, pending } = ev {
             self.release_shell_menu();
             let key = self.shapes.next.take().filter(|_| *pending);
-            let mut m = OwnMenu { items: items.clone(), at: (*x, *y), launches: launches.clone(), shell: shell.clone(), kind: *kind, view: None, opened: now, right: self.menu_right.take(), pointer: None, pending: *pending, own: items.len(), shape: None, floor_w: 0.0, carry: String::new() };
+            let mut m = OwnMenu { items: items.clone(), at: (*x, *y), launches: launches.clone(), shell: shell.clone(), kind: *kind, view: None, opened: now, right: self.menu_right.take(), pointer: None, pending: *pending, own: items.len(), shape: None, floor_w: 0.0, carry: String::new(), tail: false };
             if let Some(key) = key {
                 if let Some((_, rows, w)) = self.shapes.get(&key) {
                     m.placeholders(rows);
@@ -359,6 +362,9 @@ impl App {
             }
             kind => {
                 let mut c = ContextMenu::new(&m.items, kind, pins.unwrap_or_default(), m.at, bounds, scale);
+                if m.items.len() > m.own {
+                    c.lift_shell(m.own, m.tail);
+                }
                 if let Some((hidden, order)) = &arrangement {
                     c.arrange(hidden, order);
                 }

@@ -485,11 +485,13 @@ impl App {
         let files = t.view_loc.path().kind() != PathKind::Computer;
         m.action("item.open", S::MenuOpen.t());
         if folders > 0 {
-            m.action("item.open_tab", S::MenuOpenInNewTab.t());
-            m.action("item.open_window", S::MenuOpenInNewWindow.t());
-            if m.shown("pane.menu") {
-                self.item_pane_items(m);
-            }
+            m.submenu(S::MenuOpenIn.t(), |m| {
+                m.action("item.open_tab", S::MenuOpenInNewTab.t());
+                m.action("item.open_window", S::MenuOpenInNewWindow.t());
+                if m.shown("pane.menu") {
+                    self.item_pane_items(m);
+                }
+            });
         }
         m.separator();
         if files {

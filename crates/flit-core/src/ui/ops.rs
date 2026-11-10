@@ -94,6 +94,7 @@ struct Pending {
     then: Then,
     ctl: OpCtl,
     provider: ProviderId,
+    optimistic_removal: bool,
 }
 
 struct Slow {
@@ -346,6 +347,13 @@ fn same_location(a: &Location, b: &Location) -> bool {
     if a.path().case_sensitive() { x == y } else { x.eq_ignore_ascii_case(&y) }
 }
 
+fn removal_count(op: &FileOp) -> usize {
+    match op {
+        FileOp::Trash(items) | FileOp::Delete(items) => items.len(),
+        _ => 0,
+    }
+}
+
 impl App {
     pub fn status(&mut self, msg: impl Into<String>) {
         let msg = msg.into();
@@ -474,7 +482,32 @@ impl App {
         let id = self.ops.next_id;
         let ctl = OpCtl::new(self.conflict_default);
         self.track_job(id, &provider, &op, &ctl);
-        self.ops.pending.push(Pending { id, tab, origin, then, ctl: ctl.clone(), provider: provider.clone() });
+        let optimistic_removal = provider == ProviderId::Local
+            && match &op {
+                FileOp::Trash(items) | FileOp::Delete(items) => self.tabs.iter().find(|t| t.id == tab).is_some_and(|t| {
+                    let (Some(view), Some(dir)) = (&t.view, t.view_loc.to_windows()) else { return false };
+                    let listing = view.listing();
+                    items.iter().any(|path| {
+                        path.parent().is_some_and(|parent| parent.same(&dir))
+                            && (0..listing.len() as u32).find(|&i| listing.name(i).eq_ignore_ascii_case(path.file_name())).is_some_and(|i| listing.entries[i as usize].is_dir())
+                    })
+                }),
+                _ => false,
+            };
+        self.ops.pending.push(Pending { id, tab, origin, then, ctl: ctl.clone(), provider: provider.clone(), optimistic_removal });
+        // Explorer removes a folder from its view as soon as deletion starts.
+        // Do the same here, so a long-running delete cannot be opened or
+        // started a second time from the still-visible source list.
+        if optimistic_removal {
+            let sources = match &op {
+                FileOp::Trash(items) | FileOp::Delete(items) => items,
+                _ => unreachable!(),
+            };
+            let report = OpReport { op: op.clone(), items: sources.iter().cloned().map(|path| (path.clone(), path)).collect() };
+            if let Some(k) = self.tabs.iter().position(|t| t.id == tab) {
+                self.drop_gone(k, &provider, &report);
+            }
+        }
         self.effects.push(Effect::Provider { provider, req: ProviderRequest::Op { tab, id, op, ctl } });
     }
 
@@ -996,6 +1029,7 @@ impl App {
         self.job_done(id, error.as_deref().filter(|_| !cancelled), cancelled, now);
         if report.is_some() {
             self.check_places();
+            self.effects.push(Effect::RefreshPlaces);
         }
         let pending = self.ops.pending.iter().position(|p| p.id == id && p.tab == tab).map(|k| self.ops.pending.swap_remove(k));
         let k = self.tabs.iter().position(|t| t.id == tab);
@@ -1014,10 +1048,25 @@ impl App {
             self.tags_moved(&provider, r);
         }
         let (Some(report), Some(p)) = (report, pending) else { return };
-        if let (FileOp::Trash(_) | FileOp::Delete(_), Some(k)) = (&report.op, k) {
-            self.drop_gone(k, &p.provider, &report);
+        let incomplete_removal = p.optimistic_removal && (error.is_some() || report.items.len() != removal_count(&report.op));
+        if incomplete_removal {
+            // A skipped or failed item was hidden optimistically.  Reload to
+            // put back precisely the items Windows kept.
+            if let Some(k) = k {
+                self.reload(k, now);
+            }
+        } else if !p.optimistic_removal {
+            if let (FileOp::Trash(_) | FileOp::Delete(_), Some(k)) = (&report.op, k) {
+                self.drop_gone(k, &p.provider, &report);
+            }
         }
         self.ops.journal.record(p.origin, p.provider.clone(), &report);
+        // A watcher can add a pasted/moved folder after the normal initial
+        // size pass.  Reloading the destination makes the table schedule a
+        // fresh directory-size walk, rather than leaving its Size cell blank.
+        if self.prefs.auto_sizes && k == Some(self.cur) && matches!(report.op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Restore(_)) {
+            self.reload(self.cur, now);
+        }
         if self.archive_then(tab, &p.then, &report, error.as_deref(), now) {
             return;
         }

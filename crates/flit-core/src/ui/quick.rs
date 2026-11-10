@@ -142,6 +142,9 @@ impl App {
         let Some(q) = self.quick.as_mut() else { return };
         let drive = self.nav.sidebar.places.drives.iter().find(|d| d.path == *q.loc.path());
         q.size = drive.map(|d| d.total).filter(|&t| t > 0);
+        if let Some(drive) = drive.filter(|d| !d.file_system.is_empty()) {
+            q.system.push((S::PropertiesFileSystem.t().to_owned(), drive.file_system.clone()));
+        }
     }
 
     pub(super) fn poll_quick(&mut self) -> bool {
@@ -201,7 +204,7 @@ impl App {
             s
         };
         let mut rows = Vec::new();
-        if q.subject == Subject::File {
+        if matches!(q.subject, Subject::File | Subject::Volume) {
             if let Some(k) = &q.kind {
                 rows.push((S::SidebarQuickType.t().to_owned(), k.clone()));
             }
@@ -217,6 +220,13 @@ impl App {
             rows.push((S::SidebarQuickSize.t().to_owned(), t.map_or_else(counting, |t| bytes(t.size))));
         } else if let Some(s) = q.size {
             rows.push((S::SidebarQuickSize.t().to_owned(), bytes(s)));
+        }
+        if q.subject == Subject::Volume {
+            if let Some(drive) = self.nav.sidebar.places.drives.iter().find(|d| d.path == *q.loc.path()) {
+                if drive.total > 0 {
+                    rows.push((S::PreviewFieldFree.t().to_owned(), bytes(drive.free)));
+                }
+            }
         }
         rows
     }
