@@ -288,7 +288,7 @@ fn launch(l: &Launch) -> Result<(), PlatformError> {
             crate::apps::run_custom(command, &files, mime, *remember, crate::window::activation_token().as_deref()).map_err(|e| spawn_error(command, &e))
         }
         Launch::ChooseApp { .. } => Err(PlatformError::unsupported("choosing an application outside a window")),
-        Launch::Eject(drive) => crate::places::eject(Path::new(os(drive))).map_err(|e| spawn_error("udisksctl", &e)),
+        Launch::Eject(drive) => crate::places::eject(Path::new(os(drive))).map_err(|e| crate::places::eject_error(Path::new(os(drive)), &e)),
         Launch::Mount(_) => Err(PlatformError::unsupported("mounting outside the shell thread")),
         Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) => Err(PlatformError::unsupported("mapping network drives")),
         Launch::Reveal { .. } => Err(PlatformError::unsupported("revealing outside the shell thread")),

@@ -1,3 +1,4 @@
+use flit_core::i18n::S;
 use flit_core::listing::{attr, Meta};
 use flit_core::ui::Drive;
 use flit_core::{FsError, FsErrorKind, ListingBuilder};
@@ -22,12 +23,16 @@ fn name_of(m: &Mount, l: flit_core::i18n::Lang) -> String {
     }
 }
 
+fn space_of(m: &Mount) -> Option<(u64, u64)> {
+    (!m.is_network()).then(|| mounts::space(m.path())).flatten()
+}
+
 pub fn volumes_from(table: &[Mount], user: &[u8], by_label: &Path) -> Vec<Volume> {
     let labels = mounts::labels(by_label);
     mounts::disks(table, user)
         .into_iter()
         .map(|m| {
-            let (total, free) = mounts::space(m.path()).unwrap_or_default();
+            let (total, free) = space_of(&m).unwrap_or_default();
             let label = mounts::label_of(&m, &labels).filter(|_| m.point != b"/").unwrap_or_else(|| name_of(&m, flit_core::i18n::lang()));
             Volume { mount: m, label, total, free }
         })
@@ -155,26 +160,50 @@ pub fn eject_steps(table: &[Mount], point: &Path) -> Option<[[std::ffi::OsString
     Some([step("unmount"), step("power-off")])
 }
 
+pub fn udisks_message(stderr: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    let text = text.trim();
+    if text.contains(".Error.DeviceBusy") || text.ends_with("target is busy") {
+        return S::ErrorsFsDriveBusy.en().to_owned();
+    }
+    match text.split_once("GDBus.Error:") {
+        Some((_, rest)) => rest.split_once(": ").map_or(rest, |(_, why)| why).trim().to_owned(),
+        None => text.to_owned(),
+    }
+}
+
+fn run_step([program, args @ ..]: &[std::ffi::OsString; 4]) -> std::io::Result<()> {
+    let out = std::process::Command::new(program).args(args).stdin(std::process::Stdio::null()).output().map_err(|e| missing_tool("udisksctl", "udisks2", e))?;
+    match (out.status.success(), udisks_message(&out.stderr)) {
+        (true, _) => Ok(()),
+        (false, why) if why.is_empty() => Err(std::io::Error::other(format!("{} {} failed: {}", program.to_string_lossy(), args[0].to_string_lossy(), out.status))),
+        (false, why) => Err(std::io::Error::other(why)),
+    }
+}
+
+pub fn run_eject([unmount, power_off]: &[[std::ffi::OsString; 4]; 2]) -> std::io::Result<()> {
+    run_step(unmount)?;
+    if let Err(e) = run_step(power_off) {
+        tracing::warn!("the drive is unmounted but stays powered: {e}");
+    }
+    Ok(())
+}
+
 pub fn eject(point: &Path) -> std::io::Result<()> {
     let table = mounts::read()?;
     let steps = eject_steps(&table, point).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "not a mounted block device"))?;
-    std::thread::Builder::new().name("flit-eject".into()).spawn(move || {
-        for [program, args @ ..] in steps {
-            match std::process::Command::new(&program).args(&args).status() {
-                Ok(s) if s.success() => {}
-                Ok(s) => return tracing::warn!("{} {:?} failed: {s}", program.to_string_lossy(), args),
-                Err(e) => return tracing::warn!("{}", missing_tool("udisksctl", "udisks2", e)),
-            }
-        }
-    })?;
-    Ok(())
+    run_eject(&steps)
+}
+
+pub fn eject_error(drive: &Path, e: &std::io::Error) -> PlatformError {
+    PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, flit_core::tr_en!(S::ErrorsFsEjectFailed, drive = drive.display(), why = e))
 }
 
 pub fn list_computer(out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
     let table = mounts::read().map_err(|e| FsError { kind: FsErrorKind::Unavailable, code: e.raw_os_error().unwrap_or(-1) as i64 })?;
     for m in mounts::disks(&table, &mounts::user_name()) {
         let mut meta = Meta { attrs: attr::DIR | attr::VOLUME, ..Default::default() };
-        let space = mounts::space(m.path());
+        let space = space_of(&m);
         if let Some((total, _)) = space {
             meta.size = total;
             meta.attrs |= attr::SIZE_KNOWN;
@@ -200,6 +229,18 @@ pub fn storage_tops() -> Vec<PathBuf> {
 
 pub fn trash() -> Result<Trash, PlatformError> {
     Trash::from_env().ok_or_else(|| PlatformError::new(-1, "The Trash folder is unknown: neither XDG_DATA_HOME nor HOME is set"))
+}
+
+pub fn trash_folders(trash: &Trash, tops: &[PathBuf]) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    for dir in trash.dirs(tops) {
+        let files = dir.join("files");
+        let Some(existing) = files.ancestors().find(|p| std::fs::metadata(p).is_ok_and(|m| m.is_dir())) else { continue };
+        if !out.iter().any(|p| p == existing) {
+            out.push(existing.to_path_buf());
+        }
+    }
+    out
 }
 
 pub fn list_trash(out: &mut ListingBuilder<'_>) -> Result<(), FsError> {

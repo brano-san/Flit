@@ -236,3 +236,45 @@ fn mounting_lets_polkit_prompt_and_a_missing_udisksctl_is_explained() {
     assert_eq!(e.to_string(), "udisksctl is not installed: install the udisks2 package");
     assert_eq!(missing_tool("udisksctl", "udisks2", std::io::Error::from(std::io::ErrorKind::PermissionDenied)).kind(), std::io::ErrorKind::PermissionDenied);
 }
+
+fn step(script: &str) -> [std::ffi::OsString; 4] {
+    ["sh".into(), "-c".into(), script.into(), "step".into()]
+}
+
+#[test]
+fn eject_reports_why_the_drive_stays_mounted_and_ignores_a_failed_power_off() {
+    let busy = "Error unmounting /dev/sdb1: GDBus.Error:org.freedesktop.UDisks2.Error.DeviceBusy: Error unmounting /dev/sdb1: target is busy";
+    assert_eq!(udisks_message(busy.as_bytes()), S::ErrorsFsDriveBusy.en());
+    assert_eq!(udisks_message(b"Error unmounting /dev/sdb1: GDBus.Error:org.freedesktop.UDisks2.Error.NotAuthorizedDismissed: Not authorized to perform operation\n"), "Not authorized to perform operation");
+    assert_eq!(udisks_message(b"  plain failure \n"), "plain failure");
+    let failed = run_eject(&[step(&format!("echo '{busy}' >&2; exit 1")), step("exit 0")]).unwrap_err();
+    assert_eq!(failed.to_string(), S::ErrorsFsDriveBusy.en());
+    assert!(run_eject(&[step("exit 3"), step("exit 0")]).unwrap_err().to_string().contains("failed"));
+    assert!(run_eject(&[step("exit 0"), step("echo 'cannot power off' >&2; exit 1")]).is_ok());
+    let missing = ["/nonexistent/udisksctl".into(), "unmount".into(), "-b".into(), "/dev/sdb1".into()];
+    assert!(run_eject(&[missing, step("exit 0")]).unwrap_err().to_string().contains("udisks2"));
+    let shown = eject_error(Path::new("/media/ann/STICK"), &failed).to_string();
+    assert!(shown.starts_with("Cannot eject /media/ann/STICK: The drive is in use"), "{shown}");
+}
+
+#[test]
+fn network_mounts_are_drives_without_a_space_probe() {
+    let table = parse(b"1 0 8:1 / / rw - ext4 /dev/sda1 rw\n2 1 0:40 / /media/ann/NAS rw - cifs //server/share rw\n3 1 0:41 / /mnt/box rw - fuse.sshfs ann@box:/ rw\n");
+    let v = volumes_from(&table, b"ann", Path::new("/nonexistent/by-label"));
+    let got: Vec<(&[u8], &str, u64, bool)> = v.iter().map(|v| (v.mount.point.as_slice(), v.label.as_str(), v.total, v.mount.removable())).collect();
+    assert_eq!(got[1..], [(&b"/media/ann/NAS"[..], "NAS", 0, false), (b"/mnt/box", "box", 0, false)]);
+    let root_over_network = Mount { point: b"/".to_vec(), ..table[1].clone() };
+    assert!(space_of(&table[0]).is_some() && space_of(&root_over_network).is_none());
+}
+
+#[test]
+fn trash_is_watched_in_each_files_folder_or_its_nearest_existing_parent() {
+    let t = Temp::new("trash-watch");
+    let trash = trash_at(&t);
+    assert_eq!(trash_folders(&trash, &[]), [t.path().to_path_buf()]);
+    std::fs::create_dir_all(t.path().join("home/.local/share/Trash/files")).unwrap();
+    std::fs::create_dir_all(t.path().join(format!("vol/.Trash-{}/files", unsafe { libc::getuid() }))).unwrap();
+    std::fs::create_dir_all(t.path().join("bare")).unwrap();
+    let got = trash_folders(&trash, &[t.path().join("vol"), t.path().join("bare")]);
+    assert_eq!(got, [t.path().join("home/.local/share/Trash/files"), t.path().join(format!("vol/.Trash-{}/files", unsafe { libc::getuid() }))]);
+}

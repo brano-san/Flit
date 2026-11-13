@@ -118,7 +118,7 @@ fn storage_shows_each_file_system_once_and_only_real_disks() {
     let shown = points(&disks(&parse(CACHYOS.as_bytes()), b"maikun"));
     assert_eq!(shown, ["/", "/home/maikun/HDD", "/media/Backup", "/mnt/games", "/run/media/maikun/Stick"]);
     let desktop = points(&disks(&parse(DESKTOP.as_bytes()), b"ann"));
-    assert_eq!(desktop, ["/", "/media/ann/My Disk", "/mnt/deep/inside", "/mnt/old", "/run/media/ann/USB\\Stick"]);
+    assert_eq!(desktop, ["/", "/media/ann/My Disk", "/mnt/deep/inside", "/mnt/nas", "/mnt/old", "/run/media/ann/USB\\Stick"]);
     assert_eq!(points(&disks(&parse(WSL.as_bytes()), b"cogitci")), ["/", "/mnt/c", "/mnt/d"]);
 }
 
@@ -132,6 +132,24 @@ fn a_separate_home_partition_stays_next_to_the_root() {
 fn overmounted_point_keeps_the_top_mount() {
     let ms = visible(&parse(DESKTOP.as_bytes()), b"ann");
     assert_eq!(ms.iter().find(|m| m.point == b"/mnt/old").unwrap().fstype, "xfs");
+}
+
+#[test]
+fn network_mounts_show_as_drives_but_stay_out_of_the_index_and_are_never_ejectable() {
+    let table = parse(b"1 0 8:1 / / rw - ext4 /dev/sda1 rw
+2 1 0:40 / /home/ann/NAS rw - cifs //server/share rw
+3 1 0:41 / /home/ann/ssh rw - fuse.sshfs ann@host:/ rw
+4 1 0:42 / /mnt/nfs rw - nfs nas:/export rw
+5 1 0:43 / /media/ann/share rw - smb3 //nas/media rw
+6 1 0:44 / /run/user/1000/gvfs rw - fuse.gvfsd-fuse gvfsd-fuse rw
+7 1 0:45 / /mnt/sys rw - sysfs sysfs rw
+");
+    assert_eq!(points(&disks(&table, b"ann")), ["/", "/home/ann/NAS", "/home/ann/ssh", "/media/ann/share", "/mnt/nfs"]);
+    assert_eq!(points(&visible(&table, b"ann")), ["/"]);
+    let by = |point: &[u8]| table.iter().find(|m| m.point == point).unwrap();
+    assert!(by(b"/home/ann/NAS").is_drive() && !by(b"/home/ann/NAS").is_storage());
+    assert!(!by(b"/media/ann/share").removable());
+    assert!(!by(b"/run/user/1000/gvfs").is_drive() && !by(b"/mnt/sys").is_drive());
 }
 
 #[test]

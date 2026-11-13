@@ -1,4 +1,4 @@
-use crate::fs::{host, stat_path};
+use crate::fs::{hidden_list_in, host, mark_listed_hidden, stat_path, HIDDEN_LIST};
 use flit_core::listing::{ChangeKind, DirChange};
 use flit_core::{FsPath, ProviderEvent, TabId};
 use flit_platform::{PlatformError, Wake, Watcher};
@@ -125,15 +125,19 @@ fn flush<K: Clone>(watches: &Mutex<Watches<K>>, pending: HashMap<i32, Pending>, 
         pending.into_iter().filter_map(|(wd, p)| w.dirs.get(&wd).map(|(d, k)| (d.clone(), k.clone(), p))).collect()
     };
     for (dir, keys, p) in targets {
-        if p.rescan {
+        if p.rescan || p.seen.contains(HIDDEN_LIST.to_bytes()) {
             keys.into_iter().for_each(|k| emit(k, Notice::Rescan));
             continue;
         }
+        let hidden = hidden_list_in(&dir);
         let changes: Vec<DirChange> = p
             .names
             .into_iter()
             .map(|name| match stat_path(&dir.join(OsStr::from_bytes(&name))) {
-                Ok(meta) => DirChange { kind: ChangeKind::Added, name, meta: Some(meta) },
+                Ok(mut meta) => {
+                    mark_listed_hidden(&mut meta, &name, &hidden);
+                    DirChange { kind: ChangeKind::Added, name, meta: Some(meta) }
+                }
                 Err(_) => DirChange { kind: ChangeKind::Removed, name, meta: None },
             })
             .collect();

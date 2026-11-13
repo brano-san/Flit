@@ -160,3 +160,39 @@ fn names_the_file_system_of_a_path() {
     assert!(!fs.is_empty());
     assert_eq!(LinuxFs.file_system(&FsPath::parse("/proc/self").unwrap()).as_deref(), Some("proc"));
 }
+
+#[test]
+fn names_listed_in_a_dot_hidden_file_are_hidden_in_listings_scans_and_deep_reads() {
+    let t = Temp::new("dothidden");
+    std::fs::create_dir(t.path().join("sub")).unwrap();
+    for name in ["shown.txt", "snap", "Desktop.ini", "sub/inner.log", "sub/keep.txt"] {
+        t.file(name, 1);
+    }
+    std::fs::write(t.path().join(".hidden"), b"snap\r\nDesktop.ini\n\nmissing\nsub\n").unwrap();
+    std::fs::write(t.path().join("sub/.hidden"), b"inner.log").unwrap();
+    assert_eq!(parse_hidden_list(b"a\n\nb\r\n").into_iter().collect::<std::collections::BTreeSet<_>>(), [b"a".to_vec(), b"b".to_vec()].into());
+    let hidden = |m: &Meta| m.attrs & attr::HIDDEN != 0;
+    let m = scanned(t.path());
+    assert!(hidden(&m[&b"snap"[..]]) && hidden(&m[&b"Desktop.ini"[..]]) && hidden(&m[&b"sub"[..]]) && hidden(&m[&b".hidden"[..]]));
+    assert!(!hidden(&m[&b"shown.txt"[..]]));
+    let mut keep = |_: &ListingBuilder<'_>| true;
+    let mut b = ListingBuilder::new(flit_core::sort::CaseMode::Sensitive, &mut keep);
+    LinuxFs.read_dir(&FsPath::parse(t.path().to_str().unwrap()).unwrap(), &mut b).unwrap();
+    read_deep(t.path(), &mut b, &HashMap::new(), DEEP_LIMIT, &|| true);
+    let l = b.listing;
+    let attrs = |n: &[u8]| (0..l.len() as u32).filter(|&i| l.name(i) == n).map(|i| l.entries[i as usize].attrs & attr::HIDDEN != 0).collect::<Vec<_>>();
+    assert_eq!(attrs(b"snap"), [true]);
+    assert_eq!(attrs(b"shown.txt"), [false]);
+    assert_eq!(attrs(b"inner.log"), [true]);
+    assert_eq!(attrs(b"keep.txt"), [false]);
+}
+
+#[test]
+fn a_dot_hidden_that_is_not_a_regular_file_hides_nothing() {
+    let t = Temp::new("dothidden-fifo");
+    t.file("a", 1);
+    let fifo = std::ffi::CString::new(t.path().join(".hidden").as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    assert!(hidden_list_in(t.path()).is_empty());
+    assert_eq!(scanned(t.path())[&b"a"[..]].attrs & attr::HIDDEN, 0);
+}

@@ -184,3 +184,21 @@ fn measure_listing_and_change_latency() {
     latency.sort();
     eprintln!("measure: 10k listing first batch median {:?}, full median {:?}; external change to event median {:?}, max {:?}", first[3], full[3], latency[7], latency[14]);
 }
+
+#[test]
+fn the_trash_view_rescans_when_its_files_folder_changes() {
+    let trash = places::trash().unwrap();
+    let files = trash.dirs(&[]).remove(0).join("files");
+    std::fs::create_dir_all(&files).unwrap();
+    let (mut w, rx) = watcher();
+    w.watch(51, 4, Some(&FsPath::recycle_bin()));
+    let item = files.join(format!("flit-watch-{}", std::process::id()));
+    std::fs::write(&item, b"x").unwrap();
+    let seen = std::iter::from_fn(|| rx.recv_timeout(Duration::from_millis(300)).ok()).any(|e| matches!(e, ProviderEvent::Rescan { tab: 51, gen: 4 }));
+    std::fs::remove_file(&item).unwrap();
+    assert!(seen);
+    w.watch(51, 5, None);
+    std::fs::write(&item, b"x").unwrap();
+    std::fs::remove_file(&item).unwrap();
+    assert!(rx.recv_timeout(Duration::from_millis(150)).is_err());
+}

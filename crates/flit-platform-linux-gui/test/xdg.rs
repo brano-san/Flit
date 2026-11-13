@@ -144,3 +144,21 @@ fn turning_the_default_manager_on_and_off_restores_the_test_home() {
     assert_eq!(std::fs::read_to_string(&list).unwrap(), original);
     let _ = std::fs::remove_file(&list);
 }
+
+#[test]
+fn new_offers_an_empty_file_and_a_text_document_unless_templates_already_do() {
+    let summary = |v: Vec<NewTemplate>| v.into_iter().map(|n| (n.label, n.ext, n.stem, n.template == Template::Empty)).collect::<Vec<_>>();
+    let builtins = [("Empty file".to_owned(), "".to_owned(), "New file".to_owned(), true), ("Text document".to_owned(), ".txt".to_owned(), "New text document".to_owned(), true)];
+    assert_eq!(summary(with_builtins(Vec::new())), builtins);
+    let t = Temp::new("builtin-templates");
+    t.file("Makefile", 4);
+    t.file("Report.odt", 9);
+    let mut expected = builtins.to_vec();
+    expected.extend([("Makefile".to_owned(), "".to_owned(), "Makefile".to_owned(), false), ("Report".to_owned(), ".odt".to_owned(), "Report".to_owned(), false)]);
+    assert_eq!(summary(with_builtins(templates_in(t.path()))), expected);
+    let u = Temp::new("covering-templates");
+    u.file("Empty Document", 0);
+    u.file("TEXT DOCUMENT.md", 2);
+    let labels: Vec<String> = with_builtins(templates_in(u.path())).into_iter().map(|n| n.label).collect();
+    assert_eq!(labels, ["Empty Document", "TEXT DOCUMENT"]);
+}

@@ -4,7 +4,7 @@ use flit_core::{FsError, FsErrorKind, FsPath, ListingBuilder, Meta};
 use flit_platform::Fs;
 use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString, OsStr};
-use std::io;
+use std::io::{self, Read};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -19,6 +19,8 @@ const STATX_BTIME: u32 = 0x800;
 const STATX_ATTR_MOUNT_ROOT: u64 = 0x2000;
 const DT_DIR: u8 = 4;
 const DT_LNK: u8 = 10;
+pub const HIDDEN_LIST: &CStr = c".hidden";
+const HIDDEN_LIST_MAX: u64 = 1 << 20;
 
 #[repr(C)]
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
@@ -271,9 +273,38 @@ pub fn names(fd: libc::c_int) -> io::Result<Vec<CString>> {
     Ok(out)
 }
 
+pub fn parse_hidden_list(text: &[u8]) -> HashSet<Vec<u8>> {
+    text.split(|&b| b == b'\n').map(|l| l.strip_suffix(b"\r").unwrap_or(l)).filter(|l| !l.is_empty()).map(<[u8]>::to_vec).collect()
+}
+
+pub fn hidden_list(dir: libc::c_int) -> HashSet<Vec<u8>> {
+    let Ok(fd) = open_at(dir, HIDDEN_LIST, libc::O_RDONLY | libc::O_NONBLOCK, 0) else { return HashSet::new() };
+    let file = std::fs::File::from(fd);
+    let mut text = Vec::new();
+    match file.metadata().is_ok_and(|m| m.is_file()) && file.take(HIDDEN_LIST_MAX).read_to_end(&mut text).is_ok() {
+        true => parse_hidden_list(&text),
+        false => HashSet::new(),
+    }
+}
+
+pub fn hidden_list_in(dir: &Path) -> HashSet<Vec<u8>> {
+    open_dir(dir).map(|fd| hidden_list(fd.as_raw_fd())).unwrap_or_default()
+}
+
+pub fn mark_listed_hidden(meta: &mut Meta, name: &[u8], hidden: &HashSet<Vec<u8>>) {
+    if !hidden.is_empty() && hidden.contains(name) {
+        meta.attrs |= attr::HIDDEN;
+    }
+}
+
 pub fn scan(dir: &Path, mut each: impl FnMut(&[u8], Meta) -> bool) -> io::Result<()> {
     let fd = open_dir(dir)?;
-    dents(fd.as_raw_fd(), |name, d_type| each(name.to_bytes(), entry_meta(fd.as_raw_fd(), name, d_type)))
+    let hidden = hidden_list(fd.as_raw_fd());
+    dents(fd.as_raw_fd(), |name, d_type| {
+        let mut meta = entry_meta(fd.as_raw_fd(), name, d_type);
+        mark_listed_hidden(&mut meta, name.to_bytes(), &hidden);
+        each(name.to_bytes(), meta)
+    })
 }
 
 pub fn tree_size(root: &Path, keep_going: &dyn Fn() -> bool) -> DirStats {
@@ -365,11 +396,13 @@ pub fn read_deep(root: &Path, b: &mut ListingBuilder<'_>, walls: &HashMap<Vec<u8
             continue;
         }
         let mut n = 0usize;
+        let hidden = hidden_list(fd.as_raw_fd());
         let _ = dents(fd.as_raw_fd(), |name, d_type| {
             if b.listing.len() >= limit {
                 return false;
             }
-            let (meta, accessed) = entry_meta_at(fd.as_raw_fd(), name, d_type);
+            let (mut meta, accessed) = entry_meta_at(fd.as_raw_fd(), name, d_type);
+            mark_listed_hidden(&mut meta, name.to_bytes(), &hidden);
             b.push_nested(name.to_bytes(), meta, accessed, &rel);
             if meta.attrs & (attr::DIR | attr::LINK) == attr::DIR {
                 stack.push(joined(&rel, name.to_bytes()));
@@ -394,8 +427,10 @@ impl Fs for LinuxFs {
             out.set_volume(volume);
             Some((dev, out.tagging()?))
         });
+        let hidden = hidden_list(fd.as_raw_fd());
         dents(fd.as_raw_fd(), |name, d_type| {
-            let (meta, accessed, node) = entry_at(fd.as_raw_fd(), name, d_type);
+            let (mut meta, accessed, node) = entry_at(fd.as_raw_fd(), name, d_type);
+            mark_listed_hidden(&mut meta, name.to_bytes(), &hidden);
             let candidate = |n: &Node| tagged.as_ref().is_some_and(|(dev, (tags, volume))| *dev == n.dev && tags.may_tag(*volume, n.ino as u32));
             match node.filter(candidate) {
                 Some(n) => out.push_id(name.to_bytes(), meta, crate::tags::entry_id(fd.as_raw_fd(), name, &n)),

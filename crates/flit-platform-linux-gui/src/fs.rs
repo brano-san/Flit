@@ -93,9 +93,15 @@ pub fn rescan_blind() {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Spot {
+    Folder,
+    Trash(usize),
+}
+
 pub struct LinuxGuiWatcher {
-    notify: Notify<(TabId, u64)>,
-    current: HashMap<TabId, u64>,
+    notify: Notify<(TabId, u64, Spot)>,
+    current: HashMap<TabId, (u64, Vec<Spot>)>,
     events: Sender<ProviderEvent>,
     wake: Wake,
 }
@@ -108,15 +114,26 @@ impl LinuxGuiWatcher {
         }
         blind_tabs().push(Blind { tab, gen, events: self.events.clone(), wake: self.wake.clone() });
     }
+
+    fn watch_trash(&mut self, tab: TabId, gen: u64) {
+        let Ok(trash) = places::trash() else { return };
+        let mut spots = Vec::new();
+        for (k, folder) in places::trash_folders(&trash, &places::storage_tops()).iter().enumerate() {
+            if self.notify.watch((tab, gen, Spot::Trash(k)), folder).is_ok() {
+                spots.push(Spot::Trash(k));
+            }
+        }
+        self.current.insert(tab, (gen, spots));
+    }
 }
 
 impl Watcher for LinuxGuiWatcher {
     fn new(events: Sender<ProviderEvent>, wake: Wake) -> Result<Self, PlatformError> {
         let (sink, ping) = (events.clone(), wake.clone());
-        let notify = Notify::with_window(COALESCE, move |(tab, gen), notice| {
-            let _ = sink.send(match notice {
-                Notice::Changes(changes) => ProviderEvent::Changes { tab, gen, changes },
-                Notice::Rescan => ProviderEvent::Rescan { tab, gen },
+        let notify = Notify::with_window(COALESCE, move |(tab, gen, spot), notice| {
+            let _ = sink.send(match (spot, notice) {
+                (Spot::Folder, Notice::Changes(changes)) => ProviderEvent::Changes { tab, gen, changes },
+                _ => ProviderEvent::Rescan { tab, gen },
             });
             ping();
         })
@@ -125,14 +142,19 @@ impl Watcher for LinuxGuiWatcher {
     }
 
     fn watch(&mut self, tab: TabId, gen: u64, dir: Option<&FsPath>) {
-        if let Some(old) = self.current.remove(&tab) {
-            self.notify.unwatch(&(tab, old));
+        if let Some((old, spots)) = self.current.remove(&tab) {
+            for spot in spots {
+                self.notify.unwatch(&(tab, old, spot));
+            }
         }
         blind_tabs().retain(|b| b.tab != tab);
+        if dir.is_some_and(|d| d.kind() == PathKind::RecycleBin) {
+            return self.watch_trash(tab, gen);
+        }
         let Some(path) = dir.and_then(host) else { return };
-        match self.notify.watch((tab, gen), path) {
+        match self.notify.watch((tab, gen, Spot::Folder), path) {
             Ok(()) => {
-                self.current.insert(tab, gen);
+                self.current.insert(tab, (gen, vec![Spot::Folder]));
             }
             Err(e) => self.blind(tab, gen, &e),
         }

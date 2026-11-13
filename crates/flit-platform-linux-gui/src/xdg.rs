@@ -1,3 +1,4 @@
+use flit_core::i18n::S;
 use flit_core::provider::Template;
 use flit_core::ui::NewTemplate;
 use flit_core::{FsPath, Location};
@@ -200,8 +201,28 @@ pub fn templates_in(dir: &Path) -> Vec<NewTemplate> {
     out
 }
 
+pub fn builtin_templates() -> [NewTemplate; 2] {
+    let made = |label: S, ext: &str, stem: S| NewTemplate { label: label.t().to_owned(), ext: ext.to_owned(), stem: stem.t().to_owned(), template: Template::Empty };
+    [made(S::MenuEmptyFile, "", S::UiOpsNewFileName), made(S::MenuTextDocument, ".txt", S::MenuNewTextDocument)]
+}
+
+fn covers(user: &NewTemplate, builtin: &NewTemplate) -> bool {
+    let empty = match &user.template {
+        Template::Copy(p) => flit_platform_linux::host(p).and_then(|p| std::fs::metadata(p).ok()).is_some_and(|m| m.len() == 0),
+        Template::Empty => true,
+        Template::Data(d) => d.is_empty(),
+    };
+    user.label.to_lowercase() == builtin.label.to_lowercase() || (empty && user.ext.eq_ignore_ascii_case(&builtin.ext))
+}
+
+pub fn with_builtins(user: Vec<NewTemplate>) -> Vec<NewTemplate> {
+    let mut out: Vec<NewTemplate> = builtin_templates().into_iter().filter(|b| !user.iter().any(|u| covers(u, b))).collect();
+    out.extend(user);
+    out
+}
+
 pub fn templates() -> Vec<NewTemplate> {
-    user_dir("shell:Templates").filter(|d| home().is_none_or(|h| h != *d)).map(|d| templates_in(&d)).unwrap_or_default()
+    with_builtins(user_dir("shell:Templates").filter(|d| home().is_none_or(|h| h != *d)).map(|d| templates_in(&d)).unwrap_or_default())
 }
 
 #[cfg(test)]

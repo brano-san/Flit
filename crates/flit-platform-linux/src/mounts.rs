@@ -41,8 +41,12 @@ impl Mount {
         !self.is_pseudo() && !self.is_network() && !self.point.starts_with(b"/snap/")
     }
 
+    pub fn is_drive(&self) -> bool {
+        self.is_storage() || self.is_network()
+    }
+
     pub fn removable(&self) -> bool {
-        self.point.starts_with(b"/media/") || self.point.starts_with(b"/run/media/")
+        !self.is_network() && (self.point.starts_with(b"/media/") || self.point.starts_with(b"/run/media/"))
     }
 }
 
@@ -157,7 +161,7 @@ fn disk_point(point: &[u8], user: &[u8]) -> bool {
 }
 
 pub fn disks(mounts: &[Mount], user: &[u8]) -> Vec<Mount> {
-    let mut candidates: Vec<&Mount> = on_top(mounts).into_iter().filter(|m| m.is_storage() && disk_point(&m.point, user)).collect();
+    let mut candidates: Vec<&Mount> = on_top(mounts).into_iter().filter(|m| m.is_drive() && disk_point(&m.point, user)).collect();
     candidates.sort_by_key(|m| (rank(m), m.root.len(), m.point.len()));
     let mut kept: Vec<&Mount> = Vec::new();
     for m in candidates {

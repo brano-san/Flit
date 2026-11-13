@@ -105,3 +105,20 @@ fn queue_overflow_and_truncated_events_ask_for_a_full_rescan() {
         assert!(overflow, "{buf:?}");
     }
 }
+
+#[test]
+fn changes_honour_the_dot_hidden_list_and_editing_it_rescans() {
+    let t = Temp::new("notify-dothidden");
+    std::fs::write(t.path().join(".hidden"), b"secret\n").unwrap();
+    let (n, rx) = notify();
+    n.watch(4, t.path()).unwrap();
+    t.file("secret", 1);
+    t.file("plain", 1);
+    let (last, rescan) = settle(&rx, 4);
+    assert!(!rescan);
+    assert_ne!(last[&b"secret"[..]].meta.unwrap().attrs & flit_core::listing::attr::HIDDEN, 0);
+    assert_eq!(last[&b"plain"[..]].meta.unwrap().attrs & flit_core::listing::attr::HIDDEN, 0);
+    std::fs::write(t.path().join(".hidden"), b"secret\nplain\n").unwrap();
+    let (_, rescan) = settle(&rx, 4);
+    assert!(rescan);
+}
