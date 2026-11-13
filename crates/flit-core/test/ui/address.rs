@@ -679,6 +679,14 @@ fn unix_server_addresses_connect_and_a_missing_absolute_path_is_not_found() {
     deliver(&mut app, &[], Some(FsErrorKind::NotFound));
     assert!(launches(&mut app).is_empty());
     assert_eq!(app.tab().error.as_deref(), Some(S::ErrorsFsNotFound.t()));
+    for typed in ["./run", "docs/missing", "/bin/nothing -la"] {
+        app.tab_mut().error = None;
+        let fx = submit(&mut app, typed);
+        handle_open(&mut app, fx);
+        deliver(&mut app, &[], Some(FsErrorKind::NotFound));
+        assert!(launches(&mut app).is_empty(), "{typed} is a path, not a command");
+        assert_eq!(app.tab().error.as_deref(), Some(S::ErrorsFsNotFound.t()), "{typed}");
+    }
     let fx = submit(&mut app, "ls");
     handle_open(&mut app, fx);
     deliver(&mut app, &[], Some(FsErrorKind::NotFound));

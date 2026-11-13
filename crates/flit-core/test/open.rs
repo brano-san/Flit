@@ -190,5 +190,6 @@ fn unix_resolution_expands_and_maps_trash_while_windows_keeps_dollars() {
     }
     assert!(resolve_for(b"trash:///", None, &none, false).is_err());
     assert!(typed_as_path("/no/such") && typed_as_path("~/x") && typed_as_path("$HOME"));
-    assert!(!typed_as_path("ls") && !typed_as_path("/bin/ls -la") && !typed_as_path("./run"));
+    assert!(typed_as_path("/bin/ls -la") && typed_as_path("./run") && typed_as_path("docs/notes") && typed_as_path("/home/u/My Documents"), "a path stays a path even with spaces or arguments");
+    assert!(!typed_as_path("ls") && !typed_as_path("gedit notes.txt") && !typed_as_path("firefox https://example.org"), "a bare program name is still a command");
 }

@@ -231,7 +231,8 @@ pub fn expand_unix(raw: &[u8], env: &dyn Fn(&str) -> Option<String>) -> Option<V
 
 pub fn typed_as_path(text: &str) -> bool {
     let t = text.trim();
-    t.starts_with(['/', '~', '$']) && !t.contains(char::is_whitespace)
+    let program = t.split(char::is_whitespace).next().unwrap_or_default();
+    t.starts_with(['/', '~', '$', '.']) || program.contains('/')
 }
 
 fn strip_prefix_ci<'a>(b: &'a [u8], prefix: &[u8]) -> Option<&'a [u8]> {
