@@ -122,3 +122,32 @@ fn permission_changes_ask_for_root_only_for_items_of_other_users_or_foreign_owne
     let denied = OpOutcome { items: Vec::new(), error: Some(PlatformError::new(libc::EACCES as i64, "denied")) };
     assert_eq!(access_retry(&set(vec![mine.clone()], plus_x), &denied), Some(set(vec![mine], plus_x)));
 }
+
+#[test]
+fn the_helper_speaks_the_language_of_the_window() {
+    assert_eq!(spoken(Some(OsStr::new("ru"))), Some(Lang::Ru));
+    assert_eq!(spoken(Some(OsStr::new("zh-CN"))), Some(Lang::ZhCn));
+    assert_eq!(spoken(Some(OsStr::new("--bogus"))), None);
+    assert_eq!(spoken(None), None);
+    let args = helper_args(Path::new("/usr/bin/flit"));
+    assert_eq!(args[..2], [OsString::from("/usr/bin/flit"), OsString::from(FLAG)]);
+    assert_eq!(spoken(Some(&args[2])), Some(flit_core::i18n::lang()), "links made as root get names in the language of the window");
+}
+
+#[test]
+fn a_retry_that_cannot_get_administrator_rights_says_why() {
+    let (a, b) = (fs_path(Path::new("/x/a")), fs_path(Path::new("/x/b")));
+    let denied = || PlatformError::new(libc::EACCES as i64, "/x/b: Permission denied");
+    let first = || OpOutcome { items: vec![(a.clone(), a.clone())], error: Some(denied()) };
+    let out = retried(first(), Err(unelevated(S::ErrorsOpsExtraNoPkexec.en())));
+    assert_eq!(out.items, [(a.clone(), a.clone())]);
+    let e = out.error.unwrap();
+    assert_eq!(e.code, libc::EACCES as i64);
+    assert_eq!(e.message, flit_core::tr_en!(S::ErrorsOpsExtraNotElevated, error = denied().message, why = S::ErrorsOpsExtraNoPkexec.en()));
+    let out = retried(first(), Ok(OpOutcome { items: vec![(b.clone(), b.clone())], error: None }));
+    assert_eq!((out.items, out.error.is_none()), (vec![(a.clone(), a.clone()), (b.clone(), b)], true));
+    let up_front = only_elevated(unelevated(S::ErrorsOpsExtraAdminDismissed.en())).error.unwrap();
+    assert_eq!(up_front.message, flit_core::tr_en!(S::ErrorsOpsExtraNeedsAdmin, why = S::ErrorsOpsExtraAdminDismissed.en()));
+    let stopped = PlatformError::new(-1, flit_core::tr_en!(S::ErrorsOpsExtraAdminStopped, why = "broken pipe"));
+    assert_eq!(only_elevated(stopped.clone()).error.unwrap().message, stopped.message, "a helper that ran and stopped is not a missing right");
+}

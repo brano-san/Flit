@@ -6,7 +6,7 @@ use flit_core::limits::{self, BadName};
 use flit_core::path::PathKind;
 use flit_core::provider::{Conflict, Failure, FileOp, Recover, Resolve, Stage, Template};
 use flit_core::FsPath;
-use flit_platform::{Job, OpOutcome, PlatformError, CANCELLED};
+use flit_platform::{Fs, Job, OpOutcome, PlatformError, CANCELLED};
 use flit_proto::listing::check_name;
 use std::ffi::{CStr, CString};
 use std::io::{self, Write};
@@ -152,12 +152,32 @@ fn fs_path(p: &Path) -> Option<FsPath> {
     FsPath::parse_exact(p.as_os_str().as_bytes()).filter(|p| p.kind() == PathKind::Unix)
 }
 
-fn reason(e: &io::Error) -> String {
-    let text = e.to_string();
-    match text.rfind(" (os error ") {
-        Some(at) if e.raw_os_error().is_some() => text[..at].to_owned(),
-        _ => text,
+fn on_windows_volume(path: &FsPath) -> bool {
+    crate::fs::LinuxFs.file_system(path).is_some_and(|fs| matches!(fs.as_str(), "ntfs" | "ntfs3" | "fuseblk"))
+}
+
+fn reason(path: &FsPath, e: &io::Error) -> String {
+    match e.raw_os_error() {
+        Some(libc::EROFS) if on_windows_volume(path) => S::ErrorsOpsExtraReadOnlyWindows.en().to_owned(),
+        Some(libc::EROFS) => S::ErrorsOpsExtraReadOnly.en().to_owned(),
+        _ => flit_core::fmt::io_reason(e),
     }
+}
+
+fn failed_at(path: &FsPath, e: &io::Error) -> String {
+    match e.raw_os_error() {
+        Some(libc::EROFS) if on_windows_volume(path) => flit_core::tr_en!(S::ErrorsOpsExtraReadOnlyWindowsAt, path = path.display()),
+        Some(libc::EROFS) => flit_core::tr_en!(S::ErrorsOpsExtraReadOnlyAt, path = path.display()),
+        _ => format!("{}: {}", path.display(), flit_core::fmt::io_reason(e)),
+    }
+}
+
+fn rename_through_temporary(dir: RawFd, from: &CStr, to: &CStr) -> io::Result<()> {
+    let tmp = cstring(&numbered(dir, &[from.to_bytes(), b".flit-rename"].concat(), true, b"", true))?;
+    rename_at(dir, from, dir, &tmp, false)?;
+    rename_at(dir, &tmp, dir, to, false).inspect_err(|_| {
+        let _ = rename_at(dir, &tmp, dir, from, false);
+    })
 }
 
 fn free_space(fd: RawFd) -> Option<u64> {
@@ -225,7 +245,7 @@ impl<'a> Engine<'a> {
             Some(libc::EACCES | libc::EPERM) => self.denied = true,
             _ => {}
         }
-        self.note(format!("{}: {e}", path.display()));
+        self.note(failed_at(path, e));
     }
 
     fn trouble(&mut self, path: &FsPath, e: &io::Error) -> bool {
@@ -237,11 +257,11 @@ impl<'a> Engine<'a> {
             return false;
         }
         let fatal = matches!(e.raw_os_error(), Some(libc::ENOSPC | libc::EDQUOT));
-        match self.job.fail(Failure { path: path.clone(), error: reason(e), fatal }) {
+        match self.job.fail(Failure { path: path.clone(), error: reason(path, e), fatal }) {
             Some(Recover::Retry) => true,
             Some(Recover::Skip) => {
                 self.fatal |= fatal;
-                self.note(format!("{}: {e}", path.display()));
+                self.note(failed_at(path, e));
                 false
             }
             None => false,
@@ -530,10 +550,11 @@ impl<'a> Engine<'a> {
             if self.job.cancelled() {
                 return Res::Nothing;
             }
+            let blamed = if mode != Mode::Move && e.raw_os_error() == Some(libc::EROFS) { &dst } else { src };
             match e.raw_os_error() {
                 Some(libc::EXDEV) if mode == Mode::Move => return self.transfer(sdir, sname, src, ddir, dst, node, Mode::Across),
                 Some(libc::EEXIST) if !replace => {}
-                _ if self.trouble(src, &e) => continue,
+                _ if self.trouble(blamed, &e) => continue,
                 _ => return Res::Nothing,
             }
             let existing = node_at(ddir, &dname, false).ok();
@@ -727,8 +748,11 @@ impl<'a> Engine<'a> {
             return self.note(limits::bad_name_error(&to, bad));
         }
         let renamed = top(item).and_then(|t| {
-            let target = cstring(name)?;
-            rename_at(t.dir.as_raw_fd(), &t.name, t.dir.as_raw_fd(), &target, false)
+            let (dir, target) = (t.dir.as_raw_fd(), cstring(name)?);
+            match rename_at(dir, &t.name, dir, &target, false) {
+                Err(e) if e.raw_os_error() == Some(libc::EEXIST) && t.name != target && node_at(dir, &target, false).is_ok_and(|n| (n.dev, n.ino) == (t.node.dev, t.node.ino)) => rename_through_temporary(dir, &t.name, &target),
+                r => r,
+            }
         });
         match renamed {
             Ok(()) => self.done.push((item.clone(), to)),
@@ -983,7 +1007,10 @@ impl<'a> Engine<'a> {
                     if deletable_instead(p, &e) {
                         self.untrashable.push(p.clone());
                     }
-                    self.note(format!("Cannot move {} to the Trash: {e}", p.display()));
+                    match e.raw_os_error() {
+                        Some(libc::EROFS) => self.note(failed_at(p, &e)),
+                        _ => self.note(format!("Cannot move {} to the Trash: {}", p.display(), flit_core::fmt::io_reason(&e))),
+                    }
                 }
             }
             self.job.update(|q| q.items += 1);
@@ -1001,7 +1028,7 @@ impl<'a> Engine<'a> {
                     valid.push((trashed.clone(), original.clone()));
                 }
                 Ok((_, from)) => self.note(format!("{} in the Trash came from {}, not from {}", trashed.display(), from.display(), original.display())),
-                Err(e) => self.note(format!("Cannot restore {}: {e}", trashed.display())),
+                Err(e) => self.note(format!("Cannot restore {}: {}", trashed.display(), flit_core::fmt::io_reason(&e))),
             }
         }
         let placed = self.moves(&valid, true);

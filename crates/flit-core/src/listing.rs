@@ -309,7 +309,11 @@ impl fmt::Display for FsError {
             FsErrorKind::Other => S::ErrorsFsOther,
             FsErrorKind::NoMedia => S::ErrorsFsNoMedia,
         };
-        crate::i18n::fill_into(f, S::ErrorsFsCoded.t(), &[("what", &what), ("code", &format_args!("{:08X}", self.code as u32))]);
+        match self.kind {
+            _ if cfg!(windows) => crate::i18n::fill_into(f, S::ErrorsFsCoded.t(), &[("what", &what), ("code", &format_args!("{:08X}", self.code as u32))]),
+            FsErrorKind::Other if self.code > 0 => return f.write_str(&crate::fmt::io_reason(&std::io::Error::from_raw_os_error(self.code as i32))),
+            _ => return f.write_str(what.t()),
+        }
         Ok(())
     }
 }

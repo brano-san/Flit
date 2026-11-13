@@ -226,6 +226,15 @@ pub fn space(point: &Path) -> Option<(u64, u64)> {
     Some((st.f_blocks as u64 * unit, st.f_bavail as u64 * unit))
 }
 
+pub fn block_size(path: &Path) -> Option<u64> {
+    let c = CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+        return None;
+    }
+    [st.f_frsize as u64, st.f_bsize as u64].into_iter().find(|&b| b > 0)
+}
+
 pub fn watch(path: &Path, changed: impl Fn() + Send + 'static) -> io::Result<()> {
     let c = CString::new(path.as_os_str().as_bytes()).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
     let fd = unsafe { libc::open(c.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };

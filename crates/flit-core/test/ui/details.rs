@@ -372,7 +372,7 @@ fn unavailable_folders_explain_themselves_and_auto_sizes_measure_loaded_folders(
     app.navigate(loc(r"C:\gone"), Instant::now());
     let fx = deliver_with(&mut app, &[], Some(FsError { kind: FsErrorKind::NotFound, code: 3 }));
     assert!(!fx.iter().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::DirSizes { .. }, .. })));
-    assert_eq!(app.tab().error.as_deref(), Some("Path not found (0x00000003)"));
+    assert_eq!(app.tab().error.as_deref(), Some(if cfg!(windows) { "Path not found (0x00000003)" } else { "Path not found" }));
 }
 
 #[test]

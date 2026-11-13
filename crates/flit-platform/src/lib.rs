@@ -61,7 +61,10 @@ impl PlatformError {
 
 impl fmt::Display for PlatformError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} (0x{:08X})", self.message, self.code as u32)
+        match cfg!(windows) {
+            true => write!(f, "{} (0x{:08X})", self.message, self.code as u32),
+            false => f.write_str(&self.message),
+        }
     }
 }
 

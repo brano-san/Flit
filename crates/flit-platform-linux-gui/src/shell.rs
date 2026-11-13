@@ -498,15 +498,15 @@ fn helper_files() -> Option<(Vec<FsPath>, bool)> {
     files(&[uris].into_iter().chain(read(KDE_CUT)).collect::<Vec<_>>())
 }
 
-pub fn helper_offer(paths: &[FsPath], cut: bool) -> (&'static str, Vec<u8>) {
-    match cut {
-        true => (crate::clipboard::GNOME, crate::clipboard::gnome(paths, true)),
+pub fn helper_offer(paths: &[FsPath], cut: bool, offered_as_text: bool) -> (&'static str, Vec<u8>) {
+    match cut || offered_as_text {
+        true => (crate::clipboard::GNOME, crate::clipboard::gnome(paths, cut)),
         false => (crate::clipboard::URI_LIST, crate::clipboard::uri_list(paths)),
     }
 }
 
 pub fn set_clipboard_files(paths: &[FsPath], cut: bool) -> bool {
-    let (mime, list) = helper_offer(paths, cut);
+    let (mime, list) = helper_offer(paths, cut, wayland());
     let args: &[&str] = if wayland() { &["wl-copy", "--type", mime] } else { &["xclip", "-selection", "clipboard", "-target", mime, "-in"] };
     let Some(mut cmd) = helper(args) else { return false };
     let Ok(mut child) = cmd.stdin(Stdio::piped()).stdout(Stdio::null()).process_group(0).spawn() else { return false };

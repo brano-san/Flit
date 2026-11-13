@@ -196,3 +196,14 @@ fn a_dot_hidden_that_is_not_a_regular_file_hides_nothing() {
     assert!(hidden_list_in(t.path()).is_empty());
     assert_eq!(scanned(t.path())[&b"a"[..]].attrs & attr::HIDDEN, 0);
 }
+
+#[test]
+fn size_on_disk_counts_in_blocks_of_the_volume() {
+    use std::os::unix::fs::MetadataExt;
+    let t = Temp::new("blocks");
+    let f = t.file("one", 1);
+    let unit = LinuxFs.cluster_size(&FsPath::parse(f.to_str().unwrap()).unwrap());
+    assert!(unit >= 512 && unit.is_power_of_two(), "{unit}");
+    assert!(std::fs::metadata(&f).unwrap().blocks() * 512 <= unit, "a one-byte file takes at most one block");
+    assert_eq!(LinuxFs.cluster_size(&FsPath::parse(t.path().join("missing").to_str().unwrap()).unwrap()), 0, "nothing is guessed for a missing path");
+}

@@ -501,3 +501,39 @@ fn fat_destinations_get_safe_names_and_refuse_files_over_four_gibibytes_up_front
         assert!(e.fits(dir.as_raw_fd(), &big_src, &big_dst, &huge), "{fs}");
     }
 }
+
+#[test]
+fn errors_name_the_system_reason_once() {
+    let t = Temp::new("ops-reason");
+    let missing = fp(&t.path().join("missing"));
+    let e = run(&FileOp::NewFolder { dir: missing.clone(), name: b"n".to_vec() }, &quiet(Resolve::Skip), None).error.unwrap();
+    let expected = format!("{}: {}", missing.display(), flit_core::fmt::io_reason(&errno(libc::ENOENT)));
+    assert_eq!(e.message, expected);
+    assert_eq!(e.to_string(), expected, "no Windows-style code on Linux");
+    assert!(!e.message.contains("os error"));
+}
+
+#[test]
+fn read_only_drives_explain_themselves() {
+    let t = Temp::new("ops-read-only");
+    let p = fp(&t.path().join("f"));
+    let rofs = errno(libc::EROFS);
+    assert_eq!(failed_at(&p, &rofs), flit_core::tr_en!(S::ErrorsOpsExtraReadOnlyAt, path = p.display()));
+    assert_eq!(reason(&p, &rofs), S::ErrorsOpsExtraReadOnly.en());
+    assert_eq!(reason(&p, &errno(libc::EACCES)), flit_core::fmt::io_reason(&errno(libc::EACCES)));
+}
+
+#[test]
+fn renaming_to_another_name_of_the_same_file_goes_through_a_temporary_name() {
+    let t = Temp::new("ops-rename-case");
+    let a = t.file("a.txt", 1);
+    let out = run(&FileOp::Rename { item: fp(&a), name: b"A.txt".to_vec() }, &quiet(Resolve::Skip), None);
+    assert_eq!(ok(out), [(fp(&a), fp(&t.path().join("A.txt")))]);
+    std::fs::hard_link(t.path().join("A.txt"), t.path().join("b.txt")).unwrap();
+    let out = run(&FileOp::Rename { item: fp(&t.path().join("A.txt")), name: b"b.txt".to_vec() }, &quiet(Resolve::Skip), None);
+    assert!(out.error.unwrap().message.contains("already exists"), "a second link is a different name, not a case variant");
+    assert_eq!(listing(t.path()), [b"A.txt".to_vec(), b"b.txt".to_vec()], "the first name is put back");
+    let dir = open_dir(t.path()).unwrap();
+    rename_through_temporary(dir.as_raw_fd(), c"A.txt", c"c.txt").unwrap();
+    assert_eq!(listing(t.path()), [b"b.txt".to_vec(), b"c.txt".to_vec()]);
+}

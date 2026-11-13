@@ -1,9 +1,10 @@
+use flit_core::i18n::{Lang, S};
 use flit_core::provider::{AccessChange, FileOp};
 use flit_core::FsPath;
 use flit_platform::{Job, OpOutcome, PlatformError};
 use flit_proto::provider::{check_performed, Event, ReqId, Request, VERSION};
 use flit_proto::transport::{read_frame, read_hello, write_frame, Hello, ProtoError, Protocol};
-use std::ffi::{CString, OsStr};
+use std::ffi::{CString, OsStr, OsString};
 use std::io::{BufReader, Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -18,7 +19,18 @@ const CANCEL_POLL: Duration = Duration::from_millis(50);
 const PKEXEC_DISMISSED: i32 = 126;
 const PKEXEC_REFUSED: i32 = 127;
 
-pub fn serve() -> i32 {
+fn spoken(arg: Option<&OsStr>) -> Option<Lang> {
+    arg?.to_str().and_then(Lang::from_code)
+}
+
+fn helper_args(exe: &Path) -> [OsString; 3] {
+    [exe.as_os_str().to_owned(), FLAG.into(), flit_core::i18n::lang().code().into()]
+}
+
+pub fn serve(lang: Option<&OsStr>) -> i32 {
+    if let Some(lang) = spoken(lang) {
+        flit_core::i18n::set_lang(lang);
+    }
     match flit_platform_linux::agent::serve(std::io::stdin().lock(), std::io::stdout(), env!("CARGO_PKG_VERSION").into(), None) {
         Ok(()) => 0,
         Err(e) => {
@@ -152,17 +164,20 @@ pub fn drive<R: Read, W: Write + Send + 'static>(mut input: R, output: W, op: &F
     result
 }
 
+fn unelevated(why: impl Into<String>) -> PlatformError {
+    PlatformError::new(libc::EACCES as i64, why)
+}
+
 pub fn run(op: &FileOp, job: &Job) -> Result<OpOutcome, PlatformError> {
-    let pkexec = crate::shell::on_path(OsStr::new("pkexec")).ok_or_else(|| PlatformError::new(libc::EACCES as i64, "This needs administrator rights, and pkexec (polkit) is not installed to ask for them"))?;
-    let exe = std::env::current_exe().map_err(|e| PlatformError::new(libc::EACCES as i64, format!("cannot find the Flit program to run with administrator rights: {e}")))?;
+    let pkexec = crate::shell::on_path(OsStr::new("pkexec")).ok_or_else(|| unelevated(S::ErrorsOpsExtraNoPkexec.en()))?;
+    let exe = std::env::current_exe().map_err(|e| unelevated(format!("cannot find the Flit program: {}", flit_core::fmt::io_reason(&e))))?;
     let mut child = Command::new(pkexec)
-        .arg(&exe)
-        .arg(FLAG)
+        .args(helper_args(&exe))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("pkexec: {e}")))?;
+        .map_err(|e| unelevated(format!("pkexec: {}", flit_core::fmt::io_reason(&e))))?;
     let (Some(stdin), Some(stdout), Some(mut stderr)) = (child.stdin.take(), child.stdout.take(), child.stderr.take()) else {
         let _ = child.kill();
         return Err(PlatformError::new(-1, "pkexec started without its pipes"));
@@ -176,23 +191,37 @@ pub fn run(op: &FileOp, job: &Job) -> Result<OpOutcome, PlatformError> {
     let status = child.wait().ok().and_then(|s| s.code());
     let complaint = complaint.join().unwrap_or_default();
     outcome.map_err(|e| match status {
-        Some(PKEXEC_DISMISSED) => PlatformError::new(libc::EACCES as i64, "Administrator rights were not granted"),
-        Some(PKEXEC_REFUSED) => PlatformError::new(libc::EACCES as i64, format!("Administrator rights were refused: {}", complaint.trim())),
-        _ if complaint.trim().is_empty() => PlatformError::new(-1, format!("The elevated helper stopped: {e}")),
-        _ => PlatformError::new(-1, format!("The elevated helper stopped: {}", complaint.trim())),
+        Some(PKEXEC_DISMISSED) => unelevated(S::ErrorsOpsExtraAdminDismissed.en()),
+        Some(PKEXEC_REFUSED) => unelevated(flit_core::tr_en!(S::ErrorsOpsExtraAdminRefused, why = complaint.trim())),
+        _ if complaint.trim().is_empty() => PlatformError::new(-1, flit_core::tr_en!(S::ErrorsOpsExtraAdminStopped, why = e)),
+        _ => PlatformError::new(-1, flit_core::tr_en!(S::ErrorsOpsExtraAdminStopped, why = complaint.trim())),
     })
+}
+
+fn only_elevated(e: PlatformError) -> OpOutcome {
+    let error = match e.code == libc::EACCES as i64 {
+        true => PlatformError::new(e.code, flit_core::tr_en!(S::ErrorsOpsExtraNeedsAdmin, why = e.message)),
+        false => e,
+    };
+    OpOutcome { items: Vec::new(), error: Some(error) }
+}
+
+fn retried(first: OpOutcome, again: Result<OpOutcome, PlatformError>) -> OpOutcome {
+    match (again, first.error) {
+        (Ok(more), _) => OpOutcome { items: first.items.into_iter().chain(more.items).collect(), error: more.error },
+        (Err(e), Some(denied)) => OpOutcome { items: first.items, error: Some(PlatformError::new(denied.code, flit_core::tr_en!(S::ErrorsOpsExtraNotElevated, error = denied.message, why = e.message))) },
+        (Err(e), None) => OpOutcome { items: first.items, error: Some(e) },
+    }
 }
 
 pub fn file_op(op: &FileOp, job: &Job, plain: impl FnOnce() -> OpOutcome) -> OpOutcome {
     if needs_root(op) {
-        return run(op, job).unwrap_or_else(|e| OpOutcome { items: Vec::new(), error: Some(e) });
+        return run(op, job).unwrap_or_else(only_elevated);
     }
     let first = plain();
     let Some(rest) = retry(op, &first) else { return first };
-    match run(&rest, job) {
-        Ok(more) => OpOutcome { items: first.items.into_iter().chain(more.items).collect(), error: more.error },
-        Err(_) => first,
-    }
+    let again = run(&rest, job);
+    retried(first, again)
 }
 
 fn member(gid: u32) -> bool {
@@ -253,15 +282,13 @@ fn joined(first: Option<FileOp>, then: Option<FileOp>) -> Option<FileOp> {
 
 pub fn access_op(op: &FileOp, job: &Job, plain: impl FnOnce() -> OpOutcome) -> OpOutcome {
     if access_needs_root(op) {
-        return run(op, job).unwrap_or_else(|e| OpOutcome { items: Vec::new(), error: Some(e) });
+        return run(op, job).unwrap_or_else(only_elevated);
     }
     let first = plain();
     let Some(rest) = access_retry(op, &first) else { return first };
     let before = job.take_performed();
-    let outcome = match run(&rest, job) {
-        Ok(more) => OpOutcome { items: first.items.into_iter().chain(more.items).collect(), error: more.error },
-        Err(_) => first,
-    };
+    let again = run(&rest, job);
+    let outcome = retried(first, again);
     if let Some(all) = joined(before, job.take_performed()) {
         job.performed(all);
     }

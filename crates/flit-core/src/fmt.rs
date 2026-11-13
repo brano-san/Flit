@@ -63,6 +63,14 @@ pub fn size_in(out: &mut impl Write, bytes: u64, decimal: bool) {
     let _ = write!(out, " {}", unit.t());
 }
 
+pub fn io_reason(e: &std::io::Error) -> String {
+    let text = e.to_string();
+    match text.rfind(" (os error ") {
+        Some(at) if e.raw_os_error().is_some() => text[..at].to_owned(),
+        _ => text,
+    }
+}
+
 pub fn size_label(label: &str) -> String {
     let Some((n, unit)) = label.split_once(' ').and_then(|(n, u)| Some((n, UNITS.into_iter().find(|s| s.en() == u)?))) else { return label.to_owned() };
     let mut out = String::new();

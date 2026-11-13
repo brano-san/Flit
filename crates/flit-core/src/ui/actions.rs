@@ -831,7 +831,8 @@ impl App {
             Quote::Always => format!("\"{}\"", l.display()),
         };
         let sel: Vec<u32> = t.view.as_ref().map(|v| v.selected().collect()).unwrap_or_default();
-        let text = if sel.is_empty() { text(t.location()) } else { sel.iter().map(|&i| text(&t.entry_location(i))).collect::<Vec<_>>().join("\r\n") };
+        let line_break = if self.caps.unix_paths { "\n" } else { "\r\n" };
+        let text = if sel.is_empty() { text(t.location()) } else { sel.iter().map(|&i| text(&t.entry_location(i))).collect::<Vec<_>>().join(line_break) };
         self.effects.push(Effect::SetClipboard(text));
     }
 

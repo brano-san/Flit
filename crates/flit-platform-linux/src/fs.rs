@@ -487,6 +487,10 @@ impl Fs for LinuxFs {
         host(path).and_then(crate::mounts::space).map_or(0, |s| s.0)
     }
 
+    fn cluster_size(&self, path: &FsPath) -> u64 {
+        host(path).and_then(crate::mounts::block_size).unwrap_or(0)
+    }
+
     fn file_system(&self, path: &FsPath) -> Option<String> {
         let path = host(path)?;
         crate::mounts::read().ok()?.into_iter().filter(|m| path.starts_with(m.path())).max_by_key(|m| m.point.len()).map(|m| m.fstype)

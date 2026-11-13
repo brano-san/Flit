@@ -64,3 +64,16 @@ fn only_jobs_with_someone_to_ask_report_failures() {
     assert_eq!(job.fail(f.clone()), Some(Recover::Retry));
     assert_eq!(*seen.lock().unwrap(), [f]);
 }
+
+#[test]
+fn errors_name_the_cause_once_in_the_style_of_the_system() {
+    let reason = flit_core::fmt::io_reason(&std::io::Error::from_raw_os_error(13));
+    let e = PlatformError::new(13, format!("/root/x: {reason}"));
+    let shown = e.to_string();
+    if cfg!(windows) {
+        assert!(shown.ends_with("(0x0000000D)"), "{shown}");
+    } else {
+        assert_eq!(shown, format!("/root/x: {reason}"));
+        assert_eq!(PlatformError::new(-1, "Deletion was cancelled").to_string(), "Deletion was cancelled");
+    }
+}

@@ -240,3 +240,12 @@ fn a_program_without_the_execute_bit_asks_before_running() {
     std::fs::write(&text, b"hello").unwrap();
     assert!(!needs_exec_bit(&text));
 }
+
+#[test]
+fn the_clipboard_helper_keeps_file_uris_out_of_plain_text() {
+    use crate::clipboard::{GNOME, URI_LIST};
+    let paths = [FsPath::parse("/tmp/a b").unwrap()];
+    assert_eq!(helper_offer(&paths, false, false), (URI_LIST, b"file:///tmp/a%20b\r\n".to_vec()), "xclip offers only the type it is given");
+    assert_eq!(helper_offer(&paths, false, true), (GNOME, b"copy\nfile:///tmp/a%20b".to_vec()), "wl-copy would also offer a text/ type as plain text");
+    assert_eq!(helper_offer(&paths, true, false), (GNOME, b"cut\nfile:///tmp/a%20b".to_vec()));
+}

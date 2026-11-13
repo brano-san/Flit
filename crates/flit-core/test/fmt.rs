@@ -108,3 +108,10 @@ fn a_single_t_takes_the_first_character_of_the_meridiem() {
     assert_eq!(first_char("PM"), "P");
     assert_eq!(first_char(""), "");
 }
+
+#[test]
+fn system_errors_are_named_without_the_rust_error_number() {
+    let denied = io_reason(&std::io::Error::from_raw_os_error(2));
+    assert!(!denied.is_empty() && !denied.contains("os error"), "{denied}");
+    assert_eq!(io_reason(&std::io::Error::other("the file changed (os error 5)")), "the file changed (os error 5)");
+}

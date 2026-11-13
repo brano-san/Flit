@@ -1,6 +1,7 @@
 #![cfg(target_os = "linux")]
 
 mod activation;
+mod alert;
 mod apps;
 mod awake;
 mod clipboard;
@@ -135,6 +136,7 @@ impl Platform for Linux {
 
     fn fatal_error(message: &str) {
         eprintln!("flit: {message}");
+        alert::show(message);
     }
 
     fn refresh_period() -> Option<std::time::Duration> {

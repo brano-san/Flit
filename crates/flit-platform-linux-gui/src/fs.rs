@@ -60,6 +60,10 @@ impl Fs for LinuxGuiFs {
         LinuxFs.volume_size(path)
     }
 
+    fn cluster_size(&self, path: &FsPath) -> u64 {
+        LinuxFs.cluster_size(path)
+    }
+
     fn file_system(&self, path: &FsPath) -> Option<String> {
         LinuxFs.file_system(path)
     }

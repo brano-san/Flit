@@ -4,7 +4,7 @@ use std::path::Path;
 fn sources() -> String {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut all = String::new();
-    let mut stack: Vec<_> = ["flit-core", "flit", "flit-platform-windows", "flit-platform", "flit-platform-linux-gui", "flit-archive"].iter().map(|c| crates.join(c).join("src")).collect();
+    let mut stack: Vec<_> = ["flit-core", "flit", "flit-platform-windows", "flit-platform", "flit-platform-linux", "flit-platform-linux-gui", "flit-archive"].iter().map(|c| crates.join(c).join("src")).collect();
     while let Some(dir) = stack.pop() {
         for e in std::fs::read_dir(&dir).unwrap() {
             let p = e.unwrap().path();
@@ -195,9 +195,10 @@ fn english_errors_are_shown_in_the_chosen_language() {
 #[test]
 fn folder_errors_follow_the_language() {
     let e = crate::listing::FsError { kind: crate::listing::FsErrorKind::AccessDenied, code: 5 };
-    assert_eq!(e.to_string(), "Access denied (0x00000005)");
+    let coded = |what: &str| if cfg!(windows) { format!("{what} (0x00000005)") } else { what.to_owned() };
+    assert_eq!(e.to_string(), coded("Access denied"));
     set_lang(Lang::Ru);
-    assert_eq!(e.to_string(), "Отказано в доступе (0x00000005)");
+    assert_eq!(e.to_string(), coded("Отказано в доступе"));
     assert_eq!(localize("Access denied (0x00000005)"), "Отказано в доступе (0x00000005)");
     assert!(crate::archive::needs_password(S::ErrorsArchiveWrongPassword.t()));
     set_lang(Lang::En);
@@ -274,4 +275,14 @@ fn unix_words_call_shortcuts_links_and_leave_keyboard_shortcuts_alone() {
     }
     assert_eq!(S::MenuLink.en(), "Link");
     assert_eq!(S::MenuCreateLink.en(), "Create link");
+}
+
+#[test]
+fn linux_elevation_and_read_only_errors_follow_the_language() {
+    set_lang(Lang::Ru);
+    let retry = crate::tr_en!(S::ErrorsOpsExtraNotElevated, error = "/etc/x: Permission denied", why = S::ErrorsOpsExtraNoPkexec.en());
+    assert_eq!(localize(&retry), "/etc/x: Permission denied. Повторить с правами администратора не удалось: не установлен pkexec (polkit)");
+    let at = crate::tr_en!(S::ErrorsOpsExtraReadOnlyWindowsAt, path = "/media/c/a.txt");
+    assert!(localize(&at).starts_with("/media/c/a.txt: диск Windows подключён только для чтения"), "{}", localize(&at));
+    set_lang(Lang::En);
 }

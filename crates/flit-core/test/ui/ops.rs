@@ -2068,3 +2068,16 @@ fn the_rename_box_picks_words_and_cuts_with_shift_delete_without_deleting_files(
     assert!(app.drain_effects().any(|e| matches!(e, Effect::SetClipboard(s) if s == "my report.txt")));
     assert!(app.is_renaming());
 }
+
+#[test]
+fn copied_paths_are_separated_by_the_line_break_of_the_system() {
+    let mut app = app_at("/home/u");
+    app.caps = crate::caps::Caps { unix_paths: true };
+    deliver(&mut app, &[("a b.txt", false), ("c.txt", false)]);
+    select(&mut app, &["a b.txt", "c.txt"]);
+    app.drain_effects().for_each(drop);
+    assert!(app.run_action("item.copy_path", t0()));
+    assert_eq!(copied(&mut app).as_deref(), Some("/home/u/a b.txt\n/home/u/c.txt"));
+    assert!(app.run_action("item.copy_quoted_path", t0()));
+    assert_eq!(copied(&mut app).as_deref(), Some("\"/home/u/a b.txt\"\n\"/home/u/c.txt\""));
+}
