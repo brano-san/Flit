@@ -1,4 +1,4 @@
-use super::{App, Drag, Effect, Hit, Route, Tab, G_DRIVE, G_FOLDER, MAX_ROUTES};
+use super::{App, Drag, Effect, Hit, Route, Tab, G_DRIVE, G_FOLDER};
 use crate::input::{Key, MouseButton};
 use crate::location::Location;
 use crate::path::PathKind;
@@ -108,10 +108,10 @@ impl App {
         if self.tabs.len() != 1 || tabs.is_empty() {
             return;
         }
-        let cur = cur.min(tabs.len().min(MAX_ROUTES) - 1);
+        let cur = cur.min(tabs.len() - 1);
         let mut live = self.tabs.pop();
         let (view, show_hidden) = live.as_ref().map(|t| (t.folder_view(), t.view_spec.show_hidden)).unwrap_or_default();
-        for (i, loc) in tabs.iter().take(MAX_ROUTES).enumerate() {
+        for (i, loc) in tabs.iter().enumerate() {
             match live.take_if(|_| i == cur) {
                 Some(t) => self.tabs.push(t),
                 None => {
@@ -141,6 +141,9 @@ impl App {
     }
 
     pub fn insert_tab(&mut self, moved: MovedTab, at: Option<(f32, f32)>, now: Instant) {
+        if let Some(id) = at.and_then(|(x, y)| self.panel_at(x, y)) {
+            self.activate_panel(id);
+        }
         let mut t = *moved.0;
         t.id = self.next_tab;
         self.next_tab += 1;
@@ -208,12 +211,19 @@ impl App {
         } else {
             let panels: Vec<(u32, Rect)> = self.panels.list.iter().map(|p| (p.id, p.rect)).collect();
             let area = Rect::new(self.panels.left, 0.0, (self.size.0 - self.panels.left).max(0.0), self.size.1);
-            let zones = super::dock::zones(&panels, area, (x, y), self.scale);
+            let copy = self.mods.ctrl;
+            let zones = super::dock::zones(&panels, &self.junctions(), area, (x, y), self.scale, |d| self.dock_moves(d, copy));
             let hot = super::dock::zone_at(&zones, x, y);
             self.docking = Some(super::dock::Docking { zones, hot, at: (x, y) });
         }
         self.drag = Drag::Tab { origin, x: x0, y: y0, moved: true, torn };
         self.dirty = true;
+    }
+
+    pub(super) fn redock(&mut self) {
+        if let Some((x, y)) = self.docking.as_ref().map(|d| d.at) {
+            self.drag_tab(x, y);
+        }
     }
 
     pub(super) fn draw_tab_dock<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
@@ -261,16 +271,22 @@ impl App {
     }
 
     pub(super) fn strip_key(&mut self, key: Key) -> bool {
-        let Drag::Tab { origin, .. } = self.drag else { return false };
-        if key != Key::Escape {
+        if !matches!(self.drag, Drag::Tab { .. }) {
             return false;
         }
+        if key == Key::Escape {
+            self.cancel_tab_drag();
+        }
+        true
+    }
+
+    pub(super) fn cancel_tab_drag(&mut self) {
+        let Drag::Tab { origin, .. } = self.drag else { return };
         self.move_tab(origin.min(self.tabs.len() - 1));
         self.docking = None;
         self.drag = Drag::None;
         self.pressed = Hit::None;
         self.dirty = true;
-        true
     }
 
     pub(super) fn tear_off(&mut self, x: f32, y: f32) {
@@ -330,7 +346,7 @@ impl App {
 
     pub(super) fn strip_wheel(&mut self, dy: f32) -> bool {
         let Some((x, y)) = self.strip.pointer else { return false };
-        if !self.layout.title.contains(x, y) || self.caption_hit(x, y) != Hit::None {
+        if matches!(self.drag, Drag::Tab { .. }) || !self.layout.title.contains(x, y) || self.caption_hit(x, y) != Hit::None {
             return false;
         }
         self.strip.wheel += if self.tab_wheel_reversed { -dy } else { dy };

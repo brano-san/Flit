@@ -53,6 +53,7 @@ pub(super) struct Panel {
     filter: FilterRects,
     home: Home,
     checks: super::details::Checks,
+    crumb_shift: (f32, Option<Location>),
     pub rect: Rect,
     rows: Option<(u64, u32, u32)>,
 }
@@ -64,6 +65,8 @@ pub(super) struct Sep {
     path: Vec<usize>,
     at: usize,
     room: f32,
+    sides: [Rect; 2],
+    leaves: [u32; 2],
 }
 
 pub(super) struct Panels {
@@ -126,8 +129,9 @@ fn path_of(n: &Node, id: u32, path: &mut Vec<usize>) -> bool {
 }
 
 fn node_mut<'a>(n: &'a mut Node, path: &[usize]) -> &'a mut Node {
-    match (path.split_first(), n) {
-        (Some((&k, rest)), Node::Group { kids, .. }) => node_mut(&mut kids[k].0, rest),
+    let fits = matches!((path.first(), &*n), (Some(&k), Node::Group { kids, .. }) if k < kids.len());
+    match (fits, n) {
+        (true, Node::Group { kids, .. }) => node_mut(&mut kids[path[0]].0, &path[1..]),
         (_, n) => n,
     }
 }
@@ -151,10 +155,17 @@ fn normalize(n: &mut Node) {
     }
 }
 
-fn insert(root: &mut Node, next_to: u32, id: u32, down: bool, before: bool) {
+fn first_leaf(n: &Node) -> u32 {
+    match n {
+        Node::Leaf(id) => *id,
+        Node::Group { kids, .. } => kids.first().map_or(u32::MAX, |k| first_leaf(&k.0)),
+    }
+}
+
+fn insert(root: &mut Node, next_to: u32, id: u32, down: bool, before: bool) -> bool {
     let mut path = Vec::new();
     if !path_of(root, next_to, &mut path) {
-        return;
+        return false;
     }
     if let Some((&k, parent)) = path.split_last() {
         if let Node::Group { down: d, kids } = node_mut(root, parent) {
@@ -162,7 +173,7 @@ fn insert(root: &mut Node, next_to: u32, id: u32, down: bool, before: bool) {
                 let half = kids[k].1 / 2.0;
                 kids[k].1 = half;
                 kids.insert(if before { k } else { k + 1 }, (Node::Leaf(id), half));
-                return;
+                return true;
             }
         }
     }
@@ -172,6 +183,54 @@ fn insert(root: &mut Node, next_to: u32, id: u32, down: bool, before: bool) {
         kids.reverse();
     }
     *leaf = Node::Group { down, kids };
+    true
+}
+
+fn insert_between(root: &mut Node, left: u32, right: u32, id: u32) -> bool {
+    let (mut a, mut b) = (Vec::new(), Vec::new());
+    if !path_of(root, left, &mut a) || !path_of(root, right, &mut b) {
+        return false;
+    }
+    let common = a.iter().zip(&b).take_while(|(p, q)| p == q).count();
+    let (Some(&k), Some(&j)) = (a.get(common), b.get(common)) else { return false };
+    match node_mut(root, &a[..common]) {
+        Node::Group { down: false, kids } if j == k + 1 => {
+            let (wa, wb) = (kids[k].1, kids[j].1);
+            kids[k].1 = wa * 2.0 / 3.0;
+            kids[j].1 = wb * 2.0 / 3.0;
+            kids.insert(j, (Node::Leaf(id), (wa + wb) / 3.0));
+            true
+        }
+        _ => false,
+    }
+}
+
+fn attach(root: &mut Node, dock: Dock, id: u32) -> bool {
+    match dock {
+        Dock::Into(p) => path_of(root, p, &mut Vec::new()),
+        Dock::Split { panel, down, before } => insert(root, panel, id, down, before),
+        Dock::Window { before } => {
+            add_column(root, id, before);
+            true
+        }
+        Dock::Between { left, right } => insert_between(root, left, right, id),
+    }
+}
+
+fn rename(n: &mut Node, from: u32, to: u32) {
+    match n {
+        Node::Leaf(id) if *id == from => *id = to,
+        Node::Leaf(_) => {}
+        Node::Group { kids, .. } => kids.iter_mut().for_each(|(k, _)| rename(k, from, to)),
+    }
+}
+
+fn same_shape(a: &Node, b: &Node) -> bool {
+    match (a, b) {
+        (Node::Leaf(x), Node::Leaf(y)) => x == y,
+        (Node::Group { down: d, kids: k }, Node::Group { down: e, kids: l }) => d == e && k.len() == l.len() && k.iter().zip(l).all(|(p, q)| same_shape(&p.0, &q.0)),
+        _ => false,
+    }
 }
 
 fn add_column(root: &mut Node, id: u32, before: bool) {
@@ -231,19 +290,26 @@ fn place(n: &Node, r: Rect, gap: f32, path: &mut Vec<usize>, rects: &mut Vec<(u3
     let room = (len - gap * (kids.len() - 1) as f32).max(0.0);
     let total: f32 = kids.iter().map(|k| k.1).sum::<f32>().max(f32::EPSILON);
     let (mut at, mut acc) = (0.0, 0.0);
-    for (k, (kid, w)) in kids.iter().enumerate() {
+    let mut spans = Vec::with_capacity(kids.len());
+    for (k, (_, w)) in kids.iter().enumerate() {
         acc += w;
         let end = if k + 1 == kids.len() { room } else { (room * acc / total).round() };
         let off = at + gap * k as f32;
-        let kr = if *down { Rect::new(r.x, r.y + off, r.w, end - at) } else { Rect::new(r.x + off, r.y, end - at, r.h) };
+        spans.push(if *down { Rect::new(r.x, r.y + off, r.w, end - at) } else { Rect::new(r.x + off, r.y, end - at, r.h) });
+        at = end;
+    }
+    for (k, (kid, _)) in kids.iter().enumerate() {
+        let kr = spans[k];
         path.push(k);
         place(kid, kr, gap, path, rects, seps);
         path.pop();
-        if k + 1 < kids.len() {
+        if let Some((&next, (after, _))) = spans.get(k + 1).zip(kids.get(k + 1)) {
             let rect = if *down { Rect::new(r.x, kr.bottom(), r.w, gap) } else { Rect::new(kr.right(), r.y, gap, r.h) };
-            seps.push(Sep { rect, down: *down, path: path.clone(), at: k, room });
+            let mut left = Vec::new();
+            leaves(kid, &mut left);
+            let leaves = [left.last().copied().unwrap_or(u32::MAX), first_leaf(after)];
+            seps.push(Sep { rect, down: *down, path: path.clone(), at: k, room, sides: [kr, next], leaves });
         }
-        at = end;
     }
 }
 
@@ -314,6 +380,8 @@ impl App {
         std::mem::swap(&mut self.nav.filter, &mut p.filter);
         std::mem::swap(&mut self.nav.home, &mut p.home);
         std::mem::swap(&mut self.details.checks, &mut p.checks);
+        std::mem::swap(&mut self.addr.shift, &mut p.crumb_shift.0);
+        std::mem::swap(&mut self.addr.shift_for, &mut p.crumb_shift.1);
     }
 
     fn enter(&mut self, id: u32) {
@@ -420,6 +488,9 @@ impl App {
     }
 
     fn panel_changed(&mut self) {
+        if matches!(self.drag, Drag::PanelSep { .. }) {
+            self.drag = Drag::None;
+        }
         self.end_marquee();
         self.end_autoscroll();
         self.hover = Hit::None;
@@ -501,6 +572,9 @@ impl App {
     }
 
     pub(super) fn sep_hit(&self, x: f32, y: f32) -> Option<Hit> {
+        if self.panels.closing.is_some() {
+            return None;
+        }
         let grip = self.s(GRIP);
         self.panels.seps.iter().position(|s| s.rect.inset(-grip, -grip).contains(x, y)).map(Hit::PanelSep)
     }
@@ -521,7 +595,7 @@ impl App {
         }
     }
 
-    fn panel_at(&self, x: f32, y: f32) -> Option<u32> {
+    pub(super) fn panel_at(&self, x: f32, y: f32) -> Option<u32> {
         self.panels.list.iter().find(|p| p.rect.contains(x, y)).map(|p| p.id)
     }
 
@@ -542,7 +616,7 @@ impl App {
 
     pub(super) fn panel_wheel(&mut self, ev: &Event, dy: f32, now: Instant) -> bool {
         let Some((x, y)) = self.strip.pointer else { return false };
-        if self.nav.palette.is_some() || self.jobs.modal() {
+        if self.nav.palette.is_some() || self.jobs.modal() || self.panels.here != self.panels.active {
             return false;
         }
         let Some(id) = self.panel_at(x, y) else { return false };
@@ -580,6 +654,9 @@ impl App {
     }
 
     fn sep_weights(&mut self, k: usize) -> Option<(&mut Kids, usize, f32, bool)> {
+        if self.panels.closing.is_some() {
+            return None;
+        }
         let s = self.panels.seps.get(k)?.clone();
         match node_mut(&mut self.panels.root, &s.path) {
             Node::Group { kids, .. } if s.at + 1 < kids.len() => Some((kids, s.at, s.room, s.down)),
@@ -647,13 +724,36 @@ impl App {
         }
     }
 
-    pub(super) fn dock_tab(&mut self, dock: Dock, copy: bool, now: Instant) {
+    pub(super) fn junctions(&self) -> Vec<super::dock::Junction> {
+        self.panels.seps.iter().filter(|s| !s.down).map(|s| super::dock::Junction { line: s.rect, before: s.sides[0], after: s.sides[1], left: s.leaves[0], right: s.leaves[1] }).collect()
+    }
+
+    pub(super) fn dock_moves(&self, dock: Dock, copy: bool) -> bool {
         let src = self.panels.here;
-        let alone = self.tabs.len() == 1;
-        let onto_self = matches!(dock, Dock::Into(p) | Dock::Split { panel: p, .. } if p == src);
-        if src != self.panels.active || (!copy && (dock == Dock::Into(src) || (alone && onto_self))) {
+        let new = self.panels.next;
+        let mut after = self.panels.root.clone();
+        if src != self.panels.active || !attach(&mut after, dock, new) {
+            return false;
+        }
+        match dock {
+            _ if copy => true,
+            Dock::Into(p) => p != src,
+            _ if self.tabs.len() > 1 => true,
+            _ => {
+                remove(&mut after, src);
+                let mut before = self.panels.root.clone();
+                rename(&mut before, src, new);
+                !same_shape(&before, &after)
+            }
+        }
+    }
+
+    pub(super) fn dock_tab(&mut self, dock: Dock, copy: bool, now: Instant) {
+        if !self.dock_moves(dock, copy) {
             return;
         }
+        let src = self.panels.here;
+        let alone = self.tabs.len() == 1;
         let tab = if copy {
             let t = self.tab();
             let loc = t.location().clone();
@@ -676,12 +776,8 @@ impl App {
                 let id = self.panels.next;
                 self.panels.next += 1;
                 self.panels.list.push(Panel { id, ..Default::default() });
-                match dock {
-                    Dock::Split { panel, down, before } => insert(&mut self.panels.root, panel, id, down, before),
-                    Dock::Window { before } => add_column(&mut self.panels.root, id, before),
-                    Dock::Between { left } => insert(&mut self.panels.root, left, id, false, false),
-                    Dock::Into(_) => {}
-                }
+                attach(&mut self.panels.root, dock, id);
+                self.panels.closing = None;
                 id
             }
         };

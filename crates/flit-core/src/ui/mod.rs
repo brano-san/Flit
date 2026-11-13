@@ -678,7 +678,7 @@ pub struct App {
     side_glow: widgets::Glow<usize>,
     head_hot: Option<(usize, bool)>,
     hover_glow: widgets::Glow<(u32, Hit)>,
-    head_glow: widgets::Glow<(usize, bool)>,
+    head_glow: widgets::Glow<(u32, usize, bool)>,
     prefetch: prefetch::Prefetch,
     shapes: own_menu::Shapes,
     tag_fixes: Vec<(FsPath, u32, Instant)>,
@@ -1613,6 +1613,9 @@ impl App {
                 }
                 self.active = *f;
                 self.mods = Mods::default();
+                if !*f {
+                    self.cancel_tab_drag();
+                }
                 self.focused_at = f.then_some(now);
                 self.ops_timer_cancel();
                 self.end_autoscroll();
@@ -1655,7 +1658,11 @@ impl App {
                 self.dirty = true;
             }
             Event::Key { key, mods, pressed } => {
+                let copy_flipped = self.mods.ctrl != mods.ctrl;
                 self.mods = *mods;
+                if copy_flipped {
+                    self.redock();
+                }
                 if *pressed {
                     self.key(*key, *mods, now);
                 }
@@ -1793,6 +1800,9 @@ impl App {
     }
 
     fn mouse_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8, now: Instant) {
+        if matches!(self.drag, Drag::Tab { .. }) {
+            return;
+        }
         self.dirty = true;
         self.nav.sidebar.dragging_out = false;
         if self.form_down(x, y, clicks) {
@@ -1886,6 +1896,9 @@ impl App {
     }
 
     fn mouse_up(&mut self, x: f32, y: f32, button: MouseButton, now: Instant) {
+        if button != MouseButton::Left && matches!(self.drag, Drag::Tab { .. }) {
+            return;
+        }
         if let Some(f) = &mut self.jobs.form {
             f.document.grab = None;
         }
@@ -2191,6 +2204,10 @@ impl App {
         self.motion |= self.hover_glow.aim(hot, self.animations, now);
         let palette = self.look.palette;
         let (th, files) = (&palette.base, palette.area(Area::Files));
+        let ids: Vec<TabId> = self.tabs.iter().chain(self.panels.list.iter().filter(|p| p.id != self.panels.here).flat_map(|p| &p.tabs)).map(|t| t.id).collect();
+        if self.strip.arrivals(&ids, self.animations, now) {
+            self.motion = true;
+        }
         for _ in 0..2 {
             arena.reset();
             g.begin(files.bg);
@@ -2293,10 +2310,6 @@ impl App {
         let close_font = self.icon_font(8.0);
         let drop = self.drop_spot();
         let now = self.last_frame.unwrap_or_else(Instant::now);
-        let ids: Vec<TabId> = self.tabs.iter().map(|t| t.id).collect();
-        if self.strip.arrivals(&ids, self.animations, now) {
-            self.motion = true;
-        }
         let l = &self.layout;
         let mut new_tab_dx = 0.0;
         let mut requests: Vec<IconRequest> = Vec::new();
@@ -2304,7 +2317,7 @@ impl App {
             let from = g.dl.instances.len();
             let active = i == self.cur;
             let hovered = self.lit(Hit::Tab(i)).max(self.lit(Hit::TabClose(i)));
-            let accented = self.menu_open_from(Hit::Tab(i)) || (active && self.docking.is_some());
+            let accented = self.menu_open_from(Hit::Tab(i)) || (active && self.docking.is_some() && self.panels.here == self.panels.active);
             if accented {
                 g.dl.round_rect(r.inset(0.0, self.s(2.0)), t.accent, self.s(6.0));
             } else if active {
@@ -2362,7 +2375,8 @@ impl App {
         }
         w.g.dl.shift(new_tab_from, new_tab_dx.round(), 0.0);
         if l.actions.w > 0.0 {
-            let state = self.button(Hit::TabActions, self.nav.palette.as_ref().is_some_and(|p| p.pick == palette::Pick::Tabs), true);
+            let open = self.panels.here == self.panels.active && self.nav.palette.as_ref().is_some_and(|p| p.pick == palette::Pick::Tabs);
+            let state = self.button(Hit::TabActions, open, true);
             w.icon_button(l.actions, tabbar::G_TAB_ACTIONS, self.icon_font(12.0), state, t.text_dim);
         }
         self.request_icons(requests);
@@ -2452,11 +2466,12 @@ impl App {
         let real = tab.crumbs.len();
         let ghosts = if self.opts.breadcrumbs { &tab.ghosts[..] } else { &[] };
         let crumbs: Vec<&(String, Location)> = tab.crumbs.iter().chain(ghosts).collect();
+        let own = self.panels.here == self.panels.active;
         let open = match self.nav.palette.as_ref().map(|p| &p.pick) {
-            Some(palette::Pick::Crumb(i)) => Some(*i),
+            Some(palette::Pick::Crumb(i)) if own => Some(*i),
             _ => None,
         };
-        if self.addr.turn.aim(open, self.animations, now) {
+        if own && self.addr.turn.aim(open, self.animations, now) {
             self.motion = true;
         }
         let skip = self.compact_skip(&tab.crumbs);
@@ -2508,7 +2523,8 @@ impl App {
                     g.dl.round_rect(chev, widgets::faded(t.button_hover, lit), s3);
                 }
                 let ink = t.text_dim.alpha(if i + 1 >= real { 0x80 } else { 0xFF });
-                g.dl.chevron((chev.x + chev.w / 2.0, chev.y + chev.h / 2.0), self.s(8.0), self.addr.turn.angle(i, now), self.s(1.25).max(1.0), ink);
+                let angle = if own { self.addr.turn.angle(i, now) } else { 0.0 };
+                g.dl.chevron((chev.x + chev.w / 2.0, chev.y + chev.h / 2.0), self.s(8.0), angle, self.s(1.25).max(1.0), ink);
                 x += chev_w;
             }
         }
@@ -2567,12 +2583,15 @@ impl App {
         let baseline = (l.header.y + (l.header.h + m.ascent - m.descent) / 2.0).round();
         let pad = self.cs(10.0);
         let sort = self.tab().view_spec.sort;
-        let hot = self.head_hot.filter(|h| self.hover == Hit::Header(h.0) && self.drag == Drag::None);
-        self.motion |= self.head_glow.aim(hot, self.animations, now);
+        let here = self.panels.here;
+        let hot = self.head_hot.filter(|h| self.hover == Hit::Header(h.0) && self.drag == Drag::None).map(|(i, funnel)| (here, i, funnel));
+        if hot.is_some() || self.head_glow.touches(|k| k.0 == here) {
+            self.motion |= self.head_glow.aim(hot, self.animations, now);
+        }
         let l = &self.layout;
         for (i, col) in l.columns.iter().enumerate() {
             let r = l.cols[i];
-            let lit = self.head_glow.alpha((i, false), now);
+            let lit = self.head_glow.alpha((here, i, false), now);
             if lit > 0.0 {
                 g.dl.rect(r, widgets::faded(t.button_hover, lit));
             }
@@ -2591,7 +2610,7 @@ impl App {
             let mut room = r.right() - pad - x;
             if *col == Column::Type {
                 let fr = self.funnel_rect(r);
-                let lit = self.head_glow.alpha((i, true), now);
+                let lit = self.head_glow.alpha((here, i, true), now);
                 if lit > 0.0 {
                     let d = fr.h.min(fr.w) - self.cs(4.0);
                     g.dl.round_rect(Rect::new(fr.x + (fr.w - d) / 2.0, fr.y + (fr.h - d) / 2.0, d, d).snap(), widgets::faded(t.button_hover, lit), self.cs(4.0));

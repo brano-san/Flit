@@ -475,6 +475,183 @@ fn sessions_keep_the_panel_tree_and_old_sessions_load_into_one_panel() {
 }
 
 #[test]
+fn the_wheel_over_a_blank_spot_of_an_inactive_panel_does_not_recurse() {
+    let mut app = app_at(r"C:\a");
+    key(&mut app, Key::Char('S'), CTRL_SHIFT);
+    let strip = layout_of(&app, 0).title;
+    let (x, y) = (strip.right() - 40.0, strip.y + strip.h / 2.0);
+    app.panels.active = 1;
+    ev(&mut app, Event::MouseMove { x, y });
+    assert_eq!(app.visit(0, |a| a.hit(x, y)), Hit::None, "a blank spot of the tab row");
+    ev(&mut app, Event::Wheel { dx: 0.0, dy: -1.0 });
+    assert_eq!(app.panels.active, 1);
+}
+
+fn click(app: &mut App, r: Rect) {
+    let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    ev(app, Event::MouseMove { x, y });
+    ev(app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
+    ev(app, Event::MouseUp { x, y, button: MouseButton::Left });
+}
+
+#[test]
+fn breadcrumb_scroll_and_header_glow_belong_to_their_own_panel() {
+    let deep = r"C:\one\two\three\four\five\six\seven\eight\nine\ten";
+    let mut app = app_at(deep);
+    key(&mut app, Key::Char('S'), CTRL_SHIFT);
+    app.navigate(loc(&format!(r"{deep}\eleven")), t0());
+    deliver(&mut app, &[("f.txt", false)]);
+    let mut g = Gfx::new(Mono, 1024);
+    let t = Instant::now() + Duration::from_secs(1);
+    app.frame(&mut g, t);
+    let left = app.layout.crumb_arrows[0];
+    assert!(left.w > 0.0, "the path overflows a half-width address bar");
+    click(&mut app, left);
+    app.frame(&mut g, t);
+    assert!(app.addr.shift > 0.0, "the other panel's folder does not reset the scroll");
+
+    app.animations = true;
+    let h = app.layout.header;
+    let col = app.layout.cols[1];
+    ev(&mut app, Event::MouseMove { x: col.x + 6.0, y: h.y + h.h / 2.0 });
+    assert!(app.head_hot.is_some());
+    app.frame(&mut g, t + Duration::from_millis(500));
+    assert!(!app.frame(&mut g, t + Duration::from_secs(2)), "the header glow settles instead of restarting every frame");
+    assert_eq!(app.head_glow.alpha((app.panels.here, 1, false), t + Duration::from_secs(2)), 1.0);
+}
+
+#[test]
+fn a_tab_drag_ends_on_focus_loss_and_ignores_other_buttons_and_shortcuts() {
+    let mut app = app_at(r"C:\a");
+    key(&mut app, Key::Char('S'), CTRL_SHIFT);
+    app.open_new_tab(t0());
+    app.layout();
+    assert_eq!(app.tabs.len(), 2);
+    let left = rect(&app, 0);
+    let (x, y) = (left.x + 100.0, left.y + left.h / 2.0);
+    start_tab_drag(&mut app, x, y);
+    assert!(app.docking.is_some());
+    key(&mut app, Key::Char('W'), CTRL);
+    assert_eq!(app.tabs.len(), 2, "shortcuts wait for the drag to end");
+    ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Right, clicks: 1 });
+    ev(&mut app, Event::MouseUp { x, y, button: MouseButton::Right });
+    assert_eq!((app.panels.active, app.tabs.len()), (1, 2), "another button neither activates the panel below nor drops");
+    assert!(app.docking.is_some());
+    ev(&mut app, Event::Focus(false));
+    assert!(app.docking.is_none() && app.drag == Drag::None);
+    ev(&mut app, Event::MouseUp { x, y, button: MouseButton::Left });
+    assert_eq!((shape(&app).as_str(), app.tabs.len()), ("(0|1)", 2));
+}
+
+#[test]
+fn a_session_with_more_tabs_than_one_open_request_keeps_them_all_and_its_panels() {
+    let mut app = app_at(r"C:\a");
+    for _ in 0..20 {
+        app.open_new_tab(t0());
+    }
+    key(&mut app, Key::Char('S'), CTRL_SHIFT);
+    for _ in 0..20 {
+        app.open_new_tab(t0());
+    }
+    let s = app.session();
+    assert_eq!(s.tabs.len(), 42);
+    let mut back = app_at(r"C:\a");
+    back.animations = true;
+    back.restore_tabs(&s.tabs, s.cur);
+    back.restore_trails(&s.trails);
+    back.restore_panels(s.panels.as_ref().unwrap());
+    assert_eq!(back.panel_count(), 2);
+    assert_eq!(back.session(), s);
+    let t = Instant::now();
+    back.frame(&mut Gfx::new(Mono, 1024), t);
+    let ids: Vec<TabId> = back.tabs.iter().chain(back.panels.list.iter().flat_map(|p| &p.tabs)).map(|t| t.id).collect();
+    assert!(ids.iter().all(|&id| back.strip.arrival(id, t) == 1.0), "restored panels do not slide their tabs in");
+}
+
+#[test]
+fn a_tab_from_another_window_lands_in_the_panel_it_is_dropped_on() {
+    let mut src = app_at(r"C:\x");
+    src.open_new_tab(t0());
+    src.move_tab_to_window();
+    let moved = src.drain_effects().find_map(|e| if let Effect::MoveTab { tab, .. } = e { Some(tab) } else { None }).unwrap();
+    let mut app = app_at(r"C:\a");
+    key(&mut app, Key::Char('S'), CTRL_SHIFT);
+    let strip = layout_of(&app, 0).title;
+    app.insert_tab(moved, Some((strip.x + 40.0, strip.y + strip.h / 2.0)), t0());
+    assert_eq!((app.panels.active, app.tabs.len()), (0, 2));
+}
+
+fn start_tab_drag(app: &mut App, x: f32, y: f32) {
+    let r = app.layout.tabs[app.cur].0;
+    ev(app, Event::MouseDown { x: r.x + 30.0, y: r.y + r.h / 2.0, button: MouseButton::Left, clicks: 1 });
+    ev(app, Event::MouseMove { x, y });
+}
+
+fn offered(app: &App) -> Vec<Dock> {
+    app.docking.as_ref().map_or(Vec::new(), |d| d.zones.iter().map(|z| z.dock).collect())
+}
+
+#[test]
+fn a_tab_dropped_on_a_junction_becomes_a_column_along_the_whole_separator() {
+    let mut app = app_at(r"C:\a");
+    key(&mut app, Key::Char('S'), CTRL_SHIFT);
+    app.activate_panel(0);
+    key(&mut app, Key::Char('S'), CTRL);
+    assert_eq!(shape(&app), "((0/2)|1)");
+    let (low, right) = (rect(&app, 2), rect(&app, 1));
+    start_tab_drag(&mut app, low.right() - 5.0, low.y + low.h / 2.0);
+    let z = app.docking.as_ref().unwrap().zones.iter().find(|z| matches!(z.dock, Dock::Between { .. })).copied().expect("junction zone");
+    assert_eq!((z.area.y, z.area.bottom()), (0.0, right.bottom()), "the column spans the separator, not just the lower half beside the cursor");
+    assert!(z.area.x < low.right() && z.area.right() > right.x);
+    let (x, y) = (z.button.x + 2.0, z.button.y + 2.0);
+    ev(&mut app, Event::MouseMove { x, y });
+    assert!(app.docking.as_ref().unwrap().hot.is_some());
+    ev(&mut app, Event::MouseUp { x, y, button: MouseButton::Left });
+    assert_eq!(shape(&app), "(0|3|1)", "the lower panel had one tab: it becomes the middle column");
+}
+
+#[test]
+fn drops_that_would_leave_the_layout_as_it_is_are_not_offered() {
+    let mut app = app_at(r"C:\a");
+    key(&mut app, Key::Char('S'), CTRL_SHIFT);
+    assert_eq!(shape(&app), "(0|1)");
+    let (left, me) = (rect(&app, 0), rect(&app, 1));
+    let mid = me.y + me.h / 2.0;
+    start_tab_drag(&mut app, me.x + 5.0, mid);
+    assert!(!offered(&app).iter().any(|d| matches!(d, Dock::Between { .. })), "a column between the panel and its neighbour is the same layout: {:?}", offered(&app));
+    ev(&mut app, Event::MouseMove { x: me.x + me.w / 2.0, y: mid });
+    assert_eq!(offered(&app), [], "a panel with one tab cannot be split by it");
+    ev(&mut app, Event::MouseMove { x: me.right() - 5.0, y: mid });
+    assert!(!offered(&app).contains(&Dock::Window { before: false }), "it already is the last column");
+    ev(&mut app, Event::MouseMove { x: left.x + 5.0, y: mid });
+    assert!(offered(&app).contains(&Dock::Window { before: true }) && offered(&app).contains(&Dock::Into(0)));
+    ev(&mut app, Event::MouseMove { x: left.right() + 0.5, y: mid });
+    assert!(offered(&app).contains(&Dock::Into(0)), "the gap between two panels is not a dead spot: {:?}", offered(&app));
+    ev(&mut app, Event::MouseMove { x: me.x + me.w / 2.0, y: mid });
+    ev(&mut app, Event::Key { key: Key::Other, mods: CTRL, pressed: true });
+    assert!(offered(&app).contains(&Dock::Into(1)), "a copy may land in its own panel");
+    ev(&mut app, Event::Key { key: Key::Escape, mods: NO, pressed: true });
+    assert_eq!(shape(&app), "(0|1)");
+}
+
+#[test]
+fn only_the_dragged_tab_lights_up_while_it_docks() {
+    let mut app = three(r"C:\a");
+    assert_eq!(shape(&app), "(0|(1/2))");
+    let accent = app.look.palette.base.accent.0;
+    let lit = |g: &Gfx<Mono>, r: Rect| g.dl.instances.iter().any(|i| i.color == accent && r.contains(i.rect[0] + 1.0, i.rect[1] + 1.0));
+    let mut g = Gfx::new(Mono, 1024);
+    let far = rect(&app, 0);
+    start_tab_drag(&mut app, far.x + 100.0, far.y + far.h / 2.0);
+    assert!(app.docking.is_some());
+    app.frame(&mut g, t0());
+    for id in [0, 1] {
+        assert!(!lit(&g, layout_of(&app, id).tabs[0].0), "panel {id} is not the source");
+    }
+    assert!(lit(&g, app.layout.tabs[app.cur].0), "the source tab is lit");
+}
+
+#[test]
 fn a_tab_moved_out_of_a_panel_with_one_tab_closes_the_panel() {
     let mut app = app_at(r"C:\a");
     key(&mut app, Key::Char('S'), CTRL_SHIFT);

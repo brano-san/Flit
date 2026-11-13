@@ -11,7 +11,24 @@ pub enum Dock {
     Into(u32),
     Split { panel: u32, down: bool, before: bool },
     Window { before: bool },
-    Between { left: u32 },
+    Between { left: u32, right: u32 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Junction {
+    pub line: Rect,
+    pub before: Rect,
+    pub after: Rect,
+    pub left: u32,
+    pub right: u32,
+}
+
+impl Junction {
+    pub fn column(&self) -> Rect {
+        let from = self.before.x + (self.before.w * 2.0 / 3.0).round();
+        let to = self.after.x + (self.after.w / 3.0).round();
+        Rect::new(from, self.line.y, (to - from).max(0.0), self.line.h)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -46,8 +63,19 @@ fn split(panel: u32, r: Rect, down: bool, before: bool) -> (Dock, Rect, Scheme) 
     (Dock::Split { panel, down, before }, half(r, down, before), Scheme::Half { down, before })
 }
 
-pub fn zones(panels: &[(u32, Rect)], window: Rect, (x, y): (f32, f32), sc: f32) -> Vec<Zone> {
-    let Some(&(id, r)) = panels.iter().find(|(_, r)| r.contains(x, y)) else { return Vec::new() };
+fn distance(r: Rect, x: f32, y: f32) -> f32 {
+    (r.x - x).max(x - r.right()).max(0.0).max((r.y - y).max(y - r.bottom()).max(0.0))
+}
+
+fn panel_under(panels: &[(u32, Rect)], window: Rect, x: f32, y: f32) -> Option<(u32, Rect)> {
+    if let Some(&p) = panels.iter().find(|(_, r)| r.contains(x, y)) {
+        return Some(p);
+    }
+    window.contains(x, y).then(|| panels.iter().filter(|(_, r)| r.w > 0.0 && r.h > 0.0).min_by(|a, b| distance(a.1, x, y).total_cmp(&distance(b.1, x, y))).copied()).flatten()
+}
+
+pub fn zones(panels: &[(u32, Rect)], junctions: &[Junction], window: Rect, (x, y): (f32, f32), sc: f32, allowed: impl Fn(Dock) -> bool) -> Vec<Zone> {
+    let Some((id, r)) = panel_under(panels, window, x, y) else { return Vec::new() };
     let (bw, bh, gap, edge) = (BUTTON_W * sc, BUTTON_H * sc, GAP * sc, EDGE * sc);
     let wide = r.w >= r.h;
     let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
@@ -55,6 +83,7 @@ pub fn zones(panels: &[(u32, Rect)], window: Rect, (x, y): (f32, f32), sc: f32) 
     let mut out: Vec<Zone> = center
         .into_iter()
         .enumerate()
+        .filter(|(_, c)| allowed(c.0))
         .map(|(k, (dock, area, scheme))| {
             let off = (k as f32 - 1.0) * if wide { bw + gap } else { bh + gap };
             let button = if wide { Rect::new(cx - bw / 2.0 + off, cy - bh / 2.0, bw, bh) } else { Rect::new(cx - bw / 2.0, cy - bh / 2.0 + off, bw, bh) };
@@ -63,7 +92,7 @@ pub fn zones(panels: &[(u32, Rect)], window: Rect, (x, y): (f32, f32), sc: f32) 
         .collect();
     let mut near = |dock: Dock, area: Rect, scheme: Scheme, bx: f32, by: f32| {
         let button = Rect::new((bx - bw / 2.0).clamp(window.x, (window.right() - bw).max(window.x)), (by - bh / 2.0).clamp(window.y, (window.bottom() - bh).max(window.y)), bw, bh).snap();
-        if out.iter().all(|z| !overlaps(z.button, button)) {
+        if allowed(dock) && out.iter().all(|z| !overlaps(z.button, button)) {
             out.push(Zone { button, dock, area, scheme });
         }
     };
@@ -73,15 +102,11 @@ pub fn zones(panels: &[(u32, Rect)], window: Rect, (x, y): (f32, f32), sc: f32) 
     } else if window.right() - x < edge {
         near(Dock::Window { before: false }, Rect::new(window.right() - column, window.y, column, window.h), Scheme::Third(2), window.right() - gap - bw / 2.0, y);
     }
-    let junction = panels.iter().find(|(other, o)| *other != id && (o.x - r.right()).abs() <= 2.0 * sc && o.y < r.bottom() && r.y < o.bottom());
-    let junction = junction.filter(|(_, o)| o.x - x < edge).map(|&(_, o)| (id, r, o)).or_else(|| {
-        panels.iter().find(|(other, o)| *other != id && (r.x - o.right()).abs() <= 2.0 * sc && o.y < r.bottom() && r.y < o.bottom() && x - r.x < edge).map(|&(left, o)| (left, o, r))
-    });
-    if let Some((left, a, b)) = junction {
-        let band = ((a.w + b.w) * COLUMN / 2.0).round();
-        let top = a.y.max(b.y);
-        let area = Rect::new(b.x - band, top, 2.0 * band, a.bottom().min(b.bottom()) - top);
-        near(Dock::Between { left }, area, Scheme::Third(1), b.x, y);
+    let mid_x = |j: &Junction| j.line.x + j.line.w / 2.0;
+    let junction = junctions.iter().filter(|j| y >= j.line.y && y < j.line.bottom() && (mid_x(j) - x).abs() < edge).min_by(|a, b| (mid_x(a) - x).abs().total_cmp(&(mid_x(b) - x).abs()));
+    if let Some(j) = junction {
+        let (lo, hi) = (j.line.y + gap + bh / 2.0, j.line.bottom() - gap - bh / 2.0);
+        near(Dock::Between { left: j.left, right: j.right }, j.column(), Scheme::Third(1), mid_x(j), y.clamp(lo, hi.max(lo)));
     }
     if y - r.y < edge {
         let (d, a, s) = split(id, r, true, true);

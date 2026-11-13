@@ -788,7 +788,7 @@ fn the_type_funnel_lights_on_hover_and_opens_its_menu_under_itself_right_aligned
     let t0 = Instant::now();
     assert!(a.frame(&mut g, t0), "the funnel's hover fades in");
     assert!(!a.frame(&mut g, t0 + Duration::from_millis(300)));
-    assert_eq!(a.head_glow.alpha((k, true), t0 + Duration::from_millis(300)), 1.0);
+    assert_eq!(a.head_glow.alpha((a.panels.here, k, true), t0 + Duration::from_millis(300)), 1.0);
     let x0 = a.layout.cols[k].x + 6.0;
     a.on_event(&Event::MouseMove { x: x0, y }, Instant::now());
     assert_eq!(a.head_hot, Some((k, false)), "the rest of the header lights as a column, not the funnel");
