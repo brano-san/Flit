@@ -53,7 +53,7 @@ impl App {
             (true, Some(t)) if t.hit == h => {}
             (true, prev) => {
                 let shown = prev.is_some_and(|t| t.shown.is_some());
-                let chained = shown && !matches!(h, Hit::Row(_) | Hit::Pane(..));
+                let chained = shown && !matches!(h, Hit::Row(_) | Hit::Pane(..) | Hit::SearchRow(_));
                 if shown && !chained {
                     self.tip_hide();
                 }
@@ -75,7 +75,8 @@ impl App {
         if now + TIMER_SLACK < t.at {
             return self.arm_timer(now, t.at);
         }
-        if self.tip_anchor(t.hit).is_none() || self.hover != t.hit {
+        let hovered = if matches!(t.hit, Hit::SearchRow(_)) { self.search_tip_hit() } else { self.hover };
+        if self.tip_anchor(t.hit).is_none() || hovered != t.hit {
             self.tip = None;
             return;
         }
@@ -134,6 +135,7 @@ impl App {
             Hit::Settings(SHit::Nav(k)) => self.settings_nav_tip(k)?.0,
             Hit::Row(r) => self.row_tip_anchor(r)?,
             Hit::Pane(i, Some(row)) => self.pane_tip_anchor(i, row)?,
+            Hit::SearchRow(row) => self.search_tip_anchor(row)?,
             _ => return None,
         };
         (r.w > 0.0 && r.h > 0.0).then_some(r)
@@ -249,6 +251,7 @@ impl App {
             Hit::Settings(SHit::Nav(k)) => (self.settings_nav_tip(k)?.1, None),
             Hit::Row(row) => return self.row_tip(row),
             Hit::Pane(i, Some(row)) => return self.pane_tip(i, row),
+            Hit::SearchRow(row) => return self.search_tip(row),
             _ => return None,
         };
         let (command, keys) = match command.and_then(index) {

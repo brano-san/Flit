@@ -305,7 +305,7 @@ impl App {
                 let fixed = c == Column::Name;
                 m.entry(Cmd::Column(ColumnCmd::Shift(c, false)), S::MenuShiftLeft.t(), String::new(), Mark::None, false, fixed || k <= 1);
                 m.entry(Cmd::Column(ColumnCmd::Shift(c, true)), S::MenuShiftRight.t(), String::new(), Mark::None, false, fixed || k + 1 >= shown.len());
-                m.entry(Cmd::Column(ColumnCmd::Fit(c)), S::MenuSizeFit.t(), String::new(), Mark::None, false, false);
+                m.entry(Cmd::Column(ColumnCmd::Fit(c)), S::MenuSizeFit.t(), String::new(), Mark::None, false, fixed);
                 m.entry(Cmd::Column(ColumnCmd::Toggle(c)), S::MenuCloseColumn.t(), "MouseMiddle".into(), Mark::None, false, fixed);
                 m.separator();
             }

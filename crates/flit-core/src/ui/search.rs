@@ -1,5 +1,6 @@
 use super::edit::{EditAction, Grab, LineEdit};
 use super::sidebar::folder_icon;
+use super::tooltip::TipText;
 use super::{centered, icon_key, App, Effect, Hit, IconRequest, G_BACK, G_CHEVRON, G_FILE, G_FOLDER, G_SORT_DOWN, G_SORT_UP, ICON};
 use crate::fmt as format;
 use crate::hash::FxHashMap;
@@ -202,6 +203,8 @@ pub(super) struct SearchView {
     recent_rects: Vec<Rect>,
     chip: Rect,
     widths: Option<[f32; 4]>,
+    fit: Option<usize>,
+    elided: Vec<u64>,
     scroll_x: f32,
 }
 
@@ -672,7 +675,7 @@ impl App {
             }
             Event::MouseDown { x, y, button, clicks } => self.search_mouse_down(*x, *y, *button, *clicks, now),
             Event::MouseUp { x, y, button } => self.search_mouse_up(*x, *y, *button),
-            Event::MouseMove { x, y } => self.search_mouse_move(*x, *y),
+            Event::MouseMove { x, y } => self.search_mouse_move(*x, *y, now),
             Event::Wheel { dx, dy } => {
                 if *dx != 0.0 || self.mods.shift {
                     let delta = if *dx != 0.0 { *dx } else { -*dy };
@@ -919,6 +922,10 @@ impl App {
             self.search.recent_open = false;
         }
         match h {
+            SHit::ColSep(col) if button == MouseButton::Left && clicks >= 2 => {
+                self.search.drag = SDrag::None;
+                self.search.fit = Some(col);
+            }
             SHit::ColSep(col) if button == MouseButton::Left => {
                 let widths = self.search_layout().cols.map(|c| c.w / self.scale);
                 self.search.widths = Some(widths);
@@ -1003,7 +1010,7 @@ impl App {
         true
     }
 
-    fn search_mouse_move(&mut self, x: f32, y: f32) -> bool {
+    fn search_mouse_move(&mut self, x: f32, y: f32, now: Instant) -> bool {
         match self.search.drag {
             SDrag::HThumb(grab) => {
                 let sl = self.search_layout();
@@ -1044,9 +1051,53 @@ impl App {
         self.set_cursor(match h { SHit::Field => CursorIcon::Text, SHit::ColSep(_) => CursorIcon::ResizeHorizontal, _ => CursorIcon::Default });
         if h != self.search.hover {
             self.search.hover = h;
+            self.tip_hover(self.search_tip_hit(), now);
             self.dirty = true;
         }
         true
+    }
+
+    pub(super) fn search_tip_hit(&self) -> Hit {
+        match self.search.hover {
+            SHit::Row(row) if self.search.active && self.search.drag == SDrag::None => Hit::SearchRow(row),
+            _ => Hit::None,
+        }
+    }
+
+    pub(super) fn search_tip_anchor(&self, row: u64) -> Option<Rect> {
+        if !self.search.active {
+            return None;
+        }
+        let sl = self.search_layout();
+        let y = (sl.list.y as f64 + self.search.line_of_row(row) as f64 * sl.row_h as f64 - self.search.scroll).round() as f32;
+        let (left, right) = (sl.cols[0].x.max(sl.list.x), sl.cols[0].right().min(sl.list.right()));
+        let (top, bottom) = (y.max(sl.list.y), (y + sl.row_h).min(sl.list.bottom()));
+        (bottom > top && right > left).then(|| Rect::new(left, top, right - left, bottom - top))
+    }
+
+    pub(super) fn search_tip(&self, row: u64) -> Option<TipText> {
+        if !self.search.active {
+            return None;
+        }
+        let r = self.search.row(row)?;
+        let tip = |line: String, details: Vec<String>| Some(TipText { line, command: None, keys: Vec::new(), details });
+        if self.search.elided.contains(&row) {
+            return tip(name::display(&r.name).into_owned(), Vec::new());
+        }
+        let arena = Bump::new();
+        let labelled = |title: S, value: &str| (!value.is_empty()).then(|| format!("{}: {value}", title.t()));
+        let is_dir = r.meta.attrs & attr::DIR != 0;
+        let ext = if is_dir { &[][..] } else { &r.name[r.name.len() - name::ext_len(&r.name)..] };
+        let line = labelled(S::DetailsColumnType, self.type_of(&arena, r.meta.attrs, ext))?;
+        let mut details: Vec<String> = labelled(S::SearchColumnFolder, &name::display(&r.dir)).into_iter().collect();
+        if !is_dir {
+            let (mut size, mut date) = (String::new(), String::new());
+            format::size_in(&mut size, r.meta.size, self.style.decimal);
+            format::datetime_in(&mut date, r.meta.modified, self.utc_offset_min, &self.style);
+            details.extend(labelled(S::DetailsColumnSize, &size));
+            details.extend(labelled(S::DetailsColumnModified, &date));
+        }
+        tip(line, details)
     }
 
     fn request_visible_pages(&mut self) {
@@ -1078,7 +1129,35 @@ impl App {
         }
     }
 
+    fn fit_search_column<B: TextBackend>(&mut self, g: &mut Gfx<B>, arena: &Bump, col: usize) {
+        let (font, hfont) = (self.ui_font(13.0), self.ui_font(12.0));
+        let pad = self.s(10.0);
+        let indent = if self.search.grouped() { self.s(16.0) } else { 0.0 };
+        let lead = if col == 0 { indent + self.s(ICON) + self.s(8.0) } else { 0.0 };
+        let mut w = g.measure(COLUMNS[col].0.t(), hfont) + self.s(20.0);
+        let (first, last) = self.search_range();
+        for line in first..last {
+            let SLine::Row(row) = self.search.line_at(line) else { continue };
+            let Some(r) = self.search.row(row) else { continue };
+            let mut text = bumpalo::collections::String::new_in(arena);
+            match col {
+                0 => text.push_str(&name::display(&r.name)),
+                1 => text.push_str(&name::display(&r.dir)),
+                2 if r.meta.attrs & attr::DIR == 0 => format::size_in(&mut text, r.meta.size, self.style.decimal),
+                2 => {}
+                _ => format::datetime_in(&mut text, r.meta.modified, self.utc_offset_min, &self.style),
+            }
+            w = w.max(lead + g.measure(&text, font));
+        }
+        let mut widths = self.search.widths.unwrap_or_else(|| self.search_layout().cols.map(|c| c.w / self.scale));
+        widths[col] = ((w + 2.0 * pad) / self.scale).clamp(48.0, 2400.0).ceil();
+        self.search.widths = Some(widths);
+    }
+
     pub(super) fn draw_search<B: TextBackend>(&mut self, g: &mut Gfx<B>, arena: &Bump, t: &Theme) {
+        if let Some(col) = self.search.fit.take() {
+            self.fit_search_column(g, arena, col);
+        }
         self.search.scroll_x = self.search.scroll_x.clamp(0.0, self.search_layout().max_x);
         self.search.scroll = self.search.scroll.clamp(0.0, self.search_max_scroll());
         self.request_visible_pages();
@@ -1093,6 +1172,7 @@ impl App {
         let (first, last) = self.search_range();
         g.dl.set_clip(Some(sl.list));
         let mut requests: Vec<IconRequest> = Vec::new();
+        let mut elided: Vec<u64> = Vec::new();
         let s = &self.search;
         let headers = s.grouped();
         if s.done && s.total == 0 && !s.walking {
@@ -1134,7 +1214,11 @@ impl App {
             let ty = y + text_dy;
             let name_x = ir.right() + self.s(8.0);
             let color = if r.meta.attrs & attr::HIDDEN != 0 { t.text_dim } else { t.text };
-            g.text(name_x, ty, &name::display(&r.name), font, color, sl.cols[0].right() - name_x - pad);
+            let (shown, room) = (name::display(&r.name), sl.cols[0].right() - name_x - pad);
+            if g.measure(&shown, font) > room {
+                elided.push(row);
+            }
+            g.text(name_x, ty, &shown, font, color, room);
             let run_start = row == 0 || s.row(row - 1).is_none_or(|p| p.dir != r.dir);
             if !headers && (!s.group_folder || run_start) {
                 let folder_color = if s.group_folder { t.text } else { t.text_dim };
@@ -1154,6 +1238,7 @@ impl App {
             g.text(sl.cols[3].x + pad, ty, &d, font, t.text_dim, sl.cols[3].w - 2.0 * pad);
         }
         g.dl.set_clip(None);
+        self.search.elided = elided;
         self.request_icons(requests);
         let s = &self.search;
         if sl.thumb.h > 0.0 {

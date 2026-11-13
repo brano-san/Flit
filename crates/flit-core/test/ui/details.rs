@@ -221,7 +221,14 @@ fn the_header_menu_shows_hides_and_fits_columns_and_the_bin_keeps_its_own() {
     ];
     assert_eq!(commands(&menu.menu), want.map(|(l, c)| (l.to_owned(), c)));
     let disabled: Vec<bool> = menu.menu.iter().filter_map(|m| if let MenuItem::Command { disabled, .. } = m { Some(*disabled) } else { None }).collect();
-    assert_eq!((disabled[0], disabled[1], disabled[5], disabled[6]), (true, false, true, true), "Type cannot move left of Name, defaults cannot be restored, Name always shows");
+    assert_eq!((disabled[0], disabled[1], disabled[2], disabled[5], disabled[6]), (true, false, false, true, true), "Type cannot move left of Name, defaults cannot be restored, Name always shows");
+    let name = app.layout.cols[0];
+    click(&mut app, name.x + 20.0, name.y + name.h / 2.0, MouseButton::Right);
+    let menu = menu_of(&mut app);
+    let disabled: Vec<bool> = menu.menu.iter().filter_map(|m| if let MenuItem::Command { disabled, .. } = m { Some(*disabled) } else { None }).collect();
+    assert_eq!(&disabled[..4], [true, true, true, true], "Name takes the room the other columns leave, so it cannot move, fit or close");
+    click(&mut app, h.x + 20.0, h.y + h.h / 2.0, MouseButton::Right);
+    menu_of(&mut app);
     app.on_event(&Event::MenuCommand(11), Instant::now());
     assert_eq!(app.columns(), [Column::Name, Column::Type, Column::Modified, Column::Folders, Column::Files, Column::Size, Column::Created]);
     assert_eq!(app.layout.columns, app.columns());

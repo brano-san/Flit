@@ -893,14 +893,16 @@ impl App {
     }
 
     pub(super) fn type_text<'a>(&self, arena: &'a Bump, l: &Listing, i: u32) -> &'a str {
-        let e = &l.entries[i as usize];
-        if e.attrs & attr::VOLUME != 0 {
+        self.type_of(arena, l.entries[i as usize].attrs, l.ext(i))
+    }
+
+    pub(super) fn type_of<'a>(&self, arena: &'a Bump, attrs: u32, ext: &[u8]) -> &'a str {
+        if attrs & attr::VOLUME != 0 {
             return S::DetailsTypeDrive.t();
         }
-        if e.is_dir() {
+        if attrs & attr::DIR != 0 {
             return S::DetailsTypeFolder.t();
         }
-        let ext = l.ext(i);
         match self.type_names.get(&ext.to_ascii_lowercase()) {
             Some(Some(n)) if !n.is_empty() => arena.alloc_str(n),
             _ if ext.is_empty() => S::DetailsTypeFile.t(),

@@ -81,6 +81,70 @@ fn resizing_search_columns_changes_only_one_width_and_supports_overflow() {
 }
 
 #[test]
+fn double_clicking_a_column_edge_fits_the_column_to_the_visible_results() {
+    let mut a = app();
+    a.open_search();
+    a.search.recent_open = false;
+    requests(&mut a);
+    let gen = gen_of(&a);
+    let (name, dir) = ("a_much_longer_file_name.txt", r"C:\some\rather\deep\folder\path");
+    a.on_search_event(SearchEvent::Done { gen, total: 2 }, t0());
+    a.on_search_event(SearchEvent::Rows { gen, from: 0, rows: vec![row(name, dir, false), row("b.txt", r"C:\x", false)] }, t0());
+    frame(&mut a);
+    let before = a.search_layout().cols;
+    let edge = |a: &App, c: usize| (a.search_layout().cols[c].right(), a.search_layout().cols[c].y + 8.0);
+    let (x, y) = edge(&a, 1);
+    for clicks in [1, 2] {
+        a.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks }, t0());
+        a.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, t0());
+    }
+    frame(&mut a);
+    let after = a.search_layout().cols;
+    assert_eq!(after[1].w, 20.0 + 10.0 * dir.len() as f32, "the folder column fits its longest visible folder");
+    for i in [0, 2, 3] { assert_eq!(after[i].w, before[i].w); }
+    let (x, y) = edge(&a, 0);
+    a.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 2 }, t0());
+    a.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, t0());
+    frame(&mut a);
+    assert_eq!(a.search_layout().cols[0].w, 20.0 + ICON + 8.0 + 10.0 * name.len() as f32, "the name column leaves room for the icon");
+    assert_eq!(a.search.sort, SearchSort::default(), "fitting does not sort");
+}
+
+#[test]
+fn result_rows_tip_the_full_name_when_cut_off_and_otherwise_type_folder_and_size() {
+    let mut a = app();
+    a.open_search();
+    a.search.recent_open = false;
+    requests(&mut a);
+    let gen = gen_of(&a);
+    let long = format!("a-{}.txt", "wide-".repeat(60));
+    a.on_search_event(SearchEvent::Done { gen, total: 2 }, t0());
+    a.on_search_event(SearchEvent::Rows { gen, from: 0, rows: vec![row(&long, r"C:\data", false), row("b.txt", r"C:\data", false)] }, t0());
+    frame(&mut a);
+    assert_eq!(a.search.elided, [0], "only the wide name is cut off");
+    let over = |a: &mut App, row: u64, now: Instant| {
+        let r = a.search_tip_anchor(row).unwrap();
+        a.on_event(&Event::MouseMove { x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 }, now);
+    };
+    let start = t0();
+    over(&mut a, 0, start);
+    assert_eq!(a.tooltip(), None, "nothing shows at once");
+    a.on_event(&Event::Timer, start + super::super::tooltip::DELAY);
+    let tip = a.tooltip().unwrap();
+    assert_eq!((tip.line.as_str(), tip.command, tip.details), (long.as_str(), None, Vec::new()));
+    let next = start + super::super::tooltip::DELAY;
+    over(&mut a, 1, next);
+    assert_eq!(a.tooltip(), None, "moving to the next row restarts the delay");
+    a.on_event(&Event::Timer, next + super::super::tooltip::DELAY);
+    let tip = a.tooltip().unwrap();
+    assert_eq!(tip.line, "Type: TXT File");
+    assert_eq!(tip.details[0], r"Folder: C:\data");
+    assert!(tip.details[1].starts_with("Size: "), "{:?}", tip.details);
+    key(&mut a, Key::Escape, NO);
+    assert_eq!(a.tooltip(), None, "closing search takes the tip along");
+}
+
+#[test]
 fn search_menu_actions_use_the_result_not_the_background_folder() {
     use crate::ui::menu::Cmd;
     let mut a = app();

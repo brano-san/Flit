@@ -510,6 +510,7 @@ enum Hit {
     QuickToggle,
     PanelSep(usize),
     Bottom(bottom::BottomHit),
+    SearchRow(u64),
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
