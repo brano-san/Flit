@@ -30,6 +30,7 @@ delete_permanently = "Supprimer définitivement"
 restore = "Restaurer"
 not_now = "Pas maintenant"
 open_folder = "Ouvrir le dossier"
+no = "Non"
 
 [job]
 operations = "Opérations"
@@ -158,7 +159,8 @@ nothing_to_redo = "Rien à rétablir"
 stream_created = "Flux {name} créé"
 icon_changed = "Icône de {folder} modifiée"
 icon_restored = "Icône par défaut de {folder} rétablie"
-extension_warning = "Modifier l’extension de « {name} » peut le rendre inutilisable. Appuyez de nouveau sur Entrée pour le renommer, ou sur Échap pour annuler."
+extension_warning = "Si vous modifiez l’extension de « {name} », le fichier risque de devenir inutilisable."
+extension_title = "Modifier l’extension du nom de fichier ?"
 
 [drop]
 copy = "Copier vers %1"

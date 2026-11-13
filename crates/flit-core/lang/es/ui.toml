@@ -30,6 +30,7 @@ delete_permanently = "Eliminar permanentemente"
 restore = "Restaurar"
 not_now = "Ahora no"
 open_folder = "Abrir carpeta"
+no = "No"
 
 [job]
 operations = "Operaciones"
@@ -158,7 +159,8 @@ nothing_to_redo = "No hay nada que rehacer"
 stream_created = "Se creó el flujo {name}"
 icon_changed = "Se cambió el icono de {folder}"
 icon_restored = "Se restauró el icono predeterminado de {folder}"
-extension_warning = "Si cambias la extensión de «{name}», puede quedar inutilizable. Presiona Enter de nuevo para cambiarle el nombre o Esc para cancelar."
+extension_warning = "Si cambias la extensión de «{name}», el archivo puede quedar inutilizable."
+extension_title = "¿Cambiar la extensión del nombre de archivo?"
 
 [drop]
 copy = "Copiar en %1"

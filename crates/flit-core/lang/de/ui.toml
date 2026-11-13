@@ -30,6 +30,7 @@ delete_permanently = "Endgültig löschen"
 restore = "Wiederherstellen"
 not_now = "Nicht jetzt"
 open_folder = "Ordner öffnen"
+no = "Nein"
 
 [job]
 operations = "Vorgänge"
@@ -158,7 +159,8 @@ nothing_to_redo = "Nichts zu wiederholen"
 stream_created = "Datenstrom {name} erstellt"
 icon_changed = "Symbol von {folder} geändert"
 icon_restored = "Standardsymbol von {folder} wiederhergestellt"
-extension_warning = "Wenn Sie die Erweiterung von „{name}“ ändern, kann die Datei unbrauchbar werden. Drücken Sie erneut Enter zum Umbenennen oder Esc zum Abbrechen."
+extension_warning = "Wenn Sie die Erweiterung von „{name}“ ändern, kann die Datei unbrauchbar werden."
+extension_title = "Dateinamenerweiterung ändern?"
 
 [drop]
 copy = "Nach %1 kopieren"

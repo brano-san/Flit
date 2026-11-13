@@ -1428,10 +1428,10 @@ impl App {
         }
         let old_str = String::from_utf8_lossy(&old);
         if !is_dir && self.warn_extension_change && r.confirmed.as_deref() != Some(&name) && changes_extension(&old_str, &name) {
-            let msg = crate::tr!(S::UiOpsExtensionWarning, name = old_str);
+            let old_str = old_str.into_owned();
             r.confirmed = Some(name);
             self.ops.rename = Some(r);
-            self.status(msg);
+            self.ask_extension_change(old_str);
             return false;
         }
         let dir = t.entry_dir(r.idx);
@@ -1448,6 +1448,15 @@ impl App {
             self.ops.retry = Some(Retry { id: self.ops.next_id, tab, dir, old, text: r.edit.text });
         }
         true
+    }
+
+    pub(super) fn extension_change_answered(&mut self, yes: bool) {
+        if yes {
+            self.commit_rename();
+        } else if let Some(r) = &mut self.ops.rename {
+            r.confirmed = None;
+        }
+        self.dirty = true;
     }
 
     fn rename_again(&mut self, retry: Retry, error: &str) -> bool {

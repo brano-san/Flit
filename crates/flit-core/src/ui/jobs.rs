@@ -47,6 +47,7 @@ const REPLACE_BUTTONS: [S; 2] = [S::UiButtonReplace, S::UiButtonCancel];
 const FAILURE_BUTTONS: [S; 4] = [S::UiButtonRetry, S::UiButtonSkip, S::UiButtonSkipAll, S::UiButtonCancel];
 const FULL_BUTTONS: [S; 2] = [S::UiButtonRetry, S::UiButtonCancel];
 const UNTRASHABLE_BUTTONS: [S; 2] = [S::UiButtonDeletePermanently, S::UiButtonCancel];
+const EXTENSION_BUTTONS: [S; 2] = [S::WidgetsYes, S::UiButtonNo];
 
 const CANCEL_CODES: [&str; 3] = ["(0x80270000)", "(0x800704C7)", "(0x80004004)"];
 
@@ -184,6 +185,7 @@ pub(super) enum Ask {
     Untrashable(Vec<FsPath>),
     Restore { session: bool, dump: Option<FsPath> },
     ReplaceExport { path: FsPath, existing: crate::listing::Meta },
+    ExtensionChange(String),
 }
 
 impl Ask {
@@ -496,6 +498,10 @@ impl App {
         self.push_ask(Ask::Untrashable(items));
     }
 
+    pub(super) fn ask_extension_change(&mut self, name: String) {
+        self.push_ask(Ask::ExtensionChange(name));
+    }
+
     pub fn ask_replace_export(&mut self, path: FsPath, size: u64, modified: i64) {
         self.push_ask(Ask::ReplaceExport { path, existing: crate::listing::Meta { size, modified, ..Default::default() } });
     }
@@ -560,6 +566,7 @@ impl App {
             Some(Ask::Untrashable(_)) => Some("untrashable"),
             Some(Ask::Restore { .. }) => Some("restore"),
             Some(Ask::ReplaceExport { .. }) => Some("replace"),
+            Some(Ask::ExtensionChange(_)) => Some("extension"),
             None => self.jobs.form.as_ref().map(|f| f.kind.name()),
         }
     }
@@ -674,6 +681,7 @@ impl App {
                 let text = self.export_text();
                 self.effects.push(super::Effect::Settings(super::SettingsCmd::Export { path, text, replace: true }));
             }
+            Ask::ExtensionChange(_) => self.extension_change_answered(button == 0),
             Ask::Confirm(..) | Ask::Untrashable(_) | Ask::ReplaceExport { .. } => {}
         }
         self.jobs.all = false;
@@ -694,6 +702,7 @@ impl App {
             Some(Ask::Untrashable(_)) => &UNTRASHABLE_BUTTONS,
             Some(Ask::Restore { session, dump }) => restore_buttons(*session, dump.is_some()),
             Some(Ask::ReplaceExport { .. }) => &REPLACE_BUTTONS,
+            Some(Ask::ExtensionChange(_)) => &EXTENSION_BUTTONS,
             None => &[],
         };
         keys.iter().map(|k| k.t()).collect()
@@ -775,7 +784,7 @@ impl App {
                 Ask::Conflict { .. } => (labels, s(236.0)),
                 Ask::Failure { .. } => (labels, s(190.0)),
                 _ if checked => (labels, s(208.0)),
-                Ask::Confirm(..) | Ask::Untrashable(_) | Ask::Restore { .. } | Ask::ReplaceExport { .. } => (labels, s(168.0)),
+                Ask::Confirm(..) | Ask::Untrashable(_) | Ask::Restore { .. } | Ask::ReplaceExport { .. } | Ask::ExtensionChange(_) => (labels, s(168.0)),
             };
             let dw = s(DIALOG_W).min(w - s(32.0));
             let d = Rect::new(((w - dw) / 2.0).round(), ((h - dh) / 2.0).round().max(s(40.0)), dw, dh);
@@ -1089,6 +1098,7 @@ impl App {
                 (S::UiConfirmDelete.t().into(), vec![text, S::UiConfirmNoteUndo.t().into()])
             }
             Some(Ask::ReplaceExport { path, existing }) => (crate::tr!(S::UiExportReplaceTitle, name = quoted(path)), vec![crate::tr!(S::UiExportReplace, folder = path.parent().map(|p| quoted(&p)).unwrap_or_default()), meta_line(S::UiConflictExisting, existing, offset, &self.style)]),
+            Some(Ask::ExtensionChange(name)) => (S::UiOpsExtensionTitle.t().into(), vec![crate::tr!(S::UiOpsExtensionWarning, name = name)]),
             Some(Ask::Restore { session, dump }) => {
                 let title = if *session { S::UiSessionRestoreTitle } else { S::UiSessionCrashTitle };
                 let first = dump.as_ref().map_or_else(|| S::UiSessionCrashed.t().into(), |d| crate::tr!(S::UiSessionCrashReport, name = quoted(d)));
@@ -1115,10 +1125,10 @@ impl App {
         g.text(d.x + s20, y.round(), &title, bold, t.text, d.w - 2.0 * s20);
         y += s(12.0);
         let mf = g.metrics(font);
-        let failure = matches!(self.jobs.asks.front(), Some(Ask::Failure { .. }));
+        let wraps = matches!(self.jobs.asks.front(), Some(Ask::Failure { .. } | Ask::ExtensionChange(_)));
         for (k, line) in lines.iter().enumerate() {
             y += s(22.0);
-            let (style, color, wrapped) = if k == 0 { (font, t.text, failure) } else { (small, t.text_dim, false) };
+            let (style, color, wrapped) = if k == 0 { (font, t.text, wraps) } else { (small, t.text_dim, false) };
             let rows = if wrapped { two_rows(g, line, font, d.w - 2.0 * s20) } else { vec![line.as_str()] };
             for (r, row) in rows.iter().enumerate() {
                 g.text(d.x + s20, (y + r as f32 * s(18.0)).round() - mf.descent, row, style, color, d.w - 2.0 * s20);

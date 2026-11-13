@@ -30,6 +30,7 @@ delete_permanently = "Видалити остаточно"
 restore = "Відновити"
 not_now = "Не зараз"
 open_folder = "Відкрити папку"
+no = "Ні"
 
 [job]
 operations = "Операції"
@@ -158,7 +159,8 @@ nothing_to_redo = "Немає дій для повторення"
 stream_created = "Створено потік {name}"
 icon_changed = "Змінено піктограму {folder}"
 icon_restored = "Відновлено стандартну піктограму {folder}"
-extension_warning = "Зміна розширення «{name}» може зробити файл непридатним. Натисніть Enter ще раз, щоб перейменувати, або Esc, щоб скасувати."
+extension_warning = "Якщо змінити розширення «{name}», файл може стати непридатним."
+extension_title = "Змінити розширення імені файлу?"
 
 [drop]
 copy = "Копіювати в %1"

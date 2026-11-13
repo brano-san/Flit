@@ -1197,7 +1197,7 @@ fn f2_and_enter_without_a_change_leave_several_selected_items_alone() {
 }
 
 #[test]
-fn changing_the_extension_needs_a_second_enter() {
+fn changing_the_extension_asks_yes_or_no() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &[("notes.txt", false), ("src", true)]);
     let rename = |app: &mut App, name: &str, text: &str| {
@@ -1209,13 +1209,25 @@ fn changing_the_extension_needs_a_second_enter() {
     };
     rename(&mut app, "notes.txt", "notes.md");
     assert!(app.is_renaming() && ops(&mut app).is_empty());
-    assert!(app.tab().error.as_deref().is_some_and(|e| e.contains("extension")));
+    assert_eq!(app.asking(), Some("extension"));
+    assert_eq!(app.dialog_buttons(), ["Yes", "No"]);
+    let (title, lines) = app.dialog_text().unwrap();
+    assert_eq!((title.as_str(), lines), ("Change the file name extension?", vec!["If you change the extension of \"notes.txt\", the file might become unusable.".to_owned()]));
     key(&mut app, Key::Enter, NO);
-    assert_eq!(op_list(&mut app), [FileOp::Rename { item: p(r"C:\x\notes.txt"), name: b"notes.md".to_vec() }]);
+    assert_eq!(app.asking(), None);
+    assert_eq!(op_list(&mut app), [FileOp::Rename { item: p(r"C:\x\notes.txt"), name: b"notes.md".to_vec() }], "Yes renames");
     rename(&mut app, "notes.txt", "draft.TXT");
     assert_eq!(op_list(&mut app), [FileOp::Rename { item: p(r"C:\x\notes.txt"), name: b"draft.TXT".to_vec() }]);
     rename(&mut app, "notes.txt", "notes");
-    assert!(app.is_renaming(), "dropping the extension warns too");
+    assert_eq!(app.asking(), Some("extension"), "dropping the extension asks too");
+    key(&mut app, Key::Escape, NO);
+    assert_eq!(app.asking(), None);
+    assert!(app.is_renaming() && ops(&mut app).is_empty(), "No goes back to the name being edited");
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(app.asking(), Some("extension"), "submitting again asks again");
+    key(&mut app, Key::Right, NO);
+    key(&mut app, Key::Enter, NO);
+    assert!(app.is_renaming() && ops(&mut app).is_empty());
     key(&mut app, Key::Escape, NO);
     assert!(!app.is_renaming() && ops(&mut app).is_empty());
     app.warn_extension_change = false;

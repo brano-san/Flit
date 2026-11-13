@@ -30,6 +30,7 @@ delete_permanently = "永久删除"
 restore = "还原"
 not_now = "以后再说"
 open_folder = "打开文件夹"
+no = "否"
 
 [job]
 operations = "操作"
@@ -158,7 +159,8 @@ nothing_to_redo = "没有可重做的操作"
 stream_created = "已创建流 {name}"
 icon_changed = "已更改 {folder} 的图标"
 icon_restored = "已还原 {folder} 的默认图标"
-extension_warning = "更改“{name}”的扩展名可能导致其无法使用。再次按 Enter 重命名，或按 Esc 取消。"
+extension_warning = "如果更改“{name}”的扩展名，文件可能无法使用。"
+extension_title = "更改文件扩展名？"
 
 [drop]
 copy = "复制到 %1"

@@ -30,6 +30,7 @@ delete_permanently = "Удалить безвозвратно"
 restore = "Восстановить"
 not_now = "Не сейчас"
 open_folder = "Открыть папку"
+no = "Нет"
 
 [job]
 operations = "Операции"
@@ -158,7 +159,8 @@ nothing_to_redo = "Нечего повторять"
 stream_created = "Создан поток {name}"
 icon_changed = "Изменён значок папки {folder}"
 icon_restored = "Восстановлен стандартный значок папки {folder}"
-extension_warning = "Если изменить расширение «{name}», файл может стать недоступным. Нажмите Enter ещё раз, чтобы переименовать его, или Esc для отмены."
+extension_warning = "Если изменить расширение «{name}», файл может стать недоступным."
+extension_title = "Изменить расширение имени файла?"
 
 [drop]
 copy = "Копировать в %1"
