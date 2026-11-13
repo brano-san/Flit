@@ -238,6 +238,23 @@ fn unix_terms_rename_the_trash_and_the_computer() {
 }
 
 #[test]
+fn every_language_calls_the_bin_what_linux_desktops_call_it() {
+    let trash = [(Lang::En, "Trash"), (Lang::Ru, "Корзина"), (Lang::De, "Papierkorb"), (Lang::Fr, "Corbeille"), (Lang::Es, "Papelera"), (Lang::Uk, "Смітник"), (Lang::ZhCn, "回收站")];
+    for (l, name) in trash {
+        assert_eq!(unix_term(S::PathRecycleBin.in_lang(l), l), name, "{l:?}");
+    }
+    let empty: Vec<&str> = [Lang::En, Lang::Es, Lang::Uk].into_iter().map(|l| unix_term(S::UiBinEmpty.in_lang(l), l)).collect();
+    assert_eq!(empty, ["Empty Trash", "Vaciar Papelera", "Очистити Смітник"]);
+    let windows_only = [(Lang::En, ["Recycle Bin", "This PC"]), (Lang::Es, ["reciclaje", "Este equipo"]), (Lang::Uk, ["ошик", "Цей ПК"])];
+    for (l, words) in windows_only {
+        for s in S::ALL {
+            let text = unix_term(s.in_lang(l), l);
+            assert!(words.iter().all(|w| !text.contains(w)), "{l:?} {}: {text}", s.key());
+        }
+    }
+}
+
+#[test]
 fn system_choices_name_the_system_not_windows() {
     for l in Lang::ALL {
         for s in [S::SettingsChoiceLanguageSystem, S::SettingsChoiceDateSystem] {

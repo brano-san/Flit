@@ -154,8 +154,8 @@ pub fn unix_term(s: &'static str, l: Lang) -> &'static str {
         Lang::Ru => &[("Этот компьютер", "Компьютер")],
         Lang::De => &[("Dieser PC", "Computer")],
         Lang::Fr => &[("Ce PC", "Ordinateur")],
-        Lang::Es => &[("Este equipo", "Equipo")],
-        Lang::Uk => &[("Цей ПК", "Комп'ютер")],
+        Lang::Es => &[("Papelera de reciclaje", "Papelera"), ("Este equipo", "Equipo")],
+        Lang::Uk => &[("Кошик", "Смітник"), ("кошик", "смітник"), ("Цей ПК", "Комп'ютер")],
         Lang::ZhCn => &[("此电脑", "计算机")],
     };
     if !pairs.iter().any(|(from, _)| s.contains(from)) {
