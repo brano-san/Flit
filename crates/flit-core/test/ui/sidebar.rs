@@ -896,3 +896,69 @@ fn quick_access_rows_match_details_rows_at_default_settings_and_space_out_betwee
     let r = sb.items.iter().zip(&sb.rects).find(|(i, _)| i.usage.is_none()).unwrap().1;
     assert_eq!(r.h, app.layout.row_h, "equal scales keep them equal");
 }
+
+fn side_key(app: &mut App, key: Key) {
+    app.on_event(&Event::Key { key, mods: Mods::default(), pressed: true }, Instant::now());
+}
+
+fn cursor_label(app: &App) -> Option<&str> {
+    let sb = &app.nav.sidebar;
+    sb.head.is_none().then(|| sb.items[sb.cursor].label.as_str())
+}
+
+#[test]
+fn left_and_right_fold_sections_from_the_keyboard() {
+    let mut app = app_with_places();
+    app.animations = false;
+    app.cycle_sidebar_focus();
+    side_key(&mut app, Key::Home);
+    side_key(&mut app, Key::Down);
+    side_key(&mut app, Key::Down);
+    assert_eq!(cursor_label(&app), Some("Disk (C:)"));
+    side_key(&mut app, Key::Left);
+    assert_eq!(app.nav_prefs().collapsed, ["drives"]);
+    assert_eq!(app.nav.sidebar.head, Some(Section::Storage), "the cursor rests on the folded header");
+    assert_eq!(side_labels(&app), ["a", "b", "This PC", "Recycle Bin", "Home", "Debian"]);
+    side_key(&mut app, Key::Left);
+    assert_eq!(app.nav.sidebar.head, Some(Section::Storage), "Left on a folded header does nothing");
+    side_key(&mut app, Key::Down);
+    assert_eq!(cursor_label(&app), Some("This PC"));
+    side_key(&mut app, Key::Up);
+    assert_eq!(app.nav.sidebar.head, Some(Section::Storage), "Up and Down stop on folded headers");
+    side_key(&mut app, Key::Up);
+    assert_eq!(cursor_label(&app), Some("b"));
+    side_key(&mut app, Key::Down);
+    side_key(&mut app, Key::Right);
+    assert!(app.nav_prefs().collapsed.is_empty());
+    assert_eq!(cursor_label(&app), Some("Disk (C:)"), "Right unfolds and steps onto the first item");
+    side_key(&mut app, Key::Right);
+    assert_eq!(cursor_label(&app), Some("Disk (C:)"), "Right on an item stays put");
+    assert_eq!(app.focus, crate::ui::Focus::Sidebar);
+    side_key(&mut app, Key::Left);
+    side_key(&mut app, Key::Enter);
+    assert!(app.nav_prefs().collapsed.is_empty(), "Enter on a folded header unfolds it");
+    side_key(&mut app, Key::Left);
+    click(header(&app, Section::Storage), &mut app, MouseButton::Left);
+    assert_eq!(app.nav.sidebar.head, None, "unfolding with the mouse lets the cursor go back to items");
+}
+
+#[test]
+fn page_keys_page_through_the_sidebar() {
+    let mut app = App::new(Persisted::default(), Vec::new(), 0, false, 1.0, (1000, 300), Instant::now());
+    app.set_places(Arc::new(Places { drives: ('C'..='M').map(drive).collect(), ..Default::default() }));
+    app.set_pinned((0..12).map(|n| loc(&format!(r"C:\p{n}"))).collect());
+    app.cycle_sidebar_focus();
+    side_key(&mut app, Key::Home);
+    let n = app.nav.sidebar.items.len();
+    side_key(&mut app, Key::PageDown);
+    let page = app.nav.sidebar.cursor;
+    assert!(page > 1 && page < n - 1, "PageDown moves by a page, not one row or to the end: {page} of {n}");
+    let r = app.nav.sidebar.rects[page];
+    assert!(r.y >= app.nav.sidebar.list.y && r.bottom() <= app.nav.sidebar.list.bottom() + 0.5, "the new item is in view");
+    side_key(&mut app, Key::PageDown);
+    assert!(app.nav.sidebar.cursor > page);
+    side_key(&mut app, Key::PageUp);
+    side_key(&mut app, Key::PageUp);
+    assert_eq!(app.nav.sidebar.cursor, 0);
+    assert_eq!(app.focus, crate::ui::Focus::Sidebar, "page keys stay in the sidebar");
+}

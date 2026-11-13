@@ -776,7 +776,8 @@ impl App {
             }
             (Key::Char('C'), true, false) if m.shift => {
                 if let Some(p) = self.search.focus.and_then(|f| self.search_row_location(f)) {
-                    self.effects.push(Effect::SetClipboard(p.display().into_owned()));
+                    let text = self.as_path_text(&p);
+                    self.effects.push(Effect::SetClipboard(text));
                 }
                 return true;
             }
@@ -856,7 +857,10 @@ impl App {
                 self.close_search();
                 self.dispatch(vec![Route { folder, select }], if action == "reveal_tab" { OpenTarget::NewTab } else { OpenTarget::CurrentTab }, now);
             }
-            "path" => self.effects.push(Effect::SetClipboard(location.display().into_owned())),
+            "path" => {
+                let text = self.as_path_text(&location);
+                self.effects.push(Effect::SetClipboard(text));
+            }
             "quoted" => self.effects.push(Effect::SetClipboard(format!("\"{}\"", location.display()))),
             "copy" => {
                 if let Some(path) = location.to_windows() {

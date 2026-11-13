@@ -201,6 +201,8 @@ pub fn parse_chord(s: &str) -> Option<Chord> {
         "space" => Key::Space,
         "menu" | "apps" => Key::Apps,
         "num+" => Key::NumPlus,
+        "num-" => Key::NumMinus,
+        "num*" => Key::NumStar,
         "browserback" => Key::BrowserBack,
         "browserforward" => Key::BrowserForward,
         f if f.len() > 1 && f.starts_with('f') => match f[1..].parse() {

@@ -348,7 +348,7 @@ impl App {
                         ("reveal", S::MenuOpenFileLocation, "Ctrl+Enter"),
                         ("reveal_tab", S::ActionsItemOpenContainingTab, ""),
                         ("copy", S::MenuCopy, ""),
-                        ("path", S::MenuCopyPath, "Ctrl+Shift+C"),
+                        ("path", if a.caps.unix_paths { S::MenuCopyPath } else { S::MenuCopyAsPath }, "Ctrl+Shift+C"),
                         ("quoted", S::ActionsItemCopyQuotedPath, ""),
                     ] {
                         m.command(Cmd::Search { action, location: location.clone(), folder }, label.t(), keys.into(), false);
@@ -513,7 +513,7 @@ impl App {
                 m.action("file.paste_into", S::MenuPaste.t());
             }
         }
-        m.action("item.copy_path", S::MenuCopyPath.t());
+        m.action("item.copy_path", self.as_path_label());
         if inside {
             m.separator();
             m.action("archive.extract", S::MenuExtractDialog.t());
@@ -628,7 +628,7 @@ impl App {
             if !self.encoding_label().is_empty() {
                 m.action("archive.encoding", S::MenuEncodingOfNames.t());
             }
-            m.action("item.copy_path", S::MenuCopyPath.t());
+            m.action("item.copy_path", self.as_path_label());
             return;
         }
         if files {
@@ -640,7 +640,7 @@ impl App {
         }
         let pinned = self.nav.sidebar.state.pinned.contains(t.location());
         m.action("folder.bookmark", if pinned { S::MenuUnpinFromSidebar.t() } else { S::MenuPinToSidebar.t() });
-        m.action("item.copy_path", S::MenuCopyPath.t());
+        m.action("item.copy_path", self.as_path_label());
         m.separator();
         self.user_entries(m, false);
         m.separator();

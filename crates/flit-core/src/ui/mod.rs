@@ -2076,12 +2076,15 @@ impl App {
         match key {
             Key::BrowserBack => self.go_history(false, now),
             Key::BrowserForward => self.go_history(true, now),
+            Key::NumPlus | Key::NumMinus | Key::NumStar => {
+                self.tree_numpad(key, m);
+            }
             _ => {}
         }
     }
 
     fn char_input(&mut self, c: char, now: Instant) {
-        if c.is_control() {
+        if c.is_control() || self.tree_swallows(c) {
             return;
         }
         self.dirty = true;

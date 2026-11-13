@@ -13,7 +13,7 @@ use crate::location::Location;
 use crate::path::PathKind;
 use crate::open::OpenTarget;
 use crate::sort::{Folders, GroupField, SortField};
-use super::layouts::{ZOOM_DETAILS, ZOOM_ICONS, ZOOM_LARGE, ZOOM_LIST, ZOOM_TREE, ZOOM_XL};
+use super::layouts::{layout_of_zoom, zoom_of, Sizes, ZOOM_DETAILS, ZOOM_ICONS, ZOOM_LARGE, ZOOM_LIST, ZOOM_TREE, ZOOM_XL};
 use std::time::Instant;
 
 const MAX_CLOSED: usize = 32;
@@ -201,7 +201,7 @@ impl Action {
 use Group as G;
 
 pub static ACTIONS: &[Action] = &[
-    Action::new("subfolders.toggle", G::Quick, S::ActionsSubfoldersToggle, S::DescribeSubfoldersToggle, &[ctrl(c('E'))], |a, _| a.toggle_subfolders()),
+    Action::new("subfolders.toggle", G::Quick, S::ActionsSubfoldersToggle, S::DescribeSubfoldersToggle, &[], |a, _| a.toggle_subfolders()).on_unix(&[ctrl(c('E'))]),
     Action::new("inspector.toggle", G::Quick, S::ActionsInspectorToggle, S::DescribeInspectorToggle, &[key(Key::Space)], |a, _| a.toggle_preview_pane()),
     Action::new("panel.split_right", G::Quick, S::ActionsPanelSplitRight, S::DescribePanelSplitRight, &[ctrl_shift(c('S'))], |a, now| a.run_panel("panel.split_right", now)),
     Action::new("panel.split_bottom", G::Quick, S::ActionsPanelSplitBottom, S::DescribePanelSplitBottom, &[ctrl(c('S'))], |a, now| a.run_panel("panel.split_bottom", now)),
@@ -219,9 +219,9 @@ pub static ACTIONS: &[Action] = &[
     Action::new("panel.open_right", G::Folder, S::ActionsPanelOpenRight, S::DescribePanelOpenRight, &[ctrl_shift(Key::Enter)], |a, now| a.run_panel("panel.open_right", now)),
     Action::new("panel.open_bottom", G::Folder, S::ActionsPanelOpenBottom, S::DescribePanelOpenBottom, &[], |a, now| a.run_panel("panel.open_bottom", now)),
     Action::new("item.open_window", G::Folder, S::ActionsItemOpenWindow, S::DescribeItemOpenWindow, &[], |a, now| a.open_folders_in(OpenTarget::NewWindow, now)),
-    Action::new("tree.open", G::Folder, S::ActionsTreeOpen, S::DescribeTreeOpen, &[key(Key::Right)], |a, _| a.tree_open(false)).also(&["MouseLeft"]).within(Ctx::Tree),
-    Action::new("tree.close", G::Folder, S::ActionsTreeClose, S::DescribeTreeClose, &[key(Key::Left)], |a, _| a.tree_close(false)).also(&["MouseLeft"]).within(Ctx::Tree),
-    Action::new("tree.open_all", G::Folder, S::ActionsTreeOpenAll, S::DescribeTreeOpenAll, &[shift(Key::Right)], |a, _| a.tree_open(true)).also(&["Shift+MouseLeft"]).within(Ctx::Tree),
+    Action::new("tree.open", G::Folder, S::ActionsTreeOpen, S::DescribeTreeOpen, &[key(Key::Right), key(Key::NumPlus)], |a, _| a.tree_open(false)).also(&["MouseLeft"]).within(Ctx::Tree),
+    Action::new("tree.close", G::Folder, S::ActionsTreeClose, S::DescribeTreeClose, &[key(Key::Left), key(Key::NumMinus)], |a, _| a.tree_close(false)).also(&["MouseLeft"]).within(Ctx::Tree),
+    Action::new("tree.open_all", G::Folder, S::ActionsTreeOpenAll, S::DescribeTreeOpenAll, &[shift(Key::Right), key(Key::NumStar)], |a, _| a.tree_open(true)).also(&["Shift+MouseLeft"]).within(Ctx::Tree),
     Action::new("tree.close_all", G::Folder, S::ActionsTreeCloseAll, S::DescribeTreeCloseAll, &[shift(Key::Left)], |a, _| a.tree_close(true)).also(&["Shift+MouseLeft"]).within(Ctx::Tree),
     Action::new("file.copy", G::Folder, S::ActionsFileCopy, S::DescribeFileCopy, &[ctrl(c('C')), ctrl(Key::Insert)], |a, _| a.copy_selection()),
     Action::new("file.cut", G::Folder, S::ActionsFileCut, S::DescribeFileCut, &[ctrl(c('X'))], |a, _| a.cut_selection()),
@@ -237,7 +237,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("file.rename", G::Folder, S::ActionsFileRename, S::DescribeFileRename, &[key(Key::F(2))], |a, _| a.rename_focused()),
     Action::new("item.inspect", G::Folder, S::ActionsItemInspect, S::DescribeItemInspect, &[alt(Key::Enter)], |a, _| a.inspect()).also(&["Alt+KeypadEnter"]),
     Action::new("bin.restore", G::Folder, S::ActionsBinRestore, S::DescribeBinRestore, &[], |a, _| a.restore_selection()),
-    Action::new("item.copy_path", G::Folder, S::ActionsItemCopyPath, S::DescribeItemCopyPath, &[ctrl_shift(c('C'))], |a, _| a.copy_paths(Quote::Never)),
+    Action::new("item.copy_path", G::Folder, S::ActionsItemCopyPath, S::DescribeItemCopyPath, &[ctrl_shift(c('C'))], |a, _| a.copy_paths(a.as_path_quote())),
     Action::new("item.copy_path_smart", G::Folder, S::ActionsItemCopyPathSmart, S::DescribeItemCopyPathSmart, &[], |a, _| a.copy_paths(Quote::Needed)),
     Action::new("file.new_file", G::Folder, S::ActionsFileNewFile, S::DescribeFileNewFile, &[], |a, _| a.new_file()),
     Action::new("file.new_folder", G::Folder, S::ActionsFileNewFolder, S::DescribeFileNewFolder, &[ctrl_shift(c('N'))], |a, _| a.new_folder()),
@@ -249,14 +249,14 @@ pub static ACTIONS: &[Action] = &[
     Action::new("view.toggle_folders", G::Folder, S::ActionsViewToggleFolders, S::DescribeViewToggleFolders, &[], |a, _| a.toggle_kind(true)),
     Action::new("view.toggle_files", G::Folder, S::ActionsViewToggleFiles, S::DescribeViewToggleFiles, &[], |a, _| a.toggle_kind(false)),
     Action::new("nav.address", G::Folder, S::ActionsNavAddress, S::DescribeNavAddress, &[ctrl(c('L')), alt(c('D'))], |a, _| a.open_address()),
-    Action::new("view.columns.fit", G::Folder, S::ActionsViewColumnsFit, S::DescribeViewColumnsFit, &[ctrl(c('='))], |a, _| a.request_fit()),
-    Action::new("view.filter", G::Folder, S::ActionsViewFilter, S::DescribeViewFilter, &[ctrl(c('F')), key(Key::F(3))], |a, _| a.open_filter()),
+    Action::new("view.columns.fit", G::Folder, S::ActionsViewColumnsFit, S::DescribeViewColumnsFit, &[ctrl(Key::NumPlus)], |a, _| a.request_fit()),
+    Action::new("view.filter", G::Folder, S::ActionsViewFilter, S::DescribeViewFilter, &[ctrl(c('F')), ctrl(c('E')), key(Key::F(3))], |a, _| a.open_filter()).on_unix(&[ctrl(c('F')), key(Key::F(3))]),
     Action::new("search.folder", G::Folder, S::ActionsSearchFolder, S::DescribeSearchFolder, &[ctrl_shift(c('F'))], |a, _| a.open_folder_search()),
     Action::new("folder.refresh_stats", G::Folder, S::ActionsFolderRefreshStats, S::DescribeFolderRefreshStats, &[alt(c('R'))], |a, _| a.refresh_dir_sizes()),
     Action::new("nav.refresh", G::Folder, S::ActionsNavRefresh, S::DescribeNavRefresh, &[ctrl(c('R')), key(Key::F(5))], |a, now| a.refresh(now)),
-    Action::new("nav.back", G::Folder, S::ActionsNavBack, S::DescribeNavBack, &[alt(Key::Left)], |a, now| a.go_history(false, now)).also(&["MouseX1"]),
+    Action::new("nav.back", G::Folder, S::ActionsNavBack, S::DescribeNavBack, &[alt(Key::Left), key(Key::Backspace)], |a, now| a.go_history(false, now)).also(&["MouseX1"]),
     Action::new("nav.forward", G::Folder, S::ActionsNavForward, S::DescribeNavForward, &[alt(Key::Right)], |a, now| a.go_history(true, now)).also(&["MouseX2"]),
-    Action::new("nav.up", G::Folder, S::ActionsNavUp, S::DescribeNavUp, &[alt(Key::Up), key(Key::Backspace)], |a, now| a.go_up(now)),
+    Action::new("nav.up", G::Folder, S::ActionsNavUp, S::DescribeNavUp, &[alt(Key::Up)], |a, now| a.go_up(now)),
     Action::new("bin.empty", G::Folder, S::ActionsBinEmpty, S::DescribeBinEmpty, &[], |a, _| a.empty_bin()),
     Action::new("bin.restore_all", G::Folder, S::ActionsBinRestoreAll, S::DescribeBinRestoreAll, &[], |a, _| a.restore_all()),
     Action::new("folder.cycle_view", G::Folder, S::ActionsFolderCycleView, S::DescribeFolderCycleView, &[], |a, _| a.cycle_view_mode()),
@@ -265,14 +265,15 @@ pub static ACTIONS: &[Action] = &[
     Action::held("folder.dropdown_left", G::Folder, S::ActionsFolderDropdownLeft, S::DescribeFolderDropdownLeft, &[alt(Key::Left)], Ctx::Dropdown),
     Action::held("folder.dropdown_right", G::Folder, S::ActionsFolderDropdownRight, S::DescribeFolderDropdownRight, &[alt(Key::Right)], Ctx::Dropdown),
     Action::new("folder.types", G::Folder, S::ActionsFolderTypes, S::DescribeFolderTypes, &[alt(c('T'))], |a, _| a.open_types()),
-    Action::new("view.zoom_in", G::View, S::ActionsViewZoomIn, S::DescribeViewZoomIn, &[], |a, _| a.resize_items(1)).also(&["Ctrl+MouseWheelUp"]),
-    Action::new("view.zoom_out", G::View, S::ActionsViewZoomOut, S::DescribeViewZoomOut, &[], |a, _| a.resize_items(-1)).also(&["Ctrl+MouseWheelDown"]),
-    Action::new("view.layout.details", G::View, S::ActionsViewLayoutDetails, S::DescribeViewLayoutDetails, &[ctrl_shift(c('1'))], |a, _| a.set_zoom(ZOOM_DETAILS)).on_unix(&[ctrl_shift(c('1')), ctrl(c('3'))]),
-    Action::new("view.layout.tree", G::View, S::ActionsViewLayoutTree, S::DescribeViewLayoutTree, &[ctrl_shift(c('2'))], |a, _| a.set_zoom(ZOOM_TREE)),
-    Action::new("view.layout.list", G::View, S::ActionsViewLayoutList, S::DescribeViewLayoutList, &[ctrl_shift(c('3'))], |a, _| a.set_zoom(ZOOM_LIST)).on_unix(&[ctrl_shift(c('3')), ctrl(c('2'))]),
-    Action::new("view.layout.icons_m", G::View, S::ActionsViewLayoutIconsM, S::DescribeViewLayoutIconsM, &[ctrl_shift(c('4'))], |a, _| a.set_zoom(ZOOM_ICONS)).on_unix(&[ctrl_shift(c('4')), ctrl(c('1'))]),
-    Action::new("view.layout.icons_l", G::View, S::ActionsViewLayoutIconsL, S::DescribeViewLayoutIconsL, &[ctrl_shift(c('5'))], |a, _| a.set_zoom(ZOOM_LARGE)),
-    Action::new("view.layout.icons_xl", G::View, S::ActionsViewLayoutIconsXl, S::DescribeViewLayoutIconsXl, &[ctrl_shift(c('6'))], |a, _| a.set_zoom(ZOOM_XL)),
+    Action::new("view.zoom_in", G::View, S::ActionsViewZoomIn, S::DescribeViewZoomIn, &[ctrl(c('=')), ctrl_shift(c('='))], |a, _| a.resize_items(1)).also(&["Ctrl+MouseWheelUp"]),
+    Action::new("view.zoom_out", G::View, S::ActionsViewZoomOut, S::DescribeViewZoomOut, &[ctrl(c('-')), ctrl(Key::NumMinus)], |a, _| a.resize_items(-1)).also(&["Ctrl+MouseWheelDown"]),
+    Action::new("view.zoom_reset", G::View, S::ActionsViewZoomReset, S::DescribeViewZoomReset, &[ctrl(c('0'))], |a, _| a.reset_item_size()),
+    Action::new("view.layout.details", G::View, S::ActionsViewLayoutDetails, S::DescribeViewLayoutDetails, &[ctrl_shift(c('6'))], |a, _| a.set_zoom(ZOOM_DETAILS)).on_unix(&[ctrl_shift(c('6')), ctrl(c('3'))]),
+    Action::new("view.layout.tree", G::View, S::ActionsViewLayoutTree, S::DescribeViewLayoutTree, &[ctrl_shift(c('7'))], |a, _| a.set_zoom(ZOOM_TREE)),
+    Action::new("view.layout.list", G::View, S::ActionsViewLayoutList, S::DescribeViewLayoutList, &[ctrl_shift(c('5'))], |a, _| a.set_zoom(ZOOM_LIST)).on_unix(&[ctrl_shift(c('5')), ctrl(c('2'))]),
+    Action::new("view.layout.icons_m", G::View, S::ActionsViewLayoutIconsM, S::DescribeViewLayoutIconsM, &[ctrl_shift(c('3'))], |a, _| a.set_zoom(ZOOM_ICONS)).on_unix(&[ctrl_shift(c('3')), ctrl(c('1'))]),
+    Action::new("view.layout.icons_l", G::View, S::ActionsViewLayoutIconsL, S::DescribeViewLayoutIconsL, &[ctrl_shift(c('2'))], |a, _| a.set_zoom(ZOOM_LARGE)),
+    Action::new("view.layout.icons_xl", G::View, S::ActionsViewLayoutIconsXl, S::DescribeViewLayoutIconsXl, &[ctrl_shift(c('1'))], |a, _| a.set_zoom(ZOOM_XL)),
     Action::new("view.sort.name", G::Sort, S::ActionsViewSortName, S::DescribeViewSortName, &[], |a, _| a.sort_by(SortField::Name)),
     Action::new("view.sort.size", G::Sort, S::ActionsViewSortSize, S::DescribeViewSortSize, &[], |a, _| a.sort_by(SortField::Size)),
     Action::new("view.sort.created", G::Sort, S::ActionsViewSortCreated, S::DescribeViewSortCreated, &[], |a, _| a.sort_by(SortField::Created)),
@@ -333,8 +334,8 @@ pub static ACTIONS: &[Action] = &[
     Action::new("tab.close_right", G::Tabs, S::ActionsTabCloseRight, S::DescribeTabCloseRight, &[], |a, _| a.close_tabs(|i, cur| i <= cur)),
     Action::new("tab.close_all", G::Tabs, S::ActionsTabCloseAll, S::DescribeTabCloseAll, &[ctrl_shift(c('W'))], |a, _| a.close_all_tabs()),
     Action::new("tab.reopen", G::Tabs, S::ActionsTabReopen, S::DescribeTabReopen, &[ctrl_shift(c('T'))], |a, now| a.reopen_tab(now)),
-    Action::new("tab.next", G::Tabs, S::ActionsTabNext, S::DescribeTabNext, &[ctrl(Key::Tab), ctrl(Key::PageDown)], |a, _| a.select_tab((a.cur + 1) % a.tabs.len())),
-    Action::new("tab.previous", G::Tabs, S::ActionsTabPrevious, S::DescribeTabPrevious, &[ctrl_shift(Key::Tab), ctrl(Key::PageUp)], |a, _| a.select_tab((a.cur + a.tabs.len() - 1) % a.tabs.len())),
+    Action::new("tab.next", G::Tabs, S::ActionsTabNext, S::DescribeTabNext, &[ctrl(Key::Tab)], |a, _| a.select_tab((a.cur + 1) % a.tabs.len())).on_unix(&[ctrl(Key::Tab), ctrl(Key::PageDown)]),
+    Action::new("tab.previous", G::Tabs, S::ActionsTabPrevious, S::DescribeTabPrevious, &[ctrl_shift(Key::Tab)], |a, _| a.select_tab((a.cur + a.tabs.len() - 1) % a.tabs.len())).on_unix(&[ctrl_shift(Key::Tab), ctrl(Key::PageUp)]),
     Action::new("tab.select_1", G::Tabs, S::ActionsTabSelect1, S::DescribeTabSelect1, &[ctrl(c('1'))], |a, _| a.select_tab(0)).also(&["Ctrl+Keypad1"]).on_unix(&[alt(c('1'))]).on_unix_extra(&["Alt+Keypad1"]),
     Action::new("tab.select_2", G::Tabs, S::ActionsTabSelect2, S::DescribeTabSelect2, &[ctrl(c('2'))], |a, _| a.select_tab(1)).also(&["Ctrl+Keypad2"]).on_unix(&[alt(c('2'))]).on_unix_extra(&["Alt+Keypad2"]),
     Action::new("tab.select_3", G::Tabs, S::ActionsTabSelect3, S::DescribeTabSelect3, &[ctrl(c('3'))], |a, _| a.select_tab(2)).also(&["Ctrl+Keypad3"]).on_unix(&[alt(c('3'))]).on_unix_extra(&["Alt+Keypad3"]),
@@ -368,9 +369,9 @@ pub static ACTIONS: &[Action] = &[
     Action::new("window.fullscreen", G::Misc, S::ActionsWindowFullscreen, S::DescribeWindowFullscreen, &[key(Key::F(11))], |a, _| a.effects.push(Effect::Window(WindowCmd::Fullscreen))),
     Action::new("window.close", G::Misc, S::ActionsWindowClose, S::DescribeWindowClose, &[alt(Key::F(4))], |a, now| a.close_window(now)),
     Action::new("app.quit", G::Flit, S::ActionsAppQuit, S::DescribeAppQuit, &[], |a, now| a.quit_app(now)).on_unix(&[ctrl(c('Q'))]),
-    Action::new("font.increase", G::Options, S::ActionsFontIncrease, S::DescribeFontIncrease, &[ctrl_shift(c('='))], |a, _| a.step_font(FONT_STEP)).also(&["Alt+MouseWheelUp"]),
-    Action::new("font.decrease", G::Options, S::ActionsFontDecrease, S::DescribeFontDecrease, &[ctrl(c('-'))], |a, _| a.step_font(-FONT_STEP)).also(&["Alt+MouseWheelDown"]),
-    Action::new("font.reset", G::Options, S::ActionsFontReset, S::DescribeFontReset, &[ctrl(c('0'))], |a, _| a.set_ui_scale(100)),
+    Action::new("font.increase", G::Options, S::ActionsFontIncrease, S::DescribeFontIncrease, &[], |a, _| a.step_font(FONT_STEP)).also(&["Alt+MouseWheelUp"]),
+    Action::new("font.decrease", G::Options, S::ActionsFontDecrease, S::DescribeFontDecrease, &[], |a, _| a.step_font(-FONT_STEP)).also(&["Alt+MouseWheelDown"]),
+    Action::new("font.reset", G::Options, S::ActionsFontReset, S::DescribeFontReset, &[], |a, _| a.set_ui_scale(100)),
     Action::new("spacing.increase", G::Options, S::ActionsSpacingIncrease, S::DescribeSpacingIncrease, &[], |a, _| a.step_spacing(super::options::SPACING_STEP)).also(&["Shift+Alt+MouseWheelUp"]),
     Action::new("spacing.decrease", G::Options, S::ActionsSpacingDecrease, S::DescribeSpacingDecrease, &[], |a, _| a.step_spacing(-super::options::SPACING_STEP)).also(&["Shift+Alt+MouseWheelDown"]),
     Action::new("rename.insert_id", G::Rename, S::ActionsRenameInsertId, S::DescribeRenameInsertId, &[], |a, _| a.rename_insert(Insert::Id)).within(Ctx::Rename),
@@ -417,6 +418,10 @@ pub static ACTIONS: &[Action] = &[
     Action::new("list.cursor_down", G::Scroll, S::ActionsListCursorDown, S::DescribeListCursorDown, &[ctrl(Key::Down), ctrl(c('J'))], |a, now| a.list_key(Key::Down, CURSOR, now)),
     Action::new("list.cursor_left", G::Scroll, S::ActionsListCursorLeft, S::DescribeListCursorLeft, &[ctrl(Key::Left)], |a, now| a.list_key(Key::Left, CURSOR, now)),
     Action::new("list.cursor_right", G::Scroll, S::ActionsListCursorRight, S::DescribeListCursorRight, &[ctrl(Key::Right)], |a, now| a.list_key(Key::Right, CURSOR, now)),
+    Action::new("list.cursor_first", G::Scroll, S::ActionsListCursorFirst, S::DescribeListCursorFirst, &[ctrl(Key::Home)], |a, now| a.list_key(Key::Home, CURSOR, now)),
+    Action::new("list.cursor_last", G::Scroll, S::ActionsListCursorLast, S::DescribeListCursorLast, &[ctrl(Key::End)], |a, now| a.list_key(Key::End, CURSOR, now)),
+    Action::new("list.cursor_page_up", G::Scroll, S::ActionsListCursorPageUp, S::DescribeListCursorPageUp, &[ctrl(Key::PageUp)], |a, now| a.list_key(Key::PageUp, CURSOR, now)).on_unix(&[]),
+    Action::new("list.cursor_page_down", G::Scroll, S::ActionsListCursorPageDown, S::DescribeListCursorPageDown, &[ctrl(Key::PageDown)], |a, now| a.list_key(Key::PageDown, CURSOR, now)).on_unix(&[]),
     Action::new("list.extend_up", G::Scroll, S::ActionsListExtendUp, S::DescribeListExtendUp, &[shift(Key::Up)], |a, now| a.list_key(Key::Up, EXTEND, now)),
     Action::new("list.extend_down", G::Scroll, S::ActionsListExtendDown, S::DescribeListExtendDown, &[shift(Key::Down)], |a, now| a.list_key(Key::Down, EXTEND, now)),
     Action::new("list.extend_left", G::Scroll, S::ActionsListExtendLeft, S::DescribeListExtendLeft, &[shift(Key::Left)], |a, now| a.list_key(Key::Left, EXTEND, now)),
@@ -605,6 +610,8 @@ pub fn chord_text(c: &Chord) -> String {
         Key::Char(ch) => s.push(ch),
         Key::F(n) => s.push_str(&format!("F{n}")),
         Key::NumPlus => s.push_str("Num+"),
+        Key::NumMinus => s.push_str("Num-"),
+        Key::NumStar => s.push_str("Num*"),
         k => s.push_str(match k {
             Key::Up => "Up",
             Key::Down => "Down",
@@ -826,6 +833,44 @@ impl App {
         let sel: Vec<u32> = t.view.as_ref().map(|v| v.selected().collect()).unwrap_or_default();
         let text = if sel.is_empty() { text(t.location()) } else { sel.iter().map(|&i| text(&t.entry_location(i))).collect::<Vec<_>>().join("\r\n") };
         self.effects.push(Effect::SetClipboard(text));
+    }
+
+    pub(super) fn as_path_quote(&self) -> Quote {
+        match self.caps.unix_paths {
+            true => Quote::Never,
+            false => Quote::Always,
+        }
+    }
+
+    pub(super) fn as_path_text(&self, l: &Location) -> String {
+        match self.as_path_quote() {
+            Quote::Always => format!("\"{}\"", l.display()),
+            _ => l.display().into_owned(),
+        }
+    }
+
+    pub(super) fn as_path_label(&self) -> &'static str {
+        match self.caps.unix_paths {
+            true => S::MenuCopyPath.t(),
+            false => S::MenuCopyAsPath.t(),
+        }
+    }
+
+    fn reset_item_size(&mut self) {
+        if self.search.active {
+            return;
+        }
+        let t = self.tab();
+        let look = t.look;
+        if look.zoomed() || t.mode.zoomed() {
+            let mode = layout_of_zoom(t.zoom);
+            return self.set_zoom(zoom_of(mode, ZOOM_DETAILS));
+        }
+        let level = Sizes::default().0[look.slot()];
+        if self.tab().sizes.0[look.slot()] != level {
+            self.tab_mut().reveal_pending = true;
+            self.change_view(|t| t.sizes.0[look.slot()] = level);
+        }
     }
 
     fn cycle_folders(&mut self) {

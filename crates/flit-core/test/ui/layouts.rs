@@ -87,13 +87,13 @@ fn ctrl_shift_digits_switch_layouts_and_each_folder_remembers_its_own() {
     let mut app = app_at(r"C:\x");
     app.set_view_mode(crate::ui::ViewMode::Folder);
     deliver(&mut app, &["a.txt", "b.txt"]);
-    let order = [('5', LayoutMode::Grid), ('3', LayoutMode::List), ('4', LayoutMode::Grid), ('1', LayoutMode::Details)];
+    let order = [('2', LayoutMode::Grid), ('5', LayoutMode::List), ('3', LayoutMode::Grid), ('6', LayoutMode::Details)];
     for (digit, mode) in order {
         key(&mut app, Key::Char(digit), CTRL_SHIFT);
         assert_eq!((app.tab().mode, app.tab().look, app.layout.mode), (mode, mode, mode), "Ctrl+Shift+{digit}");
         assert_eq!(app.folder_views().get(folder_key(&loc(r"C:\x"))).unwrap().layout, mode);
     }
-    key(&mut app, Key::Char('5'), CTRL_SHIFT);
+    key(&mut app, Key::Char('2'), CTRL_SHIFT);
     assert!(app.layout.header.h == 0.0 && app.layout.flow.per > 1);
     app.run_action("nav.up", Instant::now());
     deliver(&mut app, &["x"]);
@@ -108,7 +108,7 @@ fn the_old_layout_stays_until_the_new_folder_arrives() {
     let mut app = app_at(r"C:\x");
     app.set_view_mode(crate::ui::ViewMode::Folder);
     deliver(&mut app, &["a.txt"]);
-    key(&mut app, Key::Char('5'), CTRL_SHIFT);
+    key(&mut app, Key::Char('2'), CTRL_SHIFT);
     app.navigate(loc(r"C:\y"), Instant::now());
     frame(&mut app);
     assert_eq!((app.tab().mode, app.layout.mode), (LayoutMode::Details, LayoutMode::Grid), "the Grid listing of C:\\x is still on screen");
@@ -117,7 +117,7 @@ fn the_old_layout_stays_until_the_new_folder_arrives() {
 }
 
 #[test]
-fn zoom_steps_walk_details_tree_list_and_icons_and_ctrl_equals_fits_columns() {
+fn zoom_steps_walk_details_tree_list_and_icons_and_ctrl_num_plus_fits_columns() {
     let mut app = app_at(r"C:\x");
     app.set_view_mode(crate::ui::ViewMode::Folder);
     deliver(&mut app, &["a.txt"]);
@@ -144,10 +144,10 @@ fn zoom_steps_walk_details_tree_list_and_icons_and_ctrl_equals_fits_columns() {
     }
     app.on_event(&Event::Key { key: Key::Other, mods: NO, pressed: false }, Instant::now());
     assert_eq!((app.tab().mode, app.tab().zoom), (LayoutMode::Details, 0));
-    key(&mut app, Key::Char('='), CTRL);
+    key(&mut app, Key::NumPlus, CTRL);
     assert!(app.tab().fit_pending);
-    assert_eq!(app.tab().zoom, 0, "Ctrl+= fits columns instead of resizing");
-    key(&mut app, Key::Char('5'), CTRL_SHIFT);
+    assert_eq!(app.tab().zoom, 0, "Ctrl+Num+ fits columns instead of resizing");
+    key(&mut app, Key::Char('2'), CTRL_SHIFT);
     assert_eq!((app.tab().mode, app.tab().zoom), (LayoutMode::Grid, ZOOM_LARGE));
     let v = app.folder_views().get(folder_key(&loc(r"C:\x"))).unwrap();
     assert_eq!((v.layout, v.zoom), (LayoutMode::Grid, ZOOM_LARGE), "the saved view keeps the zoom");
@@ -161,7 +161,7 @@ fn grid_tiles_take_clicks_gaps_clear_the_selection_and_arrows_move_by_tile_and_b
     app.animations = false;
     let names = files(30, "txt");
     publish(&mut app, &names, true);
-    key(&mut app, Key::Char('5'), CTRL_SHIFT);
+    key(&mut app, Key::Char('2'), CTRL_SHIFT);
     frame(&mut app);
     let per = app.layout.flow.per;
     assert!(per >= 3, "{per} tiles per band");
@@ -204,7 +204,7 @@ fn marquee_in_grid_selects_the_tiles_the_band_touches() {
     let mut app = app_at(r"C:\x");
     let names = files(12, "txt");
     publish(&mut app, &names, true);
-    key(&mut app, Key::Char('5'), CTRL_SHIFT);
+    key(&mut app, Key::Char('2'), CTRL_SHIFT);
     frame(&mut app);
     let per = app.layout.flow.per;
     let a = app.row_rect(1).unwrap();
@@ -223,7 +223,7 @@ fn list_flows_down_columns_and_scrolls_sideways() {
     app.animations = false;
     let names = files(300, "txt");
     publish(&mut app, &names, true);
-    key(&mut app, Key::Char('3'), CTRL_SHIFT);
+    key(&mut app, Key::Char('5'), CTRL_SHIFT);
     frame(&mut app);
     let l = &app.layout;
     let per = l.flow.per;
@@ -376,7 +376,7 @@ fn bench_layouts_on_100k() {
         eprintln!("BENCH switch to {:<9} on 100k entries, key to finished frame {:>7.3} ms", mode.title(), ms(t.elapsed()));
         let _ = app.drain_effects().count();
     }
-    key(&mut app, Key::Char('5'), CTRL_SHIFT);
+    key(&mut app, Key::Char('2'), CTRL_SHIFT);
     let fake = Bitmap { width: 128, height: 96, rgba: vec![200; 128 * 96 * 4] };
     let mut times = Vec::new();
     for _ in 0..600 {
@@ -405,7 +405,7 @@ fn grid_asks_for_each_thumbnail_once_and_draws_it_while_details_never_asks() {
     deliver(&mut app, &["a.jpg", "b.txt", "c"]);
     app.frame(&mut gfx, Instant::now());
     assert!(thumbs_asked(&mut app).is_empty());
-    key(&mut app, Key::Char('5'), CTRL_SHIFT);
+    key(&mut app, Key::Char('2'), CTRL_SHIFT);
     app.frame(&mut gfx, Instant::now());
     let asked = thumbs_asked(&mut app);
     assert_eq!(asked.len(), 1);
@@ -497,7 +497,7 @@ fn a_band_through_empty_grid_space_selects_nothing_and_leaves_the_focus_alone() 
     let mut app = app_at(r"C:\x");
     let names = files(3, "jpg");
     publish(&mut app, &names, true);
-    key(&mut app, Key::Char('5'), CTRL_SHIFT);
+    key(&mut app, Key::Char('2'), CTRL_SHIFT);
     frame(&mut app);
     let focus = app.tab().view.as_ref().unwrap().focus;
     let last = app.row_rect(names.len() - 1).unwrap();

@@ -9,7 +9,7 @@ use std::time::Duration;
 
 const SECTION_9: &[(&str, &[(&str, &str)])] = &[
     ("Quick", &[
-        ("Toggle Subfolders", "Ctrl+E"),
+        ("Toggle Subfolders", ""),
         ("Toggle Inspector", "Space"),
         ("Split Right", "Ctrl+Shift+S"),
         ("Split Bottom", "Ctrl+S"),
@@ -29,9 +29,9 @@ const SECTION_9: &[(&str, &[(&str, &str)])] = &[
         ("Open In Right Split", "Ctrl+Shift+Enter"),
         ("Open In Bottom Split", ""),
         ("Open In New Window", ""),
-        ("Open In Tree", "MouseLeft, Right"),
-        ("Close In Tree", "MouseLeft, Left"),
-        ("Open All In Tree", "Shift+MouseLeft, Shift+Right"),
+        ("Open In Tree", "MouseLeft, Right, Num+"),
+        ("Close In Tree", "MouseLeft, Left, Num-"),
+        ("Open All In Tree", "Shift+MouseLeft, Shift+Right, Num*"),
         ("Close All In Tree", "Shift+MouseLeft, Shift+Left"),
         ("Copy", "Ctrl+C, Ctrl+Insert"),
         ("Cut", "Ctrl+X"),
@@ -59,14 +59,14 @@ const SECTION_9: &[(&str, &[(&str, &str)])] = &[
         ("Toggle Folders", ""),
         ("Toggle Files", ""),
         ("Open Address Bar", "Ctrl+L, Alt+D"),
-        ("Size All Columns To Fit", "Ctrl+="),
-        ("Filter", "Ctrl+F, F3"),
+        ("Size All Columns To Fit", "Ctrl+Num+"),
+        ("Filter", "Ctrl+F, Ctrl+E, F3"),
         ("Search In Subfolders", "Ctrl+Shift+F"),
         ("Refresh Folder Stats", "Alt+R"),
         ("Refresh", "Ctrl+R, F5"),
-        ("Back To Folder", "MouseX1, Alt+Left"),
+        ("Back To Folder", "MouseX1, Alt+Left, Backspace"),
         ("Forward To Folder", "MouseX2, Alt+Right"),
-        ("Up To Folder", "Alt+Up, Backspace"),
+        ("Up To Folder", "Alt+Up"),
         ("Empty Trash Items", ""),
         ("Restore Trash Items", ""),
         ("Cycle Folder View", ""),
@@ -77,14 +77,15 @@ const SECTION_9: &[(&str, &[(&str, &str)])] = &[
         ("Open Types Dropdown", "Alt+T"),
     ]),
     ("View", &[
-        ("Zoom In Content", "Ctrl+MouseWheelUp"),
-        ("Zoom Out Content", "Ctrl+MouseWheelDown"),
-        ("View Details", "Ctrl+Shift+1"),
-        ("View Tree", "Ctrl+Shift+2"),
-        ("View List", "Ctrl+Shift+3"),
-        ("View Medium Icons", "Ctrl+Shift+4"),
-        ("View Large Icons", "Ctrl+Shift+5"),
-        ("View XL Icons", "Ctrl+Shift+6"),
+        ("Zoom In Content", "Ctrl+MouseWheelUp, Ctrl+=, Ctrl+Shift+="),
+        ("Zoom Out Content", "Ctrl+MouseWheelDown, Ctrl+-, Ctrl+Num-"),
+        ("Reset Content Zoom", "Ctrl+0"),
+        ("View Details", "Ctrl+Shift+6"),
+        ("View Tree", "Ctrl+Shift+7"),
+        ("View List", "Ctrl+Shift+5"),
+        ("View Medium Icons", "Ctrl+Shift+3"),
+        ("View Large Icons", "Ctrl+Shift+2"),
+        ("View XL Icons", "Ctrl+Shift+1"),
     ]),
     ("Sort", &[
         ("Sort By Name", ""),
@@ -155,8 +156,8 @@ const SECTION_9: &[(&str, &[(&str, &str)])] = &[
         ("Close Right Tabs", ""),
         ("Close All Tabs", "Ctrl+Shift+W"),
         ("Reopen Closed Tab", "Ctrl+Shift+T"),
-        ("Select Next Tab", "Ctrl+Tab, Ctrl+PageDown"),
-        ("Select Previous Tab", "Ctrl+Shift+Tab, Ctrl+PageUp"),
+        ("Select Next Tab", "Ctrl+Tab"),
+        ("Select Previous Tab", "Ctrl+Shift+Tab"),
         ("Select 1st Tab", "Ctrl+1, Ctrl+Keypad1"),
         ("Select 2nd Tab", "Ctrl+2, Ctrl+Keypad2"),
         ("Select 3rd Tab", "Ctrl+3, Ctrl+Keypad3"),
@@ -195,9 +196,9 @@ const SECTION_9: &[(&str, &[(&str, &str)])] = &[
         ("Close Window", "Alt+F4"),
     ]),
     ("Options", &[
-        ("Increase Font Size", "Alt+MouseWheelUp, Ctrl+Shift+="),
-        ("Decrease Font Size", "Alt+MouseWheelDown, Ctrl+-"),
-        ("Reset Font Size", "Ctrl+0"),
+        ("Increase Font Size", "Alt+MouseWheelUp"),
+        ("Decrease Font Size", "Alt+MouseWheelDown"),
+        ("Reset Font Size", ""),
         ("Increase Spacing", "Shift+Alt+MouseWheelUp"),
         ("Decrease Spacing", "Shift+Alt+MouseWheelDown"),
     ]),
@@ -250,6 +251,10 @@ const SECTION_9: &[(&str, &[(&str, &str)])] = &[
         ("Move File Cursor To Next", "Ctrl+Down, Ctrl+J"),
         ("Move File Cursor Left", "Ctrl+Left"),
         ("Move File Cursor Right", "Ctrl+Right"),
+        ("Move File Cursor To First", "Ctrl+Home"),
+        ("Move File Cursor To Last", "Ctrl+End"),
+        ("Scroll File Cursor Up", "Ctrl+PageUp"),
+        ("Scroll File Cursor Down", "Ctrl+PageDown"),
         ("Extend Select Previous", "Shift+Up"),
         ("Extend Select Next", "Shift+Down"),
         ("Extend Select Left", "Shift+Left"),
@@ -343,8 +348,11 @@ fn unavailable_commands_keep_their_keys_but_do_nothing() {
         assert!(a.ctx != Ctx::Main, "every command of the main context runs: {}", a.id);
     }
     press(&mut app, ctrl(Key::Char('E')));
-    assert!(!app.search_active(), "Ctrl+E is Toggle Subfolders now, not search");
-    assert!(app.tab().subfolders);
+    assert!(!app.search_active(), "Ctrl+E focuses the filter box, not the search");
+    assert_eq!(app.focus, crate::ui::Focus::Filter);
+    assert!(!app.tab().subfolders);
+    press(&mut app, key(Key::Escape));
+    app.focus = crate::ui::Focus::List;
     press(&mut app, key(Key::F(4)));
     assert!(app.go_open(), "F4 opens GoTo");
 }
@@ -356,7 +364,7 @@ fn search_filter_and_address_follow_section_9() {
     assert!(app.search_active(), "Ctrl+Shift+F opens the search in subfolders");
     press(&mut app, key(Key::Escape));
     assert!(!app.search_active());
-    for c in [key(Key::F(3)), ctrl(Key::Char('F'))] {
+    for c in [key(Key::F(3)), ctrl(Key::Char('F')), ctrl(Key::Char('E'))] {
         press(&mut app, c);
         assert_eq!(app.focus, crate::ui::Focus::Filter, "{}", chord_text(&c));
         press(&mut app, key(Key::Escape));
@@ -402,12 +410,12 @@ fn new_commands_work_on_the_list() {
     assert_eq!(smart_quote(r"C:\My Files"), r#""C:\My Files""#);
     assert_eq!(smart_quote(r"C:\Work"), r"C:\Work");
     let scale = app.ui_scale();
-    press(&mut app, ctrl_shift(Key::Char('=')));
+    assert!(app.run_action("font.increase", Instant::now()));
     assert_eq!(app.ui_scale(), scale + 10);
-    press(&mut app, ctrl(Key::Char('-')));
-    press(&mut app, ctrl(Key::Char('-')));
+    assert!(app.run_action("font.decrease", Instant::now()));
+    assert!(app.run_action("font.decrease", Instant::now()));
     assert_eq!(app.ui_scale(), scale - 10);
-    press(&mut app, ctrl(Key::Char('0')));
+    assert!(app.run_action("font.reset", Instant::now()));
     assert_eq!(app.ui_scale(), 100);
     let folders = app.tab().view_spec.sort.folders;
     for _ in 0..4 {
@@ -603,4 +611,111 @@ fn copy_and_cut_without_a_selection_leave_the_clipboard_alone() {
     press(&mut app, ctrl(Key::Char('A')));
     press(&mut app, ctrl(Key::Char('C')));
     assert!(app.drain_effects().any(|e| matches!(e, Effect::SetClipboard(s) if s == "ab")));
+}
+
+#[test]
+fn backspace_goes_back_and_alt_up_goes_up() {
+    let mut app = crate::ui::harness::app(&["a.txt"]);
+    app.navigate(Location::parse(r"C:\Other\Deep").unwrap(), Instant::now());
+    press(&mut app, key(Key::Backspace));
+    assert_eq!(app.current_location().display(), r"C:\Work", "Backspace returns to the previous folder");
+    press(&mut app, alt(Key::Up));
+    assert_eq!(app.current_location().display(), r"C:\");
+    for unix in [false, true] {
+        let k = crate::ui::keymap::defaults_for(unix);
+        assert_eq!(k.owner(key(Key::Backspace)).map(|i| ACTIONS[i].id), Some("nav.back"), "unix {unix}");
+    }
+}
+
+#[test]
+fn view_shortcuts_follow_explorer_order() {
+    let mut app = crate::ui::harness::app(&["a.txt"]);
+    for (digit, zoom) in [('1', ZOOM_XL), ('2', ZOOM_LARGE), ('3', ZOOM_ICONS), ('5', ZOOM_LIST), ('6', ZOOM_DETAILS), ('7', ZOOM_TREE)] {
+        press(&mut app, ctrl_shift(Key::Char(digit)));
+        assert_eq!(app.tab().zoom, zoom, "Ctrl+Shift+{digit}");
+    }
+    let unix = crate::ui::keymap::defaults_for(true);
+    for (c, id) in [(ctrl(c('1')), "view.layout.icons_m"), (ctrl(c('2')), "view.layout.list"), (ctrl(c('3')), "view.layout.details"), (ctrl_shift(c('6')), "view.layout.details")] {
+        assert_eq!(unix.owner(c).map(|i| ACTIONS[i].id), Some(id), "{}", chord_text(&c));
+    }
+}
+
+#[test]
+fn ctrl_plus_minus_and_zero_size_items_and_leave_the_font_alone() {
+    let mut app = crate::ui::harness::app(&["a.txt"]);
+    let scale = app.ui_scale();
+    press(&mut app, ctrl_shift(c('3')));
+    press(&mut app, ctrl(c('=')));
+    assert_eq!(app.tab().zoom, ZOOM_ICONS + 5, "Ctrl+= is Ctrl+Plus");
+    press(&mut app, ctrl_shift(c('=')));
+    assert_eq!(app.tab().zoom, ZOOM_ICONS + 10);
+    press(&mut app, ctrl(c('-')));
+    assert_eq!(app.tab().zoom, ZOOM_ICONS + 5);
+    press(&mut app, ctrl(Key::NumMinus));
+    assert_eq!(app.tab().zoom, ZOOM_ICONS);
+    press(&mut app, ctrl_shift(c('1')));
+    press(&mut app, ctrl(c('0')));
+    assert_eq!(app.tab().zoom, ZOOM_ICONS, "Ctrl+0 brings icons back to the default size");
+    press(&mut app, ctrl_shift(c('6')));
+    press(&mut app, ctrl(c('0')));
+    assert_eq!(app.tab().zoom, ZOOM_DETAILS, "Ctrl+0 keeps Details");
+    assert_eq!(app.ui_scale(), scale);
+    assert_eq!(index("view.columns.fit").map(|i| app.keymap.keys(i).to_vec()), Some(vec![ctrl(Key::NumPlus)]));
+}
+
+#[test]
+fn ctrl_home_end_and_page_keys_move_the_cursor_without_selecting() {
+    let names: Vec<String> = (0..60).map(|n| format!("f{n:02}.txt")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut app = crate::ui::harness::app(&refs);
+    press(&mut app, key(Key::Down));
+    let state = |app: &App| {
+        let v = app.tab().view.as_ref().unwrap();
+        (v.focus.and_then(|f| v.row_of(f)), v.selected().collect::<Vec<_>>())
+    };
+    let picked = state(&app).1;
+    press(&mut app, ctrl(Key::End));
+    assert_eq!(state(&app), (Some(59), picked.clone()));
+    press(&mut app, ctrl(Key::PageUp));
+    let up = state(&app);
+    assert!(up.0.is_some_and(|r| r < 59) && up.1 == picked, "{up:?}");
+    press(&mut app, ctrl(Key::Home));
+    assert_eq!(state(&app), (Some(0), picked.clone()));
+    press(&mut app, ctrl(Key::PageDown));
+    let down = state(&app);
+    assert!(down.0.is_some_and(|r| r > 0) && down.1 == picked, "{down:?}");
+    assert_eq!(app.cur, 0, "Ctrl+PageDown stays in the tab on Windows");
+    let unix = crate::ui::keymap::defaults_for(true);
+    assert_eq!(unix.owner(ctrl(Key::PageDown)).map(|i| ACTIONS[i].id), Some("tab.next"));
+    assert_eq!(unix.owner(ctrl(Key::PageUp)).map(|i| ACTIONS[i].id), Some("tab.previous"));
+    assert_eq!(unix.owner(ctrl(Key::Home)).map(|i| ACTIONS[i].id), Some("list.cursor_first"));
+}
+
+#[test]
+fn ctrl_e_and_ctrl_f_focus_the_filter_box_on_windows_only() {
+    let windows = crate::ui::keymap::defaults_for(false);
+    let unix = crate::ui::keymap::defaults_for(true);
+    assert_eq!(windows.owner(ctrl(c('E'))).map(|i| ACTIONS[i].id), Some("view.filter"));
+    assert_eq!(unix.owner(ctrl(c('E'))).map(|i| ACTIONS[i].id), Some("subfolders.toggle"));
+    assert_eq!(unix.owner(ctrl(c('F'))).map(|i| ACTIONS[i].id), Some("view.filter"));
+}
+
+fn clipboard(app: &mut App) -> Vec<String> {
+    app.drain_effects().filter_map(|e| if let Effect::SetClipboard(s) = e { Some(s) } else { None }).collect()
+}
+
+#[test]
+fn copy_as_path_quotes_like_explorer_on_windows() {
+    let mut app = crate::ui::harness::app(&["a.txt", "b c.txt"]);
+    press(&mut app, ctrl(c('A')));
+    app.drain_effects().for_each(drop);
+    press(&mut app, ctrl_shift(c('C')));
+    assert_eq!(clipboard(&mut app), [[r#""C:\Work\a.txt""#, r#""C:\Work\b c.txt""#].join("\r\n")]);
+    assert!(app.run_action("item.copy_path_smart", Instant::now()));
+    assert_eq!(clipboard(&mut app), [[r"C:\Work\a.txt", r#""C:\Work\b c.txt""#].join("\r\n")]);
+    assert_eq!(app.as_path_label(), "Copy as path");
+    app.set_caps(crate::caps::Caps { unix_paths: true });
+    assert_eq!(app.as_path_quote(), Quote::Never);
+    assert_eq!(app.as_path_text(&Location::parse(r"C:\Work\b c.txt").unwrap()), r"C:\Work\b c.txt");
+    assert_eq!(app.as_path_label(), "Copy path");
 }

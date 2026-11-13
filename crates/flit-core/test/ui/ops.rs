@@ -1565,7 +1565,7 @@ fn paste_into_the_selected_folder_and_copy_paths_in_quotes() {
     key(&mut app, Key::Char('C'), CTRL_ALT);
     assert_eq!(copied(&mut app).as_deref(), Some(r#""C:\x""#), "with nothing selected the folder itself is copied");
     key(&mut app, Key::Char('C'), CTRL_SHIFT);
-    assert_eq!(copied(&mut app).as_deref(), Some(r"C:\x"));
+    assert_eq!(copied(&mut app).as_deref(), Some(r#""C:\x""#), "Copy as path quotes like File Explorer");
 }
 
 #[test]

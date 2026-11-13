@@ -36,6 +36,8 @@ pub enum Key {
     F(u8),
     Char(char),
     NumPlus,
+    NumMinus,
+    NumStar,
     BrowserBack,
     BrowserForward,
     Other,

@@ -43,7 +43,7 @@ fn every_default_shortcut_reads_back_and_stays_assignable() {
     for bad in ["", "Ctrl+", "Ctrl+Ctrl+A", "F25", "F0", "Hyper+A", "AB", "Ctrl+Ж"] {
         assert_eq!(parse_chord(bad), None, "{bad}");
     }
-    for refused in [key(Key::Char('A')), shift(Key::Char('A')), shift(Key::Char('1')), ctrl(Key::Home), Chord { key: Key::Other, mods: CTRL }] {
+    for refused in [key(Key::Char('A')), shift(Key::Char('A')), shift(Key::Char('1')), ctrl_shift(Key::Home), Chord { key: Key::Other, mods: CTRL }] {
         assert!(refusal(refused).is_some(), "{}", chord_text(&refused));
     }
     for allowed in [ctrl(Key::Char('1')), ctrl(Key::Space), key(Key::Space)] {

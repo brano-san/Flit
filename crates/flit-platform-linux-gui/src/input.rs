@@ -147,8 +147,10 @@ fn key_at_us_position(code: KeyCode) -> Key {
         KeyCode::Comma => Key::Char(','),
         KeyCode::Period => Key::Char('.'),
         KeyCode::Equal => Key::Char('='),
-        KeyCode::Minus | KeyCode::NumpadSubtract => Key::Char('-'),
+        KeyCode::Minus => Key::Char('-'),
         KeyCode::NumpadAdd => Key::NumPlus,
+        KeyCode::NumpadSubtract => Key::NumMinus,
+        KeyCode::NumpadMultiply => Key::NumStar,
         _ => Key::Other,
     }
 }

@@ -77,7 +77,7 @@ fn item_menu_lists_flit_commands_with_their_shortcuts() {
     assert!(!file.inline);
     let labels = commands(&file.menu);
     assert_eq!(labels[0], "Open\tEnter");
-    for want in ["Cut\tCtrl+X", "Copy\tCtrl+C  Ctrl+Insert", "Copy path\tCtrl+Shift+C", "Create shortcut", "Rename\tF2", "Delete\tDelete", "New folder with selection", "New alternate data stream", "Properties\tShift+Alt+Enter"] {
+    for want in ["Cut\tCtrl+X", "Copy\tCtrl+C  Ctrl+Insert", "Copy as path\tCtrl+Shift+C", "Create shortcut", "Rename\tF2", "Delete\tDelete", "New folder with selection", "New alternate data stream", "Properties\tShift+Alt+Enter"] {
         assert!(labels.iter().any(|l| l == want), "{want} missing from {labels:?}");
     }
     assert!(!labels.iter().any(|l| l.starts_with("Open in new") || l.contains("sidebar") || l.starts_with("Paste")), "{labels:?}");
@@ -138,7 +138,7 @@ fn background_menu_offers_sorting_new_items_paste_and_terminal() {
     assert!(matches!(&menu.menu[0], MenuItem::Submenu { label, .. } if label == "Sort"));
     assert!(matches!(&menu.menu[1], MenuItem::Submenu { label, .. } if label == "Group"));
     let labels = commands(&menu.menu);
-    for want in ["Total Items", "Name *", "Date Modified", "Refresh\tCtrl+R  F5", "Folder\tCtrl+Shift+N", "Shortcut", "Paste\tCtrl+V  Shift+Insert", "Open in terminal", "Pin to sidebar", "Copy path\tCtrl+Shift+C", "Properties\tShift+Alt+Enter"] {
+    for want in ["Total Items", "Name *", "Date Modified", "Refresh\tCtrl+R  F5", "Folder\tCtrl+Shift+N", "Shortcut", "Paste\tCtrl+V  Shift+Insert", "Open in terminal", "Pin to sidebar", "Copy as path\tCtrl+Shift+C", "Properties\tShift+Alt+Enter"] {
         assert!(labels.iter().any(|l| l == want), "{want} missing from {labels:?}");
     }
     assert!(!labels.iter().any(|l| l.starts_with("Details") || l.starts_with("Cards")), "the bottom bar switches layouts, so the menu has no View submenu");

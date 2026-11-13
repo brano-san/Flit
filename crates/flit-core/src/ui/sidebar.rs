@@ -403,6 +403,12 @@ pub(super) struct Leaving {
     pub since: Instant,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Stop {
+    Item(usize),
+    Head(Section),
+}
+
 #[derive(Default)]
 pub(super) struct Sidebar {
     pub full_paths: bool,
@@ -423,6 +429,7 @@ pub(super) struct Sidebar {
     pub(super) scroll: super::Glide,
     content_h: f32,
     pub cursor: usize,
+    pub head: Option<Section>,
     pub press_y: f32,
     pub dragging_out: bool,
     pub slide: Option<super::widgets::Tween>,
@@ -526,6 +533,59 @@ impl Sidebar {
         }
         self.items = items;
         self.cursor = self.cursor.min(self.items.len().saturating_sub(1));
+        if self.head.is_some_and(|s| !self.folded(s) || self.is_hidden(s)) {
+            self.head = None;
+        }
+    }
+
+    fn folded(&self, s: Section) -> bool {
+        self.is_collapsed(s) && !self.filtering()
+    }
+
+    pub(super) fn point(&mut self, i: usize) {
+        self.cursor = i;
+        self.head = None;
+    }
+
+    fn stops(&self) -> Vec<Stop> {
+        let mut out = Vec::new();
+        for s in self.shown_sections() {
+            match self.folded(s) {
+                true => out.push(Stop::Head(s)),
+                false => out.extend(self.items.iter().enumerate().filter(|(_, it)| it.section == s).map(|(i, _)| Stop::Item(i))),
+            }
+        }
+        out
+    }
+
+    fn stop(&self) -> Stop {
+        self.head.map_or(Stop::Item(self.cursor), Stop::Head)
+    }
+
+    fn stop_rect(&self, stop: Stop) -> Option<Rect> {
+        match stop {
+            Stop::Item(i) => self.rects.get(i).copied(),
+            Stop::Head(s) => self.headers.iter().find(|(_, h)| *h == s).map(|(r, _)| *r),
+        }
+    }
+
+    fn go_to(&mut self, stop: Stop) {
+        match stop {
+            Stop::Item(i) => self.point(i),
+            Stop::Head(s) => self.head = Some(s),
+        }
+    }
+
+    fn page(&self, stops: &[Stop], at: usize, down: bool) -> usize {
+        let Some(from) = stops.get(at).and_then(|&s| self.stop_rect(s)) else { return at };
+        let reach = (self.list.h - from.h).max(0.0);
+        let within = |k: &usize| self.stop_rect(stops[*k]).is_some_and(|r| (r.y - from.y).abs() <= reach);
+        let far = match down {
+            true => (at + 1..stops.len()).take_while(within).last(),
+            false => (0..at).rev().take_while(within).last(),
+        };
+        let next = if down { (at + 1).min(stops.len().saturating_sub(1)) } else { at.saturating_sub(1) };
+        far.unwrap_or(next)
     }
 
     pub(super) fn filtering(&self) -> bool {
@@ -787,7 +847,7 @@ impl App {
         let sb = &mut self.nav.sidebar;
         sb.typing = true;
         sb.filter.edit.select_all();
-        sb.cursor = 0;
+        sb.point(0);
         self.focus = Focus::Sidebar;
         self.layout();
         self.dirty = true;
@@ -796,7 +856,7 @@ impl App {
     fn quick_filter_changed(&mut self) {
         let sb = &mut self.nav.sidebar;
         sb.scroll.snap(0.0);
-        sb.cursor = 0;
+        sb.point(0);
         self.nav_prefs_changed();
     }
 
@@ -861,7 +921,7 @@ impl App {
             let here = self.current_location().clone();
             let sb = &mut self.nav.sidebar;
             if let Some(i) = sb.items.iter().position(|it| it.loc == here && it.section != Section::Tags) {
-                sb.cursor = i;
+                sb.point(i);
             }
             self.reveal_side_cursor();
         }
@@ -1406,7 +1466,7 @@ impl App {
     fn reveal_side_cursor(&mut self) {
         self.layout();
         let sb = &mut self.nav.sidebar;
-        let Some(r) = sb.rects.get(sb.cursor).copied() else { return };
+        let Some(r) = sb.stop_rect(sb.stop()) else { return };
         if r.y < sb.list.y {
             sb.scroll.snap(sb.scroll.pos - (sb.list.y - r.y));
         } else if r.bottom() > sb.list.bottom() {
@@ -1423,6 +1483,10 @@ impl App {
         if typing && !matches!(key, Key::Escape | Key::Enter | Key::Up | Key::Down | Key::PageUp | Key::PageDown) && self.quick_filter_key(key, m) {
             return true;
         }
+        let head = self.nav.sidebar.head;
+        let stops = self.nav.sidebar.stops();
+        let at = stops.iter().position(|&s| s == self.nav.sidebar.stop()).unwrap_or(0);
+        let last = stops.len().saturating_sub(1);
         let to = match key {
             Key::Escape if typing && self.nav.sidebar.filtering() => {
                 self.clear_quick_filter();
@@ -1433,25 +1497,60 @@ impl App {
                 self.focus = Focus::List;
                 return true;
             }
+            Key::Enter | Key::Right if head.is_some() && !m.alt => {
+                self.unfold_side_section();
+                return true;
+            }
             Key::Enter if !m.alt => {
                 self.open_side_item(cur, m.ctrl, now);
                 return true;
             }
             Key::Delete if plain => {
-                if self.nav.sidebar.items.get(cur).is_some_and(|it| it.section == Section::Bookmarks) {
+                if head.is_none() && self.nav.sidebar.items.get(cur).is_some_and(|it| it.section == Section::Bookmarks) {
                     self.toggle_pin_item(cur, now);
                 }
                 return true;
             }
-            Key::Up if plain => cur.saturating_sub(1),
-            Key::Down if plain => (cur + 1).min(n.saturating_sub(1)),
+            Key::Left if plain && !typing => {
+                self.fold_side_section();
+                return true;
+            }
+            Key::Right if plain && !typing => return true,
+            Key::Up if plain => at.saturating_sub(1),
+            Key::Down if plain => (at + 1).min(last),
             Key::Home if plain => 0,
-            Key::End if plain => n.saturating_sub(1),
+            Key::End if plain => last,
+            Key::PageUp if plain => self.nav.sidebar.page(&stops, at, false),
+            Key::PageDown if plain => self.nav.sidebar.page(&stops, at, true),
             _ => return false,
         };
-        self.nav.sidebar.cursor = to;
+        match stops.get(to) {
+            Some(&stop) => self.nav.sidebar.go_to(stop),
+            None => self.nav.sidebar.point(n.saturating_sub(1).min(cur)),
+        }
         self.reveal_side_cursor();
         true
+    }
+
+    fn fold_side_section(&mut self) {
+        let sb = &self.nav.sidebar;
+        if sb.head.is_some() || sb.filtering() {
+            return;
+        }
+        let Some(s) = sb.items.get(sb.cursor).map(|it| it.section) else { return };
+        self.toggle_section(s);
+        self.nav.sidebar.head = Some(s);
+        self.reveal_side_cursor();
+    }
+
+    fn unfold_side_section(&mut self) {
+        let Some(s) = self.nav.sidebar.head else { return };
+        self.toggle_section(s);
+        let sb = &mut self.nav.sidebar;
+        if let Some(i) = sb.items.iter().position(|it| it.section == s) {
+            sb.point(i);
+        }
+        self.reveal_side_cursor();
     }
 
     pub(super) fn draw_sidebar<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
@@ -1527,6 +1626,9 @@ impl App {
             } else if glow > 0.0 {
                 g.dl.round_rect(r, super::widgets::faded(t.accent_fill, glow), s4);
             }
+            if focused && !sb.typing && sb.head == Some(section) {
+                g.dl.outline(r, t.focus_ring, s4, 1.0);
+            }
             if compact {
                 g.dl.rect(Rect::new(r.x + s8, (r.y + r.h / 2.0).round(), r.w - 2.0 * s8, 1.0), t.separator);
                 continue;
@@ -1579,7 +1681,7 @@ impl App {
                     g.dl.round_rect(row, super::widgets::faded(t.accent_fill, glow), s4);
                 }
             }
-            if focused && !sb.typing && sb.cursor == i && drop != Some(i) {
+            if focused && !sb.typing && sb.head.is_none() && sb.cursor == i && drop != Some(i) {
                 g.dl.outline(row, t.focus_ring, s4, 1.0);
             }
             let lit = glow >= 0.5 && drop != Some(i);

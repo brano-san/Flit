@@ -44,7 +44,7 @@ impl App {
                 let here = self.current_location().clone();
                 let sb = &mut self.nav.sidebar;
                 if let Some(i) = sb.items.iter().position(|it| it.loc == here) {
-                    sb.cursor = i;
+                    sb.point(i);
                 }
                 sb.cursor
             }

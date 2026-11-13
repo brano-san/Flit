@@ -157,7 +157,7 @@ fn search_menu_actions_use_the_result_not_the_background_folder() {
     let path = a.menu.iter().position(|c| matches!(c, Cmd::Search { action: "path", .. })).unwrap();
     a.search.focus = None;
     a.menu_command(path, t0());
-    assert!(a.drain_effects().any(|e| matches!(e, Effect::SetClipboard(s) if s == r"D:\Found\note.txt")));
+    assert!(a.drain_effects().any(|e| matches!(e, Effect::SetClipboard(s) if s == r#""D:\Found\note.txt""#)));
     let open = a.menu.iter().position(|c| matches!(c, Cmd::Search { action: "open", .. })).unwrap();
     a.menu_command(open, t0());
     assert!(a.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } if path.display() == r"D:\Found\note.txt")));

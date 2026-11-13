@@ -1,7 +1,7 @@
 use super::tab::TreeFold;
-use super::{App, Effect, LayoutMode, Tab};
+use super::{App, Effect, Focus, LayoutMode, Tab};
 use crate::hash::FxHashSet;
-use crate::input::Mods;
+use crate::input::{Key, Mods};
 use crate::provider::{GenToken, ProviderRequest, SnapshotSlot};
 use crate::render::Rect;
 use crate::view::{rel_path, Line};
@@ -20,6 +20,7 @@ pub(super) struct TreeState {
     pub open: FxHashSet<Vec<u8>>,
     pub loaded: FxHashSet<Vec<u8>>,
     pub probes: Vec<Probe>,
+    pub swallow: Option<char>,
 }
 
 impl TreeState {
@@ -199,13 +200,10 @@ impl App {
             (false, all) => {
                 if let Some(p) = self.parent_of(i) {
                     let before = self.shown_rows();
-                    if all {
-                        if let Some(rel) = self.rel_of(p) {
-                            let sep = self.tab().view.as_ref().map_or(b'\\', |v| v.separator());
-                            self.tab_mut().tree.close(&rel, sep, true);
-                        }
-                    } else if let Some(rel) = self.rel_of(p) {
-                        self.tab_mut().tree.open.remove(&rel);
+                    let rel = self.rel_of(p).filter(|_| all);
+                    if let Some(rel) = &rel {
+                        let sep = self.tab().view.as_ref().map_or(b'\\', |v| v.separator());
+                        self.tab_mut().tree.close(rel, sep, true);
                     }
                     if let Some(v) = &mut self.tab_mut().view {
                         v.clear_selection();
@@ -213,13 +211,47 @@ impl App {
                         v.focus = Some(p);
                         v.anchor = Some(p);
                     }
-                    self.shape_view();
-                    self.fold_tree(Some(p), before);
+                    if rel.is_some() {
+                        self.shape_view();
+                        self.fold_tree(Some(p), before);
+                    }
                     self.reveal_focus(false);
                 }
             }
         }
         true
+    }
+
+    pub(super) fn tree_numpad(&mut self, key: Key, m: Mods) -> bool {
+        if self.layout.mode != LayoutMode::Tree || self.focus != Focus::List || m.ctrl || m.alt {
+            return false;
+        }
+        let Some((i, dir)) = self.tab().view.as_ref().and_then(|v| v.focus.filter(|&i| v.is_visible(i)).map(|i| (i, v.listing().entries[i as usize].is_dir()))) else { return false };
+        let open = dir && self.is_open_in_tree(i);
+        let typed = match key {
+            Key::NumPlus if dir && !open => {
+                self.tree_open(false);
+                '+'
+            }
+            Key::NumMinus if open => {
+                self.tree_close(false);
+                '-'
+            }
+            Key::NumStar if dir => {
+                self.tree_open(true);
+                '*'
+            }
+            Key::NumPlus => '+',
+            Key::NumMinus => '-',
+            Key::NumStar => '*',
+            _ => return false,
+        };
+        self.tab_mut().tree.swallow = Some(typed);
+        true
+    }
+
+    pub(super) fn tree_swallows(&mut self, c: char) -> bool {
+        self.tab_mut().tree.swallow.take() == Some(c)
     }
 
     fn expand(&mut self, rel: Vec<u8>, all: bool) {

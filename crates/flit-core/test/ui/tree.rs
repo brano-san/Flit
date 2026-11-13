@@ -114,8 +114,42 @@ fn opening_a_folder_in_the_tree_lists_it_and_shows_its_children_under_it() {
     assert_eq!(rows(&app), ["alpha", "inner", "a.txt", "beta", "z.txt"], "children load once");
     focus(&mut app, "a.txt");
     key(&mut app, Key::Left, false);
-    assert_eq!(rows(&app), ["alpha", "beta", "z.txt"], "Left on a child closes its parent");
-    assert_eq!(app.tab().view.as_ref().unwrap().focus.map(|i| app.tab().view.as_ref().unwrap().listing().name(i).to_vec()), Some(b"alpha".to_vec()));
+    assert_eq!(rows(&app), ["alpha", "inner", "a.txt", "beta", "z.txt"], "Left on a child keeps its parent open");
+    assert_eq!(focused(&app), "alpha", "and moves to the parent");
+    key(&mut app, Key::Left, false);
+    assert_eq!(rows(&app), ["alpha", "beta", "z.txt"], "a second Left closes the parent");
+    focus(&mut app, "alpha");
+    key(&mut app, Key::Right, false);
+    focus(&mut app, "a.txt");
+    key(&mut app, Key::Left, true);
+    assert_eq!(rows(&app), ["alpha", "beta", "z.txt"], "Shift+Left on a child closes the parent with everything inside");
+    assert_eq!(focused(&app), "alpha");
+}
+
+fn focused(app: &App) -> String {
+    let v = app.tab().view.as_ref().unwrap();
+    v.focus.map(|i| String::from_utf8_lossy(v.listing().name(i)).into_owned()).unwrap_or_default()
+}
+
+#[test]
+fn numpad_plus_minus_and_star_expand_collapse_and_expand_all_without_typing() {
+    let mut app = tree_app();
+    focus(&mut app, "alpha");
+    key(&mut app, Key::NumPlus, false);
+    app.on_event(&Event::Char('+'), Instant::now());
+    answer_probes(&mut app, &[("alpha", &["inner", "a.txt"])]);
+    assert_eq!(rows(&app), ["alpha", "inner", "a.txt", "beta", "z.txt"]);
+    assert!(app.tab().filter.is_none(), "the typed plus does not start a filter");
+    key(&mut app, Key::NumMinus, false);
+    app.on_event(&Event::Char('-'), Instant::now());
+    assert_eq!(rows(&app), ["alpha", "beta", "z.txt"]);
+    key(&mut app, Key::NumStar, false);
+    app.on_event(&Event::Char('*'), Instant::now());
+    answer_probes(&mut app, &[("alpha\\inner", &["deep.txt"])]);
+    assert_eq!(rows(&app), ["alpha", "inner", "deep.txt", "a.txt", "beta", "z.txt"]);
+    assert!(app.tab().filter.is_none());
+    app.on_event(&Event::Char('-'), Instant::now());
+    assert_eq!(app.tab().filter.as_ref().map(|f| f.text().to_owned()).as_deref(), Some("-"), "only the character of the numpad key is swallowed, once");
 }
 
 #[test]

@@ -241,7 +241,7 @@ impl App {
                 self.focus = region;
                 self.kb = n;
                 if region == Focus::Sidebar {
-                    self.nav.sidebar.cursor = n;
+                    self.nav.sidebar.point(n);
                 }
             }
         }
