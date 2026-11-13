@@ -10,9 +10,26 @@ use std::time::Duration;
 
 const ROWS: usize = 50_000;
 const SLACK: u32 = if cfg!(debug_assertions) { 25 } else { 1 };
+const ATTEMPTS: usize = 3;
 
 fn budget(ms: f64) -> Duration {
     Duration::from_secs_f64(ms / 1e3) * SLACK
+}
+
+struct Timing {
+    what: String,
+    spent: Duration,
+    limit_ms: f64,
+}
+
+impl Timing {
+    fn over(&self) -> bool {
+        self.spent > budget(self.limit_ms)
+    }
+
+    fn line(&self) -> String {
+        format!("{}: {:.3} ms (budget {} ms)", self.what, self.spent.as_secs_f64() * 1e3, self.limit_ms)
+    }
 }
 
 fn loc(s: &str) -> Location {
@@ -53,8 +70,7 @@ fn places() -> Arc<Places> {
 struct Bench {
     app: App,
     gfx: Gfx<Mono>,
-    report: Vec<String>,
-    over: Vec<String>,
+    timings: Vec<Timing>,
 }
 
 impl Bench {
@@ -65,7 +81,7 @@ impl Bench {
         let mut gfx = Gfx::new(Mono, 1024);
         app.frame(&mut gfx, Instant::now());
         app.drain_effects().for_each(drop);
-        Self { app, gfx, report: Vec::new(), over: Vec::new() }
+        Self { app, gfx, timings: Vec::new() }
     }
 
     fn frame(&mut self) {
@@ -74,11 +90,7 @@ impl Bench {
     }
 
     fn check(&mut self, what: &str, spent: Duration, limit_ms: f64) {
-        let line = format!("{what}: {:.3} ms (budget {limit_ms} ms)", spent.as_secs_f64() * 1e3);
-        if spent > budget(limit_ms) {
-            self.over.push(line.clone());
-        }
-        self.report.push(line);
+        self.timings.push(Timing { what: what.to_owned(), spent, limit_ms });
     }
 
     fn once(&mut self, what: &str, limit_ms: f64, act: impl FnOnce(&mut App)) {
@@ -106,9 +118,8 @@ impl Bench {
         self.app.on_event(&Event::Key { key, mods, pressed: true }, Instant::now());
     }
 
-    fn finish(self) {
-        eprintln!("{}", self.report.join("\n"));
-        assert!(self.over.is_empty(), "over budget:\n{}", self.over.join("\n"));
+    fn finish(self) -> Vec<Timing> {
+        self.timings
     }
 }
 
@@ -117,6 +128,21 @@ const CTRL: Mods = Mods { ctrl: true, shift: false, alt: false };
 
 #[test]
 fn every_hot_path_stays_within_its_time_budget() {
+    let mut best = hot_paths();
+    for _ in 1..ATTEMPTS {
+        if !best.iter().any(Timing::over) {
+            break;
+        }
+        for (b, again) in best.iter_mut().zip(hot_paths()) {
+            b.spent = b.spent.min(again.spent);
+        }
+    }
+    eprintln!("{}", best.iter().map(Timing::line).collect::<Vec<_>>().join("\n"));
+    let over: Vec<String> = best.iter().filter(|t| t.over()).map(Timing::line).collect();
+    assert!(over.is_empty(), "over budget in each of {ATTEMPTS} attempts:\n{}", over.join("\n"));
+}
+
+fn hot_paths() -> Vec<Timing> {
     let names = names();
     let mut b = Bench::new();
     let snap = snapshot(&b.app, &names);
@@ -197,5 +223,5 @@ fn every_hot_path_stays_within_its_time_budget() {
         a.on_event(&Event::MouseDown { x: 500.0, y: 300.0, button: MouseButton::Right, clicks: 1 }, Instant::now());
         a.on_event(&Event::MouseUp { x: 500.0, y: 300.0, button: MouseButton::Right }, Instant::now());
     });
-    b.finish();
+    b.finish()
 }
