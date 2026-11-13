@@ -549,9 +549,6 @@ impl App {
                 _ => false,
             };
         self.ops.pending.push(Pending { id, tab, origin, then, ctl: ctl.clone(), provider: provider.clone(), optimistic_removal });
-        // Explorer removes a folder from its view as soon as deletion starts.
-        // Do the same here, so a long-running delete cannot be opened or
-        // started a second time from the still-visible source list.
         if optimistic_removal {
             let sources = match &op {
                 FileOp::Trash(items) | FileOp::Delete(items) => items,

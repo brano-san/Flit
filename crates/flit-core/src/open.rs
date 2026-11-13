@@ -157,9 +157,6 @@ pub fn resolve_for(raw: &[u8], cwd: Option<&[u8]>, shell_folder: &dyn Fn(&str) -
     path.and_then(|p| resolve_path(&p, cwd.and_then(FsPath::parse_bytes))).ok_or_else(|| ResolveError::Invalid(text.into_owned()))
 }
 
-/// Expands Windows-style `%NAME%` variables before a path is parsed.  Keeping
-/// this next to path resolution makes the address bar and command-line opens
-/// behave identically, while leaving unknown variables untouched.
 fn expand_environment(raw: &[u8]) -> Option<Vec<u8>> {
     let text = std::str::from_utf8(raw).ok()?;
     let mut out = String::with_capacity(text.len());
