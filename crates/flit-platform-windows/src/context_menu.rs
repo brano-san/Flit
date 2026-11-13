@@ -1,4 +1,6 @@
 use crate::err;
+use crate::volume::Outcome;
+use flit_core::i18n::S;
 use flit_core::input::Event;
 use flit_core::path::PathKind;
 use flit_core::ui::{MenuImage, MenuItem, ShellMenu, SHELL_VERBS};
@@ -11,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use windows::core::{w, Interface, PCSTR, PCWSTR, PSTR};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_CANCELLED, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{ClientToScreen, GetObjectW, BITMAP, HGDIOBJ};
 use windows::Win32::System::Com::IDataObject;
 use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL, THREAD_PRIORITY_NORMAL};
@@ -73,8 +75,11 @@ pub(crate) enum ShellUi {
     Properties(Vec<FsPath>),
     Drag(Vec<FsPath>),
     Verb(Vec<FsPath>, &'static CStr),
+    Label(FsPath, String),
     Done(Option<u64>, Event),
 }
+
+pub(crate) const SHARE_VERB: &CStr = c"Windows.ModernShare";
 
 enum Job {
     Menu { owner: isize, gen: u64, menu: ShellMenu, pt: POINT },
@@ -894,24 +899,54 @@ fn show(hwnd: HWND, m: &ShellMenu, send: &dyn Fn(Event)) {
     }
 }
 
+pub(crate) fn failure_text(what: S, e: &PlatformError) -> Option<String> {
+    (e.code != ERROR_CANCELLED.to_hresult().0 as i64).then(|| flit_core::tr_en!(what, error = e.message.trim_end()))
+}
+
+fn label(hwnd: HWND, drive: FsPath, label: String, send: &dyn Fn(Event)) {
+    match crate::volume::label(&drive, &label, crate::instance::elevated()) {
+        Ok(Outcome::Done) => send(Event::DevicesChanged),
+        Ok(Outcome::Elevate) => {
+            let owner = hwnd.0 as isize;
+            let spawned = std::thread::Builder::new().name("flit-volume-label".into()).spawn(move || {
+                crate::com_sta();
+                let ev = crate::volume::label_elevated(HWND(owner as _), &drive, &label);
+                deliver(owner, None, ev);
+            });
+            if let Err(e) = spawned {
+                send(Event::ShellError(crate::volume::failure(ERROR_ACCESS_DENIED)));
+                tracing::warn!("volume label thread: {e}");
+            }
+        }
+        Err(message) => send(Event::ShellError(message)),
+    }
+}
+
 pub(crate) fn run(hwnd: HWND, req: ShellUi, send: &dyn Fn(Event)) {
-    let result = match req {
+    let (result, what) = match req {
         ShellUi::Menu(m) => {
             show(hwnd, &m, send);
-            Ok(())
+            (Ok(()), None)
         }
-        ShellUi::Properties(paths) => properties(hwnd, &paths),
-        ShellUi::Drag(paths) => crate::dragdrop::start_drag(hwnd, &paths),
-        ShellUi::Verb(paths, verb) => invoke_verb(hwnd, &paths, verb),
+        ShellUi::Properties(paths) => (properties(hwnd, &paths), Some(S::ErrorsEnginePropertiesFailed)),
+        ShellUi::Drag(paths) => (crate::dragdrop::start_drag(hwnd, &paths), Some(S::ErrorsEngineDragFailed)),
+        ShellUi::Verb(paths, verb) => (invoke_verb(hwnd, &paths, verb), Some(if verb == SHARE_VERB { S::ErrorsEngineShareFailed } else { S::ErrorsEngineShellFailed })),
+        ShellUi::Label(drive, name) => {
+            label(hwnd, drive, name, send);
+            (Ok(()), None)
+        }
         ShellUi::Done(gen, ev) => {
             if gen.is_none_or(|g| g == CURRENT.load(Ordering::SeqCst)) {
                 send(ev);
             }
-            Ok(())
+            (Ok(()), None)
         }
     };
     if let Err(e) = result {
         tracing::warn!("shell: {e}");
+        if let Some(text) = what.and_then(|w| failure_text(w, &e)) {
+            send(Event::ShellError(text));
+        }
     }
 }
 

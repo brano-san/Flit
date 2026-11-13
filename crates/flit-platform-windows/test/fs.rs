@@ -25,7 +25,7 @@ fn cloud_placeholder_states_map_to_their_own_bits() {
     assert_eq!(map_attrs(placeholder | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS.0 | FILE_ATTRIBUTE_UNPINNED.0, CLOUD), attr::ONLINE_ONLY);
     assert_eq!(map_attrs(FILE_ATTRIBUTE_DIRECTORY.0 | FILE_ATTRIBUTE_REPARSE_POINT.0 | FILE_ATTRIBUTE_RECALL_ON_OPEN.0, CLOUD), attr::DIR | attr::ONLINE_ONLY);
     assert_eq!(map_attrs(placeholder | FILE_ATTRIBUTE_PINNED.0, CLOUD), attr::PINNED);
-    assert_eq!(map_attrs(FILE_ATTRIBUTE_OFFLINE.0 | FILE_ATTRIBUTE_ARCHIVE.0, 0), attr::OFFLINE);
+    assert_eq!(map_attrs(FILE_ATTRIBUTE_OFFLINE.0 | FILE_ATTRIBUTE_ARCHIVE.0, 0), attr::OFFLINE | attr::ARCHIVE_MARK);
     assert_eq!(map_attrs(placeholder, CLOUD), 0, "a hydrated, unpinned file is plainly local");
     assert_ne!(attr::NOT_LOCAL & attr::OFFLINE, 0);
     assert_eq!(attr::NOT_LOCAL & attr::PINNED, 0);
@@ -212,4 +212,11 @@ fn large_folders_listed_in_parallel_chunks_keep_every_entry_once() {
     let mut b = ListingBuilder::new(flit_core::sort::CaseMode::Insensitive, &mut stop);
     NtFs.read_dir(&dir, &mut b).unwrap();
     assert!(b.listing.len() < names.len(), "a stopped listing ends early");
+}
+
+#[test]
+fn compressed_encrypted_and_archive_attributes_are_kept_for_colour_and_the_attributes_column() {
+    assert_eq!(map_attrs(FILE_ATTRIBUTE_COMPRESSED.0, 0), attr::COMPRESSED);
+    assert_eq!(map_attrs(FILE_ATTRIBUTE_ENCRYPTED.0 | FILE_ATTRIBUTE_DIRECTORY.0, 0), attr::ENCRYPTED | attr::DIR);
+    assert_eq!(map_attrs(FILE_ATTRIBUTE_ARCHIVE.0 | FILE_ATTRIBUTE_READONLY.0, 0), attr::ARCHIVE_MARK | attr::READONLY);
 }

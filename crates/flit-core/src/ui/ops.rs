@@ -41,6 +41,7 @@ const MAX_NAME_UNITS: usize = 255;
 const RESERVED: [&str; 4] = ["CON", "PRN", "AUX", "NUL"];
 const BAD_CHARS: &str = r#"<>:"/\|?*"#;
 const WINDOWS_FS: [&str; 9] = ["vfat", "msdos", "exfat", "ntfs", "ntfs3", "fuseblk", "cifs", "smb3", "smbfs"];
+const WINDOWS_PROGRAMS: [&[u8]; 5] = [b"exe", b"com", b"bat", b"cmd", b"ps1"];
 const G_WARNING: &str = "\u{E7BA}";
 const HINT_GAP: f32 = 4.0;
 const HINT_PAD_X: f32 = 10.0;
@@ -140,6 +141,7 @@ struct Rename {
     batch: bool,
     confirmed: Option<String>,
     hint: Option<String>,
+    volume: Option<String>,
 }
 
 struct Retry {
@@ -992,9 +994,15 @@ impl App {
         self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch: Launch::Terminal { dirs, admin } } });
     }
 
+    pub(super) fn runs_in_terminal(&self, l: &crate::listing::Listing, i: u32) -> bool {
+        let e = &l.entries[i as usize];
+        let windows_program = !self.caps.unix_paths && !e.is_dir() && e.attrs & attr::STREAM == 0 && WINDOWS_PROGRAMS.iter().any(|x| l.ext(i).eq_ignore_ascii_case(x));
+        e.attrs & attr::EXEC != 0 || windows_program
+    }
+
     pub fn run_in_terminal(&mut self) {
         let t = self.tab();
-        let program = self.rename_target().filter(|&i| t.view.as_ref().is_some_and(|v| v.listing().entries[i as usize].attrs & attr::EXEC != 0));
+        let program = self.rename_target().filter(|&i| t.view.as_ref().is_some_and(|v| self.runs_in_terminal(v.listing(), i)));
         let Some(i) = program else { return self.status(S::ActionsStatusSelectProgram.t()) };
         match self.item_paths(&[i]) {
             Ok(mut p) => {
@@ -1263,13 +1271,32 @@ impl App {
     }
 
     pub fn rename_focused(&mut self) {
-        let Some(i) = self.rename_target() else { return };
+        let Some(i) = self.rename_target().or_else(|| self.labelled_drive()) else { return };
         self.ops.ids = 0;
         let batch = self.tab().view.as_ref().is_some_and(|v| v.selected_count() > 1 && v.is_selected(i));
         self.begin_rename(i, batch);
     }
 
+    pub(super) fn labelled_drive(&self) -> Option<u32> {
+        let v = self.tab().view.as_ref()?;
+        let i = v.focus.filter(|&f| v.is_visible(f)).or_else(|| if v.selected_count() == 1 { v.selected().next() } else { None })?;
+        self.drive_label(i).map(|_| i)
+    }
+
+    fn drive_label(&self, idx: u32) -> Option<String> {
+        let t = self.tab();
+        if self.caps.unix_paths || t.view_loc.path().kind() != PathKind::Computer {
+            return None;
+        }
+        let root = FsPath::parse_bytes(&[t.view.as_ref()?.listing().name(idx), b"\\"].concat())?;
+        self.nav.sidebar.places.drives.iter().find(|d| d.path == root)?.volume_label()
+    }
+
     fn begin_rename(&mut self, idx: u32, batch: bool) {
+        let volume = self.drive_label(idx);
+        if volume.is_none() && self.tab().view_loc.path().kind() == PathKind::Computer {
+            return;
+        }
         let t = &mut self.tabs[self.cur];
         let Some(v) = t.view.as_mut() else { return };
         if v.listing().entries[idx as usize].attrs & attr::STREAM != 0 {
@@ -1281,9 +1308,12 @@ impl App {
             return;
         };
         let mut edit = LineEdit::default();
-        edit.set(name);
+        edit.set(volume.as_deref().unwrap_or(name));
         edit.anchor = 0;
-        edit.caret = base_name_len(name, v.listing().entries[idx as usize].is_dir());
+        edit.caret = match &volume {
+            Some(label) => label.len(),
+            None => base_name_len(name, v.listing().entries[idx as usize].is_dir()),
+        };
         if !batch {
             v.clear_selection();
             v.set_selected(idx, true);
@@ -1294,7 +1324,7 @@ impl App {
         t.error = None;
         let tab = t.id;
         self.reveal_focus(false);
-        self.ops.rename = Some(Rename { tab, gen, idx, edit, scroll: 0.0, rect: Rect::default(), click: None, selecting: false, batch, confirmed: None, hint: None });
+        self.ops.rename = Some(Rename { tab, gen, idx, edit, scroll: 0.0, rect: Rect::default(), click: None, selecting: false, batch, confirmed: None, hint: None, volume });
         self.ops.slow = None;
         self.focus = Focus::List;
         self.dirty = true;
@@ -1406,6 +1436,13 @@ impl App {
         let t = self.tab();
         let Some(v) = t.view.as_ref().filter(|v| t.id == r.tab && v.snap().gen == r.gen) else { return true };
         let old = v.listing().name(r.idx).to_vec();
+        if let Some(volume) = r.volume.take() {
+            let drive = FsPath::parse_bytes(&[old.as_slice(), b"\\"].concat());
+            if let Some(drive) = drive.filter(|_| r.edit.text != volume) {
+                self.effects.push(Effect::SetVolumeLabel { drive, label: r.edit.text });
+            }
+            return true;
+        }
         let is_dir = v.listing().entries[r.idx as usize].is_dir();
         let name = match validate_name(&r.edit.text, windows) {
             Ok(n) => n,

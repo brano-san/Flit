@@ -619,6 +619,7 @@ impl<P: Platform> Handler<P> {
                 Effect::Layout(cmd) => self.layout_cmd(id, cmd),
                 Effect::Properties(paths) => window.properties(paths),
                 Effect::Share(paths) => window.share(paths),
+                Effect::SetVolumeLabel { drive, label } => window.set_volume_label(drive, label),
                 Effect::StartDrag(paths) => window.start_drag(paths),
                 Effect::Pinned(pinned) => {
                     for (_, st) in self.windows.iter_mut().filter(|(w, _)| **w != id) {

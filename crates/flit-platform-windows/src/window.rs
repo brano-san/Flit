@@ -403,7 +403,11 @@ impl Window for Win32Window {
     }
 
     fn share(&self, paths: Vec<FsPath>) {
-        crate::context_menu::request(self.hwnd(), ShellUi::Verb(paths, c"Windows.ModernShare"));
+        crate::context_menu::request(self.hwnd(), ShellUi::Verb(paths, crate::context_menu::SHARE_VERB));
+    }
+
+    fn set_volume_label(&self, drive: FsPath, label: String) {
+        crate::context_menu::request(self.hwnd(), ShellUi::Label(drive, label));
     }
 
     fn shell_pick(&self, cmd: Option<u32>) {

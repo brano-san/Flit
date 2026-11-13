@@ -2081,3 +2081,85 @@ fn copied_paths_are_separated_by_the_line_break_of_the_system() {
     assert!(app.run_action("item.copy_quoted_path", t0()));
     assert_eq!(copied(&mut app).as_deref(), Some("\"/home/u/a b.txt\"\n\"/home/u/c.txt\""));
 }
+
+fn this_pc_with_drives(names: &[&str]) -> App {
+    let mut app = App::new(Persisted { path: Location::computer(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 600), t0());
+    let t = app.tab();
+    let mut listing = Listing::default();
+    let mut keys = SortKeys::new(CaseMode::Insensitive);
+    for n in names {
+        let i = listing.push(n.as_bytes(), Meta { attrs: attr::DIR | attr::VOLUME, ..Default::default() });
+        keys.push(listing.name(i));
+    }
+    let mut order = Vec::new();
+    sort::sort(&listing, &keys, ViewSpec::default(), &mut order);
+    let snap = DirSnapshot { gen: t.gen, path: t.location().path().clone(), listing, keys, order, view: ViewSpec::default(), done: true, error: None, elapsed: Duration::ZERO };
+    t.slot.publish(Arc::new(snap));
+    app.poll();
+    app.drain_effects().for_each(drop);
+    let drives = vec![
+        Drive { label: "System (C:)".into(), ..drive_fs(r"C:\", "NTFS") },
+        Drive { label: "USB Drive (E:)".into(), kind: Some(S::SidebarDriveUsb), removable: true, ..drive_fs(r"E:\", "FAT32") },
+        Drive { label: "docs (nas) (Z:)".into(), remote: Some(r"\\nas\docs".into()), ..drive_fs(r"Z:\", "") },
+    ];
+    app.nav.sidebar.places = Arc::new(super::super::sidebar::Places { drives, ..Default::default() });
+    app
+}
+
+fn labels(app: &mut App) -> Vec<(FsPath, String)> {
+    app.drain_effects().filter_map(|e| if let Effect::SetVolumeLabel { drive, label } = e { Some((drive, label)) } else { None }).collect()
+}
+
+#[test]
+fn f2_on_a_drive_in_this_pc_edits_its_volume_label() {
+    let mut app = this_pc_with_drives(&["C:", "E:", "Z:", "Ubuntu"]);
+    select(&mut app, &["C:"]);
+    key(&mut app, Key::F(2), NO);
+    assert_eq!(app.rename_text(), Some("System"), "the edit starts from the label, not the drive letter");
+    key(&mut app, Key::End, NO);
+    typed(&mut app, " 2");
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(labels(&mut app), [(p(r"C:\"), "System 2".to_owned())]);
+    assert!(!app.is_renaming());
+    select(&mut app, &["E:"]);
+    key(&mut app, Key::F(2), NO);
+    assert_eq!(app.rename_text(), Some(""), "a drive without a label starts empty");
+    key(&mut app, Key::Enter, NO);
+    assert!(labels(&mut app).is_empty(), "an unchanged label is not written");
+    for other in ["Z:", "Ubuntu"] {
+        select(&mut app, &[other]);
+        key(&mut app, Key::F(2), NO);
+        assert!(!app.is_renaming(), "{other} has no label to edit");
+    }
+}
+
+#[test]
+fn renaming_a_drive_is_offered_in_its_menu_and_shell_failures_show_in_the_status_bar() {
+    let mut app = this_pc_with_drives(&["C:", "Z:"]);
+    select(&mut app, &["C:"]);
+    assert!(app.labelled_drive().is_some());
+    select(&mut app, &["Z:"]);
+    assert!(app.labelled_drive().is_none());
+    app.on_event(&Event::ShellError("Cannot open the Share window: Access is denied.".into()), t0());
+    assert_eq!(app.tab().error.as_deref(), Some("Cannot open the Share window: Access is denied."));
+}
+
+#[test]
+fn run_in_terminal_on_windows_takes_programs_and_scripts_by_extension() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("setup.exe", false), ("build.CMD", false), ("notes.txt", false), ("tools.exe", true)]);
+    let launched = |app: &mut App| app.drain_effects().find_map(|e| match e {
+        Effect::Provider { req: ProviderRequest::Launch { launch: Launch::RunInTerminal { program }, .. }, .. } => Some(program),
+        _ => None,
+    });
+    for (name, expected) in [("setup.exe", Some(p(r"C:\x\setup.exe"))), ("build.CMD", Some(p(r"C:\x\build.CMD"))), ("notes.txt", None), ("tools.exe", None)] {
+        select(&mut app, &[name]);
+        app.run_in_terminal();
+        assert_eq!(launched(&mut app), expected, "{name}");
+    }
+    assert!(app.caps.supports("file.run_in_terminal"));
+    app.caps.unix_paths = true;
+    select(&mut app, &["setup.exe"]);
+    app.run_in_terminal();
+    assert_eq!(launched(&mut app), None, "on Linux only the executable bit counts");
+}

@@ -308,6 +308,10 @@ pub fn restarted() -> bool {
     RESTARTED.load(Ordering::Acquire)
 }
 
+pub fn resume_session() {
+    RESTARTED.store(true, Ordering::Release);
+}
+
 pub fn relaunch_if_installed() {
     let Some(exe) = RELAUNCH.get() else { return };
     if let Err(e) = std::process::Command::new(exe).env(RESTARTED_FROM, std::process::id().to_string()).spawn() {

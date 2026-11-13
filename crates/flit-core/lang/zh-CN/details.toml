@@ -16,6 +16,7 @@ folder_usage = "文件夹占用"
 free = "可用空间"
 file_system = "文件系统"
 percent = "已用百分比"
+attributes = "属性"
 
 [type]
 drive = "驱动器"

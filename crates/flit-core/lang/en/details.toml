@@ -16,6 +16,7 @@ folder_usage = "Folder Usage"
 free = "Free Space"
 file_system = "File System"
 percent = "Percent Full"
+attributes = "Attributes"
 
 [type]
 drive = "Drive"

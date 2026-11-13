@@ -16,6 +16,7 @@ folder_usage = "Частка теки"
 free = "Вільно"
 file_system = "Файлова система"
 percent = "Заповнено"
+attributes = "Атрибути"
 
 [type]
 drive = "Диск"

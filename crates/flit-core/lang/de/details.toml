@@ -16,6 +16,7 @@ folder_usage = "Anteil am Ordner"
 free = "Freier Speicher"
 file_system = "Dateisystem"
 percent = "Belegt in %"
+attributes = "Attribute"
 
 [type]
 drive = "Laufwerk"

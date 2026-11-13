@@ -22,6 +22,9 @@ pub mod attr {
     pub const ONLINE_ONLY: u32 = 1 << 12;
     pub const PINNED: u32 = 1 << 13;
     pub const OFFLINE: u32 = 1 << 14;
+    pub const COMPRESSED: u32 = 1 << 15;
+    pub const ENCRYPTED: u32 = 1 << 16;
+    pub const ARCHIVE_MARK: u32 = 1 << 17;
     pub const NOT_LOCAL: u32 = ONLINE_ONLY | OFFLINE;
     pub const DELETED: u32 = 1 << 31;
 }

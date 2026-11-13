@@ -524,6 +524,8 @@ impl App {
             m.action("file.shortcut", S::MenuCreateShortcut.t());
             m.action("file.rename", S::MenuRename.t());
             m.action("item.trash", S::MenuDelete.t());
+        } else if count == 1 && self.labelled_drive().is_some() {
+            m.action("file.rename", S::MenuRename.t());
         }
         m.separator();
         if folders == count {
@@ -551,7 +553,7 @@ impl App {
             if folders > 0 {
                 m.action("app.terminal", S::MenuOpenInTerminal.t());
             }
-            if count == 1 && folders == 0 && self.rename_target().is_some_and(|i| v.listing().entries[i as usize].attrs & attr::EXEC != 0) {
+            if count == 1 && folders == 0 && self.rename_target().is_some_and(|i| self.runs_in_terminal(v.listing(), i)) {
                 m.action("file.run_in_terminal", S::MenuRunInTerminal.t());
             }
             if count == 1 && folders == 1 {

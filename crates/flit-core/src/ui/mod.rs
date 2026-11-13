@@ -217,6 +217,7 @@ pub enum Column {
     FileSystem,
     Percent,
     Files,
+    Attributes,
     GitStatus,
     GitMessage,
     GitAuthor,
@@ -265,6 +266,7 @@ impl Column {
             Column::Free => S::DetailsColumnFree,
             Column::FileSystem => S::DetailsColumnFileSystem,
             Column::Percent => S::DetailsColumnPercent,
+            Column::Attributes => S::DetailsColumnAttributes,
             Column::GitStatus => S::GitColumnStatus,
             Column::GitMessage => S::GitColumnMessage,
             Column::GitAuthor => S::GitColumnAuthor,
@@ -289,7 +291,7 @@ impl Column {
             Column::Free => SortField::Free,
             Column::FileSystem => SortField::FileSystem,
             Column::Percent => SortField::Percent,
-            Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => return None,
+            Column::Attributes | Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => return None,
         })
     }
 
@@ -374,6 +376,7 @@ pub enum Effect {
     Tags(TagRequest),
     Settings(SettingsCmd),
     Share(Vec<FsPath>),
+    SetVolumeLabel { drive: FsPath, label: String },
     Git(crate::git::GitRequest),
     ShellPick(Option<u32>),
     Layout(LayoutCmd),
@@ -1672,6 +1675,7 @@ impl App {
             }
             Event::CloseRequested => self.close_window(now),
             Event::ShellVerb(verb) => self.shell_verb(verb),
+            Event::ShellError(message) => self.status(message.as_str()),
             Event::MenuCommand(k) => self.menu_command(*k, now),
             Event::ShowMenu { .. } | Event::ShellItems { .. } => {}
             Event::DevicesChanged => {
@@ -2800,7 +2804,7 @@ impl App {
                     (true, true) => t.selection_text.alpha(0x99),
                     (true, false) => t.selection_text,
                     (false, true) => t.text_dim,
-                    (false, false) => t.text,
+                    (false, false) => t.name_ink(e.attrs),
                 };
                 if let Some((br, st)) = badge {
                     g.dl.round_rect(br, git::status_color(st), br.w / 2.0);

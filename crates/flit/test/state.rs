@@ -329,6 +329,36 @@ fn wide_len(s: &Saved) -> usize {
     postcard::to_stdvec(&WideRecord { view: wide(&p.view), defaults: wide(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| wide(v)).collect() }).unwrap().len() + 1
         + postcard::to_stdvec(&IntegrationRecord { git: p.prefs.git_integration, places: s.side.quick.places.clone(), places_hidden: s.side.quick.places_hidden.clone() }).unwrap().len()
         + 2
+        + attributes_len(s)
+}
+
+fn attributes_len(s: &Saved) -> usize {
+    let p = &s.persisted;
+    let folders = p.folders.entries();
+    postcard::to_stdvec(&AttributesRecord { view: attributed(&p.view), defaults: attributed(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| attributed(v)).collect() }).unwrap().len()
+}
+
+#[test]
+fn the_attributes_column_keeps_its_place_width_and_switch_and_older_files_hide_it() {
+    let mut persisted = Persisted { path: loc(r"D:\x"), ..Default::default() };
+    let kinds = [Column::Name, Column::Type, Column::Modified, Column::Size, Column::Attributes];
+    assert!(!persisted.view.columns.shown(Column::Attributes), "Explorer hides Attributes by default");
+    persisted.view.columns.toggle(Column::Attributes);
+    persisted.view.columns.set_width(Column::Attributes, 64.0);
+    persisted.view.columns.shift(Column::Attributes, &kinds, false);
+    persisted.view.columns.shift(Column::Attributes, &kinds, false);
+    let moved = persisted.view.columns.ordered(&kinds);
+    assert_eq!(moved[2], Column::Attributes);
+    let s = Saved::new(persisted, None);
+    let bytes = s.encode().unwrap();
+    let v = Saved::decode(&bytes).unwrap().sanitized().persisted.view;
+    assert!(v.columns.shown(Column::Attributes));
+    assert_eq!((v.columns.width(Column::Attributes), v.columns.ordered(&kinds)), (64.0, moved));
+    let older = Saved::decode(&bytes[..bytes.len() - attributes_len(&s)]).unwrap().sanitized().persisted.view;
+    assert!(!older.columns.shown(Column::Attributes));
+    assert_eq!(older.columns.ordered(&kinds).last(), Some(&Column::Attributes), "{:?}", older.columns.ordered(&kinds));
+    let (_, wide_order) = wide(&s.persisted.view);
+    assert!(!wide_order.contains(&(Column::Attributes as u8)), "older builds never see an id they do not know");
 }
 
 #[test]
@@ -342,7 +372,7 @@ fn folder_statistics_are_independent_and_migrate_the_old_switch() {
         let bytes = saved.encode().unwrap();
         let p = Saved::decode(&bytes).unwrap().persisted.prefs;
         assert_eq!((p.auto_sizes, p.count_folders, p.count_files), (mask & 1 != 0, mask & 2 != 0, mask & 4 != 0));
-        let legacy = Saved::decode(&bytes[..bytes.len() - 2]).unwrap().persisted.prefs;
+        let legacy = Saved::decode(&bytes[..bytes.len() - 2 - attributes_len(&saved)]).unwrap().persisted.prefs;
         assert_eq!((legacy.auto_sizes, legacy.count_folders, legacy.count_files), (mask & 1 != 0, mask & 1 != 0, mask & 1 != 0));
     }
 }
@@ -359,7 +389,7 @@ fn integration_and_places_roundtrip_without_changing_older_records() {
     assert!(restored.persisted.prefs.git_integration);
     assert_eq!(restored.side.quick, saved.side.quick);
     let len = postcard::to_stdvec(&IntegrationRecord { git: true, places: saved.side.quick.places.clone(), places_hidden: saved.side.quick.places_hidden.clone() }).unwrap().len();
-    let older = Saved::decode(&bytes[..bytes.len() - len - 2]).unwrap();
+    let older = Saved::decode(&bytes[..bytes.len() - len - 2 - attributes_len(&saved)]).unwrap();
     assert!(!older.persisted.prefs.git_integration);
     assert!(older.side.quick.places.is_empty());
     assert!(older.side.quick.show_paths);
@@ -435,7 +465,7 @@ fn the_files_column_shows_by_default_while_files_saved_from_now_on_keep_their_ch
     let chosen = Saved::decode(&bytes).unwrap().sanitized().persisted;
     assert!(!chosen.view.columns.shown(Column::Files), "a choice saved by this build stays");
     let added = postcard::to_stdvec(&IntegrationRecord { git: false, places: Vec::new(), places_hidden: Vec::new() }).unwrap().len();
-    let before = Saved::decode(&bytes[..bytes.len() - added - 3]).unwrap().sanitized().persisted;
+    let before = Saved::decode(&bytes[..bytes.len() - added - 3 - attributes_len(&s)]).unwrap().sanitized().persisted;
     assert!(before.view.columns.shown(Column::Files) && before.prefs.defaults.columns.shown(Column::Files), "a layout from before the split shows Files with Folders");
     let folder = before.folders.get(key).unwrap();
     assert!(!folder.columns.shown(Column::Folders) && !folder.columns.shown(Column::Files), "a folder that hid the counts keeps them hidden");

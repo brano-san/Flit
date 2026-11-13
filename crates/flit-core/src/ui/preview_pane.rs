@@ -1442,6 +1442,8 @@ impl App {
                 (attr::HIDDEN, S::PreviewAttrHidden),
                 (attr::SYSTEM, S::PreviewAttrSystem),
                 (attr::LINK, S::PreviewAttrLink),
+                (attr::COMPRESSED, S::PreviewAttrCompressed),
+                (attr::ENCRYPTED, S::PreviewAttrEncrypted),
                 (attr::ONLINE_ONLY, S::PreviewAttrOnlineOnly),
                 (attr::PINNED, S::PreviewAttrPinned),
                 (attr::OFFLINE, S::PreviewAttrOffline),

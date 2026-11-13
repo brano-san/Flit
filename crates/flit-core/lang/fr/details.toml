@@ -16,6 +16,7 @@ folder_usage = "Part du dossier"
 free = "Espace libre"
 file_system = "Système de fichiers"
 percent = "Pourcentage utilisé"
+attributes = "Attributs"
 
 [type]
 drive = "Lecteur"

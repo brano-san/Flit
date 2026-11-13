@@ -175,7 +175,7 @@ impl App {
                 }
                 let x = ir.right() + s8;
                 let baseline = (cell.y + (rh + m.ascent - m.descent) / 2.0).round();
-                let color = if e.attrs & attr::HIDDEN != 0 { th.text_dim } else { th.text };
+                let color = if e.attrs & attr::HIDDEN != 0 { th.text_dim } else { th.name_ink(e.attrs) };
                 let (shown, room) = (self.shown_name(listing, idx), cell.right() - s10 - x);
                 if g.measure(&shown, font) > room {
                     elided.push((i, row));

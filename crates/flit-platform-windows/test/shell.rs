@@ -245,3 +245,17 @@ fn desktop_ini_names_show_only_in_read_only_or_system_folders_and_resolve_resour
     unsafe { SetFileAttributesW(PCWSTR(wide.as_ptr()), FILE_ATTRIBUTE_NORMAL) }.unwrap();
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn run_in_terminal_starts_the_program_in_its_folder_and_keeps_the_console() {
+    let run = |path: &str, wt: Option<&str>| commands(&Launch::RunInTerminal { program: p(path) }, wt);
+    let console = Command { program: "cmd.exe".into(), args: r#"/k call "C:\my tools\build.cmd""#.into(), dir: Some(r"C:\my tools".into()), admin: false };
+    assert_eq!(run(r"C:\my tools\build.cmd", None), [console]);
+    let tab = Command { program: r"C:\wt.exe".into(), args: r#"new-tab -d "C:\my tools" cmd.exe /k call "C:\my tools\a\;b.exe""#.into(), dir: None, admin: false };
+    assert_eq!(run(r"C:\my tools\a;b.exe", Some(r"C:\wt.exe")), [tab]);
+    let script = Command { program: "powershell.exe".into(), args: r#"-NoLogo -NoExit -File "D:\s\setup.PS1""#.into(), dir: Some(r"D:\s".into()), admin: false };
+    assert_eq!(run(r"D:\s\setup.PS1", None), [script]);
+    let linux = run(r"\\wsl.localhost\Ubuntu\home\u\my tool", Some(r"C:\wt.exe"));
+    let expected = format!(r#"-d Ubuntu --cd /home/u --exec sh -c {} flit /home/u "/home/u/my tool""#, flit_core::cmdline::quote_windows(WSL_RUN_SCRIPT));
+    assert_eq!(linux, [Command { program: "wsl.exe".into(), args: expected, dir: None, admin: false }]);
+}

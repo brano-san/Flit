@@ -45,6 +45,7 @@ const SIZE_GROUPS: [S; 7] = [
     S::DetailsSizeGroupEmpty,
 ];
 const G_WARNING: &str = "\u{E7BA}";
+const NEVER_SHOWN_EXTENSIONS: [&[u8]; 2] = [b"lnk", b"url"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Columns {
@@ -55,7 +56,7 @@ pub struct Columns {
     #[serde(skip, default = "git_widths")]
     pub git_widths: [f32; 4],
     #[serde(skip, default = "extra_shown")]
-    pub extra: u8,
+    pub extra: u16,
     #[serde(skip, default = "extra_widths")]
     pub extra_widths: [f32; EXTRA],
     #[serde(skip, default = "column_order")]
@@ -63,12 +64,12 @@ pub struct Columns {
 }
 
 pub const GIT_WIDTHS: [f32; 4] = [100.0, 260.0, 140.0, 150.0];
-pub const EXTRA: usize = 8;
-pub const ORDERED: usize = 16;
+pub const EXTRA: usize = 9;
+pub const ORDERED: usize = 17;
 const FIRST_EXTRA: u8 = Column::Folders as u8;
-pub const EXTRA_WIDTHS: [f32; EXTRA] = [90.0, 150.0, 110.0, 110.0, 110.0, 90.0, 110.0, 90.0];
+pub const EXTRA_WIDTHS: [f32; EXTRA] = [90.0, 150.0, 110.0, 110.0, 110.0, 90.0, 110.0, 90.0, 90.0];
 const DEFAULT_HIDDEN: u8 = 1 << Column::Created as u8;
-const DEFAULT_EXTRA: u8 = 1 << (Column::Folders as u8 - FIRST_EXTRA) | 1 << (Column::Free as u8 - FIRST_EXTRA) | 1 << (Column::FileSystem as u8 - FIRST_EXTRA) | 1 << (Column::Percent as u8 - FIRST_EXTRA) | 1 << (Column::Files as u8 - FIRST_EXTRA);
+const DEFAULT_EXTRA: u16 = 1 << (Column::Folders as u8 - FIRST_EXTRA) | 1 << (Column::Free as u8 - FIRST_EXTRA) | 1 << (Column::FileSystem as u8 - FIRST_EXTRA) | 1 << (Column::Percent as u8 - FIRST_EXTRA) | 1 << (Column::Files as u8 - FIRST_EXTRA);
 const DEFAULT_WIDTHS: [f32; 7] = [0.0, 150.0, 140.0, 90.0, 220.0, 150.0, 150.0];
 pub const DEFAULT_ORDER: [Column; ORDERED] = [
     Column::Name,
@@ -87,6 +88,7 @@ pub const DEFAULT_ORDER: [Column; ORDERED] = [
     Column::Free,
     Column::Percent,
     Column::FileSystem,
+    Column::Attributes,
 ];
 const ALL_COLUMNS: [Column; ORDERED] = [
     Column::Name,
@@ -105,13 +107,14 @@ const ALL_COLUMNS: [Column; ORDERED] = [
     Column::FileSystem,
     Column::Percent,
     Column::Files,
+    Column::Attributes,
 ];
 
 fn git_widths() -> [f32; 4] {
     GIT_WIDTHS
 }
 
-fn extra_shown() -> u8 {
+fn extra_shown() -> u16 {
     DEFAULT_EXTRA
 }
 
@@ -568,6 +571,47 @@ fn bucket_label(s: &mut impl std::fmt::Write, table: &[S], bucket: u64) {
 
 const NO_ITEMS: &str = "--";
 const G_CALENDAR: &str = "\u{E787}";
+const ATTRIBUTE_LETTERS: [(u32, char); 6] = [(attr::READONLY, 'R'), (attr::HIDDEN, 'H'), (attr::SYSTEM, 'S'), (attr::ARCHIVE_MARK, 'A'), (attr::COMPRESSED, 'C'), (attr::ENCRYPTED, 'E')];
+const WINDOWS_COLUMNS: [Column; 12] = [
+    Column::Name,
+    Column::Type,
+    Column::Modified,
+    Column::Folders,
+    Column::Files,
+    Column::Size,
+    Column::Volume,
+    Column::Created,
+    Column::Accessed,
+    Column::FolderUsage,
+    Column::Tag,
+    Column::Attributes,
+];
+const WINDOWS_REPO_COLUMNS: [Column; 16] = [
+    Column::Name,
+    Column::Type,
+    Column::Modified,
+    Column::Folders,
+    Column::Files,
+    Column::Size,
+    Column::Volume,
+    Column::Created,
+    Column::Accessed,
+    Column::FolderUsage,
+    Column::Tag,
+    Column::Attributes,
+    Column::GitStatus,
+    Column::GitMessage,
+    Column::GitAuthor,
+    Column::GitDate,
+];
+
+pub(super) fn attribute_letters(s: &mut impl std::fmt::Write, attrs: u32) {
+    for (bit, letter) in ATTRIBUTE_LETTERS {
+        if attrs & bit != 0 {
+            let _ = s.write_char(letter);
+        }
+    }
+}
 
 fn percent_text(s: &mut impl std::fmt::Write, part: Option<u64>, whole: u64) {
     if let (Some(part), true) = (part, whole > 0) {
@@ -596,9 +640,11 @@ impl App {
         } else if t.view_loc.path().kind() == PathKind::Computer {
             &COMPUTER_COLUMNS
         } else if t.git.as_ref().is_some_and(|g| g.root.is_some()) {
-            &REPO_COLUMNS
-        } else {
+            if self.caps.unix_paths { &REPO_COLUMNS } else { &WINDOWS_REPO_COLUMNS }
+        } else if self.caps.unix_paths {
             &COLUMNS
+        } else {
+            &WINDOWS_COLUMNS
         }
     }
 
@@ -886,10 +932,15 @@ impl App {
         }
         let n = l.name(i);
         let ext = l.entries[i as usize].ext_len as usize;
-        if self.prefs.show_extensions || ext == 0 || ext + 1 >= n.len() {
+        let shown = self.prefs.show_extensions && !self.never_shows_extension(l, i);
+        if shown || ext == 0 || ext + 1 >= n.len() {
             return name::display(n);
         }
         name::display(&n[..n.len() - ext - 1])
+    }
+
+    fn never_shows_extension(&self, l: &Listing, i: u32) -> bool {
+        !self.caps.unix_paths && !l.entries[i as usize].is_dir() && NEVER_SHOWN_EXTENSIONS.iter().any(|e| l.ext(i).eq_ignore_ascii_case(e))
     }
 
     pub(super) fn type_text<'a>(&self, arena: &'a Bump, l: &Listing, i: u32) -> &'a str {
@@ -962,6 +1013,7 @@ impl App {
                 }
             }
             Column::FileSystem => s.push_str(&name::display(sort::file_system(l, i))),
+            Column::Attributes => attribute_letters(&mut s, e.attrs),
         }
         s.into_bump_str()
     }

@@ -7,6 +7,7 @@ use windows::Win32::Foundation::{CloseHandle, GENERIC_WRITE, HANDLE, HMODULE};
 use windows::Win32::Storage::FileSystem::{CreateFileW, WriteFile, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_NONE};
 use windows::Win32::System::Diagnostics::Debug::{SetUnhandledExceptionFilter, EXCEPTION_POINTERS};
 use windows::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleExW, GetProcAddress, LoadLibraryExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, LOAD_LIBRARY_SEARCH_SYSTEM32};
+use windows::Win32::System::Recovery::{RegisterApplicationRestart, RESTART_NO_CRASH, RESTART_NO_HANG};
 use windows::Win32::System::SystemInformation::GetSystemTime;
 use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId};
 
@@ -42,6 +43,13 @@ pub(crate) fn rearm() {
         unsafe {
             SetUnhandledExceptionFilter(Some(filter));
         }
+    }
+}
+
+pub fn register_restart(arg: &str) {
+    let line: Vec<u16> = arg.encode_utf16().chain(Some(0)).collect();
+    if let Err(e) = unsafe { RegisterApplicationRestart(PCWSTR(line.as_ptr()), RESTART_NO_CRASH | RESTART_NO_HANG) } {
+        tracing::info!("cannot register for a restart after Windows updates: {e}");
     }
 }
 

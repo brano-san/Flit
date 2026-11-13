@@ -588,3 +588,20 @@ fn print_the_shell_menu_of_flit_menu_probe() {
         let _ = DestroyMenu(hmenu);
     }
 }
+
+#[test]
+fn share_properties_and_drag_failures_reach_the_status_bar_and_cancels_stay_quiet() {
+    let _g = serial();
+    crate::com_sta();
+    let dir = TempDir::new("failures");
+    let missing = dir.path("gone.txt");
+    let seen = std::cell::RefCell::new(Vec::new());
+    let send = |ev: Event| seen.borrow_mut().push(ev);
+    run(HWND::default(), ShellUi::Verb(vec![missing.clone()], SHARE_VERB), &send);
+    run(HWND::default(), ShellUi::Verb(vec![missing], c"cut"), &send);
+    let seen = seen.borrow();
+    assert!(matches!(&seen[..], [Event::ShellError(a), Event::ShellError(b)] if a.starts_with("Cannot open the Share window: ") && b.starts_with("The Windows shell cannot run the command: ")), "{seen:?}");
+    let cancelled = PlatformError::new(ERROR_CANCELLED.to_hresult().0 as i64, "cancelled");
+    assert_eq!(failure_text(S::ErrorsEngineDragFailed, &cancelled), None);
+    assert_eq!(failure_text(S::ErrorsEngineDragFailed, &PlatformError::new(5, "Access is denied.\r\n")).as_deref(), Some("Cannot start dragging: Access is denied."));
+}

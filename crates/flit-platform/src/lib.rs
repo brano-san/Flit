@@ -132,6 +132,7 @@ pub trait Window {
     fn set_compact(&self, _on: Option<bool>) {}
     fn host(&self, _cmd: HostCmd) {}
     fn share(&self, _paths: Vec<FsPath>) {}
+    fn set_volume_label(&self, _drive: FsPath, _label: String) {}
     fn shell_pick(&self, _cmd: Option<u32>) {}
     fn shell_prefetch(&self, _menu: Option<ShellMenu>) {}
     fn shell_warm(&self, _menus: Vec<ShellMenu>) {}

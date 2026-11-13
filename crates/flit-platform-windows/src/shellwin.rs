@@ -10,13 +10,13 @@ use windows::core::{BSTR, GUID, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{DISP_E_BADINDEX, E_FAIL, E_INVALIDARG, E_NOINTERFACE, E_NOTIMPL, HWND, LPARAM, LRESULT, POINT, RECT, SHANDLE_PTR, S_FALSE, S_OK, VARIANT_BOOL, VARIANT_FALSE, VARIANT_TRUE, WPARAM};
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, IDispatch, IDispatch_Impl, IServiceProvider, IServiceProvider_Impl, IStream, ITypeInfo, CLSCTX_ALL, COINIT_MULTITHREADED, DISPATCH_FLAGS, DISPPARAMS, EXCEPINFO};
 use windows::Win32::System::Ole::{DispGetIDsOfNames, DispInvoke, IEnumVARIANT, IEnumVARIANT_Impl, IOleWindow_Impl, LoadRegTypeLib, OLECMDEXECOPT, OLECMDF, OLECMDID, OLEMENUGROUPWIDTHS, READYSTATE, READYSTATE_COMPLETE};
-use windows::Win32::System::Variant::{InitVariantFromBuffer, VARIANT};
+use windows::Win32::System::Variant::{InitVariantFromBuffer, VariantGetElementCount, VariantToBuffer, VariantToInt32, VARENUM, VARIANT, VT_ARRAY, VT_BSTR, VT_BYREF, VT_I2, VT_I4, VT_INT, VT_UI1, VT_UI2, VT_UI4, VT_UINT, VT_VARIANT};
 use windows::Win32::UI::Controls::{LPFNSVADDPROPSHEETPAGE, TBBUTTON};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
     Folder, FolderItem, FolderItems, FolderItems_Impl, IShellDispatch, IShellFolderViewDual, IShellFolderViewDual_Impl, Shell, ILClone, ILCombine, ILCreateFromPathW, ILFindLastID, ILFree, ILGetSize, IFolderView, IFolderView_Impl, IShellBrowser, IShellBrowser_Impl, IShellItem, IShellItemArray, IShellView, IShellView_Impl, IShellWindows, IWebBrowser2, IWebBrowser2_Impl, IWebBrowserApp_Impl,
     IWebBrowser_Impl, SHCreateItemFromIDList, SHCreateShellItemArrayFromIDLists, SHGetNameFromIDList, ShellWindows, BHID_DataObject, BHID_SFObject, FOLDERSETTINGS, FVM_DETAILS, SIGDN, SIGDN_FILESYSPATH, SIGDN_NORMALDISPLAY, SIGDN_URL, SVGIO_ALLVIEW, SVGIO_SELECTION,
-    SVGIO_TYPE_MASK, SVSI_SELECT, SWC_BROWSER, _SVGIO,
+    SVGIO_TYPE_MASK, SVSI_SELECT, SWC_BROWSER, _SVGIO, ILRemoveLastID, SHGetFolderLocation, SIGDN_DESKTOPABSOLUTEPARSING, SBSP_NAVIGATEBACK, SBSP_NAVIGATEFORWARD, SBSP_NEWBROWSER, SBSP_PARENT, SBSP_RELATIVE, navOpenInBackgroundTab, navOpenInNewTab, navOpenInNewWindow,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, GetWindowThreadProcessId, HMENU, MSG};
 use windows_core::{implement, ComObject, IUnknown, IUnknownImpl, Interface, Ref};
@@ -222,6 +222,59 @@ fn pidls(paths: &[Vec<u16>]) -> Vec<Vec<u8>> {
     paths.iter().filter_map(|p| parse(p)).collect()
 }
 
+fn deliver(open: Open) -> windows::core::Result<()> {
+    let Some((opens, wake)) = DELIVERY.get() else { return Err(E_FAIL.into()) };
+    if !lock(opens).as_ref().is_some_and(|tx| tx.send(open).is_ok()) {
+        return Err(E_FAIL.into());
+    }
+    wake();
+    Ok(())
+}
+
+pub(crate) fn pidl_name(pidl: *const ITEMIDLIST) -> Option<String> {
+    if pidl.is_null() {
+        return None;
+    }
+    let name = unsafe { SHGetNameFromIDList(pidl, SIGDN_DESKTOPABSOLUTEPARSING) }.ok()?;
+    let wide = unsafe { take_pwstr(name) }?;
+    Some(String::from_utf16_lossy(wide.strip_suffix(&[0]).unwrap_or(&wide))).filter(|n| !n.is_empty())
+}
+
+fn owned_pidl_name(pidl: *mut ITEMIDLIST) -> Option<String> {
+    let name = pidl_name(pidl);
+    if !pidl.is_null() {
+        unsafe { ILFree(Some(pidl)) };
+    }
+    name
+}
+
+pub(crate) fn navigation_target(url: &VARIANT) -> Option<String> {
+    match url.vt() {
+        v if v == VARENUM(VT_BYREF.0 | VT_VARIANT.0) => navigation_target(unsafe { url.Anonymous.Anonymous.Anonymous.pvarVal.as_ref()? }),
+        VT_BSTR => BSTR::try_from(url).ok().map(|s| s.to_string()).filter(|s| !s.is_empty()),
+        v if v == VARENUM(VT_ARRAY.0 | VT_UI1.0) => {
+            let len = unsafe { VariantGetElementCount(url) };
+            let mut pidl = vec![0u8; len as usize + 2];
+            unsafe { VariantToBuffer(url, pidl.as_mut_ptr().cast(), len) }.ok()?;
+            pidl_name(pidl.as_ptr().cast())
+        }
+        VT_I2 | VT_I4 | VT_INT | VT_UI2 | VT_UI4 | VT_UINT => {
+            let csidl = unsafe { VariantToInt32(url) }.ok()?;
+            owned_pidl_name(unsafe { SHGetFolderLocation(None, csidl, None, 0) }.ok()?)
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn navigation_window(flags: Option<&VARIANT>) -> OpenTarget {
+    let flags = flags.filter(|f| !f.is_empty()).and_then(|f| unsafe { VariantToInt32(f) }.ok()).unwrap_or(0);
+    match () {
+        _ if flags & navOpenInNewWindow.0 != 0 => OpenTarget::NewWindow,
+        _ if flags & (navOpenInNewTab.0 | navOpenInBackgroundTab.0) != 0 => OpenTarget::NewTab,
+        _ => OpenTarget::CurrentTab,
+    }
+}
+
 #[implement(IWebBrowser2, IServiceProvider, IShellBrowser, IShellView, IFolderView)]
 struct Browser {
     hwnd: isize,
@@ -290,11 +343,28 @@ impl Browser_Impl {
     }
 
     fn select_path(&self, path: FsPath) {
-        let Some((opens, wake)) = DELIVERY.get() else { return };
-        let open = Open { select: vec![path.as_bytes().to_vec()], target: OpenTarget::CurrentTab, ..Default::default() };
-        if lock(opens).as_ref().is_some_and(|tx| tx.send(open).is_ok()) {
-            wake();
+        let _ = deliver(Open { select: vec![path.as_bytes().to_vec()], target: OpenTarget::CurrentTab, ..Default::default() });
+    }
+
+    fn navigate(&self, target: Option<String>, window: OpenTarget) -> windows::core::Result<()> {
+        let target = target.ok_or(windows::core::Error::from(E_INVALIDARG))?;
+        deliver(Open { paths: vec![target.into_bytes()], target: window, ..Default::default() })
+    }
+
+    fn browse_target(&self, pidl: *const ITEMIDLIST, flags: u32) -> Option<String> {
+        let folder = lock(&self.folder).clone();
+        if flags & SBSP_PARENT != 0 {
+            let parent = unsafe { ILClone(folder.as_ptr().cast()) };
+            if !parent.is_null() && !unsafe { ILRemoveLastID(Some(parent)) }.as_bool() {
+                unsafe { ILFree(Some(parent)) };
+                return None;
+            }
+            return owned_pidl_name(parent);
         }
+        if flags & SBSP_RELATIVE != 0 {
+            return owned_pidl_name(unsafe { ILCombine(Some(folder.as_ptr().cast()), Some(pidl)) });
+        }
+        pidl_name(pidl)
     }
 }
 
@@ -421,8 +491,12 @@ impl IShellBrowser_Impl for Browser_Impl {
     fn TranslateAcceleratorSB(&self, _msg: *const MSG, _id: u16) -> windows::core::Result<()> {
         Err(S_FALSE.into())
     }
-    fn BrowseObject(&self, _pidl: *const ITEMIDLIST, _flags: u32) -> windows::core::Result<()> {
-        unsupported()
+    fn BrowseObject(&self, pidl: *const ITEMIDLIST, flags: u32) -> windows::core::Result<()> {
+        if flags & (SBSP_NAVIGATEBACK | SBSP_NAVIGATEFORWARD) != 0 {
+            return unsupported();
+        }
+        let window = if flags & SBSP_NEWBROWSER != 0 { OpenTarget::NewWindow } else { OpenTarget::CurrentTab };
+        self.navigate(self.browse_target(pidl, flags), window)
     }
     fn GetViewStateStream(&self, _mode: u32) -> windows::core::Result<IStream> {
         unsupported()
@@ -669,8 +743,8 @@ impl IWebBrowser_Impl for Browser_Impl {
     fn GoSearch(&self) -> windows::core::Result<()> {
         unsupported()
     }
-    fn Navigate(&self, _url: &BSTR, _flags: *const VARIANT, _frame: *const VARIANT, _post: *const VARIANT, _headers: *const VARIANT) -> windows::core::Result<()> {
-        unsupported()
+    fn Navigate(&self, url: &BSTR, flags: *const VARIANT, _frame: *const VARIANT, _post: *const VARIANT, _headers: *const VARIANT) -> windows::core::Result<()> {
+        self.navigate(Some(url.to_string()).filter(|u| !u.is_empty()), navigation_window(unsafe { flags.as_ref() }))
     }
     fn Refresh(&self) -> windows::core::Result<()> {
         Ok(())
@@ -801,8 +875,8 @@ impl IWebBrowserApp_Impl for Browser_Impl {
 }
 
 impl IWebBrowser2_Impl for Browser_Impl {
-    fn Navigate2(&self, _url: *const VARIANT, _flags: *const VARIANT, _frame: *const VARIANT, _post: *const VARIANT, _headers: *const VARIANT) -> windows::core::Result<()> {
-        unsupported()
+    fn Navigate2(&self, url: *const VARIANT, flags: *const VARIANT, _frame: *const VARIANT, _post: *const VARIANT, _headers: *const VARIANT) -> windows::core::Result<()> {
+        self.navigate(unsafe { url.as_ref() }.and_then(navigation_target), navigation_window(unsafe { flags.as_ref() }))
     }
     fn QueryStatusWB(&self, _cmd: OLECMDID) -> windows::core::Result<OLECMDF> {
         unsupported()

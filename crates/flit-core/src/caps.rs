@@ -18,7 +18,7 @@ pub const WINDOWS_ONLY_ACTIONS: &[&str] = &[
     "nav.network",
 ];
 
-pub const UNIX_ONLY_ACTIONS: &[&str] = &["drive.connect_server", "file.run_in_terminal"];
+pub const UNIX_ONLY_ACTIONS: &[&str] = &["drive.connect_server"];
 
 pub fn is_builtin_archive_action(action: &str) -> bool {
     action.starts_with("archive.") || action == "menu.extract"

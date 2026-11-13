@@ -1,4 +1,5 @@
 use crate::i18n::S;
+use crate::listing::attr;
 use crate::render::Color;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -30,6 +31,8 @@ pub struct Theme {
     pub accent_fill: Color,
     pub teal: Color,
     pub destructive: Color,
+    pub compressed: Color,
+    pub encrypted: Color,
 }
 
 pub const LIGHT: Theme = Theme {
@@ -60,6 +63,8 @@ pub const LIGHT: Theme = Theme {
     accent_fill: Color::rgb(0x005FB8),
     teal: Color::rgb(0x8FD3CF),
     destructive: Color::rgb(0xC9555A),
+    compressed: Color::rgb(0x0037DA),
+    encrypted: Color::rgb(0x107C10),
 };
 
 pub const DARK: Theme = Theme {
@@ -90,10 +95,22 @@ pub const DARK: Theme = Theme {
     accent_fill: Color::rgb(0x2D6BD3),
     teal: Color::rgb(0x2B6E6B),
     destructive: Color::rgb(0x9E3B3F),
+    compressed: Color::rgb(0x6CB8FF),
+    encrypted: Color::rgb(0x6CCB5F),
 };
 
 pub const MIN_TEXT_CONTRAST: f32 = 4.5;
 pub const MIN_ACCENT_CONTRAST: f32 = 3.0;
+
+impl Theme {
+    pub fn name_ink(&self, attrs: u32) -> Color {
+        match () {
+            _ if attrs & attr::ENCRYPTED != 0 => self.encrypted,
+            _ if attrs & attr::COMPRESSED != 0 => self.compressed,
+            _ => self.text,
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Mode {
@@ -269,6 +286,8 @@ pub fn high_contrast(c: &SystemColors) -> Theme {
         accent_fill: c.highlight,
         teal: c.highlight,
         destructive: c.highlight,
+        compressed: c.window_text,
+        encrypted: c.window_text,
     }
 }
 
@@ -291,6 +310,8 @@ pub fn derive(bg: Color) -> Theme {
         focus_ring: accent.alpha(alpha(base.focus_ring)),
         text_selection: accent.alpha(alpha(base.text_selection)),
         error: readable(base.error, chrome, pole, MIN_TEXT_CONTRAST),
+        compressed: readable(base.compressed, bg, pole, MIN_TEXT_CONTRAST),
+        encrypted: readable(base.encrypted, bg, pole, MIN_TEXT_CONTRAST),
         popup: mix(bg, WHITE, if dark { 0.06 } else { 0.7 }),
         ..base
     }

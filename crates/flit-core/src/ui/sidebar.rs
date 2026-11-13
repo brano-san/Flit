@@ -155,6 +155,18 @@ impl Drive {
         self.unmounted && self.remote.is_some()
     }
 
+    pub fn volume_label(&self) -> Option<String> {
+        if self.remote.is_some() || self.unmounted || self.path.kind() != PathKind::Drive || !self.path.is_root() {
+            return None;
+        }
+        if self.kind.is_some() {
+            return Some(String::new());
+        }
+        let letter = char::from(*self.path.as_bytes().first()?);
+        let suffix = crate::tr_en!(S::SidebarDriveLabel, name = "", letter = letter);
+        Some(self.label.strip_suffix(suffix.as_str()).unwrap_or(&self.label).to_owned())
+    }
+
     fn glyph(&self) -> &'static str {
         match () {
             _ if self.path.is_network() => G_NETWORK,

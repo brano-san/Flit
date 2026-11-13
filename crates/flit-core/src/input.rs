@@ -103,6 +103,7 @@ pub enum Event {
     DroppedFiles(Vec<FsPath>),
     CloseRequested,
     ShellVerb(String),
+    ShellError(String),
     MenuCommand(usize),
     ShowMenu { items: Vec<crate::ui::MenuItem>, x: f32, y: f32, launches: Vec<crate::provider::Launch>, kind: crate::ui::MenuKind, shell: Vec<u32>, pending: bool },
     ShellItems { items: Vec<crate::ui::MenuItem>, shell: Vec<u32> },

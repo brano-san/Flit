@@ -1,5 +1,6 @@
 use crate::fileops::{is_dir, std_path};
 use crate::{com_sta, err};
+use flit_core::cmdline::quote_windows;
 use flit_core::desktop_ini::DesktopIni;
 use flit_core::preview::PropGroup;
 use flit_core::ui::{Bitmap, IconKind, IconRequest};
@@ -372,6 +373,8 @@ impl Shell for ShellCom {
     }
 }
 
+const WSL_RUN_SCRIPT: &str = r#"cd -- "$1" || exit; "$2"; echo; exec "${SHELL:-/bin/sh}""#;
+
 #[derive(Debug, PartialEq)]
 pub(crate) struct Command {
     pub program: String,
@@ -390,6 +393,28 @@ fn quote_path(s: &str) -> String {
 
 fn wsl_args(distro: &str, path: &str) -> String {
     format!("-d {} --cd {}", quote_path(distro), quote_path(path))
+}
+
+fn run_in_terminal(program: &FsPath, terminal: Option<&str>) -> Option<Command> {
+    let dir = program.parent()?;
+    if let (Location::Wsl { distro, path }, Location::Wsl { path: folder, .. }) = (Location::from_local(program.clone()), Location::from_local(dir.clone())) {
+        let (path, folder) = (path.display().into_owned(), folder.display().into_owned());
+        let args = format!("{} --exec sh -c {} flit {} {}", wsl_args(&distro, &folder), quote_windows(WSL_RUN_SCRIPT), quote_windows(&folder), quote_windows(&path));
+        return Some(Command { program: "wsl.exe".into(), args, dir: None, admin: false });
+    }
+    let (path, folder) = (program.display().into_owned(), dir.display().into_owned());
+    let script = program.as_bytes().rsplit(|&b| b == b'.').next().is_some_and(|ext| ext.eq_ignore_ascii_case(b"ps1"));
+    let line = match script {
+        true => format!("powershell.exe -NoLogo -NoExit -File \"{path}\""),
+        false => format!("cmd.exe /k call \"{path}\""),
+    };
+    Some(match terminal {
+        Some(wt) => Command { program: wt.to_owned(), args: format!("new-tab -d {} {}", quote_path(&folder.replace(';', r"\;")), line.replace(';', r"\;")), dir: None, admin: false },
+        None => {
+            let (program, args) = line.split_once(' ').unwrap_or((&line, ""));
+            Command { program: program.into(), args: args.into(), dir: Some(folder), admin: false }
+        }
+    })
 }
 
 pub(crate) fn commands(launch: &Launch, terminal: Option<&str>) -> Vec<Command> {
@@ -416,7 +441,8 @@ pub(crate) fn commands(launch: &Launch, terminal: Option<&str>) -> Vec<Command> 
                 })
                 .collect(),
         },
-        Launch::RunInTerminal { .. } | Launch::Eject(_) | Launch::Mount(_) | Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) | Launch::Reveal { .. } | Launch::ChooseApp { .. } | Launch::SetDefault { .. } | Launch::Custom { .. } => Vec::new(),
+        Launch::RunInTerminal { program } => run_in_terminal(program, terminal).into_iter().collect(),
+        Launch::Eject(_) | Launch::Mount(_) | Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) | Launch::Reveal { .. } | Launch::ChooseApp { .. } | Launch::SetDefault { .. } | Launch::Custom { .. } => Vec::new(),
     }
 }
 

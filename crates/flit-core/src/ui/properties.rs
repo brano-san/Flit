@@ -49,7 +49,14 @@ pub(super) fn contains_text(files: u64, folders: u64) -> String {
 }
 
 pub(super) fn attributes_text(attrs: u32) -> String {
-    let names = [(attr::READONLY, S::PropertiesReadOnly), (attr::HIDDEN, S::PropertiesHidden), (attr::SYSTEM, S::PropertiesSystem), (attr::LINK, S::PropertiesLink)];
+    let names = [
+        (attr::READONLY, S::PropertiesReadOnly),
+        (attr::HIDDEN, S::PropertiesHidden),
+        (attr::SYSTEM, S::PropertiesSystem),
+        (attr::LINK, S::PropertiesLink),
+        (attr::COMPRESSED, S::PropertiesCompressed),
+        (attr::ENCRYPTED, S::PropertiesEncrypted),
+    ];
     names.iter().filter(|(bit, _)| attrs & bit != 0).map(|(_, s)| s.t()).collect::<Vec<_>>().join(", ")
 }
 

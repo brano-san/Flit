@@ -61,6 +61,7 @@ features = [
     "Win32_System_Pipes",
     "Win32_System_Power",
     "Win32_System_ProcessStatus",
+    "Win32_System_Recovery",
     "Win32_System_Registry",
     "Win32_System_RemoteDesktop",
     "Win32_System_Search",

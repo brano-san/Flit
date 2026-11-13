@@ -217,6 +217,7 @@ fn the_header_menu_shows_hides_and_fits_columns_and_the_bin_keeps_its_own() {
         ("Volume Usage", false),
         ("Folder Usage", false),
         ("Tags", false),
+        ("Attributes", false),
         ("Always size columns to fit", false),
     ];
     assert_eq!(commands(&menu.menu), want.map(|(l, c)| (l.to_owned(), c)));
@@ -855,4 +856,53 @@ fn folder_cells_spin_while_their_sizes_load_and_settle_when_they_arrive() {
     assert!(!app.tab().sizing(src));
     app.frame(&mut g, Instant::now());
     assert!(dots(&g) + 10 <= spinning, "known sizes replace the spinner");
+}
+
+#[test]
+fn shortcuts_and_internet_links_hide_their_extension_like_explorer() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("Docs.lnk", 1, false), ("Site.URL", 1, false), ("notes.txt", 1, false), ("folder.lnk", 0, true)]);
+    let shown = |app: &App| {
+        let v = app.tab().view.as_ref().unwrap();
+        let mut s: Vec<String> = v.rows().iter().map(|&i| app.shown_name(v.listing(), i).into_owned()).collect();
+        s.sort();
+        s
+    };
+    assert_eq!(shown(&app), ["Docs", "Site", "folder.lnk", "notes.txt"]);
+    app.caps.unix_paths = true;
+    assert_eq!(shown(&app), ["Docs.lnk", "Site.URL", "folder.lnk", "notes.txt"], "Linux has no NeverShowExt");
+}
+
+#[test]
+fn the_attributes_column_spells_explorer_letters_and_only_windows_offers_it() {
+    let mut app = app_at(r"C:\x");
+    let mut l = Listing::default();
+    let plain = l.push(b"a.txt", Meta { attrs: attr::ARCHIVE_MARK, ..Default::default() });
+    let all = l.push(b"b.txt", Meta { attrs: attr::READONLY | attr::HIDDEN | attr::SYSTEM | attr::ARCHIVE_MARK | attr::COMPRESSED | attr::ENCRYPTED | attr::LINK, ..Default::default() });
+    let none = l.push(b"c", Meta { attrs: attr::DIR, ..Default::default() });
+    let arena = Bump::new();
+    let cell = |app: &App, i| app.cell_text(&arena, &l, i, Column::Attributes).to_owned();
+    assert_eq!([cell(&app, plain), cell(&app, all), cell(&app, none)], ["A", "RHSACE", ""]);
+    assert_eq!(Column::Attributes.title(), "Attributes");
+    assert_eq!(Column::Attributes.field(), None);
+    assert!(!app.tab().columns.shown(Column::Attributes), "hidden until chosen, as in Explorer");
+    let windows: Vec<Column> = app.column_kinds().to_vec();
+    assert_eq!(windows.iter().copied().filter(|&c| c != Column::Attributes).collect::<Vec<_>>(), crate::ui::COLUMNS, "Windows adds Attributes to the usual columns");
+    assert!(windows.contains(&Column::Attributes));
+    app.caps.unix_paths = true;
+    assert!(!app.column_kinds().contains(&Column::Attributes));
+    app.caps.unix_paths = false;
+    app.tab_mut().columns.toggle(Column::Attributes);
+    assert!(app.columns().contains(&Column::Attributes));
+}
+
+#[test]
+fn compressed_and_encrypted_names_take_explorer_colours() {
+    for t in [crate::theme::LIGHT, crate::theme::DARK, crate::theme::derive(crate::render::Color::rgb(0x2E2812))] {
+        assert_eq!(t.name_ink(0), t.text);
+        assert_eq!(t.name_ink(attr::COMPRESSED), t.compressed);
+        assert_eq!(t.name_ink(attr::ENCRYPTED | attr::COMPRESSED), t.encrypted, "an encrypted file cannot be compressed, encryption wins");
+        assert!(crate::theme::contrast(t.compressed, t.bg) >= crate::theme::MIN_TEXT_CONTRAST && crate::theme::contrast(t.encrypted, t.bg) >= crate::theme::MIN_TEXT_CONTRAST);
+    }
+    assert_eq!(crate::ui::properties::attributes_text(attr::READONLY | attr::COMPRESSED | attr::ENCRYPTED), "Read-only, Compressed, Encrypted");
 }

@@ -82,3 +82,13 @@ fn prune_keeps_the_newest_dumps() {
     assert_eq!(left, ["flit-crash-5.dmp", "flit-crash-5.txt", "flit-crash-6.dmp", "flit-crash-6.txt", "flit-crash-7.dmp", "flit-crash-7.txt", "flit.log"]);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn flit_asks_windows_to_restart_it_after_updates_but_not_after_a_crash() {
+    use windows::Win32::System::Recovery::GetApplicationRestartSettings;
+    register_restart("--restarted-by-windows");
+    let (mut line, mut len, mut flags) = ([0u16; 64], 64u32, 0u32);
+    unsafe { GetApplicationRestartSettings(GetCurrentProcess(), Some(windows::core::PWSTR(line.as_mut_ptr())), &mut len, Some(&mut flags)) }.unwrap();
+    assert_eq!(String::from_utf16_lossy(&line[..len as usize - 1]), "--restarted-by-windows");
+    assert_eq!(flags, (RESTART_NO_CRASH | RESTART_NO_HANG).0);
+}

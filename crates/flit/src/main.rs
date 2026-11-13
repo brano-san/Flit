@@ -27,6 +27,8 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::time::Instant;
 
+const RESTARTED_BY_WINDOWS: &str = "--restarted-by-windows";
+
 #[cfg(windows)]
 pub type P = flit_platform_windows::Windows;
 #[cfg(not(windows))]
@@ -78,10 +80,15 @@ fn main() {
         } else if a == "--elevated-agent" {
             #[cfg(target_os = "linux")]
             std::process::exit(flit_platform_linux_gui::elevated::serve(it.next().as_deref()));
+        } else if a == "--label-volume" {
+            #[cfg(windows)]
+            std::process::exit(flit_platform_windows::label_from_command_line(it.next(), it.next()));
         } else if a == "--dbus-activated" {
             activated = true;
         } else if a == "--metrics" {
             metrics = it.next().map(PathBuf::from);
+        } else if a == RESTARTED_BY_WINDOWS {
+            update::resume_session();
         } else {
             args.push(wtf8(&a));
         }
@@ -112,6 +119,10 @@ fn main() {
     };
     let logs_dir = <P as Platform>::state_dir().map(|d| d.join("logs"));
     logs::init(logs_dir.clone(), std::env::var_os("FLIT_LOG").is_some());
+    #[cfg(windows)]
+    if metrics.is_none() {
+        flit_platform_windows::crash::register_restart(RESTARTED_BY_WINDOWS);
+    }
     #[cfg(windows)]
     if let Some(dir) = &logs_dir {
         flit_platform_windows::crash::install(dir);

@@ -106,8 +106,40 @@ fn a_registered_flit_window_receives_the_item_the_shell_asks_it_to_select() {
     let scripted: IShellFolderViewDual = doc.cast().unwrap();
     assert_eq!(unsafe { scripted.SelectedItems().unwrap().Count() }.unwrap(), 2);
     assert_eq!(unsafe { scripted.FocusedItem().unwrap().Path() }.unwrap().to_string(), picked[1].to_string_lossy());
+    let windows_dir = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+    unsafe { app.Navigate(&BSTR::from(windows_dir.as_str()), None, None, None, None) }.unwrap();
+    let open = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!((open.paths, open.target), (vec![windows_dir.clone().into_bytes()], OpenTarget::CurrentTab), "a utility steers the Flit tab");
+    let new_tab = VARIANT::from(navOpenInNewTab.0);
+    unsafe { app.Navigate2(&variant(&item), Some(&new_tab), None, None, None) }.unwrap();
+    let open = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!((open.paths, open.target), (vec![file.to_string_lossy().into_owned().into_bytes()], OpenTarget::NewTab));
+    unsafe { browser.BrowseObject(std::ptr::null(), SBSP_PARENT) }.unwrap();
+    let open = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(open.paths, [dir.parent().unwrap().to_string_lossy().into_owned().into_bytes()]);
+    unsafe { browser.BrowseObject(child, SBSP_RELATIVE | SBSP_NEWBROWSER) }.unwrap();
+    let open = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!((open.paths, open.target), (vec![file.to_string_lossy().into_owned().into_bytes()], OpenTarget::NewWindow));
+    assert!(unsafe { browser.BrowseObject(std::ptr::null(), SBSP_NAVIGATEBACK) }.is_err());
     enable(false);
     let gone = wait_for(|| find(&windows, &folder).is_none().then_some(()));
     cleanup();
     assert!(gone.is_some(), "turning the setting off takes the window off the list");
+}
+
+#[test]
+fn navigation_reads_paths_id_lists_and_special_folders_and_the_window_flags() {
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+    }
+    let windows_dir = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+    assert_eq!(navigation_target(&VARIANT::from(BSTR::from(windows_dir.as_str()))), Some(windows_dir.clone()));
+    let wide: Vec<u16> = windows_dir.encode_utf16().chain([0]).collect();
+    assert_eq!(navigation_target(&variant(&browser_pidl(&wide))).map(|s| s.to_lowercase()), Some(windows_dir.to_lowercase()));
+    const CSIDL_DRIVES: i32 = 0x11;
+    assert_eq!(navigation_target(&VARIANT::from(CSIDL_DRIVES)).as_deref(), Some("::{20D04FE0-3AEA-1069-A2D8-08002B30309D}"));
+    assert_eq!(navigation_target(&VARIANT::default()), None);
+    assert_eq!(navigation_window(None), OpenTarget::CurrentTab);
+    assert_eq!(navigation_window(Some(&VARIANT::from(navOpenInNewWindow.0))), OpenTarget::NewWindow);
+    assert_eq!(navigation_window(Some(&VARIANT::from(navOpenInBackgroundTab.0))), OpenTarget::NewTab);
 }

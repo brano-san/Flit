@@ -70,7 +70,21 @@ pub(crate) fn map_attrs(a: u32, reparse_tag: u32) -> u32 {
     if a & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 && reparse_tag & REPARSE_TAG_NAME_SURROGATE != 0 {
         out |= attr::LINK;
     }
-    out | cloud_attrs(a)
+    out | cloud_attrs(a) | ntfs_attrs(a)
+}
+
+fn ntfs_attrs(a: u32) -> u32 {
+    let mut out = 0;
+    if a & FILE_ATTRIBUTE_COMPRESSED.0 != 0 {
+        out |= attr::COMPRESSED;
+    }
+    if a & FILE_ATTRIBUTE_ENCRYPTED.0 != 0 {
+        out |= attr::ENCRYPTED;
+    }
+    if a & FILE_ATTRIBUTE_ARCHIVE.0 != 0 {
+        out |= attr::ARCHIVE_MARK;
+    }
+    out
 }
 
 pub(crate) fn cloud_attrs(a: u32) -> u32 {
