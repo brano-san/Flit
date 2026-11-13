@@ -189,9 +189,10 @@ fn windows_only_actions_disappear_everywhere_on_linux() {
     app.caps = crate::caps::Caps { unix_paths: true };
     let file = commands(&right_click(&mut app, Some(FILE), false).menu);
     let folder = commands(&right_click(&mut app, Some(FOLDER), false).menu);
-    for gone in ["Create shortcut", "New alternate data stream", "Change icon"] {
+    for gone in ["New alternate data stream", "Change icon"] {
         assert!(!file.iter().chain(&folder).any(|l| l == gone), "{gone} in {file:?} {folder:?}");
     }
+    assert!(file.iter().any(|l| l == crate::i18n::S::MenuCreateShortcut.t()), "links are made on Linux too: {file:?}");
     assert!(file.iter().any(|l| l.starts_with("Rename")));
     for id in crate::caps::WINDOWS_ONLY_ACTIONS {
         assert!(!app.available(id), "{id} offered by the palette");

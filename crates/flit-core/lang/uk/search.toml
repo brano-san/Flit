@@ -19,6 +19,7 @@ invalid_rows = "Індекс надіслав недійсні рядки: {erro
 unavailable = "Пошук недоступний: {error}"
 cannot_start = "Не вдається почати пошук: {error}"
 shell = "Windows Search: {error}"
+content_unsupported = "Пошук за вмістом (запити з $) у Linux поки недоступний"
 
 [column]
 folder = "Папка"
@@ -30,6 +31,7 @@ tagged = "Файли з тегами"
 connecting = "Підключення до індексу"
 service = "Служба індексу"
 fallback = "Локальний індекс (flit-indexd недоступний)"
+local = "Локальний індекс"
 off = "Індексування вимкнено в Налаштуваннях › Додатково; Ctrl+Shift+F шукає у відкритій папці"
 
 [index]

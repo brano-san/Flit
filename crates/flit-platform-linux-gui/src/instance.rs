@@ -94,7 +94,10 @@ fn serve(mut s: UnixStream, opens: &OpenSink, wake: &Wake) -> Result<(), ProtoEr
     let theirs = read_hello(&mut s, &ours);
     write_frame(&mut s, &ours)?;
     theirs?;
-    let Request::Open(open) = read_frame_limited::<_, Request>(&mut s, &mut Vec::new(), MAX_FRAME)?;
+    let Request::Open(mut open) = read_frame_limited::<_, Request>(&mut s, &mut Vec::new(), MAX_FRAME)?;
+    if let Some(token) = open.activation.take() {
+        crate::window::startup_token(token);
+    }
     let (running, turns) = (&crate::window::LOOP_RUNNING, &crate::window::TURNS);
     let seen = turns.load(Ordering::Acquire);
     let sent = opens.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|tx| tx.send(open).is_ok());
@@ -128,6 +131,15 @@ fn lock(path: &Path) -> io::Result<Option<File>> {
 
 impl SocketInstance {
     pub fn acquire_in(runtime: &Path, open: &Open) -> Instance<Self> {
+        let token = crate::activation::launcher_token();
+        let got = Self::lock_or_forward(runtime, &Open { activation: token.clone(), ..open.clone() });
+        if let (Some(t), false) = (token, matches!(got, Instance::Forwarded)) {
+            crate::window::startup_token(t);
+        }
+        got
+    }
+
+    fn lock_or_forward(runtime: &Path, open: &Open) -> Instance<Self> {
         let (lock_path, socket) = endpoints(runtime);
         match lock(&lock_path) {
             Ok(Some(file)) => {

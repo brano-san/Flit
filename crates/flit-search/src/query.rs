@@ -159,7 +159,14 @@ fn strip_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
 
 const OWN_PROPERTIES: [&str; 6] = ["path", "regex", "ext", "size", "dm", "tag"];
 
-pub fn shell_query(text: &str) -> Option<String> {
+pub fn is_content_query(text: &str) -> bool {
+    text.trim_start().starts_with('$')
+}
+
+pub fn shell_query(text: &str, windows: bool) -> Option<String> {
+    if !windows {
+        return None;
+    }
     let text = text.trim();
     if let Some(rest) = text.strip_prefix('$') {
         return Some(rest.trim().to_owned());

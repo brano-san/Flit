@@ -1,10 +1,11 @@
 use super::archive::Kind;
 use super::form::{Control, Form};
+use super::permissions::{held_rows, Probe};
 use super::{App, Effect};
 use crate::archive;
 use crate::fmt as format;
 use crate::i18n::{P, S};
-use crate::listing::{attr, Entry};
+use crate::listing::{attr, Entry, Listing};
 use crate::location::ProviderId;
 use crate::name;
 use crate::path::FsPath;
@@ -32,6 +33,7 @@ pub(super) struct Measuring {
     folders: u64,
     rows: Rows,
     props: u64,
+    pub(super) probe: Probe,
 }
 
 pub(super) fn measured_items(paths: &[FsPath], entries: &[Entry], archive_root: bool) -> Vec<(FsPath, Option<u64>)> {
@@ -70,8 +72,14 @@ impl App {
 
     pub(super) fn properties_for(&mut self, folder_path: Option<FsPath>) {
         let t = self.tab();
-        let Some(v) = &t.view else { return };
-        let items: Vec<u32> = if folder_path.is_some() { Vec::new() } else { v.selected().collect() };
+        let v = t.view.as_ref();
+        if v.is_none() && !(folder_path.is_some() && self.caps.unix_paths) {
+            return;
+        }
+        let items: Vec<u32> = match (&folder_path, v) {
+            (None, Some(v)) => v.selected().collect(),
+            _ => Vec::new(),
+        };
         if self.shell_bin() || items.is_empty() && !self.caps.unix_paths {
             return self.properties();
         }
@@ -87,7 +95,14 @@ impl App {
                 Err(e) => return self.status(e),
             }
         };
-        let l = v.listing();
+        let empty;
+        let l = match v {
+            Some(v) => v.listing(),
+            None => {
+                empty = Listing::default();
+                &empty
+            }
+        };
         let entries: Vec<Entry> = if folder { vec![Entry { attrs: attr::DIR, ..Default::default() }] } else { items.iter().map(|&i| l.entries[i as usize]).collect() };
         let packed = self.archive_view().is_some();
         let folders = entries.iter().filter(|e| e.is_dir()).count() as u64;
@@ -161,8 +176,14 @@ impl App {
             let req = PreviewRequest { gen: props, cancel, path: paths[0].clone(), kind: preview::Kind::Other, size: 0, details: true, px: 0 };
             self.effects.push(Effect::Preview(req));
         }
+        let probe = if self.caps.unix_paths && !packed && paths.iter().all(|p| p.kind() == crate::path::PathKind::Unix) {
+            self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Access { tab, id, items: paths.clone() } });
+            Probe::Waiting { items: paths.clone(), held: Vec::new() }
+        } else {
+            Probe::Off
+        };
         let (files, folders) = if paths.len() > 1 { (files, folders) } else { (0, 0) };
-        let mut f = Form::new(Kind::Properties(Measuring { id, ctl, packed, files, folders, rows, props }), &title, controls, vec![S::ArchiveClose.t()]);
+        let mut f = Form::new(Kind::Properties(Measuring { id, ctl, packed, files, folders, rows, props, probe }), &title, controls, vec![S::ArchiveClose.t()]);
         f.say(counting, false);
         self.open_form(f);
     }
@@ -203,14 +224,14 @@ impl App {
     }
 
     pub(super) fn properties_props(&mut self, gen: u64, groups: &[PropGroup]) -> bool {
-        let Some(f) = &mut self.jobs.form else { return false };
-        let Kind::Properties(m) = &f.kind else { return false };
+        let Some(Form { kind: Kind::Properties(m), controls, focus, .. }) = &mut self.jobs.form else { return false };
         if m.props != gen {
             return false;
         }
-        for (k, v) in groups.iter().flat_map(|g| &g.rows) {
-            f.controls.push(Control::value(k, v));
+        for g in groups {
+            held_rows(&mut m.probe, controls, focus, &g.title, &g.rows);
         }
+        self.layout();
         self.dirty = true;
         true
     }

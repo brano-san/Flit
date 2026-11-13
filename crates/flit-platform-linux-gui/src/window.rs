@@ -6,24 +6,25 @@ use flit_core::ui::{drop_effect, DragEvent, ShellMenu};
 use flit_core::FsPath;
 use flit_platform::{Placement, PlatformError, Waker, Window, WindowHandler, WindowId, WindowOptions, WindowSystem};
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::ffi::CStr;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
-use winit::data_transfer::{DataTransferId, DataTransferSendBuilder, TypeHint};
+use winit::data_transfer::{DataTransferId, DataTransferSendBuilder, TransferType, TypeHint};
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, Ime, WindowEvent};
 use winit::event_loop::run_on_demand::EventLoopExtRunOnDemand;
-use winit::event_loop::{ActiveEventLoop, ControlFlow, DndAction, EventLoop, EventLoopProxy, OwnedDisplayHandle};
+use winit::event_loop::{ActiveEventLoop, AsyncRequestSerial, ControlFlow, DndAction, EventLoop, EventLoopProxy, OwnedDisplayHandle};
 use winit::keyboard::ModifiersState;
 use winit::platform::wayland::{ActiveEventLoopExtWayland, WindowAttributesWayland};
 use winit::platform::startup_notify::WindowExtStartupNotify;
 use winit::platform::x11::WindowAttributesX11;
-use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
+use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use winit::monitor::Fullscreen;
-use winit::window::{ActivationToken, ImeCapabilities, ImeEnableRequest, ImeRequest, ImeRequestData, PlatformWindowAttributes, ResizeDirection, Theme, WindowAttributes, WindowLevel};
+use winit::window::{ActivationToken, ImeCapabilities, ImeEnableRequest, ImeRequest, ImeRequestData, PlatformWindowAttributes, ResizeDirection, Theme, UserAttentionType, WindowAttributes, WindowLevel};
 
 const APP_ID: &str = "flit";
 const DEFAULT_SIZE: (f64, f64) = (1100.0, 720.0);
@@ -31,6 +32,8 @@ const MIN_SIZE: (f64, f64) = (520.0, 320.0);
 const COMPACT_SIZE: (f64, f64) = (560.0, 380.0);
 const RESIZE_BORDER: f32 = 5.0;
 const X11_KEYBOARD_LIBRARY: &CStr = c"libxkbcommon-x11.so.0";
+const READ_WAIT: Duration = Duration::from_secs(1);
+const VERIFY_WAIT: Duration = Duration::from_millis(400);
 
 const DARK_UNKNOWN: u8 = 0;
 const DARK_NO: u8 = 1;
@@ -43,7 +46,7 @@ static THEME_CHANGED: AtomicBool = AtomicBool::new(false);
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 static A11Y_REFRESH: AtomicBool = AtomicBool::new(false);
 static QUEUED: Mutex<Vec<(WindowId, Event)>> = Mutex::new(Vec::new());
-static TOKEN: Mutex<Option<String>> = Mutex::new(None);
+static READS: Mutex<Vec<crossbeam_channel::Sender<Option<crate::clipboard::Payload>>>> = Mutex::new(Vec::new());
 static STARTUP: Mutex<Option<String>> = Mutex::new(None);
 static PREFETCHED: Mutex<Option<(Vec<FsPath>, OpenWith)>> = Mutex::new(None);
 
@@ -61,8 +64,21 @@ pub(crate) fn turned_since(running: &AtomicBool, turns: &AtomicU64, seen: u64, w
     true
 }
 
+#[cfg(test)]
+pub(crate) static STARTUP_TOKEN_USERS: Mutex<()> = Mutex::new(());
+
 pub(crate) fn activation_token() -> Option<String> {
-    TOKEN.lock().unwrap_or_else(|e| e.into_inner()).take()
+    crate::activation::take()
+}
+
+pub(crate) fn clipboard_types() -> Option<crate::clipboard::Payload> {
+    if !LOOP_RUNNING.load(Ordering::Acquire) {
+        return None;
+    }
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    READS.lock().unwrap_or_else(|e| e.into_inner()).push(tx);
+    wake_loop();
+    rx.recv_timeout(READ_WAIT).ok().flatten()
 }
 
 pub(crate) fn startup_token(token: String) {
@@ -129,8 +145,9 @@ enum Command {
     Close(WindowId),
     Paste(WindowId),
     Copy(String),
-    CopyFiles(String),
+    CopyFiles(Vec<FsPath>, bool),
     Drag(winit::window::WindowId, String),
+    Activate(WindowId, String),
 }
 
 type Commands = Rc<RefCell<Vec<Command>>>;
@@ -262,8 +279,12 @@ impl Window for LinuxWindow {
     }
 
     fn activate(&self) {
-        take_startup_token();
-        self.raw.focus_window();
+        let token = take_startup_token().or_else(|| self.is_wayland().then(crate::activation::take_ready).flatten());
+        match token {
+            Some(t) => self.push(Command::Activate(self.id, t)),
+            None if self.is_wayland() && !self.raw.has_focus() => self.raw.request_user_attention(Some(UserAttentionType::Informational)),
+            None => self.raw.focus_window(),
+        }
     }
 
     fn open_window(&self, opts: WindowOptions) {
@@ -298,7 +319,8 @@ impl Window for LinuxWindow {
     }
 
     fn set_clipboard_files(&self, paths: &[FsPath], cut: bool) {
-        self.push(Command::CopyFiles(crate::shell::remember_files(paths, cut)));
+        crate::shell::remember_files(paths, cut);
+        self.push(Command::CopyFiles(paths.to_vec(), cut));
     }
 
     fn shell_menu(&self, menu: ShellMenu) {
@@ -421,7 +443,7 @@ impl WindowSystem for LinuxWindows {
 
     fn run<H: WindowHandler<Self>>(mut self, first: WindowOptions, handler: H) -> Result<(), PlatformError> {
         let commands: Commands = Rc::new(RefCell::new(vec![Command::Open(first)]));
-        let mut app = Loop { handler, nodes: Vec::new(), commands, pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None };
+        let mut app = Loop { handler, nodes: Vec::new(), commands, pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None };
         LOOP_RUNNING.store(true, Ordering::Release);
         let ran = self.event_loop.run_app_on_demand(&mut app);
         LOOP_RUNNING.store(false, Ordering::Release);
@@ -445,6 +467,50 @@ struct Loop<H> {
     started: bool,
     error: Option<PlatformError>,
     incoming: Option<Incoming>,
+    wl: Option<crate::wl::Wl>,
+    verify: Option<(Instant, Vec<FsPath>, bool)>,
+    reading: Option<Reading>,
+}
+
+struct Reading {
+    want: HashMap<AsyncRequestSerial, String>,
+    got: crate::clipboard::Payload,
+    waiters: Vec<crossbeam_channel::Sender<Option<crate::clipboard::Payload>>>,
+    started: Instant,
+}
+
+impl Reading {
+    fn finish(self) {
+        for w in self.waiters {
+            let _ = w.send(Some(self.got.clone()));
+        }
+    }
+}
+
+fn type_name(ty: &dyn TransferType) -> Option<String> {
+    if let Some(m) = ty.cast_ref::<winit::platform::wayland::MimeType>() {
+        return Some(m.to_string());
+    }
+    let atom = ty.cast_ref::<winit::platform::x11::SelectionType>()?.atom();
+    crate::clipboard::x11_names().iter().find(|(a, _)| *a == atom).map(|(_, n)| (*n).to_owned())
+}
+
+fn clipboard_has(el: &dyn ActiveEventLoop, name: &str) -> bool {
+    let Ok(Some(id)) = el.clipboard() else { return false };
+    el.data_transfer(id).is_ok_and(|d| d.available_types().into_iter().any(|t| type_name(t).as_deref() == Some(name)))
+}
+
+fn wayland_display(el: &dyn ActiveEventLoop) -> Option<*mut std::ffi::c_void> {
+    match el.display_handle().ok()?.as_raw() {
+        RawDisplayHandle::Wayland(d) => Some(d.display.as_ptr()),
+        _ => None,
+    }
+}
+
+fn ask_token(w: &LinuxWindow) {
+    if w.is_wayland() && w.raw.request_activation_token().is_ok() {
+        crate::activation::asked();
+    }
 }
 
 fn platform_attributes(el: &dyn ActiveEventLoop) -> Box<dyn PlatformWindowAttributes> {
@@ -552,15 +618,17 @@ fn dnd_actions(effect: u32) -> Vec<DndAction> {
     out
 }
 
-fn copy_files(el: &dyn ActiveEventLoop, list: String) {
-    let data = DataTransferSendBuilder::new(list.clone())
-        .with_type(TypeHint::UriList, |list: &String, _| Some(list.clone()))
-        .with_type(TypeHint::Plaintext, |list: &String, _| Some(list.clone()))
+fn winit_copy_files(el: &dyn ActiveEventLoop, paths: Vec<FsPath>, cut: bool) {
+    let lossy = |b: Vec<u8>| String::from_utf8_lossy(&b).into_owned();
+    let texts = (lossy(crate::clipboard::uri_list(&paths)), lossy(crate::clipboard::plain(&paths)));
+    let data = DataTransferSendBuilder::new(texts)
+        .with_type(TypeHint::UriList, |t: &(String, String), _| Some(t.0.clone()))
+        .with_type(TypeHint::Plaintext, |t: &(String, String), _| Some(t.1.clone()))
         .build();
     if let Err(e) = el.set_clipboard(data) {
         tracing::debug!("winit cannot set the file clipboard ({e}), asking a helper program");
         background("flit-copy", move || {
-            if !crate::shell::set_clipboard_files(&list) {
+            if !crate::shell::set_clipboard_files(&paths, cut) {
                 tracing::info!("the file clipboard stays inside Flit: no wl-copy or xclip");
             }
         });
@@ -583,14 +651,102 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                     Command::Close(id) => self.close(id),
                     Command::Paste(id) => paste(el, id),
                     Command::Copy(text) => copy(el, text),
-                    Command::CopyFiles(list) => copy_files(el, list),
+                    Command::CopyFiles(paths, cut) => self.copy_files(el, paths, cut),
                     Command::Drag(source, list) => drag_out(el, source, list),
+                    Command::Activate(id, token) => self.activate(id, token),
                 }
             }
         }
         if self.nodes.is_empty() {
             el.exit();
         }
+    }
+
+    fn copy_files(&mut self, el: &dyn ActiveEventLoop, paths: Vec<FsPath>, cut: bool) {
+        let mut payload = crate::clipboard::payload(&paths, cut);
+        if el.is_wayland() {
+            payload.push((crate::clipboard::MARKER.to_owned(), Vec::new()));
+            if self.wl.as_mut().is_some_and(|wl| wl.set_selection(Arc::new(payload))) {
+                self.verify = Some((Instant::now() + VERIFY_WAIT, paths, cut));
+                return;
+            }
+        } else {
+            match crate::clipboard::own_x11(payload) {
+                Ok(()) => return,
+                Err(e) => tracing::debug!("cannot own the X11 clipboard ({e}), offering files through winit"),
+            }
+        }
+        winit_copy_files(el, paths, cut);
+    }
+
+    fn verify_copy(&mut self, el: &dyn ActiveEventLoop) {
+        let Some((until, ..)) = &self.verify else { return };
+        if clipboard_has(el, crate::clipboard::MARKER) {
+            self.verify = None;
+        } else if Instant::now() >= *until {
+            tracing::info!("the compositor did not take Flit's file clipboard, offering it through winit");
+            if let Some((_, paths, cut)) = self.verify.take() {
+                winit_copy_files(el, paths, cut);
+            }
+        }
+    }
+
+    fn activate(&mut self, id: WindowId, token: String) {
+        let Some(node) = self.nodes.iter().find(|n| n.window.id == id) else { return };
+        let raw = &node.window.raw;
+        let done = match raw.window_handle().map(|h| h.as_raw()) {
+            Ok(RawWindowHandle::Wayland(h)) => self.wl.as_ref().is_some_and(|wl| wl.activate(h.surface.as_ptr(), &token)),
+            Ok(RawWindowHandle::Xlib(h)) => crate::activation::x11_activate(h.window as u32, &token).map_err(|e| tracing::debug!("X11 activation: {e}")).is_ok(),
+            Ok(RawWindowHandle::Xcb(h)) => crate::activation::x11_activate(h.window.get(), &token).map_err(|e| tracing::debug!("X11 activation: {e}")).is_ok(),
+            _ => false,
+        };
+        if !done {
+            raw.focus_window();
+        }
+    }
+
+    fn start_reads(&mut self, el: &dyn ActiveEventLoop) {
+        let waiters = std::mem::take(&mut *READS.lock().unwrap_or_else(|e| e.into_inner()));
+        if waiters.is_empty() {
+            return;
+        }
+        if let Some(r) = self.reading.as_mut().filter(|r| r.started.elapsed() < READ_WAIT) {
+            return r.waiters.extend(waiters);
+        }
+        let mut r = Reading { want: HashMap::new(), got: Vec::new(), waiters, started: Instant::now() };
+        if let Ok(Some(id)) = el.clipboard() {
+            if let Ok(transfer) = el.data_transfer(id) {
+                for ty in transfer.available_types() {
+                    let Some(name) = type_name(ty).filter(|n| crate::clipboard::FILE_TYPES.contains(&n.as_str()) && !r.want.values().any(|w| w == n)) else { continue };
+                    match el.fetch_data_transfer(id, ty) {
+                        Ok(serial) => {
+                            r.want.insert(serial, name);
+                        }
+                        Err(e) => tracing::debug!("cannot read {name} from the clipboard: {e}"),
+                    }
+                }
+            }
+        }
+        if r.want.is_empty() {
+            for w in r.waiters {
+                let _ = w.send(None);
+            }
+            return;
+        }
+        self.reading = Some(r);
+    }
+
+    fn read_arrived(&mut self, event: &WindowEvent) -> bool {
+        let WindowEvent::DataTransferReceived { serial, value, .. } = event else { return false };
+        let Some(r) = self.reading.as_mut() else { return false };
+        let Some(name) = r.want.remove(serial) else { return false };
+        r.got.push((name, value.try_as_bytes().unwrap_or_default()));
+        if r.want.is_empty() {
+            if let Some(r) = self.reading.take() {
+                r.finish();
+            }
+        }
+        true
     }
 
     fn open(&mut self, el: &dyn ActiveEventLoop, opts: WindowOptions) {
@@ -678,9 +834,14 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             WindowEvent::DataTransferReceived { id, value, .. } if self.incoming.as_ref().is_some_and(|d| d.id == id && !d.entered) => {
                 let d = self.incoming.as_mut()?;
                 let paths = value.try_as_bytes().map(|b| crate::shell::parse_file_list(&b).0).unwrap_or_default();
+                if paths.is_empty() {
+                    self.incoming = None;
+                    let _ = el.set_valid_dnd_actions(id, &[]);
+                    return None;
+                }
                 d.entered = true;
                 let (at, dropped) = (d.at, d.dropped);
-                deliver(DragEvent::Enter { paths, x: at.0, y: at.1, mods, allowed: all }, id);
+                deliver(DragEvent::Enter { paths, x: at.0, y: at.1, mods, allowed: all, right: false }, id);
                 if dropped {
                     deliver(DragEvent::Drop { x: at.0, y: at.1, mods, allowed: all }, id);
                     self.incoming = None;
@@ -743,6 +904,9 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             }
             WindowEvent::KeyboardInput { event, is_synthetic: false, .. } => {
                 let pressed = event.state == ElementState::Pressed;
+                if pressed && !event.repeat {
+                    ask_token(w);
+                }
                 handler.event(w, Event::Key { key: input::key(event.physical_key, &event.key_without_modifiers), mods: input::mods(self.mods), pressed });
                 for c in event.text.iter().filter(|_| pressed && !self.mods.control_key() && !self.mods.meta_key()).flat_map(|t| t.chars()) {
                     handler.event(w, Event::Char(c));
@@ -764,10 +928,10 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                 w.restore_cursor();
                 handler.event(w, Event::MouseLeave);
             }
-            WindowEvent::ActivationTokenDone { token, .. } => *TOKEN.lock().unwrap_or_else(|e| e.into_inner()) = Some(token.into_raw()),
+            WindowEvent::ActivationTokenDone { token, .. } => crate::activation::answered(token.into_raw()),
             WindowEvent::PointerButton { state, position, button, .. } => {
                 if state == ElementState::Pressed {
-                    let _ = w.raw.request_activation_token();
+                    ask_token(w);
                 }
                 if let Some(button) = button.mouse_button().and_then(input::mouse_button) {
                     self.button(i, state == ElementState::Pressed, position, button);
@@ -789,6 +953,10 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
 
 impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
     fn can_create_surfaces(&mut self, el: &dyn ActiveEventLoop) {
+        crate::activation::set_wayland(el.is_wayland());
+        if self.wl.is_none() {
+            self.wl = wayland_display(el).and_then(crate::wl::Wl::connect);
+        }
         self.started = true;
         self.settle(el);
     }
@@ -815,6 +983,7 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
                 publish_a11y(&mut self.handler, &node.window);
             }
         }
+        self.start_reads(el);
         if SHUTDOWN.swap(false, Ordering::AcqRel) {
             for node in &self.nodes {
                 self.handler.event(&node.window, Event::SessionEnding);
@@ -825,6 +994,9 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
     }
 
     fn window_event(&mut self, el: &dyn ActiveEventLoop, id: winit::window::WindowId, event: WindowEvent) {
+        if self.read_arrived(&event) {
+            return self.settle(el);
+        }
         if let Some(i) = self.nodes.iter().position(|n| n.window.raw.id() == id) {
             if let Some(event) = self.drag_in(el, i, event) {
                 self.dispatch(i, event);
@@ -835,9 +1007,14 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
 
     fn about_to_wait(&mut self, el: &dyn ActiveEventLoop) {
         TURNS.fetch_add(1, Ordering::AcqRel);
+        if let Some(wl) = &mut self.wl {
+            wl.pump();
+        }
+        self.verify_copy(el);
         self.fire_timers();
         self.settle(el);
-        let next = self.nodes.iter().filter_map(|n| n.window.timer.get()).min();
+        let verify = self.verify.as_ref().map(|v| v.0);
+        let next = self.nodes.iter().filter_map(|n| n.window.timer.get()).chain(verify).min();
         el.set_control_flow(next.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
     }
 }

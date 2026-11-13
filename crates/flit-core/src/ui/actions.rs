@@ -141,22 +141,41 @@ pub struct Action {
     pub desc: S,
     pub keys: &'static [Chord],
     pub extra: &'static [&'static str],
+    pub unix: Option<&'static [Chord]>,
+    pub unix_extra: Option<&'static [&'static str]>,
     pub ctx: Ctx,
     pub run: Option<fn(&mut App, Instant)>,
 }
 
 impl Action {
     const fn new(id: &'static str, group: Group, title: S, desc: S, keys: &'static [Chord], run: fn(&mut App, Instant)) -> Self {
-        Self { id, group, title, desc, keys, extra: &[], ctx: Ctx::Main, run: Some(run) }
+        Self { id, group, title, desc, keys, extra: &[], unix: None, unix_extra: None, ctx: Ctx::Main, run: Some(run) }
     }
 
     const fn held(id: &'static str, group: Group, title: S, desc: S, keys: &'static [Chord], ctx: Ctx) -> Self {
-        Self { id, group, title, desc, keys, extra: &[], ctx, run: None }
+        Self { id, group, title, desc, keys, extra: &[], unix: None, unix_extra: None, ctx, run: None }
     }
 
     const fn also(mut self, extra: &'static [&'static str]) -> Self {
         self.extra = extra;
         self
+    }
+
+    const fn on_unix(mut self, keys: &'static [Chord]) -> Self {
+        self.unix = Some(keys);
+        self
+    }
+
+    const fn on_unix_extra(mut self, extra: &'static [&'static str]) -> Self {
+        self.unix_extra = Some(extra);
+        self
+    }
+
+    pub fn defaults(&self, unix: bool) -> &'static [Chord] {
+        match self.unix {
+            Some(keys) if unix => keys,
+            _ => self.keys,
+        }
     }
 
     const fn within(mut self, ctx: Ctx) -> Self {
@@ -168,9 +187,13 @@ impl Action {
         self.ctx == Ctx::Main
     }
 
-    pub fn shown_keys(&self, keys: &[Chord]) -> Vec<String> {
-        let mouse = self.extra.iter().filter(|e| e.contains("Mouse")).map(|e| (*e).to_owned());
-        let pad = self.extra.iter().filter(|e| !e.contains("Mouse")).map(|e| (*e).to_owned());
+    pub fn shown_keys(&self, keys: &[Chord], unix: bool) -> Vec<String> {
+        let extra = match self.unix_extra {
+            Some(extra) if unix => extra,
+            _ => self.extra,
+        };
+        let mouse = extra.iter().filter(|e| e.contains("Mouse")).map(|e| (*e).to_owned());
+        let pad = extra.iter().filter(|e| !e.contains("Mouse")).map(|e| (*e).to_owned());
         mouse.chain(keys.iter().map(chord_text)).chain(pad).collect()
     }
 }
@@ -237,17 +260,17 @@ pub static ACTIONS: &[Action] = &[
     Action::new("bin.empty", G::Folder, S::ActionsBinEmpty, S::DescribeBinEmpty, &[], |a, _| a.empty_bin()),
     Action::new("bin.restore_all", G::Folder, S::ActionsBinRestoreAll, S::DescribeBinRestoreAll, &[], |a, _| a.restore_all()),
     Action::new("folder.cycle_view", G::Folder, S::ActionsFolderCycleView, S::DescribeFolderCycleView, &[], |a, _| a.cycle_view_mode()),
-    Action::new("folder.bookmark", G::Folder, S::ActionsFolderBookmark, S::DescribeFolderBookmark, &[], |a, _| a.pin_current()),
+    Action::new("folder.bookmark", G::Folder, S::ActionsFolderBookmark, S::DescribeFolderBookmark, &[], |a, _| a.pin_current()).on_unix(&[ctrl(c('D'))]),
     Action::new("folder.dropdown", G::Folder, S::ActionsFolderDropdown, S::DescribeFolderDropdown, &[alt(Key::Down)], |a, _| a.open_folder_dropdown()),
     Action::held("folder.dropdown_left", G::Folder, S::ActionsFolderDropdownLeft, S::DescribeFolderDropdownLeft, &[alt(Key::Left)], Ctx::Dropdown),
     Action::held("folder.dropdown_right", G::Folder, S::ActionsFolderDropdownRight, S::DescribeFolderDropdownRight, &[alt(Key::Right)], Ctx::Dropdown),
     Action::new("folder.types", G::Folder, S::ActionsFolderTypes, S::DescribeFolderTypes, &[alt(c('T'))], |a, _| a.open_types()),
     Action::new("view.zoom_in", G::View, S::ActionsViewZoomIn, S::DescribeViewZoomIn, &[], |a, _| a.resize_items(1)).also(&["Ctrl+MouseWheelUp"]),
     Action::new("view.zoom_out", G::View, S::ActionsViewZoomOut, S::DescribeViewZoomOut, &[], |a, _| a.resize_items(-1)).also(&["Ctrl+MouseWheelDown"]),
-    Action::new("view.layout.details", G::View, S::ActionsViewLayoutDetails, S::DescribeViewLayoutDetails, &[ctrl_shift(c('1'))], |a, _| a.set_zoom(ZOOM_DETAILS)),
+    Action::new("view.layout.details", G::View, S::ActionsViewLayoutDetails, S::DescribeViewLayoutDetails, &[ctrl_shift(c('1'))], |a, _| a.set_zoom(ZOOM_DETAILS)).on_unix(&[ctrl_shift(c('1')), ctrl(c('3'))]),
     Action::new("view.layout.tree", G::View, S::ActionsViewLayoutTree, S::DescribeViewLayoutTree, &[ctrl_shift(c('2'))], |a, _| a.set_zoom(ZOOM_TREE)),
-    Action::new("view.layout.list", G::View, S::ActionsViewLayoutList, S::DescribeViewLayoutList, &[ctrl_shift(c('3'))], |a, _| a.set_zoom(ZOOM_LIST)),
-    Action::new("view.layout.icons_m", G::View, S::ActionsViewLayoutIconsM, S::DescribeViewLayoutIconsM, &[ctrl_shift(c('4'))], |a, _| a.set_zoom(ZOOM_ICONS)),
+    Action::new("view.layout.list", G::View, S::ActionsViewLayoutList, S::DescribeViewLayoutList, &[ctrl_shift(c('3'))], |a, _| a.set_zoom(ZOOM_LIST)).on_unix(&[ctrl_shift(c('3')), ctrl(c('2'))]),
+    Action::new("view.layout.icons_m", G::View, S::ActionsViewLayoutIconsM, S::DescribeViewLayoutIconsM, &[ctrl_shift(c('4'))], |a, _| a.set_zoom(ZOOM_ICONS)).on_unix(&[ctrl_shift(c('4')), ctrl(c('1'))]),
     Action::new("view.layout.icons_l", G::View, S::ActionsViewLayoutIconsL, S::DescribeViewLayoutIconsL, &[ctrl_shift(c('5'))], |a, _| a.set_zoom(ZOOM_LARGE)),
     Action::new("view.layout.icons_xl", G::View, S::ActionsViewLayoutIconsXl, S::DescribeViewLayoutIconsXl, &[ctrl_shift(c('6'))], |a, _| a.set_zoom(ZOOM_XL)),
     Action::new("view.sort.name", G::Sort, S::ActionsViewSortName, S::DescribeViewSortName, &[], |a, _| a.sort_by(SortField::Name)),
@@ -312,15 +335,15 @@ pub static ACTIONS: &[Action] = &[
     Action::new("tab.reopen", G::Tabs, S::ActionsTabReopen, S::DescribeTabReopen, &[ctrl_shift(c('T'))], |a, now| a.reopen_tab(now)),
     Action::new("tab.next", G::Tabs, S::ActionsTabNext, S::DescribeTabNext, &[ctrl(Key::Tab), ctrl(Key::PageDown)], |a, _| a.select_tab((a.cur + 1) % a.tabs.len())),
     Action::new("tab.previous", G::Tabs, S::ActionsTabPrevious, S::DescribeTabPrevious, &[ctrl_shift(Key::Tab), ctrl(Key::PageUp)], |a, _| a.select_tab((a.cur + a.tabs.len() - 1) % a.tabs.len())),
-    Action::new("tab.select_1", G::Tabs, S::ActionsTabSelect1, S::DescribeTabSelect1, &[ctrl(c('1'))], |a, _| a.select_tab(0)).also(&["Ctrl+Keypad1"]),
-    Action::new("tab.select_2", G::Tabs, S::ActionsTabSelect2, S::DescribeTabSelect2, &[ctrl(c('2'))], |a, _| a.select_tab(1)).also(&["Ctrl+Keypad2"]),
-    Action::new("tab.select_3", G::Tabs, S::ActionsTabSelect3, S::DescribeTabSelect3, &[ctrl(c('3'))], |a, _| a.select_tab(2)).also(&["Ctrl+Keypad3"]),
-    Action::new("tab.select_4", G::Tabs, S::ActionsTabSelect4, S::DescribeTabSelect4, &[ctrl(c('4'))], |a, _| a.select_tab(3)).also(&["Ctrl+Keypad4"]),
-    Action::new("tab.select_5", G::Tabs, S::ActionsTabSelect5, S::DescribeTabSelect5, &[ctrl(c('5'))], |a, _| a.select_tab(4)).also(&["Ctrl+Keypad5"]),
-    Action::new("tab.select_6", G::Tabs, S::ActionsTabSelect6, S::DescribeTabSelect6, &[ctrl(c('6'))], |a, _| a.select_tab(5)).also(&["Ctrl+Keypad6"]),
-    Action::new("tab.select_7", G::Tabs, S::ActionsTabSelect7, S::DescribeTabSelect7, &[ctrl(c('7'))], |a, _| a.select_tab(6)).also(&["Ctrl+Keypad7"]),
-    Action::new("tab.select_8", G::Tabs, S::ActionsTabSelect8, S::DescribeTabSelect8, &[ctrl(c('8'))], |a, _| a.select_tab(7)).also(&["Ctrl+Keypad8"]),
-    Action::new("tab.select_last", G::Tabs, S::ActionsTabSelectLast, S::DescribeTabSelectLast, &[ctrl(c('9'))], |a, _| a.select_tab(a.tabs.len() - 1)).also(&["Ctrl+Keypad9"]),
+    Action::new("tab.select_1", G::Tabs, S::ActionsTabSelect1, S::DescribeTabSelect1, &[ctrl(c('1'))], |a, _| a.select_tab(0)).also(&["Ctrl+Keypad1"]).on_unix(&[alt(c('1'))]).on_unix_extra(&["Alt+Keypad1"]),
+    Action::new("tab.select_2", G::Tabs, S::ActionsTabSelect2, S::DescribeTabSelect2, &[ctrl(c('2'))], |a, _| a.select_tab(1)).also(&["Ctrl+Keypad2"]).on_unix(&[alt(c('2'))]).on_unix_extra(&["Alt+Keypad2"]),
+    Action::new("tab.select_3", G::Tabs, S::ActionsTabSelect3, S::DescribeTabSelect3, &[ctrl(c('3'))], |a, _| a.select_tab(2)).also(&["Ctrl+Keypad3"]).on_unix(&[alt(c('3'))]).on_unix_extra(&["Alt+Keypad3"]),
+    Action::new("tab.select_4", G::Tabs, S::ActionsTabSelect4, S::DescribeTabSelect4, &[ctrl(c('4'))], |a, _| a.select_tab(3)).also(&["Ctrl+Keypad4"]).on_unix(&[alt(c('4'))]).on_unix_extra(&["Alt+Keypad4"]),
+    Action::new("tab.select_5", G::Tabs, S::ActionsTabSelect5, S::DescribeTabSelect5, &[ctrl(c('5'))], |a, _| a.select_tab(4)).also(&["Ctrl+Keypad5"]).on_unix(&[alt(c('5'))]).on_unix_extra(&["Alt+Keypad5"]),
+    Action::new("tab.select_6", G::Tabs, S::ActionsTabSelect6, S::DescribeTabSelect6, &[ctrl(c('6'))], |a, _| a.select_tab(5)).also(&["Ctrl+Keypad6"]).on_unix(&[alt(c('6'))]).on_unix_extra(&["Alt+Keypad6"]),
+    Action::new("tab.select_7", G::Tabs, S::ActionsTabSelect7, S::DescribeTabSelect7, &[ctrl(c('7'))], |a, _| a.select_tab(6)).also(&["Ctrl+Keypad7"]).on_unix(&[alt(c('7'))]).on_unix_extra(&["Alt+Keypad7"]),
+    Action::new("tab.select_8", G::Tabs, S::ActionsTabSelect8, S::DescribeTabSelect8, &[ctrl(c('8'))], |a, _| a.select_tab(7)).also(&["Ctrl+Keypad8"]).on_unix(&[alt(c('8'))]).on_unix_extra(&["Alt+Keypad8"]),
+    Action::new("tab.select_last", G::Tabs, S::ActionsTabSelectLast, S::DescribeTabSelectLast, &[ctrl(c('9'))], |a, _| a.select_tab(a.tabs.len() - 1)).also(&["Ctrl+Keypad9"]).on_unix(&[alt(c('9'))]).on_unix_extra(&["Alt+Keypad9"]),
     Action::new("tab.menu", G::Tabs, S::ActionsTabMenu, S::DescribeTabMenu, &[ctrl_shift(Key::Down)], |a, _| a.open_tab_menu()).also(&["MouseRight"]),
     Action::new("tab.search", G::Tabs, S::ActionsTabSearch, S::DescribeTabSearch, &[ctrl_shift(c('A'))], |a, _| a.open_tab_search()),
     Action::held("goto.select", G::GoTo, S::ActionsGotoSelect, S::DescribeGotoSelect, &[ctrl(Key::Enter)], Ctx::GoTo),
@@ -330,7 +353,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("config.create", G::Misc, S::ActionsConfigCreate, S::DescribeConfigCreate, &[], |a, _| a.create_config()),
     Action::new("config.open", G::Misc, S::ActionsConfigOpen, S::DescribeConfigOpen, &[], |a, _| a.open_settings_file()),
     Action::new("menu.main", G::Misc, S::ActionsMenuMain, S::DescribeMenuMain, &[key(Key::F(10))], |a, _| a.open_main_menu()),
-    Action::new("quick_access.toggle", G::Misc, S::ActionsQuickAccessToggle, S::DescribeQuickAccessToggle, &[ctrl(c('B'))], |a, _| a.toggle_sidebar()),
+    Action::new("quick_access.toggle", G::Misc, S::ActionsQuickAccessToggle, S::DescribeQuickAccessToggle, &[ctrl(c('B'))], |a, _| a.toggle_sidebar()).on_unix(&[ctrl(c('B')), key(Key::F(9))]),
     Action::new("quick_access.filter", G::Misc, S::ActionsQuickAccessFilter, S::DescribeQuickAccessFilter, &[alt(c('F'))], |a, _| a.focus_quick_filter()),
     Action::new("goto.open", G::Misc, S::ActionsGotoOpen, S::DescribeGotoOpen, &[ctrl(c('P')), key(Key::F(4))], |a, _| a.open_goto()),
     Action::new("palette.show", G::Misc, S::ActionsPaletteShow, S::DescribePaletteShow, &[ctrl_shift(c('P'))], |a, _| a.open_palette()),
@@ -343,7 +366,8 @@ pub static ACTIONS: &[Action] = &[
     Action::new("layout.load", G::Misc, S::ActionsLayoutLoad, S::DescribeLayoutLoad, &[], |a, _| a.ask_load_layout()),
     Action::new("window.minimize", G::Misc, S::ActionsWindowMinimize, S::DescribeWindowMinimize, &[alt(c('M'))], |a, _| a.effects.push(Effect::Window(WindowCmd::Minimize))),
     Action::new("window.fullscreen", G::Misc, S::ActionsWindowFullscreen, S::DescribeWindowFullscreen, &[key(Key::F(11))], |a, _| a.effects.push(Effect::Window(WindowCmd::Fullscreen))),
-    Action::new("window.close", G::Misc, S::ActionsWindowClose, S::DescribeWindowClose, &[alt(Key::F(4))], |a, _| a.effects.push(Effect::Window(WindowCmd::Close))),
+    Action::new("window.close", G::Misc, S::ActionsWindowClose, S::DescribeWindowClose, &[alt(Key::F(4))], |a, now| a.close_window(now)),
+    Action::new("app.quit", G::Flit, S::ActionsAppQuit, S::DescribeAppQuit, &[], |a, now| a.quit_app(now)).on_unix(&[ctrl(c('Q'))]),
     Action::new("font.increase", G::Options, S::ActionsFontIncrease, S::DescribeFontIncrease, &[ctrl_shift(c('='))], |a, _| a.step_font(FONT_STEP)).also(&["Alt+MouseWheelUp"]),
     Action::new("font.decrease", G::Options, S::ActionsFontDecrease, S::DescribeFontDecrease, &[ctrl(c('-'))], |a, _| a.step_font(-FONT_STEP)).also(&["Alt+MouseWheelDown"]),
     Action::new("font.reset", G::Options, S::ActionsFontReset, S::DescribeFontReset, &[ctrl(c('0'))], |a, _| a.set_ui_scale(100)),
@@ -379,7 +403,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("text.lowercase", G::Text, S::ActionsTextLowercase, S::DescribeTextLowercase, &[], |a, _| a.change_case(false)).within(Ctx::Field),
     Action::held("text.autocomplete", G::Text, S::ActionsTextAutocomplete, S::DescribeTextAutocomplete, &[key(Key::Tab)], Ctx::Field),
     Action::held("text.undo", G::Text, S::ActionsTextUndo, S::DescribeTextUndo, &[ctrl(c('Z'))], Ctx::Field),
-    Action::held("text.redo", G::Text, S::ActionsTextRedo, S::DescribeTextRedo, &[ctrl_shift(c('Z'))], Ctx::Field),
+    Action::held("text.redo", G::Text, S::ActionsTextRedo, S::DescribeTextRedo, &[ctrl_shift(c('Z')), ctrl(c('Y'))], Ctx::Field),
     Action::new("list.up", G::Scroll, S::ActionsListUp, S::DescribeListUp, &[key(Key::Up)], |a, now| a.list_key(Key::Up, Mods::default(), now)),
     Action::new("list.down", G::Scroll, S::ActionsListDown, S::DescribeListDown, &[key(Key::Down)], |a, now| a.list_key(Key::Down, Mods::default(), now)),
     Action::new("list.left", G::Scroll, S::ActionsListLeft, S::DescribeListLeft, &[key(Key::Left)], |a, now| a.list_key(Key::Left, Mods::default(), now)),
@@ -387,7 +411,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("list.first", G::Scroll, S::ActionsListFirst, S::DescribeListFirst, &[key(Key::Home)], |a, now| a.list_key(Key::Home, Mods::default(), now)),
     Action::new("list.last", G::Scroll, S::ActionsListLast, S::DescribeListLast, &[key(Key::End)], |a, now| a.list_key(Key::End, Mods::default(), now)),
     Action::new("list.page_up", G::Scroll, S::ActionsListPageUp, S::DescribeListPageUp, &[key(Key::PageUp), ctrl(c('U'))], |a, now| a.list_key(Key::PageUp, Mods::default(), now)),
-    Action::new("list.page_down", G::Scroll, S::ActionsListPageDown, S::DescribeListPageDown, &[key(Key::PageDown), ctrl(c('D'))], |a, now| a.list_key(Key::PageDown, Mods::default(), now)),
+    Action::new("list.page_down", G::Scroll, S::ActionsListPageDown, S::DescribeListPageDown, &[key(Key::PageDown), ctrl(c('D'))], |a, now| a.list_key(Key::PageDown, Mods::default(), now)).on_unix(&[key(Key::PageDown)]),
     Action::new("list.center", G::Scroll, S::ActionsListCenter, S::DescribeListCenter, &[], |a, _| a.reveal_focus(true)),
     Action::new("list.cursor_up", G::Scroll, S::ActionsListCursorUp, S::DescribeListCursorUp, &[ctrl(Key::Up), ctrl(c('K'))], |a, now| a.list_key(Key::Up, CURSOR, now)),
     Action::new("list.cursor_down", G::Scroll, S::ActionsListCursorDown, S::DescribeListCursorDown, &[ctrl(Key::Down), ctrl(c('J'))], |a, now| a.list_key(Key::Down, CURSOR, now)),
@@ -406,7 +430,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("search.group_folder", G::Flit, S::ActionsSearchGroupFolder, S::DescribeSearchGroupFolder, &[], |a, _| a.toggle_search_groups()),
     Action::new("search.clear_history", G::Flit, S::ActionsSearchClearHistory, S::DescribeSearchClearHistory, &[], |a, _| a.clear_search_history()),
     Action::new("search.reveal", G::Flit, S::ActionsSearchReveal, S::DescribeSearchReveal, &[], |a, now| a.reveal_search_focus(now)),
-    Action::new("nav.home", G::Flit, S::ActionsNavHome, S::DescribeNavHome, &[], |a, now| a.go_known(KnownFolder::Home, now)),
+    Action::new("nav.home", G::Flit, S::ActionsNavHome, S::DescribeNavHome, &[], |a, now| a.go_known(KnownFolder::Home, now)).on_unix(&[alt(Key::Home)]),
     Action::new("nav.home_page", G::Flit, S::ActionsNavHomePage, S::DescribeNavHomePage, &[], |a, now| a.go_home_page(false, now)),
     Action::new("nav.computer", G::Flit, S::ActionsNavComputer, S::DescribeNavComputer, &[], |a, now| a.navigate(Location::computer(), now)),
     Action::new("nav.recycle_bin", G::Flit, S::ActionsNavRecycleBin, S::DescribeNavRecycleBin, &[], |a, now| a.navigate(Location::recycle_bin(), now)),
@@ -479,7 +503,7 @@ pub static ACTIONS: &[Action] = &[
         }
     }),
     Action::new("select.none", G::Flit, S::ActionsSelectNone, S::DescribeSelectNone, &[key(Key::Escape)], |a, _| a.clear_selection()),
-    Action::new("select.invert", G::Flit, S::ActionsSelectInvert, S::DescribeSelectInvert, &[], |a, _| a.invert_selection()),
+    Action::new("select.invert", G::Flit, S::ActionsSelectInvert, S::DescribeSelectInvert, &[], |a, _| a.invert_selection()).on_unix(&[ctrl_shift(c('I'))]),
     Action::new("item.pin", G::Flit, S::ActionsItemPin, S::DescribeItemPin, &[], |a, _| a.pin_selection()),
     Action::new("tags.new", G::Flit, S::ActionsTagsNew, S::DescribeTagsNew, &[], |a, _| a.new_tag(true)),
     Action::new("tags.remove", G::Flit, S::ActionsTagsRemove, S::DescribeTagsRemove, &[], |a, _| a.remove_tags()),
@@ -501,9 +525,10 @@ pub static ACTIONS: &[Action] = &[
     Action::new("app.terminal_admin", G::Flit, S::ActionsAppTerminalAdmin, S::DescribeAppTerminalAdmin, &[ctrl_shift(c('`'))], |a, _| a.open_terminal(true)),
     Action::new("file.paste_into", G::Flit, S::ActionsFilePasteInto, S::DescribeFilePasteInto, &[ctrl_shift(c('V'))], |a, _| a.paste_into_selection()),
     Action::new("file.share", G::Flit, S::ActionsFileShare, S::DescribeFileShare, &[], |a, _| a.share_selection()),
-    Action::new("file.new_item", G::Flit, S::ActionsFileNewItem, S::DescribeFileNewItem, &[ctrl_shift(c('I'))], |a, _| a.new_item_dialog()),
+    Action::new("file.new_item", G::Flit, S::ActionsFileNewItem, S::DescribeFileNewItem, &[ctrl_shift(c('I'))], |a, _| a.new_item_dialog()).on_unix(&[]),
     Action::new("file.new_folder_with_selection", G::Flit, S::ActionsFileNewFolderWithSelection, S::DescribeFileNewFolderWithSelection, &[], |a, _| a.new_folder_with_selection()),
     Action::new("file.new_stream", G::Flit, S::ActionsFileNewStream, S::DescribeFileNewStream, &[], |a, _| a.new_stream()),
+    Action::new("file.run_in_terminal", G::Flit, S::ActionsFileRunInTerminal, S::DescribeFileRunInTerminal, &[], |a, _| a.run_in_terminal()),
     Action::new("file.folder_icon", G::Flit, S::ActionsFileFolderIcon, S::DescribeFileFolderIcon, &[], |a, _| a.ask_folder_icon()),
     Action::new("file.folder_icon_reset", G::Flit, S::ActionsFileFolderIconReset, S::DescribeFileFolderIconReset, &[], |a, _| a.reset_folder_icon()),
     Action::new("file.shortcut", G::Flit, S::ActionsFileShortcut, S::DescribeFileShortcut, &[], |a, _| a.create_shortcuts()),
@@ -526,7 +551,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("ops.show", G::Flit, S::ActionsOpsShow, S::DescribeOpsShow, &[], |a, _| a.toggle_jobs()),
     Action::new("ops.clear", G::Flit, S::ActionsOpsClear, S::DescribeOpsClear, &[], |a, _| a.clear_completed()),
     Action::new("edit.undo", G::Flit, S::ActionsEditUndo, S::DescribeEditUndo, &[ctrl(c('Z'))], |a, _| a.undo()),
-    Action::new("edit.redo", G::Flit, S::ActionsEditRedo, S::DescribeEditRedo, &[ctrl(c('Y'))], |a, _| a.redo()),
+    Action::new("edit.redo", G::Flit, S::ActionsEditRedo, S::DescribeEditRedo, &[ctrl(c('Y')), ctrl_shift(c('Z'))], |a, _| a.redo()),
     Action::new("item.properties", G::Flit, S::ActionsItemProperties, S::DescribeItemProperties, &[alt_shift(Key::Enter)], |a, _| a.properties_dialog()),
     Action::new("view.pane.preview", G::Flit, S::ActionsViewPanePreview, S::DescribeViewPanePreview, &[alt(c('P'))], |a, _| a.show_preview_tab(false)),
     Action::new("view.pane.details", G::Flit, S::ActionsViewPaneDetails, S::DescribeViewPaneDetails, &[alt_shift(c('P'))], |a, _| a.show_preview_tab(true)),
@@ -606,7 +631,7 @@ pub fn chord_text(c: &Chord) -> String {
 }
 
 pub fn keys_text(a: &Action) -> String {
-    a.shown_keys(a.keys).join(", ")
+    a.shown_keys(a.keys, false).join(", ")
 }
 
 pub fn index(id: &str) -> Option<usize> {

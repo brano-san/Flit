@@ -25,7 +25,11 @@ unicode-bidi = { version = "0.3.18", default-features = false, features = ["hard
 md-5.workspace = true
 png = "0.18"
 jpeg-decoder = "0.3"
+image-webp = "0.2"
 x11rb = { version = "0.14", default-features = false, features = ["allow-unsafe-code", "dl-libxcb"] }
+wayland-client = "0.31"
+wayland-backend = { version = "0.3", default-features = false, features = ["client_system"] }
+wayland-protocols = { version = "0.32", default-features = false, features = ["client", "staging"] }
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 png = "0.18"
 x11-dl = "2.21"

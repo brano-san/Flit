@@ -1,5 +1,7 @@
 use flit_core::i18n::S;
 use flit_core::preview::PropGroup;
+use flit_core::provider::{Access, Accounts};
+use flit_core::FsPath;
 use flit_platform::Platform;
 use std::ffi::CStr;
 use std::os::unix::fs::MetadataExt;
@@ -31,8 +33,15 @@ pub fn mode_text(mode: u32) -> String {
 }
 
 fn name_of(id: u32, user: bool) -> String {
+    match lookup(id, user) {
+        Some(name) => format!("{name} ({id})"),
+        None => id.to_string(),
+    }
+}
+
+fn lookup(id: u32, user: bool) -> Option<String> {
     let mut buf = vec![0 as libc::c_char; 4096];
-    let found = unsafe {
+    unsafe {
         if user {
             let mut pw: libc::passwd = std::mem::zeroed();
             let mut out = std::ptr::null_mut();
@@ -42,11 +51,38 @@ fn name_of(id: u32, user: bool) -> String {
             let mut out = std::ptr::null_mut();
             (libc::getgrgid_r(id, &mut gr, buf.as_mut_ptr(), buf.len(), &mut out) == 0 && !out.is_null()).then(|| CStr::from_ptr(gr.gr_name).to_string_lossy().into_owned())
         }
-    };
-    match found {
-        Some(name) => format!("{name} ({id})"),
-        None => id.to_string(),
     }
+}
+
+pub fn account_lines(text: &str) -> Vec<(u32, String)> {
+    text.lines()
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| {
+            let mut fields = l.split(':');
+            let name = fields.next().filter(|n| !n.is_empty())?;
+            let id = fields.nth(1)?.trim().parse().ok()?;
+            Some((id, name.to_owned()))
+        })
+        .collect()
+}
+
+fn known(list: &mut Vec<(u32, String)>, id: u32, user: bool) {
+    if !list.iter().any(|(k, _)| *k == id) {
+        if let Some(name) = lookup(id, user) {
+            list.push((id, name));
+        }
+    }
+}
+
+pub fn access(items: &[FsPath]) -> (Vec<Option<Access>>, Accounts) {
+    let found: Vec<Option<Access>> = items.iter().map(|p| flit_platform_linux::host(p).and_then(|h| std::fs::symlink_metadata(h).ok()).map(|m| Access { mode: m.mode(), uid: m.uid(), gid: m.gid() })).collect();
+    let read = |file: &str| std::fs::read_to_string(file).map(|t| account_lines(&t)).unwrap_or_default();
+    let mut accounts = Accounts { users: read("/etc/passwd"), groups: read("/etc/group") };
+    for a in found.iter().flatten() {
+        known(&mut accounts.users, a.uid, true);
+        known(&mut accounts.groups, a.gid, false);
+    }
+    (found, accounts)
 }
 
 fn date(t: SystemTime, offset: i32) -> Option<String> {

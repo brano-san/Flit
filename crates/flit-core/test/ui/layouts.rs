@@ -544,3 +544,26 @@ fn bench_selection_source_on_100k() {
         eprintln!("BENCH selection_source {n:>6} selected, UI thread  median {:.3} ms", ms(times[4]));
     }
 }
+
+#[test]
+fn columns_parent_panes_get_tooltips_like_the_list() {
+    let wide = format!("a-{}", "wide-".repeat(40));
+    let mut app = app_at(r"C:\x\sub");
+    deliver(&mut app, &["inner", "z.txt"]);
+    app.run_action("view.layout.columns", Instant::now());
+    let effects: Vec<Effect> = app.drain_effects().collect();
+    assert!(serve_pane(&mut app, &effects, r"C:\x", &[wide.as_str(), "sub"]));
+    let delay = crate::ui::tooltip::DELAY;
+    let tip_over = |app: &mut App, row: usize, at: Instant| {
+        let r = app.pane_tip_anchor(1, row).unwrap();
+        app.on_event(&Event::MouseMove { x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 }, at);
+        app.on_event(&Event::Timer, at + delay);
+        app.tooltip()
+    };
+    let t0 = Instant::now();
+    let tip = tip_over(&mut app, 1, t0).expect("a parent pane row gets a tip");
+    assert_eq!(tip.line, "Type: File folder");
+    let tip = tip_over(&mut app, 0, t0 + 2 * delay).expect("the cut-off name gets a tip");
+    assert!(app.details.pane_elided.contains(&(1, 0)));
+    assert_eq!(tip.line, wide);
+}

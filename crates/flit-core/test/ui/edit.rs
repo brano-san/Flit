@@ -80,3 +80,75 @@ fn case_changes_only_the_selection_and_keeps_its_direction() {
     assert_eq!((e.anchor, e.caret), (3, 1));
     assert!(!e.change_case(false), "already lowercase");
 }
+
+fn typed(e: &mut LineEdit, s: &str) {
+    s.chars().for_each(|c| e.insert(&c.to_string()));
+}
+
+#[test]
+fn typing_runs_undo_as_one_step_and_redo_restores_them() {
+    let mut e = LineEdit::default();
+    typed(&mut e, "hello");
+    e.insert(" big world");
+    typed(&mut e, "!");
+    assert_eq!(e.key(Key::Char('Z'), CTRL), EditAction::Changed);
+    assert_eq!(e.text, "hello big world");
+    e.key(Key::Char('Z'), CTRL);
+    assert_eq!(e.text, "hello");
+    e.key(Key::Char('Z'), CTRL);
+    assert_eq!(e.text, "");
+    assert_eq!(e.key(Key::Char('Z'), CTRL), EditAction::None);
+    e.key(Key::Char('Y'), CTRL);
+    assert_eq!(e.text, "hello");
+    e.key(Key::Char('Z'), Mods { ctrl: true, shift: true, alt: false });
+    assert_eq!(e.text, "hello big world");
+    typed(&mut e, "?");
+    assert_eq!(e.key(Key::Char('Y'), CTRL), EditAction::None, "new edits drop the redo history");
+}
+
+#[test]
+fn deleting_cutting_and_moving_break_the_runs() {
+    let mut e = LineEdit::default();
+    e.set("one two three");
+    e.key(Key::Backspace, CTRL);
+    e.key(Key::Backspace, NONE);
+    e.key(Key::Backspace, NONE);
+    assert_eq!(e.text, "one tw");
+    e.key(Key::Char('Z'), CTRL);
+    assert_eq!(e.text, "one two ", "plain backspaces group");
+    e.key(Key::Char('Z'), CTRL);
+    assert_eq!(e.text, "one two three");
+    assert_eq!((e.caret, e.anchor), (13, 13));
+    e.select_all();
+    assert_eq!(e.key(Key::Char('X'), CTRL), EditAction::Copy("one two three".into()));
+    assert_eq!(e.text, "");
+    e.key(Key::Char('Z'), CTRL);
+    assert_eq!((e.text.as_str(), e.selection()), ("one two three", 0..13));
+    e.move_to(3, false);
+    e.insert("X");
+    e.key(Key::Left, NONE);
+    e.insert("Y");
+    e.key(Key::Char('Z'), CTRL);
+    assert_eq!(e.text, "oneX two three");
+    e.key(Key::Char('Z'), CTRL);
+    assert_eq!(e.text, "one two three");
+}
+
+#[test]
+fn empty_selection_copy_and_cut_do_nothing_and_history_is_capped() {
+    let mut e = LineEdit::default();
+    e.set("abc");
+    assert_eq!(e.key(Key::Char('C'), CTRL), EditAction::None);
+    assert_eq!(e.key(Key::Char('X'), CTRL), EditAction::None);
+    assert_eq!(e.text, "abc");
+    assert_eq!(e.key(Key::Char('Z'), CTRL), EditAction::None, "a no-op cut leaves no history");
+    for _ in 0..500 {
+        e.insert("word");
+        e.key(Key::Left, NONE);
+    }
+    let mut steps = 0;
+    while e.undo() {
+        steps += 1;
+    }
+    assert!(steps <= 200 && steps > 100);
+}

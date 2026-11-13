@@ -239,6 +239,7 @@ impl Tab {
             }
             self.stats.done = Some(v.snap().elapsed);
             self.loading = None;
+            self.relabel_crumbs();
             self.check_trail();
         }
         done && stale_view
@@ -249,9 +250,21 @@ impl Tab {
         if self.loading.is_some() || self.pending_diffs.is_empty() {
             return false;
         }
-        v.apply_all(self.pending_diffs.drain(..));
+        self.reveal_pending |= v.apply_all(self.pending_diffs.drain(..));
         self.check_trail();
         true
+    }
+
+    fn relabel_crumbs(&mut self) {
+        let loc = self.location();
+        if loc.path().kind() != crate::path::PathKind::Drive || library::is_library(loc.path()) {
+            return;
+        }
+        let crumbs = loc.crumbs();
+        if crumbs != self.crumbs {
+            self.crumbs = crumbs;
+            self.follow_trail();
+        }
     }
 
     pub(super) fn crumb(&self, i: usize) -> Option<&(String, Location)> {
@@ -348,7 +361,7 @@ impl Tab {
         let repeated = count > 1 && self.type_ahead.chars().all(|c| c == first);
         let cur = v.focus.and_then(|f| v.row_of(f));
         let find = |needle: &str, start: usize, v: &DirView| -> Option<usize> {
-            (0..n).map(|k| (start + k) % n).find(|&r| name::starts_with_ci(v.listing().name(v.rows()[r]), needle))
+            (0..n).map(|k| (start + k) % n).find(|&r| name::starts_with_ci(v.listing().label(v.rows()[r]), needle))
         };
         let single = first.to_string();
         let next = cur.map_or(0, |r| r + 1);

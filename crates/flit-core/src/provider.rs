@@ -69,6 +69,86 @@ pub enum Template {
     Data(Vec<u8>),
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct Access {
+    pub mode: u32,
+    pub uid: u32,
+    pub gid: u32,
+}
+
+impl Access {
+    pub const DIR: u32 = 0o040000;
+    pub const LINK: u32 = 0o120000;
+    pub const FILE: u32 = 0o100000;
+    const KIND: u32 = 0o170000;
+
+    pub fn kind(&self) -> u32 {
+        self.mode & Self::KIND
+    }
+
+    pub fn perms(&self) -> u32 {
+        self.mode & 0o7777
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ModeEdit {
+    pub set: u32,
+    pub clear: u32,
+}
+
+impl ModeEdit {
+    pub fn between(before: u32, after: u32) -> Self {
+        let changed = (before ^ after) & 0o7777;
+        Self { set: after & changed, clear: before & changed }
+    }
+
+    pub fn apply(self, perms: u32) -> u32 {
+        (perms & !self.clear | self.set) & 0o7777
+    }
+
+    pub fn is_empty(self) -> bool {
+        (self.set | self.clear) & 0o7777 == 0
+    }
+
+    pub fn only(self, mask: u32) -> Self {
+        Self { set: self.set & mask, clear: self.clear & mask }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Enclosed {
+    pub files: ModeEdit,
+    pub folders: ModeEdit,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AccessEdit {
+    pub mode: ModeEdit,
+    pub owner: Option<u32>,
+    pub group: Option<u32>,
+    pub enclosed: Option<Enclosed>,
+}
+
+impl AccessEdit {
+    pub fn is_empty(&self) -> bool {
+        self.mode.is_empty() && self.owner.is_none() && self.group.is_none() && self.enclosed.is_none_or(|e| e.files.is_empty() && e.folders.is_empty())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AccessChange {
+    pub item: FsPath,
+    pub from: Access,
+    pub to: Access,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Accounts {
+    pub users: Vec<(u32, String)>,
+    pub groups: Vec<(u32, String)>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum FileOp {
     Trash(Vec<FsPath>),
@@ -91,11 +171,14 @@ pub enum FileOp {
     InstallFonts(Vec<FsPath>),
     LockScreen(FsPath),
     PasteLink { dest: FsPath },
+    SetAccess { items: Vec<FsPath>, edit: AccessEdit },
+    Access(Vec<AccessChange>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Launch {
     Terminal { dirs: Vec<FsPath>, admin: bool },
+    RunInTerminal { program: FsPath },
     With { program: FsPath, args: Vec<FsPath> },
     Run { program: String, args: String, dir: Option<FsPath> },
     Eject(FsPath),
@@ -104,6 +187,15 @@ pub enum Launch {
     Disconnect(Option<FsPath>),
     ConnectServer(String),
     Reveal { item: FsPath, new_tab: bool },
+    ChooseApp { files: Vec<FsPath>, mime: String, apps: Vec<AppChoice> },
+    SetDefault { program: FsPath, mime: String },
+    Custom { command: String, files: Vec<FsPath>, mime: String, remember: bool },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AppChoice {
+    pub name: String,
+    pub program: FsPath,
 }
 
 impl Launch {
@@ -111,12 +203,19 @@ impl Launch {
         let all = |v: &[FsPath]| v.iter().map(&f).collect::<Option<Vec<_>>>();
         Some(match self {
             Launch::Terminal { dirs, admin } => Launch::Terminal { dirs: all(dirs)?, admin: *admin },
+            Launch::RunInTerminal { program } => Launch::RunInTerminal { program: f(program)? },
             Launch::With { program, args } => Launch::With { program: f(program)?, args: all(args)? },
             Launch::Run { program, args, dir } => Launch::Run { program: program.clone(), args: args.clone(), dir: dir.as_ref().map(&f).unwrap_or(None) },
             Launch::Eject(drive) => Launch::Eject(f(drive)?),
             Launch::Mount(device) => Launch::Mount(device.clone()),
             Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) => self.clone(),
             Launch::Reveal { item, new_tab } => Launch::Reveal { item: f(item)?, new_tab: *new_tab },
+            Launch::ChooseApp { files, mime, apps } => {
+                let apps = apps.iter().map(|a| Some(AppChoice { name: a.name.clone(), program: f(&a.program)? })).collect::<Option<Vec<_>>>()?;
+                Launch::ChooseApp { files: all(files)?, mime: mime.clone(), apps }
+            }
+            Launch::SetDefault { program, mime } => Launch::SetDefault { program: f(program)?, mime: mime.clone() },
+            Launch::Custom { command, files, mime, remember } => Launch::Custom { command: command.clone(), files: all(files)?, mime: mime.clone(), remember: *remember },
         })
     }
 }
@@ -150,6 +249,8 @@ impl FileOp {
             FileOp::InstallFonts(v) => FileOp::InstallFonts(all(v)?),
             FileOp::LockScreen(p) => FileOp::LockScreen(f(p)?),
             FileOp::PasteLink { dest } => FileOp::PasteLink { dest: f(dest)? },
+            FileOp::SetAccess { items, edit } => FileOp::SetAccess { items: all(items)?, edit: *edit },
+            FileOp::Access(changes) => FileOp::Access(changes.iter().map(|c| Some(AccessChange { item: f(&c.item)?, ..c.clone() })).collect::<Option<_>>()?),
         })
     }
 }
@@ -167,6 +268,19 @@ pub struct Conflict {
     pub target: FsPath,
     pub from: Meta,
     pub to: Meta,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Recover {
+    Retry,
+    Skip,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Failure {
+    pub path: FsPath,
+    pub error: String,
+    pub fatal: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -190,6 +304,8 @@ pub struct OpProgress {
 struct Answer {
     policy: Option<Resolve>,
     given: Option<(Resolve, bool)>,
+    skip_all: bool,
+    recovered: Option<(Recover, bool)>,
 }
 
 #[derive(Default, Debug)]
@@ -253,6 +369,35 @@ impl OpCtl {
         }
         Some(choice)
     }
+
+    pub fn skips_failures(&self) -> bool {
+        self.lock().skip_all
+    }
+
+    pub fn answer_failure(&self, choice: Recover, all: bool) {
+        self.lock().recovered = Some((choice, all));
+        self.0.changed.notify_all();
+    }
+
+    pub fn recover(&self, fatal: bool, ask: impl FnOnce()) -> Option<Recover> {
+        let mut a = self.lock();
+        if a.skip_all && !fatal {
+            return Some(Recover::Skip);
+        }
+        a.recovered = None;
+        drop(a);
+        if self.is_cancelled() {
+            return None;
+        }
+        ask();
+        let mut a = self.lock();
+        while a.recovered.is_none() && !self.is_cancelled() {
+            a = self.0.changed.wait(a).unwrap_or_else(|e| e.into_inner());
+        }
+        let (choice, all) = a.recovered.take().filter(|_| !self.is_cancelled())?;
+        a.skip_all |= all && choice == Recover::Skip;
+        Some(choice)
+    }
 }
 
 pub type OpId = u64;
@@ -283,6 +428,7 @@ pub enum ProviderRequest {
     Launch { tab: TabId, launch: Launch },
     Hash { tab: TabId, id: OpId, file: FsPath, kinds: Vec<HashKind>, ctl: OpCtl },
     Measure { tab: TabId, id: OpId, items: Vec<(FsPath, Option<u64>)>, ctl: OpCtl },
+    Access { tab: TabId, id: OpId, items: Vec<FsPath> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -294,11 +440,15 @@ pub enum ProviderEvent {
     OpDone { tab: TabId, id: OpId, error: Option<String>, report: Option<OpReport> },
     OpProgress { tab: TabId, id: OpId, progress: OpProgress },
     OpConflict { tab: TabId, id: OpId, conflict: Conflict },
+    OpFailure { tab: TabId, id: OpId, failure: Failure },
+    Untrashable { tab: TabId, id: OpId, items: Vec<FsPath> },
     Navigate { tab: TabId, path: FsPath },
     Reveal { tab: TabId, path: FsPath, new_tab: bool },
     Hashed { tab: TabId, id: OpId, result: Result<Vec<String>, String> },
     Measured { tab: TabId, id: OpId, totals: Totals, file_system: Option<String>, done: bool },
     Status { tab: TabId, gen: u64, text: String },
+    Access { tab: TabId, id: OpId, items: Vec<Option<Access>>, accounts: Accounts },
+    NotExecutable { tab: TabId, path: FsPath },
 }
 
 #[cfg(test)]

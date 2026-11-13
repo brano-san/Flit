@@ -7,6 +7,8 @@ loading = "Loading preview…"
 new_tag = "+ New tag"
 shortcut = "Shortcut to {target}"
 too_large = "The image is too large to preview"
+online_only = "Stored online only.\nPreviewing downloads the file to this device."
+download = "Download to preview"
 truncated = ["Showing the first {n} character", "Showing the first {n} characters"]
 folders = ["{n} Folder", "{n} Folders"]
 files = ["{n} File", "{n} Files"]
@@ -30,6 +32,9 @@ read_only = "Read-only"
 hidden = "Hidden"
 system = "System"
 link = "Link"
+online_only = "Online only"
+pinned = "Always on this device"
+offline = "Offline"
 
 [folder]
 empty = "This folder is empty."

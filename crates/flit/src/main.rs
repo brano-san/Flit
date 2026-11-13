@@ -75,6 +75,9 @@ fn main() {
                 }
             }
             return;
+        } else if a == "--elevated-agent" {
+            #[cfg(target_os = "linux")]
+            std::process::exit(flit_platform_linux_gui::elevated::serve());
         } else if a == "--dbus-activated" {
             activated = true;
         } else if a == "--metrics" {

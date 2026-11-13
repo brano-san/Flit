@@ -437,7 +437,7 @@ fn dragging_files_over_an_inactive_panel_activates_it_for_the_drop() {
     frame(&mut app);
     let (x, y) = row_in(layout_of(&app, 0), 0);
     let paths = vec![FsPath::parse(r"D:\in\f.txt").unwrap()];
-    let effect = app.drag(&DragEvent::Enter { paths, x, y, mods: NO, allowed: drop_effect::COPY | drop_effect::MOVE }, t0());
+    let effect = app.drag(&DragEvent::Enter { paths, x, y, mods: NO, allowed: drop_effect::COPY | drop_effect::MOVE, right: false }, t0());
     assert_eq!(app.panels.active, 0);
     assert_ne!(effect, drop_effect::NONE);
 }

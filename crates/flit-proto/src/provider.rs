@@ -2,12 +2,13 @@ use crate::listing::{check_meta, check_name, EntryBatch};
 use crate::transport::ProtoError;
 use flit_core::listing::{DirChange, DirStats};
 use flit_core::path::PathKind;
-use flit_core::provider::{Conflict, FileOp, OpProgress, Resolve};
+use flit_core::provider::{Conflict, Failure, FileOp, OpProgress, Recover, Resolve};
 use flit_core::{FsError, FsPath, Meta};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-pub const VERSION: u32 = 4;
+pub const VERSION: u32 = 5;
+pub const MAX_FAILURE_TEXT: usize = 4096;
 
 pub type ReqId = u64;
 
@@ -21,6 +22,7 @@ pub enum Request {
     Answer { id: ReqId, choice: Option<Resolve>, all: bool },
     Cancel { id: ReqId },
     Shutdown,
+    Recover { id: ReqId, choice: Option<Recover>, all: bool },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -34,6 +36,8 @@ pub enum Event {
     OpProgress { id: ReqId, progress: OpProgress },
     OpConflict { id: ReqId, conflict: Conflict },
     OpDone { id: ReqId, error: Option<String>, items: Vec<(FsPath, FsPath)> },
+    OpFailure { id: ReqId, failure: Failure },
+    OpPerformed { id: ReqId, op: FileOp },
 }
 
 impl Event {
@@ -46,13 +50,14 @@ impl Event {
             }),
             Event::Stat { result: Ok(meta), .. } => check_meta(meta),
             Event::OpConflict { conflict, .. } => check_meta(&conflict.from).and_then(|()| check_meta(&conflict.to)),
+            Event::OpFailure { failure, .. } if failure.error.len() > MAX_FAILURE_TEXT => Err(ProtoError::Invalid("a failure message is too long")),
             _ => Ok(()),
         }
     }
 }
 
 pub fn agent_runs(op: &FileOp) -> bool {
-    matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::Delete(_) | FileOp::Trash(_) | FileOp::Restore(_))
+    matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::Delete(_) | FileOp::Trash(_) | FileOp::Restore(_) | FileOp::SetAccess { .. } | FileOp::Access(_))
 }
 
 fn under(set: &HashSet<&[u8]>, p: &FsPath) -> bool {
@@ -75,6 +80,11 @@ fn scope(op: &FileOp) -> Option<Scope> {
         FileOp::NewFolder { dir, .. } => (vec![dir.clone()], vec![dir.clone()]),
         FileOp::Delete(items) => (items.clone(), items.clone()),
         FileOp::Trash(items) => (items.clone(), Vec::new()),
+        FileOp::SetAccess { items, .. } => (items.clone(), items.clone()),
+        FileOp::Access(changes) => {
+            let items: Vec<FsPath> = changes.iter().map(|c| c.item.clone()).collect();
+            (items.clone(), items)
+        }
         _ => return None,
     };
     Some(Scope { sources, targets, trash: matches!(op, FileOp::Trash(_)) })
@@ -94,11 +104,26 @@ pub fn check_report(op: &FileOp, items: &[(FsPath, FsPath)]) -> Result<(), Proto
     if items.iter().all(fits) { Ok(()) } else { Err(ProtoError::Invalid("a reported path lies outside the operation")) }
 }
 
+pub fn check_performed(op: &FileOp, performed: &FileOp) -> Result<(), ProtoError> {
+    let (Some(scope), FileOp::Access(changes)) = (scope(op).filter(|_| matches!(op, FileOp::SetAccess { .. } | FileOp::Access(_))), performed) else {
+        return Err(ProtoError::Invalid("a performed operation for an operation that does not report one"));
+    };
+    let (sources, _) = sets(&scope);
+    if changes.iter().all(|c| under(&sources, &c.item)) { Ok(()) } else { Err(ProtoError::Invalid("a performed path lies outside the operation")) }
+}
+
 pub fn check_conflict(op: &FileOp, c: &Conflict) -> Result<(), ProtoError> {
     let asks = matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Restore(_));
     let scope = scope(op).filter(|_| asks).ok_or(ProtoError::Invalid("a conflict for an operation that cannot have one"))?;
     let (sources, targets) = sets(&scope);
     if under(&sources, &c.source) && under(&targets, &c.target) { Ok(()) } else { Err(ProtoError::Invalid("a conflict path lies outside the operation")) }
+}
+
+pub fn check_failure(op: &FileOp, f: &Failure) -> Result<(), ProtoError> {
+    let asks = matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Restore(_) | FileOp::Delete(_));
+    let scope = scope(op).filter(|_| asks).ok_or(ProtoError::Invalid("a failure for an operation that does not ask about one"))?;
+    let (sources, targets) = sets(&scope);
+    if under(&sources, &f.path) || under(&targets, &f.path) { Ok(()) } else { Err(ProtoError::Invalid("a failure path lies outside the operation")) }
 }
 
 #[cfg(test)]

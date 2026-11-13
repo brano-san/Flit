@@ -472,12 +472,12 @@ fn files_dropped_on_a_zip_are_copied_into_it_never_moved() {
     let row = |app: &App, n: usize| (app.layout.cols[0].x + 100.0, app.layout.list.y + (n as f32 + 0.5) * app.layout.row_h);
     let all = drop_effect::COPY | drop_effect::MOVE;
     let at = row(&app, 0);
-    let enter = DragEvent::Enter { paths: vec![p(r"C:\drop\f.txt")], x: at.0, y: at.1, mods: Mods { shift: true, ..NO }, allowed: all };
+    let enter = DragEvent::Enter { paths: vec![p(r"C:\drop\f.txt")], x: at.0, y: at.1, mods: Mods { shift: true, ..NO }, allowed: all, right: false };
     assert_eq!(app.drag(&enter, t0()), drop_effect::COPY);
     app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: Mods { shift: true, ..NO }, allowed: all }, t0());
     assert_eq!(ops(&mut app).into_iter().map(|(_, op)| op).collect::<Vec<_>>(), [FileOp::Copy { items: vec![p(r"C:\drop\f.txt")], dest: p(r"C:\drop\a.zip") }]);
     let at = row(&app, 1);
-    let enter = DragEvent::Enter { paths: vec![p(r"D:\f.txt")], x: at.0, y: at.1, mods: NO, allowed: all };
+    let enter = DragEvent::Enter { paths: vec![p(r"D:\f.txt")], x: at.0, y: at.1, mods: NO, allowed: all, right: false };
     assert_eq!(app.drag(&enter, t0()), drop_effect::COPY);
     app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: NO, allowed: all }, t0());
     assert_eq!(ops(&mut app).into_iter().map(|(_, op)| op).collect::<Vec<_>>(), [FileOp::Copy { items: vec![p(r"D:\f.txt")], dest: p(r"C:\drop") }]);
@@ -556,6 +556,25 @@ fn hashes_are_computed_in_one_request_and_compared_with_a_value_or_another_file(
     };
     key(&mut app, Key::Escape, NO);
     assert!(ctl.is_cancelled() && app.asking().is_none());
+}
+
+#[test]
+fn hashing_an_online_only_file_waits_until_compute_is_pressed() {
+    let mut app = app_at(r"C:\cloud");
+    deliver(&mut app, &[("away.bin", attr::ONLINE_ONLY), ("kept.bin", attr::PINNED)]);
+    let requests = |app: &mut App| app.drain_effects().filter(|e| matches!(e, Effect::Provider { req: ProviderRequest::Hash { .. }, .. })).count();
+    select(&mut app, &["away.bin"]);
+    app.hashes_dialog();
+    assert_eq!(app.asking(), Some("hashes"));
+    assert_eq!(requests(&mut app), 0, "nothing is downloaded before the user agrees");
+    assert_eq!((form(&app).note.as_str(), form(&app).progress), (S::ArchiveOnlineHash.t(), None));
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(requests(&mut app), 1);
+    assert!(matches!(&form(&app).kind, Kind::Hashes(Hashing { run: Some(_), .. })));
+    key(&mut app, Key::Escape, NO);
+    select(&mut app, &["kept.bin"]);
+    app.hashes_dialog();
+    assert_eq!(requests(&mut app), 1, "a file kept on the device is hashed at once");
 }
 
 #[test]

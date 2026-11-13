@@ -383,3 +383,129 @@ fn the_operations_button_shows_a_warning_after_a_failure_and_the_list_marks_the_
     finish(&mut app, id, None);
     assert_eq!(app.jobs.outcome(), Outcome::Done, "the latest outcome decides the icon");
 }
+
+fn failed(app: &mut App, id: OpId, ctl: &OpCtl, fatal: bool) -> JoinHandle<Option<Recover>> {
+    let (tx, rx) = mpsc::channel();
+    let c = ctl.clone();
+    let waiting = std::thread::spawn(move || c.recover(fatal, || tx.send(()).unwrap()));
+    rx.recv().unwrap();
+    let failure = Failure { path: p(r"C:\a\locked.txt"), error: "The process cannot access the file because it is being used by another process, so Flit waits for your answer.".into(), fatal };
+    app.on_provider_event(ProviderEvent::OpFailure { tab: app.tab().id, id, failure }, t0());
+    waiting
+}
+
+#[test]
+fn a_failing_item_asks_to_retry_skip_skip_all_or_cancel() {
+    let mut app = app_at(r"C:\x");
+    let mut g = Gfx::new(Mono, 2048);
+    let (id, ctl) = paste(&mut app);
+    let waiting = failed(&mut app, id, &ctl, false);
+    assert_eq!((app.asking(), app.jobs.sel, app.dialog_buttons()), (Some("failure"), 0, vec!["Retry", "Skip", "Skip all", "Cancel"]));
+    let (title, lines) = app.dialog_text().unwrap();
+    assert_eq!(title, "Cannot copy \u{201C}locked.txt\u{201D}");
+    assert!(lines[0].starts_with("The process cannot access") && lines[1] == r"In C:\a", "{lines:?}");
+    assert_eq!(app.jobs.list[0].status(), "Problem");
+    app.frame(&mut g, t0());
+    key(&mut app, Key::Enter);
+    assert_eq!((waiting.join().unwrap(), app.asking()), (Some(Recover::Retry), None), "Retry is the default button");
+    assert!(!app.jobs.list[0].asking && app.jobs.list[0].status() != "Problem");
+
+    let waiting = failed(&mut app, id, &ctl, false);
+    click(&mut app, |a| a.jobs.r.buttons[1]);
+    assert_eq!((waiting.join().unwrap(), ctl.skips_failures()), (Some(Recover::Skip), false));
+    let waiting = failed(&mut app, id, &ctl, false);
+    click(&mut app, |a| a.jobs.r.buttons[2]);
+    assert_eq!((waiting.join().unwrap(), ctl.skips_failures()), (Some(Recover::Skip), true));
+    assert_eq!(ctl.recover(false, || panic!("asked after Skip all")), Some(Recover::Skip));
+
+    let waiting = failed(&mut app, id, &ctl, true);
+    assert_eq!((app.asking(), app.dialog_buttons()), (Some("full"), vec!["Retry", "Cancel"]), "a full disk is asked even after Skip all");
+    assert_eq!(app.dialog_text().unwrap().0, "The destination is full");
+    app.frame(&mut g, t0());
+    key(&mut app, Key::Escape);
+    assert_eq!((waiting.join().unwrap(), ctl.is_cancelled()), (None, true));
+    finish(&mut app, id, Some("The operation was cancelled"));
+    assert_eq!(states(&app), [JobState::Cancelled]);
+}
+
+#[test]
+fn a_finished_job_drops_its_failure_question() {
+    let mut app = app_at(r"C:\x");
+    let (id, ctl) = paste(&mut app);
+    let waiting = failed(&mut app, id, &ctl, false);
+    ctl.cancel();
+    finish(&mut app, id, Some("cancelled"));
+    assert_eq!((waiting.join().unwrap(), app.asking()), (None, None));
+}
+
+fn closes(app: &mut App) -> bool {
+    app.drain_effects().any(|e| matches!(e, Effect::Window(crate::ui::WindowCmd::Close)))
+}
+
+#[test]
+fn closing_a_window_with_running_operations_asks_and_cancels_them_only_when_told() {
+    let mut app = app_at(r"C:\x");
+    app.on_event(&Event::CloseRequested, t0());
+    assert!(closes(&mut app) && app.confirm.is_none(), "nothing runs, so the window closes at once");
+    let (first, a) = paste(&mut app);
+    let (_, b) = paste(&mut app);
+    app.on_event(&Event::CloseRequested, t0());
+    let c = app.confirm.clone().expect("closing asks first");
+    assert_eq!((c.question.as_str(), c.yes.as_str()), ("2 operations are still running", "Cancel and close"));
+    assert!(!closes(&mut app) && !a.is_cancelled());
+    click(&mut app, |a| a.confirm.as_ref().unwrap().buttons[1]);
+    assert!(app.confirm.is_none() && !closes(&mut app) && !a.is_cancelled() && !b.is_cancelled(), "Keep window open leaves everything running");
+
+    finish(&mut app, first, None);
+    app.run_action("window.close", t0());
+    assert_eq!(app.confirm.as_ref().map(|c| c.question.as_str()), Some("1 operation is still running"), "finished operations do not count");
+    click(&mut app, |a| a.confirm.as_ref().unwrap().buttons[0]);
+    assert!(b.is_cancelled() && closes(&mut app), "Cancel and close cancels what runs and closes");
+}
+
+#[test]
+fn running_jobs_keep_the_system_awake() {
+    let mut app = app_at(r"C:\x");
+    assert!(!app.keeps_awake());
+    let (id, _) = paste(&mut app);
+    assert!(app.keeps_awake() && app.running_jobs() == 1);
+    finish(&mut app, id, Some("Access is denied"));
+    assert!(!app.keeps_awake() && app.running_jobs() == 0);
+}
+
+#[test]
+fn items_the_trash_refuses_can_be_deleted_permanently_instead() {
+    let mut app = app_at("/media/usb");
+    app.caps = crate::caps::Caps { unix_paths: true };
+    app.drain_effects().for_each(drop);
+    let all = vec![p("/media/usb/a"), p("/media/usb/b"), p("/media/usb/c")];
+    app.start_confirmed(ProviderId::Local, FileOp::Trash(all.clone()));
+    let (id, _) = started(&mut app).unwrap();
+    let tab = app.tab().id;
+    let refused = vec![p("/media/usb/b"), p("/media/usb/c")];
+    app.on_provider_event(ProviderEvent::Untrashable { tab, id, items: refused.clone() }, t0());
+    let report = OpReport { op: FileOp::Trash(all), items: vec![(p("/media/usb/a"), p("/home/u/.local/share/Trash/files/a"))] };
+    app.on_provider_event(ProviderEvent::OpDone { tab, id, error: Some("2 items failed. Cannot move /media/usb/b to the Trash: Permission denied".into()), report: Some(report) }, t0());
+    assert_eq!(app.asking(), Some("untrashable"));
+    let (title, lines) = app.dialog_text().unwrap();
+    assert_eq!((title.as_str(), lines[0].as_str(), lines[1].as_str()), ("Delete permanently?", "2 items can't be moved to the Trash.", "This cannot be undone."));
+    assert_eq!(app.dialog_buttons(), ["Delete permanently", "Cancel"]);
+    assert_eq!(app.jobs.sel, 0);
+    key(&mut app, Key::Enter);
+    let deletes: Vec<FileOp> = app.drain_effects().filter_map(|e| match e {
+        crate::ui::Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Op { op, .. } } => Some(op),
+        _ => None,
+    }).collect();
+    assert_eq!(deletes, [FileOp::Delete(refused)], "exactly the refused items are deleted");
+    assert_eq!(app.asking(), None);
+
+    app.start_confirmed(ProviderId::Local, FileOp::Trash(vec![p("/media/usb/d")]));
+    let (id, ctl) = started(&mut app).unwrap();
+    app.on_provider_event(ProviderEvent::Untrashable { tab, id, items: vec![p("/media/usb/d")] }, t0());
+    assert_eq!(app.dialog_text().unwrap().1[0], "“d” can't be moved to the Trash.");
+    key(&mut app, Key::Escape);
+    assert!(started(&mut app).is_none() && app.asking().is_none(), "cancel keeps the item");
+    ctl.cancel();
+    app.on_provider_event(ProviderEvent::Untrashable { tab, id, items: vec![p("/media/usb/d")] }, t0());
+    assert_eq!(app.asking(), None, "a cancelled operation does not ask");
+}

@@ -115,8 +115,8 @@ fn sizes(ctx: &Ctx, id: ReqId, dir: &FsPath, items: Vec<(u32, Vec<u8>)>) {
 }
 
 fn op(ctx: &Ctx, id: ReqId, op: &FileOp, ctl: OpCtl) {
-    let (progress, conflict) = (ctx.events.clone(), ctx.events.clone());
-    let job = Job::new(
+    let (progress, conflict, failure) = (ctx.events.clone(), ctx.events.clone(), ctx.events.clone());
+    let job = Job::asking(
         ctl,
         Box::new(move |p| {
             let _ = progress.send(Event::OpProgress { id, progress: p });
@@ -124,9 +124,15 @@ fn op(ctx: &Ctx, id: ReqId, op: &FileOp, ctl: OpCtl) {
         Box::new(move |c| {
             let _ = conflict.send(Event::OpConflict { id, conflict: c });
         }),
+        Box::new(move |f| {
+            let _ = failure.send(Event::OpFailure { id, failure: f });
+        }),
     );
     let out = ops::run(op, &job, ctx.trash.as_ref().as_ref());
     ctx.ops().remove(&id);
+    if let Some(done) = job.take_performed() {
+        ctx.send(Event::OpPerformed { id, op: done });
+    }
     ctx.send(Event::OpDone { id, error: out.error.map(|e| e.message), items: out.items });
 }
 
@@ -186,6 +192,11 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static, build: S
             },
             Request::Answer { id, choice, all } => match (ctx.ops().get(&id), choice) {
                 (Some(ctl), Some(choice)) => ctl.answer(choice, all),
+                (Some(ctl), None) => ctl.cancel(),
+                (None, _) => {}
+            },
+            Request::Recover { id, choice, all } => match (ctx.ops().get(&id), choice) {
+                (Some(ctl), Some(choice)) => ctl.answer_failure(choice, all),
                 (Some(ctl), None) => ctl.cancel(),
                 (None, _) => {}
             },

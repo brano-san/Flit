@@ -133,7 +133,7 @@ pub(crate) fn load() -> Option<Api> {
 }
 
 pub fn request(method: &str, uris: &[Vec<u8>]) -> Option<Open> {
-    let paths: Vec<Vec<u8>> = uris.iter().filter_map(|u| crate::instance::decode_uri(u)).collect();
+    let paths: Vec<Vec<u8>> = uris.iter().filter_map(|u| crate::instance::decode_uri(u).or_else(|| std::str::from_utf8(u).ok().filter(|s| flit_core::ui::server_uri(s).is_some()).map(|_| u.clone()))).collect();
     if paths.is_empty() {
         return None;
     }

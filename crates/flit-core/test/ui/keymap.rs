@@ -1,9 +1,9 @@
 use super::*;
 use crate::input::Event;
 use crate::location::Location;
-use crate::ui::actions::{alt, ctrl, ctrl_alt, ctrl_shift, key, shift};
+use crate::ui::actions::{alt, ctrl, ctrl_alt, ctrl_shift, key, shift, Ctx};
 use crate::ui::settings::{self, Value, SETTINGS};
-use crate::ui::{MenuItem, Persisted};
+use crate::ui::{Effect, MenuItem, Persisted, WindowCmd};
 use serde_json::json;
 use std::time::Duration;
 
@@ -202,7 +202,7 @@ fn bench_keymap() {
     }
     let parse_many = t.elapsed() / 1000;
     let t = Instant::now();
-    let built = Keymap::new(vec![None; ACTIONS.len()], Map::new());
+    let built = Keymap::new(vec![None; ACTIONS.len()], Map::new(), false);
     let build = t.elapsed();
     let (remapped, _) = parse(&few).unwrap();
     let probes: Vec<Chord> = ACTIONS.iter().flat_map(|a| a.keys.iter().copied()).chain([ctrl(Key::Char('G')), ctrl(Key::Char('Q'))]).collect();
@@ -253,4 +253,132 @@ fn bench_keymap() {
         linear.as_secs_f64() * 1e9,
         us(events[events.len() / 2])
     );
+}
+
+fn linux_app() -> App {
+    let mut a = app();
+    a.set_caps(crate::caps::Caps { unix_paths: true });
+    a
+}
+
+#[test]
+fn no_platform_table_gives_one_chord_to_two_commands() {
+    for unix in [false, true] {
+        let mut seen: Vec<(Ctx, Chord, &str)> = Vec::new();
+        for a in ACTIONS {
+            for &c in a.defaults(unix) {
+                if let Some((_, _, other)) = seen.iter().find(|(x, k, _)| *x == a.ctx && *k == c) {
+                    panic!("unix {unix}: {other} and {} share {}", a.id, chord_text(&c));
+                }
+                seen.push((a.ctx, c, a.id));
+                assert_eq!(parse_chord(&chord_text(&c)), Some(c));
+            }
+        }
+        let k = defaults_for(unix);
+        for (i, a) in ACTIONS.iter().enumerate().filter(|(_, a)| a.rebindable()) {
+            assert_eq!(k.keys(i), a.defaults(unix), "{}", a.id);
+            for c in a.defaults(unix) {
+                assert_eq!(k.owner(*c), Some(i), "unix {unix}: {}", chord_text(c));
+            }
+        }
+    }
+}
+
+#[test]
+fn linux_defaults_add_the_chords_file_manager_users_expect() {
+    let k = defaults_for(true);
+    for (id, c) in [
+        ("quick_access.toggle", key(Key::F(9))),
+        ("quick_access.toggle", ctrl(Key::Char('B'))),
+        ("nav.home", alt(Key::Home)),
+        ("edit.redo", ctrl_shift(Key::Char('Z'))),
+        ("edit.redo", ctrl(Key::Char('Y'))),
+        ("app.quit", ctrl(Key::Char('Q'))),
+        ("folder.bookmark", ctrl(Key::Char('D'))),
+        ("tab.select_1", alt(Key::Char('1'))),
+        ("tab.select_8", alt(Key::Char('8'))),
+        ("tab.select_last", alt(Key::Char('9'))),
+        ("view.layout.icons_m", ctrl(Key::Char('1'))),
+        ("view.layout.list", ctrl(Key::Char('2'))),
+        ("view.layout.details", ctrl(Key::Char('3'))),
+        ("select.invert", ctrl_shift(Key::Char('I'))),
+    ] {
+        assert!(k.runs(c.key, c.mods, id), "{id} {}", chord_text(&c));
+    }
+    assert_eq!(k.owner(ctrl(Key::Char('D'))), index("folder.bookmark"));
+    assert_eq!(k.owner(ctrl_shift(Key::Char('I'))), index("select.invert"));
+    assert_eq!(k.text_of("file.new_item"), "");
+    assert_eq!(k.text_of("tab.select_1"), "Alt+1");
+    assert!(k.all_text("tab.select_1").is_empty() || !k.all_text("tab.select_1").contains("Ctrl"));
+    assert!(k.shown(at("tab.select_1")).contains(&"Alt+Keypad1".to_owned()));
+}
+
+#[test]
+fn windows_defaults_are_untouched_by_the_linux_table() {
+    let k = defaults_for(false);
+    assert_eq!(k.owner(ctrl(Key::Char('1'))), index("tab.select_1"));
+    assert_eq!(k.owner(ctrl(Key::Char('D'))), index("list.page_down"));
+    assert_eq!(k.owner(ctrl_shift(Key::Char('I'))), index("file.new_item"));
+    assert_eq!(k.owner(key(Key::F(9))), None);
+    assert_eq!(k.owner(alt(Key::Home)), None);
+    assert_eq!(k.owner(ctrl(Key::Char('Q'))), None);
+    assert_eq!(k.text_of("folder.bookmark"), "");
+    assert_eq!(k.text_of("edit.redo"), "Ctrl+Y, Ctrl+Shift+Z");
+}
+
+#[test]
+fn a_linux_app_runs_its_own_defaults_and_resets_to_them() {
+    let mut a = linux_app();
+    assert_eq!(a.keymap(), &defaults_for(true));
+    assert!(a.keymap().unix());
+    for _ in 0..2 {
+        a.run_action("tab.duplicate", Instant::now());
+    }
+    press(&mut a, Key::Char('2'), Mods { alt: true, ..NO });
+    assert_eq!(a.cur, 1);
+    press(&mut a, Key::Char('9'), Mods { alt: true, ..NO });
+    assert_eq!(a.cur, 2);
+    press(&mut a, Key::Char('1'), CTRL);
+    assert_eq!(a.cur, 2, "Ctrl+1 is a view mode on Linux");
+    press(&mut a, Key::F(9), NO);
+    assert!(!a.nav.sidebar.state.sidebar);
+    press(&mut a, Key::Char('Q'), CTRL);
+    assert!(a.drain_effects().any(|e| matches!(e, Effect::Window(WindowCmd::Quit))), "Ctrl+Q quits every window on Linux");
+    a.edit_keys(|k| k.assign(at("nav.home"), None, ctrl(Key::Char('G'))));
+    assert!(a.keymap().is_custom(at("nav.home")));
+    a.restore_all_keys();
+    assert_eq!(a.keymap(), &defaults_for(true));
+    assert_eq!(a.keymap().keys(at("nav.home")), [alt(Key::Home)]);
+}
+
+#[test]
+fn saved_keymaps_are_read_against_the_platform_they_load_on() {
+    let j = json!({ "tab.select_1": ["Alt+1"], "tab.select_2": ["Ctrl+2"], "view.layout.list": ["Ctrl+2"] });
+    let (windows, problems) = parse_for(&j, false).unwrap();
+    assert_eq!(windows.keys(at("tab.select_1")), [alt(Key::Char('1'))]);
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    let (linux, problems) = parse_for(&json!({ "tab.select_1": ["Alt+1"], "folder.bookmark": ["Ctrl+D"], "nav.home": ["Alt+Home"] }), true).unwrap();
+    assert!(problems.is_empty(), "{problems:?}");
+    assert!(!linux.is_custom(at("tab.select_1")), "equal to the Linux default, so not custom");
+    assert!(!linux.is_custom(at("folder.bookmark")));
+    let (linux, problems) = parse_for(&json!({ "view.layout.list": ["Ctrl+2"], "tab.select_2": ["Alt+2"] }), true).unwrap();
+    assert!(problems.is_empty() && linux.keys(at("view.layout.list")) == [ctrl(Key::Char('2'))], "{problems:?}");
+    let mut a = app();
+    a.set_keymap(parse_for(&json!({ "nav.home": ["Ctrl+G"] }), false).unwrap().0);
+    a.set_caps(crate::caps::Caps { unix_paths: true });
+    assert_eq!(a.keymap().keys(at("nav.home")), [ctrl(Key::Char('G'))], "a user binding survives the platform switch");
+    assert_eq!(a.keymap().keys(at("tab.select_1")), [alt(Key::Char('1'))]);
+    assert_eq!(a.keymap().to_json(), json!({ "nav.home": ["Ctrl+G"] }));
+}
+
+#[test]
+fn the_shortcut_editor_restores_the_platform_default() {
+    let mut a = linux_app();
+    let i = at("nav.home");
+    a.edit_keys(|k| k.assign(i, None, ctrl(Key::Char('G'))));
+    a.edit_keys(|k| k.restore(i));
+    assert_eq!(a.keymap().keys(i), [alt(Key::Home)]);
+    a.edit_keys(|k| k.assign(i, None, ctrl(Key::Char('G'))));
+    a.edit_shortcuts(i);
+    assert_eq!(a.nav.palette.as_ref().unwrap().titles.len(), 5, "two chords, Add, Restore and Reset rows");
 }

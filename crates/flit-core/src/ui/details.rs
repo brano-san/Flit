@@ -532,6 +532,8 @@ pub(super) struct Details {
     swallow: Option<MouseButton>,
     pub middle_at: Option<(f32, f32)>,
     pub middle_on_empty: bool,
+    pub elided: Vec<usize>,
+    pub pane_elided: Vec<(usize, usize)>,
 }
 
 impl Column {
@@ -879,6 +881,9 @@ impl App {
     }
 
     pub(super) fn shown_name<'a>(&self, l: &'a Listing, i: u32) -> Cow<'a, str> {
+        if let Some(label) = l.labeled(i) {
+            return Cow::Borrowed(label);
+        }
         let n = l.name(i);
         let ext = l.entries[i as usize].ext_len as usize;
         if self.prefs.show_extensions || ext == 0 || ext + 1 >= n.len() {

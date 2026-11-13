@@ -11,7 +11,7 @@ use windows::core::{w, Interface, PCWSTR};
 use windows::Win32::Foundation::{ERROR_CANCELLED, HWND, SIZE};
 use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_INPROC_SERVER, STGM_READ};
 use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL};
+use windows::Win32::Storage::FileSystem::{GetFileAttributesW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM, INVALID_FILE_ATTRIBUTES};
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Controls::{IImageList, ILD_TRANSPARENT};
 use windows::Win32::UI::Shell::*;
@@ -36,6 +36,32 @@ pub(crate) fn owner_window() -> Option<HWND> {
 
 pub(crate) fn desktop_ini(dir: &FsPath) -> Option<DesktopIni> {
     std::fs::read(std_path(&dir.join(b"desktop.ini"))).ok().map(|b| flit_core::desktop_ini::parse(&b))
+}
+
+pub(crate) fn localized_name(dir: &FsPath) -> Option<String> {
+    let a = unsafe { GetFileAttributesW(PCWSTR(dir.to_wide(true).as_ptr())) };
+    let special = FILE_ATTRIBUTE_READONLY.0 | FILE_ATTRIBUTE_SYSTEM.0;
+    if a == INVALID_FILE_ATTRIBUTES || a & FILE_ATTRIBUTE_DIRECTORY.0 == 0 || a & special == 0 {
+        return None;
+    }
+    resolve_name(&desktop_ini(dir)?.name?)
+}
+
+pub(crate) fn resolve_name(raw: &str) -> Option<String> {
+    static RESOLVED: std::sync::Mutex<Option<std::collections::HashMap<String, Option<String>>>> = std::sync::Mutex::new(None);
+    if !raw.starts_with('@') {
+        return Some(raw.to_owned());
+    }
+    let mut resolved = RESOLVED.lock().unwrap_or_else(|e| e.into_inner());
+    resolved.get_or_insert_with(Default::default).entry(raw.to_owned()).or_insert_with(|| crate::places::indirect(raw.to_owned())).clone()
+}
+
+pub(crate) fn thumbnail_flags(not_local: bool) -> SIIGBF {
+    if not_local { SIIGBF_THUMBNAILONLY | SIIGBF_INCACHEONLY } else { SIIGBF_THUMBNAILONLY }
+}
+
+pub(crate) fn icon_flags(not_local: bool) -> SIIGBF {
+    if not_local { SIIGBF_ICONONLY | SIIGBF_INCACHEONLY } else { SIIGBF_ICONONLY }
 }
 
 pub(crate) fn shell_addressable(p: &FsPath) -> Result<(), PlatformError> {
@@ -210,7 +236,7 @@ impl ShellCom {
             }
             bgra_to_rgba(&mut rgba, true);
             let bitmap = Bitmap { width, height, rgba };
-            Some(fit(if flags == SIIGBF_ICONONLY { unpad(bitmap) } else { bitmap }, size))
+            Some(fit(if flags.0 & SIIGBF_ICONONLY.0 != 0 { unpad(bitmap) } else { bitmap }, size))
         }
     }
 }
@@ -239,7 +265,7 @@ impl Shell for ShellCom {
                 _ => self.item_image(&req.path, req.size, SIIGBF_ICONONLY).or_else(|| self.generic_icon(&req.path, false, req.size)),
             },
             IconKind::Place => self.item_image(&req.path, req.size, SIIGBF_ICONONLY).or_else(|| self.generic_icon(&req.path, true, req.size)),
-            IconKind::File => self.item_image(&req.path, req.size, SIIGBF_ICONONLY).or_else(|| self.generic_icon(&req.path, false, req.size)),
+            IconKind::File => self.item_image(&req.path, req.size, icon_flags(crate::fs::not_local(&req.path))).or_else(|| self.generic_icon(&req.path, false, req.size)),
             IconKind::CustomFolder => desktop_ini(&req.path)
                 .filter(|ini| ini.icon)
                 .and_then(|_| self.item_image(&req.path, req.size, SIIGBF_ICONONLY))
@@ -250,7 +276,7 @@ impl Shell for ShellCom {
 
     fn thumbnail(&mut self, req: &IconRequest) -> Option<Bitmap> {
         let path = flit_core::location::wsl_drive_path(req.path.as_bytes()).unwrap_or_else(|| req.path.clone());
-        self.item_image(&path, req.size, SIIGBF_THUMBNAILONLY)
+        self.item_image(&path, req.size, thumbnail_flags(crate::fs::not_local(&path)))
     }
 
     fn type_name(&mut self, ext: &[u8]) -> Option<String> {
@@ -311,7 +337,8 @@ impl Shell for ShellCom {
     }
 
     fn poster(&mut self, path: &FsPath, size: u32) -> Option<Bitmap> {
-        self.item_image(&flit_core::location::wsl_drive_path(path.as_bytes()).unwrap_or_else(|| path.clone()), size, SIIGBF_THUMBNAILONLY)
+        let path = flit_core::location::wsl_drive_path(path.as_bytes()).unwrap_or_else(|| path.clone());
+        self.item_image(&path, size, thumbnail_flags(crate::fs::not_local(&path)))
     }
 
     fn properties(&mut self, path: &FsPath) -> Vec<PropGroup> {
@@ -389,7 +416,7 @@ pub(crate) fn commands(launch: &Launch, terminal: Option<&str>) -> Vec<Command> 
                 })
                 .collect(),
         },
-        Launch::Eject(_) | Launch::Mount(_) | Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) | Launch::Reveal { .. } => Vec::new(),
+        Launch::RunInTerminal { .. } | Launch::Eject(_) | Launch::Mount(_) | Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) | Launch::Reveal { .. } | Launch::ChooseApp { .. } | Launch::SetDefault { .. } | Launch::Custom { .. } => Vec::new(),
     }
 }
 

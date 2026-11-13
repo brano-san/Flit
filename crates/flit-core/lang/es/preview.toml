@@ -7,6 +7,8 @@ loading = "Cargando la vista previa…"
 new_tag = "+ Nueva etiqueta"
 shortcut = "Acceso directo a {target}"
 too_large = "La imagen es demasiado grande para la vista previa"
+online_only = "Almacenado solo en línea.\nLa vista previa descarga el archivo en este dispositivo."
+download = "Descargar para la vista previa"
 truncated = ["Se muestra el primer {n} carácter", "Se muestran los primeros {n} de caracteres", "Se muestran los primeros {n} caracteres"]
 folders = ["{n} carpeta", "{n} de carpetas", "{n} carpetas"]
 files = ["{n} archivo", "{n} de archivos", "{n} archivos"]
@@ -30,6 +32,9 @@ read_only = "Solo lectura"
 hidden = "Oculto"
 system = "Sistema"
 link = "Vínculo"
+online_only = "Solo en línea"
+pinned = "Siempre en este dispositivo"
+offline = "Sin conexión"
 
 [folder]
 empty = "Esta carpeta está vacía."

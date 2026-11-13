@@ -37,14 +37,12 @@ pub struct Book {
     version: u64,
     file: Option<PathBuf>,
     key_of: fn(&FsPath) -> Option<FileKey>,
-    resolve: fn(&[FileKey]) -> Vec<Resolved>,
-}
-
-fn same(a: &[u8], b: &[u8]) -> bool {
-    a.eq_ignore_ascii_case(b)
+    resolve: fn(&[(FileKey, &FsPath)]) -> Vec<Resolved>,
+    unix: bool,
 }
 
 fn moved_path(path: &FsPath, from: &FsPath, to: &FsPath) -> Option<FsPath> {
+    let same = |a: &[u8], b: &[u8]| if path.case_sensitive() { a == b } else { a.eq_ignore_ascii_case(b) };
     let (p, f) = (path.as_bytes(), from.as_bytes());
     if same(p, f) {
         return Some(to.clone());
@@ -56,10 +54,15 @@ fn moved_path(path: &FsPath, from: &FsPath, to: &FsPath) -> Option<FsPath> {
 }
 
 impl Book {
-    pub fn load(file: Option<PathBuf>, key_of: fn(&FsPath) -> Option<FileKey>, resolve: fn(&[FileKey]) -> Vec<Resolved>) -> Self {
+    pub fn load(file: Option<PathBuf>, key_of: fn(&FsPath) -> Option<FileKey>, resolve: fn(&[(FileKey, &FsPath)]) -> Vec<Resolved>) -> Self {
         let decode = |b: &[u8]| postcard::from_bytes::<TagFile>(b).ok().filter(|t| t.version == FILE_VERSION && t.store.tags.len() <= tags::MAX_TAGS).map(|t| t.store);
         let store = file.as_deref().and_then(|f| crate::schema::load(f, FILE_VERSION, &MIGRATIONS, decode)).unwrap_or_default();
-        Self { store, seen: FxHashMap::default(), version: 0, file, key_of, resolve }
+        Self { store, seen: FxHashMap::default(), version: 0, file, key_of, resolve, unix: false }
+    }
+
+    pub fn on_unix(mut self, unix: bool) -> Self {
+        self.unix = unix;
+        self
     }
 
     fn save(&self) {
@@ -80,7 +83,7 @@ impl Book {
     }
 
     fn learn(&mut self, keys: Vec<FileKey>) -> bool {
-        let found = (self.resolve)(&keys);
+        let found = (self.resolve)(&keys.iter().map(|k| (*k, &self.store.files[k].path)).collect::<Vec<_>>());
         let mut changed = false;
         for (k, r) in keys.into_iter().zip(found) {
             let seen = match r {
@@ -135,7 +138,7 @@ impl Book {
             out.changed = true;
         }
         if refused > 0 {
-            out.status = Some(S::ErrorsTagsNotTaggable.en().into());
+            out.status = Some(tags::not_taggable(self.unix).en().into());
         }
     }
 
@@ -227,7 +230,7 @@ pub fn command_items<P: Platform>(o: &Open) -> Vec<FsPath> {
 }
 
 pub fn run_command<P: Platform>(o: &Open) -> Result<String, String> {
-    let mut book = Book::load(state_file::<P>(), P::file_key, P::resolve_files);
+    let mut book = Book::load(state_file::<P>(), P::file_key, P::resolve_files).on_unix(P::caps().unix_paths);
     let items = command_items::<P>(o);
     if items.is_empty() {
         return Err(S::SidebarTagNeedsArgs.t().into());
@@ -245,7 +248,7 @@ pub struct TagWorker {
 
 impl TagWorker {
     pub fn start<P: Platform>(cell: TagCell, wake: Wake) -> Result<Self, PlatformError> {
-        let mut book = Book::load(state_file::<P>(), P::file_key, P::resolve_files);
+        let mut book = Book::load(state_file::<P>(), P::file_key, P::resolve_files).on_unix(P::caps().unix_paths);
         cell.set(book.publish());
         let (tx, rx) = unbounded::<(Option<WindowId>, TagRequest)>();
         let (out, events) = unbounded();

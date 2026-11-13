@@ -19,3 +19,13 @@ fn open_roundtrip_with_hello() {
     hello.check(&theirs).unwrap();
     assert_eq!(read_frame::<_, Request>(&mut r, &mut buf).unwrap(), Request::Open(open));
 }
+
+#[test]
+fn the_launcher_activation_token_travels_with_the_open() {
+    let open = flit_core::Open { paths: vec![b"/tmp".to_vec()], activation: Some("kwin-42_TIME7".into()), ..Default::default() };
+    let mut wire = Vec::new();
+    write_frame(&mut wire, &Request::Open(open.clone())).unwrap();
+    let back: Request = read_frame(&mut Cursor::new(wire), &mut Vec::new()).unwrap();
+    assert_eq!(back, Request::Open(open));
+    const { assert!(VERSION >= 3, "a new Open field needs a new protocol version") };
+}

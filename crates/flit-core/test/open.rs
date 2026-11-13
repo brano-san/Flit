@@ -145,7 +145,7 @@ fn select_routes_to_parent() {
 
 #[test]
 fn open_serializes() {
-    let o = Open { paths: vec![b"C:\\x".to_vec(), vec![0xED, 0xA0, 0x80]], select: vec![b"/tmp/a:b".to_vec()], target: OpenTarget::NewTab, cwd: Some(b"C:\\".to_vec()), tag: Some("Work".into()), properties: true };
+    let o = Open { paths: vec![b"C:\\x".to_vec(), vec![0xED, 0xA0, 0x80]], select: vec![b"/tmp/a:b".to_vec()], target: OpenTarget::NewTab, cwd: Some(b"C:\\".to_vec()), tag: Some("Work".into()), properties: true, activation: Some("tok".into()) };
     let bytes = postcard::to_allocvec(&o).unwrap();
     assert_eq!(postcard::from_bytes::<Open>(&bytes).unwrap(), o);
 }
@@ -158,4 +158,37 @@ fn relative_paths_resolve_against_a_unix_folder() {
     assert_eq!(r("../other"), Location::parse("/home/u/other").unwrap());
     assert_eq!(r("/etc"), Location::parse("/etc").unwrap());
     assert_eq!(r("file:///home/u/My%20Files"), Location::parse("/home/u/My Files").unwrap());
+}
+
+#[test]
+fn unix_expansion_handles_tilde_and_dollar_variables() {
+    let env = |n: &str| match n {
+        "HOME" => Some("/home/u".to_owned()),
+        "DIR" => Some("work".to_owned()),
+        _ => None,
+    };
+    let x = |s: &str| expand_unix(s.as_bytes(), &env).map(|v| String::from_utf8(v).unwrap());
+    assert_eq!(x("~").as_deref(), Some("/home/u"));
+    assert_eq!(x("~/x").as_deref(), Some("/home/u/x"));
+    assert_eq!(x("$HOME").as_deref(), Some("/home/u"));
+    assert_eq!(x("${HOME}/x").as_deref(), Some("/home/u/x"));
+    assert_eq!(x("$HOME/$DIR/a").as_deref(), Some("/home/u/work/a"));
+    assert_eq!(x("${HOME}x/${DIR}").as_deref(), Some("/home/ux/work"));
+    for same in ["~user/x", "a~b", "$NOPE/x", "${NOPE}", "${HOME", "$", "/plain", "price$"] {
+        assert_eq!(x(same), None, "{same}");
+    }
+    assert_eq!(x("$NOPE/$DIR").as_deref(), Some("$NOPE/work"));
+}
+
+#[test]
+fn unix_resolution_expands_and_maps_trash_while_windows_keeps_dollars() {
+    let none = |_: &str| None;
+    assert_eq!(resolve_for(b"trash:///", None, &none, true).unwrap(), Location::recycle_bin());
+    if let Ok(home) = std::env::var("HOME") {
+        assert_eq!(resolve_for(b"~", None, &none, true).unwrap(), Location::parse(&home).unwrap());
+        assert_eq!(resolve_for(b"${HOME}/x", None, &none, true).unwrap(), Location::parse(&format!("{home}/x")).unwrap());
+    }
+    assert!(resolve_for(b"trash:///", None, &none, false).is_err());
+    assert!(typed_as_path("/no/such") && typed_as_path("~/x") && typed_as_path("$HOME"));
+    assert!(!typed_as_path("ls") && !typed_as_path("/bin/ls -la") && !typed_as_path("./run"));
 }

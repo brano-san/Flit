@@ -126,7 +126,7 @@ fn drops_on_a_library_go_to_the_save_folder_and_library_files_open_in_flit() {
     let l = app.layout.list;
     let (x, y) = (l.x + l.w / 2.0, l.bottom() - 10.0);
     let paths = vec![p(r"E:\in\a.txt")];
-    app.drag(&DragEvent::Enter { paths: paths.clone(), x, y, mods: Mods::default(), allowed: 1 }, Instant::now());
+    app.drag(&DragEvent::Enter { paths: paths.clone(), x, y, mods: Mods::default(), allowed: 1, right: false }, Instant::now());
     assert_eq!(app.drag(&DragEvent::Drop { x, y, mods: Mods::default(), allowed: 1 }, Instant::now()), 1);
     let ops: Vec<FileOp> = app.drain_effects().filter_map(|e| if let Effect::Provider { req: ProviderRequest::Op { op, .. }, .. } = e { Some(op) } else { None }).collect();
     assert_eq!(ops, [FileOp::Copy { items: paths, dest: p(r"C:\Users\u\Documents") }]);

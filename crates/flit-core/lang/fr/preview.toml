@@ -7,6 +7,8 @@ loading = "Chargement de l’aperçu…"
 new_tag = "+ Nouvelle balise"
 shortcut = "Raccourci vers {target}"
 too_large = "L’image est trop grande pour l’aperçu"
+online_only = "Stocké en ligne uniquement.\nL’aperçu télécharge le fichier sur cet appareil."
+download = "Télécharger pour l’aperçu"
 truncated = ["Affichage du premier caractère ({n})", "Affichage des {n} de premiers caractères", "Affichage des {n} premiers caractères"]
 folders = ["{n} dossier", "{n} de dossiers", "{n} dossiers"]
 files = ["{n} fichier", "{n} de fichiers", "{n} fichiers"]
@@ -30,6 +32,9 @@ read_only = "Lecture seule"
 hidden = "Caché"
 system = "Système"
 link = "Lien"
+online_only = "En ligne uniquement"
+pinned = "Toujours sur cet appareil"
+offline = "Hors connexion"
 
 [folder]
 empty = "Ce dossier est vide."

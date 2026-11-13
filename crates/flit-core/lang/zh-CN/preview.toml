@@ -7,6 +7,8 @@ loading = "正在加载预览…"
 new_tag = "+ 新建标记"
 shortcut = "指向 {target} 的快捷方式"
 too_large = "图片太大，无法预览"
+online_only = "仅联机存储。\n预览会将文件下载到此设备。"
+download = "下载以预览"
 truncated = ["显示前 {n} 个字符"]
 folders = ["{n} 个文件夹"]
 files = ["{n} 个文件"]
@@ -30,6 +32,9 @@ read_only = "只读"
 hidden = "隐藏"
 system = "系统"
 link = "链接"
+online_only = "仅联机"
+pinned = "始终保留在此设备上"
+offline = "脱机"
 
 [folder]
 empty = "此文件夹为空。"

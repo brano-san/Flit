@@ -1,8 +1,12 @@
 #![cfg(target_os = "linux")]
 
+mod activation;
 mod apps;
+mod awake;
+mod clipboard;
 mod atspi;
 mod dbus;
+pub mod elevated;
 mod fonts;
 pub mod fs;
 mod gl;
@@ -20,6 +24,7 @@ mod thumbnailers;
 mod turbo;
 mod update;
 mod window;
+mod wl;
 mod xdnd;
 pub mod xdg;
 
@@ -62,6 +67,10 @@ impl Platform for Linux {
 
     fn text() -> Result<text::LinuxText, PlatformError> {
         Ok(text::LinuxText::new())
+    }
+
+    fn keep_awake(reason: &str) -> Option<flit_platform::Awake> {
+        awake::Awake::hold(reason).map(|a| Box::new(a) as flit_platform::Awake)
     }
 
     fn fs() -> fs::LinuxGuiFs {
@@ -146,6 +155,14 @@ impl Platform for Linux {
 
     fn integrate(on: bool) -> Result<(), PlatformError> {
         xdg::desktop_entry(on).and_then(|_| xdg::default_manager(on)).and_then(|_| xdg::bus_activation(on)).map_err(handle_error)
+    }
+
+    fn file_key(path: &FsPath) -> Option<flit_core::tags::FileKey> {
+        flit_platform_linux::file_key(path)
+    }
+
+    fn resolve_files(files: &[(flit_core::tags::FileKey, &FsPath)]) -> Vec<flit_platform::Resolved> {
+        flit_platform_linux::resolve_files(files)
     }
 
     fn download(url: &str, out: &mut dyn std::io::Write, progress: &mut dyn FnMut(u64, Option<u64>) -> bool) -> Result<(), PlatformError> {

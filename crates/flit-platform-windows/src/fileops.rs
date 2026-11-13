@@ -61,7 +61,8 @@ impl Sink_Impl {
         if hr.is_err() {
             return;
         }
-        if let (Some(src), Some(new)) = (source.as_ref().and_then(item_path), created.as_ref().and_then(item_path)) {
+        if let Some(new) = created.as_ref().and_then(item_path) {
+            let src = source.as_ref().and_then(item_path).unwrap_or_else(|| new.clone());
             self.done.borrow_mut().push((src, new));
         }
     }
@@ -152,6 +153,8 @@ fn check_names(op: &FileOp) -> Result<(), PlatformError> {
         FileOp::Archive(_) => Vec::new(),
         FileOp::InstallFonts(v) => v.iter().collect(),
         FileOp::LockScreen(p) => vec![p],
+        FileOp::SetAccess { items, .. } => items.iter().collect(),
+        FileOp::Access(changes) => changes.iter().map(|c| &c.item).collect(),
     };
     paths.into_iter().try_for_each(shell_addressable)?;
     match op {
@@ -277,7 +280,7 @@ unsafe fn queue(fo: &IFileOperation, op: &FileOp) -> Result<(), PlatformError> {
             };
             fo.NewItem(&shell_item(dir)?, FILE_ATTRIBUTE_NORMAL.0, PCWSTR(name.as_ptr()), source.as_ref().map_or(PCWSTR::null(), |s| PCWSTR(s.as_ptr())), None).map_err(err)?;
         }
-        FileOp::Link { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::PasteLink { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } | FileOp::Flatten(_) | FileOp::FolderIcon { .. } | FileOp::Archive(_) | FileOp::InstallFonts(_) | FileOp::LockScreen(_) => return Err(PlatformError::new(-1, "not a file operation")),
+        FileOp::Link { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::PasteLink { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } | FileOp::Flatten(_) | FileOp::FolderIcon { .. } | FileOp::Archive(_) | FileOp::InstallFonts(_) | FileOp::LockScreen(_) | FileOp::SetAccess { .. } | FileOp::Access(_) => return Err(PlatformError::new(-1, "not a file operation")),
     }
     Ok(())
 }
@@ -332,35 +335,54 @@ fn cancelled(op: &FileOp) -> PlatformError {
     PlatformError::new(-1, what.en())
 }
 
-unsafe fn perform(op: &FileOp, job: &Job) -> OpOutcome {
+unsafe fn operate(flags: FILEOPERATION_FLAGS, fill: impl FnOnce(&IFileOperation) -> Result<(), PlatformError>, cancelled: impl Fn() -> PlatformError, job: &Job) -> OpOutcome {
     let sink = ComObject::new(Sink { done: RefCell::default(), job: job.clone() });
     let result = (|| {
         let fo: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL).map_err(err)?;
-        fo.SetOperationFlags(flags(op)).map_err(err)?;
+        fo.SetOperationFlags(flags).map_err(err)?;
         if let Some(owner) = owner_window() {
             fo.SetOwnerWindow(owner).map_err(err)?;
         }
-        queue(&fo, op)?;
+        fill(&fo)?;
         let cookie = fo.Advise(&sink.to_interface::<IFileOperationProgressSink>()).map_err(err)?;
         let performed = fo.PerformOperations();
         let _ = fo.Unadvise(cookie);
         if job.cancelled() {
-            return Err(cancelled(op));
+            return Err(cancelled());
         }
         performed.map_err(err)?;
         if fo.GetAnyOperationsAborted().map_err(err)?.as_bool() {
-            return Err(cancelled(op));
+            return Err(cancelled());
         }
         Ok(())
     })();
-    let mut items = sink.done.take();
-    if let Some(wanted) = sources(op) {
-        items.retain(|(src, _)| wanted.iter().any(|w| same_path(w, src)));
-    }
-    OpOutcome { items, error: result.err() }
+    OpOutcome { items: sink.done.take(), error: result.err() }
 }
 
-fn exists(p: &FsPath) -> bool {
+unsafe fn perform(op: &FileOp, job: &Job) -> OpOutcome {
+    let mut out = operate(flags(op), |fo| queue(fo, op), || cancelled(op), job);
+    if let Some(wanted) = sources(op) {
+        out.items.retain(|(src, _)| wanted.iter().any(|w| same_path(w, src)));
+    }
+    out
+}
+
+pub(crate) unsafe fn transfer_items(items: &[IShellItem], dest: &FsPath, moving: bool, job: &Job) -> OpOutcome {
+    let fill = |fo: &IFileOperation| {
+        let dest = shell_item(dest)?;
+        for item in items {
+            match moving {
+                true => fo.MoveItem(item, &dest, PCWSTR::null(), None),
+                false => fo.CopyItem(item, &dest, PCWSTR::null(), None),
+            }
+            .map_err(err)?;
+        }
+        Ok(())
+    };
+    operate(FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR, fill, || PlatformError::new(-1, S::ErrorsEngineCancelled.en()), job)
+}
+
+pub(crate) fn exists(p: &FsPath) -> bool {
     unsafe { GetFileAttributesW(PCWSTR(p.to_wide(true).as_ptr())) != INVALID_FILE_ATTRIBUTES }
 }
 
@@ -563,6 +585,8 @@ impl FileOps for ShellCom {
             FileOp::EmptyBin => empty_bin(),
             FileOp::InstallFonts(fonts) => crate::install::install_fonts(fonts, job),
             FileOp::LockScreen(image) => crate::install::lock_screen(image),
+            FileOp::Paste { dest } => crate::transfer::paste(dest, job),
+            FileOp::SetAccess { .. } | FileOp::Access(_) => OpOutcome { items: Vec::new(), error: Some(PlatformError::unsupported("changing Unix permissions")) },
             op if engine::native(op) => {
                 let out = engine::run(op, job);
                 with_rest(out.items, out.error, out.rest, job)
@@ -576,6 +600,10 @@ impl FileOps for ShellCom {
 
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
         clipboard::read_files()
+    }
+
+    fn clipboard_content(&mut self) -> bool {
+        crate::transfer::clipboard_content()
     }
 
     fn clear_clipboard(&mut self) {

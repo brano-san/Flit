@@ -9,7 +9,7 @@ use crate::location::{Location, ProviderId};
 use crate::name;
 use crate::open::OpenTarget;
 use crate::path::FsPath;
-use crate::provider::{Conflict, FileOp, OpCtl, OpId, OpProgress, Resolve, Stage};
+use crate::provider::{Conflict, Failure, FileOp, OpCtl, OpId, OpProgress, Recover, Resolve, Stage};
 use crate::render::Rect;
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::Theme;
@@ -44,6 +44,9 @@ const RESTORE_BUTTONS: [S; 2] = [S::UiButtonRestore, S::UiButtonNotNow];
 const CRASH_RESTORE_BUTTONS: [S; 3] = [S::UiButtonRestore, S::UiButtonOpenFolder, S::UiButtonNotNow];
 const CRASH_BUTTONS: [S; 2] = [S::UiButtonOpenFolder, S::UiButtonNotNow];
 const REPLACE_BUTTONS: [S; 2] = [S::UiButtonReplace, S::UiButtonCancel];
+const FAILURE_BUTTONS: [S; 4] = [S::UiButtonRetry, S::UiButtonSkip, S::UiButtonSkipAll, S::UiButtonCancel];
+const FULL_BUTTONS: [S; 2] = [S::UiButtonRetry, S::UiButtonCancel];
+const UNTRASHABLE_BUTTONS: [S; 2] = [S::UiButtonDeletePermanently, S::UiButtonCancel];
 
 const CANCEL_CODES: [&str; 3] = ["(0x80270000)", "(0x800704C7)", "(0x80004004)"];
 
@@ -69,6 +72,7 @@ pub(super) struct Job {
     pub state: JobState,
     pub progress: OpProgress,
     pub asking: bool,
+    erred: bool,
     created: Instant,
     started: Option<Instant>,
     finished: Option<Instant>,
@@ -118,6 +122,7 @@ impl Job {
 
     fn status(&self) -> String {
         match &self.state {
+            JobState::Running if self.asking && self.erred => S::UiJobProblem.t().into(),
             JobState::Running if self.asking => S::UiJobConflict.t().into(),
             JobState::Running if self.progress.stage == Stage::Queued => S::UiJobQueued.t().into(),
             JobState::Running if self.progress.stage == Stage::Preparing => String::new(),
@@ -174,7 +179,9 @@ impl Job {
 
 pub(super) enum Ask {
     Conflict { id: OpId, conflict: Conflict },
+    Failure { id: OpId, failure: Failure },
     Confirm(FileOp, ProviderId),
+    Untrashable(Vec<FsPath>),
     Restore { session: bool, dump: Option<FsPath> },
     ReplaceExport { path: FsPath, existing: crate::listing::Meta },
 }
@@ -194,6 +201,10 @@ impl Ask {
 
     fn first_button(&self) -> usize {
         usize::from(self.name_conflict())
+    }
+
+    fn of_job(&self, job: OpId) -> bool {
+        matches!(self, Ask::Conflict { id, .. } | Ask::Failure { id, .. } if *id == job)
     }
 }
 
@@ -317,6 +328,8 @@ fn job_title(op: &FileOp) -> Option<String> {
         FileOp::Archive(ArchiveOp::Extract { archives, .. }) => crate::tr!(S::UiJobTitleExtracting, what = count(archives)),
         FileOp::Archive(ArchiveOp::Open { item }) => crate::tr!(S::UiJobTitleOpening, what = quoted(item)),
         FileOp::InstallFonts(fonts) => crate::tr!(S::OpsExtraInstallingFonts, what = count(fonts)),
+        FileOp::SetAccess { items, .. } => crate::tr!(S::PermissionsChanging, what = count(items)),
+        FileOp::Access(changes) => crate::tr!(S::PermissionsChanging, what = count(&changes.iter().map(|c| c.item.clone()).collect::<Vec<_>>())),
         FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::NewStream { .. } | FileOp::Link { .. } | FileOp::FolderIcon { .. } | FileOp::LockScreen(_) => return None,
     })
 }
@@ -367,6 +380,24 @@ fn meta_line(label: S, m: &crate::listing::Meta, offset: i32, style: &format::St
     }
 }
 
+fn failure_title(op: Option<&FileOp>, name: String) -> String {
+    let key = match op {
+        Some(FileOp::Copy { .. } | FileOp::Paste { .. }) => S::UiFailureCopy,
+        Some(FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Restore(_) | FileOp::Flatten(_)) => S::UiFailureMove,
+        Some(FileOp::Delete(_) | FileOp::Purge(_) | FileOp::EmptyBin) => S::UiFailureDelete,
+        _ => S::UiFailureOther,
+    };
+    crate::tr!(key, name = name)
+}
+
+fn two_rows<'a, B: TextBackend>(g: &mut Gfx<B>, text: &'a str, font: FontStyle, width: f32) -> Vec<&'a str> {
+    let rows = super::settings_page::wrap(g, text, font, width);
+    match rows.get(1) {
+        Some(second) => vec![rows[0], &text[second.as_ptr() as usize - text.as_ptr() as usize..]],
+        None => rows,
+    }
+}
+
 fn can_delete_instead(ask: &Ask) -> bool {
     matches!(ask, Ask::Confirm(FileOp::Trash(_), _))
 }
@@ -376,7 +407,7 @@ impl App {
         if job_title(op).is_none() {
             return;
         }
-        let job = Job { id, op: op.clone(), wsl: matches!(provider, ProviderId::Wsl(_)), dest: job_dest(provider, op), ctl: ctl.clone(), state: JobState::Running, progress: OpProgress::default(), asking: false, created: Instant::now(), started: None, finished: None, mark: None, speed: 0.0, samples: VecDeque::new() };
+        let job = Job { id, op: op.clone(), wsl: matches!(provider, ProviderId::Wsl(_)), dest: job_dest(provider, op), ctl: ctl.clone(), state: JobState::Running, progress: OpProgress::default(), asking: false, erred: false, created: Instant::now(), started: None, finished: None, mark: None, speed: 0.0, samples: VecDeque::new() };
         if let Some(k) = self.jobs.list.iter().position(|j| j.state != JobState::Running).filter(|_| self.jobs.list.len() >= MAX_JOBS) {
             self.jobs.list.remove(k);
         }
@@ -402,9 +433,16 @@ impl App {
 
     pub(super) fn job_conflict(&mut self, id: OpId, conflict: Conflict) {
         if let Some(j) = self.job_mut(id) {
-            j.asking = true;
+            (j.asking, j.erred) = (true, false);
         }
         self.push_ask(Ask::Conflict { id, conflict });
+    }
+
+    pub(super) fn job_failure(&mut self, id: OpId, failure: Failure) {
+        if let Some(j) = self.job_mut(id) {
+            (j.asking, j.erred) = (true, true);
+        }
+        self.push_ask(Ask::Failure { id, failure });
     }
 
     fn push_ask(&mut self, ask: Ask) {
@@ -418,7 +456,7 @@ impl App {
     }
 
     pub(super) fn job_done(&mut self, id: OpId, error: Option<&str>, cancelled: bool, now: Instant) {
-        let asked = |a: &Ask| matches!(a, Ask::Conflict { id: k, .. } if *k == id);
+        let asked = |a: &Ask| a.of_job(id);
         if self.jobs.asks.front().is_some_and(asked) {
             self.jobs.all = false;
             self.jobs.sel = self.jobs.asks.iter().find(|a| !asked(a)).map_or(0, Ask::first_button);
@@ -451,6 +489,13 @@ impl App {
         self.push_ask(Ask::Confirm(op, provider));
     }
 
+    pub(super) fn offer_delete(&mut self, id: OpId, items: Vec<FsPath>) {
+        if items.is_empty() || self.job_mut(id).is_some_and(|j| j.ctl.is_cancelled()) {
+            return;
+        }
+        self.push_ask(Ask::Untrashable(items));
+    }
+
     pub fn ask_replace_export(&mut self, path: FsPath, size: u64, modified: i64) {
         self.push_ask(Ask::ReplaceExport { path, existing: crate::listing::Meta { size, modified, ..Default::default() } });
     }
@@ -473,6 +518,33 @@ impl App {
         self.jobs.open
     }
 
+    pub fn running_jobs(&self) -> usize {
+        self.jobs.list.iter().filter(|j| j.state == JobState::Running).count()
+    }
+
+    pub fn keeps_awake(&self) -> bool {
+        self.running_jobs() > 0 || self.hashing()
+    }
+
+    pub fn close_window(&mut self, now: Instant) {
+        self.leave(super::WindowCmd::Close, super::confirm::Confirmed::Close, now)
+    }
+
+    pub fn quit_app(&mut self, now: Instant) {
+        self.leave(super::WindowCmd::Quit, super::confirm::Confirmed::Quit, now)
+    }
+
+    fn leave(&mut self, cmd: super::WindowCmd, then: super::confirm::Confirmed, now: Instant) {
+        let running = self.running_jobs();
+        if running == 0 {
+            return self.effects.push(super::Effect::Window(cmd));
+        }
+        let s = |v: f32| (v * self.scale).round();
+        let anchor = self.panels.caption.get(2).copied().filter(|r| r.w > 0.0).unwrap_or_else(|| Rect::new(self.size.0 - s(46.0), 0.0, s(46.0), s(32.0)));
+        let question = crate::trn!(P::UiCloseRunning, running);
+        self.ask(anchor, (&question, S::UiCloseCancel.t()), true, then, now);
+    }
+
     pub fn job_states(&self) -> Vec<(String, JobState, OpProgress)> {
         self.jobs.list.iter().map(|j| (j.title(), j.state.clone(), j.progress)).collect()
     }
@@ -482,7 +554,10 @@ impl App {
             Some(a) if a.unreadable() => Some("unreadable"),
             Some(a) if a.too_large() => Some("too_large"),
             Some(Ask::Conflict { .. }) => Some("conflict"),
+            Some(Ask::Failure { failure, .. }) if failure.fatal => Some("full"),
+            Some(Ask::Failure { .. }) => Some("failure"),
             Some(Ask::Confirm(..)) => Some("confirm"),
+            Some(Ask::Untrashable(_)) => Some("untrashable"),
             Some(Ask::Restore { .. }) => Some("restore"),
             Some(Ask::ReplaceExport { .. }) => Some("replace"),
             None => self.jobs.form.as_ref().map(|f| f.kind.name()),
@@ -568,8 +643,21 @@ impl App {
                     j.asking = false;
                 }
             }
+            Ask::Failure { id, failure } => {
+                let choice = if failure.fatal { [Some((Recover::Retry, false)), None][button.min(1)] } else { [Some((Recover::Retry, false)), Some((Recover::Skip, false)), Some((Recover::Skip, true)), None][button.min(3)] };
+                if let Some(ctl) = self.op_ctl(id) {
+                    match choice {
+                        Some((c, all)) => ctl.answer_failure(c, all),
+                        None => ctl.cancel(),
+                    }
+                }
+                if let Some(j) = self.job_mut(id) {
+                    j.asking = false;
+                }
+            }
             Ask::Confirm(FileOp::Trash(items), provider) if button == 0 && self.jobs.all => self.start_confirmed(provider, FileOp::Delete(items)),
             Ask::Confirm(op, provider) if button == 0 => self.start_confirmed(provider, op),
+            Ask::Untrashable(items) if button == 0 => self.start_confirmed(ProviderId::Local, FileOp::Delete(items)),
             Ask::Restore { session, dump } => match restore_buttons(session, dump.is_some()).get(button) {
                 Some(S::UiButtonRestore) => self.effects.push(super::Effect::RestoreSession),
                 Some(S::UiButtonOpenFolder) => {
@@ -586,7 +674,7 @@ impl App {
                 let text = self.export_text();
                 self.effects.push(super::Effect::Settings(super::SettingsCmd::Export { path, text, replace: true }));
             }
-            Ask::Confirm(..) | Ask::ReplaceExport { .. } => {}
+            Ask::Confirm(..) | Ask::Untrashable(_) | Ask::ReplaceExport { .. } => {}
         }
         self.jobs.all = false;
         self.jobs.sel = self.jobs.asks.front().map_or(0, Ask::first_button);
@@ -599,8 +687,11 @@ impl App {
             Some(Ask::Conflict { conflict, .. }) if limits::is_short_of_space(conflict) => &NO_ROOM_BUTTONS,
             Some(a) if a.unreadable() || a.too_large() => &UNREADABLE_BUTTONS,
             Some(Ask::Conflict { .. }) => &CONFLICT_BUTTONS,
+            Some(Ask::Failure { failure, .. }) if failure.fatal => &FULL_BUTTONS,
+            Some(Ask::Failure { .. }) => &FAILURE_BUTTONS,
             Some(Ask::Confirm(FileOp::Restore(_), _)) => &RESTORE_ALL_BUTTONS,
             Some(Ask::Confirm(..)) => &CONFIRM_BUTTONS,
+            Some(Ask::Untrashable(_)) => &UNTRASHABLE_BUTTONS,
             Some(Ask::Restore { session, dump }) => restore_buttons(*session, dump.is_some()),
             Some(Ask::ReplaceExport { .. }) => &REPLACE_BUTTONS,
             None => &[],
@@ -682,8 +773,9 @@ impl App {
             let (buttons, dh) = match ask {
                 Ask::Conflict { .. } if ask.too_large() => (labels, s(168.0)),
                 Ask::Conflict { .. } => (labels, s(236.0)),
+                Ask::Failure { .. } => (labels, s(190.0)),
                 _ if checked => (labels, s(208.0)),
-                Ask::Confirm(..) | Ask::Restore { .. } | Ask::ReplaceExport { .. } => (labels, s(168.0)),
+                Ask::Confirm(..) | Ask::Untrashable(_) | Ask::Restore { .. } | Ask::ReplaceExport { .. } => (labels, s(168.0)),
             };
             let dw = s(DIALOG_W).min(w - s(32.0));
             let d = Rect::new(((w - dw) / 2.0).round(), ((h - dh) / 2.0).round().max(s(40.0)), dw, dh);
@@ -971,6 +1063,13 @@ impl App {
                 }
                 (S::UiConflictTitle.t().into(), lines)
             }
+            Some(Ask::Failure { id, failure: f }) => {
+                let op = self.jobs.list.iter().find(|j| j.id == *id).map(|j| &j.op);
+                let folder = f.path.parent().map(|p| p.display().into_owned()).unwrap_or_default();
+                let hint = if f.fatal { S::UiFailureFullHint.t().to_owned() } else { crate::tr!(S::UiFailureWhere, folder = folder) };
+                let title = if f.fatal { S::UiFailureFullTitle.t().to_owned() } else { failure_title(op, quoted(&f.path)) };
+                (title, vec![crate::i18n::localize(&f.error).into_owned(), hint])
+            }
             Some(Ask::Confirm(op, provider)) => {
                 let (title, text) = confirm_text(op);
                 let note = match op {
@@ -981,6 +1080,13 @@ impl App {
                 }
                 .t();
                 (title.into(), vec![text, note.into()])
+            }
+            Some(Ask::Untrashable(items)) => {
+                let text = match items.as_slice() {
+                    [one] => crate::tr!(S::UiConfirmUntrashableOne, name = quoted(one)),
+                    many => crate::trn!(P::UiConfirmUntrashableMany, many.len()),
+                };
+                (S::UiConfirmDelete.t().into(), vec![text, S::UiConfirmNoteUndo.t().into()])
             }
             Some(Ask::ReplaceExport { path, existing }) => (crate::tr!(S::UiExportReplaceTitle, name = quoted(path)), vec![crate::tr!(S::UiExportReplace, folder = path.parent().map(|p| quoted(&p)).unwrap_or_default()), meta_line(S::UiConflictExisting, existing, offset, &self.style)]),
             Some(Ask::Restore { session, dump }) => {
@@ -1009,9 +1115,17 @@ impl App {
         g.text(d.x + s20, y.round(), &title, bold, t.text, d.w - 2.0 * s20);
         y += s(12.0);
         let mf = g.metrics(font);
+        let failure = matches!(self.jobs.asks.front(), Some(Ask::Failure { .. }));
         for (k, line) in lines.iter().enumerate() {
             y += s(22.0);
-            g.text(d.x + s20, y.round() - mf.descent, line, if k == 0 { font } else { small }, if k == 0 { t.text } else { t.text_dim }, d.w - 2.0 * s20);
+            let (style, color, wrapped) = if k == 0 { (font, t.text, failure) } else { (small, t.text_dim, false) };
+            let rows = if wrapped { two_rows(g, line, font, d.w - 2.0 * s20) } else { vec![line.as_str()] };
+            for (r, row) in rows.iter().enumerate() {
+                g.text(d.x + s20, (y + r as f32 * s(18.0)).round() - mf.descent, row, style, color, d.w - 2.0 * s20);
+            }
+            if wrapped {
+                y += s(18.0);
+            }
         }
         let check = self.jobs.r.check;
         if check.w > 0.0 {

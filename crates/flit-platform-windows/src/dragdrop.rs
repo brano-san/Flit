@@ -1,6 +1,7 @@
 use crate::clipboard::{global, global_bytes, parse_dropfiles};
 use crate::context_menu::Pidls;
 use crate::err;
+use crate::transfer::Content;
 use flit_core::input::Mods;
 use flit_core::ui::DragEvent;
 use flit_core::FsPath;
@@ -8,13 +9,13 @@ use flit_platform::{DropReply, PlatformError};
 use std::cell::{Cell, RefCell};
 use std::mem::ManuallyDrop;
 use std::time::{Duration, Instant};
-use windows::core::w;
-use windows::Win32::Foundation::{GlobalFree, HWND, POINT, POINTL, S_OK};
+use windows::core::{w, BOOL, HRESULT};
+use windows::Win32::Foundation::{GlobalFree, DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DRAGDROP_S_USEDEFAULTCURSORS, HWND, POINT, POINTL, S_OK};
 use windows::Win32::Graphics::Gdi::ScreenToClient;
 use windows::Win32::System::Com::{CoCreateInstance, IDataObject, CLSCTX_INPROC_SERVER, DVASPECT_CONTENT, FORMATETC, STGMEDIUM, STGMEDIUM_0, TYMED_HGLOBAL};
 use windows::Win32::System::DataExchange::RegisterClipboardFormatW;
 use windows::Win32::System::Ole::*;
-use windows::Win32::System::SystemServices::{MK_CONTROL, MK_SHIFT, MODIFIERKEYS_FLAGS};
+use windows::Win32::System::SystemServices::{MK_CONTROL, MK_LBUTTON, MK_RBUTTON, MK_SHIFT, MODIFIERKEYS_FLAGS};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
 use windows::Win32::UI::Shell::{IDropTargetHelper, SHDoDragDrop, CFSTR_DROPDESCRIPTION, CLSID_DragDropHelper, DROPDESCRIPTION, DROPIMAGETYPE, DROPIMAGE_INVALID};
 use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SWAPBUTTON};
@@ -42,6 +43,7 @@ struct Target {
     effect: Cell<DROPEFFECT>,
     offered: RefCell<Option<FsPath>>,
     source_took_folder: Cell<bool>,
+    content: Cell<Option<Content>>,
 }
 
 impl Target {
@@ -57,6 +59,7 @@ impl Target {
             effect: Cell::new(DROPEFFECT_NONE),
             offered: RefCell::new(None),
             source_took_folder: Cell::new(false),
+            content: Cell::new(None),
         };
         target.into()
     }
@@ -143,6 +146,34 @@ fn mods(keys: MODIFIERKEYS_FLAGS) -> Mods {
     Mods { ctrl: keys.0 & MK_CONTROL.0 != 0, shift: keys.0 & MK_SHIFT.0 != 0, alt: keys.0 & MK_ALT != 0 }
 }
 
+fn right_button(keys: MODIFIERKEYS_FLAGS) -> bool {
+    keys.0 & MK_RBUTTON.0 != 0 && keys.0 & MK_LBUTTON.0 == 0
+}
+
+fn continue_drag(escape: bool, keys: MODIFIERKEYS_FLAGS, right: bool) -> HRESULT {
+    let (held, other) = if right { (MK_RBUTTON, MK_LBUTTON) } else { (MK_LBUTTON, MK_RBUTTON) };
+    if escape || keys.0 & other.0 != 0 {
+        DRAGDROP_S_CANCEL
+    } else if keys.0 & held.0 == 0 {
+        DRAGDROP_S_DROP
+    } else {
+        S_OK
+    }
+}
+
+#[implement(IDropSource)]
+struct RightSource;
+
+impl IDropSource_Impl for RightSource_Impl {
+    fn QueryContinueDrag(&self, escape: BOOL, keys: MODIFIERKEYS_FLAGS) -> HRESULT {
+        continue_drag(escape.as_bool(), keys, true)
+    }
+
+    fn GiveFeedback(&self, _: DROPEFFECT) -> HRESULT {
+        DRAGDROP_S_USEDEFAULTCURSORS
+    }
+}
+
 impl Target_Impl {
     fn client(&self, pt: &POINTL) -> (f32, f32) {
         let mut p = POINT { x: pt.x, y: pt.y };
@@ -198,14 +229,17 @@ impl Target_Impl {
 impl IDropTarget_Impl for Target_Impl {
     fn DragEnter(&self, data: Ref<IDataObject>, keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> windows_core::Result<()> {
         let paths = data.as_ref().map(data_paths).unwrap_or_default();
+        let content = if paths.is_empty() { data.as_ref().and_then(crate::transfer::content_of) } else { None };
         let (x, y) = self.client(pt);
         *self.data.borrow_mut() = data.as_ref().cloned();
         *self.shown.borrow_mut() = None;
         *self.offered.borrow_mut() = None;
         self.source_took_folder.set(false);
+        self.content.set(content);
         unsafe {
-            self.active.set(!paths.is_empty());
-            *effect = if paths.is_empty() { DROPEFFECT_NONE } else { self.deliver(DragEvent::Enter { paths, x, y, mods: mods(keys), allowed: (*effect).0 }) };
+            let active = !paths.is_empty() || content.is_some();
+            self.active.set(active);
+            *effect = if active { self.deliver(DragEvent::Enter { paths, x, y, mods: mods(keys), allowed: (*effect).0, right: right_button(keys) }) } else { DROPEFFECT_NONE };
             if let (Some(h), Some(d)) = (&self.helper, data.as_ref()) {
                 let _ = h.DragEnter(self.hwnd, d, &POINT { x: pt.x, y: pt.y }, *effect);
             }
@@ -237,6 +271,7 @@ impl IDropTarget_Impl for Target_Impl {
         let (x, y) = self.client(pt);
         let source_extracts = self.active.get() && self.source_took_folder.get() && data.as_ref().is_some_and(seven_zip_extracts_itself);
         let shown = self.effect.get();
+        let (content, folder) = (self.content.take(), self.offered.borrow().clone());
         unsafe {
             *effect = if source_extracts {
                 self.finish(DragEvent::Leave);
@@ -244,6 +279,12 @@ impl IDropTarget_Impl for Target_Impl {
             } else {
                 self.finish(DragEvent::Drop { x, y, mods: mods(keys), allowed: (*effect).0 })
             };
+            if let (Some(kind), Some(folder), Some(d)) = (content, folder, data.as_ref()) {
+                if *effect != DROPEFFECT_NONE {
+                    crate::transfer::drop_into(d, kind, &folder, *effect == DROPEFFECT_MOVE);
+                    *effect = DROPEFFECT_COPY;
+                }
+            }
             if let (Some(h), Some(d)) = (&self.helper, data.as_ref()) {
                 let _ = h.Drop(d, &POINT { x: pt.x, y: pt.y }, *effect);
             }
@@ -273,21 +314,25 @@ pub(crate) fn revoke(hwnd: HWND) {
     }
 }
 
-fn button_down() -> bool {
+fn held_button() -> Option<bool> {
     unsafe {
-        let vk = if GetSystemMetrics(SM_SWAPBUTTON) != 0 { VK_RBUTTON } else { VK_LBUTTON };
-        GetAsyncKeyState(vk.0 as i32) < 0
+        let (primary, secondary) = if GetSystemMetrics(SM_SWAPBUTTON) != 0 { (VK_RBUTTON, VK_LBUTTON) } else { (VK_LBUTTON, VK_RBUTTON) };
+        let down = |vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY| GetAsyncKeyState(vk.0 as i32) < 0;
+        if down(primary) {
+            Some(false)
+        } else {
+            down(secondary).then_some(true)
+        }
     }
 }
 
 pub(crate) fn start_drag(hwnd: HWND, paths: &[FsPath]) -> Result<(), PlatformError> {
-    if !button_down() {
-        return Ok(());
-    }
+    let Some(right) = held_button() else { return Ok(()) };
     let started = Instant::now();
     let data: IDataObject = Pidls::parse(paths)?.ui_object(hwnd)?;
     let ready = started.elapsed();
-    let result = unsafe { SHDoDragDrop(Some(hwnd), &data, None, DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK) };
+    let source: Option<IDropSource> = right.then(|| RightSource.into());
+    let result = unsafe { SHDoDragDrop(Some(hwnd), &data, source.as_ref(), DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK) };
     tracing::info!("drag of {} items: data object {:.1} ms, drag loop {:.1} ms", paths.len(), ready.as_secs_f64() * 1e3, (started.elapsed() - ready).as_secs_f64() * 1e3);
     result.map(drop).map_err(err)
 }

@@ -36,7 +36,7 @@ impl Field {
 
     pub fn key(&mut self, key: Key, m: Mods) -> FieldKey {
         let editing = matches!(key, Key::Left | Key::Right | Key::Home | Key::End | Key::Backspace | Key::Delete)
-            || (m.ctrl && !m.alt && matches!(key, Key::Char('A' | 'C' | 'X' | 'V')));
+            || (m.ctrl && !m.alt && matches!(key, Key::Char('A' | 'C' | 'X' | 'V' | 'Z' | 'Y')));
         if !editing {
             return FieldKey::Ignored;
         }

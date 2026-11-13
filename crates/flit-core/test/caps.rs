@@ -15,3 +15,14 @@ fn native_paths_follow_the_platform() {
         assert!(caps.native_path("relative").is_none());
     }
 }
+
+#[test]
+fn links_and_flatten_are_offered_on_both_platforms_but_libraries_only_on_windows() {
+    let (windows, linux) = (Caps::default(), Caps { unix_paths: true });
+    for id in ["file.shortcut", "file.paste_shortcut", "file.flatten"] {
+        assert!(windows.supports(id) && linux.supports(id), "{id}");
+    }
+    for id in ["libraries.new", "libraries.restore"] {
+        assert!(windows.supports(id) && !linux.supports(id), "{id}");
+    }
+}

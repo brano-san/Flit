@@ -354,6 +354,9 @@ impl Window for Win32Window {
     }
 
     fn set_clipboard_text(&self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
         let w = wide(text);
         unsafe {
             if crate::clipboard::open(Some(self.hwnd())).is_err() {

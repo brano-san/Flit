@@ -61,7 +61,7 @@ impl NameFilter {
     fn match_range(&self, listing: &Listing, from: usize, to: usize, keep: &(dyn Fn(usize) -> bool + Sync)) -> Vec<bool> {
         let one = |start: usize, end: usize| {
             let mut buf = String::new();
-            (start..end).map(|i| keep(i) && self.matches_name(listing.name(i as u32), &mut buf)).collect::<Vec<bool>>()
+            (start..end).map(|i| keep(i) && (self.matches_name(listing.name(i as u32), &mut buf) || listing.labeled(i as u32).is_some_and(|l| self.matches_name(l.as_bytes(), &mut buf)))).collect::<Vec<bool>>()
         };
         let threads = if to - from < PARALLEL_FROM { 1 } else { std::thread::available_parallelism().map_or(1, |n| n.get()).min((to - from) / NAMES_PER_THREAD) };
         if threads == 1 {

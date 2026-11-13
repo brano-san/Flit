@@ -3,10 +3,10 @@ use crate::{FileOps, PlatformError, Provider, Shell, Wake, CANCELLED};
 use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
 use flit_core::listing::Listing;
 use flit_core::path::PathKind;
-use flit_core::provider::{FileOp, GenToken, OpCtl, OpId, OpReport, Resolve, SnapshotSlot};
+use flit_core::provider::{Failure, FileOp, GenToken, OpCtl, OpId, OpReport, Recover, Resolve, SnapshotSlot};
 use flit_core::sort::{SortKeys, ViewSpec};
 use flit_core::{FsError, FsErrorKind, FsPath, Location, ProviderEvent, ProviderRequest, TabId};
-use flit_proto::provider::{agent_runs, check_conflict, check_report, Event, ReqId, Request, VERSION};
+use flit_proto::provider::{agent_runs, check_conflict, check_failure, check_performed, check_report, Event, ReqId, Request, VERSION};
 use flit_proto::transport::{read_frame, read_hello, write_frame, Hello, ProtoError, Protocol};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read, Write};
@@ -89,6 +89,7 @@ enum Msg {
     Event(u64, Event),
     Lost(u64, String),
     Answer(ReqId, Option<Resolve>, bool),
+    Recover(ReqId, Option<Recover>, bool),
     Quit,
 }
 
@@ -154,6 +155,7 @@ struct OpState {
     ctl: OpCtl,
     cancelled: bool,
     clear: bool,
+    performed: Option<FileOp>,
 }
 
 enum Pending {
@@ -302,6 +304,11 @@ impl Ctl {
                 Ok(Msg::Answer(id, choice, all)) => {
                     if matches!(self.pending.get(&id), Some(Pending::Op(_))) {
                         self.send(Request::Answer { id, choice, all });
+                    }
+                }
+                Ok(Msg::Recover(id, choice, all)) => {
+                    if matches!(self.pending.get(&id), Some(Pending::Op(_))) {
+                        self.send(Request::Recover { id, choice, all });
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => self.timer(),
@@ -574,7 +581,7 @@ impl Ctl {
                 }
                 let id = self.id();
                 let policy = ctl.policy();
-                self.pending.insert(id, Pending::Op(OpState { tab, op, request: request.clone(), ctl, cancelled: false, clear }));
+                self.pending.insert(id, Pending::Op(OpState { tab, op, request: request.clone(), ctl, cancelled: false, clear, performed: None }));
                 self.send(Request::Op { id, op: request, policy });
             }
             other => self.fallback(other),
@@ -608,6 +615,24 @@ impl Ctl {
         }
     }
 
+    fn recover(&mut self, id: ReqId, failure: Failure) {
+        let Some(Pending::Op(o)) = self.pending.get(&id) else { return };
+        if let Err(e) = check_failure(&o.request, &failure) {
+            return self.crashed(&e.to_string());
+        }
+        let (tab, op, ctl, events, wake, tx) = (o.tab, o.op, o.ctl.clone(), self.events.clone(), self.wake.clone(), self.tx.clone());
+        let asked = std::thread::Builder::new().name(format!("flit-wsl-fail-{op}")).spawn(move || {
+            let choice = ctl.recover(failure.fatal, || {
+                let _ = events.send(ProviderEvent::OpFailure { tab, id: op, failure });
+                wake();
+            });
+            let _ = tx.send(Msg::Recover(id, choice, ctl.skips_failures()));
+        });
+        if asked.is_err() {
+            self.send(Request::Recover { id, choice: None, all: false });
+        }
+    }
+
     fn finished(&mut self, id: ReqId, error: Option<String>, items: Vec<(FsPath, FsPath)>) {
         let Some(Pending::Op(o)) = self.pending.remove(&id) else { return };
         if let Err(e) = check_report(&o.request, &items) {
@@ -617,7 +642,15 @@ impl Ctl {
         if o.clear && error.is_none() {
             (self.clipboard.clear)();
         }
-        self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error, report: Some(OpReport { op: o.request, items }) });
+        self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error, report: Some(OpReport { op: o.performed.unwrap_or(o.request), items }) });
+    }
+
+    fn performed(&mut self, id: ReqId, op: FileOp) {
+        let Some(Pending::Op(o)) = self.pending.get_mut(&id) else { return };
+        match check_performed(&o.request, &op) {
+            Ok(()) => o.performed = Some(op),
+            Err(e) => self.crashed(&e.to_string()),
+        }
     }
 
     fn event(&mut self, ev: Event) {
@@ -667,7 +700,9 @@ impl Ctl {
                 }
             }
             Event::OpConflict { id, conflict } => self.ask(id, conflict),
+            Event::OpFailure { id, failure } => self.recover(id, failure),
             Event::OpDone { id, error, items } => self.finished(id, error, items),
+            Event::OpPerformed { id, op } => self.performed(id, op),
             Event::Stat { .. } => {}
         }
     }
@@ -683,6 +718,7 @@ impl Ctl {
                 Pending::List(l) => l.finish(Some(FsError { kind: FsErrorKind::Unavailable, code: 0 }), &self.wake),
                 Pending::Op(o) => {
                     o.ctl.answer(Resolve::Skip, false);
+                    o.ctl.answer_failure(Recover::Skip, false);
                     self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error: Some(lost.clone()), report: None });
                 }
                 Pending::Sizes { .. } => {}

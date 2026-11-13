@@ -70,7 +70,26 @@ pub(crate) fn map_attrs(a: u32, reparse_tag: u32) -> u32 {
     if a & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 && reparse_tag & REPARSE_TAG_NAME_SURROGATE != 0 {
         out |= attr::LINK;
     }
+    out | cloud_attrs(a)
+}
+
+pub(crate) fn cloud_attrs(a: u32) -> u32 {
+    let mut out = 0;
+    if a & (FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS.0 | FILE_ATTRIBUTE_RECALL_ON_OPEN.0) != 0 {
+        out |= attr::ONLINE_ONLY;
+    }
+    if a & FILE_ATTRIBUTE_PINNED.0 != 0 {
+        out |= attr::PINNED;
+    }
+    if a & FILE_ATTRIBUTE_OFFLINE.0 != 0 {
+        out |= attr::OFFLINE;
+    }
     out
+}
+
+pub(crate) fn not_local(path: &FsPath) -> bool {
+    let attrs = unsafe { GetFileAttributesW(PCWSTR(path.to_wide(true).as_ptr())) };
+    attrs != INVALID_FILE_ATTRIBUTES && cloud_attrs(attrs) & attr::NOT_LOCAL != 0
 }
 
 fn push_streams(dir: &FsPath, name: &[u16], file: Meta, out: &mut ListingBuilder<'_>) {
@@ -410,6 +429,10 @@ impl Fs for NtFs {
 
     fn desktop_ini(&self, dir: &FsPath) -> Option<DesktopIni> {
         crate::shell::desktop_ini(dir)
+    }
+
+    fn localized_name(&self, dir: &FsPath) -> Option<String> {
+        crate::shell::localized_name(dir)
     }
 
     fn remote(&self, path: &FsPath) -> bool {

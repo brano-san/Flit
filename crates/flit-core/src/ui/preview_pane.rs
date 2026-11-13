@@ -116,6 +116,7 @@ pub enum PaneHit {
     Volume,
     Tag(usize),
     NewTag,
+    Download,
     Body,
 }
 
@@ -264,6 +265,7 @@ pub(super) struct PreviewPane {
     r: Rects,
     chips: Vec<(Rect, PaneHit)>,
     buttons: Vec<(Rect, PaneHit)>,
+    download: u64,
 }
 
 impl PreviewPane {
@@ -841,6 +843,10 @@ impl App {
             PaneHit::Properties => self.properties_dialog(),
             PaneHit::Tag(k) => self.toggle_tag(k),
             PaneHit::NewTag => self.new_tag(true),
+            PaneHit::Download => {
+                let p = &mut self.preview;
+                p.download = std::mem::take(&mut p.key);
+            }
             PaneHit::Play => {
                 let p = &mut self.preview;
                 p.media.playing = !p.media.playing;
@@ -996,6 +1002,10 @@ impl App {
         let Some(path) = s.path else { return };
         if archived {
             p.content = Content::Basic(Some(Note::Archived));
+            return;
+        }
+        if s.entry.is_some_and(|e| preview::waits_for_download(e.attrs)) && p.download != key {
+            p.content = Content::Basic(Some(Note::OnlineOnly));
             return;
         }
         let side = p.r.body.w.max(p.r.body.h) * 2.0;
@@ -1411,7 +1421,19 @@ impl App {
                     rows.push((S::PreviewFieldModified.t(), date(e.modified)));
                 }
             }
-            let flags: Vec<&str> = [(attr::READONLY, S::PreviewAttrReadOnly), (attr::HIDDEN, S::PreviewAttrHidden), (attr::SYSTEM, S::PreviewAttrSystem), (attr::LINK, S::PreviewAttrLink)].iter().filter(|f| e.attrs & f.0 != 0).map(|f| f.1.t()).collect();
+            let flags: Vec<&str> = [
+                (attr::READONLY, S::PreviewAttrReadOnly),
+                (attr::HIDDEN, S::PreviewAttrHidden),
+                (attr::SYSTEM, S::PreviewAttrSystem),
+                (attr::LINK, S::PreviewAttrLink),
+                (attr::ONLINE_ONLY, S::PreviewAttrOnlineOnly),
+                (attr::PINNED, S::PreviewAttrPinned),
+                (attr::OFFLINE, S::PreviewAttrOffline),
+            ]
+            .iter()
+            .filter(|f| e.attrs & f.0 != 0)
+            .map(|f| f.1.t())
+            .collect();
             if !flags.is_empty() {
                 rows.push((S::PreviewFieldAttributes.t(), flags.join(", ")));
             }
@@ -1458,7 +1480,7 @@ impl App {
     }
 
     fn tag_row<B: TextBackend>(&mut self, g: &mut Gfx<B>, s: &Subject, y: &mut f32, t: &Theme) {
-        if (s.entry.is_none() && s.many.is_none()) || self.tab().view_loc.path().kind() != PathKind::Drive {
+        if (s.entry.is_none() && s.many.is_none()) || !self.taggable_here() {
             return;
         }
         let b = self.preview.r.body;
@@ -1564,6 +1586,16 @@ impl App {
             for l in n.lines() {
                 self.text_line(g, &mut y, l, small, t.text_dim);
             }
+        }
+        if matches!(self.preview.content, Content::Basic(Some(Note::OnlineOnly))) {
+            y += self.s(8.0);
+            let label = S::PreviewDownload.t();
+            let w = (g.measure(label, small) + self.s(28.0)).min(b.w).round();
+            let r = Rect::new(b.x, (b.y + y - self.preview.scroll).round(), w, self.s(BUTTON_H));
+            let hot = matches!(self.hover, Hit::Preview(PaneHit::Download)).then_some(t.accent);
+            Paint::new(g, t, self.scale).button(r, label, small, hot);
+            self.preview.buttons.push((r, PaneHit::Download));
+            y += r.h;
         }
         y
     }

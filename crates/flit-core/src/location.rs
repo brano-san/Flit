@@ -234,6 +234,7 @@ impl Location {
             let label = match &loc {
                 Location::Local(p) if p.kind() == PathKind::Computer => crate::i18n::S::PathComputer.t().to_owned(),
                 Location::Wsl { distro, path } if path.is_root() => format!("{distro} (WSL)"),
+                Location::Local(p) => crate::desktop_ini::label(p).unwrap_or_else(|| name::display(loc.file_name()).into_owned()),
                 _ => name::display(loc.file_name()).into_owned(),
             };
             cur = loc.parent();

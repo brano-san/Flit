@@ -22,7 +22,12 @@ fn tags_with(names: &[&str], files: &[(&str, u32, bool)]) -> Arc<Tags> {
 }
 
 fn app_with(items: &[(&str, u32)]) -> App {
-    let mut app = App::new(Persisted { path: Location::parse(r"C:\x").unwrap(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 600), Instant::now());
+    app_at(Location::parse(r"C:\x").unwrap(), crate::caps::Caps::default(), items)
+}
+
+fn app_at(path: Location, caps: crate::caps::Caps, items: &[(&str, u32)]) -> App {
+    let mut app = App::new(Persisted { path, ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 600), Instant::now());
+    app.caps = caps;
     app.set_tags(tags_with(&["Important", "Work", "Old"], &[]));
     let t = app.tab();
     let mut listing = Listing::default();
@@ -118,6 +123,40 @@ fn edit_tags_menu_checks_shared_tags_and_toggles_them() {
     assert!(requests(&mut app).is_empty());
     assert_eq!(app.tab().error.as_deref(), Some("Select the items to tag"));
     assert_eq!(app.selection_tags(), (0, 0));
+}
+
+fn edit_tags_shown(app: &mut App) -> Option<Vec<String>> {
+    app.context_menu();
+    let mut all = Vec::new();
+    labels(&menu(app).menu, &mut all);
+    let at = all.iter().position(|l| l == "[Edit tags]")?;
+    Some(all[at + 1..at + 4].to_vec())
+}
+
+#[test]
+fn linux_folders_offer_tags_and_other_places_say_where_tags_work() {
+    let linux = crate::caps::Caps { unix_paths: true };
+    let mut app = app_at(Location::parse("/home/me").unwrap(), linux, &[("a.txt", 0b001), ("b.txt", 0)]);
+    select(&mut app, &["a.txt"]);
+    assert_eq!(edit_tags_shown(&mut app).unwrap(), ["Important *", "Work", "Old"]);
+    app.toggle_tag(1);
+    assert_eq!(requests(&mut app), [TagRequest::Set { items: vec![path("/home/me/a.txt")], tag: 1, on: true }]);
+    let now = Instant::now();
+    app.on_tags(TagEvent::Changed { tags: app.tags().clone(), files: vec![(path("/home/me/b.txt"), 0b100), (path("/home/Me/a.txt"), 0b010)], dropped: None }, now);
+    let mut got = masks(&app);
+    got.sort();
+    assert_eq!(got, [("a.txt".into(), 0b001), ("b.txt".into(), 0b100)], "Linux folders match by exact case");
+    let mut wsl = app_at(Location::Wsl { distro: "U".into(), path: path("/home/me") }, crate::caps::Caps::default(), &[("a.txt", 0)]);
+    select(&mut wsl, &["a.txt"]);
+    assert_eq!(edit_tags_shown(&mut wsl), None, "WSL folders on Windows stay untaggable");
+    wsl.toggle_tag(0);
+    assert!(requests(&mut wsl).is_empty());
+    assert_eq!(wsl.tab().error.as_deref(), Some("Tags work only for items on local NTFS drives"));
+    let mut trash = app_at(Location::recycle_bin(), linux, &[("old.txt", 0)]);
+    select(&mut trash, &["old.txt"]);
+    trash.toggle_tag(0);
+    assert!(requests(&mut trash).is_empty());
+    assert_eq!(trash.tab().error.as_deref(), Some("Tags work only for items on local disks with ext4, Btrfs, XFS or a similar file system"));
 }
 
 #[test]
@@ -251,4 +290,14 @@ fn finished_moves_and_copies_carry_tags() {
     app.tags_moved(&ProviderId::Wsl("U".into()), &linux);
     let pairs = vec![(path("\\\\wsl.localhost\\U\\h\\a\u{F03A}b"), path(r"\\wsl.localhost\U\h\c"))];
     assert_eq!(requests(&mut app), [TagRequest::Moved { pairs, copy: false }], "tags keep Windows paths for WSL files");
+}
+
+#[test]
+#[cfg(windows)]
+fn cloud_marks_show_files_away_from_the_device_and_files_kept_on_it() {
+    assert_eq!(cloud_mark(attr::ONLINE_ONLY), Some((G_CLOUD, false)));
+    assert_eq!(cloud_mark(attr::OFFLINE), Some((G_CLOUD, false)));
+    assert_eq!(cloud_mark(attr::PINNED), Some((G_ON_DEVICE, true)));
+    assert_eq!(cloud_mark(attr::PINNED | attr::ONLINE_ONLY), Some((G_ON_DEVICE, true)), "a pinned file being downloaded already shows as kept");
+    assert_eq!(cloud_mark(attr::READONLY | attr::HIDDEN), None);
 }

@@ -1261,6 +1261,7 @@ impl App {
             _ if tagged => S::SearchSourceTagged,
             (None, SearchBackend::Connecting) => S::SearchSourceConnecting,
             (None, SearchBackend::Service) => S::SearchSourceService,
+            (None, SearchBackend::Fallback) if self.caps.unix_paths => S::SearchSourceLocal,
             (None, SearchBackend::Fallback) => S::SearchSourceFallback,
             (None, SearchBackend::Off) => S::SearchSourceOff,
         }.t());
@@ -1273,7 +1274,7 @@ impl App {
                 IndexState::Error(e) => tr_into!(&mut right, S::SearchIndexError, label = label, error = e),
             }
         }
-        let rcolor = if matches!(s.backend, SearchBackend::Fallback | SearchBackend::Off) && !tagged && s.source.is_none() { t.error } else { t.text_dim };
+        let rcolor = if (matches!(s.backend, SearchBackend::Fallback) && !self.caps.unix_paths || matches!(s.backend, SearchBackend::Off)) && !tagged && s.source.is_none() { t.error } else { t.text_dim };
         let rw = g.measure(&right, font).min(status.w / 2.0 - pad);
         g.text(status.right() - pad - rw, baseline, &right, font, rcolor, status.w / 2.0 - pad);
         self.draw_recent(g, t);

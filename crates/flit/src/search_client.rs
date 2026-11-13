@@ -405,7 +405,13 @@ impl<P: Platform> Worker<P> {
             SearchRequest::Query { gen, text, sort, scope } => {
                 self.hits.remove(&window);
                 let folder = scope.folder().and_then(|f| f.to_windows());
-                if let Some(aqs) = query::shell_query(text) {
+                if !cfg!(windows) && query::is_content_query(text) {
+                    self.start_live(window, latest, *gen, *sort, SearchSource::Shell, |_, found| {
+                        found.lock().unwrap_or_else(|e| e.into_inner()).error = Some(S::SearchErrorContentUnsupported.t().to_owned());
+                    });
+                    return true;
+                }
+                if let Some(aqs) = query::shell_query(text, cfg!(windows)) {
                     self.start_live(window, latest, *gen, *sort, SearchSource::Shell, move |keep_going, found| run_shell::<P>(folder.as_ref(), &aqs, keep_going, found));
                     return true;
                 }

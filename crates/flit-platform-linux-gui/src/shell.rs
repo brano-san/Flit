@@ -7,7 +7,7 @@ use flit_platform::{FileOps, Job, OpOutcome, PlatformError, Shell};
 use flit_platform_linux::{host, run_op};
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -53,6 +53,7 @@ pub fn xdg_open(target: &OsStr) -> Result<(), PlatformError> {
     let program = on_path(OsStr::new("xdg-open")).ok_or_else(|| PlatformError::new(libc::ENOENT as i64, "xdg-open is not installed, so Flit cannot open files with other programs"))?;
     let mut cmd = Command::new(program);
     cmd.arg(target);
+    crate::activation::pass(&mut cmd, crate::window::activation_token().as_deref());
     detach(cmd).map_err(|e| spawn_error("xdg-open", &e))
 }
 
@@ -61,11 +62,173 @@ pub fn terminal_program() -> Option<PathBuf> {
     chosen.iter().map(OsString::as_os_str).chain(TERMINALS.iter().map(OsStr::new)).find_map(on_path)
 }
 
-pub fn open_terminal(dir: &Path) -> Result<(), PlatformError> {
+enum DirArg {
+    Cwd,
+    Joined(&'static str),
+    Pair(&'static str),
+    Start,
+}
+
+enum ExecArg {
+    Rest(&'static str),
+    Positional,
+    Quoted(&'static str),
+}
+
+const OPEN_SCRIPT: &str = r#"cd -- "$1" && exec "${SHELL:-/bin/sh}""#;
+const RUN_SCRIPT: &str = r#"cd -- "$1" || exit; "$2"; echo; exec "${SHELL:-/bin/sh}""#;
+
+fn terminal_style(name: &str) -> (DirArg, ExecArg) {
+    match name {
+        "gnome-terminal" | "kgx" | "ptyxis" => (DirArg::Joined("--working-directory="), ExecArg::Rest("--")),
+        "xfce4-terminal" | "mate-terminal" | "terminator" => (DirArg::Joined("--working-directory="), ExecArg::Rest("-x")),
+        "tilix" | "lxterminal" => (DirArg::Joined("--working-directory="), ExecArg::Quoted("-e")),
+        "konsole" => (DirArg::Pair("--workdir"), ExecArg::Rest("-e")),
+        "alacritty" => (DirArg::Pair("--working-directory"), ExecArg::Rest("-e")),
+        "kitty" => (DirArg::Joined("--directory="), ExecArg::Positional),
+        "foot" | "footclient" => (DirArg::Joined("--working-directory="), ExecArg::Positional),
+        "wezterm" => (DirArg::Start, ExecArg::Rest("--")),
+        "xdg-terminal-exec" => (DirArg::Cwd, ExecArg::Positional),
+        _ => (DirArg::Cwd, ExecArg::Rest("-e")),
+    }
+}
+
+fn shell_quote(arg: &OsStr) -> OsString {
+    let mut out = b"'".to_vec();
+    for &b in arg.as_bytes() {
+        if b == b'\'' {
+            out.extend_from_slice(b"'\\''");
+        } else {
+            out.push(b);
+        }
+    }
+    out.push(b'\'');
+    OsString::from_vec(out)
+}
+
+pub fn terminal_args(program: &Path, dir: Option<&Path>, command: Option<Vec<OsString>>) -> Vec<OsString> {
+    let name = program.file_name().map(|n| n.to_string_lossy().trim_end_matches(".wrapper").to_owned()).unwrap_or_default();
+    let (dir_arg, exec) = terminal_style(&name);
+    let mut args: Vec<OsString> = Vec::new();
+    match (dir, &dir_arg) {
+        (Some(d), DirArg::Joined(flag)) => {
+            let mut a = OsString::from(flag);
+            a.push(d);
+            args.push(a);
+        }
+        (Some(d), DirArg::Pair(flag)) => args.extend([OsString::from(flag), d.into()]),
+        (Some(d), DirArg::Start) => args.extend([OsString::from("start"), "--cwd".into(), d.into()]),
+        (None, DirArg::Start) => args.push("start".into()),
+        _ => {}
+    }
+    let dispatcher = matches!(name.as_str(), "xdg-terminal-exec" | "x-terminal-emulator");
+    let command = match (command, dir) {
+        (Some(c), _) => c,
+        (None, Some(d)) if dispatcher => ["sh", "-c", OPEN_SCRIPT, "flit"].into_iter().map(OsString::from).chain([d.into()]).collect(),
+        (None, _) => return args,
+    };
+    match exec {
+        ExecArg::Rest(flag) => {
+            args.push(flag.into());
+            args.extend(command);
+        }
+        ExecArg::Positional => args.extend(command),
+        ExecArg::Quoted(flag) => {
+            args.push(flag.into());
+            args.push(command.iter().map(|c| shell_quote(c)).collect::<Vec<_>>().join(OsStr::new(" ")));
+        }
+    }
+    args
+}
+
+fn spawn_terminal(dir: Option<&Path>, command: Option<Vec<OsString>>) -> Result<(), PlatformError> {
     let program = terminal_program().ok_or_else(|| PlatformError::new(libc::ENOENT as i64, "No terminal was found: set TERMINAL or install xdg-terminal-exec"))?;
     let mut cmd = Command::new(&program);
-    cmd.current_dir(dir);
+    cmd.args(terminal_args(&program, dir, command));
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
+    if let Some(t) = crate::window::activation_token() {
+        cmd.env("XDG_ACTIVATION_TOKEN", &t).env("DESKTOP_STARTUP_ID", &t);
+    }
     detach(cmd).map_err(|e| spawn_error(&program.display().to_string(), &e))
+}
+
+pub fn open_terminal(dir: &Path) -> Result<(), PlatformError> {
+    spawn_terminal(Some(dir), None)
+}
+
+pub fn run_in_terminal(program: &Path) -> Result<(), PlatformError> {
+    let dir = program.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("/"));
+    if !std::fs::metadata(program).is_ok_and(|m| m.is_file()) {
+        return Err(PlatformError::new(libc::ENOENT as i64, format!("{} is not a file", program.display())));
+    }
+    let command = ["sh", "-c", RUN_SCRIPT, "flit"].into_iter().map(OsString::from).chain([dir.into(), program.into()]).collect();
+    spawn_terminal(Some(dir), Some(command))
+}
+
+pub fn run_in_terminal_argv(dir: Option<&Path>, argv: Vec<OsString>) -> Result<(), PlatformError> {
+    spawn_terminal(dir, Some(argv))
+}
+
+pub fn elf_program(head: &[u8]) -> bool {
+    if head.len() < 52 || &head[..4] != b"\x7fELF" {
+        return false;
+    }
+    let (wide, le) = (head[4] == 2, head[5] == 1);
+    let u16_at = |at: usize| head.get(at..at + 2).map(|b| if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) });
+    let u32_at = |at: usize| head.get(at..at + 4).map(|b| if le { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) } else { u32::from_be_bytes([b[0], b[1], b[2], b[3]]) });
+    let u64_at = |at: usize| head.get(at..at + 8).map(|b| {
+        let a: [u8; 8] = b.try_into().unwrap_or_default();
+        if le { u64::from_le_bytes(a) } else { u64::from_be_bytes(a) }
+    });
+    match u16_at(16) {
+        Some(2) => true,
+        Some(3) => {
+            let (phoff, phentsize, phnum) = if wide { (u64_at(32).map(|v| v as usize), u16_at(54), u16_at(56)) } else { (u32_at(28).map(|v| v as usize), u16_at(42), u16_at(44)) };
+            let (Some(phoff), Some(size), Some(count)) = (phoff, phentsize, phnum) else { return false };
+            (0..count as usize).any(|k| phoff.checked_add(k * size as usize).and_then(u32_at) == Some(3))
+        }
+        _ => false,
+    }
+}
+
+pub fn runs_directly(path: &Path) -> bool {
+    if !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
+        return false;
+    }
+    let Ok(c) = std::ffi::CString::new(path.as_os_str().as_bytes()) else { return false };
+    if unsafe { libc::access(c.as_ptr(), libc::X_OK) } != 0 {
+        return false;
+    }
+    let mut head = vec![0u8; 4096];
+    let Ok(n) = std::fs::File::open(path).and_then(|mut f| f.read(&mut head)) else { return false };
+    head.truncate(n);
+    let appimage = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("appimage"));
+    elf_program(&head) || appimage && head.starts_with(b"\x7fELF")
+}
+
+fn program_file(path: &Path) -> bool {
+    let mut head = vec![0u8; 4096];
+    let Ok(n) = std::fs::File::open(path).and_then(|mut f| f.read(&mut head)) else { return false };
+    head.truncate(n);
+    let appimage = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("appimage"));
+    elf_program(&head) || appimage && head.starts_with(b"\x7fELF")
+}
+
+pub fn needs_exec_bit(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 == 0) && program_file(path)
+}
+
+fn run_directly(path: &Path) -> Result<(), PlatformError> {
+    let mut cmd = Command::new(path);
+    if let Some(d) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        cmd.current_dir(d);
+    }
+    if let Some(t) = crate::window::activation_token() {
+        cmd.env("XDG_ACTIVATION_TOKEN", &t).env("DESKTOP_STARTUP_ID", &t);
+    }
+    detach(cmd).map_err(|e| spawn_error(&path.display().to_string(), &e))
 }
 
 pub fn split_args(text: &str) -> Vec<String> {
@@ -97,6 +260,7 @@ fn launch(l: &Launch) -> Result<(), PlatformError> {
     match l {
         Launch::Terminal { admin: true, .. } => Err(PlatformError::new(-1, "Flit does not open terminals with elevated rights on Linux")),
         Launch::Terminal { dirs, .. } => dirs.iter().try_for_each(|d| open_terminal(Path::new(os(d)))),
+        Launch::RunInTerminal { program } => run_in_terminal(Path::new(os(program))),
         Launch::With { program, args } if program.as_bytes().ends_with(b".desktop") => {
             let files: Vec<PathBuf> = args.iter().filter_map(|a| host(a).map(Path::to_path_buf)).collect();
             let token = crate::window::activation_token();
@@ -105,6 +269,7 @@ fn launch(l: &Launch) -> Result<(), PlatformError> {
         Launch::With { program, args } => {
             let mut cmd = Command::new(os(program));
             cmd.args(args.iter().map(os));
+            crate::activation::pass(&mut cmd, crate::window::activation_token().as_deref());
             detach(cmd).map_err(|e| spawn_error(&program.display(), &e))
         }
         Launch::Run { program, args, .. } if args.is_empty() && program.contains("://") => xdg_open(OsStr::new(program)),
@@ -114,8 +279,15 @@ fn launch(l: &Launch) -> Result<(), PlatformError> {
             if let Some(d) = dir.as_ref().and_then(host) {
                 cmd.current_dir(d);
             }
+            crate::activation::pass(&mut cmd, crate::window::activation_token().as_deref());
             detach(cmd).map_err(|e| spawn_error(program, &e))
         }
+        Launch::SetDefault { program, mime } => crate::apps::set_default(Path::new(os(program)), mime).map_err(|e| spawn_error("mimeapps.list", &e)),
+        Launch::Custom { command, files, mime, remember } => {
+            let files: Vec<PathBuf> = files.iter().filter_map(|a| host(a).map(Path::to_path_buf)).collect();
+            crate::apps::run_custom(command, &files, mime, *remember, crate::window::activation_token().as_deref()).map_err(|e| spawn_error(command, &e))
+        }
+        Launch::ChooseApp { .. } => Err(PlatformError::unsupported("choosing an application outside a window")),
         Launch::Eject(drive) => crate::places::eject(Path::new(os(drive))).map_err(|e| spawn_error("udisksctl", &e)),
         Launch::Mount(_) => Err(PlatformError::unsupported("mounting outside the shell thread")),
         Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) => Err(PlatformError::unsupported("mapping network drives")),
@@ -140,7 +312,8 @@ impl Shell for LinuxShell {
     }
 
     fn preview_image(&mut self, path: &FsPath, max: u32) -> Option<Bitmap> {
-        crate::thumb::image(host(path)?, max)
+        let path = host(path)?;
+        crate::thumb::image(path, max).or_else(|| crate::thumbnailers::thumbnail(path, max))
     }
 
     fn poster(&mut self, path: &FsPath, size: u32) -> Option<Bitmap> {
@@ -152,6 +325,10 @@ impl Shell for LinuxShell {
     }
 
     fn open(&mut self, path: &FsPath) -> Result<(), PlatformError> {
+        let p = Path::new(os(path));
+        if runs_directly(p) {
+            return run_directly(p);
+        }
         xdg_open(os(path))
     }
 
@@ -161,6 +338,14 @@ impl Shell for LinuxShell {
 
     fn properties(&mut self, path: &FsPath) -> Vec<flit_core::preview::PropGroup> {
         host(path).map(crate::props::properties).unwrap_or_default()
+    }
+
+    fn access(&mut self, items: &[FsPath]) -> Option<(Vec<Option<flit_core::provider::Access>>, flit_core::provider::Accounts)> {
+        Some(crate::props::access(items))
+    }
+
+    fn needs_exec_bit(&mut self, path: &FsPath) -> bool {
+        needs_exec_bit(Path::new(os(path)))
     }
 
     fn mount(&mut self, device: &FsPath) -> Result<FsPath, PlatformError> {
@@ -187,7 +372,8 @@ impl FileOps for LinuxShell {
             (FileOp::Purge(pairs), Ok(t)) => places::purge(t, pairs),
             (FileOp::EmptyBin, Ok(t)) => places::empty(t, &places::storage_tops()),
             (FileOp::Purge(_) | FileOp::EmptyBin, Err(e)) => OpOutcome { items: Vec::new(), error: Some(e.clone()) },
-            _ => run_op(op, job, trash.as_ref().ok()),
+            (FileOp::SetAccess { .. } | FileOp::Access(_), _) => crate::elevated::access_op(op, job, || run_op(op, job, None)),
+            _ => crate::elevated::file_op(op, job, || run_op(op, job, trash.as_ref().ok())),
         };
         fs::rescan_blind();
         out
@@ -195,10 +381,9 @@ impl FileOps for LinuxShell {
 
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
         let own = OWN_FILES.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let read = |mime: &str| clipboard_bytes(mime).filter(|b| !b.is_empty());
-        let (paths, cut) = match read("x-special/gnome-copied-files").or_else(|| read("text/uri-list")) {
-            Some(bytes) => {
-                let (paths, cut) = parse_file_list(&bytes);
+        let found = crate::window::clipboard_types().and_then(|t| crate::clipboard::files(&t)).or_else(helper_files);
+        let (paths, cut) = match found {
+            Some((paths, cut)) => {
                 let ours = own.as_ref().filter(|(list, _)| parse_file_list(list.as_bytes()).0 == paths);
                 (paths, cut || ours.is_some_and(|o| o.1))
             }
@@ -303,11 +488,29 @@ fn clipboard_bytes(mime: &str) -> Option<Vec<u8>> {
     wait_output(child, HELPER_TIMEOUT)
 }
 
-pub fn set_clipboard_files(list: &str) -> bool {
-    let args: &[&str] = if wayland() { &["wl-copy", "--type", "text/uri-list"] } else { &["xclip", "-selection", "clipboard", "-target", "text/uri-list", "-in"] };
+fn helper_files() -> Option<(Vec<FsPath>, bool)> {
+    use crate::clipboard::{files, GNOME, KDE_CUT, URI_LIST};
+    let read = |mime: &str| clipboard_bytes(mime).filter(|b| !b.is_empty()).map(|b| (mime.to_owned(), b));
+    if let Some(found) = read(GNOME).and_then(|g| files(&[g])) {
+        return Some(found);
+    }
+    let uris = read(URI_LIST)?;
+    files(&[uris].into_iter().chain(read(KDE_CUT)).collect::<Vec<_>>())
+}
+
+pub fn helper_offer(paths: &[FsPath], cut: bool) -> (&'static str, Vec<u8>) {
+    match cut {
+        true => (crate::clipboard::GNOME, crate::clipboard::gnome(paths, true)),
+        false => (crate::clipboard::URI_LIST, crate::clipboard::uri_list(paths)),
+    }
+}
+
+pub fn set_clipboard_files(paths: &[FsPath], cut: bool) -> bool {
+    let (mime, list) = helper_offer(paths, cut);
+    let args: &[&str] = if wayland() { &["wl-copy", "--type", mime] } else { &["xclip", "-selection", "clipboard", "-target", mime, "-in"] };
     let Some(mut cmd) = helper(args) else { return false };
     let Ok(mut child) = cmd.stdin(Stdio::piped()).stdout(Stdio::null()).process_group(0).spawn() else { return false };
-    let written = child.stdin.take().is_some_and(|mut input| input.write_all(list.as_bytes()).is_ok());
+    let written = child.stdin.take().is_some_and(|mut input| input.write_all(&list).is_ok());
     let _ = std::thread::Builder::new().name("flit-reap".into()).spawn(move || {
         let _ = child.wait();
     });

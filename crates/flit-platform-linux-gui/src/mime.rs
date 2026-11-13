@@ -52,6 +52,63 @@ pub fn mime_of(ext: &[u8]) -> Option<String> {
     globs().get(&ext).map(|g| g.1.clone())
 }
 
+pub fn parse_subclasses(text: &str, into: &mut HashMap<String, Vec<String>>) {
+    for (child, parent) in text.lines().filter(|l| !l.starts_with('#')).filter_map(|l| l.split_once(' ')) {
+        let list = into.entry(child.trim().to_owned()).or_default();
+        if !list.iter().any(|p| p == parent.trim()) {
+            list.push(parent.trim().to_owned());
+        }
+    }
+}
+
+pub fn parents(mime: &str) -> Vec<String> {
+    static SUBCLASSES: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
+    let map = SUBCLASSES.get_or_init(|| {
+        let mut map = HashMap::new();
+        for dir in mime_dirs().iter().rev() {
+            if let Ok(text) = std::fs::read_to_string(dir.join("subclasses")) {
+                parse_subclasses(&text, &mut map);
+            }
+        }
+        map
+    });
+    map.get(mime).cloned().unwrap_or_default()
+}
+
+pub const OCTET_STREAM: &str = "application/octet-stream";
+
+pub fn lineage(mime: &str, parents: impl Fn(&str) -> Vec<String>) -> Vec<String> {
+    let mut out = vec![mime.to_owned()];
+    let mut k = 0;
+    while k < out.len() {
+        let mut next = parents(&out[k]);
+        if out[k].starts_with("text/") && out[k] != "text/plain" {
+            next.push("text/plain".into());
+        }
+        for p in next {
+            if p != OCTET_STREAM && !out.contains(&p) {
+                out.push(p);
+            }
+        }
+        k += 1;
+    }
+    out
+}
+
+pub fn sniff(head: &[u8]) -> &'static str {
+    let text = !head.contains(&0) && std::str::from_utf8(head).map_or_else(|e| e.error_len().is_none(), |_| true);
+    if text { "text/plain" } else { OCTET_STREAM }
+}
+
+pub fn mime_of_file(path: &std::path::Path) -> String {
+    if let Some(m) = path.extension().and_then(|e| mime_of(e.as_encoded_bytes())) {
+        return m;
+    }
+    let mut head = [0u8; 4096];
+    let read = std::fs::File::open(path).and_then(|mut f| std::io::Read::read(&mut f, &mut head));
+    read.map_or(OCTET_STREAM, |n| sniff(&head[..n])).to_owned()
+}
+
 pub fn parse_generic_icons(text: &str) -> HashMap<String, String> {
     text.lines().filter_map(|l| l.split_once(':')).map(|(m, i)| (m.to_owned(), i.to_owned())).collect()
 }

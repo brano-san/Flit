@@ -20,6 +20,9 @@ fn roundtrip_every_message() {
         Request::Answer { id: 6, choice: None, all: false },
         Request::Cancel { id: 1 },
         Request::Shutdown,
+        Request::Recover { id: 6, choice: Some(Recover::Retry), all: false },
+        Request::Recover { id: 6, choice: Some(Recover::Skip), all: true },
+        Request::Recover { id: 6, choice: None, all: false },
     ];
     for m in requests {
         let mut buf = Vec::new();
@@ -40,6 +43,8 @@ fn roundtrip_every_message() {
         Event::OpDone { id: 5, error: None, items: vec![(unix(b"/tmp/a"), unix(b"/home/u/.local/share/Trash/files/a"))] },
         Event::OpProgress { id: 6, progress: OpProgress { stage: flit_core::provider::Stage::Running, bytes: 1, total_bytes: 2, items: 3, total_items: 4 } },
         Event::OpConflict { id: 6, conflict: Conflict { source: unix(b"/tmp/\xFF"), target: unix(b"/home/\xFF"), from: Meta::default(), to: Meta { size: 5, ..Default::default() } } },
+        Event::OpFailure { id: 6, failure: Failure { path: unix(b"/tmp/\xFF"), error: "Permission denied (os error 13)".into(), fatal: false } },
+        Event::OpFailure { id: 6, failure: Failure { path: unix(b"/home"), error: "No space left on device".into(), fatal: true } },
     ];
     for m in events {
         let mut buf = Vec::new();
@@ -108,4 +113,23 @@ fn conflicts_must_name_the_operation_paths() {
     assert!(check_conflict(&FileOp::Delete(vec![unix(b"/s/a")]), &c("/s/a", "/s/a")).is_err());
     let tomb = Event::OpConflict { id: 1, conflict: Conflict { to: Meta { attrs: flit_core::attr::DELETED, ..Default::default() }, ..c("/s/a", "/d/a") } };
     assert!(tomb.validate(false).is_err());
+}
+
+#[test]
+fn failures_must_name_the_operation_paths_and_stay_short() {
+    let f = |p: &str| Failure { path: unix(p.as_bytes()), error: "Permission denied".into(), fatal: false };
+    let copy = FileOp::Copy { items: vec![unix(b"/s/a")], dest: unix(b"/d") };
+    assert!(check_failure(&copy, &f("/s/a/x")).is_ok());
+    assert!(check_failure(&copy, &f("/d/a/x")).is_ok());
+    assert!(check_failure(&copy, &f("/d")).is_ok());
+    assert!(check_failure(&copy, &f("/etc/shadow")).is_err());
+    let delete = FileOp::Delete(vec![unix(b"/s/a")]);
+    assert!(check_failure(&delete, &f("/s/a/deep")).is_ok() && check_failure(&delete, &f("/s/b")).is_err());
+    let restore = FileOp::Restore(vec![(unix(b"/h/Trash/files/a"), unix(b"/tmp/a"))]);
+    assert!(check_failure(&restore, &f("/tmp/a")).is_ok());
+    assert!(check_failure(&FileOp::Trash(vec![unix(b"/s/a")]), &f("/s/a")).is_err(), "the Trash reports at the end instead");
+    assert!(check_failure(&FileOp::Rename { item: unix(b"/s/a"), name: b"b".to_vec() }, &f("/s/a")).is_err());
+    let long = Event::OpFailure { id: 1, failure: Failure { error: "x".repeat(MAX_FAILURE_TEXT + 1), ..f("/s/a") } };
+    assert!(long.validate(false).is_err());
+    assert!(Event::OpFailure { id: 1, failure: f("/s/a") }.validate(true).is_ok());
 }

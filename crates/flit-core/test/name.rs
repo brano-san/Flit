@@ -52,3 +52,13 @@ fn type_ahead_prefix() {
     assert!(starts_with_ci(b"README.md", "read"));
     assert!(!starts_with_ci(b"RE", "read"));
 }
+
+#[test]
+fn link_names_follow_the_language_and_keep_raw_bytes() {
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+    assert_eq!(link_name(b"report.txt"), b"Link to report.txt");
+    assert_eq!(link_name(b"odd\xFF"), b"Link to odd\xFF");
+    crate::i18n::set_lang(crate::i18n::Lang::ZhCn);
+    assert_eq!(link_name(b"a"), "指向 a 的链接".as_bytes());
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+}

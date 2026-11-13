@@ -3,7 +3,7 @@ use flit_core::listing::attr;
 use flit_core::{Listing, Meta};
 use serde::{Deserialize, Serialize};
 
-pub const WIRE_ATTRS: u32 = attr::DIR | attr::HIDDEN | attr::SYSTEM | attr::READONLY | attr::LINK;
+pub const WIRE_ATTRS: u32 = attr::DIR | attr::HIDDEN | attr::SYSTEM | attr::READONLY | attr::LINK | attr::EXEC;
 
 pub fn check_name(name: &[u8], windows_names: bool) -> Result<(), ProtoError> {
     let forbidden = |b: u8| b == b'/' || b == 0 || (windows_names && (b == b'\\' || b == b':'));

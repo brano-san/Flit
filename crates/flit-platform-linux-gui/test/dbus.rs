@@ -4,19 +4,20 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-static STARTUP_TOKEN_USERS: Mutex<()> = Mutex::new(());
+use crate::window::STARTUP_TOKEN_USERS;
 
 #[test]
 fn methods_turn_uris_into_folders_or_selections() {
     let uris = [b"file:///home/u/a%20b".to_vec(), b"sftp://host/x".to_vec()];
     let folders = request("ShowFolders", &uris).unwrap();
-    assert_eq!((folders.paths, folders.select.len(), folders.target, folders.properties), (vec![b"/home/u/a b".to_vec()], 0, OpenTarget::NewTab, false));
+    assert_eq!((folders.paths, folders.select.len(), folders.target, folders.properties), (vec![b"/home/u/a b".to_vec(), b"sftp://host/x".to_vec()], 0, OpenTarget::NewTab, false));
     let items = request("ShowItems", &[b"file:///etc/hosts".to_vec()]).unwrap();
     assert_eq!((items.paths.len(), items.select, items.properties), (0, vec![b"/etc/hosts".to_vec()], false));
     let props = request("ShowItemProperties", &[b"file:///etc".to_vec()]).unwrap();
     assert_eq!((props.paths.len(), props.select, props.properties), (0, vec![b"/etc".to_vec()], true));
     assert!(request("Other", &[b"file:///etc".to_vec()]).is_none());
-    assert!(request("ShowFolders", &[b"sftp://h/".to_vec()]).is_none());
+    assert!(request("ShowFolders", &[b"http://h/".to_vec()]).is_none());
+    assert_eq!(request("ShowFolders", &[b"smb://nas/share".to_vec()]).unwrap().paths, vec![b"smb://nas/share".to_vec()]);
 }
 
 fn private_bus() -> Option<(Child, String)> {

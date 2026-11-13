@@ -165,12 +165,31 @@ pub fn unix_term(s: &'static str, l: Lang) -> &'static str {
     Box::leak(out.into_boxed_str())
 }
 
+const UNIX_WORDS: [(S, S); 12] = [
+    (S::ActionsFileShortcut, S::ActionsFileLink),
+    (S::ActionsFilePasteShortcut, S::ActionsFilePasteLink),
+    (S::DescribeFileShortcut, S::DescribeFileLink),
+    (S::DescribeFilePasteShortcut, S::DescribeFilePasteLink),
+    (S::MenuShortcut, S::MenuLink),
+    (S::MenuCreateShortcut, S::MenuCreateLink),
+    (S::PalettePlaceholderShortcut, S::PalettePlaceholderLink),
+    (S::PaletteEmptyShortcut, S::PaletteEmptyLink),
+    (S::UiOpsSelectShortcut, S::UiOpsSelectLink),
+    (S::UiOpsTargetHint, S::UiOpsLinkTargetHint),
+    (S::SettingsTitleGeneralMenuShortcut, S::SettingsTitleGeneralMenuLink),
+    (S::SettingsHelpGeneralMenuShortcut, S::SettingsHelpGeneralMenuLink),
+];
+
+pub fn unix_word(s: S) -> S {
+    UNIX_WORDS.iter().find(|(windows, _)| *windows == s).map_or(s, |&(_, unix)| unix)
+}
+
 fn s_row(l: Lang) -> &'static [&'static str] {
     static UNIX: OnceLock<Vec<Vec<&'static str>>> = OnceLock::new();
     if !UNIX_TERMS.load(Ordering::Relaxed) {
         return &S_TABLE[l as usize];
     }
-    &UNIX.get_or_init(|| Lang::ALL.iter().map(|&l| S_TABLE[l as usize].iter().map(|s| unix_term(s, l)).collect()).collect())[l as usize]
+    &UNIX.get_or_init(|| Lang::ALL.iter().map(|&l| S::ALL.iter().map(|&s| unix_term(S_TABLE[l as usize][unix_word(s) as usize], l)).collect()).collect())[l as usize]
 }
 
 fn p_row(l: Lang) -> &'static [&'static [&'static str]] {

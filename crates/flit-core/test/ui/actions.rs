@@ -234,7 +234,7 @@ const SECTION_9: &[(&str, &[(&str, &str)])] = &[
         ("Lowercase", ""),
         ("Autocomplete", "Tab"),
         ("Undo", "Ctrl+Z"),
-        ("Redo", "Ctrl+Shift+Z"),
+        ("Redo", "Ctrl+Shift+Z, Ctrl+Y"),
     ]),
     ("Scroll", &[
         ("Select Previous", "Up"),
@@ -562,4 +562,45 @@ fn without_a_command_bar_its_commands_stay_on_keys_and_in_the_palette() {
     for id in ["file.cut", "file.copy", "file.paste", "file.new_folder", "file.share", "item.properties", "inspector.toggle"] {
         assert!(ids.contains(&id), "{id} not in the palette");
     }
+}
+
+fn typed_chars(app: &mut App, s: &str) {
+    for ch in s.chars() {
+        app.on_event(&crate::input::Event::Char(ch), Instant::now());
+    }
+}
+
+#[test]
+fn undo_and_redo_chords_in_the_filter_edit_the_text_and_never_the_files() {
+    let mut app = crate::ui::harness::app(&["a.txt", "b.txt"]);
+    press(&mut app, ctrl(Key::Char('F')));
+    typed_chars(&mut app, "abc");
+    let text = |app: &App| app.tab().filter.as_ref().unwrap().text().to_owned();
+    assert_eq!(text(&app), "abc");
+    press(&mut app, ctrl(Key::Char('Z')));
+    assert_eq!(text(&app), "", "typing is one undo step");
+    assert_eq!(app.tab().error, None, "no file-level undo ran");
+    press(&mut app, ctrl(Key::Char('Y')));
+    assert_eq!(text(&app), "abc");
+    press(&mut app, ctrl(Key::Char('Z')));
+    press(&mut app, ctrl_shift(Key::Char('Z')));
+    assert_eq!(text(&app), "abc");
+    press(&mut app, ctrl(Key::Char('Z')));
+    press(&mut app, ctrl(Key::Char('Z')));
+    assert_eq!(app.tab().error, None, "an empty text history swallows the chord too");
+    assert_eq!(app.focus, crate::ui::Focus::Filter);
+}
+
+#[test]
+fn copy_and_cut_without_a_selection_leave_the_clipboard_alone() {
+    let mut app = crate::ui::harness::app(&["a.txt", "b.txt"]);
+    press(&mut app, ctrl(Key::Char('F')));
+    app.drain_effects().for_each(drop);
+    press(&mut app, ctrl(Key::Char('C')));
+    press(&mut app, ctrl(Key::Char('X')));
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::SetClipboard(_))));
+    typed_chars(&mut app, "ab");
+    press(&mut app, ctrl(Key::Char('A')));
+    press(&mut app, ctrl(Key::Char('C')));
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::SetClipboard(s) if s == "ab")));
 }

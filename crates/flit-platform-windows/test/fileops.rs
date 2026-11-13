@@ -1,5 +1,5 @@
 use super::*;
-use flit_core::provider::{Conflict, OpCtl, Resolve};
+use flit_core::provider::{Conflict, Failure, OpCtl, Recover, Resolve};
 use flit_platform::{Shell, CANCELLED};
 use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
@@ -554,4 +554,85 @@ fn devices_refuse_what_the_shell_cannot_do_on_them() {
         let out = device_op(&op, &job);
         assert_eq!(out.error.map(|e| e.message), Some(S::ErrorsFsDeviceUnsupported.en().to_owned()));
     }
+}
+
+type Failed = Arc<Mutex<Vec<Failure>>>;
+
+fn recovering(answers: &[(Recover, bool)], fix: impl Fn(usize) + Send + Sync + 'static) -> (Job, Failed) {
+    let ctl = OpCtl::new(None);
+    let left = Mutex::new(answers.to_vec());
+    let failed: Failed = Arc::default();
+    let (seen, answer) = (failed.clone(), ctl.clone());
+    let failure = move |f: Failure| {
+        let k = {
+            let mut seen = seen.lock().unwrap();
+            seen.push(f);
+            seen.len() - 1
+        };
+        fix(k);
+        let mut left = left.lock().unwrap();
+        match left.is_empty() {
+            true => answer.cancel(),
+            false => {
+                let (choice, all) = left.remove(0);
+                answer.answer_failure(choice, all);
+            }
+        }
+    };
+    (Job::asking(ctl, Box::new(|_| {}), Box::new(|_| {}), Box::new(failure)), failed)
+}
+
+fn locked(t: &TempDir, rel: &str) -> std::fs::File {
+    std::fs::OpenOptions::new().read(true).share_mode(0).open(t.0.join(rel)).unwrap()
+}
+
+#[test]
+fn a_failing_item_asks_to_retry_skip_or_skip_all_and_the_rest_carries_on() {
+    let t = TempDir::new("failing");
+    std::fs::create_dir_all(t.0.join("src")).unwrap();
+    std::fs::create_dir_all(t.0.join("dst")).unwrap();
+    let items: Vec<FsPath> = ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"].iter().map(|n| t.file(&format!(r"src\{n}"), n)).collect();
+    let held = Arc::new(Mutex::new(["a.txt", "c.txt", "d.txt", "e.txt"].map(|n| Some(locked(&t, &format!(r"src\{n}"))))));
+    let unlock = held.clone();
+    let (job, failed) = recovering(&[(Recover::Retry, false), (Recover::Skip, false), (Recover::Skip, true)], move |k| {
+        if k == 0 {
+            unlock.lock().unwrap()[0] = None;
+        }
+    });
+    let out = engine::run(&FileOp::Copy { items: items.clone(), dest: t.path("dst") }, &job);
+    drop(held);
+    let seen = failed.lock().unwrap().clone();
+    assert_eq!(seen.iter().map(|f| f.path.clone()).collect::<Vec<_>>(), [items[0].clone(), items[2].clone(), items[3].clone()], "e.txt is not asked about after Skip all");
+    assert!(seen.iter().all(|f| !f.fatal && !f.error.is_empty() && !f.error.ends_with('\n')), "{seen:?}");
+    assert_eq!(out.items, vec![(items[0].clone(), t.path(r"dst\a.txt")), (items[1].clone(), t.path(r"dst\b.txt"))], "Retry copies the item once its cause is gone");
+    let summary = out.error.expect("skipped items are summed up at the end").message;
+    assert!(summary.starts_with('3') && summary.contains("c.txt"), "{summary}");
+    assert!(!t.has(r"dst\c.txt") && !t.has(r"dst\e.txt"));
+
+    std::fs::create_dir_all(t.0.join(r"tree\sub")).unwrap();
+    t.file(r"tree\sub\held.txt", "h");
+    t.file(r"tree\free.txt", "f");
+    let hold = locked(&t, r"tree\sub\held.txt");
+    let (job, failed) = recovering(&[(Recover::Skip, false)], |_| {});
+    let out = engine::run(&FileOp::Delete(vec![t.path("tree")]), &job);
+    drop(hold);
+    assert_eq!(failed.lock().unwrap().iter().map(|f| f.path.clone()).collect::<Vec<_>>(), [t.path(r"tree\sub\held.txt")], "the folders around a skipped file are not asked about");
+    assert!(out.items.is_empty() && t.has(r"tree\sub\held.txt") && !t.has(r"tree\free.txt"));
+
+    let hold = Mutex::new(Some(locked(&t, r"tree\sub\held.txt")));
+    let (job, _) = recovering(&[(Recover::Retry, false)], move |_| drop(hold.lock().unwrap().take()));
+    let out = engine::run(&FileOp::Delete(vec![t.path("tree")]), &job);
+    assert!(out.error.is_none() && !t.has("tree"), "{:?}", out.error);
+}
+
+#[test]
+fn quiet_jobs_collect_failures_and_report_them_at_the_end() {
+    let t = TempDir::new("quiet-fail");
+    std::fs::create_dir_all(t.0.join("dst")).unwrap();
+    let items = vec![t.file("a.txt", "a"), t.file("b.txt", "b")];
+    let held = [locked(&t, "a.txt"), locked(&t, "b.txt")];
+    let out = engine::run(&FileOp::Copy { items, dest: t.path("dst") }, &Job::detached(Resolve::Skip));
+    drop(held);
+    let e = out.error.expect("a summary").message;
+    assert!(e.starts_with('2') && e.contains("a.txt"), "{e}");
 }

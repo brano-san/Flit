@@ -65,11 +65,13 @@ pub(super) enum Kind {
     GitClone,
     UserMenu { at: Option<super::user_menu::EntryAt>, submenu: bool },
     Update(super::update::Updating),
+    AllowRun { tab: crate::provider::TabId, path: FsPath },
 }
 
 impl Kind {
     pub fn name(&self) -> &'static str {
         match self {
+            Kind::AllowRun { .. } => "allow_run",
             Kind::Compress { .. } => "compress",
             Kind::Extract { .. } => "extract",
             Kind::Password { .. } => "password",
@@ -569,6 +571,7 @@ impl App {
         let selected = self.selected_items();
         let pick = v.focus.filter(|f| selected.contains(f)).or(selected.first().copied()).filter(|&i| !v.listing().entries[i as usize].is_dir());
         let Some(i) = pick else { return self.status(S::ArchiveSelectToHash.t()) };
+        let online = v.listing().entries[i as usize].attrs & attr::NOT_LOCAL != 0;
         let file = match self.item_paths(&[i]) {
             Ok(mut p) => p.remove(0),
             Err(e) => return self.status(e),
@@ -578,6 +581,11 @@ impl App {
         let mut controls = vec![Control::flags(S::ArchiveAlgorithms.t(), flags), Control::text(S::ArchiveCompareWith.t(), "", S::ArchiveCompareHint.t())];
         controls.extend(kinds.iter().map(|k| Control::value(k.label(), "…")));
         let title = crate::tr!(S::ArchiveHashesTitle, name = name::display(file.file_name()));
+        if online {
+            let mut f = Form::new(Kind::Hashes(Hashing { file, kinds, values: Vec::new(), run: None }), &title, controls, vec![S::ArchiveCompute.t(), S::ArchiveClose.t()]);
+            f.say(S::ArchiveOnlineHash.t(), false);
+            return self.open_form(f);
+        }
         let (id, ctl) = self.hash_file(file.clone(), kinds.clone());
         let mut f = Form::new(Kind::Hashes(Hashing { file, kinds, values: Vec::new(), run: Some(Run { id, ctl, other: None }) }), &title, controls, vec![S::ArchiveCompute.t(), S::ArchiveClose.t()]);
         f.progress = Some(0.0);
@@ -646,6 +654,10 @@ impl App {
         }
     }
 
+    pub(super) fn hashing(&self) -> bool {
+        matches!(self.jobs.form.as_ref().map(|f| &f.kind), Some(Kind::Hashes(Hashing { run: Some(_), .. })))
+    }
+
     pub(super) fn hashed(&mut self, id: OpId, result: Result<Vec<String>, String>) {
         let Some(mut f) = self.jobs.form.take() else { return };
         let Kind::Hashes(h) = &mut f.kind else {
@@ -687,6 +699,7 @@ impl App {
     pub(super) fn form_changed(&mut self, k: usize) {
         self.compress_changed(k);
         self.extract_changed(k);
+        self.permissions_changed(k);
     }
 
     pub(super) fn form_submit(&mut self, b: usize) {
@@ -699,7 +712,8 @@ impl App {
             Kind::Extract { .. } => self.submit_extract(f),
             Kind::Password { .. } => self.submit_password(f),
             Kind::Hashes(_) => self.submit_hashes(f),
-            Kind::Properties(_) => None,
+            Kind::Properties(_) => self.submit_properties(f),
+            Kind::AllowRun { .. } => self.submit_allow_run(f),
             Kind::GitClone => self.submit_clone(f),
             Kind::UserMenu { .. } => self.submit_user_entry(f),
             Kind::Update(_) => self.submit_update(f, b),

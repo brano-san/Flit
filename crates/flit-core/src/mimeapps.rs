@@ -1,4 +1,6 @@
 pub const DEFAULTS: &str = "[Default Applications]";
+pub const ADDED: &str = "[Added Associations]";
+pub const REMOVED: &str = "[Removed Associations]";
 pub const FOLDER: &str = "inode/directory";
 pub const FOLDER_TYPES: [&str; 2] = [FOLDER, "x-directory/normal"];
 pub const FLIT_DESKTOP: &str = "flit.desktop";
@@ -16,29 +18,51 @@ fn key_of<'a>(line: &'a str, mime: &str) -> Option<&'a str> {
 }
 
 pub fn default_app(text: &str, mime: &str) -> Option<String> {
+    value_in(text, DEFAULTS, mime).map(str::to_owned)
+}
+
+fn value_in<'a>(text: &'a str, group: &str, mime: &str) -> Option<&'a str> {
     let mut inside = false;
     for line in text.lines() {
         if let Some(g) = group_of(line) {
-            inside = g == DEFAULTS;
+            inside = g == group;
         } else if inside {
             if let Some(v) = key_of(line, mime) {
-                return Some(v.to_owned());
+                return Some(v);
             }
         }
     }
     None
 }
 
+pub fn apps_in<'a>(text: &'a str, group: &str, mime: &str) -> Vec<&'a str> {
+    value_in(text, group, mime).map(|v| v.split(';').map(str::trim).filter(|a| !a.is_empty()).collect()).unwrap_or_default()
+}
+
+pub fn use_app(text: &str, mime: &str, app: &str) -> String {
+    let joined = |list: Vec<&str>| format!("{};", list.join(";"));
+    let added: Vec<&str> = std::iter::once(app).chain(apps_in(text, ADDED, mime).into_iter().filter(|a| *a != app)).collect();
+    let removed: Vec<&str> = apps_in(text, REMOVED, mime).into_iter().filter(|a| *a != app).collect();
+    let removed = (!removed.is_empty()).then(|| joined(removed));
+    let text = set_key(text, DEFAULTS, mime, Some(app));
+    let text = set_key(&text, ADDED, mime, Some(&joined(added)));
+    set_key(&text, REMOVED, mime, removed.as_deref())
+}
+
 pub fn set_default_app(text: &str, mime: &str, app: Option<&str>) -> String {
+    set_key(text, DEFAULTS, mime, app)
+}
+
+fn set_key(text: &str, group: &str, mime: &str, app: Option<&str>) -> String {
     let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
     let entry = app.map(|a| format!("{mime}={a}"));
-    match lines.iter().position(|l| group_of(l) == Some(DEFAULTS)) {
+    match lines.iter().position(|l| group_of(l) == Some(group)) {
         None => {
             if let Some(e) = entry {
                 if lines.last().is_some_and(|l| !l.trim().is_empty()) {
                     lines.push(String::new());
                 }
-                lines.extend([DEFAULTS.to_owned(), e]);
+                lines.extend([group.to_owned(), e]);
             }
         }
         Some(s) => {

@@ -2,7 +2,7 @@ use crate::{FileOps, Fs, Job, PlatformError, Provider, Shell, Wake, Watcher};
 use crossbeam_channel::{bounded, unbounded, Sender};
 use flit_core::archive::ArchiveOp;
 use flit_core::digest::HashKind;
-use flit_core::desktop_ini::FolderKind;
+use flit_core::desktop_ini::{self, FolderKind};
 use flit_core::listing::{attr, DirSnapshot, DirStats, Listing, ListingBuilder};
 use flit_core::path::PathKind;
 use flit_core::provider::{FileOp, GenToken, Launch, OpCtl, OpId, OpReport, SnapshotSlot, Stage, Totals};
@@ -43,6 +43,7 @@ struct SizesJob {
 enum ShellJob {
     Open(FsPath),
     Launch(Launch),
+    Access(OpId, Vec<FsPath>),
 }
 
 struct HashMsg {
@@ -78,9 +79,21 @@ impl Reply {
         self.send(ProviderEvent::OpDone { tab: self.tab, id: self.id, error, report });
     }
 
+    fn finish(&self, (error, report, untrashable): Finished) {
+        if !untrashable.is_empty() {
+            self.send(ProviderEvent::Untrashable { tab: self.tab, id: self.id, items: untrashable });
+        }
+        self.done((error, report));
+    }
+
     fn job(&self, ctl: OpCtl) -> Job {
-        let (p, c) = (self.clone(), self.clone());
-        Job::new(ctl, Box::new(move |progress| p.send(ProviderEvent::OpProgress { tab: p.tab, id: p.id, progress })), Box::new(move |conflict| c.send(ProviderEvent::OpConflict { tab: c.tab, id: c.id, conflict })))
+        let (p, c, f) = (self.clone(), self.clone(), self.clone());
+        Job::asking(
+            ctl,
+            Box::new(move |progress| p.send(ProviderEvent::OpProgress { tab: p.tab, id: p.id, progress })),
+            Box::new(move |conflict| c.send(ProviderEvent::OpConflict { tab: c.tab, id: c.id, conflict })),
+            Box::new(move |failure| f.send(ProviderEvent::OpFailure { tab: f.tab, id: f.id, failure })),
+        )
     }
 }
 
@@ -249,7 +262,7 @@ impl LocalProvider {
                 };
                 let job = reply.job(ctl);
                 if quick(&op) {
-                    reply.done(perform(sh, op, cut, &job));
+                    reply.finish(perform(sh, op, cut, &job));
                     continue;
                 }
                 running.fetch_add(1, Ordering::AcqRel);
@@ -257,12 +270,12 @@ impl LocalProvider {
                 let started = spawn(format!("flit-op-{id}"), move || {
                     let turn = transfer_volume(&*fs, &op).map(|key| gate.enter(key, &job));
                     let result = match (turn.as_ref().is_some_and(Option::is_none), S::new()) {
-                        (true, _) => (Some(CANCELLED.into()), Some(OpReport { op, items: Vec::new() })),
+                        (true, _) => (Some(CANCELLED.into()), Some(OpReport { op, items: Vec::new() }), Vec::new()),
                         (false, Ok(mut sh)) => perform(&mut sh, op, cut, &job),
-                        (false, Err(e)) => (Some(e.to_string()), None),
+                        (false, Err(e)) => (Some(e.to_string()), None, Vec::new()),
                     };
                     drop(turn);
-                    reply.done(result);
+                    reply.finish(result);
                     running.fetch_sub(1, Ordering::AcqRel);
                 });
                 if let Err(e) = started {
@@ -322,7 +335,9 @@ fn run_shell<S: Shell>(sh: &mut S, tab: TabId, job: ShellJob) -> Result<Option<P
             Some(dir) => Ok(go(dir)),
             None => sh.open(&p).map(|()| None),
         },
+        ShellJob::Open(p) if sh.needs_exec_bit(&p) => Ok(Some(ProviderEvent::NotExecutable { tab, path: p })),
         ShellJob::Open(p) => sh.open(&p).map(|()| None),
+        ShellJob::Access(id, items) => Ok(sh.access(&items).map(|(items, accounts)| ProviderEvent::Access { tab, id, items, accounts })),
         ShellJob::Launch(Launch::Mount(device)) => sh.mount(&device).map(go),
         ShellJob::Launch(Launch::ConnectServer(uri)) => sh.connect(&uri).map(go),
         ShellJob::Launch(Launch::Reveal { item, new_tab }) => match real_path(sh, &item) {
@@ -357,6 +372,7 @@ impl Provider for LocalProvider {
             ProviderRequest::Op { tab, id, op, ctl } => self.ops.send(OpMsg { tab, id, op, ctl }).map_err(drop),
             ProviderRequest::Open { tab, path } => self.shell.send((tab, ShellJob::Open(path))).map_err(drop),
             ProviderRequest::Launch { tab, launch } => self.shell.send((tab, ShellJob::Launch(launch))).map_err(drop),
+            ProviderRequest::Access { tab, id, items } => self.shell.send((tab, ShellJob::Access(id, items))).map_err(drop),
             ProviderRequest::Hash { tab, id, file, kinds, ctl } => self.hashes.send(HashMsg { tab, id, file, kinds, ctl }).map_err(drop),
             ProviderRequest::Measure { tab, id, items, ctl } => {
                 let (fs, reply) = (self.measure_fs.clone(), Reply { tab, id, events: self.measure_events.clone(), wake: self.measure_wake.clone() });
@@ -379,30 +395,38 @@ fn same_dir(item: &FsPath, dir: &FsPath) -> bool {
 
 fn resolve_paste<S: FileOps>(sh: &mut S, op: FileOp) -> Result<(FileOp, bool), String> {
     Ok(match op {
-        FileOp::Paste { dest } => match sh.clipboard_files().map_err(|e| e.to_string())? {
-            (items, true) => (FileOp::Move { items: items.into_iter().filter(|i| !same_dir(i, &dest)).collect(), dest }, true),
-            (items, false) => (FileOp::Copy { items, dest }, false),
+        FileOp::Paste { dest } => match sh.clipboard_files() {
+            Ok((items, true)) => (FileOp::Move { items: items.into_iter().filter(|i| !same_dir(i, &dest)).collect(), dest }, true),
+            Ok((items, false)) => (FileOp::Copy { items, dest }, false),
+            Err(_) if sh.clipboard_content() => (FileOp::Paste { dest }, false),
+            Err(e) => return Err(e.to_string()),
         },
         FileOp::PasteLink { dest } => (FileOp::Link { items: sh.clipboard_files().map_err(|e| e.to_string())?.0, dest }, false),
         op => (op, false),
     })
 }
 
-fn perform<S: FileOps>(sh: &mut S, op: FileOp, cut: bool, job: &Job) -> (Option<String>, Option<OpReport>) {
+type Finished = (Option<String>, Option<OpReport>, Vec<FsPath>);
+
+fn perform<S: FileOps>(sh: &mut S, op: FileOp, cut: bool, job: &Job) -> Finished {
     if matches!(&op, FileOp::Move { items, .. } if items.is_empty()) {
-        return (None, Some(OpReport { op, items: Vec::new() }));
+        return (None, Some(OpReport { op, items: Vec::new() }), Vec::new());
     }
     let out = sh.file_op(&op, job);
     if cut && out.error.is_none() {
         sh.clear_clipboard();
     }
-    (out.error.map(|e| e.to_string()), Some(OpReport { op, items: out.items }))
+    let untrashable = out.error.as_ref().map(|e| e.untrashable.clone()).unwrap_or_default();
+    (out.error.map(|e| e.to_string()), Some(OpReport { op: job.take_performed().unwrap_or(op), items: out.items }), untrashable)
 }
 
 #[cfg(test)]
 fn run_op<S: FileOps>(sh: &mut S, op: FileOp) -> (Option<String>, Option<OpReport>) {
     match resolve_paste(sh, op) {
-        Ok((op, cut)) => perform(sh, op, cut, &Job::detached(flit_core::provider::Resolve::Skip)),
+        Ok((op, cut)) => {
+            let (error, report, _) = perform(sh, op, cut, &Job::detached(flit_core::provider::Resolve::Skip));
+            (error, report)
+        }
         Err(e) => (Some(e), None),
     }
 }
@@ -501,6 +525,35 @@ pub(crate) fn snapshot(gen: u64, path: &FsPath, listing: Listing, keys: SortKeys
     Arc::new(DirSnapshot { gen, path: path.clone(), listing, keys, order, view, done, error, elapsed })
 }
 
+pub(crate) const LABEL_CANDIDATES: usize = 64;
+
+pub(crate) fn localize<F: Fs + ?Sized>(fs: &F, path: &FsPath, listing: &mut Listing, keys: &mut SortKeys) {
+    if path.kind() != PathKind::Drive || fs.remote(path) {
+        return;
+    }
+    let ancestors = std::iter::successors(Some(path.clone()), FsPath::parent).take_while(|d| d.kind() == PathKind::Drive && !d.is_root());
+    for dir in ancestors.filter(|d| !desktop_ini::known(d)) {
+        desktop_ini::remember(&dir, fs.localized_name(&dir).as_deref());
+    }
+    let special = |i: u32| {
+        let a = listing.entries[i as usize].attrs;
+        a & attr::DIR != 0 && a & (attr::READONLY | attr::SYSTEM) != 0 && a & (attr::NESTED | attr::STREAM | attr::DELETED | attr::VOLUME) == 0
+    };
+    let candidates: Vec<u32> = (0..listing.len() as u32).filter(|&i| special(i)).take(LABEL_CANDIDATES + 1).collect();
+    if candidates.len() > LABEL_CANDIDATES {
+        return;
+    }
+    for i in candidates {
+        let dir = path.join(listing.name(i));
+        let label = fs.localized_name(&dir);
+        desktop_ini::remember(&dir, label.as_deref());
+        if let Some(label) = label {
+            listing.set_label(i, &label);
+        }
+    }
+    keys.relabel(listing);
+}
+
 #[allow(clippy::too_many_arguments)]
 fn list<F: Fs + ?Sized>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: CaseMode, tags: Arc<Tags>, out: &SnapshotSlot, cancel: &GenToken, wake: &Wake) {
     if !cancel.is_current(gen) {
@@ -538,9 +591,12 @@ fn list<F: Fs + ?Sized>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: C
     }
     let mut listing = std::mem::take(&mut b.listing);
     let mut keys = std::mem::replace(&mut b.keys, SortKeys::new(case));
+    drop(b);
+    if result.is_ok() && cancel.is_current(gen) {
+        localize(fs, path, &mut listing, &mut keys);
+    }
     listing.shrink();
     keys.shrink();
-    drop(b);
     if cancel.is_current(gen) {
         let snap = snapshot(gen, path, listing, keys, view, true, result.err(), start.elapsed());
         if cancel.is_current(gen) {
@@ -695,6 +751,7 @@ pub fn via_unc(distro: &str, req: ProviderRequest) -> Option<ProviderRequest> {
         ProviderRequest::Launch { tab, launch } => ProviderRequest::Launch { tab, launch: launch.map_paths(unc)? },
         ProviderRequest::Hash { tab, id, file, kinds, ctl } => ProviderRequest::Hash { tab, id, file: unc(&file)?, kinds, ctl },
         ProviderRequest::Measure { tab, id, items, ctl } => ProviderRequest::Measure { tab, id, items: items.into_iter().map(|(p, s)| unc(&p).map(|p| (p, s))).collect::<Option<_>>()?, ctl },
+        ProviderRequest::Access { tab, id, items } => ProviderRequest::Access { tab, id, items: items.iter().map(unc).collect::<Option<_>>()? },
     })
 }
 

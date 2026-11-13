@@ -8,7 +8,7 @@ use windows::Win32::Graphics::Imaging::*;
 use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PropVariantToUInt16, PROPVARIANT};
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
-use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyDescription, IPropertyDescriptionList, IPropertyStore, PSFormatForDisplayAlloc, GPS_BESTEFFORT, PDFF_DEFAULT};
+use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyDescription, IPropertyDescriptionList, IPropertyStore, PSFormatForDisplayAlloc, GETPROPERTYSTOREFLAGS, GPS_BESTEFFORT, GPS_FASTPROPERTIESONLY, PDFF_DEFAULT};
 use windows::Win32::UI::Shell::{AssocQueryStringW, IShellItem2, SHCreateItemFromParsingName, ASSOCF_NOTRUNCATE, ASSOCSTR_SHELLEXTENSION};
 use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, SendMessageTimeoutW, SMTO_ABORTIFHUNG, WM_COPYDATA};
 
@@ -93,12 +93,16 @@ unsafe fn orientation(frame: &IWICBitmapFrameDecode) -> u16 {
     o
 }
 
+pub(crate) fn store_flags(not_local: bool) -> GETPROPERTYSTOREFLAGS {
+    if not_local { GPS_FASTPROPERTIESONLY } else { GPS_BESTEFFORT }
+}
+
 pub(crate) fn properties(path: &FsPath) -> Vec<PropGroup> {
     let mut groups: Vec<PropGroup> = Vec::new();
     unsafe {
         let name = path.to_wide(false);
         let Ok(item) = SHCreateItemFromParsingName::<_, _, IShellItem2>(PCWSTR(name.as_ptr()), None) else { return groups };
-        let (Ok(store), Ok(list)) = (item.GetPropertyStore::<IPropertyStore>(GPS_BESTEFFORT), item.GetPropertyDescriptionList::<IPropertyDescriptionList>(&FULL_DETAILS)) else { return groups };
+        let (Ok(store), Ok(list)) = (item.GetPropertyStore::<IPropertyStore>(store_flags(crate::fs::not_local(path))), item.GetPropertyDescriptionList::<IPropertyDescriptionList>(&FULL_DETAILS)) else { return groups };
         let mut rows = 0;
         for i in 0..list.GetCount().unwrap_or(0) {
             let Ok(desc) = list.GetAt::<IPropertyDescription>(i) else { continue };

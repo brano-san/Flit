@@ -285,3 +285,16 @@ fn seven_zip_drag_of_plain_files_is_still_copied_by_flit() {
     assert_eq!(effect, DROPEFFECT_COPY);
     assert_eq!(landed.ok().as_deref(), Some("from archive"));
 }
+
+#[test]
+fn the_right_button_carries_a_drag_until_it_is_let_go() {
+    let keys = |k: u32| MODIFIERKEYS_FLAGS(k);
+    assert!(right_button(keys(MK_RBUTTON.0)) && right_button(keys(MK_RBUTTON.0 | MK_SHIFT.0)));
+    assert!(!right_button(keys(MK_LBUTTON.0)) && !right_button(keys(0)) && !right_button(keys(MK_LBUTTON.0 | MK_RBUTTON.0)));
+    assert_eq!(continue_drag(false, keys(MK_RBUTTON.0), true), S_OK);
+    assert_eq!(continue_drag(false, keys(0), true), DRAGDROP_S_DROP);
+    assert_eq!(continue_drag(false, keys(MK_RBUTTON.0 | MK_LBUTTON.0), true), DRAGDROP_S_CANCEL);
+    assert_eq!(continue_drag(true, keys(MK_RBUTTON.0), true), DRAGDROP_S_CANCEL);
+    assert_eq!(continue_drag(false, keys(MK_LBUTTON.0), false), S_OK);
+    assert_eq!(continue_drag(false, keys(MK_RBUTTON.0), false), DRAGDROP_S_CANCEL);
+}

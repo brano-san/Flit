@@ -1,3 +1,8 @@
+use crate::hash::FxHashMap;
+use crate::name;
+use crate::path::{FsPath, PathKind};
+use std::sync::RwLock;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FolderKind {
     #[default]
@@ -21,10 +26,11 @@ impl FolderKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DesktopIni {
     pub icon: bool,
     pub kind: FolderKind,
+    pub name: Option<String>,
 }
 
 pub fn parse(bytes: &[u8]) -> DesktopIni {
@@ -44,11 +50,36 @@ pub fn parse(bytes: &[u8]) -> DesktopIni {
         let (key, value) = (key.trim().to_ascii_lowercase(), value.trim());
         match (section.as_str(), key.as_str()) {
             (".shellclassinfo", "iconresource" | "iconfile") => out.icon |= !value.is_empty(),
+            (".shellclassinfo", "localizedresourcename") => out.name = Some(value.trim_matches('"').trim().to_owned()).filter(|v| !v.is_empty()),
             ("viewstate", "foldertype") => out.kind = FolderKind::from_type(value),
             _ => {}
         }
     }
     out
+}
+
+type Labels = FxHashMap<String, Option<Box<str>>>;
+
+static LABELS: RwLock<Option<Labels>> = RwLock::new(None);
+
+fn label_key(dir: &FsPath) -> Option<String> {
+    (dir.kind() == PathKind::Drive).then(|| name::display(dir.as_bytes()).to_lowercase())
+}
+
+pub fn remember(dir: &FsPath, label: Option<&str>) {
+    let Some(key) = label_key(dir) else { return };
+    let mut labels = LABELS.write().unwrap_or_else(|e| e.into_inner());
+    labels.get_or_insert_with(Labels::default).insert(key, label.filter(|l| !l.is_empty()).map(Box::from));
+}
+
+pub fn known(dir: &FsPath) -> bool {
+    let Some(key) = label_key(dir) else { return true };
+    LABELS.read().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|m| m.contains_key(&key))
+}
+
+pub fn label(dir: &FsPath) -> Option<String> {
+    let labels = LABELS.read().unwrap_or_else(|e| e.into_inner());
+    labels.as_ref()?.get(&label_key(dir)?)?.as_deref().map(str::to_owned)
 }
 
 #[cfg(test)]

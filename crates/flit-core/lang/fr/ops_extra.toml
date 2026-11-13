@@ -12,3 +12,4 @@ no_room = "Les éléments nécessitent {need}, mais {folder} ne dispose que de {
 no_room_hint = "Copier quand même s’arrête sur une erreur quand le lecteur est plein."
 over_limit = "{name} fait {size}, mais le système de fichiers de ce lecteur n’accepte que des fichiers jusqu’à {limit}."
 over_limit_hint = "Ignorez-le pour copier les autres éléments, ou utilisez un lecteur formaté en NTFS ou exFAT."
+link_name = "Lien vers {name}"

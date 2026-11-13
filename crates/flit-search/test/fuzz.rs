@@ -15,7 +15,7 @@ proptest! {
     #[test]
     fn parse_never_panics(text in QUERY_ALPHABET) {
         let _ = parse(&text, clock());
-        let _ = shell_query(&text);
+        let _ = shell_query(&text, true);
     }
 
     #[test]

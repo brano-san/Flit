@@ -92,6 +92,7 @@ struct Out<'a> {
     written: u64,
     skipped: Vec<String>,
     made: HashSet<PathBuf>,
+    zone: Option<Vec<u8>>,
 }
 
 impl Out<'_> {
@@ -162,6 +163,9 @@ impl Out<'_> {
             let _ = fs::remove_file(part);
         }
         result?;
+        if let Some(zone) = &self.zone {
+            crate::zone::mark(dest, zone);
+        }
         self.job.update(|p| p.items += 1);
         Ok(())
     }
@@ -415,7 +419,8 @@ fn run(plan: &Plan<'_>, job: &Job, env: &Env<'_>) -> Result<Created, (Created, P
         plan.steps.iter().map(|(_, rel)| first(rel).to_owned()).filter(|r| seen.insert(fold(r))).collect()
     };
     let fresh: Vec<&String> = roots.iter().filter(|r| !target.join(r).exists()).collect();
-    let mut out = Out { job, target: target.clone(), target_fs: plan.target.clone(), archive: plan.archive, renamed: HashMap::new(), cap, free, written: 0, skipped: Vec::new(), made: HashSet::new() };
+    let zone = crate::zone::read(&std_path(plan.archive));
+    let mut out = Out { job, target: target.clone(), target_fs: plan.target.clone(), archive: plan.archive, renamed: HashMap::new(), cap, free, written: 0, skipped: Vec::new(), made: HashSet::new(), zone };
     let result = fs::create_dir_all(&target).map_err(io_error).and_then(|()| stream(plan, &mut out, archive::password(plan.archive).as_ref()));
     let mut created: Vec<(String, String)> = fresh.iter().filter(|r| target.join(r).exists()).map(|r| ((*r).clone(), (*r).clone())).collect();
     created.extend(out.renamed.iter().filter(|(_, new)| target.join(new).exists()).map(|(old, new)| (old.clone(), new.clone())));

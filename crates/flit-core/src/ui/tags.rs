@@ -1,7 +1,7 @@
 use super::layouts::Parts;
 use super::palette::{Palette, Pick};
 use super::{App, Effect, Route, MAX_OPEN};
-use crate::listing::attr;
+use crate::listing::{attr, Entry};
 use crate::i18n::{P, S};
 use crate::location::{Location, ProviderId};
 use crate::open::OpenTarget;
@@ -10,12 +10,14 @@ use crate::provider::{FileOp, OpReport, ProviderRequest};
 use crate::render::{Color, Rect};
 use crate::sort::{self, GroupField};
 use crate::tags::{self, Tag, TagEvent, TagRequest, Tags, COLORS, MAX_TAGS};
-use crate::text::{FontStyle, Gfx, TextBackend};
+use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::view::{DirView, Group};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub(super) const G_TAG: &str = "\u{E8EC}";
+#[cfg(windows)] const G_CLOUD: &str = "\u{E753}";
+#[cfg(windows)] const G_ON_DEVICE: &str = "\u{EC61}";
 const FIX_WINDOW: Duration = Duration::from_secs(10);
 const MAX_MARKS: usize = 6;
 const MARK: f32 = 8.0;
@@ -105,12 +107,21 @@ impl App {
         self.effects.push(Effect::Tags(TagRequest::Clear(items)));
     }
 
+    pub(super) fn taggable_here(&self) -> bool {
+        let loc = &self.tab().view_loc;
+        match loc.path().kind() {
+            PathKind::Drive => true,
+            PathKind::Unix => self.caps.unix_paths && matches!(loc, Location::Local(_)),
+            _ => false,
+        }
+    }
+
     fn tag_items(&mut self) -> Option<Vec<FsPath>> {
         let items = self.selected_items();
-        let result = match (items.is_empty(), self.tab().view_loc.path().kind()) {
+        let result = match (items.is_empty(), self.taggable_here()) {
             (true, _) => Err(S::SidebarTagSelectItems.t()),
-            (false, PathKind::Drive) => self.item_paths(&items),
-            _ => Err(S::ErrorsTagsNotTaggable.t()),
+            (false, true) => self.item_paths(&items),
+            _ => Err(tags::not_taggable(self.caps.unix_paths).t()),
         };
         result.map_err(|e| self.status(e)).ok()
     }
@@ -238,7 +249,7 @@ impl App {
             let (Location::Local(dir), Some(v)) = (&t.view_loc, t.view.as_mut()) else { continue };
             let mut changes = Vec::new();
             for (k, (path, mask, _)) in fixes.iter().enumerate() {
-                if path.parent().is_some_and(|p| p.as_bytes().eq_ignore_ascii_case(dir.as_bytes())) {
+                if path.parent().is_some_and(|p| p.same(dir)) {
                     open[k] = true;
                     if let Some(i) = v.find(path.file_name()) {
                         changes.push((i, *mask));
@@ -266,13 +277,22 @@ impl App {
         self.tag_defs().get(sort::first_tag(mask) as usize).map(|t| Color::rgb(t.color))
     }
 
-    pub(super) fn draw_name<B: TextBackend>(&self, g: &mut Gfx<B>, p: &Parts, text: &str, mask: u32, font: FontStyle, color: Color) -> f32 {
-        let (r, m) = (p.name, g.metrics(font));
+    pub(super) fn mark_reserve(&self, mask: u32) -> f32 {
+        let count = if mask == 0 { 0 } else { tags::bits(mask).filter_map(|k| self.tag_defs().get(k)).take(MAX_MARKS).count() };
+        let (d, gap) = (self.cs(MARK), self.cs(MARK_GAP));
+        if count == 0 { 0.0 } else { count as f32 * (d + gap) + gap }
+    }
+
+    pub(super) fn draw_name<B: TextBackend>(&self, g: &mut Gfx<B>, p: &Parts, text: &str, e: &Entry, font: FontStyle, color: Color) -> f32 {
+        let (r, m, mask) = (p.name, g.metrics(font), e.tags);
         let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
         let marks = || tags::bits(mask).filter_map(|k| self.tag_defs().get(k)).take(MAX_MARKS);
         let count = if mask == 0 { 0 } else { marks().count() };
         let (d, gap) = (self.cs(MARK), self.cs(MARK_GAP));
-        let reserve = if count == 0 { 0.0 } else { count as f32 * (d + gap) + gap };
+        let cloud = cloud_mark(e.attrs);
+        let icons = FontStyle::new(FontFamily::Icons, (font.px() * 0.85).round(), false);
+        let cloud_w = cloud.map_or(0.0, |(glyph, _)| (g.measure(glyph, icons) + 2.0 * gap).round());
+        let reserve = cloud_w + self.mark_reserve(mask);
         let x = if p.center { r.x + ((r.w - reserve - g.measure(text, font)) / 2.0).max(0.0).round() } else { r.x };
         let max_w = (r.right() - x - reserve).max(0.0);
         let needle = self.tab().view.as_ref().and_then(|v| v.filter_needle());
@@ -283,11 +303,29 @@ impl App {
             }
             None => g.text(x, baseline, text, font, color, max_w),
         };
+        if let Some((glyph, pinned)) = cloud {
+            let ink = if pinned { self.look.palette.area(crate::theme::Area::Files).teal } else { color };
+            g.text(x + w + 2.0 * gap, baseline, glyph, icons, ink, cloud_w);
+        }
         let y = r.y + ((r.h - d) / 2.0).round();
         for (k, t) in marks().enumerate() {
-            g.dl.round_rect(Rect::new((x + w + 2.0 * gap + k as f32 * (d + gap)).round(), y, d, d), Color::rgb(t.color), d / 2.0);
+            g.dl.round_rect(Rect::new((x + w + cloud_w + 2.0 * gap + k as f32 * (d + gap)).round(), y, d, d), Color::rgb(t.color), d / 2.0);
         }
-        x + w + if count == 0 { 0.0 } else { reserve }
+        x + w + if count == 0 && cloud.is_none() { 0.0 } else { reserve }
+    }
+}
+
+#[cfg(not(windows))]
+pub(super) fn cloud_mark(_attrs: u32) -> Option<(&'static str, bool)> {
+    None
+}
+
+#[cfg(windows)]
+pub(super) fn cloud_mark(attrs: u32) -> Option<(&'static str, bool)> {
+    match () {
+        _ if attrs & attr::PINNED != 0 => Some((G_ON_DEVICE, true)),
+        _ if attrs & attr::NOT_LOCAL != 0 => Some((G_CLOUD, false)),
+        _ => None,
     }
 }
 

@@ -118,6 +118,12 @@ pub fn ext_len(name: &[u8]) -> usize {
     }
 }
 
+pub fn link_name(target: &[u8]) -> Vec<u8> {
+    let pattern = crate::i18n::S::OpsExtraLinkName.t();
+    let (before, after) = pattern.split_once("{name}").unwrap_or((pattern, ""));
+    [before.as_bytes(), target, after.as_bytes()].concat()
+}
+
 #[inline]
 fn memrchr(c: u8, s: &[u8]) -> Option<usize> {
     s.iter().rposition(|&b| b == c)

@@ -227,3 +227,12 @@ fn gvfs_mounts_become_drives_with_readable_names() {
     assert_eq!(local_path("display name: photos\n  local path: /run/user/1000/gvfs/smb-share:server=nas,share=photos\n"), Some(PathBuf::from("/run/user/1000/gvfs/smb-share:server=nas,share=photos")));
     assert_eq!(local_path("uri: smb://nas/\n"), None);
 }
+
+#[test]
+fn mounting_lets_polkit_prompt_and_a_missing_udisksctl_is_explained() {
+    let args = mount_args(Path::new("/dev/sdb1"));
+    assert_eq!(args.map(|a| a.to_string_lossy().into_owned()), ["mount", "-b", "/dev/sdb1"]);
+    let e = missing_tool("udisksctl", "udisks2", std::io::Error::from(std::io::ErrorKind::NotFound));
+    assert_eq!(e.to_string(), "udisksctl is not installed: install the udisks2 package");
+    assert_eq!(missing_tool("udisksctl", "udisks2", std::io::Error::from(std::io::ErrorKind::PermissionDenied)).kind(), std::io::ErrorKind::PermissionDenied);
+}

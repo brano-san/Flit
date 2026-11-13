@@ -307,6 +307,8 @@ struct Handler<P: Platform> {
     updates: update::UpdateWorker,
     update_window: Option<WindowId>,
     restarting: bool,
+    awake: KeepAwake,
+    quitting: std::collections::HashSet<WindowId>,
 }
 
 impl<P: Platform> Handler<P> {
@@ -331,7 +333,7 @@ impl<P: Platform> Handler<P> {
         let mut app = App::new(persisted, routes, base, P::dark_mode(), 1.0, (1100, 720), Instant::now());
         app.utc_offset_min = P::utc_offset_minutes();
         app.double_click = P::double_click_time();
-        app.caps = P::caps();
+        app.set_caps(P::caps());
         flit_core::i18n::set_unix_terms(app.caps.unix_paths);
         if base == 0 && P::elevated() {
             app.status(S::UiAppElevated.t());
@@ -536,7 +538,8 @@ impl<P: Platform> Handler<P> {
                 Effect::TypeName(ext) => {
                     let _ = self.shell.send(ShellJob::TypeName(ext));
                 }
-                Effect::SetClipboard(text) => window.set_clipboard_text(&text),
+                Effect::SetClipboard(text) if !text.is_empty() => window.set_clipboard_text(&text),
+                Effect::SetClipboard(_) => {}
                 Effect::Paste => {
                     if let (Some(text), Some(st)) = (window.clipboard_text(), self.windows.get_mut(&id)) {
                         st.app.on_paste(&text);
@@ -552,6 +555,14 @@ impl<P: Platform> Handler<P> {
                         self.queued_windows.extend(s.windows());
                         self.open_next(window);
                     }
+                }
+                Effect::Window(WindowCmd::Quit) => {
+                    self.quitting = self.windows.keys().filter(|&&w| w != id).copied().collect();
+                    (self.wake)();
+                    if let Some(st) = self.windows.get(&id) {
+                        self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state()).with_pane(st.app.pane_state()).with_side(st.app.nav_prefs()).with_tools(tools(&st.app));
+                    }
+                    window.close();
                 }
                 Effect::Window(WindowCmd::Close) => {
                     if let Some(st) = self.windows.get(&id) {
@@ -662,6 +673,12 @@ impl<P: Platform> Handler<P> {
             }
         }
         self.note_session(window);
+        self.stay_awake();
+    }
+
+    fn stay_awake(&mut self) {
+        let busy = self.windows.values().any(|st| st.app.keeps_awake());
+        self.awake.track(busy, || P::keep_awake(S::UiAwakeReason.t()));
     }
 
     fn update_request(&mut self, id: WindowId, req: UpdateRequest) {
@@ -811,8 +828,8 @@ impl<P: Platform> Handler<P> {
             }
             let target = match &ev {
                 ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } | ProviderEvent::SizesSkipped { tab, .. } => self.window_of_tab(*tab),
-                ProviderEvent::OpDone { tab, .. } => self.window_of_tab(*tab).or(self.active),
-                ProviderEvent::Navigate { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } | ProviderEvent::Hashed { tab, .. } | ProviderEvent::Measured { tab, .. } | ProviderEvent::Status { tab, .. } => self.window_of_tab(*tab),
+                ProviderEvent::OpDone { tab, .. } | ProviderEvent::Untrashable { tab, .. } => self.window_of_tab(*tab).or(self.active),
+                ProviderEvent::Navigate { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } | ProviderEvent::OpFailure { tab, .. } | ProviderEvent::Hashed { tab, .. } | ProviderEvent::Measured { tab, .. } | ProviderEvent::Status { tab, .. } | ProviderEvent::Access { tab, .. } | ProviderEvent::NotExecutable { tab, .. } => self.window_of_tab(*tab),
             };
             if let Some(st) = target.and_then(|id| self.windows.get_mut(&id)) {
                 st.app.on_provider_event(ev, now);
@@ -1167,6 +1184,10 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         self.apply_opens(window);
         if let Some(st) = self.windows.get_mut(&window.id()) {
             st.app.poll();
+            if self.quitting.remove(&window.id()) {
+                st.app.close_window(Instant::now());
+                window.request_redraw();
+            }
         }
         self.flush(window);
     }
@@ -1198,6 +1219,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
             }
         }
         self.search.forget(id);
+        self.stay_awake();
         if self.active == Some(id) {
             self.active = self.windows.keys().next().copied();
         }
@@ -1227,6 +1249,7 @@ fn filetime_now() -> i64 {
 }
 
 pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Option<PathBuf>, activated: bool, started: Instant) -> Result<(), PlatformError> {
+    flit_core::ui::set_unix_defaults(P::caps().unix_paths);
     let mut saved = state::load::<P>();
     let settings_file = settings::file::<P>();
     let settings_text = settings_file.as_deref().and_then(settings::read);
@@ -1272,7 +1295,11 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let settings = Settings::start::<P>(settings_file.filter(|_| metrics.is_none()), settings_text, thumb_cache.clone(), integrate, wake.clone());
     let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes(), local.tags().clone())?;
     let open = if activated { opens.recv_timeout(ACTIVATION_WAIT).unwrap_or(open) } else { open };
-    let (routes, errors) = if open.is_empty() { Default::default() } else { open::routes(&open, &P::known_folder) };
+    let unix = P::caps().unix_paths;
+    let (servers, plain): (Vec<_>, Vec<_>) = open.paths.iter().cloned().partition(|p| unix && std::str::from_utf8(p).ok().and_then(flit_core::ui::server_uri).is_some());
+    let queued: Vec<Open> = (!servers.is_empty()).then(|| Open { paths: servers, ..Default::default() }).into_iter().collect();
+    let open = Open { paths: plain, ..open };
+    let (routes, errors) = if open.is_empty() { Default::default() } else { open::routes_for(&open, &P::known_folder, unix) };
     let new_window = open.target == OpenTarget::NewWindow;
     let files = if metrics.is_none() && std::env::var_os("FLIT_HIDDEN_CAPTURE").is_none() { Files::of::<P>() } else { None };
     let crashed = files.as_ref().is_some_and(Files::crashed);
@@ -1305,7 +1332,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         events,
         opens,
         sink,
-        queued_opens: Vec::new(),
+        queued_opens: queued,
         shell,
         thumbs,
         thumb_cache,
@@ -1341,6 +1368,8 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         updates: UpdateWorker::start::<P>(update_wake, headless)?,
         update_window: None,
         restarting: false,
+        awake: KeepAwake::default(),
+        quitting: Default::default(),
     };
     let (mut first, placement) = match &first_window {
         Some((ws, placement)) => (h.restored_app(ws), *placement),

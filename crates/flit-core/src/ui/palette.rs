@@ -72,6 +72,8 @@ pub(super) enum Pick {
     SaveLayout,
     LoadLayout,
     Keys(usize),
+    OpenWith(Box<super::open_with::Chooser>),
+    OpenWithCommand(Box<super::open_with::Chooser>),
 }
 
 impl Pick {
@@ -94,6 +96,8 @@ impl Pick {
             Pick::SaveLayout => S::MenusSaveLayoutPlaceholder.t(),
             Pick::LoadLayout => S::MenusLoadLayoutPlaceholder.t(),
             Pick::Keys(_) => S::PalettePlaceholderCommands.t(),
+            Pick::OpenWith(_) => S::OpenWithFilter.t(),
+            Pick::OpenWithCommand(_) => S::OpenWithCommand.t(),
         }
     }
 
@@ -116,6 +120,8 @@ impl Pick {
             Pick::SaveLayout => S::MenusSaveLayoutHint.t(),
             Pick::LoadLayout => S::MenusNoLayouts.t(),
             Pick::Keys(_) => S::PaletteEmptyCommands.t(),
+            Pick::OpenWith(_) => S::OpenWithNone.t(),
+            Pick::OpenWithCommand(_) => S::OpenWithCommand.t(),
         }
     }
 
@@ -124,7 +130,7 @@ impl Pick {
     }
 
     fn is_input(&self) -> bool {
-        matches!(self, Pick::Shortcut(_) | Pick::Stream(_) | Pick::FolderIcon(_) | Pick::NewLibrary | Pick::LibraryAdd(_) | Pick::Server | Pick::SaveLayout) || matches!(self, Pick::Tags(t) if t.is_input()) || matches!(self, Pick::Setting(p) if p.is_input())
+        matches!(self, Pick::Shortcut(_) | Pick::Stream(_) | Pick::FolderIcon(_) | Pick::NewLibrary | Pick::LibraryAdd(_) | Pick::Server | Pick::SaveLayout | Pick::OpenWithCommand(_)) || matches!(self, Pick::Tags(t) if t.is_input()) || matches!(self, Pick::Setting(p) if p.is_input())
     }
 }
 
@@ -484,7 +490,9 @@ impl App {
             }
             return;
         }
+        let query = p.field.text().to_owned();
         match p.pick {
+            Pick::OpenWith(c) => self.chooser_row(*c, id, index, &query),
             Pick::Encoding(archive) => self.set_encoding(&archive, id, now),
             Pick::Library(lib) => self.library_row(lib, &p.titles[id], false),
             Pick::Tags(t) => self.tag_choose(t, id, now),

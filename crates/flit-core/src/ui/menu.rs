@@ -93,6 +93,7 @@ pub(super) enum Cmd {
     SortColumn(SortField),
     FolderProperties(crate::FsPath),
     User(crate::provider::Launch),
+    Drop(u32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -528,7 +529,7 @@ impl App {
             let pinned = self.selected_folders().iter().all(|l| self.nav.sidebar.state.pinned.contains(l));
             m.action("item.pin", if pinned { S::MenuUnpinFromSidebar.t() } else { S::MenuPinToSidebar.t() });
         }
-        if t.view_loc.path().kind() == PathKind::Drive && m.shown("tags.edit") {
+        if self.taggable_here() && m.shown("tags.edit") {
             let (any, all) = self.selection_tags();
             m.submenu(S::MenuEditTags.t(), |m| {
                 for (k, tag) in self.tag_defs().iter().enumerate() {
@@ -548,6 +549,9 @@ impl App {
             }
             if folders > 0 {
                 m.action("app.terminal", S::MenuOpenInTerminal.t());
+            }
+            if count == 1 && folders == 0 && self.rename_target().is_some_and(|i| v.listing().entries[i as usize].attrs & attr::EXEC != 0) {
+                m.action("file.run_in_terminal", S::MenuRunInTerminal.t());
             }
             if count == 1 && folders == 1 {
                 m.action("file.folder_icon", S::MenuChangeIcon.t());
@@ -666,6 +670,7 @@ impl App {
             Some(Cmd::FolderProperties(dir)) if !self.caps.unix_paths => self.effects.push(super::Effect::Properties(vec![dir])),
             Some(Cmd::FolderProperties(dir)) => self.properties_for(Some(dir)),
             Some(Cmd::User(launch)) => self.launch(launch),
+            Some(Cmd::Drop(effect)) => self.drop_chosen(effect),
             None => {}
         }
     }

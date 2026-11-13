@@ -661,3 +661,42 @@ fn compact_paths_start_at_the_home_folder_and_subfolders_mark_the_last_crumb() {
     app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
     assert!(app.layout.crumbs[5].w > before, "the last crumb carries [...]");
 }
+
+#[test]
+fn unix_server_addresses_connect_and_a_missing_absolute_path_is_not_found() {
+    let mut app = app_at("/home/u");
+    app.caps.unix_paths = true;
+    deliver(&mut app, &[("f.txt", false)], None);
+    let fx = submit(&mut app, "smb://nas/share");
+    handle_open(&mut app, fx);
+    assert_eq!(launches(&mut app), [Launch::ConnectServer("smb://nas/share".into())]);
+    let fx = submit(&mut app, "recent:///");
+    handle_open(&mut app, fx);
+    assert!(launches(&mut app).is_empty());
+    let fx = submit(&mut app, "/no/such/place");
+    handle_open(&mut app, fx);
+    app.drain_effects().for_each(drop);
+    deliver(&mut app, &[], Some(FsErrorKind::NotFound));
+    assert!(launches(&mut app).is_empty());
+    assert_eq!(app.tab().error.as_deref(), Some(S::ErrorsFsNotFound.t()));
+    let fx = submit(&mut app, "ls");
+    handle_open(&mut app, fx);
+    deliver(&mut app, &[], Some(FsErrorKind::NotFound));
+    assert_eq!(launches(&mut app), [Launch::Run { program: "ls".into(), args: String::new(), dir: Some(FsPath::parse("/home/u").unwrap()) }]);
+}
+
+#[test]
+fn unix_trash_address_opens_the_trash_and_file_urls_stay_paths() {
+    let mut app = app_at("/home/u");
+    app.caps.unix_paths = true;
+    let fx = submit(&mut app, "trash:///");
+    assert!(launches_of(&fx).is_empty());
+    handle_open(&mut app, fx);
+    assert!(app.tab().location().is_recycle_bin() || app.tab().loading.is_some());
+    let fx = submit(&mut app, "file:///tmp");
+    assert!(launches_of(&fx).is_empty());
+}
+
+fn launches_of(fx: &[Effect]) -> Vec<&Launch> {
+    fx.iter().filter_map(|e| if let Effect::Provider { req: ProviderRequest::Launch { launch, .. }, .. } = e { Some(launch) } else { None }).collect()
+}

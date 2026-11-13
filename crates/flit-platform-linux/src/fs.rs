@@ -166,6 +166,8 @@ fn to_meta(name: &[u8], node: &Node, target_dir: impl FnOnce() -> bool) -> Meta 
         }
     } else if node.is_dir() {
         attrs |= attr::DIR;
+    } else if node.kind() == libc::S_IFREG && node.mode & 0o111 != 0 {
+        attrs |= attr::EXEC;
     }
     if name.first() == Some(&b'.') {
         attrs |= attr::HIDDEN;
@@ -181,16 +183,21 @@ fn entry_meta(dir: libc::c_int, name: &CStr, d_type: u8) -> Meta {
 }
 
 fn entry_meta_at(dir: libc::c_int, name: &CStr, d_type: u8) -> (Meta, i64) {
+    let (meta, accessed, _) = entry_at(dir, name, d_type);
+    (meta, accessed)
+}
+
+fn entry_at(dir: libc::c_int, name: &CStr, d_type: u8) -> (Meta, i64, Option<Node>) {
     let bytes = name.to_bytes();
     match node_at(dir, name, false) {
-        Ok(node) => (to_meta(bytes, &node, || node_at(dir, name, true).is_ok_and(|t| t.is_dir())), filetime(node.atime.sec, node.atime.nsec as i64)),
+        Ok(node) => (to_meta(bytes, &node, || node_at(dir, name, true).is_ok_and(|t| t.is_dir())), filetime(node.atime.sec, node.atime.nsec as i64), Some(node)),
         Err(_) => {
             let attrs = match d_type {
                 DT_DIR => attr::DIR,
                 DT_LNK => attr::LINK,
                 _ => 0,
             };
-            (Meta { attrs: attrs | if bytes.first() == Some(&b'.') { attr::HIDDEN } else { 0 }, ..Default::default() }, 0)
+            (Meta { attrs: attrs | if bytes.first() == Some(&b'.') { attr::HIDDEN } else { 0 }, ..Default::default() }, 0, None)
         }
     }
 }
@@ -223,6 +230,10 @@ pub fn open_at(dir: libc::c_int, name: &CStr, flags: libc::c_int, mode: libc::mo
 }
 
 pub fn dents(fd: libc::c_int, mut each: impl FnMut(&CStr, u8) -> bool) -> io::Result<()> {
+    dents_ino(fd, |name, d_type, _| each(name, d_type))
+}
+
+pub fn dents_ino(fd: libc::c_int, mut each: impl FnMut(&CStr, u8, u64) -> bool) -> io::Result<()> {
     let mut buf = vec![0u8; DENTS_BUFFER];
     loop {
         let n = unsafe { libc::syscall(libc::SYS_getdents64, fd, buf.as_mut_ptr(), buf.len()) };
@@ -238,13 +249,13 @@ pub fn dents(fd: libc::c_int, mut each: impl FnMut(&CStr, u8) -> bool) -> io::Re
             if reclen < 20 || off + reclen > n as usize {
                 return Err(io::Error::from_raw_os_error(libc::EIO));
             }
-            let d_type = buf[off + 18];
+            let (d_type, ino) = (buf[off + 18], u64::from_ne_bytes(buf[off..off + 8].try_into().unwrap_or_default()));
             let Ok(name) = CStr::from_bytes_until_nul(&buf[off + 19..off + reclen]) else { break };
             off += reclen;
             if matches!(name.to_bytes(), b"." | b"..") {
                 continue;
             }
-            if !each(name, d_type) {
+            if !each(name, d_type, ino) {
                 return Ok(());
             }
         }
@@ -379,9 +390,17 @@ impl Fs for LinuxFs {
         let path = host(dir).ok_or(FsError { kind: FsErrorKind::Unavailable, code: 0 })?;
         let mut n = 0usize;
         let fd = open_dir(path).map_err(|e| fs_error(&e))?;
+        let tagged = out.wants_ids().then(|| crate::tags::dir_volume(fd.as_raw_fd(), path)).flatten().and_then(|(dev, volume)| {
+            out.set_volume(volume);
+            Some((dev, out.tagging()?))
+        });
         dents(fd.as_raw_fd(), |name, d_type| {
-            let (meta, accessed) = entry_meta_at(fd.as_raw_fd(), name, d_type);
-            out.push(name.to_bytes(), meta);
+            let (meta, accessed, node) = entry_at(fd.as_raw_fd(), name, d_type);
+            let candidate = |n: &Node| tagged.as_ref().is_some_and(|(dev, (tags, volume))| *dev == n.dev && tags.may_tag(*volume, n.ino as u32));
+            match node.filter(candidate) {
+                Some(n) => out.push_id(name.to_bytes(), meta, crate::tags::entry_id(fd.as_raw_fd(), name, &n)),
+                None => out.push(name.to_bytes(), meta),
+            }
             out.set_accessed(accessed);
             n += 1;
             !n.is_multiple_of(BATCH) || out.batch_done()

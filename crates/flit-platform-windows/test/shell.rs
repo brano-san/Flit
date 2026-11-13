@@ -154,6 +154,32 @@ fn thumbnails_of_images_fit_the_requested_size_and_other_files_have_none() {
 }
 
 #[test]
+fn files_that_are_not_on_the_device_only_get_cached_thumbnails_and_fast_properties() {
+    use windows::Win32::Storage::FileSystem::{SetFileAttributesW, FILE_ATTRIBUTE_ARCHIVE, FILE_ATTRIBUTE_OFFLINE};
+    assert_eq!((thumbnail_flags(false), thumbnail_flags(true)), (SIIGBF_THUMBNAILONLY, SIIGBF_THUMBNAILONLY | SIIGBF_INCACHEONLY));
+    assert_eq!((icon_flags(false), icon_flags(true)), (SIIGBF_ICONONLY, SIIGBF_ICONONLY | SIIGBF_INCACHEONLY));
+    assert_eq!(crate::preview::store_flags(true), windows::Win32::UI::Shell::PropertiesSystem::GPS_FASTPROPERTIESONLY);
+    let root = crate::test_temp().join(format!("flit-shell-offline-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let file = root.join("away.jpg");
+    let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos() % 100_000 + 2;
+    write_jpeg(&file, 300, 180, seed);
+    let wide: Vec<u16> = file.as_os_str().to_string_lossy().encode_utf16().chain(Some(0)).collect();
+    let set = |a| unsafe { SetFileAttributesW(PCWSTR(wide.as_ptr()), a) }.is_ok();
+    let mut shell = ShellCom::new().unwrap();
+    let req = IconRequest { key: 0, kind: IconKind::Thumbnail, path: p(file.to_str().unwrap()), size: 96, gen: 0, row: 0 };
+    if set(FILE_ATTRIBUTE_OFFLINE | FILE_ATTRIBUTE_ARCHIVE) {
+        assert!(crate::fs::not_local(&req.path));
+        assert!(shell.thumbnail(&req).is_none(), "an uncached thumbnail of an offline file is not extracted");
+        assert!(set(FILE_ATTRIBUTE_ARCHIVE));
+    }
+    assert!(!crate::fs::not_local(&req.path));
+    assert!(shell.thumbnail(&req).is_some());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn distro_icons_come_from_their_start_menu_shortcut() {
     let mut shell = ShellCom::new().unwrap();
     let req = |distro: &str| IconRequest { key: 0, kind: IconKind::Volume, path: p(&format!(r"\\wsl.localhost\{distro}\")), size: 32, gen: 0, row: 0 };
@@ -200,4 +226,22 @@ fn quoted_arguments_come_back_whole_through_command_line_to_argv() {
         let _ = windows::Win32::Foundation::LocalFree(Some(windows::Win32::Foundation::HLOCAL(argv as _)));
     }
     assert_eq!(parsed, args, "{line}");
+}
+
+#[test]
+fn desktop_ini_names_show_only_in_read_only_or_system_folders_and_resolve_resources() {
+    use windows::Win32::Storage::FileSystem::{SetFileAttributesW, FILE_ATTRIBUTE_READONLY};
+    let root = crate::test_temp().join(format!("flit-shell-label-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("plain")).unwrap();
+    std::fs::write(root.join("plain").join("desktop.ini"), "[.ShellClassInfo]\r\nLocalizedResourceName=Фото\r\n").unwrap();
+    let dir = p(root.join("plain").to_str().unwrap());
+    assert_eq!(localized_name(&dir), None, "Explorer ignores desktop.ini in ordinary folders");
+    let wide: Vec<u16> = root.join("plain").as_os_str().to_string_lossy().encode_utf16().chain(Some(0)).collect();
+    unsafe { SetFileAttributesW(PCWSTR(wide.as_ptr()), FILE_ATTRIBUTE_READONLY) }.unwrap();
+    assert_eq!(localized_name(&dir).as_deref(), Some("Фото"));
+    let documents = resolve_name(r"@%SystemRoot%\system32\shell32.dll,-21770");
+    assert!(documents.is_some_and(|d| !d.is_empty() && !d.starts_with('@')));
+    unsafe { SetFileAttributesW(PCWSTR(wide.as_ptr()), FILE_ATTRIBUTE_NORMAL) }.unwrap();
+    let _ = std::fs::remove_dir_all(&root);
 }

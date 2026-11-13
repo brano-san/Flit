@@ -298,7 +298,7 @@ fn dropping_onto_the_new_tab_button_opens_new_tabs() {
     let r = app.layout.new_tab;
     let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
     let paths = vec![FsPath::parse(r"D:\docs").unwrap()];
-    let effect = app.drag(&DragEvent::Enter { paths, x, y, mods: NO, allowed: drop_effect::COPY | drop_effect::MOVE }, Instant::now());
+    let effect = app.drag(&DragEvent::Enter { paths, x, y, mods: NO, allowed: drop_effect::COPY | drop_effect::MOVE, right: false }, Instant::now());
     assert_eq!(effect, drop_effect::COPY);
     assert_eq!(app.drop_spot(), Some(Spot::NewTab));
     assert_eq!(app.drop_caption(), Some(("Open %1 in a new tab".to_owned(), "docs".to_owned())));

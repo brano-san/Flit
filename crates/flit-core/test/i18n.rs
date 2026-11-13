@@ -245,3 +245,16 @@ fn system_choices_name_the_system_not_windows() {
         }
     }
 }
+
+#[test]
+fn unix_words_call_shortcuts_links_and_leave_keyboard_shortcuts_alone() {
+    assert_eq!(unix_word(S::MenuCreateShortcut), S::MenuCreateLink);
+    assert_eq!(unix_word(S::ActionsFilePasteShortcut), S::ActionsFilePasteLink);
+    assert_eq!(unix_word(S::A11yButtonAddShortcut), S::A11yButtonAddShortcut);
+    for (windows, unix) in UNIX_WORDS {
+        assert_eq!(placeholders(windows.en()), placeholders(unix.en()), "{}", unix.key());
+        assert!(!unix.en().to_lowercase().contains("shortcut"), "{}", unix.key());
+    }
+    assert_eq!(S::MenuLink.en(), "Link");
+    assert_eq!(S::MenuCreateLink.en(), "Create link");
+}

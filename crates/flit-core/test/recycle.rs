@@ -35,4 +35,9 @@ fn recycled_paths_are_recognised_by_their_bin_folder() {
     assert!(in_bin(&p(r"C:\$Recycle.Bin\S-1\$RAB12CD.txt")));
     assert!(in_bin(&p(r"d:\$RECYCLE.BIN\S-1\$R1\inner")));
     assert!(!in_bin(&p(r"C:\Users\me\Recycle.Bin")));
+    assert!(in_bin(&p("/home/me/.local/share/Trash/files/a.txt")));
+    assert!(in_bin(&p("/media/me/USB/.Trash-1000/files/dir/inner")));
+    assert!(in_bin(&p("/data/.Trash/1000/files/x")));
+    assert!(!in_bin(&p("/home/me/.local/share/Trash/info/a.txt.trashinfo")) && !in_bin(&p("/home/me/trash/files/a")));
+    assert!(in_bin(&p("/media/me/Windows/$Recycle.Bin/S-1/$R1.txt")) && !in_bin(&p(r"C:\Users\me\Trash\files\a.txt")));
 }

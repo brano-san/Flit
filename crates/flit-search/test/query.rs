@@ -129,12 +129,12 @@ fn driver_is_the_longest_positive_name_literal() {
 
 #[test]
 fn dollar_and_foreign_properties_go_to_windows_search() {
-    assert_eq!(shell_query("$ kind:music  "), Some("kind:music".into()));
-    assert_eq!(shell_query("report author:Ann"), Some("report author:Ann".into()));
-    assert_eq!(shell_query("System.Size:>1MB"), Some("System.Size:>1MB".into()));
-    assert_eq!(shell_query("!kind:folder"), Some("!kind:folder".into()));
+    assert_eq!(shell_query("$ kind:music  ", true), Some("kind:music".into()));
+    assert_eq!(shell_query("report author:Ann", true), Some("report author:Ann".into()));
+    assert_eq!(shell_query("System.Size:>1MB", true), Some("System.Size:>1MB".into()));
+    assert_eq!(shell_query("!kind:folder", true), Some("!kind:folder".into()));
     for own in ["ext:txt size:>1mb", "path:docs dm:today", "tag:red", r"C:\Users", "c:foo", "\"kind:music\"", "kind:", "plain words"] {
-        assert_eq!(shell_query(own), None, "{own}");
+        assert_eq!(shell_query(own, true), None, "{own}");
     }
 }
 
@@ -154,4 +154,18 @@ fn hostile_queries_are_refused_before_they_cost_much() {
     assert!(parse(&format!("ext:{}", vec!["a"; MAX_EXTS].join(";")), clock()).is_ok());
     assert!(parse(&"*a".repeat(MAX_PATTERN), clock()).is_err());
     assert!(parse(&"a".repeat(MAX_PATTERN), clock()).is_ok());
+}
+
+#[test]
+fn unix_treats_foreign_properties_as_name_text_and_flags_dollar_queries() {
+    for text in ["TODO:fix", "report author:Ann", "$ kind:music", "ext:txt", "System.Size:>1MB"] {
+        assert_eq!(shell_query(text, false), None, "{text}");
+    }
+    assert!(is_content_query("$x") && is_content_query("  $ kind:music") && !is_content_query("TODO:fix"));
+    assert_eq!(shell_query("TODO:fix", true), Some("TODO:fix".into()));
+    assert_eq!(shell_query("ext:rs", true), None);
+    let q = parse("TODO:fix ext:rs", clock()).unwrap();
+    assert_eq!(q.terms.len(), 2);
+    assert!(matches!(&q.terms[0].filter, Filter::Match(Scope::Name, Pattern::Text(t)) if t == b"todo:fix"));
+    assert!(matches!(&q.terms[1].filter, Filter::Ext(_)));
 }

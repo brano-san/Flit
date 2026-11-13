@@ -1,9 +1,16 @@
+use flit_core::i18n::S;
+use flit_core::provider::{AppChoice, Launch};
+use flit_core::ui::{Mark, MenuImage, MenuItem};
+use flit_core::FsPath;
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const SETTLE: Duration = Duration::from_secs(2);
+const ICON_PX: u32 = 32;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Entry {
@@ -14,6 +21,12 @@ pub struct Entry {
     pub mimes: Vec<String>,
     pub terminal: bool,
     pub hidden: bool,
+    pub no_display: bool,
+    pub try_exec: String,
+    pub only_show_in: Vec<String>,
+    pub not_show_in: Vec<String>,
+    pub dir: String,
+    pub icon: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -47,15 +60,43 @@ pub fn parse_desktop(id: &str, path: &Path, text: &str, lang: &str) -> Option<En
         return None;
     }
     let yes = |k: &str| fields.get(k) == Some(&"true");
+    let text = |k: &str| fields.get(k).map(|v| v.to_string()).unwrap_or_default();
+    let list = |k: &str| -> Vec<String> { fields.get(k).map(|m| m.split(';').filter(|s| !s.is_empty()).map(str::to_owned).collect()).unwrap_or_default() };
     Some(Entry {
         id: id.to_owned(),
         path: path.to_path_buf(),
         name: localized(&fields, "Name", lang)?.to_owned(),
         exec: fields.get("Exec")?.to_string(),
-        mimes: fields.get("MimeType").map(|m| m.split(';').filter(|s| !s.is_empty()).map(str::to_owned).collect()).unwrap_or_default(),
+        mimes: list("MimeType"),
         terminal: yes("Terminal"),
         hidden: yes("Hidden"),
+        no_display: yes("NoDisplay"),
+        try_exec: text("TryExec"),
+        only_show_in: list("OnlyShowIn"),
+        not_show_in: list("NotShowIn"),
+        dir: text("Path"),
+        icon: text("Icon"),
     })
+}
+
+pub fn shown_in(e: &Entry, desktops: &[String]) -> bool {
+    for d in desktops {
+        if e.only_show_in.iter().any(|o| o.eq_ignore_ascii_case(d)) {
+            return true;
+        }
+        if e.not_show_in.iter().any(|o| o.eq_ignore_ascii_case(d)) {
+            return false;
+        }
+    }
+    e.only_show_in.is_empty()
+}
+
+pub fn runnable(e: &Entry) -> bool {
+    e.try_exec.is_empty() || crate::shell::on_path(OsStr::new(&e.try_exec)).is_some()
+}
+
+pub fn current_desktops() -> Vec<String> {
+    std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().split(':').filter(|d| !d.is_empty()).map(str::to_owned).collect()
 }
 
 pub fn parse_mimeapps(text: &str, into: &mut Assoc) {
@@ -86,10 +127,22 @@ pub fn handlers<'a>(mime: &str, entries: &'a [Entry], assoc: &Assoc) -> Vec<&'a 
     let by_id = |id: &String| entries.iter().find(|e| &e.id == id && !e.hidden);
     let mut out: Vec<&Entry> = Vec::new();
     let named = assoc.defaults.get(mime).into_iter().chain(assoc.added.get(mime)).flatten().filter_map(by_id);
-    let declared = entries.iter().filter(|e| !e.hidden && e.mimes.iter().any(|m| m == mime));
+    let declared = entries.iter().filter(|e| !e.hidden && !e.no_display && e.mimes.iter().any(|m| m == mime));
     for e in named.chain(declared) {
         if !removed.contains(&e.id) && !out.iter().any(|o| o.id == e.id) {
             out.push(e);
+        }
+    }
+    out
+}
+
+pub fn handlers_by_lineage<'a>(mime: &str, entries: &'a [Entry], assoc: &Assoc, parents: impl Fn(&str) -> Vec<String>) -> Vec<&'a Entry> {
+    let mut out: Vec<&Entry> = Vec::new();
+    for m in crate::mime::lineage(mime, parents) {
+        for e in handlers(&m, entries, assoc) {
+            if !out.iter().any(|o| o.id == e.id) {
+                out.push(e);
+            }
         }
     }
     out
@@ -127,6 +180,14 @@ pub fn command(exec: &str, files: &[PathBuf], name: &str, desktop: &Path) -> Vec
         out.extend(files.iter().map(|f| f.to_string_lossy().into_owned()));
     }
     out
+}
+
+pub fn commands(exec: &str, files: &[PathBuf], name: &str, desktop: &Path) -> Vec<Vec<String>> {
+    let single = crate::shell::split_args(exec).iter().any(|a| a == "%f" || a == "%u");
+    if single && files.len() > 1 {
+        return files.iter().map(|f| command(exec, std::slice::from_ref(f), name, desktop)).collect();
+    }
+    vec![command(exec, files, name, desktop)]
 }
 
 pub(crate) fn data_dirs() -> Vec<PathBuf> {
@@ -174,15 +235,22 @@ pub struct Catalog {
 
 impl Catalog {
     pub fn load(data: &[PathBuf], config: &[PathBuf]) -> Self {
+        Self::load_for(data, config, &current_desktops())
+    }
+
+    pub fn load_for(data: &[PathBuf], config: &[PathBuf], desktops: &[String]) -> Self {
         let lang = std::env::var("LC_MESSAGES").or_else(|_| std::env::var("LANG")).unwrap_or_default();
         let (mut seen, mut entries, mut stamps) = (HashSet::new(), Vec::new(), Vec::new());
         for d in data {
             collect(&d.join("applications"), "", &lang, &mut seen, &mut entries, &mut stamps);
         }
-        let desktops: Vec<String> = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().split(':').filter(|d| !d.is_empty()).map(str::to_lowercase).collect();
+        for e in &mut entries {
+            e.hidden |= !runnable(e);
+            e.no_display |= !shown_in(e, desktops);
+        }
         let mut files = Vec::new();
         for c in config {
-            files.extend(desktops.iter().map(|d| c.join(format!("{d}-mimeapps.list"))));
+            files.extend(desktops.iter().map(|d| c.join(format!("{}-mimeapps.list", d.to_lowercase()))));
             files.push(c.join("mimeapps.list"));
         }
         for d in data {
@@ -221,33 +289,58 @@ pub fn catalog() -> Arc<Catalog> {
     }
 }
 
-pub fn open_with(files: &[flit_core::FsPath], entries: &[Entry], assoc: &Assoc) -> (Vec<flit_core::ui::MenuItem>, Vec<flit_core::provider::Launch>) {
+fn menu_image(icon: &str) -> Option<MenuImage> {
+    if icon.is_empty() {
+        return None;
+    }
+    let bitmap = match icon.starts_with('/') {
+        true => crate::icons::render(Path::new(icon), ICON_PX),
+        false => crate::icons::icon(&[icon.trim_end_matches(".png").trim_end_matches(".svg").to_owned()], ICON_PX),
+    };
+    bitmap.map(MenuImage::pixels)
+}
+
+pub fn choices(entries: &[Entry]) -> Vec<AppChoice> {
+    let mut out: Vec<AppChoice> = entries.iter().filter(|e| !e.hidden && !e.no_display).filter_map(|e| Some(AppChoice { name: e.name.clone(), program: crate::xdg::fs_path(&e.path)? })).collect();
+    out.sort_by_cached_key(|a| a.name.to_lowercase());
+    out
+}
+
+pub fn open_with(files: &[FsPath], entries: &[Entry], assoc: &Assoc) -> OpenWith {
     let paths: Vec<PathBuf> = files.iter().filter_map(|f| flit_platform_linux::host(f).map(Path::to_path_buf)).collect();
     if paths.is_empty() || paths.len() != files.len() || paths.iter().any(|p| p.is_dir()) {
         return (Vec::new(), Vec::new());
     }
     let mut mimes: Vec<String> = Vec::new();
     for p in &paths {
-        let mime = p.extension().and_then(|e| crate::mime::mime_of(e.as_encoded_bytes())).unwrap_or_else(|| "application/octet-stream".into());
+        let mime = crate::mime::mime_of_file(p);
         if !mimes.contains(&mime) {
             mimes.push(mime);
         }
     }
-    let sets: Vec<Vec<&Entry>> = mimes.iter().map(|m| handlers(m, entries, assoc)).collect();
-    let mut apps: Vec<&Entry> = sets[0].iter().copied().filter(|e| sets[1..].iter().all(|s| s.iter().any(|h| h.id == e.id))).collect();
-    let mut others: Vec<_> = entries.iter().filter(|e| !e.hidden && !apps.iter().any(|a| a.id == e.id) && ["%f", "%F", "%u", "%U"].iter().any(|arg| e.exec.contains(arg))).collect();
-    others.sort_by_key(|a| a.name.to_lowercase());
-    if apps.is_empty() {
-        apps.append(&mut others);
+    let sets: Vec<Vec<&Entry>> = mimes.iter().map(|m| handlers_by_lineage(m, entries, assoc, crate::mime::parents)).collect();
+    let apps: Vec<(&Entry, FsPath)> = sets[0].iter().copied().filter(|e| sets[1..].iter().all(|s| s.iter().any(|h| h.id == e.id))).filter_map(|e| Some((e, crate::xdg::fs_path(&e.path)?))).collect();
+    let marked = mimes.len() == 1;
+    let mut items: Vec<MenuItem> = apps
+        .iter()
+        .enumerate()
+        .map(|(k, (e, _))| {
+            let keys = if k == 0 && marked { S::OpenWithDefault.t().to_owned() } else { String::new() };
+            MenuItem::Command { label: e.name.clone(), keys, checked: false, stay: false, mark: Mark::None, icon: "", image: menu_image(&e.icon), disabled: false }
+        })
+        .collect();
+    let mut launches: Vec<Launch> = apps.iter().map(|(_, program)| Launch::With { program: program.clone(), args: files.to_vec() }).collect();
+    if !items.is_empty() {
+        items.push(MenuItem::Separator);
     }
-    let items = apps.iter().map(|e| flit_core::ui::MenuItem::command(e.name.clone(), String::new())).collect();
-    let launches = apps.iter().filter_map(|e| Some(flit_core::provider::Launch::With { program: crate::xdg::fs_path(&e.path)?, args: files.to_vec() })).collect();
+    items.push(MenuItem::command(S::OpenWithOther.t(), String::new()));
+    launches.push(Launch::ChooseApp { files: files.to_vec(), mime: mimes[0].clone(), apps: choices(entries) });
     (items, launches)
 }
 
-pub type OpenWith = (Vec<flit_core::ui::MenuItem>, Vec<flit_core::provider::Launch>);
+pub type OpenWith = (Vec<MenuItem>, Vec<Launch>);
 
-pub fn menu_with_apps(items: Vec<flit_core::ui::MenuItem>, files: &[flit_core::FsPath]) -> OpenWith {
+pub fn menu_with_apps(items: Vec<MenuItem>, files: &[FsPath]) -> OpenWith {
     if files.is_empty() {
         return (items, Vec::new());
     }
@@ -255,35 +348,134 @@ pub fn menu_with_apps(items: Vec<flit_core::ui::MenuItem>, files: &[flit_core::F
     with_apps(items, open_with(files, &c.entries, &c.assoc))
 }
 
-pub fn with_apps(mut items: Vec<flit_core::ui::MenuItem>, (apps, launches): OpenWith) -> OpenWith {
-    if !apps.is_empty() && apps.len() == launches.len() {
+pub fn with_apps(mut items: Vec<MenuItem>, (apps, launches): OpenWith) -> OpenWith {
+    let commands = apps.iter().filter(|i| matches!(i, MenuItem::Command { .. })).count();
+    if !apps.is_empty() && commands == launches.len() {
         if !items.is_empty() {
-            items.push(flit_core::ui::MenuItem::Separator);
+            items.push(MenuItem::Separator);
         }
-        items.push(flit_core::ui::MenuItem::Submenu { label: flit_core::i18n::S::MenuOpenWith.t().to_owned(), items: apps });
+        items.push(MenuItem::Submenu { label: S::MenuOpenWith.t().to_owned(), items: apps });
         return (items, launches);
     }
     (items, Vec::new())
 }
 
-pub fn launch(desktop: &Path, files: &[PathBuf], token: Option<&str>) -> std::io::Result<()> {
-    let text = std::fs::read_to_string(desktop)?;
-    let id = desktop.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let entry = parse_desktop(&id, desktop, &text, "").ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "not an application entry"))?;
-    let mut argv = command(&entry.exec, files, &entry.name, desktop);
-    if argv.is_empty() {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "empty Exec"));
-    }
-    if entry.terminal {
-        argv.insert(0, "x-terminal-emulator".into());
-        argv.insert(1, "-e".into());
-    }
+fn spawn(argv: &[String], dir: Option<&Path>, token: Option<&str>) -> io::Result<()> {
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]);
-    if let Some(t) = token {
-        cmd.env("XDG_ACTIVATION_TOKEN", t).env("DESKTOP_STARTUP_ID", t);
+    if let Some(d) = dir {
+        cmd.current_dir(d);
     }
+    crate::activation::pass(&mut cmd, token);
     crate::shell::detach(cmd)
+}
+
+pub fn launch(desktop: &Path, files: &[PathBuf], token: Option<&str>) -> io::Result<()> {
+    let text = std::fs::read_to_string(desktop)?;
+    let id = desktop.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let entry = parse_desktop(&id, desktop, &text, "").ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "not an application entry"))?;
+    let runs = commands(&entry.exec, files, &entry.name, desktop);
+    if runs.iter().any(Vec::is_empty) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "empty Exec"));
+    }
+    let dir = Some(Path::new(&entry.dir)).filter(|d| !entry.dir.is_empty() && d.is_dir());
+    for argv in runs {
+        if entry.terminal {
+            crate::shell::run_in_terminal_argv(dir, argv.into_iter().map(Into::into).collect()).map_err(|e| io::Error::other(e.message))?;
+        } else {
+            spawn(&argv, dir, token)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn desktop_id(desktop: &Path, data: &[PathBuf]) -> String {
+    let relative = data.iter().find_map(|d| desktop.strip_prefix(d.join("applications")).ok());
+    match relative {
+        Some(rel) => rel.to_string_lossy().replace('/', "-"),
+        None => desktop.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+    }
+}
+
+pub fn use_app(config: &Path, mime: &str, id: &str) -> io::Result<()> {
+    let list = config.join("mimeapps.list");
+    let current = match std::fs::read_to_string(&list) {
+        Ok(t) => t,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e),
+    };
+    std::fs::create_dir_all(config)?;
+    std::fs::write(&list, flit_core::mimeapps::use_app(&current, mime, id))
+}
+
+fn config_home() -> io::Result<PathBuf> {
+    crate::xdg::config_home().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no HOME or XDG_CONFIG_HOME"))
+}
+
+pub fn set_default(desktop: &Path, mime: &str) -> io::Result<()> {
+    use_app(&config_home()?, mime, &desktop_id(desktop, &data_dirs()))
+}
+
+pub fn with_files(command: &str) -> String {
+    let command = command.replace(['\n', '\r'], " ");
+    let codes = crate::shell::split_args(&command).iter().any(|a| matches!(a.as_str(), "%f" | "%F" | "%u" | "%U"));
+    if codes { command.trim().to_owned() } else { format!("{} %F", command.trim()) }
+}
+
+fn program_name(exec: &str) -> String {
+    let program = crate::shell::split_args(exec).into_iter().next().unwrap_or_default();
+    Path::new(&program).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(program)
+}
+
+pub fn user_app_text(exec: &str, mime: &str) -> String {
+    format!("[Desktop Entry]\nType=Application\nName={}\nExec={exec}\nMimeType={mime};\nNoDisplay=true\nTerminal=false\n", program_name(exec))
+}
+
+pub fn write_user_app(dir: &Path, exec: &str, mime: &str) -> io::Result<PathBuf> {
+    std::fs::create_dir_all(dir)?;
+    let base: String = program_name(exec).chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')).collect();
+    let base = if base.is_empty() { "app".to_owned() } else { base };
+    let seed = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default() ^ u128::from(std::process::id());
+    for attempt in 0..64u128 {
+        let mut n = seed.wrapping_mul(6364136223846793005).wrapping_add(attempt.wrapping_mul(1442695040888963407));
+        let tag: String = (0..6)
+            .map(|_| {
+                let c = b"abcdefghijklmnopqrstuvwxyz0123456789"[(n % 36) as usize];
+                n /= 36;
+                c as char
+            })
+            .collect();
+        let path = dir.join(format!("userapp-{base}-{tag}.desktop"));
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut f) => {
+                f.write_all(user_app_text(exec, mime).as_bytes())?;
+                return Ok(path);
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::AlreadyExists, "no free name for a new application entry"))
+}
+
+pub fn run_custom_in(apps: &Path, config: &Path, command: &str, files: &[PathBuf], mime: &str, remember: bool, token: Option<&str>) -> io::Result<()> {
+    let exec = with_files(command);
+    if !remember {
+        let runs = commands(&exec, files, "", Path::new(""));
+        if runs.iter().any(Vec::is_empty) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "the command is empty"));
+        }
+        return runs.iter().try_for_each(|argv| spawn(argv, None, token));
+    }
+    let desktop = write_user_app(apps, &exec, mime)?;
+    let id = desktop.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    use_app(config, mime, &id)?;
+    launch(&desktop, files, token)
+}
+
+pub fn run_custom(command: &str, files: &[PathBuf], mime: &str, remember: bool, token: Option<&str>) -> io::Result<()> {
+    let apps = crate::xdg::data_home().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no HOME or XDG_DATA_HOME"))?.join("applications");
+    run_custom_in(&apps, &config_home()?, command, files, mime, remember, token)
 }
 
 #[cfg(test)]

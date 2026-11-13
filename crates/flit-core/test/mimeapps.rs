@@ -53,3 +53,18 @@ fn both_folder_types_go_back_to_their_own_previous_handlers() {
     let without = restore(&backup(Some("[Default Applications]\ninode/directory=a.desktop\n")), Some(&format!("{}b=c\n", ours(Some("[Default Applications]\ninode/directory=a.desktop\n"))))).unwrap();
     assert_eq!(default_app(&without, "x-directory/normal"), None);
 }
+
+#[test]
+fn using_an_app_makes_it_the_default_and_the_first_added_association() {
+    let text = "[Added Associations]\ntext/plain=kate.desktop;gedit.desktop;\nimage/png=eog.desktop;\n\n[Default Applications]\ntext/plain=kate.desktop\n\n[Removed Associations]\ntext/plain=gedit.desktop;vim.desktop;\n\n[Other]\nkeep=me\n";
+    let used = use_app(text, "text/plain", "gedit.desktop");
+    assert_eq!(default_app(&used, "text/plain").as_deref(), Some("gedit.desktop"));
+    assert_eq!(apps_in(&used, ADDED, "text/plain"), ["gedit.desktop", "kate.desktop"]);
+    assert_eq!(apps_in(&used, REMOVED, "text/plain"), ["vim.desktop"]);
+    assert_eq!(apps_in(&used, ADDED, "image/png"), ["eog.desktop"]);
+    assert!(used.contains("[Other]\nkeep=me\n"));
+    let fresh = use_app("", "image/png", "eog.desktop");
+    assert_eq!(fresh, "[Default Applications]\nimage/png=eog.desktop\n\n[Added Associations]\nimage/png=eog.desktop;\n");
+    let only = use_app("[Removed Associations]\nimage/png=eog.desktop;\n", "image/png", "eog.desktop");
+    assert!(!only.contains("[Removed Associations]\nimage/png"), "{only}");
+}

@@ -36,7 +36,10 @@ fn forward_child() {
     let open = parse_args(&args(&[b"file:///tmp/flit-forwarded%20here", b"--select", b"/tmp/flit-picked"]), None);
     let started = Instant::now();
     match SocketInstance::acquire_in(Path::new(&dir), &open) {
-        Instance::Forwarded => println!("forwarded in {:?}", started.elapsed()),
+        Instance::Forwarded => {
+            assert!(std::env::var_os("XDG_ACTIVATION_TOKEN").is_none() && std::env::var_os("DESKTOP_STARTUP_ID").is_none(), "children do not inherit the launcher token");
+            println!("forwarded in {:?}", started.elapsed())
+        }
         Instance::Primary(_) => panic!("the child became the primary instance"),
         Instance::Standalone(e) => panic!("standalone: {e}"),
     }
@@ -56,12 +59,15 @@ fn second_process_forwards_its_open_to_the_first() {
     primary.listen(sink, Arc::new(move || {
         w.fetch_add(1, Ordering::Relaxed);
     }));
-    let out = child("instance::tests::forward_child").env("FLIT_TEST_RUNTIME", t.path()).output().unwrap();
+    let _serial = crate::window::STARTUP_TOKEN_USERS.lock().unwrap_or_else(|e| e.into_inner());
+    let out = child("instance::tests::forward_child").env("FLIT_TEST_RUNTIME", t.path()).env("XDG_ACTIVATION_TOKEN", "launcher_TIME9").env("DESKTOP_STARTUP_ID", "launcher_TIME9").output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
     let open = rx.recv_timeout(Duration::from_secs(2)).unwrap();
     assert_eq!(open.paths, args(&[b"/tmp/flit-forwarded here"]));
     assert_eq!(open.select, args(&[b"/tmp/flit-picked"]));
     assert_eq!(woken.load(Ordering::Relaxed), 1);
+    assert_eq!(open.activation, None, "the token is used by the window, not the tabs");
+    assert_eq!(crate::window::take_startup_token().as_deref(), Some("launcher_TIME9"), "the launcher token raises the running window");
     let text = String::from_utf8_lossy(&out.stdout);
     if let Some(line) = text.lines().find_map(|l| l.find("forwarded in").map(|k| &l[k..])) {
         eprintln!("measure: {line}");

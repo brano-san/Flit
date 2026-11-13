@@ -157,6 +157,15 @@ impl SortKeys {
         self.prefix.extend_from_slice(&part.prefix);
     }
 
+    pub fn relabel(&mut self, l: &Listing) {
+        if l.labels.is_empty() {
+            return;
+        }
+        let mut keys = SortKeys::new(self.case);
+        (0..l.len() as u32).for_each(|i| keys.push(l.label(i)));
+        *self = keys;
+    }
+
     pub fn shrink(&mut self) {
         self.blob.shrink_to_fit();
         self.offs.shrink_to_fit();
@@ -327,7 +336,7 @@ pub fn group_key(l: &Listing, i: u32, v: &ViewSpec) -> (u64, bool) {
     let e = &l.entries[i as usize];
     match v.group.field {
         GroupField::None => (0, true),
-        GroupField::Name => (initial(l.name(i)), true),
+        GroupField::Name => (initial(l.label(i)), true),
         GroupField::Type if e.is_dir() => (0, true),
         GroupField::Type => (ext_prefix(l.ext(i)).saturating_add(1), l.ext(i).len() <= 8),
         GroupField::Size => (size_bucket(e), true),

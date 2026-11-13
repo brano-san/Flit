@@ -276,7 +276,7 @@ fn string(key: HKEY, sub: Option<&str>, name: Option<&str>) -> Option<String> {
     Some(wide_str(&buf)).filter(|s| !s.is_empty())
 }
 
-fn indirect(s: String) -> Option<String> {
+pub(crate) fn indirect(s: String) -> Option<String> {
     if !s.starts_with('@') {
         return Some(s);
     }

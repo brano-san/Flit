@@ -5,6 +5,7 @@ mod fs;
 mod inotify;
 pub mod mounts;
 mod ops;
+mod tags;
 mod trash;
 mod walk;
 
@@ -15,6 +16,7 @@ mod temp;
 pub use fs::{host, stat_path, LinuxFs};
 pub use inotify::{Inotify, Notice, Notify};
 pub use ops::run as run_op;
+pub use tags::{file_key, resolve_files};
 pub use walk::{indexed, WalkIndex};
 pub use trash::{percent_decode, percent_encode, trash_time, Trash};
 

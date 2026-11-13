@@ -19,6 +19,7 @@ invalid_rows = "索引发送了无效的行：{error}"
 unavailable = "搜索不可用：{error}"
 cannot_start = "无法开始搜索：{error}"
 shell = "Windows Search：{error}"
+content_unsupported = "Linux 上暂不支持内容搜索（$ 查询）"
 
 [column]
 folder = "文件夹"
@@ -30,6 +31,7 @@ tagged = "带标记的文件"
 connecting = "正在连接索引"
 service = "索引服务"
 fallback = "本地索引（flit-indexd 不可用）"
+local = "本地索引"
 off = "索引已在“设置 › 高级”中关闭；Ctrl+Shift+F 在打开的文件夹中搜索"
 
 [index]

@@ -51,11 +51,11 @@ fn fake_key(p: &FsPath) -> Option<FileKey> {
     DISK.with(|d| d.borrow().0.get(&s).copied())
 }
 
-fn fake_resolve(keys: &[FileKey]) -> Vec<Resolved> {
+fn fake_resolve(keys: &[(FileKey, &FsPath)]) -> Vec<Resolved> {
     DISK.with(|d| {
         let files = &d.borrow().0;
         keys.iter()
-            .map(|k| match files.iter().find(|(_, v)| *v == k) {
+            .map(|(k, _)| match files.iter().find(|(_, v)| *v == k) {
                 Some((p, _)) => Resolved::Found(FsPath::parse(p).unwrap(), Meta { size: p.len() as u64, ..Meta::default() }),
                 None if k.volume == 9 => Resolved::Unavailable,
                 None => Resolved::Gone,
@@ -267,4 +267,39 @@ fn moves_out_of_a_drive_root_keep_the_rest_of_the_path() {
     assert_eq!(moved_path(&path(r"c:\a\b.txt"), &path(r"c:\"), &path(r"d:\x")), Some(path(r"d:\x\a\b.txt")));
     assert_eq!(moved_path(&path(r"c:\a\b.txt"), &path(r"c:\a"), &path(r"d:\")), Some(path(r"d:\b.txt")));
     assert_eq!(moved_path(&path(r"c:\ab"), &path(r"c:\a"), &path(r"d:\x")), None);
+}
+
+#[test]
+fn unix_moves_match_paths_by_exact_case() {
+    assert_eq!(moved_path(&path("/h/Foo/a"), &path("/h/foo"), &path("/x")), None);
+    assert_eq!(moved_path(&path("/h/foo/a"), &path("/h/foo"), &path("/x/bar")), Some(path("/x/bar/a")));
+    assert_eq!(moved_path(&path("/h/a"), &path("/"), &path("/x")), Some(path("/x/h/a")));
+}
+
+fn unix_key(p: &FsPath) -> Option<FileKey> {
+    p.as_bytes().starts_with(b"/disk/").then(|| FileKey { volume: 5, id: p.file_name().len() as u64 })
+}
+
+fn by_hint(files: &[(FileKey, &FsPath)]) -> Vec<Resolved> {
+    let at = |hint: &FsPath| match hint.as_bytes() {
+        b"/disk/old.txt" => Resolved::Found(path("/disk/New.txt"), Meta::default()),
+        b"/disk/abc" => Resolved::Found(hint.clone(), Meta::default()),
+        _ => Resolved::Gone,
+    };
+    files.iter().map(|(_, hint)| at(hint)).collect()
+}
+
+#[test]
+fn linux_books_resolve_by_last_known_path_and_name_linux_file_systems() {
+    let mut b = Book::load(None, unix_key, by_hint).on_unix(true);
+    let items = ["/disk/old.txt", "/disk/abc", "/disk/gone.bin", "/run/user/1000/x"].map(path).to_vec();
+    let o = b.apply(TagRequest::Set { items, tag: 0, on: true });
+    assert_eq!(o.status.as_deref(), Some(flit_core::i18n::S::ErrorsTagsNotTaggableLinux.en()));
+    assert_eq!(masks(&b), [("/disk/abc".into(), 1), ("/disk/new.txt".into(), 1)], "the hint follows a rename, a missing file drops");
+    assert!(b.store.files.values().any(|t| t.path == path("/disk/New.txt")));
+    assert!(!b.apply(TagRequest::Moved { pairs: vec![(path("/disk/ABC"), path("/disk/z"))], copy: false }).changed, "Linux names differ by case");
+    b.apply(TagRequest::Moved { pairs: vec![(path("/disk/abc"), path("/disk/xyz"))], copy: false });
+    assert_eq!(masks(&b), [("/disk/new.txt".into(), 1), ("/disk/xyz".into(), 1)]);
+    let o = Book::load(None, unix_key, by_hint).apply(TagRequest::Set { items: vec![path(r"c:\x")], tag: 0, on: true });
+    assert_eq!(o.status.as_deref(), Some(flit_core::i18n::S::ErrorsTagsNotTaggable.en()), "Windows keeps its NTFS message");
 }

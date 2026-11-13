@@ -147,3 +147,96 @@ fn file_ops_create_from_templates_and_trash_one_file_quickly() {
     took.sort();
     eprintln!("measure: trash of one file median {:?}, max {:?}", took[10], took[20]);
 }
+
+fn strings(args: Vec<OsString>) -> Vec<String> {
+    args.into_iter().map(|a| a.to_string_lossy().into_owned()).collect()
+}
+
+#[test]
+fn terminals_get_the_folder_through_their_own_option() {
+    let dir = Path::new("/srv/my files");
+    let args = |t: &str| strings(terminal_args(Path::new(t), Some(dir), None));
+    assert_eq!(args("/usr/bin/gnome-terminal"), ["--working-directory=/srv/my files"]);
+    assert_eq!(args("/usr/bin/gnome-terminal.wrapper"), ["--working-directory=/srv/my files"]);
+    assert_eq!(args("ptyxis"), ["--working-directory=/srv/my files"]);
+    assert_eq!(args("konsole"), ["--workdir", "/srv/my files"]);
+    assert_eq!(args("alacritty"), ["--working-directory", "/srv/my files"]);
+    assert_eq!(args("kitty"), ["--directory=/srv/my files"]);
+    assert_eq!(args("wezterm"), ["start", "--cwd", "/srv/my files"]);
+    assert!(args("xterm").is_empty(), "xterm starts in the working directory it inherits");
+    assert_eq!(args("x-terminal-emulator"), ["-e", "sh", "-c", OPEN_SCRIPT, "flit", "/srv/my files"]);
+    assert_eq!(args("xdg-terminal-exec"), ["sh", "-c", OPEN_SCRIPT, "flit", "/srv/my files"]);
+}
+
+#[test]
+fn programs_run_in_terminals_with_each_terminal_s_syntax() {
+    let cmd = || Some(vec![OsString::from("my app"), OsString::from("it's")]);
+    let args = |t: &str| strings(terminal_args(Path::new(t), None, cmd()));
+    assert_eq!(args("gnome-terminal"), ["--", "my app", "it's"]);
+    assert_eq!(args("xfce4-terminal"), ["-x", "my app", "it's"]);
+    assert_eq!(args("konsole"), ["-e", "my app", "it's"]);
+    assert_eq!(args("foot"), ["my app", "it's"]);
+    assert_eq!(args("wezterm"), ["start", "--", "my app", "it's"]);
+    assert_eq!(args("tilix"), ["-e", r"'my app' 'it'\''s'"]);
+    assert_eq!(args("xterm"), ["-e", "my app", "it's"]);
+}
+
+#[test]
+fn the_run_script_starts_the_program_in_its_folder_and_keeps_a_shell() {
+    let t = Temp::new("run-script");
+    let out = t.path().join("out");
+    let prog = t.path().join("prog dir");
+    std::fs::create_dir(&prog).unwrap();
+    let exe = prog.join("tool");
+    std::fs::write(&exe, format!("#!/bin/sh\npwd > '{}'\n", out.display())).unwrap();
+    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let status = Command::new("sh").args(["-c", RUN_SCRIPT, "flit"]).arg(&prog).arg(&exe).env("SHELL", "/bin/true").status().unwrap();
+    assert!(status.success());
+    assert_eq!(std::fs::read_to_string(&out).unwrap().trim_end(), prog.to_str().unwrap());
+}
+
+#[test]
+fn only_executable_elf_programs_and_appimages_run_directly() {
+    let t = Temp::new("direct");
+    let sh = std::fs::read("/bin/sh").unwrap();
+    assert!(elf_program(&sh[..sh.len().min(4096)]), "a dynamically linked program has an interpreter");
+    let lib = ["/lib/x86_64-linux-gnu/libm.so.6", "/usr/lib/x86_64-linux-gnu/libm.so.6", "/usr/lib64/libm.so.6", "/usr/lib/libm.so.6"].into_iter().find_map(|p| std::fs::read(p).ok());
+    if let Some(lib) = lib {
+        assert!(!elf_program(&lib[..lib.len().min(4096)]), "a shared library is not a program");
+    }
+    assert!(!elf_program(b"#!/bin/sh\necho hi\n"));
+    let copy = t.path().join("tool");
+    std::fs::write(&copy, &sh).unwrap();
+    std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(!runs_directly(&copy), "a program without the execute bit opens like any file");
+    std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(runs_directly(&copy));
+    let script = t.path().join("script.sh");
+    std::fs::write(&script, "#!/bin/sh\necho hi\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(!runs_directly(&script), "scripts open in their editor instead of running");
+    let app = t.path().join("Tool.AppImage");
+    let mut static_header = sh[..64].to_vec();
+    static_header[16] = 3;
+    static_header[17] = 0;
+    std::fs::write(&app, &static_header).unwrap();
+    std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(runs_directly(&app), "an AppImage runs even when its runtime has no interpreter");
+    assert!(!runs_directly(t.path()));
+}
+
+#[test]
+fn a_program_without_the_execute_bit_asks_before_running() {
+    let t = Temp::new("needs-exec");
+    let app = t.path().join("Tool.AppImage");
+    let mut elf = b"\x7fELF\x02\x01\x01".to_vec();
+    elf.resize(64, 0);
+    std::fs::write(&app, &elf).unwrap();
+    std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(needs_exec_bit(&app));
+    std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o744)).unwrap();
+    assert!(!needs_exec_bit(&app));
+    let text = t.path().join("notes.txt");
+    std::fs::write(&text, b"hello").unwrap();
+    assert!(!needs_exec_bit(&text));
+}

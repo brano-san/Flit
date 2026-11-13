@@ -7,14 +7,26 @@ use super::App;
 use crate::hash::FxHashMap;
 use crate::input::{Key, Mods};
 use serde_json::{Map, Value as Json};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
+
+static UNIX_DEFAULTS: AtomicBool = AtomicBool::new(false);
+
+pub fn set_unix_defaults(on: bool) {
+    UNIX_DEFAULTS.store(on, Ordering::Relaxed);
+}
+
+fn unix_defaults() -> bool {
+    UNIX_DEFAULTS.load(Ordering::Relaxed)
+}
 
 #[derive(Clone, Debug)]
 pub struct Keymap {
     custom: Vec<Option<Vec<Chord>>>,
     unknown: Map<String, Json>,
     owners: FxHashMap<Chord, usize>,
+    unix: bool,
 }
 
 impl PartialEq for Keymap {
@@ -26,10 +38,23 @@ impl PartialEq for Keymap {
 impl Eq for Keymap {}
 
 impl Keymap {
-    fn new(custom: Vec<Option<Vec<Chord>>>, unknown: Map<String, Json>) -> Self {
-        let mut k = Self { custom, unknown, owners: FxHashMap::default() };
+    fn new(custom: Vec<Option<Vec<Chord>>>, unknown: Map<String, Json>, unix: bool) -> Self {
+        let mut k = Self { custom, unknown, owners: FxHashMap::default(), unix };
         k.reindex();
         k
+    }
+
+    pub fn unix(&self) -> bool {
+        self.unix
+    }
+
+    pub fn defaults_of(&self, i: usize) -> &'static [Chord] {
+        ACTIONS[i].defaults(self.unix)
+    }
+
+    fn rebased(&self, unix: bool) -> Self {
+        let custom = self.custom.iter().enumerate().map(|(i, c)| c.clone().filter(|k| k.as_slice() != ACTIONS[i].defaults(unix))).collect();
+        Self::new(custom, self.unknown.clone(), unix)
     }
 
     fn reindex(&mut self) {
@@ -44,7 +69,7 @@ impl Keymap {
     }
 
     pub fn keys(&self, i: usize) -> &[Chord] {
-        self.custom.get(i).and_then(Option::as_deref).unwrap_or(ACTIONS[i].keys)
+        self.custom.get(i).and_then(Option::as_deref).unwrap_or(self.defaults_of(i))
     }
 
     pub fn owner(&self, c: Chord) -> Option<usize> {
@@ -64,7 +89,7 @@ impl Keymap {
     }
 
     pub fn shown(&self, i: usize) -> Vec<String> {
-        ACTIONS[i].shown_keys(self.keys(i))
+        ACTIONS[i].shown_keys(self.keys(i), self.unix)
     }
 
     pub fn text_of(&self, id: &str) -> String {
@@ -80,7 +105,7 @@ impl Keymap {
     }
 
     fn put(&mut self, i: usize, keys: Vec<Chord>) {
-        self.custom[i] = (keys != ACTIONS[i].keys).then_some(keys);
+        self.custom[i] = (keys != self.defaults_of(i)).then_some(keys);
     }
 
     fn take(&mut self, c: Chord, keep: usize) -> Option<usize> {
@@ -115,7 +140,7 @@ impl Keymap {
     }
 
     pub fn restore(&mut self, i: usize) -> Vec<usize> {
-        let taken = ACTIONS[i].keys.iter().filter_map(|&c| self.take(c, i)).collect();
+        let taken = self.defaults_of(i).iter().filter_map(|&c| self.take(c, i)).collect();
         self.custom[i] = None;
         self.reindex();
         taken
@@ -132,9 +157,13 @@ impl Keymap {
     }
 }
 
+pub fn defaults_for(unix: bool) -> Arc<Keymap> {
+    static DEFAULTS: [OnceLock<Arc<Keymap>>; 2] = [OnceLock::new(), OnceLock::new()];
+    DEFAULTS[unix as usize].get_or_init(|| Arc::new(Keymap::new(vec![None; ACTIONS.len()], Map::new(), unix))).clone()
+}
+
 pub fn defaults() -> Arc<Keymap> {
-    static DEFAULTS: OnceLock<Arc<Keymap>> = OnceLock::new();
-    DEFAULTS.get_or_init(|| Arc::new(Keymap::new(vec![None; ACTIONS.len()], Map::new()))).clone()
+    defaults_for(unix_defaults())
 }
 
 pub fn parse_chord(s: &str) -> Option<Chord> {
@@ -195,7 +224,7 @@ pub fn refusal(c: Chord) -> Option<String> {
     if c.key == Key::Other {
         return Some(S::ErrorsKeymapUnknownKey.en().into());
     }
-    if ACTIONS.iter().any(|a| a.keys.contains(&c)) {
+    if ACTIONS.iter().any(|a| a.keys.contains(&c) || a.unix.is_some_and(|k| k.contains(&c))) {
         return None;
     }
     if matches!(c.key, Key::Char(_) | Key::Space) && !m.ctrl && !m.alt {
@@ -207,10 +236,10 @@ pub fn refusal(c: Chord) -> Option<String> {
     }
 }
 
-fn clash(custom: &[Option<Vec<Chord>>]) -> Option<(Chord, usize, usize)> {
+fn clash(custom: &[Option<Vec<Chord>>], unix: bool) -> Option<(Chord, usize, usize)> {
     let mut seen = FxHashMap::default();
     for (i, own) in custom.iter().enumerate().filter(|&(i, _)| ACTIONS[i].rebindable()) {
-        for &c in own.as_deref().unwrap_or(ACTIONS[i].keys) {
+        for &c in own.as_deref().unwrap_or(ACTIONS[i].defaults(unix)) {
             if let Some(j) = seen.insert(c, i) {
                 return Some((c, j, i));
             }
@@ -220,9 +249,13 @@ fn clash(custom: &[Option<Vec<Chord>>]) -> Option<(Chord, usize, usize)> {
 }
 
 pub fn parse(j: &Json) -> Option<(Arc<Keymap>, Vec<String>)> {
+    parse_for(j, unix_defaults())
+}
+
+pub fn parse_for(j: &Json, unix: bool) -> Option<(Arc<Keymap>, Vec<String>)> {
     let map = j.as_object()?;
     if map.is_empty() {
-        return Some((defaults(), Vec::new()));
+        return Some((defaults_for(unix), Vec::new()));
     }
     let mut custom: Vec<Option<Vec<Chord>>> = vec![None; ACTIONS.len()];
     let (mut unknown, mut problems) = (Map::new(), Vec::new());
@@ -252,10 +285,10 @@ pub fn parse(j: &Json) -> Option<(Arc<Keymap>, Vec<String>)> {
         }
         match bad {
             Some(p) => problems.push(p),
-            None => custom[i] = (keys != ACTIONS[i].keys).then_some(keys),
+            None => custom[i] = (keys != ACTIONS[i].defaults(unix)).then_some(keys),
         }
     }
-    while let Some((c, a, b)) = clash(&custom) {
+    while let Some((c, a, b)) = clash(&custom, unix) {
         if custom[a].is_none() && custom[b].is_none() {
             break;
         }
@@ -264,8 +297,8 @@ pub fn parse(j: &Json) -> Option<(Arc<Keymap>, Vec<String>)> {
         custom[b] = None;
     }
     match custom.iter().all(Option::is_none) && unknown.is_empty() {
-        true => Some((defaults(), problems)),
-        false => Some((Arc::new(Keymap::new(custom, unknown)), problems)),
+        true => Some((defaults_for(unix), problems)),
+        false => Some((Arc::new(Keymap::new(custom, unknown, unix)), problems)),
     }
 }
 
@@ -275,8 +308,16 @@ impl App {
     }
 
     pub(super) fn set_keymap(&mut self, k: Arc<Keymap>) {
-        self.keymap = k;
+        let unix = self.caps.unix_paths;
+        self.keymap = if k.unix == unix { k } else { Arc::new(k.rebased(unix)) };
         self.dirty = true;
+    }
+
+    pub fn set_caps(&mut self, caps: crate::caps::Caps) {
+        self.caps = caps;
+        let k = self.keymap.clone();
+        self.set_keymap(k);
+        self.layout();
     }
 
     pub(super) fn edit_keys<R>(&mut self, f: impl FnOnce(&mut Keymap) -> R) -> R {
@@ -320,7 +361,7 @@ impl App {
     }
 
     pub(super) fn restore_all_keys(&mut self) {
-        self.keymap = defaults();
+        self.keymap = defaults_for(self.caps.unix_paths);
         self.layout();
         self.dirty = true;
         self.status(S::KeymapStatusRestoredAll.t());
@@ -337,7 +378,7 @@ impl App {
         let mut rows: Vec<(String, String)> = self.keymap.keys(action).iter().map(|c| (tr!(S::KeymapEditorChange, key = chord_text(c)), S::KeymapEditorRemoves.t().to_owned())).collect();
         rows.push((S::A11yButtonAddShortcut.t().to_owned(), String::new()));
         if self.keymap.is_custom(action) {
-            rows.push((S::A11yButtonRestoreShortcut.t().to_owned(), ACTIONS[action].keys.iter().map(chord_text).collect::<Vec<_>>().join(", ")));
+            rows.push((S::A11yButtonRestoreShortcut.t().to_owned(), self.keymap.defaults_of(action).iter().map(chord_text).collect::<Vec<_>>().join(", ")));
         }
         rows.push((S::SettingsPageButtonRestoreKeys.t().to_owned(), String::new()));
         let mut p = Palette::new(Pick::Keys(action), rows, "");

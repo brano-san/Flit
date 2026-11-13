@@ -19,6 +19,7 @@ invalid_rows = "El índice envió filas no válidas: {error}"
 unavailable = "La búsqueda no está disponible: {error}"
 cannot_start = "No se puede iniciar la búsqueda: {error}"
 shell = "Windows Search: {error}"
+content_unsupported = "La búsqueda de contenido (consultas $) aún no está disponible en Linux"
 
 [column]
 folder = "Carpeta"
@@ -30,6 +31,7 @@ tagged = "Archivos etiquetados"
 connecting = "Conectando con el índice"
 service = "Servicio de índice"
 fallback = "Índice local (flit-indexd no disponible)"
+local = "Índice local"
 off = "La indexación está desactivada en Configuración › Avanzado; Ctrl+Shift+F busca en la carpeta abierta"
 
 [index]

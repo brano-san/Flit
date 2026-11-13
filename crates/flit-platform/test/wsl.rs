@@ -1,6 +1,6 @@
 use super::*;
 use flit_core::listing::{ChangeKind, DirChange, DirStats};
-use flit_core::provider::{Conflict, OpCtl, OpProgress, Resolve, Template};
+use flit_core::provider::{Conflict, Failure, OpCtl, OpProgress, Recover, Resolve, Template};
 use flit_core::sort::CaseMode;
 use flit_core::Meta;
 use flit_proto::listing::EntryBatch;
@@ -481,4 +481,26 @@ fn windows_form_operations_skip_the_agent() {
     s.wsl.submit(ProviderRequest::Op { tab: 1, id: 9, op: op.clone(), ctl: OpCtl::default() });
     until("share", || s.local.0.lock().unwrap().len() == 1);
     assert!(matches!(&s.local.0.lock().unwrap()[0], ProviderRequest::Op { id: 9, op: o, .. } if *o == op));
+}
+
+fn failing_events(req: &Request) -> Option<Vec<Event>> {
+    let failure = |path: &str| Failure { path: unix(path), error: "Permission denied".into(), fatal: false };
+    Some(match req {
+        Request::Op { id, .. } => vec![Event::OpFailure { id: *id, failure: failure("/src/a") }],
+        Request::Recover { id, choice: Some(Recover::Retry), .. } => vec![Event::OpFailure { id: *id, failure: failure("/etc/shadow") }],
+        _ => Vec::new(),
+    })
+}
+
+#[test]
+fn failures_are_asked_through_the_agent_and_paths_outside_the_operation_end_it() {
+    let s = setup(Fake::new(failing_events), Timing::default());
+    let ctl = OpCtl::default();
+    s.wsl.submit(ProviderRequest::Op { tab: 1, id: 6, op: copy(), ctl: ctl.clone() });
+    let failure = event(&s.events, |e| if let ProviderEvent::OpFailure { tab: 1, id: 6, failure } = e { Some(failure) } else { None });
+    assert_eq!((failure.path, failure.error.as_str(), failure.fatal), (unix("/src/a"), "Permission denied", false));
+    ctl.answer_failure(Recover::Retry, false);
+    let lost = event(&s.events, |e| if let ProviderEvent::OpDone { tab: 1, id: 6, error, .. } = e { Some(error) } else { None });
+    assert!(lost.is_some_and(|e| e.contains("was lost")), "a failure naming another path is refused like a forged conflict");
+    assert!(s.fake.seen().iter().any(|r| matches!(r, Request::Recover { id: 1, choice: Some(Recover::Retry), all: false })));
 }

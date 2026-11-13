@@ -45,12 +45,14 @@ mod popup;
 mod context;
 pub mod options;
 mod own_menu;
+mod open_with;
 mod prefetch;
 mod confirm;
 mod fuzzy;
 mod tooltip;
 mod widgets;
 mod properties;
+mod permissions;
 mod git;
 mod tree;
 mod bottom;
@@ -63,6 +65,7 @@ pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource, MAX_HISTORY};
 pub use sidebar::{Drive, KnownFolder, NavPrefs, NavState, Places, QuickPrefs, Section};
 pub use home::{Recent, Widget};
+pub use network::server_uri;
 pub const UI_SCALE: (u32, u32) = (70, 200);
 pub const SPRING_DELAY_MAX_MS: u32 = 3000;
 pub use details::{folder_key, Columns, FolderView, FolderViews, ViewMode, ViewPrefs, EXTRA, ORDERED, THUMB_CACHE_MB};
@@ -79,7 +82,7 @@ pub use address::Typed;
 pub use tabbar::{MovedTab, Startup, WindowSession};
 pub use settings::{ConfirmDelete, Doc, Page, Setting, Value, SETTINGS};
 pub use settings_page::{About, LOG_FILE};
-pub use keymap::Keymap;
+pub use keymap::{set_unix_defaults, Keymap};
 pub use tooltip::TipText;
 pub use panels::{PanelsSession, Shape};
 
@@ -299,6 +302,7 @@ pub enum WindowCmd {
     Minimize,
     ToggleMaximize,
     Close,
+    Quit,
     Fullscreen,
     Compact(Option<bool>),
 }
@@ -944,10 +948,27 @@ impl App {
     }
 
     pub fn open(&mut self, cmd: &Open, shell_folder: &dyn Fn(&str) -> Option<Location>, now: Instant) {
-        let (routes, errors) = open::routes(cmd, shell_folder);
+        let split = network::split_remote(cmd).filter(|_| self.caps.unix_paths);
+        let cmd = match &split {
+            Some((servers, rest)) => {
+                for uri in servers {
+                    self.launch(crate::provider::Launch::ConnectServer(uri.clone()));
+                }
+                if rest.is_empty() {
+                    self.addr.pending = None;
+                    return;
+                }
+                rest
+            }
+            None => cmd,
+        };
+        let (routes, errors) = open::routes_for(cmd, shell_folder, self.caps.unix_paths);
         let target = if cmd.target == OpenTarget::Default { self.open_target } else { cmd.target };
         let typed = self.addr.pending.take();
         if let Some(text) = typed.as_ref().filter(|_| routes.is_empty() && matches!(errors.first(), Some(ResolveError::Invalid(_)))) {
+            if self.caps.unix_paths && open::typed_as_path(text) {
+                return self.show_open_errors(&errors);
+            }
             return self.run_typed(text);
         }
         let watched = !routes.is_empty();
@@ -1243,6 +1264,8 @@ impl App {
             ProviderEvent::OpDone { tab, id, error, report } => self.op_done(tab, id, error.map(|e| crate::i18n::localize(&e).into_owned()), report, now),
             ProviderEvent::OpProgress { id, progress, .. } => self.job_progress(id, progress, now),
             ProviderEvent::OpConflict { id, conflict, .. } => self.job_conflict(id, conflict),
+            ProviderEvent::OpFailure { id, failure, .. } => self.job_failure(id, failure),
+            ProviderEvent::Untrashable { id, items, .. } => self.offer_delete(id, items),
             ProviderEvent::Navigate { tab, path } => {
                 if self.tab().id == tab {
                     self.navigate(Location::from_local(path), now);
@@ -1267,6 +1290,8 @@ impl App {
                     }
                 }
             }
+            ProviderEvent::Access { id, items, accounts, .. } => self.properties_access(id, items, accounts),
+            ProviderEvent::NotExecutable { tab, path } => self.ask_allow_run(tab, path),
         }
     }
 
@@ -1655,7 +1680,7 @@ impl App {
                     .collect();
                 self.dispatch(routes, OpenTarget::CurrentTab, now);
             }
-            Event::CloseRequested => self.effects.push(Effect::Window(WindowCmd::Close)),
+            Event::CloseRequested => self.close_window(now),
             Event::ShellVerb(verb) => self.shell_verb(verb),
             Event::MenuCommand(k) => self.menu_command(*k, now),
             Event::ShowMenu { .. } | Event::ShellItems { .. } => {}
@@ -1842,6 +1867,10 @@ impl App {
             }
             Hit::Group(_) => self.focus = Focus::List,
             Hit::Preview(p) => self.preview_mouse_down(p, x, y),
+            Hit::ColSep(i) if button == MouseButton::Left && clicks >= 2 && self.layout.columns[i] != Column::Name => {
+                self.drag = Drag::None;
+                self.column_command(menu::ColumnCmd::Fit(self.layout.columns[i]));
+            }
             Hit::ColSep(i) => {
                 let col = self.layout.columns[i];
                 let scale = self.content_px();
@@ -1915,7 +1944,7 @@ impl App {
             Hit::QuickClear => self.clear_quick_filter(),
             Hit::Caption(0) => self.effects.push(Effect::Window(WindowCmd::Minimize)),
             Hit::Caption(1) => self.effects.push(Effect::Window(WindowCmd::ToggleMaximize)),
-            Hit::Caption(_) => self.effects.push(Effect::Window(WindowCmd::Close)),
+            Hit::Caption(_) => self.close_window(now),
             Hit::Menu => self.open_main_menu(),
             Hit::QuickToggle => self.toggle_sidebar(),
             Hit::Crumb(i) => {
@@ -1995,7 +2024,7 @@ impl App {
             v.anchor = Some(i);
         }
         v.focus = Some(i);
-        if clicks == 1 && plain && self.single_click_opens(i) {
+        if clicks == 1 && plain && self.single_click_opens(i) && !self.open_on_release(row) {
             self.clicked_open = true;
             self.open_entry(i, now);
         }
@@ -2630,6 +2659,7 @@ impl App {
         let mut thumb_requests: Vec<IconRequest> = Vec::new();
         let mut type_requests: Vec<Vec<u8>> = Vec::new();
         let mut checks: Vec<(u32, bool)> = Vec::new();
+        let mut elided: Vec<usize> = Vec::new();
         let want_thumbs = self.prefs.thumbnails && matches!(mode, LayoutMode::Grid | LayoutMode::Cards) && !in_bin && (self.opts.thumbs != options::Thumbs::Local || !options::remote(&tab.view_loc));
         let thumb_px = thumbs::class_px(icon_px as u32);
         if let Some(v) = &tab.view {
@@ -2763,7 +2793,11 @@ impl App {
                     g.dl.round_rect(br, git::status_color(st), br.w / 2.0);
                     centered(g, br, st.letter(), FontStyle::new(FontFamily::Ui, br.h * 0.72, true), Color::rgb(0xFF_FF_FF));
                 }
-                let end = self.draw_name(g, &p, &self.shown_name(listing, i), e.tags, font, name_color);
+                let shown = self.shown_name(listing, i);
+                if g.measure(&shown, font) > (p.name.w - self.mark_reserve(e.tags)).max(0.0) {
+                    elided.push(row);
+                }
+                let end = self.draw_name(g, &p, &shown, &e, font, name_color);
                 if mode == LayoutMode::Tree && e.is_dir() {
                     if let Some(cr) = self.chevron_rect(row) {
                         let angle = match fold.filter(|(fd, ..)| fd.parent == i) {
@@ -2821,6 +2855,7 @@ impl App {
         }
         g.dl.set_clip(None);
         self.motion |= spinning && self.animations;
+        self.details.elided = elided;
         if self.details.checks.settle(checks, self.animations && self.prefs.checkboxes, now) {
             self.motion = true;
         }

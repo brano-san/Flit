@@ -1110,6 +1110,7 @@ impl App {
             }
             PlaceCmd::Eject(drive) => self.effects.push(launch(Launch::Eject(drive))),
             PlaceCmd::Launch(l) => self.effects.push(launch(l)),
+            PlaceCmd::Properties(path) if self.caps.unix_paths => self.properties_for(Some(path)),
             PlaceCmd::Properties(path) => self.effects.push(Effect::Properties(vec![path])),
             PlaceCmd::Hide(s) => self.toggle_section_shown(s),
             PlaceCmd::Compact => self.toggle_compact(),
@@ -1236,10 +1237,7 @@ impl App {
                     m.action("tags.new", S::MenuNewTag.t());
                     m.action("tags.manage", S::MenuManageTags.t());
                 }
-                Section::Libraries => {
-                    m.place(S::SidebarNewLibrary.t(), PlaceCmd::NewLibrary, false);
-                    m.place(S::SidebarRestoreLibraries.t(), PlaceCmd::RestoreLibraries, false);
-                }
+                Section::Libraries => library_places(a, m),
                 Section::Storage | Section::Wsl => {}
             }
         })
@@ -1252,8 +1250,7 @@ impl App {
             m.action("drive.disconnect", S::SidebarDriveDisconnectDialog.t());
             m.action("drive.connect_server", S::SidebarDriveConnectServer.t());
             m.separator();
-            m.place(S::SidebarNewLibrary.t(), PlaceCmd::NewLibrary, false);
-            m.place(S::SidebarRestoreLibraries.t(), PlaceCmd::RestoreLibraries, false);
+            library_places(a, m);
             m.separator();
             sections_submenu(m, sb);
             m.toggle(S::SidebarCompact.t(), PlaceCmd::Compact, sb.prefs.compact);
@@ -1771,4 +1768,13 @@ fn sections_submenu(m: &mut Menu, sb: &Sidebar) {
             m.toggle(s.title(), PlaceCmd::Hide(s), !sb.is_hidden(s));
         }
     });
+}
+
+fn library_places(a: &App, m: &mut Menu) {
+    if a.caps.supports("libraries.new") {
+        m.place(S::SidebarNewLibrary.t(), PlaceCmd::NewLibrary, false);
+    }
+    if a.caps.supports("libraries.restore") {
+        m.place(S::SidebarRestoreLibraries.t(), PlaceCmd::RestoreLibraries, false);
+    }
 }

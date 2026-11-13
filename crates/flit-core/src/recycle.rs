@@ -36,7 +36,10 @@ pub fn original(l: &Listing, i: u32) -> Option<FsPath> {
 }
 
 pub fn in_bin(p: &FsPath) -> bool {
-    p.components().any(|c| c.eq_ignore_ascii_case(BIN_FOLDER))
+    let parts: Vec<&[u8]> = p.components().collect();
+    let trash = |c: &[u8]| c == b"Trash" || c.starts_with(b".Trash-");
+    let freedesktop = || parts.windows(2).any(|w| trash(w[0]) && w[1] == b"files") || parts.windows(3).any(|w| w[0] == b".Trash" && w[2] == b"files");
+    parts.iter().any(|c| c.eq_ignore_ascii_case(BIN_FOLDER)) || (p.case_sensitive() && freedesktop())
 }
 
 #[cfg(test)]

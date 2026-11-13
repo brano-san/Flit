@@ -482,7 +482,7 @@ fn bookmarked_files_show_as_files_open_on_click_and_take_no_drops() {
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } if path == *file.path())));
     assert_eq!(app.current_location(), &before, "a file bookmark does not navigate");
     let (x, y, t, none) = (r.x + 10.0, r.y + r.h / 2.0, Instant::now(), Mods::default());
-    app.drag(&DragEvent::Enter { paths: vec![FsPath::parse(r"C:\x.txt").unwrap()], x, y, mods: none, allowed: 7 }, t);
+    app.drag(&DragEvent::Enter { paths: vec![FsPath::parse(r"C:\x.txt").unwrap()], x, y, mods: none, allowed: 7, right: false }, t);
     assert_eq!(app.drag(&DragEvent::Drop { x, y, mods: none, allowed: 7 }, t), 0, "nothing is copied into a file");
     app.set_pinned(vec![loc(r"C:\a")]);
     app.toggle_pin(loc(r"C:\a"));
@@ -496,7 +496,7 @@ fn dragging_folders_onto_pinned_pins_them_and_collapsed_sections_spring_open() {
     let (x, y) = (pinned.x + 10.0, pinned.y + pinned.h / 2.0);
     let paths = vec![FsPath::parse(r"D:\new").unwrap(), FsPath::parse(r"D:\file.txt").unwrap()];
     let (t, all, none) = (Instant::now(), 7, Mods::default());
-    app.drag(&DragEvent::Enter { paths: paths.clone(), x, y, mods: none, allowed: all }, t);
+    app.drag(&DragEvent::Enter { paths: paths.clone(), x, y, mods: none, allowed: all, right: false }, t);
     assert_eq!(app.drop_caption(), Some(("Pin to %1".to_owned(), "Sidebar".to_owned())));
     assert_eq!(app.drop_spot(), Some(Spot::SideHeader(Section::Bookmarks)));
     assert_eq!(app.drag(&DragEvent::Drop { x, y, mods: none, allowed: all }, t), 4);
@@ -508,7 +508,7 @@ fn dragging_folders_onto_pinned_pins_them_and_collapsed_sections_spring_open() {
     app.toggle_section(Section::Storage);
     let drives = header(&app, Section::Storage);
     let (x, y) = (drives.x + 10.0, drives.y + drives.h / 2.0);
-    app.drag(&DragEvent::Enter { paths, x, y, mods: none, allowed: all }, t);
+    app.drag(&DragEvent::Enter { paths, x, y, mods: none, allowed: all, right: false }, t);
     assert_eq!(app.drag(&DragEvent::Over { x, y, mods: none, allowed: all }, t), 0);
     app.drag(&DragEvent::Over { x, y, mods: none, allowed: all }, t + Duration::from_millis(300));
     assert!(app.nav.sidebar.is_collapsed(Section::Storage));
@@ -818,7 +818,7 @@ fn dragging_a_recent_folder_or_file_onto_bookmarks_pins_it() {
         let b = app.nav.sidebar.items.iter().position(|it| it.section == Section::Bookmarks).unwrap();
         let target = app.nav.sidebar.rects[b];
         let (bx, by) = (target.x + 20.0, target.y + target.h / 2.0);
-        app.drag(&DragEvent::Enter { paths: dragged.clone(), x: bx, y: by, mods: none, allowed: 7 }, t);
+        app.drag(&DragEvent::Enter { paths: dragged.clone(), x: bx, y: by, mods: none, allowed: 7, right: false }, t);
         assert_ne!(app.drag(&DragEvent::Drop { x: bx, y: by, mods: none, allowed: 7 }, t), 0);
         assert!(app.drain_effects().any(|e| matches!(e, Effect::PinFolders(p) if p == dragged)), "{name} is pinned rather than copied into the bookmark");
         app.on_event(&Event::MouseUp { x: bx, y: by, button: MouseButton::Left }, t);

@@ -18,6 +18,11 @@ pub mod attr {
     pub const ARCHIVED: u32 = 1 << 7;
     pub const STREAM: u32 = 1 << 8;
     pub const NESTED: u32 = 1 << 9;
+    pub const EXEC: u32 = 1 << 10;
+    pub const ONLINE_ONLY: u32 = 1 << 12;
+    pub const PINNED: u32 = 1 << 13;
+    pub const OFFLINE: u32 = 1 << 14;
+    pub const NOT_LOCAL: u32 = ONLINE_ONLY | OFFLINE;
     pub const DELETED: u32 = 1 << 31;
 }
 
@@ -101,9 +106,29 @@ pub struct Listing {
     pub volume: u64,
     pub total: u64,
     pub nested: u32,
+    pub labels: Vec<(u32, Box<str>)>,
 }
 
 impl Listing {
+    pub fn labeled(&self, i: u32) -> Option<&str> {
+        if self.labels.is_empty() {
+            return None;
+        }
+        self.labels.binary_search_by_key(&i, |l| l.0).ok().map(|k| &*self.labels[k].1)
+    }
+
+    #[inline]
+    pub fn label(&self, i: u32) -> &[u8] {
+        self.labeled(i).map_or_else(|| self.name(i), str::as_bytes)
+    }
+
+    pub fn set_label(&mut self, i: u32, label: &str) {
+        match self.labels.binary_search_by_key(&i, |l| l.0) {
+            Ok(k) => self.labels[k].1 = label.into(),
+            Err(k) => self.labels.insert(k, (i, label.into())),
+        }
+    }
+
     #[inline]
     pub fn len(&self) -> usize {
         self.entries.len()
@@ -344,6 +369,15 @@ impl<'a> ListingBuilder<'a> {
     pub fn push(&mut self, name: &[u8], meta: Meta) {
         let i = self.listing.push(name, meta);
         self.keys.push(self.listing.name(i));
+    }
+
+    #[inline]
+    pub fn push_id(&mut self, name: &[u8], meta: Meta, id: u64) {
+        self.push(name, meta);
+        if let (Some(t), Some(volume)) = (&self.tags, self.volume) {
+            let i = self.listing.len() as u32 - 1;
+            self.listing.set_tags(i, t.mask(FileKey { volume, id }));
+        }
     }
 
     pub fn push_nested(&mut self, name: &[u8], meta: Meta, accessed: i64, folder: &[u8]) {

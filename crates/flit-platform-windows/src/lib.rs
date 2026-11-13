@@ -22,6 +22,7 @@ mod namespace;
 mod network;
 mod pipe;
 mod places;
+mod power;
 mod preview;
 mod prevhost;
 mod recycle;
@@ -29,6 +30,7 @@ mod service;
 mod shell;
 mod shellwin;
 mod tags;
+mod transfer;
 mod uia;
 mod walk_index;
 mod watcher;
@@ -237,8 +239,8 @@ impl Platform for Windows {
         winsearch::search(folder, query, keep_going, found)
     }
 
-    fn resolve_files(keys: &[flit_core::tags::FileKey]) -> Vec<flit_platform::Resolved> {
-        tags::resolve_files(keys)
+    fn resolve_files(files: &[(flit_core::tags::FileKey, &FsPath)]) -> Vec<flit_platform::Resolved> {
+        tags::resolve_files(&files.iter().map(|f| f.0).collect::<Vec<_>>())
     }
 
     fn download(url: &str, out: &mut dyn std::io::Write, progress: &mut dyn FnMut(u64, Option<u64>) -> bool) -> Result<(), PlatformError> {
@@ -247,6 +249,10 @@ impl Platform for Windows {
 
     fn wait_exit(pid: u32, limit: std::time::Duration) {
         update::wait_exit(pid, limit)
+    }
+
+    fn keep_awake(reason: &str) -> Option<flit_platform::Awake> {
+        power::Awake::hold(reason).map(|a| Box::new(a) as flit_platform::Awake)
     }
 }
 

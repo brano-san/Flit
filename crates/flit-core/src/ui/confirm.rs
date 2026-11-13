@@ -9,6 +9,7 @@ use crate::theme::Theme;
 use std::time::Instant;
 
 const WIDTH: f32 = 240.0;
+const WIDE: f32 = 360.0;
 const PAD: f32 = 12.0;
 const LINE: f32 = 22.0;
 const BUTTON_H: f32 = 28.0;
@@ -18,12 +19,15 @@ const GAP: f32 = 8.0;
 pub(super) enum Confirmed {
     Unpin(Location),
     Pin(super::MenuKind, String, bool),
+    Close,
+    Quit,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Confirm {
     pub(super) question: String,
     pub(super) yes: String,
+    no: &'static str,
     destructive: bool,
     then: Confirmed,
     pub anchor: Rect,
@@ -38,7 +42,8 @@ impl App {
     pub(super) fn ask(&mut self, anchor: Rect, (question, yes): (&str, &str), destructive: bool, then: Confirmed, now: Instant) {
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
-        let (w, h) = (s(WIDTH).min(self.size.0 - 2.0 * s(GAP)), 2.0 * s(PAD) + s(LINE) + s(GAP) + s(BUTTON_H));
+        let (width, no) = if matches!(then, Confirmed::Close | Confirmed::Quit) { (WIDE, S::UiCloseKeep.t()) } else { (WIDTH, S::WidgetsCancel.t()) };
+        let (w, h) = (s(width).min(self.size.0 - 2.0 * s(GAP)), 2.0 * s(PAD) + s(LINE) + s(GAP) + s(BUTTON_H));
         let below = anchor.bottom() + s(4.0);
         let y = if below + h <= self.size.1 - s(GAP) { below } else { (anchor.y - s(4.0) - h).max(s(GAP)) };
         let x = (anchor.x + anchor.w / 2.0 - w / 2.0).round().min(self.size.0 - w - s(GAP)).max(s(GAP));
@@ -46,7 +51,7 @@ impl App {
         let bw = ((w - 2.0 * s(PAD) - s(GAP)) / 2.0).floor();
         let by = rect.bottom() - s(PAD) - s(BUTTON_H);
         let buttons = [Rect::new(x + s(PAD), by, bw, s(BUTTON_H)), Rect::new(rect.right() - s(PAD) - bw, by, bw, s(BUTTON_H))];
-        self.confirm = Some(Confirm { question: question.to_owned(), yes: yes.to_owned(), destructive, then, anchor, rect, buttons, hot: None, pressed: None, opened: now });
+        self.confirm = Some(Confirm { question: question.to_owned(), yes: yes.to_owned(), no, destructive, then, anchor, rect, buttons, hot: None, pressed: None, opened: now });
         self.tip_hide();
         self.dirty = true;
     }
@@ -92,6 +97,14 @@ impl App {
             match c.then {
                 Confirmed::Unpin(loc) => self.unpin(loc, now),
                 Confirmed::Pin(kind, key, pin) => self.set_pin(kind, key, pin),
+                Confirmed::Close => {
+                    self.cancel_ops();
+                    self.effects.push(super::Effect::Window(super::WindowCmd::Close));
+                }
+                Confirmed::Quit => {
+                    self.cancel_ops();
+                    self.effects.push(super::Effect::Window(super::WindowCmd::Quit));
+                }
             }
         }
     }
@@ -108,7 +121,7 @@ impl App {
         p.g.text((line.x + (line.w - w) / 2.0).round(), y, &c.question, font, t.text, line.w);
         let yes_fill = if c.destructive { t.destructive } else { t.teal };
         p.button(c.buttons[0], &c.yes, font, (c.hot == Some(0)).then_some(yes_fill));
-        p.button(c.buttons[1], S::WidgetsCancel.t(), font, (c.hot == Some(1)).then_some(t.teal));
+        p.button(c.buttons[1], c.no, font, (c.hot == Some(1)).then_some(t.teal));
         let (opened, r) = (c.opened, c.rect);
         self.keep_ghost(g, Ghost::Confirm, from, (r.x + r.w / 2.0, r.y));
         self.pop(g, from, opened, (r.x + r.w / 2.0, r.y));

@@ -19,6 +19,7 @@ invalid_rows = "The index sent invalid rows: {error}"
 unavailable = "Search is unavailable: {error}"
 cannot_start = "Cannot start the search: {error}"
 shell = "Windows Search: {error}"
+content_unsupported = "Content search ($ queries) is not available on Linux yet"
 
 [column]
 folder = "Folder"
@@ -30,6 +31,7 @@ tagged = "Tagged files"
 connecting = "Connecting to the index"
 service = "Index service"
 fallback = "Local index (flit-indexd unavailable)"
+local = "Local index"
 off = "Indexing is off in Settings › Advanced; Ctrl+Shift+F searches the open folder"
 
 [index]

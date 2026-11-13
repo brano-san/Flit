@@ -17,7 +17,7 @@ use flit_core::preview::{HostCmd, PropGroup};
 use flit_core::render::{DrawList, Rect};
 use flit_core::ui::{Bitmap, DragEvent, IconRequest, NewTemplate, ShellMenu};
 use flit_core::digest::HashKind;
-use flit_core::provider::{Conflict, FileOp, Launch, OpCtl, OpProgress, Resolve, Stage};
+use flit_core::provider::{Access, Accounts, Conflict, Failure, FileOp, Launch, OpCtl, OpProgress, Recover, Resolve, Stage};
 use flit_core::listing::DirStats;
 use flit_core::tags::FileKey;
 use flit_core::{FsError, FsPath, ListingBuilder, Location, Meta, Open, ProviderEvent, ProviderRequest, TabId};
@@ -43,11 +43,16 @@ pub enum Resolved {
 pub struct PlatformError {
     pub code: i64,
     pub message: String,
+    pub untrashable: Vec<FsPath>,
 }
 
 impl PlatformError {
     pub fn new(code: i64, message: impl Into<String>) -> Self {
-        Self { code, message: message.into() }
+        Self { code, message: message.into(), untrashable: Vec::new() }
+    }
+    pub fn untrashable(mut self, items: Vec<FsPath>) -> Self {
+        self.untrashable = items;
+        self
     }
     pub fn unsupported(what: &str) -> Self {
         Self::new(-1, format!("{what}: not supported on this platform yet"))
@@ -189,6 +194,9 @@ pub trait Fs: Send + Sync + 'static {
     fn desktop_ini(&self, _dir: &FsPath) -> Option<DesktopIni> {
         None
     }
+    fn localized_name(&self, _dir: &FsPath) -> Option<String> {
+        None
+    }
     fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, DirStats) + Sync)) {
         local::dir_sizes(self, dir, items, keep_going, report)
     }
@@ -272,6 +280,12 @@ pub trait Shell: Sized {
     fn browse(&mut self, _exts: &[&str], _folder: bool, _start: Option<&FsPath>) -> Option<FsPath> {
         None
     }
+    fn access(&mut self, _items: &[FsPath]) -> Option<(Vec<Option<Access>>, Accounts)> {
+        None
+    }
+    fn needs_exec_bit(&mut self, _path: &FsPath) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Default)]
@@ -294,7 +308,9 @@ struct JobState {
     ctl: OpCtl,
     progress: Sink<OpProgress>,
     conflict: Sink<Conflict>,
+    failure: Option<Sink<Failure>>,
     now: std::sync::Mutex<Shown>,
+    performed: std::sync::Mutex<Option<FileOp>>,
 }
 
 #[derive(Clone)]
@@ -302,7 +318,19 @@ pub struct Job(Arc<JobState>);
 
 impl Job {
     pub fn new(ctl: OpCtl, progress: Sink<OpProgress>, conflict: Sink<Conflict>) -> Self {
-        Self(Arc::new(JobState { ctl, progress, conflict, now: Default::default() }))
+        Self(Arc::new(JobState { ctl, progress, conflict, failure: None, now: Default::default(), performed: Default::default() }))
+    }
+
+    pub fn asking(ctl: OpCtl, progress: Sink<OpProgress>, conflict: Sink<Conflict>, failure: Sink<Failure>) -> Self {
+        Self(Arc::new(JobState { ctl, progress, conflict, failure: Some(failure), now: Default::default(), performed: Default::default() }))
+    }
+
+    pub fn performed(&self, op: FileOp) {
+        *self.0.performed.lock().unwrap_or_else(|e| e.into_inner()) = Some(op);
+    }
+
+    pub fn take_performed(&self) -> Option<FileOp> {
+        self.0.performed.lock().unwrap_or_else(|e| e.into_inner()).take()
     }
 
     pub fn detached(policy: Resolve) -> Self {
@@ -335,12 +363,53 @@ impl Job {
     pub fn resolve(&self, c: Conflict) -> Option<Resolve> {
         self.0.ctl.resolve(|| (self.0.conflict)(c))
     }
+
+    pub fn asks_failures(&self) -> bool {
+        self.0.failure.is_some()
+    }
+
+    pub fn fail(&self, f: Failure) -> Option<Recover> {
+        match &self.0.failure {
+            Some(sink) => self.0.ctl.recover(f.fatal, || sink(f)),
+            None => Some(Recover::Skip),
+        }
+    }
+}
+
+pub type Awake = Box<dyn std::any::Any>;
+
+pub struct KeepAwake<G = Awake> {
+    busy: bool,
+    guard: Option<G>,
+}
+
+impl<G> Default for KeepAwake<G> {
+    fn default() -> Self {
+        Self { busy: false, guard: None }
+    }
+}
+
+impl<G> KeepAwake<G> {
+    pub fn track(&mut self, busy: bool, acquire: impl FnOnce() -> Option<G>) {
+        if busy == self.busy {
+            return;
+        }
+        self.busy = busy;
+        self.guard = if busy { acquire() } else { None };
+    }
+
+    pub fn held(&self) -> bool {
+        self.guard.is_some()
+    }
 }
 
 pub trait FileOps {
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome;
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError>;
     fn clear_clipboard(&mut self);
+    fn clipboard_content(&mut self) -> bool {
+        false
+    }
 }
 
 pub enum Instance<S> {
@@ -458,8 +527,8 @@ pub trait Platform: 'static {
     fn file_key(_path: &FsPath) -> Option<FileKey> {
         None
     }
-    fn resolve_files(keys: &[FileKey]) -> Vec<Resolved> {
-        keys.iter().map(|_| Resolved::Unavailable).collect()
+    fn resolve_files(files: &[(FileKey, &FsPath)]) -> Vec<Resolved> {
+        files.iter().map(|_| Resolved::Unavailable).collect()
     }
     fn shell_search(_folder: Option<&FsPath>, _query: &str, _keep_going: &dyn Fn() -> bool, _found: &mut dyn FnMut(FsPath, flit_core::Meta)) -> Result<(), PlatformError> {
         Err(PlatformError::new(-1, flit_core::i18n::S::ErrorsEngineNoWindowsSearch.en()))
@@ -468,4 +537,11 @@ pub trait Platform: 'static {
         Err(PlatformError::unsupported("downloads"))
     }
     fn wait_exit(_pid: u32, _limit: std::time::Duration) {}
+    fn keep_awake(_reason: &str) -> Option<Awake> {
+        None
+    }
 }
+
+#[cfg(test)]
+#[path = "../test/lib.rs"]
+mod tests;

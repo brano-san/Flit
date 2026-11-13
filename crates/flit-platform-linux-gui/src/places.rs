@@ -80,7 +80,7 @@ pub fn local_path(gio_info: &str) -> Option<PathBuf> {
 }
 
 pub fn connect(uri: &str) -> std::io::Result<PathBuf> {
-    let run = |args: &[&str]| std::process::Command::new("gio").args(args).stdin(std::process::Stdio::null()).output();
+    let run = |args: &[&str]| std::process::Command::new("gio").args(args).stdin(std::process::Stdio::null()).output().map_err(|e| missing_tool("gio", "libglib2.0-bin", e));
     let mounted = run(&["mount", uri])?;
     let info = run(&["info", uri])?;
     local_path(&String::from_utf8_lossy(&info.stdout)).ok_or_else(|| std::io::Error::other(String::from_utf8_lossy(&mounted.stderr).trim().to_owned()))
@@ -127,8 +127,19 @@ pub fn unmounted_from(lsblk: &str) -> Vec<Drive> {
     out
 }
 
+pub fn mount_args(device: &Path) -> [std::ffi::OsString; 3] {
+    ["mount".into(), "-b".into(), device.as_os_str().to_owned()]
+}
+
+fn missing_tool(tool: &str, package: &str, e: std::io::Error) -> std::io::Error {
+    match e.kind() {
+        std::io::ErrorKind::NotFound => std::io::Error::new(std::io::ErrorKind::NotFound, format!("{tool} is not installed: install the {package} package")),
+        _ => e,
+    }
+}
+
 pub fn mount(device: &Path) -> std::io::Result<PathBuf> {
-    let out = std::process::Command::new("udisksctl").args(["mount", "--no-user-interaction", "-b"]).arg(device).output()?;
+    let out = std::process::Command::new("udisksctl").args(mount_args(device)).output().map_err(|e| missing_tool("udisksctl", "udisks2", e))?;
     if !out.status.success() {
         return Err(std::io::Error::other(String::from_utf8_lossy(&out.stderr).trim().to_owned()));
     }
@@ -152,7 +163,7 @@ pub fn eject(point: &Path) -> std::io::Result<()> {
             match std::process::Command::new(&program).args(&args).status() {
                 Ok(s) if s.success() => {}
                 Ok(s) => return tracing::warn!("{} {:?} failed: {s}", program.to_string_lossy(), args),
-                Err(e) => return tracing::warn!("cannot run udisksctl: {e}"),
+                Err(e) => return tracing::warn!("{}", missing_tool("udisksctl", "udisks2", e)),
             }
         }
     })?;

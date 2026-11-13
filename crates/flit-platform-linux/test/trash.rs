@@ -86,3 +86,28 @@ fn deletion_dates_read_back_as_the_same_moment() {
     assert_eq!(trash_time(b"2026-13-45"), None);
     assert_eq!(trash_time(b"garbage-not-a-date"), None);
 }
+
+#[test]
+fn other_mounts_prefer_a_sticky_shared_trash_and_otherwise_their_own_folder() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    let t = Temp::new("trash-shared");
+    let trash = home(&t);
+    let uid = unsafe { libc::getuid() };
+    let own = |top: &Path| top.join(format!(".Trash-{uid}"));
+    let plain = t.path().join("plain");
+    std::fs::create_dir(&plain).unwrap();
+    assert_eq!(trash.top_trash(&plain), own(&plain));
+    let sticky = t.path().join("sticky");
+    std::fs::create_dir_all(sticky.join(".Trash")).unwrap();
+    std::fs::set_permissions(sticky.join(".Trash"), std::fs::Permissions::from_mode(0o1777)).unwrap();
+    assert_eq!(trash.top_trash(&sticky), sticky.join(".Trash").join(uid.to_string()));
+    assert!(sticky.join(".Trash").join(uid.to_string()).is_dir());
+    let loose = t.path().join("loose");
+    std::fs::create_dir_all(loose.join(".Trash")).unwrap();
+    std::fs::set_permissions(loose.join(".Trash"), std::fs::Permissions::from_mode(0o777)).unwrap();
+    assert_eq!(trash.top_trash(&loose), own(&loose), "a shared Trash without the sticky bit is not safe");
+    let linked = t.path().join("linked");
+    std::fs::create_dir(&linked).unwrap();
+    symlink(sticky.join(".Trash"), linked.join(".Trash")).unwrap();
+    assert_eq!(trash.top_trash(&linked), own(&linked), "a symbolic link is never trusted as the shared Trash");
+}

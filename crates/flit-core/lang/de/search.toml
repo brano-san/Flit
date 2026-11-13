@@ -19,6 +19,7 @@ invalid_rows = "Der Index hat ungültige Zeilen gesendet: {error}"
 unavailable = "Die Suche ist nicht verfügbar: {error}"
 cannot_start = "Die Suche kann nicht gestartet werden: {error}"
 shell = "Windows Search: {error}"
+content_unsupported = "Die Inhaltssuche ($-Abfragen) ist unter Linux noch nicht verfügbar"
 
 [column]
 folder = "Ordner"
@@ -30,6 +31,7 @@ tagged = "Dateien mit Tags"
 connecting = "Verbindung zum Index wird hergestellt"
 service = "Indexdienst"
 fallback = "Lokaler Index (flit-indexd nicht verfügbar)"
+local = "Lokaler Index"
 off = "Indizierung ist in Einstellungen › Erweitert aus; Ctrl+Shift+F sucht im geöffneten Ordner"
 
 [index]

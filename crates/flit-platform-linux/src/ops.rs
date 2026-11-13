@@ -1,7 +1,10 @@
 use crate::fs::{cstring, host, names, node_at, open_at, open_dir, open_dir_at, Node};
+use crate::mounts::Mount;
 use crate::trash::Trash;
+use flit_core::i18n::S;
+use flit_core::limits::{self, BadName};
 use flit_core::path::PathKind;
-use flit_core::provider::{Conflict, FileOp, Resolve, Stage, Template};
+use flit_core::provider::{Conflict, Failure, FileOp, Recover, Resolve, Stage, Template};
 use flit_core::FsPath;
 use flit_platform::{Job, OpOutcome, PlatformError, CANCELLED};
 use flit_proto::listing::check_name;
@@ -10,6 +13,8 @@ use std::io::{self, Write};
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
+
+mod access;
 
 type Pairs = Vec<(FsPath, FsPath)>;
 
@@ -147,6 +152,14 @@ fn fs_path(p: &Path) -> Option<FsPath> {
     FsPath::parse_exact(p.as_os_str().as_bytes()).filter(|p| p.kind() == PathKind::Unix)
 }
 
+fn reason(e: &io::Error) -> String {
+    let text = e.to_string();
+    match text.rfind(" (os error ") {
+        Some(at) if e.raw_os_error().is_some() => text[..at].to_owned(),
+        _ => text,
+    }
+}
+
 fn free_space(fd: RawFd) -> Option<u64> {
     let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
     (unsafe { libc::fstatvfs(fd, &mut st) } == 0).then(|| st.f_bavail as u64 * st.f_frsize as u64)
@@ -159,6 +172,14 @@ fn top(p: &FsPath) -> io::Result<Top> {
     let node = node_at(dir.as_raw_fd(), &name, false)?;
     let parent_dev = node_at(dir.as_raw_fd(), c".", false)?.dev;
     Ok(Top { dir, name, node, parent_dev })
+}
+
+fn file_system(mounts: &[Mount], dev: u64) -> Option<String> {
+    mounts.iter().rev().find(|m| m.dev == ((dev >> 32) as u32, dev as u32)).map(|m| m.fstype.clone())
+}
+
+fn deletable_instead(item: &FsPath, e: &io::Error) -> bool {
+    !matches!(e.raw_os_error(), Some(libc::ENOENT | libc::EINVAL | libc::EROFS)) && top(item).is_ok_and(|t| !t.node.mounted_on(t.parent_dev))
 }
 
 fn open_parent(to: &FsPath, create: bool) -> io::Result<OwnedFd> {
@@ -179,11 +200,14 @@ struct Engine<'a> {
     failed: usize,
     first: Option<String>,
     fatal: bool,
+    denied: bool,
+    untrashable: Vec<FsPath>,
+    dest_fs: Option<(u64, Option<String>)>,
 }
 
 impl<'a> Engine<'a> {
     fn new(job: &'a Job) -> Self {
-        Self { job, done: Vec::new(), failed: 0, first: None, fatal: false }
+        Self { job, done: Vec::new(), failed: 0, first: None, fatal: false, denied: false, untrashable: Vec::new(), dest_fs: None }
     }
 
     fn stopped(&self) -> bool {
@@ -196,10 +220,32 @@ impl<'a> Engine<'a> {
     }
 
     fn fail(&mut self, path: &FsPath, e: &io::Error) {
-        if matches!(e.raw_os_error(), Some(libc::ENOSPC | libc::EDQUOT)) {
-            self.fatal = true;
+        match e.raw_os_error() {
+            Some(libc::ENOSPC | libc::EDQUOT) => self.fatal = true,
+            Some(libc::EACCES | libc::EPERM) => self.denied = true,
+            _ => {}
         }
         self.note(format!("{}: {e}", path.display()));
+    }
+
+    fn trouble(&mut self, path: &FsPath, e: &io::Error) -> bool {
+        if self.job.cancelled() {
+            return false;
+        }
+        if !self.job.asks_failures() {
+            self.fail(path, e);
+            return false;
+        }
+        let fatal = matches!(e.raw_os_error(), Some(libc::ENOSPC | libc::EDQUOT));
+        match self.job.fail(Failure { path: path.clone(), error: reason(e), fatal }) {
+            Some(Recover::Retry) => true,
+            Some(Recover::Skip) => {
+                self.fatal |= fatal;
+                self.note(format!("{}: {e}", path.display()));
+                false
+            }
+            None => false,
+        }
     }
 
     fn error(&self) -> Option<PlatformError> {
@@ -207,7 +253,8 @@ impl<'a> Engine<'a> {
             return Some(PlatformError::new(libc::ECANCELED as i64, CANCELLED));
         }
         let first = self.first.clone()?;
-        Some(PlatformError::new(-1, if self.failed > 1 { format!("{} items failed. {first}", self.failed) } else { first }))
+        let code = if self.denied { libc::EACCES as i64 } else { -1 };
+        Some(PlatformError::new(code, if self.failed > 1 { format!("{} items failed. {first}", self.failed) } else { first }))
     }
 
     fn preparing(&self) {
@@ -232,15 +279,15 @@ impl<'a> Engine<'a> {
     fn tops(&mut self, items: &[FsPath]) -> Vec<Option<Top>> {
         items
             .iter()
-            .map(|p| match top(p) {
-                Ok(t) => Some(t),
-                Err(e) if e.raw_os_error() == Some(libc::ENOENT) => {
-                    self.note(format!("{}: the item no longer exists", p.display()));
-                    None
-                }
-                Err(e) => {
-                    self.fail(p, &e);
-                    None
+            .map(|p| loop {
+                match top(p) {
+                    Ok(t) => break Some(t),
+                    Err(e) if e.raw_os_error() == Some(libc::ENOENT) => {
+                        self.note(format!("{}: the item no longer exists", p.display()));
+                        break None;
+                    }
+                    Err(e) if self.trouble(p, &e) => {}
+                    Err(_) => break None,
                 }
             })
             .collect()
@@ -275,6 +322,48 @@ impl<'a> Engine<'a> {
         flit_core::fmt::size(&mut msg, free);
         msg.push_str(" is free");
         self.note(msg);
+        false
+    }
+
+    fn dest_fs(&mut self, dir: RawFd) -> Option<String> {
+        let dev = node_at(dir, c".", false).ok()?.dev;
+        match &self.dest_fs {
+            Some((known, fs)) if *known == dev => fs.clone(),
+            _ => {
+                let fs = crate::mounts::read().ok().and_then(|m| file_system(&m, dev));
+                self.dest_fs = Some((dev, fs.clone()));
+                fs
+            }
+        }
+    }
+
+    fn fat_safe_dst(&mut self, dir: RawFd, dst: &FsPath) -> Option<FsPath> {
+        let fs = self.dest_fs(dir)?;
+        (limits::windows_names(&fs) && limits::bad_name(dst.file_name()).is_some()).then(|| sibling(dst, &limits::fat_safe(dst.file_name())))
+    }
+
+    fn bad_name_at(&mut self, dir: RawFd, name: &[u8]) -> Option<BadName> {
+        let fs = self.dest_fs(dir)?;
+        limits::windows_names(&fs).then(|| limits::bad_name(name)).flatten()
+    }
+
+    fn fits(&mut self, ddir: RawFd, src: &FsPath, dst: &FsPath, node: &Node) -> bool {
+        let Some(fs) = self.dest_fs(ddir) else { return true };
+        if let Some(bad) = limits::windows_names(&fs).then(|| limits::bad_name(dst.file_name())).flatten() {
+            self.note(limits::bad_name_error(dst, bad));
+            self.skip(node);
+            return false;
+        }
+        let Some(limit) = limits::max_file_size(&fs).filter(|&l| node.kind() == libc::S_IFREG && limits::exceeds(node.size, Some(l))) else { return true };
+        let unasked = self.job.ctl().policy().is_some();
+        if self.job.resolve(limits::over_limit(src, dst, node.size, limit)).is_some() {
+            self.skip(node);
+        }
+        if unasked {
+            let mut most = String::new();
+            flit_core::fmt::size(&mut most, limit);
+            self.note(flit_core::tr_en!(S::ErrorsOpsExtraOverLimit, path = src.display(), limit = most));
+        }
         false
     }
 
@@ -418,6 +507,12 @@ impl<'a> Engine<'a> {
             self.note(format!("{}: the destination folder is inside the source folder", src.display()));
             return Res::Nothing;
         }
+        if let Some(safe) = (mode != Mode::Move).then(|| self.fat_safe_dst(ddir, &dst)).flatten() {
+            dst = safe;
+        }
+        if mode != Mode::Move && !self.fits(ddir, src, &dst, node) {
+            return Res::Nothing;
+        }
         let mut replace = false;
         let dname = loop {
             let dname = match cstring(dst.file_name()) {
@@ -438,10 +533,8 @@ impl<'a> Engine<'a> {
             match e.raw_os_error() {
                 Some(libc::EXDEV) if mode == Mode::Move => return self.transfer(sdir, sname, src, ddir, dst, node, Mode::Across),
                 Some(libc::EEXIST) if !replace => {}
-                _ => {
-                    self.fail(src, &e);
-                    return Res::Nothing;
-                }
+                _ if self.trouble(src, &e) => continue,
+                _ => return Res::Nothing,
             }
             let existing = node_at(ddir, &dname, false).ok();
             match self.ask(src, node, &dst, existing) {
@@ -460,12 +553,14 @@ impl<'a> Engine<'a> {
                 self.job.update(|p| p.items += 1);
                 Res::Whole(dst)
             }
-            (Mode::Across, false) => match unlink_at(sdir, sname, false) {
-                Ok(()) => Res::Whole(dst),
-                Err(e) => {
-                    let _ = unlink_at(ddir, &dname, false);
-                    self.fail(src, &e);
-                    Res::Nothing
+            (Mode::Across, false) => loop {
+                match unlink_at(sdir, sname, false) {
+                    Ok(()) => break Res::Whole(dst),
+                    Err(e) if self.trouble(src, &e) => {}
+                    Err(_) => {
+                        let _ = unlink_at(ddir, &dname, false);
+                        break Res::Nothing;
+                    }
                 }
             },
             (_, false) => Res::Whole(dst),
@@ -492,19 +587,18 @@ impl<'a> Engine<'a> {
 
     #[allow(clippy::too_many_arguments)]
     fn children(&mut self, sdir: RawFd, sname: &CStr, src: &FsPath, ddir: RawFd, dname: &CStr, dst: &FsPath, node: &Node, mode: Mode, fresh: bool) -> (Pairs, bool) {
-        let opened = open_dir_at(sdir, sname).map_err(|e| (src, e)).and_then(|s| open_dir_at(ddir, dname).map(|d| (s, d)).map_err(|e| (dst, e)));
-        let (sfd, dfd) = match opened {
-            Ok(fds) => fds,
-            Err((p, e)) => {
-                self.fail(p, &e);
-                return (Vec::new(), false);
+        let (sfd, dfd) = loop {
+            match open_dir_at(sdir, sname).map_err(|e| (src, e)).and_then(|s| open_dir_at(ddir, dname).map(|d| (s, d)).map_err(|e| (dst, e))) {
+                Ok(fds) => break fds,
+                Err((p, e)) if self.trouble(p, &e) => {}
+                Err(_) => return (Vec::new(), false),
             }
         };
-        let list = match names(sfd.as_raw_fd()) {
-            Ok(l) => l,
-            Err(e) => {
-                self.fail(src, &e);
-                return (Vec::new(), false);
+        let list = loop {
+            match names(sfd.as_raw_fd()) {
+                Ok(l) => break l,
+                Err(e) if self.trouble(src, &e) => {}
+                Err(_) => return (Vec::new(), false),
             }
         };
         let (mut out, mut complete) = (Vec::new(), true);
@@ -553,9 +647,12 @@ impl<'a> Engine<'a> {
 
     fn copy(&mut self, items: &[FsPath], dest: &FsPath) {
         self.preparing();
-        let dest_fd = match host(dest).ok_or_else(|| errno(libc::EINVAL)).and_then(open_dir) {
-            Ok(fd) => fd,
-            Err(e) => return self.fail(dest, &e),
+        let dest_fd = loop {
+            match host(dest).ok_or_else(|| errno(libc::EINVAL)).and_then(open_dir) {
+                Ok(fd) => break fd,
+                Err(e) if self.trouble(dest, &e) => {}
+                Err(_) => return,
+            }
         };
         let tops = self.tops(items);
         let mut total = Tally::default();
@@ -585,12 +682,14 @@ impl<'a> Engine<'a> {
         let mut dests = Vec::with_capacity(pairs.len());
         let mut total = Tally::default();
         for ((_, to), t) in pairs.iter().zip(&tops) {
-            let fd = match t.as_ref().map(|_| open_parent(to, make_parents)) {
-                Some(Ok(fd)) => Some(fd),
-                Some(Err(e)) => {
-                    self.fail(to, &e);
-                    None
-                }
+            let fd = match t {
+                Some(_) => loop {
+                    match open_parent(to, make_parents) {
+                        Ok(fd) => break Some(fd),
+                        Err(e) if self.trouble(to, &e) => {}
+                        Err(_) => break None,
+                    }
+                },
                 None => None,
             };
             if let (Some(t), Some(fd)) = (t, &fd) {
@@ -624,6 +723,9 @@ impl<'a> Engine<'a> {
             return self.note(format!("\"{}\" is not a valid name", flit_core::name::display(name)));
         }
         let to = sibling(item, name);
+        if let Some(bad) = open_parent(&to, false).ok().and_then(|d| self.bad_name_at(d.as_raw_fd(), name)) {
+            return self.note(limits::bad_name_error(&to, bad));
+        }
         let renamed = top(item).and_then(|t| {
             let target = cstring(name)?;
             rename_at(t.dir.as_raw_fd(), &t.name, t.dir.as_raw_fd(), &target, false)
@@ -695,6 +797,104 @@ impl<'a> Engine<'a> {
         }
     }
 
+    fn link(&mut self, items: &[FsPath], dest: &FsPath) {
+        let fd = match host(dest).ok_or_else(|| errno(libc::EINVAL)).and_then(open_dir) {
+            Ok(fd) => fd,
+            Err(e) => return self.fail(dest, &e),
+        };
+        for target in items {
+            if self.stopped() {
+                break;
+            }
+            let Some(source) = host(target).filter(|s| std::fs::symlink_metadata(s).is_ok()) else {
+                self.note(flit_core::tr_en!(S::ErrorsEngineMissing, path = target.display()));
+                continue;
+            };
+            let folder = std::fs::metadata(source).is_ok_and(|m| m.is_dir());
+            let pointer = match cstring(target.as_bytes()) {
+                Ok(c) => c,
+                Err(e) => {
+                    self.fail(target, &e);
+                    continue;
+                }
+            };
+            let mut name = flit_core::name::link_name(target.file_name());
+            loop {
+                let to = dest.join(&name);
+                let made = cstring(&name).and_then(|c| check(unsafe { libc::symlinkat(pointer.as_ptr(), fd.as_raw_fd(), c.as_ptr()) }));
+                match made {
+                    Ok(()) => self.done.push((target.clone(), to)),
+                    Err(e) if e.raw_os_error() == Some(libc::EEXIST) => {
+                        name = numbered(fd.as_raw_fd(), &name, folder, b"", false);
+                        continue;
+                    }
+                    Err(e) => self.fail(&to, &e),
+                }
+                break;
+            }
+        }
+    }
+
+    fn flatten_dir(&mut self, root_fd: RawFd, root: &FsPath, dfd: RawFd, dir: &FsPath, dev: u64) {
+        let list = match names(dfd) {
+            Ok(l) => l,
+            Err(e) => return self.fail(dir, &e),
+        };
+        for n in &list {
+            if self.stopped() {
+                return;
+            }
+            let s = dir.join(n.to_bytes());
+            let node = match node_at(dfd, n, false) {
+                Ok(node) => node,
+                Err(e) if e.raw_os_error() == Some(libc::ENOENT) => continue,
+                Err(e) => {
+                    self.fail(&s, &e);
+                    continue;
+                }
+            };
+            if node.is_dir() && node.mounted_on(dev) {
+                self.note(format!("{}: a file system is mounted here, so it was left in place", s.display()));
+            } else if node.is_dir() {
+                match open_dir_at(dfd, n) {
+                    Ok(sub) => self.flatten_dir(root_fd, root, sub.as_raw_fd(), &s, dev),
+                    Err(e) => {
+                        self.fail(&s, &e);
+                        continue;
+                    }
+                }
+                if unlink_at(dfd, n, true).is_ok() {
+                    self.job.update(|p| p.items += 1);
+                }
+            } else if dir == root {
+                self.skip(&node);
+            } else {
+                let r = self.transfer(dfd, n, &s, root_fd, root.join(n.to_bytes()), &node, Mode::Move);
+                self.keep(&s, r);
+            }
+        }
+    }
+
+    fn flatten(&mut self, dirs: &[FsPath]) {
+        self.preparing();
+        let tops = self.tops(dirs);
+        let mut total = Tally::default();
+        for t in tops.iter().flatten() {
+            self.tally(t.dir.as_raw_fd(), &t.name, &t.node, false, &mut total);
+        }
+        self.running(total);
+        for (d, t) in dirs.iter().zip(&tops) {
+            if self.stopped() {
+                break;
+            }
+            let Some(t) = t else { continue };
+            match open_dir_at(t.dir.as_raw_fd(), &t.name) {
+                Ok(fd) => self.flatten_dir(fd.as_raw_fd(), d, fd.as_raw_fd(), d, t.node.dev),
+                Err(e) => self.fail(d, &e),
+            }
+        }
+    }
+
     fn delete_at(&mut self, dir: RawFd, name: &CStr, path: &FsPath, node: &Node) -> bool {
         if self.stopped() {
             return false;
@@ -718,7 +918,8 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
-                Err(e) => self.fail(path, &e),
+                Err(e) if self.trouble(path, &e) => return self.delete_at(dir, name, path, node),
+                Err(_) => {}
             }
         }
         match unlink_at(dir, name, node.is_dir()) {
@@ -728,10 +929,7 @@ impl<'a> Engine<'a> {
             }
             Err(e) => {
                 let explained = e.raw_os_error() == Some(libc::ENOTEMPTY) && self.failed > before;
-                if !self.job.cancelled() && !explained {
-                    self.fail(path, &e);
-                }
-                false
+                !explained && self.trouble(path, &e) && self.delete_at(dir, name, path, node)
             }
         }
     }
@@ -768,7 +966,10 @@ impl<'a> Engine<'a> {
     }
 
     fn trash(&mut self, items: &[FsPath], trash: Option<&Trash>) {
-        let Some(trash) = trash else { return self.note("The Trash folder is unknown: neither XDG_DATA_HOME nor HOME is set".into()) };
+        let Some(trash) = trash else {
+            self.untrashable.extend(items.iter().filter(|p| top(p).is_ok()).cloned());
+            return self.note("The Trash folder is unknown: neither XDG_DATA_HOME nor HOME is set".into());
+        };
         self.running(Tally { entries: items.len() as u64, bytes: 0 });
         for p in items {
             if self.stopped() {
@@ -778,7 +979,12 @@ impl<'a> Engine<'a> {
             match moved.map(|to| fs_path(&to)) {
                 Ok(Some(to)) => self.done.push((p.clone(), to)),
                 Ok(None) => self.note(format!("{} was moved to the Trash under a name Flit cannot record", p.display())),
-                Err(e) => self.note(format!("Cannot move {} to the Trash: {e}", p.display())),
+                Err(e) => {
+                    if deletable_instead(p, &e) {
+                        self.untrashable.push(p.clone());
+                    }
+                    self.note(format!("Cannot move {} to the Trash: {e}", p.display()));
+                }
             }
             self.job.update(|q| q.items += 1);
         }
@@ -822,14 +1028,18 @@ pub fn run(op: &FileOp, job: &Job, trash: Option<&Trash>) -> OpOutcome {
             e.moves(pairs, true);
         }
         FileOp::Rename { item, name } => e.rename(item, name),
+        FileOp::SetAccess { items, edit } => e.set_access(items, edit),
+        FileOp::Access(changes) => e.access(changes),
         FileOp::NewFolder { dir, name } => e.new_folder(dir, name),
         FileOp::NewFile { dir, name, template } => e.new_file(dir, name, template),
         FileOp::Delete(items) => e.delete(items),
         FileOp::Trash(items) => e.trash(items, trash),
         FileOp::Restore(pairs) => e.restore(pairs, trash),
+        FileOp::Link { items, dest } => e.link(items, dest),
+        FileOp::Flatten(dirs) => e.flatten(dirs),
         _ => e.note("The Linux agent does not run this operation".into()),
     }
-    OpOutcome { error: e.error(), items: e.done }
+    OpOutcome { error: e.error().map(|err| err.untrashable(std::mem::take(&mut e.untrashable))), items: e.done }
 }
 
 #[cfg(test)]

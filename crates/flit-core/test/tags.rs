@@ -67,6 +67,10 @@ fn published_tags_answer_lookups_by_key_and_volume() {
     assert_eq!((t.version, t.defs.len()), (3, 2));
     assert_eq!((t.mask(key(1)), t.mask(key(2)), t.mask(FileKey { volume: 9, id: 1 })), (0b11, 0, 0b10));
     assert!(t.any() && t.has_volume(7) && t.has_volume(9) && !t.has_volume(8));
+    assert!(t.may_tag(7, 4) && t.may_tag(9, 1) && !t.may_tag(7, 2) && !t.may_tag(8, 1));
+    let mut big = TagStore::default();
+    big.update(FileKey { volume: 7, id: (0xABCD << 32) | 4 }, p("/t/a"), |_| 1);
+    assert!(Tags::new(1, &big, &seen).may_tag(7, 4), "only the low half of an id is looked up");
     assert_eq!((t.count(0), t.count(1)), (2, 2));
     let present = |s: &str| t.files.iter().find(|f| f.path.display() == s).map(|f| (f.present, f.meta.size));
     assert_eq!(present(r"C:\t\one"), Some((true, 5)));

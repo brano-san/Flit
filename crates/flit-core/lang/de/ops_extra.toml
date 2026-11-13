@@ -12,3 +12,4 @@ no_room = "Die Elemente benötigen {need}, aber auf {folder} sind nur {free} fre
 no_room_hint = "Beim trotzdem Kopieren bricht der Vorgang mit einem Fehler ab, sobald das Laufwerk voll ist."
 over_limit = "{name} ist {size} groß, aber das Dateisystem dieses Laufwerks unterstützt nur Dateien bis {limit}."
 over_limit_hint = "Überspringen Sie es, um die anderen Elemente zu kopieren, oder verwenden Sie ein mit NTFS oder exFAT formatiertes Laufwerk."
+link_name = "Verknüpfung mit {name}"

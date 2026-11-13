@@ -7,13 +7,33 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 const MAX_SOURCE_BYTES: u64 = 256 << 20;
+const MAX_DECODED_BYTES: usize = 1 << 30;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Format {
+    Png,
+    Jpeg,
+    Webp,
+}
+
+pub fn sniff(head: &[u8]) -> Option<Format> {
+    if head.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some(Format::Png)
+    } else if head.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some(Format::Jpeg)
+    } else if head.len() >= 12 && &head[..4] == b"RIFF" && &head[8..12] == b"WEBP" {
+        Some(Format::Webp)
+    } else {
+        None
+    }
+}
 
 fn lower_ext(path: &Path) -> Vec<u8> {
     path.extension().map(|e| e.as_bytes().to_ascii_lowercase()).unwrap_or_default()
 }
 
 pub fn supported(path: &Path) -> bool {
-    matches!(lower_ext(path).as_slice(), b"jpg" | b"jpeg" | b"jpe" | b"jfif" | b"png")
+    matches!(lower_ext(path).as_slice(), b"jpg" | b"jpeg" | b"jpe" | b"jfif" | b"png" | b"webp")
 }
 
 pub fn freedesktop_name(path: &Path) -> String {
@@ -27,7 +47,7 @@ fn cached(path: &Path, cache: &Path, size: u32) -> Option<Bitmap> {
     let name = freedesktop_name(path);
     dirs.iter().find_map(|d| {
         let file = cache.join(d).join(&name);
-        let decoder = png::Decoder::new(BufReader::new(File::open(file).ok()?));
+        let decoder = png::Decoder::new_with_limits(BufReader::new(File::open(file).ok()?), png::Limits { bytes: MAX_DECODED_BYTES });
         let reader = decoder.read_info().ok()?;
         let fresh = reader.info().uncompressed_latin1_text.iter().any(|t| t.keyword == "Thumb::MTime" && t.text == mtime);
         fresh.then(|| decode_png_from(reader)).flatten()
@@ -39,28 +59,24 @@ fn decode_png_from<R: std::io::BufRead + std::io::Seek>(mut reader: png::Reader<
     let frame = reader.next_frame(&mut buf).ok()?;
     buf.truncate(frame.buffer_size());
     let (w, h) = (frame.width, frame.height);
-    let premultiply = |p: &[u8]| {
-        let a = p[3] as u32;
-        [p[0], p[1], p[2]].map(|c| ((c as u32 * a + 127) / 255) as u8)
-    };
     let rgba = match (frame.color_type, frame.bit_depth) {
-        (png::ColorType::Rgba, png::BitDepth::Eight) => buf.chunks_exact(4).flat_map(|p| {
-            let [r, g, b] = premultiply(p);
-            [r, g, b, p[3]]
-        }).collect(),
+        (png::ColorType::Rgba, png::BitDepth::Eight) => buf.chunks_exact(4).flat_map(premultiplied).collect(),
         (png::ColorType::Rgb, png::BitDepth::Eight) => buf.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
-        (png::ColorType::GrayscaleAlpha, png::BitDepth::Eight) => buf.chunks_exact(2).flat_map(|p| {
-            let [g, _, _] = premultiply(&[p[0], p[0], p[0], p[1]]);
-            [g, g, g, p[1]]
-        }).collect(),
+        (png::ColorType::GrayscaleAlpha, png::BitDepth::Eight) => buf.chunks_exact(2).flat_map(|p| premultiplied(&[p[0], p[0], p[0], p[1]])).collect(),
         (png::ColorType::Grayscale, png::BitDepth::Eight) => buf.iter().flat_map(|&g| [g, g, g, 255]).collect(),
         _ => return None,
     };
     Some(Bitmap { width: w, height: h, rgba })
 }
 
+fn premultiplied(p: &[u8]) -> [u8; 4] {
+    let a = p[3] as u32;
+    let [r, g, b] = [p[0], p[1], p[2]].map(|c| ((c as u32 * a + 127) / 255) as u8);
+    [r, g, b, p[3]]
+}
+
 pub fn png_bytes(data: &[u8]) -> Option<Bitmap> {
-    let mut decoder = png::Decoder::new(std::io::Cursor::new(data));
+    let mut decoder = png::Decoder::new_with_limits(std::io::Cursor::new(data), png::Limits { bytes: MAX_DECODED_BYTES });
     decoder.set_transformations(png::Transformations::normalize_to_color8());
     decode_png_from(decoder.read_info().ok()?)
 }
@@ -101,19 +117,36 @@ pub fn orient(b: Bitmap, o: u16) -> Bitmap {
     Bitmap { width: nw as u32, height: nh as u32, rgba }
 }
 
-pub fn image(path: &Path, max: u32) -> Option<Bitmap> {
-    if lower_ext(path) == b"png" {
-        return decode_png(path).map(|b| fit(b, max));
-    }
-    if !supported(path) {
+pub fn webp_bytes(data: &[u8]) -> Option<Bitmap> {
+    let mut decoder = image_webp::WebPDecoder::new(std::io::Cursor::new(data)).ok()?;
+    let (width, height) = decoder.dimensions();
+    let size = decoder.output_buffer_size().filter(|&n| n <= MAX_DECODED_BYTES)?;
+    let mut buf = vec![0; size];
+    decoder.read_image(&mut buf).ok()?;
+    let rgba = if decoder.has_alpha() { buf.chunks_exact(4).flat_map(premultiplied).collect() } else { buf.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect() };
+    Some(Bitmap { width, height, rgba })
+}
+
+fn decode_file(path: &Path, size: u32, embedded: bool) -> Option<Bitmap> {
+    if std::fs::metadata(path).ok()?.len() > MAX_SOURCE_BYTES {
         return None;
     }
     let data = std::fs::read(path).ok()?;
-    Some(orient(fit(decode_jpeg_bytes(&data, max)?, max), orientation(&data)))
+    let b = match sniff(&data)? {
+        Format::Png => png_bytes(&data)?,
+        Format::Webp => webp_bytes(&data)?,
+        Format::Jpeg if embedded => decode_jpeg(&data, size)?,
+        Format::Jpeg => orient(decode_jpeg_bytes(&data, size)?, orientation(&data)),
+    };
+    Some(fit(b, size))
+}
+
+pub fn image(path: &Path, max: u32) -> Option<Bitmap> {
+    decode_file(path, max, false)
 }
 
 pub fn decode_png(path: &Path) -> Option<Bitmap> {
-    let mut decoder = png::Decoder::new(BufReader::new(File::open(path).ok()?));
+    let mut decoder = png::Decoder::new_with_limits(BufReader::new(File::open(path).ok()?), png::Limits { bytes: MAX_DECODED_BYTES });
     decoder.set_transformations(png::Transformations::normalize_to_color8());
     decode_png_from(decoder.read_info().ok()?)
 }
@@ -187,10 +220,9 @@ pub fn exif_thumbnail(jpeg: &[u8]) -> Option<&[u8]> {
     tiff.get(offset..offset.checked_add(length)?)
 }
 
-fn decode_jpeg(path: &Path, size: u32) -> Option<Bitmap> {
-    let data = std::fs::read(path).ok()?;
-    let embedded = exif_thumbnail(&data).and_then(|t| decode_jpeg_bytes(t, size)).filter(|b| b.width.max(b.height) >= size);
-    Some(orient(embedded.or_else(|| decode_jpeg_bytes(&data, size))?, orientation(&data)))
+fn decode_jpeg(data: &[u8], size: u32) -> Option<Bitmap> {
+    let embedded = exif_thumbnail(data).and_then(|t| decode_jpeg_bytes(t, size)).filter(|b| b.width.max(b.height) >= size);
+    Some(orient(embedded.or_else(|| decode_jpeg_bytes(data, size))?, orientation(data)))
 }
 
 pub fn fit(b: Bitmap, size: u32) -> Bitmap {
@@ -224,11 +256,10 @@ pub fn thumbnail(path: &Path, size: u32, cache: Option<PathBuf>) -> Option<Bitma
     if let Some(b) = cache.and_then(|c| cached(path, &c, size)) {
         return Some(fit(b, size));
     }
-    if !supported(path) || std::fs::metadata(path).ok()?.len() > MAX_SOURCE_BYTES {
+    if !supported(path) {
         return None;
     }
-    let b = if lower_ext(path) == b"png" { decode_png(path)? } else { decode_jpeg(path, size)? };
-    Some(fit(b, size))
+    decode_file(path, size, true)
 }
 
 #[cfg(test)]

@@ -19,6 +19,27 @@ fn only_name_surrogate_reparse_points_are_links() {
     assert_eq!(map_attrs(FILE_ATTRIBUTE_HIDDEN.0 | FILE_ATTRIBUTE_SYSTEM.0 | FILE_ATTRIBUTE_READONLY.0, 0), attr::HIDDEN | attr::SYSTEM | attr::READONLY);
 }
 
+#[test]
+fn cloud_placeholder_states_map_to_their_own_bits() {
+    let placeholder = FILE_ATTRIBUTE_REPARSE_POINT.0 | FILE_ATTRIBUTE_SPARSE_FILE.0;
+    assert_eq!(map_attrs(placeholder | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS.0 | FILE_ATTRIBUTE_UNPINNED.0, CLOUD), attr::ONLINE_ONLY);
+    assert_eq!(map_attrs(FILE_ATTRIBUTE_DIRECTORY.0 | FILE_ATTRIBUTE_REPARSE_POINT.0 | FILE_ATTRIBUTE_RECALL_ON_OPEN.0, CLOUD), attr::DIR | attr::ONLINE_ONLY);
+    assert_eq!(map_attrs(placeholder | FILE_ATTRIBUTE_PINNED.0, CLOUD), attr::PINNED);
+    assert_eq!(map_attrs(FILE_ATTRIBUTE_OFFLINE.0 | FILE_ATTRIBUTE_ARCHIVE.0, 0), attr::OFFLINE);
+    assert_eq!(map_attrs(placeholder, CLOUD), 0, "a hydrated, unpinned file is plainly local");
+    assert_ne!(attr::NOT_LOCAL & attr::OFFLINE, 0);
+    assert_eq!(attr::NOT_LOCAL & attr::PINNED, 0);
+}
+
+#[test]
+fn local_files_are_not_reported_as_online_only() {
+    let t = Temp::new("not-local");
+    std::fs::write(t.0.join("here.txt"), b"x").unwrap();
+    let file = FsPath::parse(&t.0.join("here.txt").to_string_lossy()).unwrap();
+    assert!(!not_local(&file));
+    assert!(!not_local(&file.join(b"missing")));
+}
+
 struct Temp(PathBuf);
 
 impl Temp {

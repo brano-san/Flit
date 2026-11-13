@@ -97,6 +97,13 @@ impl App {
         }
     }
 
+    pub(super) fn pane_tip_anchor(&self, pane: usize, row: usize) -> Option<Rect> {
+        let (r, rh) = (*self.layout.panes.get(pane)?, self.layout.row_h);
+        let y = (r.y + row as f32 * rh - self.tab().panes.get(pane)?.scroll.unwrap_or(0.0)).round();
+        let (top, bottom) = (y.max(r.y), (y + rh).min(r.bottom()));
+        (bottom > top).then(|| Rect::new(r.x, top, r.w - 1.0, bottom - top))
+    }
+
     pub(super) fn pane_hit(&self, i: usize, y: f32) -> Hit {
         let (r, rh) = (self.layout.panes[i], self.layout.row_h.max(1.0));
         let Some(p) = self.tab().panes.get(i) else { return Hit::Pane(i, None) };
@@ -138,6 +145,7 @@ impl App {
         let (s4, s8, s10) = (self.cs(4.0), self.cs(8.0), self.cs(10.0));
         let t = &self.tabs[self.cur];
         let mut requests: Vec<IconRequest> = Vec::new();
+        let mut elided: Vec<(usize, usize)> = Vec::new();
         for (i, (&r, p)) in l.panes.iter().zip(&t.panes).enumerate() {
             g.dl.rect(Rect::new(r.right() - 1.0, r.y, 1.0, r.h), th.separator);
             let Some(v) = &p.view else { continue };
@@ -167,10 +175,15 @@ impl App {
                 let x = ir.right() + s8;
                 let baseline = (cell.y + (rh + m.ascent - m.descent) / 2.0).round();
                 let color = if e.attrs & attr::HIDDEN != 0 { th.text_dim } else { th.text };
-                g.text(x, baseline, &self.shown_name(listing, idx), font, color, cell.right() - s10 - x);
+                let (shown, room) = (self.shown_name(listing, idx), cell.right() - s10 - x);
+                if g.measure(&shown, font) > room {
+                    elided.push((i, row));
+                }
+                g.text(x, baseline, &shown, font, color, room);
             }
             g.dl.set_clip(None);
         }
+        self.details.pane_elided = elided;
         self.request_icons(requests);
     }
 }

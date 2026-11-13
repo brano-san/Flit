@@ -19,6 +19,7 @@ invalid_rows = "L’index a envoyé des lignes non valides : {error}"
 unavailable = "La recherche n’est pas disponible : {error}"
 cannot_start = "Impossible de lancer la recherche : {error}"
 shell = "Windows Search : {error}"
+content_unsupported = "La recherche dans le contenu (requêtes $) n'est pas encore disponible sous Linux"
 
 [column]
 folder = "Dossier"
@@ -30,6 +31,7 @@ tagged = "Fichiers balisés"
 connecting = "Connexion à l’index"
 service = "Service d’indexation"
 fallback = "Index local (flit-indexd indisponible)"
+local = "Index local"
 off = "L’indexation est désactivée dans Paramètres › Avancé ; Ctrl+Shift+F cherche dans le dossier ouvert"
 
 [index]

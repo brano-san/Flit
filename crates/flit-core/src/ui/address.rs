@@ -208,6 +208,9 @@ impl App {
     }
 
     pub(super) fn launch(&mut self, launch: Launch) {
+        if let Launch::ChooseApp { files, mime, apps } = launch {
+            return self.choose_app(files, mime, apps);
+        }
         let tab = self.tab().id;
         self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch } });
     }
@@ -237,7 +240,7 @@ impl App {
             return false;
         }
         self.remember_typed(&text);
-        if is_url(&text) {
+        if is_url(&text) && !(self.caps.unix_paths && super::network::native_url(&text)) {
             self.launch(Launch::Run { program: text, args: String::new(), dir: None });
             return true;
         }
@@ -291,7 +294,10 @@ impl App {
             }
             (FsErrorKind::NotFound, Some(text)) => {
                 self.step_back(k);
-                self.run_typed(&text);
+                match self.caps.unix_paths && open::typed_as_path(&text) {
+                    true => self.status(S::ErrorsFsNotFound.t()),
+                    false => self.run_typed(&text),
+                }
             }
             (FsErrorKind::NotADirectory, None) => {
                 let Some(parent) = here.parent() else { return false };
@@ -356,7 +362,7 @@ impl App {
 
     pub(super) fn resolve_typed(&self, dir: &str) -> Option<Location> {
         let cwd = self.current_location().to_windows().map(|p| p.as_bytes().to_vec());
-        open::resolve(dir.as_bytes(), cwd.as_deref(), &|_| None).ok()
+        open::resolve_for(dir.as_bytes(), cwd.as_deref(), &|_| None, self.caps.unix_paths).ok()
     }
 
     pub(super) fn poll_address(&mut self) -> bool {

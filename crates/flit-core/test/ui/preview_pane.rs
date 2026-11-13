@@ -398,3 +398,44 @@ fn the_inspector_opens_at_half_of_the_area_it_shares_until_the_divider_is_dragge
     let kept = PaneState { right_w: 410.0, bottom_h: 300.0, ..Default::default() }.sanitized();
     assert_eq!((kept.right_w, kept.bottom_h), (410.0, 300.0));
 }
+
+#[test]
+fn online_only_files_show_basic_info_until_the_download_button_is_clicked() {
+    use crate::listing::{ChangeKind, DirChange};
+    let mut a = app((1200, 700));
+    a.set_pane_state(PaneState { visible: true, ..Default::default() });
+    let change = |attrs| DirChange { kind: ChangeKind::Modified, name: b"a.rs".to_vec(), meta: Some(Meta { attrs, size: 100, modified: 1, ..Default::default() }) };
+    a.tab_mut().view.as_mut().unwrap().apply(&change(attr::ONLINE_ONLY));
+    select(&mut a, "a.rs");
+    frame(&mut a);
+    frame(&mut a);
+    assert!(requests(&mut a).is_empty(), "selecting an online-only file reads nothing");
+    assert!(matches!(a.preview.content, Content::Basic(Some(Note::OnlineOnly))));
+    let r = a.preview_rect(PaneHit::Download).expect("a download button");
+    let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    assert!(matches!(a.preview_hit(x, y), Some(Hit::Preview(PaneHit::Download))));
+    a.on_event(&Event::MouseMove { x, y }, Instant::now());
+    a.on_event(&Event::MouseDown { x, y, button: crate::input::MouseButton::Left, clicks: 1 }, Instant::now());
+    a.on_event(&Event::MouseUp { x, y, button: crate::input::MouseButton::Left }, Instant::now());
+    frame(&mut a);
+    let asked = requests(&mut a).pop().expect("the click previews the file");
+    assert_eq!((asked.path, asked.details), (FsPath::parse(r"C:\work\a.rs").unwrap(), false));
+    assert!(matches!(a.preview.content, Content::Loading));
+    select(&mut a, "b.png");
+    frame(&mut a);
+    assert_eq!(requests(&mut a).len(), 1);
+    a.tab_mut().view.as_mut().unwrap().apply(&change(attr::PINNED));
+    select(&mut a, "a.rs");
+    frame(&mut a);
+    assert_eq!(requests(&mut a).len(), 1, "a file kept on the device previews at once");
+}
+
+#[test]
+fn only_files_away_from_the_device_wait_for_a_download() {
+    assert!(preview::waits_for_download(attr::ONLINE_ONLY));
+    assert!(preview::waits_for_download(attr::OFFLINE | attr::READONLY));
+    assert!(!preview::waits_for_download(0));
+    assert!(!preview::waits_for_download(attr::PINNED));
+    assert!(!preview::waits_for_download(attr::DIR | attr::ONLINE_ONLY), "a folder preview lists names only");
+    assert!(!preview::waits_for_download(attr::VOLUME | attr::OFFLINE));
+}

@@ -1,4 +1,5 @@
 use super::edit::{EditAction, LineEdit};
+use super::menu::{Cmd, Mark};
 use super::palette::{Palette, Pick};
 use super::sidebar::Section;
 use super::{App, ConfirmDelete, Drag, Effect, Focus, Hit, Route};
@@ -38,6 +39,13 @@ const SECTION_SPRING_DELAY: Duration = Duration::from_millis(500);
 const DRAG_START: f32 = 4.0;
 const MAX_NAME_UNITS: usize = 255;
 const RESERVED: [&str; 4] = ["CON", "PRN", "AUX", "NUL"];
+const BAD_CHARS: &str = r#"<>:"/\|?*"#;
+const WINDOWS_FS: [&str; 9] = ["vfat", "msdos", "exfat", "ntfs", "ntfs3", "fuseblk", "cifs", "smb3", "smbfs"];
+const G_WARNING: &str = "\u{E7BA}";
+const HINT_GAP: f32 = 4.0;
+const HINT_PAD_X: f32 = 10.0;
+const HINT_PAD_Y: f32 = 6.0;
+const HINT_ICON: f32 = 22.0;
 const BIN_ONLY: S = S::UiOpsBinOnly;
 const STREAMS_VIEW_ONLY: S = S::UiOpsStreamsViewOnly;
 const OPEN_BIN: S = S::UiOpsOpenBin;
@@ -70,7 +78,7 @@ pub struct ShellMenu {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DragEvent {
-    Enter { paths: Vec<FsPath>, x: f32, y: f32, mods: Mods, allowed: u32 },
+    Enter { paths: Vec<FsPath>, x: f32, y: f32, mods: Mods, allowed: u32, right: bool },
     Over { x: f32, y: f32, mods: Mods, allowed: u32 },
     Leave,
     Drop { x: f32, y: f32, mods: Mods, allowed: u32 },
@@ -131,6 +139,15 @@ struct Rename {
     selecting: bool,
     batch: bool,
     confirmed: Option<String>,
+    hint: Option<String>,
+}
+
+struct Retry {
+    id: OpId,
+    tab: TabId,
+    dir: Location,
+    old: Vec<u8>,
+    text: String,
 }
 
 struct Press {
@@ -139,6 +156,9 @@ struct Press {
     y: f32,
     deferred: bool,
     slow: bool,
+    open: bool,
+    toggle: bool,
+    right: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -167,6 +187,13 @@ pub(super) struct Dropping {
     target: Option<Target>,
     effect: u32,
     spring: Option<(Spot, Instant)>,
+    right: bool,
+    ours: bool,
+}
+
+struct Asked {
+    paths: Vec<FsPath>,
+    dest: FsPath,
 }
 
 #[derive(Default)]
@@ -176,8 +203,11 @@ pub(super) struct Ops {
     journal: Journal,
     reveal: Vec<Reveal>,
     rename: Option<Rename>,
+    retry: Option<Retry>,
     press: Option<Press>,
     pub(super) dropping: Option<Dropping>,
+    right_drag: Option<Vec<FsPath>>,
+    asked: Option<Asked>,
     slow: Option<Slow>,
     cut: Option<Cut>,
     bin: Option<BinProbe>,
@@ -215,7 +245,7 @@ pub fn validate_name(text: &str, windows: bool) -> Result<String, &'static str> 
         return Err(S::UiOpsNameNotAllowed.t());
     }
     if windows {
-        if name.chars().any(|c| c.is_control() || r#"<>:"/\|?*"#.contains(c)) {
+        if name.chars().any(|c| bad_name_char(c, true)) {
             return Err(S::UiOpsNameBadChars.t());
         }
         let stem = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
@@ -230,6 +260,29 @@ pub fn validate_name(text: &str, windows: bool) -> Result<String, &'static str> 
         return Err(S::UiOpsNameTooLong.t());
     }
     Ok(name.to_owned())
+}
+
+pub fn bad_name_char(c: char, windows: bool) -> bool {
+    if windows { c.is_control() || BAD_CHARS.contains(c) } else { c == '/' || c == '\0' }
+}
+
+pub fn windows_names(dir: &FsPath, drives: &[super::Drive]) -> bool {
+    if dir.kind() != PathKind::Unix {
+        return true;
+    }
+    let mount = drives.iter().filter(|d| !d.unmounted && d.path.kind() == PathKind::Unix && (dir.same(&d.path) || dir.is_inside(&d.path))).max_by_key(|d| d.path.as_bytes().len());
+    mount.is_some_and(|d| WINDOWS_FS.iter().any(|f| d.file_system.eq_ignore_ascii_case(f)) || d.remote.as_deref().is_some_and(|r| r.starts_with("smb-share:")))
+}
+
+fn bad_chars_hint(windows: bool) -> &'static str {
+    if windows { S::UiOpsNameBadChars.t() } else { S::UiOpsNameSlash.t() }
+}
+
+fn same_name(a: &[u8], b: &[u8], folded: Option<&str>) -> bool {
+    match folded {
+        None => a == b,
+        Some(f) => a.eq_ignore_ascii_case(b) || (!a.is_ascii() && crate::name::display(a).to_lowercase() == f),
+    }
 }
 
 pub fn icon_location(text: &str) -> Option<(FsPath, i32)> {
@@ -917,7 +970,8 @@ impl App {
             Pick::Setting(p) => self.setting_input(p, text),
             Pick::Server => self.connect_server(text),
             Pick::SaveLayout => self.save_layout(text),
-            Pick::Tabs | Pick::LoadLayout | Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Encoding(_) |Pick::GoTo | Pick::Crumb(_) | Pick::Keys(_) => {}
+            Pick::OpenWithCommand(c) => self.chooser_command(*c, text),
+            Pick::OpenWith(_) | Pick::Tabs | Pick::LoadLayout | Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Encoding(_) |Pick::GoTo | Pick::Crumb(_) | Pick::Keys(_) => {}
         }
     }
 
@@ -939,6 +993,19 @@ impl App {
         }
         let tab = self.tab().id;
         self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch: Launch::Terminal { dirs, admin } } });
+    }
+
+    pub fn run_in_terminal(&mut self) {
+        let t = self.tab();
+        let program = self.rename_target().filter(|&i| t.view.as_ref().is_some_and(|v| v.listing().entries[i as usize].attrs & attr::EXEC != 0));
+        let Some(i) = program else { return self.status(S::ActionsStatusSelectProgram.t()) };
+        match self.item_paths(&[i]) {
+            Ok(mut p) => {
+                let tab = self.tab().id;
+                self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch: Launch::RunInTerminal { program: p.remove(0) } } });
+            }
+            Err(e) => self.status(e),
+        }
     }
 
     pub fn undo(&mut self) {
@@ -1034,10 +1101,15 @@ impl App {
         }
         let pending = self.ops.pending.iter().position(|p| p.id == id && p.tab == tab).map(|k| self.ops.pending.swap_remove(k));
         let k = self.tabs.iter().position(|t| t.id == tab);
+        let retry = self.ops.retry.take_if(|r| r.id == id && r.tab == tab);
         if let Some(message) = error.as_ref().filter(|_| !cancelled) {
-            let k = k.unwrap_or(self.cur);
-            self.tabs[k].error = Some(message.clone());
-            self.dirty |= k == self.cur;
+            if retry.is_some_and(|r| self.rename_again(r, message)) {
+                self.dirty = true;
+            } else {
+                let k = k.unwrap_or(self.cur);
+                self.tabs[k].error = Some(message.clone());
+                self.dirty |= k == self.cur;
+            }
         }
         let any_done = report.as_ref().is_some_and(|r| !r.items.is_empty());
         let unwatched = |l: &Location| matches!(l, Location::Wsl { .. }) || l.path().kind() == PathKind::Unc || archive::split(l.path()).is_some();
@@ -1225,7 +1297,7 @@ impl App {
         t.error = None;
         let tab = t.id;
         self.reveal_focus(false);
-        self.ops.rename = Some(Rename { tab, gen, idx, edit, scroll: 0.0, rect: Rect::default(), click: None, selecting: false, batch, confirmed: None });
+        self.ops.rename = Some(Rename { tab, gen, idx, edit, scroll: 0.0, rect: Rect::default(), click: None, selecting: false, batch, confirmed: None, hint: None });
         self.ops.slow = None;
         self.focus = Focus::List;
         self.dirty = true;
@@ -1301,21 +1373,46 @@ impl App {
         self.ops.rename.as_ref().map(|r| r.edit.text.as_str())
     }
 
+    pub fn rename_hint(&self) -> Option<&str> {
+        self.ops.rename.as_ref().and_then(|r| r.hint.as_deref())
+    }
+
+    fn names_like_windows(&self) -> bool {
+        windows_names(self.tab().view_loc.path(), &self.nav.sidebar.places.drives)
+    }
+
+    fn keep_renaming(&mut self, mut r: Rename, hint: impl Into<String>) -> bool {
+        r.hint = Some(hint.into());
+        self.ops.rename = Some(r);
+        self.dirty = true;
+        false
+    }
+
+    fn name_taken(&self, idx: u32, name: &[u8], nocase: bool) -> bool {
+        let t = self.tab();
+        let Some(v) = &t.view else { return false };
+        let l = v.listing();
+        let folded = nocase.then(|| crate::name::display(name).to_lowercase());
+        let dir = t.entry_dir(idx);
+        (0..l.len() as u32)
+            .filter(|&i| i != idx && l.entries[i as usize].attrs & attr::DELETED == 0 && l.folder(i) == l.folder(idx))
+            .any(|i| same_name(l.name(i), name, folded.as_deref()) && t.entry_dir(i) == dir)
+    }
+
     fn commit_rename(&mut self) -> bool {
         let Some(mut r) = self.ops.rename.take() else { return true };
+        let windows = self.names_like_windows();
         let t = self.tab();
         let Some(v) = t.view.as_ref().filter(|v| t.id == r.tab && v.snap().gen == r.gen) else { return true };
         let old = v.listing().name(r.idx).to_vec();
         let is_dir = v.listing().entries[r.idx as usize].is_dir();
-        let windows = t.view_loc.path().kind() != PathKind::Unix;
         let name = match validate_name(&r.edit.text, windows) {
             Ok(n) => n,
-            Err(e) => {
-                self.ops.rename = Some(r);
-                self.status(e);
-                return false;
-            }
+            Err(e) => return self.keep_renaming(r, e),
         };
+        if name.as_bytes() == old {
+            return true;
+        }
         if r.batch && v.selected_count() > 1 {
             let ext = extension(&old, is_dir);
             let base = match name.len().checked_sub(ext.len()) {
@@ -1325,8 +1422,8 @@ impl App {
             self.batch_rename(base);
             return true;
         }
-        if name.as_bytes() == old {
-            return true;
+        if self.name_taken(r.idx, name.as_bytes(), windows) {
+            return self.keep_renaming(r, S::UiOpsNameTaken.t());
         }
         let old_str = String::from_utf8_lossy(&old);
         if !is_dir && self.warn_extension_change && r.confirmed.as_deref() != Some(&name) && changes_extension(&old_str, &name) {
@@ -1343,8 +1440,28 @@ impl App {
             return true;
         };
         self.tab_mut().error = None;
-        let tab = self.tab().id;
+        let (tab, before) = (self.tab().id, self.ops.next_id);
         self.start_op_on(dir.provider(), tab, FileOp::Rename { item, name: target.file_name().to_vec() }, Origin::Fresh, Then::Select);
+        if self.ops.next_id != before {
+            let dir = self.tab().view_loc.clone();
+            self.ops.retry = Some(Retry { id: self.ops.next_id, tab, dir, old, text: r.edit.text });
+        }
+        true
+    }
+
+    fn rename_again(&mut self, retry: Retry, error: &str) -> bool {
+        if self.ops.rename.is_some() || self.tab().id != retry.tab || !same_location(&retry.dir, &self.tab().view_loc) {
+            return false;
+        }
+        let Some(v) = self.tab_mut().view.as_mut() else { return false };
+        let Some(i) = v.find(&retry.old).filter(|&i| v.is_visible(i)) else { return false };
+        let dir = v.listing().entries[i as usize].is_dir();
+        self.begin_rename(i, false);
+        let Some(r) = self.ops.rename.as_mut() else { return false };
+        r.edit.set(&retry.text);
+        r.edit.anchor = 0;
+        r.edit.caret = base_name_len(&retry.text, dir);
+        r.hint = Some(error.to_owned());
         true
     }
 
@@ -1390,7 +1507,12 @@ impl App {
             EditAction::Cancel => self.ops.rename = None,
             EditAction::Copy(s) => self.effects.push(Effect::SetClipboard(s)),
             EditAction::Paste => self.effects.push(Effect::Paste),
-            EditAction::Changed | EditAction::None => {}
+            EditAction::Changed => {
+                if let Some(r) = &mut self.ops.rename {
+                    r.hint = None;
+                }
+            }
+            EditAction::None => {}
         }
         true
     }
@@ -1413,15 +1535,32 @@ impl App {
     }
 
     pub(super) fn ops_char(&mut self, c: char) -> bool {
+        if self.ops.rename.is_none() {
+            return false;
+        }
+        let windows = self.names_like_windows();
         let Some(r) = &mut self.ops.rename else { return false };
-        let mut b = [0; 4];
-        r.edit.insert(c.encode_utf8(&mut b));
+        if !bad_name_char(c, windows) {
+            let mut b = [0; 4];
+            r.edit.insert(c.encode_utf8(&mut b));
+            r.hint = None;
+        } else if !c.is_control() {
+            r.hint = Some(bad_chars_hint(windows).into());
+            self.dirty = true;
+        }
         true
     }
 
     pub(super) fn ops_paste(&mut self, text: &str) -> bool {
+        if self.ops.rename.is_none() {
+            return false;
+        }
+        let windows = self.names_like_windows();
         let Some(r) = &mut self.ops.rename else { return false };
-        r.edit.insert(text.lines().next().unwrap_or(""));
+        let line = text.lines().next().unwrap_or("");
+        let kept: String = line.chars().filter(|&c| !bad_name_char(c, windows)).collect();
+        r.edit.insert(&kept);
+        r.hint = line.chars().any(|c| bad_name_char(c, windows) && !c.is_control()).then(|| bad_chars_hint(windows).into());
         self.dirty = true;
         true
     }
@@ -1429,6 +1568,7 @@ impl App {
     pub(super) fn ops_mouse_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8) -> bool {
         self.ops.press = None;
         self.ops.slow = None;
+        self.ops.right_drag = None;
         let Some(r) = &mut self.ops.rename else { return false };
         if r.rect.contains(x, y) {
             if button == MouseButton::Right {
@@ -1464,6 +1604,7 @@ impl App {
         if (x - p.x).abs().max((y - p.y).abs()) < self.s(DRAG_START) {
             return false;
         }
+        let right = p.right;
         self.ops.press = None;
         let items = self.selected_items();
         let Ok(paths) = self.item_paths(&items) else { return false };
@@ -1473,6 +1614,7 @@ impl App {
         self.pressed = Hit::None;
         self.drag = Drag::None;
         self.hover = Hit::None;
+        self.ops.right_drag = right.then(|| paths.clone());
         self.effects.push(Effect::StartDrag(paths));
         true
     }
@@ -1481,7 +1623,7 @@ impl App {
         if let Some(r) = &mut self.ops.rename {
             r.selecting = false;
         }
-        if button == MouseButton::Right && self.drag == Drag::None && self.ops.rename.is_none() {
+        if button == MouseButton::Right && self.drag == Drag::None && self.ops.rename.is_none() && self.ops.right_drag.is_none() {
             match self.hit(x, y) {
                 Hit::Row(_) => self.shell_menu(x, y, true, self.mods.shift),
                 Hit::ListEmpty | Hit::Group(_) => self.shell_menu(x, y, false, self.mods.shift),
@@ -1492,9 +1634,23 @@ impl App {
                 _ => {}
             }
         }
-        let Some(p) = self.ops.press.take().filter(|p| p.deferred && button == MouseButton::Left) else { return };
+        let Some(p) = self.ops.press.take().filter(|p| (p.deferred || p.open || p.toggle) && button == MouseButton::Left) else { return };
         if self.hit(x, y) != Hit::Row(p.row) {
             return;
+        }
+        if p.toggle {
+            if let Some(v) = &mut self.tabs[self.cur].view {
+                if let Some(&i) = v.rows().get(p.row) {
+                    v.set_selected(i, false);
+                }
+            }
+            self.dirty = true;
+            return;
+        }
+        if !p.deferred {
+            let Some(i) = self.tab().view.as_ref().and_then(|v| v.rows().get(p.row).copied()) else { return };
+            self.clicked_open = true;
+            return self.open_entry(i, now);
         }
         let (tab, wait) = (self.tab().id, self.double_click);
         let Some(v) = &mut self.tabs[self.cur].view else { return };
@@ -1536,7 +1692,17 @@ impl App {
         }
     }
 
+    pub(super) fn open_on_release(&mut self, row: usize) -> bool {
+        let Some(p) = self.ops.press.as_mut().filter(|p| p.row == row) else { return false };
+        p.open = true;
+        true
+    }
+
     pub(super) fn press_row(&mut self, row: usize, button: MouseButton, clicks: u8, x: f32, y: f32, now: Instant) -> bool {
+        if button == MouseButton::Right {
+            self.ops.press = Some(Press { row, x, y, deferred: false, slow: false, open: false, toggle: false, right: true });
+            return false;
+        }
         if button != MouseButton::Left || clicks >= 2 {
             return false;
         }
@@ -1546,21 +1712,23 @@ impl App {
         let Some(v) = &mut self.tabs[self.cur].view else { return false };
         let Some(&i) = v.rows().get(row) else { return false };
         let deferred = !m.ctrl && !m.shift && v.is_selected(i);
-        if deferred {
+        let toggle = m.ctrl && !m.shift && v.is_selected(i);
+        if deferred || toggle {
             v.focus = Some(i);
             v.anchor = Some(i);
         }
         let slow = deferred && settled && on_name && v.selected_count() == 1;
-        self.ops.press = Some(Press { row, x, y, deferred, slow });
-        deferred
+        self.ops.press = Some(Press { row, x, y, deferred, slow, open: false, toggle, right: false });
+        deferred || toggle
     }
 
     pub fn drag(&mut self, ev: &DragEvent, now: Instant) -> u32 {
         self.dirty = true;
         self.drag_panel(ev);
         match ev {
-            DragEvent::Enter { paths, x, y, mods, allowed } => {
-                self.ops.dropping = Some(Dropping { paths: paths.clone(), target: None, effect: drop_effect::NONE, spring: None });
+            DragEvent::Enter { paths, x, y, mods, allowed, right } => {
+                let ours = !paths.is_empty() && self.ops.right_drag.as_ref() == Some(paths);
+                self.ops.dropping = Some(Dropping { paths: paths.clone(), target: None, effect: drop_effect::NONE, spring: None, right: *right || ours, ours });
                 self.drag_over(*x, *y, *mods, *allowed)
             }
             DragEvent::Over { x, y, mods, allowed } => {
@@ -1576,6 +1744,9 @@ impl App {
                 let effect = self.drag_over(*x, *y, *mods, *allowed);
                 let Some(d) = self.ops.dropping.take() else { return drop_effect::NONE };
                 self.nav.sidebar.dragging_out = false;
+                if d.ours {
+                    self.ops.right_drag = None;
+                }
                 match d.target {
                     Some(Target::Reveal) if effect != drop_effect::NONE => self.on_event(&Event::DroppedFiles(d.paths), now),
                     Some(Target::NewTab) if effect != drop_effect::NONE => {
@@ -1588,6 +1759,12 @@ impl App {
                         let tab = self.tab().id;
                         let launch = Launch::With { program, args: d.paths };
                         self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch } });
+                    }
+                    Some(Target::Into { .. }) if d.paths.is_empty() => {}
+                    Some(Target::Into { dest, .. }) if d.right && effect != drop_effect::NONE => {
+                        let choices = self.drop_choices(&d.paths, d.ours, &dest, *allowed);
+                        self.ask_drop(Asked { paths: d.paths, dest }, choices, effect, (*x, *y));
+                        return allowed & drop_effect::COPY;
                     }
                     Some(Target::Into { dest, .. }) => {
                         let (items, dest) = (d.paths, dest);
@@ -1654,6 +1831,8 @@ impl App {
         let Some(d) = &self.ops.dropping else { return NONE };
         let effect = match &target {
             None => NONE,
+            Some(Target::Into { dest, .. }) if d.paths.is_empty() && archive::split(dest).is_none() => choose_effect(allowed & (COPY | MOVE), m, false),
+            Some(_) if d.paths.is_empty() => NONE,
             Some(Target::Reveal | Target::NewTab) => [COPY, LINK].into_iter().find(|e| allowed & e != 0).unwrap_or(NONE),
             Some(Target::Trash(_)) if d.paths.is_empty() || d.paths.iter().any(recycle::in_bin) => NONE,
             Some(Target::Trash(_)) => allowed & MOVE,
@@ -1662,14 +1841,17 @@ impl App {
             Some(Target::Pin) if d.paths.is_empty() => NONE,
             Some(Target::Pin) => [LINK, COPY, MOVE].into_iter().find(|e| allowed & e != 0).unwrap_or(NONE),
             Some(Target::Into { dest, .. }) => {
-                if d.paths.is_empty() || d.paths.iter().any(|p| p.same(dest) || dest.is_inside(p)) {
+                if d.paths.iter().any(|p| p.same(dest) || dest.is_inside(p)) {
                     NONE
                 } else if archive::split(dest).is_some() {
                     allowed & COPY
                 } else {
                     let e = choose_effect(allowed, m, d.paths.iter().all(|p| same_volume(p, dest, &self.nav.sidebar.places.drives)));
                     let all_here = d.paths.iter().all(|p| p.parent().is_some_and(|q| q.same(dest)));
-                    if e == MOVE && all_here {
+                    if d.right {
+                        let choices = self.drop_choices(&d.paths, d.ours, dest, allowed);
+                        [e, COPY, MOVE, LINK].into_iter().find(|c| choices & c != 0).unwrap_or(NONE)
+                    } else if e == MOVE && all_here {
                         NONE
                     } else {
                         e
@@ -1682,6 +1864,48 @@ impl App {
             d.effect = effect;
         }
         effect
+    }
+
+    fn drop_choices(&self, paths: &[FsPath], ours: bool, dest: &FsPath, allowed: u32) -> u32 {
+        use drop_effect::*;
+        let mut choices = if ours { COPY | MOVE | LINK } else { allowed & (COPY | MOVE | LINK) };
+        if archive::split(dest).is_some() {
+            choices &= COPY;
+        }
+        if paths.iter().all(|p| p.parent().is_some_and(|q| q.same(dest))) {
+            choices &= !MOVE;
+        }
+        if !self.caps.supports("file.shortcut") {
+            choices &= !LINK;
+        }
+        choices
+    }
+
+    fn ask_drop(&mut self, asked: Asked, choices: u32, default: u32, (x, y): (f32, f32)) {
+        use drop_effect::*;
+        let link = self.caps.supports("file.shortcut").then_some(if self.caps.unix_paths { S::UiDropLinkHere } else { S::UiDropShortcutHere });
+        let menu = self.collect(|_, m| {
+            for (effect, label) in [(COPY, Some(S::UiDropCopyHere)), (MOVE, Some(S::UiDropMoveHere)), (LINK, link)] {
+                if let Some(label) = label {
+                    m.entry(Cmd::Drop(effect), label.t(), String::new(), Mark::None, effect == default, choices & effect == 0);
+                }
+            }
+            m.separator();
+            m.entry(Cmd::Drop(NONE), S::UiButtonCancel.t(), String::new(), Mark::None, false, false);
+        });
+        self.ops.asked = Some(asked);
+        self.flit_menu(x, y, menu);
+    }
+
+    pub(super) fn drop_chosen(&mut self, effect: u32) {
+        let Some(Asked { paths: items, dest }) = self.ops.asked.take() else { return };
+        let op = match effect {
+            drop_effect::COPY => FileOp::Copy { items, dest },
+            drop_effect::MOVE => FileOp::Move { items, dest },
+            drop_effect::LINK => FileOp::Link { items, dest },
+            _ => return,
+        };
+        self.start_op(op, Origin::Fresh, Then::Select);
     }
 
     fn spring_spot(&self, x: f32, y: f32) -> Option<Spot> {
@@ -1830,6 +2054,26 @@ impl App {
         let preedit = Some(&self.preedit).filter(|p| !p.is_empty());
         super::field::draw_line(g, th, inner, &mut r.scroll, line, preedit, look);
         g.dl.set_clip(None);
+        self.draw_rename_hint(g, th, rect);
+    }
+
+    fn draw_rename_hint<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme, edit: Rect) {
+        let Some(hint) = self.rename_hint() else { return };
+        let (font, icons, list) = (self.ui_font(12.5), self.icon_font(14.0), self.layout.list);
+        let m = g.metrics(font);
+        let (gap, pad_x, pad_y, icon) = (self.s(HINT_GAP), self.s(HINT_PAD_X), self.s(HINT_PAD_Y), self.s(HINT_ICON));
+        let room = (list.w - 2.0 * gap).max(0.0);
+        let w = (pad_x / 2.0 + icon + g.measure(hint, font) + pad_x).ceil().min(room);
+        let h = (m.ascent + m.descent).ceil() + 2.0 * pad_y;
+        let below = edit.bottom() + gap;
+        let y = if below + h <= list.bottom() || edit.y - gap - h < list.y { below } else { edit.y - gap - h };
+        let x = edit.x.min(list.right() - gap - w).max(list.x + gap);
+        let r = Rect::new(x.round(), y.round(), w, h);
+        g.dl.round_rect(r, th.popup, self.s(super::widgets::RADIUS));
+        g.dl.outline(r, th.error, self.s(super::widgets::RADIUS), 1.0);
+        super::centered(g, Rect::new(r.x + pad_x / 2.0, r.y, icon, r.h), G_WARNING, icons, th.error);
+        let left = r.x + pad_x / 2.0 + icon;
+        g.text(left, (r.y + (r.h + m.ascent - m.descent) / 2.0).round(), hint, font, th.text, r.right() - pad_x - left);
     }
 }
 

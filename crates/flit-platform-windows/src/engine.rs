@@ -1,6 +1,6 @@
 use crate::fs::{map_attrs, NtFs};
 use flit_core::listing::{attr, Listing, ListingBuilder, Meta};
-use flit_core::provider::{Conflict, FileOp, Resolve, Stage};
+use flit_core::provider::{Conflict, Failure, FileOp, Recover, Resolve, Stage};
 use flit_core::sort::CaseMode;
 use flit_core::{limits, FsPath};
 use flit_core::i18n::S;
@@ -274,6 +274,27 @@ impl<'a> Engine<'a> {
         self.first.get_or_insert(msg);
     }
 
+    fn trouble(&mut self, path: &FsPath, e: &windows::core::Error, top: bool) -> bool {
+        if self.job.cancelled() {
+            return false;
+        }
+        let c = code(e);
+        if !self.job.asks_failures() || (top && c == ERROR_ACCESS_DENIED) {
+            self.fail(path, e, top);
+            return false;
+        }
+        let fatal = matches!(c, ERROR_DISK_FULL | ERROR_HANDLE_DISK_FULL);
+        match self.job.fail(Failure { path: path.clone(), error: e.message().trim_end().to_owned(), fatal }) {
+            Some(Recover::Retry) => true,
+            Some(Recover::Skip) => {
+                self.fatal |= fatal;
+                self.note(format!("{}: {}", path.display(), e.message()));
+                false
+            }
+            None => false,
+        }
+    }
+
     fn error(&self) -> Option<PlatformError> {
         if self.job.cancelled() {
             return Some(PlatformError::new(ERROR_CANCELLED.0 as i64, S::ErrorsEngineCancelled.en()));
@@ -446,7 +467,9 @@ impl<'a> Engine<'a> {
                 }
                 continue;
             }
-            self.fail(src, &e, top);
+            if self.trouble(src, &e, top) {
+                continue;
+            }
             return Res::Nothing;
         }
         match (mode, dir) {
@@ -454,12 +477,14 @@ impl<'a> Engine<'a> {
                 self.job.update(|p| p.items += 1);
                 Res::Whole(dst)
             }
-            (Mode::Across, false) => match delete_file(src) {
-                Ok(()) => Res::Whole(dst),
-                Err(e) => {
-                    let _ = delete_file(&dst);
-                    self.fail(src, &e, top);
-                    Res::Nothing
+            (Mode::Across, false) => loop {
+                match delete_file(src) {
+                    Ok(()) => break Res::Whole(dst),
+                    Err(e) if self.trouble(src, &e, top) => {}
+                    Err(_) => {
+                        let _ = delete_file(&dst);
+                        break Res::Nothing;
+                    }
                 }
             },
             (_, false) => Res::Whole(dst),
@@ -642,6 +667,7 @@ impl<'a> Engine<'a> {
         if self.stopped() {
             return false;
         }
+        let before = self.failed;
         if is_dir(m) && !is_dir_link(m) {
             match children(p) {
                 Ok(l) => {
@@ -662,10 +688,8 @@ impl<'a> Engine<'a> {
                 true
             }
             Err(e) => {
-                if !self.job.cancelled() {
-                    self.fail(p, &e, top);
-                }
-                false
+                let explained = code(&e) == ERROR_DIR_NOT_EMPTY && self.failed > before;
+                !explained && self.trouble(p, &e, top) && self.delete_tree(p, m, top)
             }
         }
     }

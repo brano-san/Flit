@@ -512,13 +512,18 @@ impl DirView {
         self.apply_all([c]);
     }
 
-    pub(crate) fn apply_all<C: Borrow<DirChange>>(&mut self, changes: impl IntoIterator<Item = C>) {
+    pub(crate) fn apply_all<C: Borrow<DirChange>>(&mut self, changes: impl IntoIterator<Item = C>) -> bool {
         let mut touched = Vec::new();
+        let (mut lost_sel, mut lost_focus) = (false, false);
         for c in changes {
             let c = c.borrow();
             let existing = self.find(&c.name);
             if existing.is_none() && c.kind == ChangeKind::Removed {
                 continue;
+            }
+            if let Some(i) = existing.filter(|_| c.kind == ChangeKind::Removed) {
+                lost_sel |= self.is_selected(i);
+                lost_focus |= self.focus == Some(i);
             }
             let snap = Arc::make_mut(&mut self.snap);
             let i = match existing {
@@ -544,11 +549,25 @@ impl DirView {
             };
             touched.push(i);
         }
+        let l = &self.snap.listing;
+        let gone = (lost_sel || lost_focus).then(|| self.rows().iter().position(|&i| l.entries[i as usize].attrs & attr::DELETED != 0 && (self.is_selected(i) || self.focus == Some(i)))).flatten();
         if !touched.is_empty() {
             self.reorder(touched);
             self.rows_changed();
             self.prune();
         }
+        let Some(row) = gone else { return false };
+        let select = lost_sel && self.sel_count == 0;
+        if !select && !lost_focus {
+            return false;
+        }
+        let Some(&i) = self.rows().get(row.min(self.rows().len().saturating_sub(1))) else { return false };
+        self.focus = Some(i);
+        self.anchor = Some(i);
+        if select {
+            self.set_selected(i, true);
+        }
+        select
     }
 
     fn full_sort(&mut self) {
@@ -631,7 +650,10 @@ impl DirView {
                 continue;
             }
             let i = snap.listing.push_nested(child.name(k), e.meta(), e.accessed, folder);
-            snap.keys.push(snap.listing.name(i));
+            if let Some(label) = child.labeled(k) {
+                snap.listing.set_label(i, label);
+            }
+            snap.keys.push(snap.listing.label(i));
             if let Some(s) = child.stats(k) {
                 snap.listing.set_stats(i, s);
             }

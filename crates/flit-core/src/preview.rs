@@ -2,6 +2,7 @@ pub mod markdown;
 pub mod syntax;
 
 use crate::hash::FxHashMap;
+use crate::listing::attr;
 use crate::name;
 use crate::path::FsPath;
 use crate::provider::GenToken;
@@ -38,6 +39,10 @@ pub enum Kind {
     Audio,
     Video,
     Other,
+}
+
+pub fn waits_for_download(attrs: u32) -> bool {
+    attrs & (attr::DIR | attr::VOLUME) == 0 && attrs & attr::NOT_LOCAL != 0
 }
 
 pub fn kind(ext: &[u8]) -> Kind {
@@ -442,6 +447,7 @@ pub enum Note {
     CannotPlay(String),
     Shortcut(String),
     TooLarge,
+    OnlineOnly,
 }
 
 impl Note {
@@ -453,6 +459,7 @@ impl Note {
             Note::CannotPlay(error) => crate::tr!(S::PreviewCannotPlay, error = error),
             Note::Shortcut(target) => crate::tr!(S::PreviewShortcut, target = target),
             Note::TooLarge => S::PreviewTooLarge.t().to_owned(),
+            Note::OnlineOnly => S::PreviewOnlineOnly.t().to_owned(),
         }
     }
 }

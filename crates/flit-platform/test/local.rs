@@ -234,6 +234,7 @@ struct Clip {
     cut: bool,
     ran: Vec<FileOp>,
     cleared: bool,
+    content: bool,
 }
 
 impl FileOps for Clip {
@@ -254,6 +255,20 @@ impl FileOps for Clip {
     fn clear_clipboard(&mut self) {
         self.cleared = true;
     }
+    fn clipboard_content(&mut self) -> bool {
+        self.content
+    }
+}
+
+#[test]
+fn paste_leaves_content_without_file_paths_to_the_platform() {
+    let mut clip = Clip { content: true, ..Default::default() };
+    let (error, report) = run_op(&mut clip, FileOp::Paste { dest: p(r"C:\b") });
+    assert_eq!((error, report.map(|r| r.op)), (None, Some(FileOp::Paste { dest: p(r"C:\b") })));
+    assert_eq!((clip.ran, clip.cleared), (vec![FileOp::Paste { dest: p(r"C:\b") }], false));
+    let mut both = Clip { files: vec![p(r"C:\a\x.txt")], content: true, ..Default::default() };
+    run_op(&mut both, FileOp::Paste { dest: p(r"C:\b") });
+    assert_eq!(both.ran, [FileOp::Copy { items: vec![p(r"C:\a\x.txt")], dest: p(r"C:\b") }], "file paths win over other content");
 }
 
 #[test]
@@ -344,7 +359,7 @@ impl Fs for IniFs {
     }
     fn desktop_ini(&self, _: &FsPath) -> Option<flit_core::desktop_ini::DesktopIni> {
         self.0.fetch_add(1, Ordering::SeqCst);
-        Some(flit_core::desktop_ini::DesktopIni { icon: false, kind: FolderKind::Videos })
+        Some(flit_core::desktop_ini::DesktopIni { icon: false, kind: FolderKind::Videos, name: None })
     }
 }
 
@@ -611,4 +626,71 @@ fn open_containing_path_reveals_the_real_location() {
     provider.submit(ProviderRequest::Launch { tab: 5, launch: Launch::Reveal { item: gone, new_tab: false } });
     assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { error: Some(_), .. }));
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+struct StuckBin;
+impl FileOps for StuckBin {
+    fn file_op(&mut self, op: &FileOp, _: &Job) -> OpOutcome {
+        let FileOp::Trash(items) = op else { return OpOutcome::default() };
+        let error = PlatformError::new(-1, "Cannot move to the Trash").untrashable(items[1..].to_vec());
+        OpOutcome { items: vec![(items[0].clone(), p(r"C:\bin\a"))], error: Some(error) }
+    }
+    fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
+        Err(PlatformError::new(-1, "empty"))
+    }
+    fn clear_clipboard(&mut self) {}
+}
+
+#[test]
+fn untrashable_items_reach_the_core_just_before_the_operation_ends() {
+    let trash = FileOp::Trash(vec![p(r"C:\r\a"), p(r"C:\r\b"), p(r"C:\r\c")]);
+    let finished = perform(&mut StuckBin, trash, false, &Job::detached(flit_core::provider::Resolve::Skip));
+    assert_eq!(finished.2, vec![p(r"C:\r\b"), p(r"C:\r\c")]);
+    let (tx, rx) = unbounded();
+    Reply { tab: 7, id: 2, events: tx, wake: Arc::new(|| {}) }.finish(finished);
+    assert_eq!(rx.try_recv().unwrap(), ProviderEvent::Untrashable { tab: 7, id: 2, items: vec![p(r"C:\r\b"), p(r"C:\r\c")] });
+    assert!(matches!(rx.try_recv().unwrap(), ProviderEvent::OpDone { tab: 7, id: 2, error: Some(_), report: Some(r) } if r.items.len() == 1));
+    assert!(perform(&mut StuckBin, FileOp::Delete(vec![p(r"C:\r\a")]), false, &Job::detached(flit_core::provider::Resolve::Skip)).2.is_empty());
+}
+
+struct LabelFs;
+impl Fs for LabelFs {
+    fn read_dir(&self, _: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+        for (n, attrs) in [("Downloads", attr::DIR | attr::READONLY), ("Documents", attr::DIR | attr::READONLY), ("Archive", attr::DIR)] {
+            out.push(n.as_bytes(), flit_core::Meta { attrs, ..Default::default() });
+        }
+        out.batch_done();
+        Ok(())
+    }
+    fn seek_penalty(&self, _: &FsPath) -> Option<bool> {
+        None
+    }
+    fn localized_name(&self, dir: &FsPath) -> Option<String> {
+        match dir.file_name() {
+            b"Downloads" => Some("Загрузки".into()),
+            b"Documents" => Some("Документы".into()),
+            b"flit-label-root" => Some("Корень".into()),
+            _ => None,
+        }
+    }
+}
+
+#[test]
+fn localized_folder_names_label_sort_and_filter_while_real_names_stay() {
+    let (slot, cancel, wake) = (SnapshotSlot::default(), GenToken::default(), Arc::new(|| {}) as Wake);
+    cancel.set(1);
+    let dir = p(r"C:\flit-label-root");
+    list(&LabelFs, 1, &dir, ViewSpec::default(), CaseMode::Insensitive, Arc::default(), &slot, &cancel, &wake);
+    let snap = slot.take().unwrap();
+    let l = &snap.listing;
+    let shown: Vec<&str> = snap.order.iter().map(|&i| std::str::from_utf8(l.label(i)).unwrap()).collect();
+    assert_eq!(shown, ["Archive", "Документы", "Загрузки"], "sorted by the shown name");
+    let real: Vec<&[u8]> = snap.order.iter().map(|&i| l.name(i)).collect();
+    assert_eq!(real, [&b"Archive"[..], b"Documents", b"Downloads"]);
+    let mut f = flit_core::filter::NameFilter::new("загр").unwrap();
+    f.sync(l, &snap.order);
+    assert_eq!((0..l.len() as u32).filter(|&i| f.matched(i)).map(|i| l.name(i)).collect::<Vec<_>>(), [&b"Downloads"[..]]);
+    assert_eq!(desktop_ini::label(&dir).as_deref(), Some("Корень"));
+    assert_eq!(desktop_ini::label(&dir.join(b"Documents")).as_deref(), Some("Документы"));
+    assert_eq!(Location::Local(dir.join(b"Documents")).crumbs().last().unwrap().0, "Документы");
 }

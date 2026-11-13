@@ -43,6 +43,45 @@ fn pngs_shrink_to_fit_and_fresh_freedesktop_thumbnails_win() {
 }
 
 #[test]
+fn the_content_not_the_extension_picks_the_decoder_and_webp_decodes() {
+    let t = Temp::new("thumb-sniff");
+    let disguised = t.path().join("photo.webp");
+    write_png(&disguised, 40, 20, None);
+    assert_eq!(image(&disguised, 1000).map(|b| (b.width, b.height)), Some((40, 20)));
+    let webp = t.path().join("a.png");
+    let px: Vec<u8> = (0..30 * 10).flat_map(|_| [255, 0, 0, 128]).collect();
+    image_webp::WebPEncoder::new(File::create(&webp).unwrap()).encode(&px, 30, 10, image_webp::ColorType::Rgba8).unwrap();
+    let b = image(&webp, 1000).unwrap();
+    assert_eq!((b.width, b.height), (30, 10));
+    assert_eq!(&b.rgba[..4], &[128, 0, 0, 128]);
+    assert_eq!(thumbnail(&webp, 15, None).map(|b| (b.width, b.height)), Some((15, 5)));
+    std::fs::write(t.path().join("text.png"), b"hello").unwrap();
+    assert!(image(&t.path().join("text.png"), 100).is_none());
+}
+
+#[test]
+fn pngs_of_every_colour_type_and_depth_preview() {
+    let t = Temp::new("thumb-kinds");
+    let write = |name: &str, color: png::ColorType, depth: png::BitDepth, data: &[u8], palette: Option<(Vec<u8>, Vec<u8>)>| {
+        let path = t.path().join(name);
+        let mut e = png::Encoder::new(File::create(&path).unwrap(), 2, 1);
+        e.set_color(color);
+        e.set_depth(depth);
+        if let Some((rgb, alpha)) = palette {
+            e.set_palette(rgb);
+            e.set_trns(alpha);
+        }
+        e.write_header().unwrap().write_image_data(data).unwrap();
+        image(&path, 100).map(|b| b.rgba)
+    };
+    assert_eq!(write("rgb16.png", png::ColorType::Rgb, png::BitDepth::Sixteen, &[255, 0, 0, 0, 0, 0, 0, 0, 255, 255, 0, 0], None), Some(vec![255, 0, 0, 255, 0, 255, 0, 255]));
+    assert_eq!(write("rgba16.png", png::ColorType::Rgba, png::BitDepth::Sixteen, &[255, 255, 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0], None), Some(vec![255, 0, 0, 255, 0, 0, 0, 0]));
+    assert_eq!(write("indexed.png", png::ColorType::Indexed, png::BitDepth::Eight, &[0, 1], Some((vec![0, 255, 0, 0, 0, 255], vec![255, 0]))), Some(vec![0, 255, 0, 255, 0, 0, 0, 0]));
+    assert_eq!(write("gray1.png", png::ColorType::Grayscale, png::BitDepth::One, &[0b0100_0000], None), Some(vec![0, 0, 0, 255, 255, 255, 255, 255]));
+    assert_eq!(write("gray16.png", png::ColorType::GrayscaleAlpha, png::BitDepth::Sixteen, &[255, 255, 255, 255, 0, 0, 0, 0], None), Some(vec![255, 255, 255, 255, 0, 0, 0, 0]));
+}
+
+#[test]
 fn jpegs_decode_at_a_reduced_scale() {
     let t = Temp::new("thumb-jpeg");
     let src = t.path().join("p.jpg");

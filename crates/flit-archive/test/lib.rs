@@ -386,6 +386,52 @@ fn opening_an_entry_extracts_it_alone_to_a_fresh_temporary_folder() {
     assert!(outside.error.is_some());
 }
 
+#[test]
+fn zone_ids_are_read_from_ansi_or_utf16_streams() {
+    assert_eq!(zone::zone_id(b"[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=https://example.com/a.zip\r\n"), Some(3));
+    let wide: Vec<u8> = [0xFF, 0xFE].into_iter().chain("[ZoneTransfer]\r\nzoneid = 4\r\n".encode_utf16().flat_map(u16::to_le_bytes)).collect();
+    assert_eq!(zone::zone_id(&wide), Some(4));
+    assert_eq!(zone::zone_id(b"[ZoneTransfer]\r\nHostUrl=https://example.com/\r\n"), None);
+    assert_eq!(zone::zone_id(b"ZoneId=internet"), None);
+    assert_eq!(zone::zone_id(b""), None);
+}
+
+#[cfg(windows)]
+#[test]
+fn extracted_and_opened_files_inherit_the_mark_of_the_web() {
+    let t = Temp::new("motw");
+    let items = sample(&t);
+    let zone = b"[ZoneTransfer]\r\nZoneId=3\r\nReferrerUrl=https://example.com/files\r\nHostUrl=https://example.com/files/a.zip\r\n";
+    let mark = |rel: &str| fs::read(format!("{}:Zone.Identifier", t.path(rel).display())).ok();
+    let set_mark = |rel: &str| fs::write(format!("{}:Zone.Identifier", t.path(rel).display()), zone).is_ok();
+    t.write("old.rar", &raw_rar(&[("docs", b"", true), ("docs\\a.txt", b"alpha", false), ("b.txt", b"beta!", false)]));
+    let plain = extract(&t.fs("old.rar"), &t.fs("plain"), Place::Here);
+    assert!(plain.error.is_none(), "{:?}", plain.error);
+    assert_eq!(mark("plain/docs/a.txt"), None, "an archive without a mark leaves none");
+    if !set_mark("old.rar") {
+        return;
+    }
+    let rar = extract(&t.fs("old.rar"), &t.fs("rar"), Place::Here);
+    assert!(rar.error.is_none(), "{:?}", rar.error);
+    assert_eq!((mark("rar/docs/a.txt"), mark("rar/b.txt")), (Some(zone.to_vec()), Some(zone.to_vec())));
+    assert_eq!(mark("rar/docs"), None, "folders stay unmarked like in Explorer");
+    for (format, ext) in [(Format::Zip, "zip"), (Format::SevenZ, "7z"), (Format::Tar, "tar")] {
+        let name = format!("a.{ext}");
+        compress(items.clone(), t.fs(&name), format, None);
+        assert!(set_mark(&name));
+        let out = extract(&t.fs(&name), &t.fs(&format!("out-{ext}")), Place::OwnFolder);
+        assert!(out.error.is_none(), "{ext}: {:?}", out.error);
+        for rel in ["a/readme.md", "a/Документы/отчёт.txt", "a/Документы/deep/data.bin"] {
+            assert_eq!(mark(&format!("out-{ext}/{rel}")), Some(zone.to_vec()), "{ext}: {rel}");
+        }
+        let opened = run(FileOp::Archive(ArchiveOp::Open { item: t.fs(&name).join(b"readme.md") }), Resolve::Skip);
+        let (_, temp) = opened.items.first().cloned().expect("an opened entry");
+        let marked = fs::read(format!("{}:Zone.Identifier", std_path(&temp).display())).ok();
+        let _ = fs::remove_dir_all(std_path(&temp).parent().unwrap());
+        assert_eq!(marked, Some(zone.to_vec()), "{ext}: a member opened through a temporary file keeps the mark");
+    }
+}
+
 #[cfg(windows)]
 #[test]
 fn unreadable_files_are_skipped_on_request() {

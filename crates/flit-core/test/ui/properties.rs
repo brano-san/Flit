@@ -154,3 +154,14 @@ fn an_archive_root_also_measures_its_unpacked_contents_and_shift_opens_the_shell
     app.run_action("item.inspect", Instant::now());
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Properties(p) if p.len() == 2)));
 }
+
+#[test]
+fn sidebar_properties_open_the_core_dialog_on_unix_paths_only() {
+    let mut app = app_at("/home/user/folder");
+    app.caps.unix_paths = true;
+    let path = FsPath::parse("/home/user/other").unwrap();
+    app.drain_effects().for_each(drop);
+    app.place_command(crate::ui::sidebar::PlaceCmd::Properties(path.clone()), Instant::now());
+    assert!(app.jobs.form.is_some());
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Measure { items, .. }, .. } if items.iter().any(|(p, _)| p == &path))));
+}

@@ -1,6 +1,7 @@
 use super::*;
 use crate::temp::Temp;
 use std::time::{Duration, SystemTime};
+use flit_core::provider::Launch;
 
 const EDITOR: &str = "[Desktop Entry]\nType=Application\nName=Editor\nName[ru]=Редактор\nExec=editor --new %F\nMimeType=text/plain;text/markdown;\n\n[Desktop Action New]\nName=Ignored\nExec=ignored\n";
 const VIEWER: &str = "[Desktop Entry]\nType=Application\nName=Viewer\nExec=\"/opt/my viewer/view\" %u --title %c\nMimeType=text/plain;image/png;\nTerminal=true\n";
@@ -51,10 +52,37 @@ fn the_open_with_menu_lists_apps_for_every_selected_file() {
         return;
     }
     let (items, launches) = open_with(&[fp(&a), fp(&b)], &entries, &Assoc::default());
-    assert_eq!(items.len(), 1);
-    assert_eq!(launches, [flit_core::provider::Launch::With { program: fp(Path::new("/usr/share/applications/viewer.desktop")), args: vec![fp(&a), fp(&b)] }]);
-    assert_eq!(open_with(&[fp(&a)], &entries, &Assoc::default()).0.len(), 2);
+    assert_eq!(items.len(), 3, "the app, a separator and Other application");
+    assert_eq!(launches[0], Launch::With { program: fp(Path::new("/usr/share/applications/viewer.desktop")), args: vec![fp(&a), fp(&b)] });
+    assert!(matches!(&launches[1], Launch::ChooseApp { apps, files, .. } if apps.len() == 2 && files.len() == 2));
+    let (single, _) = open_with(&[fp(&a)], &entries, &Assoc::default());
+    assert_eq!(single.len(), 4);
+    assert!(matches!(&single[0], MenuItem::Command { keys, .. } if !keys.is_empty()), "the default app is marked");
+    assert!(matches!(&single[1], MenuItem::Command { keys, .. } if keys.is_empty()));
     assert!(open_with(&[fp(t.path())], &entries, &Assoc::default()).0.is_empty(), "folders get no Open with");
+}
+
+#[test]
+fn files_without_handlers_get_no_list_of_every_application() {
+    let t = Temp::new("apps-none");
+    let blob = t.path().join("blob.flit-unknown-type");
+    std::fs::write(&blob, b"\0\x01\x02binary").unwrap();
+    let readme = t.path().join("README");
+    std::fs::write(&readme, "plain words\n").unwrap();
+    let entries = vec![entry("editor.desktop", EDITOR), entry("viewer.desktop", VIEWER)];
+    let fp = |p: &Path| crate::xdg::fs_path(p).unwrap();
+    let (items, launches) = open_with(&[fp(&blob)], &entries, &Assoc::default());
+    assert_eq!(items.len(), 1, "only Other application");
+    assert!(matches!(&launches[..], [Launch::ChooseApp { .. }]));
+    assert_eq!(open_with(&[fp(&readme)], &entries, &Assoc::default()).0.len(), 4, "text without an extension opens in text editors");
+}
+
+#[test]
+fn handlers_of_parent_types_follow_the_own_handlers() {
+    let entries = vec![entry("editor.desktop", EDITOR), entry("viewer.desktop", VIEWER)];
+    let parents = |m: &str| if m == "text/markdown" { vec!["text/plain".to_owned()] } else { Vec::new() };
+    let ids: Vec<_> = handlers_by_lineage("text/markdown", &entries, &Assoc::default(), parents).iter().map(|e| e.id.clone()).collect();
+    assert_eq!(ids, ["editor.desktop", "viewer.desktop"]);
 }
 
 fn backdate(paths: &[PathBuf]) {
@@ -137,4 +165,88 @@ fn launching_a_desktop_file_runs_its_exec_line() {
     }
     std::thread::sleep(std::time::Duration::from_millis(50));
     assert_eq!(std::fs::read_to_string(&out).unwrap().trim(), "/tmp/given file");
+}
+
+#[test]
+fn desktop_keys_hide_entries_that_cannot_run_or_belong_to_other_desktops() {
+    let t = Temp::new("apps-keys");
+    let (data, config) = (t.path().join("data"), t.path().join("config"));
+    let apps = data.join("applications");
+    std::fs::create_dir_all(&apps).unwrap();
+    std::fs::create_dir_all(&config).unwrap();
+    let app = |name: &str, extra: &str| std::fs::write(apps.join(format!("{name}.desktop")), format!("[Desktop Entry]\nType=Application\nName={name}\nExec={name} %f\nMimeType=text/plain;\nIcon=accessories-text-editor\nPath=/tmp\n{extra}")).unwrap();
+    app("plain", "");
+    app("missing", "TryExec=/nonexistent/flit-no-such-binary\n");
+    app("present", "TryExec=sh\n");
+    app("gnomeonly", "OnlyShowIn=GNOME;\n");
+    app("notkde", "NotShowIn=KDE;\n");
+    app("hiddenmenu", "NoDisplay=true\n");
+    app("chosen", "NoDisplay=true\n");
+    std::fs::write(config.join("mimeapps.list"), "[Added Associations]\ntext/plain=chosen.desktop;missing.desktop;\n").unwrap();
+    let ids = |desktops: &[&str]| {
+        let c = Catalog::load_for(std::slice::from_ref(&data), std::slice::from_ref(&config), &desktops.iter().map(|d| d.to_string()).collect::<Vec<_>>());
+        let mut ids: Vec<String> = handlers("text/plain", &c.entries, &c.assoc).iter().map(|e| e.id.trim_end_matches(".desktop").to_owned()).collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(ids(&["KDE"]), ["chosen", "plain", "present"]);
+    assert_eq!(ids(&["ubuntu", "GNOME"]), ["chosen", "gnomeonly", "notkde", "plain", "present"]);
+    let e = entry("x.desktop", "[Desktop Entry]\nType=Application\nName=X\nExec=x\nPath=/srv/w\nIcon=x-icon\nNoDisplay=true\nOnlyShowIn=XFCE;LXQt;\n");
+    assert_eq!((e.dir.as_str(), e.icon.as_str(), e.no_display), ("/srv/w", "x-icon", true));
+    assert!(shown_in(&e, &["LXQt".into()]) && !shown_in(&e, &["GNOME".into()]) && !shown_in(&e, &[]));
+}
+
+#[test]
+fn single_file_field_codes_start_one_process_per_file() {
+    let files = [PathBuf::from("/tmp/a"), PathBuf::from("/tmp/b c")];
+    let d = Path::new("/x.desktop");
+    assert_eq!(commands("view %f", &files, "V", d), [vec!["view", "/tmp/a"], vec!["view", "/tmp/b c"]]);
+    assert_eq!(commands("view %u", &files, "V", d), [vec!["view", "file:///tmp/a"], vec!["view", "file:///tmp/b%20c"]]);
+    assert_eq!(commands("view %F", &files, "V", d), [vec!["view", "/tmp/a", "/tmp/b c"]]);
+    assert_eq!(commands("view %f", &files[..1], "V", d), [vec!["view", "/tmp/a"]]);
+}
+
+fn wait_for(path: &Path) -> String {
+    let until = std::time::Instant::now() + Duration::from_secs(5);
+    while !path.exists() && std::time::Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(Duration::from_millis(50));
+    std::fs::read_to_string(path).unwrap_or_default()
+}
+
+#[test]
+fn launching_runs_in_the_entry_path_with_the_token_once_per_file() {
+    let t = Temp::new("apps-path");
+    let work = t.path().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let desktop = t.path().join("each.desktop");
+    std::fs::write(&desktop, format!("[Desktop Entry]\nType=Application\nName=E\nPath={}\nExec=sh -c 'echo \"$PWD $XDG_ACTIVATION_TOKEN\" > \"$(basename \"$0\").out\"' %f\n", work.display())).unwrap();
+    launch(&desktop, &[PathBuf::from("/tmp/one"), PathBuf::from("/tmp/two")], Some("tok_TIME1")).unwrap();
+    assert_eq!(wait_for(&work.join("one.out")).trim(), format!("{} tok_TIME1", work.display()));
+    assert_eq!(wait_for(&work.join("two.out")).trim(), format!("{} tok_TIME1", work.display()));
+}
+
+#[test]
+fn a_remembered_custom_command_becomes_a_user_entry_and_the_default() {
+    let t = Temp::new("apps-custom");
+    let (apps, config) = (t.path().join("applications"), t.path().join("config"));
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(config.join("mimeapps.list"), "[Default Applications]\nimage/png=eog.desktop\n").unwrap();
+    assert_eq!(with_files("gimp --new"), "gimp --new %F");
+    assert_eq!(with_files("gimp %U"), "gimp %U");
+    assert_eq!(user_app_text("/usr/bin/gimp %F", "image/png"), "[Desktop Entry]\nType=Application\nName=gimp\nExec=/usr/bin/gimp %F\nMimeType=image/png;\nNoDisplay=true\nTerminal=false\n");
+    let out = t.path().join("ran");
+    let command = format!("sh -c 'echo \"$1\" > {}' sh", out.display());
+    run_custom_in(&apps, &config, &command, &[PathBuf::from("/tmp/pic.png")], "image/png", true, None).unwrap();
+    assert_eq!(wait_for(&out).trim(), "/tmp/pic.png");
+    let made: Vec<_> = std::fs::read_dir(&apps).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    assert!(made.len() == 1 && made[0].starts_with("userapp-sh-") && made[0].ends_with(".desktop"), "{made:?}");
+    let list = std::fs::read_to_string(config.join("mimeapps.list")).unwrap();
+    assert_eq!(flit_core::mimeapps::default_app(&list, "image/png").as_deref(), Some(made[0].as_str()));
+    assert_eq!(flit_core::mimeapps::apps_in(&list, flit_core::mimeapps::ADDED, "image/png"), [made[0].as_str()]);
+    let c = Catalog::load_for(&[t.path().to_path_buf()], std::slice::from_ref(&config), &[]);
+    assert_eq!(handlers("image/png", &c.entries, &c.assoc)[0].id, made[0], "NoDisplay user entries still open their own type");
+    assert!(choices(&c.entries).is_empty(), "the chooser does not list user entries");
+    assert_eq!(desktop_id(&apps.join("kde/a.desktop"), &[t.path().to_path_buf()]), "kde-a.desktop");
 }

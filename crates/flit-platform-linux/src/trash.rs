@@ -133,13 +133,17 @@ impl Trash {
         }
         let top = mount_point(path, dev);
         let relative = path.strip_prefix(&top).unwrap_or(path).as_os_str().as_bytes().to_vec();
+        Ok((self.top_trash(&top), relative))
+    }
+
+    fn top_trash(&self, top: &Path) -> PathBuf {
         let shared = top.join(".Trash");
         let usable = fs::symlink_metadata(&shared).is_ok_and(|m| m.is_dir() && m.mode() & STICKY != 0);
         let per_user = shared.join(self.uid.to_string());
         if usable && private_dirs(&per_user).is_ok() {
-            return Ok((per_user, relative));
+            return per_user;
         }
-        Ok((top.join(format!(".Trash-{}", self.uid)), relative))
+        top.join(format!(".Trash-{}", self.uid))
     }
 
     fn base_of(&self, dir: &Path) -> Option<PathBuf> {

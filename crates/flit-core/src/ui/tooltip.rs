@@ -30,6 +30,7 @@ pub struct TipText {
     pub line: String,
     pub command: Option<String>,
     pub keys: Vec<String>,
+    pub details: Vec<String>,
 }
 
 fn view_tip(mode: ViewMode) -> S {
@@ -51,7 +52,11 @@ impl App {
         match (wanted, self.tip) {
             (true, Some(t)) if t.hit == h => {}
             (true, prev) => {
-                let chained = prev.is_some_and(|t| t.shown.is_some());
+                let shown = prev.is_some_and(|t| t.shown.is_some());
+                let chained = shown && !matches!(h, Hit::Row(_) | Hit::Pane(..));
+                if shown && !chained {
+                    self.tip_hide();
+                }
                 let at = if chained { now } else { now + DELAY };
                 self.tip = Some(Tip { hit: h, at, shown: chained.then_some(now) });
                 if chained {
@@ -127,9 +132,52 @@ impl App {
             Hit::PaletteClose | Hit::PaletteDescribe | Hit::PaletteScroll(_) | Hit::PaletteKeys(_) => self.palette_button(h)?,
             Hit::Preview(ph) => self.preview_rect(ph)?,
             Hit::Settings(SHit::Nav(k)) => self.settings_nav_tip(k)?.0,
+            Hit::Row(r) => self.row_tip_anchor(r)?,
+            Hit::Pane(i, Some(row)) => self.pane_tip_anchor(i, row)?,
             _ => return None,
         };
         (r.w > 0.0 && r.h > 0.0).then_some(r)
+    }
+
+    fn row_tip_anchor(&self, row: usize) -> Option<Rect> {
+        let cell = self.row_rect(row)?;
+        let p = self.item_parts(cell);
+        let r = if self.layout.mode.rows() { Rect::new(p.icon.x, cell.y, p.name.right() - p.icon.x, cell.h) } else { p.body };
+        let list = self.layout.list;
+        let (top, bottom) = (r.y.max(list.y), r.bottom().min(list.bottom()));
+        (bottom > top).then(|| Rect::new(r.x, top, r.w, bottom - top))
+    }
+
+    fn row_tip(&self, row: usize) -> Option<TipText> {
+        if self.is_renaming() || self.search.active {
+            return None;
+        }
+        let v = self.tab().view.as_ref()?;
+        self.entry_tip(v.listing(), *v.rows().get(row)?, self.details.elided.contains(&row))
+    }
+
+    fn pane_tip(&self, pane: usize, row: usize) -> Option<TipText> {
+        if self.is_renaming() || self.search.active {
+            return None;
+        }
+        let v = self.tab().panes.get(pane)?.view.as_ref()?;
+        self.entry_tip(v.listing(), *v.rows().get(row)?, self.details.pane_elided.contains(&(pane, row)))
+    }
+
+    fn entry_tip(&self, l: &crate::listing::Listing, i: u32, elided: bool) -> Option<TipText> {
+        let tip = |line: String, details: Vec<String>| Some(TipText { line, command: None, keys: Vec::new(), details });
+        if elided {
+            return tip(self.shown_name(l, i).into_owned(), Vec::new());
+        }
+        let arena = bumpalo::Bump::new();
+        let labelled = |title: S, col: Column| {
+            let value = self.cell_text(&arena, l, i, col);
+            (!value.is_empty()).then(|| format!("{}: {value}", title.t()))
+        };
+        let mut lines = labelled(S::DetailsColumnType, Column::Type).into_iter();
+        let line = lines.next()?;
+        let details = if l.entries[i as usize].is_dir() { Vec::new() } else { [labelled(S::DetailsColumnSize, Column::Size), labelled(S::DetailsColumnModified, Column::Modified)].into_iter().flatten().collect() };
+        tip(line, details)
     }
 
     pub(super) fn tip_text(&self, h: Hit) -> Option<TipText> {
@@ -199,6 +247,8 @@ impl App {
                 _ => return None,
             },
             Hit::Settings(SHit::Nav(k)) => (self.settings_nav_tip(k)?.1, None),
+            Hit::Row(row) => return self.row_tip(row),
+            Hit::Pane(i, Some(row)) => return self.pane_tip(i, row),
             _ => return None,
         };
         let (command, keys) = match command.and_then(index) {
@@ -208,7 +258,7 @@ impl App {
             }
             None => (None, Vec::new()),
         };
-        Some(TipText { line, command, keys })
+        Some(TipText { line, command, keys, details: Vec::new() })
     }
 
     pub(super) fn draw_tooltip<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
@@ -228,9 +278,12 @@ impl App {
         let second_w = if text.command.is_some() { lead_w + s(6.0) + cmd_w + s(8.0) + caps_w } else { 0.0 };
         let cap_h = line_h + s(6.0);
         let max_w = s(MAX_W).min(w - 2.0 * s(GAP));
-        let first_w = p.g.measure(&text.line, font).min(max_w - 2.0 * s(PAD_X));
+        let rows: Vec<&str> = std::iter::once(text.line.as_str()).chain(text.details.iter().map(String::as_str)).collect();
+        let widths: Vec<f32> = rows.iter().map(|l| p.g.measure(l, font).min(max_w - 2.0 * s(PAD_X))).collect();
+        let first_w = widths.iter().copied().fold(0.0, f32::max);
         let bw = (first_w.max(second_w) + 2.0 * s(PAD_X)).ceil().min(max_w);
-        let bh = 2.0 * s(PAD_Y) + line_h + if text.command.is_some() { s(LINE_GAP) + cap_h } else { 0.0 };
+        let block_h = line_h * rows.len() as f32 + s(2.0) * (rows.len() - 1) as f32;
+        let bh = 2.0 * s(PAD_Y) + block_h + if text.command.is_some() { s(LINE_GAP) + cap_h } else { 0.0 };
         let below = anchor.bottom() + s(GAP);
         let y = if below + bh <= h - s(GAP) { below } else { (anchor.y - s(GAP) - bh).max(s(GAP)) };
         let x = (anchor.x + anchor.w / 2.0 - bw / 2.0).round().min(w - bw - s(GAP)).max(s(GAP));
@@ -238,9 +291,13 @@ impl App {
         p.g.dl.round_rect(r, t.popup, s(RADIUS));
         p.g.dl.outline(r, t.popup_border, s(RADIUS), 1.0);
         let top = r.y + s(PAD_Y);
-        p.g.text((r.x + (bw - first_w) / 2.0).round(), (top + m.ascent).round(), &text.line, font, t.text, max_w - 2.0 * s(PAD_X));
+        for (n, (row, w)) in rows.iter().zip(&widths).enumerate() {
+            let x = if rows.len() == 1 { (r.x + (bw - w) / 2.0).round() } else { r.x + s(PAD_X) };
+            let color = if n == 0 { t.text } else { t.text_dim };
+            p.g.text(x, (top + n as f32 * (line_h + s(2.0)) + m.ascent).round(), row, font, color, max_w - 2.0 * s(PAD_X));
+        }
         if text.command.is_some() {
-            let cy = top + line_h + s(LINE_GAP) + cap_h / 2.0;
+            let cy = top + block_h + s(LINE_GAP) + cap_h / 2.0;
             let ms = p.g.metrics(small);
             let base = (cy + (ms.ascent - ms.descent) / 2.0).round();
             let mut cx = (r.x + (bw - second_w) / 2.0).round();

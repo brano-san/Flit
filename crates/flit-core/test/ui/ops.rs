@@ -163,6 +163,36 @@ fn unix_volumes_come_from_the_mount_list() {
     assert!(!same_volume(&p("/a"), &p(r"C:\a"), &mounts));
 }
 
+fn drive_fs(path: &str, file_system: &str) -> Drive {
+    Drive { path: p(path), label: String::new(), total: 0, free: 0, file_system: file_system.into(), removable: false, unmounted: false, kind: None, remote: None }
+}
+
+#[test]
+fn unix_folders_on_windows_file_systems_take_windows_names() {
+    let smb = "/run/user/1000/gvfs/smb-share:server=nas,share=docs";
+    let mounts = [
+        drive_fs("/", "ext4"),
+        drive_fs("/media/u/STICK", "vfat"),
+        drive_fs("/mnt/games", "ntfs3"),
+        drive_fs("/mnt/old", "fuseblk"),
+        Drive { unmounted: true, ..drive_fs("/dev/sdb1", "exfat") },
+        Drive { remote: Some("smb-share:server=nas,share=docs".into()), ..drive_fs(smb, "") },
+    ];
+    assert!(windows_names(&p(r"C:\x"), &[]));
+    assert!(windows_names(&p(r"\\srv\share\x"), &mounts));
+    assert!(!windows_names(&p("/home/u"), &mounts));
+    assert!(!windows_names(&p("/home/u"), &[]), "without a mount list Unix rules apply");
+    assert!(windows_names(&p("/media/u/STICK"), &mounts));
+    assert!(windows_names(&p("/media/u/STICK/photos/2024"), &mounts));
+    assert!(!windows_names(&p("/media/u/stick/photos"), &mounts), "mount points are case-sensitive");
+    assert!(windows_names(&p("/mnt/games/steam"), &mounts));
+    assert!(windows_names(&p("/mnt/old"), &mounts));
+    assert!(!windows_names(&p("/dev/sdb1"), &mounts), "an unmounted partition says nothing about its path");
+    assert!(windows_names(&p(&format!("{smb}/reports")), &mounts));
+    assert!(bad_name_char(':', true) && !bad_name_char(':', false));
+    assert!(bad_name_char('/', false) && bad_name_char('\0', false) && !bad_name_char('\\', false));
+}
+
 #[test]
 fn unix_names_allow_windows_characters_and_count_bytes() {
     assert_eq!(validate_name("a:b?.txt ", false), Ok("a:b?.txt".into()));
@@ -260,10 +290,11 @@ fn f2_renames_inline_and_keeps_the_item_focused() {
 
     key(&mut app, Key::F(2), NO);
     key(&mut app, Key::Char('A'), CTRL);
-    typed(&mut app, "bad:name");
+    typed(&mut app, "con.jpg");
     key(&mut app, Key::Enter, NO);
     assert!(app.is_renaming(), "an invalid name keeps the editor open");
-    assert!(app.tab().error.as_deref().is_some_and(|e| e.contains("cannot contain")));
+    assert_eq!(app.rename_text(), Some("con.jpg"));
+    assert_eq!(app.rename_hint(), Some("This name is reserved by Windows"));
     assert!(ops(&mut app).is_empty());
 
     key(&mut app, Key::Char('A'), CTRL);
@@ -522,13 +553,44 @@ fn dragging_selected_rows_starts_a_shell_drag_and_a_plain_click_narrows_the_sele
 }
 
 #[test]
+fn ctrl_dragging_a_selected_item_drags_the_selection_and_a_ctrl_click_toggles_on_release() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false), ("b.txt", false), ("c.txt", false)]);
+    select(&mut app, &["a.txt"]);
+    let (a, b) = (row_xy(&app, 0), row_xy(&app, 1));
+    let dragged = |app: &mut App| app.drain_effects().find_map(|e| if let Effect::StartDrag(paths) = e { Some(paths) } else { None });
+    press(&mut app, a, MouseButton::Left, CTRL);
+    assert_eq!(selected(&app), ["a.txt"], "the only selected item stays selected while it may still be dragged");
+    app.on_event(&Event::MouseMove { x: a.0 + 12.0, y: a.1 + 3.0 }, t0());
+    assert_eq!(dragged(&mut app), Some(vec![p(r"C:\x\a.txt")]));
+    release(&mut app, (a.0 + 12.0, a.1 + 3.0), MouseButton::Left);
+    assert_eq!(selected(&app), ["a.txt"], "a drag never toggles");
+
+    press(&mut app, b, MouseButton::Left, CTRL);
+    assert_eq!(selected(&app), ["a.txt", "b.txt"], "an unselected item joins on the press");
+    release(&mut app, b, MouseButton::Left);
+    assert_eq!(selected(&app), ["a.txt", "b.txt"]);
+    press(&mut app, b, MouseButton::Left, CTRL);
+    app.on_event(&Event::MouseMove { x: b.0 + 12.0, y: b.1 + 3.0 }, t0());
+    assert_eq!(dragged(&mut app), Some(vec![p(r"C:\x\a.txt"), p(r"C:\x\b.txt")]), "ctrl+drag copies the whole selection");
+    release(&mut app, (b.0 + 12.0, b.1 + 3.0), MouseButton::Left);
+    assert_eq!(selected(&app), ["a.txt", "b.txt"]);
+
+    press(&mut app, a, MouseButton::Left, CTRL);
+    assert_eq!(selected(&app), ["a.txt", "b.txt"]);
+    release(&mut app, a, MouseButton::Left);
+    assert_eq!(selected(&app), ["b.txt"], "a ctrl+click without a drag still toggles");
+    assert!(dragged(&mut app).is_none());
+}
+
+#[test]
 fn drops_copy_or_move_by_volume_and_modifiers() {
     use drop_effect::*;
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &[("sub", true), ("a.txt", false)]);
     let empty = (300.0, app.layout.list.y + 200.0);
     let all = COPY | MOVE | LINK;
-    let enter = |app: &mut App, paths: Vec<FsPath>, at: (f32, f32), mods: Mods| app.drag(&DragEvent::Enter { paths, x: at.0, y: at.1, mods, allowed: all }, t0());
+    let enter = |app: &mut App, paths: Vec<FsPath>, at: (f32, f32), mods: Mods| app.drag(&DragEvent::Enter { paths, x: at.0, y: at.1, mods, allowed: all, right: false }, t0());
     assert_eq!(enter(&mut app, vec![p(r"D:\in\f.txt")], empty, NO), COPY);
     assert_eq!(app.drop_spot(), Some(Spot::List));
     assert_eq!(app.drag(&DragEvent::Over { x: empty.0, y: empty.1, mods: SHIFT, allowed: all }, t0()), MOVE);
@@ -561,11 +623,128 @@ fn dropping_on_the_title_bar_reveals_the_file_like_before() {
     deliver(&mut app, &[("a.txt", false)]);
     let title = (app.layout.new_tab.right() + 40.0, 10.0);
     let all = drop_effect::COPY | drop_effect::MOVE;
-    assert_eq!(app.drag(&DragEvent::Enter { paths: vec![p(r"D:\docs\r.txt")], x: title.0, y: title.1, mods: NO, allowed: all }, t0()), drop_effect::COPY);
+    assert_eq!(app.drag(&DragEvent::Enter { paths: vec![p(r"D:\docs\r.txt")], x: title.0, y: title.1, mods: NO, allowed: all, right: false }, t0()), drop_effect::COPY);
     assert_eq!(app.drop_spot(), None);
     app.drag(&DragEvent::Drop { x: title.0, y: title.1, mods: NO, allowed: all }, t0());
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::List { path, .. }, .. } if path == p(r"D:\docs"))));
     assert_eq!(app.current_location(), &Location::parse(r"D:\docs").unwrap());
+}
+
+fn drop_menu(app: &mut App) -> Vec<MenuItem> {
+    app.drain_effects()
+        .find_map(|e| match e {
+            Effect::ShellMenu(m) if m.items.is_empty() && !m.shell => Some(m.menu),
+            _ => None,
+        })
+        .expect("a menu at the drop point")
+}
+
+fn drop_rows(items: &[MenuItem]) -> Vec<String> {
+    items
+        .iter()
+        .map(|i| match i {
+            MenuItem::Command { label, checked, disabled, .. } => format!("{label}{}{}", if *checked { " *" } else { "" }, if *disabled { " (off)" } else { "" }),
+            _ => "-".into(),
+        })
+        .collect()
+}
+
+#[test]
+fn right_dragging_rows_asks_what_to_do_where_they_land() {
+    use drop_effect::*;
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("sub", true), ("a.txt", false), ("b.txt", false)]);
+    let (a, sub) = (row_xy(&app, 1), row_xy(&app, 0));
+    press(&mut app, a, MouseButton::Right, NO);
+    assert_eq!(selected(&app), ["a.txt"], "a right press selects the row like a click");
+    app.on_event(&Event::MouseMove { x: a.0 + 12.0, y: a.1 + 3.0 }, t0());
+    let dragged = vec![p(r"C:\x\a.txt")];
+    assert!(app.drain_effects().any(|e| matches!(&e, Effect::StartDrag(p) if *p == dragged)));
+    release(&mut app, a, MouseButton::Right);
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::ShellMenu(_))), "letting go after a drag never opens the context menu");
+
+    let all = COPY | MOVE;
+    assert_eq!(app.drag(&DragEvent::Enter { paths: dragged.clone(), x: sub.0, y: sub.1, mods: NO, allowed: all, right: false }, t0()), MOVE, "the drag shows what a left drop would do");
+    assert_eq!(app.drop_spot(), Some(Spot::Row(0)));
+    assert_eq!(app.drag(&DragEvent::Drop { x: sub.0, y: sub.1, mods: NO, allowed: all }, t0()), COPY);
+    let menu = drop_menu(&mut app);
+    assert_eq!(drop_rows(&menu), ["Copy here", "Move here *", "Create shortcut here", "-", "Cancel"], "Flit offers every choice for its own drag");
+    assert!(op_list(&mut app).is_empty(), "nothing happens before a choice");
+    run_menu(&mut app, &menu, "Move here");
+    assert_eq!(op_list(&mut app), [FileOp::Move { items: dragged.clone(), dest: p(r"C:\x\sub") }]);
+
+    app.drag(&DragEvent::Enter { paths: dragged.clone(), x: sub.0, y: sub.1, mods: NO, allowed: all, right: false }, t0());
+    app.drag(&DragEvent::Drop { x: sub.0, y: sub.1, mods: NO, allowed: all }, t0());
+    assert_eq!(op_list(&mut app), [FileOp::Move { items: dragged, dest: p(r"C:\x\sub") }], "a later left drag of the same files drops at once");
+}
+
+#[test]
+fn a_right_drop_from_another_program_offers_what_it_allows() {
+    use drop_effect::*;
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("sub", true), ("a.txt", false)]);
+    let (sub, empty, title) = (row_xy(&app, 0), (300.0, app.layout.list.y + 200.0), (app.layout.new_tab.right() + 40.0, 10.0));
+    let right_drop = |app: &mut App, paths: &[&str], at: (f32, f32), allowed: u32| {
+        let paths = paths.iter().map(|s| p(s)).collect();
+        let shown = app.drag(&DragEvent::Enter { paths, x: at.0, y: at.1, mods: NO, allowed, right: true }, t0());
+        (shown, app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: NO, allowed }, t0()))
+    };
+    assert_eq!(right_drop(&mut app, &[r"D:\in\f.txt"], sub, COPY | MOVE | LINK), (COPY, COPY));
+    let menu = drop_menu(&mut app);
+    assert_eq!(drop_rows(&menu), ["Copy here *", "Move here", "Create shortcut here", "-", "Cancel"]);
+    run_menu(&mut app, &menu, "Create shortcut here");
+    assert_eq!(op_list(&mut app), [FileOp::Link { items: vec![p(r"D:\in\f.txt")], dest: p(r"C:\x\sub") }]);
+
+    right_drop(&mut app, &[r"D:\in\f.txt"], sub, COPY | MOVE | LINK);
+    let menu = drop_menu(&mut app);
+    run_menu(&mut app, &menu, "Copy here");
+    assert_eq!(op_list(&mut app), [FileOp::Copy { items: vec![p(r"D:\in\f.txt")], dest: p(r"C:\x\sub") }]);
+
+    right_drop(&mut app, &[r"D:\in\f.txt"], sub, COPY | MOVE | LINK);
+    let menu = drop_menu(&mut app);
+    run_menu(&mut app, &menu, "Cancel");
+    assert!(op_list(&mut app).is_empty());
+
+    assert_eq!(right_drop(&mut app, &[r"C:\x\a.txt"], empty, COPY | MOVE), (COPY, COPY), "files already here can still be copied");
+    assert_eq!(drop_rows(&drop_menu(&mut app)), ["Copy here *", "Move here (off)", "Create shortcut here (off)", "-", "Cancel"]);
+
+    app.caps = crate::caps::Caps { unix_paths: true };
+    right_drop(&mut app, &[r"D:\in\f.txt"], sub, COPY | MOVE | LINK);
+    assert_eq!(drop_rows(&drop_menu(&mut app)), ["Copy here *", "Move here", "Create link here", "-", "Cancel"], "unix offers symbolic links under their own name");
+
+    assert_eq!(right_drop(&mut app, &[r"D:\in\f.txt"], title, COPY), (COPY, COPY), "the title bar still reveals at once");
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::ShellMenu(_))));
+}
+
+#[test]
+fn a_right_click_without_moving_still_opens_the_context_menu() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false)]);
+    let a = row_xy(&app, 0);
+    press(&mut app, a, MouseButton::Right, NO);
+    app.on_event(&Event::MouseMove { x: a.0 + 2.0, y: a.1 }, t0());
+    release(&mut app, a, MouseButton::Right);
+    let effects: Vec<Effect> = app.drain_effects().collect();
+    assert!(!effects.iter().any(|e| matches!(e, Effect::StartDrag(_))));
+    assert!(effects.iter().any(|e| matches!(e, Effect::ShellMenu(m) if m.items == [p(r"C:\x\a.txt")])));
+}
+
+#[test]
+fn content_without_file_paths_lands_in_the_folder_under_the_cursor() {
+    use drop_effect::*;
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("sub", true), ("a.txt", false)]);
+    let (sub, title) = (row_xy(&app, 0), (app.layout.new_tab.right() + 40.0, 10.0));
+    let enter = |app: &mut App, at: (f32, f32), allowed: u32| app.drag(&DragEvent::Enter { paths: Vec::new(), x: at.0, y: at.1, mods: NO, allowed, right: false }, t0());
+    assert_eq!(enter(&mut app, sub, COPY | MOVE), COPY);
+    assert_eq!((app.drop_folder(), app.drop_caption()), (Some(p(r"C:\x\sub")), Some(("Copy to %1".to_owned(), "sub".to_owned()))), "the platform learns where to put it");
+    assert_eq!(app.drag(&DragEvent::Over { x: sub.0, y: sub.1, mods: SHIFT, allowed: COPY | MOVE }, t0()), MOVE);
+    assert_eq!(app.drag(&DragEvent::Drop { x: sub.0, y: sub.1, mods: NO, allowed: COPY | MOVE }, t0()), COPY);
+    assert!(op_list(&mut app).is_empty(), "the platform transfers the content itself");
+    assert_eq!(enter(&mut app, title, COPY), NONE, "content cannot be revealed");
+    app.drag(&DragEvent::Leave, t0());
+    assert_eq!(enter(&mut app, sub, LINK), NONE);
+    app.drag(&DragEvent::Leave, t0());
 }
 
 fn two_tabs() -> App {
@@ -588,7 +767,7 @@ type Dropped = (u32, Option<Spot>, Option<(String, String)>, Vec<FileOp>);
 fn drop_on(app: &mut App, at: (f32, f32), paths: &[&str]) -> Dropped {
     let all = drop_effect::COPY | drop_effect::MOVE | drop_effect::LINK;
     let paths = paths.iter().map(|s| p(s)).collect();
-    let effect = app.drag(&DragEvent::Enter { paths, x: at.0, y: at.1, mods: NO, allowed: all }, t0());
+    let effect = app.drag(&DragEvent::Enter { paths, x: at.0, y: at.1, mods: NO, allowed: all, right: false }, t0());
     let (spot, caption) = (app.drop_spot(), app.drop_caption());
     app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: NO, allowed: all }, t0());
     (effect, spot, caption, op_list(app))
@@ -622,7 +801,7 @@ fn hovering_a_folder_tab_or_crumb_while_dragging_opens_it() {
     let start = t0();
     let at = |app: &mut App, xy: (f32, f32), ms: u64| app.drag(&DragEvent::Over { x: xy.0, y: xy.1, mods: NO, allowed: all }, start + Duration::from_millis(ms));
     let sub = row_xy(&app, 0);
-    app.drag(&DragEvent::Enter { paths: vec![p(r"D:\in\f.txt")], x: sub.0, y: sub.1, mods: NO, allowed: all }, start);
+    app.drag(&DragEvent::Enter { paths: vec![p(r"D:\in\f.txt")], x: sub.0, y: sub.1, mods: NO, allowed: all, right: false }, start);
     at(&mut app, sub, 0);
     at(&mut app, sub, 1200);
     assert_eq!(app.current_location(), &Location::parse(r"C:\x").unwrap());
@@ -660,7 +839,7 @@ fn the_spring_delay_setting_decides_when_a_hovered_folder_opens_or_turns_it_off(
         let i = super::super::settings::index("files.spring_delay").unwrap();
         assert!(super::super::settings::SETTINGS[i].set(&mut app, super::super::settings::Value::Number(delay)));
         let sub = row_xy(&app, 0);
-        app.drag(&DragEvent::Enter { paths: vec![p(r"D:\in\f.txt")], x: sub.0, y: sub.1, mods: NO, allowed: all }, start);
+        app.drag(&DragEvent::Enter { paths: vec![p(r"D:\in\f.txt")], x: sub.0, y: sub.1, mods: NO, allowed: all, right: false }, start);
         for ms in [0, held] {
             app.drag(&DragEvent::Over { x: sub.0, y: sub.1, mods: NO, allowed: all }, start + Duration::from_millis(ms));
         }
@@ -932,14 +1111,14 @@ fn files_dropped_on_the_recycle_bin_are_trashed() {
     let r = app.nav.sidebar.rects[k];
     let at = (r.x + 40.0, r.y + r.h / 2.0);
     let all = COPY | MOVE | LINK;
-    let enter = |app: &mut App, paths: Vec<FsPath>, at: (f32, f32)| app.drag(&DragEvent::Enter { paths, x: at.0, y: at.1, mods: CTRL, allowed: all }, t0());
+    let enter = |app: &mut App, paths: Vec<FsPath>, at: (f32, f32)| app.drag(&DragEvent::Enter { paths, x: at.0, y: at.1, mods: CTRL, allowed: all, right: false }, t0());
     assert_eq!(enter(&mut app, vec![p(r"D:\in\f.txt")], at), MOVE);
     assert_eq!(app.drop_spot(), Some(Spot::Side(k)));
     assert_eq!(app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: NO, allowed: all }, t0()), MOVE);
     assert_eq!(op_list(&mut app), [FileOp::Trash(vec![p(r"D:\in\f.txt")])]);
     assert_eq!(enter(&mut app, vec![p(BIN_REPORT.0)], at), NONE, "what is already in the bin stays there");
     app.drag(&DragEvent::Leave, t0());
-    assert_eq!(app.drag(&DragEvent::Enter { paths: vec![p(r"D:\in\f.txt")], x: at.0, y: at.1, mods: NO, allowed: COPY }, t0()), NONE);
+    assert_eq!(app.drag(&DragEvent::Enter { paths: vec![p(r"D:\in\f.txt")], x: at.0, y: at.1, mods: NO, allowed: COPY, right: false }, t0()), NONE);
     app.drag(&DragEvent::Leave, t0());
 
     let mut app = bin_app();
@@ -1002,6 +1181,22 @@ fn f2_with_several_items_selected_renames_them_all_with_numbers() {
 }
 
 #[test]
+fn f2_and_enter_without_a_change_leave_several_selected_items_alone() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.jpg", false), ("b.png", false), ("c", true)]);
+    select(&mut app, &["a.jpg", "b.png", "c"]);
+    key(&mut app, Key::F(2), NO);
+    assert_eq!(app.rename_text(), Some("c"));
+    key(&mut app, Key::Enter, NO);
+    assert!(!app.is_renaming());
+    assert!(ops(&mut app).is_empty(), "an unchanged name renames nothing");
+    assert_eq!(selected(&app), ["a.jpg", "b.png", "c"]);
+    key(&mut app, Key::F(2), NO);
+    key(&mut app, Key::Tab, NO);
+    assert!(!app.is_renaming() && ops(&mut app).is_empty(), "Tab commits the same way");
+}
+
+#[test]
 fn changing_the_extension_needs_a_second_enter() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &[("notes.txt", false), ("src", true)]);
@@ -1029,6 +1224,130 @@ fn changing_the_extension_needs_a_second_enter() {
     app.warn_extension_change = true;
     rename(&mut app, "src", "src.old");
     assert_eq!(op_list(&mut app), [FileOp::Rename { item: p(r"C:\x\src"), name: b"src.old".to_vec() }], "folders have no extension");
+}
+
+fn hint_colors(app: &mut App) -> bool {
+    let error = app.look.palette.area(crate::theme::Area::Files).error.0;
+    colors(app).contains(&error)
+}
+
+#[test]
+fn characters_a_name_cannot_hold_are_refused_while_typing_with_a_note_by_the_editor() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false)]);
+    select(&mut app, &["a.txt"]);
+    key(&mut app, Key::F(2), NO);
+    assert!(!hint_colors(&mut app));
+    typed(&mut app, "x:");
+    assert_eq!(app.rename_text(), Some("x.txt"), "the colon never reaches the name");
+    assert_eq!(app.rename_hint(), Some(S::UiOpsNameBadChars.t()));
+    assert!(hint_colors(&mut app), "the note is drawn next to the editor");
+    assert_eq!(app.tab().error, None, "nothing goes to the status bar");
+    typed(&mut app, "y");
+    assert_eq!((app.rename_text(), app.rename_hint()), (Some("xy.txt"), None), "the next accepted key clears the note");
+    typed(&mut app, "*");
+    key(&mut app, Key::Backspace, NO);
+    assert_eq!((app.rename_text(), app.rename_hint()), (Some("x.txt"), None));
+    key(&mut app, Key::Char('A'), CTRL);
+    app.on_event(&Event::Pasted("re|port?.txt".into()), t0());
+    assert_eq!(app.rename_text(), Some("report.txt"));
+    assert_eq!(app.rename_hint(), Some(S::UiOpsNameBadChars.t()));
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(op_list(&mut app), [FileOp::Rename { item: p(r"C:\x\a.txt"), name: b"report.txt".to_vec() }]);
+}
+
+#[test]
+fn a_name_taken_by_another_item_keeps_the_editor_open_with_the_typed_text() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false), ("b.txt", false), ("Notes", true)]);
+    let rename = |app: &mut App, text: &str| {
+        key(app, Key::Char('A'), CTRL);
+        typed(app, text);
+        key(app, Key::Enter, NO);
+    };
+    select(&mut app, &["a.txt"]);
+    key(&mut app, Key::F(2), NO);
+    rename(&mut app, "B.TXT");
+    assert!(app.is_renaming());
+    assert_eq!((app.rename_text(), app.rename_hint()), (Some("B.TXT"), Some(S::UiOpsNameTaken.t())));
+    assert!(ops(&mut app).is_empty());
+    rename(&mut app, "notes");
+    assert_eq!((app.rename_text(), app.rename_hint()), (Some("notes"), Some(S::UiOpsNameTaken.t())), "folders count too");
+    key(&mut app, Key::Tab, NO);
+    assert_eq!(app.rename_text(), Some("notes"), "Tab does not move on from a taken name");
+    rename(&mut app, "A.txt");
+    assert!(!app.is_renaming());
+    assert_eq!(op_list(&mut app), [FileOp::Rename { item: p(r"C:\x\a.txt"), name: b"A.txt".to_vec() }], "changing only the case of the same item is allowed");
+}
+
+#[test]
+fn names_on_unix_folders_follow_the_file_system_of_the_mount() {
+    let mut app = app_at("/home/u");
+    app.caps = crate::caps::Caps { unix_paths: true };
+    app.set_places(Arc::new(crate::ui::Places { drives: vec![drive_fs("/", "ext4"), drive_fs("/media/u/STICK", "vfat")], ..Default::default() }));
+    deliver(&mut app, &[("a.txt", false), ("b.txt", false)]);
+    select(&mut app, &["a.txt"]);
+    key(&mut app, Key::F(2), NO);
+    key(&mut app, Key::Char('A'), CTRL);
+    typed(&mut app, "B:/");
+    assert_eq!((app.rename_text(), app.rename_hint()), (Some("B:"), Some(S::UiOpsNameSlash.t())));
+    typed(&mut app, ".txt");
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(op_list(&mut app), [FileOp::Rename { item: p("/home/u/a.txt"), name: b"B:.txt".to_vec() }]);
+    key(&mut app, Key::F(2), NO);
+    key(&mut app, Key::Char('A'), CTRL);
+    typed(&mut app, "B.txt");
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(op_list(&mut app), [FileOp::Rename { item: p("/home/u/a.txt"), name: b"B.txt".to_vec() }], "ext4 tells B.txt from b.txt");
+
+    let mut app = app_at("/media/u/STICK/docs");
+    app.caps = crate::caps::Caps { unix_paths: true };
+    app.set_places(Arc::new(crate::ui::Places { drives: vec![drive_fs("/", "ext4"), drive_fs("/media/u/STICK", "vfat")], ..Default::default() }));
+    deliver(&mut app, &[("a.txt", false), ("b.txt", false)]);
+    select(&mut app, &["a.txt"]);
+    key(&mut app, Key::F(2), NO);
+    key(&mut app, Key::Char('A'), CTRL);
+    typed(&mut app, "B:");
+    assert_eq!((app.rename_text(), app.rename_hint()), (Some("B"), Some(S::UiOpsNameBadChars.t())));
+    typed(&mut app, ".txt");
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(app.rename_hint(), Some(S::UiOpsNameTaken.t()), "vfat does not tell B.txt from b.txt");
+    key(&mut app, Key::Char('A'), CTRL);
+    typed(&mut app, "aux.txt");
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(app.rename_hint(), Some(S::UiOpsNameReserved.t()));
+    assert!(ops(&mut app).is_empty());
+}
+
+#[test]
+fn a_rename_the_provider_refuses_reopens_the_editor_with_the_typed_name() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false), ("b.txt", false)]);
+    select(&mut app, &["a.txt"]);
+    key(&mut app, Key::F(2), NO);
+    typed(&mut app, "draft");
+    key(&mut app, Key::Enter, NO);
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::Rename { item: p(r"C:\x\a.txt"), name: b"draft.txt".to_vec() });
+    assert!(!app.is_renaming());
+    let tab = app.tab().id;
+    app.on_provider_event(ProviderEvent::OpDone { tab, id, error: Some("Access is denied.".into()), report: None }, t0());
+    assert!(app.is_renaming());
+    assert_eq!((app.rename_text(), app.rename_hint()), (Some("draft.txt"), Some("Access is denied.")));
+    assert_eq!(app.tab().error, None, "the message sits next to the editor instead of the status bar");
+    assert_eq!(selected(&app), ["a.txt"]);
+    assert!(hint_colors(&mut app));
+    typed(&mut app, "final");
+    assert_eq!((app.rename_text(), app.rename_hint()), (Some("final.txt"), None), "the typed base name is selected again");
+    key(&mut app, Key::Enter, NO);
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::Rename { item: p(r"C:\x\a.txt"), name: b"final.txt".to_vec() });
+
+    select(&mut app, &["b.txt"]);
+    key(&mut app, Key::F(2), NO);
+    app.on_provider_event(ProviderEvent::OpDone { tab, id, error: Some("The disk is full.".into()), report: None }, t0());
+    assert_eq!((app.rename_text(), app.rename_hint()), (Some("b.txt"), None), "an editor already open is left alone");
+    assert_eq!(app.tab().error.as_deref(), Some("The disk is full."));
 }
 
 #[test]
@@ -1291,7 +1610,7 @@ fn files_dropped_on_a_program_are_passed_to_it() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &[("a.txt", false), ("run.CMD", false), ("tool.exe", false)]);
     let all = COPY | MOVE | LINK;
-    let enter = |app: &mut App, paths: Vec<FsPath>, at: (f32, f32)| app.drag(&DragEvent::Enter { paths, x: at.0, y: at.1, mods: NO, allowed: all }, t0());
+    let enter = |app: &mut App, paths: Vec<FsPath>, at: (f32, f32)| app.drag(&DragEvent::Enter { paths, x: at.0, y: at.1, mods: NO, allowed: all, right: false }, t0());
     let (tool, cmd, txt) = (row_xy(&app, 2), row_xy(&app, 1), row_xy(&app, 0));
     let files = vec![p(r"D:\in\f.txt"), p(r"D:\in\g.txt")];
     assert_eq!(enter(&mut app, files.clone(), tool), COPY);
@@ -1448,6 +1767,58 @@ fn a_context_menu_during_a_bulk_trash_still_ends_with_the_deleted_rows_gone() {
     assert_eq!(shown(&app), "keep.txt");
 }
 
+fn focused(app: &App) -> Option<String> {
+    let v = app.tab().view.as_ref().unwrap();
+    v.focus.map(|f| String::from_utf8_lossy(v.listing().name(f)).into_owned())
+}
+
+fn trash(app: &mut App, names: &[&str]) {
+    select(app, names);
+    key(app, Key::Delete, NO);
+    let [(id, op)] = ops(app).try_into().unwrap();
+    let pairs: Vec<(String, String)> = names.iter().map(|n| (format!(r"C:\x\{n}"), format!(r"C:\$Recycle.Bin\S\$R{n}"))).collect();
+    done(app, id, op, &pairs.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect::<Vec<_>>());
+}
+
+#[test]
+fn after_a_delete_the_item_in_its_place_takes_focus_and_selection() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a", false), ("b", false), ("c", false), ("d", false), ("e", false), ("f", false), ("g", false)]);
+    trash(&mut app, &["c", "b"]);
+    assert_eq!((selected(&app), focused(&app)), (vec!["d".to_owned()], Some("d".into())));
+    key(&mut app, Key::Down, NO);
+    assert_eq!(selected(&app), ["e"], "the arrow keys go on from there");
+    trash(&mut app, &["g"]);
+    assert_eq!((selected(&app), focused(&app)), (vec!["f".to_owned()], Some("f".into())), "removing the last item selects the one before it");
+
+    app.tab_mut().view.as_mut().unwrap().clear_selection();
+    change(&mut app, ChangeKind::Removed, "a", false);
+    assert_eq!((selected(&app), focused(&app)), (Vec::<String>::new(), Some("f".into())), "an unrelated item that vanishes changes nothing");
+    change(&mut app, ChangeKind::Removed, "f", false);
+    assert_eq!((selected(&app), focused(&app)), (Vec::<String>::new(), Some("e".into())), "focus moves on but nothing gets selected for the user");
+    select(&mut app, &["d", "e"]);
+    change(&mut app, ChangeKind::Removed, "d", false);
+    assert_eq!((selected(&app), focused(&app)), (vec!["e".to_owned()], Some("e".into())), "the rest of the selection stays as it was");
+}
+
+#[test]
+fn the_item_that_takes_the_place_of_a_deleted_one_is_scrolled_into_view() {
+    let mut app = app_at(r"C:\x");
+    let names: Vec<String> = (0..200).map(|k| format!("f{k:03}")).collect();
+    let items: Vec<(&str, bool)> = names.iter().map(|n| (n.as_str(), false)).collect();
+    deliver(&mut app, &items);
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, t0());
+    assert_eq!(app.tab().scroll_target, 0.0);
+    trash(&mut app, &["f150"]);
+    app.frame(&mut g, t0());
+    assert_eq!(selected(&app), ["f151"]);
+    let t = app.tab();
+    let row = t.view.as_ref().unwrap().row_of(t.view.as_ref().unwrap().focus.unwrap()).unwrap() as f32;
+    let top = row * app.layout.row_h;
+    assert!(t.scroll_target <= top && top + app.layout.row_h <= t.scroll_target + app.layout.list.h, "row {row} at {top} is visible from {}", t.scroll_target);
+}
+
 #[test]
 fn item_paths_of_a_plain_folder_match_the_general_path_for_every_kind_of_folder() {
     for dir in [r"C:\Users\me", r"C:\", r"\\server\share\docs", r"\\?\C:\deep"] {
@@ -1540,7 +1911,7 @@ fn a_file_drop_on_the_panel_fills_it_with_teal_and_a_folder_lights_only_its_row(
     let files = *app.look.palette.area(crate::theme::Area::Files);
     let fill = files.teal.alpha(DROP_FILL).0;
     let empty = (300.0, app.layout.list.y + 200.0);
-    app.drag(&DragEvent::Enter { paths: vec![p(r"D:\in\f.txt")], x: empty.0, y: empty.1, mods: NO, allowed: COPY | MOVE }, t0());
+    app.drag(&DragEvent::Enter { paths: vec![p(r"D:\in\f.txt")], x: empty.0, y: empty.1, mods: NO, allowed: COPY | MOVE, right: false }, t0());
     assert!(colors(&mut app).contains(&fill));
     let sub = row_xy(&app, 0);
     app.drag(&DragEvent::Over { x: sub.0, y: sub.1, mods: NO, allowed: COPY | MOVE }, t0());
@@ -1584,4 +1955,69 @@ fn an_error_in_the_status_bar_goes_away_after_five_seconds() {
     a.on_event(&Event::Timer, t0 + ERROR_FOR * 2);
     assert!(a.tab().error.is_none());
     assert!(a.dirty);
+}
+
+#[test]
+fn single_click_opens_a_folder_on_release_so_it_can_still_be_dragged() {
+    let mut app = app_at(r"C:\x");
+    app.single_click_folders = crate::ui::settings::ClickOpen::Always;
+    deliver(&mut app, &[("a", true), ("b", true)]);
+    let (x, y) = row_xy(&app, 0);
+    press(&mut app, (x, y), MouseButton::Left, NO);
+    assert_eq!(app.tab().location().path(), &p(r"C:\x"), "the press only selects");
+    assert_eq!(selected(&app), ["a"]);
+    app.on_event(&Event::MouseMove { x: x + 12.0, y: y + 3.0 }, t0());
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::StartDrag(p) if p.len() == 1)));
+    release(&mut app, (x + 12.0, y + 3.0), MouseButton::Left);
+    assert_eq!(app.tab().location().path(), &p(r"C:\x"), "a drag never opens the folder");
+    let b = row_xy(&app, 1);
+    press(&mut app, b, MouseButton::Left, NO);
+    assert_eq!(app.tab().location().path(), &p(r"C:\x"));
+    release(&mut app, b, MouseButton::Left);
+    assert_eq!(app.tab().location().path(), &p(r"C:\x\b"), "the release opens it");
+}
+
+#[test]
+fn double_clicking_a_column_edge_fits_that_column() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false)]);
+    let l = &app.layout;
+    let i = (1..l.cols.len()).find(|&i| l.columns[i] != crate::ui::Column::Name).expect("a column besides the name");
+    let (col, x, y) = (l.columns[i], l.cols[i].x, l.header.y + l.header.h / 2.0);
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, t0());
+    release(&mut app, (x, y), MouseButton::Left);
+    assert_eq!(app.tab().fit_column, None);
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 2 }, t0());
+    release(&mut app, (x, y), MouseButton::Left);
+    assert_eq!(app.tab().fit_column, Some(col));
+    assert!(app.tab().fit_pending);
+    assert!(matches!(app.drag, Drag::None));
+}
+
+#[test]
+fn run_in_terminal_launches_only_an_executable_file() {
+    let mut app = app_at("/home/u");
+    let t = app.tab();
+    let mut listing = Listing::default();
+    let mut keys = SortKeys::new(CaseMode::Insensitive);
+    for (n, attrs) in [("notes.txt", 0), ("tool", attr::EXEC)] {
+        let i = listing.push(n.as_bytes(), Meta { attrs, size: 1, ..Default::default() });
+        keys.push(listing.name(i));
+    }
+    let mut order = Vec::new();
+    sort::sort(&listing, &keys, ViewSpec::default(), &mut order);
+    let snap = DirSnapshot { gen: t.gen, path: t.location().path().clone(), listing, keys, order, view: ViewSpec::default(), done: true, error: None, elapsed: Duration::ZERO };
+    t.slot.publish(Arc::new(snap));
+    app.poll();
+    app.drain_effects().for_each(drop);
+    let launched = |app: &mut App| app.drain_effects().find_map(|e| match e {
+        Effect::Provider { req: ProviderRequest::Launch { launch: Launch::RunInTerminal { program }, .. }, .. } => Some(program),
+        _ => None,
+    });
+    select(&mut app, &["notes.txt"]);
+    app.run_in_terminal();
+    assert_eq!(launched(&mut app), None);
+    select(&mut app, &["tool"]);
+    app.run_in_terminal();
+    assert_eq!(launched(&mut app), Some(p("/home/u/tool")));
 }

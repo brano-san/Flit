@@ -20,6 +20,7 @@ pub struct Open {
     pub cwd: Option<Vec<u8>>,
     pub tag: Option<String>,
     pub properties: bool,
+    pub activation: Option<String>,
 }
 
 impl Open {
@@ -127,9 +128,16 @@ pub enum ResolveError {
 }
 
 pub fn resolve(raw: &[u8], cwd: Option<&[u8]>, shell_folder: &dyn Fn(&str) -> Option<Location>) -> Result<Location, ResolveError> {
-    let expanded = expand_environment(unquote(raw));
+    resolve_for(raw, cwd, shell_folder, false)
+}
+
+pub fn resolve_for(raw: &[u8], cwd: Option<&[u8]>, shell_folder: &dyn Fn(&str) -> Option<Location>, unix: bool) -> Result<Location, ResolveError> {
+    let expanded = if unix { expand_unix(unquote(raw), &|n| std::env::var(n).ok()) } else { expand_environment(unquote(raw)) };
     let raw = expanded.as_deref().unwrap_or_else(|| unquote(raw));
     let text = name::display(raw);
+    if unix && strip_prefix_ci(raw, b"trash:").is_some() {
+        return Ok(Location::recycle_bin());
+    }
     if THIS_PC.iter().any(|t| text.eq_ignore_ascii_case(t)) {
         return Ok(Location::computer());
     }
@@ -185,6 +193,48 @@ fn expand_environment(raw: &[u8]) -> Option<Vec<u8>> {
     }
     out.push_str(rest);
     Some(out.into_bytes())
+}
+
+pub fn expand_unix(raw: &[u8], env: &dyn Fn(&str) -> Option<String>) -> Option<Vec<u8>> {
+    let text = std::str::from_utf8(raw).ok()?;
+    let mut out = String::with_capacity(text.len());
+    let (mut rest, mut changed) = (text, false);
+    if let Some(tail) = text.strip_prefix('~').filter(|t| t.is_empty() || t.starts_with('/')) {
+        if let Some(home) = env("HOME") {
+            out.push_str(&home);
+            rest = tail;
+            changed = true;
+        }
+    }
+    while let Some(i) = rest.find('$') {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 1..];
+        let braced = after.strip_prefix('{').and_then(|b| b.split_once('}'));
+        let (name, tail) = match (braced, after.starts_with('{')) {
+            (Some(split), _) => split,
+            (None, true) => ("", after),
+            (None, false) => after.split_at(after.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(after.len())),
+        };
+        let valid = name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        match valid.then(|| env(name)).flatten() {
+            Some(value) => {
+                out.push_str(&value);
+                changed = true;
+                rest = tail;
+            }
+            None => {
+                out.push('$');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    changed.then(|| out.into_bytes())
+}
+
+pub fn typed_as_path(text: &str) -> bool {
+    let t = text.trim();
+    t.starts_with(['/', '~', '$']) && !t.contains(char::is_whitespace)
 }
 
 fn strip_prefix_ci<'a>(b: &'a [u8], prefix: &[u8]) -> Option<&'a [u8]> {
@@ -244,16 +294,20 @@ pub struct Route {
 }
 
 pub fn routes(open: &Open, shell_folder: &dyn Fn(&str) -> Option<Location>) -> (Vec<Route>, Vec<ResolveError>) {
+    routes_for(open, shell_folder, false)
+}
+
+pub fn routes_for(open: &Open, shell_folder: &dyn Fn(&str) -> Option<Location>, unix: bool) -> (Vec<Route>, Vec<ResolveError>) {
     let cwd = open.cwd.as_deref();
     let (mut ok, mut failed) = (Vec::new(), Vec::new());
     for raw in &open.paths {
-        match resolve(raw, cwd, shell_folder) {
+        match resolve_for(raw, cwd, shell_folder, unix) {
             Ok(folder) => ok.push(Route { folder, select: None }),
             Err(e) => failed.push(e),
         }
     }
     for raw in &open.select {
-        match resolve(raw, cwd, shell_folder) {
+        match resolve_for(raw, cwd, shell_folder, unix) {
             Ok(item) => match item.parent() {
                 Some(folder) => ok.push(Route { select: Some(item.file_name().to_vec()), folder }),
                 None => ok.push(Route { folder: item, select: None }),

@@ -85,6 +85,10 @@ pub fn validate_name(tags: &[Tag], name: &str, except: Option<usize>) -> Result<
     Ok(name.to_owned())
 }
 
+pub fn not_taggable(unix: bool) -> S {
+    if unix { S::ErrorsTagsNotTaggableLinux } else { S::ErrorsTagsNotTaggable }
+}
+
 pub fn color_name(color: u32) -> &'static str {
     COLORS.iter().find(|c| c.1 == color).map_or(S::ThemeTagColorCustom, |c| c.0).t()
 }
@@ -177,7 +181,12 @@ pub struct Tags {
     pub defs: Vec<Tag>,
     masks: FxHashMap<FileKey, u32>,
     volumes: Vec<u32>,
+    low_ids: Vec<u64>,
     pub files: Vec<TaggedFile>,
+}
+
+fn low_id(volume: u32, low: u32) -> u64 {
+    ((volume as u64) << 32) | low as u64
 }
 
 impl Tags {
@@ -186,6 +195,8 @@ impl Tags {
         let mut volumes: Vec<u32> = masks.keys().map(|k| k.volume).collect();
         volumes.sort_unstable();
         volumes.dedup();
+        let mut low_ids: Vec<u64> = masks.keys().map(|k| low_id(k.volume, k.id as u32)).collect();
+        low_ids.sort_unstable();
         let files = store
             .files
             .iter()
@@ -194,7 +205,7 @@ impl Tags {
                 TaggedFile { path: f.path.clone(), mask: f.mask, meta, present: present && !crate::recycle::in_bin(&f.path) }
             })
             .collect();
-        Self { version, defs: store.tags.clone(), masks, volumes, files }
+        Self { version, defs: store.tags.clone(), masks, volumes, low_ids, files }
     }
 
     #[inline]
@@ -208,6 +219,10 @@ impl Tags {
 
     pub fn has_volume(&self, volume: u32) -> bool {
         self.volumes.binary_search(&volume).is_ok()
+    }
+
+    pub fn may_tag(&self, volume: u32, low: u32) -> bool {
+        self.low_ids.binary_search(&low_id(volume, low)).is_ok()
     }
 
     pub fn count(&self, k: usize) -> usize {
