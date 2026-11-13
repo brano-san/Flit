@@ -503,6 +503,10 @@ fn measure_counts_contents_rounds_to_clusters_and_keeps_archives_apart() {
     assert_eq!((t.files, t.folders, t.size, t.on_disk, t.unpacked), (2, 1, 50, 52, 1003));
     let t = measure(&m, &[(p(r"C:\r\sub"), None)], &|| false, &mut |_| {});
     assert_eq!((t.files, t.folders), (0, 0));
+    let t = measure(&m, &[(p(r"C:\r\a.txt"), None)], &|| true, &mut |_| {});
+    assert_eq!((t.files, t.folders, t.size, t.on_disk), (0, 0, 7, 8), "a file of unknown size is looked up in its folder");
+    let t = measure(&m, &[(p(r"C:\r\gone.txt"), None)], &|| true, &mut |_| {});
+    assert_eq!((t.size, t.on_disk), (0, 0));
     let Some(ProviderRequest::Measure { items, .. }) = via_unc("Ubuntu", ProviderRequest::Measure { tab: 1, id: 2, items: vec![(FsPath::parse("/home").unwrap(), None)], ctl: OpCtl::default() }) else { panic!() };
     assert!(items[0].0.display().starts_with(r"\\wsl"));
 }

@@ -156,6 +156,25 @@ fn an_archive_root_also_measures_its_unpacked_contents_and_shift_opens_the_shell
 }
 
 #[test]
+fn a_recent_file_from_the_home_page_shows_as_a_file_on_unix_paths() {
+    let mut app = app_at("/home/user/folder");
+    app.caps.unix_paths = true;
+    let path = FsPath::parse("/home/user/notes.txt").unwrap();
+    app.drain_effects().for_each(drop);
+    app.place_command(crate::ui::sidebar::PlaceCmd::FileProperties(path.clone()), Instant::now());
+    assert_eq!(value(&app, S::PropertiesType).as_deref(), Some("TXT File"));
+    assert_eq!(value(&app, S::PropertiesSize).as_deref(), Some(S::PropertiesCounting.t()), "the size is measured, not taken as zero");
+    assert_eq!(value(&app, S::PropertiesContains), None, "a file contains nothing");
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Measure { items, .. }, .. } if items == vec![(path.clone(), None)])));
+    let mut app = app_at(r"C:\x");
+    app.drain_effects().for_each(drop);
+    let path = FsPath::parse(r"C:\x\notes.txt").unwrap();
+    app.place_command(crate::ui::sidebar::PlaceCmd::FileProperties(path.clone()), Instant::now());
+    assert!(app.jobs.form.is_none());
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Properties(p) if p == vec![path.clone()])));
+}
+
+#[test]
 fn sidebar_properties_open_the_core_dialog_on_unix_paths_only() {
     let mut app = app_at("/home/user/folder");
     app.caps.unix_paths = true;

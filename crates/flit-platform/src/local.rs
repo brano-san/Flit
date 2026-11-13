@@ -616,6 +616,15 @@ fn accessed(path: &FsPath) -> i64 {
     std::fs::metadata(crate::std_path(path)).and_then(|m| m.accessed()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| (d.as_secs() as i64 + 11_644_473_600) * 10_000_000 + d.subsec_nanos() as i64 / 100)
 }
 
+fn file_size<F: Fs + ?Sized>(fs: &F, file: &FsPath) -> Option<u64> {
+    let parent = file.parent()?;
+    let mut each_batch = |_: &ListingBuilder<'_>| true;
+    let mut b = ListingBuilder::new(CaseMode::Sensitive, &mut each_batch);
+    fs.read_dir(&parent, &mut b).ok()?;
+    let l = &b.listing;
+    (0..l.len() as u32).find(|&i| l.name(i) == file.file_name()).map(|i| l.entries[i as usize]).filter(|e| !e.is_dir()).map(|e| e.size)
+}
+
 pub(crate) fn measure<F: Fs + ?Sized>(fs: &F, items: &[(FsPath, Option<u64>)], keep_going: &dyn Fn() -> bool, report: &mut dyn FnMut(&Totals)) -> Totals {
     let mut t = Totals { accessed: items.first().map_or(0, |(p, _)| accessed(p)), ..Totals::default() };
     let mut clusters: HashMap<Vec<u8>, u64> = HashMap::new();
@@ -640,6 +649,10 @@ pub(crate) fn measure<F: Fs + ?Sized>(fs: &F, items: &[(FsPath, Option<u64>)], k
             let mut each_batch = |_: &ListingBuilder<'_>| keep_going();
             let mut b = ListingBuilder::new(CaseMode::Sensitive, &mut each_batch);
             if fs.read_dir(&dir, &mut b).is_err() {
+                if let Some(size) = (!packed && dir == *root).then(|| file_size(fs, root)).flatten() {
+                    t.size += size;
+                    t.on_disk += on_disk(size, unit);
+                }
                 continue;
             }
             let l = &b.listing;

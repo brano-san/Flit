@@ -71,12 +71,16 @@ impl App {
     }
 
     pub(super) fn properties_for(&mut self, folder_path: Option<FsPath>) {
+        self.properties_of(folder_path.map(|p| (p, true)));
+    }
+
+    pub(super) fn properties_of(&mut self, place: Option<(FsPath, bool)>) {
         let t = self.tab();
         let v = t.view.as_ref();
-        if v.is_none() && !(folder_path.is_some() && self.caps.unix_paths) {
+        if v.is_none() && !(place.is_some() && self.caps.unix_paths) {
             return;
         }
-        let items: Vec<u32> = match (&folder_path, v) {
+        let items: Vec<u32> = match (&place, v) {
             (None, Some(v)) => v.selected().collect(),
             _ => Vec::new(),
         };
@@ -84,8 +88,12 @@ impl App {
             return self.properties();
         }
         let folder = items.is_empty();
+        let (place, place_attrs) = match place {
+            Some((p, false)) => (Some(p), 0),
+            p => (p.map(|(p, _)| p), attr::DIR),
+        };
         let paths = if folder {
-            match folder_path.or_else(|| t.view_loc.to_windows()).filter(|p| p.kind() != crate::path::PathKind::Computer) {
+            match place.or_else(|| t.view_loc.to_windows()).filter(|p| p.kind() != crate::path::PathKind::Computer) {
                 Some(p) => vec![p],
                 None => return,
             }
@@ -103,11 +111,11 @@ impl App {
                 &empty
             }
         };
-        let entries: Vec<Entry> = if folder { vec![Entry { attrs: attr::DIR, ..Default::default() }] } else { items.iter().map(|&i| l.entries[i as usize]).collect() };
+        let entries: Vec<Entry> = if folder { vec![Entry { attrs: place_attrs, ..Default::default() }] } else { items.iter().map(|&i| l.entries[i as usize]).collect() };
         let packed = self.archive_view().is_some();
         let folders = entries.iter().filter(|e| e.is_dir()).count() as u64;
         let files = entries.len() as u64 - folders;
-        let archive_root = !packed && files == 1 && folders == 0 && archive::format_of(l.name(items[0])).is_some();
+        let archive_root = !packed && !folder && files == 1 && folders == 0 && archive::format_of(l.name(items[0])).is_some();
         let location = paths[0].parent().map(|p| p.display().into_owned()).unwrap_or_default();
         let counting = S::PropertiesCounting.t();
         let mut controls = Vec::new();
@@ -117,9 +125,10 @@ impl App {
             Some(c.len() - 1)
         };
         let title = if folder {
-            let shown = name::display(paths[0].file_name()).into_owned();
+            let (arena, file_name) = (Bump::new(), paths[0].file_name());
+            let shown = name::display(file_name).into_owned();
             add(&mut controls, S::PropertiesName, &shown);
-            add(&mut controls, S::PropertiesType, S::DetailsTypeFolder.t());
+            add(&mut controls, S::PropertiesType, self.type_of(&arena, place_attrs, &file_name[file_name.len() - name::ext_len(file_name)..]));
             crate::tr!(S::PropertiesTitle, name = shown)
         } else { match items.as_slice() {
             &[i] => {
@@ -138,7 +147,7 @@ impl App {
         if !packed {
             rows.file_system = add(&mut controls, S::PropertiesFileSystem, counting);
         }
-        let known = (folders == 0).then(|| entries.iter().map(|e| e.size).sum::<u64>());
+        let known = (folders == 0 && !folder).then(||entries.iter().map(|e| e.size).sum::<u64>());
         rows.size = add(&mut controls, S::PropertiesSize, &known.map_or_else(|| counting.to_owned(), |b| self.bytes_text(b)));
         if !packed {
             rows.on_disk = add(&mut controls, S::PropertiesOnDisk, counting);
@@ -167,7 +176,11 @@ impl App {
         let id = MEASURE_IDS + self.archive.take_id();
         let ctl = OpCtl::new(None);
         let tab = self.tab().id;
-        let req = ProviderRequest::Measure { tab, id, items: measured_items(&paths, &entries, archive_root), ctl: ctl.clone() };
+        let mut items = measured_items(&paths, &entries, archive_root);
+        if folder {
+            items[0].1 = None;
+        }
+        let req = ProviderRequest::Measure { tab, id, items, ctl: ctl.clone() };
         self.effects.push(Effect::Provider { provider: ProviderId::Local, req });
         let props = if packed || paths.len() != 1 { 0 } else { self.gen() };
         if props != 0 {

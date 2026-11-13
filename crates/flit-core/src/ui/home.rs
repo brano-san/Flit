@@ -289,7 +289,7 @@ impl App {
             m.place(S::HomeRemoveFromList.t(), PlaceCmd::Forget(path.clone()), false);
             m.place(S::HomeClearList.t(), PlaceCmd::ClearRecent, false);
             m.separator();
-            m.place(S::MenuProperties.t(), PlaceCmd::Properties(path.clone()), false);
+            m.place(S::MenuProperties.t(), PlaceCmd::FileProperties(path.clone()), false);
         });
         self.show_place_menu(x, y, Some(path), menu, super::MenuKind::File);
     }
