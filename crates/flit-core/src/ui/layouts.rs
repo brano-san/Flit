@@ -455,11 +455,11 @@ impl App {
     }
 
     pub(super) fn wheel_step(&self) -> f32 {
-        let p = self.layout.flow;
+        let (p, lines) = (self.layout.flow, self.wheel_px(self.layout.row_h, self.view_len()));
         match self.layout.mode {
             LayoutMode::List => p.cell.0,
-            LayoutMode::Cards | LayoutMode::Grid => (p.cell.1 / 2.0).max(3.0 * self.layout.row_h),
-            _ => 3.0 * self.layout.row_h,
+            LayoutMode::Cards | LayoutMode::Grid => (p.cell.1 / 2.0).max(lines),
+            _ => lines,
         }
     }
 

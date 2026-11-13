@@ -60,6 +60,7 @@ mod types;
 mod user_menu;
 mod update;
 mod update_dialog;
+mod pointer;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource, MAX_HISTORY};
@@ -573,6 +574,8 @@ pub struct App {
     pub caps: crate::caps::Caps,
     pub open_target: OpenTarget,
     pub double_click: Duration,
+    pub wheel_lines: u32,
+    wheel_steps: pointer::WheelSteps,
     pub warn_extension_change: bool,
     pub ops_button_always: bool,
     pub conflict_default: Option<Resolve>,
@@ -697,6 +700,8 @@ impl App {
             caps: crate::caps::Caps::default(),
             open_target: OpenTarget::NewTab,
             double_click: Duration::from_millis(500),
+            wheel_lines: pointer::WHEEL_LINES,
+            wheel_steps: pointer::WheelSteps::default(),
             warn_extension_change: true,
             ops_button_always: false,
             conflict_default: None,
@@ -1583,7 +1588,7 @@ impl App {
     }
 
     pub fn on_event(&mut self, ev: &Event, now: Instant) {
-        if matches!(ev, Event::MouseDown { .. } | Event::Key { pressed: true, .. } | Event::Wheel { .. } | Event::MouseLeave | Event::Focus(false) | Event::ShowMenu { .. }) {
+        if matches!(ev, Event::MouseDown { .. } | Event::Key { pressed: true, .. } | Event::Wheel { .. } | Event::Pinch(_) | Event::MouseLeave | Event::Focus(false) | Event::ShowMenu { .. }) {
             self.tip_hide();
             self.quick_hide();
         }
@@ -1634,30 +1639,7 @@ impl App {
             Event::Pointer { touch } => self.touch_input = *touch,
             Event::MouseDown { x, y, button, clicks } => self.mouse_down(*x, *y, *button, *clicks, now),
             Event::MouseUp { x, y, button } => self.mouse_up(*x, *y, *button, now),
-            Event::Wheel { dy, .. } => {
-                let dy = &if self.opts.reverse_scroll { -*dy } else { *dy };
-                if self.mods.alt && self.mods.shift && !self.mods.ctrl && !self.settings_open() {
-                    self.run_action(if *dy > 0.0 { "spacing.increase" } else { "spacing.decrease" }, now);
-                    return;
-                }
-                if self.mods.alt && !self.mods.ctrl && !self.mods.shift && !self.settings_open() {
-                    self.run_action(if *dy > 0.0 { "font.increase" } else { "font.decrease" }, now);
-                    return;
-                }
-                if self.update_wheel(*dy) || self.settings_wheel(*dy) || self.panel_wheel(ev, *dy, now) || self.jobs_wheel(*dy) || self.nav_wheel(*dy) || self.pane_wheel(*dy) || self.preview_wheel(*dy) || self.strip_wheel(*dy) {
-                    return;
-                }
-                if self.bottom_wheel(*dy) {
-                    return;
-                }
-                if self.mods.ctrl {
-                    return self.resize_items(if *dy > 0.0 { 1 } else { -1 });
-                }
-                let (step, max) = (self.wheel_step(), self.max_scroll());
-                let t = self.tab_mut();
-                t.scroll_target = (t.scroll_target - dy * step).clamp(0.0, max);
-                self.dirty = true;
-            }
+            Event::Wheel { .. } | Event::Pinch(_) => self.wheel(ev, now),
             Event::Key { key, mods, pressed } => {
                 let copy_flipped = self.mods.ctrl != mods.ctrl;
                 self.mods = *mods;
@@ -1830,7 +1812,8 @@ impl App {
                 }
                 return;
             }
-            (MouseButton::Middle, _) => return,
+            (MouseButton::Middle, _) => return self.middle_down(h, x, y, now),
+            (MouseButton::Left, Hit::None) if clicks == 2 && self.strip_double_click(x, y, now) => return,
             _ => {}
         }
         self.pressed = h;
@@ -1961,6 +1944,7 @@ impl App {
             Hit::Caption(_) => self.close_window(now),
             Hit::Menu => self.open_main_menu(),
             Hit::QuickToggle => self.toggle_sidebar(),
+            Hit::Crumb(i) if self.mods.ctrl => self.open_crumb_in_tab(i, now),
             Hit::Crumb(i) => {
                 if let Some((_, p)) = self.tab().crumb(i).cloned().filter(|(_, p)| p != self.current_location()) {
                     self.navigate(p, now);
@@ -2009,6 +1993,12 @@ impl App {
         let m = self.mods;
         let plain = !m.ctrl && !m.shift;
         let opened_by_first_click = std::mem::take(&mut self.clicked_open);
+        let entry = self.tab().view.as_ref().and_then(|v| v.rows().get(row).copied());
+        if let Some(i) = entry.filter(|_| button == MouseButton::Left && clicks >= 2 && !opened_by_first_click) {
+            if self.modified_double_click(i, now) {
+                return;
+            }
+        }
         let Some(v) = &mut self.tabs[self.cur].view else { return };
         let i = v.rows()[row];
         if button == MouseButton::Right {

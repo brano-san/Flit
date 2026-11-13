@@ -126,9 +126,10 @@ impl App {
     pub(super) fn pane_wheel(&mut self, dy: f32) -> bool {
         let Hit::Pane(i, _) = self.hover else { return false };
         let (h, rh) = (self.layout.panes.get(i).map_or(0.0, |r| r.h), self.layout.row_h);
+        let step = self.wheel_px(rh, h);
         if let Some(p) = self.tab_mut().panes.get_mut(i) {
             let max = (p.view.as_ref().map_or(0, |v| v.rows().len()) as f32 * rh - h).max(0.0);
-            p.scroll = Some((p.scroll.unwrap_or(0.0) - dy * 3.0 * rh).clamp(0.0, max));
+            p.scroll = Some((p.scroll.unwrap_or(0.0) - dy * step).clamp(0.0, max));
         }
         self.dirty = true;
         true

@@ -771,7 +771,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         enable_ime(&*raw);
         let id = self.next_id;
         self.next_id += 1;
-        self.nodes.push(Node { window: LinuxWindow::new(id, raw, self.commands.clone()), clicks: Clicks::default() });
+        self.nodes.push(Node { window: LinuxWindow::new(id, raw, self.commands.clone()), clicks: Clicks::new(input::double_click()) });
         let node = self.nodes.last().unwrap();
         self.handler.created(&node.window);
     }
@@ -806,7 +806,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         }
         let clicks = node.clicks.press(button, Instant::now(), x, y, w.scale.get());
         match (handler.hit_test(w, x, y), button) {
-            (HitArea::Caption, MouseButton::Left) if clicks == 2 => w.toggle_maximize(),
+            (HitArea::Caption, MouseButton::Left) if clicks == 2 => handler.event(w, Event::MouseDown { x, y, button, clicks }),
             (HitArea::Caption, MouseButton::Left) => {
                 let _ = w.raw.drag_window();
             }
@@ -941,6 +941,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                 let (dx, dy) = input::wheel(delta, w.scale.get());
                 handler.event(w, Event::Wheel { dx, dy });
             }
+            WindowEvent::PinchGesture { delta, .. } if delta.is_finite() && delta != 0.0 => handler.event(w, Event::Pinch(delta as f32)),
             WindowEvent::ThemeChanged(theme) => handler.event(w, Event::ThemeChanged { dark: theme == Theme::Dark }),
             WindowEvent::DataTransferReceived { value, .. } => match value.try_as_string() {
                 Ok(text) => handler.event(w, Event::Pasted(text)),

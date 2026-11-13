@@ -620,7 +620,8 @@ impl App {
             return false;
         }
         let Some(id) = self.panel_at(x, y) else { return false };
-        if self.mods.shift && !self.mods.ctrl && !self.mods.alt && self.panels.list.len() > 1 {
+        let upright = matches!(ev, Event::Wheel { dx, .. } if *dx == 0.0);
+        if upright && self.mods.shift && !self.mods.ctrl && !self.mods.alt && self.panels.list.len() > 1 && !matches!(self.hover, Hit::Preview(_)) {
             return self.wheel_sep(id, dy);
         }
         if id == self.panels.active || self.hit(x, y) != Hit::None {

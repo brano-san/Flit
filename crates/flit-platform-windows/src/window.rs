@@ -2,7 +2,8 @@ use crate::context_menu::{ShellUi, WM_SHELL_UI};
 use crate::prevhost::WM_HOSTED;
 use flit_core::preview::HostCmd;
 use crate::err;
-use flit_core::input::{CursorIcon, Event, HitArea, Key, Mods, MouseButton, Preedit};
+use flit_core::input::{CursorIcon, Event, HitArea, Key, Mods, MouseButton, Preedit, PINCH_PER_STEP};
+use windows::Win32::System::SystemServices::MK_CONTROL;
 use flit_core::a11y::Tree;
 use flit_core::render::{Color, Rect};
 use flit_core::theme::SystemColors;
@@ -1074,6 +1075,16 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
             s.send(Event::MouseUp { x, y, button: MouseButton::Left });
             Some(LRESULT(0))
         }
+        WM_NCMBUTTONDOWN | WM_NCMBUTTONDBLCLK if wp.0 as u32 == HTCAPTION => {
+            let (x, y) = screen_xy();
+            s.send(Event::MouseDown { x, y, button: MouseButton::Middle, clicks: 1 });
+            Some(LRESULT(0))
+        }
+        WM_NCMBUTTONUP if wp.0 as u32 == HTCAPTION => {
+            let (x, y) = screen_xy();
+            s.send(Event::MouseUp { x, y, button: MouseButton::Middle });
+            Some(LRESULT(0))
+        }
         WM_MOUSEMOVE => {
             if !w.tracking.get() {
                 let mut t = TRACKMOUSEEVENT { cbSize: size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, dwHoverTime: 0 };
@@ -1123,7 +1134,12 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
         }
         WM_MOUSEWHEEL | WM_MOUSEHWHEEL => {
             let delta = ((wp.0 >> 16) & 0xFFFF) as i16 as f32 / WHEEL_DELTA as f32;
-            let ev = if msg == WM_MOUSEWHEEL { Event::Wheel { dx: 0.0, dy: delta } } else { Event::Wheel { dx: delta, dy: 0.0 } };
+            let touchpad_zoom = msg == WM_MOUSEWHEEL && wp.0 & MK_CONTROL.0 as usize != 0 && !mods().ctrl;
+            let ev = match (msg == WM_MOUSEWHEEL, touchpad_zoom) {
+                (_, true) => Event::Pinch(delta * PINCH_PER_STEP),
+                (true, false) => Event::Wheel { dx: 0.0, dy: delta },
+                (false, false) => Event::Wheel { dx: delta, dy: 0.0 },
+            };
             s.send(ev);
             Some(LRESULT(0))
         }

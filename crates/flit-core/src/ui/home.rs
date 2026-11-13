@@ -224,8 +224,9 @@ impl App {
     }
 
     pub(super) fn home_wheel(&mut self, dy: f32) {
+        let step = self.wheel_px((RECENT_H * self.scale).round(), self.nav.home.area.h);
         let h = &mut self.nav.home;
-        h.scroll.by(-dy * 3.0 * (RECENT_H * self.scale).round(), h.content_h - h.area.h);
+        h.scroll.by(-dy * step, h.content_h - h.area.h);
         self.layout();
         self.dirty = true;
     }

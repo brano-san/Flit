@@ -74,3 +74,24 @@ fn a_ctrl_release_reaches_the_app_through_the_compositor_modifiers() {
     assert_eq!(modifiers_changed(ctrl, ctrl), None);
     assert_eq!(modifiers_changed(ModifiersState::META, ModifiersState::empty()), None, "keys Flit ignores change nothing");
 }
+
+#[test]
+fn desktop_mouse_settings_come_from_kde_then_gtk() {
+    let kde = "[General]\nfont=x\n\n[KDE]\nDoubleClickInterval=300\nWheelScrollLines=7\n";
+    let gtk = vec!["[Settings]\ngtk-double-click-time = 250\n".to_owned()];
+    assert_eq!(mouse_settings(Some(kde), &gtk), (Some(Duration::from_millis(300)), Some(7)));
+    assert_eq!(mouse_settings(None, &gtk), (Some(Duration::from_millis(250)), None));
+    assert_eq!(mouse_settings(Some("[KDE]\nWheelScrollLines=0\nDoubleClickInterval=9\n"), &[]), (None, None), "nonsense values keep the defaults");
+    assert_eq!(mouse_settings(None, &["gtk-double-click-time=abc".to_owned()]), (None, None));
+}
+
+#[test]
+fn a_slower_double_click_setting_widens_the_window() {
+    let (t, ms) = (Instant::now(), Duration::from_millis);
+    let mut c = Clicks::new(ms(900));
+    assert_eq!(c.press(MouseButton::Left, t, 10.0, 10.0, 1.0), 1);
+    assert_eq!(c.press(MouseButton::Left, t + ms(800), 10.0, 10.0, 1.0), 2);
+    let mut c = Clicks::new(ms(200));
+    assert_eq!(c.press(MouseButton::Left, t, 10.0, 10.0, 1.0), 1);
+    assert_eq!(c.press(MouseButton::Left, t + ms(300), 10.0, 10.0, 1.0), 1);
+}

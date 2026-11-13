@@ -507,6 +507,9 @@ pub trait Platform: 'static {
     fn double_click_time() -> std::time::Duration {
         std::time::Duration::from_millis(500)
     }
+    fn wheel_lines() -> u32 {
+        3
+    }
     fn elevated() -> bool {
         false
     }

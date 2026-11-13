@@ -439,3 +439,44 @@ fn only_files_away_from_the_device_wait_for_a_download() {
     assert!(!preview::waits_for_download(attr::DIR | attr::ONLINE_ONLY), "a folder preview lists names only");
     assert!(!preview::waits_for_download(attr::VOLUME | attr::OFFLINE));
 }
+
+#[test]
+fn the_wheel_scrolls_unwrapped_text_and_large_images_sideways() {
+    let mut a = app((1200, 700));
+    press(&mut a, Key::Space, NO);
+    select(&mut a, "a.rs");
+    frame(&mut a);
+    let r = requests(&mut a).pop().unwrap();
+    a.on_preview(r.gen, PreviewData::Doc(preview::text_doc(&"word ".repeat(400), None)));
+    a.preview.look.wrap = Some(false);
+    frame(&mut a);
+    assert!(a.preview.hmax > 0.0);
+    let b = a.preview.r.body;
+    a.on_event(&Event::MouseMove { x: b.x + 20.0, y: b.y + 10.0 }, Instant::now());
+    assert_eq!(a.hover, Hit::Preview(PaneHit::Body));
+    a.on_event(&Event::Wheel { dx: 1.0, dy: 0.0 }, Instant::now());
+    let right = a.preview.hscroll;
+    assert!(right > 0.0 && a.preview.scroll == 0.0);
+    let shift = Mods { shift: true, ..NO };
+    a.on_event(&Event::Key { key: Key::Other, mods: shift, pressed: false }, Instant::now());
+    a.on_event(&Event::Wheel { dx: 0.0, dy: -1.0 }, Instant::now());
+    assert!(a.preview.hscroll > right, "Shift+wheel scrolls sideways");
+    let size = a.opts.inspector_size;
+    let ctrl = Mods { ctrl: true, ..NO };
+    a.on_event(&Event::Key { key: Key::Other, mods: ctrl, pressed: false }, Instant::now());
+    a.on_event(&Event::Wheel { dx: -1.0, dy: 0.0 }, Instant::now());
+    assert_eq!(a.opts.inspector_size, size, "a sideways Ctrl+wheel does not resize the text");
+    a.on_event(&Event::Key { key: Key::Other, mods: NO, pressed: false }, Instant::now());
+    a.preview.look.wrap = Some(true);
+    frame(&mut a);
+    assert_eq!((a.preview.hmax, a.preview.hscroll), (0.0, 0.0));
+    select(&mut a, "b.png");
+    frame(&mut a);
+    let r = requests(&mut a).pop().unwrap();
+    a.on_preview(r.gen, PreviewData::Image(Bitmap { width: 4000, height: 20, rgba: vec![255; 320_000] }));
+    a.preview.look.scale = Scale::Original;
+    frame(&mut a);
+    assert!(a.preview.hmax > 0.0);
+    a.on_event(&Event::Wheel { dx: 2.0, dy: 0.0 }, Instant::now());
+    assert!(a.preview.hscroll > 0.0);
+}

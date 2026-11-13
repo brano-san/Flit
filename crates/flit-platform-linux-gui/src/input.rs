@@ -6,6 +6,9 @@ use winit::cursor::CursorIcon as WinitCursor;
 use winit::window::ResizeDirection;
 
 pub(crate) const DOUBLE_CLICK: Duration = Duration::from_millis(500);
+pub(crate) const WHEEL_LINES: u32 = 3;
+const DOUBLE_CLICK_RANGE: std::ops::RangeInclusive<u32> = 100..=5000;
+const WHEEL_LINES_RANGE: std::ops::RangeInclusive<u32> = 1..=100;
 const DOUBLE_CLICK_SLOP: f32 = 4.0;
 const WHEEL_PIXELS_PER_NOTCH: f32 = 40.0;
 const RESIZE_CORNER_FACTOR: f32 = 3.0;
@@ -214,16 +217,53 @@ pub(crate) fn resize_edge(x: f32, y: f32, (w, h): (f32, f32), border: f32) -> Op
     Some(direction)
 }
 
-#[derive(Default)]
 pub(crate) struct Clicks {
     last: Option<(MouseButton, Instant, f32, f32, u8)>,
+    interval: Duration,
+}
+
+impl Default for Clicks {
+    fn default() -> Self {
+        Self::new(DOUBLE_CLICK)
+    }
+}
+
+pub(crate) fn mouse_settings(kdeglobals: Option<&str>, gtk: &[String]) -> (Option<Duration>, Option<u32>) {
+    let number = |text: &str, key: &str| crate::icons::setting(text, key).and_then(|v| v.parse::<u32>().ok());
+    let kde_click = kdeglobals.and_then(|t| number(t, "DoubleClickInterval"));
+    let gtk_click = || gtk.iter().find_map(|t| number(t, "gtk-double-click-time"));
+    let click = kde_click.or_else(gtk_click).filter(|ms| DOUBLE_CLICK_RANGE.contains(ms)).map(|ms| Duration::from_millis(ms.into()));
+    let lines = kdeglobals.and_then(|t| number(t, "WheelScrollLines")).filter(|n| WHEEL_LINES_RANGE.contains(n));
+    (click, lines)
+}
+
+fn desktop_mouse() -> (Option<Duration>, Option<u32>) {
+    static READ: std::sync::OnceLock<(Option<Duration>, Option<u32>)> = std::sync::OnceLock::new();
+    *READ.get_or_init(|| {
+        let read = |file: &str| crate::xdg::config_home().and_then(|c| std::fs::read_to_string(c.join(file)).ok());
+        let kde = std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.contains("KDE")).then(|| read("kdeglobals")).flatten();
+        let gtk: Vec<String> = ["gtk-4.0/settings.ini", "gtk-3.0/settings.ini"].into_iter().filter_map(read).collect();
+        mouse_settings(kde.as_deref(), &gtk)
+    })
+}
+
+pub(crate) fn double_click() -> Duration {
+    desktop_mouse().0.unwrap_or(DOUBLE_CLICK)
+}
+
+pub(crate) fn wheel_lines() -> u32 {
+    desktop_mouse().1.unwrap_or(WHEEL_LINES)
 }
 
 impl Clicks {
+    pub(crate) fn new(interval: Duration) -> Self {
+        Self { last: None, interval }
+    }
+
     pub(crate) fn press(&mut self, button: MouseButton, at: Instant, x: f32, y: f32, scale: f32) -> u8 {
         let slop = DOUBLE_CLICK_SLOP * scale;
         let clicks = match self.last {
-            Some((b, t, lx, ly, 1)) if b == button && at.duration_since(t) <= DOUBLE_CLICK && (x - lx).abs() <= slop && (y - ly).abs() <= slop => 2,
+            Some((b, t, lx, ly, 1)) if b == button && at.duration_since(t) <= self.interval && (x - lx).abs() <= slop && (y - ly).abs() <= slop => 2,
             _ => 1,
         };
         self.last = Some((button, at, x, y, clicks));

@@ -80,7 +80,7 @@ impl App {
             }
             Event::Key { key: Key::Escape, pressed: true, .. } => self.finish_confirm(false, now),
             Event::Key { key: Key::Enter, pressed: true, .. } => self.finish_confirm(true, now),
-            Event::MouseUp { .. } | Event::Key { .. } | Event::Char(_) | Event::Wheel { .. } | Event::MouseLeave => {}
+            Event::MouseUp { .. } | Event::Key { .. } | Event::Char(_) | Event::Wheel { .. } | Event::Pinch(_) | Event::MouseLeave => {}
             Event::Focus(false) | Event::Resized { .. } | Event::ScaleChanged(_) => {
                 self.finish_confirm(false, now);
                 return false;

@@ -77,6 +77,8 @@ impl From<String> for Preedit {
     }
 }
 
+pub const PINCH_PER_STEP: f32 = 0.25;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     Resized { width: u32, height: u32 },
@@ -86,6 +88,7 @@ pub enum Event {
     Pointer { touch: bool },
     MouseUp { x: f32, y: f32, button: MouseButton },
     Wheel { dx: f32, dy: f32 },
+    Pinch(f32),
     MouseLeave,
     Key { key: Key, mods: Mods, pressed: bool },
     Char(char),

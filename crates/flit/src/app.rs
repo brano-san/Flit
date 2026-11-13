@@ -333,6 +333,7 @@ impl<P: Platform> Handler<P> {
         let mut app = App::new(persisted, routes, base, P::dark_mode(), 1.0, (1100, 720), Instant::now());
         app.utc_offset_min = P::utc_offset_minutes();
         app.double_click = P::double_click_time();
+        app.wheel_lines = P::wheel_lines();
         app.set_caps(P::caps());
         flit_core::i18n::set_unix_terms(app.caps.unix_paths);
         if base == 0 && P::elevated() {

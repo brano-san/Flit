@@ -1445,8 +1445,8 @@ impl App {
     }
 
     pub(super) fn sidebar_wheel(&mut self, dy: f32) {
+        let step = self.wheel_px(((ROW_H + ROW_GAP) * self.scale).round(), self.nav.sidebar.list.h);
         let sb = &mut self.nav.sidebar;
-        let step = 3.0 * ((ROW_H + ROW_GAP) * self.scale).round();
         sb.scroll.by(-dy * step, sb.content_h - sb.list.h);
         self.layout();
         self.dirty = true;

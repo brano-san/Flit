@@ -209,6 +209,7 @@ struct DocLayout {
     lines: Vec<VLine>,
     pieces: Vec<Piece>,
     height: f32,
+    wide: f32,
     shown: usize,
 }
 
@@ -244,6 +245,8 @@ pub(super) struct PreviewPane {
     content: Content,
     scroll: f32,
     extent: f32,
+    hscroll: f32,
+    hmax: f32,
     card_scroll: f32,
     card_extent: f32,
     doc: Option<DocLayout>,
@@ -402,11 +405,13 @@ fn layout_doc<B: TextBackend>(g: &mut Gfx<B>, d: &Doc, width: f32, (sc, mono): (
                         put(&mut out.pieces, first, ri, pos, pos + c.len_utf8() as u32, x);
                         pos += c.len_utf8() as u32;
                         x += cw;
+                        out.wide = out.wide.max(x);
                     }
                     continue;
                 }
                 put(&mut out.pieces, first, ri, start, at, x);
                 x += tw;
+                out.wide = out.wide.max(x);
             }
         }
         line(&mut out, &mut first, &mut y, &mut number);
@@ -859,23 +864,32 @@ impl App {
         self.dirty = true;
     }
 
-    pub(super) fn preview_wheel(&mut self, dy: f32) -> bool {
+    pub(super) fn preview_wheel(&mut self, dx: f32, dy: f32, zoom: bool, now: Instant) -> bool {
         let Hit::Preview(h) = self.hover else { return false };
-        if self.mods.ctrl && !self.mods.alt {
-            self.inspector_zoom(dy > 0.0);
+        if (zoom && !self.mods.alt) || h == PaneHit::Size {
+            let n = if super::pointer::upright(dx, dy) { self.wheel_steps.add(super::pointer::Steps::Inspector, dy, now) } else { 0 };
+            for _ in 0..n.unsigned_abs() {
+                self.inspector_zoom(n > 0);
+            }
             return true;
         }
-        if h == PaneHit::Size {
-            self.inspector_zoom(dy > 0.0);
-            return true;
-        }
+        let line = ROW * self.scale;
         if matches!(h, PaneHit::Card | PaneHit::Tag(_) | PaneHit::NewTag | PaneHit::Properties) {
+            let step = self.wheel_px(line, self.preview.r.card.h);
             let p = &mut self.preview;
-            p.card_scroll = (p.card_scroll - dy * 3.0 * ROW * self.scale).clamp(0.0, (p.card_extent - p.r.card.h).max(0.0));
+            p.card_scroll = (p.card_scroll - dy * step).clamp(0.0, (p.card_extent - p.r.card.h).max(0.0));
             self.dirty = true;
             return true;
         }
-        self.scroll_preview(dy)
+        let across = super::pointer::sideways(dx, dy, self.mods.shift);
+        let (step, p) = (self.wheel_px(line, if across != 0.0 { self.preview.r.body.w } else { self.preview.r.body.h }), &mut self.preview);
+        if across != 0.0 {
+            p.hscroll = (p.hscroll + across * step).clamp(0.0, p.hmax);
+        } else {
+            p.scroll = (p.scroll - dy * step).clamp(0.0, (p.extent - p.r.body.h).max(0.0));
+        }
+        self.dirty = true;
+        true
     }
 
     pub(super) fn scroll_preview(&mut self, dy: f32) -> bool {
@@ -974,7 +988,7 @@ impl App {
         p.key = key;
         p.gen = gen;
         p.cancel.set(gen);
-        p.scroll = 0.0;
+        (p.scroll, p.hscroll) = (0.0, 0.0);
         p.doc = None;
         p.media = Media::default();
         p.types = types;
@@ -1100,11 +1114,13 @@ impl App {
         let line = if self.right_side() { Rect::new(r.pane.x, r.pane.y, 1.0, r.pane.h) } else { Rect::new(r.pane.x, r.pane.y, r.pane.w, 1.0) };
         g.dl.rect(line, if hot { t.accent } else { t.separator });
         g.dl.set_clip(Some(r.body));
+        self.preview.hmax = 0.0;
         let extent = self.draw_preview_body(g, t);
         g.dl.set_clip(None);
         let p = &mut self.preview;
         p.extent = extent;
         p.scroll = p.scroll.clamp(0.0, (extent - r.body.h).max(0.0));
+        p.hscroll = p.hscroll.clamp(0.0, p.hmax);
         if !matches!(p.content, Content::Loading | Content::Empty | Content::Handler) {
             if let Some(t) = p.requested.take() {
                 tracing::debug!("preview drawn {:.1} ms after selection, {} KB held", t.elapsed().as_secs_f64() * 1e3, p.held() / 1024);
@@ -1629,7 +1645,9 @@ impl App {
         let k = image_factor(look.scale, look.zoom, (w, h), (b.w, b.h));
         let (dw, dh) = ((w * k).round(), (h * k).round());
         let y0 = if dh <= b.h { (b.y + (b.h - dh) / 2.0).round() } else { b.y - self.preview.scroll };
-        let r = Rect::new((b.x + (b.w - dw) / 2.0).round(), y0, dw, dh);
+        self.preview.hmax = (dw - b.w).max(0.0);
+        let x0 = if dw <= b.w { (b.x + (b.w - dw) / 2.0).round() } else { (b.x - self.preview.hscroll.min(self.preview.hmax)).round() };
+        let r = Rect::new(x0, y0, dw, dh);
         if look.grid {
             let cell = self.s(CHECKER).max(4.0);
             let visible = Rect::new(r.x.max(b.x), r.y.max(b.y), (r.right().min(b.right()) - r.x.max(b.x)).max(0.0), (r.bottom().min(b.bottom()) - r.y.max(b.y)).max(0.0));
@@ -1797,13 +1815,13 @@ impl App {
         let lay = p.doc.as_ref().unwrap();
         let scroll = p.scroll;
         let first = lay.lines.partition_point(|l| l.y + l.h < scroll);
+        let last = lay.lines.partition_point(|l| b.y + l.y - scroll <= b.bottom()).max(first);
         let x0 = b.x + gutter;
         let dot_color = t.text_dim.alpha(0x70);
-        for line in &lay.lines[first..] {
+        p.hmax = if wrap { 0.0 } else { (lay.wide - width).max(0.0) };
+        let shift = p.hscroll.min(p.hmax).round();
+        for line in &lay.lines[first..last] {
             let top = b.y + line.y - scroll;
-            if top > b.bottom() {
-                break;
-            }
             match line.block {
                 Block::Code if !d.mono => g.dl.rect(Rect::new(x0, top, width, line.h), t.input_bg),
                 Block::Quote => g.dl.rect(Rect::new(x0 + (2.0 * sc).round(), top, (3.0 * sc).round(), line.h), t.separator),
@@ -1815,13 +1833,20 @@ impl App {
                 let nw = g.measure(&n, num_font);
                 g.text(x0 - (8.0 * sc).round() - nw, top + line.base, &n, num_font, t.text_dim.alpha(0xA0), f32::INFINITY);
             }
+        }
+        if shift > 0.0 {
+            g.dl.set_clip(Some(Rect::new(x0, b.y, width, b.h)));
+        }
+        for line in &lay.lines[first..last] {
+            let top = b.y + line.y - scroll;
             for piece in &lay.pieces[line.pieces.start as usize..line.pieces.end as usize] {
                 let run = &d.runs[piece.run as usize];
                 let font = run_font(run, line.block, sc, mono);
                 let s = &d.text[piece.start as usize..piece.end as usize];
-                g.text(x0 + piece.x, top + line.base, s, font, tone_color(t, dark, run.tone), f32::INFINITY);
+                let px = x0 + piece.x - shift;
+                g.text(px, top + line.base, s, font, tone_color(t, dark, run.tone), f32::INFINITY);
                 if look.spaces && s.contains(' ') {
-                    let mut x = x0 + piece.x;
+                    let mut x = px;
                     for c in s.chars() {
                         let cw = char_w(g, &mut p.widths, c, font);
                         if c == ' ' {
@@ -1832,6 +1857,9 @@ impl App {
                     }
                 }
             }
+        }
+        if shift > 0.0 {
+            g.dl.set_clip(Some(b));
         }
         let mut h = lay.height;
         if d.truncated {

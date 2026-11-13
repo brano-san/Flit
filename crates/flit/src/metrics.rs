@@ -283,7 +283,8 @@ impl Metrics {
                 let page = last.saturating_sub(first).saturating_sub(1).max(1) as f64;
                 let step = page.max(rows as f64 * self.period().as_secs_f64() / SCROLL_TIME.as_secs_f64());
                 let offset = (self.injections as f64 * GOLDEN_FRACTION).fract();
-                Step::InjectAfter(self.period().mul_f64(offset), Event::Wheel { dx: 0.0, dy: -(step / 3.0) as f32 })
+                let notch = if app.wheel_lines == u32::MAX { last.saturating_sub(first).max(1) as f64 } else { f64::from(app.wheel_lines.max(1)) };
+                Step::InjectAfter(self.period().mul_f64(offset), Event::Wheel { dx: 0.0, dy: -(step / notch) as f32 })
             }
             Phase::Sort => Step::None,
             Phase::Filter(q, c) => {

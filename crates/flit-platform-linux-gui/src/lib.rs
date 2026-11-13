@@ -91,6 +91,14 @@ impl Platform for Linux {
         window::preferred_dark().unwrap_or(false)
     }
 
+    fn double_click_time() -> std::time::Duration {
+        input::double_click()
+    }
+
+    fn wheel_lines() -> u32 {
+        input::wheel_lines()
+    }
+
     fn caps() -> flit_core::caps::Caps {
         flit_core::caps::Caps { unix_paths: true }
     }

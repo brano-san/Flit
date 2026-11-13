@@ -683,9 +683,9 @@ impl App {
                     self.dirty = true;
                     return true;
                 }
-                let rh = self.layout.row_h as f64;
+                let step = f64::from(self.wheel_px(self.layout.row_h, self.search_layout().list.h));
                 let max = self.search_max_scroll();
-                self.search.scroll = (self.search.scroll - *dy as f64 * 3.0 * rh).clamp(0.0, max);
+                self.search.scroll = (self.search.scroll - *dy as f64 * step).clamp(0.0, max);
                 self.dirty = true;
                 true
             }

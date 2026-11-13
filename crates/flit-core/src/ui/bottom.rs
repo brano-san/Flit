@@ -103,12 +103,15 @@ impl App {
         self.dirty = true;
     }
 
-    pub(super) fn bottom_wheel(&mut self, dy: f32) -> bool {
+    pub(super) fn bottom_wheel(&mut self, dx: f32, dy: f32, now: std::time::Instant) -> bool {
         if !matches!(self.hover, Hit::Bottom(BottomHit::Zoom | BottomHit::Layout)) {
             return false;
         }
-        let z = if self.tab().mode.zoomed() { self.tab().zoom } else { super::layouts::ZOOM_DETAILS };
-        self.set_zoom(step_zoom(z, dy > 0.0));
+        let n = if super::pointer::upright(dx, dy) { self.wheel_steps.add(super::pointer::Steps::Zoom, dy, now) } else { 0 };
+        for _ in 0..n.unsigned_abs() {
+            let z = if self.tab().mode.zoomed() { self.tab().zoom } else { super::layouts::ZOOM_DETAILS };
+            self.set_zoom(step_zoom(z, n > 0));
+        }
         true
     }
 

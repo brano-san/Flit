@@ -218,7 +218,7 @@ impl App {
                 self.dirty = true;
                 MenuOutcome::Open
             }
-            (_, Event::Key { .. } | Event::Char(_)) => MenuOutcome::Open,
+            (_, Event::Key { .. } | Event::Char(_) | Event::Pinch(_)) => MenuOutcome::Open,
             (_, Event::Focus(false) | Event::Resized { .. } | Event::ScaleChanged(_)) => MenuOutcome::Closed,
             _ => return false,
         };
