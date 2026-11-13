@@ -301,7 +301,7 @@ impl App {
         }
         let row = f.rows[k];
         match &mut f.controls[k] {
-            Control::Text { field, .. } => field.click(x, clicks),
+            Control::Text { field, .. } => field.click(x, clicks, self.mods.shift),
             Control::Choice { .. } => self.turn(k, x < row.x + row.w * 0.66),
             Control::Flags { spots, cur, .. } => {
                 if let Some(i) = spots.iter().position(|s| s.contains(x, y)) {

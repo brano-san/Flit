@@ -1,4 +1,4 @@
-use super::edit::{EditAction, LineEdit};
+use super::edit::{EditAction, Grab, LineEdit};
 use super::menu::{Cmd, Mark};
 use super::palette::{Palette, Pick};
 use super::sidebar::Section;
@@ -135,7 +135,7 @@ struct Rename {
     edit: LineEdit,
     scroll: f32,
     rect: Rect,
-    click: Option<(f32, bool)>,
+    click: Option<(f32, Grab)>,
     selecting: bool,
     batch: bool,
     confirmed: Option<String>,
@@ -1353,7 +1353,11 @@ impl App {
     }
 
     fn rename_menu(&mut self, x: f32, y: f32) {
-        let menu = self.collect(|_, m| {
+        let menu = self.collect(|a, m| {
+            if let Some(r) = &a.ops.rename {
+                super::field::text_entries(m, &r.edit, false);
+                m.separator();
+            }
             for (id, label) in [
                 ("rename.insert_id", S::ActionsRenameInsertId),
                 ("rename.insert_date", S::ActionsRenameInsertDate),
@@ -1569,29 +1573,31 @@ impl App {
         self.ops.press = None;
         self.ops.slow = None;
         self.ops.right_drag = None;
-        let Some(r) = &mut self.ops.rename else { return false };
-        if r.rect.contains(x, y) {
-            if button == MouseButton::Right {
-                self.rename_menu(x, y);
-                return true;
-            }
-            if button == MouseButton::Left {
-                if clicks >= 2 {
-                    r.edit.select_all();
-                } else {
-                    r.click = Some((x, self.mods.shift));
-                    r.selecting = true;
+        let Some(r) = &self.ops.rename else { return false };
+        if !r.rect.contains(x, y) {
+            return !self.commit_rename();
+        }
+        match button {
+            MouseButton::Right => self.rename_menu(x, y),
+            MouseButton::Left => {
+                let how = Grab::of(self.text_clicks((x, y), clicks, Instant::now()), self.mods.shift);
+                if let Some(r) = &mut self.ops.rename {
+                    match how {
+                        Some(how) => r.click = Some((x, how)),
+                        None => r.edit.select_all(),
+                    }
+                    r.selecting = how.is_some_and(|h| h != Grab::Word);
                 }
             }
-            return true;
+            _ => {}
         }
-        !self.commit_rename()
+        true
     }
 
     pub(super) fn ops_mouse_move(&mut self, x: f32, y: f32) -> bool {
         if let Some(r) = &mut self.ops.rename {
             if r.selecting {
-                r.click = Some((x, true));
+                r.click = Some((x, Grab::Extend));
                 self.dirty = true;
                 return true;
             }
@@ -2041,9 +2047,9 @@ impl App {
         let Some(r) = self.ops.rename.as_mut() else { return };
         r.rect = rect;
         let inner = Rect::new(rect.x + pad, rect.y, rect.w - 2.0 * pad, rect.h);
-        if let Some((x, extend)) = r.click.take() {
+        if let Some((x, how)) = r.click.take() {
             let pos = g.hit(&r.edit.text, font, x - inner.x + r.scroll);
-            r.edit.move_to(pos, extend);
+            r.edit.grab(pos, how);
         }
         g.dl.set_clip(Some(list));
         g.dl.round_rect(rect, th.input_bg, radius);

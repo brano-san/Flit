@@ -1935,7 +1935,7 @@ fn the_rename_menu_opens_with_the_mouse_or_the_menu_key() {
         .into_iter()
         .filter_map(|i| if let MenuItem::Command { label, .. } = i { Some(label) } else { None })
         .collect();
-    assert_eq!(labels, ["Insert Incremental ID", "Insert Current Date", "Insert File Create Date", "Insert File Last Modified Date", "Uppercase", "Lowercase"]);
+    assert_eq!(labels, ["Undo", "Cut", "Copy", "Paste", "Delete", "Select All", "Insert Incremental ID", "Insert Current Date", "Insert File Create Date", "Insert File Last Modified Date", "Uppercase", "Lowercase"]);
     assert!(app.is_renaming());
 }
 
@@ -2020,4 +2020,39 @@ fn run_in_terminal_launches_only_an_executable_file() {
     select(&mut app, &["tool"]);
     app.run_in_terminal();
     assert_eq!(launched(&mut app), Some(p("/home/u/tool")));
+}
+
+#[test]
+fn the_rename_box_picks_words_and_cuts_with_shift_delete_without_deleting_files() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("my report.txt", false), ("other.txt", false)]);
+    select(&mut app, &["my report.txt"]);
+    key(&mut app, Key::F(2), NO);
+    app.drain_effects().for_each(drop);
+    key(&mut app, Key::Delete, SHIFT);
+    let effects: Vec<Effect> = app.drain_effects().collect();
+    assert!(effects.iter().any(|e| matches!(e, Effect::SetClipboard(s) if s == "my report")));
+    assert!(!effects.iter().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Op { .. }, .. })));
+    assert!(!app.jobs.modal());
+    assert_eq!(app.rename_text(), Some(".txt"));
+    key(&mut app, Key::Char('Z'), CTRL);
+    assert_eq!(app.rename_text(), Some("my report.txt"));
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, t0());
+    let r = app.ops.rename.as_ref().unwrap().rect;
+    let at = (r.x + 5.0, r.y + r.h / 2.0);
+    let t = t0();
+    let mut click = |app: &mut App, clicks: u8, now: Instant| {
+        app.on_event(&Event::MouseDown { x: at.0, y: at.1, button: MouseButton::Left, clicks }, now);
+        app.on_event(&Event::MouseUp { x: at.0, y: at.1, button: MouseButton::Left }, now);
+        app.frame(&mut g, now);
+        let e = &app.ops.rename.as_ref().unwrap().edit;
+        e.text[e.selection()].to_owned()
+    };
+    assert_eq!(click(&mut app, 1, t), "");
+    assert_eq!(click(&mut app, 2, t), "my");
+    assert_eq!(click(&mut app, 1, t + Duration::from_millis(50)), "my report.txt");
+    key(&mut app, Key::Insert, CTRL);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::SetClipboard(s) if s == "my report.txt")));
+    assert!(app.is_renaming());
 }

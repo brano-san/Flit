@@ -94,6 +94,7 @@ pub(super) enum Cmd {
     FolderProperties(crate::FsPath),
     User(crate::provider::Launch),
     Drop(u32),
+    Text(super::field::TextCmd),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -671,6 +672,7 @@ impl App {
             Some(Cmd::FolderProperties(dir)) => self.properties_for(Some(dir)),
             Some(Cmd::User(launch)) => self.launch(launch),
             Some(Cmd::Drop(effect)) => self.drop_chosen(effect),
+            Some(Cmd::Text(c)) => self.text_command(c, now),
             None => {}
         }
     }

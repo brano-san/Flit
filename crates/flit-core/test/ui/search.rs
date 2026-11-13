@@ -380,3 +380,27 @@ fn results_ask_the_system_for_their_icons_and_folder_headers_for_folder_icons() 
     frame(&mut app);
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::Icon(_))), "pending icons are asked once");
 }
+
+#[test]
+fn the_search_box_picks_words_and_has_an_editing_menu() {
+    let mut app = app();
+    key(&mut app, Key::Char('F'), CTRL_ALT);
+    "alpha beta".chars().for_each(|c| app.on_event(&Event::Char(c), t0()));
+    let mut g = crate::text::Gfx::new(Mono, 1024);
+    app.frame(&mut g, t0());
+    let f = app.search_layout().field;
+    let (x, y) = (f.right() - 8.0, f.y + f.h / 2.0);
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 2 }, t0());
+    app.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, t0());
+    app.frame(&mut g, t0());
+    assert_eq!(&app.search.edit.text[app.search.edit.selection()], "beta");
+    app.drain_effects().for_each(drop);
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Right, clicks: 1 }, t0());
+    let menu = app.drain_effects().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m.menu) } else { None }).expect("a menu on the box");
+    assert_eq!(menu.iter().filter(|i| matches!(i, crate::ui::MenuItem::Command { .. })).count(), 6);
+    app.on_event(&Event::MenuCommand(2), t0());
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::SetClipboard(s) if s == "beta")));
+    app.on_event(&Event::MenuCommand(4), t0());
+    assert_eq!(app.search.edit.text, "alpha ");
+    assert!(app.search_active());
+}

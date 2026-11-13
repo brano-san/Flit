@@ -152,3 +152,71 @@ fn empty_selection_copy_and_cut_do_nothing_and_history_is_capped() {
     }
     assert!(steps <= 200 && steps > 100);
 }
+
+#[test]
+fn insert_and_delete_chords_copy_paste_and_cut() {
+    let mut e = LineEdit::default();
+    e.set("one two");
+    e.key(Key::Left, CTRL);
+    e.key(Key::End, SHIFT);
+    assert_eq!(e.key(Key::Insert, CTRL), EditAction::Copy("two".into()));
+    assert_eq!(e.key(Key::Insert, SHIFT), EditAction::Paste);
+    assert_eq!(e.text, "one two", "Ctrl+Insert and Shift+Insert leave the text alone");
+    assert_eq!(e.key(Key::Delete, SHIFT), EditAction::Copy("two".into()));
+    assert_eq!(e.text, "one ");
+    assert_eq!(e.key(Key::Delete, SHIFT), EditAction::None, "nothing selected, nothing cut");
+    assert_eq!(e.text, "one ");
+    e.key(Key::Char('Z'), CTRL);
+    assert_eq!(e.text, "one two");
+    assert_eq!(e.key(Key::Insert, Mods { ctrl: true, shift: true, alt: false }), EditAction::None);
+}
+
+#[test]
+fn a_word_is_picked_around_the_position() {
+    let mut e = LineEdit::default();
+    e.set(r"C:\Program Files\my-app.exe");
+    e.select_word(5);
+    assert_eq!(&e.text[e.selection()], "Program");
+    e.select_word(16);
+    assert_eq!(&e.text[e.selection()], "Files", "the end of a word still picks that word");
+    e.select_word(11);
+    assert_eq!(&e.text[e.selection()], "Files", "the start of a word picks the word after it");
+    e.select_word(e.text.len());
+    assert_eq!(&e.text[e.selection()], "exe");
+    e.set("a   b");
+    e.select_word(2);
+    assert_eq!(e.selection(), 1..4, "between words the run of spaces is picked");
+    e.set("");
+    e.select_word(0);
+    assert!(e.selection().is_empty());
+}
+
+#[test]
+fn clicks_map_to_caret_word_and_everything() {
+    assert_eq!(Grab::of(1, false), Some(Grab::Caret));
+    assert_eq!(Grab::of(1, true), Some(Grab::Extend));
+    assert_eq!(Grab::of(2, true), Some(Grab::Word));
+    assert_eq!(Grab::of(3, false), None);
+    let mut e = LineEdit::default();
+    e.set("alpha beta");
+    e.grab(2, Grab::Caret);
+    e.grab(8, Grab::Extend);
+    assert_eq!(&e.text[e.selection()], "pha be");
+    e.grab(8, Grab::Word);
+    assert_eq!(&e.text[e.selection()], "beta");
+    assert!(!e.can_undo());
+}
+
+#[test]
+fn a_secret_field_never_hands_out_its_text() {
+    use crate::ui::field::{Field, FieldKey};
+    let mut f = Field::default();
+    f.secret = true;
+    f.insert("hunter2");
+    f.edit.select_all();
+    for (k, m) in [(Key::Char('C'), CTRL), (Key::Char('X'), CTRL), (Key::Insert, CTRL), (Key::Delete, SHIFT)] {
+        assert!(matches!(f.key(k, m), FieldKey::Edited { changed: false, action: EditAction::None }));
+    }
+    assert_eq!(f.text(), "hunter2");
+    assert!(matches!(f.key(Key::Insert, SHIFT), FieldKey::Edited { action: EditAction::Paste, .. }));
+}

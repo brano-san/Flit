@@ -104,12 +104,12 @@ impl App {
         true
     }
 
-    pub(super) fn filter_click(&mut self, x: f32, clicks: u8) {
+    pub(super) fn filter_click(&mut self, x: f32, clicks: u8, extend: bool) {
         if self.tab().filter.is_none() {
             self.open_filter();
         }
         if let Some(f) = self.tabs[self.cur].filter.as_mut() {
-            f.click(x, clicks);
+            f.click(x, clicks, extend);
             self.focus = Focus::Filter;
         }
     }

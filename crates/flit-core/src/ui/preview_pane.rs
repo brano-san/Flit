@@ -786,7 +786,7 @@ impl App {
             PaneHit::Filter => {
                 self.open_inspector_filter();
                 if let Some(f) = self.preview.filter.as_mut() {
-                    f.click(x, 1);
+                    f.click(x, 1, false);
                 }
             }
             _ => {}

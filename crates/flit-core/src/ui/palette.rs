@@ -607,9 +607,9 @@ impl App {
         self.nav.palette.as_ref().map(|p| p.field_rect)
     }
 
-    pub(super) fn palette_click(&mut self, x: f32, clicks: u8) {
+    pub(super) fn palette_click(&mut self, x: f32, clicks: u8, extend: bool) {
         if let Some(p) = &mut self.nav.palette {
-            p.field.click(x, clicks);
+            p.field.click(x, clicks, extend);
         }
     }
 

@@ -23,6 +23,24 @@ enum Run {
     Erasing,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Grab {
+    Caret,
+    Extend,
+    Word,
+}
+
+impl Grab {
+    pub fn of(clicks: u8, extend: bool) -> Option<Grab> {
+        match clicks {
+            0 | 1 if extend => Some(Grab::Extend),
+            0 | 1 => Some(Grab::Caret),
+            2 => Some(Grab::Word),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum EditAction {
     None,
@@ -77,9 +95,32 @@ impl LineEdit {
         self.travel(true)
     }
 
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
     pub fn select_all(&mut self) {
         self.anchor = 0;
         self.caret = self.text.len();
+    }
+
+    pub fn select_word(&mut self, pos: usize) {
+        self.move_to(pos, false);
+        let pos = self.caret;
+        let is_word = |c: Option<char>| c.is_some_and(|c| !is_sep(c));
+        let sep = !is_word(self.text[pos..].chars().next()) && !is_word(self.text[..pos].chars().next_back());
+        let start = self.text[..pos].char_indices().rev().take_while(|&(_, c)| is_sep(c) == sep).last().map_or(pos, |(i, _)| i);
+        let end = self.text[pos..].char_indices().find(|&(_, c)| is_sep(c) != sep).map_or(self.text.len(), |(i, _)| pos + i);
+        self.anchor = start;
+        self.caret = end;
+    }
+
+    pub fn grab(&mut self, pos: usize, how: Grab) {
+        match how {
+            Grab::Caret => self.move_to(pos, false),
+            Grab::Extend => self.move_to(pos, true),
+            Grab::Word => self.select_word(pos),
+        }
     }
 
     pub fn selection(&self) -> Range<usize> {
@@ -166,9 +207,26 @@ impl LineEdit {
         }
     }
 
+    pub fn copy(&self) -> EditAction {
+        if self.selection().is_empty() {
+            return EditAction::None;
+        }
+        EditAction::Copy(self.text[self.selection()].to_owned())
+    }
+
+    pub fn cut(&mut self) -> EditAction {
+        let EditAction::Copy(s) = self.copy() else { return EditAction::None };
+        self.begin(Run::Break);
+        self.take_selection();
+        self.run = Run::Break;
+        EditAction::Copy(s)
+    }
+
     pub fn key(&mut self, key: Key, m: Mods) -> EditAction {
         let c = self.caret;
         let shortcut = m.ctrl && !m.alt;
+        let only_ctrl = m.ctrl && !m.shift && !m.alt;
+        let only_shift = m.shift && !m.ctrl && !m.alt;
         match key {
             Key::Left => {
                 let to = if !m.shift && !self.selection().is_empty() {
@@ -205,6 +263,7 @@ impl LineEdit {
                 self.run = run;
                 return EditAction::Changed;
             }
+            Key::Delete if only_shift => return self.cut(),
             Key::Delete => {
                 let run = if m.ctrl || !self.selection().is_empty() { Run::Break } else { Run::Erasing };
                 if !self.selection().is_empty() || c < self.text.len() {
@@ -222,18 +281,11 @@ impl LineEdit {
                 let moved = if m.shift || key == Key::Char('Y') { self.redo() } else { self.undo() };
                 return if moved { EditAction::Changed } else { EditAction::None };
             }
-            Key::Char('C') if shortcut => return if self.selection().is_empty() { EditAction::None } else { EditAction::Copy(self.text[self.selection()].to_owned()) },
-            Key::Char('X') if shortcut => {
-                if self.selection().is_empty() {
-                    return EditAction::None;
-                }
-                let s = self.text[self.selection()].to_owned();
-                self.begin(Run::Break);
-                self.take_selection();
-                self.run = Run::Break;
-                return EditAction::Copy(s);
-            }
+            Key::Char('C') if shortcut => return self.copy(),
+            Key::Char('X') if shortcut => return self.cut(),
             Key::Char('V') if shortcut => return EditAction::Paste,
+            Key::Insert if only_ctrl => return self.copy(),
+            Key::Insert if only_shift => return EditAction::Paste,
             Key::Enter => return EditAction::Submit,
             Key::Escape => return EditAction::Cancel,
             _ => {}

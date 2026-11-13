@@ -478,3 +478,138 @@ fn quick_access_slides_shut_and_open_with_ctrl_b() {
     key(&mut app, Key::Char('B'), CTRL);
     assert_eq!(app.layout.header.x, 0.0, "without Animations it hides at once");
 }
+
+const SHIFT: Mods = Mods { ctrl: false, shift: true, alt: false };
+
+fn redraw(app: &mut App) {
+    app.frame(&mut Gfx::new(Mono, 1024), t0());
+}
+
+fn click_at(app: &mut App, (x, y): (f32, f32), clicks: u8, at: Instant) {
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks }, at);
+    app.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, at);
+    redraw(app);
+}
+
+fn filter_selection(app: &App) -> String {
+    let e = &app.tab().filter.as_ref().unwrap().edit;
+    e.text[e.selection()].to_owned()
+}
+
+fn clipboard(app: &mut App) -> Vec<String> {
+    app.drain_effects().filter_map(|e| if let Effect::SetClipboard(s) = e { Some(s) } else { None }).collect()
+}
+
+fn text_menu(app: &mut App) -> Vec<(String, bool)> {
+    let menu = app.drain_effects().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m.menu) } else { None }).expect("a menu");
+    menu.into_iter().filter_map(|i| if let crate::ui::MenuItem::Command { label, disabled, .. } = i { Some((label, disabled)) } else { None }).collect()
+}
+
+fn filter_with(app: &mut App, text: &str) -> ((f32, f32), (f32, f32)) {
+    key(app, Key::Char('F'), CTRL);
+    typed(app, text);
+    redraw(app);
+    app.drain_effects().for_each(drop);
+    let f = app.nav.filter.field;
+    let y = f.y + f.h / 2.0;
+    ((f.x + 25.0, y), (app.nav.filter.close.x - 6.0, y))
+}
+
+#[test]
+fn shift_delete_in_the_filter_cuts_text_and_never_deletes_files() {
+    let mut app = app_at(r"C:\x");
+    files(&mut app, &["alpha.txt", "beta.txt"]);
+    key(&mut app, Key::Char('A'), CTRL);
+    key(&mut app, Key::Char('F'), CTRL);
+    typed(&mut app, "a");
+    app.drain_effects().for_each(drop);
+    key(&mut app, Key::Char('A'), CTRL);
+    key(&mut app, Key::Insert, CTRL);
+    key(&mut app, Key::Delete, SHIFT);
+    let effects: Vec<Effect> = app.drain_effects().collect();
+    let copied: Vec<&str> = effects.iter().filter_map(|e| if let Effect::SetClipboard(s) = e { Some(s.as_str()) } else { None }).collect();
+    assert_eq!(copied, ["a", "a"], "Ctrl+Insert copies, Shift+Delete cuts");
+    assert!(!effects.iter().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Op { .. }, .. })));
+    assert!(!app.jobs.modal(), "no permanent-delete prompt");
+    assert_eq!(app.tab().filter.as_ref().unwrap().text(), "");
+    key(&mut app, Key::Insert, SHIFT);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Paste)));
+    app.on_event(&Event::Pasted("beta".into()), t0());
+    assert_eq!(rows(&app), ["beta.txt"]);
+}
+
+#[test]
+fn clicks_in_the_filter_pick_a_word_then_everything_and_dragging_extends() {
+    let mut app = app_at(r"C:\x");
+    files(&mut app, &["a"]);
+    let (start, end) = filter_with(&mut app, "alpha beta");
+    let t = t0();
+    click_at(&mut app, end, 1, t);
+    assert_eq!(filter_selection(&app), "");
+    click_at(&mut app, end, 2, t);
+    assert_eq!(filter_selection(&app), "beta", "a double click picks the word");
+    click_at(&mut app, end, 1, t + Duration::from_millis(100));
+    assert_eq!(filter_selection(&app), "alpha beta", "a quick third click picks everything");
+    click_at(&mut app, end, 1, t + Duration::from_secs(2));
+    assert_eq!(filter_selection(&app), "", "a later click only places the caret");
+    hold(&mut app, SHIFT);
+    click_at(&mut app, start, 1, t + Duration::from_secs(3));
+    hold(&mut app, NO);
+    assert_eq!(filter_selection(&app), "alpha beta", "Shift+click extends from the caret");
+    click_at(&mut app, start, 1, t + Duration::from_secs(4));
+    app.on_event(&Event::MouseDown { x: start.0, y: start.1, button: MouseButton::Left, clicks: 1 }, t + Duration::from_secs(5));
+    redraw(&mut app);
+    app.on_event(&Event::MouseMove { x: end.0 + 200.0, y: end.1 + 30.0 }, t + Duration::from_secs(5));
+    redraw(&mut app);
+    assert_eq!(filter_selection(&app), "alpha beta", "dragging selects, even past the field");
+    app.on_event(&Event::MouseUp { x: end.0, y: end.1, button: MouseButton::Left }, t + Duration::from_secs(5));
+    app.on_event(&Event::MouseMove { x: start.0, y: start.1 }, t + Duration::from_secs(5));
+    redraw(&mut app);
+    assert_eq!(filter_selection(&app), "alpha beta", "moving after the release changes nothing");
+}
+
+#[test]
+fn the_filter_menu_edits_text_and_follows_the_selection() {
+    let mut app = app_at(r"C:\x");
+    files(&mut app, &["alpha beta", "gamma"]);
+    let (start, _) = filter_with(&mut app, "alpha beta");
+    app.on_event(&Event::MouseDown { x: start.0, y: start.1, button: MouseButton::Right, clicks: 1 }, t0());
+    app.on_event(&Event::MouseUp { x: start.0, y: start.1, button: MouseButton::Right }, t0());
+    let labels: Vec<&str> = vec!["Undo", "Cut", "Copy", "Paste", "Delete", "Select All"];
+    assert_eq!(text_menu(&mut app), labels.iter().zip([false, true, true, false, true, false]).map(|(l, d)| (l.to_string(), d)).collect::<Vec<_>>());
+    app.on_event(&Event::MenuCommand(5), t0());
+    assert_eq!(filter_selection(&app), "alpha beta");
+    key(&mut app, Key::Apps, NO);
+    assert_eq!(text_menu(&mut app).iter().map(|(_, d)| *d).collect::<Vec<_>>(), [false, false, false, false, false, true], "the menu key opens it too");
+    app.on_event(&Event::MenuCommand(1), t0());
+    assert_eq!(clipboard(&mut app), ["alpha beta"]);
+    assert_eq!(app.tab().filter.as_ref().unwrap().text(), "");
+    app.on_event(&Event::MenuCommand(0), t0());
+    assert_eq!(app.tab().filter.as_ref().unwrap().text(), "alpha beta");
+    app.on_event(&Event::MenuCommand(3), t0());
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Paste)));
+    key(&mut app, Key::Enter, NO);
+    key(&mut app, Key::Char('A'), CTRL);
+    app.drain_effects().for_each(drop);
+    for k in 0..6 {
+        app.on_event(&Event::MenuCommand(k), t0());
+    }
+    let effects: Vec<Effect> = app.drain_effects().collect();
+    assert!(effects.iter().all(|e| !matches!(e, Effect::Provider { req: ProviderRequest::Op { .. }, .. } | Effect::SetClipboardFiles { .. })), "with the list focused the menu commands touch no files");
+    assert_eq!(app.tab().location(), &loc(r"C:\x"));
+}
+
+#[test]
+fn the_address_bar_picks_words_too() {
+    let mut app = app_at(r"C:\x");
+    files(&mut app, &["a"]);
+    key(&mut app, Key::Char('L'), CTRL);
+    let Some(p) = app.nav.palette.as_mut() else { panic!("Ctrl+L opens the address bar") };
+    p.field.edit.set(r"C:\Program Files");
+    redraw(&mut app);
+    let r = app.palette_field().unwrap();
+    let at = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    click_at(&mut app, at, 2, t0());
+    let e = &app.nav.palette.as_ref().unwrap().field.edit;
+    assert_eq!(&e.text[e.selection()], "Files");
+}

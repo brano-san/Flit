@@ -1276,7 +1276,7 @@ impl App {
         match sh {
             SHit::Search => {
                 ui.zone = Zone::Search;
-                ui.search.click(x, clicks);
+                ui.search.click(x, clicks, self.mods.shift);
             }
             SHit::Slide(k) => {
                 (ui.zone, ui.focus) = (Zone::List, k);

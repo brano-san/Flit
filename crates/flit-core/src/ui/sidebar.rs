@@ -819,8 +819,8 @@ impl App {
         self.quick_filter_changed();
     }
 
-    pub(super) fn quick_filter_click(&mut self, x: f32, clicks: u8) {
-        self.nav.sidebar.filter.click(x, clicks);
+    pub(super) fn quick_filter_click(&mut self, x: f32, clicks: u8, extend: bool) {
+        self.nav.sidebar.filter.click(x, clicks, extend);
         self.nav.sidebar.typing = true;
         self.focus = Focus::Sidebar;
         self.dirty = true;

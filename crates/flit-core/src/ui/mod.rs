@@ -1727,7 +1727,7 @@ impl App {
         }
         self.strip_pointer(x, y);
         self.settings_tip(x, y);
-        if self.autoscroll_move(self.along_of(x, y)) || self.ops_mouse_move(x, y) || self.marquee_move(x, y) {
+        if self.autoscroll_move(self.along_of(x, y)) || self.ops_mouse_move(x, y) || self.nav_mouse_move(x) || self.marquee_move(x, y) {
             return;
         }
         match self.drag {

@@ -1,4 +1,4 @@
-use super::edit::{EditAction, LineEdit};
+use super::edit::{EditAction, Grab, LineEdit};
 use super::sidebar::folder_icon;
 use super::{centered, icon_key, App, Effect, Hit, IconRequest, G_BACK, G_CHEVRON, G_FILE, G_FOLDER, G_SORT_DOWN, G_SORT_UP, ICON};
 use crate::fmt as format;
@@ -170,7 +170,7 @@ pub(super) struct SearchView {
     pub(super) active: bool,
     pub(super) edit: LineEdit,
     edit_scroll: f32,
-    pending_click: Option<(f32, bool)>,
+    pending_click: Option<(f32, Grab)>,
     gen: u64,
     sort: SearchSort,
     pub(super) group_folder: bool,
@@ -733,7 +733,7 @@ impl App {
         self.search.recent_open = false;
     }
 
-    fn search_key(&mut self, key: Key, m: Mods, now: Instant) -> bool {
+    pub(super) fn search_key(&mut self, key: Key, m: Mods, now: Instant) -> bool {
         self.dirty = true;
         if self.recent_key(key, m, now) {
             return true;
@@ -925,12 +925,19 @@ impl App {
                 self.search.drag = SDrag::ColSep { col, x, width: widths[col] };
                 self.set_cursor(CursorIcon::ResizeHorizontal);
             }
+            SHit::Field if button == MouseButton::Right => {
+                let menu = self.collect(|a, m| super::field::text_entries(m, &a.search.edit, false));
+                self.flit_menu(x, y, menu);
+            }
             SHit::Field => {
-                if clicks >= 2 {
-                    self.search.edit.select_all();
-                } else {
-                    self.search.pending_click = Some((x, self.mods.shift));
-                    self.search.drag = SDrag::Select;
+                match Grab::of(self.text_clicks((x, y), clicks, now), self.mods.shift) {
+                    Some(how) => {
+                        self.search.pending_click = Some((x, how));
+                        if how != Grab::Word {
+                            self.search.drag = SDrag::Select;
+                        }
+                    }
+                    None => self.search.edit.select_all(),
                 }
                 self.search.recent_open = true;
             }
@@ -1020,7 +1027,7 @@ impl App {
                 return true;
             }
             SDrag::Select => {
-                self.search.pending_click = Some((x, true));
+                self.search.pending_click = Some((x, Grab::Extend));
                 self.dirty = true;
                 return true;
             }
@@ -1311,9 +1318,9 @@ impl App {
         let inner = Rect::new(x, r.y, r.right() - x - self.s(12.0), r.h);
         g.dl.set_clip(Some(inner));
         let s = &mut self.search;
-        if let Some((x, extend)) = s.pending_click.take() {
+        if let Some((x, how)) = s.pending_click.take() {
             let pos = g.hit(&s.edit.text, font, x - inner.x + s.edit_scroll);
-            s.edit.move_to(pos, extend);
+            s.edit.grab(pos, how);
         }
         let caret_h = (r.h * 0.6).round();
         let look = super::field::EditLook { font, baseline, line_y: r.y + (r.h - caret_h) / 2.0, line_h: caret_h, stroke: 1.0f32.max(self.scale.round()), focused: true };

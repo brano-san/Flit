@@ -165,7 +165,7 @@ pub fn unix_term(s: &'static str, l: Lang) -> &'static str {
     Box::leak(out.into_boxed_str())
 }
 
-const UNIX_WORDS: [(S, S); 12] = [
+const UNIX_WORDS: [(S, S); 14] = [
     (S::ActionsFileShortcut, S::ActionsFileLink),
     (S::ActionsFilePasteShortcut, S::ActionsFilePasteLink),
     (S::DescribeFileShortcut, S::DescribeFileLink),
@@ -178,6 +178,8 @@ const UNIX_WORDS: [(S, S); 12] = [
     (S::UiOpsTargetHint, S::UiOpsLinkTargetHint),
     (S::SettingsTitleGeneralMenuShortcut, S::SettingsTitleGeneralMenuLink),
     (S::SettingsHelpGeneralMenuShortcut, S::SettingsHelpGeneralMenuLink),
+    (S::MenuFieldUndo, S::ActionsTextUndo),
+    (S::MenuFieldSelectAll, S::ActionsTextSelectAll),
 ];
 
 pub fn unix_word(s: S) -> S {

@@ -1,12 +1,16 @@
+use super::field::{is_menu_key, text_entries, Field, TextCmd};
 use super::filter::FilterRects;
 use super::home::Home;
-use super::palette::Palette;
+use super::palette::{Palette, Pick};
+use super::settings_page::SettingPick;
 use super::sidebar::Sidebar;
 use super::{App, Focus, Hit};
 use crate::input::{Key, Mods, MouseButton};
 use crate::location::Location;
 use crate::render::Rect;
 use std::time::Instant;
+
+const CLICK_SLOP: f32 = 4.0;
 
 #[derive(Default)]
 pub(super) struct Nav {
@@ -16,6 +20,11 @@ pub(super) struct Nav {
     pub filter: FilterRects,
     pub closed: Vec<Location>,
     pub home: Home,
+    streak: Option<(Instant, f32, f32)>,
+}
+
+fn is_field(h: Hit) -> bool {
+    matches!(h, Hit::FilterField | Hit::PaletteField | Hit::QuickField)
 }
 
 impl App {
@@ -29,6 +38,12 @@ impl App {
     }
 
     pub(super) fn nav_key(&mut self, key: Key, m: Mods, now: Instant) -> bool {
+        if is_menu_key(key, m) {
+            if let Some(r) = self.text_field_rect() {
+                self.text_field_menu(r.x, r.bottom());
+                return true;
+            }
+        }
         if self.nav.palette.is_some() {
             return self.palette_key(key, m, now);
         }
@@ -88,9 +103,19 @@ impl App {
             (MouseButton::Middle, Hit::Side(i)) => self.open_side_item(i, true, now),
             (MouseButton::Middle, Hit::HomeItem(i)) => self.open_home_item(i, true, now),
             (MouseButton::Left, Hit::Splitter) => self.begin_splitter_drag(x),
-            (MouseButton::Left, Hit::FilterField) => self.filter_click(x, clicks),
-            (MouseButton::Left, Hit::PaletteField) => self.palette_click(x, clicks),
-            (MouseButton::Left, Hit::QuickField) => self.quick_filter_click(x, clicks),
+            (MouseButton::Left, Hit::FilterField | Hit::PaletteField | Hit::QuickField) => {
+                let (clicks, extend) = (self.text_clicks((x, y), clicks, now), self.mods.shift);
+                match h {
+                    Hit::FilterField => self.filter_click(x, clicks, extend),
+                    Hit::PaletteField => self.palette_click(x, clicks, extend),
+                    _ => self.quick_filter_click(x, clicks, extend),
+                }
+                self.pressed = h;
+            }
+            (MouseButton::Right, Hit::FilterField | Hit::PaletteField | Hit::QuickField) => {
+                self.focus_text_field(h);
+                self.text_field_menu(x, y);
+            }
             (MouseButton::Left, Hit::PaletteScroll(down)) => self.palette_step(down),
             (MouseButton::Left, Hit::Side(_) | Hit::SidePin(_) | Hit::SideHeader(_) | Hit::HomeItem(_) | Hit::FilterClose | Hit::PaletteRow(_) | Hit::PaletteKeys(_) | Hit::PaletteClose | Hit::PaletteDescribe | Hit::GoButton(_) | Hit::QuickClear) => {
                 self.pressed = h;
@@ -101,6 +126,106 @@ impl App {
         }
         self.dirty = true;
         true
+    }
+
+    pub(super) fn nav_mouse_move(&mut self, x: f32) -> bool {
+        if !is_field(self.pressed) {
+            return false;
+        }
+        let h = self.pressed;
+        if let Some(f) = self.text_field_mut(h) {
+            f.drag(x);
+            self.dirty = true;
+        }
+        true
+    }
+
+    pub(super) fn text_clicks(&mut self, (x, y): (f32, f32), clicks: u8, now: Instant) -> u8 {
+        let slop = self.s(CLICK_SLOP);
+        let third = clicks == 1 && self.nav.streak.is_some_and(|(at, sx, sy)| now.saturating_duration_since(at) <= self.double_click && (x - sx).abs() <= slop && (y - sy).abs() <= slop);
+        self.nav.streak = (clicks == 2).then_some((now, x, y));
+        if third {
+            3
+        } else {
+            clicks
+        }
+    }
+
+    fn focus_text_field(&mut self, h: Hit) {
+        match h {
+            Hit::FilterField => {
+                if self.tab().filter.is_none() {
+                    self.open_filter();
+                }
+                self.focus = Focus::Filter;
+            }
+            Hit::QuickField => {
+                self.nav.sidebar.typing = true;
+                self.focus = Focus::Sidebar;
+            }
+            _ => {}
+        }
+    }
+
+    fn text_field_hit(&self) -> Option<Hit> {
+        if let Some(p) = &self.nav.palette {
+            return (!matches!(p.pick, Pick::Setting(SettingPick::Capture { .. }))).then_some(Hit::PaletteField);
+        }
+        match self.focus {
+            Focus::Filter if self.tab().filter.is_some() => Some(Hit::FilterField),
+            Focus::Sidebar if self.nav.sidebar.typing => Some(Hit::QuickField),
+            _ => None,
+        }
+    }
+
+    fn text_field(&self, h: Hit) -> Option<&Field> {
+        match h {
+            Hit::FilterField => self.tab().filter.as_ref(),
+            Hit::PaletteField => self.nav.palette.as_ref().map(|p| &p.field),
+            Hit::QuickField => Some(&self.nav.sidebar.filter),
+            _ => None,
+        }
+    }
+
+    fn text_field_mut(&mut self, h: Hit) -> Option<&mut Field> {
+        match h {
+            Hit::FilterField => self.tabs[self.cur].filter.as_mut(),
+            Hit::PaletteField => self.nav.palette.as_mut().map(|p| &mut p.field),
+            Hit::QuickField => Some(&mut self.nav.sidebar.filter),
+            _ => None,
+        }
+    }
+
+    fn text_field_rect(&self) -> Option<Rect> {
+        match self.text_field_hit()? {
+            Hit::FilterField => Some(self.nav.filter.field),
+            Hit::PaletteField => self.palette_field(),
+            _ => Some(self.nav.sidebar.field),
+        }
+    }
+
+    fn text_field_menu(&mut self, x: f32, y: f32) {
+        let Some(h) = self.text_field_hit() else { return };
+        let menu = self.collect(|a, m| {
+            if let Some(f) = a.text_field(h) {
+                text_entries(m, &f.edit, f.secret);
+            }
+        });
+        if !menu.is_empty() {
+            self.flit_menu(x, y, menu);
+        }
+    }
+
+    pub(super) fn text_command(&mut self, cmd: TextCmd, now: Instant) {
+        let (key, m) = cmd.chord();
+        if self.is_renaming() {
+            self.ops_key(key, m);
+        } else if self.search.active {
+            self.search_key(key, m, now);
+        } else if self.text_field_hit().is_some() {
+            self.nav_key(key, m, now);
+        }
+        self.dirty = true;
     }
 }
 

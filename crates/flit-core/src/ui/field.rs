@@ -1,4 +1,6 @@
-use super::edit::{EditAction, LineEdit};
+use super::edit::{EditAction, Grab, LineEdit};
+use super::menu::{Cmd, Mark, Menu};
+use crate::i18n::S;
 use crate::input::{Key, Mods, Preedit};
 use std::ops::Range;
 use crate::render::Rect;
@@ -10,7 +12,7 @@ pub(super) struct Field {
     pub edit: LineEdit,
     pub secret: bool,
     scroll: f32,
-    click: Option<f32>,
+    click: Option<(f32, Grab)>,
 }
 
 const MASK: char = '\u{2022}';
@@ -20,25 +22,80 @@ pub(super) enum FieldKey {
     Edited { changed: bool, action: EditAction },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TextCmd {
+    Undo,
+    Cut,
+    Copy,
+    Paste,
+    Delete,
+    SelectAll,
+}
+
+impl TextCmd {
+    pub fn chord(self) -> (Key, Mods) {
+        let ctrl = Mods { ctrl: true, ..Mods::default() };
+        match self {
+            TextCmd::Undo => (Key::Char('Z'), ctrl),
+            TextCmd::Cut => (Key::Char('X'), ctrl),
+            TextCmd::Copy => (Key::Char('C'), ctrl),
+            TextCmd::Paste => (Key::Char('V'), ctrl),
+            TextCmd::Delete => (Key::Backspace, Mods::default()),
+            TextCmd::SelectAll => (Key::Char('A'), ctrl),
+        }
+    }
+}
+
+pub(super) fn is_menu_key(key: Key, m: Mods) -> bool {
+    key == Key::Apps || (key == Key::F(10) && m.shift && !m.ctrl && !m.alt)
+}
+
+pub(super) fn text_entries(m: &mut Menu, edit: &LineEdit, secret: bool) {
+    let picked = !edit.selection().is_empty();
+    let whole = edit.selection() == (0..edit.text.len());
+    let rows = [
+        (TextCmd::Undo, S::MenuFieldUndo, "text.undo", edit.can_undo()),
+        (TextCmd::Cut, S::MenuCut, "text.cut", picked && !secret),
+        (TextCmd::Copy, S::MenuCopy, "text.copy", picked && !secret),
+        (TextCmd::Paste, S::MenuPaste, "text.paste", true),
+        (TextCmd::Delete, S::MenuDelete, "text.delete_right", picked),
+        (TextCmd::SelectAll, S::MenuFieldSelectAll, "text.select_all", !whole),
+    ];
+    for (cmd, label, id, enabled) in rows {
+        if matches!(cmd, TextCmd::Cut | TextCmd::SelectAll) {
+            m.separator();
+        }
+        let keys = m.keys.first_text(id).unwrap_or_default();
+        m.entry(Cmd::Text(cmd), label.t(), keys, Mark::None, false, !enabled);
+    }
+}
+
 impl Field {
     pub fn text(&self) -> &str {
         &self.edit.text
     }
 
-    pub fn click(&mut self, x: f32, clicks: u8) {
-        if clicks >= 2 {
+    pub fn click(&mut self, x: f32, clicks: u8, extend: bool) {
+        self.click = Grab::of(clicks, extend).map(|how| (x, how));
+        if self.click.is_none() {
             self.edit.select_all();
-            self.click = None;
-        } else {
-            self.click = Some(x);
         }
+    }
+
+    pub fn drag(&mut self, x: f32) {
+        self.click = Some((x, Grab::Extend));
     }
 
     pub fn key(&mut self, key: Key, m: Mods) -> FieldKey {
         let editing = matches!(key, Key::Left | Key::Right | Key::Home | Key::End | Key::Backspace | Key::Delete)
-            || (m.ctrl && !m.alt && matches!(key, Key::Char('A' | 'C' | 'X' | 'V' | 'Z' | 'Y')));
+            || (m.ctrl && !m.alt && matches!(key, Key::Char('A' | 'C' | 'X' | 'V' | 'Z' | 'Y')))
+            || (key == Key::Insert && m.ctrl != m.shift && !m.alt);
         if !editing {
             return FieldKey::Ignored;
+        }
+        let takes_text = (m.ctrl && !m.alt && matches!(key, Key::Char('C' | 'X'))) || (key == Key::Insert && m.ctrl) || (key == Key::Delete && m.shift && !m.ctrl && !m.alt);
+        if self.secret && takes_text {
+            return FieldKey::Edited { changed: false, action: EditAction::None };
         }
         let before = self.edit.text.len();
         let action = self.edit.key(key, m);
@@ -58,11 +115,14 @@ impl Field {
         let line_y = (inner.y + (inner.h - line_h) / 2.0).round();
         g.dl.set_clip(Some(inner));
         let shown: String = if self.secret { self.edit.text.chars().map(|_| MASK).collect() } else { self.edit.text.clone() };
-        if let Some(x) = self.click.take() {
+        if let Some((x, how)) = self.click.take() {
             let pos = g.hit(&shown, font, x - inner.x + self.scroll);
             let text = &self.edit.text;
             let pos = if self.secret { text.char_indices().nth(pos / MASK.len_utf8()).map_or(text.len(), |(i, _)| i) } else { pos };
-            self.edit.move_to(pos, false);
+            match how {
+                Grab::Word if self.secret => self.edit.select_all(),
+                how => self.edit.grab(pos, how),
+            }
         }
         let text = &self.edit.text;
         let to_shown = |b: usize| if self.secret { text[..b].chars().count() * MASK.len_utf8() } else { b };

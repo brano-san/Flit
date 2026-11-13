@@ -511,7 +511,7 @@ impl ContextMenu {
             None => MenuOutcome::Closed,
             Some(CtxHit::Field) => {
                 let inner = self.field_inner();
-                self.query.click(x.max(inner.x), clicks);
+                self.query.click(x.max(inner.x), clicks, false);
                 MenuOutcome::Open
             }
             Some(CtxHit::Scroll(down)) => {
