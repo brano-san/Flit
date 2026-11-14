@@ -37,6 +37,11 @@ fn player_commands_are_one_json_line_each() {
     assert!(observe().contains("\"time-pos\"") && observe().contains("\"pause\""));
     let s = socket_path(Path::new("/run/user/1000"), 42);
     assert!(s.starts_with("/run/user/1000") && s.to_string_lossy().ends_with("-42.sock"));
-    assert_eq!(crate::shell::mpv_args(&s, Some(0.5)), ["--no-terminal".to_owned(), format!("--input-ipc-server={}", s.display()), "--volume=50".to_owned()]);
-    assert_eq!(crate::shell::mpv_args(&s, None).len(), 2, "without a known volume mpv keeps its own");
+    assert_eq!(crate::shell::mpv_args(Some(&s), Some(0.5)), ["--no-terminal".to_owned(), format!("--input-ipc-server={}", s.display()), "--volume=50".to_owned()]);
+    assert_eq!(crate::shell::mpv_args(Some(&s), None).len(), 2, "without a known volume mpv keeps its own");
+}
+
+#[test]
+fn without_a_private_runtime_folder_mpv_gets_no_control_socket() {
+    assert_eq!(crate::shell::mpv_args(None, None), ["--no-terminal".to_owned()]);
 }
