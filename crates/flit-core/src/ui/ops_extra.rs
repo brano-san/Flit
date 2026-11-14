@@ -18,7 +18,7 @@ fn is_image(p: &FsPath) -> bool {
 
 fn ext_in(name: &[u8], list: &[&[u8]]) -> bool {
     let ext = name[name.len() - crate::name::ext_len(name)..].to_ascii_lowercase();
-    list.iter().any(|e| ext.as_slice() == *e)
+    list.contains(&ext.as_slice())
 }
 
 pub(super) fn printable(name: &[u8]) -> bool {

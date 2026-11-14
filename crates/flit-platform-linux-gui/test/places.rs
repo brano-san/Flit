@@ -446,6 +446,6 @@ fn privacy_settings_and_broken_lists_stop_the_recent_record() {
     assert!(!remember_recent_in(&file, &doc, "text/plain", std::time::SystemTime::now()).unwrap());
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "<xbel>broken");
     let doc_path = crate::xdg::fs_path(&doc).unwrap();
-    assert_eq!(crate::shell::opened_documents(&flit_core::provider::Launch::Display(doc_path.clone())), [doc.clone()]);
+    assert_eq!(crate::shell::opened_documents(&flit_core::provider::Launch::Display(doc_path.clone())), std::slice::from_ref(&doc));
     assert!(crate::shell::opened_documents(&flit_core::provider::Launch::Execute(doc_path)).is_empty(), "programs run are not documents");
 }

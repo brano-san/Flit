@@ -474,7 +474,7 @@ fn set_attr(tag: &str, name: &str, value: &str) -> String {
 fn find_bookmark(xbel: &str, path: &[u8]) -> Option<(usize, usize, usize)> {
     xbel.match_indices("<bookmark ").find_map(|(start, _)| {
         let open_end = start + xbel[start..].find('>')? + 1;
-        let href = unescape_xml(attribute(xbel[start..open_end].as_bytes(), b"href")?);
+        let href = unescape_xml(attribute(&xbel.as_bytes()[start..open_end], b"href")?);
         if crate::instance::decode_uri(&href)? != path {
             return None;
         }
@@ -490,7 +490,7 @@ pub fn remember_in_xbel(xbel: &str, path: &[u8], mime: &str, stamp: &str) -> Opt
         let body = match (body.find(OWN_APP), body.find(APPS_END)) {
             (Some(at), _) => {
                 let end = at + body[at..].find("/>")? + 2;
-                let count = attribute(body[at..end].as_bytes(), b"count").and_then(|c| std::str::from_utf8(c).ok()?.parse::<u64>().ok()).unwrap_or(0);
+                let count = attribute(&body.as_bytes()[at..end], b"count").and_then(|c| std::str::from_utf8(c).ok()?.parse::<u64>().ok()).unwrap_or(0);
                 format!("{}{}{}", &body[..at], own(count + 1), &body[end..])
             }
             (None, Some(at)) => format!("{}  {}\n        {}", body[..at].trim_end_matches([' ', '\t']), own(1), &body[at..]),
