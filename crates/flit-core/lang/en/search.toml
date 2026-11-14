@@ -1,4 +1,5 @@
 placeholder = "Search: words, *.ext, ext:, size:, dm:, path:, regex:, tag:, or $ and property:value for Windows Search"
+placeholder_unix = "Search: words, *.ext, ext:, size:, dm:, path:, regex:, tag:, or $ for text inside files"
 title = "Search — Flit"
 title_in = "Search in {name} — Flit"
 invalid = "The query is not valid."
@@ -19,7 +20,6 @@ invalid_rows = "The index sent invalid rows: {error}"
 unavailable = "Search is unavailable: {error}"
 cannot_start = "Cannot start the search: {error}"
 shell = "Windows Search: {error}"
-content_unsupported = "Content search ($ queries) is not available on Linux yet"
 
 [column]
 folder = "Folder"
@@ -27,6 +27,7 @@ folder = "Folder"
 [source]
 walk = "Live search of the folder and its subfolders"
 shell = "Windows Search"
+content = "Content search (Tracker, Baloo or Recoll)"
 tagged = "Tagged files"
 connecting = "Connecting to the index"
 service = "Index service"

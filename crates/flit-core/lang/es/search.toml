@@ -1,4 +1,5 @@
 placeholder = "Buscar: palabras, *.ext, ext:, size:, dm:, path:, regex:, tag:, o $ y propiedad:valor para Windows Search"
+placeholder_unix = "Buscar: palabras, *.ext, ext:, size:, dm:, path:, regex:, tag:, o $ para texto dentro de los archivos"
 title = "Búsqueda — Flit"
 title_in = "Búsqueda en {name} — Flit"
 invalid = "La consulta no es válida."
@@ -19,7 +20,6 @@ invalid_rows = "El índice envió filas no válidas: {error}"
 unavailable = "La búsqueda no está disponible: {error}"
 cannot_start = "No se puede iniciar la búsqueda: {error}"
 shell = "Windows Search: {error}"
-content_unsupported = "La búsqueda de contenido (consultas $) aún no está disponible en Linux"
 
 [column]
 folder = "Carpeta"
@@ -27,6 +27,7 @@ folder = "Carpeta"
 [source]
 walk = "Búsqueda en vivo de la carpeta y sus subcarpetas"
 shell = "Windows Search"
+content = "Búsqueda de contenido (Tracker, Baloo o Recoll)"
 tagged = "Archivos etiquetados"
 connecting = "Conectando con el índice"
 service = "Servicio de índice"

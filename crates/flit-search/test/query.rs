@@ -157,11 +157,13 @@ fn hostile_queries_are_refused_before_they_cost_much() {
 }
 
 #[test]
-fn unix_treats_foreign_properties_as_name_text_and_flags_dollar_queries() {
-    for text in ["TODO:fix", "report author:Ann", "$ kind:music", "ext:txt", "System.Size:>1MB"] {
+fn unix_treats_foreign_properties_as_name_text_and_sends_dollar_queries_to_content_search() {
+    for text in ["TODO:fix", "report author:Ann", "ext:txt", "System.Size:>1MB", "price$", "a $b"] {
         assert_eq!(shell_query(text, false), None, "{text}");
     }
-    assert!(is_content_query("$x") && is_content_query("  $ kind:music") && !is_content_query("TODO:fix"));
+    assert_eq!(shell_query("  $ annual report ", false), Some("annual report".into()));
+    assert_eq!(shell_query("$\"exact phrase\"", false), Some("\"exact phrase\"".into()));
+    assert_eq!(shell_query("$", false), Some(String::new()));
     assert_eq!(shell_query("TODO:fix", true), Some("TODO:fix".into()));
     assert_eq!(shell_query("ext:rs", true), None);
     let q = parse("TODO:fix ext:rs", clock()).unwrap();

@@ -1,4 +1,5 @@
 placeholder = "搜索：词语、*.ext、ext:、size:、dm:、path:、regex:、tag:，或用 $ 和 property:value 进行 Windows Search"
+placeholder_unix = "搜索：词语、*.ext、ext:、size:、dm:、path:、regex:、tag:，或用 $ 搜索文件内的文字"
 title = "搜索 — Flit"
 title_in = "在 {name} 中搜索 — Flit"
 invalid = "查询无效。"
@@ -19,7 +20,6 @@ invalid_rows = "索引发送了无效的行：{error}"
 unavailable = "搜索不可用：{error}"
 cannot_start = "无法开始搜索：{error}"
 shell = "Windows Search：{error}"
-content_unsupported = "Linux 上暂不支持内容搜索（$ 查询）"
 
 [column]
 folder = "文件夹"
@@ -27,6 +27,7 @@ folder = "文件夹"
 [source]
 walk = "实时搜索文件夹及其子文件夹"
 shell = "Windows Search"
+content = "内容搜索（Tracker、Baloo 或 Recoll）"
 tagged = "带标记的文件"
 connecting = "正在连接索引"
 service = "索引服务"

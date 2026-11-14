@@ -1,4 +1,5 @@
 placeholder = "Rechercher : mots, *.ext, ext:, size:, dm:, path:, regex:, tag:, ou $ et propriété:valeur pour Windows Search"
+placeholder_unix = "Rechercher : mots, *.ext, ext:, size:, dm:, path:, regex:, tag:, ou $ pour le texte dans les fichiers"
 title = "Recherche — Flit"
 title_in = "Recherche dans {name} — Flit"
 invalid = "La requête n’est pas valide."
@@ -19,7 +20,6 @@ invalid_rows = "L’index a envoyé des lignes non valides : {error}"
 unavailable = "La recherche n’est pas disponible : {error}"
 cannot_start = "Impossible de lancer la recherche : {error}"
 shell = "Windows Search : {error}"
-content_unsupported = "La recherche dans le contenu (requêtes $) n'est pas encore disponible sous Linux"
 
 [column]
 folder = "Dossier"
@@ -27,6 +27,7 @@ folder = "Dossier"
 [source]
 walk = "Recherche directe dans le dossier et ses sous-dossiers"
 shell = "Windows Search"
+content = "Recherche dans le contenu (Tracker, Baloo ou Recoll)"
 tagged = "Fichiers balisés"
 connecting = "Connexion à l’index"
 service = "Service d’indexation"

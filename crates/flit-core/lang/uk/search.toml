@@ -1,4 +1,5 @@
 placeholder = "Пошук: слова, *.ext, ext:, size:, dm:, path:, regex:, tag: або $ і властивість:значення для Windows Search"
+placeholder_unix = "Пошук: слова, *.ext, ext:, size:, dm:, path:, regex:, tag: або $ для тексту всередині файлів"
 title = "Пошук — Flit"
 title_in = "Пошук у {name} — Flit"
 invalid = "Запит недійсний."
@@ -19,7 +20,6 @@ invalid_rows = "Індекс надіслав недійсні рядки: {erro
 unavailable = "Пошук недоступний: {error}"
 cannot_start = "Не вдається почати пошук: {error}"
 shell = "Windows Search: {error}"
-content_unsupported = "Пошук за вмістом (запити з $) у Linux поки недоступний"
 
 [column]
 folder = "Папка"
@@ -27,6 +27,7 @@ folder = "Папка"
 [source]
 walk = "Пошук наживо в папці та її вкладених папках"
 shell = "Windows Search"
+content = "Пошук за вмістом (Tracker, Baloo або Recoll)"
 tagged = "Файли з тегами"
 connecting = "Підключення до індексу"
 service = "Служба індексу"

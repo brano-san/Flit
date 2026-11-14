@@ -405,12 +405,6 @@ impl<P: Platform> Worker<P> {
             SearchRequest::Query { gen, text, sort, scope } => {
                 self.hits.remove(&window);
                 let folder = scope.folder().and_then(|f| f.to_windows());
-                if !cfg!(windows) && query::is_content_query(text) {
-                    self.start_live(window, latest, *gen, *sort, SearchSource::Shell, |_, found| {
-                        found.lock().unwrap_or_else(|e| e.into_inner()).error = Some(S::SearchErrorContentUnsupported.t().to_owned());
-                    });
-                    return true;
-                }
                 if let Some(aqs) = query::shell_query(text, cfg!(windows)) {
                     self.start_live(window, latest, *gen, *sort, SearchSource::Shell, move |keep_going, found| run_shell::<P>(folder.as_ref(), &aqs, keep_going, found));
                     return true;
@@ -557,8 +551,9 @@ fn run_shell<P: Platform>(folder: Option<&FsPath>, aqs: &str, keep_going: find::
     });
     flush(&mut batch);
     if let Err(e) = result {
-        tracing::warn!("Windows Search: {e}");
-        found.lock().unwrap_or_else(|e| e.into_inner()).error = Some(tr!(S::SearchErrorShell, error = e.message.trim()));
+        tracing::warn!("shell search: {e}");
+        let message = if cfg!(windows) { tr!(S::SearchErrorShell, error = e.message.trim()) } else { flit_core::i18n::localize(e.message.trim()).into_owned() };
+        found.lock().unwrap_or_else(|e| e.into_inner()).error = Some(message);
     }
 }
 

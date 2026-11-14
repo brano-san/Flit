@@ -1,4 +1,5 @@
 placeholder = "Поиск: слова, *.ext, ext:, size:, dm:, path:, regex:, tag: или $ и свойство:значение для поиска Windows"
+placeholder_unix = "Поиск: слова, *.ext, ext:, size:, dm:, path:, regex:, tag: или $ для текста внутри файлов"
 title = "Поиск — Flit"
 title_in = "Поиск в «{name}» — Flit"
 invalid = "Недопустимый запрос."
@@ -19,7 +20,6 @@ invalid_rows = "Индекс передал некорректные строк�
 unavailable = "Поиск недоступен: {error}"
 cannot_start = "Не удалось начать поиск: {error}"
 shell = "Поиск Windows: {error}"
-content_unsupported = "Поиск по содержимому (запросы с $) в Linux пока недоступен"
 
 [column]
 folder = "Папка"
@@ -27,6 +27,7 @@ folder = "Папка"
 [source]
 walk = "Поиск в папке и вложенных папках"
 shell = "Поиск Windows"
+content = "Поиск по содержимому (Tracker, Baloo или Recoll)"
 tagged = "Файлы с тегами"
 connecting = "Подключение к индексу"
 service = "Служба индексирования"

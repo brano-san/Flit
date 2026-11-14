@@ -1360,6 +1360,7 @@ impl App {
         let tagged = crate::tags::has_tag_term(&s.edit.text);
         right.push_str(match (s.source, s.backend) {
             (Some(SearchSource::Walk), _) => S::SearchSourceWalk,
+            (Some(SearchSource::Shell), _) if self.caps.unix_paths => S::SearchSourceContent,
             (Some(SearchSource::Shell), _) => S::SearchSourceShell,
             _ if tagged => S::SearchSourceTagged,
             (None, SearchBackend::Connecting) => S::SearchSourceConnecting,
@@ -1423,7 +1424,7 @@ impl App {
         let preedit = Some(&self.preedit).filter(|p| !p.is_empty());
         if s.edit.text.is_empty() && preedit.is_none() {
             s.edit_scroll = 0.0;
-            g.text(inner.x, baseline, S::SearchPlaceholder.t(), font, t.text_dim.alpha(0xA0), inner.w);
+            g.text(inner.x, baseline, if self.caps.unix_paths { S::SearchPlaceholderUnix } else { S::SearchPlaceholder }.t(), font, t.text_dim.alpha(0xA0), inner.w);
             g.dl.rect(Rect::new(inner.x, look.line_y, look.stroke, caret_h), t.text);
         } else {
             let line = super::field::EditLine { text: &s.edit.text, caret: s.edit.caret, selection: s.edit.selection() };

@@ -1,4 +1,5 @@
 placeholder = "Suche: Wörter, *.ext, ext:, size:, dm:, path:, regex:, tag: oder $ und Eigenschaft:Wert für Windows Search"
+placeholder_unix = "Suche: Wörter, *.ext, ext:, size:, dm:, path:, regex:, tag: oder $ für Text in Dateien"
 title = "Suche — Flit"
 title_in = "Suche in {name} — Flit"
 invalid = "Die Abfrage ist ungültig."
@@ -19,7 +20,6 @@ invalid_rows = "Der Index hat ungültige Zeilen gesendet: {error}"
 unavailable = "Die Suche ist nicht verfügbar: {error}"
 cannot_start = "Die Suche kann nicht gestartet werden: {error}"
 shell = "Windows Search: {error}"
-content_unsupported = "Die Inhaltssuche ($-Abfragen) ist unter Linux noch nicht verfügbar"
 
 [column]
 folder = "Ordner"
@@ -27,6 +27,7 @@ folder = "Ordner"
 [source]
 walk = "Live-Suche im Ordner und seinen Unterordnern"
 shell = "Windows Search"
+content = "Inhaltssuche (Tracker, Baloo oder Recoll)"
 tagged = "Dateien mit Tags"
 connecting = "Verbindung zum Index wird hergestellt"
 service = "Indexdienst"

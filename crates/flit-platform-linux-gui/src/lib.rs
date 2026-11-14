@@ -5,6 +5,7 @@ mod alert;
 mod apps;
 mod awake;
 mod clipboard;
+mod content;
 mod atspi;
 mod dbus;
 pub mod elevated;
@@ -173,6 +174,10 @@ impl Platform for Linux {
 
     fn resolve_files(files: &[(flit_core::tags::FileKey, &FsPath)]) -> Vec<flit_platform::Resolved> {
         flit_platform_linux::resolve_files(files)
+    }
+
+    fn shell_search(folder: Option<&FsPath>, query: &str, keep_going: &dyn Fn() -> bool, found: &mut dyn FnMut(FsPath, flit_core::Meta)) -> Result<(), PlatformError> {
+        content::search(folder, query, keep_going, found)
     }
 
     fn download(url: &str, out: &mut dyn std::io::Write, progress: &mut dyn FnMut(u64, Option<u64>) -> bool) -> Result<(), PlatformError> {

@@ -27,5 +27,7 @@ unaddressable = "Оболонка Windows не може обробити {path}:
 unmappable = "Деякі імена не можна використовувати в операціях оболонки Windows"
 no_libraries = "Бібліотеки недоступні в цій системі"
 no_windows_search = "Windows Search недоступний у цій системі"
+no_content_search = "Для пошуку всередині файлів потрібен Tracker (localsearch або tracker3), Baloo (baloosearch) або Recoll (recollq); жоден із них не встановлено"
+content_search_failed = "Пошук за вмістом через {program} не вдався: {error}"
 wsl_lost = "З’єднання з {distro} втрачено"
 wsl_stopped = "З’єднання з {distro} втрачено: ця папка більше не оновлюється. Натисніть F5, щоб перезавантажити її."
