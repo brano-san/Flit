@@ -444,10 +444,10 @@ impl App {
     }
 
     pub(super) fn expire_undo_bar(&mut self, now: Instant) {
-        let Some((_, since)) = self.undo_bar else { return };
+        let Some((_, since)) = self.tab().undo else { return };
         let until = since + UNDO_BAR_FOR;
         if now >= until {
-            self.undo_bar = None;
+            self.tab_mut().undo = None;
             self.dirty = true;
         } else {
             self.arm_timer(now, until);
@@ -546,7 +546,9 @@ impl App {
     }
 
     fn start_op_on(&mut self, provider: ProviderId, tab: TabId, op: FileOp, origin: Origin, then: Then) {
-        self.undo_bar = None;
+        if let Some(t) = self.tabs.iter_mut().find(|t| t.id == tab) {
+            t.undo = None;
+        }
         let Some((provider, op)) = route(provider, op, self.caps.unix_paths) else { return self.status(MIXED_PATHS.t()) };
         self.ops.next_id += 1;
         let id = self.ops.next_id;
@@ -1142,7 +1144,8 @@ impl App {
         let (Some(report), Some(p)) = (report, pending) else { return };
         if error.is_none() {
             if let FileOp::Trash(items) = &report.op {
-                self.undo_bar = Some((items.len(), now));
+                let owner = k.unwrap_or(self.cur);
+                self.tabs[owner].undo = Some((items.len(), now));
                 self.arm_timer(now, now + UNDO_BAR_FOR);
                 self.dirty = true;
             }

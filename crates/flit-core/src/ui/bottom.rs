@@ -94,7 +94,7 @@ impl App {
                 self.run_action("view.sort.cycle_folders", std::time::Instant::now());
             }
             BottomHit::Undo => {
-                self.undo_bar = None;
+                self.tab_mut().undo = None;
                 self.undo();
             }
             BottomHit::Elapsed => {}
@@ -322,15 +322,15 @@ impl App {
         x += pad;
 
         let tab = self.tab();
-        let trashed = self.undo_bar.map(|(n, _)| n);
+        let trashed = tab.undo.as_ref().map(|(n, _)| *n);
         let mut s = bumpalo::collections::String::new_in(arena);
         let mut color = t.text_dim;
-        if let Some(n) = trashed {
-            crate::trn_into!(&mut s, P::UiJobTrashBar, n as u64);
-            color = t.text;
-        } else if let Some(err) = &tab.error {
+        if let Some(err) = &tab.error {
             s.push_str(err);
             color = t.error;
+        } else if let Some(n) = trashed {
+            crate::trn_into!(&mut s, P::UiJobTrashBar, n as u64);
+            color = t.text;
         } else if let Some(v) = current_view(self) {
             let k = v.selected_count();
             if k > 0 {

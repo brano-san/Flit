@@ -575,7 +575,6 @@ struct Layout {
 
 pub struct App {
     pub utc_offset_min: i32,
-    pub(super) undo_bar: Option<(usize, Instant)>,
     pub case: CaseMode,
     pub caps: crate::caps::Caps,
     pub open_target: OpenTarget,
@@ -772,7 +771,6 @@ impl App {
             next_gen: 0,
             timer_at: None,
             error_shown: None,
-            undo_bar: None,
             own_menu: None,
             menu_owner: None,
             menu_panel: 0,

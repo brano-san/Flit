@@ -147,12 +147,12 @@ pub(super) fn section(before: &[Access], accounts: Accounts, items: Vec<FsPath>,
     controls.push(Control::text(S::PropertiesGroup.t(), &group, S::PermissionsMixed.t()));
     if enclosed {
         controls.push(Control::line(S::PermissionsEnclosedFiles.t()));
-        for class in 0..3 {
-            controls.push(Control::flags(CLASSES[class].t(), FILE_BITS.iter().enumerate().map(|(which, l)| (l.t().to_owned(), shown & READ_WRITE & bit(class, which) != 0)).collect()));
+        for (class, label) in CLASSES.iter().enumerate() {
+            controls.push(Control::flags(label.t(), FILE_BITS.iter().enumerate().map(|(which, l)| (l.t().to_owned(), shown & READ_WRITE & bit(class, which) != 0)).collect()));
         }
         controls.push(Control::line(S::PermissionsEnclosedFolders.t()));
-        for class in 0..3 {
-            controls.push(Control::flags(CLASSES[class].t(), FOLDER_BITS.iter().enumerate().map(|(which, l)| (l.t().to_owned(), shown & bit(class, which) != 0)).collect()));
+        for (class, label) in CLASSES.iter().enumerate() {
+            controls.push(Control::flags(label.t(), FOLDER_BITS.iter().enumerate().map(|(which, l)| (l.t().to_owned(), shown & bit(class, which) != 0)).collect()));
         }
     }
     Some((controls, Editing { items, accounts, at, exec, enclosed, shown, owner, group }))

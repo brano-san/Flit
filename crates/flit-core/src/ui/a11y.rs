@@ -203,7 +203,7 @@ impl App {
             }
         }
 
-        if self.undo_bar.is_some() {
+        if self.tab().undo.is_some() {
             if let Some(&(_, r)) = l.bar.iter().find(|(b, _)| *b == super::bottom::BottomHit::Undo).filter(|(_, r)| r.w > 0.0) {
                 let k = put(&mut t, &mut targets, 0, Hit::Bottom(super::bottom::BottomHit::Undo), Role::Button, S::ActionsEditUndo.t(), r);
                 t.nodes[k].help = S::DescribeEditUndo.t().into();

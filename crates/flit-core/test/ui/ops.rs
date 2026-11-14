@@ -2182,10 +2182,10 @@ fn trashing_shows_an_undo_bar_that_untrashes_and_disappears() {
     select(&mut app, &["a.txt", "b.txt"]);
     key(&mut app, Key::Delete, NO);
     let [(id, op)] = ops(&mut app).try_into().unwrap();
-    assert!(app.undo_bar.is_none(), "nothing shows until the trash is done");
+    assert!(app.tab().undo.is_none(), "nothing shows until the trash is done");
     done(&mut app, id, op.clone(), &[(r"C:\x\a.txt", r"C:\$Recycle.Bin\S\$R1"), (r"C:\x\b.txt", r"C:\$Recycle.Bin\S\$R2")]);
     app.frame(&mut Gfx::new(Mono, 1024), t0());
-    assert_eq!(app.undo_bar.map(|(n, _)| n), Some(2));
+    assert_eq!(app.tab().undo.map(|(n, _)| n), Some(2));
     let a11y = app.accessibility();
     assert!(a11y.nodes.iter().any(|node| node.role == crate::a11y::Role::Button && node.name == "Undo"), "accessibility sees the bar");
     let r = app.layout.bar.iter().find(|(b, _)| *b == crate::ui::bottom::BottomHit::Undo).map(|(_, r)| *r).unwrap();
@@ -2193,7 +2193,7 @@ fn trashing_shows_an_undo_bar_that_untrashes_and_disappears() {
     release(&mut app, (r.x + r.w / 2.0, r.y + r.h / 2.0), MouseButton::Left);
     let [(undo_id, undo_op)] = ops(&mut app).try_into().unwrap();
     assert_eq!(undo_op, FileOp::Restore(vec![(p(r"C:\$Recycle.Bin\S\$R1"), p(r"C:\x\a.txt")), (p(r"C:\$Recycle.Bin\S\$R2"), p(r"C:\x\b.txt"))]));
-    assert!(app.undo_bar.is_none(), "clicking Undo removes the bar");
+    assert!(app.tab().undo.is_none(), "clicking Undo removes the bar");
     done(&mut app, undo_id, undo_op, &[(r"C:\$Recycle.Bin\S\$R1", r"C:\x\a.txt"), (r"C:\$Recycle.Bin\S\$R2", r"C:\x\b.txt")]);
 
     deliver(&mut app, &[("a.txt", false), ("b.txt", false), ("c.txt", false)]);
@@ -2201,25 +2201,45 @@ fn trashing_shows_an_undo_bar_that_untrashes_and_disappears() {
     key(&mut app, Key::Delete, NO);
     let [(id, op)] = ops(&mut app).try_into().unwrap();
     done(&mut app, id, op, &[(r"C:\x\a.txt", r"C:\$Recycle.Bin\S\$R3")]);
-    assert_eq!(app.undo_bar.map(|(n, _)| n), Some(1));
+    assert_eq!(app.tab().undo.map(|(n, _)| n), Some(1));
     select(&mut app, &["b.txt"]);
     key(&mut app, Key::Delete, NO);
-    assert!(app.undo_bar.is_none(), "a new operation clears the bar");
+    assert!(app.tab().undo.is_none(), "a new operation clears the bar");
     let [(id, op)] = ops(&mut app).try_into().unwrap();
     done(&mut app, id, op, &[(r"C:\x\b.txt", r"C:\$Recycle.Bin\S\$R4")]);
     app.frame(&mut Gfx::new(Mono, 1024), t0());
-    assert_eq!(app.undo_bar.map(|(n, _)| n), Some(1));
+    assert_eq!(app.tab().undo.map(|(n, _)| n), Some(1));
     select(&mut app, &["c.txt"]);
     key(&mut app, Key::Delete, SHIFT);
-    assert_eq!(app.undo_bar.map(|(n, _)| n), Some(1), "the delete is still waiting for the confirmation");
+    assert_eq!(app.tab().undo.map(|(n, _)| n), Some(1), "the delete is still waiting for the confirmation");
     key(&mut app, Key::Enter, NO);
-    assert!(app.undo_bar.is_none(), "starting the permanent delete clears the bar");
+    assert!(app.tab().undo.is_none(), "starting the permanent delete clears the bar");
     let [(id, op)] = ops(&mut app).try_into().unwrap();
     assert!(matches!(op, FileOp::Delete(_)));
     done(&mut app, id, op, &[(r"C:\x\c.txt", r"C:\x\c.txt")]);
-    assert!(app.undo_bar.is_none(), "a permanent delete shows no bar");
+    assert!(app.tab().undo.is_none(), "a permanent delete shows no bar");
 
-    app.undo_bar = Some((1, t0() - Duration::from_secs(6)));
+    if let Some(t) = app.tabs.get_mut(app.cur) { t.undo = Some((1, t0() - Duration::from_secs(6))); }
     app.frame(&mut Gfx::new(Mono, 1024), t0());
-    assert!(app.undo_bar.is_none(), "the bar expires after five seconds");
+    assert!(app.tab().undo.is_none(), "the bar expires after five seconds");
+}
+
+#[test]
+fn the_undo_bar_belongs_to_its_tab_and_yields_to_status_errors() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false)]);
+    select(&mut app, &["a.txt"]);
+    key(&mut app, Key::Delete, NO);
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    done(&mut app, id, op, &[(r"C:\x\a.txt", r"C:\$Recycle.Bin\S\$R1")]);
+    assert_eq!(app.tab().undo.map(|(n, _)| n), Some(1));
+    app.status("the folder went away");
+    assert_eq!(app.tab().error.as_deref(), Some("the folder went away"), "the error stays visible while the bar waits");
+    key(&mut app, Key::Char('T'), CTRL);
+    deliver(&mut app, &[("b.txt", false)]);
+    assert_ne!(app.cur, 0, "the second tab is active now");
+    let a11y = app.accessibility();
+    assert!(!a11y.nodes.iter().any(|node| node.name == "Undo"), "the bar does not follow into another tab");
+    key(&mut app, Key::Tab, CTRL);
+    assert_eq!(app.tab().undo.map(|(n, _)| n), Some(1), "the bar waits in its own tab");
 }

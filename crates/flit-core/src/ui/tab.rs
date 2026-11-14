@@ -33,6 +33,8 @@ pub(super) struct Loading {
     pub properties: bool,
 }
 
+pub(super) type UndoBar = (usize, Instant);
+
 pub struct Tab {
     pub id: TabId,
     pub(super) history: History,
@@ -52,6 +54,7 @@ pub struct Tab {
     pub(super) view: Option<DirView>,
     pub(super) view_loc: Location,
     pub(super) error: Option<String>,
+    pub(super) undo: Option<UndoBar>,
     pub(super) pending_diffs: VecDeque<DirChange>,
     pub(super) crumbs: Vec<(String, Location)>,
     pub(super) trail: Location,
@@ -100,6 +103,7 @@ impl Tab {
             sizes_cancel: GenToken::default(),
             view: None,
             error: None,
+            undo: None,
             pending_diffs: VecDeque::new(),
             crumbs: Vec::new(),
             stats: LoadStats::default(),
