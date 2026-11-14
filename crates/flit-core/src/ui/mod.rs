@@ -1808,7 +1808,7 @@ impl App {
         }
         self.strip_pointer(x, y);
         self.settings_tip(x, y);
-        if self.autoscroll_move(self.along_of(x, y)) || self.ops_mouse_move(x, y) || self.nav_mouse_move(x) || self.marquee_move(x, y) {
+        if self.touch_move(self.along_of(x, y), now) || self.autoscroll_move(self.along_of(x, y)) || self.ops_mouse_move(x, y) || self.nav_mouse_move(x) || self.marquee_move(x, y) {
             return;
         }
         match self.drag {
@@ -1892,6 +1892,7 @@ impl App {
         }
         self.dirty = true;
         self.nav.sidebar.dragging_out = false;
+        self.touch_down(self.hit(x, y), self.along_of(x, y), button, now);
         if self.form_down(x, y, button, clicks, now) {
             return;
         }
@@ -1992,6 +1993,11 @@ impl App {
         }
         if let Some(f) = &mut self.jobs.form {
             f.document.grab = None;
+        }
+        if button == MouseButton::Left && self.touch_up(now) {
+            self.pressed = Hit::None;
+            self.release_header();
+            return;
         }
         if self.autoscroll_up(x, y, button) {
             return;
@@ -2301,6 +2307,7 @@ impl App {
         self.ops_frame(now);
         let mut animating = self.marquee_autoscroll(dt);
         animating |= self.autoscroll_step(dt);
+        animating |= self.fling_step(dt);
         animating |= self.drag_autoscroll(dt);
         animating |= self.scroll_step(dt);
         animating |= self.glide_overlays(dt);

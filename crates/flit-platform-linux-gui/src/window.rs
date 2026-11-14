@@ -1292,7 +1292,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                     handler.event(w, Event::Char(c));
                 }
             }
-            WindowEvent::PointerMoved { position, .. } => {
+            WindowEvent::PointerMoved { position, primary, .. } if primary => {
                 let (x, y) = (position.x as f32, position.y as f32);
                 w.track_edge(x, y);
                 handler.event(w, Event::MouseMove { x, y });
@@ -1303,11 +1303,16 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                 handler.event(w, Event::MouseLeave);
             }
             WindowEvent::ActivationTokenDone { token, .. } => crate::activation::answered(token.into_raw()),
-            WindowEvent::PointerButton { state, position, button, .. } => {
+            WindowEvent::PointerButton { state, position, button, primary, .. } => {
                 if state == ElementState::Pressed {
                     ask_token(w);
                 }
-                if let Some(button) = button.mouse_button().and_then(input::mouse_button) {
+                let touch = matches!(button, winit::event::ButtonSource::Touch { .. });
+                let mapped = if touch { primary.then_some(MouseButton::Left) } else { button.mouse_button().and_then(input::mouse_button) };
+                if let Some(button) = mapped {
+                    if state == ElementState::Pressed {
+                        handler.event(w, Event::Pointer { touch });
+                    }
                     self.button(i, state == ElementState::Pressed, position, button);
                 }
             }

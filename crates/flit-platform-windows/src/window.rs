@@ -28,6 +28,7 @@ use windows::Win32::System::Ole::CF_UNICODETEXT;
 use windows::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow, GetSystemMetricsForDpi, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::Input::Ime::{ImmGetCompositionStringW, ImmGetContext, ImmReleaseContext, ImmSetCandidateWindow, ImmSetCompositionWindow, CANDIDATEFORM, CFS_EXCLUDE, CFS_POINT, COMPOSITIONFORM, GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR, IME_COMPOSITION_STRING, ISC_SHOWUICOMPOSITIONWINDOW};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
+use windows::Win32::UI::Input::Touch::{SetGestureConfig, GESTURECONFIG, GID_PAN};
 use windows::Win32::System::Threading::WaitForSingleObjectEx;
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -35,6 +36,7 @@ use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 use windows::Win32::UI::Shell::{ITaskbarList3, TaskbarList, TBPF_NOPROGRESS, TBPF_NORMAL, TBPF_PAUSED};
 
 const WM_WAKE: u32 = WM_APP + 1;
+const TOUCH_PAN_BLOCKED: u32 = 1;
 const WM_DESTROY_REQUEST: u32 = WM_APP + 2;
 const WM_OPEN_WINDOW: u32 = WM_APP + 3;
 const TIMER_ID: usize = 1;
@@ -1175,6 +1177,11 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
             let (x, y) = screen_xy();
             s.send(Event::MouseUp { x, y, button: MouseButton::Middle });
             Some(LRESULT(0))
+        }
+        WM_GESTURENOTIFY => {
+            let blocked = [GESTURECONFIG { dwID: GID_PAN, dwWant: 0, dwBlock: TOUCH_PAN_BLOCKED }];
+            let _ = SetGestureConfig(hwnd, 0, &blocked, size_of::<GESTURECONFIG>() as u32);
+            None
         }
         WM_MOUSEMOVE => {
             if !w.tracking.get() {

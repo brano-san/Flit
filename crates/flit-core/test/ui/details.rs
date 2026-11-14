@@ -1354,3 +1354,67 @@ fn placing_a_column_keeps_hidden_columns_and_name_where_they_were() {
     assert_eq!(c, before, "a column that is not shown is not placed");
     assert_eq!(c.sanitized().order, c.order, "the order stays a valid permutation");
 }
+
+fn many(n: usize) -> Vec<String> {
+    (0..n).map(|k| format!("f{k:03}.txt")).collect()
+}
+
+fn finger(app: &mut App, from: (f32, f32), to: (f32, f32), steps: u32, t: Instant) -> Instant {
+    app.on_event(&Event::Pointer { touch: true }, t);
+    app.on_event(&Event::MouseDown { x: from.0, y: from.1, button: MouseButton::Left, clicks: 1 }, t);
+    let mut at = t;
+    for k in 1..=steps {
+        at = t + Duration::from_millis(10 * k as u64);
+        let f = k as f32 / steps as f32;
+        app.on_event(&Event::MouseMove { x: from.0 + (to.0 - from.0) * f, y: from.1 + (to.1 - from.1) * f }, at);
+    }
+    app.on_event(&Event::MouseUp { x: to.0, y: to.1, button: MouseButton::Left }, at);
+    at
+}
+
+#[test]
+fn a_finger_drag_scrolls_the_list_and_a_flick_keeps_it_going() {
+    let mut app = app_at(r"C:\x");
+    app.animations = false;
+    let names = many(200);
+    let items: Vec<(&str, u64, bool)> = names.iter().map(|n| (n.as_str(), 1, false)).collect();
+    deliver(&mut app, &items);
+    let x = app.layout.cols[0].x + 40.0;
+    let y = app.layout.list.y + 300.0;
+    let t = Instant::now();
+    let end = finger(&mut app, (x, y), (x, y - 200.0), 10, t);
+    let after = app.tab().scroll;
+    assert!((after - 200.0).abs() <= 1.0, "the list follows the finger: {after}");
+    assert!(selected(&app).is_empty(), "panning selects nothing");
+    assert!(app.marquee.is_none() && app.drag == Drag::None);
+    app.frame(&mut Gfx::new(Mono, 1024), end + Duration::from_millis(16));
+    app.frame(&mut Gfx::new(Mono, 1024), end + Duration::from_millis(100));
+    let flung = app.tab().scroll;
+    assert!(flung > after + 10.0, "a quick flick glides on: {after} -> {flung}");
+    for k in 0..400 {
+        app.frame(&mut Gfx::new(Mono, 1024), end + Duration::from_millis(116 + 16 * k));
+    }
+    let rest = app.tab().scroll;
+    app.frame(&mut Gfx::new(Mono, 1024), end + Duration::from_secs(9));
+    assert_eq!(app.tab().scroll, rest, "and comes to rest");
+    let ty = line_y(&app, 3);
+    finger(&mut app, (x, ty), (x, ty), 0, end + Duration::from_secs(10));
+    assert_eq!(selected(&app).len(), 1, "a tap still selects");
+}
+
+#[test]
+fn a_mouse_drag_in_the_list_still_draws_a_rubber_band_and_does_not_scroll() {
+    let mut app = app_at(r"C:\x");
+    app.animations = false;
+    let names = many(200);
+    let items: Vec<(&str, u64, bool)> = names.iter().map(|n| (n.as_str(), 1, false)).collect();
+    deliver(&mut app, &items);
+    let x = app.layout.cols[1].x + 20.0;
+    let y = app.layout.list.y + 300.0;
+    app.on_event(&Event::Pointer { touch: false }, Instant::now());
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, Instant::now());
+    app.on_event(&Event::MouseMove { x, y: y - 150.0 }, Instant::now());
+    app.on_event(&Event::MouseUp { x, y: y - 150.0, button: MouseButton::Left }, Instant::now());
+    assert_eq!(app.tab().scroll, 0.0);
+    assert!(selected(&app).len() > 3, "the band selected rows: {:?}", selected(&app).len());
+}

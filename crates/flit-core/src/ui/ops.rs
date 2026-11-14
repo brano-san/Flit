@@ -1690,6 +1690,10 @@ impl App {
         true
     }
 
+    pub(super) fn forget_press(&mut self) {
+        self.ops.press = None;
+    }
+
     pub(super) fn ops_mouse_move(&mut self, x: f32, y: f32) -> bool {
         if let Some(r) = &mut self.ops.rename {
             if let Some(how) = r.selecting {

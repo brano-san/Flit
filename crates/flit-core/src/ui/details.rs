@@ -37,6 +37,10 @@ const AUTOSCROLL_DEAD: f32 = 12.0;
 const AUTOSCROLL_RATE: f32 = 8.0;
 pub(super) const CHECK: f32 = 14.0;
 const CHECK_IN: Duration = Duration::from_millis(140);
+const PAN_START: f32 = 8.0;
+const FLING_DECAY: f32 = 3.0;
+const FLING_MIN: f32 = 30.0;
+const FLING_STALE: Duration = Duration::from_millis(120);
 pub const THUMB_CACHE_MB: (u32, u32, u32) = (100, 500, 5000);
 const SIZE_GROUPS: [S; 7] = [
     S::DetailsSizeGroupGigantic,
@@ -515,6 +519,16 @@ struct Pick {
     at: Option<Instant>,
 }
 
+struct Pan {
+    tab: TabId,
+    start: f32,
+    last: f32,
+    at: Instant,
+    velocity: f32,
+    panning: bool,
+    before: (Vec<u32>, Option<u32>, Option<u32>),
+}
+
 struct Autoscroll {
     anchor: f32,
     y: f32,
@@ -565,6 +579,8 @@ pub(super) struct Details {
     pub elided: Vec<usize>,
     pub pane_elided: Vec<(usize, usize)>,
     head_press: Option<(Column, f32, f32)>,
+    pan: Option<Pan>,
+    fling: Option<(TabId, f32)>,
 }
 
 impl Column {
@@ -958,6 +974,7 @@ impl App {
 
     pub(super) fn release_header(&mut self) {
         self.details.head_press = None;
+        self.details.pan = None;
     }
 
     fn shown_cols(&self) -> Vec<Rect> {
@@ -1407,6 +1424,77 @@ impl App {
             v.anchor = Some(idx);
         }
         self.dirty = true;
+    }
+
+    pub(super) fn touch_down(&mut self, h: Hit, along: f32, button: MouseButton, now: Instant) {
+        self.details.fling = None;
+        let before = self.tab().view.as_ref().map_or_else(Default::default, |v| (v.selected().collect(), v.focus, v.anchor));
+        self.details.pan = (self.touch_input && button == MouseButton::Left && matches!(h, Hit::Row(_) | Hit::ListEmpty | Hit::Group(_))).then(|| Pan { tab: self.tab().id, start: along, last: along, at: now, velocity: 0.0, panning: false, before });
+    }
+
+    pub(super) fn touch_move(&mut self, along: f32, now: Instant) -> bool {
+        let threshold = self.s(PAN_START);
+        let tab = self.tab().id;
+        let Some(p) = self.details.pan.as_mut().filter(|p| p.tab == tab) else { return false };
+        if !p.panning {
+            if (along - p.start).abs() < threshold {
+                return true;
+            }
+            (p.panning, p.last, p.at) = (true, p.start, now);
+            let (picked, focus, anchor) = std::mem::take(&mut p.before);
+            if let Some(v) = self.tab_mut().view.as_mut() {
+                v.clear_selection();
+                for i in picked {
+                    v.set_selected(i, true);
+                }
+                (v.focus, v.anchor) = (focus, anchor);
+            }
+            self.forget_press();
+            self.end_marquee();
+            self.drag = Drag::None;
+        }
+        let Some(p) = self.details.pan.as_mut() else { return true };
+        let (delta, dt) = (along - p.last, now.saturating_duration_since(p.at).as_secs_f32());
+        if dt > 0.0 {
+            p.velocity = 0.5 * p.velocity + 0.5 * (-delta / dt);
+        }
+        (p.last, p.at) = (along, now);
+        let max = self.max_scroll();
+        let t = self.tab_mut();
+        t.scroll = (t.scroll - delta).clamp(0.0, max);
+        t.scroll_target = t.scroll;
+        self.dirty = true;
+        true
+    }
+
+    pub(super) fn touch_up(&mut self, now: Instant) -> bool {
+        let Some(p) = self.details.pan.take() else { return false };
+        if !p.panning {
+            return false;
+        }
+        let fresh = now.saturating_duration_since(p.at) < FLING_STALE;
+        self.details.fling = (fresh && p.velocity.abs() >= FLING_MIN).then_some((p.tab, p.velocity));
+        self.forget_press();
+        self.end_marquee();
+        self.dirty = true;
+        true
+    }
+
+    pub(super) fn fling_step(&mut self, dt: f32) -> bool {
+        let tab = self.tab().id;
+        let Some((_, v)) = self.details.fling.filter(|f| f.0 == tab) else {
+            self.details.fling = None;
+            return false;
+        };
+        let max = self.max_scroll();
+        let t = self.tab_mut();
+        let to = (t.scroll + v * dt).clamp(0.0, max);
+        let stopped = to == t.scroll && dt > 0.0;
+        (t.scroll, t.scroll_target) = (to, to);
+        let v = v * (-FLING_DECAY * dt).exp();
+        self.details.fling = (!stopped && v.abs() >= FLING_MIN).then_some((tab, v));
+        self.dirty = true;
+        self.details.fling.is_some()
     }
 
     pub(super) fn end_autoscroll(&mut self) {
