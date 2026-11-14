@@ -653,6 +653,7 @@ fn unpacked(app: &mut App, id: OpId, items: Vec<FsPath>, dest: &FsPath, error: O
 fn copying_from_an_archive_unpacks_to_a_temporary_folder_first_and_puts_those_files_on_the_clipboard() {
     let docs = p(PACKED_HOME).join(b"docs");
     let mut app = app_at(&docs.display());
+    app.caps.unix_paths = cfg!(unix);
     deliver(&mut app, &[("x.txt", PACKED), ("y.txt", PACKED)]);
     select(&mut app, &["x.txt", "y.txt"]);
     app.copy_selection();
@@ -667,6 +668,7 @@ fn copying_from_an_archive_unpacks_to_a_temporary_folder_first_and_puts_those_fi
 #[test]
 fn a_failed_unpack_leaves_the_clipboard_alone_and_plain_folders_still_copy_their_own_paths() {
     let mut app = app_at(PACKED_HOME);
+    app.caps.unix_paths = cfg!(unix);
     deliver(&mut app, &[("x.txt", PACKED)]);
     select(&mut app, &["x.txt"]);
     app.copy_selection();
@@ -687,6 +689,7 @@ fn dragging_out_of_an_archive_unpacks_first_and_starts_the_drag_only_while_the_b
     let row = |app: &App| (app.layout.cols[0].x + 100.0, app.layout.list.y + 0.5 * app.layout.row_h);
     for held in [true, false] {
         let mut app = app_at(PACKED_HOME);
+        app.caps.unix_paths = cfg!(unix);
         deliver(&mut app, &[("x.txt", PACKED)]);
         select(&mut app, &["x.txt"]);
         let (x, y) = row(&app);
