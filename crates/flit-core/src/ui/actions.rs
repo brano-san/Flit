@@ -236,6 +236,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("item.delete", G::Folder, S::ActionsItemDelete, S::DescribeItemDelete, &[shift(Key::Delete)], |a, _| a.delete_selection()),
     Action::new("file.duplicate", G::Folder, S::ActionsFileDuplicate, S::DescribeFileDuplicate, &[], |a, _| a.duplicate_selection()),
     Action::new("file.rename", G::Folder, S::ActionsFileRename, S::DescribeFileRename, &[key(Key::F(2))], |a, _| a.rename_focused()),
+    Action::new("file.batch_rename", G::Folder, S::ActionsFileBatchRename, S::DescribeFileBatchRename, &[], |a, _| a.batch_rename_dialog()),
     Action::new("item.inspect", G::Folder, S::ActionsItemInspect, S::DescribeItemInspect, &[alt(Key::Enter)], |a, _| a.inspect()).also(&["Alt+KeypadEnter"]),
     Action::new("bin.restore", G::Folder, S::ActionsBinRestore, S::DescribeBinRestore, &[], |a, _| a.restore_selection()),
     Action::new("item.copy_path", G::Folder, S::ActionsItemCopyPath, S::DescribeItemCopyPath, &[ctrl_shift(c('C'))], |a, _| a.copy_paths(a.as_path_quote())),

@@ -6,6 +6,7 @@ mod focus;
 mod harness;
 mod appearance;
 mod archive;
+mod batch_rename;
 mod columns;
 mod details;
 mod ops;

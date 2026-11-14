@@ -33,6 +33,7 @@
 "item.delete" = "Ausgewählte Dateien endgültig löschen!"
 "file.duplicate" = "Ausgewählte Dateien im selben Ordner duplizieren. Entspricht Kopieren und anschließendem Einfügen."
 "file.rename" = "Den Umbenennungsmodus für alle ausgewählten Dateien starten."
+"file.batch_rename" = "Ausgewählte Elemente auf einmal umbenennen: Text suchen und ersetzen, Nummern anfügen, neue Namen vorab sehen."
 "item.inspect" = "Das Eigenschaftenfenster des Systems für die ausgewählten Dateien öffnen."
 "bin.restore" = "Ausgewählte Dateien an ihrem ursprünglichen Ort wiederherstellen. Gilt im Papierkorb."
 "item.copy_path" = "Pfade der ausgewählten Dateien oder, wenn nichts ausgewählt ist, den aktuellen Ordnerpfad kopieren."

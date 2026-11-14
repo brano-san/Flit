@@ -606,6 +606,14 @@ impl App {
         self.effects.push(Effect::Provider { provider, req: ProviderRequest::Op { tab, id, op, ctl } });
     }
 
+    pub(super) fn start_renames(&mut self, tab: TabId, pairs: Vec<(Location, Location)>) {
+        let provider = pairs.first().map_or(ProviderId::Local, |(from, _)| from.provider());
+        match pairs.iter().map(|(from, to)| Some((op_path(from)?, op_path(to)?))).collect::<Option<Vec<_>>>() {
+            Some(p) => self.start_op_on(provider, tab, FileOp::MoveTo(p), Origin::Fresh, Then::Select),
+            None => self.status(S::UiOpsNamesNotShell.t()),
+        }
+    }
+
     pub(super) fn start_confirmed(&mut self, provider: ProviderId, op: FileOp) {
         self.start_op_on(provider, self.tab().id, op, Origin::Fresh, Then::Nothing);
     }

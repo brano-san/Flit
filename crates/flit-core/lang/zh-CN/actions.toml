@@ -33,6 +33,7 @@
 "item.delete" = "删除"
 "file.duplicate" = "创建副本"
 "file.rename" = "重命名"
+"file.batch_rename" = "通过查找替换重命名"
 "item.inspect" = "属性"
 "bin.restore" = "还原"
 "item.copy_path" = "复制为路径"

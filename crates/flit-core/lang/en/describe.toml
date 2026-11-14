@@ -33,6 +33,7 @@
 "item.delete" = "Permanently delete selected files!"
 "file.duplicate" = "Duplicate selected files into the same folder. Equivalent of using copy then paste."
 "file.rename" = "Enter rename mode for all selected files."
+"file.batch_rename" = "Rename the selected items at once: find and replace text, add numbers, see the new names first."
 "item.inspect" = "Open system properties window for the selected files."
 "bin.restore" = "Restore selected files into their original location. Applicable in Recycle Bin."
 "item.copy_path" = "Copy selected file paths or the current folder path if none are selected."

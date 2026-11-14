@@ -45,6 +45,7 @@ const SECTION_9: &[(&str, &[(&str, &str)])] = &[
         ("Delete", "Shift+Delete"),
         ("Duplicate", ""),
         ("Rename", "F2"),
+        ("Batch Rename", ""),
         ("Inspect", "Alt+Enter, Alt+KeypadEnter"),
         ("Restore", ""),
         ("Copy As Path", "Ctrl+Shift+C"),

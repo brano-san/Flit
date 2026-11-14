@@ -33,6 +33,7 @@
 "item.delete" = "Supprimer définitivement les fichiers sélectionnés !"
 "file.duplicate" = "Dupliquer les fichiers sélectionnés dans le même dossier. Équivaut à copier puis coller."
 "file.rename" = "Passer en mode renommage pour tous les fichiers sélectionnés."
+"file.batch_rename" = "Renomme les éléments sélectionnés en une fois : rechercher et remplacer du texte, ajouter des numéros, voir d’abord les nouveaux noms."
 "item.inspect" = "Ouvrir la fenêtre des propriétés du système pour les fichiers sélectionnés."
 "bin.restore" = "Restaurer les fichiers sélectionnés à leur emplacement d’origine. Applicable dans la Corbeille."
 "item.copy_path" = "Copier les chemins des fichiers sélectionnés ou le chemin du dossier actuel si rien n’est sélectionné."

@@ -33,6 +33,7 @@
 "item.delete" = "¡Elimina permanentemente los archivos seleccionados!"
 "file.duplicate" = "Duplica los archivos seleccionados en la misma carpeta. Equivale a copiar y luego pegar."
 "file.rename" = "Activa el modo de renombrado para todos los archivos seleccionados."
+"file.batch_rename" = "Cambia el nombre de los elementos seleccionados a la vez: busca y reemplaza texto, añade números y ve antes los nuevos nombres."
 "item.inspect" = "Abre la ventana de propiedades del sistema de los archivos seleccionados."
 "bin.restore" = "Restaura los archivos seleccionados en su ubicación original. Disponible en la Papelera de reciclaje."
 "item.copy_path" = "Copia las rutas de los archivos seleccionados o la ruta de la carpeta actual si no hay ninguno seleccionado."

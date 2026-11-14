@@ -33,6 +33,7 @@
 "item.delete" = "Delete"
 "file.duplicate" = "Duplicate"
 "file.rename" = "Rename"
+"file.batch_rename" = "Batch Rename"
 "item.inspect" = "Inspect"
 "bin.restore" = "Restore"
 "item.copy_path" = "Copy As Path"

@@ -530,6 +530,9 @@ impl App {
         if files {
             m.action("file.shortcut", S::MenuCreateShortcut.t());
             m.action("file.rename", S::MenuRename.t());
+            if count > 1 {
+                m.action("file.batch_rename", S::MenuBatchRename.t());
+            }
             m.action("item.trash", S::MenuDelete.t());
         } else if count == 1 && self.labelled_drive().is_some() {
             m.action("file.rename", S::MenuRename.t());

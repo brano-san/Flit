@@ -33,6 +33,7 @@
 "item.delete" = "Удалить"
 "file.duplicate" = "Создать дубликат"
 "file.rename" = "Переименовать"
+"file.batch_rename" = "Переименовать с поиском и заменой"
 "item.inspect" = "Свойства"
 "bin.restore" = "Восстановить"
 "item.copy_path" = "Копировать как путь"

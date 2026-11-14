@@ -69,6 +69,7 @@ pub(super) enum Kind {
     AllowRun { tab: crate::provider::TabId, path: FsPath },
     RunScript { tab: crate::provider::TabId, path: FsPath },
     GitAuth { dir: FsPath },
+    BatchRename(super::batch_rename::Batch),
 }
 
 impl Kind {
@@ -77,6 +78,7 @@ impl Kind {
             Kind::AllowRun { .. } => "allow_run",
             Kind::RunScript { .. } => "run_script",
             Kind::GitAuth { .. } => "git_auth",
+            Kind::BatchRename(_) => "batch_rename",
             Kind::Compress { .. } => "compress",
             Kind::Extract { .. } => "extract",
             Kind::Password { .. } => "password",
@@ -713,6 +715,7 @@ impl App {
         self.compress_changed(k);
         self.extract_changed(k);
         self.permissions_changed(k);
+        self.batch_rename_changed(k);
     }
 
     pub(super) fn form_submit(&mut self, b: usize) {
@@ -733,6 +736,7 @@ impl App {
             Kind::GitClone => self.submit_clone(f),
             Kind::UserMenu { .. } => self.submit_user_entry(f),
             Kind::Update(_) => self.submit_update(f, b),
+            Kind::BatchRename(_) => self.submit_batch_rename(f),
         };
         if self.jobs.form.is_none() {
             self.jobs.form = keep;
