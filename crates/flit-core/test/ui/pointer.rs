@@ -199,8 +199,8 @@ fn middle_click_on_back_forward_up_and_crumbs_opens_new_tabs() {
     harness::frame(&mut app);
     let (x, y) = center(app.layout.nav[2]);
     press(&mut app, x, y, MouseButton::Middle, 1);
-    assert_eq!(app.tabs.len(), 4);
-    assert_eq!(app.tabs[3].location(), &loc(r"C:\work"));
+    assert_eq!(app.tabs.len(), 4, "the new tab lands right of the current one");
+    assert_eq!(app.tabs[2].location(), &loc(r"C:\work"));
     app.select_tab(1);
     harness::frame(&mut app);
     assert_eq!(app.tabs[1].location(), &loc(r"C:\work\src"), "middle clicks never move the tab itself");
@@ -208,7 +208,7 @@ fn middle_click_on_back_forward_up_and_crumbs_opens_new_tabs() {
     let (x, y) = center(app.layout.crumbs[0]);
     press(&mut app, x, y, MouseButton::Middle, 1);
     assert_eq!(app.tabs.len(), 5);
-    assert_eq!(app.tabs[4].location(), &first);
+    assert_eq!(app.tabs[2].location(), &first);
     app.select_tab(1);
     harness::frame(&mut app);
     hold(&mut app, CTRL);
@@ -216,7 +216,7 @@ fn middle_click_on_back_forward_up_and_crumbs_opens_new_tabs() {
     press(&mut app, x, y, MouseButton::Left, 1);
     hold(&mut app, NO);
     assert_eq!(app.tabs.len(), 6);
-    assert_eq!(app.tabs[5].location(), &first);
+    assert_eq!(app.tabs[2].location(), &first);
     assert_eq!(app.tabs[1].location(), &loc(r"C:\work\src"));
 }
 

@@ -1092,8 +1092,9 @@ impl App {
         if let Some(snap) = shown {
             t.view = Some(crate::view::DirView::new(snap));
         }
-        self.tabs.push(t);
-        self.cur = self.tabs.len() - 1;
+        let at = (self.cur + 1).min(self.tabs.len());
+        self.tabs.insert(at, t);
+        self.cur = at;
         self.load_tab(self.cur, r.select, now);
         self.after_tab_change();
     }

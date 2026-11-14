@@ -490,7 +490,7 @@ fn folders_open_in_background_tabs_and_with_one_click_when_asked() {
     assert_eq!((a.tabs().len(), a.cur), (2, 0), "the new tab opens in the background");
     a.switch_to_new_tab = true;
     key(&mut a, Key::Enter, CTRL);
-    assert_eq!((a.tabs().len(), a.cur), (3, 2));
+    assert_eq!((a.tabs().len(), a.cur), (3, 1), "the new tab sits next to the current one");
     let mut a = listed(&[("docs", true), ("a.txt", false)]);
     a.single_click_folders = crate::ui::settings::ClickOpen::Always;
     a.click_row(0, MouseButton::Left, 1, Instant::now());

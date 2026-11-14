@@ -554,3 +554,20 @@ fn reopening_a_closed_tab_restores_its_history() {
     key(&mut app, Key::Backspace, NO);
     assert_eq!(*app.tab().location(), loc(r"C:\a\one"));
 }
+
+#[test]
+fn a_new_tab_opens_next_to_the_current_one() {
+    let mut app = app_with(&[r"C:\a", r"C:\b", r"C:\c"]);
+    deliver(&mut app, &[("x", false)]);
+    eprintln!("DBG start tabs={} cur={}", app.tabs().len(), app.cur);
+    app.select_tab(1);
+    eprintln!("DBG after select cur={} names={:?}", app.cur, names(&app));
+    key(&mut app, Key::Char('T'), CTRL);
+    assert_eq!(app.tabs().len(), 4);
+    assert_eq!(app.cur, 2, "the new tab takes the place right of the current one");
+    assert_eq!(names(&app), [r"C:\a", r"C:\b", r"C:\b", r"C:\c"], "the tabs after it shift right");
+    app.select_tab(0);
+    key(&mut app, Key::Char('T'), CTRL);
+    assert_eq!(names(&app), [r"C:\a", r"C:\a", r"C:\b", r"C:\b", r"C:\c"]);
+    assert_eq!(app.cur, 1);
+}
