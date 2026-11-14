@@ -22,8 +22,8 @@ const SETTLE_TICKS: i64 = 20_000_000;
 const BY_UUID: &str = "/dev/disk/by-uuid";
 const SKIPPED: [&str; 4] = ["9p", "drvfs", "virtiofs", "fuse.sshfs"];
 const MAX_WATCHES: &str = "/proc/sys/fs/inotify/max_user_watches";
-const WATCH_SHARE: u64 = 4;
-const WATCH_CAP: usize = 65_536;
+const WATCH_SHARE: u64 = 8;
+const WATCH_CAP: usize = 16_384;
 const WATCH_DEFAULT: usize = 2048;
 
 type Key = (String, u64);

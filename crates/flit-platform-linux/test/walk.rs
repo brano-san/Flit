@@ -246,9 +246,9 @@ fn a_new_mount_is_adopted_and_a_changed_one_is_walked_again() {
 
 #[test]
 fn the_watch_budget_is_a_share_of_the_inotify_limit_and_skips_hidden_folders() {
-    assert_eq!(budget(Some(8192)), 2048);
-    assert_eq!(budget(Some(1_048_576)), 65_536);
-    assert_eq!(budget(Some(100)), 25);
+    assert_eq!(budget(Some(8192)), 1024);
+    assert_eq!(budget(Some(1_048_576)), 16_384);
+    assert_eq!(budget(Some(100)), 12);
     assert_eq!(budget(None), 2048);
     let home = Path::new("/home/jo");
     assert!(watchable(home, home) && watchable(Path::new("/home/jo/Documents/x"), home));
