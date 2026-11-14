@@ -307,12 +307,21 @@ fn a_program_without_the_execute_bit_asks_before_running() {
 }
 
 #[test]
-fn the_clipboard_helper_keeps_file_uris_out_of_plain_text() {
-    use crate::clipboard::{GNOME, URI_LIST};
+fn copied_files_go_through_the_clipboard_helper_as_a_uri_list_that_dolphin_and_nautilus_both_paste() {
+    use crate::clipboard::{files, URI_LIST};
+    let paths = [FsPath::parse("/tmp/a b").unwrap(), FsPath::parse("/tmp/c").unwrap()];
+    let (mime, bytes) = helper_offer(&paths, false);
+    assert_eq!((mime, bytes.as_slice()), (URI_LIST, b"file:///tmp/a%20b\r\nfile:///tmp/c\r\n".as_slice()));
+    assert_eq!(files(&[(mime.to_owned(), bytes)]), Some((paths.to_vec(), false)));
+}
+
+#[test]
+fn cut_files_go_through_the_clipboard_helper_with_the_cut_mark_kept() {
+    use crate::clipboard::{files, GNOME};
     let paths = [FsPath::parse("/tmp/a b").unwrap()];
-    assert_eq!(helper_offer(&paths, false, false), (URI_LIST, b"file:///tmp/a%20b\r\n".to_vec()), "xclip offers only the type it is given");
-    assert_eq!(helper_offer(&paths, false, true), (GNOME, b"copy\nfile:///tmp/a%20b".to_vec()), "wl-copy would also offer a text/ type as plain text");
-    assert_eq!(helper_offer(&paths, true, false), (GNOME, b"cut\nfile:///tmp/a%20b".to_vec()));
+    let (mime, bytes) = helper_offer(&paths, true);
+    assert_eq!((mime, bytes.as_slice()), (GNOME, b"cut\nfile:///tmp/a%20b".as_slice()));
+    assert_eq!(files(&[(mime.to_owned(), bytes)]), Some((paths.to_vec(), true)));
 }
 
 #[test]
