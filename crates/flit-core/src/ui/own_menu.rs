@@ -183,9 +183,26 @@ impl App {
                 MenuOutcome::Open
             }
             (View::Plain(v), Event::MouseDown { x, y, .. }) => v.mouse_down(*x, *y),
-            (View::Context(c), Event::MouseDown { x, y, .. }) => {
+            (View::Context(c), Event::MouseDown { x, y, button, .. }) => {
                 self.dirty = true;
-                c.mouse_down(*x, *y, clicks, mods.shift)
+                match c.pick_field_menu(*x, *y) {
+                    Some(Some(cmd)) => {
+                        let (k, m) = cmd.chord();
+                        let (outcome, action) = c.key(k, m);
+                        match action {
+                            Some(EditAction::Copy(s)) => self.effects.push(Effect::SetClipboard(s)),
+                            Some(EditAction::Paste) => self.effects.push(Effect::Paste),
+                            _ => {}
+                        }
+                        outcome
+                    }
+                    Some(None) => MenuOutcome::Open,
+                    None if *button == MouseButton::Right && c.hit(*x, *y) == Some(CtxHit::Field) => {
+                        c.open_field_menu(*x, *y);
+                        MenuOutcome::Open
+                    }
+                    None => c.mouse_down(*x, *y, clicks, mods.shift),
+                }
             }
             (View::Plain(v), Event::MouseUp { x, y, .. }) => {
                 self.dirty = true;

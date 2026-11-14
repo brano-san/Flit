@@ -476,3 +476,74 @@ fn a_menu_rebuilt_by_late_shell_items_keeps_unrolling_instead_of_starting_over()
     assert!(fill(&rebuilt).h > full.h * 0.8 && fill(&rebuilt).h < full.h, "it carries on from how far it had unrolled");
     assert!(!app.frame(&mut g, ms(t0, 200)), "and finishes when it would have");
 }
+
+fn context_with_query(app: &mut App, text: &str) {
+    let own = vec![cmd("Open"), cmd("Copy"), cmd("Delete")];
+    app.on_event(&Event::ShowMenu { items: own, x: 100.0, y: 100.0, launches: Vec::new(), kind: crate::ui::MenuKind::File, shell: Vec::new(), pending: false }, Instant::now());
+    app.frame(&mut Gfx::new(Mono, 256), Instant::now());
+    for ch in text.chars() {
+        app.on_event(&Event::Char(ch), Instant::now());
+    }
+}
+
+fn click_at(app: &mut App, (x, y): (f32, f32), button: MouseButton) {
+    app.on_event(&Event::MouseDown { x, y, button, clicks: 1 }, Instant::now());
+    app.on_event(&Event::MouseUp { x, y, button }, Instant::now());
+}
+
+fn field_menu_row(app: &App, k: usize) -> (f32, f32) {
+    let r = app.context_menu_open().unwrap().field_menu.as_ref().expect("the field menu is open").rows[k].1;
+    (r.x + 5.0, r.y + r.h / 2.0)
+}
+
+#[test]
+fn the_context_window_query_has_its_own_cut_copy_paste_menu() {
+    let mut app = app();
+    context_with_query(&mut app, "op");
+    let f = app.context_menu_open().unwrap().field;
+    click_at(&mut app, (f.x + 40.0, f.y + f.h / 2.0), MouseButton::Right);
+    let c = app.context_menu_open().expect("the context window stays open");
+    let menu = c.field_menu.as_ref().expect("a right click on the query opens its menu");
+    assert_eq!(menu.rows.iter().map(|r| r.2).collect::<Vec<_>>(), [false, false, true, true], "Cut and Copy wait for a selection");
+    app.drain_effects().for_each(drop);
+    let at = field_menu_row(&app, 3);
+    click_at(&mut app, at, MouseButton::Left);
+    assert!(app.own_menu_open(), "a field command never runs a menu command or closes the window");
+    let c = app.context_menu_open().unwrap();
+    assert!(c.field_menu.is_none());
+    assert_eq!(c.query.edit.selection(), 0..2, "Select All");
+    click_at(&mut app, (f.x + 40.0, f.y + f.h / 2.0), MouseButton::Right);
+    let at = field_menu_row(&app, 1);
+    click_at(&mut app, at, MouseButton::Left);
+    let copied: Vec<String> = app.drain_effects().filter_map(|e| if let Effect::SetClipboard(s) = e { Some(s) } else { None }).collect();
+    assert_eq!(copied, ["op"]);
+    click_at(&mut app, (f.x + 40.0, f.y + f.h / 2.0), MouseButton::Right);
+    let at = field_menu_row(&app, 2);
+    click_at(&mut app, at, MouseButton::Left);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Paste)), "Paste asks for the clipboard");
+    assert!(app.own_menu_open());
+}
+
+#[test]
+fn the_query_menu_closes_without_harm_and_works_from_the_keyboard() {
+    let mut app = app();
+    context_with_query(&mut app, "op");
+    let c = app.context_menu_open().unwrap();
+    let (f, list) = (c.field, c.labels());
+    click_at(&mut app, (f.x + 40.0, f.y + f.h / 2.0), MouseButton::Right);
+    let r = app.context_menu_open().unwrap().field_menu.as_ref().unwrap().rows[0].1;
+    click_at(&mut app, (r.x + 5.0, r.y + r.h / 2.0), MouseButton::Left);
+    assert!(app.own_menu_open() && app.context_menu_open().unwrap().field_menu.is_none(), "a disabled row only closes the field menu");
+    assert_eq!(app.context_menu_open().unwrap().labels(), list);
+    app.on_event(&Event::Key { key: Key::F(10), mods: Mods { shift: true, ..Mods::default() }, pressed: true }, Instant::now());
+    assert!(app.context_menu_open().unwrap().field_menu.is_some(), "Shift+F10 opens it too");
+    key(&mut app, Key::Escape);
+    assert!(app.own_menu_open(), "Escape closes only the field menu");
+    assert_eq!(app.context_menu_open().unwrap().query.text(), "op", "and leaves the query alone");
+    app.on_event(&Event::Key { key: Key::Apps, mods: Mods::default(), pressed: true }, Instant::now());
+    key(&mut app, Key::Down);
+    key(&mut app, Key::Down);
+    key(&mut app, Key::Enter);
+    assert_eq!(app.context_menu_open().unwrap().query.edit.selection(), 0..2, "Down skips the disabled rows: Paste, then Select All");
+    assert!(picks(&mut app).is_empty(), "no menu command ran");
+}

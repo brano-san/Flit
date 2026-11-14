@@ -1,5 +1,5 @@
 use super::edit::EditAction;
-use super::field::{Field, FieldKey};
+use super::field::{is_menu_key, Field, FieldKey, TextCmd};
 use super::fuzzy::fuzzy;
 use super::menu::{Mark, MenuImage, MenuItem};
 use super::popup::MenuOutcome;
@@ -28,6 +28,14 @@ const MAX_W: f32 = 480.0;
 const SCROLL_W: f32 = 10.0;
 const FONT_PX: f32 = 13.0;
 const ICON_PX: f32 = 11.0;
+const FIELD_MENU_W: f32 = 180.0;
+const FIELD_MENU: [(TextCmd, S); 4] = [(TextCmd::Cut, S::MenuCut), (TextCmd::Copy, S::MenuCopy), (TextCmd::Paste, S::MenuPaste), (TextCmd::SelectAll, S::MenuFieldSelectAll)];
+
+pub(super) struct FieldMenu {
+    pub rect: Rect,
+    pub rows: Vec<(TextCmd, Rect, bool)>,
+    pub hot: Option<usize>,
+}
 const ARM_DISTANCE: f32 = 4.0;
 const OFF: u8 = 0x70;
 pub const PATH_SEP: &str = " \u{203A} ";
@@ -108,7 +116,7 @@ pub struct ContextMenu {
     scroll: f32,
     content_h: f32,
     pub rect: Rect,
-    field: Rect,
+    pub(super) field: Rect,
     close: Rect,
     list: Rect,
     arrows: [Rect; 2],
@@ -125,6 +133,7 @@ pub struct ContextMenu {
     shell: Option<(usize, Option<usize>)>,
     unfold: Option<(Instant, Instant)>,
     fresh: Option<(usize, usize, Option<Instant>)>,
+    pub(super) field_menu: Option<FieldMenu>,
 }
 
 fn flatten(items: &[MenuItem], depth: usize, parent: &str, next: &mut usize, out: &mut Vec<Node>) {
@@ -168,6 +177,7 @@ impl ContextMenu {
             pins,
             kind,
             query: Field::default(),
+            field_menu: None,
             rows: Vec::new(),
             rects: Vec::new(),
             hot: None,
@@ -496,6 +506,10 @@ impl ContextMenu {
     }
 
     pub fn mouse_move(&mut self, x: f32, y: f32) -> bool {
+        if let Some(menu) = self.field_menu.as_mut() {
+            let hot = menu.rows.iter().position(|(_, r, on)| *on && r.contains(x, y));
+            return std::mem::replace(&mut menu.hot, hot) != hot;
+        }
         if self.pressed == Some(CtxHit::Field) {
             let inner = self.field_inner();
             self.query.drag(x.max(inner.x));
@@ -633,7 +647,71 @@ impl ContextMenu {
         self.reveal();
     }
 
+    pub fn open_field_menu(&mut self, x: f32, y: f32) {
+        let s = self.scale;
+        let (w, rh) = (FIELD_MENU_W * s, ROW_H * s);
+        let e = &self.query.edit;
+        let (picked, whole) = (!e.selection().is_empty(), e.selection() == (0..e.text.len()));
+        let enabled = |c: TextCmd| match c {
+            TextCmd::Cut | TextCmd::Copy => picked,
+            TextCmd::SelectAll => !whole && !e.text.is_empty(),
+            _ => true,
+        };
+        let h = FIELD_MENU.len() as f32 * rh + 2.0 * PAD * s;
+        let b = self.rect;
+        let x = x.min(b.right() - w).max(b.x);
+        let y = y.min(b.bottom() - h).max(b.y);
+        let rows = FIELD_MENU.iter().enumerate().map(|(k, &(c, _))| (c, Rect::new(x + PAD * s, y + PAD * s + k as f32 * rh, w - 2.0 * PAD * s, rh), enabled(c))).collect();
+        self.field_menu = Some(FieldMenu { rect: Rect::new(x, y, w, h), rows, hot: None });
+        self.pressed = Some(CtxHit::Box);
+    }
+
+    pub fn pick_field_menu(&mut self, x: f32, y: f32) -> Option<Option<TextCmd>> {
+        let menu = self.field_menu.take()?;
+        self.pressed = Some(CtxHit::Box);
+        Some(menu.rows.iter().find(|(_, r, on)| *on && r.contains(x, y)).map(|(c, ..)| *c))
+    }
+
+    fn field_menu_key(&mut self, key: Key) -> Option<(MenuOutcome, Option<EditAction>)> {
+        let menu = self.field_menu.as_mut()?;
+        let enabled: Vec<usize> = (0..menu.rows.len()).filter(|&k| menu.rows[k].2).collect();
+        match key {
+            Key::Up | Key::Down => {
+                let at = menu.hot.and_then(|h| enabled.iter().position(|&k| k == h));
+                let n = enabled.len();
+                menu.hot = match (at, key == Key::Down) {
+                    (_, _) if n == 0 => None,
+                    (None, true) => enabled.first().copied(),
+                    (None, false) => enabled.last().copied(),
+                    (Some(i), true) => Some(enabled[(i + 1) % n]),
+                    (Some(i), false) => Some(enabled[(i + n - 1) % n]),
+                };
+                Some((MenuOutcome::Open, None))
+            }
+            Key::Enter => {
+                let cmd = menu.hot.map(|h| menu.rows[h].0);
+                self.field_menu = None;
+                Some(cmd.map_or((MenuOutcome::Open, None), |c| {
+                    let (k, m) = c.chord();
+                    self.key(k, m)
+                }))
+            }
+            _ => {
+                self.field_menu = None;
+                (key == Key::Escape).then_some((MenuOutcome::Open, None))
+            }
+        }
+    }
+
     pub fn key(&mut self, key: Key, m: Mods) -> (MenuOutcome, Option<EditAction>) {
+        if let Some(done) = self.field_menu_key(key) {
+            return done;
+        }
+        if is_menu_key(key, m) {
+            let f = self.field;
+            self.open_field_menu(f.x + f.h, f.bottom());
+            return (MenuOutcome::Open, None);
+        }
         let hot_node = self.hot.and_then(|k| match self.rows.get(k) {
             Some(Row::Node { node, .. }) => Some(*node),
             _ => None,
@@ -782,6 +860,7 @@ impl ContextMenu {
             }
         }
         p.g.dl.set_clip(None);
+        self.draw_field_menu(&mut p, font);
         if self.arrows[0].w > 0.0 {
             let at = p.g.dl.instances.len();
             for (k, glyph) in [G_UP, G_DOWN].into_iter().enumerate() {
@@ -790,6 +869,20 @@ impl ContextMenu {
             if let Some(u) = unfold {
                 u.item(&mut p.g.dl, at, 0, shown);
             }
+        }
+    }
+
+    fn draw_field_menu<B: TextBackend>(&self, p: &mut Paint<B>, font: FontStyle) {
+        let Some(menu) = &self.field_menu else { return };
+        let t = p.t;
+        p.frame(menu.rect);
+        for (k, (cmd, r, on)) in menu.rows.iter().enumerate() {
+            if menu.hot == Some(k) {
+                p.g.dl.round_rect(*r, t.hover, 4.0 * self.scale);
+            }
+            let label = FIELD_MENU.iter().find(|(c, _)| c == cmd).map_or("", |(_, s)| s.t());
+            let y = baseline(p.g, *r, font);
+            p.g.text(r.x + PAD * 2.0 * self.scale, y, label, font, if *on { t.text } else { t.text_dim }, r.w);
         }
     }
 
