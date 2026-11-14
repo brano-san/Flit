@@ -1432,7 +1432,7 @@ impl App {
 
     fn layout_panel(&mut self, area: Rect) {
         let active = self.panels.here == self.panels.active;
-        let (right, inset) = self.panel_edges(area);
+        let (caption, inset) = self.panel_edges(area);
         let ops_button = active && self.ops_button_visible();
         let status_bar = active && (self.prefs.status_bar || self.tab().error.is_some() || self.tab().filter.is_some());
         let (n, actions) = (self.tabs.len(), self.tab_actions_button);
@@ -1444,7 +1444,7 @@ impl App {
         let l = &mut self.layout;
         l.row_h = s(ROW_H);
         l.title = Rect::new(area.x, area.y, area.w, s(TAB_H));
-        let limit = l.title.right() - if right { 3.0 * s(CAPTION_W) } else { 0.0 };
+        let limit = l.title.right().min(caption);
         let bh = l.title.h - s(8.0);
         let button_y = area.y + s(4.0) + ((l.title.h - s(4.0) - bh) / 2.0).round();
         let button = |x: f32| Rect::new(x, button_y, s(30.0), bh);

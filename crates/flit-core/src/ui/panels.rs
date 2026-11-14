@@ -545,9 +545,10 @@ impl App {
         self.slot(self.panels.here).map_or(Rect::default(), |i| self.panels.list[i].rect)
     }
 
-    pub(super) fn panel_edges(&self, r: Rect) -> (bool, f32) {
+    pub(super) fn panel_edges(&self, r: Rect) -> (f32, f32) {
         let top = r.y <= 0.5;
-        (top && r.right() >= self.size.0 - 0.5, if top && r.x <= self.panels.left + 0.5 { self.panels.inset } else { 0.0 })
+        let caption = self.panels.caption.iter().filter(|c| top && c.w > 0.0).fold(f32::INFINITY, |x, c| x.min(c.x));
+        (caption, if top && r.x <= self.panels.left + 0.5 { self.panels.inset } else { 0.0 })
     }
 
     pub(super) fn chrome_hit(&self, x: f32, y: f32) -> Option<Hit> {

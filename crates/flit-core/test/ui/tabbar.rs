@@ -859,6 +859,41 @@ fn a_narrow_window_keeps_the_arrows_and_new_tab_clear_of_the_window_buttons() {
     }
 }
 
+fn strip_end(l: &crate::ui::Layout) -> f32 {
+    let tabs = l.tabs.iter().map(|(r, _)| r.right());
+    tabs.chain([l.new_tab.right(), l.actions.right(), l.tab_arrows[1].right()]).fold(0.0, f32::max)
+}
+
+#[test]
+fn while_a_new_panel_opens_the_left_strip_stays_clear_of_the_window_buttons() {
+    let mut app = many(30, 2000);
+    app.animations = true;
+    let mut g = Gfx::new(crate::text::tests::Mono, 1024);
+    let t = Instant::now();
+    app.frame(&mut g, t);
+    let caption = app.panels.caption[0].x;
+    assert!(strip_end(&app.layout) <= caption, "one panel ends its strip before the window buttons");
+    key(&mut app, Key::Char('S'), Mods { ctrl: true, shift: true, alt: false });
+    assert!(app.panels.growing.is_some(), "the new panel grows in");
+    for k in [0, 16, 50, 100, 400] {
+        app.frame(&mut g, ms(t, k));
+        let left = app.panels.list.iter().find(|p| p.id == 0).unwrap();
+        assert!(k > 0 || left.rect.right() > caption, "at first the left panel still reaches under the buttons");
+        assert!(strip_end(&left.layout) <= caption, "{k} ms: the left strip ends at {} past the buttons at {caption}", strip_end(&left.layout));
+    }
+    assert!(app.panels.growing.is_none());
+    let left = app.panels.list.iter().find(|p| p.id == 0).unwrap();
+    let s4 = app.s(4.0);
+    assert_eq!(left.layout.actions.right(), left.rect.right() - s4, "once the panel stops short of the buttons its strip uses its whole width");
+    assert!(strip_end(&app.layout) <= caption, "the right panel keeps clear of the buttons");
+    app.close_panel();
+    let t = Instant::now();
+    for k in [0, 16, 50, 400] {
+        app.frame(&mut g, ms(t, k));
+        assert!(strip_end(&app.layout) <= caption, "{k} ms into closing: the strip ends at {}", strip_end(&app.layout));
+    }
+}
+
 fn outlines(app: &App, g: &Gfx<crate::text::tests::Mono>, title: Rect) -> Vec<(Rect, u32)> {
     let sep = app.look.palette.base.separator.0;
     let mut v: Vec<(Rect, u32)> = g
