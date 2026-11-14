@@ -34,6 +34,7 @@ pub const CACHE: &str = "advanced.thumb_cache_mb";
 pub const LONG_PATHS: &str = "files.long_paths";
 pub const BUILTIN_ARCHIVES: &str = "files.builtin_archives";
 pub const NEEDS_BUILTIN_ARCHIVES: [&str; 3] = ["general.menu_compress", "files.archives_as_folders", "files.archive_format"];
+pub const WINDOWS_ONLY: [&str; 5] = [LONG_PATHS, "files.system", "files.streams", "general.menu_stream", "general.shell_submenu"];
 
 fn browsed_archives_keep_builtin_handling(map: &mut Map<String, Json>) {
     if map.get("files.archives_as_folders") == Some(&Json::Bool(true)) {
@@ -457,6 +458,10 @@ pub static SETTINGS: &[Setting] = &[
 ];
 
 impl Setting {
+    pub fn offered(&self, caps: crate::caps::Caps) -> bool {
+        !caps.unix_paths || !WINDOWS_ONLY.contains(&self.id)
+    }
+
     pub fn enabled(&self, a: &App) -> bool {
         self.id != LONG_PATHS && (a.builtin_archives || !NEEDS_BUILTIN_ARCHIVES.contains(&self.id))
     }

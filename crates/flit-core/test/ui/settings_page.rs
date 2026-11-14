@@ -234,6 +234,29 @@ fn search_finds_settings_on_every_page_and_jumps_to_the_found_one() {
 }
 
 #[test]
+fn linux_hides_the_settings_that_only_work_on_windows_and_keeps_their_values() {
+    let windows_only = ["off files.long_paths", "files.system", "files.streams", "general.menu_stream", "general.shell_submenu"];
+    let mut win = app();
+    win.open_settings(None);
+    let lines = win.settings_lines();
+    assert!(windows_only.iter().all(|id| lines.contains(&id.to_string())), "Windows shows them all: {lines:?}");
+    let mut linux = app();
+    linux.set_caps(crate::caps::Caps { unix_paths: true });
+    assert!(SETTINGS[index("files.streams").unwrap()].set(&mut linux, Value::Bool(true)));
+    linux.open_settings(None);
+    let lines = linux.settings_lines();
+    for id in windows_only {
+        assert!(!lines.iter().any(|l| l.ends_with(id.trim_start_matches("off "))), "{id} is hidden on Linux");
+    }
+    for id in ["files.show_hidden", "files.dotfiles", "general.menu_pin", "advanced.flatten_in_menu", "general.home_quick_access"] {
+        assert!(lines.contains(&id.to_owned()), "{id} still works on Linux");
+    }
+    typed(&mut linux, "streams");
+    assert_eq!(linux.settings_lines(), [S::OptionsNoMatch.t()], "search does not find a hidden setting");
+    assert!(linux.export_text().contains("\"files.streams\": true"), "a value set on Windows survives a session on Linux");
+}
+
+#[test]
 fn controls_change_settings_with_the_mouse_and_the_keyboard() {
     let mut a = app();
     a.open_settings(Some(Page::Files));

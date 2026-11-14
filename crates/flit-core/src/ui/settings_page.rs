@@ -923,6 +923,9 @@ impl App {
         if let Kind::Keys(..) | Kind::Strings(..) | Kind::Menu(..) = SETTINGS[i].kind {
             return;
         }
+        if !SETTINGS[i].offered(self.caps) {
+            return;
+        }
         if !SETTINGS[i].enabled(self) {
             return out.push(Line::Off(i));
         }

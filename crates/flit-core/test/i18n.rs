@@ -298,6 +298,23 @@ fn unix_words_call_shortcuts_links_and_leave_keyboard_shortcuts_alone() {
 }
 
 #[test]
+fn settings_help_on_linux_names_no_windows_places_or_programs() {
+    let helps = [S::SettingsHelpGeneralHomeRecent, S::SettingsHelpGeneralMenuTags, S::SettingsHelpFilesBuiltinArchives, S::SettingsHelpFilesArchivesAsFolders, S::SettingsHelpAdvancedLogLevel, S::SettingsHelpAdvancedDefaultManager, S::SettingsChoiceUnitsBinary];
+    for s in helps {
+        let linux = unix_word(s);
+        assert_ne!(linux, s, "{}", s.key());
+        for l in Lang::ALL {
+            let text = linux.in_lang(l);
+            for windows in ["Windows", "NTFS", "7-Zip", "%LOCALAPPDATA%", "Win+E", "Explorer", "Explorador", "Explorateur", "Проводник", "Провіднику", "资源管理器"] {
+                assert!(!text.contains(windows), "{} in {l:?}: {text}", linux.key());
+            }
+        }
+    }
+    assert!(S::SettingsHelpAdvancedLogLevel.in_lang(Lang::En).contains("%LOCALAPPDATA%"), "Windows keeps its own help");
+    assert_eq!(unix_word(S::SettingsHelpFilesConfirmDelete), S::SettingsHelpFilesConfirmDelete, "help without Windows names stays shared");
+}
+
+#[test]
 fn linux_elevation_and_read_only_errors_follow_the_language() {
     set_lang(Lang::Ru);
     let retry = crate::tr_en!(S::ErrorsOpsExtraNotElevated, error = "/etc/x: Permission denied", why = S::ErrorsOpsExtraNoPkexec.en());
