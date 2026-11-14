@@ -225,6 +225,7 @@ impl App {
     pub(super) fn layout_look(&mut self) {
         let (mode, level) = self.shown_look();
         let depth = if mode == LayoutMode::Columns { pane_depth(&self.tab().view_loc) } else { 0 };
+        let back = self.tab().panes_back;
         let (sc, spread) = (self.content_px(), super::options::spacing_factor(self.opts.spacing));
         let s = |v: f32| (v * sc).round();
         let l = &mut self.layout;
@@ -247,10 +248,14 @@ impl App {
         let across = mode == LayoutMode::List;
         let avail = (bottom - top).max(0.0);
         let cw = s(COLUMN_W[level.min(COLUMN_W.len() - 1)]);
-        let panes = depth.min((((w - bar) / cw).floor() as usize).saturating_sub(1));
+        let room = depth.min((((w - bar) / cw).floor() as usize).saturating_sub(1));
+        let panes = if room > 0 { depth } else { 0 };
+        l.pane_area = Rect::new(x, top, room as f32 * cw, avail);
+        l.panes_over = (panes - room) as f32 * cw;
+        let off = l.panes_over - back.clamp(0.0, l.panes_over);
         l.panes.clear();
-        l.panes.extend((0..panes).map(|k| Rect::new(x + k as f32 * cw, top, cw, avail)));
-        let (x, w) = (x + panes as f32 * cw, w - panes as f32 * cw);
+        l.panes.extend((0..panes).map(|k| Rect::new(x + k as f32 * cw - off, top, cw, avail)));
+        let (x, w) = (x + l.pane_area.w, w - l.pane_area.w);
         l.gutter = if mode.table() { s(TABLE_GUTTER).min((w / 8.0).floor()) } else { 0.0 };
         let (x, w) = (x + l.gutter, (w - 2.0 * l.gutter).max(0.0));
         if across {

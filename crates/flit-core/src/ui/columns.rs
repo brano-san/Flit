@@ -123,6 +123,24 @@ impl App {
         self.dispatch(vec![route], OpenTarget::CurrentTab, now);
     }
 
+    pub(super) fn columns_wheel(&mut self, dx: f32, dy: f32) -> bool {
+        let (over, cw) = (self.layout.panes_over, self.layout.pane_area.w / self.layout.panes.len().max(1) as f32);
+        let side = super::pointer::sideways(dx, dy, self.mods.shift);
+        let here = matches!(self.hover, Hit::Pane(..) | Hit::Row(_) | Hit::ListEmpty | Hit::Group(_));
+        if side == 0.0 || over <= 0.0 || !here || self.layout.mode != super::layouts::LayoutMode::Columns {
+            return false;
+        }
+        let step = self.wheel_px(self.layout.row_h, cw).min(cw.max(1.0));
+        let t = self.tab_mut();
+        let back = (t.panes_back.clamp(0.0, over) - side * step).clamp(0.0, over).round();
+        if back != t.panes_back {
+            t.panes_back = back;
+            self.layout();
+            self.dirty = true;
+        }
+        dx == 0.0
+    }
+
     pub(super) fn pane_wheel(&mut self, dy: f32) -> bool {
         let Hit::Pane(i, _) = self.hover else { return false };
         let (h, rh) = (self.layout.panes.get(i).map_or(0.0, |r| r.h), self.layout.row_h);
@@ -147,13 +165,20 @@ impl App {
         let t = &self.tabs[self.cur];
         let mut requests: Vec<IconRequest> = Vec::new();
         let mut elided: Vec<(usize, usize)> = Vec::new();
+        let area = l.pane_area;
         for (i, (&r, p)) in l.panes.iter().zip(&t.panes).enumerate() {
-            g.dl.rect(Rect::new(r.right() - 1.0, r.y, 1.0, r.h), th.separator);
+            let (x0, x1) = (r.x.max(area.x), (r.right() - 1.0).min(area.right()));
+            if x1 <= x0 {
+                continue;
+            }
+            if r.right() <= area.right() {
+                g.dl.rect(Rect::new(r.right() - 1.0, r.y, 1.0, r.h), th.separator);
+            }
             let Some(v) = &p.view else { continue };
             let child = t.panes.get(i + 1).map_or(&t.view_loc, |p| &p.loc).file_name();
             let (listing, rows, scroll) = (v.listing(), v.rows(), p.scroll.unwrap_or(0.0));
             let dir = p.loc.to_windows();
-            g.dl.set_clip(Some(Rect::new(r.x, r.y, r.w - 1.0, r.h)));
+            g.dl.set_clip(Some(Rect::new(x0, r.y, x1 - x0, r.h)));
             let first = (scroll / rh).floor() as usize;
             let last = (((scroll + r.h) / rh).ceil() as usize).min(rows.len());
             for (row, &idx) in rows.iter().enumerate().take(last).skip(first) {

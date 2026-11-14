@@ -291,20 +291,20 @@ fn columns_show_parent_panes_that_reuse_the_old_listing_and_navigate_on_click() 
     deliver(&mut app, &["inner", "z.txt"]);
     app.run_action("view.layout.columns", Instant::now());
     let effects: Vec<Effect> = app.drain_effects().collect();
-    assert_eq!(app.layout.panes.len(), 2);
+    assert_eq!(app.layout.panes.len(), 3, "every parent has a pane, the ones that do not fit wait to the left");
     assert!(serve_pane(&mut app, &effects, r"C:\x", &["other", "sub"]));
-    assert!(app.layout.list.x > app.layout.panes[1].right() - 1.0);
-    let other = app.layout.panes[1];
-    assert_eq!(app.hit(other.x + 40.0, other.y + app.layout.row_h * 0.5), Hit::Pane(1, Some(0)));
+    assert!(app.layout.list.x > app.layout.panes[2].right() - 1.0);
+    let other = app.layout.panes[2];
+    assert_eq!(app.hit(other.x + 40.0, other.y + app.layout.row_h * 0.5), Hit::Pane(2, Some(0)));
     key(&mut app, Key::Down, NO);
     key(&mut app, Key::Right, NO);
     let effects: Vec<Effect> = app.drain_effects().collect();
     deliver(&mut app, &["deep.txt"]);
     assert!(!serve_pane(&mut app, &effects, r"C:\x\sub", &[]), "the listing of C:\\x\\sub moves into a pane");
     let t = app.tab();
-    assert_eq!(t.panes.iter().map(|p| p.loc.clone()).collect::<Vec<_>>(), [loc(r"C:\x"), loc(r"C:\x\sub")]);
-    assert!(t.panes.iter().all(|p| p.view.is_some()));
-    let pane = app.layout.panes[0];
+    assert_eq!(t.panes.iter().rev().take(2).map(|p| p.loc.clone()).collect::<Vec<_>>(), [loc(r"C:\x\sub"), loc(r"C:\x")]);
+    assert!(t.panes.iter().rev().take(2).all(|p| p.view.is_some()));
+    let pane = app.layout.panes[app.layout.panes.len() - 2];
     let y = pane.y + app.layout.row_h * 0.5;
     click(&mut app, (pane.x + 40.0, y));
     assert_eq!(app.current_location(), &loc(r"C:\x\other"));
@@ -555,7 +555,7 @@ fn columns_parent_panes_get_tooltips_like_the_list() {
     assert!(serve_pane(&mut app, &effects, r"C:\x", &[wide.as_str(), "sub"]));
     let delay = crate::ui::tooltip::DELAY;
     let tip_over = |app: &mut App, row: usize, at: Instant| {
-        let r = app.pane_tip_anchor(1, row).unwrap();
+        let r = app.pane_tip_anchor(app.layout.panes.len() - 1, row).unwrap();
         app.on_event(&Event::MouseMove { x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 }, at);
         app.on_event(&Event::Timer, at + delay);
         app.tooltip()
@@ -564,6 +564,62 @@ fn columns_parent_panes_get_tooltips_like_the_list() {
     let tip = tip_over(&mut app, 1, t0).expect("a parent pane row gets a tip");
     assert_eq!(tip.line, "Type: File folder");
     let tip = tip_over(&mut app, 0, t0 + 2 * delay).expect("the cut-off name gets a tip");
-    assert!(app.details.pane_elided.contains(&(1, 0)));
+    assert!(app.details.pane_elided.contains(&(app.layout.panes.len() - 1, 0)));
     assert_eq!(tip.line, wide);
+}
+
+#[test]
+fn columns_scroll_sideways_to_parent_panes_that_do_not_fit() {
+    let mut app = App::new(Persisted { path: loc(r"C:\a\b\c\d\e"), ..Default::default() }, Vec::new(), 0, false, 1.0, (900, 600), Instant::now());
+    app.animations = false;
+    deliver(&mut app, &["f", "z.txt"]);
+    app.run_action("view.layout.columns", Instant::now());
+    app.drain_effects().for_each(drop);
+    frame(&mut app);
+    let (area, over) = (app.layout.pane_area, app.layout.panes_over);
+    assert_eq!(app.layout.panes.len(), 4, "every parent gets a pane");
+    assert!(area.w > 0.0 && over > 0.0, "{area:?} {over}");
+    assert_eq!(app.layout.panes[3].right(), area.right(), "the nearest parents show first");
+    assert!(app.layout.panes[0].right() <= area.x, "the farthest parent waits to the left");
+    let first = app.layout.panes[0];
+    assert_ne!(app.hit(area.x + 5.0, area.y + 5.0), Hit::Pane(0, None), "a hidden pane takes no clicks");
+    let list = app.layout.list;
+    app.on_event(&Event::MouseMove { x: list.x + 20.0, y: list.y + 5.0 }, Instant::now());
+    app.mods.shift = true;
+    app.on_event(&Event::Wheel { dx: 0.0, dy: 1.0 }, Instant::now());
+    app.mods.shift = false;
+    frame(&mut app);
+    assert!(app.tab().panes_back > 0.0);
+    assert!(app.layout.panes[0].x > first.x, "Shift+wheel up brings the farther parents in");
+    assert_eq!(app.layout.list, list, "the folder itself stays in place");
+    for _ in 0..20 {
+        app.on_event(&Event::Wheel { dx: -1.0, dy: 0.0 }, Instant::now());
+    }
+    frame(&mut app);
+    assert_eq!((app.tab().panes_back, app.layout.panes[0].x), (over, area.x), "a sideways wheel reaches the farthest parent and stops there");
+    let pane = app.layout.panes[1];
+    app.on_event(&Event::MouseMove { x: pane.x + 20.0, y: pane.y + 5.0 }, Instant::now());
+    app.on_event(&Event::Wheel { dx: 0.0, dy: -1.0 }, Instant::now());
+    assert_eq!(app.tab().panes_back, over, "a plain wheel over a pane scrolls it up and down only");
+    key(&mut app, Key::Down, NO);
+    key(&mut app, Key::Right, NO);
+    deliver(&mut app, &["g.txt"]);
+    assert_eq!(app.tab().panes_back, 0.0, "opening a folder shows the nearest parents again");
+}
+
+#[test]
+fn columns_that_fit_do_not_scroll_sideways() {
+    let mut app = App::new(Persisted { path: loc(r"C:\a\b"), ..Default::default() }, Vec::new(), 0, false, 1.0, (1600, 600), Instant::now());
+    deliver(&mut app, &["c", "z.txt"]);
+    app.run_action("view.layout.columns", Instant::now());
+    app.drain_effects().for_each(drop);
+    frame(&mut app);
+    assert_eq!(app.layout.panes_over, 0.0);
+    assert_eq!(app.layout.pane_area.w, app.layout.panes.iter().map(|r| r.w).sum::<f32>(), "all parents fit");
+    let (list, panes) = (app.layout.list, app.layout.panes.clone());
+    app.on_event(&Event::MouseMove { x: list.x + 20.0, y: list.y + 5.0 }, Instant::now());
+    app.mods.shift = true;
+    app.on_event(&Event::Wheel { dx: 0.0, dy: 1.0 }, Instant::now());
+    frame(&mut app);
+    assert_eq!((app.tab().panes_back, &app.layout.panes), (0.0, &panes));
 }

@@ -587,6 +587,8 @@ struct Layout {
     icon: f32,
     flow: flow::FlowParams,
     panes: Vec<Rect>,
+    pane_area: Rect,
+    panes_over: f32,
     bottom: f32,
     gutter: f32,
 }
@@ -1629,7 +1631,7 @@ impl App {
             let th = l.thumb;
             return if y >= th.y && y < th.bottom() && th.h > 0.0 { Hit::Thumb } else { Hit::Track };
         }
-        if let Some(i) = l.panes.iter().position(|r| r.contains(x, y)) {
+        if let Some(i) = l.panes.iter().position(|r| r.contains(x, y)).filter(|_| l.pane_area.contains(x, y)) {
             return self.pane_hit(i, y);
         }
         if self.eject_rect().is_some_and(|r| r.contains(x, y)) {

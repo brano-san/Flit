@@ -74,7 +74,7 @@ impl App {
         }
         let zoom = pinch || m.ctrl;
         let scroll = if pinch { 0.0 } else { dy };
-        if self.update_wheel(scroll) || self.settings_wheel(scroll) || self.panel_wheel(ev, scroll, now) || self.jobs_wheel(scroll, now) || self.nav_wheel(scroll) || self.pane_wheel(scroll) {
+        if self.update_wheel(scroll) || self.settings_wheel(scroll) || self.panel_wheel(ev, scroll, now) || self.jobs_wheel(scroll, now) || self.nav_wheel(scroll) || self.columns_wheel(dx, dy) || self.pane_wheel(scroll) {
             return;
         }
         if self.preview_wheel(dx, dy, zoom, now) || self.strip_wheel(scroll) || self.bottom_wheel(dx, dy, now) {
