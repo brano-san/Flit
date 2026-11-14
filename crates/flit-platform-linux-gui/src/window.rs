@@ -503,10 +503,13 @@ impl Window for LinuxWindow {
             }
         };
         let ready = PREFETCHED.lock().unwrap_or_else(|e| e.into_inner()).take().filter(|(files, _)| *files == menu.items);
-        match ready {
-            Some((_, apps)) => show(crate::apps::with_apps(menu.menu, apps)),
-            None => background("flit-menu", move || show(crate::apps::menu_with_apps(menu.menu, &menu.items))),
-        }
+        background("flit-menu", move || {
+            let opened = match ready {
+                Some((_, apps)) => crate::apps::with_apps(menu.menu, apps),
+                None => crate::apps::menu_with_apps(menu.menu, &menu.items),
+            };
+            show(crate::scripts::with_scripts(opened, &menu.dir, &menu.items))
+        });
     }
 
     fn shell_prefetch(&self, menu: Option<ShellMenu>) {

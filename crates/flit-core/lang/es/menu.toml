@@ -71,6 +71,7 @@ mount = "Montar"
 unmount = "Desmontar"
 
 open_with = "Abrir con"
+scripts = "Scripts y acciones"
 shift_left = "Mover columna a la izquierda"
 shift_right = "Mover columna a la derecha"
 size_fit = "Ajustar el ancho de la columna"

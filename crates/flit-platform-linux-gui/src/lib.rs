@@ -23,6 +23,7 @@ pub mod instance;
 pub mod places;
 pub mod shell;
 mod tools;
+mod scripts;
 mod text;
 mod thumb;
 mod thumbnailers;

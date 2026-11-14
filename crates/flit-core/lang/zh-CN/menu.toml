@@ -71,6 +71,7 @@ mount = "挂载"
 unmount = "卸载"
 
 open_with = "打开方式"
+scripts = "脚本和操作"
 shift_left = "左移列"
 shift_right = "右移列"
 size_fit = "调整列宽以适应内容"

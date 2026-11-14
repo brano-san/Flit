@@ -71,6 +71,7 @@ mount = "Einhängen"
 unmount = "Aushängen"
 
 open_with = "Öffnen mit"
+scripts = "Skripte und Aktionen"
 shift_left = "Spalte nach links"
 shift_right = "Spalte nach rechts"
 size_fit = "Spaltenbreite anpassen"

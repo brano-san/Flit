@@ -71,6 +71,7 @@ mount = "Mount"
 unmount = "Unmount"
 
 open_with = "Open with"
+scripts = "Scripts and actions"
 shift_left = "Shift Column Left"
 shift_right = "Shift Column Right"
 size_fit = "Size Column To Fit"

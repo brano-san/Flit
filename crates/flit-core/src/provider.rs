@@ -196,7 +196,10 @@ pub enum Launch {
     Display(FsPath),
     Print(Vec<FsPath>),
     FileManager(FsPath),
+    Command { runs: Vec<CommandRun>, dir: Option<FsPath> },
 }
+
+pub type CommandRun = (Vec<String>, Vec<(String, String)>);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppChoice {
@@ -233,6 +236,7 @@ impl Launch {
             Launch::Display(file) => Launch::Display(f(file)?),
             Launch::Print(files) => Launch::Print(all(files)?),
             Launch::FileManager(dir) => Launch::FileManager(f(dir)?),
+            Launch::Command { runs, dir } => Launch::Command { runs: runs.clone(), dir: dir.as_ref().map(&f).unwrap_or(None) },
         })
     }
 }

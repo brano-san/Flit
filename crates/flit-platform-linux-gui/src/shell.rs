@@ -332,6 +332,17 @@ fn open_without_xdg_open(path: &Path) -> Option<Result<(), PlatformError>> {
     Some(crate::apps::launch(&app, &[path.to_path_buf()], token.as_deref()).map_err(|e| spawn_error(&app.display().to_string(), &e)))
 }
 
+fn run_command(argv: &[String], env: &[(String, String)], dir: Option<&Path>) -> Result<(), PlatformError> {
+    let Some((program, args)) = argv.split_first() else { return Ok(()) };
+    let mut cmd = Command::new(program);
+    cmd.args(args).envs(env.iter().map(|(k, v)| (k, v)));
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
+    crate::activation::pass(&mut cmd, crate::window::activation_token().as_deref());
+    detach(cmd).map_err(|e| spawn_error(program, &e))
+}
+
 fn tool_missing(tool: &str) -> PlatformError {
     let package = crate::tools::package_for(tool, &crate::tools::os_release()).unwrap_or(tool);
     PlatformError::new(libc::ENOENT as i64, flit_core::tr_en!(flit_core::i18n::S::ErrorsOpsExtraNoTool, tool = tool, package = package))
@@ -539,6 +550,7 @@ fn launch(l: &Launch) -> Result<(), PlatformError> {
         Launch::Display(file) => xdg_open(os(file)),
         Launch::Print(files) => print_files(&files.iter().filter_map(|f| host(f).map(Path::to_path_buf)).collect::<Vec<_>>()),
         Launch::FileManager(dir) => open_in_file_manager(Path::new(os(dir))),
+        Launch::Command { runs, dir } => runs.iter().try_for_each(|(argv, env)| run_command(argv, env, dir.as_ref().and_then(host))),
         Launch::With { program, args } if program.as_bytes().ends_with(b".desktop") => {
             let files: Vec<PathBuf> = args.iter().filter_map(|a| host(a).map(Path::to_path_buf)).collect();
             let token = crate::window::activation_token();
