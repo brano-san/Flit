@@ -1706,6 +1706,8 @@ impl App {
                 Hit::ColSep(_) => self.header_menu(x, y, None),
                 h @ (Hit::Side(_) | Hit::SidePin(_) | Hit::SideHeader(_) | Hit::SideEmpty) => self.side_menu(x, y, h),
                 h @ (Hit::HomeItem(_) | Hit::HomeEmpty) => self.home_menu(x, y, h),
+                Hit::Address => self.address_menu(x, y),
+                Hit::Crumb(i) => self.crumb_menu(x, y, i),
                 _ => {}
             }
         }

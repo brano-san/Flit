@@ -78,6 +78,9 @@ show_hidden = "Show hidden files"
 show_system = "Show system files"
 include_subfolders = "Include subfolders"
 
+address_copy = "Copy address"
+address_edit = "Edit"
+
 [sort]
 name = "Name"
 modified = "Date modified"

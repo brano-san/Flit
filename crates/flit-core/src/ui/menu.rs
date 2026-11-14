@@ -95,6 +95,8 @@ pub(super) enum Cmd {
     User(crate::provider::Launch),
     Drop(u32),
     Text(super::field::TextCmd),
+    CopyAddress(crate::location::Location),
+    EditAddress(Option<usize>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -195,6 +197,11 @@ impl Menu<'_> {
     pub(super) fn go(&mut self, label: &str, k: usize, icon: &'static str) {
         self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked: false, stay: false, mark: Mark::None, icon, image: None, disabled: false });
         self.cmds.push(Cmd::Go(k));
+    }
+
+    pub(super) fn custom(&mut self, label: &str, icon: &'static str, cmd: Cmd) {
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked: false, stay: false, mark: Mark::None, icon, image: None, disabled: false });
+        self.cmds.push(cmd);
     }
 
     pub(super) fn user(&mut self, label: &str, icon: &'static str, image: Option<MenuImage>, launch: crate::provider::Launch) {
@@ -675,6 +682,11 @@ impl App {
             Some(Cmd::User(launch)) => self.launch(launch),
             Some(Cmd::Drop(effect)) => self.drop_chosen(effect),
             Some(Cmd::Text(c)) => self.text_command(c, now),
+            Some(Cmd::CopyAddress(loc)) => self.effects.push(super::Effect::SetClipboard(self.as_path_text(&loc))),
+            Some(Cmd::EditAddress(crumb)) => match crumb {
+                Some(i) => self.open_crumb(i),
+                None => self.open_address(),
+            },
             None => {}
         }
     }

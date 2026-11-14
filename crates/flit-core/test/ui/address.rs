@@ -708,3 +708,28 @@ fn unix_trash_address_opens_the_trash_and_file_urls_stay_paths() {
 fn launches_of(fx: &[Effect]) -> Vec<&Launch> {
     fx.iter().filter_map(|e| if let Effect::Provider { req: ProviderRequest::Launch { launch, .. }, .. } = e { Some(launch) } else { None }).collect()
 }
+
+#[test]
+fn right_click_on_the_address_and_crumbs_offers_copy_and_edit() {
+    let mut app = app_at(r"C:\work\sub");
+    deliver(&mut app, &[("a.txt", false)], None);
+    let now = Instant::now();
+    let addr = app.layout.address;
+    let at = (addr.x + 20.0, addr.y + addr.h / 2.0);
+    app.on_event(&Event::MouseDown { x: at.0, y: at.1, button: MouseButton::Right, clicks: 1 }, now);
+    app.on_event(&Event::MouseUp { x: at.0, y: at.1, button: MouseButton::Right }, now);
+    let labels: Vec<String> = app.drain_effects().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m.menu.into_iter().filter_map(|i| if let crate::ui::MenuItem::Command { label, .. } = i { Some(label) } else { None }).collect()) } else { None }).expect("an address menu");
+    assert_eq!(labels, ["Copy address", "Edit"]);
+    app.on_event(&Event::MenuCommand(0), now);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::SetClipboard(s) if s.contains(r"C:\work\sub"))), "copy puts the folder path on the clipboard");
+    frame(&mut app);
+    let n = app.tab().crumbs.len();
+    let r = app.layout.crumbs[n - 2];
+    let at = (r.x + 10.0, r.y + r.h / 2.0);
+    app.on_event(&Event::MouseDown { x: at.0, y: at.1, button: MouseButton::Right, clicks: 1 }, now);
+    app.on_event(&Event::MouseUp { x: at.0, y: at.1, button: MouseButton::Right }, now);
+    app.drain_effects().for_each(drop);
+    app.on_event(&Event::MenuCommand(1), now);
+    assert!(app.go_open() && app.nav.palette.as_ref().unwrap().field.text().is_empty(), "Edit opens the crumb in the address bar");
+    assert_eq!(app.nav.palette.as_ref().unwrap().go.as_ref().unwrap().crumb, Some(n - 2), "the edited crumb is the one clicked");
+}

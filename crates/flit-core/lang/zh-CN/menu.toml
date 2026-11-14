@@ -78,6 +78,9 @@ show_hidden = "显示隐藏文件"
 show_system = "显示系统文件"
 include_subfolders = "包含子文件夹"
 
+address_copy = "复制地址"
+address_edit = "编辑"
+
 [sort]
 name = "名称"
 modified = "修改日期"

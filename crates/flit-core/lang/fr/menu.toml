@@ -78,6 +78,9 @@ show_hidden = "Afficher les fichiers masqués"
 show_system = "Afficher les fichiers système"
 include_subfolders = "Inclure les sous-dossiers"
 
+address_copy = "Copier l’adresse"
+address_edit = "Modifier"
+
 [sort]
 name = "Nom"
 modified = "Modifié le"

@@ -207,6 +207,24 @@ impl App {
         self.addr.typed = typed;
     }
 
+    pub(super) fn address_menu(&mut self, x: f32, y: f32) {
+        let loc = self.current_location().clone();
+        let menu = self.collect(|_, m| {
+            m.custom(S::MenuAddressCopy.t(), super::G_FOLDER, Cmd::CopyAddress(loc.clone()));
+            m.custom(S::MenuAddressEdit.t(), "", Cmd::EditAddress(None));
+        });
+        self.button_menu(Hit::Address, x, y, menu);
+    }
+
+    pub(super) fn crumb_menu(&mut self, x: f32, y: f32, i: usize) {
+        let Some((_, loc)) = self.tab().crumb(i).cloned() else { return };
+        let menu = self.collect(|_, m| {
+            m.custom(S::MenuAddressCopy.t(), super::G_FOLDER, Cmd::CopyAddress(loc.clone()));
+            m.custom(S::MenuAddressEdit.t(), "", Cmd::EditAddress(Some(i)));
+        });
+        self.button_menu(Hit::Crumb(i), x, y, menu);
+    }
+
     pub(super) fn launch(&mut self, launch: Launch) {
         if let Launch::ChooseApp { files, mime, apps } = launch {
             return self.choose_app(files, mime, apps);

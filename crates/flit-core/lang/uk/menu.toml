@@ -78,6 +78,9 @@ show_hidden = "Показати приховані файли"
 show_system = "Показати системні файли"
 include_subfolders = "Показувати підпапки"
 
+address_copy = "Копіювати адресу"
+address_edit = "Змінити"
+
 [sort]
 name = "Ім’я"
 modified = "Дата змінення"

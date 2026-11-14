@@ -927,7 +927,7 @@ fn a_group_header_click_selects_the_group_and_only_the_chevron_folds_it() {
     press(&mut app, r.x + r.w / 2.0);
     let v = app.tab().view.as_ref().unwrap();
     assert_eq!(v.selected_count(), v.groups()[0].count as usize, "a click on the header selects the group");
-    assert_eq!(v.groups()[0].collapsed, false);
+    assert!(!v.groups()[0].collapsed);
     let chevron = r.x + app.cs(26.0) / 2.0;
     press(&mut app, chevron);
     assert!(app.tab().view.as_ref().unwrap().groups()[0].collapsed, "the chevron folds the group");

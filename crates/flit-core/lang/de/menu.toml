@@ -78,6 +78,9 @@ show_hidden = "Versteckte Dateien anzeigen"
 show_system = "Systemdateien anzeigen"
 include_subfolders = "Unterordner einschließen"
 
+address_copy = "Adresse kopieren"
+address_edit = "Bearbeiten"
+
 [sort]
 name = "Name"
 modified = "Änderungsdatum"
