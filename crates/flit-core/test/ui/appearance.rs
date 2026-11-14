@@ -244,11 +244,18 @@ fn a_failed_background_image_says_so_in_the_status_bar() {
     a.on_backdrop(gen, None);
     assert!(a.tab().error.as_deref().is_some_and(|e| e.contains("broken.jpg")));
 }
+
 #[test]
-fn the_system_animation_setting_switches_flits_animations() {
+fn the_system_animation_setting_switches_flits_animations_without_touching_the_users_choice() {
     let mut a = app();
     a.on_event(&Event::Animations(false), Instant::now());
     assert!(!a.animations, "animations are off while the system turns them off");
+    assert!(a.animations_wanted, "the user's choice stays as it was");
     a.on_event(&Event::Animations(true), Instant::now());
+    assert!(a.animations);
+    a.set_animations_wanted(false);
+    a.on_event(&Event::Animations(true), Instant::now());
+    assert!(!a.animations, "the system turning animations on does not override the user turning them off");
+    a.set_animations_wanted(true);
     assert!(a.animations);
 }

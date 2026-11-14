@@ -9,7 +9,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
@@ -42,6 +42,13 @@ const ANIM_YES: u8 = 1;
 const ANIM_NO: u8 = 0;
 static ANIMATIONS: AtomicU8 = AtomicU8::new(ANIM_YES);
 static ANIMATIONS_DIRTY: AtomicBool = AtomicBool::new(false);
+const LAUNCHER_STEP: u32 = 5;
+const LAUNCHER_HIDDEN: u32 = 0;
+static LAUNCHER_SENT: AtomicU32 = AtomicU32::new(LAUNCHER_HIDDEN);
+
+pub(crate) fn launcher_step(percent: Option<u32>) -> Option<u32> {
+    percent.map(|v| v.min(100) / LAUNCHER_STEP * LAUNCHER_STEP)
+}
 
 pub(crate) fn animations() -> bool {
     ANIMATIONS.load(Ordering::Acquire) == ANIM_YES
@@ -309,7 +316,11 @@ impl Window for LinuxWindow {
     }
 
     fn set_taskbar_progress(&self, progress: Option<(u32, bool)>) {
-        crate::shell::launcher_progress(progress.map(|(v, _)| v));
+        let percent = launcher_step(progress.map(|(v, _)| v));
+        let sent = percent.map_or(LAUNCHER_HIDDEN, |v| v + 1);
+        if LAUNCHER_SENT.swap(sent, Ordering::AcqRel) != sent {
+            crate::shell::launcher_progress(percent);
+        }
     }
 
     fn notify(&self, text: &str) {

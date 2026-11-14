@@ -123,6 +123,13 @@ enum Mode {
 
 thread_local! {
     static OPEN: RefCell<Vec<(isize, WindowId)>> = const { RefCell::new(Vec::new()) };
+    static TASKBAR: std::cell::OnceCell<Option<ITaskbarList3>> = const { std::cell::OnceCell::new() };
+}
+
+fn taskbar_list() -> Option<ITaskbarList3> {
+    let list: ITaskbarList3 = unsafe { CoCreateInstance(&TaskbarList, None, CLSCTX_INPROC_SERVER) }.map_err(|e| tracing::warn!("no taskbar progress: {}", e.message())).ok()?;
+    unsafe { list.HrInit() }.map_err(|e| tracing::warn!("no taskbar progress: {}", e.message())).ok()?;
+    Some(list)
 }
 
 #[derive(Default)]
@@ -274,7 +281,7 @@ impl Window for Win32Window {
         if h.is_invalid() {
             return;
         }
-        let Ok(list) = (unsafe { CoCreateInstance::<_, ITaskbarList3>(&TaskbarList, None, CLSCTX_INPROC_SERVER) }) else { return };
+        let Some(list) = TASKBAR.with(|t| t.get_or_init(taskbar_list).clone()) else { return };
         unsafe {
             match progress {
                 Some((percent, waiting)) => {

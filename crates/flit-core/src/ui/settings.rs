@@ -303,7 +303,7 @@ pub static SETTINGS: &[Setting] = &[
         help: S::OptionsHelpSpacing,
         kind: Kind::Number { min: 0, max: 100, step: 10, unit: S::SettingsUnitPercent, zero: None, get: |a| a.opts.spacing as i64, set: |a, v| a.set_spacing(v as u8) },
     },
-    toggle("appearance.animations", Page::Interface, S::OptionsTitleAnimations, S::OptionsHelpAnimations, |a| a.animations, |a, on| a.animations = on),
+    toggle("appearance.animations", Page::Interface, S::OptionsTitleAnimations, S::OptionsHelpAnimations, |a| a.animations_wanted, |a, on| a.set_animations_wanted(on)),
     toggle("appearance.round_corners", Page::Interface, S::OptionsTitleRoundCorners, S::OptionsHelpRoundCorners, |a| a.round_corners, |a, on| a.round_corners = on),
     choice(LANGUAGE, Page::Interface, S::SettingsTitleGeneralLanguage, S::SettingsHelpGeneralLanguage, LANGUAGE_CHOICES, |a| a.language, |a, i| a.set_language(i)),
     choice("general.date_format", Page::Interface, S::SettingsTitleGeneralDateFormat, S::SettingsHelpGeneralDateFormat, DATE_CHOICES, |a| pos(&DATES, &a.style.dates), |a, i| a.set_style(|s| s.dates = DATES[i])),

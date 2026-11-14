@@ -85,6 +85,21 @@ impl App {
         self.restyle();
     }
 
+    pub(super) fn set_system_animations(&mut self, on: bool) {
+        self.system_animations = on;
+        self.sync_animations();
+    }
+
+    pub(super) fn set_animations_wanted(&mut self, on: bool) {
+        self.animations_wanted = on;
+        self.sync_animations();
+    }
+
+    fn sync_animations(&mut self) {
+        self.animations = self.animations_wanted && self.system_animations;
+        self.dirty = true;
+    }
+
     fn restyle(&mut self) {
         let l = &mut self.look;
         l.palette = match &l.contrast {

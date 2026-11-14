@@ -358,7 +358,10 @@ impl App {
         } else if let Some(l) = &tab.loading {
             s.push_str(l.note.as_deref().unwrap_or(S::UiStatusLoading.t()));
         }
-        let room = (right - x - pad).max(0.0);
+        let undo_label = S::ActionsEditUndo.t();
+        let undo_w = if trashed.is_some() { g.measure(undo_label, font) + self.s(16.0) } else { 0.0 };
+        let undo_room = if trashed.is_some() { undo_w + self.s(4.0) } else { 0.0 };
+        let room = (right - x - pad - undo_room).max(0.0);
         let text_w = g.measure(&s, font).min(room);
         let text_x = right - text_w;
         if text_w > 0.0 {
@@ -366,10 +369,9 @@ impl App {
             g.text(text_x, baseline, &s, font, color, text_w);
             arrived.push((ARRIVE_MESSAGE, at, g.dl.instances.len()));
         }
-        if trashed.is_some() {
+        if trashed.is_some() && right - x - pad >= undo_room {
             let at = g.dl.instances.len();
-            let label = S::ActionsEditUndo.t();
-            let w = g.measure(label, font) + self.s(16.0);
+            let (label, w) = (undo_label, undo_w);
             let b = Rect::new(text_x - w - self.s(4.0), r.y + self.s(2.0), w, r.h - self.s(4.0));
             let lit = self.lit(Hit::Bottom(BottomHit::Undo));
             if lit > 0.0 {

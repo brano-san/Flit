@@ -249,3 +249,14 @@ fn the_clipboard_helper_keeps_file_uris_out_of_plain_text() {
     assert_eq!(helper_offer(&paths, false, true), (GNOME, b"copy\nfile:///tmp/a%20b".to_vec()), "wl-copy would also offer a text/ type as plain text");
     assert_eq!(helper_offer(&paths, true, false), (GNOME, b"cut\nfile:///tmp/a%20b".to_vec()));
 }
+
+#[test]
+fn launcher_progress_moves_in_steps_of_five_percent() {
+    use crate::window::launcher_step;
+    assert_eq!(launcher_step(None), None);
+    assert_eq!(launcher_step(Some(0)), Some(0));
+    assert_eq!(launcher_step(Some(4)), Some(0));
+    assert_eq!(launcher_step(Some(37)), Some(35));
+    assert_eq!(launcher_step(Some(100)), Some(100));
+    assert_eq!(launcher_step(Some(250)), Some(100));
+}

@@ -599,6 +599,8 @@ pub struct App {
     pub switch_to_new_tab: bool,
     pub smooth_scroll: bool,
     pub animations: bool,
+    pub(super) animations_wanted: bool,
+    pub(super) system_animations: bool,
     pub round_corners: bool,
     pub tooltips: bool,
     pub touch_input: bool,
@@ -725,6 +727,8 @@ impl App {
             switch_to_new_tab: true,
             smooth_scroll: true,
             animations: true,
+            animations_wanted: true,
+            system_animations: true,
             round_corners: true,
             tooltips: true,
             touch_input: false,
@@ -1125,11 +1129,9 @@ impl App {
         let t = &mut self.tabs[k];
         let from = t.location().clone();
         if t.history.jump(n, keep) {
-            let restore = t.history.take_here().filter(crate::nav::Restore::has_names);
-            let select = match restore.is_some() {
-                true => None,
-                false => (previous && from.parent().as_ref() == Some(t.location())).then(|| from.file_name().to_vec()),
-            };
+            let restore = t.history.take_here();
+            let named = restore.as_ref().is_some_and(crate::nav::Restore::has_names);
+            let select = (!named && previous && from.parent().as_ref() == Some(t.location())).then(|| from.file_name().to_vec());
             self.load_tab_restored(k, select, restore, now);
             self.after_tab_change();
         }
@@ -1623,10 +1625,7 @@ impl App {
             }
             Event::ThemeChanged { dark } => self.set_system_dark(*dark),
             Event::Contrast(colors) => self.set_contrast(*colors),
-            Event::Animations(on) => {
-                self.animations = *on;
-                self.dirty = true;
-            }
+            Event::Animations(on) => self.set_system_animations(*on),
             Event::Invoke(id) => self.a11y_invoke(*id, now),
             Event::A11yFocus(id) => self.a11y_focus(*id),
             Event::A11ySelect(id) => self.a11y_select(*id, now),

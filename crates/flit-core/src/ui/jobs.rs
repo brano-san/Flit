@@ -482,10 +482,7 @@ impl App {
         let announced = !matches!(j.state, JobState::Cancelled);
         let (items, title) = (j.progress.items, j.title());
         if !self.active && announced && took >= NOTIFY_AFTER {
-            let text = match failed {
-                true => crate::tr!(S::UiJobNotifyFailed, title = title),
-                false => crate::trn!(P::UiJobNotifyDone, items, title = title),
-            };
+            let text = if failed { crate::tr!(S::UiJobNotifyFailed, title = title) } else { crate::trn!(P::UiJobNotifyDone, items, title = title) };
             self.effects.push(super::Effect::Notify(text));
         }
         if took.as_millis() > super::bottom::ELAPSED_MIN_MS {

@@ -236,17 +236,19 @@ impl Tab {
         }
         if done {
             if let Some(r) = self.loading.as_mut().and_then(|l| l.restore.take()) {
-                v.clear_selection();
-                let mut anchor = None;
-                for name in &r.select {
-                    if let Some(i) = v.find(name).filter(|&i| v.is_visible(i)) {
-                        v.set_selected(i, true);
-                        anchor.get_or_insert(i);
+                if r.has_names() {
+                    v.clear_selection();
+                    let mut anchor = None;
+                    for name in &r.select {
+                        if let Some(i) = v.find(name).filter(|&i| v.is_visible(i)) {
+                            v.set_selected(i, true);
+                            anchor.get_or_insert(i);
+                        }
                     }
-                }
-                if let Some(i) = r.focus.as_ref().and_then(|n| v.find(n)).filter(|&i| v.is_visible(i)).or(anchor) {
-                    v.focus = Some(i);
-                    v.anchor = Some(i);
+                    if let Some(i) = r.focus.as_ref().and_then(|n| v.find(n)).filter(|&i| v.is_visible(i)).or(anchor) {
+                        v.focus = Some(i);
+                        v.anchor = Some(i);
+                    }
                 }
                 self.scroll = r.scroll;
                 self.scroll_target = r.scroll_target;

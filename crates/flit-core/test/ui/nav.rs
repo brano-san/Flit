@@ -673,3 +673,21 @@ fn back_and_forward_bring_back_the_saved_view() {
     assert_eq!(focused(&app).as_deref(), Some("n.txt"));
     assert_eq!((app.tab().scroll, app.tab().scroll_target), (90.0, 90.0));
 }
+
+#[test]
+fn back_brings_back_the_scroll_of_a_folder_left_with_nothing_selected() {
+    let mut app = app_at(r"C:\work");
+    deliver(&mut app, &[("a.txt", 0), ("b.txt", 0), ("c.txt", 0)]);
+    assert_eq!(focused(&app), None);
+    let t = app.tab_mut();
+    (t.scroll, t.scroll_target) = (120.0, 120.0);
+    app.drain_effects().for_each(drop);
+    key(&mut app, Key::Up, Mods { alt: true, ..NO });
+    assert_eq!(listed(&mut app), [(1, loc(r"C:\"))]);
+    deliver(&mut app, &[("work", attr::DIR)]);
+    key(&mut app, Key::Left, Mods { alt: true, ..NO });
+    assert_eq!(listed(&mut app), [(1, loc(r"C:\work"))]);
+    deliver(&mut app, &[("a.txt", 0), ("b.txt", 0), ("c.txt", 0)]);
+    assert!(selected(&app).is_empty());
+    assert_eq!((app.tab().scroll, app.tab().scroll_target), (120.0, 120.0));
+}
