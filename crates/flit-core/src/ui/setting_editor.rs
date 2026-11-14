@@ -13,7 +13,7 @@ use crate::theme::{Theme, Tint, PRESETS};
 pub(super) const BROWSE: &str = "\u{1}browse";
 pub(super) const BACKGROUND_IMAGE: &str = "appearance.background_image";
 const INSPECTOR_FONT: &str = "appearance.inspector_font";
-const CAN_BROWSE: bool = cfg!(windows);
+const CAN_BROWSE: bool = cfg!(any(windows, target_os = "linux"));
 const NOTE_LINES: usize = 4;
 const NOTE_LINE_H: f32 = 20.0;
 const SWATCH: f32 = 14.0;

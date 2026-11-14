@@ -4,8 +4,9 @@ use flit_core::input::Event;
 use flit_platform::WindowId;
 use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_void, CString};
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 const ROOT_PATH: &str = "/org/a11y/atspi/accessible/root";
 const NULL_PATH: &str = "/org/a11y/atspi/null";
@@ -159,6 +160,8 @@ pub(crate) enum V {
     Actions(Vec<(String, String, String)>),
     Empty(&'static str),
     Props(Vec<(String, V)>),
+    Bytes(Vec<u8>),
+    Array(&'static str, Vec<V>),
 }
 
 impl V {
@@ -181,6 +184,8 @@ impl V {
             V::Actions(_) => "a(sss)".into(),
             V::Empty(item) => format!("a{item}"),
             V::Props(_) => "a{sv}".into(),
+            V::Bytes(_) => "ay".into(),
+            V::Array(item, _) => format!("a{item}"),
         }
     }
 }
@@ -798,6 +803,8 @@ pub(crate) unsafe fn put(api: &Api, it: &mut Iter, me: &str, v: &V) {
             }
         }),
         V::Empty(item) => open(api, it, b'a', Some(item), |_| {}),
+        V::Bytes(b) => open(api, it, b'a', Some("y"), |s| b.iter().for_each(|&x| basic(api, s, b'y', x))),
+        V::Array(item, vs) => open(api, it, b'a', Some(item), |s| vs.iter().for_each(|x| put(api, s, me, x))),
         V::Props(p) => open(api, it, b'a', Some("{sv}"), |s| {
             for (k, x) in p {
                 open(api, s, b'e', None, |e| {
@@ -1177,6 +1184,76 @@ pub(crate) fn watch_settings(address: &str, changed: &dyn Fn(i64), clicks: &dyn 
             unsafe { libc::poll(&mut fd, 1, -1) };
         }
     }
+}
+
+const PORTAL: &str = "org.freedesktop.portal.Desktop";
+const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
+const CHOOSER_WAIT: Duration = Duration::from_secs(3600);
+
+pub(crate) fn request_path(unique_name: &str, token: &str) -> String {
+    format!("{PORTAL_PATH}/request/{}/{token}", unique_name.trim_start_matches(':').replace('.', "_"))
+}
+
+pub(crate) fn chooser_options(token: &str, exts: &[&str], folder: bool, start: Option<&[u8]>, filter_name: &str) -> Vec<(String, V)> {
+    let mut options = vec![("handle_token".to_owned(), V::S(token.to_owned())), ("modal".to_owned(), V::B(true)), ("directory".to_owned(), V::B(folder))];
+    if !exts.is_empty() && !folder {
+        let globs = exts.iter().flat_map(|e| [e.to_ascii_lowercase(), e.to_ascii_uppercase()]).map(|e| V::Tuple(vec![V::U(0), V::S(format!("*.{e}"))])).collect();
+        options.push(("filters".to_owned(), V::Array("(sa(us))", vec![V::Tuple(vec![V::S(filter_name.to_owned()), V::Array("(us)", globs)])])));
+    }
+    if let Some(dir) = start {
+        options.push(("current_folder".to_owned(), V::Bytes(dir.iter().copied().chain([0]).collect())));
+    }
+    options
+}
+
+pub(crate) fn chosen_uri(args: &[Arg]) -> Option<String> {
+    fn uris(a: &Arg, out: &mut Vec<String>) {
+        match a {
+            Arg::S(s) if s.starts_with("file://") => out.push(s.clone()),
+            Arg::L(v) => v.iter().for_each(|x| uris(x, out)),
+            _ => {}
+        }
+    }
+    let [Arg::I(0), rest @ ..] = args else { return None };
+    let mut out = Vec::new();
+    rest.iter().for_each(|a| uris(a, &mut out));
+    out.into_iter().next()
+}
+
+pub(crate) fn choose_file(title: &str, exts: &[&str], folder: bool, start: Option<&[u8]>, filter_name: &str) -> Option<String> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let address = dbus::session_address()?;
+    let api = dbus::load()?;
+    let conn = Conn::open(&api, &address)?;
+    let token = format!("flit{}_{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
+    let expected = request_path(&conn.me, &token);
+    conn.add_match(&format!("type='signal',interface='org.freedesktop.portal.Request',member='Response',path='{expected}'"));
+    let options = chooser_options(&token, exts, folder, start, filter_name);
+    let reply = conn.call(PORTAL, PORTAL_PATH, "org.freedesktop.portal.FileChooser", "OpenFile", &[V::S(String::new()), V::S(title.to_owned()), V::Props(options)])?;
+    let handle = match reply.first() {
+        Some(Arg::S(h)) => h.clone(),
+        _ => expected,
+    };
+    let until = Instant::now() + CHOOSER_WAIT;
+    while Instant::now() < until {
+        let mut answer = None;
+        let alive = conn.drain(|msg| unsafe {
+            if (api.msg_type)(msg) == TYPE_SIGNAL && text((api.member)(msg)) == "Response" && text((api.path)(msg)) == handle {
+                answer = Some(chosen_uri(&args(&api, msg)));
+            }
+        });
+        if let Some(a) = answer {
+            return a;
+        }
+        if !alive {
+            return None;
+        }
+        if !conn.pending() {
+            let mut fd = watch(conn.fd());
+            unsafe { libc::poll(&mut fd, 1, 1000) };
+        }
+    }
+    None
 }
 
 pub(crate) fn start(refresh: impl Fn() + Send + 'static, act: impl Fn(WindowId, Event) + Send + 'static) {

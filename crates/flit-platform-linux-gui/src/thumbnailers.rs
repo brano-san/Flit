@@ -97,10 +97,6 @@ pub fn run_png(t: &Thumbnailer, path: &Path, size: u32) -> Option<Vec<u8>> {
     png.filter(|p| done && crate::thumb::sniff(p) == Some(crate::thumb::Format::Png))
 }
 
-pub fn run(t: &Thumbnailer, path: &Path, size: u32) -> Option<Bitmap> {
-    crate::thumb::png_bytes(&run_png(t, path, size)?).map(|b| crate::thumb::fit(b, size))
-}
-
 pub fn system_png(path: &Path, size: u32) -> Option<Vec<u8>> {
     let ext = path.extension()?.as_bytes();
     let mime = crate::mime::mime_of(ext)?;

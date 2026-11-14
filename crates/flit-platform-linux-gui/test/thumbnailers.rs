@@ -9,6 +9,10 @@ fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     p
 }
 
+fn run(t: &Thumbnailer, path: &Path, size: u32) -> Option<Bitmap> {
+    crate::thumb::png_bytes(&run_png(t, path, size)?).map(|b| crate::thumb::fit(b, size))
+}
+
 fn png(path: &Path, w: u32, h: u32) {
     let mut e = png::Encoder::new(std::fs::File::create(path).unwrap(), w, h);
     e.set_color(png::ColorType::Rgb);

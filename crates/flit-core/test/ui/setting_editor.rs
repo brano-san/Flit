@@ -93,7 +93,7 @@ fn the_background_image_editor_checks_the_path_and_type_and_browses() {
     assert_eq!(pick(&a), Some(SettingPick::Text(i)));
     let rows = titles(&a);
     assert!(rows.contains(&S::SettingsPageGuideNoImage.t().to_owned()));
-    assert_eq!(rows.contains(&S::SettingsPageRowBrowse.t().to_owned()), cfg!(windows), "{rows:?}");
+    assert_eq!(rows.contains(&S::SettingsPageRowBrowse.t().to_owned()), cfg!(any(windows, target_os = "linux")), "{rows:?}");
     typed(&mut a, "wallpaper");
     assert_eq!(verdict(&a), Tone::Bad, "a bare name is not a full path");
     typed(&mut a, r"C:\x\notes.txt");

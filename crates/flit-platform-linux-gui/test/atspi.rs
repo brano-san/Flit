@@ -350,3 +350,26 @@ fn accent_and_text_size_changes_are_heard_and_other_settings_are_not() {
     assert_eq!(look_change(&[s(APPEARANCE), s("color-scheme"), Arg::L(vec![Arg::I(1)])]), None);
     assert_eq!(look_change(&[s(GNOME_INTERFACE), s("font-name"), Arg::L(vec![s("Cantarell 11")])]), None);
 }
+
+#[test]
+fn the_file_chooser_portal_is_asked_for_images_or_a_folder_and_its_answer_is_read() {
+    assert_eq!(request_path(":1.42", "flit7_0"), "/org/freedesktop/portal/desktop/request/1_42/flit7_0");
+    let options = chooser_options("flit7_0", &["jpg", "png"], false, Some(b"/home/u/Pictures"), "*.jpg *.png");
+    let keys: Vec<&str> = options.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(keys, ["handle_token", "modal", "directory", "filters", "current_folder"]);
+    assert_eq!(options[3].1.sig(), "a(sa(us))");
+    assert!(matches!(&options[4].1, V::Bytes(b) if b.as_slice() == b"/home/u/Pictures\0"), "the start folder is a NUL-terminated byte string");
+    let s = |v: &str| Arg::S(v.into());
+    let answer = [Arg::I(0), Arg::L(vec![Arg::L(vec![s("uris"), Arg::L(vec![Arg::L(vec![s("file:///home/u/Pictures/sea%20side.jpg")])])]), Arg::L(vec![s("choices"), Arg::L(vec![])])])];
+    assert_eq!(chosen_uri(&answer).as_deref(), Some("file:///home/u/Pictures/sea%20side.jpg"));
+}
+
+#[test]
+fn a_cancelled_chooser_or_a_folder_pick_carries_no_file_filter() {
+    let s = |v: &str| Arg::S(v.into());
+    assert_eq!(chosen_uri(&[Arg::I(1), Arg::L(vec![])]), None, "Cancel picks nothing");
+    assert_eq!(chosen_uri(&[Arg::I(0), Arg::L(vec![Arg::L(vec![s("uris"), Arg::L(vec![])])])]), None);
+    let folder = chooser_options("t", &[], true, None, "");
+    assert_eq!(folder.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["handle_token", "modal", "directory"]);
+    assert!(matches!(folder[2].1, V::B(true)));
+}

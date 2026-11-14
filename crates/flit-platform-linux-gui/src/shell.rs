@@ -3,6 +3,7 @@ use flit_core::i18n::S;
 use flit_core::provider::{FileOp, Launch, OpenAsk};
 use flit_core::ui::{Bitmap, IconKind, IconRequest};
 use flit_core::path::PathKind;
+use flit_core::i18n::S;
 use flit_core::FsPath;
 use flit_platform::{FileOps, Job, OpOutcome, PlatformError, Shell};
 use flit_platform_linux::{host, run_op};
@@ -677,6 +678,13 @@ impl Shell for LinuxShell {
 
     fn access(&mut self, items: &[FsPath]) -> Option<(Vec<Option<flit_core::provider::Access>>, flit_core::provider::Accounts)> {
         Some(crate::props::access(items))
+    }
+
+    fn browse(&mut self, exts: &[&str], folder: bool, start: Option<&FsPath>) -> Option<FsPath> {
+        let title = if folder { S::SettingsPageRowBrowseFolder } else { S::SettingsPageRowBrowse }.t().trim_end_matches(['…', '.']);
+        let filter = exts.iter().map(|e| format!("*.{e}")).collect::<Vec<_>>().join(" ");
+        let uri = crate::atspi::choose_file(title, exts, folder, start.and_then(host).map(|p| p.as_os_str().as_bytes()), &filter)?;
+        crate::xdg::fs_path(Path::new(std::ffi::OsStr::from_bytes(&flit_platform_linux::percent_decode(uri.strip_prefix("file://")?.as_bytes()))))
     }
 
     fn needs_exec_bit(&mut self, path: &FsPath) -> bool {
