@@ -2,7 +2,10 @@ use flit_core::i18n::S;
 use flit_core::provider::Stage;
 use flit_core::{install, tr_en, FsPath};
 use flit_platform::{Job, OpOutcome, PlatformError};
+use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
+use windows::Win32::UI::Shell::{DesktopWallpaper, IDesktopWallpaper};
 use windows::core::{HSTRING, PCWSTR};
 use windows::Storage::StorageFile;
 use windows::System::UserProfile::LockScreen;
@@ -74,6 +77,16 @@ pub(crate) fn lock_screen(image: &FsPath) -> OpOutcome {
         Ok(()) => OpOutcome { items: vec![(image.clone(), image.clone())], error: None },
         Err(e) => OpOutcome { items: Vec::new(), error: Some(PlatformError::new(e.code().0 as i64, tr_en!(S::ErrorsOpsExtraLockScreen, error = e.message()))) },
     }
+}
+
+pub(crate) fn wallpaper(image: &FsPath) -> Result<(), PlatformError> {
+    crate::com_sta();
+    let path: Vec<u16> = crate::fileops::std_path(image).as_os_str().encode_wide().chain([0]).collect();
+    let set = || -> windows::core::Result<()> {
+        let desktop: IDesktopWallpaper = unsafe { CoCreateInstance(&DesktopWallpaper, None, CLSCTX_ALL)? };
+        unsafe { desktop.SetWallpaper(PCWSTR::null(), PCWSTR(path.as_ptr())) }
+    };
+    set().map_err(|e| PlatformError::new(e.code().0 as i64, tr_en!(S::ErrorsOpsExtraWallpaper, error = e.message())))
 }
 
 #[cfg(test)]

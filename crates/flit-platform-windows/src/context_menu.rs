@@ -32,8 +32,8 @@ const STALE_TIMER: usize = 3;
 const PREFETCH: usize = 1;
 const PREP_REST: Duration = Duration::from_millis(90);
 const PREP_STALE: Duration = Duration::from_secs(20);
-const COVERED: [&str; 14] = ["open", "cut", "copy", "paste", "delete", "rename", "link", "properties", "copyaspath", "opennewwindow", "opennewtab", "new", "newfolder", "newlink"];
-const WINDOWS_VERBS: [&str; 29] = [
+const COVERED: [&str; 15] = ["open", "cut", "copy", "paste", "delete", "rename", "link", "properties", "copyaspath", "opennewwindow", "opennewtab", "new", "newfolder", "newlink", "setdesktopwallpaper"];
+const WINDOWS_VERBS: [&str; 28] = [
     "edit",
     "openas",
     "print",
@@ -50,7 +50,6 @@ const WINDOWS_VERBS: [&str; 29] = [
     "windows.share",
     "windows.modernshare",
     "previousversions",
-    "setdesktopwallpaper",
     "rotate90",
     "rotate270",
     "play",

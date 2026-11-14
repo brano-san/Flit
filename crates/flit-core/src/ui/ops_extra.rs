@@ -76,6 +76,13 @@ impl App {
         }
     }
 
+    pub(super) fn wallpaper_selection(&mut self) {
+        match self.selected_files().as_slice() {
+            [one] if is_image(one) => self.launch(Launch::Wallpaper(one.clone())),
+            _ => self.status(S::OpsExtraSelectWallpaper.t()),
+        }
+    }
+
     pub(super) fn backdrop_selection(&mut self) {
         match self.selected_files().as_slice() {
             [one] if is_image(one) => self.set_backdrop(one.display().into_owned()),
@@ -99,6 +106,7 @@ impl App {
         }
         if let [one] = files.as_slice() {
             if is_image(one) {
+                m.action("file.wallpaper", S::OpsExtraWallpaper.t());
                 m.action("file.lock_screen", S::OpsExtraLockScreen.t());
                 m.action("file.set_backdrop", S::OpsExtraSetBackdrop.t());
             }

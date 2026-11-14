@@ -324,6 +324,7 @@ impl Shell for ShellCom {
             Launch::Eject(drive) => return eject(drive),
             Launch::MapDrive(prefill) => return crate::network::map_dialog(prefill.as_ref()),
             Launch::Disconnect(drive) => return crate::network::disconnect_dialog(drive.as_ref()),
+            Launch::Wallpaper(image) => return crate::install::wallpaper(image),
             Launch::Run { program, args, .. } if program.eq_ignore_ascii_case("explorer.exe") && crate::shellwin::explorer_place(args).is_some_and(crate::shellwin::raise_explorer) => return Ok(()),
             _ => {}
         }
@@ -455,7 +456,7 @@ pub(crate) fn commands(launch: &Launch, terminal: Option<&str>) -> Vec<Command> 
                 .collect(),
         },
         Launch::RunInTerminal { program } => run_in_terminal(program, terminal).into_iter().collect(),
-        Launch::Eject(_) | Launch::Unmount(_) | Launch::Mount(_) | Launch::Unlock { .. } | Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) | Launch::Reveal { .. } | Launch::ChooseApp { .. } | Launch::SetDefault { .. } | Launch::Custom { .. } | Launch::Execute(_) | Launch::Display(_) | Launch::Print(_) | Launch::FileManager(_) | Launch::Command { .. } => Vec::new(),
+        Launch::Eject(_) | Launch::Unmount(_) | Launch::Mount(_) | Launch::Unlock { .. } | Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) | Launch::Reveal { .. } | Launch::ChooseApp { .. } | Launch::SetDefault { .. } | Launch::Custom { .. } | Launch::Execute(_) | Launch::Display(_) | Launch::Print(_) | Launch::FileManager(_) | Launch::Command { .. } | Launch::Wallpaper(_) => Vec::new(),
     }
 }
 

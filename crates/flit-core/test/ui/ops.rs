@@ -2403,3 +2403,25 @@ fn extract_and_delete_selects_what_came_out_of_the_archive() {
         assert_eq!(v.focus.map(|i| v.listing().name(i).to_vec()), Some(b"a".to_vec()));
     }
 }
+
+#[test]
+fn one_selected_picture_becomes_the_desktop_background() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("photo.jpg", false), ("notes.txt", false), ("more.png", false)]);
+    select(&mut app, &["photo.jpg"]);
+    assert!(app.run_action("file.wallpaper", t0()));
+    let set: Vec<Launch> = app.drain_effects().filter_map(|e| if let Effect::Provider { req: ProviderRequest::Launch { launch, .. }, .. } = e { Some(launch) } else { None }).collect();
+    assert_eq!(set, [Launch::Wallpaper(p(r"C:\x\photo.jpg"))]);
+}
+
+#[test]
+fn a_document_or_several_pictures_do_not_change_the_background() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("photo.jpg", false), ("notes.txt", false), ("more.png", false)]);
+    for names in [&["notes.txt"][..], &["photo.jpg", "more.png"], &[]] {
+        select(&mut app, names);
+        app.run_action("file.wallpaper", t0());
+        assert!(!app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Launch { .. }, .. })), "{names:?}");
+        assert_eq!(app.tab().error.as_deref(), Some(S::OpsExtraSelectWallpaper.t()));
+    }
+}

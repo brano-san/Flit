@@ -337,6 +337,7 @@
 "file.flatten" = "Bring every file out of the subfolders and delete the empty subfolders"
 "file.install_fonts" = "Install the selected font files for the current user"
 "file.lock_screen" = "Use the selected picture as the lock screen background"
+"file.wallpaper" = "Use the selected picture as the desktop background"
 "file.set_backdrop" = "Use the selected picture as the background of the file list"
 "view.clear_backdrop" = "Remove the background picture of the file list"
 "archive.compress" = "Pack the selection into a ZIP, 7z or tar file with options, zip"

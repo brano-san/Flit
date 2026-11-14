@@ -337,6 +337,7 @@
 "file.flatten" = "Sacar todos los archivos de las subcarpetas y eliminar las subcarpetas vacías"
 "file.install_fonts" = "Instala las fuentes seleccionadas para el usuario actual."
 "file.lock_screen" = "Usa la imagen seleccionada como fondo de la pantalla de bloqueo."
+"file.wallpaper" = "Usa la imagen seleccionada como fondo de escritorio."
 "file.set_backdrop" = "Usa la imagen seleccionada como fondo de la lista de archivos."
 "view.clear_backdrop" = "Quita la imagen de fondo de la lista de archivos."
 "archive.compress" = "Empaquetar la selección en un archivo ZIP, 7z o tar con opciones, zip"

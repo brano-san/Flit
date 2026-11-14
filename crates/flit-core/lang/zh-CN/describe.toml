@@ -337,6 +337,7 @@
 "file.flatten" = "将所有文件从子文件夹中移出并删除空的子文件夹"
 "file.install_fonts" = "为当前用户安装所选字体文件。"
 "file.lock_screen" = "将所选图片用作锁屏背景。"
+"file.wallpaper" = "将所选图片用作桌面背景。"
 "file.set_backdrop" = "将所选图片用作文件列表的背景。"
 "view.clear_backdrop" = "移除文件列表的背景图片。"
 "archive.compress" = "使用选项将所选内容打包为 ZIP、7z 或 tar 文件，zip"

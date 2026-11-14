@@ -337,6 +337,7 @@
 "file.flatten" = "Sortir tous les fichiers des sous-dossiers et supprimer les sous-dossiers vides"
 "file.install_fonts" = "Installer les fichiers de police sélectionnés pour l’utilisateur actuel."
 "file.lock_screen" = "Utiliser l’image sélectionnée comme arrière-plan de l’écran de verrouillage."
+"file.wallpaper" = "Utiliser l’image sélectionnée comme arrière-plan du bureau."
 "file.set_backdrop" = "Utiliser l’image sélectionnée comme arrière-plan de la liste de fichiers."
 "view.clear_backdrop" = "Supprimer l’image d’arrière-plan de la liste de fichiers."
 "archive.compress" = "Compresser la sélection en fichier ZIP, 7z ou TAR avec options, zip"

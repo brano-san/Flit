@@ -337,6 +337,7 @@
 "file.flatten" = "Alle Dateien aus den Unterordnern herausholen und die leeren Unterordner löschen"
 "file.install_fonts" = "Die ausgewählten Schriftdateien für den aktuellen Benutzer installieren."
 "file.lock_screen" = "Das ausgewählte Bild als Sperrbildschirm-Hintergrund verwenden."
+"file.wallpaper" = "Das ausgewählte Bild als Desktophintergrund verwenden."
 "file.set_backdrop" = "Das ausgewählte Bild als Hintergrund der Dateiliste verwenden."
 "view.clear_backdrop" = "Das Hintergrundbild der Dateiliste entfernen."
 "archive.compress" = "Die Auswahl mit Optionen in eine ZIP-, 7z- oder TAR-Datei packen, zip"

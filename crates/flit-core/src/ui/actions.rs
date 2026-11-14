@@ -542,6 +542,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("file.install_fonts", G::Flit, S::OpsExtraInstallFonts, S::DescribeFileInstallFonts, &[], |a, _| a.install_fonts_selection()),
     Action::new("file.print", G::Flit, S::ActionsFilePrint, S::DescribeFilePrint, &[], |a, _| a.print_selection()),
     Action::new("file.mount_image", G::Flit, S::ActionsFileMountImage, S::DescribeFileMountImage, &[], |a, _| a.mount_image_selection()),
+    Action::new("file.wallpaper", G::Flit, S::OpsExtraWallpaper, S::DescribeFileWallpaper, &[], |a, _| a.wallpaper_selection()),
     Action::new("file.lock_screen", G::Flit, S::OpsExtraLockScreen, S::DescribeFileLockScreen, &[], |a, _| a.lock_screen_selection()),
     Action::new("file.set_backdrop", G::Flit, S::OpsExtraSetBackdrop, S::DescribeFileSetBackdrop, &[], |a, _| a.backdrop_selection()),
     Action::new("view.clear_backdrop", G::Flit, S::OpsExtraClearBackdrop, S::DescribeViewClearBackdrop, &[], |a, _| a.set_backdrop(String::new())),

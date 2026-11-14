@@ -31,6 +31,7 @@ mod turbo;
 mod udisks;
 mod update;
 mod window;
+mod wallpaper;
 mod wl;
 mod xdnd;
 pub mod xdg;

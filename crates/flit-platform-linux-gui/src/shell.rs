@@ -596,6 +596,7 @@ fn launch(l: &Launch) -> Result<(), PlatformError> {
         Launch::Disconnect(Some(drive)) => crate::places::disconnect(Path::new(os(drive))).map_err(|e| crate::places::drive_error(S::ErrorsFsDisconnectFailed, Path::new(os(drive)), &e)),
         Launch::MapDrive(_) | Launch::Disconnect(None) | Launch::ConnectServer(_) => Err(PlatformError::unsupported("mapping network drives")),
         Launch::Reveal { .. } => Err(PlatformError::unsupported("revealing outside the shell thread")),
+        Launch::Wallpaper(image) => crate::wallpaper::set(Path::new(os(image))),
     }
 }
 
