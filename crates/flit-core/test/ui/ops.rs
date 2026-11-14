@@ -2307,3 +2307,27 @@ fn dragging_after_a_double_click_in_the_rename_box_goes_by_whole_words() {
     assert_eq!(drag(&mut app, 1, r.x + 5.0, r.x + 45.0, t + Duration::from_secs(2)), " ann", "a single click still drags by characters");
     assert!(app.is_renaming());
 }
+
+#[test]
+fn extract_and_delete_selects_what_came_out_of_the_archive() {
+    for added_first in [true, false] {
+        let mut app = app_at(r"C:\x");
+        deliver(&mut app, &[("a.zip", false), ("b.txt", false)]);
+        select(&mut app, &["a.zip"]);
+        app.extract_and_delete();
+        let [(id, extract)] = ops(&mut app).try_into().unwrap();
+        done(&mut app, id, extract, &[(r"C:\x\a.zip", r"C:\x\a")]);
+        let [(trash_id, trash)] = ops(&mut app).try_into().unwrap();
+        assert_eq!(trash, FileOp::Trash(vec![p(r"C:\x\a.zip")]));
+        if added_first {
+            change(&mut app, ChangeKind::Added, "a", true);
+        }
+        done(&mut app, trash_id, trash, &[(r"C:\x\a.zip", r"C:\$Recycle.Bin\S\$R1")]);
+        if !added_first {
+            change(&mut app, ChangeKind::Added, "a", true);
+        }
+        assert_eq!(selected(&app), ["a"], "the extracted folder is selected whichever arrives first");
+        let v = app.tab().view.as_ref().unwrap();
+        assert_eq!(v.focus.map(|i| v.listing().name(i).to_vec()), Some(b"a".to_vec()));
+    }
+}

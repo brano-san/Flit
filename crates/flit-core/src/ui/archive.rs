@@ -493,9 +493,11 @@ impl App {
         }
         match then {
             Then::TrashArchives(archives) => {
-                if error.is_none() {
-                    self.start_op_for(tab, FileOp::Trash(archives.clone()), Origin::Fresh, Then::Nothing);
+                if error.is_some() {
+                    return true;
                 }
+                self.start_op_for(tab, FileOp::Trash(archives.clone()), Origin::Fresh, Then::Nothing);
+                return false;
             }
             Then::Open(dir) if error.is_none() => self.dispatch(vec![Route { folder: Location::from_local(dir.clone()), select: None }], self.open_target, now),
             Then::Launch => {
