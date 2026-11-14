@@ -550,6 +550,7 @@ impl<P: Platform> Handler<P> {
                 Effect::Window(WindowCmd::ToggleMaximize) => window.toggle_maximize(),
                 Effect::Window(WindowCmd::Fullscreen) => window.toggle_fullscreen(),
                 Effect::Window(WindowCmd::Compact(on)) => window.set_compact(on),
+                Effect::Window(WindowCmd::Attention) => window.request_attention(),
                 Effect::MoveTab { tab, at, last } => self.move_tab(window, tab, at, last),
                 Effect::RestoreSession => {
                     if let Some(s) = self.crashed.take() {

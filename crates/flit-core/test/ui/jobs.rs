@@ -3,7 +3,7 @@ use crate::input::{Event, MouseButton};
 use crate::listing::Meta;
 use crate::provider::{OpReport, ProviderEvent, ProviderRequest};
 use crate::text::tests::Mono;
-use crate::ui::{Effect, Persisted};
+use crate::ui::{Effect, Persisted, WindowCmd};
 use std::sync::mpsc;
 use std::thread::JoinHandle;
 
@@ -508,4 +508,19 @@ fn items_the_trash_refuses_can_be_deleted_permanently_instead() {
     ctl.cancel();
     app.on_provider_event(ProviderEvent::Untrashable { tab, id, items: vec![p("/media/usb/d")] }, t0());
     assert_eq!(app.asking(), None, "a cancelled operation does not ask");
+}
+
+#[test]
+fn an_unfocused_window_flashes_once_when_a_question_arrives() {
+    let mut app = app_at(r"C:\x");
+    app.drain_effects().for_each(drop);
+    app.on_event(&Event::Focus(false), t0());
+    app.ask_confirm(FileOp::Trash(vec![p(r"C:\x\a.txt")]));
+    assert_eq!(app.drain_effects().filter(|e| matches!(e, Effect::Window(WindowCmd::Attention))).count(), 1);
+    app.ask_extension_change("txt".into());
+    assert_eq!(app.drain_effects().filter(|e| matches!(e, Effect::Window(WindowCmd::Attention))).count(), 0, "a follow-up question does not flash again");
+    app.drain_effects().for_each(drop);
+    app.on_event(&Event::Focus(true), t0());
+    app.empty_bin();
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::Window(WindowCmd::Attention))), "a focused window does not flash");
 }

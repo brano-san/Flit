@@ -451,6 +451,9 @@ impl App {
         if self.jobs.asks.is_empty() {
             self.jobs.all = false;
             self.jobs.sel = ask.first_button();
+            if !self.active {
+                self.effects.push(super::Effect::Window(super::WindowCmd::Attention));
+            }
         }
         self.jobs.asks.push_back(ask);
         self.layout();

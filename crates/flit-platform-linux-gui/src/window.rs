@@ -287,6 +287,12 @@ impl Window for LinuxWindow {
         }
     }
 
+    fn request_attention(&self) {
+        if !self.raw.has_focus() {
+            self.raw.request_user_attention(Some(UserAttentionType::Informational));
+        }
+    }
+
     fn open_window(&self, opts: WindowOptions) {
         self.push(Command::Open(opts));
     }

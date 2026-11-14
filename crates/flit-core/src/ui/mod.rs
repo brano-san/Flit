@@ -308,6 +308,7 @@ pub enum WindowCmd {
     Quit,
     Fullscreen,
     Compact(Option<bool>),
+    Attention,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]

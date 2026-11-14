@@ -128,6 +128,7 @@ pub trait Window {
         None
     }
     fn toggle_fullscreen(&self) {}
+    fn request_attention(&self) {}
     fn set_dark(&self, _dark: bool) {}
     fn set_compact(&self, _on: Option<bool>) {}
     fn host(&self, _cmd: HostCmd) {}

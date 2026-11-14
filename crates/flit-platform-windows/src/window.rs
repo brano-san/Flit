@@ -252,6 +252,21 @@ impl Window for Win32Window {
         }
     }
 
+    fn request_attention(&self) {
+        let h = self.hwnd();
+        if h.is_invalid() || unsafe { GetForegroundWindow() } == h {
+            return;
+        }
+        let info = FLASHWINFO {
+            cbSize: std::mem::size_of::<FLASHWINFO>() as u32,
+            hwnd: h,
+            dwFlags: FLASHW_TRAY | FLASHW_TIMERNOFG,
+            uCount: 0,
+            dwTimeout: 0,
+        };
+        unsafe { let _ = FlashWindowEx(&info); }
+    }
+
     fn open_window(&self, opts: WindowOptions) {
         let p = Box::into_raw(Box::new(opts));
         unsafe {
