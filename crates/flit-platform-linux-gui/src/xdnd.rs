@@ -1,9 +1,13 @@
+use flit_core::input::Mods;
+use flit_core::ui::drop_effect;
 use std::ffi::c_void;
+use std::sync::OnceLock;
+use winit::event_loop::DndAction;
 use std::time::{Duration, Instant};
 use x11rb::connection::Connection;
 type R<T> = Result<T, Box<dyn std::error::Error>>;
 use x11rb::protocol::xproto::{
-    Atom, AtomEnum, ClientMessageEvent, ConnectionExt, CreateWindowAux, EventMask, GrabMode, GrabStatus, PropMode, SelectionNotifyEvent, SelectionRequestEvent, Timestamp, Window, WindowClass,
+    Atom, AtomEnum, ClientMessageEvent, ConnectionExt, CreateWindowAux, EventMask, GrabMode, GrabStatus, KeyButMask, PropMode, SelectionNotifyEvent, SelectionRequestEvent, Timestamp, Window, WindowClass,
     SELECTION_NOTIFY_EVENT,
 };
 use x11rb::protocol::Event;
@@ -36,6 +40,47 @@ pub enum Outcome {
     Dropped(Window),
     Refused,
     Nowhere,
+}
+
+pub fn drop_choice(keys: Option<Mods>, proposed: Option<DndAction>, preferred: Option<DndAction>) -> (Mods, bool) {
+    let held = keys.unwrap_or_else(|| match proposed.filter(|&p| Some(p) != preferred) {
+        Some(DndAction::Copy) => Mods { ctrl: true, ..Mods::default() },
+        Some(DndAction::Move) => Mods { shift: true, ..Mods::default() },
+        Some(DndAction::Ask) => Mods { alt: true, ..Mods::default() },
+        _ => Mods::default(),
+    });
+    (Mods { alt: false, ..held }, held.alt)
+}
+
+pub fn chose_freely(keys: Option<Mods>, proposed: Option<DndAction>, preferred: Option<DndAction>) -> bool {
+    keys.is_some() || proposed.is_none_or(|p| Some(p) == preferred)
+}
+
+pub fn wire_action(effect: u32) -> Option<DndAction> {
+    if effect & drop_effect::MOVE != 0 {
+        Some(DndAction::Move)
+    } else if effect & (drop_effect::COPY | drop_effect::LINK) != 0 {
+        Some(DndAction::Copy)
+    } else {
+        None
+    }
+}
+
+pub fn offered_actions(effect: u32, preferred: Option<DndAction>) -> Vec<DndAction> {
+    let Some(first) = preferred.or(wire_action(effect)).filter(|_| effect != drop_effect::NONE) else { return Vec::new() };
+    let mut out = vec![first];
+    out.extend([DndAction::Copy, DndAction::Move, DndAction::Ask].into_iter().filter(|&a| a != first));
+    out
+}
+
+pub fn pointer_mods() -> Option<Mods> {
+    static POINTER: OnceLock<Option<(XCBConnection, Window)>> = OnceLock::new();
+    let (conn, root) = POINTER.get_or_init(|| XCBConnection::connect(None).ok().map(|(conn, screen)| {
+        let root = conn.setup().roots[screen].root;
+        (conn, root)
+    })).as_ref()?;
+    let mask = conn.query_pointer(*root).ok()?.reply().ok()?.mask;
+    Some(Mods { ctrl: mask.contains(KeyButMask::CONTROL), shift: mask.contains(KeyButMask::SHIFT), alt: mask.contains(KeyButMask::MOD1) })
 }
 
 pub fn release_pointer_of(display: *mut c_void) {

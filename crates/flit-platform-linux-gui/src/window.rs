@@ -1,6 +1,6 @@
 use crate::apps::OpenWith;
 use crate::input::{self, Clicks};
-use flit_core::input::{CursorIcon, Event, HitArea, MouseButton};
+use flit_core::input::{CursorIcon, Event, HitArea, Mods, MouseButton};
 use flit_core::preview::{HostCmd, Hosted, MediaCmd};
 use flit_core::render::Rect;
 use flit_core::ui::{drop_effect, Bitmap, DragEvent, ShellMenu};
@@ -602,7 +602,7 @@ impl WindowSystem for LinuxWindows {
 
     fn run<H: WindowHandler<Self>>(mut self, first: WindowOptions, handler: H) -> Result<(), PlatformError> {
         let commands: Commands = Rc::new(RefCell::new(vec![Command::Open(first)]));
-        let mut app = Loop { handler, nodes: Vec::new(), commands, pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None, clip_text: None, watching: false };
+        let mut app = Loop { handler, nodes: Vec::new(), commands, pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None, clip_text: None, watching: false, outgoing: None };
         LOOP_RUNNING.store(true, Ordering::Release);
         let ran = self.event_loop.run_app_on_demand(&mut app);
         LOOP_RUNNING.store(false, Ordering::Release);
@@ -631,6 +631,7 @@ struct Loop<H> {
     reading: Option<Reading>,
     clip_text: Option<bool>,
     watching: bool,
+    outgoing: Option<DataTransferId>,
 }
 
 struct Reading {
@@ -736,14 +737,14 @@ fn copy(el: &dyn ActiveEventLoop, text: String) {
     }
 }
 
-fn drag_out(el: &dyn ActiveEventLoop, source: winit::window::WindowId, list: String) {
+fn drag_out(el: &dyn ActiveEventLoop, source: winit::window::WindowId, list: String) -> Option<DataTransferId> {
     if let Ok(RawDisplayHandle::Xlib(x)) = el.display_handle().map(|h| h.as_raw()) {
         crate::xdnd::release_pointer_of(x.display.map_or(std::ptr::null_mut(), |d| d.as_ptr()));
         background("flit-drag", move || match crate::xdnd::drag(list) {
             Ok(outcome) => tracing::info!("drag out of Flit: {outcome:?}"),
             Err(e) => tracing::info!("cannot drag files out of Flit here: {e}"),
         });
-        return;
+        return None;
     }
     let data = DataTransferSendBuilder::new(list).with_type(TypeHint::UriList, |list: &String, _| Some(list.clone())).build();
     let mut rgba = vec![0; 40 * 40 * 4];
@@ -756,28 +757,26 @@ fn drag_out(el: &dyn ActiveEventLoop, source: winit::window::WindowId, list: Str
         }
     }
     let icon = winit::icon::RgbaIcon::new(rgba, 40, 40).ok().map(|icon| winit::event_loop::DragIcon { icon: icon.into(), offset_x: 12, offset_y: 12 });
-    if let Err(e) = el.start_drag(source, data, &[DndAction::Copy, DndAction::Move], icon) {
-        tracing::info!("cannot drag files out of Flit here: {e}");
-    }
+    el.start_drag(source, data, &[DndAction::Copy, DndAction::Move], icon).map_err(|e| tracing::info!("cannot drag files out of Flit here: {e}")).ok()
 }
 
 struct Incoming {
     id: DataTransferId,
     at: (f32, f32),
-    entered: bool,
-    dropped: bool,
+    paths: Option<Vec<FsPath>>,
+    proposed: Option<DndAction>,
+    dropped: Option<Option<DndAction>>,
+    preferred: Option<DndAction>,
+    ask: bool,
 }
 
-fn dnd_actions(effect: u32) -> Vec<DndAction> {
-    let mut out = Vec::new();
-    if effect & drop_effect::COPY != 0 {
-        out.push(DndAction::Copy);
-    }
-    if effect & drop_effect::MOVE != 0 {
-        out.push(DndAction::Move);
-    }
-    out
+enum Arrival {
+    Enter,
+    Over,
+    Drop,
 }
+
+const OFFERED_TO_FLIT: u32 = drop_effect::COPY | drop_effect::MOVE | drop_effect::LINK;
 
 fn winit_copy_files(el: &dyn ActiveEventLoop, paths: Vec<FsPath>, cut: bool) {
     let lossy = |b: Vec<u8>| String::from_utf8_lossy(&b).into_owned();
@@ -814,7 +813,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                     Command::Copy(text) => copy(el, text),
                     Command::CopyFiles(paths, cut) => self.copy_files(el, paths, cut),
                     Command::CopyImage(image) => self.copy_image(el, &image),
-                    Command::Drag(source, list) => drag_out(el, source, list),
+                    Command::Drag(source, list) => self.outgoing = drag_out(el, source, list),
                     Command::Activate(id, token) => self.activate(id, token),
                 }
             }
@@ -1022,60 +1021,108 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         }
     }
 
-    fn drag_in(&mut self, el: &dyn ActiveEventLoop, i: usize, event: WindowEvent) -> Option<WindowEvent> {
-        let (handler, w, mods) = (&mut self.handler, &self.nodes[i].window, input::mods(self.mods));
-        let all = drop_effect::COPY | drop_effect::MOVE;
-        let mut deliver = |ev: DragEvent, id: DataTransferId| {
-            let effect = handler.drag(w, ev).effect;
-            let _ = el.set_valid_dnd_actions(id, &dnd_actions(effect));
+    fn drop_keys(&self, el: &dyn ActiveEventLoop) -> Option<Mods> {
+        if !el.is_wayland() {
+            return Some(crate::xdnd::pointer_mods().unwrap_or_else(|| input::mods(self.mods)));
+        }
+        self.outgoing.is_some().then(|| input::mods(self.mods))
+    }
+
+    fn arrive(&mut self, el: &dyn ActiveEventLoop, i: usize, arrival: Arrival, proposed: Option<DndAction>) {
+        let keys = self.drop_keys(el);
+        let (handler, w) = (&mut self.handler, &self.nodes[i].window);
+        let Some(d) = self.incoming.as_mut() else { return };
+        let Some(paths) = d.paths.clone() else { return };
+        let (mods, ask) = crate::xdnd::drop_choice(keys, proposed, d.preferred);
+        let (x, y, allowed) = (d.at.0, d.at.1, OFFERED_TO_FLIT);
+        let reenter = !matches!(arrival, Arrival::Enter) && ask != d.ask;
+        if reenter {
+            handler.drag(w, DragEvent::Leave);
+        }
+        d.ask = ask;
+        let enter = DragEvent::Enter { paths, x, y, mods, allowed, right: ask };
+        let event = match arrival {
+            Arrival::Enter => enter,
+            Arrival::Over | Arrival::Drop => {
+                if reenter {
+                    handler.drag(w, enter);
+                }
+                if matches!(arrival, Arrival::Drop) {
+                    DragEvent::Drop { x, y, mods, allowed }
+                } else {
+                    DragEvent::Over { x, y, mods, allowed }
+                }
+            }
         };
+        let effect = handler.drag(w, event).effect;
+        if crate::xdnd::chose_freely(keys, proposed, d.preferred) {
+            d.preferred = crate::xdnd::wire_action(effect);
+        }
+        let id = d.id;
+        if matches!(arrival, Arrival::Drop) {
+            self.incoming = None;
+        } else {
+            let _ = el.set_valid_dnd_actions(id, &crate::xdnd::offered_actions(effect, d.preferred));
+        }
+    }
+
+    fn drag_in(&mut self, el: &dyn ActiveEventLoop, i: usize, event: WindowEvent) -> Option<WindowEvent> {
         match event {
             WindowEvent::DragEntered { id, position } => {
                 let at = position.map_or((0.0, 0.0), |p| (p.x as f32, p.y as f32));
-                self.incoming = Some(Incoming { id, at, entered: false, dropped: false });
-                let _ = el.set_valid_dnd_actions(id, &[DndAction::Copy, DndAction::Move]);
+                let offered = crate::xdnd::offered_actions(drop_effect::COPY, None);
+                self.incoming = Some(Incoming { id, at, paths: None, proposed: None, dropped: None, preferred: offered.first().copied(), ask: false });
+                let _ = el.set_valid_dnd_actions(id, &offered);
                 if let Err(e) = el.fetch_data_transfer(id, &TypeHint::UriList) {
                     tracing::debug!("the dragged data has no file list: {e}");
                 }
             }
-            WindowEvent::DataTransferReceived { id, value, .. } if self.incoming.as_ref().is_some_and(|d| d.id == id && !d.entered) => {
-                let d = self.incoming.as_mut()?;
+            WindowEvent::DataTransferReceived { id, value, .. } if self.incoming.as_ref().is_some_and(|d| d.id == id && d.paths.is_none()) => {
                 let paths = value.try_as_bytes().map(|b| crate::shell::parse_file_list(&b).0).unwrap_or_default();
+                let d = self.incoming.as_mut()?;
                 if paths.is_empty() {
                     self.incoming = None;
                     let _ = el.set_valid_dnd_actions(id, &[]);
                     return None;
                 }
-                d.entered = true;
-                let (at, dropped) = (d.at, d.dropped);
-                deliver(DragEvent::Enter { paths, x: at.0, y: at.1, mods, allowed: all, right: false }, id);
-                if dropped {
-                    deliver(DragEvent::Drop { x: at.0, y: at.1, mods, allowed: all }, id);
-                    self.incoming = None;
+                d.paths = Some(paths);
+                let (proposed, dropped) = (d.proposed, d.dropped);
+                self.arrive(el, i, Arrival::Enter, proposed);
+                if let Some(action) = dropped {
+                    self.arrive(el, i, Arrival::Drop, action);
                 }
             }
-            WindowEvent::DragPosition { id, position, .. } => {
+            WindowEvent::DragPosition { id, position, proposed_action } => {
                 let d = self.incoming.as_mut().filter(|d| d.id == id)?;
                 d.at = (position.x as f32, position.y as f32);
-                if d.entered {
-                    let at = d.at;
-                    deliver(DragEvent::Over { x: at.0, y: at.1, mods, allowed: all }, id);
+                d.proposed = proposed_action;
+                if d.paths.is_some() {
+                    self.arrive(el, i, Arrival::Over, proposed_action);
                 }
             }
-            WindowEvent::DragDropped { id, .. } => {
+            WindowEvent::DragDropped { id, proposed_action } => {
                 let d = self.incoming.as_mut().filter(|d| d.id == id)?;
-                if !d.entered {
-                    d.dropped = true;
+                if proposed_action == Some(DndAction::Ask) {
+                    let _ = el.set_valid_dnd_actions(id, &[DndAction::Copy]);
+                }
+                if d.paths.is_none() {
+                    d.dropped = Some(proposed_action);
                     return None;
                 }
-                let at = d.at;
-                self.incoming = None;
-                deliver(DragEvent::Drop { x: at.0, y: at.1, mods, allowed: all }, id);
+                self.arrive(el, i, Arrival::Drop, proposed_action);
             }
             WindowEvent::DragLeft { id } => {
-                if self.incoming.take().is_some_and(|d| d.id == id && d.entered) {
-                    deliver(DragEvent::Leave, id);
+                if self.incoming.take().is_some_and(|d| d.id == id && d.paths.is_some()) {
+                    self.handler.drag(&self.nodes[i].window, DragEvent::Leave);
                 }
+            }
+            WindowEvent::OutgoingDragDropped { id, action } => {
+                tracing::info!("drag out of Flit dropped with {action:?}");
+                self.outgoing.take_if(|o| *o == id);
+            }
+            WindowEvent::OutgoingDragCanceled { id } => {
+                tracing::info!("drag out of Flit canceled");
+                self.outgoing.take_if(|o| *o == id);
             }
             other => return Some(other),
         }
