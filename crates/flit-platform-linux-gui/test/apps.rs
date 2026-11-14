@@ -59,7 +59,37 @@ fn the_open_with_menu_lists_apps_for_every_selected_file() {
     assert_eq!(single.len(), 4);
     assert!(matches!(&single[0], MenuItem::Command { keys, .. } if !keys.is_empty()), "the default app is marked");
     assert!(matches!(&single[1], MenuItem::Command { keys, .. } if keys.is_empty()));
-    assert!(open_with(&[fp(t.path())], &entries, &Assoc::default()).0.is_empty(), "folders get no Open with");
+    assert_eq!(open_with(&[fp(t.path())], &entries, &Assoc::default()).0.len(), 1, "a folder without folder apps gets only Other application");
+}
+
+const BROWSER: &str = "[Desktop Entry]\nType=Application\nName=Disk Usage\nExec=baobab %U\nMimeType=inode/directory;\n";
+
+#[test]
+fn folders_open_with_the_apps_that_take_folders() {
+    let t = Temp::new("apps-folders");
+    let (one, two) = (t.path().join("one"), t.path().join("two"));
+    std::fs::create_dir_all(&one).unwrap();
+    std::fs::create_dir_all(&two).unwrap();
+    let entries = vec![entry("editor.desktop", EDITOR), entry("baobab.desktop", BROWSER)];
+    let fp = |p: &Path| crate::xdg::fs_path(p).unwrap();
+    let (items, launches) = open_with(&[fp(&one), fp(&two)], &entries, &Assoc::default());
+    assert!(matches!(&items[0], MenuItem::Command { label, .. } if label == "Disk Usage"));
+    assert_eq!(launches[0], Launch::With { program: fp(Path::new("/usr/share/applications/baobab.desktop")), args: vec![fp(&one), fp(&two)] });
+    assert!(matches!(&launches[1], Launch::ChooseApp { mime, .. } if mime == "inode/directory"));
+    assert_eq!(launches.len(), 2, "the text editor is not offered for folders");
+}
+
+#[test]
+fn a_folder_selected_with_a_file_gets_no_open_with() {
+    let t = Temp::new("apps-mixed");
+    let dir = t.path().join("dir");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = t.file("a.txt", 1);
+    let entries = vec![entry("editor.desktop", EDITOR), entry("baobab.desktop", BROWSER)];
+    let fp = |p: &Path| crate::xdg::fs_path(p).unwrap();
+    assert_eq!(open_with(&[fp(&dir), fp(&file)], &entries, &Assoc::default()), (Vec::new(), Vec::new()));
+    let (items, _) = open_with(&[fp(&file)], &entries, &Assoc::default());
+    assert!(matches!(&items[0], MenuItem::Command { label, .. } if label == "Редактор"), "files still list their own apps");
 }
 
 #[test]

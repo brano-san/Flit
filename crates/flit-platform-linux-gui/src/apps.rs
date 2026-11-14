@@ -308,12 +308,16 @@ pub fn choices(entries: &[Entry]) -> Vec<AppChoice> {
 
 pub fn open_with(files: &[FsPath], entries: &[Entry], assoc: &Assoc) -> OpenWith {
     let paths: Vec<PathBuf> = files.iter().filter_map(|f| flit_platform_linux::host(f).map(Path::to_path_buf)).collect();
-    if paths.is_empty() || paths.len() != files.len() || paths.iter().any(|p| p.is_dir()) {
+    if paths.is_empty() || paths.len() != files.len() {
+        return (Vec::new(), Vec::new());
+    }
+    let folders: Vec<bool> = paths.iter().map(|p| p.is_dir()).collect();
+    if folders.iter().any(|&d| d) && !folders.iter().all(|&d| d) {
         return (Vec::new(), Vec::new());
     }
     let mut mimes: Vec<String> = Vec::new();
-    for p in &paths {
-        let mime = crate::mime::mime_of_file(p);
+    for (p, folder) in paths.iter().zip(folders) {
+        let mime = if folder { flit_core::mimeapps::FOLDER.to_owned() } else { crate::mime::mime_of_file(p) };
         if !mimes.contains(&mime) {
             mimes.push(mime);
         }
