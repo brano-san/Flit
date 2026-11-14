@@ -202,7 +202,7 @@ struct FolderView {
 
 unsafe fn folder_view_call(node: *const (), ev: DragEvent) -> DropReply {
     let view = &*(node as *const FolderView);
-    let accept = DropReply { effect: DROPEFFECT_COPY.0, caption: None, folder: Some(view.dest.clone()) };
+    let accept = DropReply { effect: DROPEFFECT_COPY.0, caption: None, folder: Some(view.dest.clone()), onto: None };
     match ev {
         DragEvent::Enter { paths, .. } => {
             *view.entered.borrow_mut() = paths;
@@ -297,4 +297,86 @@ fn the_right_button_carries_a_drag_until_it_is_let_go() {
     assert_eq!(continue_drag(true, keys(MK_RBUTTON.0), true), DRAGDROP_S_CANCEL);
     assert_eq!(continue_drag(false, keys(MK_LBUTTON.0), false), S_OK);
     assert_eq!(continue_drag(false, keys(MK_RBUTTON.0), false), DRAGDROP_S_CANCEL);
+}
+
+struct OntoView {
+    onto: FsPath,
+    dest: FsPath,
+    events: RefCell<Vec<&'static str>>,
+}
+
+unsafe fn onto_view_call(node: *const (), ev: DragEvent) -> DropReply {
+    let view = &*(node as *const OntoView);
+    view.events.borrow_mut().push(match ev {
+        DragEvent::Enter { .. } => "enter",
+        DragEvent::Over { .. } => "over",
+        DragEvent::Leave => "leave",
+        DragEvent::Drop { .. } => "drop",
+    });
+    DropReply { effect: DROPEFFECT_COPY.0, caption: None, folder: Some(view.dest.clone()), onto: Some(view.onto.clone()) }
+}
+
+fn drop_onto(onto: &std::path::Path, dragged: &std::path::Path, dest: &std::path::Path) -> (Vec<&'static str>, DROPEFFECT) {
+    crate::com_sta();
+    let _ = unsafe { OleInitialize(None) };
+    let data: IDataObject = Pidls::parse(&[as_fs(dragged)]).unwrap().ui_object(HWND::default()).unwrap();
+    let view = OntoView { onto: as_fs(onto), dest: as_fs(dest), events: RefCell::new(Vec::new()) };
+    let target = Target::interface(HWND::default(), &view as *const OntoView as *const (), onto_view_call, None);
+    let (keys, pt, allowed) = (MODIFIERKEYS_FLAGS(0), POINTL { x: 10, y: 10 }, DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK);
+    let held = MODIFIERKEYS_FLAGS(MK_LBUTTON.0);
+    let mut effect = allowed;
+    unsafe {
+        target.DragEnter(&data, held, pt, &mut effect).unwrap();
+        effect = allowed;
+        target.DragOver(held, pt, &mut effect).unwrap();
+        effect = allowed;
+        target.Drop(&data, keys, pt, &mut effect).unwrap();
+    }
+    let events = view.events.borrow().clone();
+    (events, effect)
+}
+
+fn temp_root(tag: &str) -> std::path::PathBuf {
+    let root = crate::test_temp().join(format!("flit-onto-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("inbox")).unwrap();
+    std::fs::create_dir_all(root.join("here")).unwrap();
+    std::fs::write(root.join("note.txt"), "x").unwrap();
+    root
+}
+
+#[test]
+fn a_drop_on_a_shortcut_to_a_folder_goes_to_the_shell_and_lands_in_that_folder() {
+    let root = temp_root("lnk");
+    let mut sh = <crate::shell::ShellCom as flit_platform::Shell>::new().unwrap();
+    let made = flit_platform::FileOps::file_op(&mut sh, &flit_core::provider::FileOp::Link { items: vec![as_fs(&root.join("inbox"))], dest: as_fs(&root) }, &flit_platform::Job::detached(flit_core::provider::Resolve::Skip));
+    let lnk = as_std(&made.items[0].1);
+    let (events, _) = drop_onto(&lnk, &root.join("note.txt"), &root.join("here"));
+    assert!(!events.contains(&"drop"), "Flit itself does not drop as well: {events:?}");
+    assert_eq!(events.last(), Some(&"leave"));
+    let landed = root.join("inbox").join("note.txt");
+    let start = Instant::now();
+    while !landed.exists() && start.elapsed() < Duration::from_secs(10) {
+        unsafe {
+            use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE};
+            let mut msg = MSG::default();
+            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(landed.exists());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_drop_on_a_file_without_a_drop_handler_falls_back_to_flit() {
+    let root = temp_root("plain");
+    std::fs::write(root.join("plain.flit-no-handler"), "x").unwrap();
+    let (events, effect) = drop_onto(&root.join("plain.flit-no-handler"), &root.join("note.txt"), &root.join("here"));
+    assert_eq!(effect, DROPEFFECT_COPY);
+    assert_eq!(events, ["enter", "over", "drop"]);
+    let _ = std::fs::remove_dir_all(&root);
 }

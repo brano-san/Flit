@@ -2466,3 +2466,46 @@ fn back_and_forward_asked_by_the_shell_walk_the_tab_history() {
     app.on_event(&Event::ShellVerb("forward".into()), t0());
     assert_eq!(app.tab().location().path(), &p(r"C:\b"), "nothing ahead leaves the tab where it is");
 }
+
+#[test]
+fn hovering_a_plain_file_hands_the_drop_to_its_shell_handler_with_flit_as_the_fallback() {
+    use drop_effect::*;
+    let all = COPY | MOVE | LINK;
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("sub", true), ("go.lnk", false), ("run.exe", false), ("script.py", false)]);
+    let row = |app: &App, name: &str| {
+        let v = app.tab().view.as_ref().unwrap();
+        row_xy(app, v.rows().iter().position(|&i| v.listing().name(i) == name.as_bytes()).unwrap())
+    };
+    let enter = |app: &mut App, at: (f32, f32)| app.drag(&DragEvent::Enter { paths: vec![p(r"D:\in\f.txt")], x: at.0, y: at.1, mods: NO, allowed: all, right: false }, t0());
+    for name in ["go.lnk", "script.py"] {
+        let at = row(&app, name);
+        assert_eq!(enter(&mut app, at), COPY, "{name}: Flit's own answer stays the fallback");
+        assert_eq!(app.drop_onto(), Some(p(&format!(r"C:\x\{name}"))));
+        app.drag(&DragEvent::Leave, t0());
+        assert_eq!(app.drop_onto(), None);
+    }
+    let at = row(&app, "script.py");
+    enter(&mut app, at);
+    app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: NO, allowed: all }, t0());
+    assert_eq!(op_list(&mut app), [FileOp::Copy { items: vec![p(r"D:\in\f.txt")], dest: p(r"C:\x") }], "without a handler the drop lands in the folder as before");
+    for name in ["sub", "run.exe"] {
+        let at = row(&app, name);
+        enter(&mut app, at);
+        assert_eq!(app.drop_onto(), None, "{name}");
+        app.drag(&DragEvent::Leave, t0());
+    }
+    let at = row(&app, "script.py");
+    app.drag(&DragEvent::Enter { paths: vec![p(r"C:\x\script.py")], x: at.0, y: at.1, mods: NO, allowed: all, right: false }, t0());
+    assert_eq!(app.drop_onto(), None, "a file is not dropped on itself");
+    app.drag(&DragEvent::Leave, t0());
+    app.drag(&DragEvent::Enter { paths: vec![p(r"D:\in\f.txt")], x: at.0, y: at.1, mods: NO, allowed: all, right: true }, t0());
+    assert_eq!(app.drop_onto(), None, "a right drag keeps Flit's own menu");
+    app.drag(&DragEvent::Leave, t0());
+    let mut app = app_at("/home/u");
+    app.caps.unix_paths = true;
+    deliver(&mut app, &[("script.py", false)]);
+    let at = row_xy(&app, 0);
+    app.drag(&DragEvent::Enter { paths: vec![p("/tmp/f.txt")], x: at.0, y: at.1, mods: NO, allowed: all, right: false }, t0());
+    assert_eq!(app.drop_onto(), None);
+}

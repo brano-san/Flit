@@ -151,6 +151,7 @@ pub struct DropReply {
     pub effect: u32,
     pub caption: Option<(String, String)>,
     pub folder: Option<FsPath>,
+    pub onto: Option<FsPath>,
 }
 
 pub trait WindowHandler<W: WindowSystem> {

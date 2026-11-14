@@ -44,6 +44,8 @@ struct Target {
     offered: RefCell<Option<FsPath>>,
     source_took_folder: Cell<bool>,
     content: Cell<Option<Content>>,
+    handler: RefCell<Option<(FsPath, Option<IDropTarget>)>>,
+    handed: Cell<bool>,
 }
 
 impl Target {
@@ -60,6 +62,8 @@ impl Target {
             offered: RefCell::new(None),
             source_took_folder: Cell::new(false),
             content: Cell::new(None),
+            handler: RefCell::new(None),
+            handed: Cell::new(false),
         };
         target.into()
     }
@@ -102,6 +106,10 @@ fn seven_zip_extracts_itself(data: &IDataObject) -> bool {
         (Some(SEVEN_ZIP_GET_TRANSFER_ID), Some(size), Some(flags)) if size >= SEVEN_ZIP_GET_TRANSFER_SIZE => flags & SEVEN_ZIP_SOURCE_EXTRACTS_ITSELF != 0,
         _ => true,
     }
+}
+
+pub(crate) fn file_target(hwnd: HWND, file: &FsPath) -> Option<IDropTarget> {
+    Pidls::parse(std::slice::from_ref(file)).ok()?.ui_object::<IDropTarget>(hwnd).ok()
 }
 
 pub(crate) fn data_paths(data: &IDataObject) -> Vec<FsPath> {
@@ -183,7 +191,43 @@ impl Target_Impl {
         (p.x as f32, p.y as f32)
     }
 
-    fn deliver(&self, ev: DragEvent) -> DROPEFFECT {
+    fn hand_over(&self, onto: Option<FsPath>, keys: MODIFIERKEYS_FLAGS, pt: &POINTL, allowed: DROPEFFECT) -> Option<DROPEFFECT> {
+        let data = self.data.borrow().clone();
+        let mut handler = self.handler.borrow_mut();
+        let entering = handler.as_ref().map(|(p, _)| p) != onto.as_ref();
+        if entering {
+            if let Some((_, Some(t))) = handler.take() {
+                let _ = unsafe { t.DragLeave() };
+            }
+            *handler = onto.map(|f| {
+                let t = file_target(self.hwnd, &f);
+                (f, t)
+            });
+        }
+        let accepted = match (handler.as_mut(), data) {
+            (Some((_, slot @ Some(_))), Some(data)) => {
+                let mut e = allowed;
+                let t = slot.as_ref()?;
+                let ok = unsafe { if entering { t.DragEnter(&data, keys, *pt, &mut e) } else { t.DragOver(keys, *pt, &mut e) } }.is_ok();
+                if !ok && entering {
+                    *slot = None;
+                }
+                (ok && e != DROPEFFECT_NONE).then_some(e)
+            }
+            _ => None,
+        };
+        self.handed.set(accepted.is_some());
+        accepted
+    }
+
+    fn leave_handler(&self) {
+        if let Some((_, Some(t))) = self.handler.borrow_mut().take() {
+            let _ = unsafe { t.DragLeave() };
+        }
+        self.handed.set(false);
+    }
+
+    fn deliver(&self, ev: DragEvent, input: Option<(MODIFIERKEYS_FLAGS, POINTL, DROPEFFECT)>) -> DROPEFFECT {
         let started = Instant::now();
         let kind = match ev {
             DragEvent::Enter { .. } => "enter",
@@ -199,15 +243,17 @@ impl Target_Impl {
         if hovering {
             self.offer_folder(reply.folder.clone());
         }
-        self.effect.set(DROPEFFECT(reply.effect));
-        let caption = reply.caption.map(|(message, insert)| (reply.effect, message, insert));
+        let handed = input.and_then(|(keys, pt, allowed)| self.hand_over(reply.onto.clone(), keys, &pt, allowed));
+        let effect = handed.map_or(reply.effect, |e| e.0);
+        self.effect.set(DROPEFFECT(effect));
+        let caption = reply.caption.filter(|_| handed.is_none()).map(|(message, insert)| (effect, message, insert));
         if *self.shown.borrow() != caption {
             if let Some(data) = &*self.data.borrow() {
                 describe(data, caption.as_ref());
             }
             *self.shown.borrow_mut() = caption;
         }
-        DROPEFFECT(reply.effect)
+        DROPEFFECT(effect)
     }
 
     fn offer_folder(&self, folder: Option<FsPath>) {
@@ -220,7 +266,8 @@ impl Target_Impl {
     }
 
     fn finish(&self, ev: DragEvent) -> DROPEFFECT {
-        let effect = if self.active.replace(false) { self.deliver(ev) } else { DROPEFFECT_NONE };
+        self.leave_handler();
+        let effect = if self.active.replace(false) { self.deliver(ev, None) } else { DROPEFFECT_NONE };
         self.data.borrow_mut().take();
         effect
     }
@@ -239,7 +286,7 @@ impl IDropTarget_Impl for Target_Impl {
         unsafe {
             let active = !paths.is_empty() || content.is_some();
             self.active.set(active);
-            *effect = if active { self.deliver(DragEvent::Enter { paths, x, y, mods: mods(keys), allowed: (*effect).0, right: right_button(keys) }) } else { DROPEFFECT_NONE };
+            *effect = if active { self.deliver(DragEvent::Enter { paths, x, y, mods: mods(keys), allowed: (*effect).0, right: right_button(keys) }, Some((keys, *pt, *effect))) } else { DROPEFFECT_NONE };
             if let (Some(h), Some(d)) = (&self.helper, data.as_ref()) {
                 let _ = h.DragEnter(self.hwnd, d, &POINT { x: pt.x, y: pt.y }, *effect);
             }
@@ -250,7 +297,7 @@ impl IDropTarget_Impl for Target_Impl {
     fn DragOver(&self, keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> windows_core::Result<()> {
         let (x, y) = self.client(pt);
         unsafe {
-            *effect = if self.active.get() { self.deliver(DragEvent::Over { x, y, mods: mods(keys), allowed: (*effect).0 }) } else { DROPEFFECT_NONE };
+            *effect = if self.active.get() { self.deliver(DragEvent::Over { x, y, mods: mods(keys), allowed: (*effect).0 }, Some((keys, *pt, *effect))) } else { DROPEFFECT_NONE };
             if let Some(h) = &self.helper {
                 let _ = h.DragOver(&POINT { x: pt.x, y: pt.y }, *effect);
             }
@@ -268,6 +315,19 @@ impl IDropTarget_Impl for Target_Impl {
     }
 
     fn Drop(&self, data: Ref<IDataObject>, keys: MODIFIERKEYS_FLAGS, pt: &POINTL, effect: *mut DROPEFFECT) -> windows_core::Result<()> {
+        let handler = if self.handed.get() { self.handler.borrow_mut().take().and_then(|(_, t)| t) } else { None };
+        if let (Some(t), Some(d)) = (handler, data.as_ref()) {
+            unsafe {
+                let mut e = *effect;
+                let dropped = t.Drop(d, keys, *pt, &mut e).is_ok();
+                self.finish(DragEvent::Leave);
+                *effect = if dropped { e } else { DROPEFFECT_NONE };
+                if let Some(h) = &self.helper {
+                    let _ = h.Drop(d, &POINT { x: pt.x, y: pt.y }, *effect);
+                }
+            }
+            return Ok(());
+        }
         let (x, y) = self.client(pt);
         let source_extracts = self.active.get() && self.source_took_folder.get() && data.as_ref().is_some_and(seven_zip_extracts_itself);
         let shown = self.effect.get();

@@ -212,6 +212,7 @@ pub(super) struct Dropping {
     spring: Option<(Spot, Instant)>,
     right: bool,
     ours: bool,
+    onto: Option<FsPath>,
 }
 
 struct Asked {
@@ -1864,7 +1865,7 @@ impl App {
         match ev {
             DragEvent::Enter { paths, x, y, mods, allowed, right } => {
                 let ours = !paths.is_empty() && self.ops.right_drag.as_ref() == Some(paths);
-                self.ops.dropping = Some(Dropping { paths: paths.clone(), target: None, effect: drop_effect::NONE, spring: None, right: *right || ours, ours });
+                self.ops.dropping = Some(Dropping { paths: paths.clone(), target: None, effect: drop_effect::NONE, spring: None, right: *right || ours, ours, onto: None });
                 self.ops.drag_scroll = Some((*x, *y, *mods, *allowed));
                 self.drag_over(*x, *y, *mods, *allowed)
             }
@@ -1968,6 +1969,7 @@ impl App {
     fn drag_over(&mut self, x: f32, y: f32, m: Mods, allowed: u32) -> u32 {
         use drop_effect::*;
         let target = self.drop_target(x, y);
+        let onto = self.onto_file(x, y);
         let Some(d) = &self.ops.dropping else { return NONE };
         let effect = match &target {
             None => NONE,
@@ -2002,6 +2004,7 @@ impl App {
         if let Some(d) = &mut self.ops.dropping {
             d.target = target;
             d.effect = effect;
+            d.onto = onto.filter(|f| !d.right && !d.paths.contains(f));
         }
         effect
     }
@@ -2103,6 +2106,26 @@ impl App {
             Target::Pin => Some(Spot::SideHeader(Section::Bookmarks)),
             Target::Reveal => None,
         }
+    }
+
+    fn onto_file(&self, x: f32, y: f32) -> Option<FsPath> {
+        if self.caps.unix_paths || self.in_bin() || self.archive_view().is_some() {
+            return None;
+        }
+        let Hit::Row(row) = self.hit(x, y) else { return None };
+        let t = self.tab();
+        let v = t.view.as_ref()?;
+        let i = *v.rows().get(row)?;
+        let l = v.listing();
+        let runnable = RUNNABLE.iter().any(|e| l.ext(i).eq_ignore_ascii_case(e));
+        if l.entries[i as usize].is_dir() || runnable || archive::browsable(l.name(i)).is_some_and(Format::can_add) {
+            return None;
+        }
+        t.entry_location(i).to_windows().filter(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unc))
+    }
+
+    pub fn drop_onto(&self) -> Option<FsPath> {
+        self.ops.dropping.as_ref()?.onto.clone()
     }
 
     pub fn drop_folder(&self) -> Option<FsPath> {
