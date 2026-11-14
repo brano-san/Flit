@@ -235,6 +235,16 @@ pub trait Fs: Send + Sync + 'static {
     }
 }
 
+static REMEMBER_RECENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn set_remember_recent(on: bool) {
+    REMEMBER_RECENT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn remember_recent() -> bool {
+    REMEMBER_RECENT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 #[cfg(windows)]
 pub fn std_path(p: &FsPath) -> std::path::PathBuf {
     use std::os::windows::ffi::OsStringExt;

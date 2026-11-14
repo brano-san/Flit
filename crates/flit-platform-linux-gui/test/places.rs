@@ -406,3 +406,46 @@ fn phones_and_cameras_that_are_plugged_in_but_not_opened_show_as_drives_to_mount
     assert_eq!(device_uri(Path::new("/run/user/1000/gvfs/smb-share:server=nas,share=photos"), root), None);
     assert_eq!(device_uri(Path::new("/dev/sdb1"), root), None);
 }
+
+const GTK_XBEL: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<xbel version=\"1.0\"\n      xmlns:bookmark=\"http://www.freedesktop.org/standards/desktop-bookmarks\"\n      xmlns:mime=\"http://www.freedesktop.org/standards/shared-mime-info\"\n>\n  <bookmark href=\"file:///home/u/a%20b&apos;s.txt\" added=\"2026-01-01T00:00:00.000000Z\" modified=\"2026-01-01T00:00:00.000000Z\" visited=\"2026-01-01T00:00:00.000000Z\">\n    <info>\n      <metadata owner=\"http://freedesktop.org\">\n        <mime:mime-type type=\"text/plain\"/>\n        <bookmark:applications>\n          <bookmark:application name=\"gedit\" exec=\"&apos;gedit %u&apos;\" modified=\"2026-01-01T00:00:00Z\" count=\"4\"/>\n        </bookmark:applications>\n      </metadata>\n    </info>\n  </bookmark>\n</xbel>\n";
+
+#[test]
+fn opened_files_are_added_to_the_desktop_recent_list_and_counted() {
+    let stamp = xbel_stamp(std::time::UNIX_EPOCH + std::time::Duration::from_micros(1_789_000_000_123_456));
+    assert_eq!(stamp, "2026-09-10T00:26:40.123456Z");
+    let fresh = remember_in_xbel("", b"/home/u/new file.pdf", "application/pdf", &stamp).unwrap();
+    assert!(fresh.starts_with("<?xml") && fresh.trim_end().ends_with("</xbel>"));
+    assert!(fresh.contains("href=\"file:///home/u/new%20file.pdf\"") && fresh.contains("<mime:mime-type type=\"application/pdf\"/>") && fresh.contains("name=\"Flit\"") && fresh.contains("count=\"1\""), "{fresh}");
+    let listed = recent_from(fresh.as_bytes(), 5, |_| Some(false));
+    assert_eq!(listed[0].target.as_bytes(), b"/home/u/new file.pdf");
+    let once = remember_in_xbel(GTK_XBEL, b"/home/u/a b's.txt", "text/plain", &stamp).unwrap();
+    let twice = remember_in_xbel(&once, b"/home/u/a b's.txt", "text/plain", &stamp).unwrap();
+    assert_eq!(twice.matches("<bookmark ").count(), 1, "the GTK entry is updated, not doubled: {twice}");
+    assert!(twice.contains("name=\"gedit\" exec=\"&apos;gedit %u&apos;\" modified=\"2026-01-01T00:00:00Z\" count=\"4\""), "other applications stay: {twice}");
+    assert!(twice.contains(&format!("name=\"Flit\" exec=\"&apos;flit %u&apos;\" modified=\"{stamp}\" count=\"2\"")), "{twice}");
+    assert!(twice.contains(&format!("added=\"2026-01-01T00:00:00.000000Z\" modified=\"{stamp}\" visited=\"{stamp}\"")), "{twice}");
+    let both = remember_in_xbel(&twice, b"/home/u/other.txt", "text/plain", &stamp).unwrap();
+    assert_eq!(recent_from(both.as_bytes(), 5, |_| Some(false)).len(), 2);
+}
+
+#[test]
+fn privacy_settings_and_broken_lists_stop_the_recent_record() {
+    assert!(privacy_allows_recent(Some("true\n"), Some("30\n")));
+    assert!(privacy_allows_recent(None, None), "outside GNOME the list is kept");
+    assert!(privacy_allows_recent(Some("true"), Some("-1")));
+    assert!(!privacy_allows_recent(Some("false\n"), Some("30")));
+    assert!(!privacy_allows_recent(Some("true"), Some("0\n")));
+    assert_eq!(remember_in_xbel("<xbel version=\"1.0\">\n  <bookmark href=", b"/a", "text/plain", "s"), None, "a damaged list is left alone");
+    let t = Temp::new("recent");
+    let file = t.path().join("share/recently-used.xbel");
+    let doc = t.file("doc.txt", 3);
+    assert!(remember_recent_in(&file, &doc, "text/plain", std::time::SystemTime::now()).unwrap());
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
+    std::fs::write(&file, "<xbel>broken").unwrap();
+    assert!(!remember_recent_in(&file, &doc, "text/plain", std::time::SystemTime::now()).unwrap());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "<xbel>broken");
+    let doc_path = crate::xdg::fs_path(&doc).unwrap();
+    assert_eq!(crate::shell::opened_documents(&flit_core::provider::Launch::Display(doc_path.clone())), [doc.clone()]);
+    assert!(crate::shell::opened_documents(&flit_core::provider::Launch::Execute(doc_path)).is_empty(), "programs run are not documents");
+}

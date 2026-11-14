@@ -354,6 +354,7 @@ impl<P: Platform> Handler<P> {
             let all: Vec<(usize, Value)> = self.settings.values.iter().cloned().enumerate().collect();
             app.apply_settings(&all);
         }
+        set_remember_recent(app.keeps_recents());
         let fx: Vec<Effect> = app.drain_effects().collect();
         for e in fx {
             match e {
@@ -758,6 +759,7 @@ impl<P: Platform> Handler<P> {
         if self.settings.values.is_empty() {
             return;
         }
+        set_remember_recent(st.app.keeps_recents());
         let values = st.app.setting_values();
         if values == self.settings.values {
             return;
@@ -849,6 +851,7 @@ impl<P: Platform> Handler<P> {
         let doc = flit_core::ui::settings::parse(text);
         let Some(st) = self.windows.get_mut(&id) else { return };
         st.app.apply_doc(&doc);
+        set_remember_recent(st.app.keeps_recents());
         let values = st.app.setting_values();
         let all: Vec<(usize, Value)> = values.iter().cloned().enumerate().collect();
         for app in self.windows.iter_mut().filter(|(w, _)| **w != id).map(|(_, st)| &mut st.app).chain(self.pending.iter_mut()) {

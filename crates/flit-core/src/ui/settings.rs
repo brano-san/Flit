@@ -696,6 +696,10 @@ pub fn render(values: &[Value], unknown: &Map<String, Json>, tags: Option<&[Tag]
 }
 
 impl App {
+    pub fn keeps_recents(&self) -> bool {
+        self.opts.recents != super::options::Recents::Never
+    }
+
     pub fn setting_values(&self) -> Vec<Value> {
         SETTINGS.iter().map(|s| s.get(self)).collect()
     }

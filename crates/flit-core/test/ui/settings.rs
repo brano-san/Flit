@@ -384,3 +384,13 @@ fn content_size_scales_the_file_view_only_and_persists_next_to_the_interface_sca
     assert_eq!((c.ui_scale(), c.content_scale()), (130, 100), "a saved scale stays the interface scale");
     assert_eq!(S::OptionsTitleContentScale.in_lang(crate::i18n::Lang::Ru), "Масштаб содержимого");
 }
+
+#[test]
+fn only_never_storing_recents_stops_recording_opened_files_for_the_system() {
+    let mut a = app();
+    assert!(a.keeps_recents(), "recents are kept by default");
+    assert!(set(&mut a, "general.recents", Value::Choice(1)));
+    assert!(a.keeps_recents(), "session-only still lets the desktop list the file");
+    assert!(set(&mut a, "general.recents", Value::Choice(2)));
+    assert!(!a.keeps_recents());
+}

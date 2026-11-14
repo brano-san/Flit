@@ -442,6 +442,15 @@ pub fn split_args(text: &str) -> Vec<String> {
     out
 }
 
+pub fn opened_documents(l: &Launch) -> Vec<PathBuf> {
+    let files = match l {
+        Launch::With { args, .. } | Launch::Custom { files: args, .. } => args.as_slice(),
+        Launch::Display(file) => std::slice::from_ref(file),
+        _ => &[],
+    };
+    files.iter().filter_map(|f| host(f).map(Path::to_path_buf)).collect()
+}
+
 fn launch(l: &Launch) -> Result<(), PlatformError> {
     match l {
         Launch::Terminal { dirs, admin: true } => dirs.iter().try_for_each(|d| open_root_terminal(Path::new(os(d)))),
@@ -526,12 +535,12 @@ impl Shell for LinuxShell {
         if let Some(done) = open_launcher(p) {
             return done;
         }
-        if on_path(OsStr::new("xdg-open")).is_none() {
-            if let Some(done) = open_without_xdg_open(p) {
-                return done;
-            }
+        let missing = on_path(OsStr::new("xdg-open")).is_none();
+        let done = missing.then(|| open_without_xdg_open(p)).flatten().unwrap_or_else(|| xdg_open(os(path)));
+        if done.is_ok() {
+            crate::places::remember_recent(vec![p.to_path_buf()]);
         }
-        xdg_open(os(path))
+        done
     }
 
     fn open_ask(&mut self, path: &FsPath) -> Option<OpenAsk> {
@@ -544,7 +553,11 @@ impl Shell for LinuxShell {
     }
 
     fn launch(&mut self, l: &Launch) -> Result<(), PlatformError> {
-        launch(l)
+        let done = launch(l);
+        if done.is_ok() {
+            crate::places::remember_recent(opened_documents(l));
+        }
+        done
     }
 
     fn properties(&mut self, path: &FsPath) -> Vec<flit_core::preview::PropGroup> {

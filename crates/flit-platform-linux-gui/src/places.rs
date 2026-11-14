@@ -442,6 +442,131 @@ pub fn bookmarks() -> Vec<flit_core::Location> {
     bookmarks_from(&gtk, &kde, &[home.as_bytes(), b"/"], Path::is_dir)
 }
 
+const XBEL_HEAD: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<xbel version=\"1.0\"\n      xmlns:bookmark=\"http://www.freedesktop.org/standards/desktop-bookmarks\"\n      xmlns:mime=\"http://www.freedesktop.org/standards/shared-mime-info\"\n>\n";
+const XBEL_TAIL: &str = "</xbel>";
+const OWN_APP: &str = "<bookmark:application name=\"Flit\"";
+const APPS_END: &str = "</bookmark:applications>";
+const PRIVACY_FOR: std::time::Duration = std::time::Duration::from_secs(60);
+
+pub fn recent_href(path: &[u8]) -> String {
+    let keep = |b: u8| b.is_ascii_alphanumeric() || b"-._~!$()*+,;=:@/".contains(&b);
+    let encoded: String = path.iter().map(|&b| if keep(b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
+    format!("file://{encoded}")
+}
+
+pub fn xbel_stamp(t: std::time::SystemTime) -> String {
+    let since = t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let secs = since.as_secs() as libc::time_t;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { libc::gmtime_r(&secs, &mut tm) };
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}Z", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, since.subsec_micros())
+}
+
+fn set_attr(tag: &str, name: &str, value: &str) -> String {
+    let key = format!(" {name}=\"");
+    let found = tag.find(&key).and_then(|at| Some((at + key.len(), at + key.len() + tag[at + key.len()..].find('"')?)));
+    match found {
+        Some((start, end)) => format!("{}{value}{}", &tag[..start], &tag[end..]),
+        None => format!("{}{key}{value}\">", tag.trim_end_matches('>')),
+    }
+}
+
+fn find_bookmark(xbel: &str, path: &[u8]) -> Option<(usize, usize, usize)> {
+    xbel.match_indices("<bookmark ").find_map(|(start, _)| {
+        let open_end = start + xbel[start..].find('>')? + 1;
+        let href = unescape_xml(attribute(xbel[start..open_end].as_bytes(), b"href")?);
+        if crate::instance::decode_uri(&href)? != path {
+            return None;
+        }
+        Some((start, open_end, open_end + xbel[open_end..].find("</bookmark>")?))
+    })
+}
+
+pub fn remember_in_xbel(xbel: &str, path: &[u8], mime: &str, stamp: &str) -> Option<String> {
+    let own = |count: u64| format!("{OWN_APP} exec=\"&apos;flit %u&apos;\" modified=\"{stamp}\" count=\"{count}\"/>");
+    if let Some((start, open_end, close)) = find_bookmark(xbel, path) {
+        let tag = set_attr(&set_attr(&xbel[start..open_end], "modified", stamp), "visited", stamp);
+        let body = &xbel[open_end..close];
+        let body = match (body.find(OWN_APP), body.find(APPS_END)) {
+            (Some(at), _) => {
+                let end = at + body[at..].find("/>")? + 2;
+                let count = attribute(body[at..end].as_bytes(), b"count").and_then(|c| std::str::from_utf8(c).ok()?.parse::<u64>().ok()).unwrap_or(0);
+                format!("{}{}{}", &body[..at], own(count + 1), &body[end..])
+            }
+            (None, Some(at)) => format!("{}  {}\n        {}", body[..at].trim_end_matches([' ', '\t']), own(1), &body[at..]),
+            (None, None) => body.to_owned(),
+        };
+        return Some(format!("{}{tag}{body}{}", &xbel[..start], &xbel[close..]));
+    }
+    let href = recent_href(path);
+    let block = format!("  <bookmark href=\"{href}\" added=\"{stamp}\" modified=\"{stamp}\" visited=\"{stamp}\">\n    <info>\n      <metadata owner=\"http://freedesktop.org\">\n        <mime:mime-type type=\"{mime}\"/>\n        <bookmark:applications>\n          {}\n        </bookmark:applications>\n      </metadata>\n    </info>\n  </bookmark>\n", own(1));
+    if xbel.trim().is_empty() {
+        return Some(format!("{XBEL_HEAD}{block}{XBEL_TAIL}\n"));
+    }
+    let at = xbel.rfind(XBEL_TAIL).filter(|_| xbel.contains("<xbel"))?;
+    Some(format!("{}{block}{}", &xbel[..at], &xbel[at..]))
+}
+
+pub fn privacy_allows_recent(remember: Option<&str>, max_age: Option<&str>) -> bool {
+    let off = remember.is_some_and(|r| r.trim().ends_with("false"));
+    let none_kept = max_age.and_then(|a| a.split_whitespace().last()?.parse::<i64>().ok()) == Some(0);
+    !off && !none_kept
+}
+
+fn privacy_now() -> bool {
+    static SEEN: std::sync::Mutex<Option<(std::time::Instant, bool)>> = std::sync::Mutex::new(None);
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, allowed)) = *seen {
+        if at.elapsed() < PRIVACY_FOR {
+            return allowed;
+        }
+    }
+    let ask = |key: &str| crate::shell::gsettings(&["org.gnome.desktop.privacy", key]);
+    let allowed = privacy_allows_recent(ask("remember-recent-files").as_deref(), ask("recent-files-max-age").as_deref());
+    *seen = Some((std::time::Instant::now(), allowed));
+    allowed
+}
+
+pub fn remember_recent_in(file: &Path, path: &Path, mime: &str, now: std::time::SystemTime) -> std::io::Result<bool> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one_at_a_time = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+    let old = match std::fs::read(file) {
+        Ok(bytes) => String::from_utf8(bytes).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e),
+    };
+    let Some(new) = remember_in_xbel(&old, path.as_os_str().as_bytes(), mime, &xbel_stamp(now)) else { return Ok(false) };
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let temp = file.with_file_name(format!(".recently-used.xbel.flit-{}", std::process::id()));
+    let mut out = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&temp)?;
+    out.write_all(new.as_bytes())?;
+    drop(out);
+    std::fs::rename(&temp, file)?;
+    Ok(true)
+}
+
+pub fn remember_recent(paths: Vec<PathBuf>) {
+    if paths.is_empty() || !flit_platform::remember_recent() {
+        return;
+    }
+    let _ = std::thread::Builder::new().name("flit-recent".into()).spawn(move || {
+        let Some(file) = crate::xdg::data_home().map(|d| d.join("recently-used.xbel")) else { return };
+        if !privacy_now() {
+            return;
+        }
+        for p in paths.iter().filter(|p| std::fs::metadata(p).is_ok_and(|m| m.is_file())) {
+            if let Err(e) = remember_recent_in(&file, p, &crate::mime::mime_of_file(p), std::time::SystemTime::now()) {
+                tracing::debug!("recently-used.xbel not updated: {e}");
+                return;
+            }
+        }
+    });
+}
+
 pub fn recent_from(xbel: &[u8], limit: usize, exists: impl Fn(&Path) -> Option<bool>) -> Vec<flit_core::ui::Recent> {
     let mut found: Vec<(i64, Vec<u8>)> = xbel
         .split(|&b| b == b'<')
