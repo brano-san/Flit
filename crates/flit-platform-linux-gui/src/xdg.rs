@@ -113,8 +113,11 @@ pub fn desktop_text(exe: &Path) -> String {
         '%' => "%%".to_owned(),
         _ => c.to_string(),
     }).collect();
-    let exec = format!("Exec=\"{quoted}\" %U");
-    include_str!("../../../assets/flit.desktop").lines().map(|l| format!("{}\n", if l.starts_with("Exec=") { &exec } else { l })).collect()
+    let line = |l: &str| match l.strip_prefix("Exec=flit") {
+        Some(rest) => format!("Exec=\"{quoted}\"{rest}\n"),
+        None => format!("{l}\n"),
+    };
+    include_str!("../../../assets/flit.desktop").lines().map(line).collect()
 }
 
 pub fn desktop_entry(on: bool) -> std::io::Result<()> {

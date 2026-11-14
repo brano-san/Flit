@@ -117,7 +117,19 @@ fn the_desktop_entry_runs_this_executable_and_handles_folders() {
     let text = desktop_text(Path::new("/opt/my apps/100%/a\"b$c\\d"));
     assert!(text.contains("\nExec=\"/opt/my apps/100%%/a\\\\\"b\\\\$c\\\\\\\\d\" %U\n"), "{text}");
     assert!(text.contains("\nMimeType=inode/directory;\n") && text.starts_with("[Desktop Entry]\n"), "{text}");
-    assert_eq!(text.lines().filter(|l| l.starts_with("Exec=")).count(), 1);
+    assert_eq!(text.lines().filter(|l| l.starts_with("Exec=")).count(), 2);
+    assert!(text.lines().all(|l| !l.starts_with("Exec=flit")), "{text}");
+}
+
+#[test]
+fn the_desktop_entry_announces_startup_and_offers_a_new_window() {
+    let text = desktop_text(Path::new("/usr/bin/flit"));
+    let main = text.split("\n[Desktop Action").next().unwrap();
+    assert!(main.contains("\nStartupNotify=true\n") && main.contains("\nActions=new-window;\n"), "{text}");
+    assert!(main.contains("\nExec=\"/usr/bin/flit\" %U\n"), "the main entry still takes files: {text}");
+    let action = text.split("[Desktop Action new-window]\n").nth(1).unwrap();
+    assert!(action.contains("\nExec=\"/usr/bin/flit\" --new-window\n") && action.starts_with("Name=New window\n"), "{text}");
+    assert!(action.contains("\nName[ru]=Новое окно\n"), "{text}");
 }
 
 #[test]

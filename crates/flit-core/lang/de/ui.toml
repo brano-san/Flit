@@ -183,6 +183,7 @@ link_here = "Link hier erstellen"
 
 [app]
 elevated = "Flit läuft als Administrator, daher blockiert Windows Dateien, die aus anderen Programmen hereingezogen werden"
+root = "Flit läuft als root: Alles, was es anlegt, gehört root, und ein Fehler kann das System beschädigen"
 import_failed = "Die Einstellungsdatei kann nicht gelesen werden: {error}"
 exported = "Einstellungen und Tags wurden nach {path} exportiert"
 export_failed = "Die Einstellungen können nicht exportiert werden: {error}"

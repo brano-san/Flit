@@ -107,6 +107,10 @@ impl Platform for Linux {
         flit_core::caps::Caps { unix_paths: true }
     }
 
+    fn elevated() -> bool {
+        unsafe { libc::geteuid() == 0 }
+    }
+
     fn recycle_bin() -> bool {
         true
     }

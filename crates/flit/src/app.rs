@@ -338,7 +338,7 @@ impl<P: Platform> Handler<P> {
         app.set_caps(P::caps());
         flit_core::i18n::set_unix_terms(app.caps.unix_paths);
         if base == 0 && P::elevated() {
-            app.status(S::UiAppElevated.t());
+            app.warn_elevated();
         }
         app.set_nav_state(self.saved.nav.clone());
         app.set_nav_prefs(self.saved.side.clone());

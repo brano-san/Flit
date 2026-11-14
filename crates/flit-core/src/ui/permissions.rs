@@ -240,6 +240,10 @@ impl App {
         }
     }
 
+    pub fn warn_elevated(&mut self) {
+        self.status(if self.caps.unix_paths { S::UiAppRoot.t() } else { S::UiAppElevated.t() });
+    }
+
     pub(super) fn ask_allow_run(&mut self, tab: TabId, path: FsPath) {
         if self.jobs.form.is_some() {
             return;

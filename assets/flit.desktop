@@ -6,6 +6,18 @@ Comment=Very fast file manager
 Exec=flit %U
 Icon=flit
 Terminal=false
+StartupNotify=true
 Categories=System;FileTools;FileManager;Utility;Core;
 MimeType=inode/directory;
 StartupWMClass=flit
+Actions=new-window;
+
+[Desktop Action new-window]
+Name=New window
+Name[de]=Neues Fenster
+Name[es]=Nueva ventana
+Name[fr]=Nouvelle fenêtre
+Name[ru]=Новое окно
+Name[uk]=Нове вікно
+Name[zh_CN]=新建窗口
+Exec=flit --new-window

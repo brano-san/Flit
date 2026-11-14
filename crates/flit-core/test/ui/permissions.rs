@@ -172,3 +172,15 @@ fn the_run_question_can_run_the_program_in_a_terminal_instead() {
     app.on_provider_event(ProviderEvent::OpDone { tab, id, error: None, report: Some(report) }, Instant::now());
     assert!(app.drain_effects().any(|e| matches!(&e, Effect::Provider { req: ProviderRequest::Launch { launch, .. }, .. } if *launch == Launch::RunInTerminal { program: path.clone() })), "the terminal variant launches in a terminal, not the normal open");
 }
+
+#[test]
+fn running_as_root_on_linux_warns_about_root_rather_than_windows_drag_and_drop() {
+    let mut app = app_with(&["a"]);
+    app.warn_elevated();
+    let shown = app.tab().error.clone().unwrap();
+    assert!(shown.contains("root") && !shown.contains("Windows"), "{shown}");
+    app.caps.unix_paths = false;
+    app.warn_elevated();
+    let shown = app.tab().error.clone().unwrap();
+    assert!(shown.contains("administrator") && shown.contains("Windows"), "Windows keeps its own notice: {shown}");
+}

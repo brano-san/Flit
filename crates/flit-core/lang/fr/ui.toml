@@ -183,6 +183,7 @@ link_here = "Créer un lien ici"
 
 [app]
 elevated = "Flit s’exécute en tant qu’administrateur, Windows bloque donc les fichiers glissés depuis d’autres programmes"
+root = "Flit s’exécute en tant que root : tout ce qu’il crée appartient à root et une erreur peut endommager le système"
 import_failed = "Impossible de lire le fichier de paramètres : {error}"
 exported = "Paramètres et balises exportés vers {path}"
 export_failed = "Impossible d’exporter les paramètres : {error}"
