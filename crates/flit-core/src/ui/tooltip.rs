@@ -112,6 +112,7 @@ impl App {
             Hit::TabClose(i) => l.tabs.get(i)?.1,
             Hit::NewTab => l.new_tab,
             Hit::TabActions => l.actions,
+            Hit::TabScroll(right) => l.tab_arrows[usize::from(right)],
             Hit::Nav(i) => *l.nav.get(i)?,
             Hit::ViewMode => l.view,
             Hit::Bookmark => l.bookmark,
@@ -194,6 +195,10 @@ impl App {
             Hit::TabClose(_) => text(S::TooltipCloseTab, "tab.close"),
             Hit::NewTab => text(S::TooltipNewTab, "tab.new"),
             Hit::TabActions => text(S::TooltipTabActions, "tab.search"),
+            Hit::TabScroll(right) => {
+                let (line, hidden) = self.tab_arrow_text(right);
+                return Some(TipText { line: line.to_owned(), command: None, keys: Vec::new(), details: hidden.into_iter().collect() });
+            }
             Hit::Nav(0) => text(S::TooltipBack, "nav.back"),
             Hit::Nav(1) => text(S::TooltipForward, "nav.forward"),
             Hit::Nav(2) => text(S::TooltipUp, "nav.up"),

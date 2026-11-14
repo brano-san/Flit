@@ -1,6 +1,6 @@
 use super::*;
 use std::time::Duration;
-use crate::input::{Event, Mods};
+use crate::input::{Event, HitArea, Mods};
 use crate::listing::{attr, DirSnapshot, Listing, Meta};
 use crate::path::FsPath;
 use crate::provider::ProviderRequest;
@@ -593,3 +593,195 @@ fn right_click_on_the_empty_strip_opens_new_tab_and_reopen() {
     assert_eq!(app.tabs().len(), tabs + 1, "New tab from the strip menu opens one");
 }
 
+
+fn many(n: usize, width: u32) -> App {
+    let paths: Vec<String> = (0..n).map(|i| format!(r"C:\t{i:02}")).collect();
+    let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+    let mut app = app_with(&refs);
+    ev(&mut app, Event::Resized { width, height: 600 });
+    app
+}
+
+fn shown(app: &App) -> Vec<usize> {
+    app.layout.tabs.iter().enumerate().filter(|(_, (r, _))| r.w > 0.0).map(|(i, _)| i).collect()
+}
+
+fn arrow_click(app: &mut App, right: bool) {
+    let r = app.layout.tab_arrows[usize::from(right)];
+    let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    ev(app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
+    ev(app, Event::MouseUp { x, y, button: MouseButton::Left });
+    app.layout();
+}
+
+fn arrows_enabled(app: &mut App) -> Vec<(String, bool)> {
+    let tree = app.accessibility();
+    tree.nodes.iter().filter(|n| n.name.starts_with("Scroll tabs")).map(|n| (n.name.clone(), n.enabled)).collect()
+}
+
+#[test]
+fn tabs_shrink_first_and_only_then_hide_behind_arrows_that_scroll_the_strip() {
+    let app = many(3, 2000);
+    assert_eq!(shown(&app), [0, 1, 2]);
+    assert!(app.layout.tabs.iter().all(|(r, _)| r.w == app.s(crate::ui::TAB_W)), "a few tabs keep the full width");
+    assert_eq!(app.layout.tab_arrows, [Rect::default(); 2], "no arrows while everything fits");
+
+    let app = many(12, 2000);
+    assert_eq!(shown(&app).len(), 12, "twelve tabs still fit by getting narrower");
+    let w = app.layout.tabs[0].0.w;
+    assert!(w < app.s(crate::ui::TAB_W) && w >= app.s(crate::ui::TAB_MIN_W), "shrunk to {w}");
+    assert_eq!(app.layout.tab_arrows, [Rect::default(); 2]);
+
+    let mut app = many(30, 2000);
+    app.select_tab(0);
+    app.layout();
+    let visible = shown(&app);
+    assert!(visible.len() < 30 && visible[0] == 0, "{visible:?}");
+    assert!(visible.windows(2).all(|p| p[1] == p[0] + 1), "the visible tabs are one run");
+    let [left, right] = app.layout.tab_arrows;
+    let first = app.layout.tabs[visible[0]].0;
+    let last = app.layout.tabs[*visible.last().unwrap()].0;
+    assert!(left.w > 0.0 && left.right() <= first.x && last.right() <= right.x && right.right() <= app.layout.new_tab.x, "arrows frame the tabs and the new tab button follows");
+    assert_eq!(arrows_enabled(&mut app), [("Scroll tabs left".to_owned(), false), ("Scroll tabs right".to_owned(), true)]);
+    assert_eq!(app.hit_test(left.x + 2.0, left.y + 2.0), HitArea::Client, "an arrow is a button, not window caption");
+    let hidden = 30 - visible.len();
+    assert_eq!(app.tip_text(Hit::TabScroll(true)).unwrap().details, [format!("{hidden} tabs are hidden on this side.")]);
+
+    arrow_click(&mut app, true);
+    assert_eq!(shown(&app)[0], 1, "the strip moves by one tab");
+    assert_eq!(app.cur, 0, "scrolling does not switch tabs");
+    app.layout();
+    assert_eq!(shown(&app)[0], 1, "the next layout keeps the scrolled strip");
+    assert_eq!(app.tip_text(Hit::TabScroll(false)).unwrap().details, ["1 tab is hidden on this side."]);
+    for _ in 0..40 {
+        arrow_click(&mut app, true);
+    }
+    assert_eq!(shown(&app).last(), Some(&29), "the strip stops at the last tab");
+    assert_eq!(arrows_enabled(&mut app), [("Scroll tabs left".to_owned(), true), ("Scroll tabs right".to_owned(), false)]);
+    assert!(app.tip_text(Hit::TabScroll(true)).unwrap().details.is_empty());
+    for _ in 0..40 {
+        arrow_click(&mut app, false);
+    }
+    assert_eq!(shown(&app)[0], 0, "and back at the first one");
+}
+
+#[test]
+fn the_current_tab_is_scrolled_into_view_whenever_it_changes() {
+    let mut app = many(30, 2000);
+    app.select_tab(0);
+    app.layout();
+    arrow_click(&mut app, true);
+    arrow_click(&mut app, true);
+    key(&mut app, Key::Tab, CTRL);
+    app.layout();
+    assert_eq!(app.cur, 1);
+    assert!(shown(&app).contains(&1), "Ctrl+Tab brings the next tab back into view");
+
+    app.select_tab(29);
+    app.layout();
+    assert_eq!(shown(&app).last(), Some(&29));
+    app.select_tab(28);
+    app.layout();
+    assert_eq!(shown(&app).last(), Some(&29), "a visible tab is selected without moving the strip");
+
+    app.select_tab(29);
+    app.run_action("tab.new", Instant::now());
+    app.layout();
+    assert_eq!(app.cur, 30);
+    assert!(shown(&app).contains(&30), "a new tab is in view");
+
+    app.select_tab(3);
+    app.layout();
+    ev(&mut app, Event::Resized { width: 1100, height: 600 });
+    assert!(shown(&app).contains(&3), "a resize keeps the current tab in view");
+    app.run_action("tab.close", Instant::now());
+    app.layout();
+    assert!(shown(&app).contains(&app.cur), "closing the current tab shows the next current one");
+
+    app.enter_focus(crate::ui::Focus::TabBar);
+    key(&mut app, Key::End, NO);
+    key(&mut app, Key::Left, NO);
+    app.layout();
+    let kb = app.kb;
+    assert!(kb > shown(&app)[0] && shown(&app).contains(&kb), "the keyboard focus scrolls the strip to its tab");
+    key(&mut app, Key::Escape, NO);
+    app.layout();
+    assert!(shown(&app).contains(&app.cur), "leaving the strip brings the current tab back");
+
+    let mut restored = app_with(&[r"C:\a"]);
+    let locs: Vec<Location> = (0..30).map(|i| loc(&format!(r"C:\r{i:02}"))).collect();
+    restored.restore_tabs(&locs, 25);
+    restored.layout();
+    assert!(shown(&restored).contains(&25), "a restored session shows its current tab");
+}
+
+#[test]
+fn scrolling_one_panel_strip_leaves_the_other_alone_and_its_arrows_work_while_parked() {
+    let mut app = many(30, 2000);
+    app.animations = false;
+    app.select_tab(0);
+    key(&mut app, Key::Char('S'), Mods { ctrl: true, shift: true, alt: false });
+    assert_eq!(app.panels.active, 1);
+    app.activate_panel(0);
+    app.layout();
+    arrow_click(&mut app, true);
+    arrow_click(&mut app, true);
+    let first = shown(&app)[0];
+    app.activate_panel(1);
+    for _ in 0..25 {
+        app.run_action("tab.new", Instant::now());
+    }
+    app.layout();
+    assert!(app.layout.tab_arrows[0].w > 0.0, "the other panel overflows on its own");
+    arrow_click(&mut app, false);
+    let parked = &app.panels.list.iter().find(|p| p.id == 0).unwrap().layout;
+    assert_eq!(parked.tabs.iter().position(|(r, _)| r.w > 0.0), Some(first), "the parked strip keeps its place");
+    let r = parked.tab_arrows[1];
+    let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    assert_eq!(app.hit_test(x, y), HitArea::Client);
+    ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
+    ev(&mut app, Event::MouseUp { x, y, button: MouseButton::Left });
+    app.layout();
+    assert_eq!(app.panels.active, 0);
+    assert_eq!(shown(&app)[0], first + 1, "a parked panel's arrow scrolls that panel");
+}
+
+#[test]
+fn dragging_a_tab_onto_an_arrow_takes_it_to_that_end_and_esc_brings_it_back() {
+    let mut app = many(30, 2000);
+    app.select_tab(4);
+    app.layout();
+    let (x, y) = tab_xy(&app, 4);
+    let right = app.layout.tab_arrows[1];
+    ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
+    ev(&mut app, Event::MouseMove { x: right.x + right.w / 2.0, y });
+    app.layout();
+    assert_eq!(app.cur, 29);
+    assert_eq!(names(&app)[29], r"C:\t04");
+    assert!(shown(&app).contains(&29), "the dragged tab stays in view");
+    let left = app.layout.tab_arrows[0];
+    ev(&mut app, Event::MouseMove { x: left.x + left.w / 2.0, y });
+    app.layout();
+    assert_eq!((app.cur, names(&app)[0].as_str()), (0, r"C:\t04"));
+    assert!(shown(&app).contains(&0));
+    key(&mut app, Key::Escape, NO);
+    app.layout();
+    assert_eq!((app.cur, names(&app)[4].as_str()), (4, r"C:\t04"));
+    assert!(shown(&app).contains(&4));
+    ev(&mut app, Event::MouseUp { x, y, button: MouseButton::Left });
+}
+
+#[test]
+fn a_narrow_window_keeps_the_arrows_and_new_tab_clear_of_the_window_buttons() {
+    for (width, arrows) in [(520, false), (640, true), (900, true), (1300, true)] {
+        let mut app = many(20, width);
+        app.select_tab(10);
+        app.layout();
+        let l = &app.layout;
+        let limit = if l.actions.w > 0.0 { l.actions.x } else { app.panels.caption[0].x };
+        assert_eq!(l.tab_arrows[0].w > 0.0, arrows, "{width}: arrows only where a tab still fits between them");
+        assert!((!arrows || l.tab_arrows[0].x >= l.title.x) && l.new_tab.right() <= limit, "{width}: {:?} {:?} {limit}", l.tab_arrows, l.new_tab);
+        assert!(l.tabs.iter().all(|(r, _)| r.w == 0.0 || !arrows || (r.x >= l.tab_arrows[0].right() && r.right() <= l.tab_arrows[1].x)), "{width}: tabs stay between the arrows");
+        assert!(shown(&app).contains(&10), "{width}: the current tab is in view");
+    }
+}

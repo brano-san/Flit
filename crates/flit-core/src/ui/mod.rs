@@ -124,7 +124,8 @@ const SCROLLBAR_W: f32 = 12.0;
 const ICON: f32 = 16.0;
 const NAME_MIN_W: f32 = 120.0;
 const TAB_W: f32 = 190.0;
-const TAB_MIN_W: f32 = 72.0;
+const TAB_MIN_W: f32 = 100.0;
+const TAB_ARROW_W: f32 = 24.0;
 
 const MAX_PENDING_DIFFS: usize = 1 << 16;
 const SCROLL_TAU: f32 = 0.045;
@@ -503,6 +504,7 @@ enum Hit {
     FormFlag(usize, usize),
     Modal,
     TabActions,
+    TabScroll(bool),
     ViewMode,
     Bookmark,
     PanelMenu,
@@ -548,6 +550,8 @@ struct Layout {
     bookmark: Rect,
     more: Rect,
     crumb_arrows: [Rect; 2],
+    tab_arrows: [Rect; 2],
+    strip: tabbar::StripScroll,
     address: Rect,
     ops_button: Rect,
     header: Rect,
@@ -1430,7 +1434,9 @@ impl App {
         let (right, inset) = self.panel_edges(area);
         let ops_button = active && self.ops_button_visible();
         let status_bar = active && (self.prefs.status_bar || self.tab().error.is_some() || self.tab().filter.is_some());
-        let (n, cur, actions) = (self.tabs.len(), self.cur, self.tab_actions_button);
+        let (n, actions) = (self.tabs.len(), self.tab_actions_button);
+        let at = if active && self.focus == Focus::TabBar && self.kb < n { self.kb } else { self.cur };
+        let target = (at, self.tabs[at].id);
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
         let status_h = self.status_slide(if status_bar { s(STATUS_H) } else { 0.0 });
@@ -1445,18 +1451,25 @@ impl App {
         let x0 = area.x + inset + s(6.0);
         let end = if actions { l.actions.x } else { limit };
         let room = (end - s(40.0) - x0).max(0.0);
-        let tw = s(TAB_W).min(room).max(s(TAB_MIN_W).min(room));
-        let fit = ((room / tw.max(1.0)).floor() as usize).max(1);
-        let first = (cur + 1).saturating_sub(fit);
+        let (min_w, arrow_w) = (s(TAB_MIN_W), s(TAB_ARROW_W));
+        let squeezed = n > 1 && n as f32 * min_w > room;
+        let over = squeezed && room >= 2.0 * arrow_w + min_w;
+        let lane = if over { room - 2.0 * arrow_w } else { room };
+        let fit = if squeezed { ((lane / min_w).floor() as usize).clamp(1, n) } else { n };
+        let tw = if squeezed { (lane / fit as f32).floor() } else { s(TAB_W).min((room / n.max(1) as f32).floor()) };
+        let first = l.strip.place(target, n, fit);
+        let x_tabs = x0 + if over { arrow_w } else { 0.0 };
         l.tabs.clear();
         for i in 0..n {
             let shown = (first..first + fit).contains(&i);
-            let x = x0 + (i.clamp(first, first + fit) - first) as f32 * tw;
+            let x = x_tabs + (i.clamp(first, first + fit) - first) as f32 * tw;
             let r = Rect::new(x, area.y + s(4.0), if shown { tw } else { 0.0 }, l.title.h - s(4.0));
             let c = if shown { Rect::new(r.right() - s(26.0), r.y + ((r.h - s(20.0)) / 2.0).round(), s(20.0), s(20.0)) } else { Rect::default() };
             l.tabs.push((r, c));
         }
-        l.new_tab = button(x0 + (n.min(first + fit) - first) as f32 * tw + s(4.0));
+        let lane_end = x_tabs + (n.min(first + fit) - first) as f32 * tw;
+        l.tab_arrows = if over { [Rect::new(x0, button_y, arrow_w, bh), Rect::new(lane_end, button_y, arrow_w, bh)] } else { [Rect::default(); 2] };
+        l.new_tab = button(lane_end + if over { arrow_w } else { 0.0 } + s(4.0));
 
         l.toolbar = Rect::new(area.x, l.title.bottom(), area.w, s(TOOL_H));
         for (i, r) in l.nav.iter_mut().enumerate() {
@@ -1990,6 +2003,7 @@ impl App {
             Hit::Bookmark => self.pin_current(),
             Hit::PanelMenu => self.panel_quick_menu(),
             Hit::CrumbScroll(right) => self.scroll_crumbs(right),
+            Hit::TabScroll(right) => self.scroll_tabs(right),
             Hit::GoButton(k) => self.go_button(k, now),
             Hit::QuickClear => self.clear_quick_filter(),
             Hit::Caption(0) => self.effects.push(Effect::Window(WindowCmd::Minimize)),
@@ -2419,7 +2433,7 @@ impl App {
             let shown = self.strip.arrival(self.tabs[i].id, now);
             if shown < 1.0 {
                 g.dl.grow(from, shown, (r.x, r.y + r.h / 2.0), 0.6);
-                if i + 1 == self.tabs.len() {
+                if i + 1 == self.tabs.len() && l.tab_arrows[1].w == 0.0 {
                     new_tab_dx = -(1.0 - shown) * r.w;
                 }
             }
@@ -2433,6 +2447,13 @@ impl App {
             w.icon_button(l.new_tab, G_ADD, self.icon_font(10.0), self.button(Hit::NewTab, false, true), t.text_dim);
         }
         w.g.dl.shift(new_tab_from, new_tab_dx.round(), 0.0);
+        if l.tab_arrows[0].w > 0.0 {
+            let n = self.tabs.len();
+            for (k, glyph) in [G_CRUMB_LEFT, G_CRUMB_RIGHT].into_iter().enumerate() {
+                let on = l.strip.hidden(k == 1, n) > 0;
+                w.icon_button(l.tab_arrows[k], glyph, self.icon_font(8.0), self.button(Hit::TabScroll(k == 1), false, on), t.text_dim);
+            }
+        }
         if l.actions.w > 0.0 {
             let open = self.panels.here == self.panels.active && self.nav.palette.as_ref().is_some_and(|p| p.pick == palette::Pick::Tabs);
             let state = self.button(Hit::TabActions, open, true);
@@ -2979,6 +3000,9 @@ impl App {
 fn row_hit(l: &Layout, x: f32, y: f32) -> Hit {
     if l.actions.contains(x, y) {
         return Hit::TabActions;
+    }
+    if let Some(k) = l.tab_arrows.iter().position(|r| r.contains(x, y)) {
+        return Hit::TabScroll(k == 1);
     }
     for (i, (r, c)) in l.tabs.iter().enumerate() {
         if c.contains(x, y) {

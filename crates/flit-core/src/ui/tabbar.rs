@@ -3,7 +3,7 @@ use crate::input::{Key, MouseButton};
 use crate::location::Location;
 use crate::path::PathKind;
 use crate::render::Rect;
-use crate::i18n::S;
+use crate::i18n::{P, S};
 use crate::text::{Gfx, TextBackend};
 use crate::theme::Theme;
 use super::widgets::Paint;
@@ -61,6 +61,35 @@ pub(super) struct Strip {
 }
 
 pub(super) const SLIDE_IN: std::time::Duration = std::time::Duration::from_millis(140);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct StripScroll {
+    first: usize,
+    fit: usize,
+    shown: Option<crate::provider::TabId>,
+    follow: bool,
+}
+
+impl StripScroll {
+    pub fn place(&mut self, (at, id): (usize, crate::provider::TabId), n: usize, fit: usize) -> usize {
+        if self.follow || self.shown != Some(id) || self.fit != fit {
+            self.first = self.first.min(at).max((at + 1).saturating_sub(fit));
+        }
+        self.first = self.first.min(n.saturating_sub(fit));
+        (self.fit, self.shown) = (fit, Some(id));
+        self.follow = (self.first..self.first + fit).contains(&at);
+        self.first
+    }
+
+    pub fn hidden(&self, right: bool, n: usize) -> usize {
+        if right { n.saturating_sub(self.first + self.fit) } else { self.first.min(n) }
+    }
+
+    fn scroll(&mut self, right: bool, n: usize) {
+        self.first = if right { (self.first + 1).min(n.saturating_sub(self.fit)) } else { self.first.saturating_sub(1) };
+        self.follow = false;
+    }
+}
 
 impl Strip {
     pub fn arrivals(&mut self, ids: &[crate::provider::TabId], animate: bool, now: Instant) -> bool {
@@ -171,6 +200,19 @@ impl App {
             self.load_tab(self.cur, None, Instant::now());
         }
         self.wake_panels();
+    }
+
+    pub(super) fn scroll_tabs(&mut self, right: bool) {
+        let n = self.tabs.len();
+        self.layout.strip.scroll(right, n);
+        self.layout();
+        self.dirty = true;
+    }
+
+    pub(super) fn tab_arrow_text(&self, right: bool) -> (&'static str, Option<String>) {
+        let hidden = self.layout.strip.hidden(right, self.tabs.len());
+        let name = if right { S::TooltipTabsRight } else { S::TooltipTabsLeft };
+        (name.t(), (hidden > 0).then(|| crate::trn!(P::TooltipTabsHidden, hidden)))
     }
 
     fn tab_slot(&self, x: f32) -> usize {

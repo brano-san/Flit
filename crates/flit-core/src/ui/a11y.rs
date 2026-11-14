@@ -67,6 +67,12 @@ impl App {
         if self.focus == Focus::TabBar && kb == Some(l.tabs.len()) {
             focus = Some(k);
         }
+        for (k, name) in [S::A11yButtonTabsLeft, S::A11yButtonTabsRight].into_iter().enumerate().filter(|&(k, _)| l.tab_arrows[k].w > 0.0) {
+            let node = put(&mut t, &mut targets, tabs, Hit::TabScroll(k == 1), Role::Button, name.t(), l.tab_arrows[k]);
+            let hidden = self.tab_arrow_text(k == 1).1;
+            t.nodes[node].enabled = hidden.is_some();
+            t.nodes[node].help = hidden.unwrap_or_default();
+        }
         if l.actions.w > 0.0 {
             put(&mut t, &mut targets, tabs, Hit::TabActions, Role::Button, S::A11yButtonTabActions.t(), l.actions);
         }
