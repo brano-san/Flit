@@ -2,7 +2,7 @@ use super::{App, Drag, Effect, Hit, Route, Tab, G_DRIVE, G_FOLDER};
 use crate::input::{Key, MouseButton};
 use crate::location::Location;
 use crate::path::PathKind;
-use crate::render::Rect;
+use crate::render::{DrawList, Instance, Rect};
 use crate::i18n::{P, S};
 use crate::text::{Gfx, TextBackend};
 use crate::theme::Theme;
@@ -58,6 +58,34 @@ pub(super) struct Strip {
     wheel: f32,
     newest: Option<crate::provider::TabId>,
     born: Vec<(crate::provider::TabId, Instant)>,
+    tick: u64,
+    lanes: Vec<Lane>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Part {
+    Tab(crate::provider::TabId),
+    Plus,
+    Arrow(bool),
+}
+
+#[derive(Default)]
+struct Lane {
+    panel: u32,
+    tick: u64,
+    drawn: Vec<(Part, Rect, std::ops::Range<usize>)>,
+    shots: Vec<Instance>,
+    slides: Vec<(Part, Rect, Instant)>,
+    ghosts: Vec<(Rect, Instant, Vec<Instance>)>,
+}
+
+fn mix(a: Rect, b: Rect, k: f32) -> Rect {
+    if k >= 1.0 {
+        return b;
+    }
+    let at = |p: f32, q: f32| (p + (q - p) * k).round();
+    let (x, right) = (at(a.x, b.x), at(a.right(), b.right()));
+    Rect::new(x, b.y, (right - x).max(0.0), b.h)
 }
 
 pub(super) const SLIDE_IN: std::time::Duration = std::time::Duration::from_millis(140);
@@ -103,6 +131,77 @@ impl Strip {
 
     pub fn arrival(&self, id: crate::provider::TabId, now: Instant) -> f32 {
         self.born.iter().find(|b| b.0 == id).map_or(1.0, |b| super::widgets::eased(b.1, now, SLIDE_IN))
+    }
+
+    pub fn begin(&mut self, panels: impl Iterator<Item = u32> + Clone, animate: bool) {
+        self.tick += 1;
+        self.lanes.retain(|l| animate && panels.clone().any(|p| p == l.panel));
+    }
+
+    pub fn drop_ghosts(&mut self) {
+        self.lanes.iter_mut().for_each(|l| l.ghosts.clear());
+    }
+
+    fn settle(&mut self, panel: u32, ids: impl Iterator<Item = crate::provider::TabId> + Clone, arrows: bool, now: Instant) -> usize {
+        let k = self.lanes.iter().position(|l| l.panel == panel).unwrap_or_else(|| {
+            self.lanes.push(Lane { panel, ..Lane::default() });
+            self.lanes.len() - 1
+        });
+        let lane = &mut self.lanes[k];
+        let drawn = lane.drawn.iter().filter_map(|d| if let Part::Tab(id) = d.0 { Some(id) } else { None });
+        let gone = |id| !ids.clone().any(|t| t == id);
+        if lane.tick + 1 >= self.tick && !drawn.clone().eq(ids.clone()) && drawn.clone().any(gone) {
+            for (part, r, range) in &lane.drawn {
+                match part {
+                    Part::Tab(id) if gone(*id) => {
+                        if r.w > 0.0 && !range.is_empty() {
+                            lane.ghosts.push((*r, now, lane.shots[range.clone()].to_vec()));
+                        }
+                    }
+                    Part::Arrow(_) if !arrows => {}
+                    _ => {
+                        lane.slides.retain(|s| s.0 != *part);
+                        lane.slides.push((*part, *r, now));
+                    }
+                }
+            }
+        }
+        lane.tick = self.tick;
+        lane.slides.retain(|s| now.saturating_duration_since(s.2) < SLIDE_IN);
+        lane.ghosts.retain(|g| now.saturating_duration_since(g.1) < SLIDE_IN);
+        lane.drawn.clear();
+        lane.shots.clear();
+        k
+    }
+
+    pub fn busy(&self, k: Option<usize>) -> bool {
+        k.and_then(|k| self.lanes.get(k)).is_some_and(|l| !l.slides.is_empty() || !l.ghosts.is_empty())
+    }
+
+    pub fn at(&self, k: Option<usize>, part: Part, to: Rect, now: Instant) -> Rect {
+        let Some(lane) = k.and_then(|k| self.lanes.get(k)) else { return to };
+        lane.slides.iter().find(|s| s.0 == part).map_or(to, |&(_, from, since)| mix(from, to, super::widgets::eased(since, now, SLIDE_IN)))
+    }
+
+    pub fn ghosts(&self, k: Option<usize>, dl: &mut DrawList, now: Instant) {
+        let Some(lane) = k.and_then(|k| self.lanes.get(k)) else { return };
+        for (r, since, shot) in &lane.ghosts {
+            let from = dl.instances.len();
+            dl.instances.extend_from_slice(shot);
+            dl.grow(from, 1.0 - super::widgets::eased(*since, now, SLIDE_IN), (r.x, r.y + r.h / 2.0), 0.6);
+        }
+    }
+
+    pub fn record(&mut self, k: Option<usize>, part: Part, r: Rect, shot: &[Instance]) {
+        let Some(lane) = k.and_then(|k| self.lanes.get_mut(k)) else { return };
+        let from = lane.shots.len();
+        lane.shots.extend_from_slice(shot);
+        lane.drawn.push((part, r, from..lane.shots.len()));
+    }
+
+    #[cfg(test)]
+    pub fn ghost_count(&self, panel: u32) -> usize {
+        self.lanes.iter().filter(|l| l.panel == panel).map(|l| l.ghosts.len()).sum()
     }
 }
 
@@ -200,6 +299,23 @@ impl App {
             self.load_tab(self.cur, None, Instant::now());
         }
         self.wake_panels();
+    }
+
+    pub(super) fn strip_lane(&mut self, now: Instant) -> Option<usize> {
+        if !self.animations {
+            return None;
+        }
+        let arrows = self.layout.tab_arrows[0].w > 0.0;
+        let k = Some(self.strip.settle(self.panels.here, self.tabs.iter().map(|t| t.id), arrows, now));
+        self.motion |= self.strip.busy(k);
+        k
+    }
+
+    pub(super) fn strip_clip(&self) -> Rect {
+        let l = &self.layout;
+        let caption = self.panels.caption.iter().filter(|c| c.w > 0.0 && c.y < l.title.bottom() && c.bottom() > l.title.y && c.x > l.title.x).map(|c| c.x);
+        let edge = caption.chain((l.actions.w > 0.0).then_some(l.actions.x)).fold(l.title.right(), f32::min);
+        Rect::new(l.title.x, l.title.y, (edge - l.title.x).max(0.0), l.title.h)
     }
 
     pub(super) fn scroll_tabs(&mut self, right: bool) {

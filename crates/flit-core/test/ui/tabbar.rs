@@ -785,3 +785,171 @@ fn a_narrow_window_keeps_the_arrows_and_new_tab_clear_of_the_window_buttons() {
         assert!(shown(&app).contains(&10), "{width}: the current tab is in view");
     }
 }
+
+fn outlines(app: &App, g: &Gfx<crate::text::tests::Mono>, title: Rect) -> Vec<(Rect, u32)> {
+    let sep = app.look.palette.base.separator.0;
+    let mut v: Vec<(Rect, u32)> = g
+        .dl
+        .instances
+        .iter()
+        .filter(|i| i.kind == crate::render::kind::SOLID && i.border > 0.0 && i.rect[2] > 20.0 && i.color & 0x00FF_FFFF == sep & 0x00FF_FFFF)
+        .filter(|i| i.rect[1] >= title.y && i.rect[1] < title.bottom() && i.rect[0] >= title.x && i.rect[0] < title.right())
+        .map(|i| (Rect::new(i.rect[0], i.rect[1], i.rect[2], i.rect[3]), i.color >> 24))
+        .collect();
+    v.sort_by(|a, b| a.0.x.total_cmp(&b.0.x));
+    v
+}
+
+fn ms(t: Instant, n: u64) -> Instant {
+    t + Duration::from_millis(n)
+}
+
+#[test]
+fn a_closed_tab_shrinks_and_fades_while_its_right_neighbour_slides_into_its_place() {
+    let mut app = app_with(&[r"C:\a", r"C:\b", r"C:\c"]);
+    let mut g = Gfx::new(crate::text::tests::Mono, 1024);
+    let t0 = Instant::now();
+    app.select_tab(1);
+    app.frame(&mut g, ms(t0, 1000));
+    let (old1, old2) = (app.layout.tabs[1].0, app.layout.tabs[2].0);
+    let full = app.look.palette.base.separator.0 >> 24;
+    key(&mut app, Key::Char('W'), CTRL);
+    assert_eq!(names(&app), [r"C:\a", r"C:\c"]);
+    let t1 = ms(t0, 2000);
+    assert!(app.frame(&mut g, t1), "the close animates");
+    let title = app.layout.title;
+    let o = outlines(&app, &g, title);
+    assert_eq!(o.iter().map(|o| (o.0.x, o.1)).collect::<Vec<_>>(), [(old1.x, full), (old2.x, full)], "at first the closed tab is where it was and its neighbour has not moved");
+    assert_eq!(app.strip.ghost_count(app.panels.here), 1);
+
+    assert!(app.frame(&mut g, ms(t1, 60)));
+    let o = outlines(&app, &g, title);
+    assert_eq!(o.len(), 2, "{o:?}");
+    let ghost = o.iter().find(|o| o.1 < full).expect("a fading ghost");
+    let live = o.iter().find(|o| o.1 == full).expect("the new current tab");
+    assert!(ghost.0.w < old1.w && ghost.0.x == old1.x, "the ghost shrinks towards its left edge: {ghost:?}");
+    assert!(live.0.x > old1.x && live.0.x < old2.x, "the neighbour is on its way: {live:?}");
+
+    assert!(!app.frame(&mut g, ms(t1, 200)), "the strip settles and asks for no more frames");
+    let o = outlines(&app, &g, title);
+    assert_eq!(o.iter().map(|o| (o.0.x, o.1)).collect::<Vec<_>>(), [(old1.x, full)]);
+    assert_eq!(app.strip.ghost_count(app.panels.here), 0);
+}
+
+#[test]
+fn without_animations_a_closed_tab_goes_at_once_and_no_frames_are_asked_for() {
+    let mut app = app_with(&[r"C:\a", r"C:\b", r"C:\c"]);
+    app.animations = false;
+    let mut g = Gfx::new(crate::text::tests::Mono, 1024);
+    let t0 = Instant::now();
+    app.select_tab(1);
+    app.frame(&mut g, ms(t0, 1000));
+    let old1 = app.layout.tabs[1].0;
+    key(&mut app, Key::Char('W'), CTRL);
+    assert!(!app.frame(&mut g, ms(t0, 2000)));
+    let o = outlines(&app, &g, app.layout.title);
+    assert_eq!(o.iter().map(|o| o.0.x).collect::<Vec<_>>(), [old1.x], "the neighbour is in place on the first frame");
+    assert_eq!(app.strip.ghost_count(app.panels.here), 0);
+    assert!(!app.motion);
+}
+
+#[test]
+fn during_the_close_animation_clicks_land_on_the_final_layout() {
+    let mut app = app_with(&[r"C:\a", r"C:\b", r"C:\c", r"C:\d"]);
+    let mut g = Gfx::new(crate::text::tests::Mono, 1024);
+    let t0 = Instant::now();
+    app.select_tab(3);
+    app.frame(&mut g, ms(t0, 1000));
+    let (x, y) = tab_xy(&app, 1);
+    ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Middle, clicks: 1 });
+    ev(&mut app, Event::MouseUp { x, y, button: MouseButton::Middle });
+    assert_eq!(names(&app), [r"C:\a", r"C:\c", r"C:\d"]);
+    let t1 = ms(t0, 2000);
+    app.frame(&mut g, t1);
+    assert!(app.frame(&mut g, ms(t1, 50)), "still moving");
+    assert_eq!(app.strip.ghost_count(app.panels.here), 1, "a middle click animates too");
+    let r = app.layout.tabs[1].0;
+    let (x, y) = (r.x + 4.0, r.y + r.h / 2.0);
+    ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
+    ev(&mut app, Event::MouseUp { x, y, button: MouseButton::Left });
+    assert_eq!(app.cur, 1, "the click where C now stands selects it, the ghost of B is not hit");
+    assert_eq!(names(&app), [r"C:\a", r"C:\c", r"C:\d"]);
+    assert_eq!(app.drag, Drag::None);
+}
+
+#[test]
+fn quick_closes_each_leave_a_ghost_and_slides_go_on_from_where_tabs_are_drawn() {
+    let mut app = app_with(&[r"C:\a", r"C:\b", r"C:\c", r"C:\d"]);
+    let mut g = Gfx::new(crate::text::tests::Mono, 1024);
+    let t0 = Instant::now();
+    app.select_tab(1);
+    app.frame(&mut g, ms(t0, 1000));
+    let (old1, old3) = (app.layout.tabs[1].0, app.layout.tabs[3].0);
+    let full = app.look.palette.base.separator.0 >> 24;
+    key(&mut app, Key::Char('W'), CTRL);
+    let t1 = ms(t0, 2000);
+    app.frame(&mut g, t1);
+    app.frame(&mut g, ms(t1, 30));
+    let title = app.layout.title;
+    let c_at = outlines(&app, &g, title).into_iter().find(|o| o.1 == full).unwrap().0.x;
+    key(&mut app, Key::Char('W'), CTRL);
+    assert_eq!(names(&app), [r"C:\a", r"C:\d"]);
+    assert!(app.frame(&mut g, ms(t1, 40)));
+    assert_eq!(app.strip.ghost_count(app.panels.here), 2, "both closed tabs fade on their own");
+    let o = outlines(&app, &g, title);
+    assert_eq!(o.len(), 3, "{o:?}");
+    assert!(o.iter().any(|o| o.0.x == c_at && o.1 == full), "C's ghost starts where C was drawn: {o:?} {c_at}");
+    assert!(o.iter().any(|o| o.0.x == old1.x && o.1 < full), "B's ghost keeps fading");
+    let d = o.iter().filter(|o| o.1 == full).map(|o| o.0.x).fold(f32::MIN, f32::max);
+    assert!(d < old3.x && d > old1.x, "D goes on from where it was drawn, not from its old place: {d} {old3:?}");
+    assert!(!app.frame(&mut g, ms(t1, 400)));
+    assert_eq!(app.strip.ghost_count(app.panels.here), 0);
+}
+
+#[test]
+fn closing_a_tab_in_one_panel_leaves_the_other_panel_strip_still() {
+    let mut app = app_with(&[r"C:\a", r"C:\b"]);
+    let mut g = Gfx::new(crate::text::tests::Mono, 1024);
+    key(&mut app, Key::Char('S'), Mods { ctrl: true, shift: true, alt: false });
+    let (first, second) = (app.parked_ids()[0], app.panels.active);
+    app.run_action("tab.new", Instant::now());
+    app.run_action("tab.new", Instant::now());
+    app.select_tab(1);
+    let t0 = Instant::now();
+    app.frame(&mut g, ms(t0, 1000));
+    let other = app.panels.list.iter().find(|p| p.id == first).unwrap().layout.title;
+    let before = outlines(&app, &g, other);
+    assert_eq!(before.len(), 1);
+    let old1 = app.layout.tabs[1].0;
+    key(&mut app, Key::Char('W'), CTRL);
+    let t1 = ms(t0, 2000);
+    app.frame(&mut g, t1);
+    assert!(app.frame(&mut g, ms(t1, 60)));
+    assert_eq!(outlines(&app, &g, other), before, "the other panel's tabs do not move or fade");
+    assert_eq!(app.strip.ghost_count(first), 0);
+    assert_eq!(app.strip.ghost_count(second), 1);
+    assert!(outlines(&app, &g, app.layout.title).iter().any(|o| o.0.x == old1.x && o.0.w < old1.w), "the closed tab fades in its own panel");
+}
+
+#[test]
+fn closing_a_tab_of_an_overflowing_strip_animates_between_the_arrows() {
+    let mut app = many(30, 2000);
+    let mut g = Gfx::new(crate::text::tests::Mono, 1024);
+    app.select_tab(2);
+    let t0 = Instant::now();
+    app.frame(&mut g, ms(t0, 1000));
+    let [left, right] = app.layout.tab_arrows;
+    assert!(left.w > 0.0);
+    let (old2, old3) = (app.layout.tabs[2].0, app.layout.tabs[3].0);
+    key(&mut app, Key::Char('W'), CTRL);
+    let t1 = ms(t0, 2000);
+    app.frame(&mut g, t1);
+    assert!(app.frame(&mut g, ms(t1, 60)));
+    assert_eq!(app.layout.tab_arrows, [left, right], "the arrows stay put");
+    let o = outlines(&app, &g, app.layout.title);
+    assert_eq!(o.len(), 2, "{o:?}");
+    assert!(o.iter().all(|o| o.0.x >= left.right() && o.0.right() <= right.x), "{o:?}");
+    assert!(o.iter().any(|o| o.0.x > old2.x && o.0.x < old3.x), "the next tab slides in: {o:?}");
+    assert!(!app.frame(&mut g, ms(t1, 300)));
+    assert_eq!(outlines(&app, &g, app.layout.title).iter().map(|o| o.0.x).collect::<Vec<_>>(), [old2.x]);
+}

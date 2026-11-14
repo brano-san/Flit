@@ -2279,6 +2279,7 @@ impl App {
         if self.strip.arrivals(&ids, self.animations, now) {
             self.motion = true;
         }
+        self.strip.begin(self.panels.list.iter().map(|p| p.id), self.animations);
         for _ in 0..2 {
             arena.reset();
             g.begin(files.bg);
@@ -2310,6 +2311,7 @@ impl App {
             if !g.atlas_reset {
                 break;
             }
+            self.strip.drop_ghosts();
         }
         self.arena = arena;
         self.prefetch_shell();
@@ -2361,17 +2363,16 @@ impl App {
     }
 
     fn draw_title<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
+        let now = self.last_frame.unwrap_or_else(Instant::now);
+        let lane = self.strip_lane(now);
         let l = &self.layout;
         g.dl.rect(l.title, t.chrome);
         let border = self.s(1.0).max(1.0);
         let base = l.title.bottom() - border;
         let foot = if g.dl.round { self.s(3.0) } else { 0.0 };
         let start = l.title.x + if l.title.x == self.nav.sidebar.rect.right() && l.title.x > 0.0 { foot } else { 0.0 };
-        if let Some((r, _)) = l.tabs.get(self.cur).filter(|(r, _)| r.w > 0.0) {
+        if let Some(r) = l.tabs.get(self.cur).map(|&(r, _)| self.strip.at(lane, tabbar::Part::Tab(self.tabs[self.cur].id), r, now)).filter(|r| r.w > 0.0) {
             g.dl.rect(Rect::new(start, base, (r.x - foot - start).max(0.0), border), t.separator);
-            let from = g.dl.instances.len();
-            g.dl.outline(Rect::new(r.x, r.y, r.w, r.h + self.s(8.0)), t.separator, self.s(6.0), border);
-            g.dl.confine(from, Rect::new(r.x, r.y, r.w, base - foot - r.y + border));
             g.dl.rect(Rect::new(r.right() + foot, base, (l.title.right() - r.right() - foot).max(0.0), border), t.separator);
         } else {
             g.dl.rect(Rect::new(start, base, l.title.right() - start, border), t.separator);
@@ -2380,15 +2381,27 @@ impl App {
         let m = g.metrics(font);
         let close_font = self.icon_font(8.0);
         let drop = self.drop_spot();
-        let now = self.last_frame.unwrap_or_else(Instant::now);
         let l = &self.layout;
         let mut new_tab_dx = 0.0;
         let mut requests: Vec<IconRequest> = Vec::new();
-        for (i, &(r, c)) in l.tabs.iter().enumerate().filter(|(_, (r, _))| r.w > 0.0) {
+        let ghosts_from = g.dl.instances.len();
+        self.strip.ghosts(lane, &mut g.dl, now);
+        for (i, &(target, c)) in l.tabs.iter().enumerate() {
+            let part = tabbar::Part::Tab(self.tabs[i].id);
+            let r = self.strip.at(lane, part, target, now);
             let from = g.dl.instances.len();
+            if r.w <= 0.0 {
+                self.strip.record(lane, part, r, &[]);
+                continue;
+            }
+            let c = if c.w > 0.0 { Rect::new(c.x + r.right() - target.right(), c.y, c.w, c.h) } else { c };
             let active = i == self.cur;
             let hovered = self.lit(Hit::Tab(i)).max(self.lit(Hit::TabClose(i)));
             let accented = self.menu_open_from(Hit::Tab(i)) || (active && self.docking.is_some() && self.panels.here == self.panels.active);
+            if active {
+                g.dl.outline(Rect::new(r.x, r.y, r.w, r.h + self.s(8.0)), t.separator, self.s(6.0), border);
+                g.dl.confine(from, Rect::new(r.x, r.y, r.w, base - foot - r.y + border));
+            }
             if accented {
                 g.dl.round_rect(r.inset(0.0, self.s(2.0)), t.accent, self.s(6.0));
             } else if active {
@@ -2435,7 +2448,12 @@ impl App {
                     new_tab_dx = -(1.0 - shown) * r.w;
                 }
             }
+            if r.w != target.w {
+                g.dl.confine(from, Rect::new(r.x - foot, l.title.y, r.w + 2.0 * foot, l.title.h));
+            }
+            self.strip.record(lane, part, r, &g.dl.instances[from..]);
         }
+        new_tab_dx += self.strip.at(lane, tabbar::Part::Plus, l.new_tab, now).x - l.new_tab.x;
         let new_tab_from = g.dl.instances.len();
         let mut w = widgets::Paint::new(g, t, self.scale);
         if drop == Some(Spot::NewTab) {
@@ -2445,12 +2463,19 @@ impl App {
             w.icon_button(l.new_tab, G_ADD, self.icon_font(10.0), self.button(Hit::NewTab, false, true), t.text_dim);
         }
         w.g.dl.shift(new_tab_from, new_tab_dx.round(), 0.0);
+        self.strip.record(lane, tabbar::Part::Plus, Rect::new(l.new_tab.x + new_tab_dx.round(), l.new_tab.y, l.new_tab.w, l.new_tab.h), &[]);
         if l.tab_arrows[0].w > 0.0 {
             let n = self.tabs.len();
             for (k, glyph) in [G_CRUMB_LEFT, G_CRUMB_RIGHT].into_iter().enumerate() {
                 let on = l.strip.hidden(k == 1, n) > 0;
-                w.icon_button(l.tab_arrows[k], glyph, self.icon_font(8.0), self.button(Hit::TabScroll(k == 1), false, on), t.text_dim);
+                let r = self.strip.at(lane, tabbar::Part::Arrow(k == 1), l.tab_arrows[k], now);
+                w.icon_button(r, glyph, self.icon_font(8.0), self.button(Hit::TabScroll(k == 1), false, on), t.text_dim);
+                self.strip.record(lane, tabbar::Part::Arrow(k == 1), r, &[]);
             }
+        }
+        if self.strip.busy(lane) {
+            let clip = self.strip_clip();
+            w.g.dl.confine(ghosts_from, clip);
         }
         if l.actions.w > 0.0 {
             let open = self.panels.here == self.panels.active && self.nav.palette.as_ref().is_some_and(|p| p.pick == palette::Pick::Tabs);
