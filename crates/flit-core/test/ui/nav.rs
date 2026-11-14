@@ -73,6 +73,16 @@ fn rows(app: &App) -> Vec<String> {
     v.rows().iter().map(|&i| String::from_utf8_lossy(v.listing().name(i)).into_owned()).collect()
 }
 
+fn selected(app: &App) -> Vec<String> {
+    let v = app.tab().view.as_ref().unwrap();
+    v.selected().map(|i| String::from_utf8_lossy(v.listing().name(i)).into_owned()).collect()
+}
+
+fn focused(app: &App) -> Option<String> {
+    let v = app.tab().view.as_ref().unwrap();
+    v.focus.map(|i| String::from_utf8_lossy(v.listing().name(i)).into_owned())
+}
+
 fn listed(app: &mut App) -> Vec<(TabId, Location)> {
     app.drain_effects()
         .filter_map(|e| match e {
@@ -612,4 +622,54 @@ fn the_address_bar_picks_words_too() {
     click_at(&mut app, at, 2, t0());
     let e = &app.nav.palette.as_ref().unwrap().field.edit;
     assert_eq!(&e.text[e.selection()], "Files");
+}
+
+#[test]
+fn refresh_keeps_the_selection_focus_and_scroll() {
+    let mut app = app_at(r"C:\x");
+    let names: Vec<String> = (0..60).map(|i| format!("n{i:02}.txt")).collect();
+    let items: Vec<(&str, u32)> = names.iter().map(|n| (n.as_str(), 0)).collect();
+    deliver(&mut app, &items);
+    key(&mut app, Key::Home, NO);
+    key(&mut app, Key::Down, SHIFT);
+    key(&mut app, Key::Down, SHIFT);
+    assert_eq!(selected(&app), ["n00.txt", "n01.txt", "n02.txt"]);
+    app.drain_effects().for_each(drop);
+    let t = app.tab_mut();
+    (t.scroll, t.scroll_target) = (120.0, 120.0);
+    key(&mut app, Key::F(5), NO);
+    assert_eq!(listed(&mut app), [(1, loc(r"C:\x"))]);
+    let gone: Vec<(&str, u32)> = items.iter().copied().filter(|&(n, _)| n != "n01.txt").collect();
+    deliver(&mut app, &gone);
+    assert_eq!(selected(&app), ["n00.txt", "n02.txt"], "a file that vanished just drops out");
+    assert_eq!(focused(&app).as_deref(), Some("n02.txt"));
+    assert_eq!((app.tab().scroll, app.tab().scroll_target), (120.0, 120.0));
+    redraw(&mut app);
+    assert!((0.0..=app.max_scroll()).contains(&app.tab().scroll), "the restored scroll fits the folder");
+}
+
+#[test]
+fn back_and_forward_bring_back_the_saved_view() {
+    let mut app = app_at(r"C:\work");
+    deliver(&mut app, &[("src", attr::DIR), ("a.txt", 0)]);
+    key(&mut app, Key::Down, NO);
+    key(&mut app, Key::Enter, NO);
+    deliver(&mut app, &[("m.txt", 0), ("n.txt", 0), ("o.txt", 0), ("p.txt", 0)]);
+    key(&mut app, Key::Home, NO);
+    key(&mut app, Key::Down, SHIFT);
+    assert_eq!(selected(&app), ["m.txt", "n.txt"]);
+    let t = app.tab_mut();
+    (t.scroll, t.scroll_target) = (90.0, 90.0);
+    app.drain_effects().for_each(drop);
+    key(&mut app, Key::Left, Mods { alt: true, ..NO });
+    assert_eq!(listed(&mut app), [(1, loc(r"C:\work"))]);
+    deliver(&mut app, &[("src", attr::DIR), ("a.txt", 0)]);
+    assert_eq!(selected(&app), ["src"]);
+    assert_eq!(focused(&app).as_deref(), Some("src"));
+    key(&mut app, Key::Right, Mods { alt: true, ..NO });
+    assert_eq!(listed(&mut app), [(1, loc(r"C:\work\src"))]);
+    deliver(&mut app, &[("m.txt", 0), ("n.txt", 0), ("o.txt", 0), ("p.txt", 0)]);
+    assert_eq!(selected(&app), ["m.txt", "n.txt"]);
+    assert_eq!(focused(&app).as_deref(), Some("n.txt"));
+    assert_eq!((app.tab().scroll, app.tab().scroll_target), (90.0, 90.0));
 }

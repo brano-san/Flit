@@ -130,7 +130,7 @@ impl App {
         let t = self.tab();
         let (route, history) = if i < 2 {
             let mut h = t.history.clone();
-            if !h.jump(if i == 0 { -1 } else { 1 }) {
+            if !h.jump(if i == 0 { -1 } else { 1 }, None) {
                 return;
             }
             (Route { folder: h.current().clone(), select: None }, Some(h))

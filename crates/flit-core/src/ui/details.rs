@@ -700,6 +700,10 @@ impl App {
     }
 
     pub(super) fn load_tab(&mut self, k: usize, select: Option<Vec<u8>>, now: Instant) {
+        self.load_tab_restored(k, select, None, now);
+    }
+
+    pub(super) fn load_tab_restored(&mut self, k: usize, select: Option<Vec<u8>>, restore: Option<crate::nav::Restore>, now: Instant) {
         let gen = self.gen();
         let arriving = self.tabs[k].view_loc != *self.tabs[k].location();
         let fresh = arriving || self.tabs[k].view.is_none();
@@ -717,7 +721,7 @@ impl App {
         self.sync_spec(k);
         self.tabs[k].retain_filter = self.prefs.retain_filter;
         let case = self.case;
-        self.tabs[k].load(gen, select, case, now, &mut self.effects);
+        self.tabs[k].load(gen, select, restore, case, now, &mut self.effects);
         self.git_refresh(k, false);
         self.place_loaded(k);
     }

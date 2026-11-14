@@ -27,6 +27,7 @@ pub(super) struct Loading {
     pub gen: u64,
     pub since: Instant,
     pub select: Option<Vec<u8>>,
+    pub restore: Option<crate::nav::Restore>,
     scanned: u32,
     pub note: Option<String>,
     pub properties: bool,
@@ -136,7 +137,7 @@ impl Tab {
         s
     }
 
-    pub(super) fn load(&mut self, gen: u64, select: Option<Vec<u8>>, case: CaseMode, now: Instant, fx: &mut Vec<Effect>) {
+    pub(super) fn load(&mut self, gen: u64, select: Option<Vec<u8>>, restore: Option<crate::nav::Restore>, case: CaseMode, now: Instant, fx: &mut Vec<Effect>) {
         self.gen = gen;
         self.cancel.set(gen);
         self.stop_sizes();
@@ -160,7 +161,7 @@ impl Tab {
             fx.push(Effect::Provider { provider: old, req: ProviderRequest::Watch { tab: self.id, gen, path: None } });
         }
         self.watching = Some(provider.clone());
-        self.loading = Some(Loading { gen, since: now, select, scanned: 0, note: None, properties: false });
+        self.loading = Some(Loading { gen, since: now, select, restore, scanned: 0, note: None, properties: false });
         self.pending_diffs.clear();
         self.error = None;
         self.crumbs = loc.crumbs();
@@ -234,6 +235,22 @@ impl Tab {
             }
         }
         if done {
+            if let Some(r) = self.loading.as_mut().and_then(|l| l.restore.take()) {
+                v.clear_selection();
+                let mut anchor = None;
+                for name in &r.select {
+                    if let Some(i) = v.find(name).filter(|&i| v.is_visible(i)) {
+                        v.set_selected(i, true);
+                        anchor.get_or_insert(i);
+                    }
+                }
+                if let Some(i) = r.focus.as_ref().and_then(|n| v.find(n)).filter(|&i| v.is_visible(i)).or(anchor) {
+                    v.focus = Some(i);
+                    v.anchor = Some(i);
+                }
+                self.scroll = r.scroll;
+                self.scroll_target = r.scroll_target;
+            }
             if v.snap().view.deep {
                 self.deep_gen = v.snap().gen;
             }
@@ -301,6 +318,16 @@ impl Tab {
     pub(super) fn focused_name(&self) -> Option<Vec<u8>> {
         let v = self.view.as_ref()?;
         Some(v.listing().name(v.focus?).to_vec())
+    }
+
+    pub(super) fn capture(&self) -> Option<crate::nav::Restore> {
+        let v = self.view.as_ref()?;
+        if self.view_loc != *self.location() || !v.snap().done {
+            return None;
+        }
+        let select = v.selected().map(|i| v.listing().name(i).to_vec()).collect();
+        let focus = self.focused_name();
+        Some(crate::nav::Restore::capped(select, focus, self.scroll, self.scroll_target))
     }
 
     pub(super) fn entry_location(&self, i: u32) -> Location {

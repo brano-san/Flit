@@ -1030,8 +1030,9 @@ impl App {
 
     fn route_here(&mut self, r: Route, now: Instant) {
         let k = self.cur;
+        let keep = self.tabs[k].capture();
         let t = &mut self.tabs[k];
-        if !t.history.go(r.folder) {
+        if !t.history.go(r.folder, keep) {
             let current = t.gen;
             if let (Some(name), Some(v)) = (&r.select, t.view.as_mut().filter(|v| v.snap().gen == current)) {
                 if let Some(i) = v.find(name).filter(|&i| v.is_visible(i)) {
@@ -1116,11 +1117,16 @@ impl App {
 
     fn jump_history(&mut self, n: isize, now: Instant) {
         let (k, previous) = (self.cur, self.select_previous);
+        let keep = self.tabs[k].capture();
         let t = &mut self.tabs[k];
         let from = t.location().clone();
-        if t.history.jump(n) {
-            let select = (previous && from.parent().as_ref() == Some(t.location())).then(|| from.file_name().to_vec());
-            self.load_tab(k, select, now);
+        if t.history.jump(n, keep) {
+            let restore = t.history.take_here().filter(crate::nav::Restore::has_names);
+            let select = match restore.is_some() {
+                true => None,
+                false => (previous && from.parent().as_ref() == Some(t.location())).then(|| from.file_name().to_vec()),
+            };
+            self.load_tab_restored(k, select, restore, now);
             self.after_tab_change();
         }
     }
@@ -1130,8 +1136,8 @@ impl App {
     }
 
     fn reload(&mut self, k: usize, now: Instant) {
-        let select = self.tabs[k].focused_name();
-        self.load_tab(k, select, now);
+        let keep = self.tabs[k].capture();
+        self.load_tab_restored(k, None, keep, now);
         self.dirty |= k == self.cur;
     }
 
