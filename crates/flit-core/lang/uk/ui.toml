@@ -186,6 +186,7 @@ exported = "Параметри й теги експортовано до {path}"
 export_failed = "Не вдається експортувати параметри: {error}"
 tag_failed = "Flit не вдалося позначити файли тегом: {error}"
 start_failed = "Не вдалося запустити Flit: {error}"
+stopped = "Flit несподівано завершив роботу: {error}"
 integration_failed = "Не вдалося змінити інтеграцію із системою: {error}"
 
 [failure]

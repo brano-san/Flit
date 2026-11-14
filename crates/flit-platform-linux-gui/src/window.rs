@@ -118,6 +118,13 @@ pub(crate) fn preferred_dark() -> Option<bool> {
     }
 }
 
+pub(crate) fn loop_failure(e: winit::error::EventLoopError) -> PlatformError {
+    match e {
+        winit::error::EventLoopError::ExitFailure(code) => PlatformError::new(i64::from(code), "the connection to the display server was lost; the error logged just before this line says why"),
+        other => PlatformError::new(-1, format!("event loop: {other}")),
+    }
+}
+
 fn wake_loop() {
     if let Some(proxy) = PROXY.get() {
         proxy.wake_up();
@@ -581,7 +588,7 @@ impl WindowSystem for LinuxWindows {
         LOOP_RUNNING.store(true, Ordering::Release);
         let ran = self.event_loop.run_app_on_demand(&mut app);
         LOOP_RUNNING.store(false, Ordering::Release);
-        ran.map_err(|e| PlatformError::new(-1, format!("event loop: {e}")))?;
+        ran.map_err(loop_failure)?;
         app.error.map_or(Ok(()), Err)
     }
 }

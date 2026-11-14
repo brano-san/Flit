@@ -186,6 +186,7 @@ exported = "Se exportaron la configuración y las etiquetas a {path}"
 export_failed = "No se puede exportar la configuración: {error}"
 tag_failed = "Flit no pudo etiquetar los archivos: {error}"
 start_failed = "Flit no se pudo iniciar: {error}"
+stopped = "Flit se cerró inesperadamente: {error}"
 integration_failed = "No se puede cambiar la integración con el sistema: {error}"
 
 [failure]

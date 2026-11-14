@@ -22,7 +22,7 @@ use flit_core::{FsPath, Location, ProviderEvent, ProviderId, ProviderRequest, Ta
 use flit_platform::*;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -1075,6 +1075,7 @@ impl<P: Platform> Handler<P> {
         }
         if let Some(b) = st.born.take() {
             let (ms, tabs) = (b.elapsed().as_secs_f64() * 1e3, st.app.tabs().len());
+            SHOWN.store(true, Ordering::Release);
             tracing::info!("window ready in {ms:.1} ms with {tabs} tabs, software rendering: {}", st.software);
             if self.timing {
                 eprintln!("window ready in {ms:.1} ms with {tabs} tabs, software rendering: {}", st.software);
@@ -1266,6 +1267,12 @@ use flit_core::input::HitArea;
 fn filetime_now() -> i64 {
     let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     (unix + 11_644_473_600) * 10_000_000
+}
+
+static SHOWN: AtomicBool = AtomicBool::new(false);
+
+pub fn shown() -> bool {
+    SHOWN.load(Ordering::Acquire)
 }
 
 pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Option<PathBuf>, activated: bool, started: Instant) -> Result<(), PlatformError> {

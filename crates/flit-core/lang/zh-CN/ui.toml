@@ -186,6 +186,7 @@ exported = "已将设置和标记导出到 {path}"
 export_failed = "无法导出设置：{error}"
 tag_failed = "Flit 无法为文件添加标记：{error}"
 start_failed = "Flit 无法启动：{error}"
+stopped = "Flit 意外停止：{error}"
 integration_failed = "无法更改系统集成：{error}"
 
 [failure]

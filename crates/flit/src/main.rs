@@ -151,12 +151,18 @@ fn main() {
     #[cfg(target_os = "linux")]
     flit_platform_linux_gui::prefetch_fonts();
     if let Err(e) = app::run::<P>(open, instance, metrics, activated, started) {
-        tracing::error!("cannot start: {e}");
+        let ran = app::shown();
+        if ran {
+            tracing::error!("stopped: {e}");
+        } else {
+            tracing::error!("cannot start: {e}");
+        }
         logs::flush();
         if headless {
             eprintln!("flit: {e}");
         } else {
-            <P as Platform>::fatal_error(&flit_core::tr!(flit_core::i18n::S::UiAppStartFailed, error = flit_core::i18n::localize(&e.to_string())));
+            let failed = if ran { flit_core::i18n::S::UiAppStopped } else { flit_core::i18n::S::UiAppStartFailed };
+            <P as Platform>::fatal_error(&flit_core::tr!(failed, error = flit_core::i18n::localize(&e.to_string())));
         }
         std::process::exit(1);
     }

@@ -186,6 +186,7 @@ exported = "Paramètres et balises exportés vers {path}"
 export_failed = "Impossible d’exporter les paramètres : {error}"
 tag_failed = "Flit n’a pas pu baliser les fichiers : {error}"
 start_failed = "Flit n’a pas pu démarrer : {error}"
+stopped = "Flit s’est arrêté de manière inattendue : {error}"
 integration_failed = "Impossible de modifier l’intégration au système : {error}"
 
 [failure]
