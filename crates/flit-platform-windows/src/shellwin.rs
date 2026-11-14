@@ -16,9 +16,9 @@ use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
     Folder, FolderItem, FolderItems, FolderItems_Impl, IShellDispatch, IShellFolderViewDual, IShellFolderViewDual_Impl, Shell, ILClone, ILCombine, ILCreateFromPathW, ILFindLastID, ILFree, ILGetSize, IFolderView, IFolderView_Impl, IShellBrowser, IShellBrowser_Impl, IShellItem, IShellItemArray, IShellView, IShellView_Impl, IShellWindows, IWebBrowser2, IWebBrowser2_Impl, IWebBrowserApp_Impl,
     IWebBrowser_Impl, SHCreateItemFromIDList, SHCreateShellItemArrayFromIDLists, SHGetNameFromIDList, ShellWindows, BHID_DataObject, BHID_SFObject, FOLDERSETTINGS, FVM_DETAILS, SIGDN, SIGDN_FILESYSPATH, SIGDN_NORMALDISPLAY, SIGDN_URL, SVGIO_ALLVIEW, SVGIO_SELECTION,
-    SVGIO_TYPE_MASK, SVSI_SELECT, SWC_BROWSER, _SVGIO, ILRemoveLastID, SHGetFolderLocation, SIGDN_DESKTOPABSOLUTEPARSING, SBSP_NAVIGATEBACK, SBSP_NAVIGATEFORWARD, SBSP_NEWBROWSER, SBSP_PARENT, SBSP_RELATIVE, navOpenInBackgroundTab, navOpenInNewTab, navOpenInNewWindow,
+    SVGIO_TYPE_MASK, SVSI_SELECT, SWC_BROWSER, IPersistFolder2, SID_STopLevelBrowser, _SVGIO, ILRemoveLastID, SHGetFolderLocation, SIGDN_DESKTOPABSOLUTEPARSING, SBSP_NAVIGATEBACK, SBSP_NAVIGATEFORWARD, SBSP_NEWBROWSER, SBSP_PARENT, SBSP_RELATIVE, navOpenInBackgroundTab, navOpenInNewTab, navOpenInNewWindow,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, GetWindowThreadProcessId, HMENU, MSG};
+use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, GetWindowThreadProcessId, IsIconic, SetForegroundWindow, ShowWindow, HMENU, MSG, SW_RESTORE};
 use windows_core::{implement, ComObject, IUnknown, IUnknownImpl, Interface, Ref};
 
 const LIBID_SHDOCVW: GUID = GUID::from_u128(0xeab22ac0_30c1_11cf_a7eb_0000c05bae0b);
@@ -366,6 +366,47 @@ impl Browser_Impl {
         }
         pidl_name(pidl)
     }
+}
+
+pub(crate) fn explorer_place(args: &str) -> Option<&str> {
+    let inner = args.trim().strip_prefix('"')?.strip_suffix('"')?;
+    (!inner.is_empty() && !inner.contains('"')).then_some(inner)
+}
+
+pub(crate) fn reusable(windows: &[(isize, u32, String)], own: u32, place: &str) -> Option<isize> {
+    windows.iter().find(|(_, pid, shown)| *pid != own && shown.eq_ignore_ascii_case(place)).map(|w| w.0)
+}
+
+unsafe fn shown_place(item: &IDispatch) -> Option<(isize, u32, String)> {
+    let browser: IWebBrowser2 = item.cast().ok()?;
+    let hwnd = browser.HWND().ok()?.0;
+    let mut pid = 0u32;
+    GetWindowThreadProcessId(HWND(hwnd as _), Some(&mut pid));
+    let top: IShellBrowser = browser.cast::<IServiceProvider>().ok()?.QueryService(&SID_STopLevelBrowser).ok()?;
+    let folder: IPersistFolder2 = top.QueryActiveShellView().ok()?.cast::<IFolderView>().ok()?.GetFolder().ok()?;
+    Some((hwnd, pid, owned_pidl_name(folder.GetCurFolder().ok()?)?))
+}
+
+fn explorer_windows() -> Vec<(isize, u32, String)> {
+    let Ok(list) = (unsafe { CoCreateInstance::<_, IShellWindows>(&ShellWindows, None, CLSCTX_ALL) }) else { return Vec::new() };
+    let count = unsafe { list.Count() }.unwrap_or(0);
+    (0..count).filter_map(|i| unsafe { shown_place(&list.Item(&VARIANT::from(i)).ok()?) }).collect()
+}
+
+pub fn raise_explorer(place: &str) -> bool {
+    crate::com_sta();
+    let wide: Vec<u16> = place.encode_utf16().chain([0]).collect();
+    let Some(name) = parse(&wide).and_then(|p| pidl_name(p.as_ptr().cast())) else { return false };
+    let Some(hwnd) = reusable(&explorer_windows(), std::process::id(), &name) else { return false };
+    let h = HWND(hwnd as _);
+    unsafe {
+        if IsIconic(h).as_bool() {
+            let _ = ShowWindow(h, SW_RESTORE);
+        }
+        let _ = SetForegroundWindow(h);
+    }
+    tracing::info!("{place} is already open in File Explorer, raised that window");
+    true
 }
 
 fn unsupported<T>() -> windows::core::Result<T> {

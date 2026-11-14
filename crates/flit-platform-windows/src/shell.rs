@@ -316,6 +316,7 @@ impl Shell for ShellCom {
             Launch::Eject(drive) => return eject(drive),
             Launch::MapDrive(prefill) => return crate::network::map_dialog(prefill.as_ref()),
             Launch::Disconnect(drive) => return crate::network::disconnect_dialog(drive.as_ref()),
+            Launch::Run { program, args, .. } if program.eq_ignore_ascii_case("explorer.exe") && crate::shellwin::explorer_place(args).is_some_and(crate::shellwin::raise_explorer) => return Ok(()),
             _ => {}
         }
         commands(launch, windows_terminal().as_deref()).iter().try_for_each(execute)

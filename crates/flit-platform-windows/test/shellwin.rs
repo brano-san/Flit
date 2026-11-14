@@ -143,3 +143,33 @@ fn navigation_reads_paths_id_lists_and_special_folders_and_the_window_flags() {
     assert_eq!(navigation_window(Some(&VARIANT::from(navOpenInNewWindow.0))), OpenTarget::NewWindow);
     assert_eq!(navigation_window(Some(&VARIANT::from(navOpenInBackgroundTab.0))), OpenTarget::NewTab);
 }
+
+#[test]
+fn a_folder_handed_to_explorer_is_read_from_its_quoted_argument() {
+    assert_eq!(explorer_place(r#""::{26EE0668-A00A-44D7-9371-BEB064C98683}""#), Some("::{26EE0668-A00A-44D7-9371-BEB064C98683}"));
+    assert_eq!(explorer_place(r#" "C:\Work" "#), Some(r"C:\Work"));
+    assert_eq!(explorer_place(""), None, "Explorer opened without a folder always gets a new window");
+    assert_eq!(explorer_place(r#""""#), None);
+    assert_eq!(explorer_place(r#""a" "b""#), None);
+    assert_eq!(explorer_place(r"/n,C:\Work"), None);
+}
+
+#[test]
+fn an_explorer_window_already_showing_the_place_is_reused_and_flit_windows_are_not() {
+    let me = 7;
+    let windows = [(1, me, "::{26EE0668-A00A-44D7-9371-BEB064C98683}".to_owned()), (2, 40, r"C:\Work".to_owned()), (3, 41, "::{26ee0668-a00a-44d7-9371-beb064c98683}".to_owned())];
+    assert_eq!(reusable(&windows, me, "::{26EE0668-A00A-44D7-9371-BEB064C98683}"), Some(3), "Flit's own window listed among the shell windows is skipped");
+    assert_eq!(reusable(&windows, me, r"c:\work"), Some(2));
+    assert_eq!(reusable(&windows, me, r"C:\Other"), None, "a place no window shows opens a new Explorer window");
+    assert_eq!(reusable(&[], me, r"C:\Work"), None);
+}
+
+#[test]
+fn a_place_no_explorer_window_shows_is_left_for_a_new_window() {
+    let dir = crate::test_temp().join(format!("flit-explorer-nowhere-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let shown = raise_explorer(&dir.to_string_lossy());
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(!shown);
+    assert!(!raise_explorer("::{00000000-0000-0000-0000-000000000000}"), "a place the shell cannot parse is never matched");
+}

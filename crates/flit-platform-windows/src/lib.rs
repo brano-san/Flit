@@ -48,6 +48,7 @@ pub use instance::PipeInstance;
 pub use mft::MftIndex;
 pub use pipe::PipeConn;
 pub use shell::ShellCom;
+pub use shellwin::raise_explorer;
 pub use volume::label_from_command_line;
 pub use walk_index::WalkIndex;
 pub use watcher::DirWatcher;

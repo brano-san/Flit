@@ -54,7 +54,7 @@ fn wtf8(s: &OsStr) -> Vec<u8> {
 #[cfg(windows)]
 fn hand_to_explorer(open: &flit_core::open::Open) -> bool {
     let locations = flit_core::open::explorer_only(open, &P::known_folder);
-    for location in &locations {
+    for location in locations.iter().filter(|l| !flit_platform_windows::raise_explorer(l)) {
         let _ = std::process::Command::new("explorer.exe").arg(location).spawn();
     }
     !locations.is_empty()
