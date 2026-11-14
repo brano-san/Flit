@@ -141,7 +141,7 @@ impl Out<'_> {
                 }
                 Ok(Some((parent.join(name), false)))
             }
-            Some(Resolve::Skip) => {
+            Some(Resolve::Skip | Resolve::SkipSame | Resolve::ReplaceOlder) => {
                 self.skipped.push(rel);
                 self.job.update(|p| {
                     p.items += 1;

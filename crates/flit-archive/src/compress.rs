@@ -383,7 +383,7 @@ pub fn compress(items: &[FsPath], archive: &FsPath, options: &Compression, job: 
                 let name = numbered(&dir, &flit_core::name::display(target.file_name()), false);
                 target = target.parent().unwrap_or_else(|| target.clone()).join(name.as_bytes());
             }
-            Some(Resolve::Skip) => return Ok(Vec::new()),
+            Some(Resolve::Skip | Resolve::SkipSame | Resolve::ReplaceOlder) => return Ok(Vec::new()),
             None => return Err(fail(cancelled())),
         }
     }
@@ -455,7 +455,7 @@ pub fn add(items: &[FsPath], archive: &FsPath, inner: &str, job: &Job, env: &Env
                 let fresh = numbered_by(&name, from.attrs & flit_core::listing::attr::DIR != 0, |n| taken(&format!("{key_prefix}{}", fold(n))));
                 rename.insert(name, fresh);
             }
-            Some(Resolve::Skip) => {
+            Some(Resolve::Skip | Resolve::SkipSame | Resolve::ReplaceOlder) => {
                 skip.insert(name);
             }
             None => return Err(fail(cancelled())),

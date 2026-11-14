@@ -283,6 +283,24 @@ pub enum Resolve {
     KeepBoth,
     Replace,
     Skip,
+    SkipSame,
+    ReplaceOlder,
+}
+
+const SAME_TIME: i64 = 20_000_000;
+
+impl Resolve {
+    pub fn decide(self, c: &Conflict) -> Option<Resolve> {
+        let dir = |m: &Meta| m.attrs & crate::listing::attr::DIR != 0;
+        match self {
+            Resolve::KeepBoth | Resolve::Replace | Resolve::Skip => Some(self),
+            _ if crate::limits::too_large(c) || crate::archive::is_unreadable(c) => Some(Resolve::Skip),
+            _ if dir(&c.from) && dir(&c.to) => Some(Resolve::Replace),
+            Resolve::SkipSame => c.identical().then_some(Resolve::Skip),
+            Resolve::ReplaceOlder if dir(&c.from) || dir(&c.to) => Some(Resolve::Skip),
+            Resolve::ReplaceOlder => Some(if c.from.modified > c.to.modified + SAME_TIME { Resolve::Replace } else { Resolve::Skip }),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -291,6 +309,13 @@ pub struct Conflict {
     pub target: FsPath,
     pub from: Meta,
     pub to: Meta,
+}
+
+impl Conflict {
+    pub fn identical(&self) -> bool {
+        let file = |m: &Meta| m.attrs & crate::listing::attr::DIR == 0;
+        file(&self.from) && file(&self.to) && self.from.size == self.to.size && self.from.modified.abs_diff(self.to.modified) <= SAME_TIME as u64
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -371,26 +396,37 @@ impl OpCtl {
         self.0.changed.notify_all();
     }
 
-    pub fn resolve(&self, ask: impl FnOnce()) -> Option<Resolve> {
+    pub fn settle(&self, choice: Resolve, policy: Option<Resolve>) {
         let mut a = self.lock();
-        if let Some(p) = a.policy {
-            return Some(p);
+        a.policy = policy.or(a.policy);
+        a.given = Some((choice, false));
+        self.0.changed.notify_all();
+    }
+
+    pub fn resolve(&self, c: &Conflict, mut ask: impl FnMut()) -> Option<Resolve> {
+        loop {
+            let mut a = self.lock();
+            if let Some(choice) = a.policy.and_then(|p| p.decide(c)) {
+                return Some(choice);
+            }
+            a.given = None;
+            drop(a);
+            if self.is_cancelled() {
+                return None;
+            }
+            ask();
+            let mut a = self.lock();
+            while a.given.is_none() && !self.is_cancelled() {
+                a = self.0.changed.wait(a).unwrap_or_else(|e| e.into_inner());
+            }
+            let (choice, all) = a.given.take().filter(|_| !self.is_cancelled())?;
+            if all {
+                a.policy = Some(choice);
+            }
+            if let Some(decided) = choice.decide(c) {
+                return Some(decided);
+            }
         }
-        a.given = None;
-        drop(a);
-        if self.is_cancelled() {
-            return None;
-        }
-        ask();
-        let mut a = self.lock();
-        while a.given.is_none() && !self.is_cancelled() {
-            a = self.0.changed.wait(a).unwrap_or_else(|e| e.into_inner());
-        }
-        let (choice, all) = a.given.take().filter(|_| !self.is_cancelled())?;
-        if all {
-            a.policy = Some(choice);
-        }
-        Some(choice)
     }
 
     pub fn skips_failures(&self) -> bool {

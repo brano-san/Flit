@@ -361,6 +361,38 @@ fn conflicts_keep_both_replace_or_skip_and_never_touch_unchosen_items() {
 }
 
 #[test]
+fn replace_older_and_skip_identical_decide_each_file_of_a_merged_folder() {
+    let t = TempDir::new("older");
+    std::fs::create_dir_all(t.0.join(r"src\f")).unwrap();
+    std::fs::create_dir_all(t.0.join(r"dst\f")).unwrap();
+    let at = |rel: &str, body: &str, hours: u64| {
+        t.file(rel, body);
+        let f = std::fs::File::options().write(true).open(t.0.join(rel)).unwrap();
+        f.set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000 + hours * 3600)).unwrap();
+    };
+    at(r"src\f\newer", "new", 2);
+    at(r"dst\f\newer", "old!", 1);
+    at(r"src\f\older", "new", 1);
+    at(r"dst\f\older", "old!", 2);
+    at(r"src\f\same", "same", 1);
+    at(r"dst\f\same", "same", 1);
+    let copy = FileOp::Copy { items: vec![t.path(r"src\f")], dest: t.path("dst") };
+    let (job, asked) = answering(&[(Resolve::ReplaceOlder, true)]);
+    let out = engine::run(&copy, &job);
+    assert!(out.error.is_none(), "{:?}", out.error);
+    assert_eq!(asked.lock().unwrap().len(), 1, "only the folder is asked about");
+    assert_eq!([read(&t, r"dst\f\newer"), read(&t, r"dst\f\older"), read(&t, r"dst\f\same")], ["new", "old!", "same"]);
+
+    at(r"dst\f\newer", "old!", 1);
+    let (job, asked) = answering(&[(Resolve::SkipSame, true), (Resolve::KeepBoth, false), (Resolve::KeepBoth, false)]);
+    let out = engine::run(&copy, &job);
+    assert!(out.error.is_none(), "{:?}", out.error);
+    let targets: Vec<String> = asked.lock().unwrap().iter().map(|c| String::from_utf8_lossy(c.target.file_name()).into_owned()).collect();
+    assert_eq!(targets, ["f", "newer", "older"], "the identical file is skipped without a question");
+    assert!(t.has(r"dst\f\newer (2)") && t.has(r"dst\f\older (2)") && !t.has(r"dst\f\same (2)"));
+}
+
+#[test]
 fn many_small_files_copy_in_parallel_and_still_ask_about_every_conflict_in_order() {
     let t = TempDir::new("quick");
     std::fs::create_dir_all(t.0.join(r"src\tree")).unwrap();

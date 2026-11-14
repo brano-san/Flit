@@ -196,8 +196,8 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static, build: S
                 None if notify.as_ref().is_some_and(|n| n.unwatch(&id)) => {}
                 None => ctx.cancel(id),
             },
-            Request::Answer { id, choice, all } => match (ctx.ops().get(&id), choice) {
-                (Some(ctl), Some(choice)) => ctl.answer(choice, all),
+            Request::Answer { id, choice, policy } => match (ctx.ops().get(&id), choice) {
+                (Some(ctl), Some(choice)) => ctl.settle(choice, policy),
                 (Some(ctl), None) => ctl.cancel(),
                 (None, _) => {}
             },

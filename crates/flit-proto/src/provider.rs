@@ -7,7 +7,7 @@ use flit_core::{FsError, FsPath, Meta};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-pub const VERSION: u32 = 6;
+pub const VERSION: u32 = 7;
 pub const MAX_FAILURE_TEXT: usize = 4096;
 
 pub type ReqId = u64;
@@ -19,7 +19,7 @@ pub enum Request {
     Watch { id: ReqId, path: FsPath },
     DirSizes { id: ReqId, dir: FsPath, items: Vec<(u32, Vec<u8>)> },
     Op { id: ReqId, op: FileOp, policy: Option<Resolve> },
-    Answer { id: ReqId, choice: Option<Resolve>, all: bool },
+    Answer { id: ReqId, choice: Option<Resolve>, policy: Option<Resolve> },
     Cancel { id: ReqId },
     Shutdown,
     Recover { id: ReqId, choice: Option<Recover>, all: bool },

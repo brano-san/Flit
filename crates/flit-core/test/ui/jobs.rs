@@ -61,19 +61,26 @@ fn finish(app: &mut App, id: OpId, error: Option<&str>) {
     app.on_provider_event(ProviderEvent::OpDone { tab, id, error: error.map(str::to_owned), report: Some(report) }, t0());
 }
 
+fn sizes(from: u64, to: u64) -> Conflict {
+    Conflict { source: p(r"C:\a\f.txt"), target: p(r"C:\x\f.txt"), from: Meta { size: from, ..Default::default() }, to: Meta { size: to, ..Default::default() } }
+}
+
 fn conflict(app: &mut App, id: OpId) {
     let tab = app.tab().id;
-    let conflict = Conflict { source: p(r"C:\a\f.txt"), target: p(r"C:\x\f.txt"), from: Meta { size: 3, ..Default::default() }, to: Meta { size: 5, ..Default::default() } };
-    app.on_provider_event(ProviderEvent::OpConflict { tab, id, conflict }, t0());
+    app.on_provider_event(ProviderEvent::OpConflict { tab, id, conflict: sizes(3, 5) }, t0());
+}
+
+fn asked_about(app: &mut App, id: OpId, ctl: &OpCtl, conflict: Conflict) -> (JoinHandle<Option<Resolve>>, mpsc::Receiver<()>) {
+    let (tx, rx) = mpsc::channel();
+    let (ctl, c) = (ctl.clone(), conflict.clone());
+    let waiting = std::thread::spawn(move || ctl.resolve(&c, || tx.send(()).unwrap()));
+    rx.recv().unwrap();
+    app.on_provider_event(ProviderEvent::OpConflict { tab: app.tab().id, id, conflict }, t0());
+    (waiting, rx)
 }
 
 fn asked(app: &mut App, id: OpId, ctl: &OpCtl) -> JoinHandle<Option<Resolve>> {
-    let (tx, rx) = mpsc::channel();
-    let ctl = ctl.clone();
-    let waiting = std::thread::spawn(move || ctl.resolve(|| tx.send(()).unwrap()));
-    rx.recv().unwrap();
-    conflict(app, id);
-    waiting
+    asked_about(app, id, ctl, sizes(3, 5)).0
 }
 
 fn states(app: &App) -> Vec<JobState> {
@@ -98,7 +105,7 @@ fn conflicts_are_answered_in_flits_own_dialog_with_the_keyboard() {
     letter(&mut app, 'D', 'D', SHIFT);
     key(&mut app, Key::Enter);
     assert_eq!(waiting.join().unwrap(), Some(Resolve::KeepBoth));
-    assert_eq!(ctl.resolve(|| panic!("asked again")), Some(Resolve::KeepBoth), "the answer applies to all remaining conflicts");
+    assert_eq!(ctl.resolve(&sizes(1, 2), || panic!("asked again")), Some(Resolve::KeepBoth), "the answer applies to all remaining conflicts");
 
     let (id, ctl) = paste(&mut app);
     let waiting = asked(&mut app, id, &ctl);
@@ -124,14 +131,14 @@ fn the_conflict_dialog_is_modal_and_works_with_the_mouse() {
     assert!(app.jobs.all);
     click(&mut app, |a| a.jobs.r.buttons[2]);
     assert_eq!(waiting.join().unwrap(), Some(Resolve::Skip));
-    assert_eq!(ctl.resolve(|| panic!("asked again")), Some(Resolve::Skip));
+    assert_eq!(ctl.resolve(&sizes(1, 2), || panic!("asked again")), Some(Resolve::Skip));
     let mut g = Gfx::new(Mono, 2048);
     let (id, ctl) = paste(&mut app);
     let waiting = asked(&mut app, id, &ctl);
     app.open_search();
     app.frame(&mut g, t0());
     assert!(!g.dl.instances.is_empty());
-    click(&mut app, |a| a.jobs.r.buttons[3]);
+    click(&mut app, |a| *a.jobs.r.buttons.last().unwrap());
     assert_eq!((waiting.join().unwrap(), ctl.is_cancelled()), (None, true), "the dialog answers over the search view too");
 }
 
@@ -239,7 +246,7 @@ fn flags_keep_the_button_and_answer_conflicts_by_default() {
     assert!(app.layout.ops_button.w > 0.0);
     app.conflict_default = Some(Resolve::Replace);
     let (_, ctl) = paste(&mut app);
-    assert_eq!(ctl.resolve(|| panic!("asked despite a default action")), Some(Resolve::Replace));
+    assert_eq!(ctl.resolve(&sizes(1, 2), || panic!("asked despite a default action")), Some(Resolve::Replace));
 }
 
 #[test]
@@ -296,8 +303,8 @@ fn items_too_large_for_the_drive_are_skipped_or_cancel_without_setting_a_policy(
     let mut app = app_at(r"C:\x");
     let ask = |app: &mut App, ctl: &OpCtl, id: OpId, conflict: Conflict| {
         let (tx, rx) = mpsc::channel();
-        let c = ctl.clone();
-        let waiting = std::thread::spawn(move || c.resolve(|| tx.send(()).unwrap()));
+        let (c, asked) = (ctl.clone(), conflict.clone());
+        let waiting = std::thread::spawn(move || c.resolve(&asked, || tx.send(()).unwrap()));
         rx.recv().unwrap();
         app.on_provider_event(ProviderEvent::OpConflict { tab: app.tab().id, id, conflict }, t0());
         waiting
@@ -603,7 +610,7 @@ fn dialog_buttons_answer_by_localized_first_letters_and_shift_tab_walks_back() {
     let mut app = app_at(r"C:\x");
     let (id, ctl) = paste(&mut app);
     let waiting = asked(&mut app, id, &ctl);
-    assert_eq!(app.dialog_buttons(), ["Replace", "Keep both", "Skip", "Cancel"]);
+    assert_eq!(app.dialog_buttons(), ["Replace", "Keep both", "Skip", "Skip identical", "Replace older", "Cancel"]);
     key(&mut app, Key::Tab);
     assert_eq!(app.jobs.sel, 2, "Tab advances");
     shift(&mut app, Key::Tab);
@@ -622,4 +629,77 @@ fn dialog_buttons_answer_by_localized_first_letters_and_shift_tab_walks_back() {
     letter(&mut app, 'J', ru, NO);
     assert_eq!(waiting.join().unwrap(), Some(Resolve::KeepBoth), "the Russian answer works by the letter the layout types");
     crate::i18n::set_lang(crate::i18n::Lang::En);
+}
+
+fn button(app: &App, label: &str) -> usize {
+    app.dialog_buttons().iter().position(|b| *b == label).unwrap_or_else(|| panic!("no {label} in {:?}", app.dialog_buttons()))
+}
+
+#[test]
+fn replace_older_answers_this_conflict_by_date_and_decides_the_rest_without_asking() {
+    let mut app = app_at(r"C:\x");
+    let (id, ctl) = paste(&mut app);
+    let waiting = asked(&mut app, id, &ctl);
+    let k = button(&app, "Replace older");
+    click(&mut app, |a| a.jobs.r.buttons[k]);
+    assert_eq!((waiting.join().unwrap(), ctl.policy(), app.asking()), (Some(Resolve::Skip), Some(Resolve::ReplaceOlder), None), "the new file is not newer, so it is skipped");
+    let mut newer = sizes(3, 5);
+    newer.from.modified = 600_000_000;
+    assert_eq!(ctl.resolve(&newer, || panic!("asked again")), Some(Resolve::Replace));
+    assert_eq!(ctl.resolve(&sizes(3, 5), || panic!("asked again")), Some(Resolve::Skip));
+}
+
+#[test]
+fn skip_identical_skips_same_files_from_now_on_and_still_asks_about_a_different_one() {
+    let mut app = app_at(r"C:\x");
+    let (id, ctl) = paste(&mut app);
+    let (waiting, again) = asked_about(&mut app, id, &ctl, sizes(3, 5));
+    let k = button(&app, "Skip identical");
+    click(&mut app, |a| a.jobs.r.buttons[k]);
+    again.recv().unwrap();
+    conflict(&mut app, id);
+    assert_eq!(app.dialog_buttons(), ["Replace", "Keep both", "Skip", "Replace older", "Cancel"], "a different file is asked about again, without the choice already made");
+    assert_eq!(app.jobs.sel, 1);
+    key(&mut app, Key::Enter);
+    assert_eq!(waiting.join().unwrap(), Some(Resolve::KeepBoth));
+    assert_eq!(ctl.resolve(&sizes(4, 4), || panic!("asked about an identical file")), Some(Resolve::Skip));
+    let (waiting, _) = asked_about(&mut app, id, &ctl, sizes(4, 9));
+    letter(&mut app, 'S', 's', NO);
+    assert_eq!((waiting.join().unwrap(), ctl.policy()), (Some(Resolve::Skip), Some(Resolve::SkipSame)), "S still means Skip for this one file");
+}
+
+#[test]
+fn the_conflict_dialog_says_when_both_files_look_the_same() {
+    let mut app = app_at(r"C:\x");
+    let (id, ctl) = paste(&mut app);
+    let same = "Both have the same size and modification date.";
+    let waiting = asked_about(&mut app, id, &ctl, sizes(4, 4)).0;
+    assert!(app.dialog_text().unwrap().1.iter().any(|l| l == same));
+    key(&mut app, Key::Escape);
+    waiting.join().unwrap();
+    let (id, ctl) = paste(&mut app);
+    let waiting = asked(&mut app, id, &ctl);
+    assert!(!app.dialog_text().unwrap().1.iter().any(|l| l == same));
+    key(&mut app, Key::Escape);
+    waiting.join().unwrap();
+}
+
+#[test]
+fn conflict_buttons_never_overlap_even_in_a_narrow_window() {
+    for width in [1000, 420, 300] {
+        let mut app = app_at(r"C:\x");
+        app.on_event(&Event::Resized { width, height: 600 }, t0());
+        let (id, ctl) = paste(&mut app);
+        let waiting = asked(&mut app, id, &ctl);
+        let (d, b, check) = (app.jobs.r.dialog, app.jobs.r.buttons.clone(), app.jobs.r.check);
+        let apart = |a: &Rect, c: &Rect| a.right() <= c.x || c.right() <= a.x || a.bottom() <= c.y || c.bottom() <= a.y;
+        for (i, r) in b.iter().enumerate() {
+            assert!(r.x >= d.x && r.right() <= d.right() && r.y >= d.y && r.bottom() <= d.bottom() && r.w > 0.0, "{width}: button {i} {r:?} leaves {d:?}");
+            assert!(apart(r, &check), "{width}: button {i} covers the checkbox");
+            assert!(b[i + 1..].iter().all(|o| apart(r, o)), "{width}: button {i} overlaps");
+        }
+        assert!(b[3].bottom() <= b[0].y, "{width}: the choices for all conflicts sit above the answers");
+        key(&mut app, Key::Escape);
+        waiting.join().unwrap();
+    }
 }

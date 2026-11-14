@@ -459,7 +459,7 @@ impl<'a> Engine<'a> {
                     Some(Resolve::KeepBoth) => dst = free_name(&dst, dir),
                     Some(Resolve::Replace) if dir => return self.merge(src, &dst, mode),
                     Some(Resolve::Replace) => replace = true,
-                    Some(Resolve::Skip) => {
+                    Some(Resolve::Skip | Resolve::SkipSame | Resolve::ReplaceOlder) => {
                         self.skip(&m);
                         return Res::Nothing;
                     }

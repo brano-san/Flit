@@ -663,7 +663,7 @@ impl<'a> Engine<'a> {
                 Some(Resolve::KeepBoth) => dst = sibling(&dst, &numbered(ddir, dst.file_name(), node.is_dir(), b"", false)),
                 Some(Resolve::Replace) if node.is_dir() => return self.merge(sdir, sname, src, ddir, &dname, &dst, node, mode),
                 Some(Resolve::Replace) => replace = true,
-                Some(Resolve::Skip) => {
+                Some(Resolve::Skip | Resolve::SkipSame | Resolve::ReplaceOlder) => {
                     self.skip(node);
                     return Res::Nothing;
                 }

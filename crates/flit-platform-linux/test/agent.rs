@@ -192,7 +192,7 @@ fn conflicts_are_asked_over_the_channel_and_cancel_stops_the_operation() {
         }
     };
     assert_eq!((conflict.target, conflict.to.size), (fs_path(&t.path().join("dst/a")), 2));
-    c.send(Request::Answer { id: 1, choice: Some(flit_core::provider::Resolve::KeepBoth), all: false });
+    c.send(Request::Answer { id: 1, choice: Some(flit_core::provider::Resolve::KeepBoth), policy: None });
     assert_eq!(c.done(1), (None, vec![(fs_path(&t.path().join("a")), fs_path(&t.path().join("dst/a (2)")))]));
     c.op(2, copy);
     while !matches!(c.next(), Event::OpConflict { id: 2, .. }) {}

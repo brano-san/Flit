@@ -25,6 +25,7 @@ const MENU_ROW: f32 = 30.0;
 const DIALOG_W: f32 = 480.0;
 const BUTTON_W: f32 = 104.0;
 const BUTTON_H: f32 = 32.0;
+const POLICY_W: f32 = 200.0;
 const SAMPLES: usize = 60;
 const SAMPLE_EVERY: Duration = Duration::from_millis(250);
 const NOTIFY_AFTER: Duration = Duration::from_secs(10);
@@ -36,7 +37,8 @@ const G_DONE: &str = "\u{E73E}";
 const G_CLOSE: &str = "\u{E8BB}";
 const G_MORE: &str = "\u{E712}";
 
-const CONFLICT_BUTTONS: [S; 4] = [S::UiButtonReplace, S::UiButtonKeepBoth, S::UiButtonSkip, S::UiButtonCancel];
+const CONFLICT_ANSWERS: [S; 3] = [S::UiButtonReplace, S::UiButtonKeepBoth, S::UiButtonSkip];
+const POLICY_BUTTONS: [S; 2] = [S::UiButtonSkipSame, S::UiButtonReplaceOlder];
 const UNREADABLE_BUTTONS: [S; 2] = [S::UiButtonSkip, S::UiButtonCancel];
 const NO_ROOM_BUTTONS: [S; 2] = [S::OpsExtraCopyAnyway, S::UiButtonCancel];
 const CONFIRM_BUTTONS: [S; 2] = [S::UiButtonDelete, S::UiButtonCancel];
@@ -650,14 +652,23 @@ impl App {
     }
 
     fn answer(&mut self, button: usize) {
+        let key = self.dialog_keys().get(button).copied();
         let Some(ask) = self.jobs.asks.pop_front() else { return };
         let (two, too_large) = (!ask.name_conflict(), ask.too_large());
         match ask {
             Ask::Conflict { id, .. } => {
-                let choice = if two { [Some(Resolve::Skip), None][button.min(1)] } else { [Some(Resolve::Replace), Some(Resolve::KeepBoth), Some(Resolve::Skip), None][button.min(3)] };
+                let choice = match key {
+                    _ if two => [Some((Resolve::Skip, self.jobs.all)), None][button.min(1)],
+                    Some(S::UiButtonReplace) => Some((Resolve::Replace, self.jobs.all)),
+                    Some(S::UiButtonKeepBoth) => Some((Resolve::KeepBoth, self.jobs.all)),
+                    Some(S::UiButtonSkip) => Some((Resolve::Skip, self.jobs.all)),
+                    Some(S::UiButtonSkipSame) => Some((Resolve::SkipSame, true)),
+                    Some(S::UiButtonReplaceOlder) => Some((Resolve::ReplaceOlder, true)),
+                    _ => None,
+                };
                 if let Some(ctl) = self.op_ctl(id) {
                     match choice {
-                        Some(c) => ctl.answer(c, self.jobs.all && !too_large),
+                        Some((c, all)) => ctl.answer(c, all && !too_large),
                         None => ctl.cancel(),
                     }
                 }
@@ -705,11 +716,17 @@ impl App {
         self.dirty = true;
     }
 
-    pub(super) fn dialog_buttons(&self) -> Vec<&'static str> {
+    fn conflict_keys(&self, id: OpId) -> Vec<S> {
+        let skipping_same = self.op_ctl(id).is_some_and(|c| c.policy() == Some(Resolve::SkipSame));
+        let policies = POLICY_BUTTONS.into_iter().filter(|&k| !(skipping_same && k == S::UiButtonSkipSame));
+        CONFLICT_ANSWERS.into_iter().chain(policies).chain([S::UiButtonCancel]).collect()
+    }
+
+    fn dialog_keys(&self) -> Vec<S> {
         let keys: &[S] = match self.jobs.asks.front() {
             Some(Ask::Conflict { conflict, .. }) if limits::is_short_of_space(conflict) => &NO_ROOM_BUTTONS,
             Some(a) if a.unreadable() || a.too_large() => &UNREADABLE_BUTTONS,
-            Some(Ask::Conflict { .. }) => &CONFLICT_BUTTONS,
+            Some(Ask::Conflict { id, .. }) => return self.conflict_keys(*id),
             Some(Ask::Failure { failure, .. }) if failure.fatal => &FULL_BUTTONS,
             Some(Ask::Failure { .. }) => &FAILURE_BUTTONS,
             Some(Ask::Confirm(FileOp::Restore(_), _)) => &RESTORE_ALL_BUTTONS,
@@ -720,7 +737,11 @@ impl App {
             Some(Ask::ExtensionChange(_)) => &EXTENSION_BUTTONS,
             None => &[],
         };
-        keys.iter().map(|k| k.t()).collect()
+        keys.to_vec()
+    }
+
+    pub(super) fn dialog_buttons(&self) -> Vec<&'static str> {
+        self.dialog_keys().into_iter().map(S::t).collect()
     }
 
     pub(super) fn jobs_char(&mut self, c: char) -> bool {
@@ -737,9 +758,8 @@ impl App {
                 self.jobs.all = !self.jobs.all;
             }
         } else {
-            let letters: Vec<Option<char>> = self.dialog_buttons().iter().map(|l| first_letter(l)).collect();
-            let answers = letters.len().saturating_sub(1);
-            if let Some(k) = letters[..answers].iter().rposition(|l| l.is_some() && *l == typed) {
+            let letters: Vec<Option<char>> = self.dialog_keys().iter().map(|k| CONFLICT_ANSWERS.contains(k).then(|| first_letter(k.t())).flatten()).collect();
+            if let Some(k) = letters.iter().rposition(|l| l.is_some() && *l == typed) {
                 self.answer(k);
             }
         }
@@ -795,7 +815,7 @@ impl App {
 
     pub(super) fn layout_jobs(&mut self) {
         self.layout_form();
-        let labels = self.dialog_buttons().len();
+        let policy: Vec<bool> = self.dialog_keys().iter().map(|k| POLICY_BUTTONS.contains(k)).collect();
         let (w, h, sc) = (self.size.0, self.size.1, self.scale);
         let s = |v: f32| (v * sc).round();
         let button = self.layout.ops_button;
@@ -817,19 +837,37 @@ impl App {
         }
         if let Some(ask) = j.asks.front() {
             let checked = (matches!(ask, Ask::Conflict { .. }) && !ask.too_large()) || can_delete_instead(ask);
-            let (buttons, dh) = match ask {
-                Ask::Conflict { .. } if ask.too_large() => (labels, s(168.0)),
-                Ask::Conflict { .. } => (labels, s(236.0)),
-                Ask::Failure { .. } => (labels, s(190.0)),
-                _ if checked => (labels, s(208.0)),
-                Ask::Confirm(..) | Ask::Untrashable(_) | Ask::Restore { .. } | Ask::ReplaceExport { .. } | Ask::ExtensionChange(_) => (labels, s(168.0)),
-            };
+            let policies = policy.iter().filter(|&&p| p).count();
+            let buttons = policy.len() - policies;
+            let row_h = if policies > 0 { s(BUTTON_H) + s(10.0) } else { 0.0 };
+            let dh = row_h
+                + match ask {
+                    Ask::Conflict { .. } if ask.too_large() => s(168.0),
+                    Ask::Conflict { .. } => s(236.0),
+                    Ask::Failure { .. } => s(190.0),
+                    _ if checked => s(208.0),
+                    Ask::Confirm(..) | Ask::Untrashable(_) | Ask::Restore { .. } | Ask::ReplaceExport { .. } | Ask::ExtensionChange(_) => s(168.0),
+                };
             let dw = s(DIALOG_W).min(w - s(32.0));
             let d = Rect::new(((w - dw) / 2.0).round(), ((h - dh) / 2.0).round().max(s(40.0)), dw, dh);
-            let (bw, gap) = (s(BUTTON_W).min((dw - s(40.0) - s(8.0) * (buttons as f32 - 1.0)) / buttons as f32), s(8.0));
-            let right = d.right() - s(20.0);
-            j.r.buttons = (0..buttons).map(|k| Rect::new(right - (buttons - k) as f32 * bw - (buttons - 1 - k) as f32 * gap, d.bottom() - s(20.0) - s(BUTTON_H), bw, s(BUTTON_H))).collect();
-            j.r.check = if checked { Rect::new(d.x + s(20.0), d.bottom() - s(20.0) - s(BUTTON_H) - s(40.0), dw - s(40.0), s(28.0)) } else { Rect::default() };
+            let gap = s(8.0);
+            let bw = s(BUTTON_W).min((dw - s(40.0) - gap * (buttons as f32 - 1.0)) / buttons as f32);
+            let pw = s(POLICY_W).min((dw - s(40.0) - gap * (policies as f32 - 1.0)) / policies.max(1) as f32);
+            let (right, row_y) = (d.right() - s(20.0), d.bottom() - s(20.0) - s(BUTTON_H));
+            let (mut main, mut extra) = (0, 0);
+            j.r.buttons = policy
+                .iter()
+                .map(|&p| {
+                    if p {
+                        extra += 1;
+                        Rect::new(d.x + s(20.0) + (extra - 1) as f32 * (pw + gap), row_y - row_h, pw, s(BUTTON_H))
+                    } else {
+                        main += 1;
+                        Rect::new(right - (buttons + 1 - main) as f32 * bw - (buttons - main) as f32 * gap, row_y, bw, s(BUTTON_H))
+                    }
+                })
+                .collect();
+            j.r.check = if checked { Rect::new(d.x + s(20.0), row_y - row_h - s(40.0), dw - s(40.0), s(28.0)) } else { Rect::default() };
             j.r.dialog = d;
         }
     }
@@ -1107,6 +1145,8 @@ impl App {
                 let mut lines = vec![crate::tr!(S::UiConflictExists, name = quoted(&c.target), folder = folder), meta_line(S::UiConflictNew, &c.from, offset, &self.style), meta_line(S::UiConflictExisting, &c.to, offset, &self.style)];
                 if both_dirs {
                     lines.push(S::UiConflictMerge.t().into());
+                } else if c.identical() {
+                    lines.push(S::UiConflictIdentical.t().into());
                 }
                 (S::UiConflictTitle.t().into(), lines)
             }

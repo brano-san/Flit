@@ -405,7 +405,7 @@ fn op_events(req: &Request) -> Option<Vec<Event>> {
     let conflict = Conflict { source: unix("/src/a"), target: unix("/dst/a"), from: Meta::default(), to: Meta::default() };
     Some(match req {
         Request::Op { id, .. } => vec![Event::OpProgress { id: *id, progress }, Event::OpConflict { id: *id, conflict }],
-        Request::Answer { id, choice: Some(Resolve::Replace), all: true } => vec![Event::OpDone { id: *id, error: None, items: vec![(unix("/src/a"), unix("/dst/a"))] }],
+        Request::Answer { id, choice: Some(_), .. } => vec![Event::OpDone { id: *id, error: None, items: vec![(unix("/src/a"), unix("/dst/a"))] }],
         Request::Cancel { id } => vec![Event::OpDone { id: *id, error: Some(CANCELLED.into()), items: Vec::new() }],
         _ => Vec::new(),
     })
@@ -428,8 +428,19 @@ fn operations_run_on_the_agent_with_progress_and_conflicts() {
     let done = event(&s.events, |e| if let ProviderEvent::OpDone { tab: 1, id: 4, error, report } = e { Some((error, report)) } else { None });
     assert_eq!(done, (None, Some(OpReport { op: copy(), items: vec![(unix("/src/a"), unix("/dst/a"))] })));
     assert_eq!(ctl.policy(), Some(Resolve::Replace));
-    assert!(matches!(&s.fake.seen()[..], [Request::Lang { code }, Request::Op { id: 1, policy: None, .. }, Request::Answer { id: 1, choice: Some(Resolve::Replace), all: true }] if code == flit_core::i18n::lang().code()));
+    assert!(matches!(&s.fake.seen()[..], [Request::Lang { code }, Request::Op { id: 1, policy: None, .. }, Request::Answer { id: 1, choice: Some(Resolve::Replace), policy: Some(Resolve::Replace) }] if code == flit_core::i18n::lang().code()));
     assert!(s.local.0.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_replace_older_answer_reaches_the_agent_as_its_decision_and_its_policy() {
+    let s = setup(Fake::new(op_events), Timing::default());
+    let ctl = OpCtl::default();
+    s.wsl.submit(ProviderRequest::Op { tab: 1, id: 4, op: copy(), ctl: ctl.clone() });
+    event(&s.events, |e| if let ProviderEvent::OpConflict { tab: 1, id: 4, conflict } = e { Some(conflict) } else { None });
+    ctl.answer(Resolve::ReplaceOlder, true);
+    event(&s.events, |e| if let ProviderEvent::OpDone { tab: 1, id: 4, error, .. } = e { Some(error) } else { None });
+    assert!(matches!(&s.fake.seen()[..], [Request::Op { .. }, Request::Answer { id: 1, choice: Some(Resolve::Skip), policy: Some(Resolve::ReplaceOlder) }]), "{:?}", s.fake.seen());
 }
 
 #[test]

@@ -136,7 +136,7 @@ pub fn drive<R: Read, W: Write + Send + 'static>(mut input: R, output: W, op: &F
             Event::OpProgress { progress, .. } => job.update(|p| *p = progress),
             Event::OpConflict { conflict, .. } => {
                 let choice = job.resolve(conflict);
-                if let Err(e) = send(&output, &Request::Answer { id: OP, choice, all: false }) {
+                if let Err(e) = send(&output, &Request::Answer { id: OP, choice, policy: job.ctl().policy() }) {
                     break Err(e);
                 }
             }

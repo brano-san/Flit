@@ -88,7 +88,7 @@ enum Msg {
     Hello(u64, Result<String, ProtoError>),
     Event(u64, Event),
     Lost(u64, String),
-    Answer(ReqId, Option<Resolve>, bool),
+    Answer(ReqId, Option<Resolve>, Option<Resolve>),
     Recover(ReqId, Option<Recover>, bool),
     Quit,
 }
@@ -301,9 +301,9 @@ impl Ctl {
                         self.crashed(&why);
                     }
                 }
-                Ok(Msg::Answer(id, choice, all)) => {
+                Ok(Msg::Answer(id, choice, policy)) => {
                     if matches!(self.pending.get(&id), Some(Pending::Op(_))) {
-                        self.send(Request::Answer { id, choice, all });
+                        self.send(Request::Answer { id, choice, policy });
                     }
                 }
                 Ok(Msg::Recover(id, choice, all)) => {
@@ -605,14 +605,14 @@ impl Ctl {
         }
         let (tab, op, ctl, events, wake, tx) = (o.tab, o.op, o.ctl.clone(), self.events.clone(), self.wake.clone(), self.tx.clone());
         let asked = std::thread::Builder::new().name(format!("flit-wsl-ask-{op}")).spawn(move || {
-            let choice = ctl.resolve(|| {
-                let _ = events.send(ProviderEvent::OpConflict { tab, id: op, conflict });
+            let choice = ctl.resolve(&conflict, || {
+                let _ = events.send(ProviderEvent::OpConflict { tab, id: op, conflict: conflict.clone() });
                 wake();
             });
-            let _ = tx.send(Msg::Answer(id, choice, ctl.policy().is_some()));
+            let _ = tx.send(Msg::Answer(id, choice, ctl.policy()));
         });
         if asked.is_err() {
-            self.send(Request::Answer { id, choice: None, all: false });
+            self.send(Request::Answer { id, choice: None, policy: None });
         }
     }
 

@@ -497,12 +497,12 @@ fn unreadable_items_are_skipped_or_cancel_the_compression() {
         })
         .unwrap();
     let (tx, rx) = mpsc::channel();
+    let conflict: Conflict = archive::unreadable(&p(r"C:\unread\a.txt"), Meta::default());
     let waiting = {
-        let ctl = ctl.clone();
-        std::thread::spawn(move || ctl.resolve(|| tx.send(()).unwrap()))
+        let (ctl, c) = (ctl.clone(), conflict.clone());
+        std::thread::spawn(move || ctl.resolve(&c, || tx.send(()).unwrap()))
     };
     rx.recv().unwrap();
-    let conflict: Conflict = archive::unreadable(&p(r"C:\unread\a.txt"), Meta::default());
     app.on_provider_event(ProviderEvent::OpConflict { tab: app.tab().id, id, conflict }, t0());
     assert_eq!(app.asking(), Some("unreadable"));
     key(&mut app, Key::Enter, NO);

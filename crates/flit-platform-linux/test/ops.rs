@@ -230,6 +230,43 @@ fn conflicts_keep_both_replace_skip_and_merge() {
 }
 
 #[test]
+fn replace_older_and_skip_identical_decide_each_file_of_a_merged_folder() {
+    let t = Temp::new("ops-older");
+    let (src, dst) = (t.path().join("src"), t.path().join("dst"));
+    let at = |p: &Path, body: &str, hours: u64| {
+        write(p, body);
+        let f = std::fs::File::options().write(true).open(p).unwrap();
+        f.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000 + hours * 3600)).unwrap();
+    };
+    at(&src.join("f/newer"), "new", 2);
+    at(&dst.join("f/newer"), "old!", 1);
+    at(&src.join("f/older"), "new", 1);
+    at(&dst.join("f/older"), "old!", 2);
+    at(&src.join("f/same"), "same", 1);
+    at(&dst.join("f/same"), "same", 1);
+    let copy = FileOp::Copy { items: vec![fp(&src.join("f"))], dest: fp(&dst) };
+    let (job, seen) = answering(Resolve::ReplaceOlder, true);
+    ok(run(&copy, &job, None));
+    assert_eq!(seen.lock().unwrap().len(), 1, "only the folder is asked about");
+    assert_eq!([read(&dst.join("f/newer")), read(&dst.join("f/older")), read(&dst.join("f/same"))], ["new", "old!", "same"]);
+    at(&dst.join("f/newer"), "old!", 1);
+    let ctl = OpCtl::new(Some(Resolve::SkipSame));
+    let (answer, asked) = (ctl.clone(), Arc::new(Mutex::new(0)));
+    let counted = asked.clone();
+    let job = Job::new(
+        ctl,
+        Box::new(|_| {}),
+        Box::new(move |_| {
+            *counted.lock().unwrap() += 1;
+            answer.answer(Resolve::KeepBoth, false);
+        }),
+    );
+    ok(run(&copy, &job, None));
+    assert_eq!(*asked.lock().unwrap(), 2);
+    assert_eq!(listing(&dst.join("f")), [&b"newer"[..], b"newer (2)", b"older", b"older (2)", b"same"], "the identical file is skipped and the others are asked about");
+}
+
+#[test]
 fn moves_create_missing_parents_and_cross_devices_by_copy_then_delete() {
     let t = Temp::new("ops-move");
     write(&t.path().join("a/f"), "f");

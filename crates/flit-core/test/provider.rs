@@ -1,5 +1,5 @@
 use super::*;
-use crate::listing::Listing;
+use crate::listing::{attr, Listing};
 use crate::sort::{CaseMode, SortKeys};
 use std::time::Duration;
 
@@ -38,4 +38,65 @@ fn failures_wait_for_an_answer_and_skip_all_stops_asking_except_when_the_disk_is
     let (c, cancel) = (ctl.clone(), ctl.clone());
     assert_eq!(std::thread::spawn(move || c.recover(true, move || cancel.cancel())).join().unwrap(), None);
     assert_eq!(ctl.recover(true, || panic!("asked after cancel")), None);
+}
+
+fn files(from: (u64, i64), to: (u64, i64)) -> Conflict {
+    let meta = |(size, modified): (u64, i64)| Meta { size, modified, ..Default::default() };
+    Conflict { source: FsPath::parse(r"C:\a\f.txt").unwrap(), target: FsPath::parse(r"D:\b\f.txt").unwrap(), from: meta(from), to: meta(to) }
+}
+
+const SECOND: i64 = 10_000_000;
+
+#[test]
+fn replace_older_replaces_only_what_the_source_has_newer_and_merges_folders() {
+    let t = 133_000_000_000 * SECOND / 10_000;
+    assert_eq!(Resolve::ReplaceOlder.decide(&files((5, t + 60 * SECOND), (5, t))), Some(Resolve::Replace));
+    assert_eq!(Resolve::ReplaceOlder.decide(&files((5, t), (5, t + 60 * SECOND))), Some(Resolve::Skip), "a newer item at the destination stays");
+    assert_eq!(Resolve::ReplaceOlder.decide(&files((9, t + SECOND), (5, t))), Some(Resolve::Skip), "FAT rounds times to two seconds, so that is not newer");
+    assert_eq!(Resolve::ReplaceOlder.decide(&files((5, 0), (5, t))), Some(Resolve::Skip), "an unknown date is never newer");
+    let mut folders = files((0, t + 60 * SECOND), (0, t));
+    folders.from.attrs = attr::DIR;
+    assert_eq!(Resolve::ReplaceOlder.decide(&folders), Some(Resolve::Skip), "a newer folder never replaces a file");
+    folders.to.attrs = attr::DIR;
+    folders.from.modified = 0;
+    assert_eq!(Resolve::ReplaceOlder.decide(&folders), Some(Resolve::Replace), "two folders merge so that their files are compared one by one");
+}
+
+#[test]
+fn skip_same_skips_only_files_with_the_same_size_and_date() {
+    let t = 133_000_000_000 * SECOND / 10_000;
+    assert!(files((7, t), (7, t + 2 * SECOND)).identical());
+    assert!(!files((7, t), (8, t)).identical() && !files((7, t), (7, t + 3 * SECOND)).identical());
+    assert_eq!(Resolve::SkipSame.decide(&files((7, t), (7, t))), Some(Resolve::Skip));
+    assert_eq!(Resolve::SkipSame.decide(&files((7, t), (8, t))), None, "a different file is asked about");
+    let ctl = OpCtl::new(Some(Resolve::SkipSame));
+    assert_eq!(ctl.resolve(&files((7, t), (7, t)), || panic!("asked about an identical file")), Some(Resolve::Skip));
+    let (c, answer) = (ctl.clone(), ctl.clone());
+    let asked = std::thread::spawn(move || c.resolve(&files((7, t), (8, t)), move || answer.answer(Resolve::KeepBoth, false))).join().unwrap();
+    assert_eq!((asked, ctl.policy()), (Some(Resolve::KeepBoth), Some(Resolve::SkipSame)), "answering one file keeps skipping identical ones");
+}
+
+#[test]
+fn the_new_policies_never_replace_items_that_are_too_large_or_unreadable() {
+    let dest = FsPath::parse(r"E:\").unwrap();
+    let file = FsPath::parse(r"C:\a\big.iso").unwrap();
+    let special = [crate::limits::over_limit(&file, &dest.join(b"big.iso"), 5 << 30, crate::limits::FAT_MAX_FILE), crate::archive::unreadable(&file, Meta::default())];
+    for c in &special {
+        for p in [Resolve::SkipSame, Resolve::ReplaceOlder] {
+            assert_eq!(p.decide(c), Some(Resolve::Skip), "{p:?}");
+        }
+        for p in [Resolve::KeepBoth, Resolve::Replace, Resolve::Skip] {
+            assert_eq!(p.decide(c), Some(p), "the older policies keep their meaning");
+        }
+    }
+}
+
+#[test]
+fn an_answer_settled_elsewhere_carries_the_policy_for_the_rest() {
+    let ctl = OpCtl::default();
+    let (c, answer) = (ctl.clone(), ctl.clone());
+    let t = 133_000_000_000 * SECOND / 10_000;
+    let first = std::thread::spawn(move || c.resolve(&files((1, t), (2, t)), move || answer.settle(Resolve::Skip, Some(Resolve::ReplaceOlder)))).join().unwrap();
+    assert_eq!(first, Some(Resolve::Skip));
+    assert_eq!(ctl.resolve(&files((1, t + 60 * SECOND), (2, t)), || panic!("asked again")), Some(Resolve::Replace));
 }

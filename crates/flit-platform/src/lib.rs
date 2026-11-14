@@ -392,7 +392,7 @@ impl Job {
     }
 
     pub fn resolve(&self, c: Conflict) -> Option<Resolve> {
-        self.0.ctl.resolve(|| (self.0.conflict)(c))
+        self.0.ctl.resolve(&c, || (self.0.conflict)(c.clone()))
     }
 
     pub fn asks_failures(&self) -> bool {
