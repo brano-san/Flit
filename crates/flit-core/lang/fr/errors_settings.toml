@@ -2,3 +2,5 @@ not_json = "Le fichier de paramètres n’est pas un JSON valide ({error}), les 
 tags = "Les balises du fichier de paramètres ne forment pas une liste, elles ont donc été ignorées"
 value = "La valeur de {key} dans le fichier de paramètres n’est pas valide, la valeur par défaut est donc utilisée"
 is_folder = "{path} est un dossier"
+
+write_failed = "Impossible d’enregistrer les paramètres : {error}"

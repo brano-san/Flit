@@ -177,3 +177,18 @@ fn the_worker_reports_integration_failures() {
     }
     assert!(replies.try_recv().is_err());
 }
+#[test]
+fn a_failed_write_reaches_the_window_and_changes_are_not_silently_lost() {
+    let d = temp("save-fail");
+    let blocker = d.0.join("blocker");
+    std::fs::create_dir_all(&d.0).unwrap();
+    std::fs::write(&blocker, "x").unwrap();
+    let (jobs, replies, thread) = worker(&blocker.join("settings.json"), "{}");
+    jobs.send(Job::Write("{\"n\": 1}".into())).unwrap();
+    assert!(matches!(reply(&replies), Reply::SaveFailed(_)), "the failure reaches the window");
+    jobs.send(Job::Check).unwrap();
+    assert!(replies.recv_timeout(Duration::from_secs(1)).is_err(), "the old settings stay in memory, so no phantom change");
+    drop(jobs);
+    thread.join().unwrap();
+    assert!(replies.try_recv().is_err());
+}

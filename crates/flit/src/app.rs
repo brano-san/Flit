@@ -770,6 +770,10 @@ impl<P: Platform> Handler<P> {
                     self.share_about();
                 }
                 settings::Reply::Changed(text) => self.reload_settings(id, &text),
+                settings::Reply::SaveFailed(e) => {
+                    tracing::warn!("cannot save the settings: {e}");
+                    self.status(id, flit_core::tr!(S::ErrorsSettingsWriteFailed, error = flit_core::i18n::localize(&e)));
+                }
                 settings::Reply::IntegrationFailed(on, error) => {
                     self.status(id, flit_core::tr!(S::UiAppIntegrationFailed, error = flit_core::i18n::localize(&error)));
                     let Some(k) = flit_core::ui::settings::index(flit_core::ui::settings::DEFAULT_MANAGER) else { continue };

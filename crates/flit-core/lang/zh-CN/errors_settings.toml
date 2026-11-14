@@ -2,3 +2,5 @@ not_json = "设置文件不是有效的 JSON（{error}），因此保留上次�
 tags = "设置文件中的标记不是列表，因此已忽略"
 value = "设置文件中 {key} 的值无效，因此使用默认值"
 is_folder = "{path} 是文件夹"
+
+write_failed = "无法保存设置：{error}"

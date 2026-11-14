@@ -22,6 +22,7 @@ pub enum Job {
 pub enum Reply {
     System { os: String, dates: (String, String) },
     Changed(String),
+    SaveFailed(String),
     Imported(Result<String, String>),
     Exported(Result<PathBuf, String>),
     ExportExists { path: PathBuf, size: u64, modified: i64 },
@@ -86,7 +87,10 @@ fn work(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>>, integrate:
                     if let Some(p) = path.as_deref() {
                         match write_atomic(p, text.as_bytes()) {
                             Ok(()) => last = text,
-                            Err(e) => tracing::warn!("cannot write the settings file {}: {e}", p.display()),
+                            Err(e) => {
+                                tracing::warn!("cannot write the settings file {}: {e}", p.display());
+                                reply(Reply::SaveFailed(e.to_string()));
+                            }
                         }
                     }
                 }
