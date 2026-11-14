@@ -833,7 +833,7 @@ impl App {
         let next = order[if pos > 0 { pos - 1 } else { 1 }];
         for mut t in std::mem::take(&mut self.tabs) {
             t.shutdown(&mut self.effects);
-            self.remember_closed(t.location().clone());
+            self.remember_closed_with(t.location().clone(), t.history.back_list().to_vec());
         }
         self.enter(next);
         self.panels.active = next;

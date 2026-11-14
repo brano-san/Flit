@@ -19,6 +19,7 @@ pub(super) struct Nav {
     pub back: Option<Box<Palette>>,
     pub filter: FilterRects,
     pub closed: Vec<Location>,
+    pub closed_trail: Vec<Vec<Location>>,
     pub home: Home,
     streak: Option<(Instant, f32, f32)>,
 }

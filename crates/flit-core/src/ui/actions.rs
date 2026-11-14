@@ -706,17 +706,22 @@ impl App {
         }
     }
 
-    pub(super) fn remember_closed(&mut self, loc: Location) {
+    pub(super) fn remember_closed_with(&mut self, loc: Location, trail: Vec<Location>) {
         if self.nav.closed.len() == MAX_CLOSED {
             self.nav.closed.remove(0);
+            self.nav.closed_trail.remove(0);
         }
         self.nav.closed.push(loc);
+        self.nav.closed_trail.push(trail);
         self.note_closed(self.last_frame.unwrap_or_else(Instant::now));
     }
 
     fn reopen_tab(&mut self, now: Instant) {
-        if let Some(folder) = self.nav.closed.pop() {
-            self.dispatch(vec![Route { folder, select: None }], OpenTarget::NewTab, now);
+        let Some(folder) = self.nav.closed.pop() else { return };
+        let trail = self.nav.closed_trail.pop().unwrap_or_default();
+        self.dispatch(vec![Route { folder: folder.clone(), select: None }], OpenTarget::NewTab, now);
+        if let Some(t) = self.tabs.last_mut() {
+            t.history.restore(trail, folder);
         }
     }
 

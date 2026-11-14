@@ -85,6 +85,15 @@ impl History {
         self.here.take()
     }
 
+    pub fn restore(&mut self, back: Vec<Location>, cur: Location) {
+        self.back = back;
+        self.back_views = vec![None; self.back.len()];
+        self.fwd.clear();
+        self.fwd_views.clear();
+        self.cur = cur;
+        self.here = None;
+    }
+
     pub fn back_list(&self) -> &[Location] {
         &self.back
     }

@@ -1121,7 +1121,7 @@ impl App {
         }
         let mut t = self.tabs.remove(i);
         t.shutdown(&mut self.effects);
-        self.remember_closed(t.location().clone());
+        self.remember_closed_with(t.location().clone(), t.history.back_list().to_vec());
         if self.cur > i || self.cur >= self.tabs.len() {
             self.cur = self.cur.saturating_sub(1);
         }

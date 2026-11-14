@@ -531,3 +531,26 @@ fn a_second_right_click_on_the_tab_keeps_its_menu_open_and_only_that_tab_is_lit(
     let other = app.parked_ids()[0];
     assert!(!app.visit(other, |a| a.menu_open_from(Hit::Tab(0))), "the first tab of the other panel is not lit");
 }
+
+#[test]
+fn reopening_a_closed_tab_restores_its_history() {
+    let mut app = app_with(&[r"C:\a", r"C:\b"]);
+    deliver(&mut app, &[("x", false)]);
+    app.navigate(loc(r"C:\a\one"), Instant::now());
+    deliver(&mut app, &[("y", false)]);
+    app.navigate(loc(r"C:\a\one\two"), Instant::now());
+    deliver(&mut app, &[("z", false)]);
+    assert_eq!(app.tab().history.back_list().len(), 2);
+    key(&mut app, Key::Char('W'), CTRL);
+    eprintln!("DBG tabs={} closed={:?}", app.tabs().len(), app.nav.closed.last());
+    assert_eq!(app.tabs().len(), 1);
+    assert_eq!(app.nav.closed.last(), Some(&loc(r"C:\a\one\two")));
+    assert_eq!(app.nav.closed_trail.last().map(|t| t.len()), Some(2), "the trail is remembered");
+    app.run_action("tab.reopen", Instant::now());
+    assert_eq!(app.tabs().len(), 2);
+    assert_eq!(*app.tab().location(), loc(r"C:\a\one\two"), "the tab reopens at its last folder");
+    assert_eq!(app.tab().history.back_list().len(), 2, "the back trail comes back with it");
+    assert!(app.tab().history.can_back(), "Back walks the restored trail");
+    key(&mut app, Key::Backspace, NO);
+    assert_eq!(*app.tab().location(), loc(r"C:\a\one"));
+}
