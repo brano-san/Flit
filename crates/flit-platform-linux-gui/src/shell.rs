@@ -618,7 +618,7 @@ impl Shell for LinuxShell {
     fn thumbnail(&mut self, req: &IconRequest) -> Option<Bitmap> {
         let cache = crate::xdg::cache_dir().and_then(|d| d.parent().map(|p| p.join("thumbnails")));
         let path = host(&req.path)?;
-        crate::thumb::thumbnail(path, req.size, cache).or_else(|| crate::thumbnailers::thumbnail(path, req.size)).or_else(|| poster(path, req.size))
+        crate::thumb::thumbnail(path, req.size, cache.clone()).or_else(|| crate::thumbnailers::produce(path, req.size, cache.as_deref(), |px| crate::thumbnailers::system_png(path, px).or_else(|| poster_png(path, px))))
     }
 
     fn preview_image(&mut self, path: &FsPath, max: u32) -> Option<Bitmap> {
@@ -766,15 +766,22 @@ pub fn poster_command(path: &Path, size: u32) -> Option<Vec<OsString>> {
     Some(args)
 }
 
+fn poster_png(path: &Path, size: u32) -> Option<Vec<u8>> {
+    let args = poster_command(path, size)?;
+    let mut cmd = Command::new(on_path(&args[0])?);
+    let child = cmd.args(&args[1..]).stdin(Stdio::null()).stderr(Stdio::null()).stdout(Stdio::piped()).spawn().ok()?;
+    wait_output(child, POSTER_TIMEOUT).filter(|png| crate::thumb::sniff(png) == Some(crate::thumb::Format::Png))
+}
+
+fn generated_png(path: &Path, size: u32) -> Option<Vec<u8>> {
+    poster_png(path, size).or_else(|| crate::thumbnailers::system_png(path, size))
+}
+
 fn poster(path: &Path, size: u32) -> Option<Bitmap> {
     if let Some(b) = crate::thumb::thumbnail(path, size, None) {
         return Some(b);
     }
-    let args = poster_command(path, size)?;
-    let mut cmd = Command::new(on_path(&args[0])?);
-    let child = cmd.args(&args[1..]).stdin(Stdio::null()).stderr(Stdio::null()).stdout(Stdio::piped()).spawn().ok()?;
-    let png = wait_output(child, POSTER_TIMEOUT)?;
-    crate::thumb::png_bytes(&png).map(|b| crate::thumb::fit(b, size))
+    crate::thumbnailers::produce(path, size, None, |px| generated_png(path, px))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -94,3 +94,59 @@ fn the_installed_gdk_pixbuf_thumbnailer_draws_a_bmp() {
     let b = run(&real, &src, 32).expect("gdk-pixbuf-thumbnailer made a thumbnail");
     assert_eq!(b.width.max(b.height), 32);
 }
+
+fn png_data(w: u32, h: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut e = png::Encoder::new(&mut out, w, h);
+    e.set_color(png::ColorType::Rgb);
+    e.set_depth(png::BitDepth::Eight);
+    e.write_header().unwrap().write_image_data(&vec![90; (w * h * 3) as usize]).unwrap();
+    out
+}
+
+#[test]
+fn a_generated_thumbnail_goes_to_the_shared_cache_where_flit_and_other_apps_find_it() {
+    let t = Temp::new("thumb-cache");
+    let cache = t.path().join("thumbnails");
+    let book = t.file("book.epub", 9);
+    let asked = std::cell::Cell::new(0);
+    let made = produce(&book, 96, Some(&cache), |px| {
+        asked.set(px);
+        Some(png_data(px, px / 2))
+    });
+    assert_eq!(asked.get(), 128, "a list thumbnail is made at the normal size of the shared cache");
+    assert_eq!(made.map(|b| (b.width, b.height)), Some((96, 48)));
+    let stored = cache.join("normal").join(crate::thumb::freedesktop_name(&book));
+    assert_eq!(std::fs::metadata(&stored).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(std::fs::metadata(cache.join("normal")).unwrap().permissions().mode() & 0o777, 0o700);
+    let again = crate::thumb::thumbnail(&book, 96, Some(cache.clone())).expect("read back from the cache without running the thumbnailer");
+    assert_eq!((again.width, again.height), (96, 48));
+    produce(&book, 200, Some(&cache), |px| Some(png_data(px, px)));
+    assert!(cache.join("large").join(crate::thumb::freedesktop_name(&book)).exists());
+    assert_eq!(std::fs::read_dir(cache.join("normal")).unwrap().count(), 1, "no temporary file is left");
+}
+
+#[test]
+fn a_changed_file_broken_output_or_a_preview_never_reuse_or_pollute_the_cache() {
+    let t = Temp::new("thumb-cache-negative");
+    let cache = t.path().join("thumbnails");
+    let doc = t.file("report.odt", 9);
+    produce(&doc, 96, Some(&cache), |px| Some(png_data(px, px)));
+    std::fs::write(&doc, b"changed contents").unwrap();
+    let older = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+    std::fs::File::options().write(true).open(&doc).unwrap().set_modified(older).unwrap();
+    assert!(crate::thumb::thumbnail(&doc, 96, Some(cache.clone())).is_none(), "a thumbnail of the old contents is not shown");
+    let other = t.file("broken.odt", 3);
+    assert!(produce(&other, 96, Some(&cache), |_| Some(b"not a png".to_vec())).is_none());
+    assert!(!cache.join("normal").join(crate::thumb::freedesktop_name(&other)).exists());
+    let preview = t.file("preview.odt", 3);
+    let mut asked = 0;
+    assert!(produce(&preview, 700, None, |px| {
+        asked = px;
+        Some(png_data(px, px))
+    })
+    .is_some());
+    assert_eq!(asked, 700, "without a cache the picture is made at the size asked");
+    assert!(!cache.join("xx-large").exists());
+    assert_eq!(store(&cache, &cache.join("normal").join("x.png"), "normal", &png_data(4, 4)), None, "thumbnails of thumbnails are not stored");
+}
