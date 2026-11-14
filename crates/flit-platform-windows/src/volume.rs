@@ -86,10 +86,16 @@ pub(crate) fn grant_args(dir: &FsPath, sid: &str) -> String {
     format!("{} /grant *{sid}:(OI)(CI)RX", quote_windows(&dir.display()))
 }
 
+fn system_dir() -> Option<String> {
+    let mut buf = [0u16; 260];
+    let n = unsafe { windows::Win32::System::SystemInformation::GetSystemDirectoryW(Some(&mut buf)) } as usize;
+    (n > 0 && n < buf.len()).then(|| String::from_utf16_lossy(&buf[..n]))
+}
+
 fn grant(dir: &FsPath) -> Result<(), PlatformError> {
     let sid = crate::instance::process_user_sid(unsafe { GetCurrentProcess() }).ok_or_else(|| PlatformError::new(-1, "cannot read the current user"))?;
-    let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
-    let (file, args) = (wide(&format!(r"{root}\System32\icacls.exe")), wide(&grant_args(dir, &sid)));
+    let system = system_dir().ok_or_else(|| PlatformError::new(-1, "cannot find the Windows system folder"))?;
+    let (file, args) = (wide(&format!(r"{system}\icacls.exe")), wide(&grant_args(dir, &sid)));
     let mut info = SHELLEXECUTEINFOW {
         cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
         fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC,

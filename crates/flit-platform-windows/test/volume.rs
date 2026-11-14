@@ -25,3 +25,9 @@ fn access_is_granted_to_the_user_for_the_folder_and_everything_inside_it_with_re
     let plain = FsPath::parse(r"D:\data").unwrap();
     assert_eq!(grant_args(&plain, "S-1-5-21-9"), r"D:\data /grant *S-1-5-21-9:(OI)(CI)RX");
 }
+
+#[test]
+fn the_system_folder_comes_from_windows_not_from_the_environment() {
+    let dir = system_dir().expect("Windows names its system folder");
+    assert!(std::path::Path::new(&dir).join("icacls.exe").is_file(), "{dir}");
+}
