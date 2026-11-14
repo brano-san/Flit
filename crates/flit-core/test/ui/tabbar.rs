@@ -543,8 +543,8 @@ fn reopening_a_closed_tab_restores_its_history() {
     assert_eq!(app.tab().history.back_list().len(), 2);
     key(&mut app, Key::Char('W'), CTRL);
     assert_eq!(app.tabs().len(), 1);
-    assert_eq!(app.nav.closed.last(), Some(&loc(r"C:\a\one\two")));
-    assert_eq!(app.nav.closed_trail.last().map(|t| t.len()), Some(2), "the trail is remembered");
+    assert_eq!(app.nav.closed.last().map(|c| c.location()), Some(&loc(r"C:\a\one\two")));
+    assert_eq!(app.nav.closed.last().map(|c| c.history.back_list().len()), Some(2), "the trail is remembered");
     app.run_action("tab.reopen", Instant::now());
     assert_eq!(app.tabs().len(), 2);
     assert_eq!(*app.tab().location(), loc(r"C:\a\one\two"), "the tab reopens at its last folder");
@@ -552,6 +552,79 @@ fn reopening_a_closed_tab_restores_its_history() {
     assert!(app.tab().history.can_back(), "Back walks the restored trail");
     key(&mut app, Key::Backspace, NO);
     assert_eq!(*app.tab().location(), loc(r"C:\a\one"));
+}
+
+fn numbered(n: usize) -> Vec<String> {
+    (0..n).map(|i| format!("f{i:03}")).collect()
+}
+
+fn deliver_files(app: &mut App, names: &[String]) {
+    let items: Vec<(&str, bool)> = names.iter().map(|n| (n.as_str(), false)).collect();
+    deliver(app, &items);
+}
+
+#[test]
+fn reopening_a_closed_tab_brings_back_forward_history_scroll_and_selection() {
+    let files = numbered(300);
+    let mut app = app_with(&[r"C:\a", r"C:\b"]);
+    app.select_tab(0);
+    deliver(&mut app, &[("one", true)]);
+    app.navigate(loc(r"C:\a\one"), Instant::now());
+    deliver_files(&mut app, &files);
+    app.navigate(loc(r"C:\a\one\two"), Instant::now());
+    deliver(&mut app, &[("z", false)]);
+    app.run_action("nav.back", Instant::now());
+    deliver_files(&mut app, &files);
+    app.layout();
+    assert!(app.max_scroll() > 500.0);
+    let t = app.tab_mut();
+    (t.scroll, t.scroll_target) = (480.0, 480.0);
+    let v = t.view.as_mut().unwrap();
+    let i = v.find(b"f150").unwrap();
+    v.clear_selection();
+    v.set_selected(i, true);
+    v.focus = Some(i);
+    key(&mut app, Key::Char('W'), CTRL);
+    assert_eq!(app.tabs().len(), 1);
+    app.run_action("tab.reopen", Instant::now());
+    assert_eq!(*app.tab().location(), loc(r"C:\a\one"));
+    assert_eq!(app.tab().history.forward_list(), [loc(r"C:\a\one\two")], "Forward comes back with the tab");
+    assert_eq!(app.tab().history.back_list(), [loc(r"C:\a")]);
+    deliver_files(&mut app, &files);
+    app.layout();
+    assert_eq!((app.tab().scroll, app.tab().scroll_target), (480.0, 480.0), "the list is scrolled where it was");
+    assert_eq!(app.tab().focused_name().as_deref(), Some(&b"f150"[..]), "and the same item is focused");
+    app.run_action("nav.forward", Instant::now());
+    assert_eq!(*app.tab().location(), loc(r"C:\a\one\two"));
+}
+
+#[test]
+fn each_reopened_tab_gets_its_own_history_also_from_the_tab_list() {
+    let mut app = app_with(&[r"C:\a", r"C:\b", r"C:\c"]);
+    app.select_tab(0);
+    app.navigate(loc(r"C:\a\x"), Instant::now());
+    app.select_tab(1);
+    app.navigate(loc(r"C:\b\y"), Instant::now());
+    app.navigate(loc(r"C:\b\y\z"), Instant::now());
+    key(&mut app, Key::Char('W'), CTRL);
+    app.select_tab(0);
+    key(&mut app, Key::Char('W'), CTRL);
+    assert_eq!(names(&app), [r"C:\c"]);
+    app.run_action("tab.new", Instant::now());
+    app.select_tab(0);
+    app.run_action("tab.search", Instant::now());
+    assert!(app.tab_row_closed(2));
+    app.choose_tab_row(2, Instant::now());
+    assert_eq!((app.cur, names(&app)), (1, vec![r"C:\c".to_owned(), r"C:\a\x".to_owned(), r"C:\c".to_owned()]), "the latest closed tab opens next to the current one");
+    assert_eq!(app.tab().history.back_list(), [loc(r"C:\a")]);
+    assert!(app.tabs()[2].history.back_list().is_empty(), "the last tab keeps its own empty history");
+    assert_eq!(app.nav.closed.len(), 1);
+    app.run_action("tab.reopen", Instant::now());
+    assert_eq!(*app.tab().location(), loc(r"C:\b\y\z"));
+    assert_eq!(app.tab().history.back_list(), [loc(r"C:\b"), loc(r"C:\b\y")], "the other closed tab kept its own trail");
+    assert!(app.nav.closed.is_empty());
+    app.run_action("tab.reopen", Instant::now());
+    assert_eq!(app.tabs().len(), 4, "nothing more to reopen");
 }
 
 #[test]

@@ -706,22 +706,36 @@ impl App {
         }
     }
 
-    pub(super) fn remember_closed_with(&mut self, loc: Location, trail: Vec<Location>) {
+    pub(super) fn remember_closed(&mut self, t: super::Tab) {
         if self.nav.closed.len() == MAX_CLOSED {
             self.nav.closed.remove(0);
-            self.nav.closed_trail.remove(0);
         }
-        self.nav.closed.push(loc);
-        self.nav.closed_trail.push(trail);
-        self.note_closed(self.last_frame.unwrap_or_else(Instant::now));
+        let view = t.capture();
+        let at = self.last_frame.unwrap_or_else(Instant::now);
+        self.nav.closed.push(super::nav::Closed { history: t.history, view, at });
     }
 
     fn reopen_tab(&mut self, now: Instant) {
-        let Some(folder) = self.nav.closed.pop() else { return };
-        let trail = self.nav.closed_trail.pop().unwrap_or_default();
-        self.dispatch(vec![Route { folder: folder.clone(), select: None }], OpenTarget::NewTab, now);
-        if let Some(t) = self.tabs.last_mut() {
-            t.history.restore(trail, folder);
+        if let Some(k) = self.nav.closed.len().checked_sub(1) {
+            self.reopen_closed(k, now);
+        }
+    }
+
+    pub(super) fn reopen_closed(&mut self, k: usize, now: Instant) {
+        if k >= self.nav.closed.len() {
+            return;
+        }
+        let c = self.nav.closed.remove(k);
+        let n = self.tabs.len();
+        self.dispatch(vec![Route { folder: c.location().clone(), select: None }], OpenTarget::NewTab, now);
+        if self.tabs.len() > n {
+            let t = self.tab_mut();
+            let here = t.location().clone();
+            t.history = c.history;
+            t.history.replace(here);
+            if let Some(l) = t.loading.as_mut() {
+                l.restore = c.view;
+            }
         }
     }
 

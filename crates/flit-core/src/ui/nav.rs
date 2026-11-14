@@ -19,11 +19,22 @@ pub(super) struct Nav {
     pub palette: Option<Palette>,
     pub back: Option<Box<Palette>>,
     pub filter: FilterRects,
-    pub closed: Vec<Location>,
-    pub closed_trail: Vec<Vec<Location>>,
+    pub closed: Vec<Closed>,
     pub home: Home,
     streak: Option<(Instant, f32, f32)>,
     clipboard_text: Option<bool>,
+}
+
+pub(super) struct Closed {
+    pub history: crate::nav::History,
+    pub view: Option<crate::nav::Restore>,
+    pub at: Instant,
+}
+
+impl Closed {
+    pub fn location(&self) -> &Location {
+        self.history.current()
+    }
 }
 
 fn is_field(h: Hit) -> bool {

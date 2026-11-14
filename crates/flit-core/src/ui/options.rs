@@ -101,7 +101,6 @@ pub struct Opts {
     pub pins: [Vec<String>; 3],
     pub menu: super::menu_editor::MenuPrefs,
     pub user_menu: Vec<super::user_menu::UserEntry>,
-    pub closed_at: Vec<Instant>,
     pub tab_rows: Vec<TabRow>,
     pub describe: bool,
 }
@@ -138,7 +137,6 @@ impl Default for Opts {
             pins: Default::default(),
             menu: Default::default(),
             user_menu: Vec::new(),
-            closed_at: Vec::new(),
             tab_rows: Vec::new(),
             describe: true,
         }
@@ -310,15 +308,6 @@ impl App {
         self.dispatch(vec![Route { folder, select: None }], OpenTarget::NewTab, now);
     }
 
-    pub(super) fn note_closed(&mut self, now: Instant) {
-        self.opts.closed_at.push(now);
-        let n = self.nav.closed.len();
-        if self.opts.closed_at.len() > n {
-            let extra = self.opts.closed_at.len() - n;
-            self.opts.closed_at.drain(..extra);
-        }
-    }
-
     pub(super) fn open_tab_search(&mut self) {
         let now = self.last_frame.unwrap_or_else(Instant::now);
         let mut items = Vec::new();
@@ -329,18 +318,11 @@ impl App {
             descs.push(super::tabbar::full_name(t));
             rows.push(TabRow::Open(i));
         }
-        let closed = self.nav.closed.len();
-        let times = self.opts.closed_at.len();
-        for k in (0..closed).rev().take(SHOWN_CLOSED) {
-            let loc = &self.nav.closed[k];
+        for (k, c) in self.nav.closed.iter().enumerate().rev().take(SHOWN_CLOSED) {
+            let loc = c.location();
             let name = crate::name::display(loc.file_name()).into_owned();
             let title = if name.is_empty() { loc.display().into_owned() } else { name };
-            let at = (k + times).checked_sub(closed).and_then(|j| self.opts.closed_at.get(j));
-            let path = loc.display().into_owned();
-            let desc = match at {
-                Some(at) => format!("{path} \u{2022} {}", closed_ago(now.saturating_duration_since(*at))),
-                None => path,
-            };
+            let desc = format!("{} \u{2022} {}", loc.display(), closed_ago(now.saturating_duration_since(c.at)));
             items.push((title, String::new()));
             descs.push(desc);
             rows.push(TabRow::Closed(k));
@@ -363,7 +345,7 @@ impl App {
     pub(super) fn tab_row_glyph(&self, row: usize) -> &'static str {
         match self.opts.tab_rows.get(row) {
             Some(TabRow::Open(i)) => self.tabs.get(*i).map_or(super::G_FOLDER, |t| super::tabbar::tab_glyph(t.location())),
-            Some(TabRow::Closed(k)) => self.nav.closed.get(*k).map_or(super::G_FOLDER, super::tabbar::tab_glyph),
+            Some(TabRow::Closed(k)) => self.nav.closed.get(*k).map_or(super::G_FOLDER, |c| super::tabbar::tab_glyph(c.location())),
             None => super::G_FOLDER,
         }
     }
@@ -375,17 +357,8 @@ impl App {
     pub(super) fn choose_tab_row(&mut self, row: usize, now: Instant) {
         match self.opts.tab_rows.get(row).cloned() {
             Some(TabRow::Open(i)) => self.select_tab(i),
-            Some(TabRow::Closed(k)) if k < self.nav.closed.len() => {
-                let folder = self.nav.closed.remove(k);
-                let times = self.opts.closed_at.len();
-                if let Some(j) = (k + times).checked_sub(self.nav.closed.len() + 1) {
-                    if j < times {
-                        self.opts.closed_at.remove(j);
-                    }
-                }
-                self.dispatch(vec![Route { folder, select: None }], OpenTarget::NewTab, now);
-            }
-            _ => {}
+            Some(TabRow::Closed(k)) => self.reopen_closed(k, now),
+            None => {}
         }
     }
 

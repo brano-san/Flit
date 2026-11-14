@@ -524,7 +524,7 @@ impl App {
                 self.tabs.push(t);
             } else {
                 t.shutdown(&mut self.effects);
-                self.remember_closed_with(t.location().clone(), t.history.back_list().to_vec());
+                self.remember_closed(t);
             }
         }
         self.after_tab_change();
