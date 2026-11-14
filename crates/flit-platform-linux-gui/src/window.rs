@@ -204,7 +204,7 @@ enum Command {
     Copy(String),
     CopyFiles(Vec<FsPath>, bool),
     CopyImage(Bitmap),
-    Drag(winit::window::WindowId, String),
+    Drag(winit::window::WindowId, Vec<FsPath>, f32),
     Activate(WindowId, String),
 }
 
@@ -517,7 +517,7 @@ impl Window for LinuxWindow {
     fn properties(&self, _paths: Vec<FsPath>) {}
 
     fn start_drag(&self, paths: Vec<FsPath>) {
-        self.push(Command::Drag(self.raw.id(), crate::shell::uri_list(&paths)));
+        self.push(Command::Drag(self.raw.id(), paths, self.scale.get()));
     }
 
     fn set_timer(&self, ms: u32) {
@@ -737,26 +737,21 @@ fn copy(el: &dyn ActiveEventLoop, text: String) {
     }
 }
 
-fn drag_out(el: &dyn ActiveEventLoop, source: winit::window::WindowId, list: String) -> Option<DataTransferId> {
+fn drag_out(el: &dyn ActiveEventLoop, source: winit::window::WindowId, paths: Vec<FsPath>, scale: f32) -> Option<DataTransferId> {
     if let Ok(RawDisplayHandle::Xlib(x)) = el.display_handle().map(|h| h.as_raw()) {
         crate::xdnd::release_pointer_of(x.display.map_or(std::ptr::null_mut(), |d| d.as_ptr()));
-        background("flit-drag", move || match crate::xdnd::drag(list) {
+        background("flit-drag", move || match crate::xdnd::drag(paths, scale) {
             Ok(outcome) => tracing::info!("drag out of Flit: {outcome:?}"),
             Err(e) => tracing::info!("cannot drag files out of Flit here: {e}"),
         });
         return None;
     }
+    let list = crate::shell::uri_list(&paths);
     let data = DataTransferSendBuilder::new(list).with_type(TypeHint::UriList, |list: &String, _| Some(list.clone())).build();
-    let mut rgba = vec![0; 40 * 40 * 4];
-    for y in 5..35 {
-        for x in 4..36 {
-            if y >= 11 || x < 19 {
-                let at = (y * 40 + x) * 4;
-                rgba[at..at + 4].copy_from_slice(&[240, 188, 72, 235]);
-            }
-        }
-    }
-    let icon = winit::icon::RgbaIcon::new(rgba, 40, 40).ok().map(|icon| winit::event_loop::DragIcon { icon: icon.into(), offset_x: 12, offset_y: 12 });
+    let picture = crate::xdnd::drag_picture_soon(paths, scale);
+    let hot = (picture.width / 4) as i32;
+    let rgba = flit_core::preview::straight_rgba(&picture.rgba);
+    let icon = winit::icon::RgbaIcon::new(rgba, picture.width, picture.height).ok().map(|icon| winit::event_loop::DragIcon { icon: icon.into(), offset_x: hot, offset_y: hot });
     el.start_drag(source, data, &[DndAction::Copy, DndAction::Move], icon).map_err(|e| tracing::info!("cannot drag files out of Flit here: {e}")).ok()
 }
 
@@ -813,7 +808,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                     Command::Copy(text) => copy(el, text),
                     Command::CopyFiles(paths, cut) => self.copy_files(el, paths, cut),
                     Command::CopyImage(image) => self.copy_image(el, &image),
-                    Command::Drag(source, list) => self.outgoing = drag_out(el, source, list),
+                    Command::Drag(source, paths, scale) => self.outgoing = drag_out(el, source, paths, scale),
                     Command::Activate(id, token) => self.activate(id, token),
                 }
             }

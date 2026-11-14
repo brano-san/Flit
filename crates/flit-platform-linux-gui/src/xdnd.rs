@@ -1,5 +1,6 @@
 use flit_core::input::Mods;
-use flit_core::ui::drop_effect;
+use flit_core::ui::{drop_effect, Bitmap};
+use flit_core::FsPath;
 use std::ffi::c_void;
 use std::sync::OnceLock;
 use winit::event_loop::DndAction;
@@ -7,7 +8,7 @@ use std::time::{Duration, Instant};
 use x11rb::connection::Connection;
 type R<T> = Result<T, Box<dyn std::error::Error>>;
 use x11rb::protocol::xproto::{
-    Atom, AtomEnum, ClientMessageEvent, ConnectionExt, CreateWindowAux, EventMask, GrabMode, GrabStatus, KeyButMask, PropMode, SelectionNotifyEvent, SelectionRequestEvent, Timestamp, Window, WindowClass,
+    Atom, AtomEnum, ClientMessageEvent, ConnectionExt, CreateWindowAux, EventMask, GrabMode, GrabStatus, KeyButMask, PropMode, Rectangle, SelectionNotifyEvent, SelectionRequestEvent, Timestamp, Window, WindowClass,
     SELECTION_NOTIFY_EVENT,
 };
 use x11rb::protocol::Event;
@@ -107,6 +108,16 @@ struct Source {
     ghost: Window,
     atoms: Atoms,
     data: Vec<u8>,
+    depth: u8,
+    pixels: Option<(u16, u16, Vec<u8>)>,
+}
+
+const GHOST_BACKGROUND: [u8; 3] = [0xf4, 0xf4, 0xf4];
+
+fn bgrx_screen(setup: &x11rb::protocol::xproto::Setup, screen: &x11rb::protocol::xproto::Screen) -> bool {
+    let wide = setup.pixmap_formats.iter().any(|f| f.depth == screen.root_depth && f.bits_per_pixel == 32);
+    let rgb = screen.allowed_depths.iter().flat_map(|d| &d.visuals).any(|v| v.visual_id == screen.root_visual && (v.red_mask, v.green_mask, v.blue_mask) == (0xff_0000, 0xff00, 0xff));
+    setup.image_byte_order == x11rb::protocol::xproto::ImageOrder::LSB_FIRST && wide && rgb
 }
 
 struct Target {
@@ -118,7 +129,7 @@ struct Target {
 }
 
 impl Source {
-    fn open(data: Vec<u8>) -> R<Self> {
+    fn open(data: Vec<u8>, picture: &Bitmap) -> R<Self> {
         let (conn, screen) = XCBConnection::connect(None)?;
         let root = conn.setup().roots[screen].root;
         let atoms = Atoms::new(&conn)?.reply()?;
@@ -127,19 +138,31 @@ impl Source {
         conn.set_selection_owner(window, atoms.XdndSelection, CURRENT_TIME)?;
         let ghost = conn.generate_id()?;
         let screen = &conn.setup().roots[screen];
-        conn.create_window(screen.root_depth, ghost, root, -100, -100, 40, 40, 1, WindowClass::INPUT_OUTPUT, screen.root_visual, &CreateWindowAux::new().override_redirect(1).background_pixel(0xf4f4f4).border_pixel(0x808080).event_mask(EventMask::EXPOSURE))?;
+        let pixels = bgrx_screen(conn.setup(), screen).then(|| (picture.width as u16, picture.height as u16, over_background(picture, GHOST_BACKGROUND)));
+        let (w, h, border) = pixels.as_ref().map_or((40, 40, 1), |p| (p.0, p.1, 0));
+        let aux = CreateWindowAux::new().override_redirect(1).background_pixel(0xf4f4f4).border_pixel(0x808080).event_mask(EventMask::EXPOSURE);
+        conn.create_window(screen.root_depth, ghost, root, -100, -100, w, h, border, WindowClass::INPUT_OUTPUT, screen.root_visual, &aux)?;
+        let runs = opaque_runs(picture);
+        if pixels.is_some() && !runs.is_empty() {
+            use x11rb::protocol::shape::{ConnectionExt as _, SK, SO};
+            conn.shape_rectangles(SO::SET, SK::BOUNDING, x11rb::protocol::xproto::ClipOrdering::UNSORTED, ghost, 0, 0, &runs)?;
+        }
         let pointer = conn.query_pointer(root)?.reply()?;
         conn.configure_window(ghost, &x11rb::protocol::xproto::ConfigureWindowAux::new().x(i32::from(pointer.root_x) + 16).y(i32::from(pointer.root_y) + 16))?;
         conn.map_window(ghost)?;
         conn.flush()?;
-        Ok(Self { conn, root, window, ghost, atoms, data })
+        let depth = screen.root_depth;
+        Ok(Self { conn, root, window, ghost, atoms, data, depth, pixels })
     }
 
     fn paint(&self) -> R<()> {
-        use x11rb::protocol::xproto::{CreateGCAux, Rectangle};
+        use x11rb::protocol::xproto::{CreateGCAux, ImageFormat};
         let gc = self.conn.generate_id()?;
         self.conn.create_gc(gc, self.ghost, &CreateGCAux::new().foreground(0xf0bc48))?;
-        self.conn.poly_fill_rectangle(self.ghost, gc, &[Rectangle { x: 4, y: 6, width: 15, height: 9 }, Rectangle { x: 4, y: 12, width: 32, height: 22 }])?;
+        match &self.pixels {
+            Some((w, h, bytes)) => self.conn.put_image(ImageFormat::Z_PIXMAP, self.ghost, gc, *w, *h, 0, 0, 0, self.depth, bytes)?,
+            None => self.conn.poly_fill_rectangle(self.ghost, gc, &[Rectangle { x: 4, y: 6, width: 15, height: 9 }, Rectangle { x: 4, y: 12, width: 32, height: 22 }])?,
+        };
         self.conn.free_gc(gc)?;
         self.conn.flush()?;
         Ok(())
@@ -306,8 +329,187 @@ impl Drop for Source {
     }
 }
 
-pub fn drag(uri_list: String) -> Result<Outcome, String> {
-    let source = Source::open(uri_list.into_bytes()).map_err(|e| e.to_string())?;
+const DRAG_ICON: f32 = 48.0;
+const DRAG_MARGIN: f32 = 12.0;
+const STACK_STEP: f32 = 6.0;
+const STACK_OPACITY: f32 = 0.55;
+const BADGE_RADIUS: f32 = 11.0;
+const BADGE_TEXT: f32 = 13.0;
+const BADGE_COLOR: [u8; 4] = [0x35, 0x84, 0xe4, 255];
+const FOLDER_COLOR: [u8; 4] = [240, 188, 72, 255];
+const WHITE: [u8; 4] = [255, 255, 255, 255];
+const MOST_COUNTED: usize = 999;
+const PICTURE_WAIT: Duration = Duration::from_millis(40);
+
+pub fn badge_text(count: usize) -> String {
+    if count > MOST_COUNTED {
+        format!("{MOST_COUNTED}+")
+    } else {
+        count.to_string()
+    }
+}
+
+fn blend(canvas: &mut Bitmap, x: i32, y: i32, src: [u8; 4]) {
+    if x < 0 || y < 0 || x >= canvas.width as i32 || y >= canvas.height as i32 || src[3] == 0 {
+        return;
+    }
+    let at = (y as usize * canvas.width as usize + x as usize) * 4;
+    let keep = 255 - u32::from(src[3]);
+    for (k, s) in src.iter().enumerate() {
+        canvas.rgba[at + k] = (u32::from(*s) + (u32::from(canvas.rgba[at + k]) * keep + 127) / 255).min(255) as u8;
+    }
+}
+
+fn tint(color: [u8; 4], coverage: f32) -> [u8; 4] {
+    let a = coverage.clamp(0.0, 1.0) * f32::from(color[3]) / 255.0;
+    [color[0], color[1], color[2], 255].map(|c| (f32::from(c) * a).round() as u8)
+}
+
+fn draw_icon(canvas: &mut Bitmap, icon: &Bitmap, (x0, y0): (i32, i32), side: u32, opacity: f32) {
+    let (dx, dy) = (x0 + (side as i32 - icon.width as i32) / 2, y0 + (side as i32 - icon.height as i32) / 2);
+    for (k, p) in icon.rgba.chunks_exact(4).enumerate() {
+        let (x, y) = ((k % icon.width as usize) as i32, (k / icon.width as usize) as i32);
+        blend(canvas, dx + x, dy + y, [p[0], p[1], p[2], p[3]].map(|c| (f32::from(c) * opacity).round() as u8));
+    }
+}
+
+fn draw_folder(canvas: &mut Bitmap, (x0, y0): (i32, i32), side: u32, opacity: f32) {
+    let s = side as f32 / 40.0;
+    let color = tint(FOLDER_COLOR, opacity);
+    for y in (5.0 * s) as i32..(35.0 * s) as i32 {
+        for x in (4.0 * s) as i32..(36.0 * s) as i32 {
+            if y as f32 >= 11.0 * s || (x as f32) < 19.0 * s {
+                blend(canvas, x0 + x, y0 + y, color);
+            }
+        }
+    }
+}
+
+fn fill_pill(canvas: &mut Bitmap, (cx, cy): (f32, f32), width: f32, radius: f32, color: [u8; 4]) {
+    let half = (width / 2.0 - radius).max(0.0);
+    let (x0, x1) = ((cx - width / 2.0).floor() as i32, (cx + width / 2.0).ceil() as i32);
+    let (y0, y1) = ((cy - radius).floor() as i32, (cy + radius).ceil() as i32);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let dx = ((x as f32 + 0.5 - cx).abs() - half).max(0.0);
+            let dy = y as f32 + 0.5 - cy;
+            blend(canvas, x, y, tint(color, radius + 0.5 - (dx * dx + dy * dy).sqrt()));
+        }
+    }
+}
+
+fn label_glyphs(text: &str, px: f32) -> Option<(swash::FontRef<'static>, Vec<(u16, f32)>, f32)> {
+    let font = swash::FontRef::from_index(crate::fonts::SANS, 0)?;
+    let (charmap, metrics) = (font.charmap(), font.glyph_metrics(&[]).scale(px));
+    let mut pen = 0.0;
+    let mut glyphs = Vec::new();
+    for id in text.chars().map(|c| charmap.map(c)) {
+        glyphs.push((id, pen));
+        pen += metrics.advance_width(id);
+    }
+    Some((font, glyphs, pen))
+}
+
+fn draw_label(canvas: &mut Bitmap, (font, glyphs, width): (swash::FontRef<'static>, Vec<(u16, f32)>, f32), (cx, cy): (f32, f32), px: f32, color: [u8; 4]) {
+    use swash::scale::{Render, ScaleContext, Source};
+    let mut context = ScaleContext::new();
+    let mut scaler = context.builder(font).size(px).hint(true).build();
+    let baseline = (cy + font.metrics(&[]).scale(px).cap_height / 2.0).round() as i32;
+    let left = cx - width / 2.0;
+    for (id, x) in glyphs {
+        let Some(image) = Render::new(&[Source::Outline]).format(swash::zeno::Format::Alpha).render(&mut scaler, id) else { continue };
+        let p = image.placement;
+        let (ox, oy) = ((left + x).round() as i32 + p.left, baseline - p.top);
+        for (k, &a) in image.data.iter().enumerate().take((p.width * p.height) as usize) {
+            blend(canvas, ox + (k as u32 % p.width) as i32, oy + (k as u32 / p.width) as i32, tint(color, f32::from(a) / 255.0));
+        }
+    }
+}
+
+pub fn compose_drag(icon: Option<&Bitmap>, count: usize, scale: f32) -> Bitmap {
+    let scale = scale.clamp(0.5, 4.0);
+    let side = (DRAG_ICON * scale).round() as u32;
+    let margin = (DRAG_MARGIN * scale).round() as u32;
+    let total = side + margin;
+    let mut canvas = Bitmap { width: total, height: total, rgba: vec![0; (total * total * 4) as usize] };
+    let mut layer = |canvas: &mut Bitmap, at: (i32, i32), opacity: f32| match icon.filter(|i| i.width > 0 && i.rgba.len() == (i.width * i.height * 4) as usize) {
+        Some(i) => draw_icon(canvas, i, at, side, opacity),
+        None => draw_folder(canvas, at, side, opacity),
+    };
+    if count > 1 {
+        let step = (STACK_STEP * scale).round() as i32;
+        layer(&mut canvas, (step, margin as i32 - step), STACK_OPACITY);
+    }
+    layer(&mut canvas, (0, margin as i32), 1.0);
+    if count > 1 {
+        let (radius, px) = (BADGE_RADIUS * scale, BADGE_TEXT * scale);
+        let label = label_glyphs(&badge_text(count), px);
+        let width = label.as_ref().map_or(0.0, |l| l.2 + radius).max(radius * 2.0);
+        let center = (total as f32 - width / 2.0, radius);
+        fill_pill(&mut canvas, center, width, radius, BADGE_COLOR);
+        if let Some(label) = label {
+            draw_label(&mut canvas, label, center, px, WHITE);
+        }
+    }
+    canvas
+}
+
+fn first_icon(paths: &[FsPath], scale: f32) -> Option<Bitmap> {
+    use flit_core::ui::{IconKind, IconRequest};
+    let first = paths.first()?;
+    let dir = flit_platform_linux::host(first).is_some_and(|p| std::fs::metadata(p).is_ok_and(|m| m.is_dir()));
+    let size = (DRAG_ICON * scale.clamp(0.5, 4.0)).round() as u32;
+    let req = IconRequest { key: 0, kind: if dir { IconKind::Folder } else { IconKind::File }, path: first.clone(), size, gen: 0, row: 0 };
+    crate::icons::icon(&crate::shell::icon_names(&req), size)
+}
+
+pub fn drag_picture(paths: &[FsPath], scale: f32) -> Bitmap {
+    compose_drag(first_icon(paths, scale).as_ref(), paths.len(), scale)
+}
+
+pub fn drag_picture_soon(paths: Vec<FsPath>, scale: f32) -> Bitmap {
+    let count = paths.len();
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    let spawned = std::thread::Builder::new().name("flit-drag-picture".into()).spawn(move || {
+        let _ = tx.send(drag_picture(&paths, scale));
+    });
+    spawned.ok().and_then(|_| rx.recv_timeout(PICTURE_WAIT).ok()).unwrap_or_else(|| compose_drag(None, count, scale))
+}
+
+pub fn over_background(image: &Bitmap, background: [u8; 3]) -> Vec<u8> {
+    image.rgba.chunks_exact(4).flat_map(|p| {
+        let keep = 255 - u32::from(p[3]);
+        let mix = |k: usize| (u32::from(p[k]) + (u32::from(background[k]) * keep + 127) / 255).min(255) as u8;
+        [mix(2), mix(1), mix(0), 0]
+    }).collect()
+}
+
+pub fn opaque_runs(image: &Bitmap) -> Vec<Rectangle> {
+    let mut out = Vec::new();
+    for y in 0..image.height {
+        let row = &image.rgba[(y * image.width * 4) as usize..((y + 1) * image.width * 4) as usize];
+        let mut start = None;
+        for x in 0..=image.width {
+            let solid = x < image.width && row[(x * 4 + 3) as usize] >= SOLID_ALPHA;
+            match (solid, start) {
+                (true, None) => start = Some(x),
+                (false, Some(s)) => {
+                    out.push(Rectangle { x: s as i16, y: y as i16, width: (x - s) as u16, height: 1 });
+                    start = None;
+                }
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+const SOLID_ALPHA: u8 = 0x60;
+
+pub fn drag(paths: Vec<FsPath>, scale: f32) -> Result<Outcome, String> {
+    let picture = drag_picture(&paths, scale);
+    let uri_list = crate::shell::uri_list(&paths);
+    let source = Source::open(uri_list.into_bytes(), &picture).map_err(|e| e.to_string())?;
     if !source.grab().map_err(|e| e.to_string())? {
         return Err("the pointer is grabbed by another client".into());
     }

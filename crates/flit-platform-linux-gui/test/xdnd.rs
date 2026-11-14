@@ -64,7 +64,8 @@ fn files_dragged_out_reach_an_xdnd_target_as_a_uri_list() {
     fake(BUTTON_PRESS_EVENT, 1, 0, 0);
     let target = std::thread::spawn(move || receive(&conn, &atoms, window));
     let list = "file:///home/u/a%20b.txt\r\nfile:///home/u/c.txt\r\n";
-    let dragging = std::thread::spawn(move || drag(list.to_owned()));
+    let paths = vec![FsPath::parse("/home/u/a b.txt").unwrap(), FsPath::parse("/home/u/c.txt").unwrap()];
+    let dragging = std::thread::spawn(move || drag(paths, 1.0));
     std::thread::sleep(Duration::from_millis(200));
     fake(MOTION_NOTIFY_EVENT, 0, 150, 150);
     fake(MOTION_NOTIFY_EVENT, 0, 200, 180);
@@ -151,4 +152,59 @@ fn ctrl_held_before_the_drag_reaches_flit_still_copies() {
     let mut preferred = offered.first().copied();
     let steps: Vec<(u32, bool)> = (0..6).map(|_| hover(Some(DndAction::Copy), &mut preferred, &mut offered)).collect();
     assert!(steps[2..].iter().all(|&s| s == (drop_effect::COPY, false)), "{steps:?}");
+}
+
+fn px(b: &Bitmap, x: u32, y: u32) -> [u8; 4] {
+    let at = ((y * b.width + x) * 4) as usize;
+    [b.rgba[at], b.rgba[at + 1], b.rgba[at + 2], b.rgba[at + 3]]
+}
+
+fn solid(side: u32, color: [u8; 4]) -> Bitmap {
+    Bitmap { width: side, height: side, rgba: color.repeat((side * side) as usize) }
+}
+
+fn badge_left(b: &Bitmap, row: u32) -> Option<u32> {
+    (0..b.width).find(|&x| {
+        let p = px(b, x, row);
+        p[3] > 200 && p[2] > p[0] + 60
+    })
+}
+
+#[test]
+fn the_drag_picture_shows_the_files_own_icon_and_counts_several_files() {
+    let red = solid(48, [200, 0, 0, 255]);
+    let one = compose_drag(Some(&red), 1, 1.0);
+    assert_eq!((one.width, one.height), (60, 60));
+    assert_eq!(px(&one, 24, 12 + 24), [200, 0, 0, 255], "the file's icon, not a drawn folder");
+    assert_eq!(badge_left(&one, 11), None, "one file has no counter");
+    let three = compose_drag(Some(&red), 3, 1.0);
+    let left = badge_left(&three, 11).expect("a counter for three files");
+    assert!((3..19).any(|y| (left..three.width).any(|x| px(&three, x, y).iter().take(3).all(|&c| c > 200))), "the count is written on the badge");
+    let many = compose_drag(Some(&red), 5000, 1.0);
+    assert!(badge_left(&many, 11).unwrap() < left, "a long count makes a wider badge");
+    assert_eq!(badge_text(5000), "999+");
+    assert_eq!(badge_text(12), "12");
+}
+
+#[test]
+fn without_an_icon_the_picture_falls_back_to_a_folder_and_scales_with_the_screen() {
+    let folder = compose_drag(None, 1, 2.0);
+    assert_eq!((folder.width, folder.height), (120, 120));
+    let mid = px(&folder, 48, 24 + 60);
+    assert!(mid[3] == 255 && mid[0] > 200 && mid[2] < 120, "{mid:?}");
+    let broken = Bitmap { width: 4, height: 4, rgba: vec![9; 3] };
+    assert_eq!(compose_drag(Some(&broken), 1, 1.0).rgba, compose_drag(None, 1, 1.0).rgba, "a malformed icon is not drawn");
+}
+
+#[test]
+fn the_x11_ghost_is_shaped_to_the_picture_and_blends_its_edges_on_light_grey() {
+    let mut b = Bitmap { width: 4, height: 2, rgba: vec![0; 32] };
+    b.rgba[4..8].copy_from_slice(&[255, 0, 0, 255]);
+    b.rgba[8..12].copy_from_slice(&[0, 0, 128, 128]);
+    b.rgba[28..32].copy_from_slice(&[0, 0, 0, 16]);
+    assert_eq!(opaque_runs(&b), [Rectangle { x: 1, y: 0, width: 2, height: 1 }]);
+    let bgrx = over_background(&b, [200, 200, 200]);
+    assert_eq!(&bgrx[4..8], &[0, 0, 255, 0]);
+    assert_eq!(&bgrx[8..12], &[228, 100, 100, 0]);
+    assert_eq!(&bgrx[0..4], &[200, 200, 200, 0]);
 }
