@@ -324,6 +324,9 @@ impl Shell for LinuxShell {
     }
 
     fn icon(&mut self, req: &IconRequest) -> Option<Bitmap> {
+        if let Some(target) = (req.kind == IconKind::File).then(|| link_target_kind(&req.path)).flatten() {
+            return link_icon(req, target);
+        }
         let picture = (req.kind == IconKind::Thumbnail).then(|| self.thumbnail(req)).flatten();
         picture.or_else(|| crate::icons::icon(&icon_names(req), req.size))
     }
@@ -449,6 +452,42 @@ fn poster(path: &Path, size: u32) -> Option<Bitmap> {
     let child = cmd.args(&args[1..]).stdin(Stdio::null()).stderr(Stdio::null()).stdout(Stdio::piped()).spawn().ok()?;
     let png = wait_output(child, POSTER_TIMEOUT)?;
     crate::thumb::png_bytes(&png).map(|b| crate::thumb::fit(b, size))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinkTarget {
+    File,
+    Folder,
+    Missing,
+}
+
+pub fn link_target_kind(path: &FsPath) -> Option<LinkTarget> {
+    let p = host(path)?;
+    if !std::fs::symlink_metadata(p).ok()?.file_type().is_symlink() {
+        return None;
+    }
+    Some(match std::fs::metadata(p) {
+        Ok(m) if m.is_dir() => LinkTarget::Folder,
+        Ok(_) => LinkTarget::File,
+        Err(_) => LinkTarget::Missing,
+    })
+}
+
+pub fn link_icon_names(req: &IconRequest, target: LinkTarget) -> Vec<String> {
+    match target {
+        LinkTarget::Folder => vec!["folder".into()],
+        LinkTarget::Missing => vec!["image-missing".into(), "text-x-generic".into(), "unknown".into()],
+        LinkTarget::File => icon_names(&IconRequest { kind: IconKind::Type, ..req.clone() }),
+    }
+}
+
+fn link_icon(req: &IconRequest, target: LinkTarget) -> Option<Bitmap> {
+    let base = crate::icons::icon(&link_icon_names(req, target), req.size)?;
+    let side = req.size / 2;
+    match (side >= 8).then(|| crate::icons::icon(&["emblem-symbolic-link".to_owned()], side)).flatten() {
+        Some(emblem) => Some(crate::icons::with_emblem(base, &emblem)),
+        None => Some(base),
+    }
 }
 
 pub fn icon_names(req: &IconRequest) -> Vec<String> {

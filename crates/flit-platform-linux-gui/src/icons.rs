@@ -217,6 +217,20 @@ pub fn render(path: &Path, size: u32) -> Option<Bitmap> {
     crate::thumb::decode_png(path).map(|b| crate::thumb::fit(b, size))
 }
 
+pub fn with_emblem(mut base: Bitmap, emblem: &Bitmap) -> Bitmap {
+    let top = base.height.saturating_sub(emblem.height);
+    for y in 0..emblem.height.min(base.height) {
+        for x in 0..emblem.width.min(base.width) {
+            let (e, b) = (((y * emblem.width + x) * 4) as usize, (((top + y) * base.width + x) * 4) as usize);
+            let keep = 255 - u32::from(emblem.rgba[e + 3]);
+            for c in 0..4 {
+                base.rgba[b + c] = (u32::from(emblem.rgba[e + c]) + (u32::from(base.rgba[b + c]) * keep + 127) / 255).min(255) as u8;
+            }
+        }
+    }
+    base
+}
+
 pub fn setting(text: &str, key: &str) -> Option<String> {
     text.lines().find_map(|l| l.split_once('=').filter(|(k, _)| k.trim() == key).map(|(_, v)| v.trim().trim_matches(['"', '\'']).to_owned())).filter(|v| !v.is_empty())
 }

@@ -3067,6 +3067,9 @@ pub fn icon_key(name: &[u8], ext: &[u8], e: &crate::listing::Entry, size: u32, d
     if e.attrs & attr::VOLUME != 0 {
         return (hash::hash(&("vol", name, size)), IconKind::Volume);
     }
+    if e.attrs & attr::LINK != 0 && !cfg!(windows) {
+        return (hash::hash(&("link", dir, name, e.attrs & attr::DIR, e.modified, size, epoch)), IconKind::File);
+    }
     if e.is_dir() && (e.attrs & (attr::READONLY | attr::SYSTEM) != 0 || crate::location::wsl_drive_path(dir).is_some()) {
         return (hash::hash(&("custom", dir, name, e.modified, e.attrs, size, epoch)), IconKind::CustomFolder);
     }

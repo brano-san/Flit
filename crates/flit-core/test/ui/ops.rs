@@ -1454,6 +1454,26 @@ fn the_new_item_dialog_creates_files_from_templates_folders_and_shortcuts() {
 }
 
 #[test]
+fn links_get_an_icon_of_their_own_outside_windows_and_plain_files_share_their_type_icon() {
+    use crate::listing::{attr, Entry};
+    use crate::ui::{icon_key, IconKind};
+    let entry = |attrs| Entry { attrs, ..Entry::default() };
+    let link = |name: &[u8], attrs| icon_key(name, b"txt", &entry(attrs), 16, b"/home/u", 0);
+    let plain = |name: &[u8]| icon_key(name, b"txt", &entry(0), 16, b"/home/u", 0);
+    assert_eq!(plain(b"a.txt"), plain(b"b.txt"));
+    assert_eq!(plain(b"a.txt").1, IconKind::Type);
+    assert_eq!(icon_key(b"d", b"", &entry(attr::DIR), 16, b"/home/u", 0).1, IconKind::Folder);
+    if cfg!(windows) {
+        assert_eq!(link(b"a.txt", attr::LINK), plain(b"a.txt"));
+    } else {
+        assert_eq!(link(b"a.txt", attr::LINK).1, IconKind::File);
+        assert_ne!(link(b"a.txt", attr::LINK).0, link(b"b.txt", attr::LINK).0);
+        assert_ne!(link(b"a.txt", attr::LINK).0, plain(b"a.txt").0);
+        assert_eq!(link(b"d", attr::LINK | attr::DIR).1, IconKind::File);
+    }
+}
+
+#[test]
 fn the_folder_icon_command_asks_for_an_icon_location_and_writes_it_for_the_selected_folder() {
     assert_eq!(icon_location(r#" "C:\Windows\System32\imageres.dll" , -113 "#), Some((p(r"C:\Windows\System32\imageres.dll"), -113)));
     assert_eq!(icon_location(r"C:\i\a,b.ico"), Some((p(r"C:\i\a,b.ico"), 0)));
