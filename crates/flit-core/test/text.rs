@@ -14,7 +14,7 @@ impl TextBackend for Mono {
         if key.id == ' ' as u16 {
             return false;
         }
-        *out = GlyphBitmap { left: 1, top: 7, width: 6, height: 8, data: vec![255; 48] };
+        *out = GlyphBitmap { left: 1, top: 7, width: 6, height: 8, data: vec![255; 48], color: false };
         true
     }
     fn metrics(&mut self, _: FontStyle) -> FontMetrics {
@@ -69,4 +69,45 @@ fn glyph_overflow_forgets_image_slots() {
     g.uploads.clear();
     assert!(g.image(7, Rect::new(0.0, 0.0, 4.0, 4.0)));
     assert_eq!(g.uploads.rects.len(), 1, "image re-uploaded after the glyph overflow");
+}
+
+struct Emoji;
+
+impl TextBackend for Emoji {
+    fn shape(&mut self, text: &str, s: FontStyle, out: &mut ShapedText) {
+        Mono.shape(text, s, out)
+    }
+    fn rasterize(&mut self, key: GlyphKey, out: &mut GlyphBitmap) -> bool {
+        match key.id {
+            0x263A => *out = GlyphBitmap { left: 0, top: 8, width: 2, height: 2, data: [10, 20, 30, 255].repeat(4), color: true },
+            0x2639 => *out = GlyphBitmap { left: 0, top: 8, width: 2, height: 2, data: vec![255; 4], color: true },
+            _ => *out = GlyphBitmap { left: 0, top: 8, width: 2, height: 2, data: vec![200; 4], color: false },
+        }
+        true
+    }
+    fn metrics(&mut self, _: FontStyle) -> FontMetrics {
+        FontMetrics { ascent: 8.0, descent: 2.0 }
+    }
+}
+
+#[test]
+fn colour_glyphs_keep_their_colours_and_follow_only_the_text_alpha() {
+    let mut g = Gfx::new(Emoji, 256);
+    g.begin(Color::default());
+    g.text(0.0, 10.0, "a\u{263A}", style(), Color::rgb(0x112233).alpha(0x80), 1000.0);
+    let kinds: Vec<u32> = g.dl.instances.iter().map(|i| i.kind).collect();
+    assert_eq!(kinds, [crate::render::kind::GLYPH, crate::render::kind::IMAGE]);
+    assert_eq!(g.dl.instances[1].color >> 24, 0x80, "the emoji fades with the text but is not tinted");
+    let emoji_upload = &g.uploads.data[g.uploads.rects[1].1..g.uploads.rects[1].1 + 16];
+    assert_eq!(emoji_upload, [10, 20, 30, 255].repeat(4).as_slice(), "the colour pixels go to the atlas as they are");
+    assert_eq!(&g.uploads.data[..4], [200, 200, 200, 200], "a plain glyph is still a tinted mask");
+}
+
+#[test]
+fn a_colour_glyph_with_short_pixel_data_is_dropped_instead_of_corrupting_the_atlas() {
+    let mut g = Gfx::new(Emoji, 256);
+    g.begin(Color::default());
+    g.text(0.0, 10.0, "\u{2639}b", style(), Color::default(), 1000.0);
+    assert_eq!(g.dl.instances.len(), 1, "only the plain glyph is drawn");
+    assert_eq!(g.uploads.data.len(), 16);
 }

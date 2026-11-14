@@ -16,7 +16,7 @@ fn shaped(t: &mut LinuxText, s: &str, style: FontStyle) -> ShapedText {
 fn raster(t: &mut LinuxText, g: ShapedGlyph, style: FontStyle, subpx: u8) -> GlyphBitmap {
     let mut bm = GlyphBitmap::default();
     assert!(t.rasterize(GlyphKey { font: g.font, id: g.id, size_q: style.size_q, subpx }, &mut bm));
-    assert_eq!(bm.data.len(), (bm.width * bm.height) as usize);
+    assert_eq!(bm.data.len(), (bm.width * bm.height) as usize * if bm.color { 4 } else { 1 });
     bm
 }
 
@@ -38,6 +38,7 @@ fn shapes_latin_and_cyrillic_and_rasterizes() {
     let bm = raster(&mut t, s.glyphs[0], style, 0);
     assert!(bm.width > 2 && bm.height > 5, "{bm:?}");
     assert!(bm.data.iter().any(|&a| a > 200));
+    assert!(!bm.color, "ordinary letters stay a mask tinted by the text colour");
     assert!(bm.top > 5 && bm.top <= 13, "{bm:?}");
     let m = t.metrics(style);
     assert!(m.ascent > 8.0 && m.descent > 1.0, "{m:?}");
@@ -106,7 +107,7 @@ fn combining_marks_stay_with_their_base() {
 }
 
 #[test]
-fn emoji_get_a_monochrome_glyph_when_any_font_has_one() {
+fn emoji_are_drawn_in_colour_from_a_colour_font_and_text_stays_a_mask() {
     let mut t = ready();
     let style = ui(16.0);
     let s = shaped(&mut t, "😀", style);
@@ -114,6 +115,10 @@ fn emoji_get_a_monochrome_glyph_when_any_font_has_one() {
     if s.glyphs[0].id != 0 {
         let bm = raster(&mut t, s.glyphs[0], style, 0);
         assert!(bm.width > 4 && bm.data.iter().any(|&a| a > 128), "{bm:?}");
+        assert_eq!(bm.color, t.faces[s.glyphs[0].font as usize].color, "a colour font gives colour pixels");
+        if bm.color {
+            assert!(bm.data.chunks_exact(4).any(|p| p[0] != p[1] || p[1] != p[2]), "the emoji has more than one colour");
+        }
     }
     let family = shaped(&mut t, "👨\u{200D}👩\u{200D}👧 ok", style);
     assert!(!family.glyphs.is_empty() && family.width > 0.0);

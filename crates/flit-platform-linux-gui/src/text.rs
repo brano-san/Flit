@@ -4,8 +4,8 @@ use crate::fonts::{self, FontFile, Pair};
 use flit_core::hash::FxHashMap;
 use flit_core::text::{FontFamily, FontMetrics, FontStyle, GlyphBitmap, GlyphKey, ShapedGlyph, ShapedText, TextBackend};
 use harfrust::{Buffer, Direction, Script, ShapeOptions, ShapePlan, ShapePlanKey, ShaperFont, Tag};
-use swash::scale::image::Image;
-use swash::scale::{Render, ScaleContext, Source};
+use swash::scale::image::{Content, Image};
+use swash::scale::{Render, ScaleContext, Source, StrikeWith};
 use swash::zeno::{Format, Vector};
 use unicode_bidi::{bidi_class, BidiClass, BidiInfo, Level};
 
@@ -13,6 +13,14 @@ const WGHT: [u8; 4] = *b"wght";
 const SEMIBOLD: f32 = 600.0;
 const EMBOLDEN_PER_PX: f32 = 1.0 / 32.0;
 const NONE: u16 = u16::MAX;
+const COLOR_TABLES: [&[u8; 4]; 4] = [b"COLR", b"CBDT", b"sbix", b"SVG "];
+const COLOR_SOURCES: [Source; 3] = [Source::ColorOutline(0), Source::ColorBitmap(StrikeWith::BestFit), Source::Outline];
+
+fn premultiplied(p: &[u8]) -> [u8; 4] {
+    let a = u32::from(p[3]);
+    let m = |c: u8| ((u32::from(c) * a + 127) / 255) as u8;
+    [m(p[0]), m(p[1]), m(p[2]), p[3]]
+}
 
 struct Face {
     sw: swash::FontRef<'static>,
@@ -23,6 +31,7 @@ struct Face {
     descent: f32,
     vars: Vec<(u32, f32)>,
     embolden: bool,
+    color: bool,
     ascii: u128,
     plans: Vec<ShapePlan>,
 }
@@ -50,7 +59,8 @@ impl Face {
         let m = sw.metrics(&[]);
         let charmap = sw.charmap();
         let ascii = (0x20u32..0x7F).filter(|&c| charmap.map(c) != 0).fold(0u128, |a, c| a | 1 << c);
-        Some(Self { sw, charmap, hr, upem: m.units_per_em.max(1) as f32, ascent: m.ascent, descent: m.descent, vars, embolden, ascii, plans: Vec::new() })
+        let color = COLOR_TABLES.iter().any(|t| swash::TableProvider::table_by_tag(&sw, swash::tag_from_bytes(t)).is_some());
+        Some(Self { sw, charmap, hr, upem: m.units_per_em.max(1) as f32, ascent: m.ascent, descent: m.descent, vars, embolden, color, ascii, plans: Vec::new() })
     }
 
     fn covers(&self, c: char) -> bool {
@@ -361,7 +371,7 @@ impl TextBackend for LinuxText {
         let Some(face) = self.faces.get(key.font as usize) else { return false };
         let px = key.size_q as f32 / 4.0;
         let mut scaler = self.scale.builder(face.sw).size(px).hint(fonts::hinting()).variations(face.vars.iter().copied()).build();
-        let mut render = Render::new(&[Source::Outline]);
+        let mut render = Render::new(if face.color { &COLOR_SOURCES } else { &COLOR_SOURCES[2..] });
         render.format(Format::Alpha).offset(Vector::new(key.subpx as f32 / 4.0, 0.0));
         if face.embolden {
             render.embolden(px * EMBOLDEN_PER_PX);
@@ -375,8 +385,15 @@ impl TextBackend for LinuxText {
         out.top = p.top;
         out.width = p.width;
         out.height = p.height;
+        out.color = self.image.content == Content::Color;
         out.data.clear();
-        out.data.extend_from_slice(&self.image.data[..(p.width * p.height) as usize]);
+        let bytes = (p.width * p.height) as usize * if out.color { 4 } else { 1 };
+        let Some(pixels) = self.image.data.get(..bytes) else { return false };
+        if out.color {
+            out.data.extend(pixels.chunks_exact(4).flat_map(premultiplied));
+        } else {
+            out.data.extend_from_slice(pixels);
+        }
         true
     }
 

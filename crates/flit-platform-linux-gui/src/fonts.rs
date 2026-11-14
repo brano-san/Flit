@@ -287,16 +287,22 @@ impl Fontconfig {
         let mut result = 0;
         let set = unsafe { (self.api.font_sort)(self.config, q.1, 1, std::ptr::null_mut(), &mut result) };
         let mut out: Vec<FontFile> = Vec::new();
+        let mut colored: Vec<FontFile> = Vec::new();
         for p in self.patterns(set) {
             let sfnt = matches!(self.string(p, FONTFORMAT, 0), Some(b"TrueType" | b"CFF"));
-            if !sfnt || self.boolean(p, OUTLINE) == Some(false) || self.boolean(p, COLOR) == Some(true) {
+            let color = self.boolean(p, COLOR) == Some(true);
+            if !sfnt || (self.boolean(p, OUTLINE) == Some(false) && !color) {
                 continue;
             }
-            if let Some(f) = self.file(p).filter(|f| !out.contains(f)) {
+            let Some(f) = self.file(p).filter(|f| !out.contains(f) && !colored.contains(f)) else { continue };
+            if color {
+                colored.push(f);
+            } else {
                 out.push(f);
             }
         }
         unsafe { (self.api.font_set_destroy)(set) };
+        out.extend(colored);
         out
     }
 

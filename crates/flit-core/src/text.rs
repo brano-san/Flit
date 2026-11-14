@@ -56,6 +56,7 @@ pub struct GlyphBitmap {
     pub width: u32,
     pub height: u32,
     pub data: Vec<u8>,
+    pub color: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -97,6 +98,7 @@ struct GlyphSlot {
     slot: Slot,
     left: i32,
     top: i32,
+    color: bool,
 }
 
 struct Image {
@@ -341,7 +343,11 @@ impl<B: TextBackend> GlyphCtx<'_, B> {
         };
         if let Some(gs) = gs {
             let r = Rect::new(ix + gs.left as f32, py.round() - gs.top as f32, gs.slot.w as f32, gs.slot.h as f32);
-            self.dl.glyph(r, uv(gs.slot, self.atlas.size()), color);
+            if gs.color {
+                self.dl.image(r, uv(gs.slot, self.atlas.size()), (color.0 >> 24) as u8);
+            } else {
+                self.dl.glyph(r, uv(gs.slot, self.atlas.size()), color);
+            }
         }
     }
 
@@ -357,10 +363,15 @@ impl<B: TextBackend> GlyphCtx<'_, B> {
 
     fn rasterize(&mut self, key: GlyphKey) -> Option<GlyphSlot> {
         self.scratch.data.clear();
+        self.scratch.color = false;
         if !self.text.rasterize(key, self.scratch) || self.scratch.width == 0 || self.scratch.height == 0 {
             return None;
         }
         let (w, h) = (self.scratch.width, self.scratch.height);
+        let per_pixel = if self.scratch.color { 4 } else { 1 };
+        if self.scratch.data.len() != (w * h) as usize * per_pixel {
+            return None;
+        }
         let slot = match self.atlas.alloc(w, h) {
             Some(s) => s,
             None => {
@@ -370,8 +381,12 @@ impl<B: TextBackend> GlyphCtx<'_, B> {
         };
         let bm = &*self.scratch;
         self.uploads.rects.push((slot, self.uploads.data.len()));
-        self.uploads.data.extend(bm.data.iter().flat_map(|&a| [a, a, a, a]));
-        Some(GlyphSlot { slot, left: bm.left, top: bm.top })
+        if bm.color {
+            self.uploads.data.extend_from_slice(&bm.data);
+        } else {
+            self.uploads.data.extend(bm.data.iter().flat_map(|&a| [a, a, a, a]));
+        }
+        Some(GlyphSlot { slot, left: bm.left, top: bm.top, color: bm.color })
     }
 }
 
