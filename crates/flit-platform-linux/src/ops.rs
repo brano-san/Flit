@@ -292,11 +292,12 @@ struct Engine<'a> {
     untrashable: Vec<FsPath>,
     dest_fs: Option<(u64, Option<String>)>,
     lang: Lang,
+    free: fn(RawFd) -> Option<u64>,
 }
 
 impl<'a> Engine<'a> {
     fn new(job: &'a Job) -> Self {
-        Self { job, done: Vec::new(), failed: 0, first: None, fatal: false, denied: false, untrashable: Vec::new(), dest_fs: None, lang: flit_core::i18n::lang() }
+        Self { job, done: Vec::new(), failed: 0, first: None, fatal: false, denied: false, untrashable: Vec::new(), dest_fs: None, lang: flit_core::i18n::lang(), free: free_space }
     }
 
     fn stopped(&self) -> bool {
@@ -404,13 +405,15 @@ impl<'a> Engine<'a> {
     }
 
     fn room(&mut self, fd: RawFd, dest: &FsPath, need: u64) -> bool {
-        let Some(free) = free_space(fd).filter(|&free| free < need) else { return true };
-        let mut msg = format!("There is not enough free space in {}: the items need ", dest.display());
-        flit_core::fmt::size(&mut msg, need);
-        msg.push_str(", but only ");
-        flit_core::fmt::size(&mut msg, free);
-        msg.push_str(" is free");
-        self.note(msg);
+        let free = match self.job.room(dest, need, || (self.free)(fd)) {
+            Ok(()) => return true,
+            Err(None) => return false,
+            Err(Some(free)) => free,
+        };
+        let (mut needed, mut available) = (String::new(), String::new());
+        flit_core::fmt::size(&mut needed, need);
+        flit_core::fmt::size(&mut available, free);
+        self.note(flit_core::tr_en!(S::ErrorsEngineNoRoom, folder = dest.display(), need = needed, free = available));
         false
     }
 
@@ -803,6 +806,7 @@ impl<'a> Engine<'a> {
         let tops = self.tops(&froms);
         let mut dests = Vec::with_capacity(pairs.len());
         let mut total = Tally::default();
+        let mut far: Vec<(u64, usize, u64)> = Vec::new();
         for ((_, to), t) in pairs.iter().zip(&tops) {
             let fd = match t {
                 Some(_) => loop {
@@ -815,14 +819,27 @@ impl<'a> Engine<'a> {
                 None => None,
             };
             if let (Some(t), Some(fd)) = (t, &fd) {
-                let across = node_at(fd.as_raw_fd(), c".", false).is_ok_and(|d| d.dev != t.node.dev);
-                if across {
-                    self.tally(t.dir.as_raw_fd(), &t.name, &t.node, false, &mut total);
-                } else {
-                    total.entries += 1;
+                match node_at(fd.as_raw_fd(), c".", false).map(|d| d.dev).ok().filter(|&dev| dev != t.node.dev) {
+                    Some(dev) => {
+                        let mut moved = Tally::default();
+                        self.tally(t.dir.as_raw_fd(), &t.name, &t.node, false, &mut moved);
+                        total.entries += moved.entries;
+                        total.bytes += moved.bytes;
+                        match far.iter_mut().find(|(d, ..)| *d == dev) {
+                            Some((_, _, need)) => *need += moved.bytes,
+                            None => far.push((dev, dests.len(), moved.bytes)),
+                        }
+                    }
+                    None => total.entries += 1,
                 }
             }
             dests.push(fd);
+        }
+        for (_, k, need) in far {
+            let (Some(fd), Some(dir)) = (&dests[k], pairs[k].1.parent()) else { continue };
+            if !self.room(fd.as_raw_fd(), &dir, need) {
+                return vec![None; pairs.len()];
+            }
         }
         self.running(total);
         let mut placed = vec![None; pairs.len()];

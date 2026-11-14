@@ -406,7 +406,7 @@ impl OpCtl {
     pub fn resolve(&self, c: &Conflict, mut ask: impl FnMut()) -> Option<Resolve> {
         loop {
             let mut a = self.lock();
-            if let Some(choice) = a.policy.and_then(|p| p.decide(c)) {
+            if let Some(choice) = a.policy.filter(|_| !crate::limits::is_short_of_space(c)).and_then(|p| p.decide(c)) {
                 return Some(choice);
             }
             a.given = None;

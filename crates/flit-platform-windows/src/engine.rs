@@ -345,10 +345,11 @@ impl<'a> Engine<'a> {
     }
 
     pub(crate) fn room(&mut self, dest: &FsPath, need: u64) -> bool {
-        let Some(free) = free_space(dest).filter(|&free| free < need) else { return true };
-        if self.job.ctl().policy().is_none() && self.job.resolve(limits::short_of_space(dest, need, free)).is_some() {
-            return true;
-        }
+        let free = match self.job.room(dest, need, || free_space(dest)) {
+            Ok(()) => return true,
+            Err(None) => return false,
+            Err(Some(free)) => free,
+        };
         let (mut needed, mut available) = (String::new(), String::new());
         flit_core::fmt::size(&mut needed, need);
         flit_core::fmt::size(&mut available, free);

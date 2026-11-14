@@ -1,10 +1,12 @@
 use crate::i18n::S;
 use crate::listing::{attr, Meta};
-use crate::provider::Conflict;
+use crate::provider::{Conflict, Resolve};
 use crate::FsPath;
 
 pub const TOO_LARGE: i64 = 0x544C_0001;
 pub const FAT_MAX_FILE: u64 = 0xFFFF_FFFF;
+pub const ROOM_ANYWAY: Resolve = Resolve::Skip;
+pub const ROOM_RETRY: Resolve = Resolve::Replace;
 
 pub fn max_file_size(file_system: &str) -> Option<u64> {
     matches!(file_system.to_ascii_uppercase().as_str(), "FAT" | "FAT12" | "FAT16" | "FAT32" | "VFAT" | "MSDOS" | "UMSDOS").then_some(FAT_MAX_FILE)

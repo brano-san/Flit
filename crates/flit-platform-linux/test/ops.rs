@@ -266,6 +266,71 @@ fn replace_older_and_skip_identical_decide_each_file_of_a_merged_folder() {
     assert_eq!(listing(&dst.join("f")), [&b"newer"[..], b"newer (2)", b"older", b"older (2)", b"same"], "the identical file is skipped and the others are asked about");
 }
 
+fn asking_room(answer: Option<Resolve>) -> (Job, Arc<Mutex<Vec<Conflict>>>) {
+    let ctl = OpCtl::new(Some(Resolve::Replace));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let (c, s) = (ctl.clone(), seen.clone());
+    let job = Job::asking(
+        ctl,
+        Box::new(|_| {}),
+        Box::new(move |conflict| {
+            s.lock().unwrap().push(conflict);
+            match answer {
+                Some(a) => c.answer(a, false),
+                None => c.cancel(),
+            }
+        }),
+        Box::new(|_| {}),
+    );
+    (job, seen)
+}
+
+#[test]
+fn copies_and_moves_to_another_device_ask_when_the_free_space_is_short() {
+    let t = Temp::new("ops-room");
+    write(&t.path().join("src/f"), "0123456789");
+    std::fs::create_dir_all(t.path().join("dst")).unwrap();
+    let copy = |job: &Job| {
+        let mut e = Engine::new(job);
+        e.free = |_| Some(4);
+        e.copy(&[fp(&t.path().join("src/f"))], &fp(&t.path().join("dst")));
+        (e.done, e.first)
+    };
+    let (job, seen) = asking_room(None);
+    let (done, _) = copy(&job);
+    assert!(done.is_empty() && job.cancelled() && !t.path().join("dst/f").exists());
+    let c = seen.lock().unwrap()[0].clone();
+    assert!(limits::is_short_of_space(&c) && (c.from.size, c.to.size) == (10, 4), "the Replace policy does not answer the question");
+    let (job, _) = asking_room(Some(limits::ROOM_ANYWAY));
+    assert_eq!(copy(&job).0.len(), 1);
+    assert_eq!(read(&t.path().join("dst/f")), "0123456789");
+    std::fs::remove_file(t.path().join("dst/f")).unwrap();
+    let (done, first) = copy(&quiet(Resolve::Replace));
+    assert!(done.is_empty() && first.is_some_and(|e| e.contains("not enough free space")), "nobody to ask: refused before it starts");
+
+    let shm = Path::new("/dev/shm");
+    let far = std::fs::metadata(shm).is_ok_and(|m| m.dev() != std::fs::metadata(t.path()).unwrap().dev());
+    if !far {
+        return eprintln!("skipped: /dev/shm is not another device");
+    }
+    let other = shm.join(format!("flit-test-room-{}", std::process::id()));
+    std::fs::create_dir_all(&other).unwrap();
+    let pairs = [(fp(&t.path().join("src/f")), fp(&other.join("f")))];
+    let (job, seen) = asking_room(None);
+    let mut e = Engine::new(&job);
+    e.free = |_| Some(4);
+    let placed = e.moves(&pairs, false);
+    let asked = seen.lock().unwrap().len();
+    let left = t.path().join("src/f").exists();
+    let _ = std::fs::remove_dir_all(&other);
+    assert_eq!((placed, asked, left), (vec![None], 1, true), "a move to another device checks the free space first");
+    let job = quiet(Resolve::Skip);
+    let mut e = Engine::new(&job);
+    e.free = |_| Some(4);
+    let near = [(fp(&t.path().join("src/f")), fp(&t.path().join("dst/g")))];
+    assert_eq!(e.moves(&near, false), vec![Some(fp(&t.path().join("dst/g")))], "a rename on the same device needs no space");
+}
+
 #[test]
 fn moves_create_missing_parents_and_cross_devices_by_copy_then_delete() {
     let t = Temp::new("ops-move");

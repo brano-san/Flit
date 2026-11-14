@@ -395,6 +395,20 @@ impl Job {
         self.0.ctl.resolve(&c, || (self.0.conflict)(c.clone()))
     }
 
+    pub fn room(&self, dest: &FsPath, need: u64, free: impl Fn() -> Option<u64>) -> Result<(), Option<u64>> {
+        loop {
+            let Some(free) = free().filter(|&free| free < need) else { return Ok(()) };
+            if !self.asks_failures() && self.0.ctl.policy().is_some() {
+                return Err(Some(free));
+            }
+            match self.resolve(flit_core::limits::short_of_space(dest, need, free)) {
+                Some(flit_core::limits::ROOM_RETRY) => {}
+                Some(_) => return Ok(()),
+                None => return Err(None),
+            }
+        }
+    }
+
     pub fn asks_failures(&self) -> bool {
         self.0.failure.is_some()
     }

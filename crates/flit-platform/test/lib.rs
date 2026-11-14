@@ -110,3 +110,52 @@ fn letters_between_locale_fields_stay_text_and_odd_formats_keep_the_default() {
     assert_eq!(posix_date_patterns("%Y", "%H:%M"), None, "a date without day and month falls back");
     assert_eq!(posix_date_patterns("%d.%m.%Y", "%p"), None, "a time without hours and minutes falls back");
 }
+
+fn asking_room(answers: Vec<Option<Resolve>>) -> (Job, Arc<std::sync::Mutex<Vec<Conflict>>>) {
+    let ctl = OpCtl::new(Some(Resolve::Skip));
+    let left = std::sync::Mutex::new(answers);
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (answer, s) = (ctl.clone(), seen.clone());
+    let job = Job::asking(
+        ctl,
+        Box::new(|_| {}),
+        Box::new(move |c| {
+            s.lock().unwrap().push(c);
+            match left.lock().unwrap().remove(0) {
+                Some(choice) => answer.answer(choice, false),
+                None => answer.cancel(),
+            }
+        }),
+        Box::new(|_| {}),
+    );
+    (job, seen)
+}
+
+#[test]
+fn short_of_space_asks_even_with_a_conflict_policy_and_retry_measures_again() {
+    let dest = FsPath::parse(r"E:\backup").unwrap();
+    let free = std::sync::Mutex::new(vec![3, 5, 50]);
+    let measure = || Some(free.lock().unwrap().remove(0));
+    let (job, seen) = asking_room(vec![Some(flit_core::limits::ROOM_RETRY), Some(flit_core::limits::ROOM_RETRY)]);
+    assert_eq!(job.room(&dest, 10, measure), Ok(()), "enough space after the second retry");
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.iter().map(|c| c.to.size).collect::<Vec<_>>(), [3, 5], "each retry shows the free space measured again");
+    assert!(seen.iter().all(flit_core::limits::is_short_of_space));
+    assert_eq!(job.ctl().policy(), Some(Resolve::Skip), "the answers never become the conflict policy");
+
+    let (job, seen) = asking_room(vec![Some(flit_core::limits::ROOM_ANYWAY)]);
+    assert_eq!(job.room(&dest, 10, || Some(3)), Ok(()));
+    assert_eq!(seen.lock().unwrap().len(), 1);
+    let (job, _) = asking_room(vec![None]);
+    assert_eq!((job.room(&dest, 10, || Some(3)), job.cancelled()), (Err(None), true));
+}
+
+#[test]
+fn short_of_space_without_anyone_to_ask_refuses_and_enough_space_asks_nothing() {
+    let dest = FsPath::parse(r"E:\backup").unwrap();
+    assert_eq!(Job::detached(Resolve::Replace).room(&dest, 10, || Some(3)), Err(Some(3)), "a policy never copies past the free space");
+    let (job, seen) = asking_room(Vec::new());
+    assert_eq!(job.room(&dest, 10, || Some(10)), Ok(()));
+    assert_eq!(job.room(&dest, 10, || None), Ok(()), "an unknown free space does not stop the copy");
+    assert!(seen.lock().unwrap().is_empty());
+}

@@ -317,7 +317,13 @@ fn items_too_large_for_the_drive_are_skipped_or_cancel_without_setting_a_policy(
     assert_eq!((waiting.join().unwrap(), ctl.policy(), app.asking()), (Some(Resolve::Skip), None, None));
 
     let waiting = ask(&mut app, &ctl, id, crate::limits::short_of_space(&p(r"E:\"), 10, 3));
-    assert_eq!((app.asking(), app.dialog_buttons()), (Some("too_large"), vec!["Copy anyway", "Cancel"]));
+    assert_eq!((app.asking(), app.jobs.sel, app.dialog_buttons()), (Some("too_large"), 0, vec!["Copy anyway", "Retry", "Cancel"]));
+    click(&mut app, |a| a.jobs.r.buttons[1]);
+    assert_eq!((waiting.join().unwrap(), ctl.policy()), (Some(crate::limits::ROOM_RETRY), None), "retry measures the free space again and sets no policy");
+    let waiting = ask(&mut app, &ctl, id, crate::limits::short_of_space(&p(r"E:\"), 10, 3));
+    key(&mut app, Key::Enter);
+    assert_eq!((waiting.join().unwrap(), ctl.policy()), (Some(crate::limits::ROOM_ANYWAY), None));
+    let waiting = ask(&mut app, &ctl, id, crate::limits::short_of_space(&p(r"E:\"), 10, 3));
     key(&mut app, Key::Escape);
     assert_eq!((waiting.join().unwrap(), ctl.is_cancelled()), (None, true));
 }

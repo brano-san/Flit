@@ -40,7 +40,7 @@ const G_MORE: &str = "\u{E712}";
 const CONFLICT_ANSWERS: [S; 3] = [S::UiButtonReplace, S::UiButtonKeepBoth, S::UiButtonSkip];
 const POLICY_BUTTONS: [S; 2] = [S::UiButtonSkipSame, S::UiButtonReplaceOlder];
 const UNREADABLE_BUTTONS: [S; 2] = [S::UiButtonSkip, S::UiButtonCancel];
-const NO_ROOM_BUTTONS: [S; 2] = [S::OpsExtraCopyAnyway, S::UiButtonCancel];
+const NO_ROOM_BUTTONS: [S; 3] = [S::OpsExtraCopyAnyway, S::UiButtonRetry, S::UiButtonCancel];
 const CONFIRM_BUTTONS: [S; 2] = [S::UiButtonDelete, S::UiButtonCancel];
 const RESTORE_ALL_BUTTONS: [S; 2] = [S::UiButtonRestore, S::UiButtonCancel];
 const RESTORE_BUTTONS: [S; 2] = [S::UiButtonRestore, S::UiButtonNotNow];
@@ -658,6 +658,8 @@ impl App {
         match ask {
             Ask::Conflict { id, .. } => {
                 let choice = match key {
+                    Some(S::OpsExtraCopyAnyway) => Some((limits::ROOM_ANYWAY, false)),
+                    Some(S::UiButtonRetry) => Some((limits::ROOM_RETRY, false)),
                     _ if two => [Some((Resolve::Skip, self.jobs.all)), None][button.min(1)],
                     Some(S::UiButtonReplace) => Some((Resolve::Replace, self.jobs.all)),
                     Some(S::UiButtonKeepBoth) => Some((Resolve::KeepBoth, self.jobs.all)),
