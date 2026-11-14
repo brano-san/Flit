@@ -2,7 +2,7 @@ use super::*;
 use crate::temp::Temp;
 use flit_core::provider::{Failure, OpCtl, Recover};
 use std::ffi::OsStr;
-use std::os::unix::fs::{symlink, FileTypeExt, MetadataExt, PermissionsExt};
+use std::os::unix::fs::{symlink, FileExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -96,6 +96,50 @@ fn copies_into_the_same_folder_get_a_copy_suffix() {
         assert!(out.error.is_none(), "{:?}", out.error);
     }
     assert_eq!(listing(t.path()), [&b"a - Copy (2).txt"[..], b"a - Copy.txt", b"a.txt", b"d", b"d - Copy", b"d - Copy (2)"]);
+}
+
+fn sparse_file(p: &Path, size: u64, data_at: &[u64]) {
+    let f = std::fs::File::create(p).unwrap();
+    f.set_len(size).unwrap();
+    for &at in data_at {
+        f.write_all_at(b"data", at).unwrap();
+    }
+}
+
+fn copied(t: &Temp, src: &Path) -> PathBuf {
+    let dst = t.path().join("dst");
+    std::fs::create_dir_all(&dst).unwrap();
+    ok(run(&FileOp::Copy { items: vec![fp(src)], dest: fp(&dst) }, &quiet(Resolve::Skip), None));
+    dst.join(src.file_name().unwrap())
+}
+
+#[test]
+fn sparse_files_are_copied_without_filling_their_holes() {
+    let t = Temp::new("ops-sparse");
+    let src = t.path().join("disk.img");
+    sparse_file(&src, 64 << 20, &[0, 32 << 20, (64 << 20) - 4]);
+    let copy = copied(&t, &src);
+    let meta = std::fs::metadata(&copy).unwrap();
+    assert_eq!(meta.len(), 64 << 20);
+    assert!(meta.blocks() * 512 < 4 << 20, "the copy takes {} bytes on disk", meta.blocks() * 512);
+    assert!(std::fs::read(&copy).unwrap() == std::fs::read(&src).unwrap());
+}
+
+#[test]
+fn files_that_are_all_hole_end_in_a_hole_or_have_none_copy_byte_for_byte() {
+    let t = Temp::new("ops-holes");
+    let empty = t.path().join("empty.img");
+    sparse_file(&empty, 10 << 20, &[]);
+    let tail = t.path().join("tail.img");
+    sparse_file(&tail, 8 << 20, &[0]);
+    let dense = t.file("dense.bin", 3 << 20);
+    for src in [&empty, &tail, &dense] {
+        let copy = copied(&t, src);
+        assert_eq!(std::fs::metadata(&copy).unwrap().len(), std::fs::metadata(src).unwrap().len(), "{}", src.display());
+        assert!(std::fs::read(&copy).unwrap() == std::fs::read(src).unwrap(), "{}", src.display());
+    }
+    let dense_copy = std::fs::metadata(t.path().join("dst/dense.bin")).unwrap();
+    assert!(dense_copy.blocks() * 512 >= 3 << 20);
 }
 
 #[test]

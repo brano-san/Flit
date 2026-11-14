@@ -36,6 +36,12 @@ enum Res {
     Nothing,
 }
 
+struct Pump {
+    base: u64,
+    kernel: bool,
+    buf: Vec<u8>,
+}
+
 #[derive(Default)]
 struct Tally {
     entries: u64,
@@ -76,6 +82,15 @@ fn rename_at(sdir: RawFd, sname: &CStr, ddir: RawFd, dname: &CStr, replace: bool
         }
     }
     check(unsafe { libc::renameat(sdir, sname.as_ptr(), ddir, dname.as_ptr()) })
+}
+
+fn seek(fd: RawFd, at: u64, whence: libc::c_int) -> io::Result<u64> {
+    let r = unsafe { libc::lseek(fd, at as libc::off_t, whence) };
+    if r < 0 { Err(io::Error::last_os_error()) } else { Ok(r as u64) }
+}
+
+fn sparse(st: &libc::stat) -> bool {
+    (st.st_blocks as u64).saturating_mul(512) < st.st_size as u64
 }
 
 fn times(node: &Node) -> [libc::timespec; 2] {
@@ -398,31 +413,60 @@ impl<'a> Engine<'a> {
         self.counted(node);
     }
 
-    fn copy_data(&self, from: RawFd, to: RawFd) -> io::Result<()> {
-        let base = self.job.progress().bytes;
-        let (mut done, mut kernel, mut buf) = (0u64, true, Vec::new());
+    fn copy_data(&self, from: RawFd, to: RawFd, sparse: bool) -> io::Result<()> {
+        let mut pump = Pump { base: self.job.progress().bytes, kernel: true, buf: Vec::new() };
+        if !sparse {
+            return self.pump(from, to, 0, u64::MAX, &mut pump).map(drop);
+        }
+        let mut at = 0;
+        loop {
+            let start = match seek(from, at, libc::SEEK_DATA) {
+                Ok(s) => s,
+                Err(e) if e.raw_os_error() == Some(libc::ENXIO) => break,
+                Err(e) if at == 0 && matches!(e.raw_os_error(), Some(libc::EINVAL | libc::EOPNOTSUPP)) => return self.pump(from, to, 0, u64::MAX, &mut pump).map(drop),
+                Err(e) => return Err(e),
+            };
+            let end = seek(from, start, libc::SEEK_HOLE)?;
+            seek(from, start, libc::SEEK_SET)?;
+            seek(to, start, libc::SEEK_SET)?;
+            let copied = self.pump(from, to, start, end - start, &mut pump)?;
+            if copied < end - start {
+                break;
+            }
+            at = end;
+        }
+        let size = seek(from, 0, libc::SEEK_END)?;
+        check(unsafe { libc::ftruncate(to, size as libc::off_t) })
+    }
+
+    fn pump(&self, from: RawFd, to: RawFd, offset: u64, limit: u64, p: &mut Pump) -> io::Result<u64> {
+        let mut done = 0u64;
         loop {
             if self.job.cancelled() {
                 return Err(errno(libc::ECANCELED));
             }
-            let n = if kernel {
-                let r = unsafe { libc::syscall(libc::SYS_copy_file_range, from, std::ptr::null_mut::<i64>(), to, std::ptr::null_mut::<i64>(), CHUNK, 0) };
+            let want = (limit - done).min(CHUNK as u64) as usize;
+            if want == 0 {
+                return Ok(done);
+            }
+            let n = if p.kernel {
+                let r = unsafe { libc::syscall(libc::SYS_copy_file_range, from, std::ptr::null_mut::<i64>(), to, std::ptr::null_mut::<i64>(), want, 0) };
                 if r < 0 {
                     let e = io::Error::last_os_error();
                     if done == 0 && matches!(e.raw_os_error(), Some(libc::EXDEV | libc::ENOSYS | libc::EINVAL | libc::EOPNOTSUPP | libc::EPERM | libc::EBADF)) {
-                        kernel = false;
+                        p.kernel = false;
                         continue;
                     }
                     return Err(e);
                 }
                 if r == 0 && done == 0 {
-                    kernel = false;
+                    p.kernel = false;
                     continue;
                 }
                 r as usize
             } else {
-                buf.resize(BUFFER, 0);
-                let r = unsafe { libc::read(from, buf.as_mut_ptr().cast(), buf.len()) };
+                p.buf.resize(BUFFER.min(want), 0);
+                let r = unsafe { libc::read(from, p.buf.as_mut_ptr().cast(), p.buf.len()) };
                 if r < 0 {
                     let e = io::Error::last_os_error();
                     if e.kind() == io::ErrorKind::Interrupted {
@@ -430,7 +474,7 @@ impl<'a> Engine<'a> {
                     }
                     return Err(e);
                 }
-                let mut rest = &buf[..r as usize];
+                let mut rest = &p.buf[..r as usize];
                 while !rest.is_empty() {
                     let w = unsafe { libc::write(to, rest.as_ptr().cast(), rest.len()) };
                     if w < 0 {
@@ -445,10 +489,11 @@ impl<'a> Engine<'a> {
                 r as usize
             };
             if n == 0 {
-                return Ok(());
+                return Ok(done);
             }
             done += n as u64;
-            self.job.update(|p| p.bytes = base + done);
+            let at = p.base + offset + done;
+            self.job.update(|p| p.bytes = at);
         }
     }
 
@@ -474,7 +519,7 @@ impl<'a> Engine<'a> {
         let base = self.job.progress().bytes;
         self.placed(ddir, dname, replace, |name| {
             let dst = open_at(ddir, name, libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL, 0o600)?;
-            let r = self.copy_data(src.as_raw_fd(), dst.as_raw_fd());
+            let r = self.copy_data(src.as_raw_fd(), dst.as_raw_fd(), sparse(&st));
             if r.is_ok() {
                 keep_meta(dst.as_raw_fd(), node);
             }
