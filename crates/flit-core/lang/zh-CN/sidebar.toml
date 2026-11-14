@@ -20,6 +20,7 @@ clear_bookmarks = "清除书签"
 
 [folder]
 favorites = "收藏夹"
+one_drive = "OneDrive"
 home = "主文件夹"
 desktop = "桌面"
 downloads = "下载"

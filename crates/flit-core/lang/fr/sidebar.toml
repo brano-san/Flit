@@ -20,6 +20,7 @@ clear_bookmarks = "Effacer les signets"
 
 [folder]
 favorites = "Favoris"
+one_drive = "OneDrive"
 home = "Accueil"
 desktop = "Bureau"
 downloads = "Téléchargements"

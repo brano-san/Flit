@@ -20,6 +20,7 @@ clear_bookmarks = "Clear Bookmarks"
 
 [folder]
 favorites = "Favorites"
+one_drive = "OneDrive"
 home = "Home"
 desktop = "Desktop"
 downloads = "Downloads"

@@ -20,6 +20,7 @@ clear_bookmarks = "Borrar marcadores"
 
 [folder]
 favorites = "Favoritos"
+one_drive = "OneDrive"
 home = "Inicio"
 desktop = "Escritorio"
 downloads = "Descargas"

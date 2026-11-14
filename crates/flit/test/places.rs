@@ -111,3 +111,13 @@ fn deleted_places_count_as_gone_but_places_on_an_offline_root_stay() {
         assert!(!gone(&FsPath::parse(r"\\flit-offline-host.invalid\share\docs").unwrap()), "and so is one on an unreachable share");
     }
 }
+
+#[test]
+fn one_drive_is_listed_only_when_its_folder_exists() {
+    let t = temp("onedrive");
+    let here = |p: &Path| Location::from_local(FsPath::parse(&p.to_string_lossy()).unwrap());
+    assert!(!shown(KnownFolder::OneDrive, &here(&t.0)), "OneDrive that was never set up is hidden");
+    std::fs::create_dir_all(&t.0).unwrap();
+    assert!(shown(KnownFolder::OneDrive, &here(&t.0)));
+    assert!(shown(KnownFolder::Downloads, &here(&t.0.join("missing"))), "other known folders are listed as before");
+}

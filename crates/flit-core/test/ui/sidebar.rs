@@ -40,9 +40,21 @@ fn pinned_items_get_labels_and_glyphs() {
 }
 
 #[test]
+fn one_drive_is_a_place_right_after_home_with_a_cloud() {
+    let mut sb = Sidebar::default();
+    sb.places = Arc::new(Places { folders: vec![(KnownFolder::Music, loc(r"C:\Users\u\Music")), (KnownFolder::OneDrive, loc(r"C:\Users\u\OneDrive")), (KnownFolder::Home, loc(r"C:\Users\u"))], ..Default::default() });
+    sb.rebuild();
+    let got: Vec<(&str, &str)> = sb.items.iter().filter(|it| it.section == Section::Places).map(|it| (it.label.as_str(), it.glyph)).collect();
+    assert_eq!(got[..4], [("This PC", G_DRIVE), ("u", G_HOME), ("OneDrive", G_CLOUD), ("Music", G_MUSIC)]);
+    sb.places = Arc::new(Places { folders: vec![(KnownFolder::Music, loc(r"C:\Users\u\Music"))], ..Default::default() });
+    sb.rebuild();
+    assert!(sb.items.iter().all(|it| it.label != "OneDrive"), "a computer without OneDrive shows no OneDrive place");
+}
+
+#[test]
 fn known_folders_map_to_shell_names() {
     let names: Vec<&str> = KnownFolder::ALL.iter().map(|k| k.shell_name()).collect();
-    assert_eq!(names, ["shell:Profile", "shell:Desktop", "shell:Downloads", "shell:Personal", "shell:My Pictures", "shell:My Music", "shell:My Video", "shell:Favorites"]);
+    assert_eq!(names, ["shell:Profile", "shell:Desktop", "shell:Downloads", "shell:Personal", "shell:My Pictures", "shell:My Music", "shell:My Video", "shell:Favorites", "shell:OneDrive"]);
     assert_eq!(KnownFolder::ALL.map(|k| k.label())[0], "Home");
 }
 

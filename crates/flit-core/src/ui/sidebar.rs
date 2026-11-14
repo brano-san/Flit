@@ -68,6 +68,7 @@ const G_SEARCH: &str = "\u{E721}";
 const G_SHIFT_UP: &str = "\u{E70E}";
 const G_RESTORE_ORDER: &str = "\u{E777}";
 const G_PATHS: &str = "\u{E8FD}";
+const G_CLOUD: &str = "\u{E753}";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum KnownFolder {
@@ -79,11 +80,12 @@ pub enum KnownFolder {
     Music,
     Videos,
     Favorites,
+    OneDrive,
 }
 
 impl KnownFolder {
-    pub const ALL: [KnownFolder; 8] = [Self::Home, Self::Desktop, Self::Downloads, Self::Documents, Self::Pictures, Self::Music, Self::Videos, Self::Favorites];
-    const PLACES: [KnownFolder; 7] = [Self::Home, Self::Desktop, Self::Downloads, Self::Documents, Self::Music, Self::Pictures, Self::Videos];
+    pub const ALL: [KnownFolder; 9] = [Self::Home, Self::Desktop, Self::Downloads, Self::Documents, Self::Pictures, Self::Music, Self::Videos, Self::Favorites, Self::OneDrive];
+    const PLACES: [KnownFolder; 8] = [Self::Home, Self::OneDrive, Self::Desktop, Self::Downloads, Self::Documents, Self::Music, Self::Pictures, Self::Videos];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -95,6 +97,7 @@ impl KnownFolder {
             Self::Music => S::SidebarFolderMusic.t(),
             Self::Videos => S::SidebarFolderVideos.t(),
             Self::Favorites => S::SidebarFolderFavorites.t(),
+            Self::OneDrive => S::SidebarFolderOneDrive.t(),
         }
     }
 
@@ -108,6 +111,7 @@ impl KnownFolder {
             Self::Music => "shell:My Music",
             Self::Videos => "shell:My Video",
             Self::Favorites => "shell:Favorites",
+            Self::OneDrive => "shell:OneDrive",
         }
     }
 
@@ -121,6 +125,7 @@ impl KnownFolder {
             Self::Music => G_MUSIC,
             Self::Videos => G_VIDEOS,
             Self::Favorites => G_PIN,
+            Self::OneDrive => G_CLOUD,
         }
     }
 }

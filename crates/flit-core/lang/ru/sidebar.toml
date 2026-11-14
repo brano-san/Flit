@@ -20,6 +20,7 @@ clear_bookmarks = "Очистить закладки"
 
 [folder]
 favorites = "Избранное"
+one_drive = "OneDrive"
 home = "Домашняя папка"
 desktop = "Рабочий стол"
 downloads = "Загрузки"

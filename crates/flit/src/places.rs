@@ -186,12 +186,17 @@ pub fn gone(p: &FsPath) -> bool {
     !exists(p) && anchor.is_some_and(|a| exists(&a))
 }
 
+fn shown(k: KnownFolder, l: &Location) -> bool {
+    k != KnownFolder::OneDrive || l.to_windows().is_some_and(|p| flit_platform::std_path(&p).is_dir())
+}
+
 fn collect<P: Platform>() -> Places {
     let folders = KnownFolder::ALL
         .iter()
         .filter_map(|&k| {
             let home = || (k == KnownFolder::Home).then(|| Location::from_local(P::home()));
-            Some((k, P::known_folder(k.shell_name()).or_else(home)?))
+            let found = P::known_folder(k.shell_name()).or_else(home)?;
+            shown(k, &found).then_some((k, found))
         })
         .collect();
     Places { folders, drives: P::drives(), wsl: P::wsl_distros(), recycle_bin: P::recycle_bin(), ..Default::default() }
