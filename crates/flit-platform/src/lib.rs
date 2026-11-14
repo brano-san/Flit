@@ -550,6 +550,9 @@ pub trait Platform: 'static {
     fn os_version() -> String {
         std::env::consts::OS.to_owned()
     }
+    fn missing_tools() -> Vec<flit_core::ui::MissingTool> {
+        Vec::new()
+    }
     fn ui_language() -> String {
         String::new()
     }

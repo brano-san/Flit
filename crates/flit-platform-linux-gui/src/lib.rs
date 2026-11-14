@@ -22,6 +22,7 @@ mod svg;
 pub mod instance;
 pub mod places;
 pub mod shell;
+mod tools;
 mod text;
 mod thumb;
 mod thumbnailers;
@@ -109,6 +110,10 @@ impl Platform for Linux {
 
     fn elevated() -> bool {
         unsafe { libc::geteuid() == 0 }
+    }
+
+    fn missing_tools() -> Vec<flit_core::ui::MissingTool> {
+        tools::missing()
     }
 
     fn recycle_bin() -> bool {

@@ -780,8 +780,9 @@ impl<P: Platform> Handler<P> {
         let id = window.id();
         while let Ok(reply) = self.settings.replies.try_recv() {
             match reply {
-                settings::Reply::System { os, dates } => {
+                settings::Reply::System { os, dates, missing } => {
                     self.about.os = os;
+                    self.about.missing = missing;
                     self.share_about();
                     for app in self.windows.values_mut().map(|st| &mut st.app).chain(self.pending.iter_mut()) {
                         app.set_date_patterns(dates.0.clone(), dates.1.clone());
@@ -1340,7 +1341,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let (shell, thumbs, sorter, previews, done) = start_workers::<P>(wake.clone(), thumb_cache.clone(), refresh)?;
     let tags = TagWorker::start::<P>(local.tags().clone(), wake.clone())?;
     let fs_path = |p: PathBuf| FsPath::parse(&p.to_string_lossy());
-    let about = About { os: String::new(), file: settings_file.clone().and_then(fs_path), cache_bytes: None, logs: P::state_dir().map(|d| d.join("logs")).and_then(fs_path) };
+    let about = About { os: String::new(), file: settings_file.clone().and_then(fs_path), cache_bytes: None, logs: P::state_dir().map(|d| d.join("logs")).and_then(fs_path), missing: Vec::new() };
     let integrate = metrics.is_none() && std::env::var_os("FLIT_HIDDEN_CAPTURE").is_none();
     let settings = Settings::start::<P>(settings_file.filter(|_| metrics.is_none()), settings_text, thumb_cache.clone(), integrate, wake.clone());
     let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes(), local.tags().clone())?;

@@ -353,6 +353,14 @@ pub struct About {
     pub file: Option<FsPath>,
     pub cache_bytes: Option<u64>,
     pub logs: Option<FsPath>,
+    pub missing: Vec<MissingTool>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MissingTool {
+    pub tool: &'static str,
+    pub purpose: S,
+    pub package: &'static str,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -871,6 +879,10 @@ impl App {
                 out.push(Line::Info(S::SettingsPageLineVersion.t(), format!("Flit {}", env!("CARGO_PKG_VERSION"))));
                 out.push(Line::Info(OS_NAME, if self.about.os.is_empty() { S::SettingsPageLineUnknown.t().into() } else { self.about.os.clone() }));
                 out.push(Line::Buttons(None, &[Btn::CopyAbout]));
+                if !self.about.missing.is_empty() {
+                    out.push(Line::Group(S::SettingsPageToolMissing.t()));
+                    out.extend(self.about.missing.iter().map(|m| Line::Info(m.tool, crate::tr!(S::SettingsPageToolInstall, what = m.purpose.t(), package = m.package))));
+                }
                 out.push(Line::Group(S::UpdatePageGroup.t()));
                 if let Some(i) = settings::index(settings::CHECK_UPDATES) {
                     self.setting_lines(i, out);

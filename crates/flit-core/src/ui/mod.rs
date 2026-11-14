@@ -83,7 +83,7 @@ pub use tab::Tab;
 pub use address::Typed;
 pub use tabbar::{MovedTab, Startup, WindowSession};
 pub use settings::{ConfirmDelete, Doc, Page, Setting, Value, SETTINGS};
-pub use settings_page::{About, LOG_FILE};
+pub use settings_page::{About, MissingTool, LOG_FILE};
 pub use keymap::{set_unix_defaults, Keymap};
 pub use tooltip::TipText;
 pub use panels::{PanelsSession, Shape};

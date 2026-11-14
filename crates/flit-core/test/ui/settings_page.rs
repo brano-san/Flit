@@ -335,7 +335,7 @@ fn advanced_page_exports_imports_resets_and_clears_the_cache() {
     press(&mut a, Btn::Reset);
     key(&mut a, Key::Enter, NO);
     assert_eq!(a.single_click_files, crate::ui::settings::ClickOpen::Never);
-    a.set_about(About { os: "Windows 11".into(), file: FsPath::parse(r"C:\Users\me\AppData\Local\Flit\settings.json"), cache_bytes: Some(3 << 20), logs: None });
+    a.set_about(About { os: "Windows 11".into(), file: FsPath::parse(r"C:\Users\me\AppData\Local\Flit\settings.json"), cache_bytes: Some(3 << 20), logs: None, missing: Vec::new() });
     assert!(a.settings_lines().contains(&"Thumbnail cache in use: 3.0 MB".to_owned()));
     press(&mut a, Btn::OpenFile);
     assert!(a.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } if path.display().ends_with("settings.json"))));
@@ -380,7 +380,7 @@ fn tags_page_lists_tags_and_runs_their_commands() {
 #[test]
 fn about_page_shows_versions_and_no_libraries() {
     let mut a = app();
-    a.set_about(About { os: "Windows 11 Pro 24H2 (build 26100.1)".into(), file: None, cache_bytes: None, logs: None });
+    a.set_about(About { os: "Windows 11 Pro 24H2 (build 26100.1)".into(), file: None, cache_bytes: None, logs: None, missing: Vec::new() });
     a.open_settings(Some(Page::About));
     let lines = page(&a, Page::About);
     assert!(lines[0].starts_with("Version: Flit ") && lines[1] == format!("{OS_NAME}: Windows 11 Pro 24H2 (build 26100.1)"));
@@ -1277,4 +1277,16 @@ fn settings_sit_in_the_middle_of_the_whole_window_and_rows_stay_clear_of_the_scr
     assert!((p.y - (h - p.bottom())).abs() <= 1.0, "top {} bottom {}", p.y, h - p.bottom());
     assert!(ui.bar.w > 0.0, "the list scrolls here");
     assert!(ui.rects.iter().all(|r| r.right() <= ui.bar.x), "no row runs under the scrollbar");
+}
+
+#[test]
+fn about_page_lists_missing_helper_programs_with_their_packages() {
+    let mut a = app();
+    let missing = vec![crate::ui::MissingTool { tool: "xclip", purpose: S::SettingsPageToolClipboard, package: "xclip" }, crate::ui::MissingTool { tool: "pdftoppm", purpose: S::SettingsPageToolPdf, package: "poppler-utils" }];
+    a.set_about(About { os: "Ubuntu 24.04".into(), missing, ..Default::default() });
+    a.open_settings(Some(Page::About));
+    let lines = page(&a, Page::About);
+    let at = lines.iter().position(|l| l == "Missing helper programs").expect("the group is shown");
+    assert_eq!(lines[at + 1..at + 3], ["xclip: Copying and pasting files with other applications: install the package xclip", "pdftoppm: PDF thumbnails: install the package poppler-utils"]);
+    assert!(lines[at + 3..].iter().any(|l| l == "Updates"), "the rest of the page follows: {lines:?}");
 }

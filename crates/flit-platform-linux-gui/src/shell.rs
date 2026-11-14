@@ -50,8 +50,13 @@ pub fn on_path(program: &OsStr) -> Option<PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH")?).map(|d| d.join(program)).find(|p| executable(p))
 }
 
+pub fn no_xdg_open() -> String {
+    let package = crate::tools::package_for("xdg-open", &crate::tools::os_release()).unwrap_or("xdg-utils");
+    flit_core::tr_en!(flit_core::i18n::S::ErrorsOpsExtraNoXdgOpen, package = package)
+}
+
 pub fn xdg_open(target: &OsStr) -> Result<(), PlatformError> {
-    let program = on_path(OsStr::new("xdg-open")).ok_or_else(|| PlatformError::new(libc::ENOENT as i64, "xdg-open is not installed, so Flit cannot open files with other programs"))?;
+    let program = on_path(OsStr::new("xdg-open")).ok_or_else(|| PlatformError::new(libc::ENOENT as i64, no_xdg_open()))?;
     let mut cmd = Command::new(program);
     cmd.arg(target);
     crate::activation::pass(&mut cmd, crate::window::activation_token().as_deref());

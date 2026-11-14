@@ -20,7 +20,7 @@ pub enum Job {
 }
 
 pub enum Reply {
-    System { os: String, dates: (String, String) },
+    System { os: String, dates: (String, String), missing: Vec<flit_core::ui::MissingTool> },
     Changed(String),
     SaveFailed(String),
     Imported(Result<String, String>),
@@ -147,7 +147,7 @@ impl Settings {
         let thread = std::thread::Builder::new()
             .name("flit-settings".into())
             .spawn(move || {
-                let _ = tx.send(Reply::System { os: P::os_version(), dates: P::date_patterns() });
+                let _ = tx.send(Reply::System { os: P::os_version(), dates: P::date_patterns(), missing: P::missing_tools() });
                 wake();
                 if integrate.is_some() {
                     P::tidy_integration();
