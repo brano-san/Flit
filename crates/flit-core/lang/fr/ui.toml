@@ -56,6 +56,7 @@ completed_in = "Terminé en {seconds} s"
 completed = "Terminé"
 notify_done = ["{title} terminé : {n} élément", "{title} terminé : {n} élément", "{title} terminé : {n} éléments"]
 notify_failed = "{title} terminé avec des erreurs"
+trash_bar = ["Déplacé vers la corbeille : {n} élément", "Déplacé vers la corbeille : {n} élément", "Déplacé vers la corbeille : {n} éléments"]
 cancelled_detail = "Annulé avant la fin ; les éléments restants ont été laissés en place"
 
 [job_title]

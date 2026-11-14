@@ -55,6 +55,7 @@ const MAX_TERMINALS: usize = 5;
 const RUNNABLE: [&[u8]; 4] = [b"exe", b"com", b"bat", b"cmd"];
 pub(super) const TIMER_SLACK: Duration = Duration::from_millis(16);
 pub(super) const ERROR_FOR: Duration = Duration::from_secs(5);
+const UNDO_BAR_FOR: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NewTemplate {
@@ -441,6 +442,17 @@ impl App {
         }
     }
 
+    pub(super) fn expire_undo_bar(&mut self, now: Instant) {
+        let Some((_, since)) = self.undo_bar else { return };
+        let until = since + UNDO_BAR_FOR;
+        if now >= until {
+            self.undo_bar = None;
+            self.dirty = true;
+        } else {
+            self.arm_timer(now, until);
+        }
+    }
+
     pub(super) fn in_bin(&self) -> bool {
         self.tab().view_loc.is_recycle_bin()
     }
@@ -533,6 +545,7 @@ impl App {
     }
 
     fn start_op_on(&mut self, provider: ProviderId, tab: TabId, op: FileOp, origin: Origin, then: Then) {
+        self.undo_bar = None;
         let Some((provider, op)) = route(provider, op, self.caps.unix_paths) else { return self.status(MIXED_PATHS.t()) };
         self.ops.next_id += 1;
         let id = self.ops.next_id;
@@ -1126,6 +1139,13 @@ impl App {
             self.tags_moved(&provider, r);
         }
         let (Some(report), Some(p)) = (report, pending) else { return };
+        if error.is_none() {
+            if let FileOp::Trash(items) = &report.op {
+                self.undo_bar = Some((items.len(), now));
+                self.arm_timer(now, now + UNDO_BAR_FOR);
+                self.dirty = true;
+            }
+        }
         let incomplete_removal = p.optimistic_removal && (error.is_some() || report.items.len() != removal_count(&report.op));
         if incomplete_removal {
             if let Some(k) = k {

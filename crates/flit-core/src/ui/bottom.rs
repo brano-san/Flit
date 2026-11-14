@@ -13,6 +13,7 @@ const ARRIVE_ELAPSED: u8 = 0;
 const ARRIVE_BUTTONS: u8 = 1;
 const ARRIVE_BRANCH: u8 = 2;
 const ARRIVE_MESSAGE: u8 = 3;
+const ARRIVE_UNDO: u8 = 4;
 const BUTTON_W: f32 = 26.0;
 const ROLL_LIFT: f32 = 8.0;
 const ROLL: std::time::Duration = std::time::Duration::from_millis(120);
@@ -57,6 +58,7 @@ pub(super) enum BottomHit {
     Layout,
     Zoom,
     Elapsed,
+    Undo,
 }
 
 impl BottomHit {
@@ -66,6 +68,7 @@ impl BottomHit {
             BottomHit::Folders => "view.toggle_folders",
             BottomHit::Files => "view.toggle_files",
             BottomHit::Order => "view.sort.cycle_folders",
+            BottomHit::Undo => "edit.undo",
             BottomHit::Retain | BottomHit::Layout | BottomHit::Zoom | BottomHit::Elapsed => "",
         }
     }
@@ -89,6 +92,10 @@ impl App {
             BottomHit::Files => self.toggle_kind(false),
             BottomHit::Order => {
                 self.run_action("view.sort.cycle_folders", std::time::Instant::now());
+            }
+            BottomHit::Undo => {
+                self.undo_bar = None;
+                self.undo();
             }
             BottomHit::Elapsed => {}
             BottomHit::Layout | BottomHit::Zoom => {
@@ -136,6 +143,7 @@ impl App {
             BottomHit::Zoom => S::TooltipZoom,
             BottomHit::Elapsed if self.tab().stats.op.is_some() => S::TooltipElapsedOp,
             BottomHit::Elapsed => S::TooltipElapsed,
+            BottomHit::Undo => S::DescribeEditUndo,
         }
     }
 
@@ -314,9 +322,13 @@ impl App {
         x += pad;
 
         let tab = self.tab();
+        let trashed = self.undo_bar.map(|(n, _)| n);
         let mut s = bumpalo::collections::String::new_in(arena);
         let mut color = t.text_dim;
-        if let Some(err) = &tab.error {
+        if let Some(n) = trashed {
+            crate::trn_into!(&mut s, P::UiJobTrashBar, n as u64);
+            color = t.text;
+        } else if let Some(err) = &tab.error {
             s.push_str(err);
             color = t.error;
         } else if let Some(v) = current_view(self) {
@@ -353,6 +365,19 @@ impl App {
             let at = g.dl.instances.len();
             g.text(text_x, baseline, &s, font, color, text_w);
             arrived.push((ARRIVE_MESSAGE, at, g.dl.instances.len()));
+        }
+        if trashed.is_some() {
+            let at = g.dl.instances.len();
+            let label = S::ActionsEditUndo.t();
+            let w = g.measure(label, font) + self.s(16.0);
+            let b = Rect::new(text_x - w - self.s(4.0), r.y + self.s(2.0), w, r.h - self.s(4.0));
+            let lit = self.lit(Hit::Bottom(BottomHit::Undo));
+            if lit > 0.0 {
+                g.dl.round_rect(b, super::widgets::faded(t.button_hover, lit), self.s(3.0));
+            }
+            g.text(b.x + self.s(8.0), baseline, label, font, t.accent, f32::INFINITY);
+            self.layout.bar.push((BottomHit::Undo, b));
+            arrived.push((ARRIVE_UNDO, at, g.dl.instances.len()));
         }
         let now = self.last_frame.unwrap_or_else(std::time::Instant::now);
         let keys: Vec<u8> = arrived.iter().map(|a| a.0).collect();
