@@ -21,7 +21,7 @@ const FAT_FORBIDDEN: &[u8] = b"\\/:*?\"<>|";
 const DEVICES: [&[u8]; 4] = [b"CON", b"PRN", b"AUX", b"NUL"];
 
 pub fn windows_names(file_system: &str) -> bool {
-    max_file_size(file_system).is_some() || file_system.eq_ignore_ascii_case("exfat")
+    max_file_size(file_system).is_some() || matches!(file_system.to_ascii_uppercase().as_str(), "EXFAT" | "NTFS" | "NTFS3" | "CIFS" | "SMB" | "SMB2" | "SMB3" | "SMBFS" | "FUSEBLK")
 }
 
 pub fn bad_name(name: &[u8]) -> Option<BadName> {

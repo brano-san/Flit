@@ -27,10 +27,10 @@ fn too_large_conflicts_are_told_apart_from_name_and_unreadable_ones() {
 
 #[test]
 fn fat_and_exfat_refuse_windows_names_and_other_file_systems_take_anything() {
-    for fs in ["vfat", "msdos", "exfat", "FAT32", "exFAT"] {
+    for fs in ["vfat", "msdos", "exfat", "FAT32", "exFAT", "ntfs", "NTFS", "ntfs3", "cifs", "CIFS", "smb3", "smbfs", "fuseblk"] {
         assert!(windows_names(fs), "{fs}");
     }
-    for fs in ["ext4", "btrfs", "ntfs3", "ntfs", "fuseblk", "NTFS", "tmpfs", ""] {
+    for fs in ["ext4", "btrfs", "tmpfs", "nfs4", "fuse.gvfsd-fuse", ""] {
         assert!(!windows_names(fs), "{fs}");
     }
     let cases: [(&[u8], Option<BadName>); 21] = [
@@ -64,10 +64,10 @@ fn fat_and_exfat_refuse_windows_names_and_other_file_systems_take_anything() {
 #[test]
 fn bad_name_errors_name_the_rule() {
     let path = |s: &str| FsPath::parse(s).unwrap();
-    assert_eq!(bad_name_error(&path("/media/usb/a:b.txt"), BadName::Char(b':')), r#"/media/usb/a:b.txt: FAT and exFAT drives do not allow : in names (nor any of \ : * ? " < > |)"#);
+    assert_eq!(bad_name_error(&path("/media/usb/a:b.txt"), BadName::Char(b':')), r#"/media/usb/a:b.txt: FAT, exFAT, NTFS and CIFS drives do not allow : in names (nor any of \ : * ? " < > |)"#);
     assert!(bad_name_error(&path("/m/a"), BadName::Char(1)).contains("do not allow U+0001 in names"));
-    assert_eq!(bad_name_error(&path("/m/x."), BadName::End), "/m/x.: FAT and exFAT drives do not allow names that end with a dot or a space");
-    assert_eq!(bad_name_error(&path("/m/con.txt"), BadName::Reserved), "/m/con.txt: FAT and exFAT drives do not allow the name con.txt, which is reserved for devices");
+    assert_eq!(bad_name_error(&path("/m/x."), BadName::End), "/m/x.: FAT, exFAT, NTFS and CIFS drives do not allow names that end with a dot or a space");
+    assert_eq!(bad_name_error(&path("/m/con.txt"), BadName::Reserved), "/m/con.txt: FAT, exFAT, NTFS and CIFS drives do not allow the name con.txt, which is reserved for devices");
 }
 
 #[test]
