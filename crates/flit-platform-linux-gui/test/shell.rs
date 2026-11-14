@@ -436,3 +436,20 @@ fn programs_that_keep_running_or_end_quietly_are_not_reported() {
     assert_eq!(watch_start(shell("true"), Duration::from_secs(5)), None);
     assert_eq!(first_words(&"x".repeat(500).into_bytes()).chars().count(), 161);
 }
+
+#[test]
+fn quick_view_asks_gnome_sushi_to_toggle_its_preview_of_the_file() {
+    let [v2, v1] = sushi_calls(Path::new("/home/u/my photo.jpg"));
+    assert_eq!(&v2[..3], ["gdbus", "call", "--session"]);
+    assert!(v2.contains(&"org.gnome.NautilusPreviewer2.ShowFile".to_owned()) && v1.contains(&"org.gnome.NautilusPreviewer.ShowFile".to_owned()));
+    assert_eq!(v2[v2.len() - 3..], ["file:///home/u/my%20photo.jpg", "''", "true"]);
+    assert_eq!(v1[v1.len() - 3..], ["file:///home/u/my%20photo.jpg", "0", "true"]);
+}
+
+#[test]
+fn without_a_session_bus_quick_view_falls_back_to_flits_own_preview() {
+    let t = Temp::new("sushi");
+    let file = t.file("a.txt", 3);
+    assert!(!session_bus(), "tests run without the desktop's session bus");
+    assert!(!LinuxShell.quick_view(&fs_path(&file)));
+}

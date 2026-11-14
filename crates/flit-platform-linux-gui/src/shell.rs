@@ -560,6 +560,10 @@ impl Shell for LinuxShell {
         done
     }
 
+    fn quick_view(&mut self, path: &FsPath) -> bool {
+        session_bus() && host(path).is_some_and(|p| sushi_calls(p).iter().any(|args| ask_session(args)))
+    }
+
     fn properties(&mut self, path: &FsPath) -> Vec<flit_core::preview::PropGroup> {
         host(path).map(crate::props::properties).unwrap_or_default()
     }
@@ -891,6 +895,22 @@ fn gtk_theme_dark() -> Option<bool> {
 
 fn session_bus() -> bool {
     std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some() || crate::xdg::runtime_dir().is_some_and(|d| d.join("bus").exists())
+}
+
+const SUSHI_WAIT: Duration = Duration::from_secs(4);
+
+pub fn sushi_calls(path: &Path) -> [Vec<String>; 2] {
+    let uri = format!("file://{}", flit_platform_linux::percent_encode(path.as_os_str().as_bytes()));
+    let call = |interface: &str, window: &str| {
+        let method = format!("{interface}.ShowFile");
+        ["gdbus", "call", "--session", "--timeout", "3", "--dest", "org.gnome.NautilusPreviewer", "--object-path", "/org/gnome/NautilusPreviewer", "--method", &method, &uri, window, "true"].map(str::to_owned).to_vec()
+    };
+    [call("org.gnome.NautilusPreviewer2", "''"), call("org.gnome.NautilusPreviewer", "0")]
+}
+
+fn ask_session(args: &[String]) -> bool {
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    helper(&refs).and_then(|mut c| c.stdout(Stdio::piped()).spawn().ok()).and_then(|child| wait_output(child, SUSHI_WAIT)).is_some()
 }
 
 pub fn gsettings(args: &[&str]) -> Option<String> {
