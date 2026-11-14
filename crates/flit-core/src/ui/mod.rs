@@ -2382,7 +2382,6 @@ impl App {
         let close_font = self.icon_font(8.0);
         let drop = self.drop_spot();
         let l = &self.layout;
-        let mut new_tab_dx = 0.0;
         let mut requests: Vec<IconRequest> = Vec::new();
         let ghosts_from = g.dl.instances.len();
         self.strip.ghosts(lane, &mut g.dl, now);
@@ -2444,16 +2443,16 @@ impl App {
             let shown = self.strip.arrival(self.tabs[i].id, now);
             if shown < 1.0 {
                 g.dl.grow(from, shown, (r.x, r.y + r.h / 2.0), 0.6);
-                if i + 1 == self.tabs.len() && l.tab_arrows[1].w == 0.0 {
-                    new_tab_dx = -(1.0 - shown) * r.w;
-                }
             }
             if r.w != target.w {
                 g.dl.confine(from, Rect::new(r.x - foot, l.title.y, r.w + 2.0 * foot, l.title.h));
             }
             self.strip.record(lane, part, r, &g.dl.instances[from..]);
         }
-        new_tab_dx += self.strip.at(lane, tabbar::Part::Plus, l.new_tab, now).x - l.new_tab.x;
+        if self.strip.busy(lane) {
+            g.dl.confine(ghosts_from, self.strip_clip(true));
+        }
+        let new_tab_dx = self.strip.at(lane, tabbar::Part::Plus, l.new_tab, now).x - l.new_tab.x;
         let new_tab_from = g.dl.instances.len();
         let mut w = widgets::Paint::new(g, t, self.scale);
         if drop == Some(Spot::NewTab) {
@@ -2474,7 +2473,7 @@ impl App {
             }
         }
         if self.strip.busy(lane) {
-            let clip = self.strip_clip();
+            let clip = self.strip_clip(false);
             w.g.dl.confine(ghosts_from, clip);
         }
         if l.actions.w > 0.0 {

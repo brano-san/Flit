@@ -953,3 +953,105 @@ fn closing_a_tab_of_an_overflowing_strip_animates_between_the_arrows() {
     assert!(!app.frame(&mut g, ms(t1, 300)));
     assert_eq!(outlines(&app, &g, app.layout.title).iter().map(|o| o.0.x).collect::<Vec<_>>(), [old2.x]);
 }
+
+fn drawn(app: &App, i: usize) -> Rect {
+    app.strip.drawn(app.panels.here, crate::ui::tabbar::Part::Tab(app.tabs[i].id)).expect("drawn")
+}
+
+fn plus_drawn(app: &App) -> Rect {
+    app.strip.drawn(app.panels.here, crate::ui::tabbar::Part::Plus).expect("drawn")
+}
+
+#[test]
+fn a_new_tab_pushes_the_tabs_to_its_right_aside_and_clicks_use_the_final_places() {
+    let mut app = app_with(&[r"C:\a", r"C:\b", r"C:\c"]);
+    let mut g = Gfx::new(crate::text::tests::Mono, 1024);
+    let t0 = Instant::now();
+    app.select_tab(0);
+    app.frame(&mut g, ms(t0, 1000));
+    let (old_b, old_c, old_plus) = (app.layout.tabs[1].0, app.layout.tabs[2].0, app.layout.new_tab);
+    key(&mut app, Key::Char('T'), CTRL);
+    assert_eq!((app.cur, names(&app)), (1, vec![r"C:\a".to_owned(), r"C:\a".to_owned(), r"C:\b".to_owned(), r"C:\c".to_owned()]));
+    let t1 = ms(t0, 2000);
+    assert!(app.frame(&mut g, t1));
+    assert_eq!((drawn(&app, 2).x, drawn(&app, 3).x, plus_drawn(&app).x), (old_b.x, old_c.x, old_plus.x), "at first the tabs on the right stay where they were");
+
+    assert!(app.frame(&mut g, ms(t1, 60)));
+    let (b, c, plus) = (drawn(&app, 2), drawn(&app, 3), plus_drawn(&app));
+    assert!(b.x > old_b.x && b.x < app.layout.tabs[2].0.x, "B is on its way right: {b:?}");
+    assert!(c.x > old_c.x && c.x < app.layout.tabs[3].0.x, "C is on its way right: {c:?}");
+    assert!(plus.x > old_plus.x && plus.x < app.layout.new_tab.x, "and so is the new tab button: {plus:?}");
+    let r = app.layout.tabs[3].0;
+    let (x, y) = (r.right() - 3.0, r.y + r.h / 2.0);
+    assert!(!c.contains(x, y), "the click below lands where C is not drawn yet");
+    ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
+    ev(&mut app, Event::MouseUp { x, y, button: MouseButton::Left });
+    assert_eq!(app.cur, 3, "a click on C's final place selects C");
+
+    assert!(!app.frame(&mut g, ms(t1, 300)), "the strip settles");
+    assert_eq!((drawn(&app, 2), drawn(&app, 3)), (app.layout.tabs[2].0, app.layout.tabs[3].0));
+}
+
+#[test]
+fn without_animations_a_new_tab_moves_its_neighbours_at_once() {
+    let mut app = app_with(&[r"C:\a", r"C:\b", r"C:\c"]);
+    app.animations = false;
+    let mut g = Gfx::new(crate::text::tests::Mono, 1024);
+    let t0 = Instant::now();
+    app.select_tab(0);
+    app.frame(&mut g, ms(t0, 1000));
+    key(&mut app, Key::Char('T'), CTRL);
+    assert!(!app.frame(&mut g, ms(t0, 2000)), "no frames are asked for");
+    assert!(!app.motion);
+    assert_eq!(app.strip.drawn(app.panels.here, crate::ui::tabbar::Part::Tab(app.tabs[2].id)), None, "nothing is remembered for animation");
+}
+
+#[test]
+fn dragging_a_tab_moves_the_strip_under_the_pointer_without_lag() {
+    let mut app = app_with(&[r"C:\a", r"C:\b", r"C:\c"]);
+    let mut g = Gfx::new(crate::text::tests::Mono, 1024);
+    let t0 = Instant::now();
+    app.frame(&mut g, ms(t0, 1000));
+    let (x0, y) = tab_xy(&app, 0);
+    let r2 = app.layout.tabs[2].0;
+    ev(&mut app, Event::MouseDown { x: x0, y, button: MouseButton::Left, clicks: 1 });
+    ev(&mut app, Event::MouseMove { x: r2.x + r2.w * 0.75, y });
+    assert_eq!(names(&app), [r"C:\b", r"C:\c", r"C:\a"]);
+    app.frame(&mut g, ms(t0, 2000));
+    assert_eq!((0..3).map(|i| drawn(&app, i)).collect::<Vec<_>>(), app.layout.tabs.iter().map(|t| t.0).collect::<Vec<_>>(), "the dragged strip follows the pointer without lag");
+    assert_eq!(app.strip.ghost_count(app.panels.here), 0);
+    ev(&mut app, Event::MouseUp { x: r2.x + r2.w * 0.75, y, button: MouseButton::Left });
+    assert_eq!(app.drag, Drag::None);
+}
+
+#[test]
+fn scrolling_an_overflowing_strip_slides_the_tabs_and_brings_the_next_one_in_from_the_edge() {
+    let mut app = many(30, 2000);
+    let mut g = Gfx::new(crate::text::tests::Mono, 1024);
+    app.select_tab(0);
+    let t0 = Instant::now();
+    app.frame(&mut g, ms(t0, 1000));
+    let old: Vec<Rect> = app.layout.tabs.iter().map(|t| t.0).collect();
+    let last = shown(&app).last().copied().unwrap();
+    arrow_click(&mut app, true);
+    assert_eq!(shown(&app)[0], 1);
+    let t1 = ms(t0, 2000);
+    assert!(app.frame(&mut g, t1));
+    assert_eq!(drawn(&app, 1).x, old[1].x, "at first nothing jumps");
+    assert!(app.frame(&mut g, ms(t1, 60)));
+    let one = drawn(&app, 1);
+    assert!(one.x < old[1].x && one.x > old[0].x, "the strip slides left: {one:?}");
+    let gone = drawn(&app, 0);
+    assert!(gone.w > 0.0 && gone.x < old[0].x, "the first tab slides out to the left: {gone:?}");
+    let next = drawn(&app, last + 1);
+    let target = app.layout.tabs[last + 1].0;
+    assert!(next.w == target.w && next.x > target.x, "the next tab comes in from the right edge: {next:?} {target:?}");
+    let [left, right] = app.layout.tab_arrows;
+    let clip = |i: &crate::render::Instance| i.clip[0] >= left.right() - 0.5 && i.clip[2] <= right.x + 0.5;
+    let title = app.layout.title;
+    let lane: Vec<_> = g.dl.instances.iter().filter(|i| i.kind == crate::render::kind::GLYPH && i.rect[1] >= title.y && i.rect[1] < title.bottom() && i.rect[0] > left.right() && i.rect[0] < right.x).collect();
+    assert!(!lane.is_empty() && lane.iter().all(|i| clip(i)), "moving tabs are clipped to the lane between the arrows");
+    assert!(!app.frame(&mut g, ms(t1, 300)));
+    assert_eq!(drawn(&app, 1), app.layout.tabs[1].0);
+    assert_eq!(drawn(&app, 0).w, 0.0);
+}

@@ -60,6 +60,7 @@ pub(super) struct Strip {
     born: Vec<(crate::provider::TabId, Instant)>,
     tick: u64,
     lanes: Vec<Lane>,
+    targets: Vec<(Part, Rect)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -73,10 +74,18 @@ pub(super) enum Part {
 struct Lane {
     panel: u32,
     tick: u64,
+    first: Option<Part>,
     drawn: Vec<(Part, Rect, std::ops::Range<usize>)>,
     shots: Vec<Instance>,
-    slides: Vec<(Part, Rect, Instant)>,
+    slides: Vec<Slide>,
     ghosts: Vec<(Rect, Instant, Vec<Instance>)>,
+}
+
+struct Slide {
+    part: Part,
+    from: Rect,
+    to: Option<Rect>,
+    since: Instant,
 }
 
 fn mix(a: Rect, b: Rect, k: f32) -> Rect {
@@ -142,32 +151,40 @@ impl Strip {
         self.lanes.iter_mut().for_each(|l| l.ghosts.clear());
     }
 
-    fn settle(&mut self, panel: u32, ids: impl Iterator<Item = crate::provider::TabId> + Clone, arrows: bool, now: Instant) -> usize {
+    fn settle(&mut self, panel: u32, slide: bool, now: Instant) -> usize {
         let k = self.lanes.iter().position(|l| l.panel == panel).unwrap_or_else(|| {
             self.lanes.push(Lane { panel, ..Lane::default() });
             self.lanes.len() - 1
         });
-        let lane = &mut self.lanes[k];
-        let drawn = lane.drawn.iter().filter_map(|d| if let Part::Tab(id) = d.0 { Some(id) } else { None });
-        let gone = |id| !ids.clone().any(|t| t == id);
-        if lane.tick + 1 >= self.tick && !drawn.clone().eq(ids.clone()) && drawn.clone().any(gone) {
+        let (lane, targets) = (&mut self.lanes[k], &self.targets);
+        let was = lane.drawn.iter().map(|d| (d.0, d.1)).filter(|d| matches!(d.0, Part::Tab(_)));
+        let will = targets.iter().copied().filter(|d| matches!(d.0, Part::Tab(_)));
+        let first = will.clone().find(|t| t.1.w > 0.0).map(|t| t.0);
+        let scrolled = std::mem::replace(&mut lane.first, first) != first;
+        let changed = scrolled || !was.clone().map(|d| d.0).eq(will.map(|d| d.0));
+        if lane.tick + 1 >= self.tick && changed {
             for (part, r, range) in &lane.drawn {
-                match part {
-                    Part::Tab(id) if gone(*id) => {
-                        if r.w > 0.0 && !range.is_empty() {
-                            lane.ghosts.push((*r, now, lane.shots[range.clone()].to_vec()));
-                        }
-                    }
-                    Part::Arrow(_) if !arrows => {}
-                    _ => {
-                        lane.slides.retain(|s| s.0 != *part);
-                        lane.slides.push((*part, *r, now));
-                    }
+                if matches!(part, Part::Tab(_)) && r.w > 0.0 && !range.is_empty() && !targets.iter().any(|t| t.0 == *part) {
+                    lane.ghosts.push((*r, now, lane.shots[range.clone()].to_vec()));
+                }
+            }
+            let shift = targets.iter().find_map(|&(p, to)| was.clone().find(|w| w.0 == p && w.1.w > 0.0 && to.w > 0.0).map(|w| w.1.x - to.x));
+            for &(part, target) in targets.iter().filter(|_| slide) {
+                let Some(&(_, from, _)) = lane.drawn.iter().find(|d| d.0 == part) else { continue };
+                lane.slides.retain(|s| s.part != part);
+                let (from, to) = match (from.w > 0.0, target.w > 0.0, shift) {
+                    (false, false, _) => continue,
+                    (false, true, Some(d)) => (Rect::new(target.x + d, target.y, target.w, target.h), None),
+                    (true, false, Some(d)) => (from, Some(Rect::new(from.x - d, from.y, from.w, from.h))),
+                    _ => (from, None),
+                };
+                if to.is_some() || from != target {
+                    lane.slides.push(Slide { part, from, to, since: now });
                 }
             }
         }
         lane.tick = self.tick;
-        lane.slides.retain(|s| now.saturating_duration_since(s.2) < SLIDE_IN);
+        lane.slides.retain(|s| now.saturating_duration_since(s.since) < SLIDE_IN);
         lane.ghosts.retain(|g| now.saturating_duration_since(g.1) < SLIDE_IN);
         lane.drawn.clear();
         lane.shots.clear();
@@ -180,7 +197,7 @@ impl Strip {
 
     pub fn at(&self, k: Option<usize>, part: Part, to: Rect, now: Instant) -> Rect {
         let Some(lane) = k.and_then(|k| self.lanes.get(k)) else { return to };
-        lane.slides.iter().find(|s| s.0 == part).map_or(to, |&(_, from, since)| mix(from, to, super::widgets::eased(since, now, SLIDE_IN)))
+        lane.slides.iter().find(|s| s.part == part).map_or(to, |s| mix(s.from, s.to.unwrap_or(to), super::widgets::eased(s.since, now, SLIDE_IN)))
     }
 
     pub fn ghosts(&self, k: Option<usize>, dl: &mut DrawList, now: Instant) {
@@ -197,6 +214,11 @@ impl Strip {
         let from = lane.shots.len();
         lane.shots.extend_from_slice(shot);
         lane.drawn.push((part, r, from..lane.shots.len()));
+    }
+
+    #[cfg(test)]
+    pub fn drawn(&self, panel: u32, part: Part) -> Option<Rect> {
+        self.lanes.iter().filter(|l| l.panel == panel).flat_map(|l| &l.drawn).find(|d| d.0 == part).map(|d| d.1)
     }
 
     #[cfg(test)]
@@ -305,17 +327,27 @@ impl App {
         if !self.animations {
             return None;
         }
-        let arrows = self.layout.tab_arrows[0].w > 0.0;
-        let k = Some(self.strip.settle(self.panels.here, self.tabs.iter().map(|t| t.id), arrows, now));
+        let l = &self.layout;
+        let targets = &mut self.strip.targets;
+        targets.clear();
+        targets.extend(self.tabs.iter().zip(&l.tabs).map(|(t, &(r, _))| (Part::Tab(t.id), r)));
+        targets.push((Part::Plus, l.new_tab));
+        if l.tab_arrows[0].w > 0.0 {
+            targets.extend([(Part::Arrow(false), l.tab_arrows[0]), (Part::Arrow(true), l.tab_arrows[1])]);
+        }
+        let slide = !matches!(self.drag, Drag::Tab { .. });
+        let k = Some(self.strip.settle(self.panels.here, slide, now));
         self.motion |= self.strip.busy(k);
         k
     }
 
-    pub(super) fn strip_clip(&self) -> Rect {
+    pub(super) fn strip_clip(&self, tabs: bool) -> Rect {
         let l = &self.layout;
         let caption = self.panels.caption.iter().filter(|c| c.w > 0.0 && c.y < l.title.bottom() && c.bottom() > l.title.y && c.x > l.title.x).map(|c| c.x);
         let edge = caption.chain((l.actions.w > 0.0).then_some(l.actions.x)).fold(l.title.right(), f32::min);
-        Rect::new(l.title.x, l.title.y, (edge - l.title.x).max(0.0), l.title.h)
+        let [left, right] = l.tab_arrows;
+        let (x, edge) = if tabs && left.w > 0.0 { (left.right(), edge.min(right.x)) } else { (l.title.x, edge) };
+        Rect::new(x, l.title.y, (edge - x).max(0.0), l.title.h)
     }
 
     pub(super) fn scroll_tabs(&mut self, right: bool) {
