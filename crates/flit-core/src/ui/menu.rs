@@ -474,7 +474,7 @@ impl App {
         m.command(Cmd::NewItem(0), S::MenuFolder.t(), keys, false);
         m.command(Cmd::NewItem(1), S::MenuShortcut.t(), String::new(), false);
         for (k, tpl) in self.nav.sidebar.places.templates.iter().enumerate() {
-            m.command(Cmd::NewItem(k + 2), &tpl.label, String::new(), false);
+            m.command(Cmd::NewItem(k + 2), tpl.label(), String::new(), false);
         }
     }
 

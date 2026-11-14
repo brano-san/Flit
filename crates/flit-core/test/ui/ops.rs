@@ -1146,7 +1146,7 @@ fn copied(app: &mut App) -> Option<String> {
 }
 
 fn with_templates(app: &mut App) {
-    let t = |label: &str, ext: &str, template| NewTemplate { label: label.into(), ext: ext.into(), stem: format!("New {label}"), template };
+    let t = |label: &str, ext: &str, template| NewTemplate { label: label.into(), ext: ext.into(), stem: format!("New {label}"), template, names: None };
     let templates = vec![t("Text Document", ".txt", Template::Empty), t("Compressed (zipped) Folder", ".zip", Template::Data(vec![0x50, 0x4B, 5, 6]))];
     app.set_places(Arc::new(crate::ui::Places { templates, ..Default::default() }));
 }
@@ -1472,6 +1472,28 @@ fn links_get_an_icon_of_their_own_outside_windows_and_plain_files_share_their_ty
         assert_ne!(link(b"a.txt", attr::LINK).0, plain(b"a.txt").0);
         assert_eq!(link(b"d", attr::LINK | attr::DIR).1, IconKind::File);
     }
+}
+
+#[test]
+fn built_in_templates_follow_a_language_change_and_the_users_own_keep_their_names() {
+    use crate::i18n::Lang;
+    let mut app = app_at(r"C:\x");
+    let builtin = NewTemplate { label: "Text Document".into(), ext: ".txt".into(), stem: "New Text Document".into(), template: Template::Empty, names: Some(crate::ui::TemplateNames { label: S::MenuTextDocument, stem: S::MenuNewTextDocument }) };
+    let own = NewTemplate { label: "Invoice".into(), ext: ".odt".into(), stem: "Invoice".into(), template: Template::Copy(p(r"C:\t\Invoice.odt")), names: None };
+    app.set_places(Arc::new(crate::ui::Places { templates: vec![builtin, own], ..Default::default() }));
+    crate::i18n::set_lang(Lang::Ru);
+    key(&mut app, Key::Char('I'), CTRL_SHIFT);
+    let titles = app.nav.palette.as_ref().unwrap().titles.clone();
+    assert_eq!(titles[2..], [S::MenuTextDocument.in_lang(Lang::Ru).to_owned(), "Invoice".to_owned()]);
+    key(&mut app, Key::Down, NO);
+    key(&mut app, Key::Down, NO);
+    key(&mut app, Key::Enter, NO);
+    let made = op_list(&mut app);
+    crate::i18n::set_lang(Lang::En);
+    let name = format!("{}.txt", S::MenuNewTextDocument.in_lang(Lang::Ru));
+    assert_eq!(made, [FileOp::NewFile { dir: p(r"C:\x"), name: name.into_bytes(), template: Template::Empty }]);
+    key(&mut app, Key::Char('I'), CTRL_SHIFT);
+    assert_eq!(app.nav.palette.as_ref().unwrap().titles[2..], [S::MenuTextDocument.in_lang(Lang::En), "Invoice"], "back in English without new places");
 }
 
 #[test]

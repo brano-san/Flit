@@ -64,6 +64,24 @@ pub struct NewTemplate {
     pub ext: String,
     pub stem: String,
     pub template: Template,
+    #[serde(skip)]
+    pub names: Option<TemplateNames>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TemplateNames {
+    pub label: S,
+    pub stem: S,
+}
+
+impl NewTemplate {
+    pub fn label(&self) -> &str {
+        self.names.map_or(&self.label, |n| n.label.t())
+    }
+
+    pub fn stem(&self) -> &str {
+        self.names.map_or(&self.stem, |n| n.stem.t())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -918,7 +936,7 @@ impl App {
         }
         let folder_keys = self.keymap.text_of("file.new_folder");
         let mut items = vec![(S::MenuFolder.t().to_owned(), folder_keys), (S::MenuShortcut.t().to_owned(), String::new())];
-        items.extend(self.nav.sidebar.places.templates.iter().map(|t| (t.label.clone(), t.ext.clone())));
+        items.extend(self.nav.sidebar.places.templates.iter().map(|t| (t.label().to_owned(), t.ext.clone())));
         self.open_pick(Palette::new(Pick::NewItem, items, ""));
     }
 
@@ -928,7 +946,7 @@ impl App {
             1 => self.ask_shortcut(),
             _ => {
                 let Some(t) = self.nav.sidebar.places.templates.get(k - 2).cloned() else { return };
-                self.create(|dir, name| FileOp::NewFile { dir, name, template: t.template }, &t.stem, &t.ext);
+                self.create(|dir, name| FileOp::NewFile { dir, name, template: t.template.clone() }, t.stem(), &t.ext);
             }
         }
     }

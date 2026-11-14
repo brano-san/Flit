@@ -205,3 +205,14 @@ fn user_folders_tell_their_type_and_other_folders_do_not() {
     assert_eq!(folder_kind_with(Path::new("/home/ann/Bilder/2024"), dirs), None, "subfolders keep their own type");
     assert_eq!(folder_kind_with(Path::new("/home/ann/Downloads"), dirs), None);
 }
+
+#[test]
+fn built_in_templates_carry_their_string_keys_and_files_keep_their_own_names() {
+    let t = Temp::new("named-templates");
+    t.file("Report.odt", 9);
+    let all = with_builtins(templates_in(t.path()));
+    let keys: Vec<Option<TemplateNames>> = all.iter().map(|n| n.names).collect();
+    assert_eq!(keys[1], Some(TemplateNames { label: S::MenuTextDocument, stem: S::MenuNewTextDocument }), "the text document is renamed when the language changes");
+    assert_eq!(keys.iter().filter(|k| k.is_some()).count(), 4);
+    assert_eq!((all[4].label(), all[4].stem(), all[4].names), ("Report", "Report", None), "a file in Templates keeps its file name");
+}

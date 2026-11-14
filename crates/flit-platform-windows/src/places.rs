@@ -322,7 +322,7 @@ fn shell_new(key: HKEY, ext: &str, dirs: &[PathBuf]) -> Option<NewTemplate> {
     };
     let label = string(key, None, Some("MenuText")).and_then(indirect).or_else(|| friendly_name(ext))?;
     let stem = string(key, None, Some("ItemName")).and_then(indirect).unwrap_or_else(|| format!("New {label}"));
-    Some(NewTemplate { label, ext: ext.to_owned(), stem, template })
+    Some(NewTemplate { label, ext: ext.to_owned(), stem, template, names: None })
 }
 
 fn class_template(ext: &str, dirs: &[PathBuf]) -> Option<NewTemplate> {

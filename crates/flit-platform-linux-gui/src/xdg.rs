@@ -1,6 +1,6 @@
 use flit_core::i18n::S;
 use flit_core::provider::Template;
-use flit_core::ui::NewTemplate;
+use flit_core::ui::{NewTemplate, TemplateNames};
 use flit_core::{FsPath, Location};
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
@@ -210,7 +210,7 @@ pub fn templates_in(dir: &Path) -> Vec<NewTemplate> {
             let dot = bytes.iter().rposition(|&b| b == b'.').filter(|&k| k > 0);
             let (stem, ext) = dot.map_or((bytes, &b""[..]), |k| bytes.split_at(k));
             let label = String::from_utf8_lossy(stem).into_owned();
-            Some(NewTemplate { label: label.clone(), ext: String::from_utf8(ext.to_vec()).ok()?, stem: label, template: Template::Copy(fs_path(&e.path())?) })
+            Some(NewTemplate { label: label.clone(), ext: String::from_utf8(ext.to_vec()).ok()?, stem: label, template: Template::Copy(fs_path(&e.path())?), names: None })
         })
         .collect();
     out.sort_by_cached_key(|t| t.label.to_lowercase());
@@ -220,7 +220,7 @@ pub fn templates_in(dir: &Path) -> Vec<NewTemplate> {
 pub const SHELL_SCRIPT: &[u8] = b"#!/bin/sh\n\n";
 
 pub fn builtin_templates() -> [NewTemplate; 4] {
-    let made = |label: S, ext: &str, stem: S, template: Template| NewTemplate { label: label.t().to_owned(), ext: ext.to_owned(), stem: stem.t().to_owned(), template };
+    let made = |label: S, ext: &str, stem: S, template: Template| NewTemplate { label: label.t().to_owned(), ext: ext.to_owned(), stem: stem.t().to_owned(), template, names: Some(TemplateNames { label, stem }) };
     [
         made(S::MenuEmptyFile, "", S::UiOpsNewFileName, Template::Empty),
         made(S::MenuTextDocument, ".txt", S::MenuNewTextDocument, Template::Empty),
@@ -239,7 +239,7 @@ fn is_empty(template: &Template) -> bool {
 
 fn covers(user: &NewTemplate, builtin: &NewTemplate) -> bool {
     let same_empty_kind = builtin.template == Template::Empty && user.ext.eq_ignore_ascii_case(&builtin.ext) && is_empty(&user.template);
-    user.label.to_lowercase() == builtin.label.to_lowercase() || same_empty_kind
+    user.label.to_lowercase() == builtin.label().to_lowercase() || same_empty_kind
 }
 
 pub fn with_builtins(user: Vec<NewTemplate>) -> Vec<NewTemplate> {
