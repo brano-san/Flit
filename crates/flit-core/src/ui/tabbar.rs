@@ -64,6 +64,8 @@ pub(super) struct Strip {
     lanes: Vec<Lane>,
     targets: Vec<(Part, Rect)>,
     hold: Option<Hold>,
+    incoming: Option<(u32, usize)>,
+    out: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -312,7 +314,37 @@ impl App {
         self.dirty = true;
     }
 
+    pub fn tab_incoming(&mut self, at: Option<(f32, f32)>) -> bool {
+        let spot = at.map(|(x, y)| {
+            let id = self.panel_at(x, y).unwrap_or(self.panels.active);
+            (id, self.visit(id, |a| a.layout.tabs.iter().filter(|(r, _)| x > r.x + r.w / 2.0).count()))
+        });
+        if spot == self.strip.incoming {
+            return false;
+        }
+        self.strip.incoming = spot;
+        self.dirty = true;
+        true
+    }
+
+    pub(super) fn insert_mark(&self) -> Option<Rect> {
+        let (_, slot) = self.strip.incoming.filter(|s| s.0 == self.panels.here)?;
+        let tabs = &self.layout.tabs;
+        let x = tabs.get(slot).map(|t| t.0.x).or_else(|| tabs.last().map(|t| t.0.right()))?;
+        let r = tabs.first()?.0;
+        let w = self.s(2.0).max(2.0);
+        Some(Rect::new((x - w / 2.0).round(), r.y + self.s(2.0), w, (r.h - self.s(4.0)).max(0.0)))
+    }
+
+    fn tab_out(&mut self, at: Option<(f32, f32)>) {
+        if at.is_some() || self.strip.out {
+            self.effects.push(Effect::TabOver(at));
+        }
+        self.strip.out = at.is_some();
+    }
+
     pub fn insert_tab(&mut self, moved: MovedTab, at: Option<(f32, f32)>, now: Instant) {
+        self.strip.incoming = None;
         if let Some(id) = at.and_then(|(x, y)| self.panel_at(x, y)) {
             self.activate_panel(id);
         }
@@ -488,6 +520,7 @@ impl App {
         let torn = x < 0.0 || y < 0.0 || x >= self.size.0 || y >= self.size.1;
         let on_strip = y >= title.y - m && y <= title.bottom() + m && x >= title.x && x < title.right();
         let arrow = on_strip && self.hover_arrow(x, y, Held::Tab, self.clock());
+        self.tab_out(torn.then_some((x, y)));
         if !on_strip {
             self.strip.hold = None;
         }
@@ -570,6 +603,7 @@ impl App {
 
     pub(super) fn cancel_tab_drag(&mut self) {
         let Drag::Tab { origin, .. } = self.drag else { return };
+        self.tab_out(None);
         self.move_tab(origin.min(self.tabs.len() - 1));
         self.docking = None;
         self.drag = Drag::None;
@@ -582,6 +616,7 @@ impl App {
     }
 
     fn detach_tab(&mut self, at: Option<(f32, f32)>) {
+        self.strip.out = false;
         let alone = self.tabs.len() == 1;
         let last = alone && self.panel_count() == 1;
         let mut t = if last {

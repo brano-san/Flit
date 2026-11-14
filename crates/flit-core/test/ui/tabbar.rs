@@ -173,6 +173,81 @@ fn a_tab_torn_off_the_strip_moves_to_another_window() {
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::MoveTab { .. })));
 }
 
+fn tab_over(app: &mut App) -> Vec<Option<(f32, f32)>> {
+    app.drain_effects().filter_map(|e| if let Effect::TabOver(at) = e { Some(at) } else { None }).collect()
+}
+
+#[test]
+fn a_tab_dragged_out_of_the_window_reports_where_it_is_until_it_comes_back_or_is_dropped() {
+    let mut app = app_with(&[r"C:\a", r"C:\b", r"C:\c"]);
+    let (x, y) = tab_xy(&app, 1);
+    ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
+    ev(&mut app, Event::MouseMove { x: x + 40.0, y });
+    assert_eq!(tab_over(&mut app), [], "on its own strip the tab reports nothing");
+    ev(&mut app, Event::MouseMove { x, y: -30.0 });
+    ev(&mut app, Event::MouseMove { x: -80.0, y: -30.0 });
+    assert_eq!(tab_over(&mut app), [Some((x, -30.0)), Some((-80.0, -30.0))], "outside the window every move is reported");
+    ev(&mut app, Event::MouseMove { x, y });
+    ev(&mut app, Event::MouseMove { x: x + 10.0, y });
+    assert_eq!(tab_over(&mut app), [None], "back over its window the mark is taken away once");
+    ev(&mut app, Event::MouseMove { x, y: -30.0 });
+    key(&mut app, Key::Escape, NO);
+    assert_eq!(tab_over(&mut app), [Some((x, -30.0)), None], "Esc takes the mark away");
+    ev(&mut app, Event::MouseUp { x, y: -30.0, button: MouseButton::Left });
+    assert_eq!(tab_over(&mut app), []);
+}
+
+#[test]
+fn the_window_under_a_dragged_tab_marks_where_it_will_land() {
+    let mut app = app_with(&[r"C:\a", r"C:\b"]);
+    let (x, y) = tab_xy(&app, 1);
+    ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
+    ev(&mut app, Event::MouseMove { x, y: -30.0 });
+    ev(&mut app, Event::MouseUp { x, y: -30.0, button: MouseButton::Left });
+    let moved = app.drain_effects().find_map(|e| if let Effect::MoveTab { tab, .. } = e { Some(tab) } else { None }).unwrap();
+
+    let mut target = app_with(&[r"C:\x", r"C:\y", r"C:\z"]);
+    target.layout();
+    assert_eq!(target.insert_mark(), None, "no mark without a dragged tab");
+    let [t0, t1, _] = [0, 1, 2].map(|i| target.layout.tabs[i].0);
+    let at = (t1.x + 10.0, t1.y + 200.0);
+    assert!(target.tab_incoming(Some(at)));
+    assert!(!target.tab_incoming(Some((at.0 + 1.0, at.1))), "moving within one gap changes nothing");
+    let mark = target.insert_mark().expect("a mark");
+    assert!(mark.x < t1.x && mark.right() > t1.x && mark.x > t0.x + t0.w / 2.0, "the mark stands between the first and second tab: {mark:?}");
+    let mut g = Gfx::new(crate::text::tests::Mono, 1024);
+    target.frame(&mut g, Instant::now());
+    let accent = target.look.palette.base.accent.0;
+    assert!(g.dl.instances.iter().any(|i| i.rect == [mark.x, mark.y, mark.w, mark.h] && i.color == accent), "the mark is drawn");
+    assert!(target.tab_incoming(Some((t0.x + 2.0, at.1))));
+    assert_eq!(target.insert_mark().map(|r| r.right() > t0.x && r.x < t0.x), Some(true), "before the first tab");
+    assert!(target.tab_incoming(Some(at)));
+    target.insert_tab(moved, Some(at), Instant::now());
+    assert_eq!(names(&target), [r"C:\x", r"C:\b", r"C:\y", r"C:\z"], "the tab lands where the mark stood");
+    assert_eq!(target.insert_mark(), None, "and the mark goes");
+    assert!(!target.tab_incoming(None));
+}
+
+#[test]
+fn the_mark_shows_only_in_the_panel_under_the_pointer() {
+    let mut target = app_with(&[r"C:\x", r"C:\y"]);
+    key(&mut target, Key::Char('S'), Mods { ctrl: true, shift: true, alt: false });
+    target.animations = false;
+    target.layout();
+    let right = target.panels.active;
+    let left = target.panels.list.iter().find(|p| p.id != right).unwrap().id;
+    let r = target.layout.tabs[0].0;
+    assert!(target.tab_incoming(Some((r.right() - 2.0, r.y + 300.0))));
+    assert!(target.insert_mark().is_some(), "the right panel shows the mark");
+    assert_eq!(target.visit(left, |a| a.insert_mark()), None, "the left panel does not");
+    let l = target.panels.list.iter().find(|p| p.id == left).unwrap().layout.tabs[0].0;
+    assert!(target.tab_incoming(Some((l.x + 5.0, l.y + 300.0))));
+    assert_eq!(target.insert_mark(), None);
+    assert!(target.visit(left, |a| a.insert_mark()).is_some());
+    assert!(target.tab_incoming(None));
+    assert_eq!(target.visit(left, |a| a.insert_mark()), None, "leaving the window clears it");
+}
+
 #[test]
 fn wheel_over_the_strip_switches_tabs_in_the_chosen_direction() {
     let mut app = app_with(&[r"C:\a", r"C:\b", r"C:\c"]);

@@ -385,7 +385,20 @@ impl<P: Platform> Handler<P> {
         window.open_window(WindowOptions { title: "Flit".into(), placement, dark: window.is_dark_mode() });
     }
 
+    fn tab_over(&mut self, window: &Win<P>, at: Option<(f32, f32)>) {
+        let id = window.id();
+        let target = at.and_then(|(x, y)| window.window_at(x, y)).filter(|(t, ..)| *t != id);
+        let mut changed = false;
+        for (w, st) in self.windows.iter_mut().filter(|(w, _)| **w != id) {
+            changed |= st.app.tab_incoming(target.filter(|(t, ..)| t == w).map(|(_, x, y)| (x, y)));
+        }
+        if changed {
+            (self.wake)();
+        }
+    }
+
     fn move_tab(&mut self, window: &Win<P>, tab: MovedTab, at: Option<(f32, f32)>, last: bool) {
+        self.tab_over(window, None);
         let (id, now) = (window.id(), Instant::now());
         let target = at.and_then(|(x, y)| window.window_at(x, y)).filter(|(t, ..)| *t != id && self.windows.contains_key(t));
         if let Some((t, x, y)) = target {
@@ -555,6 +568,7 @@ impl<P: Platform> Handler<P> {
                 Effect::Window(WindowCmd::Attention) => window.request_attention(),
                 Effect::Notify(text) => window.notify(&text),
                 Effect::MoveTab { tab, at, last } => self.move_tab(window, tab, at, last),
+                Effect::TabOver(at) => self.tab_over(window, at),
                 Effect::RestoreSession => {
                     if let Some(s) = self.crashed.take() {
                         self.queued_windows.extend(s.windows());

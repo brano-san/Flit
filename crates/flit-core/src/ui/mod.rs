@@ -376,6 +376,7 @@ pub enum Effect {
     Host(HostCmd),
     Timer(Duration),
     MoveTab { tab: MovedTab, at: Option<(f32, f32)>, last: bool },
+    TabOver(Option<(f32, f32)>),
     RestoreSession,
     Tags(TagRequest),
     Settings(SettingsCmd),
@@ -2482,6 +2483,9 @@ impl App {
             let open = self.panels.here == self.panels.active && self.nav.palette.as_ref().is_some_and(|p| p.pick == palette::Pick::Tabs);
             let state = self.button(Hit::TabActions, open, true);
             w.icon_button(l.actions, tabbar::G_TAB_ACTIONS, self.icon_font(12.0), state, t.text_dim);
+        }
+        if let Some(r) = self.insert_mark() {
+            w.g.dl.rect(r, t.accent);
         }
         self.request_icons(requests);
     }
