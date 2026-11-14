@@ -18,6 +18,8 @@ const QUIET_RUNS: [&str; 3] = ["FLIT_NO_UPDATE", "FLIT_HIDDEN", "FLIT_HIDDEN_CAP
 const OLD_SLOTS: usize = 8;
 const PROBE: &str = ".flit-update-probe";
 const EXIT_WAIT: Duration = Duration::from_secs(30);
+pub const INSTALL_ELEVATED: &str = "--install-update";
+const CANCELLED: i64 = 1223;
 
 static RESTARTED: AtomicBool = AtomicBool::new(false);
 static RELAUNCH: OnceLock<PathBuf> = OnceLock::new();
@@ -178,19 +180,79 @@ pub fn swap(dir: &Path, files: &[(String, Vec<u8>)]) -> Result<(), String> {
     Ok(())
 }
 
-pub fn install(release: &Release, exe: &Path, public_key: &str, download: &mut dyn FnMut(&str) -> Result<Vec<u8>, String>, installing: &mut dyn FnMut()) -> Result<(), Failure> {
+pub type Elevate<'a> = &'a mut dyn FnMut(&[u8], &str) -> Result<bool, String>;
+
+fn unpack(archive: &[u8], exe: &Path) -> Result<(), String> {
     let dir = exe.parent().unwrap_or(Path::new("."));
-    if !writable(dir) {
-        return Err(Failure::ReadOnly(dir.display().to_string()));
-    }
-    let archive = download(&release.url).map_err(Failure::Failed)?;
-    verify(&archive, &release.signature, public_key).map_err(Failure::Failed)?;
-    installing();
-    let mut files: Vec<(String, Vec<u8>)> = binaries(&archive).map_err(Failure::Failed)?.into_iter().map(|(name, bytes)| (name.to_owned(), bytes)).collect();
+    let mut files: Vec<(String, Vec<u8>)> = binaries(archive)?.into_iter().map(|(name, bytes)| (name.to_owned(), bytes)).collect();
     if let (Some(first), Some(name)) = (files.first_mut(), exe.file_name()) {
         first.0 = name.to_string_lossy().into_owned();
     }
-    swap(dir, &files).map_err(Failure::Failed)
+    swap(dir, &files)
+}
+
+pub fn install(release: &Release, exe: &Path, public_key: &str, download: &mut dyn FnMut(&str) -> Result<Vec<u8>, String>, installing: &mut dyn FnMut(), elevate: Option<Elevate>) -> Result<(), Failure> {
+    let can_write = writable(exe.parent().unwrap_or(Path::new(".")));
+    install_into(release, exe, public_key, download, installing, elevate, can_write)
+}
+
+pub fn install_into(release: &Release, exe: &Path, public_key: &str, download: &mut dyn FnMut(&str) -> Result<Vec<u8>, String>, installing: &mut dyn FnMut(), elevate: Option<Elevate>, can_write: bool) -> Result<(), Failure> {
+    let dir = exe.parent().unwrap_or(Path::new("."));
+    let read_only = || Failure::ReadOnly(dir.display().to_string());
+    let elevate = match (can_write, elevate) {
+        (true, _) => None,
+        (false, Some(e)) if dir.is_dir() => Some(e),
+        (false, _) => return Err(read_only()),
+    };
+    let archive = download(&release.url).map_err(Failure::Failed)?;
+    verify(&archive, &release.signature, public_key).map_err(Failure::Failed)?;
+    installing();
+    match elevate {
+        None => unpack(&archive, exe).map_err(Failure::Failed),
+        Some(e) => match e(&archive, &release.signature) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(read_only()),
+            Err(e) => Err(Failure::Failed(e)),
+        },
+    }
+}
+
+pub fn install_elevated(archive: &Path, signature: &str, public_key: &str, exe: &Path) -> Result<(), String> {
+    let bytes = fs::read(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
+    verify(&bytes, signature, public_key)?;
+    unpack(&bytes, exe)
+}
+
+pub fn install_from_command_line(archive: Option<std::ffi::OsString>, signature: Option<std::ffi::OsString>) -> i32 {
+    let (Some(archive), Some(signature)) = (archive.map(PathBuf::from), signature) else { return 2 };
+    let result = running_exe().and_then(|exe| install_elevated(&archive, &signature.to_string_lossy(), PUBLIC_KEY, &exe));
+    match result {
+        Ok(()) => 0,
+        Err(e) => {
+            let _ = fs::write(error_file(&archive), e);
+            1
+        }
+    }
+}
+
+fn error_file(archive: &Path) -> PathBuf {
+    with_suffix(archive, ".error")
+}
+
+fn elevated<P: Platform>(archive: &[u8], signature: &str) -> Result<bool, String> {
+    let file = std::env::temp_dir().join(format!("flit-update-{}.zip", std::process::id()));
+    fs::write(&file, archive).map_err(|e| format!("{}: {e}", file.display()))?;
+    let _ = fs::remove_file(error_file(&file));
+    let ran = P::run_elevated(&[INSTALL_ELEVATED.to_owned(), file.to_string_lossy().into_owned(), signature.to_owned()]);
+    let reason = fs::read_to_string(error_file(&file)).ok();
+    let _ = fs::remove_file(&file);
+    let _ = fs::remove_file(error_file(&file));
+    match ran {
+        Ok(0) => Ok(true),
+        Ok(code) => Err(reason.unwrap_or_else(|| format!("the installer stopped with code {code}"))),
+        Err(e) if e.code == CANCELLED => Ok(false),
+        Err(e) => Err(e.message),
+    }
 }
 
 fn fetch<P: Platform>(url: &str, progress: &mut dyn FnMut(u64, Option<u64>) -> bool) -> Result<Vec<u8>, String> {
@@ -246,7 +308,10 @@ fn run<P: Platform>(jobs: Receiver<UpdateRequest>, tx: Sender<Reply>, wake: Wake
             .map_err(|e| if cancel.load(Ordering::Acquire) { S::UpdateErrorCancelled.t().to_owned() } else { e })
         };
         let result = match running_exe() {
-            Ok(exe) => install(&release, &exe, PUBLIC_KEY, &mut download, &mut || send(Reply::Ui(UpdateEvent::Installing))).map(|()| exe),
+            Ok(exe) => {
+                let mut elevate = elevated::<P>;
+                install(&release, &exe, PUBLIC_KEY, &mut download, &mut || send(Reply::Ui(UpdateEvent::Installing)), cfg!(windows).then_some(&mut elevate as Elevate)).map(|()| exe)
+            }
             Err(e) => Err(Failure::Failed(e)),
         };
         match result {

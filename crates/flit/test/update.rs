@@ -119,7 +119,7 @@ fn install_swaps_the_binaries_and_keeps_the_old_ones_until_next_start() {
     let r = install(&release(sign(&pair, &bytes)), &exe, &public, &mut |url| {
         asked.push(url.to_owned());
         Ok(bytes.clone())
-    }, &mut || installing += 1);
+    }, &mut || installing += 1, None);
     assert_eq!(r, Ok(()));
     assert_eq!((asked, installing), (vec!["https://example.com/flit.zip".to_owned()], 1));
     for name in BINARIES {
@@ -150,11 +150,11 @@ fn bad_signature_wrong_key_or_missing_binary_leave_the_install_untouched() {
     let incomplete = archive(&partial);
     let cases = [(tampered, sign(&pair, &bytes)), (bytes.clone(), sign(&stranger, &bytes)), (incomplete.clone(), sign(&pair, &incomplete))];
     for (served, signature) in cases {
-        let r = install(&release(signature), &exe, &public, &mut |_| Ok(served.clone()), &mut || {});
+        let r = install(&release(signature), &exe, &public, &mut |_| Ok(served.clone()), &mut || {}, None);
         assert!(matches!(r, Err(Failure::Failed(_))), "{r:?}");
         assert_eq!(contents(&t.0), before);
     }
-    let r = install(&release(sign(&pair, &bytes)), &exe, &public, &mut |_| Err("offline".into()), &mut || {});
+    let r = install(&release(sign(&pair, &bytes)), &exe, &public, &mut |_| Err("offline".into()), &mut || {}, None);
     assert_eq!(r, Err(Failure::Failed("offline".into())));
     assert_eq!(contents(&t.0), before);
 }
@@ -163,7 +163,7 @@ fn bad_signature_wrong_key_or_missing_binary_leave_the_install_untouched() {
 fn missing_folder_is_reported_as_not_writable() {
     let t = temp("readonly");
     let exe = t.0.join("gone").join(BINARIES[0]);
-    let r = install(&release(String::new()), &exe, PUBLIC_KEY, &mut |_| panic!("no download into a folder Flit cannot write"), &mut || {});
+    let r = install(&release(String::new()), &exe, PUBLIC_KEY, &mut |_| panic!("no download into a folder Flit cannot write"), &mut || {}, None);
     assert_eq!(r, Err(Failure::ReadOnly(t.0.join("gone").display().to_string())));
 }
 
@@ -174,7 +174,7 @@ fn running_exe_keeps_its_own_name() {
     fs::write(&exe, b"old build").unwrap();
     let (pair, public) = keys(7);
     let bytes = full_archive();
-    install(&release(sign(&pair, &bytes)), &exe, &public, &mut |_| Ok(bytes.clone()), &mut || {}).unwrap();
+    install(&release(sign(&pair, &bytes)), &exe, &public, &mut |_| Ok(bytes.clone()), &mut || {}, None).unwrap();
     assert_eq!(fs::read(&exe).unwrap(), b"new build");
     assert!(!t.0.join(BINARIES[0]).exists());
 }
@@ -209,4 +209,47 @@ fn live_release_downloads_through_redirects() {
     assert_eq!(seen, (bytes.len() as u64, Some(bytes.len() as u64)));
     assert_eq!(binaries(&bytes).unwrap().len(), BINARIES.len());
     println!("{:?}", check::<crate::P>(false));
+}
+
+#[test]
+fn a_folder_flit_cannot_write_is_updated_through_an_elevated_copy_of_itself() {
+    let t = temp("elevated");
+    let exe = installed(&t.0);
+    let (pair, public) = keys(7);
+    let bytes = full_archive();
+    let signature = sign(&pair, &bytes);
+    let mut handed = Vec::new();
+    let mut elevate = |archive: &[u8], signature: &str| {
+        handed.push((archive.to_vec(), signature.to_owned()));
+        Ok(true)
+    };
+    let r = install_into(&release(signature.clone()), &exe, &public, &mut |_| Ok(bytes.clone()), &mut || {}, Some(&mut elevate), false);
+    assert_eq!(r, Ok(()));
+    assert_eq!(handed, [(bytes.clone(), signature.clone())], "the verified download goes to the elevated copy");
+    assert_eq!(fs::read(&exe).unwrap(), b"old build", "this process does not touch the folder itself");
+    let archive = t.0.join("download.zip");
+    fs::write(&archive, &bytes).unwrap();
+    install_elevated(&archive, &signature, &public, &exe).unwrap();
+    assert_eq!(fs::read(&exe).unwrap(), b"new build");
+}
+
+#[test]
+fn a_declined_prompt_or_a_tampered_download_leaves_the_folder_alone() {
+    let t = temp("declined");
+    let exe = installed(&t.0);
+    let before = contents(&t.0);
+    let (pair, public) = keys(7);
+    let bytes = full_archive();
+    let r = install_into(&release(sign(&pair, &bytes)), &exe, &public, &mut |_| Ok(bytes.clone()), &mut || {}, Some(&mut |_: &[u8], _: &str| Ok(false)), false);
+    assert_eq!(r, Err(Failure::ReadOnly(t.0.display().to_string())), "declining the prompt explains the folder is read-only");
+    let r = install_into(&release(sign(&pair, &bytes)), &exe, &public, &mut |_| panic!("no download without a way to write"), &mut || {}, None, false);
+    assert_eq!(r, Err(Failure::ReadOnly(t.0.display().to_string())));
+    let archive = t.0.join("download.zip");
+    let mut tampered = bytes.clone();
+    let last = tampered.len() - 1;
+    tampered[last] ^= 0xFF;
+    fs::write(&archive, &tampered).unwrap();
+    assert!(install_elevated(&archive, &sign(&pair, &bytes), &public, &exe).is_err(), "the elevated copy checks the signature again");
+    fs::remove_file(&archive).unwrap();
+    assert_eq!(contents(&t.0), before);
 }

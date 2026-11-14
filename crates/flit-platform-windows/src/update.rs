@@ -4,7 +4,11 @@ use std::ffi::c_void;
 use std::io::Write;
 use std::time::Duration;
 use windows::core::{HSTRING, PCWSTR};
-use windows::Win32::Foundation::CloseHandle;
+use windows::core::w;
+use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, WIN32_ERROR};
+use windows::Win32::System::Threading::{GetExitCodeProcess, INFINITE};
+use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
 use windows::Win32::Networking::WinHttp::*;
 use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
 
@@ -96,3 +100,65 @@ pub(crate) fn wait_exit(pid: u32, limit: Duration) {
         let _ = CloseHandle(process);
     }
 }
+
+pub(crate) fn command_line(args: &[String]) -> String {
+    let mut out = String::new();
+    for a in args {
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push('"');
+        let mut slashes = 0;
+        for c in a.chars() {
+            match c {
+                '\\' => slashes += 1,
+                '"' => {
+                    out.extend(std::iter::repeat_n('\\', slashes * 2 + 1));
+                    slashes = 0;
+                }
+                _ => {
+                    out.extend(std::iter::repeat_n('\\', slashes));
+                    slashes = 0;
+                }
+            }
+            if c != '\\' {
+                out.push(c);
+            }
+        }
+        out.extend(std::iter::repeat_n('\\', slashes * 2));
+        out.push('"');
+    }
+    out
+}
+
+pub fn run_elevated(args: &[String]) -> Result<u32, PlatformError> {
+    let exe = std::env::current_exe().map_err(|e| PlatformError::new(-1, e.to_string()))?;
+    let file: Vec<u16> = exe.to_string_lossy().encode_utf16().chain([0]).collect();
+    let params: Vec<u16> = command_line(args).encode_utf16().chain([0]).collect();
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC,
+        lpVerb: w!("runas"),
+        lpFile: PCWSTR(file.as_ptr()),
+        lpParameters: PCWSTR(params.as_ptr()),
+        nShow: SW_HIDE.0,
+        ..Default::default()
+    };
+    if let Err(e) = unsafe { ShellExecuteExW(&mut info) } {
+        return Err(match WIN32_ERROR::from_error(&e) {
+            Some(ERROR_CANCELLED) => PlatformError::new(i64::from(ERROR_CANCELLED.0), "cancelled"),
+            _ => err(e),
+        });
+    }
+    let mut code = 1u32;
+    unsafe {
+        WaitForSingleObject(info.hProcess, INFINITE);
+        let _ = GetExitCodeProcess(info.hProcess, &mut code);
+        let _ = CloseHandle(info.hProcess);
+    }
+    Ok(code)
+}
+
+#[cfg(test)]
+#[path = "../test/update.rs"]
+mod tests;

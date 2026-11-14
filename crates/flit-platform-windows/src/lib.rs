@@ -283,6 +283,10 @@ impl Platform for Windows {
     fn jump_list(pinned: &[Location], frequent: &[Location]) {
         jumplist::update(pinned, frequent)
     }
+
+    fn run_elevated(args: &[String]) -> Result<u32, PlatformError> {
+        update::run_elevated(args)
+    }
 }
 
 const PIPE_NAME: &str = r"\\.\pipe\flit-indexd";
