@@ -98,8 +98,61 @@ fn times(node: &Node) -> [libc::timespec; 2] {
     [ts(node.atime), ts(node.mtime)]
 }
 
-fn keep_meta(fd: RawFd, node: &Node) {
+fn copied_xattr(name: &[u8], move_labels: bool) -> bool {
+    !name.is_empty() && (move_labels || name != b"security.selinux")
+}
+
+fn xattr_names(fd: RawFd) -> Vec<u8> {
+    for _ in 0..3 {
+        let n = unsafe { libc::flistxattr(fd, std::ptr::null_mut(), 0) };
+        if n <= 0 {
+            return Vec::new();
+        }
+        let mut buf = vec![0u8; n as usize];
+        let m = unsafe { libc::flistxattr(fd, buf.as_mut_ptr().cast(), buf.len()) };
+        if m >= 0 {
+            buf.truncate(m as usize);
+            return buf;
+        }
+        if io::Error::last_os_error().raw_os_error() != Some(libc::ERANGE) {
+            return Vec::new();
+        }
+    }
+    Vec::new()
+}
+
+fn xattr_value(fd: RawFd, name: &CStr) -> Option<Vec<u8>> {
+    for _ in 0..3 {
+        let n = unsafe { libc::fgetxattr(fd, name.as_ptr(), std::ptr::null_mut(), 0) };
+        if n < 0 {
+            return None;
+        }
+        let mut buf = vec![0u8; n as usize];
+        let m = unsafe { libc::fgetxattr(fd, name.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) };
+        if m >= 0 {
+            buf.truncate(m as usize);
+            return Some(buf);
+        }
+        if io::Error::last_os_error().raw_os_error() != Some(libc::ERANGE) {
+            return None;
+        }
+    }
+    None
+}
+
+fn keep_xattrs(from: RawFd, to: RawFd, move_labels: bool) {
+    let names = xattr_names(from);
+    for name in names.split(|&b| b == 0).filter(|n| copied_xattr(n, move_labels)) {
+        let Ok(name) = CString::new(name) else { continue };
+        if let Some(value) = xattr_value(from, &name) {
+            unsafe { libc::fsetxattr(to, name.as_ptr(), value.as_ptr().cast(), value.len(), 0) };
+        }
+    }
+}
+
+fn keep_meta(from: RawFd, fd: RawFd, node: &Node, mode: Mode) {
     let owned = unsafe { libc::fchown(fd, node.uid, node.gid) } == 0;
+    keep_xattrs(from, fd, mode != Mode::Copy);
     let mode = if owned { node.mode & 0o7777 } else { node.mode & 0o1777 };
     unsafe {
         libc::fchmod(fd, mode as libc::mode_t);
@@ -509,7 +562,8 @@ impl<'a> Engine<'a> {
         r
     }
 
-    fn copy_file(&self, sdir: RawFd, sname: &CStr, node: &Node, ddir: RawFd, dname: &CStr, replace: bool) -> io::Result<()> {
+    #[allow(clippy::too_many_arguments)]
+    fn copy_file(&self, sdir: RawFd, sname: &CStr, node: &Node, ddir: RawFd, dname: &CStr, replace: bool, mode: Mode) -> io::Result<()> {
         let src = open_at(sdir, sname, libc::O_RDONLY | libc::O_NONBLOCK, 0)?;
         let mut st: libc::stat = unsafe { std::mem::zeroed() };
         check(unsafe { libc::fstat(src.as_raw_fd(), &mut st) })?;
@@ -521,7 +575,7 @@ impl<'a> Engine<'a> {
             let dst = open_at(ddir, name, libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL, 0o600)?;
             let r = self.copy_data(src.as_raw_fd(), dst.as_raw_fd(), sparse(&st));
             if r.is_ok() {
-                keep_meta(dst.as_raw_fd(), node);
+                keep_meta(src.as_raw_fd(), dst.as_raw_fd(), node, mode);
             }
             drop(dst);
             if r.is_err() {
@@ -536,10 +590,11 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
-    fn create(&self, sdir: RawFd, sname: &CStr, node: &Node, ddir: RawFd, dname: &CStr, replace: bool) -> io::Result<()> {
+    #[allow(clippy::too_many_arguments)]
+    fn create(&self, sdir: RawFd, sname: &CStr, node: &Node, ddir: RawFd, dname: &CStr, replace: bool, mode: Mode) -> io::Result<()> {
         match node.kind() {
             libc::S_IFDIR => check(unsafe { libc::mkdirat(ddir, dname.as_ptr(), 0o700) }),
-            libc::S_IFREG => self.copy_file(sdir, sname, node, ddir, dname, replace),
+            libc::S_IFREG => self.copy_file(sdir, sname, node, ddir, dname, replace, mode),
             libc::S_IFLNK => {
                 let target = read_link(sdir, sname, node.size)?;
                 self.placed(ddir, dname, replace, |name| {
@@ -589,7 +644,7 @@ impl<'a> Engine<'a> {
             };
             let tried = match mode {
                 Mode::Move => rename_at(sdir, sname, ddir, &dname, replace),
-                _ => self.create(sdir, sname, node, ddir, &dname, replace),
+                _ => self.create(sdir, sname, node, ddir, &dname, replace, mode),
             };
             let Err(e) = tried else { break dname };
             if self.job.cancelled() {
@@ -698,7 +753,7 @@ impl<'a> Engine<'a> {
             }
         }
         if fresh && mode != Mode::Move {
-            keep_meta(dfd.as_raw_fd(), node);
+            keep_meta(sfd.as_raw_fd(), dfd.as_raw_fd(), node, mode);
         }
         (out, complete)
     }

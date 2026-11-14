@@ -142,6 +142,55 @@ fn files_that_are_all_hole_end_in_a_hole_or_have_none_copy_byte_for_byte() {
     assert!(dense_copy.blocks() * 512 >= 3 << 20);
 }
 
+fn set_xattr(p: &Path, name: &str, value: &[u8]) {
+    let (p, name) = (cstring(p.as_os_str().as_bytes()).unwrap(), CString::new(name).unwrap());
+    assert_eq!(unsafe { libc::setxattr(p.as_ptr(), name.as_ptr(), value.as_ptr().cast(), value.len(), 0) }, 0, "{}", io::Error::last_os_error());
+}
+
+fn xattrs(p: &Path) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let fd = std::fs::File::open(p).unwrap();
+    let names = xattr_names(fd.as_raw_fd());
+    let mut out: Vec<_> = names.split(|&b| b == 0).filter(|n| !n.is_empty()).map(|n| (n.to_vec(), xattr_value(fd.as_raw_fd(), &CString::new(n).unwrap()).unwrap())).collect();
+    out.sort();
+    out
+}
+
+fn acl(uid: u32) -> Vec<u8> {
+    let entry = |tag: u16, perm: u16, id: u32| [tag.to_le_bytes().as_slice(), &perm.to_le_bytes(), &id.to_le_bytes()].concat();
+    [2u32.to_le_bytes().to_vec(), entry(1, 6, u32::MAX), entry(2, 4, uid), entry(4, 4, u32::MAX), entry(0x10, 4, u32::MAX), entry(0x20, 0, u32::MAX)].concat()
+}
+
+#[test]
+fn copies_keep_extended_attributes_and_access_lists_of_files_and_folders() {
+    let t = Temp::new("ops-xattr");
+    let src = t.path().join("src");
+    let file = src.join("a.txt");
+    write(&file, "hello");
+    set_xattr(&file, "user.xdg.comment", b"keep me");
+    set_xattr(&file, "system.posix_acl_access", &acl(12345));
+    set_xattr(&src, "user.xdg.tags", b"red");
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o640)).unwrap();
+    let before = xattrs(&file);
+    let copy = copied(&t, &src);
+    assert_eq!(xattrs(&copy.join("a.txt")), before);
+    assert_eq!(xattrs(&copy), [(b"user.xdg.tags".to_vec(), b"red".to_vec())]);
+    assert_eq!(std::fs::metadata(copy.join("a.txt")).unwrap().mode() & 0o777, 0o640);
+    assert_eq!(xattrs(&file), before);
+}
+
+#[test]
+fn plain_files_gain_no_attributes_and_selinux_labels_follow_moves_only() {
+    let t = Temp::new("ops-noxattr");
+    let file = t.file("plain.txt", 4);
+    let copy = copied(&t, &file);
+    assert!(xattrs(&copy).iter().all(|(n, _)| !n.starts_with(b"user.")), "{:?}", xattrs(&copy));
+    assert!(copied_xattr(b"security.selinux", true));
+    assert!(!copied_xattr(b"security.selinux", false));
+    assert!(copied_xattr(b"user.xdg.tags", false));
+    assert!(copied_xattr(b"system.posix_acl_default", false));
+    assert!(!copied_xattr(b"", true));
+}
+
 #[test]
 fn conflicts_keep_both_replace_skip_and_merge() {
     let t = Temp::new("ops-conflict");
@@ -324,11 +373,11 @@ fn cancelling_removes_the_partial_copy() {
     let e = Engine::new(&job);
     let src = top(&fp(&big)).unwrap();
     let into = open_dir(&dst).unwrap();
-    let r = e.copy_file(src.dir.as_raw_fd(), &src.name, &src.node, into.as_raw_fd(), c"big", false);
+    let r = e.copy_file(src.dir.as_raw_fd(), &src.name, &src.node, into.as_raw_fd(), c"big", false, Mode::Copy);
     assert_eq!(r.unwrap_err().raw_os_error(), Some(libc::ECANCELED));
     assert!(listing(&dst).is_empty(), "the half-written file is removed");
     write(&dst.join("big"), "old");
-    assert!(e.copy_file(src.dir.as_raw_fd(), &src.name, &src.node, into.as_raw_fd(), c"big", true).is_err());
+    assert!(e.copy_file(src.dir.as_raw_fd(), &src.name, &src.node, into.as_raw_fd(), c"big", true, Mode::Copy).is_err());
     assert_eq!(listing(&dst), [b"big".to_vec()]);
     assert_eq!(read(&dst.join("big")), "old");
 }
