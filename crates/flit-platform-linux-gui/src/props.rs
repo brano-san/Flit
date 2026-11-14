@@ -85,6 +85,65 @@ pub fn access(items: &[FsPath]) -> (Vec<Option<Access>>, Accounts) {
     (found, accounts)
 }
 
+const ACL_ACCESS: &str = "system.posix_acl_access";
+const ACL_DEFAULT: &str = "system.posix_acl_default";
+const SELINUX: &str = "security.selinux";
+
+pub fn acl_text(blob: &[u8], name: impl Fn(u32, bool) -> String) -> Option<(String, bool)> {
+    let entries = blob.strip_prefix(&2u32.to_le_bytes()[..])?;
+    if entries.is_empty() || !entries.len().is_multiple_of(8) {
+        return None;
+    }
+    let bits = |p: u16| [(4, 'r'), (2, 'w'), (1, 'x')].iter().map(|&(b, c)| if p & b != 0 { c } else { '-' }).collect::<String>();
+    let mut named = false;
+    let mut out = Vec::new();
+    for e in entries.chunks_exact(8) {
+        let (tag, perm, id) = (u16::from_le_bytes([e[0], e[1]]), u16::from_le_bytes([e[2], e[3]]), u32::from_le_bytes([e[4], e[5], e[6], e[7]]));
+        let who = match tag {
+            0x01 => "user:".to_owned(),
+            0x02 => format!("user:{}", name(id, true)),
+            0x04 => "group:".to_owned(),
+            0x08 => format!("group:{}", name(id, false)),
+            0x10 => "mask:".to_owned(),
+            0x20 => "other:".to_owned(),
+            _ => return None,
+        };
+        named |= matches!(tag, 0x02 | 0x08);
+        out.push(format!("{who}:{}", bits(perm)));
+    }
+    Some((out.join(", "), named))
+}
+
+pub fn link_row(path: &Path) -> Option<(String, String)> {
+    let target = std::fs::read_link(path).ok()?;
+    let shown = target.display().to_string();
+    let text = if std::fs::metadata(path).is_ok() { shown } else { flit_core::tr!(S::PropertiesLinkMissing, target = shown) };
+    Some((S::PropertiesLinkTarget.t().to_owned(), text))
+}
+
+pub fn extended_rows(path: &Path) -> Vec<(String, String)> {
+    let names = flit_platform_linux::xattr_names(path);
+    let has = |n: &str| names.iter().any(|x| x == n);
+    let read = |n: &str| has(n).then(|| flit_platform_linux::xattr(path, n)).flatten();
+    let who = |id: u32, user: bool| lookup(id, user).unwrap_or_else(|| id.to_string());
+    let mut rows = Vec::new();
+    if let Some((text, true)) = read(ACL_ACCESS).and_then(|b| acl_text(&b, who)) {
+        rows.push((S::PropertiesAcl.t().to_owned(), text));
+    }
+    if let Some((text, _)) = read(ACL_DEFAULT).and_then(|b| acl_text(&b, who)) {
+        rows.push((S::PropertiesDefaultAcl.t().to_owned(), text));
+    }
+    if let Some(label) = read(SELINUX) {
+        let label = label.strip_suffix(b"\0").unwrap_or(&label);
+        rows.push((S::PropertiesSelinux.t().to_owned(), String::from_utf8_lossy(label).into_owned()));
+    }
+    let other: Vec<&str> = names.iter().map(String::as_str).filter(|n| ![ACL_ACCESS, ACL_DEFAULT, SELINUX].contains(n)).collect();
+    if !other.is_empty() {
+        rows.push((S::PropertiesXattrs.t().to_owned(), other.join(", ")));
+    }
+    rows
+}
+
 fn date(t: SystemTime, offset: i32) -> Option<String> {
     let d = t.duration_since(UNIX_EPOCH).ok()?;
     let ticks = d.as_secs() as i64 * 10_000_000 + (d.subsec_nanos() / 100) as i64 + 116_444_736_000_000_000;
@@ -107,7 +166,16 @@ pub fn properties(path: &Path) -> Vec<PropGroup> {
     let changed = UNIX_EPOCH + std::time::Duration::new(m.ctime().max(0) as u64, m.ctime_nsec().clamp(0, 999_999_999) as u32);
     let dates = [(S::PropertiesCreated, m.created().ok()), (S::PropertiesAccessed, m.accessed().ok()), (S::PropertiesChanged, Some(changed))];
     let rows = dates.into_iter().filter_map(|(label, t)| Some((label.t().to_owned(), date(t?, offset)?))).collect();
-    vec![access, PropGroup { title: S::PropertiesDates.t().to_owned(), rows }]
+    let mut groups = Vec::new();
+    if let Some(row) = m.file_type().is_symlink().then(|| link_row(path)).flatten() {
+        groups.push(PropGroup { title: S::PropertiesLink.t().to_owned(), rows: vec![row] });
+    }
+    groups.extend([access, PropGroup { title: S::PropertiesDates.t().to_owned(), rows }]);
+    let extended = extended_rows(path);
+    if !extended.is_empty() {
+        groups.push(PropGroup { title: S::PropertiesSecurity.t().to_owned(), rows: extended });
+    }
+    groups
 }
 
 #[cfg(test)]
