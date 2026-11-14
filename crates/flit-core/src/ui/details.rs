@@ -214,6 +214,21 @@ impl Columns {
         }
     }
 
+    pub fn place(&mut self, c: Column, kinds: &[Column], slot: usize) {
+        let shown: Vec<Column> = self.ordered(kinds).into_iter().filter(|&x| self.shown(x)).collect();
+        let Some(from) = shown.iter().position(|&x| x == c).filter(|_| c != Column::Name) else { return };
+        let mut seq = shown.clone();
+        seq.remove(from);
+        let to = if slot > from { slot - 1 } else { slot };
+        seq.insert(to.clamp(1, seq.len()), c);
+        let ids: Vec<u8> = seq.iter().map(|&x| x as u8).filter(|id| self.order.contains(id)).collect();
+        let mut at: Vec<usize> = ids.iter().filter_map(|id| self.order.iter().position(|o| o == id)).collect();
+        at.sort_unstable();
+        for (k, id) in at.into_iter().zip(ids) {
+            self.order[k] = id;
+        }
+    }
+
     pub fn is_default(&self) -> bool {
         let d = Self::default();
         self.hidden == d.hidden && self.extra == d.extra && self.order == d.order && self.widths == d.widths && self.extra_widths == d.extra_widths
@@ -549,6 +564,7 @@ pub(super) struct Details {
     pub middle_on_empty: bool,
     pub elided: Vec<usize>,
     pub pane_elided: Vec<(usize, usize)>,
+    head_press: Option<(Column, f32, f32)>,
 }
 
 impl Column {
@@ -917,6 +933,66 @@ impl App {
             let hot = matches!(self.hover, Hit::HThumb | Hit::HTrack) || matches!(self.drag, Drag::HThumb { .. });
             g.dl.round_rect(r, if hot { th.scrollbar_hover } else { th.scrollbar }, r.h / 2.0);
         }
+    }
+
+    pub(super) fn press_header(&mut self, i: usize, x: f32) {
+        self.details.head_press = self.layout.columns.get(i).filter(|&&c| c != Column::Name).map(|&c| (c, x, x - self.layout.cols[i].x));
+    }
+
+    pub(super) fn move_header(&mut self, x: f32) -> bool {
+        if let Drag::ColMove { col, grab, .. } = self.drag {
+            self.drag = Drag::ColMove { col, x, grab };
+            self.dirty = true;
+            return true;
+        }
+        let Some((col, x0, grab)) = self.details.head_press else { return false };
+        if self.drag != Drag::None || (x - x0).abs() < self.s(6.0) {
+            return false;
+        }
+        self.details.head_press = None;
+        self.drag = Drag::ColMove { col, x, grab };
+        self.tip_hide();
+        self.dirty = true;
+        true
+    }
+
+    pub(super) fn release_header(&mut self) {
+        self.details.head_press = None;
+    }
+
+    fn shown_cols(&self) -> Vec<Rect> {
+        let cols = self.tab().columns;
+        self.layout.columns.iter().zip(&self.layout.cols).filter(|(&c, _)| cols.shown(c)).map(|(_, &r)| r).collect()
+    }
+
+    pub(super) fn column_slot(&self, x: f32) -> (usize, f32) {
+        let shown = self.shown_cols();
+        let slot = shown.iter().take_while(|r| r.x + r.w / 2.0 < x).count().max(1);
+        let edge = shown.get(slot).map_or_else(|| shown.last().map_or(x, |r| r.right()), |r| r.x);
+        (slot, edge)
+    }
+
+    pub(super) fn drop_column(&mut self, col: Column, x: f32) {
+        let (slot, _) = self.column_slot(x);
+        let kinds = self.column_kinds();
+        self.change_view(|t| t.columns.place(col, kinds, slot));
+    }
+
+    pub(super) fn draw_column_move<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme) {
+        let Drag::ColMove { col, x, grab } = self.drag else { return };
+        let Some(k) = self.layout.columns.iter().position(|&c| c == col) else { return };
+        let (h, r) = (self.layout.header, self.layout.cols[k]);
+        let (_, edge) = self.column_slot(x);
+        g.dl.rect(self.header_clip(r), th.button_hover);
+        let ghost = Rect::new((x - grab).round(), h.y, r.w, h.h);
+        g.dl.set_clip(Some(self.header_clip(ghost)));
+        g.dl.rect(ghost, th.selection.alpha(0x60));
+        let font = self.content_font(12.0);
+        let m = g.metrics(font);
+        g.text(ghost.x + self.cs(10.0), (h.y + (h.h + m.ascent - m.descent) / 2.0).round(), col.title(), font, th.text, (ghost.w - self.cs(20.0)).max(0.0));
+        g.dl.set_clip(None);
+        let bar = self.cs(2.0).max(2.0);
+        g.dl.rect(Rect::new((edge - bar / 2.0).round(), h.y, bar, h.h), th.accent);
     }
 
     pub(super) fn request_fit(&mut self) {

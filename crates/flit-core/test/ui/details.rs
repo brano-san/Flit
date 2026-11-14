@@ -1281,3 +1281,76 @@ fn a_group_header_click_focuses_files_of_that_group_whatever_order_they_arrived_
     assert_eq!(v.selected_count(), 1, "a plain click on another header replaces the selection");
     assert_eq!(named(&app, v.focus).as_deref(), Some("kiwi.txt"));
 }
+
+fn drag_header(app: &mut App, from: f32, to: f32, button: MouseButton) {
+    let y = header_y(app);
+    app.on_event(&Event::MouseDown { x: from, y, button, clicks: 1 }, Instant::now());
+    for k in 1..=4 {
+        app.on_event(&Event::MouseMove { x: from + (to - from) * k as f32 / 4.0, y }, Instant::now());
+    }
+    app.on_event(&Event::MouseUp { x: to, y, button }, Instant::now());
+    frame(app);
+}
+
+#[test]
+fn dragging_a_column_header_moves_the_column() {
+    let mut app = app_at(r"C:\x");
+    app.animations = false;
+    deliver(&mut app, &[("a.txt", 10, false)]);
+    let order = app.columns();
+    assert_eq!(order, [Column::Name, Column::Type, Column::Modified, Column::Folders, Column::Files, Column::Size]);
+    let sort = app.tab().view_spec.sort;
+    let (size, ty) = (col_rect(&app, Column::Size), col_rect(&app, Column::Type));
+    drag_header(&mut app, size.x + size.w / 2.0, ty.x + 5.0, MouseButton::Left);
+    assert_eq!(app.columns(), [Column::Name, Column::Size, Column::Type, Column::Modified, Column::Folders, Column::Files], "Size lands before Type");
+    assert_eq!(app.tab().view_spec.sort, sort, "a drag does not sort");
+    assert_eq!(app.drag, Drag::None);
+    let ty = col_rect(&app, Column::Type);
+    let x0 = app.layout.cols[0].x + 5.0;
+    drag_header(&mut app, ty.x + 20.0, x0, MouseButton::Left);
+    assert_eq!(app.columns()[..3], [Column::Name, Column::Type, Column::Size], "nothing goes before Name");
+    let last = *app.layout.cols.last().unwrap();
+    let ty = col_rect(&app, Column::Type);
+    drag_header(&mut app, ty.x + 20.0, last.right() - 2.0, MouseButton::Left);
+    assert_eq!(*app.columns().last().unwrap(), Column::Type, "past the middle of the last column it becomes last");
+}
+
+#[test]
+fn a_header_click_or_a_small_wobble_still_sorts_and_name_stays_first() {
+    let mut app = app_at(r"C:\x");
+    app.animations = false;
+    deliver(&mut app, &[("a.txt", 10, false)]);
+    let order = app.columns();
+    let size = col_rect(&app, Column::Size);
+    drag_header(&mut app, size.x + 30.0, size.x + 33.0, MouseButton::Left);
+    assert_eq!(app.columns(), order);
+    assert_eq!(app.tab().view_spec.sort.field, SortField::Size, "a click with a tiny wobble sorts");
+    let name = app.layout.cols[0];
+    drag_header(&mut app, name.x + 60.0, size.x + 30.0, MouseButton::Left);
+    assert_eq!(app.columns(), order, "Name cannot be dragged");
+    let ty = col_rect(&app, Column::Type);
+    drag_header(&mut app, ty.x + 20.0, size.right() - 2.0, MouseButton::Right);
+    assert_eq!(app.columns(), order, "a right-button drag moves nothing");
+    menu_of(&mut app);
+}
+
+#[test]
+fn placing_a_column_keeps_hidden_columns_and_name_where_they_were() {
+    let kinds = [Column::Name, Column::Type, Column::Modified, Column::Size, Column::Created];
+    let mut c = Columns::default();
+    let shown = |c: &Columns| c.ordered(&kinds).into_iter().filter(|&x| c.shown(x)).collect::<Vec<_>>();
+    assert_eq!(shown(&c), [Column::Name, Column::Type, Column::Modified, Column::Size]);
+    c.place(Column::Size, &kinds, 1);
+    assert_eq!(shown(&c), [Column::Name, Column::Size, Column::Type, Column::Modified]);
+    c.toggle(Column::Created);
+    assert_eq!(shown(&c), [Column::Name, Column::Size, Column::Type, Column::Modified, Column::Created], "a hidden column comes back where it was");
+    c.place(Column::Name, &kinds, 3);
+    c.place(Column::Type, &kinds, 0);
+    assert_eq!(shown(&c)[..2], [Column::Name, Column::Type], "Name stays first");
+    c.place(Column::Modified, &kinds, 99);
+    assert_eq!(*shown(&c).last().unwrap(), Column::Modified);
+    let before = c;
+    c.place(Column::GitStatus, &kinds, 1);
+    assert_eq!(c, before, "a column that is not shown is not placed");
+    assert_eq!(c.sanitized().order, c.order, "the order stays a valid permutation");
+}

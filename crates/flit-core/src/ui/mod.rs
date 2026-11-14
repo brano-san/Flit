@@ -535,6 +535,7 @@ enum Drag {
     None,
     Thumb { grab: f32 },
     HThumb { grab: f32 },
+    ColMove { col: Column, x: f32, grab: f32 },
     ColSep { col: Column, start_x: f32, start: details::Columns, moved: bool },
     Splitter { start_x: f32, start_w: f32 },
     PinMove { from: usize, to: usize },
@@ -1715,6 +1716,7 @@ impl App {
                 self.focused_at = f.then_some(now);
                 self.ops_timer_cancel();
                 self.end_autoscroll();
+                self.release_header();
                 self.dirty = true;
             }
             Event::MouseMove { x, y } => self.mouse_move(*x, *y, now),
@@ -1821,6 +1823,10 @@ impl App {
             }
             Drag::ColSep { .. } => return self.drag_column_edge(x),
             Drag::HThumb { grab } => return self.drag_hthumb(x, grab),
+            Drag::ColMove { .. } => {
+                self.move_header(x);
+                return;
+            }
             Drag::Splitter { start_x, start_w } => return self.drag_splitter(x, start_x, start_w),
             Drag::PinMove { from, .. } => return self.drag_pin(from, y),
             Drag::PlaceMove { from, .. } => {
@@ -1838,7 +1844,7 @@ impl App {
             Drag::MenuMove { from, .. } => return self.drag_menu_row(from, y),
             Drag::Marquee | Drag::None => {}
         }
-        if self.start_pin_drag(y) {
+        if self.start_pin_drag(y) || self.move_header(x) {
             return;
         }
         let h = self.hit(x, y);
@@ -1972,6 +1978,7 @@ impl App {
                 self.column_command(menu::ColumnCmd::Fit(self.layout.columns[i]));
             }
             Hit::ColSep(i) if button == MouseButton::Left => self.press_column_edge(i, x),
+            Hit::Header(i) if button == MouseButton::Left => self.press_header(i, x),
             Hit::PanelSep(k) if button == MouseButton::Left => self.press_sep(k, x, y, clicks),
             _ => {}
         }
@@ -1993,6 +2000,10 @@ impl App {
         let was = std::mem::replace(&mut self.drag, Drag::None);
         let pressed = std::mem::replace(&mut self.pressed, Hit::None);
         self.dirty = true;
+        self.release_header();
+        if let Drag::ColMove { col, x, .. } = was {
+            return self.drop_column(col, x);
+        }
         if let Drag::PinMove { from, to } = was {
             return self.drop_pin(from, to);
         }
@@ -2774,6 +2785,7 @@ impl App {
             g.text(x, baseline, col.title(), font, if sorted { t.text } else { t.text_dim }, room.max(0.0));
             g.dl.set_clip(None);
         }
+        self.draw_column_move(g, t);
     }
 
     fn draw_list<B: TextBackend>(&mut self, g: &mut Gfx<B>, arena: &Bump, t: &Theme) {
