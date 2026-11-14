@@ -32,6 +32,12 @@ switch = "Cambiado a {branch}"
 not_repo = "Esta carpeta no está en un repositorio Git"
 no_web = "El repositorio no tiene un remoto web"
 failed = "Git: {error}"
+missing = "Git no está instalado"
+install_windows = "Git no está instalado. Instala Git for Windows desde git-scm.com y vuelve a intentarlo"
+install_linux = "Git no está instalado. Instala el paquete git con el gestor de software del sistema y vuelve a intentarlo"
+auth_title = "Iniciar sesión en el servidor Git"
+auth_text = "Git necesita un nombre de usuario, una contraseña o una clave para ejecutar {command}. Ejecútalo en una terminal, donde Git podrá pedirlos."
+auth_open = "Abrir terminal"
 
 [clone]
 title = "Clonar repositorio"

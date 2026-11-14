@@ -136,3 +136,49 @@ fn operations_need_a_repository_except_init_and_clone() {
     app.on_git(GitEvent::Done { tab, op: GitOp::OpenRemote, error: None, url: Some("https://github.com/o/r".into()) });
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Launch { launch: crate::provider::Launch::Run { program, .. }, .. }, .. } if program == "https://github.com/o/r")));
 }
+
+fn terminals(app: &mut App) -> Vec<Vec<FsPath>> {
+    app.drain_effects().filter_map(|e| if let Effect::Provider { req: ProviderRequest::Launch { launch: crate::provider::Launch::Terminal { dirs, .. }, .. }, .. } = e { Some(dirs) } else { None }).collect()
+}
+
+#[test]
+fn a_sign_in_failure_offers_a_terminal_in_the_repository() {
+    let (mut app, _) = app_in(r"C:\x\sub", &["a.txt"]);
+    let mut status = repo(&app);
+    if let GitEvent::Status { info: Some(i), .. } = &mut status {
+        Arc::make_mut(i).root = FsPath::parse(r"C:\x");
+    }
+    app.on_git(status);
+    let tab = app.tab().id;
+    let auth = "fatal: could not read Username for 'https://github.com': terminal prompts disabled";
+    app.on_git(GitEvent::Done { tab, op: GitOp::Push, error: Some(auth.into()), url: None });
+    let form = app.jobs.form.as_ref().expect("a sign-in failure asks what to do");
+    assert!(matches!(&form.kind, Kind::GitAuth { dir } if *dir == FsPath::parse(r"C:\x").unwrap()));
+    app.drain_effects().for_each(drop);
+    app.form_submit(0);
+    assert_eq!(terminals(&mut app), [vec![FsPath::parse(r"C:\x").unwrap()]], "the terminal opens at the repository root");
+    assert!(app.jobs.form.is_none());
+    app.on_git(GitEvent::Done { tab, op: GitOp::Pull, error: Some("git@github.com: Permission denied (publickey).".into()), url: None });
+    assert!(app.jobs.form.is_some());
+    app.form_submit(1);
+    assert!(terminals(&mut app).is_empty(), "Cancel opens nothing");
+}
+
+#[test]
+fn a_missing_git_says_how_to_install_it_and_other_failures_stay_as_they_were() {
+    let (mut app, _) = app_in(r"C:\x", &[]);
+    let tab = app.tab().id;
+    app.on_git(GitEvent::Done { tab, op: GitOp::Init, error: Some(S::GitErrorMissing.en().into()), url: None });
+    assert_eq!(app.tab().error.as_deref(), Some(S::GitErrorInstallWindows.t()));
+    app.caps.unix_paths = true;
+    app.on_git(GitEvent::Done { tab, op: GitOp::Fetch, error: Some(S::GitErrorMissing.en().into()), url: None });
+    assert_eq!(app.tab().error.as_deref(), Some(S::GitErrorInstallLinux.t()));
+    app.on_git(GitEvent::Done { tab, op: GitOp::Switch("dev".into()), error: Some("fatal: Authentication failed".into()), url: None });
+    assert!(app.jobs.form.is_none(), "a switch never talks to a server, so there is nothing to sign in to");
+    assert_eq!(app.tab().error.as_deref(), Some("Git: fatal: Authentication failed"));
+    app.on_git(GitEvent::Done { tab, op: GitOp::Push, error: Some("error: failed to push some refs".into()), url: None });
+    assert!(app.jobs.form.is_none());
+    assert_eq!(crate::git::failure("remote: Invalid username or password."), crate::git::Failure::Auth);
+    assert_eq!(crate::git::failure("fatal: not a git repository"), crate::git::Failure::Other);
+    assert_eq!(crate::git::op_command(&GitOp::Clone { url: "https://h/r.git".into() }).as_deref(), Some("git clone https://h/r.git"));
+}

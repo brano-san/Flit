@@ -32,6 +32,12 @@ switch = "已切换到 {branch}"
 not_repo = "此文件夹不在 Git 仓库中"
 no_web = "该仓库没有网页远程地址"
 failed = "Git：{error}"
+missing = "未安装 Git"
+install_windows = "未安装 Git。请从 git-scm.com 安装 Git for Windows，然后重试"
+install_linux = "未安装 Git。请用系统的软件管理器安装 git 软件包，然后重试"
+auth_title = "登录 Git 服务器"
+auth_text = "运行 {command} 时 Git 需要用户名、密码或密钥。请在终端中运行它，Git 会在那里询问。"
+auth_open = "打开终端"
 
 [clone]
 title = "克隆仓库"

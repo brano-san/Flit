@@ -55,7 +55,7 @@ pub fn command(dir: &Path) -> Command {
 }
 
 fn output(dir: &Path, args: &[&str]) -> Result<Output, String> {
-    let out = command(dir).args(args).stdout(Stdio::piped()).stderr(Stdio::piped()).output().map_err(|e| e.to_string())?;
+    let out = command(dir).args(args).stdout(Stdio::piped()).stderr(Stdio::piped()).output().map_err(|e| spawn_error(&e))?;
     if out.status.success() {
         return Ok(out);
     }
@@ -63,6 +63,10 @@ fn output(dir: &Path, args: &[&str]) -> Result<Output, String> {
     let mut lines = err.lines().map(str::trim).filter(|l| !l.is_empty());
     let first_error = lines.clone().find(|l| l.starts_with("fatal:") || l.starts_with("error:"));
     Err(first_error.or_else(|| lines.next_back()).unwrap_or("git failed").to_owned())
+}
+
+fn spawn_error(e: &std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::NotFound { S::GitErrorMissing.en().to_owned() } else { e.to_string() }
 }
 
 pub fn discover(dir: &Path) -> Option<(PathBuf, PathBuf)> {

@@ -123,7 +123,7 @@ impl App {
             GitEvent::Done { tab, op, error, url } => {
                 let here = self.tab().id == tab;
                 match (error, url) {
-                    (Some(e), _) if here => self.status(crate::tr!(S::GitErrorFailed, error = e)),
+                    (Some(e), _) if here => self.git_failed(tab, &op, &e),
                     (None, Some(url)) => self.launch(Launch::Run { program: url, args: String::new(), dir: None }),
                     (None, None) if here => self.status(done_text(&op)),
                     _ => {}
@@ -214,6 +214,32 @@ fn started_text(op: &GitOp) -> String {
         GitOp::Clone { url } => crate::tr!(S::GitOpCloning, url = url),
         GitOp::Switch(b) => crate::tr!(S::GitOpSwitching, branch = b),
         GitOp::OpenRemote => String::new(),
+    }
+}
+
+impl App {
+    fn git_failed(&mut self, tab: TabId, op: &GitOp, e: &str) {
+        match crate::git::failure(e) {
+            crate::git::Failure::Missing => self.status(if self.caps.unix_paths { S::GitErrorInstallLinux } else { S::GitErrorInstallWindows }.t()),
+            crate::git::Failure::Auth if self.jobs.form.is_none() => {
+                let (Some(command), Some(dir)) = (crate::git::op_command(op), self.git_dir_of(tab)) else { return self.status(crate::tr!(S::GitErrorFailed, error = e)) };
+                let controls = vec![Control::line(&crate::tr!(S::GitErrorAuthText, command = command)), Control::line(e)];
+                self.open_form(Form::new(Kind::GitAuth { dir }, S::GitErrorAuthTitle.t(), controls, vec![S::GitErrorAuthOpen.t(), S::WidgetsCancel.t()]));
+            }
+            _ => self.status(crate::tr!(S::GitErrorFailed, error = e)),
+        }
+    }
+
+    fn git_dir_of(&self, tab: TabId) -> Option<FsPath> {
+        let t = self.tabs.iter().find(|t| t.id == tab)?;
+        t.git.as_ref().and_then(|g| g.root.clone()).or_else(|| t.view_loc.to_windows())
+    }
+
+    pub(super) fn submit_git_auth(&mut self, f: Form, b: usize) -> Option<Form> {
+        if let (Kind::GitAuth { dir }, 0) = (f.kind, b) {
+            self.launch(Launch::Terminal { dirs: vec![dir], admin: false });
+        }
+        None
     }
 }
 

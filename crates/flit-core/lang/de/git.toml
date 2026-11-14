@@ -32,6 +32,12 @@ switch = "Zu {branch} gewechselt"
 not_repo = "Dieser Ordner liegt in keinem Git-Repository"
 no_web = "Das Repository hat keinen Web-Remote"
 failed = "Git: {error}"
+missing = "Git ist nicht installiert"
+install_windows = "Git ist nicht installiert. Installieren Sie Git for Windows von git-scm.com und versuchen Sie es erneut"
+install_linux = "Git ist nicht installiert. Installieren Sie das Paket git über die Softwareverwaltung Ihres Systems und versuchen Sie es erneut"
+auth_title = "Beim Git-Server anmelden"
+auth_text = "Git benötigt für {command} einen Benutzernamen, ein Passwort oder einen Schlüssel. Führen Sie den Befehl in einem Terminal aus, dort kann Git danach fragen."
+auth_open = "Terminal öffnen"
 
 [clone]
 title = "Repository klonen"

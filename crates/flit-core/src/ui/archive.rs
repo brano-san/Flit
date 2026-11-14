@@ -68,6 +68,7 @@ pub(super) enum Kind {
     Update(super::update::Updating),
     AllowRun { tab: crate::provider::TabId, path: FsPath },
     RunScript { tab: crate::provider::TabId, path: FsPath },
+    GitAuth { dir: FsPath },
 }
 
 impl Kind {
@@ -75,6 +76,7 @@ impl Kind {
         match self {
             Kind::AllowRun { .. } => "allow_run",
             Kind::RunScript { .. } => "run_script",
+            Kind::GitAuth { .. } => "git_auth",
             Kind::Compress { .. } => "compress",
             Kind::Extract { .. } => "extract",
             Kind::Password { .. } => "password",
@@ -727,6 +729,7 @@ impl App {
             Kind::Properties(_) => self.submit_properties(f),
             Kind::AllowRun { .. } => self.submit_allow_run(f, b),
             Kind::RunScript { .. } => self.submit_run_script(f, b),
+            Kind::GitAuth { .. } => self.submit_git_auth(f, b),
             Kind::GitClone => self.submit_clone(f),
             Kind::UserMenu { .. } => self.submit_user_entry(f),
             Kind::Update(_) => self.submit_update(f, b),

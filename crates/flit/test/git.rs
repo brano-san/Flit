@@ -123,3 +123,11 @@ fn bench_status_of_a_large_folder() {
     let miss_us = t.elapsed().as_secs_f64() * 1e6;
     eprintln!("{}: {} statuses in {status_ms:.1} ms; {} last commits in {cold_ms:.1} ms cold, {warm_ms:.1} ms cached; outside a repository {miss_us:.0} us", dir.display(), plain.status.len(), full.commits.len());
 }
+
+#[test]
+fn a_git_that_cannot_be_started_is_reported_as_missing() {
+    assert_eq!(spawn_error(&std::io::Error::from(std::io::ErrorKind::NotFound)), S::GitErrorMissing.en());
+    assert_eq!(flit_core::git::failure(&spawn_error(&std::io::Error::from(std::io::ErrorKind::NotFound))), flit_core::git::Failure::Missing);
+    let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+    assert_eq!(spawn_error(&denied), denied.to_string(), "other start failures keep their own reason");
+}

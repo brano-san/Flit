@@ -207,6 +207,33 @@ pub fn web_url(remote: &str) -> Option<String> {
     (!host.is_empty() && !path.is_empty()).then(|| format!("https://{host}/{path}"))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Failure {
+    Missing,
+    Auth,
+    Other,
+}
+
+const AUTH_SIGNS: [&str; 7] = ["could not read username", "could not read password", "terminal prompts disabled", "authentication failed", "permission denied (publickey", "host key verification failed", "invalid username or password"];
+
+pub fn failure(error: &str) -> Failure {
+    if error == crate::i18n::S::GitErrorMissing.en() {
+        return Failure::Missing;
+    }
+    let lower = error.to_ascii_lowercase();
+    if AUTH_SIGNS.iter().any(|s| lower.contains(s)) { Failure::Auth } else { Failure::Other }
+}
+
+pub fn op_command(op: &GitOp) -> Option<String> {
+    Some(match op {
+        GitOp::Fetch => "git fetch".to_owned(),
+        GitOp::Pull => "git pull".to_owned(),
+        GitOp::Push => "git push".to_owned(),
+        GitOp::Clone { url } => format!("git clone {url}"),
+        GitOp::Init | GitOp::Switch(_) | GitOp::OpenRemote => return None,
+    })
+}
+
 pub fn repo_name(url: &str) -> Option<String> {
     let u = url.trim().trim_end_matches('/');
     let u = u.strip_suffix(".git").unwrap_or(u);
