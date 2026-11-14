@@ -68,7 +68,8 @@ const G_SEARCH: &str = "\u{E721}";
 const G_SHIFT_UP: &str = "\u{E70E}";
 const G_RESTORE_ORDER: &str = "\u{E777}";
 const G_PATHS: &str = "\u{E8FD}";
-const G_CLOUD: &str = "\u{E753}";
+#[cfg(windows)] const G_CLOUD: &str = "\u{E753}";
+#[cfg(not(windows))] const G_CLOUD: &str = G_FOLDER;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum KnownFolder {
