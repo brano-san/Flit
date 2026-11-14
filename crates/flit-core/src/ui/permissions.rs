@@ -103,15 +103,22 @@ impl Editing {
         self.owner_at() + 1
     }
 
-    fn enclosed_at(&self) -> Option<usize> {
+    fn enclosed_files_at(&self) -> Option<usize> {
         self.enclosed.then_some(self.group_at() + 1)
+    }
+
+    fn enclosed_folders_at(&self) -> Option<usize> {
+        self.enclosed_files_at().map(|at| at + 4)
     }
 
     fn edit(&self, controls: &[Control]) -> Result<Option<AccessEdit>, String> {
         let mode = ModeEdit::between(self.shown, bits(controls, self.at));
         let owner = account(text(controls, self.owner_at()), &self.owner, &self.accounts.users, S::PermissionsNoUser)?;
         let group = account(text(controls, self.group_at()), &self.group, &self.accounts.groups, S::PermissionsNoGroup)?;
-        let enclosed = checked(controls, self.enclosed_at()).then_some(Enclosed { files: mode.only(READ_WRITE), folders: mode });
+        let enclosed = self.enclosed_files_at().map(|files_at| Enclosed {
+            files: ModeEdit::between(self.shown & READ_WRITE, bits(controls, files_at)),
+            folders: ModeEdit::between(self.shown, bits(controls, self.enclosed_folders_at().unwrap_or_default())),
+        });
         let edit = AccessEdit { mode, owner, group, enclosed };
         Ok((!edit.is_empty()).then_some(edit))
     }
@@ -139,7 +146,14 @@ pub(super) fn section(before: &[Access], accounts: Accounts, items: Vec<FsPath>,
     controls.push(Control::text(S::PropertiesOwner.t(), &owner, S::PermissionsMixed.t()));
     controls.push(Control::text(S::PropertiesGroup.t(), &group, S::PermissionsMixed.t()));
     if enclosed {
-        controls.push(Control::check(S::PermissionsEnclosed.t(), false));
+        controls.push(Control::line(S::PermissionsEnclosedFiles.t()));
+        for class in 0..3 {
+            controls.push(Control::flags(CLASSES[class].t(), FILE_BITS.iter().enumerate().map(|(which, l)| (l.t().to_owned(), shown & READ_WRITE & bit(class, which) != 0)).collect()));
+        }
+        controls.push(Control::line(S::PermissionsEnclosedFolders.t()));
+        for class in 0..3 {
+            controls.push(Control::flags(CLASSES[class].t(), FOLDER_BITS.iter().enumerate().map(|(which, l)| (l.t().to_owned(), shown & bit(class, which) != 0)).collect()));
+        }
     }
     Some((controls, Editing { items, accounts, at, exec, enclosed, shown, owner, group }))
 }
