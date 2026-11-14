@@ -29,6 +29,7 @@ pub struct Wl {
     queue: EventQueue<State>,
     state: State,
     manager: Option<WlDataDeviceManager>,
+    devices: Vec<WlDataDevice>,
     activation: Option<XdgActivationV1>,
 }
 
@@ -45,8 +46,9 @@ impl Wl {
         let mut state = State::default();
         let seats = globals.contents().with_list(|list| list.iter().filter(|g| g.interface == WlSeat::interface().name).map(|g| (g.name, g.version.min(5))).collect::<Vec<_>>());
         state.seats = seats.into_iter().map(|(name, version)| (globals.registry().bind::<WlSeat, _, _>(name, version, &qh, ()), false, false)).collect();
+        let devices = manager.as_ref().map(|m| state.seats.iter().map(|(seat, ..)| m.get_data_device(seat, &qh, ())).collect()).unwrap_or_default();
         queue.roundtrip(&mut state).ok()?;
-        Some(Self { conn, queue, state, manager, activation })
+        Some(Self { conn, queue, state, manager, devices, activation })
     }
 
     pub fn pump(&mut self) {
@@ -58,7 +60,7 @@ impl Wl {
     pub fn set_selection(&mut self, payload: Payload) -> bool {
         self.pump();
         let (Some(manager), Some(serial)) = (&self.manager, self.state.serial) else { return false };
-        if self.state.seats.is_empty() {
+        if self.devices.is_empty() {
             return false;
         }
         let qh = self.queue.handle();
@@ -66,12 +68,8 @@ impl Wl {
         for (mime, _) in payload.iter() {
             source.offer(mime.clone());
         }
-        for (seat, ..) in &self.state.seats {
-            let device = manager.get_data_device(seat, &qh, ());
+        for device in &self.devices {
             device.set_selection(Some(&source), serial);
-            if device.version() >= 2 {
-                device.release();
-            }
         }
         self.state.sources.push(source);
         self.conn.flush().is_ok()
