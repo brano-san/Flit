@@ -649,6 +649,28 @@ pub fn probe_animations() -> Option<bool> {
     session_bus().then(|| ask(&portal)).flatten().or_else(|| ask(&gsettings))
 }
 
+pub fn play_media(video: bool, path: &Path) -> Option<std::process::Child> {
+    let file = path.as_os_str().to_owned();
+    let command = |name: &str, extra: &[&str]| {
+        on_path(OsStr::new(name)).map(|program| {
+            let mut cmd = Command::new(program);
+            cmd.args(extra.iter().map(OsStr::new)).arg(&file).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).process_group(0);
+            cmd
+        })
+    };
+    let mut with = command("mpv", &["--no-terminal"])
+        .or_else(|| command("gst-play-1.0", &[]))
+        .or_else(|| match video {
+            true => command("ffplay", &["-autoexit"]),
+            false => command("ffplay", &["-autoexit", "-nodisp"]),
+        })
+        .or_else(|| match video {
+            true => None,
+            false => command("paplay", &[]),
+        })?;
+    with.spawn().ok()
+}
+
 pub fn kde_dark(kdeglobals: &str) -> Option<bool> {
     let mut window = false;
     for line in kdeglobals.lines().map(str::trim) {

@@ -1,6 +1,7 @@
 use crate::apps::OpenWith;
 use crate::input::{self, Clicks};
 use flit_core::input::{CursorIcon, Event, HitArea, MouseButton};
+use flit_core::preview::{HostCmd, Hosted, MediaCmd};
 use flit_core::render::Rect;
 use flit_core::ui::{drop_effect, DragEvent, ShellMenu};
 use flit_core::FsPath;
@@ -186,6 +187,8 @@ pub struct LinuxWindow {
     timer: Cell<Option<Instant>>,
     ime_area: Cell<Rect>,
     compact_from: Cell<Option<(u32, u32)>>,
+    media: RefCell<Option<(bool, FsPath)>>,
+    player: RefCell<Option<std::process::Child>>,
 }
 
 impl LinuxWindow {
@@ -203,6 +206,15 @@ impl LinuxWindow {
             timer: Cell::new(None),
             ime_area: Cell::new(Rect::default()),
             compact_from: Cell::new(None),
+            media: RefCell::new(None),
+            player: RefCell::new(None),
+        }
+    }
+
+    fn stop_player(&self) {
+        if let Some(mut child) = self.player.borrow_mut().take() {
+            let _ = child.kill();
+            let _ = child.wait();
         }
     }
 
@@ -248,6 +260,15 @@ impl LinuxWindow {
         let Some((w, h)) = self.compact_from.take() else { return };
         self.raw.set_window_level(WindowLevel::Normal);
         let _ = self.raw.request_surface_size(PhysicalSize::new(w, h).into());
+    }
+}
+
+impl Drop for LinuxWindow {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.player.borrow_mut().take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 }
 
@@ -325,6 +346,26 @@ impl Window for LinuxWindow {
 
     fn notify(&self, text: &str) {
         crate::alert::notification(text);
+    }
+
+    fn host(&self, cmd: HostCmd) {
+        match cmd {
+            HostCmd::Show { what: Hosted::Media { video }, path, .. } => {
+                self.stop_player();
+                self.media.replace(Some((video, path)));
+            }
+            HostCmd::Show { .. } | HostCmd::Place(_) => self.stop_player(),
+            HostCmd::Media(MediaCmd::Play) => {
+                self.stop_player();
+                if let Some((video, path)) = self.media.borrow().clone().filter(|(_, p)| flit_platform_linux::host(p).is_some()) {
+                    if let Some(child) = flit_platform_linux::host(&path).and_then(|p| crate::shell::play_media(video, p)) {
+                        self.player.replace(Some(child));
+                    }
+                }
+            }
+            HostCmd::Media(_) => {}
+            HostCmd::Close => self.stop_player(),
+        }
     }
 
     fn open_window(&self, opts: WindowOptions) {
