@@ -364,6 +364,52 @@ fn readable(c: Color, bg: Color, pole: Color, min: f32) -> Color {
     (0..=20).map(|k| mix(c, pole, k as f32 / 20.0)).find(|&m| contrast(m, bg) >= min).unwrap_or(pole)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Accent {
+    pub light: Color,
+    pub dark: Color,
+}
+
+const PALETTE_LIGHT2: usize = 1;
+const PALETTE_DARK1: usize = 4;
+
+impl Accent {
+    pub fn single(c: Color) -> Self {
+        Self { light: c, dark: c }
+    }
+
+    pub fn from_windows_palette(bytes: &[u8]) -> Option<Self> {
+        let entry = |k: usize| bytes.get(4 * k..4 * k + 3).map(|c| Color::rgb(u32::from(c[0]) << 16 | u32::from(c[1]) << 8 | u32::from(c[2])));
+        Some(Self { light: entry(PALETTE_DARK1)?, dark: entry(PALETTE_LIGHT2)? })
+    }
+
+    pub fn from_unit_rgb(r: f64, g: f64, b: f64) -> Option<Self> {
+        let channel = |v: f64| (0.0..=1.0).contains(&v).then(|| (v * 255.0).round() as u32);
+        Some(Self::single(Color::rgb(channel(r)? << 16 | channel(g)? << 8 | channel(b)?)))
+    }
+
+    fn on(&self, t: &Theme) -> Theme {
+        let dark = is_dark(t.chrome);
+        let pole = if dark { WHITE } else { BLACK };
+        let accent = readable(if dark { self.dark } else { self.light }, t.chrome, pole, MIN_ACCENT_CONTRAST);
+        Theme {
+            accent,
+            selection: accent.alpha(alpha(t.selection)),
+            focus_ring: accent.alpha(alpha(t.focus_ring)),
+            text_selection: accent.alpha(alpha(t.text_selection)),
+            accent_fill: self.light,
+            ..*t
+        }
+    }
+}
+
+impl Palette {
+    pub fn with_accent(self, accent: Option<Accent>) -> Self {
+        let Some(a) = accent else { return self };
+        Self { base: a.on(&self.base), areas: self.areas.map(|t| a.on(&t)), ..self }
+    }
+}
+
 #[cfg(test)]
 #[path = "../test/theme.rs"]
 mod tests;

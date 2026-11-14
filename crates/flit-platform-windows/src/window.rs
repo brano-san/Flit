@@ -23,6 +23,7 @@ use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK, DWMWA_US
 use windows::Win32::Graphics::Gdi::{GetSysColor, SYS_COLOR_INDEX, COLOR_BTNFACE, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_HOTLIGHT, COLOR_WINDOW, COLOR_WINDOWTEXT, ClientToScreen, GetMonitorInfoW, MonitorFromRect, MonitorFromWindow, ScreenToClient, ValidateRect, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::System::DataExchange::{AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, IsClipboardFormatAvailable, SetClipboardData};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_BINARY, RRF_RT_REG_DWORD};
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
 use windows::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow, GetSystemMetricsForDpi, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
@@ -569,6 +570,20 @@ fn mouse_setting(wp: WPARAM) -> bool {
     [SPI_SETWHEELSCROLLLINES, SPI_SETDOUBLECLICKTIME].iter().any(|a| a.0 as usize == wp.0)
 }
 
+fn system_accent() -> Option<flit_core::theme::Accent> {
+    let mut data = [0u8; 32];
+    let mut size = data.len() as u32;
+    unsafe { RegGetValueW(HKEY_CURRENT_USER, w!(r"Software\Microsoft\Windows\CurrentVersion\Explorer\Accent"), w!("AccentPalette"), RRF_RT_REG_BINARY, None, Some(data.as_mut_ptr().cast()), Some(&mut size)) }.ok().ok()?;
+    flit_core::theme::Accent::from_windows_palette(data.get(..size as usize)?)
+}
+
+fn text_scale() -> f32 {
+    let mut percent = 100u32;
+    let mut size = 4u32;
+    let read = unsafe { RegGetValueW(HKEY_CURRENT_USER, w!(r"Software\Microsoft\Accessibility"), w!("TextScaleFactor"), RRF_RT_REG_DWORD, None, Some((&mut percent as *mut u32).cast()), Some(&mut size)) };
+    if read.is_ok() { percent as f32 / 100.0 } else { 1.0 }
+}
+
 fn client_area_animation() -> bool {
     let mut on = BOOL(1);
     unsafe { SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, Some(&mut on as *mut BOOL as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0)) }.ok().is_none_or(|_| on.as_bool())
@@ -767,6 +782,8 @@ impl<H: WindowHandler<Win32>> Shared<H> {
             node.queue.borrow_mut().push_back(Event::Contrast(Some(colors)));
         }
         node.queue.borrow_mut().push_back(Event::Animations(client_area_animation()));
+        node.queue.borrow_mut().push_back(Event::Accent(system_accent()));
+        node.queue.borrow_mut().push_back(Event::TextScale(text_scale()));
         node.queue.borrow_mut().push_back(Event::ClipboardText(clipboard_has_text()));
         let tabs = if hidden { std::env::var("FLIT_CAPTURE_TABS").ok().and_then(|v| v.parse().ok()).unwrap_or(0) } else { 0 };
         for _ in 0..tabs {
@@ -1342,6 +1359,8 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
                 s.send(Event::ThemeChanged { dark: crate::dark_mode() });
             }
             s.send(Event::Animations(client_area_animation()));
+            s.send(Event::Accent(system_accent()));
+            s.send(Event::TextScale(text_scale()));
             None
         }
         WM_SHELL_UI => {

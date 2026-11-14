@@ -652,6 +652,7 @@ pub struct App {
     dark: bool,
     scale: f32,
     system_scale: f32,
+    system_text: f32,
     ui_scale: u32,
     content_scale: u32,
     size: (f32, f32),
@@ -786,6 +787,7 @@ impl App {
             dark,
             scale,
             system_scale: scale,
+            system_text: 1.0,
             ui_scale: 100,
             content_scale: 100,
             size: (size.0 as f32, size.1 as f32),
@@ -948,7 +950,7 @@ impl App {
     }
 
     fn content_px(&self) -> f32 {
-        self.system_scale * self.content_scale as f32 / 100.0
+        self.system_scale * self.system_text * self.content_scale as f32 / 100.0
     }
 
     fn cs(&self, v: f32) -> f32 {
@@ -990,7 +992,7 @@ impl App {
     }
 
     fn rescale(&mut self) {
-        self.scale = self.system_scale * self.ui_scale as f32 / 100.0;
+        self.scale = self.system_scale * self.system_text * self.ui_scale as f32 / 100.0;
         self.layout();
         self.dirty = true;
     }
@@ -1712,6 +1714,8 @@ impl App {
             Event::ThemeChanged { dark } => self.set_system_dark(*dark),
             Event::Contrast(colors) => self.set_contrast(*colors),
             Event::Animations(on) => self.set_system_animations(*on),
+            Event::Accent(accent) => self.set_system_accent(*accent),
+            Event::TextScale(factor) => self.set_system_text_scale(*factor),
             Event::MouseSettings { double_click, wheel_lines } => (self.double_click, self.wheel_lines) = (*double_click, *wheel_lines),
             Event::Invoke(id) => self.a11y_invoke(*id, now),
             Event::A11yFocus(id) => self.a11y_focus(*id),

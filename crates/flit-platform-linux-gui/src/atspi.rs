@@ -38,6 +38,8 @@ const APPEARANCE: &str = "org.freedesktop.appearance";
 const SETTING_MATCH: &str = "type='signal',interface='org.freedesktop.portal.Settings',member='SettingChanged',arg0='org.freedesktop.appearance'";
 const MOUSE: &str = "org.gnome.desktop.peripherals.mouse";
 const MOUSE_MATCH: &str = "type='signal',interface='org.freedesktop.portal.Settings',member='SettingChanged',arg0='org.gnome.desktop.peripherals.mouse'";
+const GNOME_INTERFACE: &str = "org.gnome.desktop.interface";
+const INTERFACE_MATCH: &str = "type='signal',interface='org.freedesktop.portal.Settings',member='SettingChanged',arg0='org.gnome.desktop.interface'";
 const ROLE_APPLICATION: (u32, &str) = (75, "application");
 const LAYER_WIDGET: u32 = 3;
 const LAYER_WINDOW: u32 = 7;
@@ -1117,23 +1119,47 @@ pub(crate) fn double_click_change(args: &[Arg]) -> Option<i64> {
     }
 }
 
-pub(crate) fn watch_color_scheme(address: &str, changed: &dyn Fn(i64)) {
-    watch_setting(address, SETTING_MATCH, color_scheme_change, changed);
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum LookChange {
+    Accent(Option<flit_core::theme::Accent>),
+    TextScale(f64),
 }
 
-pub(crate) fn watch_double_click(address: &str, changed: &dyn Fn(i64)) {
-    watch_setting(address, MOUSE_MATCH, double_click_change, changed);
+fn doubles(a: &Arg) -> Vec<f64> {
+    match a {
+        Arg::D(d) => vec![*d],
+        Arg::L(v) => v.iter().flat_map(doubles).collect(),
+        _ => Vec::new(),
+    }
 }
 
-fn watch_setting(address: &str, rule: &str, pick: fn(&[Arg]) -> Option<i64>, changed: &dyn Fn(i64)) {
+pub(crate) fn look_change(args: &[Arg]) -> Option<LookChange> {
+    match args {
+        [Arg::S(ns), Arg::S(key), value] if ns == APPEARANCE && key == "accent-color" => Some(LookChange::Accent(match doubles(value)[..] {
+            [r, g, b] => flit_core::theme::Accent::from_unit_rgb(r, g, b),
+            _ => None,
+        })),
+        [Arg::S(ns), Arg::S(key), value] if ns == GNOME_INTERFACE && key == "text-scaling-factor" => doubles(value).first().copied().filter(|f| crate::shell::TEXT_SCALE_RANGE.contains(f)).map(LookChange::TextScale),
+        _ => None,
+    }
+}
+
+pub(crate) fn watch_settings(address: &str, changed: &dyn Fn(i64), clicks: &dyn Fn(i64), look: &dyn Fn(LookChange)) {
     let Some(api) = dbus::load() else { return };
     let Some(conn) = Conn::open(&api, address) else { return };
-    conn.add_match(rule);
+    conn.add_match(SETTING_MATCH);
+    conn.add_match(INTERFACE_MATCH);
+    conn.add_match(MOUSE_MATCH);
     loop {
         let mut latest = None;
+        let mut looks = Vec::new();
+        let mut click = None;
         let alive = conn.drain(|msg| unsafe {
             if (api.msg_type)(msg) == TYPE_SIGNAL && text((api.member)(msg)) == "SettingChanged" {
-                latest = pick(&args(&api, msg)).or(latest);
+                let a = args(&api, msg);
+                latest = color_scheme_change(&a).or(latest);
+                looks.extend(look_change(&a));
+                click = double_click_change(&a).or(click);
             }
         });
         if !alive {
@@ -1141,6 +1167,10 @@ fn watch_setting(address: &str, rule: &str, pick: fn(&[Arg]) -> Option<i64>, cha
         }
         if let Some(scheme) = latest {
             changed(scheme);
+        }
+        looks.into_iter().for_each(look);
+        if let Some(ms) = click {
+            clicks(ms);
         }
         if !conn.pending() {
             let mut fd = watch(conn.fd());

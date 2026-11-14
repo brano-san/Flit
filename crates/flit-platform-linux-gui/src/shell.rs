@@ -19,6 +19,7 @@ const TERMINALS: [&str; 18] = [
     "xdg-terminal-exec", "x-terminal-emulator", "gnome-terminal", "kgx", "ptyxis", "konsole", "xfce4-terminal", "mate-terminal", "tilix", "terminator", "lxterminal", "kitty", "alacritty", "foot", "wezterm", "cosmic-term", "qterminal", "xterm",
 ];
 const HELPER_TIMEOUT: Duration = Duration::from_millis(500);
+pub const TEXT_SCALE_RANGE: std::ops::RangeInclusive<f64> = 0.5..=3.0;
 
 pub struct LinuxShell;
 
@@ -1058,6 +1059,44 @@ pub fn probe_animations() -> Option<bool> {
     session_bus().then(|| ask(&portal)).flatten().or_else(|| ask(&gsettings))
 }
 
+
+pub fn numbers(out: &str) -> Vec<f64> {
+    out.split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == 'e' || c == 'E' || c == '+')).filter_map(|w| w.parse::<f64>().ok()).collect()
+}
+
+pub fn parse_accent(out: &str) -> Option<flit_core::theme::Accent> {
+    match numbers(out)[..] {
+        [r, g, b] => flit_core::theme::Accent::from_unit_rgb(r, g, b),
+        _ => None,
+    }
+}
+
+pub fn kde_accent(kdeglobals: &str) -> Option<flit_core::theme::Accent> {
+    let value = crate::icons::setting(kdeglobals, "AccentColor")?;
+    let parts: Vec<u32> = value.split(',').map(|p| p.trim().parse().ok()).collect::<Option<_>>()?;
+    match parts[..] {
+        [r, g, b] if r < 256 && g < 256 && b < 256 => Some(flit_core::theme::Accent::single(flit_core::render::Color::rgb(r << 16 | g << 8 | b))),
+        _ => None,
+    }
+}
+
+pub fn parse_text_scale(out: &str) -> Option<f64> {
+    numbers(out).last().copied().filter(|f| TEXT_SCALE_RANGE.contains(f))
+}
+
+pub fn probe_accent() -> Option<flit_core::theme::Accent> {
+    let portal = ["gdbus", "call", "--session", "--timeout", "1", "--dest", "org.freedesktop.portal.Desktop", "--object-path", "/org/freedesktop/portal/desktop", "--method", "org.freedesktop.portal.Settings.Read", "org.freedesktop.appearance", "accent-color"];
+    let ask = |args: &[&str]| helper(args).and_then(|mut c| c.stdout(Stdio::piped()).spawn().ok()).and_then(|child| wait_output(child, HELPER_TIMEOUT)).and_then(|r| String::from_utf8(r).ok()).and_then(|r| parse_accent(&r));
+    let kde = || crate::xdg::config_home().and_then(|c| std::fs::read_to_string(c.join("kdeglobals")).ok()).and_then(|t| kde_accent(&t));
+    session_bus().then(|| ask(&portal)).flatten().or_else(kde)
+}
+
+pub fn probe_text_scale() -> Option<f64> {
+    let portal = ["gdbus", "call", "--session", "--timeout", "1", "--dest", "org.freedesktop.portal.Desktop", "--object-path", "/org/freedesktop/portal/desktop", "--method", "org.freedesktop.portal.Settings.Read", "org.gnome.desktop.interface", "text-scaling-factor"];
+    let gsettings = ["gsettings", "get", "org.gnome.desktop.interface", "text-scaling-factor"];
+    let ask = |args: &[&str]| helper(args).and_then(|mut c| c.stdout(Stdio::piped()).spawn().ok()).and_then(|child| wait_output(child, HELPER_TIMEOUT)).and_then(|r| String::from_utf8(r).ok()).and_then(|r| parse_text_scale(&r));
+    session_bus().then(|| ask(&portal)).flatten().or_else(|| ask(&gsettings))
+}
 pub fn last_number(out: &str) -> Option<u32> {
     let end = out.rfind(|c: char| c.is_ascii_digit())? + 1;
     let start = out[..end].rfind(|c: char| !c.is_ascii_digit()).map_or(0, |i| i + 1);
@@ -1124,17 +1163,22 @@ pub fn scheme_dark(scheme: i64) -> Option<bool> {
     }
 }
 
-pub fn dark_preference(found: impl Fn(bool) + Send + 'static) {
+pub(crate) fn dark_preference(found: impl Fn(bool) + Send + 'static, clicks: impl Fn(i64) + Send + 'static, look: impl Fn(crate::atspi::LookChange) + Send + 'static) {
     let _ = std::thread::Builder::new().name("flit-theme".into()).spawn(move || {
         if let Some(dark) = probe_dark() {
             found(dark);
         }
         if let Some(address) = crate::dbus::session_address() {
-            crate::atspi::watch_color_scheme(&address, &|scheme| {
-                if let Some(dark) = scheme_dark(scheme).or_else(probe_dark) {
-                    found(dark);
-                }
-            });
+            crate::atspi::watch_settings(
+                &address,
+                &|scheme| {
+                    if let Some(dark) = scheme_dark(scheme).or_else(probe_dark) {
+                        found(dark);
+                    }
+                },
+                &clicks,
+                &look,
+            );
         }
     });
 }

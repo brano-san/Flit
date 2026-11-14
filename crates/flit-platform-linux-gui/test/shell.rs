@@ -110,9 +110,12 @@ fn programs_are_found_on_path_and_spawned_without_a_shell() {
 fn theme_probe_never_blocks_the_caller() {
     let start = Instant::now();
     let (tx, rx) = crossbeam_channel::bounded(1);
-    dark_preference(move |dark| {
-        let _ = tx.send(dark);
-    });
+    dark_preference(
+        move |dark| {
+            let _ = tx.send(dark);
+        },
+        |_| {},
+    );
     assert!(start.elapsed() < Duration::from_millis(200));
     let _ = rx.recv_timeout(Duration::from_secs(2));
     let _ = clipboard_text();
@@ -483,4 +486,25 @@ fn fonts_install_into_the_users_font_folder_and_other_files_are_refused() {
     let again = install_fonts(&[fs_path(&fonts.join("Sans.ttf"))], Some(fonts.clone()));
     assert!(again.error.is_none());
     assert_eq!(std::fs::read(fonts.join("Sans.ttf")).unwrap().len(), 64, "installing an installed font does not empty it");
+}
+
+#[test]
+fn the_desktop_accent_and_text_size_are_read_from_the_portal_gsettings_or_kdeglobals() {
+    let accent = parse_accent("(<<(0.20784313725490197, 0.51764705882352946, 0.89411764705882357)>>,)\n").unwrap();
+    assert_eq!(accent, flit_core::theme::Accent::single(flit_core::render::Color::rgb(0x3584E4)));
+    assert_eq!(kde_accent("[General]\nAccentColor=61,174,233\n"), Some(flit_core::theme::Accent::single(flit_core::render::Color::rgb(0x3DAEE9))));
+    assert_eq!(parse_text_scale("(<<1.25>>,)\n"), Some(1.25));
+    assert_eq!(parse_text_scale("1.5\n"), Some(1.5));
+}
+
+#[test]
+fn an_unset_or_odd_accent_and_text_size_keep_flits_own() {
+    assert_eq!(parse_accent("(<<(-1.0, -1.0, -1.0)>>,)"), None, "out of range means the accent is unset");
+    assert_eq!(parse_accent("Error: GDBus.Error:org.freedesktop.portal.Error.NotFound: Requested setting not found"), None);
+    assert_eq!(kde_accent("[General]\nColorScheme=BreezeDark\n"), None);
+    assert_eq!(kde_accent("[General]\nAccentColor=300,0,0\n"), None);
+    assert_eq!(parse_text_scale("(<<40.0>>,)"), None);
+    assert_eq!(parse_text_scale(""), None);
+    assert_eq!(crate::window::text_scale(false, 1500), 1.0, "on X11 the desktop already scales text through Xft.dpi");
+    assert_eq!(crate::window::text_scale(true, 1500), 1.5);
 }

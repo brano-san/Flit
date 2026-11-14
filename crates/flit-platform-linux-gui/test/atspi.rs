@@ -272,7 +272,7 @@ fn the_portal_setting_changed_signal_switches_the_theme_live() {
     let address = address.trim().to_owned();
     let (tx, rx) = crossbeam_channel::unbounded();
     let bus = address.clone();
-    let watcher = std::thread::spawn(move || watch_color_scheme(&bus, &move |scheme| tx.send(scheme).unwrap()));
+    let watcher = std::thread::spawn(move || watch_settings(&bus, &move |scheme| tx.send(scheme).unwrap(), &|_| {}, &|_| {}));
     let signal = |scheme: u32| {
         Command::new("dbus-send")
             .args([&format!("--bus={address}"), "--type=signal", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Settings.SettingChanged", "string:org.freedesktop.appearance", "string:color-scheme", &format!("variant:uint32:{scheme}")])
@@ -315,7 +315,7 @@ fn a_changed_gnome_double_click_time_is_heard_live_and_other_settings_are_not() 
     let address = address.trim().to_owned();
     let (tx, rx) = crossbeam_channel::unbounded();
     let bus = address.clone();
-    let watcher = std::thread::spawn(move || watch_double_click(&bus, &move |ms| tx.send(ms).unwrap()));
+    let watcher = std::thread::spawn(move || watch_settings(&bus, &|_| {}, &move |ms| tx.send(ms).unwrap(), &|_| {}));
     let signal = |ns: &str, key: &str, value: &str| {
         Command::new("dbus-send")
             .args([&format!("--bus={address}"), "--type=signal", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Settings.SettingChanged", &format!("string:{ns}"), &format!("string:{key}"), value])
@@ -337,4 +337,16 @@ fn a_changed_gnome_double_click_time_is_heard_live_and_other_settings_are_not() 
     assert_eq!(next, Some(300), "the color scheme and the pointer speed are not double-click times");
     drop(daemon);
     watcher.join().unwrap();
+}
+
+#[test]
+fn accent_and_text_size_changes_are_heard_and_other_settings_are_not() {
+    let s = |v: &str| Arg::S(v.into());
+    let rgb = Arg::L(vec![Arg::L(vec![Arg::D(1.0), Arg::D(0.5), Arg::D(0.0)])]);
+    let orange = flit_core::theme::Accent::single(flit_core::render::Color::rgb(0xFF8000));
+    assert_eq!(look_change(&[s(APPEARANCE), s("accent-color"), rgb]), Some(LookChange::Accent(Some(orange))));
+    assert_eq!(look_change(&[s(APPEARANCE), s("accent-color"), Arg::L(vec![Arg::D(-1.0), Arg::D(-1.0), Arg::D(-1.0)])]), Some(LookChange::Accent(None)), "an unset accent brings Flit's own back");
+    assert_eq!(look_change(&[s(GNOME_INTERFACE), s("text-scaling-factor"), Arg::L(vec![Arg::D(1.25)])]), Some(LookChange::TextScale(1.25)));
+    assert_eq!(look_change(&[s(APPEARANCE), s("color-scheme"), Arg::L(vec![Arg::I(1)])]), None);
+    assert_eq!(look_change(&[s(GNOME_INTERFACE), s("font-name"), Arg::L(vec![s("Cantarell 11")])]), None);
 }

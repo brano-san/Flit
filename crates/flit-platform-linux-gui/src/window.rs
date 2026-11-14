@@ -142,13 +142,49 @@ fn wake_loop() {
     }
 }
 
+static ACCENT: Mutex<Option<flit_core::theme::Accent>> = Mutex::new(None);
+static TEXT_SCALE_MILLI: AtomicU32 = AtomicU32::new(1000);
+static LOOK_DIRTY: AtomicBool = AtomicBool::new(false);
+
+fn system_accent() -> Option<flit_core::theme::Accent> {
+    *ACCENT.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+pub(crate) fn text_scale(wayland: bool, milli: u32) -> f32 {
+    if wayland { milli as f32 / 1000.0 } else { 1.0 }
+}
+
+fn apply_look(change: crate::atspi::LookChange) {
+    match change {
+        crate::atspi::LookChange::Accent(a) => *ACCENT.lock().unwrap_or_else(|e| e.into_inner()) = a,
+        crate::atspi::LookChange::TextScale(f) => TEXT_SCALE_MILLI.store((f * 1000.0).round() as u32, Ordering::Release),
+    }
+    LOOK_DIRTY.store(true, Ordering::Release);
+    wake_loop();
+}
+
 fn watch_desktop() {
-    crate::shell::dark_preference(|dark| {
-        PREFERRED_DARK.store(if dark { DARK_YES } else { DARK_NO }, Ordering::Release);
-        THEME_CHANGED.store(true, Ordering::Release);
-        wake_loop();
-    });
+    crate::shell::dark_preference(
+        |dark| {
+            PREFERRED_DARK.store(if dark { DARK_YES } else { DARK_NO }, Ordering::Release);
+            THEME_CHANGED.store(true, Ordering::Release);
+            wake_loop();
+        },
+        |ms| {
+            if !input::kde_desktop() && u32::try_from(ms).is_ok_and(input::probed_double_click) {
+                MOUSE_DIRTY.store(true, Ordering::Release);
+                wake_loop();
+            }
+        },
+        apply_look,
+    );
     let _ = std::thread::Builder::new().name("flit-prefs".into()).spawn(|| {
+        if let Some(accent) = crate::shell::probe_accent() {
+            apply_look(crate::atspi::LookChange::Accent(Some(accent)));
+        }
+        if let Some(factor) = crate::shell::probe_text_scale() {
+            apply_look(crate::atspi::LookChange::TextScale(factor));
+        }
         if let Some(on) = crate::shell::probe_animations() {
             ANIMATIONS.store(if on { ANIM_YES } else { ANIM_NO }, Ordering::Release);
             ANIMATIONS_DIRTY.store(true, Ordering::Release);
@@ -160,14 +196,6 @@ fn watch_desktop() {
         if crate::shell::probe_double_click().is_some_and(input::probed_double_click) {
             MOUSE_DIRTY.store(true, Ordering::Release);
             wake_loop();
-        }
-        if let Some(address) = crate::dbus::session_address() {
-            crate::atspi::watch_double_click(&address, &|ms| {
-                if u32::try_from(ms).is_ok_and(input::probed_double_click) {
-                    MOUSE_DIRTY.store(true, Ordering::Release);
-                    wake_loop();
-                }
-            });
         }
     });
     let shutdown = crate::instance::on_shutdown_signal(|signal| {
@@ -1047,6 +1075,8 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         let node = self.nodes.last().unwrap();
         self.handler.created(&node.window);
         self.handler.event(&node.window, Event::Animations(animations()));
+        self.handler.event(&node.window, Event::Accent(system_accent()));
+        self.handler.event(&node.window, Event::TextScale(text_scale(node.window.is_wayland(), TEXT_SCALE_MILLI.load(Ordering::Acquire))));
         if let Some(text) = self.clip_text {
             self.handler.event(&node.window, Event::ClipboardText(text));
         }
@@ -1357,6 +1387,13 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
         if ANIMATIONS_DIRTY.swap(false, Ordering::AcqRel) {
             for node in &self.nodes {
                 self.handler.event(&node.window, Event::Animations(animations()));
+            }
+        }
+        if LOOK_DIRTY.swap(false, Ordering::AcqRel) {
+            let (accent, milli) = (system_accent(), TEXT_SCALE_MILLI.load(Ordering::Acquire));
+            for node in &self.nodes {
+                self.handler.event(&node.window, Event::Accent(accent));
+                self.handler.event(&node.window, Event::TextScale(text_scale(node.window.is_wayland(), milli)));
             }
         }
         if MOUSE_DIRTY.swap(false, Ordering::AcqRel) {

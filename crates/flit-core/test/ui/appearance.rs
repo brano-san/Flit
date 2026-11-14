@@ -259,3 +259,43 @@ fn the_system_animation_setting_switches_flits_animations_without_touching_the_u
     a.set_animations_wanted(true);
     assert!(a.animations);
 }
+
+#[test]
+fn the_system_accent_colors_selection_and_focus_and_leaves_the_users_colors_alone() {
+    let mut a = app();
+    assert!(set(&mut a, "appearance.background", text("#203040")));
+    let before: Vec<Value> = a.setting_values();
+    let green = crate::theme::Accent { light: Color::rgb(0x107C10), dark: Color::rgb(0x6CCB5F) };
+    a.on_event(&Event::Accent(Some(green)), Instant::now());
+    let t = *a.theme();
+    assert_ne!(t.accent, DARK.accent);
+    assert!(crate::theme::contrast(t.accent, t.chrome) >= crate::theme::MIN_ACCENT_CONTRAST, "the accent stays readable on the user's background");
+    assert_eq!(t.selection.0 & 0x00FF_FFFF, t.accent.0 & 0x00FF_FFFF, "selection and focus use the system accent");
+    assert_eq!(t.bg, Color::rgb(0x203040), "the user's background is kept");
+    assert_eq!(a.setting_values(), before, "nothing the user chose changes");
+    a.on_event(&Event::Accent(None), Instant::now());
+    assert_eq!(a.theme().accent, crate::theme::derive(Color::rgb(0x203040)).accent, "without a system accent Flit's own returns");
+}
+
+#[test]
+fn high_contrast_wins_over_the_system_accent() {
+    let mut a = app();
+    let colors = crate::theme::SystemColors { window: Color::rgb(0), window_text: Color::rgb(0xFFFFFF), highlight: Color::rgb(0x1AEBFF), highlight_text: Color::rgb(0), hotlight: Color::rgb(0xFFFF00), gray_text: Color::rgb(0x3FF23F), btn_face: Color::rgb(0) };
+    a.on_event(&Event::Contrast(Some(colors)), Instant::now());
+    a.on_event(&Event::Accent(Some(crate::theme::Accent::single(Color::rgb(0xE01B24)))), Instant::now());
+    assert_eq!(a.theme().accent, Color::rgb(0xFFFF00));
+}
+
+#[test]
+fn the_system_text_size_enlarges_flit_on_top_of_its_own_scale_without_changing_the_setting() {
+    let mut a = app();
+    assert!(set(&mut a, "appearance.scale", Value::Number(110)));
+    let (ui, content) = (a.scale, a.content_px());
+    a.on_event(&Event::TextScale(1.5), Instant::now());
+    assert!((a.scale - ui * 1.5).abs() < 1e-4 && (a.content_px() - content * 1.5).abs() < 1e-4);
+    assert_eq!(get(&a, "appearance.scale"), Value::Number(110), "the user's scale stays 110 %");
+    a.on_event(&Event::TextScale(0.5), Instant::now());
+    assert!((a.scale - ui).abs() < 1e-4, "the system never makes Flit smaller than the user chose");
+    a.on_event(&Event::TextScale(f32::NAN), Instant::now());
+    assert!((a.scale - ui).abs() < 1e-4);
+}

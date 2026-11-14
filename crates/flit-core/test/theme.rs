@@ -105,3 +105,18 @@ fn a_checkmark_stands_out_on_every_accent() {
     assert_eq!(ink_on(DARK.accent), BLACK);
     assert_eq!(ink_on(LIGHT.accent), WHITE);
 }
+
+#[test]
+fn the_windows_accent_palette_gives_the_shades_windows_uses_in_light_and_dark_mode() {
+    let mut bytes = Vec::new();
+    for rgb in [0x99EBFF, 0x4CC2FF, 0x0091F8, 0x0078D4, 0x0067C0, 0x003E92, 0x001A68, 0xF7630C] {
+        bytes.extend([(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8, 0]);
+    }
+    assert_eq!(Accent::from_windows_palette(&bytes), Some(Accent { light: Color::rgb(0x0067C0), dark: Color::rgb(0x4CC2FF) }));
+    assert_eq!(Accent::from_windows_palette(&bytes[..12]), None, "a cut palette gives no accent");
+    assert_eq!(Accent::from_unit_rgb(1.0, 0.5, 0.0), Some(Accent::single(Color::rgb(0xFF8000))));
+    assert_eq!(Accent::from_unit_rgb(-1.0, 0.5, 0.0), None, "out of range means unset");
+    let pale = Palette::new(false, Tint::Default, [Tint::Default; 5]).with_accent(Some(Accent::single(Color::rgb(0xFFFF80))));
+    assert!(contrast(pale.base.accent, pale.base.chrome) >= MIN_ACCENT_CONTRAST, "a pale accent is darkened to stay readable");
+    assert_eq!(Palette::new(true, Tint::Default, [Tint::Default; 5]).with_accent(None).base, DARK);
+}

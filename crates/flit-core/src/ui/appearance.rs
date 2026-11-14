@@ -6,10 +6,11 @@ use crate::i18n::S;
 use super::Bitmap;
 use crate::path::FsPath;
 use crate::render::{DrawList, Rect};
-use crate::theme::{Area, Mode, Palette, SystemColors, Tint};
+use crate::theme::{Accent, Area, Mode, Palette, SystemColors, Tint};
 
 const MAX_FONT: usize = 64;
 const BACKDROP_ALPHA: u8 = 0x48;
+const SYSTEM_TEXT: (f32, f32) = (1.0, 2.25);
 
 pub(super) fn cover_uv(window_aspect: f32, image_aspect: f32) -> [f32; 4] {
     if image_aspect > window_aspect {
@@ -32,6 +33,7 @@ pub struct Look {
     pub(super) font_pick: Option<usize>,
     system_dark: bool,
     pub contrast: Option<SystemColors>,
+    pub system_accent: Option<Accent>,
     pub backdrop_path: String,
     pub backdrop_failed: bool,
     backdrop: Option<Bitmap>,
@@ -52,6 +54,7 @@ impl Look {
             font_pick: None,
             system_dark,
             contrast: None,
+            system_accent: None,
             backdrop_path: String::new(),
             backdrop_failed: false,
             backdrop: None,
@@ -85,6 +88,19 @@ impl App {
         self.restyle();
     }
 
+    pub(super) fn set_system_accent(&mut self, accent: Option<Accent>) {
+        self.look.system_accent = accent;
+        self.restyle();
+    }
+
+    pub(super) fn set_system_text_scale(&mut self, factor: f32) {
+        let factor = if factor.is_finite() { factor.clamp(SYSTEM_TEXT.0, SYSTEM_TEXT.1) } else { 1.0 };
+        if factor != self.system_text {
+            self.system_text = factor;
+            self.rescale();
+        }
+    }
+
     pub(super) fn set_system_animations(&mut self, on: bool) {
         self.system_animations = on;
         self.sync_animations();
@@ -104,7 +120,7 @@ impl App {
         let l = &mut self.look;
         l.palette = match &l.contrast {
             Some(c) => Palette::high_contrast(c),
-            None => Palette::new(l.mode.dark(l.system_dark), l.background, l.areas),
+            None => Palette::new(l.mode.dark(l.system_dark), l.background, l.areas).with_accent(l.system_accent),
         };
         self.dark = l.palette.dark;
         self.dirty = true;
