@@ -257,6 +257,7 @@ struct WinState<P: Platform> {
     backdrop_rev: u64,
     dark: Option<bool>,
     selection_key: Option<(TabId, u64, u64, Option<u32>)>,
+    progress: Option<(u32, bool)>,
 }
 
 struct Handler<P: Platform> {
@@ -677,11 +678,21 @@ impl<P: Platform> Handler<P> {
         }
         self.note_session(window);
         self.stay_awake();
+        self.taskbar_progress(window);
     }
 
     fn stay_awake(&mut self) {
         let busy = self.windows.values().any(|st| st.app.keeps_awake());
         self.awake.track(busy, || P::keep_awake(S::UiAwakeReason.t()));
+    }
+
+    fn taskbar_progress(&mut self, window: &Win<P>) {
+        let Some(st) = self.windows.get_mut(&window.id()) else { return };
+        let now = st.app.overall_progress().map(|(f, waiting)| (((f * 100.0).round() as u32).min(100), waiting));
+        if st.progress != now {
+            st.progress = now;
+            window.set_taskbar_progress(now);
+        }
     }
 
     fn update_request(&mut self, id: WindowId, req: UpdateRequest) {
@@ -1125,7 +1136,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         for k in &self.kept.kept {
             gfx.add_image(k.key, k.image.width, k.image.height, k.image.rgba.clone());
         }
-        let st = WinState { app, gfx, renderer: None, software: false, device_gen: 0, visible: Arc::default(), session_rev: 0, placement: Some(window.placement()), born, preview_rev: u64::MAX, backdrop_rev: u64::MAX, dark: None, selection_key: None };
+        let st = WinState { app, gfx, renderer: None, software: false, device_gen: 0, visible: Arc::default(), session_rev: 0, placement: Some(window.placement()), born, preview_rev: u64::MAX, backdrop_rev: u64::MAX, dark: None, selection_key: None, progress: None };
         self.windows.insert(id, st);
         self.active = Some(id);
         self.flush(window);

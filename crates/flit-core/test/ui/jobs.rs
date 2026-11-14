@@ -1,7 +1,7 @@
 use super::*;
 use crate::input::{Event, MouseButton};
 use crate::listing::Meta;
-use crate::provider::{OpReport, ProviderEvent, ProviderRequest};
+use crate::provider::{OpProgress, OpReport, ProviderEvent, ProviderRequest};
 use crate::text::tests::Mono;
 use crate::ui::{Effect, Persisted, WindowCmd};
 use std::sync::mpsc;
@@ -523,4 +523,18 @@ fn an_unfocused_window_flashes_once_when_a_question_arrives() {
     app.on_event(&Event::Focus(true), t0());
     app.empty_bin();
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::Window(WindowCmd::Attention))), "a focused window does not flash");
+}
+
+#[test]
+fn the_taskbar_progress_averages_running_jobs_and_pauses_for_a_question() {
+    let mut app = app_at(r"C:\x");
+    assert_eq!(app.overall_progress(), None);
+    let (id, _) = paste(&mut app);
+    assert_eq!(app.overall_progress(), Some((0.0, false)));
+    app.job_progress(id, OpProgress { bytes: 50, total_bytes: 100, ..Default::default() }, t0());
+    assert_eq!(app.overall_progress().map(|(f, _)| (f * 100.0) as u32), Some(50));
+    app.ask_confirm(FileOp::Trash(vec![p(r"C:\x\a.txt")]));
+    assert_eq!(app.overall_progress().map(|(_, waiting)| waiting), Some(true));
+    finish(&mut app, id, None);
+    assert_eq!(app.overall_progress(), None);
 }

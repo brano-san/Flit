@@ -129,6 +129,7 @@ pub trait Window {
     }
     fn toggle_fullscreen(&self) {}
     fn request_attention(&self) {}
+    fn set_taskbar_progress(&self, _progress: Option<(u32, bool)>) {}
     fn set_dark(&self, _dark: bool) {}
     fn set_compact(&self, _on: Option<bool>) {}
     fn host(&self, _cmd: HostCmd) {}

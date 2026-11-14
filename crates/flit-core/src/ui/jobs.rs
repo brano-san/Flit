@@ -535,6 +535,11 @@ impl App {
         self.running_jobs() > 0 || self.hashing()
     }
 
+    pub fn overall_progress(&self) -> Option<(f32, bool)> {
+        let running: Vec<f32> = self.jobs.list.iter().filter(|j| j.state == JobState::Running).map(Job::fraction).collect();
+        (!running.is_empty()).then(|| (running.iter().sum::<f32>() / running.len() as f32, !self.jobs.asks.is_empty()))
+    }
+
     pub fn close_window(&mut self, now: Instant) {
         self.leave(super::WindowCmd::Close, super::confirm::Confirmed::Close, now)
     }

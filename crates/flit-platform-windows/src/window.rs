@@ -31,6 +31,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::System::Threading::WaitForSingleObjectEx;
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::WindowsAndMessaging::*;
+use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+use windows::Win32::UI::Shell::{ITaskbarList3, TaskbarList, TBPF_NOPROGRESS, TBPF_NORMAL, TBPF_PAUSED};
 
 const WM_WAKE: u32 = WM_APP + 1;
 const WM_DESTROY_REQUEST: u32 = WM_APP + 2;
@@ -265,6 +267,25 @@ impl Window for Win32Window {
             dwTimeout: 0,
         };
         unsafe { let _ = FlashWindowEx(&info); }
+    }
+
+    fn set_taskbar_progress(&self, progress: Option<(u32, bool)>) {
+        let h = self.hwnd();
+        if h.is_invalid() {
+            return;
+        }
+        let Ok(list) = (unsafe { CoCreateInstance::<_, ITaskbarList3>(&TaskbarList, None, CLSCTX_INPROC_SERVER) }) else { return };
+        unsafe {
+            match progress {
+                Some((percent, waiting)) => {
+                    let _ = list.SetProgressState(h, if waiting { TBPF_PAUSED } else { TBPF_NORMAL });
+                    let _ = list.SetProgressValue(h, u64::from(percent), 100);
+                }
+                None => {
+                    let _ = list.SetProgressState(h, TBPF_NOPROGRESS);
+                }
+            }
+        }
     }
 
     fn open_window(&self, opts: WindowOptions) {

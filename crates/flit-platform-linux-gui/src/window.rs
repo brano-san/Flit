@@ -293,6 +293,10 @@ impl Window for LinuxWindow {
         }
     }
 
+    fn set_taskbar_progress(&self, progress: Option<(u32, bool)>) {
+        crate::shell::launcher_progress(progress.map(|(v, _)| v));
+    }
+
     fn open_window(&self, opts: WindowOptions) {
         self.push(Command::Open(opts));
     }
