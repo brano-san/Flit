@@ -65,6 +65,10 @@ pub(crate) fn icon_flags(not_local: bool) -> SIIGBF {
     if not_local { SIIGBF_ICONONLY | SIIGBF_INCACHEONLY } else { SIIGBF_ICONONLY }
 }
 
+pub(crate) fn recent_worthy(path: &FsPath) -> bool {
+    matches!(path.kind(), PathKind::Drive | PathKind::Unc) && std::fs::metadata(crate::fileops::std_path(path)).is_ok_and(|m| m.is_file())
+}
+
 pub(crate) fn shell_addressable(p: &FsPath) -> Result<(), PlatformError> {
     if p.components().any(|c| c.ends_with(b".") || c.ends_with(b" ")) {
         return Err(PlatformError::new(-1, flit_core::tr_en!(flit_core::i18n::S::ErrorsEngineUnaddressable, path = p.display())));
@@ -308,7 +312,11 @@ impl Shell for ShellCom {
             nShow: SW_SHOWNORMAL.0,
             ..Default::default()
         };
-        unsafe { ShellExecuteExW(&mut info) }.map_err(err)
+        unsafe { ShellExecuteExW(&mut info) }.map_err(err)?;
+        if recent_worthy(path) {
+            unsafe { SHAddToRecentDocs(SHARD_PATHW.0 as u32, Some(file.as_ptr().cast())) };
+        }
+        Ok(())
     }
 
     fn launch(&mut self, launch: &Launch) -> Result<(), PlatformError> {

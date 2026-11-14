@@ -259,3 +259,16 @@ fn run_in_terminal_starts_the_program_in_its_folder_and_keeps_the_console() {
     let expected = format!(r#"-d Ubuntu --cd /home/u --exec sh -c {} flit /home/u "/home/u/my tool""#, flit_core::cmdline::quote_windows(WSL_RUN_SCRIPT));
     assert_eq!(linux, [Command { program: "wsl.exe".into(), args: expected, dir: None, admin: false }]);
 }
+
+#[test]
+fn only_files_that_were_opened_go_to_the_recent_list() {
+    let dir = crate::test_temp().join(format!("flit-recent-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("note.txt"), b"x").unwrap();
+    let at = |name: &str| FsPath::parse(&dir.join(name).to_string_lossy()).unwrap();
+    assert!(recent_worthy(&at("note.txt")));
+    assert!(!recent_worthy(&FsPath::parse(&dir.to_string_lossy()).unwrap()), "a folder is not a recent document");
+    assert!(!recent_worthy(&at("gone.txt")));
+    assert!(!recent_worthy(&FsPath::computer()));
+    std::fs::remove_dir_all(&dir).unwrap();
+}

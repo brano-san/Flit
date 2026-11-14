@@ -26,6 +26,7 @@ mod places;
 mod power;
 mod preview;
 mod prevhost;
+mod quick;
 mod recycle;
 mod service;
 mod shell;
@@ -208,6 +209,11 @@ impl Platform for Windows {
 
     fn recent(limit: usize) -> (Vec<flit_core::ui::Recent>, bool) {
         places::recent(limit)
+    }
+
+    fn bookmarks() -> Vec<Location> {
+        let known: Vec<FsPath> = flit_core::ui::KnownFolder::ALL.iter().filter_map(|k| Self::known_folder(k.shell_name())).filter_map(|l| l.to_windows()).collect();
+        quick::pinned_folders(&known)
     }
 
     fn double_click_time() -> std::time::Duration {
