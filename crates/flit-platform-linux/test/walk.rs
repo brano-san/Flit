@@ -10,6 +10,15 @@ fn index_of(root: &Path) -> VolumeIndex {
     v
 }
 
+fn put(t: &Temp, name: &str, bytes: usize) {
+    std::fs::create_dir_all(t.path().join(name).parent().unwrap()).unwrap();
+    t.file(name, bytes);
+}
+
+fn size_of(v: &VolumeIndex, name: &[u8]) -> u64 {
+    (0..v.len() as u32).find(|&i| v.listed(i) && v.name(i) == name).map_or(u64::MAX, |i| v.sizes[i as usize])
+}
+
 fn paths(v: &VolumeIndex) -> Vec<String> {
     let (mut chain, mut out) = (Vec::new(), Vec::new());
     let mut all: Vec<String> = (0..v.len() as u32)
@@ -70,15 +79,25 @@ fn mount_roots_and_foreign_inodes_cannot_replace_local_parents() {
 }
 
 #[test]
-fn a_volume_is_rewalked_only_after_its_period() {
+fn after_its_period_a_volume_is_reread_in_place_instead_of_walked_again() {
     let t = Temp::new("rewalk");
+    put(&t, "d/grows.txt", 1);
     let mut w = WalkIndex::with_roots(vec![("v".into(), t.path().to_path_buf(), "ext4".into())]);
     let mut v = VolumeIndex::new("v", t.path().as_os_str().as_bytes(), b'/');
-    assert_eq!(w.changes("v", Checkpoint::default(), &mut v).unwrap(), None);
+    assert_eq!(w.changes("v", Checkpoint::default(), &mut v).unwrap(), None, "without a walk of its own the volume is scanned");
     let cp = w.scan("v", &mut v).unwrap();
+    v.commit();
     assert_eq!(w.changes("v", cp, &mut v).unwrap(), Some(cp));
+    std::fs::write(t.path().join("d/grows.txt"), b"12345").unwrap();
+    w.changes("v", cp, &mut v).unwrap();
+    v.commit();
+    assert_eq!(size_of(&v, b"grows.txt"), 1, "an edit inside an unwatched folder waits for the period");
     w.walked[0].1 -= REWALK;
-    assert_eq!(w.changes("v", cp, &mut v).unwrap(), None);
+    assert_eq!(w.changes("v", cp, &mut v).unwrap(), Some(cp));
+    v.commit();
+    assert_eq!(size_of(&v, b"grows.txt"), 5);
+    assert!(w.walked[0].1.elapsed() < REWALK);
+    assert!(w.live.is_none(), "an index of chosen folders adds no inotify watches");
     assert!(w.scan("nope", &mut v).is_err());
 }
 
@@ -223,4 +242,59 @@ fn a_new_mount_is_adopted_and_a_changed_one_is_walked_again() {
     assert!(w.retarget(vec![root("b", &b)], keys(&[("b", "uuid-2")])));
     assert!(w.scan("a", &mut v).is_err() && !w.trees.contains_key("a"));
     assert!(!w.refresh(), "an index of chosen folders never follows the mounts");
+}
+
+#[test]
+fn the_watch_budget_is_a_share_of_the_inotify_limit_and_skips_hidden_folders() {
+    assert_eq!(budget(Some(8192)), 2048);
+    assert_eq!(budget(Some(1_048_576)), 65_536);
+    assert_eq!(budget(Some(100)), 25);
+    assert_eq!(budget(None), 2048);
+    let home = Path::new("/home/jo");
+    assert!(watchable(home, home) && watchable(Path::new("/home/jo/Documents/x"), home));
+    assert!(!watchable(Path::new("/home/jo/.cache/thumbnails"), home));
+    assert!(!watchable(Path::new("/home/jo2/Documents"), home));
+    assert!(!watchable(Path::new("/usr/share"), home));
+}
+
+#[test]
+fn watched_folders_reach_the_index_at_once_and_hidden_ones_wait() {
+    let t = Temp::new("watched");
+    put(&t, "docs/a.txt", 1);
+    put(&t, "docs/sub/b.txt", 1);
+    put(&t, ".hidden/h.txt", 1);
+    let mut w = WalkIndex::with_roots(vec![("v".into(), t.path().to_path_buf(), "ext4".into())]).watching(t.path().to_path_buf(), 100);
+    let mut v = VolumeIndex::new("v", t.path().as_os_str().as_bytes(), b'/');
+    let cp = w.scan("v", &mut v).unwrap();
+    v.commit();
+    assert_eq!(w.changes("v", cp, &mut v).unwrap(), Some(cp));
+    v.commit();
+    std::fs::write(t.path().join("docs/a.txt"), b"12345").unwrap();
+    std::fs::write(t.path().join("docs/sub/new.txt"), b"xy").unwrap();
+    std::fs::write(t.path().join(".hidden/h.txt"), b"12345").unwrap();
+    std::thread::sleep(Duration::from_millis(250));
+    assert_eq!(w.changes("v", cp, &mut v).unwrap(), Some(cp));
+    v.commit();
+    assert_eq!(size_of(&v, b"a.txt"), 5, "an edit in place is seen without waiting for the walk period");
+    assert_eq!(size_of(&v, b"new.txt"), 2);
+    assert_eq!(size_of(&v, b"h.txt"), 1, "hidden folders are not watched");
+    std::fs::remove_dir_all(t.path().join("docs/sub")).unwrap();
+    std::thread::sleep(Duration::from_millis(250));
+    w.changes("v", cp, &mut v).unwrap();
+    v.commit();
+    assert_eq!(size_of(&v, b"b.txt"), u64::MAX);
+    assert_eq!(w.live.as_ref().unwrap().watched["v"].len(), 2, "the removed folder gives its watch back");
+}
+
+#[test]
+fn the_shallowest_folders_get_the_watches_when_the_budget_is_short() {
+    let t = Temp::new("budget");
+    put(&t, "top/mid/deep/f", 1);
+    let mut w = WalkIndex::with_roots(vec![("v".into(), t.path().to_path_buf(), "ext4".into())]).watching(t.path().to_path_buf(), 2);
+    let mut v = VolumeIndex::new("v", t.path().as_os_str().as_bytes(), b'/');
+    w.scan("v", &mut v).unwrap();
+    let ino = |p: &Path| std::fs::metadata(p).unwrap().ino();
+    let watched = &w.live.as_ref().unwrap().watched["v"];
+    assert_eq!(watched.len(), 2);
+    assert!(watched.contains(&ino(t.path())) && watched.contains(&ino(&t.path().join("top"))));
 }
