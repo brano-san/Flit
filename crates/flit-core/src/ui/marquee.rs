@@ -28,7 +28,7 @@ impl App {
 
     pub(super) fn marquee_base(&self) -> Vec<u32> {
         match &self.tab().view {
-            Some(v) if self.mods.ctrl => v.selected().collect(),
+            Some(v) if self.mods.ctrl || self.mods.shift => v.selected().collect(),
             _ => Vec::new(),
         }
     }

@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 const NO: Mods = Mods { ctrl: false, shift: false, alt: false };
 const CTRL: Mods = Mods { ctrl: true, shift: false, alt: false };
+const SHIFT: Mods = Mods { ctrl: false, shift: true, alt: false };
 
 fn app_with(names: &[String]) -> App {
     let state = Persisted { path: Location::parse(r"C:\m").unwrap(), ..Default::default() };
@@ -154,4 +155,50 @@ fn holding_the_pointer_below_the_list_scrolls_and_extends_the_band() {
     assert_eq!(grown[0], "f000");
     release(&mut app, x, below);
     assert!(app.marquee.is_none());
+}
+
+#[test]
+fn tree_rows_marquee_and_shift_marquee_extends_the_selection() {
+    let mut app = five();
+    app.run_action("view.layout.tree", Instant::now());
+    let names: Vec<String> = (0..20).map(|i| format!("n{i:02}.txt")).collect();
+    let items: Vec<(&str, u64, bool)> = names.iter().map(|n| (n.as_str(), 1, false)).collect();
+    let t = app.tab();
+    let mut listing = Listing::default();
+    let mut keys = SortKeys::new(CaseMode::Insensitive);
+    for &(n, size, dir) in &items {
+        let i = listing.push(n.as_bytes(), Meta { size, attrs: if dir { crate::listing::attr::DIR } else { 0 }, ..Default::default() });
+        keys.push(listing.name(i));
+    }
+    let mut order = Vec::new();
+    sort::sort(&listing, &keys, t.view_spec, &mut order);
+    let snap = DirSnapshot { gen: t.gen, path: t.location().path().clone(), listing, keys, order, view: t.view_spec, done: true, error: None, elapsed: Duration::ZERO };
+    t.slot.publish(Arc::new(snap));
+    app.poll();
+    app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    assert_eq!(app.layout.mode, LayoutMode::Tree);
+    let x = detail_x(&app);
+    let (y1, y3) = (row_y(&app, 1.0), row_y(&app, 3.0));
+    press(&mut app, x, y1, NO);
+    drag_to(&mut app, x, y3);
+    release(&mut app, x, y3);
+    assert_eq!(selected(&app), ["n01.txt", "n02.txt", "n03.txt"], "a plain marquee in the tree selects the band");
+    select(&mut app, &["n01.txt", "n05.txt"]);
+    let (y6, y7) = (row_y(&app, 6.0), row_y(&app, 7.0));
+    press(&mut app, x, y6, SHIFT);
+    drag_to(&mut app, x, y7);
+    release(&mut app, x, y7);
+    assert_eq!(selected(&app), ["n01.txt", "n05.txt", "n06.txt", "n07.txt"], "a shift marquee extends the old selection");
+}
+
+#[test]
+fn shift_marquee_in_details_extends_instead_of_restarting() {
+    let mut app = five();
+    select(&mut app, &["a"]);
+    let x = detail_x(&app);
+    let (y1, y2) = (row_y(&app, 1.0), row_y(&app, 2.0));
+    press(&mut app, x, y1, SHIFT);
+    drag_to(&mut app, x, y2);
+    release(&mut app, x, y2);
+    assert_eq!(selected(&app), ["a", "b", "c"], "the old selection survives the shift marquee");
 }

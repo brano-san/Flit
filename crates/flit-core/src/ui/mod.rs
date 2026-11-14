@@ -1866,7 +1866,7 @@ impl App {
                     self.tree_toggle_row(row, self.mods.shift);
                 } else if button == MouseButton::Left && self.on_checkbox(x, y) {
                     self.toggle_row(row);
-                } else if button == MouseButton::Left && clicks == 1 && !self.mods.shift && self.marquee_column(x) {
+                } else if button == MouseButton::Left && clicks == 1 && (self.marquee_column(x) || (self.layout.mode == LayoutMode::Tree && !self.on_checkbox(x, y))) {
                     let base = self.marquee_base();
                     self.click_row(row, button, clicks, now);
                     self.arm_marquee(x, y, self.mods.ctrl, base);
@@ -1877,9 +1877,9 @@ impl App {
             Hit::ListEmpty => {
                 self.focus = Focus::List;
                 let base = self.marquee_base();
-                let ctrl = self.mods.ctrl;
+                let (ctrl, shift) = (self.mods.ctrl, self.mods.shift);
                 if let Some(v) = &mut self.tab_mut().view {
-                    if !ctrl {
+                    if !ctrl && !shift {
                         v.clear_selection();
                     }
                 }
