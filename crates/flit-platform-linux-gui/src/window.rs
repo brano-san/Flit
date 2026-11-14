@@ -297,6 +297,10 @@ impl Window for LinuxWindow {
         crate::shell::launcher_progress(progress.map(|(v, _)| v));
     }
 
+    fn notify(&self, text: &str) {
+        crate::alert::notification(text);
+    }
+
     fn open_window(&self, opts: WindowOptions) {
         self.push(Command::Open(opts));
     }

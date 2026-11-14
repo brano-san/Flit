@@ -27,6 +27,7 @@ const BUTTON_W: f32 = 104.0;
 const BUTTON_H: f32 = 32.0;
 const SAMPLES: usize = 60;
 const SAMPLE_EVERY: Duration = Duration::from_millis(250);
+const NOTIFY_AFTER: Duration = Duration::from_secs(10);
 const MAX_JOBS: usize = 100;
 
 const G_OPS: &str = "\u{E896}";
@@ -478,6 +479,15 @@ impl App {
         j.asking = false;
         let took = now.saturating_duration_since(j.created);
         let failed = matches!(j.state, JobState::Failed(_));
+        let announced = !matches!(j.state, JobState::Cancelled);
+        let (items, title) = (j.progress.items, j.title());
+        if !self.active && announced && took >= NOTIFY_AFTER {
+            let text = match failed {
+                true => crate::tr!(S::UiJobNotifyFailed, title = title),
+                false => crate::trn!(P::UiJobNotifyDone, items, title = title),
+            };
+            self.effects.push(super::Effect::Notify(text));
+        }
         if took.as_millis() > super::bottom::ELAPSED_MIN_MS {
             self.tab_mut().stats.op = Some(took);
         }

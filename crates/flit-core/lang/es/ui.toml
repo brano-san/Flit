@@ -54,6 +54,8 @@ items_of = ["{done} de {n} elemento", "{done} de {n} de elementos", "{done} de {
 items_speed = "{speed} elementos/s"
 completed_in = "Completado en {seconds} s"
 completed = "Completado"
+notify_done = ["{title} terminado: {n} elemento", "{title} terminado: {n} elemento", "{title} terminado: {n} elementos"]
+notify_failed = "{title} terminado con errores"
 cancelled_detail = "Se canceló antes de terminar; los elementos restantes se quedaron en su lugar"
 
 [job_title]

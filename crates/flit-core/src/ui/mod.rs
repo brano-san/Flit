@@ -350,6 +350,7 @@ pub enum Effect {
     SetClipboard(String),
     Paste,
     Window(WindowCmd),
+    Notify(String),
     Cursor(CursorIcon),
     Title(String),
     NewWindow(Vec<Route>),

@@ -54,6 +54,8 @@ items_of = ["{done}/{n} 个项目"]
 items_speed = "{speed} 个项目/秒"
 completed_in = "已完成，用时 {seconds} 秒"
 completed = "已完成"
+notify_done = ["{title}已完成：{n} 项"]
+notify_failed = "{title}已完成，但有错误"
 cancelled_detail = "在完成前已取消；剩余项目保持原位"
 
 [job_title]

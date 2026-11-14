@@ -25,6 +25,21 @@ pub fn show(message: &str) -> bool {
         })
 }
 
+pub fn notification(message: &str) -> bool {
+    if !has_display() {
+        return false;
+    }
+    let argv = ["notify-send".to_owned(), "--urgency=normal".to_owned(), format!("--app-name={TITLE}"), "--".to_owned(), TITLE.to_owned(), message.to_owned()];
+    let Some(program) = crate::shell::on_path(OsStr::new(&argv[0])) else { return false };
+    let mut cmd = Command::new(program);
+    cmd.args(&argv[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    let Ok(mut child) = cmd.spawn() else { return false };
+    let _ = std::thread::Builder::new().name("flit-reap".into()).spawn(move || {
+        let _ = child.wait();
+    });
+    true
+}
+
 #[cfg(test)]
 #[path = "../test/alert.rs"]
 mod tests;

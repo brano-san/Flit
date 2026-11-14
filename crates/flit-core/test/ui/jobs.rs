@@ -538,3 +538,29 @@ fn the_taskbar_progress_averages_running_jobs_and_pauses_for_a_question() {
     finish(&mut app, id, None);
     assert_eq!(app.overall_progress(), None);
 }
+
+#[test]
+fn a_long_operation_notifies_an_unfocused_window_when_it_finishes() {
+    let mut app = app_at(r"C:\x");
+    app.drain_effects().for_each(drop);
+    let (id, _) = paste(&mut app);
+    app.on_event(&Event::Focus(false), t0());
+    app.drain_effects().for_each(drop);
+    app.op_done(1, id, None, None, t0() + Duration::from_secs(11));
+    let notes: Vec<String> = app.drain_effects().filter_map(|e| if let Effect::Notify(text) = e { Some(text) } else { None }).collect();
+    assert_eq!(notes.len(), 1);
+    let (id, _) = paste(&mut app);
+    app.drain_effects().for_each(drop);
+    app.op_done(1, id, Some("disk full".into()), None, t0() + Duration::from_secs(12));
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Notify(_))), "an error is announced too");
+    let (id, _) = paste(&mut app);
+    app.drain_effects().for_each(drop);
+    app.on_event(&Event::Focus(true), t0());
+    app.op_done(1, id, None, None, t0() + Duration::from_secs(31));
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::Notify(_))), "a focused window says nothing");
+    let (id, _) = paste(&mut app);
+    app.drain_effects().for_each(drop);
+    app.on_event(&Event::Focus(false), t0());
+    app.op_done(1, id, None, None, t0() + Duration::from_secs(3));
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::Notify(_))), "a short operation says nothing");
+}
