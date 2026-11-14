@@ -470,6 +470,7 @@ pub enum ProviderEvent {
     Hashed { tab: TabId, id: OpId, result: Result<Vec<String>, String> },
     Measured { tab: TabId, id: OpId, totals: Totals, file_system: Option<String>, done: bool },
     Status { tab: TabId, gen: u64, text: String },
+    Unwatched { tab: TabId, gen: u64, limit: bool },
     Access { tab: TabId, id: OpId, items: Vec<Option<Access>>, accounts: Accounts },
     NotExecutable { tab: TabId, path: FsPath },
     OpenAsk { tab: TabId, path: FsPath, ask: OpenAsk },

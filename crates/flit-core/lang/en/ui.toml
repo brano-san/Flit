@@ -191,6 +191,8 @@ tag_failed = "Flit could not tag the files: {error}"
 start_failed = "Flit could not start: {error}"
 stopped = "Flit stopped unexpectedly: {error}"
 integration_failed = "Cannot change the system integration: {error}"
+watch_limit_failed = "Cannot raise the watched folder limit: {error}"
+watch_limit_raised = "The watched folder limit is raised to {n}; live updates are back"
 
 [failure]
 copy = "Cannot copy {name}"

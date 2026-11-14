@@ -673,6 +673,7 @@ impl<P: Platform> Handler<P> {
                 Effect::Settings(SettingsCmd::Export { path, text, replace }) => self.settings.send(Job::Export(crate::preview::std_path(&path), text, replace)),
                 Effect::Settings(SettingsCmd::Import(path)) => self.settings.send(Job::Import(crate::preview::std_path(&path))),
                 Effect::Settings(SettingsCmd::CacheSize) => self.settings.send(Job::CacheSize),
+                Effect::Settings(SettingsCmd::RaiseWatchLimit) => self.settings.send(Job::RaiseWatchLimit(P::raise_watch_limit)),
                 Effect::Settings(SettingsCmd::Fonts) => {
                     if let Some(st) = self.windows.get_mut(&id) {
                         let t = Instant::now();
@@ -793,6 +794,12 @@ impl<P: Platform> Handler<P> {
                     }
                     self.dates = dates;
                 }
+                settings::Reply::WatchLimit(outcome) => {
+                    let now = Instant::now();
+                    for app in self.windows.values_mut().map(|st| &mut st.app) {
+                        app.watch_limit_raised(&outcome, now);
+                    }
+                }
                 settings::Reply::CacheUsed(bytes) => {
                     self.about.cache_bytes = Some(bytes);
                     self.share_about();
@@ -877,7 +884,7 @@ impl<P: Platform> Handler<P> {
             let target = match &ev {
                 ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } | ProviderEvent::SizesSkipped { tab, .. } => self.window_of_tab(*tab),
                 ProviderEvent::OpDone { tab, .. } | ProviderEvent::Untrashable { tab, .. } => self.window_of_tab(*tab).or(self.active),
-                ProviderEvent::Navigate { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } | ProviderEvent::OpFailure { tab, .. } | ProviderEvent::Hashed { tab, .. } | ProviderEvent::Measured { tab, .. } | ProviderEvent::Status { tab, .. } | ProviderEvent::Access { tab, .. } | ProviderEvent::NotExecutable { tab, .. } | ProviderEvent::OpenAsk { tab, .. } => self.window_of_tab(*tab),
+                ProviderEvent::Navigate { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } | ProviderEvent::OpFailure { tab, .. } | ProviderEvent::Hashed { tab, .. } | ProviderEvent::Measured { tab, .. } | ProviderEvent::Status { tab, .. } | ProviderEvent::Access { tab, .. } | ProviderEvent::NotExecutable { tab, .. } | ProviderEvent::OpenAsk { tab, .. } | ProviderEvent::Unwatched { tab, .. } => self.window_of_tab(*tab),
             };
             if let Some(st) = target.and_then(|id| self.windows.get_mut(&id)) {
                 st.app.on_provider_event(ev, now);

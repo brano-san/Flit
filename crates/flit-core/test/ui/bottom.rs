@@ -223,3 +223,43 @@ fn the_filter_field_has_no_fill_of_its_own_and_reads_as_one_field_with_its_piece
     let filled = g.dl.instances.iter().any(|i| i.color == t.input_bg.0 && (i.rect[0] - f.x).abs() < 1.0 && (i.rect[2] - f.w).abs() < 1.0);
     assert!(!filled, "the field is drawn as an outline on the bar piece, without a second colour");
 }
+
+#[test]
+fn a_folder_without_live_updates_shows_a_warning_that_raises_the_limit_once_and_reloads() {
+    let mut app = harness::app(&["a.txt"]);
+    let now = Instant::now();
+    let (tab, gen) = (app.tab().id, app.tab().gen);
+    app.on_provider_event(crate::provider::ProviderEvent::Unwatched { tab, gen: gen + 1, limit: true }, now);
+    harness::frame(&mut app);
+    assert!(bar(&app, BottomHit::LiveOff).is_none(), "a notice for another load is ignored");
+    app.on_provider_event(crate::provider::ProviderEvent::Unwatched { tab, gen, limit: true }, now);
+    harness::frame(&mut app);
+    assert_eq!(app.bottom_tip(BottomHit::LiveOff), S::TooltipLiveOffLimit);
+    click(&mut app, BottomHit::LiveOff);
+    click(&mut app, BottomHit::LiveOff);
+    let asks = app.drain_effects().filter(|e| matches!(e, Effect::Settings(crate::ui::SettingsCmd::RaiseWatchLimit))).count();
+    assert_eq!(asks, 1, "a second click while the password prompt is open asks nothing more");
+    app.watch_limit_raised(&WatchLimit::Raised(524_288), now);
+    assert!(app.tab().gen > gen, "the folder loads again and is watched again");
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: crate::provider::ProviderRequest::Watch { path: Some(_), .. }, .. })));
+    assert!(app.tab().error.as_deref().is_some_and(|m| m.contains("524288")), "{:?}", app.tab().error);
+    harness::frame(&mut app);
+    assert!(bar(&app, BottomHit::LiveOff).is_none(), "the warning goes with the reload");
+}
+
+#[test]
+fn other_watch_failures_offer_nothing_to_raise_and_a_cancelled_prompt_leaves_tabs_alone() {
+    let mut app = harness::app(&["a.txt"]);
+    let now = Instant::now();
+    let (tab, gen) = (app.tab().id, app.tab().gen);
+    app.on_provider_event(crate::provider::ProviderEvent::Unwatched { tab, gen, limit: false }, now);
+    harness::frame(&mut app);
+    assert_eq!(app.bottom_tip(BottomHit::LiveOff), S::TooltipLiveOff);
+    click(&mut app, BottomHit::LiveOff);
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::Settings(crate::ui::SettingsCmd::RaiseWatchLimit))));
+    app.watch_limit_raised(&WatchLimit::Cancelled, now);
+    app.watch_limit_raised(&WatchLimit::Raised(524_288), now);
+    assert_eq!(app.tab().gen, gen, "a folder that failed for another reason is not reloaded");
+    assert!(app.tab().error.is_none(), "a window that did not ask shows no message");
+    assert!(bar(&app, BottomHit::LiveOff).is_some());
+}

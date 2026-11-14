@@ -191,6 +191,8 @@ tag_failed = "Flit 无法为文件添加标记：{error}"
 start_failed = "Flit 无法启动：{error}"
 stopped = "Flit 意外停止：{error}"
 integration_failed = "无法更改系统集成：{error}"
+watch_limit_failed = "无法提高监视文件夹上限：{error}"
+watch_limit_raised = "监视文件夹上限已提高到 {n}，实时更新已恢复"
 
 [failure]
 copy = "无法复制 {name}"

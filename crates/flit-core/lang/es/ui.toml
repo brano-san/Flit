@@ -191,6 +191,8 @@ tag_failed = "Flit no pudo etiquetar los archivos: {error}"
 start_failed = "Flit no se pudo iniciar: {error}"
 stopped = "Flit se cerró inesperadamente: {error}"
 integration_failed = "No se puede cambiar la integración con el sistema: {error}"
+watch_limit_failed = "No se puede subir el límite de carpetas vigiladas: {error}"
+watch_limit_raised = "El límite de carpetas vigiladas ahora es {n}; la actualización en directo vuelve a funcionar"
 
 [failure]
 copy = "No se puede copiar {name}"

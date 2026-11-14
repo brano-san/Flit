@@ -1,5 +1,6 @@
 use super::layouts::{layout_of_zoom, step_zoom};
 use super::{centered, App, Hit, BIN_BUTTONS, G_BRANCH};
+use super::tab::LiveOff;
 use crate::fmt as format;
 use crate::i18n::{P, S};
 use crate::render::Rect;
@@ -47,6 +48,7 @@ const G_ORDER: &str = "\u{E8CB}";
 const G_SUBFOLDERS: &str = "\u{E8F4}";
 const G_RETAIN: &str = "\u{E718}";
 const G_HIDDEN: &str = "\u{E8BB}";
+const G_WARNING: &str = "\u{E7BA}";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum BottomHit {
@@ -59,6 +61,7 @@ pub(super) enum BottomHit {
     Zoom,
     Elapsed,
     Undo,
+    LiveOff,
 }
 
 impl BottomHit {
@@ -69,7 +72,7 @@ impl BottomHit {
             BottomHit::Files => "view.toggle_files",
             BottomHit::Order => "view.sort.cycle_folders",
             BottomHit::Undo => "edit.undo",
-            BottomHit::Retain | BottomHit::Layout | BottomHit::Zoom | BottomHit::Elapsed => "",
+            BottomHit::Retain | BottomHit::Layout | BottomHit::Zoom | BottomHit::Elapsed | BottomHit::LiveOff => "",
         }
     }
 }
@@ -98,6 +101,11 @@ impl App {
                 self.undo();
             }
             BottomHit::Elapsed => {}
+            BottomHit::LiveOff => {
+                if self.tab().live_off == Some(LiveOff::Limit) {
+                    self.raise_watch_limit();
+                }
+            }
             BottomHit::Layout | BottomHit::Zoom => {
                 let r = self.layout.bar.iter().find(|x| x.0 == b).map_or(Rect::default(), |x| x.1);
                 let menu = self.build_layout_menu();
@@ -144,6 +152,8 @@ impl App {
             BottomHit::Elapsed if self.tab().stats.op.is_some() => S::TooltipElapsedOp,
             BottomHit::Elapsed => S::TooltipElapsed,
             BottomHit::Undo => S::DescribeEditUndo,
+            BottomHit::LiveOff if self.tab().live_off == Some(LiveOff::Limit) => S::TooltipLiveOffLimit,
+            BottomHit::LiveOff => S::TooltipLiveOff,
         }
     }
 
@@ -237,6 +247,16 @@ impl App {
         let order = self.tab().view_spec.sort.folders != Folders::First;
         self.bar_button(g, t, br(right - bw), BottomHit::Order, G_ORDER, order);
         right -= bw + self.s(6.0);
+        if let Some(off) = self.tab().live_off {
+            let b = br(right - bw);
+            let lit = self.lit(Hit::Bottom(BottomHit::LiveOff));
+            if lit > 0.0 {
+                g.dl.round_rect(b, super::widgets::faded(t.button_hover, lit), self.s(3.0));
+            }
+            centered(g, b, G_WARNING, self.icon_font(12.0), if off == LiveOff::Limit { t.error } else { t.text_dim });
+            self.layout.bar.push((BottomHit::LiveOff, b));
+            right -= bw + self.s(4.0);
+        }
 
         let tab = self.tab();
         let current = tab.view.as_ref().filter(|v| v.snap().gen == tab.gen && !tab.location().is_home_page());
@@ -408,6 +428,38 @@ impl App {
         g.dl.beneath(right_from, |dl| piece(dl, right, false));
         self.layout.bar_pieces = [left, right];
     }
+
+    pub(super) fn raise_watch_limit(&mut self) {
+        if !std::mem::replace(&mut self.raising_watch_limit, true) {
+            self.effects.push(super::Effect::Settings(super::SettingsCmd::RaiseWatchLimit));
+        }
+    }
+
+    pub fn watch_limit_raised(&mut self, outcome: &WatchLimit, now: std::time::Instant) {
+        let asked = std::mem::replace(&mut self.raising_watch_limit, false);
+        match outcome {
+            WatchLimit::Raised(n) => {
+                let blind: Vec<usize> = (0..self.tabs.len()).filter(|&k| self.tabs[k].live_off == Some(LiveOff::Limit)).collect();
+                for k in blind {
+                    self.reload(k, now);
+                }
+                if asked {
+                    self.status(crate::tr!(S::UiAppWatchLimitRaised, n = n));
+                }
+            }
+            WatchLimit::Cancelled => {}
+            WatchLimit::Failed(e) if asked => self.status(crate::tr!(S::UiAppWatchLimitFailed, error = crate::i18n::localize(e))),
+            WatchLimit::Failed(_) => {}
+        }
+        self.dirty = true;
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WatchLimit {
+    Raised(u64),
+    Cancelled,
+    Failed(String),
 }
 
 fn current_view(a: &App) -> Option<&crate::view::DirView> {

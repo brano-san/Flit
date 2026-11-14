@@ -35,6 +35,12 @@ pub(super) struct Loading {
 
 pub(super) type UndoBar = (usize, Instant);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum LiveOff {
+    Limit,
+    Failed,
+}
+
 pub struct Tab {
     pub id: TabId,
     pub(super) history: History,
@@ -55,6 +61,7 @@ pub struct Tab {
     pub(super) view: Option<DirView>,
     pub(super) view_loc: Location,
     pub(super) error: Option<String>,
+    pub(super) live_off: Option<LiveOff>,
     pub(super) undo: Option<UndoBar>,
     pub(super) pending_diffs: VecDeque<DirChange>,
     pub(super) crumbs: Vec<(String, Location)>,
@@ -107,6 +114,7 @@ impl Tab {
             sizes_cancel: GenToken::default(),
             view: None,
             error: None,
+            live_off: None,
             undo: None,
             pending_diffs: VecDeque::new(),
             crumbs: Vec::new(),
@@ -174,6 +182,7 @@ impl Tab {
         self.loading = Some(Loading { gen, since: now, select, restore, scanned: 0, note: None, properties: false });
         self.pending_diffs.clear();
         self.error = None;
+        self.live_off = None;
         self.crumbs = loc.crumbs();
         self.follow_trail();
         self.stats = LoadStats::default();

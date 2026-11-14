@@ -191,6 +191,8 @@ tag_failed = "Flit konnte die Dateien nicht mit Tags versehen: {error}"
 start_failed = "Flit konnte nicht gestartet werden: {error}"
 stopped = "Flit wurde unerwartet beendet: {error}"
 integration_failed = "Die Systemintegration kann nicht geändert werden: {error}"
+watch_limit_failed = "Das Limit für überwachte Ordner lässt sich nicht erhöhen: {error}"
+watch_limit_raised = "Das Limit für überwachte Ordner ist auf {n} erhöht; die Live-Aktualisierung ist zurück"
 
 [failure]
 copy = "{name} kann nicht kopiert werden"

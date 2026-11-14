@@ -79,6 +79,10 @@ impl Platform for Linux {
         Ok(text::LinuxText::new())
     }
 
+    fn raise_watch_limit() -> flit_core::ui::WatchLimit {
+        fs::raise_watch_limit()
+    }
+
     fn keep_awake(reason: &str) -> Option<flit_platform::Awake> {
         awake::Awake::hold(reason).map(|a| Box::new(a) as flit_platform::Awake)
     }

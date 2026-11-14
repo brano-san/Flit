@@ -1,7 +1,7 @@
 use crate::thumbs::ThumbCache;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use flit_core::ui::settings::{self, Doc};
-use flit_core::ui::{Value, SETTINGS};
+use flit_core::ui::{Value, WatchLimit, SETTINGS};
 use flit_platform::{Platform, PlatformError, Wake};
 use serde_json::{Map, Value as Json};
 use std::path::{Path, PathBuf};
@@ -17,6 +17,7 @@ pub enum Job {
     CacheSize,
     CacheLimit(u32),
     Integrate(bool),
+    RaiseWatchLimit(fn() -> WatchLimit),
 }
 
 pub enum Reply {
@@ -28,6 +29,7 @@ pub enum Reply {
     ExportExists { path: PathBuf, size: u64, modified: i64 },
     CacheUsed(u64),
     IntegrationFailed(bool, String),
+    WatchLimit(WatchLimit),
 }
 
 pub type Integrate = fn(bool) -> Result<(), PlatformError>;
@@ -117,6 +119,16 @@ fn work(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>>, integrate:
                     if let Some(Err(e)) = integrate.map(|f| f(on)) {
                         tracing::warn!("cannot turn the default file manager {}: {e:?}", if on { "on" } else { "off" });
                         reply(Reply::IntegrationFailed(on, e.message));
+                    }
+                }
+                Job::RaiseWatchLimit(raise) => {
+                    let (replies, wake) = (replies.clone(), wake.clone());
+                    let spawned = std::thread::Builder::new().name("flit-watch-limit".into()).spawn(move || {
+                        let _ = replies.send(Reply::WatchLimit(raise()));
+                        wake();
+                    });
+                    if let Err(e) = spawned {
+                        reply(Reply::WatchLimit(WatchLimit::Failed(e.to_string())));
                     }
                 }
                 Job::CacheLimit(mb) => {

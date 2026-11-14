@@ -151,12 +151,12 @@ fn failed_watch_reports_status_and_rescans_after_own_operations() {
     let (w, rx) = watcher();
     w.blind(41, 9, &io::Error::from_raw_os_error(libc::ENOSPC));
     match rx.recv_timeout(Duration::from_millis(100)).unwrap() {
-        ProviderEvent::Status { tab: 41, gen: 9, text } => assert_eq!(text, WATCH_LIMIT),
+        ProviderEvent::Unwatched { tab: 41, gen: 9, limit } => assert!(limit, "a full inotify table offers to raise the limit"),
         other => panic!("{other:?}"),
     }
     let (mut w2, rx2) = watcher();
     w2.watch(42, 3, Some(&FsPath::parse("/tmp/flit-gui-test-missing-folder").unwrap()));
-    assert!(matches!(rx2.recv_timeout(Duration::from_millis(100)).unwrap(), ProviderEvent::Status { tab: 42, gen: 3, .. }));
+    assert!(matches!(rx2.recv_timeout(Duration::from_millis(100)).unwrap(), ProviderEvent::Unwatched { tab: 42, gen: 3, limit: false }), "another failure has nothing to raise");
     rescan_blind();
     assert!(matches!(rx.recv_timeout(Duration::from_millis(100)).unwrap(), ProviderEvent::Rescan { tab: 41, gen: 9 }));
     assert!(matches!(rx2.recv_timeout(Duration::from_millis(100)).unwrap(), ProviderEvent::Rescan { tab: 42, gen: 3 }));
@@ -258,4 +258,24 @@ fn a_drive_mounted_while_the_trash_is_shown_reloads_only_the_trash_tabs() {
     w.watch(61, 2, Some(&fs_path(t.path())));
     rescan_trash(&w.trash_tabs, &w.events, &w.wake);
     assert!(rx.recv_timeout(Duration::from_millis(100)).is_err());
+}
+
+#[test]
+fn raising_the_watch_limit_asks_once_and_survives_a_reboot() {
+    assert_eq!(raised_limit(Some(8192)), WATCH_LIMIT_TARGET);
+    assert_eq!(raised_limit(None), WATCH_LIMIT_TARGET);
+    assert_eq!(raised_limit(Some(WATCH_LIMIT_TARGET)), 2 * WATCH_LIMIT_TARGET, "a limit already at the target still grows");
+    let args = raise_args(524_288);
+    assert_eq!(&args[..2], ["/bin/sh", "-c"]);
+    assert_eq!(&args[3..], ["sh", "524288", WATCH_LIMIT_CONF]);
+    assert!(args[2].contains("sysctl -q -w fs.inotify.max_user_watches") && args[2].contains("> \"$2\""), "{}", args[2]);
+    assert_eq!(raise_outcome(524_288, Some(0), ""), WatchLimit::Raised(524_288));
+}
+
+#[test]
+fn a_dismissed_password_prompt_is_quiet_and_other_failures_are_explained() {
+    assert_eq!(raise_outcome(1, Some(126), ""), WatchLimit::Cancelled);
+    assert_eq!(raise_outcome(1, Some(127), "Error executing command as another user: Not authorized\n"), WatchLimit::Failed("Error executing command as another user: Not authorized".into()));
+    assert_eq!(raise_outcome(1, Some(1), ""), WatchLimit::Failed("pkexec exit code 1".into()));
+    assert!(matches!(raise_outcome(1, None, ""), WatchLimit::Failed(_)));
 }

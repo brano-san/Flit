@@ -2,6 +2,8 @@ use crate::places;
 use crossbeam_channel::Sender;
 use flit_core::listing::DirStats;
 use flit_core::path::PathKind;
+use flit_core::i18n::S;
+use flit_core::ui::WatchLimit;
 use flit_core::{FsError, FsPath, ListingBuilder, ProviderEvent, TabId};
 use flit_platform::{Fs, PlatformError, Wake, Watcher};
 use flit_platform_linux::{host, LinuxFs, Notice, Notify};
@@ -14,7 +16,39 @@ use std::time::Duration;
 
 pub const COALESCE: Duration = Duration::from_millis(16);
 
-pub const WATCH_LIMIT: &str = "Live updates are off: the inotify watch limit (fs.inotify.max_user_watches) is reached, so this folder refreshes after Flit's own operations";
+pub const WATCH_LIMIT_FILE: &str = "/proc/sys/fs/inotify/max_user_watches";
+pub const WATCH_LIMIT_TARGET: u64 = 524_288;
+pub const WATCH_LIMIT_CONF: &str = "/etc/sysctl.d/60-flit-inotify.conf";
+const PKEXEC_DISMISSED: i32 = 126;
+const RAISE_SCRIPT: &str = "printf 'fs.inotify.max_user_watches = %s\n' \"$1\" > \"$2\" && sysctl -q -w fs.inotify.max_user_watches=\"$1\"";
+
+pub fn raised_limit(current: Option<u64>) -> u64 {
+    current.map_or(WATCH_LIMIT_TARGET, |c| if c < WATCH_LIMIT_TARGET { WATCH_LIMIT_TARGET } else { c.saturating_mul(2) })
+}
+
+pub fn raise_args(limit: u64) -> Vec<String> {
+    ["/bin/sh", "-c", RAISE_SCRIPT, "sh"].into_iter().map(str::to_owned).chain([limit.to_string(), WATCH_LIMIT_CONF.to_owned()]).collect()
+}
+
+pub fn raise_outcome(limit: u64, code: Option<i32>, stderr: &str) -> WatchLimit {
+    match code {
+        Some(0) => WatchLimit::Raised(limit),
+        Some(PKEXEC_DISMISSED) => WatchLimit::Cancelled,
+        _ if !stderr.trim().is_empty() => WatchLimit::Failed(stderr.trim().to_owned()),
+        Some(c) => WatchLimit::Failed(format!("pkexec exit code {c}")),
+        None => WatchLimit::Failed("pkexec was stopped by a signal".to_owned()),
+    }
+}
+
+pub fn raise_watch_limit() -> WatchLimit {
+    let Some(pkexec) = crate::shell::on_path(std::ffi::OsStr::new("pkexec")) else { return WatchLimit::Failed(S::ErrorsOpsExtraNoPkexec.en().to_owned()) };
+    let current = std::fs::read_to_string(WATCH_LIMIT_FILE).ok().and_then(|t| t.trim().parse().ok());
+    let limit = raised_limit(current);
+    match std::process::Command::new(pkexec).args(raise_args(limit)).stdin(std::process::Stdio::null()).output() {
+        Ok(out) => raise_outcome(limit, out.status.code(), &String::from_utf8_lossy(&out.stderr)),
+        Err(e) => WatchLimit::Failed(format!("pkexec: {}", flit_core::fmt::io_reason(&e))),
+    }
+}
 
 pub struct LinuxGuiFs;
 
@@ -140,8 +174,9 @@ pub struct LinuxGuiWatcher {
 
 impl LinuxGuiWatcher {
     fn blind(&self, tab: TabId, gen: u64, e: &io::Error) {
-        let text = if e.raw_os_error() == Some(libc::ENOSPC) { WATCH_LIMIT.to_owned() } else { format!("Live updates are off for this folder: {e}") };
-        if self.events.send(ProviderEvent::Status { tab, gen, text }).is_ok() {
+        tracing::warn!("live updates are off for tab {tab}: {e}");
+        let limit = e.raw_os_error() == Some(libc::ENOSPC);
+        if self.events.send(ProviderEvent::Unwatched { tab, gen, limit }).is_ok() {
             (self.wake)();
         }
         blind_tabs().push(Blind { tab, gen, events: self.events.clone(), wake: self.wake.clone() });

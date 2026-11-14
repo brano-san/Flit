@@ -588,6 +588,10 @@ pub trait Platform: 'static {
     fn run_elevated(_args: &[String]) -> Result<u32, PlatformError> {
         Err(PlatformError::unsupported("running with administrator rights"))
     }
+
+    fn raise_watch_limit() -> flit_core::ui::WatchLimit {
+        flit_core::ui::WatchLimit::Failed(PlatformError::unsupported("raising the watch limit").message)
+    }
 }
 
 pub fn posix_date_patterns(date: &str, time: &str) -> Option<(String, String)> {

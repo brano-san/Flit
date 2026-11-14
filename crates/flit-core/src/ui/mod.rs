@@ -80,6 +80,7 @@ pub use update::UpdatePrefs;
 pub use popup::{MenuOutcome, MenuView};
 pub use context::MenuKind;
 pub use tab::Tab;
+pub use bottom::WatchLimit;
 pub use address::Typed;
 pub use tabbar::{MovedTab, Startup, WindowSession};
 pub use settings::{ConfirmDelete, Doc, Page, Setting, Value, SETTINGS};
@@ -406,6 +407,7 @@ pub enum SettingsCmd {
     CacheSize,
     Fonts,
     Browse { exts: &'static [&'static str], folder: bool, start: Option<FsPath> },
+    RaiseWatchLimit,
 }
 
 pub enum IconResult {
@@ -605,6 +607,7 @@ pub struct App {
     pub ops_button_always: bool,
     pub conflict_default: Option<Resolve>,
     pub shell_items_inline: bool,
+    raising_watch_limit: bool,
     pub menu_hidden: Vec<&'static str>,
     git_branches: Vec<String>,
     pub tab_wheel_reversed: bool,
@@ -735,6 +738,7 @@ impl App {
             ops_button_always: false,
             conflict_default: None,
             shell_items_inline: false,
+            raising_watch_limit: false,
             menu_hidden: Vec::new(),
             git_branches: Vec::new(),
             tab_wheel_reversed: false,
@@ -1361,6 +1365,12 @@ impl App {
                         l.note = Some(crate::i18n::localize(&text).into_owned());
                         self.dirty |= k == self.cur;
                     }
+                }
+            }
+            ProviderEvent::Unwatched { tab, gen, limit } => {
+                if let Some(k) = tab_of(&self.tabs, tab, gen) {
+                    self.tabs[k].live_off = Some(if limit { tab::LiveOff::Limit } else { tab::LiveOff::Failed });
+                    self.dirty |= k == self.cur;
                 }
             }
             ProviderEvent::Access { id, items, accounts, .. } => self.properties_access(id, items, accounts),
