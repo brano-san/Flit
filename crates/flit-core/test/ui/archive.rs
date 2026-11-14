@@ -633,6 +633,8 @@ fn form_controls_answer_the_mouse() {
     assert!(ops(&mut app).is_empty());
 }
 
+const PACKED_HOME: &str = if cfg!(windows) { r"C:\menu\a.zip" } else { "/menu/a.zip" };
+
 fn unpacked_to(app: &mut App, then: &str) -> (OpId, Vec<FsPath>, FsPath) {
     let (id, op) = only(app);
     let FileOp::Copy { items, dest } = op else { panic!("{then}: {op:?}") };
@@ -649,12 +651,13 @@ fn unpacked(app: &mut App, id: OpId, items: Vec<FsPath>, dest: &FsPath, error: O
 
 #[test]
 fn copying_from_an_archive_unpacks_to_a_temporary_folder_first_and_puts_those_files_on_the_clipboard() {
-    let mut app = app_at(r"C:\menu\a.zip\docs");
+    let docs = p(PACKED_HOME).join(b"docs");
+    let mut app = app_at(&docs.display());
     deliver(&mut app, &[("x.txt", PACKED), ("y.txt", PACKED)]);
     select(&mut app, &["x.txt", "y.txt"]);
     app.copy_selection();
     let (id, items, dest) = unpacked_to(&mut app, "copy");
-    assert_eq!(items, [p(r"C:\menu\a.zip\docs\x.txt"), p(r"C:\menu\a.zip\docs\y.txt")]);
+    assert_eq!(items, [docs.join(b"x.txt"), docs.join(b"y.txt")]);
     unpacked(&mut app, id, items, &dest, None);
     let clip = app.drain_effects().find_map(|e| if let Effect::SetClipboardFiles { paths, cut } = e { Some((paths, cut)) } else { None });
     assert_eq!(clip, Some((vec![dest.join(b"x.txt"), dest.join(b"y.txt")], false)));
@@ -663,7 +666,7 @@ fn copying_from_an_archive_unpacks_to_a_temporary_folder_first_and_puts_those_fi
 
 #[test]
 fn a_failed_unpack_leaves_the_clipboard_alone_and_plain_folders_still_copy_their_own_paths() {
-    let mut app = app_at(r"C:\menu\a.zip");
+    let mut app = app_at(PACKED_HOME);
     deliver(&mut app, &[("x.txt", PACKED)]);
     select(&mut app, &["x.txt"]);
     app.copy_selection();
@@ -683,7 +686,7 @@ fn a_failed_unpack_leaves_the_clipboard_alone_and_plain_folders_still_copy_their
 fn dragging_out_of_an_archive_unpacks_first_and_starts_the_drag_only_while_the_button_is_held() {
     let row = |app: &App| (app.layout.cols[0].x + 100.0, app.layout.list.y + 0.5 * app.layout.row_h);
     for held in [true, false] {
-        let mut app = app_at(r"C:\menu\a.zip");
+        let mut app = app_at(PACKED_HOME);
         deliver(&mut app, &[("x.txt", PACKED)]);
         select(&mut app, &["x.txt"]);
         let (x, y) = row(&app);
