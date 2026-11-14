@@ -2000,12 +2000,12 @@ fn single_click_opens_a_folder_on_release_so_it_can_still_be_dragged() {
 }
 
 #[test]
-fn double_clicking_a_column_edge_fits_that_column() {
+fn double_clicking_the_right_edge_of_a_column_fits_that_column() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &[("a.txt", false)]);
     let l = &app.layout;
     let i = (1..l.cols.len()).find(|&i| l.columns[i] != crate::ui::Column::Name).expect("a column besides the name");
-    let (col, x, y) = (l.columns[i], l.cols[i].x, l.header.y + l.header.h / 2.0);
+    let (col, x, y) = (l.columns[i], l.cols[i].right(), l.header.y + l.header.h / 2.0);
     app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, t0());
     release(&mut app, (x, y), MouseButton::Left);
     assert_eq!(app.tab().fit_column, None);

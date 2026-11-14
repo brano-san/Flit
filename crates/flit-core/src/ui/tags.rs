@@ -283,6 +283,13 @@ impl App {
         if count == 0 { 0.0 } else { count as f32 * (d + gap) + gap }
     }
 
+    pub(super) fn name_marks<B: TextBackend>(&self, g: &mut Gfx<B>, e: &Entry, font: FontStyle) -> (f32, f32) {
+        let gap = self.cs(MARK_GAP);
+        let icons = FontStyle::new(FontFamily::Icons, (font.px() * 0.85).round(), false);
+        let cloud_w = cloud_mark(e.attrs).map_or(0.0, |(glyph, _)| (g.measure(glyph, icons) + 2.0 * gap).round());
+        (cloud_w, cloud_w + self.mark_reserve(e.tags))
+    }
+
     pub(super) fn draw_name<B: TextBackend>(&self, g: &mut Gfx<B>, p: &Parts, text: &str, e: &Entry, font: FontStyle, color: Color) -> f32 {
         let (r, m, mask) = (p.name, g.metrics(font), e.tags);
         let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
@@ -291,8 +298,7 @@ impl App {
         let (d, gap) = (self.cs(MARK), self.cs(MARK_GAP));
         let cloud = cloud_mark(e.attrs);
         let icons = FontStyle::new(FontFamily::Icons, (font.px() * 0.85).round(), false);
-        let cloud_w = cloud.map_or(0.0, |(glyph, _)| (g.measure(glyph, icons) + 2.0 * gap).round());
-        let reserve = cloud_w + self.mark_reserve(mask);
+        let (cloud_w, reserve) = self.name_marks(g, e, font);
         let x = if p.center { r.x + ((r.w - reserve - g.measure(text, font)) / 2.0).max(0.0).round() } else { r.x };
         let max_w = (r.right() - x - reserve).max(0.0);
         let needle = self.tab().view.as_ref().and_then(|v| v.filter_needle());

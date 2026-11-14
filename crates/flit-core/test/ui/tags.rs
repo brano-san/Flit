@@ -257,7 +257,7 @@ fn tag_column_is_opt_in_and_shows_names_and_marks() {
     assert!(!app.columns().contains(&Column::Tag));
     app.run_action("view.column.tag", Instant::now());
     assert_eq!(app.columns().last(), Some(&Column::Tag));
-    app.set_column_width(Column::Tag, 180.0);
+    app.tab_mut().columns.set_width(Column::Tag, 180.0);
     assert_eq!(app.tab().columns.width(Column::Tag), 180.0);
     assert_eq!(Columns { hidden: 0x81, ..Columns::default() }.sanitized().hidden, 0x80);
     let a = app.tab_mut().view.as_mut().unwrap().find(b"a.txt").unwrap();

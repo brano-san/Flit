@@ -229,7 +229,7 @@ fn the_header_menu_shows_hides_and_fits_columns_and_the_bin_keeps_its_own() {
     click(&mut app, name.x + 20.0, name.y + name.h / 2.0, MouseButton::Right);
     let menu = menu_of(&mut app);
     let disabled: Vec<bool> = menu.menu.iter().filter_map(|m| if let MenuItem::Command { disabled, .. } = m { Some(*disabled) } else { None }).collect();
-    assert_eq!(&disabled[..4], [true, true, true, true], "Name takes the room the other columns leave, so it cannot move, fit or close");
+    assert_eq!(&disabled[..4], [true, true, false, true], "Name stays first and always shows, but it can be sized to fit");
     click(&mut app, h.x + 20.0, h.y + h.h / 2.0, MouseButton::Right);
     menu_of(&mut app);
     app.on_event(&Event::MenuCommand(11), Instant::now());
@@ -256,9 +256,9 @@ fn the_header_menu_shows_hides_and_fits_columns_and_the_bin_keeps_its_own() {
     assert_eq!([Column::Modified, Column::Created, Column::Size].map(|c| w[c as usize]), [170.0, 160.0, 80.0]);
     let k = app.layout.columns.iter().position(|&c| c == Column::Size).unwrap();
     let displayed = app.layout.cols[k].w / app.content_px();
-    let other_widths: Vec<_> = app.layout.columns.iter().zip(&app.layout.cols).filter(|(c, _)| **c != Column::Name && **c != Column::Size).map(|(&c, r)| (c, r.w / app.content_px())).collect();
-    let expected = (displayed + 25.0).min(app.layout.list.w / app.content_px() - crate::ui::NAME_MIN_W - other_widths.iter().map(|(_, w)| w).sum::<f32>());
-    let (sx, sy) = (app.layout.cols[k].x, h.y + h.h / 2.0);
+    let other_widths: Vec<_> = app.layout.columns.iter().zip(&app.layout.cols).filter(|(c, _)| **c != Column::Size).map(|(&c, r)| (c, r.w / app.content_px())).collect();
+    let expected = displayed - 25.0;
+    let (sx, sy) = (app.layout.cols[k].right(), h.y + h.h / 2.0);
     app.on_event(&Event::MouseDown { x: sx, y: sy, button: MouseButton::Left, clicks: 1 }, Instant::now());
     app.on_event(&Event::MouseMove { x: sx - 25.0, y: sy }, Instant::now());
     app.on_event(&Event::MouseUp { x: sx - 25.0, y: sy, button: MouseButton::Left }, Instant::now());
@@ -732,6 +732,166 @@ fn a_narrow_pane_squeezes_the_columns_to_fit_its_width() {
     let (list, last) = (app.layout.list, *app.layout.cols.last().unwrap());
     assert!(app.layout.cols.len() > 3, "{:?}", app.layout.columns);
     assert!(last.right() <= list.right() + 0.5, "the table ends at {} past the pane edge {}: {:?} {:?}", last.right(), list.right(), app.layout.columns, app.layout.cols);
+}
+
+fn header_y(app: &App) -> f32 {
+    app.layout.header.y + app.layout.header.h / 2.0
+}
+
+fn col_rect(app: &App, c: Column) -> Rect {
+    app.layout.cols[app.layout.columns.iter().position(|&x| x == c).unwrap()]
+}
+
+fn drag_edge(app: &mut App, x: f32, dx: f32) {
+    let y = header_y(app);
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, Instant::now());
+    app.on_event(&Event::MouseMove { x: x + dx, y }, Instant::now());
+    app.on_event(&Event::MouseUp { x: x + dx, y, button: MouseButton::Left }, Instant::now());
+    frame(app);
+}
+
+fn double_click_edge(app: &mut App, x: f32) {
+    let y = header_y(app);
+    for clicks in [1, 2] {
+        app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks }, Instant::now());
+        app.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, Instant::now());
+    }
+    frame(app);
+}
+
+fn assert_near(got: f32, want: f32, what: &str) {
+    assert!((got - want).abs() <= 1.0, "{what}: {got} instead of {want}");
+}
+
+#[test]
+fn dragging_a_column_edge_sizes_the_column_on_its_left_and_the_edge_follows_the_pointer() {
+    let mut app = app_at(r"C:\x");
+    app.animations = false;
+    deliver(&mut app, &[("a.txt", 10, false)]);
+    let (before, list) = (app.layout.cols.clone(), app.layout.list);
+    let (ty, modified) = (col_rect(&app, Column::Type), col_rect(&app, Column::Modified));
+    assert_eq!(app.hit(ty.right(), header_y(&app)), Hit::ColSep(1), "the edge between Type and Date modified is the right edge of Type");
+    drag_edge(&mut app, ty.right(), -30.0);
+    assert_near(col_rect(&app, Column::Type).w, ty.w - 30.0, "Type shrinks");
+    assert_near(col_rect(&app, Column::Modified).x, modified.x - 30.0, "Date modified follows the edge");
+    assert_eq!(col_rect(&app, Column::Modified).w, modified.w, "Date modified keeps its width");
+    assert_eq!(app.layout.cols[0], before[0], "Name stays where it was");
+    assert_near(app.layout.cols.last().unwrap().right(), before.last().unwrap().right() - 30.0, "the freed room opens after the last column, as in Explorer");
+    app.on_event(&Event::Resized { width: 1300, height: 600 }, Instant::now());
+    frame(&mut app);
+    assert_eq!(app.layout.cols[0].w, before[0].w, "once the user sizes columns, a wider window leaves Name alone");
+    assert!(app.layout.cols.last().unwrap().right() < app.layout.list.right() - 100.0);
+    let mut app = app_at(r"C:\x");
+    app.animations = false;
+    deliver(&mut app, &[("a.txt", 10, false)]);
+    drag_edge(&mut app, ty.right(), 30.0);
+    assert_near(col_rect(&app, Column::Type).w, ty.w + 30.0, "Type grows");
+    assert_near(col_rect(&app, Column::Modified).x, modified.x + 30.0, "the edge follows the pointer even when the pane is full");
+    assert_near(col_rect(&app, Column::Modified).w, modified.w - 30.0, "the column right of the edge gives up the room");
+    assert_eq!(app.layout.cols[0], before[0], "Name does not move");
+    assert!(app.layout.cols.last().unwrap().right() <= list.right() + 0.5, "nothing is pushed out of the pane");
+}
+
+#[test]
+fn name_fills_the_pane_until_an_edge_is_dragged() {
+    let mut app = app_at(r"C:\x");
+    app.animations = false;
+    deliver(&mut app, &[("a.txt", 10, false)]);
+    let name = app.layout.cols[0];
+    assert_near(app.layout.cols.last().unwrap().right(), app.layout.list.right(), "Name takes the room the other columns leave");
+    let ty = col_rect(&app, Column::Type);
+    let y = header_y(&app);
+    click(&mut app, ty.right(), y, MouseButton::Left);
+    assert_eq!(app.tab().columns.width(Column::Name), 0.0, "a click on an edge without moving sizes nothing");
+    double_click_edge(&mut app, ty.right());
+    assert_eq!(app.tab().columns.width(Column::Name), 0.0, "fitting another column leaves Name filling the pane");
+    assert_ne!(app.tab().columns.width(Column::Type), ty.w, "Type was fitted");
+    run(&mut app, "view.columns.fit");
+    frame(&mut app);
+    assert_eq!(app.tab().columns.width(Column::Name), 0.0, "Size All Columns To Fit leaves a filling Name filling");
+    let (y, ty) = (header_y(&app), col_rect(&app, Column::Type));
+    click(&mut app, ty.right(), y, MouseButton::Right);
+    let menu = menu_of(&mut app);
+    assert_eq!(commands(&menu.menu)[..4].iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), ["Shift Column Left", "Shift Column Right", "Size Column To Fit", "Close Column"], "a right click on an edge offers the column on its left");
+    app.on_event(&Event::MenuCommand(3), Instant::now());
+    frame(&mut app);
+    assert!(!app.columns().contains(&Column::Type) && app.columns().contains(&Column::Modified), "{:?}", app.columns());
+    assert_eq!(app.tab().columns.width(Column::Name), 0.0);
+    app.on_event(&Event::Resized { width: 1300, height: 600 }, Instant::now());
+    frame(&mut app);
+    assert!(app.layout.cols[0].w > name.w, "a wider window widens Name");
+    assert_near(app.layout.cols.last().unwrap().right(), app.layout.list.right(), "the table still ends at the pane edge");
+}
+
+#[test]
+fn double_clicking_the_edge_after_name_fits_name_to_its_longest_name() {
+    let mut app = App::new(Persisted { path: loc(r"C:\x"), ..Default::default() }, Vec::new(), 0, false, 1.0, (1600, 600), Instant::now());
+    app.animations = false;
+    let long = "a-rather-long-file-name-to-fit.txt";
+    deliver(&mut app, &[(long, 1, false), ("b.txt", 1, false)]);
+    let auto = app.layout.cols[0];
+    assert_eq!(app.hit(auto.right(), header_y(&app)), Hit::ColSep(0));
+    double_click_edge(&mut app, auto.right());
+    let fitted = app.layout.cols[0];
+    assert!(fitted.w < auto.w, "{} {}", fitted.w, auto.w);
+    let p = app.item_parts(app.row_rect(0).unwrap());
+    let need = Gfx::new(Mono, 1024).measure(long, app.content_font(13.0));
+    assert!(need <= p.name.w && p.name.w < need + 2.0, "the longest name just fits: {need} in {}", p.name.w);
+    assert_eq!(app.layout.cols[1].x, fitted.right(), "the next column starts right after Name");
+    assert!(app.layout.cols.last().unwrap().right() < app.layout.list.right() - 100.0, "the rest of the pane stays empty");
+    drag_edge(&mut app, fitted.right(), 50.0);
+    assert_eq!(app.layout.cols[0].w, fitted.w + 50.0, "the edge after Name sizes Name");
+    run(&mut app, "view.columns.fit");
+    frame(&mut app);
+    assert_eq!(app.layout.cols[0].w, fitted.w, "a sized Name is fitted with the others");
+    let y = header_y(&app);
+    click(&mut app, fitted.x + 20.0, y, MouseButton::Right);
+    let menu = menu_of(&mut app);
+    let disabled: Vec<bool> = menu.menu.iter().filter_map(|m| if let MenuItem::Command { disabled, .. } = m { Some(*disabled) } else { None }).collect();
+    assert!(!disabled[5], "Restore Default Columns brings back the filling Name");
+    app.on_event(&Event::MenuCommand(5), Instant::now());
+    frame(&mut app);
+    assert_eq!(app.tab().columns.width(Column::Name), 0.0);
+    assert_eq!(app.layout.cols[0].w, auto.w);
+}
+
+#[test]
+fn a_sized_name_is_saved_and_older_views_keep_name_filling() {
+    let mut c = Columns::default();
+    assert_eq!(c.sanitized().width(Column::Name), 0.0, "views saved before Name could be sized keep it filling");
+    c.set_width(Column::Name, 1200.0);
+    assert!(!c.is_default());
+    assert_eq!(c.sanitized().width(Column::Name), 1200.0, "Name may be wider than the other columns");
+    assert_eq!(c.restored().width(Column::Name), 0.0);
+    for bad in [f32::NAN, f32::INFINITY, -5.0, 10.0, 1.0e6] {
+        c.set_width(Column::Name, bad);
+        assert_eq!(c.sanitized().width(Column::Name), 0.0, "{bad}");
+    }
+}
+
+#[test]
+fn a_narrow_window_still_fits_the_table_when_name_was_sized() {
+    let mut app = app_at(r"C:\x");
+    app.animations = false;
+    deliver(&mut app, &[("a.txt", 10, false)]);
+    let edge = app.layout.cols[0].right();
+    drag_edge(&mut app, edge, -40.0);
+    let sized = app.tab().columns.width(Column::Name);
+    assert!(sized > 0.0);
+    app.on_event(&Event::Resized { width: 560, height: 600 }, Instant::now());
+    frame(&mut app);
+    let (list, last) = (app.layout.list, *app.layout.cols.last().unwrap());
+    assert!(last.right() <= list.right() + 0.5, "the table ends at {} past the pane edge {}", last.right(), list.right());
+    let mut auto = app_at(r"C:\x");
+    auto.animations = false;
+    deliver(&mut auto, &[("a.txt", 10, false)]);
+    auto.on_event(&Event::Resized { width: 560, height: 600 }, Instant::now());
+    frame(&mut auto);
+    assert_eq!(app.layout.cols, auto.layout.cols, "a sized Name squeezes the same way as a filling one");
+    app.on_event(&Event::Resized { width: 1000, height: 600 }, Instant::now());
+    frame(&mut app);
+    assert_eq!(app.tab().columns.width(Column::Name), sized, "the narrow window did not change the saved width");
+    assert_eq!(app.layout.cols[0].w, sized);
 }
 
 #[test]

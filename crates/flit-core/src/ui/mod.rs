@@ -525,7 +525,7 @@ enum Hit {
 enum Drag {
     None,
     Thumb { grab: f32 },
-    ColSep { col: Column, start_x: f32, start_w: f32 },
+    ColSep { col: Column, start_x: f32, start: details::Columns, moved: bool },
     Splitter { start_x: f32, start_w: f32 },
     PinMove { from: usize, to: usize },
     PlaceMove { from: usize, to: usize },
@@ -1515,11 +1515,13 @@ impl App {
         l.columns.clear();
         l.columns.extend(shown.0.iter().map(|&(c, _)| c));
         let fixed: f32 = shown.0.iter().filter(|&&(c, _)| c != Column::Name).map(|&(_, w)| w).sum();
-        let room = (l.list.w - s(NAME_MIN_W)).max(0.0);
+        let name_cap = if widths.width(Column::Name) > 0.0 { s(widths.width(Column::Name)) } else { f32::INFINITY };
+        let name_floor = s(NAME_MIN_W).min(name_cap);
+        let room = (l.list.w - name_floor).max(0.0);
         let squeeze = if fixed > room { room / fixed } else { 1.0 };
         let fit = |w: f32| if squeeze < 1.0 { (w * squeeze).floor().max(s(details::MIN_COL_W).min(w)) } else { w };
         let fitted: f32 = shown.0.iter().filter(|&&(c, _)| c != Column::Name).map(|&(_, w)| fit(w)).sum();
-        let name_w = (l.list.w - fitted).max(s(NAME_MIN_W));
+        let name_w = (l.list.w - fitted).min(name_cap).max(name_floor);
         let total = name_w + fitted;
         let tight = if total > l.list.w && total > 0.0 { l.list.w / total } else { 1.0 };
         let mut x = l.list.x;
@@ -1596,7 +1598,7 @@ impl App {
         }
         if l.header.contains(x, y) {
             let grip = self.s(4.0);
-            if let Some(i) = (1..l.cols.len()).find(|&i| (x - l.cols[i].x).abs() <= grip) {
+            if let Some((i, _)) = l.cols.iter().map(|r| (x - r.right()).abs()).enumerate().filter(|&(_, d)| d <= grip).min_by(|a, b| a.1.total_cmp(&b.1)) {
                 return Hit::ColSep(i);
             }
             return l.cols.iter().position(|r| r.contains(x, y)).map_or(Hit::None, Hit::Header);
@@ -1783,7 +1785,7 @@ impl App {
                 self.dirty = true;
                 return;
             }
-            Drag::ColSep { col, start_x, start_w } => return self.set_column_width(col, start_w - (x - start_x) / (self.content_px())),
+            Drag::ColSep { .. } => return self.drag_column_edge(x),
             Drag::Splitter { start_x, start_w } => return self.drag_splitter(x, start_x, start_w),
             Drag::PinMove { from, .. } => return self.drag_pin(from, y),
             Drag::PlaceMove { from, .. } => {
@@ -1927,19 +1929,11 @@ impl App {
                 }
             }
             Hit::Preview(p) => self.preview_mouse_down(p, x, y),
-            Hit::ColSep(i) if button == MouseButton::Left && clicks >= 2 && self.layout.columns[i] != Column::Name => {
+            Hit::ColSep(i) if button == MouseButton::Left && clicks >= 2 => {
                 self.drag = Drag::None;
                 self.column_command(menu::ColumnCmd::Fit(self.layout.columns[i]));
             }
-            Hit::ColSep(i) => {
-                let col = self.layout.columns[i];
-                let scale = self.content_px();
-                let widths: Vec<_> = self.layout.columns.iter().zip(&self.layout.cols).filter(|(c, _)| **c != Column::Name).map(|(&c, r)| (c, r.w / scale)).collect();
-                for (c, w) in widths {
-                    self.tab_mut().columns.set_width(c, w);
-                }
-                self.drag = Drag::ColSep { col, start_x: x, start_w: self.tab().columns.width(col) };
-            }
+            Hit::ColSep(i) if button == MouseButton::Left => self.press_column_edge(i, x),
             Hit::PanelSep(k) if button == MouseButton::Left => self.press_sep(k, x, y, clicks),
             _ => {}
         }
@@ -2677,6 +2671,9 @@ impl App {
             }
             if i > 0 {
                 g.dl.rect(Rect::new(r.x, r.y + self.cs(6.0), 1.0, r.h - self.cs(12.0)), t.separator);
+            }
+            if i + 1 == l.columns.len() && r.right() < l.list.right() - 1.0 {
+                g.dl.rect(Rect::new(r.right(), r.y + self.cs(6.0), 1.0, r.h - self.cs(12.0)), t.separator);
             }
             g.dl.set_clip(Some(r));
             let sorted = Some(sort.field) == col.field();

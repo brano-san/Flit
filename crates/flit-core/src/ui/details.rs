@@ -1,3 +1,4 @@
+use super::flow::Flow;
 use super::layouts::{LayoutMode, Sizes};
 use super::ops::TIMER_SLACK;
 use super::sidebar::PlaceCmd;
@@ -23,12 +24,14 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::hash::Hasher;
+use std::ops::Range;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 pub const FOLDER_VIEWS_CAP: usize = 4096;
 pub const MIN_COL_W: f32 = 40.0;
 pub const MAX_COL_W: f32 = 600.0;
+pub const MAX_NAME_W: f32 = 8000.0;
 const HOVER_SELECT: Duration = Duration::from_millis(600);
 const AUTOSCROLL_DEAD: f32 = 12.0;
 const AUTOSCROLL_RATE: f32 = 8.0;
@@ -132,6 +135,14 @@ impl Default for Columns {
     }
 }
 
+fn min_width(c: Column) -> f32 {
+    if c == Column::Name { super::NAME_MIN_W } else { MIN_COL_W }
+}
+
+fn max_width(c: Column) -> f32 {
+    if c == Column::Name { MAX_NAME_W } else { MAX_COL_W }
+}
+
 fn git_slot(c: Column) -> usize {
     c as usize - Column::GitStatus as usize
 }
@@ -205,7 +216,7 @@ impl Columns {
 
     pub fn is_default(&self) -> bool {
         let d = Self::default();
-        self.hidden == d.hidden && self.extra == d.extra && self.order == d.order && self.widths[1..] == d.widths[1..] && self.extra_widths == d.extra_widths
+        self.hidden == d.hidden && self.extra == d.extra && self.order == d.order && self.widths == d.widths && self.extra_widths == d.extra_widths
     }
 
     pub fn restored(self) -> Self {
@@ -214,8 +225,9 @@ impl Columns {
 
     pub fn sanitized(mut self) -> Self {
         let d = Self::default();
-        for (w, dw) in self.widths.iter_mut().zip(d.widths).chain(self.extra_widths.iter_mut().zip(d.extra_widths)) {
-            if !(w.is_finite() && (MIN_COL_W..=MAX_COL_W).contains(w)) {
+        for (k, (w, dw)) in self.widths.iter_mut().zip(d.widths).chain(self.extra_widths.iter_mut().zip(d.extra_widths)).enumerate() {
+            let max = if k == 0 { MAX_NAME_W } else { MAX_COL_W };
+            if !(w.is_finite() && (MIN_COL_W..=max).contains(w)) {
                 *w = dw;
             }
         }
@@ -815,10 +827,38 @@ impl App {
         }
     }
 
-    pub(super) fn set_column_width(&mut self, c: Column, w: f32) {
-        let others: f32 = self.layout.columns.iter().filter(|&&col| col != Column::Name && col != c).map(|&col| self.tab().columns.width(col)).sum();
-        let max = if matches!(self.drag, super::Drag::ColSep { .. }) { (self.layout.list.w / self.content_px() - super::NAME_MIN_W - others).clamp(MIN_COL_W, MAX_COL_W) } else { MAX_COL_W };
-        self.change_view(|t| t.columns.set_width(c, w.clamp(MIN_COL_W, max).round()));
+    pub(super) fn press_column_edge(&mut self, i: usize, x: f32) {
+        let Some(&col) = self.layout.columns.get(i) else { return };
+        let scale = self.content_px();
+        let base = self.tab().columns;
+        let rendered: Vec<(Column, f32)> = self.layout.columns.iter().zip(&self.layout.cols).filter(|(&c, _)| base.shown(c)).map(|(&c, r)| (c, r.w / scale)).collect();
+        let mut start = base;
+        for (c, w) in rendered {
+            start.set_width(c, w);
+        }
+        self.drag = super::Drag::ColSep { col, start_x: x, start, moved: false };
+    }
+
+    pub(super) fn drag_column_edge(&mut self, x: f32) {
+        let super::Drag::ColSep { col, start_x, start, moved } = self.drag else { return };
+        if !moved && (x - start_x).abs() < 1.0 {
+            return;
+        }
+        self.drag = super::Drag::ColSep { col, start_x, start, moved: true };
+        let dx = (x - start_x) / self.content_px();
+        let shown: Vec<Column> = self.layout.columns.iter().copied().filter(|&c| start.shown(c)).collect();
+        let free = (self.layout.list.w / self.content_px() - shown.iter().map(|&c| start.width(c)).sum::<f32>()).max(0.0);
+        let from = start.width(col);
+        let want = (from + dx).round().clamp(min_width(col).min(from), max_width(col).max(from));
+        let mut need = (want - from - free).max(0.0);
+        let mut cols = start;
+        for &c in shown.iter().skip_while(|&&c| c != col).skip(1) {
+            let give = need.min((start.width(c) - MIN_COL_W).max(0.0));
+            cols.set_width(c, start.width(c) - give);
+            need -= give;
+        }
+        cols.set_width(col, want - need);
+        self.change_view(|t| t.columns = cols);
     }
 
     pub(super) fn request_fit(&mut self) {
@@ -882,12 +922,18 @@ impl App {
         let only = self.tabs[k].fit_column.take();
         let (font, hfont) = (self.content_font(13.0), self.content_font(12.0));
         let (pad, glyph) = (self.cs(10.0), self.cs(20.0));
-        let lines = self.visible_lines(&self.flow());
+        let f = self.flow();
+        let lines = self.visible_lines(&f);
         let t = &self.tabs[k];
         let Some(v) = &t.view else { return };
         let mut cols = t.columns;
+        let name_fixed = cols.width(Column::Name) > 0.0;
 
-        for &c in self.layout.columns.iter().filter(|&&c| c != Column::Name && only.is_none_or(|o| o == c)) {
+        for &c in self.layout.columns.iter().filter(|&&c| only.map_or(c != Column::Name || name_fixed, |o| o == c)) {
+            if c == Column::Name {
+                cols.set_width(c, (self.name_fit(g, &f, lines.clone()) / self.content_px()).ceil().clamp(super::NAME_MIN_W, MAX_NAME_W));
+                continue;
+            }
             let mut w = g.measure(c.title(), hfont) + glyph;
             for line in lines.clone() {
                 if let Some(Line::Row(r)) = v.line(line) {
@@ -897,6 +943,27 @@ impl App {
             cols.set_width(c, ((w + 2.0 * pad) / (self.content_px())).clamp(MIN_COL_W, MAX_COL_W).ceil());
         }
         self.change_view(|t| t.columns = cols);
+    }
+
+    fn name_fit<B: TextBackend>(&self, g: &mut Gfx<B>, f: &Flow, lines: Range<usize>) -> f32 {
+        let (font, pad) = (self.content_font(13.0), self.cs(10.0));
+        let lead = if self.prefs.checkboxes { self.header_check(Rect::default()).right() + self.cs(6.0) } else { pad };
+        let mut w = lead + g.measure(Column::Name.title(), self.content_font(12.0)) + self.cs(20.0) + pad;
+        let Some(v) = &self.tab().view else { return w };
+        let l = v.listing();
+        for line in lines {
+            let Some(Line::Row(r)) = v.line(line) else { continue };
+            let i = v.rows()[r];
+            let c = self.line_rect(f, line);
+            let p = self.item_parts(c);
+            let mut end = p.name.x - c.x + g.measure(&self.shown_name(l, i), font) + self.name_marks(g, &l.entries[i as usize], font).1;
+            let folder = l.folder(i);
+            if !folder.is_empty() && self.layout.mode != LayoutMode::Tree {
+                end += self.cs(8.0) + g.measure(&format!("{}{}", super::NESTED_MARK, name::display(folder)), font);
+            }
+            w = w.max(end + pad);
+        }
+        w
     }
 
     pub(super) fn header_menu(&mut self, x: f32, y: f32, col: Option<Column>) {
