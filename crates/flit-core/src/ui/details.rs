@@ -818,7 +818,7 @@ impl App {
                 self.git_refresh(self.cur, false);
             }
             if self.prefs.auto_fit {
-                self.request_fit();
+                self.request_auto_fit(self.cur);
             }
             if matches!(c, Column::Size | Column::Folders | Column::Files) {
                 self.compute_dir_sizes();
@@ -861,14 +861,23 @@ impl App {
     }
 
     pub(super) fn request_fit(&mut self) {
-        self.tab_mut().fit_pending = true;
+        let t = self.tab_mut();
+        (t.fit_pending, t.fit_keeps_name) = (true, false);
+        self.dirty = true;
+    }
+
+    fn request_auto_fit(&mut self, k: usize) {
+        let t = &mut self.tabs[k];
+        if !t.fit_pending {
+            (t.fit_pending, t.fit_keeps_name) = (true, true);
+        }
         self.dirty = true;
     }
 
     pub(super) fn toggle_auto_fit(&mut self) {
         self.prefs.auto_fit = !self.prefs.auto_fit;
         if self.prefs.auto_fit {
-            self.request_fit();
+            self.request_auto_fit(self.cur);
         }
     }
 
@@ -919,6 +928,7 @@ impl App {
             return;
         }
         let only = self.tabs[k].fit_column.take();
+        let keep_name = std::mem::take(&mut self.tabs[k].fit_keeps_name);
         let (font, hfont) = (self.content_font(13.0), self.content_font(12.0));
         let (pad, glyph) = (self.cs(10.0), self.cs(20.0));
         let f = self.flow();
@@ -926,7 +936,7 @@ impl App {
         let t = &self.tabs[k];
         let Some(v) = &t.view else { return };
         let mut cols = t.columns;
-        let name_fixed = cols.width(Column::Name) > 0.0;
+        let name_fixed = cols.width(Column::Name) > 0.0 && !keep_name;
 
         for &c in self.layout.columns.iter().filter(|&&c| only.map_or(c != Column::Name || name_fixed, |o| o == c)) {
             if c == Column::Name {
@@ -1154,7 +1164,9 @@ impl App {
 
     pub(super) fn on_loaded(&mut self, k: usize) {
         self.archive_loaded(k);
-        self.tabs[k].fit_pending |= self.prefs.auto_fit;
+        if self.prefs.auto_fit {
+            self.request_auto_fit(k);
+        }
         if k == self.cur {
             self.compute_dir_sizes();
         }

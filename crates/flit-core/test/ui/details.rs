@@ -869,6 +869,76 @@ fn a_sized_name_is_saved_and_older_views_keep_name_filling() {
     }
 }
 
+fn sized_name_app() -> App {
+    let mut app = App::new(Persisted { path: loc(r"C:\x"), ..Default::default() }, Vec::new(), 0, false, 1.0, (1600, 600), Instant::now());
+    app.animations = false;
+    deliver(&mut app, &[("a.txt", 1, false), ("b.txt", 1, false)]);
+    let edge = app.layout.cols[0].right();
+    double_click_edge(&mut app, edge);
+    assert!(app.layout.cols.last().unwrap().right() < app.layout.list.right() - 100.0, "the table leaves room on the right");
+    app
+}
+
+#[test]
+fn a_right_click_on_the_header_after_the_last_column_offers_the_header_menu() {
+    let mut app = sized_name_app();
+    let (last, y) = (*app.layout.cols.last().unwrap(), header_y(&app));
+    let x = last.right() + 50.0;
+    assert_eq!(app.hit(x, y), Hit::HeaderEmpty);
+    click(&mut app, x, y, MouseButton::Right);
+    let labels: Vec<String> = commands(&menu_of(&mut app).menu).into_iter().map(|c| c.0).collect();
+    assert_eq!(labels[..2], ["Size All Columns To Fit", "Restore Default Columns"], "the menu has no column of its own: {labels:?}");
+    assert!(labels.iter().any(|l| l == "Date Created") && !labels.iter().any(|l| l == "Close Column"));
+    click(&mut app, x, y, MouseButton::Left);
+    assert_eq!(app.columns(), [Column::Name, Column::Type, Column::Modified, Column::Folders, Column::Files, Column::Size], "a left click there changes nothing");
+    let ty = col_rect(&app, Column::Type);
+    click(&mut app, ty.x + 20.0, y, MouseButton::Right);
+    assert_eq!(commands(&menu_of(&mut app).menu)[0].0, "Shift Column Left", "a column header still offers its own commands");
+}
+
+#[test]
+fn rows_light_up_only_under_the_columns_when_the_table_ends_early() {
+    let mut app = sized_name_app();
+    let (last, list) = (*app.layout.cols.last().unwrap(), app.layout.list);
+    let row = app.row_rect(0).unwrap();
+    assert_eq!((row.x, row.right()), (list.x, last.right()), "the row ends with the last column");
+    let y = line_y(&app, 0);
+    assert_eq!(app.hit(last.right() - 5.0, y), Hit::Row(0));
+    assert_eq!(app.hit(last.right() + 50.0, y), Hit::ListEmpty, "the room after the table is empty space");
+    click_line(&mut app, 20.0, 0, MouseButton::Left);
+    assert_eq!(selected(&app), ["a.txt"]);
+    click(&mut app, last.right() + 50.0, y, MouseButton::Left);
+    assert!(selected(&app).is_empty(), "a click past the table clears the selection as on empty space");
+    let mut full = app_at(r"C:\x");
+    full.animations = false;
+    deliver(&mut full, &[("a.txt", 1, false)]);
+    let (row, list) = (full.row_rect(0).unwrap(), full.layout.list);
+    assert_eq!((row.x, row.w), (list.x, list.w), "with Name filling the pane the row spans the pane");
+    assert_eq!(full.hit(list.right() - 2.0, line_y(&full, 0)), Hit::Row(0));
+}
+
+#[test]
+fn always_fit_keeps_a_sized_name_while_folders_load() {
+    let mut app = app_at(r"C:\x");
+    app.animations = false;
+    deliver(&mut app, &[("a.txt", 10, false)]);
+    let edge = app.layout.cols[0].right();
+    drag_edge(&mut app, edge, -100.0);
+    let sized = app.tab().columns.width(Column::Name);
+    assert!(sized > 0.0);
+    run(&mut app, "view.columns.autofit");
+    frame(&mut app);
+    assert_eq!(app.tab().columns.width(Column::Name), sized, "turning Always Fit on leaves Name alone");
+    let ty = app.tab().columns.width(Column::Type);
+    deliver(&mut app, &[("a-much-longer-name-than-before.someverylongext", 10, false)]);
+    frame(&mut app);
+    assert_eq!(app.tab().columns.width(Column::Name), sized, "a loaded folder does not refit the width the user gave Name");
+    assert_ne!(app.tab().columns.width(Column::Type), ty, "the other columns follow the folder");
+    run(&mut app, "view.columns.fit");
+    frame(&mut app);
+    assert_ne!(app.tab().columns.width(Column::Name), sized, "Size All Columns To Fit still fits a sized Name");
+}
+
 #[test]
 fn a_narrow_window_still_fits_the_table_when_name_was_sized() {
     let mut app = app_at(r"C:\x");

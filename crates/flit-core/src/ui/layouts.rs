@@ -301,10 +301,23 @@ impl App {
     pub(super) fn line_rect(&self, f: &Flow, line: usize) -> Rect {
         let (c, l) = (f.cell_from(line, self.tab().scroll), self.layout.list);
         if self.layout.flow.across {
-            Rect::new((l.x + c.x).round(), l.y + c.y, c.w, c.h)
-        } else {
-            Rect::new(l.x + c.x, (l.y + c.y).round(), c.w, c.h)
+            return Rect::new((l.x + c.x).round(), l.y + c.y, c.w, c.h);
         }
+        let r = Rect::new(l.x + c.x, (l.y + c.y).round(), c.w, c.h);
+        match self.table_span() {
+            Some((x, w)) if matches!(self.tab().view.as_ref().and_then(|v| v.line(line)), Some(crate::view::Line::Row(_))) => Rect { x, w, ..r },
+            _ => r,
+        }
+    }
+
+    pub(super) fn table_span(&self) -> Option<(f32, f32)> {
+        let l = &self.layout;
+        if !l.mode.table() {
+            return None;
+        }
+        let (first, last) = (l.cols.first()?, l.cols.last()?);
+        let right = if last.right() >= l.list.right() - 1.0 { last.right().max(l.list.right()) } else { last.right() };
+        Some((first.x, right - first.x))
     }
 
     pub(super) fn visible_lines(&self, f: &Flow) -> Range<usize> {
@@ -337,7 +350,7 @@ impl App {
         let Some((n, line)) = self.line_at(&f, x, y).and_then(|n| Some((n, self.tab().view.as_ref()?.line(n)?))) else { return Hit::ListEmpty };
         match line {
             crate::view::Line::Header(g) => Hit::Group(g),
-            crate::view::Line::Row(r) if self.layout.mode.rows() || self.item_parts(self.line_rect(&f, n)).body.contains(x, y) => Hit::Row(r),
+            crate::view::Line::Row(r) if self.layout.mode.rows() && x < self.line_rect(&f, n).right() || self.item_parts(self.line_rect(&f, n)).body.contains(x, y) => Hit::Row(r),
             crate::view::Line::Row(_) => Hit::ListEmpty,
         }
     }

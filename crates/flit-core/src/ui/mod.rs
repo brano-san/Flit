@@ -468,6 +468,7 @@ enum Hit {
     CrumbChevron(usize),
     Address,
     Header(usize),
+    HeaderEmpty,
     ColSep(usize),
     Row(usize),
     Group(usize),
@@ -1613,7 +1614,7 @@ impl App {
             if let Some((i, _)) = l.cols.iter().map(|r| (x - r.right()).abs()).enumerate().filter(|&(_, d)| d <= grip).min_by(|a, b| a.1.total_cmp(&b.1)) {
                 return Hit::ColSep(i);
             }
-            return l.cols.iter().position(|r| r.contains(x, y)).map_or(Hit::None, Hit::Header);
+            return l.cols.iter().position(|r| r.contains(x, y)).map_or(Hit::HeaderEmpty, Hit::Header);
         }
         if l.track.contains(x, y) {
             let th = l.thumb;
