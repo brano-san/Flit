@@ -95,6 +95,7 @@ pub(super) enum Then {
     Reveal(Vec<u8>),
     Open(FsPath),
     Launch,
+    Terminal,
     TrashArchives(Vec<FsPath>),
 }
 

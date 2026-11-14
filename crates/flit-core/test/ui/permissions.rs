@@ -2,7 +2,7 @@ use super::*;
 use crate::input::{Event, Key, Mods};
 use crate::listing::{DirSnapshot, Listing, Meta};
 use crate::location::{Location, ProviderId};
-use crate::provider::{AccessChange, OpReport, ProviderEvent, ProviderRequest};
+use crate::provider::{AccessChange, Launch, OpReport, ProviderEvent, ProviderRequest};
 use crate::sort::{self, CaseMode, SortKeys, ViewSpec};
 use crate::ui::properties::Measuring;
 use crate::ui::{Effect, Persisted};
@@ -153,4 +153,22 @@ fn files_only_selection_has_no_enclosed_masks_and_the_run_check() {
     let Kind::Properties(Measuring { probe: Probe::Editing(e), .. }) = &f.kind else { panic!("no permissions section") };
     assert!(e.enclosed_files_at().is_none() && e.enclosed_folders_at().is_none(), "a plain file shows no enclosed masks");
     assert!(e.exec_at().is_some(), "a plain file keeps the execute checkbox");
+}
+
+#[test]
+fn the_run_question_can_run_the_program_in_a_terminal_instead() {
+    let mut app = app_with(&["Tool.AppImage"]);
+    let (tab, path) = (app.tab().id, p("/home/u/Tool.AppImage"));
+    app.on_provider_event(ProviderEvent::NotExecutable { tab, path: path.clone() }, Instant::now());
+    assert_eq!(app.asking(), Some("allow_run"));
+    let f = app.jobs.form.as_ref().unwrap();
+    assert_eq!(f.buttons, ["Allow and run", "Run in terminal", "Cancel"]);
+    key(&mut app, Key::Right);
+    key(&mut app, Key::Enter);
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::SetAccess { items: vec![path.clone()], edit: AccessEdit { mode: ModeEdit { set: 0o100, clear: 0 }, ..Default::default() } });
+    let change = AccessChange { item: path.clone(), from: Access { mode: Access::FILE | 0o644, uid: 1000, gid: 1000 }, to: Access { mode: Access::FILE | 0o744, uid: 1000, gid: 1000 } };
+    let report = OpReport { op: FileOp::Access(vec![change]), items: vec![(path.clone(), path.clone())] };
+    app.on_provider_event(ProviderEvent::OpDone { tab, id, error: None, report: Some(report) }, Instant::now());
+    assert!(app.drain_effects().any(|e| matches!(&e, Effect::Provider { req: ProviderRequest::Launch { launch, .. }, .. } if *launch == Launch::RunInTerminal { program: path.clone() })), "the terminal variant launches in a terminal, not the normal open");
 }

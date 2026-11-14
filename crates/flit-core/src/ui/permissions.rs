@@ -247,13 +247,17 @@ impl App {
         let shown = crate::tr!(S::UiQuoted, name = name::display(path.file_name()));
         let controls = vec![Control::line(&crate::tr!(S::PermissionsNotExecutable, name = shown)), Control::line(S::PermissionsRunHint.t())];
         let title = crate::tr!(S::PermissionsRunTitle, name = shown);
-        self.open_form(Form::new(Kind::AllowRun { tab, path }, &title, controls, vec![S::PermissionsAllowRun.t(), S::WidgetsCancel.t()]));
+        self.open_form(Form::new(Kind::AllowRun { tab, path }, &title, controls, vec![S::PermissionsAllowRun.t(), S::ActionsFileRunInTerminal.t(), S::WidgetsCancel.t()]));
     }
 
-    pub(super) fn submit_allow_run(&mut self, f: Form) -> Option<Form> {
+    pub(super) fn submit_allow_run(&mut self, f: Form, b: usize) -> Option<Form> {
         if let Kind::AllowRun { tab, path } = f.kind {
             let edit = AccessEdit { mode: ModeEdit { set: OWNER_EXEC, clear: 0 }, ..Default::default() };
-            self.start_op_for(tab, FileOp::SetAccess { items: vec![path], edit }, Origin::Fresh, Then::Launch);
+            let then = match b {
+                1 => Then::Terminal,
+                _ => Then::Launch,
+            };
+            self.start_op_for(tab, FileOp::SetAccess { items: vec![path], edit }, Origin::Fresh, then);
         }
         None
     }

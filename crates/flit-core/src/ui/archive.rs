@@ -8,7 +8,7 @@ use crate::listing::attr;
 use crate::location::{Location, ProviderId};
 use crate::name;
 use crate::path::{FsPath, PathKind};
-use crate::provider::{FileOp, OpCtl, OpId, OpProgress, OpReport, ProviderRequest, TabId};
+use crate::provider::{FileOp, Launch, OpCtl, OpId, OpProgress, OpReport, ProviderRequest, TabId};
 use crate::undo::Origin;
 use crate::i18n::{self, Lang, S};
 use std::time::Instant;
@@ -507,6 +507,11 @@ impl App {
                     }
                 }
             }
+            Then::Terminal if error.is_none() => {
+                for (_, to) in &report.items {
+                    self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch: Launch::RunInTerminal { program: to.clone() } } });
+                }
+            }
             _ => return false,
         }
         true
@@ -713,7 +718,7 @@ impl App {
             Kind::Password { .. } => self.submit_password(f),
             Kind::Hashes(_) => self.submit_hashes(f),
             Kind::Properties(_) => self.submit_properties(f),
-            Kind::AllowRun { .. } => self.submit_allow_run(f),
+            Kind::AllowRun { .. } => self.submit_allow_run(f, b),
             Kind::GitClone => self.submit_clone(f),
             Kind::UserMenu { .. } => self.submit_user_entry(f),
             Kind::Update(_) => self.submit_update(f, b),
