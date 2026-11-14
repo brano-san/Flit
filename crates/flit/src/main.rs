@@ -153,6 +153,12 @@ fn main() {
     }
     #[cfg(target_os = "linux")]
     flit_platform_linux_gui::prefetch_fonts();
+    let _ = std::thread::Builder::new().name("flit-sweep".into()).spawn(|| {
+        let gone = flit_core::archive::sweep_temp(&flit_core::archive::temp_root(), flit_core::archive::TEMP_KEEP, std::time::SystemTime::now());
+        if gone > 0 {
+            tracing::info!("removed {gone} old unpacked copies");
+        }
+    });
     if let Err(e) = app::run::<P>(open, instance, metrics, activated, started) {
         let ran = app::shown();
         if ran {

@@ -81,6 +81,18 @@ fn is_tar_gz(name: &[u8]) -> bool {
     name.len() > 7 && name[name.len() - 7..].eq_ignore_ascii_case(b".tar.gz")
 }
 
+pub const TEMP_KEEP: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
+
+pub fn temp_root() -> std::path::PathBuf {
+    std::env::temp_dir().join("Flit")
+}
+
+pub fn sweep_temp(root: &std::path::Path, keep: std::time::Duration, now: std::time::SystemTime) -> usize {
+    let Ok(entries) = std::fs::read_dir(root) else { return 0 };
+    let old = |e: &std::fs::DirEntry| e.metadata().and_then(|m| m.modified()).is_ok_and(|t| t + keep < now);
+    entries.filter_map(Result::ok).filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) && old(e)).filter(|e| std::fs::remove_dir_all(e.path()).is_ok()).count()
+}
+
 pub fn browsable(name: &[u8]) -> Option<Format> {
     if is_tar_gz(name) {
         return Some(Format::TarGz);

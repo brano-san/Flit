@@ -51,3 +51,20 @@ fn operations_map_their_paths() {
     let moved = op.map_paths(|x| FsPath::parse(&x.display().replace("C:", "D:")));
     assert_eq!(moved, Some(ArchiveOp::Extract { archives: vec![p(r"D:\a.zip")], dest: Some(p(r"D:\out")), place: Place::Smart }));
 }
+
+#[test]
+fn old_unpacked_copies_are_swept_and_fresh_ones_and_loose_files_stay() {
+    let root = std::env::temp_dir().join(format!("flit-sweep-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("123-1-copy-0/inner")).unwrap();
+    std::fs::write(root.join("123-1-copy-0/inner/a.txt"), b"a").unwrap();
+    std::fs::write(root.join("note.txt"), b"n").unwrap();
+    let now = std::time::SystemTime::now();
+    assert_eq!(sweep_temp(&root, TEMP_KEEP, now), 0, "copies younger than a day stay, they may still be open");
+    assert!(root.join("123-1-copy-0").exists());
+    assert_eq!(sweep_temp(&root, TEMP_KEEP, now + 2 * TEMP_KEEP), 1);
+    assert!(!root.join("123-1-copy-0").exists());
+    assert!(root.join("note.txt").exists(), "only folders Flit unpacked into are removed");
+    assert_eq!(sweep_temp(&root.join("missing"), TEMP_KEEP, now), 0);
+    let _ = std::fs::remove_dir_all(&root);
+}
