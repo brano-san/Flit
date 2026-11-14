@@ -819,29 +819,135 @@ fn scrolling_one_panel_strip_leaves_the_other_alone_and_its_arrows_work_while_pa
     assert_eq!(shown(&app)[0], first + 1, "a parked panel's arrow scrolls that panel");
 }
 
+fn centre(r: Rect) -> (f32, f32) {
+    (r.x + r.w / 2.0, r.y + r.h / 2.0)
+}
+
+fn timer(app: &mut App, at: Instant) {
+    app.on_event(&Event::Timer, at);
+    app.layout();
+}
+
+fn asks_timer(app: &mut App) -> bool {
+    app.drain_effects().any(|e| matches!(e, Effect::Timer(_)))
+}
+
 #[test]
-fn dragging_a_tab_onto_an_arrow_takes_it_to_that_end_and_esc_brings_it_back() {
+fn dragging_a_tab_onto_an_arrow_scrolls_the_strip_step_by_step_and_esc_brings_it_back() {
     let mut app = many(30, 2000);
     app.select_tab(4);
     app.layout();
+    let (fit, s0) = (shown(&app).len(), shown(&app)[0]);
     let (x, y) = tab_xy(&app, 4);
-    let right = app.layout.tab_arrows[1];
+    let right = centre(app.layout.tab_arrows[1]);
     ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
-    ev(&mut app, Event::MouseMove { x: right.x + right.w / 2.0, y });
+    ev(&mut app, Event::MouseMove { x: right.0, y });
     app.layout();
-    assert_eq!(app.cur, 29);
-    assert_eq!(names(&app)[29], r"C:\t04");
-    assert!(shown(&app).contains(&29), "the dragged tab stays in view");
-    let left = app.layout.tab_arrows[0];
-    ev(&mut app, Event::MouseMove { x: left.x + left.w / 2.0, y });
+    assert_eq!(shown(&app)[0], s0 + 1, "the strip moves by one tab, not to the end");
+    assert_eq!((app.cur, names(&app)[s0 + fit].as_str()), (s0 + fit, r"C:\t04"), "the dragged tab rides at the right edge");
+    assert!(shown(&app).contains(&app.cur), "the dragged tab stays in view");
+    ev(&mut app, Event::MouseMove { x: right.0 + 1.0, y });
     app.layout();
-    assert_eq!((app.cur, names(&app)[0].as_str()), (0, r"C:\t04"));
-    assert!(shown(&app).contains(&0));
+    assert_eq!(shown(&app)[0], s0 + 1, "moving over the arrow does not add steps");
+    let t = Instant::now();
+    timer(&mut app, t + Duration::from_millis(100));
+    assert_eq!(shown(&app)[0], s0 + 1, "it waits before repeating");
+    timer(&mut app, t + super::HOLD_DELAY);
+    assert_eq!((shown(&app)[0], app.cur), (s0 + 2, s0 + fit + 1), "then steps while it stays over the arrow");
+    timer(&mut app, t + super::HOLD_DELAY + super::HOLD_REPEAT);
+    assert_eq!((shown(&app)[0], app.cur), (s0 + 3, s0 + fit + 2));
+    let left = centre(app.layout.tab_arrows[0]);
+    ev(&mut app, Event::MouseMove { x: left.0, y });
+    app.layout();
+    assert_eq!((shown(&app)[0], app.cur, names(&app)[s0 + 2].as_str()), (s0 + 2, s0 + 2, r"C:\t04"), "the left arrow steps back with the tab at its edge");
     key(&mut app, Key::Escape, NO);
     app.layout();
     assert_eq!((app.cur, names(&app)[4].as_str()), (4, r"C:\t04"));
     assert!(shown(&app).contains(&4));
+    let before = shown(&app)[0];
+    timer(&mut app, t + Duration::from_secs(5));
+    assert_eq!(shown(&app)[0], before, "a cancelled drag stops the steps");
     ev(&mut app, Event::MouseUp { x, y, button: MouseButton::Left });
+}
+
+#[test]
+fn a_held_arrow_repeats_until_released_or_left_and_a_click_steps_once() {
+    let mut app = many(30, 2000);
+    app.select_tab(0);
+    app.layout();
+    let (x, y) = centre(app.layout.tab_arrows[1]);
+    let t = Instant::now();
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, t);
+    app.layout();
+    assert_eq!(shown(&app)[0], 1, "pressing steps at once");
+    assert!(asks_timer(&mut app));
+    timer(&mut app, t + Duration::from_millis(200));
+    assert_eq!(shown(&app)[0], 1);
+    timer(&mut app, t + super::HOLD_DELAY);
+    assert_eq!(shown(&app)[0], 2, "holding repeats after a pause");
+    let step = t + super::HOLD_DELAY + super::HOLD_REPEAT;
+    timer(&mut app, step);
+    assert_eq!(shown(&app)[0], 3);
+    let (ox, oy) = tab_xy(&app, 10);
+    app.on_event(&Event::MouseMove { x: ox, y: oy }, step);
+    timer(&mut app, step + super::HOLD_REPEAT);
+    assert_eq!(shown(&app)[0], 3, "off the arrow it waits");
+    app.on_event(&Event::MouseMove { x, y }, step);
+    timer(&mut app, step + super::HOLD_REPEAT * 2);
+    assert_eq!(shown(&app)[0], 4, "back over it the steps go on");
+    app.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, step);
+    app.layout();
+    assert_eq!(shown(&app)[0], 4, "releasing adds no step");
+    app.drain_effects().for_each(drop);
+    timer(&mut app, step + super::HOLD_REPEAT * 3);
+    assert_eq!(shown(&app)[0], 4, "and stops the repeat");
+    assert!(!asks_timer(&mut app), "a released arrow asks for no more timers");
+    assert_eq!(app.cur, 0, "scrolling never switches tabs");
+
+    arrow_click(&mut app, true);
+    assert_eq!(shown(&app)[0], 5, "a click is one step");
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, t);
+    let mut at = t + super::HOLD_DELAY;
+    for _ in 0..40 {
+        timer(&mut app, at);
+        at += super::HOLD_REPEAT;
+    }
+    assert_eq!(shown(&app).last(), Some(&29));
+    app.drain_effects().for_each(drop);
+    timer(&mut app, at);
+    assert!(!asks_timer(&mut app), "at the end no more frames or timers are asked for");
+    app.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, at);
+}
+
+#[test]
+fn a_file_dragged_over_an_arrow_scrolls_the_strip_but_not_over_a_tab() {
+    let mut app = many(30, 2000);
+    app.select_tab(0);
+    app.layout();
+    let all = drop_effect::COPY | drop_effect::MOVE;
+    let (x, y) = centre(app.layout.tab_arrows[1]);
+    let paths = vec![FsPath::parse(r"D:\docs\a.txt").unwrap()];
+    let t = Instant::now();
+    app.drag(&DragEvent::Enter { paths, x, y, mods: NO, allowed: all, right: false }, t);
+    app.layout();
+    assert_eq!(shown(&app)[0], 1, "the strip moves as the file arrives over the arrow");
+    app.drag(&DragEvent::Over { x, y, mods: NO, allowed: all }, t + Duration::from_millis(50));
+    app.layout();
+    assert_eq!(shown(&app)[0], 1, "repeated drag-over events do not race ahead");
+    timer(&mut app, t + super::HOLD_DELAY);
+    assert_eq!(shown(&app)[0], 2, "the strip keeps scrolling while the file stays there");
+    let (tx, ty) = tab_xy(&app, 5);
+    app.drag(&DragEvent::Over { x: tx, y: ty, mods: NO, allowed: all }, t + super::HOLD_DELAY);
+    timer(&mut app, t + super::HOLD_DELAY + super::HOLD_REPEAT);
+    assert_eq!(shown(&app)[0], 2, "over a tab the strip stays");
+    assert_eq!(app.drop_spot(), Some(Spot::Tab(5)), "and the tab is the drop target");
+    app.drag(&DragEvent::Over { x, y, mods: NO, allowed: all }, t + Duration::from_secs(1));
+    app.layout();
+    assert_eq!(shown(&app)[0], 3);
+    app.drag(&DragEvent::Leave, t + Duration::from_secs(1));
+    timer(&mut app, t + Duration::from_secs(2));
+    assert_eq!(shown(&app)[0], 3, "leaving the window stops the scrolling");
+    assert_eq!(names(&app).len(), 30, "nothing was opened");
 }
 
 #[test]

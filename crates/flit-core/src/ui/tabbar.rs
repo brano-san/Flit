@@ -10,7 +10,7 @@ use super::widgets::Paint;
 use crate::sort::ViewSpec;
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub const G_TAB_ACTIONS: &str = "\u{E70D}";
 const G_COMPUTER: &str = "\u{E7F4}";
@@ -18,6 +18,8 @@ const G_LINUX: &str = "\u{E756}";
 const G_BIN: &str = "\u{E74D}";
 const DRAG_START: f32 = 6.0;
 const TEAR_MARGIN: f32 = 24.0;
+pub(super) const HOLD_DELAY: Duration = Duration::from_millis(350);
+pub(super) const HOLD_REPEAT: Duration = Duration::from_millis(90);
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Startup {
@@ -61,6 +63,22 @@ pub(super) struct Strip {
     tick: u64,
     lanes: Vec<Lane>,
     targets: Vec<(Part, Rect)>,
+    hold: Option<Hold>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Held {
+    Press,
+    Tab,
+    Files,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Hold {
+    held: Held,
+    right: bool,
+    at: (f32, f32),
+    next: Instant,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -125,6 +143,10 @@ impl StripScroll {
     fn scroll(&mut self, right: bool, n: usize) {
         self.first = if right { (self.first + 1).min(n.saturating_sub(self.fit)) } else { self.first.saturating_sub(1) };
         self.follow = false;
+    }
+
+    fn edge(&self, right: bool, n: usize) -> usize {
+        if right { (self.first + self.fit).min(n).saturating_sub(1) } else { self.first.min(n.saturating_sub(1)) }
     }
 }
 
@@ -357,6 +379,78 @@ impl App {
         self.dirty = true;
     }
 
+    fn arrow_at(&self, x: f32, y: f32) -> Option<bool> {
+        self.layout.tab_arrows.iter().position(|r| r.w > 0.0 && r.contains(x, y)).map(|k| k == 1)
+    }
+
+    fn hold_live(&self, h: &Hold) -> bool {
+        match h.held {
+            Held::Press => self.pressed == Hit::TabScroll(h.right) && self.drag == Drag::None,
+            Held::Tab => matches!(self.drag, Drag::Tab { .. }),
+            Held::Files => self.ops.dropping.is_some(),
+        }
+    }
+
+    pub(super) fn press_arrow(&mut self, right: bool, at: (f32, f32), held: Held, now: Instant) {
+        self.step_arrow(right);
+        self.strip.hold = Some(Hold { held, right, at, next: now + HOLD_DELAY });
+        self.arm_timer(now, now + HOLD_DELAY);
+    }
+
+    fn step_arrow(&mut self, right: bool) {
+        self.scroll_tabs(right);
+        if matches!(self.drag, Drag::Tab { .. }) {
+            let edge = self.layout.strip.edge(right, self.tabs.len());
+            self.move_tab(edge);
+            self.layout();
+        }
+    }
+
+    pub(super) fn hover_arrow(&mut self, x: f32, y: f32, held: Held, now: Instant) -> bool {
+        let Some(right) = self.arrow_at(x, y) else {
+            self.strip.hold = None;
+            return false;
+        };
+        let live = self.strip.hold.filter(|h| h.held == held && h.right == right && self.hold_live(h));
+        match live {
+            Some(h) => self.strip.hold = Some(Hold { at: (x, y), ..h }),
+            None => self.press_arrow(right, (x, y), held, now),
+        }
+        true
+    }
+
+    pub(super) fn strip_drag(&mut self, ev: &super::DragEvent, now: Instant) {
+        match ev {
+            super::DragEvent::Enter { x, y, .. } | super::DragEvent::Over { x, y, .. } => {
+                self.hover_arrow(*x, *y, Held::Files, now);
+            }
+            super::DragEvent::Leave | super::DragEvent::Drop { .. } => self.strip.hold = None,
+        }
+    }
+
+    pub(super) fn strip_timer(&mut self, now: Instant) {
+        let Some(h) = self.strip.hold.filter(|h| self.hold_live(h)) else {
+            self.strip.hold = None;
+            return;
+        };
+        if now + super::ops::TIMER_SLACK < h.next {
+            return self.arm_timer(now, h.next);
+        }
+        let next = now + HOLD_REPEAT;
+        let over = self.arrow_at(h.at.0, h.at.1) == Some(h.right);
+        if !over && h.held != Held::Press {
+            self.strip.hold = None;
+            return;
+        }
+        if over {
+            self.step_arrow(h.right);
+        }
+        self.strip.hold = Some(Hold { next, ..h });
+        if !over || self.layout.strip.hidden(h.right, self.tabs.len()) > 0 {
+            self.arm_timer(now, next);
+        }
+    }
+
     pub(super) fn tab_arrow_text(&self, right: bool) -> (&'static str, Option<String>) {
         let hidden = self.layout.strip.hidden(right, self.tabs.len());
         let name = if right { S::TooltipTabsRight } else { S::TooltipTabsLeft };
@@ -393,9 +487,13 @@ impl App {
         let (m, title) = (self.s(TEAR_MARGIN), self.layout.title);
         let torn = x < 0.0 || y < 0.0 || x >= self.size.0 || y >= self.size.1;
         let on_strip = y >= title.y - m && y <= title.bottom() + m && x >= title.x && x < title.right();
+        let arrow = on_strip && self.hover_arrow(x, y, Held::Tab, self.clock());
+        if !on_strip {
+            self.strip.hold = None;
+        }
         if torn || on_strip {
             self.docking = None;
-            if on_strip {
+            if on_strip && !arrow {
                 self.move_tab(self.tab_slot(x));
             }
         } else {
@@ -549,6 +647,9 @@ impl App {
 
     pub(super) fn strip_pointer(&mut self, x: f32, y: f32) {
         self.strip.pointer = Some((x, y));
+        if let Some(h) = self.strip.hold.as_mut().filter(|h| h.held == Held::Press) {
+            h.at = (x, y);
+        }
     }
 
     pub(super) fn strip_mouse_down(&mut self, h: Hit, button: MouseButton, clicks: u8, now: Instant) -> bool {

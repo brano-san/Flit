@@ -1801,6 +1801,7 @@ impl App {
     pub fn drag(&mut self, ev: &DragEvent, now: Instant) -> u32 {
         self.dirty = true;
         self.drag_panel(ev);
+        self.strip_drag(ev, now);
         match ev {
             DragEvent::Enter { paths, x, y, mods, allowed, right } => {
                 let ours = !paths.is_empty() && self.ops.right_drag.as_ref() == Some(paths);

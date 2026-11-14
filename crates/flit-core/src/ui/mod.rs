@@ -1748,6 +1748,7 @@ impl App {
                 self.ops_timer(now);
                 self.hover_timer(now);
                 self.history_timer(now);
+                self.strip_timer(now);
                 self.tip_timer(now);
                 self.quick_timer(now);
                 self.expire_error(now);
@@ -1883,6 +1884,7 @@ impl App {
         self.pressed = h;
         match h {
             Hit::Tab(i) => self.press_tab(i, x, y, button),
+            Hit::TabScroll(right) if button == MouseButton::Left => self.press_arrow(right, (x, y), tabbar::Held::Press, now),
             Hit::Nav(i @ 0..=1) if button == MouseButton::Left => self.arm_history_press(i, now),
             Hit::Address if button == MouseButton::Left => self.open_address(),
             Hit::Row(row) => {
@@ -1983,7 +1985,7 @@ impl App {
             return;
         }
         let h = self.hit(x, y);
-        if h != pressed || self.jobs_click(h, now) {
+        if h != pressed || matches!(h, Hit::TabScroll(_)) || self.jobs_click(h, now) {
             return;
         }
         self.click(h, x, y, now);
