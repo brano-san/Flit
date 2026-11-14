@@ -378,7 +378,7 @@ impl Provider for LocalProvider {
                 let (fs, reply) = (self.measure_fs.clone(), Reply { tab, id, events: self.measure_events.clone(), wake: self.measure_wake.clone() });
                 spawn(format!("flit-measure-{id}"), move || {
                     let keep_going = || !ctl.is_cancelled();
-                    let totals = measure(&*fs, &items, &keep_going, &mut |t| reply.send(ProviderEvent::Measured { tab, id, totals: *t, file_system: None, done: false }));
+                    let totals = fs.measure(&items, &keep_going, &mut |t| reply.send(ProviderEvent::Measured { tab, id, totals: *t, file_system: None, done: false }));
                     if keep_going() {
                         reply.send(ProviderEvent::Measured { tab, id, totals, file_system: items.first().and_then(|(p, _)| fs.file_system(p)), done: true });
                     }
@@ -625,7 +625,7 @@ fn file_size<F: Fs + ?Sized>(fs: &F, file: &FsPath) -> Option<u64> {
     (0..l.len() as u32).find(|&i| l.name(i) == file.file_name()).map(|i| l.entries[i as usize]).filter(|e| !e.is_dir()).map(|e| e.size)
 }
 
-pub(crate) fn measure<F: Fs + ?Sized>(fs: &F, items: &[(FsPath, Option<u64>)], keep_going: &dyn Fn() -> bool, report: &mut dyn FnMut(&Totals)) -> Totals {
+pub fn measure<F: Fs + ?Sized>(fs: &F, items: &[(FsPath, Option<u64>)], keep_going: &dyn Fn() -> bool, report: &mut dyn FnMut(&Totals)) -> Totals {
     let mut t = Totals { accessed: items.first().map_or(0, |(p, _)| accessed(p)), ..Totals::default() };
     let mut clusters: HashMap<Vec<u8>, u64> = HashMap::new();
     let mut cluster = |p: &FsPath| *clusters.entry(fs.volume_key(p)).or_insert_with(|| fs.cluster_size(p));

@@ -197,6 +197,57 @@ fn a_dot_hidden_that_is_not_a_regular_file_hides_nothing() {
     assert_eq!(scanned(t.path())[&b"a"[..]].attrs & attr::HIDDEN, 0);
 }
 
+fn sparse(p: &Path, size: u64, data_at: u64) {
+    use std::os::unix::fs::FileExt;
+    let f = std::fs::File::create(p).unwrap();
+    f.set_len(size).unwrap();
+    f.write_all_at(b"data", data_at).unwrap();
+}
+
+fn fs_path(p: &Path) -> FsPath {
+    FsPath::parse_exact(p.as_os_str().as_bytes()).unwrap()
+}
+
+#[test]
+fn size_on_disk_counts_the_blocks_files_really_take() {
+    use std::os::unix::fs::MetadataExt;
+    let t = Temp::new("on-disk");
+    std::fs::create_dir(t.path().join("d")).unwrap();
+    sparse(&t.path().join("d/disk.img"), 64 << 20, 1 << 20);
+    t.file("d/small", 10);
+    let img = t.path().join("img");
+    sparse(&img, 32 << 20, 0);
+    let blocks = |p: &Path| std::fs::metadata(p).unwrap().blocks() * 512;
+    let reports = std::cell::Cell::new(0);
+    let total = LinuxFs.measure(&[(fs_path(&t.path().join("d")), None), (fs_path(&img), Some(32 << 20))], &|| true, &mut |_| reports.set(reports.get() + 1));
+    assert_eq!((total.files, total.folders, total.size), (2, 0, (64 << 20) + 10 + (32 << 20)));
+    assert_eq!(total.on_disk, blocks(&t.path().join("d/disk.img")) + blocks(&t.path().join("d/small")) + blocks(&img));
+    assert!(total.on_disk < 1 << 20, "holes take no space: {}", total.on_disk);
+    assert!(total.accessed > 0);
+}
+
+#[test]
+fn measuring_counts_folders_and_links_like_before_and_stops_when_cancelled() {
+    let t = Temp::new("on-disk-tree");
+    let outside = Temp::new("on-disk-outside");
+    outside.file("big", 100_000);
+    std::fs::create_dir_all(t.path().join("a/deep/er")).unwrap();
+    t.file("a/one", 100);
+    t.file("a/deep/er/two", 200);
+    symlink(outside.path(), t.path().join("a/dirlink")).unwrap();
+    symlink("one", t.path().join("a/filelink")).unwrap();
+    let a = fs_path(&t.path().join("a"));
+    let total = LinuxFs.measure(&[(a.clone(), None)], &|| true, &mut |_| {});
+    assert_eq!((total.files, total.folders, total.size), (3, 3, 303), "a link to a folder counts as a folder and is not followed");
+    let one = LinuxFs.measure(&[(fs_path(&t.path().join("a/one")), None)], &|| true, &mut |_| {});
+    assert_eq!((one.files, one.size), (0, 100));
+    assert!(one.on_disk >= 100);
+    let gone = LinuxFs.measure(&[(fs_path(&t.path().join("gone")), None)], &|| true, &mut |_| {});
+    assert_eq!((gone.size, gone.on_disk), (0, 0));
+    let stopped = LinuxFs.measure(&[(a, None)], &|| false, &mut |_| {});
+    assert_eq!(stopped.files, 0);
+}
+
 #[test]
 fn size_on_disk_counts_in_blocks_of_the_volume() {
     use std::os::unix::fs::MetadataExt;

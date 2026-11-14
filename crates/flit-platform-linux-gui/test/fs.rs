@@ -71,6 +71,28 @@ fn zip_7z_and_tar_gz_archives_open_as_folders_and_extract() {
 }
 
 #[test]
+fn measuring_archives_still_counts_what_they_hold_and_folders_count_real_blocks() {
+    use flit_core::archive::{ArchiveOp, Compression, Format};
+    use flit_core::provider::{FileOp, Resolve};
+    use flit_platform::{FileOps, Job};
+    use std::os::unix::fs::MetadataExt;
+    let t = Temp::new("measure-archive");
+    t.file("src/docs/report.txt", 7);
+    t.file("src/readme.md", 3);
+    let archive = fs_path(&t.path().join("pack.zip"));
+    let options = Compression { format: Format::Zip, level: Format::Zip.default_level(), ..Compression::default() };
+    let made = crate::shell::LinuxShell.file_op(&FileOp::Archive(ArchiveOp::Compress { items: vec![fs_path(&t.path().join("src"))], archive: archive.clone(), options }), &Job::detached(Resolve::Replace));
+    assert!(made.error.is_none(), "{:?}", made.error);
+    let zip_size = std::fs::metadata(t.path().join("pack.zip")).unwrap().len();
+    let packed = LinuxGuiFs.measure(&[(archive.clone(), Some(zip_size)), (archive, None)], &|| true, &mut |_| {});
+    assert_eq!((packed.unpacked, packed.size), (10, zip_size));
+    let src = LinuxGuiFs.measure(&[(fs_path(&t.path().join("src")), None)], &|| true, &mut |_| {});
+    let blocks = |p: &str| std::fs::metadata(t.path().join(p)).unwrap().blocks() * 512;
+    assert_eq!((src.files, src.folders, src.size), (2, 1, 10));
+    assert_eq!(src.on_disk, blocks("src/docs/report.txt") + blocks("src/readme.md"));
+}
+
+#[test]
 fn volume_key_follows_the_device_of_the_nearest_existing_folder() {
     let t = Temp::new("volume");
     let fs = LinuxGuiFs;

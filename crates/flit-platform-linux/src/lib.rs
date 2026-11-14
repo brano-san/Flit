@@ -13,7 +13,7 @@ mod walk;
 #[path = "../test/temp.rs"]
 mod temp;
 
-pub use fs::{host, stat_path, LinuxFs};
+pub use fs::{host, stat_path, xattr, xattr_names, LinuxFs};
 pub use inotify::{Inotify, Notice, Notify};
 pub use ops::run as run_op;
 pub use tags::{file_key, resolve_files};

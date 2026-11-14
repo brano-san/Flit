@@ -6,7 +6,7 @@ mod wsl;
 
 pub use digest::hash_file;
 pub use indexer::{root_of, start_indexer};
-pub use local::{read_deep, via_unc, LocalProvider, CANCELLED};
+pub use local::{measure, read_deep, via_unc, LocalProvider, CANCELLED};
 pub use wsl::{AgentImage, AgentImages, AgentLauncher, AgentProcess, Clipboard, Timing, WslProvider, UNMAPPABLE};
 
 use crossbeam_channel::Sender;
@@ -216,6 +216,9 @@ pub trait Fs: Send + Sync + 'static {
     }
     fn cluster_size(&self, _path: &FsPath) -> u64 {
         0
+    }
+    fn measure(&self, items: &[(FsPath, Option<u64>)], keep_going: &dyn Fn() -> bool, report: &mut dyn FnMut(&flit_core::provider::Totals)) -> flit_core::provider::Totals {
+        local::measure(self, items, keep_going, report)
     }
     fn file_system(&self, _path: &FsPath) -> Option<String> {
         None

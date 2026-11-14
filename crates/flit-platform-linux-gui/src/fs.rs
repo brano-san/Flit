@@ -64,6 +64,14 @@ impl Fs for LinuxGuiFs {
         LinuxFs.cluster_size(path)
     }
 
+    fn measure(&self, items: &[(FsPath, Option<u64>)], keep_going: &dyn Fn() -> bool, report: &mut dyn FnMut(&flit_core::provider::Totals)) -> flit_core::provider::Totals {
+        if items.iter().all(|(p, _)| p.kind() == PathKind::Unix && flit_archive::locate(p).is_none()) {
+            LinuxFs.measure(items, keep_going, report)
+        } else {
+            flit_platform::measure(self, items, keep_going, report)
+        }
+    }
+
     fn file_system(&self, path: &FsPath) -> Option<String> {
         LinuxFs.file_system(path)
     }

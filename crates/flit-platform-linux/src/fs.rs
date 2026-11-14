@@ -1,5 +1,6 @@
 use flit_core::listing::{attr, DirStats};
 use flit_core::path::PathKind;
+use flit_core::provider::Totals;
 use flit_core::{FsError, FsErrorKind, FsPath, ListingBuilder, Meta};
 use flit_platform::Fs;
 use std::collections::{HashMap, HashSet};
@@ -49,7 +50,7 @@ struct Statx {
     _spare0: u16,
     ino: u64,
     size: u64,
-    _blocks: u64,
+    blocks: u64,
     attributes_mask: u64,
     atime: Stamp,
     btime: Stamp,
@@ -72,6 +73,7 @@ pub struct Node {
     pub mtime: Stamp,
     pub btime: i64,
     pub mount_root: Option<bool>,
+    pub blocks: u64,
 }
 
 impl Node {
@@ -85,6 +87,10 @@ impl Node {
 
     pub fn is_link(&self) -> bool {
         self.kind() == libc::S_IFLNK
+    }
+
+    pub fn allocated(&self) -> u64 {
+        self.blocks.saturating_mul(512)
     }
 
     pub fn mounted_on(&self, parent_dev: u64) -> bool {
@@ -133,7 +139,7 @@ pub fn node_at(dir: libc::c_int, name: &CStr, follow: bool) -> io::Result<Node> 
         if r == 0 {
             let btime = if sx.mask & STATX_BTIME != 0 { filetime(sx.btime.sec, sx.btime.nsec as i64) } else { 0 };
             let mount_root = (sx.attributes_mask & STATX_ATTR_MOUNT_ROOT != 0).then_some(sx.attributes & STATX_ATTR_MOUNT_ROOT != 0);
-            return Ok(Node { mode: sx.mode as u32, uid: sx.uid, gid: sx.gid, size: sx.size, dev: dev_of(sx.dev[0], sx.dev[1]), ino: sx.ino, atime: sx.atime, mtime: sx.mtime, btime, mount_root });
+            return Ok(Node { mode: sx.mode as u32, uid: sx.uid, gid: sx.gid, size: sx.size, dev: dev_of(sx.dev[0], sx.dev[1]), ino: sx.ino, atime: sx.atime, mtime: sx.mtime, btime, mount_root, blocks: sx.blocks });
         }
         let e = io::Error::last_os_error();
         if e.raw_os_error() != Some(libc::ENOSYS) {
@@ -156,6 +162,7 @@ pub fn node_at(dir: libc::c_int, name: &CStr, follow: bool) -> io::Result<Node> 
         mtime: Stamp::new(st.st_mtime, st.st_mtime_nsec as u32),
         btime: 0,
         mount_root: None,
+        blocks: st.st_blocks as u64,
     })
 }
 
@@ -331,6 +338,87 @@ pub fn tree_size(root: &Path, keep_going: &dyn Fn() -> bool) -> DirStats {
     s
 }
 
+fn grown(mut call: impl FnMut(*mut libc::c_void, usize) -> isize) -> Option<Vec<u8>> {
+    for _ in 0..3 {
+        let n = call(std::ptr::null_mut(), 0);
+        if n < 0 {
+            return None;
+        }
+        let mut buf = vec![0u8; n as usize];
+        let m = call(buf.as_mut_ptr().cast(), buf.len());
+        if m >= 0 {
+            buf.truncate(m as usize);
+            return Some(buf);
+        }
+        if io::Error::last_os_error().raw_os_error() != Some(libc::ERANGE) {
+            return None;
+        }
+    }
+    None
+}
+
+pub fn xattr(path: &Path, name: &str) -> Option<Vec<u8>> {
+    let (p, n) = (cstring(path.as_os_str().as_bytes()).ok()?, CString::new(name).ok()?);
+    grown(|buf, len| unsafe { libc::lgetxattr(p.as_ptr(), n.as_ptr(), buf, len) })
+}
+
+pub fn xattr_names(path: &Path) -> Vec<String> {
+    let Ok(p) = cstring(path.as_os_str().as_bytes()) else { return Vec::new() };
+    let list = grown(|buf, len| unsafe { libc::llistxattr(p.as_ptr(), buf.cast(), len) }).unwrap_or_default();
+    list.split(|&b| b == 0).filter(|n| !n.is_empty()).map(|n| String::from_utf8_lossy(n).into_owned()).collect()
+}
+
+const MEASURE_REPORT_EVERY: std::time::Duration = std::time::Duration::from_millis(200);
+
+pub fn measure(items: &[(FsPath, Option<u64>)], keep_going: &dyn Fn() -> bool, report: &mut dyn FnMut(&Totals)) -> Totals {
+    let stat = |p: &[u8], follow: bool| cstring(p).and_then(|c| node_at(libc::AT_FDCWD, &c, follow)).ok();
+    let accessed = items.first().and_then(|(p, _)| stat(p.as_bytes(), true)).map_or(0, |n| filetime(n.atime.sec, n.atime.nsec as i64));
+    let mut t = Totals { accessed, ..Totals::default() };
+    let mut last = std::time::Instant::now();
+    for (root, size) in items {
+        let Some(path) = host(root) else { continue };
+        let node = stat(path.as_os_str().as_bytes(), false);
+        if let Some(size) = size {
+            t.size += size;
+            t.on_disk += node.map_or(0, |n| n.allocated());
+            continue;
+        }
+        let Some(node) = node else { continue };
+        if !node.is_dir() {
+            t.size += node.size;
+            t.on_disk += node.allocated();
+            continue;
+        }
+        let mut stack = vec![path.as_os_str().as_bytes().to_vec()];
+        while let Some(dir) = stack.pop() {
+            if !keep_going() {
+                return t;
+            }
+            let Ok(c) = cstring(&dir) else { continue };
+            let Ok(fd) = owned(unsafe { libc::open(c.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) }) else { continue };
+            let _ = dents(fd.as_raw_fd(), |name, _| {
+                let Ok(n) = node_at(fd.as_raw_fd(), name, false) else { return true };
+                if n.is_dir() {
+                    t.folders += 1;
+                    stack.push(joined(&dir, name.to_bytes()));
+                } else if n.is_link() && node_at(fd.as_raw_fd(), name, true).is_ok_and(|target| target.is_dir()) {
+                    t.folders += 1;
+                } else {
+                    t.files += 1;
+                    t.size += n.size;
+                    t.on_disk += n.allocated();
+                }
+                keep_going()
+            });
+            if last.elapsed() >= MEASURE_REPORT_EVERY {
+                last = std::time::Instant::now();
+                report(&t);
+            }
+        }
+    }
+    t
+}
+
 pub fn dir_sizes(dir: &Path, items: &[(u32, PathBuf)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, DirStats) + Sync)) {
     let next = AtomicUsize::new(0);
     let workers = std::thread::available_parallelism().map_or(4, |n| n.get()).min(items.len()).max(1);
@@ -489,6 +577,10 @@ impl Fs for LinuxFs {
 
     fn cluster_size(&self, path: &FsPath) -> u64 {
         host(path).and_then(crate::mounts::block_size).unwrap_or(0)
+    }
+
+    fn measure(&self, items: &[(FsPath, Option<u64>)], keep_going: &dyn Fn() -> bool, report: &mut dyn FnMut(&Totals)) -> Totals {
+        measure(items, keep_going, report)
     }
 
     fn file_system(&self, path: &FsPath) -> Option<String> {
