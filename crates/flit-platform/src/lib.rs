@@ -590,6 +590,75 @@ pub trait Platform: 'static {
     }
 }
 
+pub fn posix_date_patterns(date: &str, time: &str) -> Option<(String, String)> {
+    let date = posix_picture(date)?;
+    let time = [":ss", ".ss"].iter().fold(posix_picture(time)?, |t, seconds| t.replace(seconds, ""));
+    let shows = |p: &str, any: &[char]| p.chars().any(|c| any.contains(&c));
+    (shows(&date, &['d']) && shows(&date, &['M']) && shows(&time, &['H', 'h']) && shows(&time, &['m'])).then_some((date, time))
+}
+
+fn posix_picture(format: &str) -> Option<String> {
+    let mut out = String::new();
+    let mut literal = String::new();
+    let flush = |out: &mut String, literal: &mut String| {
+        if literal.chars().any(|c| c.is_ascii_alphabetic() || c == '\'') {
+            out.push('\'');
+            out.push_str(&literal.replace('\'', "''"));
+            out.push('\'');
+        } else {
+            out.push_str(literal);
+        }
+        literal.clear();
+    };
+    let mut chars = format.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            literal.push(c);
+            continue;
+        }
+        let unpadded = chars.next_if(|&f| matches!(f, '-' | '_' | '0' | '^' | '#')).is_some_and(|f| f == '-');
+        chars.next_if(|&m| matches!(m, 'E' | 'O'));
+        let spec = chars.next()?;
+        let pick = |padded: &'static str, bare: &'static str| if unpadded { bare } else { padded };
+        let piece = match spec {
+            '%' => {
+                literal.push('%');
+                continue;
+            }
+            'n' | 't' => {
+                literal.push(' ');
+                continue;
+            }
+            'Y' | 'G' => "yyyy",
+            'y' | 'g' => pick("yy", "y"),
+            'm' => pick("MM", "M"),
+            'd' => pick("dd", "d"),
+            'e' => "d",
+            'b' | 'h' => "MMM",
+            'B' => "MMMM",
+            'a' => "ddd",
+            'A' => "dddd",
+            'H' => pick("HH", "H"),
+            'k' => "H",
+            'I' => pick("hh", "h"),
+            'l' => "h",
+            'M' => pick("mm", "m"),
+            'S' => pick("ss", "s"),
+            'p' | 'P' => "tt",
+            'T' => "HH:mm:ss",
+            'R' => "HH:mm",
+            'r' => "hh:mm:ss tt",
+            'D' => "MM/dd/yy",
+            'F' => "yyyy-MM-dd",
+            _ => return None,
+        };
+        flush(&mut out, &mut literal);
+        out.push_str(piece);
+    }
+    flush(&mut out, &mut literal);
+    Some(out)
+}
+
 #[cfg(test)]
 #[path = "../test/lib.rs"]
 mod tests;

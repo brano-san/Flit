@@ -15,6 +15,7 @@ pub mod fs;
 mod gl;
 mod icons;
 mod input;
+mod locale;
 mod mime;
 mod poll;
 mod player;
@@ -152,6 +153,10 @@ impl Platform for Linux {
 
     fn ui_language() -> String {
         ["LC_ALL", "LC_MESSAGES", "LANG"].iter().filter_map(|k| std::env::var(k).ok()).find(|v| !v.is_empty()).unwrap_or_default()
+    }
+
+    fn date_patterns() -> (String, String) {
+        locale::date_patterns().unwrap_or_else(|| ("yyyy-MM-dd".into(), "HH:mm".into()))
     }
 
     fn templates() -> Vec<flit_core::ui::NewTemplate> {

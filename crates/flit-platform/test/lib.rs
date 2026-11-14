@@ -77,3 +77,36 @@ fn errors_name_the_cause_once_in_the_style_of_the_system() {
         assert_eq!(PlatformError::new(-1, "Deletion was cancelled").to_string(), "Deletion was cancelled");
     }
 }
+
+fn shown(patterns: &(String, String)) -> String {
+    let secs = 1_710_000_000 + 15 * 3600 + 7 * 60 + 9 - 1_710_000_000 % 86_400;
+    let mut out = String::new();
+    flit_core::fmt::picture(&mut out, &patterns.0, secs);
+    out.push(' ');
+    flit_core::fmt::picture(&mut out, &patterns.1, secs);
+    out
+}
+
+#[test]
+fn dates_follow_the_locale_of_the_linux_desktop_without_seconds() {
+    let russian = posix_date_patterns("%d.%m.%Y", "%T").unwrap();
+    assert_eq!(russian, ("dd.MM.yyyy".to_owned(), "HH:mm".to_owned()));
+    assert_eq!(shown(&russian), "09.03.2024 15:07");
+    let american = posix_date_patterns("%m/%d/%Y", "%r").unwrap();
+    assert_eq!(shown(&american), format!("03/09/2024 03:07 {}", flit_core::i18n::S::FormatDatePm.t()));
+    assert_eq!(shown(&posix_date_patterns("%Y-%m-%d", "%H:%M:%S").unwrap()), "2024-03-09 15:07");
+    assert_eq!(shown(&posix_date_patterns("%-d/%-m/%y", "%k.%M.%S").unwrap()), "9/3/24 15.07");
+    assert_eq!(shown(&posix_date_patterns("%Y年%m月%d日", "%H時%M分").unwrap()), "2024年03月09日 15時07分");
+}
+
+#[test]
+fn letters_between_locale_fields_stay_text_and_odd_formats_keep_the_default() {
+    let spanish = posix_date_patterns("%d de %b de %Y", "%Hh%M").unwrap();
+    assert_eq!(spanish.0, "dd' de 'MMM' de 'yyyy");
+    assert_eq!(shown(&spanish), format!("09 de {} de 2024 15h07", flit_core::i18n::S::FormatMonthShortMar.t()));
+    assert_eq!(shown(&posix_date_patterns("%d'%m'%Y", "%R").unwrap()), "09'03'2024 15:07");
+    assert_eq!(posix_date_patterns("%x", "%X"), None, "an unknown conversion falls back to the default");
+    assert_eq!(posix_date_patterns("%d.%m.%Y", "%H:%"), None, "a cut-off format falls back");
+    assert_eq!(posix_date_patterns("%Y", "%H:%M"), None, "a date without day and month falls back");
+    assert_eq!(posix_date_patterns("%d.%m.%Y", "%p"), None, "a time without hours and minutes falls back");
+}
