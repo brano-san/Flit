@@ -25,6 +25,7 @@ mod text;
 mod thumb;
 mod thumbnailers;
 mod turbo;
+mod udisks;
 mod update;
 mod window;
 mod wl;
@@ -162,7 +163,11 @@ impl Platform for Linux {
     }
 
     fn watch_wsl(changed: Box<dyn Fn() + Send>) {
-        places::watch_mounts(changed)
+        places::watch_mounts(Box::new(move || {
+            changed();
+            window::devices_changed();
+        }));
+        udisks::watch(window::devices_changed);
     }
 
     fn integrate(on: bool) -> Result<(), PlatformError> {

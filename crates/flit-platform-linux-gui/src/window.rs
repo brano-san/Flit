@@ -63,6 +63,7 @@ static PREFERRED_DARK: AtomicU8 = AtomicU8::new(DARK_UNKNOWN);
 static THEME_CHANGED: AtomicBool = AtomicBool::new(false);
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 static A11Y_REFRESH: AtomicBool = AtomicBool::new(false);
+static DEVICES_CHANGED: AtomicBool = AtomicBool::new(false);
 static QUEUED: Mutex<Vec<(WindowId, Event)>> = Mutex::new(Vec::new());
 static READS: Mutex<Vec<crossbeam_channel::Sender<Option<crate::clipboard::Payload>>>> = Mutex::new(Vec::new());
 static STARTUP: Mutex<Option<String>> = Mutex::new(None);
@@ -123,6 +124,11 @@ pub(crate) fn loop_failure(e: winit::error::EventLoopError) -> PlatformError {
         winit::error::EventLoopError::ExitFailure(code) => PlatformError::new(i64::from(code), "the connection to the display server was lost; the error logged just before this line says why"),
         other => PlatformError::new(-1, format!("event loop: {other}")),
     }
+}
+
+pub(crate) fn devices_changed() {
+    DEVICES_CHANGED.store(true, Ordering::Release);
+    wake_loop();
 }
 
 fn wake_loop() {
@@ -1149,6 +1155,11 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
         for (id, ev) in queued {
             if let Some(node) = self.nodes.iter().find(|n| n.window.id == id) {
                 self.handler.event(&node.window, ev);
+            }
+        }
+        if DEVICES_CHANGED.swap(false, Ordering::AcqRel) {
+            for node in &self.nodes {
+                self.handler.event(&node.window, Event::DevicesChanged);
             }
         }
         if A11Y_REFRESH.swap(false, Ordering::AcqRel) {

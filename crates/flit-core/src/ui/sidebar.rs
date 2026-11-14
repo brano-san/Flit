@@ -360,6 +360,7 @@ pub(super) enum PlaceCmd {
     HidePlace(Location),
     RestorePlaces,
     Eject(FsPath),
+    Mount(FsPath),
     Properties(FsPath),
     FileProperties(FsPath),
     Hide(Section),
@@ -1145,9 +1146,8 @@ impl App {
             return self.place_command(PlaceCmd::OpenFile(file), now);
         }
         let Some(folder) = self.nav.sidebar.items.get(i).map(|it| it.loc.clone()) else { return };
-        if let Some(d) = self.nav.sidebar.places.drives.iter().find(|d| d.unmounted && d.path == *folder.path()) {
-            let (tab, launch) = (self.tab().id, Launch::Mount(d.path.clone()));
-            return self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch } });
+        if self.mount_drive(folder.path()) {
+            return;
         }
         match new_tab {
             true => self.open_in_tabs(vec![Route { folder, select: None }], now),
@@ -1163,7 +1163,13 @@ impl App {
         let tab = self.tab().id;
         let launch = |launch| Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch } };
         match c {
+            PlaceCmd::Open(folder, _) if self.unmounted_drive(folder.path()) => {
+                self.mount_drive(folder.path());
+            }
             PlaceCmd::Open(folder, target) => self.dispatch(vec![Route { folder, select: None }], target, now),
+            PlaceCmd::Mount(device) => {
+                self.mount_drive(&device);
+            }
             PlaceCmd::OpenFile(path) => self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Open { tab, path } }),
             PlaceCmd::Reveal(path) => {
                 let item = Location::from_local(path);
@@ -1263,9 +1269,10 @@ impl App {
                 }
                 m.place(S::WidgetsRemoveItem.t(), PlaceCmd::HidePlace(loc.clone()), false);
             }
-            if a.nav.sidebar.places.drives.iter().any(|d| d.removable && d.path == *loc.path()) {
+            if a.nav.sidebar.places.drives.iter().any(|d| d.removable && !d.unmounted && d.path == *loc.path()) {
                 m.place(S::MenuEject.t(), PlaceCmd::Eject(loc.path().clone()), false);
             }
+            a.drive_items(m, loc.path());
             if a.supports("drive.disconnect") && a.nav.sidebar.places.drives.iter().any(|d| d.remote.is_some() && d.path == *loc.path() && d.path.kind() == PathKind::Drive) {
                 m.place(S::SidebarDriveDisconnect.t(), PlaceCmd::Launch(Launch::Disconnect(Some(loc.path().clone()))), false);
             }

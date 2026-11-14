@@ -67,6 +67,8 @@ extract_all = "Извлечь все…"
 encoding_of_names = "Кодировка имен…"
 new = "Создать"
 eject = "Извлечь"
+mount = "Подключить"
+unmount = "Отключить"
 
 open_with = "Открыть с помощью"
 shift_left = "Сдвинуть колонку влево"

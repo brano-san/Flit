@@ -254,6 +254,9 @@ impl App {
         }
         let Some(loc) = self.card_location(i) else { return };
         let file = matches!(self.nav.home.cards[i].1, Card::Recent(r) if !self.nav.sidebar.places.recent[r].dir);
+        if !file && self.mount_drive(loc.path()) {
+            return;
+        }
         match (file, new_tab) {
             (true, _) => self.place_command(PlaceCmd::OpenFile(loc.path().clone()), now),
             (false, true) => self.open_in_tabs(vec![Route { folder: loc, select: None }], now),

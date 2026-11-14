@@ -26,6 +26,7 @@ mod menu;
 mod menu_editor;
 mod nav;
 mod network;
+mod volumes;
 pub mod palette;
 mod preview_pane;
 pub mod settings;

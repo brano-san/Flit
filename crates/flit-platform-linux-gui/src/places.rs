@@ -50,10 +50,15 @@ pub fn volumes() -> Vec<Volume> {
     volumes_from(&mounts::read().unwrap_or_default(), &mounts::user_name(), Path::new(mounts::BY_LABEL))
 }
 
+pub fn drive_of(v: &Volume) -> Option<Drive> {
+    let remote = v.mount.is_network().then(|| String::from_utf8_lossy(&v.mount.source).into_owned());
+    Some(Drive { path: crate::xdg::fs_path(v.mount.path())?, label: v.label.clone(), total: v.total, free: v.free, file_system: v.mount.fstype.clone(), removable: v.mount.removable(), unmounted: false, kind: None, remote })
+}
+
 pub fn drives() -> Vec<Drive> {
     volumes()
-        .into_iter()
-        .filter_map(|v| Some(Drive { path: crate::xdg::fs_path(v.mount.path())?, label: v.label, total: v.total, free: v.free, file_system: v.mount.fstype.clone(), removable: v.mount.removable(), unmounted: false, kind: None, remote: None }))
+        .iter()
+        .filter_map(drive_of)
         .chain(unmounted())
         .chain(gvfs(&gvfs_root()))
         .collect()
@@ -99,10 +104,11 @@ pub fn connect(uri: &str) -> std::io::Result<PathBuf> {
 }
 
 fn unmounted() -> Vec<Drive> {
-    let out = std::process::Command::new("lsblk").args(["-P", "-b", "-o", "PATH,LABEL,MOUNTPOINT,HOTPLUG,FSTYPE,TYPE,PARTTYPE"]).stderr(std::process::Stdio::null()).output();
+    let out = std::process::Command::new("lsblk").args(["-P", "-b", "-o", "PATH,LABEL,MOUNTPOINT,HOTPLUG,FSTYPE,TYPE,PARTTYPE,KNAME,PKNAME"]).stderr(std::process::Stdio::null()).output();
     out.map(|o| unmounted_from(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default()
 }
 
+const ENCRYPTED: [&str; 2] = ["crypto_LUKS", "BitLocker"];
 const NOT_DATA: [&str; 9] = ["", "swap", "crypto_LUKS", "LVM2_member", "linux_raid_member", "zfs_member", "bcache", "squashfs", "BitLocker"];
 const SYSTEM_PARTITIONS: [&str; 7] = [
     "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
@@ -119,28 +125,37 @@ fn data_partition(f: &HashMap<&str, &str>) -> bool {
     get("MOUNTPOINT").is_empty() && !NOT_DATA.contains(&get("FSTYPE")) && get("TYPE") != "loop" && !SYSTEM_PARTITIONS.contains(&get("PARTTYPE").to_ascii_lowercase().as_str())
 }
 
-pub fn unmounted_from(lsblk: &str) -> Vec<Drive> {
-    let mut out = Vec::new();
-    for line in lsblk.lines() {
-        let mut f = HashMap::new();
-        let mut rest = line.trim();
-        while let Some((key, tail)) = rest.split_once("=\"") {
-            let Some((value, after)) = tail.split_once('"') else { break };
-            f.insert(key.trim(), value);
-            rest = after;
-        }
-        let get = |k: &str| f.get(k).copied().unwrap_or("");
-        if data_partition(&f) {
-            let Some(path) = flit_core::FsPath::parse_exact(get("PATH").as_bytes()) else { continue };
-            let label = if get("LABEL").is_empty() { get("PATH").rsplit('/').next().unwrap_or("").to_owned() } else { get("LABEL").to_owned() };
-            out.push(Drive { path, label, total: 0, free: 0, file_system: get("FSTYPE").to_owned(), removable: get("HOTPLUG") == "1", unmounted: true, kind: None, remote: None });
-        }
+fn fields(line: &str) -> HashMap<&str, &str> {
+    let mut f = HashMap::new();
+    let mut rest = line.trim();
+    while let Some((key, tail)) = rest.split_once("=\"") {
+        let Some((value, after)) = tail.split_once('"') else { break };
+        f.insert(key.trim(), value);
+        rest = after;
     }
-    out
+    f
 }
 
-pub fn mount_args(device: &Path) -> [std::ffi::OsString; 3] {
-    ["mount".into(), "-b".into(), device.as_os_str().to_owned()]
+pub fn unmounted_from(lsblk: &str) -> Vec<Drive> {
+    let lines: Vec<HashMap<&str, &str>> = lsblk.lines().map(fields).collect();
+    let unlocked = |kname: &str| !kname.is_empty() && lines.iter().any(|l| l.get("PKNAME") == Some(&kname) && l.get("TYPE") == Some(&"crypt"));
+    let mut out = Vec::new();
+    for f in &lines {
+        let get = |k: &str| f.get(k).copied().unwrap_or("");
+        let locked = get("MOUNTPOINT").is_empty() && ENCRYPTED.contains(&get("FSTYPE")) && !unlocked(get("KNAME"));
+        if !data_partition(f) && !locked {
+            continue;
+        }
+        let Some(path) = flit_core::FsPath::parse_exact(get("PATH").as_bytes()) else { continue };
+        let short = get("PATH").rsplit('/').next().unwrap_or("");
+        let (label, kind) = match (get("LABEL"), locked) {
+            ("", true) => (format!("{} ({short})", S::SidebarDriveEncrypted.en()), Some(S::SidebarDriveEncrypted)),
+            ("", false) => (short.to_owned(), None),
+            (label, _) => (label.to_owned(), None),
+        };
+        out.push(Drive { path, label, total: 0, free: 0, file_system: get("FSTYPE").to_owned(), removable: get("HOTPLUG") == "1", unmounted: true, kind, remote: None });
+    }
+    out
 }
 
 fn missing_tool(tool: &str, package: &str, e: std::io::Error) -> std::io::Error {
@@ -150,60 +165,15 @@ fn missing_tool(tool: &str, package: &str, e: std::io::Error) -> std::io::Error 
     }
 }
 
-pub fn mount(device: &Path) -> std::io::Result<PathBuf> {
-    let out = std::process::Command::new("udisksctl").args(mount_args(device)).output().map_err(|e| missing_tool("udisksctl", "udisks2", e))?;
-    if !out.status.success() {
-        return Err(std::io::Error::other(String::from_utf8_lossy(&out.stderr).trim().to_owned()));
+pub fn drive_error(key: S, drive: &Path, e: &std::io::Error) -> PlatformError {
+    if e.kind() == std::io::ErrorKind::Interrupted {
+        return PlatformError::new(-1, flit_platform::CANCELLED);
     }
-    let table = mounts::read()?;
-    let found = table.iter().rev().find(|m| m.source == device.as_os_str().as_bytes()).map(|m| m.path().to_path_buf());
-    found.ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "mounted, but the mount point is unknown"))
-}
-
-pub fn eject_steps(table: &[Mount], point: &Path) -> Option<[[std::ffi::OsString; 4]; 2]> {
-    let m = table.iter().rev().find(|m| m.path() == point && m.source.starts_with(b"/dev/"))?;
-    let dev = std::ffi::OsStr::from_bytes(&m.source).to_owned();
-    let step = |verb: &str| ["udisksctl".into(), verb.into(), "-b".into(), dev.clone()];
-    Some([step("unmount"), step("power-off")])
-}
-
-pub fn udisks_message(stderr: &[u8]) -> String {
-    let text = String::from_utf8_lossy(stderr);
-    let text = text.trim();
-    if text.contains(".Error.DeviceBusy") || text.ends_with("target is busy") {
-        return S::ErrorsFsDriveBusy.en().to_owned();
-    }
-    match text.split_once("GDBus.Error:") {
-        Some((_, rest)) => rest.split_once(": ").map_or(rest, |(_, why)| why).trim().to_owned(),
-        None => text.to_owned(),
-    }
-}
-
-fn run_step([program, args @ ..]: &[std::ffi::OsString; 4]) -> std::io::Result<()> {
-    let out = std::process::Command::new(program).args(args).stdin(std::process::Stdio::null()).output().map_err(|e| missing_tool("udisksctl", "udisks2", e))?;
-    match (out.status.success(), udisks_message(&out.stderr)) {
-        (true, _) => Ok(()),
-        (false, why) if why.is_empty() => Err(std::io::Error::other(format!("{} {} failed: {}", program.to_string_lossy(), args[0].to_string_lossy(), out.status))),
-        (false, why) => Err(std::io::Error::other(why)),
-    }
-}
-
-pub fn run_eject([unmount, power_off]: &[[std::ffi::OsString; 4]; 2]) -> std::io::Result<()> {
-    run_step(unmount)?;
-    if let Err(e) = run_step(power_off) {
-        tracing::warn!("the drive is unmounted but stays powered: {e}");
-    }
-    Ok(())
-}
-
-pub fn eject(point: &Path) -> std::io::Result<()> {
-    let table = mounts::read()?;
-    let steps = eject_steps(&table, point).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "not a mounted block device"))?;
-    run_eject(&steps)
+    PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, flit_core::tr_en!(key, drive = drive.display(), why = flit_core::fmt::io_reason(e)))
 }
 
 pub fn eject_error(drive: &Path, e: &std::io::Error) -> PlatformError {
-    PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, flit_core::tr_en!(S::ErrorsFsEjectFailed, drive = drive.display(), why = flit_core::fmt::io_reason(e)))
+    drive_error(S::ErrorsFsEjectFailed, drive, e)
 }
 
 pub fn list_computer(out: &mut ListingBuilder<'_>) -> Result<(), FsError> {

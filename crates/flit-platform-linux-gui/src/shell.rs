@@ -1,4 +1,5 @@
 use crate::{fs, places};
+use flit_core::i18n::S;
 use flit_core::provider::{FileOp, Launch};
 use flit_core::ui::{Bitmap, IconKind, IconRequest};
 use flit_core::path::PathKind;
@@ -324,8 +325,9 @@ fn launch(l: &Launch) -> Result<(), PlatformError> {
             crate::apps::run_custom(command, &files, mime, *remember, crate::window::activation_token().as_deref()).map_err(|e| spawn_error(command, &e))
         }
         Launch::ChooseApp { .. } => Err(PlatformError::unsupported("choosing an application outside a window")),
-        Launch::Eject(drive) => crate::places::eject(Path::new(os(drive))).map_err(|e| crate::places::eject_error(Path::new(os(drive)), &e)),
-        Launch::Mount(_) => Err(PlatformError::unsupported("mounting outside the shell thread")),
+        Launch::Eject(drive) => crate::udisks::eject(Path::new(os(drive))).map_err(|e| crate::places::eject_error(Path::new(os(drive)), &e)),
+        Launch::Unmount(drive) => crate::udisks::unmount(Path::new(os(drive))).map_err(|e| crate::places::drive_error(S::ErrorsFsUnmountFailed, Path::new(os(drive)), &e)),
+        Launch::Mount(_) | Launch::Unlock { .. } => Err(PlatformError::unsupported("mounting outside the shell thread")),
         Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) => Err(PlatformError::unsupported("mapping network drives")),
         Launch::Reveal { .. } => Err(PlatformError::unsupported("revealing outside the shell thread")),
     }
@@ -388,7 +390,12 @@ impl Shell for LinuxShell {
     }
 
     fn mount(&mut self, device: &FsPath) -> Result<FsPath, PlatformError> {
-        let point = crate::places::mount(Path::new(os(device))).map_err(|e| PlatformError::new(-1, format!("cannot mount {}: {e}", device.display())))?;
+        let point = crate::udisks::mount(Path::new(os(device))).map_err(|e| crate::places::drive_error(S::ErrorsFsMountFailed, Path::new(os(device)), &e))?;
+        crate::xdg::fs_path(&point).ok_or_else(|| PlatformError::new(-1, "the mount point is not a valid path"))
+    }
+
+    fn unlock(&mut self, device: &FsPath, passphrase: &str) -> Result<FsPath, PlatformError> {
+        let point = crate::udisks::unlock(Path::new(os(device)), passphrase).map_err(|e| crate::places::drive_error(S::ErrorsFsUnlockFailed, Path::new(os(device)), &e))?;
         crate::xdg::fs_path(&point).ok_or_else(|| PlatformError::new(-1, "the mount point is not a valid path"))
     }
 

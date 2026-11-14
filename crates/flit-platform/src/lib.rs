@@ -267,6 +267,9 @@ pub trait Shell: Sized {
     fn connect(&mut self, _uri: &str) -> Result<FsPath, PlatformError> {
         Err(PlatformError::unsupported("connecting to servers"))
     }
+    fn unlock(&mut self, _device: &FsPath, _passphrase: &str) -> Result<FsPath, PlatformError> {
+        Err(PlatformError::unsupported("unlocking encrypted volumes"))
+    }
     fn shortcut_folder(&mut self, _link: &FsPath) -> Option<FsPath> {
         None
     }

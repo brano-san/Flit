@@ -762,7 +762,7 @@ unsafe fn open(api: &Api, it: &mut Iter, t: u8, sig: Option<&str>, body: impl Fn
     (api.close_container)(it, &mut sub);
 }
 
-unsafe fn put(api: &Api, it: &mut Iter, me: &str, v: &V) {
+pub(crate) unsafe fn put(api: &Api, it: &mut Iter, me: &str, v: &V) {
     match v {
         V::S(s) => string(api, it, b's', s),
         V::I(i) => basic(api, it, b'i', *i),
@@ -839,7 +839,7 @@ unsafe fn read(api: &Api, it: &mut Iter) -> Vec<Arg> {
     }
 }
 
-unsafe fn args(api: &Api, msg: *mut c_void) -> Vec<Arg> {
+pub(crate) unsafe fn args(api: &Api, msg: *mut c_void) -> Vec<Arg> {
     let mut it = Iter::new();
     if (api.iter_init)(msg, &mut it) == 0 {
         return Vec::new();

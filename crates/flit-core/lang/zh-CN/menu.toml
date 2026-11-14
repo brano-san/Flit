@@ -67,6 +67,8 @@ extract_all = "全部解压…"
 encoding_of_names = "名称编码…"
 new = "新建"
 eject = "弹出"
+mount = "挂载"
+unmount = "卸载"
 
 open_with = "打开方式"
 shift_left = "左移列"

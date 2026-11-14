@@ -31,6 +31,10 @@ impl Error {
     pub(crate) fn message(&self) -> String {
         text(self.message)
     }
+
+    pub(crate) fn name(&self) -> String {
+        text(self.name)
+    }
 }
 
 #[repr(C, align(8))]

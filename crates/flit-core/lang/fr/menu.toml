@@ -67,6 +67,8 @@ extract_all = "Extraire tout…"
 encoding_of_names = "Encodage des noms…"
 new = "Nouveau"
 eject = "Éjecter"
+mount = "Monter"
+unmount = "Démonter"
 
 open_with = "Ouvrir avec"
 shift_left = "Décaler la colonne à gauche"

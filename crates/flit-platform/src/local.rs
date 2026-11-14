@@ -339,6 +339,7 @@ fn run_shell<S: Shell>(sh: &mut S, tab: TabId, job: ShellJob) -> Result<Option<P
         ShellJob::Open(p) => sh.open(&p).map(|()| None),
         ShellJob::Access(id, items) => Ok(sh.access(&items).map(|(items, accounts)| ProviderEvent::Access { tab, id, items, accounts })),
         ShellJob::Launch(Launch::Mount(device)) => sh.mount(&device).map(go),
+        ShellJob::Launch(Launch::Unlock { device, passphrase }) => sh.unlock(&device, &passphrase.0).map(go),
         ShellJob::Launch(Launch::ConnectServer(uri)) => sh.connect(&uri).map(go),
         ShellJob::Launch(Launch::Reveal { item, new_tab }) => match real_path(sh, &item) {
             Some(path) => Ok(Some(ProviderEvent::Reveal { tab, path, new_tab })),

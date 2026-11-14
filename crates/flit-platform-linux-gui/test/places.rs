@@ -29,6 +29,24 @@ PATH=\"/dev/sdd1\" LABEL=\"Mounted\" SIZE=\"1\" MOUNTPOINT=\"/media/u/M\" HOTPLU
 }
 
 #[test]
+fn a_locked_encrypted_volume_shows_as_one_to_unlock_and_an_unlocked_one_shows_its_contents() {
+    let lsblk = "PATH=\"/dev/sdb1\" LABEL=\"\" MOUNTPOINT=\"\" HOTPLUG=\"1\" FSTYPE=\"crypto_LUKS\" TYPE=\"part\" PARTTYPE=\"0x83\" KNAME=\"sdb1\" PKNAME=\"sdb\"
+PATH=\"/dev/sdc1\" LABEL=\"Vault\" MOUNTPOINT=\"\" HOTPLUG=\"1\" FSTYPE=\"crypto_LUKS\" TYPE=\"part\" PARTTYPE=\"0x83\" KNAME=\"sdc1\" PKNAME=\"sdc\"
+PATH=\"/dev/mapper/luks-1\" LABEL=\"Inside\" MOUNTPOINT=\"\" HOTPLUG=\"0\" FSTYPE=\"ext4\" TYPE=\"crypt\" PARTTYPE=\"\" KNAME=\"dm-0\" PKNAME=\"sdc1\"
+PATH=\"/dev/nvme0n1p3\" LABEL=\"\" MOUNTPOINT=\"\" HOTPLUG=\"0\" FSTYPE=\"crypto_LUKS\" TYPE=\"part\" PARTTYPE=\"0fc63daf-8483-4772-8e79-3d69d8477de4\" KNAME=\"nvme0n1p3\" PKNAME=\"nvme0n1\"
+PATH=\"/dev/mapper/root\" LABEL=\"\" MOUNTPOINT=\"/\" HOTPLUG=\"0\" FSTYPE=\"btrfs\" TYPE=\"crypt\" PARTTYPE=\"\" KNAME=\"dm-1\" PKNAME=\"nvme0n1p3\"
+";
+    let got: Vec<(String, String, String, bool)> = unmounted_from(lsblk).into_iter().map(|d| (String::from_utf8_lossy(d.path.as_bytes()).into_owned(), d.title(), d.file_system, d.kind.is_some())).collect();
+    assert_eq!(
+        got,
+        [
+            ("/dev/sdb1".to_owned(), "Encrypted volume (sdb1)".to_owned(), "crypto_LUKS".to_owned(), true),
+            ("/dev/mapper/luks-1".to_owned(), "Inside".to_owned(), "ext4".to_owned(), false),
+        ]
+    );
+}
+
+#[test]
 fn unmounted_internal_data_partitions_show_and_system_partitions_do_not() {
     let lsblk = "PATH=\"/dev/nvme0n1p1\" LABEL=\"\" MOUNTPOINT=\"\" HOTPLUG=\"0\" FSTYPE=\"vfat\" TYPE=\"part\" PARTTYPE=\"C12A7328-F81F-11D2-BA4B-00A0C93EC93B\"\n\
 PATH=\"/dev/nvme0n1p2\" LABEL=\"\" MOUNTPOINT=\"/\" HOTPLUG=\"0\" FSTYPE=\"btrfs\" TYPE=\"part\" PARTTYPE=\"0fc63daf-8483-4772-8e79-3d69d8477de4\"\n\
@@ -39,17 +57,6 @@ PATH=\"/dev/loop0\" LABEL=\"\" MOUNTPOINT=\"\" HOTPLUG=\"0\" FSTYPE=\"ext4\" TYP
 PATH=\"/dev/sdb1\" LABEL=\"Stick\" MOUNTPOINT=\"\" HOTPLUG=\"1\" FSTYPE=\"exfat\" TYPE=\"part\" PARTTYPE=\"0x7\"\n";
     let got: Vec<(String, bool)> = unmounted_from(lsblk).into_iter().map(|d| (d.label, d.removable)).collect();
     assert_eq!(got, [("Windows".to_owned(), false), ("Stick".to_owned(), true)]);
-}
-
-#[test]
-fn eject_unmounts_then_powers_off_the_block_device_behind_the_mount() {
-    let table = parse(b"40 1 8:17 / /media/u/STICK rw,nosuid - vfat /dev/sdb1 rw\n41 1 0:50 / /media/u/net rw - fuse.sshfs host:/ rw\n");
-    let steps = eject_steps(&table, Path::new("/media/u/STICK")).unwrap();
-    let words = |s: &[std::ffi::OsString; 4]| s.iter().map(|w| w.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
-    assert_eq!(words(&steps[0]), "udisksctl unmount -b /dev/sdb1");
-    assert_eq!(words(&steps[1]), "udisksctl power-off -b /dev/sdb1");
-    assert!(eject_steps(&table, Path::new("/media/u/net")).is_none());
-    assert!(eject_steps(&table, Path::new("/nowhere")).is_none());
 }
 
 #[test]
@@ -229,41 +236,16 @@ fn gvfs_mounts_become_drives_with_readable_names() {
 }
 
 #[test]
-fn mounting_lets_polkit_prompt_and_a_missing_udisksctl_is_explained() {
-    let args = mount_args(Path::new("/dev/sdb1"));
-    assert_eq!(args.map(|a| a.to_string_lossy().into_owned()), ["mount", "-b", "/dev/sdb1"]);
-    let e = missing_tool("udisksctl", "udisks2", std::io::Error::from(std::io::ErrorKind::NotFound));
-    assert_eq!(e.to_string(), "udisksctl is not installed: install the udisks2 package");
-    assert_eq!(missing_tool("udisksctl", "udisks2", std::io::Error::from(std::io::ErrorKind::PermissionDenied)).kind(), std::io::ErrorKind::PermissionDenied);
-}
-
-fn step(script: &str) -> [std::ffi::OsString; 4] {
-    ["sh".into(), "-c".into(), script.into(), "step".into()]
-}
-
-#[test]
-fn eject_reports_why_the_drive_stays_mounted_and_ignores_a_failed_power_off() {
-    let busy = "Error unmounting /dev/sdb1: GDBus.Error:org.freedesktop.UDisks2.Error.DeviceBusy: Error unmounting /dev/sdb1: target is busy";
-    assert_eq!(udisks_message(busy.as_bytes()), S::ErrorsFsDriveBusy.en());
-    assert_eq!(udisks_message(b"Error unmounting /dev/sdb1: GDBus.Error:org.freedesktop.UDisks2.Error.NotAuthorizedDismissed: Not authorized to perform operation\n"), "Not authorized to perform operation");
-    assert_eq!(udisks_message(b"  plain failure \n"), "plain failure");
-    let failed = run_eject(&[step(&format!("echo '{busy}' >&2; exit 1")), step("exit 0")]).unwrap_err();
-    assert_eq!(failed.to_string(), S::ErrorsFsDriveBusy.en());
-    assert!(run_eject(&[step("exit 3"), step("exit 0")]).unwrap_err().to_string().contains("failed"));
-    assert!(run_eject(&[step("exit 0"), step("echo 'cannot power off' >&2; exit 1")]).is_ok());
-    let missing = ["/nonexistent/udisksctl".into(), "unmount".into(), "-b".into(), "/dev/sdb1".into()];
-    assert!(run_eject(&[missing, step("exit 0")]).unwrap_err().to_string().contains("udisks2"));
-    let shown = eject_error(Path::new("/media/ann/STICK"), &failed).to_string();
-    assert!(shown.starts_with("Cannot eject /media/ann/STICK: The drive is in use"), "{shown}");
-}
-
-#[test]
 fn network_mounts_are_drives_that_are_never_removable() {
     let table = parse(b"1 0 8:1 / / rw - ext4 /dev/sda1 rw\n2 1 0:40 / /media/ann/NAS rw - cifs //server/share rw\n3 1 0:41 / /mnt/box rw - fuse.sshfs ann@box:/ rw\n");
     let v = volumes_from(&table, b"ann", Path::new("/nonexistent/by-label"));
     let got: Vec<(&[u8], &str, u64, bool)> = v.iter().map(|v| (v.mount.point.as_slice(), v.label.as_str(), v.total, v.mount.removable())).collect();
     assert_eq!(got[1..], [(&b"/media/ann/NAS"[..], "NAS", 0, false), (b"/mnt/box", "box", 0, false)]);
     assert!(v[0].total > 0);
+    let local = drive_of(&v[0]).unwrap();
+    let share = drive_of(&v[1]).unwrap();
+    assert_eq!((local.remote.as_deref(), share.remote.as_deref()), (None, Some("//server/share")));
+    assert!(!share.unmountable() && local.path == FsPath::parse("/").unwrap() && !local.unmountable());
 }
 
 fn answering_share(_: &Path) -> Option<(u64, u64)> {
@@ -318,6 +300,6 @@ fn a_drive_without_a_trash_yet_is_watched_for_the_trash_to_appear() {
     let got = trash_folders(&trash, &tops, &[stick.clone(), shared.clone(), gone]);
     assert_eq!(got, [t.path().join("home/.local/share/Trash/files"), stick.clone(), shared.join(".Trash"), shared.clone()]);
     std::fs::create_dir_all(stick.join(format!(".Trash-{uid}/files"))).unwrap();
-    let got = trash_folders(&trash, &tops, &[stick.clone()]);
+    let got = trash_folders(&trash, &tops, std::slice::from_ref(&stick));
     assert_eq!(got, [t.path().join("home/.local/share/Trash/files"), stick.join(format!(".Trash-{uid}/files")), stick.clone()]);
 }
