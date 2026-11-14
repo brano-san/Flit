@@ -208,3 +208,6 @@ keep = "Fenster offen lassen"
 
 [awake]
 reason = "Flit kopiert, verschiebt oder löscht Dateien"
+
+[jump_list]
+frequent = "Häufig"

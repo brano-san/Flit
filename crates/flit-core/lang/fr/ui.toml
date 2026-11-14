@@ -208,3 +208,6 @@ keep = "Garder la fenêtre"
 
 [awake]
 reason = "Flit copie, déplace ou supprime des fichiers"
+
+[jump_list]
+frequent = "Fréquents"

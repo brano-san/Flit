@@ -1,3 +1,4 @@
+use crate::jumps::{self, JumpList};
 use crate::metrics::{Metrics, Step};
 use crate::places::{worth_keeping, KeptIcon, KeptIcons, PlacesWorker, Reply, ICONS_FILE, PLACES_FILE};
 use crate::search_client::SearchClient;
@@ -310,6 +311,7 @@ struct Handler<P: Platform> {
     restarting: bool,
     awake: KeepAwake,
     quitting: std::collections::HashSet<WindowId>,
+    jumps: JumpList,
 }
 
 impl<P: Platform> Handler<P> {
@@ -601,6 +603,8 @@ impl<P: Platform> Handler<P> {
                     window.set_title(&t);
                     if let Some(st) = self.windows.get(&id) {
                         window.set_folder(st.app.current_location().to_windows().as_ref());
+                        let lists = jumps::lists(&st.app.nav_state(), &st.app.nav_prefs());
+                        self.jumps.show(lists);
                     }
                 }
                 Effect::Open(cmd) => {
@@ -1421,7 +1425,9 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         restarting: false,
         awake: KeepAwake::default(),
         quitting: Default::default(),
+        jumps: JumpList::start::<P>(integrate),
     };
+    h.jumps.show(jumps::lists(&saved.nav, &saved.side));
     let (mut first, placement) = match &first_window {
         Some((ws, placement)) => (h.restored_app(ws), *placement),
         None => {

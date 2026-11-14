@@ -16,6 +16,7 @@ mod update;
 mod install;
 mod integration;
 mod instance;
+mod jumplist;
 mod library;
 mod mft;
 mod namespace;
@@ -269,6 +270,10 @@ impl Platform for Windows {
 
     fn keep_awake(reason: &str) -> Option<flit_platform::Awake> {
         power::Awake::hold(reason).map(|a| Box::new(a) as flit_platform::Awake)
+    }
+
+    fn jump_list(pinned: &[Location], frequent: &[Location]) {
+        jumplist::update(pinned, frequent)
     }
 }
 

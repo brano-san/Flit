@@ -208,3 +208,6 @@ keep = "Keep window open"
 
 [awake]
 reason = "Flit is copying, moving or deleting files"
+
+[jump_list]
+frequent = "Frequent"

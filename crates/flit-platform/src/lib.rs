@@ -581,6 +581,7 @@ pub trait Platform: 'static {
     fn keep_awake(_reason: &str) -> Option<Awake> {
         None
     }
+    fn jump_list(_pinned: &[Location], _frequent: &[Location]) {}
 }
 
 #[cfg(test)]

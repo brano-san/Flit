@@ -208,3 +208,6 @@ keep = "Mantener abierta"
 
 [awake]
 reason = "Flit está copiando, moviendo o eliminando archivos"
+
+[jump_list]
+frequent = "Frecuentes"

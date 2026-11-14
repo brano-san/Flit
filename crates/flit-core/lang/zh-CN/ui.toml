@@ -208,3 +208,6 @@ keep = "保持窗口打开"
 
 [awake]
 reason = "Flit 正在复制、移动或删除文件"
+
+[jump_list]
+frequent = "常用"
