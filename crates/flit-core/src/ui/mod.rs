@@ -941,12 +941,17 @@ impl App {
     }
 
     fn select_group(&mut self, g: usize) {
+        let adding = self.mods.ctrl;
         let Some(v) = self.tab_mut().view.as_mut() else { return };
         let Some(gr) = v.groups().get(g).cloned() else { return };
         let (a, b) = (gr.start as usize, (gr.start + gr.count).saturating_sub(1) as usize);
+        let (Some(&first), Some(&last)) = (v.rows().get(a), v.rows().get(b)) else { return };
+        if !adding {
+            v.clear_selection();
+        }
         v.select_rows(a, b);
-        v.anchor = Some(a as u32);
-        v.focus = Some(b as u32);
+        v.anchor = Some(first);
+        v.focus = Some(last);
         self.dirty = true;
     }
 
@@ -2130,7 +2135,7 @@ impl App {
             return;
         }
         self.dirty = true;
-        if self.form_insert(c.encode_utf8(&mut [0; 4])) || self.jobs.modal() || self.settings_insert(c.encode_utf8(&mut [0; 4])) || self.ops_char(c) || self.inspector_insert(c.encode_utf8(&mut [0; 4])) {
+        if self.form_insert(c.encode_utf8(&mut [0; 4])) || self.jobs_char(c) || self.settings_insert(c.encode_utf8(&mut [0; 4])) || self.ops_char(c) || self.inspector_insert(c.encode_utf8(&mut [0; 4])) {
             return;
         }
         if self.nav_insert(c.encode_utf8(&mut [0; 4])) {
@@ -2142,7 +2147,7 @@ impl App {
         if c == ' ' && !self.tab().typing(now) {
             return;
         }
-        if self.focus == Focus::List && (c == '/' || c == '~') {
+        if self.focus == Focus::List && self.caps.unix_paths && !self.tab().typing(now) && (c == '/' || c == '~') {
             self.open_address();
             self.nav_insert(c.encode_utf8(&mut [0; 4]));
             self.dirty = true;

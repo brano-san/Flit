@@ -937,3 +937,35 @@ fn a_group_header_click_selects_the_group_and_only_the_chevron_folds_it() {
     press(&mut app, r.x + r.w / 2.0);
     assert_eq!(app.tab().view.as_ref().unwrap().selected_count(), app.tab().view.as_ref().unwrap().groups()[0].count as usize, "the header selects again");
 }
+
+#[test]
+fn a_group_header_click_focuses_files_of_that_group_whatever_order_they_arrived_in() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("kiwi.txt", 10, false), ("zebra.txt", 10, false), ("banana.txt", 10, false), ("apple.txt", 10, false)]);
+    app.drain_effects().for_each(drop);
+    app.run_action("view.group.name", Instant::now());
+    resort_now(&mut app);
+    frame(&mut app);
+    let header = |app: &App, g: usize| {
+        let v = app.tab().view.as_ref().unwrap();
+        let n = (0..v.lines()).find(|&n| matches!(v.line(n), Some(crate::view::Line::Header(h)) if h == g)).unwrap();
+        app.line_rect(&app.flow(), n)
+    };
+    let press = |app: &mut App, r: Rect| {
+        let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+        app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, Instant::now());
+        app.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, Instant::now());
+    };
+    let named = |app: &App, i: Option<u32>| i.map(|i| String::from_utf8_lossy(app.tab().view.as_ref().unwrap().listing().name(i)).into_owned());
+    let r = header(&app, 0);
+    press(&mut app, r);
+    let v = app.tab().view.as_ref().unwrap();
+    let (focus, anchor) = (named(&app, v.focus), named(&app, v.anchor));
+    assert_eq!((anchor.as_deref(), focus.as_deref()), (Some("apple.txt"), Some("banana.txt")), "the anchor and focus sit on the first and last file of the group");
+    assert_eq!(v.selected_count(), 2);
+    let r = header(&app, 1);
+    press(&mut app, r);
+    let v = app.tab().view.as_ref().unwrap();
+    assert_eq!(v.selected_count(), 1, "a plain click on another header replaces the selection");
+    assert_eq!(named(&app, v.focus).as_deref(), Some("kiwi.txt"));
+}

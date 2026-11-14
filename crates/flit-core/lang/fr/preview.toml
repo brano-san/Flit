@@ -1,6 +1,7 @@
 selected = ["{n} élément sélectionné", "{n} d’éléments sélectionnés", "{n} éléments sélectionnés"]
 archived = "Dans une archive : extrayez-la pour afficher l’aperçu"
 cannot_play = "Impossible de lire ce fichier : {error}"
+no_player = "aucun lecteur multimédia trouvé ; installez mpv, GStreamer (gst-play-1.0) ou FFmpeg (ffplay)"
 properties = "Propriétés"
 reading = "Lecture des propriétés…"
 loading = "Chargement de l’aperçu…"

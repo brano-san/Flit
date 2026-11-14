@@ -693,20 +693,33 @@ fn back_brings_back_the_scroll_of_a_folder_left_with_nothing_selected() {
 }
 
 #[test]
-fn slash_and_tilde_in_the_list_open_the_address_bar_with_the_character() {
-    let mut app = app_at(r"C:\x");
+fn slash_and_tilde_in_the_list_open_the_address_bar_with_the_character_on_linux() {
+    let later = |s: u64| t0() + Duration::from_secs(s);
+    let mut app = app_at("/home/u");
+    app.caps.unix_paths = true;
     app.opts.char_key = crate::ui::options::CharKey::Select;
-    files(&mut app, &["a.txt", "b.txt"]);
-    app.on_event(&Event::Char('a'), t0());
+    files(&mut app, &["a.txt", "a~b.txt", "b.txt"]);
+    app.on_event(&Event::Char('a'), later(0));
     assert!(app.nav.palette.is_none(), "plain letters still go to type-ahead");
-    assert_eq!(selected(&app), ["a.txt"]);
-    files(&mut app, &["a.txt", "b.txt"]);
-    app.on_event(&Event::Char('/'), t0());
+    app.on_event(&Event::Char('~'), later(0));
+    assert!(app.nav.palette.is_none(), "a tilde in the middle of a typed name stays part of it");
+    assert_eq!(selected(&app), ["a~b.txt"]);
+    app.on_event(&Event::Char('/'), later(10));
     let Some(p) = app.nav.palette.as_ref() else { panic!("slash opens the address bar") };
     assert_eq!(p.field.text(), "/");
     key(&mut app, Key::Escape, NO);
     files(&mut app, &["a.txt", "b.txt"]);
-    app.on_event(&Event::Char('~'), t0());
+    app.on_event(&Event::Char('~'), later(20));
     let Some(p) = app.nav.palette.as_ref() else { panic!("tilde opens the address bar") };
     assert_eq!(p.field.text(), "~");
+}
+
+#[test]
+fn a_tilde_in_the_list_on_windows_finds_office_lock_files_by_typing() {
+    let mut app = app_at(r"C:\x");
+    app.opts.char_key = crate::ui::options::CharKey::Select;
+    files(&mut app, &["a.txt", "~$report.docx"]);
+    app.on_event(&Event::Char('~'), t0());
+    assert!(app.nav.palette.is_none(), "Explorer has no slash or tilde shortcut");
+    assert_eq!(selected(&app), ["~$report.docx"]);
 }

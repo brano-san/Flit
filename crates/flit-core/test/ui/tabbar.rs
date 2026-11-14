@@ -542,7 +542,6 @@ fn reopening_a_closed_tab_restores_its_history() {
     deliver(&mut app, &[("z", false)]);
     assert_eq!(app.tab().history.back_list().len(), 2);
     key(&mut app, Key::Char('W'), CTRL);
-    eprintln!("DBG tabs={} closed={:?}", app.tabs().len(), app.nav.closed.last());
     assert_eq!(app.tabs().len(), 1);
     assert_eq!(app.nav.closed.last(), Some(&loc(r"C:\a\one\two")));
     assert_eq!(app.nav.closed_trail.last().map(|t| t.len()), Some(2), "the trail is remembered");
@@ -559,9 +558,7 @@ fn reopening_a_closed_tab_restores_its_history() {
 fn a_new_tab_opens_next_to_the_current_one() {
     let mut app = app_with(&[r"C:\a", r"C:\b", r"C:\c"]);
     deliver(&mut app, &[("x", false)]);
-    eprintln!("DBG start tabs={} cur={}", app.tabs().len(), app.cur);
     app.select_tab(1);
-    eprintln!("DBG after select cur={} names={:?}", app.cur, names(&app));
     key(&mut app, Key::Char('T'), CTRL);
     assert_eq!(app.tabs().len(), 4);
     assert_eq!(app.cur, 2, "the new tab takes the place right of the current one");

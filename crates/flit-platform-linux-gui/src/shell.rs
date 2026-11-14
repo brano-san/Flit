@@ -660,14 +660,8 @@ pub fn play_media(video: bool, path: &Path) -> Option<std::process::Child> {
     };
     let mut with = command("mpv", &["--no-terminal"])
         .or_else(|| command("gst-play-1.0", &[]))
-        .or_else(|| match video {
-            true => command("ffplay", &["-autoexit"]),
-            false => command("ffplay", &["-autoexit", "-nodisp"]),
-        })
-        .or_else(|| match video {
-            true => None,
-            false => command("paplay", &[]),
-        })?;
+        .or_else(|| if video { command("ffplay", &["-autoexit"]) } else { command("ffplay", &["-autoexit", "-nodisp"]) })
+        .or_else(|| if video { None } else { command("paplay", &[]) })?;
     with.spawn().ok()
 }
 

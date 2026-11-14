@@ -4,6 +4,7 @@ use flit_core::input::{CursorIcon, Event, HitArea, MouseButton};
 use flit_core::preview::{HostCmd, Hosted, MediaCmd};
 use flit_core::render::Rect;
 use flit_core::ui::{drop_effect, DragEvent, ShellMenu};
+use flit_core::i18n::S;
 use flit_core::FsPath;
 use flit_platform::{Placement, PlatformError, Waker, Window, WindowHandler, WindowId, WindowOptions, WindowSystem};
 use std::cell::{Cell, RefCell};
@@ -187,8 +188,15 @@ pub struct LinuxWindow {
     timer: Cell<Option<Instant>>,
     ime_area: Cell<Rect>,
     compact_from: Cell<Option<(u32, u32)>>,
-    media: RefCell<Option<(bool, FsPath)>>,
+    media: RefCell<Option<ShownMedia>>,
     player: RefCell<Option<std::process::Child>>,
+}
+
+#[derive(Clone)]
+struct ShownMedia {
+    gen: u64,
+    video: bool,
+    path: FsPath,
 }
 
 impl LinuxWindow {
@@ -213,8 +221,38 @@ impl LinuxWindow {
 
     fn stop_player(&self) {
         if let Some(mut child) = self.player.borrow_mut().take() {
+            signal_group(&child, libc::SIGKILL);
             let _ = child.kill();
             let _ = child.wait();
+        }
+    }
+
+    fn signal_player(&self, signal: libc::c_int) -> bool {
+        let mut player = self.player.borrow_mut();
+        let Some(child) = player.as_mut() else { return false };
+        if !matches!(child.try_wait(), Ok(None)) {
+            return false;
+        }
+        signal_group(child, signal);
+        true
+    }
+
+    fn play(&self) {
+        if self.signal_player(libc::SIGCONT) {
+            return;
+        }
+        self.stop_player();
+        let Some(m) = self.media.borrow().clone() else { return };
+        let Some(file) = flit_platform_linux::host(&m.path) else { return };
+        match crate::shell::play_media(m.video, file) {
+            Some(child) => {
+                self.player.replace(Some(child));
+            }
+            None => {
+                let failed = flit_core::preview::HostEvent::Failed { gen: m.gen, message: S::PreviewNoPlayer.t().to_owned() };
+                QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((self.id, Event::Hosted(failed)));
+                wake_loop();
+            }
         }
     }
 
@@ -265,10 +303,14 @@ impl LinuxWindow {
 
 impl Drop for LinuxWindow {
     fn drop(&mut self) {
-        if let Some(mut child) = self.player.borrow_mut().take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+        self.stop_player();
+    }
+}
+
+fn signal_group(child: &std::process::Child, signal: libc::c_int) {
+    let Ok(pid) = libc::pid_t::try_from(child.id()) else { return };
+    unsafe {
+        libc::kill(-pid, signal);
     }
 }
 
@@ -350,21 +392,19 @@ impl Window for LinuxWindow {
 
     fn host(&self, cmd: HostCmd) {
         match cmd {
-            HostCmd::Show { what: Hosted::Media { video }, path, .. } => {
+            HostCmd::Show { gen, what: Hosted::Media { video }, path, .. } => {
                 self.stop_player();
-                self.media.replace(Some((video, path)));
+                self.media.replace(Some(ShownMedia { gen, video, path }));
             }
-            HostCmd::Show { .. } | HostCmd::Place(_) => self.stop_player(),
-            HostCmd::Media(MediaCmd::Play) => {
+            HostCmd::Show { .. } | HostCmd::Close => {
                 self.stop_player();
-                if let Some((video, path)) = self.media.borrow().clone().filter(|(_, p)| flit_platform_linux::host(p).is_some()) {
-                    if let Some(child) = flit_platform_linux::host(&path).and_then(|p| crate::shell::play_media(video, p)) {
-                        self.player.replace(Some(child));
-                    }
-                }
+                self.media.replace(None);
             }
-            HostCmd::Media(_) => {}
-            HostCmd::Close => self.stop_player(),
+            HostCmd::Place(_) | HostCmd::Media(MediaCmd::Seek(_) | MediaCmd::Volume(_)) => {}
+            HostCmd::Media(MediaCmd::Play) => self.play(),
+            HostCmd::Media(MediaCmd::Pause) => {
+                self.signal_player(libc::SIGSTOP);
+            }
         }
     }
 

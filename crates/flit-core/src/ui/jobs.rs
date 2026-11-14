@@ -723,25 +723,39 @@ impl App {
         keys.iter().map(|k| k.t()).collect()
     }
 
+    pub(super) fn jobs_char(&mut self, c: char) -> bool {
+        if !self.jobs.modal() {
+            return false;
+        }
+        let conflict = self.jobs.asks.front().is_some_and(Ask::name_conflict);
+        if !conflict || self.mods.ctrl || self.mods.alt {
+            return true;
+        }
+        let typed = upper(c);
+        if self.mods.shift {
+            if typed.is_some() && typed == first_letter(S::UiConflictApplyAll.t()) {
+                self.jobs.all = !self.jobs.all;
+            }
+        } else {
+            let letters: Vec<Option<char>> = self.dialog_buttons().iter().map(|l| first_letter(l)).collect();
+            let answers = letters.len().saturating_sub(1);
+            if let Some(k) = letters[..answers].iter().rposition(|l| l.is_some() && *l == typed) {
+                self.answer(k);
+            }
+        }
+        self.dirty = true;
+        true
+    }
+
     pub(super) fn jobs_key(&mut self, key: Key, m: Mods) -> bool {
         if !self.jobs.asks.is_empty() {
             let n = self.dialog_buttons().len();
-            let conflict = self.jobs.asks.front().is_some_and(Ask::name_conflict);
-            let plain = !m.ctrl && !m.alt;
-            let letters = self.dialog_buttons().iter().map(|l| first_letter(l)).collect::<Vec<_>>();
-            let all = first_letter(S::UiConflictApplyAll.t());
             match key {
                 Key::Escape => self.answer(n - 1),
                 Key::Enter | Key::Space => self.answer(self.jobs.sel),
                 Key::Left => self.jobs.sel = (self.jobs.sel + n - 1) % n,
                 Key::Right | Key::Tab if !m.shift => self.jobs.sel = (self.jobs.sel + 1) % n,
                 Key::Tab => self.jobs.sel = (self.jobs.sel + n - 1) % n,
-                Key::Char(c) if conflict && plain && !m.shift => {
-                    if let Some(k) = letters[..n - 1].iter().rposition(|l| *l == Some(c.to_ascii_uppercase())) {
-                        self.answer(k);
-                    }
-                }
-                Key::Char(c) if conflict && plain && m.shift && Some(c.to_ascii_uppercase()) == all => self.jobs.all = !self.jobs.all,
                 _ => {}
             }
             self.dirty = true;
@@ -1202,5 +1216,9 @@ fn self_menu_len(j: &Jobs, row: usize) -> usize {
 mod tests;
 
 fn first_letter(label: &str) -> Option<char> {
-    label.chars().find(|c| c.is_alphabetic()).map(|c| c.to_ascii_uppercase())
+    label.chars().find(|c| c.is_alphabetic()).and_then(upper)
+}
+
+fn upper(c: char) -> Option<char> {
+    c.to_uppercase().next()
 }

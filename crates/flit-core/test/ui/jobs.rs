@@ -50,6 +50,11 @@ fn shift(app: &mut App, key: Key) {
     app.on_event(&Event::Key { key, mods: SHIFT, pressed: true }, t0());
 }
 
+fn letter(app: &mut App, vk: char, typed: char, mods: Mods) {
+    app.on_event(&Event::Key { key: Key::Char(vk), mods, pressed: true }, t0());
+    app.on_event(&Event::Char(typed), t0());
+}
+
 fn finish(app: &mut App, id: OpId, error: Option<&str>) {
     let tab = app.tab().id;
     let report = OpReport { op: FileOp::Paste { dest: p(r"C:\x") }, items: Vec::new() };
@@ -86,11 +91,11 @@ fn conflicts_are_answered_in_flits_own_dialog_with_the_keyboard() {
     let waiting = asked(&mut app, id, &ctl);
     assert_eq!((app.asking(), app.jobs.sel), (Some("conflict"), 1), "keep both is the default button");
     assert!(app.job_states()[0].0.starts_with("Pasting into"));
-    key(&mut app, Key::Char('R'));
+    letter(&mut app, 'R', 'r', NO);
     assert_eq!((waiting.join().unwrap(), app.asking()), (Some(Resolve::Replace), None));
 
     let waiting = asked(&mut app, id, &ctl);
-    shift(&mut app, Key::Char('D'));
+    letter(&mut app, 'D', 'D', SHIFT);
     key(&mut app, Key::Enter);
     assert_eq!(waiting.join().unwrap(), Some(Resolve::KeepBoth));
     assert_eq!(ctl.resolve(|| panic!("asked again")), Some(Resolve::KeepBoth), "the answer applies to all remaining conflicts");
@@ -277,7 +282,7 @@ fn items_too_large_for_the_drive_are_skipped_or_cancel_without_setting_a_policy(
     let (id, ctl) = paste(&mut app);
     let waiting = ask(&mut app, &ctl, id, crate::limits::over_limit(&p(r"C:\a\big.iso"), &p(r"E:\big.iso"), 5 << 30, crate::limits::FAT_MAX_FILE));
     assert_eq!((app.asking(), app.jobs.sel, app.dialog_buttons()), (Some("too_large"), 0, vec!["Skip", "Cancel"]));
-    key(&mut app, Key::Char('A'));
+    letter(&mut app, 'A', 'a', NO);
     key(&mut app, Key::Enter);
     assert_eq!((waiting.join().unwrap(), ctl.policy(), app.asking()), (Some(Resolve::Skip), None, None));
 
@@ -580,16 +585,18 @@ fn dialog_buttons_answer_by_localized_first_letters_and_shift_tab_walks_back() {
     assert_eq!(app.jobs.sel, 2, "Tab advances");
     shift(&mut app, Key::Tab);
     assert_eq!(app.jobs.sel, 1, "Shift+Tab walks back");
-    key(&mut app, Key::Char('s'));
+    letter(&mut app, 'S', 's', NO);
     assert_eq!(waiting.join().unwrap(), Some(Resolve::Skip), "the first letter of the localized button answers, in either case");
     crate::i18n::set_lang(crate::i18n::Lang::Ru);
     let (id, ctl) = paste(&mut app);
     let waiting = asked(&mut app, id, &ctl);
     let letters: Vec<Option<char>> = app.dialog_buttons().iter().map(|l| first_letter(l)).collect();
     assert!(letters.iter().all(|l| l.is_some()) && letters[0] != letters[1], "{letters:?}");
-    let ru = letters[1].unwrap().to_ascii_lowercase();
-    let c = crate::input::Key::Char(ru);
-    key(&mut app, c);
-    assert_eq!(waiting.join().unwrap(), Some(Resolve::KeepBoth), "the Russian answer works by its own letter");
+    let ru = letters[1].unwrap().to_lowercase().next().unwrap();
+    assert!(!ru.is_ascii(), "the Russian label starts with a Cyrillic letter");
+    letter(&mut app, 'S', 'ы', NO);
+    assert_eq!(app.asking(), Some("conflict"), "the Latin key code alone answers nothing on a Russian layout");
+    letter(&mut app, 'J', ru, NO);
+    assert_eq!(waiting.join().unwrap(), Some(Resolve::KeepBoth), "the Russian answer works by the letter the layout types");
     crate::i18n::set_lang(crate::i18n::Lang::En);
 }
