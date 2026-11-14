@@ -2243,3 +2243,19 @@ fn the_undo_bar_belongs_to_its_tab_and_yields_to_status_errors() {
     key(&mut app, Key::Tab, CTRL);
     assert_eq!(app.tab().undo.map(|(n, _)| n), Some(1), "the bar waits in its own tab");
 }
+
+fn hovering_a_sidebar_folder_mid_drag_opens_it_after_the_spring_delay() {
+    let mut app = app_at(r"C:\x");
+    let downloads = crate::location::Location::parse(r"C:\Users\u\Downloads").unwrap();
+    app.set_places(std::sync::Arc::new(crate::ui::Places { folders: vec![(crate::ui::KnownFolder::Home, crate::location::Location::parse(r"C:\Users\u").unwrap()), (crate::ui::KnownFolder::Downloads, downloads.clone())], recycle_bin: true, ..Default::default() }));
+    app.spring_delay_ms = 100;
+    let all = drop_effect::COPY | drop_effect::MOVE | drop_effect::LINK;
+    let k = app.nav.sidebar.items.iter().position(|it| it.loc == downloads).unwrap();
+    let r = app.nav.sidebar.rects[k];
+    let at = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    app.drag(&DragEvent::Enter { paths: vec![p(r"D:\in\f.txt")], x: at.0, y: at.1, mods: NO, allowed: all, right: false }, t0());
+    app.drag(&DragEvent::Over { x: at.0, y: at.1, mods: NO, allowed: all }, t0());
+    assert_eq!(*app.current_location(), crate::location::Location::parse(r"C:\x").unwrap(), "nothing before the delay");
+    app.drag(&DragEvent::Over { x: at.0, y: at.1, mods: NO, allowed: all }, t0() + Duration::from_millis(150));
+    assert_eq!(*app.current_location(), downloads, "the sidebar folder opens mid drag");
+}
