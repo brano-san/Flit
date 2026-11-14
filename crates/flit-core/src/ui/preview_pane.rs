@@ -10,7 +10,7 @@ use crate::listing::{attr, Entry};
 use crate::name;
 use crate::path::{FsPath, PathKind};
 use crate::i18n::{P, S};
-use crate::preview::{self, Block, Doc, FolderSummary, HostCmd, HostEvent, Hosted, Kind, MediaCmd, Note, PreviewData, PreviewRequest, PropGroup, Run, Tone, IMAGE_PX};
+use crate::preview::{self, Block, Doc, FolderSummary, HostCmd, HostEvent, Hosted, Kind, MediaCmd, Note, PreviewData, PreviewRequest, PropGroup, Run, Tone, COPY_PX, IMAGE_PX};
 use crate::provider::GenToken;
 use crate::recycle;
 use crate::render::{Color, Rect};
@@ -284,6 +284,8 @@ pub(super) struct PreviewPane {
     widths: FxHashMap<(char, FontStyle), f32>,
     image: Option<Bitmap>,
     image_rev: u64,
+    image_px: u32,
+    copy_gen: u64,
     host: Host,
     media: Media,
     peeked: bool,
@@ -448,6 +450,35 @@ fn line_span_x(d: &Doc, lay: &DocLayout, line: &VLine, widths: &FxHashMap<(char,
 fn line_end_x(d: &Doc, lay: &DocLayout, line: &VLine, widths: &FxHashMap<(char, FontStyle), f32>, fonts: (f32, f32)) -> f32 {
     let Some(last) = lay.pieces[line.pieces.start as usize..line.pieces.end as usize].last() else { return 0.0 };
     line_span_x(d, lay, line, widths, fonts, (last.start, last.end)).map_or(last.x, |s| s.1)
+}
+
+fn line_text(d: &Doc, lay: &DocLayout, line: &VLine) -> (u32, u32) {
+    let pieces = &lay.pieces[line.pieces.start as usize..line.pieces.end as usize];
+    match (pieces.first(), pieces.last()) {
+        (Some(a), Some(b)) => (a.start, b.end),
+        _ => para_span(d, line.para as usize),
+    }
+}
+
+fn caret_line(d: &Doc, lay: &DocLayout, s: Spot) -> Option<usize> {
+    let of_para = |l: &VLine| l.para == s.para;
+    lay.lines.iter().position(|l| of_para(l) && line_text(d, lay, l).1 >= s.at).or_else(|| lay.lines.iter().rposition(of_para))
+}
+
+fn step_char(d: &Doc, lay: &DocLayout, s: Spot, right: bool) -> Spot {
+    let (start, end) = para_span(d, s.para as usize);
+    let text = d.text.as_str();
+    if right && s.at < end {
+        return Spot { para: s.para, at: s.at + text[s.at as usize..].chars().next().map_or(1, char::len_utf8) as u32 };
+    }
+    if !right && s.at > start {
+        return Spot { para: s.para, at: s.at - text[..s.at as usize].chars().next_back().map_or(1, char::len_utf8) as u32 };
+    }
+    let next = if right { lay.lines.iter().find(|l| l.para > s.para) } else { lay.lines.iter().rev().find(|l| l.para < s.para) };
+    next.map_or(s, |l| {
+        let (a, b) = para_span(d, l.para as usize);
+        Spot { para: l.para, at: if right { a } else { b } }
+    })
 }
 
 fn spot_on_line(d: &Doc, lay: &DocLayout, line: &VLine, widths: &FxHashMap<(char, FontStyle), f32>, (sc, mono): (f32, f32), x: f32) -> Spot {
@@ -806,6 +837,7 @@ impl App {
         match key {
             Key::Char('C') | Key::Insert if only_ctrl => self.copy_from_preview(),
             Key::Char('A') if only_ctrl && self.shows_doc() => self.select_preview_text(),
+            Key::Left | Key::Right | Key::Up | Key::Down | Key::Home | Key::End if m.shift && !m.alt && self.shows_doc() => self.extend_preview_pick(key, m.ctrl),
             _ if super::field::is_menu_key(key, m) && self.preview_copyable() => {
                 let b = self.preview.r.body;
                 self.preview_menu(b.x, b.y);
@@ -817,6 +849,9 @@ impl App {
     }
 
     fn copy_from_preview(&mut self) {
+        if matches!(self.preview.content, Content::Image) && self.copy_full_image() {
+            return;
+        }
         let line_break = if self.caps.unix_paths { "\n" } else { "\r\n" };
         let query = self.preview.query();
         let p = &self.preview;
@@ -826,6 +861,57 @@ impl App {
             _ => None,
         };
         self.effects.extend(effect);
+    }
+
+    fn copy_full_image(&mut self) -> bool {
+        let p = &self.preview;
+        let Some(b) = &p.image else { return false };
+        let Some(s) = p.subject.as_ref().filter(|s| s.kind == Kind::Image && b.width.max(b.height) >= p.image_px) else { return false };
+        let (path, size) = (s.path.clone(), s.entry.map_or(0, |e| e.size));
+        let Some(path) = path else { return false };
+        let gen = self.gen();
+        let cancel = GenToken::default();
+        cancel.set(gen);
+        self.preview.copy_gen = gen;
+        self.effects.push(Effect::Preview(PreviewRequest { gen, cancel, path, kind: Kind::Image, size, details: false, px: COPY_PX }));
+        true
+    }
+
+    fn extend_preview_pick(&mut self, key: Key, ctrl: bool) {
+        let fonts = (self.scale, super::options::mono_px(self.opts.inspector_size));
+        let p = &mut self.preview;
+        let (Content::Doc(d), Some(lay)) = (&p.content, p.doc.as_ref()) else { return };
+        let (Some(first), Some(last)) = (lay.lines.first(), lay.lines.last()) else { return };
+        let s = p.pick.caret;
+        let Some(k) = caret_line(d, lay, s) else { return };
+        let line = &lay.lines[k];
+        let (lo, hi) = line_text(d, lay, line);
+        let caret_x = || line_span_x(d, lay, line, &p.widths, fonts, (lo, s.at)).map_or_else(|| lay.pieces.get(line.pieces.start as usize).map_or(0.0, |q| q.x), |r| r.1);
+        let to = match key {
+            Key::Left | Key::Right => step_char(d, lay, s, key == Key::Right),
+            Key::Home if ctrl => Spot { para: first.para, at: line_text(d, lay, first).0 },
+            Key::End if ctrl => Spot { para: last.para, at: line_text(d, lay, last).1 },
+            Key::Home => Spot { para: line.para, at: lo },
+            Key::End => Spot { para: line.para, at: hi },
+            _ => {
+                let target = if key == Key::Up { k.checked_sub(1) } else { Some(k + 1).filter(|&j| j < lay.lines.len()) };
+                match target {
+                    Some(j) => spot_on_line(d, lay, &lay.lines[j], &p.widths, fonts, caret_x()),
+                    None if key == Key::Up => Spot { para: line.para, at: lo },
+                    None => Spot { para: line.para, at: hi },
+                }
+            }
+        };
+        let shown = caret_line(d, lay, to).map(|j| (lay.lines[j].y, lay.lines[j].h));
+        p.pick = Pick { anchor: p.pick.anchor, caret: to, from: (p.pick.anchor, p.pick.anchor), grain: Grain::Char };
+        if let Some((y, h)) = shown {
+            let room = p.r.body.h;
+            if y < p.scroll {
+                p.scroll = y;
+            } else if y + h > p.scroll + room {
+                p.scroll = (y + h - room).max(0.0);
+            }
+        }
     }
 
     fn select_preview_text(&mut self) {
@@ -1307,6 +1393,7 @@ impl App {
         }
         let side = p.r.body.w.max(p.r.body.h) * 2.0;
         let px = (side as u32).clamp(256, IMAGE_PX);
+        p.image_px = px;
         p.content = Content::Loading;
         p.requested = Some(now);
         let req = PreviewRequest { gen, cancel: p.cancel.clone(), path, kind: s.kind, size: s.entry.map_or(0, |e| e.size), details: false, px };
@@ -1314,6 +1401,15 @@ impl App {
     }
 
     pub fn on_preview(&mut self, gen: u64, data: PreviewData) {
+        if gen != 0 && gen == self.preview.copy_gen {
+            self.preview.copy_gen = 0;
+            let full = match data {
+                PreviewData::Image(b) => Some(b),
+                _ => self.preview.image.clone(),
+            };
+            self.effects.extend(full.map(Effect::SetClipboardImage));
+            return;
+        }
         if let PreviewData::Props(groups) = &data {
             if self.quick_props(gen, groups) || self.properties_props(gen, groups) {
                 return;

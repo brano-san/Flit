@@ -69,6 +69,7 @@ static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 static A11Y_REFRESH: AtomicBool = AtomicBool::new(false);
 static DEVICES_CHANGED: AtomicBool = AtomicBool::new(false);
 static QUEUED: Mutex<Vec<(WindowId, Event)>> = Mutex::new(Vec::new());
+static ENCODED_IMAGE: Mutex<Option<Vec<u8>>> = Mutex::new(None);
 static READS: Mutex<Vec<crossbeam_channel::Sender<Option<crate::clipboard::Payload>>>> = Mutex::new(Vec::new());
 static STARTUP: Mutex<Option<String>> = Mutex::new(None);
 static PREFETCHED: Mutex<Option<(Vec<FsPath>, OpenWith)>> = Mutex::new(None);
@@ -641,7 +642,7 @@ struct Loop<H> {
     error: Option<PlatformError>,
     incoming: Option<Incoming>,
     wl: Option<crate::wl::Wl>,
-    verify: Option<(Instant, Vec<FsPath>, bool)>,
+    verify: Option<(Instant, Unverified)>,
     reading: Option<Reading>,
     clip_text: Option<bool>,
     watching: bool,
@@ -673,6 +674,28 @@ fn type_name(ty: &dyn TransferType) -> Option<String> {
 
 fn clipboard_has(el: &dyn ActiveEventLoop, name: &str) -> bool {
     let Ok(Some(id)) = el.clipboard() else { return false };
+enum Unverified {
+    Files(Vec<FsPath>, bool),
+    Image(Vec<u8>),
+}
+
+impl Unverified {
+    fn marker(&self) -> &'static str {
+        match self {
+            Unverified::Files(..) => crate::clipboard::MARKER,
+            Unverified::Image(_) => crate::clipboard::IMAGE_MARKER,
+        }
+    }
+}
+
+fn copy_image_through_helper(png: Vec<u8>) {
+    background("flit-copy", move || {
+        if !crate::shell::set_clipboard_image(&png) {
+            tracing::info!("cannot copy the image: no wl-copy or xclip");
+        }
+    });
+}
+
     el.data_transfer(id).is_ok_and(|d| d.available_types().into_iter().any(|t| type_name(t).as_deref() == Some(name)))
 }
 
@@ -861,7 +884,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                     Command::Paste(id) => paste(el, id),
                     Command::Copy(text) => copy(el, text),
                     Command::CopyFiles(paths, cut) => self.copy_files(el, paths, cut),
-                    Command::CopyImage(image) => self.copy_image(el, &image),
+                    Command::CopyImage(image) => self.copy_image(el, image),
                     Command::SetPrimary(text) => set_primary(el, text),
                     Command::PastePrimary => paste_primary(el),
                     Command::Drag(source, paths, scale) => self.outgoing = drag_out(el, source, paths, scale),
@@ -879,7 +902,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         if el.is_wayland() {
             payload.push((crate::clipboard::MARKER.to_owned(), Vec::new()));
             if self.wl.as_mut().is_some_and(|wl| wl.set_selection(Arc::new(payload))) {
-                self.verify = Some((Instant::now() + VERIFY_WAIT, paths, cut));
+                self.verify = Some((Instant::now() + VERIFY_WAIT, Unverified::Files(paths, cut)));
                 return;
             }
         } else {
@@ -891,31 +914,49 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         winit_copy_files(el, paths, cut);
     }
 
-    fn copy_image(&mut self, el: &dyn ActiveEventLoop, image: &Bitmap) {
-        let Some(png) = crate::clipboard::png(image) else { return };
-        let payload = vec![(crate::clipboard::PNG.to_owned(), png.clone())];
-        let owned = if el.is_wayland() {
-            self.wl.as_mut().is_some_and(|wl| wl.set_selection(Arc::new(payload)))
-        } else {
-            crate::clipboard::own_x11(payload).map_err(|e| tracing::debug!("cannot own the X11 clipboard ({e}), asking a helper program")).is_ok()
-        };
-        if !owned {
-            background("flit-copy", move || {
-                if !crate::shell::set_clipboard_image(&png) {
-                    tracing::info!("cannot copy the image: no wl-copy or xclip");
+    fn copy_image(&mut self, el: &dyn ActiveEventLoop, image: Bitmap) {
+        let wayland = el.is_wayland();
+        background("flit-copy", move || {
+            let Some(png) = crate::clipboard::png(&image) else { return };
+            if wayland {
+                *ENCODED_IMAGE.lock().unwrap_or_else(|e| e.into_inner()) = Some(png);
+                return wake_loop();
+            }
+            match crate::clipboard::own_x11(vec![(crate::clipboard::PNG.to_owned(), png.clone())]) {
+                Ok(()) => {}
+                Err(e) => {
+                    tracing::debug!("cannot own the X11 clipboard ({e}), asking a helper program");
+                    copy_image_through_helper(png);
                 }
-            });
+            }
+        });
+    }
+
+    fn offer_encoded_image(&mut self) {
+        let Some(png) = ENCODED_IMAGE.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
+        let payload = vec![(crate::clipboard::PNG.to_owned(), png.clone()), (crate::clipboard::IMAGE_MARKER.to_owned(), Vec::new())];
+        if self.wl.as_mut().is_some_and(|wl| wl.set_selection(Arc::new(payload))) {
+            self.verify = Some((Instant::now() + VERIFY_WAIT, Unverified::Image(png)));
+        } else {
+            copy_image_through_helper(png);
         }
     }
 
     fn verify_copy(&mut self, el: &dyn ActiveEventLoop) {
-        let Some((until, ..)) = &self.verify else { return };
-        if clipboard_has(el, crate::clipboard::MARKER) {
+        let Some((until, what)) = &self.verify else { return };
+        if clipboard_has(el, what.marker()) {
             self.verify = None;
         } else if Instant::now() >= *until {
-            tracing::info!("the compositor did not take Flit's file clipboard, offering it through winit");
-            if let Some((_, paths, cut)) = self.verify.take() {
-                winit_copy_files(el, paths, cut);
+            match self.verify.take().map(|v| v.1) {
+                Some(Unverified::Files(paths, cut)) => {
+                    tracing::info!("the compositor did not take Flit's file clipboard, offering it through winit");
+                    winit_copy_files(el, paths, cut);
+                }
+                Some(Unverified::Image(png)) => {
+                    tracing::info!("the compositor did not take Flit's image, asking a helper program");
+                    copy_image_through_helper(png);
+                }
+                None => {}
             }
         }
     }
@@ -1298,6 +1339,7 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
         self.pending.store(false, Ordering::Release);
         for node in &self.nodes {
             self.handler.woken(&node.window);
+        self.offer_encoded_image();
         }
         if THEME_CHANGED.swap(false, Ordering::AcqRel) {
             let dark = preferred_dark().unwrap_or(false);

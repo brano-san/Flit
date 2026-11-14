@@ -3,7 +3,8 @@ use flit_core::ui::Bitmap;
 use flit_core::FsPath;
 use std::sync::OnceLock;
 use x11rb::connection::{Connection, RequestConnection};
-use x11rb::protocol::xproto::{Atom, AtomEnum, ConnectionExt, CreateWindowAux, EventMask, PropMode, SelectionNotifyEvent, SelectionRequestEvent, WindowClass, SELECTION_NOTIFY_EVENT};
+use std::ops::Range;
+use x11rb::protocol::xproto::{Atom, AtomEnum, ChangeWindowAttributesAux, ConnectionExt, CreateWindowAux, EventMask, Property, PropMode, SelectionNotifyEvent, SelectionRequestEvent, Window, WindowClass, SELECTION_NOTIFY_EVENT};
 use x11rb::protocol::Event;
 use x11rb::xcb_ffi::XCBConnection;
 use x11rb::{CURRENT_TIME, NONE};
@@ -15,6 +16,8 @@ pub const TEXT: &str = "text/plain;charset=utf-8";
 pub const PLAIN: &str = "text/plain";
 pub const MARKER: &str = "application/x-flit-files";
 pub const PNG: &str = "image/png";
+pub const IMAGE_MARKER: &str = "application/x-flit-image";
+const INCR_CHUNK: usize = 1 << 18;
 pub const FILE_TYPES: [&str; 3] = [GNOME, KDE_CUT, URI_LIST];
 const X11_TEXT: [&str; 3] = ["UTF8_STRING", "STRING", "TEXT"];
 
@@ -77,16 +80,80 @@ pub fn x11_names() -> &'static [(Atom, &'static str)] {
     })
 }
 
+#[derive(Debug, PartialEq)]
+pub(crate) struct Chunks {
+    len: usize,
+    at: usize,
+    done: bool,
+}
+
+impl Chunks {
+    pub(crate) fn new(len: usize) -> Self {
+        Self { len, at: 0, done: false }
+    }
+
+    pub(crate) fn next_range(&mut self, chunk: usize) -> Option<Range<usize>> {
+        if self.done {
+            return None;
+        }
+        let end = (self.at + chunk.max(1)).min(self.len);
+        let r = self.at..end;
+        self.at = end;
+        self.done = r.is_empty();
+        Some(r)
+    }
+}
+
+pub(crate) fn needs_incr(len: usize, max_request: usize) -> bool {
+    len + 64 >= max_request.min(4 * INCR_CHUNK)
+}
+
+struct Transfer {
+    requestor: Window,
+    property: Atom,
+    target: Atom,
+    k: usize,
+    chunks: Chunks,
+}
+
 struct Owner {
     conn: XCBConnection,
     clipboard: Atom,
     targets: Atom,
+    incr: Atom,
     types: Vec<(Atom, usize)>,
     payload: Payload,
+    transfers: Vec<Transfer>,
 }
 
 impl Owner {
-    fn answer(&self, req: &SelectionRequestEvent) -> R<()> {
+    fn start_incr(&mut self, req: &SelectionRequestEvent, property: Atom, k: usize) -> R<()> {
+        self.conn.change_window_attributes(req.requestor, &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE | EventMask::STRUCTURE_NOTIFY))?;
+        let len = self.payload[k].1.len().min(u32::MAX as usize) as u32;
+        self.conn.change_property(PropMode::REPLACE, req.requestor, property, self.incr, 32, 1, &len.to_ne_bytes())?;
+        self.transfers.retain(|t| !(t.requestor == req.requestor && t.property == property));
+        self.transfers.push(Transfer { requestor: req.requestor, property, target: req.target, k, chunks: Chunks::new(self.payload[k].1.len()) });
+        Ok(())
+    }
+
+    fn send_chunk(&mut self, window: Window, property: Atom) -> R<()> {
+        let Some(n) = self.transfers.iter().position(|t| t.requestor == window && t.property == property) else { return Ok(()) };
+        let chunk = INCR_CHUNK.min(self.conn.maximum_request_bytes().saturating_sub(64)).max(1);
+        let t = &mut self.transfers[n];
+        let Some(r) = t.chunks.next_range(chunk) else { return Ok(()) };
+        let data = &self.payload[t.k].1[r.clone()];
+        self.conn.change_property(PropMode::REPLACE, window, property, t.target, 8, data.len() as u32, data)?;
+        if r.is_empty() {
+            self.transfers.remove(n);
+            if !self.transfers.iter().any(|t| t.requestor == window) {
+                self.conn.change_window_attributes(window, &ChangeWindowAttributesAux::new().event_mask(EventMask::NO_EVENT))?;
+            }
+        }
+        self.conn.flush()?;
+        Ok(())
+    }
+
+    fn answer(&mut self, req: &SelectionRequestEvent) -> R<()> {
         let property = if req.property == NONE { req.target } else { req.property };
         let stored = if req.selection != self.clipboard {
             false
@@ -96,9 +163,13 @@ impl Owner {
             let bytes: Vec<u8> = list.iter().flat_map(|a| a.to_ne_bytes()).collect();
             self.conn.change_property(PropMode::REPLACE, req.requestor, property, AtomEnum::ATOM, 32, list.len() as u32, &bytes)?;
             true
-        } else if let Some((_, k)) = self.types.iter().find(|(a, _)| *a == req.target).filter(|(_, k)| self.payload[*k].1.len() + 64 < self.conn.maximum_request_bytes()) {
-            let data = &self.payload[*k].1;
-            self.conn.change_property(PropMode::REPLACE, req.requestor, property, req.target, 8, data.len() as u32, data)?;
+        } else if let Some(&(_, k)) = self.types.iter().find(|(a, _)| *a == req.target) {
+            let data = &self.payload[k].1;
+            if needs_incr(data.len(), self.conn.maximum_request_bytes()) {
+                self.start_incr(req, property, k)?;
+            } else {
+                self.conn.change_property(PropMode::REPLACE, req.requestor, property, req.target, 8, data.len() as u32, data)?;
+            }
             true
         } else {
             false
@@ -109,7 +180,7 @@ impl Owner {
         Ok(())
     }
 
-    fn serve(self) {
+    fn serve(mut self) {
         loop {
             match self.conn.wait_for_event() {
                 Ok(Event::SelectionRequest(req)) => {
@@ -117,12 +188,22 @@ impl Owner {
                         tracing::debug!("cannot answer a clipboard request: {e}");
                     }
                 }
-                Ok(Event::SelectionClear(c)) if c.selection == self.clipboard => return,
+                Ok(Event::PropertyNotify(e)) if e.state == Property::DELETE => {
+                    if let Err(err) = self.send_chunk(e.window, e.atom) {
+                        tracing::debug!("cannot send the next clipboard chunk: {err}");
+                        self.transfers.retain(|t| t.requestor != e.window);
+                    }
+                }
+                Ok(Event::DestroyNotify(e)) => self.transfers.retain(|t| t.requestor != e.window),
+                Ok(Event::SelectionClear(c)) if c.selection == self.clipboard => self.types.clear(),
                 Ok(_) => {}
                 Err(e) => {
                     tracing::debug!("the clipboard connection closed: {e}");
                     return;
                 }
+            }
+            if self.types.is_empty() && self.transfers.is_empty() {
+                return;
             }
         }
     }
@@ -185,9 +266,9 @@ pub fn own_x11(payload: Payload) -> R<()> {
 pub fn own_selection(selection: &str, payload: Payload) -> R<()> {
     let (conn, screen) = XCBConnection::connect(None)?;
     let root = conn.setup().roots[screen].root;
-    let names: Vec<&str> = payload.iter().map(|(t, _)| t.as_str()).chain(X11_TEXT).chain([selection, "TARGETS"]).collect();
+    let names: Vec<&str> = payload.iter().map(|(t, _)| t.as_str()).chain(X11_TEXT).chain([selection, "TARGETS", "INCR"]).collect();
     let atoms = intern(&conn, &names)?;
-    let (clipboard, targets) = (atoms[names.len() - 2], atoms[names.len() - 1]);
+    let (clipboard, targets, incr) = (atoms[names.len() - 3], atoms[names.len() - 2], atoms[names.len() - 1]);
     let text = payload.iter().position(|(t, _)| t == TEXT);
     let mut types: Vec<(Atom, usize)> = (0..payload.len()).map(|k| (atoms[k], k)).collect();
     types.extend(text.into_iter().flat_map(|k| atoms[payload.len()..payload.len() + X11_TEXT.len()].iter().map(move |&a| (a, k))));
@@ -197,7 +278,7 @@ pub fn own_selection(selection: &str, payload: Payload) -> R<()> {
     if conn.get_selection_owner(clipboard)?.reply()?.owner != window {
         return Err("another program kept the clipboard".into());
     }
-    let owner = Owner { conn, clipboard, targets, types, payload };
+    let owner = Owner { conn, clipboard, targets, incr, types, payload, transfers: Vec::new() };
     std::thread::Builder::new().name("flit-clipboard".into()).spawn(move || owner.serve())?;
     Ok(())
 }

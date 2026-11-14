@@ -125,3 +125,15 @@ fn the_x11_text_watch_follows_each_new_owner_of_the_selection() {
     own_selection(&selection, vec![(TEXT.to_owned(), b"hello".to_vec())]).unwrap();
     assert_eq!(rx.recv_timeout(wait), Ok(true));
 }
+
+#[test]
+fn large_clipboard_data_goes_in_chunks_and_ends_with_an_empty_one() {
+    let mut c = Chunks::new(5);
+    let got: Vec<Range<usize>> = std::iter::from_fn(|| c.next_range(2)).collect();
+    assert_eq!(got, [0..2, 2..4, 4..5, 5..5]);
+    let mut empty = Chunks::new(0);
+    assert_eq!((empty.next_range(4), empty.next_range(4)), (Some(0..0), None));
+    assert!(needs_incr(4 << 20, 16 << 20), "a big picture is sent incrementally");
+    assert!(needs_incr(1000, 900), "anything above the request limit is too");
+    assert!(!needs_incr(1000, 16 << 20), "small data still goes in one piece");
+}

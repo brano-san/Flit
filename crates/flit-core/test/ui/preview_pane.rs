@@ -682,6 +682,40 @@ fn images_copy_as_images_from_ctrl_c_and_the_context_menu() {
 }
 
 #[test]
+fn a_shrunk_preview_image_is_copied_at_full_size() {
+    let mut a = app((1200, 700));
+    press(&mut a, Key::Space, NO);
+    select(&mut a, "b.png");
+    frame(&mut a);
+    let r = requests(&mut a).pop().unwrap();
+    let side = a.preview.image_px;
+    let shrunk = Bitmap { width: side, height: 1, rgba: vec![9; side as usize * 4] };
+    a.on_preview(r.gen, PreviewData::Image(shrunk.clone()));
+    frame(&mut a);
+    a.drain_effects().for_each(drop);
+    let b = a.preview.r.body;
+    mouse(&mut a, (b.x + b.w / 2.0, b.y + b.h / 2.0), MouseButton::Left, 1);
+    a.drain_effects().for_each(drop);
+    press(&mut a, Key::Char('C'), CTRL);
+    let effects: Vec<Effect> = a.drain_effects().collect();
+    assert!(!effects.iter().any(|e| matches!(e, Effect::SetClipboardImage(_))), "the shrunk copy is not what lands on the clipboard");
+    let full = effects.iter().find_map(|e| if let Effect::Preview(q) = e { Some(q.clone()) } else { None }).expect("the file is decoded again at full size");
+    assert_eq!((full.px, full.path.clone(), full.details), (crate::preview::COPY_PX, r.path.clone(), false));
+    assert!(full.cancel.is_current(full.gen));
+    let big = Bitmap { width: side * 3, height: 2, rgba: vec![7; side as usize * 24] };
+    a.on_preview(full.gen, PreviewData::Image(big.clone()));
+    let copied: Vec<(u32, u32)> = a.drain_effects().filter_map(|e| if let Effect::SetClipboardImage(b) = e { Some((b.width, b.height)) } else { None }).collect();
+    assert_eq!(copied, [(side * 3, 2)]);
+    assert_eq!(a.preview.image.as_ref().map(|b| b.width), Some(side), "the pane keeps showing its own copy");
+    press(&mut a, Key::Char('C'), CTRL);
+    let again = requests(&mut a).pop().unwrap();
+    a.on_preview(again.gen, PreviewData::Basic { poster: None, note: None });
+    let copied: Vec<(u32, u32)> = a.drain_effects().filter_map(|e| if let Effect::SetClipboardImage(b) = e { Some((b.width, b.height)) } else { None }).collect();
+    assert_eq!(copied, [(side, 1)], "when the file cannot be decoded again the shown image is copied");
+    assert!(matches!(a.preview.content, Content::Image));
+}
+
+#[test]
 fn copied_text_follows_paragraphs_words_and_the_line_filter() {
     let d = preview::text_doc("one two\n\nthree", None);
     assert_eq!(para_span(&d, 1), (7, 7));
@@ -715,4 +749,30 @@ fn the_selection_is_painted_under_the_picked_characters_and_dims_without_focus()
     a.focus = Focus::List;
     let dim = a.theme().selection_inactive.0;
     assert!(painted(&mut a, dim).contains(&(x0 + 60.0, 40.0 + (line_h * 0.3).round())));
+}
+
+#[test]
+fn shift_arrows_extend_the_preview_selection_like_a_text_editor() {
+    const SHIFT: Mods = Mods { ctrl: false, shift: true, alt: false };
+    let mut a = text_preview((1200, 700), "one two\nthree\nfour");
+    click_spot(&mut a, (0, 4), MouseButton::Left, 1);
+    for _ in 0..3 {
+        press(&mut a, Key::Right, SHIFT);
+    }
+    assert_eq!(copied(&mut a, Key::Char('C'), CTRL).0, ["two"]);
+    press(&mut a, Key::Down, SHIFT);
+    assert_eq!(copied(&mut a, Key::Char('C'), CTRL).0, ["two\r\nthree"], "Shift+Down runs to the same column on the next line, here its end");
+    press(&mut a, Key::Left, SHIFT);
+    press(&mut a, Key::Home, SHIFT);
+    assert_eq!(copied(&mut a, Key::Char('C'), CTRL).0, ["two\r\n"]);
+    press(&mut a, Key::End, Mods { ctrl: true, shift: true, alt: false });
+    assert_eq!(copied(&mut a, Key::Char('C'), CTRL).0, ["two\r\nthree\r\nfour"]);
+    press(&mut a, Key::Right, SHIFT);
+    assert_eq!(copied(&mut a, Key::Char('C'), CTRL).0, ["two\r\nthree\r\nfour"], "the end of the text stops the caret");
+    press(&mut a, Key::Home, Mods { ctrl: true, shift: true, alt: false });
+    press(&mut a, Key::Up, SHIFT);
+    assert_eq!(copied(&mut a, Key::Char('C'), CTRL).0, ["one "], "the selection flips to the anchor's left");
+    let before = a.preview.pick.range();
+    press(&mut a, Key::Right, NO);
+    assert_eq!(a.preview.pick.range(), before, "an arrow without Shift does not touch the selection");
 }

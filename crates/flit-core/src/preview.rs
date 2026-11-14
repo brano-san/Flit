@@ -16,6 +16,7 @@ pub const TEXT_BYTES: usize = 64 * 1024;
 pub const RTF_BYTES: usize = 1 << 20;
 pub const SNIFF_LIMIT: u64 = 500 * 1024;
 pub const IMAGE_PX: u32 = 1600;
+pub const COPY_PX: u32 = 16384;
 pub const IMAGE_FILE_LIMIT: u64 = 256 << 20;
 pub const POSTER_PX: u32 = 256;
 pub const FOLDER_SCAN: usize = 20_000;
