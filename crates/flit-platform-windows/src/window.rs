@@ -538,6 +538,10 @@ pub(crate) fn high_contrast() -> Option<SystemColors> {
     Some(SystemColors { window: c(COLOR_WINDOW), window_text: c(COLOR_WINDOWTEXT), highlight: c(COLOR_HIGHLIGHT), highlight_text: c(COLOR_HIGHLIGHTTEXT), hotlight: c(COLOR_HOTLIGHT), gray_text: c(COLOR_GRAYTEXT), btn_face: c(COLOR_BTNFACE) })
 }
 
+fn mouse_setting(wp: WPARAM) -> bool {
+    [SPI_SETWHEELSCROLLLINES, SPI_SETDOUBLECLICKTIME].iter().any(|a| a.0 as usize == wp.0)
+}
+
 fn client_area_animation() -> bool {
     let mut on = BOOL(1);
     unsafe { SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, Some(&mut on as *mut BOOL as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0)) }.ok().is_none_or(|_| on.as_bool())
@@ -1290,6 +1294,10 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
         }
         WM_SETTINGCHANGE if wp.0 as u32 == SPI_SETHIGHCONTRAST.0 => {
             s.send(Event::Contrast(high_contrast()));
+            None
+        }
+        WM_SETTINGCHANGE if mouse_setting(wp) => {
+            s.send(Event::MouseSettings { double_click: crate::double_click_time(), wheel_lines: crate::wheel_lines() });
             None
         }
         WM_SETTINGCHANGE => {

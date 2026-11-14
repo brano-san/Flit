@@ -44,6 +44,7 @@ const ANIM_YES: u8 = 1;
 const ANIM_NO: u8 = 0;
 static ANIMATIONS: AtomicU8 = AtomicU8::new(ANIM_YES);
 static ANIMATIONS_DIRTY: AtomicBool = AtomicBool::new(false);
+static MOUSE_DIRTY: AtomicBool = AtomicBool::new(false);
 const LAUNCHER_STEP: u32 = 5;
 const LAUNCHER_HIDDEN: u32 = 0;
 static LAUNCHER_SENT: AtomicU32 = AtomicU32::new(LAUNCHER_HIDDEN);
@@ -129,10 +130,17 @@ fn watch_desktop() {
         THEME_CHANGED.store(true, Ordering::Release);
         wake_loop();
     });
-    let _ = std::thread::Builder::new().name("flit-anim".into()).spawn(|| {
+    let _ = std::thread::Builder::new().name("flit-prefs".into()).spawn(|| {
         if let Some(on) = crate::shell::probe_animations() {
             ANIMATIONS.store(if on { ANIM_YES } else { ANIM_NO }, Ordering::Release);
             ANIMATIONS_DIRTY.store(true, Ordering::Release);
+            wake_loop();
+        }
+        if input::kde_desktop() {
+            return;
+        }
+        if crate::shell::probe_double_click().is_some_and(input::probed_double_click) {
+            MOUSE_DIRTY.store(true, Ordering::Release);
             wake_loop();
         }
     });
@@ -1121,6 +1129,13 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
         if ANIMATIONS_DIRTY.swap(false, Ordering::AcqRel) {
             for node in &self.nodes {
                 self.handler.event(&node.window, Event::Animations(animations()));
+            }
+        }
+        if MOUSE_DIRTY.swap(false, Ordering::AcqRel) {
+            let (double_click, wheel_lines) = (input::double_click(), input::wheel_lines());
+            for node in &mut self.nodes {
+                node.clicks.set_interval(double_click);
+                self.handler.event(&node.window, Event::MouseSettings { double_click, wheel_lines });
             }
         }
         let queued = std::mem::take(&mut *QUEUED.lock().unwrap_or_else(|e| e.into_inner()));

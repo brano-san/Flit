@@ -176,6 +176,25 @@ fn the_wheel_scrolls_by_the_system_line_count() {
 }
 
 #[test]
+fn changed_system_mouse_settings_apply_without_a_restart_and_keep_the_users_reversed_wheel() {
+    let names: Vec<String> = (0..400).map(|i| format!("{i}.txt")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut app = harness::app(&refs);
+    let rh = app.layout.row_h;
+    app.opts.reverse_scroll = true;
+    app.on_event(&Event::MouseSettings { double_click: Duration::from_millis(900), wheel_lines: 6 }, Instant::now());
+    wheel(&mut app, 0.0, 1.0);
+    assert_eq!(app.tab().scroll_target, 6.0 * rh, "the new line count, still reversed as the user chose");
+    assert!(app.opts.reverse_scroll);
+    let t = Instant::now();
+    assert_eq!(app.text_clicks((10.0, 10.0), 2, t), 2);
+    assert_eq!(app.text_clicks((10.0, 10.0), 1, t + Duration::from_millis(800)), 3, "the slower double-click time stretches the triple click");
+    app.on_event(&Event::MouseSettings { double_click: Duration::from_millis(200), wheel_lines: 6 }, Instant::now());
+    assert_eq!(app.text_clicks((10.0, 10.0), 2, t), 2);
+    assert_eq!(app.text_clicks((10.0, 10.0), 1, t + Duration::from_millis(300)), 1, "a faster one shrinks it");
+}
+
+#[test]
 fn middle_click_on_back_forward_up_and_crumbs_opens_new_tabs() {
     let mut app = app_at(r"C:\work", &[("src", true)]);
     let now = Instant::now();

@@ -70,6 +70,15 @@ fn color_scheme_replies_from_portal_and_gsettings() {
 }
 
 #[test]
+fn double_click_replies_from_portal_and_gsettings() {
+    assert_eq!(last_number("(<<400>>,)\n"), Some(400));
+    assert_eq!(last_number("(<<int32 250>>,)\n"), Some(250), "the type tag's digits are not the value");
+    assert_eq!(last_number("650\n"), Some(650));
+    assert_eq!(last_number(""), None);
+    assert_eq!(last_number("No such key “double-click”\n"), None);
+}
+
+#[test]
 fn kde_color_schemes_are_dark_when_the_window_background_is() {
     let breeze_dark = "[General]\nColorScheme=BreezeDark\n\n[Colors:View]\nBackgroundNormal=250,250,250\n\n[Colors:Window]\nBackgroundAlternate=49,54,59\nBackgroundNormal=32,35,38\n";
     assert_eq!(kde_dark(breeze_dark), Some(true));

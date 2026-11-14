@@ -98,6 +98,7 @@ pub enum Event {
     ThemeChanged { dark: bool },
     Contrast(Option<crate::theme::SystemColors>),
     Animations(bool),
+    MouseSettings { double_click: std::time::Duration, wheel_lines: u32 },
     Invoke(u64),
     A11yFocus(u64),
     A11ySelect(u64),

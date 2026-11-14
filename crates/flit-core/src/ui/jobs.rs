@@ -773,12 +773,16 @@ impl App {
         false
     }
 
-    pub(super) fn jobs_wheel(&mut self, dy: f32) -> bool {
+    pub(super) fn jobs_wheel(&mut self, dy: f32, now: Instant) -> bool {
         if !self.jobs.open || !matches!(self.hover, Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsCancel(_) | Hit::OpsMore(_)) {
             return false;
         }
+        let rows = self.wheel_steps.add(super::pointer::Steps::Jobs, dy, now);
+        if rows == 0 {
+            return true;
+        }
         let max = self.jobs.list.len().saturating_sub(MAX_ROWS) as isize;
-        self.jobs.first = (self.jobs.first as isize - dy.signum() as isize).clamp(0, max) as usize;
+        self.jobs.first = (self.jobs.first as isize - rows as isize).clamp(0, max) as usize;
         self.jobs.menu = None;
         self.layout();
         self.dirty = true;

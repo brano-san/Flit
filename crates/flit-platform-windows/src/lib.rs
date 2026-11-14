@@ -85,6 +85,16 @@ pub(crate) fn dark_mode() -> bool {
     r.is_ok() && v == 0
 }
 
+pub(crate) fn double_click_time() -> std::time::Duration {
+    std::time::Duration::from_millis(unsafe { GetDoubleClickTime() }.into())
+}
+
+pub(crate) fn wheel_lines() -> u32 {
+    let mut lines = 3u32;
+    let read = unsafe { SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, Some(&mut lines as *mut u32 as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0)) };
+    if read.is_ok() { lines } else { 3 }
+}
+
 pub(crate) fn com_sta() {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
@@ -198,13 +208,11 @@ impl Platform for Windows {
     }
 
     fn double_click_time() -> std::time::Duration {
-        std::time::Duration::from_millis(unsafe { GetDoubleClickTime() }.into())
+        double_click_time()
     }
 
     fn wheel_lines() -> u32 {
-        let mut lines = 3u32;
-        let read = unsafe { SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, Some(&mut lines as *mut u32 as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0)) };
-        if read.is_ok() { lines } else { 3 }
+        wheel_lines()
     }
 
     fn elevated() -> bool {

@@ -1,4 +1,5 @@
 use flit_core::input::{CursorIcon, Event, Key, Mods, MouseButton};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use winit::event::{MouseButton as WinitButton, MouseScrollDelta};
 use winit::keyboard::{Key as WinitKey, KeyCode, ModifiersState, NamedKey, PhysicalKey};
@@ -12,6 +13,7 @@ const WHEEL_LINES_RANGE: std::ops::RangeInclusive<u32> = 1..=100;
 const DOUBLE_CLICK_SLOP: f32 = 4.0;
 const WHEEL_PIXELS_PER_NOTCH: f32 = 40.0;
 const RESIZE_CORNER_FACTOR: f32 = 3.0;
+static PROBED_CLICK_MS: AtomicU32 = AtomicU32::new(0);
 
 const FUNCTION_KEYS: [NamedKey; 24] = [
     NamedKey::F1,
@@ -241,14 +243,28 @@ fn desktop_mouse() -> (Option<Duration>, Option<u32>) {
     static READ: std::sync::OnceLock<(Option<Duration>, Option<u32>)> = std::sync::OnceLock::new();
     *READ.get_or_init(|| {
         let read = |file: &str| crate::xdg::config_home().and_then(|c| std::fs::read_to_string(c.join(file)).ok());
-        let kde = std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.contains("KDE")).then(|| read("kdeglobals")).flatten();
+        let kde = kde_desktop().then(|| read("kdeglobals")).flatten();
         let gtk: Vec<String> = ["gtk-4.0/settings.ini", "gtk-3.0/settings.ini"].into_iter().filter_map(read).collect();
         mouse_settings(kde.as_deref(), &gtk)
     })
 }
 
+pub(crate) fn kde_desktop() -> bool {
+    std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.contains("KDE"))
+}
+
+pub(crate) fn effective_click(probed_ms: u32, files: Option<Duration>) -> Duration {
+    Some(probed_ms).filter(|ms| DOUBLE_CLICK_RANGE.contains(ms)).map(|ms| Duration::from_millis(ms.into())).or(files).unwrap_or(DOUBLE_CLICK)
+}
+
 pub(crate) fn double_click() -> Duration {
-    desktop_mouse().0.unwrap_or(DOUBLE_CLICK)
+    effective_click(PROBED_CLICK_MS.load(Ordering::Acquire), desktop_mouse().0)
+}
+
+pub(crate) fn probed_double_click(ms: u32) -> bool {
+    let before = double_click();
+    PROBED_CLICK_MS.store(ms, Ordering::Release);
+    double_click() != before
 }
 
 pub(crate) fn wheel_lines() -> u32 {
@@ -272,6 +288,10 @@ impl Clicks {
 
     pub(crate) fn reset(&mut self) {
         self.last = None;
+    }
+
+    pub(crate) fn set_interval(&mut self, interval: Duration) {
+        self.interval = interval;
     }
 }
 

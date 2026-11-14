@@ -95,3 +95,17 @@ fn a_slower_double_click_setting_widens_the_window() {
     assert_eq!(c.press(MouseButton::Left, t, 10.0, 10.0, 1.0), 1);
     assert_eq!(c.press(MouseButton::Left, t + ms(300), 10.0, 10.0, 1.0), 1);
 }
+
+#[test]
+fn the_gnome_double_click_time_overrides_the_files_and_reaches_open_windows() {
+    let (t, ms) = (Instant::now(), Duration::from_millis);
+    assert_eq!(effective_click(700, Some(ms(250))), ms(700), "GNOME's own setting beats a stale settings.ini");
+    assert_eq!(effective_click(0, Some(ms(250))), ms(250), "no answer keeps the file value");
+    assert_eq!(effective_click(0, None), DOUBLE_CLICK);
+    assert_eq!(effective_click(20, Some(ms(250))), ms(250), "a nonsense answer is ignored");
+    assert_eq!(effective_click(9000, None), DOUBLE_CLICK);
+    let mut c = Clicks::new(ms(200));
+    c.set_interval(ms(900));
+    assert_eq!(c.press(MouseButton::Left, t, 10.0, 10.0, 1.0), 1);
+    assert_eq!(c.press(MouseButton::Left, t + ms(800), 10.0, 10.0, 1.0), 2, "a window already open uses the new time");
+}

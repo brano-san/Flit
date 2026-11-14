@@ -196,6 +196,29 @@ fn the_more_menu_opens_the_destination_or_removes_the_entry() {
 }
 
 #[test]
+fn fine_touchpad_deltas_over_the_operations_panel_add_up_to_whole_rows() {
+    let mut app = app_at(r"C:\x");
+    app.run_action("ops.show", t0());
+    for _ in 0..8 {
+        paste(&mut app);
+    }
+    app.frame(&mut Gfx::new(Mono, 2048), t0());
+    let r = app.jobs.r.panel;
+    app.on_event(&Event::MouseMove { x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 }, t0());
+    let (t, ms) = (t0(), Duration::from_millis);
+    let wheel = |app: &mut App, dy: f32, at: u64| {
+        app.on_event(&Event::Wheel { dx: 0.0, dy }, t + ms(at));
+        app.jobs.first
+    };
+    assert_eq!([wheel(&mut app, -0.25, 0), wheel(&mut app, -0.25, 10), wheel(&mut app, -0.25, 20)], [0, 0, 0], "a quarter notch moves nothing yet");
+    assert_eq!(wheel(&mut app, -0.25, 30), 1, "four quarters make one row");
+    assert_eq!(wheel(&mut app, -1.0, 40), 2, "a mouse notch still moves one row");
+    assert_eq!(wheel(&mut app, -2.0, 50), 3, "the list stops at its end");
+    assert_eq!(wheel(&mut app, 0.5, 60), 3);
+    assert_eq!(wheel(&mut app, 0.5, 70), 2, "two half notches back make one row back");
+}
+
+#[test]
 fn permanent_deletion_waits_for_the_confirmation_button() {
     let mut app = app_at(r"C:\x");
     app.empty_bin();

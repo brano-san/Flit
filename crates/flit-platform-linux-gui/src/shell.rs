@@ -657,6 +657,19 @@ pub fn probe_animations() -> Option<bool> {
     session_bus().then(|| ask(&portal)).flatten().or_else(|| ask(&gsettings))
 }
 
+pub fn last_number(out: &str) -> Option<u32> {
+    let end = out.rfind(|c: char| c.is_ascii_digit())? + 1;
+    let start = out[..end].rfind(|c: char| !c.is_ascii_digit()).map_or(0, |i| i + 1);
+    out[start..end].parse().ok()
+}
+
+pub fn probe_double_click() -> Option<u32> {
+    let portal = ["gdbus", "call", "--session", "--timeout", "1", "--dest", "org.freedesktop.portal.Desktop", "--object-path", "/org/freedesktop/portal/desktop", "--method", "org.freedesktop.portal.Settings.Read", "org.gnome.desktop.peripherals.mouse", "double-click"];
+    let gsettings = ["gsettings", "get", "org.gnome.desktop.peripherals.mouse", "double-click"];
+    let ask = |args: &[&str]| helper(args).and_then(|mut c| c.stdout(Stdio::piped()).spawn().ok()).and_then(|child| wait_output(child, HELPER_TIMEOUT)).and_then(|r| String::from_utf8(r).ok()).and_then(|r| last_number(&r));
+    session_bus().then(|| ask(&portal)).flatten().or_else(|| ask(&gsettings))
+}
+
 pub fn play_media(video: bool, path: &Path) -> Option<std::process::Child> {
     let file = path.as_os_str().to_owned();
     let command = |name: &str, extra: &[&str]| {
