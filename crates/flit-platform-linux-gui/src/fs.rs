@@ -105,6 +105,8 @@ enum Spot {
 
 pub struct LinuxGuiWatcher {
     notify: Notify<(TabId, u64, Spot)>,
+    poll: crate::poll::Poll,
+    remote: fn(&FsPath) -> bool,
     current: HashMap<TabId, (u64, Vec<Spot>)>,
     events: Sender<ProviderEvent>,
     wake: Wake,
@@ -142,7 +144,8 @@ impl Watcher for LinuxGuiWatcher {
             ping();
         })
         .map_err(|e| PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("inotify: {e}")))?;
-        Ok(Self { notify, current: HashMap::new(), events, wake })
+        let poll = crate::poll::Poll::new(events.clone(), wake.clone(), crate::poll::PERIOD);
+        Ok(Self { notify, poll, remote: |dir| LinuxFs.remote(dir), current: HashMap::new(), events, wake })
     }
 
     fn watch(&mut self, tab: TabId, gen: u64, dir: Option<&FsPath>) {
@@ -152,10 +155,14 @@ impl Watcher for LinuxGuiWatcher {
             }
         }
         blind_tabs().retain(|b| b.tab != tab);
+        self.poll.forget(tab);
         if dir.is_some_and(|d| d.kind() == PathKind::RecycleBin) {
             return self.watch_trash(tab, gen);
         }
         let Some(path) = dir.and_then(host) else { return };
+        if dir.is_some_and(self.remote) {
+            self.poll.watch(tab, gen, path);
+        }
         match self.notify.watch((tab, gen, Spot::Folder), path) {
             Ok(()) => {
                 self.current.insert(tab, (gen, vec![Spot::Folder]));

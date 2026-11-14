@@ -202,3 +202,22 @@ fn the_trash_view_rescans_when_its_files_folder_changes() {
     std::fs::remove_file(&item).unwrap();
     assert!(rx.recv_timeout(Duration::from_millis(150)).is_err());
 }
+
+#[test]
+fn network_folders_are_also_polled_and_local_ones_only_watched() {
+    let t = Temp::new("polled");
+    let (mut w, rx) = watcher();
+    w.watch(61, 1, Some(&fs_path(t.path())));
+    assert!(!w.poll.running(), "a local folder relies on inotify alone");
+    w.poll = crate::poll::Poll::new(w.events.clone(), w.wake.clone(), Duration::from_millis(40));
+    w.remote = |_| true;
+    w.watch(61, 2, Some(&fs_path(t.path())));
+    assert!(w.poll.running());
+    std::thread::sleep(Duration::from_millis(60));
+    t.file("written-by-the-server", 1);
+    let seen = std::iter::from_fn(|| rx.recv_timeout(Duration::from_millis(300)).ok()).any(|e| matches!(e, ProviderEvent::Rescan { tab: 61, gen: 2 }));
+    assert!(seen);
+    w.watch(61, 3, None);
+    t.file("after-leaving", 1);
+    assert!(!std::iter::from_fn(|| rx.recv_timeout(Duration::from_millis(200)).ok()).any(|e| matches!(e, ProviderEvent::Rescan { tab: 61, .. })));
+}
