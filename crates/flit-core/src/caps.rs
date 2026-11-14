@@ -8,7 +8,6 @@ pub const WINDOWS_ONLY_ACTIONS: &[&str] = &[
     "libraries.new",
     "libraries.restore",
     "library.locations",
-    "app.terminal_admin",
     "file.share",
     "file.install_fonts",
     "file.lock_screen",

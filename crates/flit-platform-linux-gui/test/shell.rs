@@ -103,7 +103,6 @@ fn programs_are_found_on_path_and_spawned_without_a_shell() {
     }
     assert!(marker.exists());
     assert!(!t.path().join("injected").exists());
-    assert!(launch(&Launch::Terminal { dirs: vec![fs_path(t.path())], admin: true }).is_err());
     assert!(launch(&Launch::Eject(fs_path(t.path()))).is_err());
 }
 
@@ -325,4 +324,20 @@ fn launcher_progress_moves_in_steps_of_five_percent() {
     assert_eq!(launcher_step(Some(37)), Some(35));
     assert_eq!(launcher_step(Some(100)), Some(100));
     assert_eq!(launcher_step(Some(250)), Some(100));
+}
+
+#[test]
+fn root_terminals_keep_the_folder_through_sudo_or_pkexec() {
+    let dir = Path::new("/srv/my site");
+    assert_eq!(root_shell(dir, true), ["sudo", "-s"].map(OsString::from));
+    let pk = root_shell(dir, false);
+    assert_eq!(pk[0], "pkexec");
+    assert_eq!(pk.last().unwrap(), "/srv/my site", "the folder is an argument, never part of the script");
+    assert!(!pk[3].to_string_lossy().contains("my site"));
+    let out = Command::new("/bin/sh").args(&pk[2..]).env("SHELL", "/bin/pwd").output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "", "a missing folder stops the script before a shell starts");
+    let t = Temp::new("root-shell");
+    let here = root_shell(t.path(), false);
+    let out = Command::new("/bin/sh").args(&here[2..]).env("SHELL", "/bin/pwd").output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), t.path().to_str().unwrap());
 }

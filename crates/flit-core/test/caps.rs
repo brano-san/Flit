@@ -26,3 +26,12 @@ fn links_and_flatten_are_offered_on_both_platforms_but_libraries_only_on_windows
         assert!(windows.supports(id) && !linux.supports(id), "{id}");
     }
 }
+
+#[test]
+fn a_root_terminal_is_offered_on_both_systems_and_windows_only_commands_stay_hidden_on_linux() {
+    let (linux, windows) = (Caps { unix_paths: true }, Caps { unix_paths: false });
+    assert!(linux.supports("app.terminal_admin"));
+    assert!(windows.supports("app.terminal_admin"));
+    assert!(!linux.supports("file.folder_icon"));
+    assert!(!linux.supports("drive.map"));
+}

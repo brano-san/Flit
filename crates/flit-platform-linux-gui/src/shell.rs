@@ -190,6 +190,19 @@ pub fn run_in_terminal(program: &Path) -> Result<(), PlatformError> {
     spawn_terminal(Some(dir), Some(command))
 }
 
+const ROOT_SHELL: &str = "cd \"$1\" && exec \"${SHELL:-/bin/sh}\"";
+
+pub fn root_shell(dir: &Path, sudo: bool) -> Vec<OsString> {
+    if sudo {
+        return ["sudo", "-s"].map(OsString::from).to_vec();
+    }
+    ["pkexec", "/bin/sh", "-c", ROOT_SHELL, "flit"].into_iter().map(OsString::from).chain([dir.into()]).collect()
+}
+
+pub fn open_root_terminal(dir: &Path) -> Result<(), PlatformError> {
+    spawn_terminal(Some(dir), Some(root_shell(dir, on_path(OsStr::new("sudo")).is_some())))
+}
+
 pub fn run_in_terminal_argv(dir: Option<&Path>, argv: Vec<OsString>) -> Result<(), PlatformError> {
     spawn_terminal(dir, Some(argv))
 }
@@ -281,7 +294,7 @@ pub fn split_args(text: &str) -> Vec<String> {
 
 fn launch(l: &Launch) -> Result<(), PlatformError> {
     match l {
-        Launch::Terminal { admin: true, .. } => Err(PlatformError::new(-1, "Flit does not open terminals with elevated rights on Linux")),
+        Launch::Terminal { dirs, admin: true } => dirs.iter().try_for_each(|d| open_root_terminal(Path::new(os(d)))),
         Launch::Terminal { dirs, .. } => dirs.iter().try_for_each(|d| open_terminal(Path::new(os(d)))),
         Launch::RunInTerminal { program } => run_in_terminal(Path::new(os(program))),
         Launch::With { program, args } if program.as_bytes().ends_with(b".desktop") => {
