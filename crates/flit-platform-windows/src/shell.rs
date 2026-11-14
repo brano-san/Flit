@@ -399,6 +399,10 @@ impl Shell for ShellCom {
         self.item_image(&path, size, thumbnail_flags(crate::fs::not_local(&path)))
     }
 
+    fn column_props(&mut self, path: &FsPath) -> Vec<String> {
+        crate::preview::column_props(path)
+    }
+
     fn properties(&mut self, path: &FsPath) -> Vec<PropGroup> {
         crate::preview::properties(path)
     }

@@ -17,6 +17,10 @@ free = "Free Space"
 file_system = "File System"
 percent = "Percent Full"
 attributes = "Attributes"
+dimensions = "Dimensions"
+duration = "Length"
+artist = "Contributing artists"
+version = "File version"
 
 [type]
 drive = "Drive"

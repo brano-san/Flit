@@ -174,3 +174,18 @@ fn a_download_from_the_internet_is_blocked_and_an_intranet_or_plain_file_is_not(
     assert!(!blocked(&fs(&d.0)));
     assert_eq!(properties(&mark("zip.exe", Some(3))).last(), Some(&security_group()));
 }
+
+#[test]
+fn column_properties_give_picture_dimensions_and_program_versions_and_stay_empty_otherwise() {
+    com_sta();
+    let d = temp("columns");
+    let pic = d.0.join("pic.bmp");
+    std::fs::write(&pic, bmp(7, 5, [10, 20, 30])).unwrap();
+    let got = column_props(&fs(&pic));
+    assert_eq!(got.len(), 4);
+    assert!(got[0].contains('7') && got[0].contains('5'), "{got:?}");
+    assert!(got[2].is_empty() && got[3].is_empty(), "{got:?}");
+    let exe = column_props(&FsPath::parse(r"C:\Windows\notepad.exe").unwrap());
+    assert!(exe[3].chars().next().is_some_and(|c| c.is_ascii_digit()), "{exe:?}");
+    assert!(column_props(&fs(&d.0.join("missing.bmp"))).is_empty());
+}

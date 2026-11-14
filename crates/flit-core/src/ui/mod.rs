@@ -1,5 +1,6 @@
 pub mod edit;
 mod a11y;
+mod shell_props;
 mod focus;
 #[cfg(test)]
 #[path = "../../test/ui/harness.rs"]
@@ -222,6 +223,10 @@ pub enum Column {
     Percent,
     Files,
     Attributes,
+    ImageSize,
+    Duration,
+    Artist,
+    Version,
     GitStatus,
     GitMessage,
     GitAuthor,
@@ -229,6 +234,7 @@ pub enum Column {
 }
 
 pub const GIT_COLUMNS: [Column; 4] = [Column::GitStatus, Column::GitMessage, Column::GitAuthor, Column::GitDate];
+pub const SHELL_COLUMNS: [Column; 4] = [Column::ImageSize, Column::Duration, Column::Artist, Column::Version];
 pub const REPO_COLUMNS: [Column; 15] = [
     Column::Name,
     Column::Type,
@@ -271,6 +277,10 @@ impl Column {
             Column::FileSystem => S::DetailsColumnFileSystem,
             Column::Percent => S::DetailsColumnPercent,
             Column::Attributes => S::DetailsColumnAttributes,
+            Column::ImageSize => S::DetailsColumnDimensions,
+            Column::Duration => S::DetailsColumnDuration,
+            Column::Artist => S::DetailsColumnArtist,
+            Column::Version => S::DetailsColumnVersion,
             Column::GitStatus => S::GitColumnStatus,
             Column::GitMessage => S::GitColumnMessage,
             Column::GitAuthor => S::GitColumnAuthor,
@@ -296,7 +306,7 @@ impl Column {
             Column::FileSystem => SortField::FileSystem,
             Column::Percent => SortField::Percent,
             Column::Attributes => SortField::Attributes,
-            Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => return None,
+            Column::ImageSize | Column::Duration | Column::Artist | Column::Version | Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => return None,
         })
     }
 
@@ -369,6 +379,7 @@ pub enum Effect {
     ShellWarm(Vec<ShellMenu>),
     Properties(Vec<FsPath>),
     StartDrag(Vec<FsPath>),
+    ShellProps { tab: TabId, gen: u64, dir: FsPath, names: Vec<Vec<u8>> },
     Pinned(Vec<Location>),
     PinnedFiles(Vec<Location>),
     PinFolders(Vec<FsPath>),
@@ -2323,6 +2334,7 @@ impl App {
         let _span = tracing::trace_span!("ui_frame").entered();
         let dt = frame_dt(self.last_frame, now, self.moving);
         self.last_frame = Some(now);
+        self.request_shell_props();
         self.poll();
         self.dirty = false;
         self.expire_error(now);

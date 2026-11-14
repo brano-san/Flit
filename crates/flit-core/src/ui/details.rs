@@ -71,10 +71,10 @@ pub struct Columns {
 }
 
 pub const GIT_WIDTHS: [f32; 4] = [100.0, 260.0, 140.0, 150.0];
-pub const EXTRA: usize = 9;
-pub const ORDERED: usize = 17;
+pub const EXTRA: usize = 13;
+pub const ORDERED: usize = 21;
 const FIRST_EXTRA: u8 = Column::Folders as u8;
-pub const EXTRA_WIDTHS: [f32; EXTRA] = [90.0, 150.0, 110.0, 110.0, 110.0, 90.0, 110.0, 90.0, 90.0];
+pub const EXTRA_WIDTHS: [f32; EXTRA] = [90.0, 150.0, 110.0, 110.0, 110.0, 90.0, 110.0, 90.0, 90.0, 110.0, 100.0, 160.0, 110.0];
 const DEFAULT_HIDDEN: u8 = 1 << Column::Created as u8;
 const DEFAULT_EXTRA: u16 = 1 << (Column::Folders as u8 - FIRST_EXTRA) | 1 << (Column::Free as u8 - FIRST_EXTRA) | 1 << (Column::FileSystem as u8 - FIRST_EXTRA) | 1 << (Column::Percent as u8 - FIRST_EXTRA) | 1 << (Column::Files as u8 - FIRST_EXTRA);
 const DEFAULT_WIDTHS: [f32; 7] = [0.0, 150.0, 140.0, 90.0, 220.0, 150.0, 150.0];
@@ -96,6 +96,10 @@ pub const DEFAULT_ORDER: [Column; ORDERED] = [
     Column::Percent,
     Column::FileSystem,
     Column::Attributes,
+    Column::ImageSize,
+    Column::Duration,
+    Column::Artist,
+    Column::Version,
 ];
 const ALL_COLUMNS: [Column; ORDERED] = [
     Column::Name,
@@ -115,6 +119,10 @@ const ALL_COLUMNS: [Column; ORDERED] = [
     Column::Percent,
     Column::Files,
     Column::Attributes,
+    Column::ImageSize,
+    Column::Duration,
+    Column::Artist,
+    Column::Version,
 ];
 
 fn git_widths() -> [f32; 4] {
@@ -615,7 +623,7 @@ fn bucket_label(s: &mut impl std::fmt::Write, table: &[S], bucket: u64) {
 
 const NO_ITEMS: &str = "--";
 const G_CALENDAR: &str = "\u{E787}";
-const WINDOWS_COLUMNS: [Column; 12] = [
+const WINDOWS_COLUMNS: [Column; 16] = [
     Column::Name,
     Column::Type,
     Column::Modified,
@@ -628,8 +636,12 @@ const WINDOWS_COLUMNS: [Column; 12] = [
     Column::FolderUsage,
     Column::Tag,
     Column::Attributes,
+    Column::ImageSize,
+    Column::Duration,
+    Column::Artist,
+    Column::Version,
 ];
-const WINDOWS_REPO_COLUMNS: [Column; 16] = [
+const WINDOWS_REPO_COLUMNS: [Column; 20] = [
     Column::Name,
     Column::Type,
     Column::Modified,
@@ -642,6 +654,10 @@ const WINDOWS_REPO_COLUMNS: [Column; 16] = [
     Column::FolderUsage,
     Column::Tag,
     Column::Attributes,
+    Column::ImageSize,
+    Column::Duration,
+    Column::Artist,
+    Column::Version,
     Column::GitStatus,
     Column::GitMessage,
     Column::GitAuthor,
@@ -1214,6 +1230,7 @@ impl App {
             Column::Origin => s.push_str(&name::display(recycle::origin(l, i))),
             Column::Tag => self.tag_text(&mut s, e.tags),
             Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => self.git_text(&mut s, l.name(i), col),
+            Column::ImageSize | Column::Duration | Column::Artist | Column::Version => self.shell_prop_text(&mut s, l.name(i), col),
             Column::Type => return self.type_text(arena, l, i),
             Column::Size => {
                 if !e.is_dir() || e.attrs & attr::SIZE_KNOWN != 0 && (self.prefs.auto_sizes || e.attrs & attr::VOLUME != 0) {

@@ -10,7 +10,7 @@ use windows::Win32::Graphics::Imaging::*;
 use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PropVariantToUInt16, PROPVARIANT};
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
-use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyDescription, IPropertyDescriptionList, IPropertyStore, PSFormatForDisplayAlloc, GETPROPERTYSTOREFLAGS, GPS_BESTEFFORT, GPS_FASTPROPERTIESONLY, PDFF_DEFAULT};
+use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyDescription, IPropertyDescriptionList, IPropertyStore, PSFormatForDisplayAlloc, PSGetPropertyKeyFromName, GETPROPERTYSTOREFLAGS, GPS_BESTEFFORT, GPS_FASTPROPERTIESONLY, PDFF_DEFAULT};
 use windows::Win32::UI::Shell::{AssocQueryStringW, IShellItem2, SHCreateItemFromParsingName, ASSOCF_NOTRUNCATE, ASSOCSTR_SHELLEXTENSION};
 use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, SendMessageTimeoutW, SMTO_ABORTIFHUNG, WM_COPYDATA};
 
@@ -97,6 +97,29 @@ unsafe fn orientation(frame: &IWICBitmapFrameDecode) -> u16 {
 
 pub(crate) fn store_flags(not_local: bool) -> GETPROPERTYSTOREFLAGS {
     if not_local { GPS_FASTPROPERTIESONLY } else { GPS_BESTEFFORT }
+}
+
+pub(crate) const COLUMN_PROPS: [PCWSTR; 4] = [w!("System.Image.Dimensions"), w!("System.Media.Duration"), w!("System.Music.Artist"), w!("System.FileVersion")];
+
+pub(crate) fn column_props(path: &FsPath) -> Vec<String> {
+    unsafe {
+        let name = path.to_wide(false);
+        let Ok(item) = SHCreateItemFromParsingName::<_, _, IShellItem2>(PCWSTR(name.as_ptr()), None) else { return Vec::new() };
+        let Ok(store) = item.GetPropertyStore::<IPropertyStore>(store_flags(crate::fs::not_local(path))) else { return Vec::new() };
+        COLUMN_PROPS
+            .iter()
+            .map(|&canonical| {
+                let mut key = PROPERTYKEY::default();
+                if PSGetPropertyKeyFromName(canonical, &mut key).is_err() {
+                    return String::new();
+                }
+                let Ok(mut value) = store.GetValue(&key) else { return String::new() };
+                let text = PSFormatForDisplayAlloc(&key, &value, PDFF_DEFAULT).ok().and_then(|p: PWSTR| take_pwstr(p)).map(|w| String::from_utf16_lossy(&w));
+                let _ = PropVariantClear(&mut value);
+                text.map(|t| t.replace(['\u{200E}', '\u{200F}', '\u{202A}', '\u{202C}'], "").trim().to_owned()).unwrap_or_default()
+            })
+            .collect()
+    }
 }
 
 pub(crate) fn link_group(link: &LinkInfo) -> PropGroup {

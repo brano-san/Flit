@@ -220,6 +220,10 @@ fn the_header_menu_shows_hides_and_fits_columns_and_the_bin_keeps_its_own() {
         ("Folder Usage", false),
         ("Tags", false),
         ("Attributes", false),
+        ("Dimensions", false),
+        ("Length", false),
+        ("Contributing artists", false),
+        ("File version", false),
         ("Always size columns to fit", false),
     ];
     assert_eq!(commands(&menu.menu), want.map(|(l, c)| (l.to_owned(), c)));
@@ -1201,7 +1205,7 @@ fn the_attributes_column_spells_explorer_letters_and_only_windows_offers_it() {
     assert_eq!(Column::Attributes.field(), Some(SortField::Attributes), "a click on its header sorts by it");
     assert!(!app.tab().columns.shown(Column::Attributes), "hidden until chosen, as in Explorer");
     let windows: Vec<Column> = app.column_kinds().to_vec();
-    assert_eq!(windows.iter().copied().filter(|&c| c != Column::Attributes).collect::<Vec<_>>(), crate::ui::COLUMNS, "Windows adds Attributes to the usual columns");
+    assert_eq!(windows.iter().copied().filter(|&c| c != Column::Attributes && !crate::ui::SHELL_COLUMNS.contains(&c)).collect::<Vec<_>>(), crate::ui::COLUMNS, "Windows adds Attributes and the shell property columns to the usual columns");
     assert!(windows.contains(&Column::Attributes));
     app.caps.unix_paths = true;
     assert!(!app.column_kinds().contains(&Column::Attributes));

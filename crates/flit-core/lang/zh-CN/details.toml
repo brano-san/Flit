@@ -17,6 +17,10 @@ free = "可用空间"
 file_system = "文件系统"
 percent = "已用百分比"
 attributes = "属性"
+dimensions = "分辨率"
+duration = "时长"
+artist = "参与创作的艺术家"
+version = "文件版本"
 
 [type]
 drive = "驱动器"

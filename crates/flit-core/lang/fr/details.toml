@@ -17,6 +17,10 @@ free = "Espace libre"
 file_system = "Système de fichiers"
 percent = "Pourcentage utilisé"
 attributes = "Attributs"
+dimensions = "Dimensions"
+duration = "Durée"
+artist = "Artistes ayant participé"
+version = "Version du fichier"
 
 [type]
 drive = "Lecteur"

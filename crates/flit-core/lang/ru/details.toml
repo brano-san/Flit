@@ -17,6 +17,10 @@ free = "Свободно"
 file_system = "Файловая система"
 percent = "Заполнено"
 attributes = "Атрибуты"
+dimensions = "Размеры"
+duration = "Продолжительность"
+artist = "Исполнители"
+version = "Версия файла"
 
 [type]
 drive = "Диск"
