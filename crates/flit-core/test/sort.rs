@@ -51,6 +51,42 @@ fn invalid_names_sort_stably() {
     assert_eq!(natural_cmp(b"x\xFF", b"x\xFE", CaseMode::Insensitive), Ordering::Greater);
 }
 
+#[test]
+fn accented_latin_letters_sort_with_their_base_letter() {
+    assert_eq!(sorted(&["Zebra", "Äpfel", "Apfel", "Bär", "Ölung", "Ofen", "Pferd"], CaseMode::Insensitive), ["Apfel", "Äpfel", "Bär", "Ofen", "Ölung", "Pferd", "Zebra"]);
+    assert_eq!(sorted(&["été", "ecole", "élan", "fin", "Ångström", "zone"], CaseMode::Insensitive), ["Ångström", "ecole", "élan", "été", "fin", "zone"]);
+    assert_eq!(sorted(&["Straße", "Strasse", "Strand", "Strauch"], CaseMode::Insensitive), ["Strand", "Strasse", "Straße", "Strauch"]);
+    assert_eq!(sorted(&["Łódź", "Lublin", "Lodz", "Mielec", "Ćmielów", "Cieszyn", "Dębica"], CaseMode::Insensitive), ["Cieszyn", "Ćmielów", "Dębica", "Lodz", "Łódź", "Lublin", "Mielec"]);
+    assert_eq!(sorted(&["Đà Nẵng", "Hà Nội", "Huế", "Cần Thơ"], CaseMode::Insensitive), ["Cần Thơ", "Đà Nẵng", "Hà Nội", "Huế"]);
+}
+
+#[test]
+fn cyrillic_yo_and_ukrainian_letters_take_their_alphabet_place() {
+    assert_eq!(sorted(&["Ёлка", "Яма", "Ель", "Жук", "ёж", "Дом", "Эхо"], CaseMode::Insensitive), ["Дом", "ёж", "Ёлка", "Ель", "Жук", "Эхо", "Яма"]);
+    assert_eq!(sorted(&["Їжак", "Яр", "Іван", "Йод", "Ива", "Ґанок", "Голуб", "Дім", "Євген", "Жовтень"], CaseMode::Insensitive), ["Голуб", "Ґанок", "Дім", "Євген", "Жовтень", "Ива", "Іван", "Їжак", "Йод", "Яр"]);
+    assert_eq!(sorted(&["ώρα", "άλφα", "βήτα", "ωμέγα", "αλφάβητο"], CaseMode::Insensitive), ["άλφα", "αλφάβητο", "βήτα", "ωμέγα", "ώρα"]);
+}
+
+#[test]
+fn letters_with_marks_keep_case_order_and_numbers_and_follow_plain_letters_on_ties() {
+    use Ordering::*;
+    assert_eq!(natural_cmp("ä".as_bytes(), b"b", CaseMode::Sensitive), Less);
+    assert_eq!(natural_cmp("ä".as_bytes(), "Ä".as_bytes(), CaseMode::Sensitive), Less);
+    assert_eq!(natural_cmp("Ä".as_bytes(), b"b", CaseMode::Sensitive), Less);
+    assert_eq!(natural_cmp("ё".as_bytes(), "Ё".as_bytes(), CaseMode::Sensitive), Less);
+    assert_eq!(natural_cmp("Ё".as_bytes(), "ж".as_bytes(), CaseMode::Sensitive), Less);
+    assert_eq!(natural_cmp(b"a", "ä".as_bytes(), CaseMode::Insensitive), Less);
+    assert_eq!(natural_cmp("e\u{301}".as_bytes(), b"f", CaseMode::Insensitive), Less);
+    assert_eq!(natural_cmp("e\u{301}".as_bytes(), "é".as_bytes(), CaseMode::Insensitive), Less);
+    assert_eq!(sorted(&["Ä10", "a9", "Ä2", "a10"], CaseMode::Insensitive), ["Ä2", "a9", "a10", "Ä10"]);
+}
+
+#[test]
+fn symbols_and_other_scripts_keep_their_place_around_latin_greek_and_cyrillic() {
+    assert_eq!(sorted(&["日本", "zeta", "яр", "α", "×x", "שלום", "ÿ"], CaseMode::Insensitive), ["ÿ", "zeta", "×x", "α", "яр", "שלום", "日本"]);
+    assert_eq!(sorted(&["b", "_", "a", "1"], CaseMode::Insensitive), ["_", "1", "a", "b"]);
+}
+
 fn listing(items: &[(&str, u64, bool)]) -> (Listing, SortKeys) {
     let mut l = Listing::default();
     let mut k = SortKeys::new(CaseMode::Insensitive);
@@ -79,6 +115,19 @@ fn fields_and_folders_first() {
     v.sort = SortSpec { field: SortField::Type, descending: false, ..Default::default() };
     sort(&l, &k, v, &mut o);
     assert_eq!(names(&l, &o), ["dir9", "Dir10", "c.md", "a.rs", "b.txt"]);
+}
+
+#[test]
+fn a_folder_of_umlaut_and_yo_names_lists_them_in_alphabet_order_with_folders_first() {
+    let (l, k) = listing(&[("Ölbild.png", 1, false), ("Zug.txt", 2, false), ("Ёлка", 0, true), ("Ель", 0, true), ("Апрель", 0, true), ("Äpfel.txt", 3, false), ("Banane.txt", 4, false)]);
+    let mut o = Vec::new();
+    let mut v = ViewSpec::default();
+    sort(&l, &k, v, &mut o);
+    assert_eq!(names(&l, &o), ["Апрель", "Ёлка", "Ель", "Äpfel.txt", "Banane.txt", "Ölbild.png", "Zug.txt"]);
+    v.sort.descending = true;
+    sort(&l, &k, v, &mut o);
+    assert_eq!(names(&l, &o), ["Ель", "Ёлка", "Апрель", "Zug.txt", "Ölbild.png", "Banane.txt", "Äpfel.txt"]);
+    assert!(is_sorted(&l, &k, &v, &o));
 }
 
 const DAY: i64 = 86_400 * 10_000_000;

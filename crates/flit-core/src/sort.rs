@@ -226,12 +226,113 @@ pub fn encode_key(name: &[u8], case: CaseMode, out: &mut Vec<u8>) {
         } else {
             let (cp, n) = name::decode(&name[i..]);
             i += n;
-            let cp = match char::from_u32(cp) {
-                Some(c) if !sensitive => c.to_lowercase().next().map_or(cp, |l| l as u32),
-                _ => cp,
-            };
-            name::push_cp(out, cp);
+            push_letter(out, cp, sensitive);
         }
+    }
+}
+
+const LATIN1_BASE: &[u8] = b"aaaaaa*ceeeeiiiidnooooo-ouuuuy-y";
+const LATIN_A_BASE: &[u8] = concat!(
+    "aaaaaaccccccccdd",
+    "ddeeeeeeeeeegggg",
+    "gggghhhhiiiiiiii",
+    "ii**jjkkklllllll",
+    "lllnnnnnnnnnoooo",
+    "oo**rrrrrrssssss",
+    "ssttttttuuuuuuuu",
+    "uuuuwwyyyzzzzzzs",
+)
+.as_bytes();
+const CYRILLIC: [char; 46] = [
+    'а', 'б', 'в', 'г', 'ґ', 'д', 'ђ', 'ѓ', 'е', 'є', 'ж', 'з', 'ѕ', 'и', 'і', 'ї', 'й', 'ј', 'к', 'л', 'љ', 'м', 'н', 'њ', 'о', 'п', 'р', 'с', 'т', 'ћ', 'ќ', 'у', 'ў', 'ф', 'х', 'ц', 'ч', 'џ', 'ш', 'щ', 'ъ', 'ы', 'ь', 'э', 'ю', 'я',
+];
+const GREEK: [char; 24] = ['α', 'β', 'γ', 'δ', 'ε', 'ζ', 'η', 'θ', 'ι', 'κ', 'λ', 'μ', 'ν', 'ξ', 'ο', 'π', 'ρ', 'σ', 'τ', 'υ', 'φ', 'χ', 'ψ', 'ω'];
+const GREEK_LEAD: u8 = 0xCE;
+const CYRILLIC_LEAD: u8 = 0xD0;
+
+enum Letter {
+    Latin(&'static [u8]),
+    Script(u8, u8),
+    Mark,
+    Other(char),
+}
+
+fn table_base(table: &'static [u8], at: usize) -> Option<&'static [u8]> {
+    table.get(at..at + 1).filter(|b| b[0].is_ascii_lowercase())
+}
+
+fn latin_base(c: char) -> Option<&'static [u8]> {
+    match c {
+        'æ' => Some(b"ae"),
+        'ß' => Some(b"ss"),
+        'ĳ' => Some(b"ij"),
+        'œ' => Some(b"oe"),
+        '\u{E0}'..='\u{FF}' => table_base(LATIN1_BASE, c as usize - 0xE0),
+        '\u{100}'..='\u{17F}' => table_base(LATIN_A_BASE, c as usize - 0x100),
+        'ǎ' | 'ȁ' | 'ȃ' => Some(b"a"),
+        'ǐ' | 'ȉ' | 'ȋ' => Some(b"i"),
+        'ǒ' | 'ơ' | 'ȍ' | 'ȏ' => Some(b"o"),
+        'ǔ' | 'ư' | 'ǖ' | 'ǘ' | 'ǚ' | 'ǜ' | 'ȕ' | 'ȗ' => Some(b"u"),
+        'ș' => Some(b"s"),
+        'ț' => Some(b"t"),
+        '\u{1EA1}'..='\u{1EB7}' => Some(b"a"),
+        '\u{1EB9}'..='\u{1EC7}' => Some(b"e"),
+        '\u{1EC9}'..='\u{1ECB}' => Some(b"i"),
+        '\u{1ECD}'..='\u{1EE3}' => Some(b"o"),
+        '\u{1EE5}'..='\u{1EF1}' => Some(b"u"),
+        '\u{1EF3}'..='\u{1EF9}' => Some(b"y"),
+        _ => None,
+    }
+}
+
+fn script_rank(c: char) -> Option<(u8, u8)> {
+    let base = match c {
+        'ё' | 'ѐ' => 'е',
+        'ѝ' => 'и',
+        'ά' => 'α',
+        'έ' => 'ε',
+        'ή' => 'η',
+        'ί' | 'ϊ' | 'ΐ' => 'ι',
+        'ό' => 'ο',
+        'ύ' | 'ϋ' | 'ΰ' => 'υ',
+        'ώ' => 'ω',
+        'ς' => 'σ',
+        c => c,
+    };
+    let at = |set: &[char]| set.iter().position(|&x| x == base).map(|k| k as u8);
+    match base {
+        'а'..='я' | 'ѐ'..='џ' | 'ґ' => at(&CYRILLIC).map(|k| (CYRILLIC_LEAD, k)),
+        'α'..='ω' => at(&GREEK).map(|k| (GREEK_LEAD, k)),
+        _ => None,
+    }
+}
+
+fn letter(c: char) -> Letter {
+    if ('\u{300}'..='\u{36F}').contains(&c) {
+        return Letter::Mark;
+    }
+    if let Some(base) = latin_base(c) {
+        return Letter::Latin(base);
+    }
+    match script_rank(c) {
+        Some((lead, rank)) => Letter::Script(lead, rank),
+        None => Letter::Other(c),
+    }
+}
+
+#[inline]
+fn push_letter(out: &mut Vec<u8>, cp: u32, sensitive: bool) {
+    let Some(c) = char::from_u32(cp) else { return name::push_cp(out, cp) };
+    let lower = c.to_lowercase().next().unwrap_or(c);
+    let upper = u8::from(lower != c);
+    match letter(lower) {
+        Letter::Latin(base) if sensitive => out.extend(base.iter().map(|b| LETTERS + 2 * (b - b'a') + upper)),
+        Letter::Latin(base) => out.extend(base.iter().map(|b| LETTERS + (b - b'a'))),
+        Letter::Script(lead, rank) if sensitive => out.extend_from_slice(&[lead, 2 * rank + upper]),
+        Letter::Script(lead, rank) => out.extend_from_slice(&[lead, rank]),
+        Letter::Mark => {}
+        Letter::Other(_) if sensitive => name::push_cp(out, cp),
+        Letter::Other(l) => name::push_cp(out, l as u32),
     }
 }
 
