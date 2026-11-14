@@ -1668,6 +1668,58 @@ fn files_dropped_on_a_program_are_passed_to_it() {
     assert_eq!(app.drop_spot(), Some(Spot::List), "other files still drop into the folder");
 }
 
+fn deliver_attrs(app: &mut App, items: &[(&str, u32)]) {
+    let t = app.tab();
+    let mut listing = Listing::default();
+    let mut keys = SortKeys::new(CaseMode::Insensitive);
+    for &(n, attrs) in items {
+        let i = listing.push(n.as_bytes(), Meta { attrs, size: 1, ..Default::default() });
+        keys.push(listing.name(i));
+    }
+    let mut order = Vec::new();
+    sort::sort(&listing, &keys, ViewSpec::default(), &mut order);
+    let snap = DirSnapshot { gen: t.gen, path: t.location().path().clone(), listing, keys, order, view: ViewSpec::default(), done: true, error: None, elapsed: Duration::ZERO };
+    t.slot.publish(Arc::new(snap));
+    app.poll();
+    app.drain_effects().for_each(drop);
+}
+
+#[test]
+fn on_linux_files_dropped_on_an_executable_or_a_desktop_launcher_are_passed_to_it() {
+    use drop_effect::*;
+    let mut app = app_at("/home/u");
+    app.caps = crate::caps::Caps { unix_paths: true };
+    deliver_attrs(&mut app, &[("notes.txt", 0), ("plain.sh", 0), ("run.sh", attr::EXEC), ("setup.exe", 0), ("tool.AppImage", attr::EXEC), ("viewer.desktop", 0)]);
+    let all = COPY | MOVE | LINK;
+    let files = vec![p("/tmp/in/f.txt"), p("/tmp/in/g.txt")];
+    for (row, program) in [(2, "/home/u/run.sh"), (4, "/home/u/tool.AppImage"), (5, "/home/u/viewer.desktop")] {
+        let at = row_xy(&app, row);
+        assert_eq!(app.drag(&DragEvent::Enter { paths: files.clone(), x: at.0, y: at.1, mods: NO, allowed: all, right: false }, t0()), COPY);
+        assert_eq!(app.drop_spot(), Some(Spot::Row(row)), "{program}");
+        app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: NO, allowed: all }, t0());
+        assert_eq!(launches(&mut app), [Launch::With { program: p(program), args: files.clone() }]);
+    }
+    for row in [0, 1, 3] {
+        let at = row_xy(&app, row);
+        app.drag(&DragEvent::Enter { paths: files.clone(), x: at.0, y: at.1, mods: NO, allowed: all, right: false }, t0());
+        assert_eq!(app.drop_spot(), Some(Spot::List), "row {row} is not a program on Linux");
+        app.drag(&DragEvent::Leave, t0());
+    }
+}
+
+#[test]
+fn on_windows_an_executable_bit_or_a_desktop_file_does_not_take_dropped_files() {
+    let mut app = app_at(r"C:\x");
+    deliver_attrs(&mut app, &[("tool", attr::EXEC), ("viewer.desktop", 0)]);
+    let all = drop_effect::COPY | drop_effect::MOVE | drop_effect::LINK;
+    for row in [0, 1] {
+        let at = row_xy(&app, row);
+        app.drag(&DragEvent::Enter { paths: vec![p(r"D:\in\f.txt")], x: at.0, y: at.1, mods: NO, allowed: all, right: false }, t0());
+        assert_eq!(app.drop_spot(), Some(Spot::List));
+        app.drag(&DragEvent::Leave, t0());
+    }
+}
+
 #[test]
 fn a_shortcut_to_a_folder_opens_in_flit() {
     let mut app = app_at(r"C:\x");

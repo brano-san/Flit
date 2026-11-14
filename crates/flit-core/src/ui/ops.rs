@@ -1012,6 +1012,14 @@ impl App {
         self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch: Launch::Terminal { dirs, admin } } });
     }
 
+    fn takes_dropped_files(&self, l: &crate::listing::Listing, i: u32) -> bool {
+        let e = &l.entries[i as usize];
+        if !self.caps.unix_paths {
+            return RUNNABLE.iter().any(|x| l.ext(i).eq_ignore_ascii_case(x));
+        }
+        !e.is_dir() && e.attrs & attr::STREAM == 0 && (e.attrs & attr::EXEC != 0 || l.ext(i).eq_ignore_ascii_case(b"desktop"))
+    }
+
     pub(super) fn runs_in_terminal(&self, l: &crate::listing::Listing, i: u32) -> bool {
         let e = &l.entries[i as usize];
         let windows_program = !self.caps.unix_paths && !e.is_dir() && e.attrs & attr::STREAM == 0 && WINDOWS_PROGRAMS.iter().any(|x| l.ext(i).eq_ignore_ascii_case(x));
@@ -1878,7 +1886,7 @@ impl App {
             Hit::Row(row) => {
                 let v = t.view.as_ref()?;
                 let i = *v.rows().get(row)?;
-                let runnable = RUNNABLE.iter().any(|e| v.listing().ext(i).eq_ignore_ascii_case(e));
+                let runnable = self.takes_dropped_files(v.listing(), i);
                 if v.listing().entries[i as usize].is_dir() || archive::browsable(v.listing().name(i)).is_some_and(Format::can_add) {
                     into(&t.entry_location(i), Spot::Row(row))
                 } else if runnable {
