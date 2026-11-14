@@ -41,8 +41,7 @@ fn pinned_items_get_labels_and_glyphs() {
 
 #[test]
 fn one_drive_is_a_place_right_after_home_with_a_cloud() {
-    let mut sb = Sidebar::default();
-    sb.places = Arc::new(Places { folders: vec![(KnownFolder::Music, loc(r"C:\Users\u\Music")), (KnownFolder::OneDrive, loc(r"C:\Users\u\OneDrive")), (KnownFolder::Home, loc(r"C:\Users\u"))], ..Default::default() });
+    let mut sb = Sidebar { places: Arc::new(Places { folders: vec![(KnownFolder::Music, loc(r"C:\Users\u\Music")), (KnownFolder::OneDrive, loc(r"C:\Users\u\OneDrive")), (KnownFolder::Home, loc(r"C:\Users\u"))], ..Default::default() }), ..Default::default() };
     sb.rebuild();
     let got: Vec<(&str, &str)> = sb.items.iter().filter(|it| it.section == Section::Places).map(|it| (it.label.as_str(), it.glyph)).collect();
     assert_eq!(got[..4], [("This PC", G_DRIVE), ("u", G_HOME), ("OneDrive", G_CLOUD), ("Music", G_MUSIC)]);

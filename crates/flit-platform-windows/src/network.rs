@@ -24,6 +24,56 @@ pub(crate) fn letter(drive: &FsPath) -> Option<String> {
     (drive.kind() == PathKind::Drive).then(|| format!("{}:", drive.as_bytes()[0] as char))
 }
 
+fn unescape(part: &str) -> String {
+    let bytes = part.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = bytes.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok()).and_then(|h| u8::from_str_radix(h, 16).ok());
+        match (bytes[i], hex) {
+            (b'%', Some(b)) => {
+                out.push(b);
+                i += 3;
+            }
+            (b, _) => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+pub(crate) fn server_path(uri: &str) -> Result<FsPath, String> {
+    let uri = uri.trim();
+    if let Some(unc) = FsPath::parse(uri).filter(|p| p.kind() == PathKind::Unc) {
+        return Ok(unc);
+    }
+    let (scheme, rest) = uri.split_once("://").ok_or_else(|| uri.to_owned())?;
+    let scheme = scheme.to_ascii_lowercase();
+    let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let host_port = authority.rsplit('@').next().unwrap_or(authority);
+    let (host, port) = match host_port.rsplit_once(':') {
+        Some((h, p)) if !h.is_empty() && p.parse::<u16>().is_ok() => (h, Some(p)),
+        _ => (host_port, None),
+    };
+    let parts: Vec<String> = path.split('/').filter(|p| !p.is_empty()).map(unescape).collect();
+    let server = match (scheme.as_str(), port) {
+        ("smb" | "cifs", None | Some("445")) if !parts.is_empty() => host.to_owned(),
+        ("dav" | "webdav", None | Some("80")) => format!(r"{host}\DavWWWRoot"),
+        ("dav" | "webdav", Some(p)) => format!(r"{host}@{p}\DavWWWRoot"),
+        ("davs" | "webdavs", None | Some("443")) => format!(r"{host}@SSL\DavWWWRoot"),
+        ("davs" | "webdavs", Some(p)) => format!(r"{host}@SSL@{p}\DavWWWRoot"),
+        _ => return Err(scheme),
+    };
+    let mut unc = format!(r"\\{server}");
+    for p in &parts {
+        unc.push('\\');
+        unc.push_str(p);
+    }
+    FsPath::parse(&unc).filter(|p| p.kind() == PathKind::Unc && !host.is_empty()).ok_or(scheme)
+}
+
 pub(crate) fn share_root(dir: &FsPath) -> Option<String> {
     let (server, share, _) = dir.unc_parts()?;
     Some(format!(r"\\{}\{}", String::from_utf8_lossy(server), String::from_utf8_lossy(share)))

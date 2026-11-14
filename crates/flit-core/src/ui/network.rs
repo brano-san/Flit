@@ -2,7 +2,7 @@ use super::palette::{Palette, Pick};
 use super::App;
 use crate::i18n::S;
 use crate::open::Open;
-use crate::path::PathKind;
+use crate::path::{FsPath, PathKind};
 use crate::provider::Launch;
 
 const SCHEMES: [&str; 9] = ["smb", "sftp", "ssh", "ftp", "ftps", "dav", "davs", "afp", "nfs"];
@@ -43,7 +43,8 @@ impl App {
     }
 
     pub(super) fn connect_server(&mut self, text: &str) {
-        match server_uri(text) {
+        let share = (!self.caps.unix_paths).then(|| text.trim()).filter(|t| FsPath::parse(t).is_some_and(|p| p.kind() == PathKind::Unc)).map(str::to_owned);
+        match server_uri(text).or(share) {
             Some(uri) => self.launch(Launch::ConnectServer(uri)),
             None => self.status(S::SidebarDriveServerPrompt.t()),
         }

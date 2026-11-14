@@ -79,6 +79,7 @@ disconnect_dialog = "Disconnect network drive"
 disconnect = "Disconnect"
 connect_server = "Connect to server"
 server_prompt = "Server address, for example smb://server/share or sftp://user@host"
+server_prompt_windows = "Server address, for example smb://server/share or \\\\server\\share"
 server_enter = "Enter connects to the server"
 
 [quick]

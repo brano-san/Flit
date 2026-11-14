@@ -334,6 +334,10 @@ impl Shell for ShellCom {
         crate::network::reconnect(device)
     }
 
+    fn connect(&mut self, uri: &str) -> Result<FsPath, PlatformError> {
+        crate::network::server_path(uri).map_err(|scheme| PlatformError::new(-1, flit_core::tr_en!(flit_core::i18n::S::ErrorsEngineServerScheme, scheme = scheme)))
+    }
+
     fn shortcut_folder(&mut self, link: &FsPath) -> Option<FsPath> {
         unsafe { link_target(link) }.filter(is_dir)
     }

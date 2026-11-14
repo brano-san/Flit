@@ -35,12 +35,17 @@ fn drive_actions_reach_the_shell_and_unix_hosts_hide_them() {
     assert!(a.run_action("drive.map", Instant::now()));
     assert!(a.run_action("drive.disconnect", Instant::now()));
     assert_eq!(launches(&mut a), [Launch::MapDrive(None), Launch::Disconnect(None)]);
-    assert!(!a.run_action("drive.connect_server", Instant::now()));
+    assert!(a.run_action("drive.connect_server", Instant::now()), "Windows connects to servers too");
+    a.connect_server("smb://nas/share");
+    a.connect_server(r" \\nas\share\docs ");
+    a.connect_server("nas");
+    assert_eq!(launches(&mut a), [Launch::ConnectServer("smb://nas/share".into()), Launch::ConnectServer(r"\\nas\share\docs".into())]);
     a.caps.unix_paths = true;
     assert!(!a.run_action("drive.map", Instant::now()));
     a.connect_server("smb://nas/share");
     a.connect_server("nas");
-    assert_eq!(launches(&mut a), [Launch::ConnectServer("smb://nas/share".into())]);
+    a.connect_server(r"\\nas\share");
+    assert_eq!(launches(&mut a), [Launch::ConnectServer("smb://nas/share".into())], "a Windows network path means nothing on Linux");
 }
 
 #[test]

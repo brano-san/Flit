@@ -79,6 +79,7 @@ disconnect_dialog = "断开网络驱动器"
 disconnect = "断开连接"
 connect_server = "连接到服务器"
 server_prompt = "服务器地址，例如 smb://server/share 或 sftp://user@host"
+server_prompt_windows = "服务器地址，例如 smb://server/share 或 \\\\server\\share"
 server_enter = "按 Enter 连接到服务器"
 
 [quick]

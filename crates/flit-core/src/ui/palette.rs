@@ -90,6 +90,7 @@ impl Pick {
             Pick::LibraryAdd(_) => S::PalettePlaceholderLibraryAdd.t(),
             Pick::Tags(t) => t.placeholder(),
             Pick::Setting(p) => p.placeholder(),
+            Pick::Server if cfg!(windows) => S::SidebarDriveServerPromptWindows.t(),
             Pick::Server => S::SidebarDriveServerPrompt.t(),
             Pick::GoTo | Pick::Crumb(_) => S::AddressGotoPlaceholder.t(),
             Pick::Tabs => S::MenusSearchTabsShort.t(),

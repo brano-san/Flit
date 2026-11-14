@@ -43,3 +43,21 @@ fn a_cancelled_dialog_is_not_an_error() {
     assert!(finished(WIN32_ERROR(CANCELLED_BY_USER)).is_ok());
     assert!(finished(ERROR_LOGON_FAILURE).is_err());
 }
+
+#[test]
+fn server_addresses_become_network_paths() {
+    let unc = |s: &str| server_path(s).map(|p| p.display().into_owned());
+    assert_eq!(unc("smb://nas/share"), Ok(r"\\nas\share\".into()));
+    assert_eq!(unc("SMB://me@nas:445/Share/My%20Docs/"), Ok(r"\\nas\Share\My Docs".into()), "user, default port and escapes");
+    assert_eq!(unc("davs://cloud.example.com/remote.php/dav"), Ok(r"\\cloud.example.com@SSL\DavWWWRoot\remote.php\dav".into()));
+    assert_eq!(unc("dav://box:8080/files"), Ok(r"\\box@8080\DavWWWRoot\files".into()));
+    assert_eq!(unc(r"\\nas\share\docs"), Ok(r"\\nas\share\docs".into()), "a typed network path is taken as it is");
+}
+
+#[test]
+fn servers_windows_cannot_reach_name_their_protocol() {
+    assert_eq!(server_path("sftp://me@host/home"), Err("sftp".into()));
+    assert_eq!(server_path("ftp://host"), Err("ftp".into()));
+    assert_eq!(server_path("smb://nas:4455/share"), Err("smb".into()), "SMB on another port cannot be written as a network path");
+    assert_eq!(server_path("smb://nas"), Err("smb".into()), "a share is needed");
+}
