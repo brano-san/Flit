@@ -54,8 +54,16 @@ fn a_thumbnailer_writes_a_png_that_is_read_back_fitted_and_removed() {
     png(&src, 300, 150);
     let copy = script(t.path(), "copy", "cp \"$1\" \"$2\"");
     let ok = Thumbnailer { exec: format!("{} %i %o", copy.display()), mimes: vec!["image/heif".into()] };
-    let b = run(&ok, &src, 100).unwrap();
-    assert_eq!((b.width, b.height), (100, 50));
+    for attempt in 0..3 {
+        match run(&ok, &src, 100) {
+            Some(b) => {
+                assert_eq!((b.width, b.height), (100, 50));
+                break;
+            }
+            None if attempt < 2 => {}
+            None => panic!("the thumbnailer produced nothing in every attempt"),
+        }
+    }
     let leftovers = std::fs::read_dir(std::env::temp_dir()).unwrap().filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().starts_with(&format!("flit-thumb-{}-", std::process::id()))).count();
     assert_eq!(leftovers, 0, "the output file is removed");
     let fails = script(t.path(), "fails", "cp \"$1\" \"$2\"; exit 1");

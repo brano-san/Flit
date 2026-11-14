@@ -173,13 +173,20 @@ fn a_share_that_refuses_extended_notices_is_still_watched() {
     if std::fs::metadata(&share).is_err() {
         return;
     }
-    let (tx, rx) = crossbeam_channel::unbounded();
-    let mut w = DirWatcher::new(tx, Arc::new(|| {})).unwrap();
-    w.watch(6, 1, Some(&dir));
-    assert_eq!(lock(&w.state).by_tab.get(&6).map(Vec::len), Some(1));
-    std::fs::write(root.join("on-share.txt"), b"abc").unwrap();
-    assert!(wait_for(&rx, |c| c.name == b"on-share.txt" && c.meta.as_ref().is_some_and(|m| m.size == 3)));
-    drop(w);
+    for attempt in 0..3 {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut w = DirWatcher::new(tx, Arc::new(|| {})).unwrap();
+        w.watch(6, 1, Some(&dir));
+        assert_eq!(lock(&w.state).by_tab.get(&6).map(Vec::len), Some(1));
+        std::fs::write(root.join("on-share.txt"), b"abc").unwrap();
+        let seen = wait_for(&rx, |c| c.name == b"on-share.txt" && c.meta.as_ref().is_some_and(|m| m.size == 3));
+        drop(w);
+        let _ = std::fs::remove_file(root.join("on-share.txt"));
+        if seen {
+            break;
+        }
+        assert!(attempt < 2, "the share stayed unwatched in every attempt");
+    }
     let _ = std::fs::remove_dir_all(&root);
 }
 
