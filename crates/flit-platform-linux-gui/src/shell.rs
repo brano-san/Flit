@@ -332,6 +332,80 @@ fn open_without_xdg_open(path: &Path) -> Option<Result<(), PlatformError>> {
     Some(crate::apps::launch(&app, &[path.to_path_buf()], token.as_deref()).map_err(|e| spawn_error(&app.display().to_string(), &e)))
 }
 
+fn tool_missing(tool: &str) -> PlatformError {
+    let package = crate::tools::package_for(tool, &crate::tools::os_release()).unwrap_or(tool);
+    PlatformError::new(libc::ENOENT as i64, flit_core::tr_en!(flit_core::i18n::S::ErrorsOpsExtraNoTool, tool = tool, package = package))
+}
+
+fn print_files(files: &[PathBuf]) -> Result<(), PlatformError> {
+    let program = on_path(OsStr::new("lp")).ok_or_else(|| tool_missing("lp"))?;
+    let out = Command::new(program).args(files).stdin(Stdio::null()).output().map_err(|e| spawn_error("lp", &e))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(PlatformError::new(-1, format!("lp: {}", first_words(&out.stderr))))
+}
+
+pub fn other_file_manager<'a>(entries: &'a [crate::apps::Entry], assoc: &crate::apps::Assoc) -> Option<&'a crate::apps::Entry> {
+    let flit = |e: &crate::apps::Entry| e.id == flit_core::mimeapps::FLIT_DESKTOP || split_args(&e.exec).first().is_some_and(|p| Path::new(p).file_name() == Some(OsStr::new("flit")));
+    crate::apps::handlers(flit_core::mimeapps::FOLDER, entries, assoc).into_iter().find(|e| !flit(e) && e.categories.iter().any(|c| c == "FileManager"))
+}
+
+fn open_in_file_manager(dir: &Path) -> Result<(), PlatformError> {
+    let c = crate::apps::catalog();
+    let app = other_file_manager(&c.entries, &c.assoc).map(|e| e.path.clone()).ok_or_else(|| PlatformError::new(-1, flit_core::i18n::S::ErrorsOpsExtraNoFileManager.en()))?;
+    let token = crate::window::activation_token();
+    crate::apps::launch(&app, &[dir.to_path_buf()], token.as_deref()).map_err(|e| spawn_error(&app.display().to_string(), &e))
+}
+
+pub fn loop_device(said: &str) -> Option<PathBuf> {
+    let at = said.find(" as /dev/")? + 4;
+    Some(PathBuf::from(said[at..].trim().trim_end_matches('.')))
+}
+
+fn mount_image(file: &Path) -> io::Result<PathBuf> {
+    let udisks = on_path(OsStr::new("udisksctl")).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, tool_missing("udisksctl").message))?;
+    let out = Command::new(udisks).args(["loop-setup", "-r", "-f"]).arg(file).stdin(Stdio::null()).output()?;
+    if !out.status.success() {
+        return Err(io::Error::other(crate::places::udisks_message(&out.stderr)));
+    }
+    let device = loop_device(&String::from_utf8_lossy(&out.stdout)).ok_or_else(|| io::Error::other("udisksctl did not name the loop device"))?;
+    crate::places::mount(&device).or_else(|e| {
+        let table = flit_platform_linux::mounts::read()?;
+        table.iter().rev().find(|m| m.source == device.as_os_str().as_bytes()).map(|m| m.path().to_path_buf()).ok_or(e)
+    })
+}
+
+pub fn install_fonts(fonts: &[FsPath], dir: Option<PathBuf>) -> OpOutcome {
+    let Some(dir) = dir else { return OpOutcome { items: Vec::new(), error: Some(PlatformError::new(-1, "no HOME or XDG_DATA_HOME")) } };
+    let (mut out, mut errors) = (OpOutcome::default(), Vec::new());
+    for font in fonts {
+        let shown = font.display().into_owned();
+        let Some((src, name)) = host(font).and_then(|p| Some((p, p.file_name()?))) else { continue };
+        if !flit_core::install::is_font(font.file_name()) {
+            errors.push(flit_core::tr_en!(flit_core::i18n::S::ErrorsOpsExtraNotFont, path = shown));
+            continue;
+        }
+        let to = dir.join(name);
+        let same = std::fs::canonicalize(src).ok().is_some_and(|s| std::fs::canonicalize(&to).ok() == Some(s));
+        let copied = if same { Ok(()) } else { std::fs::create_dir_all(&dir).and_then(|()| std::fs::copy(src, &to)).map(drop) };
+        match (copied, crate::xdg::fs_path(&to)) {
+            (Ok(()), Some(target)) => out.items.push((font.clone(), target)),
+            (Ok(()), None) => {}
+            (Err(e), _) => errors.push(flit_core::tr_en!(flit_core::i18n::S::ErrorsOpsExtraFont, path = shown, error = e)),
+        }
+    }
+    if !out.items.is_empty() {
+        if let Some(fc) = on_path(OsStr::new("fc-cache")) {
+            let mut cmd = Command::new(fc);
+            cmd.arg("-f").arg(&dir);
+            let _ = detach(cmd);
+        }
+    }
+    out.error = (!errors.is_empty()).then(|| PlatformError::new(-1, errors.join("\n")));
+    out
+}
+
 #[derive(Default)]
 struct Said {
     bytes: Vec<u8>,
@@ -463,6 +537,8 @@ fn launch(l: &Launch) -> Result<(), PlatformError> {
         Launch::RunInTerminal { program } => run_in_terminal(Path::new(os(program))),
         Launch::Execute(program) => run_directly(Path::new(os(program))),
         Launch::Display(file) => xdg_open(os(file)),
+        Launch::Print(files) => print_files(&files.iter().filter_map(|f| host(f).map(Path::to_path_buf)).collect::<Vec<_>>()),
+        Launch::FileManager(dir) => open_in_file_manager(Path::new(os(dir))),
         Launch::With { program, args } if program.as_bytes().ends_with(b".desktop") => {
             let files: Vec<PathBuf> = args.iter().filter_map(|a| host(a).map(Path::to_path_buf)).collect();
             let token = crate::window::activation_token();
@@ -585,6 +661,11 @@ impl Shell for LinuxShell {
         if let Some(uri) = crate::places::device_uri(Path::new(os(device)), &crate::places::gvfs_root()) {
             return self.connect(&uri);
         }
+        let local = Path::new(os(device));
+        if std::fs::metadata(local).is_ok_and(|m| m.is_file()) {
+            let point = mount_image(local).map_err(|e| PlatformError::new(-1, format!("cannot mount {}: {e}", device.display())))?;
+            return crate::xdg::fs_path(&point).ok_or_else(|| PlatformError::new(-1, "the mount point is not a valid path"));
+        }
         let point = crate::udisks::mount(Path::new(os(device))).map_err(|e| crate::places::drive_error(S::ErrorsFsMountFailed, Path::new(os(device)), &e))?;
         crate::xdg::fs_path(&point).ok_or_else(|| PlatformError::new(-1, "the mount point is not a valid path"))
     }
@@ -610,6 +691,7 @@ impl FileOps for LinuxShell {
         }
         let trash = places::trash();
         let out = match (op, &trash) {
+            (FileOp::InstallFonts(fonts), _) => install_fonts(fonts, crate::xdg::data_home().map(|d| d.join("fonts"))),
             (FileOp::Purge(pairs), Ok(t)) => places::purge(t, pairs),
             (FileOp::EmptyBin, Ok(t)) => places::empty(t, &places::storage_tops()),
             (FileOp::Purge(_) | FileOp::EmptyBin, Err(e)) => OpOutcome { items: Vec::new(), error: Some(e.clone()) },

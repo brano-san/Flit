@@ -225,3 +225,37 @@ fn folder_sizes_is_a_check_item_in_the_layout_menu_and_keeps_its_shortcut() {
     app.on_event(&Event::Key { key: Key::Char('R'), mods: Mods { ctrl: false, shift: false, alt: true }, pressed: true }, Instant::now());
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::DirSizes { .. }, .. })), "a pending calculation is not duplicated");
 }
+
+fn launched(app: &mut App) -> Vec<crate::provider::Launch> {
+    app.drain_effects().filter_map(|e| if let Effect::Provider { req: ProviderRequest::Launch { launch, .. }, .. } = e { Some(launch) } else { None }).collect()
+}
+
+#[test]
+fn linux_menus_offer_printing_disk_images_fonts_and_the_system_file_manager() {
+    use crate::provider::Launch;
+    let mut app = app_with(&[("sub", true), ("a.pdf", false), ("b.txt", false), ("disk.iso", false), ("Sans.ttf", false)]);
+    app.caps = crate::caps::Caps { unix_paths: true };
+    let pdf = right_click(&mut app, Some(1), false);
+    assert!(commands(&pdf.menu).iter().any(|l| l == "Print") && !commands(&pdf.menu).iter().any(|l| l == "Mount disk image"));
+    run(&mut app, &pdf, "Print");
+    assert_eq!(launched(&mut app), [Launch::Print(vec![FsPath::parse(r"C:\x\a.pdf").unwrap()])]);
+    let iso = right_click(&mut app, Some(3), false);
+    assert!(!commands(&iso.menu).iter().any(|l| l == "Print"));
+    run(&mut app, &iso, "Mount disk image");
+    assert_eq!(launched(&mut app), [Launch::Mount(FsPath::parse(r"C:\x\disk.iso").unwrap())]);
+    assert!(commands(&right_click(&mut app, Some(4), false).menu).iter().any(|l| l == "Install font"), "fonts install on Linux too");
+    assert!(commands(&right_click(&mut app, None, false).menu).iter().any(|l| l == "Open in system file manager"));
+}
+
+#[test]
+fn windows_menus_keep_their_shell_verbs_instead_of_the_linux_entries() {
+    let mut app = app_with(&[("sub", true), ("a.pdf", false), ("b.txt", false), ("disk.iso", false)]);
+    let shown: Vec<String> = [Some(1), Some(3), None].into_iter().flat_map(|row| commands(&right_click(&mut app, row, false).menu)).collect();
+    for gone in ["Print", "Mount disk image", "Open in system file manager"] {
+        assert!(!shown.iter().any(|l| l == gone), "{gone} in {shown:?}");
+    }
+    let mut folder = app_with(&[("sub", true), ("a.pdf", false)]);
+    folder.caps = crate::caps::Caps { unix_paths: true };
+    let menu = right_click(&mut folder, Some(0), false);
+    assert!(!commands(&menu.menu).iter().any(|l| l == "Print"), "a folder is not printed");
+}

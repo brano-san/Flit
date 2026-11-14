@@ -27,6 +27,7 @@ pub struct Entry {
     pub not_show_in: Vec<String>,
     pub dir: String,
     pub icon: String,
+    pub categories: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -98,6 +99,7 @@ pub fn parse_desktop(id: &str, path: &Path, text: &str, lang: &str) -> Option<En
         not_show_in: list("NotShowIn"),
         dir: text("Path"),
         icon: text("Icon"),
+        categories: list("Categories"),
     })
 }
 

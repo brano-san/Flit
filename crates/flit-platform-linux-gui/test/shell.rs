@@ -453,3 +453,34 @@ fn without_a_session_bus_quick_view_falls_back_to_flits_own_preview() {
     assert!(!session_bus(), "tests run without the desktop's session bus");
     assert!(!LinuxShell.quick_view(&fs_path(&file)));
 }
+
+fn app_entry(id: &str, exec: &str, categories: &str) -> crate::apps::Entry {
+    let text = format!("[Desktop Entry]\nType=Application\nName={id}\nExec={exec}\nMimeType=inode/directory;\nCategories={categories}\n");
+    crate::apps::parse_desktop(id, Path::new(&format!("/usr/share/applications/{id}")), &text, "").unwrap()
+}
+
+#[test]
+fn the_system_file_manager_is_another_file_manager_than_flit() {
+    let entries = [app_entry("flit.desktop", "flit %U", "System;FileManager;"), app_entry("userapp-flit-x.desktop", "/opt/flit/flit %U", "FileManager;"), app_entry("baobab.desktop", "baobab %U", "GTK;System;"), app_entry("org.gnome.Nautilus.desktop", "nautilus --new-window %U", "GNOME;Utility;Core;FileManager;")];
+    let mut assoc = crate::apps::Assoc::default();
+    crate::apps::parse_mimeapps("[Default Applications]\ninode/directory=flit.desktop;\n", &mut assoc);
+    assert_eq!(other_file_manager(&entries, &assoc).map(|e| e.id.as_str()), Some("org.gnome.Nautilus.desktop"));
+    assert_eq!(other_file_manager(&entries[..3], &assoc), None, "Flit and a disk usage tool are not offered");
+    assert_eq!(loop_device("Mapped file /home/u/disk.iso as /dev/loop7.\n"), Some(PathBuf::from("/dev/loop7")));
+    assert_eq!(loop_device("Error setting up loop device"), None);
+}
+
+#[test]
+fn fonts_install_into_the_users_font_folder_and_other_files_are_refused() {
+    let t = Temp::new("fonts");
+    let fonts = t.path().join("share/fonts");
+    let font = t.file("Sans.ttf", 64);
+    let text = t.file("notes.txt", 3);
+    let out = install_fonts(&[fs_path(&font), fs_path(&text)], Some(fonts.clone()));
+    assert_eq!(out.items, [(fs_path(&font), fs_path(&fonts.join("Sans.ttf")))]);
+    assert_eq!(std::fs::read(fonts.join("Sans.ttf")).unwrap().len(), 64);
+    assert!(out.error.is_some_and(|e| e.message.contains("notes.txt")), "the text file is named");
+    let again = install_fonts(&[fs_path(&fonts.join("Sans.ttf"))], Some(fonts.clone()));
+    assert!(again.error.is_none());
+    assert_eq!(std::fs::read(fonts.join("Sans.ttf")).unwrap().len(), 64, "installing an installed font does not empty it");
+}

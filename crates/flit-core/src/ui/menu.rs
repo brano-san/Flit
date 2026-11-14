@@ -647,6 +647,7 @@ impl App {
             }
             m.action("file.paste", S::MenuPaste.t());
             m.action("app.terminal", S::MenuOpenInTerminal.t());
+            m.action("folder.file_manager", S::ActionsFolderFileManager.t());
         }
         let pinned = self.nav.sidebar.state.pinned.contains(t.location());
         m.action("folder.bookmark", if pinned { S::MenuUnpinFromSidebar.t() } else { S::MenuPinToSidebar.t() });

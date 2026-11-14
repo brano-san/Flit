@@ -194,6 +194,8 @@ pub enum Launch {
     Custom { command: String, files: Vec<FsPath>, mime: String, remember: bool },
     Execute(FsPath),
     Display(FsPath),
+    Print(Vec<FsPath>),
+    FileManager(FsPath),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -229,6 +231,8 @@ impl Launch {
             Launch::Custom { command, files, mime, remember } => Launch::Custom { command: command.clone(), files: all(files)?, mime: mime.clone(), remember: *remember },
             Launch::Execute(program) => Launch::Execute(f(program)?),
             Launch::Display(file) => Launch::Display(f(file)?),
+            Launch::Print(files) => Launch::Print(all(files)?),
+            Launch::FileManager(dir) => Launch::FileManager(f(dir)?),
         })
     }
 }
