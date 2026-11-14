@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-const TERMINALS: [&str; 16] = [
-    "xdg-terminal-exec", "x-terminal-emulator", "gnome-terminal", "kgx", "ptyxis", "konsole", "xfce4-terminal", "mate-terminal", "tilix", "terminator", "lxterminal", "kitty", "alacritty", "foot", "wezterm", "xterm",
+const TERMINALS: [&str; 18] = [
+    "xdg-terminal-exec", "x-terminal-emulator", "gnome-terminal", "kgx", "ptyxis", "konsole", "xfce4-terminal", "mate-terminal", "tilix", "terminator", "lxterminal", "kitty", "alacritty", "foot", "wezterm", "cosmic-term", "qterminal", "xterm",
 ];
 const HELPER_TIMEOUT: Duration = Duration::from_millis(500);
 
@@ -66,7 +66,6 @@ enum DirArg {
     Cwd,
     Joined(&'static str),
     Pair(&'static str),
-    Start,
 }
 
 enum ExecArg {
@@ -75,22 +74,48 @@ enum ExecArg {
     Quoted(&'static str),
 }
 
+struct Style {
+    lead: &'static [&'static str],
+    dir: DirArg,
+    exec: ExecArg,
+}
+
 const OPEN_SCRIPT: &str = r#"cd -- "$1" && exec "${SHELL:-/bin/sh}""#;
 const RUN_SCRIPT: &str = r#"cd -- "$1" || exit; "$2"; echo; exec "${SHELL:-/bin/sh}""#;
+const XTERM_STYLE: Style = Style { lead: &[], dir: DirArg::Cwd, exec: ExecArg::Rest("-e") };
 
-fn terminal_style(name: &str) -> (DirArg, ExecArg) {
+fn terminal_style(name: &str) -> Option<Style> {
+    let style = |lead, dir, exec| Some(Style { lead, dir, exec });
     match name {
-        "gnome-terminal" | "kgx" | "ptyxis" => (DirArg::Joined("--working-directory="), ExecArg::Rest("--")),
-        "xfce4-terminal" | "mate-terminal" | "terminator" => (DirArg::Joined("--working-directory="), ExecArg::Rest("-x")),
-        "tilix" | "lxterminal" => (DirArg::Joined("--working-directory="), ExecArg::Quoted("-e")),
-        "konsole" => (DirArg::Pair("--workdir"), ExecArg::Rest("-e")),
-        "alacritty" => (DirArg::Pair("--working-directory"), ExecArg::Rest("-e")),
-        "kitty" => (DirArg::Joined("--directory="), ExecArg::Positional),
-        "foot" | "footclient" => (DirArg::Joined("--working-directory="), ExecArg::Positional),
-        "wezterm" => (DirArg::Start, ExecArg::Rest("--")),
-        "xdg-terminal-exec" => (DirArg::Cwd, ExecArg::Positional),
-        _ => (DirArg::Cwd, ExecArg::Rest("-e")),
+        "gnome-terminal" | "kgx" => style(&[], DirArg::Joined("--working-directory="), ExecArg::Rest("--")),
+        "ptyxis" => style(&["--new-window"], DirArg::Joined("--working-directory="), ExecArg::Rest("--")),
+        "xfce4-terminal" | "mate-terminal" | "terminator" => style(&[], DirArg::Joined("--working-directory="), ExecArg::Rest("-x")),
+        "tilix" | "lxterminal" => style(&[], DirArg::Joined("--working-directory="), ExecArg::Quoted("-e")),
+        "konsole" => style(&[], DirArg::Pair("--workdir"), ExecArg::Rest("-e")),
+        "qterminal" => style(&[], DirArg::Pair("--workdir"), ExecArg::Rest("-e")),
+        "alacritty" | "cosmic-term" => style(&[], DirArg::Pair("--working-directory"), ExecArg::Rest("-e")),
+        "kitty" => style(&[], DirArg::Joined("--directory="), ExecArg::Positional),
+        "foot" | "footclient" => style(&[], DirArg::Joined("--working-directory="), ExecArg::Positional),
+        "wezterm" => style(&["start"], DirArg::Pair("--cwd"), ExecArg::Rest("--")),
+        "xdg-terminal-exec" => style(&[], DirArg::Cwd, ExecArg::Positional),
+        "xterm" | "uxterm" | "urxvt" | "rxvt-unicode" | "st" => Some(XTERM_STYLE),
+        _ => None,
     }
+}
+
+fn dispatcher(name: &str) -> bool {
+    name == "xdg-terminal-exec" || name == "x-terminal-emulator" || name.ends_with(".wrapper")
+}
+
+pub fn real_terminal(program: &Path, find: impl Fn(&OsStr) -> Option<PathBuf>) -> PathBuf {
+    let known = |p: &Path| p.file_name().and_then(OsStr::to_str).is_some_and(|n| terminal_style(n).is_some());
+    let Ok(target) = std::fs::canonicalize(program) else { return program.to_owned() };
+    let name = target.file_name().and_then(OsStr::to_str).unwrap_or_default();
+    let real = match name.strip_suffix(".wrapper") {
+        Some(base) => Some(target.with_file_name(base)).filter(|p| executable(p)).or_else(|| find(OsStr::new(base))),
+        None => Some(target.clone()),
+    };
+    real.filter(|r| known(r)).unwrap_or_else(|| program.to_owned())
 }
 
 fn shell_quote(arg: &OsStr) -> OsString {
@@ -107,27 +132,24 @@ fn shell_quote(arg: &OsStr) -> OsString {
 }
 
 pub fn terminal_args(program: &Path, dir: Option<&Path>, command: Option<Vec<OsString>>) -> Vec<OsString> {
-    let name = program.file_name().map(|n| n.to_string_lossy().trim_end_matches(".wrapper").to_owned()).unwrap_or_default();
-    let (dir_arg, exec) = terminal_style(&name);
-    let mut args: Vec<OsString> = Vec::new();
-    match (dir, &dir_arg) {
+    let name = program.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let style = terminal_style(&name).unwrap_or(XTERM_STYLE);
+    let mut args: Vec<OsString> = style.lead.iter().map(OsString::from).collect();
+    match (dir, &style.dir) {
         (Some(d), DirArg::Joined(flag)) => {
             let mut a = OsString::from(flag);
             a.push(d);
             args.push(a);
         }
         (Some(d), DirArg::Pair(flag)) => args.extend([OsString::from(flag), d.into()]),
-        (Some(d), DirArg::Start) => args.extend([OsString::from("start"), "--cwd".into(), d.into()]),
-        (None, DirArg::Start) => args.push("start".into()),
         _ => {}
     }
-    let dispatcher = matches!(name.as_str(), "xdg-terminal-exec" | "x-terminal-emulator");
     let command = match (command, dir) {
         (Some(c), _) => c,
-        (None, Some(d)) if dispatcher => ["sh", "-c", OPEN_SCRIPT, "flit"].into_iter().map(OsString::from).chain([d.into()]).collect(),
+        (None, Some(d)) if dispatcher(&name) => ["sh", "-c", OPEN_SCRIPT, "flit"].into_iter().map(OsString::from).chain([d.into()]).collect(),
         (None, _) => return args,
     };
-    match exec {
+    match style.exec {
         ExecArg::Rest(flag) => {
             args.push(flag.into());
             args.extend(command);
@@ -143,6 +165,7 @@ pub fn terminal_args(program: &Path, dir: Option<&Path>, command: Option<Vec<OsS
 
 fn spawn_terminal(dir: Option<&Path>, command: Option<Vec<OsString>>) -> Result<(), PlatformError> {
     let program = terminal_program().ok_or_else(|| PlatformError::new(libc::ENOENT as i64, "No terminal was found: set TERMINAL or install xdg-terminal-exec"))?;
+    let program = real_terminal(&program, on_path);
     let mut cmd = Command::new(&program);
     cmd.args(terminal_args(&program, dir, command));
     if let Some(d) = dir {

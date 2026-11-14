@@ -166,15 +166,70 @@ fn terminals_get_the_folder_through_their_own_option() {
     let dir = Path::new("/srv/my files");
     let args = |t: &str| strings(terminal_args(Path::new(t), Some(dir), None));
     assert_eq!(args("/usr/bin/gnome-terminal"), ["--working-directory=/srv/my files"]);
-    assert_eq!(args("/usr/bin/gnome-terminal.wrapper"), ["--working-directory=/srv/my files"]);
-    assert_eq!(args("ptyxis"), ["--working-directory=/srv/my files"]);
+    assert_eq!(args("kgx"), ["--working-directory=/srv/my files"]);
+    assert_eq!(args("ptyxis"), ["--new-window", "--working-directory=/srv/my files"], "without --new-window Ptyxis raises an old window or opens home");
     assert_eq!(args("konsole"), ["--workdir", "/srv/my files"]);
+    assert_eq!(args("qterminal"), ["--workdir", "/srv/my files"]);
     assert_eq!(args("alacritty"), ["--working-directory", "/srv/my files"]);
+    assert_eq!(args("cosmic-term"), ["--working-directory", "/srv/my files"]);
     assert_eq!(args("kitty"), ["--directory=/srv/my files"]);
     assert_eq!(args("wezterm"), ["start", "--cwd", "/srv/my files"]);
     assert!(args("xterm").is_empty(), "xterm starts in the working directory it inherits");
+    assert!(args("st").is_empty());
     assert_eq!(args("x-terminal-emulator"), ["-e", "sh", "-c", OPEN_SCRIPT, "flit", "/srv/my files"]);
+    assert_eq!(args("/usr/bin/gnome-terminal.wrapper"), ["-e", "sh", "-c", OPEN_SCRIPT, "flit", "/srv/my files"], "a wrapper drops options xterm lacks");
     assert_eq!(args("xdg-terminal-exec"), ["sh", "-c", OPEN_SCRIPT, "flit", "/srv/my files"]);
+}
+
+fn executable_file(p: &Path) {
+    std::fs::write(p, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[test]
+fn an_alternatives_chain_to_a_wrapper_opens_the_real_terminal_in_the_folder() {
+    let t = Temp::new("terminal-chain");
+    let bin = t.path().join("bin");
+    let alternatives = t.path().join("etc/alternatives");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&alternatives).unwrap();
+    executable_file(&bin.join("gnome-terminal.wrapper"));
+    executable_file(&bin.join("gnome-terminal"));
+    std::os::unix::fs::symlink(bin.join("gnome-terminal.wrapper"), alternatives.join("x-terminal-emulator")).unwrap();
+    std::os::unix::fs::symlink(alternatives.join("x-terminal-emulator"), bin.join("x-terminal-emulator")).unwrap();
+    let program = real_terminal(&bin.join("x-terminal-emulator"), |_| None);
+    assert_eq!(program, std::fs::canonicalize(bin.join("gnome-terminal")).unwrap());
+    assert_eq!(strings(terminal_args(&program, Some(Path::new("/srv/my files")), None)), ["--working-directory=/srv/my files"]);
+    let run = strings(terminal_args(&program, Some(Path::new("/srv")), Some(vec!["sh".into(), "-c".into()])));
+    assert_eq!(run, ["--working-directory=/srv", "--", "sh", "-c"]);
+    std::fs::remove_file(bin.join("gnome-terminal")).unwrap();
+    let elsewhere = t.path().join("usr/bin/gnome-terminal");
+    std::fs::create_dir_all(elsewhere.parent().unwrap()).unwrap();
+    executable_file(&elsewhere);
+    let found = real_terminal(&bin.join("x-terminal-emulator"), |name| (name == "gnome-terminal").then(|| elsewhere.clone()));
+    assert_eq!(found, elsewhere);
+}
+
+#[test]
+fn unknown_or_unwrappable_terminals_keep_the_dispatcher_and_its_script() {
+    let t = Temp::new("terminal-unknown");
+    let wrapper = t.path().join("gnome-terminal.wrapper");
+    executable_file(&wrapper);
+    let x = t.path().join("x-terminal-emulator");
+    std::os::unix::fs::symlink(&wrapper, &x).unwrap();
+    assert_eq!(real_terminal(&x, |_| None), x, "a wrapper without its terminal stays the xterm-compatible entry");
+    let odd = t.path().join("odd-term");
+    executable_file(&odd);
+    let y = t.path().join("y").join("x-terminal-emulator");
+    std::fs::create_dir_all(y.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&odd, &y).unwrap();
+    assert_eq!(real_terminal(&y, |_| None), y);
+    assert_eq!(strings(terminal_args(&y, Some(Path::new("/srv")), None)), ["-e", "sh", "-c", OPEN_SCRIPT, "flit", "/srv"]);
+    let missing = t.path().join("gone");
+    assert_eq!(real_terminal(&missing, |_| None), missing);
+    let konsole = t.path().join("konsole");
+    executable_file(&konsole);
+    assert_eq!(real_terminal(&konsole, |_| None), std::fs::canonicalize(&konsole).unwrap());
 }
 
 #[test]
@@ -182,6 +237,8 @@ fn programs_run_in_terminals_with_each_terminal_s_syntax() {
     let cmd = || Some(vec![OsString::from("my app"), OsString::from("it's")]);
     let args = |t: &str| strings(terminal_args(Path::new(t), None, cmd()));
     assert_eq!(args("gnome-terminal"), ["--", "my app", "it's"]);
+    assert_eq!(args("ptyxis"), ["--new-window", "--", "my app", "it's"]);
+    assert_eq!(args("x-terminal-emulator"), ["-e", "my app", "it's"]);
     assert_eq!(args("xfce4-terminal"), ["-x", "my app", "it's"]);
     assert_eq!(args("konsole"), ["-e", "my app", "it's"]);
     assert_eq!(args("foot"), ["my app", "it's"]);
