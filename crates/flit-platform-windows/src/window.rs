@@ -20,7 +20,7 @@ use std::sync::Arc;
 use windows::core::{w, BOOL, PCWSTR};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK, DWMWA_USE_IMMERSIVE_DARK_MODE};
-use windows::Win32::Graphics::Gdi::{GetSysColor, SYS_COLOR_INDEX, COLOR_BTNFACE, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_HOTLIGHT, COLOR_WINDOW, COLOR_WINDOWTEXT, ClientToScreen, GetMonitorInfoW, MonitorFromWindow, ScreenToClient, ValidateRect, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+use windows::Win32::Graphics::Gdi::{GetSysColor, SYS_COLOR_INDEX, COLOR_BTNFACE, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_HOTLIGHT, COLOR_WINDOW, COLOR_WINDOWTEXT, ClientToScreen, GetMonitorInfoW, MonitorFromRect, MonitorFromWindow, ScreenToClient, ValidateRect, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::System::DataExchange::{AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, IsClipboardFormatAvailable, SetClipboardData};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
@@ -524,6 +524,23 @@ impl Window for Win32Window {
     }
 }
 
+pub(crate) fn fit_rect(r: RECT, area: RECT) -> RECT {
+    let w = (r.right - r.left).clamp(0, (area.right - area.left).max(0));
+    let h = (r.bottom - r.top).clamp(0, (area.bottom - area.top).max(0));
+    let left = r.left.clamp(area.left, area.right - w);
+    let top = r.top.clamp(area.top, area.bottom - h);
+    RECT { left, top, right: left + w, bottom: top + h }
+}
+
+fn within_monitor(r: RECT, whole: bool) -> RECT {
+    let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+    let monitor = unsafe { MonitorFromRect(&r, MONITOR_DEFAULTTONEAREST) };
+    if !unsafe { GetMonitorInfoW(monitor, &mut mi) }.as_bool() {
+        return r;
+    }
+    fit_rect(r, if whole { mi.rcMonitor } else { mi.rcWork })
+}
+
 pub(crate) fn high_contrast() -> Option<SystemColors> {
     if crate::d3d::capture_path().is_some() && std::env::var_os("FLIT_CAPTURE_CONTRAST").is_some() {
         let c = Color::rgb;
@@ -719,10 +736,12 @@ impl<H: WindowHandler<Win32>> Shared<H> {
         OPEN.with_borrow_mut(|open| open.push((hwnd.0 as isize, id)));
         let mut maximized = false;
         if let Some(p) = opts.placement.filter(|p| !hidden && p.width > 100 && p.height > 100) {
+            let saved = RECT { left: p.x, top: p.y, right: p.x + p.width, bottom: p.y + p.height };
+            let room = within_monitor(saved, false);
             let wp = WINDOWPLACEMENT {
                 length: size_of::<WINDOWPLACEMENT>() as u32,
                 showCmd: SW_HIDE.0 as u32,
-                rcNormalPosition: RECT { left: p.x, top: p.y, right: p.x + p.width, bottom: p.y + p.height },
+                rcNormalPosition: RECT { right: saved.left + (room.right - room.left), bottom: saved.top + (room.bottom - room.top), ..saved },
                 ..Default::default()
             };
             let _ = SetWindowPlacement(hwnd, &wp);
@@ -1250,8 +1269,10 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
             let dpi = ((wp.0 >> 16) & 0xFFFF) as u32;
             w.dpi.set(dpi);
             s.send(Event::ScaleChanged(dpi as f32 / 96.0));
-            let r = &*(lp.0 as *const RECT);
-            let _ = SetWindowPos(hwnd, None, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+            if !IsZoomed(hwnd).as_bool() {
+                let r = within_monitor(*(lp.0 as *const RECT), w.mode.get() == Mode::Full);
+                let _ = SetWindowPos(hwnd, None, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+            }
             Some(LRESULT(0))
         }
         WM_GETMINMAXINFO => {
