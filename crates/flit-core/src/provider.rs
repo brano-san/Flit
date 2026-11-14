@@ -359,6 +359,7 @@ struct Answer {
 #[derive(Default, Debug)]
 struct Control {
     cancelled: AtomicBool,
+    paused: AtomicBool,
     answer: Mutex<Answer>,
     changed: Condvar,
 }
@@ -385,6 +386,26 @@ impl OpCtl {
 
     pub fn is_cancelled(&self) -> bool {
         self.0.cancelled.load(Ordering::Acquire)
+    }
+
+    pub fn pause(&self, paused: bool) {
+        self.0.paused.store(paused, Ordering::Release);
+        let _held = self.lock();
+        self.0.changed.notify_all();
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.0.paused.load(Ordering::Acquire)
+    }
+
+    pub fn wait_while_paused(&self) {
+        if !self.is_paused() {
+            return;
+        }
+        let mut a = self.lock();
+        while self.is_paused() && !self.is_cancelled() {
+            a = self.0.changed.wait(a).unwrap_or_else(|e| e.into_inner());
+        }
     }
 
     pub fn policy(&self) -> Option<Resolve> {

@@ -1950,7 +1950,7 @@ impl App {
             Hit::SideHeader(_) | Hit::HomeItem(_) | Hit::HomeEmpty => None,
             Hit::Splitter | Hit::FilterField | Hit::FilterClose | Hit::PanelSep(_) | Hit::Menu | Hit::QuickToggle => None,
             Hit::PaletteRow(_) | Hit::PaletteKeys(_) | Hit::PaletteField | Hit::PaletteBox | Hit::PaletteOutside | Hit::PaletteClose | Hit::PaletteDescribe | Hit::PaletteScroll(_) => None,
-            Hit::OpsButton | Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsClear | Hit::OpsCancel(_) | Hit::OpsMore(_) | Hit::OpsMenu(_) => None,
+            Hit::OpsButton | Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsClear | Hit::OpsCancel(_) | Hit::OpsPause(_) | Hit::OpsMore(_) | Hit::OpsMenu(_) => None,
             Hit::Dialog | Hit::DialogButton(_) | Hit::DialogCheck | Hit::Form(_) | Hit::Modal | Hit::Preview(_) => None,
             _ if self.layout.status.contains(x, y) => None,
             _ => Some(Target::Reveal),

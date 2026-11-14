@@ -36,6 +36,8 @@ const G_WARNING: &str = "\u{E7BA}";
 const G_DONE: &str = "\u{E73E}";
 const G_CLOSE: &str = "\u{E8BB}";
 const G_MORE: &str = "\u{E712}";
+const G_PAUSE: &str = "\u{E769}";
+const G_PLAY: &str = "\u{E768}";
 
 const CONFLICT_ANSWERS: [S; 3] = [S::UiButtonReplace, S::UiButtonKeepBoth, S::UiButtonSkip];
 const POLICY_BUTTONS: [S; 2] = [S::UiButtonSkipSame, S::UiButtonReplaceOlder];
@@ -128,6 +130,7 @@ impl Job {
         match &self.state {
             JobState::Running if self.asking && self.erred => S::UiJobProblem.t().into(),
             JobState::Running if self.asking => S::UiJobConflict.t().into(),
+            JobState::Running if self.ctl.is_paused() => S::UiJobPaused.t().into(),
             JobState::Running if self.progress.stage == Stage::Queued => S::UiJobQueued.t().into(),
             JobState::Running if self.progress.stage == Stage::Preparing => String::new(),
             JobState::Running => format!("{:.0}%", self.fraction() * 100.0),
@@ -152,7 +155,7 @@ impl Job {
                     out
                 };
                 crate::tr_into!(&mut s, S::UiJobBytesOf, done = size(p.bytes), total = size(p.total_bytes));
-                if self.speed > 0.0 {
+                if self.speed > 0.0 && !self.ctl.is_paused() {
                     s.push_str(" · ");
                     crate::tr_into!(&mut s, S::UiJobSpeed, size = size(self.speed as u64));
                 }
@@ -161,7 +164,7 @@ impl Job {
             }
             JobState::Running => {
                 crate::trn_into!(&mut s, P::UiJobItemsOf, p.total_items, done = crate::i18n::num(p.items.min(p.total_items)));
-                if self.speed > 0.0 {
+                if self.speed > 0.0 && !self.ctl.is_paused() {
                     s.push_str(" · ");
                     crate::tr_into!(&mut s, S::UiJobItemsSpeed, speed = format_args!("{:.0}", self.speed));
                 }
@@ -281,6 +284,10 @@ impl Jobs {
 
     fn cancel_rect(row: Rect, s: impl Fn(f32) -> f32) -> Rect {
         Rect::new(row.right() - s(64.0), row.y + s(6.0), s(28.0), s(24.0))
+    }
+
+    fn pause_rect(row: Rect, s: impl Fn(f32) -> f32) -> Rect {
+        Rect::new(row.right() - s(94.0), row.y + s(6.0), s(28.0), s(24.0))
     }
 
     fn more_rect(row: Rect, s: impl Fn(f32) -> f32) -> Rect {
@@ -541,12 +548,13 @@ impl App {
     }
 
     pub fn keeps_awake(&self) -> bool {
-        self.running_jobs() > 0 || self.hashing()
+        self.jobs.list.iter().any(|j| j.state == JobState::Running && !j.ctl.is_paused()) || self.hashing()
     }
 
     pub fn overall_progress(&self) -> Option<(f32, bool)> {
         let running: Vec<f32> = self.jobs.list.iter().filter(|j| j.state == JobState::Running).map(Job::fraction).collect();
-        (!running.is_empty()).then(|| (running.iter().sum::<f32>() / running.len() as f32, !self.jobs.asks.is_empty()))
+        let held = !self.jobs.asks.is_empty() || self.jobs.list.iter().any(|j| j.state == JobState::Running && j.ctl.is_paused());
+        (!running.is_empty()).then(|| (running.iter().sum::<f32>() / running.len() as f32, held))
     }
 
     pub fn close_window(&mut self, now: Instant) {
@@ -615,11 +623,23 @@ impl App {
         }
     }
 
+    pub fn pause_job(&mut self, row: usize) {
+        let i = self.jobs.row_of(row);
+        if let Some(j) = self.jobs.list.get_mut(i).filter(|j| j.state == JobState::Running) {
+            j.ctl.pause(!j.ctl.is_paused());
+            (j.mark, j.speed) = (None, 0.0);
+            self.dirty = true;
+        }
+    }
+
     fn job_menu(&self, row: usize) -> Vec<S> {
         let Some(j) = self.jobs.list.get(self.jobs.row_of(row)) else { return Vec::new() };
         let mut items = Vec::new();
         if j.dest.is_some() {
             items.push(S::UiJobOpenDestination);
+        }
+        if j.state == JobState::Running {
+            items.push(if j.ctl.is_paused() { S::UiJobResume } else { S::UiJobPause });
         }
         items.push(if j.state == JobState::Running { S::UiButtonCancel } else { S::UiJobRemove });
         items
@@ -641,6 +661,7 @@ impl App {
                 }
             }
             Some(S::UiButtonCancel) => self.cancel_job(row),
+            Some(S::UiJobPause | S::UiJobResume) => self.pause_job(row),
             Some(_) => {
                 self.jobs.list.remove(i);
                 self.jobs.first = self.jobs.first.min(self.jobs.list.len().saturating_sub(MAX_ROWS));
@@ -796,7 +817,7 @@ impl App {
     }
 
     pub(super) fn jobs_wheel(&mut self, dy: f32, now: Instant) -> bool {
-        if !self.jobs.open || !matches!(self.hover, Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsCancel(_) | Hit::OpsMore(_)) {
+        if !self.jobs.open || !matches!(self.hover, Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsCancel(_) | Hit::OpsPause(_) | Hit::OpsMore(_)) {
             return false;
         }
         let rows = self.wheel_steps.add(super::pointer::Steps::Jobs, dy, now);
@@ -916,6 +937,9 @@ impl App {
             if running && Jobs::cancel_rect(row, s).contains(x, y) {
                 return Some(Hit::OpsCancel(i));
             }
+            if running && Jobs::pause_rect(row, s).contains(x, y) {
+                return Some(Hit::OpsPause(i));
+            }
             if row.contains(x, y) {
                 return Some(Hit::OpsRow(i));
             }
@@ -924,7 +948,7 @@ impl App {
     }
 
     pub(super) fn jobs_mouse_down(&mut self, h: Hit) -> bool {
-        let ours = matches!(h, Hit::Modal | Hit::Dialog | Hit::DialogButton(_) | Hit::DialogCheck | Hit::Form(_) | Hit::OpsButton | Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsClear | Hit::OpsCancel(_) | Hit::OpsMore(_) | Hit::OpsMenu(_));
+        let ours = matches!(h, Hit::Modal | Hit::Dialog | Hit::DialogButton(_) | Hit::DialogCheck | Hit::Form(_) | Hit::OpsButton | Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsClear | Hit::OpsCancel(_) | Hit::OpsPause(_) | Hit::OpsMore(_) | Hit::OpsMenu(_));
         if !ours {
             if self.jobs.open {
                 self.jobs.open = false;
@@ -946,6 +970,7 @@ impl App {
             Hit::OpsButton => self.toggle_jobs(),
             Hit::OpsClear => self.clear_completed(),
             Hit::OpsCancel(row) => self.cancel_job(row),
+            Hit::OpsPause(row) => self.pause_job(row),
             Hit::OpsMore(row) => {
                 self.jobs.menu = if self.jobs.menu == Some(row) { None } else { Some(row) };
                 self.layout();
@@ -1041,7 +1066,7 @@ impl App {
                 g.dl.round_rect(row, t.error.alpha(0x1C), s4);
                 g.dl.round_rect(Rect::new(row.x + s(2.0), row.y + s(6.0), s(3.0), row.h - s(12.0)), t.error, s(1.5));
             }
-            let lit = if self.jobs.menu == Some(i) { 1.0 } else { self.lit(Hit::OpsRow(i)).max(self.lit(Hit::OpsCancel(i))).max(self.lit(Hit::OpsMore(i))) };
+            let lit = if self.jobs.menu == Some(i) { 1.0 } else { self.lit(Hit::OpsRow(i)).max(self.lit(Hit::OpsCancel(i))).max(self.lit(Hit::OpsPause(i))).max(self.lit(Hit::OpsMore(i))) };
             if lit > 0.0 {
                 g.dl.round_rect(row, super::widgets::faded(t.hover, lit), s4);
             }
@@ -1049,10 +1074,11 @@ impl App {
                 g.dl.rect(Rect::new(row.x + s12, row.y, row.w - 2.0 * s12, 1.0), t.separator);
             }
             let running = j.state == JobState::Running;
-            let (more, cancel) = (Jobs::more_rect(row, s), Jobs::cancel_rect(row, s));
+            let (more, cancel, pause) = (Jobs::more_rect(row, s), Jobs::cancel_rect(row, s), Jobs::pause_rect(row, s));
             let status = j.status();
             let sw = g.measure(&status, small);
-            let title_end = if running { cancel.x } else { more.x } - s(8.0) - sw;
+            let title_end = if running { pause.x } else { more.x } - s(8.0) - sw;
+            let pause_glyph = if j.ctl.is_paused() { G_PLAY } else { G_PAUSE };
             let mt = g.metrics(font);
             let title_y = (row.y + s(6.0) + (s(24.0) + mt.ascent - mt.descent) / 2.0).round();
             let title_x = if failed {
@@ -1068,7 +1094,7 @@ impl App {
                 _ => t.accent,
             };
             g.text(title_end, title_y, &status, small, status_color, f32::INFINITY);
-            for (b, glyph, show, hit) in [(cancel, G_CLOSE, running, Hit::OpsCancel(i)), (more, G_MORE, true, Hit::OpsMore(i))] {
+            for (b, glyph, show, hit) in [(pause, pause_glyph, running, Hit::OpsPause(i)), (cancel, G_CLOSE, running, Hit::OpsCancel(i)), (more, G_MORE, true, Hit::OpsMore(i))] {
                 if !show {
                     continue;
                 }
@@ -1254,7 +1280,7 @@ impl App {
 }
 
 fn self_menu_len(j: &Jobs, row: usize) -> usize {
-    j.list.get(j.row_of(row)).map_or(0, |job| 1 + usize::from(job.dest.is_some()))
+    j.list.get(j.row_of(row)).map_or(0, |job| 1 + usize::from(job.dest.is_some()) + usize::from(job.state == JobState::Running))
 }
 
 #[cfg(test)]

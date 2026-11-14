@@ -506,6 +506,7 @@ enum Hit {
     OpsRow(usize),
     OpsClear,
     OpsCancel(usize),
+    OpsPause(usize),
     OpsMore(usize),
     OpsMenu(usize),
     Dialog,

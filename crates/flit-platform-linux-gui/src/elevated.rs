@@ -117,10 +117,15 @@ pub fn drive<R: Read, W: Write + Send + 'static>(mut input: R, output: W, op: &F
     let watcher = {
         let (finished, output, job) = (finished.clone(), output.clone(), job.clone());
         std::thread::Builder::new().name("flit-elevated-cancel".into()).spawn(move || {
+            let mut paused = false;
             while !finished.load(Ordering::Acquire) {
                 if job.cancelled() {
                     let _ = send(&output, &Request::Cancel { id: OP });
                     return;
+                }
+                if job.ctl().is_paused() != paused {
+                    paused = !paused;
+                    let _ = send(&output, &Request::Pause { id: OP, paused });
                 }
                 std::thread::sleep(CANCEL_POLL);
             }

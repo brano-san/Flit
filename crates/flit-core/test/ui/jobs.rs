@@ -187,8 +187,8 @@ fn the_more_menu_opens_the_destination_or_removes_the_entry() {
     app.run_action("ops.show", t0());
     let (id, ctl) = paste(&mut app);
     click(&mut app, |a| Jobs::more_rect(a.jobs.r.rows[0], unscaled));
-    assert_eq!((app.jobs.menu, app.job_menu_items(0)), (Some(0), vec!["Open destination", "Cancel"]));
-    click(&mut app, |a| a.jobs.r.menu[1]);
+    assert_eq!((app.jobs.menu, app.job_menu_items(0)), (Some(0), vec!["Open destination", "Pause", "Cancel"]));
+    click(&mut app, |a| a.jobs.r.menu[2]);
     assert!(ctl.is_cancelled());
     finish(&mut app, id, None);
     click(&mut app, |a| Jobs::more_rect(a.jobs.r.rows[0], unscaled));
@@ -708,4 +708,37 @@ fn conflict_buttons_never_overlap_even_in_a_narrow_window() {
         key(&mut app, Key::Escape);
         waiting.join().unwrap();
     }
+}
+
+#[test]
+fn a_running_operation_pauses_and_resumes_from_its_row_or_its_menu() {
+    let mut app = app_at(r"C:\x");
+    app.run_action("ops.show", t0());
+    let (first, ctl) = paste(&mut app);
+    let (_, other) = paste(&mut app);
+    let tab = app.tab().id;
+    let progress = OpProgress { stage: Stage::Running, bytes: 50, total_bytes: 200, items: 1, total_items: 4 };
+    app.on_provider_event(ProviderEvent::OpProgress { tab, id: first, progress }, t0());
+    let row = app.jobs.list.iter().position(|j| j.id == first).map(|k| app.jobs.row_of(k)).unwrap();
+    let mut g = Gfx::new(Mono, 2048);
+    app.frame(&mut g, t0());
+    assert!(app.keeps_awake());
+    click(&mut app, |a| Jobs::pause_rect(a.jobs.r.rows[row], unscaled));
+    assert!(ctl.is_paused() && !other.is_paused(), "only that operation pauses");
+    let j = app.jobs.list.iter().find(|j| j.id == first).unwrap();
+    assert_eq!(j.status(), "Paused");
+    assert!(j.detail(false).starts_with("50 B of 200 B"));
+    assert_eq!(app.overall_progress().map(|p| p.1), Some(true), "the taskbar shows the paused state");
+    app.frame(&mut g, t0());
+    click(&mut app, |a| Jobs::more_rect(a.jobs.r.rows[row], unscaled));
+    assert_eq!(app.job_menu_items(row), ["Open destination", "Resume", "Cancel"]);
+    click(&mut app, |a| a.jobs.r.menu[1]);
+    assert!(!ctl.is_paused() && !ctl.is_cancelled());
+    app.pause_job(row);
+    finish(&mut app, first, None);
+    app.frame(&mut g, t0());
+    let done = app.jobs.list.iter().position(|j| j.id == first).map(|k| app.jobs.row_of(k)).unwrap();
+    let r = Jobs::pause_rect(app.jobs.r.rows[done], unscaled);
+    assert_ne!(app.jobs_hit(r.x + 2.0, r.y + 2.0), Some(Hit::OpsPause(done)), "a finished operation has nothing to pause");
+    assert!(!app.job_menu_items(done).contains(&"Resume"));
 }

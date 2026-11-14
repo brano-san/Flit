@@ -159,3 +159,18 @@ fn short_of_space_without_anyone_to_ask_refuses_and_enough_space_asks_nothing() 
     assert_eq!(job.room(&dest, 10, || None), Ok(()), "an unknown free space does not stop the copy");
     assert!(seen.lock().unwrap().is_empty());
 }
+
+#[test]
+fn progress_from_a_paused_job_holds_the_worker_until_it_resumes() {
+    let job = Job::detached(Resolve::Skip);
+    job.ctl().pause(true);
+    let worker = {
+        let job = job.clone();
+        std::thread::spawn(move || job.update(|p| p.items += 1))
+    };
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    assert_eq!(job.progress().items, 0);
+    job.ctl().pause(false);
+    worker.join().unwrap();
+    assert_eq!(job.progress().items, 1);
+}

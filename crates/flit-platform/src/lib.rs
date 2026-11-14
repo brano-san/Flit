@@ -381,6 +381,7 @@ impl Job {
     }
 
     pub fn update(&self, f: impl FnOnce(&mut OpProgress)) {
+        self.0.ctl.wait_while_paused();
         let mut now = self.0.now.lock().unwrap_or_else(|e| e.into_inner());
         f(&mut now.progress);
         let (t, p) = (std::time::Instant::now(), now.progress);

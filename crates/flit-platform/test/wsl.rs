@@ -444,6 +444,21 @@ fn a_replace_older_answer_reaches_the_agent_as_its_decision_and_its_policy() {
 }
 
 #[test]
+fn pausing_and_resuming_an_operation_reaches_the_agent() {
+    let s = setup(Fake::new(|req| if matches!(req, Request::Op { .. }) { Some(Vec::new()) } else { op_events(req) }), Timing::default());
+    let ctl = OpCtl::default();
+    s.wsl.submit(ProviderRequest::Op { tab: 1, id: 5, op: copy(), ctl: ctl.clone() });
+    until("op", || s.fake.seen().iter().any(|r| matches!(r, Request::Op { .. })));
+    ctl.pause(true);
+    until("pause", || s.fake.seen().contains(&Request::Pause { id: 1, paused: true }));
+    ctl.pause(false);
+    until("resume", || s.fake.seen().contains(&Request::Pause { id: 1, paused: false }));
+    ctl.cancel();
+    until("cancel", || s.fake.seen().contains(&Request::Cancel { id: 1 }));
+    assert_eq!(s.fake.seen().iter().filter(|r| matches!(r, Request::Pause { .. })).count(), 2, "each change is sent once");
+}
+
+#[test]
 fn cancelling_an_operation_reaches_the_agent() {
     let s = setup(Fake::new(|req| if matches!(req, Request::Op { .. }) { Some(Vec::new()) } else { op_events(req) }), Timing::default());
     let ctl = OpCtl::new(Some(Resolve::Skip));

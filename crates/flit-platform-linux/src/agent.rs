@@ -201,6 +201,11 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static, build: S
                 (Some(ctl), None) => ctl.cancel(),
                 (None, _) => {}
             },
+            Request::Pause { id, paused } => {
+                if let Some(ctl) = ctx.ops().get(&id) {
+                    ctl.pause(paused);
+                }
+            }
             Request::Recover { id, choice, all } => match (ctx.ops().get(&id), choice) {
                 (Some(ctl), Some(choice)) => ctl.answer_failure(choice, all),
                 (Some(ctl), None) => ctl.cancel(),

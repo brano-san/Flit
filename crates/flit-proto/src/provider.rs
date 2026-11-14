@@ -24,6 +24,7 @@ pub enum Request {
     Shutdown,
     Recover { id: ReqId, choice: Option<Recover>, all: bool },
     Lang { code: String },
+    Pause { id: ReqId, paused: bool },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

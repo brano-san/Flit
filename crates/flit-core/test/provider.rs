@@ -100,3 +100,26 @@ fn an_answer_settled_elsewhere_carries_the_policy_for_the_rest() {
     assert_eq!(first, Some(Resolve::Skip));
     assert_eq!(ctl.resolve(&files((1, t + 60 * SECOND), (2, t)), || panic!("asked again")), Some(Resolve::Replace));
 }
+
+#[test]
+fn a_paused_operation_waits_until_it_is_resumed_or_cancelled() {
+    let ctl = OpCtl::default();
+    ctl.wait_while_paused();
+    ctl.pause(true);
+    let (c, done) = (ctl.clone(), Arc::new(AtomicBool::new(false)));
+    let d = done.clone();
+    let waiting = std::thread::spawn(move || {
+        c.wait_while_paused();
+        d.store(true, Ordering::Release);
+    });
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(!done.load(Ordering::Acquire), "the operation does not go on while paused");
+    ctl.pause(false);
+    waiting.join().unwrap();
+    ctl.pause(true);
+    let c = ctl.clone();
+    let waiting = std::thread::spawn(move || c.wait_while_paused());
+    ctl.cancel();
+    waiting.join().unwrap();
+    assert!(ctl.is_paused() && ctl.is_cancelled(), "cancel ends the wait without resuming");
+}

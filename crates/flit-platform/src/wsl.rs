@@ -154,6 +154,7 @@ struct OpState {
     request: FileOp,
     ctl: OpCtl,
     cancelled: bool,
+    paused: bool,
     clear: bool,
     performed: Option<FileOp>,
 }
@@ -345,19 +346,23 @@ impl Ctl {
     }
 
     fn poll_cancels(&mut self) {
-        let newly: Vec<ReqId> = self
+        let newly: Vec<Request> = self
             .pending
             .iter_mut()
             .filter_map(|(&id, p)| match p {
                 Pending::Op(o) if !o.cancelled && o.ctl.is_cancelled() => {
                     o.cancelled = true;
-                    Some(id)
+                    Some(Request::Cancel { id })
+                }
+                Pending::Op(o) if !o.cancelled && o.paused != o.ctl.is_paused() => {
+                    o.paused = !o.paused;
+                    Some(Request::Pause { id, paused: o.paused })
                 }
                 _ => None,
             })
             .collect();
-        for id in newly {
-            self.send(Request::Cancel { id });
+        for req in newly {
+            self.send(req);
         }
     }
 
@@ -581,7 +586,7 @@ impl Ctl {
                 }
                 let id = self.id();
                 let policy = ctl.policy();
-                self.pending.insert(id, Pending::Op(OpState { tab, op, request: request.clone(), ctl, cancelled: false, clear, performed: None }));
+                self.pending.insert(id, Pending::Op(OpState { tab, op, request: request.clone(), ctl, cancelled: false, paused: false, clear, performed: None }));
                 self.send(Request::Lang { code: flit_core::i18n::lang().code().into() });
                 self.send(Request::Op { id, op: request, policy });
             }
