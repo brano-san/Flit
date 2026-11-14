@@ -1368,6 +1368,15 @@ impl App {
         self.ops.rename.is_some()
     }
 
+    pub(super) fn rename_selection(&self) -> Option<&str> {
+        let edit = &self.ops.rename.as_ref()?.edit;
+        edit.text.get(edit.selection())
+    }
+
+    pub(super) fn rename_contains(&self, x: f32, y: f32) -> bool {
+        self.ops.rename.as_ref().is_some_and(|r| r.rect.contains(x, y))
+    }
+
     pub(super) fn rename_insert(&mut self, what: Insert) {
         let Some(r) = &self.ops.rename else { return };
         let t = self.tab();

@@ -350,6 +350,8 @@ pub enum Effect {
     ClearThumbnails,
     TypeName(Vec<u8>),
     SetClipboard(String),
+    SetPrimary(String),
+    PastePrimary,
     SetClipboardImage(Bitmap),
     Paste,
     Window(WindowCmd),
@@ -690,6 +692,7 @@ pub struct App {
     archive: archive::ArchiveUi,
     strip: tabbar::Strip,
     addr: address::Address,
+    primary: String,
     ghosts: widgets::Ghosts,
     bar_arrivals: widgets::Arrivals,
     rolls: [bottom::Roll; 2],
@@ -818,6 +821,7 @@ impl App {
             archive: archive::ArchiveUi::new(state.archive),
             strip: Default::default(),
             addr: Default::default(),
+            primary: String::new(),
             ghosts: Default::default(),
             bar_arrivals: Default::default(),
             rolls: Default::default(),
@@ -1651,6 +1655,16 @@ impl App {
     }
 
     pub fn on_event(&mut self, ev: &Event, now: Instant) {
+        if self.caps.unix_paths && self.middle_paste(ev, now) {
+            return;
+        }
+        self.handle_event(ev, now);
+        if self.caps.unix_paths {
+            self.offer_primary();
+        }
+    }
+
+    fn handle_event(&mut self, ev: &Event, now: Instant) {
         if matches!(ev, Event::MouseDown { .. } | Event::Key { pressed: true, .. } | Event::Wheel { .. } | Event::Pinch(_) | Event::MouseLeave | Event::Focus(false) | Event::ShowMenu { .. }) {
             self.tip_hide();
             self.quick_hide();

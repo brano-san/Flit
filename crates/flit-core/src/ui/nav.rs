@@ -246,6 +246,39 @@ impl App {
         }
     }
 
+    fn selected_text(&self) -> Option<&str> {
+        if self.is_renaming() {
+            return self.rename_selection();
+        }
+        if self.search.active {
+            return self.search.edit.text.get(self.search.edit.selection());
+        }
+        let f = self.text_field(self.text_field_hit()?).filter(|f| !f.secret)?;
+        f.edit.text.get(f.edit.selection())
+    }
+
+    pub(super) fn offer_primary(&mut self) {
+        let Some(text) = self.selected_text().filter(|t| !t.is_empty() && *t != self.primary).map(str::to_owned) else { return };
+        self.primary.clone_from(&text);
+        self.effects.push(super::Effect::SetPrimary(text));
+    }
+
+    pub(super) fn middle_paste(&mut self, ev: &crate::input::Event, now: Instant) -> bool {
+        use crate::input::Event;
+        let Event::MouseDown { x, y, button: MouseButton::Middle, .. } = *ev else { return false };
+        let field = self.text_field_hit().filter(|_| self.text_field_rect().is_some_and(|r| r.contains(x, y)));
+        if field.is_none() && !self.rename_contains(x, y) {
+            return false;
+        }
+        self.handle_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, now);
+        self.handle_event(&Event::MouseUp { x, y, button: MouseButton::Left }, now);
+        if let Some(f) = field.and_then(|h| self.text_field_mut(h)) {
+            f.edit.anchor = f.edit.caret;
+        }
+        self.effects.push(super::Effect::PastePrimary);
+        true
+    }
+
     fn text_field_rect(&self) -> Option<Rect> {
         match self.text_field_hit()? {
             Hit::FilterField => Some(self.nav.filter.field),

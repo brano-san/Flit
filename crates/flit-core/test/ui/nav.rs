@@ -884,3 +884,48 @@ fn the_inspector_filter_picks_words_drags_and_offers_the_field_menu() {
     assert_eq!(app.inspector_filter().unwrap().text(), "");
     assert_eq!(app.tab().location(), &loc(r"C:\x"), "cutting text never cuts files");
 }
+
+fn primaries(app: &mut App) -> Vec<String> {
+    app.drain_effects().filter_map(|e| if let Effect::SetPrimary(s) = e { Some(s) } else { None }).collect()
+}
+
+#[test]
+fn on_linux_text_selected_in_a_field_becomes_the_primary_selection_once() {
+    let mut app = app_at("/home/u");
+    app.caps = crate::caps::Caps { unix_paths: true };
+    files(&mut app, &["alpha"]);
+    filter_with(&mut app, "alpha");
+    assert!(primaries(&mut app).is_empty(), "typing selects nothing");
+    key(&mut app, Key::Char('A'), CTRL);
+    assert_eq!(primaries(&mut app), ["alpha"]);
+    app.on_event(&Event::MouseMove { x: 5.0, y: 5.0 }, t0());
+    assert!(primaries(&mut app).is_empty(), "the same selection is not offered again");
+}
+
+#[test]
+fn on_windows_text_selected_in_a_field_is_not_offered_as_a_primary_selection() {
+    let mut app = app_at(r"C:\x");
+    files(&mut app, &["alpha"]);
+    filter_with(&mut app, "alpha");
+    key(&mut app, Key::Char('A'), CTRL);
+    assert!(primaries(&mut app).is_empty());
+}
+
+#[test]
+fn a_middle_click_in_the_focused_field_pastes_the_primary_selection_where_it_lands() {
+    let mut app = app_at("/home/u");
+    app.caps = crate::caps::Caps { unix_paths: true };
+    files(&mut app, &["alpha"]);
+    let (start, _) = filter_with(&mut app, "alpha");
+    key(&mut app, Key::Char('A'), CTRL);
+    app.drain_effects().for_each(drop);
+    app.on_event(&Event::MouseDown { x: start.0 + 20.0, y: start.1, button: MouseButton::Middle, clicks: 1 }, t0());
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::PastePrimary)));
+    redraw(&mut app);
+    app.on_paste("X");
+    let text = app.tab().filter.as_ref().unwrap().text().to_owned();
+    assert_eq!(text, "alXpha", "inserted where the button went down instead of over the selected text");
+    let row = (app.layout.cols[0].x + 100.0, app.layout.list.y + app.layout.row_h / 2.0);
+    app.on_event(&Event::MouseDown { x: row.0, y: row.1, button: MouseButton::Middle, clicks: 1 }, t0());
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::PastePrimary)), "outside a field the middle button keeps its own job");
+}

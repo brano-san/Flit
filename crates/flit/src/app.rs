@@ -561,6 +561,12 @@ impl<P: Platform> Handler<P> {
                         st.app.on_paste(&text);
                     }
                 }
+                Effect::SetPrimary(text) => window.set_primary_text(&text),
+                Effect::PastePrimary => {
+                    if let (Some(text), Some(st)) = (window.primary_text(), self.windows.get_mut(&id)) {
+                        st.app.on_paste(&text);
+                    }
+                }
                 Effect::Window(WindowCmd::Minimize) => window.minimize(),
                 Effect::Window(WindowCmd::ToggleMaximize) => window.toggle_maximize(),
                 Effect::Window(WindowCmd::Fullscreen) => window.toggle_fullscreen(),

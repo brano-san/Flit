@@ -204,6 +204,8 @@ enum Command {
     Copy(String),
     CopyFiles(Vec<FsPath>, bool),
     CopyImage(Bitmap),
+    SetPrimary(String),
+    PastePrimary,
     Drag(winit::window::WindowId, Vec<FsPath>, f32),
     Activate(WindowId, String),
 }
@@ -459,6 +461,15 @@ impl Window for LinuxWindow {
 
     fn set_clipboard_text(&self, text: &str) {
         self.push(Command::Copy(text.to_owned()));
+    }
+
+    fn set_primary_text(&self, text: &str) {
+        self.push(Command::SetPrimary(text.to_owned()));
+    }
+
+    fn primary_text(&self) -> Option<String> {
+        self.push(Command::PastePrimary);
+        None
     }
 
     fn set_clipboard_image(&self, image: &Bitmap) {
@@ -725,6 +736,27 @@ fn paste(el: &dyn ActiveEventLoop, window: WindowId) {
     }
 }
 
+fn set_primary(el: &dyn ActiveEventLoop, text: String) {
+    let Some(ext) = el.primary_selection_ext() else { return };
+    let data = DataTransferSendBuilder::new(text).with_type(TypeHint::Plaintext, |text: &String, _| Some(text.clone())).build();
+    if let Err(e) = ext.set_primary_selection(data) {
+        tracing::debug!("cannot set the primary selection: {e}");
+    }
+}
+
+fn paste_primary(el: &dyn ActiveEventLoop) {
+    let Some(ext) = el.primary_selection_ext() else { return };
+    match ext.primary_selection() {
+        Ok(Some(id)) => {
+            if let Err(e) = el.fetch_data_transfer(id, &TypeHint::Plaintext) {
+                tracing::debug!("the primary selection has no text: {e}");
+            }
+        }
+        Ok(None) => {}
+        Err(e) => tracing::debug!("cannot read the primary selection: {e}"),
+    }
+}
+
 fn copy(el: &dyn ActiveEventLoop, text: String) {
     let data = DataTransferSendBuilder::new(text.clone()).with_type(TypeHint::Plaintext, |text: &String, _| Some(text.clone())).build();
     if let Err(e) = el.set_clipboard(data) {
@@ -808,6 +840,8 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                     Command::Copy(text) => copy(el, text),
                     Command::CopyFiles(paths, cut) => self.copy_files(el, paths, cut),
                     Command::CopyImage(image) => self.copy_image(el, &image),
+                    Command::SetPrimary(text) => set_primary(el, text),
+                    Command::PastePrimary => paste_primary(el),
                     Command::Drag(source, paths, scale) => self.outgoing = drag_out(el, source, paths, scale),
                     Command::Activate(id, token) => self.activate(id, token),
                 }
