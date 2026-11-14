@@ -424,7 +424,46 @@ pub fn localize(msg: &str) -> Cow<'_, str> {
             return Cow::Owned(fill(k.in_lang(l), &refs));
         }
     }
+    for (_, k) in LINUX_ERRNO {
+        if let Some(head) = msg.strip_suffix(k.en()).filter(|h| h.ends_with(": ")) {
+            return Cow::Owned(format!("{head}{}", k.in_lang(l)));
+        }
+    }
     Cow::Borrowed(msg)
+}
+
+pub const LINUX_ERRNO: [(i32, S); 23] = [
+    (1, S::ErrorsOsNotPermitted),
+    (2, S::ErrorsOsNotFound),
+    (5, S::ErrorsOsIo),
+    (13, S::ErrorsOsPermissionDenied),
+    (16, S::ErrorsOsBusy),
+    (17, S::ErrorsOsExists),
+    (18, S::ErrorsOsCrossDevice),
+    (19, S::ErrorsOsNoDevice),
+    (20, S::ErrorsOsNotADirectory),
+    (21, S::ErrorsOsIsADirectory),
+    (22, S::ErrorsOsInvalid),
+    (26, S::ErrorsOsTextBusy),
+    (27, S::ErrorsOsTooLarge),
+    (28, S::ErrorsOsNoSpace),
+    (30, S::ErrorsOsReadOnly),
+    (36, S::ErrorsOsNameTooLong),
+    (39, S::ErrorsOsNotEmpty),
+    (40, S::ErrorsOsLoop),
+    (95, S::ErrorsOsNotSupported),
+    (110, S::ErrorsOsTimedOut),
+    (111, S::ErrorsOsRefused),
+    (113, S::ErrorsOsHostUnreachable),
+    (122, S::ErrorsOsQuota),
+];
+
+pub fn linux_errno(code: i32) -> Option<S> {
+    LINUX_ERRNO.iter().find(|e| e.0 == code).map(|e| e.1)
+}
+
+pub fn os_error(code: i32) -> Option<S> {
+    if cfg!(target_os = "linux") { linux_errno(code) } else { None }
 }
 
 pub fn relocalize(msg: &str, from: Lang) -> Cow<'_, str> {

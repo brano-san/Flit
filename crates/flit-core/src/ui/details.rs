@@ -1326,7 +1326,7 @@ impl App {
             FsErrorKind::NoMedia => S::ErrorsFsTitleNoMedia,
         }
         .t();
-        let detail = crate::tr!(if e.kind == FsErrorKind::NoMedia { S::ErrorsFsInsertMedia } else { S::ErrorsFsRetry }, error = e);
+        let detail = crate::tr!(if e.kind == FsErrorKind::NoMedia { S::ErrorsFsInsertMedia } else { S::ErrorsFsRetry }, error = crate::i18n::localize(&e.to_string()));
         let (big, small) = (self.content_font(16.0), self.content_font(13.0));
         let y = list.y + self.cs(48.0);
         centered(g, Rect::new(list.x, y, list.w, self.cs(32.0)), G_WARNING, self.content_icons(24.0), th.error);

@@ -64,6 +64,9 @@ pub fn size_in(out: &mut impl Write, bytes: u64, decimal: bool) {
 }
 
 pub fn io_reason(e: &std::io::Error) -> String {
+    if let Some(s) = e.raw_os_error().and_then(i18n::os_error) {
+        return s.en().to_owned();
+    }
     let text = e.to_string();
     match text.rfind(" (os error ") {
         Some(at) if e.raw_os_error().is_some() => text[..at].to_owned(),

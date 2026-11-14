@@ -301,8 +301,45 @@ fn unix_words_call_shortcuts_links_and_leave_keyboard_shortcuts_alone() {
 fn linux_elevation_and_read_only_errors_follow_the_language() {
     set_lang(Lang::Ru);
     let retry = crate::tr_en!(S::ErrorsOpsExtraNotElevated, error = "/etc/x: Permission denied", why = S::ErrorsOpsExtraNoPkexec.en());
-    assert_eq!(localize(&retry), "/etc/x: Permission denied. Повторить с правами администратора не удалось: не установлен pkexec (polkit)");
+    assert_eq!(localize(&retry), "/etc/x: Отказано в доступе. Повторить с правами администратора не удалось: не установлен pkexec (polkit)");
     let at = crate::tr_en!(S::ErrorsOpsExtraReadOnlyWindowsAt, path = "/media/c/a.txt");
     assert!(localize(&at).starts_with("/media/c/a.txt: диск Windows подключён только для чтения"), "{}", localize(&at));
     set_lang(Lang::En);
+}
+
+#[test]
+fn linux_system_errors_are_shown_in_the_chosen_language() {
+    set_lang(Lang::Ru);
+    assert_eq!(localize("Permission denied"), "Отказано в доступе");
+    assert_eq!(localize("/home/u/a.txt: No space left on device"), "/home/u/a.txt: На устройстве не осталось места", "a path in front of the reason stays as it is");
+    assert_eq!(localize("Directory not empty"), S::ErrorsOsNotEmpty.in_lang(Lang::Ru));
+    assert_eq!(localize("Permission deniedx"), "Permission deniedx");
+    assert_eq!(localize("my file named Permission denied"), "my file named Permission denied", "only a reason after a colon is a system error");
+    set_lang(Lang::En);
+    assert_eq!(localize("/x: Permission denied"), "/x: Permission denied");
+    let mut codes: Vec<i32> = LINUX_ERRNO.iter().map(|e| e.0).collect();
+    codes.dedup();
+    assert_eq!(codes.len(), LINUX_ERRNO.len(), "every errno is listed once");
+    assert_eq!(linux_errno(13), Some(S::ErrorsOsPermissionDenied));
+    assert_eq!(linux_errno(2).map(|s| s.en()), Some("No such file or directory"));
+    assert_eq!(linux_errno(9999), None);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn errno_texts_match_what_the_system_says() {
+    for (code, s) in LINUX_ERRNO {
+        let system = crate::fmt::io_reason(&std::io::Error::from_raw_os_error(code));
+        assert_eq!(system, s.en(), "{code}");
+        let raw = std::io::Error::from_raw_os_error(code).to_string();
+        assert!(raw.starts_with(s.en()), "the C library says {raw:?} for {code}");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn windows_errors_keep_the_system_wording() {
+    let e = std::io::Error::from_raw_os_error(5);
+    assert!(!crate::fmt::io_reason(&e).is_empty());
+    assert_eq!(os_error(13), None, "errno numbers mean nothing on Windows");
 }
