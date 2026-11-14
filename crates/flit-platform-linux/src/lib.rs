@@ -16,7 +16,7 @@ mod temp;
 pub use fs::{host, stat_path, xattr, xattr_names, LinuxFs};
 pub use inotify::{Inotify, Notice, Notify};
 pub use ops::run as run_op;
-pub use tags::{file_key, resolve_files};
+pub use tags::{file_key, merged_tag_names, resolve_files, sync_tag_names};
 pub use walk::{indexed, WalkIndex};
 pub use trash::{percent_decode, percent_encode, trash_time, Trash};
 

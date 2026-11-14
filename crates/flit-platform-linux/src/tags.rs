@@ -187,6 +187,36 @@ pub(crate) fn resolve_with(files: &[(FileKey, &FsPath)], places: impl FnOnce() -
     out.into_iter().zip(keys.iter().zip(&hints)).map(|(r, (k, h))| r.unwrap_or_else(|| h.map_or(Resolved::Unavailable, |h| missing(*k, h, &mounts, &mut elsewhere)))).collect()
 }
 
+const XDG_TAGS: &str = "user.xdg.tags";
+
+pub fn merged_tag_names(current: &[u8], drop: &[String], keep: &[String]) -> Vec<u8> {
+    let text = String::from_utf8_lossy(current);
+    let mut names: Vec<&str> = text.split(',').map(str::trim).filter(|n| !n.is_empty() && !drop.iter().any(|d| d == n)).collect();
+    for k in keep {
+        if !names.contains(&k.as_str()) {
+            names.push(k);
+        }
+    }
+    names.join(",").into_bytes()
+}
+
+pub fn sync_tag_names(path: &FsPath, drop: &[String], keep: &[String]) {
+    let Some(p) = host(path).and_then(probe) else { return };
+    let current = crate::fs::xattr(Path::new(OsStr::from_bytes(p.to_bytes())), XDG_TAGS);
+    let next = merged_tag_names(current.as_deref().unwrap_or_default(), drop, keep);
+    if current.as_deref() == Some(&next[..]) || current.is_none() && next.is_empty() {
+        return;
+    }
+    let name = c"user.xdg.tags";
+    unsafe {
+        if next.is_empty() {
+            libc::removexattr(p.as_ptr(), name.as_ptr());
+        } else {
+            libc::setxattr(p.as_ptr(), name.as_ptr(), next.as_ptr().cast(), next.len(), 0);
+        }
+    }
+}
+
 pub fn resolve_files(files: &[(FileKey, &FsPath)]) -> Vec<Resolved> {
     resolve_with(files, || {
         let mounts = mounts::read().unwrap_or_default();

@@ -303,3 +303,43 @@ fn linux_books_resolve_by_last_known_path_and_name_linux_file_systems() {
     let o = Book::load(None, unix_key, by_hint).apply(TagRequest::Set { items: vec![path(r"c:\x")], tag: 0, on: true });
     assert_eq!(o.status.as_deref(), Some(flit_core::i18n::S::ErrorsTagsNotTaggable.en()), "Windows keeps its NTFS message");
 }
+
+type Synced = Vec<(String, Vec<String>, Vec<String>)>;
+
+thread_local! {
+    static SYNCED: RefCell<Synced> = const { RefCell::new(Vec::new()) };
+}
+
+fn record(p: &FsPath, drop: &[String], keep: &[String]) {
+    SYNCED.with(|s| s.borrow_mut().push((p.display().into_owned(), drop.to_vec(), keep.to_vec())));
+}
+
+fn synced() -> Synced {
+    SYNCED.with(|s| std::mem::take(&mut *s.borrow_mut()))
+}
+
+fn strings(v: &[&str]) -> Vec<String> {
+    v.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn tagging_tells_the_platform_which_names_a_file_carries_and_which_flit_owns() {
+    let mut b = Book::load(None, unix_key, by_hint).on_unix(true).syncing(record);
+    b.store.tags.clear();
+    b.apply(TagRequest::Create { name: "red".into(), color: 1, assign: vec![path("/disk/abc")] });
+    b.apply(TagRequest::Create { name: "work".into(), color: 2, assign: Vec::new() });
+    synced();
+    b.apply(TagRequest::Set { items: vec![path("/disk/abc")], tag: 1, on: true });
+    assert_eq!(synced(), [("/disk/abc".into(), strings(&["red", "work"]), strings(&["red", "work"]))]);
+    b.apply(TagRequest::Rename { tag: 0, name: "urgent".into() });
+    assert_eq!(synced(), [("/disk/abc".into(), strings(&["urgent", "work", "red"]), strings(&["urgent", "work"]))]);
+    b.apply(TagRequest::Delete(1));
+    assert_eq!(synced(), [("/disk/abc".into(), strings(&["urgent", "work"]), strings(&["urgent"]))]);
+    b.apply(TagRequest::Clear(vec![path("/disk/abc")]));
+    assert_eq!(synced(), [("/disk/abc".into(), strings(&["urgent"]), Vec::new())]);
+    b.apply(TagRequest::Recolor { tag: 0, color: 3 });
+    assert!(synced().is_empty(), "a new colour does not touch files");
+    let mut quiet = Book::load(None, unix_key, by_hint).on_unix(true);
+    quiet.apply(TagRequest::Create { name: "red".into(), color: 1, assign: vec![path("/disk/abc")] });
+    assert!(synced().is_empty(), "books that do not sync leave files alone");
+}

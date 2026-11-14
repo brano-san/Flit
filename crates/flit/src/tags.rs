@@ -39,6 +39,7 @@ pub struct Book {
     key_of: fn(&FsPath) -> Option<FileKey>,
     resolve: fn(&[(FileKey, &FsPath)]) -> Vec<Resolved>,
     unix: bool,
+    sync: fn(&FsPath, &[String], &[String]),
 }
 
 fn moved_path(path: &FsPath, from: &FsPath, to: &FsPath) -> Option<FsPath> {
@@ -57,7 +58,23 @@ impl Book {
     pub fn load(file: Option<PathBuf>, key_of: fn(&FsPath) -> Option<FileKey>, resolve: fn(&[(FileKey, &FsPath)]) -> Vec<Resolved>) -> Self {
         let decode = |b: &[u8]| postcard::from_bytes::<TagFile>(b).ok().filter(|t| t.version == FILE_VERSION && t.store.tags.len() <= tags::MAX_TAGS).map(|t| t.store);
         let store = file.as_deref().and_then(|f| crate::schema::load(f, FILE_VERSION, &MIGRATIONS, decode)).unwrap_or_default();
-        Self { store, seen: FxHashMap::default(), version: 0, file, key_of, resolve, unix: false }
+        Self { store, seen: FxHashMap::default(), version: 0, file, key_of, resolve, unix: false, sync: |_, _, _| {} }
+    }
+
+    pub fn syncing(mut self, sync: fn(&FsPath, &[String], &[String])) -> Self {
+        self.sync = sync;
+        self
+    }
+
+    fn names(&self, mask: u32) -> Vec<String> {
+        tags::bits(mask).filter_map(|k| self.store.tags.get(k)).map(|t| t.name.clone()).collect()
+    }
+
+    fn sync_files(&self, files: &[(FsPath, u32)], gone: &[String]) {
+        let drop: Vec<String> = self.store.tags.iter().map(|t| t.name.clone()).chain(gone.iter().cloned()).collect();
+        for (path, mask) in files {
+            (self.sync)(path, &drop, &self.names(*mask));
+        }
     }
 
     pub fn on_unix(mut self, unix: bool) -> Self {
@@ -161,6 +178,12 @@ impl Book {
 
     pub fn apply(&mut self, req: TagRequest) -> Outcome {
         let mut out = Outcome::default();
+        let renamed = match &req {
+            TagRequest::Rename { tag, .. } | TagRequest::Delete(tag) => self.store.tags.get(*tag).map(|t| (*tag, t.name.clone())),
+            _ => None,
+        };
+        let holders: Vec<FileKey> = renamed.as_ref().map(|(k, _)| self.store.files.iter().filter(|(_, t)| t.mask & 1 << k != 0).map(|(key, _)| *key).collect()).unwrap_or_default();
+        let holder_paths: Vec<FsPath> = holders.iter().filter_map(|k| self.store.files.get(k).map(|t| t.path.clone())).collect();
         match req {
             TagRequest::Set { items, tag, on } => self.set(items, tag, on, &mut out),
             TagRequest::Clear(items) => {
@@ -198,6 +221,10 @@ impl Book {
             TagRequest::Command { name, items } => self.command(&name, items, &mut out),
         }
         if out.changed {
+            let gone: Vec<String> = renamed.map(|(_, name)| name).into_iter().collect();
+            let mut synced = out.files.clone();
+            synced.extend(holders.iter().zip(holder_paths).map(|(k, p)| (p, self.store.files.get(k).map_or(0, |t| t.mask))));
+            self.sync_files(&synced, &gone);
             self.learn_new();
             self.save();
         }
@@ -230,7 +257,7 @@ pub fn command_items<P: Platform>(o: &Open) -> Vec<FsPath> {
 }
 
 pub fn run_command<P: Platform>(o: &Open) -> Result<String, String> {
-    let mut book = Book::load(state_file::<P>(), P::file_key, P::resolve_files).on_unix(P::caps().unix_paths);
+    let mut book = Book::load(state_file::<P>(), P::file_key, P::resolve_files).on_unix(P::caps().unix_paths).syncing(P::sync_tag_names);
     let items = command_items::<P>(o);
     if items.is_empty() {
         return Err(S::SidebarTagNeedsArgs.t().into());
@@ -248,7 +275,7 @@ pub struct TagWorker {
 
 impl TagWorker {
     pub fn start<P: Platform>(cell: TagCell, wake: Wake) -> Result<Self, PlatformError> {
-        let mut book = Book::load(state_file::<P>(), P::file_key, P::resolve_files).on_unix(P::caps().unix_paths);
+        let mut book = Book::load(state_file::<P>(), P::file_key, P::resolve_files).on_unix(P::caps().unix_paths).syncing(P::sync_tag_names);
         cell.set(book.publish());
         let (tx, rx) = unbounded::<(Option<WindowId>, TagRequest)>();
         let (out, events) = unbounded();

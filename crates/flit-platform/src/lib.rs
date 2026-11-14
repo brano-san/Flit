@@ -547,6 +547,7 @@ pub trait Platform: 'static {
     fn resolve_files(files: &[(FileKey, &FsPath)]) -> Vec<Resolved> {
         files.iter().map(|_| Resolved::Unavailable).collect()
     }
+    fn sync_tag_names(_path: &FsPath, _drop: &[String], _keep: &[String]) {}
     fn shell_search(_folder: Option<&FsPath>, _query: &str, _keep_going: &dyn Fn() -> bool, _found: &mut dyn FnMut(FsPath, flit_core::Meta)) -> Result<(), PlatformError> {
         Err(PlatformError::new(-1, flit_core::i18n::S::ErrorsEngineNoWindowsSearch.en()))
     }

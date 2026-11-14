@@ -136,3 +136,31 @@ fn virtual_and_missing_places_are_not_taggable() {
     assert_eq!(file_key(&FsPath::parse("/tmp/flit-no-such-file-for-tags").unwrap()), None);
     assert_eq!(file_key(&FsPath::parse(r"C:\x.txt").unwrap()), None);
 }
+
+#[test]
+fn tag_names_merge_with_ones_other_programs_wrote() {
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    assert_eq!(merged_tag_names(b"work, old,photos", &s(&["old", "red"]), &s(&["red"])), b"work,photos,red");
+    assert_eq!(merged_tag_names(b"", &s(&["red"]), &s(&["red", "blue"])), b"red,blue");
+    assert_eq!(merged_tag_names(b"red", &s(&["red"]), &[]), b"");
+    assert_eq!(merged_tag_names(b"red,red", &[], &s(&["red"])), b"red,red");
+}
+
+#[test]
+fn tags_are_written_to_user_xdg_tags_and_foreign_ones_survive() {
+    let t = Temp::new("xdg-tags");
+    let f = t.file("a.txt", 1);
+    let p = FsPath::parse_exact(f.as_os_str().as_bytes()).unwrap();
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    sync_tag_names(&p, &s(&["red"]), &s(&["red"]));
+    assert_eq!(crate::fs::xattr(&f, XDG_TAGS).as_deref(), Some(&b"red"[..]));
+    let c = cstring(f.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { libc::setxattr(c.as_ptr(), c"user.xdg.tags".as_ptr(), b"red,dolphin".as_ptr().cast(), 11, 0) }, 0);
+    sync_tag_names(&p, &s(&["red"]), &[]);
+    assert_eq!(crate::fs::xattr(&f, XDG_TAGS).as_deref(), Some(&b"dolphin"[..]));
+    sync_tag_names(&p, &s(&["dolphin"]), &[]);
+    assert_eq!(crate::fs::xattr(&f, XDG_TAGS), None, "an empty list removes the attribute");
+    let plain = t.file("b.txt", 1);
+    sync_tag_names(&FsPath::parse_exact(plain.as_os_str().as_bytes()).unwrap(), &s(&["red"]), &[]);
+    assert!(crate::fs::xattr_names(&plain).is_empty(), "nothing is written for a file without tags");
+}

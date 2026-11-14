@@ -181,6 +181,10 @@ impl Platform for Linux {
         content::search(folder, query, keep_going, found)
     }
 
+    fn sync_tag_names(path: &FsPath, drop: &[String], keep: &[String]) {
+        flit_platform_linux::sync_tag_names(path, drop, keep)
+    }
+
     fn download(url: &str, out: &mut dyn std::io::Write, progress: &mut dyn FnMut(u64, Option<u64>) -> bool) -> Result<(), PlatformError> {
         update::download(url, out, progress)
     }
