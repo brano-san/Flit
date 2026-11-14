@@ -728,15 +728,20 @@ impl App {
             let n = self.dialog_buttons().len();
             let conflict = self.jobs.asks.front().is_some_and(Ask::name_conflict);
             let plain = !m.ctrl && !m.alt;
+            let letters = self.dialog_buttons().iter().map(|l| first_letter(l)).collect::<Vec<_>>();
+            let all = first_letter(S::UiConflictApplyAll.t());
             match key {
                 Key::Escape => self.answer(n - 1),
                 Key::Enter | Key::Space => self.answer(self.jobs.sel),
                 Key::Left => self.jobs.sel = (self.jobs.sel + n - 1) % n,
-                Key::Right | Key::Tab => self.jobs.sel = (self.jobs.sel + 1) % n,
-                Key::Char('R') if conflict && plain => self.answer(0),
-                Key::Char('K') if conflict && plain => self.answer(1),
-                Key::Char('S') if conflict && plain => self.answer(2),
-                Key::Char('A') if conflict && plain => self.jobs.all = !self.jobs.all,
+                Key::Right | Key::Tab if !m.shift => self.jobs.sel = (self.jobs.sel + 1) % n,
+                Key::Tab => self.jobs.sel = (self.jobs.sel + n - 1) % n,
+                Key::Char(c) if conflict && plain && !m.shift => {
+                    if let Some(k) = letters[..n - 1].iter().rposition(|l| *l == Some(c.to_ascii_uppercase())) {
+                        self.answer(k);
+                    }
+                }
+                Key::Char(c) if conflict && plain && m.shift && Some(c.to_ascii_uppercase()) == all => self.jobs.all = !self.jobs.all,
                 _ => {}
             }
             self.dirty = true;
@@ -1195,3 +1200,7 @@ fn self_menu_len(j: &Jobs, row: usize) -> usize {
 #[cfg(test)]
 #[path = "../../test/ui/jobs.rs"]
 mod tests;
+
+fn first_letter(label: &str) -> Option<char> {
+    label.chars().find(|c| c.is_alphabetic()).map(|c| c.to_ascii_uppercase())
+}

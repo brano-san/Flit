@@ -8,6 +8,7 @@ use std::sync::mpsc;
 use std::thread::JoinHandle;
 
 const NO: Mods = Mods { ctrl: false, shift: false, alt: false };
+const SHIFT: Mods = Mods { ctrl: false, shift: true, alt: false };
 
 fn t0() -> Instant {
     Instant::now()
@@ -43,6 +44,10 @@ fn click(app: &mut App, pick: impl Fn(&App) -> Rect) {
 
 fn key(app: &mut App, key: Key) {
     app.on_event(&Event::Key { key, mods: NO, pressed: true }, t0());
+}
+
+fn shift(app: &mut App, key: Key) {
+    app.on_event(&Event::Key { key, mods: SHIFT, pressed: true }, t0());
 }
 
 fn finish(app: &mut App, id: OpId, error: Option<&str>) {
@@ -85,7 +90,7 @@ fn conflicts_are_answered_in_flits_own_dialog_with_the_keyboard() {
     assert_eq!((waiting.join().unwrap(), app.asking()), (Some(Resolve::Replace), None));
 
     let waiting = asked(&mut app, id, &ctl);
-    key(&mut app, Key::Char('A'));
+    shift(&mut app, Key::Char('D'));
     key(&mut app, Key::Enter);
     assert_eq!(waiting.join().unwrap(), Some(Resolve::KeepBoth));
     assert_eq!(ctl.resolve(|| panic!("asked again")), Some(Resolve::KeepBoth), "the answer applies to all remaining conflicts");
@@ -563,4 +568,28 @@ fn a_long_operation_notifies_an_unfocused_window_when_it_finishes() {
     app.on_event(&Event::Focus(false), t0());
     app.op_done(1, id, None, None, t0() + Duration::from_secs(3));
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::Notify(_))), "a short operation says nothing");
+}
+
+#[test]
+fn dialog_buttons_answer_by_localized_first_letters_and_shift_tab_walks_back() {
+    let mut app = app_at(r"C:\x");
+    let (id, ctl) = paste(&mut app);
+    let waiting = asked(&mut app, id, &ctl);
+    assert_eq!(app.dialog_buttons(), ["Replace", "Keep both", "Skip", "Cancel"]);
+    key(&mut app, Key::Tab);
+    assert_eq!(app.jobs.sel, 2, "Tab advances");
+    shift(&mut app, Key::Tab);
+    assert_eq!(app.jobs.sel, 1, "Shift+Tab walks back");
+    key(&mut app, Key::Char('s'));
+    assert_eq!(waiting.join().unwrap(), Some(Resolve::Skip), "the first letter of the localized button answers, in either case");
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+    let (id, ctl) = paste(&mut app);
+    let waiting = asked(&mut app, id, &ctl);
+    let letters: Vec<Option<char>> = app.dialog_buttons().iter().map(|l| first_letter(l)).collect();
+    assert!(letters.iter().all(|l| l.is_some()) && letters[0] != letters[1], "{letters:?}");
+    let ru = letters[1].unwrap().to_ascii_lowercase();
+    let c = crate::input::Key::Char(ru);
+    key(&mut app, c);
+    assert_eq!(waiting.join().unwrap(), Some(Resolve::KeepBoth), "the Russian answer works by its own letter");
+    crate::i18n::set_lang(crate::i18n::Lang::En);
 }
