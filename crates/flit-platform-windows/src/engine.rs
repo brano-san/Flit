@@ -300,7 +300,7 @@ impl<'a> Engine<'a> {
             return Some(PlatformError::new(ERROR_CANCELLED.0 as i64, S::ErrorsEngineCancelled.en()));
         }
         let first = self.first.clone()?;
-        Some(PlatformError::new(-1, if self.failed > 1 { tr_en!(S::ErrorsEngineFailed, count = self.failed, first = first) } else { first }))
+        Some(PlatformError::new(-1, if self.failed > 1 { tr_en!(S::ErrorsEngineFailed, count = self.failed, error = first) } else { first }))
     }
 
     fn running(&self, total: Tally) {
