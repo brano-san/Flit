@@ -1177,6 +1177,7 @@ impl App {
         g.dl.set_clip(Some(sl.list));
         let mut requests: Vec<IconRequest> = Vec::new();
         let mut elided: Vec<u64> = Vec::new();
+        let mut type_requests: Vec<Vec<u8>> = Vec::new();
         let s = &self.search;
         let headers = s.grouped();
         if s.done && s.total == 0 && !s.walking {
@@ -1203,6 +1204,10 @@ impl App {
             let is_dir = r.meta.attrs & attr::DIR != 0;
             let ext_at = if is_dir { r.name.len() } else { r.name.len() - name::ext_len(&r.name) };
             let ext = &r.name[ext_at..];
+            let folded = ext.to_ascii_lowercase();
+            if !is_dir && !self.type_names.contains_key(&folded) && !type_requests.contains(&folded) {
+                type_requests.push(folded);
+            }
             let entry = Entry { size: 0, modified: 0, created: 0, accessed: 0, name_off: 0, attrs: r.meta.attrs, name_len: 0, ext_len: 0, tags: 0 };
             let (key, kind) = icon_key(&r.name, ext, &entry, icon_px as u32, &r.dir, self.icon_epoch);
             let indent = if headers { self.s(16.0) } else { 0.0 };
@@ -1244,6 +1249,10 @@ impl App {
         g.dl.set_clip(None);
         self.search.elided = elided;
         self.request_icons(requests);
+        for ext in type_requests {
+            self.type_names.insert(ext.clone(), None);
+            self.effects.push(Effect::TypeName(ext));
+        }
         let s = &self.search;
         if sl.thumb.h > 0.0 {
             let hot = matches!(s.hover, SHit::Thumb | SHit::Track) || matches!(s.drag, SDrag::Thumb(_));

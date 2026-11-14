@@ -122,6 +122,9 @@ fn result_rows_tip_the_full_name_when_cut_off_and_otherwise_type_folder_and_size
     a.on_search_event(SearchEvent::Rows { gen, from: 0, rows: vec![row(&long, r"C:\data", false), row("b.txt", r"C:\data", false)] }, t0());
     frame(&mut a);
     assert_eq!(a.search.elided, [0], "only the wide name is cut off");
+    let ext = a.drain_effects().find_map(|e| if let Effect::TypeName(ext) = e { Some(ext) } else { None }).expect("visible rows ask for the shell type names");
+    assert_eq!(ext, b"txt");
+    a.on_type_name(ext, Some("Text Document".into()));
     let over = |a: &mut App, row: u64, now: Instant| {
         let r = a.search_tip_anchor(row).unwrap();
         a.on_event(&Event::MouseMove { x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 }, now);
@@ -137,7 +140,7 @@ fn result_rows_tip_the_full_name_when_cut_off_and_otherwise_type_folder_and_size
     assert_eq!(a.tooltip(), None, "moving to the next row restarts the delay");
     a.on_event(&Event::Timer, next + super::super::tooltip::DELAY);
     let tip = a.tooltip().unwrap();
-    assert_eq!(tip.line, "Type: TXT File");
+    assert_eq!(tip.line, "Type: Text Document", "the shell type name arrives instead of the extension guess");
     assert_eq!(tip.details[0], r"Folder: C:\data");
     assert!(tip.details[1].starts_with("Size: "), "{:?}", tip.details);
     key(&mut a, Key::Escape, NO);
