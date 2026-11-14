@@ -71,7 +71,7 @@ pub struct OwnMenu {
     shell: Vec<u32>,
     kind: MenuKind,
     view: Option<View>,
-    pub(super) opened: Instant,
+    pub(super) shown: Option<Instant>,
     right: Option<f32>,
     pointer: Option<(f32, f32)>,
     pending: bool,
@@ -130,7 +130,7 @@ impl App {
         if let Event::ShowMenu { items, x, y, launches, kind, shell, pending } = ev {
             self.release_shell_menu();
             let key = self.shapes.next.take().filter(|_| *pending);
-            let mut m = OwnMenu { items: items.clone(), at: (*x, *y), launches: launches.clone(), shell: shell.clone(), kind: *kind, view: None, opened: now, right: self.menu_right.take(), pointer: None, pending: *pending, own: items.len(), shape: None, floor_w: 0.0, carry: String::new(), tail: false };
+            let mut m = OwnMenu { items: items.clone(), at: (*x, *y), launches: launches.clone(), shell: shell.clone(), kind: *kind, view: None, shown: None, right: self.menu_right.take(), pointer: None, pending: *pending, own: items.len(), shape: None, floor_w: 0.0, carry: String::new(), tail: false };
             if let Some(key) = key {
                 if let Some((_, rows, w)) = self.shapes.get(&key) {
                     m.placeholders(rows);
@@ -392,23 +392,23 @@ impl App {
                 View::Context(Box::new(c))
             }
         });
-        let (from, opened, at) = (g.dl.instances.len(), m.opened, m.at);
+        let (from, at) = (g.dl.instances.len(), m.at);
         let (now, animate) = (self.last_frame.unwrap_or_else(Instant::now), self.animations);
-        let glowing = match view {
+        let since = *m.shown.get_or_insert(now);
+        let moving = match view {
             View::Plain(v) => {
-                let moving = v.settle_glow(now, animate);
+                let moving = v.settle_glow(now, animate) | v.settle_unfold(since, now, animate);
                 v.draw(g, t);
                 moving
             }
             View::Context(c) => {
-                let moving = c.settle_glow(now, animate);
+                let moving = c.settle_glow(now, animate) | c.settle_unfold(since, now, animate);
                 c.draw(g, t, active, &preedit);
                 moving
             }
         };
-        self.motion |= glowing;
+        self.motion |= moving;
         self.keep_ghost(g, Ghost::Menu, from, at);
-        self.pop(g, from, opened, at);
         if let (Some(latest), Some(kind)) = (seen, self.own_menu_kind()) {
             self.remember_menu(kind, latest);
         }

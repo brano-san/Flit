@@ -234,3 +234,245 @@ fn a_click_on_a_submenu_of_the_context_menu_redraws_it_open_at_once() {
     assert!(app.context_menu_open().unwrap().is_open("New"));
     assert!(app.dirty, "the opened submenu is drawn on the next frame, not after the pointer moves again");
 }
+
+fn ms(t0: Instant, n: u64) -> Instant {
+    t0 + std::time::Duration::from_millis(n)
+}
+
+fn settled_start() -> Instant {
+    ms(Instant::now(), 2000)
+}
+
+fn numbered(n: usize) -> Vec<MenuItem> {
+    (1..=n).map(|k| cmd(&format!("Item {k}"))).collect()
+}
+
+fn open_menu(app: &mut App, items: Vec<MenuItem>, launches: Vec<Launch>, (x, y): (f32, f32), kind: crate::ui::MenuKind, at: Instant) {
+    app.on_event(&Event::ShowMenu { items, x, y, launches, kind, shell: Vec::new(), pending: false }, at);
+}
+
+fn drawn(app: &mut App, g: &mut Gfx<Mono>, at: Instant) -> (bool, Vec<crate::render::Instance>) {
+    let moving = app.frame(g, at);
+    let from = g.dl.instances.iter().rposition(|i| i.kind == crate::render::kind::SHADOW).unwrap();
+    (moving, g.dl.instances[from..].to_vec())
+}
+
+fn fill(menu: &[crate::render::Instance]) -> Rect {
+    let [x, y, w, h] = menu[1].rect;
+    Rect::new(x, y, w, h)
+}
+
+fn glyphs_of_row(menu: &[crate::render::Instance], first: bool) -> Vec<usize> {
+    let ys = menu.iter().filter(|i| i.kind == crate::render::kind::GLYPH).map(|i| i.rect[1]);
+    let y = if first { ys.fold(f32::MAX, f32::min) } else { ys.fold(f32::MIN, f32::max) };
+    let row: Vec<usize> = (0..menu.len()).filter(|&k| menu[k].kind == crate::render::kind::GLYPH && (menu[k].rect[1] - y).abs() < 1.0).collect();
+    assert!(!row.is_empty());
+    row
+}
+
+fn alpha(i: &crate::render::Instance) -> u32 {
+    i.color >> 24
+}
+
+fn inside_the_panel(menu: &[crate::render::Instance]) -> bool {
+    let f = fill(menu);
+    menu[3..].iter().all(|i| i.clip[0] >= f.x - 1.0 && i.clip[1] >= f.y - 1.0 && i.clip[2] <= f.right() + 1.0 && i.clip[3] <= f.bottom() + 1.0)
+}
+
+#[test]
+fn a_menu_below_the_pointer_unrolls_downward_and_its_items_drop_in_one_after_another() {
+    let mut app = app();
+    let mut g = Gfx::new(Mono, 1024);
+    let t0 = settled_start();
+    open_menu(&mut app, numbered(6), Vec::new(), (100.0, 100.0), crate::ui::MenuKind::None, t0);
+    let (moving_start, start) = drawn(&mut app, &mut g, t0);
+    let (moving_mid, mid) = drawn(&mut app, &mut g, ms(t0, 90));
+    let (moving_end, end) = drawn(&mut app, &mut g, ms(t0, 400));
+    assert!(moving_start && moving_mid, "frames keep coming while the menu unrolls");
+    assert!(!moving_end, "and stop once it is in place");
+    let panel = app.menu_panels()[0];
+    assert_eq!(fill(&end), panel.snap(), "it ends at its real place");
+    assert_eq!(fill(&start).y, fill(&end).y, "it unrolls from the top edge, where the click was");
+    assert!(fill(&start).h < fill(&end).h * 0.5 && fill(&start).h < fill(&mid).h && fill(&mid).h < fill(&end).h);
+    let (first, last) = (glyphs_of_row(&end, true), glyphs_of_row(&end, false));
+    for &k in &first {
+        assert_eq!(alpha(&start[k]), 0, "nothing shows at its final place on the first frame");
+        assert!(start[k].rect[1] < end[k].rect[1], "the first item drops in from above");
+        assert!(alpha(&mid[k]) * 10 >= alpha(&end[k]) * 9 && (mid[k].rect[1] - end[k].rect[1]).abs() < 1.0, "the first item has landed by mid-way");
+    }
+    for &k in &last {
+        assert_eq!(alpha(&start[k]), 0);
+        assert!(start[k].clip[3] <= end[k].rect[1], "the last item is still rolled up at first");
+        assert!(alpha(&mid[k]) > 0 && alpha(&mid[k]) < alpha(&end[k]), "the last item is still arriving mid-way");
+    }
+    assert!(inside_the_panel(&start) && inside_the_panel(&mid), "no item is drawn outside the unrolling panel");
+}
+
+#[test]
+fn a_menu_flipped_above_the_pointer_unrolls_upward_from_its_bottom_edge() {
+    let mut app = app();
+    let mut g = Gfx::new(Mono, 1024);
+    let t0 = settled_start();
+    open_menu(&mut app, numbered(6), Vec::new(), (100.0, 590.0), crate::ui::MenuKind::None, t0);
+    let (_, start) = drawn(&mut app, &mut g, t0);
+    let (_, mid) = drawn(&mut app, &mut g, ms(t0, 90));
+    let (_, end) = drawn(&mut app, &mut g, ms(t0, 400));
+    assert!(fill(&end).bottom() <= 590.0, "the menu opened above the pointer");
+    assert_eq!(fill(&start).bottom(), fill(&end).bottom(), "it unrolls from the bottom edge");
+    assert!(fill(&start).y > fill(&end).y + fill(&end).h * 0.5);
+    let (top, bottom) = (glyphs_of_row(&end, true), glyphs_of_row(&end, false));
+    for &k in &bottom {
+        assert!(start[k].rect[1] > end[k].rect[1], "the item nearest the pointer rises in from below");
+        assert!(alpha(&mid[k]) * 10 >= alpha(&end[k]) * 9, "and arrives first");
+    }
+    for &k in &top {
+        assert!(start[k].clip[1] >= end[k].rect[1] + end[k].rect[3], "the far item is still rolled up at first");
+        assert!(alpha(&mid[k]) < alpha(&end[k]), "and arrives last");
+    }
+    assert!(inside_the_panel(&start) && inside_the_panel(&mid));
+}
+
+#[test]
+fn with_animations_off_a_menu_appears_at_once_exactly_where_it_ends_up() {
+    let t0 = settled_start();
+    let mut animated = app();
+    let mut g = Gfx::new(Mono, 1024);
+    open_menu(&mut animated, numbered(6), Vec::new(), (100.0, 100.0), crate::ui::MenuKind::None, t0);
+    drawn(&mut animated, &mut g, t0);
+    let (_, end) = drawn(&mut animated, &mut g, ms(t0, 400));
+    let mut still = app();
+    still.set_animations_wanted(false);
+    let mut g = Gfx::new(Mono, 1024);
+    open_menu(&mut still, numbered(6), Vec::new(), (100.0, 100.0), crate::ui::MenuKind::None, t0);
+    let (moving, at_once) = drawn(&mut still, &mut g, t0);
+    assert!(!moving, "no frames are asked for");
+    assert_eq!(at_once.len(), end.len());
+    for (a, b) in at_once.iter().zip(&end) {
+        assert_eq!((a.rect, a.clip, a.color), (b.rect, b.clip, b.color));
+    }
+}
+
+#[test]
+fn clicks_and_keys_during_the_unrolling_act_on_the_items_real_places() {
+    let launch = |name: &str| Launch::With { program: FsPath::parse(&format!("/usr/share/applications/{name}.desktop")).unwrap(), args: Vec::new() };
+    let launches = vec![launch("one"), launch("two"), launch("three")];
+    let launched = |app: &mut App| -> Vec<Launch> {
+        app.drain_effects().filter_map(|e| match e {
+            Effect::Provider { req: ProviderRequest::Launch { launch, .. }, .. } => Some(launch),
+            _ => None,
+        }).collect()
+    };
+    let mut app = app();
+    let mut g = Gfx::new(Mono, 1024);
+    let t0 = settled_start();
+    open_menu(&mut app, numbered(3), launches.clone(), (100.0, 100.0), crate::ui::MenuKind::None, t0);
+    app.frame(&mut g, t0);
+    assert!(app.frame(&mut g, ms(t0, 60)), "the menu is still unrolling");
+    let panel = app.menu_panels()[0];
+    let (x, y) = (panel.x + 40.0, panel.y + 4.0 + 28.0 + 14.0);
+    app.on_event(&Event::MouseMove { x, y }, ms(t0, 61));
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, ms(t0, 62));
+    app.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, ms(t0, 63));
+    assert!(!app.own_menu_open());
+    assert_eq!(launched(&mut app), [launches[1].clone()], "the second item runs, not whatever is drawn under the pointer");
+    let t1 = ms(t0, 1000);
+    open_menu(&mut app, numbered(3), launches.clone(), (100.0, 100.0), crate::ui::MenuKind::None, t1);
+    app.frame(&mut g, t1);
+    for k in [Key::Down, Key::Down, Key::Down, Key::Enter] {
+        key(&mut app, k);
+    }
+    assert_eq!(launched(&mut app), [launches[2].clone()], "keys walk the items before they have arrived");
+}
+
+#[test]
+fn a_submenu_unrolls_from_the_side_it_opens_toward_while_its_parent_stays_put() {
+    let mut app = app();
+    let mut g = Gfx::new(Mono, 1024);
+    let t0 = settled_start();
+    let items = vec![cmd("Copy path"), MenuItem::Separator, MenuItem::Submenu { label: "Open with".into(), items: vec![cmd("Editor"), cmd("Viewer")] }];
+    open_menu(&mut app, items, Vec::new(), (100.0, 100.0), crate::ui::MenuKind::None, t0);
+    app.frame(&mut g, t0);
+    let (_, root) = drawn(&mut app, &mut g, ms(t0, 400));
+    let panel = app.menu_panels()[0];
+    let t1 = ms(t0, 500);
+    app.on_event(&Event::MouseMove { x: panel.x + 40.0, y: panel.y + 4.0 + 28.0 + 9.0 + 14.0 }, t1);
+    let (moving, start) = drawn(&mut app, &mut g, t1);
+    assert_eq!(app.menu_panels().len(), 2, "the submenu opened");
+    let shadows: Vec<usize> = (0..g.dl.instances.len()).filter(|&k| g.dl.instances[k].kind == crate::render::kind::SHADOW).collect();
+    let parent = &g.dl.instances[shadows[shadows.len() - 2]..];
+    assert_eq!(fill(parent), fill(&root), "the parent does not unroll again");
+    let (_, end) = drawn(&mut app, &mut g, ms(t1, 400));
+    assert!(moving);
+    assert!(fill(&end).x > fill(&root).x, "the submenu opens to the right");
+    assert_eq!(fill(&start).x, fill(&end).x, "it unrolls from its left edge");
+    assert!(fill(&start).w < fill(&end).w * 0.5 && fill(&start).h == fill(&end).h);
+    for k in glyphs_of_row(&end, true) {
+        assert_eq!(alpha(&start[k]), 0);
+        assert!(start[k].rect[0] < end[k].rect[0] && start[k].rect[1] == end[k].rect[1], "items slide in sideways");
+    }
+    assert!(inside_the_panel(&start));
+}
+
+#[test]
+fn a_long_scrolling_menu_unrolls_as_quickly_as_a_short_one() {
+    let mut app = app();
+    let mut g = Gfx::new(Mono, 1024);
+    let t0 = settled_start();
+    open_menu(&mut app, numbered(80), Vec::new(), (100.0, 100.0), crate::ui::MenuKind::None, t0);
+    let (_, start) = drawn(&mut app, &mut g, t0);
+    assert!(fill(&start).h < 600.0 * 0.5);
+    assert!(inside_the_panel(&start));
+    assert!(app.frame(&mut g, ms(t0, 150)));
+    assert!(!app.frame(&mut g, ms(t0, 200)), "every item has arrived within a fifth of a second");
+}
+
+#[test]
+fn a_context_menu_unrolls_and_rows_of_a_submenu_opened_inside_it_drop_in() {
+    let mut app = app();
+    let mut g = Gfx::new(Mono, 1024);
+    let t0 = settled_start();
+    let items = vec![cmd("Paste"), MenuItem::Submenu { label: "New".into(), items: vec![cmd("Folder"), cmd("Text Document")] }];
+    open_menu(&mut app, items, Vec::new(), (100.0, 100.0), crate::ui::MenuKind::Background, t0);
+    let (_, start) = drawn(&mut app, &mut g, t0);
+    let (moving, end) = drawn(&mut app, &mut g, ms(t0, 400));
+    assert!(!moving);
+    assert_eq!(fill(&start).y, fill(&end).y);
+    assert!(fill(&start).h < fill(&end).h * 0.5 && inside_the_panel(&start));
+    let c = app.context_menu_open().unwrap();
+    let (paste, row) = (c.rects[0], c.rects[c.labels().iter().position(|l| l == "New >").unwrap()]);
+    let (x, y) = (row.x + 40.0, row.y + row.h / 2.0);
+    let t1 = ms(t0, 500);
+    app.on_event(&Event::MouseMove { x, y }, t1);
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, t1);
+    app.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, t1);
+    let (moving, opened) = drawn(&mut app, &mut g, t1);
+    let (_, settled) = drawn(&mut app, &mut g, ms(t1, 400));
+    assert!(moving, "the new rows ask for frames");
+    assert_eq!(fill(&opened), fill(&settled), "the menu itself does not unroll again");
+    let shift = settled.len() - opened.len();
+    for k in glyphs_of_row(&settled, false) {
+        assert_eq!(alpha(&opened[k - shift]), 0, "the last row of the opened submenu drops in");
+        assert!(opened[k - shift].rect[1] < settled[k].rect[1]);
+    }
+    let kept: Vec<_> = settled.iter().filter(|i| i.kind == crate::render::kind::GLYPH && i.rect[1] >= paste.y && i.rect[1] < paste.bottom()).collect();
+    assert!(!kept.is_empty());
+    for i in kept {
+        assert!(opened.iter().any(|o| (o.rect, o.color) == (i.rect, i.color)), "rows that were already there stay as they are");
+    }
+}
+
+#[test]
+fn a_menu_rebuilt_by_late_shell_items_keeps_unrolling_instead_of_starting_over() {
+    let mut app = app();
+    let mut g = Gfx::new(Mono, 1024);
+    let t0 = settled_start();
+    app.on_event(&Event::ShowMenu { items: vec![cmd("Open")], x: 100.0, y: 100.0, launches: Vec::new(), kind: crate::ui::MenuKind::File, shell: Vec::new(), pending: true }, t0);
+    app.frame(&mut g, t0);
+    app.frame(&mut g, ms(t0, 100));
+    app.on_event(&Event::ShellItems { items: vec![cmd("Scan"), cmd("Share")], shell: vec![7, 9] }, ms(t0, 110));
+    let (moving, rebuilt) = drawn(&mut app, &mut g, ms(t0, 120));
+    assert!(moving);
+    let full = app.context_menu_open().unwrap().rect;
+    assert!(fill(&rebuilt).h > full.h * 0.8 && fill(&rebuilt).h < full.h, "it carries on from how far it had unrolled");
+    assert!(!app.frame(&mut g, ms(t0, 200)), "and finishes when it would have");
+}

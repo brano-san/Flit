@@ -1,5 +1,5 @@
 use super::App;
-use crate::render::{Color, Rect};
+use crate::render::{Color, DrawList, Rect};
 use crate::text::{FontStyle, Gfx, TextBackend};
 use crate::theme::{ink_on, Theme};
 use std::ops::Range;
@@ -8,12 +8,93 @@ use std::time::{Duration, Instant};
 const POP: Duration = Duration::from_millis(90);
 const FADE: Duration = Duration::from_millis(100);
 const SLIDE: f32 = 6.0;
+const UNROLL: Duration = Duration::from_millis(170);
+const UNROLL_FROM: f32 = 0.3;
+const FRAME_IN: Duration = Duration::from_millis(60);
+const ITEM_IN: Duration = Duration::from_millis(110);
+const STAGGER: Duration = Duration::from_millis(12);
+const STAGGER_MAX: Duration = Duration::from_millis(80);
+const ITEM_SLIDE: f32 = 8.0;
+pub(super) const UNFOLD: Duration = Duration::from_millis(190);
 
 pub(super) const HOVER_FADE: Duration = Duration::from_millis(100);
 
 pub(super) fn eased(since: Instant, now: Instant, span: Duration) -> f32 {
-    let p = (now.saturating_duration_since(since).as_secs_f32() / span.as_secs_f32()).min(1.0);
-    1.0 - (1.0 - p).powi(3)
+    ease_out(now.saturating_duration_since(since).as_secs_f32() / span.as_secs_f32())
+}
+
+fn ease_out(p: f32) -> f32 {
+    1.0 - (1.0 - p.clamp(0.0, 1.0)).powi(3)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Edge {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+impl Edge {
+    pub fn nearest(r: Rect, y: f32) -> Self {
+        if (y - r.y).abs() <= (r.bottom() - y).abs() { Edge::Top } else { Edge::Bottom }
+    }
+
+    pub fn beside(r: Rect, parent: Rect) -> Self {
+        if r.x >= parent.x { Edge::Left } else { Edge::Right }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Unfold {
+    secs: f32,
+    edge: Edge,
+    scale: f32,
+}
+
+impl Unfold {
+    pub fn at(since: Instant, now: Instant, edge: Edge, scale: f32) -> Option<Self> {
+        Self::running(since, now).then(|| Self { secs: now.saturating_duration_since(since).as_secs_f32(), edge, scale })
+    }
+
+    pub fn edge(&self) -> Edge {
+        self.edge
+    }
+
+    pub fn running(since: Instant, now: Instant) -> bool {
+        now.saturating_duration_since(since) < UNFOLD
+    }
+
+    pub fn shown(&self, r: Rect) -> Rect {
+        let k = UNROLL_FROM + (1.0 - UNROLL_FROM) * ease_out(self.secs / UNROLL.as_secs_f32());
+        let (w, h) = (r.w * k, r.h * k);
+        match self.edge {
+            Edge::Top => Rect::new(r.x, r.y, r.w, h),
+            Edge::Bottom => Rect::new(r.x, r.bottom() - h, r.w, h),
+            Edge::Left => Rect::new(r.x, r.y, w, r.h),
+            Edge::Right => Rect::new(r.right() - w, r.y, w, r.h),
+        }
+    }
+
+    pub fn panel(&self, dl: &mut DrawList, from: usize, r: Rect) {
+        dl.refit(from, r, self.shown(r));
+        dl.fade(from, ease_out(self.secs / FRAME_IN.as_secs_f32()));
+    }
+
+    pub fn item(&self, dl: &mut DrawList, from: usize, n: usize, clip: Rect) {
+        let delay = (STAGGER.as_secs_f32() * n as f32).min(STAGGER_MAX.as_secs_f32());
+        let k = ease_out((self.secs - delay) / ITEM_IN.as_secs_f32());
+        let d = (1.0 - k) * ITEM_SLIDE * self.scale;
+        let (dx, dy) = match self.edge {
+            Edge::Top => (0.0, -d),
+            Edge::Bottom => (0.0, d),
+            Edge::Left => (-d, 0.0),
+            Edge::Right => (d, 0.0),
+        };
+        dl.nudge(from, dx, dy);
+        dl.fade(from, k);
+        dl.confine(from, clip);
+    }
 }
 
 pub(super) fn faded(c: Color, k: f32) -> Color {

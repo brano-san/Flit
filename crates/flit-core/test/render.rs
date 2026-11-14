@@ -30,3 +30,27 @@ fn a_check_mark_is_two_thick_strokes_inside_its_box() {
         assert!(gaps.into_iter().all(|d| d <= stroke * 0.5 + 1e-3), "{side}: the strokes have no holes");
     }
 }
+
+#[test]
+fn a_panel_refits_with_its_shadow_margin_and_slid_items_keep_their_clip() {
+    let panel = Rect::new(10.0, 20.0, 100.0, 80.0);
+    let mut dl = DrawList::default();
+    dl.shadow(panel, Color::rgba(0x0000_0050), 6.0, 10.0);
+    dl.round_rect(panel, Color::rgb(0xFFFFFF), 6.0);
+    dl.refit(0, panel, Rect::new(10.0, 20.0, 100.0, 30.0));
+    assert_eq!(dl.instances[0].rect, [0.0, 10.0, 120.0, 50.0], "the shadow keeps its blur around the shorter panel");
+    assert_eq!(dl.instances[1].rect, [10.0, 20.0, 100.0, 30.0]);
+    dl.refit(0, Rect::new(10.0, 20.0, 100.0, 30.0), Rect::new(10.0, 200.0, 100.0, 0.0));
+    assert!(dl.instances.iter().all(|i| i.rect[2] >= 0.0 && i.rect[3] >= 0.0), "a size never goes negative");
+    let mut dl = DrawList::default();
+    dl.set_clip(Some(panel));
+    dl.rect(Rect::new(20.0, 30.0, 10.0, 10.0), Color::rgb(0x102030).alpha(0x80));
+    dl.nudge(0, 0.0, -8.0);
+    dl.fade(0, 0.5);
+    let i = dl.instances[0];
+    assert_eq!((i.rect[1], i.clip), (22.0, [10.0, 20.0, 110.0, 100.0]), "a slide moves the item, not the panel's clip");
+    assert_eq!(i.color >> 24, 0x40);
+    assert_eq!(i.color & 0x00FF_FFFF, Color::rgb(0x102030).0 & 0x00FF_FFFF);
+    dl.fade(0, 1.0);
+    assert_eq!(dl.instances[0].color >> 24, 0x40, "a full fade leaves colours alone");
+}

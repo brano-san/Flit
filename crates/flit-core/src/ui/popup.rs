@@ -1,9 +1,10 @@
 use super::menu::{Mark, MenuItem};
-use super::widgets::{baseline, Paint};
+use super::widgets::{baseline, Edge, Paint, Unfold};
 use crate::input::Key;
 use crate::render::Rect;
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::{ink_on, Theme};
+use std::time::Instant;
 
 const ROW_H: f32 = 28.0;
 const SEPARATOR_H: f32 = 9.0;
@@ -66,6 +67,7 @@ struct Panel {
     rect: Rect,
     hot: Option<usize>,
     scroll: f32,
+    born: Option<Instant>,
 }
 
 pub struct MenuView {
@@ -76,7 +78,8 @@ pub struct MenuView {
     start: (f32, f32),
     armed: bool,
     glow: super::widgets::Glow<(usize, usize)>,
-    glow_at: Option<std::time::Instant>,
+    glow_at: Option<Instant>,
+    unfold_at: Option<Instant>,
 }
 
 struct Measure<'a, B: TextBackend> {
@@ -125,9 +128,9 @@ impl MenuView {
         let (w, h) = (lists[0].width, lists[0].height.min(bounds.h));
         let below = y + h <= bounds.bottom();
         let top = if below { y } else if y - h >= bounds.y { y - h } else { bounds.bottom() - h };
-        let mut view = Self { lists, panels: Vec::new(), bounds, scale, start: (x, y), armed: false, glow: Default::default(), glow_at: None };
+        let mut view = Self { lists, panels: Vec::new(), bounds, scale, start: (x, y), armed: false, glow: Default::default(), glow_at: None, unfold_at: None };
         let rect = view.fit(w, h, x, x, top);
-        view.panels.push(Panel { list: 0, rect, hot: None, scroll: 0.0 });
+        view.panels.push(Panel { list: 0, rect, hot: None, scroll: 0.0, born: None });
         view
     }
 
@@ -248,7 +251,24 @@ impl MenuView {
         }
     }
 
-    pub fn settle_glow(&mut self, now: std::time::Instant, animate: bool) -> bool {
+    pub fn settle_unfold(&mut self, since: Instant, now: Instant, animate: bool) -> bool {
+        for (n, p) in self.panels.iter_mut().enumerate() {
+            p.born = Some(if n == 0 { since } else { p.born.unwrap_or(now) });
+        }
+        self.unfold_at = animate.then_some(now);
+        animate && self.panels.iter().any(|p| p.born.is_some_and(|b| Unfold::running(b, now)))
+    }
+
+    fn unfold(&self, n: usize) -> Option<Unfold> {
+        let (now, p) = (self.unfold_at?, self.panels.get(n)?);
+        let edge = match n.checked_sub(1).and_then(|k| self.panels.get(k)) {
+            Some(parent) => Edge::beside(p.rect, parent.rect),
+            None => Edge::nearest(p.rect, self.start.1),
+        };
+        Unfold::at(p.born?, now, edge, self.scale)
+    }
+
+    pub fn settle_glow(&mut self, now: Instant, animate: bool) -> bool {
         let top = self.panels.last().and_then(|p| p.hot.filter(|&i| self.lists[p.list].nodes[i].selectable()).map(|i| (p.list, i)));
         self.glow_at = Some(now);
         self.glow.aim(top, animate, now)
@@ -261,66 +281,87 @@ impl MenuView {
         let last = self.panels.len().saturating_sub(1);
         for (n, panel) in self.panels.iter().enumerate() {
             let r = panel.rect;
+            let unfold = self.unfold(n);
+            let at = p.g.dl.instances.len();
             p.frame(r);
+            if let Some(u) = unfold {
+                u.panel(&mut p.g.dl, at, r);
+            }
             let max = self.max_scroll(panel);
             if max > 0.0 {
                 p.g.dl.set_clip(Some(r.inset(0.0, PAD * s)));
             }
-            for (i, row) in self.rows(panel).filter(|(_, row)| row.bottom() > r.y && row.y < r.bottom()) {
-                let node = &self.lists[panel.list].nodes[i];
-                if let Node::Separator = node {
-                    p.separator(row.x + PAD * s, row.y + row.h / 2.0, row.w - 2.0 * PAD * s);
-                    continue;
-                }
-                let lit = match self.glow_at {
-                    Some(now) if n == last => self.glow.alpha((panel.list, i), now),
-                    _ => f32::from(u8::from(panel.hot == Some(i) && node.selectable())),
-                };
-                let hot = lit >= 0.5;
-                if lit > 0.0 {
-                    p.g.dl.round_rect(row, super::widgets::faded(t.accent_fill, lit), RADIUS * s * 0.66);
-                }
-                let off = matches!(node, Node::Command { disabled: true, .. } | Node::Header(_));
-                let (ink, dim) = match (hot, off) {
-                    (true, _) => (ink_on(t.accent_fill), ink_on(t.accent_fill)),
-                    (false, true) => (t.text_dim.alpha(OFF), t.text_dim.alpha(OFF)),
-                    (false, false) => (t.text, t.text_dim),
-                };
-                let text_y = baseline(p.g, row, font);
-                let side = Rect::new(row.right() - ARROW_W * s, row.y, ARROW_W * s, row.h);
-                let label_x = if matches!(node, Node::Header(_)) { row.x + PAD * s } else { r.x + LABEL_X * s };
-                p.g.text(label_x, text_y, node.label(), font, if matches!(node, Node::Header(_)) { t.text_dim } else { ink }, side.x - label_x);
-                if let Node::Command { icon, .. } = node {
-                    if !icon.is_empty() {
-                        p.centered(Rect::new(row.x, row.y, LABEL_X * s - (row.x - r.x), row.h), icon, icons, if off && !hot { dim } else { ink });
-                    }
-                }
-                match node {
-                    Node::Command { keys, checked, mark, .. } => {
-                        if !keys.is_empty() {
-                            let w = p.g.measure(keys, font);
-                            p.g.text(side.x - w, text_y, keys, font, dim, f32::INFINITY);
-                        }
-                        let bx = Rect::new(side.x + (side.w - MARK * s) / 2.0, row.y + (row.h - MARK * s) / 2.0, MARK * s, MARK * s).snap();
-                        match (mark, checked) {
-                            (Mark::Radio, on) => p.radio(bx, *on, None),
-                            (Mark::Sort(desc), on) => p.radio(bx, *on, on.then_some((!*desc, FontStyle::new(FontFamily::Ui, 10.0 * s, false)))),
-                            (Mark::Check, on) | (Mark::None, on @ true) => p.checkbox(bx, *on),
-                            (Mark::None, false) => {}
-                        }
-                    }
-                    Node::Submenu { .. } => p.centered(side, G_SUBMENU, icons, ink),
-                    Node::Header(_) | Node::Separator => {}
+            let seen = |row: &Rect| row.bottom() > r.y && row.y < r.bottom();
+            let count = self.rows(panel).filter(|(_, row)| seen(row)).count();
+            for (k, (i, row)) in self.rows(panel).filter(|(_, row)| seen(row)).enumerate() {
+                let at = p.g.dl.instances.len();
+                self.draw_row(&mut p, panel, i, row, n == last, (font, icons));
+                if let Some(u) = unfold {
+                    let order = if u.edge() == Edge::Bottom { count - 1 - k } else { k };
+                    u.item(&mut p.g.dl, at, order, u.shown(r));
                 }
             }
             if max > 0.0 {
                 p.g.dl.set_clip(None);
+                let at = p.g.dl.instances.len();
                 let track = Rect::new(r.right() - SCROLLBAR_W * s, r.y + PAD * s, SCROLLBAR_W * s - 2.0 * s, r.h - 2.0 * PAD * s);
                 let content = self.lists[panel.list].height;
                 let th = (track.h * r.h / content).max(16.0 * s).min(track.h);
                 let thumb = Rect::new(track.x, track.y + (track.h - th) * panel.scroll / max, track.w, th);
                 p.g.dl.round_rect(thumb, t.scrollbar, thumb.w / 2.0);
+                if let Some(u) = unfold {
+                    u.item(&mut p.g.dl, at, 0, u.shown(r));
+                }
             }
+        }
+    }
+
+    fn draw_row<B: TextBackend>(&self, p: &mut Paint<B>, panel: &Panel, i: usize, row: Rect, top: bool, (font, icons): (FontStyle, FontStyle)) {
+        let (s, t, r) = (self.scale, p.t, panel.rect);
+        let node = &self.lists[panel.list].nodes[i];
+        if let Node::Separator = node {
+            p.separator(row.x + PAD * s, row.y + row.h / 2.0, row.w - 2.0 * PAD * s);
+            return;
+        }
+        let lit = match self.glow_at {
+            Some(now) if top => self.glow.alpha((panel.list, i), now),
+            _ => f32::from(u8::from(panel.hot == Some(i) && node.selectable())),
+        };
+        let hot = lit >= 0.5;
+        if lit > 0.0 {
+            p.g.dl.round_rect(row, super::widgets::faded(t.accent_fill, lit), RADIUS * s * 0.66);
+        }
+        let off = matches!(node, Node::Command { disabled: true, .. } | Node::Header(_));
+        let (ink, dim) = match (hot, off) {
+            (true, _) => (ink_on(t.accent_fill), ink_on(t.accent_fill)),
+            (false, true) => (t.text_dim.alpha(OFF), t.text_dim.alpha(OFF)),
+            (false, false) => (t.text, t.text_dim),
+        };
+        let text_y = baseline(p.g, row, font);
+        let side = Rect::new(row.right() - ARROW_W * s, row.y, ARROW_W * s, row.h);
+        let label_x = if matches!(node, Node::Header(_)) { row.x + PAD * s } else { r.x + LABEL_X * s };
+        p.g.text(label_x, text_y, node.label(), font, if matches!(node, Node::Header(_)) { t.text_dim } else { ink }, side.x - label_x);
+        if let Node::Command { icon, .. } = node {
+            if !icon.is_empty() {
+                p.centered(Rect::new(row.x, row.y, LABEL_X * s - (row.x - r.x), row.h), icon, icons, if off && !hot { dim } else { ink });
+            }
+        }
+        match node {
+            Node::Command { keys, checked, mark, .. } => {
+                if !keys.is_empty() {
+                    let w = p.g.measure(keys, font);
+                    p.g.text(side.x - w, text_y, keys, font, dim, f32::INFINITY);
+                }
+                let bx = Rect::new(side.x + (side.w - MARK * s) / 2.0, row.y + (row.h - MARK * s) / 2.0, MARK * s, MARK * s).snap();
+                match (mark, checked) {
+                    (Mark::Radio, on) => p.radio(bx, *on, None),
+                    (Mark::Sort(desc), on) => p.radio(bx, *on, on.then_some((!*desc, FontStyle::new(FontFamily::Ui, 10.0 * s, false)))),
+                    (Mark::Check, on) | (Mark::None, on @ true) => p.checkbox(bx, *on),
+                    (Mark::None, false) => {}
+                }
+            }
+            Node::Submenu { .. } => p.centered(side, G_SUBMENU, icons, ink),
+            Node::Header(_) | Node::Separator => {}
         }
     }
 
@@ -362,7 +403,7 @@ impl MenuView {
             let h = h.min(self.bounds.h);
             let top = if anchor.y - PAD * s + h <= self.bounds.bottom() { anchor.y - PAD * s } else { self.bounds.bottom() - h };
             let rect = self.fit(w, h, p.rect.right() - PAD * s, p.rect.x + PAD * s, top);
-            self.panels.push(Panel { list, rect, hot: None, scroll: 0.0 });
+            self.panels.push(Panel { list, rect, hot: None, scroll: 0.0, born: None });
         }
     }
 

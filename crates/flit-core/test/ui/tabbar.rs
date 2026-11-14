@@ -512,10 +512,10 @@ fn a_second_right_click_on_the_tab_keeps_its_menu_open_and_only_that_tab_is_lit(
     right(&mut app);
     app.frame(&mut g, Instant::now());
     assert!(app.menu_open_from(Hit::Tab(1)));
-    let opened = app.own_menu.as_ref().map(|m| m.opened);
+    let opened = app.own_menu.as_ref().map(|m| m.shown);
     right(&mut app);
     assert!(app.menu_open_from(Hit::Tab(1)), "the menu stays open");
-    assert_eq!(app.own_menu.as_ref().map(|m| m.opened), opened, "it is the same menu, not closed and opened again");
+    assert_eq!(app.own_menu.as_ref().map(|m| m.shown), opened, "it is the same menu, not closed and opened again");
     assert!(!app.menu_open_from(Hit::Tab(0)));
     key(&mut app, Key::Escape, Mods::default());
     key(&mut app, Key::Char('S'), Mods { ctrl: true, shift: true, alt: false });

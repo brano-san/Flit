@@ -3,7 +3,7 @@ use super::field::{Field, FieldKey};
 use super::fuzzy::fuzzy;
 use super::menu::{Mark, MenuImage, MenuItem};
 use super::popup::MenuOutcome;
-use super::widgets::{baseline, Button, Paint};
+use super::widgets::{baseline, Button, Edge, Paint, Unfold};
 use crate::i18n::S;
 use crate::input::{Key, Mods, Preedit};
 use crate::render::Rect;
@@ -11,6 +11,7 @@ use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::{ink_on, Theme};
 use std::cmp::Reverse;
 use std::ops::Range;
+use std::time::Instant;
 
 const ROW_H: f32 = 24.0;
 const SEPARATOR_H: f32 = 7.0;
@@ -120,8 +121,10 @@ pub struct ContextMenu {
     pub floor_w: f32,
     glow: super::widgets::Glow<usize>,
     star_glow: super::widgets::Glow<usize>,
-    glow_at: Option<std::time::Instant>,
+    glow_at: Option<Instant>,
     shell: Option<(usize, Option<usize>)>,
+    unfold: Option<(Instant, Instant)>,
+    fresh: Option<(usize, usize, Option<Instant>)>,
 }
 
 fn flatten(items: &[MenuItem], depth: usize, parent: &str, next: &mut usize, out: &mut Vec<Node>) {
@@ -188,6 +191,8 @@ impl ContextMenu {
             star_glow: Default::default(),
             glow_at: None,
             shell: None,
+            unfold: None,
+            fresh: None,
         };
         m.arrange(&[], &[]);
         m
@@ -581,7 +586,12 @@ impl ContextMenu {
             Some(k) => {
                 self.open.remove(k);
             }
-            None => self.open.push(node),
+            None => {
+                self.open.push(node);
+                if let What::Submenu { end } = self.nodes[node].what {
+                    self.fresh = Some((node, end, None));
+                }
+            }
         }
         self.rebuild();
         self.reveal();
@@ -697,7 +707,16 @@ impl ContextMenu {
         self.field_inner()
     }
 
-    pub fn settle_glow(&mut self, now: std::time::Instant, animate: bool) -> bool {
+    pub fn settle_unfold(&mut self, since: Instant, now: Instant, animate: bool) -> bool {
+        if let Some(f) = self.fresh.as_mut() {
+            f.2 = f.2.or(Some(now));
+        }
+        self.fresh = self.fresh.filter(|f| animate && f.2.is_some_and(|b| Unfold::running(b, now)));
+        self.unfold = animate.then_some((since, now));
+        animate && (Unfold::running(since, now) || self.fresh.is_some())
+    }
+
+    pub fn settle_glow(&mut self, now: Instant, animate: bool) -> bool {
         let hot = self.hot.and_then(|k| match self.rows.get(k) {
             Some(Row::Node { node, .. }) => Some(*node),
             _ => None,
@@ -716,102 +735,138 @@ impl ContextMenu {
     pub fn draw<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, active: bool, preedit: &Preedit) {
         let s = self.scale;
         let (font, icons) = (font(s), FontStyle::new(FontFamily::Icons, ICON_PX * s, false));
+        let unfold = self.unfold.and_then(|(since, now)| Unfold::at(since, now, Edge::nearest(self.rect, self.start.1), s));
+        let fresh = self.fresh.and_then(|(node, end, born)| Some((node + 1..end, Unfold::at(born?, self.unfold?.1, Edge::Top, s)?)));
+        let (list, shown) = (self.list, unfold.map_or(self.rect, |u| u.shown(self.rect)));
+        let seen = move |r: &Rect| r.bottom() >= list.y && r.y <= list.bottom();
+        let count = self.rects.iter().filter(|r| seen(r)).count();
+        let order = |k: usize| if unfold.is_some_and(|u| u.edge() == Edge::Bottom) { count.saturating_sub(k) } else { k };
         let mut p = Paint::new(g, t, s);
+        let at = p.g.dl.instances.len();
         p.frame(self.rect);
+        if let Some(u) = unfold {
+            u.panel(&mut p.g.dl, at, self.rect);
+        }
+        let at = p.g.dl.instances.len();
         p.field(self.field, true);
         p.centered(Rect::new(self.field.x, self.field.y, self.field.h, self.field.h), G_SEARCH, icons, t.text_dim);
         let inner = self.field_inner();
         self.query.draw(p.g, t, inner, font, active, S::MenusSearchCommand.t(), s, Some(preedit));
         p.icon_button(self.close, G_CLOSE, FontStyle::new(FontFamily::Icons, 9.0 * s, false), Button::of(self.hover == Some(CtxHit::Close), false, true), t.text_dim);
-        p.g.dl.set_clip(Some(self.list));
-        for (k, row) in self.rows.iter().enumerate() {
-            let r = self.rects[k];
-            if r.bottom() < self.list.y || r.y > self.list.bottom() {
-                continue;
-            }
-            let Row::Node { node, marks, pinned, path } = row else {
-                p.separator(r.x + PAD * s, r.y + r.h / 2.0, r.w - 2.0 * PAD * s);
-                continue;
-            };
-            let n = &self.nodes[*node];
-            if n.label.is_empty() && n.what == What::Header {
-                let bar = Rect::new(r.x + ICON_W * s, r.y + (r.h * 0.36).round(), (r.w * 0.5 - (k % 3) as f32 * 24.0 * s).max(r.w * 0.2), (r.h * 0.28).round());
-                p.g.dl.round_rect(bar, t.text_dim.alpha(0x24), 3.0 * s);
-                continue;
-            }
-            let lit = match self.glow_at {
-                Some(now) => self.glow.alpha(*node, now),
-                None => f32::from(u8::from(self.hot == Some(k))),
-            };
-            let hot = lit >= 0.5;
-            if lit > 0.0 {
-                p.g.dl.round_rect(r, super::widgets::faded(t.accent_fill, lit), 4.0 * s);
-            }
-            let off = matches!(n.what, What::Command { disabled: true, .. } | What::Header);
-            let (ink, dim, mark) = match (hot, off) {
-                (true, _) => (ink_on(t.accent_fill), ink_on(t.accent_fill), ink_on(t.accent_fill)),
-                (false, true) => (t.text_dim.alpha(OFF), t.text_dim.alpha(OFF), t.accent.alpha(OFF)),
-                (false, false) => (t.text, t.text_dim, t.accent),
-            };
-            let depth = if *path { 0.0 } else { n.depth as f32 };
-            let x0 = r.x + depth * INDENT * s;
-            let side = Rect::new(r.right() - SIDE_W * s, r.y, SIDE_W * s, r.h);
-            let star = self.star_rect(k);
-            let text_y = baseline(p.g, r, font);
-            let keys_w = if n.keys.is_empty() { 0.0 } else { p.g.measure(&n.keys, font) };
-            let star_on = *pinned || (hot && self.pinnable(k) && self.hover.is_some());
-            let keys_right = if star_on { star.x } else { side.x };
-            let label_x = x0 + ICON_W * s;
-            let room = keys_right - label_x - if keys_w > 0.0 { keys_w + KEYS_GAP * s } else { 0.0 };
-            let text = if *path { &n.path } else { &n.label };
-            p.marked((label_x, text_y), text, marks, font, (ink, mark), room);
-            if let What::Command { icon, image, .. } = &n.what {
-                let slot = Rect::new(x0, r.y, ICON_W * s, r.h);
-                let shown = image.as_ref().is_some_and(|i| draw_image(p.g, i, slot, s, if off && !hot { OFF } else { 0xFF }));
-                if !shown && !icon.is_empty() {
-                    p.centered(slot, icon, icons, if off && !hot { dim } else { ink });
+        if let Some(u) = unfold {
+            u.item(&mut p.g.dl, at, order(0), shown);
+        }
+        p.g.dl.set_clip(Some(list));
+        let (mut n, mut kids) = (0, 0);
+        for k in (0..self.rows.len()).filter(|&k| seen(&self.rects[k])) {
+            let at = p.g.dl.instances.len();
+            self.draw_row(&mut p, k, (font, icons));
+            n += 1;
+            if let (Some((nodes, f)), Row::Node { node, pinned: false, .. }) = (&fresh, &self.rows[k]) {
+                if nodes.contains(node) {
+                    f.item(&mut p.g.dl, at, kids, list);
+                    kids += 1;
                 }
             }
-            if keys_w > 0.0 {
-                p.g.text(keys_right - keys_w - PAD * s, text_y, &n.keys, font, dim, f32::INFINITY);
-            }
-            if star_on {
-                let lit = match self.glow_at {
-                    Some(now) => self.star_glow.alpha(*node, now),
-                    None => f32::from(u8::from(self.hover == Some(CtxHit::Star(k)))),
-                };
-                if lit > 0.0 {
-                    let pad = (3.0 * s).round();
-                    let back = if hot { ink_on(t.accent_fill).alpha(0x38) } else { t.button_hover };
-                    p.g.dl.round_rect(Rect::new(star.x + 1.0, star.y + pad, star.w - 2.0, star.h - 2.0 * pad), super::widgets::faded(back, lit), 3.0 * s);
-                }
-                let ink = if *pinned && !hot { t.accent } else { dim };
-                p.centered(star, G_PIN, icons, ink);
-            }
-            match &n.what {
-                What::Command { checked, mark: m, .. } => {
-                    let bx = Rect::new(side.x + (side.w - 14.0 * s) / 2.0, r.y + (r.h - 14.0 * s) / 2.0, 14.0 * s, 14.0 * s).snap();
-                    match (m, checked) {
-                        (Mark::Radio, on) => p.radio(bx, *on, None),
-                        (Mark::Sort(desc), on) => p.radio(bx, *on, on.then_some((!*desc, FontStyle::new(FontFamily::Ui, 10.0 * s, false)))),
-                        (Mark::Check, on) | (Mark::None, on @ true) => p.checkbox(bx, *on),
-                        (Mark::None, false) => {}
-                    }
-                }
-                What::Submenu { .. } => p.centered(side, if self.open.contains(node) { G_OPENED } else { G_CLOSED }, icons, ink),
-                What::Header | What::Separator => {}
+            if let Some(u) = unfold {
+                u.item(&mut p.g.dl, at, order(n), shown);
             }
         }
         if self.rows.is_empty() {
+            let at = p.g.dl.instances.len();
             let r = Rect::new(self.list.x, self.list.y, self.list.w, ROW_H * s);
             let y = baseline(p.g, r, font);
             p.g.text(r.x + ICON_W * s, y, S::MenusNoMatch.t(), font, t.text_dim, r.w);
+            if let Some(u) = unfold {
+                u.item(&mut p.g.dl, at, order(1), shown);
+            }
         }
         p.g.dl.set_clip(None);
         if self.arrows[0].w > 0.0 {
+            let at = p.g.dl.instances.len();
             for (k, glyph) in [G_UP, G_DOWN].into_iter().enumerate() {
                 p.icon_button(self.arrows[k], glyph, FontStyle::new(FontFamily::Icons, 8.0 * s, false), Button::of(self.hover == Some(CtxHit::Scroll(k == 1)), false, true), t.text_dim);
             }
+            if let Some(u) = unfold {
+                u.item(&mut p.g.dl, at, 0, shown);
+            }
+        }
+    }
+
+    fn draw_row<B: TextBackend>(&self, p: &mut Paint<B>, k: usize, (font, icons): (FontStyle, FontStyle)) {
+        let (s, t, r) = (self.scale, p.t, self.rects[k]);
+        let row = &self.rows[k];
+        let Row::Node { node, marks, pinned, path } = row else {
+            p.separator(r.x + PAD * s, r.y + r.h / 2.0, r.w - 2.0 * PAD * s);
+            return;
+        };
+        let n = &self.nodes[*node];
+        if n.label.is_empty() && n.what == What::Header {
+            let bar = Rect::new(r.x + ICON_W * s, r.y + (r.h * 0.36).round(), (r.w * 0.5 - (k % 3) as f32 * 24.0 * s).max(r.w * 0.2), (r.h * 0.28).round());
+            p.g.dl.round_rect(bar, t.text_dim.alpha(0x24), 3.0 * s);
+            return;
+        }
+        let lit = match self.glow_at {
+            Some(now) => self.glow.alpha(*node, now),
+            None => f32::from(u8::from(self.hot == Some(k))),
+        };
+        let hot = lit >= 0.5;
+        if lit > 0.0 {
+            p.g.dl.round_rect(r, super::widgets::faded(t.accent_fill, lit), 4.0 * s);
+        }
+        let off = matches!(n.what, What::Command { disabled: true, .. } | What::Header);
+        let (ink, dim, mark) = match (hot, off) {
+            (true, _) => (ink_on(t.accent_fill), ink_on(t.accent_fill), ink_on(t.accent_fill)),
+            (false, true) => (t.text_dim.alpha(OFF), t.text_dim.alpha(OFF), t.accent.alpha(OFF)),
+            (false, false) => (t.text, t.text_dim, t.accent),
+        };
+        let depth = if *path { 0.0 } else { n.depth as f32 };
+        let x0 = r.x + depth * INDENT * s;
+        let side = Rect::new(r.right() - SIDE_W * s, r.y, SIDE_W * s, r.h);
+        let star = self.star_rect(k);
+        let text_y = baseline(p.g, r, font);
+        let keys_w = if n.keys.is_empty() { 0.0 } else { p.g.measure(&n.keys, font) };
+        let star_on = *pinned || (hot && self.pinnable(k) && self.hover.is_some());
+        let keys_right = if star_on { star.x } else { side.x };
+        let label_x = x0 + ICON_W * s;
+        let room = keys_right - label_x - if keys_w > 0.0 { keys_w + KEYS_GAP * s } else { 0.0 };
+        let text = if *path { &n.path } else { &n.label };
+        p.marked((label_x, text_y), text, marks, font, (ink, mark), room);
+        if let What::Command { icon, image, .. } = &n.what {
+            let slot = Rect::new(x0, r.y, ICON_W * s, r.h);
+            let shown = image.as_ref().is_some_and(|i| draw_image(p.g, i, slot, s, if off && !hot { OFF } else { 0xFF }));
+            if !shown && !icon.is_empty() {
+                p.centered(slot, icon, icons, if off && !hot { dim } else { ink });
+            }
+        }
+        if keys_w > 0.0 {
+            p.g.text(keys_right - keys_w - PAD * s, text_y, &n.keys, font, dim, f32::INFINITY);
+        }
+        if star_on {
+            let lit = match self.glow_at {
+                Some(now) => self.star_glow.alpha(*node, now),
+                None => f32::from(u8::from(self.hover == Some(CtxHit::Star(k)))),
+            };
+            if lit > 0.0 {
+                let pad = (3.0 * s).round();
+                let back = if hot { ink_on(t.accent_fill).alpha(0x38) } else { t.button_hover };
+                p.g.dl.round_rect(Rect::new(star.x + 1.0, star.y + pad, star.w - 2.0, star.h - 2.0 * pad), super::widgets::faded(back, lit), 3.0 * s);
+            }
+            let ink = if *pinned && !hot { t.accent } else { dim };
+            p.centered(star, G_PIN, icons, ink);
+        }
+        match &n.what {
+            What::Command { checked, mark: m, .. } => {
+                let bx = Rect::new(side.x + (side.w - 14.0 * s) / 2.0, r.y + (r.h - 14.0 * s) / 2.0, 14.0 * s, 14.0 * s).snap();
+                match (m, checked) {
+                    (Mark::Radio, on) => p.radio(bx, *on, None),
+                    (Mark::Sort(desc), on) => p.radio(bx, *on, on.then_some((!*desc, FontStyle::new(FontFamily::Ui, 10.0 * s, false)))),
+                    (Mark::Check, on) | (Mark::None, on @ true) => p.checkbox(bx, *on),
+                    (Mark::None, false) => {}
+                }
+            }
+            What::Submenu { .. } => p.centered(side, if self.open.contains(node) { G_OPENED } else { G_CLOSED }, icons, ink),
+            What::Header | What::Separator => {}
         }
     }
 }

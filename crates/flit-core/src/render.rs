@@ -163,8 +163,33 @@ impl DrawList {
             let [x, y, w, h] = i.rect;
             i.rect = [scale(x, center.0), scale(y, center.1), w * k, h * k];
             i.radius *= k;
-            let a = ((i.color >> 24) as f32 * t).round() as u32;
-            i.color = (i.color & 0x00FF_FFFF) | a << 24;
+            i.color = times_alpha(i.color, t);
+        }
+    }
+
+    pub fn fade(&mut self, from: usize, k: f32) {
+        let k = k.clamp(0.0, 1.0);
+        if k >= 1.0 {
+            return;
+        }
+        for i in self.instances.iter_mut().skip(from) {
+            i.color = times_alpha(i.color, k);
+        }
+    }
+
+    pub fn nudge(&mut self, from: usize, dx: f32, dy: f32) {
+        for i in self.instances.iter_mut().skip(from) {
+            i.rect[0] += dx;
+            i.rect[1] += dy;
+        }
+    }
+
+    pub fn refit(&mut self, from: usize, was: Rect, to: Rect) {
+        let (left, top) = (to.x - was.x, to.y - was.y);
+        let (right, bottom) = (to.right() - was.right(), to.bottom() - was.bottom());
+        for i in self.instances.iter_mut().skip(from) {
+            let [x, y, w, h] = i.rect;
+            i.rect = [x + left, y + top, (w + right - left).max(0.0), (h + bottom - top).max(0.0)];
         }
     }
 
@@ -230,6 +255,11 @@ impl DrawList {
             }
         }
     }
+}
+
+fn times_alpha(color: u32, k: f32) -> u32 {
+    let a = ((color >> 24) as f32 * k).round() as u32;
+    (color & 0x00FF_FFFF) | a << 24
 }
 
 const CHECK_POINTS: [(f32, f32); 3] = [(0.24, 0.52), (0.42, 0.70), (0.77, 0.32)];
