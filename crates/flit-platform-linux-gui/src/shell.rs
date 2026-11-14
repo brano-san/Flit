@@ -374,14 +374,26 @@ pub fn loop_device(said: &str) -> Option<PathBuf> {
     Some(PathBuf::from(said[at..].trim().trim_end_matches('.')))
 }
 
+fn udisksctl_message(stderr: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    let text = text.trim();
+    if text.contains(".Error.DeviceBusy") || text.ends_with("target is busy") {
+        return S::ErrorsFsDriveBusy.en().to_owned();
+    }
+    match text.split_once("GDBus.Error:") {
+        Some((_, rest)) => rest.split_once(": ").map_or(rest, |(_, why)| why).trim().to_owned(),
+        None => text.to_owned(),
+    }
+}
+
 fn mount_image(file: &Path) -> io::Result<PathBuf> {
     let udisks = on_path(OsStr::new("udisksctl")).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, tool_missing("udisksctl").message))?;
     let out = Command::new(udisks).args(["loop-setup", "-r", "-f"]).arg(file).stdin(Stdio::null()).output()?;
     if !out.status.success() {
-        return Err(io::Error::other(crate::places::udisks_message(&out.stderr)));
+        return Err(io::Error::other(udisksctl_message(&out.stderr)));
     }
     let device = loop_device(&String::from_utf8_lossy(&out.stdout)).ok_or_else(|| io::Error::other("udisksctl did not name the loop device"))?;
-    crate::places::mount(&device).or_else(|e| {
+    crate::udisks::mount(&device).or_else(|e| {
         let table = flit_platform_linux::mounts::read()?;
         table.iter().rev().find(|m| m.source == device.as_os_str().as_bytes()).map(|m| m.path().to_path_buf()).ok_or(e)
     })
