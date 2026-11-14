@@ -546,8 +546,9 @@ impl App {
     }
 
     pub(super) fn set_layout(&mut self, mode: LayoutMode) {
-        if mode == LayoutMode::Adaptive && self.prefs.same_for_all {
-            return self.status(S::LayoutsAdaptiveShared.t());
+        let shared = mode == LayoutMode::Adaptive && self.prefs.same_for_all;
+        if shared {
+            self.toggle_pref(|p| &mut p.same_for_all);
         }
         let look = self.concrete(self.cur, mode);
         let zoom = zoom_of(mode, self.tab().zoom);
@@ -558,6 +559,9 @@ impl App {
         }
         self.change_view(|t| (t.mode, t.look, t.zoom) = (mode, look, zoom));
         self.shape_view();
+        if shared {
+            self.status(S::LayoutsAdaptiveShared.t());
+        }
     }
 
     pub(super) fn set_zoom(&mut self, zoom: u8) {

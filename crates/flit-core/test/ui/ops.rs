@@ -417,7 +417,8 @@ fn operations_inside_one_distro_are_routed_to_its_agent() {
     let back = FileOp::Trash(vec![p(r"\\wsl.localhost\Ubuntu\tmp\a")]);
     assert_eq!(route(ubuntu(), back, false), Some((ubuntu(), FileOp::Trash(vec![p("/tmp/a")]))), "a step recorded from a share report is routed by its paths");
     assert_eq!(route(local.clone(), FileOp::Delete(vec![p("/etc")]), false), None, "Linux paths never go to Windows");
-    assert_eq!(route(ubuntu(), FileOp::Copy { items: vec![p("/a")], dest: p(r"C:\b") }, false), None);
+    assert_eq!(route(ubuntu(), FileOp::Copy { items: vec![p("/home/u/a")], dest: p(r"C:\b") }, false), Some((local.clone(), FileOp::Copy { items: vec![p(r"\\wsl.localhost\Ubuntu\home\u\a")], dest: p(r"C:\b") })), "WSL and Windows items go together through the WSL share");
+    assert_eq!(route(ubuntu(), FileOp::Copy { items: vec![p(r"C:\a")], dest: p("/tmp") }, false), Some((local.clone(), FileOp::Copy { items: vec![p(r"C:\a")], dest: p(r"\\wsl.localhost\Ubuntu\tmp") })));
     assert_eq!(route(local.clone(), FileOp::Delete(vec![p("/etc")]), true), Some((local.clone(), FileOp::Delete(vec![p("/etc")]))), "a Linux build runs Linux paths locally");
     assert_eq!(route(local.clone(), FileOp::Copy { items: vec![p("/a")], dest: p(r"C:\b") }, true), None);
 }
@@ -1643,7 +1644,13 @@ fn the_terminal_opens_the_folder_or_up_to_five_selected_folders() {
     deliver(&mut app, &[("C:", true)]);
     app.run_action("app.terminal", t0());
     assert!(launches(&mut app).is_empty());
-    assert_eq!(app.tab().error.as_deref(), Some("This location cannot be opened in a terminal"));
+    assert_eq!(app.tab().error.as_deref(), Some("This location cannot be opened in a terminal"), "without a known home folder there is nowhere to go");
+    std::sync::Arc::make_mut(&mut app.nav.sidebar.places).folders.push((crate::ui::sidebar::KnownFolder::Home, Location::parse(r"C:\Users\u").unwrap()));
+    app.run_action("app.terminal", t0());
+    assert_eq!(launches(&mut app), [Launch::Terminal { dirs: vec![p(r"C:\Users\u")], admin: false }], "This PC opens the terminal in the home folder as Explorer does");
+    app.navigate(Location::home_page(), t0());
+    app.run_action("app.terminal", t0());
+    assert_eq!(launches(&mut app), [Launch::Terminal { dirs: vec![p(r"C:\Users\u")], admin: false }], "so does the Home page");
 }
 
 #[test]

@@ -393,6 +393,12 @@ fn in_distro(op: &FileOp) -> Option<(String, FileOp)> {
 
 pub fn route(provider: ProviderId, op: FileOp, unix_local: bool) -> Option<(ProviderId, FileOp)> {
     let unix = |p: &FsPath| p.kind() == PathKind::Unix;
+    if let (ProviderId::Wsl(distro), false) = (&provider, unix_local) {
+        if !op.all_paths(unix) && !op.all_paths(|p| !unix(p)) {
+            let shared = op.map_paths(|p| if unix(p) { Location::Wsl { distro: distro.clone(), path: p.clone() }.to_windows() } else { Some(p.clone()) })?;
+            return route(ProviderId::Local, shared, false);
+        }
+    }
     if op.all_paths(|p| !unix(p)) {
         return Some(match in_distro(&op) {
             Some((distro, linux)) => (ProviderId::Wsl(distro), linux),
@@ -1001,7 +1007,7 @@ impl App {
         };
         let dirs = match (folders.is_empty(), self.item_paths(&folders)) {
             (false, Ok(paths)) => paths.into_iter().take(MAX_TERMINALS).collect(),
-            _ => match t.view_loc.to_windows().filter(|p| p.kind() != PathKind::Computer) {
+            _ => match t.view_loc.to_windows().filter(|p| p.kind() != PathKind::Computer).or_else(|| self.known_folder(super::sidebar::KnownFolder::Home).and_then(|h| h.to_windows())) {
                 Some(dir) => vec![dir],
                 None => return self.status(S::UiOpsNoTerminal.t()),
             },

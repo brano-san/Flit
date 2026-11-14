@@ -339,13 +339,21 @@ fn adaptive_follows_the_desktop_ini_folder_type() {
 }
 
 #[test]
-fn adaptive_is_refused_while_all_folders_share_one_view() {
+fn adaptive_turns_off_the_shared_view_instead_of_refusing() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &["a.txt"]);
     app.run_action("view.same_for_all", Instant::now());
+    assert!(app.prefs.same_for_all);
+    app.run_action("view.layout.list", Instant::now());
+    assert!(app.prefs.same_for_all, "other layouts keep the shared view");
+    assert_eq!(app.tab().error, None);
     app.run_action("view.layout.adaptive", Instant::now());
-    assert_eq!(app.tab().mode, LayoutMode::Details);
-    assert_eq!(app.tab().error.as_deref(), Some(S::LayoutsAdaptiveShared.t()));
+    assert_eq!(app.tab().mode, LayoutMode::Adaptive);
+    assert!(!app.prefs.same_for_all, "Adaptive needs its own view per folder");
+    assert_eq!(app.tab().error.as_deref(), Some(S::LayoutsAdaptiveShared.t()), "and says what it changed");
+    app.run_action("view.layout.details", Instant::now());
+    app.run_action("view.layout.adaptive", Instant::now());
+    assert!(!app.prefs.same_for_all);
 }
 
 #[test]
