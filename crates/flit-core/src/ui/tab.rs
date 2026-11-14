@@ -63,6 +63,7 @@ pub struct Tab {
     pub stats: LoadStats,
     pub(super) scroll: f32,
     pub(super) scroll_target: f32,
+    pub(super) scroll_x: f32,
     pub(super) reveal_pending: bool,
     pub(super) properties_due: bool,
     pub(super) motion: TabMotion,
@@ -111,6 +112,7 @@ impl Tab {
             stats: LoadStats::default(),
             scroll: 0.0,
             scroll_target: 0.0,
+            scroll_x: 0.0,
             reveal_pending: false,
             properties_due: false,
             motion: TabMotion::default(),
@@ -215,6 +217,9 @@ impl Tab {
             Some(v) if v.snap().gen == snap.gen => v.replace(snap),
             _ => {
                 self.view = Some(DirView::new(snap));
+                if self.view_loc != *self.location() {
+                    self.scroll_x = 0.0;
+                }
                 self.view_loc = self.location().clone();
                 self.scroll = 0.0;
                 self.scroll_target = 0.0;

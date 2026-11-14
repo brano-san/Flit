@@ -477,6 +477,8 @@ enum Hit {
     ListEmpty,
     Track,
     Thumb,
+    HTrack,
+    HThumb,
     Encoding,
     Branch,
     Bin(usize),
@@ -532,6 +534,7 @@ enum Hit {
 enum Drag {
     None,
     Thumb { grab: f32 },
+    HThumb { grab: f32 },
     ColSep { col: Column, start_x: f32, start: details::Columns, moved: bool },
     Splitter { start_x: f32, start_w: f32 },
     PinMove { from: usize, to: usize },
@@ -567,6 +570,9 @@ struct Layout {
     list: Rect,
     track: Rect,
     thumb: Rect,
+    htrack: Rect,
+    hthumb: Rect,
+    hmax: f32,
     status: Rect,
     bar: Vec<(bottom::BottomHit, Rect)>,
     bar_pieces: [Rect; 2],
@@ -1527,20 +1533,15 @@ impl App {
         let l = &mut self.layout;
         l.columns.clear();
         l.columns.extend(shown.0.iter().map(|&(c, _)| c));
-        let fixed: f32 = shown.0.iter().filter(|&&(c, _)| c != Column::Name).map(|&(_, w)| w).sum();
-        let name_cap = if widths.width(Column::Name) > 0.0 { s(widths.width(Column::Name)) } else { f32::INFINITY };
-        let name_floor = s(NAME_MIN_W).min(name_cap);
-        let room = (l.list.w - name_floor).max(0.0);
-        let squeeze = if fixed > room { room / fixed } else { 1.0 };
-        let fit = |w: f32| if squeeze < 1.0 { (w * squeeze).floor().max(s(details::MIN_COL_W).min(w)) } else { w };
-        let fitted: f32 = shown.0.iter().filter(|&&(c, _)| c != Column::Name).map(|&(_, w)| fit(w)).sum();
-        let name_w = (l.list.w - fitted).min(name_cap).max(name_floor);
-        let total = name_w + fitted;
-        let tight = if total > l.list.w && total > 0.0 { l.list.w / total } else { 1.0 };
-        let mut x = l.list.x;
+        let fixed: f32 = shown.0.iter().filter(|&&(c, _)| c != Column::Name).map(|&(_, w)| w.floor()).sum();
+        let name_w = if widths.width(Column::Name) > 0.0 { s(widths.width(Column::Name)) } else { (l.list.w - fixed).max(s(NAME_MIN_W)).floor() };
+        let total = if l.mode.table() { name_w + fixed } else { 0.0 };
+        let sx = self.table_scroll(total, s(SCROLLBAR_W));
+        let l = &mut self.layout;
+        let mut x = l.list.x - sx;
         l.cols.clear();
         for &(c, w) in &shown.0 {
-            let cw = (if c == Column::Name { name_w } else { fit(w) } * tight).floor();
+            let cw = if c == Column::Name { name_w } else { w.floor() };
             l.cols.push(Rect::new(x, l.header.y, cw, l.header.h));
             x += cw;
         }
@@ -1610,11 +1611,18 @@ impl App {
             return Hit::None;
         }
         if l.header.contains(x, y) {
-            let grip = self.s(4.0);
-            if let Some((i, _)) = l.cols.iter().map(|r| (x - r.right()).abs()).enumerate().filter(|&(_, d)| d <= grip).min_by(|a, b| a.1.total_cmp(&b.1)) {
+            let (grip, lo, hi) = (self.s(4.0), l.list.x, l.list.right());
+            let near = l.cols.iter().map(|r| r.right()).enumerate().filter(|&(_, e)| (lo..=hi + 0.5).contains(&e) && (x - e).abs() <= grip);
+            if let Some((i, _)) = near.min_by(|a, b| (x - a.1).abs().total_cmp(&(x - b.1).abs())) {
                 return Hit::ColSep(i);
             }
+            if x < lo || x >= hi {
+                return Hit::HeaderEmpty;
+            }
             return l.cols.iter().position(|r| r.contains(x, y)).map_or(Hit::HeaderEmpty, Hit::Header);
+        }
+        if l.htrack.contains(x, y) {
+            return if l.hthumb.contains(x, y) { Hit::HThumb } else { Hit::HTrack };
         }
         if l.track.contains(x, y) {
             let th = l.thumb;
@@ -1812,6 +1820,7 @@ impl App {
                 return;
             }
             Drag::ColSep { .. } => return self.drag_column_edge(x),
+            Drag::HThumb { grab } => return self.drag_hthumb(x, grab),
             Drag::Splitter { start_x, start_w } => return self.drag_splitter(x, start_x, start_w),
             Drag::PinMove { from, .. } => return self.drag_pin(from, y),
             Drag::PlaceMove { from, .. } => {
@@ -1940,6 +1949,7 @@ impl App {
                 let th = self.layout.thumb;
                 self.drag = Drag::Thumb { grab: self.along_of(x - th.x, y - th.y) };
             }
+            Hit::HThumb | Hit::HTrack => self.hbar_down(h, x),
             Hit::Track => {
                 let th = self.layout.thumb;
                 let dir = if self.along_of(x - th.x, y - th.y) < 0.0 { -1.0 } else { 1.0 };
@@ -2720,17 +2730,21 @@ impl App {
         let l = &self.layout;
         for (i, col) in l.columns.iter().enumerate() {
             let r = l.cols[i];
+            let shown = self.header_clip(r);
+            if shown.w <= 0.0 {
+                continue;
+            }
             let lit = self.head_glow.alpha((here, i, false), now);
             if lit > 0.0 {
-                g.dl.rect(r, widgets::faded(t.button_hover, lit));
+                g.dl.rect(shown, widgets::faded(t.button_hover, lit));
             }
-            if i > 0 {
+            if i > 0 && r.x >= l.list.x {
                 g.dl.rect(Rect::new(r.x, r.y + self.cs(6.0), 1.0, r.h - self.cs(12.0)), t.separator);
             }
             if i + 1 == l.columns.len() && r.right() < l.list.right() - 1.0 {
                 g.dl.rect(Rect::new(r.right(), r.y + self.cs(6.0), 1.0, r.h - self.cs(12.0)), t.separator);
             }
-            g.dl.set_clip(Some(r));
+            g.dl.set_clip(Some(shown));
             let sorted = Some(sort.field) == col.field();
             let mut x = r.x + pad;
             if *col == Column::Name && self.prefs.checkboxes {
@@ -3026,6 +3040,7 @@ impl App {
             let hot = matches!(self.hover, Hit::Thumb | Hit::Track) || matches!(self.drag, Drag::Thumb { .. });
             g.dl.round_rect(th, if hot { t.scrollbar_hover } else { t.scrollbar }, th.w / 2.0);
         }
+        self.draw_hbar(g, t);
     }
 }
 

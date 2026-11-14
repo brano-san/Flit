@@ -1361,6 +1361,7 @@ impl App {
         t.error = None;
         let tab = t.id;
         self.reveal_focus(false);
+        self.tab_mut().scroll_x = 0.0;
         self.ops.rename = Some(Rename { tab, gen, idx, edit, scroll: 0.0, rect: Rect::default(), click: None, selecting: None, batch, confirmed: None, hint: None, volume });
         self.ops.slow = None;
         self.focus = Focus::List;
@@ -1908,7 +1909,7 @@ impl App {
                     here()
                 }
             }
-            Hit::ListEmpty | Hit::Group(_) | Hit::Track | Hit::Thumb => here(),
+            Hit::ListEmpty | Hit::Group(_) | Hit::Track | Hit::Thumb | Hit::HTrack | Hit::HThumb => here(),
             Hit::Tab(i) | Hit::TabClose(i) => into(self.tabs.get(i)?.location(), Spot::Tab(i)),
             Hit::Crumb(i) => into(&t.crumb(i)?.1, Spot::Crumb(i)),
             Hit::Side(i) | Hit::SidePin(i) if self.nav.sidebar.dragging_out && self.nav.sidebar.items.get(i).is_some_and(|it| it.section == Section::Bookmarks) => Some(Target::Pin),

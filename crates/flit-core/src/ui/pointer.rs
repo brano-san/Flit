@@ -86,6 +86,9 @@ impl App {
             }
             return;
         }
+        if self.table_wheel(dx, dy) {
+            return;
+        }
         let (step, max) = (self.wheel_step(), self.max_scroll());
         let along = if self.layout.flow.across { dy - dx } else { dy };
         let t = self.tab_mut();

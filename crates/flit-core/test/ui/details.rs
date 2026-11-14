@@ -721,17 +721,85 @@ fn the_sort_arrow_turns_over_on_a_new_direction_and_fades_in_on_a_new_column() {
 }
 
 #[test]
-fn a_narrow_pane_squeezes_the_columns_to_fit_its_width() {
+fn a_narrow_pane_scrolls_the_columns_sideways_instead_of_squeezing_them() {
     let mut app = App::new(Persisted { path: loc(r"C:\x"), ..Default::default() }, Vec::new(), 0, false, 1.0, (560, 600), Instant::now());
     app.animations = false;
     let mut cols = app.tab().columns;
     cols.toggle(Column::Created);
     app.tab_mut().columns = cols;
-    deliver(&mut app, &[("a.txt", 10, false)]);
+    deliver(&mut app, &[("a.txt", 10, false), ("b.txt", 10, false)]);
     frame(&mut app);
     let (list, last) = (app.layout.list, *app.layout.cols.last().unwrap());
-    assert!(app.layout.cols.len() > 3, "{:?}", app.layout.columns);
-    assert!(last.right() <= list.right() + 0.5, "the table ends at {} past the pane edge {}: {:?} {:?}", last.right(), list.right(), app.layout.columns, app.layout.cols);
+    for (&c, r) in app.layout.columns.iter().zip(&app.layout.cols).skip(1) {
+        assert_eq!(r.w, cols.width(c), "{c:?} keeps its width");
+    }
+    assert_eq!(app.layout.cols[0].w, crate::ui::NAME_MIN_W, "a filling Name shrinks only to its minimum");
+    assert!(last.right() > list.right() + 50.0, "the table runs past the pane edge");
+    let (bar, thumb) = (app.layout.htrack, app.layout.hthumb);
+    assert!(bar.h > 0.0 && thumb.w > 0.0 && thumb.w < bar.w, "a horizontal scroll bar shows: {bar:?} {thumb:?}");
+    assert_eq!(list.bottom(), bar.y, "the bar sits under the rows");
+    let over = last.right() - list.right();
+    let y0 = app.tab().scroll;
+    app.on_event(&Event::Wheel { dx: 0.0, dy: -1.0 }, Instant::now());
+    frame(&mut app);
+    assert_eq!((app.tab().scroll_x, app.layout.cols[0].x), (0.0, list.x), "a plain wheel does not scroll sideways");
+    app.tab_mut().scroll = y0;
+    app.tab_mut().scroll_target = y0;
+    app.mods.shift = true;
+    app.on_event(&Event::Wheel { dx: 0.0, dy: -1.0 }, Instant::now());
+    app.mods.shift = false;
+    frame(&mut app);
+    let sx = app.tab().scroll_x;
+    assert!(sx > 0.0 && app.tab().scroll_target == y0, "Shift+wheel scrolls sideways only: {sx}");
+    assert_eq!(app.layout.cols[0].x, list.x - sx, "the header moves");
+    assert_eq!(app.row_rect(0).unwrap().x, list.x - sx, "the rows move with it");
+    let y = header_y(&app);
+    assert_eq!(app.hit(list.x - 2.0, y), Hit::HeaderEmpty, "a column scrolled out of sight takes no clicks");
+    app.on_event(&Event::Wheel { dx: 50.0, dy: 0.0 }, Instant::now());
+    frame(&mut app);
+    assert!(app.tab().scroll_x > sx, "a sideways wheel scrolls too");
+    let th = app.layout.hthumb;
+    let (tx, ty) = (th.x + th.w / 2.0, th.y + th.h / 2.0);
+    assert_eq!(app.hit(tx, ty), Hit::HThumb);
+    app.on_event(&Event::MouseDown { x: tx, y: ty, button: MouseButton::Left, clicks: 1 }, Instant::now());
+    app.on_event(&Event::MouseMove { x: tx + 1000.0, y: ty }, Instant::now());
+    app.on_event(&Event::MouseUp { x: tx + 1000.0, y: ty, button: MouseButton::Left }, Instant::now());
+    frame(&mut app);
+    assert_eq!(app.tab().scroll_x, over, "dragging the thumb to the end shows the last column");
+    assert_eq!(app.layout.cols.last().unwrap().right(), list.right());
+    let th = app.layout.hthumb;
+    let tx = app.layout.htrack.x + 2.0;
+    click(&mut app, tx, th.y + 1.0, MouseButton::Left);
+    frame(&mut app);
+    assert_eq!(app.tab().scroll_x, (over - list.w).max(0.0).round(), "a click on the track left of the thumb pages back");
+    app.mods.shift = true;
+    app.on_event(&Event::Wheel { dx: 0.0, dy: -1.0 }, Instant::now());
+    app.mods.shift = false;
+    app.on_event(&Event::Resized { width: 1600, height: 600 }, Instant::now());
+    frame(&mut app);
+    assert_eq!((app.tab().scroll_x, app.layout.hthumb.w), (0.0, 0.0), "a wide enough window needs no scrolling");
+    assert_near(app.layout.cols.last().unwrap().right(), app.layout.list.right(), "Name fills the pane again");
+}
+
+#[test]
+fn another_folder_starts_scrolled_to_the_name_column() {
+    let mut app = App::new(Persisted { path: loc(r"C:\x"), ..Default::default() }, Vec::new(), 0, false, 1.0, (560, 600), Instant::now());
+    app.animations = false;
+    deliver(&mut app, &[("a.txt", 10, false)]);
+    app.mods.shift = true;
+    app.on_event(&Event::Wheel { dx: 0.0, dy: -1.0 }, Instant::now());
+    app.mods.shift = false;
+    frame(&mut app);
+    let sx = app.tab().scroll_x;
+    assert!(sx > 0.0);
+    let k = app.cur;
+    app.reload(k, Instant::now());
+    deliver(&mut app, &[("a.txt", 11, false)]);
+    assert_eq!(app.tab().scroll_x, sx, "a refresh keeps the sideways scroll");
+    app.navigate(loc(r"C:\y"), Instant::now());
+    deliver(&mut app, &[("c.txt", 10, false)]);
+    assert_eq!(app.tab().scroll_x, 0.0);
+    assert_eq!(app.layout.cols[0].x, app.layout.list.x);
 }
 
 fn header_y(app: &App) -> f32 {
@@ -787,9 +855,10 @@ fn dragging_a_column_edge_sizes_the_column_on_its_left_and_the_edge_follows_the_
     drag_edge(&mut app, ty.right(), 30.0);
     assert_near(col_rect(&app, Column::Type).w, ty.w + 30.0, "Type grows");
     assert_near(col_rect(&app, Column::Modified).x, modified.x + 30.0, "the edge follows the pointer even when the pane is full");
-    assert_near(col_rect(&app, Column::Modified).w, modified.w - 30.0, "the column right of the edge gives up the room");
-    assert_eq!(app.layout.cols[0], before[0], "Name does not move");
-    assert!(app.layout.cols.last().unwrap().right() <= list.right() + 0.5, "nothing is pushed out of the pane");
+    assert_eq!(col_rect(&app, Column::Modified).w, modified.w, "the column right of the edge keeps its width");
+    assert_eq!(app.layout.cols[0].w, before[0].w, "Name keeps its width");
+    assert_near(app.layout.cols.last().unwrap().right(), list.right() + 30.0, "the table grows past the pane edge as in Explorer");
+    assert!(app.layout.hthumb.w > 0.0, "and scrolls sideways");
 }
 
 #[test]
@@ -940,7 +1009,7 @@ fn always_fit_keeps_a_sized_name_while_folders_load() {
 }
 
 #[test]
-fn a_narrow_window_still_fits_the_table_when_name_was_sized() {
+fn a_narrow_window_keeps_a_sized_name_and_scrolls_the_table() {
     let mut app = app_at(r"C:\x");
     app.animations = false;
     deliver(&mut app, &[("a.txt", 10, false)]);
@@ -951,13 +1020,8 @@ fn a_narrow_window_still_fits_the_table_when_name_was_sized() {
     app.on_event(&Event::Resized { width: 560, height: 600 }, Instant::now());
     frame(&mut app);
     let (list, last) = (app.layout.list, *app.layout.cols.last().unwrap());
-    assert!(last.right() <= list.right() + 0.5, "the table ends at {} past the pane edge {}", last.right(), list.right());
-    let mut auto = app_at(r"C:\x");
-    auto.animations = false;
-    deliver(&mut auto, &[("a.txt", 10, false)]);
-    auto.on_event(&Event::Resized { width: 560, height: 600 }, Instant::now());
-    frame(&mut auto);
-    assert_eq!(app.layout.cols, auto.layout.cols, "a sized Name squeezes the same way as a filling one");
+    assert_eq!(app.layout.cols[0].w, sized, "a narrow window does not squeeze the width the user gave Name");
+    assert!(last.right() > list.right() && app.layout.hthumb.w > 0.0, "the rest of the table is reached by scrolling");
     app.on_event(&Event::Resized { width: 1000, height: 600 }, Instant::now());
     frame(&mut app);
     assert_eq!(app.tab().columns.width(Column::Name), sized, "the narrow window did not change the saved width");

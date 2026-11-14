@@ -845,19 +845,78 @@ impl App {
         }
         self.drag = super::Drag::ColSep { col, start_x, start, moved: true };
         let dx = (x - start_x) / self.content_px();
-        let shown: Vec<Column> = self.layout.columns.iter().copied().filter(|&c| start.shown(c)).collect();
-        let free = (self.layout.list.w / self.content_px() - shown.iter().map(|&c| start.width(c)).sum::<f32>()).max(0.0);
         let from = start.width(col);
-        let want = (from + dx).round().clamp(min_width(col).min(from), max_width(col).max(from));
-        let mut need = (want - from - free).max(0.0);
         let mut cols = start;
-        for &c in shown.iter().skip_while(|&&c| c != col).skip(1) {
-            let give = need.min((start.width(c) - MIN_COL_W).max(0.0));
-            cols.set_width(c, start.width(c) - give);
-            need -= give;
-        }
-        cols.set_width(col, want - need);
+        cols.set_width(col, (from + dx).round().clamp(min_width(col).min(from), max_width(col).max(from)));
         self.change_view(|t| t.columns = cols);
+    }
+
+    pub(super) fn table_scroll(&mut self, total: f32, bar: f32) -> f32 {
+        let l = &mut self.layout;
+        let over = (total - l.list.w).floor();
+        if over < 1.0 || l.list.h <= 2.0 * bar {
+            (l.htrack, l.hthumb, l.hmax) = (Rect::default(), Rect::default(), 0.0);
+            self.tab_mut().scroll_x = 0.0;
+            return 0.0;
+        }
+        l.list.h -= bar;
+        l.htrack = Rect::new(l.list.x, l.list.bottom(), l.list.w, bar);
+        l.hmax = over;
+        let sx = self.tab().scroll_x.clamp(0.0, over).round();
+        self.tab_mut().scroll_x = sx;
+        let l = &mut self.layout;
+        let (tr, inset) = (l.htrack, (bar / 4.0).round());
+        let tw = (tr.w * l.list.w / total).max(2.0 * bar).min(tr.w);
+        l.hthumb = Rect::new((tr.x + (tr.w - tw) * sx / over).round(), tr.y + inset, tw, tr.h - 2.0 * inset);
+        sx
+    }
+
+    pub(super) fn scroll_table_to(&mut self, x: f32) {
+        let max = self.layout.hmax;
+        let t = self.tab_mut();
+        let to = x.clamp(0.0, max).round();
+        if to != t.scroll_x {
+            t.scroll_x = to;
+            self.layout();
+            self.dirty = true;
+        }
+    }
+
+    pub(super) fn table_wheel(&mut self, dx: f32, dy: f32) -> bool {
+        let side = super::pointer::sideways(dx, dy, self.mods.shift);
+        if side == 0.0 || !self.layout.mode.table() || self.layout.hmax <= 0.0 {
+            return false;
+        }
+        self.scroll_table_to(self.tab().scroll_x + side * self.wheel_step());
+        dx == 0.0
+    }
+
+    pub(super) fn hbar_down(&mut self, h: Hit, x: f32) {
+        let th = self.layout.hthumb;
+        match h {
+            Hit::HThumb => self.drag = Drag::HThumb { grab: x - th.x },
+            Hit::HTrack => self.scroll_table_to(self.tab().scroll_x + if x < th.x { -self.layout.list.w } else { self.layout.list.w }),
+            _ => {}
+        }
+    }
+
+    pub(super) fn drag_hthumb(&mut self, x: f32, grab: f32) {
+        let (tr, th, max) = (self.layout.htrack, self.layout.hthumb, self.layout.hmax);
+        self.scroll_table_to((x - grab - tr.x) / (tr.w - th.w).max(1.0) * max);
+    }
+
+    pub(super) fn header_clip(&self, r: Rect) -> Rect {
+        let l = self.layout.list;
+        let (x0, x1) = (r.x.max(l.x), r.right().min(l.right()));
+        Rect { x: x0, w: (x1 - x0).max(0.0), ..r }
+    }
+
+    pub(super) fn draw_hbar<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme) {
+        let r = self.layout.hthumb;
+        if r.w > 0.0 {
+            let hot = matches!(self.hover, Hit::HThumb | Hit::HTrack) || matches!(self.drag, Drag::HThumb { .. });
+            g.dl.round_rect(r, if hot { th.scrollbar_hover } else { th.scrollbar }, r.h / 2.0);
+        }
     }
 
     pub(super) fn request_fit(&mut self) {
