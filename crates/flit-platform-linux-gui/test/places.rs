@@ -297,10 +297,27 @@ fn a_network_drive_shows_its_free_space_and_a_hanging_one_does_not_hold_the_list
 fn trash_is_watched_in_each_files_folder_or_its_nearest_existing_parent() {
     let t = Temp::new("trash-watch");
     let trash = trash_at(&t);
-    assert_eq!(trash_folders(&trash, &[]), [t.path().to_path_buf()]);
+    assert_eq!(trash_folders(&trash, &[], &[]), [t.path().to_path_buf()]);
     std::fs::create_dir_all(t.path().join("home/.local/share/Trash/files")).unwrap();
     std::fs::create_dir_all(t.path().join(format!("vol/.Trash-{}/files", unsafe { libc::getuid() }))).unwrap();
     std::fs::create_dir_all(t.path().join("bare")).unwrap();
-    let got = trash_folders(&trash, &[t.path().join("vol"), t.path().join("bare")]);
+    let got = trash_folders(&trash, &[t.path().join("vol"), t.path().join("bare")], &[]);
     assert_eq!(got, [t.path().join("home/.local/share/Trash/files"), t.path().join(format!("vol/.Trash-{}/files", unsafe { libc::getuid() }))]);
+}
+
+#[test]
+fn a_drive_without_a_trash_yet_is_watched_for_the_trash_to_appear() {
+    let t = Temp::new("trash-coming");
+    let trash = trash_at(&t);
+    let uid = unsafe { libc::getuid() };
+    std::fs::create_dir_all(t.path().join("home/.local/share/Trash/files")).unwrap();
+    std::fs::create_dir_all(t.path().join("stick")).unwrap();
+    std::fs::create_dir_all(t.path().join("shared/.Trash")).unwrap();
+    let (stick, shared, gone) = (t.path().join("stick"), t.path().join("shared"), t.path().join("gone"));
+    let tops = [stick.clone(), shared.clone()];
+    let got = trash_folders(&trash, &tops, &[stick.clone(), shared.clone(), gone]);
+    assert_eq!(got, [t.path().join("home/.local/share/Trash/files"), stick.clone(), shared.join(".Trash"), shared.clone()]);
+    std::fs::create_dir_all(stick.join(format!(".Trash-{uid}/files"))).unwrap();
+    let got = trash_folders(&trash, &tops, &[stick.clone()]);
+    assert_eq!(got, [t.path().join("home/.local/share/Trash/files"), stick.join(format!(".Trash-{uid}/files")), stick.clone()]);
 }

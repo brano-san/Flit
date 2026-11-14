@@ -166,10 +166,14 @@ impl Trash {
         self.record(trashed).map(|(info, original, _)| (info, original))
     }
 
+    pub fn volume_dirs(&self, top: &Path) -> [PathBuf; 2] {
+        [top.join(".Trash").join(self.uid.to_string()), top.join(format!(".Trash-{}", self.uid))]
+    }
+
     pub fn dirs(&self, tops: &[PathBuf]) -> Vec<PathBuf> {
         let mut out = vec![self.home.clone()];
         for top in tops {
-            for dir in [top.join(".Trash").join(self.uid.to_string()), top.join(format!(".Trash-{}", self.uid))] {
+            for dir in self.volume_dirs(top) {
                 if !out.contains(&dir) && fs::symlink_metadata(dir.join("files")).is_ok_and(|m| m.is_dir()) {
                     out.push(dir);
                 }

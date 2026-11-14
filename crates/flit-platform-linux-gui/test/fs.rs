@@ -243,3 +243,19 @@ fn network_folders_are_also_polled_and_local_ones_only_watched() {
     t.file("after-leaving", 1);
     assert!(!std::iter::from_fn(|| rx.recv_timeout(Duration::from_millis(200)).ok()).any(|e| matches!(e, ProviderEvent::Rescan { tab: 61, .. })));
 }
+
+#[test]
+fn a_drive_mounted_while_the_trash_is_shown_reloads_only_the_trash_tabs() {
+    let (mut w, rx) = watcher();
+    let t = Temp::new("trash-mount");
+    w.trash = Some(flit_platform_linux::Trash::new(t.path().join("Trash"), unsafe { libc::getuid() }));
+    w.watch(61, 1, Some(&FsPath::recycle_bin()));
+    w.watch(62, 1, Some(&fs_path(t.path())));
+    while rx.try_recv().is_ok() {}
+    rescan_trash(&w.trash_tabs, &w.events, &w.wake);
+    let got: Vec<ProviderEvent> = std::iter::from_fn(|| rx.recv_timeout(Duration::from_millis(100)).ok()).collect();
+    assert!(matches!(got.as_slice(), [ProviderEvent::Rescan { tab: 61, gen: 1 }]), "{got:?}");
+    w.watch(61, 2, Some(&fs_path(t.path())));
+    rescan_trash(&w.trash_tabs, &w.events, &w.wake);
+    assert!(rx.recv_timeout(Duration::from_millis(100)).is_err());
+}

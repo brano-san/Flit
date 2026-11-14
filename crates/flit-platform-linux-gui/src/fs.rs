@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub const COALESCE: Duration = Duration::from_millis(16);
@@ -116,11 +116,24 @@ enum Spot {
     Trash(usize),
 }
 
+type TrashTabs = Arc<Mutex<HashMap<TabId, u64>>>;
+
+fn rescan_trash(tabs: &TrashTabs, events: &Sender<ProviderEvent>, wake: &Wake) {
+    let shown: Vec<(TabId, u64)> = tabs.lock().unwrap_or_else(|e| e.into_inner()).iter().map(|(&t, &g)| (t, g)).collect();
+    let sent = shown.into_iter().filter(|&(tab, gen)| events.send(ProviderEvent::Rescan { tab, gen }).is_ok()).count();
+    if sent > 0 {
+        wake();
+    }
+}
+
 pub struct LinuxGuiWatcher {
     notify: Notify<(TabId, u64, Spot)>,
     poll: crate::poll::Poll,
     remote: fn(&FsPath) -> bool,
     current: HashMap<TabId, (u64, Vec<Spot>)>,
+    trash: Option<flit_platform_linux::Trash>,
+    trash_tabs: TrashTabs,
+    mounts_watched: bool,
     events: Sender<ProviderEvent>,
     wake: Wake,
 }
@@ -134,10 +147,27 @@ impl LinuxGuiWatcher {
         blind_tabs().push(Blind { tab, gen, events: self.events.clone(), wake: self.wake.clone() });
     }
 
+    fn watch_mounts(&mut self) {
+        if self.mounts_watched {
+            return;
+        }
+        self.mounts_watched = true;
+        let (tabs, events, wake) = (self.trash_tabs.clone(), self.events.clone(), self.wake.clone());
+        if let Err(e) = flit_platform_linux::mounts::watch(Path::new(flit_platform_linux::mounts::MOUNTINFO), move || rescan_trash(&tabs, &events, &wake)) {
+            tracing::warn!("the trash view will not notice new drives: {e}");
+        }
+    }
+
     fn watch_trash(&mut self, tab: TabId, gen: u64) {
-        let Ok(trash) = places::trash() else { return };
+        if self.trash.is_none() {
+            return;
+        }
+        self.trash_tabs.lock().unwrap_or_else(|e| e.into_inner()).insert(tab, gen);
+        self.watch_mounts();
+        let (tops, volumes) = places::trash_tops();
+        let folders = self.trash.as_ref().map(|t| places::trash_folders(t, &tops, &volumes)).unwrap_or_default();
         let mut spots = Vec::new();
-        for (k, folder) in places::trash_folders(&trash, &places::storage_tops()).iter().enumerate() {
+        for (k, folder) in folders.iter().enumerate() {
             if self.notify.watch((tab, gen, Spot::Trash(k)), folder).is_ok() {
                 spots.push(Spot::Trash(k));
             }
@@ -158,7 +188,7 @@ impl Watcher for LinuxGuiWatcher {
         })
         .map_err(|e| PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("inotify: {e}")))?;
         let poll = crate::poll::Poll::new(events.clone(), wake.clone(), crate::poll::PERIOD);
-        Ok(Self { notify, poll, remote: |dir| LinuxFs.remote(dir), current: HashMap::new(), events, wake })
+        Ok(Self { notify, poll, remote: |dir| LinuxFs.remote(dir), current: HashMap::new(), trash: places::trash().ok(), trash_tabs: TrashTabs::default(), mounts_watched: false, events, wake })
     }
 
     fn watch(&mut self, tab: TabId, gen: u64, dir: Option<&FsPath>) {
@@ -169,6 +199,7 @@ impl Watcher for LinuxGuiWatcher {
         }
         blind_tabs().retain(|b| b.tab != tab);
         self.poll.forget(tab);
+        self.trash_tabs.lock().unwrap_or_else(|e| e.into_inner()).remove(&tab);
         if dir.is_some_and(|d| d.kind() == PathKind::RecycleBin) {
             return self.watch_trash(tab, gen);
         }

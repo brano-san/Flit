@@ -235,17 +235,25 @@ pub fn storage_tops() -> Vec<PathBuf> {
     mounts::read().unwrap_or_default().iter().filter(|m| m.is_storage()).map(|m| m.path().to_path_buf()).collect()
 }
 
+pub fn trash_tops() -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let table = mounts::read().unwrap_or_default();
+    let tops = table.iter().filter(|m| m.is_storage()).map(|m| m.path().to_path_buf()).collect();
+    let volumes = mounts::disks(&table, &mounts::user_name()).iter().filter(|m| m.is_storage()).map(|m| m.path().to_path_buf()).collect();
+    (tops, volumes)
+}
+
 pub fn trash() -> Result<Trash, PlatformError> {
     Trash::from_env().ok_or_else(|| PlatformError::new(-1, flit_core::tr_en!(S::ErrorsOpsTrashUnknown)))
 }
 
-pub fn trash_folders(trash: &Trash, tops: &[PathBuf]) -> Vec<PathBuf> {
+pub fn trash_folders(trash: &Trash, tops: &[PathBuf], volumes: &[PathBuf]) -> Vec<PathBuf> {
+    let nearest = |files: &Path| files.ancestors().find(|p| std::fs::metadata(p).is_ok_and(|m| m.is_dir())).map(Path::to_path_buf);
+    let found = trash.dirs(tops).into_iter().filter_map(|dir| nearest(&dir.join("files")));
+    let coming = volumes.iter().flat_map(|v| trash.volume_dirs(v).into_iter().filter_map(move |dir| nearest(&dir.join("files")).filter(|p| p.starts_with(v))));
     let mut out: Vec<PathBuf> = Vec::new();
-    for dir in trash.dirs(tops) {
-        let files = dir.join("files");
-        let Some(existing) = files.ancestors().find(|p| std::fs::metadata(p).is_ok_and(|m| m.is_dir())) else { continue };
-        if !out.iter().any(|p| p == existing) {
-            out.push(existing.to_path_buf());
+    for existing in found.chain(coming) {
+        if !out.contains(&existing) {
+            out.push(existing);
         }
     }
     out
