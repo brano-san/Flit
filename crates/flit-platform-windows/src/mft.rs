@@ -556,6 +556,7 @@ pub struct MftIndex {
     volumes: Vec<(FsPath, VolumeInfo)>,
     walk: WalkIndex,
     modes: HashMap<String, Mode>,
+    follow: bool,
 }
 
 fn describe(root: &FsPath) -> VolumeInfo {
@@ -569,7 +570,22 @@ fn describe(root: &FsPath) -> VolumeInfo {
 impl MftIndex {
     pub fn with_roots(roots: Vec<FsPath>) -> Self {
         let volumes = roots.iter().map(|r| (r.clone(), describe(r))).collect();
-        Self { volumes, walk: WalkIndex::with_roots(roots), modes: HashMap::new() }
+        Self { volumes, walk: WalkIndex::with_roots(roots), modes: HashMap::new(), follow: false }
+    }
+
+    pub fn retarget(&mut self, roots: Vec<FsPath>) -> bool {
+        if !self.walk.retarget(roots.clone()) {
+            return false;
+        }
+        self.volumes.retain(|(r, _)| roots.contains(r));
+        for r in roots {
+            if !self.volumes.iter().any(|(o, _)| *o == r) {
+                let info = describe(&r);
+                self.volumes.push((r, info));
+            }
+        }
+        self.modes.retain(|id, _| self.volumes.iter().any(|(_, v)| v.id == *id));
+        true
     }
 
     fn volume(&self, id: &str) -> Result<&(FsPath, VolumeInfo), PlatformError> {
@@ -584,7 +600,11 @@ impl MftIndex {
 
 impl IndexSource for MftIndex {
     fn new() -> Result<Self, PlatformError> {
-        Ok(Self::with_roots(fixed_drives()))
+        Ok(Self { follow: true, ..Self::with_roots(fixed_drives()) })
+    }
+
+    fn refresh(&mut self) -> bool {
+        self.follow && self.retarget(fixed_drives())
     }
 
     fn volumes(&self) -> Result<Vec<VolumeInfo>, PlatformError> {

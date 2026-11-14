@@ -19,11 +19,14 @@ const SETTLE_TICKS: i64 = 20_000_000;
 const BY_UUID: &str = "/dev/disk/by-uuid";
 const SKIPPED: [&str; 4] = ["9p", "drvfs", "virtiofs", "fuse.sshfs"];
 
+pub type Roots = Vec<(String, PathBuf, String)>;
+
 pub struct WalkIndex {
-    roots: Vec<(String, PathBuf, String)>,
+    roots: Roots,
     keys: HashMap<String, String>,
     walked: Vec<(String, Instant)>,
     trees: HashMap<String, Tree>,
+    follow: bool,
 }
 
 struct Dir {
@@ -216,9 +219,34 @@ fn volume_key(m: &Mount, uuids: &HashMap<PathBuf, String>) -> Option<String> {
     (id != [0, 0]).then(|| format!("fsid-{:08x}{:08x}", id[0] as u32, id[1] as u32))
 }
 
+fn discover() -> Result<(Roots, HashMap<String, String>), PlatformError> {
+    let all = mounts::read().map_err(|e| PlatformError::new(-1, format!("cannot read {}: {e}", mounts::MOUNTINFO)))?;
+    let mounts = indexed(&all, &mounts::user_name());
+    let uuids = mounts::labels(Path::new(BY_UUID));
+    let keys = mounts.iter().filter_map(|m| Some((String::from_utf8_lossy(&m.point).into_owned(), volume_key(m, &uuids)?))).collect();
+    let roots = mounts.into_iter().map(|m| (String::from_utf8_lossy(&m.point).into_owned(), m.path().to_path_buf(), m.fstype)).collect();
+    Ok((roots, keys))
+}
+
 impl WalkIndex {
-    pub fn with_roots(roots: Vec<(String, PathBuf, String)>) -> Self {
-        Self { roots, keys: HashMap::new(), walked: Vec::new(), trees: HashMap::new() }
+    pub fn with_roots(roots: Roots) -> Self {
+        Self { roots, keys: HashMap::new(), walked: Vec::new(), trees: HashMap::new(), follow: false }
+    }
+
+    pub fn retarget(&mut self, roots: Roots, keys: HashMap<String, String>) -> bool {
+        let same = |id: &str| self.roots.iter().find(|r| r.0 == id) == roots.iter().find(|r| r.0 == id) && self.keys.get(id) == keys.get(id);
+        let changed: Vec<String> = self.roots.iter().map(|r| r.0.clone()).filter(|id| !same(id)).collect();
+        let added = roots.iter().any(|r| !self.roots.iter().any(|o| o.0 == r.0));
+        if changed.is_empty() && !added {
+            return false;
+        }
+        for id in &changed {
+            self.trees.remove(id);
+            self.walked.retain(|(v, _)| v != id);
+        }
+        self.roots = roots;
+        self.keys = keys;
+        true
     }
 
     fn root(&self, volume: &str) -> Result<&Path, PlatformError> {
@@ -228,12 +256,8 @@ impl WalkIndex {
 
 impl IndexSource for WalkIndex {
     fn new() -> Result<Self, PlatformError> {
-        let all = mounts::read().map_err(|e| PlatformError::new(-1, format!("cannot read {}: {e}", mounts::MOUNTINFO)))?;
-        let mounts = indexed(&all, &mounts::user_name());
-        let uuids = mounts::labels(Path::new(BY_UUID));
-        let keys = mounts.iter().filter_map(|m| Some((String::from_utf8_lossy(&m.point).into_owned(), volume_key(m, &uuids)?))).collect();
-        let roots = mounts.into_iter().map(|m| (String::from_utf8_lossy(&m.point).into_owned(), m.path().to_path_buf(), m.fstype)).collect();
-        Ok(Self { keys, ..Self::with_roots(roots) })
+        let (roots, keys) = discover()?;
+        Ok(Self { keys, follow: true, ..Self::with_roots(roots) })
     }
 
     fn volumes(&self) -> Result<Vec<VolumeInfo>, PlatformError> {
@@ -264,6 +288,10 @@ impl IndexSource for WalkIndex {
 
     fn snapshot_key(&self, volume: &str) -> String {
         format!("walk-v2:{}", self.keys.get(volume).map_or_else(|| volume.to_owned(), |k| format!("{k}{volume}")))
+    }
+
+    fn refresh(&mut self) -> bool {
+        self.follow && discover().is_ok_and(|(roots, keys)| self.retarget(roots, keys))
     }
 }
 

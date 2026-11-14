@@ -439,6 +439,9 @@ pub trait IndexSource: Sized + Send {
     fn snapshot_key(&self, volume: &str) -> String {
         volume.to_owned()
     }
+    fn refresh(&mut self) -> bool {
+        false
+    }
 }
 
 pub trait Duplex: std::io::Read + std::io::Write + Send + Sized + 'static {

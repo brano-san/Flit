@@ -8,6 +8,9 @@ type Step = Result<Option<Vec<(u64, &'static str)>>, String>;
 struct Script {
     scans: Arc<Mutex<u32>>,
     changes: Arc<Mutex<Vec<Step>>>,
+    plugged: Arc<Mutex<Option<Vec<&'static str>>>>,
+    disk: Arc<Mutex<&'static str>>,
+    listed: Arc<Mutex<u32>>,
 }
 
 struct Fake(Script);
@@ -17,7 +20,15 @@ impl IndexSource for Fake {
         Ok(Fake(Script::default()))
     }
     fn volumes(&self) -> Result<Vec<VolumeInfo>, PlatformError> {
-        Ok(vec![VolumeInfo { id: "T:".into(), label: String::new(), file_system: "TEST".into(), files: 0, state: VolumeState::Scanning { progress: 0.0 } }])
+        *self.0.listed.lock().unwrap() += 1;
+        let ids = self.0.plugged.lock().unwrap().clone().unwrap_or_else(|| vec!["T:"]);
+        Ok(ids.into_iter().map(|id| VolumeInfo { id: id.into(), label: String::new(), file_system: "TEST".into(), files: 0, state: VolumeState::Scanning { progress: 0.0 } }).collect())
+    }
+    fn snapshot_key(&self, volume: &str) -> String {
+        format!("{volume}{}", self.0.disk.lock().unwrap())
+    }
+    fn refresh(&mut self) -> bool {
+        self.0.plugged.lock().unwrap().is_some()
     }
     fn scan<S: IndexSink>(&mut self, _: &str, sink: &mut S) -> Result<Checkpoint, PlatformError> {
         let n = {
@@ -162,4 +173,68 @@ fn volume_ids_map_to_roots() {
     assert_eq!(root_of("C:"), (br"C:\".to_vec(), b'\\'));
     assert_eq!(root_of(r"D:\data\tree"), (br"D:\data\tree".to_vec(), b'\\'));
     assert_eq!(root_of("/home/u"), (b"/home/u".to_vec(), b'/'));
+}
+
+fn ids(shared: &SharedIndex) -> (Vec<String>, Vec<String>) {
+    let mut status: Vec<String> = shared.status().1.into_iter().map(|v| v.id).collect();
+    let mut indexed: Vec<String> = shared.read().volumes.iter().map(|v| v.id.clone()).collect();
+    status.sort();
+    indexed.sort();
+    (status, indexed)
+}
+
+fn ready(shared: &SharedIndex, id: &str) -> bool {
+    shared.status().1.iter().any(|v| v.id == id && v.state == VolumeState::Ready && v.files == 10)
+}
+
+fn wait_long(what: &str, mut f: impl FnMut() -> bool) {
+    let deadline = Instant::now() + VOLUMES_EVERY * 4;
+    while !f() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn a_drive_attached_later_is_indexed_and_a_detached_one_leaves_the_results() {
+    let script = Script::default();
+    let shared = SharedIndex::new();
+    start_indexer(Fake(script.clone()), shared.clone(), None).unwrap();
+    wait_until("the first drive", || ready(&shared, "T:"));
+    *script.plugged.lock().unwrap() = Some(vec!["T:", "U:"]);
+    wait_long("the attached drive", || ready(&shared, "U:"));
+    assert_eq!(ids(&shared), (vec!["T:".to_owned(), "U:".to_owned()], vec!["T:".to_owned(), "U:".to_owned()]));
+    assert_eq!(*script.scans.lock().unwrap(), 2, "the drive that stayed is not scanned again");
+    let version = shared.read().version;
+    *script.plugged.lock().unwrap() = Some(vec!["U:"]);
+    wait_long("the detached drive to leave", || ids(&shared) == (vec!["U:".to_owned()], vec!["U:".to_owned()]));
+    assert!(shared.read().version > version, "open searches run again without the detached drive");
+    assert!(ready(&shared, "U:"));
+    assert_eq!(*script.scans.lock().unwrap(), 2);
+}
+
+#[test]
+fn another_disk_under_the_same_name_replaces_the_old_one_s_files() {
+    let script = Script::default();
+    script.plugged.lock().unwrap().replace(vec!["T:"]);
+    let shared = SharedIndex::new();
+    start_indexer(Fake(script.clone()), shared.clone(), None).unwrap();
+    wait_until("the first disk", || ready(&shared, "T:"));
+    std::thread::sleep(VOLUMES_EVERY + POLL * 2);
+    assert_eq!(*script.scans.lock().unwrap(), 1, "an unchanged list rescans nothing");
+    *script.disk.lock().unwrap() = "-other";
+    wait_long("the other disk", || *script.scans.lock().unwrap() == 2 && ready(&shared, "T:"));
+    assert!(names(&shared).iter().all(|n| n.starts_with("scan2")), "{:?}", names(&shared));
+    assert_eq!(ids(&shared), (vec!["T:".to_owned()], vec!["T:".to_owned()]));
+}
+
+#[test]
+fn a_source_with_fixed_volumes_is_never_asked_again() {
+    let script = Script::default();
+    let shared = SharedIndex::new();
+    start_indexer(Fake(script.clone()), shared.clone(), None).unwrap();
+    wait_until("the drive", || ready(&shared, "T:"));
+    std::thread::sleep(VOLUMES_EVERY + POLL * 2);
+    assert_eq!(*script.listed.lock().unwrap(), 1);
+    assert_eq!(ids(&shared), (vec!["T:".to_owned()], vec!["T:".to_owned()]));
 }

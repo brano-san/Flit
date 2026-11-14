@@ -13,6 +13,7 @@ const FLUSH_MIN: Duration = Duration::from_millis(250);
 const FLUSH_COST_FACTOR: u32 = 4;
 const CHECK_EVERY: usize = 4096;
 const SAVE_EVERY: Duration = Duration::from_secs(300);
+const VOLUMES_EVERY: Duration = Duration::from_secs(5);
 
 pub fn root_of(id: &str) -> (Vec<u8>, u8) {
     let b = id.as_bytes();
@@ -174,8 +175,121 @@ fn save_snapshot(dir: &Path, shared: &SharedIndex, id: &str, key: &str, cp: Chec
     std::fs::rename(&tmp, &path)
 }
 
+struct Slot {
+    info: VolumeInfo,
+    key: String,
+    point: Option<Checkpoint>,
+    retry_at: Instant,
+    dirty: bool,
+    saved_at: Option<Instant>,
+}
+
+impl Slot {
+    fn new(info: VolumeInfo, key: String) -> Self {
+        Self { info, key, point: None, retry_at: Instant::now(), dirty: false, saved_at: None }
+    }
+
+    fn save(&mut self, dir: &Path, shared: &SharedIndex) {
+        if let Some(cp) = self.point.filter(|_| self.dirty) {
+            self.dirty = save_snapshot(dir, shared, &self.info.id, &self.key, cp).is_err();
+            self.saved_at = Some(Instant::now());
+        }
+    }
+
+    fn step<S: IndexSource>(&mut self, source: &mut S, shared: &SharedIndex, snapshots: Option<&Path>) {
+        let mut fresh = false;
+        match self.point {
+            None if Instant::now() >= self.retry_at => {
+                self.point = scan(source, shared, &self.info);
+                if self.point.is_none() {
+                    self.retry_at = Instant::now() + RETRY;
+                }
+                fresh = self.point.is_some();
+                self.dirty |= fresh;
+            }
+            None => {}
+            Some(cp) => {
+                let mut feed = Feed::new(shared, self.info.clone(), None);
+                feed.info.files = shared.read().volumes.iter().find(|v| v.id == self.info.id).map_or(0, |v| v.live() as u64);
+                match source.changes(&self.info.id, cp, &mut feed) {
+                    Ok(next) => {
+                        self.point = next;
+                        feed.flush(VolumeState::Ready);
+                        self.dirty |= feed.dirty;
+                    }
+                    Err(e) => {
+                        self.point = None;
+                        self.retry_at = Instant::now() + RETRY;
+                        feed.flush(VolumeState::Error(e.message));
+                    }
+                }
+            }
+        }
+        if let Some(dir) = snapshots.filter(|_| fresh || self.saved_at.is_none_or(|t| t.elapsed() >= SAVE_EVERY)) {
+            self.save(dir, shared);
+        }
+    }
+}
+
+fn adopt<S: IndexSource>(source: &S, shared: &SharedIndex, snapshots: Option<&Path>, infos: Vec<VolumeInfo>) -> Vec<Slot> {
+    {
+        let mut e = shared.write();
+        for info in &infos {
+            if e.volume_mut(&info.id).is_none() {
+                e.volumes.push(empty_volume(&info.id));
+            }
+            shared.set_volume(info.clone());
+        }
+    }
+    let mut slots: Vec<Slot> = infos.into_iter().map(|info| Slot::new(info.clone(), source.snapshot_key(&info.id))).collect();
+    let Some(dir) = snapshots else { return slots };
+    let points: Vec<Option<Checkpoint>> = std::thread::scope(|s| {
+        let loads: Vec<_> = slots
+            .iter()
+            .map(|slot| {
+                let (info, key) = (&slot.info, &slot.key);
+                s.spawn(move || {
+                    let (v, cp) = load_snapshot(dir, &info.id, key)?;
+                    let files = v.live() as u64;
+                    {
+                        let mut e = shared.write();
+                        if let Some(at) = e.volume_mut(&info.id) {
+                            *at = v;
+                        }
+                        e.version += 1;
+                    }
+                    shared.set_volume(VolumeInfo { files, state: VolumeState::Ready, ..info.clone() });
+                    Some(cp)
+                })
+            })
+            .collect();
+        loads.into_iter().map(|h| h.join().ok().flatten()).collect()
+    });
+    for (slot, point) in slots.iter_mut().zip(points) {
+        slot.point = point;
+    }
+    slots
+}
+
+fn follow<S: IndexSource>(source: &S, shared: &SharedIndex, snapshots: Option<&Path>, slots: &mut Vec<Slot>, now: Vec<VolumeInfo>) {
+    let kept = |slot: &Slot| now.iter().any(|info| info.id == slot.info.id) && source.snapshot_key(&slot.info.id) == slot.key;
+    let (stay, gone): (Vec<Slot>, Vec<Slot>) = std::mem::take(slots).into_iter().partition(kept);
+    *slots = stay;
+    for mut slot in gone {
+        if let Some(dir) = snapshots {
+            slot.save(dir, shared);
+        }
+        shared.remove_volume(&slot.info.id);
+    }
+    let added: Vec<VolumeInfo> = now.into_iter().filter(|info| !slots.iter().any(|slot| slot.info.id == info.id)).collect();
+    if !added.is_empty() {
+        slots.extend(adopt(source, shared, snapshots, added));
+    }
+}
+
 fn run<S: IndexSource>(mut source: S, owner: Arc<SharedIndex>, snapshots: Option<PathBuf>) {
     let shared = &*owner;
+    let snapshots = snapshots.as_deref();
     let volumes = match source.volumes() {
         Ok(v) => v,
         Err(e) => {
@@ -183,81 +297,19 @@ fn run<S: IndexSource>(mut source: S, owner: Arc<SharedIndex>, snapshots: Option
             return;
         }
     };
-    {
-        let mut e = shared.write();
-        for info in &volumes {
-            if e.volume_mut(&info.id).is_none() {
-                e.volumes.push(empty_volume(&info.id));
-            }
-            shared.set_volume(info.clone());
-        }
-    }
-    let mut points: Vec<Option<Checkpoint>> = vec![None; volumes.len()];
-    let mut retry_at = vec![Instant::now(); volumes.len()];
-    let mut dirty = vec![false; volumes.len()];
-    let mut saved_at: Vec<Option<Instant>> = vec![None; volumes.len()];
-    if let Some(dir) = &snapshots {
-        let keys: Vec<String> = volumes.iter().map(|info| source.snapshot_key(&info.id)).collect();
-        let loaded: Vec<Option<Checkpoint>> = std::thread::scope(|s| {
-            let loads: Vec<_> = volumes
-                .iter()
-                .zip(&keys)
-                .map(|(info, key)| {
-                    s.spawn(move || {
-                        let (v, cp) = load_snapshot(dir, &info.id, key)?;
-                        let files = v.live() as u64;
-                        {
-                            let mut e = shared.write();
-                            if let Some(slot) = e.volume_mut(&info.id) {
-                                *slot = v;
-                            }
-                            e.version += 1;
-                        }
-                        shared.set_volume(VolumeInfo { files, state: VolumeState::Ready, ..info.clone() });
-                        Some(cp)
-                    })
-                })
-                .collect();
-            loads.into_iter().map(|h| h.join().ok().flatten()).collect()
-        });
-        points = loaded;
-    }
+    let mut slots = adopt(&source, shared, snapshots, volumes);
+    let mut checked = Instant::now();
     while Arc::strong_count(&owner) > 1 {
-        for (k, info) in volumes.iter().enumerate() {
-            let mut fresh = false;
-            match points[k] {
-                None if Instant::now() >= retry_at[k] => {
-                    points[k] = scan(&mut source, shared, info);
-                    if points[k].is_none() {
-                        retry_at[k] = Instant::now() + RETRY;
-                    }
-                    fresh = points[k].is_some();
-                    dirty[k] |= fresh;
-                }
-                None => {}
-                Some(cp) => {
-                    let mut feed = Feed::new(shared, info.clone(), None);
-                    feed.info.files = shared.read().volumes.iter().find(|v| v.id == info.id).map_or(0, |v| v.live() as u64);
-                    match source.changes(&info.id, cp, &mut feed) {
-                        Ok(next) => {
-                            points[k] = next;
-                            feed.flush(VolumeState::Ready);
-                            dirty[k] |= feed.dirty;
-                        }
-                        Err(e) => {
-                            points[k] = None;
-                            retry_at[k] = Instant::now() + RETRY;
-                            feed.flush(VolumeState::Error(e.message));
-                        }
-                    }
+        if checked.elapsed() >= VOLUMES_EVERY {
+            checked = Instant::now();
+            if source.refresh() {
+                if let Ok(now) = source.volumes() {
+                    follow(&source, shared, snapshots, &mut slots, now);
                 }
             }
-            if let (Some(dir), Some(cp)) = (&snapshots, points[k]) {
-                if dirty[k] && (fresh || saved_at[k].is_none_or(|t| t.elapsed() >= SAVE_EVERY)) {
-                    dirty[k] = save_snapshot(dir, shared, &info.id, &source.snapshot_key(&info.id), cp).is_err();
-                    saved_at[k] = Some(Instant::now());
-                }
-            }
+        }
+        for slot in &mut slots {
+            slot.step(&mut source, shared, snapshots);
         }
         std::thread::sleep(POLL);
     }

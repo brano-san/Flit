@@ -202,3 +202,25 @@ fn bench_an_idle_sweep_of_twenty_thousand_directories() {
     runs.sort();
     eprintln!("measure: idle sweep of {} directories median {:?}", tree.dirs.len(), runs[2]);
 }
+
+#[test]
+fn a_new_mount_is_adopted_and_a_changed_one_is_walked_again() {
+    let (a, b) = (Temp::new("retarget-a"), Temp::new("retarget-b"));
+    let root = |id: &str, t: &Temp| (id.to_owned(), t.path().to_path_buf(), "ext4".to_owned());
+    let keys = |pairs: &[(&str, &str)]| pairs.iter().map(|(v, k)| (v.to_string(), k.to_string())).collect::<HashMap<_, _>>();
+    let mut w = WalkIndex::with_roots(vec![root("a", &a)]);
+    w.keys = keys(&[("a", "uuid-1")]);
+    let mut v = VolumeIndex::new("a", a.path().as_os_str().as_bytes(), b'/');
+    let cp = w.scan("a", &mut v).unwrap();
+    assert!(!w.retarget(vec![root("a", &a)], keys(&[("a", "uuid-1")])), "the same mounts change nothing");
+    assert!(w.retarget(vec![root("a", &a), root("b", &b)], keys(&[("a", "uuid-1"), ("b", "uuid-2")])));
+    assert_eq!(w.volumes().unwrap().iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+    assert_eq!(w.changes("a", cp, &mut v).unwrap(), Some(cp), "the mount that stayed keeps its walk");
+    assert!(w.scan("b", &mut VolumeIndex::new("b", b.path().as_os_str().as_bytes(), b'/')).is_ok());
+    assert!(w.retarget(vec![root("a", &a), root("b", &b)], keys(&[("a", "uuid-3"), ("b", "uuid-2")])));
+    assert_eq!(w.changes("a", cp, &mut v).unwrap(), None, "another disk at the same place is walked again");
+    assert!(w.snapshot_key("a").contains("uuid-3"));
+    assert!(w.retarget(vec![root("b", &b)], keys(&[("b", "uuid-2")])));
+    assert!(w.scan("a", &mut v).is_err() && !w.trees.contains_key("a"));
+    assert!(!w.refresh(), "an index of chosen folders never follows the mounts");
+}

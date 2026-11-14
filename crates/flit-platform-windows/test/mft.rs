@@ -283,3 +283,25 @@ fn volumes_without_mft_access_are_walked_and_never_resumed_blindly() {
     drop(fresh);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn a_drive_that_appears_is_described_and_one_that_leaves_drops_its_mode() {
+    let base = crate::test_temp().join(format!("flit-mft-retarget-{}", std::process::id()));
+    let (a, b) = (base.join("a"), base.join("b"));
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    let (ra, rb) = (FsPath::parse(a.to_str().unwrap()).unwrap(), FsPath::parse(b.to_str().unwrap()).unwrap());
+    let mut m = MftIndex::with_roots(vec![ra.clone()]);
+    let ia = m.volumes().unwrap()[0].id.clone();
+    m.scan(&ia, &mut VolumeIndex::new(&ia, a.to_str().unwrap().as_bytes(), b'\\')).unwrap();
+    assert!(!m.retarget(vec![ra.clone()]));
+    assert!(m.retarget(vec![ra.clone(), rb.clone()]));
+    let ids: Vec<String> = m.volumes().unwrap().into_iter().map(|v| v.id).collect();
+    assert_eq!(ids.len(), 2);
+    assert!(m.modes.contains_key(&ia), "the drive that stayed keeps its mode");
+    assert!(m.retarget(vec![rb]));
+    assert!(!m.modes.contains_key(&ia) && m.volumes().unwrap().len() == 1);
+    assert!(!m.refresh());
+    drop(m);
+    let _ = std::fs::remove_dir_all(&base);
+}

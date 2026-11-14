@@ -374,11 +374,21 @@ pub struct WalkIndex {
     roots: Vec<FsPath>,
     live: Vec<(String, Live)>,
     synthetic: AtomicU64,
+    follow: bool,
 }
 
 impl WalkIndex {
     pub fn with_roots(roots: Vec<FsPath>) -> Self {
-        Self { roots, live: Vec::new(), synthetic: AtomicU64::new(1) }
+        Self { roots, live: Vec::new(), synthetic: AtomicU64::new(1), follow: false }
+    }
+
+    pub fn retarget(&mut self, roots: Vec<FsPath>) -> bool {
+        if roots == self.roots {
+            return false;
+        }
+        self.live.retain(|(v, _)| roots.iter().any(|r| volume_id(r) == *v));
+        self.roots = roots;
+        true
     }
 
     fn follow<S: IndexSink>(&self, dir: &Handle, from: Checkpoint, sink: &mut S) -> Option<Checkpoint> {
@@ -442,7 +452,11 @@ pub(crate) fn fixed_drives() -> Vec<FsPath> {
 
 impl IndexSource for WalkIndex {
     fn new() -> Result<Self, PlatformError> {
-        Ok(Self::with_roots(fixed_drives()))
+        Ok(Self { follow: true, ..Self::with_roots(fixed_drives()) })
+    }
+
+    fn refresh(&mut self) -> bool {
+        self.follow && self.retarget(fixed_drives())
     }
 
     fn volumes(&self) -> Result<Vec<VolumeInfo>, PlatformError> {

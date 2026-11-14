@@ -112,3 +112,34 @@ fn folder_sorted_results_carry_group_starts() {
     let out = run(&mut session, &latest, query(2, "x"));
     assert!(!out.iter().any(|m| matches!(m, Message::Groups { .. })), "only folder order has groups");
 }
+
+#[test]
+fn a_removed_volume_leaves_open_results_and_the_status() {
+    let shared = shared();
+    let mut d = VolumeIndex::new("D:", b"D:\\", b'\\');
+    d.upsert(&IndexRecord { id: 5, parent: 5, name: b".", size: 0, modified: 0, attrs: attr::DIR });
+    for k in 0..300u64 {
+        let name = format!("file{k:03}.dat");
+        d.upsert(&IndexRecord { id: 100 + k, parent: 5, name: name.as_bytes(), size: k, modified: 0, attrs: 0 });
+    }
+    d.commit();
+    shared.write().volumes.push(d);
+    for id in ["C:", "D:"] {
+        shared.set_volume(VolumeInfo { id: id.into(), label: String::new(), file_system: String::new(), files: 0, state: VolumeState::Ready });
+    }
+    let mut s = Session::new(shared.clone(), 0);
+    let latest = AtomicU64::new(1);
+    assert_eq!(run(&mut s, &latest, query(1, "file"))[0], Message::QueryDone { gen: 1, total: 400 });
+    let (seen, _) = shared.status();
+    shared.remove_volume("Q:");
+    assert_eq!(shared.status().0, seen, "an unknown volume changes nothing");
+    shared.remove_volume("C:");
+    let (version, volumes) = shared.status();
+    assert!(version > seen);
+    assert_eq!(volumes.iter().map(|v| v.id.as_str()).collect::<Vec<_>>(), ["D:"]);
+    let out = run(&mut s, &latest, Message::GetRows { gen: 1, from: 250, to: 400 });
+    assert_eq!(out[0], Message::QueryDone { gen: 1, total: 300 });
+    let Some(Message::Rows { from: 250, entries, dirs, .. }) = out.last() else { panic!("{out:?}") };
+    assert_eq!(entries.len(), 50);
+    assert!(dirs.iter().all(|d| d == br"D:\"));
+}

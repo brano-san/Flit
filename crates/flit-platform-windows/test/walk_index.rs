@@ -214,3 +214,23 @@ fn bench_walk_of_every_fixed_drive() {
     let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
     eprintln!("measure: {mode} total {records} records in {:.2} s on {cores} cores", started.elapsed().as_secs_f64());
 }
+
+#[test]
+fn drives_that_come_and_go_change_the_volumes_and_drop_their_watches() {
+    let (a, b) = (temp_root("retarget-a"), temp_root("retarget-b"));
+    let (ra, rb) = (FsPath::parse(a.to_str().unwrap()).unwrap(), FsPath::parse(b.to_str().unwrap()).unwrap());
+    let (ia, ib) = (volume_id(&ra), volume_id(&rb));
+    let mut w = WalkIndex::with_roots(vec![ra.clone()]);
+    let mut v = VolumeIndex::new(&ia, a.to_str().unwrap().as_bytes(), b'\\');
+    w.scan(&ia, &mut v).unwrap();
+    assert!(!w.retarget(vec![ra.clone()]), "the same drives change nothing");
+    assert_eq!(w.live.len(), 1);
+    assert!(w.retarget(vec![ra.clone(), rb.clone()]));
+    assert_eq!(w.volumes().unwrap().iter().map(|i| i.id.clone()).collect::<Vec<_>>(), [ia.clone(), ib.clone()]);
+    assert_eq!(w.live.len(), 1, "the drive that stayed keeps its watch");
+    assert!(w.retarget(vec![rb]));
+    assert!(w.live.is_empty() && w.scan(&ia, &mut v).is_err());
+    assert!(!w.refresh(), "an index of chosen folders never follows the drives");
+    let _ = std::fs::remove_dir_all(&a);
+    let _ = std::fs::remove_dir_all(&b);
+}

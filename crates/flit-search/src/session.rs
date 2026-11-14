@@ -49,6 +49,19 @@ impl SharedIndex {
         st.0 += 1;
     }
 
+    pub fn remove_volume(&self, id: &str) {
+        {
+            let mut e = self.write();
+            let before = e.volumes.len();
+            e.volumes.retain(|v| v.id != id);
+            e.version += (e.volumes.len() != before) as u64;
+        }
+        let mut st = self.status.lock().unwrap_or_else(|e| e.into_inner());
+        let before = st.1.len();
+        st.1.retain(|v| v.id != id);
+        st.0 += (st.1.len() != before) as u64;
+    }
+
     pub fn status(&self) -> (u64, Vec<VolumeInfo>) {
         self.status.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
