@@ -1190,6 +1190,9 @@ impl App {
         }
         let e = t.view.as_ref().unwrap().listing().entries[i as usize];
         let loc = t.entry_location(i);
+        if self.caps.unix_paths && t.view_loc.path().kind() == PathKind::Computer && self.mount_drive(loc.path()) {
+            return;
+        }
         if !e.is_dir() && self.open_archived(&loc) {
             return;
         }

@@ -124,6 +124,35 @@ fn the_root_drive_is_named_in_the_interface_language() {
 }
 
 #[test]
+fn this_computer_lists_mounted_unmounted_and_network_volumes_under_their_labels() {
+    let table = parse(b"1 0 8:1 / / rw - ext4 /dev/sda1 rw
+2 1 8:17 / /media/ann/STICK rw - vfat /dev/sdb1 rw
+");
+    let mut volumes: Vec<Volume> = table.into_iter().map(|mount| Volume { label: name_of(&mount, flit_core::i18n::Lang::En), mount, total: 0, free: 0 }).collect();
+    volumes[0].total = 1000;
+    volumes[0].free = 400;
+    volumes[1].label = "STICK".into();
+    let unmounted = unmounted_from("PATH=\"/dev/sdc1\" LABEL=\"Backup\" MOUNTPOINT=\"\" HOTPLUG=\"1\" FSTYPE=\"ext4\" TYPE=\"part\" PARTTYPE=\"0x83\"
+");
+    let share = Drive { path: FsPath::parse("/run/user/1000/gvfs/smb-share:server=nas,share=photos").unwrap(), label: gvfs_label("smb-share:server=nas,share=photos"), total: 0, free: 0, file_system: String::new(), removable: false, unmounted: false, kind: None, remote: Some("smb-share:server=nas,share=photos".into()) };
+    let others: Vec<Drive> = unmounted.into_iter().chain([share]).collect();
+    let l = listing(|b| computer_from(b, &volumes, &others));
+    let rows: Vec<(String, String, bool)> = (0..l.len() as u32).map(|i| (String::from_utf8_lossy(l.name(i)).into_owned(), String::from_utf8_lossy(l.label(i)).into_owned(), l.entries[i as usize].attrs & attr::SIZE_KNOWN != 0)).collect();
+    assert_eq!(
+        rows,
+        [
+            ("/".to_owned(), "File System".to_owned(), true),
+            ("/media/ann/STICK".to_owned(), "STICK".to_owned(), false),
+            ("/dev/sdc1".to_owned(), "Backup".to_owned(), false),
+            ("/run/user/1000/gvfs/smb-share:server=nas,share=photos".to_owned(), "photos (nas)".to_owned(), false),
+        ]
+    );
+    assert!((0..l.len()).all(|i| l.entries[i].attrs & (attr::DIR | attr::VOLUME) == attr::DIR | attr::VOLUME));
+    assert_eq!(l.drive(0).map(|d| d.0), Some(400));
+    assert_eq!(l.drive(1), None);
+}
+
+#[test]
 fn computer_lists_absolute_mount_points_as_volumes() {
     let l = listing(|b| list_computer(b).unwrap());
     let root = (0..l.len() as u32).find(|&i| l.name(i) == b"/").expect("the root is always shown");

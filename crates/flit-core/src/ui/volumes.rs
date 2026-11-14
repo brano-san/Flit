@@ -57,6 +57,17 @@ impl App {
         }
     }
 
+    pub(super) fn computer_drive_items(&self, m: &mut Menu) {
+        let t = self.tab();
+        let Some(v) = t.view.as_ref().filter(|v| t.view_loc.path().kind() == PathKind::Computer && v.selected_count() == 1) else { return };
+        let Some(i) = v.selected().next() else { return };
+        let path = t.entry_location(i).path().clone();
+        if self.drive_at(&path).is_some_and(|d| d.removable && !d.unmounted && d.path.kind() == PathKind::Unix) {
+            m.place(S::MenuEject.t(), PlaceCmd::Eject(path.clone()), false);
+        }
+        self.drive_items(m, &path);
+    }
+
     pub(super) fn ask_unlock(&mut self, device: FsPath, title: &str) {
         if self.jobs.form.is_some() {
             return;

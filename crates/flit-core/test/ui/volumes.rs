@@ -138,3 +138,53 @@ fn a_drive_card_on_home_mounts_an_unmounted_volume_instead_of_opening_its_device
     assert!(launches(&mut app).is_empty());
     assert_eq!(app.tab().location().path(), &p("/media/ann/STICK"));
 }
+
+fn computer(app: &mut App, names: &[&str]) {
+    use crate::listing::{attr, DirSnapshot, Listing, Meta};
+    use crate::sort::{self, CaseMode, SortKeys, ViewSpec};
+    app.navigate(Location::computer(), Instant::now());
+    let t = app.tab();
+    let mut listing = Listing::default();
+    let mut keys = SortKeys::new(CaseMode::Sensitive);
+    for n in names {
+        let i = listing.push(n.as_bytes(), Meta { attrs: attr::DIR | attr::VOLUME, ..Default::default() });
+        keys.push(listing.name(i));
+    }
+    let mut order = Vec::new();
+    sort::sort(&listing, &keys, ViewSpec::default(), &mut order);
+    let snap = DirSnapshot { gen: t.gen, path: t.location().path().clone(), listing, keys, order, view: ViewSpec::default(), done: true, error: None, elapsed: std::time::Duration::ZERO };
+    t.slot.publish(Arc::new(snap));
+    app.poll();
+    app.drain_effects().for_each(drop);
+}
+
+fn pick(app: &mut App, name: &str) -> u32 {
+    let v = app.tabs[app.cur].view.as_mut().unwrap();
+    let i = v.find(name.as_bytes()).unwrap();
+    v.clear_selection();
+    v.set_selected(i, true);
+    v.focus = Some(i);
+    i
+}
+
+#[test]
+fn this_computer_mounts_an_unmounted_volume_and_offers_mount_unmount_and_eject() {
+    let mut app = machine();
+    computer(&mut app, &["/", "/media/ann/STICK", "/dev/sdc1", "/dev/sdd2"]);
+    let verbs = |app: &mut App, name: &str| {
+        pick(app, name);
+        labels(&app.collect(|a, m| a.computer_drive_items(m)))
+    };
+    assert_eq!(verbs(&mut app, "/media/ann/STICK"), [S::MenuEject.t(), S::MenuUnmount.t()]);
+    assert_eq!(verbs(&mut app, "/dev/sdc1"), [S::MenuMount.t()]);
+    assert_eq!(verbs(&mut app, "/dev/sdd2"), [S::SidebarDriveUnlock.t()]);
+    assert!(verbs(&mut app, "/").is_empty());
+    let i = pick(&mut app, "/dev/sdc1");
+    app.open_entry(i, Instant::now());
+    assert_eq!(launches(&mut app), [Launch::Mount(p("/dev/sdc1"))]);
+    assert!(app.tab().location().path().kind() == PathKind::Computer);
+    let i = pick(&mut app, "/media/ann/STICK");
+    app.open_entry(i, Instant::now());
+    assert!(launches(&mut app).is_empty());
+    assert_eq!(app.tab().location().path(), &p("/media/ann/STICK"));
+}

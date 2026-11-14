@@ -534,6 +534,7 @@ impl App {
         } else if count == 1 && self.labelled_drive().is_some() {
             m.action("file.rename", S::MenuRename.t());
         }
+        self.computer_drive_items(m);
         m.separator();
         if folders == count {
             let pinned = self.selected_folders().iter().all(|l| self.nav.sidebar.state.pinned.contains(l));

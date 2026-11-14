@@ -178,21 +178,34 @@ pub fn eject_error(drive: &Path, e: &std::io::Error) -> PlatformError {
 
 pub fn list_computer(out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
     let table = mounts::read().map_err(|e| FsError { kind: FsErrorKind::Unavailable, code: e.raw_os_error().unwrap_or(-1) as i64 })?;
-    let disks = mounts::disks(&table, &mounts::user_name());
-    let spaces = spaces_of(&disks, mounts::NETWORK_SPACE_WAIT, mounts::space);
-    for (m, space) in disks.iter().zip(spaces) {
+    let volumes = volumes_from(&table, &mounts::user_name(), Path::new(mounts::BY_LABEL));
+    computer_from(out, &volumes, &unmounted().into_iter().chain(gvfs(&gvfs_root())).collect::<Vec<_>>());
+    Ok(())
+}
+
+pub fn computer_from(out: &mut ListingBuilder<'_>, volumes: &[Volume], others: &[Drive]) {
+    let labelled = |out: &mut ListingBuilder<'_>, label: &str| {
+        let i = out.listing.len() as u32 - 1;
+        out.listing.set_label(i, label);
+    };
+    for v in volumes {
         let mut meta = Meta { attrs: attr::DIR | attr::VOLUME, ..Default::default() };
-        if let Some((total, _)) = space {
-            meta.size = total;
+        if v.total > 0 {
+            meta.size = v.total;
             meta.attrs |= attr::SIZE_KNOWN;
         }
-        out.push(&m.point, meta);
-        if let Some((_, free)) = space {
-            out.listing.push_drive_info(free, &m.fstype);
+        out.push(&v.mount.point, meta);
+        if v.total > 0 {
+            out.listing.push_drive_info(v.free, &v.mount.fstype);
         }
+        labelled(out, &v.label);
     }
+    for d in others {
+        out.push(d.path.as_bytes(), Meta { attrs: attr::DIR | attr::VOLUME, ..Default::default() });
+        labelled(out, &d.title());
+    }
+    out.keys.relabel(&out.listing);
     out.batch_done();
-    Ok(())
 }
 
 pub fn watch_mounts(changed: Box<dyn Fn() + Send>) {
