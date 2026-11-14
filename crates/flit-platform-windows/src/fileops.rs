@@ -574,6 +574,7 @@ impl FileOps for ShellCom {
         if let Err(e) = check_names(op) {
             return OpOutcome { items: Vec::new(), error: Some(e) };
         }
+        crate::prevhost::release(crate::prevhost::releasing(op));
         match op {
             FileOp::Link { items, dest } => unsafe { make_links(items, dest) },
             FileOp::NewStream { item, name } => new_stream(item, name),

@@ -514,6 +514,7 @@ pub enum HostEvent {
     Ready { gen: u64, ms: u32 },
     Failed { gen: u64, message: String },
     Media { gen: u64, position: f64, duration: f64, playing: bool },
+    Released { gen: u64 },
 }
 
 #[cfg(test)]

@@ -1153,6 +1153,7 @@ impl App {
     pub(super) fn op_done(&mut self, tab: TabId, id: OpId, error: Option<String>, report: Option<OpReport>, now: Instant) {
         let cancelled = error.as_deref().is_some_and(super::jobs::cancelled_error);
         self.job_done(id, error.as_deref().filter(|_| !cancelled), cancelled, now);
+        self.reload_released_preview();
         if report.is_some() {
             self.check_places();
             self.effects.push(Effect::RefreshPlaces);

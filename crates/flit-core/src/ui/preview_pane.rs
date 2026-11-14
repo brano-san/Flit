@@ -287,6 +287,7 @@ pub(super) struct PreviewPane {
     image_px: u32,
     copy_gen: u64,
     host: Host,
+    released: bool,
     media: Media,
     peeked: bool,
     requested: Option<Instant>,
@@ -1460,9 +1461,22 @@ impl App {
                 p.content = if media { Content::Basic(Some(Note::CannotPlay(message))) } else { Content::Basic(Some(Note::Message(message))) };
             }
             HostEvent::Media { gen, position, duration, playing } if gen == p.host.gen => p.media = Media { position, duration, playing },
+            HostEvent::Released { gen } if gen == p.host.gen => {
+                p.host = Host::default();
+                p.content = Content::Basic(None);
+                p.released = true;
+                self.effects.push(Effect::Host(HostCmd::Close));
+            }
             _ => return,
         }
         self.dirty = true;
+    }
+
+    pub(super) fn reload_released_preview(&mut self) {
+        if std::mem::take(&mut self.preview.released) {
+            self.preview.key = 0;
+            self.dirty = true;
+        }
     }
 
     fn place_host(&mut self) {

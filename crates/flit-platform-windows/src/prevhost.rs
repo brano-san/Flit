@@ -1,10 +1,12 @@
 use flit_core::preview::{HostCmd, HostEvent, Hosted, MediaCmd};
 use flit_core::render::Rect;
+use flit_core::provider::FileOp;
 use flit_core::FsPath;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Mutex, OnceLock};
-use std::time::Instant;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Condvar, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use windows::core::{w, Interface, BSTR, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject, FillRect, HDC, HGDIOBJ};
@@ -19,6 +21,7 @@ use windows_core::implement;
 pub(crate) const WM_HOSTED: u32 = WM_APP + 0x41;
 const WM_JOB: u32 = WM_APP + 1;
 const POLL_MS: u32 = 250;
+const RELEASE_WAIT: Duration = Duration::from_secs(2);
 const HOST_CLASS: PCWSTR = w!("FlitPreviewHost");
 const WORKER_CLASS: PCWSTR = w!("FlitPreviewWorker");
 
@@ -27,12 +30,14 @@ enum Job {
     Place { parent: isize },
     Media { parent: isize, cmd: MediaCmd },
     Close { parent: isize },
+    Release { paths: Vec<FsPath>, ticket: u64 },
 }
 
 impl Job {
     fn parent(&self) -> isize {
         match self {
             Job::Show { parent, .. } | Job::Place { parent } | Job::Media { parent, .. } | Job::Close { parent } => *parent,
+            Job::Release { .. } => 0,
         }
     }
 }
@@ -40,6 +45,7 @@ impl Job {
 struct Session {
     host: HWND,
     gen: u64,
+    path: FsPath,
     handler: Option<IPreviewHandler>,
     media: Option<IMFMediaEngine>,
     shown: (f64, f64, bool),
@@ -48,6 +54,9 @@ struct Session {
 static EVENTS: Mutex<Vec<(isize, HostEvent)>> = Mutex::new(Vec::new());
 static QUEUE: Mutex<VecDeque<Job>> = Mutex::new(VecDeque::new());
 static WORKER: OnceLock<isize> = OnceLock::new();
+static TICKETS: AtomicU64 = AtomicU64::new(0);
+static RELEASED: Mutex<u64> = Mutex::new(0);
+static SETTLED: Condvar = Condvar::new();
 
 thread_local! {
     static HOSTS: RefCell<HashMap<isize, isize>> = RefCell::default();
@@ -79,6 +88,50 @@ fn send(job: Job) {
     unsafe {
         let _ = PostMessageW(Some(HWND(hwnd as _)), WM_JOB, WPARAM(0), LPARAM(0));
     }
+}
+
+pub(crate) fn releasing(op: &FileOp) -> Vec<FsPath> {
+    match op {
+        FileOp::Trash(items) | FileOp::Delete(items) | FileOp::Flatten(items) => items.clone(),
+        FileOp::Move { items, .. } => items.clone(),
+        FileOp::Rename { item, .. } => vec![item.clone()],
+        FileOp::MoveTo(pairs) | FileOp::Restore(pairs) | FileOp::Purge(pairs) => pairs.iter().map(|(from, _)| from.clone()).collect(),
+        _ => Vec::new(),
+    }
+}
+
+pub(crate) fn touches(paths: &[FsPath], shown: &FsPath) -> bool {
+    let s = shown.as_bytes();
+    paths.iter().any(|p| {
+        let p = p.as_bytes();
+        s.len() >= p.len() && s[..p.len()].eq_ignore_ascii_case(p) && (s.len() == p.len() || s[p.len()] == b'\\' || p.ends_with(b"\\"))
+    })
+}
+
+pub(crate) fn release(paths: Vec<FsPath>) {
+    if paths.is_empty() || WORKER.get().is_none_or(|&w| w == 0) {
+        return;
+    }
+    let ticket = TICKETS.fetch_add(1, Ordering::AcqRel) + 1;
+    send(Job::Release { paths, ticket });
+    let done = RELEASED.lock().unwrap_or_else(|e| e.into_inner());
+    let _ = SETTLED.wait_timeout_while(done, RELEASE_WAIT, |done| *done < ticket);
+}
+
+fn released(paths: &[FsPath], ticket: u64) {
+    let gone: Vec<(isize, Session)> = SESSIONS.with(|all| {
+        let mut all = all.borrow_mut();
+        let hit: Vec<isize> = all.iter().filter(|(_, s)| touches(paths, &s.path)).map(|(&p, _)| p).collect();
+        hit.into_iter().filter_map(|p| all.remove(&p).map(|s| (p, s))).collect()
+    });
+    for (parent, s) in gone {
+        let gen = s.gen;
+        close(s);
+        post(parent, HostEvent::Released { gen });
+    }
+    let mut done = RELEASED.lock().unwrap_or_else(|e| e.into_inner());
+    *done = (*done).max(ticket);
+    SETTLED.notify_all();
 }
 
 pub(crate) fn hinst() -> HINSTANCE {
@@ -287,7 +340,7 @@ unsafe fn show(parent: isize, host: HWND, gen: u64, what: Hosted, path: &FsPath,
     match opened {
         Ok((handler, media)) => {
             post(parent, HostEvent::Ready { gen, ms: t.elapsed().as_millis() as u32 });
-            SESSIONS.with(|s| s.borrow_mut().insert(parent, Session { host, gen, handler, media, shown: (-1.0, -1.0, false) }));
+            SESSIONS.with(|s| s.borrow_mut().insert(parent, Session { host, gen, path: path.clone(), handler, media, shown: (-1.0, -1.0, false) }));
         }
         Err(e) => post(parent, HostEvent::Failed { gen, message: format!("The preview could not be shown: {}", e.message()) }),
     }
@@ -383,6 +436,7 @@ unsafe fn process(worker: HWND) {
                         close(s);
                     }
                 }
+                Job::Release { paths, ticket } => released(&paths, ticket),
             }
         }
         poll(worker);

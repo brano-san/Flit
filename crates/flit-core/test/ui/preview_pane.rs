@@ -776,3 +776,26 @@ fn shift_arrows_extend_the_preview_selection_like_a_text_editor() {
     press(&mut a, Key::Right, NO);
     assert_eq!(a.preview.pick.range(), before, "an arrow without Shift does not touch the selection");
 }
+
+#[test]
+fn a_hosted_preview_released_for_an_operation_hides_and_comes_back_when_it_ends() {
+    let mut a = app((1200, 700));
+    a.set_pane_state(PaneState { visible: true, ..Default::default() });
+    select(&mut a, "c.docx");
+    frame(&mut a);
+    let r = requests(&mut a).pop().unwrap();
+    a.on_preview(r.gen, PreviewData::Handler("{84F66100-FF7C-4fb4-B0C0-02CD7FB668FE}".into()));
+    frame(&mut a);
+    a.drain_effects().for_each(drop);
+    a.on_event(&Event::Hosted(HostEvent::Released { gen: r.gen + 1 }), Instant::now());
+    assert!(matches!(a.preview.content, Content::Handler) && !a.drain_effects().any(|e| matches!(e, Effect::Host(_))), "another preview's release changes nothing");
+    a.on_event(&Event::Hosted(HostEvent::Released { gen: r.gen }), Instant::now());
+    assert!(matches!(a.preview.content, Content::Basic(None)));
+    assert!(a.drain_effects().any(|e| matches!(e, Effect::Host(HostCmd::Close))), "the preview window leaves the pane");
+    frame(&mut a);
+    assert!(requests(&mut a).is_empty(), "nothing reopens the file while the operation runs");
+    let tab = a.tab().id;
+    a.op_done(tab, 77, Some("The process cannot access the file".into()), None, Instant::now());
+    frame(&mut a);
+    assert_eq!(requests(&mut a).len(), 1, "the file is still there, so its preview comes back");
+}
