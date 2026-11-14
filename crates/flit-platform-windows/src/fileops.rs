@@ -604,6 +604,10 @@ impl FileOps for ShellCom {
         crate::transfer::clipboard_content()
     }
 
+    fn clipboard_data(&mut self, dest: &FsPath) -> Option<FileOp> {
+        clipboard::read_content()?.file(dest, |p| std_path(p).symlink_metadata().is_ok())
+    }
+
     fn clear_clipboard(&mut self) {
         clipboard::clear_if_unchanged();
     }

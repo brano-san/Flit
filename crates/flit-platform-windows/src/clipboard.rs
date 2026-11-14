@@ -1,7 +1,7 @@
 use flit_core::preview::straight_rgba;
 use flit_core::ui::Bitmap;
 use flit_core::FsPath;
-use flit_platform::PlatformError;
+use flit_platform::{Pasted, PlatformError};
 use std::cell::OnceCell;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
@@ -11,7 +11,7 @@ use windows::Win32::Graphics::Imaging::{CLSID_WICImagingFactory, GUID_ContainerF
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER, STATFLAG_NONAME, STATSTG, STREAM_SEEK_SET};
 use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard, RegisterClipboardFormatW, SetClipboardData};
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
-use windows::Win32::System::Ole::{CF_DIB, CF_DIBV5, CF_HDROP, DROPEFFECT_COPY, DROPEFFECT_LINK, DROPEFFECT_MOVE};
+use windows::Win32::System::Ole::{CF_DIB, CF_DIBV5, CF_HDROP, CF_UNICODETEXT, DROPEFFECT_COPY, DROPEFFECT_LINK, DROPEFFECT_MOVE};
 use windows::Win32::UI::Shell::SHCreateMemStream;
 
 const HEADER: usize = 20;
@@ -238,6 +238,51 @@ pub(crate) fn read_files() -> Result<(Vec<FsPath>, bool), PlatformError> {
             Some(files) if !files.is_empty() => Ok((files, effect.is_some_and(effect_is_move))),
             _ => Err(PlatformError::new(-1, flit_core::i18n::S::ErrorsEngineClipboardNoFiles.en())),
         }
+    }
+}
+
+pub(crate) fn from_dib(b: &[u8]) -> Option<Bitmap> {
+    let u32_at = |at: usize| b.get(at..at + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]));
+    let header = u32_at(0)? as usize;
+    let (width, height) = (u32_at(4)? as i32, u32_at(8)? as i32);
+    let bits = u16::from_le_bytes([*b.get(14)?, *b.get(15)?]);
+    let compression = u32_at(16)?;
+    if header < INFO_HEADER as usize || width <= 0 || height == 0 || !matches!(bits, 24 | 32) || !matches!(compression, BI_RGB | BI_BITFIELDS) {
+        return None;
+    }
+    if compression == BI_BITFIELDS && (bits != 32 || [u32_at(40)?, u32_at(44)?, u32_at(48)?] != [0x00FF_0000, 0x0000_FF00, 0x0000_00FF]) {
+        return None;
+    }
+    let masks = if compression == BI_BITFIELDS && header == INFO_HEADER as usize { 12 } else { 0 };
+    let (w, h) = (width as usize, height.unsigned_abs() as usize);
+    let stride = (w * bits as usize / 8).div_ceil(4) * 4;
+    let pixels = b.get(header + masks..)?.get(..stride.checked_mul(h)?)?;
+    let alpha = bits == 32 && pixels.chunks_exact(stride).any(|row| row[..w * 4].chunks_exact(4).any(|p| p[3] != 0));
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    for y in 0..h {
+        let row = if height > 0 { h - 1 - y } else { y };
+        for p in pixels[row * stride..][..w * bits as usize / 8].chunks_exact(bits as usize / 8) {
+            let a = if alpha { p[3] } else { 255 };
+            let mix = |c: u8| ((u32::from(c) * u32::from(a) + 127) / 255) as u8;
+            rgba.extend_from_slice(&[mix(p[2]), mix(p[1]), mix(p[0]), a]);
+        }
+    }
+    Some(Bitmap { width: w as u32, height: h as u32, rgba })
+}
+
+pub(crate) fn read_content() -> Option<Pasted> {
+    unsafe {
+        open(None).ok()?;
+        let get = |format: u32| GetClipboardData(format).ok().and_then(|h| global_bytes(HGLOBAL(h.0)));
+        let png = get(png_format());
+        let dib = if png.is_none() { get(CF_DIBV5.0 as u32).or_else(|| get(CF_DIB.0 as u32)) } else { None };
+        let text = get(CF_UNICODETEXT.0 as u32);
+        let _ = CloseClipboard();
+        if let Some(image) = png.or_else(|| dib.as_deref().and_then(from_dib).and_then(|b| self::png(&b))) {
+            return Some(Pasted::Image(image));
+        }
+        let wide: Vec<u16> = text?.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).take_while(|&c| c != 0).collect();
+        Some(Pasted::Text(String::from_utf16_lossy(&wide)))
     }
 }
 

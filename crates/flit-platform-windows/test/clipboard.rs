@@ -119,3 +119,37 @@ fn images_written_to_the_clipboard_offer_png_and_dibs() {
         assert!(png > 8 && v5 >= 140 && plain >= 56);
     }
 }
+
+#[test]
+fn copied_pictures_read_back_from_dibs_of_any_row_order() {
+    let pic = picture();
+    let opaque = |b: &Bitmap| b.rgba.chunks_exact(4).all(|p| p[3] == 255);
+    let v5 = from_dib(&dib(&pic, true)).unwrap();
+    assert_eq!((v5.width, v5.height), (2, 2));
+    assert_eq!(&v5.rgba[..4], &pic.rgba[..4], "rows come back top first");
+    assert_eq!(v5.rgba[12..], pic.rgba[12..]);
+    assert_eq!(v5.rgba[7], 128, "transparency survives");
+    let plain = from_dib(&dib(&pic, false)).unwrap();
+    assert!(opaque(&plain) && plain.rgba[..4] == [255, 0, 0, 255]);
+    let mut top_down = dib(&pic, false);
+    top_down[8..12].copy_from_slice(&(-2i32).to_le_bytes());
+    assert_eq!(from_dib(&top_down).unwrap().rgba[..4], plain.rgba[8..12], "a negative height means the first row is the top");
+    let mut rgb = vec![0u8; 40];
+    rgb[0] = 40;
+    rgb[4] = 1;
+    rgb[8] = 1;
+    rgb[12] = 1;
+    rgb[14] = 24;
+    rgb.extend_from_slice(&[30, 20, 10, 0]);
+    assert_eq!(from_dib(&rgb).unwrap().rgba, [10, 20, 30, 255], "24-bit rows are padded to four bytes");
+}
+
+#[test]
+fn broken_or_unsupported_dibs_are_refused() {
+    let mut eight = dib(&picture(), false);
+    eight[14] = 8;
+    assert!(from_dib(&eight).is_none());
+    let whole = dib(&picture(), false);
+    assert!(from_dib(&whole[..whole.len() - 1]).is_none(), "missing pixels");
+    assert!(from_dib(&[]).is_none() && from_dib(&whole[..20]).is_none());
+}

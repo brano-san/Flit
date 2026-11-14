@@ -5,7 +5,7 @@ use flit_core::ui::{Bitmap, IconKind, IconRequest};
 use flit_core::path::PathKind;
 use flit_core::i18n::S;
 use flit_core::FsPath;
-use flit_platform::{FileOps, Job, OpOutcome, PlatformError, Shell};
+use flit_platform::{FileOps, Job, OpOutcome, Pasted, PlatformError, Shell};
 use flit_platform_linux::{host, run_op};
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
@@ -754,6 +754,11 @@ impl FileOps for LinuxShell {
 
     fn clear_clipboard(&mut self) {
         OWN_FILES.lock().unwrap_or_else(|e| e.into_inner()).take();
+    }
+
+    fn clipboard_data(&mut self, dest: &FsPath) -> Option<FileOp> {
+        let pasted = clipboard_bytes(crate::clipboard::PNG).map(Pasted::Image).filter(Pasted::usable).or_else(|| clipboard_text().map(Pasted::Text))?;
+        pasted.file(dest, |p| host(p).is_none_or(|h| h.symlink_metadata().is_ok()))
     }
 }
 

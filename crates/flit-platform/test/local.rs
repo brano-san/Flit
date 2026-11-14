@@ -235,6 +235,7 @@ struct Clip {
     ran: Vec<FileOp>,
     cleared: bool,
     content: bool,
+    data: Option<crate::Pasted>,
 }
 
 impl FileOps for Clip {
@@ -258,6 +259,32 @@ impl FileOps for Clip {
     fn clipboard_content(&mut self) -> bool {
         self.content
     }
+    fn clipboard_data(&mut self, dest: &FsPath) -> Option<FileOp> {
+        self.data.take()?.file(dest, |p| p.file_name() == b"Pasted image.png")
+    }
+}
+
+#[test]
+fn an_image_or_text_on_the_clipboard_is_pasted_as_a_new_file() {
+    let png = b"\x89PNG\r\n\x1a\nrest".to_vec();
+    let mut clip = Clip { data: Some(crate::Pasted::Image(png.clone())), ..Default::default() };
+    let (error, _) = run_op(&mut clip, FileOp::Paste { dest: p(r"C:\b") });
+    let made = FileOp::NewFile { dir: p(r"C:\b"), name: b"Pasted image (2).png".to_vec(), template: flit_core::provider::Template::Data(png) };
+    assert_eq!((error, clip.ran), (None, vec![made]), "a taken name gets a number");
+    let mut clip = Clip { data: Some(crate::Pasted::Text("hello\r\n".into())), ..Default::default() };
+    run_op(&mut clip, FileOp::Paste { dest: p(r"C:\b") });
+    assert_eq!(clip.ran, [FileOp::NewFile { dir: p(r"C:\b"), name: b"Pasted text.txt".to_vec(), template: flit_core::provider::Template::Data(b"hello\r\n".to_vec()) }]);
+}
+
+#[test]
+fn files_on_the_clipboard_win_over_its_text_and_blank_text_pastes_nothing() {
+    let mut both = Clip { files: vec![p(r"C:\a\x.txt")], data: Some(crate::Pasted::Text(r"C:\a\x.txt".into())), ..Default::default() };
+    run_op(&mut both, FileOp::Paste { dest: p(r"C:\b") });
+    assert_eq!(both.ran, [FileOp::Copy { items: vec![p(r"C:\a\x.txt")], dest: p(r"C:\b") }]);
+    let mut blank = Clip { data: Some(crate::Pasted::Text(" \r\n".into())), ..Default::default() };
+    let (error, report) = run_op(&mut blank, FileOp::Paste { dest: p(r"C:\b") });
+    assert!(error.is_some_and(|e| e.contains("no files")) && report.is_none() && blank.ran.is_empty());
+    assert!(crate::Pasted::Image(b"GIF89a".to_vec()).file(&p(r"C:\b"), |_| false).is_none(), "only PNG data becomes an image file");
 }
 
 #[test]

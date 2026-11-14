@@ -448,12 +448,42 @@ impl<G> KeepAwake<G> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Pasted {
+    Image(Vec<u8>),
+    Text(String),
+}
+
+impl Pasted {
+    pub fn usable(&self) -> bool {
+        match self {
+            Pasted::Image(png) => png.starts_with(b"\x89PNG\r\n\x1a\n"),
+            Pasted::Text(text) => !text.trim().is_empty(),
+        }
+    }
+
+    pub fn file(self, dir: &FsPath, taken: impl Fn(&FsPath) -> bool) -> Option<FileOp> {
+        if !self.usable() {
+            return None;
+        }
+        let (stem, ext, data) = match self {
+            Pasted::Image(png) => (flit_core::i18n::S::OpsExtraPastedImage, ".png", png),
+            Pasted::Text(text) => (flit_core::i18n::S::OpsExtraPastedText, ".txt", text.into_bytes()),
+        };
+        let name = (1u32..).map(|k| if k == 1 { format!("{}{ext}", stem.t()) } else { format!("{} ({k}){ext}", stem.t()) }).find(|n| !taken(&dir.join(n.as_bytes())))?;
+        Some(FileOp::NewFile { dir: dir.clone(), name: name.into_bytes(), template: flit_core::provider::Template::Data(data) })
+    }
+}
+
 pub trait FileOps {
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome;
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError>;
     fn clear_clipboard(&mut self);
     fn clipboard_content(&mut self) -> bool {
         false
+    }
+    fn clipboard_data(&mut self, _dest: &FsPath) -> Option<FileOp> {
+        None
     }
 }
 

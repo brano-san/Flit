@@ -428,7 +428,10 @@ fn resolve_paste<S: FileOps>(sh: &mut S, op: FileOp) -> Result<(FileOp, bool), S
             Ok((items, true)) => (FileOp::Move { items: items.into_iter().filter(|i| !same_dir(i, &dest)).collect(), dest }, true),
             Ok((items, false)) => (FileOp::Copy { items, dest }, false),
             Err(_) if sh.clipboard_content() => (FileOp::Paste { dest }, false),
-            Err(e) => return Err(e.to_string()),
+            Err(e) => match sh.clipboard_data(&dest) {
+                Some(op) => (op, false),
+                None => return Err(e.to_string()),
+            },
         },
         FileOp::PasteLink { dest } => (FileOp::Link { items: sh.clipboard_files().map_err(|e| e.to_string())?.0, dest }, false),
         op => (op, false),
