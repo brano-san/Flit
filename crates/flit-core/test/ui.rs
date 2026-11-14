@@ -473,3 +473,17 @@ fn desktop_launchers_get_their_own_icons_while_other_files_share_one_per_type() 
     let (a, kind) = icon_key(b"a.txt", b"txt", &file, 16, b"/home/u/Desktop", 0);
     assert_eq!((kind, a), (IconKind::Type, icon_key(b"b.txt", b"txt", &file, 16, b"/home/u", 0).0));
 }
+
+#[cfg(windows)]
+#[test]
+fn windows_links_get_their_own_icon_so_the_shell_can_draw_the_link_arrow_but_unix_links_share_the_type_icon() {
+    let entry = |attrs| crate::listing::Entry { attrs, ..Default::default() };
+    let win = br"C:\x".as_slice();
+    assert_eq!(icon_key(b"jump", b"", &entry(attr::DIR | attr::LINK), 16, win, 0).1, IconKind::CustomFolder);
+    assert_eq!(icon_key(b"soft.txt", b"txt", &entry(attr::LINK), 16, win, 0).1, IconKind::File);
+    assert_ne!(icon_key(b"a.txt", b"txt", &entry(attr::LINK), 16, win, 0).0, icon_key(b"b.txt", b"txt", &entry(attr::LINK), 16, win, 0).0);
+    assert_eq!(icon_key(b"plain.txt", b"txt", &entry(0), 16, win, 0).1, IconKind::Type);
+    assert_eq!(icon_key(b"dir", b"", &entry(attr::DIR), 16, win, 0).1, IconKind::Folder);
+    assert_eq!(icon_key(b"lib.so", b"so", &entry(attr::LINK), 16, b"/usr/lib", 0).1, IconKind::Type);
+    assert_eq!(icon_key(b"bin", b"", &entry(attr::DIR | attr::LINK), 16, b"/", 0).1, IconKind::Folder);
+}

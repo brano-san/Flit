@@ -12,7 +12,7 @@ use windows::core::{w, Interface, PCWSTR};
 use windows::Win32::Foundation::{ERROR_CANCELLED, HWND, SIZE};
 use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_INPROC_SERVER, STGM_READ};
 use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::Storage::FileSystem::{GetFileAttributesW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM, INVALID_FILE_ATTRIBUTES};
+use windows::Win32::Storage::FileSystem::{GetFileAttributesW, FILE_FLAGS_AND_ATTRIBUTES, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM, INVALID_FILE_ATTRIBUTES};
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Controls::{IImageList, ILD_TRANSPARENT};
 use windows::Win32::UI::Shell::*;
@@ -172,6 +172,26 @@ pub(crate) fn fit(b: Bitmap, size: u32) -> Bitmap {
     Bitmap { width: dw, height: dh, rgba }
 }
 
+pub(crate) fn stamp(mut base: Bitmap, badge: &Bitmap) -> Bitmap {
+    let badge = fit(badge.clone(), base.width.max(base.height));
+    let dy = base.height.saturating_sub(badge.height);
+    for y in 0..badge.height.min(base.height) {
+        for x in 0..badge.width.min(base.width) {
+            let s = ((y * badge.width + x) * 4) as usize;
+            let d = (((y + dy) * base.width + x) * 4) as usize;
+            let keep = 255 - u32::from(badge.rgba[s + 3]);
+            for c in 0..4 {
+                base.rgba[d + c] = (u32::from(badge.rgba[s + c]) + (u32::from(base.rgba[d + c]) * keep + 127) / 255).min(255) as u8;
+            }
+        }
+    }
+    base
+}
+
+pub(crate) fn overlaid(kind: IconKind, path: &FsPath) -> bool {
+    matches!(kind, IconKind::File | IconKind::CustomFolder) && matches!(path.kind(), PathKind::Drive | PathKind::Unc)
+}
+
 unsafe fn icon_bitmap(icon: HICON) -> Option<Bitmap> {
     let mut ii = ICONINFO::default();
     let got = GetIconInfo(icon, &mut ii).is_ok();
@@ -223,6 +243,24 @@ impl ShellCom {
         unsafe { icon_bitmap(icon) }.map(|b| fit(unpad(b), size))
     }
 
+    pub(crate) fn overlay(&mut self, path: &FsPath, size: u32) -> Option<Bitmap> {
+        let w = wide(path);
+        let mut info = SHFILEINFOW::default();
+        let flags = SHGFI_ICON | SHGFI_SMALLICON | SHGFI_SYSICONINDEX | SHGFI_OVERLAYINDEX;
+        let ok = unsafe { SHGetFileInfoW(PCWSTR(w.as_ptr()), FILE_FLAGS_AND_ATTRIBUTES(0), Some(&mut info), size_of::<SHFILEINFOW>() as u32, flags) };
+        if !info.hIcon.is_invalid() {
+            let _ = unsafe { DestroyIcon(info.hIcon) };
+        }
+        let index = (info.iIcon as u32 >> 24) & 0xFF;
+        if ok == 0 || index == 0 {
+            return None;
+        }
+        let list = self.list_for(size)?;
+        let image = unsafe { list.GetOverlayImage(index as i32) }.ok()?;
+        let icon = unsafe { list.GetIcon(image, ILD_TRANSPARENT.0) }.ok()?;
+        unsafe { icon_bitmap(icon) }
+    }
+
     fn item_image(&self, path: &FsPath, size: u32, flags: SIIGBF) -> Option<Bitmap> {
         unsafe {
             let factory: IShellItemImageFactory = match path.kind() {
@@ -262,7 +300,7 @@ impl Shell for ShellCom {
         if let Some(path) = flit_core::location::wsl_drive_path(req.path.as_bytes()) {
             return self.icon(&IconRequest { path, ..req.clone() });
         }
-        match req.kind {
+        let base = match req.kind {
             IconKind::Type => self.generic_icon(&req.path, false, req.size),
             IconKind::Folder => self.generic_icon(&req.path, true, req.size),
             IconKind::Volume => match Location::from_local(req.path.clone()) {
@@ -276,7 +314,12 @@ impl Shell for ShellCom {
                 .and_then(|_| self.item_image(&req.path, req.size, SIIGBF_ICONONLY))
                 .or_else(|| self.generic_icon(&req.path, true, req.size)),
             IconKind::Thumbnail => self.thumbnail(req),
-        }
+        }?;
+        let badge = if overlaid(req.kind, &req.path) { self.overlay(&req.path, req.size) } else { None };
+        Some(match badge {
+            Some(b) => stamp(base, &b),
+            None => base,
+        })
     }
 
     fn thumbnail(&mut self, req: &IconRequest) -> Option<Bitmap> {

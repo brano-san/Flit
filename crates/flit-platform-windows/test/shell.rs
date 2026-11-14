@@ -272,3 +272,36 @@ fn only_files_that_were_opened_go_to_the_recent_list() {
     assert!(!recent_worthy(&FsPath::computer()));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn a_badge_is_drawn_over_the_bottom_left_corner_and_leaves_the_rest_alone() {
+    let base = solid(4, [0, 0, 200, 255]);
+    let mut badge = solid(2, [0, 0, 0, 0]);
+    badge.rgba[8..12].copy_from_slice(&[255, 0, 0, 255]);
+    let out = stamp(base.clone(), &badge);
+    assert_eq!((out.width, out.height), (4, 4));
+    let px = |b: &Bitmap, x: u32, y: u32| b.rgba[((y * b.width + x) * 4) as usize..][..4].to_vec();
+    assert_eq!(px(&out, 0, 3), [255, 0, 0, 255]);
+    assert_eq!(px(&out, 3, 0), [0, 0, 200, 255]);
+    assert_eq!(px(&out, 1, 1), [0, 0, 200, 255]);
+    let clear = stamp(base.clone(), &solid(4, [0, 0, 0, 0]));
+    assert_eq!(clear.rgba, base.rgba);
+}
+
+#[test]
+fn a_shortcut_icon_carries_the_link_arrow_and_its_target_does_not() {
+    let root = crate::test_temp().join(format!("flit-shell-arrow-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let mut sh = ShellCom::new().unwrap();
+    let exe = p(r"C:\Windows\notepad.exe");
+    let out = sh.file_op(&FileOp::Link { items: vec![exe.clone()], dest: p(root.to_str().unwrap()) }, &flit_platform::Job::detached(flit_core::provider::Resolve::Skip));
+    let lnk = out.items[0].1.clone();
+    assert!(sh.overlay(&lnk, 32).is_some());
+    assert!(sh.overlay(&exe, 32).is_none());
+    let icon = |sh: &mut ShellCom, path: &FsPath| sh.icon(&IconRequest { key: 0, kind: IconKind::File, path: path.clone(), size: 32, gen: 0, row: 0 }).unwrap();
+    assert_ne!(icon(&mut sh, &lnk).rgba, icon(&mut sh, &exe).rgba);
+    let typed = sh.icon(&IconRequest { key: 0, kind: IconKind::Type, path: lnk.clone(), size: 32, gen: 0, row: 0 }).unwrap();
+    assert_eq!(typed.width.max(typed.height), 32);
+    let _ = std::fs::remove_dir_all(&root);
+}

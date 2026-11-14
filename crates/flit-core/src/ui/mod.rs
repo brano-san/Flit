@@ -3149,14 +3149,15 @@ pub fn icon_key(name: &[u8], ext: &[u8], e: &crate::listing::Entry, size: u32, d
     if e.attrs & attr::LINK != 0 && !cfg!(windows) {
         return (hash::hash(&("link", dir, name, e.attrs & attr::DIR, e.modified, size, epoch)), IconKind::File);
     }
-    if e.is_dir() && (e.attrs & (attr::READONLY | attr::SYSTEM) != 0 || crate::location::wsl_drive_path(dir).is_some()) {
+    let shell_link = e.attrs & attr::LINK != 0 && dir.first() != Some(&b'/');
+    if e.is_dir() && (e.attrs & (attr::READONLY | attr::SYSTEM) != 0 || shell_link || crate::location::wsl_drive_path(dir).is_some()) {
         return (hash::hash(&("custom", dir, name, e.modified, e.attrs, size, epoch)), IconKind::CustomFolder);
     }
     if e.is_dir() {
         return (hash::hash(&("dir", size, epoch)), IconKind::Folder);
     }
     let folded = ext.to_ascii_lowercase();
-    if PER_FILE_ICON_EXT.contains(&folded.as_slice()) {
+    if PER_FILE_ICON_EXT.contains(&folded.as_slice()) || shell_link {
         return (hash::hash(&("file", dir, name, size, epoch)), IconKind::File);
     }
     if folded.is_empty() && e.attrs & attr::EXEC != 0 {
