@@ -362,3 +362,47 @@ fn disconnecting_picks_gio_for_gvfs_fusermount_for_fuse_and_umount_for_kernel_sh
     assert_eq!(words("/mnt/box"), "fusermount -u /mnt/box");
     assert_eq!(words("/mnt/nas"), "umount /mnt/nas");
 }
+
+const GIO_MOUNT_LI: &str = "Drive(0): SanDisk Cruzer
+  Type: GProxyDrive (GProxyVolumeMonitorUDisks2)
+  Volume(0): STICK
+    Type: GProxyVolume (GProxyVolumeMonitorUDisks2)
+    ids:
+     unix-device: '/dev/sdb1'
+    can_mount=1
+Volume(0): Pixel 7
+  Type: GProxyVolume (GProxyVolumeMonitorMTP)
+  ids:
+   unix-device: '/dev/bus/usb/001/005'
+  activation_root=mtp://Google_Pixel_7_1A2B3C/
+  can_mount=1
+  should_automount=1
+Volume(1): Canon EOS 2000D
+  Type: GProxyVolume (GProxyVolumeMonitorGPhoto2)
+  activation_root=gphoto2://Canon_Inc._Canon_Digital_Camera/
+  can_mount=1
+Volume(2): Galaxy S21
+  Type: GProxyVolume (GProxyVolumeMonitorMTP)
+  activation_root=mtp://SAMSUNG_Android_R58N/
+  Mount(0): Galaxy S21 -> mtp://SAMSUNG_Android_R58N/
+    Type: GProxyMount (GProxyVolumeMonitorMTP)
+Mount(1): photos on nas -> smb://nas/photos/
+  Type: GDaemonMount
+";
+
+#[test]
+fn phones_and_cameras_that_are_plugged_in_but_not_opened_show_as_drives_to_mount() {
+    let root = Path::new("/run/user/1000/gvfs");
+    let got: Vec<(String, String, bool)> = phones_from(GIO_MOUNT_LI, root).into_iter().map(|d| (String::from_utf8_lossy(d.path.as_bytes()).into_owned(), d.label.clone(), d.mountable())).collect();
+    assert_eq!(
+        got,
+        [
+            ("/run/user/1000/gvfs/mtp:host=Google_Pixel_7_1A2B3C".to_owned(), "Pixel 7".to_owned(), true),
+            ("/run/user/1000/gvfs/gphoto2:host=Canon_Inc._Canon_Digital_Camera".to_owned(), "Canon EOS 2000D".to_owned(), true),
+        ]
+    );
+    assert!(phones_from("", root).is_empty());
+    assert_eq!(device_uri(Path::new("/run/user/1000/gvfs/mtp:host=Google_Pixel_7_1A2B3C"), root).as_deref(), Some("mtp://Google_Pixel_7_1A2B3C/"));
+    assert_eq!(device_uri(Path::new("/run/user/1000/gvfs/smb-share:server=nas,share=photos"), root), None);
+    assert_eq!(device_uri(Path::new("/dev/sdb1"), root), None);
+}

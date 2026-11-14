@@ -61,11 +61,58 @@ pub fn drives() -> Vec<Drive> {
         .filter_map(drive_of)
         .chain(unmounted())
         .chain(gvfs(&gvfs_root()))
+        .chain(phones(&gvfs_root()))
         .collect()
 }
 
 pub fn gvfs_root() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR").map_or_else(|| PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() })), PathBuf::from).join("gvfs")
+}
+
+const DEVICE_SCHEMES: [&str; 3] = ["mtp", "gphoto2", "afc"];
+
+pub fn gvfs_uri(name: &str) -> Option<String> {
+    let (scheme, rest) = name.split_once(':')?;
+    let host = rest.split(',').find_map(|kv| kv.strip_prefix("host="))?;
+    DEVICE_SCHEMES.contains(&scheme).then(|| format!("{scheme}://{host}/"))
+}
+
+fn gvfs_name(uri: &str) -> Option<String> {
+    let (scheme, rest) = uri.split_once("://")?;
+    let host = rest.split('/').next().filter(|h| !h.is_empty())?;
+    DEVICE_SCHEMES.contains(&scheme).then(|| format!("{scheme}:host={host}"))
+}
+
+pub fn device_uri(path: &Path, root: &Path) -> Option<String> {
+    gvfs_uri(path.strip_prefix(root).ok()?.to_str()?)
+}
+
+pub fn phones_from(listed: &str, root: &Path) -> Vec<Drive> {
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    let lines: Vec<&str> = listed.lines().collect();
+    let mut out: Vec<Drive> = Vec::new();
+    for (k, line) in lines.iter().enumerate() {
+        let Some(name) = line.trim_start().strip_prefix("Volume(").and_then(|r| r.split_once("): ")).map(|(_, n)| n.trim()) else { continue };
+        let depth = indent(line);
+        let block = lines[k + 1..].iter().take_while(|l| l.trim().is_empty() || indent(l) > depth);
+        let (mut uri, mut mounted) = (None, false);
+        for l in block {
+            let l = l.trim();
+            mounted |= l.starts_with("Mount(");
+            uri = uri.or_else(|| l.strip_prefix("activation_root=").map(str::to_owned));
+        }
+        let Some(dir) = uri.as_deref().filter(|_| !mounted).and_then(gvfs_name) else { continue };
+        let Some(path) = crate::xdg::fs_path(&root.join(dir)) else { continue };
+        if !out.iter().any(|d| d.path == path) {
+            out.push(Drive { path, label: name.to_owned(), total: 0, free: 0, file_system: String::new(), removable: true, unmounted: true, kind: None, remote: None });
+        }
+    }
+    out
+}
+
+fn phones(root: &Path) -> Vec<Drive> {
+    let listed = gio(&["mount", "-li"], PHONES_WAIT).map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    phones_from(&listed, root)
 }
 
 pub fn gvfs_label(name: &str) -> String {
@@ -97,6 +144,7 @@ pub fn local_path(gio_info: &str) -> Option<PathBuf> {
 }
 
 pub const CONNECT_WAIT: std::time::Duration = std::time::Duration::from_secs(45);
+const PHONES_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 pub fn run_within(mut cmd: std::process::Command, wait: std::time::Duration) -> std::io::Result<std::process::Output> {
     use std::process::Stdio;
@@ -233,7 +281,7 @@ pub fn eject_error(drive: &Path, e: &std::io::Error) -> PlatformError {
 pub fn list_computer(out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
     let table = mounts::read().map_err(|e| FsError { kind: FsErrorKind::Unavailable, code: e.raw_os_error().unwrap_or(-1) as i64 })?;
     let volumes = volumes_from(&table, &mounts::user_name(), Path::new(mounts::BY_LABEL));
-    computer_from(out, &volumes, &unmounted().into_iter().chain(gvfs(&gvfs_root())).collect::<Vec<_>>());
+    computer_from(out, &volumes, &unmounted().into_iter().chain(gvfs(&gvfs_root())).chain(phones(&gvfs_root())).collect::<Vec<_>>());
     Ok(())
 }
 

@@ -391,6 +391,9 @@ impl Shell for LinuxShell {
     }
 
     fn mount(&mut self, device: &FsPath) -> Result<FsPath, PlatformError> {
+        if let Some(uri) = crate::places::device_uri(Path::new(os(device)), &crate::places::gvfs_root()) {
+            return self.connect(&uri);
+        }
         let point = crate::udisks::mount(Path::new(os(device))).map_err(|e| crate::places::drive_error(S::ErrorsFsMountFailed, Path::new(os(device)), &e))?;
         crate::xdg::fs_path(&point).ok_or_else(|| PlatformError::new(-1, "the mount point is not a valid path"))
     }
