@@ -517,6 +517,11 @@ impl App {
                     }
                 }
             }
+            Then::Reload => {
+                if let Some(k) = self.tabs.iter().position(|t| t.id == tab).filter(|_| error.is_none()) {
+                    self.reload(k, now);
+                }
+            }
             Then::Clipboard | Then::Drag => {
                 if error.is_none() {
                     self.unpacked(then, report.items.iter().map(|(_, to)| to.clone()).collect());

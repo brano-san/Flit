@@ -733,3 +733,50 @@ fn right_click_on_the_address_and_crumbs_offers_copy_and_edit() {
     assert!(app.go_open() && app.nav.palette.as_ref().unwrap().field.text().is_empty(), "Edit opens the crumb in the address bar");
     assert_eq!(app.nav.palette.as_ref().unwrap().go.as_ref().unwrap().crumb, Some(n - 2), "the edited crumb is the one clicked");
 }
+
+fn op_effects(app: &mut App) -> Vec<(crate::provider::OpId, crate::provider::FileOp)> {
+    app.drain_effects().filter_map(|e| if let Effect::Provider { req: ProviderRequest::Op { id, op, .. }, .. } = e { Some((id, op)) } else { None }).collect()
+}
+
+#[test]
+fn a_folder_without_permission_offers_continue_which_gets_access_and_reloads_it() {
+    let mut app = app_at(r"C:\Locked");
+    deliver(&mut app, &[], Some(FsErrorKind::AccessDenied));
+    frame(&mut app);
+    let r = app.grant_rect().unwrap();
+    assert_eq!(app.hit(r.x + 5.0, r.y + 5.0), Hit::GrantAccess);
+    app.drain_effects().for_each(drop);
+    app.on_event(&Event::MouseDown { x: r.x + 5.0, y: r.y + 5.0, button: MouseButton::Left, clicks: 1 }, Instant::now());
+    app.on_event(&Event::MouseUp { x: r.x + 5.0, y: r.y + 5.0, button: MouseButton::Left }, Instant::now());
+    let [(id, op)] = op_effects(&mut app).try_into().unwrap();
+    let dir = FsPath::parse(r"C:\Locked").unwrap();
+    assert_eq!(op, crate::provider::FileOp::GrantAccess(dir.clone()));
+    let (tab, gen) = (app.tab().id, app.tab().gen);
+    let report = crate::provider::OpReport { op: op.clone(), items: vec![(dir.clone(), dir.clone())] };
+    app.on_provider_event(crate::provider::ProviderEvent::OpDone { tab, id, error: Some("cancelled".into()), report: Some(report.clone()) }, Instant::now());
+    assert_eq!(app.tab().gen, gen, "a refused prompt leaves the folder as it was");
+    app.grant_access();
+    let [(id, _)] = op_effects(&mut app).try_into().unwrap();
+    app.on_provider_event(crate::provider::ProviderEvent::OpDone { tab, id, error: None, report: Some(report) }, Instant::now());
+    assert_ne!(app.tab().gen, gen, "the folder is listed again");
+}
+
+#[test]
+fn continue_is_offered_only_for_a_denied_folder_on_this_computer() {
+    for (path, error) in [(r"C:\Missing", FsErrorKind::NotFound), (r"E:\", FsErrorKind::NoMedia), (r"C:\a.zip\inner", FsErrorKind::AccessDenied), ("/srv/private", FsErrorKind::AccessDenied)] {
+        let mut app = app_at(path);
+        deliver(&mut app, &[], Some(error));
+        assert_eq!(app.grant_rect(), None, "{path}");
+    }
+    let mut share = app_at(r"\\srv\share\private");
+    deliver(&mut share, &[], Some(FsErrorKind::AccessDenied));
+    assert!(share.grant_rect().is_some());
+    let mut linux = app_at("/srv/private");
+    linux.caps.unix_paths = true;
+    deliver(&mut linux, &[], Some(FsErrorKind::AccessDenied));
+    assert!(linux.grant_rect().is_some());
+    let mut drive = app_at(r"C:\Locked");
+    drive.caps.unix_paths = true;
+    deliver(&mut drive, &[], Some(FsErrorKind::AccessDenied));
+    assert_eq!(drive.grant_rect(), None);
+}

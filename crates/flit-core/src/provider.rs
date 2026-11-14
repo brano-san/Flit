@@ -175,6 +175,7 @@ pub enum FileOp {
     Access(Vec<AccessChange>),
     SetAttributes { items: Vec<FsPath>, set: u32, clear: u32, unblock: bool },
     PasteDropped { dest: FsPath, moving: bool },
+    GrantAccess(FsPath),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -278,6 +279,7 @@ impl FileOp {
             FileOp::Access(changes) => FileOp::Access(changes.iter().map(|c| Some(AccessChange { item: f(&c.item)?, ..c.clone() })).collect::<Option<_>>()?),
             FileOp::SetAttributes { items, set, clear, unblock } => FileOp::SetAttributes { items: all(items)?, set: *set, clear: *clear, unblock: *unblock },
             FileOp::PasteDropped { dest, moving } => FileOp::PasteDropped { dest: f(dest)?, moving: *moving },
+            FileOp::GrantAccess(dir) => FileOp::GrantAccess(f(dir)?),
         })
     }
 }

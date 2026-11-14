@@ -342,6 +342,7 @@ fn job_title(op: &FileOp) -> Option<String> {
         FileOp::InstallFonts(fonts) => crate::tr!(S::OpsExtraInstallingFonts, what = count(fonts)),
         FileOp::SetAccess { items, .. } => crate::tr!(S::PermissionsChanging, what = count(items)),
         FileOp::SetAttributes { items, .. } => crate::tr!(S::PropertiesChanging, what = count(items)),
+        FileOp::GrantAccess(dir) => crate::tr!(S::ErrorsFsGranting, what = quoted(dir)),
         FileOp::Access(changes) => crate::tr!(S::PermissionsChanging, what = count(&changes.iter().map(|c| c.item.clone()).collect::<Vec<_>>())),
         FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::NewStream { .. } | FileOp::Link { .. } | FileOp::FolderIcon { .. } | FileOp::LockScreen(_) => return None,
     })

@@ -1,6 +1,12 @@
 use super::menu::Menu;
 use super::ops::Then;
-use super::App;
+use super::{App, Hit};
+use crate::listing::FsErrorKind;
+use crate::location::Location;
+use crate::path::PathKind;
+use crate::render::Rect;
+use crate::text::{Gfx, TextBackend};
+use crate::theme::Theme;
 use crate::i18n::S;
 use crate::install;
 use crate::path::FsPath;
@@ -114,5 +120,40 @@ impl App {
                 m.action("file.mount_image", S::ActionsFileMountImage.t());
             }
         }
+    }
+}
+
+impl App {
+    pub(super) fn grant_rect(&self) -> Option<Rect> {
+        let t = self.tab();
+        let v = t.view.as_ref()?;
+        let denied = v.total_rows() == 0 && v.snap().error.as_ref().is_some_and(|e| e.kind == FsErrorKind::AccessDenied);
+        let Location::Local(dir) = &t.view_loc else { return None };
+        let native = match dir.kind() {
+            PathKind::Unix => self.caps.unix_paths,
+            PathKind::Drive | PathKind::Unc => !self.caps.unix_paths,
+            _ => false,
+        };
+        if !denied || !native || crate::archive::split(dir).is_some() {
+            return None;
+        }
+        let (l, w) = (self.layout.list, self.s(160.0));
+        Some(Rect::new((l.x + (l.w - w) / 2.0).round(), l.y + self.s(152.0), w, self.s(30.0)))
+    }
+
+    pub(super) fn draw_grant<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme) {
+        let Some(b) = self.grant_rect() else { return };
+        let s4 = self.s(4.0);
+        g.dl.round_rect(b, if self.hover == Hit::GrantAccess { th.button_pressed } else { th.button_hover }, s4);
+        g.dl.outline(b, th.input_border, s4, 1.0);
+        super::centered(g, b, S::ErrorsFsGrantButton.t(), self.ui_font(13.0), th.text);
+    }
+
+    pub(super) fn grant_access(&mut self) {
+        if self.grant_rect().is_none() {
+            return;
+        }
+        let Location::Local(dir) = self.tab().view_loc.clone() else { return };
+        self.start_op(FileOp::GrantAccess(dir), Origin::Fresh, Then::Reload);
     }
 }

@@ -300,6 +300,36 @@ pub fn access_op(op: &FileOp, job: &Job, plain: impl FnOnce() -> OpOutcome) -> O
     outcome
 }
 
+pub fn grant_args(uid: u32, dir: &Path) -> Vec<OsString> {
+    vec!["-m".into(), format!("u:{uid}:rX").into(), "--".into(), dir.as_os_str().to_owned()]
+}
+
+fn grant_failure(status: Option<i32>, complaint: &str) -> PlatformError {
+    match status {
+        Some(PKEXEC_DISMISSED) => unelevated(S::ErrorsOpsExtraAdminDismissed.en()),
+        Some(PKEXEC_REFUSED) => unelevated(flit_core::tr_en!(S::ErrorsOpsExtraAdminRefused, why = complaint.trim())),
+        code => PlatformError::new(code.map_or(-1, i64::from), format!("setfacl: {}", complaint.trim())),
+    }
+}
+
+pub fn grant_access(dir: &FsPath) -> OpOutcome {
+    let granted = (|| {
+        let path = flit_platform_linux::host(dir).ok_or_else(|| PlatformError::new(-1, "not a Linux path"))?;
+        let pkexec = crate::shell::on_path(OsStr::new("pkexec")).ok_or_else(|| unelevated(S::ErrorsOpsExtraNoPkexec.en()))?;
+        let setfacl = crate::shell::on_path(OsStr::new("setfacl")).ok_or_else(|| PlatformError::new(-1, S::ErrorsFsNoSetfacl.en()))?;
+        let out = Command::new(pkexec).arg(setfacl).args(grant_args(unsafe { libc::getuid() }, path)).stdin(Stdio::null()).output().map_err(|e| unelevated(format!("pkexec: {}", flit_core::fmt::io_reason(&e))))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(grant_failure(out.status.code(), &String::from_utf8_lossy(&out.stderr)))
+        }
+    })();
+    match granted {
+        Ok(()) => OpOutcome { items: vec![(dir.clone(), dir.clone())], error: None },
+        Err(e) => OpOutcome { items: Vec::new(), error: Some(e) },
+    }
+}
+
 #[cfg(test)]
 #[path = "../test/elevated.rs"]
 mod tests;

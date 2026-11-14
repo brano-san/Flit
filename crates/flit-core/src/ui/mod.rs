@@ -526,6 +526,7 @@ enum Hit {
     QuickField,
     QuickClear,
     Eject,
+    GrantAccess,
     Settings(settings_page::SHit),
     Menu,
     QuickToggle,
@@ -1648,6 +1649,9 @@ impl App {
         if let Some(i) = l.panes.iter().position(|r| r.contains(x, y)).filter(|_| l.pane_area.contains(x, y)) {
             return self.pane_hit(i, y);
         }
+        if self.grant_rect().is_some_and(|r| r.contains(x, y)) {
+            return Hit::GrantAccess;
+        }
         if self.eject_rect().is_some_and(|r| r.contains(x, y)) {
             return Hit::Eject;
         }
@@ -2122,6 +2126,7 @@ impl App {
             Hit::PaletteDescribe => self.toggle_descriptions(),
             Hit::TabActions => self.open_tab_search(),
             Hit::Eject => self.eject(),
+            Hit::GrantAccess => self.grant_access(),
             Hit::Settings(s) => self.settings_click(s, x, y),
             _ => {}
         }

@@ -1352,6 +1352,7 @@ impl App {
             g.text(list.x + (list.w - w) / 2.0, y + self.cs(56.0 + 24.0 * k as f32), text, font, color, list.w);
         }
         self.draw_eject(g, th);
+        self.draw_grant(g, th);
     }
 
     pub(super) fn draw_checkbox<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme, r: Rect, on: bool) {

@@ -729,6 +729,7 @@ impl FileOps for LinuxShell {
             (FileOp::EmptyBin, Ok(t)) => places::empty(t, &places::storage_tops()),
             (FileOp::Purge(_) | FileOp::EmptyBin, Err(e)) => OpOutcome { items: Vec::new(), error: Some(e.clone()) },
             (FileOp::SetAccess { .. } | FileOp::Access(_), _) => crate::elevated::access_op(op, job, || run_op(op, job, None)),
+            (FileOp::GrantAccess(dir), _) => crate::elevated::grant_access(dir),
             _ => crate::elevated::file_op(op, job, || run_op(op, job, trash.as_ref().ok())),
         };
         fs::rescan_blind();

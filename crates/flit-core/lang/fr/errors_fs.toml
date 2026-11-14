@@ -21,6 +21,10 @@ retry = "{error}. Appuyez sur F5 pour réessayer."
 insert_media = "{error}. Insérez-en un et appuyez sur F5, ou éjectez le lecteur."
 not_responding = "L'emplacement réseau ne répond pas"
 device_unsupported = "Cette action n'est pas disponible pour les téléphones et appareils photo"
+grant_button = "Continuer"
+grant_hint = "Cliquez sur Continuer pour obtenir un accès permanent à ce dossier en tant qu’administrateur."
+granting = "Obtention de l’accès à {what}"
+no_setfacl = "setfacl n’est pas installé (paquet acl)"
 
 [title]
 encrypted = "Cette archive est chiffrée"

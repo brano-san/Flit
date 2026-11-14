@@ -21,6 +21,10 @@ retry = "{error}. Presiona F5 para intentarlo de nuevo."
 insert_media = "{error}. Inserta uno y presiona F5, o expulsa la unidad."
 not_responding = "La ubicación de red no responde"
 device_unsupported = "Esta acción no está disponible para teléfonos y cámaras"
+grant_button = "Continuar"
+grant_hint = "Haga clic en Continuar para obtener acceso permanente a esta carpeta como administrador."
+granting = "Obteniendo acceso a {what}"
+no_setfacl = "setfacl no está instalado (paquete acl)"
 
 [title]
 encrypted = "Este archivo comprimido está cifrado"

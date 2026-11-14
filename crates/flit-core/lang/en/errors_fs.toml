@@ -21,6 +21,10 @@ retry = "{error}. Press F5 to try again."
 insert_media = "{error}. Insert one and press F5, or eject the drive."
 not_responding = "The network location is not responding"
 device_unsupported = "This action is not available on phones and cameras"
+grant_button = "Continue"
+grant_hint = "Click Continue to get permanent access to this folder as an administrator."
+granting = "Getting access to {what}"
+no_setfacl = "setfacl is not installed (package acl)"
 
 [title]
 encrypted = "This archive is encrypted"

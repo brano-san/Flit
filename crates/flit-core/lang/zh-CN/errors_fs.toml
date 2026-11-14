@@ -21,6 +21,10 @@ retry = "{error}。按 F5 重试。"
 insert_media = "{error}。请插入介质并按 F5，或弹出驱动器。"
 not_responding = "网络位置没有响应"
 device_unsupported = "此操作不适用于手机和相机"
+grant_button = "继续"
+grant_hint = "单击“继续”以管理员身份永久获取此文件夹的访问权限。"
+granting = "正在获取 {what} 的访问权限"
+no_setfacl = "未安装 setfacl（acl 软件包）"
 
 [title]
 encrypted = "此压缩文件已加密"

@@ -151,3 +151,12 @@ fn a_retry_that_cannot_get_administrator_rights_says_why() {
     let stopped = PlatformError::new(-1, flit_core::tr_en!(S::ErrorsOpsExtraAdminStopped, why = "broken pipe"));
     assert_eq!(only_elevated(stopped.clone()).error.unwrap().message, stopped.message, "a helper that ran and stopped is not a missing right");
 }
+
+#[test]
+fn continue_on_a_locked_folder_lets_the_user_list_and_enter_it_and_nothing_more() {
+    let args: Vec<String> = grant_args(1000, Path::new("/srv/locked dir")).into_iter().map(|a| a.to_string_lossy().into_owned()).collect();
+    assert_eq!(args, ["-m", "u:1000:rX", "--", "/srv/locked dir"]);
+    assert_eq!(grant_failure(Some(PKEXEC_DISMISSED), "").message, S::ErrorsOpsExtraAdminDismissed.en());
+    let other = grant_failure(Some(1), "setfacl: /srv/x: Operation not supported\n");
+    assert_eq!(other.message, "setfacl: setfacl: /srv/x: Operation not supported");
+}

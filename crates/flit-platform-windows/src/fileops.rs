@@ -156,7 +156,7 @@ fn check_names(op: &FileOp) -> Result<(), PlatformError> {
         FileOp::Paste { dest } | FileOp::PasteLink { dest } | FileOp::PasteDropped { dest, .. } => vec![dest],
         FileOp::Archive(_) => Vec::new(),
         FileOp::InstallFonts(v) => v.iter().collect(),
-        FileOp::LockScreen(p) => vec![p],
+        FileOp::LockScreen(p) | FileOp::GrantAccess(p) => vec![p],
         FileOp::SetAccess { items, .. } | FileOp::SetAttributes { items, .. } => items.iter().collect(),
         FileOp::Access(changes) => changes.iter().map(|c| &c.item).collect(),
     };
@@ -284,7 +284,7 @@ unsafe fn queue(fo: &IFileOperation, op: &FileOp) -> Result<(), PlatformError> {
             };
             fo.NewItem(&shell_item(dir)?, FILE_ATTRIBUTE_NORMAL.0, PCWSTR(name.as_ptr()), source.as_ref().map_or(PCWSTR::null(), |s| PCWSTR(s.as_ptr())), None).map_err(err)?;
         }
-        FileOp::Link { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::PasteLink { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } | FileOp::Flatten(_) | FileOp::FolderIcon { .. } | FileOp::Archive(_) | FileOp::InstallFonts(_) | FileOp::LockScreen(_) | FileOp::SetAccess { .. } | FileOp::Access(_) | FileOp::SetAttributes { .. } | FileOp::PasteDropped { .. } => return Err(PlatformError::new(-1, "not a file operation")),
+        FileOp::Link { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::PasteLink { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } | FileOp::Flatten(_) | FileOp::FolderIcon { .. } | FileOp::Archive(_) | FileOp::InstallFonts(_) | FileOp::LockScreen(_) | FileOp::SetAccess { .. } | FileOp::Access(_) | FileOp::SetAttributes { .. } | FileOp::PasteDropped { .. } | FileOp::GrantAccess(_) => return Err(PlatformError::new(-1, "not a file operation")),
     }
     Ok(())
 }
@@ -639,6 +639,7 @@ impl FileOps for ShellCom {
             FileOp::LockScreen(image) => crate::install::lock_screen(image),
             FileOp::Paste { dest } => crate::transfer::paste(dest, job),
             FileOp::PasteDropped { dest, moving } => crate::transfer::paste_dropped(dest, *moving, job),
+            FileOp::GrantAccess(dir) => crate::volume::grant_access(dir),
             FileOp::SetAccess { .. } | FileOp::Access(_) => OpOutcome { items: Vec::new(), error: Some(PlatformError::unsupported("changing Unix permissions")) },
             FileOp::SetAttributes { items, set, clear, unblock } => set_attributes(items, *set, *clear, *unblock),
             op if engine::native(op) => {

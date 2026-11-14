@@ -21,6 +21,10 @@ retry = "{error}. Drücken Sie F5, um es erneut zu versuchen."
 insert_media = "{error}. Legen Sie einen ein und drücken Sie F5, oder werfen Sie das Laufwerk aus."
 not_responding = "Der Netzwerkspeicherort antwortet nicht"
 device_unsupported = "Diese Aktion ist für Telefone und Kameras nicht verfügbar"
+grant_button = "Fortsetzen"
+grant_hint = "Klicken Sie auf „Fortsetzen“, um als Administrator dauerhaft Zugriff auf diesen Ordner zu erhalten."
+granting = "Zugriff auf {what} wird eingerichtet"
+no_setfacl = "setfacl ist nicht installiert (Paket acl)"
 
 [title]
 encrypted = "Dieses Archiv ist verschlüsselt"

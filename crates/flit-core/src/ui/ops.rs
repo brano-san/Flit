@@ -118,6 +118,7 @@ pub(super) enum Then {
     TrashArchives(Vec<FsPath>),
     Clipboard,
     Drag,
+    Reload,
 }
 
 struct Pending {
