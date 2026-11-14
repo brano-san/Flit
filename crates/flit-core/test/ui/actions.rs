@@ -196,9 +196,9 @@ const SECTION_9: &[(&str, &[(&str, &str)])] = &[
         ("Close Window", "Alt+F4"),
     ]),
     ("Options", &[
-        ("Increase Font Size", "Alt+MouseWheelUp"),
-        ("Decrease Font Size", "Alt+MouseWheelDown"),
-        ("Reset Font Size", ""),
+        ("Increase Font Size", "Alt+MouseWheelUp, Ctrl+Alt+="),
+        ("Decrease Font Size", "Alt+MouseWheelDown, Ctrl+Alt+-"),
+        ("Reset Font Size", "Ctrl+Alt+0"),
         ("Increase Spacing", "Shift+Alt+MouseWheelUp"),
         ("Decrease Spacing", "Shift+Alt+MouseWheelDown"),
     ]),

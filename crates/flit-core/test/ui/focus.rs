@@ -7,13 +7,15 @@ fn tab_walks_every_shown_region_in_order_and_shift_tab_walks_back() {
     let mut a = app(&["a.txt", "b.txt"]);
     assert_eq!(a.focus, Focus::List);
     let mut seen = Vec::new();
-    for _ in 0..4 {
+    for _ in 0..5 {
         press(&mut a, Key::Tab, false);
         seen.push(a.focus);
     }
-    assert_eq!(seen, [Focus::TabBar, Focus::Nav, Focus::List, Focus::TabBar]);
+    assert_eq!(seen, [Focus::TabBar, Focus::Nav, Focus::Sidebar, Focus::List, Focus::TabBar], "section headers keep the sidebar reachable even without places");
     press(&mut a, Key::Tab, true);
     assert_eq!(a.focus, Focus::List);
+    press(&mut a, Key::Tab, true);
+    assert_eq!(a.focus, Focus::Sidebar);
     press(&mut a, Key::Tab, true);
     assert_eq!(a.focus, Focus::Nav);
     a.preview.state.visible = true;

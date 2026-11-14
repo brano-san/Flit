@@ -153,3 +153,19 @@ fn set_focus_and_select_move_the_app_to_that_control() {
     let t = a.accessibility();
     assert_eq!(t.nodes[t.focus.unwrap()].id, refresh);
 }
+
+#[test]
+fn a_collapsed_section_header_keeps_the_sidebar_focus_and_the_old_item_is_not_reported() {
+    let mut a = app(&["alpha.txt"]);
+    let home = crate::location::Location::parse(r"C:\Users\u").unwrap();
+    a.set_places(std::sync::Arc::new(crate::ui::Places { folders: vec![(crate::ui::KnownFolder::Home, home.clone())], recycle_bin: true, ..Default::default() }));
+    a.enter_focus(Focus::Sidebar);
+    frame(&mut a);
+    let section = a.nav.sidebar.items[0].section;
+    a.toggle_section(section);
+    a.nav.sidebar.head = Some(section);
+    crate::ui::harness::frame(&mut a);
+    let t = a.accessibility();
+    let node = t.by_name(section.title()).unwrap_or_else(|| panic!("the header {} is in the tree", section.title()));
+    assert_eq!(t.nodes[t.focus.unwrap()].id, node.id, "the focused node is the section header, not a stale item");
+}

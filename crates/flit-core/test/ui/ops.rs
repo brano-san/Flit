@@ -1556,17 +1556,27 @@ fn paste_into_the_selected_folder_and_copy_paths_in_quotes() {
     select(&mut app, &["sub"]);
     key(&mut app, Key::Char('V'), CTRL_SHIFT);
     assert_eq!(op_list(&mut app), [FileOp::Paste { dest: p(r"C:\x\sub") }]);
-    key(&mut app, Key::Char('C'), CTRL_ALT);
+    key(&mut app, Key::Char('C'), CTRL_SHIFT);
     assert_eq!(copied(&mut app).as_deref(), Some(r#""C:\x\sub""#));
     select(&mut app, &["sub", "a.txt"]);
-    key(&mut app, Key::Char('C'), CTRL_ALT);
+    key(&mut app, Key::Char('C'), CTRL_SHIFT);
     assert_eq!(copied(&mut app).as_deref(), Some("\"C:\\x\\sub\"\r\n\"C:\\x\\a.txt\""));
     select(&mut app, &[]);
-    key(&mut app, Key::Char('C'), CTRL_ALT);
+    key(&mut app, Key::Char('C'), CTRL_SHIFT);
     assert_eq!(copied(&mut app).as_deref(), Some(r#""C:\x""#), "with nothing selected the folder itself is copied");
     key(&mut app, Key::Char('C'), CTRL_SHIFT);
     assert_eq!(copied(&mut app).as_deref(), Some(r#""C:\x""#), "Copy as path quotes like File Explorer");
 }
+
+#[test]
+fn ctrl_alt_c_stays_free_on_windows_so_the_font_commands_can_use_ctrl_alt() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("a.txt", false)]);
+    select(&mut app, &["a.txt"]);
+    key(&mut app, Key::Char('C'), CTRL_ALT);
+    assert!(copied(&mut app).is_none(), "Ctrl+Alt+C is not bound on Windows");
+}
+
 
 #[test]
 fn cut_items_stay_dimmed_until_the_clipboard_changes() {

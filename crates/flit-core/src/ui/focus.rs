@@ -14,7 +14,7 @@ impl App {
             Focus::TabBar => l.tabs.iter().enumerate().map(|(i, &(r, _))| (Hit::Tab(i), r)).chain([(Hit::NewTab, l.new_tab)]).collect(),
             Focus::Nav => (0..4).map(|i| (Hit::Nav(i), l.nav[i])).chain([(Hit::ViewMode, l.view), (Hit::Bookmark, l.bookmark), (Hit::PanelMenu, l.more)]).collect(),
             Focus::Address => vec![(Hit::Address, l.address)],
-            Focus::Sidebar => self.nav.sidebar.rects.iter().enumerate().map(|(i, &r)| (Hit::Side(i), r)).collect(),
+            Focus::Sidebar => self.nav.sidebar.headers.iter().map(|(r, s)| (Hit::SideHeader(*s), *r)).chain(self.nav.sidebar.rects.iter().enumerate().map(|(i, &r)| (Hit::Side(i), r))).collect(),
             Focus::List => vec![(Hit::ListEmpty, l.list)],
             Focus::Preview => vec![(Hit::None, self.preview_area())],
             Focus::Filter => vec![(Hit::FilterField, self.nav.filter.field)],

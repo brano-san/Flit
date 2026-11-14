@@ -120,11 +120,17 @@ impl App {
         if sb.rect.w > 0.0 {
             let side = t.add(0, SIDEBAR, Role::Tree, S::A11yRegionSidebar.t(), sb.rect);
             let here = self.tab().location().clone();
+            for (r, section) in &sb.headers {
+                let k = put(&mut t, &mut targets, side, Hit::SideHeader(*section), Role::TreeItem, section.title(), *r);
+                if self.focus == Focus::Sidebar && sb.head == Some(*section) {
+                    focus = Some(k);
+                }
+            }
             for (i, (it, &r)) in sb.items.iter().zip(&sb.rects).enumerate() {
                 let k = put(&mut t, &mut targets, side, Hit::Side(i), Role::TreeItem, &it.label, r);
                 t.nodes[k].selected = it.loc == here;
                 t.nodes[k].help = it.loc.display().into_owned();
-                if self.focus == Focus::Sidebar && sb.cursor == i {
+                if self.focus == Focus::Sidebar && sb.head.is_none() && sb.cursor == i {
                     focus = Some(k);
                 }
             }
