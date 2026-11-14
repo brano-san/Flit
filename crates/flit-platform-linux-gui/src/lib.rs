@@ -17,6 +17,7 @@ mod icons;
 mod input;
 mod mime;
 mod poll;
+mod player;
 mod props;
 mod svg;
 pub mod instance;

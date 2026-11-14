@@ -226,7 +226,8 @@ pub struct LinuxWindow {
     ime_area: Cell<Rect>,
     compact_from: Cell<Option<(u32, u32)>>,
     media: RefCell<Option<ShownMedia>>,
-    player: RefCell<Option<std::process::Child>>,
+    player: RefCell<Option<crate::player::Player>>,
+    volume: Cell<Option<f32>>,
 }
 
 #[derive(Clone)]
@@ -253,37 +254,38 @@ impl LinuxWindow {
             compact_from: Cell::new(None),
             media: RefCell::new(None),
             player: RefCell::new(None),
+            volume: Cell::new(None),
         }
     }
 
     fn stop_player(&self) {
-        if let Some(mut child) = self.player.borrow_mut().take() {
-            signal_group(&child, libc::SIGKILL);
-            let _ = child.kill();
-            let _ = child.wait();
+        if let Some(player) = self.player.borrow_mut().take() {
+            player.stop();
         }
     }
 
-    fn signal_player(&self, signal: libc::c_int) -> bool {
-        let mut player = self.player.borrow_mut();
-        let Some(child) = player.as_mut() else { return false };
-        if !matches!(child.try_wait(), Ok(None)) {
-            return false;
-        }
-        signal_group(child, signal);
-        true
+    fn tell_player(&self, line: &str, signal: Option<libc::c_int>) -> bool {
+        let player = self.player.borrow();
+        let Some(p) = player.as_ref().filter(|p| p.alive()) else { return false };
+        p.send(line) || signal.is_some_and(|s| p.signal(s))
     }
 
     fn play(&self) {
-        if self.signal_player(libc::SIGCONT) {
+        if self.tell_player(&crate::player::pause(false), Some(libc::SIGCONT)) {
             return;
         }
         self.stop_player();
         let Some(m) = self.media.borrow().clone() else { return };
         let Some(file) = flit_platform_linux::host(&m.path) else { return };
-        match crate::shell::play_media(m.video, file) {
-            Some(child) => {
-                self.player.replace(Some(child));
+        let socket = crate::player::socket_path(&std::env::var_os("XDG_RUNTIME_DIR").map_or_else(std::env::temp_dir, std::path::PathBuf::from), m.gen);
+        match crate::shell::play_media(m.video, file, &socket, self.volume.get()) {
+            Some((child, ipc)) => {
+                let id = self.id;
+                let report = move |e: flit_core::preview::HostEvent| {
+                    QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((id, Event::Hosted(e)));
+                    wake_loop();
+                };
+                self.player.replace(Some(crate::player::Player::start(child, ipc.then_some(socket), m.gen, report)));
             }
             None => {
                 let failed = flit_core::preview::HostEvent::Failed { gen: m.gen, message: S::PreviewNoPlayer.t().to_owned() };
@@ -341,13 +343,6 @@ impl LinuxWindow {
 impl Drop for LinuxWindow {
     fn drop(&mut self) {
         self.stop_player();
-    }
-}
-
-fn signal_group(child: &std::process::Child, signal: libc::c_int) {
-    let Ok(pid) = libc::pid_t::try_from(child.id()) else { return };
-    unsafe {
-        libc::kill(-pid, signal);
     }
 }
 
@@ -437,10 +432,17 @@ impl Window for LinuxWindow {
                 self.stop_player();
                 self.media.replace(None);
             }
-            HostCmd::Place(_) | HostCmd::Media(MediaCmd::Seek(_) | MediaCmd::Volume(_)) => {}
+            HostCmd::Place(_) => {}
+            HostCmd::Media(MediaCmd::Seek(at)) => {
+                self.tell_player(&crate::player::seek(at), None);
+            }
+            HostCmd::Media(MediaCmd::Volume(v)) => {
+                self.volume.set(Some(v));
+                self.tell_player(&crate::player::volume(v), None);
+            }
             HostCmd::Media(MediaCmd::Play) => self.play(),
             HostCmd::Media(MediaCmd::Pause) => {
-                self.signal_player(libc::SIGSTOP);
+                self.tell_player(&crate::player::pause(true), Some(libc::SIGSTOP));
             }
         }
     }
@@ -672,8 +674,6 @@ fn type_name(ty: &dyn TransferType) -> Option<String> {
     crate::clipboard::x11_names().iter().find(|(a, _)| *a == atom).map(|(_, n)| (*n).to_owned())
 }
 
-fn clipboard_has(el: &dyn ActiveEventLoop, name: &str) -> bool {
-    let Ok(Some(id)) = el.clipboard() else { return false };
 enum Unverified {
     Files(Vec<FsPath>, bool),
     Image(Vec<u8>),
@@ -696,6 +696,8 @@ fn copy_image_through_helper(png: Vec<u8>) {
     });
 }
 
+fn clipboard_has(el: &dyn ActiveEventLoop, name: &str) -> bool {
+    let Ok(Some(id)) = el.clipboard() else { return false };
     el.data_transfer(id).is_ok_and(|d| d.available_types().into_iter().any(|t| type_name(t).as_deref() == Some(name)))
 }
 
@@ -1337,9 +1339,9 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
 
     fn proxy_wake_up(&mut self, el: &dyn ActiveEventLoop) {
         self.pending.store(false, Ordering::Release);
+        self.offer_encoded_image();
         for node in &self.nodes {
             self.handler.woken(&node.window);
-        self.offer_encoded_image();
         }
         if THEME_CHANGED.swap(false, Ordering::AcqRel) {
             let dark = preferred_dark().unwrap_or(false);

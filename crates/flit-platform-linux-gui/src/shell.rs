@@ -1071,7 +1071,7 @@ pub fn probe_double_click() -> Option<u32> {
     session_bus().then(|| ask(&portal)).flatten().or_else(|| ask(&gsettings))
 }
 
-pub fn play_media(video: bool, path: &Path) -> Option<std::process::Child> {
+pub fn play_media(video: bool, path: &Path, socket: &Path, volume: Option<f32>) -> Option<(std::process::Child, bool)> {
     let file = path.as_os_str().to_owned();
     let command = |name: &str, extra: &[&str]| {
         on_path(OsStr::new(name)).map(|program| {
@@ -1080,11 +1080,22 @@ pub fn play_media(video: bool, path: &Path) -> Option<std::process::Child> {
             cmd
         })
     };
-    let mut with = command("mpv", &["--no-terminal"])
-        .or_else(|| command("gst-play-1.0", &[]))
+    let mpv = mpv_args(socket, volume);
+    let mpv: Vec<&str> = mpv.iter().map(String::as_str).collect();
+    if let Some(mut with) = command("mpv", &mpv) {
+        let _ = std::fs::remove_file(socket);
+        return with.spawn().ok().map(|c| (c, true));
+    }
+    let mut with = command("gst-play-1.0", &[])
         .or_else(|| if video { command("ffplay", &["-autoexit"]) } else { command("ffplay", &["-autoexit", "-nodisp"]) })
         .or_else(|| if video { None } else { command("paplay", &[]) })?;
-    with.spawn().ok()
+    with.spawn().ok().map(|c| (c, false))
+}
+
+pub fn mpv_args(socket: &Path, volume: Option<f32>) -> Vec<String> {
+    let mut args = vec!["--no-terminal".to_owned(), format!("--input-ipc-server={}", socket.display())];
+    args.extend(volume.map(|v| format!("--volume={}", (v.clamp(0.0, 1.0) * 100.0).round())));
+    args
 }
 
 pub fn kde_dark(kdeglobals: &str) -> Option<bool> {
