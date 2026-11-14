@@ -85,6 +85,7 @@ pub(super) struct Panels {
     pub growing: Option<(u32, Instant)>,
     pub closing: Option<(Node, u32, Instant)>,
     pub status: Vec<(u32, super::widgets::Tween)>,
+    pub(super) cycle_from: Option<u32>,
 }
 
 pub(super) const SPLIT: std::time::Duration = std::time::Duration::from_millis(150);
@@ -104,7 +105,7 @@ fn grown(root: &Node, id: u32, k: f32) -> Node {
 
 impl Default for Panels {
     fn default() -> Self {
-        Self { list: vec![Panel::default()], root: Node::Leaf(0), here: 0, active: 0, next: 1, seps: Vec::new(), caption: Default::default(), menu: Rect::default(), quick: Rect::default(), left: 0.0, inset: 0.0, hover: None, growing: None, closing: None, status: Vec::new() }
+        Self { list: vec![Panel::default()], root: Node::Leaf(0), here: 0, active: 0, next: 1, seps: Vec::new(), caption: Default::default(), menu: Rect::default(), quick: Rect::default(), left: 0.0, inset: 0.0, hover: None, growing: None, closing: None, status: Vec::new(), cycle_from: None }
     }
 }
 

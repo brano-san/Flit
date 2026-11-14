@@ -923,6 +923,16 @@ impl App {
     }
 
     pub(super) fn cycle_sidebar_focus(&mut self) {
+        if self.focus == Focus::List && self.panels.list.len() > 1 {
+            let order = self.order();
+            let at = order.iter().position(|&id| id == self.panels.active).unwrap_or(0);
+            let next = order[(at + 1) % order.len()];
+            let from = self.panels.cycle_from.replace(self.panels.active);
+            if from != Some(next) {
+                return self.activate_panel(next);
+            }
+            self.panels.cycle_from = None;
+        }
         if self.focus == Focus::Sidebar {
             self.focus = Focus::List;
         } else {

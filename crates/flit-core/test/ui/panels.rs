@@ -738,3 +738,35 @@ fn the_tab_search_button_lines_up_with_the_window_buttons() {
         assert!((centre(actions) - centre(close)).abs() <= 0.5, "at {scale}: {} vs {}", centre(actions), centre(close));
     }
 }
+
+#[test]
+fn f6_walks_every_panel_and_then_the_sidebar() {
+    let mut app = app_at(r"C:\a");
+    deliver(&mut app, &[("one", false)]);
+    app.run_action("panel.open_right", t0());
+    assert_eq!(app.panels.list.len(), 2);
+    let (first, second) = (app.order()[0], app.order()[1]);
+    assert_eq!(app.panels.active, second, "the new panel is focused at once");
+    assert_eq!(app.focus, Focus::List);
+    key(&mut app, Key::F(6), NO);
+    assert_eq!(app.panels.active, first, "F6 moves to the next panel");
+    assert_eq!(app.focus, Focus::List);
+    key(&mut app, Key::F(6), NO);
+    assert_eq!(app.focus, Focus::Sidebar, "after the full turn F6 reaches the sidebar");
+    key(&mut app, Key::F(6), NO);
+    assert_eq!(app.focus, Focus::List);
+    assert_eq!(app.panels.active, first);
+    key(&mut app, Key::F(6), NO);
+    assert_eq!(app.panels.active, second, "and the cycle continues");
+}
+
+#[test]
+fn with_one_panel_f6_still_toggles_the_sidebar() {
+    let mut app = app_at(r"C:\a");
+    deliver(&mut app, &[("one", false)]);
+    key(&mut app, Key::F(6), NO);
+    assert_eq!(app.focus, Focus::Sidebar);
+    key(&mut app, Key::F(6), NO);
+    assert_eq!(app.focus, Focus::List);
+    assert_eq!(app.panels.list.len(), 1);
+}
