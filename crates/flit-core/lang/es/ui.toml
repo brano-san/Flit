@@ -2,6 +2,8 @@ quoted = "«{name}»"
 invalid_path = "Ruta no válida: {path}"
 in_recycle_bin = "«{name}» está en la Papelera de reciclaje. Restáuralo para abrirlo."
 dropped_routes = ["Se abrió la primera {shown} de {n} ubicación", "Se abrieron las primeras {shown} de {n} de ubicaciones", "Se abrieron las primeras {shown} de {n} ubicaciones"]
+dropped_text = "Texto soltado"
+dropped_image = "Imagen soltada"
 
 [bin]
 restore = "Restaurar"

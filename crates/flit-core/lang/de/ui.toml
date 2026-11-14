@@ -2,6 +2,8 @@ quoted = "„{name}“"
 invalid_path = "Ungültiger Pfad: {path}"
 in_recycle_bin = "„{name}“ befindet sich im Papierkorb. Stellen Sie es wieder her, um es zu öffnen."
 dropped_routes = ["Der erste {shown} von {n} Orten wurde geöffnet", "Die ersten {shown} von {n} Orten wurden geöffnet"]
+dropped_text = "Abgelegter Text"
+dropped_image = "Abgelegtes Bild"
 
 [bin]
 restore = "Wiederherstellen"

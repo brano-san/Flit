@@ -2,6 +2,8 @@ quoted = "“{name}”"
 invalid_path = "无效路径：{path}"
 in_recycle_bin = "“{name}”位于回收站中。请先还原再打开。"
 dropped_routes = ["已打开 {n} 个位置中的前 {shown} 个"]
+dropped_text = "拖放的文本"
+dropped_image = "拖放的图片"
 
 [bin]
 restore = "还原"

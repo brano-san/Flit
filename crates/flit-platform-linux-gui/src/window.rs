@@ -787,6 +787,22 @@ fn drag_out(el: &dyn ActiveEventLoop, source: winit::window::WindowId, paths: Ve
     el.start_drag(source, data, &[DndAction::Copy, DndAction::Move], icon).map_err(|e| tracing::info!("cannot drag files out of Flit here: {e}")).ok()
 }
 
+fn dragged_kinds(el: &dyn ActiveEventLoop, id: DataTransferId) -> Vec<TypeHint> {
+    let offered: Vec<TypeHint> = el.data_transfer(id).map(|t| t.available_types().into_iter().filter_map(|ty| ty.hint()).collect()).unwrap_or_default();
+    crate::dropped::wanted(&offered)
+}
+
+fn save_dropped(content: crate::dropped::Content, folder: FsPath) {
+    let (text, image) = (S::UiDroppedText.t().to_owned(), S::UiDroppedImage.t().to_owned());
+    background("flit-drop", move || {
+        let Some(dir) = flit_platform_linux::host(&folder) else { return };
+        match crate::dropped::save(dir, &content, &text, &image) {
+            Ok(path) => tracing::info!("saved a drop as {}", path.display()),
+            Err(e) => tracing::warn!("cannot save the drop into {}: {e}", dir.display()),
+        }
+    });
+}
+
 struct Incoming {
     id: DataTransferId,
     at: (f32, f32),
@@ -795,6 +811,9 @@ struct Incoming {
     dropped: Option<Option<DndAction>>,
     preferred: Option<DndAction>,
     ask: bool,
+    content: Option<crate::dropped::Content>,
+    folder: Option<FsPath>,
+    fetching: Vec<TypeHint>,
 }
 
 enum Arrival {
@@ -1083,15 +1102,36 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                 }
             }
         };
-        let effect = handler.drag(w, event).effect;
+        let reply = handler.drag(w, event);
+        let effect = reply.effect;
         if crate::xdnd::chose_freely(keys, proposed, d.preferred) {
             d.preferred = crate::xdnd::wire_action(effect);
         }
         let id = d.id;
         if matches!(arrival, Arrival::Drop) {
+            if let (Some(content), Some(folder)) = (d.content.take().filter(|_| effect != drop_effect::NONE), d.folder.take()) {
+                save_dropped(content, folder);
+            }
             self.incoming = None;
         } else {
+            d.folder = reply.folder;
             let _ = el.set_valid_dnd_actions(id, &crate::xdnd::offered_actions(effect, d.preferred));
+        }
+    }
+
+    fn fetch_next(&mut self, el: &dyn ActiveEventLoop, id: DataTransferId) {
+        while let Some(kind) = self.incoming.as_ref().filter(|d| d.id == id).and_then(|d| d.fetching.first().copied()) {
+            match el.fetch_data_transfer(id, &kind) {
+                Ok(_) => return,
+                Err(e) => tracing::debug!("cannot read {kind:?} from the dragged data: {e}"),
+            }
+            if let Some(d) = self.incoming.as_mut() {
+                d.fetching.remove(0);
+            }
+        }
+        if self.incoming.as_ref().is_some_and(|d| d.id == id && d.paths.is_none()) {
+            self.incoming = None;
+            let _ = el.set_valid_dnd_actions(id, &[]);
         }
     }
 
@@ -1100,21 +1140,26 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             WindowEvent::DragEntered { id, position } => {
                 let at = position.map_or((0.0, 0.0), |p| (p.x as f32, p.y as f32));
                 let offered = crate::xdnd::offered_actions(drop_effect::COPY, None);
-                self.incoming = Some(Incoming { id, at, paths: None, proposed: None, dropped: None, preferred: offered.first().copied(), ask: false });
+                let fetching = dragged_kinds(el, id);
+                self.incoming = Some(Incoming { id, at, paths: None, proposed: None, dropped: None, preferred: offered.first().copied(), ask: false, content: None, folder: None, fetching });
                 let _ = el.set_valid_dnd_actions(id, &offered);
-                if let Err(e) = el.fetch_data_transfer(id, &TypeHint::UriList) {
-                    tracing::debug!("the dragged data has no file list: {e}");
-                }
+                self.fetch_next(el, id);
             }
             WindowEvent::DataTransferReceived { id, value, .. } if self.incoming.as_ref().is_some_and(|d| d.id == id && d.paths.is_none()) => {
-                let paths = value.try_as_bytes().map(|b| crate::shell::parse_file_list(&b).0).unwrap_or_default();
+                let bytes = value.try_as_bytes().unwrap_or_default();
                 let d = self.incoming.as_mut()?;
-                if paths.is_empty() {
-                    self.incoming = None;
-                    let _ = el.set_valid_dnd_actions(id, &[]);
-                    return None;
+                let kind = (!d.fetching.is_empty()).then(|| d.fetching.remove(0));
+                match crate::dropped::interpret(kind, &bytes) {
+                    Some(crate::dropped::Dragged::Files(paths)) => d.paths = Some(paths),
+                    Some(crate::dropped::Dragged::Content(content)) => {
+                        d.content = Some(content);
+                        d.paths = Some(Vec::new());
+                    }
+                    None => {
+                        self.fetch_next(el, id);
+                        return None;
+                    }
                 }
-                d.paths = Some(paths);
                 let (proposed, dropped) = (d.proposed, d.dropped);
                 self.arrive(el, i, Arrival::Enter, proposed);
                 if let Some(action) = dropped {

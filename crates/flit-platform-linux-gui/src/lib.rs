@@ -8,6 +8,7 @@ mod clipboard;
 mod content;
 mod atspi;
 mod dbus;
+mod dropped;
 pub mod elevated;
 mod fonts;
 pub mod fs;
