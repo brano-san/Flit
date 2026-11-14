@@ -200,6 +200,28 @@ fn lists_exact_names_through_the_agent() {
 }
 
 #[test]
+fn linux_errors_from_the_agent_show_errno_names_instead_of_windows_codes() {
+    let failing = |req: &Request| {
+        Some(match req {
+            Request::List { id, .. } => vec![Event::ListDone { id: *id, error: Some(FsError { kind: FsErrorKind::Other, code: 5 }) }],
+            _ => Vec::new(),
+        })
+    };
+    let s = setup(Fake::new(failing), Timing::default());
+    let error = finished(&list(&s.wsl, 1, 1, "/mnt/broken")).error.clone().unwrap();
+    assert_eq!(error.linux_errno(), Some(5));
+    assert_eq!(error.to_string(), "Error (EIO)");
+    let denied = |req: &Request| {
+        Some(match req {
+            Request::List { id, .. } => vec![Event::ListDone { id: *id, error: Some(FsError { kind: FsErrorKind::AccessDenied, code: 13 }) }],
+            _ => Vec::new(),
+        })
+    };
+    let s = setup(Fake::new(denied), Timing::default());
+    assert_eq!(finished(&list(&s.wsl, 1, 1, "/root")).error.as_ref().unwrap().to_string(), "Access denied");
+}
+
+#[test]
 fn folders_inside_archives_are_read_through_the_share_without_the_agent() {
     let s = setup(Fake::new(lister), Timing::default());
     list(&s.wsl, 1, 1, "/home/u/a.zip/docs");
@@ -406,7 +428,7 @@ fn operations_run_on_the_agent_with_progress_and_conflicts() {
     let done = event(&s.events, |e| if let ProviderEvent::OpDone { tab: 1, id: 4, error, report } = e { Some((error, report)) } else { None });
     assert_eq!(done, (None, Some(OpReport { op: copy(), items: vec![(unix("/src/a"), unix("/dst/a"))] })));
     assert_eq!(ctl.policy(), Some(Resolve::Replace));
-    assert!(matches!(&s.fake.seen()[..], [Request::Op { id: 1, policy: None, .. }, Request::Answer { id: 1, choice: Some(Resolve::Replace), all: true }]));
+    assert!(matches!(&s.fake.seen()[..], [Request::Lang { code }, Request::Op { id: 1, policy: None, .. }, Request::Answer { id: 1, choice: Some(Resolve::Replace), all: true }] if code == flit_core::i18n::lang().code()));
     assert!(s.local.0.lock().unwrap().is_empty());
 }
 

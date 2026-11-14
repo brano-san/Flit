@@ -205,6 +205,26 @@ fn folder_errors_follow_the_language() {
 }
 
 #[test]
+fn linux_errors_name_their_errno_in_every_language_and_windows_codes_stay() {
+    use crate::listing::{FsError, FsErrorKind};
+    set_lang(Lang::En);
+    let io = FsError { kind: FsErrorKind::Other, code: 5 }.from_linux();
+    assert_eq!(io.to_string(), "Error (EIO)");
+    assert_eq!(FsError { kind: FsErrorKind::Other, code: 4000 }.from_linux().to_string(), "Error (errno 4000)");
+    assert_eq!(FsError { kind: FsErrorKind::AccessDenied, code: 13 }.from_linux().to_string(), "Access denied");
+    assert_eq!(FsError { kind: FsErrorKind::Unavailable, code: 0 }.from_linux().to_string(), "Location is not available");
+    assert_eq!(FsError { kind: FsErrorKind::Other, code: -1 }.from_linux().to_string(), "Error");
+    set_lang(Lang::Ru);
+    assert_eq!(io.to_string(), "Ошибка (EIO)");
+    set_lang(Lang::En);
+    let responding = FsError::not_responding();
+    assert_eq!(responding.clone().from_linux(), responding);
+    assert_eq!(FsError { kind: FsErrorKind::AccessDenied, code: 5 }.linux_errno(), None);
+    let windows = FsError { kind: FsErrorKind::Other, code: 0x8007_0005 };
+    assert_eq!(windows.clone().from_linux(), windows);
+}
+
+#[test]
 fn relocalize_moves_messages_between_languages() {
     set_lang(Lang::En);
     let status = crate::tr!(S::KeymapStatusAssigned, key = "F2", command = S::SidebarDriveLocal.t());

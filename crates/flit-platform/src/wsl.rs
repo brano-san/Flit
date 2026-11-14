@@ -582,6 +582,7 @@ impl Ctl {
                 let id = self.id();
                 let policy = ctl.policy();
                 self.pending.insert(id, Pending::Op(OpState { tab, op, request: request.clone(), ctl, cancelled: false, clear, performed: None }));
+                self.send(Request::Lang { code: flit_core::i18n::lang().code().into() });
                 self.send(Request::Op { id, op: request, policy });
             }
             other => self.fallback(other),
@@ -668,7 +669,7 @@ impl Ctl {
             }
             Event::ListDone { id, error } => {
                 if let Some(Pending::List(l)) = self.pending.remove(&id) {
-                    l.finish(error, &self.wake);
+                    l.finish(error.map(FsError::from_linux), &self.wake);
                 }
             }
             Event::Changes { id, changes } => {

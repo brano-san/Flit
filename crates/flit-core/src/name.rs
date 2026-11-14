@@ -119,9 +119,18 @@ pub fn ext_len(name: &[u8]) -> usize {
 }
 
 pub fn link_name(target: &[u8]) -> Vec<u8> {
-    let pattern = crate::i18n::S::OpsExtraLinkName.t();
+    link_name_in(target, crate::i18n::lang())
+}
+
+pub fn link_name_in(target: &[u8], lang: crate::i18n::Lang) -> Vec<u8> {
+    let pattern = crate::i18n::S::OpsExtraLinkName.in_lang(lang);
     let (before, after) = pattern.split_once("{name}").unwrap_or((pattern, ""));
     [before.as_bytes(), target, after.as_bytes()].concat()
+}
+
+pub fn copy_suffix_in(lang: crate::i18n::Lang) -> &'static str {
+    let pattern = crate::i18n::S::OpsExtraCopyName.in_lang(lang);
+    pattern.split_once("{name}").map_or(pattern, |(_, after)| after)
 }
 
 #[inline]

@@ -60,5 +60,10 @@ fn link_names_follow_the_language_and_keep_raw_bytes() {
     assert_eq!(link_name(b"odd\xFF"), b"Link to odd\xFF");
     crate::i18n::set_lang(crate::i18n::Lang::ZhCn);
     assert_eq!(link_name(b"a"), "指向 a 的链接".as_bytes());
+    assert_eq!(link_name_in(b"a", crate::i18n::Lang::Ru), "Ссылка на a".as_bytes());
+    assert_eq!(link_name_in(b"a", crate::i18n::Lang::En), b"Link to a");
+    assert_eq!(copy_suffix_in(crate::i18n::Lang::En), " - Copy");
+    assert_eq!(copy_suffix_in(crate::i18n::Lang::De), " - Kopie");
+    assert!(crate::i18n::Lang::ALL.iter().all(|&l| copy_suffix_in(l).starts_with(" - ")));
     crate::i18n::set_lang(crate::i18n::Lang::En);
 }

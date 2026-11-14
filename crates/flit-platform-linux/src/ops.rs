@@ -1,7 +1,7 @@
 use crate::fs::{cstring, host, names, node_at, open_at, open_dir, open_dir_at, Node};
 use crate::mounts::Mount;
 use crate::trash::Trash;
-use flit_core::i18n::S;
+use flit_core::i18n::{Lang, S};
 use flit_core::limits::{self, BadName};
 use flit_core::path::PathKind;
 use flit_core::provider::{Conflict, Failure, FileOp, Recover, Resolve, Stage, Template};
@@ -291,11 +291,12 @@ struct Engine<'a> {
     denied: bool,
     untrashable: Vec<FsPath>,
     dest_fs: Option<(u64, Option<String>)>,
+    lang: Lang,
 }
 
 impl<'a> Engine<'a> {
     fn new(job: &'a Job) -> Self {
-        Self { job, done: Vec::new(), failed: 0, first: None, fatal: false, denied: false, untrashable: Vec::new(), dest_fs: None }
+        Self { job, done: Vec::new(), failed: 0, first: None, fatal: false, denied: false, untrashable: Vec::new(), dest_fs: None, lang: flit_core::i18n::lang() }
     }
 
     fn stopped(&self) -> bool {
@@ -790,7 +791,7 @@ impl<'a> Engine<'a> {
             }
             let Some(t) = t else { continue };
             let dup = item.parent().as_ref() == Some(dest);
-            let dst = if dup { dest.join(&numbered(dest_fd.as_raw_fd(), item.file_name(), t.node.is_dir(), b" - Copy", true)) } else { dest.join(item.file_name()) };
+            let dst = if dup { dest.join(&numbered(dest_fd.as_raw_fd(), item.file_name(), t.node.is_dir(), flit_core::name::copy_suffix_in(self.lang).as_bytes(), true)) } else { dest.join(item.file_name()) };
             let r = self.transfer(t.dir.as_raw_fd(), &t.name, item, dest_fd.as_raw_fd(), dst, &t.node, Mode::Copy);
             self.keep(item, r);
         }
@@ -943,7 +944,7 @@ impl<'a> Engine<'a> {
                     continue;
                 }
             };
-            let mut name = flit_core::name::link_name(target.file_name());
+            let mut name = flit_core::name::link_name_in(target.file_name(), self.lang);
             loop {
                 let to = dest.join(&name);
                 let made = cstring(&name).and_then(|c| check(unsafe { libc::symlinkat(pointer.as_ptr(), fd.as_raw_fd(), c.as_ptr()) }));
@@ -1143,7 +1144,11 @@ impl<'a> Engine<'a> {
 }
 
 pub fn run(op: &FileOp, job: &Job, trash: Option<&Trash>) -> OpOutcome {
-    let mut e = Engine::new(job);
+    run_in(op, job, trash, flit_core::i18n::lang())
+}
+
+pub fn run_in(op: &FileOp, job: &Job, trash: Option<&Trash>, lang: Lang) -> OpOutcome {
+    let mut e = Engine { lang, ..Engine::new(job) };
     let linux = op.all_paths(|p| p.kind() == PathKind::Unix);
     match op {
         _ if !linux => e.note(NOT_LINUX.into()),

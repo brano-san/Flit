@@ -274,11 +274,65 @@ impl Listing {
 }
 
 pub const NOT_RESPONDING_CODE: i64 = 0x544C_0002;
+const LINUX_ERRNO: i64 = 0x4C58 << 32;
+
+const ERRNO_NAMES: [(i64, &str); 34] = [
+    (1, "EPERM"),
+    (2, "ENOENT"),
+    (5, "EIO"),
+    (6, "ENXIO"),
+    (9, "EBADF"),
+    (11, "EAGAIN"),
+    (12, "ENOMEM"),
+    (13, "EACCES"),
+    (16, "EBUSY"),
+    (17, "EEXIST"),
+    (18, "EXDEV"),
+    (19, "ENODEV"),
+    (20, "ENOTDIR"),
+    (21, "EISDIR"),
+    (22, "EINVAL"),
+    (23, "ENFILE"),
+    (24, "EMFILE"),
+    (26, "ETXTBSY"),
+    (27, "EFBIG"),
+    (28, "ENOSPC"),
+    (30, "EROFS"),
+    (31, "EMLINK"),
+    (36, "ENAMETOOLONG"),
+    (39, "ENOTEMPTY"),
+    (40, "ELOOP"),
+    (61, "ENODATA"),
+    (95, "EOPNOTSUPP"),
+    (110, "ETIMEDOUT"),
+    (111, "ECONNREFUSED"),
+    (112, "EHOSTDOWN"),
+    (113, "EHOSTUNREACH"),
+    (116, "ESTALE"),
+    (122, "EDQUOT"),
+    (123, "ENOMEDIUM"),
+];
 
 impl FsError {
     pub fn not_responding() -> Self {
         Self { kind: FsErrorKind::Unavailable, code: NOT_RESPONDING_CODE }
     }
+
+    pub fn from_linux(self) -> Self {
+        match self.code {
+            -1 => Self { code: LINUX_ERRNO, ..self },
+            0..0x1_0000 => Self { code: LINUX_ERRNO | self.code, ..self },
+            _ => self,
+        }
+    }
+
+    pub fn linux_errno(&self) -> Option<i64> {
+        (self.code & !0xFFFF == LINUX_ERRNO).then_some(self.code & 0xFFFF)
+    }
+}
+
+pub fn errno_name(code: i64) -> std::borrow::Cow<'static, str> {
+    ERRNO_NAMES.iter().find(|(n, _)| *n == code).map_or_else(|| format!("errno {code}").into(), |(_, name)| (*name).into())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -312,6 +366,15 @@ impl fmt::Display for FsError {
             FsErrorKind::Other => S::ErrorsFsOther,
             FsErrorKind::NoMedia => S::ErrorsFsNoMedia,
         };
+        if let Some(errno) = self.linux_errno() {
+            return match self.kind {
+                FsErrorKind::Other if errno > 0 => {
+                    crate::i18n::fill_into(f, S::ErrorsFsErrno.t(), &[("what", &what), ("code", &errno_name(errno))]);
+                    Ok(())
+                }
+                _ => f.write_str(what.t()),
+            };
+        }
         match self.kind {
             _ if cfg!(windows) => crate::i18n::fill_into(f, S::ErrorsFsCoded.t(), &[("what", &what), ("code", &format_args!("{:08X}", self.code as u32))]),
             FsErrorKind::Other if self.code > 0 => return f.write_str(&crate::fmt::io_reason(&std::io::Error::from_raw_os_error(self.code as i32))),

@@ -204,6 +204,25 @@ fn conflicts_are_asked_over_the_channel_and_cancel_stops_the_operation() {
 }
 
 #[test]
+fn copies_and_links_are_named_in_the_language_flit_speaks() {
+    let t = Temp::new("agent-lang");
+    let a = t.file("a.txt", 1);
+    let here = fs_path(t.path());
+    let mut c = Client::start(None);
+    c.send(Request::Lang { code: "ru".into() });
+    c.op(1, FileOp::Copy { items: vec![fs_path(&a)], dest: here.clone() });
+    assert_eq!(c.done(1), (None, vec![(fs_path(&a), here.join("a - копия.txt".as_bytes()))]));
+    c.op(2, FileOp::Link { items: vec![fs_path(&a)], dest: here.clone() });
+    assert_eq!(c.done(2).1, [(fs_path(&a), here.join("Ссылка на a.txt".as_bytes()))]);
+    c.send(Request::Lang { code: "en".into() });
+    c.op(3, FileOp::Copy { items: vec![fs_path(&a)], dest: here.clone() });
+    assert_eq!(c.done(3).1, [(fs_path(&a), here.join(b"a - Copy.txt"))]);
+    let mut other = Client::start(None);
+    other.op(1, FileOp::Copy { items: vec![fs_path(&a)], dest: here.clone() });
+    assert_eq!(other.done(1).1, [(fs_path(&a), here.join(b"a - Copy (2).txt"))], "a session that was told nothing speaks English");
+}
+
+#[test]
 fn shutdown_eof_and_garbage_end_the_session() {
     let mut c = Client::start(None);
     c.send(Request::Shutdown);

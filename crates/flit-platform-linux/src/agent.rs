@@ -3,6 +3,7 @@ use crate::inotify::{Notice, Notify};
 use crate::ops;
 use crate::trash::Trash;
 use crossbeam_channel::{unbounded, Sender};
+use flit_core::i18n::Lang;
 use flit_core::listing::DirStats;
 use flit_core::provider::{FileOp, OpCtl};
 use flit_core::{FsError, FsErrorKind, FsPath};
@@ -32,6 +33,7 @@ struct Ctx {
     cancelled: Arc<Mutex<HashSet<ReqId>>>,
     ops: Arc<Mutex<HashMap<ReqId, OpCtl>>>,
     trash: Arc<Option<Trash>>,
+    lang: Arc<Mutex<Lang>>,
 }
 
 impl Ctx {
@@ -49,6 +51,10 @@ impl Ctx {
 
     fn finish(&self, id: ReqId) -> bool {
         !self.cancelled.lock().unwrap_or_else(|e| e.into_inner()).remove(&id)
+    }
+
+    fn lang(&self) -> Lang {
+        *self.lang.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     fn cancel(&self, id: ReqId) {
@@ -128,7 +134,7 @@ fn op(ctx: &Ctx, id: ReqId, op: &FileOp, ctl: OpCtl) {
             let _ = failure.send(Event::OpFailure { id, failure: f });
         }),
     );
-    let out = ops::run(op, &job, ctx.trash.as_ref().as_ref());
+    let out = ops::run_in(op, &job, ctx.trash.as_ref().as_ref(), ctx.lang());
     ctx.ops().remove(&id);
     if let Some(done) = job.take_performed() {
         ctx.send(Event::OpPerformed { id, op: done });
@@ -165,7 +171,7 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static, build: S
     let theirs = ours.clone();
     spawn("flit-agent-out", move || write_loop(output, theirs, rx));
     read_hello(&mut input, &ours)?;
-    let ctx = Ctx { events, cancelled: Arc::default(), ops: Arc::default(), trash: Arc::new(trash) };
+    let ctx = Ctx { events, cancelled: Arc::default(), ops: Arc::default(), trash: Arc::new(trash), lang: Arc::new(Mutex::new(flit_core::i18n::lang())) };
     let sink = ctx.events.clone();
     let notify = Notify::new(move |id, notice| {
         let _ = sink.send(match notice {
@@ -201,6 +207,7 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static, build: S
                 (None, _) => {}
             },
             Request::Watch { id, path } => watch(notify.as_ref(), id, &path),
+            Request::Lang { code } => *ctx.lang.lock().unwrap_or_else(|e| e.into_inner()) = Lang::from_code(&code).unwrap_or_default(),
             Request::Stat { id, path } => {
                 let result = host(&path).map_or(Err(UNAVAILABLE), |p| stat_path(p).map_err(|e| fs_error(&e)));
                 ctx.send(Event::Stat { id, result });
