@@ -4,6 +4,8 @@ use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 pub const MOUNTINFO: &str = "/proc/self/mountinfo";
 pub const BY_LABEL: &str = "/dev/disk/by-label";
@@ -224,6 +226,41 @@ pub fn space(point: &Path) -> Option<(u64, u64)> {
     }
     let unit = st.f_frsize as u64;
     Some((st.f_blocks as u64 * unit, st.f_bavail as u64 * unit))
+}
+
+pub const NETWORK_SPACE_WAIT: Duration = Duration::from_millis(1500);
+
+static PROBING: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+fn probing() -> std::sync::MutexGuard<'static, Vec<PathBuf>> {
+    PROBING.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn start_probe(point: &Path, probe: fn(&Path) -> Option<(u64, u64)>) -> Option<crossbeam_channel::Receiver<Option<(u64, u64)>>> {
+    let mut busy = probing();
+    if busy.iter().any(|p| p == point) {
+        return None;
+    }
+    busy.push(point.to_path_buf());
+    drop(busy);
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    let owned = point.to_path_buf();
+    let spawned = std::thread::Builder::new().name("flit-statvfs".into()).spawn(move || {
+        let found = probe(&owned);
+        probing().retain(|p| *p != owned);
+        let _ = tx.send(found);
+    });
+    if spawned.is_err() {
+        probing().retain(|p| p != point);
+        return None;
+    }
+    Some(rx)
+}
+
+pub fn spaces_within(points: &[PathBuf], wait: Duration, probe: fn(&Path) -> Option<(u64, u64)>) -> Vec<Option<(u64, u64)>> {
+    let deadline = Instant::now() + wait;
+    let started: Vec<_> = points.iter().map(|p| start_probe(p, probe)).collect();
+    started.into_iter().map(|rx| rx?.recv_deadline(deadline).ok().flatten()).collect()
 }
 
 pub fn block_size(path: &Path) -> Option<u64> {

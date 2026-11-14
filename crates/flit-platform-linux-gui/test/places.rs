@@ -258,13 +258,39 @@ fn eject_reports_why_the_drive_stays_mounted_and_ignores_a_failed_power_off() {
 }
 
 #[test]
-fn network_mounts_are_drives_without_a_space_probe() {
+fn network_mounts_are_drives_that_are_never_removable() {
     let table = parse(b"1 0 8:1 / / rw - ext4 /dev/sda1 rw\n2 1 0:40 / /media/ann/NAS rw - cifs //server/share rw\n3 1 0:41 / /mnt/box rw - fuse.sshfs ann@box:/ rw\n");
     let v = volumes_from(&table, b"ann", Path::new("/nonexistent/by-label"));
     let got: Vec<(&[u8], &str, u64, bool)> = v.iter().map(|v| (v.mount.point.as_slice(), v.label.as_str(), v.total, v.mount.removable())).collect();
     assert_eq!(got[1..], [(&b"/media/ann/NAS"[..], "NAS", 0, false), (b"/mnt/box", "box", 0, false)]);
-    let root_over_network = Mount { point: b"/".to_vec(), ..table[1].clone() };
-    assert!(space_of(&table[0]).is_some() && space_of(&root_over_network).is_none());
+    assert!(v[0].total > 0);
+}
+
+fn answering_share(_: &Path) -> Option<(u64, u64)> {
+    Some((500, 200))
+}
+
+fn hanging_share(p: &Path) -> Option<(u64, u64)> {
+    if p.starts_with("/media/ann") {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+    }
+    Some((900, 100))
+}
+
+#[test]
+fn a_network_drive_shows_its_free_space_and_a_hanging_one_does_not_hold_the_list() {
+    use std::time::{Duration, Instant};
+    let t = Temp::new("net-space");
+    let share = format!("2 1 0:40 / {} rw - cifs //server/share rw", t.path().display());
+    let table = parse(format!("1 0 8:1 / / rw - ext4 /dev/sda1 rw\n{share}\n").as_bytes());
+    let live = spaces_of(&table, Duration::from_secs(5), mounts::space);
+    assert!(live[1].is_some_and(|(total, free)| total > 0 && free <= total), "{live:?}");
+    assert_eq!(spaces_of(&table, Duration::from_secs(5), answering_share), [Some((500, 200)), Some((500, 200))]);
+    let stuck = parse(b"1 0 8:1 / / rw - ext4 /dev/sda1 rw\n2 1 0:40 / /media/ann/NAS rw - cifs //nas/a rw\n3 1 0:41 / /media/ann/BOX rw - nfs box:/b rw\n");
+    let started = Instant::now();
+    let got = spaces_of(&stuck, Duration::from_millis(300), hanging_share);
+    assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+    assert_eq!(got, [Some((900, 100)), None, None]);
 }
 
 #[test]

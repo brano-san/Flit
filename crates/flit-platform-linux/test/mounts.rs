@@ -193,3 +193,39 @@ fn watch_starts_on_mountinfo_and_fails_on_missing_file() {
     assert!(watch(Path::new(MOUNTINFO), || {}).is_ok());
     assert!(watch(Path::new("/tmp/flit-missing-mountinfo"), || {}).is_err());
 }
+
+static SLOW_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn slow_space(_: &Path) -> Option<(u64, u64)> {
+    SLOW_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    std::thread::sleep(Duration::from_millis(600));
+    Some((10, 5))
+}
+
+#[test]
+fn a_share_that_does_not_answer_in_time_is_probed_once_until_it_answers() {
+    let point = PathBuf::from(format!("/flit-test/stuck-{}", std::process::id()));
+    let started = Instant::now();
+    assert_eq!(spaces_within(std::slice::from_ref(&point), Duration::from_millis(100), slow_space), [None]);
+    assert!(started.elapsed() < Duration::from_millis(500));
+    assert_eq!(spaces_within(std::slice::from_ref(&point), Duration::from_millis(100), slow_space), [None]);
+    assert_eq!(SLOW_CALLS.load(std::sync::atomic::Ordering::SeqCst), 1);
+    std::thread::sleep(Duration::from_millis(700));
+    assert_eq!(spaces_within(&[point], Duration::from_secs(5), slow_space), [Some((10, 5))]);
+    assert_eq!(SLOW_CALLS.load(std::sync::atomic::Ordering::SeqCst), 2);
+}
+
+fn side_space(_: &Path) -> Option<(u64, u64)> {
+    std::thread::sleep(Duration::from_millis(600));
+    Some((10, 5))
+}
+
+#[test]
+fn shares_are_probed_side_by_side_within_one_wait() {
+    let points: Vec<PathBuf> = (0..4).map(|k| PathBuf::from(format!("/flit-test/side-{k}-{}", std::process::id()))).collect();
+    let started = Instant::now();
+    assert_eq!(spaces_within(&points, Duration::from_secs(5), side_space), [Some((10, 5)); 4]);
+    assert!(started.elapsed() < Duration::from_millis(1500), "{:?}", started.elapsed());
+    assert_eq!(spaces_within(&[], Duration::from_secs(5), side_space), []);
+    assert_eq!(spaces_within(&[PathBuf::from("/nonexistent/flit-share")], Duration::from_secs(5), space), [None]);
+}

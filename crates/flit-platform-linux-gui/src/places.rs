@@ -23,16 +23,23 @@ fn name_of(m: &Mount, l: flit_core::i18n::Lang) -> String {
     }
 }
 
-fn space_of(m: &Mount) -> Option<(u64, u64)> {
-    (!m.is_network()).then(|| mounts::space(m.path())).flatten()
+type Probe = fn(&Path) -> Option<(u64, u64)>;
+
+fn spaces_of(ms: &[Mount], wait: std::time::Duration, probe: Probe) -> Vec<Option<(u64, u64)>> {
+    let remote: Vec<PathBuf> = ms.iter().filter(|m| m.is_network()).map(|m| m.path().to_path_buf()).collect();
+    let mut probed = mounts::spaces_within(&remote, wait, probe).into_iter();
+    ms.iter().map(|m| if m.is_network() { probed.next().flatten() } else { probe(m.path()) }).collect()
 }
 
 pub fn volumes_from(table: &[Mount], user: &[u8], by_label: &Path) -> Vec<Volume> {
     let labels = mounts::labels(by_label);
-    mounts::disks(table, user)
+    let disks = mounts::disks(table, user);
+    let spaces = spaces_of(&disks, mounts::NETWORK_SPACE_WAIT, mounts::space);
+    disks
         .into_iter()
-        .map(|m| {
-            let (total, free) = space_of(&m).unwrap_or_default();
+        .zip(spaces)
+        .map(|(m, space)| {
+            let (total, free) = space.unwrap_or_default();
             let label = mounts::label_of(&m, &labels).filter(|_| m.point != b"/").unwrap_or_else(|| name_of(&m, flit_core::i18n::lang()));
             Volume { mount: m, label, total, free }
         })
@@ -201,9 +208,10 @@ pub fn eject_error(drive: &Path, e: &std::io::Error) -> PlatformError {
 
 pub fn list_computer(out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
     let table = mounts::read().map_err(|e| FsError { kind: FsErrorKind::Unavailable, code: e.raw_os_error().unwrap_or(-1) as i64 })?;
-    for m in mounts::disks(&table, &mounts::user_name()) {
+    let disks = mounts::disks(&table, &mounts::user_name());
+    let spaces = spaces_of(&disks, mounts::NETWORK_SPACE_WAIT, mounts::space);
+    for (m, space) in disks.iter().zip(spaces) {
         let mut meta = Meta { attrs: attr::DIR | attr::VOLUME, ..Default::default() };
-        let space = space_of(&m);
         if let Some((total, _)) = space {
             meta.size = total;
             meta.attrs |= attr::SIZE_KNOWN;
