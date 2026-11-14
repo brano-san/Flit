@@ -332,3 +332,33 @@ fn a_drive_without_a_trash_yet_is_watched_for_the_trash_to_appear() {
     let got = trash_folders(&trash, &tops, std::slice::from_ref(&stick));
     assert_eq!(got, [t.path().join("home/.local/share/Trash/files"), stick.join(format!(".Trash-{uid}/files")), stick.clone()]);
 }
+
+#[test]
+fn a_server_that_does_not_answer_is_given_up_on_and_a_login_prompt_is_recognised() {
+    use std::os::unix::process::ExitStatusExt;
+    use std::time::{Duration, Instant};
+    let mut slow = std::process::Command::new("sh");
+    slow.args(["-c", "sleep 5"]);
+    let started = Instant::now();
+    let e = run_within(slow, Duration::from_millis(200)).unwrap_err();
+    assert_eq!((e.kind(), e.to_string()), (std::io::ErrorKind::TimedOut, S::ErrorsFsNotResponding.en().to_owned()));
+    assert!(started.elapsed() < Duration::from_secs(2));
+    let mut quick = std::process::Command::new("sh");
+    quick.args(["-c", "echo mounted"]);
+    let out = run_within(quick, Duration::from_secs(10)).unwrap();
+    assert!(out.status.success() && out.stdout == b"mounted\n" && !needs_login(&out));
+    let asked = std::process::Output { status: std::process::ExitStatus::from_raw(2 << 8), stdout: b"Authentication Required\nEnter user and password for share photos on nas:\nUser [ann]: ".to_vec(), stderr: b"gio: smb://nas/photos/: Password dialog cancelled\n".to_vec() };
+    assert!(needs_login(&asked));
+    let refused = std::process::Output { stderr: b"gio: smb://nas/photos/: Failed to mount Windows share: Connection refused\n".to_vec(), stdout: Vec::new(), ..asked };
+    assert!(!needs_login(&refused));
+}
+
+#[test]
+fn disconnecting_picks_gio_for_gvfs_fusermount_for_fuse_and_umount_for_kernel_shares() {
+    let table = parse(b"1 0 0:40 / /mnt/nas rw - cifs //nas/share rw\n2 0 0:41 / /mnt/box rw - fuse.sshfs ann@box:/ rw\n");
+    let gvfs = Path::new("/run/user/1000/gvfs");
+    let words = |p: &str| disconnect_command(Path::new(p), &table, gvfs).iter().map(|w| w.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
+    assert_eq!(words("/run/user/1000/gvfs/smb-share:server=nas,share=photos"), "gio mount -u /run/user/1000/gvfs/smb-share:server=nas,share=photos");
+    assert_eq!(words("/mnt/box"), "fusermount -u /mnt/box");
+    assert_eq!(words("/mnt/nas"), "umount /mnt/nas");
+}

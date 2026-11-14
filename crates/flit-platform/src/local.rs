@@ -212,11 +212,17 @@ impl LocalProvider {
         spawn("flit-shell-open".into(), move || {
             let mut sh = S::new();
             for (tab, job) in shell_rx {
-                let event = match sh.as_mut().map_err(|e| e.clone()).and_then(|sh| run_shell(sh, tab, job)) {
-                    Ok(None) => continue,
-                    Ok(Some(event)) => event,
-                    Err(e) => ProviderEvent::OpDone { tab, id: 0, error: Some(e.to_string()), report: None },
-                };
+                if matches!(job, ShellJob::Launch(Launch::ConnectServer(_))) {
+                    let (events, wake) = (open_events.clone(), open_wake.clone());
+                    let _ = spawn("flit-connect".into(), move || {
+                        if let Some(event) = shell_event(tab, S::new().and_then(|mut sh| run_shell(&mut sh, tab, job))) {
+                            let _ = events.send(event);
+                            wake();
+                        }
+                    });
+                    continue;
+                }
+                let Some(event) = shell_event(tab, sh.as_mut().map_err(|e| e.clone()).and_then(|sh| run_shell(sh, tab, job))) else { continue };
                 let _ = open_events.send(event);
                 open_wake();
             }
@@ -326,6 +332,13 @@ pub fn real_path<S: Shell>(sh: &mut S, item: &FsPath) -> Option<FsPath> {
         return Some(target);
     }
     from_std(&std::fs::canonicalize(crate::std_path(item)).ok()?)
+}
+
+fn shell_event(tab: TabId, done: Result<Option<ProviderEvent>, PlatformError>) -> Option<ProviderEvent> {
+    match done {
+        Ok(event) => event,
+        Err(e) => Some(ProviderEvent::OpDone { tab, id: 0, error: Some(e.to_string()), report: None }),
+    }
 }
 
 fn run_shell<S: Shell>(sh: &mut S, tab: TabId, job: ShellJob) -> Result<Option<ProviderEvent>, PlatformError> {

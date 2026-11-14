@@ -328,7 +328,8 @@ fn launch(l: &Launch) -> Result<(), PlatformError> {
         Launch::Eject(drive) => crate::udisks::eject(Path::new(os(drive))).map_err(|e| crate::places::eject_error(Path::new(os(drive)), &e)),
         Launch::Unmount(drive) => crate::udisks::unmount(Path::new(os(drive))).map_err(|e| crate::places::drive_error(S::ErrorsFsUnmountFailed, Path::new(os(drive)), &e)),
         Launch::Mount(_) | Launch::Unlock { .. } => Err(PlatformError::unsupported("mounting outside the shell thread")),
-        Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) => Err(PlatformError::unsupported("mapping network drives")),
+        Launch::Disconnect(Some(drive)) => crate::places::disconnect(Path::new(os(drive))).map_err(|e| crate::places::drive_error(S::ErrorsFsDisconnectFailed, Path::new(os(drive)), &e)),
+        Launch::MapDrive(_) | Launch::Disconnect(None) | Launch::ConnectServer(_) => Err(PlatformError::unsupported("mapping network drives")),
         Launch::Reveal { .. } => Err(PlatformError::unsupported("revealing outside the shell thread")),
     }
 }
@@ -400,7 +401,7 @@ impl Shell for LinuxShell {
     }
 
     fn connect(&mut self, uri: &str) -> Result<FsPath, PlatformError> {
-        let point = crate::places::connect(uri).map_err(|e| PlatformError::new(-1, format!("cannot connect to {uri}: {e}")))?;
+        let point = crate::places::connect(uri).map_err(|e| crate::places::drive_error(S::ErrorsFsConnectFailed, Path::new(uri), &e))?;
         crate::xdg::fs_path(&point).ok_or_else(|| PlatformError::new(-1, "the mount point is not a valid path"))
     }
 }

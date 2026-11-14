@@ -96,11 +96,65 @@ pub fn local_path(gio_info: &str) -> Option<PathBuf> {
     gio_info.lines().find_map(|l| l.trim().strip_prefix("local path:")).map(|p| PathBuf::from(p.trim()))
 }
 
+pub const CONNECT_WAIT: std::time::Duration = std::time::Duration::from_secs(45);
+
+pub fn run_within(mut cmd: std::process::Command, wait: std::time::Duration) -> std::io::Result<std::process::Output> {
+    use std::process::Stdio;
+    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let deadline = std::time::Instant::now() + wait;
+    while child.try_wait()?.is_none() {
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, S::ErrorsFsNotResponding.en()));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    child.wait_with_output()
+}
+
+pub fn needs_login(out: &std::process::Output) -> bool {
+    let said = [&out.stdout[..], &out.stderr[..]].concat();
+    let text = String::from_utf8_lossy(&said);
+    !out.status.success() && ["Authentication Required", "Password:", "Password dialog cancelled"].iter().any(|w| text.contains(w))
+}
+
+fn gio(args: &[&str], wait: std::time::Duration) -> std::io::Result<std::process::Output> {
+    let mut cmd = std::process::Command::new("gio");
+    cmd.args(args);
+    run_within(cmd, wait).map_err(|e| missing_tool("gio", "libglib2.0-bin", e))
+}
+
 pub fn connect(uri: &str) -> std::io::Result<PathBuf> {
-    let run = |args: &[&str]| std::process::Command::new("gio").args(args).stdin(std::process::Stdio::null()).output().map_err(|e| missing_tool("gio", "libglib2.0-bin", e));
-    let mounted = run(&["mount", uri])?;
-    let info = run(&["info", uri])?;
+    let mounted = gio(&["mount", uri], CONNECT_WAIT)?;
+    if needs_login(&mounted) {
+        return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, S::ErrorsFsNeedsLogin.en()));
+    }
+    let info = gio(&["info", uri], CONNECT_WAIT)?;
     local_path(&String::from_utf8_lossy(&info.stdout)).ok_or_else(|| std::io::Error::other(String::from_utf8_lossy(&mounted.stderr).trim().to_owned()))
+}
+
+pub fn disconnect_command(point: &Path, table: &[Mount], gvfs_root: &Path) -> Vec<std::ffi::OsString> {
+    let words = |w: &[&str]| w.iter().map(std::ffi::OsString::from).chain([point.as_os_str().to_owned()]).collect();
+    if point.starts_with(gvfs_root) {
+        return words(&["gio", "mount", "-u"]);
+    }
+    match table.iter().rev().find(|m| m.path() == point) {
+        Some(m) if m.fstype.starts_with("fuse.") || m.fstype == "sshfs" => words(&["fusermount", "-u"]),
+        _ => words(&["umount"]),
+    }
+}
+
+pub fn disconnect(point: &Path) -> std::io::Result<()> {
+    let [program, args @ ..] = &disconnect_command(point, &mounts::read()?, &gvfs_root())[..] else { return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput)) };
+    let mut cmd = std::process::Command::new(program);
+    cmd.args(args);
+    let out = run_within(cmd, CONNECT_WAIT)?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let why = String::from_utf8_lossy(&out.stderr).trim().to_owned();
+    Err(std::io::Error::other(if why.contains("busy") { S::ErrorsFsDriveBusy.en().to_owned() } else { why }))
 }
 
 fn unmounted() -> Vec<Drive> {

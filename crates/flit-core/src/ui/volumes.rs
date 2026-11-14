@@ -52,6 +52,9 @@ impl App {
         if d.unmountable() {
             m.place(S::MenuUnmount.t(), PlaceCmd::Launch(Launch::Unmount(d.path.clone())), false);
         }
+        if !d.unmounted && d.remote.is_some() && d.path.kind() == PathKind::Unix {
+            m.place(S::SidebarDriveDisconnect.t(), PlaceCmd::Launch(Launch::Disconnect(Some(d.path.clone()))), false);
+        }
         if d.mountable() {
             m.place(if d.locked() { S::SidebarDriveUnlock.t() } else { S::MenuMount.t() }, PlaceCmd::Mount(d.path.clone()), false);
         }

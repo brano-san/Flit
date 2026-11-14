@@ -446,6 +446,53 @@ fn shortcuts_to_folders_navigate_and_launches_reach_the_shell() {
     assert!(error(next()).starts_with("Terminal"));
 }
 
+struct SlowServerShell;
+impl Shell for SlowServerShell {
+    fn new() -> Result<Self, PlatformError> {
+        Ok(SlowServerShell)
+    }
+    fn icon(&mut self, _: &IconRequest) -> Option<Bitmap> {
+        None
+    }
+    fn type_name(&mut self, _: &[u8]) -> Option<String> {
+        None
+    }
+    fn open(&mut self, path: &FsPath) -> Result<(), PlatformError> {
+        Err(PlatformError::new(1, format!("opened {}", path.display())))
+    }
+    fn connect(&mut self, uri: &str) -> Result<FsPath, PlatformError> {
+        std::thread::sleep(Duration::from_millis(800));
+        match uri {
+            "smb://nas/share" => Ok(p(r"C:\mnt\share")),
+            _ => Err(PlatformError::new(3, format!("{uri} is not responding"))),
+        }
+    }
+}
+impl FileOps for SlowServerShell {
+    fn file_op(&mut self, _: &FileOp, _: &Job) -> OpOutcome {
+        OpOutcome::default()
+    }
+    fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
+        Err(PlatformError::new(-1, "empty"))
+    }
+    fn clear_clipboard(&mut self) {}
+}
+
+#[test]
+fn a_slow_server_connection_does_not_hold_up_opening_files() {
+    let (tx, rx) = unbounded();
+    let provider = LocalProvider::new::<_, NoWatch, SlowServerShell>(fs(), 1, tx, Arc::new(|| {})).unwrap();
+    let next = || rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    provider.submit(ProviderRequest::Launch { tab: 7, launch: Launch::ConnectServer("smb://nas/share".into()) });
+    provider.submit(ProviderRequest::Launch { tab: 7, launch: Launch::ConnectServer("sftp://gone/".into()) });
+    provider.submit(ProviderRequest::Open { tab: 7, path: p(r"C:\r\a.txt") });
+    assert!(matches!(next(), ProviderEvent::OpDone { error: Some(e), .. } if e.starts_with(r"opened C:\r\a.txt")));
+    let mut rest = [next(), next()];
+    rest.sort_by_key(|e| format!("{e:?}"));
+    assert_eq!(rest[0], ProviderEvent::Navigate { tab: 7, path: p(r"C:\mnt\share") });
+    assert!(matches!(&rest[1], ProviderEvent::OpDone { tab: 7, error: Some(e), .. } if e.contains("sftp://gone/ is not responding")));
+}
+
 #[test]
 fn wsl_launches_map_to_unc() {
     let launch = Launch::With { program: FsPath::parse("/bin/tool.exe").unwrap(), args: vec![FsPath::parse("/home/a").unwrap()] };

@@ -70,7 +70,7 @@ fn a_mounted_drive_can_be_unmounted_and_the_system_and_network_drives_cannot() {
     assert_eq!(drive_verbs(&mut app, "/mnt/data"), [S::MenuUnmount.t()]);
     assert!(drive_verbs(&mut app, "/").is_empty());
     assert!(drive_verbs(&mut app, "/home").is_empty());
-    assert!(!drive_verbs(&mut app, "/mnt/nas").contains(&S::MenuUnmount.t().to_owned()));
+    assert_eq!(drive_verbs(&mut app, "/mnt/nas"), [S::SidebarDriveDisconnect.t()]);
     assert_eq!(drive_verbs(&mut app, "/dev/sdc1"), [S::MenuMount.t()]);
     assert_eq!(drive_verbs(&mut app, "/dev/sdd2"), [S::SidebarDriveUnlock.t()]);
 }
@@ -82,6 +82,10 @@ fn unmount_from_the_menu_asks_the_platform_to_unmount_that_drive_only() {
     let k = labels(&m.menu).iter().position(|l| l == S::MenuUnmount.t()).unwrap();
     app.on_event(&Event::MenuCommand(k), Instant::now());
     assert_eq!(launches(&mut app), [Launch::Unmount(p("/media/ann/STICK"))]);
+    let m = menu_for(&mut app, "/mnt/nas");
+    let k = labels(&m.menu).iter().position(|l| l == S::SidebarDriveDisconnect.t()).unwrap();
+    app.on_event(&Event::MenuCommand(k), Instant::now());
+    assert_eq!(launches(&mut app), [Launch::Disconnect(Some(p("/mnt/nas")))]);
 }
 
 #[test]
