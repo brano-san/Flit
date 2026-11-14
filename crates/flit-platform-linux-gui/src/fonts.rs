@@ -5,6 +5,7 @@ use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -341,14 +342,54 @@ impl Fontconfig {
         out
     }
 
-    pub fn resolve(&self, family: Option<&str>) -> Resolved {
+    pub fn resolve(&self, family: Option<&str>, desktop_ui: Option<&str>) -> Resolved {
         Resolved {
-            ui: self.generic("sans-serif"),
+            ui: desktop_ui.and_then(|d| self.family(d)).or_else(|| self.generic("sans-serif")),
             mono: self.generic("monospace"),
             fallback: self.fallback(),
             family: family.and_then(|name| Some((name.to_owned(), self.family(name)?))),
         }
     }
+}
+
+static HINTING: AtomicBool = AtomicBool::new(false);
+
+pub fn hinting() -> bool {
+    HINTING.load(Ordering::Relaxed)
+}
+
+pub fn gnome_font_family(font_name: &str) -> Option<String> {
+    let name = font_name.trim().trim_matches(['\'', '"']).trim();
+    let family = match name.rsplit_once(' ') {
+        Some((family, size)) if size.parse::<f32>().is_ok() => family.trim(),
+        _ => name,
+    };
+    (!family.is_empty()).then(|| family.to_owned())
+}
+
+pub fn kde_font_family(kdeglobals: &str) -> Option<String> {
+    let family = crate::icons::setting(kdeglobals, "font")?.split(',').next()?.trim().to_owned();
+    (!family.is_empty()).then_some(family)
+}
+
+pub fn full_hinting(style: &str) -> bool {
+    matches!(style.trim().trim_matches(['\'', '"']), "full" | "medium" | "hintfull" | "hintmedium")
+}
+
+pub struct Desktop {
+    pub family: Option<String>,
+    pub hinting: bool,
+}
+
+fn desktop() -> Desktop {
+    if crate::input::kde_desktop() {
+        let globals = crate::xdg::config_home().and_then(|c| std::fs::read_to_string(c.join("kdeglobals")).ok()).unwrap_or_default();
+        let hint = crate::icons::setting(&globals, "XftHintStyle").is_some_and(|s| full_hinting(&s));
+        return Desktop { family: kde_font_family(&globals), hinting: hint };
+    }
+    let family = crate::shell::gsettings(&["org.gnome.desktop.interface", "font-name"]).and_then(|v| gnome_font_family(&v));
+    let hinting = crate::shell::gsettings(&["org.gnome.desktop.interface", "font-hinting"]).is_some_and(|v| full_hinting(&v));
+    Desktop { family, hinting }
 }
 
 pub struct Live {
@@ -387,7 +428,9 @@ fn resolve_live(family: Option<&str>) -> Live {
     let start = Instant::now();
     let fc = Fontconfig::load();
     let init = start.elapsed();
-    let resolved = fc.as_ref().map(|fc| fc.resolve(family)).unwrap_or_default();
+    let desk = desktop();
+    HINTING.store(desk.hinting, Ordering::Relaxed);
+    let resolved = fc.as_ref().map(|fc| fc.resolve(family, desk.family.as_deref())).unwrap_or_default();
     Live { fc, resolved, init, total: start.elapsed() }
 }
 

@@ -360,7 +360,7 @@ impl TextBackend for LinuxText {
     fn rasterize(&mut self, key: GlyphKey, out: &mut GlyphBitmap) -> bool {
         let Some(face) = self.faces.get(key.font as usize) else { return false };
         let px = key.size_q as f32 / 4.0;
-        let mut scaler = self.scale.builder(face.sw).size(px).hint(false).variations(face.vars.iter().copied()).build();
+        let mut scaler = self.scale.builder(face.sw).size(px).hint(fonts::hinting()).variations(face.vars.iter().copied()).build();
         let mut render = Render::new(&[Source::Outline]);
         render.format(Format::Alpha).offset(Vector::new(key.subpx as f32 / 4.0, 0.0));
         if face.embolden {

@@ -27,7 +27,7 @@ fn the_cache_round_trips_and_rejects_foreign_files() {
 #[test]
 fn fontconfig_resolves_the_defaults_a_fallback_chain_and_the_family_list() {
     let fc = Fontconfig::load().expect("libfontconfig.so.1");
-    let r = fc.resolve(Some("DejaVu Sans Mono"));
+    let r = fc.resolve(Some("DejaVu Sans Mono"), None);
     let [ui, ui_bold] = r.ui.clone().unwrap();
     assert!(ui.path.exists() && ui_bold.path.exists(), "{r:?}");
     assert!(r.mono.is_some());
@@ -63,7 +63,7 @@ fn bench_fontconfig() {
         })
         .collect();
     let t = Instant::now();
-    let r = fc.resolve(None);
+    let r = fc.resolve(None, None);
     let resolve = t.elapsed();
     let t = Instant::now();
     let families = fc.families();
@@ -81,4 +81,22 @@ fn bench_fontconfig() {
         families.len(),
         r.encode().len()
     );
+}
+
+#[test]
+fn the_desktop_font_and_hinting_are_read_from_gnome_and_kde_settings() {
+    assert_eq!(gnome_font_family("'Cantarell 11'\n").as_deref(), Some("Cantarell"));
+    assert_eq!(gnome_font_family("'Noto Sans CJK JP 10.5'").as_deref(), Some("Noto Sans CJK JP"));
+    assert_eq!(gnome_font_family("'Inter'").as_deref(), Some("Inter"));
+    assert_eq!(kde_font_family("[General]\nfixed=Hack,10,-1,5,50,0,0,0,0,0\nfont=Noto Sans,10,-1,5,50,0,0,0,0,0\n").as_deref(), Some("Noto Sans"));
+    assert!(full_hinting("'full'\n") && full_hinting("hintmedium"));
+    assert!(!full_hinting("'slight'") && !full_hinting("'none'") && !full_hinting(""), "slight hinting stays unhinted like before");
+}
+
+#[test]
+fn an_unknown_desktop_font_falls_back_to_the_fontconfig_default() {
+    assert_eq!(gnome_font_family("''"), None);
+    assert_eq!(kde_font_family("[General]\nfixed=Hack,10\n"), None);
+    let Some(fc) = Fontconfig::load() else { return };
+    assert_eq!(fc.resolve(None, Some("No Such Font Family 4242")).ui, fc.resolve(None, None).ui);
 }
