@@ -116,13 +116,15 @@ fn grouping_adds_counted_headers_that_collapse_on_click() {
     assert_eq!(app.tab().view.as_ref().unwrap().lines(), 7);
     let x = app.layout.cols[0].x + 100.0;
     assert_eq!([0, 1, 4, 6].map(|n| app.hit(x, line_y(&app, n))), [Hit::Group(0), Hit::Row(0), Hit::Group(2), Hit::Row(3)]);
-    click_line(&mut app, 100.0, 4, MouseButton::Left);
+    let at = app.cs(13.0);
+    click_line(&mut app, at, 4, MouseButton::Left);
     assert_eq!(names(&app), ["src", "a.rs"]);
     assert_eq!(app.tab().view.as_ref().unwrap().lines(), 5);
     let c = app.tab().view.as_ref().unwrap().all_counts();
     assert_eq!(c.dirs + c.files, 4, "collapsed items still count");
     frame(&mut app);
-    click_line(&mut app, 100.0, 4, MouseButton::Left);
+    let at = app.cs(13.0);
+    click_line(&mut app, at, 4, MouseButton::Left);
     assert_eq!(names(&app).len(), 4);
     run(&mut app, "view.group.size");
     resort_now(&mut app);
@@ -905,4 +907,33 @@ fn compressed_and_encrypted_names_take_explorer_colours() {
         assert!(crate::theme::contrast(t.compressed, t.bg) >= crate::theme::MIN_TEXT_CONTRAST && crate::theme::contrast(t.encrypted, t.bg) >= crate::theme::MIN_TEXT_CONTRAST);
     }
     assert_eq!(crate::ui::properties::attributes_text(attr::READONLY | attr::COMPRESSED | attr::ENCRYPTED), "Read-only, Compressed, Encrypted");
+}
+
+#[test]
+fn a_group_header_click_selects_the_group_and_only_the_chevron_folds_it() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("apple.txt", 10, false), ("apricot.txt", 10, false), ("banana.txt", 10, false)]);
+    app.drain_effects().for_each(drop);
+    app.run_action("view.group.name", Instant::now());
+    resort_now(&mut app);
+    frame(&mut app);
+    let f = app.flow();
+    let n = (0..app.tab().view.as_ref().unwrap().lines()).find(|&n| matches!(app.tab().view.as_ref().unwrap().line(n), Some(crate::view::Line::Header(0)))).unwrap();
+    let r = app.line_rect(&f, n);
+    let press = |app: &mut App, x: f32| {
+        app.on_event(&Event::MouseDown { x, y: r.y + r.h / 2.0, button: MouseButton::Left, clicks: 1 }, Instant::now());
+        app.on_event(&Event::MouseUp { x, y: r.y + r.h / 2.0, button: MouseButton::Left }, Instant::now());
+    };
+    press(&mut app, r.x + r.w / 2.0);
+    let v = app.tab().view.as_ref().unwrap();
+    assert_eq!(v.selected_count(), v.groups()[0].count as usize, "a click on the header selects the group");
+    assert_eq!(v.groups()[0].collapsed, false);
+    let chevron = r.x + app.cs(26.0) / 2.0;
+    press(&mut app, chevron);
+    assert!(app.tab().view.as_ref().unwrap().groups()[0].collapsed, "the chevron folds the group");
+    assert_eq!(app.tab().view.as_ref().unwrap().selected_count(), 0, "the hidden rows drop out of the selection");
+    press(&mut app, chevron);
+    assert!(!app.tab().view.as_ref().unwrap().groups()[0].collapsed, "the chevron unfolds it again");
+    press(&mut app, r.x + r.w / 2.0);
+    assert_eq!(app.tab().view.as_ref().unwrap().selected_count(), app.tab().view.as_ref().unwrap().groups()[0].count as usize, "the header selects again");
 }

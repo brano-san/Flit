@@ -674,6 +674,7 @@ pub struct App {
     moving: bool,
     dirty: bool,
     ops: ops::Ops,
+    group_press: Option<usize>,
     nav: nav::Nav,
     marquee: Option<marquee::Marquee>,
     search: search::SearchView,
@@ -801,6 +802,7 @@ impl App {
             moving: false,
             dirty: true,
             ops: ops::Ops::default(),
+            group_press: None,
             nav: nav::Nav::default(),
             marquee: None,
             search: Default::default(),
@@ -925,6 +927,27 @@ impl App {
 
     fn cs(&self, v: f32) -> f32 {
         (v * self.content_px()).round()
+    }
+
+    fn group_chevron_click(&self, x: f32, y: f32) -> Option<usize> {
+        let f = self.flow();
+        let n = self.line_at(&f, x, y)?;
+        let g = match self.tab().view.as_ref()?.line(n)? {
+            crate::view::Line::Header(g) => g,
+            _ => return None,
+        };
+        let r = self.line_rect(&f, n);
+        (x <= r.x + self.cs(26.0)).then_some(g)
+    }
+
+    fn select_group(&mut self, g: usize) {
+        let Some(v) = self.tab_mut().view.as_mut() else { return };
+        let Some(gr) = v.groups().get(g).cloned() else { return };
+        let (a, b) = (gr.start as usize, (gr.start + gr.count).saturating_sub(1) as usize);
+        v.select_rows(a, b);
+        v.anchor = Some(a as u32);
+        v.focus = Some(b as u32);
+        self.dirty = true;
     }
 
     fn content_font(&self, px: f32) -> FontStyle {
@@ -1875,7 +1898,15 @@ impl App {
                 let t = self.tab_mut();
                 t.scroll_target = (t.scroll_target + dir * len).clamp(0.0, max);
             }
-            Hit::Group(_) => self.focus = Focus::List,
+            Hit::Group(g) => {
+                self.focus = Focus::List;
+                if button == MouseButton::Left {
+                    self.group_press = self.group_chevron_click(x, y).map(|_| g);
+                    if self.group_press.is_none() {
+                        self.select_group(g);
+                    }
+                }
+            }
             Hit::Preview(p) => self.preview_mouse_down(p, x, y),
             Hit::ColSep(i) if button == MouseButton::Left && clicks >= 2 && self.layout.columns[i] != Column::Name => {
                 self.drag = Drag::None;
@@ -1977,7 +2008,11 @@ impl App {
                     self.sort_column(f);
                 }
             }
-            Hit::Group(g) => self.toggle_group(g),
+            Hit::Group(g) => {
+                if self.group_press.take() == Some(g) {
+                    self.toggle_group(g);
+                }
+            }
             Hit::Pane(i, Some(row)) => self.open_pane_row(i, row, now),
             Hit::Encoding => self.pick_encoding(),
             Hit::Bottom(b) => self.bottom_click(b),
