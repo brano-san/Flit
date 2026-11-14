@@ -42,7 +42,7 @@ pub fn inverse(report: &OpReport) -> Option<Step> {
             FileOp::Restore(recycled)
         }
         FileOp::Access(changes) => FileOp::Access(changes.iter().rev().map(|c| AccessChange { item: c.item.clone(), from: c.to, to: c.from }).collect()),
-        FileOp::Paste { .. } | FileOp::PasteLink { .. } | FileOp::NewStream { .. } | FileOp::Delete(_) | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::FolderIcon { .. } | FileOp::InstallFonts(_) | FileOp::LockScreen(_) | FileOp::SetAccess { .. } | FileOp::SetAttributes { .. } => return None,
+        FileOp::Paste { .. } | FileOp::PasteLink { .. } | FileOp::NewStream { .. } | FileOp::Delete(_) | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::FolderIcon { .. } | FileOp::InstallFonts(_) | FileOp::LockScreen(_) | FileOp::SetAccess { .. } | FileOp::SetAttributes { .. } | FileOp::PasteDropped { .. } => return None,
     }))
 }
 

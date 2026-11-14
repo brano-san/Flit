@@ -1,15 +1,16 @@
 use crate::clipboard::{effect_is_move, global_bytes};
 use crate::fileops::{exists, std_path};
-use crate::{com_sta, err};
+use crate::err;
 use flit_core::i18n::S;
-use flit_core::provider::Resolve;
 use flit_core::FsPath;
 use flit_platform::{Job, OpOutcome, PlatformError};
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
-use windows::core::PCWSTR;
+use windows::core::{AgileReference, PCWSTR};
 use windows::Win32::Foundation::S_OK;
 use windows::Win32::System::Com::StructuredStorage::{StgCreateDocfile, IStorage};
 use windows::Win32::System::Com::{IDataObject, IStream, DVASPECT_CONTENT, FORMATETC, STGC_DEFAULT, STGM_FAILIFTHERE, STGM_READWRITE, STGM_SHARE_EXCLUSIVE, TYMED_HGLOBAL, TYMED_ISTORAGE, TYMED_ISTREAM};
@@ -360,26 +361,57 @@ pub(crate) fn paste(dest: &FsPath, job: &Job) -> OpOutcome {
     }
 }
 
-pub(crate) fn drop_into(data: &IDataObject, kind: Content, dest: &FsPath, moving: bool) {
-    let report = |out: OpOutcome| {
-        if let Some(e) = out.error {
-            tracing::warn!("drop into {}: {e}", dest.display());
-        }
+enum Held {
+    Items(Vec<u8>),
+    Data(Content, AgileReference<IDataObject>),
+}
+
+struct HeldDrop {
+    ticket: u64,
+    dest: FsPath,
+    held: Held,
+}
+
+static HELD: Mutex<Vec<HeldDrop>> = Mutex::new(Vec::new());
+static TICKETS: AtomicU64 = AtomicU64::new(1);
+
+fn held() -> std::sync::MutexGuard<'static, Vec<HeldDrop>> {
+    HELD.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+pub(crate) fn hold_drop(data: &IDataObject, kind: Content, dest: &FsPath) -> Option<u64> {
+    let held_data = match kind {
+        Content::Items => Held::Items(bytes(data, CFSTR_SHELLIDLIST)?),
+        kind => Held::Data(kind, AgileReference::new(data).map_err(|e| tracing::warn!("drop data: {e}")).ok()?),
     };
-    if kind != Content::Items {
-        return report(unsafe { transfer(data, kind, dest, false, &Job::detached(Resolve::Skip)) });
+    let ticket = TICKETS.fetch_add(1, Ordering::Relaxed);
+    held().push(HeldDrop { ticket, dest: dest.clone(), held: held_data });
+    Some(ticket)
+}
+
+pub(crate) fn release_drop(ticket: u64) {
+    held().retain(|h| h.ticket != ticket);
+}
+
+fn take_drop(dest: &FsPath) -> Option<Held> {
+    let mut held = held();
+    let at = held.iter().position(|h| h.dest == *dest)?;
+    Some(held.remove(at).held)
+}
+
+pub(crate) fn paste_dropped(dest: &FsPath, moving: bool, job: &Job) -> OpOutcome {
+    unsafe {
+        let _ = OleInitialize(None);
     }
-    let Some(cida) = bytes(data, CFSTR_SHELLIDLIST) else { return };
-    let dest = dest.clone();
-    let spawned = std::thread::Builder::new().name("flit-drop".into()).spawn(move || {
-        com_sta();
-        let out = unsafe { copy_items(&cida_pidls(&cida), &dest, moving, &Job::detached(Resolve::Skip)) };
-        if let Some(e) = out.error {
-            tracing::warn!("drop into {}: {e}", dest.display());
-        }
-    });
-    if let Err(e) = spawned {
-        tracing::warn!("drop thread: {e}");
+    match take_drop(dest) {
+        None => failed(nothing()),
+        Some(Held::Items(cida)) => unsafe { copy_items(&cida_pidls(&cida), dest, moving, job) },
+        Some(Held::Data(kind, data)) => unsafe {
+            match data.resolve() {
+                Ok(data) => transfer(&data, kind, dest, false, job),
+                Err(e) => failed(err(e)),
+            }
+        },
     }
 }
 

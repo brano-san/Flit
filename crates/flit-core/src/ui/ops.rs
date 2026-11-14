@@ -1901,7 +1901,11 @@ impl App {
                         let launch = Launch::With { program, args: d.paths };
                         self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch } });
                     }
-                    Some(Target::Into { .. }) if d.paths.is_empty() => {}
+                    Some(Target::Into { dest, .. }) if d.paths.is_empty() => {
+                        if !self.caps.unix_paths && matches!(effect, drop_effect::COPY | drop_effect::MOVE) {
+                            self.start_op(FileOp::PasteDropped { dest, moving: effect == drop_effect::MOVE }, Origin::Fresh, Then::Select);
+                        }
+                    }
                     Some(Target::Into { dest, .. }) if d.right && effect != drop_effect::NONE => {
                         let choices = self.drop_choices(&d.paths, d.ours, &dest, *allowed);
                         self.ask_drop(Asked { paths: d.paths, dest }, choices, effect, (*x, *y));

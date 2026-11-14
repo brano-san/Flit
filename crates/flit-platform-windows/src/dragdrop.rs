@@ -332,6 +332,10 @@ impl IDropTarget_Impl for Target_Impl {
         let source_extracts = self.active.get() && self.source_took_folder.get() && data.as_ref().is_some_and(seven_zip_extracts_itself);
         let shown = self.effect.get();
         let (content, folder) = (self.content.take(), self.offered.borrow().clone());
+        let ticket = match (content, &folder, data.as_ref()) {
+            (Some(kind), Some(folder), Some(d)) if !source_extracts => crate::transfer::hold_drop(d, kind, folder),
+            _ => None,
+        };
         unsafe {
             *effect = if source_extracts {
                 self.finish(DragEvent::Leave);
@@ -339,9 +343,10 @@ impl IDropTarget_Impl for Target_Impl {
             } else {
                 self.finish(DragEvent::Drop { x, y, mods: mods(keys), allowed: (*effect).0 })
             };
-            if let (Some(kind), Some(folder), Some(d)) = (content, folder, data.as_ref()) {
-                if *effect != DROPEFFECT_NONE {
-                    crate::transfer::drop_into(d, kind, &folder, *effect == DROPEFFECT_MOVE);
+            if let Some(ticket) = ticket {
+                if *effect == DROPEFFECT_NONE {
+                    crate::transfer::release_drop(ticket);
+                } else {
                     *effect = DROPEFFECT_COPY;
                 }
             }

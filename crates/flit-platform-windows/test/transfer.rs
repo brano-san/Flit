@@ -84,3 +84,82 @@ fn links_become_internet_shortcuts_named_after_the_page() {
     let wide: Vec<u8> = "https://e.com\0junk".encode_utf16().flat_map(u16::to_le_bytes).collect();
     assert_eq!((url_text(&wide, true).as_deref(), url_text(b"http://a\0b", false).as_deref(), url_text(b"  ", false)), (Some("https://e.com"), Some("http://a"), None));
 }
+
+fn temp(tag: &str) -> std::path::PathBuf {
+    let root = crate::test_temp().join(format!("flit-held-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("dest")).unwrap();
+    root
+}
+
+fn fs(p: &std::path::Path) -> FsPath {
+    FsPath::parse(p.to_str().unwrap()).unwrap()
+}
+
+fn on_worker(dest: FsPath, moving: bool) -> OpOutcome {
+    let worker = std::thread::spawn(move || {
+        crate::com_sta();
+        paste_dropped(&dest, moving, &Job::detached(flit_core::provider::Resolve::Skip))
+    });
+    while !worker.is_finished() {
+        unsafe {
+            use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE};
+            let mut msg = MSG::default();
+            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    worker.join().unwrap()
+}
+
+fn url_data(url: &str) -> IDataObject {
+    use windows::Win32::System::Com::STGMEDIUM;
+    use windows::Win32::UI::Shell::SHCreateDataObject;
+    let data: IDataObject = unsafe { SHCreateDataObject(None, None, None) }.unwrap();
+    let wide: Vec<u8> = url.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect();
+    unsafe {
+        let h = crate::clipboard::global(&wide).unwrap();
+        let medium = STGMEDIUM { tymed: TYMED_HGLOBAL.0 as u32, u: windows::Win32::System::Com::STGMEDIUM_0 { hGlobal: h }, pUnkForRelease: std::mem::ManuallyDrop::new(None) };
+        data.SetData(&etc(format(CFSTR_INETURLW), -1, TYMED_HGLOBAL.0 as u32), &medium, true).unwrap();
+    }
+    data
+}
+
+#[test]
+fn a_dropped_link_and_dropped_shell_items_are_saved_later_by_the_operation_on_its_own_thread() {
+    crate::com_sta();
+    let root = temp("later");
+    let dest = fs(&root.join("dest"));
+    let data = url_data("https://example.com/page");
+    assert_eq!(content_of(&data), Some(Content::Url));
+    assert!(hold_drop(&data, Content::Url, &dest).is_some());
+    let out = on_worker(dest.clone(), false);
+    assert!(out.error.is_none(), "{:?}", out.error);
+    let [(made, _)] = out.items.try_into().unwrap();
+    assert_eq!(made, dest.join(b"example.com.url"));
+    assert!(std::fs::read_to_string(root.join("dest").join("example.com.url")).unwrap().contains("URL=https://example.com/page"));
+    std::fs::write(root.join("photo.jpg"), "jpeg").unwrap();
+    let items: IDataObject = crate::context_menu::Pidls::parse(&[fs(&root.join("photo.jpg"))]).unwrap().ui_object(windows::Win32::Foundation::HWND::default()).unwrap();
+    assert!(hold_drop(&items, Content::Items, &dest).is_some());
+    let out = on_worker(dest.clone(), false);
+    assert!(out.error.is_none(), "{:?}", out.error);
+    assert_eq!(std::fs::read_to_string(root.join("dest").join("photo.jpg")).unwrap(), "jpeg");
+    assert!(root.join("photo.jpg").exists(), "a copy leaves the original");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_drop_flit_declined_is_released_and_never_saved() {
+    crate::com_sta();
+    let root = temp("declined");
+    let dest = fs(&root.join("dest"));
+    let ticket = hold_drop(&url_data("https://example.org/"), Content::Url, &dest).unwrap();
+    release_drop(ticket);
+    let out = on_worker(dest, false);
+    assert!(out.error.is_some());
+    assert_eq!(std::fs::read_dir(root.join("dest")).unwrap().count(), 0);
+    let _ = std::fs::remove_dir_all(&root);
+}

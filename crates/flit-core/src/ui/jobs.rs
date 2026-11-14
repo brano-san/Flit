@@ -329,7 +329,7 @@ fn job_title(op: &FileOp) -> Option<String> {
             let renames = pairs.iter().all(|(a, b)| a.parent() == b.parent());
             crate::tr!(if renames { S::UiJobTitleRenaming } else { S::UiJobTitleMovingItems }, what = count_pairs(pairs, |p| &p.0))
         }
-        FileOp::Paste { dest } | FileOp::PasteLink { dest } => crate::tr!(S::UiJobTitlePasting, dest = quoted(dest)),
+        FileOp::Paste { dest } | FileOp::PasteLink { dest } | FileOp::PasteDropped { dest, .. } => crate::tr!(S::UiJobTitlePasting, dest = quoted(dest)),
         FileOp::Trash(items) => crate::tr!(S::UiJobTitleTrashing, what = count(items)),
         FileOp::Delete(items) => crate::tr!(S::UiJobTitleDeleting, what = count(items)),
         FileOp::Flatten(dirs) => crate::tr!(S::UiJobTitleFlattening, what = count(dirs)),
@@ -349,7 +349,7 @@ fn job_title(op: &FileOp) -> Option<String> {
 
 fn job_dest(provider: &ProviderId, op: &FileOp) -> Option<Location> {
     let path = match op {
-        FileOp::Copy { dest, .. } | FileOp::Move { dest, .. } | FileOp::Paste { dest } | FileOp::PasteLink { dest } => dest.clone(),
+        FileOp::Copy { dest, .. } | FileOp::Move { dest, .. } | FileOp::Paste { dest } | FileOp::PasteLink { dest } | FileOp::PasteDropped { dest, .. } => dest.clone(),
         FileOp::MoveTo(pairs) => pairs.first()?.1.parent()?,
         FileOp::Restore(pairs) => pairs.first()?.1.parent()?,
         FileOp::Flatten(dirs) => dirs.first()?.clone(),
@@ -395,7 +395,7 @@ fn meta_line(label: S, m: &crate::listing::Meta, offset: i32, style: &format::St
 
 fn failure_title(op: Option<&FileOp>, name: String) -> String {
     let key = match op {
-        Some(FileOp::Copy { .. } | FileOp::Paste { .. }) => S::UiFailureCopy,
+        Some(FileOp::Copy { .. } | FileOp::Paste { .. } | FileOp::PasteDropped { .. }) => S::UiFailureCopy,
         Some(FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Restore(_) | FileOp::Flatten(_)) => S::UiFailureMove,
         Some(FileOp::Delete(_) | FileOp::Purge(_) | FileOp::EmptyBin) => S::UiFailureDelete,
         _ => S::UiFailureOther,

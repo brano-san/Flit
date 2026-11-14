@@ -741,7 +741,10 @@ fn content_without_file_paths_lands_in_the_folder_under_the_cursor() {
     assert_eq!((app.drop_folder(), app.drop_caption()), (Some(p(r"C:\x\sub")), Some(("Copy to %1".to_owned(), "sub".to_owned()))), "the platform learns where to put it");
     assert_eq!(app.drag(&DragEvent::Over { x: sub.0, y: sub.1, mods: SHIFT, allowed: COPY | MOVE }, t0()), MOVE);
     assert_eq!(app.drag(&DragEvent::Drop { x: sub.0, y: sub.1, mods: NO, allowed: COPY | MOVE }, t0()), COPY);
-    assert!(op_list(&mut app).is_empty(), "the platform transfers the content itself");
+    assert_eq!(op_list(&mut app), [FileOp::PasteDropped { dest: p(r"C:\x\sub"), moving: false }], "the content is saved by a queued operation that selects what it made");
+    enter(&mut app, sub, COPY | MOVE);
+    app.drag(&DragEvent::Drop { x: sub.0, y: sub.1, mods: SHIFT, allowed: COPY | MOVE }, t0());
+    assert_eq!(op_list(&mut app), [FileOp::PasteDropped { dest: p(r"C:\x\sub"), moving: true }]);
     assert_eq!(enter(&mut app, title, COPY), NONE, "content cannot be revealed");
     app.drag(&DragEvent::Leave, t0());
     assert_eq!(enter(&mut app, sub, LINK), NONE);
