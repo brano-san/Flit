@@ -986,6 +986,7 @@ impl App {
             Pick::Tags(t) => self.tag_input(t, text),
             Pick::Setting(p) => self.setting_input(p, text),
             Pick::Server => self.connect_server(text),
+            Pick::Label(drive) => self.relabel_drive(drive, text),
             Pick::SaveLayout => self.save_layout(text),
             Pick::OpenWithCommand(c) => self.chooser_command(*c, text),
             Pick::OpenWith(_) | Pick::Tabs | Pick::LoadLayout | Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Encoding(_) |Pick::GoTo | Pick::Crumb(_) | Pick::Keys(_) => {}
@@ -1111,8 +1112,10 @@ impl App {
         self.push_shell_menu(ShellMenu { x, y, menu, ..target });
     }
 
-    pub(super) fn shell_verb(&mut self, verb: &str) {
+    pub(super) fn shell_verb(&mut self, verb: &str, now: Instant) {
         match verb.to_ascii_lowercase().as_str() {
+            "back" => self.go_history(false, now),
+            "forward" => self.go_history(true, now),
             "rename" => self.rename_focused(),
             "copy" => self.copy_selection(),
             "cut" => self.cut_selection(),

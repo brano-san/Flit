@@ -443,7 +443,7 @@ fn item_menus_offer_place_commands() {
     let m = menu(&mut app);
     assert!(m.shell, "items keep Show more options");
     assert_eq!(m.items, [FsPath::parse(r"E:\").unwrap()]);
-    assert_eq!(labels(&m.menu), ["Open", "Open in new tab", "Open in new window", "Open In Right Split", "Open In Bottom Split", "Copy path", "Open in terminal", "Pin to sidebar", "Eject", "Properties"]);
+    assert_eq!(labels(&m.menu), ["Open", "Open in new tab", "Open in new window", "Open In Right Split", "Open In Bottom Split", "Copy path", "Open in terminal", "Pin to sidebar", "Eject", "Rename", "Properties"]);
     run(&mut app, &m, "Eject");
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Launch { launch: Launch::Eject(d), .. }, .. } if d == FsPath::parse(r"E:\").unwrap())));
     click(app.nav.sidebar.rects[0], &mut app, MouseButton::Right);
@@ -972,4 +972,45 @@ fn page_keys_page_through_the_sidebar() {
     side_key(&mut app, Key::PageUp);
     assert_eq!(app.nav.sidebar.cursor, 0);
     assert_eq!(app.focus, crate::ui::Focus::Sidebar, "page keys stay in the sidebar");
+}
+
+fn labelled_app() -> App {
+    let mut app = App::new(Persisted::default(), Vec::new(), 0, false, 1.0, (900, 600), Instant::now());
+    let mut usb = drive('E');
+    usb.label = "Stick (E:)".into();
+    usb.removable = true;
+    app.set_places(Arc::new(Places { drives: vec![drive('C'), usb], ..Default::default() }));
+    app.drain_effects().for_each(drop);
+    app
+}
+
+fn focus_drive(app: &mut App, letter: char) {
+    let at = app.nav.sidebar.items.iter().position(|it| it.section == Section::Storage && it.loc.path() == &FsPath::parse(&format!("{letter}:\\")).unwrap()).unwrap();
+    app.focus = Focus::Sidebar;
+    app.nav.sidebar.point(at);
+}
+
+#[test]
+fn f2_on_a_drive_in_the_sidebar_renames_its_label() {
+    let mut app = labelled_app();
+    focus_drive(&mut app, 'E');
+    assert!(app.sidebar_key(Key::F(2), Mods::default(), Instant::now()));
+    assert_eq!(app.nav.palette.as_ref().map(|p| p.field.text()), Some("Stick"));
+    app.nav.palette.as_mut().unwrap().field.edit.set("Backup");
+    app.on_event(&Event::Key { key: Key::Enter, mods: Mods::default(), pressed: true }, Instant::now());
+    let set: Vec<(FsPath, String)> = app.drain_effects().filter_map(|e| if let Effect::SetVolumeLabel { drive, label } = e { Some((drive, label)) } else { None }).collect();
+    assert_eq!(set, [(FsPath::parse("E:\\").unwrap(), "Backup".to_owned())]);
+}
+
+#[test]
+fn an_unchanged_label_a_bookmark_or_linux_leave_the_drive_alone() {
+    let mut app = labelled_app();
+    focus_drive(&mut app, 'E');
+    app.sidebar_key(Key::F(2), Mods::default(), Instant::now());
+    app.on_event(&Event::Key { key: Key::Enter, mods: Mods::default(), pressed: true }, Instant::now());
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::SetVolumeLabel { .. })), "Enter without a change does nothing");
+    app.caps.unix_paths = true;
+    focus_drive(&mut app, 'E');
+    assert!(!app.sidebar_key(Key::F(2), Mods::default(), Instant::now()), "Linux mounts have no Windows labels to edit here");
+    assert!(app.nav.palette.is_none());
 }

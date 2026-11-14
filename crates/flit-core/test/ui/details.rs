@@ -1036,6 +1036,24 @@ fn shortcuts_and_internet_links_hide_their_extension_like_explorer() {
 }
 
 #[test]
+fn file_types_the_registry_marks_never_show_ext_hide_their_extension() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("Docs.lnk", 1, false), ("Old.PIF", 1, false), ("notes.txt", 1, false)]);
+    app.set_places(std::sync::Arc::new(crate::ui::Places { never_shown: vec!["lnk".into(), "pif".into()], ..Default::default() }));
+    let shown = |app: &App| {
+        let v = app.tab().view.as_ref().unwrap();
+        let mut s: Vec<String> = v.rows().iter().map(|&i| app.shown_name(v.listing(), i).into_owned()).collect();
+        s.sort();
+        s
+    };
+    assert_eq!(shown(&app), ["Docs", "Old", "notes.txt"]);
+    app.set_places(std::sync::Arc::new(crate::ui::Places { never_shown: vec!["pif".into()], ..Default::default() }));
+    assert_eq!(shown(&app), ["Docs.lnk", "Old", "notes.txt"], "a shortcut type without the flag shows its extension");
+    app.caps.unix_paths = true;
+    assert_eq!(shown(&app), ["Docs.lnk", "Old.PIF", "notes.txt"], "Linux keeps every extension");
+}
+
+#[test]
 fn the_attributes_column_spells_explorer_letters_and_only_windows_offers_it() {
     let mut app = app_at(r"C:\x");
     let mut l = Listing::default();
@@ -1046,7 +1064,7 @@ fn the_attributes_column_spells_explorer_letters_and_only_windows_offers_it() {
     let cell = |app: &App, i| app.cell_text(&arena, &l, i, Column::Attributes).to_owned();
     assert_eq!([cell(&app, plain), cell(&app, all), cell(&app, none)], ["A", "RHSACE", ""]);
     assert_eq!(Column::Attributes.title(), "Attributes");
-    assert_eq!(Column::Attributes.field(), None);
+    assert_eq!(Column::Attributes.field(), Some(SortField::Attributes), "a click on its header sorts by it");
     assert!(!app.tab().columns.shown(Column::Attributes), "hidden until chosen, as in Explorer");
     let windows: Vec<Column> = app.column_kinds().to_vec();
     assert_eq!(windows.iter().copied().filter(|&c| c != Column::Attributes).collect::<Vec<_>>(), crate::ui::COLUMNS, "Windows adds Attributes to the usual columns");

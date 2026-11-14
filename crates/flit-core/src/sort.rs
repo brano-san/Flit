@@ -24,6 +24,7 @@ pub enum SortField {
     FolderUsage,
     Folders,
     Files,
+    Attributes,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash, serde::Serialize, serde::Deserialize)]
@@ -379,6 +380,17 @@ fn group_tail_cmp(l: &Listing, v: &ViewSpec, a: u32, b: u32) -> Ordering {
     ext_cmp(group_bytes(l, a, f), group_bytes(l, b, f))
 }
 
+pub const ATTRIBUTE_LETTERS: [(u32, char); 6] = [(attr::READONLY, 'R'), (attr::HIDDEN, 'H'), (attr::SYSTEM, 'S'), (attr::ARCHIVE_MARK, 'A'), (attr::COMPRESSED, 'C'), (attr::ENCRYPTED, 'E')];
+
+fn attribute_key(attrs: u32) -> u64 {
+    let mut key = [0u8; 8];
+    let letters = ATTRIBUTE_LETTERS.iter().filter(|(bit, _)| attrs & bit != 0).map(|&(_, c)| c as u8);
+    for (slot, letter) in key.iter_mut().zip(letters) {
+        *slot = letter;
+    }
+    u64::from_be_bytes(key)
+}
+
 pub fn incremental(v: &ViewSpec) -> bool {
     v.group.field != GroupField::FolderUsage
 }
@@ -416,6 +428,7 @@ fn item_cmp(l: &Listing, k: &SortKeys, spec: SortSpec, a: u32, b: u32) -> Orderi
         SortField::Volume | SortField::FolderUsage => ea.size.cmp(&eb.size),
         SortField::Items | SortField::Folders | SortField::Files | SortField::Free | SortField::Percent => primary(l, spec.field, a).cmp(&primary(l, spec.field, b)),
         SortField::FileSystem => ext_cmp(file_system(l, a), file_system(l, b)),
+        SortField::Attributes => attribute_key(ea.attrs).cmp(&attribute_key(eb.attrs)),
     }
     .then_with(|| k.cmp(a, b))
     .then_with(|| l.name(a).cmp(l.name(b)));
@@ -480,6 +493,7 @@ fn primary(l: &Listing, field: SortField, i: u32) -> u64 {
         SortField::Free => l.drive(i).map_or(0, |d| d.0),
         SortField::FileSystem => ext_prefix(file_system(l, i)),
         SortField::Percent => used_permille(l, i).map_or(0, |p| p + 1),
+        SortField::Attributes => attribute_key(e.attrs),
     }
 }
 

@@ -81,6 +81,8 @@ connect_server = "Se connecter à un serveur"
 server_prompt = "Adresse du serveur, par exemple smb://server/share ou sftp://user@host"
 server_prompt_windows = "Adresse du serveur, par exemple smb://server/share ou \\\\server\\share"
 server_enter = "Entrée se connecte au serveur"
+label_prompt = "Nouveau nom du lecteur"
+label_enter = "Entrée renomme le lecteur"
 
 [quick]
 created = "Créé :"

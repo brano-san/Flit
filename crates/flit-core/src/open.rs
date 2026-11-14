@@ -21,6 +21,7 @@ pub struct Open {
     pub tag: Option<String>,
     pub properties: bool,
     pub activation: Option<String>,
+    pub window: Option<u64>,
 }
 
 impl Open {
@@ -314,6 +315,16 @@ pub fn routes_for(open: &Open, shell_folder: &dyn Fn(&str) -> Option<Location>, 
         }
     }
     (ok, failed)
+}
+
+pub fn take_for_window(queued: &mut Vec<Open>, window: u64, active: Option<u64>, windows: &[u64]) -> Vec<Open> {
+    let mine = |o: &Open| match o.window.filter(|w| windows.contains(w)) {
+        Some(w) => w == window,
+        None => active.is_none_or(|a| a == window),
+    };
+    let (taken, kept) = std::mem::take(queued).into_iter().partition(mine);
+    *queued = kept;
+    taken
 }
 
 pub fn explorer_only(open: &Open, shell_folder: &dyn Fn(&str) -> Option<Location>) -> Vec<String> {

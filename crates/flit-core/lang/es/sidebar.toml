@@ -81,6 +81,8 @@ connect_server = "Conectar al servidor"
 server_prompt = "Dirección del servidor, por ejemplo smb://server/share o sftp://user@host"
 server_prompt_windows = "Dirección del servidor, por ejemplo smb://server/share o \\\\server\\share"
 server_enter = "Intro conecta con el servidor"
+label_prompt = "Nueva etiqueta de la unidad"
+label_enter = "Intro cambia el nombre de la unidad"
 
 [quick]
 created = "Creado:"

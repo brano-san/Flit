@@ -81,6 +81,8 @@ connect_server = "Підключитися до сервера"
 server_prompt = "Адреса сервера, наприклад smb://server/share або sftp://user@host"
 server_prompt_windows = "Адреса сервера, наприклад smb://server/share або \\\\server\\share"
 server_enter = "Enter підключає до сервера"
+label_prompt = "Нова мітка диска"
+label_enter = "Enter перейменовує диск"
 
 [quick]
 created = "Створено:"

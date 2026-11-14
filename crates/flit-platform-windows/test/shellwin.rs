@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use windows::core::w;
 use windows::Win32::System::Com::DISPATCH_PROPERTYGET;
 use windows::Win32::UI::Shell::{ILFindLastID, SID_STopLevelBrowser, SWFO_NEEDDISPATCH};
-use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, HWND_MESSAGE, WINDOW_EX_STYLE, WINDOW_STYLE};
+use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, PeekMessageW, HWND_MESSAGE, PM_REMOVE, WINDOW_EX_STYLE, WINDOW_STYLE};
 
 fn variant(pidl: &[u8]) -> VARIANT {
     unsafe { InitVariantFromBuffer(pidl.as_ptr().cast(), pidl.len() as u32) }.unwrap()
@@ -61,13 +61,13 @@ fn a_registered_flit_window_receives_the_item_the_shell_asks_it_to_select() {
     let hwnd = unsafe { CreateWindowExW(WINDOW_EX_STYLE(0), w!("STATIC"), PCWSTR::null(), WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, None, None) }.unwrap();
     let (tx, rx) = unbounded();
     deliver_to(Arc::new(Mutex::new(Some(tx))), Arc::new(|| {}));
-    show(hwnd, Some(&folder_path));
+    show(hwnd, 9, Some(&folder_path));
     assert!(find(&windows, &folder).is_none(), "nothing is listed while the setting is off");
     enable(true);
     let found = wait_for(|| find(&windows, &folder));
     let cleanup = || {
         enable(false);
-        show(hwnd, None);
+        show(hwnd, 9, None);
         unsafe {
             let _ = DestroyWindow(hwnd);
         }
@@ -86,7 +86,7 @@ fn a_registered_flit_window_receives_the_item_the_shell_asks_it_to_select() {
     let child = unsafe { ILFindLastID(item.as_ptr().cast()) };
     unsafe { view.SelectItem(child, SVSI_SELECT.0 as u32) }.unwrap();
     let open = rx.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert_eq!(open.target, OpenTarget::CurrentTab);
+    assert_eq!((open.target, open.window), (OpenTarget::CurrentTab, Some(9)));
     assert_eq!(open.select, [FsPath::parse(&file.to_string_lossy()).unwrap().as_bytes().to_vec()]);
     assert_eq!(location_url(&disp), unsafe { app.LocationURL() }.unwrap().to_string());
     assert!(location_url(&disp).starts_with("file:///") && location_url(&disp).ends_with(&format!("flit-shellwin-{}", std::process::id())));
@@ -109,18 +109,27 @@ fn a_registered_flit_window_receives_the_item_the_shell_asks_it_to_select() {
     let windows_dir = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
     unsafe { app.Navigate(&BSTR::from(windows_dir.as_str()), None, None, None, None) }.unwrap();
     let open = rx.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert_eq!((open.paths, open.target), (vec![windows_dir.clone().into_bytes()], OpenTarget::CurrentTab), "a utility steers the Flit tab");
+    assert_eq!((open.paths, open.target, open.window), (vec![windows_dir.clone().into_bytes()], OpenTarget::CurrentTab, Some(9)), "a utility steers the tab of this very Flit window");
     let new_tab = VARIANT::from(navOpenInNewTab.0);
     unsafe { app.Navigate2(&variant(&item), Some(&new_tab), None, None, None) }.unwrap();
     let open = rx.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert_eq!((open.paths, open.target), (vec![file.to_string_lossy().into_owned().into_bytes()], OpenTarget::NewTab));
+    assert_eq!((open.paths, open.target, open.window), (vec![file.to_string_lossy().into_owned().into_bytes()], OpenTarget::NewTab, Some(9)), "a new tab opens in the same window");
     unsafe { browser.BrowseObject(std::ptr::null(), SBSP_PARENT) }.unwrap();
     let open = rx.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(open.paths, [dir.parent().unwrap().to_string_lossy().into_owned().into_bytes()]);
     unsafe { browser.BrowseObject(child, SBSP_RELATIVE | SBSP_NEWBROWSER) }.unwrap();
     let open = rx.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!((open.paths, open.target), (vec![file.to_string_lossy().into_owned().into_bytes()], OpenTarget::NewWindow));
-    assert!(unsafe { browser.BrowseObject(std::ptr::null(), SBSP_NAVIGATEBACK) }.is_err());
+    let history = || {
+        let mut msg = MSG::default();
+        wait_for(|| unsafe { PeekMessageW(&mut msg, Some(hwnd), WM_SHELL_HISTORY, WM_SHELL_HISTORY, PM_REMOVE) }.as_bool().then_some(msg.wParam.0))
+    };
+    unsafe { browser.BrowseObject(std::ptr::null(), SBSP_NAVIGATEBACK) }.unwrap();
+    assert_eq!(history(), Some(0), "Back reaches this window");
+    unsafe { app.GoForward() }.unwrap();
+    assert_eq!(history(), Some(1));
+    unsafe { app.GoBack() }.unwrap();
+    assert_eq!(history(), Some(0));
     enable(false);
     let gone = wait_for(|| find(&windows, &folder).is_none().then_some(()));
     cleanup();

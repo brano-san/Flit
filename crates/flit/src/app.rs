@@ -1005,12 +1005,14 @@ impl<P: Platform> Handler<P> {
     }
 
     fn apply_opens(&mut self, window: &Win<P>) {
-        if self.queued_opens.is_empty() || self.active.is_some_and(|a| a != window.id()) {
+        if self.queued_opens.is_empty() || !self.windows.contains_key(&window.id()) {
             return;
         }
-        let Some(st) = self.windows.get_mut(&window.id()) else { return };
+        let ids: Vec<WindowId> = self.windows.keys().copied().collect();
+        let mine = open::take_for_window(&mut self.queued_opens, window.id(), self.active, &ids);
+        let Some(st) = self.windows.get_mut(&window.id()).filter(|_| !mine.is_empty()) else { return };
         let now = Instant::now();
-        for mut o in std::mem::take(&mut self.queued_opens) {
+        for mut o in mine {
             if o.is_empty() {
                 o.paths.push(Location::from_local(P::home()).to_bytes());
             }

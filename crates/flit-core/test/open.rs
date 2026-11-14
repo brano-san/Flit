@@ -145,7 +145,7 @@ fn select_routes_to_parent() {
 
 #[test]
 fn open_serializes() {
-    let o = Open { paths: vec![b"C:\\x".to_vec(), vec![0xED, 0xA0, 0x80]], select: vec![b"/tmp/a:b".to_vec()], target: OpenTarget::NewTab, cwd: Some(b"C:\\".to_vec()), tag: Some("Work".into()), properties: true, activation: Some("tok".into()) };
+    let o = Open { paths: vec![b"C:\\x".to_vec(), vec![0xED, 0xA0, 0x80]], select: vec![b"/tmp/a:b".to_vec()], target: OpenTarget::NewTab, cwd: Some(b"C:\\".to_vec()), tag: Some("Work".into()), properties: true, activation: Some("tok".into()), window: Some(3) };
     let bytes = postcard::to_allocvec(&o).unwrap();
     assert_eq!(postcard::from_bytes::<Open>(&bytes).unwrap(), o);
 }
@@ -192,4 +192,22 @@ fn unix_resolution_expands_and_maps_trash_while_windows_keeps_dollars() {
     assert!(typed_as_path("/no/such") && typed_as_path("~/x") && typed_as_path("$HOME"));
     assert!(typed_as_path("/bin/ls -la") && typed_as_path("./run") && typed_as_path("docs/notes") && typed_as_path("/home/u/My Documents"), "a path stays a path even with spaces or arguments");
     assert!(!typed_as_path("ls") && !typed_as_path("gedit notes.txt") && !typed_as_path("firefox https://example.org"), "a bare program name is still a command");
+}
+
+#[test]
+fn an_open_aimed_at_a_window_reaches_that_window_and_others_go_to_the_active_one() {
+    let aimed = |w: Option<u64>, path: &str| Open { paths: vec![path.as_bytes().to_vec()], window: w, ..Default::default() };
+    let mut queued = vec![aimed(Some(2), "a"), aimed(None, "b"), aimed(Some(9), "c")];
+    let windows = [1, 2];
+    assert_eq!(take_for_window(&mut queued, 1, Some(1), &windows), [aimed(None, "b"), aimed(Some(9), "c")], "a window that is gone falls back to the active one");
+    assert_eq!(take_for_window(&mut queued, 2, Some(1), &windows), [aimed(Some(2), "a")], "an inactive window still gets what was aimed at it");
+    assert!(queued.is_empty());
+}
+
+#[test]
+fn an_open_for_no_window_waits_for_the_active_one() {
+    let mut queued = vec![Open { paths: vec![b"b".to_vec()], ..Default::default() }];
+    assert!(take_for_window(&mut queued, 2, Some(1), &[1, 2]).is_empty());
+    assert_eq!(queued.len(), 1);
+    assert_eq!(take_for_window(&mut queued, 2, None, &[1, 2]).len(), 1, "with no active window the first one to ask takes it");
 }

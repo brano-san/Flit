@@ -2425,3 +2425,15 @@ fn a_document_or_several_pictures_do_not_change_the_background() {
         assert_eq!(app.tab().error.as_deref(), Some(S::OpsExtraSelectWallpaper.t()));
     }
 }
+
+#[test]
+fn back_and_forward_asked_by_the_shell_walk_the_tab_history() {
+    let mut app = app_at(r"C:\a");
+    app.navigate(Location::parse(r"C:\b").unwrap(), t0());
+    app.on_event(&Event::ShellVerb("back".into()), t0());
+    assert_eq!(app.tab().location().path(), &p(r"C:\a"));
+    app.on_event(&Event::ShellVerb("Forward".into()), t0());
+    assert_eq!(app.tab().location().path(), &p(r"C:\b"));
+    app.on_event(&Event::ShellVerb("forward".into()), t0());
+    assert_eq!(app.tab().location().path(), &p(r"C:\b"), "nothing ahead leaves the tab where it is");
+}

@@ -355,7 +355,7 @@ impl Window for Win32Window {
     }
 
     fn set_folder(&self, folder: Option<&FsPath>) {
-        crate::shellwin::show(self.hwnd(), folder);
+        crate::shellwin::show(self.hwnd(), self.id, folder);
     }
 
     fn set_selection(&self, selection: &dyn Fn() -> flit_platform::SelectionSource) -> bool {
@@ -1348,6 +1348,10 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
             }
             Some(LRESULT(0))
         }
+        crate::shellwin::WM_SHELL_HISTORY => {
+            s.send(Event::ShellVerb(if wp.0 == 1 { "forward" } else { "back" }.into()));
+            Some(LRESULT(0))
+        }
         crate::toast::WM_TOAST_CLICKED => {
             w.activate();
             Some(LRESULT(0))
@@ -1407,7 +1411,7 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
             crate::dragdrop::revoke(hwnd);
             OPEN.with_borrow_mut(|open| open.retain(|(h, _)| *h != hwnd.0 as isize));
             crate::prevhost::forget(hwnd);
-            crate::shellwin::show(hwnd, None);
+            crate::shellwin::show(hwnd, w.id, None);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             s.shared().destroyed(hwnd);
             Some(LRESULT(0))

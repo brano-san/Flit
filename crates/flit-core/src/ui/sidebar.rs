@@ -192,6 +192,7 @@ pub struct Places {
     pub libraries: Vec<Library>,
     pub recent: Vec<Recent>,
     pub recent_off: bool,
+    pub never_shown: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -367,6 +368,7 @@ pub(super) enum PlaceCmd {
     RestorePlaces,
     Eject(FsPath),
     Mount(FsPath),
+    Label(FsPath),
     Properties(FsPath),
     FileProperties(FsPath),
     Hide(Section),
@@ -1204,6 +1206,7 @@ impl App {
                 self.nav_prefs_changed();
             }
             PlaceCmd::Eject(drive) => self.effects.push(launch(Launch::Eject(drive))),
+            PlaceCmd::Label(drive) => self.ask_label(drive),
             PlaceCmd::Launch(l) => self.effects.push(launch(l)),
             PlaceCmd::Properties(path) if self.caps.unix_paths => self.properties_for(Some(path)),
             PlaceCmd::Properties(path) => self.effects.push(Effect::Properties(vec![path])),
@@ -1279,6 +1282,9 @@ impl App {
                 m.place(S::MenuEject.t(), PlaceCmd::Eject(loc.path().clone()), false);
             }
             a.drive_items(m, loc.path());
+            if a.side_label(loc.path()).is_some() {
+                m.place(S::MenuRename.t(), PlaceCmd::Label(loc.path().clone()), false);
+            }
             if a.supports("drive.disconnect") && a.nav.sidebar.places.drives.iter().any(|d| d.remote.is_some() && d.path == *loc.path() && d.path.kind() == PathKind::Drive) {
                 m.place(S::SidebarDriveDisconnect.t(), PlaceCmd::Launch(Launch::Disconnect(Some(loc.path().clone()))), false);
             }
@@ -1540,6 +1546,12 @@ impl App {
                 self.open_side_item(cur, m.ctrl, now);
                 return true;
             }
+            Key::F(2) if plain && head.is_none() && self.side_drive(cur).is_some() => {
+                if let Some(drive) = self.side_drive(cur) {
+                    self.ask_label(drive);
+                }
+                return true;
+            }
             Key::Delete if plain => {
                 if head.is_none() && self.nav.sidebar.items.get(cur).is_some_and(|it| it.section == Section::Bookmarks) {
                     self.toggle_pin_item(cur, now);
@@ -1565,6 +1577,31 @@ impl App {
         }
         self.reveal_side_cursor();
         true
+    }
+
+    fn side_drive(&self, i: usize) -> Option<FsPath> {
+        let item = self.nav.sidebar.items.get(i).filter(|it| it.section == Section::Storage)?;
+        self.side_label(item.loc.path()).map(|_| item.loc.path().clone())
+    }
+
+    pub(super) fn side_label(&self, drive: &FsPath) -> Option<String> {
+        if self.caps.unix_paths {
+            return None;
+        }
+        self.nav.sidebar.places.drives.iter().find(|d| d.path == *drive)?.volume_label()
+    }
+
+    pub(super) fn ask_label(&mut self, drive: FsPath) {
+        if let Some(label) = self.side_label(&drive) {
+            self.open_pick(super::palette::Palette::new(super::palette::Pick::Label(drive), Vec::new(), &label));
+        }
+    }
+
+    pub(super) fn relabel_drive(&mut self, drive: FsPath, text: &str) {
+        let label = text.trim();
+        if self.side_label(&drive).is_some_and(|old| old != label) {
+            self.effects.push(Effect::SetVolumeLabel { drive, label: label.to_owned() });
+        }
     }
 
     fn fold_side_section(&mut self) {

@@ -66,6 +66,7 @@ pub(super) enum Pick {
     Tags(TagPick),
     Setting(SettingPick),
     Server,
+    Label(FsPath),
     GoTo,
     Crumb(usize),
     Tabs,
@@ -91,6 +92,7 @@ impl Pick {
             Pick::Tags(t) => t.placeholder(),
             Pick::Setting(p) => p.placeholder(),
             Pick::Server if cfg!(windows) => S::SidebarDriveServerPromptWindows.t(),
+            Pick::Label(_) => S::SidebarDriveLabelPrompt.t(),
             Pick::Server => S::SidebarDriveServerPrompt.t(),
             Pick::GoTo | Pick::Crumb(_) => S::AddressGotoPlaceholder.t(),
             Pick::Tabs => S::MenusSearchTabsShort.t(),
@@ -116,6 +118,7 @@ impl Pick {
             Pick::Tags(t) => t.empty(),
             Pick::Setting(p) => p.empty(),
             Pick::Server => S::SidebarDriveServerEnter.t(),
+            Pick::Label(_) => S::SidebarDriveLabelEnter.t(),
             Pick::GoTo | Pick::Crumb(_) => S::AddressGotoEmpty.t(),
             Pick::Tabs => S::MenusNoTabs.t(),
             Pick::SaveLayout => S::MenusSaveLayoutHint.t(),
@@ -131,7 +134,7 @@ impl Pick {
     }
 
     fn is_input(&self) -> bool {
-        matches!(self, Pick::Shortcut(_) | Pick::Stream(_) | Pick::FolderIcon(_) | Pick::NewLibrary | Pick::LibraryAdd(_) | Pick::Server | Pick::SaveLayout | Pick::OpenWithCommand(_)) || matches!(self, Pick::Tags(t) if t.is_input()) || matches!(self, Pick::Setting(p) if p.is_input())
+        matches!(self, Pick::Shortcut(_) | Pick::Stream(_) | Pick::FolderIcon(_) | Pick::NewLibrary | Pick::LibraryAdd(_) | Pick::Server | Pick::Label(_) | Pick::SaveLayout | Pick::OpenWithCommand(_)) || matches!(self, Pick::Tags(t) if t.is_input()) || matches!(self, Pick::Setting(p) if p.is_input())
     }
 }
 

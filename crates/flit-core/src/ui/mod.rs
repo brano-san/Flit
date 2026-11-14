@@ -293,7 +293,8 @@ impl Column {
             Column::Free => SortField::Free,
             Column::FileSystem => SortField::FileSystem,
             Column::Percent => SortField::Percent,
-            Column::Attributes | Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => return None,
+            Column::Attributes => SortField::Attributes,
+            Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => return None,
         })
     }
 
@@ -1751,7 +1752,7 @@ impl App {
                 self.dispatch(routes, OpenTarget::CurrentTab, now);
             }
             Event::CloseRequested => self.close_window(now),
-            Event::ShellVerb(verb) => self.shell_verb(verb),
+            Event::ShellVerb(verb) => self.shell_verb(verb, now),
             Event::ShellError(message) => self.status(message.as_str()),
             Event::MenuCommand(k) => self.menu_command(*k, now),
             Event::ShowMenu { .. } | Event::ShellItems { .. } => {}

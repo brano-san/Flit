@@ -390,3 +390,22 @@ fn a_swap_at_any_chunk_boundary_breaks_sortedness() {
         o.swap(p, p + 1);
     }
 }
+
+#[test]
+fn attributes_sort_by_their_explorer_letters_and_plain_items_come_first() {
+    let mut l = Listing::default();
+    let mut k = SortKeys::new(CaseMode::Insensitive);
+    for (n, attrs) in [("system", attr::SYSTEM | attr::ARCHIVE_MARK), ("plain", 0), ("archived", attr::ARCHIVE_MARK), ("readonly", attr::READONLY), ("compressed", attr::ARCHIVE_MARK | attr::COMPRESSED)] {
+        let i = l.push(n.as_bytes(), Meta { attrs, ..Default::default() });
+        k.push(l.name(i));
+    }
+    let mut o = Vec::new();
+    let mut v = ViewSpec { sort: SortSpec { field: SortField::Attributes, ..Default::default() }, ..Default::default() };
+    sort(&l, &k, v, &mut o);
+    assert_eq!(names(&l, &o), ["plain", "archived", "compressed", "readonly", "system"]);
+    v.sort.descending = true;
+    sort(&l, &k, v, &mut o);
+    assert_eq!(names(&l, &o), ["system", "readonly", "compressed", "archived", "plain"]);
+    o.sort_by(|&a, &b| cmp(&l, &k, &v, a, b));
+    assert_eq!(names(&l, &o), ["system", "readonly", "compressed", "archived", "plain"], "the comparison used for live updates agrees");
+}

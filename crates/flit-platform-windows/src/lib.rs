@@ -10,6 +10,7 @@ mod digest;
 mod dragdrop;
 mod dwrite;
 mod engine;
+mod extensions;
 mod fileops;
 mod fs;
 mod update;
@@ -282,6 +283,10 @@ impl Platform for Windows {
 
     fn jump_list(pinned: &[Location], frequent: &[Location]) {
         jumplist::update(pinned, frequent)
+    }
+
+    fn never_shown_extensions() -> Vec<String> {
+        extensions::never_shown()
     }
 
     fn run_elevated(args: &[String]) -> Result<u32, PlatformError> {

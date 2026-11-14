@@ -18,7 +18,7 @@ use windows::Win32::UI::Shell::{
     IWebBrowser_Impl, SHCreateItemFromIDList, SHCreateShellItemArrayFromIDLists, SHGetNameFromIDList, ShellWindows, BHID_DataObject, BHID_SFObject, FOLDERSETTINGS, FVM_DETAILS, SIGDN, SIGDN_FILESYSPATH, SIGDN_NORMALDISPLAY, SIGDN_URL, SVGIO_ALLVIEW, SVGIO_SELECTION,
     SVGIO_TYPE_MASK, SVSI_SELECT, SWC_BROWSER, IPersistFolder2, SID_STopLevelBrowser, _SVGIO, ILRemoveLastID, SHGetFolderLocation, SIGDN_DESKTOPABSOLUTEPARSING, SBSP_NAVIGATEBACK, SBSP_NAVIGATEFORWARD, SBSP_NEWBROWSER, SBSP_PARENT, SBSP_RELATIVE, navOpenInBackgroundTab, navOpenInNewTab, navOpenInNewWindow,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, GetWindowThreadProcessId, IsIconic, SetForegroundWindow, ShowWindow, HMENU, MSG, SW_RESTORE};
+use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, GetWindowThreadProcessId, IsIconic, PostMessageW, SetForegroundWindow, ShowWindow, HMENU, MSG, SW_RESTORE, WM_APP};
 use windows_core::{implement, ComObject, IUnknown, IUnknownImpl, Interface, Ref};
 
 const LIBID_SHDOCVW: GUID = GUID::from_u128(0xeab22ac0_30c1_11cf_a7eb_0000c05bae0b);
@@ -31,6 +31,7 @@ enum Msg {
 }
 
 const REVOKE_WAIT: Duration = Duration::from_millis(500);
+pub(crate) const WM_SHELL_HISTORY: u32 = WM_APP + 0x49;
 
 #[derive(Clone, Default)]
 struct Selection {
@@ -42,6 +43,7 @@ struct Selection {
 struct State {
     on: bool,
     folders: HashMap<isize, Vec<u16>>,
+    ids: HashMap<isize, u64>,
     selections: HashMap<isize, flit_platform::SelectionSource>,
     worker: Option<Sender<Msg>>,
 }
@@ -78,10 +80,14 @@ pub fn enable(on: bool) {
     })
 }
 
-pub fn show(hwnd: HWND, folder: Option<&FsPath>) {
+pub fn show(hwnd: HWND, window: u64, folder: Option<&FsPath>) {
     let key = hwnd.0 as isize;
     let folder = folder.map(|f| f.to_wide(false));
     let ack = with(|s| {
+        match folder {
+            Some(_) => s.ids.insert(key, window),
+            None => s.ids.remove(&key),
+        };
         if s.folders.get(&key) == folder.as_ref() {
             return None;
         }
@@ -342,13 +348,22 @@ impl Browser_Impl {
         unsafe { (Interface::vtable(&array).BindToHandler)(array.as_raw(), std::ptr::null_mut(), &BHID_DataObject, riid, out).ok() }
     }
 
+    fn window(&self) -> Option<u64> {
+        with(|s| s.ids.get(&self.hwnd).copied())
+    }
+
     fn select_path(&self, path: FsPath) {
-        let _ = deliver(Open { select: vec![path.as_bytes().to_vec()], target: OpenTarget::CurrentTab, ..Default::default() });
+        let _ = deliver(Open { select: vec![path.as_bytes().to_vec()], target: OpenTarget::CurrentTab, window: self.window(), ..Default::default() });
     }
 
     fn navigate(&self, target: Option<String>, window: OpenTarget) -> windows::core::Result<()> {
         let target = target.ok_or(windows::core::Error::from(E_INVALIDARG))?;
-        deliver(Open { paths: vec![target.into_bytes()], target: window, ..Default::default() })
+        let here = (window != OpenTarget::NewWindow).then(|| self.window()).flatten();
+        deliver(Open { paths: vec![target.into_bytes()], target: window, window: here, ..Default::default() })
+    }
+
+    fn history(&self, forward: bool) -> windows::core::Result<()> {
+        unsafe { PostMessageW(Some(HWND(self.hwnd as _)), WM_SHELL_HISTORY, WPARAM(usize::from(forward)), LPARAM(0)) }
     }
 
     fn browse_target(&self, pidl: *const ITEMIDLIST, flags: u32) -> Option<String> {
@@ -534,7 +549,7 @@ impl IShellBrowser_Impl for Browser_Impl {
     }
     fn BrowseObject(&self, pidl: *const ITEMIDLIST, flags: u32) -> windows::core::Result<()> {
         if flags & (SBSP_NAVIGATEBACK | SBSP_NAVIGATEFORWARD) != 0 {
-            return unsupported();
+            return self.history(flags & SBSP_NAVIGATEFORWARD != 0);
         }
         let window = if flags & SBSP_NEWBROWSER != 0 { OpenTarget::NewWindow } else { OpenTarget::CurrentTab };
         self.navigate(self.browse_target(pidl, flags), window)
@@ -773,10 +788,10 @@ impl IEnumVARIANT_Impl for Walk_Impl {
 
 impl IWebBrowser_Impl for Browser_Impl {
     fn GoBack(&self) -> windows::core::Result<()> {
-        unsupported()
+        self.history(false)
     }
     fn GoForward(&self) -> windows::core::Result<()> {
-        unsupported()
+        self.history(true)
     }
     fn GoHome(&self) -> windows::core::Result<()> {
         unsupported()

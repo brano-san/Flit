@@ -583,7 +583,6 @@ fn bucket_label(s: &mut impl std::fmt::Write, table: &[S], bucket: u64) {
 
 const NO_ITEMS: &str = "--";
 const G_CALENDAR: &str = "\u{E787}";
-const ATTRIBUTE_LETTERS: [(u32, char); 6] = [(attr::READONLY, 'R'), (attr::HIDDEN, 'H'), (attr::SYSTEM, 'S'), (attr::ARCHIVE_MARK, 'A'), (attr::COMPRESSED, 'C'), (attr::ENCRYPTED, 'E')];
 const WINDOWS_COLUMNS: [Column; 12] = [
     Column::Name,
     Column::Type,
@@ -618,7 +617,7 @@ const WINDOWS_REPO_COLUMNS: [Column; 16] = [
 ];
 
 pub(super) fn attribute_letters(s: &mut impl std::fmt::Write, attrs: u32) {
-    for (bit, letter) in ATTRIBUTE_LETTERS {
+    for (bit, letter) in sort::ATTRIBUTE_LETTERS {
         if attrs & bit != 0 {
             let _ = s.write_char(letter);
         }
@@ -1011,7 +1010,14 @@ impl App {
     }
 
     fn never_shows_extension(&self, l: &Listing, i: u32) -> bool {
-        !self.caps.unix_paths && !l.entries[i as usize].is_dir() && NEVER_SHOWN_EXTENSIONS.iter().any(|e| l.ext(i).eq_ignore_ascii_case(e))
+        if self.caps.unix_paths || l.entries[i as usize].is_dir() {
+            return false;
+        }
+        let ext = l.ext(i);
+        match self.nav.sidebar.places.never_shown.as_slice() {
+            [] => NEVER_SHOWN_EXTENSIONS.iter().any(|e| ext.eq_ignore_ascii_case(e)),
+            known => known.iter().any(|e| ext.eq_ignore_ascii_case(e.as_bytes())),
+        }
     }
 
     pub(super) fn type_text<'a>(&self, arena: &'a Bump, l: &Listing, i: u32) -> &'a str {

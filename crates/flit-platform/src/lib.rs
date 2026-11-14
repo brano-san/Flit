@@ -582,6 +582,9 @@ pub trait Platform: 'static {
         None
     }
     fn jump_list(_pinned: &[Location], _frequent: &[Location]) {}
+    fn never_shown_extensions() -> Vec<String> {
+        Vec::new()
+    }
     fn run_elevated(_args: &[String]) -> Result<u32, PlatformError> {
         Err(PlatformError::unsupported("running with administrator rights"))
     }

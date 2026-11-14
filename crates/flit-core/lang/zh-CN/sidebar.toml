@@ -81,6 +81,8 @@ connect_server = "连接到服务器"
 server_prompt = "服务器地址，例如 smb://server/share 或 sftp://user@host"
 server_prompt_windows = "服务器地址，例如 smb://server/share 或 \\\\server\\share"
 server_enter = "按 Enter 连接到服务器"
+label_prompt = "驱动器的新卷标"
+label_enter = "按 Enter 重命名驱动器"
 
 [quick]
 created = "创建时间："

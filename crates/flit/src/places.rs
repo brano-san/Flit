@@ -199,7 +199,7 @@ fn collect<P: Platform>() -> Places {
             shown(k, &found).then_some((k, found))
         })
         .collect();
-    Places { folders, drives: P::drives(), wsl: P::wsl_distros(), recycle_bin: P::recycle_bin(), ..Default::default() }
+    Places { folders, drives: P::drives(), wsl: P::wsl_distros(), recycle_bin: P::recycle_bin(), never_shown: P::never_shown_extensions(), ..Default::default() }
 }
 
 fn load<T: DeserializeOwned>(path: &Path) -> Option<T> {

@@ -81,6 +81,8 @@ connect_server = "Connect to server"
 server_prompt = "Server address, for example smb://server/share or sftp://user@host"
 server_prompt_windows = "Server address, for example smb://server/share or \\\\server\\share"
 server_enter = "Enter connects to the server"
+label_prompt = "New label of the drive"
+label_enter = "Enter renames the drive"
 
 [quick]
 created = "Created:"
