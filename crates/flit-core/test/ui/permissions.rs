@@ -184,3 +184,73 @@ fn running_as_root_on_linux_warns_about_root_rather_than_windows_drag_and_drop()
     let shown = app.tab().error.clone().unwrap();
     assert!(shown.contains("administrator") && shown.contains("Windows"), "Windows keeps its own notice: {shown}");
 }
+
+fn launched(app: &mut App) -> Vec<Launch> {
+    app.drain_effects().filter_map(|e| if let Effect::Provider { req: ProviderRequest::Launch { launch, .. }, .. } = e { Some(launch) } else { None }).collect()
+}
+
+#[test]
+fn an_executable_script_asks_to_run_it_in_a_terminal_or_open_it() {
+    let path = p("/home/u/build.sh");
+    let answers = [(0, Launch::Execute(path.clone())), (1, Launch::RunInTerminal { program: path.clone() }), (2, Launch::Display(path.clone()))];
+    for (rights, expected) in answers {
+        let mut app = app_with(&["build.sh"]);
+        let tab = app.tab().id;
+        app.on_provider_event(ProviderEvent::OpenAsk { tab, path: path.clone(), ask: OpenAsk::Script }, Instant::now());
+        assert_eq!(app.asking(), Some("run_script"));
+        assert_eq!(app.jobs.form.as_ref().unwrap().buttons, ["Run", "Run in terminal", "Open", "Cancel"]);
+        for _ in 0..rights {
+            key(&mut app, Key::Right);
+        }
+        key(&mut app, Key::Enter);
+        assert_eq!(launched(&mut app), [expected]);
+        assert!(app.jobs.form.is_none());
+    }
+}
+
+#[test]
+fn cancelling_the_script_question_runs_nothing_and_a_second_question_waits_for_the_first() {
+    let mut app = app_with(&["a.sh", "b.sh"]);
+    let tab = app.tab().id;
+    app.on_provider_event(ProviderEvent::OpenAsk { tab, path: p("/home/u/a.sh"), ask: OpenAsk::Script }, Instant::now());
+    app.on_provider_event(ProviderEvent::OpenAsk { tab, path: p("/home/u/b.sh"), ask: OpenAsk::Script }, Instant::now());
+    assert!(matches!(&app.jobs.form.as_ref().unwrap().kind, Kind::RunScript { path, .. } if *path == p("/home/u/a.sh")));
+    key(&mut app, Key::Escape);
+    assert!(launched(&mut app).is_empty() && app.jobs.form.is_none());
+}
+
+#[test]
+fn a_file_no_application_opens_offers_the_application_chooser() {
+    let mut app = app_with(&["blob.xyz"]);
+    let tab = app.tab().id;
+    let apps = vec![crate::provider::AppChoice { name: "Hex".into(), program: p("/usr/share/applications/hex.desktop") }];
+    app.on_provider_event(ProviderEvent::OpenAsk { tab, path: p("/home/u/blob.xyz"), ask: OpenAsk::NoApp { mime: "application/x-xyz".into(), apps } }, Instant::now());
+    let palette = app.nav.palette.as_ref().expect("the chooser opens");
+    assert_eq!(palette.titles.last().map(String::as_str), Some("Hex"));
+    assert!(launched(&mut app).is_empty(), "nothing starts before a choice");
+}
+
+#[test]
+fn an_untrusted_launcher_is_allowed_and_started_without_a_terminal_choice() {
+    let mut app = app_with(&["Game.desktop"]);
+    let (tab, path) = (app.tab().id, p("/home/u/Game.desktop"));
+    app.on_provider_event(ProviderEvent::NotExecutable { tab, path: path.clone() }, Instant::now());
+    assert_eq!(app.jobs.form.as_ref().unwrap().buttons, ["Allow and run", "Cancel"]);
+    key(&mut app, Key::Enter);
+    let [(_, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::SetAccess { items: vec![path], edit: AccessEdit { mode: ModeEdit { set: 0o100, clear: 0 }, ..Default::default() } });
+}
+
+#[test]
+fn the_four_script_buttons_fit_a_narrow_window_without_overlapping() {
+    let mut app = App::new(Persisted { path: Location::parse("/home/u").unwrap(), ..Default::default() }, Vec::new(), 0, false, 1.0, (360, 480), Instant::now());
+    app.caps.unix_paths = true;
+    let tab = app.tab().id;
+    app.on_provider_event(ProviderEvent::OpenAsk { tab, path: p("/home/u/a-rather-long-script-name-for-a-narrow-window.sh"), ask: OpenAsk::Script }, Instant::now());
+    let mut g = crate::text::Gfx::new(crate::text::tests::Mono, 1024);
+    app.frame(&mut g, Instant::now());
+    let f = app.jobs.form.as_ref().unwrap();
+    assert_eq!(f.button_rects.len(), 4);
+    assert!(f.button_rects.iter().all(|b| b.x >= f.rect.x && b.right() <= f.rect.right() && b.w > 0.0), "{:?} in {:?}", f.button_rects, f.rect);
+    assert!(f.button_rects.windows(2).all(|w| w[0].right() <= w[1].x), "{:?}", f.button_rects);
+}

@@ -5,13 +5,21 @@ use super::App;
 use crate::i18n::S;
 use crate::name;
 use crate::path::FsPath;
-use crate::provider::{Access, AccessEdit, Accounts, Enclosed, FileOp, ModeEdit, OpId, TabId};
+use crate::provider::{Access, AccessEdit, Accounts, Enclosed, FileOp, Launch, ModeEdit, OpId, OpenAsk, TabId};
 use crate::undo::Origin;
+use crate::{ProviderId, ProviderRequest};
+use super::Effect;
 
 const CLASSES: [S; 3] = [S::PermissionsOwner, S::PermissionsGroup, S::PermissionsOthers];
 const FILE_BITS: [S; 3] = [S::PermissionsRead, S::PermissionsWrite, S::PermissionsExecute];
 const FOLDER_BITS: [S; 3] = [S::PermissionsList, S::PermissionsCreate, S::PermissionsEnter];
 const OWNER_EXEC: u32 = 0o100;
+const LAUNCHER: &[u8] = b".desktop";
+
+fn is_launcher(path: &FsPath) -> bool {
+    let name = path.file_name();
+    name.len() > LAUNCHER.len() && name[name.len() - LAUNCHER.len()..].eq_ignore_ascii_case(LAUNCHER)
+}
 const EXEC: u32 = 0o111;
 const READ_WRITE: u32 = 0o666;
 
@@ -249,9 +257,38 @@ impl App {
             return;
         }
         let shown = crate::tr!(S::UiQuoted, name = name::display(path.file_name()));
-        let controls = vec![Control::line(&crate::tr!(S::PermissionsNotExecutable, name = shown)), Control::line(S::PermissionsRunHint.t())];
+        let launcher = is_launcher(&path);
+        let hint = if launcher { S::PermissionsLauncherHint.t() } else { S::PermissionsRunHint.t() };
+        let controls = vec![Control::line(&crate::tr!(S::PermissionsNotExecutable, name = shown)), Control::line(hint)];
         let title = crate::tr!(S::PermissionsRunTitle, name = shown);
-        self.open_form(Form::new(Kind::AllowRun { tab, path }, &title, controls, vec![S::PermissionsAllowRun.t(), S::ActionsFileRunInTerminal.t(), S::WidgetsCancel.t()]));
+        let buttons = if launcher { vec![S::PermissionsAllowRun.t(), S::WidgetsCancel.t()] } else { vec![S::PermissionsAllowRun.t(), S::ActionsFileRunInTerminal.t(), S::WidgetsCancel.t()] };
+        self.open_form(Form::new(Kind::AllowRun { tab, path }, &title, controls, buttons));
+    }
+
+    pub(super) fn open_ask(&mut self, tab: TabId, path: FsPath, ask: OpenAsk) {
+        match ask {
+            OpenAsk::NoApp { mime, apps } => self.choose_app(vec![path], mime, apps),
+            OpenAsk::Script if self.jobs.form.is_none() => {
+                let shown = crate::tr!(S::UiQuoted, name = name::display(path.file_name()));
+                let controls = vec![Control::line(&crate::tr!(S::PermissionsScript, name = shown)), Control::line(S::PermissionsScriptHint.t())];
+                let title = crate::tr!(S::PermissionsRunTitle, name = shown);
+                let buttons = vec![S::PermissionsRun.t(), S::ActionsFileRunInTerminal.t(), S::MenuOpen.t(), S::WidgetsCancel.t()];
+                self.open_form(Form::new(Kind::RunScript { tab, path }, &title, controls, buttons));
+            }
+            OpenAsk::Script => {}
+        }
+    }
+
+    pub(super) fn submit_run_script(&mut self, f: Form, b: usize) -> Option<Form> {
+        if let Kind::RunScript { tab, path } = f.kind {
+            let launch = match b {
+                0 => Launch::Execute(path),
+                1 => Launch::RunInTerminal { program: path },
+                _ => Launch::Display(path),
+            };
+            self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch } });
+        }
+        None
     }
 
     pub(super) fn submit_allow_run(&mut self, f: Form, b: usize) -> Option<Form> {

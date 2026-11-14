@@ -350,3 +350,89 @@ fn root_terminals_keep_the_folder_through_sudo_or_pkexec() {
     let out = Command::new("/bin/sh").args(&here[2..]).env("SHELL", "/bin/pwd").output().unwrap();
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), t.path().to_str().unwrap());
 }
+
+fn write_mode(path: &Path, text: &str, mode: u32) -> PathBuf {
+    std::fs::write(path, text).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    path.to_path_buf()
+}
+
+fn text_editor() -> crate::apps::Entry {
+    crate::apps::parse_desktop("editor.desktop", Path::new("/usr/share/applications/editor.desktop"), "[Desktop Entry]\nType=Application\nName=Editor\nExec=editor %F\nMimeType=text/plain;\n", "").unwrap()
+}
+
+#[test]
+fn an_executable_script_asks_before_running_and_a_file_without_an_app_offers_the_chooser() {
+    let t = Temp::new("open-ask");
+    let entries = [text_editor()];
+    let assoc = crate::apps::Assoc::default();
+    let ask = |p: &Path| open_question(p, &entries, &assoc);
+    let script = write_mode(&t.path().join("build.sh"), "#!/bin/sh\necho hi\n", 0o755);
+    assert_eq!(ask(&script), Some(OpenAsk::Script));
+    let blob = write_mode(&t.path().join("blob.flit-unknown-type"), "\0\x01\x02binary", 0o644);
+    assert!(matches!(ask(&blob), Some(OpenAsk::NoApp { mime, apps }) if mime == "application/octet-stream" && apps.len() == 1));
+}
+
+#[test]
+fn ordinary_files_open_without_questions() {
+    let t = Temp::new("open-plain");
+    let entries = [text_editor()];
+    let assoc = crate::apps::Assoc::default();
+    let ask = |p: &Path| open_question(p, &entries, &assoc);
+    assert_eq!(ask(&write_mode(&t.path().join("notes.txt"), "words\n", 0o644)), None);
+    assert_eq!(ask(&write_mode(&t.path().join("on-fat.txt"), "every file on a FAT drive is executable\n", 0o755)), None, "no shebang, no question");
+    assert_eq!(ask(&write_mode(&t.path().join("plain.sh"), "#!/bin/sh\necho hi\n", 0o644)), None, "a script without the execute bit just opens");
+    assert_eq!(ask(&write_mode(&t.path().join("app.desktop"), "#!x\n[Desktop Entry]\n", 0o755)), None, "launchers have their own trust check");
+    assert_eq!(ask(t.path()), None);
+    let blob = write_mode(&t.path().join("blob.flit-unknown-type"), "\0\x01\x02binary", 0o644);
+    assert_eq!(open_question(&blob, &[], &assoc), None, "without any applications xdg-open gets its chance");
+}
+
+#[test]
+fn launchers_need_trust_unless_installed_or_executable_and_links_lead_to_folders() {
+    let t = Temp::new("launchers");
+    let app = "[Desktop Entry]\nType=Application\nName=Game\nIcon=game-icon\nExec=game\n";
+    let untrusted = write_mode(&t.path().join("Game.desktop"), app, 0o644);
+    assert!(needs_exec_bit(&untrusted));
+    assert!(!needs_exec_bit(&write_mode(&t.path().join("Mine.desktop"), app, 0o744)));
+    let apps = t.path().join("share/applications/kde");
+    std::fs::create_dir_all(&apps).unwrap();
+    let installed = write_mode(&apps.join("game.desktop"), app, 0o644);
+    assert!(crate::apps::trusted_launcher(&installed, &[t.path().join("share")]));
+    assert!(!crate::apps::trusted_launcher(&untrusted, &[t.path().join("share")]));
+    assert_eq!(crate::apps::launcher_icon(app).as_deref(), Some("game-icon"));
+    let docs = t.path().join("Docs dir");
+    std::fs::create_dir_all(&docs).unwrap();
+    let link = |name: &str, url: &str| write_mode(&t.path().join(name), &format!("[Desktop Entry]\nType=Link\nName=L\nURL={url}\n"), 0o644);
+    assert_eq!(launcher_folder(&link("docs.desktop", &format!("file://{}", docs.display()).replace(' ', "%20"))), Some(docs.clone()));
+    assert_eq!(launcher_folder(&link("plain.desktop", &docs.display().to_string())), Some(docs.clone()));
+    assert_eq!(launcher_folder(&link("web.desktop", "https://example.org/")), None);
+    assert_eq!(launcher_folder(&untrusted), None);
+    assert!(!needs_exec_bit(&link("site.desktop", "https://example.org/")), "links are followed without the trust question");
+}
+
+fn shell(script: &str) -> std::process::Child {
+    std::process::Command::new("sh").args(["-c", script]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0).spawn().unwrap()
+}
+
+#[test]
+fn a_program_that_ends_at_once_saying_something_is_reported_with_a_terminal_hint() {
+    assert_eq!(watch_start(shell("echo 'usage: tool FILE'; exit 2"), Duration::from_secs(5)).as_deref(), Some("usage: tool FILE"));
+    assert_eq!(watch_start(shell("echo 'error: no display' >&2"), Duration::from_secs(5)).as_deref(), Some("error: no display"));
+    assert_eq!(watch_start(shell("exit 3"), Duration::from_secs(5)).as_deref(), Some(""));
+    let started = Instant::now();
+    assert_eq!(watch_start(shell("(sleep 3) & echo started"), Duration::from_secs(5)).as_deref(), Some("started"), "a child keeping the pipe open does not hold Flit");
+    assert!(started.elapsed() < Duration::from_secs(2));
+    let hint = console_hint("\"tool\"", "usage: tool FILE");
+    assert_eq!(hint, flit_core::i18n::S::ErrorsOpsExtraEndedSaying.en().replace("{name}", "\"tool\"").replace("{words}", "usage: tool FILE"));
+    assert_eq!(console_hint("\"tool\"", ""), flit_core::i18n::S::ErrorsOpsExtraEndedAtOnce.en().replace("{name}", "\"tool\""));
+}
+
+#[test]
+fn programs_that_keep_running_or_end_quietly_are_not_reported() {
+    let started = Instant::now();
+    assert_eq!(watch_start(shell("sleep 2"), Duration::from_millis(200)), None);
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert_eq!(watch_start(shell("true"), Duration::from_secs(5)), None);
+    assert_eq!(first_words(&"x".repeat(500).into_bytes()).chars().count(), 161);
+}

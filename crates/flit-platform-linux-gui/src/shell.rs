@@ -1,6 +1,6 @@
 use crate::{fs, places};
 use flit_core::i18n::S;
-use flit_core::provider::{FileOp, Launch};
+use flit_core::provider::{FileOp, Launch, OpenAsk};
 use flit_core::ui::{Bitmap, IconKind, IconRequest};
 use flit_core::path::PathKind;
 use flit_core::FsPath;
@@ -254,7 +254,148 @@ fn program_file(path: &Path) -> bool {
 }
 
 pub fn needs_exec_bit(path: &Path) -> bool {
-    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 == 0) && program_file(path)
+    let program = std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 == 0) && program_file(path);
+    program || launcher_app(path).is_some() && !crate::apps::trusted_launcher(path, &crate::apps::data_dirs())
+}
+
+const LAUNCHER_MAX: u64 = 1 << 20;
+const SAID_MAX: usize = 4096;
+const SAID_SHOWN: usize = 160;
+const QUIET_START: Duration = Duration::from_millis(600);
+const DRAIN_WAIT: Duration = Duration::from_millis(200);
+
+fn is_launcher(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e.eq_ignore_ascii_case("desktop"))
+}
+
+fn launcher_text(path: &Path) -> Option<String> {
+    let small = is_launcher(path) && std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() <= LAUNCHER_MAX);
+    small.then(|| std::fs::read_to_string(path).ok()).flatten()
+}
+
+fn launcher_app(path: &Path) -> Option<crate::apps::Entry> {
+    crate::apps::parse_desktop("", path, &launcher_text(path)?, "")
+}
+
+pub fn launcher_folder(path: &Path) -> Option<PathBuf> {
+    let url = crate::apps::link_url(&launcher_text(path)?)?;
+    let local = if url.starts_with('/') { url.into_bytes() } else { crate::instance::decode_uri(url.as_bytes())? };
+    Some(PathBuf::from(OsString::from_vec(local))).filter(|p| p.is_dir())
+}
+
+fn open_launcher(path: &Path) -> Option<Result<(), PlatformError>> {
+    let text = launcher_text(path)?;
+    if let Some(url) = crate::apps::link_url(&text) {
+        return Some(xdg_open(OsStr::new(&url)));
+    }
+    crate::apps::parse_desktop("", path, &text, "")?;
+    if !crate::apps::trusted_launcher(path, &crate::apps::data_dirs()) {
+        return None;
+    }
+    let token = crate::window::activation_token();
+    Some(crate::apps::launch(path, &[], token.as_deref()).map_err(|e| spawn_error(&path.display().to_string(), &e)))
+}
+
+pub fn executable_script(path: &Path) -> bool {
+    let Ok(c) = std::ffi::CString::new(path.as_os_str().as_bytes()) else { return false };
+    if unsafe { libc::access(c.as_ptr(), libc::X_OK) } != 0 {
+        return false;
+    }
+    let mut head = [0u8; 2];
+    std::fs::File::open(path).and_then(|mut f| f.read_exact(&mut head)).is_ok() && head == *b"#!"
+}
+
+pub fn open_question(path: &Path, entries: &[crate::apps::Entry], assoc: &crate::apps::Assoc) -> Option<OpenAsk> {
+    if is_launcher(path) || !std::fs::metadata(path).is_ok_and(|m| m.is_file()) || runs_directly(path) {
+        return None;
+    }
+    if executable_script(path) {
+        return Some(OpenAsk::Script);
+    }
+    if entries.is_empty() {
+        return None;
+    }
+    let mime = crate::mime::mime_of_file(path);
+    crate::apps::handlers_by_lineage(&mime, entries, assoc, crate::mime::parents).is_empty().then(|| OpenAsk::NoApp { mime, apps: crate::apps::choices(entries) })
+}
+
+fn open_without_xdg_open(path: &Path) -> Option<Result<(), PlatformError>> {
+    let c = crate::apps::catalog();
+    let mime = crate::mime::mime_of_file(path);
+    let app = crate::apps::handlers_by_lineage(&mime, &c.entries, &c.assoc, crate::mime::parents).first().map(|e| e.path.clone())?;
+    let token = crate::window::activation_token();
+    Some(crate::apps::launch(&app, &[path.to_path_buf()], token.as_deref()).map_err(|e| spawn_error(&app.display().to_string(), &e)))
+}
+
+#[derive(Default)]
+struct Said {
+    bytes: Vec<u8>,
+    closed: usize,
+}
+
+fn drain(mut pipe: impl Read + Send + 'static, said: std::sync::Arc<(std::sync::Mutex<Said>, std::sync::Condvar)>) {
+    let _ = std::thread::Builder::new().name("flit-drain".into()).spawn(move || {
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = pipe.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            let mut s = said.0.lock().unwrap_or_else(|e| e.into_inner());
+            let room = SAID_MAX.saturating_sub(s.bytes.len()).min(n);
+            s.bytes.extend_from_slice(&buf[..room]);
+        }
+        said.0.lock().unwrap_or_else(|e| e.into_inner()).closed += 1;
+        said.1.notify_all();
+    });
+}
+
+pub fn first_words(output: &[u8]) -> String {
+    let text = String::from_utf8_lossy(output);
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default();
+    match line.char_indices().nth(SAID_SHOWN) {
+        Some((at, _)) => format!("{}…", &line[..at]),
+        None => line.to_owned(),
+    }
+}
+
+pub fn watch_start(mut child: Child, limit: Duration) -> Option<String> {
+    let said = std::sync::Arc::new((std::sync::Mutex::new(Said::default()), std::sync::Condvar::new()));
+    let mut opened = 0;
+    if let Some(out) = child.stdout.take() {
+        drain(out, said.clone());
+        opened += 1;
+    }
+    if let Some(err) = child.stderr.take() {
+        drain(err, said.clone());
+        opened += 1;
+    }
+    let end = Instant::now() + limit;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let guard = said.0.lock().unwrap_or_else(|e| e.into_inner());
+                let (guard, _) = said.1.wait_timeout_while(guard, DRAIN_WAIT, |s| s.closed < opened).unwrap_or_else(|e| e.into_inner());
+                let words = first_words(&guard.bytes);
+                return (!status.success() || !words.is_empty()).then_some(words);
+            }
+            Ok(None) if Instant::now() < end => std::thread::sleep(Duration::from_millis(10)),
+            Ok(None) => {
+                let _ = std::thread::Builder::new().name("flit-reap".into()).spawn(move || {
+                    let _ = child.wait();
+                });
+                return None;
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+pub fn console_hint(name: &str, words: &str) -> String {
+    if words.is_empty() {
+        flit_core::tr_en!(flit_core::i18n::S::ErrorsOpsExtraEndedAtOnce, name = name)
+    } else {
+        flit_core::tr_en!(flit_core::i18n::S::ErrorsOpsExtraEndedSaying, name = name, words = words)
+    }
 }
 
 fn run_directly(path: &Path) -> Result<(), PlatformError> {
@@ -265,7 +406,15 @@ fn run_directly(path: &Path) -> Result<(), PlatformError> {
     if let Some(t) = crate::window::activation_token() {
         cmd.env("XDG_ACTIVATION_TOKEN", &t).env("DESKTOP_STARTUP_ID", &t);
     }
-    detach(cmd).map_err(|e| spawn_error(&path.display().to_string(), &e))
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0);
+    let child = cmd.spawn().map_err(|e| spawn_error(&path.display().to_string(), &e))?;
+    match watch_start(child, QUIET_START) {
+        Some(words) => {
+            let name = flit_core::tr!(flit_core::i18n::S::UiQuoted, name = path.file_name().unwrap_or_default().to_string_lossy());
+            Err(PlatformError::new(-1, console_hint(&name, &words)))
+        }
+        None => Ok(()),
+    }
 }
 
 pub fn split_args(text: &str) -> Vec<String> {
@@ -298,6 +447,8 @@ fn launch(l: &Launch) -> Result<(), PlatformError> {
         Launch::Terminal { dirs, admin: true } => dirs.iter().try_for_each(|d| open_root_terminal(Path::new(os(d)))),
         Launch::Terminal { dirs, .. } => dirs.iter().try_for_each(|d| open_terminal(Path::new(os(d)))),
         Launch::RunInTerminal { program } => run_in_terminal(Path::new(os(program))),
+        Launch::Execute(program) => run_directly(Path::new(os(program))),
+        Launch::Display(file) => xdg_open(os(file)),
         Launch::With { program, args } if program.as_bytes().ends_with(b".desktop") => {
             let files: Vec<PathBuf> = args.iter().filter_map(|a| host(a).map(Path::to_path_buf)).collect();
             let token = crate::window::activation_token();
@@ -344,7 +495,8 @@ impl Shell for LinuxShell {
             return link_icon(req, target);
         }
         let picture = (req.kind == IconKind::Thumbnail).then(|| self.thumbnail(req)).flatten();
-        picture.or_else(|| crate::icons::icon(&icon_names(req), req.size))
+        let own = || (req.kind == IconKind::File).then(|| host(&req.path).and_then(launcher_text)).flatten().and_then(|t| crate::apps::launcher_icon(&t));
+        picture.or_else(|| own().and_then(|name| crate::apps::icon_image(&name, req.size))).or_else(|| crate::icons::icon(&icon_names(req), req.size))
     }
 
     fn thumbnail(&mut self, req: &IconRequest) -> Option<Bitmap> {
@@ -371,7 +523,24 @@ impl Shell for LinuxShell {
         if runs_directly(p) {
             return run_directly(p);
         }
+        if let Some(done) = open_launcher(p) {
+            return done;
+        }
+        if on_path(OsStr::new("xdg-open")).is_none() {
+            if let Some(done) = open_without_xdg_open(p) {
+                return done;
+            }
+        }
         xdg_open(os(path))
+    }
+
+    fn open_ask(&mut self, path: &FsPath) -> Option<OpenAsk> {
+        let c = crate::apps::catalog();
+        open_question(host(path)?, &c.entries, &c.assoc)
+    }
+
+    fn shortcut_folder(&mut self, link: &FsPath) -> Option<FsPath> {
+        crate::xdg::fs_path(&launcher_folder(host(link)?)?)
     }
 
     fn launch(&mut self, l: &Launch) -> Result<(), PlatformError> {

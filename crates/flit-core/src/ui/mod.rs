@@ -176,7 +176,7 @@ const MAX_OPEN: usize = 16;
 const MAX_THUMB_STATES: usize = 1 << 16;
 const MAX_ROUTES: usize = 32;
 
-const PER_FILE_ICON_EXT: [&[u8]; 6] = [b"exe", b"ico", b"lnk", b"url", b"cur", b"ani"];
+const PER_FILE_ICON_EXT: [&[u8]; 7] = [b"exe", b"ico", b"lnk", b"url", b"cur", b"ani", b"desktop"];
 
 const G_BACK: &str = "\u{E72B}";
 const G_FORWARD: &str = "\u{E72A}";
@@ -1354,6 +1354,7 @@ impl App {
             }
             ProviderEvent::Access { id, items, accounts, .. } => self.properties_access(id, items, accounts),
             ProviderEvent::NotExecutable { tab, path } => self.ask_allow_run(tab, path),
+            ProviderEvent::OpenAsk { tab, path, ask } => self.open_ask(tab, path, ask),
         }
     }
 

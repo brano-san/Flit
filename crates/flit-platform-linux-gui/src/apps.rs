@@ -42,7 +42,7 @@ fn localized<'a>(fields: &HashMap<&str, &'a str>, key: &str, lang: &str) -> Opti
     [format!("{key}[{country}]"), format!("{key}[{short}]"), key.to_owned()].iter().find_map(|k| fields.get(k.as_str()).copied())
 }
 
-pub fn parse_desktop(id: &str, path: &Path, text: &str, lang: &str) -> Option<Entry> {
+fn main_group(text: &str) -> HashMap<&str, &str> {
     let mut fields = HashMap::new();
     let mut inside = false;
     for line in text.lines().map(str::trim) {
@@ -56,6 +56,28 @@ pub fn parse_desktop(id: &str, path: &Path, text: &str, lang: &str) -> Option<En
             }
         }
     }
+    fields
+}
+
+pub fn link_url(text: &str) -> Option<String> {
+    let fields = main_group(text);
+    let url = fields.get("URL").filter(|u| !u.is_empty() && fields.get("Type") == Some(&"Link"))?;
+    Some(url.to_string())
+}
+
+pub fn launcher_icon(text: &str) -> Option<String> {
+    main_group(text).get("Icon").filter(|i| !i.is_empty()).map(|i| i.to_string())
+}
+
+pub fn trusted_launcher(path: &Path, data: &[PathBuf]) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let installed = |p: &Path| data.iter().any(|d| p.starts_with(d.join("applications")));
+    installed(path) || installed(&real) || std::fs::metadata(&real).is_ok_and(|m| m.permissions().mode() & 0o100 != 0)
+}
+
+pub fn parse_desktop(id: &str, path: &Path, text: &str, lang: &str) -> Option<Entry> {
+    let fields = main_group(text);
     if fields.get("Type") != Some(&"Application") {
         return None;
     }
@@ -289,15 +311,19 @@ pub fn catalog() -> Arc<Catalog> {
     }
 }
 
-fn menu_image(icon: &str) -> Option<MenuImage> {
+pub fn icon_image(icon: &str, px: u32) -> Option<flit_core::ui::Bitmap> {
     if icon.is_empty() {
         return None;
     }
-    let bitmap = match icon.starts_with('/') {
-        true => crate::icons::render(Path::new(icon), ICON_PX),
-        false => crate::icons::icon(&[icon.trim_end_matches(".png").trim_end_matches(".svg").to_owned()], ICON_PX),
-    };
-    bitmap.map(MenuImage::pixels)
+    if icon.starts_with('/') {
+        crate::icons::render(Path::new(icon), px)
+    } else {
+        crate::icons::icon(&[icon.trim_end_matches(".png").trim_end_matches(".svg").to_owned()], px)
+    }
+}
+
+fn menu_image(icon: &str) -> Option<MenuImage> {
+    icon_image(icon, ICON_PX).map(MenuImage::pixels)
 }
 
 pub fn choices(entries: &[Entry]) -> Vec<AppChoice> {

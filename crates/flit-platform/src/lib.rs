@@ -301,6 +301,9 @@ pub trait Shell: Sized {
     fn access(&mut self, _items: &[FsPath]) -> Option<(Vec<Option<Access>>, Accounts)> {
         None
     }
+    fn open_ask(&mut self, _path: &FsPath) -> Option<flit_core::provider::OpenAsk> {
+        None
+    }
     fn needs_exec_bit(&mut self, _path: &FsPath) -> bool {
         false
     }

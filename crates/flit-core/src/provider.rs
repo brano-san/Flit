@@ -192,12 +192,20 @@ pub enum Launch {
     ChooseApp { files: Vec<FsPath>, mime: String, apps: Vec<AppChoice> },
     SetDefault { program: FsPath, mime: String },
     Custom { command: String, files: Vec<FsPath>, mime: String, remember: bool },
+    Execute(FsPath),
+    Display(FsPath),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppChoice {
     pub name: String,
     pub program: FsPath,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OpenAsk {
+    Script,
+    NoApp { mime: String, apps: Vec<AppChoice> },
 }
 
 impl Launch {
@@ -219,6 +227,8 @@ impl Launch {
             }
             Launch::SetDefault { program, mime } => Launch::SetDefault { program: f(program)?, mime: mime.clone() },
             Launch::Custom { command, files, mime, remember } => Launch::Custom { command: command.clone(), files: all(files)?, mime: mime.clone(), remember: *remember },
+            Launch::Execute(program) => Launch::Execute(f(program)?),
+            Launch::Display(file) => Launch::Display(f(file)?),
         })
     }
 }
@@ -452,6 +462,7 @@ pub enum ProviderEvent {
     Status { tab: TabId, gen: u64, text: String },
     Access { tab: TabId, id: OpId, items: Vec<Option<Access>>, accounts: Accounts },
     NotExecutable { tab: TabId, path: FsPath },
+    OpenAsk { tab: TabId, path: FsPath, ask: OpenAsk },
 }
 
 #[cfg(test)]

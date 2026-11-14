@@ -311,6 +311,11 @@ fn is_shortcut(p: &FsPath) -> bool {
     b.len() > 4 && b[b.len() - 4..].eq_ignore_ascii_case(b".lnk")
 }
 
+fn is_launcher(p: &FsPath) -> bool {
+    let b = p.as_bytes();
+    p.kind() == PathKind::Unix && b.len() > 8 && b[b.len() - 8..].eq_ignore_ascii_case(b".desktop")
+}
+
 #[cfg(windows)]
 fn from_std(p: &std::path::Path) -> Option<FsPath> {
     let s = p.to_string_lossy();
@@ -343,13 +348,23 @@ fn shell_event(tab: TabId, done: Result<Option<ProviderEvent>, PlatformError>) -
 
 fn run_shell<S: Shell>(sh: &mut S, tab: TabId, job: ShellJob) -> Result<Option<ProviderEvent>, PlatformError> {
     let go = |path: FsPath| Some(ProviderEvent::Navigate { tab, path });
+    let job = match job {
+        ShellJob::Open(p) if is_launcher(&p) => match sh.shortcut_folder(&p) {
+            Some(dir) => return Ok(go(dir)),
+            None => ShellJob::Open(p),
+        },
+        job => job,
+    };
     match job {
         ShellJob::Open(p) if is_shortcut(&p) => match sh.shortcut_folder(&p) {
             Some(dir) => Ok(go(dir)),
             None => sh.open(&p).map(|()| None),
         },
         ShellJob::Open(p) if sh.needs_exec_bit(&p) => Ok(Some(ProviderEvent::NotExecutable { tab, path: p })),
-        ShellJob::Open(p) => sh.open(&p).map(|()| None),
+        ShellJob::Open(p) => match sh.open_ask(&p) {
+            Some(ask) => Ok(Some(ProviderEvent::OpenAsk { tab, path: p, ask })),
+            None => sh.open(&p).map(|()| None),
+        },
         ShellJob::Access(id, items) => Ok(sh.access(&items).map(|(items, accounts)| ProviderEvent::Access { tab, id, items, accounts })),
         ShellJob::Launch(Launch::Mount(device)) => sh.mount(&device).map(go),
         ShellJob::Launch(Launch::Unlock { device, passphrase }) => sh.unlock(&device, &passphrase.0).map(go),

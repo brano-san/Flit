@@ -442,7 +442,7 @@ pub(crate) fn commands(launch: &Launch, terminal: Option<&str>) -> Vec<Command> 
                 .collect(),
         },
         Launch::RunInTerminal { program } => run_in_terminal(program, terminal).into_iter().collect(),
-        Launch::Eject(_) | Launch::Unmount(_) | Launch::Mount(_) | Launch::Unlock { .. } | Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) | Launch::Reveal { .. } | Launch::ChooseApp { .. } | Launch::SetDefault { .. } | Launch::Custom { .. } => Vec::new(),
+        Launch::Eject(_) | Launch::Unmount(_) | Launch::Mount(_) | Launch::Unlock { .. } | Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) | Launch::Reveal { .. } | Launch::ChooseApp { .. } | Launch::SetDefault { .. } | Launch::Custom { .. } | Launch::Execute(_) | Launch::Display(_) => Vec::new(),
     }
 }
 

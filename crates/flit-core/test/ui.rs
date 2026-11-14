@@ -462,3 +462,14 @@ fn shutdown_cancels_jobs_and_stops_watches() {
     assert!(fx.iter().any(|e| matches!(e, Effect::Provider { provider: ProviderId::Wsl(d), req: ProviderRequest::Watch { tab: 2, path: None, .. } } if d == "Debian")));
     assert!(tokens.iter().all(|(c, g)| !c.is_current(*g)));
 }
+
+#[test]
+fn desktop_launchers_get_their_own_icons_while_other_files_share_one_per_type() {
+    let file = crate::listing::Entry { size: 1, modified: 0, created: 0, accessed: 0, name_off: 0, attrs: 0, name_len: 0, ext_len: 0, tags: 0 };
+    let (firefox, kind) = icon_key(b"firefox.desktop", b"desktop", &file, 16, b"/home/u/Desktop", 0);
+    let (gimp, _) = icon_key(b"gimp.desktop", b"DESKTOP", &file, 16, b"/home/u/Desktop", 0);
+    assert_eq!(kind, IconKind::File);
+    assert_ne!(firefox, gimp);
+    let (a, kind) = icon_key(b"a.txt", b"txt", &file, 16, b"/home/u/Desktop", 0);
+    assert_eq!((kind, a), (IconKind::Type, icon_key(b"b.txt", b"txt", &file, 16, b"/home/u", 0).0));
+}

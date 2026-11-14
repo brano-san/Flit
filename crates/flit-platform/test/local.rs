@@ -414,7 +414,16 @@ impl Shell for LinkShell {
         Err(PlatformError::new(2, format!("{launch:?}")))
     }
     fn shortcut_folder(&mut self, link: &FsPath) -> Option<FsPath> {
-        link.as_bytes().ends_with(b"docs.LNK").then(|| p(r"D:\docs"))
+        match link.as_bytes() {
+            b"/home/u/Docs.desktop" => Some(p("/home/u/Documents")),
+            b => b.ends_with(b"docs.LNK").then(|| p(r"D:\docs")),
+        }
+    }
+    fn needs_exec_bit(&mut self, path: &FsPath) -> bool {
+        path.as_bytes().ends_with(b"untrusted.desktop")
+    }
+    fn open_ask(&mut self, path: &FsPath) -> Option<flit_core::provider::OpenAsk> {
+        path.as_bytes().ends_with(b".sh").then_some(flit_core::provider::OpenAsk::Script)
     }
 }
 impl FileOps for LinkShell {
@@ -491,6 +500,24 @@ fn a_slow_server_connection_does_not_hold_up_opening_files() {
     rest.sort_by_key(|e| format!("{e:?}"));
     assert_eq!(rest[0], ProviderEvent::Navigate { tab: 7, path: p(r"C:\mnt\share") });
     assert!(matches!(&rest[1], ProviderEvent::OpDone { tab: 7, error: Some(e), .. } if e.contains("sftp://gone/ is not responding")));
+}
+
+#[test]
+fn launchers_to_folders_navigate_and_scripts_ask_before_opening() {
+    let (tx, rx) = unbounded();
+    let provider = LocalProvider::new::<_, NoWatch, LinkShell>(fs(), 1, tx, Arc::new(|| {})).unwrap();
+    let next = || rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let opened = |e: ProviderEvent| matches!(e, ProviderEvent::OpDone { error: Some(e), .. } if e.starts_with("opened "));
+    provider.submit(ProviderRequest::Open { tab: 3, path: p("/home/u/Docs.desktop") });
+    assert_eq!(next(), ProviderEvent::Navigate { tab: 3, path: p("/home/u/Documents") });
+    provider.submit(ProviderRequest::Open { tab: 3, path: p("/home/u/untrusted.desktop") });
+    assert_eq!(next(), ProviderEvent::NotExecutable { tab: 3, path: p("/home/u/untrusted.desktop") }, "a launcher that is not a folder link still passes the trust check");
+    provider.submit(ProviderRequest::Open { tab: 3, path: p("/home/u/run.sh") });
+    assert_eq!(next(), ProviderEvent::OpenAsk { tab: 3, path: p("/home/u/run.sh"), ask: flit_core::provider::OpenAsk::Script });
+    provider.submit(ProviderRequest::Open { tab: 3, path: p("/home/u/app.desktop") });
+    assert!(opened(next()), "a trusted launcher reaches the shell");
+    provider.submit(ProviderRequest::Open { tab: 3, path: p("/home/u/notes.txt") });
+    assert!(opened(next()), "ordinary files open without a question");
 }
 
 #[test]
