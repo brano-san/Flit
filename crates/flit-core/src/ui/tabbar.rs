@@ -395,8 +395,17 @@ impl App {
                 self.open_tab_menu();
             }
             Hit::Nav(i @ 0..=1) => self.history_menu(i),
+            Hit::None if self.in_title(y) && !self.layout.new_tab.contains(x, y) => self.open_strip_menu(x, y),
             _ => {}
         }
+    }
+
+    pub(super) fn open_strip_menu(&mut self, x: f32, y: f32) {
+        let menu = self.collect(|_, m| {
+            m.action("tab.new", S::ActionsTabNew.t());
+            m.action("tab.reopen", S::MenuReopenClosedTab.t());
+        });
+        self.flit_menu(x, y, menu);
     }
 
     pub(super) fn open_tab_menu(&mut self) {

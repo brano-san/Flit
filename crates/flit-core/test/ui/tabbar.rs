@@ -571,3 +571,28 @@ fn a_new_tab_opens_next_to_the_current_one() {
     assert_eq!(names(&app), [r"C:\a", r"C:\a", r"C:\b", r"C:\b", r"C:\c"]);
     assert_eq!(app.cur, 1);
 }
+
+#[test]
+fn right_click_on_the_empty_strip_opens_new_tab_and_reopen() {
+    let mut app = app_with(&[r"C:\a", r"C:\b"]);
+    deliver(&mut app, &[("x", false)]);
+    let t = app.layout.title;
+    let y = t.y + t.h / 2.0;
+    let mut at = None;
+    for k in (0..t.w as usize).rev() {
+        let cx = t.x + k as f32;
+        if app.hit(cx, y) == crate::ui::Hit::None && !app.layout.new_tab.contains(cx, y) {
+            at = Some((cx, y));
+            break;
+        }
+    }
+    let (x, y) = at.expect("empty strip room");
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Right, clicks: 1 }, Instant::now());
+    app.on_event(&Event::MouseUp { x, y, button: MouseButton::Right }, Instant::now());
+    let labels: Vec<String> = app.drain_effects().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m.menu.into_iter().filter_map(|i| if let MenuItem::Command { label, .. } = i { Some(label) } else { None }).collect()) } else { None }).expect("a strip menu");
+    assert_eq!(labels, ["Open New Tab", "Reopen closed tab"]);
+    let tabs = app.tabs().len();
+    app.on_event(&Event::MenuCommand(0), Instant::now());
+    assert_eq!(app.tabs().len(), tabs + 1, "New tab from the strip menu opens one");
+}
+
