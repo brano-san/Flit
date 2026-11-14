@@ -729,7 +729,7 @@ impl App {
             Kind::Password { .. } => self.submit_password(f),
             Kind::Unlock { .. } => self.submit_unlock(f),
             Kind::Hashes(_) => self.submit_hashes(f),
-            Kind::Properties(_) => self.submit_properties(f),
+            Kind::Properties(_) => self.submit_properties_form(f),
             Kind::AllowRun { .. } => self.submit_allow_run(f, b),
             Kind::RunScript { .. } => self.submit_run_script(f, b),
             Kind::GitAuth { .. } => self.submit_git_auth(f, b),

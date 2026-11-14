@@ -3,7 +3,7 @@ mod extract;
 mod index;
 mod names;
 mod pzip;
-mod zone;
+pub mod zone;
 
 pub use index::{days_from_civil, dos_ticks};
 pub use names::{decode, detect, safe_path};

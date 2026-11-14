@@ -2,6 +2,7 @@ use crate::engine;
 use crate::recycle::{self, info_file};
 use crate::shell::{owner_window, shell_addressable, ShellCom};
 use crate::{clipboard, err, take_pwstr};
+use flit_core::listing::attr;
 use flit_core::provider::{FileOp, Stage, Template};
 use flit_core::FsPath;
 use flit_core::i18n::S;
@@ -14,7 +15,10 @@ use std::os::windows::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 use windows::core::{s, Interface, HRESULT, PCWSTR, PWSTR};
 use windows::Win32::Foundation::ERROR_CANCELLED;
-use windows::Win32::Storage::FileSystem::{CopyFile2, CreateDirectoryW, DeleteFileW, GetFileAttributesW, MoveFileExW, COPYFILE2_EXTENDED_PARAMETERS, COPY_FILE_FAIL_IF_EXISTS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, INVALID_FILE_ATTRIBUTES, MOVE_FILE_FLAGS};
+use windows::Win32::Storage::FileSystem::{
+    CopyFile2, CreateDirectoryW, DeleteFileW, GetFileAttributesW, MoveFileExW, SetFileAttributesW, COPYFILE2_EXTENDED_PARAMETERS, COPY_FILE_FAIL_IF_EXISTS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL,
+    FILE_ATTRIBUTE_READONLY, FILE_FLAGS_AND_ATTRIBUTES, INVALID_FILE_ATTRIBUTES, MOVE_FILE_FLAGS,
+};
 use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_ALL, CLSCTX_INPROC_SERVER};
 use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::{CreatePopupMenu, DestroyMenu, SW_SHOWNORMAL};
@@ -153,7 +157,7 @@ fn check_names(op: &FileOp) -> Result<(), PlatformError> {
         FileOp::Archive(_) => Vec::new(),
         FileOp::InstallFonts(v) => v.iter().collect(),
         FileOp::LockScreen(p) => vec![p],
-        FileOp::SetAccess { items, .. } => items.iter().collect(),
+        FileOp::SetAccess { items, .. } | FileOp::SetAttributes { items, .. } => items.iter().collect(),
         FileOp::Access(changes) => changes.iter().map(|c| &c.item).collect(),
     };
     paths.into_iter().try_for_each(shell_addressable)?;
@@ -280,7 +284,7 @@ unsafe fn queue(fo: &IFileOperation, op: &FileOp) -> Result<(), PlatformError> {
             };
             fo.NewItem(&shell_item(dir)?, FILE_ATTRIBUTE_NORMAL.0, PCWSTR(name.as_ptr()), source.as_ref().map_or(PCWSTR::null(), |s| PCWSTR(s.as_ptr())), None).map_err(err)?;
         }
-        FileOp::Link { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::PasteLink { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } | FileOp::Flatten(_) | FileOp::FolderIcon { .. } | FileOp::Archive(_) | FileOp::InstallFonts(_) | FileOp::LockScreen(_) | FileOp::SetAccess { .. } | FileOp::Access(_) => return Err(PlatformError::new(-1, "not a file operation")),
+        FileOp::Link { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::PasteLink { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } | FileOp::Flatten(_) | FileOp::FolderIcon { .. } | FileOp::Archive(_) | FileOp::InstallFonts(_) | FileOp::LockScreen(_) | FileOp::SetAccess { .. } | FileOp::Access(_) | FileOp::SetAttributes { .. } => return Err(PlatformError::new(-1, "not a file operation")),
     }
     Ok(())
 }
@@ -519,6 +523,56 @@ unsafe fn make_links(items: &[FsPath], dest: &FsPath) -> OpOutcome {
     out
 }
 
+const SETTABLE: u32 = 0x1 | 0x2 | 0x4 | 0x20 | 0x100 | 0x1000 | 0x2000;
+
+pub(crate) fn win_attributes(now: u32, set: u32, clear: u32) -> u32 {
+    let bits = |a: u32| (if a & attr::READONLY != 0 { FILE_ATTRIBUTE_READONLY.0 } else { 0 }) | if a & attr::HIDDEN != 0 { FILE_ATTRIBUTE_HIDDEN.0 } else { 0 };
+    let next = ((now | bits(set)) & !bits(clear)) & SETTABLE;
+    if next == 0 { FILE_ATTRIBUTE_NORMAL.0 } else { next }
+}
+
+fn zone_stream(item: &FsPath) -> PathBuf {
+    let mut s = std_path(item).into_os_string();
+    s.push(":Zone.Identifier");
+    PathBuf::from(s)
+}
+
+fn change_attributes(item: &FsPath, set: u32, clear: u32, unblock: bool) -> Result<(), PlatformError> {
+    let wide = item.to_wide(true);
+    let now = unsafe { GetFileAttributesW(PCWSTR(wide.as_ptr())) };
+    if now == INVALID_FILE_ATTRIBUTES {
+        return Err(err(windows::core::Error::from_thread()));
+    }
+    let apply = |a: u32| unsafe { SetFileAttributesW(PCWSTR(wide.as_ptr()), FILE_FLAGS_AND_ATTRIBUTES(a)) }.map_err(err);
+    if unblock {
+        if now & FILE_ATTRIBUTE_READONLY.0 != 0 {
+            apply(win_attributes(now, 0, attr::READONLY))?;
+        }
+        if let Err(e) = std::fs::remove_file(zone_stream(item)).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(e) }) {
+            return Err(PlatformError::new(e.raw_os_error().map_or(-1, i64::from), format!("{}: {e}", item.display())));
+        }
+    }
+    let next = win_attributes(now, set, clear);
+    if next != win_attributes(now, 0, 0) || unblock {
+        apply(next)?;
+    }
+    Ok(())
+}
+
+fn set_attributes(items: &[FsPath], set: u32, clear: u32, unblock: bool) -> OpOutcome {
+    let mut out = OpOutcome::default();
+    for item in items {
+        match change_attributes(item, set, clear, unblock) {
+            Ok(()) => out.items.push((item.clone(), item.clone())),
+            Err(e) => {
+                out.error = Some(e);
+                break;
+            }
+        }
+    }
+    out
+}
+
 windows_core::link!("shell32.dll" "system" fn SHUpdateRecycleBinIcon());
 
 fn purge(pairs: &[(FsPath, FsPath)]) -> OpOutcome {
@@ -585,6 +639,7 @@ impl FileOps for ShellCom {
             FileOp::LockScreen(image) => crate::install::lock_screen(image),
             FileOp::Paste { dest } => crate::transfer::paste(dest, job),
             FileOp::SetAccess { .. } | FileOp::Access(_) => OpOutcome { items: Vec::new(), error: Some(PlatformError::unsupported("changing Unix permissions")) },
+            FileOp::SetAttributes { items, set, clear, unblock } => set_attributes(items, *set, *clear, *unblock),
             op if engine::native(op) => {
                 let out = engine::run(op, job);
                 with_rest(out.items, out.error, out.rest, job)

@@ -1,16 +1,19 @@
 use super::archive::Kind;
 use super::form::{Control, Form};
 use super::permissions::{held_rows, Probe};
+use super::ops::Then;
 use super::{App, Effect};
 use crate::archive;
 use crate::fmt as format;
 use crate::i18n::{P, S};
 use crate::listing::{attr, Entry, Listing};
-use crate::location::ProviderId;
+use crate::location::{Location, ProviderId};
 use crate::name;
 use crate::path::FsPath;
 use crate::preview::{self, PreviewRequest, PropGroup};
-use crate::provider::{GenToken, OpCtl, OpId, ProviderRequest, Totals};
+use crate::path::PathKind;
+use crate::provider::{FileOp, GenToken, OpCtl, OpId, ProviderRequest, Totals};
+use crate::undo::Origin;
 use bumpalo::Bump;
 
 pub(super) const MEASURE_IDS: OpId = 1 << 61;
@@ -34,6 +37,44 @@ pub(super) struct Measuring {
     rows: Rows,
     props: u64,
     pub(super) probe: Probe,
+    attrs: Option<AttrEditing>,
+}
+
+const EDITABLE: [(u32, S); 2] = [(attr::READONLY, S::PropertiesReadOnly), (attr::HIDDEN, S::PropertiesHidden)];
+
+struct AttrEditing {
+    items: Vec<FsPath>,
+    at: usize,
+    offered: Vec<u32>,
+    shown: u32,
+    unblock_at: Option<usize>,
+}
+
+impl AttrEditing {
+    fn op(&self, controls: &[Control]) -> Option<FileOp> {
+        let flags: Vec<bool> = match controls.get(self.at) {
+            Some(Control::Flags { items, .. }) => items.iter().map(|(_, on)| *on).collect(),
+            _ => Vec::new(),
+        };
+        let (mut set, mut clear) = (0, 0);
+        for (&bit, on) in self.offered.iter().zip(flags) {
+            let had = self.shown & bit != 0;
+            if on && !had {
+                set |= bit;
+            } else if !on && had {
+                clear |= bit;
+            }
+        }
+        let unblock = matches!(self.unblock_at.and_then(|k| controls.get(k)), Some(Control::Check { on: true, .. }));
+        (set != 0 || clear != 0 || unblock).then(|| FileOp::SetAttributes { items: self.items.clone(), set, clear, unblock })
+    }
+}
+
+fn editable_attributes(entries: &[Entry]) -> (Vec<u32>, u32) {
+    let folders = entries.iter().any(|e| e.is_dir());
+    let offered: Vec<u32> = EDITABLE.iter().map(|&(bit, _)| bit).filter(|&bit| bit != attr::READONLY || !folders).collect();
+    let shown = entries.iter().fold(attr::READONLY | attr::HIDDEN, |acc, e| acc & e.attrs);
+    (offered, shown)
 }
 
 pub(super) fn measured_items(paths: &[FsPath], entries: &[Entry], archive_root: bool) -> Vec<(FsPath, Option<u64>)> {
@@ -175,9 +216,18 @@ impl App {
             if !packed {
                 rows.accessed = add(&mut controls, S::PropertiesAccessed, counting);
             }
-            let attrs = attributes_text(e.attrs);
+        }
+        let editing = !self.caps.unix_paths && !packed && !folder && matches!(t.view_loc, Location::Local(_)) && paths.iter().all(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unc));
+        let attr_editing = editing.then(|| {
+            let (offered, shown) = editable_attributes(&entries);
+            let names = offered.iter().filter_map(|&bit| EDITABLE.iter().find(|(b, _)| *b == bit)).map(|&(bit, label)| (label.t().to_owned(), shown & bit != 0)).collect();
+            controls.push(Control::flags(S::PropertiesAttributes.t(), names));
+            AttrEditing { items: paths.clone(), at: controls.len() - 1, offered, shown, unblock_at: None }
+        });
+        if let [e] = entries.as_slice() {
+            let (label, attrs) = if editing { ("", attributes_text(e.attrs & !(attr::READONLY | attr::HIDDEN))) } else { (S::PropertiesAttributes.t(), attributes_text(e.attrs)) };
             if !attrs.is_empty() {
-                add(&mut controls, S::PropertiesAttributes, &attrs);
+                controls.push(Control::value(label, &attrs));
             }
         }
         let id = MEASURE_IDS + self.archive.take_id();
@@ -203,7 +253,8 @@ impl App {
             Probe::Off
         };
         let (files, folders) = if paths.len() > 1 { (files, folders) } else { (0, 0) };
-        let mut f = Form::new(Kind::Properties(Measuring { id, ctl, packed, files, folders, rows, props, probe }), &title, controls, vec![S::ArchiveClose.t()]);
+        let buttons = if attr_editing.is_some() { vec![S::ArchiveOk.t(), S::WidgetsCancel.t()] } else { vec![S::ArchiveClose.t()] };
+        let mut f = Form::new(Kind::Properties(Measuring { id, ctl, packed, files, folders, rows, props, probe, attrs: attr_editing }), &title, controls, buttons);
         f.say(counting, false);
         self.open_form(f);
     }
@@ -249,11 +300,27 @@ impl App {
             return false;
         }
         for g in groups {
-            held_rows(&mut m.probe, controls, focus, &g.title, &g.rows);
+            match &mut m.attrs {
+                Some(a) if g.title == S::PropertiesSecurity.t() && a.unblock_at.is_none() => {
+                    controls.extend(g.rows.iter().map(|(k, v)| Control::value(k, v)));
+                    controls.push(Control::check(S::PropertiesUnblock.t(), false));
+                    a.unblock_at = Some(controls.len() - 1);
+                }
+                _ => held_rows(&mut m.probe, controls, focus, &g.title, &g.rows),
+            }
         }
         self.layout();
         self.dirty = true;
         true
+    }
+
+    pub(super) fn submit_properties_form(&mut self, f: Form) -> Option<Form> {
+        if let Kind::Properties(Measuring { attrs: Some(a), .. }) = &f.kind {
+            if let Some(op) = a.op(&f.controls) {
+                self.start_op(op, Origin::Fresh, Then::Nothing);
+            }
+        }
+        self.submit_properties(f)
     }
 }
 

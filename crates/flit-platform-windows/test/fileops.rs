@@ -684,3 +684,42 @@ fn a_file_in_use_names_the_program_in_the_question_and_the_summary() {
     let missing = engine::run(&FileOp::Delete(vec![t.path("nothing.txt")]), &Job::detached(Resolve::Skip));
     assert!(!missing.error.unwrap().message.contains("It is open in"), "other errors stay as they were");
 }
+
+fn raw_attributes(p: &FsPath) -> u32 {
+    unsafe { GetFileAttributesW(PCWSTR(p.to_wide(true).as_ptr())) }
+}
+
+fn zone_of(p: &FsPath) -> Option<String> {
+    std::fs::read_to_string(zone_stream(p)).ok()
+}
+
+#[test]
+fn unblocking_a_read_only_download_removes_its_mark_and_keeps_it_read_only() {
+    let t = TempDir::new("unblock");
+    let file = t.file("setup.exe", "MZ");
+    std::fs::write(zone_stream(&file), "[ZoneTransfer]\r\nZoneId=3\r\n").unwrap();
+    let out = set_attributes(std::slice::from_ref(&file), attr::READONLY, 0, false);
+    assert!(out.error.is_none(), "{:?}", out.error);
+    assert!(zone_of(&file).is_some(), "only ticking read-only keeps the mark");
+    let out = set_attributes(std::slice::from_ref(&file), 0, 0, true);
+    assert!(out.error.is_none(), "{:?}", out.error);
+    assert_eq!(zone_of(&file), None);
+    assert_ne!(raw_attributes(&file) & FILE_ATTRIBUTE_READONLY.0, 0);
+    let out = set_attributes(std::slice::from_ref(&file), attr::HIDDEN, attr::READONLY, true);
+    assert!(out.error.is_none(), "unblocking a file without a mark is harmless: {:?}", out.error);
+    assert_eq!(raw_attributes(&file) & (FILE_ATTRIBUTE_READONLY.0 | FILE_ATTRIBUTE_HIDDEN.0), FILE_ATTRIBUTE_HIDDEN.0);
+    assert_eq!(std::fs::read_to_string(t.0.join("setup.exe")).unwrap(), "MZ");
+}
+
+#[test]
+fn attribute_changes_touch_only_read_only_and_hidden_and_stop_at_a_missing_item() {
+    let archive = 0x20;
+    assert_eq!(win_attributes(archive | FILE_ATTRIBUTE_HIDDEN.0, attr::READONLY, attr::HIDDEN), archive | FILE_ATTRIBUTE_READONLY.0);
+    assert_eq!(win_attributes(FILE_ATTRIBUTE_HIDDEN.0, 0, attr::HIDDEN), FILE_ATTRIBUTE_NORMAL.0);
+    assert_eq!(win_attributes(FILE_ATTRIBUTE_DIRECTORY.0 | archive, attr::HIDDEN, 0), archive | FILE_ATTRIBUTE_HIDDEN.0);
+    let t = TempDir::new("attrs-missing");
+    let a = t.file("a.txt", "a");
+    let out = set_attributes(&[a.clone(), t.path("gone.txt")], attr::HIDDEN, 0, false);
+    assert_eq!(out.items, [(a.clone(), a)]);
+    assert!(out.error.is_some());
+}

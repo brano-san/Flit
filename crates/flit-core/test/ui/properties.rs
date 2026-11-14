@@ -64,6 +64,107 @@ fn measure(app: &mut App) -> (OpId, Vec<(FsPath, Option<u64>)>) {
     one
 }
 
+fn flags(app: &App) -> Option<Vec<(String, bool)>> {
+    app.jobs.form.as_ref()?.controls.iter().find_map(|c| match c {
+        Control::Flags { label, items, .. } if label == S::PropertiesAttributes.t() => Some(items.clone()),
+        _ => None,
+    })
+}
+
+fn set_flags(app: &mut App, on: &[bool]) {
+    let f = app.jobs.form.as_mut().unwrap();
+    let Some(Control::Flags { items, .. }) = f.controls.iter_mut().find(|c| matches!(c, Control::Flags { .. })) else { panic!("no attribute flags") };
+    for ((_, now), &want) in items.iter_mut().zip(on) {
+        *now = want;
+    }
+}
+
+fn check_unblock(app: &mut App) {
+    let f = app.jobs.form.as_mut().unwrap();
+    let Some(Control::Check { on, .. }) = f.controls.iter_mut().find(|c| matches!(c, Control::Check { label, .. } if label == S::PropertiesUnblock.t())) else { panic!("no unblock box") };
+    *on = true;
+}
+
+fn file_ops(app: &mut App) -> Vec<FileOp> {
+    app.drain_effects().filter_map(|e| if let Effect::Provider { req: ProviderRequest::Op { op, .. }, .. } = e { Some(op) } else { None }).collect()
+}
+
+fn props_reply(app: &mut App, groups: Vec<PropGroup>) {
+    let req = app.drain_effects().find_map(|e| if let Effect::Preview(r) = e { Some(r) } else { None }).unwrap();
+    app.on_preview(req.gen, PreviewData::Props(groups));
+}
+
+fn security() -> PropGroup {
+    PropGroup { title: S::PropertiesSecurity.t().into(), rows: vec![(S::PropertiesSecurity.t().into(), S::PropertiesBlocked.t().into())] }
+}
+
+#[test]
+fn a_file_shows_read_only_and_hidden_boxes_and_ok_changes_only_what_was_ticked() {
+    let mut app = app_at(r"C:\work");
+    deliver(&mut app, &[("a.txt", attr::READONLY | attr::COMPRESSED, 5), ("b.txt", 0, 7)]);
+    select(&mut app, &["a.txt"]);
+    app.properties_dialog();
+    assert_eq!(flags(&app), Some(vec![(S::PropertiesReadOnly.t().to_owned(), true), (S::PropertiesHidden.t().to_owned(), false)]));
+    assert!(app.jobs.form.as_ref().unwrap().controls.iter().any(|c| matches!(c, Control::Value { value, .. } if value == S::PropertiesCompressed.t())), "other attributes are still listed");
+    assert_eq!(app.jobs.form.as_ref().unwrap().buttons.len(), 2);
+    app.drain_effects().for_each(drop);
+    set_flags(&mut app, &[false, true]);
+    app.form_submit(0);
+    assert_eq!(file_ops(&mut app), [FileOp::SetAttributes { items: vec![FsPath::parse(r"C:\work\a.txt").unwrap()], set: attr::HIDDEN, clear: attr::READONLY, unblock: false }]);
+    assert_eq!(app.asking(), None);
+}
+
+#[test]
+fn ok_without_changes_or_cancel_after_changes_runs_nothing_and_mixed_boxes_stay_untouched() {
+    let mut app = app_at(r"C:\work");
+    deliver(&mut app, &[("a.txt", attr::HIDDEN, 5), ("b.txt", 0, 7)]);
+    select(&mut app, &["a.txt", "b.txt"]);
+    app.properties_dialog();
+    assert_eq!(flags(&app), Some(vec![(S::PropertiesReadOnly.t().to_owned(), false), (S::PropertiesHidden.t().to_owned(), false)]), "hidden on only one of two items is shown unticked");
+    app.drain_effects().for_each(drop);
+    app.form_submit(0);
+    assert!(file_ops(&mut app).is_empty());
+    assert_eq!(app.asking(), None);
+    app.properties_dialog();
+    app.drain_effects().for_each(drop);
+    set_flags(&mut app, &[true, true]);
+    app.form_submit(1);
+    assert!(file_ops(&mut app).is_empty());
+    assert_eq!(app.asking(), None);
+}
+
+#[test]
+fn a_downloaded_file_offers_unblock_and_ok_removes_the_mark_with_the_attribute_change() {
+    let mut app = app_at(r"C:\Downloads");
+    deliver(&mut app, &[("setup.exe", 0, 5)]);
+    select(&mut app, &["setup.exe"]);
+    app.properties_dialog();
+    props_reply(&mut app, vec![PropGroup { title: "Origin".into(), rows: vec![("Authors".into(), "Ann".into())] }, security()]);
+    assert_eq!(value(&app, S::PropertiesSecurity).as_deref(), Some(S::PropertiesBlocked.t()));
+    assert!(app.jobs.form.as_ref().unwrap().controls.iter().any(|c| matches!(c, Control::Value { label, .. } if label == "Authors")));
+    check_unblock(&mut app);
+    app.form_submit(0);
+    assert_eq!(file_ops(&mut app), [FileOp::SetAttributes { items: vec![FsPath::parse(r"C:\Downloads\setup.exe").unwrap()], set: 0, clear: 0, unblock: true }]);
+}
+
+#[test]
+fn unblock_is_not_offered_without_the_mark_and_unix_items_keep_plain_attributes() {
+    let mut app = app_at(r"C:\Downloads");
+    deliver(&mut app, &[("notes.txt", attr::READONLY, 5)]);
+    select(&mut app, &["notes.txt"]);
+    app.properties_dialog();
+    props_reply(&mut app, vec![PropGroup { title: "Origin".into(), rows: vec![("Authors".into(), "Ann".into())] }]);
+    assert!(!app.jobs.form.as_ref().unwrap().controls.iter().any(|c| matches!(c, Control::Check { .. })));
+    let mut app = app_at("/home/user/folder");
+    app.caps.unix_paths = true;
+    deliver(&mut app, &[("notes.txt", attr::READONLY, 5)]);
+    select(&mut app, &["notes.txt"]);
+    app.properties_dialog();
+    assert_eq!(flags(&app), None);
+    assert_eq!(value(&app, S::PropertiesAttributes).as_deref(), Some(S::PropertiesReadOnly.t()));
+    assert_eq!(app.jobs.form.as_ref().unwrap().buttons.len(), 1);
+}
+
 #[test]
 fn texts_name_counts_and_attributes() {
     assert_eq!(attributes_text(attr::READONLY | attr::HIDDEN | attr::DIR), format!("{}, {}", S::PropertiesReadOnly.t(), S::PropertiesHidden.t()));
@@ -82,7 +183,7 @@ fn a_folder_counts_in_the_background_and_esc_closes() {
     assert_eq!(items, vec![(FsPath::parse(r"C:\work\docs").unwrap(), None)]);
     assert_eq!(value(&app, S::PropertiesName).as_deref(), Some("docs"));
     assert_eq!(value(&app, S::PropertiesLocation).as_deref(), Some(r"C:\work"));
-    assert_eq!(value(&app, S::PropertiesAttributes).as_deref(), Some(S::PropertiesReadOnly.t()));
+    assert_eq!(flags(&app), Some(vec![(S::PropertiesHidden.t().to_owned(), false)]), "a folder's read-only bit is not offered, as in Explorer");
     assert_eq!(value(&app, S::PropertiesSize).as_deref(), Some(S::PropertiesCounting.t()));
     assert!(value(&app, S::PropertiesUnpacked).is_none());
     let tab = app.tab().id;

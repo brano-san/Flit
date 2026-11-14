@@ -155,3 +155,22 @@ fn hands_the_file_to_a_seer_window_by_copy_data() {
     assert_eq!(kind, SEER_INVOKE);
     assert_eq!(text, "C:\\папка\\a.txt\0");
 }
+
+#[test]
+fn a_download_from_the_internet_is_blocked_and_an_intranet_or_plain_file_is_not() {
+    let d = temp("zone");
+    let mark = |name: &str, zone: Option<u32>| {
+        let p = d.0.join(name);
+        std::fs::write(&p, "x").unwrap();
+        if let Some(z) = zone {
+            std::fs::write(format!("{}:Zone.Identifier", p.display()), format!("[ZoneTransfer]\r\nZoneId={z}\r\n")).unwrap();
+        }
+        fs(&p)
+    };
+    assert!(blocked(&mark("web.exe", Some(3))));
+    assert!(blocked(&mark("restricted.exe", Some(4))));
+    assert!(!blocked(&mark("intranet.exe", Some(1))));
+    assert!(!blocked(&mark("local.exe", None)));
+    assert!(!blocked(&fs(&d.0)));
+    assert_eq!(properties(&mark("zip.exe", Some(3))).last(), Some(&security_group()));
+}

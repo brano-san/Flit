@@ -110,8 +110,21 @@ pub(crate) fn link_group(link: &LinkInfo) -> PropGroup {
     PropGroup { title: S::PropertiesLink.t().to_owned(), rows: rows.into_iter().flatten().collect() }
 }
 
+pub(crate) const BLOCKING_ZONE: u32 = 3;
+
+pub(crate) fn blocked(path: &FsPath) -> bool {
+    use flit_archive::zone;
+    let file = crate::fileops::std_path(path);
+    !file.is_dir() && zone::read(&file).and_then(|b| zone::zone_id(&b)).is_some_and(|z| z >= BLOCKING_ZONE)
+}
+
+pub(crate) fn security_group() -> PropGroup {
+    PropGroup { title: S::PropertiesSecurity.t().to_owned(), rows: vec![(S::PropertiesSecurity.t().to_owned(), S::PropertiesBlocked.t().to_owned())] }
+}
+
 pub(crate) fn properties(path: &FsPath) -> Vec<PropGroup> {
-    crate::fs::link_info(path).map(|l| link_group(&l)).into_iter().chain(shell_properties(path)).collect()
+    let link = crate::fs::link_info(path).map(|l| link_group(&l));
+    link.into_iter().chain(shell_properties(path)).chain(blocked(path).then(security_group)).collect()
 }
 
 fn shell_properties(path: &FsPath) -> Vec<PropGroup> {
