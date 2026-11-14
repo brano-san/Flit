@@ -201,18 +201,29 @@ pub fn templates_in(dir: &Path) -> Vec<NewTemplate> {
     out
 }
 
-pub fn builtin_templates() -> [NewTemplate; 2] {
-    let made = |label: S, ext: &str, stem: S| NewTemplate { label: label.t().to_owned(), ext: ext.to_owned(), stem: stem.t().to_owned(), template: Template::Empty };
-    [made(S::MenuEmptyFile, "", S::UiOpsNewFileName), made(S::MenuTextDocument, ".txt", S::MenuNewTextDocument)]
+pub const SHELL_SCRIPT: &[u8] = b"#!/bin/sh\n\n";
+
+pub fn builtin_templates() -> [NewTemplate; 4] {
+    let made = |label: S, ext: &str, stem: S, template: Template| NewTemplate { label: label.t().to_owned(), ext: ext.to_owned(), stem: stem.t().to_owned(), template };
+    [
+        made(S::MenuEmptyFile, "", S::UiOpsNewFileName, Template::Empty),
+        made(S::MenuTextDocument, ".txt", S::MenuNewTextDocument, Template::Empty),
+        made(S::MenuMarkdownDocument, ".md", S::MenuNewMarkdownDocument, Template::Empty),
+        made(S::MenuShellScript, ".sh", S::MenuNewShellScript, Template::Data(SHELL_SCRIPT.to_vec())),
+    ]
 }
 
-fn covers(user: &NewTemplate, builtin: &NewTemplate) -> bool {
-    let empty = match &user.template {
+fn is_empty(template: &Template) -> bool {
+    match template {
         Template::Copy(p) => flit_platform_linux::host(p).and_then(|p| std::fs::metadata(p).ok()).is_some_and(|m| m.len() == 0),
         Template::Empty => true,
         Template::Data(d) => d.is_empty(),
-    };
-    user.label.to_lowercase() == builtin.label.to_lowercase() || (empty && user.ext.eq_ignore_ascii_case(&builtin.ext))
+    }
+}
+
+fn covers(user: &NewTemplate, builtin: &NewTemplate) -> bool {
+    let same_empty_kind = builtin.template == Template::Empty && user.ext.eq_ignore_ascii_case(&builtin.ext) && is_empty(&user.template);
+    user.label.to_lowercase() == builtin.label.to_lowercase() || same_empty_kind
 }
 
 pub fn with_builtins(user: Vec<NewTemplate>) -> Vec<NewTemplate> {

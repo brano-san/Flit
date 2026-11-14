@@ -796,10 +796,11 @@ impl<'a> Engine<'a> {
             },
             _ => None,
         };
+        let mode = if matches!(template, Template::Data(d) if d.starts_with(b"#!")) { 0o777 } else { 0o666 };
         let mut name = name.to_vec();
         loop {
             let to = dir.join(&name);
-            let made = cstring(&name).and_then(|c| open_at(fd.as_raw_fd(), &c, libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL, 0o666));
+            let made = cstring(&name).and_then(|c| open_at(fd.as_raw_fd(), &c, libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL, mode));
             let file = match made {
                 Ok(f) => std::fs::File::from(f),
                 Err(e) if e.raw_os_error() == Some(libc::EEXIST) => {

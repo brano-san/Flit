@@ -210,6 +210,31 @@ fn rename_and_new_folder_take_linux_names() {
     assert_eq!(out.error.unwrap().message, NOT_LINUX);
 }
 
+fn umask() -> u32 {
+    let status = std::fs::read_to_string("/proc/self/status").unwrap();
+    let line = status.lines().find_map(|l| l.strip_prefix("Umask:")).unwrap();
+    u32::from_str_radix(line.trim(), 8).unwrap()
+}
+
+#[test]
+fn new_scripts_are_executable_and_other_new_files_are_not() {
+    let t = Temp::new("ops-new-script");
+    let dir = fp(t.path());
+    let tpl = t.file("tool.sh", 4);
+    std::fs::set_permissions(&tpl, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let made = |name: &str, template: Template| {
+        let out = ok(run(&FileOp::NewFile { dir: dir.clone(), name: name.as_bytes().to_vec(), template }, &quiet(Resolve::Skip), None));
+        assert_eq!(out, [(dir.join(name.as_bytes()), dir.join(name.as_bytes()))]);
+        std::fs::metadata(t.path().join(name)).unwrap().permissions().mode() & 0o777
+    };
+    let mask = umask();
+    assert_eq!(made("New shell script.sh", Template::Data(b"#!/bin/sh\n\n".to_vec())), 0o777 & !mask);
+    assert_eq!(read(&t.path().join("New shell script.sh")), "#!/bin/sh\n\n");
+    assert_eq!(made("notes.md", Template::Data(b"# Notes\n".to_vec())), 0o666 & !mask);
+    assert_eq!(made("empty", Template::Empty), 0o666 & !mask);
+    assert_eq!(made("copy.sh", Template::Copy(fp(&tpl))), 0o666 & !mask);
+}
+
 #[test]
 fn trash_restores_through_the_agent_with_conflicts() {
     let t = Temp::new("ops-restore");

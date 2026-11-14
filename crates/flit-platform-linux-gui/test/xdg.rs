@@ -146,19 +146,32 @@ fn turning_the_default_manager_on_and_off_restores_the_test_home() {
 }
 
 #[test]
-fn new_offers_an_empty_file_and_a_text_document_unless_templates_already_do() {
-    let summary = |v: Vec<NewTemplate>| v.into_iter().map(|n| (n.label, n.ext, n.stem, n.template == Template::Empty)).collect::<Vec<_>>();
-    let builtins = [("Empty file".to_owned(), "".to_owned(), "New file".to_owned(), true), ("Text document".to_owned(), ".txt".to_owned(), "New text document".to_owned(), true)];
+fn new_offers_files_documents_and_a_script_unless_templates_already_do() {
+    let summary = |v: Vec<NewTemplate>| v.into_iter().map(|n| (n.label, n.ext, n.stem, n.template)).collect::<Vec<_>>();
+    let own = |label: &str, ext: &str, stem: &str, template: Template| (label.to_owned(), ext.to_owned(), stem.to_owned(), template);
+    let builtins = [
+        own("Empty file", "", "New file", Template::Empty),
+        own("Text document", ".txt", "New text document", Template::Empty),
+        own("Markdown document", ".md", "New Markdown document", Template::Empty),
+        own("Shell script", ".sh", "New shell script", Template::Data(b"#!/bin/sh\n\n".to_vec())),
+    ];
     assert_eq!(summary(with_builtins(Vec::new())), builtins);
     let t = Temp::new("builtin-templates");
     t.file("Makefile", 4);
-    t.file("Report.odt", 9);
+    let report = t.file("Report.odt", 9);
     let mut expected = builtins.to_vec();
-    expected.extend([("Makefile".to_owned(), "".to_owned(), "Makefile".to_owned(), false), ("Report".to_owned(), ".odt".to_owned(), "Report".to_owned(), false)]);
+    expected.extend([own("Makefile", "", "Makefile", Template::Copy(fs_path(&t.path().join("Makefile")).unwrap())), own("Report", ".odt", "Report", Template::Copy(fs_path(&report).unwrap()))]);
     assert_eq!(summary(with_builtins(templates_in(t.path()))), expected);
+    let labels = |dir: &Temp| with_builtins(templates_in(dir.path())).into_iter().map(|n| n.label).collect::<Vec<String>>();
     let u = Temp::new("covering-templates");
     u.file("Empty Document", 0);
     u.file("TEXT DOCUMENT.md", 2);
-    let labels: Vec<String> = with_builtins(templates_in(u.path())).into_iter().map(|n| n.label).collect();
-    assert_eq!(labels, ["Empty Document", "TEXT DOCUMENT"]);
+    assert_eq!(labels(&u), ["Markdown document", "Shell script", "Empty Document", "TEXT DOCUMENT"]);
+    let v = Temp::new("empty-templates");
+    v.file("Notes.md", 0);
+    v.file("empty.sh", 0);
+    assert_eq!(labels(&v), ["Empty file", "Text document", "Shell script", "empty", "Notes"]);
+    let w = Temp::new("script-template");
+    w.file("Shell Script.sh", 5);
+    assert_eq!(labels(&w), ["Empty file", "Text document", "Markdown document", "Shell Script"]);
 }
