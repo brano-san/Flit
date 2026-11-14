@@ -175,3 +175,21 @@ fn new_offers_files_documents_and_a_script_unless_templates_already_do() {
     w.file("Shell Script.sh", 5);
     assert_eq!(labels(&w), ["Empty file", "Text document", "Markdown document", "Shell Script"]);
 }
+
+#[test]
+fn user_folders_tell_their_type_and_other_folders_do_not() {
+    use flit_core::desktop_ini::FolderKind;
+    let dirs = |key: &str| match key {
+        "XDG_PICTURES_DIR" => Some(PathBuf::from("/home/ann/Bilder")),
+        "XDG_MUSIC_DIR" => Some(PathBuf::from("/home/ann/Musik")),
+        "XDG_DOCUMENTS_DIR" => Some(PathBuf::from("/home/ann/Dokumente")),
+        "XDG_VIDEOS_DIR" => Some(PathBuf::from("/home/ann/Videos")),
+        _ => None,
+    };
+    assert_eq!(folder_kind_with(Path::new("/home/ann/Bilder"), dirs), Some(FolderKind::Pictures));
+    assert_eq!(folder_kind_with(Path::new("/home/ann/Musik"), dirs), Some(FolderKind::Music));
+    assert_eq!(folder_kind_with(Path::new("/home/ann/Dokumente"), dirs), Some(FolderKind::Documents));
+    assert_eq!(folder_kind_with(Path::new("/home/ann/Videos"), dirs), Some(FolderKind::Videos));
+    assert_eq!(folder_kind_with(Path::new("/home/ann/Bilder/2024"), dirs), None, "subfolders keep their own type");
+    assert_eq!(folder_kind_with(Path::new("/home/ann/Downloads"), dirs), None);
+}

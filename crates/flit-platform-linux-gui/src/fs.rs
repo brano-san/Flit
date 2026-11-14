@@ -60,6 +60,11 @@ impl Fs for LinuxGuiFs {
         LinuxFs.volume_size(path)
     }
 
+    fn desktop_ini(&self, dir: &FsPath) -> Option<flit_core::desktop_ini::DesktopIni> {
+        let kind = crate::xdg::folder_kind(host(dir)?)?;
+        Some(flit_core::desktop_ini::DesktopIni { kind, ..Default::default() })
+    }
+
     fn cluster_size(&self, path: &FsPath) -> u64 {
         LinuxFs.cluster_size(path)
     }

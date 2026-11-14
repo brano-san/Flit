@@ -174,6 +174,19 @@ pub fn user_dir_icon(path: &Path) -> Option<&'static str> {
     USER_DIRS.iter().find(|(shell, ..)| user_dir(shell).as_deref() == Some(path)).map(|(.., icon)| *icon)
 }
 
+pub fn folder_kind_with(path: &Path, dir: impl Fn(&str) -> Option<PathBuf>) -> Option<flit_core::desktop_ini::FolderKind> {
+    use flit_core::desktop_ini::FolderKind;
+    let kinds = [("XDG_DOCUMENTS_DIR", FolderKind::Documents), ("XDG_PICTURES_DIR", FolderKind::Pictures), ("XDG_MUSIC_DIR", FolderKind::Music), ("XDG_VIDEOS_DIR", FolderKind::Videos)];
+    kinds.into_iter().find(|(key, _)| dir(key).as_deref() == Some(path)).map(|(_, kind)| kind)
+}
+
+pub fn folder_kind(path: &Path) -> Option<flit_core::desktop_ini::FolderKind> {
+    if home().as_deref() == Some(path) {
+        return None;
+    }
+    folder_kind_with(path, user_dir)
+}
+
 pub fn fs_path(p: &Path) -> Option<FsPath> {
     FsPath::parse_exact(p.as_os_str().as_bytes())
 }
