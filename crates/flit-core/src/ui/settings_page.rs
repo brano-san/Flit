@@ -1262,13 +1262,30 @@ impl App {
         self.dirty = true;
     }
 
-    pub(super) fn settings_mouse_down(&mut self, h: Hit, (x, y): (f32, f32), button: MouseButton, clicks: u8) -> bool {
+    pub(super) fn settings_search(&self) -> Option<&Field> {
+        self.settings.as_ref().map(|ui| &ui.search)
+    }
+
+    pub(super) fn settings_search_mut(&mut self) -> Option<&mut Field> {
+        self.settings.as_mut().map(|ui| &mut ui.search)
+    }
+
+    pub(super) fn settings_mouse_down(&mut self, h: Hit, (x, y): (f32, f32), button: MouseButton, clicks: u8, now: Instant) -> bool {
         let Hit::Settings(sh) = h else { return false };
+        if self.settings.is_none() {
+            return false;
+        }
+        let clicks = if sh == SHit::Search && button == MouseButton::Left { self.text_clicks((x, y), clicks, now) } else { clicks };
         let Some(ui) = &mut self.settings else { return false };
         if self.nav.palette.is_some() {
             self.nav.palette = None;
         }
         self.dirty = true;
+        if sh == SHit::Search && button == MouseButton::Right {
+            ui.zone = Zone::Search;
+            self.text_field_menu(x, y);
+            return true;
+        }
         if button != MouseButton::Left {
             return true;
         }

@@ -142,3 +142,18 @@ fn drops_on_a_library_go_to_the_save_folder_and_library_files_open_in_flit() {
     app.open_entry(0, Instant::now());
     assert_eq!(app.current_location(), &Location::Local(p(LIB)), "a library file opens as a location, not in Explorer");
 }
+
+#[test]
+fn shift_delete_in_the_library_locations_cuts_the_query_and_removes_no_folder() {
+    let mut app = library_app();
+    assert!(app.run_action("library.locations", Instant::now()));
+    app.on_paste("Docs");
+    app.on_event(&Event::Key { key: Key::Char('A'), mods: Mods { ctrl: true, ..Mods::default() }, pressed: true }, Instant::now());
+    app.on_event(&Event::Key { key: Key::Delete, mods: Mods { shift: true, ..Mods::default() }, pressed: true }, Instant::now());
+    let effects: Vec<Effect> = app.drain_effects().collect();
+    assert!(!effects.iter().any(|e| matches!(e, Effect::Library(_))), "no folder leaves the library");
+    assert!(effects.iter().any(|e| matches!(e, Effect::SetClipboard(s) if s == "Docs")));
+    assert_eq!(app.nav.palette.as_ref().map(|p| p.field.text()), Some(""));
+    key(&mut app, Key::Delete);
+    assert_eq!(library_ops(&mut app), [LibraryOp::Remove { library: p(LIB), folder: p(r"C:\Users\u\Documents") }], "plain Delete still removes");
+}

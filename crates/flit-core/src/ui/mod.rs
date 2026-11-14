@@ -1754,6 +1754,7 @@ impl App {
                 self.expire_undo_bar(now);
             }
             Event::ClipboardChanged(seq) => self.clipboard_changed(*seq),
+            Event::ClipboardText(text) => self.clipboard_text_changed(*text),
             Event::SessionEnding => {}
             Event::Hosted(ev) => self.on_hosted(ev.clone()),
         }
@@ -1851,13 +1852,13 @@ impl App {
         }
         self.dirty = true;
         self.nav.sidebar.dragging_out = false;
-        if self.form_down(x, y, clicks) {
+        if self.form_down(x, y, button, clicks, now) {
             return;
         }
         if !self.settings_open() {
             self.panel_press(x, y);
         }
-        if self.jobs_mouse_down(self.hit(x, y)) || self.settings_mouse_down(self.hit(x, y), (x, y), button, clicks) || self.strip_mouse_down(self.hit(x, y), button, clicks, now) || self.autoscroll_down(self.hit(x, y), self.along_of(x, y), button) || self.ops_mouse_down(x, y, button, clicks) {
+        if self.jobs_mouse_down(self.hit(x, y)) || self.settings_mouse_down(self.hit(x, y), (x, y), button, clicks, now) || self.strip_mouse_down(self.hit(x, y), button, clicks, now) || self.autoscroll_down(self.hit(x, y), self.along_of(x, y), button) || self.ops_mouse_down(x, y, button, clicks, now) {
             return;
         }
         let h = self.hit(x, y);
@@ -2122,7 +2123,7 @@ impl App {
 
     fn key(&mut self, key: Key, m: Mods, now: Instant) {
         self.dirty = true;
-        if self.jobs_key(key, m) || self.settings_key(key, m) || self.ops_key(key, m) || self.strip_key(key) || self.inspector_key(key, m) {
+        if self.field_menu_key(key, m) || self.jobs_key(key, m) || self.settings_key(key, m) || self.ops_key(key, m) || self.strip_key(key) || self.inspector_key(key, m) {
             return;
         }
         if self.focus_key(key, m, now) {

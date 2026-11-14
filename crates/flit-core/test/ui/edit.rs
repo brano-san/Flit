@@ -220,3 +220,38 @@ fn a_secret_field_never_hands_out_its_text() {
     assert_eq!(f.text(), "hunter2");
     assert!(matches!(f.key(Key::Insert, SHIFT), FieldKey::Edited { action: EditAction::Paste, .. }));
 }
+
+#[test]
+fn dragging_after_a_double_click_extends_by_whole_words_around_the_first_one() {
+    let mut e = LineEdit::default();
+    e.set("alpha beta gamma");
+    e.grab(8, Grab::Word);
+    assert_eq!(&e.text[e.selection()], "beta");
+    e.grab(13, Grab::Words);
+    assert_eq!(&e.text[e.selection()], "beta gamma", "forward the far word is taken whole");
+    assert_eq!(e.caret, e.text.len());
+    e.grab(2, Grab::Words);
+    assert_eq!(&e.text[e.selection()], "alpha beta", "backward the first word stays picked");
+    assert_eq!((e.anchor, e.caret), (10, 0));
+    e.grab(7, Grab::Words);
+    assert_eq!(&e.text[e.selection()], "beta", "back inside it only the first word is left");
+    assert!(!e.can_undo());
+    assert_eq!(Grab::Word.dragged(), Grab::Words);
+    assert_eq!(Grab::Caret.dragged(), Grab::Extend);
+}
+
+#[test]
+fn dragging_after_a_single_click_still_goes_by_characters() {
+    let mut e = LineEdit::default();
+    e.set("alpha beta gamma");
+    e.grab(8, Grab::Caret);
+    e.grab(13, Grab::Caret.dragged());
+    assert_eq!(&e.text[e.selection()], "ta ga");
+    e.set("short");
+    e.grab(3, Grab::Words);
+    assert_eq!(&e.text[e.selection()], "short", "with no word picked before, the selection itself is the start");
+    e.set("日本 語");
+    e.grab(1, Grab::Word);
+    e.grab(8, Grab::Words);
+    assert_eq!(&e.text[e.selection()], "日本 語", "positions inside a character snap to its start");
+}

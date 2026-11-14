@@ -2282,3 +2282,28 @@ fn dragging_at_the_list_edge_scrolls_and_the_sidebar_does_too() {
     app.frame(&mut Gfx::new(Mono, 1024), t0() + Duration::from_millis(400));
     assert_eq!(app.tab().scroll_target, held, "the scroll holds after the drag leaves");
 }
+
+#[test]
+fn dragging_after_a_double_click_in_the_rename_box_goes_by_whole_words() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("my annual report.txt", false)]);
+    select(&mut app, &["my annual report.txt"]);
+    key(&mut app, Key::F(2), NO);
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, t0());
+    let r = app.ops.rename.as_ref().unwrap().rect;
+    let y = r.y + r.h / 2.0;
+    let t = t0();
+    let mut drag = |app: &mut App, clicks: u8, from: f32, to: f32, now: Instant| {
+        app.on_event(&Event::MouseDown { x: from, y, button: MouseButton::Left, clicks }, now);
+        app.frame(&mut g, now);
+        app.on_event(&Event::MouseMove { x: to, y }, now);
+        app.frame(&mut g, now);
+        app.on_event(&Event::MouseUp { x: to, y, button: MouseButton::Left }, now);
+        let e = &app.ops.rename.as_ref().unwrap().edit;
+        e.text[e.selection()].to_owned()
+    };
+    assert_eq!(drag(&mut app, 2, r.x + 5.0, r.x + 45.0, t), "my annual", "the word reached is taken whole");
+    assert_eq!(drag(&mut app, 1, r.x + 5.0, r.x + 45.0, t + Duration::from_secs(2)), " ann", "a single click still drags by characters");
+    assert!(app.is_renaming());
+}

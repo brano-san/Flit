@@ -162,7 +162,7 @@ enum SDrag {
     None,
     Thumb(f32),
     HThumb(f32),
-    Select,
+    Select(Grab),
     ColSep { col: usize, x: f32, width: f32 },
 }
 
@@ -937,16 +937,14 @@ impl App {
                 self.set_cursor(CursorIcon::ResizeHorizontal);
             }
             SHit::Field if button == MouseButton::Right => {
-                let menu = self.collect(|a, m| super::field::text_entries(m, &a.search.edit, false));
+                let menu = self.collect(|a, m| super::field::text_entries(m, &a.search.edit, false, a.text_on_clipboard()));
                 self.flit_menu(x, y, menu);
             }
             SHit::Field => {
                 match Grab::of(self.text_clicks((x, y), clicks, now), self.mods.shift) {
                     Some(how) => {
                         self.search.pending_click = Some((x, how));
-                        if how != Grab::Word {
-                            self.search.drag = SDrag::Select;
-                        }
+                        self.search.drag = SDrag::Select(how.dragged());
                     }
                     None => self.search.edit.select_all(),
                 }
@@ -1037,8 +1035,8 @@ impl App {
                 self.dirty = true;
                 return true;
             }
-            SDrag::Select => {
-                self.search.pending_click = Some((x, Grab::Extend));
+            SDrag::Select(how) => {
+                self.search.pending_click = Some((x, how));
                 self.dirty = true;
                 return true;
             }

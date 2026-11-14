@@ -140,7 +140,7 @@ struct Rename {
     scroll: f32,
     rect: Rect,
     click: Option<(f32, Grab)>,
-    selecting: bool,
+    selecting: Option<Grab>,
     batch: bool,
     confirmed: Option<String>,
     hint: Option<String>,
@@ -1350,7 +1350,7 @@ impl App {
         t.error = None;
         let tab = t.id;
         self.reveal_focus(false);
-        self.ops.rename = Some(Rename { tab, gen, idx, edit, scroll: 0.0, rect: Rect::default(), click: None, selecting: false, batch, confirmed: None, hint: None, volume });
+        self.ops.rename = Some(Rename { tab, gen, idx, edit, scroll: 0.0, rect: Rect::default(), click: None, selecting: None, batch, confirmed: None, hint: None, volume });
         self.ops.slow = None;
         self.focus = Focus::List;
         self.dirty = true;
@@ -1408,7 +1408,7 @@ impl App {
     fn rename_menu(&mut self, x: f32, y: f32) {
         let menu = self.collect(|a, m| {
             if let Some(r) = &a.ops.rename {
-                super::field::text_entries(m, &r.edit, false);
+                super::field::text_entries(m, &r.edit, false, a.text_on_clipboard());
                 m.separator();
             }
             for (id, label) in [
@@ -1638,7 +1638,7 @@ impl App {
         true
     }
 
-    pub(super) fn ops_mouse_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8) -> bool {
+    pub(super) fn ops_mouse_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8, now: Instant) -> bool {
         self.ops.press = None;
         self.ops.slow = None;
         self.ops.right_drag = None;
@@ -1649,13 +1649,13 @@ impl App {
         match button {
             MouseButton::Right => self.rename_menu(x, y),
             MouseButton::Left => {
-                let how = Grab::of(self.text_clicks((x, y), clicks, Instant::now()), self.mods.shift);
+                let how = Grab::of(self.text_clicks((x, y), clicks, now), self.mods.shift);
                 if let Some(r) = &mut self.ops.rename {
                     match how {
                         Some(how) => r.click = Some((x, how)),
                         None => r.edit.select_all(),
                     }
-                    r.selecting = how.is_some_and(|h| h != Grab::Word);
+                    r.selecting = how.map(Grab::dragged);
                 }
             }
             _ => {}
@@ -1665,8 +1665,8 @@ impl App {
 
     pub(super) fn ops_mouse_move(&mut self, x: f32, y: f32) -> bool {
         if let Some(r) = &mut self.ops.rename {
-            if r.selecting {
-                r.click = Some((x, Grab::Extend));
+            if let Some(how) = r.selecting {
+                r.click = Some((x, how));
                 self.dirty = true;
                 return true;
             }
@@ -1696,7 +1696,7 @@ impl App {
 
     pub(super) fn ops_mouse_up(&mut self, x: f32, y: f32, button: MouseButton, now: Instant) {
         if let Some(r) = &mut self.ops.rename {
-            r.selecting = false;
+            r.selecting = None;
         }
         if button == MouseButton::Right && self.drag == Drag::None && self.ops.rename.is_none() && self.ops.right_drag.is_none() {
             match self.hit(x, y) {

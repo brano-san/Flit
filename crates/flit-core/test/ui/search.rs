@@ -471,3 +471,24 @@ fn the_search_box_picks_words_and_has_an_editing_menu() {
     assert_eq!(app.search.edit.text, "alpha ");
     assert!(app.search_active());
 }
+
+#[test]
+fn dragging_after_a_double_click_in_the_search_box_goes_by_whole_words() {
+    let mut app = app();
+    key(&mut app, Key::Char('F'), CTRL_ALT);
+    "alpha beta".chars().for_each(|c| app.on_event(&Event::Char(c), t0()));
+    let mut g = crate::text::Gfx::new(Mono, 1024);
+    app.frame(&mut g, t0());
+    let f = app.search_layout().field;
+    let (x, y) = (f.right() - 8.0, f.y + f.h / 2.0);
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 2 }, t0());
+    app.frame(&mut g, t0());
+    app.on_event(&Event::MouseMove { x: f.x, y }, t0());
+    app.frame(&mut g, t0());
+    app.on_event(&Event::MouseUp { x: f.x, y, button: MouseButton::Left }, t0());
+    assert_eq!(&app.search.edit.text[app.search.edit.selection()], "alpha beta");
+    assert_eq!(app.search.edit.caret, 0, "the caret follows the pointer to the start of the word");
+    app.on_event(&Event::MouseMove { x, y }, t0());
+    app.frame(&mut g, t0());
+    assert_eq!(app.search.edit.caret, 0, "moving after the release changes nothing");
+}

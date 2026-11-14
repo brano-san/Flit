@@ -933,6 +933,18 @@ impl App {
         self.dirty = true;
     }
 
+    pub(super) fn inspector_filter(&self) -> Option<&Field> {
+        self.preview.filter.as_ref()
+    }
+
+    pub(super) fn inspector_filter_mut(&mut self) -> Option<&mut Field> {
+        self.preview.filter.as_mut()
+    }
+
+    pub(super) fn inspector_filter_rect(&self) -> Rect {
+        self.preview.r.filter
+    }
+
     pub(super) fn quick_view(&mut self) {
         match self.subject().and_then(|s| s.path.filter(|_| s.many.is_none() && s.entry.is_some())) {
             Some(path) => self.effects.push(Effect::QuickView(path)),

@@ -24,7 +24,7 @@ fn expanding_near_the_screen_edge_keeps_the_parent_under_the_pointer() {
     let before = c.rect;
     let parent = c.rects[0];
     c.mouse_move(parent.x + 10.0, parent.y + 10.0);
-    c.mouse_down(parent.x + 10.0, parent.y + 10.0, 1);
+    c.mouse_down(parent.x + 10.0, parent.y + 10.0, 1, false);
     c.mouse_up(parent.x + 10.0, parent.y + 10.0);
     assert_eq!((c.rect.x, c.rect.y), (before.x, before.y));
     assert_eq!(c.rects[0].y, parent.y);
@@ -82,12 +82,12 @@ fn the_star_of_a_command_asks_to_pin_it_and_of_a_pinned_one_to_unpin_it() {
     let star = c.star_rect(row);
     let (x, y) = (star.x + star.w / 2.0, star.y + star.h / 2.0);
     c.mouse_move(x, y);
-    c.mouse_down(x, y, 1);
+    c.mouse_down(x, y, 1, false);
     assert!(matches!(c.mouse_up(x, y), MenuOutcome::Pin(k, true, _) if k == "Open"));
     let star = c.star_rect(0);
     let (x, y) = (star.x + star.w / 2.0, star.y + star.h / 2.0);
     c.mouse_move(x, y);
-    c.mouse_down(x, y, 1);
+    c.mouse_down(x, y, 1, false);
     assert!(matches!(c.mouse_up(x, y), MenuOutcome::Pin(k, false, _) if k == "Delete"));
 }
 
@@ -170,10 +170,10 @@ fn submenus_start_folded_stay_folded_under_the_pointer_and_open_on_a_click() {
     }
     assert_eq!(c.labels(), ["Open", "New >", "Send to >"], "passing over a submenu does not unfold it");
     let y = row(&c, "Send to");
-    c.mouse_down(x, y, 1);
+    c.mouse_down(x, y, 1, false);
     c.mouse_up(x, y);
     assert!(c.is_open("Send to") && !c.is_open("New"), "a click unfolds it");
-    c.mouse_down(x, y, 1);
+    c.mouse_down(x, y, 1, false);
     c.mouse_up(x, y);
     assert!(!c.is_open("Send to"), "the next click folds it");
 }
@@ -187,4 +187,36 @@ fn a_menu_that_fits_has_no_scroll_at_fractional_scales() {
         c.wheel(-5.0);
         assert_eq!(c.rects[0].y, before, "the wheel does not move a menu that fits at {scale}");
     }
+}
+
+#[test]
+fn the_query_selects_by_dragging_and_by_whole_words_after_a_double_click() {
+    let mut c = menu(&[]);
+    let mut g = crate::text::Gfx::new(crate::text::tests::Mono, 1024);
+    c.measure(&mut g);
+    c.insert("alpha beta");
+    c.draw(&mut g, &crate::theme::DARK, true, &Default::default());
+    let inner = c.field_inner();
+    let y = inner.y + inner.h / 2.0;
+    let (start, end) = (inner.x + 25.0, inner.x + 95.0);
+    let mut picked = |c: &mut ContextMenu| {
+        c.draw(&mut g, &crate::theme::DARK, true, &Default::default());
+        c.query.edit.text[c.query.edit.selection()].to_owned()
+    };
+    assert!(matches!(c.mouse_down(end, y, 2, false), MenuOutcome::Open));
+    assert_eq!(picked(&mut c), "beta");
+    assert!(c.mouse_move(start, y));
+    assert_eq!(picked(&mut c), "alpha beta", "dragging after a double click goes by words");
+    assert!(matches!(c.mouse_up(start, y), MenuOutcome::Open), "a drag in the query never runs a command");
+    c.mouse_move(end, y);
+    assert_eq!(picked(&mut c), "alpha beta", "moving after the release changes nothing");
+    c.mouse_down(start, y, 1, false);
+    picked(&mut c);
+    c.mouse_move(start + 20.0, y);
+    assert_eq!(picked(&mut c), "ph", "after a single click it goes by characters");
+    c.mouse_up(start + 20.0, y);
+    c.mouse_down(end, y, 1, true);
+    assert_eq!(picked(&mut c), "pha beta", "Shift+click extends");
+    c.mouse_down(end, y, 3, false);
+    assert_eq!(picked(&mut c), "alpha beta", "a triple click picks everything");
 }

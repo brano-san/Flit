@@ -13,6 +13,7 @@ pub(super) struct Field {
     pub secret: bool,
     scroll: f32,
     click: Option<(f32, Grab)>,
+    held: Option<Grab>,
 }
 
 const MASK: char = '\u{2022}';
@@ -50,14 +51,14 @@ pub(super) fn is_menu_key(key: Key, m: Mods) -> bool {
     key == Key::Apps || (key == Key::F(10) && m.shift && !m.ctrl && !m.alt)
 }
 
-pub(super) fn text_entries(m: &mut Menu, edit: &LineEdit, secret: bool) {
+pub(super) fn text_entries(m: &mut Menu, edit: &LineEdit, secret: bool, paste: bool) {
     let picked = !edit.selection().is_empty();
     let whole = edit.selection() == (0..edit.text.len());
     let rows = [
         (TextCmd::Undo, S::MenuFieldUndo, "text.undo", edit.can_undo()),
         (TextCmd::Cut, S::MenuCut, "text.cut", picked && !secret),
         (TextCmd::Copy, S::MenuCopy, "text.copy", picked && !secret),
-        (TextCmd::Paste, S::MenuPaste, "text.paste", true),
+        (TextCmd::Paste, S::MenuPaste, "text.paste", paste),
         (TextCmd::Delete, S::MenuDelete, "text.delete_right", picked),
         (TextCmd::SelectAll, S::MenuFieldSelectAll, "text.select_all", !whole),
     ];
@@ -77,13 +78,16 @@ impl Field {
 
     pub fn click(&mut self, x: f32, clicks: u8, extend: bool) {
         self.click = Grab::of(clicks, extend).map(|how| (x, how));
+        self.held = self.click.map(|(_, how)| how.dragged());
         if self.click.is_none() {
             self.edit.select_all();
         }
     }
 
     pub fn drag(&mut self, x: f32) {
-        self.click = Some((x, Grab::Extend));
+        if let Some(how) = self.held {
+            self.click = Some((x, how));
+        }
     }
 
     pub fn key(&mut self, key: Key, m: Mods) -> FieldKey {
@@ -120,7 +124,7 @@ impl Field {
             let text = &self.edit.text;
             let pos = if self.secret { text.char_indices().nth(pos / MASK.len_utf8()).map_or(text.len(), |(i, _)| i) } else { pos };
             match how {
-                Grab::Word if self.secret => self.edit.select_all(),
+                Grab::Word | Grab::Words if self.secret => self.edit.select_all(),
                 how => self.edit.grab(pos, how),
             }
         }

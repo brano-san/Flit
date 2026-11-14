@@ -4,8 +4,9 @@ use super::field::{Field, FieldKey};
 use super::a11y::put;
 use super::{centered, App, Effect, Hit};
 use crate::a11y::{Role, Tree};
-use crate::input::{Key, Mods};
+use crate::input::{Key, Mods, MouseButton};
 use crate::render::Rect;
+use std::time::Instant;
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::Theme;
 
@@ -283,7 +284,30 @@ impl App {
         true
     }
 
-    pub(super) fn form_down(&mut self, x: f32, y: f32, clicks: u8) -> bool {
+    pub(super) fn form_text(&self, k: usize) -> Option<&Field> {
+        match self.jobs.form.as_ref()?.controls.get(k)? {
+            Control::Text { field, .. } => Some(field),
+            _ => None,
+        }
+    }
+
+    pub(super) fn form_text_mut(&mut self, k: usize) -> Option<&mut Field> {
+        match self.jobs.form.as_mut()?.controls.get_mut(k)? {
+            Control::Text { field, .. } => Some(field),
+            _ => None,
+        }
+    }
+
+    pub(super) fn form_text_focus(&self) -> Option<usize> {
+        let k = self.jobs.form.as_ref().filter(|_| self.jobs.asks.is_empty())?.focus;
+        self.form_text(k).map(|_| k)
+    }
+
+    pub(super) fn form_text_rect(&self, k: usize) -> Option<Rect> {
+        self.jobs.form.as_ref()?.rows.get(k).copied()
+    }
+
+    pub(super) fn form_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8, now: Instant) -> bool {
         if self.jobs.form.is_none() || !self.jobs.asks.is_empty() {
             return false;
         }
@@ -291,17 +315,31 @@ impl App {
             return true;
         }
         let Some(Hit::Form(k)) = self.form_hit(x, y) else { return false };
+        self.dirty = true;
+        if self.form_text(k).is_some() {
+            if let Some(f) = &mut self.jobs.form {
+                f.focus = k;
+            }
+            if button == MouseButton::Right {
+                self.text_field_menu(x, y);
+                return true;
+            }
+            let (clicks, shift) = (self.text_clicks((x, y), clicks, now), self.mods.shift);
+            if let Some(field) = self.form_text_mut(k) {
+                field.click(x, clicks, shift);
+            }
+            self.pressed = Hit::Form(k);
+            return true;
+        }
         let Some(f) = &mut self.jobs.form else { return false };
         f.focus = k;
         let n = f.controls.len();
         self.pressed = Hit::Form(k);
-        self.dirty = true;
         if k >= n {
             return true;
         }
         let row = f.rows[k];
         match &mut f.controls[k] {
-            Control::Text { field, .. } => field.click(x, clicks, self.mods.shift),
             Control::Choice { .. } => self.turn(k, x < row.x + row.w * 0.66),
             Control::Flags { spots, cur, .. } => {
                 if let Some(i) = spots.iter().position(|s| s.contains(x, y)) {

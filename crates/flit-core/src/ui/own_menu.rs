@@ -1,4 +1,4 @@
-use super::context::{ContextMenu, MenuKind};
+use super::context::{ContextMenu, CtxHit, MenuKind};
 use super::edit::EditAction;
 use super::menu::MenuItem;
 use super::popup::{MenuOutcome, MenuView};
@@ -166,6 +166,11 @@ impl App {
             }
         }
         let mods = self.mods;
+        let clicks = match *ev {
+            Event::MouseDown { x, y, button: MouseButton::Left, clicks } if self.context_menu_open().is_some_and(|c| c.hit(x, y) == Some(CtxHit::Field)) => self.text_clicks((x, y), clicks, now),
+            Event::MouseDown { clicks, .. } => clicks,
+            _ => 0,
+        };
         let pointer = self.own_menu.as_ref().and_then(|m| m.pointer);
         let Some(view) = self.own_menu.as_mut().and_then(|m| m.view.as_mut()) else { return false };
         let outcome = match (view, ev) {
@@ -178,9 +183,9 @@ impl App {
                 MenuOutcome::Open
             }
             (View::Plain(v), Event::MouseDown { x, y, .. }) => v.mouse_down(*x, *y),
-            (View::Context(c), Event::MouseDown { x, y, clicks, .. }) => {
+            (View::Context(c), Event::MouseDown { x, y, .. }) => {
                 self.dirty = true;
-                c.mouse_down(*x, *y, *clicks)
+                c.mouse_down(*x, *y, clicks, mods.shift)
             }
             (View::Plain(v), Event::MouseUp { x, y, .. }) => {
                 self.dirty = true;

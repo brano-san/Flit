@@ -2,7 +2,8 @@ use super::field::{is_menu_key, text_entries, Field, TextCmd};
 use super::filter::FilterRects;
 use super::home::Home;
 use super::palette::{Palette, Pick};
-use super::settings_page::SettingPick;
+use super::preview_pane::PaneHit;
+use super::settings_page::{SHit, SettingPick};
 use super::sidebar::Sidebar;
 use super::{App, Focus, Hit};
 use crate::input::{Key, Mods, MouseButton};
@@ -22,10 +23,11 @@ pub(super) struct Nav {
     pub closed_trail: Vec<Vec<Location>>,
     pub home: Home,
     streak: Option<(Instant, f32, f32)>,
+    clipboard_text: Option<bool>,
 }
 
 fn is_field(h: Hit) -> bool {
-    matches!(h, Hit::FilterField | Hit::PaletteField | Hit::QuickField)
+    matches!(h, Hit::FilterField | Hit::PaletteField | Hit::QuickField | Hit::Preview(PaneHit::Filter) | Hit::Settings(SHit::Search) | Hit::Form(_))
 }
 
 impl App {
@@ -38,13 +40,24 @@ impl App {
         self.palette_hit(x, y).or_else(|| self.sidebar_hit(x, y)).or_else(|| self.filter_hit(x, y)).or_else(|| self.home_hit(x, y))
     }
 
-    pub(super) fn nav_key(&mut self, key: Key, m: Mods, now: Instant) -> bool {
-        if is_menu_key(key, m) {
-            if let Some(r) = self.text_field_rect() {
-                self.text_field_menu(r.x, r.bottom());
-                return true;
-            }
+    pub(super) fn field_menu_key(&mut self, key: Key, m: Mods) -> bool {
+        if !is_menu_key(key, m) || self.is_renaming() {
+            return false;
         }
+        let Some(r) = self.text_field_rect() else { return false };
+        self.text_field_menu(r.x, r.bottom());
+        true
+    }
+
+    pub(super) fn clipboard_text_changed(&mut self, text: bool) {
+        self.nav.clipboard_text = Some(text);
+    }
+
+    pub(super) fn text_on_clipboard(&self) -> bool {
+        self.nav.clipboard_text != Some(false)
+    }
+
+    pub(super) fn nav_key(&mut self, key: Key, m: Mods, now: Instant) -> bool {
         if self.nav.palette.is_some() {
             return self.palette_key(key, m, now);
         }
@@ -95,7 +108,8 @@ impl App {
         if !matches!(button, MouseButton::Left | MouseButton::Middle | MouseButton::Right) {
             return palette_hit;
         }
-        let ours = palette_hit || matches!(h, Hit::Side(_) | Hit::SidePin(_) | Hit::SideEmpty | Hit::SideHeader(_) | Hit::HomeItem(_) | Hit::HomeEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose | Hit::QuickField | Hit::QuickClear);
+        let inspector = h == Hit::Preview(PaneHit::Filter) && button != MouseButton::Middle;
+        let ours = palette_hit || inspector || matches!(h, Hit::Side(_) | Hit::SidePin(_) | Hit::SideEmpty | Hit::SideHeader(_) | Hit::HomeItem(_) | Hit::HomeEmpty | Hit::Splitter | Hit::FilterField | Hit::FilterClose | Hit::QuickField | Hit::QuickClear);
         if !ours {
             return false;
         }
@@ -104,16 +118,22 @@ impl App {
             (MouseButton::Middle, Hit::Side(i)) => self.open_side_item(i, true, now),
             (MouseButton::Middle, Hit::HomeItem(i)) => self.open_home_item(i, true, now),
             (MouseButton::Left, Hit::Splitter) => self.begin_splitter_drag(x),
-            (MouseButton::Left, Hit::FilterField | Hit::PaletteField | Hit::QuickField) => {
+            (MouseButton::Left, Hit::FilterField | Hit::PaletteField | Hit::QuickField | Hit::Preview(_)) => {
                 let (clicks, extend) = (self.text_clicks((x, y), clicks, now), self.mods.shift);
                 match h {
                     Hit::FilterField => self.filter_click(x, clicks, extend),
                     Hit::PaletteField => self.palette_click(x, clicks, extend),
+                    Hit::Preview(_) => {
+                        self.focus_text_field(h);
+                        if let Some(f) = self.inspector_filter_mut() {
+                            f.click(x, clicks, extend);
+                        }
+                    }
                     _ => self.quick_filter_click(x, clicks, extend),
                 }
                 self.pressed = h;
             }
-            (MouseButton::Right, Hit::FilterField | Hit::PaletteField | Hit::QuickField) => {
+            (MouseButton::Right, Hit::FilterField | Hit::PaletteField | Hit::QuickField | Hit::Preview(_)) => {
                 self.focus_text_field(h);
                 self.text_field_menu(x, y);
             }
@@ -134,10 +154,9 @@ impl App {
             return false;
         }
         let h = self.pressed;
-        if let Some(f) = self.text_field_mut(h) {
-            f.drag(x);
-            self.dirty = true;
-        }
+        let Some(f) = self.text_field_mut(h) else { return false };
+        f.drag(x);
+        self.dirty = true;
         true
     }
 
@@ -164,13 +183,26 @@ impl App {
                 self.nav.sidebar.typing = true;
                 self.focus = Focus::Sidebar;
             }
+            Hit::Preview(_) if !self.inspector_field_focused() => self.open_inspector_filter(),
             _ => {}
         }
     }
 
     fn text_field_hit(&self) -> Option<Hit> {
+        if let Some(k) = self.form_text_focus() {
+            return Some(Hit::Form(k));
+        }
+        if self.jobs.modal() {
+            return None;
+        }
         if let Some(p) = &self.nav.palette {
             return (!matches!(p.pick, Pick::Setting(SettingPick::Capture { .. }))).then_some(Hit::PaletteField);
+        }
+        if self.settings_ime_area().is_some() {
+            return Some(Hit::Settings(SHit::Search));
+        }
+        if self.inspector_field_focused() {
+            return Some(Hit::Preview(PaneHit::Filter));
         }
         match self.focus {
             Focus::Filter if self.tab().filter.is_some() => Some(Hit::FilterField),
@@ -184,6 +216,9 @@ impl App {
             Hit::FilterField => self.tab().filter.as_ref(),
             Hit::PaletteField => self.nav.palette.as_ref().map(|p| &p.field),
             Hit::QuickField => Some(&self.nav.sidebar.filter),
+            Hit::Preview(_) => self.inspector_filter(),
+            Hit::Settings(_) => self.settings_search(),
+            Hit::Form(k) => self.form_text(k),
             _ => None,
         }
     }
@@ -193,6 +228,9 @@ impl App {
             Hit::FilterField => self.tabs[self.cur].filter.as_mut(),
             Hit::PaletteField => self.nav.palette.as_mut().map(|p| &mut p.field),
             Hit::QuickField => Some(&mut self.nav.sidebar.filter),
+            Hit::Preview(PaneHit::Filter) => self.inspector_filter_mut(),
+            Hit::Settings(SHit::Search) => self.settings_search_mut(),
+            Hit::Form(k) => self.form_text_mut(k),
             _ => None,
         }
     }
@@ -201,15 +239,18 @@ impl App {
         match self.text_field_hit()? {
             Hit::FilterField => Some(self.nav.filter.field),
             Hit::PaletteField => self.palette_field(),
+            Hit::Preview(_) => Some(self.inspector_filter_rect()),
+            Hit::Settings(_) => self.settings_ime_area(),
+            Hit::Form(k) => self.form_text_rect(k),
             _ => Some(self.nav.sidebar.field),
         }
     }
 
-    fn text_field_menu(&mut self, x: f32, y: f32) {
+    pub(super) fn text_field_menu(&mut self, x: f32, y: f32) {
         let Some(h) = self.text_field_hit() else { return };
         let menu = self.collect(|a, m| {
             if let Some(f) = a.text_field(h) {
-                text_entries(m, &f.edit, f.secret);
+                text_entries(m, &f.edit, f.secret, a.text_on_clipboard());
             }
         });
         if !menu.is_empty() {
@@ -223,8 +264,12 @@ impl App {
             self.ops_key(key, m);
         } else if self.search.active {
             self.search_key(key, m, now);
-        } else if self.text_field_hit().is_some() {
-            self.nav_key(key, m, now);
+        } else if let Some(h) = self.text_field_hit() {
+            if matches!(h, Hit::Form(_) | Hit::Settings(_) | Hit::Preview(_)) {
+                self.key(key, m, now);
+            } else {
+                self.nav_key(key, m, now);
+            }
         } else if self.focus == Focus::Preview {
             self.inspector_key(key, m);
         }

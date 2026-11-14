@@ -9,6 +9,7 @@ pub struct LineEdit {
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
     run: Run,
+    word: Range<usize>,
 }
 
 type Snapshot = (String, usize, usize);
@@ -28,6 +29,7 @@ pub enum Grab {
     Caret,
     Extend,
     Word,
+    Words,
 }
 
 impl Grab {
@@ -37,6 +39,13 @@ impl Grab {
             0 | 1 => Some(Grab::Caret),
             2 => Some(Grab::Word),
             _ => None,
+        }
+    }
+
+    pub fn dragged(self) -> Grab {
+        match self {
+            Grab::Caret | Grab::Extend => Grab::Extend,
+            Grab::Word | Grab::Words => Grab::Words,
         }
     }
 }
@@ -64,6 +73,7 @@ impl LineEdit {
         self.undo.clear();
         self.redo.clear();
         self.run = Run::Break;
+        self.word = 0..0;
     }
 
     fn begin(&mut self, run: Run) {
@@ -104,15 +114,30 @@ impl LineEdit {
         self.caret = self.text.len();
     }
 
-    pub fn select_word(&mut self, pos: usize) {
-        self.move_to(pos, false);
-        let pos = self.caret;
+    fn boundary(&self, pos: usize) -> usize {
+        (0..=pos.min(self.text.len())).rev().find(|&p| self.text.is_char_boundary(p)).unwrap_or(0)
+    }
+
+    fn word_at(&self, pos: usize) -> Range<usize> {
+        let pos = self.boundary(pos);
         let is_word = |c: Option<char>| c.is_some_and(|c| !is_sep(c));
         let sep = !is_word(self.text[pos..].chars().next()) && !is_word(self.text[..pos].chars().next_back());
         let start = self.text[..pos].char_indices().rev().take_while(|&(_, c)| is_sep(c) == sep).last().map_or(pos, |(i, _)| i);
         let end = self.text[pos..].char_indices().find(|&(_, c)| is_sep(c) != sep).map_or(self.text.len(), |(i, _)| pos + i);
-        self.anchor = start;
-        self.caret = end;
+        start..end
+    }
+
+    pub fn select_word(&mut self, pos: usize) {
+        self.run = Run::Break;
+        self.word = self.word_at(pos);
+        (self.anchor, self.caret) = (self.word.start, self.word.end);
+    }
+
+    fn extend_by_words(&mut self, pos: usize) {
+        self.run = Run::Break;
+        let origin = if !self.word.is_empty() && self.text.get(self.word.clone()).is_some() { self.word.clone() } else { self.selection() };
+        let w = self.word_at(pos);
+        (self.anchor, self.caret) = if w.start < origin.start { (origin.end, w.start) } else { (origin.start, w.end.max(origin.end)) };
     }
 
     pub fn grab(&mut self, pos: usize, how: Grab) {
@@ -120,6 +145,7 @@ impl LineEdit {
             Grab::Caret => self.move_to(pos, false),
             Grab::Extend => self.move_to(pos, true),
             Grab::Word => self.select_word(pos),
+            Grab::Words => self.extend_by_words(pos),
         }
     }
 
@@ -201,7 +227,7 @@ impl LineEdit {
 
     pub fn move_to(&mut self, pos: usize, extend: bool) {
         self.run = Run::Break;
-        self.caret = (0..=pos.min(self.text.len())).rev().find(|&p| self.text.is_char_boundary(p)).unwrap_or(0);
+        self.caret = self.boundary(pos);
         if !extend {
             self.anchor = self.caret;
         }

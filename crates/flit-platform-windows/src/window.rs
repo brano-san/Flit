@@ -21,7 +21,7 @@ use windows::core::{w, BOOL, PCWSTR};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows::Win32::Graphics::Gdi::{GetSysColor, SYS_COLOR_INDEX, COLOR_BTNFACE, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_HOTLIGHT, COLOR_WINDOW, COLOR_WINDOWTEXT, ClientToScreen, GetMonitorInfoW, MonitorFromWindow, ScreenToClient, ValidateRect, MONITORINFO, MONITOR_DEFAULTTONEAREST};
-use windows::Win32::System::DataExchange::{AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, SetClipboardData};
+use windows::Win32::System::DataExchange::{AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, IsClipboardFormatAvailable, SetClipboardData};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
@@ -538,6 +538,10 @@ pub(crate) fn high_contrast() -> Option<SystemColors> {
     Some(SystemColors { window: c(COLOR_WINDOW), window_text: c(COLOR_WINDOWTEXT), highlight: c(COLOR_HIGHLIGHT), highlight_text: c(COLOR_HIGHLIGHTTEXT), hotlight: c(COLOR_HOTLIGHT), gray_text: c(COLOR_GRAYTEXT), btn_face: c(COLOR_BTNFACE) })
 }
 
+fn clipboard_has_text() -> bool {
+    unsafe { IsClipboardFormatAvailable(u32::from(CF_UNICODETEXT.0)) }.is_ok()
+}
+
 fn mouse_setting(wp: WPARAM) -> bool {
     [SPI_SETWHEELSCROLLLINES, SPI_SETDOUBLECLICKTIME].iter().any(|a| a.0 as usize == wp.0)
 }
@@ -738,6 +742,7 @@ impl<H: WindowHandler<Win32>> Shared<H> {
             node.queue.borrow_mut().push_back(Event::Contrast(Some(colors)));
         }
         node.queue.borrow_mut().push_back(Event::Animations(client_area_animation()));
+        node.queue.borrow_mut().push_back(Event::ClipboardText(clipboard_has_text()));
         let tabs = if hidden { std::env::var("FLIT_CAPTURE_TABS").ok().and_then(|v| v.parse().ok()).unwrap_or(0) } else { 0 };
         for _ in 0..tabs {
             node.queue.borrow_mut().push_back(Event::Key { key: Key::Tab, mods: Mods::default(), pressed: true });
@@ -1407,6 +1412,7 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
         }
         WM_CLIPBOARDUPDATE => {
             s.send(Event::ClipboardChanged(GetClipboardSequenceNumber()));
+            s.send(Event::ClipboardText(clipboard_has_text()));
             Some(LRESULT(0))
         }
         _ => None,

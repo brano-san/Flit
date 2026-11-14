@@ -491,6 +491,11 @@ impl ContextMenu {
     }
 
     pub fn mouse_move(&mut self, x: f32, y: f32) -> bool {
+        if self.pressed == Some(CtxHit::Field) {
+            let inner = self.field_inner();
+            self.query.drag(x.max(inner.x));
+            return true;
+        }
         if !self.armed && (x - self.start.0).hypot(y - self.start.1) > ARM_DISTANCE * self.scale {
             self.armed = true;
         }
@@ -504,14 +509,14 @@ impl ContextMenu {
         before != (self.hover, self.hot)
     }
 
-    pub fn mouse_down(&mut self, x: f32, y: f32, clicks: u8) -> MenuOutcome {
+    pub fn mouse_down(&mut self, x: f32, y: f32, clicks: u8, extend: bool) -> MenuOutcome {
         self.armed = true;
         self.pressed = self.hit(x, y);
         match self.pressed {
             None => MenuOutcome::Closed,
             Some(CtxHit::Field) => {
                 let inner = self.field_inner();
-                self.query.click(x.max(inner.x), clicks, false);
+                self.query.click(x.max(inner.x), clicks, extend);
                 MenuOutcome::Open
             }
             Some(CtxHit::Scroll(down)) => {

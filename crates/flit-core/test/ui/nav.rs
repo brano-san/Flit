@@ -723,3 +723,164 @@ fn a_tilde_in_the_list_on_windows_finds_office_lock_files_by_typing() {
     assert!(app.nav.palette.is_none(), "Explorer has no slash or tilde shortcut");
     assert_eq!(selected(&app), ["~$report.docx"]);
 }
+
+fn right_click(app: &mut App, (x, y): (f32, f32)) {
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Right, clicks: 1 }, t0());
+    app.on_event(&Event::MouseUp { x, y, button: MouseButton::Right }, t0());
+}
+
+fn drag_words(app: &mut App, from: (f32, f32), to: (f32, f32), at: Instant) {
+    app.on_event(&Event::MouseDown { x: from.0, y: from.1, button: MouseButton::Left, clicks: 2 }, at);
+    redraw(app);
+    app.on_event(&Event::MouseMove { x: to.0, y: to.1 }, at);
+    redraw(app);
+    app.on_event(&Event::MouseUp { x: to.0, y: to.1, button: MouseButton::Left }, at);
+}
+
+fn picked(f: Option<&Field>) -> String {
+    let e = &f.expect("the field").edit;
+    e.text[e.selection()].to_owned()
+}
+
+fn no_menu(app: &mut App) -> bool {
+    !app.drain_effects().any(|e| matches!(e, Effect::ShellMenu(_)))
+}
+
+#[test]
+fn paste_in_the_field_menu_is_offered_only_while_the_clipboard_holds_text() {
+    let mut app = app_at(r"C:\x");
+    files(&mut app, &["alpha"]);
+    let (start, _) = filter_with(&mut app, "alpha");
+    let paste = |app: &mut App| {
+        right_click(app, start);
+        !text_menu(app)[3].1
+    };
+    assert!(paste(&mut app), "until the system reports anything Paste stays offered");
+    app.on_event(&Event::ClipboardText(false), t0());
+    assert!(!paste(&mut app), "an empty or non-text clipboard greys Paste out");
+    right_click(&mut app, start);
+    assert_eq!(text_menu(&mut app).iter().map(|(_, d)| *d).collect::<Vec<_>>(), [false, true, true, true, true, false], "the other entries do not change");
+    key(&mut app, Key::Char('V'), CTRL);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Paste)), "Ctrl+V still asks the system");
+    app.on_event(&Event::ClipboardText(true), t0());
+    assert!(paste(&mut app));
+}
+
+#[test]
+fn dragging_after_a_double_click_in_the_filter_extends_by_whole_words() {
+    let mut app = app_at(r"C:\x");
+    files(&mut app, &["a"]);
+    let (start, end) = filter_with(&mut app, "alpha beta");
+    drag_words(&mut app, end, start, t0());
+    assert_eq!(filter_selection(&app), "alpha beta", "the word under the pointer is taken whole");
+    drag_words(&mut app, start, (start.0 + 6.0, start.1), t0() + Duration::from_secs(2));
+    assert_eq!(filter_selection(&app), "alpha", "within the first word nothing else is added");
+    app.on_event(&Event::MouseDown { x: start.0, y: start.1, button: MouseButton::Left, clicks: 1 }, t0() + Duration::from_secs(4));
+    redraw(&mut app);
+    app.on_event(&Event::MouseMove { x: start.0 + 20.0, y: start.1 }, t0() + Duration::from_secs(4));
+    redraw(&mut app);
+    assert_eq!(filter_selection(&app), "al", "after a single click dragging still goes by characters");
+}
+
+#[test]
+fn the_settings_search_picks_words_drags_and_offers_the_field_menu() {
+    let mut app = app_at(r"C:\x");
+    app.open_settings(None);
+    typed(&mut app, "alpha beta");
+    redraw(&mut app);
+    let r = app.settings_ime_area().expect("typing goes to the search");
+    let y = r.y + r.h / 2.0;
+    let (start, end) = ((r.x + 32.0 + 25.0, y), (r.right() - 12.0, y));
+    let t = t0();
+    click_at(&mut app, end, 2, t);
+    assert_eq!(picked(app.settings_search()), "beta");
+    click_at(&mut app, end, 1, t + Duration::from_millis(100));
+    assert_eq!(picked(app.settings_search()), "alpha beta", "a quick third click picks everything");
+    drag_words(&mut app, end, start, t + Duration::from_secs(2));
+    assert_eq!(picked(app.settings_search()), "alpha beta");
+    click_at(&mut app, start, 1, t + Duration::from_secs(4));
+    app.on_event(&Event::MouseDown { x: start.0, y, button: MouseButton::Left, clicks: 1 }, t + Duration::from_secs(5));
+    app.on_event(&Event::MouseMove { x: end.0, y }, t + Duration::from_secs(5));
+    redraw(&mut app);
+    app.on_event(&Event::MouseUp { x: end.0, y, button: MouseButton::Left }, t + Duration::from_secs(5));
+    assert_eq!(picked(app.settings_search()), "pha beta", "dragging selects");
+    right_click(&mut app, start);
+    assert_eq!(text_menu(&mut app).iter().map(|(_, d)| *d).collect::<Vec<_>>(), [false, false, false, false, false, false]);
+    app.on_event(&Event::MenuCommand(1), t0());
+    assert_eq!(clipboard(&mut app), ["pha beta"]);
+    assert_eq!(app.settings_search().unwrap().text(), "al");
+    app.on_event(&Event::MenuCommand(0), t0());
+    assert_eq!(app.settings_search().unwrap().text(), "alpha beta");
+    key(&mut app, Key::Apps, NO);
+    assert_eq!(text_menu(&mut app).len(), 6, "the menu key opens it too");
+    key(&mut app, Key::Enter, NO);
+    key(&mut app, Key::Apps, NO);
+    assert!(no_menu(&mut app), "with the list focused the menu key opens no field menu");
+    app.on_event(&Event::MenuCommand(4), t0());
+    assert_eq!(app.settings_search().unwrap().text(), "alpha beta", "a stale field command leaves the search alone");
+}
+
+#[test]
+fn dialog_text_fields_pick_words_drag_and_offer_the_field_menu_but_secrets_stay_hidden() {
+    use crate::ui::archive::Kind;
+    use crate::ui::form::{Control, Form};
+    let mut app = app_at(r"C:\x");
+    app.open_form(Form::new(Kind::GitClone, "Clone", vec![Control::text("Address", "alpha beta", ""), Control::secret("Password", "")], vec!["OK", "Cancel"]));
+    redraw(&mut app);
+    let rows = app.jobs.form.as_ref().unwrap().rows.clone();
+    let (y, y2) = (rows[0].y + rows[0].h / 2.0, rows[1].y + rows[1].h / 2.0);
+    let (start, end) = ((rows[0].x + 2.0, y), (rows[0].right() - 12.0, y));
+    let t = t0();
+    click_at(&mut app, end, 2, t);
+    assert_eq!(picked(app.form_text(0)), "beta");
+    click_at(&mut app, end, 1, t + Duration::from_millis(100));
+    assert_eq!(picked(app.form_text(0)), "alpha beta", "a quick third click picks everything");
+    click_at(&mut app, end, 1, t + Duration::from_secs(2));
+    drag_words(&mut app, end, start, t + Duration::from_secs(4));
+    assert_eq!(picked(app.form_text(0)), "alpha beta", "dragging after a double click goes by words");
+    right_click(&mut app, end);
+    assert_eq!(text_menu(&mut app)[2], ("Copy".to_owned(), false));
+    app.on_event(&Event::MenuCommand(2), t0());
+    assert_eq!(clipboard(&mut app), ["alpha beta"]);
+    click_at(&mut app, (rows[1].right() - 12.0, y2), 1, t + Duration::from_secs(6));
+    typed(&mut app, "hunter2");
+    key(&mut app, Key::Char('A'), CTRL);
+    right_click(&mut app, (rows[1].right() - 12.0, y2));
+    let menu = text_menu(&mut app);
+    assert!(menu[1].1 && menu[2].1, "Cut and Copy stay off for a password");
+    app.on_event(&Event::MenuCommand(2), t0());
+    assert!(clipboard(&mut app).is_empty());
+    assert_eq!(app.form_text(1).unwrap().text(), "hunter2");
+    assert_eq!(app.form_text(0).unwrap().text(), "alpha beta", "the other field is untouched");
+}
+
+#[test]
+fn the_inspector_filter_picks_words_drags_and_offers_the_field_menu() {
+    let mut app = app_at(r"C:\x");
+    files(&mut app, &["a.rs"]);
+    key(&mut app, Key::Char('A'), CTRL);
+    key(&mut app, Key::Space, NO);
+    redraw(&mut app);
+    let gen = app.drain_effects().filter_map(|e| if let Effect::Preview(r) = e { Some(r.gen) } else { None }).next_back().expect("a preview request");
+    app.on_preview(gen, crate::preview::PreviewData::Doc(crate::preview::text_doc("alpha beta\ngamma", None)));
+    assert!(app.run_action("inspector.filter", t0()));
+    typed(&mut app, "alpha beta");
+    redraw(&mut app);
+    let r = app.inspector_filter_rect();
+    let y = r.y + r.h / 2.0;
+    let (start, end) = ((r.x + 22.0 + 25.0, y), (r.x + 22.0 + 95.0, y));
+    let t = t0();
+    click_at(&mut app, end, 2, t);
+    assert_eq!(picked(app.inspector_filter()), "beta");
+    click_at(&mut app, end, 1, t + Duration::from_millis(100));
+    assert_eq!(picked(app.inspector_filter()), "alpha beta");
+    click_at(&mut app, end, 1, t + Duration::from_secs(2));
+    drag_words(&mut app, end, start, t + Duration::from_secs(4));
+    assert_eq!(picked(app.inspector_filter()), "alpha beta");
+    right_click(&mut app, start);
+    assert_eq!(text_menu(&mut app).len(), 6);
+    app.on_event(&Event::MenuCommand(1), t0());
+    assert_eq!(clipboard(&mut app), ["alpha beta"]);
+    assert_eq!(app.inspector_filter().unwrap().text(), "");
+    assert_eq!(app.tab().location(), &loc(r"C:\x"), "cutting text never cuts files");
+}

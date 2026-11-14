@@ -67,7 +67,7 @@ fn scrollbar_drag_and_copy_feedback_preserve_dialog_state() {
     assert_eq!(f.document.scroll.pos, f.document.max());
     a.on_event(&Event::MouseUp { x: thumb.x, y: end, button: MouseButton::Left }, Instant::now());
     assert!(a.jobs.form.as_ref().unwrap().document.grab.is_none());
-    a.form_down(value.x + 2.0, value.y + 2.0, 1);
+    a.form_down(value.x + 2.0, value.y + 2.0, MouseButton::Left, 1, Instant::now());
     a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
     let f = a.jobs.form.as_ref().unwrap();
     assert!(f.document.copied.is_some());

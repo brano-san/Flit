@@ -338,3 +338,26 @@ fn a_group_chevron_turns_when_its_group_folds() {
     draw(&mut a, t + Duration::from_millis(410));
     assert_eq!(angle(&a, t + Duration::from_millis(410)), 90.0, "without Animations it turns at once");
 }
+
+#[test]
+fn shift_delete_in_the_shortcut_and_layout_pickers_cuts_query_text_and_plain_delete_still_removes() {
+    let mut a = crate::ui::harness::app(&["a.txt"]);
+    find_command(&mut a, "view.hidden");
+    press(&mut a, Key::F(2), NONE);
+    a.palette_insert("Change");
+    press(&mut a, Key::Char('A'), CTRL);
+    a.drain_effects().for_each(drop);
+    press(&mut a, Key::Delete, Mods { shift: true, ..NONE });
+    assert_eq!(a.keymap.text_of("view.hidden"), "Ctrl+H", "Shift+Delete keeps the shortcut");
+    assert!(a.drain_effects().any(|e| matches!(e, Effect::SetClipboard(s) if s == "Change")), "it cuts the query instead");
+    assert_eq!(a.nav.palette.as_ref().unwrap().field.text(), "");
+    press(&mut a, Key::Delete, NONE);
+    assert_eq!(a.keymap.text_of("view.hidden"), "", "plain Delete still removes the highlighted shortcut");
+    a.close_palette();
+    a.set_layouts(vec!["home".into(), "work".into()]);
+    a.ask_load_layout();
+    press(&mut a, Key::Delete, Mods { shift: true, ..NONE });
+    assert_eq!(a.layouts(), ["home", "work"], "Shift+Delete deletes no layout");
+    press(&mut a, Key::Delete, NONE);
+    assert_eq!(a.layouts(), ["work"]);
+}

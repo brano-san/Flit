@@ -539,7 +539,7 @@ impl App {
         if self.capture_key(key, m, now) {
             return true;
         }
-        if key == Key::Delete && self.remove_palette_item() {
+        if key == Key::Delete && !m.shift && self.remove_palette_item() {
             self.layout();
             return true;
         }
