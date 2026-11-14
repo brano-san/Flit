@@ -273,7 +273,7 @@ impl Listing {
     }
 }
 
-pub const NOT_RESPONDING_CODE: i64 = 0x79;
+pub const NOT_RESPONDING_CODE: i64 = 0x544C_0002;
 
 impl FsError {
     pub fn not_responding() -> Self {

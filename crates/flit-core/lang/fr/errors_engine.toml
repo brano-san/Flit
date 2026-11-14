@@ -1,4 +1,4 @@
-failed = "Échec de {count} éléments. {first}"
+failed = "Échec de {count} éléments. {error}"
 no_room = "Espace libre insuffisant dans {folder} : les éléments nécessitent {need}, mais seuls {free} sont libres"
 inside = "{path} : le dossier de destination se trouve dans le dossier source"
 link_skipped = "{path} : les liens de dossier ne sont pas copiés"

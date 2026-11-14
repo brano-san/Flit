@@ -1,4 +1,4 @@
-failed = "{count} Elemente fehlgeschlagen. {first}"
+failed = "{count} Elemente fehlgeschlagen. {error}"
 no_room = "In {folder} ist nicht genügend Speicherplatz frei: Die Elemente benötigen {need}, frei sind nur {free}"
 inside = "{path}: Der Zielordner befindet sich im Quellordner"
 link_skipped = "{path}: Ordnerverknüpfungen werden nicht kopiert"

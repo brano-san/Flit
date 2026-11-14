@@ -196,7 +196,7 @@ pub fn eject(point: &Path) -> std::io::Result<()> {
 }
 
 pub fn eject_error(drive: &Path, e: &std::io::Error) -> PlatformError {
-    PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, flit_core::tr_en!(S::ErrorsFsEjectFailed, drive = drive.display(), why = e))
+    PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, flit_core::tr_en!(S::ErrorsFsEjectFailed, drive = drive.display(), why = flit_core::fmt::io_reason(e)))
 }
 
 pub fn list_computer(out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
@@ -228,7 +228,7 @@ pub fn storage_tops() -> Vec<PathBuf> {
 }
 
 pub fn trash() -> Result<Trash, PlatformError> {
-    Trash::from_env().ok_or_else(|| PlatformError::new(-1, "The Trash folder is unknown: neither XDG_DATA_HOME nor HOME is set"))
+    Trash::from_env().ok_or_else(|| PlatformError::new(-1, flit_core::tr_en!(S::ErrorsOpsTrashUnknown)))
 }
 
 pub fn trash_folders(trash: &Trash, tops: &[PathBuf]) -> Vec<PathBuf> {
@@ -250,14 +250,14 @@ pub fn list_trash(out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
 }
 
 fn failure(p: &Path, e: std::io::Error) -> PlatformError {
-    PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("{}: {e}", p.display()))
+    PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("{}: {}", p.display(), flit_core::fmt::io_reason(&e)))
 }
 
 pub fn purge(trash: &Trash, pairs: &[(flit_core::FsPath, flit_core::FsPath)]) -> OpOutcome {
     let mut out = OpOutcome::default();
     for (trashed, original) in pairs {
         let Some(path) = flit_platform_linux::host(trashed) else {
-            out.error = Some(PlatformError::new(-1, format!("{} is not in the Trash", trashed.display())));
+            out.error = Some(PlatformError::new(-1, flit_core::tr_en!(S::ErrorsOpsTrashForeign, path = trashed.display())));
             continue;
         };
         match trash.purge(path) {
@@ -272,10 +272,10 @@ pub fn empty(trash: &Trash, tops: &[PathBuf]) -> OpOutcome {
     let dirs = trash.dirs(tops);
     let (removed, error) = trash.empty(&dirs);
     if removed.is_empty() && error.is_none() {
-        return OpOutcome { items: Vec::new(), error: Some(PlatformError::new(-1, "The Trash is already empty")) };
+        return OpOutcome { items: Vec::new(), error: Some(PlatformError::new(-1, flit_core::tr_en!(S::ErrorsOpsTrashAlreadyEmpty))) };
     }
     let items = removed.iter().filter_map(|p| crate::xdg::fs_path(p)).map(|p| (p.clone(), p)).collect();
-    OpOutcome { items, error: error.map(|e| PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("Some items could not be deleted from the Trash: {e}"))) }
+    OpOutcome { items, error: error.map(|e| PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, flit_core::tr_en!(S::ErrorsOpsTrashPartial, error = flit_core::fmt::io_reason(&e)))) }
 }
 
 fn attribute<'a>(tag: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {

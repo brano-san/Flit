@@ -1,1 +1,5 @@
 not_recycled = "The deleted items are not in the Recycle Bin, so the deletion cannot be undone"
+trash_partial = "Some items could not be deleted from the Trash: {error}"
+trash_foreign = "{path} is not in the Trash"
+trash_unknown = "The Trash folder is unknown: neither XDG_DATA_HOME nor HOME is set"
+trash_already_empty = "The Trash is already empty"

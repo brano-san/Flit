@@ -1,1 +1,5 @@
 not_recycled = "Die gelöschten Elemente befinden sich nicht im Papierkorb, daher kann das Löschen nicht rückgängig gemacht werden"
+trash_partial = "Einige Elemente konnten nicht aus dem Papierkorb gelöscht werden: {error}"
+trash_foreign = "{path} befindet sich nicht im Papierkorb"
+trash_unknown = "Der Papierkorb-Ordner ist unbekannt: weder XDG_DATA_HOME noch HOME ist gesetzt"
+trash_already_empty = "Der Papierkorb ist bereits leer"

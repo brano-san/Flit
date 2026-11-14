@@ -1,1 +1,5 @@
 not_recycled = "Los elementos eliminados no están en la Papelera de reciclaje, así que la eliminación no se puede deshacer"
+trash_partial = "Algunos elementos no se pudieron eliminar de la papelera: {error}"
+trash_foreign = "{path} no está en la papelera"
+trash_unknown = "La carpeta de la papelera es desconocida: no está definido ni XDG_DATA_HOME ni HOME"
+trash_already_empty = "La papelera ya está vacía"

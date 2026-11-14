@@ -1,1 +1,5 @@
 not_recycled = "已删除的项目不在回收站中，因此无法撤消删除"
+trash_partial = "部分项目无法从回收站删除：{error}"
+trash_foreign = "{path} 不在回收站中"
+trash_unknown = "回收站文件夹未知：未设置 XDG_DATA_HOME 或 HOME"
+trash_already_empty = "回收站已经是空的"

@@ -1,4 +1,4 @@
-failed = "{count} items failed. {first}"
+failed = "{count} items failed. {error}"
 no_room = "There is not enough free space in {folder}: the items need {need}, but only {free} is free"
 inside = "{path}: the destination folder is inside the source folder"
 link_skipped = "{path}: folder links are not copied"

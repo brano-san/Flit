@@ -1,4 +1,4 @@
-failed = "Error en {count} elementos. {first}"
+failed = "Error en {count} elementos. {error}"
 no_room = "No hay suficiente espacio libre en {folder}: los elementos necesitan {need}, pero solo hay {free} libres"
 inside = "{path}: la carpeta de destino está dentro de la carpeta de origen"
 link_skipped = "{path}: los vínculos de carpeta no se copian"
