@@ -97,6 +97,7 @@ pub enum Event {
     Focus(bool),
     ThemeChanged { dark: bool },
     Contrast(Option<crate::theme::SystemColors>),
+    Animations(bool),
     Invoke(u64),
     A11yFocus(u64),
     A11ySelect(u64),

@@ -525,6 +525,11 @@ pub(crate) fn high_contrast() -> Option<SystemColors> {
     Some(SystemColors { window: c(COLOR_WINDOW), window_text: c(COLOR_WINDOWTEXT), highlight: c(COLOR_HIGHLIGHT), highlight_text: c(COLOR_HIGHLIGHTTEXT), hotlight: c(COLOR_HOTLIGHT), gray_text: c(COLOR_GRAYTEXT), btn_face: c(COLOR_BTNFACE) })
 }
 
+fn client_area_animation() -> bool {
+    let mut on = BOOL(1);
+    unsafe { SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, Some(&mut on as *mut BOOL as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0)) }.ok().is_none_or(|_| on.as_bool())
+}
+
 fn load_cursor(c: CursorIcon) -> HCURSOR {
     let id = match c {
         CursorIcon::Default => IDC_ARROW,
@@ -715,6 +720,7 @@ impl<H: WindowHandler<Win32>> Shared<H> {
         if let Some(colors) = high_contrast() {
             node.queue.borrow_mut().push_back(Event::Contrast(Some(colors)));
         }
+        node.queue.borrow_mut().push_back(Event::Animations(client_area_animation()));
         let tabs = if hidden { std::env::var("FLIT_CAPTURE_TABS").ok().and_then(|v| v.parse().ok()).unwrap_or(0) } else { 0 };
         for _ in 0..tabs {
             node.queue.borrow_mut().push_back(Event::Key { key: Key::Tab, mods: Mods::default(), pressed: true });
@@ -1277,6 +1283,7 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
             if lp.0 != 0 && PCWSTR(lp.0 as *const u16).to_string().is_ok_and(|v| v == "ImmersiveColorSet") {
                 s.send(Event::ThemeChanged { dark: crate::dark_mode() });
             }
+            s.send(Event::Animations(client_area_animation()));
             None
         }
         WM_SHELL_UI => {

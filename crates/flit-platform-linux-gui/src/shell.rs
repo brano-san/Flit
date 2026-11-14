@@ -633,6 +633,22 @@ fn probe_dark() -> Option<bool> {
     session_bus().then(|| ask(&portal)).flatten().or_else(kde).or_else(|| ask(&gsettings))
 }
 
+fn parse_flag(out: &str) -> Option<bool> {
+    let v = out.trim();
+    match (v.contains("true"), v.contains("false")) {
+        (true, _) => Some(true),
+        (_, true) => Some(false),
+        _ => None,
+    }
+}
+
+pub fn probe_animations() -> Option<bool> {
+    let portal = ["gdbus", "call", "--session", "--timeout", "1", "--dest", "org.freedesktop.portal.Desktop", "--object-path", "/org/freedesktop/portal/desktop", "--method", "org.freedesktop.portal.Settings.Read", "org.gnome.desktop.interface", "enable-animations"];
+    let gsettings = ["gsettings", "get", "org.gnome.desktop.interface", "enable-animations"];
+    let ask = |args: &[&str]| helper(args).and_then(|mut c| c.stdout(Stdio::piped()).spawn().ok()).and_then(|child| wait_output(child, HELPER_TIMEOUT)).and_then(|r| String::from_utf8(r).ok()).and_then(|r| parse_flag(&r));
+    session_bus().then(|| ask(&portal)).flatten().or_else(|| ask(&gsettings))
+}
+
 pub fn kde_dark(kdeglobals: &str) -> Option<bool> {
     let mut window = false;
     for line in kdeglobals.lines().map(str::trim) {

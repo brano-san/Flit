@@ -244,3 +244,11 @@ fn a_failed_background_image_says_so_in_the_status_bar() {
     a.on_backdrop(gen, None);
     assert!(a.tab().error.as_deref().is_some_and(|e| e.contains("broken.jpg")));
 }
+#[test]
+fn the_system_animation_setting_switches_flits_animations() {
+    let mut a = app();
+    a.on_event(&Event::Animations(false), Instant::now());
+    assert!(!a.animations, "animations are off while the system turns them off");
+    a.on_event(&Event::Animations(true), Instant::now());
+    assert!(a.animations);
+}

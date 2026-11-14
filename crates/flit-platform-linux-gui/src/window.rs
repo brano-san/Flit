@@ -38,6 +38,14 @@ const VERIFY_WAIT: Duration = Duration::from_millis(400);
 const DARK_UNKNOWN: u8 = 0;
 const DARK_NO: u8 = 1;
 const DARK_YES: u8 = 2;
+const ANIM_YES: u8 = 1;
+const ANIM_NO: u8 = 0;
+static ANIMATIONS: AtomicU8 = AtomicU8::new(ANIM_YES);
+static ANIMATIONS_DIRTY: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn animations() -> bool {
+    ANIMATIONS.load(Ordering::Acquire) == ANIM_YES
+}
 
 static DISPLAY: OnceLock<OwnedDisplayHandle> = OnceLock::new();
 static PROXY: OnceLock<EventLoopProxy> = OnceLock::new();
@@ -111,6 +119,13 @@ fn watch_desktop() {
         PREFERRED_DARK.store(if dark { DARK_YES } else { DARK_NO }, Ordering::Release);
         THEME_CHANGED.store(true, Ordering::Release);
         wake_loop();
+    });
+    let _ = std::thread::Builder::new().name("flit-anim".into()).spawn(|| {
+        if let Some(on) = crate::shell::probe_animations() {
+            ANIMATIONS.store(if on { ANIM_YES } else { ANIM_NO }, Ordering::Release);
+            ANIMATIONS_DIRTY.store(true, Ordering::Release);
+            wake_loop();
+        }
     });
     let shutdown = crate::instance::on_shutdown_signal(|signal| {
         tracing::info!("signal {signal}, saving the session");
@@ -788,6 +803,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         self.nodes.push(Node { window: LinuxWindow::new(id, raw, self.commands.clone()), clicks: Clicks::new(input::double_click()) });
         let node = self.nodes.last().unwrap();
         self.handler.created(&node.window);
+        self.handler.event(&node.window, Event::Animations(animations()));
     }
 
     fn close(&mut self, id: WindowId) {
@@ -985,6 +1001,11 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
             let dark = preferred_dark().unwrap_or(false);
             for node in &self.nodes {
                 self.handler.event(&node.window, Event::ThemeChanged { dark });
+            }
+        }
+        if ANIMATIONS_DIRTY.swap(false, Ordering::AcqRel) {
+            for node in &self.nodes {
+                self.handler.event(&node.window, Event::Animations(animations()));
             }
         }
         let queued = std::mem::take(&mut *QUEUED.lock().unwrap_or_else(|e| e.into_inner()));
