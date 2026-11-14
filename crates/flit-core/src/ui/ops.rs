@@ -1996,6 +1996,7 @@ impl App {
                 let v = t.view.as_ref()?;
                 v.listing().entries[*v.rows().get(row)? as usize].is_dir().then_some(Spot::Row(row))
             }
+            Hit::Side(i) | Hit::SidePin(i) if self.nav.sidebar.items.get(i).is_some_and(|it| it.glyph != super::G_FILE && it.loc != *self.current_location()) => Some(Spot::Side(i)),
             Hit::SideHeader(s) if self.nav.sidebar.is_collapsed(s) => Some(Spot::SideHeader(s)),
             _ => None,
         }
@@ -2023,6 +2024,7 @@ impl App {
         let folder = match spot {
             Some(Spot::Tab(i)) => return self.select_tab(i),
             Some(Spot::SideHeader(s)) => return self.toggle_section(s),
+            Some(Spot::Side(i)) => self.nav.sidebar.items.get(i).map(|it| it.loc.clone()),
             Some(Spot::Crumb(i)) => t.crumb(i).map(|c| c.1.clone()),
             Some(Spot::Row(row)) => t.view.as_ref().and_then(|v| v.rows().get(row).map(|&i| t.entry_location(i))),
             _ => None,

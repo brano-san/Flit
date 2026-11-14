@@ -2244,6 +2244,7 @@ fn the_undo_bar_belongs_to_its_tab_and_yields_to_status_errors() {
     assert_eq!(app.tab().undo.map(|(n, _)| n), Some(1), "the bar waits in its own tab");
 }
 
+#[test]
 fn hovering_a_sidebar_folder_mid_drag_opens_it_after_the_spring_delay() {
     let mut app = app_at(r"C:\x");
     let downloads = crate::location::Location::parse(r"C:\Users\u\Downloads").unwrap();
