@@ -234,7 +234,7 @@ fn media_controls_send_commands() {
     frame(&mut a);
     assert!(a.drain_effects().any(|e| matches!(e, Effect::Host(HostCmd::Place(Some(_))))));
     let v = a.preview.r.volume;
-    a.preview_mouse_down(PaneHit::Volume, v.right(), v.y);
+    a.preview_mouse_down(PaneHit::Volume, (v.right(), v.y), MouseButton::Left, 1, Instant::now());
     assert_eq!(a.pane_state().volume, 1.0);
     select(&mut a, "a.rs");
     frame(&mut a);
@@ -479,4 +479,240 @@ fn the_wheel_scrolls_unwrapped_text_and_large_images_sideways() {
     assert!(a.preview.hmax > 0.0);
     a.on_event(&Event::Wheel { dx: 2.0, dy: 0.0 }, Instant::now());
     assert!(a.preview.hscroll > 0.0);
+}
+
+const CTRL: Mods = Mods { ctrl: true, shift: false, alt: false };
+
+fn text_preview(size: (u32, u32), text: &str) -> App {
+    let mut a = app(size);
+    press(&mut a, Key::Space, NO);
+    select(&mut a, "a.rs");
+    frame(&mut a);
+    let r = requests(&mut a).pop().unwrap();
+    a.on_preview(r.gen, PreviewData::Doc(preview::text_doc(text, None)));
+    frame(&mut a);
+    a.drain_effects().for_each(drop);
+    a
+}
+
+fn spot_xy(a: &App, line: usize, col: usize) -> (f32, f32) {
+    let b = a.preview.r.body;
+    let l = &a.preview.doc.as_ref().unwrap().lines[line];
+    (b.x + a.preview.r.gutter + col as f32 * 10.0 + 2.0 - a.preview.hscroll, b.y + l.y + l.h / 2.0 - a.preview.scroll)
+}
+
+fn mouse(a: &mut App, (x, y): (f32, f32), button: MouseButton, clicks: u8) {
+    a.on_event(&Event::MouseDown { x, y, button, clicks }, Instant::now());
+    a.on_event(&Event::MouseUp { x, y, button }, Instant::now());
+}
+
+fn drag(a: &mut App, from: (f32, f32), to: (f32, f32)) {
+    a.on_event(&Event::MouseDown { x: from.0, y: from.1, button: MouseButton::Left, clicks: 1 }, Instant::now());
+    a.on_event(&Event::MouseMove { x: to.0, y: to.1 }, Instant::now());
+    a.on_event(&Event::MouseUp { x: to.0, y: to.1, button: MouseButton::Left }, Instant::now());
+}
+
+fn drag_spots(a: &mut App, from: (usize, usize), to: (usize, usize)) {
+    let (f, t) = (spot_xy(a, from.0, from.1), spot_xy(a, to.0, to.1));
+    drag(a, f, t);
+}
+
+fn click_spot(a: &mut App, at: (usize, usize), button: MouseButton, clicks: u8) {
+    let xy = spot_xy(a, at.0, at.1);
+    mouse(a, xy, button, clicks);
+}
+
+fn copied(a: &mut App, key: Key, mods: Mods) -> (Vec<String>, bool) {
+    a.drain_effects().for_each(drop);
+    press(a, key, mods);
+    let fx: Vec<Effect> = a.drain_effects().collect();
+    let text = fx.iter().filter_map(|e| if let Effect::SetClipboard(s) = e { Some(s.clone()) } else { None }).collect();
+    (text, fx.iter().any(|e| matches!(e, Effect::SetClipboardFiles { .. })))
+}
+
+fn shown_menu(a: &mut App) -> Vec<(String, bool)> {
+    let m = a.drain_effects().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m.menu) } else { None }).expect("a menu");
+    m.into_iter().filter_map(|i| if let crate::ui::MenuItem::Command { label, disabled, .. } = i { Some((label, disabled)) } else { None }).collect()
+}
+
+#[test]
+fn dragging_across_the_text_preview_selects_text_that_ctrl_c_copies_instead_of_the_files() {
+    let mut a = text_preview((1200, 700), "alpha beta\ngamma delta");
+    let lb = if a.caps.unix_paths { "\n" } else { "\r\n" };
+    drag_spots(&mut a, (0, 6), (1, 5));
+    assert_eq!(a.focus, Focus::Preview);
+    frame(&mut a);
+    assert_eq!(copied(&mut a, Key::Char('C'), CTRL), (vec![format!("beta{lb}gamma")], false));
+    assert_eq!(copied(&mut a, Key::Insert, CTRL), (vec![format!("beta{lb}gamma")], false));
+    drag_spots(&mut a, (1, 5), (0, 6));
+    assert_eq!(copied(&mut a, Key::Char('C'), CTRL).0, [format!("beta{lb}gamma")], "dragging backwards selects the same text");
+}
+
+#[test]
+fn ctrl_c_in_the_file_list_still_copies_files_while_the_preview_holds_a_selection() {
+    let mut a = text_preview((1200, 700), "alpha beta\ngamma delta");
+    drag_spots(&mut a, (0, 0), (0, 5));
+    a.focus = Focus::List;
+    assert_eq!(copied(&mut a, Key::Char('C'), CTRL), (Vec::new(), true));
+    press(&mut a, Key::Char('A'), CTRL);
+    assert!(a.tab().view.as_ref().unwrap().selected_count() > 1, "Ctrl+A in the list selects every file");
+    let mut fresh = text_preview((1200, 700), "alpha");
+    assert_eq!(copied(&mut fresh, Key::Char('C'), CTRL), (Vec::new(), true), "nothing clicked in the preview, so the list keeps Ctrl+C");
+}
+
+#[test]
+fn double_click_takes_a_word_triple_click_the_line_shift_click_extends_and_ctrl_a_takes_all() {
+    let mut a = text_preview((1200, 700), "let snake_case = 42;\nnext line\n\nlast");
+    let lb = if a.caps.unix_paths { "\n" } else { "\r\n" };
+    let at = spot_xy(&a, 0, 7);
+    mouse(&mut a, at, MouseButton::Left, 1);
+    mouse(&mut a, at, MouseButton::Left, 2);
+    assert_eq!(copied(&mut a, Key::Char('C'), CTRL).0, ["snake_case"]);
+    mouse(&mut a, at, MouseButton::Left, 1);
+    assert_eq!(copied(&mut a, Key::Char('C'), CTRL).0, ["let snake_case = 42;"]);
+    click_spot(&mut a, (1, 0), MouseButton::Left, 1);
+    a.mods.shift = true;
+    click_spot(&mut a, (3, 2), MouseButton::Left, 1);
+    a.mods.shift = false;
+    assert_eq!(copied(&mut a, Key::Char('C'), CTRL).0, [format!("next line{lb}{lb}la")]);
+    let (text, files) = copied(&mut a, Key::Char('A'), CTRL);
+    assert!(text.is_empty() && !files);
+    assert_eq!(copied(&mut a, Key::Char('C'), CTRL).0, [format!("let snake_case = 42;{lb}next line{lb}{lb}last")]);
+    assert_eq!(a.tab().view.as_ref().unwrap().selected_count(), 1, "Ctrl+A in the preview leaves the file selection alone");
+}
+
+#[test]
+fn the_preview_context_menu_copies_and_selects_all_text() {
+    let mut a = text_preview((1200, 700), "one two");
+    click_spot(&mut a, (0, 1), MouseButton::Right, 1);
+    assert_eq!(a.focus, Focus::Preview);
+    assert_eq!(shown_menu(&mut a), [(S::MenuCopy.t().to_owned(), true), (S::MenuFieldSelectAll.t().to_owned(), false)]);
+    a.on_event(&Event::MenuCommand(1), Instant::now());
+    a.on_event(&Event::MenuCommand(0), Instant::now());
+    let fx: Vec<Effect> = a.drain_effects().collect();
+    assert!(fx.iter().any(|e| matches!(e, Effect::SetClipboard(s) if s == "one two")));
+    assert!(!fx.iter().any(|e| matches!(e, Effect::SetClipboardFiles { .. })));
+    click_spot(&mut a, (0, 1), MouseButton::Right, 1);
+    assert_eq!(shown_menu(&mut a)[0], (S::MenuCopy.t().to_owned(), false), "a right click keeps the selection");
+}
+
+#[test]
+fn selection_follows_the_sideways_scroll_of_unwrapped_text() {
+    let line = (0..300).map(|k| char::from(b'a' + (k % 26) as u8)).collect::<String>();
+    let mut a = text_preview((1200, 700), &line);
+    a.preview.look.wrap = Some(false);
+    frame(&mut a);
+    assert!(a.preview.hmax > 500.0);
+    a.preview.hscroll = 500.0;
+    frame(&mut a);
+    let b = a.preview.r.body;
+    let x0 = b.x + a.preview.r.gutter;
+    let y = spot_xy(&a, 0, 0).1;
+    drag(&mut a, (x0 + 2.0, y), (x0 + 32.0, y));
+    assert_eq!(copied(&mut a, Key::Char('C'), CTRL).0, [line[50..53].to_owned()]);
+    drag(&mut a, (x0 + 2.0, y), (b.right() + 400.0, y));
+    assert!(a.preview.hscroll > 500.0, "dragging past the edge scrolls sideways");
+    a.preview.look.wrap = Some(true);
+    frame(&mut a);
+    assert_eq!(a.preview.hmax, 0.0);
+}
+
+#[test]
+fn a_long_text_copies_only_on_request_and_empty_or_binary_previews_copy_nothing() {
+    let long = "x".repeat(preview::TEXT_CHARS + 50);
+    let mut a = text_preview((1200, 700), &long);
+    a.preview.look.wrap = Some(false);
+    frame(&mut a);
+    click_spot(&mut a, (0, 0), MouseButton::Left, 1);
+    press(&mut a, Key::Char('A'), CTRL);
+    for _ in 0..3 {
+        frame(&mut a);
+    }
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::SetClipboard(_))), "frames never touch the clipboard");
+    assert_eq!(copied(&mut a, Key::Char('C'), CTRL).0.iter().map(String::len).collect::<Vec<_>>(), [preview::TEXT_CHARS]);
+    let mut empty = text_preview((1200, 700), "");
+    click_spot(&mut empty, (0, 3), MouseButton::Left, 2);
+    press(&mut empty, Key::Char('A'), CTRL);
+    assert_eq!(copied(&mut empty, Key::Char('C'), CTRL), (Vec::new(), false));
+    select(&mut empty, "c.docx");
+    frame(&mut empty);
+    let r = requests(&mut empty).pop().unwrap();
+    empty.on_preview(r.gen, PreviewData::Basic { poster: None, note: None });
+    frame(&mut empty);
+    assert_eq!(empty.focus, Focus::Preview);
+    assert_eq!(copied(&mut empty, Key::Char('C'), CTRL), (Vec::new(), false), "Ctrl+C in a focused preview never copies the files");
+}
+
+#[test]
+fn a_narrow_pane_still_selects_and_a_new_subject_drops_the_selection() {
+    let mut a = text_preview((420, 260), "alpha beta gamma delta epsilon");
+    drag_spots(&mut a, (0, 0), (0, 2));
+    assert_eq!(copied(&mut a, Key::Char('C'), CTRL).0, ["al"]);
+    select(&mut a, "c.docx");
+    frame(&mut a);
+    let r = requests(&mut a).pop().unwrap();
+    a.on_preview(r.gen, PreviewData::Doc(preview::text_doc("other", None)));
+    frame(&mut a);
+    assert_eq!(copied(&mut a, Key::Char('C'), CTRL), (Vec::new(), false));
+}
+
+#[test]
+fn images_copy_as_images_from_ctrl_c_and_the_context_menu() {
+    let mut a = app((1200, 700));
+    press(&mut a, Key::Space, NO);
+    select(&mut a, "b.png");
+    frame(&mut a);
+    let r = requests(&mut a).pop().unwrap();
+    let image = Bitmap { width: 2, height: 1, rgba: vec![255, 0, 0, 255, 0, 0, 0, 0] };
+    a.on_preview(r.gen, PreviewData::Image(image.clone()));
+    frame(&mut a);
+    a.drain_effects().for_each(drop);
+    let images = |a: &mut App| a.drain_effects().filter_map(|e| if let Effect::SetClipboardImage(b) = e { Some((b.width, b.height, b.rgba)) } else { None }).collect::<Vec<_>>();
+    press(&mut a, Key::Char('C'), CTRL);
+    assert!(images(&mut a).is_empty(), "the list keeps Ctrl+C until the image is clicked");
+    let b = a.preview.r.body;
+    mouse(&mut a, (b.x + b.w / 2.0, b.y + b.h / 2.0), MouseButton::Right, 1);
+    assert_eq!(shown_menu(&mut a), [(S::PreviewCopyImage.t().to_owned(), false)]);
+    a.on_event(&Event::MenuCommand(0), Instant::now());
+    assert_eq!(images(&mut a), [(2, 1, image.rgba.clone())]);
+    let (text, files) = copied(&mut a, Key::Char('C'), CTRL);
+    assert!(text.is_empty() && !files);
+    press(&mut a, Key::Char('C'), CTRL);
+    assert_eq!(images(&mut a).len(), 1);
+}
+
+#[test]
+fn copied_text_follows_paragraphs_words_and_the_line_filter() {
+    let d = preview::text_doc("one two\n\nthree", None);
+    assert_eq!(para_span(&d, 1), (7, 7));
+    assert_eq!(para_span(&d, 2), (7, 12));
+    assert_eq!(para_span(&d, 9), (12, 12));
+    let all = (Spot::default(), Spot { para: 2, at: 12 });
+    assert_eq!(picked_text(&d, all, "", "\n"), "one two\n\nthree");
+    assert_eq!(picked_text(&d, all, "t", "\n"), "one two\nthree", "hidden lines stay out of the copy");
+    assert_eq!(picked_text(&d, (Spot { para: 0, at: 3 }, Spot { para: 0, at: 3 }), "", "\n"), "");
+    assert_eq!(picked_text(&preview::text_doc("", None), all, "", "\n"), "");
+    assert_eq!(word_at("let snake_case = 42;", 7), 4..14);
+    assert_eq!(word_at("a  b", 2), 1..3);
+    assert_eq!(word_at("x.y", 1), 0..1);
+    assert_eq!(word_at("", 0), 0..0);
+    assert_eq!(word_at("été", 1), 0..5);
+}
+
+#[test]
+fn the_selection_is_painted_under_the_picked_characters_and_dims_without_focus() {
+    let mut a = text_preview((1200, 700), "alpha beta\ngamma");
+    drag_spots(&mut a, (0, 6), (1, 0));
+    let painted = |a: &mut App, color: u32| {
+        let mut g = Gfx::new(Mono, 2048);
+        a.frame(&mut g, Instant::now());
+        g.dl.instances.iter().filter(|i| i.color == color).map(|i| (i.rect[0], i.rect[2])).collect::<Vec<_>>()
+    };
+    let x0 = a.preview.r.body.x + a.preview.r.gutter;
+    let lit = a.theme().text_selection.0;
+    let line_h = a.preview.doc.as_ref().unwrap().lines[0].h;
+    assert_eq!(painted(&mut a, lit), [(x0 + 60.0, 40.0 + (line_h * 0.3).round())], "the line break shows as a short tail");
+    a.focus = Focus::List;
+    let dim = a.theme().selection_inactive.0;
+    assert!(painted(&mut a, dim).contains(&(x0 + 60.0, 40.0 + (line_h * 0.3).round())));
 }

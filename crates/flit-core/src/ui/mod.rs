@@ -349,6 +349,7 @@ pub enum Effect {
     ClearThumbnails,
     TypeName(Vec<u8>),
     SetClipboard(String),
+    SetClipboardImage(Bitmap),
     Paste,
     Window(WindowCmd),
     Notify(String),
@@ -1811,6 +1812,7 @@ impl App {
             Hit::ColSep(_) | Hit::Splitter => CursorIcon::ResizeHorizontal,
             Hit::QuickField | Hit::FilterField | Hit::PaletteField | Hit::Settings(settings_page::SHit::Search) => CursorIcon::Text,
             Hit::Preview(preview_pane::PaneHit::Split) => self.preview_cursor(),
+            Hit::Preview(preview_pane::PaneHit::Body) if self.preview_text_at(x, y) => CursorIcon::Text,
             Hit::PanelSep(k) => self.sep_cursor(k),
             _ => CursorIcon::Default,
         };
@@ -1928,7 +1930,7 @@ impl App {
                     }
                 }
             }
-            Hit::Preview(p) => self.preview_mouse_down(p, x, y),
+            Hit::Preview(p) => self.preview_mouse_down(p, (x, y), button, clicks, now),
             Hit::ColSep(i) if button == MouseButton::Left && clicks >= 2 => {
                 self.drag = Drag::None;
                 self.column_command(menu::ColumnCmd::Fit(self.layout.columns[i]));

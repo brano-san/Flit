@@ -114,6 +114,7 @@ pub trait Window {
     fn placement(&self) -> Placement;
     fn clipboard_text(&self) -> Option<String>;
     fn set_clipboard_text(&self, text: &str);
+    fn set_clipboard_image(&self, _image: &Bitmap) {}
     fn set_ime_area(&self, area: Rect);
     fn is_dark_mode(&self) -> bool;
     fn set_clipboard_files(&self, paths: &[FsPath], cut: bool);

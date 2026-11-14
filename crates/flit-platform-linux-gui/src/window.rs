@@ -3,7 +3,7 @@ use crate::input::{self, Clicks};
 use flit_core::input::{CursorIcon, Event, HitArea, MouseButton};
 use flit_core::preview::{HostCmd, Hosted, MediaCmd};
 use flit_core::render::Rect;
-use flit_core::ui::{drop_effect, DragEvent, ShellMenu};
+use flit_core::ui::{drop_effect, Bitmap, DragEvent, ShellMenu};
 use flit_core::i18n::S;
 use flit_core::FsPath;
 use flit_platform::{Placement, PlatformError, Waker, Window, WindowHandler, WindowId, WindowOptions, WindowSystem};
@@ -170,6 +170,7 @@ enum Command {
     Paste(WindowId),
     Copy(String),
     CopyFiles(Vec<FsPath>, bool),
+    CopyImage(Bitmap),
     Drag(winit::window::WindowId, String),
     Activate(WindowId, String),
 }
@@ -425,6 +426,10 @@ impl Window for LinuxWindow {
 
     fn set_clipboard_text(&self, text: &str) {
         self.push(Command::Copy(text.to_owned()));
+    }
+
+    fn set_clipboard_image(&self, image: &Bitmap) {
+        self.push(Command::CopyImage(image.clone()));
     }
 
     fn set_ime_area(&self, area: Rect) {
@@ -773,6 +778,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                     Command::Paste(id) => paste(el, id),
                     Command::Copy(text) => copy(el, text),
                     Command::CopyFiles(paths, cut) => self.copy_files(el, paths, cut),
+                    Command::CopyImage(image) => self.copy_image(el, &image),
                     Command::Drag(source, list) => drag_out(el, source, list),
                     Command::Activate(id, token) => self.activate(id, token),
                 }
@@ -798,6 +804,23 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             }
         }
         winit_copy_files(el, paths, cut);
+    }
+
+    fn copy_image(&mut self, el: &dyn ActiveEventLoop, image: &Bitmap) {
+        let Some(png) = crate::clipboard::png(image) else { return };
+        let payload = vec![(crate::clipboard::PNG.to_owned(), png.clone())];
+        let owned = if el.is_wayland() {
+            self.wl.as_mut().is_some_and(|wl| wl.set_selection(Arc::new(payload)))
+        } else {
+            crate::clipboard::own_x11(payload).map_err(|e| tracing::debug!("cannot own the X11 clipboard ({e}), asking a helper program")).is_ok()
+        };
+        if !owned {
+            background("flit-copy", move || {
+                if !crate::shell::set_clipboard_image(&png) {
+                    tracing::info!("cannot copy the image: no wl-copy or xclip");
+                }
+            });
+        }
     }
 
     fn verify_copy(&mut self, el: &dyn ActiveEventLoop) {

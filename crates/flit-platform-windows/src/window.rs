@@ -9,7 +9,7 @@ use flit_core::render::{Color, Rect};
 use flit_core::theme::SystemColors;
 use crate::uia::{WM_A11Y_FOCUS, WM_A11Y_INVOKE, WM_A11Y_SELECT};
 use windows::Win32::UI::Accessibility::{IRawElementProviderSimple, UiaClientsAreListening, UiaDisconnectProvider, UiaReturnRawElementProvider, UiaRootObjectId, HCF_HIGHCONTRASTON, HIGHCONTRASTW};
-use flit_core::ui::{DragEvent, ShellMenu};
+use flit_core::ui::{Bitmap, DragEvent, ShellMenu};
 use flit_core::FsPath;
 use flit_platform::{DropReply, Placement, PlatformError, Waker, Window, WindowHandler, WindowId, WindowOptions, WindowSystem};
 use std::cell::{Cell, RefCell};
@@ -419,6 +419,12 @@ impl Window for Win32Window {
                 }
             }
             let _ = CloseClipboard();
+        }
+    }
+
+    fn set_clipboard_image(&self, image: &Bitmap) {
+        if !crate::clipboard::write_image(self.hwnd(), image) {
+            tracing::info!("cannot put the image on the clipboard");
         }
     }
 

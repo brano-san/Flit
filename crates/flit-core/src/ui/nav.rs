@@ -225,6 +225,8 @@ impl App {
             self.search_key(key, m, now);
         } else if self.text_field_hit().is_some() {
             self.nav_key(key, m, now);
+        } else if self.focus == Focus::Preview {
+            self.inspector_key(key, m);
         }
         self.dirty = true;
     }

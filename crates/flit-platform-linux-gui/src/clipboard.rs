@@ -1,3 +1,5 @@
+use flit_core::preview::straight_rgba;
+use flit_core::ui::Bitmap;
 use flit_core::FsPath;
 use std::sync::OnceLock;
 use x11rb::connection::{Connection, RequestConnection};
@@ -12,6 +14,7 @@ pub const URI_LIST: &str = "text/uri-list";
 pub const TEXT: &str = "text/plain;charset=utf-8";
 pub const PLAIN: &str = "text/plain";
 pub const MARKER: &str = "application/x-flit-files";
+pub const PNG: &str = "image/png";
 pub const FILE_TYPES: [&str; 3] = [GNOME, KDE_CUT, URI_LIST];
 const X11_TEXT: [&str; 3] = ["UTF8_STRING", "STRING", "TEXT"];
 
@@ -36,6 +39,21 @@ pub fn plain(paths: &[FsPath]) -> Vec<u8> {
 pub fn payload(paths: &[FsPath], cut: bool) -> Payload {
     let text = plain(paths);
     [(GNOME, gnome(paths, cut)), (KDE_CUT, if cut { b"1".to_vec() } else { b"0".to_vec() }), (URI_LIST, uri_list(paths)), (TEXT, text.clone()), (PLAIN, text)].into_iter().map(|(t, b)| (t.to_owned(), b)).collect()
+}
+
+pub fn png(image: &Bitmap) -> Option<Vec<u8>> {
+    if image.width == 0 || image.height == 0 || image.rgba.len() != image.width as usize * image.height as usize * 4 {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut encoder = png::Encoder::new(&mut out, image.width, image.height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_compression(png::Compression::Fast);
+    let mut writer = encoder.write_header().ok()?;
+    writer.write_image_data(&straight_rgba(&image.rgba)).ok()?;
+    writer.finish().ok()?;
+    Some(out)
 }
 
 pub fn files(types: &[(String, Vec<u8>)]) -> Option<(Vec<FsPath>, bool)> {

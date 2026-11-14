@@ -36,6 +36,14 @@ fn binary_sniffing() {
 }
 
 #[test]
+fn copied_images_get_straight_alpha_back_from_premultiplied_pixels() {
+    let premultiplied = [255, 10, 0, 255, 64, 32, 0, 128, 9, 9, 9, 0];
+    assert_eq!(straight_rgba(&premultiplied), [255, 10, 0, 255, 128, 64, 0, 128, 0, 0, 0, 0]);
+    assert_eq!(straight_rgba(&[200, 0, 0, 100, 1]), [255, 0, 0, 100], "a too bright channel and a torn pixel stay in range");
+    assert!(straight_rgba(&[]).is_empty());
+}
+
+#[test]
 fn text_docs_are_capped_and_expand_tabs() {
     let d = text_doc("a\tb\r\nsecond", None);
     assert_eq!(texts(&d), ["a   b", "second"]);

@@ -542,6 +542,7 @@ impl<P: Platform> Handler<P> {
                 }
                 Effect::SetClipboard(text) if !text.is_empty() => window.set_clipboard_text(&text),
                 Effect::SetClipboard(_) => {}
+                Effect::SetClipboardImage(image) => window.set_clipboard_image(&image),
                 Effect::Paste => {
                     if let (Some(text), Some(st)) = (window.clipboard_text(), self.windows.get_mut(&id)) {
                         st.app.on_paste(&text);

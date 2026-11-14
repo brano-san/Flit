@@ -194,6 +194,17 @@ pub fn decode(b: &[u8]) -> String {
     utf8(b)
 }
 
+pub fn straight_rgba(rgba: &[u8]) -> Vec<u8> {
+    let unmix = |c: u8, a: u8| ((u32::from(c) * 255 + u32::from(a) / 2) / u32::from(a)).min(255) as u8;
+    rgba.chunks_exact(4)
+        .flat_map(|p| match p[3] {
+            0 => [0, 0, 0, 0],
+            255 => [p[0], p[1], p[2], 255],
+            a => [unmix(p[0], a), unmix(p[1], a), unmix(p[2], a), a],
+        })
+        .collect()
+}
+
 pub fn looks_binary(b: &[u8]) -> bool {
     if b.starts_with(&[0xFF, 0xFE]) || b.starts_with(&[0xFE, 0xFF]) {
         return false;

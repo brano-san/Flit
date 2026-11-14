@@ -10,6 +10,7 @@ shortcut = "Acceso directo a {target}"
 too_large = "La imagen es demasiado grande para la vista previa"
 online_only = "Almacenado solo en línea.\nLa vista previa descarga el archivo en este dispositivo."
 download = "Descargar para la vista previa"
+copy_image = "Copiar imagen"
 truncated = ["Se muestra el primer {n} carácter", "Se muestran los primeros {n} de caracteres", "Se muestran los primeros {n} caracteres"]
 folders = ["{n} carpeta", "{n} de carpetas", "{n} carpetas"]
 files = ["{n} archivo", "{n} de archivos", "{n} archivos"]

@@ -83,3 +83,16 @@ fn an_x11_clipboard_owner_answers_every_format_until_it_is_replaced() {
     let names = x11_names();
     assert!(names.iter().any(|&(a, n)| a == atoms[2] && n == GNOME), "{names:?}");
 }
+
+#[test]
+fn copied_images_are_offered_as_png_with_straight_alpha() {
+    let image = Bitmap { width: 2, height: 1, rgba: vec![255, 0, 0, 255, 0, 64, 0, 128] };
+    let bytes = png(&image).expect("png");
+    let mut reader = png::Decoder::new(std::io::Cursor::new(bytes)).read_info().unwrap();
+    let mut buf = vec![0; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut buf).unwrap();
+    assert_eq!((info.width, info.height, info.color_type), (2, 1, png::ColorType::Rgba));
+    assert_eq!(&buf[..8], &[255, 0, 0, 255, 0, 128, 0, 128]);
+    assert!(png(&Bitmap { width: 2, height: 2, rgba: vec![0; 4] }).is_none());
+    assert!(png(&Bitmap { width: 0, height: 0, rgba: Vec::new() }).is_none());
+}

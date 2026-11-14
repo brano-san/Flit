@@ -1,10 +1,11 @@
-use super::field::Field;
+use super::field::{Field, TextCmd};
+use super::menu::{Cmd, Mark};
 use super::options::{InspectorAt, INSPECTOR_SIZE};
 use super::widgets::Paint;
 use super::{centered, icon_key, App, Bitmap, Drag, Effect, Focus, Hit, IconRequest, IconState};
 use crate::fmt as format;
 use crate::hash::{self, FxHashMap};
-use crate::input::{CursorIcon, Key, Mods};
+use crate::input::{CursorIcon, Key, Mods, MouseButton};
 use crate::listing::{attr, Entry};
 use crate::name;
 use crate::path::{FsPath, PathKind};
@@ -200,7 +201,36 @@ struct VLine {
     base: f32,
     block: Block,
     num: u32,
+    para: u32,
     pieces: Range<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct Spot {
+    pub para: u32,
+    pub at: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Grain {
+    #[default]
+    Char,
+    Word,
+    Line,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct Pick {
+    anchor: Spot,
+    caret: Spot,
+    from: (Spot, Spot),
+    grain: Grain,
+}
+
+impl Pick {
+    fn range(&self) -> (Spot, Spot) {
+        (self.anchor.min(self.caret), self.anchor.max(self.caret))
+    }
 }
 
 #[derive(Default)]
@@ -250,6 +280,7 @@ pub(super) struct PreviewPane {
     card_scroll: f32,
     card_extent: f32,
     doc: Option<DocLayout>,
+    pick: Pick,
     widths: FxHashMap<(char, FontStyle), f32>,
     image: Option<Bitmap>,
     image_rev: u64,
@@ -344,6 +375,99 @@ pub(super) fn line_matches(d: &Doc, k: usize, query: &str) -> bool {
     text.to_lowercase().contains(query)
 }
 
+pub(super) fn para_span(d: &Doc, k: usize) -> (u32, u32) {
+    let all = d.text.len() as u32;
+    let Some(p) = d.paras.get(k) else { return (all, all) };
+    let start = d.runs.get(p.runs.start as usize).map_or(all, |r| r.start);
+    let end = if p.runs.is_empty() { start } else { d.runs.get(p.runs.end as usize - 1).map_or(start, |r| r.end) };
+    (start, end)
+}
+
+fn word_class(c: char) -> u8 {
+    if c.is_alphanumeric() || c == '_' {
+        0
+    } else if c.is_whitespace() {
+        1
+    } else {
+        2
+    }
+}
+
+pub(super) fn word_at(text: &str, pos: usize) -> Range<usize> {
+    let pos = (0..=pos.min(text.len())).rev().find(|&p| text.is_char_boundary(p)).unwrap_or(0);
+    let (after, before) = (text[pos..].chars().next().map(word_class), text[..pos].chars().next_back().map(word_class));
+    let class = match (after, before) {
+        (Some(0), _) | (_, Some(0)) => 0,
+        (Some(c), _) | (None, Some(c)) => c,
+        (None, None) => return pos..pos,
+    };
+    let start = text[..pos].char_indices().rev().take_while(|&(_, c)| word_class(c) == class).last().map_or(pos, |(i, _)| i);
+    let end = text[pos..].char_indices().find(|&(_, c)| word_class(c) != class).map_or(text.len(), |(i, _)| pos + i);
+    start..end
+}
+
+pub(super) fn picked_text(d: &Doc, (a, b): (Spot, Spot), query: &str, line_break: &str) -> String {
+    let mut out = String::new();
+    if a == b {
+        return out;
+    }
+    let last = (b.para as usize).min(d.paras.len().saturating_sub(1));
+    let mut first = true;
+    for k in a.para as usize..=last {
+        if k >= d.paras.len() || !line_matches(d, k, query) {
+            continue;
+        }
+        let (s, e) = para_span(d, k);
+        let lo = if k == a.para as usize { a.at.clamp(s, e) } else { s };
+        let hi = if k == b.para as usize { b.at.clamp(lo, e) } else { e };
+        if !first {
+            out.push_str(line_break);
+        }
+        first = false;
+        out.push_str(d.text.get(lo as usize..hi as usize).unwrap_or_default());
+    }
+    out
+}
+
+fn line_span_x(d: &Doc, lay: &DocLayout, line: &VLine, widths: &FxHashMap<(char, FontStyle), f32>, (sc, mono): (f32, f32), (lo, hi): (u32, u32)) -> Option<(f32, f32)> {
+    let mut span: Option<(f32, f32)> = None;
+    for piece in &lay.pieces[line.pieces.start as usize..line.pieces.end as usize] {
+        let (s, e) = (piece.start.max(lo), piece.end.min(hi));
+        if s >= e {
+            continue;
+        }
+        let font = run_font(&d.runs[piece.run as usize], line.block, sc, mono);
+        let w = |a: u32, b: u32| d.text[a as usize..b as usize].chars().map(|c| widths.get(&(c, font)).copied().unwrap_or(0.0)).sum::<f32>();
+        let x = piece.x + w(piece.start, s);
+        let x2 = x + w(s, e);
+        span = Some(span.map_or((x, x2), |(a, b)| (a.min(x), b.max(x2))));
+    }
+    span
+}
+
+fn line_end_x(d: &Doc, lay: &DocLayout, line: &VLine, widths: &FxHashMap<(char, FontStyle), f32>, fonts: (f32, f32)) -> f32 {
+    let Some(last) = lay.pieces[line.pieces.start as usize..line.pieces.end as usize].last() else { return 0.0 };
+    line_span_x(d, lay, line, widths, fonts, (last.start, last.end)).map_or(last.x, |s| s.1)
+}
+
+fn spot_on_line(d: &Doc, lay: &DocLayout, line: &VLine, widths: &FxHashMap<(char, FontStyle), f32>, (sc, mono): (f32, f32), x: f32) -> Spot {
+    let para = line.para;
+    let mut at = para_span(d, para as usize).0;
+    for piece in &lay.pieces[line.pieces.start as usize..line.pieces.end as usize] {
+        let font = run_font(&d.runs[piece.run as usize], line.block, sc, mono);
+        let mut px = piece.x;
+        for (i, c) in d.text[piece.start as usize..piece.end as usize].char_indices() {
+            let w = widths.get(&(c, font)).copied().unwrap_or(0.0);
+            if x < px + w / 2.0 {
+                return Spot { para, at: piece.start + i as u32 };
+            }
+            px += w;
+        }
+        at = piece.end;
+    }
+    Spot { para, at }
+}
+
 fn layout_doc<B: TextBackend>(g: &mut Gfx<B>, d: &Doc, width: f32, (sc, mono): (f32, f32), widths: &mut FxHashMap<(char, FontStyle), f32>, wrap: bool, query: &str) -> DocLayout {
     let mut out = DocLayout::default();
     let mut y = 0.0;
@@ -359,7 +483,7 @@ fn layout_doc<B: TextBackend>(g: &mut Gfx<B>, d: &Doc, width: f32, (sc, mono): (
         let lh = ((m.ascent + m.descent) * if d.mono { 1.25 } else { 1.4 }).round();
         let base = ((lh + m.ascent - m.descent) / 2.0).round();
         if block == Block::Rule {
-            out.lines.push(VLine { y, h: (12.0 * sc).round(), base, block, num, pieces: 0..0 });
+            out.lines.push(VLine { y, h: (12.0 * sc).round(), base, block, num, para: k as u32, pieces: 0..0 });
             y += (12.0 * sc).round();
             continue;
         }
@@ -371,7 +495,7 @@ fn layout_doc<B: TextBackend>(g: &mut Gfx<B>, d: &Doc, width: f32, (sc, mono): (
         };
         let (mut x, mut first, mut number) = (indent, out.pieces.len(), num);
         let line = |out: &mut DocLayout, first: &mut usize, y: &mut f32, number: &mut u32| {
-            out.lines.push(VLine { y: *y, h: lh, base, block, num: *number, pieces: *first as u32..out.pieces.len() as u32 });
+            out.lines.push(VLine { y: *y, h: lh, base, block, num: *number, para: k as u32, pieces: *first as u32..out.pieces.len() as u32 });
             *y += lh;
             *first = out.pieces.len();
             *number = 0;
@@ -611,8 +735,11 @@ impl App {
     }
 
     pub(super) fn inspector_key(&mut self, key: Key, m: Mods) -> bool {
-        if !self.preview.filtering || !self.preview.state.visible {
+        if !self.preview.state.visible {
             return false;
+        }
+        if !self.preview.filtering {
+            return self.preview_key(key, m);
         }
         match key {
             Key::Escape => self.close_inspector_filter(),
@@ -665,6 +792,145 @@ impl App {
 
     pub(super) fn inspector_field(&mut self) -> Option<&mut super::edit::LineEdit> {
         self.preview.filter.as_mut().filter(|_| self.preview.filtering).map(|f| &mut f.edit)
+    }
+
+    fn preview_copyable(&self) -> bool {
+        self.shows_doc() || self.shows_image()
+    }
+
+    fn preview_key(&mut self, key: Key, m: Mods) -> bool {
+        if self.focus != Focus::Preview || self.preview.r.pane.w <= 0.0 {
+            return false;
+        }
+        let only_ctrl = m.ctrl && !m.shift && !m.alt;
+        match key {
+            Key::Char('C') | Key::Insert if only_ctrl => self.copy_from_preview(),
+            Key::Char('A') if only_ctrl && self.shows_doc() => self.select_preview_text(),
+            _ if super::field::is_menu_key(key, m) && self.preview_copyable() => {
+                let b = self.preview.r.body;
+                self.preview_menu(b.x, b.y);
+            }
+            _ => return false,
+        }
+        self.dirty = true;
+        true
+    }
+
+    fn copy_from_preview(&mut self) {
+        let line_break = if self.caps.unix_paths { "\n" } else { "\r\n" };
+        let query = self.preview.query();
+        let p = &self.preview;
+        let effect = match &p.content {
+            Content::Doc(d) => Some(picked_text(d, p.pick.range(), &query, line_break)).filter(|t| !t.is_empty()).map(Effect::SetClipboard),
+            Content::Image => p.image.clone().map(Effect::SetClipboardImage),
+            _ => None,
+        };
+        self.effects.extend(effect);
+    }
+
+    fn select_preview_text(&mut self) {
+        let p = &mut self.preview;
+        let Content::Doc(d) = &p.content else { return };
+        let Some(last) = d.paras.len().checked_sub(1) else { return };
+        let end = Spot { para: last as u32, at: para_span(d, last).1 };
+        p.pick = Pick { anchor: Spot::default(), caret: end, from: (Spot::default(), end), grain: Grain::Char };
+    }
+
+    fn preview_menu(&mut self, x: f32, y: f32) {
+        let image = self.shows_image();
+        let (a, b) = self.preview.pick.range();
+        let menu = self.collect(|_, m| {
+            let keys = m.keys.first_text("text.copy").unwrap_or_default();
+            if image {
+                return m.entry(Cmd::Text(TextCmd::Copy), S::PreviewCopyImage.t(), keys, Mark::None, false, false);
+            }
+            m.entry(Cmd::Text(TextCmd::Copy), S::MenuCopy.t(), keys, Mark::None, false, a == b);
+            m.separator();
+            let keys = m.keys.first_text("text.select_all").unwrap_or_default();
+            m.entry(Cmd::Text(TextCmd::SelectAll), S::MenuFieldSelectAll.t(), keys, Mark::None, false, false);
+        });
+        self.flit_menu(x, y, menu);
+    }
+
+    fn preview_spot(&self, x: f32, y: f32) -> Option<Spot> {
+        let p = &self.preview;
+        let Content::Doc(d) = &p.content else { return None };
+        let lay = p.doc.as_ref()?;
+        let last = lay.lines.last()?;
+        let fonts = (self.scale, super::options::mono_px(self.opts.inspector_size));
+        let b = p.r.body;
+        let along = y - b.y + p.scroll;
+        if along < 0.0 {
+            return Some(spot_on_line(d, lay, &lay.lines[0], &p.widths, fonts, f32::NEG_INFINITY));
+        }
+        if along >= lay.height {
+            return Some(spot_on_line(d, lay, last, &p.widths, fonts, f32::INFINITY));
+        }
+        let line = &lay.lines[lay.lines.partition_point(|l| l.y + l.h <= along).min(lay.lines.len() - 1)];
+        let x0 = b.x + p.r.gutter;
+        let across = if x < x0 { f32::NEG_INFINITY } else { x - x0 + p.hscroll.min(p.hmax).round() };
+        Some(spot_on_line(d, lay, line, &p.widths, fonts, across))
+    }
+
+    fn grain_range(&self, s: Spot, grain: Grain) -> (Spot, Spot) {
+        let Content::Doc(d) = &self.preview.content else { return (s, s) };
+        let (start, end) = para_span(d, s.para as usize);
+        let at = |k: usize| Spot { para: s.para, at: start + k as u32 };
+        match grain {
+            Grain::Char => (s, s),
+            Grain::Word => {
+                let r = word_at(&d.text[start as usize..end as usize], s.at.saturating_sub(start) as usize);
+                (at(r.start), at(r.end))
+            }
+            Grain::Line => (at(0), at((end - start) as usize)),
+        }
+    }
+
+    pub(super) fn preview_text_at(&self, x: f32, y: f32) -> bool {
+        self.shows_doc() && self.preview.r.body.contains(x, y) && !self.preview.r.card.contains(x, y)
+    }
+
+    fn press_preview_body(&mut self, (x, y): (f32, f32), button: MouseButton, clicks: u8, now: Instant) {
+        if !self.preview_copyable() || !self.preview.r.body.contains(x, y) {
+            return;
+        }
+        self.focus = Focus::Preview;
+        self.preview.filtering = false;
+        if button == MouseButton::Right {
+            return self.preview_menu(x, y);
+        }
+        let Some(spot) = self.preview_spot(x, y).filter(|_| button == MouseButton::Left) else { return };
+        let clicks = self.text_clicks((x, y), clicks, now);
+        let grain = match clicks {
+            0 | 1 => Grain::Char,
+            2 => Grain::Word,
+            _ => Grain::Line,
+        };
+        let range = self.grain_range(spot, grain);
+        let p = &mut self.preview.pick;
+        *p = if self.mods.shift && grain == Grain::Char {
+            Pick { anchor: p.anchor, caret: spot, from: (p.anchor, p.anchor), grain }
+        } else {
+            Pick { anchor: range.0, caret: range.1, from: range, grain }
+        };
+        self.drag = Drag::Preview { hit: PaneHit::Body, start: 0.0, size: 0.0 };
+    }
+
+    fn drag_preview_pick(&mut self, x: f32, y: f32) {
+        let b = self.preview.r.body;
+        let x0 = b.x + self.preview.r.gutter;
+        let p = &mut self.preview;
+        let below = (y - b.bottom()).max(0.0) - (b.y - y).max(0.0);
+        p.scroll = (p.scroll + below).clamp(0.0, (p.extent - b.h).max(0.0));
+        let aside = (x - b.right()).max(0.0) - (x0 - x).max(0.0);
+        p.hscroll = (p.hscroll + aside).clamp(0.0, p.hmax);
+        let Some(spot) = self.preview_spot(x, y) else { return };
+        let grain = self.preview.pick.grain;
+        let target = self.grain_range(spot, grain);
+        let p = &mut self.preview.pick;
+        let (a, z) = p.from;
+        (p.anchor, p.caret) = if target.0 < a { (z, target.0) } else { (a, target.1.max(z)) };
+        self.dirty = true;
     }
 
     pub(super) fn quick_view(&mut self) {
@@ -777,7 +1043,7 @@ impl App {
         }
     }
 
-    pub(super) fn preview_mouse_down(&mut self, h: PaneHit, x: f32, y: f32) {
+    pub(super) fn preview_mouse_down(&mut self, h: PaneHit, (x, y): (f32, f32), button: MouseButton, clicks: u8, now: Instant) {
         let st = self.preview.state;
         let pane = self.preview.r.pane;
         let shown = |v: f32, px: f32| if v == HALF { px / self.scale } else { v };
@@ -794,11 +1060,15 @@ impl App {
                     f.click(x, 1, false);
                 }
             }
+            PaneHit::Body => self.press_preview_body((x, y), button, clicks, now),
             _ => {}
         }
     }
 
     pub(super) fn preview_drag(&mut self, hit: PaneHit, x: f32, y: f32, start: f32, size: f32) {
+        if hit == PaneHit::Body {
+            return self.drag_preview_pick(x, y);
+        }
         if hit != PaneHit::Split {
             return self.preview_slide(hit, x);
         }
@@ -990,6 +1260,7 @@ impl App {
         p.cancel.set(gen);
         (p.scroll, p.hscroll) = (0.0, 0.0);
         p.doc = None;
+        p.pick = Pick::default();
         p.media = Media::default();
         p.types = types;
         if dirs + files > 0 {
@@ -1057,6 +1328,7 @@ impl App {
             PreviewData::Props(_) => (Content::Basic(None), None, None),
         };
         p.content = content;
+        p.pick = Pick::default();
         if let Some(b) = bitmap {
             p.image = Some(b);
             p.image_rev += 1;
@@ -1800,7 +2072,9 @@ impl App {
         let num_font = FontStyle::new(FontFamily::Mono, mono * sc, false);
         let query = self.preview.query();
         let look = self.preview.look;
+        let ink = if self.focus == Focus::Preview { t.text_selection } else { t.selection_inactive };
         let p = &mut self.preview;
+        let (from, to) = p.pick.range();
         let Content::Doc(d) = &p.content else { return 0.0 };
         let wrap = p.effective_wrap(d);
         let numbers = d.mono && look.lines;
@@ -1839,8 +2113,22 @@ impl App {
         if shift > 0.0 {
             g.dl.set_clip(Some(Rect::new(x0, b.y, width, b.h)));
         }
-        for line in &lay.lines[first..last] {
+        for (k, line) in lay.lines.iter().enumerate().take(last).skip(first) {
             let top = b.y + line.y - scroll;
+            if from != to && (from.para..=to.para).contains(&line.para) {
+                let lo = if line.para == from.para { from.at } else { 0 };
+                let hi = if line.para == to.para { to.at } else { u32::MAX };
+                let ends = line.para < to.para && lay.lines.get(k + 1).is_none_or(|n| n.para != line.para);
+                let span = line_span_x(d, lay, line, &p.widths, (sc, mono), (lo, hi));
+                let span = match (span, ends) {
+                    (Some((a, z)), true) => Some((a, z + (line.h * 0.3).round())),
+                    (None, true) => Some(line_end_x(d, lay, line, &p.widths, (sc, mono))).map(|e| (e, e + (line.h * 0.3).round())),
+                    (span, false) => span,
+                };
+                if let Some((a, z)) = span {
+                    g.dl.rect(Rect::new(x0 + a - shift, top, z - a, line.h), ink);
+                }
+            }
             for piece in &lay.pieces[line.pieces.start as usize..line.pieces.end as usize] {
                 let run = &d.runs[piece.run as usize];
                 let font = run_font(run, line.block, sc, mono);

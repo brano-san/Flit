@@ -507,10 +507,18 @@ pub fn helper_offer(paths: &[FsPath], cut: bool, offered_as_text: bool) -> (&'st
 
 pub fn set_clipboard_files(paths: &[FsPath], cut: bool) -> bool {
     let (mime, list) = helper_offer(paths, cut, wayland());
+    offer_through_helper(mime, &list)
+}
+
+pub fn set_clipboard_image(png: &[u8]) -> bool {
+    offer_through_helper(crate::clipboard::PNG, png)
+}
+
+fn offer_through_helper(mime: &str, bytes: &[u8]) -> bool {
     let args: &[&str] = if wayland() { &["wl-copy", "--type", mime] } else { &["xclip", "-selection", "clipboard", "-target", mime, "-in"] };
     let Some(mut cmd) = helper(args) else { return false };
     let Ok(mut child) = cmd.stdin(Stdio::piped()).stdout(Stdio::null()).process_group(0).spawn() else { return false };
-    let written = child.stdin.take().is_some_and(|mut input| input.write_all(&list).is_ok());
+    let written = child.stdin.take().is_some_and(|mut input| input.write_all(bytes).is_ok());
     let _ = std::thread::Builder::new().name("flit-reap".into()).spawn(move || {
         let _ = child.wait();
     });
