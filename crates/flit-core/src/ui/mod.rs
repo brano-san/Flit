@@ -3075,6 +3075,7 @@ impl App {
 
     fn system_icon<B: TextBackend>(&self, g: &mut Gfx<B>, icon: Option<sidebar::SystemIcon>, r: Rect, px: f32, alpha: u8, requests: &mut Vec<IconRequest>) -> bool {
         let Some((key, kind, path)) = icon else { return false };
+        let key = if self.icon_epoch == 0 { key } else { crate::hash::hash(&(key, self.icon_epoch)) };
         if g.image_alpha(key, Rect::new((r.x + (r.w - px) / 2.0).round(), (r.y + (r.h - px) / 2.0).round(), px, px), alpha) {
             return true;
         }

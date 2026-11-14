@@ -314,3 +314,19 @@ fn card_glyphs_show_only_until_the_system_icon_arrives() {
     assert_eq!(kinds_in(&g, ir, crate::render::kind::IMAGE), 1, "the system icon replaces the glyph");
     assert_eq!(kinds_in(&g, ir, crate::render::kind::GLYPH), 0);
 }
+
+#[test]
+fn a_new_icon_epoch_asks_for_place_icons_again() {
+    let mut app = home_app();
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, Instant::now());
+    let asked = |app: &mut App| app.drain_effects().find_map(|e| if let Effect::Icon(q) = e { (q.size == 32 && q.path.display() == r"C:\Users\u\Downloads").then_some(q.key) } else { None });
+    let key = asked(&mut app).expect("asked");
+    app.on_icon(&mut g, key, crate::ui::IconResult::Ready(crate::ui::Bitmap { width: 32, height: 32, rgba: vec![255; 32 * 32 * 4] }));
+    app.frame(&mut g, Instant::now());
+    assert_eq!(asked(&mut app), None, "a cached icon is not asked for again");
+    app.icon_epoch += 1;
+    app.frame(&mut g, Instant::now());
+    let again = asked(&mut app).expect("the icon theme changed, so the place icon is fetched anew");
+    assert_ne!(again, key);
+}
