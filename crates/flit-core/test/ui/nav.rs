@@ -691,3 +691,22 @@ fn back_brings_back_the_scroll_of_a_folder_left_with_nothing_selected() {
     assert!(selected(&app).is_empty());
     assert_eq!((app.tab().scroll, app.tab().scroll_target), (120.0, 120.0));
 }
+
+#[test]
+fn slash_and_tilde_in_the_list_open_the_address_bar_with_the_character() {
+    let mut app = app_at(r"C:\x");
+    app.opts.char_key = crate::ui::options::CharKey::Select;
+    files(&mut app, &["a.txt", "b.txt"]);
+    app.on_event(&Event::Char('a'), t0());
+    assert!(app.nav.palette.is_none(), "plain letters still go to type-ahead");
+    assert_eq!(selected(&app), ["a.txt"]);
+    files(&mut app, &["a.txt", "b.txt"]);
+    app.on_event(&Event::Char('/'), t0());
+    let Some(p) = app.nav.palette.as_ref() else { panic!("slash opens the address bar") };
+    assert_eq!(p.field.text(), "/");
+    key(&mut app, Key::Escape, NO);
+    files(&mut app, &["a.txt", "b.txt"]);
+    app.on_event(&Event::Char('~'), t0());
+    let Some(p) = app.nav.palette.as_ref() else { panic!("tilde opens the address bar") };
+    assert_eq!(p.field.text(), "~");
+}

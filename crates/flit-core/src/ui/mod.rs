@@ -2106,6 +2106,12 @@ impl App {
         if c == ' ' && !self.tab().typing(now) {
             return;
         }
+        if self.focus == Focus::List && (c == '/' || c == '~') {
+            self.open_address();
+            self.nav_insert(c.encode_utf8(&mut [0; 4]));
+            self.dirty = true;
+            return;
+        }
         if self.opts.char_key == options::CharKey::Filter && self.focus == Focus::List {
             self.open_filter();
             self.filter_insert(c.encode_utf8(&mut [0; 4]));
