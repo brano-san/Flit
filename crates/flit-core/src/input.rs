@@ -100,6 +100,7 @@ pub enum Event {
     Animations(bool),
     Accent(Option<crate::theme::Accent>),
     TextScale(f32),
+    IconTheme,
     MouseSettings { double_click: std::time::Duration, wheel_lines: u32 },
     Invoke(u64),
     A11yFocus(u64),

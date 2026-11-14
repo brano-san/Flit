@@ -2,7 +2,7 @@ use flit_core::ui::Bitmap;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -242,22 +242,34 @@ fn theme_name() -> String {
     kde().or_else(|| config("gtk-3.0/settings.ini", "gtk-icon-theme-name")).or_else(gnome).unwrap_or_else(|| "Adwaita".into())
 }
 
-fn themes() -> &'static [Theme] {
-    static THEMES: OnceLock<Vec<Theme>> = OnceLock::new();
-    THEMES.get_or_init(|| chain(&base_dirs(), &theme_name()))
-}
-
 type Rendered = HashMap<(Vec<String>, u32), (Option<Bitmap>, Instant)>;
 
+static THEMES: Mutex<Option<Arc<Vec<Theme>>>> = Mutex::new(None);
+static CACHE: Mutex<Option<Rendered>> = Mutex::new(None);
+
+fn themes() -> Arc<Vec<Theme>> {
+    THEMES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(|| Arc::new(chain(&base_dirs(), &theme_name()))).clone()
+}
+
+pub fn switch_theme(name: &str) -> bool {
+    let name = name.trim().trim_matches(['\'', '"']);
+    if name.is_empty() {
+        return false;
+    }
+    let fresh = Arc::new(chain(&base_dirs(), name));
+    *THEMES.lock().unwrap_or_else(|e| e.into_inner()) = Some(fresh);
+    *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    true
+}
+
 pub fn icon(names: &[String], size: u32) -> Option<Bitmap> {
-    static CACHE: Mutex<Option<Rendered>> = Mutex::new(None);
     let key = (names.to_vec(), size);
     if let Some((hit, at)) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get(&key) {
         if hit.is_some() || at.elapsed() < RECHECK {
             return hit.clone();
         }
     }
-    let made = find(themes(), names, size).and_then(|p| render(&p, size));
+    let made = find(&themes(), names, size).and_then(|p| render(&p, size));
     CACHE.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(key, (made.clone(), Instant::now()));
     made
 }

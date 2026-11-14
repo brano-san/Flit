@@ -83,7 +83,7 @@ fn an_icon_installed_while_running_is_found_after_the_recheck() {
 #[test]
 fn file_kinds_map_to_freedesktop_icon_names() {
     let req = |kind, path: &str| flit_core::ui::IconRequest { key: 0, kind, path: flit_core::FsPath::parse(path).unwrap(), size: 32, gen: 0, row: 0 };
-    assert_eq!(crate::shell::icon_names(&req(flit_core::ui::IconKind::Volume, "/media/ann/USB")), ["drive-removable-media", "drive-harddisk"]);
+    assert_eq!(crate::shell::icon_names(&req(flit_core::ui::IconKind::Volume, "/media/ann/USB")), ["drive-removable-media-usb", "drive-removable-media", "drive-harddisk"]);
     assert_eq!(crate::shell::icon_names(&req(flit_core::ui::IconKind::Folder, "/srv")), ["folder"]);
     assert_eq!(crate::shell::icon_names(&req(flit_core::ui::IconKind::Place, "shell:RecycleBinFolder")), ["user-trash", "folder"]);
     assert_eq!(crate::shell::icon_names(&req(flit_core::ui::IconKind::Place, "/srv")), ["folder", "folder"]);

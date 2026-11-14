@@ -1716,6 +1716,11 @@ impl App {
             Event::Animations(on) => self.set_system_animations(*on),
             Event::Accent(accent) => self.set_system_accent(*accent),
             Event::TextScale(factor) => self.set_system_text_scale(*factor),
+            Event::IconTheme => {
+                self.icon_epoch += 1;
+                self.icons.clear();
+                self.dirty = true;
+            }
             Event::MouseSettings { double_click, wheel_lines } => (self.double_click, self.wheel_lines) = (*double_click, *wheel_lines),
             Event::Invoke(id) => self.a11y_invoke(*id, now),
             Event::A11yFocus(id) => self.a11y_focus(*id),
@@ -3137,7 +3142,7 @@ fn centered<B: TextBackend>(g: &mut Gfx<B>, r: Rect, s: &str, font: FontStyle, c
 
 pub fn icon_key(name: &[u8], ext: &[u8], e: &crate::listing::Entry, size: u32, dir: &[u8], epoch: u64) -> (u64, IconKind) {
     if e.attrs & attr::VOLUME != 0 {
-        return (hash::hash(&("vol", name, size)), IconKind::Volume);
+        return (hash::hash(&("vol", name, size, epoch)), IconKind::Volume);
     }
     if e.attrs & attr::LINK != 0 && !cfg!(windows) {
         return (hash::hash(&("link", dir, name, e.attrs & attr::DIR, e.modified, size, epoch)), IconKind::File);
@@ -3146,13 +3151,16 @@ pub fn icon_key(name: &[u8], ext: &[u8], e: &crate::listing::Entry, size: u32, d
         return (hash::hash(&("custom", dir, name, e.modified, e.attrs, size, epoch)), IconKind::CustomFolder);
     }
     if e.is_dir() {
-        return (hash::hash(&("dir", size)), IconKind::Folder);
+        return (hash::hash(&("dir", size, epoch)), IconKind::Folder);
     }
     let folded = ext.to_ascii_lowercase();
     if PER_FILE_ICON_EXT.contains(&folded.as_slice()) {
-        return (hash::hash(&("file", dir, name, size)), IconKind::File);
+        return (hash::hash(&("file", dir, name, size, epoch)), IconKind::File);
     }
-    (hash::hash(&("ext", folded.as_slice(), size)), IconKind::Type)
+    if folded.is_empty() && e.attrs & attr::EXEC != 0 {
+        return (hash::hash(&("exec", size, epoch)), IconKind::Type);
+    }
+    (hash::hash(&("ext", folded.as_slice(), size, epoch)), IconKind::Type)
 }
 
 #[cfg(test)]

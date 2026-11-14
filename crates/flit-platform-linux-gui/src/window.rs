@@ -145,6 +145,7 @@ fn wake_loop() {
 static ACCENT: Mutex<Option<flit_core::theme::Accent>> = Mutex::new(None);
 static TEXT_SCALE_MILLI: AtomicU32 = AtomicU32::new(1000);
 static LOOK_DIRTY: AtomicBool = AtomicBool::new(false);
+static ICONS_DIRTY: AtomicBool = AtomicBool::new(false);
 
 fn system_accent() -> Option<flit_core::theme::Accent> {
     *ACCENT.lock().unwrap_or_else(|e| e.into_inner())
@@ -158,6 +159,11 @@ fn apply_look(change: crate::atspi::LookChange) {
     match change {
         crate::atspi::LookChange::Accent(a) => *ACCENT.lock().unwrap_or_else(|e| e.into_inner()) = a,
         crate::atspi::LookChange::TextScale(f) => TEXT_SCALE_MILLI.store((f * 1000.0).round() as u32, Ordering::Release),
+        crate::atspi::LookChange::IconTheme(name) => {
+            if crate::icons::switch_theme(&name) {
+                ICONS_DIRTY.store(true, Ordering::Release);
+            }
+        }
     }
     LOOK_DIRTY.store(true, Ordering::Release);
     wake_loop();
@@ -1387,6 +1393,11 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
         if ANIMATIONS_DIRTY.swap(false, Ordering::AcqRel) {
             for node in &self.nodes {
                 self.handler.event(&node.window, Event::Animations(animations()));
+            }
+        }
+        if ICONS_DIRTY.swap(false, Ordering::AcqRel) {
+            for node in &self.nodes {
+                self.handler.event(&node.window, Event::IconTheme);
             }
         }
         if LOOK_DIRTY.swap(false, Ordering::AcqRel) {

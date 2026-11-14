@@ -1126,10 +1126,19 @@ pub(crate) fn double_click_change(args: &[Arg]) -> Option<i64> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum LookChange {
     Accent(Option<flit_core::theme::Accent>),
     TextScale(f64),
+    IconTheme(String),
+}
+
+fn first_text(a: &Arg) -> Option<String> {
+    match a {
+        Arg::S(s) if !s.is_empty() => Some(s.clone()),
+        Arg::L(v) => v.iter().find_map(first_text),
+        _ => None,
+    }
 }
 
 fn doubles(a: &Arg) -> Vec<f64> {
@@ -1147,6 +1156,7 @@ pub(crate) fn look_change(args: &[Arg]) -> Option<LookChange> {
             _ => None,
         })),
         [Arg::S(ns), Arg::S(key), value] if ns == GNOME_INTERFACE && key == "text-scaling-factor" => doubles(value).first().copied().filter(|f| crate::shell::TEXT_SCALE_RANGE.contains(f)).map(LookChange::TextScale),
+        [Arg::S(ns), Arg::S(key), value] if ns == GNOME_INTERFACE && key == "icon-theme" => first_text(value).map(LookChange::IconTheme),
         _ => None,
     }
 }

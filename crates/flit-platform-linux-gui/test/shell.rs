@@ -508,3 +508,23 @@ fn an_unset_or_odd_accent_and_text_size_keep_flits_own() {
     assert_eq!(crate::window::text_scale(false, 1500), 1.0, "on X11 the desktop already scales text through Xft.dpi");
     assert_eq!(crate::window::text_scale(true, 1500), 1.5);
 }
+
+#[test]
+fn volumes_and_programs_get_icons_of_their_kind() {
+    let table = flit_platform_linux::mounts::parse(b"1 0 8:2 / / rw - ext4 /dev/sda2 rw\n2 1 8:17 / /run/media/u/STICK rw - exfat /dev/sdb1 rw\n3 1 11:0 / /run/media/u/DVD ro - iso9660 /dev/sr0 ro\n4 1 0:60 / /mnt/nas rw - nfs4 nas:/x rw\n");
+    let names = |p: &[u8]| volume_icon_names(p, table.iter().find(|m| m.point == p));
+    assert_eq!(names(b"/run/media/u/STICK")[0], "drive-removable-media-usb");
+    assert_eq!(names(b"/run/media/u/DVD")[0], "media-optical");
+    assert_eq!(names(b"/mnt/nas")[0], "folder-remote");
+    assert!(type_icon_names(b"configure", true).contains(&"application-x-executable".to_owned()));
+}
+
+#[test]
+fn the_system_disk_plain_files_and_scripts_keep_their_usual_icons() {
+    let table = flit_platform_linux::mounts::parse(b"1 0 8:2 / / rw - ext4 /dev/sda2 rw\n");
+    assert_eq!(volume_icon_names(b"/", table.first()), ["drive-harddisk"]);
+    assert_eq!(volume_icon_names(b"/media/old", None)[0], "drive-removable-media-usb", "an unmounted path under /media still looks removable");
+    assert!(!type_icon_names(b"notes", false).contains(&"application-x-executable".to_owned()));
+    assert!(!type_icon_names(b"build.sh", true).contains(&"application-x-executable".to_owned()), "a script keeps the icon of its type");
+    assert!(!crate::icons::switch_theme("  ''  "), "an empty theme name changes nothing");
+}

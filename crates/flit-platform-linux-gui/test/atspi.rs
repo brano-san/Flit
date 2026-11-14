@@ -373,3 +373,10 @@ fn a_cancelled_chooser_or_a_folder_pick_carries_no_file_filter() {
     assert_eq!(folder.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["handle_token", "modal", "directory"]);
     assert!(matches!(folder[2].1, V::B(true)));
 }
+
+#[test]
+fn an_icon_theme_change_is_heard_with_its_name() {
+    let s = |v: &str| Arg::S(v.into());
+    assert_eq!(look_change(&[s(GNOME_INTERFACE), s("icon-theme"), Arg::L(vec![s("Papirus")])]), Some(LookChange::IconTheme("Papirus".into())));
+    assert_eq!(look_change(&[s(GNOME_INTERFACE), s("icon-theme"), Arg::L(vec![s("")])]), None);
+}

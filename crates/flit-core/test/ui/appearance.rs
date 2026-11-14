@@ -299,3 +299,22 @@ fn the_system_text_size_enlarges_flit_on_top_of_its_own_scale_without_changing_t
     a.on_event(&Event::TextScale(f32::NAN), Instant::now());
     assert!((a.scale - ui).abs() < 1e-4);
 }
+
+#[test]
+fn a_new_icon_theme_asks_for_every_icon_again_and_programs_share_their_own_icon() {
+    use crate::listing::{attr, Entry};
+    use crate::ui::{harness, icon_key, Effect, IconKind};
+    let file = |attrs| Entry { size: 0, modified: 0, created: 0, accessed: 0, name_off: 0, attrs, name_len: 0, ext_len: 0, tags: 0 };
+    let program = icon_key(b"run", b"", &file(attr::EXEC), 16, b"/bin", 0);
+    assert_eq!(program.1, IconKind::Type);
+    assert_ne!(program.0, icon_key(b"notes", b"", &file(0), 16, b"/bin", 0).0, "a program looks different from a plain file");
+    assert_eq!(program.0, icon_key(b"other", b"", &file(attr::EXEC), 16, b"/usr/bin", 0).0, "one icon serves all programs");
+    assert_eq!(icon_key(b"x.sh", b"sh", &file(attr::EXEC), 16, b"/", 0).0, icon_key(b"y.sh", b"sh", &file(0), 16, b"/", 0).0, "a script keeps the icon of its type");
+    let mut app = harness::app(&["a.txt", "b.png", "c"]);
+    let icons = |app: &mut App| app.drain_effects().filter(|e| matches!(e, Effect::Icon(_))).count();
+    harness::frame(&mut app);
+    assert_eq!(icons(&mut app), 0, "icons already asked for are not asked again");
+    app.on_event(&Event::IconTheme, Instant::now());
+    harness::frame(&mut app);
+    assert!(icons(&mut app) >= 2, "every visible icon is asked for again in the new theme");
+}

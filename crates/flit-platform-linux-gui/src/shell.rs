@@ -828,20 +828,44 @@ fn link_icon(req: &IconRequest, target: LinkTarget) -> Option<Bitmap> {
     }
 }
 
+pub fn volume_icon_names(path: &[u8], mount: Option<&flit_platform_linux::mounts::Mount>) -> Vec<String> {
+    let optical = mount.is_some_and(|m| matches!(m.fstype.as_str(), "iso9660" | "udf") || m.source.starts_with(b"/dev/sr"));
+    let removable = mount.map_or(path.starts_with(b"/media/") || path.starts_with(b"/run/media/"), |m| m.removable());
+    let list: &[&str] = match mount {
+        Some(m) if m.is_network() => &["folder-remote", "network-server", "drive-harddisk"],
+        _ if optical => &["media-optical", "drive-optical", "drive-removable-media", "drive-harddisk"],
+        _ if removable => &["drive-removable-media-usb", "drive-removable-media", "drive-harddisk"],
+        _ => &["drive-harddisk"],
+    };
+    list.iter().map(|s| s.to_string()).collect()
+}
+
+pub fn type_icon_names(name: &[u8], executable: bool) -> Vec<String> {
+    let ext = name.iter().rposition(|&b| b == b'.').filter(|&i| i > 0).map(|i| &name[i + 1..]);
+    let mut names: Vec<String> = ext.and_then(crate::mime::mime_of).map(|m| crate::mime::icon_names(&m)).unwrap_or_default();
+    if ext.is_none() && executable {
+        names.push("application-x-executable".into());
+    }
+    names.extend(["text-x-generic", "unknown"].map(String::from));
+    names
+}
+
 pub fn icon_names(req: &IconRequest) -> Vec<String> {
     let owned = |list: &[&str]| list.iter().map(|s| s.to_string()).collect();
     let path = req.path.as_bytes();
     match req.kind {
         IconKind::Folder | IconKind::CustomFolder => owned(&["folder"]),
         IconKind::Place => owned(&[place_icon_name(&req.path), "folder"]),
-        IconKind::Volume if path.starts_with(b"/media/") || path.starts_with(b"/run/media/") => owned(&["drive-removable-media", "drive-harddisk"]),
-        IconKind::Volume => owned(&["drive-harddisk"]),
+        IconKind::Volume => {
+            let mounts = flit_platform_linux::mounts::read().unwrap_or_default();
+            let mount = mounts.iter().rev().find(|m| m.point == path);
+            volume_icon_names(path, mount)
+        }
         IconKind::Type | IconKind::File | IconKind::Thumbnail => {
+            let executable = || std::fs::metadata(OsStr::from_bytes(path)).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
             let name = req.path.file_name();
-            let ext = name.iter().rposition(|&b| b == b'.').filter(|&i| i > 0).map(|i| &name[i + 1..]);
-            let mut names = ext.and_then(crate::mime::mime_of).map(|m| crate::mime::icon_names(&m)).unwrap_or_default();
-            names.extend(owned(&["text-x-generic", "unknown"]));
-            names
+            let bare = !name.iter().skip(1).any(|&b| b == b'.');
+            type_icon_names(name, bare && executable())
         }
     }
 }
