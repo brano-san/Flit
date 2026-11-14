@@ -668,3 +668,19 @@ fn quiet_jobs_collect_failures_and_report_them_at_the_end() {
     let e = out.error.expect("a summary").message;
     assert!(e.starts_with('2') && e.contains("a.txt"), "{e}");
 }
+
+#[test]
+fn a_file_in_use_names_the_program_in_the_question_and_the_summary() {
+    let t = TempDir::new("inuse");
+    let f = t.file("held.txt", "h");
+    let hold = locked(&t, "held.txt");
+    let (job, failed) = recovering(&[(Recover::Skip, false)], |_| {});
+    let out = engine::run(&FileOp::Delete(vec![f.clone()]), &job);
+    let quiet = engine::run(&FileOp::Delete(vec![f]), &Job::detached(Resolve::Skip));
+    drop(hold);
+    let asked = failed.lock().unwrap()[0].error.clone();
+    assert!(asked.contains(". It is open in "), "{asked}");
+    assert!(out.error.unwrap().message.contains(". It is open in ") && quiet.error.unwrap().message.contains(". It is open in "));
+    let missing = engine::run(&FileOp::Delete(vec![t.path("nothing.txt")]), &Job::detached(Resolve::Skip));
+    assert!(!missing.error.unwrap().message.contains("It is open in"), "other errors stay as they were");
+}

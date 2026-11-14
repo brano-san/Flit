@@ -115,3 +115,13 @@ fn system_errors_are_named_without_the_rust_error_number() {
     assert!(!denied.is_empty() && !denied.contains("os error"), "{denied}");
     assert_eq!(io_reason(&std::io::Error::other("the file changed (os error 5)")), "the file changed (os error 5)");
 }
+
+#[test]
+fn a_file_in_use_names_up_to_three_programs_once_each() {
+    let apps = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let said = "The process cannot access the file because it is being used by another process.";
+    assert_eq!(in_use(said, &apps(&["Microsoft Word"])).unwrap(), "The process cannot access the file because it is being used by another process. It is open in Microsoft Word");
+    assert!(in_use(said, &apps(&["a", "b", "a", " ", "c", "d"])).unwrap().ends_with("It is open in a, b, c, …"));
+    assert_eq!(in_use(said, &apps(&["", "  "])), None, "no names, no change to the message");
+    assert_eq!(in_use(said, &[]), None);
+}

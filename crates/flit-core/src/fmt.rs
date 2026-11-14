@@ -74,6 +74,25 @@ pub fn io_reason(e: &std::io::Error) -> String {
     }
 }
 
+const NAMED_HOLDERS: usize = 3;
+
+pub fn in_use(error: &str, apps: &[String]) -> Option<String> {
+    let mut named: Vec<&str> = Vec::new();
+    for a in apps.iter().map(|a| a.trim()).filter(|a| !a.is_empty()) {
+        if !named.contains(&a) {
+            named.push(a);
+        }
+    }
+    if named.is_empty() {
+        return None;
+    }
+    let mut list = named[..named.len().min(NAMED_HOLDERS)].join(", ");
+    if named.len() > NAMED_HOLDERS {
+        list.push_str(", …");
+    }
+    Some(crate::tr_en!(S::ErrorsEngineInUse, error = error.trim_end().trim_end_matches('.'), apps = list))
+}
+
 pub fn size_label(label: &str) -> String {
     let Some((n, unit)) = label.split_once(' ').and_then(|(n, u)| Some((n, UNITS.into_iter().find(|s| s.en() == u)?))) else { return label.to_owned() };
     let mut out = String::new();

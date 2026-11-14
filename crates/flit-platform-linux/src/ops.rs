@@ -224,11 +224,16 @@ fn on_windows_volume(path: &FsPath) -> bool {
     crate::fs::LinuxFs.file_system(path).is_some_and(|fs| matches!(fs.as_str(), "ntfs" | "ntfs3" | "fuseblk"))
 }
 
+fn in_use(path: &FsPath, e: &io::Error) -> Option<String> {
+    let busy = matches!(e.raw_os_error(), Some(libc::EBUSY | libc::ETXTBSY));
+    busy.then(|| host(path)).flatten().and_then(|h| flit_core::fmt::in_use(&flit_core::fmt::io_reason(e), &crate::busy::holders(h)))
+}
+
 fn reason(path: &FsPath, e: &io::Error) -> String {
     match e.raw_os_error() {
         Some(libc::EROFS) if on_windows_volume(path) => S::ErrorsOpsExtraReadOnlyWindows.en().to_owned(),
         Some(libc::EROFS) => S::ErrorsOpsExtraReadOnly.en().to_owned(),
-        _ => flit_core::fmt::io_reason(e),
+        _ => in_use(path, e).unwrap_or_else(|| flit_core::fmt::io_reason(e)),
     }
 }
 
@@ -236,7 +241,7 @@ fn failed_at(path: &FsPath, e: &io::Error) -> String {
     match e.raw_os_error() {
         Some(libc::EROFS) if on_windows_volume(path) => flit_core::tr_en!(S::ErrorsOpsExtraReadOnlyWindowsAt, path = path.display()),
         Some(libc::EROFS) => flit_core::tr_en!(S::ErrorsOpsExtraReadOnlyAt, path = path.display()),
-        _ => format!("{}: {}", path.display(), flit_core::fmt::io_reason(e)),
+        _ => format!("{}: {}", path.display(), in_use(path, e).unwrap_or_else(|| flit_core::fmt::io_reason(e))),
     }
 }
 

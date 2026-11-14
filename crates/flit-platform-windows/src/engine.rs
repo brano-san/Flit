@@ -55,6 +55,14 @@ fn code(e: &windows::core::Error) -> WIN32_ERROR {
     WIN32_ERROR::from_error(e).unwrap_or(ERROR_GEN_FAILURE)
 }
 
+fn reason(path: &FsPath, e: &windows::core::Error) -> String {
+    let said = e.message().trim_end().to_owned();
+    match code(e) {
+        ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION => flit_core::fmt::in_use(&said, &crate::busy::holders(path)).unwrap_or(said),
+        _ => said,
+    }
+}
+
 fn same(a: &FsPath, b: &FsPath) -> bool {
     a.as_bytes().eq_ignore_ascii_case(b.as_bytes())
 }
@@ -266,7 +274,7 @@ impl<'a> Engine<'a> {
         if matches!(c, ERROR_DISK_FULL | ERROR_HANDLE_DISK_FULL) {
             self.fatal = true;
         }
-        self.note(format!("{}: {}", path.display(), e.message()));
+        self.note(format!("{}: {}", path.display(), reason(path, e)));
     }
 
     fn note(&mut self, msg: String) {
@@ -284,11 +292,12 @@ impl<'a> Engine<'a> {
             return false;
         }
         let fatal = matches!(c, ERROR_DISK_FULL | ERROR_HANDLE_DISK_FULL);
-        match self.job.fail(Failure { path: path.clone(), error: e.message().trim_end().to_owned(), fatal }) {
+        let error = reason(path, e);
+        match self.job.fail(Failure { path: path.clone(), error: error.clone(), fatal }) {
             Some(Recover::Retry) => true,
             Some(Recover::Skip) => {
                 self.fatal |= fatal;
-                self.note(format!("{}: {}", path.display(), e.message()));
+                self.note(format!("{}: {}", path.display(), error));
                 false
             }
             None => false,
