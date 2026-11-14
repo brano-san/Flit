@@ -632,3 +632,69 @@ fn form_controls_answer_the_mouse() {
     assert_eq!(app.asking(), None);
     assert!(ops(&mut app).is_empty());
 }
+
+fn unpacked_to(app: &mut App, then: &str) -> (OpId, Vec<FsPath>, FsPath) {
+    let (id, op) = only(app);
+    let FileOp::Copy { items, dest } = op else { panic!("{then}: {op:?}") };
+    let temp = std::env::temp_dir().join("Flit");
+    assert!(dest.display().starts_with(&*temp.to_string_lossy()), "{then}: {}", dest.display());
+    (id, items, dest)
+}
+
+fn unpacked(app: &mut App, id: OpId, items: Vec<FsPath>, dest: &FsPath, error: Option<&str>) {
+    let tab = app.tab().id;
+    let made = items.iter().map(|i| (i.clone(), dest.join(i.file_name()))).collect();
+    app.on_provider_event(ProviderEvent::OpDone { tab, id, error: error.map(str::to_owned), report: Some(OpReport { op: FileOp::Copy { items, dest: dest.clone() }, items: made }) }, t0());
+}
+
+#[test]
+fn copying_from_an_archive_unpacks_to_a_temporary_folder_first_and_puts_those_files_on_the_clipboard() {
+    let mut app = app_at(r"C:\menu\a.zip\docs");
+    deliver(&mut app, &[("x.txt", PACKED), ("y.txt", PACKED)]);
+    select(&mut app, &["x.txt", "y.txt"]);
+    app.copy_selection();
+    let (id, items, dest) = unpacked_to(&mut app, "copy");
+    assert_eq!(items, [p(r"C:\menu\a.zip\docs\x.txt"), p(r"C:\menu\a.zip\docs\y.txt")]);
+    unpacked(&mut app, id, items, &dest, None);
+    let clip = app.drain_effects().find_map(|e| if let Effect::SetClipboardFiles { paths, cut } = e { Some((paths, cut)) } else { None });
+    assert_eq!(clip, Some((vec![dest.join(b"x.txt"), dest.join(b"y.txt")], false)));
+    assert_eq!(app.undo_depth().0, 0, "the temporary copy is not an undoable step");
+}
+
+#[test]
+fn a_failed_unpack_leaves_the_clipboard_alone_and_plain_folders_still_copy_their_own_paths() {
+    let mut app = app_at(r"C:\menu\a.zip");
+    deliver(&mut app, &[("x.txt", PACKED)]);
+    select(&mut app, &["x.txt"]);
+    app.copy_selection();
+    let (id, items, dest) = unpacked_to(&mut app, "copy");
+    unpacked(&mut app, id, items, &dest, Some("disk full"));
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::SetClipboardFiles { .. })));
+    let mut app = app_at(r"C:\plain");
+    deliver(&mut app, &[("x.txt", FILE)]);
+    select(&mut app, &["x.txt"]);
+    app.copy_selection();
+    let effects: Vec<Effect> = app.drain_effects().collect();
+    assert!(effects.iter().any(|e| matches!(e, Effect::SetClipboardFiles { paths, cut: false } if *paths == vec![p(r"C:\plain\x.txt")])));
+    assert!(!effects.iter().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Op { .. }, .. })));
+}
+
+#[test]
+fn dragging_out_of_an_archive_unpacks_first_and_starts_the_drag_only_while_the_button_is_held() {
+    let row = |app: &App| (app.layout.cols[0].x + 100.0, app.layout.list.y + 0.5 * app.layout.row_h);
+    for held in [true, false] {
+        let mut app = app_at(r"C:\menu\a.zip");
+        deliver(&mut app, &[("x.txt", PACKED)]);
+        select(&mut app, &["x.txt"]);
+        let (x, y) = row(&app);
+        app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, t0());
+        app.on_event(&Event::MouseMove { x: x + 20.0, y: y + 3.0 }, t0());
+        let (id, items, dest) = unpacked_to(&mut app, "drag");
+        if !held {
+            app.on_event(&Event::MouseUp { x: x + 20.0, y: y + 3.0, button: MouseButton::Left }, t0());
+        }
+        unpacked(&mut app, id, items, &dest, None);
+        let dragged = app.drain_effects().find_map(|e| if let Effect::StartDrag(paths) = e { Some(paths) } else { None });
+        assert_eq!(dragged, held.then(|| vec![dest.join(b"x.txt")]), "held: {held}");
+    }
+}

@@ -116,6 +116,8 @@ pub(super) enum Then {
     Launch,
     Terminal,
     TrashArchives(Vec<FsPath>),
+    Clipboard,
+    Drag,
 }
 
 struct Pending {
@@ -237,6 +239,7 @@ pub(super) struct Ops {
     cut: Option<Cut>,
     bin: Option<BinProbe>,
     ids: u32,
+    unpack_drag: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -381,6 +384,14 @@ pub fn choose_effect(allowed: u32, m: Mods, same_volume: bool) -> u32 {
         return NONE;
     }
     [COPY, MOVE, LINK].into_iter().find(|e| allowed & e != 0).unwrap_or(NONE)
+}
+
+pub(super) fn unpacked_copies() -> Option<FsPath> {
+    static COPIES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
+    let n = COPIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join("Flit").join(format!("{}-{stamp}-copy-{n}", std::process::id()));
+    FsPath::parse(&dir.to_string_lossy())
 }
 
 fn op_path(loc: &Location) -> Option<FsPath> {
@@ -782,6 +793,13 @@ impl App {
         }
         if cut && self.archive_view().is_some() {
             return self.status(crate::i18n::S::ErrorsArchiveInside.t());
+        }
+        if self.archive_view().is_some() {
+            return match (self.item_paths(&items), unpacked_copies()) {
+                (Ok(items), Some(dest)) => self.start_op(FileOp::Copy { items, dest }, Origin::Fresh, Then::Clipboard),
+                (Err(e), _) => self.status(e),
+                (_, None) => self.status(S::ErrorsArchiveInside.t()),
+            };
         }
         let paths = match cut && self.shell_bin() {
             true => Ok(self.recycled_paths(&items)),
@@ -1207,7 +1225,9 @@ impl App {
                 self.drop_gone(k, &p.provider, &report);
             }
         }
-        self.ops.journal.record(p.origin, p.provider.clone(), &report);
+        if !matches!(p.then, Then::Clipboard | Then::Drag) {
+            self.ops.journal.record(p.origin, p.provider.clone(), &report);
+        }
         self.each_pane(|a, k| {
             let t = &mut a.tabs[k];
             if t.view_loc.provider() != p.provider {
@@ -1742,10 +1762,18 @@ impl App {
         self.ops.press = None;
         let items = self.selected_items();
         let Ok(paths) = self.item_paths(&items) else { return false };
-        if paths.is_empty() || self.archive_view().is_some() {
+        if paths.is_empty() {
             return false;
         }
         self.pressed = Hit::None;
+        if self.archive_view().is_some() {
+            self.drag = Drag::None;
+            if let Some(dest) = unpacked_copies() {
+                self.ops.unpack_drag = true;
+                self.start_op(FileOp::Copy { items: paths, dest }, Origin::Fresh, Then::Drag);
+            }
+            return true;
+        }
         self.drag = Drag::None;
         self.hover = Hit::None;
         self.ops.right_drag = right.then(|| paths.clone());
@@ -1753,7 +1781,17 @@ impl App {
         true
     }
 
+    pub(super) fn unpacked(&mut self, then: &Then, paths: Vec<FsPath>) {
+        match then {
+            _ if paths.is_empty() => {}
+            Then::Clipboard => self.effects.push(Effect::SetClipboardFiles { paths, cut: false }),
+            Then::Drag if std::mem::take(&mut self.ops.unpack_drag) => self.effects.push(Effect::StartDrag(paths)),
+            _ => {}
+        }
+    }
+
     pub(super) fn ops_mouse_up(&mut self, x: f32, y: f32, button: MouseButton, now: Instant) {
+        self.ops.unpack_drag = false;
         if let Some(r) = &mut self.ops.rename {
             r.selecting = None;
         }

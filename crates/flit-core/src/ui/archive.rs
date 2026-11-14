@@ -517,6 +517,11 @@ impl App {
                     }
                 }
             }
+            Then::Clipboard | Then::Drag => {
+                if error.is_none() {
+                    self.unpacked(then, report.items.iter().map(|(_, to)| to.clone()).collect());
+                }
+            }
             Then::Terminal if error.is_none() => {
                 for (_, to) in &report.items {
                     self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch: Launch::RunInTerminal { program: to.clone() } } });

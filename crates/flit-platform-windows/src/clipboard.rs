@@ -8,10 +8,10 @@ use std::time::Duration;
 use windows::core::w;
 use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND};
 use windows::Win32::Graphics::Imaging::{CLSID_WICImagingFactory, GUID_ContainerFormatPng, GUID_WICPixelFormat32bppBGRA, IWICImagingFactory, WICBitmapEncoderNoCache};
-use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER, STATFLAG_NONAME, STATSTG, STREAM_SEEK_SET};
+use windows::Win32::System::Com::{CoCreateInstance, IDataObject, CLSCTX_INPROC_SERVER, DVASPECT_CONTENT, FORMATETC, STATFLAG_NONAME, STATSTG, STGMEDIUM, STGMEDIUM_0, STREAM_SEEK_SET, TYMED_HGLOBAL};
 use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard, RegisterClipboardFormatW, SetClipboardData};
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
-use windows::Win32::System::Ole::{CF_DIB, CF_DIBV5, CF_HDROP, CF_UNICODETEXT, DROPEFFECT_COPY, DROPEFFECT_LINK, DROPEFFECT_MOVE};
+use windows::Win32::System::Ole::{OleSetClipboard, CF_DIB, CF_DIBV5, CF_HDROP, CF_UNICODETEXT, DROPEFFECT_COPY, DROPEFFECT_LINK, DROPEFFECT_MOVE};
 use windows::Win32::UI::Shell::SHCreateMemStream;
 
 const HEADER: usize = 20;
@@ -110,6 +110,9 @@ pub(crate) unsafe fn open(owner: Option<HWND>) -> Result<(), PlatformError> {
 
 pub(crate) fn write_files(owner: HWND, paths: &[FsPath], cut: bool) -> bool {
     let effect = if cut { DROPEFFECT_MOVE.0 } else { DROPEFFECT_COPY.0 | DROPEFFECT_LINK.0 };
+    if needs_items(paths) {
+        return write_items(owner, paths, effect);
+    }
     unsafe {
         if open(Some(owner)).is_err() {
             return false;
@@ -117,6 +120,30 @@ pub(crate) fn write_files(owner: HWND, paths: &[FsPath], cut: bool) -> bool {
         let ok = EmptyClipboard().is_ok() && put(CF_HDROP.0 as u32, &dropfiles(paths)) && put(drop_effect_format(), &effect.to_le_bytes());
         let _ = CloseClipboard();
         ok
+    }
+}
+
+pub(crate) fn needs_items(paths: &[FsPath]) -> bool {
+    paths.iter().any(|p| p.kind() == flit_core::path::PathKind::Shell)
+}
+
+pub(crate) fn write_items(owner: HWND, paths: &[FsPath], effect: u32) -> bool {
+    let data: IDataObject = match crate::context_menu::Pidls::parse(paths).and_then(|p| p.ui_object(owner)) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!("clipboard items: {e}");
+            return false;
+        }
+    };
+    unsafe {
+        if let Some(h) = global(&effect.to_le_bytes()) {
+            let format = FORMATETC { cfFormat: drop_effect_format() as u16, ptd: std::ptr::null_mut(), dwAspect: DVASPECT_CONTENT.0, lindex: -1, tymed: TYMED_HGLOBAL.0 as u32 };
+            let medium = STGMEDIUM { tymed: TYMED_HGLOBAL.0 as u32, u: STGMEDIUM_0 { hGlobal: h }, pUnkForRelease: std::mem::ManuallyDrop::new(None) };
+            if data.SetData(&format, &medium, true).is_err() {
+                let _ = GlobalFree(Some(h));
+            }
+        }
+        OleSetClipboard(&data).is_ok()
     }
 }
 

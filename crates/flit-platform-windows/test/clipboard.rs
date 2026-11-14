@@ -153,3 +153,13 @@ fn broken_or_unsupported_dibs_are_refused() {
     assert!(from_dib(&whole[..whole.len() - 1]).is_none(), "missing pixels");
     assert!(from_dib(&[]).is_none() && from_dib(&whole[..20]).is_none());
 }
+
+#[test]
+fn phone_items_go_on_the_clipboard_as_shell_items_and_disk_files_as_plain_paths() {
+    let phone = FsPath::device(b"Pixel 7").unwrap().join(b"Internal storage").join(b"DCIM").join(b"a.jpg");
+    let disk = FsPath::parse(r"C:\Users\x\a.jpg").unwrap();
+    assert!(needs_items(std::slice::from_ref(&phone)));
+    assert!(needs_items(&[disk.clone(), phone]));
+    assert!(!needs_items(&[disk]));
+    assert!(!needs_items(&[FsPath::parse(r"\\server\share\a.jpg").unwrap()]));
+}
