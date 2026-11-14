@@ -18,6 +18,7 @@ use windows::Win32::Foundation::*;
 use windows::Win32::Storage::FileSystem::*;
 use windows::Win32::System::Ioctl::{PropertyStandardQuery, StorageDeviceSeekPenaltyProperty, DEVICE_SEEK_PENALTY_DESCRIPTOR, IOCTL_STORAGE_QUERY_PROPERTY, STORAGE_PROPERTY_QUERY};
 use windows::Win32::System::IO::{DeviceIoControl, IO_STATUS_BLOCK};
+use windows::Win32::System::SystemServices::{IO_REPARSE_TAG_MOUNT_POINT, IO_REPARSE_TAG_SYMLINK};
 
 const BUFFER: usize = 64 * 1024;
 pub(crate) const DRIVE_FIXED: u32 = 3;
@@ -99,6 +100,42 @@ pub(crate) fn cloud_attrs(a: u32) -> u32 {
         out |= attr::OFFLINE;
     }
     out
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LinkInfo {
+    Symbolic(Option<FsPath>),
+    Junction(Option<FsPath>),
+    Hard(u32),
+}
+
+pub(crate) fn shown_target(raw: &std::path::Path) -> Option<FsPath> {
+    let text = raw.to_string_lossy();
+    let text = match text.strip_prefix(r"\\?\UNC\").or_else(|| text.strip_prefix(r"\??\UNC\")) {
+        Some(rest) => format!(r"\\{rest}"),
+        None => text.strip_prefix(r"\\?\").or_else(|| text.strip_prefix(r"\??\")).unwrap_or(&text).to_owned(),
+    };
+    FsPath::parse(&text).or_else(|| FsPath::from_utf16(&text.encode_utf16().collect::<Vec<_>>()))
+}
+
+pub(crate) fn link_info(path: &FsPath) -> Option<LinkInfo> {
+    let wide = path.to_wide(true);
+    let share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    let h = Handle(unsafe { CreateFileW(PCWSTR(wide.as_ptr()), FILE_READ_ATTRIBUTES.0, share, None, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, None) }.ok()?);
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    unsafe { GetFileInformationByHandle(h.0, &mut info) }.ok()?;
+    let mut tag = FILE_ATTRIBUTE_TAG_INFO::default();
+    if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+        unsafe { GetFileInformationByHandleEx(h.0, FileAttributeTagInfo, &mut tag as *mut _ as _, size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32) }.ok()?;
+    }
+    drop(h);
+    let target = || std::fs::read_link(crate::fileops::std_path(path)).ok().and_then(|t| shown_target(&t));
+    match tag.ReparseTag {
+        IO_REPARSE_TAG_SYMLINK => Some(LinkInfo::Symbolic(target())),
+        IO_REPARSE_TAG_MOUNT_POINT => Some(LinkInfo::Junction(target())),
+        _ if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY.0 == 0 && info.nNumberOfLinks > 1 => Some(LinkInfo::Hard(info.nNumberOfLinks)),
+        _ => None,
+    }
 }
 
 pub(crate) fn not_local(path: &FsPath) -> bool {

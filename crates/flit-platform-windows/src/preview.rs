@@ -1,4 +1,6 @@
 use crate::take_pwstr;
+use crate::fs::LinkInfo;
+use flit_core::i18n::S;
 use flit_core::preview::{PropGroup, MAX_PROPS};
 use flit_core::ui::Bitmap;
 use flit_core::FsPath;
@@ -97,7 +99,22 @@ pub(crate) fn store_flags(not_local: bool) -> GETPROPERTYSTOREFLAGS {
     if not_local { GPS_FASTPROPERTIESONLY } else { GPS_BESTEFFORT }
 }
 
+pub(crate) fn link_group(link: &LinkInfo) -> PropGroup {
+    let row = |label: S, value: String| (label.t().to_owned(), value);
+    let target = |t: &Option<FsPath>| t.as_ref().map(|t| row(S::PropertiesLinkTarget, t.display().into_owned()));
+    let rows = match link {
+        LinkInfo::Symbolic(t) => [Some(row(S::PropertiesLinkType, S::PropertiesSymbolicLink.t().to_owned())), target(t)],
+        LinkInfo::Junction(t) => [Some(row(S::PropertiesLinkType, S::PropertiesJunction.t().to_owned())), target(t)],
+        LinkInfo::Hard(n) => [Some(row(S::PropertiesLinkType, S::PropertiesHardLink.t().to_owned())), Some(row(S::PropertiesHardLinks, n.to_string()))],
+    };
+    PropGroup { title: S::PropertiesLink.t().to_owned(), rows: rows.into_iter().flatten().collect() }
+}
+
 pub(crate) fn properties(path: &FsPath) -> Vec<PropGroup> {
+    crate::fs::link_info(path).map(|l| link_group(&l)).into_iter().chain(shell_properties(path)).collect()
+}
+
+fn shell_properties(path: &FsPath) -> Vec<PropGroup> {
     let mut groups: Vec<PropGroup> = Vec::new();
     unsafe {
         let name = path.to_wide(false);

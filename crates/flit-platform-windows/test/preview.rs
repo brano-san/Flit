@@ -84,6 +84,29 @@ fn reads_grouped_properties_and_finds_no_handler_for_unknown_types() {
 }
 
 #[test]
+fn a_hard_linked_file_shows_its_link_group_first_and_a_plain_file_shows_none() {
+    com_sta();
+    let d = temp("link-props");
+    let p = d.0.join("data.txt");
+    std::fs::write(&p, "hello").unwrap();
+    let link = S::PropertiesLink.t();
+    assert!(properties(&fs(&p)).iter().all(|g| g.title != link));
+    std::fs::hard_link(&p, d.0.join("again.txt")).unwrap();
+    let groups = properties(&fs(&p));
+    assert_eq!(groups[0].title, link);
+    assert_eq!(groups[0].rows, [(S::PropertiesLinkType.t().to_owned(), S::PropertiesHardLink.t().to_owned()), (S::PropertiesHardLinks.t().to_owned(), "2".to_owned())]);
+    assert!(groups.len() > 1, "the shell's own groups still follow");
+}
+
+#[test]
+fn a_junction_lists_its_target_and_a_link_without_a_readable_target_lists_only_its_kind() {
+    let target = FsPath::parse(r"C:\Data\Photos").unwrap();
+    let group = link_group(&LinkInfo::Junction(Some(target)));
+    assert_eq!(group.rows, [(S::PropertiesLinkType.t().to_owned(), S::PropertiesJunction.t().to_owned()), (S::PropertiesLinkTarget.t().to_owned(), r"C:\Data\Photos".to_owned())]);
+    assert_eq!(link_group(&LinkInfo::Symbolic(None)).rows, [(S::PropertiesLinkType.t().to_owned(), S::PropertiesSymbolicLink.t().to_owned())]);
+}
+
+#[test]
 fn hands_the_file_to_a_running_quick_look_over_its_pipe() {
     use std::io::Read;
     use std::os::windows::io::FromRawHandle;

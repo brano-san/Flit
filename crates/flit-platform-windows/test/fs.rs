@@ -220,3 +220,37 @@ fn compressed_encrypted_and_archive_attributes_are_kept_for_colour_and_the_attri
     assert_eq!(map_attrs(FILE_ATTRIBUTE_ENCRYPTED.0 | FILE_ATTRIBUTE_DIRECTORY.0, 0), attr::ENCRYPTED | attr::DIR);
     assert_eq!(map_attrs(FILE_ATTRIBUTE_ARCHIVE.0 | FILE_ATTRIBUTE_READONLY.0, 0), attr::ARCHIVE_MARK | attr::READONLY);
 }
+
+#[test]
+fn a_junction_a_hard_link_and_a_symbolic_link_report_their_kind_and_target() {
+    let t = Temp::new("links");
+    t.dir("target");
+    t.file("file.txt", 3);
+    let linked = junction(&t.0.join("jump"), &t.0.join("target"));
+    assert!(linked, "mklink /J failed");
+    assert_eq!(link_info(&fs_path(&t.0.join("jump"))), Some(LinkInfo::Junction(Some(fs_path(&t.0.join("target"))))));
+    std::fs::hard_link(t.0.join("file.txt"), t.0.join("second.txt")).unwrap();
+    assert_eq!(link_info(&fs_path(&t.0.join("file.txt"))), Some(LinkInfo::Hard(2)));
+    assert_eq!(link_info(&fs_path(&t.0.join("second.txt"))), Some(LinkInfo::Hard(2)));
+    if std::os::windows::fs::symlink_file(r"file.txt", t.0.join("soft.txt")).is_ok() {
+        assert_eq!(link_info(&fs_path(&t.0.join("soft.txt"))), Some(LinkInfo::Symbolic(FsPath::parse("file.txt"))));
+    }
+}
+
+#[test]
+fn plain_files_folders_and_missing_paths_are_not_links() {
+    let t = Temp::new("nolinks");
+    t.dir("folder");
+    t.file("one.txt", 1);
+    assert_eq!(link_info(&fs_path(&t.0.join("one.txt"))), None);
+    assert_eq!(link_info(&fs_path(&t.0.join("folder"))), None);
+    assert_eq!(link_info(&fs_path(&t.0.join("missing"))), None);
+}
+
+#[test]
+fn link_targets_lose_their_verbatim_prefixes() {
+    assert_eq!(shown_target(Path::new(r"\\?\C:\Users\x")), FsPath::parse(r"C:\Users\x"));
+    assert_eq!(shown_target(Path::new(r"\??\D:\data")), FsPath::parse(r"D:\data"));
+    assert_eq!(shown_target(Path::new(r"\\?\UNC\server\share\dir")), FsPath::parse(r"\\server\share\dir"));
+    assert_eq!(shown_target(Path::new(r"C:\plain")), FsPath::parse(r"C:\plain"));
+}
