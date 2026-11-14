@@ -1,7 +1,10 @@
 use super::*;
 use flit_core::listing::attr;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use windows::Win32::UI::Shell::LSF_OVERRIDEEXISTING;
+
+const SHELL_LIBRARY_TIMEOUT: Duration = Duration::from_secs(60);
 
 struct Temp(PathBuf);
 
@@ -34,8 +37,20 @@ fn temp_library(dir: &Path, name: &str) -> FsPath {
     }
 }
 
-#[test]
-fn a_temp_library_gains_and_loses_folders_and_lists_them_merged() {
+fn within_shell_timeout(f: impl FnOnce() + Send + 'static) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        com_sta();
+        let _ = tx.send(std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
+    });
+    match rx.recv_timeout(SHELL_LIBRARY_TIMEOUT) {
+        Ok(Ok(())) => {}
+        Ok(Err(_)) => panic!("library steps failed"),
+        Err(_) => panic!("a shell library call made no progress for {} s, the shell is in a bad state", SHELL_LIBRARY_TIMEOUT.as_secs()),
+    }
+}
+
+fn library_steps() {
     let t = Temp::new("ops");
     for d in ["one", "two", "libs"] {
         std::fs::create_dir_all(t.0.join(d)).unwrap();
@@ -65,7 +80,11 @@ fn a_temp_library_gains_and_loses_folders_and_lists_them_merged() {
 }
 
 #[test]
-fn restoring_defaults_writes_only_missing_classic_libraries_that_the_shell_can_read() {
+fn a_temp_library_gains_and_loses_folders_and_lists_them_merged() {
+    within_shell_timeout(library_steps);
+}
+
+fn restoring_steps() {
     let t = Temp::new("restore");
     std::fs::write(t.0.join("Music.library-ms"), "kept").unwrap();
     assert_eq!(restore(&t.0, &DEFAULTS).unwrap(), 3);
@@ -74,4 +93,9 @@ fn restoring_defaults_writes_only_missing_classic_libraries_that_the_shell_can_r
     let docs = read(&t.at("Documents.library-ms")).expect("the shell reads the restored library");
     assert_eq!(docs.folders.len(), 1);
     assert_eq!(docs.save.as_ref(), docs.folders.first());
+}
+
+#[test]
+fn restoring_defaults_writes_only_missing_classic_libraries_that_the_shell_can_read() {
+    within_shell_timeout(restoring_steps);
 }
