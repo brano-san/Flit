@@ -31,6 +31,7 @@ mod service;
 mod shell;
 mod shellwin;
 mod tags;
+mod toast;
 mod transfer;
 mod uia;
 mod volume;

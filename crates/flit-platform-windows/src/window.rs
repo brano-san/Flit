@@ -350,6 +350,10 @@ impl Window for Win32Window {
         self.post(WM_DESTROY_REQUEST, 0);
     }
 
+    fn notify(&self, text: &str) {
+        crate::toast::notify(self.hwnd(), text);
+    }
+
     fn set_folder(&self, folder: Option<&FsPath>) {
         crate::shellwin::show(self.hwnd(), folder);
     }
@@ -1342,6 +1346,10 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
                     }
                 });
             }
+            Some(LRESULT(0))
+        }
+        crate::toast::WM_TOAST_CLICKED => {
+            w.activate();
             Some(LRESULT(0))
         }
         WM_HOSTED => {

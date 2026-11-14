@@ -23,6 +23,7 @@ windows-core.workspace = true
 [target.'cfg(windows)'.dependencies.windows]
 workspace = true
 features = [
+    "Data_Xml_Dom",
     "Foundation",
     "Storage_Streams",
     "System_UserProfile",
@@ -80,4 +81,5 @@ features = [
     "Win32_UI_Shell_Common",
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
+    "UI_Notifications",
 ]
