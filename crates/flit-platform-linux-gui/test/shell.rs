@@ -115,6 +115,7 @@ fn theme_probe_never_blocks_the_caller() {
             let _ = tx.send(dark);
         },
         |_| {},
+        |_| {},
     );
     assert!(start.elapsed() < Duration::from_millis(200));
     let _ = rx.recv_timeout(Duration::from_secs(2));

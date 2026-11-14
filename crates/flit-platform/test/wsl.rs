@@ -440,7 +440,7 @@ fn a_replace_older_answer_reaches_the_agent_as_its_decision_and_its_policy() {
     event(&s.events, |e| if let ProviderEvent::OpConflict { tab: 1, id: 4, conflict } = e { Some(conflict) } else { None });
     ctl.answer(Resolve::ReplaceOlder, true);
     event(&s.events, |e| if let ProviderEvent::OpDone { tab: 1, id: 4, error, .. } = e { Some(error) } else { None });
-    assert!(matches!(&s.fake.seen()[..], [Request::Op { .. }, Request::Answer { id: 1, choice: Some(Resolve::Skip), policy: Some(Resolve::ReplaceOlder) }]), "{:?}", s.fake.seen());
+    assert!(matches!(&s.fake.seen()[..], [Request::Lang { .. }, Request::Op { .. }, Request::Answer { id: 1, choice: Some(Resolve::Skip), policy: Some(Resolve::ReplaceOlder) }]), "{:?}", s.fake.seen());
 }
 
 #[test]

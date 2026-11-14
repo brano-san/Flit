@@ -3,7 +3,6 @@ use flit_core::i18n::S;
 use flit_core::provider::{FileOp, Launch, OpenAsk};
 use flit_core::ui::{Bitmap, IconKind, IconRequest};
 use flit_core::path::PathKind;
-use flit_core::i18n::S;
 use flit_core::FsPath;
 use flit_platform::{FileOps, Job, OpOutcome, Pasted, PlatformError, Shell};
 use flit_platform_linux::{host, run_op};
