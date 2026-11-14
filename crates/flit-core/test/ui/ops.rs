@@ -2259,3 +2259,25 @@ fn hovering_a_sidebar_folder_mid_drag_opens_it_after_the_spring_delay() {
     app.drag(&DragEvent::Over { x: at.0, y: at.1, mods: NO, allowed: all }, t0() + Duration::from_millis(150));
     assert_eq!(*app.current_location(), downloads, "the sidebar folder opens mid drag");
 }
+
+#[test]
+fn dragging_at_the_list_edge_scrolls_and_the_sidebar_does_too() {
+    let mut app = app_at(r"C:\x");
+    let names: Vec<String> = (0..200).map(|i| format!("f{i:03}.txt")).collect();
+    let items: Vec<(&str, bool)> = names.iter().map(|n| (n.as_str(), false)).collect();
+    deliver(&mut app, &items);
+    assert!(app.max_scroll() > 0.0);
+    let all = drop_effect::COPY | drop_effect::MOVE | drop_effect::LINK;
+    let inside = (app.layout.list.x + app.layout.list.w / 2.0, app.layout.list.bottom() - 3.0);
+    app.drag(&DragEvent::Enter { paths: vec![p(r"D:\in\f.txt")], x: inside.0, y: inside.1, mods: NO, allowed: all, right: false }, t0());
+    app.frame(&mut Gfx::new(Mono, 1024), t0());
+    app.frame(&mut Gfx::new(Mono, 1024), t0() + Duration::from_millis(100));
+    assert!(app.tab().scroll > 0.0, "the list scrolls while the drag holds the bottom edge");
+    app.drag(&DragEvent::Over { x: inside.0, y: app.layout.list.y + app.layout.list.h / 2.0, mods: NO, allowed: all }, t0() + Duration::from_millis(150));
+    let held = app.tab().scroll_target;
+    app.frame(&mut Gfx::new(Mono, 1024), t0() + Duration::from_millis(250));
+    assert_eq!(app.tab().scroll_target, held, "the middle of the list does not scroll");
+    app.drag(&DragEvent::Leave, t0() + Duration::from_millis(300));
+    app.frame(&mut Gfx::new(Mono, 1024), t0() + Duration::from_millis(400));
+    assert_eq!(app.tab().scroll_target, held, "the scroll holds after the drag leaves");
+}

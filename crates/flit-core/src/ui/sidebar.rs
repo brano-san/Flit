@@ -439,7 +439,7 @@ pub(super) struct Sidebar {
     pub filter: Field,
     pub typing: bool,
     pub(super) scroll: super::Glide,
-    content_h: f32,
+    pub(super) content_h: f32,
     pub cursor: usize,
     pub head: Option<Section>,
     pub press_y: f32,

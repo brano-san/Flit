@@ -56,6 +56,7 @@ const RUNNABLE: [&[u8]; 4] = [b"exe", b"com", b"bat", b"cmd"];
 pub(super) const TIMER_SLACK: Duration = Duration::from_millis(16);
 pub(super) const ERROR_FOR: Duration = Duration::from_secs(5);
 const UNDO_BAR_FOR: Duration = Duration::from_secs(5);
+const DRAG_SCROLL_RATE: f32 = 15.0;
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NewTemplate {
@@ -210,6 +211,7 @@ pub(super) struct Ops {
     retry: Option<Retry>,
     press: Option<Press>,
     pub(super) dropping: Option<Dropping>,
+    pub(super) drag_scroll: Option<(f32, f32, Mods, u32)>,
     right_drag: Option<Vec<FsPath>>,
     asked: Option<Asked>,
     slow: Option<Slow>,
@@ -1802,18 +1804,22 @@ impl App {
             DragEvent::Enter { paths, x, y, mods, allowed, right } => {
                 let ours = !paths.is_empty() && self.ops.right_drag.as_ref() == Some(paths);
                 self.ops.dropping = Some(Dropping { paths: paths.clone(), target: None, effect: drop_effect::NONE, spring: None, right: *right || ours, ours });
+                self.ops.drag_scroll = Some((*x, *y, *mods, *allowed));
                 self.drag_over(*x, *y, *mods, *allowed)
             }
             DragEvent::Over { x, y, mods, allowed } => {
                 self.spring_load(*x, *y, now);
+                self.ops.drag_scroll = Some((*x, *y, *mods, *allowed));
                 self.drag_over(*x, *y, *mods, *allowed)
             }
             DragEvent::Leave => {
                 self.nav.sidebar.dragging_out = false;
                 self.ops.dropping = None;
+                self.ops.drag_scroll = None;
                 drop_effect::NONE
             }
             DragEvent::Drop { x, y, mods, allowed } => {
+                self.ops.drag_scroll = None;
                 let effect = self.drag_over(*x, *y, *mods, *allowed);
                 let Some(d) = self.ops.dropping.take() else { return drop_effect::NONE };
                 self.nav.sidebar.dragging_out = false;
@@ -2147,6 +2153,46 @@ impl App {
         super::centered(g, Rect::new(r.x + pad_x / 2.0, r.y, icon, r.h), G_WARNING, icons, th.error);
         let left = r.x + pad_x / 2.0 + icon;
         g.text(left, (r.y + (r.h + m.ascent - m.descent) / 2.0).round(), hint, font, th.text, r.right() - pad_x - left);
+    }
+
+    pub(super) fn drag_autoscroll(&mut self, dt: f32) -> bool {
+        let Some((x, y, mods, allowed)) = self.ops.drag_scroll else { return false };
+        let over = |at: f32, lo: f32, hi: f32| {
+            const EDGE: f32 = 40.0;
+            if at < lo + EDGE {
+                at - lo - EDGE
+            } else if at > hi - EDGE {
+                at - (hi - EDGE)
+            } else {
+                0.0
+            }
+        };
+        let mut moved = false;
+        let list = self.layout.list;
+        if list.w > 0.0 && list.inset(-4.0, 0.0).contains(x, y) {
+            let out = over(y, list.y, list.bottom());
+            if out != 0.0 {
+                let max = self.max_scroll();
+                let t = self.tab_mut();
+                let next = (t.scroll_target + out * DRAG_SCROLL_RATE * dt).clamp(0.0, max);
+                moved |= next != t.scroll_target;
+                t.scroll_target = next;
+            }
+        }
+        let sb = &mut self.nav.sidebar;
+        if sb.rect.w > 0.0 && sb.list.h > 0.0 && sb.list.contains(x, y) {
+            let out = over(y, sb.list.y, sb.list.bottom());
+            if out != 0.0 {
+                let before = sb.scroll.target;
+                sb.scroll.by(-out * DRAG_SCROLL_RATE * dt, sb.content_h - sb.list.h);
+                moved |= sb.scroll.target != before;
+            }
+        }
+        if moved {
+            self.dirty = true;
+            self.drag_over(x, y, mods, allowed);
+        }
+        moved
     }
 }
 

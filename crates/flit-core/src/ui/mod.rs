@@ -2201,6 +2201,7 @@ impl App {
         self.ops_frame(now);
         let mut animating = self.marquee_autoscroll(dt);
         animating |= self.autoscroll_step(dt);
+        animating |= self.drag_autoscroll(dt);
         animating |= self.scroll_step(dt);
         animating |= self.glide_overlays(dt);
         animating |= self.step_parked(dt);
