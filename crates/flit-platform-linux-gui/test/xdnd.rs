@@ -1,7 +1,8 @@
 use super::*;
 use x11rb::protocol::xproto::{MapState, BUTTON_PRESS_EVENT, BUTTON_RELEASE_EVENT, MOTION_NOTIFY_EVENT};
 use x11rb::protocol::xtest::ConnectionExt as _;
-use x11rb::wrapper::ConnectionExt as _;
+
+static POINTER_USERS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 struct Dropped {
     data: Vec<u8>,
@@ -39,6 +40,7 @@ fn receive(conn: &XCBConnection, atoms: &Atoms, window: Window) -> Dropped {
 
 #[test]
 fn files_dragged_out_reach_an_xdnd_target_as_a_uri_list() {
+    let _pointer = POINTER_USERS.lock().unwrap_or_else(|e| e.into_inner());
     if std::env::var_os("DISPLAY").is_none() {
         eprintln!("no X server, skipped");
         return;
@@ -207,4 +209,121 @@ fn the_x11_ghost_is_shaped_to_the_picture_and_blends_its_edges_on_light_grey() {
     assert_eq!(&bgrx[4..8], &[0, 0, 255, 0]);
     assert_eq!(&bgrx[8..12], &[228, 100, 100, 0]);
     assert_eq!(&bgrx[0..4], &[200, 200, 200, 0]);
+}
+
+#[test]
+fn modifiers_pick_the_action_offered_to_other_programs_like_gtk_does() {
+    assert_eq!(suggested(KeyButMask::default()), Suggested::Any);
+    assert_eq!(suggested(KeyButMask::CONTROL), Suggested::Copy);
+    assert_eq!(suggested(KeyButMask::SHIFT), Suggested::Move);
+    assert_eq!(suggested(KeyButMask::CONTROL | KeyButMask::SHIFT), Suggested::Link);
+    assert_eq!(suggested(KeyButMask::MOD1), Suggested::Ask);
+    assert_eq!(suggested(KeyButMask::SHIFT | KeyButMask::BUTTON1), Suggested::Move, "the held button does not matter");
+    assert_eq!(offered_by_source(Suggested::Any).len(), 4, "without keys the target chooses among all actions");
+    assert_eq!(offered_by_source(Suggested::Move), [Suggested::Move]);
+    assert_eq!(codes_with(&[0, 0xff1b, 0x61, 0x41, 0xff1b, 0], 2, 8, 0xff1b), [8, 10]);
+    assert_eq!(codes_with(&[0x61], 1, 8, 0xff1b), Vec::<u8>::new());
+}
+
+struct Seen {
+    actions: Vec<Atom>,
+    list: Vec<Atom>,
+    left: bool,
+}
+
+fn watch_target(conn: &XCBConnection, atoms: &Atoms, window: Window) -> Seen {
+    let mut seen = Seen { actions: Vec::new(), list: Vec::new(), left: false };
+    let mut source = NONE;
+    loop {
+        match conn.wait_for_event().unwrap() {
+            Event::ClientMessage(c) if c.type_ == atoms.XdndEnter => source = c.data.as_data32()[0],
+            Event::ClientMessage(c) if c.type_ == atoms.XdndPosition => {
+                let action = c.data.as_data32()[4];
+                seen.actions.push(action);
+                seen.list = conn.get_property(false, source, atoms.XdndActionList, AtomEnum::ATOM, 0, 16).unwrap().reply().unwrap().value32().unwrap().collect();
+                conn.send_event(false, source, EventMask::NO_EVENT, ClientMessageEvent::new(32, source, atoms.XdndStatus, [window, 1, 0, 0, action])).unwrap();
+                conn.flush().unwrap();
+            }
+            Event::ClientMessage(c) if c.type_ == atoms.XdndLeave => {
+                seen.left = true;
+                return seen;
+            }
+            Event::ClientMessage(c) if c.type_ == atoms.XdndDrop => {
+                conn.send_event(false, source, EventMask::NO_EVENT, ClientMessageEvent::new(32, source, atoms.XdndFinished, [window, 1, *seen.actions.last().unwrap(), 0, 0])).unwrap();
+                conn.flush().unwrap();
+                return seen;
+            }
+            _ => {}
+        }
+    }
+}
+
+fn drag_scene(keys: &[u32], release_with_escape: bool) -> (Seen, Outcome, Atoms) {
+    use x11rb::protocol::xproto::{KEY_PRESS_EVENT, KEY_RELEASE_EVENT};
+    let (conn, screen) = XCBConnection::connect(None).unwrap();
+    let root = conn.setup().roots[screen].root;
+    let atoms = Atoms::new(&conn).unwrap().reply().unwrap();
+    let window = conn.generate_id().unwrap();
+    conn.create_window(0, window, root, 100, 100, 300, 200, 0, WindowClass::INPUT_OUTPUT, 0, &CreateWindowAux::new().override_redirect(1)).unwrap();
+    conn.change_property32(PropMode::REPLACE, window, atoms.XdndAware, AtomEnum::ATOM, &[VERSION]).unwrap();
+    conn.map_window(window).unwrap();
+    conn.flush().unwrap();
+    while conn.get_window_attributes(window).unwrap().reply().unwrap().map_state != MapState::VIEWABLE {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let (input, _) = XCBConnection::connect(None).unwrap();
+    let setup = input.setup();
+    let map = input.get_keyboard_mapping(setup.min_keycode, setup.max_keycode - setup.min_keycode + 1).unwrap().reply().unwrap();
+    let code = |sym: u32| codes_with(&map.keysyms, map.keysyms_per_keycode, setup.min_keycode, sym)[0];
+    let fake = |kind, detail, x, y| {
+        input.xtest_fake_input(kind, detail, CURRENT_TIME, root, x, y, 0).unwrap();
+        input.flush().unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    fake(MOTION_NOTIFY_EVENT, 0, 10, 10);
+    fake(BUTTON_PRESS_EVENT, 1, 0, 0);
+    let target = std::thread::spawn(move || {
+        let seen = watch_target(&conn, &atoms, window);
+        (seen, atoms)
+    });
+    let paths = vec![FsPath::parse("/home/u/a.txt").unwrap()];
+    let dragging = std::thread::spawn(move || drag(paths, 1.0));
+    std::thread::sleep(Duration::from_millis(200));
+    fake(MOTION_NOTIFY_EVENT, 0, 150, 150);
+    for &k in keys {
+        fake(KEY_PRESS_EVENT, code(k), 0, 0);
+    }
+    fake(MOTION_NOTIFY_EVENT, 0, 200, 180);
+    if release_with_escape {
+        fake(KEY_PRESS_EVENT, code(ESCAPE), 0, 0);
+        fake(KEY_RELEASE_EVENT, code(ESCAPE), 0, 0);
+    }
+    fake(BUTTON_RELEASE_EVENT, 1, 0, 0);
+    for &k in keys {
+        fake(KEY_RELEASE_EVENT, code(k), 0, 0);
+    }
+    let (seen, atoms) = target.join().unwrap();
+    (seen, dragging.join().unwrap().unwrap(), atoms)
+}
+
+const SHIFT_L: u32 = 0xffe1;
+
+#[test]
+fn shift_moves_and_esc_cancels_a_drag_out_of_flit() {
+    let _pointer = POINTER_USERS.lock().unwrap_or_else(|e| e.into_inner());
+    if std::env::var_os("DISPLAY").is_none() {
+        eprintln!("no X server, skipped");
+        return;
+    }
+    let (plain, outcome, atoms) = drag_scene(&[], false);
+    assert!(matches!(outcome, Outcome::Dropped(_)));
+    assert!(plain.actions.iter().all(|&a| a == atoms.XdndActionCopy), "no keys suggest a copy");
+    assert_eq!(plain.list, [atoms.XdndActionCopy, atoms.XdndActionMove, atoms.XdndActionLink, atoms.XdndActionAsk]);
+    let (moved, outcome, atoms) = drag_scene(&[SHIFT_L], false);
+    assert!(matches!(outcome, Outcome::Dropped(_)));
+    assert_eq!(moved.actions.last(), Some(&atoms.XdndActionMove), "{:?}", moved.actions);
+    assert_eq!(moved.list, [atoms.XdndActionMove]);
+    let (canceled, outcome, _) = drag_scene(&[], true);
+    assert_eq!(outcome, Outcome::Canceled);
+    assert!(canceled.left, "the target hears the drag leave");
 }

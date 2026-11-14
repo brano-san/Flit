@@ -12,6 +12,7 @@ use x11rb::protocol::xproto::{
     SELECTION_NOTIFY_EVENT,
 };
 use x11rb::protocol::Event;
+use x11rb::wrapper::ConnectionExt as _;
 use x11rb::xcb_ffi::XCBConnection;
 use x11rb::{CURRENT_TIME, NONE};
 
@@ -30,6 +31,10 @@ x11rb::atom_manager! {
         XdndDrop,
         XdndFinished,
         XdndActionCopy,
+        XdndActionMove,
+        XdndActionLink,
+        XdndActionAsk,
+        XdndActionList,
         XdndTypeList,
         TARGETS,
         UriList: b"text/uri-list",
@@ -40,7 +45,45 @@ x11rb::atom_manager! {
 pub enum Outcome {
     Dropped(Window),
     Refused,
+    Canceled,
     Nowhere,
+}
+
+const ESCAPE: u32 = 0xff1b;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Suggested {
+    Any,
+    Copy,
+    Move,
+    Link,
+    Ask,
+}
+
+pub fn suggested(mask: KeyButMask) -> Suggested {
+    let (ctrl, shift, alt) = (mask.contains(KeyButMask::CONTROL), mask.contains(KeyButMask::SHIFT), mask.contains(KeyButMask::MOD1));
+    if ctrl && shift {
+        Suggested::Link
+    } else if ctrl {
+        Suggested::Copy
+    } else if shift {
+        Suggested::Move
+    } else if alt {
+        Suggested::Ask
+    } else {
+        Suggested::Any
+    }
+}
+
+pub fn offered_by_source(action: Suggested) -> Vec<Suggested> {
+    match action {
+        Suggested::Any | Suggested::Ask => vec![Suggested::Copy, Suggested::Move, Suggested::Link, Suggested::Ask],
+        one => vec![one],
+    }
+}
+
+pub fn codes_with(keysyms: &[u32], per_code: u8, first: u8, wanted: u32) -> Vec<u8> {
+    keysyms.chunks(usize::from(per_code.max(1))).enumerate().filter(|(_, syms)| syms.contains(&wanted)).filter_map(|(k, _)| u8::try_from(usize::from(first) + k).ok()).collect()
 }
 
 pub fn drop_choice(keys: Option<Mods>, proposed: Option<DndAction>, preferred: Option<DndAction>) -> (Mods, bool) {
@@ -110,6 +153,7 @@ struct Source {
     data: Vec<u8>,
     depth: u8,
     pixels: Option<(u16, u16, Vec<u8>)>,
+    action: std::cell::Cell<Suggested>,
 }
 
 const GHOST_BACKGROUND: [u8; 3] = [0xf4, 0xf4, 0xf4];
@@ -152,7 +196,7 @@ impl Source {
         conn.map_window(ghost)?;
         conn.flush()?;
         let depth = screen.root_depth;
-        Ok(Self { conn, root, window, ghost, atoms, data, depth, pixels })
+        Ok(Self { conn, root, window, ghost, atoms, data, depth, pixels, action: std::cell::Cell::new(Suggested::Any) })
     }
 
     fn paint(&self) -> R<()> {
@@ -172,11 +216,40 @@ impl Source {
         let mask = EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION | EventMask::BUTTON_MOTION;
         for _ in 0..GRAB_TRIES {
             if self.conn.grab_pointer(false, self.root, mask, GrabMode::ASYNC, GrabMode::ASYNC, NONE, NONE, CURRENT_TIME)?.reply()?.status == GrabStatus::SUCCESS {
+                if self.conn.grab_keyboard(false, self.root, CURRENT_TIME, GrabMode::ASYNC, GrabMode::ASYNC)?.reply()?.status != GrabStatus::SUCCESS {
+                    tracing::debug!("the keyboard stays with another client: Esc will not cancel this drag");
+                }
                 return Ok(true);
             }
             std::thread::sleep(Duration::from_millis(2));
         }
         Ok(false)
+    }
+
+    fn escape_codes(&self) -> Vec<u8> {
+        let setup = self.conn.setup();
+        let count = setup.max_keycode.saturating_sub(setup.min_keycode).saturating_add(1);
+        let Ok(Ok(map)) = self.conn.get_keyboard_mapping(setup.min_keycode, count).map(|c| c.reply()) else { return Vec::new() };
+        codes_with(&map.keysyms, map.keysyms_per_keycode, setup.min_keycode, ESCAPE)
+    }
+
+    fn atom_of(&self, action: Suggested) -> Atom {
+        match action {
+            Suggested::Copy | Suggested::Any => self.atoms.XdndActionCopy,
+            Suggested::Move => self.atoms.XdndActionMove,
+            Suggested::Link => self.atoms.XdndActionLink,
+            Suggested::Ask => self.atoms.XdndActionAsk,
+        }
+    }
+
+    fn offer(&self, action: Suggested) -> R<()> {
+        let list: Vec<Atom> = offered_by_source(action).into_iter().map(|a| self.atom_of(a)).collect();
+        self.conn.change_property32(PropMode::REPLACE, self.window, self.atoms.XdndActionList, AtomEnum::ATOM, &list)?;
+        Ok(())
+    }
+
+    fn held(&self) -> Suggested {
+        self.conn.query_pointer(self.root).ok().and_then(|c| c.reply().ok()).map_or(Suggested::Any, |p| suggested(p.mask))
     }
 
     fn aware(&self, w: Window) -> Option<u32> {
@@ -223,7 +296,15 @@ impl Source {
         t.waiting = true;
         t.pending = None;
         let at = ((x as u16 as u32) << 16) | y as u16 as u32;
-        self.send(t.window, self.atoms.XdndPosition, [self.window, 0, at, time, self.atoms.XdndActionCopy])
+        self.send(t.window, self.atoms.XdndPosition, [self.window, 0, at, time, self.atom_of(self.action.get())])
+    }
+
+    fn choose(&self, action: Suggested) -> R<bool> {
+        if self.action.replace(action) == action {
+            return Ok(false);
+        }
+        self.offer(action)?;
+        Ok(true)
     }
 
     fn answer(&self, req: &SelectionRequestEvent) -> R<()> {
@@ -257,11 +338,31 @@ impl Source {
 
     fn run(&self) -> R<Outcome> {
         let mut target: Option<Target> = None;
+        let escape = self.escape_codes();
+        let mut last = None;
+        self.action.set(self.held());
+        self.offer(self.action.get())?;
         loop {
             let event = self.conn.wait_for_event()?;
             match event {
                 Event::Expose(e) if e.window == self.ghost => self.paint()?,
+                Event::KeyPress(k) if escape.contains(&k.detail) => {
+                    self.conn.unmap_window(self.ghost)?;
+                    if let Some(t) = target {
+                        self.leave(&t)?;
+                    }
+                    return Ok(Outcome::Canceled);
+                }
+                Event::KeyPress(_) | Event::KeyRelease(_) => {
+                    if self.choose(self.held())? {
+                        if let (Some(t), Some(at)) = (target.as_mut(), last) {
+                            self.position(t, at)?;
+                        }
+                    }
+                }
                 Event::MotionNotify(m) => {
+                    last = Some((m.root_x, m.root_y, m.time));
+                    self.choose(suggested(m.state))?;
                     self.conn.configure_window(self.ghost, &x11rb::protocol::xproto::ConfigureWindowAux::new().x(i32::from(m.root_x) + 16).y(i32::from(m.root_y) + 16))?;
                     self.conn.flush()?;
                     let found = self.target_at();
@@ -298,6 +399,7 @@ impl Source {
                         return Ok(Outcome::Refused);
                     }
                     self.conn.ungrab_pointer(CURRENT_TIME)?;
+                    self.conn.ungrab_keyboard(CURRENT_TIME)?;
                     self.send(t.window, self.atoms.XdndDrop, [self.window, 0, b.time, 0, 0])?;
                     return self.finish(t.window);
                 }
@@ -323,6 +425,7 @@ impl Source {
 impl Drop for Source {
     fn drop(&mut self) {
         let _ = self.conn.ungrab_pointer(CURRENT_TIME);
+        let _ = self.conn.ungrab_keyboard(CURRENT_TIME);
         let _ = self.conn.destroy_window(self.window);
         let _ = self.conn.destroy_window(self.ghost);
         let _ = self.conn.flush();
@@ -398,7 +501,9 @@ fn fill_pill(canvas: &mut Bitmap, (cx, cy): (f32, f32), width: f32, radius: f32,
     }
 }
 
-fn label_glyphs(text: &str, px: f32) -> Option<(swash::FontRef<'static>, Vec<(u16, f32)>, f32)> {
+type Label = (swash::FontRef<'static>, Vec<(u16, f32)>, f32);
+
+fn label_glyphs(text: &str, px: f32) -> Option<Label> {
     let font = swash::FontRef::from_index(crate::fonts::SANS, 0)?;
     let (charmap, metrics) = (font.charmap(), font.glyph_metrics(&[]).scale(px));
     let mut pen = 0.0;
@@ -410,7 +515,7 @@ fn label_glyphs(text: &str, px: f32) -> Option<(swash::FontRef<'static>, Vec<(u1
     Some((font, glyphs, pen))
 }
 
-fn draw_label(canvas: &mut Bitmap, (font, glyphs, width): (swash::FontRef<'static>, Vec<(u16, f32)>, f32), (cx, cy): (f32, f32), px: f32, color: [u8; 4]) {
+fn draw_label(canvas: &mut Bitmap, (font, glyphs, width): Label, (cx, cy): (f32, f32), px: f32, color: [u8; 4]) {
     use swash::scale::{Render, ScaleContext, Source};
     let mut context = ScaleContext::new();
     let mut scaler = context.builder(font).size(px).hint(true).build();
@@ -432,7 +537,7 @@ pub fn compose_drag(icon: Option<&Bitmap>, count: usize, scale: f32) -> Bitmap {
     let margin = (DRAG_MARGIN * scale).round() as u32;
     let total = side + margin;
     let mut canvas = Bitmap { width: total, height: total, rgba: vec![0; (total * total * 4) as usize] };
-    let mut layer = |canvas: &mut Bitmap, at: (i32, i32), opacity: f32| match icon.filter(|i| i.width > 0 && i.rgba.len() == (i.width * i.height * 4) as usize) {
+    let layer = |canvas: &mut Bitmap, at: (i32, i32), opacity: f32| match icon.filter(|i| i.width > 0 && i.rgba.len() == (i.width * i.height * 4) as usize) {
         Some(i) => draw_icon(canvas, i, at, side, opacity),
         None => draw_folder(canvas, at, side, opacity),
     };
