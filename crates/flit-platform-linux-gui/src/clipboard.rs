@@ -128,6 +128,56 @@ impl Owner {
     }
 }
 
+pub fn is_text(mime: &str) -> bool {
+    mime == PLAIN || mime.starts_with("text/plain;") || X11_TEXT.contains(&mime)
+}
+
+pub fn watch_x11_text(selection: &str, changed: impl Fn(bool) + Send + 'static) -> R<()> {
+    use x11rb::protocol::xfixes::{ConnectionExt as _, SelectionEventMask};
+    let (conn, screen) = XCBConnection::connect(None)?;
+    conn.xfixes_query_version(5, 0)?.reply()?;
+    let root = conn.setup().roots[screen].root;
+    let names: Vec<&str> = [selection, "TARGETS", "FLIT_TARGETS", TEXT, PLAIN].into_iter().chain(X11_TEXT).collect();
+    let atoms = intern(&conn, &names)?;
+    let (clipboard, targets, property, text) = (atoms[0], atoms[1], atoms[2], atoms[3..].to_vec());
+    let window = conn.generate_id()?;
+    conn.create_window(0, window, root, -10, -10, 1, 1, 0, WindowClass::INPUT_ONLY, 0, &CreateWindowAux::new().override_redirect(1))?;
+    let mask = SelectionEventMask::SET_SELECTION_OWNER | SelectionEventMask::SELECTION_WINDOW_DESTROY | SelectionEventMask::SELECTION_CLIENT_CLOSE;
+    conn.xfixes_select_selection_input(window, clipboard, mask)?;
+    let ask = move |conn: &XCBConnection, time: u32| -> R<()> {
+        conn.convert_selection(window, clipboard, targets, property, time)?;
+        conn.flush()?;
+        Ok(())
+    };
+    if conn.get_selection_owner(clipboard)?.reply()?.owner == NONE {
+        changed(false);
+    } else {
+        ask(&conn, CURRENT_TIME)?;
+    }
+    conn.flush()?;
+    std::thread::Builder::new().name("flit-clipboard-watch".into()).spawn(move || loop {
+        match conn.wait_for_event() {
+            Ok(Event::XfixesSelectionNotify(e)) if e.selection == clipboard && e.owner == NONE => changed(false),
+            Ok(Event::XfixesSelectionNotify(e)) if e.selection == clipboard => {
+                if let Err(e) = ask(&conn, e.selection_timestamp) {
+                    tracing::debug!("cannot ask the clipboard for its types: {e}");
+                }
+            }
+            Ok(Event::SelectionNotify(n)) if n.selection == clipboard => {
+                let reply = (n.property != NONE).then(|| conn.get_property(true, window, property, AtomEnum::ANY, 0, 4096).ok()?.reply().ok()).flatten();
+                let listed: Option<Vec<Atom>> = reply.and_then(|r| r.value32().map(Iterator::collect));
+                changed(listed.is_none_or(|list| list.iter().any(|a| text.contains(a))));
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::debug!("the clipboard watch closed: {e}");
+                return;
+            }
+        }
+    })?;
+    Ok(())
+}
+
 pub fn own_x11(payload: Payload) -> R<()> {
     own_selection("CLIPBOARD", payload)
 }

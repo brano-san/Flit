@@ -96,3 +96,32 @@ fn copied_images_are_offered_as_png_with_straight_alpha() {
     assert!(png(&Bitmap { width: 2, height: 2, rgba: vec![0; 4] }).is_none());
     assert!(png(&Bitmap { width: 0, height: 0, rgba: Vec::new() }).is_none());
 }
+
+#[test]
+fn only_plain_text_types_count_as_text_to_paste_into_a_field() {
+    for mime in [TEXT, PLAIN, "text/plain;charset=UTF-8", "UTF8_STRING", "STRING", "TEXT"] {
+        assert!(is_text(mime), "{mime}");
+    }
+    for mime in [GNOME, KDE_CUT, URI_LIST, PNG, MARKER, "text/html", "text/plainish", ""] {
+        assert!(!is_text(mime), "{mime}");
+    }
+}
+
+#[test]
+fn the_x11_text_watch_follows_each_new_owner_of_the_selection() {
+    if std::env::var_os("DISPLAY").is_none() {
+        eprintln!("no X server, skipped");
+        return;
+    }
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let selection = format!("FLIT_TEST_TEXT_{}", std::process::id());
+    watch_x11_text(&selection, move |text| tx.send(text).unwrap()).unwrap();
+    let wait = std::time::Duration::from_secs(5);
+    assert_eq!(rx.recv_timeout(wait), Ok(false), "nobody owns a fresh selection");
+    own_selection(&selection, payload(&[p("/tmp/a")], false)).unwrap();
+    assert_eq!(rx.recv_timeout(wait), Ok(true), "copied files come with their paths as text");
+    own_selection(&selection, vec![(PNG.to_owned(), vec![1, 2, 3])]).unwrap();
+    assert_eq!(rx.recv_timeout(wait), Ok(false), "a picture alone is no text for a field");
+    own_selection(&selection, vec![(TEXT.to_owned(), b"hello".to_vec())]).unwrap();
+    assert_eq!(rx.recv_timeout(wait), Ok(true));
+}

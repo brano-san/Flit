@@ -292,3 +292,49 @@ fn the_portal_setting_changed_signal_switches_the_theme_live() {
     drop(daemon);
     watcher.join().unwrap();
 }
+
+#[test]
+fn only_the_gnome_mouse_double_click_setting_counts() {
+    let s = |v: &str| Arg::S(v.into());
+    assert_eq!(double_click_change(&[s(MOUSE), s("double-click"), Arg::L(vec![Arg::I(550)])]), Some(550));
+    assert_eq!(double_click_change(&[s(MOUSE), s("speed"), Arg::L(vec![Arg::I(1)])]), None);
+    assert_eq!(double_click_change(&[s(APPEARANCE), s("double-click"), Arg::L(vec![Arg::I(550)])]), None);
+    assert_eq!(color_scheme_change(&[s(MOUSE), s("double-click"), Arg::L(vec![Arg::I(550)])]), None);
+}
+
+#[test]
+fn a_changed_gnome_double_click_time_is_heard_live_and_other_settings_are_not() {
+    if !tool("dbus-daemon") || !tool("dbus-send") {
+        eprintln!("skipped: dbus-daemon or dbus-send is missing");
+        return;
+    }
+    let mut daemon = Command::new("dbus-daemon").args(["--session", "--nofork", "--print-address=1"]).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut address = String::new();
+    BufReader::new(daemon.stdout.take().unwrap()).read_line(&mut address).unwrap();
+    let daemon = Kill(daemon);
+    let address = address.trim().to_owned();
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let bus = address.clone();
+    let watcher = std::thread::spawn(move || watch_double_click(&bus, &move |ms| tx.send(ms).unwrap()));
+    let signal = |ns: &str, key: &str, value: &str| {
+        Command::new("dbus-send")
+            .args([&format!("--bus={address}"), "--type=signal", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Settings.SettingChanged", &format!("string:{ns}"), &format!("string:{key}"), value])
+            .status()
+            .unwrap()
+    };
+    let mut heard = None;
+    let until = Instant::now() + Duration::from_secs(10);
+    while heard.is_none() && Instant::now() < until {
+        assert!(signal(MOUSE, "double-click", "variant:int32:550").success());
+        heard = rx.recv_timeout(Duration::from_millis(100)).ok();
+    }
+    assert_eq!(heard, Some(550));
+    while rx.recv_timeout(Duration::from_millis(200)).is_ok() {}
+    assert!(signal(APPEARANCE, "color-scheme", "variant:uint32:1").success());
+    assert!(signal(MOUSE, "speed", "variant:double:0.5").success());
+    assert!(signal(MOUSE, "double-click", "variant:int32:300").success());
+    let next = (0..50).find_map(|_| rx.recv_timeout(Duration::from_millis(200)).ok());
+    assert_eq!(next, Some(300), "the color scheme and the pointer speed are not double-click times");
+    drop(daemon);
+    watcher.join().unwrap();
+}

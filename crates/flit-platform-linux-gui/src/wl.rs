@@ -5,7 +5,7 @@ use wayland_client::backend::{Backend, ObjectId};
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
 use wayland_client::protocol::wl_data_device::{self, WlDataDevice};
 use wayland_client::protocol::wl_data_device_manager::WlDataDeviceManager;
-use wayland_client::protocol::wl_data_offer::WlDataOffer;
+use wayland_client::protocol::wl_data_offer::{self, WlDataOffer};
 use wayland_client::protocol::wl_data_source::{self, WlDataSource};
 use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
 use wayland_client::protocol::wl_pointer::{self, WlPointer};
@@ -22,6 +22,41 @@ pub struct State {
     serial: Option<u32>,
     seats: Vec<(WlSeat, bool, bool)>,
     sources: Vec<WlDataSource>,
+    offers: Offers,
+}
+
+#[derive(Default, Debug)]
+pub struct Offers {
+    live: Vec<(u32, bool)>,
+    changed: Option<bool>,
+}
+
+impl Offers {
+    pub fn made(&mut self, id: u32) {
+        self.forget(id);
+        self.live.push((id, false));
+    }
+
+    pub fn offered(&mut self, id: u32, mime: &str) {
+        if let Some(o) = self.live.iter_mut().find(|o| o.0 == id).filter(|_| crate::clipboard::is_text(mime)) {
+            o.1 = true;
+        }
+    }
+
+    pub fn selected(&mut self, id: Option<u32>) {
+        self.changed = Some(id.and_then(|id| self.live.iter().find(|o| o.0 == id)).is_some_and(|o| o.1));
+        if let Some(id) = id {
+            self.forget(id);
+        }
+    }
+
+    pub fn forget(&mut self, id: u32) {
+        self.live.retain(|o| o.0 != id);
+    }
+
+    pub fn take(&mut self) -> Option<bool> {
+        self.changed.take()
+    }
 }
 
 pub struct Wl {
@@ -55,6 +90,10 @@ impl Wl {
         if let Err(e) = self.queue.dispatch_pending(&mut self.state) {
             tracing::debug!("wayland side queue: {e}");
         }
+    }
+
+    pub fn clipboard_text_changed(&mut self) -> Option<bool> {
+        self.state.offers.take()
     }
 
     pub fn set_selection(&mut self, payload: Payload) -> bool {
@@ -125,9 +164,18 @@ impl Dispatch<WlDataDeviceManager, ()> for State {
 }
 
 impl Dispatch<WlDataDevice, ()> for State {
-    fn event(_: &mut Self, _: &WlDataDevice, event: wl_data_device::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(state: &mut Self, _: &WlDataDevice, event: wl_data_device::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         match event {
-            wl_data_device::Event::Selection { id: Some(offer) } | wl_data_device::Event::Enter { id: Some(offer), .. } => offer.destroy(),
+            wl_data_device::Event::DataOffer { id } => state.offers.made(id.id().protocol_id()),
+            wl_data_device::Event::Selection { id: Some(offer) } => {
+                state.offers.selected(Some(offer.id().protocol_id()));
+                offer.destroy();
+            }
+            wl_data_device::Event::Selection { id: None } => state.offers.selected(None),
+            wl_data_device::Event::Enter { id: Some(offer), .. } => {
+                state.offers.forget(offer.id().protocol_id());
+                offer.destroy();
+            }
             _ => {}
         }
     }
@@ -136,7 +184,11 @@ impl Dispatch<WlDataDevice, ()> for State {
 }
 
 impl Dispatch<WlDataOffer, ()> for State {
-    fn event(_: &mut Self, _: &WlDataOffer, _: <WlDataOffer as Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(state: &mut Self, offer: &WlDataOffer, event: <WlDataOffer as Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        if let wl_data_offer::Event::Offer { mime_type } = event {
+            state.offers.offered(offer.id().protocol_id(), &mime_type);
+        }
+    }
 }
 
 impl Dispatch<WlDataSource, Payload> for State {

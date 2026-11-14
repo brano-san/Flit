@@ -45,6 +45,10 @@ const ANIM_NO: u8 = 0;
 static ANIMATIONS: AtomicU8 = AtomicU8::new(ANIM_YES);
 static ANIMATIONS_DIRTY: AtomicBool = AtomicBool::new(false);
 static MOUSE_DIRTY: AtomicBool = AtomicBool::new(false);
+const TEXT_UNSEEN: u8 = 0;
+const TEXT_NO: u8 = 1;
+const TEXT_YES: u8 = 2;
+static CLIPBOARD_TEXT: AtomicU8 = AtomicU8::new(TEXT_UNSEEN);
 const LAUNCHER_STEP: u32 = 5;
 const LAUNCHER_HIDDEN: u32 = 0;
 static LAUNCHER_SENT: AtomicU32 = AtomicU32::new(LAUNCHER_HIDDEN);
@@ -155,6 +159,14 @@ fn watch_desktop() {
         if crate::shell::probe_double_click().is_some_and(input::probed_double_click) {
             MOUSE_DIRTY.store(true, Ordering::Release);
             wake_loop();
+        }
+        if let Some(address) = crate::dbus::session_address() {
+            crate::atspi::watch_double_click(&address, &|ms| {
+                if u32::try_from(ms).is_ok_and(input::probed_double_click) {
+                    MOUSE_DIRTY.store(true, Ordering::Release);
+                    wake_loop();
+                }
+            });
         }
     });
     let shutdown = crate::instance::on_shutdown_signal(|signal| {
@@ -590,7 +602,7 @@ impl WindowSystem for LinuxWindows {
 
     fn run<H: WindowHandler<Self>>(mut self, first: WindowOptions, handler: H) -> Result<(), PlatformError> {
         let commands: Commands = Rc::new(RefCell::new(vec![Command::Open(first)]));
-        let mut app = Loop { handler, nodes: Vec::new(), commands, pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None };
+        let mut app = Loop { handler, nodes: Vec::new(), commands, pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None, clip_text: None, watching: false };
         LOOP_RUNNING.store(true, Ordering::Release);
         let ran = self.event_loop.run_app_on_demand(&mut app);
         LOOP_RUNNING.store(false, Ordering::Release);
@@ -617,6 +629,8 @@ struct Loop<H> {
     wl: Option<crate::wl::Wl>,
     verify: Option<(Instant, Vec<FsPath>, bool)>,
     reading: Option<Reading>,
+    clip_text: Option<bool>,
+    watching: bool,
 }
 
 struct Reading {
@@ -940,6 +954,33 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         let node = self.nodes.last().unwrap();
         self.handler.created(&node.window);
         self.handler.event(&node.window, Event::Animations(animations()));
+        if let Some(text) = self.clip_text {
+            self.handler.event(&node.window, Event::ClipboardText(text));
+        }
+    }
+
+    fn clipboard_text(&mut self, text: Option<bool>) {
+        let Some(text) = text.filter(|&t| self.clip_text != Some(t)) else { return };
+        self.clip_text = Some(text);
+        for node in &self.nodes {
+            self.handler.event(&node.window, Event::ClipboardText(text));
+        }
+    }
+
+    fn watch_clipboard(&mut self, el: &dyn ActiveEventLoop) {
+        if self.watching || el.is_wayland() {
+            return;
+        }
+        self.watching = true;
+        background("flit-clipboard-watch", || {
+            let watched = crate::clipboard::watch_x11_text("CLIPBOARD", |text| {
+                CLIPBOARD_TEXT.store(if text { TEXT_YES } else { TEXT_NO }, Ordering::Release);
+                wake_loop();
+            });
+            if let Err(e) = watched {
+                tracing::debug!("cannot watch the X11 clipboard for text: {e}");
+            }
+        });
     }
 
     fn close(&mut self, id: WindowId) {
@@ -1124,6 +1165,7 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
         if self.wl.is_none() {
             self.wl = wayland_display(el).and_then(crate::wl::Wl::connect);
         }
+        self.watch_clipboard(el);
         self.started = true;
         self.settle(el);
     }
@@ -1167,6 +1209,10 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
                 publish_a11y(&mut self.handler, &node.window);
             }
         }
+        match CLIPBOARD_TEXT.swap(TEXT_UNSEEN, Ordering::AcqRel) {
+            TEXT_UNSEEN => {}
+            seen => self.clipboard_text(Some(seen == TEXT_YES)),
+        }
         self.start_reads(el);
         if SHUTDOWN.swap(false, Ordering::AcqRel) {
             for node in &self.nodes {
@@ -1191,9 +1237,11 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
 
     fn about_to_wait(&mut self, el: &dyn ActiveEventLoop) {
         TURNS.fetch_add(1, Ordering::AcqRel);
-        if let Some(wl) = &mut self.wl {
+        let text = self.wl.as_mut().and_then(|wl| {
             wl.pump();
-        }
+            wl.clipboard_text_changed()
+        });
+        self.clipboard_text(text);
         self.verify_copy(el);
         self.fire_timers();
         self.settle(el);

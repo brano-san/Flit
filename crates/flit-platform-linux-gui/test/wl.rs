@@ -46,3 +46,35 @@ fn a_lost_display_connection_is_named_as_such_in_the_log() {
     assert!(text.contains("display server"), "{text}");
     assert!(!text.contains("Exit Failure"), "{text}");
 }
+
+#[test]
+fn the_clipboard_counts_as_text_only_when_its_offer_lists_a_plain_text_type() {
+    let mut offers = Offers::default();
+    assert_eq!(offers.take(), None, "nothing is reported before the compositor speaks");
+    offers.made(7);
+    offers.offered(7, crate::clipboard::URI_LIST);
+    offers.offered(7, "text/plain;charset=utf-8");
+    offers.selected(Some(7));
+    assert_eq!(offers.take(), Some(true));
+    assert_eq!(offers.take(), None, "a change is reported once");
+    offers.made(8);
+    offers.offered(8, crate::clipboard::PNG);
+    offers.selected(Some(8));
+    assert_eq!(offers.take(), Some(false), "a picture alone is no text");
+    offers.made(9);
+    offers.offered(9, "UTF8_STRING");
+    offers.selected(None);
+    assert_eq!(offers.take(), Some(false), "an emptied clipboard has no text");
+}
+
+#[test]
+fn a_dragged_offer_never_changes_what_the_clipboard_holds() {
+    let mut offers = Offers::default();
+    offers.made(3);
+    offers.offered(3, "text/plain");
+    offers.forget(3);
+    assert_eq!(offers.take(), None);
+    offers.offered(3, "text/plain");
+    offers.selected(Some(3));
+    assert_eq!(offers.take(), Some(false), "types of a forgotten offer are not remembered");
+}

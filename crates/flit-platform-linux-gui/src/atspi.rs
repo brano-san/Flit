@@ -36,6 +36,8 @@ const TYPE_SIGNAL: c_int = 4;
 const DATA_REMAINS: c_int = 0;
 const APPEARANCE: &str = "org.freedesktop.appearance";
 const SETTING_MATCH: &str = "type='signal',interface='org.freedesktop.portal.Settings',member='SettingChanged',arg0='org.freedesktop.appearance'";
+const MOUSE: &str = "org.gnome.desktop.peripherals.mouse";
+const MOUSE_MATCH: &str = "type='signal',interface='org.freedesktop.portal.Settings',member='SettingChanged',arg0='org.gnome.desktop.peripherals.mouse'";
 const ROLE_APPLICATION: (u32, &str) = (75, "application");
 const LAYER_WIDGET: u32 = 3;
 const LAYER_WINDOW: u32 = 7;
@@ -1108,15 +1110,30 @@ pub(crate) fn color_scheme_change(args: &[Arg]) -> Option<i64> {
     }
 }
 
+pub(crate) fn double_click_change(args: &[Arg]) -> Option<i64> {
+    match args {
+        [Arg::S(ns), Arg::S(key), value] if ns == MOUSE && key == "double-click" => Some(int(Some(value))),
+        _ => None,
+    }
+}
+
 pub(crate) fn watch_color_scheme(address: &str, changed: &dyn Fn(i64)) {
+    watch_setting(address, SETTING_MATCH, color_scheme_change, changed);
+}
+
+pub(crate) fn watch_double_click(address: &str, changed: &dyn Fn(i64)) {
+    watch_setting(address, MOUSE_MATCH, double_click_change, changed);
+}
+
+fn watch_setting(address: &str, rule: &str, pick: fn(&[Arg]) -> Option<i64>, changed: &dyn Fn(i64)) {
     let Some(api) = dbus::load() else { return };
     let Some(conn) = Conn::open(&api, address) else { return };
-    conn.add_match(SETTING_MATCH);
+    conn.add_match(rule);
     loop {
         let mut latest = None;
         let alive = conn.drain(|msg| unsafe {
             if (api.msg_type)(msg) == TYPE_SIGNAL && text((api.member)(msg)) == "SettingChanged" {
-                latest = color_scheme_change(&args(&api, msg)).or(latest);
+                latest = pick(&args(&api, msg)).or(latest);
             }
         });
         if !alive {
