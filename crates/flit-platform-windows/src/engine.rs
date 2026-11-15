@@ -13,6 +13,8 @@ use windows::Win32::Storage::FileSystem::*;
 use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_UPDATEDIR, SHCNF_FLUSHNOWAIT, SHCNF_PATHW};
 
 type Pairs = Vec<(FsPath, FsPath)>;
+type MakeLink<'a> = &'a dyn Fn(LinkKind, &FsPath, &FsPath) -> windows::core::Result<()>;
+type ElevateLinks<'a> = &'a dyn Fn(&[(FsPath, FsPath)]) -> windows::core::Result<()>;
 
 #[cfg(test)]
 #[path = "../test/engine.rs"]
@@ -80,12 +82,16 @@ fn ticks(t: FILETIME) -> i64 {
     ((t.dwHighDateTime as u64) << 32 | t.dwLowDateTime as u64) as i64
 }
 
-pub(crate) fn stat(p: &FsPath) -> Option<Meta> {
-    if p.is_root() {
-        let mut data = WIN32_FILE_ATTRIBUTE_DATA::default();
-        unsafe { GetFileAttributesExW(PCWSTR(wide(p).as_ptr()), GetFileExInfoStandard, &mut data as *mut _ as _) }.ok()?;
-        return Some(Meta { size: (data.nFileSizeHigh as u64) << 32 | data.nFileSizeLow as u64, modified: ticks(data.ftLastWriteTime), created: ticks(data.ftCreationTime), attrs: map_attrs(data.dwFileAttributes, 0) });
+pub(crate) fn link_stat(p: &FsPath) -> Option<Meta> {
+    if !p.is_root() {
+        return stat(p);
     }
+    let mut data = WIN32_FILE_ATTRIBUTE_DATA::default();
+    unsafe { GetFileAttributesExW(PCWSTR(wide(p).as_ptr()), GetFileExInfoStandard, &mut data as *mut _ as _) }.ok()?;
+    Some(Meta { size: (data.nFileSizeHigh as u64) << 32 | data.nFileSizeLow as u64, modified: ticks(data.ftLastWriteTime), created: ticks(data.ftCreationTime), attrs: map_attrs(data.dwFileAttributes, 0) })
+}
+
+pub(crate) fn stat(p: &FsPath) -> Option<Meta> {
     let mut d = WIN32_FIND_DATAW::default();
     let h = unsafe { FindFirstFileExW(PCWSTR(wide(p).as_ptr()), FindExInfoBasic, &mut d as *mut _ as *mut c_void, FindExSearchNameMatch, None, FIND_FIRST_EX_FLAGS(0)) }.ok()?;
     unsafe {
@@ -174,6 +180,15 @@ impl LinkStage {
         self.made = false;
         Ok(())
     }
+}
+
+struct Waiting {
+    item: FsPath,
+    dst: FsPath,
+    replace: bool,
+    stage: LinkStage,
+    meta: Meta,
+    dir: bool,
 }
 
 impl Drop for LinkStage {
@@ -306,11 +321,13 @@ pub(crate) struct Engine<'a> {
     elevate: bool,
     dirs: Vec<FsPath>,
     limit: Option<(Vec<u8>, Option<u64>)>,
+    make_link: MakeLink<'a>,
+    elevate_links: ElevateLinks<'a>,
 }
 
 impl<'a> Engine<'a> {
     pub(crate) fn new(job: &'a Job) -> Self {
-        Self { job, done: Vec::new(), failed: 0, first: None, first_code: None, fatal: false, elevate: false, dirs: Vec::new(), limit: None }
+        Self { job, done: Vec::new(), failed: 0, first: None, first_code: None, fatal: false, elevate: false, dirs: Vec::new(), limit: None, make_link: &crate::links::create, elevate_links: &crate::links::elevated }
     }
 
     fn stopped(&self) -> bool {
@@ -336,8 +353,15 @@ impl<'a> Engine<'a> {
     }
 
     fn note(&mut self, msg: String) {
+        self.noted(None, msg);
+    }
+
+    fn noted(&mut self, code: Option<i64>, msg: String) {
         self.failed += 1;
-        self.first.get_or_insert(msg);
+        if self.first.is_none() {
+            self.first = Some(msg);
+            self.first_code = code;
+        }
     }
 
     fn trouble(&mut self, path: &FsPath, e: &windows::core::Error, top: bool) -> bool {
@@ -637,14 +661,76 @@ impl<'a> Engine<'a> {
             .collect()
     }
 
+    fn offer_elevation(&mut self, item: &FsPath) -> bool {
+        if !self.job.asks_failures() || self.job.cancelled() {
+            return false;
+        }
+        match self.job.fail(Failure { path: item.clone(), error: S::ErrorsEngineSymlinkPrivilege.en().to_owned(), fatal: false }) {
+            Some(Recover::Retry) => !self.job.cancelled(),
+            Some(_) => false,
+            None => {
+                self.job.ctl().cancel();
+                false
+            }
+        }
+    }
+
+    fn place_link(&mut self, mut waiting: Waiting) {
+        loop {
+            if self.job.cancelled() {
+                return;
+            }
+            match waiting.stage.place(&waiting.dst, waiting.replace) {
+                Ok(()) => {
+                    self.done.push((waiting.item, waiting.dst));
+                    self.job.update(|p| p.items += 1);
+                    return;
+                }
+                Err(error) => {
+                    let code = code(&error);
+                    if matches!(code, ERROR_ALREADY_EXISTS | ERROR_FILE_EXISTS) && !waiting.replace {
+                        match self.ask(&waiting.item, waiting.meta, &waiting.dst) {
+                            Some(Resolve::KeepBoth) => waiting.dst = free_name(&waiting.dst, waiting.dir),
+                            Some(Resolve::Replace) if !waiting.dir && stat(&waiting.dst).is_some_and(|m| !is_dir(&m)) => waiting.replace = true,
+                            _ => return,
+                        }
+                    } else if !self.trouble(&waiting.dst, &error, false) {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    fn elevated_links(&mut self, waiting: Vec<Waiting>) {
+        if waiting.is_empty() || self.job.cancelled() {
+            return;
+        }
+        let pairs: Pairs = waiting.iter().map(|w| (w.item.clone(), w.stage.path.clone())).collect();
+        let result = (self.elevate_links)(&pairs);
+        for mut waiting in waiting {
+            if stat(&waiting.stage.path).is_some() {
+                waiting.stage.made = true;
+                self.place_link(waiting);
+                continue;
+            }
+            match &result {
+                Err(error) if !matches!(code(error), ERROR_CANCELLED | ERROR_PRIVILEGE_NOT_HELD) => self.noted(Some(code(error).0 as i64), format!("{}: {}", waiting.dst.display(), reason(&waiting.dst, error))),
+                _ => self.noted(Some(ERROR_PRIVILEGE_NOT_HELD.0 as i64), S::ErrorsEngineSymlinkPrivilege.en().to_owned()),
+            }
+        }
+    }
+
     fn links(&mut self, items: &[FsPath], dest: &FsPath, kind: LinkKind) -> Option<FileOp> {
         self.running(Tally { entries: items.len() as u64, ..Default::default() });
         self.touch(Some(dest.clone()));
+        let mut elevation = None;
+        let mut waiting = Vec::new();
         for item in items {
             if self.stopped() {
                 break;
             }
-            let Some(meta) = stat(item) else {
+            let Some(meta) = link_stat(item) else {
                 self.note(tr_en!(S::ErrorsEngineMissing, path = item.display()));
                 continue;
             };
@@ -666,8 +752,26 @@ impl<'a> Engine<'a> {
                 if self.job.cancelled() {
                     break;
                 }
-                let made = LinkStage::new(&dst, kind, dir).and_then(|mut stage| {
-                    crate::links::create_for_job(kind, item, &stage.path, self.job)?;
+                let mut stage = match LinkStage::new(&dst, kind, dir) {
+                    Ok(stage) => stage,
+                    Err(error) if self.trouble(&dst, &error, false) => continue,
+                    Err(_) => break,
+                };
+                let created = if kind == LinkKind::Symbolic && elevation == Some(true) { Err(ERROR_PRIVILEGE_NOT_HELD.to_hresult().into()) } else { (self.make_link)(kind, item, &stage.path) };
+                if let Err(error) = &created {
+                    if kind == LinkKind::Symbolic && code(error) == ERROR_PRIVILEGE_NOT_HELD {
+                        if elevation.is_none() {
+                            elevation = Some(self.offer_elevation(item));
+                        }
+                        if elevation == Some(true) {
+                            waiting.push(Waiting { item: item.clone(), dst, replace, stage, meta: output_meta, dir });
+                        } else if !self.job.cancelled() {
+                            self.noted(Some(ERROR_PRIVILEGE_NOT_HELD.0 as i64), S::ErrorsEngineSymlinkPrivilege.en().to_owned());
+                        }
+                        break;
+                    }
+                }
+                let made = created.and_then(|()| {
                     stage.made = true;
                     if self.job.cancelled() {
                         return Err(ERROR_CANCELLED.to_hresult().into());
@@ -683,10 +787,7 @@ impl<'a> Engine<'a> {
                             _ => break,
                         }
                     }
-                    if code == ERROR_PRIVILEGE_NOT_HELD {
-                        self.first_code.get_or_insert(code.0 as i64);
-                        self.note(S::ErrorsEngineSymlinkPrivilege.en().to_owned());
-                    } else if code == ERROR_CANCELLED {
+                    if code == ERROR_CANCELLED {
                         self.job.ctl().cancel();
                     } else if self.trouble(&dst, &error, false) {
                         continue;
@@ -698,6 +799,7 @@ impl<'a> Engine<'a> {
                 break;
             }
         }
+        self.elevated_links(waiting);
         None
     }
 

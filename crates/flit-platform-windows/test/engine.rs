@@ -81,3 +81,148 @@ fn windows_errors_translate_known_codes_without_overwriting_unknown_system_reaso
     }
     i18n::set_lang(original);
 }
+
+struct LinkTemp(std::path::PathBuf);
+
+impl LinkTemp {
+    fn new(tag: &str) -> Self {
+        let dir = crate::test_temp().join(format!("flit-w10-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("out")).unwrap();
+        Self(dir)
+    }
+
+    fn path(&self, rel: &str) -> FsPath {
+        FsPath::parse(self.0.join(rel).to_str().unwrap()).unwrap()
+    }
+
+    fn file(&self, rel: &str) -> FsPath {
+        std::fs::write(self.0.join(rel), rel).unwrap();
+        self.path(rel)
+    }
+
+    fn out(&self) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(self.0.join("out")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        names
+    }
+}
+
+impl Drop for LinkTemp {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn retrying_job(asked: std::sync::Arc<std::sync::atomic::AtomicUsize>) -> Job {
+    let ctl = flit_core::provider::OpCtl::new(Some(Resolve::KeepBoth));
+    let answer = ctl.clone();
+    Job::asking(ctl, Box::new(|_| {}), Box::new(|_| {}), Box::new(move |failure: Failure| {
+        assert_eq!(failure.error, S::ErrorsEngineSymlinkPrivilege.en());
+        asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        answer.answer_failure(Recover::Retry, false);
+    }))
+}
+
+fn unprivileged(kind: LinkKind, _: &FsPath, _: &FsPath) -> windows::core::Result<()> {
+    assert_eq!(kind, LinkKind::Symbolic);
+    Err(ERROR_PRIVILEGE_NOT_HELD.to_hresult().into())
+}
+
+#[test]
+fn one_retry_as_administrator_creates_every_remaining_symbolic_link_in_one_elevated_launch() {
+    let t = LinkTemp::new("batch");
+    let items: Vec<FsPath> = (0..4).map(|k| t.file(&format!("source {k}.txt"))).collect();
+    let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let job = retrying_job(asked.clone());
+    let launches = std::cell::RefCell::new(Vec::new());
+    let elevate = |pairs: &[(FsPath, FsPath)]| {
+        launches.borrow_mut().push(pairs.len());
+        for (target, path) in pairs {
+            std::fs::write(crate::fileops::std_path(path), crate::fileops::std_path(target).to_string_lossy().as_bytes()).unwrap();
+        }
+        Ok(())
+    };
+    let mut engine = Engine::new(&job);
+    engine.make_link = &unprivileged;
+    engine.elevate_links = &elevate;
+    engine.links(&items, &t.path("out"), LinkKind::Symbolic);
+    assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(*launches.borrow(), [4]);
+    assert!(engine.error().is_none());
+    assert_eq!(engine.done.len(), 4);
+    assert_eq!(t.out(), ["Link to source 0.txt", "Link to source 1.txt", "Link to source 2.txt", "Link to source 3.txt"]);
+}
+
+#[test]
+fn refusing_the_administrator_prompt_reports_every_link_as_failed_instead_of_cancelling_silently() {
+    let t = LinkTemp::new("refused");
+    let items: Vec<FsPath> = (0..2).map(|k| t.file(&format!("source {k}.txt"))).collect();
+    let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let job = retrying_job(asked.clone());
+    let refuse = |_: &[(FsPath, FsPath)]| Err(ERROR_CANCELLED.to_hresult().into());
+    let mut engine = Engine::new(&job);
+    engine.make_link = &unprivileged;
+    engine.elevate_links = &refuse;
+    engine.links(&items, &t.path("out"), LinkKind::Symbolic);
+    assert!(!job.cancelled());
+    let error = engine.error().unwrap();
+    assert_eq!(error.code, ERROR_PRIVILEGE_NOT_HELD.0 as i64);
+    assert!(error.message.contains(S::ErrorsEngineSymlinkPrivilege.en()));
+    assert!(error.message.contains('2'));
+    assert!(engine.done.is_empty());
+    assert!(t.out().is_empty());
+}
+
+#[test]
+fn declining_the_retry_asks_once_and_never_launches_an_elevated_process() {
+    let t = LinkTemp::new("declined");
+    let items: Vec<FsPath> = (0..3).map(|k| t.file(&format!("source {k}.txt"))).collect();
+    for cancel in [false, true] {
+        let ctl = flit_core::provider::OpCtl::new(Some(Resolve::KeepBoth));
+        let answer = ctl.clone();
+        let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = asked.clone();
+        let job = Job::asking(ctl, Box::new(|_| {}), Box::new(|_| {}), Box::new(move |_| {
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if cancel { answer.cancel(); } else { answer.answer_failure(Recover::Skip, false); }
+        }));
+        let never = |_: &[(FsPath, FsPath)]| -> windows::core::Result<()> { panic!("elevated after declining") };
+        let mut engine = Engine::new(&job);
+        engine.make_link = &unprivileged;
+        engine.elevate_links = &never;
+        engine.links(&items, &t.path("out"), LinkKind::Symbolic);
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(job.cancelled(), cancel);
+        assert_eq!(engine.error().unwrap().code, if cancel { ERROR_CANCELLED.0 as i64 } else { ERROR_PRIVILEGE_NOT_HELD.0 as i64 });
+        assert!(t.out().is_empty());
+    }
+}
+
+#[test]
+fn the_reported_error_code_belongs_to_the_first_reported_message() {
+    let t = LinkTemp::new("first-code");
+    let items = vec![t.path("missing.txt"), t.file("present.txt")];
+    let job = Job::detached(Resolve::KeepBoth);
+    let mut engine = Engine::new(&job);
+    engine.make_link = &unprivileged;
+    engine.links(&items, &t.path("out"), LinkKind::Symbolic);
+    let error = engine.error().unwrap();
+    assert!(error.message.contains("missing.txt"));
+    assert_eq!(error.code, -1);
+    let job = Job::detached(Resolve::KeepBoth);
+    let mut engine = Engine::new(&job);
+    engine.make_link = &unprivileged;
+    engine.links(&items[1..], &t.path("out"), LinkKind::Symbolic);
+    assert_eq!(engine.error().unwrap().code, ERROR_PRIVILEGE_NOT_HELD.0 as i64);
+}
+
+#[test]
+fn copy_move_and_delete_ignore_a_drive_root_while_links_can_still_point_at_it() {
+    let root = FsPath::parse_bytes(FsPath::parse(crate::test_temp().to_str().unwrap()).unwrap().root_bytes()).unwrap();
+    assert!(stat(&root).is_none());
+    assert!(link_stat(&root).is_some_and(|m| is_dir(&m)));
+    let job = Job::detached(Resolve::Skip);
+    let mut engine = Engine::new(&job);
+    assert!(engine.stat_all(std::slice::from_ref(&root)).iter().all(Option::is_none));
+}
