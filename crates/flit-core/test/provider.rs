@@ -144,3 +144,25 @@ fn a_paused_operation_waits_until_it_is_resumed_or_cancelled() {
     waiting.join().unwrap();
     assert!(ctl.is_paused() && ctl.is_cancelled(), "cancel ends the wait without resuming");
 }
+
+#[test]
+fn dropped_file_bytes_are_local_only_and_the_legacy_wire_format_is_unchanged() {
+    let dest = FsPath::parse("/tmp").unwrap();
+    let data = Arc::new(DroppedFile { name: b"private.txt".to_vec(), bytes: b"synthetic private body".to_vec() });
+    let legacy = [23, 4, b'/', b't', b'm', b'p', 0];
+    for payload in [None, Some(data)] {
+        let op = FileOp::PasteDropped { dest: dest.clone(), moving: false, data: payload };
+        assert_eq!(postcard::to_stdvec(&op).unwrap(), legacy);
+        assert_eq!(postcard::from_bytes::<FileOp>(&legacy).unwrap(), FileOp::PasteDropped { dest: dest.clone(), moving: false, data: None });
+        assert_eq!(op.map_paths(|p| Some(p.clone())), Some(op));
+    }
+}
+
+#[test]
+fn dropped_content_debug_never_reveals_its_body() {
+    let data = DroppedFile { name: b"private.txt".to_vec(), bytes: b"synthetic private body".to_vec() };
+    let shown = format!("{data:?}");
+    assert!(!shown.contains("synthetic private body"));
+    assert!(!shown.contains("115, 121, 110, 116"));
+    assert!(shown.contains("private.txt") && shown.contains("22"));
+}

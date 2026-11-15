@@ -594,7 +594,7 @@ impl FileOps for ShellCom {
             FileOp::InstallFonts(fonts) => crate::install::install_fonts(fonts, job),
             FileOp::LockScreen(image) => crate::install::lock_screen(image),
             FileOp::Paste { dest } => crate::transfer::paste(dest, job),
-            FileOp::PasteDropped { dest, moving } => crate::transfer::paste_dropped(dest, *moving, job),
+            FileOp::PasteDropped { dest, moving, .. } => crate::transfer::paste_dropped(dest, *moving, job),
             FileOp::GrantAccess(dir) => crate::volume::grant_access(dir),
             FileOp::SetAccess { .. } | FileOp::Access(_) => OpOutcome { items: Vec::new(), error: Some(PlatformError::unsupported("changing Unix permissions")) },
             FileOp::SetAttributes { items, set, clear, unblock } => set_attributes(items, *set, *clear, *unblock),
