@@ -300,6 +300,18 @@ impl App {
             return false;
         }
         for g in groups {
+            if g.title == S::PropertiesDates.t() {
+                let own = [S::PropertiesCreated.t(), S::PropertiesModified.t(), S::PropertiesAccessed.t(), S::PropertiesChanged.t()];
+                for row in &g.rows {
+                    let known = own.contains(&row.0.as_str()).then(|| controls.iter_mut().find(|c| matches!(c, Control::Value { label, .. } if label == &row.0))).flatten();
+                    if let Some(Control::Value { value, .. }) = known {
+                        value.clone_from(&row.1);
+                    } else {
+                        held_rows(&mut m.probe, controls, focus, &g.title, std::slice::from_ref(row));
+                    }
+                }
+                continue;
+            }
             match &mut m.attrs {
                 Some(a) if g.title == S::PropertiesSecurity.t() && a.unblock_at.is_none() => {
                     controls.extend(g.rows.iter().map(|(k, v)| Control::value(k, v)));
@@ -312,6 +324,10 @@ impl App {
         self.layout();
         self.dirty = true;
         true
+    }
+
+    pub(super) fn properties_edited(f: &Form) -> bool {
+        matches!(&f.kind, Kind::Properties(Measuring { attrs: Some(a), .. }) if a.op(&f.controls).is_some())
     }
 
     pub(super) fn submit_properties_form(&mut self, f: Form) -> Option<Form> {

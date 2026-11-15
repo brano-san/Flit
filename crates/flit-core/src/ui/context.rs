@@ -18,7 +18,7 @@ const SEPARATOR_H: f32 = 7.0;
 const FIELD_H: f32 = 28.0;
 const PAD: f32 = 4.0;
 const ICON_W: f32 = 26.0;
-const INDENT: f32 = 16.0;
+const INDENT: f32 = ICON_W;
 const SIDE_W: f32 = 22.0;
 const STAR_W: f32 = 22.0;
 const KEYS_GAP: f32 = 24.0;
@@ -75,6 +75,24 @@ enum What {
     Separator,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Role {
+    Opening,
+    Properties,
+}
+
+pub(super) fn roles(cmds: &[super::menu::Cmd]) -> Vec<Option<Role>> {
+    use super::menu::Cmd;
+    use super::sidebar::PlaceCmd;
+    cmds.iter()
+        .map(|c| match c {
+            Cmd::Action("item.open" | "item.open_tab" | "item.open_window") | Cmd::Place(PlaceCmd::Open(..) | PlaceCmd::OpenFile(_)) => Some(Role::Opening),
+            Cmd::Action("item.properties") | Cmd::FolderProperties(_) | Cmd::Place(PlaceCmd::Properties(_) | PlaceCmd::FileProperties(_)) => Some(Role::Properties),
+            _ => None,
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct Node {
     label: String,
@@ -98,6 +116,8 @@ pub enum CtxHit {
     Row(usize),
     Star(usize),
     Scroll(bool),
+    ScrollThumb,
+    ScrollTrack,
     Box,
 }
 
@@ -120,6 +140,9 @@ pub struct ContextMenu {
     close: Rect,
     list: Rect,
     arrows: [Rect; 2],
+    track: Rect,
+    thumb: Rect,
+    grab: Option<f32>,
     bounds: Rect,
     scale: f32,
     start: (f32, f32),
@@ -133,6 +156,7 @@ pub struct ContextMenu {
     shell: Option<(usize, Option<usize>)>,
     unfold: Option<(Instant, Instant)>,
     fresh: Option<(usize, usize, Option<Instant>)>,
+    roles: Vec<Option<Role>>,
     pub(super) field_menu: Option<FieldMenu>,
 }
 
@@ -190,6 +214,9 @@ impl ContextMenu {
             close: Rect::default(),
             list: Rect::default(),
             arrows: [Rect::default(); 2],
+            track: Rect::default(),
+            thumb: Rect::default(),
+            grab: None,
             bounds,
             scale,
             start: at,
@@ -203,6 +230,7 @@ impl ContextMenu {
             shell: None,
             unfold: None,
             fresh: None,
+            roles: Vec::new(),
         };
         m.arrange(&[], &[]);
         m
@@ -230,6 +258,11 @@ impl ContextMenu {
                         _ if group == 0 => (0, 0),
                         _ => (2, group),
                     };
+                    let (slot, group) = match self.role(i) {
+                        Some(Role::Opening) if order.is_empty() && self.kind != MenuKind::None => (0, 0),
+                        Some(Role::Properties) if order.is_empty() && self.kind != MenuKind::None => (4, usize::MAX),
+                        _ => (slot, group),
+                    };
                     items.push((anchor, slot, group, i));
                 }
             }
@@ -249,6 +282,26 @@ impl ContextMenu {
             self.top.push(Some(node));
         }
         self.rebuild();
+    }
+
+    pub(super) fn set_roles(&mut self, roles: Vec<Option<Role>>) {
+        self.roles = roles;
+        self.arrange(&[], &[]);
+    }
+
+    fn role(&self, i: usize) -> Option<Role> {
+        if self.shell.is_some_and(|(from, _)| i >= from) {
+            return (self.nodes[i].label == S::MenuOpenWith.t()).then_some(Role::Opening);
+        }
+        let end = match self.nodes[i].what {
+            What::Submenu { end } => end,
+            _ => i + 1,
+        };
+        let id = self.nodes[i..end].iter().find_map(|n| match n.what {
+            What::Command { id, .. } => Some(id),
+            _ => None,
+        })?;
+        self.roles.get(id).copied().flatten()
     }
 
     pub fn lift_shell(&mut self, own: usize, keep_tail: bool) {
@@ -412,7 +465,7 @@ impl ContextMenu {
     fn layout(&mut self) {
         let s = self.scale;
         let b = self.bounds;
-        let w = if self.width > 0.0 { self.width } else { (MIN_W * s).min(b.w) };
+        let w = if self.width > 0.0 { self.width } else { MIN_W * s }.min(b.w).max(0.0);
         let w = if self.anchored { w.min(b.right() - self.rect.x) } else { w };
         self.content_h = self.rows.iter().map(|r| self.row_h(r)).sum::<f32>().max(ROW_H * s);
         let head = FIELD_H * s + 2.0 * PAD * s;
@@ -425,13 +478,16 @@ impl ContextMenu {
         let r = self.rect;
         self.field = Rect::new(r.x + PAD * s, r.y + PAD * s, r.w - 2.0 * PAD * s, FIELD_H * s);
         self.close = Rect::new(self.field.right() - FIELD_H * s, self.field.y, FIELD_H * s, FIELD_H * s);
-        self.list = Rect::new(r.x + PAD * s, self.field.bottom() + PAD * s, r.w - 2.0 * PAD * s, r.bottom() - self.field.bottom() - 2.0 * PAD * s);
+        self.list = Rect::new(r.x + PAD * s, self.field.bottom() + PAD * s, (r.w - 2.0 * PAD * s).max(0.0), (r.bottom() - self.field.bottom() - 2.0 * PAD * s).max(0.0));
         let overflow = self.content_h - self.list.h;
         let max = if overflow > 0.5 { overflow } else { 0.0 };
         self.scroll = self.scroll.clamp(0.0, max);
         let scrolls = max > 0.0;
         let sw = SCROLL_W * s;
         self.arrows = if scrolls { [Rect::new(self.list.right() - sw, self.list.y, sw, sw), Rect::new(self.list.right() - sw, self.list.bottom() - sw, sw, sw)] } else { [Rect::default(); 2] };
+        self.track = if scrolls { Rect::new(self.list.right() - sw, self.list.y + sw, sw, (self.list.h - 2.0 * sw).max(0.0)) } else { Rect::default() };
+        let h = (self.track.h * self.list.h / self.content_h).max(18.0 * s).min(self.track.h);
+        self.thumb = Rect::new(self.track.x, self.track.y + if max > 0.0 { (self.track.h - h) * self.scroll / max } else { 0.0 }, self.track.w, h);
         let rw = self.list.w - if scrolls { sw + PAD * s } else { 0.0 };
         let mut y = self.list.y - self.scroll;
         self.rects = self
@@ -491,6 +547,8 @@ impl ContextMenu {
         if let Some(k) = self.arrows.iter().position(|r| r.contains(x, y)) {
             return Some(CtxHit::Scroll(k == 1));
         }
+        if self.thumb.contains(x, y) { return Some(CtxHit::ScrollThumb); }
+        if self.track.contains(x, y) { return Some(CtxHit::ScrollTrack); }
         if !self.list.contains(x, y) {
             return Some(CtxHit::Box);
         }
@@ -506,6 +564,14 @@ impl ContextMenu {
     }
 
     pub fn mouse_move(&mut self, x: f32, y: f32) -> bool {
+        if let Some(grab) = self.grab {
+            let travel = self.track.h - self.thumb.h;
+            if travel > 0.0 {
+                self.scroll = ((y - self.track.y - grab) / travel).clamp(0.0, 1.0) * (self.content_h - self.list.h).max(0.0);
+                self.layout();
+            }
+            return true;
+        }
         if let Some(menu) = self.field_menu.as_mut() {
             let hot = menu.rows.iter().position(|(_, r, on)| *on && r.contains(x, y));
             return std::mem::replace(&mut menu.hot, hot) != hot;
@@ -532,6 +598,14 @@ impl ContextMenu {
         self.armed = true;
         self.pressed = self.hit(x, y);
         match self.pressed {
+            Some(CtxHit::ScrollThumb) => {
+                self.grab = Some(y - self.thumb.y);
+                MenuOutcome::Open
+            }
+            Some(CtxHit::ScrollTrack) => {
+                self.scroll_by(if y < self.thumb.y { -self.list.h } else { self.list.h });
+                MenuOutcome::Open
+            }
             None => MenuOutcome::Closed,
             Some(CtxHit::Field) => {
                 let inner = self.field_inner();
@@ -548,6 +622,7 @@ impl ContextMenu {
 
     pub fn mouse_up(&mut self, x: f32, y: f32) -> MenuOutcome {
         let pressed = self.pressed.take();
+        if self.grab.take().is_some() { return MenuOutcome::Open; }
         if !self.armed {
             return MenuOutcome::Open;
         }
@@ -863,6 +938,8 @@ impl ContextMenu {
         self.draw_field_menu(&mut p, font);
         if self.arrows[0].w > 0.0 {
             let at = p.g.dl.instances.len();
+            let thumb = self.thumb.inset(2.0 * s, 0.0);
+            p.g.dl.round_rect(thumb, if self.grab.is_some() || self.hover == Some(CtxHit::ScrollThumb) { t.text_dim } else { t.text_dim.alpha(0x70) }, 3.0 * s);
             for (k, glyph) in [G_UP, G_DOWN].into_iter().enumerate() {
                 p.icon_button(self.arrows[k], glyph, FontStyle::new(FontFamily::Icons, 8.0 * s, false), Button::of(self.hover == Some(CtxHit::Scroll(k == 1)), false, true), t.text_dim);
             }
@@ -928,9 +1005,11 @@ impl ContextMenu {
         if let What::Command { icon, image, .. } = &n.what {
             let slot = Rect::new(x0, r.y, ICON_W * s, r.h);
             let shown = image.as_ref().is_some_and(|i| draw_image(p.g, i, slot, s, if off && !hot { OFF } else { 0xFF }));
-            if !shown && !icon.is_empty() {
-                p.centered(slot, icon, icons, if off && !hot { dim } else { ink });
+            if !shown {
+                p.centered(slot, if icon.is_empty() { "\u{E8A5}" } else { icon }, icons, if off && !hot { dim } else { ink });
             }
+        } else if matches!(n.what, What::Submenu { .. }) {
+            p.centered(Rect::new(x0, r.y, ICON_W * s, r.h), "\u{E8B7}", icons, ink);
         }
         if keys_w > 0.0 {
             p.g.text(keys_right - keys_w - PAD * s, text_y, &n.keys, font, dim, f32::INFINITY);

@@ -70,6 +70,35 @@ fn tidy(items: &[MenuItem]) -> bool {
 }
 
 #[test]
+fn built_in_context_commands_have_icons_in_every_context() {
+    fn check(items: &[MenuItem]) {
+        for item in items {
+            match item {
+                MenuItem::Command { label, icon, image, .. } => assert!(!icon.is_empty() || image.is_some(), "missing icon: {label}"),
+                MenuItem::Submenu { items, .. } => check(items),
+                _ => {}
+            }
+        }
+    }
+    let mut app = app_with(&[("a.txt", false), ("sub", true)]);
+    for unix_paths in [false, true] {
+        app.caps = crate::caps::Caps { unix_paths };
+        for row in [Some(FILE), Some(FOLDER), None] {
+            check(&right_click(&mut app, row, false).menu);
+        }
+    }
+}
+
+#[test]
+fn releasing_a_right_click_over_another_item_does_not_open_the_wrong_context() {
+    let mut app = app_with(&[("a.txt", false), ("sub", true)]);
+    let (x, y) = (app.layout.cols[0].x + 100.0, app.layout.list.y + 0.5 * app.layout.row_h);
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Right, clicks: 1 }, Instant::now());
+    app.on_event(&Event::MouseUp { x, y: y + app.layout.row_h, button: MouseButton::Right }, Instant::now());
+    assert!(app.drain_effects().all(|e| !matches!(e, Effect::ShellMenu(_))));
+}
+
+#[test]
 fn item_menu_lists_flit_commands_with_their_shortcuts() {
     let mut app = app_with(&[("a.txt", false), ("sub", true)]);
     let file = right_click(&mut app, Some(FILE), false);

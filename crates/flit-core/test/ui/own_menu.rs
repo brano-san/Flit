@@ -65,6 +65,24 @@ fn escape_and_clicks_outside_close_the_menu_without_a_command() {
 }
 
 #[test]
+fn menu_dismissal_does_not_swallow_window_resize_scale_or_focus_changes() {
+    let mut app = app();
+    shown(&mut app, Vec::new());
+    app.on_event(&Event::Resized { width: 520, height: 320 }, Instant::now());
+    assert!(!app.own_menu_open());
+    assert_eq!(app.size, (520.0, 320.0));
+    shown(&mut app, Vec::new());
+    app.on_event(&Event::ScaleChanged(1.5), Instant::now());
+    assert!(!app.own_menu_open());
+    assert_eq!(app.system_scale, 1.5);
+    shown(&mut app, Vec::new());
+    app.active = true;
+    app.on_event(&Event::Focus(false), Instant::now());
+    assert!(!app.own_menu_open());
+    assert!(!app.active);
+}
+
+#[test]
 fn trailing_commands_launch_their_programs_and_the_rest_are_flit_commands() {
     let mut app = app();
     let editor = Launch::With { program: FsPath::parse("/usr/share/applications/editor.desktop").unwrap(), args: vec![FsPath::parse("/x/a.txt").unwrap()] };

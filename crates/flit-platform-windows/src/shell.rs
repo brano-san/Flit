@@ -22,6 +22,20 @@ pub struct ShellCom {
     lists: Vec<(u32, IImageList)>,
 }
 
+fn launch_commands(runs: &[flit_core::provider::CommandRun], dir: Option<&FsPath>, mut notify: impl FnMut(&str)) -> Result<(), PlatformError> {
+    runs.iter().try_for_each(|(argv, env)| {
+        let Some((program, args)) = argv.split_first() else { return Ok(()) };
+        let args = args.iter().map(|a| quote_windows(a)).collect::<Vec<_>>().join(" ");
+        let explorer = program.eq_ignore_ascii_case("explorer.exe") || program.eq_ignore_ascii_case("explorer");
+        let started = (explorer && crate::shellwin::explorer_place(&args).is_some_and(crate::shellwin::raise_explorer))
+            || shell_execute(&Command { program: program.clone(), args, dir: dir.map(|p| p.display().into_owned()), admin: false }, SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI)?;
+        if started && env.iter().any(|(k, v)| k == "FLIT_STARTUP_NOTIFY" && v == "1") {
+            notify(&flit_core::tr!(flit_core::i18n::S::UserMenuStarted, program = program));
+        }
+        Ok(())
+    })
+}
+
 fn wide(p: &FsPath) -> Vec<u16> {
     p.to_wide(false)
 }
@@ -368,10 +382,14 @@ impl Shell for ShellCom {
             Launch::MapDrive(prefill) => return crate::network::map_dialog(prefill.as_ref()),
             Launch::Disconnect(drive) => return crate::network::disconnect_dialog(drive.as_ref()),
             Launch::Wallpaper(image) => return crate::install::wallpaper(image),
+            Launch::Command { runs, dir } => {
+                let owner = owner_window().unwrap_or_default();
+                return launch_commands(runs, dir.as_ref(), |text| crate::toast::notify(owner, text));
+            }
             Launch::Run { program, args, .. } if program.eq_ignore_ascii_case("explorer.exe") && crate::shellwin::explorer_place(args).is_some_and(crate::shellwin::raise_explorer) => return Ok(()),
             _ => {}
         }
-        commands(launch, windows_terminal().as_deref()).iter().try_for_each(execute)
+        commands(launch, windows_terminal().as_deref()).iter().try_for_each(|c| execute(c).map(|_| ()))
     }
 
     fn mount(&mut self, device: &FsPath) -> Result<FsPath, PlatformError> {
@@ -526,12 +544,23 @@ fn windows_terminal() -> Option<String> {
     std::fs::symlink_metadata(&wt).is_ok().then(|| wt.to_string_lossy().into_owned())
 }
 
-fn execute(c: &Command) -> Result<(), PlatformError> {
+fn launch_accepted(result: windows::core::Result<()>) -> Result<bool, PlatformError> {
+    match result {
+        Err(e) if e.code() == ERROR_CANCELLED.to_hresult() => Ok(false),
+        r => r.map(|_| true).map_err(err),
+    }
+}
+
+fn execute(c: &Command) -> Result<bool, PlatformError> {
+    shell_execute(c, SEE_MASK_NOASYNC)
+}
+
+fn shell_execute(c: &Command, mask: u32) -> Result<bool, PlatformError> {
     let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
     let (file, args, dir) = (wide(&c.program), wide(&c.args), c.dir.as_deref().map(wide));
     let mut info = SHELLEXECUTEINFOW {
         cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
-        fMask: SEE_MASK_NOASYNC,
+        fMask: mask,
         hwnd: owner_window().unwrap_or_default(),
         lpVerb: if c.admin { w!("runas") } else { PCWSTR::null() },
         lpFile: PCWSTR(file.as_ptr()),
@@ -540,10 +569,7 @@ fn execute(c: &Command) -> Result<(), PlatformError> {
         nShow: SW_SHOWNORMAL.0,
         ..Default::default()
     };
-    match unsafe { ShellExecuteExW(&mut info) } {
-        Err(e) if e.code() == ERROR_CANCELLED.to_hresult() => Ok(()),
-        r => r.map_err(err),
-    }
+    launch_accepted(unsafe { ShellExecuteExW(&mut info) })
 }
 
 pub(crate) unsafe fn link_target(link: &FsPath) -> Option<FsPath> {

@@ -733,7 +733,10 @@ pub(crate) unsafe fn convert(menu: Option<&IContextMenu>, hmenu: HMENU, from: i3
             }
             continue;
         }
-        let (label, keys) = plain_label(&item_text(hmenu, i));
+        let (mut label, keys) = plain_label(&item_text(hmenu, i));
+        if menu.is_some_and(|m| matches!(id_verb(m, info.wID).to_ascii_lowercase().as_str(), "openas" | "openwith")) {
+            label = flit_core::i18n::S::MenuOpenWith.t().to_owned();
+        }
         if label.is_empty() {
             continue;
         }
@@ -743,6 +746,13 @@ pub(crate) unsafe fn convert(menu: Option<&IContextMenu>, hmenu: HMENU, from: i3
             }
             if let Some(m) = menu {
                 let _ = forward(m, WM_INITMENUPOPUP, WPARAM(info.hSubMenu.0 as usize), LPARAM(i as isize));
+                let opening = (0..GetMenuItemCount(Some(info.hSubMenu))).any(|at| {
+                    let verb = id_verb(m, GetMenuItemID(info.hSubMenu, at));
+                    verb.eq_ignore_ascii_case("openas") || verb.eq_ignore_ascii_case("openwith")
+                });
+                if opening {
+                    label = flit_core::i18n::S::MenuOpenWith.t().to_owned();
+                }
             }
             let mut sub = Vec::new();
             convert(menu, info.hSubMenu, 0, depth + 1, &mut sub, ids);

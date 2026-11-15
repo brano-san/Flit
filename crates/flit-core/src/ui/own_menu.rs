@@ -127,6 +127,12 @@ pub fn commands(items: &[MenuItem]) -> usize {
 
 impl App {
     pub(super) fn own_menu_event(&mut self, ev: &Event, now: Instant) -> bool {
+        if matches!(ev, Event::Focus(false) | Event::Resized { .. } | Event::ScaleChanged(_)) {
+            if self.own_menu.is_some() {
+                self.close_own_menu();
+            }
+            return false;
+        }
         if let Event::ShowMenu { items, x, y, launches, kind, shell, pending } = ev {
             self.release_shell_menu();
             let key = self.shapes.next.take().filter(|_| *pending);
@@ -241,7 +247,6 @@ impl App {
                 MenuOutcome::Open
             }
             (_, Event::Key { .. } | Event::Char(_) | Event::Pinch(_)) => MenuOutcome::Open,
-            (_, Event::Focus(false) | Event::Resized { .. } | Event::ScaleChanged(_)) => MenuOutcome::Closed,
             _ => return false,
         };
         match outcome {
@@ -370,6 +375,7 @@ impl App {
         if !files.is_empty() {
             self.request_menu_images(&files, super::context::image_px(scale), |k| g.has_image(k));
         }
+        let roles = self.own_menu.as_ref().filter(|m| m.view.is_none()).map(|_| super::context::roles(&self.menu)).unwrap_or_default();
         let Some(m) = self.own_menu.as_mut() else { return };
         let view = m.view.get_or_insert_with(|| match m.kind {
             MenuKind::None => {
@@ -384,6 +390,7 @@ impl App {
             }
             kind => {
                 let mut c = ContextMenu::new(&m.items, kind, pins.unwrap_or_default(), m.at, bounds, scale);
+                c.set_roles(roles);
                 if m.items.len() > m.own {
                     c.lift_shell(m.own, m.tail);
                 }

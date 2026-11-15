@@ -8,6 +8,36 @@ fn p(s: &str) -> FsPath {
 }
 
 #[test]
+fn launch_notification_is_sent_only_when_enabled_and_spawn_succeeds() {
+    let program = std::env::var("SystemRoot").unwrap() + r"\System32\where.exe";
+    for enabled in [false, true] {
+        let mut notices = Vec::new();
+        let runs = vec![(vec![program.clone(), "/q".into(), "where.exe".into()], vec![("FLIT_STARTUP_NOTIFY".into(), if enabled { "1" } else { "0" }.into())])];
+        launch_commands(&runs, None, |text| notices.push(text.to_owned())).unwrap();
+        assert_eq!(notices.len(), usize::from(enabled));
+        if enabled { assert!(notices[0].contains("where.exe")); }
+    }
+    let mut notices = Vec::new();
+    let missing = vec![(vec![r"C:\flit-missing-notification-test.exe".into()], vec![("FLIT_STARTUP_NOTIFY".into(), "1".into())])];
+    assert!(launch_commands(&missing, None, |text| notices.push(text.to_owned())).is_err());
+    assert!(notices.is_empty(), "a failed launch must never report success");
+}
+
+#[test]
+fn cancelled_system_launches_are_not_successful_starts() {
+    assert!(!launch_accepted(Err(windows::core::Error::from_hresult(ERROR_CANCELLED.to_hresult()))).unwrap());
+    assert!(launch_accepted(Ok(())).unwrap());
+    assert!(launch_accepted(Err(windows::core::Error::from_hresult(windows::Win32::Foundation::ERROR_FILE_NOT_FOUND.to_hresult()))).is_err());
+}
+
+#[test]
+fn argv_commands_report_spawn_errors_instead_of_silently_succeeding() {
+    let mut shell = ShellCom::new().unwrap();
+    let command = Launch::Command { runs: vec![(vec![r"C:\flit-nonexistent-action-program.exe".into(), "a & b; $(literal)".into()], Vec::new())], dir: None };
+    assert!(shell.launch(&command).is_err());
+}
+
+#[test]
 fn shortcuts_resolve_only_to_existing_folders() {
     let root = crate::test_temp().join(format!("flit-shell-lnk-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);

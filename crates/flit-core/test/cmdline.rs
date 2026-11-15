@@ -1,5 +1,34 @@
 use super::*;
 
+#[test]
+fn an_argument_takes_at_most_one_list_placeholder() {
+    let two = owned(&["/tmp/a", "/tmp/b"]);
+    assert!(expand("tool %F%N", true, &places(&two, "/tmp")).is_none());
+    assert!(expand("tool %F=%D", true, &places(&two, "/tmp")).is_none());
+    assert_eq!(expand("tool %F%F", true, &places(&two[..1], "/tmp")).unwrap().1, owned(&["/tmp/a/tmp/a"]));
+    assert_eq!(expand("tool %F %N", true, &places(&two, "/tmp")).unwrap().1, owned(&["/tmp/a", "/tmp/b", "a", "b"]));
+    assert_eq!(expand("tool --in=%f%n", true, &places(&two, "/tmp")).unwrap().1, owned(&["--in=/tmp/aa"]));
+}
+
+#[test]
+fn folder_placeholders_keep_roots_and_shares_whole() {
+    assert_eq!(expand("t %d", true, &places(&owned(&["/file"]), "/")).unwrap().1, owned(&["/"]));
+    assert_eq!(expand("t %d", false, &places(&owned(&[r"C:\file"]), r"C:\")).unwrap().1, owned(&[r"C:\"]));
+    assert_eq!(expand("t %d", false, &places(&owned(&[r"\\server\share\dir\file.txt"]), r"C:\")).unwrap().1, owned(&[r"\\server\share\dir"]));
+    assert_eq!(expand("t %D", false, &places(&owned(&[r"D:\a\b\", r"D:\c"]), r"C:\")).unwrap().1, owned(&[r"D:\a", r"D:\"]));
+}
+
+#[test]
+fn doubled_percent_signs_stay_literal_next_to_placeholder_letters() {
+    assert_eq!(expand("cmd /c echo %%DATE%% %%f", false, &places(&owned(&[r"C:\x.txt"]), r"C:\")).unwrap().1, owned(&["/c", "echo", "%DATE%", "%f"]));
+}
+
+#[test]
+fn percent_placeholders_preserve_literal_unix_backslashes() {
+    let files = vec![r"/home/a\b.txt".to_owned()];
+    assert_eq!(expand("app %n %d", true, &Places { items: &files, dir: "/home" }).unwrap().1, [r"a\b.txt", "/home"]);
+}
+
 fn places<'a>(items: &'a [String], dir: &'a str) -> Places<'a> {
     Places { items, dir }
 }
@@ -33,6 +62,15 @@ fn placeholder_text_inside_a_path_is_never_expanded_again() {
     let items = owned(&["/tmp/{dir} $(rm -rf ~); `x`"]);
     let (_, args) = expand("echo {path}", true, &places(&items, "/tmp")).unwrap();
     assert_eq!(args, items, "a file name is one argument, whatever it contains");
+}
+
+#[test]
+fn percent_placeholders_keep_each_selected_item_as_a_literal_argument() {
+    let items = owned(&["/tmp/a b;$(echo bad).txt", "/other/{dir}%n.txt"]);
+    let (_, args) = expand("tool %f %F %n %N %d %D %% --name=%N", true, &places(&items, "/tmp")).unwrap();
+    assert_eq!(args, owned(&["/tmp/a b;$(echo bad).txt", "/tmp/a b;$(echo bad).txt", "/other/{dir}%n.txt", "a b;$(echo bad).txt", "a b;$(echo bad).txt", "{dir}%n.txt", "/tmp", "/tmp", "/other", "%", "--name=a b;$(echo bad).txt", "--name={dir}%n.txt"]));
+    assert_eq!(expand("tool %d %F %n", true, &places(&[], "/tmp")).unwrap().1, owned(&["/tmp", "/tmp", "tmp"]));
+    assert_eq!(expand("tool %d", false, &places(&owned(&[r"C:\a.txt"]), r"C:\")).unwrap().1, owned(&[r"C:\"]));
 }
 
 #[test]

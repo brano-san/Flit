@@ -1,4 +1,16 @@
 use super::*;
+
+#[test]
+fn built_in_menu_action_icons_are_present_in_the_bundled_font() {
+    let face = Face::open(fonts::ICONS, 0, false).unwrap();
+    let source = include_str!("../../flit-core/src/ui/menu.rs");
+    let missing: Vec<_> = source.split("\\u{").skip(1).filter_map(|tail| {
+        let code = u32::from_str_radix(tail.split('}').next()?, 16).ok()?;
+        let ch = char::from_u32(code)?;
+        (!face.covers(ch)).then_some(format!("U+{code:04X}"))
+    }).collect();
+    assert!(missing.is_empty(), "menu icons missing from FlitIcons.ttf: {missing:?}");
+}
 use flit_core::render::Color;
 use flit_core::text::Gfx;
 use std::time::{Duration, Instant};

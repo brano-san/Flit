@@ -1010,7 +1010,8 @@ fn the_category_at_the_top_of_the_list_is_lit_while_scrolling() {
     }
     let list = ui(&a).list;
     a.on_event(&Event::MouseMove { x: list.x + list.w / 2.0, y: list.y + list.h / 2.0 }, Instant::now());
-    a.on_event(&Event::Wheel { dx: 0.0, dy: 30.0 }, Instant::now());
+    let to_top = ui(&a).scroll.pos / (3.0 * s(ITEM_H)) + 1.0;
+    a.on_event(&Event::Wheel { dx: 0.0, dy: to_top }, Instant::now());
     assert_eq!(a.settings_page(), Some(Page::Interface), "the wheel moves the light too");
 }
 
@@ -1169,7 +1170,8 @@ fn the_context_menu_section_lists_every_kind_and_holds_its_options() {
     let mut a = app();
     a.open_settings(Some(Page::Menu));
     let lines = page(&a, Page::Menu);
-    assert_eq!(lines[..2], [settings::MENU_KIND.to_owned(), S::MenuEditorEmpty.t().to_owned()], "{lines:?}");
+    assert_eq!(lines[0], S::MenuEditorOwn.t(), "custom actions are immediately discoverable");
+    assert!(lines.contains(&settings::MENU_KIND.to_owned()) && !lines.contains(&S::MenuEditorEmpty.t().to_owned()), "built-in actions are available before opening a menu");
     for id in ["general.shell_submenu", "general.menu_open_tab", "advanced.flatten_in_menu"] {
         assert!(lines.contains(&id.to_owned()), "{id} moved into the section");
     }
@@ -1177,14 +1179,14 @@ fn the_context_menu_section_lists_every_kind_and_holds_its_options() {
     assert!(!lines.iter().any(|l| l.contains("menu.pins") || l.contains("menu.seen")), "raw lists stay out of the window");
     assert!(!page(&a, Page::Interface).iter().any(|l| l.starts_with("general.menu")));
     let mut a = menu_app();
-    assert_eq!(menu_lines(&a), ["menu [x] Open", "menu [x] Rename", "menu [x] Send to >", "menu [x] Properties"]);
+    assert_eq!(&menu_lines(&a)[..4], ["menu [x] Open", "menu [x] Rename", "menu [x] Send to >", "menu [x] Properties"]);
     let k = line(&mut a, settings::MENU_KIND);
     key(&mut a, Key::Right, NO);
     assert_eq!(ui(&a).focus, k);
-    assert_eq!(menu_lines(&a), ["menu [x] Open in new tab"], "the folder menu has its own list");
+    assert_eq!(menu_lines(&a)[0], "menu [x] Open in new tab", "the folder menu has its own list");
     key(&mut a, Key::Right, NO);
-    assert!(menu_lines(&a).is_empty());
-    assert!(a.settings_lines().contains(&S::MenuEditorEmpty.t().to_owned()));
+    assert!(menu_lines(&a).iter().any(|line| line.contains(S::MenuRefresh.t())));
+    assert!(!a.settings_lines().contains(&S::MenuEditorEmpty.t().to_owned()));
 }
 
 #[test]
@@ -1226,14 +1228,14 @@ fn rows_move_with_alt_arrows_and_by_dragging() {
     let mut a = menu_app();
     menu_row(&mut a, "Properties");
     key(&mut a, Key::Up, ALT);
-    assert_eq!(a.opts.menu.order[0], ["Open", "Rename", "Properties", "Send to"]);
+    assert_eq!(&a.opts.menu.order[0][..4], ["Open", "Rename", "Properties", "Send to"]);
     assert!(matches!(&ui(&a).lines[ui(&a).focus], Line::MenuItem(r) if r.label() == "Properties"), "the moved row keeps the focus");
     key(&mut a, Key::Up, ALT);
     key(&mut a, Key::Up, ALT);
     key(&mut a, Key::Up, ALT);
-    assert_eq!(a.opts.menu.order[0], ["Properties", "Open", "Rename", "Send to"], "the top stops the row");
+    assert_eq!(&a.opts.menu.order[0][..4], ["Properties", "Open", "Rename", "Send to"], "the top stops the row");
     key(&mut a, Key::Down, ALT);
-    assert_eq!(a.opts.menu.order[0], ["Open", "Properties", "Rename", "Send to"]);
+    assert_eq!(&a.opts.menu.order[0][..4], ["Open", "Properties", "Rename", "Send to"]);
     let at = menu_row(&mut a, "Send to");
     let from = rect(&a, at);
     let at = menu_row(&mut a, "Open");
@@ -1246,11 +1248,11 @@ fn rows_move_with_alt_arrows_and_by_dragging() {
     assert_eq!(a.drag, super::super::Drag::MenuMove { from: dragged, to: Some(0) });
     a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
     a.on_event(&Event::MouseUp { x, y: onto.y + 3.0, button: MouseButton::Left }, Instant::now());
-    assert_eq!(a.opts.menu.order[0], ["Send to", "Open", "Properties", "Rename"]);
+    assert_eq!(&a.opts.menu.order[0][..4], ["Send to", "Open", "Properties", "Rename"]);
     let at = menu_row(&mut a, "Rename");
     let r = rect(&a, at);
     click_at(&mut a, center(r));
-    assert_eq!(a.opts.menu.order[0], ["Send to", "Open", "Properties", "Rename"], "a click without a drag moves nothing");
+    assert_eq!(&a.opts.menu.order[0][..4], ["Send to", "Open", "Properties", "Rename"], "a click without a drag moves nothing");
 }
 
 #[test]
@@ -1266,7 +1268,7 @@ fn reset_restores_one_menu_and_leaves_the_others() {
     assert!(a.opts.menu.hidden[0].is_empty() && a.opts.menu.order[0].is_empty());
     assert_eq!(a.opts.menu.hidden[1], ["Open in new tab"], "the folder menu keeps its layout");
     assert_eq!(a.opts.pins[0], ["Open"], "pins stay: they have their own star");
-    assert_eq!(menu_lines(&a), ["menu [x] Open *", "menu [x] Rename", "menu [x] Send to >", "menu [x] Properties"]);
+    assert_eq!(&menu_lines(&a)[..4], ["menu [x] Open *", "menu [x] Rename", "menu [x] Send to >", "menu [x] Properties"]);
 }
 
 #[test]

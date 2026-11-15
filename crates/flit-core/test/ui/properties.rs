@@ -285,3 +285,101 @@ fn sidebar_properties_open_the_core_dialog_on_unix_paths_only() {
     assert!(app.jobs.form.is_some());
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Measure { items, .. }, .. } if items.iter().any(|(p, _)| p == &path))));
 }
+
+#[test]
+fn long_properties_stay_in_the_window_and_scroll_below_a_fixed_header() {
+    let mut app = app_at(r"C:\work");
+    deliver(&mut app, &[("a.txt", 0, 5)]);
+    select(&mut app, &["a.txt"]);
+    app.properties_dialog();
+    props_reply(&mut app, vec![PropGroup { title: "Details".into(), rows: (0..80).map(|i| (format!("Property {i}"), "value".into())).collect() }]);
+    app.on_event(&Event::Resized { width: 420, height: 320 }, Instant::now());
+    let f = app.jobs.form.as_ref().unwrap();
+    assert!(f.rect.y >= 0.0 && f.rect.bottom() <= 320.0);
+    assert!(f.rect.x >= 0.0 && f.rect.right() <= 420.0);
+    assert!(f.document.max() > 0.0);
+    let buttons = f.button_rects.clone();
+    app.form_key(Key::End, Mods::default());
+    let f = app.jobs.form.as_ref().unwrap();
+    assert!(f.document.scroll.target > 0.0);
+    assert_eq!(f.button_rects, buttons);
+}
+
+#[test]
+fn outside_click_closes_unchanged_properties_but_keeps_edits() {
+    let mut app = app_at(r"C:\work");
+    deliver(&mut app, &[("a.txt", 0, 5)]);
+    select(&mut app, &["a.txt"]);
+    app.properties_dialog();
+    let ctl = match &app.jobs.form.as_ref().unwrap().kind { Kind::Properties(m) => m.ctl.clone(), _ => unreachable!() };
+    let r = app.jobs.form.as_ref().unwrap().rect;
+    app.form_down(r.x + 2.0, r.y + 2.0, crate::input::MouseButton::Left, 1, Instant::now());
+    assert!(app.jobs.form.is_some(), "inside click keeps the dialog open");
+    app.drain_effects().for_each(drop);
+    set_flags(&mut app, &[true, true]);
+    app.form_down(1.0, 100.0, crate::input::MouseButton::Left, 1, Instant::now());
+    assert!(app.jobs.form.is_some(), "a stray click never discards edited attributes");
+    assert!(file_ops(&mut app).is_empty());
+    set_flags(&mut app, &[false, false]);
+    app.form_down(1.0, 100.0, crate::input::MouseButton::Left, 1, Instant::now());
+    assert!(app.jobs.form.is_none());
+    assert!(ctl.is_cancelled());
+    assert!(file_ops(&mut app).is_empty());
+}
+
+#[test]
+fn header_close_is_accessible_and_cancels_pending_attribute_changes() {
+    let mut app = app_at(r"C:\work");
+    deliver(&mut app, &[("a.txt", 0, 5)]);
+    select(&mut app, &["a.txt"]);
+    app.properties_dialog();
+    set_flags(&mut app, &[true, true]);
+    let f = app.jobs.form.as_ref().unwrap();
+    let k = f.controls.len() + f.buttons.len();
+    let close = f.close_rect;
+    assert_eq!(app.form_hit(close.x + 1.0, close.y + 1.0), Some(crate::ui::Hit::Form(k)));
+    let mut tree = crate::a11y::Tree::default();
+    let mut targets = Vec::new();
+    app.form_a11y(&mut tree, &mut targets);
+    assert!(targets.iter().any(|(_, h)| *h == crate::ui::Hit::Form(k)));
+    app.drain_effects().for_each(drop);
+    app.form_a11y_invoke(k);
+    assert!(app.jobs.form.is_none());
+    assert!(file_ops(&mut app).is_empty());
+}
+
+#[test]
+fn async_dates_update_existing_rows_without_duplicates_or_shifting_measurement_targets() {
+    let mut app = app_at("/home/user/folder");
+    app.caps.unix_paths = true;
+    deliver(&mut app, &[("notes.txt", 0, 5)]);
+    select(&mut app, &["notes.txt"]);
+    app.properties_dialog();
+    let (id, indices) = match &app.jobs.form.as_ref().unwrap().kind {
+        Kind::Properties(m) => (m.id, (m.rows.size, m.rows.on_disk, m.rows.accessed, m.rows.file_system)),
+        _ => unreachable!(),
+    };
+    props_reply(&mut app, vec![PropGroup { title: S::PropertiesDates.t().into(), rows: vec![
+        (S::PropertiesCreated.t().into(), "native creation date".into()),
+        (S::PropertiesAccessed.t().into(), "native access date".into()),
+        (S::PropertiesChanged.t().into(), "old metadata date".into()),
+        (S::PropertiesChanged.t().into(), "native metadata date".into()),
+    ] }]);
+    for (label, expected) in [(S::PropertiesCreated, "native creation date"), (S::PropertiesAccessed, "native access date"), (S::PropertiesChanged, "native metadata date")] {
+        let rows: Vec<_> = app.jobs.form.as_ref().unwrap().controls.iter().filter_map(|c| match c {
+            Control::Value { label: shown, value } if shown == label.t() => Some(value.as_str()),
+            _ => None,
+        }).collect();
+        assert_eq!(rows, [expected], "each date has one updated row");
+    }
+    let Kind::Properties(m) = &app.jobs.form.as_ref().unwrap().kind else { unreachable!() };
+    assert_eq!((m.rows.size, m.rows.on_disk, m.rows.accessed, m.rows.file_system), indices);
+    let accessed = 133_000_000_000_000_000;
+    app.measured(id, Totals { size: 42, on_disk: 4096, accessed, ..Default::default() }, Some("ext4".into()), true);
+    assert_eq!(value(&app, S::PropertiesSize), Some(app.bytes_text(42)));
+    assert_eq!(value(&app, S::PropertiesOnDisk), Some(app.bytes_text(4096)));
+    assert_eq!(value(&app, S::PropertiesAccessed), Some(app.date_text(accessed)));
+    assert_eq!(value(&app, S::PropertiesFileSystem).as_deref(), Some("ext4"));
+    assert_eq!(value(&app, S::PropertiesCreated).as_deref(), Some("native creation date"));
+    assert_eq!(value(&app, S::PropertiesChanged).as_deref(), Some("native metadata date"));
+}

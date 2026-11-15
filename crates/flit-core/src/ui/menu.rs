@@ -75,6 +75,35 @@ impl MenuItem {
     }
 }
 
+fn command_icon(cmd: &Cmd) -> &'static str {
+    let Cmd::Action(id) = cmd else {
+        return match cmd {
+            Cmd::FolderProperties(_) => "\u{E946}",
+            Cmd::ToggleTag(_) | Cmd::ShowTag(_) | Cmd::OpenTagged(_) => "\u{E8EC}",
+            Cmd::User(_) => "\u{E756}",
+            Cmd::NewItem(_) => "\u{E8A5}",
+            _ => "\u{E8B7}",
+        };
+    };
+    match *id {
+        "item.open" | "archive.open" => "\u{E768}",
+        "item.properties" | "file.hashes" => "\u{E946}",
+        "file.copy" | "item.copy_path" => "\u{E8C8}",
+        "file.rename" | "file.batch_rename" => "\u{E8AC}",
+        "item.trash" | "bin.empty" => "\u{E74D}",
+        "file.shortcut" => "\u{E71B}",
+        "nav.refresh" => "\u{E72C}",
+        "app.terminal" | "file.run_in_terminal" => "\u{E756}",
+        "item.open_tab" => "\u{E923}",
+        "item.open_window" => "\u{E922}",
+        "item.pin" | "folder.bookmark" => "\u{E718}",
+        "file.new_folder" | "file.new_folder_with_selection" => "\u{E8F4}",
+        id if id.starts_with("archive.") => "\u{E7B8}",
+        id if id.starts_with("tags.") => "\u{E8EC}",
+        id => super::actions::ACTIONS.iter().find(|a| a.id == id).map_or("\u{E8A5}", |a| a.group.icon()),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Cmd {
     Action(&'static str),
@@ -204,8 +233,9 @@ impl Menu<'_> {
         self.cmds.push(cmd);
     }
 
-    pub(super) fn user(&mut self, label: &str, icon: &'static str, image: Option<MenuImage>, launch: crate::provider::Launch) {
-        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked: false, stay: false, mark: Mark::None, icon, image, disabled: false });
+    pub(super) fn user(&mut self, label: &str, keys: &str, icon: &'static str, image: Option<MenuImage>, launch: crate::provider::Launch) {
+        let icon = if icon.is_empty() { "\u{E756}" } else { icon };
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys: keys.to_owned(), checked: false, stay: false, mark: Mark::None, icon, image, disabled: false });
         self.cmds.push(Cmd::User(launch));
     }
 
@@ -228,7 +258,7 @@ impl Menu<'_> {
     }
 
     pub(super) fn entry(&mut self, cmd: Cmd, label: &str, keys: String, mark: Mark, checked: bool, disabled: bool) {
-        self.items.push(MenuItem::Command { label: label.to_owned(), keys, checked, stay: mark == Mark::Check && !disabled, mark, icon: "", image: None, disabled });
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys, checked, stay: mark == Mark::Check && !disabled, mark, icon: command_icon(&cmd), image: None, disabled });
         self.cmds.push(cmd);
     }
 
@@ -237,7 +267,7 @@ impl Menu<'_> {
             return;
         }
         let disabled = matches!(cmd, Cmd::Action(id) if super::actions::ACTIONS.iter().any(|a| a.id == id && a.run.is_none()));
-        self.items.push(MenuItem::Command { label: label.to_owned(), keys, checked, stay: false, mark, icon: "", image: None, disabled });
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys, checked, stay: false, mark, icon: command_icon(&cmd), image: None, disabled });
         self.cmds.push(cmd);
     }
 

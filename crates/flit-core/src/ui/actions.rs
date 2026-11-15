@@ -662,7 +662,9 @@ impl App {
         if key == Key::Space && mods == Mods::default() && self.tab().typing(now) {
             return false;
         }
-        let Some(i) = self.keymap.owner(Chord { key, mods }).filter(|&i| self.supports(ACTIONS[i].id)) else { return false };
+        let Some(i) = self.keymap.owner(Chord { key, mods }).filter(|&i| self.supports(ACTIONS[i].id)) else {
+            return self.focus == super::Focus::List && self.nav.palette.is_none() && !self.jobs.modal() && self.user_shortcut(key, mods);
+        };
         if let Some(run) = ACTIONS[i].run {
             run(self, now);
         }

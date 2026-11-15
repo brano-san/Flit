@@ -22,6 +22,12 @@ const COMMAND: usize = 3;
 const PLACE: usize = 4;
 const SHOW: usize = 5;
 const EXT: usize = 6;
+const DESCRIPTION: usize = 7;
+const SHORTCUT: usize = 8;
+const NOTIFY: usize = 9;
+const PATTERNS: usize = 10;
+const SELECTION: usize = 11;
+const CATEGORIES: usize = 12;
 const SUB_SHOW: usize = 1;
 const SUB_EXT: usize = 2;
 
@@ -70,12 +76,23 @@ pub struct UserEntry {
     pub background: bool,
     pub ext: String,
     pub submenu: Option<Vec<UserEntry>>,
+    pub description: String,
+    pub shortcut: String,
+    pub startup_notify: bool,
+    pub patterns: String,
+    pub selection: usize,
+    pub categories: Vec<String>,
 }
 
 impl Default for UserEntry {
     fn default() -> Self {
-        Self { name: String::new(), icon: String::new(), command: String::new(), files: true, folders: true, background: false, ext: String::new(), submenu: None }
+        Self { name: String::new(), icon: String::new(), command: String::new(), files: true, folders: true, background: false, ext: String::new(), submenu: None, description: String::new(), shortcut: String::new(), startup_notify: false, patterns: String::new(), selection: 0, categories: Vec::new() }
     }
+}
+
+pub fn action_chord(text: &str) -> Option<super::actions::Chord> {
+    let c = super::keymap::parse_chord(text)?;
+    (c.mods.ctrl || c.mods.alt || matches!(c.key, crate::input::Key::F(_))).then_some(c)
 }
 
 pub fn glyph(icon: &str) -> Option<&'static str> {
@@ -87,6 +104,35 @@ fn ext_of(name: &[u8]) -> String {
     dot.map(|i| String::from_utf8_lossy(&name[i + 1..]).to_lowercase()).unwrap_or_default()
 }
 
+const CATEGORY_IDS: [&str; 6] = ["folder", "audio", "video", "image", "text", "other"];
+
+fn category(dir: bool, ext: &str) -> &'static str {
+    if dir { "folder" }
+    else if ["mp3", "wav", "flac", "ogg", "m4a", "aac", "opus", "wma"].contains(&ext) { "audio" }
+    else if ["mp4", "mkv", "webm", "avi", "mov", "mpeg", "mpg", "wmv"].contains(&ext) { "video" }
+    else if crate::preview::IMAGES.contains(&ext) { "image" }
+    else if ["txt", "md", "markdown", "csv", "json", "xml", "html", "css", "js", "ts", "rs", "py", "toml", "yaml", "yml", "log", "ini", "conf"].contains(&ext) { "text" }
+    else { "other" }
+}
+
+fn pattern_matches(pattern: &str, name: &[u8]) -> bool {
+    let p: Vec<char> = pattern.to_lowercase().chars().collect();
+    let n: Vec<char> = String::from_utf8_lossy(name).to_lowercase().chars().collect();
+    let (mut pi, mut ni, mut star) = (0, 0, None);
+    while ni < n.len() {
+        match p.get(pi) {
+            Some('*') => { star = Some((pi, ni)); pi += 1; }
+            Some('?') => { pi += 1; ni += 1; }
+            Some(c) if *c == n[ni] => { pi += 1; ni += 1; }
+            _ => match star {
+                Some((sp, sn)) => { let next = sn + 1; star = Some((sp, next)); pi = sp + 1; ni = next; }
+                None => return false,
+            },
+        }
+    }
+    p[pi..].iter().all(|c| *c == '*')
+}
+
 impl UserEntry {
     fn exts(&self) -> Vec<String> {
         self.ext.split([' ', ',', ';']).map(|e| e.trim().trim_start_matches('.').to_lowercase()).filter(|e| !e.is_empty()).collect()
@@ -94,8 +140,16 @@ impl UserEntry {
 
     pub fn wants(&self, items: Option<&[(bool, &[u8])]>) -> bool {
         let Some(items) = items else { return self.background };
+        if (self.selection == 1 && items.len() != 1) || (self.selection == 2 && items.len() < 2) { return false; }
         let exts = self.exts();
-        !items.is_empty() && items.iter().all(|&(dir, name)| if dir { self.folders } else { self.files && (exts.is_empty() || exts.contains(&ext_of(name))) })
+        let patterns: Vec<_> = self.patterns.split(';').map(str::trim).filter(|s| !s.is_empty()).collect();
+        !items.is_empty() && items.iter().all(|&(dir, name)| {
+            let ext = ext_of(name);
+            let category = category(dir, &ext);
+            (if dir { self.folders } else { self.files && (exts.is_empty() || exts.contains(&ext)) })
+                && (self.categories.is_empty() || self.categories.iter().any(|c| c == category))
+                && (patterns.is_empty() || patterns.iter().any(|p| pattern_matches(p, name)))
+        })
     }
 
     fn image(&self) -> Option<MenuImage> {
@@ -113,13 +167,22 @@ impl UserEntry {
         }
         match &self.submenu {
             Some(items) => m.insert("items".into(), Json::Array(items.iter().map(UserEntry::to_json).collect())),
-            None => m.insert("command".into(), Json::String(self.command.clone())),
+            None => {
+                m.insert("percent".into(), Json::Bool(true));
+                m.insert("command".into(), Json::String(self.command.clone()))
+            }
         };
         let show = [("files", self.files), ("folders", self.folders), ("background", self.background)];
         m.insert("show".into(), Json::Array(show.iter().filter(|s| s.1).map(|s| Json::String(s.0.into())).collect()));
         if !self.ext.is_empty() {
             m.insert("extensions".into(), Json::String(self.ext.clone()));
         }
+        for (key, value) in [("description", &self.description), ("shortcut", &self.shortcut), ("patterns", &self.patterns)] {
+            if !value.is_empty() { m.insert(key.into(), Json::String(value.clone())); }
+        }
+        if self.startup_notify { m.insert("startup_notify".into(), Json::Bool(true)); }
+        if self.selection != 0 { m.insert("selection".into(), Json::from(self.selection)); }
+        if !self.categories.is_empty() { m.insert("categories".into(), Json::Array(self.categories.iter().cloned().map(Json::String).collect())); }
         Json::Object(m)
     }
 
@@ -138,16 +201,25 @@ impl UserEntry {
             Some(v) => Some(v.as_array().filter(|a| a.len() <= MAX_ENTRIES)?.iter().map(|c| UserEntry::from_json(c, true)).collect::<Option<Vec<_>>>()?),
             None => None,
         };
-        let e = UserEntry {
+        let command = text("command")?;
+        let percent = o.get("percent").map_or(Some(false), Json::as_bool)?;
+        let mut e = UserEntry {
             name: text("name")?,
             icon: text("icon")?,
-            command: text("command")?,
+            command: if percent { command } else { command.replace('%', "%%") },
             files: shown.contains(&"files"),
             folders: shown.contains(&"folders"),
             background: shown.contains(&"background"),
             ext: text("extensions")?,
             submenu,
+            description: text("description")?,
+            shortcut: text("shortcut")?,
+            patterns: text("patterns")?,
+            startup_notify: o.get("startup_notify").and_then(Json::as_bool).unwrap_or(false),
+            selection: o.get("selection").and_then(Json::as_u64).filter(|&s| s <= 2).map_or(0, |s| s as usize),
+            categories: o.get("categories").and_then(Json::as_array).map(|a| a.iter().filter_map(|c| c.as_str().filter(|c| !c.is_empty() && c.len() <= MAX_TEXT)).map(str::to_owned).collect()).unwrap_or_default(),
         };
+        if action_chord(&e.shortcut).is_none() { e.shortcut.clear(); }
         (!e.name.trim().is_empty() && (e.submenu.is_some() || !e.command.trim().is_empty())).then_some(e)
     }
 }
@@ -173,6 +245,32 @@ pub(super) struct EntryAt {
 }
 
 impl App {
+    fn user_actions(&self) -> impl Iterator<Item = (EntryAt, Option<&UserEntry>, &UserEntry)> {
+        self.opts.user_menu.iter().enumerate().flat_map(|(top, e)| match &e.submenu {
+            Some(items) => items.iter().enumerate().map(|(child, c)| (EntryAt { top, child: Some(child) }, Some(e), c)).collect::<Vec<_>>(),
+            None => vec![(EntryAt { top, child: None }, None, e)],
+        })
+    }
+
+    pub(super) fn user_shortcut(&mut self, key: crate::input::Key, mods: crate::input::Mods) -> bool {
+        let pressed = super::actions::Chord { key, mods };
+        let matching: Vec<_> = self.user_actions().filter(|(_, _, e)| !e.shortcut.is_empty() && action_chord(&e.shortcut) == Some(pressed)).map(|(_, parent, e)| (parent, e)).collect();
+        if matching.is_empty() || self.archive_view().is_some() { return false; }
+        let t = self.tab();
+        let (Some(v), Some(dir)) = (&t.view, t.view_loc.to_windows()) else { return false };
+        let ids: Vec<_> = v.selected().collect();
+        let listing = v.listing();
+        let kinds: Vec<_> = ids.iter().map(|&i| (listing.entries[i as usize].is_dir(), listing.name(i))).collect();
+        let target = (!ids.is_empty()).then_some(kinds.as_slice());
+        let Some(entry) = matching.into_iter().find(|(parent, e)| parent.is_none_or(|p| p.wants(target)) && e.wants(target)).map(|(_, e)| e) else { return false };
+        let Ok(paths) = self.item_paths(&ids) else { return false };
+        let shown: Vec<_> = paths.iter().map(|p| p.display().into_owned()).collect();
+        let here = dir.display().into_owned();
+        let Some(launch) = entry_launch(entry, &Places { items: &shown, dir: &here }, &dir) else { return false };
+        self.launch(launch);
+        true
+    }
+
     pub(super) fn user_entries(&self, m: &mut Menu, on_items: bool) {
         let list = &self.opts.user_menu;
         let t = self.tab();
@@ -249,6 +347,7 @@ impl App {
         let w = g.text(tx, y, &e.name, font, t.text, s(240.0));
         let detail = match &e.submenu {
             Some(items) => S::UserMenuSubmenu.t().to_owned() + &format!(" \u{00B7} {}", items.len()),
+            None if !e.description.is_empty() => e.description.clone(),
             None => e.command.clone(),
         };
         let room = r.right() - s(16.0) - 3.0 * (s(92.0) + s(8.0)) - (tx + w + s(14.0));
@@ -329,6 +428,15 @@ impl App {
         }
         controls.push(Control::flags(S::UserMenuShow.t(), shows));
         controls.push(Control::text(S::UserMenuExtensions.t(), &e.ext, S::UserMenuExtensionsHint.t()));
+        if !submenu {
+            controls.push(Control::text(S::UserMenuDescription.t(), &e.description, ""));
+            controls.push(Control::text(S::UserMenuShortcut.t(), &e.shortcut, "Ctrl+Shift+H"));
+            controls.push(Control::check(S::UserMenuStartupNotify.t(), e.startup_notify));
+            controls.push(Control::text(S::UserMenuPatterns.t(), &e.patterns, "*.txt; *.md"));
+            controls.push(Control::choice(S::UserMenuSelection.t(), vec![S::UserMenuAnySelection.t().into(), S::UserMenuSingleSelection.t().into(), S::UserMenuMultipleSelection.t().into()], e.selection));
+            let labels = [S::UserMenuFolders, S::UserMenuAudio, S::UserMenuVideo, S::UserMenuImages, S::UserMenuText, S::UserMenuOther];
+            controls.push(Control::flags(S::UserMenuCategories.t(), labels.iter().zip(CATEGORY_IDS).map(|(label, id)| (label.t().to_owned(), e.categories.is_empty() || e.categories.iter().any(|c| c == id))).collect()));
+        }
         let title = match (submenu, at.is_some()) {
             (true, _) => S::UserMenuSubmenuTitle.t(),
             (false, false) => S::UserMenuNewTitle.t(),
@@ -360,6 +468,10 @@ impl App {
                 f.say(S::UserMenuNoCommand.t(), true);
                 return Some(f);
             }
+            if cmdline::expand(&e.command, cmdline::POSIX, &Places { items: &["a".into(), "b".into()], dir: "." }).is_none() {
+                f.say(S::UserMenuBadCommand.t(), true);
+                return Some(f);
+            }
             let image = f.text(IMAGE).trim().trim_matches('"').to_owned();
             e.icon = match (image.is_empty(), f.choice(ICON)) {
                 (false, _) => image,
@@ -367,6 +479,32 @@ impl App {
                 (true, k) => GLYPHS.get(k - 1).map_or_else(String::new, |g| g.0.to_owned()),
             };
             parent = f.choice(PLACE).checked_sub(1).and_then(|k| self.submenus().get(k).copied());
+            e.description = f.text(DESCRIPTION).trim().to_owned();
+            e.shortcut = f.text(SHORTCUT).trim().to_owned();
+            if !e.shortcut.is_empty() {
+                let Some(chord) = action_chord(&e.shortcut) else {
+                    f.say(S::UserMenuBadShortcut.t(), true);
+                    return Some(f);
+                };
+                let builtin = self.keymap.owner(chord).filter(|&i| self.supports(super::actions::ACTIONS[i].id)).map(|i| super::actions::ACTIONS[i].title.t().to_owned());
+                let custom = || self.user_actions().find(|(other, _, o)| Some(*other) != at && action_chord(&o.shortcut) == Some(chord)).map(|(_, _, o)| o.name.clone());
+                if let Some(command) = builtin.or_else(custom) {
+                    f.say(crate::tr!(S::KeymapCaptureAlready, key = &e.shortcut, command = command), true);
+                    return Some(f);
+                }
+            }
+            e.startup_notify = f.checked(NOTIFY);
+            e.patterns = f.text(PATTERNS).trim().to_owned();
+            e.selection = f.choice(SELECTION);
+            let categories = f.flags(CATEGORIES);
+            if !categories.iter().any(|on| *on) { f.say(S::UserMenuNoCategories.t(), true); return Some(f); }
+            if !categories.iter().all(|on| *on) { e.categories = CATEGORY_IDS.iter().zip(categories).filter(|(_, on)| *on).map(|(id, _)| (*id).to_owned()).collect(); }
+        }
+        let same_parent = at.is_some_and(|a| a.child.map(|_| a.top) == parent);
+        let destination_len = parent.and_then(|p| self.opts.user_menu.get(p)).and_then(|p| p.submenu.as_ref()).map_or(self.opts.user_menu.len(), Vec::len);
+        if !same_parent && destination_len >= MAX_ENTRIES {
+            f.say(S::UserMenuTooMany.t(), true);
+            return Some(f);
         }
         self.place_user_entry(at, parent, e);
         self.layout();
@@ -408,10 +546,17 @@ impl App {
     }
 }
 
+fn entry_launch(e: &UserEntry, places: &Places, dir: &FsPath) -> Option<Launch> {
+    let (program, args) = cmdline::expand(&e.command, cmdline::POSIX, places)?;
+    let mut argv = vec![program];
+    argv.extend(args);
+    let env = vec![("FLIT_STARTUP_NOTIFY".to_owned(), if e.startup_notify { "1" } else { "0" }.to_owned())];
+    Some(Launch::Command { runs: vec![(argv, env)], dir: Some(dir.clone()) })
+}
+
 fn push(m: &mut Menu, e: &UserEntry, places: &Places, dir: &FsPath) {
-    let Some((program, args)) = cmdline::expand(&e.command, cmdline::POSIX, places) else { return };
-    let launch = Launch::Run { program, args: cmdline::join(&args, cmdline::POSIX), dir: Some(dir.clone()) };
-    m.user(&e.name, glyph(&e.icon).unwrap_or(""), e.image(), launch);
+    let Some(launch) = entry_launch(e, places, dir) else { return };
+    m.user(&e.name, &e.shortcut, glyph(&e.icon).unwrap_or(""), e.image(), launch);
 }
 
 pub(super) fn file_images(items: &[MenuItem], out: &mut Vec<MenuImage>) {

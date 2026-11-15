@@ -56,10 +56,15 @@ pub fn no_xdg_open() -> String {
     flit_core::tr_en!(flit_core::i18n::S::ErrorsOpsExtraNoXdgOpen, package = package)
 }
 
-pub fn xdg_open(target: &OsStr) -> Result<(), PlatformError> {
+fn xdg_open_command(target: &OsStr) -> Result<Command, PlatformError> {
     let program = on_path(OsStr::new("xdg-open")).ok_or_else(|| PlatformError::new(libc::ENOENT as i64, no_xdg_open()))?;
     let mut cmd = Command::new(program);
     cmd.arg(target);
+    Ok(cmd)
+}
+
+pub fn xdg_open(target: &OsStr) -> Result<(), PlatformError> {
+    let mut cmd = xdg_open_command(target)?;
     crate::activation::pass(&mut cmd, crate::window::activation_token().as_deref());
     detach(cmd).map_err(|e| spawn_error("xdg-open", &e))
 }
@@ -335,13 +340,15 @@ fn open_without_xdg_open(path: &Path) -> Option<Result<(), PlatformError>> {
 
 fn run_command(argv: &[String], env: &[(String, String)], dir: Option<&Path>) -> Result<(), PlatformError> {
     let Some((program, args)) = argv.split_first() else { return Ok(()) };
-    let mut cmd = Command::new(program);
-    cmd.args(args).envs(env.iter().map(|(k, v)| (k, v)));
+    let url = args.is_empty() && program.contains("://");
+    let mut cmd = if url { xdg_open_command(OsStr::new(program))? } else { Command::new(program) };
+    cmd.args(args).envs(env.iter().filter(|(k, _)| k != "FLIT_STARTUP_NOTIFY").map(|(k, v)| (k, v)));
+    cmd.env_remove("FLIT_STARTUP_NOTIFY");
     if let Some(d) = dir {
         cmd.current_dir(d);
     }
     crate::activation::pass(&mut cmd, crate::window::activation_token().as_deref());
-    detach(cmd).map_err(|e| spawn_error(program, &e))
+    detach(cmd).map_err(|e| spawn_error(if url { "xdg-open" } else { program }, &e))
 }
 
 fn tool_missing(tool: &str) -> PlatformError {

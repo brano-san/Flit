@@ -894,6 +894,12 @@ impl App {
                 out.push(Line::Note(NO_TELEMETRY.t()));
             }
             Page::Menu => {
+                out.push(Line::Group(S::MenuEditorOwn.t()));
+                out.push(Line::Buttons(None, USER_BUTTONS));
+                if self.opts.user_menu.is_empty() {
+                    out.push(Line::Note(S::UserMenuEmpty.t()));
+                }
+                out.extend(self.user_lines().into_iter().map(Line::Entry));
                 if let Some(i) = settings::index(settings::MENU_KIND) {
                     self.setting_lines(i, out);
                 }
@@ -908,12 +914,6 @@ impl App {
                 for (i, _) in SETTINGS.iter().enumerate().filter(|(_, s)| s.page == Page::Menu && s.id != settings::MENU_KIND) {
                     self.setting_lines(i, out);
                 }
-                out.push(Line::Group(S::MenuEditorOwn.t()));
-                if self.opts.user_menu.is_empty() {
-                    out.push(Line::Note(S::UserMenuEmpty.t()));
-                }
-                out.extend(self.user_lines().into_iter().map(Line::Entry));
-                out.push(Line::Buttons(None, USER_BUTTONS));
             }
             Page::Interface | Page::Colors | Page::Files | Page::Data | Page::Input | Page::Windows => {}
         }

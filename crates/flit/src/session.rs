@@ -1,12 +1,18 @@
 use crossbeam_channel::{unbounded, Sender};
 use flit_core::Location;
-use flit_core::ui::{PanelsSession, WindowSession};
+use flit_core::ui::{PanelsSession, Startup, WindowSession};
 use flit_platform::{Placement, Platform};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::io::Write;
 use std::thread::JoinHandle;
 
 const VERSION: u32 = 1;
+const SETTLED: std::time::Duration = std::time::Duration::from_secs(60);
+
+pub fn restore_crash(startup: &Startup, unix: bool, explicit_open: bool, settled: bool) -> bool {
+    unix && !explicit_open && settled && matches!(startup, Startup::Continue)
+}
 
 type Bounds = (i32, i32, i32, i32, bool);
 
@@ -88,6 +94,11 @@ impl Files {
         std::fs::metadata(&self.marker).and_then(|m| m.modified()).ok()
     }
 
+    pub fn settled_before_exit(&self) -> bool {
+        let saved = std::fs::metadata(&self.session).and_then(|m| m.modified()).ok();
+        saved.zip(self.marked_at()).is_some_and(|(saved, started)| saved.duration_since(started).is_ok_and(|ran| ran >= SETTLED))
+    }
+
     pub fn mark(&self) {
         if let Some(dir) = self.marker.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -106,33 +117,59 @@ pub fn load(path: &Path) -> Option<Session> {
     crate::schema::load(path, VERSION, &MIGRATIONS, Session::decode)
 }
 
-pub fn write(path: &Path, s: &Session) {
-    let Some(bytes) = s.encode() else { return };
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
+pub fn write(path: &Path, s: &Session) -> bool {
+    store(path, s, true)
+}
+
+fn store(path: &Path, s: &Session, durable: bool) -> bool {
+    let Some(bytes) = s.encode() else { return false };
     let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
-    if std::fs::write(&tmp, bytes).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
+    let result = (|| -> std::io::Result<()> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(&bytes)?;
+        if durable {
+            file.sync_all()?;
+        }
+        drop(file);
+        std::fs::rename(&tmp, path)?;
+        #[cfg(unix)]
+        if let Some(dir) = path.parent().filter(|_| durable) {
+            std::fs::File::open(dir)?.sync_all()?;
+        }
+        Ok(())
+    })();
+    if let Err(e) = result {
+        tracing::warn!("cannot save the session: {e}");
+        let _ = std::fs::remove_file(tmp);
+        return false;
     }
+    true
 }
 
 pub struct Writer {
-    tx: Option<Sender<Session>>,
+    tx: Option<Sender<(Session, Option<Sender<()>>)>>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl Writer {
     pub fn start(path: PathBuf) -> Self {
-        let (tx, rx) = unbounded::<Session>();
+        let (tx, rx) = unbounded::<(Session, Option<Sender<()>>)>();
         let thread = std::thread::Builder::new()
             .name("flit-session".into())
             .spawn(move || {
-                while let Ok(mut s) = rx.recv() {
-                    while let Ok(newer) = rx.try_recv() {
+                while let Ok((mut s, ack)) = rx.recv() {
+                    let mut acks: Vec<_> = ack.into_iter().collect();
+                    while let Ok((newer, ack)) = rx.try_recv() {
                         s = newer;
+                        acks.extend(ack);
                     }
-                    write(&path, &s);
+                    store(&path, &s, !acks.is_empty());
+                    for ack in acks {
+                        let _ = ack.send(());
+                    }
                 }
             })
             .ok();
@@ -141,7 +178,16 @@ impl Writer {
 
     pub fn send(&self, s: Session) {
         if let Some(tx) = &self.tx {
-            let _ = tx.send(s);
+            let _ = tx.send((s, None));
+        }
+    }
+
+    pub fn flush(&self, s: Session) {
+        if let Some(tx) = &self.tx {
+            let (ack, done) = crossbeam_channel::bounded(1);
+            if tx.send((s, Some(ack))).is_ok() {
+                let _ = done.recv();
+            }
         }
     }
 
@@ -150,6 +196,12 @@ impl Writer {
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
+    }
+}
+
+impl Drop for Writer {
+    fn drop(&mut self) {
+        self.finish();
     }
 }
 

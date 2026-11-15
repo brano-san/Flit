@@ -1,4 +1,15 @@
 use super::*;
+
+#[test]
+fn uri_actions_keep_the_system_opener_route() {
+    let dir = FsPath::parse("/tmp").unwrap();
+    for startup_notify in [false, true] {
+        let entry = UserEntry { command: "https://example.com/docs".into(), startup_notify, ..UserEntry::default() };
+        let Some(Launch::Command { runs, .. }) = entry_launch(&entry, &Places { items: &[], dir: "/tmp" }, &dir) else { panic!("a URI must carry its notification preference to the opener"); };
+        assert_eq!(runs[0].0, ["https://example.com/docs"]);
+        assert_eq!(runs[0].1, [("FLIT_STARTUP_NOTIFY".to_owned(), if startup_notify { "1" } else { "0" }.to_owned())]);
+    }
+}
 use crate::input::{Event, MouseButton};
 use crate::listing::{attr, DirSnapshot, Listing, Meta};
 use crate::location::Location;
@@ -77,7 +88,7 @@ fn shown(p: &str) -> String {
 fn entries_persist_as_plain_json_and_reject_what_they_cannot_run() {
     let list = entries();
     let j = to_json(&list);
-    assert_eq!(j[0], json!({ "name": "Code", "icon": "C:\\icons\\code.png", "command": "code --goto {paths}", "show": ["files", "folders"] }));
+    assert_eq!(j[0], json!({ "name": "Code", "icon": "C:\\icons\\code.png", "percent": true, "command": "code --goto {paths}", "show": ["files", "folders"] }));
     assert_eq!(j[3]["items"][0]["command"], "hasher \"{name}\" {paths}");
     assert_eq!(from_json(&j), Some(list));
     assert!(from_json(&json!([{ "name": "x", "command": "a" }])).unwrap()[0].files, "files and folders by default");
@@ -99,6 +110,141 @@ fn entries_match_files_folders_background_and_extensions() {
 }
 
 #[test]
+fn action_metadata_filters_and_shortcuts_survive_persistence() {
+    let e = UserEntry { description: "Open the selected text files".into(), shortcut: "Ctrl+Shift+H".into(), startup_notify: true, patterns: "report-*.txt; notes?.md".into(), selection: 2, categories: vec!["text".into()], ..command("Inspect", "text", "inspect %F") };
+    assert_eq!(from_json(&to_json(std::slice::from_ref(&e))), Some(vec![e.clone()]));
+    assert!(e.wants(Some(&[(false, b"report-1.txt"), (false, b"notes2.md")])));
+    assert!(!e.wants(Some(&[(false, b"report-1.txt")])));
+    assert!(!e.wants(Some(&[(false, b"report-1.txt"), (false, b"image.png")])));
+    assert!(!e.wants(Some(&[(false, b"report-1.txt"), (true, b"report-2.txt")])));
+    for shortcut in ["not a shortcut", "H", "Shift+Down"] {
+        let loaded = from_json(&json!([{ "name": "Kept", "command": "x", "shortcut": shortcut }])).expect("an unusable shortcut never drops the entry");
+        assert_eq!((&*loaded[0].name, &*loaded[0].shortcut), ("Kept", ""));
+    }
+}
+
+#[test]
+fn values_from_a_newer_flit_never_drop_the_menu() {
+    let list = json!([
+        { "name": "Other", "command": "y" },
+        { "name": "Newer", "command": "x", "selection": 7, "categories": ["archive", "text", 3], "startup_notify": "yes" },
+    ]);
+    let loaded = from_json(&list).expect("one entry with unknown values keeps the whole menu");
+    assert_eq!(loaded.len(), 2);
+    let e = &loaded[1];
+    assert_eq!((e.selection, e.startup_notify), (0, false));
+    assert_eq!(e.categories, ["archive", "text"]);
+    assert!(e.wants(Some(&[(false, b"notes.txt")])));
+    assert!(!e.wants(Some(&[(false, b"song.mp3")])));
+    assert_eq!(from_json(&to_json(&loaded)).unwrap()[1].categories, ["archive", "text"], "unknown categories are saved back");
+}
+
+#[test]
+fn commands_saved_before_percent_placeholders_keep_their_percent_signs_literal() {
+    let old = from_json(&json!([{ "name": "Day", "command": "cmd /c echo %DATE% %f {path}" }])).unwrap();
+    assert_eq!(old[0].command, "cmd /c echo %%DATE%% %%f {path}");
+    let (_, args) = crate::cmdline::expand(&old[0].command, false, &Places { items: &[r"C:\x\a.txt".into()], dir: r"C:\x" }).unwrap();
+    assert_eq!(args, ["/c", "echo", "%DATE%", "%f", r"C:\x\a.txt"]);
+    assert_eq!(from_json(&to_json(&old)), Some(old.clone()), "a migrated command is saved once and never escaped again");
+    let fresh = from_json(&json!([{ "name": "Day", "percent": true, "command": "tool %f" }])).unwrap();
+    assert_eq!(fresh[0].command, "tool %f");
+}
+
+#[test]
+fn custom_shortcuts_need_a_modifier_and_a_free_chord() {
+    let mut a = app(&[("notes.md", false)]);
+    a.opts.user_menu = vec![UserEntry { shortcut: "Ctrl+Alt+J".into(), ..command("Other", "", "other %f") }];
+    a.new_user_entry(false);
+    let keymap = crate::ui::keymap::defaults();
+    let taken = (0..crate::ui::actions::ACTIONS.len()).filter(|&i| a.supports(crate::ui::actions::ACTIONS[i].id)).find_map(|i| keymap.keys(i).iter().find(|c| c.mods.ctrl).map(crate::ui::actions::chord_text));
+    let mut tries = vec!["H", "Shift+Down", "Ctrl+Alt+J"];
+    tries.extend(taken.as_deref());
+    for shortcut in tries {
+        form_texts(&mut a, &[(NAME, "Preview"), (COMMAND, "preview %F"), (SHORTCUT, shortcut)], &[]);
+        a.form_submit(0);
+        assert!(a.jobs.form.as_ref().is_some_and(|f| f.error), "{shortcut} must be refused");
+    }
+    form_texts(&mut a, &[(SHORTCUT, "F7")], &[]);
+    a.form_submit(0);
+    assert!(a.jobs.form.is_none());
+    a.edit_user_entry(EntryAt { top: 1, child: None });
+    a.form_submit(0);
+    assert!(a.jobs.form.is_none(), "an entry keeps its own shortcut when edited");
+}
+
+#[test]
+fn the_editor_refuses_two_list_placeholders_in_one_argument() {
+    let mut a = app(&[("notes.md", false)]);
+    a.new_user_entry(false);
+    form_texts(&mut a, &[(NAME, "Pairs"), (COMMAND, "tool %F:%N")], &[]);
+    a.form_submit(0);
+    assert!(a.jobs.form.as_ref().is_some_and(|f| f.error));
+    form_texts(&mut a, &[(COMMAND, "tool %F %N")], &[]);
+    a.form_submit(0);
+    assert!(a.jobs.form.is_none());
+}
+
+#[test]
+fn built_in_bindings_win_over_custom_shortcuts() {
+    let mut a = app(&[("a.txt", false)]);
+    let keymap = crate::ui::keymap::defaults();
+    let chord = (0..crate::ui::actions::ACTIONS.len()).filter(|&i| a.supports(crate::ui::actions::ACTIONS[i].id)).find_map(|i| keymap.keys(i).iter().find(|c| c.mods.ctrl && c.key == crate::input::Key::Char('C')).copied()).unwrap();
+    a.opts.user_menu = vec![UserEntry { shortcut: crate::ui::actions::chord_text(&chord), ..command("Shadow", "", "shadow %f") }];
+    right_click(&mut a, Some(0));
+    a.focus = crate::ui::Focus::List;
+    a.drain_effects().for_each(drop);
+    a.on_event(&Event::Key { key: chord.key, mods: chord.mods, pressed: true }, Instant::now());
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Launch { launch: Launch::Command { .. }, .. }, .. })));
+}
+
+#[test]
+fn custom_shortcut_launches_only_when_appearance_conditions_match() {
+    let mut a = app(&[("a b.txt", false)]);
+    a.opts.user_menu = vec![UserEntry { shortcut: "Ctrl+Shift+H".into(), startup_notify: true, ..command("Inspect", "text", "inspect %F") }];
+    right_click(&mut a, Some(0));
+    let mods = crate::input::Mods { ctrl: true, shift: true, alt: false };
+    assert!(a.user_shortcut(crate::input::Key::Char('H'), mods));
+    let launch = a.drain_effects().find_map(|e| match e { Effect::Provider { req: ProviderRequest::Launch { launch, .. }, .. } => Some(launch), _ => None }).unwrap();
+    let Launch::Command { runs, .. } = launch else { panic!("custom actions use argv") };
+    assert_eq!(runs[0].0, ["inspect".to_owned(), shown(r"C:\x\a b.txt")]);
+    assert_eq!(runs[0].1, [("FLIT_STARTUP_NOTIFY".into(), "1".into())]);
+    a.opts.user_menu[0].patterns = "*.png".into();
+    assert!(!a.user_shortcut(crate::input::Key::Char('H'), mods));
+}
+
+#[test]
+fn editor_saves_metadata_and_rejects_invalid_shortcuts() {
+    let mut a = app(&[("notes.md", false)]);
+    a.new_user_entry(false);
+    form_texts(&mut a, &[(NAME, "Preview"), (COMMAND, "preview %F"), (DESCRIPTION, "Preview Markdown"), (SHORTCUT, "invalid shortcut"), (PATTERNS, "*.md")], &[(SELECTION, 1)]);
+    a.form_submit(0);
+    assert!(a.jobs.form.as_ref().is_some_and(|f| f.error));
+    form_texts(&mut a, &[(SHORTCUT, "Ctrl+Shift+H")], &[]);
+    if let Some(Control::Check { on, .. }) = a.jobs.form.as_mut().unwrap().controls.get_mut(NOTIFY) { *on = true; }
+    a.form_submit(0);
+    assert!(a.jobs.form.is_none());
+    let e = &a.opts.user_menu[0];
+    assert_eq!((&*e.description, &*e.shortcut, &*e.patterns, e.selection, e.startup_notify), ("Preview Markdown", "Ctrl+Shift+H", "*.md", 1, true));
+    assert_eq!(from_json(&to_json(&a.opts.user_menu)), Some(a.opts.user_menu.clone()));
+    a.edit_user_entry(EntryAt { top: 0, child: None });
+    assert_eq!(a.jobs.form.as_ref().unwrap().text(DESCRIPTION), "Preview Markdown");
+}
+
+#[test]
+fn keyboard_events_invoke_custom_actions_only_from_the_file_list() {
+    let mut a = app(&[("a.txt", false)]);
+    a.opts.user_menu = vec![UserEntry { shortcut: "Ctrl+Shift+H".into(), ..command("Inspect", "", "inspect %f") }];
+    right_click(&mut a, Some(0));
+    a.focus = crate::ui::Focus::List;
+    let event = Event::Key { key: crate::input::Key::Char('H'), mods: crate::input::Mods { ctrl: true, shift: true, alt: false }, pressed: true };
+    a.on_event(&event, Instant::now());
+    assert!(a.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Launch { launch: Launch::Command { .. }, .. }, .. })));
+    a.new_user_entry(false);
+    a.on_event(&event, Instant::now());
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Launch { .. }, .. })));
+}
+
+#[test]
 fn chosen_entries_launch_their_command_with_each_path_quoted_for_the_platform() {
     let mut a = app(&[("a b.txt", false), ("notes.md", false), ("sub", true)]);
     a.opts.user_menu = entries();
@@ -109,15 +255,15 @@ fn chosen_entries_launch_their_command_with_each_path_quoted_for_the_platform() 
     assert!(shown_labels.contains(&"Code".into()) && shown_labels.contains(&"Tools/Hash".into()), "{shown_labels:?}");
     assert!(!shown_labels.iter().any(|l| l == "Preview" || l == "Terminal here"), "{shown_labels:?}");
     let file = shown(r"C:\x\a b.txt");
-    let want = Launch::Run { program: "code".into(), args: crate::cmdline::join(&["--goto".into(), file.clone()], crate::cmdline::POSIX), dir: FsPath::parse(r"C:\x") };
+    let want = Launch::Command { runs: vec![(vec!["code".into(), "--goto".into(), file.clone()], vec![("FLIT_STARTUP_NOTIFY".into(), "0".into())])], dir: FsPath::parse(r"C:\x") };
     assert_eq!(launched(&mut a, &menu, "Code"), want);
     let menu = right_click(&mut a, row("a b.txt"));
-    let Launch::Run { program, args, .. } = launched(&mut a, &menu, "Tools/Hash") else { panic!() };
-    assert_eq!((program.as_str(), args), ("hasher", crate::cmdline::join(&["a b.txt".into(), file], crate::cmdline::POSIX)));
+    let Launch::Command { runs, .. } = launched(&mut a, &menu, "Tools/Hash") else { panic!() };
+    assert_eq!(runs[0].0, ["hasher".to_owned(), "a b.txt".into(), file]);
     assert!(labels(&right_click(&mut a, row("notes.md")).menu).contains(&"Preview".into()));
     let background = right_click(&mut a, None);
-    let Launch::Run { program, args, .. } = launched(&mut a, &background, "Terminal here") else { panic!() };
-    assert_eq!((program.as_str(), args), ("wt", crate::cmdline::join(&["-d".into(), shown(r"C:\x")], crate::cmdline::POSIX)));
+    let Launch::Command { runs, .. } = launched(&mut a, &background, "Terminal here") else { panic!() };
+    assert_eq!(runs[0].0, ["wt".to_owned(), "-d".into(), shown(r"C:\x")]);
 }
 
 #[test]

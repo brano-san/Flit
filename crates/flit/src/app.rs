@@ -466,10 +466,9 @@ impl<P: Platform> Handler<P> {
         self.writer = None;
         self.kept.finish();
         if let Some(f) = &self.files {
-            if let Some(s) = s {
-                session::write(&f.session, &s);
+            if s.as_ref().is_none_or(|s| session::write(&f.session, s)) {
+                f.unmark();
             }
-            f.unmark();
         }
     }
 
@@ -588,6 +587,9 @@ impl<P: Platform> Handler<P> {
                     }
                 }
                 Effect::Window(WindowCmd::Quit) => {
+                    if let Some(w) = self.writer.as_ref().filter(|_| cfg!(not(windows))) {
+                        w.flush(self.session());
+                    }
                     self.quitting = self.windows.keys().filter(|&&w| w != id).copied().collect();
                     (self.wake)();
                     if let Some(st) = self.windows.get(&id) {
@@ -596,6 +598,9 @@ impl<P: Platform> Handler<P> {
                     window.close();
                 }
                 Effect::Window(WindowCmd::Close) => {
+                    if let Some(w) = self.writer.as_ref().filter(|_| cfg!(not(windows))) {
+                        if self.windows.len() <= 1 { w.flush(self.session()) } else { w.send(self.session()) }
+                    }
                     if let Some(st) = self.windows.get(&id) {
                         self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state()).with_pane(st.app.pane_state()).with_side(st.app.nav_prefs()).with_tools(tools(&st.app));
                     }
@@ -1380,12 +1385,14 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let crashed = files.as_ref().is_some_and(Files::crashed);
     let dump = files.as_ref().filter(|_| crashed).and_then(Files::marked_at).zip(P::state_dir()).and_then(|(t, d)| crate::logs::crash_report(&d.join("logs"), t)).and_then(fs_path);
     let previous = files.as_ref().and_then(|f| session::load(&f.session));
+    let settled = files.as_ref().is_some_and(Files::settled_before_exit);
     if let Some(f) = &files {
         f.mark();
     }
     let typed: Typed = Arc::new(Mutex::new(previous.as_ref().map(|s| s.typed.clone()).unwrap_or_default()));
+    let restore_crash = session::restore_crash(&saved.persisted.startup, unix, !open.is_empty(), settled);
     let mut restore: VecDeque<(WindowSession, Option<Placement>)> = match &saved.persisted.startup {
-        _ if !open.is_empty() || crashed => VecDeque::new(),
+        _ if !open.is_empty() || (crashed && !restore_crash) => VecDeque::new(),
         _ if update::restarted() => previous.iter().flat_map(Session::windows).collect(),
         Startup::Continue => previous.iter().flat_map(Session::windows).collect(),
         Startup::NewTab => VecDeque::from([(WindowSession { tabs: vec![Location::home_page()], cur: 0, ..Default::default() }, None)]),
@@ -1428,7 +1435,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         search,
         writer: files.as_ref().map(|f| Writer::start(f.session.clone())),
         files,
-        crashed: previous.filter(|_| crashed),
+        crashed: previous.filter(|_| crashed && !restore_crash),
         typed,
         queued_windows: restore,
         raise: None,

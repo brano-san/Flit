@@ -20,6 +20,34 @@ fn window(paths: &[&str], cur: usize) -> WindowSession {
 }
 
 #[test]
+fn linux_last_session_resumes_with_a_crash_marker_without_overriding_explicit_opens_or_windows_recovery() {
+    assert!(restore_crash(&Startup::Continue, true, false, true));
+    assert!(!restore_crash(&Startup::Continue, true, false, false), "a run that died early keeps the recovery prompt");
+    assert!(!restore_crash(&Startup::Continue, false, false, true), "Windows keeps its recovery prompt");
+    assert!(!restore_crash(&Startup::Continue, true, true, true), "explicit CLI folders take precedence");
+    assert!(!restore_crash(&Startup::NewTab, true, false, true));
+    assert!(!restore_crash(&Startup::Folders(vec![Location::home_page()]), true, false, true));
+}
+
+#[test]
+fn only_a_run_that_saved_its_session_a_minute_after_start_counts_as_settled() {
+    let d = temp("settled");
+    std::fs::create_dir_all(&d.0).unwrap();
+    let files = Files { session: d.0.join("session.bin"), marker: d.0.join("running") };
+    assert!(!files.settled_before_exit(), "no marker and no session");
+    files.mark();
+    std::fs::write(&files.session, b"x").unwrap();
+    let started = files.marked_at().unwrap();
+    let touch = |at: std::time::SystemTime| std::fs::File::options().write(true).open(&files.session).unwrap().set_modified(at).unwrap();
+    touch(started + std::time::Duration::from_secs(5));
+    assert!(!files.settled_before_exit(), "a crash seconds after start must not restore the same session again");
+    touch(started + std::time::Duration::from_secs(120));
+    assert!(files.settled_before_exit());
+    touch(started - std::time::Duration::from_secs(600));
+    assert!(!files.settled_before_exit(), "a session older than the run says nothing about it");
+}
+
+#[test]
 fn sessions_round_trip_and_skip_empty_windows() {
     let at = Placement { x: 10, y: 20, width: 800, height: 600, maximized: true };
     let s = Session::new(vec![(window(&[r"C:\a", "wsl://Ubuntu/home"], 1), Some(at)), (window(&[], 0), None), (window(&[r"D:\"], 0), None)], vec![r"C:\typed".into()]);
@@ -67,6 +95,21 @@ fn the_writer_keeps_the_latest_session_and_the_marker_tells_a_crash() {
     files.unmark();
     assert!(!files.crashed());
     assert!(load(&d.0.join("missing.bin")).is_none());
+}
+
+#[test]
+fn linux_locations_are_durable_before_teardown_and_writer_drop_drains_pending_snapshots() {
+    let d = temp("linux-teardown");
+    let f = d.0.join("session.bin");
+    let first = Session::new(vec![(window(&["/home/alice", "/tmp", "/"], 1), None)], vec!["/var/log".into()]);
+    let writer = Writer::start(f.clone());
+    writer.flush(first.clone());
+    assert_eq!(load(&f), Some(first), "flush persists the snapshot before the window is destroyed");
+    let last = Session::new(vec![(window(&["/home/alice/Documents", "/tmp"], 0), None)], Vec::new());
+    writer.send(last.clone());
+    drop(writer);
+    assert_eq!(load(&f), Some(last), "dropping a writer joins its final write");
+    assert!(!f.with_extension(format!("{}.tmp", std::process::id())).exists());
 }
 
 #[test]

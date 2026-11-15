@@ -15,7 +15,7 @@ pub(super) struct Document {
     pub grab: Option<f32>,
     pub copied: Option<(String, Instant)>,
     width: f32,
-    scale: f32,
+    pub(super) scale: f32,
     lines: Vec<Line>,
     rows: Vec<(usize, f32, f32)>,
     pointer: (f32, f32),
@@ -44,7 +44,7 @@ impl Document {
         Rect::new(self.viewport.right() - 10.0 * self.scale, self.viewport.y, 10.0 * self.scale, self.viewport.h)
     }
 
-    fn thumb(&self) -> Rect {
+    pub(super) fn thumb(&self) -> Rect {
         let track = self.track();
         let h = (track.h * track.h / self.height.max(1.0)).max(24.0 * self.scale).min(track.h);
         Rect::new(track.x + 2.0 * self.scale, track.y + (track.h - h) * self.scroll.pos / self.max().max(1.0), 6.0 * self.scale, h)
@@ -121,7 +121,7 @@ impl App {
         if !self.jobs.asks.is_empty() {
             return None;
         }
-        self.jobs.form.as_mut().filter(|f| matches!(f.kind, Kind::Update(_))).map(|f| &mut f.document)
+        self.jobs.form.as_mut().map(|f| &mut f.document)
     }
 
     pub(super) fn update_wheel(&mut self, dy: f32) -> bool {
@@ -134,6 +134,9 @@ impl App {
 
     pub(super) fn update_scroll_key(&mut self, key: Key, mods: Mods) -> bool {
         if mods.ctrl || mods.alt {
+            return false;
+        }
+        if matches!(key, Key::Home | Key::End) && self.form_text_focus().is_some() {
             return false;
         }
         let Some(d) = self.update_document() else { return false };

@@ -17,7 +17,6 @@ const G_COMPUTER: &str = "\u{E7F4}";
 const G_LINUX: &str = "\u{E756}";
 const G_BIN: &str = "\u{E74D}";
 const DRAG_START: f32 = 6.0;
-const TEAR_MARGIN: f32 = 24.0;
 pub(super) const HOLD_DELAY: Duration = Duration::from_millis(350);
 pub(super) const HOLD_REPEAT: Duration = Duration::from_millis(90);
 
@@ -66,6 +65,8 @@ pub(super) struct Strip {
     hold: Option<Hold>,
     incoming: Option<(u32, usize)>,
     out: bool,
+    grab: f32,
+    floating: Option<Rect>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -96,6 +97,7 @@ struct Lane {
     tick: u64,
     first: Option<Part>,
     drawn: Vec<(Part, Rect, std::ops::Range<usize>)>,
+    targets: Vec<Part>,
     shots: Vec<Instance>,
     slides: Vec<Slide>,
     ghosts: Vec<(Rect, Instant, Vec<Instance>)>,
@@ -175,7 +177,7 @@ impl Strip {
         self.lanes.iter_mut().for_each(|l| l.ghosts.clear());
     }
 
-    fn settle(&mut self, panel: u32, slide: bool, now: Instant) -> usize {
+    fn settle(&mut self, panel: u32, now: Instant) -> usize {
         let k = self.lanes.iter().position(|l| l.panel == panel).unwrap_or_else(|| {
             self.lanes.push(Lane { panel, ..Lane::default() });
             self.lanes.len() - 1
@@ -185,7 +187,8 @@ impl Strip {
         let will = targets.iter().copied().filter(|d| matches!(d.0, Part::Tab(_)));
         let first = will.clone().find(|t| t.1.w > 0.0).map(|t| t.0);
         let scrolled = std::mem::replace(&mut lane.first, first) != first;
-        let changed = scrolled || !was.clone().map(|d| d.0).eq(will.map(|d| d.0));
+        let changed = scrolled || !lane.targets.iter().copied().eq(will.map(|d| d.0));
+        lane.targets = targets.iter().filter_map(|(p, _)| matches!(p, Part::Tab(_)).then_some(*p)).collect();
         if lane.tick + 1 >= self.tick && changed {
             for (part, r, range) in &lane.drawn {
                 if matches!(part, Part::Tab(_)) && r.w > 0.0 && !range.is_empty() && !targets.iter().any(|t| t.0 == *part) {
@@ -193,7 +196,7 @@ impl Strip {
                 }
             }
             let shift = targets.iter().find_map(|&(p, to)| was.clone().find(|w| w.0 == p && w.1.w > 0.0 && to.w > 0.0).map(|w| w.1.x - to.x));
-            for &(part, target) in targets.iter().filter(|_| slide) {
+            for &(part, target) in targets {
                 let Some(&(_, from, _)) = lane.drawn.iter().find(|d| d.0 == part) else { continue };
                 lane.slides.retain(|s| s.part != part);
                 let (from, to) = match (from.w > 0.0, target.w > 0.0, shift) {
@@ -328,7 +331,7 @@ impl App {
     }
 
     pub(super) fn insert_mark(&self) -> Option<Rect> {
-        let (_, slot) = self.strip.incoming.filter(|s| s.0 == self.panels.here)?;
+        let slot = if self.dragged_tab().is_some() { self.cur } else { self.strip.incoming.filter(|s| s.0 == self.panels.here)?.1 };
         let tabs = &self.layout.tabs;
         let x = tabs.get(slot).map(|t| t.0.x).or_else(|| tabs.last().map(|t| t.0.right()))?;
         let r = tabs.first()?.0;
@@ -389,10 +392,21 @@ impl App {
         if l.tab_arrows[0].w > 0.0 {
             targets.extend([(Part::Arrow(false), l.tab_arrows[0]), (Part::Arrow(true), l.tab_arrows[1])]);
         }
-        let slide = !matches!(self.drag, Drag::Tab { .. });
-        let k = Some(self.strip.settle(self.panels.here, slide, now));
-        self.motion |= self.strip.busy(k);
-        k
+        let k = self.strip.settle(self.panels.here, now);
+        let part = Part::Tab(self.tabs[self.cur].id);
+        if matches!(self.drag, Drag::Tab { .. }) {
+            self.strip.lanes[k].slides.retain(|s| s.part != part);
+        } else if let Some(from) = self.strip.floating.take_if(|_| self.panels.here == self.panels.active) {
+            let lane = &mut self.strip.lanes[k];
+            lane.slides.retain(|s| s.part != part);
+            lane.slides.push(Slide { part, from, to: None, since: now });
+        }
+        self.motion |= self.strip.busy(Some(k));
+        Some(k)
+    }
+
+    pub(super) fn dragged_tab(&self) -> Option<Rect> {
+        (self.panels.here == self.panels.active && matches!(self.drag, Drag::Tab { moved: true, torn: false, .. })).then_some(self.strip.floating).flatten()
     }
 
     pub(super) fn strip_clip(&self, tabs: bool) -> Rect {
@@ -507,6 +521,8 @@ impl App {
     pub(super) fn press_tab(&mut self, i: usize, x: f32, y: f32, button: MouseButton) {
         self.select_tab(i);
         if button == MouseButton::Left {
+            self.strip.grab = self.layout.tabs.get(self.cur).map_or(0.0, |t| x - t.0.x);
+            self.strip.floating = None;
             self.drag = Drag::Tab { origin: self.cur, x, y, moved: false, torn: false };
         }
     }
@@ -516,10 +532,15 @@ impl App {
         if !moved && (x - x0).abs().max((y - y0).abs()) < self.s(DRAG_START) {
             return;
         }
-        let (m, title) = (self.s(TEAR_MARGIN), self.layout.title);
         let torn = x < 0.0 || y < 0.0 || x >= self.size.0 || y >= self.size.1;
-        let on_strip = y >= title.y - m && y <= title.bottom() + m && x >= title.x && x < title.right();
+        let on_strip = self.layout.title.contains(x, y);
         let arrow = on_strip && self.hover_arrow(x, y, Held::Tab, self.clock());
+        self.strip.floating = if on_strip && !torn {
+            self.layout.tabs.get(self.cur).map(|t| {
+                let clip = self.strip_clip(true);
+                Rect::new((x - self.strip.grab).clamp(clip.x, (clip.right() - t.0.w).max(clip.x)), t.0.y, t.0.w, t.0.h)
+            })
+        } else { None };
         self.tab_out(torn.then_some((x, y)));
         if !on_strip {
             self.strip.hold = None;
@@ -604,6 +625,7 @@ impl App {
     pub(super) fn cancel_tab_drag(&mut self) {
         let Drag::Tab { origin, .. } = self.drag else { return };
         self.tab_out(None);
+        self.strip.hold = None;
         self.move_tab(origin.min(self.tabs.len() - 1));
         self.docking = None;
         self.drag = Drag::None;
@@ -616,6 +638,7 @@ impl App {
     }
 
     fn detach_tab(&mut self, at: Option<(f32, f32)>) {
+        self.strip.floating = None;
         self.strip.out = false;
         let alone = self.tabs.len() == 1;
         let last = alone && self.panel_count() == 1;
@@ -712,6 +735,9 @@ impl App {
 
     pub(super) fn strip_mouse_up(&mut self, x: f32, y: f32, button: MouseButton) {
         self.addr.press = None;
+        if button == MouseButton::Left && matches!(self.drag, Drag::Tab { .. }) {
+            self.strip.hold = None;
+        }
         if button != MouseButton::Right {
             return;
         }

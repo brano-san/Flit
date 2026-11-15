@@ -1,6 +1,19 @@
 use super::*;
 
 #[test]
+#[ignore = "displays a real Windows notification; requires an interactive desktop"]
+fn native_launch_notification_is_accepted_by_windows() {
+    unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok().unwrap(); }
+    assert!(prepare(), "Flit notification registration failed");
+    let notifier = ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID)).unwrap();
+    let text = flit_core::tr!(flit_core::i18n::S::UserMenuStarted, program = "Flit notification verification");
+    let toast = show(0, &text).expect("Windows accepts the native launch notification");
+    assert_eq!(notifier.Setting().unwrap(), windows::UI::Notifications::NotificationSetting::Enabled, "Windows has disabled notifications for Flit");
+    assert!(toast.Content().unwrap().GetXml().unwrap().to_string_lossy().contains("Flit notification verification"));
+    notifier.Hide(&toast).unwrap();
+}
+
+#[test]
 fn a_notification_shows_the_text_with_markup_characters_kept_literal() {
     let xml = toast_xml("Copying \"a & b\" <2> finished: 3 items");
     assert!(xml.contains("<text>Flit</text><text>Copying &quot;a &amp; b&quot; &lt;2&gt; finished: 3 items</text>"), "{xml}");

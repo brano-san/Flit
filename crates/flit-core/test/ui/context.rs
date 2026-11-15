@@ -1,8 +1,56 @@
 use super::*;
 use crate::input::{Key, Mods};
+use super::super::menu::Cmd;
 
 fn cmd(label: &str) -> MenuItem {
     MenuItem::command(label, String::new())
+}
+
+#[test]
+fn opening_actions_are_together_and_properties_follow_platform_extensions() {
+    let items = vec![cmd(S::MenuOpen.t()), MenuItem::Submenu { label: S::MenuOpenIn.t().into(), items: vec![cmd("New tab")] }, MenuItem::Separator, cmd("Copy"), cmd(S::MenuProperties.t()), MenuItem::Separator,
+        MenuItem::Submenu { label: S::MenuOpenWith.t().into(), items: vec![cmd("Editor")] }, MenuItem::Submenu { label: "Scripts".into(), items: vec![cmd("Script")] }];
+    let mut c = ContextMenu::new(&items, MenuKind::File, vec![], (0.0, 0.0), Rect::new(0.0, 0.0, 600.0, 400.0), 1.0);
+    c.set_roles(roles(&[Cmd::Action("item.open"), Cmd::Action("item.open_tab"), Cmd::Action("file.copy"), Cmd::Action("item.properties")]));
+    c.lift_shell(6, false);
+    let labels = c.labels();
+    assert_eq!(&labels[..3], &[S::MenuOpen.t().to_owned(), format!("{} >", S::MenuOpenIn.t()), format!("{} >", S::MenuOpenWith.t())]);
+    assert_eq!(labels.last().unwrap(), S::MenuProperties.t());
+}
+
+#[test]
+fn items_that_only_share_a_label_with_flit_commands_stay_in_place() {
+    let items = vec![cmd("Copy"), cmd(S::MenuOpen.t()), MenuItem::Separator, cmd("Rename"), cmd(S::MenuProperties.t())];
+    let mut c = ContextMenu::new(&items, MenuKind::File, vec![], (0.0, 0.0), Rect::new(0.0, 0.0, 600.0, 400.0), 1.0);
+    let user = Cmd::User(crate::provider::Launch::Run { program: "x".into(), args: String::new(), dir: None });
+    c.set_roles(roles(&[Cmd::Action("file.copy"), user]));
+    c.lift_shell(3, false);
+    let labels = c.labels();
+    assert_eq!(labels[..2], ["Copy".to_owned(), S::MenuOpen.t().to_owned()], "a user entry called Open is not moved to the top");
+    assert_eq!(labels[2..], ["Rename".to_owned(), S::MenuProperties.t().to_owned()], "a shell extension's Properties keeps its place");
+}
+
+#[test]
+fn menu_geometry_remains_valid_in_small_scaled_viewports() {
+    for scale in [1.0, 1.5, 2.5] {
+        let mut c = ContextMenu::new(&(0..50).map(|n| cmd(&format!("Long command {n}"))).collect::<Vec<_>>(), MenuKind::File, vec![], (180.0, 150.0), Rect::new(0.0, 0.0, 200.0, 160.0), scale);
+        c.measure(&mut crate::text::Gfx::new(crate::text::tests::Mono, 256));
+        assert!(c.rect.w <= 200.0 && c.rect.bottom() <= 160.0 && c.list.h >= 0.0);
+        c.wheel(-100.0);
+        assert!(c.scroll > 0.0);
+    }
+}
+
+#[test]
+fn long_menu_scrollbar_can_be_dragged_to_the_last_command() {
+    let mut c = ContextMenu::new(&(0..80).map(|n| cmd(&format!("Item {n}"))).collect::<Vec<_>>(), MenuKind::File, vec![], (0.0, 0.0), Rect::new(0.0, 0.0, 600.0, 400.0), 1.0);
+    let (x, y) = (c.thumb.x + c.thumb.w / 2.0, c.thumb.y + c.thumb.h / 2.0);
+    assert_eq!(c.hit(x, y), Some(CtxHit::ScrollThumb));
+    c.mouse_down(x, y, 1, false);
+    c.mouse_move(x, c.track.bottom());
+    assert!((c.scroll - (c.content_h - c.list.h)).abs() < 0.1);
+    assert_eq!(c.mouse_up(x, c.track.bottom()), MenuOutcome::Open);
+    assert!(c.grab.is_none());
 }
 
 fn items() -> Vec<MenuItem> {

@@ -2463,7 +2463,7 @@ impl App {
         let base = l.title.bottom() - border;
         let foot = if g.dl.round { self.s(3.0) } else { 0.0 };
         let start = l.title.x + if l.title.x == self.nav.sidebar.rect.right() && l.title.x > 0.0 { foot } else { 0.0 };
-        if let Some(r) = l.tabs.get(self.cur).map(|&(r, _)| self.strip.at(lane, tabbar::Part::Tab(self.tabs[self.cur].id), r, now)).filter(|r| r.w > 0.0) {
+        if let Some(r) = l.tabs.get(self.cur).map(|&(r, _)| self.dragged_tab().unwrap_or_else(|| self.strip.at(lane, tabbar::Part::Tab(self.tabs[self.cur].id), r, now))).filter(|r| r.w > 0.0) {
             g.dl.rect(Rect::new(start, base, (r.x - foot - start).max(0.0), border), t.separator);
             g.dl.rect(Rect::new(r.right() + foot, base, (l.title.right() - r.right() - foot).max(0.0), border), t.separator);
         } else {
@@ -2477,9 +2477,12 @@ impl App {
         let mut requests: Vec<IconRequest> = Vec::new();
         let ghosts_from = g.dl.instances.len();
         self.strip.ghosts(lane, &mut g.dl, now);
-        for (i, &(target, c)) in l.tabs.iter().enumerate() {
+        let floating = self.dragged_tab();
+        let order = (0..l.tabs.len()).filter(|&i| floating.is_none() || i != self.cur).chain(floating.map(|_| self.cur));
+        for i in order {
+            let (target, c) = l.tabs[i];
             let part = tabbar::Part::Tab(self.tabs[i].id);
-            let r = self.strip.at(lane, part, target, now);
+            let r = floating.filter(|_| i == self.cur).unwrap_or_else(|| self.strip.at(lane, part, target, now));
             let from = g.dl.instances.len();
             if r.w <= 0.0 {
                 self.strip.record(lane, part, r, &[]);

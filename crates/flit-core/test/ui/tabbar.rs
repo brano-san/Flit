@@ -134,6 +134,24 @@ fn dragging_a_tab_reorders_and_esc_puts_it_back() {
 }
 
 #[test]
+fn dragging_outside_the_strip_switches_to_split_preview_and_returning_or_cancelling_cleans_it_up() {
+    let mut app = app_with(&[r"C:\a", r"C:\b"]);
+    let (x, y) = tab_xy(&app, 0);
+    ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
+    ev(&mut app, Event::MouseMove { x: x + 10.0, y });
+    assert!(app.dragged_tab().is_some() && app.insert_mark().is_some());
+    let below = app.layout.title.bottom() + 1.0;
+    ev(&mut app, Event::MouseMove { x, y: below });
+    assert!(app.docking.is_some(), "split preview starts immediately below the strip");
+    assert!(app.dragged_tab().is_none() && app.insert_mark().is_none());
+    ev(&mut app, Event::MouseMove { x, y });
+    assert!(app.docking.is_none() && app.dragged_tab().is_some());
+    key(&mut app, Key::Escape, NO);
+    assert!(app.docking.is_none() && app.dragged_tab().is_none() && app.insert_mark().is_none());
+    assert!(app.strip.hold.is_none());
+}
+
+#[test]
 fn a_tab_torn_off_the_strip_moves_to_another_window() {
     let mut app = app_with(&[r"C:\a", r"C:\b"]);
     app.run_action("nav.up", Instant::now());
@@ -1296,7 +1314,7 @@ fn without_animations_a_new_tab_moves_its_neighbours_at_once() {
 }
 
 #[test]
-fn dragging_a_tab_moves_the_strip_under_the_pointer_without_lag() {
+fn dragging_a_tab_follows_the_pointer_while_neighbours_slide_into_the_insertion_slot() {
     let mut app = app_with(&[r"C:\a", r"C:\b", r"C:\c"]);
     let mut g = Gfx::new(crate::text::tests::Mono, 1024);
     let t0 = Instant::now();
@@ -1306,11 +1324,20 @@ fn dragging_a_tab_moves_the_strip_under_the_pointer_without_lag() {
     ev(&mut app, Event::MouseDown { x: x0, y, button: MouseButton::Left, clicks: 1 });
     ev(&mut app, Event::MouseMove { x: r2.x + r2.w * 0.75, y });
     assert_eq!(names(&app), [r"C:\b", r"C:\c", r"C:\a"]);
-    app.frame(&mut g, ms(t0, 2000));
-    assert_eq!((0..3).map(|i| drawn(&app, i)).collect::<Vec<_>>(), app.layout.tabs.iter().map(|t| t.0).collect::<Vec<_>>(), "the dragged strip follows the pointer without lag");
+    assert!(app.frame(&mut g, ms(t0, 2000)));
+    assert_eq!(drawn(&app, app.cur).x, r2.x + r2.w * 0.75 - (x0 - app.layout.tabs[0].0.x), "the grabbed point stays under the cursor");
+    assert_ne!(drawn(&app, 0), app.layout.tabs[0].0, "neighbours animate to their new slots");
+    assert!(app.insert_mark().is_some());
+    app.frame(&mut g, ms(t0, 2070));
+    let middle = drawn(&app, 0);
+    assert!(middle.x > app.layout.tabs[0].0.x && middle.x < app.layout.tabs[1].0.x);
     assert_eq!(app.strip.ghost_count(app.panels.here), 0);
     ev(&mut app, Event::MouseUp { x: r2.x + r2.w * 0.75, y, button: MouseButton::Left });
     assert_eq!(app.drag, Drag::None);
+    assert_eq!(app.insert_mark(), None);
+    app.frame(&mut g, ms(t0, 2200));
+    app.frame(&mut g, ms(t0, 2400));
+    assert_eq!(drawn(&app, app.cur), app.layout.tabs[app.cur].0);
 }
 
 #[test]

@@ -93,8 +93,21 @@ fn the_order_applies_to_shell_items_and_new_ones_follow_their_neighbour() {
 #[test]
 fn without_a_layout_the_menu_keeps_its_natural_order() {
     let mut a = app();
+    a.menu = ["item.open", "file.rename", "send.desktop", "send.mail", "item.properties"].map(super::super::menu::Cmd::Action).to_vec();
     show(&mut a, own_items(), false);
-    assert_eq!(labels(&a), ["Open", "Rename", "-", "Send to >", "Properties"]);
+    assert_eq!(labels(&a), ["Open", "Rename", "-", "Send to >", "-", "Properties"]);
+}
+
+#[test]
+fn settings_list_builtin_actions_before_any_context_menu_is_opened() {
+    let mut a = app();
+    assert!(a.opts.menu.seen.iter().all(Vec::is_empty));
+    for kind in 0..3 {
+        a.opts.menu.kind = kind;
+        let rows = a.menu_rows();
+        assert!(rows.iter().any(|r| r.label() == S::MenuProperties.t()), "kind {kind}");
+        assert!(rows.iter().any(|r| r.label() == if kind == 2 { S::MenuRefresh.t() } else { S::MenuOpen.t() }), "kind {kind}");
+    }
 }
 
 #[test]

@@ -1797,7 +1797,9 @@ impl App {
             r.selecting = None;
         }
         if button == MouseButton::Right && self.drag == Drag::None && self.ops.rename.is_none() && self.ops.right_drag.is_none() {
-            match self.hit(x, y) {
+            let hit = self.hit(x, y);
+            match hit {
+                Hit::Row(_) | Hit::ListEmpty | Hit::Group(_) if !self.right_release_matches(hit) => {}
                 Hit::Row(_) => self.shell_menu(x, y, true, self.mods.shift),
                 Hit::ListEmpty | Hit::Group(_) => self.shell_menu(x, y, false, self.mods.shift),
                 Hit::Header(c) | Hit::ColSep(c) => self.header_menu(x, y, self.layout.columns.get(c).copied()),
@@ -1864,6 +1866,15 @@ impl App {
         let still = t.id == s.tab && t.view.as_ref().is_some_and(|v| v.snap().gen == s.gen && v.selected_count() == 1 && v.is_selected(s.idx));
         if still && self.rename_target() == Some(s.idx) {
             self.begin_rename(s.idx, false);
+        }
+    }
+
+    fn right_release_matches(&self, hit: Hit) -> bool {
+        let v = self.tab().view.as_ref();
+        match (self.pressed, hit) {
+            (Hit::Row(_), Hit::Row(r)) => v.is_some_and(|v| v.focus.is_some() && v.rows().get(r).copied() == v.focus),
+            (Hit::Row(_), _) | (Hit::ListEmpty | Hit::Group(_), Hit::Row(_)) => false,
+            _ => true,
         }
     }
 
