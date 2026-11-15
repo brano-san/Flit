@@ -2,6 +2,21 @@ use super::*;
 use flit_core::i18n::{self, Lang};
 use windows::core::{Error, HRESULT};
 
+fn language_test_child(test: &str) -> bool {
+    const CHILD: &str = "FLIT_TEST_ENGINE_LANGUAGE";
+    if std::env::var(CHILD).as_deref() == Ok(test) {
+        return true;
+    }
+    // flit-core is a dependency here, so its cfg(test) thread-local language
+    // is unavailable. Keep language changes out of the parallel test process.
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--nocapture", "--test-threads=1"])
+        .env(CHILD, test)
+        .output().unwrap();
+    assert!(output.status.success(), "{test}:\n{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    false
+}
+
 #[test]
 fn staging_reservation_has_one_owner_and_never_removes_a_rivals_marker() {
     let root = crate::test_temp().join(format!("flit-w10-stage-{}", std::process::id()));
@@ -50,6 +65,9 @@ fn staging_cleanup_never_deletes_a_foreign_file_that_arrives_after_placement() {
 
 #[test]
 fn windows_operation_and_shell_errors_follow_the_interface_language() {
+    if !language_test_child("engine::tests::windows_operation_and_shell_errors_follow_the_interface_language") {
+        return;
+    }
     let original = i18n::lang();
     i18n::set_lang(Lang::Ru);
     let path = FsPath::parse(r"C:\missing.txt").unwrap();
@@ -68,6 +86,9 @@ fn windows_operation_and_shell_errors_follow_the_interface_language() {
 
 #[test]
 fn windows_errors_translate_known_codes_without_overwriting_unknown_system_reasons() {
+    if !language_test_child("engine::tests::windows_errors_translate_known_codes_without_overwriting_unknown_system_reasons") {
+        return;
+    }
     let original = i18n::lang();
     i18n::set_lang(Lang::De);
     let path = FsPath::parse(r"C:\missing.txt").unwrap();
