@@ -116,6 +116,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const TAB_H: f32 = 32.0;
+const THUMB_MIN_ICON: f32 = 32.0;
 const TOOL_H: f32 = 40.0;
 const HEADER_H: f32 = 28.0;
 const ROW_H: f32 = 24.0;
@@ -2887,7 +2888,7 @@ impl App {
         let mut type_requests: Vec<Vec<u8>> = Vec::new();
         let mut checks: Vec<(u32, bool)> = Vec::new();
         let mut elided: Vec<usize> = Vec::new();
-        let want_thumbs = self.prefs.thumbnails && matches!(mode, LayoutMode::Grid | LayoutMode::Cards) && !in_bin && (self.opts.thumbs != options::Thumbs::Local || !options::remote(&tab.view_loc));
+        let want_thumbs = self.prefs.thumbnails && icon_px >= self.cs(THUMB_MIN_ICON) && !in_bin && (self.opts.thumbs != options::Thumbs::Local || !options::remote(&tab.view_loc));
         let thumb_px = thumbs::class_px(icon_px as u32);
         if let Some(v) = &tab.view {
             if let Some(e) = v.snap().error.as_ref().filter(|_| v.total_rows() == 0) {

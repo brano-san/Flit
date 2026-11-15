@@ -407,24 +407,48 @@ fn thumb_quads(gfx: &Gfx<Mono>) -> usize {
 }
 
 #[test]
-fn grid_asks_for_each_thumbnail_once_and_draws_it_while_details_never_asks() {
-    let mut app = app_at(r"C:\pics");
-    let mut gfx = Gfx::new(Mono, 1024);
-    deliver(&mut app, &["a.jpg", "b.txt", "c"]);
-    app.frame(&mut gfx, Instant::now());
-    assert!(thumbs_asked(&mut app).is_empty());
-    key(&mut app, Key::Char('2'), CTRL_SHIFT);
-    app.frame(&mut gfx, Instant::now());
-    let asked = thumbs_asked(&mut app);
-    assert_eq!(asked.len(), 1);
-    assert!(asked[0].kind == IconKind::Thumbnail && asked[0].path == *loc(r"C:\pics\a.jpg").path());
-    app.on_thumb(&mut gfx, asked[0].key, IconResult::Ready(Bitmap { width: 40, height: 30, rgba: vec![255; 4800] }));
-    app.frame(&mut gfx, Instant::now());
-    assert!(thumbs_asked(&mut app).is_empty());
-    assert_eq!((thumb_quads(&gfx), gfx.thumbs.uploads.rects.len()), (1, 1));
-    app.run_action("view.thumbnails", Instant::now());
-    app.frame(&mut gfx, Instant::now());
-    assert_eq!(thumb_quads(&gfx), 0, "the toggle turns thumbnails off");
+fn small_icons_never_ask_for_thumbnails() {
+    for (digit, mode) in [('6', LayoutMode::Details), ('5', LayoutMode::List)] {
+        let mut app = app_at(r"C:\pics");
+        let mut gfx = Gfx::new(Mono, 1024);
+        deliver(&mut app, &["a.jpg", "b.png"]);
+        key(&mut app, Key::Char(digit), CTRL_SHIFT);
+        app.frame(&mut gfx, Instant::now());
+        app.frame(&mut gfx, Instant::now() + Duration::from_secs(2));
+        assert_eq!(app.layout.mode, mode);
+        assert!(app.layout.icon < 32.0, "{mode:?}: {}", app.layout.icon);
+        assert!(thumbs_asked(&mut app).is_empty(), "{mode:?}: icons under 32 px keep the type icon and decode nothing");
+        assert_eq!(thumb_quads(&gfx), 0, "{mode:?}");
+    }
+}
+
+#[test]
+fn views_with_icons_of_32_px_and_more_ask_for_each_thumbnail_once_and_draw_it_in_place_of_the_icon() {
+    for (digit, mode) in [('6', LayoutMode::Details), ('5', LayoutMode::List), ('2', LayoutMode::Grid)] {
+        let mut app = app_at(r"C:\pics");
+        let mut gfx = Gfx::new(Mono, 1024);
+        deliver(&mut app, &["a.jpg", "b.txt", "c"]);
+        key(&mut app, Key::Char(digit), CTRL_SHIFT);
+        let look = app.tab().look;
+        let top = look.levels() - 1;
+        app.change_view(|t| t.sizes.0[look.slot()] = top);
+        app.frame(&mut gfx, Instant::now());
+        assert_eq!(app.layout.mode, mode);
+        assert!(app.layout.icon >= 32.0, "{mode:?}: {}", app.layout.icon);
+        let asked = thumbs_asked(&mut app);
+        assert!(!asked.is_empty(), "{mode:?}");
+        assert!(asked.iter().all(|r| r.kind == IconKind::Thumbnail && r.path == *loc(r"C:\pics\a.jpg").path()), "{mode:?}: only the picture is asked for, not the text file or the file without an extension");
+        for r in &asked {
+            app.on_thumb(&mut gfx, r.key, IconResult::Ready(Bitmap { width: 40, height: 30, rgba: vec![255; 4800] }));
+        }
+        app.frame(&mut gfx, Instant::now() + Duration::from_secs(2));
+        app.frame(&mut gfx, Instant::now() + Duration::from_secs(2));
+        assert!(thumbs_asked(&mut app).is_empty(), "{mode:?}: asked once");
+        assert_eq!(thumb_quads(&gfx), 1, "{mode:?}");
+        app.run_action("view.thumbnails", Instant::now());
+        app.frame(&mut gfx, Instant::now());
+        assert_eq!(thumb_quads(&gfx), 0, "{mode:?}: the toggle turns thumbnails off");
+    }
 }
 
 #[test]
