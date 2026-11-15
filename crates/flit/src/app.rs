@@ -164,7 +164,7 @@ enum PreviewJob {
     QuickView { window: WindowId, path: FsPath },
     Backdrop { window: WindowId, gen: u64, path: FsPath },
     Browse { window: WindowId, exts: &'static [&'static str], folder: bool, start: Option<FsPath> },
-    ColumnProps { window: WindowId, tab: TabId, gen: u64, dir: FsPath, names: Vec<Vec<u8>> },
+    ColumnProps { window: WindowId, tab: TabId, gen: u64, ask: u64, dir: FsPath, names: Vec<Vec<u8>> },
 }
 
 enum Done {
@@ -178,7 +178,7 @@ enum Done {
     QuickView { window: WindowId, shown: bool },
     Backdrop { window: WindowId, gen: u64, image: Option<flit_core::ui::Bitmap> },
     Browsed { window: WindowId, path: Option<FsPath> },
-    ColumnProps { window: WindowId, tab: TabId, gen: u64, rows: Vec<(Vec<u8>, Vec<String>)> },
+    ColumnProps { window: WindowId, tab: TabId, gen: u64, ask: u64, rows: Vec<(Vec<u8>, flit_core::listing::ColumnValues)> },
 }
 
 fn tools(app: &App) -> Tools {
@@ -214,7 +214,7 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest
                         None => continue,
                     },
                     PreviewJob::QuickView { window, path } => Done::QuickView { window, shown: shell.quick_view(&path) },
-                    PreviewJob::ColumnProps { window, tab, gen, dir, names } => Done::ColumnProps { window, tab, gen, rows: names.into_iter().map(|n| { let props = shell.column_props(&dir.join(&n)); (n, props) }).collect() },
+                    PreviewJob::ColumnProps { window, tab, gen, ask, dir, names } => Done::ColumnProps { window, tab, gen, ask, rows: names.into_iter().map(|n| { let props = shell.column_props(&dir.join(&n)); (n, props) }).collect() },
                     PreviewJob::Backdrop { window, gen, path } => Done::Backdrop { window, gen, image: shell.preview_image(&path, BACKDROP_PX) },
                     PreviewJob::Browse { window, exts, folder, start } => Done::Browsed { window, path: shell.browse(exts, folder, start.as_ref()) },
                 };
@@ -702,8 +702,8 @@ impl<P: Platform> Handler<P> {
                 Effect::Share(paths) => window.share(paths),
                 Effect::SetVolumeLabel { drive, label } => window.set_volume_label(drive, label),
                 Effect::StartDrag(paths) => window.start_drag(paths),
-                Effect::ShellProps { tab, gen, dir, names } => {
-                    let _ = self.previews.send(PreviewJob::ColumnProps { window: id, tab, gen, dir, names });
+                Effect::ShellProps { tab, gen, ask, dir, names } => {
+                    let _ = self.previews.send(PreviewJob::ColumnProps { window: id, tab, gen, ask, dir, names });
                 }
                 Effect::Pinned(pinned) => {
                     for (_, st) in self.windows.iter_mut().filter(|(w, _)| **w != id) {
@@ -979,9 +979,9 @@ impl<P: Platform> Handler<P> {
                         st.app.on_preview(gen, data);
                     }
                 }
-                Done::ColumnProps { window, tab, gen, rows } => {
+                Done::ColumnProps { window, tab, gen, ask, rows } => {
                     if let Some(st) = self.windows.get_mut(&window) {
-                        st.app.on_shell_props(tab, gen, rows);
+                        st.app.on_shell_props(tab, gen, ask, rows);
                     }
                 }
                 Done::QuickView { window, shown } => {

@@ -224,6 +224,12 @@ fn the_header_menu_shows_hides_and_fits_columns_and_the_bin_keeps_its_own() {
         ("Length", false),
         ("Contributing artists", false),
         ("File version", false),
+        ("Date taken", false),
+        ("Camera model", false),
+        ("Album", false),
+        ("Title", false),
+        ("Authors", false),
+        ("Company", false),
         ("Always size columns to fit", false),
     ];
     assert_eq!(commands(&menu.menu), want.map(|(l, c)| (l.to_owned(), c)));

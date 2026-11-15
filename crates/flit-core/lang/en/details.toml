@@ -21,6 +21,12 @@ dimensions = "Dimensions"
 duration = "Length"
 artist = "Contributing artists"
 version = "File version"
+date_taken = "Date taken"
+camera_model = "Camera model"
+album = "Album"
+title = "Title"
+authors = "Authors"
+company = "Company"
 
 [type]
 drive = "Drive"
@@ -56,6 +62,17 @@ medium = "Medium (1 - 128 MB)"
 large = "Large (128 MB - 1 GB)"
 huge = "Huge (1 - 4 GB)"
 gigantic = "Gigantic (4+ GB)"
+
+[dimensions_group]
+very_large = "Very large (12+ MP)"
+large = "Large (2 - 12 MP)"
+medium = "Medium (0.3 - 2 MP)"
+small = "Small (under 0.3 MP)"
+
+[length_group]
+long = "Long (30+ min)"
+medium = "Medium (5 - 30 min)"
+short = "Short (under 5 min)"
 
 [count]
 items = ["{n} item", "{n} items"]

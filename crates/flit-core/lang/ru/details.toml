@@ -21,6 +21,12 @@ dimensions = "Размеры"
 duration = "Продолжительность"
 artist = "Исполнители"
 version = "Версия файла"
+date_taken = "Дата съемки"
+camera_model = "Камера, модель"
+album = "Альбом"
+title = "Название"
+authors = "Авторы"
+company = "Организация"
 
 [type]
 drive = "Диск"
@@ -56,6 +62,17 @@ medium = "Средние (1 - 128 MB)"
 large = "Большие (128 MB - 1 GB)"
 huge = "Огромные (1 - 4 GB)"
 gigantic = "Гигантские (4+ GB)"
+
+[dimensions_group]
+very_large = "Очень большие (12+ МП)"
+large = "Большие (2 - 12 МП)"
+medium = "Средние (0,3 - 2 МП)"
+small = "Маленькие (менее 0,3 МП)"
+
+[length_group]
+long = "Длинные (30+ мин)"
+medium = "Средние (5 - 30 мин)"
+short = "Короткие (менее 5 мин)"
 
 [count]
 items = ["{n} элемент", "{n} элемента", "{n} элементов"]

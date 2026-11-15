@@ -418,7 +418,7 @@ impl Shell for ShellCom {
         self.item_image(&path, size, thumbnail_flags(crate::fs::not_local(&path)))
     }
 
-    fn column_props(&mut self, path: &FsPath) -> Vec<String> {
+    fn column_props(&mut self, path: &FsPath) -> flit_core::listing::ColumnValues {
         crate::preview::column_props(path)
     }
 

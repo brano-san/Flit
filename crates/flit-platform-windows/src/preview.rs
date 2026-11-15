@@ -3,11 +3,12 @@ use crate::fs::LinkInfo;
 use flit_core::i18n::S;
 use flit_core::preview::{PropGroup, MAX_PROPS};
 use flit_core::ui::Bitmap;
+use flit_core::listing::{ColumnValues, SHELL_PROPS};
 use flit_core::FsPath;
 use windows::core::{w, Interface, GUID, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{GENERIC_READ, LPARAM, PROPERTYKEY, WPARAM};
 use windows::Win32::Graphics::Imaging::*;
-use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PropVariantToUInt16, PROPVARIANT};
+use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PropVariantToUInt16, PropVariantToUInt64, PROPVARIANT};
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyDescription, IPropertyDescriptionList, IPropertyStore, PSFormatForDisplayAlloc, PSGetPropertyKeyFromName, GETPROPERTYSTOREFLAGS, GPS_BESTEFFORT, GPS_FASTPROPERTIESONLY, PDFF_DEFAULT};
@@ -99,26 +100,49 @@ pub(crate) fn store_flags(not_local: bool) -> GETPROPERTYSTOREFLAGS {
     if not_local { GPS_FASTPROPERTIESONLY } else { GPS_BESTEFFORT }
 }
 
-pub(crate) const COLUMN_PROPS: [PCWSTR; 4] = [w!("System.Image.Dimensions"), w!("System.Media.Duration"), w!("System.Music.Artist"), w!("System.FileVersion")];
+const SIZE_PROPS: [&str; 2] = ["System.Image.HorizontalSize", "System.Image.VerticalSize"];
 
-pub(crate) fn column_props(path: &FsPath) -> Vec<String> {
-    unsafe {
-        let name = path.to_wide(false);
-        let Ok(item) = SHCreateItemFromParsingName::<_, _, IShellItem2>(PCWSTR(name.as_ptr()), None) else { return Vec::new() };
-        let Ok(store) = item.GetPropertyStore::<IPropertyStore>(store_flags(crate::fs::not_local(path))) else { return Vec::new() };
-        COLUMN_PROPS
+fn column_keys() -> &'static [Option<PROPERTYKEY>] {
+    static KEYS: std::sync::OnceLock<Vec<Option<PROPERTYKEY>>> = std::sync::OnceLock::new();
+    KEYS.get_or_init(|| {
+        SHELL_PROPS
             .iter()
-            .map(|&canonical| {
+            .chain(&SIZE_PROPS)
+            .map(|name| {
+                let wide = wide_str(name);
                 let mut key = PROPERTYKEY::default();
-                if PSGetPropertyKeyFromName(canonical, &mut key).is_err() {
-                    return String::new();
-                }
-                let Ok(mut value) = store.GetValue(&key) else { return String::new() };
-                let text = PSFormatForDisplayAlloc(&key, &value, PDFF_DEFAULT).ok().and_then(|p: PWSTR| take_pwstr(p)).map(|w| String::from_utf16_lossy(&w));
-                let _ = PropVariantClear(&mut value);
-                text.map(|t| t.replace(['\u{200E}', '\u{200F}', '\u{202A}', '\u{202C}'], "").trim().to_owned()).unwrap_or_default()
+                unsafe { PSGetPropertyKeyFromName(PCWSTR(wide.as_ptr()), &mut key) }.ok().map(|_| key)
             })
             .collect()
+    })
+}
+
+unsafe fn display_value(store: &IPropertyStore, key: &PROPERTYKEY) -> String {
+    let Ok(mut value) = store.GetValue(key) else { return String::new() };
+    let text = PSFormatForDisplayAlloc(key, &value, PDFF_DEFAULT).ok().and_then(|p: PWSTR| take_pwstr(p)).map(|w| String::from_utf16_lossy(&w));
+    let _ = PropVariantClear(&mut value);
+    text.map(|t| t.replace(['\u{200E}', '\u{200F}', '\u{202A}', '\u{202C}'], "").trim().to_owned()).unwrap_or_default()
+}
+
+unsafe fn number_value(store: &IPropertyStore, key: Option<PROPERTYKEY>) -> Option<u64> {
+    let mut value = store.GetValue(&key?).ok()?;
+    let n = PropVariantToUInt64(&value).ok();
+    let _ = PropVariantClear(&mut value);
+    n
+}
+
+pub(crate) fn column_props(path: &FsPath) -> ColumnValues {
+    unsafe {
+        let name = path.to_wide(false);
+        let Ok(item) = SHCreateItemFromParsingName::<_, _, IShellItem2>(PCWSTR(name.as_ptr()), None) else { return ColumnValues::default() };
+        let Ok(store) = item.GetPropertyStore::<IPropertyStore>(store_flags(crate::fs::not_local(path))) else { return ColumnValues::default() };
+        let keys = column_keys();
+        let text: Vec<String> = keys.iter().take(SHELL_PROPS.len()).map(|k| k.as_ref().map(|k| display_value(&store, k)).unwrap_or_default()).collect();
+        let shown = |k: usize| text.get(k).is_some_and(|t| !t.is_empty());
+        let side = |k: usize| number_value(&store, keys.get(SHELL_PROPS.len() + k).copied().flatten()).and_then(|n| u32::try_from(n).ok());
+        let (width, height) = if shown(0) { (side(0), side(1)) } else { (None, None) };
+        let duration = if shown(1) { number_value(&store, keys.get(1).copied().flatten()) } else { None };
+        ColumnValues { text, width, height, duration }
     }
 }
 

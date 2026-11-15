@@ -228,6 +228,12 @@ pub enum Column {
     Duration,
     Artist,
     Version,
+    DateTaken,
+    CameraModel,
+    Album,
+    Title,
+    Authors,
+    Company,
     GitStatus,
     GitMessage,
     GitAuthor,
@@ -235,7 +241,18 @@ pub enum Column {
 }
 
 pub const GIT_COLUMNS: [Column; 4] = [Column::GitStatus, Column::GitMessage, Column::GitAuthor, Column::GitDate];
-pub const SHELL_COLUMNS: [Column; 4] = [Column::ImageSize, Column::Duration, Column::Artist, Column::Version];
+pub const SHELL_COLUMNS: [Column; 10] = [
+    Column::ImageSize,
+    Column::Duration,
+    Column::Artist,
+    Column::Version,
+    Column::DateTaken,
+    Column::CameraModel,
+    Column::Album,
+    Column::Title,
+    Column::Authors,
+    Column::Company,
+];
 pub const REPO_COLUMNS: [Column; 15] = [
     Column::Name,
     Column::Type,
@@ -282,6 +299,12 @@ impl Column {
             Column::Duration => S::DetailsColumnDuration,
             Column::Artist => S::DetailsColumnArtist,
             Column::Version => S::DetailsColumnVersion,
+            Column::DateTaken => S::DetailsColumnDateTaken,
+            Column::CameraModel => S::DetailsColumnCameraModel,
+            Column::Album => S::DetailsColumnAlbum,
+            Column::Title => S::DetailsColumnTitle,
+            Column::Authors => S::DetailsColumnAuthors,
+            Column::Company => S::DetailsColumnCompany,
             Column::GitStatus => S::GitColumnStatus,
             Column::GitMessage => S::GitColumnMessage,
             Column::GitAuthor => S::GitColumnAuthor,
@@ -307,7 +330,11 @@ impl Column {
             Column::FileSystem => SortField::FileSystem,
             Column::Percent => SortField::Percent,
             Column::Attributes => SortField::Attributes,
-            Column::ImageSize | Column::Duration | Column::Artist | Column::Version | Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => return None,
+            Column::ImageSize => SortField::Dimensions,
+            Column::Duration => SortField::Duration,
+            Column::Artist => SortField::Artist,
+            Column::Version => SortField::Version,
+            Column::DateTaken | Column::CameraModel | Column::Album | Column::Title | Column::Authors | Column::Company | Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => return None,
         })
     }
 
@@ -384,7 +411,7 @@ pub enum Effect {
     ShellWarm(Vec<ShellMenu>),
     Properties(Vec<FsPath>),
     StartDrag(Vec<FsPath>),
-    ShellProps { tab: TabId, gen: u64, dir: FsPath, names: Vec<Vec<u8>> },
+    ShellProps { tab: TabId, gen: u64, ask: u64, dir: FsPath, names: Vec<Vec<u8>> },
     Pinned(Vec<Location>),
     PinnedFiles(Vec<Location>),
     PinFolders(Vec<FsPath>),
@@ -1842,6 +1869,7 @@ impl App {
                 self.quick_timer(now);
                 self.expire_error(now);
                 self.expire_undo_bar(now);
+                self.dirty |= self.shell_props_due(now);
             }
             Event::ClipboardChanged(seq) => self.clipboard_changed(*seq),
             Event::ClipboardText(text) => self.clipboard_text_changed(*text),
@@ -2354,7 +2382,7 @@ impl App {
         let _span = tracing::trace_span!("ui_frame").entered();
         let dt = frame_dt(self.last_frame, now, self.moving);
         self.last_frame = Some(now);
-        self.request_shell_props();
+        self.pump_shell_props(now);
         self.poll();
         self.dirty = false;
         self.expire_error(now);

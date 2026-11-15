@@ -63,7 +63,7 @@ pub struct Columns {
     #[serde(skip, default = "git_widths")]
     pub git_widths: [f32; 4],
     #[serde(skip, default = "extra_shown")]
-    pub extra: u16,
+    pub extra: u32,
     #[serde(skip, default = "extra_widths")]
     pub extra_widths: [f32; EXTRA],
     #[serde(skip, default = "column_order")]
@@ -71,12 +71,12 @@ pub struct Columns {
 }
 
 pub const GIT_WIDTHS: [f32; 4] = [100.0, 260.0, 140.0, 150.0];
-pub const EXTRA: usize = 13;
-pub const ORDERED: usize = 21;
+pub const EXTRA: usize = 19;
+pub const ORDERED: usize = 27;
 const FIRST_EXTRA: u8 = Column::Folders as u8;
-pub const EXTRA_WIDTHS: [f32; EXTRA] = [90.0, 150.0, 110.0, 110.0, 110.0, 90.0, 110.0, 90.0, 90.0, 110.0, 100.0, 160.0, 110.0];
+pub const EXTRA_WIDTHS: [f32; EXTRA] = [90.0, 150.0, 110.0, 110.0, 110.0, 90.0, 110.0, 90.0, 90.0, 110.0, 100.0, 160.0, 110.0, 140.0, 140.0, 160.0, 160.0, 140.0, 140.0];
 const DEFAULT_HIDDEN: u8 = 1 << Column::Created as u8;
-const DEFAULT_EXTRA: u16 = 1 << (Column::Folders as u8 - FIRST_EXTRA) | 1 << (Column::Free as u8 - FIRST_EXTRA) | 1 << (Column::FileSystem as u8 - FIRST_EXTRA) | 1 << (Column::Percent as u8 - FIRST_EXTRA) | 1 << (Column::Files as u8 - FIRST_EXTRA);
+const DEFAULT_EXTRA: u32 = 1 << (Column::Folders as u8 - FIRST_EXTRA) | 1 << (Column::Free as u8 - FIRST_EXTRA) | 1 << (Column::FileSystem as u8 - FIRST_EXTRA) | 1 << (Column::Percent as u8 - FIRST_EXTRA) | 1 << (Column::Files as u8 - FIRST_EXTRA);
 const DEFAULT_WIDTHS: [f32; 7] = [0.0, 150.0, 140.0, 90.0, 220.0, 150.0, 150.0];
 pub const DEFAULT_ORDER: [Column; ORDERED] = [
     Column::Name,
@@ -100,6 +100,12 @@ pub const DEFAULT_ORDER: [Column; ORDERED] = [
     Column::Duration,
     Column::Artist,
     Column::Version,
+    Column::DateTaken,
+    Column::CameraModel,
+    Column::Album,
+    Column::Title,
+    Column::Authors,
+    Column::Company,
 ];
 const ALL_COLUMNS: [Column; ORDERED] = [
     Column::Name,
@@ -123,13 +129,19 @@ const ALL_COLUMNS: [Column; ORDERED] = [
     Column::Duration,
     Column::Artist,
     Column::Version,
+    Column::DateTaken,
+    Column::CameraModel,
+    Column::Album,
+    Column::Title,
+    Column::Authors,
+    Column::Company,
 ];
 
 fn git_widths() -> [f32; 4] {
     GIT_WIDTHS
 }
 
-fn extra_shown() -> u16 {
+fn extra_shown() -> u32 {
     DEFAULT_EXTRA
 }
 
@@ -616,6 +628,8 @@ impl Tab {
 const DATE_GROUPS: [S; 6] = [S::DetailsGroupToday, S::DetailsGroupYesterday, S::DetailsGroupLastWeek, S::DetailsGroupLastMonth, S::DetailsGroupLastYear, S::DetailsGroupLongAgo];
 const NAME_GROUPS: [S; 4] = [S::DetailsGroupNameAh, S::DetailsGroupNameIp, S::DetailsGroupNameQz, S::DetailsGroupOther];
 const ITEM_GROUPS: [S; 5] = [S::DetailsGroupThousands, S::DetailsGroupHundreds, S::DetailsGroupDozens, S::DetailsGroupFew, S::DetailsGroupNoItems];
+const DIMENSION_GROUPS: [S; 4] = [S::DetailsDimensionsGroupVeryLarge, S::DetailsDimensionsGroupLarge, S::DetailsDimensionsGroupMedium, S::DetailsDimensionsGroupSmall];
+const LENGTH_GROUPS: [S; 3] = [S::DetailsLengthGroupLong, S::DetailsLengthGroupMedium, S::DetailsLengthGroupShort];
 
 fn bucket_label(s: &mut impl std::fmt::Write, table: &[S], bucket: u64) {
     let _ = s.write_str(table.get(bucket as usize).map_or(S::DetailsGroupUnspecified, |&k| k).t());
@@ -623,7 +637,7 @@ fn bucket_label(s: &mut impl std::fmt::Write, table: &[S], bucket: u64) {
 
 const NO_ITEMS: &str = "--";
 const G_CALENDAR: &str = "\u{E787}";
-const WINDOWS_COLUMNS: [Column; 16] = [
+const WINDOWS_COLUMNS: [Column; 22] = [
     Column::Name,
     Column::Type,
     Column::Modified,
@@ -640,8 +654,14 @@ const WINDOWS_COLUMNS: [Column; 16] = [
     Column::Duration,
     Column::Artist,
     Column::Version,
+    Column::DateTaken,
+    Column::CameraModel,
+    Column::Album,
+    Column::Title,
+    Column::Authors,
+    Column::Company,
 ];
-const WINDOWS_REPO_COLUMNS: [Column; 20] = [
+const WINDOWS_REPO_COLUMNS: [Column; 26] = [
     Column::Name,
     Column::Type,
     Column::Modified,
@@ -658,6 +678,12 @@ const WINDOWS_REPO_COLUMNS: [Column; 20] = [
     Column::Duration,
     Column::Artist,
     Column::Version,
+    Column::DateTaken,
+    Column::CameraModel,
+    Column::Album,
+    Column::Title,
+    Column::Authors,
+    Column::Company,
     Column::GitStatus,
     Column::GitMessage,
     Column::GitAuthor,
@@ -1230,7 +1256,7 @@ impl App {
             Column::Origin => s.push_str(&name::display(recycle::origin(l, i))),
             Column::Tag => self.tag_text(&mut s, e.tags),
             Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => self.git_text(&mut s, l.name(i), col),
-            Column::ImageSize | Column::Duration | Column::Artist | Column::Version => self.shell_prop_text(&mut s, l.name(i), col),
+            Column::ImageSize | Column::Duration | Column::Artist | Column::Version | Column::DateTaken | Column::CameraModel | Column::Album | Column::Title | Column::Authors | Column::Company => self.shell_prop_text(&mut s, l.name(i), col),
             Column::Type => return self.type_text(arena, l, i),
             Column::Size => {
                 if !e.is_dir() || e.attrs & attr::SIZE_KNOWN != 0 && (self.prefs.auto_sizes || e.attrs & attr::VOLUME != 0) {
@@ -1296,6 +1322,13 @@ impl App {
                 o => s.push_str(&name::display(o)),
             },
             GroupField::Tag => s.push_str(self.tag_defs().get(sort::first_tag(e.tags) as usize).map_or(S::DetailsGroupNoTags.t(), |t| t.name.as_str())),
+            GroupField::Dimensions => bucket_label(&mut s, &DIMENSION_GROUPS, key),
+            GroupField::Duration => bucket_label(&mut s, &LENGTH_GROUPS, key),
+            GroupField::Artist => s.push_str(sort::artist(l, i).unwrap_or(S::DetailsGroupUnspecified.t())),
+            GroupField::Version if key == sort::UNSPECIFIED => s.push_str(S::DetailsGroupUnspecified.t()),
+            GroupField::Version => {
+                let _ = write!(s, "{key}.x");
+            }
         }
         s.into_bump_str()
     }

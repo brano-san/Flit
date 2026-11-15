@@ -1,6 +1,6 @@
 use crate::filter::NameFilter;
 use crate::hash::{self, FxHashMap, FxHashSet, FxHasher};
-use crate::listing::{attr, ChangeKind, DirChange, DirSnapshot, DirStats, Listing};
+use crate::listing::{attr, ChangeKind, DirChange, DirSnapshot, DirStats, Listing, PropKey};
 use crate::path::PathKind;
 use crate::sort::{self, GroupField, ViewSpec};
 use std::hash::Hasher;
@@ -677,6 +677,28 @@ impl DirView {
         }
         let v = snap.view;
         if !touched.is_empty() && (v.sort.field == sort::SortField::Tag || v.group.field == GroupField::Tag) {
+            self.reorder(touched);
+            self.rows_changed();
+            self.prune();
+        }
+    }
+
+    pub fn set_props(&mut self, keys: Vec<(u32, Option<PropKey>)>) {
+        let l = self.listing();
+        let changed: Vec<(u32, Option<PropKey>)> = keys.into_iter().filter(|(i, k)| (*i as usize) < l.len() && l.props.get(i) != k.as_ref()).collect();
+        if changed.is_empty() {
+            return;
+        }
+        let snap = Arc::make_mut(&mut self.snap);
+        let mut touched = Vec::with_capacity(changed.len());
+        for (i, k) in changed {
+            match k {
+                Some(k) => snap.listing.props.insert(i, k),
+                None => snap.listing.props.remove(&i),
+            };
+            touched.push(i);
+        }
+        if snap.view.needs_props() {
             self.reorder(touched);
             self.rows_changed();
             self.prune();

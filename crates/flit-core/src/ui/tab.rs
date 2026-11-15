@@ -293,7 +293,12 @@ impl Tab {
         if self.loading.is_some() || self.pending_diffs.is_empty() {
             return false;
         }
+        let changed: Vec<Vec<u8>> = if self.props.is_idle() { Vec::new() } else { self.pending_diffs.iter().map(|c| c.name.clone()).collect() };
         self.reveal_pending |= v.apply_all(self.pending_diffs.drain(..));
+        for name in changed {
+            let at = v.find(&name);
+            self.props.forget(&name, at);
+        }
         self.check_trail();
         true
     }
