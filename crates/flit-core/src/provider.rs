@@ -149,6 +149,23 @@ pub struct Accounts {
     pub groups: Vec<(u32, String)>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum LinkKind {
+    Shortcut,
+    Symbolic,
+    Junction,
+    Hard,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LinkChoices(pub [bool; 4]);
+
+impl LinkChoices {
+    pub fn allows(self, kind: LinkKind) -> bool {
+        self.0[kind as usize]
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum FileOp {
     Trash(Vec<FsPath>),
@@ -176,6 +193,8 @@ pub enum FileOp {
     SetAttributes { items: Vec<FsPath>, set: u32, clear: u32, unblock: bool },
     PasteDropped { dest: FsPath, moving: bool },
     GrantAccess(FsPath),
+    LinkAs { items: Vec<FsPath>, dest: FsPath, kind: LinkKind },
+    PasteLinkAs { dest: FsPath, kind: LinkKind },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -280,6 +299,8 @@ impl FileOp {
             FileOp::SetAttributes { items, set, clear, unblock } => FileOp::SetAttributes { items: all(items)?, set: *set, clear: *clear, unblock: *unblock },
             FileOp::PasteDropped { dest, moving } => FileOp::PasteDropped { dest: f(dest)?, moving: *moving },
             FileOp::GrantAccess(dir) => FileOp::GrantAccess(f(dir)?),
+            FileOp::LinkAs { items, dest, kind } => FileOp::LinkAs { items: all(items)?, dest: f(dest)?, kind: *kind },
+            FileOp::PasteLinkAs { dest, kind } => FileOp::PasteLinkAs { dest: f(dest)?, kind: *kind },
         })
     }
 }

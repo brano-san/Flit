@@ -105,3 +105,9 @@ mixed = "Mix files and folders"
 
 [group]
 none = "None"
+[links]
+paste_as = "Paste as"
+symbolic_link = "Symbolic link"
+junction = "Junction"
+hard_link = "Hard link"
+retry_admin = "Retry as administrator"

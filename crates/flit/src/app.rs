@@ -86,6 +86,7 @@ impl Visible {
 enum ShellJob {
     Icon { window: WindowId, req: IconRequest, visible: Arc<Visible> },
     TypeName(Vec<u8>),
+    LinkChoices { window: WindowId, generation: u64, items: Option<Vec<FsPath>>, dest: FsPath },
 }
 
 struct ThumbJob {
@@ -136,6 +137,7 @@ enum Done {
     Refreshed { req: IconRequest, image: flit_core::ui::Bitmap },
     Thumb { window: WindowId, key: u64, result: IconResult },
     TypeName(Vec<u8>, Option<String>),
+    LinkChoices { window: WindowId, generation: u64, choices: flit_core::provider::LinkChoices },
     Sorted { window: WindowId, tab: TabId, gen: u64, view: ViewSpec, base_len: usize, order: Vec<u32>, ms: f64 },
     Preview { window: WindowId, gen: u64, data: PreviewData },
     QuickView { window: WindowId, shown: bool },
@@ -222,6 +224,7 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest
                         let name = shell.type_name(&ext);
                         Done::TypeName(ext, name)
                     }
+                    ShellJob::LinkChoices { window, generation, items, dest } => Done::LinkChoices { window, generation, choices: shell.link_choices(items.as_deref(), &dest) },
                 };
                 if tx.send(done).is_err() {
                     return;
@@ -557,6 +560,9 @@ impl<P: Platform> Handler<P> {
                 }
                 Effect::TypeName(ext) => {
                     let _ = self.shell.send(ShellJob::TypeName(ext));
+                }
+                Effect::LinkChoices { generation, items, dest } => {
+                    let _ = self.shell.send(ShellJob::LinkChoices { window: id, generation, items, dest });
                 }
                 Effect::SetClipboard(text) if !text.is_empty() => window.set_clipboard_text(&text),
                 Effect::SetClipboard(_) => {}
@@ -918,6 +924,11 @@ impl<P: Platform> Handler<P> {
                 Done::TypeName(ext, name) => {
                     for st in self.windows.values_mut() {
                         st.app.on_type_name(ext.clone(), name.clone());
+                    }
+                }
+                Done::LinkChoices { window, generation, choices } => {
+                    if let Some(st) = self.windows.get_mut(&window) {
+                        st.app.on_event(&Event::LinkChoices { generation, choices }, Instant::now());
                     }
                 }
                 Done::Preview { window, gen, data } => {

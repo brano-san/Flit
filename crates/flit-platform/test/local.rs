@@ -715,6 +715,22 @@ fn paste_shortcut_links_the_clipboard_items_into_the_folder() {
 }
 
 #[test]
+fn typed_paste_links_use_the_same_queue_and_do_not_clear_a_cut_clipboard() {
+    for kind in [flit_core::provider::LinkKind::Symbolic, flit_core::provider::LinkKind::Junction, flit_core::provider::LinkKind::Hard] {
+        let files = vec![p(r"C:\a\x.txt")];
+        let mut clip = Clip { files: files.clone(), cut: true, ..Default::default() };
+        let (error, report) = run_op(&mut clip, FileOp::PasteLinkAs { dest: p(r"C:\b"), kind });
+        let expected = FileOp::LinkAs { items: files, dest: p(r"C:\b"), kind };
+        assert!(error.is_none());
+        assert_eq!(clip.ran.as_slice(), std::slice::from_ref(&expected));
+        assert_eq!(report.unwrap().op, expected);
+        assert!(!clip.cleared);
+        let (error, report) = run_op(&mut Clip::default(), FileOp::PasteLinkAs { dest: p(r"C:\b"), kind });
+        assert!(error.is_some() && report.is_none());
+    }
+}
+
+#[test]
 fn open_containing_path_reveals_the_real_location() {
     let dir = std::env::temp_dir().join(format!("flit-platform-reveal-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("inner")).unwrap();

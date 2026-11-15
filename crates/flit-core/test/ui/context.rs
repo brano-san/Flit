@@ -42,6 +42,39 @@ fn menu_geometry_remains_valid_in_small_scaled_viewports() {
 }
 
 #[test]
+fn translated_link_submenus_fit_a_narrow_window_and_keep_keyboard_focus_when_choices_arrive() {
+    for lang in crate::i18n::Lang::ALL {
+        let labels = [S::MenuShortcut, S::MenuLinksSymbolicLink, S::MenuLinksJunction, S::MenuLinksHardLink];
+        let entries = labels.into_iter().enumerate().map(|(n, key)| {
+            let mut item = cmd(key.in_lang(lang));
+            if let MenuItem::Command { disabled, .. } = &mut item { *disabled = n > 0; }
+            item
+        }).collect();
+        let items = [MenuItem::Submenu { label: S::MenuLinksPasteAs.in_lang(lang).to_owned(), items: entries }];
+        let mut c = ContextMenu::new(&items, MenuKind::Background, vec![], (250.0, 120.0), Rect::new(0.0, 0.0, 320.0, 280.0), 1.0);
+        let mut gfx = crate::text::Gfx::new(crate::text::tests::Mono, 1024);
+        c.measure(&mut gfx);
+        c.key(Key::Down, Mods::default());
+        c.key(Key::Right, Mods::default());
+        assert!(c.is_open(S::MenuLinksPasteAs.in_lang(lang)));
+        c.key(Key::Down, Mods::default());
+        assert_eq!(c.key(Key::Enter, Mods::default()).0, MenuOutcome::Command(0));
+        let hot = c.hot;
+        c.set_disabled(3, false);
+        assert_eq!(c.hot, hot);
+        c.key(Key::End, Mods::default());
+        assert_eq!(c.key(Key::Enter, Mods::default()).0, MenuOutcome::Command(3));
+        c.set_disabled(3, true);
+        assert_eq!(c.key(Key::Enter, Mods::default()).0, MenuOutcome::Open);
+        c.measure(&mut gfx);
+        c.draw(&mut gfx, &crate::theme::LIGHT, true, &Default::default());
+        assert!(c.rect.x >= 0.0 && c.rect.right() <= 320.0 && c.rect.bottom() <= 280.0);
+        assert!(labels.into_iter().all(|key| c.labels().iter().any(|s| s.trim() == key.in_lang(lang))));
+        assert_eq!(c.key(Key::Escape, Mods::default()).0, MenuOutcome::Closed);
+    }
+}
+
+#[test]
 fn long_menu_scrollbar_can_be_dragged_to_the_last_command() {
     let mut c = ContextMenu::new(&(0..80).map(|n| cmd(&format!("Item {n}"))).collect::<Vec<_>>(), MenuKind::File, vec![], (0.0, 0.0), Rect::new(0.0, 0.0, 600.0, 400.0), 1.0);
     let (x, y) = (c.thumb.x + c.thumb.w / 2.0, c.thumb.y + c.thumb.h / 2.0);

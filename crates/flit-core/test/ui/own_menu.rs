@@ -15,6 +15,49 @@ fn app() -> App {
     app
 }
 
+fn disabled_link(items: &[MenuItem], label: &str) -> Option<bool> {
+    items.iter().find_map(|item| match item {
+        MenuItem::Command { label: text, disabled, .. } if text == label => Some(*disabled),
+        MenuItem::Submenu { items, .. } => disabled_link(items, label),
+        _ => None,
+    })
+}
+
+#[test]
+fn link_choices_enable_the_visible_menu_in_both_async_orders_and_never_reopen_it() {
+    use crate::provider::LinkChoices;
+    for choices_first in [true, false] {
+        let mut app = app();
+        app.context_menu();
+        let effects: Vec<_> = app.drain_effects().collect();
+        let generation = effects.iter().find_map(|e| if let Effect::LinkChoices { generation, .. } = e { Some(*generation) } else { None }).unwrap();
+        let menu = effects.into_iter().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m) } else { None }).unwrap();
+        let answer = Event::LinkChoices { generation, choices: LinkChoices([true, true, false, true]) };
+        if choices_first { app.on_event(&answer, Instant::now()); }
+        app.on_event(&Event::ShowMenu { items: menu.menu, x: menu.x, y: menu.y, launches: Vec::new(), kind: menu.kind, shell: Vec::new(), pending: false }, Instant::now());
+        let mut gfx = Gfx::new(Mono, 1024);
+        app.frame(&mut gfx, Instant::now());
+        let context = app.context_menu_mut().unwrap();
+        context.insert("Hard link");
+        context.key(Key::Down, Mods::default());
+        if !choices_first { app.on_event(&answer, Instant::now()); }
+        let current = &app.own_menu.as_ref().unwrap().items;
+        assert_eq!(disabled_link(current, "Hard link"), Some(false), "choices_first={choices_first}");
+        assert_eq!(disabled_link(current, "Junction"), Some(true));
+        assert_eq!(app.context_menu_open().unwrap().query.text(), "Hard link");
+        app.context_menu_mut().unwrap().key(Key::Down, Mods::default());
+        let chosen = app.context_menu_mut().unwrap().key(Key::Enter, Mods::default()).0;
+        assert!(matches!(chosen, MenuOutcome::Command(_)));
+        app.on_event(&Event::ClipboardChanged(30), Instant::now());
+        assert_eq!(disabled_link(&app.own_menu.as_ref().unwrap().items, "Hard link"), Some(true));
+        app.on_event(&answer, Instant::now());
+        assert_eq!(disabled_link(&app.own_menu.as_ref().unwrap().items, "Hard link"), Some(true));
+        app.close_own_menu();
+        app.on_event(&answer, Instant::now());
+        assert!(app.own_menu.is_none());
+    }
+}
+
 fn shown(app: &mut App, launches: Vec<Launch>) {
     let items = vec![cmd("Copy path"), MenuItem::Separator, MenuItem::Submenu { label: "Open with".into(), items: vec![cmd("Editor"), cmd("Viewer")] }];
     app.on_event(&Event::ShowMenu { items, x: 100.0, y: 100.0, launches, kind: crate::ui::MenuKind::None, shell: Vec::new(), pending: false }, Instant::now());

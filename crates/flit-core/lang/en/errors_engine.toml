@@ -33,3 +33,4 @@ no_content_search = "No content search program is installed. Install the package
 content_search_failed = "Content search with {program} failed: {error}"
 wsl_lost = "The connection to {distro} was lost"
 wsl_stopped = "The connection to {distro} was lost: this folder no longer updates. Press F5 to reload it."
+symlink_privilege = "Creating symbolic links requires Developer Mode or administrator rights."

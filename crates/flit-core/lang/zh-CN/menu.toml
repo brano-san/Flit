@@ -105,3 +105,9 @@ mixed = "混合文件和文件夹"
 
 [group]
 none = "无"
+[links]
+paste_as = "粘贴为"
+symbolic_link = "符号链接"
+junction = "目录联接"
+hard_link = "硬链接"
+retry_admin = "以管理员身份重试"

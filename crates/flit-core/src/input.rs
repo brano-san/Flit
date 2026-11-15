@@ -116,6 +116,7 @@ pub enum Event {
     Timer,
     ClipboardChanged(u32),
     ClipboardText(bool),
+    LinkChoices { generation: u64, choices: crate::provider::LinkChoices },
     SessionEnding,
     Hosted(crate::preview::HostEvent),
 }

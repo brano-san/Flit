@@ -22,6 +22,36 @@ fn app_at(path: &str) -> App {
     App::new(Persisted { path: Location::parse(path).unwrap(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 600), t0())
 }
 
+#[test]
+fn symbolic_link_privilege_retry_is_explicit_and_its_translations_fit_the_first_button() {
+    let original = crate::i18n::lang();
+    for lang in crate::i18n::Lang::ALL {
+        crate::i18n::set_lang(lang);
+        let mut app = app_at(r"C:\x");
+        app.on_event(&Event::Resized { width: 400, height: 400 }, t0());
+        let (id, ctl) = paste(&mut app);
+        let tab = app.tab().id;
+        app.on_provider_event(ProviderEvent::OpFailure { tab, id, failure: Failure { path: p(r"C:\source.txt"), error: S::ErrorsEngineSymlinkPrivilege.en().into(), fatal: false } }, t0());
+        let mut gfx = Gfx::new(Mono, 1024);
+        app.frame(&mut gfx, t0());
+        assert_eq!(app.dialog_buttons()[0], S::MenuLinksRetryAdmin.t());
+        let (dialog, buttons) = app.dialog_rects();
+        assert!(buttons[0].w > buttons[1].w && buttons[0].y < buttons[1].y);
+        assert!(buttons.iter().all(|b| b.x >= dialog.x && b.right() <= dialog.right() && b.bottom() <= 400.0));
+        let font = FontStyle::new(FontFamily::Ui, 13.0, false);
+        let rows = crate::ui::settings_page::wrap(&mut gfx, S::MenuLinksRetryAdmin.t(), font, buttons[0].w - 16.0);
+        assert!(rows.len() <= 2 && rows.iter().all(|line| gfx.measure(line, font) <= buttons[0].w - 16.0));
+        let answered = ctl.clone();
+        let (ready, waiting) = mpsc::channel();
+        let waiter = std::thread::spawn(move || answered.recover(false, || { ready.send(()).unwrap(); }));
+        waiting.recv_timeout(Duration::from_secs(1)).unwrap();
+        key(&mut app, Key::Home);
+        key(&mut app, Key::Enter);
+        assert_eq!(waiter.join().unwrap(), Some(Recover::Retry));
+    }
+    crate::i18n::set_lang(original);
+}
+
 fn started(app: &mut App) -> Option<(OpId, OpCtl)> {
     app.drain_effects().find_map(|e| match e {
         Effect::Provider { req: ProviderRequest::Op { id, ctl, .. }, .. } => Some((id, ctl)),

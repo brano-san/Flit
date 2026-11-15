@@ -105,3 +105,9 @@ mixed = "Dateien und Ordner mischen"
 
 [group]
 none = "Keine"
+[links]
+paste_as = "Einfügen als"
+symbolic_link = "Symbolischer Link"
+junction = "Verzeichnisverknüpfung"
+hard_link = "Harte Verknüpfung"
+retry_admin = "Als Administrator wiederholen"
