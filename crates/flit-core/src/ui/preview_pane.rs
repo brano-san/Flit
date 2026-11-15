@@ -1778,8 +1778,10 @@ impl App {
             self.request_icons(requests);
             return;
         }
-        let glyph = if e.attrs & attr::VOLUME != 0 { super::G_DRIVE } else if e.is_dir() { super::G_FOLDER } else { super::G_FILE };
-        centered(g, r, glyph, FontStyle::new(FontFamily::Icons, r.h * 0.8, false), self.theme().text_dim);
+        if !self.folder_stand_in(g, kind, r.w as u32, r, 255, &mut requests) {
+            let glyph = if e.attrs & attr::VOLUME != 0 { super::G_DRIVE } else if e.is_dir() { super::G_FOLDER } else { super::G_FILE };
+            centered(g, r, glyph, FontStyle::new(FontFamily::Icons, r.h * 0.8, false), self.theme().text_dim);
+        }
         if let (false, Some(path)) = (self.icons.contains_key(&key), s.path.clone()) {
             requests.push(IconRequest { key, kind, path, size: r.w as u32, gen: 0, row: 0 });
         }

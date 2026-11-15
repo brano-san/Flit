@@ -87,8 +87,39 @@ impl Visible {
     }
 }
 
+const FOLDER_BATCH: usize = 100;
+
+fn batched<S: Shell>(req: &IconRequest) -> bool {
+    S::BATCHES_FOLDER_ICONS && req.kind == flit_core::ui::IconKind::CustomFolder
+}
+
+fn folder_batches(reqs: Vec<IconRequest>) -> Vec<Vec<IconRequest>> {
+    let mut out: Vec<Vec<IconRequest>> = Vec::new();
+    for req in reqs {
+        match out.last_mut() {
+            Some(last) if last.len() < FOLDER_BATCH => last.push(req),
+            _ => out.push(vec![req]),
+        }
+    }
+    out
+}
+
+fn batch_icons<S: Shell>(shell: &mut S, window: WindowId, reqs: Vec<IconRequest>, visible: &Visible) -> Vec<Done> {
+    let (wanted, skipped): (Vec<IconRequest>, Vec<IconRequest>) = reqs.into_iter().partition(|r| visible.wants(r));
+    if !wanted.is_empty() {
+        shell.prepare_icons(&wanted);
+    }
+    let mut out: Vec<Done> = skipped.into_iter().map(|req| Done::Icon { window, req, result: IconResult::Skipped }).collect();
+    out.extend(wanted.into_iter().map(|req| {
+        let result = if visible.wants(&req) { shell.icon(&req).map_or(IconResult::Failed, IconResult::Ready) } else { IconResult::Skipped };
+        Done::Icon { window, req, result }
+    }));
+    out
+}
+
 enum ShellJob {
     Icon { window: WindowId, req: IconRequest, visible: Arc<Visible> },
+    Icons { window: WindowId, reqs: Vec<IconRequest>, visible: Arc<Visible> },
     TypeName(Vec<u8>),
     LinkChoices { window: WindowId, generation: u64, items: Option<Vec<FsPath>>, dest: FsPath },
 }
@@ -222,15 +253,16 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest
                         } else {
                             shell.icon(&req).map_or(IconResult::Failed, IconResult::Ready)
                         };
-                        Done::Icon { window, req, result }
+                        vec![Done::Icon { window, req, result }]
                     }
+                    ShellJob::Icons { window, reqs, visible } => batch_icons(&mut shell, window, reqs, &visible),
                     ShellJob::TypeName(ext) => {
                         let name = shell.type_name(&ext);
-                        Done::TypeName(ext, name)
+                        vec![Done::TypeName(ext, name)]
                     }
-                    ShellJob::LinkChoices { window, generation, items, dest } => Done::LinkChoices { window, generation, choices: shell.link_choices(items.as_deref(), &dest) },
+                    ShellJob::LinkChoices { window, generation, items, dest } => vec![Done::LinkChoices { window, generation, choices: shell.link_choices(items.as_deref(), &dest) }],
                 };
-                if tx.send(done).is_err() {
+                if done.into_iter().any(|d| tx.send(d).is_err()) {
                     return;
                 }
                 wake();
@@ -543,8 +575,10 @@ impl<P: Platform> Handler<P> {
         let id = window.id();
         let Some(st) = self.windows.get_mut(&id) else { return };
         let fx: Vec<Effect> = st.app.drain_effects().collect();
+        let mut folders = Vec::new();
         for e in fx {
             match e {
+                Effect::Icon(req) if batched::<P::Shell>(&req) => folders.push(req),
                 Effect::Provider { provider, req } => self.submit(provider, req),
                 Effect::Resort { tab, gen, snap, view } => {
                     let _ = self.sorter.send(SortJob { window: id, tab, gen, snap, view });
@@ -707,6 +741,11 @@ impl<P: Platform> Handler<P> {
                     let _ = self.previews.send(PreviewJob::Browse { window: id, exts, folder, start });
                 }
                 Effect::Update(req) => self.update_request(id, req),
+            }
+        }
+        if let Some(st) = self.windows.get(&id).filter(|_| !folders.is_empty()) {
+            for reqs in folder_batches(folders) {
+                let _ = self.shell.send(ShellJob::Icons { window: id, reqs, visible: st.visible.clone() });
             }
         }
         self.sync_settings(id);

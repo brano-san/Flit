@@ -10,6 +10,7 @@ mod atspi;
 mod dbus;
 mod dropped;
 pub mod elevated;
+mod folder_icons;
 mod fonts;
 pub mod fs;
 mod gl;

@@ -163,6 +163,11 @@ fn set_window_buttons(buttons: WindowButtons) {
     }
 }
 
+pub(crate) fn icons_changed() {
+    ICONS_DIRTY.store(true, Ordering::Release);
+    wake_loop();
+}
+
 fn system_accent() -> Option<flit_core::theme::Accent> {
     *ACCENT.lock().unwrap_or_else(|e| e.into_inner())
 }

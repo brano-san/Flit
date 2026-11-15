@@ -199,3 +199,65 @@ fn one_content_budget_covers_both_file_panels_and_theme_changes_refresh_emblems(
         assert!(first.is_none() && fresh.is_none());
     }
 }
+
+#[test]
+fn linux_folders_ask_for_their_own_icon_by_place_and_others_keep_the_shared_one() {
+    let dir = Entry { attrs: attr::DIR, modified: 5, ..Entry::default() };
+    let pictures = icon_key(b"Pictures", b"", &dir, 32, b"/home/ann", 0);
+    let elsewhere = icon_key(b"Pictures", b"", &dir, 32, b"/media/usb", 0);
+    let work = icon_key(b"Work", b"", &dir, 32, b"/home/ann", 0);
+    if cfg!(target_os = "linux") {
+        assert_eq!(pictures.1, IconKind::CustomFolder);
+        assert_ne!(pictures.0, elsewhere.0);
+        assert_ne!(pictures.0, work.0);
+        assert_ne!(pictures.0, icon_key(b"Pictures", b"", &Entry { modified: 6, ..dir }, 32, b"/home/ann", 0).0, "a changed folder asks again");
+    } else {
+        assert_eq!(pictures, work);
+        assert_eq!(pictures.1, IconKind::Folder);
+    }
+    if !cfg!(windows) {
+        assert_eq!(icon_key(b"jump", b"", &Entry { attrs: attr::DIR | attr::LINK, ..dir }, 32, b"/home/ann", 0).1, IconKind::File);
+    }
+    assert_eq!(icon_key(b"usb", b"", &Entry { attrs: attr::DIR | attr::VOLUME, ..dir }, 32, b"/media", 0).1, IconKind::Volume);
+    assert_eq!(icon_key(b"inner", b"", &Entry { attrs: attr::DIR | attr::ARCHIVED, ..dir }, 32, b"/tmp/a.zip", 0).1, IconKind::Folder);
+    assert_eq!(icon_key(b"gone", b"", &Entry { attrs: attr::DIR | attr::DELETED, ..dir }, 32, b"/home/ann", 0).1, IconKind::Folder);
+}
+
+#[test]
+fn folders_waiting_for_their_own_icon_show_the_shared_folder_icon_in_every_layout() {
+    let red = || IconResult::Ready(Bitmap { width: 1, height: 1, rgba: vec![255, 0, 0, 255] });
+    for mode in [LayoutMode::Details, LayoutMode::Grid, LayoutMode::Columns, LayoutMode::Tree] {
+        let mut app = file_app(&[("Pictures", attr::DIR), ("Work", attr::DIR)]);
+        app.set_layout(mode);
+        let mut gfx = Gfx::new(Mono, 1024);
+        app.frame(&mut gfx, Instant::now());
+        let reqs: Vec<IconRequest> = app.drain_effects().filter_map(|e| match e { Effect::Icon(r) => Some(r), _ => None }).collect();
+        let own: Vec<&IconRequest> = reqs.iter().filter(|r| r.kind == IconKind::CustomFolder).collect();
+        let row_size = own.first().map_or(0, |r| r.size);
+        let is_shared = |r: &IconRequest| r.kind == IconKind::Folder && r.size == row_size;
+        let shared = reqs.iter().filter(|r| is_shared(r)).count();
+        if !cfg!(target_os = "linux") {
+            assert!(own.is_empty(), "{mode:?}");
+            continue;
+        }
+        assert_eq!(shared, 1, "{mode:?} asks for the shared folder icon at the row size once");
+        let named: Vec<&[u8]> = own.iter().map(|r| r.path.file_name()).collect();
+        assert!(named.contains(&&b"Pictures"[..]) && named.contains(&&b"Work"[..]), "{mode:?}: {named:?}");
+        let images = |app: &mut App, gfx: &mut Gfx<Mono>| {
+            app.frame(gfx, Instant::now());
+            gfx.dl.instances.iter().filter(|i| i.kind == crate::render::kind::IMAGE).count()
+        };
+        for r in reqs.iter().filter(|r| r.kind == IconKind::CustomFolder) {
+            let result = if r.path.file_name() == b"Pictures" { red() } else { IconResult::Failed };
+            app.on_icon(&mut gfx, r.key, result);
+        }
+        let without_shared = images(&mut app, &mut gfx);
+        assert!(without_shared >= 1, "{mode:?}: the custom icon is drawn");
+        for r in reqs.iter().filter(|r| is_shared(r)) {
+            app.on_icon(&mut gfx, r.key, red());
+        }
+        app.drain_effects().for_each(drop);
+        assert!(images(&mut app, &mut gfx) > without_shared, "{mode:?}: the folder without its own icon shows the shared one");
+        assert!(app.drain_effects().all(|e| !matches!(e, Effect::Icon(ref r) if r.kind == IconKind::CustomFolder)), "{mode:?}: answered folders are not asked again");
+    }
+}

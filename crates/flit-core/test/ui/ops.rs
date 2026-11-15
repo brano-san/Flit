@@ -1533,7 +1533,7 @@ fn links_get_an_icon_of_their_own_outside_windows_and_plain_files_share_their_ty
     let plain = |name: &[u8]| icon_key(name, b"txt", &entry(0), 16, b"/home/u", 0);
     assert_eq!(plain(b"a.txt"), plain(b"b.txt"));
     assert_eq!(plain(b"a.txt").1, IconKind::Type);
-    assert_eq!(icon_key(b"d", b"", &entry(attr::DIR), 16, b"/home/u", 0).1, IconKind::Folder);
+    assert_eq!(icon_key(b"d", b"", &entry(attr::DIR), 16, b"/home/u", 0).1, if cfg!(target_os = "linux") { IconKind::CustomFolder } else { IconKind::Folder });
     if cfg!(windows) {
         assert_eq!(link(b"a.txt", attr::LINK), plain(b"a.txt"));
     } else {
