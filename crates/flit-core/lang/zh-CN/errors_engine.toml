@@ -33,3 +33,4 @@ no_content_search = "未安装文件内容搜索程序。请安装 {package} 软
 content_search_failed = "使用 {program} 的内容搜索失败：{error}"
 wsl_lost = "与 {distro} 的连接已断开"
 wsl_stopped = "与 {distro} 的连接已断开：此文件夹不再更新。按 F5 重新加载。"
+symlink_privilege = "创建符号链接需要启用开发者模式或具有管理员权限。"

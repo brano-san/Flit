@@ -1,6 +1,6 @@
 use crate::fs::{map_attrs, NtFs};
 use flit_core::listing::{attr, Listing, ListingBuilder, Meta};
-use flit_core::provider::{Conflict, Failure, FileOp, Recover, Resolve, Stage};
+use flit_core::provider::{Conflict, Failure, FileOp, LinkKind, Recover, Resolve, Stage};
 use flit_core::sort::CaseMode;
 use flit_core::{limits, FsPath};
 use flit_core::i18n::S;
@@ -81,6 +81,11 @@ fn ticks(t: FILETIME) -> i64 {
 }
 
 pub(crate) fn stat(p: &FsPath) -> Option<Meta> {
+    if p.is_root() {
+        let mut data = WIN32_FILE_ATTRIBUTE_DATA::default();
+        unsafe { GetFileAttributesExW(PCWSTR(wide(p).as_ptr()), GetFileExInfoStandard, &mut data as *mut _ as _) }.ok()?;
+        return Some(Meta { size: (data.nFileSizeHigh as u64) << 32 | data.nFileSizeLow as u64, modified: ticks(data.ftLastWriteTime), created: ticks(data.ftCreationTime), attrs: map_attrs(data.dwFileAttributes, 0) });
+    }
     let mut d = WIN32_FIND_DATAW::default();
     let h = unsafe { FindFirstFileExW(PCWSTR(wide(p).as_ptr()), FindExInfoBasic, &mut d as *mut _ as *mut c_void, FindExSearchNameMatch, None, FIND_FIRST_EX_FLAGS(0)) }.ok()?;
     unsafe {
@@ -139,6 +144,54 @@ pub(crate) fn copy_name(item: &FsPath, dest: &FsPath, dir: bool) -> FsPath {
 fn partial(to: &FsPath) -> FsPath {
     let dir = to.parent().unwrap_or_else(|| to.clone());
     numbered(&dir, &[to.file_name(), b".flit-partial"].concat(), true, b"", true)
+}
+
+struct LinkStage {
+    dir: FsPath,
+    path: FsPath,
+    made: bool,
+    directory: bool,
+}
+
+impl LinkStage {
+    fn reserve(dir: FsPath, kind: LinkKind, directory: bool) -> windows::core::Result<Self> {
+        unsafe { CreateDirectoryW(PCWSTR(wide(&dir).as_ptr()), None) }?;
+        let path = dir.join(if kind == LinkKind::Shortcut { b"link.lnk" } else { b"link" });
+        Ok(Self { dir, path, made: false, directory })
+    }
+
+    fn new(dst: &FsPath, kind: LinkKind, directory: bool) -> windows::core::Result<Self> {
+        loop {
+            match Self::reserve(partial(dst), kind, directory) {
+                Err(error) if matches!(code(&error), ERROR_ALREADY_EXISTS | ERROR_FILE_EXISTS) => {}
+                result => return result,
+            }
+        }
+    }
+
+    fn place(&mut self, destination: &FsPath, replace: bool) -> windows::core::Result<()> {
+        move_file(&self.path, destination, if replace { MOVEFILE_REPLACE_EXISTING } else { MOVE_FILE_FLAGS(0) })?;
+        self.made = false;
+        Ok(())
+    }
+}
+
+impl Drop for LinkStage {
+    fn drop(&mut self) {
+        if self.made {
+            if self.directory { let _ = remove_dir(&self.path); } else { let _ = delete_file(&self.path); }
+        }
+        let _ = remove_dir(&self.dir);
+    }
+}
+
+fn link_name(item: &FsPath, kind: LinkKind) -> Vec<u8> {
+    let stem: Vec<u8> = item.file_name().iter().copied().filter(|&c| c != b':' && c != b'\\').collect();
+    let mut name = flit_core::name::link_name(&stem);
+    if kind == LinkKind::Shortcut {
+        name.extend_from_slice(b".lnk");
+    }
+    name
 }
 
 fn move_file(from: &FsPath, to: &FsPath, flags: MOVE_FILE_FLAGS) -> windows::core::Result<()> {
@@ -248,6 +301,7 @@ pub(crate) struct Engine<'a> {
     done: Pairs,
     failed: usize,
     first: Option<String>,
+    first_code: Option<i64>,
     fatal: bool,
     elevate: bool,
     dirs: Vec<FsPath>,
@@ -256,7 +310,7 @@ pub(crate) struct Engine<'a> {
 
 impl<'a> Engine<'a> {
     pub(crate) fn new(job: &'a Job) -> Self {
-        Self { job, done: Vec::new(), failed: 0, first: None, fatal: false, elevate: false, dirs: Vec::new(), limit: None }
+        Self { job, done: Vec::new(), failed: 0, first: None, first_code: None, fatal: false, elevate: false, dirs: Vec::new(), limit: None }
     }
 
     fn stopped(&self) -> bool {
@@ -313,7 +367,7 @@ impl<'a> Engine<'a> {
             return Some(PlatformError::new(ERROR_CANCELLED.0 as i64, S::ErrorsEngineCancelled.en()));
         }
         let first = self.first.clone()?;
-        Some(PlatformError::new(-1, if self.failed > 1 { tr_en!(S::ErrorsEngineFailed, count = self.failed, error = first) } else { first }))
+        Some(PlatformError::new(self.first_code.unwrap_or(-1), if self.failed > 1 { tr_en!(S::ErrorsEngineFailed, count = self.failed, error = first) } else { first }))
     }
 
     fn running(&self, total: Tally) {
@@ -583,6 +637,70 @@ impl<'a> Engine<'a> {
             .collect()
     }
 
+    fn links(&mut self, items: &[FsPath], dest: &FsPath, kind: LinkKind) -> Option<FileOp> {
+        self.running(Tally { entries: items.len() as u64, ..Default::default() });
+        self.touch(Some(dest.clone()));
+        for item in items {
+            if self.stopped() {
+                break;
+            }
+            let Some(meta) = stat(item) else {
+                self.note(tr_en!(S::ErrorsEngineMissing, path = item.display()));
+                continue;
+            };
+            let name = link_name(item, kind);
+            let mut dst = dest.join(&name);
+            let dir = is_dir(&meta) && kind != LinkKind::Shortcut;
+            let output_meta = Meta { attrs: if kind == LinkKind::Shortcut { meta.attrs & !attr::DIR } else { meta.attrs }, ..meta };
+            let mut replace = false;
+            if exists(&dst) {
+                match self.ask(item, output_meta, &dst) {
+                    Some(Resolve::KeepBoth) => dst = free_name(&dst, dir),
+                    Some(Resolve::Replace) if !dir && stat(&dst).is_some_and(|m| !is_dir(&m)) => replace = true,
+                    Some(Resolve::Replace) => dst = free_name(&dst, dir),
+                    Some(_) => { self.job.update(|p| p.items += 1); continue; }
+                    None => break,
+                }
+            }
+            loop {
+                if self.job.cancelled() {
+                    break;
+                }
+                let made = LinkStage::new(&dst, kind, dir).and_then(|mut stage| {
+                    crate::links::create_for_job(kind, item, &stage.path, self.job)?;
+                    stage.made = true;
+                    if self.job.cancelled() {
+                        return Err(ERROR_CANCELLED.to_hresult().into());
+                    }
+                    stage.place(&dst, replace)
+                });
+                if let Err(error) = made {
+                    let code = code(&error);
+                    if matches!(code, ERROR_ALREADY_EXISTS | ERROR_FILE_EXISTS) && !replace {
+                        match self.ask(item, output_meta, &dst) {
+                            Some(Resolve::KeepBoth) => { dst = free_name(&dst, dir); continue; }
+                            Some(Resolve::Replace) if !dir && stat(&dst).is_some_and(|m| !is_dir(&m)) => { replace = true; continue; }
+                            _ => break,
+                        }
+                    }
+                    if code == ERROR_PRIVILEGE_NOT_HELD {
+                        self.first_code.get_or_insert(code.0 as i64);
+                        self.note(S::ErrorsEngineSymlinkPrivilege.en().to_owned());
+                    } else if code == ERROR_CANCELLED {
+                        self.job.ctl().cancel();
+                    } else if self.trouble(&dst, &error, false) {
+                        continue;
+                    }
+                    break;
+                }
+                self.done.push((item.clone(), dst));
+                self.job.update(|p| p.items += 1);
+                break;
+            }
+        }
+        None
+    }
+
     fn copy(&mut self, items: &[FsPath], dest: &FsPath) -> Option<FileOp> {
         self.job.update(|p| p.stage = Stage::Preparing);
         let metas = self.stat_all(items);
@@ -783,7 +901,7 @@ impl<'a> Engine<'a> {
 }
 
 pub(crate) fn native(op: &FileOp) -> bool {
-    matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Rename { .. } | FileOp::Delete(_) | FileOp::Flatten(_))
+    matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Rename { .. } | FileOp::Delete(_) | FileOp::Flatten(_) | FileOp::Link { .. } | FileOp::LinkAs { .. })
 }
 
 pub(crate) fn run(op: &FileOp, job: &Job) -> Outcome {
@@ -795,6 +913,8 @@ pub(crate) fn run(op: &FileOp, job: &Job) -> Outcome {
         FileOp::Rename { item, name } => e.rename(item, name),
         FileOp::Delete(items) => e.delete(items),
         FileOp::Flatten(dirs) => e.flatten(dirs),
+        FileOp::Link { items, dest } => e.links(items, dest, LinkKind::Shortcut),
+        FileOp::LinkAs { items, dest, kind } => e.links(items, dest, *kind),
         _ => Some(op.clone()),
     };
     e.notify();

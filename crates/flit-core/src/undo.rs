@@ -27,6 +27,7 @@ pub fn inverse(report: &OpReport) -> Option<Step> {
     let created = || FileOp::Trash(items.iter().map(|(_, to)| to.clone()).collect());
     Some(Step::Run(match &report.op {
         FileOp::Archive(ArchiveOp::Open { .. }) => return None,
+        FileOp::LinkAs { .. } => FileOp::Delete(items.iter().map(|(_, to)| to.clone()).collect()),
         FileOp::Link { .. } if items.iter().all(|(_, to)| to.kind() == PathKind::Unix) => FileOp::Delete(items.iter().map(|(_, to)| to.clone()).collect()),
         FileOp::Copy { .. } | FileOp::Link { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::Restore(_) | FileOp::Archive(_) => created(),
         FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Flatten(_) => FileOp::MoveTo(items.iter().map(|(from, to)| (to.clone(), from.clone())).collect()),
@@ -42,7 +43,7 @@ pub fn inverse(report: &OpReport) -> Option<Step> {
             FileOp::Restore(recycled)
         }
         FileOp::Access(changes) => FileOp::Access(changes.iter().rev().map(|c| AccessChange { item: c.item.clone(), from: c.to, to: c.from }).collect()),
-        FileOp::Paste { .. } | FileOp::PasteLink { .. } | FileOp::NewStream { .. } | FileOp::Delete(_) | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::FolderIcon { .. } | FileOp::InstallFonts(_) | FileOp::LockScreen(_) | FileOp::SetAccess { .. } | FileOp::SetAttributes { .. } | FileOp::PasteDropped { .. } | FileOp::GrantAccess(_) => return None,
+        FileOp::Paste { .. } | FileOp::PasteLink { .. } | FileOp::PasteLinkAs { .. } | FileOp::NewStream { .. } | FileOp::Delete(_) | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::FolderIcon { .. } | FileOp::InstallFonts(_) | FileOp::LockScreen(_) | FileOp::SetAccess { .. } | FileOp::SetAttributes { .. } | FileOp::PasteDropped { .. } | FileOp::GrantAccess(_) => return None,
     }))
 }
 

@@ -105,3 +105,9 @@ mixed = "Mezclar archivos y carpetas"
 
 [group]
 none = "Ninguno"
+[links]
+paste_as = "Pegar como"
+symbolic_link = "Enlace simbólico"
+junction = "Unión de directorios"
+hard_link = "Enlace físico"
+retry_admin = "Reintentar como administrador"

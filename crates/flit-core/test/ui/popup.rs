@@ -154,3 +154,22 @@ fn headers_and_disabled_commands_are_shown_but_never_picked() {
         assert!(!matches!(v.mouse_up(x, y), MenuOutcome::Command(_)), "row {i}");
     }
 }
+
+#[test]
+fn link_choice_updates_preserve_an_open_submenu_and_keyboard_navigation() {
+    let items = [MenuItem::Submenu { label: "Paste as".into(), items: ["Shortcut", "Symbolic link", "Junction", "Hard link"].into_iter().map(cmd).collect() }];
+    let mut v = MenuView::new(&items, 300.0, 180.0, Rect::new(0.0, 0.0, 320.0, 300.0), 1.0, &mut Gfx::new(Mono, 512));
+    v.key(Key::Home);
+    v.key(Key::Right);
+    v.key(Key::End);
+    assert_eq!(v.key(Key::Enter), MenuOutcome::Command(3));
+    let focus = v.panels.last().unwrap().hot;
+    v.set_disabled(3, true);
+    assert_eq!(v.panels.last().unwrap().hot, focus);
+    assert_eq!(v.key(Key::Enter), MenuOutcome::Open);
+    v.key(Key::Home);
+    assert_eq!(v.key(Key::Enter), MenuOutcome::Command(0));
+    assert_eq!(v.key(Key::Escape), MenuOutcome::Open);
+    assert_eq!(v.key(Key::Escape), MenuOutcome::Closed);
+    assert!(v.panels().all(|r| r.x >= 0.0 && r.right() <= 320.0 && r.bottom() <= 300.0));
+}

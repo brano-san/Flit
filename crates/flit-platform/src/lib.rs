@@ -484,6 +484,9 @@ pub trait FileOps {
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome;
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError>;
     fn clear_clipboard(&mut self);
+    fn link_choices(&mut self, _items: Option<&[FsPath]>, _dest: &FsPath) -> flit_core::provider::LinkChoices {
+        Default::default()
+    }
     fn clipboard_content(&mut self) -> bool {
         false
     }

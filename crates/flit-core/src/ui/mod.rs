@@ -374,6 +374,7 @@ pub enum Effect {
     NewWindow(Vec<Route>),
     Open(Open),
     SetClipboardFiles { paths: Vec<FsPath>, cut: bool },
+    LinkChoices { generation: u64, items: Option<Vec<FsPath>>, dest: FsPath },
     ShellMenu(ShellMenu),
     ShellPrefetch(Option<ShellMenu>),
     ShellWarm(Vec<ShellMenu>),
@@ -1826,6 +1827,7 @@ impl App {
             }
             Event::ClipboardChanged(seq) => self.clipboard_changed(*seq),
             Event::ClipboardText(text) => self.clipboard_text_changed(*text),
+            Event::LinkChoices { generation, choices } => self.on_link_choices(*generation, *choices),
             Event::SessionEnding => {}
             Event::Hosted(ev) => self.on_hosted(ev.clone()),
         }

@@ -669,7 +669,7 @@ fn right_dragging_rows_asks_what_to_do_where_they_land() {
     assert_eq!(app.drop_spot(), Some(Spot::Row(0)));
     assert_eq!(app.drag(&DragEvent::Drop { x: sub.0, y: sub.1, mods: NO, allowed: all }, t0()), COPY);
     let menu = drop_menu(&mut app);
-    assert_eq!(drop_rows(&menu), ["Copy here", "Move here *", "Create shortcut here", "-", "Cancel"], "Flit offers every choice for its own drag");
+    assert_eq!(drop_rows(&menu), ["Copy here", "Move here *", "Create shortcut here", "Symbolic link (off)", "Junction (off)", "Hard link (off)", "-", "Cancel"], "Flit offers every choice for its own drag");
     assert!(op_list(&mut app).is_empty(), "nothing happens before a choice");
     run_menu(&mut app, &menu, "Move here");
     assert_eq!(op_list(&mut app), [FileOp::Move { items: dragged.clone(), dest: p(r"C:\x\sub") }]);
@@ -692,7 +692,7 @@ fn a_right_drop_from_another_program_offers_what_it_allows() {
     };
     assert_eq!(right_drop(&mut app, &[r"D:\in\f.txt"], sub, COPY | MOVE | LINK), (COPY, COPY));
     let menu = drop_menu(&mut app);
-    assert_eq!(drop_rows(&menu), ["Copy here *", "Move here", "Create shortcut here", "-", "Cancel"]);
+    assert_eq!(drop_rows(&menu), ["Copy here *", "Move here", "Create shortcut here", "Symbolic link (off)", "Junction (off)", "Hard link (off)", "-", "Cancel"]);
     run_menu(&mut app, &menu, "Create shortcut here");
     assert_eq!(op_list(&mut app), [FileOp::Link { items: vec![p(r"D:\in\f.txt")], dest: p(r"C:\x\sub") }]);
 
@@ -707,7 +707,7 @@ fn a_right_drop_from_another_program_offers_what_it_allows() {
     assert!(op_list(&mut app).is_empty());
 
     assert_eq!(right_drop(&mut app, &[r"C:\x\a.txt"], empty, COPY | MOVE), (COPY, COPY), "files already here can still be copied");
-    assert_eq!(drop_rows(&drop_menu(&mut app)), ["Copy here *", "Move here (off)", "Create shortcut here (off)", "-", "Cancel"]);
+    assert_eq!(drop_rows(&drop_menu(&mut app)), ["Copy here *", "Move here (off)", "Create shortcut here (off)", "Symbolic link (off)", "Junction (off)", "Hard link (off)", "-", "Cancel"]);
 
     app.caps = crate::caps::Caps { unix_paths: true };
     right_drop(&mut app, &[r"D:\in\f.txt"], sub, COPY | MOVE | LINK);
@@ -715,6 +715,73 @@ fn a_right_drop_from_another_program_offers_what_it_allows() {
 
     assert_eq!(right_drop(&mut app, &[r"D:\in\f.txt"], title, COPY), (COPY, COPY), "the title bar still reveals at once");
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::ShellMenu(_))));
+}
+
+#[test]
+fn right_drop_links_use_the_existing_job_queue_select_the_created_item_and_undo_only_the_link() {
+    use crate::provider::{LinkChoices, LinkKind};
+    use drop_effect::*;
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("keep.txt", false)]);
+    let at = (300.0, app.layout.list.y + 200.0);
+    let source = p(r"C:\from\a.txt");
+    let allowed = COPY | MOVE | LINK;
+    app.drag(&DragEvent::Enter { paths: vec![source.clone()], x: at.0, y: at.1, mods: NO, allowed, right: true }, t0());
+    app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: NO, allowed }, t0());
+    let effects: Vec<_> = app.drain_effects().collect();
+    let generation = effects.iter().find_map(|e| if let Effect::LinkChoices { generation, items, dest } = e {
+        assert_eq!(items.as_ref().unwrap(), std::slice::from_ref(&source));
+        assert_eq!(dest, &p(r"C:\x"));
+        Some(*generation)
+    } else { None }).unwrap();
+    let menu = effects.into_iter().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m.menu) } else { None }).unwrap();
+    app.on_event(&Event::LinkChoices { generation, choices: LinkChoices([true, true, false, true]) }, t0());
+    run_menu(&mut app, &menu, "Hard link");
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::LinkAs { items: vec![source], dest: p(r"C:\x"), kind: LinkKind::Hard });
+    assert_eq!(app.running_jobs(), 1);
+    done(&mut app, id, op, &[(r"C:\from\a.txt", r"C:\x\Link to a.txt")]);
+    deliver(&mut app, &[("keep.txt", false), ("Link to a.txt", false)]);
+    app.frame(&mut Gfx::new(Mono, 512), t0());
+    assert_eq!(selected(&app), ["Link to a.txt"]);
+    key(&mut app, Key::Char('Z'), CTRL);
+    assert_eq!(op_list(&mut app), [FileOp::Delete(vec![p(r"C:\x\Link to a.txt")])]);
+}
+
+#[test]
+fn cancelling_a_right_drop_or_denying_link_transfer_never_uses_old_link_choices() {
+    use crate::provider::{LinkChoices, LinkKind};
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[]);
+    let asked = || Asked { paths: vec![p(r"C:\a.txt")], dest: p(r"C:\x") };
+    app.ask_drop(asked(), drop_effect::COPY | drop_effect::LINK, drop_effect::COPY, (300.0, 200.0));
+    let generation = app.ops.link_probe.as_ref().unwrap().generation;
+    app.on_link_choices(generation, LinkChoices([true; 4]));
+    app.drop_chosen(drop_effect::NONE);
+    app.drop_as(LinkKind::Hard);
+    assert!(ops(&mut app).is_empty());
+    app.ask_drop(asked(), drop_effect::COPY, drop_effect::COPY, (300.0, 200.0));
+    app.on_link_choices(generation, LinkChoices([true; 4]));
+    app.drop_as(LinkKind::Hard);
+    assert!(ops(&mut app).is_empty());
+}
+
+#[test]
+fn the_shortcut_choice_keeps_legacy_undo_and_redo_through_the_recycle_bin() {
+    use crate::provider::LinkKind;
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[]);
+    app.paste_as(LinkKind::Shortcut);
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::PasteLink { dest: p(r"C:\x") });
+    let link = FileOp::Link { items: vec![p(r"C:\source")], dest: p(r"C:\x") };
+    done(&mut app, id, link, &[(r"C:\source", r"C:\x\Link to source.lnk")]);
+    key(&mut app, Key::Char('Z'), CTRL);
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::Trash(vec![p(r"C:\x\Link to source.lnk")]));
+    done(&mut app, id, op, &[(r"C:\x\Link to source.lnk", r"C:\$Recycle.Bin\S\$Rlink")]);
+    key(&mut app, Key::Char('Y'), CTRL);
+    assert_eq!(op_list(&mut app), [FileOp::Restore(vec![(p(r"C:\$Recycle.Bin\S\$Rlink"), p(r"C:\x\Link to source.lnk"))])]);
 }
 
 #[test]

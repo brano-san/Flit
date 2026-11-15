@@ -3,6 +3,17 @@ use crate::transport::{decode, encode};
 use flit_core::listing::{ChangeKind, DirStats};
 use flit_core::FsErrorKind;
 
+#[test]
+fn typed_links_are_kept_local_and_are_never_dispatched_to_an_old_agent() {
+    let dest = FsPath::parse(r"C:\out").unwrap();
+    for kind in [flit_core::provider::LinkKind::Symbolic, flit_core::provider::LinkKind::Junction, flit_core::provider::LinkKind::Hard] {
+        for op in [FileOp::LinkAs { items: vec![dest.clone()], dest: dest.clone(), kind }, FileOp::PasteLinkAs { dest: dest.clone(), kind }] {
+            assert!(!agent_runs(&op));
+            assert!(check_report(&op, &[(dest.clone(), dest.clone())]).is_err());
+        }
+    }
+}
+
 fn unix(p: &[u8]) -> FsPath {
     FsPath::parse_bytes(p).unwrap()
 }

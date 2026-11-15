@@ -434,6 +434,7 @@ fn resolve_paste<S: FileOps>(sh: &mut S, op: FileOp) -> Result<(FileOp, bool), S
             },
         },
         FileOp::PasteLink { dest } => (FileOp::Link { items: sh.clipboard_files().map_err(|e| e.to_string())?.0, dest }, false),
+        FileOp::PasteLinkAs { dest, kind } => (FileOp::LinkAs { items: sh.clipboard_files().map_err(|e| e.to_string())?.0, dest, kind }, false),
         op => (op, false),
     })
 }

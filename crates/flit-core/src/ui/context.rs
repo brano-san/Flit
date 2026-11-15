@@ -191,6 +191,16 @@ fn push_separator(rows: &mut Vec<Row>) {
 }
 
 impl ContextMenu {
+    pub(super) fn set_disabled(&mut self, command: usize, value: bool) {
+        for node in &mut self.nodes {
+            if let What::Command { id, disabled, .. } = &mut node.what {
+                if *id == command {
+                    *disabled = value;
+                }
+            }
+        }
+    }
+
     pub fn new(items: &[MenuItem], kind: MenuKind, pins: Vec<String>, at: (f32, f32), bounds: Rect, scale: f32) -> Self {
         let mut nodes = Vec::new();
         flatten(items, 0, "", &mut 0, &mut nodes);

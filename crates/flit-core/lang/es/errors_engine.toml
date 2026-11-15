@@ -33,3 +33,4 @@ no_content_search = "No hay ningún programa de búsqueda de contenido instalado
 content_search_failed = "La búsqueda de contenido con {program} falló: {error}"
 wsl_lost = "Se perdió la conexión con {distro}"
 wsl_stopped = "Se perdió la conexión con {distro}: esta carpeta ya no se actualiza. Presiona F5 para volver a cargarla."
+symlink_privilege = "Para crear enlaces simbólicos se necesita el modo de desarrollador o permisos de administrador."

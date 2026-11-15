@@ -33,3 +33,4 @@ no_content_search = "Aucun programme de recherche dans le contenu des fichiers n
 content_search_failed = "La recherche dans le contenu avec {program} a échoué : {error}"
 wsl_lost = "La connexion à {distro} a été perdue"
 wsl_stopped = "La connexion à {distro} a été perdue : ce dossier n’est plus mis à jour. Appuyez sur F5 pour le recharger."
+symlink_privilege = "La création de liens symboliques nécessite le mode développeur ou les droits d’administrateur."
