@@ -17,7 +17,7 @@ use flit_core::preview::{HostCmd, PropGroup};
 use flit_core::render::{DrawList, Rect};
 use flit_core::ui::{Bitmap, DragEvent, IconRequest, NewTemplate, ShellMenu};
 use flit_core::digest::HashKind;
-use flit_core::provider::{Access, Accounts, Conflict, Failure, FileOp, Launch, OpCtl, OpProgress, Recover, Resolve, Stage};
+use flit_core::provider::{Access, Accounts, Conflict, Failure, FileOp, Launch, MountAnswer, MountAsk, MountReply, OpCtl, OpProgress, Recover, Resolve, Stage};
 use flit_core::listing::DirStats;
 use flit_core::tags::FileKey;
 use flit_core::{FsError, FsPath, ListingBuilder, Location, Meta, Open, ProviderEvent, ProviderRequest, TabId};
@@ -31,6 +31,33 @@ pub use flit_core::text::TextBackend as Text;
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
 pub type OpenSink = Arc<std::sync::Mutex<Option<Sender<Open>>>>;
+
+pub struct MountPrompt {
+    tab: TabId,
+    events: Sender<ProviderEvent>,
+    wake: Wake,
+}
+
+impl MountPrompt {
+    pub fn new(tab: TabId, events: Sender<ProviderEvent>, wake: Wake) -> Self {
+        Self { tab, events, wake }
+    }
+
+    pub fn ask(&self, ask: MountAsk) -> (u64, std::sync::mpsc::Receiver<MountReply>) {
+        let (answer, rx) = MountAnswer::new();
+        let id = answer.id();
+        if self.events.send(ProviderEvent::MountAsk { tab: self.tab, ask, answer }).is_ok() {
+            (self.wake)();
+        }
+        (id, rx)
+    }
+
+    pub fn withdraw(&self, id: u64) {
+        if self.events.send(ProviderEvent::MountAskDone { tab: self.tab, id }).is_ok() {
+            (self.wake)();
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Resolved {
@@ -293,6 +320,9 @@ pub trait Shell: Sized {
     }
     fn connect(&mut self, _uri: &str) -> Result<FsPath, PlatformError> {
         Err(PlatformError::unsupported("connecting to servers"))
+    }
+    fn connect_asking(&mut self, uri: &str, _prompt: &MountPrompt) -> Result<Option<FsPath>, PlatformError> {
+        self.connect(uri).map(Some)
     }
     fn unlock(&mut self, _device: &FsPath, _passphrase: &str) -> Result<FsPath, PlatformError> {
         Err(PlatformError::unsupported("unlocking encrypted volumes"))

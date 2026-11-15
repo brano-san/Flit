@@ -70,6 +70,8 @@ pub(super) enum Kind {
     RunScript { tab: crate::provider::TabId, path: FsPath },
     GitAuth { dir: FsPath },
     BatchRename(super::batch_rename::Batch),
+    Login(super::network::Login),
+    MountQuestion(super::network::Question),
 }
 
 impl Kind {
@@ -88,6 +90,8 @@ impl Kind {
             Kind::GitClone => "git_clone",
             Kind::UserMenu { .. } => "user_menu",
             Kind::Update(_) => "update",
+            Kind::Login(_) => "login",
+            Kind::MountQuestion(_) => "mount_question",
         }
     }
 }
@@ -747,6 +751,8 @@ impl App {
             Kind::UserMenu { .. } => self.submit_user_entry(f),
             Kind::Update(_) => self.submit_update(f, b),
             Kind::BatchRename(_) => self.submit_batch_rename(f),
+            Kind::Login(_) => self.submit_login(f),
+            Kind::MountQuestion(_) => self.submit_mount_question(f),
         };
         if self.jobs.form.is_none() {
             self.jobs.form = keep;
@@ -760,6 +766,7 @@ impl App {
             Kind::Update(u) => self.cancel_update(u),
             _ => {}
         }
+        super::network::mount_form_closed(f);
     }
 }
 

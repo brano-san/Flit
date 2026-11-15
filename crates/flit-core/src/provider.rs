@@ -550,6 +550,113 @@ pub enum ProviderRequest {
     Access { tab: TabId, id: OpId, items: Vec<FsPath> },
 }
 
+pub const ASK_PASSWORD: u32 = 1;
+pub const ASK_USER: u32 = 2;
+pub const ASK_DOMAIN: u32 = 4;
+pub const ASK_SAVING: u32 = 8;
+pub const ASK_ANONYMOUS: u32 = 16;
+
+pub fn wipe(s: &mut String) {
+    let bytes = unsafe { s.as_mut_vec() };
+    for b in bytes.iter_mut() {
+        unsafe { std::ptr::write_volatile(b, 0) };
+    }
+    std::sync::atomic::compiler_fence(Ordering::SeqCst);
+    bytes.clear();
+}
+
+#[derive(Default)]
+pub struct Password(String);
+
+impl Password {
+    pub fn new(text: String) -> Self {
+        Password(text)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Drop for Password {
+    fn drop(&mut self) {
+        wipe(&mut self.0);
+    }
+}
+
+impl fmt::Debug for Password {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Password")
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoginAsk {
+    pub server: String,
+    pub message: String,
+    pub user: String,
+    pub domain: String,
+    pub flags: u32,
+}
+
+impl LoginAsk {
+    pub fn wants(&self, flag: u32) -> bool {
+        self.flags & flag != 0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MountAsk {
+    Login(LoginAsk),
+    Question { server: String, message: String, choices: Vec<String> },
+}
+
+#[derive(Debug)]
+pub enum MountReply {
+    Login { user: String, domain: String, password: Password, anonymous: bool, remember: bool },
+    Choice(usize),
+    Cancel,
+}
+
+pub struct MountAnswer {
+    id: u64,
+    tx: std::sync::mpsc::Sender<MountReply>,
+}
+
+impl MountAnswer {
+    pub fn new() -> (Self, std::sync::mpsc::Receiver<MountReply>) {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let (tx, rx) = std::sync::mpsc::channel();
+        (MountAnswer { id: NEXT.fetch_add(1, Ordering::Relaxed), tx }, rx)
+    }
+
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    pub fn send(self, reply: MountReply) -> bool {
+        self.tx.send(reply).is_ok()
+    }
+}
+
+impl Clone for MountAnswer {
+    fn clone(&self) -> Self {
+        MountAnswer { id: self.id, tx: self.tx.clone() }
+    }
+}
+
+impl PartialEq for MountAnswer {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl fmt::Debug for MountAnswer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "MountAnswer({})", self.id)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProviderEvent {
     Changes { tab: TabId, gen: u64, changes: Vec<DirChange> },
@@ -570,6 +677,8 @@ pub enum ProviderEvent {
     Access { tab: TabId, id: OpId, items: Vec<Option<Access>>, accounts: Accounts },
     NotExecutable { tab: TabId, path: FsPath },
     OpenAsk { tab: TabId, path: FsPath, ask: OpenAsk },
+    MountAsk { tab: TabId, ask: MountAsk, answer: MountAnswer },
+    MountAskDone { tab: TabId, id: u64 },
 }
 
 #[cfg(test)]

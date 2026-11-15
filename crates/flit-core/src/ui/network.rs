@@ -1,9 +1,11 @@
+use super::archive::Kind;
+use super::form::{Control, Form};
 use super::palette::{Palette, Pick};
 use super::App;
 use crate::i18n::S;
 use crate::open::Open;
 use crate::path::{FsPath, PathKind};
-use crate::provider::Launch;
+use crate::provider::{Launch, LoginAsk, MountAnswer, MountAsk, MountReply, Password, ASK_ANONYMOUS, ASK_DOMAIN, ASK_PASSWORD, ASK_SAVING, ASK_USER};
 
 const SCHEMES: [&str; 9] = ["smb", "sftp", "ssh", "ftp", "ftps", "dav", "davs", "afp", "nfs"];
 
@@ -49,6 +51,132 @@ impl App {
             None => self.status(S::SidebarDriveServerPrompt.t()),
         }
     }
+
+    pub(super) fn mount_ask(&mut self, ask: MountAsk, answer: MountAnswer) {
+        if self.jobs.form.is_some() {
+            return;
+        }
+        let form = match ask {
+            MountAsk::Login(ask) => login_form(ask, answer),
+            MountAsk::Question { choices, .. } if choices.is_empty() => {
+                answer.send(MountReply::Cancel);
+                return;
+            }
+            MountAsk::Question { server, message, choices } => {
+                let mut controls: Vec<Control> = message_lines(&message).iter().map(|l| Control::line(l)).collect();
+                let at = controls.len();
+                controls.push(Control::choice(S::SidebarDriveLoginAnswer.t(), choices, 0));
+                let title = crate::tr!(S::SidebarDriveLoginTitle, server = server);
+                Form::new(Kind::MountQuestion(Question { answer, at }), &title, controls, vec![S::SidebarDriveLoginContinue.t(), S::WidgetsCancel.t()])
+            }
+        };
+        self.open_form(form);
+    }
+
+    pub(super) fn mount_ask_done(&mut self, id: u64) {
+        let ours = self.jobs.form.as_ref().is_some_and(|f| matches!(&f.kind, Kind::Login(l) if l.answer.id() == id) || matches!(&f.kind, Kind::MountQuestion(q) if q.answer.id() == id));
+        if let Some(mut f) = ours.then(|| self.jobs.form.take()).flatten() {
+            f.wipe_secrets();
+            self.layout();
+            self.dirty = true;
+        }
+    }
+
+    pub(super) fn submit_login(&mut self, mut f: Form) -> Option<Form> {
+        let Kind::Login(l) = &f.kind else { return None };
+        let anonymous = l.anonymous.is_some_and(|k| f.checked(k));
+        let user = l.user.map_or_else(|| l.default_user.clone(), |k| f.text(k).trim().to_owned());
+        let domain = l.domain.map_or_else(|| l.default_domain.clone(), |k| f.text(k).trim().to_owned());
+        let password = Password::new(l.password.map(|k| f.text(k).to_owned()).unwrap_or_default());
+        let remember = l.remember.is_some_and(|k| f.choice(k) == 1);
+        f.wipe_secrets();
+        if let Kind::Login(l) = f.kind {
+            l.answer.send(MountReply::Login { user, domain, password, anonymous, remember });
+        }
+        None
+    }
+
+    pub(super) fn submit_mount_question(&mut self, f: Form) -> Option<Form> {
+        let choice = match &f.kind {
+            Kind::MountQuestion(q) => f.choice(q.at),
+            _ => return None,
+        };
+        if let Kind::MountQuestion(q) = f.kind {
+            q.answer.send(MountReply::Choice(choice));
+        }
+        None
+    }
+}
+
+pub(super) struct Login {
+    pub answer: MountAnswer,
+    default_user: String,
+    default_domain: String,
+    user: Option<usize>,
+    domain: Option<usize>,
+    password: Option<usize>,
+    anonymous: Option<usize>,
+    remember: Option<usize>,
+}
+
+pub(super) struct Question {
+    pub answer: MountAnswer,
+    at: usize,
+}
+
+pub(super) fn mount_form_closed(mut f: Form) {
+    f.wipe_secrets();
+    match f.kind {
+        Kind::Login(l) => {
+            l.answer.send(MountReply::Cancel);
+        }
+        Kind::MountQuestion(q) => {
+            q.answer.send(MountReply::Cancel);
+        }
+        _ => {}
+    }
+}
+
+const LINE_CHARS: usize = 72;
+
+pub(super) fn message_lines(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for para in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let mut line = String::new();
+        for word in para.split_whitespace() {
+            if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > LINE_CHARS {
+                out.push(std::mem::take(&mut line));
+            }
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+        }
+        out.push(line);
+    }
+    out
+}
+
+fn login_form(ask: LoginAsk, answer: MountAnswer) -> Form {
+    let mut controls: Vec<Control> = message_lines(&ask.message).iter().map(|l| Control::line(l)).collect();
+    let mut add = |wanted: bool, c: Control| {
+        wanted.then(|| {
+            controls.push(c);
+            controls.len() - 1
+        })
+    };
+    let user = add(ask.wants(ASK_USER), Control::text(S::SidebarDriveLoginUser.t(), &ask.user, ""));
+    let domain = add(ask.wants(ASK_DOMAIN), Control::text(S::SidebarDriveLoginDomain.t(), &ask.domain, ""));
+    let password = add(ask.wants(ASK_PASSWORD), Control::secret(S::SidebarDriveLoginPassword.t(), ""));
+    let anonymous = add(ask.wants(ASK_ANONYMOUS), Control::check(S::SidebarDriveLoginAnonymous.t(), false));
+    let remember = add(ask.wants(ASK_SAVING), Control::choice(S::SidebarDriveLoginRemember.t(), vec![S::SidebarDriveLoginForget.t().to_owned(), S::SidebarDriveLoginSession.t().to_owned()], 0));
+    let title = crate::tr!(S::SidebarDriveLoginTitle, server = ask.server);
+    let login = Login { answer, default_user: ask.user, default_domain: ask.domain, user, domain, password, anonymous, remember };
+    let mut form = Form::new(Kind::Login(login), &title, controls, vec![S::SidebarDriveLoginConnect.t(), S::WidgetsCancel.t()]);
+    if let Some(k) = password.filter(|_| user.is_none_or(|u| !form.text(u).is_empty())) {
+        form.focus = k;
+    }
+    form
 }
 
 #[cfg(test)]

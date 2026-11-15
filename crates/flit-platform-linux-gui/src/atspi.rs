@@ -164,6 +164,7 @@ pub(crate) enum V {
     Props(Vec<(String, V)>),
     Bytes(Vec<u8>),
     Array(&'static str, Vec<V>),
+    O(String),
 }
 
 impl V {
@@ -188,6 +189,7 @@ impl V {
             V::Props(_) => "a{sv}".into(),
             V::Bytes(_) => "ay".into(),
             V::Array(item, _) => format!("a{item}"),
+            V::O(_) => "o".into(),
         }
     }
 }
@@ -807,6 +809,7 @@ pub(crate) unsafe fn put(api: &Api, it: &mut Iter, me: &str, v: &V) {
         V::Empty(item) => open(api, it, b'a', Some(item), |_| {}),
         V::Bytes(b) => open(api, it, b'a', Some("y"), |s| b.iter().for_each(|&x| basic(api, s, b'y', x))),
         V::Array(item, vs) => open(api, it, b'a', Some(item), |s| vs.iter().for_each(|x| put(api, s, me, x))),
+        V::O(path) => string(api, it, b'o', path),
         V::Props(p) => open(api, it, b'a', Some("{sv}"), |s| {
             for (k, x) in p {
                 open(api, s, b'e', None, |e| {
