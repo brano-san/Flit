@@ -125,7 +125,7 @@ impl Default for Opts {
             sizes_hdd: false,
             sizes_network: false,
             act_on_press: true,
-            scroll_beyond: false,
+            scroll_beyond: true,
             reverse_scroll: false,
             char_key: CharKey::Filter,
             inspector_at: InspectorAt::Auto,
