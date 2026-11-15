@@ -14,6 +14,22 @@ deleting = "正在删除分支…"
 created = "已创建分支 {branch}"
 deleted = "已删除分支 {branch}"
 
+[sequence]
+merge = "正在合并"
+rebase = "正在变基"
+cherry_pick = "正在拣选"
+conflicts = "冲突数：{n}"
+abort = "Git：中止操作…"
+abort_merge = "中止合并…"
+abort_rebase = "中止变基…"
+abort_cherry_pick = "中止拣选…"
+show = "显示冲突"
+select = "选择当前文件夹中存在冲突的文件和文件夹"
+confirm = "中止当前 Git 操作？操作期间的冲突解决结果和修改可能会丢失。"
+aborting = "正在中止 Git 操作…"
+aborted = "Git 操作已中止"
+changed = "Git 操作已更改或结束。请刷新文件夹后重试。"
+
 [column]
 hash = "提交哈希"
 status = "Git 状态"

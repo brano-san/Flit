@@ -68,6 +68,75 @@ fn upstream_status_tracks_the_current_branch_and_detached_or_unborn_heads() {
 
 struct Temp(PathBuf);
 
+#[test]
+fn abort_restores_each_conflicted_sequence_and_refuses_a_different_operation() {
+    for (tag, kind, start) in [
+        ("merge", git::Sequence::Merge, "merge"),
+        ("rebase", git::Sequence::Rebase, "rebase"),
+        ("pick", git::Sequence::CherryPick, "cherry-pick"),
+    ] {
+        let t = temp(&format!("abort {tag} папка"));
+        let r = &t.0;
+        sh(r, &["init", "-q"]);
+        fs::write(r.join("conflict.txt"), "base\n").unwrap();
+        sh(r, &["add", "."]);
+        sh(r, &["commit", "-qm", "base"]);
+        sh(r, &["switch", "-c", "topic/x"]);
+        fs::write(r.join("conflict.txt"), "topic\n").unwrap();
+        sh(r, &["commit", "-qam", "topic"]);
+        sh(r, &["switch", "main"]);
+        fs::write(r.join("conflict.txt"), "main\n").unwrap();
+        sh(r, &["commit", "-qam", "main"]);
+        let head = output(r, &["rev-parse", "HEAD"]).unwrap().stdout;
+        assert!(output(r, &[start, "topic/x"]).is_err());
+        let info = status(r, false, &mut Cache::default()).unwrap();
+        assert_eq!(info.sequence, Some(kind));
+        assert_eq!(info.conflicts, 1);
+        assert_eq!(info.status.get(&b"conflict.txt"[..]), Some(&GitStatus::Conflict));
+        fs::create_dir(r.join("subfolder")).unwrap();
+        let nested = status(&r.join("subfolder"), false, &mut Cache::default()).unwrap();
+        assert_eq!(nested.sequence, Some(kind));
+        assert_eq!(nested.conflicts, 1);
+        assert!(nested.status.is_empty());
+        let wrong = if kind == git::Sequence::Merge { git::Sequence::Rebase } else { git::Sequence::Merge };
+        assert!(run_op(r, &GitOp::Abort(wrong)).is_err());
+        assert_eq!(status(r, false, &mut Cache::default()).unwrap().sequence, Some(kind));
+        assert_eq!(run_op(r, &GitOp::Abort(kind)), Ok(None));
+        let info = status(r, false, &mut Cache::default()).unwrap();
+        assert!(info.sequence.is_none());
+        assert_eq!(info.conflicts, 0);
+        assert_eq!(fs::read_to_string(r.join("conflict.txt")).unwrap(), "main\n");
+        assert_eq!(output(r, &["rev-parse", "HEAD"]).unwrap().stdout, head);
+        assert!(run_op(r, &GitOp::Abort(kind)).is_err());
+    }
+}
+
+#[test]
+fn sequence_markers_belong_to_the_worktree_git_directory() {
+    let t = temp("sequence worktree папка");
+    let r = &t.0;
+    sh(r, &["init", "-q"]);
+    assert!(status(r, false, &mut Cache::default()).unwrap().sequence.is_none());
+    sh(r, &["commit", "--allow-empty", "-qm", "first"]);
+    sh(r, &["worktree", "add", "-b", "topic/x", "linked"]);
+    let w = r.join("linked");
+    let (_, gitdir) = discover(&w).unwrap();
+    assert!(w.join(".git").is_file());
+    for (marker, kind, directory) in [
+        ("MERGE_HEAD", git::Sequence::Merge, false),
+        ("rebase-merge", git::Sequence::Rebase, true),
+        ("rebase-apply", git::Sequence::Rebase, true),
+        ("CHERRY_PICK_HEAD", git::Sequence::CherryPick, false),
+    ] {
+        let p = gitdir.join(marker);
+        if directory { fs::create_dir(&p).unwrap(); } else { fs::write(&p, output(r, &["rev-parse", "HEAD"]).unwrap().stdout).unwrap(); }
+        assert_eq!(status(&w, false, &mut Cache::default()).unwrap().sequence, Some(kind));
+        assert!(status(r, false, &mut Cache::default()).unwrap().sequence.is_none());
+        if directory { fs::remove_dir(&p).unwrap(); } else { fs::remove_file(&p).unwrap(); }
+    }
+    assert!(status(&w, false, &mut Cache::default()).unwrap().sequence.is_none());
+}
+
 impl Drop for Temp {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);

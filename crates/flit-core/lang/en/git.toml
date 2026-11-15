@@ -14,6 +14,22 @@ deleting = "Deleting branch…"
 created = "Created branch {branch}"
 deleted = "Deleted branch {branch}"
 
+[sequence]
+merge = "Merge in progress"
+rebase = "Rebase in progress"
+cherry_pick = "Cherry-pick in progress"
+conflicts = "Conflicts: {n}"
+abort = "Git: Abort operation…"
+abort_merge = "Abort merge…"
+abort_rebase = "Abort rebase…"
+abort_cherry_pick = "Abort cherry-pick…"
+show = "Show conflicts"
+select = "Select conflicting files and folders in this folder"
+confirm = "Abort the current Git operation? Conflict resolutions and changes made during the operation may be lost."
+aborting = "Aborting Git operation…"
+aborted = "Git operation aborted"
+changed = "The Git operation has changed or already ended. Refresh the folder and try again."
+
 [column]
 hash = "Commit hash"
 status = "Git status"

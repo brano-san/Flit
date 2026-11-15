@@ -66,6 +66,17 @@ pub struct GitInfo {
     pub upstream: Option<String>,
     pub status: FxHashMap<Vec<u8>, GitStatus>,
     pub commits: FxHashMap<Vec<u8>, Arc<Commit>>,
+    pub sequence: Option<Sequence>,
+    pub conflicts: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Sequence { Merge, Rebase, CherryPick }
+
+impl Sequence {
+    pub fn command(self) -> &'static str {
+        match self { Self::Merge => "merge", Self::Rebase => "rebase", Self::CherryPick => "cherry-pick" }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -85,6 +96,7 @@ pub enum GitOp {
     Switch(String),
     CreateBranch { name: String, base: String, switch: bool },
     DeleteBranch { name: String, force: bool },
+    Abort(Sequence),
     OpenRemote,
 }
 
@@ -245,7 +257,7 @@ pub fn op_command(op: &GitOp) -> Option<String> {
         GitOp::Push => "git push".to_owned(),
         GitOp::Sync => "git pull && git push".to_owned(),
         GitOp::Clone { url } => format!("git clone {url}"),
-        GitOp::Init | GitOp::Switch(_) | GitOp::OpenRemote | GitOp::CreateBranch { .. } | GitOp::DeleteBranch { .. } => return None,
+        GitOp::Init | GitOp::Switch(_) | GitOp::OpenRemote | GitOp::CreateBranch { .. } | GitOp::DeleteBranch { .. } | GitOp::Abort(_) => return None,
     })
 }
 

@@ -66,6 +66,7 @@ pub(super) enum Kind {
     GitClone,
     GitNewBranch { tab: crate::provider::TabId, dir: FsPath, bases: Vec<String>, pending: Option<crate::git::GitOp> },
     GitDeleteBranch { tab: crate::provider::TabId, dir: FsPath, name: String, force: bool, pending: bool },
+    GitAbort { tab: crate::provider::TabId, dir: FsPath, sequence: crate::git::Sequence, pending: bool },
     UserMenu { at: Option<super::user_menu::EntryAt>, submenu: bool },
     Update(super::update::Updating),
     AllowRun { tab: crate::provider::TabId, path: FsPath },
@@ -90,6 +91,7 @@ impl Kind {
             Kind::GitClone => "git_clone",
             Kind::GitNewBranch { .. } => "git_new_branch",
             Kind::GitDeleteBranch { .. } => "git_delete_branch",
+            Kind::GitAbort { .. } => "git_abort",
             Kind::UserMenu { .. } => "user_menu",
             Kind::Update(_) => "update",
         }
@@ -141,6 +143,7 @@ impl App {
                     }
                 }
                 Control::Check { label, .. } | Control::Value { label, .. } => moved(label),
+                Control::Paragraph { text, lines } if matches!(f.kind, Kind::GitAbort { .. }) => { moved(text); lines.clear(); }
                 Control::Line(_) | Control::Paragraph { .. } => {}
                 Control::Flags { label, items, .. } => {
                     moved(label);
@@ -751,6 +754,7 @@ impl App {
             Kind::GitClone => self.submit_clone(f),
             Kind::GitNewBranch { .. } => self.submit_git_branch(f),
             Kind::GitDeleteBranch { .. } => self.submit_git_delete(f),
+            Kind::GitAbort { .. } => self.submit_git_abort(f),
             Kind::UserMenu { .. } => self.submit_user_entry(f),
             Kind::Update(_) => self.submit_update(f, b),
             Kind::BatchRename(_) => self.submit_batch_rename(f),

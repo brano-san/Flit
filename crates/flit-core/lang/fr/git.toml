@@ -14,6 +14,22 @@ deleting = "Suppression de la branche…"
 created = "Branche {branch} créée"
 deleted = "Branche {branch} supprimée"
 
+[sequence]
+merge = "Fusion en cours"
+rebase = "Rebase en cours"
+cherry_pick = "Cherry-pick en cours"
+conflicts = "Conflits : {n}"
+abort = "Git : Abandonner l’opération…"
+abort_merge = "Annuler la fusion…"
+abort_rebase = "Annuler le rebase…"
+abort_cherry_pick = "Annuler le cherry-pick…"
+show = "Afficher les conflits"
+select = "Sélectionner les fichiers et dossiers en conflit dans ce dossier"
+confirm = "Abandonner l’opération Git en cours ? Les résolutions de conflits et les modifications effectuées pendant l’opération peuvent être perdues."
+aborting = "Abandon de l’opération Git…"
+aborted = "Opération Git abandonnée"
+changed = "L’opération Git a changé ou est déjà terminée. Actualisez le dossier et réessayez."
+
 [column]
 hash = "Hash du commit"
 status = "Statut Git"

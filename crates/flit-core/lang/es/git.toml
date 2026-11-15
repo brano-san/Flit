@@ -14,6 +14,22 @@ deleting = "Eliminando rama…"
 created = "Rama {branch} creada"
 deleted = "Rama {branch} eliminada"
 
+[sequence]
+merge = "Fusión en curso"
+rebase = "Rebase en curso"
+cherry_pick = "Cherry-pick en curso"
+conflicts = "Conflictos: {n}"
+abort = "Git: Cancelar operación…"
+abort_merge = "Cancelar fusión…"
+abort_rebase = "Cancelar rebase…"
+abort_cherry_pick = "Cancelar cherry-pick…"
+show = "Mostrar conflictos"
+select = "Seleccionar archivos y carpetas con conflictos en esta carpeta"
+confirm = "¿Cancelar la operación de Git actual? Se pueden perder las resoluciones de conflictos y los cambios realizados durante la operación."
+aborting = "Cancelando la operación de Git…"
+aborted = "Operación de Git cancelada"
+changed = "La operación de Git ha cambiado o ya ha terminado. Actualiza la carpeta e inténtalo de nuevo."
+
 [column]
 hash = "Hash del commit"
 status = "Estado de Git"

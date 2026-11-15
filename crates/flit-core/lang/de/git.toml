@@ -14,6 +14,22 @@ deleting = "Branch wird gelöscht…"
 created = "Branch {branch} erstellt"
 deleted = "Branch {branch} gelöscht"
 
+[sequence]
+merge = "Merge läuft"
+rebase = "Rebase läuft"
+cherry_pick = "Cherry-Pick läuft"
+conflicts = "Konflikte: {n}"
+abort = "Git: Vorgang abbrechen…"
+abort_merge = "Merge abbrechen…"
+abort_rebase = "Rebase abbrechen…"
+abort_cherry_pick = "Cherry-Pick abbrechen…"
+show = "Konflikte anzeigen"
+select = "Dateien und Ordner mit Konflikten in diesem Ordner auswählen"
+confirm = "Den laufenden Git-Vorgang abbrechen? Konfliktlösungen und Änderungen während des Vorgangs können verloren gehen."
+aborting = "Git-Vorgang wird abgebrochen…"
+aborted = "Git-Vorgang abgebrochen"
+changed = "Der Git-Vorgang hat sich geändert oder ist bereits beendet. Aktualisieren Sie den Ordner und versuchen Sie es erneut."
+
 [column]
 hash = "Commit-Hash"
 status = "Git-Status"

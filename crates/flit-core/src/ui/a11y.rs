@@ -216,6 +216,16 @@ impl App {
             }
         }
 
+        if let Some(labels) = self.git_bar_labels() {
+            for (i, (label, r)) in labels.into_iter().zip(l.git_bar).enumerate() {
+                if i >= 2 {
+                    put(&mut t, &mut targets, 0, if i == 2 { Hit::GitAbort } else { Hit::GitConflicts }, Role::Button, &label, r);
+                } else {
+                    t.add(0, hash::hash(&format!("git_sequence_{i}")) | LEAF, Role::Text, &label, r);
+                }
+            }
+        }
+
         if let Some(k) = self.form_a11y(&mut t, &mut targets) {
             focus = Some(k);
         }

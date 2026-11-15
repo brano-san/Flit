@@ -151,13 +151,24 @@ impl Cache {
     }
 }
 
+fn sequence(gitdir: &Path) -> Option<git::Sequence> {
+    if gitdir.join("rebase-merge").is_dir() || gitdir.join("rebase-apply").is_dir() { Some(git::Sequence::Rebase) }
+    else if gitdir.join("MERGE_HEAD").is_file() { Some(git::Sequence::Merge) }
+    else if gitdir.join("CHERRY_PICK_HEAD").is_file() { Some(git::Sequence::CherryPick) }
+    else { None }
+}
+
 pub fn status(dir: &Path, commits: bool, cache: &mut Cache) -> Option<GitInfo> {
     let (root, gitdir) = discover(dir)?;
     let branch = std::fs::read(gitdir.join("HEAD")).ok().and_then(|h| git::head_branch(&h)).unwrap_or_default();
     let status = output(dir, &["status", "--porcelain=v1", "-z", "--", "."]).map(|o| git::parse_status(&o.stdout, &prefix(&root, dir))).unwrap_or_default();
     let commits = if commits { cache.commits(dir, &gitdir) } else { Commits::default() };
     let upstream = output(dir, &["rev-parse", "--abbrev-ref", "@{u}"]).ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).filter(|s| !s.is_empty());
-    Some(GitInfo { root: FsPath::parse(&root.to_string_lossy()), branch, upstream, status, commits })
+    let sequence = sequence(&gitdir);
+    let conflicts = if sequence.is_some() {
+        output(&root, &["diff", "--name-only", "--diff-filter=U", "-z"]).map(|o| o.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()).count()).unwrap_or(0)
+    } else { 0 };
+    Some(GitInfo { root: FsPath::parse(&root.to_string_lossy()), branch, upstream, status, commits, sequence, conflicts })
 }
 
 
@@ -206,6 +217,12 @@ pub fn run_op(dir: &Path, op: &GitOp) -> Result<Option<String>, String> {
             if *switch { output(dir, &["switch", "-c", name, &base]).map(drop) } else { output(dir, &["branch", "--", name, &base]).map(drop) }
         }
         GitOp::DeleteBranch { name, force } => output(dir, &["branch", if *force { "-D" } else { "-d" }, "--", name]).map(drop),
+        GitOp::Abort(kind) => {
+            if discover(dir).and_then(|(_, g)| sequence(&g)) != Some(*kind) {
+                return Err(S::GitSequenceChanged.t().into());
+            }
+            output(dir, &[kind.command(), "--abort"]).map(drop)
+        }
         GitOp::Switch(b) => match output(dir, &["switch", b]) {
             Err(e) => match b.split_once('/') {
                 Some((_, tail)) if !tail.is_empty() => output(dir, &["switch", tail]).map(drop).map_err(|_| e),

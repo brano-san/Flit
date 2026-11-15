@@ -499,6 +499,8 @@ enum Hit {
     HThumb,
     Encoding,
     Branch,
+    GitAbort,
+    GitConflicts,
     Bin(usize),
     Side(usize),
     SidePin(usize),
@@ -599,6 +601,7 @@ struct Layout {
     bar_pieces: [Rect; 2],
     encoding: Rect,
     branch: Rect,
+    git_bar: [Rect; 4],
     bin: [Rect; 3],
     crumbs: Vec<Rect>,
     crumb_chevrons: Vec<Rect>,
@@ -1559,6 +1562,7 @@ impl App {
         let l = &mut self.layout;
         l.header = Rect::new(area.x, area.y, area.w, s(HEADER_H));
         l.bottom = area.bottom();
+        self.layout_git_bar();
         self.layout_look();
         let now = self.clock();
         let animate = self.animations && !matches!(self.drag, Drag::ColSep { .. });
@@ -1680,6 +1684,8 @@ impl App {
         if l.encoding.contains(x, y) {
             return Hit::Encoding;
         }
+        if l.git_bar[2].contains(x, y) { return Hit::GitAbort; }
+        if l.git_bar[3].contains(x, y) { return Hit::GitConflicts; }
         if l.branch.contains(x, y) {
             return Hit::Branch;
         }
@@ -2129,6 +2135,8 @@ impl App {
             Hit::Encoding => self.pick_encoding(),
             Hit::Bottom(b) => self.bottom_click(b),
             Hit::Branch => self.git_branches_menu(),
+            Hit::GitAbort => self.ask_git_abort(),
+            Hit::GitConflicts => self.show_git_conflicts(),
             Hit::Preview(p) => self.preview_click(p),
             Hit::Bin(k) => self.bin_button(k),
             Hit::Side(i) => self.open_side_item(i, self.mods.ctrl, now),
@@ -2600,6 +2608,7 @@ impl App {
                 self.draw_ops(g, files);
             }
             self.draw_header(g, files);
+            self.draw_git_bar(g, files);
             if active {
                 self.draw_preview(g, palette.area(Area::Pane));
             }

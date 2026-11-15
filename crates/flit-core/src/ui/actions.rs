@@ -486,6 +486,8 @@ pub static ACTIONS: &[Action] = &[
     Action::new("git.clone", G::Flit, S::ActionsGitClone, S::DescribeGitClone, &[], |a, _| a.ask_clone()),
     Action::new("git.branches", G::Flit, S::ActionsGitBranches, S::DescribeGitBranches, &[], |a, _| a.git_branches_menu()),
     Action::new("git.new_branch", G::Flit, S::ActionsGitNewBranch, S::DescribeGitNewBranch, &[], |a, _| a.ask_git_branch()),
+    Action::new("git.abort", G::Flit, S::GitSequenceAbort, S::GitSequenceConfirm, &[], |a, _| a.ask_git_abort()),
+    Action::new("git.show_conflicts", G::Flit, S::GitSequenceShow, S::GitSequenceSelect, &[], |a, _| a.show_git_conflicts()),
     Action::new("git.open_remote", G::Flit, S::ActionsGitOpenRemote, S::DescribeGitOpenRemote, &[], |a, _| a.git_run(GitOp::OpenRemote)),
     Action::new("view.status_bar", G::Flit, S::ActionsViewStatusBar, S::DescribeViewStatusBar, &[], |a, _| a.toggle_pref(|p| &mut p.status_bar)),
     Action::new("theme.toggle", G::Flit, S::ActionsThemeToggle, S::DescribeThemeToggle, &[ctrl_alt(c('T'))], |a, _| a.toggle_theme()),
@@ -698,6 +700,7 @@ impl App {
         let no_files = home || bin || kind == PathKind::Computer;
         match id.split('.').next().unwrap_or_default() {
             _ if id == "git.sync" => self.git_can_sync(),
+            _ if matches!(id, "git.abort" | "git.show_conflicts") => self.git_sequence().is_some(),
             _ if id.ends_with("origin") || id.ends_with(".deleted") => bin,
             _ if id == "home.clear_recent" => true,
             _ if id == "layout.load" => !self.opts.layouts.is_empty(),

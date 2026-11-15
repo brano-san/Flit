@@ -31,6 +31,131 @@ fn git_requests(fx: &[Effect]) -> Vec<GitRequest> {
 }
 
 #[test]
+fn an_in_progress_git_sequence_offers_abort_without_running_it_immediately() {
+    let (mut app, _) = app_in(r"C:\x", &["a.txt"]);
+    let mut ev = repo(&app);
+    if let GitEvent::Status { info: Some(i), .. } = &mut ev { Arc::make_mut(i).sequence = Some(crate::git::Sequence::Merge); }
+    app.on_git(ev);
+    assert!(app.run_action("git.abort", Instant::now()));
+    assert!(app.jobs.form.is_some());
+    assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty());
+}
+
+#[test]
+fn a_repository_without_a_sequence_never_offers_destructive_abort() {
+    let (mut app, _) = app_in(r"C:\x", &[]);
+    app.on_git(repo(&app));
+    assert!(app.run_action("git.abort", Instant::now()));
+    assert!(app.jobs.form.is_none());
+    assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty());
+}
+
+fn sequence_event(app: &App, sequence: Sequence) -> GitEvent {
+    let mut ev = repo(app);
+    if let GitEvent::Status { info: Some(i), .. } = &mut ev {
+        let info = Arc::make_mut(i);
+        info.sequence = Some(sequence);
+        info.conflicts = 1;
+        info.status.insert(b"a.txt".to_vec(), GitStatus::Conflict);
+    }
+    ev
+}
+
+#[test]
+fn abort_requires_confirmation_preserves_errors_and_removes_the_bar_after_refresh() {
+    for sequence in [Sequence::Merge, Sequence::Rebase, Sequence::CherryPick] {
+        let (mut app, _) = app_in(r"C:\x", &["a.txt", "b.txt"]);
+        app.on_git(sequence_event(&app, sequence));
+        assert!(app.layout.git_bar.iter().all(|r| r.w > 0.0));
+        app.ask_git_abort();
+        let f = app.jobs.form.as_ref().unwrap();
+        assert_eq!(f.focus, f.controls.len() + 1);
+        app.form_submit(1);
+        assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty());
+        app.ask_git_abort();
+        app.form_submit(0);
+        let requests = git_requests(&app.drain_effects().collect::<Vec<_>>());
+        assert!(matches!(requests.as_slice(), [GitRequest::Run { dir, op: GitOp::Abort(s), .. }] if dir.display() == r"C:\x" && *s == sequence));
+        app.form_submit(0);
+        assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty());
+        app.on_git(GitEvent::Done { tab: app.tab().id, op: GitOp::Abort(sequence), error: Some("permission denied".into()), url: None });
+        assert!(app.jobs.form.as_ref().unwrap().error);
+        assert!(app.layout.git_bar[2].w > 0.0);
+        app.form_submit(0);
+        app.on_git(GitEvent::Done { tab: app.tab().id, op: GitOp::Abort(sequence), error: None, url: None });
+        assert!(app.jobs.form.is_none());
+        assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).iter().any(|r| matches!(r, GitRequest::Status { .. })));
+        app.on_git(repo(&app));
+        assert!(app.layout.git_bar.iter().all(|r| r.w == 0.0));
+        assert!(!app.available("git.abort"));
+    }
+}
+
+#[test]
+fn show_conflicts_selects_only_conflicts_and_keeps_other_tabs_panes_and_windows_independent() {
+    let (mut app, _) = app_in(r"C:\x", &["a.txt", "b.txt"]);
+    app.on_git(sequence_event(&app, Sequence::Merge));
+    app.tab_mut().view.as_mut().unwrap().set_selected(1, true);
+    app.show_git_conflicts();
+    assert_eq!(app.tab().view.as_ref().unwrap().selected().collect::<Vec<_>>(), [0]);
+    let first = app.tab().id;
+    app.run_action("tab.new", Instant::now());
+    assert!(app.git_sequence().is_none());
+    app.run_action("tab.previous", Instant::now());
+    assert_eq!(app.tab().id, first);
+    assert_eq!(app.git_sequence(), Some(Sequence::Merge));
+    app.run_action("panel.split_right", Instant::now());
+    if app.tab().id == first { app.run_action("panel.next", Instant::now()); }
+    app.on_git(repo(&app));
+    let other_pane = app.tab().id;
+    assert!(app.git_sequence().is_none());
+    app.run_action("panel.previous", Instant::now());
+    assert_eq!(app.git_sequence(), Some(Sequence::Merge));
+    app.drain_effects().for_each(drop);
+    app.on_git(GitEvent::Done { tab: first, op: GitOp::Abort(Sequence::Merge), error: None, url: None });
+    let requests = git_requests(&app.drain_effects().collect::<Vec<_>>());
+    for id in [first, other_pane] {
+        assert!(requests.iter().any(|r| matches!(r, GitRequest::Status { tab, .. } if *tab == id)));
+    }
+    let (mut other, _) = app_in(r"C:\x", &["a.txt"]);
+    other.on_git(repo(&other));
+    assert!(other.git_sequence().is_none());
+    app.set_git_integration(false);
+    assert!(app.git_sequence().is_none());
+    assert!(app.layout.git_bar.iter().all(|r| r.w == 0.0));
+}
+
+#[test]
+fn sequence_bars_and_confirmations_fit_narrow_windows_in_every_language() {
+    use crate::i18n::{self, Lang};
+    for lang in Lang::ALL {
+        i18n::set_lang(lang);
+        for sequence in [Sequence::Merge, Sequence::Rebase, Sequence::CherryPick] {
+            let (mut app, _) = app_in(r"C:\x", &["a.txt"]);
+            app.on_event(&crate::input::Event::Resized { width: 480, height: 360 }, Instant::now());
+            app.on_git(sequence_event(&app, sequence));
+            let mut gfx = Gfx::new(crate::text::tests::Mono, 2048);
+            app.frame(&mut gfx, Instant::now());
+            for (label, r) in app.git_bar_labels().unwrap().into_iter().zip(app.layout.git_bar) {
+                assert!(r.x >= 0.0 && r.right() <= 480.0 && r.bottom() <= app.layout.header.y, "{lang:?}");
+                assert!(gfx.measure(&label, app.content_font(13.0)) <= r.w, "{lang:?}: {label}");
+            }
+            let r = app.layout.git_bar[2];
+            assert_eq!(app.hit(r.x + 1.0, r.y + 1.0), super::super::Hit::GitAbort);
+            let tree = app.accessibility();
+            assert!(tree.nodes.iter().any(|n| n.name == sequence_labels(sequence)[1].t()));
+            app.ask_git_abort();
+            app.frame(&mut gfx, Instant::now());
+            let f = app.jobs.form.as_ref().unwrap();
+            let Control::Paragraph { text, lines } = &f.controls[0] else { panic!("wrapped warning") };
+            assert_eq!(lines.join("").split_whitespace().collect::<String>(), text.split_whitespace().collect::<String>());
+            assert!(f.rect.x >= 0.0 && f.rect.right() <= 480.0 && f.rect.bottom() <= 360.0);
+        }
+    }
+    i18n::set_lang(Lang::En);
+}
+
+#[test]
 fn creating_a_branch_fetches_choices_in_the_background() {
     let (mut app, _) = app_in(r"C:\x", &[]);
     app.on_git(repo(&app));

@@ -14,6 +14,22 @@ deleting = "Удаление ветки…"
 created = "Ветка {branch} создана"
 deleted = "Ветка {branch} удалена"
 
+[sequence]
+merge = "Идёт слияние"
+rebase = "Идёт rebase"
+cherry_pick = "Идёт cherry-pick"
+conflicts = "Конфликтов: {n}"
+abort = "Git: Прервать операцию…"
+abort_merge = "Прервать слияние…"
+abort_rebase = "Прервать rebase…"
+abort_cherry_pick = "Прервать cherry-pick…"
+show = "Показать конфликты"
+select = "Выделить конфликтные файлы и папки в текущей папке"
+confirm = "Прервать текущую операцию Git? Разрешения конфликтов и изменения, сделанные во время операции, могут быть потеряны."
+aborting = "Прерывание операции Git…"
+aborted = "Операция Git прервана"
+changed = "Операция Git изменилась или уже завершена. Обновите папку и повторите попытку."
+
 [column]
 hash = "Хеш коммита"
 status = "Статус Git"
