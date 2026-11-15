@@ -28,6 +28,9 @@ fn os(p: &FsPath) -> &OsStr {
 }
 
 fn spawn_error(what: &str, e: &io::Error) -> PlatformError {
+    if e.kind() == io::ErrorKind::NotFound && crate::tools::package_for(what, "").is_some() && on_path(OsStr::new(what)).is_none() {
+        return tool_missing(what);
+    }
     PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("{what}: {e}"))
 }
 
@@ -48,7 +51,18 @@ pub fn on_path(program: &OsStr) -> Option<PathBuf> {
     if program.as_bytes().contains(&b'/') {
         return Some(PathBuf::from(program)).filter(|p| executable(p));
     }
-    std::env::split_paths(&std::env::var_os("PATH")?).map(|d| d.join(program)).find(|p| executable(p))
+    #[cfg(test)]
+    if let Some(path) = crate::temp::tool_path() {
+        return on_path_in(program, &path);
+    }
+    on_path_in(program, &std::env::var_os("PATH")?)
+}
+
+fn on_path_in(program: &OsStr, path: &OsStr) -> Option<PathBuf> {
+    if program.as_bytes().contains(&b'/') {
+        return Some(PathBuf::from(program)).filter(|p| executable(p));
+    }
+    std::env::split_paths(path).map(|d| d.join(program)).find(|p| executable(p))
 }
 
 pub fn no_xdg_open() -> String {
@@ -176,7 +190,7 @@ pub fn terminal_args(program: &Path, dir: Option<&Path>, command: Option<Vec<OsS
 }
 
 fn spawn_terminal(dir: Option<&Path>, command: Option<Vec<OsString>>) -> Result<(), PlatformError> {
-    let program = terminal_program().ok_or_else(|| PlatformError::new(libc::ENOENT as i64, "No terminal was found: set TERMINAL or install xdg-terminal-exec"))?;
+    let program = terminal_program().ok_or_else(|| tool_missing("xterm"))?;
     let program = real_terminal(&program, on_path);
     let mut cmd = Command::new(&program);
     cmd.args(terminal_args(&program, dir, command));
@@ -212,7 +226,11 @@ pub fn root_shell(dir: &Path, sudo: bool) -> Vec<OsString> {
 }
 
 pub fn open_root_terminal(dir: &Path) -> Result<(), PlatformError> {
-    spawn_terminal(Some(dir), Some(root_shell(dir, on_path(OsStr::new("sudo")).is_some())))
+    let sudo = on_path(OsStr::new("sudo")).is_some();
+    if !sudo {
+        crate::tools::require("pkexec")?;
+    }
+    spawn_terminal(Some(dir), Some(root_shell(dir, sudo)))
 }
 
 pub fn run_in_terminal_argv(dir: Option<&Path>, argv: Vec<OsString>) -> Result<(), PlatformError> {
@@ -351,9 +369,16 @@ fn run_command(argv: &[String], env: &[(String, String)], dir: Option<&Path>) ->
     detach(cmd).map_err(|e| spawn_error(if url { "xdg-open" } else { program }, &e))
 }
 
-fn tool_missing(tool: &str) -> PlatformError {
+pub(crate) fn tool_missing(tool: &str) -> PlatformError {
     let package = crate::tools::package_for(tool, &crate::tools::os_release()).unwrap_or(tool);
-    PlatformError::new(libc::ENOENT as i64, flit_core::tr_en!(flit_core::i18n::S::ErrorsOpsExtraNoTool, tool = tool, package = package))
+    let key = match tool {
+        "pkexec" => S::ErrorsOpsExtraNoPkexec,
+        "setfacl" => S::ErrorsFsNoSetfacl,
+        "mpv" => S::PreviewNoPlayer,
+        "recollq" => S::ErrorsEngineNoContentSearch,
+        _ => S::ErrorsOpsExtraNoTool,
+    };
+    PlatformError::new(libc::ENOENT as i64, flit_core::tr_en!(key, tool = tool, package = package))
 }
 
 fn print_files(files: &[PathBuf]) -> Result<(), PlatformError> {
@@ -745,18 +770,7 @@ impl FileOps for LinuxShell {
 
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
         let own = OWN_FILES.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let found = crate::window::clipboard_types().and_then(|t| crate::clipboard::files(&t)).or_else(helper_files);
-        let (paths, cut) = match found {
-            Some((paths, cut)) => {
-                let ours = own.as_ref().filter(|(list, _)| parse_file_list(list.as_bytes()).0 == paths);
-                (paths, cut || ours.is_some_and(|o| o.1))
-            }
-            None => own.map(|(list, cut)| (parse_file_list(list.as_bytes()).0, cut)).unwrap_or_default(),
-        };
-        if paths.is_empty() {
-            return Err(PlatformError::new(-1, "the clipboard holds no files"));
-        }
-        Ok((paths, cut))
+        clipboard_files_from(own, crate::window::clipboard_types())
     }
 
     fn clear_clipboard(&mut self) {
@@ -915,6 +929,29 @@ pub fn remember_files(paths: &[FsPath], cut: bool) -> String {
     let list = uri_list(paths);
     *OWN_FILES.lock().unwrap_or_else(|e| e.into_inner()) = Some((list.clone(), cut));
     list
+}
+
+fn clipboard_files_from(own: Option<(String, bool)>, native: Option<crate::clipboard::Payload>) -> Result<(Vec<FsPath>, bool), PlatformError> {
+    let found = native.as_deref().and_then(crate::clipboard::files).or_else(helper_files);
+    let (paths, cut) = match found {
+        Some((paths, cut)) => {
+            let ours = own.as_ref().filter(|(list, _)| parse_file_list(list.as_bytes()).0 == paths);
+            (paths, cut || ours.is_some_and(|o| o.1))
+        }
+        None => own.map(|(list, cut)| (parse_file_list(list.as_bytes()).0, cut)).unwrap_or_default(),
+    };
+    if paths.is_empty() {
+        return Err(empty_clipboard(native.is_some(), wayland()));
+    }
+    Ok((paths, cut))
+}
+
+fn empty_clipboard(native: bool, wayland: bool) -> PlatformError {
+    let reader = if wayland { "wl-paste" } else { "xclip" };
+    if !native && on_path(OsStr::new(reader)).is_none() {
+        return tool_missing(reader);
+    }
+    PlatformError::new(-1, S::ErrorsEngineClipboardNoFiles.en())
 }
 
 fn clipboard_bytes(mime: &str) -> Option<Vec<u8>> {
@@ -1141,7 +1178,7 @@ pub fn probe_double_click() -> Option<u32> {
     session_bus().then(|| ask(&portal)).flatten().or_else(|| ask(&gsettings))
 }
 
-pub fn play_media(video: bool, path: &Path, socket: Option<&Path>, volume: Option<f32>) -> Option<(std::process::Child, bool)> {
+pub fn play_media(video: bool, path: &Path, socket: Option<&Path>, volume: Option<f32>) -> Result<(std::process::Child, bool), PlatformError> {
     let file = path.as_os_str().to_owned();
     let command = |name: &str, extra: &[&str]| {
         on_path(OsStr::new(name)).map(|program| {
@@ -1156,12 +1193,12 @@ pub fn play_media(video: bool, path: &Path, socket: Option<&Path>, volume: Optio
         if let Some(s) = socket {
             let _ = std::fs::remove_file(s);
         }
-        return with.spawn().ok().map(|c| (c, socket.is_some()));
+        return with.spawn().map(|c| (c, socket.is_some())).map_err(|e| spawn_error("mpv", &e));
     }
     let mut with = command("gst-play-1.0", &[])
         .or_else(|| if video { command("ffplay", &["-autoexit"]) } else { command("ffplay", &["-autoexit", "-nodisp"]) })
-        .or_else(|| if video { None } else { command("paplay", &[]) })?;
-    with.spawn().ok().map(|c| (c, false))
+        .or_else(|| if video { None } else { command("paplay", &[]) }).ok_or_else(|| tool_missing("mpv"))?;
+    with.spawn().map(|c| (c, false)).map_err(|e| spawn_error(&with.get_program().to_string_lossy(), &e))
 }
 
 pub fn mpv_args(socket: Option<&Path>, volume: Option<f32>) -> Vec<String> {

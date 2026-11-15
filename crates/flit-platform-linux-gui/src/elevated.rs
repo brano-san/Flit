@@ -174,7 +174,7 @@ fn unelevated(why: impl Into<String>) -> PlatformError {
 }
 
 pub fn run(op: &FileOp, job: &Job) -> Result<OpOutcome, PlatformError> {
-    let pkexec = crate::shell::on_path(OsStr::new("pkexec")).ok_or_else(|| unelevated(S::ErrorsOpsExtraNoPkexec.en()))?;
+    let pkexec = crate::tools::require("pkexec").map_err(|e| unelevated(e.message))?;
     let exe = std::env::current_exe().map_err(|e| unelevated(format!("cannot find the Flit program: {}", flit_core::fmt::io_reason(&e))))?;
     let mut child = Command::new(pkexec)
         .args(helper_args(&exe))
@@ -315,8 +315,8 @@ fn grant_failure(status: Option<i32>, complaint: &str) -> PlatformError {
 pub fn grant_access(dir: &FsPath) -> OpOutcome {
     let granted = (|| {
         let path = flit_platform_linux::host(dir).ok_or_else(|| PlatformError::new(-1, "not a Linux path"))?;
-        let pkexec = crate::shell::on_path(OsStr::new("pkexec")).ok_or_else(|| unelevated(S::ErrorsOpsExtraNoPkexec.en()))?;
-        let setfacl = crate::shell::on_path(OsStr::new("setfacl")).ok_or_else(|| PlatformError::new(-1, S::ErrorsFsNoSetfacl.en()))?;
+        let pkexec = crate::tools::require("pkexec").map_err(|e| unelevated(e.message))?;
+        let setfacl = crate::tools::require("setfacl")?;
         let out = Command::new(pkexec).arg(setfacl).args(grant_args(unsafe { libc::getuid() }, path)).stdin(Stdio::null()).output().map_err(|e| unelevated(format!("pkexec: {}", flit_core::fmt::io_reason(&e))))?;
         if out.status.success() {
             Ok(())

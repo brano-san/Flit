@@ -7,6 +7,36 @@ use flit_platform_linux::mounts::parse;
 use std::os::unix::ffi::OsStrExt;
 
 #[test]
+fn missing_network_connector_names_the_distribution_package_and_present_gio_runs() {
+    crate::temp::with_tools(&[], || {
+        let error = connect("sftp://invalid.example/unused").unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(error.to_string(), crate::shell::tool_missing("gio").message);
+        crate::temp::assert_missing(&error.to_string(), "gio");
+    });
+    crate::temp::with_tools(&["gio"], || {
+        assert!(gio(&["info", "sftp://invalid.example/unused"], CONNECT_WAIT).unwrap().status.success());
+    });
+}
+
+#[test]
+fn missing_disconnect_helpers_name_their_packages_for_each_mount_type() {
+    let table = parse(b"21 1 0:31 / /tmp/fuse rw - fuse.sshfs host:/ rw\n22 1 0:32 / /tmp/local rw - ext4 /dev/fake rw\n");
+    let root = Path::new("/tmp/gvfs");
+    for (point, tool) in [("/tmp/gvfs/share", "gio"), ("/tmp/fuse", "fusermount"), ("/tmp/local", "umount")] {
+        crate::temp::with_tools(&[], || {
+            let error = disconnect_from(Path::new(point), &table, root).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+            assert_eq!(error.to_string(), crate::shell::tool_missing(tool).message);
+            crate::temp::assert_missing(&error.to_string(), tool);
+        });
+        crate::temp::with_tools(&[tool], || {
+            disconnect_from(Path::new(point), &table, root).unwrap();
+        });
+    }
+}
+
+#[test]
 fn bookmarks_come_from_gtk_then_kde_without_home_duplicates_or_missing_folders() {
     let gtk = b"file:///home/u/Projects Projects\nfile:///home/u/My%20Docs\nsftp://host/x\nfile:///home/u/gone\n";
     let kde = b"<xbel><bookmark href=\"file:///home/u\"><title>Home</title></bookmark><bookmark href=\"file:///home/u/Projects\"/><bookmark href=\"file:///srv/a&amp;b\"/><bookmark href=\"trash:/\"/></xbel>";

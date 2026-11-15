@@ -2,7 +2,6 @@ use crate::places;
 use crossbeam_channel::Sender;
 use flit_core::listing::DirStats;
 use flit_core::path::PathKind;
-use flit_core::i18n::S;
 use flit_core::ui::WatchLimit;
 use flit_core::{FsError, FsPath, ListingBuilder, ProviderEvent, TabId};
 use flit_platform::{Fs, PlatformError, Wake, Watcher};
@@ -41,7 +40,10 @@ pub fn raise_outcome(limit: u64, code: Option<i32>, stderr: &str) -> WatchLimit 
 }
 
 pub fn raise_watch_limit() -> WatchLimit {
-    let Some(pkexec) = crate::shell::on_path(std::ffi::OsStr::new("pkexec")) else { return WatchLimit::Failed(S::ErrorsOpsExtraNoPkexec.en().to_owned()) };
+    let pkexec = match crate::tools::require("pkexec") {
+        Ok(program) => program,
+        Err(e) => return WatchLimit::Failed(e.message),
+    };
     let current = std::fs::read_to_string(WATCH_LIMIT_FILE).ok().and_then(|t| t.trim().parse().ok());
     let limit = raised_limit(current);
     match std::process::Command::new(pkexec).args(raise_args(limit)).stdin(std::process::Stdio::null()).output() {

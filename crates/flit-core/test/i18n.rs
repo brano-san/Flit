@@ -317,8 +317,8 @@ fn settings_help_on_linux_names_no_windows_places_or_programs() {
 #[test]
 fn linux_elevation_and_read_only_errors_follow_the_language() {
     set_lang(Lang::Ru);
-    let retry = crate::tr_en!(S::ErrorsOpsExtraNotElevated, error = "/etc/x: Permission denied", why = S::ErrorsOpsExtraNoPkexec.en());
-    assert_eq!(localize(&retry), "/etc/x: Отказано в доступе. Повторить с правами администратора не удалось: не установлен pkexec (polkit)");
+    let retry = crate::tr_en!(S::ErrorsOpsExtraNotElevated, error = "/etc/x: Permission denied", why = crate::tr_en!(S::ErrorsOpsExtraNoPkexec, package = "pkexec"));
+    assert_eq!(localize(&retry), "/etc/x: Отказано в доступе. Повторить с правами администратора не удалось: не установлен pkexec. Установите пакет pkexec");
     let at = crate::tr_en!(S::ErrorsOpsExtraReadOnlyWindowsAt, path = "/media/c/a.txt");
     assert!(localize(&at).starts_with("/media/c/a.txt: диск Windows подключён только для чтения"), "{}", localize(&at));
     set_lang(Lang::En);

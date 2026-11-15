@@ -24,7 +24,7 @@ device_unsupported = "Diese Aktion ist für Telefone und Kameras nicht verfügba
 grant_button = "Fortsetzen"
 grant_hint = "Klicken Sie auf „Fortsetzen“, um als Administrator dauerhaft Zugriff auf diesen Ordner zu erhalten."
 granting = "Zugriff auf {what} wird eingerichtet"
-no_setfacl = "setfacl ist nicht installiert (Paket acl)"
+no_setfacl = "setfacl ist nicht installiert. Installieren Sie das Paket {package}"
 
 [title]
 encrypted = "Dieses Archiv ist verschlüsselt"

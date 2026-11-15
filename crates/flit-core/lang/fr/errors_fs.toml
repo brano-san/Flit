@@ -24,7 +24,7 @@ device_unsupported = "Cette action n'est pas disponible pour les téléphones et
 grant_button = "Continuer"
 grant_hint = "Cliquez sur Continuer pour obtenir un accès permanent à ce dossier en tant qu’administrateur."
 granting = "Obtention de l’accès à {what}"
-no_setfacl = "setfacl n’est pas installé (paquet acl)"
+no_setfacl = "setfacl n’est pas installé. Installez le paquet {package}"
 
 [title]
 encrypted = "Cette archive est chiffrée"
