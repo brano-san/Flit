@@ -335,3 +335,49 @@ fn a_shortcut_icon_carries_the_link_arrow_and_its_target_does_not() {
     assert_eq!(typed.width.max(typed.height), 32);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn only_a_shell_overlay_answer_with_an_index_in_range_counts() {
+    use windows::Win32::Foundation::{E_FAIL, S_FALSE, S_OK};
+    let pending = windows::core::HRESULT(0x8000000A_u32 as i32);
+    assert_eq!(overlay_result(S_OK, 3), Some(3));
+    assert_eq!(overlay_result(S_OK, 15), Some(15));
+    for (hr, index) in [(S_FALSE, 0), (S_FALSE, 3), (S_OK, 0), (S_OK, 16), (S_OK, -1), (S_OK, 300), (pending, 2), (E_FAIL, 2)] {
+        assert_eq!(overlay_result(hr, index), None, "{hr:?} {index}");
+    }
+}
+
+#[test]
+fn overlays_are_asked_only_on_fixed_local_drives() {
+    let temp = p(crate::test_temp().join("flit-overlay-dir").to_str().unwrap());
+    assert!(overlay_allowed(&temp), "{}", temp.display());
+    for other in [r"\\server\share\dir", r"\\wsl.localhost\Ubuntu\home", "/tmp"] {
+        assert!(!overlay_allowed(&p(other)), "{other}");
+    }
+    let mut sh = ShellCom::new().unwrap();
+    let t = std::time::Instant::now();
+    assert_eq!(sh.overlay_slot(&p(r"\\flitnosuchserver\share\file.txt")), None);
+    assert!(t.elapsed() < std::time::Duration::from_secs(2), "a network path is refused before the shell sees it");
+}
+
+#[test]
+fn a_plain_temporary_file_has_no_overlay_and_a_shortcut_gets_its_arrow_slot() {
+    let root = crate::test_temp().join(format!("flit-shell-overlay-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("folder")).unwrap();
+    std::fs::write(root.join("plain.txt"), b"x").unwrap();
+    let dir = p(root.to_str().unwrap());
+    let mut sh = ShellCom::new().unwrap();
+    assert_eq!(sh.overlay_slot(&dir.join(b"plain.txt")), None);
+    assert_eq!(sh.overlay_slot(&dir.join(b"folder")), None);
+    assert_eq!(sh.overlay_slot(&dir.join(b"missing.txt")), None, "a vanished file is not an error");
+    let out = sh.file_op(&FileOp::Link { items: vec![p(r"C:\Windows\notepad.exe")], dest: dir.clone() }, &flit_platform::Job::detached(flit_core::provider::Resolve::Skip));
+    let slot = sh.overlay_slot(&out.items[0].1).expect("the shell marks a shortcut");
+    for size in [16, 32, 48] {
+        let image = sh.overlay_image(slot, size).unwrap();
+        assert!(image.width <= size && image.height <= size && image.rgba.iter().skip(3).step_by(4).any(|&a| a != 0), "{size}");
+    }
+    assert!(sh.overlay_image(0, 16).is_none() || sh.overlay_image(99, 16).is_none());
+    assert_eq!(sh.overlay_slot(&dir.join(b"plain.txt")), None, "the folder kept for the next row answers the same");
+    let _ = std::fs::remove_dir_all(&root);
+}

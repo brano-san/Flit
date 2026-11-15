@@ -2,6 +2,7 @@ pub mod edit;
 mod a11y;
 mod file_icons;
 mod shell_props;
+mod shell_overlays;
 mod focus;
 #[cfg(test)]
 #[path = "../../test/ui/harness.rs"]
@@ -84,6 +85,7 @@ pub use update::UpdatePrefs;
 pub use popup::{MenuOutcome, MenuView};
 pub use context::MenuKind;
 pub use tab::Tab;
+pub use shell_overlays::{OverlayBatch, OverlayItem, OverlayReply, OVERLAY_BATCH, OVERLAY_SLOTS};
 pub use bottom::WatchLimit;
 pub use address::Typed;
 pub use tabbar::{MovedTab, Startup, WindowSession};
@@ -392,6 +394,7 @@ pub enum Effect {
     Resort { tab: TabId, gen: u64, snap: Arc<DirSnapshot>, view: ViewSpec },
     Icon(IconRequest),
     Thumbnail(IconRequest),
+    Overlays(OverlayBatch),
     ClearThumbnails,
     TypeName(Vec<u8>),
     SetClipboard(String),
@@ -737,6 +740,7 @@ pub struct App {
     thumbs: FxHashMap<u64, IconState>,
     icon_epoch: u64,
     file_icons: file_icons::FileIcons,
+    shell_overlays: shell_overlays::ShellOverlays,
     type_names: FxHashMap<Vec<u8>, Option<String>>,
     adaptive: FxHashMap<u64, LayoutMode>,
 
@@ -871,6 +875,7 @@ impl App {
             thumbs: FxHashMap::default(),
             icon_epoch: 0,
             file_icons: file_icons::FileIcons::default(),
+            shell_overlays: shell_overlays::ShellOverlays::default(),
             type_names: FxHashMap::default(),
             adaptive: FxHashMap::default(),
             layout: Layout::default(),
@@ -1249,6 +1254,9 @@ impl App {
     }
 
     fn reload(&mut self, k: usize, now: Instant) {
+        if let Some(dir) = self.tabs[k].view_loc.to_windows() {
+            self.shell_overlays.forget_dir(dir.as_bytes());
+        }
         let keep = self.tabs[k].capture();
         self.load_tab_restored(k, None, keep, now);
         self.dirty |= k == self.cur;
@@ -1362,6 +1370,11 @@ impl App {
         match ev {
             ProviderEvent::Changes { tab, gen, changes } => {
                 if let Some(k) = tab_of(&self.tabs, tab, gen) {
+                    if let Some(dir) = self.tabs[k].view_loc.to_windows() {
+                        for c in &changes {
+                            self.shell_overlays.forget(dir.as_bytes(), &c.name);
+                        }
+                    }
                     self.tabs[k].pending_diffs.extend(changes);
                     self.git_refresh(k, true);
                     if self.tabs[k].pending_diffs.len() > MAX_PENDING_DIFFS {
@@ -2413,6 +2426,7 @@ impl App {
         self.expire_undo_bar(now);
         self.motion = false;
         self.file_icons.begin();
+        self.shell_overlays.begin(self.icon_epoch);
         g.dl.round = self.round_corners;
         self.apply_tag_fixes(now);
         self.ops_frame(now);
@@ -2480,6 +2494,7 @@ impl App {
         }
         self.arena = arena;
         self.prefetch_shell();
+        self.flush_shell_overlays();
 
         let t = self.tab();
         if let Some(l) = &t.loading {
@@ -3077,6 +3092,9 @@ impl App {
                 }
 
                 if !replaces {
+                    if !in_bin {
+                        self.draw_shell_overlay(g, kind, &e, dir_key, name, ir, alpha);
+                    }
                     self.draw_file_emblems(g, e.attrs, ir, alpha, &mut requests);
                 }
 

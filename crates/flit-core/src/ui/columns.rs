@@ -225,6 +225,7 @@ impl App {
                         requests.push(IconRequest { key, kind, path, size: icon_px as u32, gen: 0, row: 0 });
                     }
                 }
+                self.draw_shell_overlay(g, kind, &e, dir.as_ref().map_or(&b""[..], |d| d.as_bytes()), name, ir, 255);
                 self.draw_file_emblems(g, e.attrs, ir, 255, &mut requests);
                 let x = ir.right() + s8;
                 let baseline = (cell.y + (rh + m.ascent - m.descent) / 2.0).round();

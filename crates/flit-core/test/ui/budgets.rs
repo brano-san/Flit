@@ -310,3 +310,38 @@ fn twenty_thousand_files_sorted_by_length_keep_every_frame_fast_while_all_length
     assert!(worst < budget(8.0), "p99 frame {worst:?}");
     assert!(whole < Duration::from_secs(30), "reading every length took {whole:?}");
 }
+
+#[test]
+fn scrolling_ten_thousand_files_with_shell_overlays_stays_within_the_ui_budget() {
+    let names: Vec<_> = (0..10_000).map(|i| format!("file{i:05}.txt")).collect();
+    let mut best = Duration::MAX;
+    let mut asked_most = 0;
+    for _ in 0..ATTEMPTS {
+        let mut b = Bench::new();
+        let path = loc(r"C:\overlays");
+        b.app = App::new(Persisted { path: path.clone(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1400, 900), Instant::now());
+        b.app.set_shell_overlays(true);
+        let mut snap = (*snapshot(&b.app, &names)).clone();
+        snap.path = path.path().clone();
+        for e in &mut snap.listing.entries { e.attrs = 0; }
+        b.app.tab().slot.publish(Arc::new(snap));
+        b.app.poll();
+        let start = Instant::now();
+        for k in 0..100 {
+            b.app.on_event(&Event::Wheel { dx: 0.0, dy: -3.0 }, Instant::now());
+            b.app.frame(&mut b.gfx, Instant::now());
+            for e in b.app.drain_effects().collect::<Vec<_>>() {
+                if let Effect::Overlays(batch) = e {
+                    asked_most = asked_most.max(batch.items.len());
+                    let found = batch.items.iter().map(|i| (i.key, (k % 3 == 0).then_some(1))).collect();
+                    let images = if batch.have.contains(&1) { Vec::new() } else { vec![(1, crate::ui::Bitmap { width: 16, height: 16, rgba: vec![255; 1024] })] };
+                    b.app.on_overlays(&mut b.gfx, crate::ui::OverlayReply { id: batch.id, size: batch.size, found, skipped: Vec::new(), images });
+                }
+            }
+        }
+        best = best.min(start.elapsed());
+    }
+    eprintln!("10k overlay scroll: {:?} per frame, largest batch {asked_most}", best / 100);
+    assert!(asked_most > 0 && asked_most <= crate::ui::OVERLAY_BATCH);
+    assert!(best / 100 < budget(8.0));
+}

@@ -8,6 +8,7 @@ mod jumps;
 mod layouts;
 mod logs;
 mod metrics;
+mod overlays;
 mod places;
 mod preview;
 mod schema;
