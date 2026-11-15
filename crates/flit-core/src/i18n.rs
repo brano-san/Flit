@@ -431,7 +431,7 @@ pub fn localize(msg: &str) -> Cow<'_, str> {
             return Cow::Owned(fill(k.in_lang(l), &refs));
         }
     }
-    for (_, k) in LINUX_ERRNO {
+    for &(_, k) in LINUX_ERRNO.iter().chain(WINDOWS_ERRORS.iter().filter(|_| cfg!(windows))) {
         if let Some(head) = msg.strip_suffix(k.en()).filter(|h| h.ends_with(": ")) {
             return Cow::Owned(format!("{head}{}", k.in_lang(l)));
         }
@@ -469,8 +469,40 @@ pub fn linux_errno(code: i32) -> Option<S> {
     LINUX_ERRNO.iter().find(|e| e.0 == code).map(|e| e.1)
 }
 
+pub const WINDOWS_ERRORS: [(i32, S); 22] = [
+    (2, S::ErrorsOsNotFound),
+    (3, S::ErrorsOsNotFound),
+    (5, S::ErrorsOsPermissionDenied),
+    (19, S::ErrorsOsReadOnly),
+    (21, S::ErrorsOsNotReady),
+    (32, S::ErrorsOsBusy),
+    (33, S::ErrorsOsBusy),
+    (39, S::ErrorsOsNoSpace),
+    (50, S::ErrorsOsNotSupported),
+    (53, S::ErrorsOsNetworkNotFound),
+    (64, S::ErrorsOsNetworkUnavailable),
+    (67, S::ErrorsOsNetworkNotFound),
+    (80, S::ErrorsOsExists),
+    (112, S::ErrorsOsNoSpace),
+    (123, S::ErrorsOsInvalidName),
+    (145, S::ErrorsOsNotEmpty),
+    (183, S::ErrorsOsExists),
+    (206, S::ErrorsOsNameTooLong),
+    (740, S::ErrorsOsElevationRequired),
+    (1223, S::ErrorsOsCancelled),
+    (1314, S::ErrorsOsPrivilegeRequired),
+    (1392, S::ErrorsOsCorrupt),
+];
+
 pub fn os_error(code: i32) -> Option<S> {
-    if cfg!(target_os = "linux") { linux_errno(code) } else { None }
+    if cfg!(target_os = "linux") {
+        linux_errno(code)
+    } else if cfg!(windows) {
+        let code = if (code >> 16) & 0x1FFF == 7 { code & 0xFFFF } else { code };
+        WINDOWS_ERRORS.iter().find(|e| e.0 == code).map(|e| e.1)
+    } else {
+        None
+    }
 }
 
 pub fn relocalize(msg: &str, from: Lang) -> Cow<'_, str> {

@@ -121,7 +121,7 @@ fn remove(p: &FsPath) -> std::io::Result<()> {
 }
 
 fn failure(p: &FsPath, e: std::io::Error) -> PlatformError {
-    PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("{}: {e}", p.display()))
+    PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("{}: {}", p.display(), flit_core::fmt::io_reason(&e)))
 }
 
 pub(crate) fn purge(pairs: &[(FsPath, FsPath)]) -> OpOutcome {

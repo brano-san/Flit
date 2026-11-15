@@ -14,6 +14,10 @@ use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_UPDATEDIR, SHCNF_FLUSHNOWA
 
 type Pairs = Vec<(FsPath, FsPath)>;
 
+#[cfg(test)]
+#[path = "../test/engine.rs"]
+mod tests;
+
 const PROTECTED: u32 = FILE_ATTRIBUTE_READONLY.0 | FILE_ATTRIBUTE_HIDDEN.0 | FILE_ATTRIBUTE_SYSTEM.0;
 
 pub(crate) struct Outcome {
@@ -56,7 +60,7 @@ fn code(e: &windows::core::Error) -> WIN32_ERROR {
 }
 
 fn reason(path: &FsPath, e: &windows::core::Error) -> String {
-    let said = e.message().trim_end().to_owned();
+    let said = crate::error_reason(e).trim_end().to_owned();
     match code(e) {
         ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION => flit_core::fmt::in_use(&said, &crate::busy::holders(path)).unwrap_or(said),
         _ => said,

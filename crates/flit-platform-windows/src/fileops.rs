@@ -39,7 +39,7 @@ fn shell_item(p: &FsPath) -> Result<IShellItem, PlatformError> {
         return crate::namespace::item(p).map_err(|e| PlatformError::new(e.code, format!("{}: {e}", p.display())));
     }
     let w = p.to_wide(false);
-    unsafe { SHCreateItemFromParsingName(PCWSTR(w.as_ptr()), None) }.map_err(|e| PlatformError::new(e.code().0 as i64, format!("{}: {}", p.display(), e.message())))
+    unsafe { SHCreateItemFromParsingName(PCWSTR(w.as_ptr()), None) }.map_err(|e| PlatformError::new(e.code().0 as i64, format!("{}: {}", p.display(), crate::error_reason(&e))))
 }
 
 fn wide_name(name: &[u8]) -> Vec<u16> {
@@ -431,7 +431,7 @@ fn new_stream(item: &FsPath, name: &[u8]) -> OpOutcome {
     flit_core::name::to_utf16(name, &mut w);
     match create_new(Path::new(&OsString::from_wide(&w)), &[]) {
         Ok(()) => OpOutcome { items: vec![(item.clone(), item.clone())], error: None },
-        Err(e) => OpOutcome { items: Vec::new(), error: Some(PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, tr_en!(S::ErrorsEngineStream, error = e))) },
+        Err(e) => OpOutcome { items: Vec::new(), error: Some(PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, tr_en!(S::ErrorsEngineStream, error = flit_core::fmt::io_reason(&e)))) },
     }
 }
 
@@ -549,7 +549,7 @@ fn change_attributes(item: &FsPath, set: u32, clear: u32, unblock: bool) -> Resu
             apply(win_attributes(now, 0, attr::READONLY))?;
         }
         if let Err(e) = std::fs::remove_file(zone_stream(item)).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(e) }) {
-            return Err(PlatformError::new(e.raw_os_error().map_or(-1, i64::from), format!("{}: {e}", item.display())));
+            return Err(PlatformError::new(e.raw_os_error().map_or(-1, i64::from), format!("{}: {}", item.display(), flit_core::fmt::io_reason(&e))));
         }
     }
     let next = win_attributes(now, set, clear);

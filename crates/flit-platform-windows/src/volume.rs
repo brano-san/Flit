@@ -28,7 +28,7 @@ fn set(drive: &FsPath, label: &str) -> Result<(), WIN32_ERROR> {
 }
 
 pub(crate) fn failure(code: WIN32_ERROR) -> String {
-    flit_core::tr_en!(S::ErrorsEngineVolumeLabelFailed, error = windows::core::Error::from_hresult(code.to_hresult()).message())
+    flit_core::tr_en!(S::ErrorsEngineVolumeLabelFailed, error = crate::error_reason(&windows::core::Error::from_hresult(code.to_hresult())))
 }
 
 pub(crate) fn label(drive: &FsPath, label: &str, elevated: bool) -> Result<Outcome, String> {
@@ -123,7 +123,7 @@ fn grant(dir: &FsPath) -> Result<(), PlatformError> {
     }
     match code {
         0 => Ok(()),
-        c => Err(PlatformError::new(i64::from(c), format!("icacls {}: {}", dir.display(), windows::core::Error::from_hresult(WIN32_ERROR(c).to_hresult()).message()))),
+        c => Err(PlatformError::new(i64::from(c), format!("icacls {}: {}", dir.display(), crate::error_reason(&windows::core::Error::from_hresult(WIN32_ERROR(c).to_hresult()))))),
     }
 }
 

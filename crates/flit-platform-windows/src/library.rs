@@ -122,10 +122,10 @@ fn restore(dir: &std::path::Path, defaults: &[Classic]) -> Result<usize, Platfor
         let file = match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(PlatformError::new(-1, flit_core::tr_en!(S::ErrorsLibrariesCreate, path = path.display(), error = e))),
+            Err(e) => return Err(PlatformError::new(-1, flit_core::tr_en!(S::ErrorsLibrariesCreate, path = path.display(), error = flit_core::fmt::io_reason(&e)))),
         };
         let mut file = file;
-        file.write_all(d.xml().as_bytes()).map_err(|e| PlatformError::new(-1, flit_core::tr_en!(S::ErrorsLibrariesWrite, path = path.display(), error = e)))?;
+        file.write_all(d.xml().as_bytes()).map_err(|e| PlatformError::new(-1, flit_core::tr_en!(S::ErrorsLibrariesWrite, path = path.display(), error = flit_core::fmt::io_reason(&e))))?;
         let w: Vec<u16> = path.as_os_str().to_string_lossy().encode_utf16().chain(Some(0)).collect();
         unsafe { SHChangeNotify(SHCNE_CREATE, SHCNF_PATHW, Some(w.as_ptr().cast()), None) };
         made += 1;
