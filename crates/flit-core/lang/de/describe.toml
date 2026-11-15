@@ -282,6 +282,7 @@
 "git.init" = "Macht den aktuellen Ordner zu einem neuen Git-Repository"
 "git.clone" = "Kopiert ein Repository per URL in den aktuellen Ordner"
 "git.branches" = "Listet die Branches und wechselt zum gewählten"
+"git.new_branch" = "Erstellt einen lokalen Branch aus dem gewählten Branch und wechselt auf Wunsch zu ihm"
 "git.open_remote" = "Öffnet die Seite des Remotes origin im Browser"
 "view.status_bar" = "Leiste unten mit der Anzahl der Elemente und der Auswahl"
 "theme.toggle" = "Dunkler Modus, heller Modus, Nacht, Farben, Darstellung"

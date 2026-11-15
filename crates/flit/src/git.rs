@@ -161,13 +161,12 @@ pub fn status(dir: &Path, commits: bool, cache: &mut Cache) -> Option<GitInfo> {
 }
 
 
-pub fn branches(dir: &Path) -> Vec<String> {
-    let Ok(out) = output(dir, &["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"]) else { return Vec::new() };
+pub fn branches(dir: &Path) -> Vec<git::Branch> {
+    let Ok(out) = output(dir, &["for-each-ref", "--format=%(refname)%00%(symref)", "refs/heads", "refs/remotes"]) else { return Vec::new() };
     String::from_utf8_lossy(&out.stdout)
         .lines()
-        .filter(|l| !l.ends_with("/HEAD"))
-        .filter_map(|l| l.strip_prefix("refs/heads/").or_else(|| l.strip_prefix("refs/remotes/")))
-        .map(str::to_owned)
+        .filter_map(|l| l.split_once('\0').filter(|(_, target)| target.is_empty()).map(|(name, _)| name))
+        .filter_map(|l| l.strip_prefix("refs/heads/").map(|name| git::Branch { name: name.into(), remote: false }).or_else(|| l.strip_prefix("refs/remotes/").map(|name| git::Branch { name: name.into(), remote: true })))
         .collect()
 }
 
@@ -201,6 +200,12 @@ pub fn run_op(dir: &Path, op: &GitOp) -> Result<Option<String>, String> {
         GitOp::Sync => sync(&mut |args| output(dir, args).map(drop)),
         GitOp::Init => output(dir, &["init"]).map(drop),
         GitOp::Clone { url } => output(dir, &["clone", "--", url]).map(drop),
+        GitOp::CreateBranch { name, base, switch } => {
+            output(dir, &["check-ref-format", "--branch", name])?;
+            let base = if base == "HEAD" { base.clone() } else { format!("refs/heads/{base}") };
+            if *switch { output(dir, &["switch", "-c", name, &base]).map(drop) } else { output(dir, &["branch", "--", name, &base]).map(drop) }
+        }
+        GitOp::DeleteBranch { name, force } => output(dir, &["branch", if *force { "-D" } else { "-d" }, "--", name]).map(drop),
         GitOp::Switch(b) => match output(dir, &["switch", b]) {
             Err(e) => match b.split_once('/') {
                 Some((_, tail)) if !tail.is_empty() => output(dir, &["switch", tail]).map(drop).map_err(|_| e),
@@ -250,7 +255,7 @@ fn run(rx: Receiver<Job>, tx: Sender<Reply>, wake: Wake) {
                     tracing::debug!("git status of {} in {:.1} ms, repository: {}", dir.display(), started.elapsed().as_secs_f64() * 1e3, info.is_some());
                     GitEvent::Status { tab, gen, info: info.map(Arc::new) }
                 }
-                GitRequest::Branches { tab, dir } => GitEvent::Branches { tab, branches: branches(&std_path(&dir)) },
+                GitRequest::Branches { tab, gen, dir, create } => GitEvent::Branches { tab, gen, branches: branches(&std_path(&dir)), dir, create },
                 GitRequest::Run { tab, dir, op } => {
                     let (tx, wake) = (tx.clone(), wake.clone());
                     let _ = tx.send(GitEvent::Started { tab, op: op.clone() });

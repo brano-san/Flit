@@ -69,6 +69,12 @@ pub struct GitInfo {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct Branch {
+    pub name: String,
+    pub remote: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum GitOp {
     Fetch,
     Pull,
@@ -77,20 +83,22 @@ pub enum GitOp {
     Init,
     Clone { url: String },
     Switch(String),
+    CreateBranch { name: String, base: String, switch: bool },
+    DeleteBranch { name: String, force: bool },
     OpenRemote,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum GitRequest {
     Status { tab: TabId, gen: u64, dir: FsPath, commits: bool, changed: bool },
-    Branches { tab: TabId, dir: FsPath },
+    Branches { tab: TabId, gen: u64, dir: FsPath, create: bool },
     Run { tab: TabId, dir: FsPath, op: GitOp },
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum GitEvent {
     Status { tab: TabId, gen: u64, info: Option<Arc<GitInfo>> },
-    Branches { tab: TabId, branches: Vec<String> },
+    Branches { tab: TabId, gen: u64, dir: FsPath, create: bool, branches: Vec<Branch> },
     Started { tab: TabId, op: GitOp },
     Done { tab: TabId, op: GitOp, error: Option<String>, url: Option<String> },
 }
@@ -237,7 +245,7 @@ pub fn op_command(op: &GitOp) -> Option<String> {
         GitOp::Push => "git push".to_owned(),
         GitOp::Sync => "git pull && git push".to_owned(),
         GitOp::Clone { url } => format!("git clone {url}"),
-        GitOp::Init | GitOp::Switch(_) | GitOp::OpenRemote => return None,
+        GitOp::Init | GitOp::Switch(_) | GitOp::OpenRemote | GitOp::CreateBranch { .. } | GitOp::DeleteBranch { .. } => return None,
     })
 }
 

@@ -282,6 +282,7 @@
 "git.init" = "Git: Repository hier initialisieren"
 "git.clone" = "Git: Repository klonen"
 "git.branches" = "Git: Branch wechseln"
+"git.new_branch" = "Git: Neuer Branch…"
 "git.open_remote" = "Git: Repository im Web öffnen"
 "view.status_bar" = "Statusleiste ein-/ausblenden"
 "theme.toggle" = "Zwischen hellem und dunklem Design wechseln"

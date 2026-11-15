@@ -125,12 +125,16 @@ impl App {
     pub fn on_git(&mut self, ev: GitEvent) {
         match ev {
             GitEvent::Status { tab, gen, info } => self.git_status_arrived(tab, gen, info),
-            GitEvent::Branches { tab, branches } => {
-                if self.tab().id == tab {
+            GitEvent::Branches { tab, gen, dir, create, branches } => {
+                if self.tab().id == tab && self.tab().gen == gen && git_dir(self.tab().location()).as_ref() == Some(&dir) && self.jobs.form.is_none() {
                     self.git_branches = branches;
-                    let r = self.layout.branch;
-                    let menu = self.build_branch_menu();
-                    self.flit_menu(r.x, r.y, menu);
+                    if create {
+                        self.new_git_branch_form(tab, dir);
+                    } else {
+                        let r = self.layout.branch;
+                        let menu = self.build_branch_menu();
+                        self.flit_menu(r.x, r.y, menu);
+                    }
                 }
             }
             GitEvent::Started { tab, op } => {
@@ -140,8 +144,9 @@ impl App {
             }
             GitEvent::Done { tab, op, error, url } => {
                 let here = self.tab().id == tab;
+                let handled = self.git_branch_done(tab, &op, error.as_deref());
                 match (error, url) {
-                    (Some(e), _) if here => self.git_failed(tab, &op, &e),
+                    (Some(e), _) if here && !handled => self.git_failed(tab, &op, &e),
                     (None, Some(url)) => self.launch(Launch::Run { program: url, args: String::new(), dir: None }),
                     (None, None) if here => self.status(done_text(&op)),
                     _ => {}
@@ -201,7 +206,7 @@ impl App {
 
     pub(super) fn git_branches_menu(&mut self) {
         if let Some((tab, dir)) = self.git_target(true) {
-            self.effects.push(Effect::Git(GitRequest::Branches { tab, dir }));
+            self.effects.push(Effect::Git(GitRequest::Branches { tab, gen: self.tab().gen, dir, create: false }));
         }
     }
 
@@ -211,8 +216,92 @@ impl App {
 
     pub(super) fn git_switch(&mut self, k: usize) {
         if let Some(b) = self.git_branches.get(k).cloned() {
-            self.git_run(GitOp::Switch(b));
+            self.git_run(GitOp::Switch(b.name));
         }
+    }
+
+    pub(super) fn ask_git_branch(&mut self) {
+        if self.jobs.form.is_some() { return; }
+        if let Some((tab, dir)) = self.git_target(true) {
+            self.effects.push(Effect::Git(GitRequest::Branches { tab, gen: self.tab().gen, dir, create: true }));
+        }
+    }
+
+    fn new_git_branch_form(&mut self, tab: TabId, dir: FsPath) {
+        let current = self.git_branch().unwrap_or_default();
+        let mut bases: Vec<String> = self.git_branches.iter().filter(|b| !b.remote).map(|b| b.name.clone()).collect();
+        if let Some(at) = bases.iter().position(|b| b == current) {
+            bases[..=at].rotate_right(1);
+        } else {
+            bases.insert(0, "HEAD".into());
+        }
+        let controls = vec![Control::text(S::GitBranchName.t(), "", ""), Control::choice(S::GitBranchBase.t(), bases.clone(), 0), Control::check(S::GitBranchCheckout.t(), true)];
+        self.open_form(Form::new(Kind::GitNewBranch { tab, dir, bases, pending: None }, S::ActionsGitNewBranch.t(), controls, vec![S::GitBranchCreate.t(), S::WidgetsCancel.t()]));
+    }
+
+    pub(super) fn submit_git_branch(&mut self, mut f: Form) -> Option<Form> {
+        let name = f.text(0).to_owned();
+        let choice = f.choice(1);
+        let switch = f.checked(2);
+        if let Kind::GitNewBranch { tab, dir, bases, pending } = &mut f.kind {
+            if pending.is_none() {
+                let Some(base) = bases.get(choice).cloned() else { return Some(f) };
+                let op = GitOp::CreateBranch { name, base, switch };
+                *pending = Some(op.clone());
+                self.effects.push(Effect::Git(GitRequest::Run { tab: *tab, dir: dir.clone(), op }));
+                f.say(S::GitBranchCreating.t(), false);
+            }
+        }
+        Some(f)
+    }
+
+    pub(super) fn ask_git_delete(&mut self, k: usize) {
+        if self.jobs.form.is_some() { return; }
+        let Some(b) = self.git_branches.get(k).filter(|b| !b.remote && Some(b.name.as_str()) != self.git_branch()).cloned() else { return };
+        let Some((tab, dir)) = self.git_target(true) else { return };
+        let controls = vec![Control::paragraph(crate::tr!(S::GitBranchConfirm, branch = b.name))];
+        let mut f = Form::new(Kind::GitDeleteBranch { tab, dir, name: b.name, force: false, pending: false }, S::GitBranchDelete.t(), controls, vec![S::GitBranchDelete.t(), S::WidgetsCancel.t()]);
+        f.focus = f.controls.len() + 1;
+        self.open_form(f);
+    }
+
+    pub(super) fn submit_git_delete(&mut self, mut f: Form) -> Option<Form> {
+        if let Kind::GitDeleteBranch { tab, dir, name, force, pending } = &mut f.kind {
+            if !*pending {
+                *pending = true;
+                self.effects.push(Effect::Git(GitRequest::Run { tab: *tab, dir: dir.clone(), op: GitOp::DeleteBranch { name: name.clone(), force: *force } }));
+                f.say(S::GitBranchDeleting.t(), false);
+            }
+        }
+        Some(f)
+    }
+
+    fn git_branch_done(&mut self, tab: TabId, op: &GitOp, error: Option<&str>) -> bool {
+        let Some(mut f) = self.jobs.form.take() else { return false };
+        let handled = match &mut f.kind {
+            Kind::GitNewBranch { tab: t, pending, .. } if *t == tab && pending.as_ref() == Some(op) => {
+                *pending = None;
+                if let Some(e) = error { f.say(e, true); }
+                true
+            }
+            Kind::GitDeleteBranch { tab: t, name, force, pending, .. } if *t == tab && *pending && *op == (GitOp::DeleteBranch { name: name.clone(), force: *force }) => {
+                *pending = false;
+                if let Some(e) = error {
+                    if !*force && e.contains("not fully merged") {
+                        *force = true;
+                        f.controls = vec![Control::paragraph(crate::tr!(S::GitBranchForceConfirm, branch = name))];
+                        f.note.clear();
+                        f.error = false;
+                        f.focus = f.controls.len() + 1;
+                    } else { f.say(e, true); }
+                }
+                true
+            }
+            _ => false,
+        };
+        if !handled || error.is_some() { self.jobs.form = Some(f); }
+        if handled { self.layout(); self.dirty = true; }
+        handled
     }
 
     pub(super) fn ask_clone(&mut self) {
@@ -242,6 +331,8 @@ fn started_text(op: &GitOp) -> String {
         GitOp::Init => S::GitOpInitializing.t().to_owned(),
         GitOp::Clone { url } => crate::tr!(S::GitOpCloning, url = url),
         GitOp::Switch(b) => crate::tr!(S::GitOpSwitching, branch = b),
+        GitOp::CreateBranch { .. } => S::GitBranchCreating.t().into(),
+        GitOp::DeleteBranch { .. } => S::GitBranchDeleting.t().into(),
         GitOp::OpenRemote => String::new(),
     }
 }
@@ -281,6 +372,8 @@ fn done_text(op: &GitOp) -> String {
         GitOp::Init => S::GitDoneInit.t().to_owned(),
         GitOp::Clone { url } => crate::tr!(S::GitDoneClone, name = crate::git::repo_name(url).unwrap_or_default()),
         GitOp::Switch(b) => crate::tr!(S::GitDoneSwitch, branch = b),
+        GitOp::CreateBranch { name, .. } => crate::tr!(S::GitBranchCreated, branch = name),
+        GitOp::DeleteBranch { name, .. } => crate::tr!(S::GitBranchDeleted, branch = name),
         GitOp::OpenRemote => String::new(),
     }
 }

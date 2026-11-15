@@ -1,5 +1,19 @@
 copy_hash = "Copiar el hash completo del commit"
 
+[branch]
+name = "Nombre de la rama"
+base = "Rama de origen"
+checkout = "Cambiar a la nueva rama"
+create = "Crear"
+switch = "Cambiar a esta rama"
+delete = "Eliminar rama…"
+confirm = "¿Eliminar la rama {branch}?"
+force_confirm = "La rama {branch} no está completamente fusionada. ¿Eliminarla de todos modos? Se pueden perder los commits exclusivos de esta rama."
+creating = "Creando rama…"
+deleting = "Eliminando rama…"
+created = "Rama {branch} creada"
+deleted = "Rama {branch} eliminada"
+
 [column]
 hash = "Hash del commit"
 status = "Estado de Git"

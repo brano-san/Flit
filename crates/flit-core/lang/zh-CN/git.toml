@@ -1,5 +1,19 @@
 copy_hash = "复制完整提交哈希"
 
+[branch]
+name = "分支名称"
+base = "起始分支"
+checkout = "切换到新分支"
+create = "创建"
+switch = "切换到此分支"
+delete = "删除分支…"
+confirm = "删除分支 {branch}？"
+force_confirm = "分支 {branch} 尚未完全合并。仍要删除吗？此分支独有的提交可能会丢失。"
+creating = "正在创建分支…"
+deleting = "正在删除分支…"
+created = "已创建分支 {branch}"
+deleted = "已删除分支 {branch}"
+
 [column]
 hash = "提交哈希"
 status = "Git 状态"

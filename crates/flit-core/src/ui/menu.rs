@@ -118,6 +118,7 @@ pub(super) enum Cmd {
     OpenTagged(usize),
     Setting(usize, usize),
     GitBranch(usize),
+    GitDeleteBranch(usize),
     CopyGitHash(String),
     Column(ColumnCmd),
     Types(TypeCmd),
@@ -429,9 +430,17 @@ impl App {
         let branches = self.git_branches.clone();
         self.collect(|a, m| {
             for (k, b) in branches.iter().enumerate() {
-                m.command(Cmd::GitBranch(k), b, String::new(), *b == current);
+                if !b.remote && b.name != current {
+                    m.submenu(&b.name, |m| {
+                        m.command(Cmd::GitBranch(k), S::GitBranchSwitch.t(), String::new(), false);
+                        m.command(Cmd::GitDeleteBranch(k), S::GitBranchDelete.t(), String::new(), false);
+                    });
+                } else {
+                    m.command(Cmd::GitBranch(k), &b.name, String::new(), b.name == current && !b.remote);
+                }
             }
             m.separator();
+            m.action("git.new_branch", S::ActionsGitNewBranch.t());
             m.action("git.fetch", S::ActionsGitFetch.t());
             m.action("git.pull", S::ActionsGitPull.t());
             m.action("git.push", S::ActionsGitPush.t());
@@ -721,6 +730,7 @@ impl App {
             Some(Cmd::OpenTagged(k)) => self.open_all_tagged(k, now),
             Some(Cmd::Setting(i, choice)) => self.choose_setting(i, choice),
             Some(Cmd::GitBranch(k)) => self.git_switch(k),
+            Some(Cmd::GitDeleteBranch(k)) => self.ask_git_delete(k),
             Some(Cmd::CopyGitHash(hash)) => self.effects.push(super::Effect::SetClipboard(hash)),
             Some(Cmd::Column(c)) => self.column_command(c),
             Some(Cmd::Types(c)) => self.types_command(c),

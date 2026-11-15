@@ -91,6 +91,53 @@ fn have_git() -> bool {
 }
 
 #[test]
+fn local_branches_can_be_created_with_or_without_switching_and_invalid_names_change_nothing() {
+    let t = temp("branches путь с пробелами");
+    let r = &t.0;
+    sh(r, &["init", "-q"]);
+    assert!(run_op(r, &GitOp::CreateBranch { name: "empty".into(), base: "HEAD".into(), switch: false }).is_err());
+    sh(r, &["commit", "--allow-empty", "-qm", "first"]);
+    let before = branches(r);
+    for name in ["", "bad name", "bad..name", "-bad", "topic/", "foo.lock"] {
+        assert!(run_op(r, &GitOp::CreateBranch { name: name.into(), base: "main".into(), switch: true }).is_err(), "{name}");
+        assert_eq!(branches(r), before);
+        assert_eq!(status(r, false, &mut Cache::default()).unwrap().branch, "main");
+    }
+    run_op(r, &GitOp::CreateBranch { name: "origin/topic".into(), base: "main".into(), switch: false }).unwrap();
+    assert_eq!(status(r, false, &mut Cache::default()).unwrap().branch, "main");
+    assert!(branches(r).iter().any(|b| b.name == "origin/topic" && !b.remote));
+    sh(r, &["branch", "feature/HEAD"]);
+    assert!(branches(r).iter().any(|b| b.name == "feature/HEAD" && !b.remote));
+    run_op(r, &GitOp::CreateBranch { name: "topic/новая".into(), base: "origin/topic".into(), switch: true }).unwrap();
+    assert_eq!(status(r, false, &mut Cache::default()).unwrap().branch, "topic/новая");
+    assert!(run_op(r, &GitOp::CreateBranch { name: "origin/topic".into(), base: "main".into(), switch: false }).is_err());
+    sh(r, &["switch", "--detach"]);
+    run_op(r, &GitOp::CreateBranch { name: "from-detached".into(), base: "HEAD".into(), switch: true }).unwrap();
+    assert_eq!(status(r, false, &mut Cache::default()).unwrap().branch, "from-detached");
+}
+
+#[test]
+fn deleting_a_branch_preserves_unmerged_commits_until_force_is_requested() {
+    let t = temp("delete-branch");
+    let r = &t.0;
+    sh(r, &["init", "-q"]);
+    sh(r, &["commit", "--allow-empty", "-qm", "first"]);
+    sh(r, &["branch", "merged"]);
+    run_op(r, &GitOp::DeleteBranch { name: "merged".into(), force: false }).unwrap();
+    sh(r, &["switch", "-c", "topic/x"]);
+    sh(r, &["commit", "--allow-empty", "-qm", "unmerged"]);
+    let tip = output(r, &["rev-parse", "HEAD"]).unwrap().stdout;
+    sh(r, &["switch", "main"]);
+    let error = run_op(r, &GitOp::DeleteBranch { name: "topic/x".into(), force: false }).unwrap_err();
+    assert!(error.contains("not fully merged"), "{error}");
+    assert_eq!(output(r, &["rev-parse", "topic/x"]).unwrap().stdout, tip);
+    run_op(r, &GitOp::DeleteBranch { name: "topic/x".into(), force: true }).unwrap();
+    assert!(!branches(r).iter().any(|b| b.name == "topic/x"));
+    assert!(run_op(r, &GitOp::DeleteBranch { name: "main".into(), force: true }).is_err());
+    assert_eq!(status(r, false, &mut Cache::default()).unwrap().branch, "main");
+}
+
+#[test]
 fn status_branch_and_last_commits_of_a_folder() {
     if !have_git() {
         return;
@@ -168,8 +215,8 @@ fn network_operations_against_a_local_bare_repository() {
     sh(&work, &["push", "-q", "origin", "dev"]);
     run_op(&clone, &GitOp::Fetch).unwrap();
     let list = branches(&clone);
-    assert!(list.contains(&"main".to_owned()) && list.contains(&"origin/dev".to_owned()), "{list:?}");
-    assert!(!list.iter().any(|b| b.ends_with("HEAD")));
+    assert!(list.iter().any(|b| b.name == "main" && !b.remote) && list.iter().any(|b| b.name == "origin/dev" && b.remote), "{list:?}");
+    assert!(!list.iter().any(|b| b.name.ends_with("HEAD")));
     run_op(&clone, &GitOp::Switch("origin/dev".into())).unwrap();
     assert_eq!(status(&clone, false, &mut Cache::default()).unwrap().branch, "dev");
     assert!(run_op(&clone, &GitOp::Switch("missing".into())).is_err());

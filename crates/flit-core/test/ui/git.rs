@@ -31,6 +31,156 @@ fn git_requests(fx: &[Effect]) -> Vec<GitRequest> {
 }
 
 #[test]
+fn creating_a_branch_fetches_choices_in_the_background() {
+    let (mut app, _) = app_in(r"C:\x", &[]);
+    app.on_git(repo(&app));
+    assert!(app.build_branch_menu().iter().any(|m| matches!(m, MenuItem::Command { label, .. } if label == "Git: New branch…")));
+    assert!(app.run_action("git.new_branch", Instant::now()));
+    assert!(matches!(git_requests(&app.drain_effects().collect::<Vec<_>>()).as_slice(), [GitRequest::Branches { .. }]));
+}
+
+#[test]
+fn creating_a_branch_never_opens_a_form_outside_a_repository() {
+    let (mut app, _) = app_in(r"C:\x", &[]);
+    assert!(app.run_action("git.new_branch", Instant::now()));
+    assert!(app.jobs.form.is_none());
+    assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty());
+}
+
+fn branch_choices(app: &App, create: bool) -> GitEvent {
+    let branches = [("dev", false), ("origin/main", true), ("main", false), ("origin/topic", false)].into_iter().map(|(name, remote)| crate::git::Branch { name: name.into(), remote }).collect();
+    GitEvent::Branches { tab: app.tab().id, gen: app.tab().gen, dir: app.tab().location().path().clone(), create, branches }
+}
+
+#[test]
+fn new_branch_form_keeps_errors_and_uses_its_original_repository() {
+    let (mut app, _) = app_in(r"C:\x", &[]);
+    app.on_git(repo(&app));
+    app.on_git(branch_choices(&app, true));
+    let tab = app.tab().id;
+    let f = app.jobs.form.as_mut().unwrap();
+    assert!(f.checked(2));
+    assert!(matches!(&f.kind, Kind::GitNewBranch { bases, .. } if bases == &["main", "dev", "origin/topic"]));
+    f.set_text(0, "bad name");
+    app.drain_effects().for_each(drop);
+    app.form_submit(0);
+    let requests = git_requests(&app.drain_effects().collect::<Vec<_>>());
+    let [GitRequest::Run { op, dir, .. }] = requests.as_slice() else { panic!("creation request") };
+    assert_eq!(dir, &FsPath::parse(r"C:\x").unwrap());
+    assert_eq!(op, &GitOp::CreateBranch { name: "bad name".into(), base: "main".into(), switch: true });
+    app.form_submit(0);
+    assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty(), "a pending submit cannot start twice");
+    app.on_git(GitEvent::Done { tab, op: op.clone(), error: Some("fatal: invalid branch name".into()), url: None });
+    let f = app.jobs.form.as_mut().unwrap();
+    assert!(f.error && f.note.contains("invalid branch"));
+    assert_eq!(f.text(0), "bad name");
+    f.set_text(0, "topic/new");
+    if let Control::Check { on, .. } = &mut f.controls[2] { *on = false; }
+    app.drain_effects().for_each(drop);
+    app.form_submit(0);
+    let requests = git_requests(&app.drain_effects().collect::<Vec<_>>());
+    let [GitRequest::Run { op, .. }] = requests.as_slice() else { panic!("retry request") };
+    assert_eq!(op, &GitOp::CreateBranch { name: "topic/new".into(), base: "main".into(), switch: false });
+    app.on_git(GitEvent::Done { tab, op: op.clone(), error: None, url: None });
+    assert!(app.jobs.form.is_none());
+}
+
+#[test]
+fn deleting_an_unmerged_branch_requires_a_second_confirmation_and_defaults_to_cancel() {
+    let (mut app, _) = app_in(r"C:\x", &[]);
+    app.on_git(repo(&app));
+    app.on_git(branch_choices(&app, false));
+    for k in [1, 2] {
+        app.ask_git_delete(k);
+        assert!(app.jobs.form.is_none(), "remote and current branches cannot be deleted");
+    }
+    app.ask_git_delete(0);
+    let f = app.jobs.form.as_ref().unwrap();
+    assert_eq!(f.focus, f.controls.len() + 1);
+    app.drain_effects().for_each(drop);
+    app.form_submit(1);
+    assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty());
+    app.ask_git_delete(0);
+    app.form_submit(0);
+    let requests = git_requests(&app.drain_effects().collect::<Vec<_>>());
+    assert!(matches!(requests.as_slice(), [GitRequest::Run { op: GitOp::DeleteBranch { name, force: false }, .. }] if name == "dev"));
+    let tab = app.tab().id;
+    app.on_git(GitEvent::Done { tab, op: GitOp::DeleteBranch { name: "dev".into(), force: false }, error: Some("error: the branch 'dev' is not fully merged".into()), url: None });
+    let f = app.jobs.form.as_ref().unwrap();
+    assert!(matches!(&f.kind, Kind::GitDeleteBranch { force: true, pending: false, .. }));
+    assert_eq!(f.focus, f.controls.len() + 1);
+    assert!(matches!(&f.controls[0], Control::Paragraph { text, .. } if text.contains("dev") && text.contains("may be lost")));
+    assert!(!git_requests(&app.drain_effects().collect::<Vec<_>>()).iter().any(|r| matches!(r, GitRequest::Run { .. })), "force is never automatic");
+    app.form_submit(0);
+    assert!(matches!(git_requests(&app.drain_effects().collect::<Vec<_>>()).as_slice(), [GitRequest::Run { op: GitOp::DeleteBranch { force: true, .. }, .. }]));
+    app.on_git(GitEvent::Done { tab, op: GitOp::DeleteBranch { name: "dev".into(), force: true }, error: None, url: None });
+    assert!(app.jobs.form.is_none());
+}
+
+#[test]
+fn stale_branch_choices_do_not_open_forms_in_other_tabs_or_directories() {
+    let (mut app, _) = app_in(r"C:\x", &[]);
+    app.on_git(repo(&app));
+    let old = branch_choices(&app, true);
+    app.run_action("tab.new", Instant::now());
+    app.on_git(old.clone());
+    assert!(app.jobs.form.is_none());
+    app.run_action("tab.previous", Instant::now());
+    app.tab_mut().gen += 1;
+    app.on_git(old);
+    assert!(app.jobs.form.is_none());
+}
+
+#[test]
+fn changing_the_interface_language_never_translates_branch_names() {
+    use crate::i18n::{self, Lang};
+    let (mut app, _) = app_in(r"C:\x", &[]);
+    app.on_git(repo(&app));
+    let mut choices = branch_choices(&app, true);
+    if let GitEvent::Branches { branches, .. } = &mut choices { branches.push(crate::git::Branch { name: "Cancel".into(), remote: false }); }
+    app.on_git(choices);
+    i18n::set_lang(Lang::Fr);
+    app.relabel_form(Lang::En);
+    let f = app.jobs.form.as_ref().unwrap();
+    assert!(matches!(&f.controls[1], Control::Choice { options, .. } if options.iter().any(|s| s == "Cancel")));
+    i18n::set_lang(Lang::En);
+}
+
+#[test]
+fn branch_forms_fit_a_narrow_window_with_every_translation() {
+    use crate::i18n::{self, Lang};
+    for lang in Lang::ALL {
+        i18n::set_lang(lang);
+        let (mut app, _) = app_in(r"C:\x", &[]);
+        app.on_git(repo(&app));
+        app.on_event(&crate::input::Event::Resized { width: 480, height: 360 }, Instant::now());
+        app.on_git(branch_choices(&app, true));
+        let mut gfx = Gfx::new(crate::text::tests::Mono, 2048);
+        app.frame(&mut gfx, Instant::now());
+        let f = app.jobs.form.as_ref().unwrap();
+        assert!(f.rect.x >= 0.0 && f.rect.right() <= 480.0 && f.rect.bottom() <= 360.0, "{lang:?}");
+        assert!(f.button_rects.iter().all(|r| r.x >= f.rect.x && r.right() <= f.rect.right()), "{lang:?}");
+        app.form_submit(1);
+        app.ask_git_delete(0);
+        app.frame(&mut gfx, Instant::now());
+        let f = app.jobs.form.as_ref().unwrap();
+        assert!(f.rect.x >= 0.0 && f.rect.right() <= 480.0 && f.rect.bottom() <= 360.0, "{lang:?}");
+        app.form_submit(0);
+        app.on_git(GitEvent::Done { tab: app.tab().id, op: GitOp::DeleteBranch { name: "dev".into(), force: false }, error: Some("not fully merged".into()), url: None });
+        app.frame(&mut gfx, Instant::now());
+        let f = app.jobs.form.as_ref().unwrap();
+        let Control::Paragraph { text, lines } = &f.controls[0] else { panic!("wrapped warning") };
+        assert!(!lines.is_empty(), "{lang:?}");
+        assert_eq!(lines.join("").split_whitespace().collect::<String>(), text.split_whitespace().collect::<String>(), "{lang:?}");
+        let font = crate::text::FontStyle::new(crate::text::FontFamily::Ui, 12.0, false);
+        if gfx.measure(text, font) > f.rows[0].w - 8.0 { assert!(lines.len() > 1, "{lang:?}"); }
+        assert!(lines.iter().all(|line| gfx.measure(line, font) <= f.rows[0].w - 8.0), "{lang:?}");
+        assert_eq!(f.focus, f.controls.len() + 1);
+    }
+    i18n::set_lang(Lang::En);
+}
+
+#[test]
 fn commit_hash_is_opt_in_and_only_available_in_a_repository() {
     let (mut app, _) = app_in(r"C:\x", &["a.txt"]);
     assert!(!app.column_kinds().iter().any(|c| c.title() == "Commit hash"));
@@ -309,10 +459,12 @@ fn branch_menu_lists_branches_and_switches() {
     app.run_action("git.branches", Instant::now());
     assert!(matches!(git_requests(&app.drain_effects().collect::<Vec<_>>()).as_slice(), [GitRequest::Branches { .. }]));
     let tab = app.tab().id;
-    app.on_git(GitEvent::Branches { tab, branches: vec!["main".into(), "dev".into(), "origin/main".into()] });
+    let branches = vec![crate::git::Branch { name: "main".into(), remote: false }, crate::git::Branch { name: "dev".into(), remote: false }, crate::git::Branch { name: "origin/main".into(), remote: true }];
+    app.on_git(GitEvent::Branches { tab, gen: app.tab().gen, dir: app.tab().location().path().clone(), create: false, branches });
     let menu = app.drain_effects().find_map(|e| if let Effect::ShellMenu(ShellMenu { menu, .. }) = e { Some(menu) } else { None }).unwrap();
     let labels: Vec<(String, bool)> = menu.iter().filter_map(|m| if let MenuItem::Command { label, checked, .. } = m { Some((label.clone(), *checked)) } else { None }).collect();
-    assert_eq!(labels[..3], [("main".into(), true), ("dev".into(), false), ("origin/main".into(), false)]);
+    assert_eq!(labels[..2], [("main".into(), true), ("origin/main".into(), false)]);
+    assert!(menu.iter().any(|m| matches!(m, MenuItem::Submenu { label, items } if label == "dev" && items.len() == 2)));
     assert!(labels.iter().any(|(l, _)| l == "Git: Pull"));
     app.menu_command(1, Instant::now());
     assert!(matches!(git_requests(&app.drain_effects().collect::<Vec<_>>()).as_slice(), [GitRequest::Run { op: GitOp::Switch(b), .. }] if b == "dev"));

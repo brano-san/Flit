@@ -282,6 +282,7 @@
 "git.init" = "Git : initialiser un dépôt ici"
 "git.clone" = "Git : cloner un dépôt"
 "git.branches" = "Git : changer de branche"
+"git.new_branch" = "Git : nouvelle branche…"
 "git.open_remote" = "Git : ouvrir le dépôt sur le web"
 "view.status_bar" = "Afficher ou masquer la barre d’état"
 "theme.toggle" = "Basculer entre le thème clair et le thème sombre"

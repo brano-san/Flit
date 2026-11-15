@@ -64,6 +64,8 @@ pub(super) enum Kind {
     Hashes(Hashing),
     Properties(super::properties::Measuring),
     GitClone,
+    GitNewBranch { tab: crate::provider::TabId, dir: FsPath, bases: Vec<String>, pending: Option<crate::git::GitOp> },
+    GitDeleteBranch { tab: crate::provider::TabId, dir: FsPath, name: String, force: bool, pending: bool },
     UserMenu { at: Option<super::user_menu::EntryAt>, submenu: bool },
     Update(super::update::Updating),
     AllowRun { tab: crate::provider::TabId, path: FsPath },
@@ -86,6 +88,8 @@ impl Kind {
             Kind::Hashes(_) => "hashes",
             Kind::Properties(_) => "properties",
             Kind::GitClone => "git_clone",
+            Kind::GitNewBranch { .. } => "git_new_branch",
+            Kind::GitDeleteBranch { .. } => "git_delete_branch",
             Kind::UserMenu { .. } => "user_menu",
             Kind::Update(_) => "update",
         }
@@ -130,13 +134,14 @@ impl App {
                 Control::Choice { label, options, .. } => {
                     moved(label);
                     match (&f.kind, k) {
+                        (Kind::GitNewBranch { .. }, 1) => {}
                         (Kind::Compress { .. }, C_VOLUME) => *options = labels(&VOLUMES, S::ArchiveDoNotSplit),
                         (Kind::Compress { .. }, C_DICTIONARY) => *options = labels(&DICTIONARIES, S::ArchiveAutomatic),
                         _ => options.iter_mut().for_each(moved),
                     }
                 }
                 Control::Check { label, .. } | Control::Value { label, .. } => moved(label),
-                Control::Line(_) => {}
+                Control::Line(_) | Control::Paragraph { .. } => {}
                 Control::Flags { label, items, .. } => {
                     moved(label);
                     items.iter_mut().for_each(|(s, _)| moved(s));
@@ -744,6 +749,8 @@ impl App {
             Kind::RunScript { .. } => self.submit_run_script(f, b),
             Kind::GitAuth { .. } => self.submit_git_auth(f, b),
             Kind::GitClone => self.submit_clone(f),
+            Kind::GitNewBranch { .. } => self.submit_git_branch(f),
+            Kind::GitDeleteBranch { .. } => self.submit_git_delete(f),
             Kind::UserMenu { .. } => self.submit_user_entry(f),
             Kind::Update(_) => self.submit_update(f, b),
             Kind::BatchRename(_) => self.submit_batch_rename(f),

@@ -282,6 +282,7 @@
 "git.init" = "Git: inicializar un repositorio aquí"
 "git.clone" = "Git: clonar un repositorio"
 "git.branches" = "Git: cambiar de rama"
+"git.new_branch" = "Git: nueva rama…"
 "git.open_remote" = "Git: abrir el repositorio en la web"
 "view.status_bar" = "Mostrar u ocultar la barra de estado"
 "theme.toggle" = "Alternar entre el tema claro y el oscuro"

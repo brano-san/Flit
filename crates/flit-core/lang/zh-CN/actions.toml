@@ -282,6 +282,7 @@
 "git.init" = "Git：在此初始化仓库"
 "git.clone" = "Git：克隆仓库"
 "git.branches" = "Git：切换分支"
+"git.new_branch" = "Git：新建分支…"
 "git.open_remote" = "Git：在网页中打开仓库"
 "view.status_bar" = "显示或隐藏状态栏"
 "theme.toggle" = "在浅色和深色主题之间切换"

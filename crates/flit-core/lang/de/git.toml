@@ -1,5 +1,19 @@
 copy_hash = "Vollständigen Commit-Hash kopieren"
 
+[branch]
+name = "Branch-Name"
+base = "Ausgangsbranch"
+checkout = "Zum neuen Branch wechseln"
+create = "Erstellen"
+switch = "Zum Branch wechseln"
+delete = "Branch löschen…"
+confirm = "Branch {branch} löschen?"
+force_confirm = "Branch {branch} ist nicht vollständig zusammengeführt. Trotzdem löschen? Nur in diesem Branch vorhandene Commits können verloren gehen."
+creating = "Branch wird erstellt…"
+deleting = "Branch wird gelöscht…"
+created = "Branch {branch} erstellt"
+deleted = "Branch {branch} gelöscht"
+
 [column]
 hash = "Commit-Hash"
 status = "Git-Status"

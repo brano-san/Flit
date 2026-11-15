@@ -627,7 +627,7 @@ pub struct App {
     pub shell_items_inline: bool,
     raising_watch_limit: bool,
     pub menu_hidden: Vec<&'static str>,
-    git_branches: Vec<String>,
+    git_branches: Vec<crate::git::Branch>,
     pub tab_wheel_reversed: bool,
     pub tab_actions_button: bool,
     pub folders_in_new_tab: bool,

@@ -485,6 +485,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("git.init", G::Flit, S::ActionsGitInit, S::DescribeGitInit, &[], |a, _| a.git_run(GitOp::Init)),
     Action::new("git.clone", G::Flit, S::ActionsGitClone, S::DescribeGitClone, &[], |a, _| a.ask_clone()),
     Action::new("git.branches", G::Flit, S::ActionsGitBranches, S::DescribeGitBranches, &[], |a, _| a.git_branches_menu()),
+    Action::new("git.new_branch", G::Flit, S::ActionsGitNewBranch, S::DescribeGitNewBranch, &[], |a, _| a.ask_git_branch()),
     Action::new("git.open_remote", G::Flit, S::ActionsGitOpenRemote, S::DescribeGitOpenRemote, &[], |a, _| a.git_run(GitOp::OpenRemote)),
     Action::new("view.status_bar", G::Flit, S::ActionsViewStatusBar, S::DescribeViewStatusBar, &[], |a, _| a.toggle_pref(|p| &mut p.status_bar)),
     Action::new("theme.toggle", G::Flit, S::ActionsThemeToggle, S::DescribeThemeToggle, &[ctrl_alt(c('T'))], |a, _| a.toggle_theme()),

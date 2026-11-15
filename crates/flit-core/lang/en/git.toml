@@ -1,5 +1,19 @@
 copy_hash = "Copy full commit hash"
 
+[branch]
+name = "Branch name"
+base = "Start from"
+checkout = "Switch to the new branch"
+create = "Create"
+switch = "Switch to branch"
+delete = "Delete branch…"
+confirm = "Delete branch {branch}?"
+force_confirm = "Branch {branch} is not fully merged. Delete it anyway? Commits unique to this branch may be lost."
+creating = "Creating branch…"
+deleting = "Deleting branch…"
+created = "Created branch {branch}"
+deleted = "Deleted branch {branch}"
+
 [column]
 hash = "Commit hash"
 status = "Git status"

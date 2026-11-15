@@ -282,6 +282,7 @@
 "git.init" = "Convierte la carpeta actual en un repositorio Git nuevo"
 "git.clone" = "Copia un repositorio por su URL en la carpeta actual"
 "git.branches" = "Muestra las ramas y cambia a la elegida"
+"git.new_branch" = "Crea una rama local a partir de la elegida y permite cambiar a ella"
 "git.open_remote" = "Abre la página del remoto origin en el navegador"
 "view.status_bar" = "Barra inferior con el número de elementos y la selección"
 "theme.toggle" = "Modo oscuro, modo claro, noche, colores, apariencia"

@@ -282,6 +282,7 @@
 "git.init" = "Makes the current folder a new Git repository"
 "git.clone" = "Copies a repository by its URL into the current folder"
 "git.branches" = "Lists the branches and switches to the chosen one"
+"git.new_branch" = "Creates a local branch from the chosen branch and optionally switches to it"
 "git.open_remote" = "Opens the page of the origin remote in the browser"
 "view.status_bar" = "Bar at the bottom with the number of items and the selection"
 "theme.toggle" = "Dark mode, light mode, night, colors, appearance"
