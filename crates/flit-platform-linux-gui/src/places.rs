@@ -182,6 +182,11 @@ pub fn connect(uri: &str) -> std::io::Result<PathBuf> {
     local_path(&String::from_utf8_lossy(&info.stdout)).ok_or_else(|| std::io::Error::other(String::from_utf8_lossy(&mounted.stderr).trim().to_owned()))
 }
 
+pub fn local_path_within(uri: &str, wait: std::time::Duration) -> std::io::Result<PathBuf> {
+    let info = gio(&["info", uri], wait)?;
+    local_path(&String::from_utf8_lossy(&info.stdout)).ok_or_else(|| std::io::Error::other(String::from_utf8_lossy(&info.stderr).trim().to_owned()))
+}
+
 fn fuse_unmounter() -> &'static str {
     if crate::shell::on_path(std::ffi::OsStr::new("fusermount3")).is_none() && crate::shell::on_path(std::ffi::OsStr::new("fusermount")).is_some() { "fusermount" } else { "fusermount3" }
 }

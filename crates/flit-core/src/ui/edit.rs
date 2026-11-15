@@ -76,6 +76,14 @@ impl LineEdit {
         self.word = 0..0;
     }
 
+    pub fn wipe(&mut self) {
+        crate::provider::wipe(&mut self.text);
+        for (text, _, _) in self.undo.iter_mut().chain(self.redo.iter_mut()) {
+            crate::provider::wipe(text);
+        }
+        self.set("");
+    }
+
     fn begin(&mut self, run: Run) {
         if run != Run::Break && self.run == run {
             return;

@@ -12,6 +12,7 @@ mod dropped;
 pub mod elevated;
 mod folder_icons;
 mod fonts;
+mod gvfs;
 pub mod fs;
 mod gl;
 mod icons;

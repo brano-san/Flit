@@ -51,7 +51,7 @@ pub(crate) struct Api {
     pub(crate) error_free: unsafe extern "C" fn(*mut Error),
     pub(crate) open_private: unsafe extern "C" fn(*const c_char, *mut Error) -> *mut c_void,
     pub(crate) register: unsafe extern "C" fn(*mut c_void, *mut Error) -> u32,
-    request_name: unsafe extern "C" fn(*mut c_void, *const c_char, u32, *mut Error) -> c_int,
+    pub(crate) request_name: unsafe extern "C" fn(*mut c_void, *const c_char, u32, *mut Error) -> c_int,
     pub(crate) read_write: unsafe extern "C" fn(*mut c_void, c_int) -> u32,
     pub(crate) pop: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
     pub(crate) msg_type: unsafe extern "C" fn(*mut c_void) -> c_int,
@@ -81,6 +81,8 @@ pub(crate) struct Api {
     pub(crate) dispatch_status: unsafe extern "C" fn(*mut c_void) -> c_int,
     pub(crate) close: unsafe extern "C" fn(*mut c_void),
     pub(crate) release: unsafe extern "C" fn(*mut c_void),
+    pub(crate) reply_serial: unsafe extern "C" fn(*mut c_void) -> u32,
+    pub(crate) error_name: unsafe extern "C" fn(*mut c_void) -> *const c_char,
 }
 
 unsafe fn cast<T: Copy>(p: *mut c_void) -> T {
@@ -136,6 +138,8 @@ pub(crate) fn load() -> Option<Api> {
             dispatch_status: cast(sym(c"dbus_connection_get_dispatch_status")?),
             close: cast(sym(c"dbus_connection_close")?),
             release: cast(sym(c"dbus_connection_unref")?),
+            reply_serial: cast(sym(c"dbus_message_get_reply_serial")?),
+            error_name: cast(sym(c"dbus_message_get_error_name")?),
         })
     }
 }
