@@ -111,6 +111,63 @@ pub struct Listing {
     pub total: u64,
     pub nested: u32,
     pub labels: Vec<(u32, Box<str>)>,
+    pub props: crate::hash::FxHashMap<u32, PropKey>,
+}
+
+pub const SHELL_PROPS: [&str; 10] = [
+    "System.Image.Dimensions",
+    "System.Media.Duration",
+    "System.Music.Artist",
+    "System.FileVersion",
+    "System.Photo.DateTaken",
+    "System.Photo.CameraModel",
+    "System.Music.AlbumTitle",
+    "System.Title",
+    "System.Author",
+    "System.Company",
+];
+const ARTIST_AT: usize = 2;
+const VERSION_AT: usize = 3;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ColumnValues {
+    pub text: Vec<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub duration: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PropKey {
+    pub pixels: Option<(u64, u32)>,
+    pub duration: Option<u64>,
+    pub artist: Option<(Box<str>, Box<[u8]>)>,
+    pub version: Option<u64>,
+}
+
+impl PropKey {
+    pub fn new(v: &ColumnValues, case: CaseMode) -> Option<Self> {
+        let text = |k: usize| v.text.get(k).map(|s| s.trim()).filter(|s| !s.is_empty());
+        let pixels = v.width.zip(v.height).filter(|&(w, h)| w > 0 && h > 0).map(|(w, h)| (u64::from(w) * u64::from(h), w));
+        let artist = text(ARTIST_AT).map(|a| {
+            let mut key = Vec::new();
+            crate::sort::encode_key(a.as_bytes(), case, &mut key);
+            (Box::from(a), key.into_boxed_slice())
+        });
+        let key = Self { pixels, duration: v.duration, artist, version: text(VERSION_AT).and_then(version_number) };
+        (key != Self::default()).then_some(key)
+    }
+}
+
+pub fn version_number(s: &str) -> Option<u64> {
+    let mut packed = 0u64;
+    for (k, part) in s.trim().split('.').enumerate() {
+        if k == 4 || part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        packed |= u64::from(part.parse::<u16>().ok()?) << (48 - 16 * k);
+    }
+    Some(packed)
 }
 
 impl Listing {

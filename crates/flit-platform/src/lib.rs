@@ -297,8 +297,8 @@ pub trait Shell: Sized {
     fn poster(&mut self, _path: &FsPath, _size: u32) -> Option<Bitmap> {
         None
     }
-    fn column_props(&mut self, _path: &FsPath) -> Vec<String> {
-        Vec::new()
+    fn column_props(&mut self, _path: &FsPath) -> flit_core::listing::ColumnValues {
+        flit_core::listing::ColumnValues::default()
     }
     fn properties(&mut self, _path: &FsPath) -> Vec<PropGroup> {
         Vec::new()

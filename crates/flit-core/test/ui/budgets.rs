@@ -249,3 +249,64 @@ fn ten_thousand_extensionless_content_icons_stay_within_the_ui_budget() {
     eprintln!("10k extensionless scroll: {:?} per frame, Content request limit 8", best / 100);
     assert!(best / 100 < budget(8.0));
 }
+
+#[test]
+fn twenty_thousand_files_sorted_by_length_keep_every_frame_fast_while_all_lengths_arrive() {
+    let names: Vec<String> = (0..20_000).map(|k| format!("clip {k:05}.mp4")).collect();
+    let files = names.len() - names.len() / 10;
+    let (mut worst, mut whole) = (Duration::MAX, Duration::MAX);
+    for _ in 0..ATTEMPTS {
+        let mut b = Bench::new();
+        let snap = snapshot(&b.app, &names);
+        b.app.tab().slot.publish(snap);
+        b.app.poll();
+        b.frame();
+        b.app.sort_column(crate::sort::SortField::Duration);
+        let (start, mut now, mut read, mut frames) = (Instant::now(), Instant::now(), 0, Vec::new());
+        while read < files && frames.len() < 10_000 {
+            let t = Instant::now();
+            b.app.frame(&mut b.gfx, now);
+            frames.push(t.elapsed());
+            for e in b.app.drain_effects().collect::<Vec<_>>() {
+                match e {
+                    Effect::ShellProps { tab, gen, ask, names, .. } => {
+                        read += names.len();
+                        let rows = names
+                            .into_iter()
+                            .map(|n| {
+                                let k = n.iter().filter(|d| d.is_ascii_digit()).fold(0u64, |a, &d| a * 10 + u64::from(d - b'0'));
+                                let text = vec![String::new(), format!("{k}"), String::new(), String::new()];
+                                (n, crate::listing::ColumnValues { text, duration: Some(k * 7919 % 36_000 * 10_000_000), ..Default::default() })
+                            })
+                            .collect();
+                        b.app.on_shell_props(tab, gen, ask, rows);
+                    }
+                    Effect::Resort { tab, gen, view, snap } => {
+                        let mut order = Vec::new();
+                        sort::sort(&snap.listing, &snap.keys, view, &mut order);
+                        b.app.on_resorted(tab, gen, view, snap.listing.len(), order);
+                    }
+                    _ => {}
+                }
+            }
+            now += Duration::from_millis(16);
+        }
+        for _ in 0..40 {
+            b.app.frame(&mut b.gfx, now);
+            b.app.drain_effects().for_each(drop);
+            now += Duration::from_millis(16);
+        }
+        let took = start.elapsed();
+        assert_eq!(read, files, "every file is read once");
+        let v = b.app.tab().view.as_ref().unwrap();
+        let s = v.snap();
+        assert_eq!(s.listing.props.len(), files);
+        assert!(sort::is_sorted(&s.listing, &s.keys, &s.view, &s.order));
+        frames.sort();
+        worst = worst.min(frames[frames.len() * 99 / 100]);
+        whole = whole.min(took);
+    }
+    eprintln!("20k sorted by length: p99 frame {worst:?}, all lengths in {whole:?}");
+    assert!(worst < budget(8.0), "p99 frame {worst:?}");
+    assert!(whole < Duration::from_secs(30), "reading every length took {whole:?}");
+}

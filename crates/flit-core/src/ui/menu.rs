@@ -165,6 +165,13 @@ const GROUPS: [(GroupField, &str, S); 11] = [
     (GroupField::Tag, "view.group.tag", S::MenuSortTags),
 ];
 
+const SHELL_GROUPS: [(GroupField, &str, S); 4] = [
+    (GroupField::Dimensions, "view.group.dimensions", S::DetailsColumnDimensions),
+    (GroupField::Duration, "view.group.duration", S::DetailsColumnDuration),
+    (GroupField::Artist, "view.group.artist", S::DetailsColumnArtist),
+    (GroupField::Version, "view.group.version", S::DetailsColumnVersion),
+];
+
 const COMPUTER_GROUPS: [(GroupField, &str, S); 7] = [
     (GroupField::None, "view.group.none", S::MenuGroupNone),
     (GroupField::Name, "view.group.name", S::MenuSortName),
@@ -499,6 +506,9 @@ impl App {
         let group = t.view_spec.group;
         let computer = t.view_loc.path().kind() == PathKind::Computer;
         m.choices(if t.view_loc.is_recycle_bin() { &BIN_GROUPS[..] } else if computer { &COMPUTER_GROUPS[..] } else { &GROUPS[..] }, group.field);
+        if self.column_kinds().contains(&Column::ImageSize) && self.props_dir().is_some() {
+            m.choices(&SHELL_GROUPS, group.field);
+        }
     }
 
     fn new_entries(&self, m: &mut Menu) {

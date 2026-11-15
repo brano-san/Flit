@@ -1,5 +1,5 @@
 use super::*;
-use crate::listing::Meta;
+use crate::listing::{ColumnValues, Meta, PropKey};
 
 fn sorted(names: &[&str], case: CaseMode) -> Vec<String> {
     let mut v: Vec<&str> = names.to_vec();
@@ -485,6 +485,151 @@ fn relabeling_the_last_sort_key_preserves_earlier_keys_and_future_pushes() {
         }
         for i in 0..3 {
             assert_eq!(keys.key(i), expected.key(i));
+        }
+    }
+}
+
+type Media<'a> = (&'a str, Option<(u32, u32)>, Option<u64>, &'a str, &'a str);
+
+fn media_listing() -> (Listing, SortKeys) {
+    let (mut l, k) = listing(&[
+        ("album", 0, true),
+        ("a.jpg", 1, false),
+        ("b.jpg", 1, false),
+        ("c.txt", 1, false),
+        ("d.jpg", 1, false),
+        ("e.mp3", 1, false),
+        ("f.mp3", 1, false),
+        ("g.mp3", 1, false),
+        ("h.mp3", 1, false),
+        ("w.dll", 1, false),
+        ("x.exe", 1, false),
+        ("y.exe", 1, false),
+        ("z.dll", 1, false),
+    ]);
+    let props: [Media; 11] = [
+        ("a.jpg", Some((4000, 3000)), None, "", ""),
+        ("b.jpg", Some((640, 480)), None, "", ""),
+        ("d.jpg", Some((480, 640)), None, "", ""),
+        ("e.mp3", None, Some(3), "nina Simone", ""),
+        ("f.mp3", None, Some(45), "Abba", ""),
+        ("g.mp3", None, Some(12), "artist 10", ""),
+        ("h.mp3", None, Some(7), "Artist 9", ""),
+        ("w.dll", None, None, "", "not a version"),
+        ("x.exe", None, None, "", "10.0.1"),
+        ("y.exe", None, None, "", "9.9.9"),
+        ("z.dll", None, None, "", "10.0.1.2"),
+    ];
+    for (name, dims, minutes, artist, version) in props {
+        let i = (0..l.len() as u32).find(|&i| l.name(i) == name.as_bytes()).unwrap();
+        let text = vec![dims.map(|(w, h)| format!("{w} x {h}")).unwrap_or_default(), minutes.map(|m| format!("{m}:00")).unwrap_or_default(), artist.to_owned(), version.to_owned()];
+        let values = ColumnValues { text, width: dims.map(|d| d.0), height: dims.map(|d| d.1), duration: minutes.map(|m| m * 600_000_000) };
+        if let Some(key) = PropKey::new(&values, CaseMode::Insensitive) {
+            l.props.insert(i, key);
+        }
+    }
+    (l, k)
+}
+
+fn by(l: &Listing, k: &SortKeys, field: SortField, descending: bool) -> Vec<String> {
+    let view = ViewSpec { sort: SortSpec { field, descending, ..Default::default() }, ..Default::default() };
+    let mut fast = Vec::new();
+    sort(l, k, view, &mut fast);
+    let mut slow: Vec<u32> = (0..l.len() as u32).collect();
+    slow.sort_by(|&a, &b| cmp(l, k, &view, a, b));
+    assert_eq!(fast, slow, "{field:?} desc={descending}");
+    assert!(is_sorted(l, k, &view, &fast));
+    names(l, &fast)
+}
+
+#[test]
+fn shell_property_columns_sort_by_value_and_files_without_one_go_last_both_ways() {
+    let (l, k) = media_listing();
+    let rest = |shown: &[&str], descending: bool| {
+        let mut others: Vec<String> = ["a.jpg", "b.jpg", "c.txt", "d.jpg", "e.mp3", "f.mp3", "g.mp3", "h.mp3", "w.dll", "x.exe", "y.exe", "z.dll"].iter().filter(|n| !shown.contains(n)).map(|n| n.to_string()).collect();
+        if descending {
+            others.reverse();
+        }
+        let mut want = vec!["album".to_owned()];
+        want.extend(shown.iter().map(|s| s.to_string()));
+        want.extend(others);
+        want
+    };
+    let cases: [(SortField, &[&str]); 4] = [
+        (SortField::Dimensions, &["d.jpg", "b.jpg", "a.jpg"]),
+        (SortField::Duration, &["e.mp3", "h.mp3", "g.mp3", "f.mp3"]),
+        (SortField::Artist, &["f.mp3", "h.mp3", "g.mp3", "e.mp3"]),
+        (SortField::Version, &["y.exe", "x.exe", "z.dll"]),
+    ];
+    for (field, shown) in cases {
+        assert_eq!(by(&l, &k, field, false), rest(shown, false), "{field:?}");
+        let mut reversed = shown.to_vec();
+        reversed.reverse();
+        assert_eq!(by(&l, &k, field, true), rest(&reversed, true), "{field:?} descending");
+    }
+}
+
+#[test]
+fn versions_compare_as_numbers_and_text_that_is_no_version_has_none() {
+    assert!(crate::listing::version_number("10.0.1") > crate::listing::version_number("9.9.9"));
+    assert_eq!(crate::listing::version_number("10.0.1"), crate::listing::version_number("10.0.1.0"));
+    assert!(crate::listing::version_number("10.0.1.2") > crate::listing::version_number("10.0.1"));
+    for bad in ["", "1.2.3.4.5", "1..2", "v1.2", "1.70000", "1.2 beta", "-1"] {
+        assert_eq!(crate::listing::version_number(bad), None, "{bad}");
+    }
+}
+
+#[test]
+fn shell_property_groups_split_pictures_media_artists_and_major_versions() {
+    let (mut l, _) = listing(&[("p", 1, false)]);
+    let mut key = |field: GroupField, values: ColumnValues| {
+        l.props.clear();
+        if let Some(k) = PropKey::new(&values, CaseMode::Insensitive) {
+            l.props.insert(0, k);
+        }
+        let view = ViewSpec { group: GroupSpec { field, ..Default::default() }, ..Default::default() };
+        group_key(&l, 0, &view).0
+    };
+    let picture = |w: u32, h: u32| ColumnValues { text: vec!["x".into()], width: Some(w), height: Some(h), ..Default::default() };
+    let picture_groups: Vec<u64> = [(639, 480), (640, 480), (1920, 1079), (1920, 1080), (3999, 3000), (4000, 3000)].iter().map(|&(w, h)| key(GroupField::Dimensions, picture(w, h))).collect();
+    assert_eq!(picture_groups, [3, 2, 2, 1, 1, 0]);
+    let clip = |seconds: u64| ColumnValues { text: vec![String::new(), "x".into()], duration: Some(seconds * 10_000_000), ..Default::default() };
+    let clip_groups: Vec<u64> = [299, 300, 1799, 1800].iter().map(|&s| key(GroupField::Duration, clip(s))).collect();
+    assert_eq!(clip_groups, [2, 1, 1, 0]);
+    let program = |v: &str| ColumnValues { text: vec![String::new(), String::new(), String::new(), v.into()], ..Default::default() };
+    assert_eq!(key(GroupField::Version, program("10.0.19041.1")), 10);
+    assert_eq!(key(GroupField::Version, program("9.9")), 9);
+    for field in [GroupField::Dimensions, GroupField::Duration, GroupField::Artist, GroupField::Version] {
+        assert_eq!(key(field, ColumnValues::default()), UNSPECIFIED, "{field:?} without a value");
+    }
+    assert_eq!(key(GroupField::Dimensions, picture(0, 480)), UNSPECIFIED);
+}
+
+#[test]
+fn fast_sort_matches_comparator_for_shell_properties() {
+    let (mut l, k) = synthetic(3000);
+    for i in 0..l.len() as u32 {
+        let r = u64::from(i).wrapping_mul(2654435761) >> 7;
+        let values = ColumnValues {
+            text: vec![if r % 3 == 0 { String::new() } else { "d".into() }, if r % 4 == 0 { String::new() } else { "t".into() }, ["", "Abba", "abba", "Artist 10", "artist 9", "Ölbild long artist name"][(r % 6) as usize].into(), ["", "1.2", "10.0.1", "9.9.9", "10.0.1.2", "bad"][(r % 6) as usize].into()],
+            width: (r % 3 != 0).then_some((r % 50) as u32 * 10),
+            height: (r % 3 != 0).then_some((r % 7) as u32 * 100),
+            duration: (r % 4 != 0).then_some((r % 40) * 600_000_000),
+        };
+        if let Some(key) = PropKey::new(&values, CaseMode::Insensitive) {
+            l.props.insert(i, key);
+        }
+    }
+    for field in [SortField::Dimensions, SortField::Duration, SortField::Artist, SortField::Version] {
+        for group in [GroupField::None, GroupField::Dimensions, GroupField::Duration, GroupField::Artist, GroupField::Version] {
+            for (descending, folders) in [(false, Folders::First), (true, Folders::First), (false, Folders::Mixed), (true, Folders::Last)] {
+                let view = ViewSpec { sort: SortSpec { field, descending, folders }, group: GroupSpec { field: group, ..Default::default() }, show_hidden: true, ..Default::default() };
+                let mut fast = Vec::new();
+                sort(&l, &k, view, &mut fast);
+                let mut slow: Vec<u32> = (0..l.len() as u32).filter(|&i| visible(&l, i, &view)).collect();
+                slow.sort_by(|&a, &b| cmp(&l, &k, &view, a, b));
+                assert_eq!(fast, slow, "{field:?} desc={descending} {folders:?} {group:?}");
+            }
         }
     }
 }

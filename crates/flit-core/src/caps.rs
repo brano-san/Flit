@@ -14,6 +14,10 @@ pub const WINDOWS_ONLY_ACTIONS: &[&str] = &[
     "drive.map",
     "drive.disconnect",
     "nav.network",
+    "view.group.dimensions",
+    "view.group.duration",
+    "view.group.artist",
+    "view.group.version",
 ];
 
 pub const UNIX_ONLY_ACTIONS: &[&str] = &["item.copy_quoted_path", "file.print", "file.mount_image", "folder.file_manager"];
