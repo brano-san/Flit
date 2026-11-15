@@ -458,3 +458,33 @@ fn attributes_sort_by_their_explorer_letters_and_plain_items_come_first() {
     o.sort_by(|&a, &b| cmp(&l, &k, &v, a, b));
     assert_eq!(names(&l, &o), ["system", "readonly", "compressed", "archived", "plain"], "the comparison used for live updates agrees");
 }
+
+#[test]
+fn relabeling_the_last_sort_key_preserves_earlier_keys_and_future_pushes() {
+    for case in [CaseMode::Sensitive, CaseMode::Insensitive] {
+        let mut keys = SortKeys::new(case);
+        keys.relabel_last(b"empty");
+        assert!(keys.is_empty());
+        keys.push(b"first");
+        keys.push(b"long-filename.desktop");
+        let original = keys.key(0).to_vec();
+        for label in [b"A".as_slice(), b"Translated Application 123", b"", b"Zebra"] {
+            keys.relabel_last(label);
+            assert_eq!(keys.len(), 2);
+            assert_eq!(keys.key(0), original);
+            let mut expected = SortKeys::new(case);
+            expected.push(b"first");
+            expected.push(label);
+            assert_eq!(keys.key(1), expected.key(1));
+            assert_eq!(keys.cmp(0, 1), expected.cmp(0, 1));
+        }
+        keys.push(b"after");
+        let mut expected = SortKeys::new(case);
+        for name in [b"first".as_slice(), b"Zebra", b"after"] {
+            expected.push(name);
+        }
+        for i in 0..3 {
+            assert_eq!(keys.key(i), expected.key(i));
+        }
+    }
+}
