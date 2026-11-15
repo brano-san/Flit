@@ -768,6 +768,7 @@ dependencies = [
  "sevenz-rust2",
  "tar",
  "unrar-ng",
+ "windows",
  "zip",
 ]
 

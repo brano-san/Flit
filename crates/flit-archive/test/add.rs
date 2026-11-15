@@ -482,3 +482,255 @@ fn rewritten_archives_keep_the_windows_internet_zone_and_propagate_it_when_extra
         assert_eq!(zone::read(&t.path("out/new.txt")).as_deref(), Some(mark.as_slice()));
     }
 }
+
+const ALL_FORMATS: [(Format, &str); 4] = [(Format::Zip, "zip"), (Format::SevenZ, "7z"), (Format::Tar, "tar"), (Format::TarGz, "tar.gz")];
+
+fn listed(archive: &FsPath) -> Vec<String> {
+    names(archive).unwrap().into_iter().map(|(name, ..)| name).collect()
+}
+
+#[cfg(unix)]
+fn symlink(target: &Path, link: &Path) -> io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(windows)]
+fn symlink(target: &Path, link: &Path) -> io::Result<()> {
+    std::os::windows::fs::symlink_file(target, link)
+}
+
+#[test]
+fn adding_through_a_symbolic_link_updates_the_real_archive_and_keeps_the_link() {
+    for (format, ext) in ALL_FORMATS {
+        let t = Temp::new("symlinked");
+        t.write("old.txt", b"old");
+        t.write("new.txt", b"new");
+        fs::create_dir_all(t.path("store")).unwrap();
+        fs::create_dir_all(t.path("links")).unwrap();
+        let real = t.fs(&format!("store/real.{ext}"));
+        compress(vec![t.fs("old.txt")], real.clone(), format, None);
+        let link = t.path(&format!("links/a.{ext}"));
+        if let Err(error) = symlink(Path::new(&format!("../store/real.{ext}")), &link) {
+            assert_eq!(error.raw_os_error(), Some(1314), "{error}");
+            return;
+        }
+        let out = add(&t, &t.fs(&format!("links/a.{ext}")), &["new.txt"], Resolve::Replace);
+        assert!(out.error.is_none(), "{ext}: {:?}", out.error);
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink(), "{ext}: the link must stay a link");
+        assert_eq!(listed(&real), ["new.txt", "old.txt"], "{ext}");
+        assert!(!fs::read_dir(t.path("links")).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().ends_with(".flit-part")));
+        assert!(!fs::read_dir(t.path("store")).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().ends_with(".flit-part")));
+    }
+}
+
+#[test]
+fn adding_to_a_hard_linked_archive_is_refused_and_leaves_both_names_unchanged() {
+    for (format, ext) in ALL_FORMATS {
+        let t = Temp::new("hard-linked");
+        t.write("old.txt", b"old");
+        t.write("new.txt", b"new");
+        let archive = t.fs(&format!("a.{ext}"));
+        compress(vec![t.fs("old.txt")], archive.clone(), format, None);
+        fs::hard_link(std_path(&archive), t.path(&format!("twin.{ext}"))).unwrap();
+        let before = fs::read(std_path(&archive)).unwrap();
+        let error = add(&t, &archive, &["new.txt"], Resolve::Replace).error.expect("a hard-linked archive must not be split from its twin");
+        assert_eq!(error.message, flit_core::i18n::S::ErrorsArchiveHardLinked.en(), "{ext}");
+        assert_eq!(fs::read(std_path(&archive)).unwrap(), before);
+        assert_eq!(t.read(&format!("twin.{ext}")), before);
+        no_parts(&t);
+        fs::remove_file(t.path(&format!("twin.{ext}"))).unwrap();
+        assert!(add(&t, &archive, &["new.txt"], Resolve::Replace).error.is_none(), "{ext}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn private_zip_archives_stay_private_after_adding() {
+    use std::os::unix::fs::PermissionsExt;
+    for mode in [0o600, 0o640] {
+        let t = Temp::new("private-zip");
+        t.write("old.txt", b"old");
+        t.write("new.txt", b"new");
+        let archive = t.fs("a.zip");
+        compress(vec![t.fs("old.txt")], archive.clone(), Format::Zip, None);
+        fs::set_permissions(std_path(&archive), fs::Permissions::from_mode(mode)).unwrap();
+        assert!(add(&t, &archive, &["new.txt"], Resolve::Replace).error.is_none());
+        assert_eq!(fs::metadata(std_path(&archive)).unwrap().permissions().mode() & 0o777, mode);
+        assert_eq!(listed(&archive), ["new.txt", "old.txt"]);
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn the_owner_is_given_to_the_temporary_archive_before_anything_is_written() {
+    use flit_core::provider::OpCtl;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::MetadataExt;
+    if unsafe { libc::geteuid() } != 0 {
+        return;
+    }
+    for (format, ext) in ALL_FORMATS {
+        let t = Temp::new("early-owner");
+        t.write("old.txt", &vec![b'x'; 1024 * 1024]);
+        t.write("new.txt", b"new");
+        let archive = t.fs(&format!("a.{ext}"));
+        compress(vec![t.fs("old.txt")], archive.clone(), format, None);
+        let original = fs::File::open(std_path(&archive)).unwrap();
+        assert_eq!(unsafe { libc::fchown(original.as_raw_fd(), 65534, 65534) }, 0);
+        let ctl = OpCtl::new(Some(Resolve::Replace));
+        let pause = ctl.clone();
+        let job = Job::new(ctl, Box::new(move |_| pause.pause(true)), Box::new(|_| {}));
+        let op = FileOp::Copy { items: vec![t.fs("new.txt")], dest: archive.clone() };
+        let owner = std::thread::scope(|scope| {
+            let task = scope.spawn(|| file_op(&op, &job, &env()).unwrap());
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let owner = loop {
+                let part = fs::read_dir(&t.0).unwrap().filter_map(Result::ok).find(|e| e.file_name().to_string_lossy().ends_with(".flit-part"));
+                if let Some(meta) = part.and_then(|p| p.metadata().ok()) {
+                    break Some((meta.uid(), meta.gid()));
+                }
+                if task.is_finished() || std::time::Instant::now() >= deadline {
+                    break None;
+                }
+                std::thread::yield_now();
+            };
+            job.ctl().cancel();
+            job.ctl().pause(false);
+            task.join().unwrap();
+            owner
+        });
+        assert_eq!(owner, Some((65534, 65534)), "{ext}");
+        no_parts(&t);
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn rewritten_archives_keep_their_windows_access_list_and_hidden_and_system_attributes() {
+    use std::os::windows::fs::MetadataExt;
+    let acl = |path: &Path| {
+        let out = std::process::Command::new("icacls").arg(path).output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).replace(&*path.to_string_lossy(), "");
+        text.lines().map(str::trim).filter(|l| !l.is_empty() && l.contains(':') && !l.contains("Successfully")).map(str::to_owned).collect::<Vec<_>>()
+    };
+    let user = format!("{}\\{}", std::env::var("USERDOMAIN").unwrap(), std::env::var("USERNAME").unwrap());
+    for (format, ext) in ALL_FORMATS {
+        let t = Temp::new("windows-acl");
+        t.write("old.txt", b"old");
+        t.write("new.txt", b"new");
+        let archive = t.fs(&format!("a.{ext}"));
+        compress(vec![t.fs("old.txt")], archive.clone(), format, None);
+        let path = std_path(&archive);
+        let status = std::process::Command::new("icacls").arg(&path).args(["/inheritance:r", "/grant:r", &format!("{user}:F")]).output().unwrap();
+        assert!(status.status.success(), "{}", String::from_utf8_lossy(&status.stdout));
+        let status = std::process::Command::new("attrib").args(["+h", "+s"]).arg(&path).status().unwrap();
+        assert!(status.success());
+        let before = acl(&path);
+        assert_eq!(before.len(), 1, "{before:?}");
+        let out = add(&t, &archive, &["new.txt"], Resolve::Replace);
+        assert!(out.error.is_none(), "{ext}: {:?}", out.error);
+        assert_eq!(acl(&path), before, "{ext}: the private access list must survive");
+        assert_eq!(fs::metadata(&path).unwrap().file_attributes() & 0x6, 0x6, "{ext}: hidden and system stay");
+        assert_eq!(listed(&archive), ["new.txt", "old.txt"], "{ext}");
+        let _ = std::process::Command::new("attrib").args(["-h", "-s"]).arg(&path).status();
+        no_parts(&t);
+    }
+}
+
+#[test]
+fn tar_entries_with_legacy_encoded_names_are_replaced_instead_of_duplicated() {
+    let dos = |s: &str| encoding_rs::IBM866.encode(s).0.into_owned();
+    for (format, ext) in [(Format::Tar, "tar"), (Format::TarGz, "tgz")] {
+        let t = Temp::new("tar-legacy");
+        let mut writer = tar::Builder::new(Vec::new());
+        for (name, body) in [("Отчёт за квартал.txt", b"old".as_slice()), ("Фото за лето.txt", b"keep".as_slice())] {
+            let mut header = tar::Header::new_ustar();
+            header.set_mode(0o644);
+            header.set_mtime(0);
+            header.set_size(body.len() as u64);
+            let raw = dos(name);
+            header.as_ustar_mut().unwrap().name[..raw.len()].copy_from_slice(&raw);
+            header.set_cksum();
+            writer.append(&header, body).unwrap();
+        }
+        let bytes = writer.into_inner().unwrap();
+        let archive = t.fs(&format!("a.{ext}"));
+        if format == Format::TarGz {
+            let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            gz.write_all(&bytes).unwrap();
+            fs::write(std_path(&archive), gz.finish().unwrap()).unwrap();
+        } else {
+            fs::write(std_path(&archive), bytes).unwrap();
+        }
+        archive::choose_encoding(&archive, Some(Encoding::Cp866));
+        assert_eq!(listed(&archive), ["Отчёт за квартал.txt", "Фото за лето.txt"], "{ext}");
+        t.write("Отчёт за квартал.txt", b"new");
+        let out = add(&t, &archive, &["Отчёт за квартал.txt"], Resolve::Replace);
+        assert!(out.error.is_none(), "{ext}: {:?}", out.error);
+        assert_eq!(index::open(&archive, 0).unwrap().entries, 2, "{ext}");
+        let mut raw = Vec::new();
+        if format == Format::TarGz {
+            flate2::read::MultiGzDecoder::new(fs::File::open(std_path(&archive)).unwrap()).read_to_end(&mut raw).unwrap();
+        } else {
+            raw = fs::read(std_path(&archive)).unwrap();
+        }
+        let mut entries: Vec<(Vec<u8>, Vec<u8>)> = tar::Archive::new(raw.as_slice()).entries().unwrap().map(|e| {
+            let mut e = e.unwrap();
+            let mut body = Vec::new();
+            e.read_to_end(&mut body).unwrap();
+            (e.path_bytes().into_owned(), body)
+        }).collect();
+        entries.sort();
+        let mut expected = vec![(dos("Фото за лето.txt"), b"keep".to_vec()), ("Отчёт за квартал.txt".as_bytes().to_vec(), b"new".to_vec())];
+        expected.sort();
+        assert_eq!(entries, expected, "{ext}");
+    }
+}
+
+#[test]
+fn tar_symbolic_link_entries_take_part_in_name_conflicts() {
+    for policy in [Resolve::Replace, Resolve::KeepBoth, Resolve::Skip] {
+        let t = Temp::new("tar-link");
+        let mut writer = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Symlink);
+        header.set_mode(0o777);
+        header.set_mtime(0);
+        header.set_size(0);
+        writer.append_link(&mut header, "note.txt", "elsewhere.txt").unwrap();
+        let archive = t.fs("a.tar");
+        fs::write(std_path(&archive), writer.into_inner().unwrap()).unwrap();
+        t.write("note.txt", b"new");
+        let out = add(&t, &archive, &["note.txt"], policy);
+        assert!(out.error.is_none(), "{policy:?}: {:?}", out.error);
+        let mut entries: Vec<(String, bool)> = tar::Archive::new(fs::File::open(std_path(&archive)).unwrap()).entries().unwrap().map(|e| {
+            let e = e.unwrap();
+            (String::from_utf8_lossy(&e.path_bytes()).into_owned(), e.header().entry_type().is_symlink())
+        }).collect();
+        entries.sort();
+        let expected: Vec<(String, bool)> = match policy {
+            Resolve::Replace => vec![("note.txt".into(), false)],
+            Resolve::KeepBoth => vec![("note (2).txt".into(), false), ("note.txt".into(), true)],
+            _ => vec![("note.txt".into(), true)],
+        };
+        assert_eq!(entries, expected, "{policy:?}");
+    }
+}
+
+#[test]
+fn sevenz_archives_keep_empty_files_and_folders_as_ordinary_entries() {
+    let t = Temp::new("7z-anti");
+    t.write("src/empty.txt", b"");
+    t.write("src/full.txt", b"full");
+    fs::create_dir_all(t.path("src/folder")).unwrap();
+    let archive = t.fs("a.7z");
+    compress(vec![t.fs("src/empty.txt"), t.fs("src/full.txt"), t.fs("src/folder")], archive.clone(), Format::SevenZ, None);
+    t.write("new.txt", b"");
+    assert!(add(&t, &archive, &["new.txt"], Resolve::Replace).error.is_none());
+    let index = index::open(&archive, 0).unwrap();
+    let files = &index.sevenz.as_ref().unwrap().files;
+    assert_eq!(files.len(), 4);
+    assert!(files.iter().all(|f| !f.is_anti_item), "{:?}", files.iter().map(|f| (&f.name, f.is_anti_item)).collect::<Vec<_>>());
+    assert!(extract(&archive, &t.fs("out"), Place::Here).error.is_none());
+    assert!(t.path("out/empty.txt").is_file() && t.path("out/folder").is_dir() && t.path("out/new.txt").is_file());
+}
