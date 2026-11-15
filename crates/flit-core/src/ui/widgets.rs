@@ -317,6 +317,25 @@ impl<'a, B: TextBackend> Paint<'a, B> {
         self.centered(r, glyph, font, ink);
     }
 
+    pub fn pane_button(&mut self, r: Rect, below: bool, state: Button, idle: Color) {
+        if let Some(fill) = self.fill_of(state) {
+            self.g.dl.round_rect(r, fill, self.px(BUTTON_RADIUS));
+        }
+        let ink = self.ink_of(state, idle);
+        let line = self.px(1.0).max(1.0);
+        let (w, h) = (self.px(13.0), self.px(11.0));
+        let frame = Rect::new((r.x + (r.w - w) / 2.0).round(), (r.y + (r.h - h) / 2.0).round(), w, h);
+        self.g.dl.outline(frame, ink, self.px(2.0), line);
+        let panel = if below {
+            let ph = (h * 0.4).round();
+            Rect::new(frame.x, frame.bottom() - ph, frame.w, ph)
+        } else {
+            let pw = (w * 0.4).round();
+            Rect::new(frame.right() - pw, frame.y, pw, frame.h)
+        };
+        self.g.dl.round_rect(panel, ink, self.px(2.0));
+    }
+
     pub fn toggle_button(&mut self, r: Rect, glyph: &str, font: FontStyle, on: bool, lit: f32) {
         if lit > 0.0 {
             self.g.dl.round_rect(r, faded(self.t.button_hover, lit), self.px(BUTTON_RADIUS));

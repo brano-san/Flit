@@ -400,6 +400,28 @@ fn the_inspector_opens_at_half_of_the_area_it_shares_until_the_divider_is_dragge
 }
 
 #[test]
+fn an_inspector_below_resizes_from_its_own_edge_and_not_from_the_status_bar() {
+    let mut a = app((1200, 700));
+    press(&mut a, Key::Space, NO);
+    a.preview.look.at = InspectorAt::Below;
+    a.layout();
+    frame(&mut a);
+    let (pane, status, split) = (a.preview.r.pane, a.layout.status, a.preview.r.split);
+    assert!(split.y < pane.y && split.bottom() > pane.y, "the grip straddles the inspector's top edge: {split:?} {pane:?}");
+    assert!(split.y >= status.y + status.h / 2.0, "the grip is not on the status bar's top edge: {split:?} {status:?}");
+    let x = pane.x + pane.w / 2.0;
+    assert_ne!(a.hit(x, status.y + 1.0), Hit::Preview(PaneHit::Split), "the top of the status bar does not resize the inspector");
+    let y = pane.y;
+    assert_eq!(a.hit(x, y), Hit::Preview(PaneHit::Split));
+    let before = pane.h;
+    a.on_event(&Event::MouseMove { x, y }, Instant::now());
+    a.on_event(&Event::MouseDown { x, y, button: crate::input::MouseButton::Left, clicks: 1 }, Instant::now());
+    a.on_event(&Event::MouseMove { x, y: y - 60.0 }, Instant::now());
+    a.on_event(&Event::MouseUp { x, y: y - 60.0, button: crate::input::MouseButton::Left }, Instant::now());
+    assert!((a.preview.r.pane.h - before - 60.0).abs() <= 1.0, "{} -> {}", before, a.preview.r.pane.h);
+}
+
+#[test]
 fn online_only_files_show_basic_info_until_the_download_button_is_clicked() {
     use crate::listing::{ChangeKind, DirChange};
     let mut a = app((1200, 700));

@@ -44,7 +44,6 @@ const G_PAUSE: &str = "\u{E769}";
 const G_VOLUME: &str = "\u{E767}";
 const G_CLOSE: &str = "\u{E8BB}";
 const G_AUTO: &str = "\u{E72C}";
-const G_RIGHT: &str = "\u{E8A0}";
 const G_BELOW: &str = "\u{E70D}";
 const G_WRAP: &str = "\u{E7A6}";
 const G_LINES: &str = "\u{E8FD}";
@@ -1091,7 +1090,7 @@ impl App {
             let status_h = l.status.h;
             let ph = sized(st.bottom_h, room_h, s(MIN_BOTTOM), s).min((room_h * 0.7).round());
             r.pane = Rect::new(x0, end - ph, room_w, ph);
-            r.split = Rect::new(x0, r.pane.y - status_h - s(3.0), room_w, s(6.0));
+            r.split = Rect::new(x0, r.pane.y - s(3.0), room_w, s(6.0));
             l.status.y = r.pane.y - status_h;
             l.bottom = l.status.y;
         }
@@ -1550,9 +1549,17 @@ impl App {
         x += bw + self.s(8.0);
         let group = Rect::new(x - self.s(2.0), y - self.s(2.0), 3.0 * bw + self.s(4.0), bw + self.s(4.0));
         Paint::new(g, t, self.scale).dashed(group, t.input_border);
-        for (k, at) in AT_CHOICES.into_iter().enumerate() {
-            let glyph = [G_AUTO, G_RIGHT, G_BELOW][k];
-            self.tool_button(g, t, Rect::new(x, y, bw, bw), glyph, PaneHit::At(at), self.preview.look.at == at);
+        for at in AT_CHOICES {
+            let r = Rect::new(x, y, bw, bw);
+            let hit = PaneHit::At(at);
+            match at {
+                InspectorAt::Auto => self.tool_button(g, t, r, G_AUTO, hit, self.preview.look.at == at),
+                InspectorAt::Right | InspectorAt::Below => {
+                    let state = self.button(Hit::Preview(hit), self.preview.look.at == at, true);
+                    Paint::new(g, t, self.scale).pane_button(r, at == InspectorAt::Below, state, t.text_dim);
+                    self.preview.buttons.push((r, hit));
+                }
+            }
             x += bw;
         }
         x += self.s(8.0);
