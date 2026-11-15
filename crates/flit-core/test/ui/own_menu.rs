@@ -168,8 +168,18 @@ fn a_menu_still_waiting_for_shell_items_releases_them_and_ignores_late_ones() {
     late_shell_items(&mut app);
     assert_eq!(app.own_menu.as_ref().map(|m| m.items.len()), Some(3), "a menu without shell items takes none");
     pending(&mut app);
+    shown(&mut app, Vec::new());
+    assert_eq!(picks(&mut app), [None], "a menu of Flit's own releases the one still waiting");
+}
+
+#[test]
+fn a_new_menu_with_shell_items_leaves_the_release_of_the_old_one_to_the_shell_and_still_gets_its_items() {
+    let mut app = app();
     pending(&mut app);
-    assert_eq!(picks(&mut app), [None], "a new menu releases the one still waiting");
+    pending(&mut app);
+    assert_eq!(picks(&mut app), [], "a release sent now would cancel the shell items asked for the new menu");
+    late_shell_items(&mut app);
+    assert_eq!(app.own_menu.as_ref().map(|m| m.items.len()), Some(5), "the shell items replace the placeholders");
 }
 
 #[test]

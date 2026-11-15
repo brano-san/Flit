@@ -134,7 +134,9 @@ impl App {
             return false;
         }
         if let Event::ShowMenu { items, x, y, launches, kind, shell, pending } = ev {
-            self.release_shell_menu();
+            if !*pending {
+                self.release_shell_menu();
+            }
             let key = self.shapes.next.take().filter(|_| *pending);
             let mut m = OwnMenu { items: items.clone(), at: (*x, *y), launches: launches.clone(), shell: shell.clone(), kind: *kind, view: None, shown: None, right: self.menu_right.take(), pointer: None, pending: *pending, own: items.len(), shape: None, floor_w: 0.0, carry: String::new(), tail: false };
             if let Some(key) = key {
