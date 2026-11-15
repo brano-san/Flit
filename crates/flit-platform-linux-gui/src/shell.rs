@@ -990,27 +990,7 @@ fn helper(args: &[&str]) -> Option<Command> {
 }
 
 pub fn launcher_progress(percent: Option<u32>) {
-    let dict = match percent {
-        Some(v) => format!("{{'progress': <{:.2}>, 'progress-visible': <true>}}", f64::from(v.min(100)) / 100.0),
-        None => "{'progress': <0.0>, 'progress-visible': <false>}".to_owned(),
-    };
-    let args = vec![
-        "gdbus".to_owned(),
-        "emit".to_owned(),
-        "--session".to_owned(),
-        "--object-path".to_owned(),
-        format!("/com/canonical/unity/launcherentry/{}", std::process::id()),
-        "--signal".to_owned(),
-        "com.canonical.Unity.LauncherEntry.Update".to_owned(),
-        "application://flit.desktop".to_owned(),
-        dict,
-    ];
-    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let Some(mut cmd) = helper(&refs) else { return };
-    let Ok(mut child) = cmd.spawn() else { return };
-    let _ = std::thread::Builder::new().name("flit-reap".into()).spawn(move || {
-        let _ = child.wait();
-    });
+    crate::dbus::launcher_progress(percent);
 }
 
 fn wayland() -> bool {
