@@ -277,6 +277,7 @@ fn terminals_get_the_folder_through_their_own_option() {
     assert_eq!(args("cosmic-term"), ["--working-directory", "/srv/my files"]);
     assert_eq!(args("kitty"), ["--directory=/srv/my files"]);
     assert_eq!(args("wezterm"), ["start", "--cwd", "/srv/my files"]);
+    assert_eq!(args("ghostty"), ["--gtk-single-instance=false", "--working-directory=/srv/my files"], "a running Ghostty would otherwise open its window in its own folder");
     assert!(args("xterm").is_empty(), "xterm starts in the working directory it inherits");
     assert!(args("st").is_empty());
     assert_eq!(args("x-terminal-emulator"), ["-e", "sh", "-c", OPEN_SCRIPT, "flit", "/srv/my files"]);
@@ -311,6 +312,30 @@ fn an_alternatives_chain_to_a_wrapper_opens_the_real_terminal_in_the_folder() {
     executable_file(&elsewhere);
     let found = real_terminal(&bin.join("x-terminal-emulator"), |name| (name == "gnome-terminal").then(|| elsewhere.clone()));
     assert_eq!(found, elsewhere);
+}
+
+#[test]
+fn the_terminal_chosen_for_xdg_terminal_exec_is_started_directly_with_its_own_folder_option() {
+    assert_eq!(listed_terminal("com.mitchellh.ghostty.desktop\n"), Some("ghostty"));
+    assert_eq!(listed_terminal("# mine\n\n  org.gnome.Ptyxis.desktop:new-window\nkitty.desktop"), Some("ptyxis"));
+    assert_eq!(listed_terminal("org.gnome.Terminal.desktop"), Some("gnome-terminal"));
+    assert_eq!(listed_terminal("org.gnome.Console.desktop"), Some("kgx"));
+    assert_eq!(listed_terminal("org.kde.konsole.desktop"), Some("konsole"));
+    assert_eq!(listed_terminal("-kitty.desktop\n+foot.desktop"), Some("foot"));
+    for list in ["", "# only a comment", "org.example.Unknown.desktop", "xdg-terminal-exec.desktop"] {
+        assert_eq!(listed_terminal(list), None, "{list:?}");
+    }
+    let t = Temp::new("terminal-lists");
+    let user = t.path().join("missing-xdg-terminals.list");
+    let system = t.path().join("xdg-terminals.list");
+    std::fs::write(&system, "com.mitchellh.ghostty.desktop\n").unwrap();
+    let ghostty = t.path().join("ghostty");
+    let found = preferred_terminal(&[user.clone(), system.clone()], |n| (n == "ghostty").then(|| ghostty.clone()));
+    assert_eq!(found.as_deref(), Some(ghostty.as_path()));
+    let program = found.unwrap();
+    assert_eq!(strings(terminal_args(&program, Some(Path::new("/srv")), None)), ["--gtk-single-instance=false", "--working-directory=/srv"]);
+    assert_eq!(preferred_terminal(&[user.clone(), system], |_| None), None, "a listed terminal that is not installed leaves xdg-terminal-exec in charge");
+    assert_eq!(preferred_terminal(&[user], |_| Some(PathBuf::from("/x"))), None);
 }
 
 #[test]

@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-const TERMINALS: [&str; 18] = [
-    "xdg-terminal-exec", "x-terminal-emulator", "gnome-terminal", "kgx", "ptyxis", "konsole", "xfce4-terminal", "mate-terminal", "tilix", "terminator", "lxterminal", "kitty", "alacritty", "foot", "wezterm", "cosmic-term", "qterminal", "xterm",
+const TERMINALS: [&str; 19] = [
+    "xdg-terminal-exec", "x-terminal-emulator", "gnome-terminal", "kgx", "ptyxis", "konsole", "xfce4-terminal", "mate-terminal", "tilix", "terminator", "lxterminal", "kitty", "ghostty", "alacritty", "foot", "wezterm", "cosmic-term", "qterminal", "xterm",
 ];
 const HELPER_TIMEOUT: Duration = Duration::from_millis(500);
 pub const TEXT_SCALE_RANGE: std::ops::RangeInclusive<f64> = 0.5..=3.0;
@@ -121,6 +121,7 @@ fn terminal_style(name: &str) -> Option<Style> {
         "qterminal" => style(&[], DirArg::Pair("--workdir"), ExecArg::Rest("-e")),
         "alacritty" | "cosmic-term" => style(&[], DirArg::Pair("--working-directory"), ExecArg::Rest("-e")),
         "kitty" => style(&[], DirArg::Joined("--directory="), ExecArg::Positional),
+        "ghostty" => style(&["--gtk-single-instance=false"], DirArg::Joined("--working-directory="), ExecArg::Rest("-e")),
         "foot" | "footclient" => style(&[], DirArg::Joined("--working-directory="), ExecArg::Positional),
         "wezterm" => style(&["start"], DirArg::Pair("--cwd"), ExecArg::Rest("--")),
         "xdg-terminal-exec" => style(&[], DirArg::Cwd, ExecArg::Positional),
@@ -133,8 +134,42 @@ fn dispatcher(name: &str) -> bool {
     name == "xdg-terminal-exec" || name == "x-terminal-emulator" || name.ends_with(".wrapper")
 }
 
+pub fn listed_terminal(list: &str) -> Option<&'static str> {
+    let entry = list.lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with('-'))?;
+    let entry = entry.strip_prefix('+').unwrap_or(entry);
+    let id = entry.split(':').next().unwrap_or(entry);
+    let id = id.strip_suffix(".desktop").unwrap_or(id).to_ascii_lowercase();
+    let last = id.rsplit('.').next().unwrap_or(&id);
+    let name = match last {
+        "terminal" if id.contains("gnome") => "gnome-terminal",
+        "console" if id.contains("gnome") => "kgx",
+        other => other,
+    };
+    TERMINALS.iter().copied().find(|&t| t == name && !dispatcher(t))
+}
+
+fn xdg_terminal_lists() -> Vec<PathBuf> {
+    let home = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
+    let system = std::env::var_os("XDG_CONFIG_DIRS").filter(|v| !v.is_empty()).unwrap_or_else(|| OsString::from("/etc/xdg"));
+    let desktops: Vec<String> = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().split(':').filter(|d| !d.is_empty()).map(str::to_ascii_lowercase).collect();
+    home.into_iter()
+        .chain(std::env::split_paths(&system))
+        .flat_map(|dir| desktops.iter().map(|d| dir.join(format!("{d}-xdg-terminals.list"))).chain([dir.join("xdg-terminals.list")]).collect::<Vec<_>>())
+        .collect()
+}
+
+pub fn preferred_terminal(lists: &[PathBuf], find: impl Fn(&OsStr) -> Option<PathBuf>) -> Option<PathBuf> {
+    let text = lists.iter().find_map(|p| std::fs::read_to_string(p).ok())?;
+    find(OsStr::new(listed_terminal(&text)?))
+}
+
 pub fn real_terminal(program: &Path, find: impl Fn(&OsStr) -> Option<PathBuf>) -> PathBuf {
     let known = |p: &Path| p.file_name().and_then(OsStr::to_str).is_some_and(|n| terminal_style(n).is_some());
+    if program.file_name() == Some(OsStr::new("xdg-terminal-exec")) {
+        if let Some(chosen) = preferred_terminal(&xdg_terminal_lists(), &find) {
+            return chosen;
+        }
+    }
     let Ok(target) = std::fs::canonicalize(program) else { return program.to_owned() };
     let name = target.file_name().and_then(OsStr::to_str).unwrap_or_default();
     let real = match name.strip_suffix(".wrapper") {

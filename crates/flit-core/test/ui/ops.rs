@@ -554,6 +554,30 @@ fn dragging_selected_rows_starts_a_shell_drag_and_a_plain_click_narrows_the_sele
 }
 
 #[test]
+fn a_right_button_drag_starts_from_an_unselected_row_and_from_the_selection() {
+    for (dir, unix) in [(r"C:\x", false), ("/home/u", true)] {
+        let mut app = app_at(dir);
+        app.set_caps(crate::caps::Caps { unix_paths: unix });
+        deliver(&mut app, &[("a.txt", false), ("b.txt", false), ("c.txt", false)]);
+        let at = |name: &str| p(dir).join(name.as_bytes());
+        let dragged = |app: &mut App| app.drain_effects().find_map(|e| if let Effect::StartDrag(paths) = e { Some(paths) } else { None });
+        let (x, y) = row_xy(&app, 2);
+        app.on_event(&Event::MouseMove { x, y }, t0());
+        press(&mut app, (x, y), MouseButton::Right, NO);
+        app.on_event(&Event::MouseMove { x: x + 12.0, y: y + 3.0 }, t0());
+        assert_eq!(dragged(&mut app), Some(vec![at("c.txt")]), "{dir}: the row under the pointer is dragged even when nothing was selected");
+        release(&mut app, (x + 12.0, y + 3.0), MouseButton::Right);
+        assert!(!app.own_menu_open(), "{dir}: releasing after a drag opens no context menu");
+        select(&mut app, &["a.txt", "b.txt"]);
+        let (x, y) = row_xy(&app, 0);
+        app.on_event(&Event::MouseMove { x, y }, t0());
+        press(&mut app, (x, y), MouseButton::Right, NO);
+        app.on_event(&Event::MouseMove { x: x + 12.0, y: y + 3.0 }, t0());
+        assert_eq!(dragged(&mut app), Some(vec![at("a.txt"), at("b.txt")]), "{dir}: a right drag on a selected row takes the whole selection");
+    }
+}
+
+#[test]
 fn ctrl_dragging_a_selected_item_drags_the_selection_and_a_ctrl_click_toggles_on_release() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &[("a.txt", false), ("b.txt", false), ("c.txt", false)]);
