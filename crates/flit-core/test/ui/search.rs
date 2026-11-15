@@ -492,3 +492,32 @@ fn dragging_after_a_double_click_in_the_search_box_goes_by_whole_words() {
     app.frame(&mut g, t0());
     assert_eq!(app.search.edit.caret, 0, "moving after the release changes nothing");
 }
+
+#[test]
+fn a_finger_scrolls_search_results_both_ways_and_a_flick_glides_on() {
+    let mut a = app();
+    a.open_search();
+    a.search.recent_open = false;
+    a.on_event(&Event::Char('f'), t0());
+    requests(&mut a);
+    let gen = gen_of(&a);
+    a.on_search_event(SearchEvent::Done { gen, total: 2 * PAGE }, t0());
+    a.on_search_event(SearchEvent::Rows { gen, from: 0, rows: page(0, 2 * PAGE) }, t0());
+    a.search.widths = Some([500.0, 500.0, 200.0, 200.0]);
+    let start = t0();
+    a.frame(&mut Gfx::new(Mono, 2048), start);
+    let sl = a.search_layout();
+    assert!(sl.max_x > 100.0);
+    let (x, y) = (sl.list.x + sl.list.w / 2.0, sl.list.bottom() - 30.0);
+    let end = a.touch_swipe((x, y), (x - 80.0, y - 120.0), start + Duration::from_secs(1));
+    assert!((a.search.scroll - 120.0).abs() <= 1.0 && (a.search.scroll_x - 80.0).abs() <= 1.0, "the results follow the finger: {} {}", a.search.scroll, a.search.scroll_x);
+    assert!(a.search.active && a.search.drag == SDrag::None);
+    a.touch_flick(end, |a| a.search.scroll as f32);
+    let row = |a: &App| match a.search_hit(x, y) {
+        SHit::Row(r) => r,
+        h => panic!("{h:?}"),
+    };
+    let r = row(&a);
+    a.touch_tap((x, y), end + Duration::from_secs(10));
+    assert_eq!(a.search.focus, Some(r), "a tap picks the row like a click");
+}

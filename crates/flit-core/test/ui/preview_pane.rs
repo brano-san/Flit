@@ -875,3 +875,33 @@ fn nested_extensionless_preview_never_reuses_another_subfolders_loaded_icon() {
         assert_eq!(second[0].path.as_bytes(), b"/tmp/root/other/image");
     }
 }
+
+#[test]
+fn a_finger_scrolls_preview_text_and_large_images_both_ways_without_selecting() {
+    let text = format!("{}\n", "word ".repeat(12)).repeat(300);
+    let mut a = text_preview((1200, 700), &text);
+    a.preview.look.wrap = Some(false);
+    frame(&mut a);
+    assert!(a.preview.hmax > 100.0 && a.preview.extent > a.preview.r.body.h + 400.0, "{} {} {}", a.preview.hmax, a.preview.extent, a.preview.r.body.h);
+    let picked = a.preview.pick.range();
+    let b = a.preview.r.body;
+    let (x, y) = (b.x + b.w / 2.0, b.bottom() - 40.0);
+    let t = Instant::now() + Duration::from_secs(1);
+    let end = a.touch_swipe((x, y), (x - 80.0, y - 120.0), t);
+    assert!((a.preview.scroll - 120.0).abs() <= 1.0 && (a.preview.hscroll - 80.0).abs() <= 1.0, "the text follows the finger: {} {}", a.preview.scroll, a.preview.hscroll);
+    assert_eq!(a.preview.pick.range(), picked, "panning selects no text");
+    assert_eq!(a.drag, Drag::None);
+    a.touch_flick(end, |a| a.preview.scroll);
+
+    select(&mut a, "b.png");
+    frame(&mut a);
+    let r = requests(&mut a).pop().unwrap();
+    a.on_preview(r.gen, PreviewData::Image(Bitmap { width: 2000, height: 2000, rgba: vec![255; 16_000_000] }));
+    a.preview.look.scale = Scale::Original;
+    frame(&mut a);
+    assert!(a.preview.hmax > 100.0);
+    let (scroll, hscroll) = (a.preview.scroll, a.preview.hscroll);
+    let t = Instant::now() + Duration::from_secs(30);
+    a.touch_swipe((x, y), (x - 60.0, y - 90.0), t);
+    assert!((a.preview.hscroll - hscroll - 60.0).abs() <= 1.0 && (a.preview.scroll - scroll - 90.0).abs() <= 1.0, "a large image pans under the finger: {} {}", a.preview.scroll, a.preview.hscroll);
+}

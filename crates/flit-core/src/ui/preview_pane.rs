@@ -220,7 +220,7 @@ enum Grain {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-struct Pick {
+pub(super) struct Pick {
     anchor: Spot,
     caret: Spot,
     from: (Spot, Spot),
@@ -1259,6 +1259,22 @@ impl App {
         }
         self.dirty = true;
         true
+    }
+
+    pub(super) fn preview_pick(&self) -> Pick {
+        self.preview.pick
+    }
+
+    pub(super) fn restore_preview_pick(&mut self, pick: Pick) {
+        self.preview.pick = pick;
+    }
+
+    pub(super) fn touch_pan_preview(&mut self, dx: f32, dy: f32) -> (bool, bool) {
+        let p = &mut self.preview;
+        let (x, y) = ((p.hscroll - dx).clamp(0.0, p.hmax), (p.scroll - dy).clamp(0.0, (p.extent - p.r.body.h).max(0.0)));
+        let moved = (x != p.hscroll, y != p.scroll);
+        (p.hscroll, p.scroll) = (x, y);
+        moved
     }
 
     pub(super) fn scroll_preview(&mut self, dy: f32) -> bool {

@@ -29,6 +29,7 @@ pub mod shell;
 mod tools;
 mod scripts;
 mod text;
+mod touch;
 mod thumb;
 mod thumbnailers;
 mod turbo;
