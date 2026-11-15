@@ -182,13 +182,17 @@ pub fn connect(uri: &str) -> std::io::Result<PathBuf> {
     local_path(&String::from_utf8_lossy(&info.stdout)).ok_or_else(|| std::io::Error::other(String::from_utf8_lossy(&mounted.stderr).trim().to_owned()))
 }
 
+fn fuse_unmounter() -> &'static str {
+    if crate::shell::on_path(std::ffi::OsStr::new("fusermount3")).is_none() && crate::shell::on_path(std::ffi::OsStr::new("fusermount")).is_some() { "fusermount" } else { "fusermount3" }
+}
+
 pub fn disconnect_command(point: &Path, table: &[Mount], gvfs_root: &Path) -> Vec<std::ffi::OsString> {
     let words = |w: &[&str]| w.iter().map(std::ffi::OsString::from).chain([point.as_os_str().to_owned()]).collect();
     if point.starts_with(gvfs_root) {
         return words(&["gio", "mount", "-u"]);
     }
     match table.iter().rev().find(|m| m.path() == point) {
-        Some(m) if m.fstype.starts_with("fuse.") || m.fstype == "sshfs" => words(&["fusermount", "-u"]),
+        Some(m) if m.fstype.starts_with("fuse.") || m.fstype == "sshfs" => words(&[fuse_unmounter(), "-u"]),
         _ => words(&["umount"]),
     }
 }

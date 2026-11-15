@@ -524,7 +524,11 @@ impl App {
                 p.caption[k] = Rect::new(x, 0.0, cw, top);
                 x += cw;
             }
-            if side { right = count as f32 * cw; } else { left = x; }
+            if side {
+                right = count as f32 * cw;
+            } else {
+                left = x;
+            }
         }
         let above = side - left >= 2.0 * bw + 3.0 * pad;
         p.menu = Rect::new(left + pad, pad, bw, top - 2.0 * pad);
@@ -1088,7 +1092,9 @@ impl App {
         let max_glyph = if self.maximized { G_RESTORE } else { G_MAX };
         for (i, glyph) in [G_MIN, max_glyph, G_CLOSE].into_iter().enumerate() {
             let r = self.panels.caption[i];
-            if r.w <= 0.0 { continue; }
+            if r.w <= 0.0 {
+                continue;
+            }
             let idle = if self.active { t.text } else { t.text_dim };
             let lit = self.lit(Hit::Caption(i));
             let fill = if i == 2 { t.close_hover } else { t.teal };

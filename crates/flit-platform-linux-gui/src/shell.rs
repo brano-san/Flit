@@ -376,6 +376,7 @@ pub(crate) fn tool_missing(tool: &str) -> PlatformError {
         "setfacl" => S::ErrorsFsNoSetfacl,
         "mpv" => S::PreviewNoPlayer,
         "recollq" => S::ErrorsEngineNoContentSearch,
+        "xterm" => S::ErrorsOpsExtraNoTerminal,
         _ => S::ErrorsOpsExtraNoTool,
     };
     PlatformError::new(libc::ENOENT as i64, flit_core::tr_en!(key, tool = tool, package = package))

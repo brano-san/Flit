@@ -55,6 +55,7 @@ fn invalid_pointer_coordinates_and_empty_windows_never_receive_tabs() {
         assert_eq!(tab_target([rect(2, (0.0, 0.0), size)].into_iter(), 1, (0.0, 0.0)), None);
     }
 }
+
 #[test]
 fn minimized_state_refresh_is_limited_to_once_per_quarter_second() {
     let now = Instant::now();
@@ -63,6 +64,7 @@ fn minimized_state_refresh_is_limited_to_once_per_quarter_second() {
     assert!(!tab_windows_due(Some(now), now + Duration::from_millis(249)));
     assert!(tab_windows_due(Some(now), now + Duration::from_millis(250)));
 }
+
 #[test]
 fn an_old_visibility_query_cannot_make_a_newly_minimized_window_receive_a_tab() {
     let state = MinimizedState::new(false);
@@ -80,6 +82,7 @@ fn a_recent_visibility_query_can_update_the_cached_minimized_state() {
     let target = TabTarget { minimized: state.get(), ..rect(2, (0.0, 0.0), (600, 400)) };
     assert_eq!(tab_target([target].into_iter(), 1, (120.0, 130.0)), Some((2, 120.0, 130.0)));
 }
+
 #[test]
 fn a_minimize_restore_cycle_also_invalidates_an_older_visibility_query() {
     let state = MinimizedState::new(false);
@@ -89,4 +92,66 @@ fn a_minimize_restore_cycle_also_invalidates_an_older_visibility_query() {
     state.complete(outstanding, true);
     let target = TabTarget { minimized: state.get(), ..rect(2, (0.0, 0.0), (600, 400)) };
     assert_eq!(tab_target([target].into_iter(), 1, (120.0, 130.0)), Some((2, 120.0, 130.0)));
+}
+
+#[test]
+fn a_window_closed_during_a_minimized_check_is_released_on_the_ui_thread() {
+    struct Probe(Arc<Mutex<Option<std::thread::ThreadId>>>);
+    impl Drop for Probe {
+        fn drop(&mut self) {
+            *self.0.lock().unwrap() = Some(std::thread::current().id());
+        }
+    }
+    let dropped = Arc::new(Mutex::new(None));
+    let window = Arc::new(Probe(dropped.clone()));
+    let state = Arc::new(MinimizedState::new(false));
+    let checks = vec![(Arc::downgrade(&window), state.clone(), state.snapshot())];
+    let (back, returned) = mpsc::channel();
+    let (inside, entered) = mpsc::channel();
+    let (go, wait) = mpsc::channel::<()>();
+    let worker = std::thread::spawn(move || {
+        check_minimized(checks, |_| {
+            inside.send(()).unwrap();
+            wait.recv().unwrap();
+            Some(true)
+        }, &back, || {});
+    });
+    entered.recv().unwrap();
+    drop(window);
+    go.send(()).unwrap();
+    worker.join().unwrap();
+    assert!(dropped.lock().unwrap().is_none(), "the background check never destroys a window");
+    returned.try_iter().for_each(drop);
+    assert_eq!(*dropped.lock().unwrap(), Some(std::thread::current().id()));
+    assert!(state.get());
+    let gone: Vec<MinimizedCheck<Probe>> = vec![(Weak::new(), state.clone(), state.snapshot())];
+    let (back, returned) = mpsc::channel();
+    check_minimized(gone, |_| panic!("a closed window is not queried"), &back, || {});
+    assert!(returned.try_iter().next().is_none());
+}
+
+#[test]
+fn focus_resize_and_occlusion_reuse_the_cached_position_without_asking_x11() {
+    let ask = || -> Option<(f64, f64)> { panic!("X11 position read") };
+    let inset = || -> (f64, f64) { panic!("X11 inset read") };
+    let first = next_target(None, 3, None, (800, 600), || (2.0, 30.0), || Some((100.0, 50.0))).unwrap();
+    assert_eq!(first.0.origin, (102.0, 80.0));
+    let resized = next_target(Some(first), 3, None, (900, 700), inset, ask).unwrap();
+    assert_eq!((resized.0.origin, resized.0.size), ((102.0, 80.0), (900, 700)));
+    let moved = next_target(Some(resized), 3, Some((10.0, 20.0)), (900, 700), inset, ask).unwrap();
+    assert_eq!(moved.0.origin, (12.0, 50.0));
+    let hidden = (TabTarget { minimized: true, ..moved.0 }, moved.1);
+    assert!(next_target(Some(hidden), 3, None, (900, 700), inset, ask).unwrap().0.minimized);
+    assert!(next_target(None, 3, None, (1, 1), || (0.0, 0.0), || None).is_none());
+}
+
+#[test]
+fn kde_globals_without_an_accent_keep_the_accent_from_the_portal() {
+    let blue = crate::shell::kde_accent("[General]\nAccentColor=61,174,233\n").unwrap();
+    let red = crate::shell::kde_accent("[General]\nAccentColor=218,68,83\n").unwrap();
+    assert_eq!(kde_accent_change("[General]\nColorScheme=BreezeDark\n", Some(blue)), None);
+    assert_eq!(kde_accent_change("", None), None);
+    assert_eq!(kde_accent_change("[General]\nAccentColor=61,174,233\n", Some(blue)), None, "an unchanged accent is not applied again");
+    assert_eq!(kde_accent_change("[General]\nAccentColor=218,68,83\n", Some(blue)), Some(Some(red)));
+    assert_eq!(kde_accent_change("[General]\nAccentColor=218,68,83\n", None), Some(Some(red)));
 }

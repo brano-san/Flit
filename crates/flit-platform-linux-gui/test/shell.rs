@@ -30,7 +30,7 @@ fn missing_print_mount_and_terminal_helpers_name_their_packages() {
         let message = mount_image(Path::new("/not-an-image")).unwrap_err().to_string();
         assert_eq!(message, tool_missing("udisksctl").message);
         crate::temp::assert_missing(&message, "udisksctl");
-        assert_missing(&open_terminal(Path::new("/")).unwrap_err(), "xterm");
+        assert_eq!(open_terminal(Path::new("/")).unwrap_err().message, tool_missing("xterm").message);
         assert_missing(&open_root_terminal(Path::new("/")).unwrap_err(), "pkexec");
         assert!(xdg_open_command(OsStr::new("/tmp/a")).unwrap_err().message.contains("xdg-utils"));
     });
@@ -628,4 +628,22 @@ fn the_system_disk_plain_files_and_scripts_keep_their_usual_icons() {
     assert!(!type_icon_names(b"notes", false).contains(&"application-x-executable".to_owned()));
     assert!(!type_icon_names(b"build.sh", true).contains(&"application-x-executable".to_owned()), "a script keeps the icon of its type");
     assert!(!crate::icons::switch_theme("  ''  "), "an empty theme name changes nothing");
+}
+
+#[test]
+fn an_empty_or_text_clipboard_read_natively_never_blames_a_missing_helper() {
+    crate::temp::with_tools(&[], || {
+        assert_eq!(clipboard_files_from(None, crate::window::without_files(true)).unwrap_err().message, S::ErrorsEngineClipboardNoFiles.en());
+        assert_missing(&clipboard_files_from(None, crate::window::without_files(false)).unwrap_err(), "xclip");
+    });
+}
+
+#[test]
+fn a_missing_terminal_suggests_the_terminal_variable_xdg_terminal_exec_and_a_package() {
+    let message = tool_missing("xterm").message;
+    assert_eq!(message, S::ErrorsOpsExtraNoTerminal.en().replace("{package}", "xterm"));
+    assert!(message.contains("TERMINAL") && message.contains("xdg-terminal-exec"));
+    crate::temp::with_tools(&[], || {
+        assert_eq!(open_terminal(Path::new("/")).unwrap_err().message, message);
+    });
 }

@@ -210,6 +210,7 @@ fn queued_drop_readonly_child() {
     let Some(dir) = std::env::var_os("FLIT_DROP_READONLY_TEST_DIR") else { return };
     let out = queued(&queued_path(Path::new(&dir)), &queued_file("text.txt", b"hello"), &Job::detached(Resolve::Skip));
     assert!(out.items.is_empty());
+    assert!(std::fs::read_dir(&dir).is_ok(), "the child must reach the folder so only its read-only mode can refuse the drop");
     let error = out.error.unwrap();
     assert!(error.message.contains("Permission denied"), "{}", error.message);
 }

@@ -39,7 +39,7 @@ fn missing_helper_packages_match_all_four_distribution_families() {
         ("setfacl", ["acl"; 4]),
         ("curl", ["curl"; 4]),
         ("wl-paste", ["wl-clipboard"; 4]),
-        ("fusermount", ["fuse", "fuse", "fuse2", "fuse"]),
+        ("fusermount3", ["fuse3"; 4]),
         ("umount", ["mount", "util-linux-core", "util-linux", "util-linux"]),
         ("xterm", ["xterm"; 4]),
         ("recollq", ["recollcmd", "recoll", "recoll", "recoll"]),
@@ -54,4 +54,21 @@ fn missing_helper_packages_match_all_four_distribution_families() {
 fn missing_independent_helpers_are_not_hidden_by_another_program_from_the_same_package() {
     let missing = missing_from(|t| t != "gio" && t != "wl-paste", UBUNTU, true, true);
     assert_eq!(missing.iter().map(|m| (m.tool, m.package)).collect::<Vec<_>>(), [("gio", "libglib2.0-bin"), ("wl-paste", "wl-clipboard")]);
+}
+
+#[test]
+fn fuse3_only_and_fuse2_only_systems_both_have_an_unmount_helper() {
+    let only = |tool: &'static str| move |t: &str| t != "fusermount3" && t != "fusermount" || t == tool;
+    for tool in ["fusermount3", "fusermount"] {
+        assert!(!missing_from(only(tool), UBUNTU, false, true).iter().any(|m| m.purpose == S::SettingsPageToolDrives), "{tool}");
+    }
+    let none = missing_from(|t| t != "fusermount3" && t != "fusermount", UBUNTU, false, true);
+    assert_eq!(none.iter().map(|m| (m.tool, m.package)).collect::<Vec<_>>(), [("fusermount3", "fuse3")]);
+}
+
+#[test]
+fn the_terminal_entry_comes_from_the_table_and_only_when_no_terminal_exists() {
+    assert!(missing_from(|t| t != "xterm", UBUNTU, false, true).is_empty());
+    let missing = missing_from(|t| t != "xterm", TUMBLEWEED, false, false);
+    assert_eq!(missing.iter().map(|m| (m.tool, m.purpose, m.package)).collect::<Vec<_>>(), [("xterm", S::SettingsPageToolTerminal, "xterm")]);
 }

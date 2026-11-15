@@ -96,6 +96,10 @@ pub(crate) fn activation_token() -> Option<String> {
     crate::activation::take()
 }
 
+pub(crate) fn without_files(native: bool) -> Option<crate::clipboard::Payload> {
+    native.then(Vec::new)
+}
+
 pub(crate) fn clipboard_types() -> Option<crate::clipboard::Payload> {
     if !LOOP_RUNNING.load(Ordering::Acquire) {
         return None;
@@ -166,6 +170,10 @@ fn set_window_buttons(buttons: WindowButtons) {
 pub(crate) fn icons_changed() {
     ICONS_DIRTY.store(true, Ordering::Release);
     wake_loop();
+}
+
+pub(crate) fn kde_accent_change(globals: &str, current: Option<flit_core::theme::Accent>) -> Option<Option<flit_core::theme::Accent>> {
+    crate::shell::kde_accent(globals).filter(|accent| current != Some(*accent)).map(Some)
 }
 
 fn system_accent() -> Option<flit_core::theme::Accent> {
@@ -329,43 +337,76 @@ impl MinimizedState {
 }
 struct TrackedWindow {
     target: TabTarget,
+    inset: (f64, f64),
     raw: Weak<dyn winit::window::Window>,
     minimized: Arc<MinimizedState>,
 }
 
-type MinimizedCheck = (Arc<dyn winit::window::Window>, Arc<MinimizedState>, u64);
+type MinimizedCheck<W> = (Weak<W>, Arc<MinimizedState>, u64);
 
 struct TabWindows {
     windows: Vec<TrackedWindow>,
     checked: Option<Instant>,
-    check: mpsc::SyncSender<Vec<MinimizedCheck>>,
+    check: mpsc::SyncSender<Vec<MinimizedCheck<dyn winit::window::Window>>>,
+    returned: mpsc::Receiver<Arc<dyn winit::window::Window>>,
 }
 
 fn tab_windows_due(checked: Option<Instant>, now: Instant) -> bool {
     checked.is_none_or(|at| now.saturating_duration_since(at) >= TAB_WINDOWS_WAIT)
 }
 
+fn check_minimized<W: ?Sized>(windows: Vec<MinimizedCheck<W>>, is_minimized: impl Fn(&W) -> Option<bool>, back: &mpsc::Sender<Arc<W>>, returned: impl Fn()) {
+    for (raw, minimized, seen) in windows {
+        let Some(raw) = raw.upgrade() else { continue };
+        if let Some(hidden) = is_minimized(&raw) {
+            minimized.complete(seen, hidden);
+        }
+        if let Err(mpsc::SendError(raw)) = back.send(raw) {
+            std::mem::forget(raw);
+        }
+    }
+    returned();
+}
+
+fn next_target(previous: Option<(TabTarget, (f64, f64))>, id: WindowId, moved: Option<(f64, f64)>, size: (u32, u32), inset: impl FnOnce() -> (f64, f64), origin: impl FnOnce() -> Option<(f64, f64)>) -> Option<(TabTarget, (f64, f64))> {
+    let minimized = previous.is_some_and(|(t, _)| t.minimized);
+    match (moved, previous) {
+        (Some(at), previous) => {
+            let inset = previous.map_or_else(inset, |(_, inset)| inset);
+            Some((TabTarget { id, origin: (at.0 + inset.0, at.1 + inset.1), size, minimized }, inset))
+        }
+        (None, Some((target, inset))) => Some((TabTarget { size, ..target }, inset)),
+        (None, None) => {
+            let at = origin()?;
+            let inset = inset();
+            Some((TabTarget { id, origin: (at.0 + inset.0, at.1 + inset.1), size, minimized }, inset))
+        }
+    }
+}
+
 impl TabWindows {
     fn new() -> Self {
-        let (check, pending) = mpsc::sync_channel::<Vec<MinimizedCheck>>(1);
+        let (check, pending) = mpsc::sync_channel::<Vec<MinimizedCheck<dyn winit::window::Window>>>(1);
+        let (back, returned) = mpsc::channel();
         background("flit-tab-windows", move || {
             while let Ok(windows) = pending.recv() {
-                for (raw, minimized, seen) in windows {
-                    if let Some(hidden) = raw.is_minimized() {
-                        minimized.complete(seen, hidden);
-                    }
-                }
+                check_minimized(windows, |raw| raw.is_minimized(), &back, wake_loop);
             }
         });
-        Self { windows: Vec::new(), checked: None, check }
+        Self { windows: Vec::new(), checked: None, check, returned }
+    }
+
+    fn release(&self) {
+        self.returned.try_iter().for_each(drop);
     }
 
     fn refresh(&mut self, now: Instant) {
+        self.release();
         if !tab_windows_due(self.checked, now) {
             return;
         }
         self.checked = Some(now);
-        let windows = self.windows.iter().filter_map(|w| Some((w.raw.upgrade()?, w.minimized.clone(), w.minimized.snapshot()))).collect();
+        let windows = self.windows.iter().map(|w| (w.raw.clone(), w.minimized.clone(), w.minimized.snapshot())).collect();
         let _ = self.check.try_send(windows);
     }
 }
@@ -423,15 +464,28 @@ impl LinuxWindow {
         if self.is_wayland() {
             return;
         }
-        let Some(at) = position.or_else(|| self.raw.outer_position().ok()) else { return };
-        let inset = self.raw.surface_position();
-        let target = TabTarget { id: self.id, origin: (f64::from(at.x) + f64::from(inset.x), f64::from(at.y) + f64::from(inset.y)), size: self.size.get(), minimized: self.raw.is_minimized().unwrap_or(false) };
         let mut targets = self.targets.borrow_mut();
-        if let Some(w) = targets.windows.iter_mut().find(|w| w.target.id == self.id) {
-            w.target = target;
-            w.minimized.set(target.minimized);
-        } else {
-            targets.windows.push(TrackedWindow { target, raw: Arc::downgrade(&self.raw), minimized: Arc::new(MinimizedState::new(target.minimized)) });
+        let tracked = targets.windows.iter().position(|w| w.target.id == self.id);
+        let previous = tracked.map(|k| (TabTarget { minimized: targets.windows[k].minimized.get(), ..targets.windows[k].target }, targets.windows[k].inset));
+        let moved = position.map(|at| (f64::from(at.x), f64::from(at.y)));
+        let inset = || {
+            let inset = self.raw.surface_position();
+            (f64::from(inset.x), f64::from(inset.y))
+        };
+        let origin = || self.raw.outer_position().ok().map(|at| (f64::from(at.x), f64::from(at.y)));
+        let Some((target, inset)) = next_target(previous, self.id, moved, self.size.get(), inset, origin) else { return };
+        match tracked {
+            Some(k) => {
+                targets.windows[k].target = target;
+                targets.windows[k].inset = inset;
+            }
+            None => targets.windows.push(TrackedWindow { target, inset, raw: Arc::downgrade(&self.raw), minimized: Arc::new(MinimizedState::new(false)) }),
+        }
+    }
+
+    fn occluded(&self, hidden: bool) {
+        if let Some(w) = self.targets.borrow().windows.iter().find(|w| w.target.id == self.id) {
+            w.minimized.set(hidden);
         }
     }
 
@@ -820,7 +874,9 @@ impl WindowSystem for LinuxWindows {
                         PREFERRED_DARK.store(if dark { DARK_YES } else { DARK_NO }, Ordering::Release);
                         THEME_CHANGED.store(true, Ordering::Release);
                     }
-                    apply_look(crate::atspi::LookChange::Accent(crate::shell::kde_accent(&text)));
+                    if let Some(accent) = kde_accent_change(&text, system_accent()) {
+                        apply_look(crate::atspi::LookChange::Accent(accent));
+                    }
                 }
             }).ok())
         } else { None };
@@ -1189,8 +1245,10 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             return r.waiters.extend(waiters);
         }
         let mut r = Reading { want: HashMap::new(), got: Vec::new(), waiters, started: Instant::now() };
+        let mut native = false;
         if let Ok(Some(id)) = el.clipboard() {
             if let Ok(transfer) = el.data_transfer(id) {
+                native = true;
                 for ty in transfer.available_types() {
                     let Some(name) = type_name(ty).filter(|n| crate::clipboard::FILE_TYPES.contains(&n.as_str()) && !r.want.values().any(|w| w == n)) else { continue };
                     match el.fetch_data_transfer(id, ty) {
@@ -1204,7 +1262,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         }
         if r.want.is_empty() {
             for w in r.waiters {
-                let _ = w.send(None);
+                let _ = w.send(without_files(native));
             }
             return;
         }
@@ -1474,7 +1532,10 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                 handler.event(w, Event::ScaleChanged(scale_factor as f32));
             }
             WindowEvent::Moved(position) => w.cache_target(Some(position)),
-            WindowEvent::Occluded(_) => w.cache_target(None),
+            WindowEvent::Occluded(hidden) => {
+                w.cache_target(None);
+                w.occluded(hidden);
+            }
             WindowEvent::CloseRequested => handler.event(w, Event::CloseRequested),
             WindowEvent::Focused(focused) => {
                 w.cache_target(None);
@@ -1642,6 +1703,7 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
 
     fn about_to_wait(&mut self, el: &dyn ActiveEventLoop) {
         TURNS.fetch_add(1, Ordering::AcqRel);
+        self.targets.borrow().release();
         let text = self.wl.as_mut().and_then(|wl| {
             wl.pump();
             wl.clipboard_text_changed()

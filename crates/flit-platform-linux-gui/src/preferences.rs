@@ -32,12 +32,16 @@ fn buttons(left: impl Iterator<Item = WindowButton>, right: impl Iterator<Item =
 
 pub(crate) fn gnome_buttons(layout: &str) -> WindowButtons {
     let (left, right) = layout.split_once(':').unwrap_or((layout, ""));
-    let parse = |part: &str| part.split(',').filter_map(|word| match word.trim() {
-        "minimize" => Some(WindowButton::Minimize),
-        "maximize" => Some(WindowButton::Maximize),
-        "close" => Some(WindowButton::Close),
-        _ => None,
-    }).collect::<Vec<_>>();
+    let parse = |part: &str| {
+        part.split(',')
+            .filter_map(|word| match word.trim() {
+                "minimize" => Some(WindowButton::Minimize),
+                "maximize" => Some(WindowButton::Maximize),
+                "close" => Some(WindowButton::Close),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
     buttons(parse(left).into_iter(), parse(right).into_iter())
 }
 
@@ -57,12 +61,16 @@ pub(crate) fn kde_buttons(config: &str) -> WindowButtons {
             }
         }
     }
-    let parse = |part: &str| part.chars().filter_map(|c| match c {
-        'I' => Some(WindowButton::Minimize),
-        'A' => Some(WindowButton::Maximize),
-        'X' => Some(WindowButton::Close),
-        _ => None,
-    }).collect::<Vec<_>>();
+    let parse = |part: &str| {
+        part.chars()
+            .filter_map(|c| match c {
+                'I' => Some(WindowButton::Minimize),
+                'A' => Some(WindowButton::Maximize),
+                'X' => Some(WindowButton::Close),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
     buttons(parse(left).into_iter(), parse(right).into_iter())
 }
 
@@ -128,7 +136,9 @@ impl Watch {
             loop {
                 for (k, path) in paths.iter().enumerate() {
                     let now = stamp(path);
-                    if !first && now == stamps[k] { continue; }
+                    if !first && now == stamps[k] {
+                        continue;
+                    }
                     stamps[k] = now;
                     let text = read_config(path);
                     if k == 0 {
