@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::data_transfer::{DataTransferId, DataTransferSendBuilder, TransferType, TypeHint};
@@ -36,6 +36,7 @@ const RESIZE_BORDER: f32 = 5.0;
 const X11_KEYBOARD_LIBRARY: &CStr = c"libxkbcommon-x11.so.0";
 const READ_WAIT: Duration = Duration::from_secs(1);
 const VERIFY_WAIT: Duration = Duration::from_millis(400);
+const TAB_WINDOWS_WAIT: Duration = Duration::from_millis(250);
 
 const DARK_UNKNOWN: u8 = 0;
 const DARK_NO: u8 = 1;
@@ -247,10 +248,102 @@ enum Command {
 
 type Commands = Rc<RefCell<Vec<Command>>>;
 
+#[derive(Clone, Copy)]
+struct TabTarget {
+    id: WindowId,
+    origin: (f64, f64),
+    size: (u32, u32),
+    minimized: bool,
+}
+
+fn tab_target(windows: impl DoubleEndedIterator<Item = TabTarget>, source: WindowId, point: (f64, f64)) -> Option<(WindowId, f32, f32)> {
+    if !point.0.is_finite() || !point.1.is_finite() {
+        return None;
+    }
+    windows.rev().find_map(|w| {
+        let (x, y) = (point.0 - w.origin.0, point.1 - w.origin.1);
+        (w.id != source && !w.minimized && x >= 0.0 && y >= 0.0 && x < f64::from(w.size.0) && y < f64::from(w.size.1)).then_some((w.id, x as f32, y as f32))
+    })
+}
+
+struct MinimizedState(AtomicU64);
+
+impl MinimizedState {
+    fn new(hidden: bool) -> Self {
+        Self(AtomicU64::new(u64::from(hidden)))
+    }
+
+    fn get(&self) -> bool {
+        self.snapshot() & 1 != 0
+    }
+
+    fn snapshot(&self) -> u64 {
+        self.0.load(Ordering::Acquire)
+    }
+
+    fn set(&self, hidden: bool) {
+        let mut seen = self.snapshot();
+        loop {
+            let next = (seen.wrapping_add(2) & !1) | u64::from(hidden);
+            match self.0.compare_exchange_weak(seen, next, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => return,
+                Err(current) => seen = current,
+            }
+        }
+    }
+
+    fn complete(&self, seen: u64, hidden: bool) {
+        let _ = self.0.compare_exchange(seen, (seen & !1) | u64::from(hidden), Ordering::AcqRel, Ordering::Acquire);
+    }
+}
+struct TrackedWindow {
+    target: TabTarget,
+    raw: Weak<dyn winit::window::Window>,
+    minimized: Arc<MinimizedState>,
+}
+
+type MinimizedCheck = (Arc<dyn winit::window::Window>, Arc<MinimizedState>, u64);
+
+struct TabWindows {
+    windows: Vec<TrackedWindow>,
+    checked: Option<Instant>,
+    check: mpsc::SyncSender<Vec<MinimizedCheck>>,
+}
+
+fn tab_windows_due(checked: Option<Instant>, now: Instant) -> bool {
+    checked.is_none_or(|at| now.saturating_duration_since(at) >= TAB_WINDOWS_WAIT)
+}
+
+impl TabWindows {
+    fn new() -> Self {
+        let (check, pending) = mpsc::sync_channel::<Vec<MinimizedCheck>>(1);
+        background("flit-tab-windows", move || {
+            while let Ok(windows) = pending.recv() {
+                for (raw, minimized, seen) in windows {
+                    if let Some(hidden) = raw.is_minimized() {
+                        minimized.complete(seen, hidden);
+                    }
+                }
+            }
+        });
+        Self { windows: Vec::new(), checked: None, check }
+    }
+
+    fn refresh(&mut self, now: Instant) {
+        if !tab_windows_due(self.checked, now) {
+            return;
+        }
+        self.checked = Some(now);
+        let windows = self.windows.iter().filter_map(|w| Some((w.raw.upgrade()?, w.minimized.clone(), w.minimized.snapshot()))).collect();
+        let _ = self.check.try_send(windows);
+    }
+}
+
 pub struct LinuxWindow {
     id: WindowId,
     raw: Arc<dyn winit::window::Window>,
     commands: Commands,
+    targets: Rc<RefCell<TabWindows>>,
     size: Cell<(u32, u32)>,
     normal_size: Cell<(u32, u32)>,
     scale: Cell<f32>,
@@ -272,13 +365,14 @@ struct ShownMedia {
 }
 
 impl LinuxWindow {
-    fn new(id: WindowId, raw: Arc<dyn winit::window::Window>, commands: Commands) -> Self {
+    fn new(id: WindowId, raw: Arc<dyn winit::window::Window>, commands: Commands, targets: Rc<RefCell<TabWindows>>) -> Self {
         let size = raw.surface_size();
-        Self {
+        let window = Self {
             id,
             scale: Cell::new(raw.scale_factor() as f32),
             raw,
             commands,
+            targets,
             size: Cell::new((size.width, size.height)),
             normal_size: Cell::new((size.width, size.height)),
             cursor: Cell::new(CursorIcon::Default),
@@ -289,6 +383,32 @@ impl LinuxWindow {
             media: RefCell::new(None),
             player: RefCell::new(None),
             volume: Cell::new(None),
+        };
+        window.cache_target(None);
+        window
+    }
+
+    fn cache_target(&self, position: Option<PhysicalPosition<i32>>) {
+        if self.is_wayland() {
+            return;
+        }
+        let Some(at) = position.or_else(|| self.raw.outer_position().ok()) else { return };
+        let inset = self.raw.surface_position();
+        let target = TabTarget { id: self.id, origin: (f64::from(at.x) + f64::from(inset.x), f64::from(at.y) + f64::from(inset.y)), size: self.size.get(), minimized: self.raw.is_minimized().unwrap_or(false) };
+        let mut targets = self.targets.borrow_mut();
+        if let Some(w) = targets.windows.iter_mut().find(|w| w.target.id == self.id) {
+            w.target = target;
+            w.minimized.set(target.minimized);
+        } else {
+            targets.windows.push(TrackedWindow { target, raw: Arc::downgrade(&self.raw), minimized: Arc::new(MinimizedState::new(target.minimized)) });
+        }
+    }
+
+    fn focused(&self) {
+        let mut targets = self.targets.borrow_mut();
+        if let Some(i) = targets.windows.iter().position(|w| w.target.id == self.id) {
+            let window = targets.windows.remove(i);
+            targets.windows.push(window);
         }
     }
 
@@ -376,6 +496,7 @@ impl LinuxWindow {
 
 impl Drop for LinuxWindow {
     fn drop(&mut self) {
+        self.targets.borrow_mut().windows.retain(|w| w.target.id != self.id);
         self.stop_player();
     }
 }
@@ -408,6 +529,9 @@ impl Window for LinuxWindow {
     }
 
     fn minimize(&self) {
+        if let Some(w) = self.targets.borrow().windows.iter().find(|w| w.target.id == self.id) {
+            w.minimized.set(true);
+        }
         self.raw.set_minimized(true);
     }
 
@@ -583,6 +707,17 @@ impl Window for LinuxWindow {
         }
     }
 
+    fn window_at(&self, x: f32, y: f32) -> Option<(WindowId, f32, f32)> {
+        if self.is_wayland() {
+            return None;
+        }
+        let mut targets = self.targets.borrow_mut();
+        targets.refresh(Instant::now());
+        let source = targets.windows.iter().find(|w| w.target.id == self.id)?.target;
+        let point = (source.origin.0 + f64::from(x), source.origin.1 + f64::from(y));
+        tab_target(targets.windows.iter().map(|w| TabTarget { minimized: w.minimized.get(), ..w.target }), self.id, point)
+    }
+
     fn toggle_fullscreen(&self) {
         let full = self.raw.fullscreen().is_some();
         self.raw.set_fullscreen((!full).then_some(Fullscreen::Borderless(None)));
@@ -653,7 +788,7 @@ impl WindowSystem for LinuxWindows {
 
     fn run<H: WindowHandler<Self>>(mut self, first: WindowOptions, handler: H) -> Result<(), PlatformError> {
         let commands: Commands = Rc::new(RefCell::new(vec![Command::Open(first)]));
-        let mut app = Loop { handler, nodes: Vec::new(), commands, pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None, clip_text: None, watching: false, outgoing: None };
+        let mut app = Loop { handler, nodes: Vec::new(), commands, targets: Rc::new(RefCell::new(TabWindows::new())), pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None, clip_text: None, watching: false, outgoing: None };
         LOOP_RUNNING.store(true, Ordering::Release);
         let ran = self.event_loop.run_app_on_demand(&mut app);
         LOOP_RUNNING.store(false, Ordering::Release);
@@ -671,6 +806,7 @@ struct Loop<H> {
     handler: H,
     nodes: Vec<Node>,
     commands: Commands,
+    targets: Rc<RefCell<TabWindows>>,
     pending: Arc<AtomicBool>,
     next_id: WindowId,
     mods: ModifiersState,
@@ -1077,7 +1213,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         enable_ime(&*raw);
         let id = self.next_id;
         self.next_id += 1;
-        self.nodes.push(Node { window: LinuxWindow::new(id, raw, self.commands.clone()), clicks: Clicks::new(input::double_click()) });
+        self.nodes.push(Node { window: LinuxWindow::new(id, raw, self.commands.clone(), self.targets.clone()), clicks: Clicks::new(input::double_click()) });
         let node = self.nodes.last().unwrap();
         self.handler.created(&node.window);
         self.handler.event(&node.window, Event::Animations(animations()));
@@ -1295,14 +1431,21 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             }
             WindowEvent::SurfaceResized(size) => {
                 w.resized(size);
+                w.cache_target(None);
                 handler.event(w, Event::Resized { width: size.width, height: size.height });
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 w.scale.set(scale_factor as f32);
                 handler.event(w, Event::ScaleChanged(scale_factor as f32));
             }
+            WindowEvent::Moved(position) => w.cache_target(Some(position)),
+            WindowEvent::Occluded(_) => w.cache_target(None),
             WindowEvent::CloseRequested => handler.event(w, Event::CloseRequested),
             WindowEvent::Focused(focused) => {
+                w.cache_target(None);
+                if focused {
+                    w.focused();
+                }
                 node.clicks.reset();
                 self.mods = ModifiersState::empty();
                 handler.event(w, Event::Focus(focused));
@@ -1471,3 +1614,7 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
         el.set_control_flow(next.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
     }
 }
+
+#[cfg(test)]
+#[path = "../test/window.rs"]
+mod tests;
