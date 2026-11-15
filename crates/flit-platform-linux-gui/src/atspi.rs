@@ -41,6 +41,8 @@ const MOUSE: &str = "org.gnome.desktop.peripherals.mouse";
 const MOUSE_MATCH: &str = "type='signal',interface='org.freedesktop.portal.Settings',member='SettingChanged',arg0='org.gnome.desktop.peripherals.mouse'";
 const GNOME_INTERFACE: &str = "org.gnome.desktop.interface";
 const INTERFACE_MATCH: &str = "type='signal',interface='org.freedesktop.portal.Settings',member='SettingChanged',arg0='org.gnome.desktop.interface'";
+const GNOME_WM: &str = "org.gnome.desktop.wm.preferences";
+const WM_MATCH: &str = "type='signal',interface='org.freedesktop.portal.Settings',member='SettingChanged',arg0='org.gnome.desktop.wm.preferences'";
 const ROLE_APPLICATION: (u32, &str) = (75, "application");
 const LAYER_WIDGET: u32 = 3;
 const LAYER_WINDOW: u32 = 7;
@@ -1131,6 +1133,27 @@ pub(crate) enum LookChange {
     Accent(Option<flit_core::theme::Accent>),
     TextScale(f64),
     IconTheme(String),
+    WindowButtons(String),
+}
+
+fn setting_string(a: &Arg) -> Option<String> {
+    match a {
+        Arg::S(s) => Some(s.clone()),
+        Arg::L(v) => v.iter().find_map(setting_string),
+        _ => None,
+    }
+}
+
+pub(crate) fn read_button_layout() -> Option<String> {
+    let address = dbus::session_address()?;
+    read_button_layout_at(&address)
+}
+
+fn read_button_layout_at(address: &str) -> Option<String> {
+    let api = dbus::load()?;
+    let conn = Conn::open(&api, address)?;
+    let reply = conn.call(PORTAL, PORTAL_PATH, "org.freedesktop.portal.Settings", "Read", &[V::S(GNOME_WM.to_owned()), V::S("button-layout".to_owned())])?;
+    reply.iter().find_map(setting_string)
 }
 
 fn first_text(a: &Arg) -> Option<String> {
@@ -1151,6 +1174,7 @@ fn doubles(a: &Arg) -> Vec<f64> {
 
 pub(crate) fn look_change(args: &[Arg]) -> Option<LookChange> {
     match args {
+        [Arg::S(ns), Arg::S(key), value] if ns == GNOME_WM && key == "button-layout" => setting_string(value).map(LookChange::WindowButtons),
         [Arg::S(ns), Arg::S(key), value] if ns == APPEARANCE && key == "accent-color" => Some(LookChange::Accent(match doubles(value)[..] {
             [r, g, b] => flit_core::theme::Accent::from_unit_rgb(r, g, b),
             _ => None,
@@ -1167,6 +1191,7 @@ pub(crate) fn watch_settings(address: &str, changed: &dyn Fn(i64), clicks: &dyn 
     conn.add_match(SETTING_MATCH);
     conn.add_match(INTERFACE_MATCH);
     conn.add_match(MOUSE_MATCH);
+    conn.add_match(WM_MATCH);
     loop {
         let mut latest = None;
         let mut looks = Vec::new();

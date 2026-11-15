@@ -77,9 +77,11 @@ pub(super) struct Panels {
     next: u32,
     pub seps: Vec<Sep>,
     pub caption: [Rect; 3],
+    pub buttons: crate::input::WindowButtons,
     pub menu: Rect,
     pub quick: Rect,
     pub left: f32,
+    right: f32,
     inset: f32,
     hover: Option<(u32, Hit)>,
     pub growing: Option<(u32, Instant)>,
@@ -105,7 +107,7 @@ fn grown(root: &Node, id: u32, k: f32) -> Node {
 
 impl Default for Panels {
     fn default() -> Self {
-        Self { list: vec![Panel::default()], root: Node::Leaf(0), here: 0, active: 0, next: 1, seps: Vec::new(), caption: Default::default(), menu: Rect::default(), quick: Rect::default(), left: 0.0, inset: 0.0, hover: None, growing: None, closing: None, status: Vec::new(), cycle_from: None }
+        Self { list: vec![Panel::default()], root: Node::Leaf(0), here: 0, active: 0, next: 1, seps: Vec::new(), caption: Default::default(), buttons: Default::default(), menu: Rect::default(), quick: Rect::default(), left: 0.0, right: 0.0, inset: 0.0, hover: None, growing: None, closing: None, status: Vec::new(), cycle_from: None }
     }
 }
 
@@ -501,19 +503,35 @@ impl App {
     }
 
     pub(super) fn layout_panels(&mut self) {
+        if !self.animations {
+            self.panels.growing = None;
+            self.panels.closing = None;
+        }
         let (w, h) = self.size;
         let top = self.s(TAB_H);
         let side = self.sidebar_width();
         let (cw, bw, pad) = (self.s(CAPTION_W), self.s(BUTTON_W), self.s(4.0));
         let p = &mut self.panels;
-        for (i, r) in p.caption.iter_mut().enumerate() {
-            *r = Rect::new(w - (3 - i) as f32 * cw, 0.0, cw, top);
+        p.caption.fill(Rect::default());
+        let mut seen = [false; 3];
+        let (mut left, mut right) = (0.0, 0.0);
+        for (side, buttons) in [(false, &p.buttons.left), (true, &p.buttons.right)] {
+            let buttons: Vec<_> = buttons.iter().copied().filter(|b| !std::mem::replace(&mut seen[b.index()], true)).collect();
+            let count = buttons.len();
+            let mut x = if side { w - count as f32 * cw } else { 0.0 };
+            for button in buttons {
+                let k = button.index();
+                p.caption[k] = Rect::new(x, 0.0, cw, top);
+                x += cw;
+            }
+            if side { right = count as f32 * cw; } else { left = x; }
         }
-        let above = side >= 2.0 * bw + 3.0 * pad;
-        p.menu = Rect::new(pad, pad, bw, top - 2.0 * pad);
+        let above = side - left >= 2.0 * bw + 3.0 * pad;
+        p.menu = Rect::new(left + pad, pad, bw, top - 2.0 * pad);
         p.quick = Rect::new(if above { side - bw - pad } else { p.menu.right() + pad / 2.0 }, pad, bw, top - 2.0 * pad);
         p.left = side;
         p.inset = if above { 0.0 } else { (p.quick.right() + pad - side).max(0.0) };
+        p.right = w - right;
         self.layout_nav(top, h);
         let area = Rect::new(side, 0.0, (w - side).max(0.0), h);
         let (mut rects, mut seps) = (Vec::new(), Vec::new());
@@ -547,8 +565,9 @@ impl App {
 
     pub(super) fn panel_edges(&self, r: Rect) -> (f32, f32) {
         let top = r.y <= 0.5;
-        let caption = self.panels.caption.iter().filter(|c| top && c.w > 0.0).fold(f32::INFINITY, |x, c| x.min(c.x));
-        (caption, if top && r.x <= self.panels.left + 0.5 { self.panels.inset } else { 0.0 })
+        let end = if top { r.right().min(self.panels.right).max(r.x) } else { r.right() };
+        let start = if top { (self.panels.left + self.panels.inset).max(r.x).min(end) } else { r.x };
+        (end, start - r.x)
     }
 
     pub(super) fn chrome_hit(&self, x: f32, y: f32) -> Option<Hit> {
@@ -1069,6 +1088,7 @@ impl App {
         let max_glyph = if self.maximized { G_RESTORE } else { G_MAX };
         for (i, glyph) in [G_MIN, max_glyph, G_CLOSE].into_iter().enumerate() {
             let r = self.panels.caption[i];
+            if r.w <= 0.0 { continue; }
             let idle = if self.active { t.text } else { t.text_dim };
             let lit = self.lit(Hit::Caption(i));
             let fill = if i == 2 { t.close_hover } else { t.teal };

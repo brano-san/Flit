@@ -18,6 +18,7 @@ mod input;
 mod locale;
 mod mime;
 mod poll;
+mod preferences;
 mod player;
 mod props;
 mod svg;

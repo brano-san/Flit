@@ -1,6 +1,6 @@
 use crate::apps::OpenWith;
 use crate::input::{self, Clicks};
-use flit_core::input::{CursorIcon, Event, HitArea, Mods, MouseButton};
+use flit_core::input::{CursorIcon, Event, HitArea, Mods, MouseButton, WindowButtons};
 use flit_core::preview::{HostCmd, Hosted, MediaCmd};
 use flit_core::render::Rect;
 use flit_core::ui::{drop_effect, Bitmap, DragEvent, ShellMenu};
@@ -147,6 +147,21 @@ static ACCENT: Mutex<Option<flit_core::theme::Accent>> = Mutex::new(None);
 static TEXT_SCALE_MILLI: AtomicU32 = AtomicU32::new(1000);
 static LOOK_DIRTY: AtomicBool = AtomicBool::new(false);
 static ICONS_DIRTY: AtomicBool = AtomicBool::new(false);
+static WINDOW_BUTTONS: Mutex<Option<WindowButtons>> = Mutex::new(None);
+static BUTTONS_DIRTY: AtomicBool = AtomicBool::new(false);
+
+fn window_buttons() -> WindowButtons {
+    WINDOW_BUTTONS.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default()
+}
+
+fn set_window_buttons(buttons: WindowButtons) {
+    let mut current = WINDOW_BUTTONS.lock().unwrap_or_else(|e| e.into_inner());
+    if current.as_ref() != Some(&buttons) {
+        *current = Some(buttons);
+        BUTTONS_DIRTY.store(true, Ordering::Release);
+        wake_loop();
+    }
+}
 
 fn system_accent() -> Option<flit_core::theme::Accent> {
     *ACCENT.lock().unwrap_or_else(|e| e.into_inner())
@@ -164,6 +179,12 @@ fn apply_look(change: crate::atspi::LookChange) {
             if crate::icons::switch_theme(&name) {
                 ICONS_DIRTY.store(true, Ordering::Release);
             }
+        }
+        crate::atspi::LookChange::WindowButtons(layout) => {
+            if crate::preferences::Desktop::current() == crate::preferences::Desktop::Gnome {
+                set_window_buttons(crate::preferences::gnome_buttons(&layout));
+            }
+            return;
         }
     }
     LOOK_DIRTY.store(true, Ordering::Release);
@@ -186,6 +207,11 @@ fn watch_desktop() {
         apply_look,
     );
     let _ = std::thread::Builder::new().name("flit-prefs".into()).spawn(|| {
+        if crate::preferences::Desktop::current() == crate::preferences::Desktop::Gnome {
+            if let Some(layout) = crate::shell::probe_window_buttons() {
+                set_window_buttons(crate::preferences::gnome_buttons(&layout));
+            }
+        }
         if let Some(accent) = crate::shell::probe_accent() {
             apply_look(crate::atspi::LookChange::Accent(Some(accent)));
         }
@@ -760,6 +786,7 @@ impl Waker for LinuxWaker {
 pub struct LinuxWindows {
     event_loop: EventLoop,
     pending: Arc<AtomicBool>,
+    _preferences: Option<crate::preferences::Watch>,
 }
 
 fn library_loads(name: &CStr) -> bool {
@@ -779,7 +806,19 @@ impl WindowSystem for LinuxWindows {
         let _ = DISPLAY.set(event_loop.owned_display_handle());
         let _ = PROXY.set(event_loop.create_proxy());
         watch_desktop();
-        Ok(Self { event_loop, pending: Arc::default() })
+        let preferences = if crate::preferences::Desktop::current() == crate::preferences::Desktop::Kde {
+            crate::xdg::config_home().and_then(|config| crate::preferences::Watch::start(config, Duration::from_millis(250), |change| match change {
+                crate::preferences::Change::Buttons(buttons) => set_window_buttons(buttons),
+                crate::preferences::Change::Globals(text) => {
+                    if let Some(dark) = crate::shell::kde_dark(&text) {
+                        PREFERRED_DARK.store(if dark { DARK_YES } else { DARK_NO }, Ordering::Release);
+                        THEME_CHANGED.store(true, Ordering::Release);
+                    }
+                    apply_look(crate::atspi::LookChange::Accent(crate::shell::kde_accent(&text)));
+                }
+            }).ok())
+        } else { None };
+        Ok(Self { event_loop, pending: Arc::default(), _preferences: preferences })
     }
 
     fn waker(&self) -> LinuxWaker {
@@ -1204,6 +1243,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         self.nodes.push(Node { window: LinuxWindow::new(id, raw, self.commands.clone(), self.targets.clone()), clicks: Clicks::new(input::double_click()) });
         let node = self.nodes.last().unwrap();
         self.handler.created(&node.window);
+        self.handler.event(&node.window, Event::WindowButtons(window_buttons()));
         self.handler.event(&node.window, Event::Animations(animations()));
         self.handler.event(&node.window, Event::Accent(system_accent()));
         self.handler.event(&node.window, Event::TextScale(text_scale(node.window.is_wayland(), TEXT_SCALE_MILLI.load(Ordering::Acquire))));
@@ -1544,6 +1584,12 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
             for node in &mut self.nodes {
                 node.clicks.set_interval(double_click);
                 self.handler.event(&node.window, Event::MouseSettings { double_click, wheel_lines });
+            }
+        }
+        if BUTTONS_DIRTY.swap(false, Ordering::AcqRel) {
+            let buttons = window_buttons();
+            for node in &self.nodes {
+                self.handler.event(&node.window, Event::WindowButtons(buttons.clone()));
             }
         }
         let queued = std::mem::take(&mut *QUEUED.lock().unwrap_or_else(|e| e.into_inner()));

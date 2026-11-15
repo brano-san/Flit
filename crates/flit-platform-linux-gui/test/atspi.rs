@@ -9,6 +9,85 @@ const BACK: u64 = 0x10;
 const ALPHA: u64 = 0x21;
 const BETA: u64 = 0x22;
 
+#[test]
+fn button_layout_signals_preserve_empty_strings_and_ignore_other_settings() {
+    let s = |v: &str| Arg::S(v.into());
+    assert_eq!(look_change(&[s(GNOME_WM), s("button-layout"), Arg::L(vec![s("")])]), Some(LookChange::WindowButtons(String::new())));
+    assert_eq!(look_change(&[s(GNOME_WM), s("button-layout"), Arg::L(vec![Arg::L(vec![s("close:")])])]), Some(LookChange::WindowButtons("close:".into())));
+    assert_eq!(look_change(&[s(GNOME_WM), s("theme"), s("close:")]), None);
+    assert_eq!(look_change(&[s(APPEARANCE), s("button-layout"), s("close:")]), None);
+    assert_eq!(look_change(&[s(GNOME_WM), s("button-layout"), Arg::I(1)]), None);
+}
+
+#[test]
+fn button_layout_changes_arrive_from_a_private_portal_bus_including_no_buttons() {
+    if !tool("dbus-daemon") || !tool("dbus-send") { return; }
+    let mut daemon = Command::new("dbus-daemon").args(["--session", "--nofork", "--print-address=1"]).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut address = String::new();
+    BufReader::new(daemon.stdout.take().unwrap()).read_line(&mut address).unwrap();
+    let daemon = Kill(daemon);
+    let address = address.trim().to_owned();
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let bus = address.clone();
+    let watcher = std::thread::spawn(move || watch_settings(&bus, &|_| {}, &|_| {}, &move |change| { let _ = tx.send(change); }));
+    let emit = |value: &str| {
+        assert!(Command::new("dbus-send").args([&format!("--bus={address}"), "--type=signal", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Settings.SettingChanged", &format!("string:{GNOME_WM}"), "string:button-layout", &format!("variant:string:{value}")]).status().unwrap().success());
+    };
+    let until = Instant::now() + Duration::from_secs(10);
+    let mut heard = None;
+    while heard.is_none() && Instant::now() < until {
+        emit("close:");
+        heard = rx.recv_timeout(Duration::from_millis(100)).ok();
+    }
+    assert_eq!(heard, Some(LookChange::WindowButtons("close:".into())));
+    emit("");
+    let empty = (0..50).find_map(|_| rx.recv_timeout(Duration::from_millis(100)).ok().filter(|v| *v == LookChange::WindowButtons(String::new())));
+    assert_eq!(empty, Some(LookChange::WindowButtons(String::new())));
+    drop(daemon);
+    watcher.join().unwrap();
+}
+
+#[test]
+fn the_private_settings_read_reply_unwraps_both_variants_and_preserves_empty() {
+    if !tool("dbus-daemon") { return; }
+    let mut daemon = Command::new("dbus-daemon").args(["--session", "--nofork", "--print-address=1"]).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+    let mut address = String::new();
+    BufReader::new(daemon.stdout.take().unwrap()).read_line(&mut address).unwrap();
+    let daemon = Kill(daemon);
+    let address = address.trim().to_owned();
+    let bus = address.clone();
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    let server = std::thread::spawn(move || {
+        let api = dbus::load().unwrap();
+        let conn = Conn::open(&api, &bus).unwrap();
+        let owned = conn.call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", &[V::S(PORTAL.to_owned()), V::U(0)]).unwrap();
+        assert_eq!(owned, vec![Arg::I(1)]);
+        tx.send(()).unwrap();
+        let mut answered = 0;
+        let until = Instant::now() + Duration::from_secs(10);
+        while answered < 2 && Instant::now() < until {
+            conn.drain(|message| unsafe {
+                if (api.msg_type)(message) == TYPE_METHOD_CALL && text((api.member)(message)) == "Read" {
+                    assert_eq!(args(&api, message), vec![Arg::S(GNOME_WM.to_owned()), Arg::S("button-layout".to_owned())]);
+                    let reply = (api.new_return)(message);
+                    let value = if answered == 0 { "close:" } else { "" };
+                    conn.append(reply, &[V::Var(Box::new(V::Var(Box::new(V::S(value.to_owned())))))]);
+                    conn.send(reply);
+                    conn.flush();
+                    answered += 1;
+                }
+            });
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(answered, 2);
+    });
+    rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(read_button_layout_at(&address), Some("close:".into()));
+    assert_eq!(read_button_layout_at(&address), Some(String::new()));
+    server.join().unwrap();
+    drop(daemon);
+}
+
 fn sample(focus_beta: bool, beta_name: &str) -> Tree {
     let mut t = Tree::new("Flit test", Rect::new(0.0, 0.0, 800.0, 600.0));
     let tabs = t.add(0, 2, Role::TabList, "Tabs", Rect::new(0.0, 0.0, 800.0, 30.0));
