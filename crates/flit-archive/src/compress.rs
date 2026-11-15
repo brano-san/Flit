@@ -311,7 +311,15 @@ fn tar_header(s: &Source) -> tar::Header {
 
 fn write_tar<W: Write>(w: W, sources: &[Source], job: &Job) -> Result<W, PlatformError> {
     let mut t = tar::Builder::new(w);
+    tar_entries(&mut t, sources, job)?;
+    t.into_inner().map_err(write_error)
+}
+
+fn tar_entries<W: Write>(t: &mut tar::Builder<W>, sources: &[Source], job: &Job) -> Result<(), PlatformError> {
     for s in sources {
+        if job.cancelled() {
+            return Err(cancelled());
+        }
         let mut h = tar_header(s);
         if s.dir {
             t.append_data(&mut h, &s.name, io::empty()).map_err(write_error)?;
@@ -326,7 +334,7 @@ fn write_tar<W: Write>(w: W, sources: &[Source], job: &Job) -> Result<W, Platfor
         }
         job.update(|p| p.items += 1);
     }
-    t.into_inner().map_err(write_error)
+    Ok(())
 }
 
 fn write_gz<W: Write>(w: W, s: &Source, level: u8, threads: usize, job: &Job) -> Result<W, PlatformError> {
@@ -425,9 +433,18 @@ pub fn compress(items: &[FsPath], archive: &FsPath, options: &Compression, job: 
 
 pub fn add(items: &[FsPath], archive: &FsPath, inner: &str, job: &Job, env: &Env<'_>) -> Outcome {
     let fail = |e| (Vec::new(), e);
-    let index = index::open(archive, env.utc_offset).map_err(fail)?;
-    if !index.format.can_add() {
+    let path = std_path(archive);
+    let format = index::sniff(&path, archive.file_name()).map_err(fail)?;
+    if !format.can_add() {
         return Err(fail(PlatformError::new(-1, flit_core::i18n::S::ErrorsArchiveNoAdd.en())));
+    }
+    let index = index::open(archive, env.utc_offset).map_err(|e| fail(if format == Format::SevenZ && e.code == archive::PASSWORD_CODE { encrypted_add() } else { e }))?;
+    if index.sevenz.as_ref().is_some_and(|a| a.blocks.iter().flat_map(|b| &b.coders).any(|c| c.encoder_method_id() == sevenz_rust2::EncoderMethod::ID_AES256_SHA256)) {
+        return Err(fail(encrypted_add()));
+    }
+    let original = if format == Format::Zip { None } else { Some(File::open(&path).map_err(|e| fail(io_error(e)))?) };
+    if original.as_ref().map(File::metadata).transpose().map_err(|e| fail(io_error(e)))?.is_some_and(|m| m.permissions().readonly()) {
+        return Err(fail(io_error(io::Error::from_raw_os_error(if cfg!(windows) { 5 } else { 13 }))));
     }
     if items.iter().any(|i| crate::locate(i).is_some_and(|(a, n)| a == *archive || !n.is_empty())) {
         return Err(fail(PlatformError::new(-1, "Items inside archives cannot be added to an archive; extract them first")));
@@ -469,15 +486,22 @@ pub fn add(items: &[FsPath], archive: &FsPath, inner: &str, job: &Job, env: &Env
             s.name = format!("{prefix}{new}{}", &rest[root.len()..]);
         }
     }
-    job.update(|p| {
-        p.stage = Stage::Running;
-        p.total_items = sources.len() as u64;
-        p.total_bytes = sources.iter().map(|s| s.size).sum();
-    });
     let dropped = |key: &str| drop_roots.iter().any(|r| key == r || (key.starts_with(r.as_str()) && key.as_bytes().get(r.len()) == Some(&b'/')));
-    let path = std_path(archive);
+    add_progress(job, &sources, if format == Format::Zip { 0 } else { index.entries as u64 }, if format == Format::Zip { 0 } else { index.unpacked });
     let part = path.with_file_name(format!("~{}-{}.flit-part", std::process::id(), crate::extract::next_part()));
     let result = (|| -> Result<(), PlatformError> {
+        if job.cancelled() {
+            return Err(cancelled());
+        }
+        if format != Format::Zip {
+            let file = BufWriter::new(crate::security::create(&part).map_err(io_error)?);
+            match format {
+                Format::SevenZ => rewrite_7z(file, &path, &sources, &dropped, job)?,
+                Format::Tar | Format::TarGz => rewrite_tar(file, &path, format, &sources, &dropped, job)?,
+                _ => unreachable!(),
+            }
+            return Ok(());
+        }
         let mut src = zip::ZipArchive::new(io::BufReader::new(File::open(&path).map_err(io_error)?)).map_err(|e| corrupt(&e.to_string()))?;
         let aligned = src.len() == index.entries;
         let by_ordinal: HashMap<usize, &index::Item> = index.items.iter().map(|i| (i.ordinal, i)).collect();
@@ -498,7 +522,20 @@ pub fn add(items: &[FsPath], archive: &FsPath, inner: &str, job: &Job, env: &Env
         z.finish().map_err(|e| corrupt(&e.to_string()))?.into_inner().map_err(|e| io_error(e.into_error()))?;
         Ok(())
     })()
-    .and_then(|()| fs::rename(&part, &path).map_err(io_error));
+    .and_then(|()| {
+        if job.cancelled() {
+            return Err(cancelled());
+        }
+        if format != Format::Zip {
+            if let Some(zone) = crate::zone::read(&path) {
+                crate::zone::mark_checked(&part, &zone).map_err(io_error)?;
+            }
+        }
+        if let Some(original) = original.as_ref() {
+            crate::security::preserve(original, &part).map_err(io_error)?;
+        }
+        fs::rename(&part, &path).map_err(io_error)
+    });
     crate::forget(archive);
     match result {
         Ok(()) => Ok(Vec::new()),
@@ -508,3 +545,158 @@ pub fn add(items: &[FsPath], archive: &FsPath, inner: &str, job: &Job, env: &Env
         }
     }
 }
+
+fn add_progress(job: &Job, sources: &[Source], old_items: u64, old_bytes: u64) {
+    job.update(|p| {
+        p.stage = Stage::Running;
+        p.total_items = old_items.saturating_add(sources.len() as u64);
+        p.total_bytes = sources.iter().fold(old_bytes, |total, source| total.saturating_add(source.size));
+    });
+}
+
+struct Counted<'a> {
+    inner: Box<dyn Read>,
+    position: &'a std::cell::Cell<u64>,
+    job: &'a Job,
+}
+
+impl Read for Counted<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.job.cancelled() {
+            return Err(io::Error::other(CANCELLED));
+        }
+        let count = self.inner.read(buf)?;
+        self.position.set(self.position.get().checked_add(count as u64).ok_or(io::ErrorKind::InvalidData)?);
+        Ok(count)
+    }
+}
+
+fn encrypted_add() -> PlatformError {
+    PlatformError::new(-1, flit_core::i18n::S::ErrorsArchiveEncryptedAdd.en())
+}
+
+fn sevenz_write_error(e: sevenz_rust2::Error) -> PlatformError {
+    match e {
+        sevenz_rust2::Error::PasswordRequired | sevenz_rust2::Error::MaybeBadPassword(_) => encrypted_add(),
+        sevenz_rust2::Error::Io(e, _) => write_error(e),
+        e if e.to_string().contains(CANCELLED) => cancelled(),
+        e => corrupt(&e.to_string()),
+    }
+}
+
+fn rewrite_7z<W: Write + Seek>(w: W, path: &Path, sources: &[Source], dropped: &impl Fn(&str) -> bool, job: &Job) -> Result<(), PlatformError> {
+    use sevenz_rust2::{ArchiveEntry, ArchiveReader, ArchiveWriter, Password};
+    let mut reader = ArchiveReader::new(io::BufReader::new(File::open(path).map_err(io_error)?), Password::empty()).map_err(sevenz_write_error)?;
+    reader.set_thread_count(1);
+    let mut writer = ArchiveWriter::new(w).map_err(sevenz_write_error)?;
+    writer.set_content_methods(vec![sevenz_rust2::encoder_options::Lzma2Options::from_level(5).into()]);
+    writer.set_encrypt_header(false);
+    reader
+        .for_each_entries(|entry, data| {
+            if job.cancelled() {
+                return Err(io::Error::other(CANCELLED).into());
+            }
+            if crate::names::safe_path(&entry.name).is_some_and(|name| dropped(&fold(&name))) {
+                io::copy(&mut Progress { inner: data, job }, &mut io::sink())?;
+                job.update(|p| p.items += 1);
+                return Ok(true);
+            }
+            if entry.has_stream {
+                writer.push_archive_entry(entry.clone(), Some(Progress { inner: data, job }))?;
+            } else {
+                writer.push_archive_entry::<&[u8]>(entry.clone(), None)?;
+            }
+            job.update(|p| p.items += 1);
+            Ok(true)
+        })
+        .map_err(sevenz_write_error)?;
+    for source in sources {
+        if job.cancelled() {
+            return Err(cancelled());
+        }
+        let mut entry = ArchiveEntry::from_path(&source.path, source.name.clone());
+        entry.is_directory = source.dir;
+        if source.dir || source.size == 0 {
+            writer.push_archive_entry::<&[u8]>(entry, None).map_err(sevenz_write_error)?;
+        } else {
+            let file = match File::open(&source.path) {
+                Ok(file) => file,
+                Err(_) => {
+                    unreadable(source, job)?;
+                    continue;
+                }
+            };
+            writer.push_archive_entry(entry, Some(Progress { inner: file, job })).map_err(sevenz_write_error)?;
+        }
+        job.update(|p| p.items += 1);
+    }
+    writer.finish().map_err(write_error)?.flush().map_err(write_error)
+}
+
+fn tar_reader(path: &Path, format: Format) -> Result<Box<dyn Read>, PlatformError> {
+    let file = io::BufReader::new(File::open(path).map_err(io_error)?);
+    Ok(if format == Format::TarGz { Box::new(flate2::read::MultiGzDecoder::new(file)) } else { Box::new(file) })
+}
+
+fn copy_exact(reader: &mut dyn Read, writer: &mut dyn Write, bytes: u64, job: &Job, progress: bool) -> Result<(), PlatformError> {
+    let mut left = bytes;
+    let mut buf = [0; 64 * 1024];
+    while left > 0 {
+        if job.cancelled() {
+            return Err(cancelled());
+        }
+        let count = left.min(buf.len() as u64) as usize;
+        reader.read_exact(&mut buf[..count]).map_err(write_error)?;
+        writer.write_all(&buf[..count]).map_err(write_error)?;
+        left -= count as u64;
+        if progress {
+            job.update(|p| p.bytes += count as u64);
+        }
+    }
+    Ok(())
+}
+
+fn rewrite_tar<W: Write>(w: W, path: &Path, format: Format, sources: &[Source], dropped: &impl Fn(&str) -> bool, job: &Job) -> Result<(), PlatformError> {
+    let write = |writer: &mut dyn Write| -> Result<(), PlatformError> {
+        let parsed = std::cell::Cell::new(0);
+        let mut archive = tar::Archive::new(Counted { inner: tar_reader(path, format)?, position: &parsed, job });
+        let mut raw = tar_reader(path, format)?;
+        let mut builder = tar::Builder::new(writer);
+        let mut position = 0;
+        for entry in archive.entries().map_err(write_error)? {
+            if job.cancelled() {
+                return Err(cancelled());
+            }
+            let entry = entry.map_err(write_error)?;
+            let name = String::from_utf8_lossy(&entry.path_bytes()).into_owned();
+            let keep = !crate::names::safe_path(&name).is_some_and(|name| dropped(&fold(&name)));
+            let start = parsed.get();
+            let size = if entry.header().entry_type().is_gnu_sparse() { entry.header().entry_size().map_err(write_error)? } else { entry.size() };
+            let end = start.checked_add(size).and_then(|end| end.checked_add((512 - size % 512) % 512)).ok_or_else(|| io_error(io::Error::from(io::ErrorKind::InvalidData)))?;
+            let mut discard = io::sink();
+            let sink: &mut dyn Write = if keep { builder.get_mut() } else { &mut discard };
+            copy_exact(&mut raw, sink, start - position, job, false)?;
+            copy_exact(&mut raw, sink, size, job, !entry.header().entry_type().is_dir())?;
+            copy_exact(&mut raw, sink, end - start - size, job, false)?;
+            job.update(|p| {
+                p.items += 1;
+                p.bytes += entry.size().saturating_sub(size);
+            });
+            position = end;
+        }
+        tar_entries(&mut builder, sources, job)?;
+        builder.into_inner().map_err(write_error)?.flush().map_err(write_error)
+    };
+    if format == Format::TarGz {
+        let mut gzip = flate2::write::GzEncoder::new(w, flate2::Compression::default());
+        write(&mut gzip)?;
+        gzip.finish().map_err(write_error)?.flush().map_err(write_error)
+    } else {
+        let mut w = w;
+        write(&mut w)
+    }
+}
+
+#[cfg(test)]
+#[path = "../test/add_progress.rs"]
+mod tests;

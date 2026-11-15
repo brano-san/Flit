@@ -1,5 +1,6 @@
 password_needed = "L’archive est chiffrée : entrez son mot de passe"
 wrong_password = "Le mot de passe est incorrect"
 inside = "Cette action est impossible dans une archive"
-no_add = "Les fichiers ne peuvent être ajoutés qu’aux archives ZIP"
+no_add = "Les fichiers ne peuvent être ajoutés qu’aux archives ZIP, 7z, TAR et TAR.GZ"
+encrypted_add = "Un mot de passe est nécessaire ; l’ajout de fichiers aux archives 7z chiffrées n’est pas pris en charge"
 password_kept = "Flit garde le mot de passe en mémoire jusqu’à sa fermeture"

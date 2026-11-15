@@ -65,7 +65,7 @@ impl Format {
     }
 
     pub fn can_add(self) -> bool {
-        self == Format::Zip
+        matches!(self, Format::Zip | Format::SevenZ | Format::Tar | Format::TarGz)
     }
 }
 

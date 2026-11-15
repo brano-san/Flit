@@ -3,6 +3,7 @@ mod extract;
 mod index;
 mod names;
 mod pzip;
+mod security;
 pub mod zone;
 
 pub use index::{days_from_civil, dos_ticks};

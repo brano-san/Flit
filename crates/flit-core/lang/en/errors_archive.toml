@@ -1,5 +1,6 @@
 password_needed = "The archive is encrypted: enter its password"
 wrong_password = "The password is wrong"
 inside = "This cannot be done inside an archive"
-no_add = "Files can be added only to ZIP archives"
+no_add = "Files can be added only to ZIP, 7z, TAR and TAR.GZ archives"
+encrypted_add = "A password is required; adding files to encrypted 7z archives is not supported"
 password_kept = "Flit keeps the password in memory until it closes"

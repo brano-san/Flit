@@ -1,5 +1,6 @@
 password_needed = "Das Archiv ist verschlüsselt: Geben Sie das Kennwort ein"
 wrong_password = "Das Kennwort ist falsch"
 inside = "Dies ist innerhalb eines Archivs nicht möglich"
-no_add = "Dateien können nur zu ZIP-Archiven hinzugefügt werden"
+no_add = "Dateien können nur zu ZIP-, 7z-, TAR- und TAR.GZ-Archiven hinzugefügt werden"
+encrypted_add = "Ein Kennwort ist erforderlich; das Hinzufügen von Dateien zu verschlüsselten 7z-Archiven wird nicht unterstützt"
 password_kept = "Flit behält das Kennwort bis zum Beenden im Arbeitsspeicher"

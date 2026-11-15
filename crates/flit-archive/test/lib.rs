@@ -285,10 +285,6 @@ fn files_are_added_to_zips_and_copied_out_of_them() {
     let refused = run(FileOp::Trash(vec![picks[0].clone()]), Resolve::Replace);
     assert_eq!(refused.error.map(|e| e.message), Some(flit_core::i18n::S::ErrorsArchiveInside.en().to_owned()));
     assert!(file_op(&FileOp::Trash(vec![zip.clone()]), &Job::detached(Resolve::Replace), &env()).is_none());
-    t.write("b.7z", b"");
-    compress(vec![t.fs("new/note.txt")], t.fs("b.7z"), Format::SevenZ, None);
-    let out = run(FileOp::Copy { items: vec![t.fs("new/note.txt")], dest: t.fs("b.7z") }, Resolve::KeepBoth);
-    assert_eq!(out.error.map(|e| e.message), Some(flit_core::i18n::S::ErrorsArchiveNoAdd.en().to_owned()));
 }
 
 #[test]
@@ -592,3 +588,6 @@ fn gzip_and_tar_gz_compress_in_parallel_chunks_and_extract_intact() {
     assert_eq!(t.read("out-src.tar.gz/src/big.txt"), words);
     assert_eq!(t.read("out-src.tar.gz/src/exact.bin"), vec![7u8; 1 << 20]);
 }
+
+#[path = "add.rs"]
+mod add;

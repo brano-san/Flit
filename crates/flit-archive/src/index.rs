@@ -33,6 +33,7 @@ pub struct Index {
     pub declared: bool,
     pub entries: usize,
     pub packed: u64,
+    pub unpacked: u64,
     pub sevenz: Option<sevenz_rust2::Archive>,
 }
 
@@ -309,7 +310,8 @@ fn build(archive: &FsPath, path: &Path, len: u64, offset_min: i32) -> Result<Ind
         archive::set_detected_encoding(archive, e);
     }
     let legacy = chosen.or(detected);
-    let mut index = Index { format, items: Vec::with_capacity(raws.len()), rejected: Vec::new(), declared: format != Format::Gz, entries: raws.len(), packed: len, sevenz };
+    let unpacked = raws.iter().filter(|r| !r.dir).fold(0u64, |total, r| total.saturating_add(r.size));
+    let mut index = Index { format, items: Vec::with_capacity(raws.len()), rejected: Vec::new(), declared: format != Format::Gz, entries: raws.len(), packed: len, unpacked, sevenz };
     for (ordinal, r) in raws.into_iter().enumerate() {
         let text = match (r.utf8, legacy) {
             (true, _) | (false, None) => String::from_utf8_lossy(&r.name).into_owned(),
