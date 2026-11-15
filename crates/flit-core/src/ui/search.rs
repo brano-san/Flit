@@ -1212,8 +1212,10 @@ impl App {
             let indent = if headers { self.s(16.0) } else { 0.0 };
             let ir = Rect::new(sl.cols[0].x + pad + indent, y + ((rh - icon_px) / 2.0).round(), icon_px, icon_px);
             if !g.image(key, ir) {
-                let (glyph, color) = if is_dir { (G_FOLDER, t.accent.alpha(0xB0)) } else { (G_FILE, t.text_dim.alpha(0x90)) };
-                centered(g, ir, glyph, FontStyle::new(FontFamily::Icons, icon_px * 0.85, false), color);
+                if !self.folder_stand_in(g, kind, icon_px as u32, ir, 255, &mut requests) {
+                    let (glyph, color) = if is_dir { (G_FOLDER, t.accent.alpha(0xB0)) } else { (G_FILE, t.text_dim.alpha(0x90)) };
+                    centered(g, ir, glyph, FontStyle::new(FontFamily::Icons, icon_px * 0.85, false), color);
+                }
                 let wanted = !self.icons.contains_key(&key) && !requests.iter().any(|q| q.key == key);
                 if let Some(path) = wanted.then(|| Location::parse_exact(&r.dir)).flatten().and_then(|d| d.join(&r.name).to_windows()) {
                     requests.push(IconRequest { key, kind, path, size: icon_px as u32, gen: 0, row: 0 });

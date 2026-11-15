@@ -18,17 +18,21 @@ pub fn assert_missing(message: &str, tool: &str) {
 }
 
 pub fn with_tools<T>(names: &[&str], run: impl FnOnce() -> T) -> T {
+    let temp = Temp::new("tools-path");
+    for name in names {
+        std::os::unix::fs::symlink("/bin/true", temp.path().join(name)).unwrap();
+    }
+    with_tool_dir(temp.path(), run)
+}
+
+pub fn with_tool_dir<T>(dir: &Path, run: impl FnOnce() -> T) -> T {
     struct Restore(Option<std::ffi::OsString>);
     impl Drop for Restore {
         fn drop(&mut self) {
             TOOL_PATH.with(|p| *p.borrow_mut() = self.0.take());
         }
     }
-    let temp = Temp::new("tools-path");
-    for name in names {
-        std::os::unix::fs::symlink("/bin/true", temp.path().join(name)).unwrap();
-    }
-    let _restore = Restore(TOOL_PATH.with(|p| p.replace(Some(temp.path().as_os_str().to_owned()))));
+    let _restore = Restore(TOOL_PATH.with(|p| p.replace(Some(dir.as_os_str().to_owned()))));
     run()
 }
 

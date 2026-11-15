@@ -634,11 +634,21 @@ fn launch(l: &Launch) -> Result<(), PlatformError> {
 }
 
 impl Shell for LinuxShell {
+    const BATCHES_FOLDER_ICONS: bool = true;
+
     fn new() -> Result<Self, PlatformError> {
         Ok(LinuxShell)
     }
 
+    fn prepare_icons(&mut self, reqs: &[IconRequest]) {
+        let dirs: Vec<PathBuf> = reqs.iter().filter(|r| r.kind == IconKind::CustomFolder).filter_map(|r| host(&r.path)).map(Path::to_path_buf).collect();
+        crate::folder_icons::prepare(&dirs);
+    }
+
     fn icon(&mut self, req: &IconRequest) -> Option<Bitmap> {
+        if req.kind == IconKind::CustomFolder {
+            return host(&req.path).and_then(|p| crate::folder_icons::icon(p, req.size));
+        }
         if let Some(target) = (req.kind == IconKind::File).then(|| link_target_kind(&req.path)).flatten() {
             return link_icon(req, target);
         }

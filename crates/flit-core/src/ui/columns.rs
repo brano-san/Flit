@@ -194,7 +194,9 @@ impl App {
                 let (key, kind) = icon_key(name, listing.ext(idx), &e, icon_px as u32, dir.as_ref().map_or(&b""[..], |d| d.as_bytes()), self.icon_epoch);
                 self.file_icons.see(key, kind);
                 if !g.image(key, ir) {
-                    icon_glyph(g, th, &e, ir);
+                    if !self.folder_stand_in(g, kind, icon_px as u32, ir, 255, &mut requests) {
+                        icon_glyph(g, th, &e, ir);
+                    }
                     if let Some(path) = (!self.icons.contains_key(&key) && !requests.iter().any(|q| q.key == key)).then(|| p.loc.join(name).to_windows()).flatten() {
                         requests.push(IconRequest { key, kind, path, size: icon_px as u32, gen: 0, row: 0 });
                     }

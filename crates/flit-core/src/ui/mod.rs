@@ -3010,7 +3010,9 @@ impl App {
                     (Rect::new(ir.right() - d * 0.8, ir.bottom() - d * 0.8, d, d), st)
                 });
                 if !replaces && !thumbed && !g.image_alpha(key, ir, alpha) {
-                    icon_glyph(g, t, &e, ir);
+                    if !self.folder_stand_in(g, kind, icon_px as u32, ir, alpha, &mut requests) {
+                        icon_glyph(g, t, &e, ir);
+                    }
                     let wanted = !self.icons.contains_key(&key) && !requests.iter().any(|r| r.key == key);
                     let path = match (wanted, in_bin) {
                         (false, _) => None,
@@ -3198,8 +3200,11 @@ pub fn icon_key(name: &[u8], ext: &[u8], e: &crate::listing::Entry, size: u32, d
     if e.is_dir() && (e.attrs & (attr::READONLY | attr::SYSTEM) != 0 || shell_link || crate::location::wsl_drive_path(dir).is_some()) {
         return (hash::hash(&("custom", dir, name, e.modified, e.attrs, size, epoch)), IconKind::CustomFolder);
     }
+    if cfg!(target_os = "linux") && e.is_dir() && dir.first() == Some(&b'/') && e.attrs & (attr::STREAM | attr::ARCHIVED | attr::NOT_LOCAL | attr::DELETED) == 0 {
+        return (hash::hash(&("folder", dir, name, e.modified, size, epoch)), IconKind::CustomFolder);
+    }
     if e.is_dir() {
-        return (hash::hash(&("dir", size, epoch)), IconKind::Folder);
+        return file_icons::folder_key(size, epoch);
     }
     let folded = ext.to_ascii_lowercase();
     if PER_FILE_ICON_EXT.contains(&folded.as_slice()) || shell_link {

@@ -292,3 +292,21 @@ fn missing_watch_limit_authorization_names_its_package_and_present_helper_stays_
         assert!(matches!(raise_watch_limit(), WatchLimit::Raised(_)));
     });
 }
+
+#[test]
+fn editing_the_shown_folders_directory_file_drops_its_remembered_icon() {
+    let t = Temp::new("dot-directory-watch");
+    let dir = t.path().join("Shown");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join(".directory"), "[Desktop Entry]\nIcon=folder-red\n").unwrap();
+    let (mut w, rx) = watcher();
+    w.watch(11, 1, Some(&fs_path(&dir)));
+    let _ = crate::folder_icons::sources(&dir);
+    t.file("Shown/other.txt", 3);
+    let saw = |name: &[u8]| std::iter::from_fn(|| rx.recv_timeout(Duration::from_millis(300)).ok()).any(|e| matches!(e, ProviderEvent::Changes { tab: 11, changes, .. } if changes.iter().any(|c| c.name == name)));
+    assert!(saw(b"other.txt"));
+    assert!(crate::folder_icons::remembered(&dir), "other files leave the icon alone");
+    std::fs::write(dir.join(".directory"), "[Desktop Entry]\nIcon=folder-tan\n").unwrap();
+    assert!(saw(b".directory"));
+    assert!(!crate::folder_icons::remembered(&dir));
+}
