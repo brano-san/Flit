@@ -1101,6 +1101,29 @@ pub fn gsettings(args: &[&str]) -> Option<String> {
     String::from_utf8(wait_output(child, HELPER_TIMEOUT)?).ok()
 }
 
+pub(crate) fn gsettings_string(out: &str) -> Option<String> {
+    let out = out.trim();
+    let quote = out.chars().next().filter(|c| *c == '\'' || *c == '"')?;
+    let inside = out.strip_prefix(quote)?.strip_suffix(quote)?;
+    let mut value = String::new();
+    let mut escape = false;
+    for c in inside.chars() {
+        if escape {
+            value.push(match c { 'n' => '\n', 'r' => '\r', 't' => '\t', _ => c });
+            escape = false;
+        } else if c == '\\' {
+            escape = true;
+        } else {
+            value.push(c);
+        }
+    }
+    (!escape).then_some(value)
+}
+
+pub(crate) fn probe_window_buttons() -> Option<String> {
+    crate::atspi::read_button_layout().or_else(|| gsettings(&["org.gnome.desktop.wm.preferences", "button-layout"]).and_then(|s| gsettings_string(&s)))
+}
+
 fn probe_dark() -> Option<bool> {
     if let Some(dark) = gtk_theme_dark() {
         return Some(dark);

@@ -1493,12 +1493,12 @@ impl App {
         l.row_h = s(ROW_H);
         l.title = Rect::new(area.x, area.y, area.w, s(TAB_H));
         let limit = l.title.right().min(caption);
+        let x0 = (area.x + inset + s(6.0)).min(limit);
         let bh = l.title.h - s(8.0);
         let button_y = area.y + s(4.0) + ((l.title.h - s(4.0) - bh) / 2.0).round();
         let button = |x: f32| Rect::new(x, button_y, s(30.0), bh);
-        l.actions = if actions { Rect::new(limit - s(34.0), area.y + ((l.title.h - bh) / 2.0).round(), s(30.0), bh) } else { Rect::default() };
-        let x0 = area.x + inset + s(6.0);
-        let end = if actions { l.actions.x } else { limit };
+        l.actions = if actions && limit - x0 >= s(34.0) { Rect::new(limit - s(34.0), area.y + ((l.title.h - bh) / 2.0).round(), s(30.0), bh) } else { Rect::default() };
+        let end = if l.actions.w > 0.0 { l.actions.x } else { limit };
         let room = (end - s(40.0) - x0).max(0.0);
         let (min_w, arrow_w) = (s(TAB_MIN_W), s(TAB_ARROW_W));
         let squeezed = n > 1 && n as f32 * min_w > room;
@@ -1513,12 +1513,13 @@ impl App {
             let shown = (first..first + fit).contains(&i);
             let x = x_tabs + (i.clamp(first, first + fit) - first) as f32 * tw;
             let r = Rect::new(x, area.y + s(4.0), if shown { tw } else { 0.0 }, l.title.h - s(4.0));
-            let c = if shown { Rect::new(r.right() - s(26.0), r.y + ((r.h - s(20.0)) / 2.0).round(), s(20.0), s(20.0)) } else { Rect::default() };
+            let c = if shown && tw >= s(26.0) { Rect::new(r.right() - s(26.0), r.y + ((r.h - s(20.0)) / 2.0).round(), s(20.0), s(20.0)) } else { Rect::default() };
             l.tabs.push((r, c));
         }
         let lane_end = x_tabs + (n.min(first + fit) - first) as f32 * tw;
         l.tab_arrows = if over { [Rect::new(x0, button_y, arrow_w, bh), Rect::new(lane_end, button_y, arrow_w, bh)] } else { [Rect::default(); 2] };
-        l.new_tab = button(lane_end + if over { arrow_w } else { 0.0 } + s(4.0));
+        let next_x = lane_end + if over { arrow_w } else { 0.0 } + s(4.0);
+        l.new_tab = if next_x + s(30.0) <= end { button(next_x) } else { Rect::default() };
 
         l.toolbar = Rect::new(area.x, l.title.bottom(), area.w, s(TOOL_H));
         for (i, r) in l.nav.iter_mut().enumerate() {
@@ -1699,6 +1700,16 @@ impl App {
     }
 
     pub fn on_event(&mut self, ev: &Event, now: Instant) {
+        if let Event::WindowButtons(buttons) = ev {
+            if self.panels.buttons != *buttons {
+                self.panels.buttons = buttons.clone();
+                self.hover = Hit::None;
+                self.pressed = Hit::None;
+                self.layout();
+                self.dirty = true;
+            }
+            return;
+        }
         if self.caps.unix_paths && self.middle_paste(ev, now) {
             return;
         }
@@ -1740,6 +1751,7 @@ impl App {
                 self.dirty = true;
             }
             Event::MouseSettings { double_click, wheel_lines } => (self.double_click, self.wheel_lines) = (*double_click, *wheel_lines),
+            Event::WindowButtons(_) => {}
             Event::Invoke(id) => self.a11y_invoke(*id, now),
             Event::A11yFocus(id) => self.a11y_focus(*id),
             Event::A11ySelect(id) => self.a11y_select(*id, now),
@@ -2532,7 +2544,7 @@ impl App {
                 centered(g, icon, tabbar::tab_glyph(loc), self.icon_font(12.0), if torn || accented { color } else { t.accent.alpha(0xC0) });
             }
             g.text(icon.right() + self.s(6.0), baseline, &label, font, color, c.x - icon.right() - self.s(10.0));
-            if active || hovered > 0.0 {
+            if c.w > 0.0 && (active || hovered > 0.0) {
                 let state = self.button(Hit::TabClose(i), false, true);
                 let ink = if accented { color } else { t.text_dim };
                 widgets::Paint::new(g, t, self.scale).icon_button(c, G_CLOSE, close_font, state, if active { ink } else { widgets::faded(ink, hovered) });
@@ -2552,11 +2564,13 @@ impl App {
         let new_tab_dx = self.strip.at(lane, tabbar::Part::Plus, l.new_tab, now).x - l.new_tab.x;
         let new_tab_from = g.dl.instances.len();
         let mut w = widgets::Paint::new(g, t, self.scale);
-        if drop == Some(Spot::NewTab) {
-            w.g.dl.round_rect(l.new_tab, t.teal, self.s(4.0));
-            w.centered(l.new_tab, G_ADD, self.icon_font(10.0), theme::ink_on(t.teal));
-        } else {
-            w.icon_button(l.new_tab, G_ADD, self.icon_font(10.0), self.button(Hit::NewTab, false, true), t.text_dim);
+        if l.new_tab.w > 0.0 {
+            if drop == Some(Spot::NewTab) {
+                w.g.dl.round_rect(l.new_tab, t.teal, self.s(4.0));
+                w.centered(l.new_tab, G_ADD, self.icon_font(10.0), theme::ink_on(t.teal));
+            } else {
+                w.icon_button(l.new_tab, G_ADD, self.icon_font(10.0), self.button(Hit::NewTab, false, true), t.text_dim);
+            }
         }
         w.g.dl.shift(new_tab_from, new_tab_dx.round(), 0.0);
         self.strip.record(lane, tabbar::Part::Plus, Rect::new(l.new_tab.x + new_tab_dx.round(), l.new_tab.y, l.new_tab.w, l.new_tab.h), &[]);

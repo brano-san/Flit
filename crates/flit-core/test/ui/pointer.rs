@@ -266,6 +266,28 @@ fn a_double_click_on_the_caption_outside_the_strip_still_maximizes() {
 }
 
 #[test]
+fn custom_window_buttons_preserve_empty_strip_drag_and_double_click_behaviour() {
+    use crate::input::{WindowButton as B, WindowButtons};
+    for buttons in [WindowButtons::default(), WindowButtons { left: vec![B::Close, B::Minimize, B::Maximize], right: vec![] }, WindowButtons { left: vec![B::Close], right: vec![B::Minimize] }, WindowButtons { left: vec![], right: vec![] }] {
+        let mut app = app_at(r"C:\work", &[("a.txt", false)]);
+        app.on_event(&Event::WindowButtons(buttons), Instant::now());
+        harness::frame(&mut app);
+        let (x, y) = empty_strip(&app);
+        assert_eq!(app.hit_test(x, y), crate::input::HitArea::Caption);
+        let n = app.tabs.len();
+        press(&mut app, x, y, MouseButton::Left, 2);
+        assert_eq!(app.tabs.len(), n + 1);
+        assert!(!app.drain_effects().any(|e| matches!(e, Effect::Window(WindowCmd::ToggleMaximize))));
+        harness::frame(&mut app);
+        let y = 4.0;
+        let x = (0..app.layout.title.x as usize).map(|x| x as f32).find(|&x| app.hit(x, y) == Hit::None && app.in_title(y)).expect("free room above the sidebar");
+        assert_eq!(app.hit_test(x, y), crate::input::HitArea::Caption);
+        press(&mut app, x, y, MouseButton::Left, 2);
+        assert!(app.drain_effects().any(|e| matches!(e, Effect::Window(WindowCmd::ToggleMaximize))));
+    }
+}
+
+#[test]
 fn alt_double_click_inspects_and_ctrl_double_click_opens_a_folder_window() {
     let mut app = app_at(r"C:\work", &[("docs", true), ("a.txt", false)]);
     let row = |app: &App, name: &str| {

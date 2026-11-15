@@ -2,6 +2,15 @@ use super::*;
 use crate::temp::Temp;
 use flit_core::provider::{Resolve, Template};
 
+#[test]
+fn gsettings_button_layout_keeps_an_explicit_empty_string() {
+    assert_eq!(gsettings_string("''\n"), Some(String::new()));
+    assert_eq!(gsettings_string("'close:minimize,maximize'\n"), Some("close:minimize,maximize".into()));
+    assert_eq!(gsettings_string("\"close:\"\n"), Some("close:".into()));
+    assert_eq!(gsettings_string("garbage"), None);
+    assert_eq!(gsettings_string("'unterminated"), None);
+}
+
 fn fs_path(p: &Path) -> FsPath {
     FsPath::parse_exact(p.as_os_str().as_bytes()).unwrap()
 }
