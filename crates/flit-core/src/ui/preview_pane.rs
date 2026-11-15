@@ -1281,7 +1281,7 @@ impl App {
                 let e = l.entries[i as usize];
                 let name = l.name(i);
                 let path = if in_bin { recycle::recycled(l, i) } else { t.entry_location(i).to_windows() };
-                let kind = if e.is_dir() { Kind::Folder } else { preview::kind(l.ext(i)) };
+                let kind = if e.is_dir() { Kind::Folder } else { preview::kind_of(name) };
                 let drive = (e.attrs & attr::VOLUME != 0)
                     .then(|| self.nav.sidebar.places.drives.iter().find(|d| d.path.as_bytes().get(..2).is_some_and(|p| p.eq_ignore_ascii_case(name)) && d.total > 0).map(|d| (d.total, d.free)))
                     .flatten();

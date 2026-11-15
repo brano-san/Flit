@@ -18,6 +18,29 @@ fn kinds_follow_the_extension() {
 }
 
 #[test]
+fn file_names_refine_the_kind_only_where_the_extension_says_nothing_more() {
+    let code = |ext| Kind::Code(syntax::by_ext(ext).unwrap());
+    assert_eq!(kind_of(b"Makefile"), code("mk"));
+    assert_eq!(kind_of(b"CMakeLists.txt"), code("cmake"));
+    assert_eq!(kind_of(b"Dockerfile"), code("dockerfile"));
+    assert_eq!(kind_of(b"notes.txt"), Kind::Text);
+    assert_eq!(kind_of(b"main.rs"), code("rs"));
+    assert_eq!(kind_of(b"photo.jpg"), Kind::Image);
+    assert_eq!(kind_of(b"tool"), Kind::Other);
+}
+
+#[test]
+fn a_shebang_turns_plain_text_into_highlighted_code() {
+    let script = build(Kind::Text, b"#!/usr/bin/env bash\nif true; then echo \"x\"; fi\n");
+    assert!(!script.wrap, "a script is shown like code, without wrapping");
+    assert!(script.runs.iter().any(|r| r.tone == Tone::Keyword && script.run_text(r) == "if"));
+    let note = build(Kind::Text, b"if true then\n#!/bin/sh\n");
+    assert!(note.runs.iter().all(|r| r.tone == Tone::Plain), "a shebang counts only on the first line");
+    let markdown = build(Kind::Markdown, b"#!/bin/sh\n");
+    assert!(markdown.runs.iter().all(|r| r.tone != Tone::Keyword), "only plain text is refined");
+}
+
+#[test]
 fn decodes_boms_and_cut_utf8() {
     assert_eq!(decode(b"\xEF\xBB\xBFhi"), "hi");
     assert_eq!(decode(&[0xFF, 0xFE, b'h', 0, 0x3F, 0x04]), "hп");

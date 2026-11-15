@@ -81,6 +81,20 @@ const SQL: &[&str] = &[
     "values", "view", "when", "where", "with",
 ];
 const LUA: &[&str] = &["and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if", "in", "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while"];
+const MAKE: &[&str] = &[
+    "ifeq", "ifneq", "ifdef", "ifndef", "else", "endif", "define", "endef", "include", "-include", "sinclude", "export", "unexport", "override", "private", "vpath", ".PHONY", ".SUFFIXES", ".DEFAULT",
+    ".PRECIOUS", ".INTERMEDIATE", ".SECONDARY", ".DELETE_ON_ERROR", ".ONESHELL", ".SILENT",
+];
+const DOCKER: &[&str] = &[
+    "ADD", "ARG", "AS", "CMD", "COPY", "ENTRYPOINT", "ENV", "EXPOSE", "FROM", "HEALTHCHECK", "LABEL", "MAINTAINER", "ONBUILD", "RUN", "SHELL", "STOPSIGNAL", "USER", "VOLUME", "WORKDIR",
+];
+const CMAKE: &[&str] = &[
+    "add_compile_definitions", "add_compile_options", "add_custom_command", "add_custom_target", "add_definitions", "add_dependencies", "add_executable", "add_library", "add_subdirectory", "add_test",
+    "break", "cmake_minimum_required", "configure_file", "continue", "else", "elseif", "enable_testing", "endforeach", "endfunction", "endif", "endmacro", "endwhile", "file", "find_library",
+    "find_package", "find_path", "find_program", "foreach", "function", "get_filename_component", "if", "include", "include_directories", "install", "link_directories", "list", "macro", "message",
+    "option", "project", "return", "set", "set_property", "set_target_properties", "string", "target_compile_definitions", "target_compile_features", "target_compile_options",
+    "target_include_directories", "target_link_libraries", "target_link_options", "target_sources", "unset", "while",
+];
 const LITERALS: &[&str] = &["true", "false", "null", "yes", "no", "on", "off"];
 const CSS: &[&str] = &["!important", "@media", "@import", "@font-face", "@keyframes", "@supports"];
 
@@ -106,11 +120,83 @@ pub static SYNTAXES: &[Syntax] = &[
     Syntax { markup: true, ..syn("XML", &["xml", "html", "htm", "xhtml", "svg", "xaml", "csproj", "vcxproj", "props", "targets", "plist", "resx", "config", "manifest", "nuspec", "xsd", "xsl"], &[], &[("<!--", "-->")], DQ_SQ, &[]) },
     syn("CSS", &["css", "scss", "less"], &[], C_BLOCK, DQ_SQ, CSS),
     Syntax { diff: true, ..syn("Diff", &["diff", "patch"], &[], &[], &[], &[]) },
+    Syntax { ident_extra: b".-", ..syn("Make", &["mk", "mak", "make"], HASH, &[], DQ_SQ, MAKE) },
+    Syntax { nocase: true, ..syn("Dockerfile", &["dockerfile", "containerfile"], HASH, &[], DQ_SQ, DOCKER) },
+    Syntax { nocase: true, ..syn("CMake", &["cmake"], HASH, &[("#[[", "]]")], DQ, CMAKE) },
 ];
 
 pub fn by_ext(ext: &str) -> Option<u8> {
     let ext = ext.to_ascii_lowercase();
     SYNTAXES.iter().position(|s| s.exts.contains(&ext.as_str())).map(|i| i as u8)
+}
+
+const BY_FILE_NAME: &[(&str, &str)] = &[
+    ("makefile", "mk"),
+    ("gnumakefile", "mk"),
+    ("dockerfile", "dockerfile"),
+    ("containerfile", "dockerfile"),
+    ("cmakelists.txt", "cmake"),
+    ("gemfile", "rb"),
+    ("rakefile", "rb"),
+    ("podfile", "rb"),
+    ("vagrantfile", "rb"),
+    ("brewfile", "rb"),
+    ("guardfile", "rb"),
+    ("fastfile", "rb"),
+    ("jenkinsfile", "groovy"),
+    ("pkgbuild", "sh"),
+    ("apkbuild", "sh"),
+    (".bash_profile", "sh"),
+    (".bash_aliases", "sh"),
+    (".bash_logout", "sh"),
+    (".zprofile", "sh"),
+    (".zshenv", "sh"),
+    (".zlogin", "sh"),
+    (".kshrc", "sh"),
+    (".xprofile", "sh"),
+    (".xinitrc", "sh"),
+    (".gitmodules", "ini"),
+    (".npmrc", "ini"),
+    (".pypirc", "ini"),
+    (".flake8", "ini"),
+];
+
+pub fn by_file_name(name: &str) -> Option<u8> {
+    let n = name.to_ascii_lowercase();
+    if let Some(&(_, ext)) = BY_FILE_NAME.iter().find(|(file, _)| *file == n) {
+        return by_ext(ext);
+    }
+    match () {
+        _ if n.starts_with("dockerfile.") || n.ends_with(".dockerfile") => by_ext("dockerfile"),
+        _ if n.starts_with("makefile.") => by_ext("mk"),
+        _ if n.starts_with(".env.") => by_ext("env"),
+        _ => None,
+    }
+}
+
+pub fn by_shebang(text: &[u8]) -> Option<u8> {
+    let rest = text.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(text).strip_prefix(b"#!")?;
+    let line = &rest[..rest.iter().position(|&c| c == b'\n').unwrap_or(rest.len()).min(256)];
+    let line = std::str::from_utf8(line).ok()?;
+    let mut words = line.split_ascii_whitespace();
+    let program = |w: &str| w.rsplit('/').next().unwrap_or(w).to_ascii_lowercase();
+    let mut name = program(words.next()?);
+    if name == "env" {
+        name = program(words.find(|w| !w.starts_with('-') && !w.contains('='))?);
+    }
+    let base = name.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+    let ext = match base {
+        "sh" | "bash" | "zsh" | "ksh" | "mksh" | "dash" | "ash" | "fish" => "sh",
+        "python" | "pypy" => "py",
+        "node" | "nodejs" | "deno" | "bun" | "ts-node" | "tsx" => "js",
+        "ruby" => "rb",
+        "php" => "php",
+        "lua" | "luajit" => "lua",
+        "pwsh" | "powershell" => "ps1",
+        "make" => "mk",
+        _ => return None,
+    };
+    by_ext(ext)
 }
 
 pub fn by_name(name: &str) -> Option<u8> {
@@ -128,6 +214,8 @@ pub fn by_name(name: &str) -> Option<u8> {
         "kotlin" => "kt",
         "ruby" => "rb",
         "html" => "html",
+        "make" | "makefile" => "mk",
+        "docker" => "dockerfile",
         other => other,
     };
     by_ext(alias)

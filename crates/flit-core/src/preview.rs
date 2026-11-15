@@ -60,6 +60,14 @@ pub fn kind(ext: &[u8]) -> Kind {
     }
 }
 
+pub fn kind_of(file_name: &[u8]) -> Kind {
+    let ext = &file_name[file_name.len() - name::ext_len(file_name)..];
+    match kind(ext) {
+        Kind::Text | Kind::Other => syntax::by_file_name(&name::display(file_name)).map_or_else(|| kind(ext), Kind::Code),
+        k => k,
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tone {
     Plain,
@@ -248,6 +256,10 @@ pub fn encoding_of(b: &[u8]) -> &'static str {
 }
 
 pub fn build(kind: Kind, bytes: &[u8]) -> Doc {
+    let kind = match kind {
+        Kind::Text => syntax::by_shebang(bytes).map_or(kind, Kind::Code),
+        k => k,
+    };
     let doc = match kind {
         Kind::Markdown => markdown_doc(&decode(bytes)),
         Kind::Code(k) => text_doc(&decode(bytes), Some(k)),
