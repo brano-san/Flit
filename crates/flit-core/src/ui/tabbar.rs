@@ -470,7 +470,7 @@ impl App {
             super::DragEvent::Enter { x, y, .. } | super::DragEvent::Over { x, y, .. } => {
                 self.hover_arrow(*x, *y, Held::Files, now);
             }
-            super::DragEvent::Leave | super::DragEvent::Drop { .. } => self.strip.hold = None,
+            super::DragEvent::Leave | super::DragEvent::Drop { .. } | super::DragEvent::DropData { .. } => self.strip.hold = None,
         }
     }
 

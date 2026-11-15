@@ -114,6 +114,7 @@ pub enum DragEvent {
     Over { x: f32, y: f32, mods: Mods, allowed: u32 },
     Leave,
     Drop { x: f32, y: f32, mods: Mods, allowed: u32 },
+    DropData { x: f32, y: f32, data: std::sync::Arc<crate::provider::DroppedFile> },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -1984,8 +1985,19 @@ impl App {
     }
 
     pub fn drag(&mut self, ev: &DragEvent, now: Instant) -> u32 {
+        let normalized;
+        let (ev, data) = match ev {
+            DragEvent::DropData { x, y, data } => {
+                normalized = DragEvent::Drop { x: *x, y: *y, mods: Mods::default(), allowed: drop_effect::COPY };
+                (&normalized, Some(data))
+            }
+            _ => (ev, None),
+        };
         self.dirty = true;
         self.drag_panel(ev);
+        if data.is_some() && (!self.caps.unix_paths || self.tab().location().provider() != ProviderId::Local) {
+            return self.drag(&DragEvent::Leave, now);
+        }
         self.strip_drag(ev, now);
         match ev {
             DragEvent::Enter { paths, x, y, mods, allowed, right } => {
@@ -1999,6 +2011,7 @@ impl App {
                 self.ops.drag_scroll = Some((*x, *y, *mods, *allowed));
                 self.drag_over(*x, *y, *mods, *allowed)
             }
+            DragEvent::DropData { .. } => drop_effect::NONE,
             DragEvent::Leave => {
                 self.nav.sidebar.dragging_out = false;
                 self.ops.dropping = None;
@@ -2027,8 +2040,11 @@ impl App {
                         self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch } });
                     }
                     Some(Target::Into { dest, .. }) if d.paths.is_empty() => {
-                        if !self.caps.unix_paths && matches!(effect, drop_effect::COPY | drop_effect::MOVE) {
-                            self.start_op(FileOp::PasteDropped { dest, moving: effect == drop_effect::MOVE }, Origin::Fresh, Then::Select);
+                        if data.is_some() && dest.kind() != PathKind::Unix {
+                            return drop_effect::NONE;
+                        }
+                        if (!self.caps.unix_paths || data.is_some()) && matches!(effect, drop_effect::COPY | drop_effect::MOVE) {
+                            self.start_op(FileOp::PasteDropped { dest, moving: effect == drop_effect::MOVE, data: data.cloned() }, Origin::Fresh, Then::Select);
                         }
                     }
                     Some(Target::Into { dest, .. }) if d.right && effect != drop_effect::NONE => {

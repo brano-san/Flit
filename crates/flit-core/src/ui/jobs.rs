@@ -422,7 +422,11 @@ impl App {
         if job_title(op).is_none() {
             return;
         }
-        let job = Job { id, op: op.clone(), wsl: matches!(provider, ProviderId::Wsl(_)), dest: job_dest(provider, op), ctl: ctl.clone(), state: JobState::Running, progress: OpProgress::default(), asking: false, erred: false, created: Instant::now(), started: None, finished: None, mark: None, speed: 0.0, samples: VecDeque::new() };
+        let mut summary = op.clone();
+        if let FileOp::PasteDropped { data, .. } = &mut summary {
+            *data = None;
+        }
+        let job = Job { id, op: summary, wsl: matches!(provider, ProviderId::Wsl(_)), dest: job_dest(provider, op), ctl: ctl.clone(), state: JobState::Running, progress: OpProgress::default(), asking: false, erred: false, created: Instant::now(), started: None, finished: None, mark: None, speed: 0.0, samples: VecDeque::new() };
         if let Some(k) = self.jobs.list.iter().position(|j| j.state != JobState::Running).filter(|_| self.jobs.list.len() >= MAX_JOBS) {
             self.jobs.list.remove(k);
         }

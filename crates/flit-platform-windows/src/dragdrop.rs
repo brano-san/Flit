@@ -233,7 +233,7 @@ impl Target_Impl {
             DragEvent::Enter { .. } => "enter",
             DragEvent::Over { .. } => "over",
             DragEvent::Leave => "leave",
-            DragEvent::Drop { .. } => "drop",
+            DragEvent::Drop { .. } | DragEvent::DropData { .. } => "drop",
         };
         let hovering = matches!(ev, DragEvent::Enter { .. } | DragEvent::Over { .. });
         let reply = unsafe { (self.call)(self.node, ev) };

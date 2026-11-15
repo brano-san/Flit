@@ -756,6 +756,7 @@ impl FileOps for LinuxShell {
         }
         let trash = places::trash();
         let out = match (op, &trash) {
+            (FileOp::PasteDropped { dest, data: Some(data), .. }, _) => crate::dropped::queued(dest, data, job),
             (FileOp::InstallFonts(fonts), _) => install_fonts(fonts, crate::xdg::data_home().map(|d| d.join("fonts"))),
             (FileOp::Purge(pairs), Ok(t)) => places::purge(t, pairs),
             (FileOp::EmptyBin, Ok(t)) => places::empty(t, &places::storage_tops()),

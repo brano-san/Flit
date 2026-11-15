@@ -166,6 +166,18 @@ impl LinkChoices {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct DroppedFile {
+    pub name: Vec<u8>,
+    pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for DroppedFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DroppedFile").field("name", &crate::name::display(&self.name)).field("len", &self.bytes.len()).finish()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum FileOp {
     Trash(Vec<FsPath>),
@@ -191,7 +203,7 @@ pub enum FileOp {
     SetAccess { items: Vec<FsPath>, edit: AccessEdit },
     Access(Vec<AccessChange>),
     SetAttributes { items: Vec<FsPath>, set: u32, clear: u32, unblock: bool },
-    PasteDropped { dest: FsPath, moving: bool },
+    PasteDropped { dest: FsPath, moving: bool, #[serde(skip)] data: Option<Arc<DroppedFile>> },
     GrantAccess(FsPath),
     LinkAs { items: Vec<FsPath>, dest: FsPath, kind: LinkKind },
     PasteLinkAs { dest: FsPath, kind: LinkKind },
@@ -297,7 +309,7 @@ impl FileOp {
             FileOp::SetAccess { items, edit } => FileOp::SetAccess { items: all(items)?, edit: *edit },
             FileOp::Access(changes) => FileOp::Access(changes.iter().map(|c| Some(AccessChange { item: f(&c.item)?, ..c.clone() })).collect::<Option<_>>()?),
             FileOp::SetAttributes { items, set, clear, unblock } => FileOp::SetAttributes { items: all(items)?, set: *set, clear: *clear, unblock: *unblock },
-            FileOp::PasteDropped { dest, moving } => FileOp::PasteDropped { dest: f(dest)?, moving: *moving },
+            FileOp::PasteDropped { dest, moving, data } => FileOp::PasteDropped { dest: f(dest)?, moving: *moving, data: data.clone() },
             FileOp::GrantAccess(dir) => FileOp::GrantAccess(f(dir)?),
             FileOp::LinkAs { items, dest, kind } => FileOp::LinkAs { items: all(items)?, dest: f(dest)?, kind: *kind },
             FileOp::PasteLinkAs { dest, kind } => FileOp::PasteLinkAs { dest: f(dest)?, kind: *kind },

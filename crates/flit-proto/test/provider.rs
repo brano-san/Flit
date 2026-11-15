@@ -145,3 +145,12 @@ fn failures_must_name_the_operation_paths_and_stay_short() {
     assert!(long.validate(false).is_err());
     assert!(Event::OpFailure { id: 1, failure: f("/s/a") }.validate(true).is_ok());
 }
+
+#[test]
+fn dropped_file_payloads_never_go_to_the_agent() {
+    let dest = unix(b"/tmp");
+    let data = std::sync::Arc::new(flit_core::provider::DroppedFile { name: b"text.txt".to_vec(), bytes: b"hello".to_vec() });
+    for data in [None, Some(data)] {
+        assert!(!agent_runs(&FileOp::PasteDropped { dest: dest.clone(), moving: false, data }));
+    }
+}

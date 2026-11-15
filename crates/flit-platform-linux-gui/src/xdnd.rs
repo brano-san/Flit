@@ -96,6 +96,17 @@ pub fn drop_choice(keys: Option<Mods>, proposed: Option<DndAction>, preferred: O
     (Mods { alt: false, ..held }, held.alt)
 }
 
+pub fn incoming_choice(content: bool, keys: Option<Mods>, proposed: Option<DndAction>, preferred: Option<DndAction>) -> (Mods, bool) {
+    if content { (Mods::default(), false) } else { drop_choice(keys, proposed, preferred) }
+}
+
+pub fn incoming_actions(content: bool, effect: u32, preferred: Option<DndAction>) -> Vec<DndAction> {
+    if content {
+        if effect & drop_effect::COPY != 0 { vec![DndAction::Copy] } else { Vec::new() }
+    } else {
+        offered_actions(effect, preferred)
+    }
+}
 pub fn chose_freely(keys: Option<Mods>, proposed: Option<DndAction>, preferred: Option<DndAction>) -> bool {
     keys.is_some() || proposed.is_none_or(|p| Some(p) == preferred)
 }

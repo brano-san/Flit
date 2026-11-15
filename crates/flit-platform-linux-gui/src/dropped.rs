@@ -1,7 +1,11 @@
+use flit_core::provider::{DroppedFile, FileOp, Stage};
 use flit_core::FsPath;
+use flit_platform::{Job, OpOutcome, PlatformError};
 use std::io::Write;
-use winit::data_transfer::TypeHint;
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use winit::data_transfer::TypeHint;
 
 const WEB_SCHEMES: [&str; 3] = ["http://", "https://", "ftp://"];
 const MAX_STEM: usize = 80;
@@ -18,7 +22,7 @@ pub fn web_urls(uri_list: &[u8]) -> Vec<String> {
         .lines()
         .map(str::trim)
         .filter(|l| !l.starts_with('#'))
-        .filter(|l| WEB_SCHEMES.iter().any(|s| l.len() > s.len() && l[..s.len()].eq_ignore_ascii_case(s)))
+        .filter(|l| WEB_SCHEMES.iter().any(|s| l.len() > s.len() && l.get(..s.len()).is_some_and(|prefix| prefix.eq_ignore_ascii_case(s))))
         .map(str::to_owned)
         .collect()
 }
@@ -45,23 +49,95 @@ pub fn link_file(url: &str, name: &str) -> String {
     format!("[Desktop Entry]\nType=Link\nName={}\nURL={}\nIcon=text-html\n", one_line(name), one_line(url))
 }
 
-pub fn free_name(dir: &Path, stem: &str, ext: &str) -> PathBuf {
-    let base = clean(stem);
-    let name = flit_core::ui::unique_name(&base, |n| dir.join(format!("{n}.{ext}")).exists());
-    dir.join(format!("{name}.{ext}"))
+impl Content {
+    pub fn file(self, text_stem: &str, image_stem: &str) -> DroppedFile {
+        let (stem, extension, bytes) = match self {
+            Self::Url(url) => {
+                let stem = url_stem(&url).unwrap_or_else(|| clean(text_stem));
+                let bytes = link_file(&url, &stem).into_bytes();
+                (stem, "desktop", bytes)
+            }
+            Self::Text(text) => (clean(text_stem), "txt", text.into_bytes()),
+            Self::Image(png) => (clean(image_stem), "png", png),
+        };
+        DroppedFile { name: format!("{stem}.{extension}").into_bytes(), bytes }
+    }
 }
 
-pub fn save(dir: &Path, content: &Content, text_stem: &str, image_stem: &str) -> std::io::Result<PathBuf> {
-    let (path, bytes) = match content {
-        Content::Url(url) => {
-            let stem = url_stem(url).unwrap_or_else(|| text_stem.to_owned());
-            (free_name(dir, &stem, "desktop"), link_file(url, &stem).into_bytes())
+static NEXT_STAGE: AtomicU64 = AtomicU64::new(0);
+const WRITE_CHUNK: usize = 64 * 1024;
+
+struct Staged {
+    path: PathBuf,
+    dir: PathBuf,
+}
+
+fn cancelled() -> std::io::Error {
+    std::io::Error::from_raw_os_error(libc::ECANCELED)
+}
+
+impl Staged {
+    fn new(data: &DroppedFile, job: &Job) -> std::io::Result<Self> {
+        Self::new_at(&std::env::temp_dir(), data, job, NEXT_STAGE.fetch_add(1, Ordering::Relaxed))
+    }
+
+    fn new_at(root: &Path, data: &DroppedFile, job: &Job, id: u64) -> std::io::Result<Self> {
+        if job.cancelled() {
+            return Err(cancelled());
         }
-        Content::Text(text) => (free_name(dir, text_stem, "txt"), text.clone().into_bytes()),
-        Content::Image(png) => (free_name(dir, image_stem, "png"), png.clone()),
+        if flit_proto::listing::check_name(&data.name, false).is_err() || data.name.iter().any(u8::is_ascii_control) {
+            return Err(std::io::Error::from_raw_os_error(libc::EINVAL));
+        }
+        use std::os::unix::ffi::OsStrExt;
+        let mut attempt = 0u64;
+        let staged = loop {
+            if job.cancelled() {
+                return Err(cancelled());
+            }
+            let dir = root.join(format!("flit-drop-{}-{id}-{attempt}", std::process::id()));
+            match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+                Ok(()) => break Self { path: dir.join(std::ffi::OsStr::from_bytes(&data.name)), dir },
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => attempt = attempt.wrapping_add(1),
+                Err(e) => return Err(e),
+            }
+        };
+        let mut file = std::fs::File::create_new(&staged.path)?;
+        job.update(|p| {
+            p.stage = Stage::Preparing;
+            p.total_bytes = data.bytes.len() as u64;
+            p.total_items = 1;
+        });
+        for chunk in data.bytes.chunks(WRITE_CHUNK) {
+            if job.cancelled() {
+                return Err(cancelled());
+            }
+            file.write_all(chunk)?;
+        }
+        if job.cancelled() {
+            return Err(cancelled());
+        }
+        Ok(staged)
+    }
+}
+
+impl Drop for Staged {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+        let _ = std::fs::remove_dir(&self.dir);
+    }
+}
+
+pub fn queued(dest: &FsPath, data: &DroppedFile, job: &Job) -> OpOutcome {
+    let staged = match Staged::new(data, job) {
+        Ok(staged) => staged,
+        Err(e) => return OpOutcome { items: Vec::new(), error: Some(PlatformError::new(e.raw_os_error().map_or(-1, i64::from), if e.raw_os_error() == Some(libc::ECANCELED) { flit_platform::CANCELLED.to_owned() } else { flit_core::fmt::io_reason(&e) })) },
     };
-    std::fs::File::create_new(&path)?.write_all(&bytes)?;
-    Ok(path)
+    use std::os::unix::ffi::OsStrExt;
+    let Some(source) = FsPath::parse_exact(staged.path.as_os_str().as_bytes()) else {
+        return OpOutcome { items: Vec::new(), error: Some(PlatformError::new(libc::EINVAL as i64, flit_core::fmt::io_reason(&std::io::Error::from_raw_os_error(libc::EINVAL)))) };
+    };
+    let out = flit_platform_linux::run_op(&FileOp::Copy { items: vec![source], dest: dest.clone() }, job, None);
+    OpOutcome { items: out.items.into_iter().map(|(_, target)| (target.clone(), target)).collect(), error: out.error }
 }
 
 pub const PNG: TypeHint = TypeHint::Image { extension_hint: Some("png") };
