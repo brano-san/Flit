@@ -365,10 +365,13 @@ fn delete_never_follows_links_out_of_the_tree() {
     std::fs::set_permissions(doomed.join("sub"), std::fs::Permissions::from_mode(0o755)).ok();
     if unsafe { libc::geteuid() } != 0 {
         assert!(out.error.is_some(), "a read-only folder keeps its entries");
+        assert!(doomed.join("sub/b").exists());
+        let out = run(&FileOp::Delete(vec![fp(&doomed)]), &quiet(Resolve::Skip), None);
+        assert_eq!(ok(out), [(fp(&doomed), fp(&doomed))]);
+    } else {
+        assert_eq!(ok(out), [(fp(&doomed), fp(&doomed))], "root can delete entries in a read-only folder");
     }
     assert_eq!(read(&t.path().join("keep/precious")), "p");
-    let out = run(&FileOp::Delete(vec![fp(&doomed)]), &quiet(Resolve::Skip), None);
-    assert_eq!(ok(out), [(fp(&doomed), fp(&doomed))]);
     assert!(!doomed.exists());
     symlink(t.path().join("keep"), t.path().join("toplink")).unwrap();
     run(&FileOp::Delete(vec![fp(&t.path().join("toplink"))]), &quiet(Resolve::Skip), None);
@@ -644,14 +647,20 @@ fn trash_failures_list_the_items_that_can_be_deleted_instead() {
     let items = vec![fp(&fine), fp(&locked.join("stuck")), fp(&t.path().join("gone"))];
     let out = run(&FileOp::Trash(items), &quiet(Resolve::Skip), Some(&trash));
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
-    assert_eq!(out.items.len(), 1);
     let error = out.error.unwrap();
     if unsafe { libc::geteuid() } != 0 {
+        assert_eq!(out.items.len(), 1);
         assert!(error.message.starts_with("2 items failed. Cannot move"), "{}", error.message);
         assert_eq!(error.untrashable, [fp(&locked.join("stuck"))], "only items that still exist can be deleted instead");
+    } else {
+        assert_eq!(out.items.len(), 2, "root can move entries out of a read-only folder");
+        assert!(error.untrashable.is_empty(), "the only failure is a missing item, which cannot be deleted instead");
+        assert!(!locked.join("stuck").exists());
     }
-    let nowhere = run(&FileOp::Trash(vec![fp(&locked.join("stuck"))]), &quiet(Resolve::Skip), None);
-    assert_eq!(nowhere.error.unwrap().untrashable, [fp(&locked.join("stuck"))]);
+    let no_trash = t.file("no-trash", 1);
+    let nowhere = run(&FileOp::Trash(vec![fp(&no_trash)]), &quiet(Resolve::Skip), None);
+    assert_eq!(nowhere.error.unwrap().untrashable, [fp(&no_trash)]);
+    assert!(no_trash.exists());
     assert!(run(&FileOp::Trash(vec![fp(&locked)]), &quiet(Resolve::Skip), Some(&trash)).error.is_none());
 }
 
