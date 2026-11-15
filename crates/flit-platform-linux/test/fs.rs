@@ -258,3 +258,98 @@ fn size_on_disk_counts_in_blocks_of_the_volume() {
     assert!(std::fs::metadata(&f).unwrap().blocks() * 512 <= unit, "a one-byte file takes at most one block");
     assert_eq!(LinuxFs.cluster_size(&FsPath::parse(t.path().join("missing").to_str().unwrap()).unwrap()), 0, "nothing is guessed for a missing path");
 }
+
+fn launcher_listing(dir: &Path) -> flit_core::Listing {
+    let mut keep = |_: &ListingBuilder<'_>| true;
+    let mut out = ListingBuilder::new(flit_core::sort::CaseMode::Sensitive, &mut keep);
+    LinuxFs.read_dir(&FsPath::parse(dir.to_str().unwrap()).unwrap(), &mut out).unwrap();
+    out.listing
+}
+
+fn launcher_file(dir: &Path, name: &str, text: &str, mode: u32) -> PathBuf {
+    let file = dir.join(name);
+    std::fs::write(&file, text).unwrap();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(mode)).unwrap();
+    file
+}
+
+#[test]
+fn trusted_desktop_launchers_show_the_interface_language_without_changing_the_filename() {
+    let t = Temp::new("launcher-label");
+    launcher_file(t.path(), "firefox.desktop", "[Desktop Entry]\nType=Application\nName=Firefox\nName[en]=Browser\nExec=firefox\n[Desktop Action Private]\nName=Private\n", 0o700);
+    let listing = launcher_listing(t.path());
+    assert_eq!(listing.labeled(0), Some("Browser"));
+    assert_eq!(listing.name(0), b"firefox.desktop");
+}
+
+#[test]
+fn untrusted_broken_and_oversized_launchers_keep_their_real_filenames() {
+    let t = Temp::new("launcher-boundaries");
+    let valid = "[Desktop Entry]\nType=Link\nName=Documents\nURL=file:///tmp\n";
+    launcher_file(t.path(), "trusted.desktop", valid, 0o700);
+    launcher_file(t.path(), "evil.desktop", valid, 0o600);
+    launcher_file(t.path(), "ordinary.txt", valid, 0o700);
+    launcher_file(t.path(), "empty.desktop", "", 0o700);
+    launcher_file(t.path(), "broken.desktop", "[Other]\nName=Wrong\n", 0o700);
+    launcher_file(t.path(), "oversized.desktop", &format!("{valid}{}", "x".repeat(65536)), 0o700);
+    std::fs::create_dir(t.path().join("folder.desktop")).unwrap();
+    symlink("missing", t.path().join("missing.desktop")).unwrap();
+    let fifo = CString::new(t.path().join("pipe.desktop").as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o700) }, 0);
+    let listing = launcher_listing(t.path());
+    for i in 0..listing.len() as u32 {
+        if listing.name(i) == b"trusted.desktop" {
+            assert_eq!(listing.labeled(i), Some("Documents"));
+        } else {
+            assert!(listing.labeled(i).is_none(), "{:?}", listing.name(i));
+            assert_eq!(listing.label(i), listing.name(i));
+        }
+    }
+}
+
+#[test]
+fn launcher_labels_are_already_sorted_at_each_published_batch() {
+    let t = Temp::new("launcher-sort");
+    for i in 0..2050 {
+        launcher_file(t.path(), &format!("file{i:04}.desktop"), &format!("[Desktop Entry]\nType=Application\nName=App {:04}\n", 2050 - i), 0o700);
+    }
+    let mut batches = 0;
+    let mut verify = |out: &ListingBuilder<'_>| {
+        batches += 1;
+        assert_eq!(out.listing.labels.len(), out.listing.len());
+        let mut order = Vec::new();
+        flit_core::sort::sort(&out.listing, &out.keys, flit_core::sort::ViewSpec::default(), &mut order);
+        let labels: Vec<_> = order.iter().map(|&i| out.listing.label(i)).collect();
+        assert!(labels.windows(2).all(|w| w[0] <= w[1]));
+        true
+    };
+    let mut out = ListingBuilder::new(flit_core::sort::CaseMode::Sensitive, &mut verify);
+    LinuxFs.read_dir(&FsPath::parse(t.path().to_str().unwrap()).unwrap(), &mut out).unwrap();
+    assert_eq!(out.listing.len(), 2050);
+    drop(out);
+    assert_eq!(batches, 3);
+}
+
+#[test]
+#[ignore]
+fn bench_ten_thousand_desktop_labels_against_plain_directory_listing() {
+    let t = Temp::new("launcher-budget");
+    for i in 0..10_000 {
+        launcher_file(t.path(), &format!("file{i:05}.desktop"), &format!("[Desktop Entry]\nType=Application\nName=Application {i:05}\n"), 0o700);
+    }
+    let baseline = std::time::Instant::now();
+    assert_eq!(scanned(t.path()).len(), 10_000);
+    let baseline = baseline.elapsed();
+    let began = std::time::Instant::now();
+    let mut first_batch = None;
+    let mut batch = |_: &ListingBuilder<'_>| {
+        first_batch.get_or_insert_with(|| began.elapsed());
+        true
+    };
+    let mut out = ListingBuilder::new(flit_core::sort::CaseMode::Sensitive, &mut batch);
+    LinuxFs.read_dir(&FsPath::parse(t.path().to_str().unwrap()).unwrap(), &mut out).unwrap();
+    let elapsed = began.elapsed();
+    assert_eq!(out.listing.labels.len(), 10_000);
+    drop(out);
+    eprintln!("10k desktop listing: baseline {:?}, first batch {:?}, full {:?}", baseline, first_batch, elapsed);
+}

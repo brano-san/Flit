@@ -70,12 +70,7 @@ pub fn launcher_icon(text: &str) -> Option<String> {
     main_group(text).get("Icon").filter(|i| !i.is_empty()).map(|i| i.to_string())
 }
 
-pub fn trusted_launcher(path: &Path, data: &[PathBuf]) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let installed = |p: &Path| data.iter().any(|d| p.starts_with(d.join("applications")));
-    installed(path) || installed(&real) || std::fs::metadata(&real).is_ok_and(|m| m.permissions().mode() & 0o100 != 0)
-}
+pub use flit_platform_linux::desktop::trusted_launcher;
 
 pub fn parse_desktop(id: &str, path: &Path, text: &str, lang: &str) -> Option<Entry> {
     let fields = main_group(text);
@@ -214,10 +209,7 @@ pub fn commands(exec: &str, files: &[PathBuf], name: &str, desktop: &Path) -> Ve
     vec![command(exec, files, name, desktop)]
 }
 
-pub(crate) fn data_dirs() -> Vec<PathBuf> {
-    let system = std::env::var("XDG_DATA_DIRS").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "/usr/local/share:/usr/share".into());
-    crate::xdg::data_home().into_iter().chain(system.split(':').filter(|d| d.starts_with('/')).map(PathBuf::from)).collect()
-}
+pub(crate) use flit_platform_linux::desktop::data_dirs;
 
 fn config_dirs() -> Vec<PathBuf> {
     let system = std::env::var("XDG_CONFIG_DIRS").unwrap_or_else(|_| "/etc/xdg".into());

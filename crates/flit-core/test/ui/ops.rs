@@ -2512,3 +2512,43 @@ fn hovering_a_plain_file_hands_the_drop_to_its_shell_handler_with_flit_as_the_fa
     app.drag(&DragEvent::Enter { paths: vec![p("/tmp/f.txt")], x: at.0, y: at.1, mods: NO, allowed: all, right: false }, t0());
     assert_eq!(app.drop_onto(), None);
 }
+
+#[test]
+fn desktop_listing_labels_sort_and_select_by_title_but_f2_edits_the_actual_file() {
+    let mut app = app_at("/tmp/launchers");
+    app.caps.unix_paths = true;
+    let t = app.tab();
+    let mut listing = Listing::default();
+    let launcher = listing.push(b"z-browser.desktop", Meta::default());
+    listing.set_label(launcher, "Alpha Browser");
+    listing.push(b"middle.txt", Meta::default());
+    let mut keys = SortKeys::new(CaseMode::Sensitive);
+    keys.push(b"z-browser.desktop");
+    keys.push(b"middle.txt");
+    keys.relabel(&listing);
+    let view = ViewSpec::default();
+    let mut order = Vec::new();
+    sort::sort(&listing, &keys, view, &mut order);
+    t.slot.publish(Arc::new(DirSnapshot { gen: t.gen, path: t.location().path().clone(), listing, keys, order, view, done: true, error: None, elapsed: Duration::ZERO }));
+    app.poll();
+    app.drain_effects().for_each(drop);
+    let v = app.tab().view.as_ref().unwrap();
+    assert_eq!(v.rows(), &[launcher, 1]);
+    assert_eq!(app.shown_name(v.listing(), launcher), "Alpha Browser");
+    app.opts.char_key = crate::ui::options::CharKey::Select;
+    key(&mut app, Key::End, NO);
+    typed(&mut app, "a");
+    assert_eq!(selected(&app), ["z-browser.desktop"]);
+    for needle in ["Alpha", "z-browser"] {
+        let v = app.tabs[app.cur].view.as_mut().unwrap();
+        v.set_filter(needle);
+        assert_eq!(v.rows(), &[launcher]);
+    }
+    app.tabs[app.cur].view.as_mut().unwrap().set_filter("");
+    key(&mut app, Key::F(2), NO);
+    assert_eq!(app.rename_text(), Some("z-browser.desktop"));
+    typed(&mut app, "new");
+    assert_eq!(app.rename_text(), Some("new.desktop"));
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(ops(&mut app).into_iter().map(|(_, op)| op).collect::<Vec<_>>(), [FileOp::Rename { item: p("/tmp/launchers/z-browser.desktop"), name: b"new.desktop".to_vec() }]);
+}

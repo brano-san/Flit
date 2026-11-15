@@ -1,6 +1,7 @@
 #![cfg(target_os = "linux")]
 
 pub mod agent;
+pub mod desktop;
 mod busy;
 mod fs;
 mod inotify;

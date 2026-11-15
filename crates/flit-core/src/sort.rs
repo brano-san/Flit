@@ -151,6 +151,14 @@ impl SortKeys {
         self.prefix.push(u64::from_be_bytes(p));
     }
 
+    pub fn relabel_last(&mut self, name: &[u8]) {
+        if self.prefix.pop().is_some() {
+            self.offs.pop();
+            self.blob.truncate(self.offs.last().copied().unwrap_or(0) as usize);
+            self.push(name);
+        }
+    }
+
     pub fn append(&mut self, part: SortKeys) {
         let base = self.blob.len() as u32;
         self.blob.extend_from_slice(&part.blob);
