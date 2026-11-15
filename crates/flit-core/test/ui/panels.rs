@@ -690,7 +690,7 @@ fn closing_a_split_panel_slides_it_shut_and_the_neighbour_takes_the_room() {
     let half = rect(&app, 0).w;
     app.animations = true;
     app.close_panel();
-    let t = Instant::now();
+    let t = app.panels.closing.as_ref().unwrap().2;
     app.frame(&mut g, t);
     let start = rect(&app, 0).w;
     app.frame(&mut g, t + Duration::from_millis(50));
