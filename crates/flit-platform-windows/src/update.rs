@@ -34,7 +34,7 @@ impl Drop for Handle {
 
 fn last(what: &str) -> PlatformError {
     let e = windows::core::Error::from_thread();
-    PlatformError::new(e.code().0 as i64, format!("{what}: {}", e.message()))
+    PlatformError::new(e.code().0 as i64, format!("{what}: {}", crate::error_reason(&e)))
 }
 
 fn context(what: &str) -> impl Fn(windows::core::Error) -> PlatformError + '_ {

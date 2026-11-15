@@ -71,7 +71,11 @@ use windows::Win32::UI::Shell::{IShellItem, SHCreateItemFromParsingName, SIGDN_F
 use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, SystemParametersInfoW, MB_ICONERROR, MB_OK, SPI_GETWHEELSCROLLLINES, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS};
 
 pub(crate) fn err(e: windows::core::Error) -> PlatformError {
-    PlatformError::new(e.code().0 as i64, e.message())
+    PlatformError::new(e.code().0 as i64, error_reason(&e))
+}
+
+pub(crate) fn error_reason(e: &windows::core::Error) -> String {
+    flit_core::i18n::os_error(e.code().0).map_or_else(|| e.message(), |s| s.en().to_owned())
 }
 
 pub(crate) fn dark_mode() -> bool {

@@ -218,7 +218,7 @@ pub(crate) fn content_of(data: &IDataObject) -> Option<Content> {
 }
 
 fn io(e: std::io::Error) -> PlatformError {
-    PlatformError::new(e.raw_os_error().map_or(-1, i64::from), e.to_string())
+    PlatformError::new(e.raw_os_error().map_or(-1, i64::from), flit_core::fmt::io_reason(&e))
 }
 
 fn failed(error: PlatformError) -> OpOutcome {
