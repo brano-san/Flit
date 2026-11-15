@@ -27,12 +27,39 @@ fn unrelated_or_broken_mpv_lines_change_nothing() {
 }
 
 #[test]
+fn library_property_changes_move_the_same_bar_as_mpv_messages() {
+    let mut p = Progress { playing: true, ..Progress::default() };
+    assert!(p.change("duration", Some(30.0), None));
+    assert!(p.change("time-pos", Some(-0.5), None));
+    assert!(p.change("pause", None, Some(true)));
+    assert_eq!((p.position, p.duration, p.playing), (0.0, 30.0, false));
+    assert!(!p.change("pause", Some(1.0), None), "a pause without a flag is ignored");
+    assert!(!p.change("time-pos", None, None), "a position mpv cannot tell is ignored");
+    assert!(!p.change("volume", Some(80.0), None));
+    assert_eq!((p.position, p.duration, p.playing), (0.0, 30.0, false));
+}
+
+#[test]
+fn every_preview_control_becomes_the_same_order_for_both_players() {
+    assert_eq!(order(MediaCmd::Play), Order::Pause(false));
+    assert_eq!(order(MediaCmd::Pause), Order::Pause(true));
+    assert_eq!(order(MediaCmd::Seek(12.5)), Order::Seek(12.5));
+    assert_eq!(order(MediaCmd::Seek(-3.0)), Order::Seek(0.0), "a drag left of the bar seeks to the start");
+    assert_eq!(order(MediaCmd::Volume(0.375)), Order::Volume(38.0));
+    assert_eq!(order(MediaCmd::Volume(4.0)), Order::Volume(100.0));
+    assert_eq!(order(MediaCmd::Volume(-1.0)), Order::Volume(0.0));
+    assert_eq!(stop_signal(Order::Pause(true)), Some(libc::SIGSTOP), "players without a control socket are paused by a signal");
+    assert_eq!(stop_signal(Order::Pause(false)), Some(libc::SIGCONT));
+    assert_eq!(stop_signal(Order::Seek(1.0)), None, "a seek is never turned into a signal");
+}
+
+#[test]
 fn player_commands_are_one_json_line_each() {
-    assert_eq!(seek(12.5), "{\"command\":[\"seek\",12.5,\"absolute\"]}\n");
-    assert_eq!(seek(-3.0), "{\"command\":[\"seek\",0.0,\"absolute\"]}\n");
-    assert_eq!(volume(0.375), "{\"command\":[\"set_property\",\"volume\",38.0]}\n");
-    assert_eq!(volume(4.0), "{\"command\":[\"set_property\",\"volume\",100.0]}\n");
-    assert_eq!(pause(true), "{\"command\":[\"set_property\",\"pause\",true]}\n");
+    assert_eq!(line(order(MediaCmd::Seek(12.5))), "{\"command\":[\"seek\",12.5,\"absolute\"]}\n");
+    assert_eq!(line(order(MediaCmd::Seek(-3.0))), "{\"command\":[\"seek\",0.0,\"absolute\"]}\n");
+    assert_eq!(line(order(MediaCmd::Volume(0.375))), "{\"command\":[\"set_property\",\"volume\",38.0]}\n");
+    assert_eq!(line(order(MediaCmd::Volume(4.0))), "{\"command\":[\"set_property\",\"volume\",100.0]}\n");
+    assert_eq!(line(order(MediaCmd::Pause)), "{\"command\":[\"set_property\",\"pause\",true]}\n");
     assert_eq!(observe().lines().count(), 3);
     assert!(observe().contains("\"time-pos\"") && observe().contains("\"pause\""));
     let s = socket_path(Path::new("/run/user/1000"), 42);
@@ -44,4 +71,30 @@ fn player_commands_are_one_json_line_each() {
 #[test]
 fn without_a_private_runtime_folder_mpv_gets_no_control_socket() {
     assert_eq!(crate::shell::mpv_args(None, None), ["--no-terminal".to_owned()]);
+}
+
+#[test]
+fn the_library_player_is_tried_unless_it_is_known_to_be_missing() {
+    assert_eq!(backend(Some(true)), Backend::Embedded);
+    assert_eq!(backend(None), Backend::Embedded, "the library is looked for off the window thread on the first play");
+    assert_eq!(backend(Some(false)), Backend::External, "without libmpv the separate mpv window and the other players stay");
+}
+
+#[test]
+fn frames_follow_the_refresh_rate_of_the_screen() {
+    let hz = |d: Duration| (1.0 / d.as_secs_f64()).round();
+    assert_eq!(hz(frame_interval(Some(144_000))), 144.0);
+    assert_eq!(hz(frame_interval(Some(59_940))), 60.0);
+    assert_eq!(hz(frame_interval(None)), 60.0, "an unknown screen gets 60 frames a second");
+    assert_eq!(hz(frame_interval(Some(1))), 24.0, "a broken refresh rate never stalls the video");
+    assert_eq!(hz(frame_interval(Some(10_000_000))), 360.0);
+}
+
+#[test]
+fn the_video_area_is_taken_from_the_placed_rectangle() {
+    let r = |w: f32, h: f32| flit_core::render::Rect::new(10.0, 20.0, w, h);
+    assert_eq!(area(r(640.4, 359.6)), Some((640, 360)));
+    assert_eq!(area(r(0.0, 300.0)), None, "a collapsed pane keeps the previous size");
+    assert_eq!(area(r(f32::NAN, 300.0)), None);
+    assert_eq!(area(r(-5.0, 300.0)), None);
 }

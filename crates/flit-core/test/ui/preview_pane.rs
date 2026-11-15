@@ -241,6 +241,68 @@ fn media_controls_send_commands() {
     assert!(a.drain_effects().any(|e| matches!(e, Effect::Host(HostCmd::Close))));
 }
 
+fn shown_media(a: &mut App, name: &str, video: bool) -> u64 {
+    select(a, name);
+    frame(a);
+    let r = requests(a).pop().unwrap();
+    a.on_preview(r.gen, PreviewData::Media { video, poster: Some(Bitmap { width: 2, height: 2, rgba: vec![9; 16] }) });
+    a.preview_click(PaneHit::Play);
+    frame(a);
+    a.drain_effects().for_each(drop);
+    r.gen
+}
+
+fn video_frame(width: u32) -> Bitmap {
+    Bitmap { width, height: 4, rgba: vec![255; width as usize * 16] }
+}
+
+#[test]
+fn a_playing_video_shows_each_new_frame_in_place_of_the_poster() {
+    let mut a = app((1200, 700));
+    a.set_pane_state(PaneState { visible: true, ..Default::default() });
+    let gen = shown_media(&mut a, "b.png", true);
+    let (poster_rev, poster) = a.preview_image();
+    assert_eq!(poster.map(|b| b.width), Some(2));
+    let frames = preview::Frames::default();
+    assert!(frames.put(gen, video_frame(8)));
+    a.on_event(&Event::Hosted(HostEvent::Frame(frames.clone())), Instant::now());
+    let (rev, shown) = a.preview_image();
+    assert!(rev > poster_rev && shown.is_some_and(|b| b.width == 8), "the first frame replaces the poster");
+    assert!(frames.put(gen, video_frame(12)));
+    assert!(!frames.put(gen, video_frame(16)), "a frame not shown yet is replaced, not queued");
+    a.on_event(&Event::Hosted(HostEvent::Frame(frames.clone())), Instant::now());
+    assert_eq!(a.preview_image().1.map(|b| b.width), Some(16), "only the newest frame is shown");
+    let rev = a.preview_image().0;
+    a.on_event(&Event::Hosted(HostEvent::Frame(frames.clone())), Instant::now());
+    assert_eq!(a.preview_image().0, rev, "a wake-up without a new frame uploads nothing");
+    press(&mut a, Key::Space, NO);
+    frame(&mut a);
+    assert!(a.drain_effects().any(|e| matches!(e, Effect::Host(HostCmd::Close))), "closing the pane stops the player");
+    frames.put(gen, video_frame(20));
+    a.on_event(&Event::Hosted(HostEvent::Frame(frames.clone())), Instant::now());
+    assert!(a.preview_image().1.is_none_or(|b| b.width != 20), "a frame drawn while the player stops is not shown");
+}
+
+#[test]
+fn frames_of_a_file_left_behind_or_of_audio_never_reach_the_preview() {
+    let mut a = app((1200, 700));
+    a.set_pane_state(PaneState { visible: true, ..Default::default() });
+    let old = shown_media(&mut a, "b.png", true);
+    let frames = preview::Frames::default();
+    frames.put(old, video_frame(8));
+    let new = shown_media(&mut a, "c.docx", true);
+    assert_ne!(old, new);
+    let before = a.preview_image().0;
+    a.on_event(&Event::Hosted(HostEvent::Frame(frames.clone())), Instant::now());
+    assert_eq!(a.preview_image().0, before, "a late frame of the previous video is dropped");
+    assert_eq!(a.preview_image().1.map(|b| b.width), Some(2), "the new file keeps its poster");
+    assert!(frames.take().is_none(), "the dropped frame does not stay in memory");
+    let audio = shown_media(&mut a, "a.rs", false);
+    frames.put(audio, video_frame(8));
+    a.on_event(&Event::Hosted(HostEvent::Frame(frames.clone())), Instant::now());
+    assert_eq!(a.preview_image().1.map(|b| b.width), Some(2), "audio keeps its cover");
+}
+
 #[test]
 fn quick_view_opens_the_selection_or_peeks_with_the_pane() {
     let mut a = app((1200, 700));

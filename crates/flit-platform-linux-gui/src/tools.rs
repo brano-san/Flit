@@ -22,7 +22,7 @@ struct Need {
     when: When,
 }
 
-const NEEDS: [Need; 18] = [
+const NEEDS: [Need; 19] = [
     Need { tools: &["xdg-open"], purpose: S::SettingsPageToolOpen, packages: ["xdg-utils", "xdg-utils", "xdg-utils", "xdg-utils"], when: When::Always },
     Need { tools: &["gdbus"], purpose: S::SettingsPageToolDesktop, packages: ["libglib2.0-bin", "glib2", "glib2", "glib2-tools"], when: When::Always },
     Need { tools: &["gio"], purpose: S::SettingsPageToolDrives, packages: ["libglib2.0-bin", "glib2", "glib2", "glib2-tools"], when: When::Always },
@@ -39,12 +39,22 @@ const NEEDS: [Need; 18] = [
     Need { tools: &["pdftoppm"], purpose: S::SettingsPageToolPdf, packages: ["poppler-utils", "poppler-utils", "poppler", "poppler-tools"], when: When::Always },
     Need { tools: &["ffmpegthumbnailer"], purpose: S::SettingsPageToolVideo, packages: ["ffmpegthumbnailer", "ffmpegthumbnailer", "ffmpegthumbnailer", "ffmpegthumbnailer"], when: When::Always },
     Need { tools: &["mpv", "gst-play-1.0", "ffplay", "paplay"], purpose: S::SettingsPageToolMedia, packages: ["mpv", "mpv", "mpv", "mpv"], when: When::Always },
+    Need { tools: &["libmpv"], purpose: S::SettingsPageToolMediaInside, packages: ["libmpv2", "mpv-libs", "mpv", "libmpv2"], when: When::Always },
     Need { tools: &["lp"], purpose: S::SettingsPageToolPrint, packages: ["cups-client", "cups-client", "cups", "cups-client"], when: When::Always },
     Need { tools: &["xterm"], purpose: S::SettingsPageToolTerminal, packages: ["xterm", "xterm", "xterm", "xterm"], when: When::Terminal },
 ];
 
+const LIBRARIES: [(&str, &[&str]); 1] = [("libmpv", &crate::mpv::LIBRARIES)];
+const OLD_DEBIAN: [(&str, &str); 1] = [("libmpv", "libmpv1")];
+const OLD_DEBIAN_RELEASES: [&str; 6] = ["bionic", "focal", "jammy", "kinetic", "buster", "bullseye"];
+const LIBRARY_DIRS: [&str; 5] = ["/usr/lib", "/usr/lib64", "/lib", "/lib64", "/usr/local/lib"];
+
+fn value(os_release: &str, key: &str) -> String {
+    os_release.lines().find_map(|l| l.strip_prefix(key)).map(|v| v.trim_matches('"').to_ascii_lowercase()).unwrap_or_default()
+}
+
 pub fn family(os_release: &str) -> usize {
-    let value = |key: &str| os_release.lines().find_map(|l| l.strip_prefix(key)).map(|v| v.trim_matches('"').to_ascii_lowercase()).unwrap_or_default();
+    let value = |key: &str| value(os_release, key);
     let names = format!("{} {}", value("ID="), value("ID_LIKE="));
     let has = |n: &str| names.split_whitespace().any(|w| w == n);
     if has("fedora") || has("rhel") || has("centos") {
@@ -59,7 +69,37 @@ pub fn family(os_release: &str) -> usize {
 }
 
 pub fn package_for(tool: &str, os_release: &str) -> Option<&'static str> {
-    NEEDS.iter().find(|n| n.tools.first() == Some(&tool)).map(|n| n.packages[family(os_release)])
+    NEEDS.iter().find(|n| n.tools.first() == Some(&tool)).map(|n| package(n, os_release))
+}
+
+fn package(need: &Need, os_release: &str) -> &'static str {
+    let f = family(os_release);
+    let old = f == DEBIAN && ["UBUNTU_CODENAME=", "VERSION_CODENAME="].iter().any(|k| OLD_DEBIAN_RELEASES.contains(&value(os_release, k).as_str()));
+    OLD_DEBIAN.iter().find(|(tool, _)| old && need.tools[0] == *tool).map_or(need.packages[f], |(_, p)| p)
+}
+
+pub fn library_listed(cache: &[u8], file: &str) -> bool {
+    let entry = [b"/", file.as_bytes(), b"\0"].concat();
+    cache.windows(entry.len()).any(|w| w == entry)
+}
+
+fn library_present(files: &[&str], cache: &[u8], dirs: &[std::path::PathBuf]) -> bool {
+    files.iter().any(|f| library_listed(cache, f) || dirs.iter().any(|d| d.join(f).is_file()))
+}
+
+fn library_dirs() -> Vec<std::path::PathBuf> {
+    let mut dirs: Vec<std::path::PathBuf> = std::env::var_os("LD_LIBRARY_PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    let multiarch = format!("{}-linux-gnu", std::env::consts::ARCH);
+    dirs.extend(LIBRARY_DIRS.iter().map(std::path::PathBuf::from));
+    dirs.extend(["/usr/lib", "/lib"].iter().map(|d| std::path::Path::new(d).join(&multiarch)));
+    dirs
+}
+
+fn found(tool: &str, cache: &dyn Fn() -> Vec<u8>) -> bool {
+    match LIBRARIES.iter().find(|(name, _)| *name == tool) {
+        Some((_, files)) => crate::mpv::loaded() || library_present(files, &cache(), &library_dirs()),
+        None => crate::shell::on_path(OsStr::new(tool)).is_some(),
+    }
 }
 
 pub(crate) fn require(tool: &str) -> Result<std::path::PathBuf, flit_platform::PlatformError> {
@@ -71,7 +111,6 @@ pub(crate) fn command(tool: &str) -> std::io::Result<std::process::Command> {
 }
 
 pub fn missing_from(found: impl Fn(&str) -> bool, os_release: &str, wayland: bool, terminal: bool) -> Vec<MissingTool> {
-    let f = family(os_release);
     let applies = |w: When| match w {
         When::Always => true,
         When::X11 => !wayland,
@@ -81,7 +120,7 @@ pub fn missing_from(found: impl Fn(&str) -> bool, os_release: &str, wayland: boo
     NEEDS
         .iter()
         .filter(|n| applies(n.when) && !n.tools.iter().any(|t| found(t)))
-        .map(|n| MissingTool { tool: n.tools[0], purpose: n.purpose, package: n.packages[f] })
+        .map(|n| MissingTool { tool: n.tools[0], purpose: n.purpose, package: package(n, os_release) })
         .collect()
 }
 
@@ -91,7 +130,8 @@ pub fn os_release() -> String {
 
 pub fn missing() -> Vec<MissingTool> {
     let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
-    missing_from(|t| crate::shell::on_path(OsStr::new(t)).is_some(), &os_release(), wayland, crate::shell::terminal_program().is_some())
+    let cache = || std::fs::read("/etc/ld.so.cache").unwrap_or_default();
+    missing_from(|t| found(t, &cache), &os_release(), wayland, crate::shell::terminal_program().is_some())
 }
 
 #[cfg(test)]

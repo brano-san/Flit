@@ -38,6 +38,7 @@ const X11_KEYBOARD_LIBRARY: &CStr = c"libxkbcommon-x11.so.0";
 const READ_WAIT: Duration = Duration::from_secs(1);
 const VERIFY_WAIT: Duration = Duration::from_millis(400);
 const TAB_WINDOWS_WAIT: Duration = Duration::from_millis(250);
+const PLAYER_GRACE: Duration = Duration::from_secs(2);
 
 const DARK_UNKNOWN: u8 = 0;
 const DARK_NO: u8 = 1;
@@ -428,6 +429,7 @@ pub struct LinuxWindow {
     media: RefCell<Option<ShownMedia>>,
     player: RefCell<Option<crate::player::Player>>,
     volume: Cell<Option<f32>>,
+    placed: Cell<Option<(u32, u32)>>,
 }
 
 #[derive(Clone)]
@@ -456,6 +458,7 @@ impl LinuxWindow {
             media: RefCell::new(None),
             player: RefCell::new(None),
             volume: Cell::new(None),
+            placed: Cell::new(None),
         };
         window.cache_target(None);
         window
@@ -504,35 +507,29 @@ impl LinuxWindow {
         }
     }
 
-    fn tell_player(&self, line: &str, signal: Option<libc::c_int>) -> bool {
-        let player = self.player.borrow();
-        let Some(p) = player.as_ref().filter(|p| p.alive()) else { return false };
-        p.send(line) || signal.is_some_and(|s| p.signal(s))
+    fn tell_player(&self, order: crate::player::Order) -> bool {
+        self.player.borrow().as_ref().is_some_and(|p| p.order(order))
     }
 
     fn play(&self) {
-        if self.tell_player(&crate::player::pause(false), Some(libc::SIGCONT)) {
+        if self.tell_player(crate::player::order(MediaCmd::Play)) {
             return;
         }
         self.stop_player();
         let Some(m) = self.media.borrow().clone() else { return };
         let Some(file) = flit_platform_linux::host(&m.path) else { return };
-        let socket = std::env::var_os("XDG_RUNTIME_DIR").map(|d| crate::player::socket_path(std::path::Path::new(&d), m.gen));
-        match crate::shell::play_media(m.video, file, socket.as_deref(), self.volume.get()) {
-            Ok((child, ipc)) => {
-                let id = self.id;
-                let report = move |e: flit_core::preview::HostEvent| {
-                    QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((id, Event::Hosted(e)));
-                    wake_loop();
-                };
-                self.player.replace(Some(crate::player::Player::start(child, socket.filter(|_| ipc), m.gen, report)));
-            }
-            Err(error) => {
-                let failed = flit_core::preview::HostEvent::Failed { gen: m.gen, message: flit_core::i18n::localize(&error.message).into_owned() };
-                QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((self.id, Event::Hosted(failed)));
-                wake_loop();
-            }
-        }
+        let id = self.id;
+        let report: crate::player::Report = Arc::new(move |e: flit_core::preview::HostEvent| {
+            QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((id, Event::Hosted(e)));
+            wake_loop();
+        });
+        let start = crate::player::Start { path: file.to_path_buf(), video: m.video, gen: m.gen, volume: self.volume.get(), area: self.placed.get(), every: self.frame_interval(m.video) };
+        self.player.replace(crate::player::Player::start(start, report));
+    }
+
+    fn frame_interval(&self, video: bool) -> std::time::Duration {
+        let refresh = video.then(|| self.raw.current_monitor()).flatten().and_then(|m| m.current_video_mode()).and_then(|v| v.refresh_rate_millihertz());
+        crate::player::frame_interval(refresh.map(std::num::NonZeroU32::get))
     }
 
     pub(crate) fn winit(&self) -> &Arc<dyn winit::window::Window> {
@@ -670,23 +667,28 @@ impl Window for LinuxWindow {
         match cmd {
             HostCmd::Show { gen, what: Hosted::Media { video }, path, .. } => {
                 self.stop_player();
+                self.placed.set(None);
                 self.media.replace(Some(ShownMedia { gen, video, path }));
             }
             HostCmd::Show { .. } | HostCmd::Close => {
                 self.stop_player();
+                self.placed.set(None);
                 self.media.replace(None);
             }
-            HostCmd::Place(_) => {}
-            HostCmd::Media(MediaCmd::Seek(at)) => {
-                self.tell_player(&crate::player::seek(at), None);
-            }
-            HostCmd::Media(MediaCmd::Volume(v)) => {
-                self.volume.set(Some(v));
-                self.tell_player(&crate::player::volume(v), None);
+            HostCmd::Place(rect) => {
+                if let Some(area) = rect.and_then(crate::player::area) {
+                    self.placed.set(Some(area));
+                    if let Some(p) = self.player.borrow().as_ref() {
+                        p.place(area);
+                    }
+                }
             }
             HostCmd::Media(MediaCmd::Play) => self.play(),
-            HostCmd::Media(MediaCmd::Pause) => {
-                self.tell_player(&crate::player::pause(true), Some(libc::SIGSTOP));
+            HostCmd::Media(cmd) => {
+                if let MediaCmd::Volume(v) = cmd {
+                    self.volume.set(Some(v));
+                }
+                self.tell_player(crate::player::order(cmd));
             }
         }
     }
@@ -894,8 +896,11 @@ impl WindowSystem for LinuxWindows {
         LOOP_RUNNING.store(true, Ordering::Release);
         let ran = self.event_loop.run_app_on_demand(&mut app);
         LOOP_RUNNING.store(false, Ordering::Release);
+        let error = app.error.take();
+        drop(app);
+        crate::mpv::settle(PLAYER_GRACE);
         ran.map_err(loop_failure)?;
-        app.error.map_or(Ok(()), Err)
+        error.map_or(Ok(()), Err)
     }
 }
 
