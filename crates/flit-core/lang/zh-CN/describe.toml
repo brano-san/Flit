@@ -276,6 +276,7 @@
 "view.column.git_date" = "显示最后一次提交时间的列"
 "git.fetch" = "从远程下载新提交，不更改文件"
 "git.pull" = "将远程更改合并到当前分支"
+"git.sync" = "拉取远程更改，成功后推送当前分支"
 "git.push" = "将本地提交发送到远程"
 "git.init" = "将当前文件夹设为新的 Git 仓库"
 "git.clone" = "按 URL 将仓库复制到当前文件夹"

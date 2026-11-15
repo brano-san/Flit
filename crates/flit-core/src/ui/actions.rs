@@ -480,6 +480,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("git.fetch", G::Flit, S::ActionsGitFetch, S::DescribeGitFetch, &[], |a, _| a.git_run(GitOp::Fetch)),
     Action::new("git.pull", G::Flit, S::ActionsGitPull, S::DescribeGitPull, &[], |a, _| a.git_run(GitOp::Pull)),
     Action::new("git.push", G::Flit, S::ActionsGitPush, S::DescribeGitPush, &[], |a, _| a.git_run(GitOp::Push)),
+    Action::new("git.sync", G::Flit, S::ActionsGitSync, S::DescribeGitSync, &[], |a, _| a.git_run(GitOp::Sync)),
     Action::new("git.init", G::Flit, S::ActionsGitInit, S::DescribeGitInit, &[], |a, _| a.git_run(GitOp::Init)),
     Action::new("git.clone", G::Flit, S::ActionsGitClone, S::DescribeGitClone, &[], |a, _| a.ask_clone()),
     Action::new("git.branches", G::Flit, S::ActionsGitBranches, S::DescribeGitBranches, &[], |a, _| a.git_branches_menu()),
@@ -694,6 +695,7 @@ impl App {
         let (home, bin, library) = (kind == PathKind::Home, kind == PathKind::RecycleBin, self.current_library().is_some());
         let no_files = home || bin || kind == PathKind::Computer;
         match id.split('.').next().unwrap_or_default() {
+            _ if id == "git.sync" => self.git_can_sync(),
             _ if id.ends_with("origin") || id.ends_with(".deleted") => bin,
             _ if id == "home.clear_recent" => true,
             _ if id == "layout.load" => !self.opts.layouts.is_empty(),

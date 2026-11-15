@@ -43,8 +43,10 @@ impl GitWorker {
 pub fn command(dir: &Path) -> Command {
     let mut c = Command::new("git");
     c.arg("--no-optional-locks").arg("-C").arg(dir);
-    c.env("GIT_TERMINAL_PROMPT", "0").env("GIT_MERGE_AUTOEDIT", "no").env("LC_ALL", "C");
+    c.env("GIT_TERMINAL_PROMPT", "0").env("GIT_MERGE_AUTOEDIT", "no").env("LC_ALL", "C").env("LANGUAGE", "");
     c.stdin(Stdio::null());
+    #[cfg(test)]
+    tests::isolate(&mut c);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -154,7 +156,8 @@ pub fn status(dir: &Path, commits: bool, cache: &mut Cache) -> Option<GitInfo> {
     let branch = std::fs::read(gitdir.join("HEAD")).ok().and_then(|h| git::head_branch(&h)).unwrap_or_default();
     let status = output(dir, &["status", "--porcelain=v1", "-z", "--", "."]).map(|o| git::parse_status(&o.stdout, &prefix(&root, dir))).unwrap_or_default();
     let commits = if commits { cache.commits(dir, &gitdir) } else { Commits::default() };
-    Some(GitInfo { root: FsPath::parse(&root.to_string_lossy()), branch, status, commits })
+    let upstream = output(dir, &["rev-parse", "--abbrev-ref", "@{u}"]).ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).filter(|s| !s.is_empty());
+    Some(GitInfo { root: FsPath::parse(&root.to_string_lossy()), branch, upstream, status, commits })
 }
 
 
@@ -176,14 +179,26 @@ fn remote_url(dir: &Path) -> Result<String, String> {
     git::web_url(&String::from_utf8_lossy(&out.stdout)).ok_or_else(|| S::GitErrorNoWeb.t().to_owned())
 }
 
+const NO_UPSTREAM: [&str; 2] = ["no upstream", "set-upstream"];
+
+fn push(run: &mut impl FnMut(&[&str]) -> Result<(), String>) -> Result<(), String> {
+    match run(&["push"]) {
+        Err(e) if NO_UPSTREAM.iter().any(|s| e.contains(s)) => run(&["push", "--set-upstream", "origin", "HEAD"]),
+        r => r,
+    }
+}
+
+fn sync(run: &mut impl FnMut(&[&str]) -> Result<(), String>) -> Result<(), String> {
+    run(&["pull"])?;
+    push(run)
+}
+
 pub fn run_op(dir: &Path, op: &GitOp) -> Result<Option<String>, String> {
     match op {
         GitOp::Fetch => output(dir, &["fetch", "--prune"]).map(drop),
         GitOp::Pull => output(dir, &["pull"]).map(drop),
-        GitOp::Push => match output(dir, &["push"]) {
-            Err(e) if e.contains("no upstream") || e.contains("set-upstream") => output(dir, &["push", "--set-upstream", "origin", "HEAD"]).map(drop),
-            r => r.map(drop),
-        },
+        GitOp::Push => push(&mut |args| output(dir, args).map(drop)),
+        GitOp::Sync => sync(&mut |args| output(dir, args).map(drop)),
         GitOp::Init => output(dir, &["init"]).map(drop),
         GitOp::Clone { url } => output(dir, &["clone", "--", url]).map(drop),
         GitOp::Switch(b) => match output(dir, &["switch", b]) {

@@ -169,6 +169,9 @@ impl App {
     }
 
     pub(super) fn git_run(&mut self, op: GitOp) {
+        if op == GitOp::Sync && !self.git_can_sync() {
+            return self.status(S::GitErrorNoUpstream.t());
+        }
         let need_repo = !matches!(op, GitOp::Init | GitOp::Clone { .. });
         if let Some((tab, dir)) = self.git_target(need_repo) {
             self.effects.push(Effect::Git(GitRequest::Run { tab, dir, op }));
@@ -179,6 +182,10 @@ impl App {
         if let Some((tab, dir)) = self.git_target(true) {
             self.effects.push(Effect::Git(GitRequest::Branches { tab, dir }));
         }
+    }
+
+    pub(super) fn git_can_sync(&self) -> bool {
+        git_dir(self.tab().location()).is_some() && self.git_info().is_some_and(|g| g.root.is_some() && g.upstream.is_some())
     }
 
     pub(super) fn git_switch(&mut self, k: usize) {
@@ -210,6 +217,7 @@ fn started_text(op: &GitOp) -> String {
         GitOp::Fetch => S::GitOpFetching.t().to_owned(),
         GitOp::Pull => S::GitOpPulling.t().to_owned(),
         GitOp::Push => S::GitOpPushing.t().to_owned(),
+        GitOp::Sync => S::GitOpSyncing.t().to_owned(),
         GitOp::Init => S::GitOpInitializing.t().to_owned(),
         GitOp::Clone { url } => crate::tr!(S::GitOpCloning, url = url),
         GitOp::Switch(b) => crate::tr!(S::GitOpSwitching, branch = b),
@@ -248,6 +256,7 @@ fn done_text(op: &GitOp) -> String {
         GitOp::Fetch => S::GitDoneFetch.t().to_owned(),
         GitOp::Pull => S::GitDonePull.t().to_owned(),
         GitOp::Push => S::GitDonePush.t().to_owned(),
+        GitOp::Sync => S::GitDoneSync.t().to_owned(),
         GitOp::Init => S::GitDoneInit.t().to_owned(),
         GitOp::Clone { url } => crate::tr!(S::GitDoneClone, name = crate::git::repo_name(url).unwrap_or_default()),
         GitOp::Switch(b) => crate::tr!(S::GitDoneSwitch, branch = b),

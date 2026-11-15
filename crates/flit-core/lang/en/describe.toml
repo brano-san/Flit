@@ -276,6 +276,7 @@
 "view.column.git_date" = "Column with the time of the last commit"
 "git.fetch" = "Downloads new commits from the remote without changing files"
 "git.pull" = "Brings the remote changes into the current branch"
+"git.sync" = "Pulls remote changes, then pushes the current branch if the pull succeeds"
 "git.push" = "Sends the local commits to the remote"
 "git.init" = "Makes the current folder a new Git repository"
 "git.clone" = "Copies a repository by its URL into the current folder"

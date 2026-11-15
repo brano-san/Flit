@@ -276,6 +276,7 @@
 "view.column.git_date" = "Spalte „Commit-Datum“ ein- oder ausblenden"
 "git.fetch" = "Git: Abrufen (Fetch)"
 "git.pull" = "Git: Pull"
+"git.sync" = "Git: Synchronisieren"
 "git.push" = "Git: Push"
 "git.init" = "Git: Repository hier initialisieren"
 "git.clone" = "Git: Repository klonen"

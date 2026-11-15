@@ -276,6 +276,7 @@
 "view.column.git_date" = "Columna con la hora del último commit"
 "git.fetch" = "Descarga commits nuevos del remoto sin cambiar archivos"
 "git.pull" = "Trae los cambios remotos a la rama actual"
+"git.sync" = "Trae los cambios remotos y, si se completa correctamente, envía la rama actual"
 "git.push" = "Envía los commits locales al remoto"
 "git.init" = "Convierte la carpeta actual en un repositorio Git nuevo"
 "git.clone" = "Copia un repositorio por su URL en la carpeta actual"

@@ -13,6 +13,7 @@ untracked = "Sin seguimiento"
 conflict = "Conflicto"
 
 [op]
+syncing = "Sincronizando…"
 fetching = "Obteniendo…"
 pulling = "Haciendo pull…"
 pushing = "Haciendo push…"
@@ -21,6 +22,7 @@ cloning = "Clonando {url}…"
 switching = "Cambiando a {branch}…"
 
 [done]
+sync = "Sincronización completada"
 fetch = "Fetch completado"
 pull = "Pull completado"
 push = "Push completado"
@@ -29,6 +31,7 @@ clone = "Clonado en {name}"
 switch = "Cambiado a {branch}"
 
 [error]
+no_upstream = "No hay una rama de seguimiento"
 not_repo = "Esta carpeta no está en un repositorio Git"
 no_web = "El repositorio no tiene un remoto web"
 failed = "Git: {error}"

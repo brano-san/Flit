@@ -31,6 +31,72 @@ fn git_requests(fx: &[Effect]) -> Vec<GitRequest> {
 }
 
 #[test]
+fn sync_is_listed_but_disabled_without_an_upstream() {
+    let (mut app, _) = app_in(r"C:\x", &[]);
+    app.on_git(repo(&app));
+    let menu = app.build_branch_menu();
+    assert!(menu.iter().any(|m| matches!(m, MenuItem::Command { label, disabled: true, .. } if label.contains("Sync"))));
+    assert!(!app.available("git.sync"));
+    assert!(app.run_action("git.sync", Instant::now()));
+    assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty());
+    assert_eq!(app.tab().error.as_deref(), Some("No upstream branch"));
+}
+
+#[test]
+fn sync_is_a_discoverable_palette_command() {
+    let (mut app, _) = app_in(r"C:\x", &[]);
+    app.open_palette();
+    let palette = app.nav.palette.as_ref().unwrap();
+    assert!(palette.ids.iter().any(|&i| crate::ui::actions::ACTIONS[i].id == "git.sync"));
+}
+
+#[test]
+fn sync_stays_disabled_in_the_palette_at_narrow_widths_in_every_language() {
+    use crate::i18n::{self, Lang};
+    for lang in Lang::ALL {
+        i18n::set_lang(lang);
+        let (mut app, _) = app_in(r"C:\x", &[]);
+        app.on_event(&crate::input::Event::Resized { width: 480, height: 360 }, Instant::now());
+        app.on_git(repo(&app));
+        let menu = app.build_branch_menu();
+        let bounds = crate::render::Rect::new(0.0, 0.0, 480.0, 360.0);
+        let view = crate::ui::popup::MenuView::new(&menu, 460.0, 340.0, bounds, 1.0, &mut Gfx::new(crate::text::tests::Mono, 2048));
+        assert!(view.panels().all(|r| r.x >= 0.0 && r.y >= 0.0 && r.right() <= 480.0 && r.bottom() <= 360.0));
+        app.open_palette();
+        for c in S::ActionsGitSync.t().chars() {
+            app.on_event(&crate::input::Event::Char(c), Instant::now());
+        }
+        app.frame(&mut Gfx::new(crate::text::tests::Mono, 2048), Instant::now());
+        let p = app.nav.palette.as_ref().unwrap();
+        assert!(p.rect.x >= 0.0 && p.rect.right() <= 480.0 && p.rect.bottom() <= 360.0);
+        let k = p.ids.iter().position(|&i| crate::ui::actions::ACTIONS[i].id == "git.sync").unwrap();
+        assert!(!p.commands.as_ref().unwrap().live[k]);
+        assert!((0..p.matches.len()).any(|row| p.row_action(row).is_some_and(|i| crate::ui::actions::ACTIONS[i].id == "git.sync")));
+    }
+    i18n::set_lang(Lang::En);
+}
+
+#[test]
+fn sync_uses_the_active_tabs_upstream_and_does_not_leak_to_other_windows() {
+    let (mut app, _) = app_in(r"C:\x", &[]);
+    let mut ev = repo(&app);
+    if let GitEvent::Status { info: Some(i), .. } = &mut ev {
+        Arc::make_mut(i).upstream = Some("origin/topic/x".into());
+    }
+    app.on_git(ev);
+    assert!(app.available("git.sync"));
+    assert!(app.build_branch_menu().iter().any(|m| matches!(m, MenuItem::Command { label, disabled: false, .. } if label == "Git: Sync")));
+    app.run_action("git.sync", Instant::now());
+    assert!(matches!(git_requests(&app.drain_effects().collect::<Vec<_>>()).as_slice(), [GitRequest::Run { op: GitOp::Sync, tab, .. }] if *tab == app.tab().id));
+    let (other, _) = app_in(r"C:\x", &[]);
+    assert!(!other.available("git.sync"));
+    app.run_action("tab.new", Instant::now());
+    assert!(!app.available("git.sync"));
+    app.run_action("tab.previous", Instant::now());
+    assert!(app.available("git.sync"));
+}
+
+#[test]
 fn integration_is_off_by_default_and_late_status_is_ignored_after_disabling() {
     let mut app = App::new(Persisted { path: Location::parse(r"C:\x").unwrap(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 600), Instant::now());
     assert!(!app.prefs.git_integration);

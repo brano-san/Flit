@@ -13,6 +13,7 @@ untracked = "Untracked"
 conflict = "Conflict"
 
 [op]
+syncing = "Synchronizing…"
 fetching = "Fetching…"
 pulling = "Pulling…"
 pushing = "Pushing…"
@@ -21,6 +22,7 @@ cloning = "Cloning {url}…"
 switching = "Switching to {branch}…"
 
 [done]
+sync = "Sync finished"
 fetch = "Fetch finished"
 pull = "Pull finished"
 push = "Push finished"
@@ -29,6 +31,7 @@ clone = "Cloned into {name}"
 switch = "Switched to {branch}"
 
 [error]
+no_upstream = "No upstream branch"
 not_repo = "This folder is not in a Git repository"
 no_web = "The repository has no web remote"
 failed = "Git: {error}"

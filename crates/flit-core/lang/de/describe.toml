@@ -276,6 +276,7 @@
 "view.column.git_date" = "Spalte mit der Zeit des letzten Commits"
 "git.fetch" = "Lädt neue Commits vom Remote, ohne Dateien zu ändern"
 "git.pull" = "Übernimmt die Remote-Änderungen in den aktuellen Branch"
+"git.sync" = "Holt entfernte Änderungen und überträgt bei Erfolg den aktuellen Branch"
 "git.push" = "Sendet die lokalen Commits an den Remote"
 "git.init" = "Macht den aktuellen Ordner zu einem neuen Git-Repository"
 "git.clone" = "Kopiert ein Repository per URL in den aktuellen Ordner"

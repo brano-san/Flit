@@ -425,7 +425,7 @@ impl App {
     pub(super) fn build_branch_menu(&mut self) -> Vec<MenuItem> {
         let current = self.git_branch().unwrap_or_default().to_owned();
         let branches = self.git_branches.clone();
-        self.collect(|_, m| {
+        self.collect(|a, m| {
             for (k, b) in branches.iter().enumerate() {
                 m.command(Cmd::GitBranch(k), b, String::new(), *b == current);
             }
@@ -433,6 +433,13 @@ impl App {
             m.action("git.fetch", S::ActionsGitFetch.t());
             m.action("git.pull", S::ActionsGitPull.t());
             m.action("git.push", S::ActionsGitPush.t());
+            if m.shown("git.sync") {
+                let ready = a.git_can_sync();
+                m.entry(Cmd::Action("git.sync"), S::ActionsGitSync.t(), m.keys.all_text("git.sync"), Mark::None, false, !ready);
+                if !ready {
+                    m.header(S::GitErrorNoUpstream.t());
+                }
+            }
             m.separator();
             m.action("git.open_remote", S::ActionsGitOpenRemote.t());
         })

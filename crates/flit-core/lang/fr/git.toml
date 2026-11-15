@@ -13,6 +13,7 @@ untracked = "Non suivi"
 conflict = "Conflit"
 
 [op]
+syncing = "Synchronisation en cours…"
 fetching = "Récupération…"
 pulling = "Pull en cours…"
 pushing = "Push en cours…"
@@ -21,6 +22,7 @@ cloning = "Clonage de {url}…"
 switching = "Passage à {branch}…"
 
 [done]
+sync = "Synchronisation terminée"
 fetch = "Récupération terminée"
 pull = "Pull terminé"
 push = "Push terminé"
@@ -29,6 +31,7 @@ clone = "Cloné dans {name}"
 switch = "Passé à {branch}"
 
 [error]
+no_upstream = "Aucune branche amont"
 not_repo = "Ce dossier n’est pas dans un dépôt Git"
 no_web = "Le dépôt n’a pas de dépôt distant web"
 failed = "Git : {error}"

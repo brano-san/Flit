@@ -276,6 +276,7 @@
 "view.column.git_date" = "Show or hide the Commit date column"
 "git.fetch" = "Git: Fetch"
 "git.pull" = "Git: Pull"
+"git.sync" = "Git: Sync"
 "git.push" = "Git: Push"
 "git.init" = "Git: Initialize a repository here"
 "git.clone" = "Git: Clone a repository"

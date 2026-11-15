@@ -2,6 +2,70 @@ use super::*;
 use flit_core::git::GitStatus;
 use std::fs;
 
+pub(super) fn isolate(c: &mut Command) {
+    static CONFIG: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    let empty = CONFIG.get_or_init(|| {
+        let path = std::env::temp_dir().join(format!("flit-git-empty-{}.config", std::process::id()));
+        fs::write(&path, "").unwrap();
+        path
+    });
+    c.env("GIT_CONFIG_GLOBAL", empty).env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_AUTHOR_NAME", "Ann").env("GIT_AUTHOR_EMAIL", "ann@example.com")
+        .env("GIT_COMMITTER_NAME", "Ann").env("GIT_COMMITTER_EMAIL", "ann@example.com");
+}
+
+#[test]
+fn sync_pulls_before_pushing_and_keeps_the_push_upstream_fallback() {
+    let mut calls = Vec::new();
+    let result = sync(&mut |args| {
+        calls.push(args.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        if args == ["push"] { Err("fatal: The current branch topic/x has no upstream branch.".into()) } else { Ok(()) }
+    });
+    assert_eq!(result, Ok(()));
+    assert_eq!(calls, [vec!["pull"], vec!["push"], vec!["push", "--set-upstream", "origin", "HEAD"]]);
+}
+
+#[test]
+fn sync_never_pushes_after_a_failed_pull() {
+    let mut calls = Vec::new();
+    let result = sync(&mut |args| {
+        calls.push(args.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        Err("CONFLICT: merge failed".into())
+    });
+    assert_eq!(result, Err("CONFLICT: merge failed".into()));
+    assert_eq!(calls, [vec!["pull"]]);
+}
+
+#[test]
+fn sync_reports_push_rejection_without_retrying_as_a_new_upstream() {
+    let mut calls = Vec::new();
+    let result = sync(&mut |args| {
+        calls.push(args.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        if args == ["push"] { Err("error: failed to push some refs".into()) } else { Ok(()) }
+    });
+    assert_eq!(result, Err("error: failed to push some refs".into()));
+    assert_eq!(calls, [vec!["pull"], vec!["push"]]);
+}
+
+#[test]
+fn upstream_status_tracks_the_current_branch_and_detached_or_unborn_heads() {
+    assert!(have_git());
+    let t = temp("upstream папка с пробелами");
+    let r = &t.0;
+    assert!(status(r, false, &mut Cache::default()).is_none());
+    sh(r, &["init", "-q"]);
+    assert!(status(r, false, &mut Cache::default()).unwrap().upstream.is_none());
+    fs::write(r.join("a.txt"), "1").unwrap();
+    sh(r, &["add", "."]);
+    sh(r, &["commit", "-qm", "first"]);
+    sh(r, &["switch", "-c", "topic/x"]);
+    assert!(status(r, false, &mut Cache::default()).unwrap().upstream.is_none());
+    sh(r, &["branch", "--set-upstream-to=main"]);
+    assert_eq!(status(r, false, &mut Cache::default()).unwrap().upstream.as_deref(), Some("main"));
+    sh(r, &["switch", "--detach"]);
+    assert!(status(r, false, &mut Cache::default()).unwrap().upstream.is_none());
+}
+
 struct Temp(PathBuf);
 
 impl Drop for Temp {
@@ -77,6 +141,8 @@ fn network_operations_against_a_local_bare_repository() {
     sh(&work, &["add", "."]);
     sh(&work, &["commit", "-qm", "one"]);
     sh(&work, &["remote", "add", "origin", bare.to_str().unwrap()]);
+    let no_upstream = output(&work, &["push"]).unwrap_err();
+    assert!(NO_UPSTREAM.iter().any(|s| no_upstream.contains(s)), "{no_upstream}");
     run_op(&work, &GitOp::Push).unwrap();
     let url = bare.to_string_lossy().into_owned();
     run_op(&t.0, &GitOp::Clone { url }).unwrap();
@@ -88,6 +154,11 @@ fn network_operations_against_a_local_bare_repository() {
     run_op(&clone, &GitOp::Fetch).unwrap();
     run_op(&clone, &GitOp::Pull).unwrap();
     assert_eq!(fs::read_to_string(clone.join("a.txt")).unwrap(), "2");
+    fs::write(work.join("a.txt"), "3").unwrap();
+    sh(&work, &["commit", "-qam", "three"]);
+    run_op(&work, &GitOp::Push).unwrap();
+    run_op(&clone, &GitOp::Sync).unwrap();
+    assert_eq!(fs::read_to_string(clone.join("a.txt")).unwrap(), "3");
     sh(&work, &["branch", "dev"]);
     run_op(&work, &GitOp::Push).unwrap();
     sh(&work, &["push", "-q", "origin", "dev"]);

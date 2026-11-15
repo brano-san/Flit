@@ -62,6 +62,7 @@ pub struct Commit {
 pub struct GitInfo {
     pub root: Option<FsPath>,
     pub branch: String,
+    pub upstream: Option<String>,
     pub status: FxHashMap<Vec<u8>, GitStatus>,
     pub commits: FxHashMap<Vec<u8>, Arc<Commit>>,
 }
@@ -71,6 +72,7 @@ pub enum GitOp {
     Fetch,
     Pull,
     Push,
+    Sync,
     Init,
     Clone { url: String },
     Switch(String),
@@ -229,6 +231,7 @@ pub fn op_command(op: &GitOp) -> Option<String> {
         GitOp::Fetch => "git fetch".to_owned(),
         GitOp::Pull => "git pull".to_owned(),
         GitOp::Push => "git push".to_owned(),
+        GitOp::Sync => "git pull && git push".to_owned(),
         GitOp::Clone { url } => format!("git clone {url}"),
         GitOp::Init | GitOp::Switch(_) | GitOp::OpenRemote => return None,
     })

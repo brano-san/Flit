@@ -276,6 +276,7 @@
 "view.column.git_date" = "显示或隐藏“提交日期”列"
 "git.fetch" = "Git：获取 (Fetch)"
 "git.pull" = "Git：拉取 (Pull)"
+"git.sync" = "Git：同步"
 "git.push" = "Git：推送 (Push)"
 "git.init" = "Git：在此初始化仓库"
 "git.clone" = "Git：克隆仓库"
