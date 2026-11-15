@@ -404,7 +404,7 @@ fn online_only_files_show_basic_info_until_the_download_button_is_clicked() {
     use crate::listing::{ChangeKind, DirChange};
     let mut a = app((1200, 700));
     a.set_pane_state(PaneState { visible: true, ..Default::default() });
-    let change = |attrs| DirChange { kind: ChangeKind::Modified, name: b"a.rs".to_vec(), meta: Some(Meta { attrs, size: 100, modified: 1, ..Default::default() }) };
+    let change = |attrs| DirChange { label: crate::listing::Label::Keep, kind: ChangeKind::Modified, name: b"a.rs".to_vec(), meta: Some(Meta { attrs, size: 100, modified: 1, ..Default::default() }) };
     a.tab_mut().view.as_mut().unwrap().apply(&change(attr::ONLINE_ONLY));
     select(&mut a, "a.rs");
     frame(&mut a);

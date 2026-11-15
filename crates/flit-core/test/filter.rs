@@ -28,7 +28,7 @@ fn rows(v: &DirView) -> Vec<String> {
 }
 
 fn added(name: &str) -> DirChange {
-    DirChange { kind: ChangeKind::Added, name: name.into(), meta: Some(Meta::default()) }
+    DirChange { label: crate::listing::Label::Keep, kind: ChangeKind::Added, name: name.into(), meta: Some(Meta::default()) }
 }
 
 #[test]
@@ -91,9 +91,9 @@ fn filtered_rows_drive_selection_and_lookup() {
 fn diffs_resorts_and_sizes_respect_the_filter() {
     let mut v = DirView::new(snap(&["a1", "b1", "a2"]));
     v.set_filter("a");
-    v.apply_all([added("a0"), added("zz"), DirChange { kind: ChangeKind::Removed, name: "a2".into(), meta: None }]);
+    v.apply_all([added("a0"), added("zz"), DirChange { label: crate::listing::Label::Keep, kind: ChangeKind::Removed, name: "a2".into(), meta: None }]);
     assert_eq!(rows(&v), ["a0", "a1"]);
-    v.apply(&DirChange { kind: ChangeKind::Modified, name: "a0".into(), meta: Some(Meta { attrs: attr::HIDDEN, ..Default::default() }) });
+    v.apply(&DirChange { label: crate::listing::Label::Keep, kind: ChangeKind::Modified, name: "a0".into(), meta: Some(Meta { attrs: attr::HIDDEN, ..Default::default() }) });
     assert_eq!(rows(&v), ["a1"]);
     let by_size = ViewSpec { sort: SortSpec { field: SortField::Size, descending: true, ..Default::default() }, show_hidden: true, ..Default::default() };
     let mut order = Vec::new();

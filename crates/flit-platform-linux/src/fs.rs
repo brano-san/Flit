@@ -546,9 +546,7 @@ impl Fs for LinuxFs {
             Some((dev, out.tagging()?))
         });
         let hidden = hidden_list(fd.as_raw_fd());
-        let data = crate::desktop::data_dirs();
-        let lang = flit_core::i18n::lang().code();
-        let system = std::env::var("LANG").unwrap_or_default();
+        let launchers = out.wants_labels().then(|| (crate::desktop::data_dirs(), flit_core::i18n::lang().code(), std::env::var("LANG").unwrap_or_default()));
         dents(fd.as_raw_fd(), |name, d_type| {
             let (mut meta, accessed, node) = entry_at(fd.as_raw_fd(), name, d_type);
             mark_listed_hidden(&mut meta, name.to_bytes(), &hidden);
@@ -558,8 +556,8 @@ impl Fs for LinuxFs {
                 None => out.push(name.to_bytes(), meta),
             }
             out.set_accessed(accessed);
-            if name.to_bytes().ends_with(b".desktop") && meta.attrs & attr::DIR == 0 {
-                if let Some(label) = crate::desktop::label(&path.join(OsStr::from_bytes(name.to_bytes())), &data, lang, &system) {
+            if let Some((data, lang, system)) = launchers.as_ref().filter(|_| name.to_bytes().ends_with(b".desktop") && meta.attrs & attr::DIR == 0) {
+                if let Some(label) = crate::desktop::label(&path.join(OsStr::from_bytes(name.to_bytes())), data, lang, system) {
                     out.listing.set_label(out.listing.len() as u32 - 1, &label);
                     out.keys.relabel_last(label.as_bytes());
                 }

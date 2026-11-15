@@ -400,7 +400,7 @@ fn hidden_statistics_columns_cancel_work_and_new_entries_do_not_recount_their_ne
     app.tab_mut().view.as_mut().unwrap().set_dir_stats(0, crate::listing::DirStats { size: 42, ..Default::default() });
     app.toggle_column(Column::Size);
     app.drain_effects().for_each(drop);
-    app.tab_mut().view.as_mut().unwrap().apply(&crate::listing::DirChange { name: b"new".to_vec(), kind: crate::listing::ChangeKind::Added, meta: Some(Meta { attrs: attr::DIR, ..Default::default() }) });
+    app.tab_mut().view.as_mut().unwrap().apply(&crate::listing::DirChange { label: crate::listing::Label::Keep, name: b"new".to_vec(), kind: crate::listing::ChangeKind::Added, meta: Some(Meta { attrs: attr::DIR, ..Default::default() }) });
     app.compute_dir_sizes();
     let wanted: Vec<_> = app.drain_effects().filter_map(|e| match e { Effect::Provider { req: ProviderRequest::DirSizes { items, .. }, .. } => Some(items), _ => None }).flatten().collect();
     assert_eq!(wanted, [(1, b"new".to_vec())]);

@@ -1379,7 +1379,7 @@ impl App {
             .iter()
             .map(|(from, _)| Location::on(provider, from.clone()))
             .filter(|from| from.parent().is_some_and(|p| same_location(&p, dir)))
-            .map(|from| DirChange { kind: ChangeKind::Removed, name: from.file_name().to_vec(), meta: None })
+            .map(|from| DirChange { label: crate::listing::Label::Keep, kind: ChangeKind::Removed, name: from.file_name().to_vec(), meta: None })
             .collect();
         t.pending_diffs.extend(gone);
         self.dirty |= t.apply_diffs() && k == self.cur;

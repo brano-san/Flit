@@ -295,7 +295,7 @@ fn changes(dir: &FsPath, notices: Vec<Notice>, extended: bool) -> Option<Vec<Dir
                 _ if extended => Some(n.meta),
                 _ => Some(crate::engine::stat(&dir.join(&name))?),
             };
-            Some(DirChange { kind: n.kind, name, meta })
+            Some(DirChange { label: flit_core::listing::Label::Keep, kind: n.kind, name, meta })
         })
         .collect()
 }

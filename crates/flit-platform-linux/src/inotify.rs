@@ -1,5 +1,5 @@
 use crate::fs::{hidden_list_in, host, mark_listed_hidden, stat_path, HIDDEN_LIST};
-use flit_core::listing::{ChangeKind, DirChange};
+use flit_core::listing::{ChangeKind, DirChange, Label};
 use flit_core::{FsPath, ProviderEvent, TabId};
 use flit_platform::{PlatformError, Wake, Watcher};
 use crossbeam_channel::Sender;
@@ -115,6 +115,13 @@ fn parse(buf: &[u8], pending: &mut HashMap<i32, Pending>, overflow: &mut bool) {
     }
 }
 
+fn launcher_label(dir: &Path, name: &[u8], meta: &flit_core::listing::Meta, launchers: Option<&(Vec<PathBuf>, &str, String)>) -> Label {
+    match launchers {
+        Some((data, lang, system)) if name.ends_with(b".desktop") && meta.attrs & flit_core::listing::attr::DIR == 0 => crate::desktop::label(&dir.join(OsStr::from_bytes(name)), data, lang, system).map_or(Label::Clear, Label::Set),
+        _ => Label::Keep,
+    }
+}
+
 fn flush<K: Clone>(watches: &Mutex<Watches<K>>, pending: HashMap<i32, Pending>, overflow: bool, emit: &dyn Fn(K, Notice)) {
     let targets: Vec<(PathBuf, Vec<K>, Pending)> = {
         let w = lock(watches);
@@ -130,15 +137,17 @@ fn flush<K: Clone>(watches: &Mutex<Watches<K>>, pending: HashMap<i32, Pending>, 
             continue;
         }
         let hidden = hidden_list_in(&dir);
+        let launchers = p.names.iter().any(|name| name.ends_with(b".desktop")).then(|| (crate::desktop::data_dirs(), flit_core::i18n::lang().code(), std::env::var("LANG").unwrap_or_default()));
         let changes: Vec<DirChange> = p
             .names
             .into_iter()
             .map(|name| match stat_path(&dir.join(OsStr::from_bytes(&name))) {
                 Ok(mut meta) => {
                     mark_listed_hidden(&mut meta, &name, &hidden);
-                    DirChange { kind: ChangeKind::Added, name, meta: Some(meta) }
+                    let label = launcher_label(&dir, &name, &meta, launchers.as_ref());
+                    DirChange { label, kind: ChangeKind::Added, name, meta: Some(meta) }
                 }
-                Err(_) => DirChange { kind: ChangeKind::Removed, name, meta: None },
+                Err(_) => DirChange { label: Label::Keep, kind: ChangeKind::Removed, name, meta: None },
             })
             .collect();
         keys.into_iter().for_each(|k| emit(k, Notice::Changes(changes.clone())));

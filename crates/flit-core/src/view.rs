@@ -1,6 +1,6 @@
 use crate::filter::NameFilter;
 use crate::hash::{self, FxHashMap, FxHashSet, FxHasher};
-use crate::listing::{attr, ChangeKind, DirChange, DirSnapshot, DirStats, Listing};
+use crate::listing::{attr, ChangeKind, DirChange, DirSnapshot, DirStats, Label, Listing};
 use crate::path::PathKind;
 use crate::sort::{self, GroupField, ViewSpec};
 use std::hash::Hasher;
@@ -514,6 +514,7 @@ impl DirView {
 
     pub(crate) fn apply_all<C: Borrow<DirChange>>(&mut self, changes: impl IntoIterator<Item = C>) -> bool {
         let mut touched = Vec::new();
+        let mut relabeled = false;
         let (mut lost_sel, mut lost_focus) = (false, false);
         for c in changes {
             let c = c.borrow();
@@ -536,11 +537,23 @@ impl DirView {
                 }
                 Some(i) => {
                     snap.listing.set_meta(i, c.meta.unwrap_or_default());
+                    relabeled |= match &c.label {
+                        Label::Keep => false,
+                        Label::Set(label) if snap.listing.labeled(i) == Some(label.as_str()) => false,
+                        Label::Set(label) => {
+                            snap.listing.set_label(i, label);
+                            true
+                        }
+                        Label::Clear => snap.listing.clear_label(i),
+                    };
                     i
                 }
                 None => {
                     let i = snap.listing.push(&c.name, c.meta.unwrap_or_default());
-                    snap.keys.push(snap.listing.name(i));
+                    if let Label::Set(label) = &c.label {
+                        snap.listing.set_label(i, label);
+                    }
+                    snap.keys.push(snap.listing.label(i));
                     if let Some(m) = &mut self.names {
                         m.entry(hash::hash(c.name.as_slice())).or_default().push(i);
                     }
@@ -548,6 +561,10 @@ impl DirView {
                 }
             };
             touched.push(i);
+        }
+        if relabeled {
+            let snap = Arc::make_mut(&mut self.snap);
+            snap.keys.rebuild(&snap.listing);
         }
         let l = &self.snap.listing;
         let gone = (lost_sel || lost_focus).then(|| self.rows().iter().position(|&i| l.entries[i as usize].attrs & attr::DELETED != 0 && (self.is_selected(i) || self.focus == Some(i)))).flatten();

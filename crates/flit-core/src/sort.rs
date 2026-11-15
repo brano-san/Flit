@@ -166,6 +166,12 @@ impl SortKeys {
         self.prefix.extend_from_slice(&part.prefix);
     }
 
+    pub fn rebuild(&mut self, l: &Listing) {
+        let mut keys = SortKeys::new(self.case);
+        (0..l.len() as u32).for_each(|i| keys.push(l.label(i)));
+        *self = keys;
+    }
+
     pub fn relabel(&mut self, l: &Listing) {
         if l.labels.is_empty() {
             return;

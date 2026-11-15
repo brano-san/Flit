@@ -261,7 +261,7 @@ fn size_on_disk_counts_in_blocks_of_the_volume() {
 
 fn launcher_listing(dir: &Path) -> flit_core::Listing {
     let mut keep = |_: &ListingBuilder<'_>| true;
-    let mut out = ListingBuilder::new(flit_core::sort::CaseMode::Sensitive, &mut keep);
+    let mut out = ListingBuilder::new(flit_core::sort::CaseMode::Sensitive, &mut keep).with_labels(true);
     LinuxFs.read_dir(&FsPath::parse(dir.to_str().unwrap()).unwrap(), &mut out).unwrap();
     out.listing
 }
@@ -323,7 +323,7 @@ fn launcher_labels_are_already_sorted_at_each_published_batch() {
         assert!(labels.windows(2).all(|w| w[0] <= w[1]));
         true
     };
-    let mut out = ListingBuilder::new(flit_core::sort::CaseMode::Sensitive, &mut verify);
+    let mut out = ListingBuilder::new(flit_core::sort::CaseMode::Sensitive, &mut verify).with_labels(true);
     LinuxFs.read_dir(&FsPath::parse(t.path().to_str().unwrap()).unwrap(), &mut out).unwrap();
     assert_eq!(out.listing.len(), 2050);
     drop(out);
@@ -346,7 +346,7 @@ fn bench_ten_thousand_desktop_labels_against_plain_directory_listing() {
         first_batch.get_or_insert_with(|| began.elapsed());
         true
     };
-    let mut out = ListingBuilder::new(flit_core::sort::CaseMode::Sensitive, &mut batch);
+    let mut out = ListingBuilder::new(flit_core::sort::CaseMode::Sensitive, &mut batch).with_labels(true);
     LinuxFs.read_dir(&FsPath::parse(t.path().to_str().unwrap()).unwrap(), &mut out).unwrap();
     let elapsed = began.elapsed();
     assert_eq!(out.listing.labels.len(), 10_000);
@@ -380,4 +380,16 @@ fn permission_changes_flow_through_listing_and_stat_without_reading_file_data() 
     assert_eq!(scanned(temp.path())[&b"private"[..]].attrs & attr::UNREADABLE, expected);
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
     assert_eq!(stat_path(&file).unwrap().attrs & attr::UNREADABLE, 0);
+}
+
+#[test]
+fn launchers_are_named_only_when_a_folder_is_listed_for_display() {
+    let t = Temp::new("launcher-walk");
+    launcher_file(t.path(), "firefox.desktop", "[Desktop Entry]\nType=Application\nName=Firefox\n", 0o700);
+    let mut keep = |_: &ListingBuilder<'_>| true;
+    let mut walk = ListingBuilder::new(flit_core::sort::CaseMode::Sensitive, &mut keep);
+    LinuxFs.read_dir(&FsPath::parse(t.path().to_str().unwrap()).unwrap(), &mut walk).unwrap();
+    assert_eq!(walk.listing.len(), 1);
+    assert!(walk.listing.labeled(0).is_none(), "searches, sizes and tree walks do not open launchers");
+    assert_eq!(launcher_listing(t.path()).labeled(0), Some("Firefox"));
 }

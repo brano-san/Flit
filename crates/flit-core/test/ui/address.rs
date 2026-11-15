@@ -575,7 +575,7 @@ fn a_dimmed_folder_that_is_gone_drops_with_everything_below_it() {
     deliver(&mut app, &[("B", true), ("other", true)], None);
     assert_eq!(ghosts(&app), ["b", "c"], "names match without case");
     let (tab, gen) = (app.tab().id, app.tab().gen);
-    let gone = DirChange { kind: crate::listing::ChangeKind::Removed, name: b"B".to_vec(), meta: None };
+    let gone = DirChange { label: crate::listing::Label::Keep, kind: crate::listing::ChangeKind::Removed, name: b"B".to_vec(), meta: None };
     app.on_provider_event(crate::provider::ProviderEvent::Changes { tab, gen, changes: vec![gone] }, Instant::now());
     app.poll();
     assert!(ghosts(&app).is_empty());

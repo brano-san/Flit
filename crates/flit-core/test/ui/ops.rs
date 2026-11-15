@@ -96,7 +96,7 @@ fn done(app: &mut App, id: OpId, op: FileOp, items: &[(&str, &str)]) {
 fn change(app: &mut App, kind: ChangeKind, name: &str, dir: bool) {
     let (tab, gen) = (app.tab().id, app.tab().gen);
     let meta = Some(Meta { attrs: if dir { attr::DIR } else { 0 }, ..Default::default() });
-    app.on_provider_event(ProviderEvent::Changes { tab, gen, changes: vec![DirChange { kind, name: name.as_bytes().to_vec(), meta }] }, t0());
+    app.on_provider_event(ProviderEvent::Changes { tab, gen, changes: vec![DirChange { label: crate::listing::Label::Keep, kind, name: name.as_bytes().to_vec(), meta }] }, t0());
     let mut g = Gfx::new(Mono, 1024);
     app.frame(&mut g, t0());
 }
@@ -1909,7 +1909,7 @@ fn bulk(app: &mut App, n: usize) -> (Vec<String>, OpId, FileOp) {
 fn watcher_removes(app: &mut App, names: &[String]) {
     let (tab, gen) = (app.tab().id, app.tab().gen);
     for n in names {
-        let change = DirChange { kind: ChangeKind::Removed, name: n.as_bytes().to_vec(), meta: None };
+        let change = DirChange { label: crate::listing::Label::Keep, kind: ChangeKind::Removed, name: n.as_bytes().to_vec(), meta: None };
         app.on_provider_event(ProviderEvent::Changes { tab, gen, changes: vec![change] }, t0());
     }
     app.poll();

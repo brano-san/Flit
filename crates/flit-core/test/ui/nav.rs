@@ -186,7 +186,7 @@ fn filter_survives_refresh_and_watcher_but_not_navigation() {
     deliver(&mut app, &[("src", attr::DIR), ("notes.md", 0), ("main.rs", 0), ("lib.rs", 0)]);
     assert_eq!(rows(&app), ["lib.rs", "main.rs"]);
     let (tab, gen) = (app.tab().id, app.tab().gen);
-    let add = |n: &str| DirChange { kind: ChangeKind::Added, name: n.into(), meta: Some(Meta::default()) };
+    let add = |n: &str| DirChange { label: crate::listing::Label::Keep, kind: ChangeKind::Added, name: n.into(), meta: Some(Meta::default()) };
     app.on_provider_event(ProviderEvent::Changes { tab, gen, changes: vec![add("build.rs"), add("README")] }, t0());
     app.frame(&mut Gfx::new(Mono, 1024), t0());
     assert_eq!(rows(&app), ["build.rs", "lib.rs", "main.rs"]);

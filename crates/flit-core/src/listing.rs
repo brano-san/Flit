@@ -126,6 +126,16 @@ impl Listing {
         self.labeled(i).map_or_else(|| self.name(i), str::as_bytes)
     }
 
+    pub fn clear_label(&mut self, i: u32) -> bool {
+        match self.labels.binary_search_by_key(&i, |l| l.0) {
+            Ok(k) => {
+                self.labels.remove(k);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
     pub fn set_label(&mut self, i: u32, label: &str) {
         match self.labels.binary_search_by_key(&i, |l| l.0) {
             Ok(k) => self.labels[k].1 = label.into(),
@@ -392,11 +402,12 @@ pub struct ListingBuilder<'a> {
     tags: Option<Arc<Tags>>,
     volume: Option<u32>,
     streams: bool,
+    labels: bool,
 }
 
 impl<'a> ListingBuilder<'a> {
     pub fn new(case: CaseMode, on_batch: &'a mut dyn FnMut(&ListingBuilder<'_>) -> bool) -> Self {
-        Self { listing: Listing::default(), keys: SortKeys::new(case), on_batch: Some(on_batch), tags: None, volume: None, streams: false }
+        Self { listing: Listing::default(), keys: SortKeys::new(case), on_batch: Some(on_batch), tags: None, volume: None, streams: false, labels: false }
     }
 
     pub fn with_streams(mut self, on: bool) -> Self {
@@ -406,6 +417,15 @@ impl<'a> ListingBuilder<'a> {
 
     pub fn wants_streams(&self) -> bool {
         self.streams
+    }
+
+    pub fn with_labels(mut self, on: bool) -> Self {
+        self.labels = on;
+        self
+    }
+
+    pub fn wants_labels(&self) -> bool {
+        self.labels
     }
 
     pub fn with_tags(mut self, tags: Arc<Tags>) -> Self {
@@ -499,11 +519,20 @@ pub enum ChangeKind {
     Modified,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Label {
+    #[default]
+    Keep,
+    Set(String),
+    Clear,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirChange {
     pub kind: ChangeKind,
     pub name: Vec<u8>,
     pub meta: Option<Meta>,
+    pub label: Label,
 }
 
 #[cfg(test)]
