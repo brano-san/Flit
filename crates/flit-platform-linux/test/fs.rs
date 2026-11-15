@@ -353,3 +353,31 @@ fn bench_ten_thousand_desktop_labels_against_plain_directory_listing() {
     drop(out);
     eprintln!("10k desktop listing: baseline {:?}, first batch {:?}, full {:?}", baseline, first_batch, elapsed);
 }
+
+#[test]
+fn unreadable_metadata_uses_the_owners_and_groups_actual_read_bits() {
+    let user = Identity { uid: 42, groups: vec![100, 200] };
+    let node = |uid, gid, mode| Node { uid, gid, mode: libc::S_IFREG | mode, ..Node::default() };
+    assert!(!user.readable(&node(99, 300, 0o600)));
+    assert!(user.readable(&node(42, 300, 0o600)));
+    assert!(user.readable(&node(99, 200, 0o640)));
+    assert!(!user.readable(&node(42, 200, 0o040)));
+    assert!(!user.readable(&node(99, 300, 0o640)));
+    assert!(user.readable(&node(99, 300, 0o604)));
+    assert!(Identity { uid: 0, groups: vec![] }.readable(&node(99, 300, 0)));
+    assert!(user.readable(&Node { mode: libc::S_IFLNK, ..Node::default() }));
+}
+
+#[test]
+fn permission_changes_flow_through_listing_and_stat_without_reading_file_data() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = Temp::new("unreadable-metadata");
+    let file = temp.path().join("private");
+    std::fs::write(&file, b"private").unwrap();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o0)).unwrap();
+    let expected = if unsafe { libc::geteuid() } == 0 { 0 } else { attr::UNREADABLE };
+    assert_eq!(stat_path(&file).unwrap().attrs & attr::UNREADABLE, expected);
+    assert_eq!(scanned(temp.path())[&b"private"[..]].attrs & attr::UNREADABLE, expected);
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(stat_path(&file).unwrap().attrs & attr::UNREADABLE, 0);
+}

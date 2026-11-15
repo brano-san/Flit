@@ -43,3 +43,109 @@ fn sniffing_tells_text_from_binary_even_when_a_character_is_cut_at_the_end() {
     assert_eq!(sniff(b"\x7fELF\x02\x01\x01\0"), OCTET_STREAM);
     assert_eq!(sniff(b"\xff\xfe\xfa"), OCTET_STREAM);
 }
+
+#[test]
+fn content_magic_uses_system_mime_data_and_keeps_the_old_fallback_without_gio() {
+    let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01\0\0\0\x01\x08\x02\0\0\0";
+    if content_api().is_some() {
+        assert_eq!(content_mime(png).as_deref(), Some("image/png"));
+    }
+    assert_eq!(sniff(b"hello world\n"), "text/plain");
+    assert_eq!(sniff(b"\0binary"), OCTET_STREAM);
+}
+
+#[test]
+fn content_cache_is_bounded_and_a_new_mtime_reads_again() {
+    let mut cache = ContentCache::default();
+    let key = |n, stamp| ContentKey { path: PathBuf::from(format!("/tmp/{n}")), modified: (stamp, 0), size: 20 };
+    let a = key(1, 1);
+    cache.insert(a.clone(), "image/png".into());
+    assert_eq!(cache.get(&a).map(String::as_str), Some("image/png"));
+    assert!(cache.get(&key(1, 2)).is_none());
+    for i in 0..CONTENT_CACHE_LIMIT + 10 {
+        cache.insert(key(i, 1), OCTET_STREAM.into());
+    }
+    assert_eq!(cache.entries.len(), CONTENT_CACHE_LIMIT);
+}
+
+#[test]
+fn content_reader_limits_regular_files_and_never_opens_a_fifo_for_reading() {
+    use crate::temp::Temp;
+    use std::os::unix::ffi::OsStrExt;
+    let temp = Temp::new("content-reader");
+    let file = temp.path().join("bytes");
+    std::fs::write(&file, vec![b'x'; CONTENT_HEAD + 100]).unwrap();
+    let (_, data) = content_head(&file).unwrap();
+    assert_eq!(data.len(), CONTENT_HEAD);
+    let fifo = temp.path().join("pipe");
+    let name = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    let start = std::time::Instant::now();
+    assert!(content_head(&fifo).is_none());
+    assert!(start.elapsed() < std::time::Duration::from_secs(1));
+}
+
+#[test]
+fn content_cache_reuses_reads_between_windows_sizes_and_theme_epochs() {
+    let mut cache = ContentCache::default();
+    let key = ContentKey { path: PathBuf::from("/tmp/image"), modified: (7, 1), size: 42 };
+    let reads = std::cell::Cell::new(0);
+    for _ in 0..4 {
+        assert_eq!(cache.resolve(key.clone(), || { reads.set(reads.get() + 1); "image/png".into() }), "image/png");
+    }
+    assert_eq!(reads.get(), 1);
+    let fresh = ContentKey { modified: (8, 1), ..key.clone() };
+    assert_eq!(cache.resolve(fresh, || { reads.set(reads.get() + 1); "application/pdf".into() }), "application/pdf");
+    assert_eq!(reads.get(), 2);
+    assert!(cache.get(&key).is_none());
+    assert_eq!(content_mime_with(b"\x89PNG", None), None);
+}
+
+#[test]
+fn content_type_results_are_freed_even_if_conversion_is_unknown() {
+    use std::ffi::{CStr, CString};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static FREED: AtomicUsize = AtomicUsize::new(0);
+    unsafe extern "C" fn guess(name: *const libc::c_char, bytes: *const u8, size: usize, _: *mut libc::c_int) -> *mut libc::c_char {
+        assert!(name.is_null());
+        assert_eq!(unsafe { std::slice::from_raw_parts(bytes, size) }, b"image bytes");
+        CString::new("image/png").unwrap().into_raw()
+    }
+    unsafe extern "C" fn mime(content: *const libc::c_char) -> *mut libc::c_char {
+        assert_eq!(unsafe { CStr::from_ptr(content) }.to_bytes(), b"image/png");
+        CString::new("image/png").unwrap().into_raw()
+    }
+    unsafe extern "C" fn unknown(_: *const libc::c_char) -> *mut libc::c_char { std::ptr::null_mut() }
+    unsafe extern "C" fn free(p: *mut libc::c_void) {
+        if !p.is_null() {
+            drop(unsafe { CString::from_raw(p.cast()) });
+            FREED.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    let api = ContentApi { guess, mime, free, _gio: 0, _glib: 0 };
+    assert_eq!(content_mime_with(b"image bytes", Some(&api)).as_deref(), Some("image/png"));
+    assert_eq!(FREED.load(Ordering::Relaxed), 2);
+    let api = ContentApi { mime: unknown, ..api };
+    assert_eq!(content_mime_with(b"image bytes", Some(&api)), None);
+    assert_eq!(FREED.load(Ordering::Relaxed), 3);
+}
+
+#[test]
+fn extensionless_png_and_replaced_content_choose_their_mime_icons_but_programs_do_not_sniff() {
+    use crate::temp::Temp;
+    use std::os::unix::fs::PermissionsExt;
+    if content_api().is_none() { return; }
+    let temp = Temp::new("content-icons");
+    let path = temp.path().join("image");
+    std::fs::write(&path, b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01\0\0\0\x01\x08\x02\0\0\0").unwrap();
+    assert_eq!(content_icon_names(&path).first().map(String::as_str), Some("image-png"));
+    std::fs::write(&path, b"%PDF-1.4\n").unwrap();
+    let file = std::fs::File::options().write(true).open(&path).unwrap();
+    file.set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(2))).unwrap();
+    assert_eq!(content_icon_names(&path).first().map(String::as_str), Some("application-pdf"));
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(content_icon_names(&path).is_empty(), "programs keep their program icon");
+    let link = temp.path().join("link");
+    std::os::unix::fs::symlink(&path, &link).unwrap();
+    assert!(content_icon_names(&link).is_empty(), "the link pipeline retains its target and emblem handling");
+}

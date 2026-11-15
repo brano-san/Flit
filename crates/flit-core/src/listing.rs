@@ -19,6 +19,7 @@ pub mod attr {
     pub const STREAM: u32 = 1 << 8;
     pub const NESTED: u32 = 1 << 9;
     pub const EXEC: u32 = 1 << 10;
+    pub const UNREADABLE: u32 = 1 << 11;
     pub const ONLINE_ONLY: u32 = 1 << 12;
     pub const PINNED: u32 = 1 << 13;
     pub const OFFLINE: u32 = 1 << 14;

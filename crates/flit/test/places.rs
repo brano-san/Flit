@@ -121,3 +121,11 @@ fn one_drive_is_listed_only_when_its_folder_exists() {
     assert!(shown(KnownFolder::OneDrive, &here(&t.0)));
     assert!(shown(KnownFolder::Downloads, &here(&t.0.join("missing"))), "other known folders are listed as before");
 }
+
+#[test]
+fn content_and_emblems_do_not_pollute_the_persisted_icon_cache() {
+    for kind in [IconKind::Content, IconKind::LinkEmblem, IconKind::UnreadableEmblem] {
+        assert!(!worth_keeping(&request(0, 0, kind)));
+    }
+    assert!(worth_keeping(&request(0, 0, IconKind::Type)));
+}

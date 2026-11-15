@@ -799,3 +799,79 @@ fn a_hosted_preview_released_for_an_operation_hides_and_comes_back_when_it_ends(
     frame(&mut a);
     assert_eq!(requests(&mut a).len(), 1, "the file is still there, so its preview comes back");
 }
+
+fn nested_icon_app() -> App {
+    let mut a = App::new(Persisted { path: Location::parse("/tmp/root").unwrap(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1200, 700), Instant::now());
+    let view = crate::sort::ViewSpec { deep: true, ..Default::default() };
+    a.tab_mut().view_spec = view;
+    let t = a.tab();
+    let mut listing = Listing::default();
+    let meta = Meta { size: 42, modified: 7, ..Default::default() };
+    listing.push(b"image", meta);
+    listing.push_nested(b"image", meta, 0, b"sub");
+    listing.push_nested(b"image", meta, 0, b"other");
+    let mut keys = SortKeys::new(CaseMode::Sensitive);
+    for i in 0..listing.len() as u32 { keys.push(listing.name(i)); }
+    let snap = DirSnapshot { gen: t.gen, path: t.location().path().clone(), listing, keys, order: vec![0, 1, 2], view, done: true, error: None, elapsed: Duration::ZERO };
+    t.slot.publish(Arc::new(snap));
+    a.poll();
+    a.set_pane_state(PaneState { visible: true, ..Default::default() });
+    a.drain_effects().for_each(drop);
+    a
+}
+
+fn nested_icon_select(a: &mut App, index: u32) {
+    let v = a.tab_mut().view.as_mut().unwrap();
+    v.clear_selection();
+    v.set_selected(index, true);
+    v.focus = Some(index);
+}
+
+fn nested_icon_header(a: &mut App, gfx: &mut Gfx<Mono>) -> Vec<IconRequest> {
+    a.frame(gfx, Instant::now());
+    let gen = a.drain_effects().find_map(|e| match e { Effect::Preview(r) if !r.details => Some(r.gen), _ => None }).unwrap();
+    a.on_preview(gen, PreviewData::Basic { poster: None, note: None });
+    a.frame(gfx, Instant::now());
+    let px = a.s(ICON_PX) as u32;
+    a.drain_effects().filter_map(|e| match e { Effect::Icon(r) if r.kind == super::super::IconKind::Content && r.size == px => Some(r), _ => None }).collect()
+}
+
+#[test]
+fn nested_extensionless_preview_uses_the_selected_path_instead_of_the_root_namesake() {
+    let mut a = nested_icon_app();
+    let mut gfx = Gfx::new(Mono, 2048);
+    for (index, path, parent) in [(0, "/tmp/root/image", "/tmp/root"), (1, "/tmp/root/sub/image", "/tmp/root/sub")] {
+        nested_icon_select(&mut a, index);
+        let subject = a.subject().unwrap();
+        assert_eq!(subject.path.as_ref().unwrap().as_bytes(), path.as_bytes());
+        assert_eq!(subject.dir_key, parent.as_bytes());
+        let reqs = nested_icon_header(&mut a, &mut gfx);
+        if cfg!(target_os = "linux") {
+            assert_eq!(reqs.len(), 1);
+            assert_eq!(reqs[0].path.as_bytes(), path.as_bytes(), "the worker must sniff the selected PNG path, not the root PDF path");
+            let expected = super::super::icon_key(b"image", b"", &subject.entry.unwrap(), a.s(ICON_PX) as u32, parent.as_bytes(), a.icon_epoch);
+            assert_eq!(reqs[0].key, expected.0, "list and preview use the same actual parent in their keys");
+        }
+    }
+}
+
+#[test]
+fn nested_extensionless_preview_never_reuses_another_subfolders_loaded_icon() {
+    let mut a = nested_icon_app();
+    let mut gfx = Gfx::new(Mono, 2048);
+    nested_icon_select(&mut a, 1);
+    let first = nested_icon_header(&mut a, &mut gfx);
+    let first_parent = a.subject().unwrap().dir_key;
+    for req in &first {
+        a.on_icon(&mut gfx, req.key, super::super::IconResult::Ready(Bitmap { width: 1, height: 1, rgba: vec![0, 0, 255, 255] }));
+    }
+    nested_icon_select(&mut a, 2);
+    let second = nested_icon_header(&mut a, &mut gfx);
+    assert_ne!(first_parent, a.subject().unwrap().dir_key);
+    if cfg!(target_os = "linux") {
+        assert_eq!((first.len(), second.len()), (1, 1));
+        assert_ne!(first[0].key, second[0].key, "equal basename, size and mtime do not alias different parents");
+        assert_eq!(first[0].path.as_bytes(), b"/tmp/root/sub/image");
+        assert_eq!(second[0].path.as_bytes(), b"/tmp/root/other/image");
+    }
+}

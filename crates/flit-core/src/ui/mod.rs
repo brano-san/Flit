@@ -1,5 +1,6 @@
 pub mod edit;
 mod a11y;
+mod file_icons;
 mod shell_props;
 mod focus;
 #[cfg(test)]
@@ -335,6 +336,9 @@ pub enum IconKind {
     Volume,
     Place,
     Thumbnail,
+    Content,
+    LinkEmblem,
+    UnreadableEmblem,
 }
 
 #[derive(Clone, Debug)]
@@ -703,6 +707,7 @@ pub struct App {
     icons: FxHashMap<u64, IconState>,
     thumbs: FxHashMap<u64, IconState>,
     icon_epoch: u64,
+    file_icons: file_icons::FileIcons,
     type_names: FxHashMap<Vec<u8>, Option<String>>,
     adaptive: FxHashMap<u64, LayoutMode>,
 
@@ -835,6 +840,7 @@ impl App {
             icons: FxHashMap::default(),
             thumbs: FxHashMap::default(),
             icon_epoch: 0,
+            file_icons: file_icons::FileIcons::default(),
             type_names: FxHashMap::default(),
             adaptive: FxHashMap::default(),
             layout: Layout::default(),
@@ -2354,6 +2360,7 @@ impl App {
         self.expire_error(now);
         self.expire_undo_bar(now);
         self.motion = false;
+        self.file_icons.begin();
         g.dl.round = self.round_corners;
         self.apply_tag_fixes(now);
         self.ops_frame(now);
@@ -2984,10 +2991,11 @@ impl App {
 
                 let name = listing.name(i);
                 let faded = e.attrs & attr::HIDDEN != 0 || name.starts_with(b".") || cut.is_some_and(|c| c.contains(name));
-                let row_dir = if in_library { FsPath::parse_exact(crate::library::folder(listing, i)) } else { None };
+                let row_dir = if in_library { FsPath::parse_exact(crate::library::folder(listing, i)) } else if e.attrs & attr::NESTED != 0 { shell_dir.as_ref().map(|d| d.join(listing.folder(i))) } else { None };
                 let dir = row_dir.as_ref().or(shell_dir.as_ref());
                 let dir_key = if in_bin { recycle::origin(listing, i) } else { dir.map_or(&b""[..], |d| d.as_bytes()) };
                 let (key, kind) = icon_key(name, listing.ext(i), &e, icon_px as u32, dir_key, self.icon_epoch);
+                self.file_icons.see(key, kind);
                 let ir = p.icon;
                 let alpha = if faded { 0x70 } else { 0xFF };
                 let thumb = (want_thumbs && !e.is_dir() && has_thumbnail(listing.ext(i))).then(|| hash::hash(&("thumb", dir_key, name, e.modified, e.size, thumb_px)));
@@ -3012,6 +3020,10 @@ impl App {
                     if let Some(path) = path {
                         requests.push(IconRequest { key, kind, path, size: icon_px as u32, gen: tab.gen, row: row as u32 });
                     }
+                }
+
+                if !replaces {
+                    self.draw_file_emblems(g, e.attrs, ir, alpha, &mut requests);
                 }
 
                 if boxed && corner {
@@ -3124,10 +3136,7 @@ impl App {
 
 impl App {
     fn request_icons(&mut self, requests: Vec<IconRequest>) {
-        for r in requests {
-            self.icons.insert(r.key, IconState::Pending);
-            self.effects.push(Effect::Icon(r));
-        }
+        self.request_file_icons(requests);
     }
 
     fn system_icon<B: TextBackend>(&self, g: &mut Gfx<B>, icon: Option<sidebar::SystemIcon>, r: Rect, px: f32, alpha: u8, requests: &mut Vec<IconRequest>) -> bool {
@@ -3183,7 +3192,7 @@ pub fn icon_key(name: &[u8], ext: &[u8], e: &crate::listing::Entry, size: u32, d
         return (hash::hash(&("vol", name, size, epoch)), IconKind::Volume);
     }
     if e.attrs & attr::LINK != 0 && !cfg!(windows) {
-        return (hash::hash(&("link", dir, name, e.attrs & attr::DIR, e.modified, size, epoch)), IconKind::File);
+        return (hash::hash(&("link-base", dir, name, e.attrs & attr::DIR, e.modified, size, epoch)), IconKind::File);
     }
     let shell_link = e.attrs & attr::LINK != 0 && dir.first() != Some(&b'/');
     if e.is_dir() && (e.attrs & (attr::READONLY | attr::SYSTEM) != 0 || shell_link || crate::location::wsl_drive_path(dir).is_some()) {
@@ -3198,6 +3207,9 @@ pub fn icon_key(name: &[u8], ext: &[u8], e: &crate::listing::Entry, size: u32, d
     }
     if folded.is_empty() && e.attrs & attr::EXEC != 0 {
         return (hash::hash(&("exec", size, epoch)), IconKind::Type);
+    }
+    if cfg!(target_os = "linux") && dir.first() == Some(&b'/') && folded.is_empty() && e.size > 0 && e.attrs & (attr::STREAM | attr::ARCHIVED | attr::NOT_LOCAL | attr::DELETED | attr::UNREADABLE) == 0 {
+        return (hash::hash(&("content", dir, name, e.modified, e.size, size, epoch)), IconKind::Content);
     }
     (hash::hash(&("ext", folded.as_slice(), size, epoch)), IconKind::Type)
 }

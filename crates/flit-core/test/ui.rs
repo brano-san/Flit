@@ -487,3 +487,6 @@ fn windows_links_get_their_own_icon_so_the_shell_can_draw_the_link_arrow_but_uni
     assert_eq!(icon_key(b"lib.so", b"so", &entry(attr::LINK), 16, b"/usr/lib", 0).1, IconKind::Type);
     assert_eq!(icon_key(b"bin", b"", &entry(attr::DIR | attr::LINK), 16, b"/", 0).1, IconKind::Folder);
 }
+
+#[path = "ui/file_icons.rs"]
+mod file_icons;

@@ -809,6 +809,7 @@ impl WindowSystem for LinuxWindows {
         let preferences = if crate::preferences::Desktop::current() == crate::preferences::Desktop::Kde {
             crate::xdg::config_home().and_then(|config| crate::preferences::Watch::start(config, Duration::from_millis(250), |change| match change {
                 crate::preferences::Change::Buttons(buttons) => set_window_buttons(buttons),
+                crate::preferences::Change::IconTheme(name) => apply_look(crate::atspi::LookChange::IconTheme(name)),
                 crate::preferences::Change::Globals(text) => {
                     if let Some(dark) = crate::shell::kde_dark(&text) {
                         PREFERRED_DARK.store(if dark { DARK_YES } else { DARK_NO }, Ordering::Release);

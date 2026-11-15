@@ -192,12 +192,14 @@ impl App {
                 }
                 let ir = Rect::new(cell.x + s10, cell.y + ((rh - icon_px) / 2.0).round(), icon_px, icon_px);
                 let (key, kind) = icon_key(name, listing.ext(idx), &e, icon_px as u32, dir.as_ref().map_or(&b""[..], |d| d.as_bytes()), self.icon_epoch);
+                self.file_icons.see(key, kind);
                 if !g.image(key, ir) {
                     icon_glyph(g, th, &e, ir);
                     if let Some(path) = (!self.icons.contains_key(&key) && !requests.iter().any(|q| q.key == key)).then(|| p.loc.join(name).to_windows()).flatten() {
                         requests.push(IconRequest { key, kind, path, size: icon_px as u32, gen: 0, row: 0 });
                     }
                 }
+                self.draw_file_emblems(g, e.attrs, ir, 255, &mut requests);
                 let x = ir.right() + s8;
                 let baseline = (cell.y + (rh + m.ascent - m.descent) / 2.0).round();
                 let color = if e.attrs & attr::HIDDEN != 0 { th.text_dim } else { th.name_ink(e.attrs) };
