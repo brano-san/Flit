@@ -3,6 +3,11 @@ use flit_core::listing::attr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use windows::Win32::UI::Shell::LSF_OVERRIDEEXISTING;
+use std::cell::RefCell;
+use std::rc::Rc;
+use windows::core::{implement, Ref, Result as ComResult, PWSTR};
+use windows::Win32::Foundation::{E_ACCESSDENIED, E_NOTIMPL};
+use windows::Win32::UI::Shell::{IShellLibrary_Impl, DEFAULTSAVEFOLDERTYPE, LIBRARYFOLDERFILTER, LIBRARYOPTIONFLAGS, LIBRARYSAVEFLAGS};
 
 const SHELL_LIBRARY_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -80,8 +85,121 @@ fn library_steps() {
 }
 
 #[test]
+#[ignore = "Changes the Windows Search index; run only in an isolated Windows test account"]
 fn a_temp_library_gains_and_loses_folders_and_lists_them_merged() {
     within_shell_timeout(library_steps);
+}
+
+#[derive(Default)]
+struct Edits {
+    folders: Vec<FsPath>,
+    save: Option<FsPath>,
+    commits: usize,
+    deny_edit: bool,
+    deny_commit: bool,
+}
+
+#[implement(IShellLibrary)]
+struct TestLibrary(Rc<RefCell<Edits>>);
+
+impl IShellLibrary_Impl for TestLibrary_Impl {
+    fn AddFolder(&self, item: Ref<IShellItem>) -> ComResult<()> {
+        let mut e = self.0.borrow_mut();
+        if e.deny_edit { return Err(E_ACCESSDENIED.into()); }
+        e.folders.push(path_of(item.as_ref().unwrap()).unwrap());
+        Ok(())
+    }
+    fn RemoveFolder(&self, item: Ref<IShellItem>) -> ComResult<()> {
+        let path = path_of(item.as_ref().unwrap()).unwrap();
+        self.0.borrow_mut().folders.retain(|p| p != &path);
+        Ok(())
+    }
+    fn SetDefaultSaveFolder(&self, kind: DEFAULTSAVEFOLDERTYPE, item: Ref<IShellItem>) -> ComResult<()> {
+        assert_eq!(kind, DSFT_DETECT);
+        self.0.borrow_mut().save = path_of(item.as_ref().unwrap());
+        Ok(())
+    }
+    fn Commit(&self) -> ComResult<()> {
+        let mut e = self.0.borrow_mut();
+        if e.deny_commit { return Err(E_ACCESSDENIED.into()); }
+        e.commits += 1;
+        Ok(())
+    }
+    fn LoadLibraryFromItem(&self, _: Ref<IShellItem>, _: u32) -> ComResult<()> { Err(E_NOTIMPL.into()) }
+    fn LoadLibraryFromKnownFolder(&self, _: *const GUID, _: u32) -> ComResult<()> { Err(E_NOTIMPL.into()) }
+    fn GetFolders(&self, _: LIBRARYFOLDERFILTER, _: *const GUID, _: *mut *mut core::ffi::c_void) -> ComResult<()> { Err(E_NOTIMPL.into()) }
+    fn ResolveFolder(&self, _: Ref<IShellItem>, _: u32, _: *const GUID, _: *mut *mut core::ffi::c_void) -> ComResult<()> { Err(E_NOTIMPL.into()) }
+    fn GetDefaultSaveFolder(&self, _: DEFAULTSAVEFOLDERTYPE, _: *const GUID, _: *mut *mut core::ffi::c_void) -> ComResult<()> { Err(E_NOTIMPL.into()) }
+    fn GetOptions(&self) -> ComResult<LIBRARYOPTIONFLAGS> { Err(E_NOTIMPL.into()) }
+    fn SetOptions(&self, _: LIBRARYOPTIONFLAGS, _: LIBRARYOPTIONFLAGS) -> ComResult<()> { Err(E_NOTIMPL.into()) }
+    fn GetFolderType(&self) -> ComResult<GUID> { Err(E_NOTIMPL.into()) }
+    fn SetFolderType(&self, _: *const GUID) -> ComResult<()> { Err(E_NOTIMPL.into()) }
+    fn GetIcon(&self) -> ComResult<PWSTR> { Err(E_NOTIMPL.into()) }
+    fn SetIcon(&self, _: &PCWSTR) -> ComResult<()> { Err(E_NOTIMPL.into()) }
+    fn Save(&self, _: Ref<IShellItem>, _: &PCWSTR, _: LIBRARYSAVEFLAGS) -> ComResult<IShellItem> { Err(E_NOTIMPL.into()) }
+    fn SaveInKnownFolder(&self, _: *const GUID, _: &PCWSTR, _: LIBRARYSAVEFLAGS) -> ComResult<IShellItem> { Err(E_NOTIMPL.into()) }
+}
+
+#[test]
+fn library_edits_commit_the_selected_folder_and_report_failures_without_the_system_index() {
+    com_sta();
+    let temp = Temp::new("edits");
+    for d in ["one", "two"] { std::fs::create_dir(temp.0.join(d)).unwrap(); }
+    let library = temp.at("Test.library-ms");
+    let edits = Rc::new(RefCell::new(Edits::default()));
+    let fake: IShellLibrary = TestLibrary(edits.clone()).into();
+    let open = |path: &FsPath, write: bool| {
+        assert_eq!(path, &library);
+        assert!(write);
+        Ok(fake.clone())
+    };
+    let (one, two) = (temp.at("one"), temp.at("two"));
+    for folder in [&one, &two] { apply_with(&LibraryOp::Add { library: library.clone(), folder: folder.clone() }, open).unwrap(); }
+    assert_eq!(edits.borrow().folders, [one.clone(), two.clone()]);
+    apply_with(&LibraryOp::SetSave { library: library.clone(), folder: two.clone() }, open).unwrap();
+    assert_eq!(edits.borrow().save, Some(two.clone()));
+    apply_with(&LibraryOp::Remove { library: library.clone(), folder: one.clone() }, open).unwrap();
+    assert_eq!(edits.borrow().folders, [two]);
+    assert_eq!(edits.borrow().commits, 4);
+    edits.borrow_mut().deny_edit = true;
+    let add = LibraryOp::Add { library: library.clone(), folder: one.clone() };
+    assert!(apply_with(&add, open).is_err());
+    assert_eq!(edits.borrow().commits, 4, "a failed edit must not be committed");
+    edits.borrow_mut().deny_edit = false;
+    edits.borrow_mut().deny_commit = true;
+    assert!(apply_with(&add, open).is_err(), "a failed commit must reach the user");
+    assert!(apply_with(&add, |_, _| Err(E_ACCESSDENIED.into())).is_err(), "a library that cannot be opened must fail");
+    assert!(apply_with(&LibraryOp::Add { library, folder: temp.at("missing") }, |_, _| Ok(fake.clone())).is_err());
+}
+
+#[test]
+fn a_fixture_library_reads_and_lists_real_folders_without_adding_them_to_the_index() {
+    within_shell_timeout(|| {
+        let temp = Temp::new("read");
+        for d in ["one", "two"] { std::fs::create_dir(temp.0.join(d)).unwrap(); }
+        std::fs::write(temp.0.join("one/a.txt"), "a").unwrap();
+        std::fs::create_dir(temp.0.join("two/sub")).unwrap();
+        let (one, two) = (temp.at("one"), temp.at("two"));
+        let connectors: String = [&one, &two].into_iter().enumerate().map(|(i, p)| {
+            let url = p.display().replace('\\', "/").replace('&', "&amp;").replace('<', "&lt;");
+            format!("<searchConnectorDescription><isDefaultSaveLocation>{}</isDefaultSaveLocation><simpleLocation><url>file:///{url}</url></simpleLocation></searchConnectorDescription>", i == 1)
+        }).collect();
+        let xml = format!("<?xml version=\"1.0\"?><libraryDescription xmlns=\"http://schemas.microsoft.com/windows/2009/library\"><name>Test</name><version>6</version><searchConnectorDescriptionList>{connectors}</searchConnectorDescriptionList></libraryDescription>");
+        std::fs::write(temp.0.join("Test.library-ms"), xml).unwrap();
+        let lib = temp.at("Test.library-ms");
+        let back = read(&lib).unwrap();
+        assert_eq!(back.name, "Test");
+        assert_eq!(back.folders, [one.clone(), two.clone()]);
+        assert_eq!(back.save, Some(two.clone()));
+        let mut go = |_: &ListingBuilder<'_>| true;
+        let mut b = ListingBuilder::new(CaseMode::Insensitive, &mut go);
+        NtFs.read_dir(&lib, &mut b).unwrap();
+        let l = b.listing;
+        let mut rows: Vec<_> = (0..l.len() as u32).map(|i| (l.name(i).to_vec(), library::folder(&l, i).to_vec(), l.entries[i as usize].attrs & attr::DIR != 0)).collect();
+        rows.sort();
+        assert_eq!(rows, [(b"a.txt".to_vec(), one.display().as_bytes().to_vec(), false), (b"sub".to_vec(), two.display().as_bytes().to_vec(), true)]);
+        assert!(read(&temp.at("missing.library-ms")).is_none());
+    });
 }
 
 fn restoring_steps() {
