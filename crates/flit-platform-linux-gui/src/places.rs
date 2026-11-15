@@ -168,9 +168,9 @@ pub fn needs_login(out: &std::process::Output) -> bool {
 }
 
 fn gio(args: &[&str], wait: std::time::Duration) -> std::io::Result<std::process::Output> {
-    let mut cmd = std::process::Command::new("gio");
+    let mut cmd = crate::tools::command("gio")?;
     cmd.args(args);
-    run_within(cmd, wait).map_err(|e| missing_tool("gio", "libglib2.0-bin", e))
+    run_within(cmd, wait)
 }
 
 pub fn connect(uri: &str) -> std::io::Result<PathBuf> {
@@ -194,8 +194,12 @@ pub fn disconnect_command(point: &Path, table: &[Mount], gvfs_root: &Path) -> Ve
 }
 
 pub fn disconnect(point: &Path) -> std::io::Result<()> {
-    let [program, args @ ..] = &disconnect_command(point, &mounts::read()?, &gvfs_root())[..] else { return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput)) };
-    let mut cmd = std::process::Command::new(program);
+    disconnect_from(point, &mounts::read()?, &gvfs_root())
+}
+
+fn disconnect_from(point: &Path, table: &[Mount], gvfs_root: &Path) -> std::io::Result<()> {
+    let [program, args @ ..] = &disconnect_command(point, table, gvfs_root)[..] else { return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput)) };
+    let mut cmd = crate::tools::command(&program.to_string_lossy())?;
     cmd.args(args);
     let out = run_within(cmd, CONNECT_WAIT)?;
     if out.status.success() {
@@ -258,13 +262,6 @@ pub fn unmounted_from(lsblk: &str) -> Vec<Drive> {
         out.push(Drive { path, label, total: 0, free: 0, file_system: get("FSTYPE").to_owned(), removable: get("HOTPLUG") == "1", unmounted: true, kind, remote: None });
     }
     out
-}
-
-fn missing_tool(tool: &str, package: &str, e: std::io::Error) -> std::io::Error {
-    match e.kind() {
-        std::io::ErrorKind::NotFound => std::io::Error::new(std::io::ErrorKind::NotFound, format!("{tool} is not installed: install the {package} package")),
-        _ => e,
-    }
 }
 
 pub fn drive_error(key: S, drive: &Path, e: &std::io::Error) -> PlatformError {

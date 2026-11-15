@@ -24,7 +24,7 @@ device_unsupported = "Esta acción no está disponible para teléfonos y cámara
 grant_button = "Continuar"
 grant_hint = "Haga clic en Continuar para obtener acceso permanente a esta carpeta como administrador."
 granting = "Obteniendo acceso a {what}"
-no_setfacl = "setfacl no está instalado (paquete acl)"
+no_setfacl = "setfacl no está instalado. Instale el paquete {package}"
 
 [title]
 encrypted = "Este archivo comprimido está cifrado"

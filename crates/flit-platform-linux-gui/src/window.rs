@@ -313,7 +313,7 @@ impl LinuxWindow {
         let Some(file) = flit_platform_linux::host(&m.path) else { return };
         let socket = std::env::var_os("XDG_RUNTIME_DIR").map(|d| crate::player::socket_path(std::path::Path::new(&d), m.gen));
         match crate::shell::play_media(m.video, file, socket.as_deref(), self.volume.get()) {
-            Some((child, ipc)) => {
+            Ok((child, ipc)) => {
                 let id = self.id;
                 let report = move |e: flit_core::preview::HostEvent| {
                     QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((id, Event::Hosted(e)));
@@ -321,8 +321,8 @@ impl LinuxWindow {
                 };
                 self.player.replace(Some(crate::player::Player::start(child, socket.filter(|_| ipc), m.gen, report)));
             }
-            None => {
-                let failed = flit_core::preview::HostEvent::Failed { gen: m.gen, message: S::PreviewNoPlayer.t().to_owned() };
+            Err(error) => {
+                let failed = flit_core::preview::HostEvent::Failed { gen: m.gen, message: flit_core::i18n::localize(&error.message).into_owned() };
                 QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((self.id, Event::Hosted(failed)));
                 wake_loop();
             }

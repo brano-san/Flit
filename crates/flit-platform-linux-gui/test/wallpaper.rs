@@ -23,3 +23,20 @@ fn an_unknown_desktop_only_asks_the_portal() {
     assert_eq!(attempts(Path::new("/p/a.png"), "XFCE").len(), 1);
     assert_eq!(attempts(Path::new("/p/a.png"), "").len(), 1);
 }
+
+#[test]
+fn missing_wallpaper_helpers_name_a_package_only_after_the_desktop_and_portal_fallbacks() {
+    for desktop in ["KDE", "GNOME", "XFCE", ""] {
+        crate::temp::with_tools(&[], || {
+            crate::temp::assert_missing(&set_for(Path::new("/tmp/unused.png"), desktop).unwrap_err().message, "gdbus");
+        });
+        crate::temp::with_tools(&["gdbus"], || {
+            set_for(Path::new("/tmp/unused.png"), desktop).unwrap();
+        });
+    }
+    for (desktop, tool) in [("KDE", "plasma-apply-wallpaperimage"), ("GNOME", "gsettings")] {
+        crate::temp::with_tools(&[tool], || {
+            set_for(Path::new("/tmp/unused.png"), desktop).unwrap();
+        });
+    }
+}

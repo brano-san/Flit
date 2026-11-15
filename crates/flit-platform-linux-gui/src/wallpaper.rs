@@ -47,12 +47,22 @@ pub(crate) fn attempts(path: &Path, desktop: &str) -> Vec<Attempt> {
 }
 
 fn succeeded(cmd: &[String]) -> bool {
-    Command::new(&cmd[0]).args(&cmd[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
+    let Some(program) = crate::shell::on_path(std::ffi::OsStr::new(&cmd[0])) else { return false };
+    Command::new(program).args(&cmd[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
 }
 
 pub fn set(path: &Path) -> Result<(), PlatformError> {
     let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
-    for attempt in attempts(path, &desktop) {
+    set_for(path, &desktop)
+}
+
+fn set_for(path: &Path, desktop: &str) -> Result<(), PlatformError> {
+    let attempts = attempts(path, desktop);
+    let installed = attempts.iter().filter_map(|a| a.first()).any(|cmd| crate::shell::on_path(std::ffi::OsStr::new(&cmd[0])).is_some());
+    if !installed {
+        return Err(crate::shell::tool_missing("gdbus"));
+    }
+    for attempt in attempts {
         let Some((first, rest)) = attempt.split_first() else { continue };
         if succeeded(first) {
             for cmd in rest {

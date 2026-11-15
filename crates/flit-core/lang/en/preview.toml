@@ -1,7 +1,7 @@
 selected = ["{n} item selected", "{n} items selected"]
 archived = "Inside an archive: extract it to preview"
 cannot_play = "Cannot play this file: {error}"
-no_player = "no media player found; install mpv, GStreamer (gst-play-1.0) or FFmpeg (ffplay)"
+no_player = "no media player found. Install the package {package}"
 properties = "Properties"
 reading = "Reading properties…"
 loading = "Loading preview…"

@@ -279,3 +279,16 @@ fn a_dismissed_password_prompt_is_quiet_and_other_failures_are_explained() {
     assert_eq!(raise_outcome(1, Some(1), ""), WatchLimit::Failed("pkexec exit code 1".into()));
     assert!(matches!(raise_outcome(1, None, ""), WatchLimit::Failed(_)));
 }
+
+#[test]
+fn missing_watch_limit_authorization_names_its_package_and_present_helper_stays_usable() {
+    crate::temp::with_tools(&[], || {
+        let outcome = raise_watch_limit();
+        assert_eq!(outcome, WatchLimit::Failed(crate::shell::tool_missing("pkexec").message));
+        let WatchLimit::Failed(message) = outcome else { panic!("the helper should be missing") };
+        crate::temp::assert_missing(&message, "pkexec");
+    });
+    crate::temp::with_tools(&["pkexec"], || {
+        assert!(matches!(raise_watch_limit(), WatchLimit::Raised(_)));
+    });
+}

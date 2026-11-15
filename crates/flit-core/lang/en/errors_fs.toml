@@ -24,7 +24,7 @@ device_unsupported = "This action is not available on phones and cameras"
 grant_button = "Continue"
 grant_hint = "Click Continue to get permanent access to this folder as an administrator."
 granting = "Getting access to {what}"
-no_setfacl = "setfacl is not installed (package acl)"
+no_setfacl = "setfacl is not installed. Install the package {package}"
 
 [title]
 encrypted = "This archive is encrypted"
