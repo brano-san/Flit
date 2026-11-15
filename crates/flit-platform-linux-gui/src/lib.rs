@@ -18,6 +18,7 @@ mod icons;
 mod input;
 mod locale;
 mod mime;
+mod mpv;
 mod poll;
 mod preferences;
 mod player;

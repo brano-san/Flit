@@ -9,6 +9,7 @@ use crate::provider::GenToken;
 use crate::render::Rect;
 use crate::ui::Bitmap;
 use std::ops::Range;
+use std::sync::{Arc, Mutex, MutexGuard};
 use syntax::{Syntax, SYNTAXES};
 
 pub const TEXT_CHARS: usize = 10_000;
@@ -509,11 +510,41 @@ pub enum HostCmd {
     Close,
 }
 
+#[derive(Clone, Default)]
+pub struct Frames(Arc<Mutex<Option<(u64, Bitmap)>>>);
+
+impl Frames {
+    pub fn put(&self, gen: u64, frame: Bitmap) -> bool {
+        self.slot().replace((gen, frame)).is_none()
+    }
+
+    pub fn take(&self) -> Option<(u64, Bitmap)> {
+        self.slot().take()
+    }
+
+    fn slot(&self) -> MutexGuard<'_, Option<(u64, Bitmap)>> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+impl PartialEq for Frames {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl std::fmt::Debug for Frames {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Frames")
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum HostEvent {
     Ready { gen: u64, ms: u32 },
     Failed { gen: u64, message: String },
     Media { gen: u64, position: f64, duration: f64, playing: bool },
+    Frame(Frames),
     Released { gen: u64 },
 }
 
