@@ -857,6 +857,7 @@ fn dialog_text_fields_pick_words_drag_and_offer_the_field_menu_but_secrets_stay_
 #[test]
 fn the_inspector_filter_picks_words_drags_and_offers_the_field_menu() {
     let mut app = app_at(r"C:\x");
+    app.animations = false;
     files(&mut app, &["a.rs"]);
     key(&mut app, Key::Char('A'), CTRL);
     key(&mut app, Key::Space, NO);

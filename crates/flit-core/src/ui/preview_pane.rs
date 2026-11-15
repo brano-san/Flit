@@ -267,6 +267,7 @@ pub(super) struct PreviewPane {
     pub state: PaneState,
     pub look: Look,
     pub turn: super::widgets::Tween,
+    foot_slide: super::widgets::Tween,
     key: u64,
     gen: u64,
     cancel: GenToken,
@@ -1068,6 +1069,10 @@ impl App {
         let s = |v: f32| (v * sc).round();
         let st = self.preview.state;
         let shown = st.visible && !self.search.active && !self.on_home();
+        let foot_on = shown && self.focus == Focus::Preview && (self.prefs.status_bar || self.preview.filter.is_some());
+        let (now, animate) = (self.clock(), self.animations);
+        self.motion |= self.preview.foot_slide.aim(if foot_on { s(FOOT_H) } else { 0.0 }, animate, now, super::panels::SPLIT);
+        let foot_h = self.preview.foot_slide.value(now, super::panels::SPLIT).round();
         let l = &mut self.layout;
         l.bottom = l.status.y;
         let (x0, w, top, end) = (l.header.x, l.header.right(), l.toolbar.bottom(), l.status.bottom());
@@ -1096,7 +1101,7 @@ impl App {
         }
         let pane = r.pane;
         r.tools = Rect::new(pane.x, pane.y, pane.w, s(TOOLS_H));
-        r.foot = Rect::new(pane.x, pane.bottom() - s(FOOT_H), pane.w, s(FOOT_H));
+        r.foot = Rect::new(pane.x, pane.bottom() - foot_h, pane.w, foot_h);
         let top = r.tools.bottom() + s(8.0);
         r.body = Rect::new(pane.x + s(PAD), top, (pane.w - 2.0 * s(PAD)).max(0.0), (r.foot.y - s(6.0) - top).max(0.0));
         let card_w = s(CARD_W).min(pane.w - s(16.0)).max(0.0);
@@ -1146,6 +1151,9 @@ impl App {
         let pane = self.preview.r.pane;
         let shown = |v: f32, px: f32| if v == HALF { px / self.scale } else { v };
         let (at, size) = if self.right_side() { (x, shown(st.right_w, pane.w)) } else { (y, shown(st.bottom_h, pane.h)) };
+        if !matches!(h, PaneHit::Split | PaneHit::Close) {
+            self.focus = Focus::Preview;
+        }
         match h {
             PaneHit::Split => self.drag = Drag::Preview { hit: h, start: at, size },
             PaneHit::Seek | PaneHit::Volume => {
@@ -1644,9 +1652,14 @@ impl App {
     }
 
     fn draw_inspector_foot<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
-        let r = self.preview.r.foot;
-        g.dl.rect(r, t.chrome);
-        g.dl.rect(Rect::new(r.x, r.y, r.w, 1.0), t.separator);
+        let slot = self.preview.r.foot;
+        self.preview.r.filter = Rect::default();
+        if slot.h <= 0.0 {
+            return;
+        }
+        let r = Rect { h: self.s(FOOT_H), ..slot };
+        let radius = self.s(6.0);
+        let right_from = g.dl.instances.len();
         let font = self.ui_font(12.0);
         let icons = self.icon_font(11.0);
         let m = g.metrics(font);
@@ -1670,12 +1683,14 @@ impl App {
             g.text(br.x + self.s(7.0) + icon_w, baseline, &label, font, if hit.is_some() { t.text } else { t.text_dim }, f32::INFINITY);
             right = br.x - self.s(6.0);
         }
-        let Some((label, count)) = filterable else {
-            self.preview.r.filter = Rect::default();
-            return;
-        };
+        if g.dl.instances.len() > right_from {
+            let piece = Rect::new(right, r.y, r.right() - right, r.h);
+            g.dl.beneath(right_from, |dl| super::bottom::bar_piece(dl, t, r, piece, false, radius));
+        }
+        let Some((label, count)) = filterable else { return };
         let fr = Rect::new(r.x + self.s(6.0), r.y + self.s(2.0), (right - r.x - self.s(12.0)).clamp(0.0, self.s(260.0)), block_h);
         self.preview.r.filter = fr;
+        let left_from = g.dl.instances.len();
         let focused = self.preview.filtering && self.focus == Focus::Preview;
         let mut p = Paint::new(g, t, self.scale);
         p.field(fr, focused);
@@ -1695,6 +1710,8 @@ impl App {
             let cr = Rect::new(fr.right() - clear_w - self.s(2.0), fr.y, clear_w, fr.h);
             self.tool_button(g, t, cr, G_CLOSE, PaneHit::FilterClear, false);
         }
+        let piece = Rect::new(r.x, r.y, fr.right() + self.s(6.0) - r.x, r.h);
+        g.dl.beneath(left_from, |dl| super::bottom::bar_piece(dl, t, r, piece, true, radius));
     }
 
     fn draw_card<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {

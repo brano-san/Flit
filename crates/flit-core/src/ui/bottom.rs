@@ -417,15 +417,8 @@ impl App {
         let right_start = if text_w > 0.0 { text_x - pad } else { right - self.s(2.0) };
         let radius = self.s(6.0);
         let (left, right) = (Rect::new(r.x, r.y, (left_end - r.x).max(0.0), r.h), Rect::new(right_start, r.y, (r.right() - right_start).max(0.0), r.h));
-        let piece = |dl: &mut crate::render::DrawList, p: Rect, open_left: bool| {
-            let shape = Rect::new(if open_left { p.x - radius } else { p.x }, p.y, p.w + radius, p.h + radius);
-            dl.set_clip(Some(r));
-            dl.round_rect(shape, t.chrome, radius);
-            dl.outline(shape, t.separator, radius, 1.0);
-            dl.set_clip(None);
-        };
-        g.dl.beneath(left_from, |dl| piece(dl, left, true));
-        g.dl.beneath(right_from, |dl| piece(dl, right, false));
+        g.dl.beneath(left_from, |dl| bar_piece(dl, t, r, left, true, radius));
+        g.dl.beneath(right_from, |dl| bar_piece(dl, t, r, right, false, radius));
         self.layout.bar_pieces = [left, right];
     }
 
@@ -460,6 +453,14 @@ pub enum WatchLimit {
     Raised(u64),
     Cancelled,
     Failed(String),
+}
+
+pub(super) fn bar_piece(dl: &mut crate::render::DrawList, t: &Theme, face: Rect, p: Rect, open_left: bool, radius: f32) {
+    let shape = Rect::new(if open_left { p.x - radius } else { p.x }, p.y, p.w + radius, p.h + radius);
+    dl.set_clip(Some(face));
+    dl.round_rect(shape, t.chrome, radius);
+    dl.outline(shape, t.separator, radius, 1.0);
+    dl.set_clip(None);
 }
 
 fn current_view(a: &App) -> Option<&crate::view::DirView> {

@@ -422,6 +422,33 @@ fn an_inspector_below_resizes_from_its_own_edge_and_not_from_the_status_bar() {
 }
 
 #[test]
+fn the_inspector_dock_bar_shows_only_while_the_inspector_has_focus_and_in_pieces_like_a_panels() {
+    let mut a = app((1200, 700));
+    a.animations = false;
+    press(&mut a, Key::Space, NO);
+    select(&mut a, "a.rs");
+    frame(&mut a);
+    let gen = requests(&mut a).last().expect("a preview request").gen;
+    a.on_preview(gen, crate::preview::PreviewData::Doc(crate::preview::text_doc("alpha\nbeta", None)));
+    frame(&mut a);
+    assert_eq!(a.preview.r.foot.h, 0.0, "the list has focus, so the inspector keeps no dock bar");
+    assert_eq!(a.preview.r.body.bottom(), a.preview.r.pane.bottom() - 6.0, "its text runs to the bottom instead");
+    let body = a.preview.r.body;
+    a.on_event(&Event::MouseDown { x: body.x + 5.0, y: body.y + 5.0, button: crate::input::MouseButton::Left, clicks: 1 }, Instant::now());
+    a.on_event(&Event::MouseUp { x: body.x + 5.0, y: body.y + 5.0, button: crate::input::MouseButton::Left }, Instant::now());
+    let mut g = Gfx::new(Mono, 2048);
+    a.frame(&mut g, Instant::now());
+    let foot = a.preview.r.foot;
+    assert!(foot.h > 0.0 && a.focus == Focus::Preview, "a click in the inspector focuses it and brings its bar in");
+    let solid = g.dl.instances.iter().any(|i| i.rect[0] == foot.x && i.rect[2] == foot.w && i.rect[1] == foot.y);
+    assert!(!solid, "the bar is drawn in pieces, not as one strip across the inspector");
+    press(&mut a, Key::Tab, NO);
+    frame(&mut a);
+    assert_ne!(a.focus, Focus::Preview);
+    assert_eq!(a.preview.r.foot.h, 0.0, "the bar leaves with the focus");
+}
+
+#[test]
 fn online_only_files_show_basic_info_until_the_download_button_is_clicked() {
     use crate::listing::{ChangeKind, DirChange};
     let mut a = app((1200, 700));
