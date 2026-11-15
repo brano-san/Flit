@@ -43,8 +43,10 @@ impl GitWorker {
 pub fn command(dir: &Path) -> Command {
     let mut c = Command::new("git");
     c.arg("--no-optional-locks").arg("-C").arg(dir);
-    c.env("GIT_TERMINAL_PROMPT", "0").env("GIT_MERGE_AUTOEDIT", "no").env("LC_ALL", "C");
+    c.env("GIT_TERMINAL_PROMPT", "0").env("GIT_MERGE_AUTOEDIT", "no").env("LC_ALL", "C").env("LANGUAGE", "");
     c.stdin(Stdio::null());
+    #[cfg(test)]
+    tests::isolate(&mut c);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -103,7 +105,7 @@ fn children(dir: &Path) -> usize {
 pub fn last_commits(dir: &Path) -> Commits {
     let mut commits = Commits::default();
     let want = children(dir);
-    let Ok(mut child) = command(dir).args(["-c", "core.quotePath=false", "log", LogParser::FORMAT, "--name-only", "-z", "--relative", "--", "."]).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else {
+    let Ok(mut child) = command(dir).args(["-c", "core.quotePath=false", "log", LogParser::FORMAT, "--abbrev=7", "--name-only", "-z", "--relative", "--", "."]).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else {
         return commits;
     };
     let started = Instant::now();
@@ -149,22 +151,33 @@ impl Cache {
     }
 }
 
+fn sequence(gitdir: &Path) -> Option<git::Sequence> {
+    if gitdir.join("rebase-merge").is_dir() || gitdir.join("rebase-apply").is_dir() { Some(git::Sequence::Rebase) }
+    else if gitdir.join("MERGE_HEAD").is_file() { Some(git::Sequence::Merge) }
+    else if gitdir.join("CHERRY_PICK_HEAD").is_file() { Some(git::Sequence::CherryPick) }
+    else { None }
+}
+
 pub fn status(dir: &Path, commits: bool, cache: &mut Cache) -> Option<GitInfo> {
     let (root, gitdir) = discover(dir)?;
     let branch = std::fs::read(gitdir.join("HEAD")).ok().and_then(|h| git::head_branch(&h)).unwrap_or_default();
     let status = output(dir, &["status", "--porcelain=v1", "-z", "--", "."]).map(|o| git::parse_status(&o.stdout, &prefix(&root, dir))).unwrap_or_default();
     let commits = if commits { cache.commits(dir, &gitdir) } else { Commits::default() };
-    Some(GitInfo { root: FsPath::parse(&root.to_string_lossy()), branch, status, commits })
+    let upstream = output(dir, &["rev-parse", "--abbrev-ref", "@{u}"]).ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).filter(|s| !s.is_empty());
+    let sequence = sequence(&gitdir);
+    let conflicts = if sequence.is_some() {
+        output(&root, &["diff", "--name-only", "--diff-filter=U", "-z"]).map(|o| o.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()).count()).unwrap_or(0)
+    } else { 0 };
+    Some(GitInfo { root: FsPath::parse(&root.to_string_lossy()), branch, upstream, status, commits, sequence, conflicts })
 }
 
 
-pub fn branches(dir: &Path) -> Vec<String> {
-    let Ok(out) = output(dir, &["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"]) else { return Vec::new() };
+pub fn branches(dir: &Path) -> Vec<git::Branch> {
+    let Ok(out) = output(dir, &["for-each-ref", "--format=%(refname)%00%(symref)", "refs/heads", "refs/remotes"]) else { return Vec::new() };
     String::from_utf8_lossy(&out.stdout)
         .lines()
-        .filter(|l| !l.ends_with("/HEAD"))
-        .filter_map(|l| l.strip_prefix("refs/heads/").or_else(|| l.strip_prefix("refs/remotes/")))
-        .map(str::to_owned)
+        .filter_map(|l| l.split_once('\0').filter(|(_, target)| target.is_empty()).map(|(name, _)| name))
+        .filter_map(|l| l.strip_prefix("refs/heads/").map(|name| git::Branch { name: name.into(), remote: false }).or_else(|| l.strip_prefix("refs/remotes/").map(|name| git::Branch { name: name.into(), remote: true })))
         .collect()
 }
 
@@ -176,16 +189,40 @@ fn remote_url(dir: &Path) -> Result<String, String> {
     git::web_url(&String::from_utf8_lossy(&out.stdout)).ok_or_else(|| S::GitErrorNoWeb.t().to_owned())
 }
 
+const NO_UPSTREAM: [&str; 2] = ["no upstream", "set-upstream"];
+
+fn push(run: &mut impl FnMut(&[&str]) -> Result<(), String>) -> Result<(), String> {
+    match run(&["push"]) {
+        Err(e) if NO_UPSTREAM.iter().any(|s| e.contains(s)) => run(&["push", "--set-upstream", "origin", "HEAD"]),
+        r => r,
+    }
+}
+
+fn sync(run: &mut impl FnMut(&[&str]) -> Result<(), String>) -> Result<(), String> {
+    run(&["pull"])?;
+    push(run)
+}
+
 pub fn run_op(dir: &Path, op: &GitOp) -> Result<Option<String>, String> {
     match op {
         GitOp::Fetch => output(dir, &["fetch", "--prune"]).map(drop),
         GitOp::Pull => output(dir, &["pull"]).map(drop),
-        GitOp::Push => match output(dir, &["push"]) {
-            Err(e) if e.contains("no upstream") || e.contains("set-upstream") => output(dir, &["push", "--set-upstream", "origin", "HEAD"]).map(drop),
-            r => r.map(drop),
-        },
+        GitOp::Push => push(&mut |args| output(dir, args).map(drop)),
+        GitOp::Sync => sync(&mut |args| output(dir, args).map(drop)),
         GitOp::Init => output(dir, &["init"]).map(drop),
         GitOp::Clone { url } => output(dir, &["clone", "--", url]).map(drop),
+        GitOp::CreateBranch { name, base, switch } => {
+            output(dir, &["check-ref-format", "--branch", name])?;
+            let base = if base == "HEAD" { base.clone() } else { format!("refs/heads/{base}") };
+            if *switch { output(dir, &["switch", "-c", name, &base]).map(drop) } else { output(dir, &["branch", "--", name, &base]).map(drop) }
+        }
+        GitOp::DeleteBranch { name, force } => output(dir, &["branch", if *force { "-D" } else { "-d" }, "--", name]).map(drop),
+        GitOp::Abort(kind) => {
+            if discover(dir).and_then(|(_, g)| sequence(&g)) != Some(*kind) {
+                return Err(S::GitSequenceChanged.t().into());
+            }
+            output(dir, &[kind.command(), "--abort"]).map(drop)
+        }
         GitOp::Switch(b) => match output(dir, &["switch", b]) {
             Err(e) => match b.split_once('/') {
                 Some((_, tail)) if !tail.is_empty() => output(dir, &["switch", tail]).map(drop).map_err(|_| e),
@@ -235,7 +272,7 @@ fn run(rx: Receiver<Job>, tx: Sender<Reply>, wake: Wake) {
                     tracing::debug!("git status of {} in {:.1} ms, repository: {}", dir.display(), started.elapsed().as_secs_f64() * 1e3, info.is_some());
                     GitEvent::Status { tab, gen, info: info.map(Arc::new) }
                 }
-                GitRequest::Branches { tab, dir } => GitEvent::Branches { tab, branches: branches(&std_path(&dir)) },
+                GitRequest::Branches { tab, gen, dir, create } => GitEvent::Branches { tab, gen, branches: branches(&std_path(&dir)), dir, create },
                 GitRequest::Run { tab, dir, op } => {
                     let (tx, wake) = (tx.clone(), wake.clone());
                     let _ = tx.send(GitEvent::Started { tab, op: op.clone() });

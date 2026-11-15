@@ -53,6 +53,7 @@ impl GitStatus {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Commit {
     pub hash: String,
+    pub short_hash: String,
     pub author: String,
     pub time: i64,
     pub message: String,
@@ -62,8 +63,26 @@ pub struct Commit {
 pub struct GitInfo {
     pub root: Option<FsPath>,
     pub branch: String,
+    pub upstream: Option<String>,
     pub status: FxHashMap<Vec<u8>, GitStatus>,
     pub commits: FxHashMap<Vec<u8>, Arc<Commit>>,
+    pub sequence: Option<Sequence>,
+    pub conflicts: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Sequence { Merge, Rebase, CherryPick }
+
+impl Sequence {
+    pub fn command(self) -> &'static str {
+        match self { Self::Merge => "merge", Self::Rebase => "rebase", Self::CherryPick => "cherry-pick" }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Branch {
+    pub name: String,
+    pub remote: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -71,23 +90,27 @@ pub enum GitOp {
     Fetch,
     Pull,
     Push,
+    Sync,
     Init,
     Clone { url: String },
     Switch(String),
+    CreateBranch { name: String, base: String, switch: bool },
+    DeleteBranch { name: String, force: bool },
+    Abort(Sequence),
     OpenRemote,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum GitRequest {
     Status { tab: TabId, gen: u64, dir: FsPath, commits: bool, changed: bool },
-    Branches { tab: TabId, dir: FsPath },
+    Branches { tab: TabId, gen: u64, dir: FsPath, create: bool },
     Run { tab: TabId, dir: FsPath, op: GitOp },
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum GitEvent {
     Status { tab: TabId, gen: u64, info: Option<Arc<GitInfo>> },
-    Branches { tab: TabId, branches: Vec<String> },
+    Branches { tab: TabId, gen: u64, dir: FsPath, create: bool, branches: Vec<Branch> },
     Started { tab: TabId, op: GitOp },
     Done { tab: TabId, op: GitOp, error: Option<String>, url: Option<String> },
 }
@@ -164,7 +187,7 @@ impl Default for LogParser {
 }
 
 impl LogParser {
-    pub const FORMAT: &'static str = "--format=%x1e%H%x1f%an%x1f%ct%x1f%s";
+    pub const FORMAT: &'static str = "--format=%x1e%H%x1f%h%x1f%an%x1f%ct%x1f%s";
 
     pub fn new() -> Self {
         Self { current: None }
@@ -174,8 +197,11 @@ impl LogParser {
         let field = field.strip_prefix(b"\n").unwrap_or(field);
         if let Some(header) = field.strip_prefix(b"\x1e") {
             let mut f = header.split(|&b| b == 0x1f).map(|s| String::from_utf8_lossy(s).into_owned());
-            let (hash, author, time, message) = (f.next().unwrap_or_default(), f.next().unwrap_or_default(), f.next().unwrap_or_default(), f.next().unwrap_or_default());
-            self.current = Some(Arc::new(Commit { hash, author, time: filetime(time.trim().parse().unwrap_or(0)), message }));
+            let (Some(hash), Some(short_hash), Some(author), Some(time), Some(message)) = (f.next(), f.next(), f.next(), f.next(), f.next()) else {
+                self.current = None;
+                return;
+            };
+            self.current = Some(Arc::new(Commit { hash, short_hash: short_hash.chars().take(7).collect(), author, time: filetime(time.trim().parse().unwrap_or(0)), message }));
             return;
         }
         let Some(c) = &self.current else { return };
@@ -229,8 +255,9 @@ pub fn op_command(op: &GitOp) -> Option<String> {
         GitOp::Fetch => "git fetch".to_owned(),
         GitOp::Pull => "git pull".to_owned(),
         GitOp::Push => "git push".to_owned(),
+        GitOp::Sync => "git pull && git push".to_owned(),
         GitOp::Clone { url } => format!("git clone {url}"),
-        GitOp::Init | GitOp::Switch(_) | GitOp::OpenRemote => return None,
+        GitOp::Init | GitOp::Switch(_) | GitOp::OpenRemote | GitOp::CreateBranch { .. } | GitOp::DeleteBranch { .. } | GitOp::Abort(_) => return None,
     })
 }
 

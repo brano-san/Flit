@@ -242,9 +242,10 @@ pub enum Column {
     GitMessage,
     GitAuthor,
     GitDate,
+    GitHash,
 }
 
-pub const GIT_COLUMNS: [Column; 4] = [Column::GitStatus, Column::GitMessage, Column::GitAuthor, Column::GitDate];
+pub const GIT_COLUMNS: [Column; 5] = [Column::GitStatus, Column::GitMessage, Column::GitAuthor, Column::GitDate, Column::GitHash];
 pub const SHELL_COLUMNS: [Column; 10] = [
     Column::ImageSize,
     Column::Duration,
@@ -257,7 +258,7 @@ pub const SHELL_COLUMNS: [Column; 10] = [
     Column::Authors,
     Column::Company,
 ];
-pub const REPO_COLUMNS: [Column; 15] = [
+pub const REPO_COLUMNS: [Column; 16] = [
     Column::Name,
     Column::Type,
     Column::Modified,
@@ -273,6 +274,7 @@ pub const REPO_COLUMNS: [Column; 15] = [
     Column::GitMessage,
     Column::GitAuthor,
     Column::GitDate,
+    Column::GitHash,
 ];
 pub const COLUMNS: [Column; 11] = [Column::Name, Column::Type, Column::Modified, Column::Folders, Column::Files, Column::Size, Column::Volume, Column::Created, Column::Accessed, Column::FolderUsage, Column::Tag];
 pub const BIN_COLUMNS: [Column; 4] = [Column::Name, Column::Origin, Column::Deleted, Column::Size];
@@ -313,6 +315,7 @@ impl Column {
             Column::GitMessage => S::GitColumnMessage,
             Column::GitAuthor => S::GitColumnAuthor,
             Column::GitDate => S::GitColumnDate,
+            Column::GitHash => S::GitColumnHash,
         }
         .t()
     }
@@ -338,6 +341,7 @@ impl Column {
             Column::Duration => SortField::Duration,
             Column::Artist => SortField::Artist,
             Column::Version => SortField::Version,
+            Column::GitHash => SortField::GitHash,
             Column::DateTaken | Column::CameraModel | Column::Album | Column::Title | Column::Authors | Column::Company | Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => return None,
         })
     }
@@ -533,6 +537,8 @@ enum Hit {
     HThumb,
     Encoding,
     Branch,
+    GitAbort,
+    GitConflicts,
     Bin(usize),
     Side(usize),
     SidePin(usize),
@@ -633,6 +639,7 @@ struct Layout {
     bar_pieces: [Rect; 2],
     encoding: Rect,
     branch: Rect,
+    git_bar: [Rect; 4],
     bin: [Rect; 3],
     crumbs: Vec<Rect>,
     crumb_chevrons: Vec<Rect>,
@@ -661,7 +668,7 @@ pub struct App {
     pub shell_items_inline: bool,
     raising_watch_limit: bool,
     pub menu_hidden: Vec<&'static str>,
-    git_branches: Vec<String>,
+    git_branches: Vec<crate::git::Branch>,
     pub tab_wheel_reversed: bool,
     pub tab_actions_button: bool,
     pub folders_in_new_tab: bool,
@@ -1525,8 +1532,9 @@ impl App {
 
     fn resort(&mut self, k: usize) {
         self.sync_spec(k);
-        let t = &self.tabs[k];
-        if let Some(v) = &t.view {
+        let t = &mut self.tabs[k];
+        if let Some(v) = &mut t.view {
+            v.set_git(if t.view_spec.sort.field == SortField::GitHash { t.git.clone() } else { None });
             self.effects.push(Effect::Resort { tab: t.id, gen: t.gen, snap: v.snap().clone(), view: t.view_spec });
         }
     }
@@ -1619,6 +1627,7 @@ impl App {
         let l = &mut self.layout;
         l.header = Rect::new(area.x, area.y, area.w, s(HEADER_H));
         l.bottom = area.bottom();
+        self.layout_git_bar();
         self.layout_look();
         let now = self.clock();
         let animate = self.animations && !matches!(self.drag, Drag::ColSep { .. });
@@ -1740,6 +1749,8 @@ impl App {
         if l.encoding.contains(x, y) {
             return Hit::Encoding;
         }
+        if l.git_bar[2].contains(x, y) { return Hit::GitAbort; }
+        if l.git_bar[3].contains(x, y) { return Hit::GitConflicts; }
         if l.branch.contains(x, y) {
             return Hit::Branch;
         }
@@ -2212,6 +2223,8 @@ impl App {
             Hit::Encoding => self.pick_encoding(),
             Hit::Bottom(b) => self.bottom_click(b),
             Hit::Branch => self.git_branches_menu(),
+            Hit::GitAbort => self.ask_git_abort(),
+            Hit::GitConflicts => self.show_git_conflicts(),
             Hit::Preview(p) => self.preview_click(p),
             Hit::Bin(k) => self.bin_button(k),
             Hit::Side(i) => self.open_side_item(i, self.mods.ctrl, now),
@@ -2688,6 +2701,7 @@ impl App {
                 self.draw_ops(g, files);
             }
             self.draw_header(g, files);
+            self.draw_git_bar(g, files);
             if active {
                 self.draw_preview(g, palette.area(Area::Pane));
             }

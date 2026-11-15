@@ -2,15 +2,23 @@ use super::archive::Kind;
 use super::form::{Control, Form};
 use super::{App, Column, Effect, Tab};
 use crate::fmt as format;
-use crate::git::{GitEvent, GitInfo, GitOp, GitRequest, GitStatus};
+use crate::git::{GitEvent, GitInfo, GitOp, GitRequest, GitStatus, Sequence};
 use crate::i18n::S;
 use crate::location::{Location, ProviderId};
 use crate::path::{FsPath, PathKind};
 use crate::provider::{Launch, TabId};
-use crate::render::Color;
+use crate::render::{Color, Rect};
 use std::sync::Arc;
 
-const COMMIT_COLUMNS: u8 = 0b1110;
+const COMMIT_COLUMNS: u8 = 0b11110;
+
+fn sequence_labels(sequence: Sequence) -> [S; 2] {
+    match sequence {
+        Sequence::Merge => [S::GitSequenceMerge, S::GitSequenceAbortMerge],
+        Sequence::Rebase => [S::GitSequenceRebase, S::GitSequenceAbortRebase],
+        Sequence::CherryPick => [S::GitSequenceCherryPick, S::GitSequenceAbortCherryPick],
+    }
+}
 
 pub(super) fn status_color(s: GitStatus) -> Color {
     match s {
@@ -55,10 +63,94 @@ impl Tab {
 }
 
 impl App {
+    pub(super) fn git_sequence(&self) -> Option<Sequence> {
+        git_dir(self.tab().location())?;
+        self.git_info().filter(|g| g.root.is_some())?.sequence
+    }
+
+    pub(super) fn git_bar_labels(&self) -> Option<[String; 4]> {
+        let [state, abort] = sequence_labels(self.git_sequence()?);
+        Some([state.t().into(), crate::tr!(S::GitSequenceConflicts, n = self.git_info()?.conflicts), abort.t().into(), S::GitSequenceShow.t().into()])
+    }
+
+    pub(super) fn layout_git_bar(&mut self) {
+        self.layout.git_bar = [Rect::default(); 4];
+        if self.git_sequence().is_none() { return; }
+        let h = self.cs(28.0);
+        let pad = self.cs(4.0);
+        let r = self.layout.header;
+        if r.w >= self.cs(800.0) {
+            let w = r.w / 4.0;
+            self.layout.git_bar = std::array::from_fn(|i| Rect::new(r.x + i as f32 * w + pad, r.y, w - 2.0 * pad, h));
+            self.layout.header.y += h + pad;
+        } else {
+            self.layout.git_bar = std::array::from_fn(|i| Rect::new(r.x + pad, r.y + i as f32 * h, (r.w - 2.0 * pad).max(0.0), h));
+            self.layout.header.y += 4.0 * h + pad;
+        }
+    }
+
+    pub(super) fn draw_git_bar<B: crate::text::TextBackend>(&self, g: &mut crate::text::Gfx<B>, t: &crate::theme::Theme) {
+        let Some(labels) = self.git_bar_labels() else { return };
+        let font = self.content_font(13.0);
+        for (i, (r, label)) in self.layout.git_bar.into_iter().zip(labels).enumerate() {
+            g.dl.set_clip(Some(r));
+            if i >= 2 {
+                let hit = if i == 2 { super::Hit::GitAbort } else { super::Hit::GitConflicts };
+                let fill = if self.lit(hit) > 0.0 { t.button_hover } else { t.button_pressed };
+                g.dl.round_rect(Rect::new(r.x, r.y + self.cs(2.0), r.w, r.h - self.cs(4.0)), fill, self.cs(3.0));
+            }
+            super::centered(g, r, &label, font, t.text);
+            g.dl.set_clip(None);
+        }
+    }
+
+    pub(super) fn show_git_conflicts(&mut self) {
+        if self.git_sequence().is_none() { return; }
+        self.close_filter();
+        let t = self.tab_mut();
+        if let (Some(g), Some(v)) = (&t.git, &mut t.view) {
+            let conflicts: Vec<_> = v.rows().iter().copied().filter(|i| g.status.get(v.listing().name(*i)) == Some(&GitStatus::Conflict)).collect();
+            v.clear_selection();
+            for &i in &conflicts { v.set_selected(i, true); }
+            if let Some(&i) = conflicts.first() { v.focus = Some(i); v.anchor = Some(i); }
+        }
+        self.focus = super::Focus::List;
+        self.reveal_focus(true);
+        self.dirty = true;
+    }
+
+    pub(super) fn ask_git_abort(&mut self) {
+        if self.jobs.form.is_some() { return; }
+        let Some(sequence) = self.git_sequence() else { return };
+        let Some((tab, dir)) = self.git_target(true) else { return };
+        let label = sequence_labels(sequence)[1].t();
+        let controls = vec![Control::paragraph(S::GitSequenceConfirm.t().into())];
+        let mut f = Form::new(Kind::GitAbort { tab, dir, sequence, pending: false }, label, controls, vec![label, S::WidgetsCancel.t()]);
+        f.focus = f.controls.len() + 1;
+        self.open_form(f);
+    }
+
+    pub(super) fn submit_git_abort(&mut self, mut f: Form) -> Option<Form> {
+        if let Kind::GitAbort { tab, dir, sequence, pending } = &mut f.kind {
+            if !*pending {
+                *pending = true;
+                self.effects.push(Effect::Git(GitRequest::Run { tab: *tab, dir: dir.clone(), op: GitOp::Abort(*sequence) }));
+                f.say(S::GitSequenceAborting.t(), false);
+            }
+        }
+        Some(f)
+    }
+
     pub(super) fn set_git_integration(&mut self, on: bool) {
         self.prefs.git_integration = on;
         self.each_pane(|a, k| {
             a.tabs[k].git = None;
+            if let Some(v) = &mut a.tabs[k].view {
+                v.set_git(None);
+            }
+            if a.tabs[k].view_spec.sort.field == crate::sort::SortField::GitHash {
+                a.resort(k);
+            }
             if on { a.git_refresh(k, false); }
         });
         self.layout();
@@ -72,7 +164,7 @@ impl App {
             return;
         }
         let Some(dir) = git_dir(t.location()) else { return };
-        let commits = t.columns.git & COMMIT_COLUMNS != 0;
+        let commits = t.columns.git & COMMIT_COLUMNS != 0 || t.view_spec.sort.field == crate::sort::SortField::GitHash;
         self.effects.push(Effect::Git(GitRequest::Status { tab: t.id, gen: t.gen, dir, commits, changed }));
     }
 
@@ -88,6 +180,7 @@ impl App {
         let _ = match col {
             Column::GitMessage => s.write_str(&c.message),
             Column::GitAuthor => s.write_str(&c.author),
+            Column::GitHash => s.write_str(&c.short_hash),
             _ => {
                 let mut d = String::new();
                 format::datetime_in(&mut d, c.time, self.utc_offset_min, &self.style);
@@ -104,15 +197,30 @@ impl App {
         self.tab().git.as_deref()
     }
 
+    pub(super) fn selected_commit_hash(&self) -> Option<&str> {
+        let t = self.tab();
+        if !t.columns.shown(Column::GitHash) || git_dir(t.location()).is_none() {
+            return None;
+        }
+        let g = t.git.as_ref().filter(|g| g.root.is_some())?;
+        let v = t.view.as_ref().filter(|v| v.selected_count() == 1)?;
+        let name = v.listing().name(v.selected().next()?);
+        g.commits.get(name).map(|c| c.hash.as_str()).filter(|s| !s.is_empty())
+    }
+
     pub fn on_git(&mut self, ev: GitEvent) {
         match ev {
             GitEvent::Status { tab, gen, info } => self.git_status_arrived(tab, gen, info),
-            GitEvent::Branches { tab, branches } => {
-                if self.tab().id == tab {
+            GitEvent::Branches { tab, gen, dir, create, branches } => {
+                if self.tab().id == tab && self.tab().gen == gen && git_dir(self.tab().location()).as_ref() == Some(&dir) && self.jobs.form.is_none() {
                     self.git_branches = branches;
-                    let r = self.layout.branch;
-                    let menu = self.build_branch_menu();
-                    self.flit_menu(r.x, r.y, menu);
+                    if create {
+                        self.new_git_branch_form(tab, dir);
+                    } else {
+                        let r = self.layout.branch;
+                        let menu = self.build_branch_menu();
+                        self.flit_menu(r.x, r.y, menu);
+                    }
                 }
             }
             GitEvent::Started { tab, op } => {
@@ -122,15 +230,14 @@ impl App {
             }
             GitEvent::Done { tab, op, error, url } => {
                 let here = self.tab().id == tab;
+                let handled = self.git_form_done(tab, &op, error.as_deref());
                 match (error, url) {
-                    (Some(e), _) if here => self.git_failed(tab, &op, &e),
+                    (Some(e), _) if here && !handled => self.git_failed(tab, &op, &e),
                     (None, Some(url)) => self.launch(Launch::Run { program: url, args: String::new(), dir: None }),
                     (None, None) if here => self.status(done_text(&op)),
                     _ => {}
                 }
-                for k in 0..self.tabs.len() {
-                    self.git_refresh(k, true);
-                }
+                self.each_pane(|a, k| a.git_refresh(k, true));
                 if op == GitOp::Init {
                     self.git_refresh(self.cur, false);
                 }
@@ -143,6 +250,9 @@ impl App {
         let info = info.filter(|g| g.root.is_some());
         if let Some(k) = self.tabs.iter().position(|t| t.id == tab && t.gen == gen) {
             self.tabs[k].git = info;
+            if self.tabs[k].view_spec.sort.field == crate::sort::SortField::GitHash {
+                self.resort(k);
+            }
             if k == self.cur {
                 self.layout();
                 self.dirty = true;
@@ -169,6 +279,9 @@ impl App {
     }
 
     pub(super) fn git_run(&mut self, op: GitOp) {
+        if op == GitOp::Sync && !self.git_can_sync() {
+            return self.status(S::GitErrorNoUpstream.t());
+        }
         let need_repo = !matches!(op, GitOp::Init | GitOp::Clone { .. });
         if let Some((tab, dir)) = self.git_target(need_repo) {
             self.effects.push(Effect::Git(GitRequest::Run { tab, dir, op }));
@@ -177,14 +290,107 @@ impl App {
 
     pub(super) fn git_branches_menu(&mut self) {
         if let Some((tab, dir)) = self.git_target(true) {
-            self.effects.push(Effect::Git(GitRequest::Branches { tab, dir }));
+            self.effects.push(Effect::Git(GitRequest::Branches { tab, gen: self.tab().gen, dir, create: false }));
         }
+    }
+
+    pub(super) fn git_can_sync(&self) -> bool {
+        git_dir(self.tab().location()).is_some() && self.git_info().is_some_and(|g| g.root.is_some() && g.upstream.is_some())
     }
 
     pub(super) fn git_switch(&mut self, k: usize) {
         if let Some(b) = self.git_branches.get(k).cloned() {
-            self.git_run(GitOp::Switch(b));
+            self.git_run(GitOp::Switch(b.name));
         }
+    }
+
+    pub(super) fn ask_git_branch(&mut self) {
+        if self.jobs.form.is_some() { return; }
+        if let Some((tab, dir)) = self.git_target(true) {
+            self.effects.push(Effect::Git(GitRequest::Branches { tab, gen: self.tab().gen, dir, create: true }));
+        }
+    }
+
+    fn new_git_branch_form(&mut self, tab: TabId, dir: FsPath) {
+        let current = self.git_branch().unwrap_or_default();
+        let mut bases: Vec<String> = self.git_branches.iter().filter(|b| !b.remote).map(|b| b.name.clone()).collect();
+        if let Some(at) = bases.iter().position(|b| b == current) {
+            bases[..=at].rotate_right(1);
+        } else {
+            bases.insert(0, "HEAD".into());
+        }
+        let controls = vec![Control::text(S::GitBranchName.t(), "", ""), Control::choice(S::GitBranchBase.t(), bases.clone(), 0), Control::check(S::GitBranchCheckout.t(), true)];
+        self.open_form(Form::new(Kind::GitNewBranch { tab, dir, bases, pending: None }, S::ActionsGitNewBranch.t(), controls, vec![S::GitBranchCreate.t(), S::WidgetsCancel.t()]));
+    }
+
+    pub(super) fn submit_git_branch(&mut self, mut f: Form) -> Option<Form> {
+        let name = f.text(0).to_owned();
+        let choice = f.choice(1);
+        let switch = f.checked(2);
+        if let Kind::GitNewBranch { tab, dir, bases, pending } = &mut f.kind {
+            if pending.is_none() {
+                let Some(base) = bases.get(choice).cloned() else { return Some(f) };
+                let op = GitOp::CreateBranch { name, base, switch };
+                *pending = Some(op.clone());
+                self.effects.push(Effect::Git(GitRequest::Run { tab: *tab, dir: dir.clone(), op }));
+                f.say(S::GitBranchCreating.t(), false);
+            }
+        }
+        Some(f)
+    }
+
+    pub(super) fn ask_git_delete(&mut self, k: usize) {
+        if self.jobs.form.is_some() { return; }
+        let Some(b) = self.git_branches.get(k).filter(|b| !b.remote && Some(b.name.as_str()) != self.git_branch()).cloned() else { return };
+        let Some((tab, dir)) = self.git_target(true) else { return };
+        let controls = vec![Control::paragraph(crate::tr!(S::GitBranchConfirm, branch = b.name))];
+        let mut f = Form::new(Kind::GitDeleteBranch { tab, dir, name: b.name, force: false, pending: false }, S::GitBranchDelete.t(), controls, vec![S::GitBranchDelete.t(), S::WidgetsCancel.t()]);
+        f.focus = f.controls.len() + 1;
+        self.open_form(f);
+    }
+
+    pub(super) fn submit_git_delete(&mut self, mut f: Form) -> Option<Form> {
+        if let Kind::GitDeleteBranch { tab, dir, name, force, pending } = &mut f.kind {
+            if !*pending {
+                *pending = true;
+                self.effects.push(Effect::Git(GitRequest::Run { tab: *tab, dir: dir.clone(), op: GitOp::DeleteBranch { name: name.clone(), force: *force } }));
+                f.say(S::GitBranchDeleting.t(), false);
+            }
+        }
+        Some(f)
+    }
+
+    fn git_form_done(&mut self, tab: TabId, op: &GitOp, error: Option<&str>) -> bool {
+        let Some(mut f) = self.jobs.form.take() else { return false };
+        let handled = match &mut f.kind {
+            Kind::GitAbort { tab: t, sequence, pending, .. } if *t == tab && *pending && *op == GitOp::Abort(*sequence) => {
+                *pending = false;
+                if let Some(e) = error { f.say(e, true); }
+                true
+            }
+            Kind::GitNewBranch { tab: t, pending, .. } if *t == tab && pending.as_ref() == Some(op) => {
+                *pending = None;
+                if let Some(e) = error { f.say(e, true); }
+                true
+            }
+            Kind::GitDeleteBranch { tab: t, name, force, pending, .. } if *t == tab && *pending && *op == (GitOp::DeleteBranch { name: name.clone(), force: *force }) => {
+                *pending = false;
+                if let Some(e) = error {
+                    if !*force && e.contains("not fully merged") {
+                        *force = true;
+                        f.controls = vec![Control::paragraph(crate::tr!(S::GitBranchForceConfirm, branch = name))];
+                        f.note.clear();
+                        f.error = false;
+                        f.focus = f.controls.len() + 1;
+                    } else { f.say(e, true); }
+                }
+                true
+            }
+            _ => false,
+        };
+        if !handled || error.is_some() { self.jobs.form = Some(f); }
+        if handled { self.layout(); self.dirty = true; }
+        handled
     }
 
     pub(super) fn ask_clone(&mut self) {
@@ -210,9 +416,13 @@ fn started_text(op: &GitOp) -> String {
         GitOp::Fetch => S::GitOpFetching.t().to_owned(),
         GitOp::Pull => S::GitOpPulling.t().to_owned(),
         GitOp::Push => S::GitOpPushing.t().to_owned(),
+        GitOp::Sync => S::GitOpSyncing.t().to_owned(),
         GitOp::Init => S::GitOpInitializing.t().to_owned(),
         GitOp::Clone { url } => crate::tr!(S::GitOpCloning, url = url),
         GitOp::Switch(b) => crate::tr!(S::GitOpSwitching, branch = b),
+        GitOp::CreateBranch { .. } => S::GitBranchCreating.t().into(),
+        GitOp::DeleteBranch { .. } => S::GitBranchDeleting.t().into(),
+        GitOp::Abort(_) => S::GitSequenceAborting.t().into(),
         GitOp::OpenRemote => String::new(),
     }
 }
@@ -248,9 +458,13 @@ fn done_text(op: &GitOp) -> String {
         GitOp::Fetch => S::GitDoneFetch.t().to_owned(),
         GitOp::Pull => S::GitDonePull.t().to_owned(),
         GitOp::Push => S::GitDonePush.t().to_owned(),
+        GitOp::Sync => S::GitDoneSync.t().to_owned(),
         GitOp::Init => S::GitDoneInit.t().to_owned(),
         GitOp::Clone { url } => crate::tr!(S::GitDoneClone, name = crate::git::repo_name(url).unwrap_or_default()),
         GitOp::Switch(b) => crate::tr!(S::GitDoneSwitch, branch = b),
+        GitOp::CreateBranch { name, .. } => crate::tr!(S::GitBranchCreated, branch = name),
+        GitOp::DeleteBranch { name, .. } => crate::tr!(S::GitBranchDeleted, branch = name),
+        GitOp::Abort(_) => S::GitSequenceAborted.t().into(),
         GitOp::OpenRemote => String::new(),
     }
 }

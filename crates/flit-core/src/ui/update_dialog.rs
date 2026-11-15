@@ -93,7 +93,7 @@ impl Form {
     }
 }
 
-fn wrapped<B: TextBackend>(g: &mut Gfx<B>, text: &str, font: FontStyle, width: f32) -> Vec<String> {
+pub(super) fn wrapped<B: TextBackend>(g: &mut Gfx<B>, text: &str, font: FontStyle, width: f32) -> Vec<String> {
     let mut out = Vec::new();
     for line in super::settings_page::wrap(g, text, font, width) {
         if g.measure(line, font) <= width {

@@ -262,7 +262,7 @@ impl Palette {
         p.commands = Some(Commands {
             descriptions: app.prefs.command_descriptions,
             groups: ids.iter().map(|&i| ACTIONS[i].group).collect(),
-            shown: ids.iter().map(|&i| ACTIONS[i].desc.t()).collect(),
+            shown: ids.iter().map(|&i| if ACTIONS[i].id == "git.sync" && !app.git_can_sync() { S::GitErrorNoUpstream.t() } else { ACTIONS[i].desc.t() }).collect(),
             caps: ids.iter().map(|&i| app.keymap.shown(i)).collect(),
             live: ids.iter().map(|&i| app.available(ACTIONS[i].id)).collect(),
             ..Default::default()

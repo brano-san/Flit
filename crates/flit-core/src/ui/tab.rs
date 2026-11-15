@@ -225,7 +225,7 @@ impl Tab {
             self.error = Some(e.to_string());
         }
         let done = snap.done;
-        let stale_view = snap.view != self.view_spec;
+        let stale_view = snap.view != self.view_spec || self.view_spec.sort.field == crate::sort::SortField::GitHash;
         match &mut self.view {
             Some(v) if v.snap().gen == snap.gen => v.replace(snap),
             _ => {
@@ -242,6 +242,9 @@ impl Tab {
             }
         }
         let v = self.view.as_mut().unwrap();
+        if self.view_spec.sort.field == crate::sort::SortField::GitHash {
+            v.set_git(self.git.clone());
+        }
         if let Some(l) = self.loading.as_mut() {
             if let Some(name) = &l.select {
                 let listing = v.listing();

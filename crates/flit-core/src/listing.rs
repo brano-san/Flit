@@ -112,6 +112,7 @@ pub struct Listing {
     pub nested: u32,
     pub labels: Vec<(u32, Box<str>)>,
     pub props: crate::hash::FxHashMap<u32, PropKey>,
+    pub git: Option<Arc<crate::git::GitInfo>>,
 }
 
 pub const SHELL_PROPS: [&str; 10] = [
@@ -171,6 +172,10 @@ pub fn version_number(s: &str) -> Option<u64> {
 }
 
 impl Listing {
+    pub fn git_hash(&self, i: u32) -> &str {
+        self.git.as_ref().and_then(|g| g.commits.get(self.name(i))).map_or("", |c| c.short_hash.as_str())
+    }
+
     pub fn labeled(&self, i: u32) -> Option<&str> {
         if self.labels.is_empty() {
             return None;

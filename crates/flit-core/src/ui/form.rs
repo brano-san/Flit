@@ -37,6 +37,7 @@ pub(super) enum Control {
     Flags { label: String, items: Vec<(String, bool)>, cur: usize, spots: Vec<Rect> },
     Value { label: String, value: String },
     Line(String),
+    Paragraph { text: String, lines: Vec<String> },
 }
 
 impl Control {
@@ -75,9 +76,14 @@ impl Control {
         Control::Line(text.to_owned())
     }
 
+    pub fn paragraph(text: String) -> Self {
+        Control::Paragraph { text, lines: Vec::new() }
+    }
+
     fn height(&self) -> f32 {
         match self {
             Control::Value { .. } | Control::Line(_) => VALUE_ROW,
+            Control::Paragraph { lines, .. } => VALUE_ROW * lines.len().max(1) as f32,
             Control::Flags { items, .. } => ROW * flag_grid(items.len()).0 as f32,
             _ => ROW,
         }
@@ -85,7 +91,7 @@ impl Control {
 }
 
 fn section_gaps(controls: &[Control]) -> Vec<bool> {
-    let line = |c: &Control| matches!(c, Control::Line(_));
+    let line = |c: &Control| matches!(c, Control::Line(_) | Control::Paragraph { .. });
     controls.iter().enumerate().map(|(k, c)| k > 0 && line(c) != line(&controls[k - 1])).collect()
 }
 
@@ -120,7 +126,7 @@ impl Form {
     }
 
     pub fn new(kind: Kind, title: &str, controls: Vec<Control>, buttons: Vec<&'static str>) -> Self {
-        let focus = controls.iter().position(|c| !matches!(c, Control::Value { .. } | Control::Line(_))).unwrap_or(controls.len());
+        let focus = controls.iter().position(|c| !matches!(c, Control::Value { .. } | Control::Line(_) | Control::Paragraph { .. })).unwrap_or(controls.len());
         Self { kind, title: title.to_owned(), controls, buttons, focus, note: String::new(), error: false, progress: None, rect: Rect::default(), close_rect: Rect::default(), rows: Vec::new(), button_rects: Vec::new(), document: Default::default() }
     }
 
@@ -178,7 +184,7 @@ impl Form {
         let n = self.slots();
         for _ in 0..n {
             self.focus = if back { (self.focus + n - 1) % n } else { (self.focus + 1) % n };
-            if !matches!(self.controls.get(self.focus), Some(Control::Line(_))) {
+            if !matches!(self.controls.get(self.focus), Some(Control::Line(_) | Control::Paragraph { .. })) {
                 break;
             }
         }
@@ -418,7 +424,7 @@ impl App {
                 Control::Check { label, .. } => (Role::CheckBox, label, String::new()),
                 Control::Flags { label, items, .. } => (Role::Group, label, items.iter().filter(|i| i.1).map(|i| i.0.as_str()).collect::<Vec<_>>().join(", ")),
                 Control::Value { label, value } => (Role::Text, label, value.clone()),
-                Control::Line(text) => (Role::Text, text, String::new()),
+                Control::Line(text) | Control::Paragraph { text, .. } => (Role::Text, text, String::new()),
             };
             let node = put(t, targets, d, Hit::Form(k), role, label, r);
             t.nodes[node].value = value;
@@ -570,6 +576,17 @@ impl App {
         let s = |v: f32| (v * sc).round();
         let (s4, s8, s20) = (s(4.0), s(8.0), s(20.0));
         let (hover, active, pressed) = (self.hover, self.active, self.pressed);
+        let mut reflow = false;
+        if let Some(f) = &mut self.jobs.form {
+            let width = (f.rect.w - s(62.0)).max(1.0);
+            for c in &mut f.controls {
+                if let Control::Paragraph { text, lines } = c {
+                    let next = super::update_dialog::wrapped(g, text, small, width);
+                    if *lines != next { *lines = next; reflow = true; }
+                }
+            }
+        }
+        if reflow { self.layout_form(); }
         let Some(f) = &mut self.jobs.form else { return };
         let d = f.rect;
         g.dl.round_rect(d, t.bg, s8);
@@ -636,6 +653,13 @@ impl App {
                     let ms = g.metrics(small);
                     let base = (row.y + (row.h + ms.ascent - ms.descent) / 2.0).round();
                     g.text(row.x + s8, base, text, small, t.text, row.w - s8);
+                }
+                Control::Paragraph { lines, .. } => {
+                    let ms = g.metrics(small);
+                    for (line, text) in lines.iter().enumerate() {
+                        let base = (row.y + s(VALUE_ROW) * line as f32 + (s(VALUE_ROW) + ms.ascent - ms.descent) / 2.0).round();
+                        g.text(row.x + s8, base, text, small, t.text, row.w - s8);
+                    }
                 }
                 Control::Value { label, value } => {
                     if hover == Hit::Form(k) || focused {

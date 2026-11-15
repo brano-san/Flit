@@ -29,10 +29,11 @@ pub enum SortField {
     Duration,
     Artist,
     Version,
+    GitHash,
 }
 
 impl SortField {
-    pub const ALL: [SortField; 21] = [
+    pub const ALL: [SortField; 22] = [
         Self::Name,
         Self::Modified,
         Self::Type,
@@ -54,10 +55,15 @@ impl SortField {
         Self::Duration,
         Self::Artist,
         Self::Version,
+        Self::GitHash,
     ];
 
     pub fn is_shell(self) -> bool {
         matches!(self, Self::Dimensions | Self::Duration | Self::Artist | Self::Version)
+    }
+
+    pub fn is_newer_than_0_7(self) -> bool {
+        self.is_shell() || self == Self::GitHash
     }
 }
 
@@ -674,6 +680,7 @@ fn item_cmp(l: &Listing, k: &SortKeys, spec: SortSpec, a: u32, b: u32) -> Orderi
         SortField::Duration => duration(l, a).cmp(&duration(l, b)),
         SortField::Artist => artist_key(l, a).cmp(artist_key(l, b)),
         SortField::Version => version(l, a).cmp(&version(l, b)),
+        SortField::GitHash => l.git_hash(a).cmp(l.git_hash(b)),
     }
     .then_with(|| k.cmp(a, b))
     .then_with(|| l.name(a).cmp(l.name(b)));
@@ -743,6 +750,7 @@ fn primary(l: &Listing, field: SortField, i: u32) -> u64 {
         SortField::Duration => duration(l, i).unwrap_or(0),
         SortField::Artist => key_word(artist_key(l, i), 0),
         SortField::Version => version(l, i).unwrap_or(0),
+        SortField::GitHash => ext_prefix(l.git_hash(i).as_bytes()),
     }
 }
 

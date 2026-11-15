@@ -86,6 +86,7 @@ fn command_icon(cmd: &Cmd) -> &'static str {
     let Cmd::Action(id) = cmd else {
         return match cmd {
             Cmd::FolderProperties(_) => "\u{E946}",
+            Cmd::CopyGitHash(_) => "\u{E8C8}",
             Cmd::ToggleTag(_) | Cmd::ShowTag(_) | Cmd::OpenTagged(_) => "\u{E8EC}",
             Cmd::User(_) => "\u{E756}",
             Cmd::NewItem(_) => "\u{E8A5}",
@@ -124,6 +125,8 @@ pub(super) enum Cmd {
     OpenTagged(usize),
     Setting(usize, usize),
     GitBranch(usize),
+    GitDeleteBranch(usize),
+    CopyGitHash(String),
     Column(ColumnCmd),
     Types(TypeCmd),
     SortColumn(SortField),
@@ -441,14 +444,29 @@ impl App {
     pub(super) fn build_branch_menu(&mut self) -> Vec<MenuItem> {
         let current = self.git_branch().unwrap_or_default().to_owned();
         let branches = self.git_branches.clone();
-        self.collect(|_, m| {
+        self.collect(|a, m| {
             for (k, b) in branches.iter().enumerate() {
-                m.command(Cmd::GitBranch(k), b, String::new(), *b == current);
+                if !b.remote && b.name != current {
+                    m.submenu(&b.name, |m| {
+                        m.command(Cmd::GitBranch(k), S::GitBranchSwitch.t(), String::new(), false);
+                        m.command(Cmd::GitDeleteBranch(k), S::GitBranchDelete.t(), String::new(), false);
+                    });
+                } else {
+                    m.command(Cmd::GitBranch(k), &b.name, String::new(), b.name == current && !b.remote);
+                }
             }
             m.separator();
+            m.action("git.new_branch", S::ActionsGitNewBranch.t());
             m.action("git.fetch", S::ActionsGitFetch.t());
             m.action("git.pull", S::ActionsGitPull.t());
             m.action("git.push", S::ActionsGitPush.t());
+            if m.shown("git.sync") {
+                let ready = a.git_can_sync();
+                m.entry(Cmd::Action("git.sync"), S::ActionsGitSync.t(), m.keys.all_text("git.sync"), Mark::None, false, !ready);
+                if !ready {
+                    m.header(S::GitErrorNoUpstream.t());
+                }
+            }
             m.separator();
             m.action("git.open_remote", S::ActionsGitOpenRemote.t());
         })
@@ -574,6 +592,9 @@ impl App {
             }
         }
         m.action("item.copy_path", self.as_path_label());
+        if let Some(hash) = self.selected_commit_hash() {
+            m.command(Cmd::CopyGitHash(hash.to_owned()), S::GitCopyHash.t(), String::new(), false);
+        }
         if inside {
             m.separator();
             m.action("archive.extract", S::MenuExtractDialog.t());
@@ -739,6 +760,8 @@ impl App {
             Some(Cmd::OpenTagged(k)) => self.open_all_tagged(k, now),
             Some(Cmd::Setting(i, choice)) => self.choose_setting(i, choice),
             Some(Cmd::GitBranch(k)) => self.git_switch(k),
+            Some(Cmd::GitDeleteBranch(k)) => self.ask_git_delete(k),
+            Some(Cmd::CopyGitHash(hash)) => self.effects.push(super::Effect::SetClipboard(hash)),
             Some(Cmd::Column(c)) => self.column_command(c),
             Some(Cmd::Types(c)) => self.types_command(c),
             Some(Cmd::SortColumn(f)) => self.sort_column(f),

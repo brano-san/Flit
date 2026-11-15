@@ -481,12 +481,17 @@ pub static ACTIONS: &[Action] = &[
     Action::new("view.column.git_message", G::Flit, S::ActionsViewColumnGitMessage, S::DescribeViewColumnGitMessage, &[], |a, _| a.toggle_column(Column::GitMessage)),
     Action::new("view.column.git_author", G::Flit, S::ActionsViewColumnGitAuthor, S::DescribeViewColumnGitAuthor, &[], |a, _| a.toggle_column(Column::GitAuthor)),
     Action::new("view.column.git_date", G::Flit, S::ActionsViewColumnGitDate, S::DescribeViewColumnGitDate, &[], |a, _| a.toggle_column(Column::GitDate)),
+    Action::new("view.column.git_hash", G::Flit, S::ActionsViewColumnGitHash, S::DescribeViewColumnGitHash, &[], |a, _| a.toggle_column(Column::GitHash)),
     Action::new("git.fetch", G::Flit, S::ActionsGitFetch, S::DescribeGitFetch, &[], |a, _| a.git_run(GitOp::Fetch)),
     Action::new("git.pull", G::Flit, S::ActionsGitPull, S::DescribeGitPull, &[], |a, _| a.git_run(GitOp::Pull)),
     Action::new("git.push", G::Flit, S::ActionsGitPush, S::DescribeGitPush, &[], |a, _| a.git_run(GitOp::Push)),
+    Action::new("git.sync", G::Flit, S::ActionsGitSync, S::DescribeGitSync, &[], |a, _| a.git_run(GitOp::Sync)),
     Action::new("git.init", G::Flit, S::ActionsGitInit, S::DescribeGitInit, &[], |a, _| a.git_run(GitOp::Init)),
     Action::new("git.clone", G::Flit, S::ActionsGitClone, S::DescribeGitClone, &[], |a, _| a.ask_clone()),
     Action::new("git.branches", G::Flit, S::ActionsGitBranches, S::DescribeGitBranches, &[], |a, _| a.git_branches_menu()),
+    Action::new("git.new_branch", G::Flit, S::ActionsGitNewBranch, S::DescribeGitNewBranch, &[], |a, _| a.ask_git_branch()),
+    Action::new("git.abort", G::Flit, S::GitSequenceAbort, S::GitSequenceConfirm, &[], |a, _| a.ask_git_abort()),
+    Action::new("git.show_conflicts", G::Flit, S::GitSequenceShow, S::GitSequenceSelect, &[], |a, _| a.show_git_conflicts()),
     Action::new("git.open_remote", G::Flit, S::ActionsGitOpenRemote, S::DescribeGitOpenRemote, &[], |a, _| a.git_run(GitOp::OpenRemote)),
     Action::new("view.status_bar", G::Flit, S::ActionsViewStatusBar, S::DescribeViewStatusBar, &[], |a, _| a.toggle_pref(|p| &mut p.status_bar)),
     Action::new("theme.toggle", G::Flit, S::ActionsThemeToggle, S::DescribeThemeToggle, &[ctrl_alt(c('T'))], |a, _| a.toggle_theme()),
@@ -698,6 +703,8 @@ impl App {
         let (home, bin, library) = (kind == PathKind::Home, kind == PathKind::RecycleBin, self.current_library().is_some());
         let no_files = home || bin || kind == PathKind::Computer;
         match id.split('.').next().unwrap_or_default() {
+            _ if id == "git.sync" => self.git_can_sync(),
+            _ if matches!(id, "git.abort" | "git.show_conflicts") => self.git_sequence().is_some(),
             _ if id.ends_with("origin") || id.ends_with(".deleted") => bin,
             _ if id == "home.clear_recent" => true,
             _ if id == "layout.load" => !self.opts.layouts.is_empty(),

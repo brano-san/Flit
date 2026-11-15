@@ -335,7 +335,16 @@ fn wide_len(s: &Saved) -> usize {
 fn attributes_len(s: &Saved) -> usize {
     let p = &s.persisted;
     let folders = p.folders.entries();
-    postcard::to_stdvec(&AttributesRecord { view: attributed(&p.view), defaults: attributed(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| attributed(v)).collect() }).unwrap().len() + shells_len(s)
+    postcard::to_stdvec(&AttributesRecord { view: attributed(&p.view), defaults: attributed(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| attributed(v)).collect() }).unwrap().len() + newer_len(s)
+}
+
+fn newer_len(s: &Saved) -> usize {
+    shells_len(s) + hash_record_len(s)
+}
+
+fn hash_record_len(s: &Saved) -> usize {
+    let p = &s.persisted;
+    postcard::to_stdvec(&GitHashRecord { view: hash_width(&p.view), defaults: hash_width(&p.prefs.defaults), folders: p.folders.entries().iter().map(|(k, v)| (*k, hash_width(v))).collect() }).unwrap().len()
 }
 
 fn shells_len(s: &Saved) -> usize {
@@ -373,7 +382,7 @@ fn a_state_without_the_new_columns_writes_every_older_record_byte_for_byte_as_be
     let s = classic();
     let bytes = s.encode().unwrap();
     let old = unhex(CLASSIC_FROM_0_7);
-    assert_eq!(hex(&bytes[..bytes.len() - shells_len(&s)]), hex(&old), "the records older builds read are unchanged");
+    assert_eq!(hex(&bytes[..bytes.len() - newer_len(&s)]), hex(&old), "the records older builds read are unchanged");
     let back = Saved::decode(&old).unwrap().sanitized().persisted;
     let want = s.persisted.clone();
     assert_eq!((back.view.sort, back.view.group, back.view.columns), (want.view.sort, want.view.group, want.view.columns), "a file from the older build opens with its settings");
@@ -406,7 +415,7 @@ fn shell_columns_sorting_and_grouping_survive_a_restart_and_older_builds_read_na
     assert_eq!((back.view.columns.width(Column::Company), back.view.columns.ordered(&kinds)), (222.0, moved));
     assert_eq!((back.prefs.defaults.sort.field, back.prefs.defaults.group.field), (SortField::Version, GroupField::Dimensions));
     assert_eq!(back.folders.get(key).map(|f| (f.sort.field, f.group.field)), Some((SortField::Artist, GroupField::Duration)));
-    let older = Saved::decode(&bytes[..bytes.len() - shells_len(&s)]).unwrap().sanitized().persisted;
+    let older = Saved::decode(&bytes[..bytes.len() - newer_len(&s)]).unwrap().sanitized().persisted;
     assert_eq!((older.view.sort.field, older.view.sort.descending, older.view.group.field), (SortField::Name, true, GroupField::None), "builds without these sorts fall back to names");
     assert_eq!((older.prefs.defaults.sort.field, older.prefs.defaults.group.field), (SortField::Name, GroupField::None));
     assert_eq!(older.folders.get(key).map(|f| (f.sort.field, f.group.field)), Some((SortField::Name, GroupField::None)));
@@ -430,11 +439,11 @@ fn a_cut_or_unknown_shell_record_keeps_every_older_setting() {
     s.persisted.view.sort.field = SortField::Duration;
     s.persisted.view.columns.toggle(Column::Title);
     let bytes = s.encode().unwrap();
-    let cut = Saved::decode(&bytes[..bytes.len() - 3]).unwrap().sanitized().persisted;
+    let cut = Saved::decode(&bytes[..bytes.len() - hash_record_len(&s) - 3]).unwrap().sanitized().persisted;
     assert!(cut.view.columns.shown(Column::Attributes) && cut.view.columns.shown(Column::ImageSize));
     assert_eq!(cut.view.columns.width(Column::Version), 123.0);
     assert_eq!((cut.view.sort.field, cut.view.group.field), (SortField::Name, GroupField::Type));
-    let mut future = bytes[..bytes.len() - shells_len(&s)].to_vec();
+    let mut future = bytes[..bytes.len() - newer_len(&s)].to_vec();
     let mut record = shelled(&s.persisted.view);
     (record.3, record.4) = (200, 200);
     record.0 |= 1 << 30;
@@ -445,6 +454,36 @@ fn a_cut_or_unknown_shell_record_keeps_every_older_setting() {
     assert_eq!((read.view.sort.field, read.view.group.field), (SortField::Name, GroupField::Type), "sorts this build does not know fall back");
     assert!(read.view.columns.shown(Column::Title) && read.view.columns.shown(Column::Attributes));
     assert_eq!(read.view.columns.width(Column::Version), 123.0);
+}
+
+#[test]
+fn commit_hash_columns_keep_their_visibility_width_and_sort_without_changing_old_records() {
+    let mut persisted = Persisted { path: loc(r"D:\x"), ..Default::default() };
+    persisted.view.columns.toggle(Column::GitHash);
+    persisted.view.columns.set_width(Column::GitHash, 190.0);
+    persisted.view.sort.field = SortField::GitHash;
+    persisted.prefs.defaults.columns.set_width(Column::GitHash, 180.0);
+    let key = folder_key(&loc(r"D:\other"));
+    let mut folder = FolderView::default();
+    folder.columns.toggle(Column::GitHash);
+    folder.columns.set_width(Column::GitHash, 170.0);
+    persisted.folders.put(key, folder);
+    let saved = Saved::new(persisted, None);
+    let bytes = saved.encode().unwrap();
+    let back = Saved::decode(&bytes).unwrap();
+    assert!(back.persisted.view.columns.shown(Column::GitHash));
+    assert_eq!(back.persisted.view.columns.width(Column::GitHash), 190.0);
+    assert_eq!(back.persisted.view.sort.field, SortField::GitHash);
+    assert_eq!(back.persisted.prefs.defaults.columns.width(Column::GitHash), 180.0);
+    assert!(!back.persisted.prefs.defaults.columns.shown(Column::GitHash));
+    assert_eq!(back.persisted.folders.get(key).unwrap().columns.width(Column::GitHash), 170.0);
+    let old = Saved::new(Persisted::default(), None);
+    let old_bytes = old.encode().unwrap();
+    let old_back = Saved::decode(&old_bytes[..old_bytes.len() - hash_record_len(&old)]).unwrap();
+    assert!(!old_back.persisted.view.columns.shown(Column::GitHash));
+    assert_eq!(old_back.persisted.view.columns.width(Column::GitHash), 130.0);
+    let older = Saved::decode(&bytes[..bytes.len() - newer_len(&saved)]).unwrap();
+    assert_eq!(older.persisted.view.sort.field, SortField::Name, "builds without the hash sort read name order instead of failing");
 }
 
 #[test]

@@ -1,4 +1,37 @@
+copy_hash = "复制完整提交哈希"
+
+[branch]
+name = "分支名称"
+base = "起始分支"
+checkout = "切换到新分支"
+create = "创建"
+switch = "切换到此分支"
+delete = "删除分支…"
+confirm = "删除分支 {branch}？"
+force_confirm = "分支 {branch} 尚未完全合并。仍要删除吗？此分支独有的提交可能会丢失。"
+creating = "正在创建分支…"
+deleting = "正在删除分支…"
+created = "已创建分支 {branch}"
+deleted = "已删除分支 {branch}"
+
+[sequence]
+merge = "正在合并"
+rebase = "正在变基"
+cherry_pick = "正在拣选"
+conflicts = "冲突数：{n}"
+abort = "Git：中止操作…"
+abort_merge = "中止合并…"
+abort_rebase = "中止变基…"
+abort_cherry_pick = "中止拣选…"
+show = "显示冲突"
+select = "选择当前文件夹中存在冲突的文件和文件夹"
+confirm = "中止当前 Git 操作？操作期间的冲突解决结果和修改可能会丢失。"
+aborting = "正在中止 Git 操作…"
+aborted = "Git 操作已中止"
+changed = "Git 操作已更改或结束。请刷新文件夹后重试。"
+
 [column]
+hash = "提交哈希"
 status = "Git 状态"
 message = "提交消息"
 author = "提交作者"
@@ -13,6 +46,7 @@ untracked = "未跟踪"
 conflict = "冲突"
 
 [op]
+syncing = "正在同步…"
 fetching = "正在获取…"
 pulling = "正在拉取…"
 pushing = "正在推送…"
@@ -21,6 +55,7 @@ cloning = "正在克隆 {url}…"
 switching = "正在切换到 {branch}…"
 
 [done]
+sync = "同步完成"
 fetch = "获取完成"
 pull = "拉取完成"
 push = "推送完成"
@@ -29,6 +64,7 @@ clone = "已克隆到 {name}"
 switch = "已切换到 {branch}"
 
 [error]
+no_upstream = "没有上游分支"
 not_repo = "此文件夹不在 Git 仓库中"
 no_web = "该仓库没有网页远程地址"
 failed = "Git：{error}"
