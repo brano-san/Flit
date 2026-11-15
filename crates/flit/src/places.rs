@@ -240,7 +240,7 @@ pub fn worth_keeping(req: &IconRequest) -> bool {
         && match req.kind {
             IconKind::Type | IconKind::Folder | IconKind::Volume => true,
             IconKind::Place | IconKind::File => req.gen == 0,
-            IconKind::CustomFolder | IconKind::Thumbnail => false,
+            IconKind::CustomFolder | IconKind::Thumbnail | IconKind::Content | IconKind::LinkEmblem | IconKind::UnreadableEmblem => false,
         }
 }
 

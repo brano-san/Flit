@@ -48,3 +48,39 @@ fn a_kde_worker_notices_atomic_replacement_deletion_and_recreation_then_stops() 
     assert!(start.elapsed() < Duration::from_secs(1));
     assert_eq!(rx.recv_timeout(Duration::from_secs(1)), Err(crossbeam_channel::RecvTimeoutError::Disconnected));
 }
+
+#[test]
+fn kde_icon_theme_reads_only_the_icons_section() {
+    assert_eq!(kde_icon_theme("[Other]\nTheme=Wrong\n[Icons]\nTheme = Papirus\n[Other]\nTheme=WrongAgain"), Some("Papirus".into()));
+    assert_eq!(kde_icon_theme("[Icons]\nTheme=\n"), None);
+    assert_eq!(kde_icon_theme("broken"), None);
+}
+
+#[test]
+fn kde_icon_theme_notices_atomic_replacement_and_ignores_unrelated_changes() {
+    let temp = Temp::new("icon-theme");
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let worker = Watch::start(temp.path().to_owned(), Duration::from_millis(15), move |change| { let _ = tx.send(change); }).unwrap();
+    assert!(matches!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Change::Buttons(_)));
+    let globals = temp.path().join("kdeglobals");
+    std::fs::write(&globals, "[Icons]\nTheme=First\n").unwrap();
+    assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Change::IconTheme("First".into()));
+    assert!(matches!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Change::Globals(_)));
+    std::fs::write(&globals, "[Icons]\nTheme=First\n[Other]\nTheme=Wrong\n").unwrap();
+    assert!(matches!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Change::Globals(_)));
+    assert!(rx.recv_timeout(Duration::from_millis(70)).is_err());
+    let replacement = temp.path().join("replacement");
+    std::fs::write(&replacement, "[Icons]\nTheme=Second\n").unwrap();
+    std::fs::rename(&replacement, &globals).unwrap();
+    assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Change::IconTheme("Second".into()));
+    assert!(matches!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Change::Globals(_)));
+    std::fs::remove_file(&globals).unwrap();
+    assert!(matches!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Change::Globals(_)));
+    std::fs::write(&globals, "[Icons]\nTheme=Second\n").unwrap();
+    assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Change::IconTheme("Second".into()));
+    assert!(matches!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Change::Globals(_)));
+    let at = Instant::now();
+    drop(worker);
+    assert!(at.elapsed() < Duration::from_secs(1));
+    assert_eq!(rx.recv_timeout(Duration::from_secs(1)), Err(crossbeam_channel::RecvTimeoutError::Disconnected));
+}

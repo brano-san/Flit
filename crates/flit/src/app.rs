@@ -75,10 +75,14 @@ impl Rows {
 struct Visible {
     pane: Rows,
     parked: Mutex<Vec<(u64, u32, u32)>>,
+    content: Mutex<Vec<u64>>,
 }
 
 impl Visible {
     fn wants(&self, req: &IconRequest) -> bool {
+        if req.kind == flit_core::ui::IconKind::Content {
+            return self.content.lock().is_ok_and(|keys| keys.contains(&req.key));
+        }
         req.gen == 0 || self.pane.wants(req) || self.parked.lock().is_ok_and(|p| p.iter().any(|&r| within(req, r)))
     }
 }
@@ -1098,6 +1102,7 @@ impl<P: Platform> Handler<P> {
         st.app.set_clock(filetime_now());
         let t = Instant::now();
         let animating = st.app.frame(&mut st.gfx, t);
+        *st.visible.content.lock().unwrap_or_else(|e| e.into_inner()) = st.app.visible_content_icons();
         let renderer = st.renderer.as_mut().unwrap();
         for &(slot, off) in &st.gfx.uploads.rects {
             let len = (slot.w * slot.h * 4) as usize;
@@ -1489,3 +1494,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     h.pending.push_back(first);
     ws.run(WindowOptions { title: "Flit".into(), placement, dark }, h)
 }
+
+#[cfg(test)]
+#[path = "../test/icon_visibility.rs"]
+mod icon_visibility_tests;

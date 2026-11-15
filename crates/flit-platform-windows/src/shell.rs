@@ -328,6 +328,7 @@ impl Shell for ShellCom {
                 .and_then(|_| self.item_image(&req.path, req.size, SIIGBF_ICONONLY))
                 .or_else(|| self.generic_icon(&req.path, true, req.size)),
             IconKind::Thumbnail => self.thumbnail(req),
+            IconKind::Content | IconKind::LinkEmblem | IconKind::UnreadableEmblem => None,
         }?;
         let badge = if overlaid(req.kind, &req.path) { self.overlay(&req.path, req.size) } else { None };
         Some(match badge {

@@ -225,3 +225,27 @@ fn hot_paths() -> Vec<Timing> {
     });
     b.finish()
 }
+
+#[test]
+fn ten_thousand_extensionless_content_icons_stay_within_the_ui_budget() {
+    let names: Vec<_> = (0..10_000).map(|i| format!("file{i:05}")).collect();
+    let mut best = Duration::MAX;
+    for _ in 0..ATTEMPTS {
+        let mut b = Bench::new();
+        let path = Location::parse("/tmp/content-icons").unwrap();
+        b.app = App::new(Persisted { path: path.clone(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1400, 900), Instant::now());
+        let mut snap = (*snapshot(&b.app, &names)).clone();
+        snap.path = path.path().clone();
+        for e in &mut snap.listing.entries { e.attrs = 0; e.size = 100; }
+        b.app.tab().slot.publish(Arc::new(snap));
+        b.app.poll();
+        let start = Instant::now();
+        for _ in 0..100 {
+            b.app.on_event(&Event::Wheel { dx: 0.0, dy: -3.0 }, Instant::now());
+            b.frame();
+        }
+        best = best.min(start.elapsed());
+    }
+    eprintln!("10k extensionless scroll: {:?} per frame, Content request limit 8", best / 100);
+    assert!(best / 100 < budget(8.0));
+}

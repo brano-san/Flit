@@ -642,6 +642,14 @@ impl Shell for LinuxShell {
         if let Some(target) = (req.kind == IconKind::File).then(|| link_target_kind(&req.path)).flatten() {
             return link_icon(req, target);
         }
+        if matches!(req.kind, IconKind::LinkEmblem | IconKind::UnreadableEmblem) {
+            let name = if req.kind == IconKind::LinkEmblem { "emblem-symbolic-link" } else { "emblem-unreadable" };
+            return crate::icons::icon(&[name.to_owned()], req.size);
+        }
+        if req.kind == IconKind::Content {
+            let names = host(&req.path).map(crate::mime::content_icon_names).unwrap_or_default();
+            return crate::icons::icon(&names, req.size).or_else(|| crate::icons::icon(&["text-x-generic".into(), "unknown".into()], req.size));
+        }
         let picture = (req.kind == IconKind::Thumbnail).then(|| self.thumbnail(req)).flatten();
         let own = || (req.kind == IconKind::File).then(|| host(&req.path).and_then(launcher_text)).flatten().and_then(|t| crate::apps::launcher_icon(&t));
         picture.or_else(|| own().and_then(|name| crate::apps::icon_image(&name, req.size))).or_else(|| crate::icons::icon(&icon_names(req), req.size))
@@ -847,12 +855,7 @@ pub fn link_icon_names(req: &IconRequest, target: LinkTarget) -> Vec<String> {
 }
 
 fn link_icon(req: &IconRequest, target: LinkTarget) -> Option<Bitmap> {
-    let base = crate::icons::icon(&link_icon_names(req, target), req.size)?;
-    let side = req.size / 2;
-    match (side >= 8).then(|| crate::icons::icon(&["emblem-symbolic-link".to_owned()], side)).flatten() {
-        Some(emblem) => Some(crate::icons::with_emblem(base, &emblem)),
-        None => Some(base),
-    }
+    crate::icons::icon(&link_icon_names(req, target), req.size)
 }
 
 pub fn volume_icon_names(path: &[u8], mount: Option<&flit_platform_linux::mounts::Mount>) -> Vec<String> {
@@ -888,6 +891,7 @@ pub fn icon_names(req: &IconRequest) -> Vec<String> {
             let mount = mounts.iter().rev().find(|m| m.point == path);
             volume_icon_names(path, mount)
         }
+        IconKind::Content | IconKind::LinkEmblem | IconKind::UnreadableEmblem => Vec::new(),
         IconKind::Type | IconKind::File | IconKind::Thumbnail => {
             let executable = || std::fs::metadata(OsStr::from_bytes(path)).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
             let name = req.path.file_name();

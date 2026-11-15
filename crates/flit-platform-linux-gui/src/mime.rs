@@ -143,6 +143,110 @@ pub fn type_name(ext: &[u8]) -> Option<String> {
         .clone()
 }
 
+const CONTENT_HEAD: usize = 16 * 1024;
+const CONTENT_CACHE_LIMIT: usize = 2048;
+
+struct ContentApi {
+    guess: unsafe extern "C" fn(*const libc::c_char, *const u8, usize, *mut libc::c_int) -> *mut libc::c_char,
+    mime: unsafe extern "C" fn(*const libc::c_char) -> *mut libc::c_char,
+    free: unsafe extern "C" fn(*mut libc::c_void),
+    _gio: usize,
+    _glib: usize,
+}
+
+fn content_api() -> Option<&'static ContentApi> {
+    static API: OnceLock<Option<ContentApi>> = OnceLock::new();
+    API.get_or_init(|| unsafe {
+        let gio = libc::dlopen(c"libgio-2.0.so.0".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+        if gio.is_null() { return None; }
+        let glib = libc::dlopen(c"libglib-2.0.so.0".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+        if glib.is_null() { libc::dlclose(gio); return None; }
+        let guess = libc::dlsym(gio, c"g_content_type_guess".as_ptr());
+        let mime = libc::dlsym(gio, c"g_content_type_get_mime_type".as_ptr());
+        let free = libc::dlsym(glib, c"g_free".as_ptr());
+        if guess.is_null() || mime.is_null() || free.is_null() {
+            libc::dlclose(glib);
+            libc::dlclose(gio);
+            return None;
+        }
+        Some(ContentApi { guess: std::mem::transmute::<*mut libc::c_void, unsafe extern "C" fn(*const libc::c_char, *const u8, usize, *mut libc::c_int) -> *mut libc::c_char>(guess), mime: std::mem::transmute::<*mut libc::c_void, unsafe extern "C" fn(*const libc::c_char) -> *mut libc::c_char>(mime), free: std::mem::transmute::<*mut libc::c_void, unsafe extern "C" fn(*mut libc::c_void)>(free), _gio: gio as usize, _glib: glib as usize })
+    }).as_ref()
+}
+
+fn content_mime(data: &[u8]) -> Option<String> {
+    content_mime_with(data, content_api())
+}
+
+fn content_mime_with(data: &[u8], api: Option<&ContentApi>) -> Option<String> {
+    let api = api?;
+    unsafe {
+        let content = (api.guess)(std::ptr::null(), data.as_ptr(), data.len(), std::ptr::null_mut());
+        if content.is_null() { return None; }
+        let mime = (api.mime)(content);
+        let out = (!mime.is_null()).then(|| std::ffi::CStr::from_ptr(mime).to_str().ok().map(str::to_owned)).flatten();
+        (api.free)(mime.cast());
+        (api.free)(content.cast());
+        out
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct ContentKey {
+    path: PathBuf,
+    modified: (i64, i64),
+    size: u64,
+}
+
+impl ContentKey {
+    fn of(path: &std::path::Path, m: &std::fs::Metadata) -> Option<Self> {
+        use std::os::unix::fs::MetadataExt;
+        (m.is_file() && m.len() > 0 && m.mode() & 0o111 == 0).then(|| Self { path: path.to_owned(), modified: (m.mtime(), m.mtime_nsec()), size: m.len() })
+    }
+}
+
+#[derive(Default)]
+struct ContentCache {
+    entries: std::collections::VecDeque<(ContentKey, String)>,
+}
+
+impl ContentCache {
+    fn get(&self, key: &ContentKey) -> Option<&String> {
+        self.entries.iter().find(|(k, _)| k == key).map(|(_, m)| m)
+    }
+
+    fn resolve(&mut self, key: ContentKey, read: impl FnOnce() -> String) -> String {
+        if let Some(mime) = self.get(&key) { return mime.clone(); }
+        let mime = read();
+        self.insert(key, mime.clone());
+        mime
+    }
+
+    fn insert(&mut self, key: ContentKey, mime: String) {
+        self.entries.retain(|(k, _)| k.path != key.path);
+        if self.entries.len() >= CONTENT_CACHE_LIMIT { self.entries.pop_front(); }
+        self.entries.push_back((key, mime));
+    }
+}
+
+fn content_head(path: &std::path::Path) -> Option<(ContentKey, Vec<u8>)> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW).open(path).ok()?;
+    let key = ContentKey::of(path, &file.metadata().ok()?)?;
+    let mut data = Vec::with_capacity(CONTENT_HEAD);
+    file.take(CONTENT_HEAD as u64).read_to_end(&mut data).ok()?;
+    Some((key, data))
+}
+
+pub fn content_icon_names(path: &std::path::Path) -> Vec<String> {
+    static CACHE: Mutex<Option<ContentCache>> = Mutex::new(None);
+    let Some(key) = std::fs::symlink_metadata(path).ok().and_then(|m| ContentKey::of(path, &m)) else { return Vec::new() };
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let cache = cache.get_or_insert_with(ContentCache::default);
+    let mime = cache.resolve(key.clone(), || content_head(path).filter(|(actual, _)| actual == &key).map(|(_, data)| content_mime(&data).unwrap_or_else(|| sniff(&data).to_owned())).unwrap_or_else(|| OCTET_STREAM.into()));
+    icon_names(&mime)
+}
+
 #[cfg(test)]
 #[path = "../test/mime.rs"]
 mod tests;

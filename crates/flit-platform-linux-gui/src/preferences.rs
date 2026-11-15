@@ -66,6 +66,23 @@ pub(crate) fn kde_buttons(config: &str) -> WindowButtons {
     buttons(parse(left).into_iter(), parse(right).into_iter())
 }
 
+pub(crate) fn kde_icon_theme(config: &str) -> Option<String> {
+    let mut icons = false;
+    let mut theme = None;
+    for line in config.lines().map(str::trim) {
+        if line.starts_with('[') {
+            icons = line == "[Icons]";
+        } else if icons {
+            if let Some((key, value)) = line.split_once('=') {
+                if key.trim() == "Theme" {
+                    theme = Some(value.trim().trim_matches(['\'', '"']).to_owned()).filter(|v| !v.is_empty());
+                }
+            }
+        }
+    }
+    theme
+}
+
 fn read_config(path: &Path) -> String {
     let mut text = String::new();
     let _ = std::fs::File::open(path).and_then(|f| f.take(1 << 20).read_to_string(&mut text));
@@ -76,6 +93,7 @@ fn read_config(path: &Path) -> String {
 pub(crate) enum Change {
     Buttons(WindowButtons),
     Globals(String),
+    IconTheme(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -99,6 +117,7 @@ impl Watch {
             let mut stamps = [None, None];
             let mut layout = None;
             let mut globals = String::new();
+            let mut icon_theme = None;
             let mut first = true;
             loop {
                 for (k, path) in paths.iter().enumerate() {
@@ -113,6 +132,11 @@ impl Watch {
                             emit(Change::Buttons(next));
                         }
                     } else if globals != text {
+                        let next = kde_icon_theme(&text);
+                        if next != icon_theme {
+                            icon_theme.clone_from(&next);
+                            if let Some(name) = next { emit(Change::IconTheme(name)); }
+                        }
                         globals.clone_from(&text);
                         emit(Change::Globals(text));
                     }

@@ -166,6 +166,33 @@ pub fn node_at(dir: libc::c_int, name: &CStr, follow: bool) -> io::Result<Node> 
     })
 }
 
+struct Identity {
+    uid: u32,
+    groups: Vec<u32>,
+}
+
+impl Identity {
+    fn current() -> &'static Self {
+        static IDENTITY: std::sync::OnceLock<Identity> = std::sync::OnceLock::new();
+        IDENTITY.get_or_init(|| {
+            let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) }.max(0) as usize;
+            let mut groups = vec![0; count];
+            let read = unsafe { libc::getgroups(count as i32, groups.as_mut_ptr()) };
+            groups.truncate(read.max(0) as usize);
+            groups.push(unsafe { libc::getegid() });
+            Identity { uid: unsafe { libc::geteuid() }, groups }
+        })
+    }
+
+    fn readable(&self, node: &Node) -> bool {
+        if self.uid == 0 || node.is_link() {
+            return true;
+        }
+        let bit = if self.uid == node.uid { 0o400 } else if self.groups.contains(&node.gid) { 0o040 } else { 0o004 };
+        node.mode & bit != 0
+    }
+}
+
 fn to_meta(name: &[u8], node: &Node, target_dir: impl FnOnce() -> bool) -> Meta {
     let mut attrs = 0;
     if node.is_link() {
@@ -183,6 +210,9 @@ fn to_meta(name: &[u8], node: &Node, target_dir: impl FnOnce() -> bool) -> Meta 
     }
     if node.mode & 0o222 == 0 {
         attrs |= attr::READONLY;
+    }
+    if matches!(node.kind(), libc::S_IFREG | libc::S_IFDIR) && !Identity::current().readable(node) {
+        attrs |= attr::UNREADABLE;
     }
     Meta { size: node.size, modified: filetime(node.mtime.sec, node.mtime.nsec as i64), created: node.btime, attrs }
 }
