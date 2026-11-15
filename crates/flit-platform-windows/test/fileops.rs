@@ -54,6 +54,165 @@ fn read(t: &TempDir, rel: &str) -> String {
 
 type Asked = Arc<Mutex<Vec<Conflict>>>;
 
+#[test]
+fn native_hard_links_share_content_and_have_two_directory_entries() {
+    let t = TempDir::new("w10-hard");
+    let source = t.file("source.txt", "shared");
+    std::fs::create_dir(t.0.join("out")).unwrap();
+    let op = FileOp::LinkAs { items: vec![source], dest: t.path("out"), kind: flit_core::provider::LinkKind::Hard };
+    let out = run(&mut ShellCom::new().unwrap(), &op);
+    assert!(out.error.is_none(), "{:?}", out.error);
+    assert_eq!(out.items.len(), 1);
+    assert_eq!(std::fs::read_to_string(std_path(&out.items[0].1)).unwrap(), "shared");
+    assert!(matches!(crate::fs::link_info(&out.items[0].1), Some(crate::fs::LinkInfo::Hard(2))));
+}
+
+#[test]
+fn native_junctions_open_the_target_and_deleting_them_preserves_the_target() {
+    let t = TempDir::new("w10-junction");
+    std::fs::create_dir(t.0.join("source")).unwrap();
+    t.file("source\\keep.txt", "keep");
+    std::fs::create_dir(t.0.join("out")).unwrap();
+    let mut shell = ShellCom::new().unwrap();
+    let op = FileOp::LinkAs { items: vec![t.path("source")], dest: t.path("out"), kind: flit_core::provider::LinkKind::Junction };
+    let out = run(&mut shell, &op);
+    assert!(out.error.is_none(), "{:?}", out.error);
+    assert_eq!(out.items.len(), 1);
+    let junction = &out.items[0].1;
+    assert!(matches!(crate::fs::link_info(junction), Some(crate::fs::LinkInfo::Junction(_))));
+    assert_eq!(std::fs::read_to_string(std_path(&junction.join(b"keep.txt"))).unwrap(), "keep");
+    let deleted = run(&mut shell, &FileOp::Delete(vec![junction.clone()]));
+    assert!(deleted.error.is_none(), "{:?}", deleted.error);
+    assert_eq!(read(&t, "source\\keep.txt"), "keep");
+}
+
+#[test]
+fn native_links_reject_invalid_targets_and_honor_cancellation() {
+    let t = TempDir::new("w10-invalid");
+    let source = t.file("file.txt", "keep");
+    std::fs::create_dir(t.0.join("out")).unwrap();
+    let mut shell = ShellCom::new().unwrap();
+    let op = FileOp::LinkAs { items: vec![source], dest: t.path("out"), kind: flit_core::provider::LinkKind::Junction };
+    let out = run(&mut shell, &op);
+    assert!(out.error.is_some());
+    assert!(out.items.is_empty());
+    assert_eq!(std::fs::read_dir(t.0.join("out")).unwrap().count(), 0);
+    let op = FileOp::LinkAs { items: vec![t.path("file.txt")], dest: t.path("out"), kind: flit_core::provider::LinkKind::Hard };
+    let ctl = OpCtl::new(Some(Resolve::KeepBoth));
+    ctl.cancel();
+    let out = shell.file_op(&op, &Job::new(ctl, Box::new(|_| {}), Box::new(|_| {})));
+    assert!(out.error.is_some());
+    assert!(out.items.is_empty());
+    assert_eq!(std::fs::read_dir(t.0.join("out")).unwrap().count(), 0);
+}
+
+#[test]
+fn native_symbolic_links_point_to_files_and_directories_or_explain_missing_privileges() {
+    let t = TempDir::new("w10-symbolic");
+    t.file("file.txt", "content");
+    std::fs::create_dir(t.0.join("folder")).unwrap();
+    t.file("folder\\nested.txt", "nested");
+    std::fs::create_dir(t.0.join("out")).unwrap();
+    let mut shell = ShellCom::new().unwrap();
+    for name in ["file.txt", "folder"] {
+        let op = FileOp::LinkAs { items: vec![t.path(name)], dest: t.path("out"), kind: flit_core::provider::LinkKind::Symbolic };
+        let out = run(&mut shell, &op);
+        if let Some(error) = out.error {
+            assert_eq!(error.code, windows::Win32::Foundation::ERROR_PRIVILEGE_NOT_HELD.0 as i64);
+            assert!(error.message.contains(S::ErrorsEngineSymlinkPrivilege.en()));
+            assert!(out.items.is_empty());
+        } else {
+            assert_eq!(out.items.len(), 1);
+            let link = &out.items[0].1;
+            assert!(matches!(crate::fs::link_info(link), Some(crate::fs::LinkInfo::Symbolic(_))));
+            let file = if name == "folder" { link.join(b"nested.txt") } else { link.clone() };
+            assert_eq!(std::fs::read_to_string(std_path(&file)).unwrap(), if name == "folder" { "nested" } else { "content" });
+        }
+    }
+    assert!(!std::fs::read_dir(t.0.join("out")).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().contains("flit-partial")));
+}
+
+#[test]
+fn native_link_conflicts_skip_keep_both_or_replace_without_changing_the_source() {
+    let t = TempDir::new("w10-conflicts");
+    let source = t.file("source.txt", "source");
+    std::fs::create_dir(t.0.join("out")).unwrap();
+    let destination = t.file("out\\Link to source.txt", "original");
+    let mut shell = ShellCom::new().unwrap();
+    let op = FileOp::LinkAs { items: vec![source.clone()], dest: t.path("out"), kind: flit_core::provider::LinkKind::Hard };
+    let skipped = shell.file_op(&op, &Job::detached(Resolve::Skip));
+    assert!(skipped.error.is_none() && skipped.items.is_empty());
+    assert_eq!(std::fs::read_to_string(std_path(&destination)).unwrap(), "original");
+    let kept = shell.file_op(&op, &Job::detached(Resolve::KeepBoth));
+    assert!(kept.error.is_none());
+    assert_eq!(names(&kept.items), ["Link to source (2).txt"]);
+    assert_eq!(std::fs::read_to_string(std_path(&destination)).unwrap(), "original");
+    let replaced = shell.file_op(&op, &Job::detached(Resolve::Replace));
+    assert!(replaced.error.is_none());
+    assert_eq!(replaced.items, [(source.clone(), destination.clone())]);
+    assert_eq!(std::fs::read_to_string(std_path(&destination)).unwrap(), "source");
+    assert_eq!(std::fs::read_to_string(std_path(&source)).unwrap(), "source");
+    let ctl = OpCtl::new(None);
+    let cancel = ctl.clone();
+    let job = Job::new(ctl, Box::new(|_| {}), Box::new(move |_| cancel.cancel()));
+    let cancelled = shell.file_op(&op, &job);
+    assert!(cancelled.error.is_some() && cancelled.items.is_empty());
+    assert_eq!(std::fs::read_to_string(std_path(&destination)).unwrap(), "source");
+}
+
+#[test]
+fn native_link_menu_eligibility_checks_types_and_real_volume_ids() {
+    let t = TempDir::new("w10-choices");
+    let file = t.file("file.txt", "source");
+    std::fs::create_dir(t.0.join("folder")).unwrap();
+    std::fs::create_dir(t.0.join("out")).unwrap();
+    let mut shell = ShellCom::new().unwrap();
+    assert_eq!(shell.link_choices(Some(std::slice::from_ref(&file)), &t.path("out")).0, [true, true, false, true]);
+    assert_eq!(shell.link_choices(Some(&[t.path("folder")]), &t.path("out")).0, [true, true, true, false]);
+    assert_eq!(shell.link_choices(Some(&[file.clone(), t.path("folder")]), &t.path("out")).0, [true, true, false, false]);
+    assert_eq!(shell.link_choices(Some(&[t.path("missing")]), &t.path("out")).0, [false; 4]);
+    assert_eq!(shell.link_choices(Some(std::slice::from_ref(&file)), &file).0, [false; 4]);
+    let exe = std::env::current_exe().unwrap();
+    let other = TempDir::under(exe.parent().unwrap(), "w10-other-volume");
+    if !crate::links::choices(std::slice::from_ref(&file), &other.path("")).0[3] {
+        assert_eq!(shell.link_choices(Some(&[file]), &other.path("")).0, [true, true, false, false]);
+        assert_eq!(shell.link_choices(Some(&[t.path("folder")]), &other.path("")).0, [true, true, false, false]);
+    }
+}
+
+#[test]
+fn links_to_drive_roots_keep_valid_names_and_folder_shortcut_replace_preserves_its_name() {
+    let t = TempDir::new("w10-root");
+    std::fs::create_dir(t.0.join("out")).unwrap();
+    let root = FsPath::parse_bytes(t.path("").root_bytes()).unwrap();
+    assert!(engine::link_stat(&root).is_some_and(|m| m.attrs & attr::DIR != 0));
+    assert!(engine::stat(&root).is_none());
+    let mut shell = ShellCom::new().unwrap();
+    for kind in [flit_core::provider::LinkKind::Shortcut, flit_core::provider::LinkKind::Junction, flit_core::provider::LinkKind::Symbolic] {
+        let op = if kind == flit_core::provider::LinkKind::Shortcut { FileOp::Link { items: vec![root.clone()], dest: t.path("out") } } else { FileOp::LinkAs { items: vec![root.clone()], dest: t.path("out"), kind } };
+        let out = run(&mut shell, &op);
+        if let Some(error) = out.error {
+            assert_eq!(kind, flit_core::provider::LinkKind::Symbolic);
+            assert_eq!(error.code, windows::Win32::Foundation::ERROR_PRIVILEGE_NOT_HELD.0 as i64);
+        } else {
+            assert_eq!(out.items.len(), 1);
+            assert!(!out.items[0].1.file_name().iter().any(|c| *c == b':' || *c == b'\\'));
+            if kind == flit_core::provider::LinkKind::Shortcut {
+                let replaced = shell.file_op(&op, &Job::detached(Resolve::Replace));
+                assert!(replaced.error.is_none());
+                assert_eq!(replaced.items, out.items);
+            } else {
+                let deleted = run(&mut shell, &FileOp::Delete(vec![out.items[0].1.clone()]));
+                assert!(deleted.error.is_none());
+            }
+        }
+    }
+    let source = t.file("source.txt", "source");
+    let marker = t.file("out\\reserved.lnk", "preexisting marker");
+    assert!(crate::links::create(flit_core::provider::LinkKind::Shortcut, &source, &marker).is_err());
+    assert_eq!(std::fs::read_to_string(std_path(&marker)).unwrap(), "preexisting marker");
+}
+
 fn answering(answers: &[(Resolve, bool)]) -> (Job, Asked) {
     let ctl = OpCtl::new(None);
     let left = Mutex::new(answers.to_vec());
@@ -117,9 +276,9 @@ fn copy_move_rename_new_folder_and_link_report_their_results() {
     assert!(t.has("a.txt") && !t.has(r"New folder\b.txt"));
 
     let out = run(&mut sh, &FileOp::Link { items: vec![t.path("a.txt")], dest: t.path("sub") });
-    assert_eq!(names(&out.items), ["a.txt - Shortcut.lnk"]);
+    assert_eq!(names(&out.items), ["Link to a.txt.lnk"]);
     let out = run(&mut sh, &FileOp::Link { items: vec![t.path("a.txt")], dest: t.path("sub") });
-    assert_eq!(names(&out.items), ["a.txt - Shortcut (2).lnk"]);
+    assert_eq!(names(&out.items), ["Link to a.txt (2).lnk"]);
 }
 
 #[test]

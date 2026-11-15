@@ -1,6 +1,6 @@
 use crate::fs::{map_attrs, NtFs};
 use flit_core::listing::{attr, Listing, ListingBuilder, Meta};
-use flit_core::provider::{Conflict, Failure, FileOp, Recover, Resolve, Stage};
+use flit_core::provider::{Conflict, Failure, FileOp, LinkKind, Recover, Resolve, Stage};
 use flit_core::sort::CaseMode;
 use flit_core::{limits, FsPath};
 use flit_core::i18n::S;
@@ -13,6 +13,12 @@ use windows::Win32::Storage::FileSystem::*;
 use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_UPDATEDIR, SHCNF_FLUSHNOWAIT, SHCNF_PATHW};
 
 type Pairs = Vec<(FsPath, FsPath)>;
+type MakeLink<'a> = &'a dyn Fn(LinkKind, &FsPath, &FsPath) -> windows::core::Result<()>;
+type ElevateLinks<'a> = &'a dyn Fn(&[(FsPath, FsPath)]) -> windows::core::Result<()>;
+
+#[cfg(test)]
+#[path = "../test/engine.rs"]
+mod tests;
 
 const PROTECTED: u32 = FILE_ATTRIBUTE_READONLY.0 | FILE_ATTRIBUTE_HIDDEN.0 | FILE_ATTRIBUTE_SYSTEM.0;
 
@@ -56,7 +62,7 @@ fn code(e: &windows::core::Error) -> WIN32_ERROR {
 }
 
 fn reason(path: &FsPath, e: &windows::core::Error) -> String {
-    let said = e.message().trim_end().to_owned();
+    let said = crate::error_reason(e).trim_end().to_owned();
     match code(e) {
         ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION => flit_core::fmt::in_use(&said, &crate::busy::holders(path)).unwrap_or(said),
         _ => said,
@@ -74,6 +80,15 @@ fn inside(path: &FsPath, folder: &FsPath) -> bool {
 
 fn ticks(t: FILETIME) -> i64 {
     ((t.dwHighDateTime as u64) << 32 | t.dwLowDateTime as u64) as i64
+}
+
+pub(crate) fn link_stat(p: &FsPath) -> Option<Meta> {
+    if !p.is_root() {
+        return stat(p);
+    }
+    let mut data = WIN32_FILE_ATTRIBUTE_DATA::default();
+    unsafe { GetFileAttributesExW(PCWSTR(wide(p).as_ptr()), GetFileExInfoStandard, &mut data as *mut _ as _) }.ok()?;
+    Some(Meta { size: (data.nFileSizeHigh as u64) << 32 | data.nFileSizeLow as u64, modified: ticks(data.ftLastWriteTime), created: ticks(data.ftCreationTime), attrs: map_attrs(data.dwFileAttributes, 0) })
 }
 
 pub(crate) fn stat(p: &FsPath) -> Option<Meta> {
@@ -135,6 +150,63 @@ pub(crate) fn copy_name(item: &FsPath, dest: &FsPath, dir: bool) -> FsPath {
 fn partial(to: &FsPath) -> FsPath {
     let dir = to.parent().unwrap_or_else(|| to.clone());
     numbered(&dir, &[to.file_name(), b".flit-partial"].concat(), true, b"", true)
+}
+
+struct LinkStage {
+    dir: FsPath,
+    path: FsPath,
+    made: bool,
+    directory: bool,
+}
+
+impl LinkStage {
+    fn reserve(dir: FsPath, kind: LinkKind, directory: bool) -> windows::core::Result<Self> {
+        unsafe { CreateDirectoryW(PCWSTR(wide(&dir).as_ptr()), None) }?;
+        let path = dir.join(if kind == LinkKind::Shortcut { b"link.lnk" } else { b"link" });
+        Ok(Self { dir, path, made: false, directory })
+    }
+
+    fn new(dst: &FsPath, kind: LinkKind, directory: bool) -> windows::core::Result<Self> {
+        loop {
+            match Self::reserve(partial(dst), kind, directory) {
+                Err(error) if matches!(code(&error), ERROR_ALREADY_EXISTS | ERROR_FILE_EXISTS) => {}
+                result => return result,
+            }
+        }
+    }
+
+    fn place(&mut self, destination: &FsPath, replace: bool) -> windows::core::Result<()> {
+        move_file(&self.path, destination, if replace { MOVEFILE_REPLACE_EXISTING } else { MOVE_FILE_FLAGS(0) })?;
+        self.made = false;
+        Ok(())
+    }
+}
+
+struct Waiting {
+    item: FsPath,
+    dst: FsPath,
+    replace: bool,
+    stage: LinkStage,
+    meta: Meta,
+    dir: bool,
+}
+
+impl Drop for LinkStage {
+    fn drop(&mut self) {
+        if self.made {
+            if self.directory { let _ = remove_dir(&self.path); } else { let _ = delete_file(&self.path); }
+        }
+        let _ = remove_dir(&self.dir);
+    }
+}
+
+fn link_name(item: &FsPath, kind: LinkKind) -> Vec<u8> {
+    let stem: Vec<u8> = item.file_name().iter().copied().filter(|&c| c != b':' && c != b'\\').collect();
+    let mut name = flit_core::name::link_name(&stem);
+    if kind == LinkKind::Shortcut {
+        name.extend_from_slice(b".lnk");
+    }
+    name
 }
 
 fn move_file(from: &FsPath, to: &FsPath, flags: MOVE_FILE_FLAGS) -> windows::core::Result<()> {
@@ -244,15 +316,18 @@ pub(crate) struct Engine<'a> {
     done: Pairs,
     failed: usize,
     first: Option<String>,
+    first_code: Option<i64>,
     fatal: bool,
     elevate: bool,
     dirs: Vec<FsPath>,
     limit: Option<(Vec<u8>, Option<u64>)>,
+    make_link: MakeLink<'a>,
+    elevate_links: ElevateLinks<'a>,
 }
 
 impl<'a> Engine<'a> {
     pub(crate) fn new(job: &'a Job) -> Self {
-        Self { job, done: Vec::new(), failed: 0, first: None, fatal: false, elevate: false, dirs: Vec::new(), limit: None }
+        Self { job, done: Vec::new(), failed: 0, first: None, first_code: None, fatal: false, elevate: false, dirs: Vec::new(), limit: None, make_link: &crate::links::create, elevate_links: &crate::links::elevated }
     }
 
     fn stopped(&self) -> bool {
@@ -278,8 +353,15 @@ impl<'a> Engine<'a> {
     }
 
     fn note(&mut self, msg: String) {
+        self.noted(None, msg);
+    }
+
+    fn noted(&mut self, code: Option<i64>, msg: String) {
         self.failed += 1;
-        self.first.get_or_insert(msg);
+        if self.first.is_none() {
+            self.first = Some(msg);
+            self.first_code = code;
+        }
     }
 
     fn trouble(&mut self, path: &FsPath, e: &windows::core::Error, top: bool) -> bool {
@@ -309,7 +391,7 @@ impl<'a> Engine<'a> {
             return Some(PlatformError::new(ERROR_CANCELLED.0 as i64, S::ErrorsEngineCancelled.en()));
         }
         let first = self.first.clone()?;
-        Some(PlatformError::new(-1, if self.failed > 1 { tr_en!(S::ErrorsEngineFailed, count = self.failed, error = first) } else { first }))
+        Some(PlatformError::new(self.first_code.unwrap_or(-1), if self.failed > 1 { tr_en!(S::ErrorsEngineFailed, count = self.failed, error = first) } else { first }))
     }
 
     fn running(&self, total: Tally) {
@@ -579,6 +661,148 @@ impl<'a> Engine<'a> {
             .collect()
     }
 
+    fn offer_elevation(&mut self, item: &FsPath) -> bool {
+        if !self.job.asks_failures() || self.job.cancelled() {
+            return false;
+        }
+        match self.job.fail(Failure { path: item.clone(), error: S::ErrorsEngineSymlinkPrivilege.en().to_owned(), fatal: false }) {
+            Some(Recover::Retry) => !self.job.cancelled(),
+            Some(_) => false,
+            None => {
+                self.job.ctl().cancel();
+                false
+            }
+        }
+    }
+
+    fn place_link(&mut self, mut waiting: Waiting) {
+        loop {
+            if self.job.cancelled() {
+                return;
+            }
+            match waiting.stage.place(&waiting.dst, waiting.replace) {
+                Ok(()) => {
+                    self.done.push((waiting.item, waiting.dst));
+                    self.job.update(|p| p.items += 1);
+                    return;
+                }
+                Err(error) => {
+                    let code = code(&error);
+                    if matches!(code, ERROR_ALREADY_EXISTS | ERROR_FILE_EXISTS) && !waiting.replace {
+                        match self.ask(&waiting.item, waiting.meta, &waiting.dst) {
+                            Some(Resolve::KeepBoth) => waiting.dst = free_name(&waiting.dst, waiting.dir),
+                            Some(Resolve::Replace) if !waiting.dir && stat(&waiting.dst).is_some_and(|m| !is_dir(&m)) => waiting.replace = true,
+                            _ => return,
+                        }
+                    } else if !self.trouble(&waiting.dst, &error, false) {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    fn elevated_links(&mut self, waiting: Vec<Waiting>) {
+        if waiting.is_empty() || self.job.cancelled() {
+            return;
+        }
+        let pairs: Pairs = waiting.iter().map(|w| (w.item.clone(), w.stage.path.clone())).collect();
+        let result = (self.elevate_links)(&pairs);
+        for mut waiting in waiting {
+            if stat(&waiting.stage.path).is_some() {
+                waiting.stage.made = true;
+                self.place_link(waiting);
+                continue;
+            }
+            match &result {
+                Err(error) if !matches!(code(error), ERROR_CANCELLED | ERROR_PRIVILEGE_NOT_HELD) => self.noted(Some(code(error).0 as i64), format!("{}: {}", waiting.dst.display(), reason(&waiting.dst, error))),
+                _ => self.noted(Some(ERROR_PRIVILEGE_NOT_HELD.0 as i64), S::ErrorsEngineSymlinkPrivilege.en().to_owned()),
+            }
+        }
+    }
+
+    fn links(&mut self, items: &[FsPath], dest: &FsPath, kind: LinkKind) -> Option<FileOp> {
+        self.running(Tally { entries: items.len() as u64, ..Default::default() });
+        self.touch(Some(dest.clone()));
+        let mut elevation = None;
+        let mut waiting = Vec::new();
+        for item in items {
+            if self.stopped() {
+                break;
+            }
+            let Some(meta) = link_stat(item) else {
+                self.note(tr_en!(S::ErrorsEngineMissing, path = item.display()));
+                continue;
+            };
+            let name = link_name(item, kind);
+            let mut dst = dest.join(&name);
+            let dir = is_dir(&meta) && kind != LinkKind::Shortcut;
+            let output_meta = Meta { attrs: if kind == LinkKind::Shortcut { meta.attrs & !attr::DIR } else { meta.attrs }, ..meta };
+            let mut replace = false;
+            if exists(&dst) {
+                match self.ask(item, output_meta, &dst) {
+                    Some(Resolve::KeepBoth) => dst = free_name(&dst, dir),
+                    Some(Resolve::Replace) if !dir && stat(&dst).is_some_and(|m| !is_dir(&m)) => replace = true,
+                    Some(Resolve::Replace) => dst = free_name(&dst, dir),
+                    Some(_) => { self.job.update(|p| p.items += 1); continue; }
+                    None => break,
+                }
+            }
+            loop {
+                if self.job.cancelled() {
+                    break;
+                }
+                let mut stage = match LinkStage::new(&dst, kind, dir) {
+                    Ok(stage) => stage,
+                    Err(error) if self.trouble(&dst, &error, false) => continue,
+                    Err(_) => break,
+                };
+                let created = if kind == LinkKind::Symbolic && elevation == Some(true) { Err(ERROR_PRIVILEGE_NOT_HELD.to_hresult().into()) } else { (self.make_link)(kind, item, &stage.path) };
+                if let Err(error) = &created {
+                    if kind == LinkKind::Symbolic && code(error) == ERROR_PRIVILEGE_NOT_HELD {
+                        if elevation.is_none() {
+                            elevation = Some(self.offer_elevation(item));
+                        }
+                        if elevation == Some(true) {
+                            waiting.push(Waiting { item: item.clone(), dst, replace, stage, meta: output_meta, dir });
+                        } else if !self.job.cancelled() {
+                            self.noted(Some(ERROR_PRIVILEGE_NOT_HELD.0 as i64), S::ErrorsEngineSymlinkPrivilege.en().to_owned());
+                        }
+                        break;
+                    }
+                }
+                let made = created.and_then(|()| {
+                    stage.made = true;
+                    if self.job.cancelled() {
+                        return Err(ERROR_CANCELLED.to_hresult().into());
+                    }
+                    stage.place(&dst, replace)
+                });
+                if let Err(error) = made {
+                    let code = code(&error);
+                    if matches!(code, ERROR_ALREADY_EXISTS | ERROR_FILE_EXISTS) && !replace {
+                        match self.ask(item, output_meta, &dst) {
+                            Some(Resolve::KeepBoth) => { dst = free_name(&dst, dir); continue; }
+                            Some(Resolve::Replace) if !dir && stat(&dst).is_some_and(|m| !is_dir(&m)) => { replace = true; continue; }
+                            _ => break,
+                        }
+                    }
+                    if code == ERROR_CANCELLED {
+                        self.job.ctl().cancel();
+                    } else if self.trouble(&dst, &error, false) {
+                        continue;
+                    }
+                    break;
+                }
+                self.done.push((item.clone(), dst));
+                self.job.update(|p| p.items += 1);
+                break;
+            }
+        }
+        self.elevated_links(waiting);
+        None
+    }
+
     fn copy(&mut self, items: &[FsPath], dest: &FsPath) -> Option<FileOp> {
         self.job.update(|p| p.stage = Stage::Preparing);
         let metas = self.stat_all(items);
@@ -779,7 +1003,7 @@ impl<'a> Engine<'a> {
 }
 
 pub(crate) fn native(op: &FileOp) -> bool {
-    matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Rename { .. } | FileOp::Delete(_) | FileOp::Flatten(_))
+    matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Rename { .. } | FileOp::Delete(_) | FileOp::Flatten(_) | FileOp::Link { .. } | FileOp::LinkAs { .. })
 }
 
 pub(crate) fn run(op: &FileOp, job: &Job) -> Outcome {
@@ -791,6 +1015,8 @@ pub(crate) fn run(op: &FileOp, job: &Job) -> Outcome {
         FileOp::Rename { item, name } => e.rename(item, name),
         FileOp::Delete(items) => e.delete(items),
         FileOp::Flatten(dirs) => e.flatten(dirs),
+        FileOp::Link { items, dest } => e.links(items, dest, LinkKind::Shortcut),
+        FileOp::LinkAs { items, dest, kind } => e.links(items, dest, *kind),
         _ => Some(op.clone()),
     };
     e.notify();

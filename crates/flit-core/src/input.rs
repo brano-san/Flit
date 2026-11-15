@@ -79,6 +79,35 @@ impl From<String> for Preedit {
 
 pub const PINCH_PER_STEP: f32 = 0.25;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowButton {
+    Minimize,
+    Maximize,
+    Close,
+}
+
+impl WindowButton {
+    pub fn index(self) -> usize {
+        match self {
+            Self::Minimize => 0,
+            Self::Maximize => 1,
+            Self::Close => 2,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WindowButtons {
+    pub left: Vec<WindowButton>,
+    pub right: Vec<WindowButton>,
+}
+
+impl Default for WindowButtons {
+    fn default() -> Self {
+        Self { left: Vec::new(), right: vec![WindowButton::Minimize, WindowButton::Maximize, WindowButton::Close] }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     Resized { width: u32, height: u32 },
@@ -89,6 +118,7 @@ pub enum Event {
     MouseUp { x: f32, y: f32, button: MouseButton },
     Wheel { dx: f32, dy: f32 },
     Pinch(f32),
+    TouchCancel,
     MouseLeave,
     Key { key: Key, mods: Mods, pressed: bool },
     Char(char),
@@ -102,6 +132,7 @@ pub enum Event {
     TextScale(f32),
     IconTheme,
     MouseSettings { double_click: std::time::Duration, wheel_lines: u32 },
+    WindowButtons(WindowButtons),
     Invoke(u64),
     A11yFocus(u64),
     A11ySelect(u64),
@@ -116,6 +147,7 @@ pub enum Event {
     Timer,
     ClipboardChanged(u32),
     ClipboardText(bool),
+    LinkChoices { generation: u64, choices: crate::provider::LinkChoices },
     SessionEnding,
     Hosted(crate::preview::HostEvent),
 }

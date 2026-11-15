@@ -342,7 +342,7 @@ unsafe fn show(parent: isize, host: HWND, gen: u64, what: Hosted, path: &FsPath,
             post(parent, HostEvent::Ready { gen, ms: t.elapsed().as_millis() as u32 });
             SESSIONS.with(|s| s.borrow_mut().insert(parent, Session { host, gen, path: path.clone(), handler, media, shown: (-1.0, -1.0, false) }));
         }
-        Err(e) => post(parent, HostEvent::Failed { gen, message: format!("The preview could not be shown: {}", e.message()) }),
+        Err(e) => post(parent, HostEvent::Failed { gen, message: format!("The preview could not be shown: {}", crate::error_reason(&e)) }),
     }
 }
 

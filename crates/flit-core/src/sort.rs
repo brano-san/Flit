@@ -1,6 +1,6 @@
 use rayon::prelude::*;
 use crate::hash::FxHasher;
-use crate::listing::{attr, Entry, Listing};
+use crate::listing::{attr, Entry, Listing, PropKey};
 use crate::{fmt, name, recycle};
 use std::cmp::Ordering;
 use std::hash::Hasher;
@@ -25,6 +25,40 @@ pub enum SortField {
     Folders,
     Files,
     Attributes,
+    Dimensions,
+    Duration,
+    Artist,
+    Version,
+}
+
+impl SortField {
+    pub const ALL: [SortField; 21] = [
+        Self::Name,
+        Self::Modified,
+        Self::Type,
+        Self::Size,
+        Self::Origin,
+        Self::Created,
+        Self::Tag,
+        Self::Accessed,
+        Self::Items,
+        Self::Free,
+        Self::FileSystem,
+        Self::Percent,
+        Self::Volume,
+        Self::FolderUsage,
+        Self::Folders,
+        Self::Files,
+        Self::Attributes,
+        Self::Dimensions,
+        Self::Duration,
+        Self::Artist,
+        Self::Version,
+    ];
+
+    pub fn is_shell(self) -> bool {
+        matches!(self, Self::Dimensions | Self::Duration | Self::Artist | Self::Version)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash, serde::Serialize, serde::Deserialize)]
@@ -61,11 +95,41 @@ pub enum GroupField {
     Percent,
     Volume,
     FolderUsage,
+    Dimensions,
+    Duration,
+    Artist,
+    Version,
 }
 
 impl GroupField {
+    pub const ALL: [GroupField; 19] = [
+        Self::None,
+        Self::Name,
+        Self::Type,
+        Self::Size,
+        Self::Modified,
+        Self::Created,
+        Self::Origin,
+        Self::Tag,
+        Self::Accessed,
+        Self::Items,
+        Self::Free,
+        Self::FileSystem,
+        Self::Percent,
+        Self::Volume,
+        Self::FolderUsage,
+        Self::Dimensions,
+        Self::Duration,
+        Self::Artist,
+        Self::Version,
+    ];
+
     pub fn is_date(self) -> bool {
         matches!(self, Self::Modified | Self::Created | Self::Accessed)
+    }
+
+    pub fn is_shell(self) -> bool {
+        matches!(self, Self::Dimensions | Self::Duration | Self::Artist | Self::Version)
     }
 }
 
@@ -98,6 +162,12 @@ pub struct ViewSpec {
     pub tree: bool,
     pub hide_dirs: bool,
     pub hide_files: bool,
+}
+
+impl ViewSpec {
+    pub fn needs_props(&self) -> bool {
+        self.sort.field.is_shell() || self.group.field.is_shell()
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash)]
@@ -151,11 +221,25 @@ impl SortKeys {
         self.prefix.push(u64::from_be_bytes(p));
     }
 
+    pub fn relabel_last(&mut self, name: &[u8]) {
+        if self.prefix.pop().is_some() {
+            self.offs.pop();
+            self.blob.truncate(self.offs.last().copied().unwrap_or(0) as usize);
+            self.push(name);
+        }
+    }
+
     pub fn append(&mut self, part: SortKeys) {
         let base = self.blob.len() as u32;
         self.blob.extend_from_slice(&part.blob);
         self.offs.extend(part.offs[1..].iter().map(|o| o + base));
         self.prefix.extend_from_slice(&part.prefix);
+    }
+
+    pub fn rebuild(&mut self, l: &Listing) {
+        let mut keys = SortKeys::new(self.case);
+        (0..l.len() as u32).for_each(|i| keys.push(l.label(i)));
+        *self = keys;
     }
 
     pub fn relabel(&mut self, l: &Listing) {
@@ -434,6 +518,50 @@ fn tag_key(mask: u32) -> u64 {
     (!mask).reverse_bits() as u64
 }
 
+const MINUTE: u64 = 600_000_000;
+const PIXEL_LIMITS: [u64; 3] = [640 * 480, 1920 * 1080, 4000 * 3000];
+const DURATION_LIMITS: [u64; 2] = [5 * MINUTE, 30 * MINUTE];
+
+#[inline]
+fn prop(l: &Listing, i: u32) -> Option<&PropKey> {
+    if l.props.is_empty() { None } else { l.props.get(&i) }
+}
+
+pub fn pixels(l: &Listing, i: u32) -> Option<(u64, u32)> {
+    prop(l, i).and_then(|p| p.pixels)
+}
+
+pub fn duration(l: &Listing, i: u32) -> Option<u64> {
+    prop(l, i).and_then(|p| p.duration)
+}
+
+pub fn artist(l: &Listing, i: u32) -> Option<&str> {
+    prop(l, i).and_then(|p| p.artist.as_ref()).map(|a| &*a.0)
+}
+
+fn artist_key(l: &Listing, i: u32) -> &[u8] {
+    prop(l, i).and_then(|p| p.artist.as_ref()).map_or(&[], |a| &*a.1)
+}
+
+pub fn version(l: &Listing, i: u32) -> Option<u64> {
+    prop(l, i).and_then(|p| p.version)
+}
+
+fn limit_bucket(n: u64, limits: &[u64]) -> u64 {
+    (limits.len() - limits.iter().position(|&lim| n < lim).unwrap_or(limits.len())) as u64
+}
+
+#[inline]
+fn absent(l: &Listing, field: SortField, i: u32) -> bool {
+    match field {
+        SortField::Dimensions => pixels(l, i).is_none(),
+        SortField::Duration => duration(l, i).is_none(),
+        SortField::Artist => artist(l, i).is_none(),
+        SortField::Version => version(l, i).is_none(),
+        _ => false,
+    }
+}
+
 pub fn group_key(l: &Listing, i: u32, v: &ViewSpec) -> (u64, bool) {
     let e = &l.entries[i as usize];
     match v.group.field {
@@ -456,6 +584,13 @@ pub fn group_key(l: &Listing, i: u32, v: &ViewSpec) -> (u64, bool) {
         GroupField::Percent => (used_permille(l, i).map_or(UNSPECIFIED, |p| percent_bucket(p, 1000)), true),
         GroupField::Volume => (known_size(e).map_or(UNSPECIFIED, |s| percent_bucket(s, l.volume)), true),
         GroupField::FolderUsage => (known_size(e).map_or(UNSPECIFIED, |s| percent_bucket(s, l.total)), true),
+        GroupField::Dimensions => (pixels(l, i).map_or(UNSPECIFIED, |p| limit_bucket(p.0, &PIXEL_LIMITS)), true),
+        GroupField::Duration => (duration(l, i).map_or(UNSPECIFIED, |d| limit_bucket(d, &DURATION_LIMITS)), true),
+        GroupField::Artist => match artist(l, i) {
+            None => (UNSPECIFIED, true),
+            Some(a) => (ext_prefix(a.as_bytes()).min(UNSPECIFIED - 1), a.len() <= 8),
+        },
+        GroupField::Version => (version(l, i).map_or(UNSPECIFIED, |v| v >> 48), true),
     }
 }
 
@@ -464,6 +599,7 @@ pub fn group_bytes(l: &Listing, i: u32, f: GroupField) -> &[u8] {
         GroupField::Type => l.ext(i),
         GroupField::Origin => recycle::origin(l, i),
         GroupField::FileSystem => file_system(l, i),
+        GroupField::Artist => artist(l, i).map_or(&[], str::as_bytes),
         _ => &[],
     }
 }
@@ -517,6 +653,10 @@ fn item_cmp(l: &Listing, k: &SortKeys, spec: SortSpec, a: u32, b: u32) -> Orderi
     if dirs != Ordering::Equal {
         return dirs;
     }
+    let missing = absent(l, spec.field, a).cmp(&absent(l, spec.field, b));
+    if missing != Ordering::Equal {
+        return missing;
+    }
     let o = match spec.field {
         SortField::Name => Ordering::Equal,
         SortField::Size => ea.size.cmp(&eb.size),
@@ -530,6 +670,10 @@ fn item_cmp(l: &Listing, k: &SortKeys, spec: SortSpec, a: u32, b: u32) -> Orderi
         SortField::Items | SortField::Folders | SortField::Files | SortField::Free | SortField::Percent => primary(l, spec.field, a).cmp(&primary(l, spec.field, b)),
         SortField::FileSystem => ext_cmp(file_system(l, a), file_system(l, b)),
         SortField::Attributes => attribute_key(ea.attrs).cmp(&attribute_key(eb.attrs)),
+        SortField::Dimensions => pixels(l, a).cmp(&pixels(l, b)),
+        SortField::Duration => duration(l, a).cmp(&duration(l, b)),
+        SortField::Artist => artist_key(l, a).cmp(artist_key(l, b)),
+        SortField::Version => version(l, a).cmp(&version(l, b)),
     }
     .then_with(|| k.cmp(a, b))
     .then_with(|| l.name(a).cmp(l.name(b)));
@@ -595,6 +739,10 @@ fn primary(l: &Listing, field: SortField, i: u32) -> u64 {
         SortField::FileSystem => ext_prefix(file_system(l, i)),
         SortField::Percent => used_permille(l, i).map_or(0, |p| p + 1),
         SortField::Attributes => attribute_key(e.attrs),
+        SortField::Dimensions => pixels(l, i).map_or(0, |p| p.0),
+        SortField::Duration => duration(l, i).unwrap_or(0),
+        SortField::Artist => key_word(artist_key(l, i), 0),
+        SortField::Version => version(l, i).unwrap_or(0),
     }
 }
 
@@ -609,9 +757,11 @@ pub fn sort(l: &Listing, k: &SortKeys, view: ViewSpec, out: &mut Vec<u32>) {
                 SortField::Type => l.ext(i).len() <= 8,
                 SortField::Origin => recycle::origin(l, i).len() <= 8,
                 SortField::FileSystem => file_system(l, i).len() <= 8,
+                SortField::Dimensions => false,
+                SortField::Artist => artist_key(l, i).len() <= 8,
                 _ => true,
             };
-            let group = folder_rank(spec.folders, e);
+            let group = folder_rank(spec.folders, e) << 1 | u16::from(absent(l, spec.field, i));
             let (gkey, gexact) = group_key(l, i, &view);
             let name2 = inv(key_word(k.key(i), 8));
             Item { gkey, primary: inv(primary), name: inv(k.prefix[i as usize]), name2, idx: i, group, exact, gexact }

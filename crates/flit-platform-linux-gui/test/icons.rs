@@ -131,21 +131,6 @@ fn bench_twenty_distinct_lookups_in_the_system_theme() {
 }
 
 #[test]
-fn emblems_are_drawn_over_the_bottom_left_corner_only() {
-    let base = Bitmap { width: 4, height: 4, rgba: [10, 20, 30, 255].repeat(16) };
-    let emblem = Bitmap { width: 2, height: 2, rgba: [[200, 0, 0, 255], [0, 0, 0, 0], [100, 0, 0, 128], [200, 0, 0, 255]].concat() };
-    let out = with_emblem(base.clone(), &emblem);
-    let px = |x: u32, y: u32| out.rgba[((y * 4 + x) * 4) as usize..][..4].to_vec();
-    assert_eq!(px(0, 2), [200, 0, 0, 255]);
-    assert_eq!(px(1, 2), [10, 20, 30, 255], "a transparent emblem pixel keeps the icon");
-    assert_eq!(px(0, 3), [105, 10, 15, 255]);
-    assert_eq!(px(3, 0), [10, 20, 30, 255]);
-    assert_eq!(out.rgba.len(), base.rgba.len());
-    let tiny = Bitmap { width: 1, height: 1, rgba: vec![1, 2, 3, 255] };
-    assert_eq!(with_emblem(tiny.clone(), &emblem).rgba, [200, 0, 0, 255], "an emblem larger than the icon is cut");
-}
-
-#[test]
 fn links_take_the_icon_of_what_they_point_at_and_broken_ones_say_so() {
     let t = Temp::new("link-icons");
     std::fs::write(t.path().join("a.pdf"), b"x").unwrap();
@@ -163,4 +148,15 @@ fn links_take_the_icon_of_what_they_point_at_and_broken_ones_say_so() {
     assert_eq!(link_icon_names(&req("dir"), LinkTarget::Folder), ["folder"]);
     assert_eq!(link_icon_names(&req("broken.pdf"), LinkTarget::Missing)[0], "image-missing");
     assert_eq!(link_icon_names(&req("doc.pdf"), LinkTarget::File), crate::shell::icon_names(&req("a.pdf")));
+}
+
+#[test]
+fn switching_to_the_icon_theme_already_in_use_does_not_refresh_every_icon() {
+    assert!(!switch_theme(&current_theme()));
+    let mut current = None;
+    assert!(!replaced(&mut current, "breeze", || "breeze".into()));
+    assert_eq!(current.as_deref(), Some("breeze"));
+    assert!(replaced(&mut current, "Papirus", || unreachable!()));
+    assert!(!replaced(&mut current, "Papirus", || unreachable!()));
+    assert_eq!(current.as_deref(), Some("Papirus"));
 }

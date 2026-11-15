@@ -1,4 +1,4 @@
-use crate::{FileOps, Fs, Job, PlatformError, Provider, Shell, Wake, Watcher};
+use crate::{FileOps, Fs, Job, MountPrompt, PlatformError, Provider, Shell, Wake, Watcher};
 use crossbeam_channel::{bounded, unbounded, Sender};
 use flit_core::archive::ArchiveOp;
 use flit_core::digest::HashKind;
@@ -212,14 +212,20 @@ impl LocalProvider {
         spawn("flit-shell-open".into(), move || {
             let mut sh = S::new();
             for (tab, job) in shell_rx {
-                if matches!(job, ShellJob::Launch(Launch::ConnectServer(_))) {
+                if let ShellJob::Launch(Launch::ConnectServer(uri)) = job {
                     let (events, wake) = (open_events.clone(), open_wake.clone());
-                    let _ = spawn("flit-connect".into(), move || {
-                        if let Some(event) = shell_event(tab, S::new().and_then(|mut sh| run_shell(&mut sh, tab, job))) {
+                    let started = spawn("flit-connect".into(), move || {
+                        let prompt = MountPrompt::new(tab, events.clone(), wake.clone());
+                        let done = S::new().and_then(|mut sh| sh.connect_asking(&uri, &prompt)).map(|p| p.map(|path| ProviderEvent::Navigate { tab, path }));
+                        if let Some(event) = shell_event(tab, done) {
                             let _ = events.send(event);
                             wake();
                         }
                     });
+                    if let Err(e) = started {
+                        let _ = open_events.send(ProviderEvent::OpDone { tab, id: 0, error: Some(e.to_string()), report: None });
+                        open_wake();
+                    }
                     continue;
                 }
                 let Some(event) = shell_event(tab, sh.as_mut().map_err(|e| e.clone()).and_then(|sh| run_shell(sh, tab, job))) else { continue };
@@ -434,6 +440,7 @@ fn resolve_paste<S: FileOps>(sh: &mut S, op: FileOp) -> Result<(FileOp, bool), S
             },
         },
         FileOp::PasteLink { dest } => (FileOp::Link { items: sh.clipboard_files().map_err(|e| e.to_string())?.0, dest }, false),
+        FileOp::PasteLinkAs { dest, kind } => (FileOp::LinkAs { items: sh.clipboard_files().map_err(|e| e.to_string())?.0, dest, kind }, false),
         op => (op, false),
     })
 }
@@ -612,7 +619,7 @@ fn list<F: Fs + ?Sized>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: C
         }
         true
     };
-    let mut b = ListingBuilder::new(case, &mut on_batch).with_tags(tags).with_streams(view.show_streams);
+    let mut b = ListingBuilder::new(case, &mut on_batch).with_tags(tags).with_streams(view.show_streams).with_labels(true);
     b.listing.volume = fs.volume_size(path);
     let result = fs.read_dir(path, &mut b);
     if let Err(e) = &result {

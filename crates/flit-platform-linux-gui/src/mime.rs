@@ -143,6 +143,136 @@ pub fn type_name(ext: &[u8]) -> Option<String> {
         .clone()
 }
 
+const CONTENT_HEAD: usize = 16 * 1024;
+const CONTENT_CACHE_LIMIT: usize = 2048;
+
+struct ContentApi {
+    guess: unsafe extern "C" fn(*const libc::c_char, *const u8, usize, *mut libc::c_int) -> *mut libc::c_char,
+    mime: unsafe extern "C" fn(*const libc::c_char) -> *mut libc::c_char,
+    free: unsafe extern "C" fn(*mut libc::c_void),
+    _gio: usize,
+    _glib: usize,
+}
+
+fn content_api() -> Option<&'static ContentApi> {
+    static API: OnceLock<Option<ContentApi>> = OnceLock::new();
+    API.get_or_init(|| unsafe {
+        let gio = libc::dlopen(c"libgio-2.0.so.0".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+        if gio.is_null() { return None; }
+        let glib = libc::dlopen(c"libglib-2.0.so.0".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+        if glib.is_null() { libc::dlclose(gio); return None; }
+        let guess = libc::dlsym(gio, c"g_content_type_guess".as_ptr());
+        let mime = libc::dlsym(gio, c"g_content_type_get_mime_type".as_ptr());
+        let free = libc::dlsym(glib, c"g_free".as_ptr());
+        if guess.is_null() || mime.is_null() || free.is_null() {
+            libc::dlclose(glib);
+            libc::dlclose(gio);
+            return None;
+        }
+        Some(ContentApi { guess: std::mem::transmute::<*mut libc::c_void, unsafe extern "C" fn(*const libc::c_char, *const u8, usize, *mut libc::c_int) -> *mut libc::c_char>(guess), mime: std::mem::transmute::<*mut libc::c_void, unsafe extern "C" fn(*const libc::c_char) -> *mut libc::c_char>(mime), free: std::mem::transmute::<*mut libc::c_void, unsafe extern "C" fn(*mut libc::c_void)>(free), _gio: gio as usize, _glib: glib as usize })
+    }).as_ref()
+}
+
+fn content_mime(data: &[u8]) -> Option<String> {
+    content_mime_with(data, content_api())
+}
+
+fn content_mime_with(data: &[u8], api: Option<&ContentApi>) -> Option<String> {
+    let api = api?;
+    unsafe {
+        let content = (api.guess)(std::ptr::null(), data.as_ptr(), data.len(), std::ptr::null_mut());
+        if content.is_null() { return None; }
+        let mime = (api.mime)(content);
+        let out = (!mime.is_null()).then(|| std::ffi::CStr::from_ptr(mime).to_str().ok().map(str::to_owned)).flatten();
+        (api.free)(mime.cast());
+        (api.free)(content.cast());
+        out
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct ContentKey {
+    path: PathBuf,
+    modified: (i64, i64),
+    size: u64,
+}
+
+impl ContentKey {
+    fn of(path: &std::path::Path, m: &std::fs::Metadata) -> Option<Self> {
+        use std::os::unix::fs::MetadataExt;
+        (m.is_file() && m.len() > 0 && m.mode() & 0o111 == 0).then(|| Self { path: path.to_owned(), modified: (m.mtime(), m.mtime_nsec()), size: m.len() })
+    }
+}
+
+#[derive(Default)]
+struct ContentCache {
+    entries: std::collections::VecDeque<(ContentKey, String)>,
+}
+
+impl ContentCache {
+    fn get(&self, key: &ContentKey) -> Option<&String> {
+        self.entries.iter().find(|(k, _)| k == key).map(|(_, m)| m)
+    }
+
+    fn insert(&mut self, key: ContentKey, mime: String) {
+        self.entries.retain(|(k, _)| k.path != key.path);
+        if self.entries.len() >= CONTENT_CACHE_LIMIT { self.entries.pop_front(); }
+        self.entries.push_back((key, mime));
+    }
+}
+
+fn content_head(path: &std::path::Path) -> Option<(ContentKey, Vec<u8>)> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW).open(path).ok()?;
+    let key = ContentKey::of(path, &file.metadata().ok()?)?;
+    let mut data = Vec::with_capacity(CONTENT_HEAD);
+    file.take(CONTENT_HEAD as u64).read_to_end(&mut data).ok()?;
+    Some((key, data))
+}
+
+const LOCAL_MEMORY: [&str; 2] = ["tmpfs", "ramfs"];
+const MOUNTS_FRESH: std::time::Duration = std::time::Duration::from_secs(2);
+
+fn content_readable(path: &std::path::Path, mounts: &[flit_platform_linux::mounts::Mount]) -> bool {
+    let Some(mount) = mounts.iter().filter(|m| path.starts_with(m.path())).max_by_key(|m| m.point.len()) else { return true };
+    !(mount.is_network() || (mount.is_pseudo() && !LOCAL_MEMORY.contains(&mount.fstype.as_str())))
+}
+
+fn current_mounts() -> std::sync::Arc<Vec<flit_platform_linux::mounts::Mount>> {
+    static MOUNTS: Mutex<Option<(std::time::Instant, std::sync::Arc<Vec<flit_platform_linux::mounts::Mount>>)>> = Mutex::new(None);
+    let mut slot = MOUNTS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, mounts)) = slot.as_ref().filter(|(at, _)| at.elapsed() < MOUNTS_FRESH) {
+        return mounts.clone();
+    }
+    let fresh = std::sync::Arc::new(flit_platform_linux::mounts::read().unwrap_or_default());
+    *slot = Some((std::time::Instant::now(), fresh.clone()));
+    fresh
+}
+
+fn content_names_in(cache: &Mutex<Option<ContentCache>>, path: &std::path::Path, readable: bool, read: impl FnOnce(&ContentKey) -> String) -> Vec<String> {
+    if !readable {
+        return Vec::new();
+    }
+    let Some(key) = std::fs::symlink_metadata(path).ok().and_then(|m| ContentKey::of(path, &m)) else { return Vec::new() };
+    let known = cache.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(ContentCache::default).get(&key).cloned();
+    let mime = match known {
+        Some(mime) => mime,
+        None => {
+            let mime = read(&key);
+            cache.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(ContentCache::default).insert(key, mime.clone());
+            mime
+        }
+    };
+    icon_names(&mime)
+}
+
+pub fn content_icon_names(path: &std::path::Path) -> Vec<String> {
+    static CACHE: Mutex<Option<ContentCache>> = Mutex::new(None);
+    let readable = content_readable(path, &current_mounts());
+    content_names_in(&CACHE, path, readable, |key| content_head(path).filter(|(actual, _)| actual == key).map(|(_, data)| content_mime(&data).unwrap_or_else(|| sniff(&data).to_owned())).unwrap_or_else(|| OCTET_STREAM.into()))
+}
+
 #[cfg(test)]
 #[path = "../test/mime.rs"]
 mod tests;

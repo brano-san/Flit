@@ -153,6 +153,30 @@ impl App {
         true
     }
 
+    pub(super) fn touch_pan_pane(&mut self, i: usize, dx: f32, dy: f32) -> (bool, bool) {
+        let (h, rh, over) = (self.layout.panes.get(i).map_or(0.0, |r| r.h), self.layout.row_h, self.layout.panes_over);
+        let t = self.tab_mut();
+        let back = (t.panes_back.clamp(0.0, over) + dx).clamp(0.0, over);
+        let across = back != t.panes_back.clamp(0.0, over);
+        t.panes_back = back;
+        let down = t.panes.get_mut(i).is_some_and(|p| {
+            let max = (p.view.as_ref().map_or(0, |v| v.rows().len()) as f32 * rh - h).max(0.0);
+            let was = p.scroll.unwrap_or(0.0);
+            let to = (was - dy).clamp(0.0, max);
+            p.scroll = Some(to);
+            to != was
+        });
+        if across {
+            self.layout();
+        }
+        (across, down)
+    }
+
+    #[cfg(test)]
+    pub(super) fn pane_scroll(&self, i: usize) -> f32 {
+        self.tab().panes.get(i).and_then(|p| p.scroll).unwrap_or(0.0)
+    }
+
     pub(super) fn draw_panes<B: TextBackend>(&mut self, g: &mut Gfx<B>, th: &Theme) {
         let l = &self.layout;
         if l.panes.is_empty() {
@@ -192,12 +216,17 @@ impl App {
                 }
                 let ir = Rect::new(cell.x + s10, cell.y + ((rh - icon_px) / 2.0).round(), icon_px, icon_px);
                 let (key, kind) = icon_key(name, listing.ext(idx), &e, icon_px as u32, dir.as_ref().map_or(&b""[..], |d| d.as_bytes()), self.icon_epoch);
+                self.file_icons.see(key, kind);
                 if !g.image(key, ir) {
-                    icon_glyph(g, th, &e, ir);
+                    if !self.folder_stand_in(g, kind, icon_px as u32, ir, 255, &mut requests) {
+                        icon_glyph(g, th, &e, ir);
+                    }
                     if let Some(path) = (!self.icons.contains_key(&key) && !requests.iter().any(|q| q.key == key)).then(|| p.loc.join(name).to_windows()).flatten() {
                         requests.push(IconRequest { key, kind, path, size: icon_px as u32, gen: 0, row: 0 });
                     }
                 }
+                self.draw_shell_overlay(g, kind, &e, dir.as_ref().map_or(&b""[..], |d| d.as_bytes()), name, ir, 255);
+                self.draw_file_emblems(g, e.attrs, ir, 255, &mut requests);
                 let x = ir.right() + s8;
                 let baseline = (cell.y + (rh + m.ascent - m.descent) / 2.0).round();
                 let color = if e.attrs & attr::HIDDEN != 0 { th.text_dim } else { th.name_ink(e.attrs) };

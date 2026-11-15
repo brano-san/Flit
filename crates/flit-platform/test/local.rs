@@ -1,7 +1,7 @@
 use super::*;
 use crate::OpOutcome;
 use flit_core::listing::Meta;
-use flit_core::provider::OpProgress;
+use flit_core::provider::{MountReply, OpProgress};
 use flit_core::ui::{Bitmap, IconRequest};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -529,6 +529,79 @@ fn a_slow_server_connection_does_not_hold_up_opening_files() {
     assert!(matches!(&rest[1], ProviderEvent::OpDone { tab: 7, error: Some(e), .. } if e.contains("sftp://gone/ is not responding")));
 }
 
+struct LoginShell;
+impl Shell for LoginShell {
+    fn new() -> Result<Self, PlatformError> {
+        Ok(LoginShell)
+    }
+    fn icon(&mut self, _: &IconRequest) -> Option<Bitmap> {
+        None
+    }
+    fn type_name(&mut self, _: &[u8]) -> Option<String> {
+        None
+    }
+    fn open(&mut self, path: &FsPath) -> Result<(), PlatformError> {
+        Err(PlatformError::new(1, format!("opened {}", path.display())))
+    }
+    fn connect_asking(&mut self, uri: &str, prompt: &MountPrompt) -> Result<Option<FsPath>, PlatformError> {
+        let ask = flit_core::provider::LoginAsk { server: uri.into(), message: "Password".into(), user: "ann".into(), domain: String::new(), flags: flit_core::provider::ASK_PASSWORD };
+        let (_, rx) = prompt.ask(flit_core::provider::MountAsk::Login(ask));
+        match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(MountReply::Login { password, .. }) if password.as_str() == "s3cret" => Ok(Some(p(r"C:\mnt\share"))),
+            Ok(MountReply::Cancel) => Ok(None),
+            _ => Err(PlatformError::new(13, "login refused")),
+        }
+    }
+}
+impl FileOps for LoginShell {
+    fn file_op(&mut self, _: &FileOp, _: &Job) -> OpOutcome {
+        OpOutcome::default()
+    }
+    fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
+        Err(PlatformError::new(-1, "empty"))
+    }
+    fn clear_clipboard(&mut self) {}
+}
+
+fn asked(rx: &crossbeam_channel::Receiver<ProviderEvent>) -> flit_core::provider::MountAnswer {
+    match rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+        ProviderEvent::MountAsk { tab: 7, answer, .. } => answer,
+        e => panic!("{e:?}"),
+    }
+}
+
+#[test]
+fn a_login_question_goes_to_the_tab_that_connected_and_its_answer_opens_the_share() {
+    let (tx, rx) = unbounded();
+    let provider = LocalProvider::new::<_, NoWatch, LoginShell>(fs(), 1, tx, Arc::new(|| {})).unwrap();
+    provider.submit(ProviderRequest::Launch { tab: 7, launch: Launch::ConnectServer("smb://nas/share".into()) });
+    let answer = asked(&rx);
+    provider.submit(ProviderRequest::Open { tab: 7, path: p(r"C:\r\a.txt") });
+    assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { error: Some(e), .. } if e.starts_with("opened")), "an open login form does not block opening files");
+    answer.send(MountReply::Login { user: "ann".into(), domain: String::new(), password: flit_core::provider::Password::new("s3cret".into()), anonymous: false, remember: false });
+    assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::Navigate { tab: 7, path: p(r"C:\mnt\share") });
+}
+
+#[test]
+fn cancelling_the_login_neither_navigates_nor_reports_an_error() {
+    let (tx, rx) = unbounded();
+    let provider = LocalProvider::new::<_, NoWatch, LoginShell>(fs(), 1, tx, Arc::new(|| {})).unwrap();
+    provider.submit(ProviderRequest::Launch { tab: 7, launch: Launch::ConnectServer("smb://nas/share".into()) });
+    asked(&rx).send(MountReply::Cancel);
+    assert!(rx.recv_timeout(Duration::from_millis(500)).is_err(), "a cancelled login is silent");
+    provider.submit(ProviderRequest::Launch { tab: 7, launch: Launch::ConnectServer("smb://nas/share".into()) });
+    drop(asked(&rx));
+    assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { tab: 7, error: Some(e), .. } if e.contains("login refused")), "a form that went away without an answer is an error");
+}
+
+#[test]
+fn a_shell_without_login_questions_connects_as_before() {
+    let (tx, rx) = unbounded();
+    let provider = LocalProvider::new::<_, NoWatch, SlowServerShell>(fs(), 1, tx, Arc::new(|| {})).unwrap();
+    provider.submit(ProviderRequest::Launch { tab: 7, launch: Launch::ConnectServer("smb://nas/share".into()) });
+    assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::Navigate { tab: 7, path: p(r"C:\mnt\share") });
+}
+
 #[test]
 fn launchers_to_folders_navigate_and_scripts_ask_before_opening() {
     let (tx, rx) = unbounded();
@@ -715,6 +788,22 @@ fn paste_shortcut_links_the_clipboard_items_into_the_folder() {
 }
 
 #[test]
+fn typed_paste_links_use_the_same_queue_and_do_not_clear_a_cut_clipboard() {
+    for kind in [flit_core::provider::LinkKind::Symbolic, flit_core::provider::LinkKind::Junction, flit_core::provider::LinkKind::Hard] {
+        let files = vec![p(r"C:\a\x.txt")];
+        let mut clip = Clip { files: files.clone(), cut: true, ..Default::default() };
+        let (error, report) = run_op(&mut clip, FileOp::PasteLinkAs { dest: p(r"C:\b"), kind });
+        let expected = FileOp::LinkAs { items: files, dest: p(r"C:\b"), kind };
+        assert!(error.is_none());
+        assert_eq!(clip.ran.as_slice(), std::slice::from_ref(&expected));
+        assert_eq!(report.unwrap().op, expected);
+        assert!(!clip.cleared);
+        let (error, report) = run_op(&mut Clip::default(), FileOp::PasteLinkAs { dest: p(r"C:\b"), kind });
+        assert!(error.is_some() && report.is_none());
+    }
+}
+
+#[test]
 fn open_containing_path_reveals_the_real_location() {
     let dir = std::env::temp_dir().join(format!("flit-platform-reveal-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("inner")).unwrap();
@@ -798,4 +887,26 @@ fn localized_folder_names_label_sort_and_filter_while_real_names_stay() {
     assert_eq!(desktop_ini::label(&dir).as_deref(), Some("Корень"));
     assert_eq!(desktop_ini::label(&dir.join(b"Documents")).as_deref(), Some("Документы"));
     assert_eq!(Location::Local(dir.join(b"Documents")).crumbs().last().unwrap().0, "Документы");
+}
+
+static LABELS_WANTED: Mutex<Vec<bool>> = Mutex::new(Vec::new());
+
+struct DisplayLabelFs;
+impl Fs for DisplayLabelFs {
+    fn read_dir(&self, _: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+        LABELS_WANTED.lock().unwrap().push(out.wants_labels());
+        Ok(())
+    }
+    fn seek_penalty(&self, _: &FsPath) -> Option<bool> {
+        None
+    }
+}
+
+#[test]
+fn folder_listings_ask_the_file_system_for_display_labels() {
+    let slot = SnapshotSlot::default();
+    let cancel = GenToken::default();
+    cancel.set(1);
+    list(&DisplayLabelFs, 1, &p(r"C:\labels"), ViewSpec::default(), CaseMode::Insensitive, Arc::default(), &slot, &cancel, &(Arc::new(|| {}) as Wake));
+    assert_eq!(*LABELS_WANTED.lock().unwrap(), [true]);
 }

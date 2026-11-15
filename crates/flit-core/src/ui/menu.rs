@@ -130,6 +130,8 @@ pub(super) enum Cmd {
     FolderProperties(crate::FsPath),
     User(crate::provider::Launch),
     Drop(u32),
+    PasteAs(crate::provider::LinkKind),
+    DropAs(crate::provider::LinkKind),
     Text(super::field::TextCmd),
     CopyAddress(crate::location::Location),
     EditAddress(Option<usize>),
@@ -168,6 +170,13 @@ const GROUPS: [(GroupField, &str, S); 11] = [
     (GroupField::Volume, "view.group.volume", S::DetailsColumnVolume),
     (GroupField::FolderUsage, "view.group.folder_usage", S::DetailsColumnFolderUsage),
     (GroupField::Tag, "view.group.tag", S::MenuSortTags),
+];
+
+const SHELL_GROUPS: [(GroupField, &str, S); 4] = [
+    (GroupField::Dimensions, "view.group.dimensions", S::DetailsColumnDimensions),
+    (GroupField::Duration, "view.group.duration", S::DetailsColumnDuration),
+    (GroupField::Artist, "view.group.artist", S::DetailsColumnArtist),
+    (GroupField::Version, "view.group.version", S::DetailsColumnVersion),
 ];
 
 const COMPUTER_GROUPS: [(GroupField, &str, S); 7] = [
@@ -504,6 +513,9 @@ impl App {
         let group = t.view_spec.group;
         let computer = t.view_loc.path().kind() == PathKind::Computer;
         m.choices(if t.view_loc.is_recycle_bin() { &BIN_GROUPS[..] } else if computer { &COMPUTER_GROUPS[..] } else { &GROUPS[..] }, group.field);
+        if self.column_kinds().contains(&Column::ImageSize) && self.props_dir().is_some() {
+            m.choices(&SHELL_GROUPS, group.field);
+        }
     }
 
     fn new_entries(&self, m: &mut Menu) {
@@ -692,6 +704,13 @@ impl App {
             m.action("file.paste", S::MenuPaste.t());
             m.action("app.terminal", S::MenuOpenInTerminal.t());
             m.action("folder.file_manager", S::ActionsFolderFileManager.t());
+            if !self.caps.unix_paths && self.shell_dir().is_ok() {
+                m.submenu(S::MenuLinksPasteAs.t(), |m| {
+                    for (kind, label) in super::ops::LINK_KINDS {
+                        m.entry(Cmd::PasteAs(kind), label.t(), String::new(), Mark::None, false, !self.paste_link_allowed(kind));
+                    }
+                });
+            }
         }
         let pinned = self.nav.sidebar.state.pinned.contains(t.location());
         m.action("folder.bookmark", if pinned { S::MenuUnpinFromSidebar.t() } else { S::MenuPinToSidebar.t() });
@@ -727,6 +746,8 @@ impl App {
             Some(Cmd::FolderProperties(dir)) => self.properties_for(Some(dir)),
             Some(Cmd::User(launch)) => self.launch(launch),
             Some(Cmd::Drop(effect)) => self.drop_chosen(effect),
+            Some(Cmd::PasteAs(kind)) => self.paste_as(kind),
+            Some(Cmd::DropAs(kind)) => self.drop_as(kind),
             Some(Cmd::Text(c)) => self.text_command(c, now),
             Some(Cmd::CopyAddress(loc)) => self.effects.push(super::Effect::SetClipboard(self.as_path_text(&loc))),
             Some(Cmd::EditAddress(crumb)) => match crumb {

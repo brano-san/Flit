@@ -75,7 +75,7 @@ pub(crate) fn lock_screen(image: &FsPath) -> OpOutcome {
     };
     match set() {
         Ok(()) => OpOutcome { items: vec![(image.clone(), image.clone())], error: None },
-        Err(e) => OpOutcome { items: Vec::new(), error: Some(PlatformError::new(e.code().0 as i64, tr_en!(S::ErrorsOpsExtraLockScreen, error = e.message()))) },
+        Err(e) => OpOutcome { items: Vec::new(), error: Some(PlatformError::new(e.code().0 as i64, tr_en!(S::ErrorsOpsExtraLockScreen, error = crate::error_reason(&e)))) },
     }
 }
 
@@ -86,7 +86,7 @@ pub(crate) fn wallpaper(image: &FsPath) -> Result<(), PlatformError> {
         let desktop: IDesktopWallpaper = unsafe { CoCreateInstance(&DesktopWallpaper, None, CLSCTX_ALL)? };
         unsafe { desktop.SetWallpaper(PCWSTR::null(), PCWSTR(path.as_ptr())) }
     };
-    set().map_err(|e| PlatformError::new(e.code().0 as i64, tr_en!(S::ErrorsOpsExtraWallpaper, error = e.message())))
+    set().map_err(|e| PlatformError::new(e.code().0 as i64, tr_en!(S::ErrorsOpsExtraWallpaper, error = crate::error_reason(&e))))
 }
 
 #[cfg(test)]

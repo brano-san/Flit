@@ -166,6 +166,33 @@ pub fn node_at(dir: libc::c_int, name: &CStr, follow: bool) -> io::Result<Node> 
     })
 }
 
+struct Identity {
+    uid: u32,
+    groups: Vec<u32>,
+}
+
+impl Identity {
+    fn current() -> &'static Self {
+        static IDENTITY: std::sync::OnceLock<Identity> = std::sync::OnceLock::new();
+        IDENTITY.get_or_init(|| {
+            let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) }.max(0) as usize;
+            let mut groups = vec![0; count];
+            let read = unsafe { libc::getgroups(count as i32, groups.as_mut_ptr()) };
+            groups.truncate(read.max(0) as usize);
+            groups.push(unsafe { libc::getegid() });
+            Identity { uid: unsafe { libc::geteuid() }, groups }
+        })
+    }
+
+    fn readable(&self, node: &Node) -> bool {
+        if self.uid == 0 || node.is_link() {
+            return true;
+        }
+        let bit = if self.uid == node.uid { 0o400 } else if self.groups.contains(&node.gid) { 0o040 } else { 0o004 };
+        node.mode & bit != 0
+    }
+}
+
 fn to_meta(name: &[u8], node: &Node, target_dir: impl FnOnce() -> bool) -> Meta {
     let mut attrs = 0;
     if node.is_link() {
@@ -183,6 +210,9 @@ fn to_meta(name: &[u8], node: &Node, target_dir: impl FnOnce() -> bool) -> Meta 
     }
     if node.mode & 0o222 == 0 {
         attrs |= attr::READONLY;
+    }
+    if matches!(node.kind(), libc::S_IFREG | libc::S_IFDIR) && !Identity::current().readable(node) {
+        attrs |= attr::UNREADABLE;
     }
     Meta { size: node.size, modified: filetime(node.mtime.sec, node.mtime.nsec as i64), created: node.btime, attrs }
 }
@@ -516,6 +546,7 @@ impl Fs for LinuxFs {
             Some((dev, out.tagging()?))
         });
         let hidden = hidden_list(fd.as_raw_fd());
+        let launchers = out.wants_labels().then(|| (crate::desktop::data_dirs(), flit_core::i18n::lang().code(), std::env::var("LANG").unwrap_or_default()));
         dents(fd.as_raw_fd(), |name, d_type| {
             let (mut meta, accessed, node) = entry_at(fd.as_raw_fd(), name, d_type);
             mark_listed_hidden(&mut meta, name.to_bytes(), &hidden);
@@ -525,6 +556,12 @@ impl Fs for LinuxFs {
                 None => out.push(name.to_bytes(), meta),
             }
             out.set_accessed(accessed);
+            if let Some((data, lang, system)) = launchers.as_ref().filter(|_| name.to_bytes().ends_with(b".desktop") && meta.attrs & attr::DIR == 0) {
+                if let Some(label) = crate::desktop::label(&path.join(OsStr::from_bytes(name.to_bytes())), data, lang, system) {
+                    out.listing.set_label(out.listing.len() as u32 - 1, &label);
+                    out.keys.relabel_last(label.as_bytes());
+                }
+            }
             n += 1;
             !n.is_multiple_of(BATCH) || out.batch_done()
         })

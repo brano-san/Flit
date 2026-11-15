@@ -27,5 +27,9 @@ pub fn read(archive: &Path) -> Option<Vec<u8>> {
 }
 
 pub fn mark(file: &Path, zone: &[u8]) {
-    let _ = std::fs::write(stream(file), zone);
+    let _ = mark_checked(file, zone);
+}
+
+pub(crate) fn mark_checked(file: &Path, zone: &[u8]) -> std::io::Result<()> {
+    std::fs::write(stream(file), zone)
 }

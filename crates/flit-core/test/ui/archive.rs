@@ -466,21 +466,23 @@ fn the_status_bar_picks_the_encoding_of_zip_names_and_reloads_the_view() {
 }
 
 #[test]
-fn files_dropped_on_a_zip_are_copied_into_it_never_moved() {
-    let mut app = app_at(r"C:\drop");
-    deliver(&mut app, &[("a.zip", FILE), ("b.7z", FILE)]);
-    let row = |app: &App, n: usize| (app.layout.cols[0].x + 100.0, app.layout.list.y + (n as f32 + 0.5) * app.layout.row_h);
-    let all = drop_effect::COPY | drop_effect::MOVE;
-    let at = row(&app, 0);
-    let enter = DragEvent::Enter { paths: vec![p(r"C:\drop\f.txt")], x: at.0, y: at.1, mods: Mods { shift: true, ..NO }, allowed: all, right: false };
-    assert_eq!(app.drag(&enter, t0()), drop_effect::COPY);
-    app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: Mods { shift: true, ..NO }, allowed: all }, t0());
-    assert_eq!(ops(&mut app).into_iter().map(|(_, op)| op).collect::<Vec<_>>(), [FileOp::Copy { items: vec![p(r"C:\drop\f.txt")], dest: p(r"C:\drop\a.zip") }]);
-    let at = row(&app, 1);
-    let enter = DragEvent::Enter { paths: vec![p(r"D:\f.txt")], x: at.0, y: at.1, mods: NO, allowed: all, right: false };
-    assert_eq!(app.drag(&enter, t0()), drop_effect::COPY);
-    app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: NO, allowed: all }, t0());
-    assert_eq!(ops(&mut app).into_iter().map(|(_, op)| op).collect::<Vec<_>>(), [FileOp::Copy { items: vec![p(r"D:\f.txt")], dest: p(r"C:\drop") }]);
+fn files_dropped_on_writable_archives_are_copied_into_them_never_moved() {
+    for name in ["a.zip", "a.7z", "a.tar", "a.tar.gz", "a.tgz"] {
+        let mut app = app_at(r"C:\drop");
+        deliver(&mut app, &[(name, FILE), ("z.rar", FILE)]);
+        let row = |app: &App, n: usize| (app.layout.cols[0].x + 100.0, app.layout.list.y + (n as f32 + 0.5) * app.layout.row_h);
+        let all = drop_effect::COPY | drop_effect::MOVE;
+        let at = row(&app, 0);
+        let enter = DragEvent::Enter { paths: vec![p(r"C:\drop\f.txt")], x: at.0, y: at.1, mods: Mods { shift: true, ..NO }, allowed: all, right: false };
+        assert_eq!(app.drag(&enter, t0()), drop_effect::COPY);
+        app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: Mods { shift: true, ..NO }, allowed: all }, t0());
+        assert_eq!(ops(&mut app).into_iter().map(|(_, op)| op).collect::<Vec<_>>(), [FileOp::Copy { items: vec![p(r"C:\drop\f.txt")], dest: p(r"C:\drop").join(name.as_bytes()) }]);
+        let at = row(&app, 1);
+        let enter = DragEvent::Enter { paths: vec![p(r"D:\f.txt")], x: at.0, y: at.1, mods: NO, allowed: all, right: false };
+        assert_eq!(app.drag(&enter, t0()), drop_effect::COPY);
+        app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: NO, allowed: all }, t0());
+        assert_eq!(ops(&mut app).into_iter().map(|(_, op)| op).collect::<Vec<_>>(), [FileOp::Copy { items: vec![p(r"D:\f.txt")], dest: p(r"C:\drop") }]);
+    }
 }
 
 #[test]

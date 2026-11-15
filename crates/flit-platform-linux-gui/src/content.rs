@@ -175,7 +175,7 @@ fn run(engine: &Engine, args: &[OsString], keep_going: &dyn Fn() -> bool, found:
 }
 
 pub fn search_with(engines: &[Engine], folder: Option<&Path>, query: &str, keep_going: &dyn Fn() -> bool, found: &mut dyn FnMut(FsPath, Meta)) -> Result<(), PlatformError> {
-    let Some(first) = engines.first() else { return Err(PlatformError::new(libc::ENOENT as i64, S::ErrorsEngineNoContentSearch.en())) };
+    let Some(first) = engines.first() else { return Err(crate::shell::tool_missing("recollq")) };
     let terms = terms(query);
     if terms.is_empty() {
         return Ok(());

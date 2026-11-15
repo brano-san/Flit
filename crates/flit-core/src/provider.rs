@@ -149,6 +149,35 @@ pub struct Accounts {
     pub groups: Vec<(u32, String)>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum LinkKind {
+    Shortcut,
+    Symbolic,
+    Junction,
+    Hard,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LinkChoices(pub [bool; 4]);
+
+impl LinkChoices {
+    pub fn allows(self, kind: LinkKind) -> bool {
+        self.0[kind as usize]
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct DroppedFile {
+    pub name: Vec<u8>,
+    pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for DroppedFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DroppedFile").field("name", &crate::name::display(&self.name)).field("len", &self.bytes.len()).finish()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum FileOp {
     Trash(Vec<FsPath>),
@@ -174,8 +203,10 @@ pub enum FileOp {
     SetAccess { items: Vec<FsPath>, edit: AccessEdit },
     Access(Vec<AccessChange>),
     SetAttributes { items: Vec<FsPath>, set: u32, clear: u32, unblock: bool },
-    PasteDropped { dest: FsPath, moving: bool },
+    PasteDropped { dest: FsPath, moving: bool, #[serde(skip)] data: Option<Arc<DroppedFile>> },
     GrantAccess(FsPath),
+    LinkAs { items: Vec<FsPath>, dest: FsPath, kind: LinkKind },
+    PasteLinkAs { dest: FsPath, kind: LinkKind },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -278,8 +309,10 @@ impl FileOp {
             FileOp::SetAccess { items, edit } => FileOp::SetAccess { items: all(items)?, edit: *edit },
             FileOp::Access(changes) => FileOp::Access(changes.iter().map(|c| Some(AccessChange { item: f(&c.item)?, ..c.clone() })).collect::<Option<_>>()?),
             FileOp::SetAttributes { items, set, clear, unblock } => FileOp::SetAttributes { items: all(items)?, set: *set, clear: *clear, unblock: *unblock },
-            FileOp::PasteDropped { dest, moving } => FileOp::PasteDropped { dest: f(dest)?, moving: *moving },
+            FileOp::PasteDropped { dest, moving, data } => FileOp::PasteDropped { dest: f(dest)?, moving: *moving, data: data.clone() },
             FileOp::GrantAccess(dir) => FileOp::GrantAccess(f(dir)?),
+            FileOp::LinkAs { items, dest, kind } => FileOp::LinkAs { items: all(items)?, dest: f(dest)?, kind: *kind },
+            FileOp::PasteLinkAs { dest, kind } => FileOp::PasteLinkAs { dest: f(dest)?, kind: *kind },
         })
     }
 }
@@ -517,6 +550,113 @@ pub enum ProviderRequest {
     Access { tab: TabId, id: OpId, items: Vec<FsPath> },
 }
 
+pub const ASK_PASSWORD: u32 = 1;
+pub const ASK_USER: u32 = 2;
+pub const ASK_DOMAIN: u32 = 4;
+pub const ASK_SAVING: u32 = 8;
+pub const ASK_ANONYMOUS: u32 = 16;
+
+pub fn wipe(s: &mut String) {
+    let bytes = unsafe { s.as_mut_vec() };
+    for b in bytes.iter_mut() {
+        unsafe { std::ptr::write_volatile(b, 0) };
+    }
+    std::sync::atomic::compiler_fence(Ordering::SeqCst);
+    bytes.clear();
+}
+
+#[derive(Default)]
+pub struct Password(String);
+
+impl Password {
+    pub fn new(text: String) -> Self {
+        Password(text)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Drop for Password {
+    fn drop(&mut self) {
+        wipe(&mut self.0);
+    }
+}
+
+impl fmt::Debug for Password {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Password")
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoginAsk {
+    pub server: String,
+    pub message: String,
+    pub user: String,
+    pub domain: String,
+    pub flags: u32,
+}
+
+impl LoginAsk {
+    pub fn wants(&self, flag: u32) -> bool {
+        self.flags & flag != 0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MountAsk {
+    Login(LoginAsk),
+    Question { server: String, message: String, choices: Vec<String> },
+}
+
+#[derive(Debug)]
+pub enum MountReply {
+    Login { user: String, domain: String, password: Password, anonymous: bool, remember: bool },
+    Choice(usize),
+    Cancel,
+}
+
+pub struct MountAnswer {
+    id: u64,
+    tx: std::sync::mpsc::Sender<MountReply>,
+}
+
+impl MountAnswer {
+    pub fn new() -> (Self, std::sync::mpsc::Receiver<MountReply>) {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let (tx, rx) = std::sync::mpsc::channel();
+        (MountAnswer { id: NEXT.fetch_add(1, Ordering::Relaxed), tx }, rx)
+    }
+
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    pub fn send(self, reply: MountReply) -> bool {
+        self.tx.send(reply).is_ok()
+    }
+}
+
+impl Clone for MountAnswer {
+    fn clone(&self) -> Self {
+        MountAnswer { id: self.id, tx: self.tx.clone() }
+    }
+}
+
+impl PartialEq for MountAnswer {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl fmt::Debug for MountAnswer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "MountAnswer({})", self.id)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProviderEvent {
     Changes { tab: TabId, gen: u64, changes: Vec<DirChange> },
@@ -537,6 +677,8 @@ pub enum ProviderEvent {
     Access { tab: TabId, id: OpId, items: Vec<Option<Access>>, accounts: Accounts },
     NotExecutable { tab: TabId, path: FsPath },
     OpenAsk { tab: TabId, path: FsPath, ask: OpenAsk },
+    MountAsk { tab: TabId, ask: MountAsk, answer: MountAnswer },
+    MountAskDone { tab: TabId, id: u64 },
 }
 
 #[cfg(test)]

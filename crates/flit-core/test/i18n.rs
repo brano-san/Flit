@@ -317,8 +317,8 @@ fn settings_help_on_linux_names_no_windows_places_or_programs() {
 #[test]
 fn linux_elevation_and_read_only_errors_follow_the_language() {
     set_lang(Lang::Ru);
-    let retry = crate::tr_en!(S::ErrorsOpsExtraNotElevated, error = "/etc/x: Permission denied", why = S::ErrorsOpsExtraNoPkexec.en());
-    assert_eq!(localize(&retry), "/etc/x: Отказано в доступе. Повторить с правами администратора не удалось: не установлен pkexec (polkit)");
+    let retry = crate::tr_en!(S::ErrorsOpsExtraNotElevated, error = "/etc/x: Permission denied", why = crate::tr_en!(S::ErrorsOpsExtraNoPkexec, package = "pkexec"));
+    assert_eq!(localize(&retry), "/etc/x: Отказано в доступе. Повторить с правами администратора не удалось: не установлен pkexec. Установите пакет pkexec");
     let at = crate::tr_en!(S::ErrorsOpsExtraReadOnlyWindowsAt, path = "/media/c/a.txt");
     assert!(localize(&at).starts_with("/media/c/a.txt: диск Windows подключён только для чтения"), "{}", localize(&at));
     set_lang(Lang::En);
@@ -351,12 +351,77 @@ fn errno_texts_match_what_the_system_says() {
         let raw = std::io::Error::from_raw_os_error(code).to_string();
         assert!(raw.starts_with(s.en()), "the C library says {raw:?} for {code}");
     }
+    assert_eq!(os_error(21), Some(S::ErrorsOsIsADirectory));
+    assert_eq!(os_error(1223), None);
+    assert_eq!(os_error(0x80070005u32 as i32), None);
+    assert_eq!(os_error(crate::listing::NOT_RESPONDING_CODE as i32), None);
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(windows)]
 #[test]
-fn windows_errors_keep_the_system_wording() {
-    let e = std::io::Error::from_raw_os_error(5);
-    assert!(!crate::fmt::io_reason(&e).is_empty());
+fn windows_system_errors_are_shown_in_the_chosen_language() {
+    let expected = [
+        (2, "No such file or directory"),
+        (3, "No such file or directory"),
+        (5, "Permission denied"),
+        (19, "Read-only file system"),
+        (21, "The device is not ready"),
+        (32, "Device or resource busy"),
+        (33, "Device or resource busy"),
+        (39, "No space left on device"),
+        (112, "No space left on device"),
+        (53, "The network path was not found"),
+        (64, "The network resource is no longer available"),
+        (67, "The network path was not found"),
+        (80, "File exists"),
+        (183, "File exists"),
+        (145, "Directory not empty"),
+        (123, "The file or folder name is invalid"),
+        (206, "File name too long"),
+        (1223, "The operation was cancelled"),
+        (1314, "A required privilege is not held"),
+        (740, "Administrator rights are required"),
+        (50, "Operation not supported"),
+        (1392, "The file or folder is corrupted and unreadable"),
+    ];
+    let original = lang();
+    for l in Lang::ALL {
+        set_lang(l);
+        for (code, en) in expected {
+            let reason = crate::fmt::io_reason(&std::io::Error::from_raw_os_error(code));
+            assert_eq!(reason, en, "{code} in {l:?}");
+            let key = S::ALL.into_iter().find(|s| s.en() == en).unwrap();
+            assert_eq!(localize(&reason), key.in_lang(l), "{code} in {l:?}");
+            let path = format!(r"C:\a.txt: {reason}");
+            assert_eq!(localize(&path), format!(r"C:\a.txt: {}", key.in_lang(l)), "{code} in {l:?}");
+        }
+        let denied = crate::fmt::io_reason(&std::io::Error::from_raw_os_error(0x80070005u32 as i32));
+        assert_eq!(localize(&denied), S::ErrorsOsPermissionDenied.in_lang(l));
+    }
+    set_lang(original);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_system_errors_keep_unknown_codes_and_file_names_intact() {
+    let original = lang();
+    set_lang(Lang::Ru);
+    for code in [0x12345678, 0x80004005u32 as i32, 0x80071234u32 as i32, 0x79, crate::listing::NOT_RESPONDING_CODE as i32] {
+        assert_eq!(os_error(code), None, "{code:#x}");
+        let e = std::io::Error::from_raw_os_error(code);
+        let raw = e.to_string();
+        let expected = raw.rsplit_once(" (os error ").map_or(raw.as_str(), |(reason, _)| reason);
+        let reason = crate::fmt::io_reason(&e);
+        assert_eq!(reason, expected);
+        assert_eq!(localize(&reason), reason);
+    }
+    assert_eq!(crate::FsError::not_responding().to_string(), format!("{} (0x544C0002)", S::ErrorsFsNotResponding.t()));
+    for en in ["Permission denied", "The device is not ready", "The operation was cancelled"] {
+        let name = format!("my file named {en}");
+        assert_eq!(localize(&name), name);
+    }
+    let reason = crate::fmt::io_reason(&std::io::Error::from_raw_os_error(21));
+    assert_ne!(localize(&format!(r"C:\a.txt: {reason}")), format!(r"C:\a.txt: {reason}"));
     assert_eq!(os_error(13), None, "errno numbers mean nothing on Windows");
+    set_lang(original);
 }

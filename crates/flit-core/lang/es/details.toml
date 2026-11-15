@@ -21,6 +21,12 @@ dimensions = "Dimensiones"
 duration = "Duración"
 artist = "Intérpretes colaboradores"
 version = "Versión del archivo"
+date_taken = "Fecha de captura"
+camera_model = "Modelo de cámara"
+album = "Álbum"
+title = "Título"
+authors = "Autores"
+company = "Compañía"
 
 [type]
 drive = "Unidad"
@@ -56,6 +62,17 @@ medium = "Mediano (1 - 128 MB)"
 large = "Grande (128 MB - 1 GB)"
 huge = "Enorme (1 - 4 GB)"
 gigantic = "Gigantesco (4+ GB)"
+
+[dimensions_group]
+very_large = "Muy grande (12+ MP)"
+large = "Grande (2 - 12 MP)"
+medium = "Mediano (0,3 - 2 MP)"
+small = "Pequeño (menos de 0,3 MP)"
+
+[length_group]
+long = "Largo (30+ min)"
+medium = "Medio (5 - 30 min)"
+short = "Corto (menos de 5 min)"
 
 [count]
 items = ["{n} elemento", "{n} de elementos", "{n} elementos"]

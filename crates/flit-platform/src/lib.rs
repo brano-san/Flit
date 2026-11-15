@@ -17,7 +17,7 @@ use flit_core::preview::{HostCmd, PropGroup};
 use flit_core::render::{DrawList, Rect};
 use flit_core::ui::{Bitmap, DragEvent, IconRequest, NewTemplate, ShellMenu};
 use flit_core::digest::HashKind;
-use flit_core::provider::{Access, Accounts, Conflict, Failure, FileOp, Launch, OpCtl, OpProgress, Recover, Resolve, Stage};
+use flit_core::provider::{Access, Accounts, Conflict, Failure, FileOp, Launch, MountAnswer, MountAsk, MountReply, OpCtl, OpProgress, Recover, Resolve, Stage};
 use flit_core::listing::DirStats;
 use flit_core::tags::FileKey;
 use flit_core::{FsError, FsPath, ListingBuilder, Location, Meta, Open, ProviderEvent, ProviderRequest, TabId};
@@ -31,6 +31,33 @@ pub use flit_core::text::TextBackend as Text;
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
 pub type OpenSink = Arc<std::sync::Mutex<Option<Sender<Open>>>>;
+
+pub struct MountPrompt {
+    tab: TabId,
+    events: Sender<ProviderEvent>,
+    wake: Wake,
+}
+
+impl MountPrompt {
+    pub fn new(tab: TabId, events: Sender<ProviderEvent>, wake: Wake) -> Self {
+        Self { tab, events, wake }
+    }
+
+    pub fn ask(&self, ask: MountAsk) -> (u64, std::sync::mpsc::Receiver<MountReply>) {
+        let (answer, rx) = MountAnswer::new();
+        let id = answer.id();
+        if self.events.send(ProviderEvent::MountAsk { tab: self.tab, ask, answer }).is_ok() {
+            (self.wake)();
+        }
+        (id, rx)
+    }
+
+    pub fn withdraw(&self, id: u64) {
+        if self.events.send(ProviderEvent::MountAskDone { tab: self.tab, id }).is_ok() {
+            (self.wake)();
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Resolved {
@@ -266,8 +293,20 @@ pub trait Watcher: Sized + Send + 'static {
 }
 
 pub trait Shell: Sized {
+    const BATCHES_FOLDER_ICONS: bool = false;
+    const ICON_OVERLAYS: bool = false;
     fn new() -> Result<Self, PlatformError>;
     fn icon(&mut self, req: &IconRequest) -> Option<Bitmap>;
+    fn shared_icon(&mut self, req: &IconRequest) -> (Option<Bitmap>, Option<u64>) {
+        (self.icon(req), None)
+    }
+    fn prepare_icons(&mut self, _reqs: &[IconRequest]) {}
+    fn overlay_slot(&mut self, _path: &FsPath) -> Option<u8> {
+        None
+    }
+    fn overlay_image(&mut self, _slot: u8, _size: u32) -> Option<Bitmap> {
+        None
+    }
     fn thumbnail(&mut self, _req: &IconRequest) -> Option<Bitmap> {
         None
     }
@@ -281,6 +320,9 @@ pub trait Shell: Sized {
     }
     fn connect(&mut self, _uri: &str) -> Result<FsPath, PlatformError> {
         Err(PlatformError::unsupported("connecting to servers"))
+    }
+    fn connect_asking(&mut self, uri: &str, _prompt: &MountPrompt) -> Result<Option<FsPath>, PlatformError> {
+        self.connect(uri).map(Some)
     }
     fn unlock(&mut self, _device: &FsPath, _passphrase: &str) -> Result<FsPath, PlatformError> {
         Err(PlatformError::unsupported("unlocking encrypted volumes"))
@@ -297,8 +339,8 @@ pub trait Shell: Sized {
     fn poster(&mut self, _path: &FsPath, _size: u32) -> Option<Bitmap> {
         None
     }
-    fn column_props(&mut self, _path: &FsPath) -> Vec<String> {
-        Vec::new()
+    fn column_props(&mut self, _path: &FsPath) -> flit_core::listing::ColumnValues {
+        flit_core::listing::ColumnValues::default()
     }
     fn properties(&mut self, _path: &FsPath) -> Vec<PropGroup> {
         Vec::new()
@@ -484,6 +526,9 @@ pub trait FileOps {
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome;
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError>;
     fn clear_clipboard(&mut self);
+    fn link_choices(&mut self, _items: Option<&[FsPath]>, _dest: &FsPath) -> flit_core::provider::LinkChoices {
+        Default::default()
+    }
     fn clipboard_content(&mut self) -> bool {
         false
     }

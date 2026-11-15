@@ -2,7 +2,7 @@ use super::field::{Field, TextCmd};
 use super::menu::{Cmd, Mark};
 use super::options::{InspectorAt, INSPECTOR_SIZE};
 use super::widgets::Paint;
-use super::{centered, icon_key, App, Bitmap, Drag, Effect, Focus, Hit, IconRequest, IconState};
+use super::{centered, icon_key, App, Bitmap, Drag, Effect, Focus, Hit, IconRequest};
 use crate::fmt as format;
 use crate::hash::{self, FxHashMap};
 use crate::input::{CursorIcon, Key, Mods, MouseButton};
@@ -219,7 +219,7 @@ enum Grain {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-struct Pick {
+pub(super) struct Pick {
     anchor: Spot,
     caret: Spot,
     from: (Spot, Spot),
@@ -1268,6 +1268,22 @@ impl App {
         true
     }
 
+    pub(super) fn preview_pick(&self) -> Pick {
+        self.preview.pick
+    }
+
+    pub(super) fn restore_preview_pick(&mut self, pick: Pick) {
+        self.preview.pick = pick;
+    }
+
+    pub(super) fn touch_pan_preview(&mut self, dx: f32, dy: f32) -> (bool, bool) {
+        let p = &mut self.preview;
+        let (x, y) = ((p.hscroll - dx).clamp(0.0, p.hmax), (p.scroll - dy).clamp(0.0, (p.extent - p.r.body.h).max(0.0)));
+        let moved = (x != p.hscroll, y != p.scroll);
+        (p.hscroll, p.scroll) = (x, y);
+        moved
+    }
+
     pub(super) fn scroll_preview(&mut self, dy: f32) -> bool {
         let p = &mut self.preview;
         p.scroll = (p.scroll - dy * 3.0 * ROW * self.scale).clamp(0.0, (p.extent - p.r.body.h).max(0.0));
@@ -1288,12 +1304,13 @@ impl App {
                 let i = v.focus.filter(|&f| v.is_selected(f)).or_else(|| v.selected().next())?;
                 let e = l.entries[i as usize];
                 let name = l.name(i);
-                let path = if in_bin { recycle::recycled(l, i) } else { t.entry_location(i).to_windows() };
+                let row_dir = if crate::library::is_library(t.view_loc.path()) { FsPath::parse_exact(crate::library::folder(l, i)) } else if e.attrs & attr::NESTED != 0 { t.view_loc.to_windows().map(|d| d.join(l.folder(i))) } else { None };
+                let path = if in_bin { recycle::recycled(l, i) } else { row_dir.as_ref().map_or_else(|| t.entry_location(i).to_windows(), |d| Some(d.join(name))) };
                 let kind = if e.is_dir() { Kind::Folder } else { preview::kind_of(name) };
                 let drive = (e.attrs & attr::VOLUME != 0)
                     .then(|| self.nav.sidebar.places.drives.iter().find(|d| d.path.as_bytes().get(..2).is_some_and(|p| p.eq_ignore_ascii_case(name)) && d.total > 0).map(|d| (d.total, d.free)))
                     .flatten();
-                let dir_key = if in_bin { recycle::origin(l, i).to_vec() } else { base.dir_key };
+                let dir_key = if in_bin { recycle::origin(l, i).to_vec() } else { row_dir.map_or(base.dir_key, |d| d.as_bytes().to_vec()) };
                 Some(Subject { title: name::display(name).into_owned(), path, kind, entry: Some(e), ext: l.ext(i).to_vec(), dir_key, drive, ..base })
             }
             n => Some(Subject { title: crate::trn!(P::PreviewSelected, n), many: Some((n, v.selected_size())), path: None, ..base }),
@@ -1794,15 +1811,22 @@ impl App {
         let e = s.entry.unwrap_or(Entry { size: 0, modified: 0, created: 0, accessed: 0, name_off: 0, attrs: attr::DIR, name_len: 0, ext_len: 0, tags: 0 });
         let name = s.path.as_ref().map(|p| p.file_name().to_vec()).unwrap_or_default();
         let (key, kind) = icon_key(&name, &s.ext, &e, r.w as u32, &s.dir_key, self.icon_epoch);
+        self.file_icons.see(key, kind);
+        let mut requests = Vec::new();
         if g.image(key, r) {
+            self.draw_file_emblems(g, e.attrs, r, 255, &mut requests);
+            self.request_icons(requests);
             return;
         }
-        let glyph = if e.attrs & attr::VOLUME != 0 { super::G_DRIVE } else if e.is_dir() { super::G_FOLDER } else { super::G_FILE };
-        centered(g, r, glyph, FontStyle::new(FontFamily::Icons, r.h * 0.8, false), self.theme().text_dim);
-        if let (false, Some(path)) = (self.icons.contains_key(&key), s.path.clone()) {
-            self.icons.insert(key, IconState::Pending);
-            self.effects.push(Effect::Icon(IconRequest { key, kind, path, size: r.w as u32, gen: 0, row: 0 }));
+        if !self.folder_stand_in(g, kind, r.w as u32, r, 255, &mut requests) {
+            let glyph = if e.attrs & attr::VOLUME != 0 { super::G_DRIVE } else if e.is_dir() { super::G_FOLDER } else { super::G_FILE };
+            centered(g, r, glyph, FontStyle::new(FontFamily::Icons, r.h * 0.8, false), self.theme().text_dim);
         }
+        if let (false, Some(path)) = (self.icons.contains_key(&key), s.path.clone()) {
+            requests.push(IconRequest { key, kind, path, size: r.w as u32, gen: 0, row: 0 });
+        }
+        self.draw_file_emblems(g, e.attrs, r, 255, &mut requests);
+        self.request_icons(requests);
     }
 
     fn header<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, s: &Subject, y: &mut f32) {

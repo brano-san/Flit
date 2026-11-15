@@ -1,6 +1,8 @@
 pub mod edit;
 mod a11y;
+mod file_icons;
 mod shell_props;
+mod shell_overlays;
 mod focus;
 #[cfg(test)]
 #[path = "../../test/ui/harness.rs"]
@@ -64,6 +66,7 @@ mod user_menu;
 mod update;
 mod update_dialog;
 mod pointer;
+mod touch;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, TemplateNames, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource, MAX_HISTORY};
@@ -82,6 +85,7 @@ pub use update::UpdatePrefs;
 pub use popup::{MenuOutcome, MenuView};
 pub use context::MenuKind;
 pub use tab::Tab;
+pub use shell_overlays::{OverlayBatch, OverlayItem, OverlayReply, OVERLAY_BATCH, OVERLAY_SLOTS};
 pub use bottom::WatchLimit;
 pub use address::Typed;
 pub use tabbar::{MovedTab, Startup, WindowSession};
@@ -228,6 +232,12 @@ pub enum Column {
     Duration,
     Artist,
     Version,
+    DateTaken,
+    CameraModel,
+    Album,
+    Title,
+    Authors,
+    Company,
     GitStatus,
     GitMessage,
     GitAuthor,
@@ -235,7 +245,18 @@ pub enum Column {
 }
 
 pub const GIT_COLUMNS: [Column; 4] = [Column::GitStatus, Column::GitMessage, Column::GitAuthor, Column::GitDate];
-pub const SHELL_COLUMNS: [Column; 4] = [Column::ImageSize, Column::Duration, Column::Artist, Column::Version];
+pub const SHELL_COLUMNS: [Column; 10] = [
+    Column::ImageSize,
+    Column::Duration,
+    Column::Artist,
+    Column::Version,
+    Column::DateTaken,
+    Column::CameraModel,
+    Column::Album,
+    Column::Title,
+    Column::Authors,
+    Column::Company,
+];
 pub const REPO_COLUMNS: [Column; 15] = [
     Column::Name,
     Column::Type,
@@ -282,6 +303,12 @@ impl Column {
             Column::Duration => S::DetailsColumnDuration,
             Column::Artist => S::DetailsColumnArtist,
             Column::Version => S::DetailsColumnVersion,
+            Column::DateTaken => S::DetailsColumnDateTaken,
+            Column::CameraModel => S::DetailsColumnCameraModel,
+            Column::Album => S::DetailsColumnAlbum,
+            Column::Title => S::DetailsColumnTitle,
+            Column::Authors => S::DetailsColumnAuthors,
+            Column::Company => S::DetailsColumnCompany,
             Column::GitStatus => S::GitColumnStatus,
             Column::GitMessage => S::GitColumnMessage,
             Column::GitAuthor => S::GitColumnAuthor,
@@ -307,7 +334,11 @@ impl Column {
             Column::FileSystem => SortField::FileSystem,
             Column::Percent => SortField::Percent,
             Column::Attributes => SortField::Attributes,
-            Column::ImageSize | Column::Duration | Column::Artist | Column::Version | Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => return None,
+            Column::ImageSize => SortField::Dimensions,
+            Column::Duration => SortField::Duration,
+            Column::Artist => SortField::Artist,
+            Column::Version => SortField::Version,
+            Column::DateTaken | Column::CameraModel | Column::Album | Column::Title | Column::Authors | Column::Company | Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => return None,
         })
     }
 
@@ -336,6 +367,9 @@ pub enum IconKind {
     Volume,
     Place,
     Thumbnail,
+    Content,
+    LinkEmblem,
+    UnreadableEmblem,
 }
 
 #[derive(Clone, Debug)]
@@ -361,6 +395,7 @@ pub enum Effect {
     Resort { tab: TabId, gen: u64, snap: Arc<DirSnapshot>, view: ViewSpec },
     Icon(IconRequest),
     Thumbnail(IconRequest),
+    Overlays(OverlayBatch),
     ClearThumbnails,
     TypeName(Vec<u8>),
     SetClipboard(String),
@@ -375,12 +410,13 @@ pub enum Effect {
     NewWindow(Vec<Route>),
     Open(Open),
     SetClipboardFiles { paths: Vec<FsPath>, cut: bool },
+    LinkChoices { generation: u64, items: Option<Vec<FsPath>>, dest: FsPath },
     ShellMenu(ShellMenu),
     ShellPrefetch(Option<ShellMenu>),
     ShellWarm(Vec<ShellMenu>),
     Properties(Vec<FsPath>),
     StartDrag(Vec<FsPath>),
-    ShellProps { tab: TabId, gen: u64, dir: FsPath, names: Vec<Vec<u8>> },
+    ShellProps { tab: TabId, gen: u64, ask: u64, dir: FsPath, names: Vec<Vec<u8>> },
     Pinned(Vec<Location>),
     PinnedFiles(Vec<Location>),
     PinFolders(Vec<FsPath>),
@@ -425,6 +461,7 @@ pub enum SettingsCmd {
 
 pub enum IconResult {
     Ready(Bitmap),
+    Shared(u64, Bitmap),
     Failed,
     Skipped,
 }
@@ -703,6 +740,8 @@ pub struct App {
     icons: FxHashMap<u64, IconState>,
     thumbs: FxHashMap<u64, IconState>,
     icon_epoch: u64,
+    file_icons: file_icons::FileIcons,
+    shell_overlays: shell_overlays::ShellOverlays,
     type_names: FxHashMap<Vec<u8>, Option<String>>,
     adaptive: FxHashMap<u64, LayoutMode>,
 
@@ -719,6 +758,7 @@ pub struct App {
     search: search::SearchView,
     jobs: jobs::Jobs,
     details: details::Details,
+    touch: touch::Touch,
     archive: archive::ArchiveUi,
     strip: tabbar::Strip,
     addr: address::Address,
@@ -835,6 +875,8 @@ impl App {
             icons: FxHashMap::default(),
             thumbs: FxHashMap::default(),
             icon_epoch: 0,
+            file_icons: file_icons::FileIcons::default(),
+            shell_overlays: shell_overlays::ShellOverlays::default(),
             type_names: FxHashMap::default(),
             adaptive: FxHashMap::default(),
             layout: Layout::default(),
@@ -850,6 +892,7 @@ impl App {
             search: Default::default(),
             jobs: Default::default(),
             details: Default::default(),
+            touch: Default::default(),
             archive: archive::ArchiveUi::new(state.archive),
             strip: Default::default(),
             addr: Default::default(),
@@ -1212,6 +1255,9 @@ impl App {
     }
 
     fn reload(&mut self, k: usize, now: Instant) {
+        if let Some(dir) = self.tabs[k].view_loc.to_windows() {
+            self.shell_overlays.forget_dir(dir.as_bytes());
+        }
         let keep = self.tabs[k].capture();
         self.load_tab_restored(k, None, keep, now);
         self.dirty |= k == self.cur;
@@ -1325,6 +1371,11 @@ impl App {
         match ev {
             ProviderEvent::Changes { tab, gen, changes } => {
                 if let Some(k) = tab_of(&self.tabs, tab, gen) {
+                    if let Some(dir) = self.tabs[k].view_loc.to_windows() {
+                        for c in &changes {
+                            self.shell_overlays.forget(dir.as_bytes(), &c.name);
+                        }
+                    }
                     self.tabs[k].pending_diffs.extend(changes);
                     self.git_refresh(k, true);
                     if self.tabs[k].pending_diffs.len() > MAX_PENDING_DIFFS {
@@ -1393,6 +1444,8 @@ impl App {
             ProviderEvent::Access { id, items, accounts, .. } => self.properties_access(id, items, accounts),
             ProviderEvent::NotExecutable { tab, path } => self.ask_allow_run(tab, path),
             ProviderEvent::OpenAsk { tab, path, ask } => self.open_ask(tab, path, ask),
+            ProviderEvent::MountAsk { ask, answer, .. } => self.mount_ask(ask, answer),
+            ProviderEvent::MountAskDone { id, .. } => self.mount_ask_done(id),
         }
     }
 
@@ -1414,6 +1467,16 @@ impl App {
                 self.icons.remove(&key);
                 gfx.add_image(key, bm.width, bm.height, bm.rgba);
             }
+            IconResult::Shared(share, bm) => {
+                if self.icons.get(&key) == Some(&IconState::Pending) {
+                    self.icons.remove(&key);
+                    let shared = hash::hash(&("shared-icon", share, self.icon_epoch));
+                    if !gfx.has_image(shared) {
+                        gfx.add_image(shared, bm.width, bm.height, bm.rgba);
+                    }
+                    gfx.alias_image(key, shared);
+                }
+            }
             IconResult::Failed => {
                 self.icons.insert(key, IconState::Failed);
             }
@@ -1426,10 +1489,10 @@ impl App {
 
     pub fn on_thumb<B: TextBackend>(&mut self, gfx: &mut Gfx<B>, key: u64, result: IconResult) {
         match result {
-            IconResult::Ready(bm) if gfx.thumbs.insert(key, bm.width, bm.height, &bm.rgba) => {
+            IconResult::Ready(bm) | IconResult::Shared(_, bm) if gfx.thumbs.insert(key, bm.width, bm.height, &bm.rgba) => {
                 self.thumbs.remove(&key);
             }
-            IconResult::Ready(_) | IconResult::Failed => {
+            IconResult::Ready(_) | IconResult::Shared(..) | IconResult::Failed => {
                 if self.thumbs.len() >= MAX_THUMB_STATES {
                     self.thumbs.retain(|_, s| *s == IconState::Pending);
                 }
@@ -1493,12 +1556,12 @@ impl App {
         l.row_h = s(ROW_H);
         l.title = Rect::new(area.x, area.y, area.w, s(TAB_H));
         let limit = l.title.right().min(caption);
+        let x0 = (area.x + inset + s(6.0)).min(limit);
         let bh = l.title.h - s(8.0);
         let button_y = area.y + s(4.0) + ((l.title.h - s(4.0) - bh) / 2.0).round();
         let button = |x: f32| Rect::new(x, button_y, s(30.0), bh);
-        l.actions = if actions { Rect::new(limit - s(34.0), area.y + ((l.title.h - bh) / 2.0).round(), s(30.0), bh) } else { Rect::default() };
-        let x0 = area.x + inset + s(6.0);
-        let end = if actions { l.actions.x } else { limit };
+        l.actions = if actions && limit - x0 >= s(34.0) { Rect::new(limit - s(34.0), area.y + ((l.title.h - bh) / 2.0).round(), s(30.0), bh) } else { Rect::default() };
+        let end = if l.actions.w > 0.0 { l.actions.x } else { limit };
         let room = (end - s(40.0) - x0).max(0.0);
         let (min_w, arrow_w) = (s(TAB_MIN_W), s(TAB_ARROW_W));
         let squeezed = n > 1 && n as f32 * min_w > room;
@@ -1513,12 +1576,13 @@ impl App {
             let shown = (first..first + fit).contains(&i);
             let x = x_tabs + (i.clamp(first, first + fit) - first) as f32 * tw;
             let r = Rect::new(x, area.y + s(4.0), if shown { tw } else { 0.0 }, l.title.h - s(4.0));
-            let c = if shown { Rect::new(r.right() - s(26.0), r.y + ((r.h - s(20.0)) / 2.0).round(), s(20.0), s(20.0)) } else { Rect::default() };
+            let c = if shown && tw >= s(26.0) { Rect::new(r.right() - s(26.0), r.y + ((r.h - s(20.0)) / 2.0).round(), s(20.0), s(20.0)) } else { Rect::default() };
             l.tabs.push((r, c));
         }
         let lane_end = x_tabs + (n.min(first + fit) - first) as f32 * tw;
         l.tab_arrows = if over { [Rect::new(x0, button_y, arrow_w, bh), Rect::new(lane_end, button_y, arrow_w, bh)] } else { [Rect::default(); 2] };
-        l.new_tab = button(lane_end + if over { arrow_w } else { 0.0 } + s(4.0));
+        let next_x = lane_end + if over { arrow_w } else { 0.0 } + s(4.0);
+        l.new_tab = if next_x + s(30.0) <= end { button(next_x) } else { Rect::default() };
 
         l.toolbar = Rect::new(area.x, l.title.bottom(), area.w, s(TOOL_H));
         for (i, r) in l.nav.iter_mut().enumerate() {
@@ -1699,6 +1763,16 @@ impl App {
     }
 
     pub fn on_event(&mut self, ev: &Event, now: Instant) {
+        if let Event::WindowButtons(buttons) = ev {
+            if self.panels.buttons != *buttons {
+                self.panels.buttons = buttons.clone();
+                self.hover = Hit::None;
+                self.pressed = Hit::None;
+                self.layout();
+                self.dirty = true;
+            }
+            return;
+        }
         if self.caps.unix_paths && self.middle_paste(ev, now) {
             return;
         }
@@ -1709,6 +1783,20 @@ impl App {
     }
 
     fn handle_event(&mut self, ev: &Event, now: Instant) {
+        if let Event::MouseDown { x, y, button: MouseButton::Left, .. } = *ev {
+            if self.touch_input {
+                self.touch_event(ev, now);
+                let snap = self.touch_snapshot();
+                self.route_event(ev, now);
+                return self.touch_pressed(x, y, snap, now);
+            }
+        }
+        if !self.touch_event(ev, now) {
+            self.route_event(ev, now);
+        }
+    }
+
+    fn route_event(&mut self, ev: &Event, now: Instant) {
         if matches!(ev, Event::MouseDown { .. } | Event::Key { pressed: true, .. } | Event::Wheel { .. } | Event::Pinch(_) | Event::MouseLeave | Event::Focus(false) | Event::ShowMenu { .. }) {
             self.tip_hide();
             self.quick_hide();
@@ -1740,6 +1828,7 @@ impl App {
                 self.dirty = true;
             }
             Event::MouseSettings { double_click, wheel_lines } => (self.double_click, self.wheel_lines) = (*double_click, *wheel_lines),
+            Event::WindowButtons(_) => {}
             Event::Invoke(id) => self.a11y_invoke(*id, now),
             Event::A11yFocus(id) => self.a11y_focus(*id),
             Event::A11ySelect(id) => self.a11y_select(*id, now),
@@ -1771,6 +1860,7 @@ impl App {
             Event::MouseDown { x, y, button, clicks } => self.mouse_down(*x, *y, *button, *clicks, now),
             Event::MouseUp { x, y, button } => self.mouse_up(*x, *y, *button, now),
             Event::Wheel { .. } | Event::Pinch(_) => self.wheel(ev, now),
+            Event::TouchCancel => {}
             Event::Key { key, mods, pressed } => {
                 let copy_flipped = self.mods.ctrl != mods.ctrl;
                 self.mods = *mods;
@@ -1824,9 +1914,12 @@ impl App {
                 self.quick_timer(now);
                 self.expire_error(now);
                 self.expire_undo_bar(now);
+                self.dirty |= self.shell_props_due(now);
+                self.touch_timer(now);
             }
             Event::ClipboardChanged(seq) => self.clipboard_changed(*seq),
             Event::ClipboardText(text) => self.clipboard_text_changed(*text),
+            Event::LinkChoices { generation, choices } => self.on_link_choices(*generation, *choices),
             Event::SessionEnding => {}
             Event::Hosted(ev) => self.on_hosted(ev.clone()),
         }
@@ -1845,7 +1938,7 @@ impl App {
         }
         self.strip_pointer(x, y);
         self.settings_tip(x, y);
-        if self.touch_move(self.along_of(x, y), now) || self.autoscroll_move(self.along_of(x, y)) || self.ops_mouse_move(x, y) || self.nav_mouse_move(x) || self.marquee_move(x, y) {
+        if self.autoscroll_move(self.along_of(x, y)) || self.ops_mouse_move(x, y) || self.nav_mouse_move(x) || self.marquee_move(x, y) {
             return;
         }
         match self.drag {
@@ -1929,7 +2022,6 @@ impl App {
         }
         self.dirty = true;
         self.nav.sidebar.dragging_out = false;
-        self.touch_down(self.hit(x, y), self.along_of(x, y), button, now);
         if self.form_down(x, y, button, clicks, now) {
             return;
         }
@@ -2030,11 +2122,6 @@ impl App {
         }
         if let Some(f) = &mut self.jobs.form {
             f.document.grab = None;
-        }
-        if button == MouseButton::Left && self.touch_up(now) {
-            self.pressed = Hit::None;
-            self.release_header();
-            return;
         }
         if self.autoscroll_up(x, y, button) {
             return;
@@ -2335,18 +2422,20 @@ impl App {
         let _span = tracing::trace_span!("ui_frame").entered();
         let dt = frame_dt(self.last_frame, now, self.moving);
         self.last_frame = Some(now);
-        self.request_shell_props();
+        self.pump_shell_props(now);
         self.poll();
         self.dirty = false;
         self.expire_error(now);
         self.expire_undo_bar(now);
         self.motion = false;
+        self.file_icons.begin();
+        self.shell_overlays.begin(self.icon_epoch);
         g.dl.round = self.round_corners;
         self.apply_tag_fixes(now);
         self.ops_frame(now);
         let mut animating = self.marquee_autoscroll(dt);
         animating |= self.autoscroll_step(dt);
-        animating |= self.fling_step(dt);
+        animating |= self.touch_fling(dt);
         animating |= self.drag_autoscroll(dt);
         animating |= self.scroll_step(dt);
         animating |= self.glide_overlays(dt);
@@ -2408,6 +2497,7 @@ impl App {
         }
         self.arena = arena;
         self.prefetch_shell();
+        self.flush_shell_overlays();
 
         let t = self.tab();
         if let Some(l) = &t.loading {
@@ -2531,7 +2621,7 @@ impl App {
                 centered(g, icon, tabbar::tab_glyph(loc), self.icon_font(12.0), if torn || accented { color } else { t.accent.alpha(0xC0) });
             }
             g.text(icon.right() + self.s(6.0), baseline, &label, font, color, c.x - icon.right() - self.s(10.0));
-            if active || hovered > 0.0 {
+            if c.w > 0.0 && (active || hovered > 0.0) {
                 let state = self.button(Hit::TabClose(i), false, true);
                 let ink = if accented { color } else { t.text_dim };
                 widgets::Paint::new(g, t, self.scale).icon_button(c, G_CLOSE, close_font, state, if active { ink } else { widgets::faded(ink, hovered) });
@@ -2551,11 +2641,13 @@ impl App {
         let new_tab_dx = self.strip.at(lane, tabbar::Part::Plus, l.new_tab, now).x - l.new_tab.x;
         let new_tab_from = g.dl.instances.len();
         let mut w = widgets::Paint::new(g, t, self.scale);
-        if drop == Some(Spot::NewTab) {
-            w.g.dl.round_rect(l.new_tab, t.teal, self.s(4.0));
-            w.centered(l.new_tab, G_ADD, self.icon_font(10.0), theme::ink_on(t.teal));
-        } else {
-            w.icon_button(l.new_tab, G_ADD, self.icon_font(10.0), self.button(Hit::NewTab, false, true), t.text_dim);
+        if l.new_tab.w > 0.0 {
+            if drop == Some(Spot::NewTab) {
+                w.g.dl.round_rect(l.new_tab, t.teal, self.s(4.0));
+                w.centered(l.new_tab, G_ADD, self.icon_font(10.0), theme::ink_on(t.teal));
+            } else {
+                w.icon_button(l.new_tab, G_ADD, self.icon_font(10.0), self.button(Hit::NewTab, false, true), t.text_dim);
+            }
         }
         w.g.dl.shift(new_tab_from, new_tab_dx.round(), 0.0);
         self.strip.record(lane, tabbar::Part::Plus, Rect::new(l.new_tab.x + new_tab_dx.round(), l.new_tab.y, l.new_tab.w, l.new_tab.h), &[]);
@@ -2969,10 +3061,11 @@ impl App {
 
                 let name = listing.name(i);
                 let faded = e.attrs & attr::HIDDEN != 0 || name.starts_with(b".") || cut.is_some_and(|c| c.contains(name));
-                let row_dir = if in_library { FsPath::parse_exact(crate::library::folder(listing, i)) } else { None };
+                let row_dir = if in_library { FsPath::parse_exact(crate::library::folder(listing, i)) } else if e.attrs & attr::NESTED != 0 { shell_dir.as_ref().map(|d| d.join(listing.folder(i))) } else { None };
                 let dir = row_dir.as_ref().or(shell_dir.as_ref());
                 let dir_key = if in_bin { recycle::origin(listing, i) } else { dir.map_or(&b""[..], |d| d.as_bytes()) };
                 let (key, kind) = icon_key(name, listing.ext(i), &e, icon_px as u32, dir_key, self.icon_epoch);
+                self.file_icons.see(key, kind);
                 let ir = p.icon;
                 let alpha = if faded { 0x70 } else { 0xFF };
                 let thumb = (want_thumbs && !e.is_dir() && has_thumbnail(listing.ext(i))).then(|| hash::hash(&("thumb", dir_key, name, e.modified, e.size, thumb_px)));
@@ -2987,7 +3080,9 @@ impl App {
                     (Rect::new(ir.right() - d * 0.8, ir.bottom() - d * 0.8, d, d), st)
                 });
                 if !replaces && !thumbed && !g.image_alpha(key, ir, alpha) {
-                    icon_glyph(g, t, &e, ir);
+                    if !self.folder_stand_in(g, kind, icon_px as u32, ir, alpha, &mut requests) {
+                        icon_glyph(g, t, &e, ir);
+                    }
                     let wanted = !self.icons.contains_key(&key) && !requests.iter().any(|r| r.key == key);
                     let path = match (wanted, in_bin) {
                         (false, _) => None,
@@ -2997,6 +3092,13 @@ impl App {
                     if let Some(path) = path {
                         requests.push(IconRequest { key, kind, path, size: icon_px as u32, gen: tab.gen, row: row as u32 });
                     }
+                }
+
+                if !replaces {
+                    if !in_bin {
+                        self.draw_shell_overlay(g, kind, &e, dir_key, name, ir, alpha);
+                    }
+                    self.draw_file_emblems(g, e.attrs, ir, alpha, &mut requests);
                 }
 
                 if boxed && corner {
@@ -3109,10 +3211,7 @@ impl App {
 
 impl App {
     fn request_icons(&mut self, requests: Vec<IconRequest>) {
-        for r in requests {
-            self.icons.insert(r.key, IconState::Pending);
-            self.effects.push(Effect::Icon(r));
-        }
+        self.request_file_icons(requests);
     }
 
     fn system_icon<B: TextBackend>(&self, g: &mut Gfx<B>, icon: Option<sidebar::SystemIcon>, r: Rect, px: f32, alpha: u8, requests: &mut Vec<IconRequest>) -> bool {
@@ -3168,14 +3267,17 @@ pub fn icon_key(name: &[u8], ext: &[u8], e: &crate::listing::Entry, size: u32, d
         return (hash::hash(&("vol", name, size, epoch)), IconKind::Volume);
     }
     if e.attrs & attr::LINK != 0 && !cfg!(windows) {
-        return (hash::hash(&("link", dir, name, e.attrs & attr::DIR, e.modified, size, epoch)), IconKind::File);
+        return (hash::hash(&("link-base", dir, name, e.attrs & attr::DIR, e.modified, size, epoch)), IconKind::File);
     }
     let shell_link = e.attrs & attr::LINK != 0 && dir.first() != Some(&b'/');
     if e.is_dir() && (e.attrs & (attr::READONLY | attr::SYSTEM) != 0 || shell_link || crate::location::wsl_drive_path(dir).is_some()) {
         return (hash::hash(&("custom", dir, name, e.modified, e.attrs, size, epoch)), IconKind::CustomFolder);
     }
+    if cfg!(target_os = "linux") && e.is_dir() && dir.first() == Some(&b'/') && e.attrs & (attr::STREAM | attr::ARCHIVED | attr::NOT_LOCAL | attr::DELETED) == 0 {
+        return (hash::hash(&("folder", dir, name, e.modified, size, epoch)), IconKind::CustomFolder);
+    }
     if e.is_dir() {
-        return (hash::hash(&("dir", size, epoch)), IconKind::Folder);
+        return file_icons::folder_key(size, epoch);
     }
     let folded = ext.to_ascii_lowercase();
     if PER_FILE_ICON_EXT.contains(&folded.as_slice()) || shell_link {
@@ -3183,6 +3285,9 @@ pub fn icon_key(name: &[u8], ext: &[u8], e: &crate::listing::Entry, size: u32, d
     }
     if folded.is_empty() && e.attrs & attr::EXEC != 0 {
         return (hash::hash(&("exec", size, epoch)), IconKind::Type);
+    }
+    if cfg!(target_os = "linux") && dir.first() == Some(&b'/') && folded.is_empty() && e.size > 0 && e.attrs & (attr::STREAM | attr::ARCHIVED | attr::NOT_LOCAL | attr::DELETED | attr::UNREADABLE) == 0 {
+        return (hash::hash(&("content", dir, name, e.modified, e.size, size, epoch)), IconKind::Content);
     }
     (hash::hash(&("ext", folded.as_slice(), size, epoch)), IconKind::Type)
 }

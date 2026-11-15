@@ -28,6 +28,9 @@ fn os(p: &FsPath) -> &OsStr {
 }
 
 fn spawn_error(what: &str, e: &io::Error) -> PlatformError {
+    if e.kind() == io::ErrorKind::NotFound && crate::tools::package_for(what, "").is_some() && on_path(OsStr::new(what)).is_none() {
+        return tool_missing(what);
+    }
     PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("{what}: {e}"))
 }
 
@@ -48,7 +51,18 @@ pub fn on_path(program: &OsStr) -> Option<PathBuf> {
     if program.as_bytes().contains(&b'/') {
         return Some(PathBuf::from(program)).filter(|p| executable(p));
     }
-    std::env::split_paths(&std::env::var_os("PATH")?).map(|d| d.join(program)).find(|p| executable(p))
+    #[cfg(test)]
+    if let Some(path) = crate::temp::tool_path() {
+        return on_path_in(program, &path);
+    }
+    on_path_in(program, &std::env::var_os("PATH")?)
+}
+
+fn on_path_in(program: &OsStr, path: &OsStr) -> Option<PathBuf> {
+    if program.as_bytes().contains(&b'/') {
+        return Some(PathBuf::from(program)).filter(|p| executable(p));
+    }
+    std::env::split_paths(path).map(|d| d.join(program)).find(|p| executable(p))
 }
 
 pub fn no_xdg_open() -> String {
@@ -176,7 +190,7 @@ pub fn terminal_args(program: &Path, dir: Option<&Path>, command: Option<Vec<OsS
 }
 
 fn spawn_terminal(dir: Option<&Path>, command: Option<Vec<OsString>>) -> Result<(), PlatformError> {
-    let program = terminal_program().ok_or_else(|| PlatformError::new(libc::ENOENT as i64, "No terminal was found: set TERMINAL or install xdg-terminal-exec"))?;
+    let program = terminal_program().ok_or_else(|| tool_missing("xterm"))?;
     let program = real_terminal(&program, on_path);
     let mut cmd = Command::new(&program);
     cmd.args(terminal_args(&program, dir, command));
@@ -212,7 +226,11 @@ pub fn root_shell(dir: &Path, sudo: bool) -> Vec<OsString> {
 }
 
 pub fn open_root_terminal(dir: &Path) -> Result<(), PlatformError> {
-    spawn_terminal(Some(dir), Some(root_shell(dir, on_path(OsStr::new("sudo")).is_some())))
+    let sudo = on_path(OsStr::new("sudo")).is_some();
+    if !sudo {
+        crate::tools::require("pkexec")?;
+    }
+    spawn_terminal(Some(dir), Some(root_shell(dir, sudo)))
 }
 
 pub fn run_in_terminal_argv(dir: Option<&Path>, argv: Vec<OsString>) -> Result<(), PlatformError> {
@@ -351,9 +369,17 @@ fn run_command(argv: &[String], env: &[(String, String)], dir: Option<&Path>) ->
     detach(cmd).map_err(|e| spawn_error(if url { "xdg-open" } else { program }, &e))
 }
 
-fn tool_missing(tool: &str) -> PlatformError {
+pub(crate) fn tool_missing(tool: &str) -> PlatformError {
     let package = crate::tools::package_for(tool, &crate::tools::os_release()).unwrap_or(tool);
-    PlatformError::new(libc::ENOENT as i64, flit_core::tr_en!(flit_core::i18n::S::ErrorsOpsExtraNoTool, tool = tool, package = package))
+    let key = match tool {
+        "pkexec" => S::ErrorsOpsExtraNoPkexec,
+        "setfacl" => S::ErrorsFsNoSetfacl,
+        "mpv" => S::PreviewNoPlayer,
+        "recollq" => S::ErrorsEngineNoContentSearch,
+        "xterm" => S::ErrorsOpsExtraNoTerminal,
+        _ => S::ErrorsOpsExtraNoTool,
+    };
+    PlatformError::new(libc::ENOENT as i64, flit_core::tr_en!(key, tool = tool, package = package))
 }
 
 fn print_files(files: &[PathBuf]) -> Result<(), PlatformError> {
@@ -609,17 +635,43 @@ fn launch(l: &Launch) -> Result<(), PlatformError> {
 }
 
 impl Shell for LinuxShell {
+    const BATCHES_FOLDER_ICONS: bool = true;
+
     fn new() -> Result<Self, PlatformError> {
         Ok(LinuxShell)
     }
 
+    fn prepare_icons(&mut self, reqs: &[IconRequest]) {
+        let dirs: Vec<PathBuf> = reqs.iter().filter(|r| r.kind == IconKind::CustomFolder).filter_map(|r| host(&r.path)).map(Path::to_path_buf).collect();
+        crate::folder_icons::prepare(&dirs);
+    }
+
     fn icon(&mut self, req: &IconRequest) -> Option<Bitmap> {
+        if req.kind == IconKind::CustomFolder {
+            return host(&req.path).and_then(|p| crate::folder_icons::icon(p, req.size));
+        }
         if let Some(target) = (req.kind == IconKind::File).then(|| link_target_kind(&req.path)).flatten() {
             return link_icon(req, target);
+        }
+        if matches!(req.kind, IconKind::LinkEmblem | IconKind::UnreadableEmblem) {
+            let name = if req.kind == IconKind::LinkEmblem { "emblem-symbolic-link" } else { "emblem-unreadable" };
+            return crate::icons::icon(&[name.to_owned()], req.size);
+        }
+        if req.kind == IconKind::Content {
+            return self.shared_icon(req).0;
         }
         let picture = (req.kind == IconKind::Thumbnail).then(|| self.thumbnail(req)).flatten();
         let own = || (req.kind == IconKind::File).then(|| host(&req.path).and_then(launcher_text)).flatten().and_then(|t| crate::apps::launcher_icon(&t));
         picture.or_else(|| own().and_then(|name| crate::apps::icon_image(&name, req.size))).or_else(|| crate::icons::icon(&icon_names(req), req.size))
+    }
+
+    fn shared_icon(&mut self, req: &IconRequest) -> (Option<Bitmap>, Option<u64>) {
+        if req.kind != IconKind::Content {
+            return (self.icon(req), None);
+        }
+        let names = host(&req.path).map(crate::mime::content_icon_names).unwrap_or_default();
+        let image = crate::icons::icon(&names, req.size).or_else(|| crate::icons::icon(&["text-x-generic".into(), "unknown".into()], req.size));
+        (image, Some(flit_core::hash::hash(&(&names, req.size))))
     }
 
     fn thumbnail(&mut self, req: &IconRequest) -> Option<Bitmap> {
@@ -719,6 +771,11 @@ impl Shell for LinuxShell {
         let point = crate::places::connect(uri).map_err(|e| crate::places::drive_error(S::ErrorsFsConnectFailed, Path::new(uri), &e))?;
         crate::xdg::fs_path(&point).ok_or_else(|| PlatformError::new(-1, "the mount point is not a valid path"))
     }
+
+    fn connect_asking(&mut self, uri: &str, prompt: &flit_platform::MountPrompt) -> Result<Option<FsPath>, PlatformError> {
+        let Some(point) = crate::gvfs::connect(uri, prompt).map_err(|e| crate::places::drive_error(S::ErrorsFsConnectFailed, Path::new(uri), &e))? else { return Ok(None) };
+        crate::xdg::fs_path(&point).map(Some).ok_or_else(|| PlatformError::new(-1, "the mount point is not a valid path"))
+    }
 }
 
 impl FileOps for LinuxShell {
@@ -731,6 +788,7 @@ impl FileOps for LinuxShell {
         }
         let trash = places::trash();
         let out = match (op, &trash) {
+            (FileOp::PasteDropped { dest, data: Some(data), .. }, _) => crate::dropped::queued(dest, data, job),
             (FileOp::InstallFonts(fonts), _) => install_fonts(fonts, crate::xdg::data_home().map(|d| d.join("fonts"))),
             (FileOp::Purge(pairs), Ok(t)) => places::purge(t, pairs),
             (FileOp::EmptyBin, Ok(t)) => places::empty(t, &places::storage_tops()),
@@ -745,18 +803,7 @@ impl FileOps for LinuxShell {
 
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
         let own = OWN_FILES.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        let found = crate::window::clipboard_types().and_then(|t| crate::clipboard::files(&t)).or_else(helper_files);
-        let (paths, cut) = match found {
-            Some((paths, cut)) => {
-                let ours = own.as_ref().filter(|(list, _)| parse_file_list(list.as_bytes()).0 == paths);
-                (paths, cut || ours.is_some_and(|o| o.1))
-            }
-            None => own.map(|(list, cut)| (parse_file_list(list.as_bytes()).0, cut)).unwrap_or_default(),
-        };
-        if paths.is_empty() {
-            return Err(PlatformError::new(-1, "the clipboard holds no files"));
-        }
-        Ok((paths, cut))
+        clipboard_files_from(own, crate::window::clipboard_types())
     }
 
     fn clear_clipboard(&mut self) {
@@ -832,12 +879,7 @@ pub fn link_icon_names(req: &IconRequest, target: LinkTarget) -> Vec<String> {
 }
 
 fn link_icon(req: &IconRequest, target: LinkTarget) -> Option<Bitmap> {
-    let base = crate::icons::icon(&link_icon_names(req, target), req.size)?;
-    let side = req.size / 2;
-    match (side >= 8).then(|| crate::icons::icon(&["emblem-symbolic-link".to_owned()], side)).flatten() {
-        Some(emblem) => Some(crate::icons::with_emblem(base, &emblem)),
-        None => Some(base),
-    }
+    crate::icons::icon(&link_icon_names(req, target), req.size)
 }
 
 pub fn volume_icon_names(path: &[u8], mount: Option<&flit_platform_linux::mounts::Mount>) -> Vec<String> {
@@ -873,6 +915,7 @@ pub fn icon_names(req: &IconRequest) -> Vec<String> {
             let mount = mounts.iter().rev().find(|m| m.point == path);
             volume_icon_names(path, mount)
         }
+        IconKind::Content | IconKind::LinkEmblem | IconKind::UnreadableEmblem => Vec::new(),
         IconKind::Type | IconKind::File | IconKind::Thumbnail => {
             let executable = || std::fs::metadata(OsStr::from_bytes(path)).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
             let name = req.path.file_name();
@@ -915,6 +958,29 @@ pub fn remember_files(paths: &[FsPath], cut: bool) -> String {
     let list = uri_list(paths);
     *OWN_FILES.lock().unwrap_or_else(|e| e.into_inner()) = Some((list.clone(), cut));
     list
+}
+
+fn clipboard_files_from(own: Option<(String, bool)>, native: Option<crate::clipboard::Payload>) -> Result<(Vec<FsPath>, bool), PlatformError> {
+    let found = native.as_deref().and_then(crate::clipboard::files).or_else(helper_files);
+    let (paths, cut) = match found {
+        Some((paths, cut)) => {
+            let ours = own.as_ref().filter(|(list, _)| parse_file_list(list.as_bytes()).0 == paths);
+            (paths, cut || ours.is_some_and(|o| o.1))
+        }
+        None => own.map(|(list, cut)| (parse_file_list(list.as_bytes()).0, cut)).unwrap_or_default(),
+    };
+    if paths.is_empty() {
+        return Err(empty_clipboard(native.is_some(), wayland()));
+    }
+    Ok((paths, cut))
+}
+
+fn empty_clipboard(native: bool, wayland: bool) -> PlatformError {
+    let reader = if wayland { "wl-paste" } else { "xclip" };
+    if !native && on_path(OsStr::new(reader)).is_none() {
+        return tool_missing(reader);
+    }
+    PlatformError::new(-1, S::ErrorsEngineClipboardNoFiles.en())
 }
 
 fn clipboard_bytes(mime: &str) -> Option<Vec<u8>> {
@@ -990,27 +1056,7 @@ fn helper(args: &[&str]) -> Option<Command> {
 }
 
 pub fn launcher_progress(percent: Option<u32>) {
-    let dict = match percent {
-        Some(v) => format!("{{'progress': <{:.2}>, 'progress-visible': <true>}}", f64::from(v.min(100)) / 100.0),
-        None => "{'progress': <0.0>, 'progress-visible': <false>}".to_owned(),
-    };
-    let args = vec![
-        "gdbus".to_owned(),
-        "emit".to_owned(),
-        "--session".to_owned(),
-        "--object-path".to_owned(),
-        format!("/com/canonical/unity/launcherentry/{}", std::process::id()),
-        "--signal".to_owned(),
-        "com.canonical.Unity.LauncherEntry.Update".to_owned(),
-        "application://flit.desktop".to_owned(),
-        dict,
-    ];
-    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let Some(mut cmd) = helper(&refs) else { return };
-    let Ok(mut child) = cmd.spawn() else { return };
-    let _ = std::thread::Builder::new().name("flit-reap".into()).spawn(move || {
-        let _ = child.wait();
-    });
+    crate::dbus::launcher_progress(percent);
 }
 
 fn wayland() -> bool {
@@ -1081,6 +1127,29 @@ pub fn gsettings(args: &[&str]) -> Option<String> {
     let full: Vec<&str> = ["gsettings", "get"].into_iter().chain(args.iter().copied()).collect();
     let child = helper(&full)?.stdout(Stdio::piped()).spawn().ok()?;
     String::from_utf8(wait_output(child, HELPER_TIMEOUT)?).ok()
+}
+
+pub(crate) fn gsettings_string(out: &str) -> Option<String> {
+    let out = out.trim();
+    let quote = out.chars().next().filter(|c| *c == '\'' || *c == '"')?;
+    let inside = out.strip_prefix(quote)?.strip_suffix(quote)?;
+    let mut value = String::new();
+    let mut escape = false;
+    for c in inside.chars() {
+        if escape {
+            value.push(match c { 'n' => '\n', 'r' => '\r', 't' => '\t', _ => c });
+            escape = false;
+        } else if c == '\\' {
+            escape = true;
+        } else {
+            value.push(c);
+        }
+    }
+    (!escape).then_some(value)
+}
+
+pub(crate) fn probe_window_buttons() -> Option<String> {
+    crate::atspi::read_button_layout().or_else(|| gsettings(&["org.gnome.desktop.wm.preferences", "button-layout"]).and_then(|s| gsettings_string(&s)))
 }
 
 fn probe_dark() -> Option<bool> {
@@ -1161,7 +1230,7 @@ pub fn probe_double_click() -> Option<u32> {
     session_bus().then(|| ask(&portal)).flatten().or_else(|| ask(&gsettings))
 }
 
-pub fn play_media(video: bool, path: &Path, socket: Option<&Path>, volume: Option<f32>) -> Option<(std::process::Child, bool)> {
+pub fn play_media(video: bool, path: &Path, socket: Option<&Path>, volume: Option<f32>) -> Result<(std::process::Child, bool), PlatformError> {
     let file = path.as_os_str().to_owned();
     let command = |name: &str, extra: &[&str]| {
         on_path(OsStr::new(name)).map(|program| {
@@ -1176,12 +1245,12 @@ pub fn play_media(video: bool, path: &Path, socket: Option<&Path>, volume: Optio
         if let Some(s) = socket {
             let _ = std::fs::remove_file(s);
         }
-        return with.spawn().ok().map(|c| (c, socket.is_some()));
+        return with.spawn().map(|c| (c, socket.is_some())).map_err(|e| spawn_error("mpv", &e));
     }
     let mut with = command("gst-play-1.0", &[])
         .or_else(|| if video { command("ffplay", &["-autoexit"]) } else { command("ffplay", &["-autoexit", "-nodisp"]) })
-        .or_else(|| if video { None } else { command("paplay", &[]) })?;
-    with.spawn().ok().map(|c| (c, false))
+        .or_else(|| if video { None } else { command("paplay", &[]) }).ok_or_else(|| tool_missing("mpv"))?;
+    with.spawn().map(|c| (c, false)).map_err(|e| spawn_error(&with.get_program().to_string_lossy(), &e))
 }
 
 pub fn mpv_args(socket: Option<&Path>, volume: Option<f32>) -> Vec<String> {

@@ -33,7 +33,10 @@ pub struct Index {
     pub declared: bool,
     pub entries: usize,
     pub packed: u64,
+    pub unpacked: u64,
     pub sevenz: Option<sevenz_rust2::Archive>,
+    pub links: Vec<String>,
+    pub legacy: Option<Encoding>,
 }
 
 struct Raw {
@@ -280,6 +283,13 @@ pub fn rar_error(e: unrar_ng::error::UnrarError, had_password: bool) -> Platform
     }
 }
 
+pub(crate) fn entry_text(name: &[u8], utf8: bool, legacy: Option<Encoding>) -> String {
+    match (utf8, legacy) {
+        (true, _) | (false, None) => String::from_utf8_lossy(name).into_owned(),
+        (false, Some(e)) => names::decode(name, e),
+    }
+}
+
 fn build(archive: &FsPath, path: &Path, len: u64, offset_min: i32) -> Result<Index, PlatformError> {
     let format = sniff(path, archive.file_name())?;
     let password = archive::password(archive);
@@ -309,17 +319,20 @@ fn build(archive: &FsPath, path: &Path, len: u64, offset_min: i32) -> Result<Ind
         archive::set_detected_encoding(archive, e);
     }
     let legacy = chosen.or(detected);
-    let mut index = Index { format, items: Vec::with_capacity(raws.len()), rejected: Vec::new(), declared: format != Format::Gz, entries: raws.len(), packed: len, sevenz };
+    let unpacked = raws.iter().filter(|r| !r.dir).fold(0u64, |total, r| total.saturating_add(r.size));
+    let mut index = Index { format, items: Vec::with_capacity(raws.len()), rejected: Vec::new(), declared: format != Format::Gz, entries: raws.len(), packed: len, unpacked, sevenz, links: Vec::new(), legacy };
     for (ordinal, r) in raws.into_iter().enumerate() {
-        let text = match (r.utf8, legacy) {
-            (true, _) | (false, None) => String::from_utf8_lossy(&r.name).into_owned(),
-            (false, Some(e)) => names::decode(&r.name, e),
-        };
+        let text = entry_text(&r.name, r.utf8, legacy);
         let zip_name = if format == Format::Zip {
             if r.utf8 { String::from_utf8_lossy(&r.name).into_owned() } else { names::cp437(&r.name) }
         } else {
             String::new()
         };
+        if r.link {
+            if let Some(path) = names::safe_path(&text) {
+                index.links.push(fold(&path));
+            }
+        }
         match names::safe_path(&text).filter(|_| !r.link) {
             Some(path) => {
                 let key = fold(&path);

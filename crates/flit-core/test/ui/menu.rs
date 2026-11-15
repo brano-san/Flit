@@ -11,6 +11,66 @@ use std::time::Duration;
 const FOLDER: usize = 0;
 const FILE: usize = 1;
 
+#[test]
+fn windows_paste_menu_exposes_all_link_kinds_but_disables_unknown_sources() {
+    let mut app = app_with(&[]);
+    let menu = app.build_menu(false);
+    let paste = menu.iter().find_map(|item| match item {
+        MenuItem::Submenu { label, items } if label == "Paste as" => Some(items),
+        _ => None,
+    }).expect("Paste as submenu");
+    assert_eq!(commands(paste), ["Shortcut", "Symbolic link", "Junction", "Hard link"]);
+    assert!(paste.iter().skip(1).all(|item| matches!(item, MenuItem::Command { disabled: true, .. })));
+}
+
+fn paste_link_probe(app: &mut App) -> (ShellMenu, u64) {
+    app.context_menu();
+    let effects: Vec<_> = app.drain_effects().collect();
+    let generation = effects.iter().find_map(|e| if let Effect::LinkChoices { generation, .. } = e { Some(*generation) } else { None }).unwrap();
+    let menu = effects.into_iter().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m) } else { None }).unwrap();
+    (menu, generation)
+}
+
+#[test]
+fn a_slow_link_probe_keeps_paste_usable_and_never_runs_a_disabled_link() {
+    let mut app = app_with(&[]);
+    let (menu, _) = paste_link_probe(&mut app);
+    run(&mut app, &menu, "Symbolic link");
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Op { .. }, .. })));
+    run(&mut app, &menu, "Paste");
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Op { op: crate::provider::FileOp::Paste { .. }, .. }, .. })));
+}
+
+#[test]
+fn link_probe_answers_enable_only_current_clipboard_sources_and_queue_the_selected_kind() {
+    use crate::provider::{FileOp, LinkChoices, LinkKind};
+    let mut app = app_with(&[]);
+    let (_, old) = paste_link_probe(&mut app);
+    app.on_event(&Event::ClipboardChanged(20), Instant::now());
+    let (menu, current) = paste_link_probe(&mut app);
+    app.on_event(&Event::LinkChoices { generation: old, choices: LinkChoices([true; 4]) }, Instant::now());
+    run(&mut app, &menu, "Hard link");
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Op { .. }, .. })));
+    app.on_event(&Event::LinkChoices { generation: current, choices: LinkChoices([true, true, false, true]) }, Instant::now());
+    run(&mut app, &menu, "Junction");
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Op { .. }, .. })));
+    run(&mut app, &menu, "Hard link");
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Op { op: FileOp::PasteLinkAs { kind: LinkKind::Hard, .. }, .. }, .. })));
+    assert_eq!(app.running_jobs(), 1);
+}
+
+#[test]
+fn unix_and_virtual_locations_do_not_offer_windows_link_kinds() {
+    let mut app = app_with(&[]);
+    app.caps = crate::caps::Caps { unix_paths: true };
+    assert!(!commands(&app.build_menu(false)).iter().any(|s| s.contains("Junction") || s.contains("Hard link")));
+    for path in [crate::Location::computer(), crate::Location::recycle_bin()] {
+        let mut app = App::new(Persisted { path, ..Default::default() }, Vec::new(), 0, false, 1.0, (400, 300), Instant::now());
+        let menu = app.build_menu(false);
+        assert!(!menu.iter().any(|m| matches!(m, MenuItem::Submenu { label, .. } if label == "Paste as")));
+    }
+}
+
 fn app_with(items: &[(&str, bool)]) -> App {
     let attrs: Vec<(&str, u32)> = items.iter().map(|&(n, dir)| (n, if dir { attr::DIR } else { 0 })).collect();
     app_with_attrs(&attrs)

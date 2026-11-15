@@ -8,6 +8,7 @@ mod jumps;
 mod layouts;
 mod logs;
 mod metrics;
+mod overlays;
 mod places;
 mod preview;
 mod schema;
@@ -81,6 +82,9 @@ fn main() {
         } else if a == "--elevated-agent" {
             #[cfg(target_os = "linux")]
             std::process::exit(flit_platform_linux_gui::elevated::serve(it.next().as_deref()));
+        } else if a == "--create-symbolic-link" {
+            #[cfg(windows)]
+            std::process::exit(flit_platform_windows::symbolic_from_command_line(it));
         } else if a == "--label-volume" {
             #[cfg(windows)]
             std::process::exit(flit_platform_windows::label_from_command_line(it.next(), it.next()));

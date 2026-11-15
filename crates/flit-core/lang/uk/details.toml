@@ -21,6 +21,12 @@ dimensions = "Розміри"
 duration = "Тривалість"
 artist = "Виконавці"
 version = "Версія файлу"
+date_taken = "Дата зйомки"
+camera_model = "Модель камери"
+album = "Альбом"
+title = "Назва"
+authors = "Автори"
+company = "Компанія"
 
 [type]
 drive = "Диск"
@@ -56,6 +62,17 @@ medium = "Середні (1 - 128 MB)"
 large = "Великі (128 MB - 1 GB)"
 huge = "Величезні (1 - 4 GB)"
 gigantic = "Гігантські (4+ GB)"
+
+[dimensions_group]
+very_large = "Дуже великі (12+ МП)"
+large = "Великі (2 - 12 МП)"
+medium = "Середні (0,3 - 2 МП)"
+small = "Малі (менше 0,3 МП)"
+
+[length_group]
+long = "Довгі (30+ хв)"
+medium = "Середні (5 - 30 хв)"
+short = "Короткі (менше 5 хв)"
 
 [count]
 items = ["{n} елемент", "{n} елементи", "{n} елементів"]

@@ -7,6 +7,33 @@ fn fs_path(p: &Path) -> FsPath {
     FsPath::parse_exact(p.as_os_str().as_bytes()).unwrap()
 }
 
+#[test]
+fn missing_administrator_helpers_name_their_packages_without_changing_access() {
+    let t = Temp::new("missing-admin");
+    let dir = fs_path(t.path());
+    let op = FileOp::NewFolder { dir: dir.clone(), name: b"untouched".to_vec() };
+    crate::temp::with_tools(&[], || {
+        let missing = crate::shell::tool_missing("pkexec").message;
+        let error = run(&op, &Job::detached(Resolve::Skip)).unwrap_err();
+        assert_eq!(error.message, missing);
+        crate::temp::assert_missing(&error.message, "pkexec");
+        let error = grant_access(&dir).error.unwrap();
+        assert_eq!(error.message, missing);
+        crate::temp::assert_missing(&error.message, "pkexec");
+    });
+    crate::temp::with_tools(&["pkexec"], || {
+        let error = grant_access(&dir).error.unwrap();
+        assert_eq!(error.message, crate::shell::tool_missing("setfacl").message);
+        crate::temp::assert_missing(&error.message, "setfacl");
+        let error = run(&op, &Job::detached(Resolve::Skip)).unwrap_err();
+        assert!(!error.message.contains("Install the package"), "{}", error.message);
+    });
+    crate::temp::with_tools(&["pkexec", "setfacl"], || {
+        assert!(grant_access(&dir).error.is_none());
+    });
+    assert!(!t.path().join("untouched").exists());
+}
+
 fn locked(t: &Temp) -> PathBuf {
     let dir = t.path().join("locked");
     std::fs::create_dir(&dir).unwrap();
@@ -139,11 +166,12 @@ fn a_retry_that_cannot_get_administrator_rights_says_why() {
     let (a, b) = (fs_path(Path::new("/x/a")), fs_path(Path::new("/x/b")));
     let denied = || PlatformError::new(libc::EACCES as i64, "/x/b: Permission denied");
     let first = || OpOutcome { items: vec![(a.clone(), a.clone())], error: Some(denied()) };
-    let out = retried(first(), Err(unelevated(S::ErrorsOpsExtraNoPkexec.en())));
+    let why = crate::shell::tool_missing("pkexec").message;
+    let out = retried(first(), Err(unelevated(&why)));
     assert_eq!(out.items, [(a.clone(), a.clone())]);
     let e = out.error.unwrap();
     assert_eq!(e.code, libc::EACCES as i64);
-    assert_eq!(e.message, flit_core::tr_en!(S::ErrorsOpsExtraNotElevated, error = denied().message, why = S::ErrorsOpsExtraNoPkexec.en()));
+    assert_eq!(e.message, flit_core::tr_en!(S::ErrorsOpsExtraNotElevated, error = denied().message, why = why));
     let out = retried(first(), Ok(OpOutcome { items: vec![(b.clone(), b.clone())], error: None }));
     assert_eq!((out.items, out.error.is_none()), (vec![(a.clone(), a.clone()), (b.clone(), b)], true));
     let up_front = only_elevated(unelevated(S::ErrorsOpsExtraAdminDismissed.en())).error.unwrap();

@@ -592,6 +592,25 @@ impl App {
         SLayout { field, header: l.header, cols, list, track: l.track, thumb, htrack, hthumb, max_x, row_h: rh }
     }
 
+    pub(super) fn search_pans_at(&self, x: f32, y: f32) -> bool {
+        matches!(self.search_hit(x, y), SHit::Row(_) | SHit::Group(_) | SHit::Empty)
+    }
+
+    pub(super) fn touch_pan_search(&mut self, dx: f32, dy: f32) -> (bool, bool) {
+        let (max_x, max) = (self.search_layout().max_x, self.search_max_scroll());
+        let s = &mut self.search;
+        let x = (s.scroll_x - dx).clamp(0.0, max_x);
+        let y = (s.scroll - f64::from(dy)).clamp(0.0, max);
+        let moved = (x != s.scroll_x, y != s.scroll);
+        (s.scroll_x, s.scroll) = (x, y);
+        moved
+    }
+
+    pub(super) fn search_let_go(&mut self) {
+        self.search.pressed = SHit::None;
+        self.search.drag = SDrag::None;
+    }
+
     fn search_max_scroll(&self) -> f64 {
         let l = &self.layout;
         (self.search.lines() as f64 * l.row_h.max(1.0) as f64 - self.search_layout().list.h as f64).max(0.0)
@@ -1206,18 +1225,23 @@ impl App {
             if !is_dir && !self.type_names.contains_key(&folded) && !type_requests.contains(&folded) {
                 type_requests.push(folded);
             }
-            let entry = Entry { size: 0, modified: 0, created: 0, accessed: 0, name_off: 0, attrs: r.meta.attrs, name_len: 0, ext_len: 0, tags: 0 };
+            let entry = Entry { size: r.meta.size, modified: r.meta.modified, created: r.meta.created, accessed: 0, name_off: 0, attrs: r.meta.attrs, name_len: 0, ext_len: 0, tags: 0 };
             let (key, kind) = icon_key(&r.name, ext, &entry, icon_px as u32, &r.dir, self.icon_epoch);
+            self.file_icons.see(key, kind);
             let indent = if headers { self.s(16.0) } else { 0.0 };
             let ir = Rect::new(sl.cols[0].x + pad + indent, y + ((rh - icon_px) / 2.0).round(), icon_px, icon_px);
             if !g.image(key, ir) {
-                let (glyph, color) = if is_dir { (G_FOLDER, t.accent.alpha(0xB0)) } else { (G_FILE, t.text_dim.alpha(0x90)) };
-                centered(g, ir, glyph, FontStyle::new(FontFamily::Icons, icon_px * 0.85, false), color);
+                if !self.folder_stand_in(g, kind, icon_px as u32, ir, 255, &mut requests) {
+                    let (glyph, color) = if is_dir { (G_FOLDER, t.accent.alpha(0xB0)) } else { (G_FILE, t.text_dim.alpha(0x90)) };
+                    centered(g, ir, glyph, FontStyle::new(FontFamily::Icons, icon_px * 0.85, false), color);
+                }
                 let wanted = !self.icons.contains_key(&key) && !requests.iter().any(|q| q.key == key);
                 if let Some(path) = wanted.then(|| Location::parse_exact(&r.dir)).flatten().and_then(|d| d.join(&r.name).to_windows()) {
                     requests.push(IconRequest { key, kind, path, size: icon_px as u32, gen: 0, row: 0 });
                 }
             }
+            self.draw_shell_overlay(g, kind, &entry, &r.dir, &r.name, ir, 255);
+            self.draw_file_emblems(g, entry.attrs, ir, 255, &mut requests);
             let ty = y + text_dy;
             let name_x = ir.right() + self.s(8.0);
             let color = if r.meta.attrs & attr::HIDDEN != 0 { t.text_dim } else { t.text };

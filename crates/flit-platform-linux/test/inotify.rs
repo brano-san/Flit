@@ -122,3 +122,32 @@ fn changes_honour_the_dot_hidden_list_and_editing_it_rescans() {
     let (_, rescan) = settle(&rx, 4);
     assert!(rescan);
 }
+
+#[test]
+fn launcher_names_follow_renames_new_launchers_and_trust_changes() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = Temp::new("notify-launchers");
+    let launcher = |name: &str, mode: u32| {
+        let path = t.path().join(name);
+        std::fs::write(&path, "[Desktop Entry]\nType=Application\nName=Firefox\nExec=firefox\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    launcher("firefox.desktop", 0o700);
+    let (n, rx) = notify();
+    n.watch(1, t.path()).unwrap();
+    std::fs::rename(t.path().join("firefox.desktop"), t.path().join("web.desktop")).unwrap();
+    launcher("untrusted.desktop", 0o600);
+    launcher("later.desktop", 0o600);
+    std::fs::set_permissions(t.path().join("later.desktop"), std::fs::Permissions::from_mode(0o700)).unwrap();
+    t.file("plain.txt", 3);
+    let (last, rescan) = settle(&rx, 1);
+    assert!(!rescan);
+    assert_eq!(last[&b"web.desktop"[..]].label, Label::Set("Firefox".into()));
+    assert_eq!(last[&b"firefox.desktop"[..]].kind, ChangeKind::Removed);
+    assert_eq!(last[&b"untrusted.desktop"[..]].label, Label::Clear);
+    assert_eq!(last[&b"later.desktop"[..]].label, Label::Set("Firefox".into()));
+    assert_eq!(last[&b"plain.txt"[..]].label, Label::Keep);
+    std::fs::set_permissions(t.path().join("web.desktop"), std::fs::Permissions::from_mode(0o600)).unwrap();
+    let (last, _) = settle(&rx, 1);
+    assert_eq!(last[&b"web.desktop"[..]].label, Label::Clear, "a launcher that is no longer trusted loses its name");
+}

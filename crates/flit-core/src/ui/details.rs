@@ -37,10 +37,6 @@ const AUTOSCROLL_DEAD: f32 = 12.0;
 const AUTOSCROLL_RATE: f32 = 8.0;
 pub(super) const CHECK: f32 = 14.0;
 const CHECK_IN: Duration = Duration::from_millis(140);
-const PAN_START: f32 = 8.0;
-const FLING_DECAY: f32 = 3.0;
-const FLING_MIN: f32 = 30.0;
-const FLING_STALE: Duration = Duration::from_millis(120);
 pub const THUMB_CACHE_MB: (u32, u32, u32) = (100, 500, 5000);
 const SIZE_GROUPS: [S; 7] = [
     S::DetailsSizeGroupGigantic,
@@ -63,7 +59,7 @@ pub struct Columns {
     #[serde(skip, default = "git_widths")]
     pub git_widths: [f32; 4],
     #[serde(skip, default = "extra_shown")]
-    pub extra: u16,
+    pub extra: u32,
     #[serde(skip, default = "extra_widths")]
     pub extra_widths: [f32; EXTRA],
     #[serde(skip, default = "column_order")]
@@ -71,12 +67,12 @@ pub struct Columns {
 }
 
 pub const GIT_WIDTHS: [f32; 4] = [100.0, 260.0, 140.0, 150.0];
-pub const EXTRA: usize = 13;
-pub const ORDERED: usize = 21;
+pub const EXTRA: usize = 19;
+pub const ORDERED: usize = 27;
 const FIRST_EXTRA: u8 = Column::Folders as u8;
-pub const EXTRA_WIDTHS: [f32; EXTRA] = [90.0, 150.0, 110.0, 110.0, 110.0, 90.0, 110.0, 90.0, 90.0, 110.0, 100.0, 160.0, 110.0];
+pub const EXTRA_WIDTHS: [f32; EXTRA] = [90.0, 150.0, 110.0, 110.0, 110.0, 90.0, 110.0, 90.0, 90.0, 110.0, 100.0, 160.0, 110.0, 140.0, 140.0, 160.0, 160.0, 140.0, 140.0];
 const DEFAULT_HIDDEN: u8 = 1 << Column::Created as u8;
-const DEFAULT_EXTRA: u16 = 1 << (Column::Folders as u8 - FIRST_EXTRA) | 1 << (Column::Free as u8 - FIRST_EXTRA) | 1 << (Column::FileSystem as u8 - FIRST_EXTRA) | 1 << (Column::Percent as u8 - FIRST_EXTRA) | 1 << (Column::Files as u8 - FIRST_EXTRA);
+const DEFAULT_EXTRA: u32 = 1 << (Column::Folders as u8 - FIRST_EXTRA) | 1 << (Column::Free as u8 - FIRST_EXTRA) | 1 << (Column::FileSystem as u8 - FIRST_EXTRA) | 1 << (Column::Percent as u8 - FIRST_EXTRA) | 1 << (Column::Files as u8 - FIRST_EXTRA);
 const DEFAULT_WIDTHS: [f32; 7] = [0.0, 150.0, 140.0, 90.0, 220.0, 150.0, 150.0];
 pub const DEFAULT_ORDER: [Column; ORDERED] = [
     Column::Name,
@@ -100,6 +96,12 @@ pub const DEFAULT_ORDER: [Column; ORDERED] = [
     Column::Duration,
     Column::Artist,
     Column::Version,
+    Column::DateTaken,
+    Column::CameraModel,
+    Column::Album,
+    Column::Title,
+    Column::Authors,
+    Column::Company,
 ];
 const ALL_COLUMNS: [Column; ORDERED] = [
     Column::Name,
@@ -123,13 +125,19 @@ const ALL_COLUMNS: [Column; ORDERED] = [
     Column::Duration,
     Column::Artist,
     Column::Version,
+    Column::DateTaken,
+    Column::CameraModel,
+    Column::Album,
+    Column::Title,
+    Column::Authors,
+    Column::Company,
 ];
 
 fn git_widths() -> [f32; 4] {
     GIT_WIDTHS
 }
 
-fn extra_shown() -> u16 {
+fn extra_shown() -> u32 {
     DEFAULT_EXTRA
 }
 
@@ -527,16 +535,6 @@ struct Pick {
     at: Option<Instant>,
 }
 
-struct Pan {
-    tab: TabId,
-    start: f32,
-    last: f32,
-    at: Instant,
-    velocity: f32,
-    panning: bool,
-    before: (Vec<u32>, Option<u32>, Option<u32>),
-}
-
 struct Autoscroll {
     anchor: f32,
     y: f32,
@@ -587,8 +585,6 @@ pub(super) struct Details {
     pub elided: Vec<usize>,
     pub pane_elided: Vec<(usize, usize)>,
     head_press: Option<(Column, f32, f32)>,
-    pan: Option<Pan>,
-    fling: Option<(TabId, f32)>,
 }
 
 impl Column {
@@ -616,6 +612,8 @@ impl Tab {
 const DATE_GROUPS: [S; 6] = [S::DetailsGroupToday, S::DetailsGroupYesterday, S::DetailsGroupLastWeek, S::DetailsGroupLastMonth, S::DetailsGroupLastYear, S::DetailsGroupLongAgo];
 const NAME_GROUPS: [S; 4] = [S::DetailsGroupNameAh, S::DetailsGroupNameIp, S::DetailsGroupNameQz, S::DetailsGroupOther];
 const ITEM_GROUPS: [S; 5] = [S::DetailsGroupThousands, S::DetailsGroupHundreds, S::DetailsGroupDozens, S::DetailsGroupFew, S::DetailsGroupNoItems];
+const DIMENSION_GROUPS: [S; 4] = [S::DetailsDimensionsGroupVeryLarge, S::DetailsDimensionsGroupLarge, S::DetailsDimensionsGroupMedium, S::DetailsDimensionsGroupSmall];
+const LENGTH_GROUPS: [S; 3] = [S::DetailsLengthGroupLong, S::DetailsLengthGroupMedium, S::DetailsLengthGroupShort];
 
 fn bucket_label(s: &mut impl std::fmt::Write, table: &[S], bucket: u64) {
     let _ = s.write_str(table.get(bucket as usize).map_or(S::DetailsGroupUnspecified, |&k| k).t());
@@ -623,7 +621,7 @@ fn bucket_label(s: &mut impl std::fmt::Write, table: &[S], bucket: u64) {
 
 const NO_ITEMS: &str = "--";
 const G_CALENDAR: &str = "\u{E787}";
-const WINDOWS_COLUMNS: [Column; 16] = [
+const WINDOWS_COLUMNS: [Column; 22] = [
     Column::Name,
     Column::Type,
     Column::Modified,
@@ -640,8 +638,14 @@ const WINDOWS_COLUMNS: [Column; 16] = [
     Column::Duration,
     Column::Artist,
     Column::Version,
+    Column::DateTaken,
+    Column::CameraModel,
+    Column::Album,
+    Column::Title,
+    Column::Authors,
+    Column::Company,
 ];
-const WINDOWS_REPO_COLUMNS: [Column; 20] = [
+const WINDOWS_REPO_COLUMNS: [Column; 26] = [
     Column::Name,
     Column::Type,
     Column::Modified,
@@ -658,6 +662,12 @@ const WINDOWS_REPO_COLUMNS: [Column; 20] = [
     Column::Duration,
     Column::Artist,
     Column::Version,
+    Column::DateTaken,
+    Column::CameraModel,
+    Column::Album,
+    Column::Title,
+    Column::Authors,
+    Column::Company,
     Column::GitStatus,
     Column::GitMessage,
     Column::GitAuthor,
@@ -990,7 +1000,6 @@ impl App {
 
     pub(super) fn release_header(&mut self) {
         self.details.head_press = None;
-        self.details.pan = None;
     }
 
     fn shown_cols(&self) -> Vec<Rect> {
@@ -1230,7 +1239,7 @@ impl App {
             Column::Origin => s.push_str(&name::display(recycle::origin(l, i))),
             Column::Tag => self.tag_text(&mut s, e.tags),
             Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => self.git_text(&mut s, l.name(i), col),
-            Column::ImageSize | Column::Duration | Column::Artist | Column::Version => self.shell_prop_text(&mut s, l.name(i), col),
+            Column::ImageSize | Column::Duration | Column::Artist | Column::Version | Column::DateTaken | Column::CameraModel | Column::Album | Column::Title | Column::Authors | Column::Company => self.shell_prop_text(&mut s, l.name(i), col),
             Column::Type => return self.type_text(arena, l, i),
             Column::Size => {
                 if !e.is_dir() || e.attrs & attr::SIZE_KNOWN != 0 && (self.prefs.auto_sizes || e.attrs & attr::VOLUME != 0) {
@@ -1296,6 +1305,13 @@ impl App {
                 o => s.push_str(&name::display(o)),
             },
             GroupField::Tag => s.push_str(self.tag_defs().get(sort::first_tag(e.tags) as usize).map_or(S::DetailsGroupNoTags.t(), |t| t.name.as_str())),
+            GroupField::Dimensions => bucket_label(&mut s, &DIMENSION_GROUPS, key),
+            GroupField::Duration => bucket_label(&mut s, &LENGTH_GROUPS, key),
+            GroupField::Artist => s.push_str(sort::artist(l, i).unwrap_or(S::DetailsGroupUnspecified.t())),
+            GroupField::Version if key == sort::UNSPECIFIED => s.push_str(S::DetailsGroupUnspecified.t()),
+            GroupField::Version => {
+                let _ = write!(s, "{key}.x");
+            }
         }
         s.into_bump_str()
     }
@@ -1444,75 +1460,14 @@ impl App {
         self.dirty = true;
     }
 
-    pub(super) fn touch_down(&mut self, h: Hit, along: f32, button: MouseButton, now: Instant) {
-        self.details.fling = None;
-        let before = self.tab().view.as_ref().map_or_else(Default::default, |v| (v.selected().collect(), v.focus, v.anchor));
-        self.details.pan = (self.touch_input && button == MouseButton::Left && matches!(h, Hit::Row(_) | Hit::ListEmpty | Hit::Group(_))).then(|| Pan { tab: self.tab().id, start: along, last: along, at: now, velocity: 0.0, panning: false, before });
-    }
-
-    pub(super) fn touch_move(&mut self, along: f32, now: Instant) -> bool {
-        let threshold = self.s(PAN_START);
-        let tab = self.tab().id;
-        let Some(p) = self.details.pan.as_mut().filter(|p| p.tab == tab) else { return false };
-        if !p.panning {
-            if (along - p.start).abs() < threshold {
-                return true;
-            }
-            (p.panning, p.last, p.at) = (true, p.start, now);
-            let (picked, focus, anchor) = std::mem::take(&mut p.before);
-            if let Some(v) = self.tab_mut().view.as_mut() {
-                v.clear_selection();
-                for i in picked {
-                    v.set_selected(i, true);
-                }
-                (v.focus, v.anchor) = (focus, anchor);
-            }
-            self.forget_press();
-            self.end_marquee();
-            self.drag = Drag::None;
-        }
-        let Some(p) = self.details.pan.as_mut() else { return true };
-        let (delta, dt) = (along - p.last, now.saturating_duration_since(p.at).as_secs_f32());
-        if dt > 0.0 {
-            p.velocity = 0.5 * p.velocity + 0.5 * (-delta / dt);
-        }
-        (p.last, p.at) = (along, now);
-        let max = self.max_scroll();
+    pub(super) fn touch_pan_list(&mut self, dx: f32, dy: f32) -> (bool, bool) {
+        let across = self.layout.flow.across;
+        let (along, max) = (if across { dx } else { dy }, self.max_scroll());
         let t = self.tab_mut();
-        t.scroll = (t.scroll - delta).clamp(0.0, max);
-        t.scroll_target = t.scroll;
-        self.dirty = true;
-        true
-    }
-
-    pub(super) fn touch_up(&mut self, now: Instant) -> bool {
-        let Some(p) = self.details.pan.take() else { return false };
-        if !p.panning {
-            return false;
-        }
-        let fresh = now.saturating_duration_since(p.at) < FLING_STALE;
-        self.details.fling = (fresh && p.velocity.abs() >= FLING_MIN).then_some((p.tab, p.velocity));
-        self.forget_press();
-        self.end_marquee();
-        self.dirty = true;
-        true
-    }
-
-    pub(super) fn fling_step(&mut self, dt: f32) -> bool {
-        let tab = self.tab().id;
-        let Some((_, v)) = self.details.fling.filter(|f| f.0 == tab) else {
-            self.details.fling = None;
-            return false;
-        };
-        let max = self.max_scroll();
-        let t = self.tab_mut();
-        let to = (t.scroll + v * dt).clamp(0.0, max);
-        let stopped = to == t.scroll && dt > 0.0;
+        let to = (t.scroll - along).clamp(0.0, max);
+        let moved = to != t.scroll;
         (t.scroll, t.scroll_target) = (to, to);
-        let v = v * (-FLING_DECAY * dt).exp();
-        self.details.fling = (!stopped && v.abs() >= FLING_MIN).then_some((tab, v));
-        self.dirty = true;
-        self.details.fling.is_some()
+        if across { (moved, false) } else { (false, moved) }
     }
 
     pub(super) fn end_autoscroll(&mut self) {

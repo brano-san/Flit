@@ -323,13 +323,14 @@ fn count_pairs(pairs: &[(FsPath, FsPath)], pick: impl Fn(&(FsPath, FsPath)) -> &
 
 fn job_title(op: &FileOp) -> Option<String> {
     Some(match op {
+        FileOp::Link { dest, .. } if dest.kind() == crate::path::PathKind::Unix => return None,
         FileOp::Copy { items, dest } => crate::tr!(S::UiJobTitleCopying, what = count(items), dest = quoted(dest)),
         FileOp::Move { items, dest } => crate::tr!(S::UiJobTitleMoving, what = count(items), dest = quoted(dest)),
         FileOp::MoveTo(pairs) => {
             let renames = pairs.iter().all(|(a, b)| a.parent() == b.parent());
             crate::tr!(if renames { S::UiJobTitleRenaming } else { S::UiJobTitleMovingItems }, what = count_pairs(pairs, |p| &p.0))
         }
-        FileOp::Paste { dest } | FileOp::PasteLink { dest } | FileOp::PasteDropped { dest, .. } => crate::tr!(S::UiJobTitlePasting, dest = quoted(dest)),
+        FileOp::Paste { dest } | FileOp::PasteLink { dest } | FileOp::PasteLinkAs { dest, .. } | FileOp::Link { dest, .. } | FileOp::LinkAs { dest, .. } | FileOp::PasteDropped { dest, .. } => crate::tr!(S::UiJobTitlePasting, dest = quoted(dest)),
         FileOp::Trash(items) => crate::tr!(S::UiJobTitleTrashing, what = count(items)),
         FileOp::Delete(items) => crate::tr!(S::UiJobTitleDeleting, what = count(items)),
         FileOp::Flatten(dirs) => crate::tr!(S::UiJobTitleFlattening, what = count(dirs)),
@@ -344,13 +345,13 @@ fn job_title(op: &FileOp) -> Option<String> {
         FileOp::SetAttributes { items, .. } => crate::tr!(S::PropertiesChanging, what = count(items)),
         FileOp::GrantAccess(dir) => crate::tr!(S::ErrorsFsGranting, what = quoted(dir)),
         FileOp::Access(changes) => crate::tr!(S::PermissionsChanging, what = count(&changes.iter().map(|c| c.item.clone()).collect::<Vec<_>>())),
-        FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::NewStream { .. } | FileOp::Link { .. } | FileOp::FolderIcon { .. } | FileOp::LockScreen(_) => return None,
+        FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::NewStream { .. } | FileOp::FolderIcon { .. } | FileOp::LockScreen(_) => return None,
     })
 }
 
 fn job_dest(provider: &ProviderId, op: &FileOp) -> Option<Location> {
     let path = match op {
-        FileOp::Copy { dest, .. } | FileOp::Move { dest, .. } | FileOp::Paste { dest } | FileOp::PasteLink { dest } | FileOp::PasteDropped { dest, .. } => dest.clone(),
+        FileOp::Copy { dest, .. } | FileOp::Move { dest, .. } | FileOp::Paste { dest } | FileOp::PasteLink { dest } | FileOp::PasteLinkAs { dest, .. } | FileOp::Link { dest, .. } | FileOp::LinkAs { dest, .. } | FileOp::PasteDropped { dest, .. } => dest.clone(),
         FileOp::MoveTo(pairs) => pairs.first()?.1.parent()?,
         FileOp::Restore(pairs) => pairs.first()?.1.parent()?,
         FileOp::Flatten(dirs) => dirs.first()?.clone(),
@@ -421,7 +422,11 @@ impl App {
         if job_title(op).is_none() {
             return;
         }
-        let job = Job { id, op: op.clone(), wsl: matches!(provider, ProviderId::Wsl(_)), dest: job_dest(provider, op), ctl: ctl.clone(), state: JobState::Running, progress: OpProgress::default(), asking: false, erred: false, created: Instant::now(), started: None, finished: None, mark: None, speed: 0.0, samples: VecDeque::new() };
+        let mut summary = op.clone();
+        if let FileOp::PasteDropped { data, .. } = &mut summary {
+            *data = None;
+        }
+        let job = Job { id, op: summary, wsl: matches!(provider, ProviderId::Wsl(_)), dest: job_dest(provider, op), ctl: ctl.clone(), state: JobState::Running, progress: OpProgress::default(), asking: false, erred: false, created: Instant::now(), started: None, finished: None, mark: None, speed: 0.0, samples: VecDeque::new() };
         if let Some(k) = self.jobs.list.iter().position(|j| j.state != JobState::Running).filter(|_| self.jobs.list.len() >= MAX_JOBS) {
             self.jobs.list.remove(k);
         }
@@ -762,7 +767,13 @@ impl App {
             Some(Ask::ExtensionChange(_)) => &EXTENSION_BUTTONS,
             None => &[],
         };
-        keys.to_vec()
+        let mut keys = keys.to_vec();
+        if matches!(self.jobs.asks.front(), Some(Ask::Failure { failure, .. }) if failure.error == S::ErrorsEngineSymlinkPrivilege.en()) {
+            if let Some(first) = keys.first_mut() {
+                *first = S::MenuLinksRetryAdmin;
+            }
+        }
+        keys
     }
 
     pub(super) fn dialog_buttons(&self) -> Vec<&'static str> {
@@ -861,10 +872,11 @@ impl App {
             }
         }
         if let Some(ask) = j.asks.front() {
+            let elevating = matches!(ask, Ask::Failure { failure, .. } if failure.error == S::ErrorsEngineSymlinkPrivilege.en());
             let checked = (matches!(ask, Ask::Conflict { .. }) && !ask.too_large()) || can_delete_instead(ask);
             let policies = policy.iter().filter(|&&p| p).count();
-            let buttons = policy.len() - policies;
-            let row_h = if policies > 0 { s(BUTTON_H) + s(10.0) } else { 0.0 };
+            let buttons = policy.len() - policies - usize::from(elevating);
+            let row_h = if elevating { s(58.0) } else if policies > 0 { s(BUTTON_H) + s(10.0) } else { 0.0 };
             let dh = row_h
                 + match ask {
                     Ask::Conflict { .. } if ask.too_large() => s(168.0),
@@ -882,8 +894,11 @@ impl App {
             let (mut main, mut extra) = (0, 0);
             j.r.buttons = policy
                 .iter()
-                .map(|&p| {
-                    if p {
+                .enumerate()
+                .map(|(index, &p)| {
+                    if elevating && index == 0 {
+                        Rect::new(d.x + s(20.0), row_y - row_h, dw - s(40.0), s(48.0))
+                    } else if p {
                         extra += 1;
                         Rect::new(d.x + s(20.0) + (extra - 1) as f32 * (pw + gap), row_y - row_h, pw, s(BUTTON_H))
                     } else {
@@ -1274,9 +1289,19 @@ impl App {
                 g.dl.round_rect(*b, if hot { t.button_pressed } else { t.button_hover }, s4);
                 g.dl.outline(*b, t.input_border, s4, 1.0);
             }
-            let lw = g.measure(label, font);
-            let baseline = (b.y + (b.h + mf.ascent - mf.descent) / 2.0).round();
-            g.text((b.x + (b.w - lw) / 2.0).round(), baseline, label, font, if primary { t.bg } else { t.text }, b.w);
+            if k == 0 && label == S::MenuLinksRetryAdmin.t() {
+                let rows = super::settings_page::wrap(g, label, font, (b.w - s(16.0)).max(1.0));
+                let height = mf.ascent + mf.descent;
+                let top = b.y + (b.h - height * rows.len() as f32) / 2.0;
+                for (line, text) in rows.into_iter().enumerate() {
+                    let width = g.measure(text, font);
+                    g.text((b.x + (b.w - width) / 2.0).round(), (top + mf.ascent + line as f32 * height).round(), text, font, if primary { t.bg } else { t.text }, b.w - s(16.0));
+                }
+            } else {
+                let lw = g.measure(label, font);
+                let baseline = (b.y + (b.h + mf.ascent - mf.descent) / 2.0).round();
+                g.text((b.x + (b.w - lw) / 2.0).round(), baseline, label, font, if primary { t.bg } else { t.text }, b.w);
+            }
         }
     }
 }

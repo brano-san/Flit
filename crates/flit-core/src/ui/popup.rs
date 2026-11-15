@@ -122,6 +122,18 @@ impl<B: TextBackend> Measure<'_, B> {
 }
 
 impl MenuView {
+    pub(super) fn set_disabled(&mut self, command: usize, value: bool) {
+        for list in &mut self.lists {
+            for node in &mut list.nodes {
+                if let Node::Command { id, disabled, .. } = node {
+                    if *id == command {
+                        *disabled = value;
+                    }
+                }
+            }
+        }
+    }
+
     pub fn new<B: TextBackend>(items: &[MenuItem], x: f32, y: f32, bounds: Rect, scale: f32, g: &mut Gfx<B>) -> Self {
         let mut lists = Vec::new();
         Measure { g, font: font(scale), scale, next_id: 0 }.flatten(items, &mut lists);

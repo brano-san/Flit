@@ -15,6 +15,49 @@ fn app() -> App {
     app
 }
 
+fn disabled_link(items: &[MenuItem], label: &str) -> Option<bool> {
+    items.iter().find_map(|item| match item {
+        MenuItem::Command { label: text, disabled, .. } if text == label => Some(*disabled),
+        MenuItem::Submenu { items, .. } => disabled_link(items, label),
+        _ => None,
+    })
+}
+
+#[test]
+fn link_choices_enable_the_visible_menu_in_both_async_orders_and_never_reopen_it() {
+    use crate::provider::LinkChoices;
+    for choices_first in [true, false] {
+        let mut app = app();
+        app.context_menu();
+        let effects: Vec<_> = app.drain_effects().collect();
+        let generation = effects.iter().find_map(|e| if let Effect::LinkChoices { generation, .. } = e { Some(*generation) } else { None }).unwrap();
+        let menu = effects.into_iter().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m) } else { None }).unwrap();
+        let answer = Event::LinkChoices { generation, choices: LinkChoices([true, true, false, true]) };
+        if choices_first { app.on_event(&answer, Instant::now()); }
+        app.on_event(&Event::ShowMenu { items: menu.menu, x: menu.x, y: menu.y, launches: Vec::new(), kind: menu.kind, shell: Vec::new(), pending: false }, Instant::now());
+        let mut gfx = Gfx::new(Mono, 1024);
+        app.frame(&mut gfx, Instant::now());
+        let context = app.context_menu_mut().unwrap();
+        context.insert("Hard link");
+        context.key(Key::Down, Mods::default());
+        if !choices_first { app.on_event(&answer, Instant::now()); }
+        let current = &app.own_menu.as_ref().unwrap().items;
+        assert_eq!(disabled_link(current, "Hard link"), Some(false), "choices_first={choices_first}");
+        assert_eq!(disabled_link(current, "Junction"), Some(true));
+        assert_eq!(app.context_menu_open().unwrap().query.text(), "Hard link");
+        app.context_menu_mut().unwrap().key(Key::Down, Mods::default());
+        let chosen = app.context_menu_mut().unwrap().key(Key::Enter, Mods::default()).0;
+        assert!(matches!(chosen, MenuOutcome::Command(_)));
+        app.on_event(&Event::ClipboardChanged(30), Instant::now());
+        assert_eq!(disabled_link(&app.own_menu.as_ref().unwrap().items, "Hard link"), Some(true));
+        app.on_event(&answer, Instant::now());
+        assert_eq!(disabled_link(&app.own_menu.as_ref().unwrap().items, "Hard link"), Some(true));
+        app.close_own_menu();
+        app.on_event(&answer, Instant::now());
+        assert!(app.own_menu.is_none());
+    }
+}
+
 fn shown(app: &mut App, launches: Vec<Launch>) {
     let items = vec![cmd("Copy path"), MenuItem::Separator, MenuItem::Submenu { label: "Open with".into(), items: vec![cmd("Editor"), cmd("Viewer")] }];
     app.on_event(&Event::ShowMenu { items, x: 100.0, y: 100.0, launches, kind: crate::ui::MenuKind::None, shell: Vec::new(), pending: false }, Instant::now());
@@ -574,4 +617,48 @@ fn the_query_menu_closes_without_harm_and_works_from_the_keyboard() {
     key(&mut app, Key::Enter);
     assert_eq!(app.context_menu_open().unwrap().query.edit.selection(), 0..2, "Down skips the disabled rows: Paste, then Select All");
     assert!(picks(&mut app).is_empty(), "no menu command ran");
+}
+
+fn first_row_y(app: &App) -> f32 {
+    app.context_menu_open().unwrap().rects[0].y
+}
+
+#[test]
+fn a_finger_scrolls_a_long_context_menu_without_running_a_command_and_a_tap_runs_one() {
+    let mut app = app();
+    let mut g = Gfx::new(Mono, 1024);
+    let t0 = settled_start();
+    open_menu(&mut app, numbered(80), Vec::new(), (100.0, 100.0), crate::ui::MenuKind::Background, t0);
+    app.frame(&mut g, ms(t0, 500));
+    let c = app.context_menu_open().unwrap();
+    let (list, row) = (c.rect, c.rects[6]);
+    let top = first_row_y(&app);
+    let (x, y) = (row.x + 40.0, row.y + row.h / 2.0);
+    let end = app.touch_swipe((x, y), (x, y - 100.0), ms(t0, 1000));
+    assert!(app.own_menu_open(), "a drag runs no command");
+    let moved = top - first_row_y(&app);
+    assert!((moved - 100.0).abs() <= 1.0, "the menu follows the finger: {moved}");
+    app.touch_flick(end, |a| -first_row_y(a));
+    assert!(app.own_menu_open() && list.contains(x, y));
+    app.touch_tap((x, y), end + std::time::Duration::from_secs(10));
+    assert!(!app.own_menu_open(), "a tap runs the command under the finger");
+}
+
+#[test]
+fn a_mouse_drag_over_a_long_menu_does_not_scroll_it() {
+    let mut app = app();
+    let mut g = Gfx::new(Mono, 1024);
+    let t0 = settled_start();
+    open_menu(&mut app, numbered(80), Vec::new(), (100.0, 100.0), crate::ui::MenuKind::Background, t0);
+    app.frame(&mut g, ms(t0, 500));
+    let row = app.context_menu_open().unwrap().rects[6];
+    let top = first_row_y(&app);
+    let (x, y) = (row.x + 40.0, row.y + row.h / 2.0);
+    let t = ms(t0, 1000);
+    app.on_event(&Event::Pointer { touch: false }, t);
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, t);
+    app.on_event(&Event::MouseMove { x, y: y - 100.0 }, t);
+    assert_eq!(first_row_y(&app), top);
+    app.on_event(&Event::MouseUp { x, y: y - 100.0, button: MouseButton::Left }, t);
+    assert_eq!(first_row_y(&app), top);
 }

@@ -191,6 +191,16 @@ fn push_separator(rows: &mut Vec<Row>) {
 }
 
 impl ContextMenu {
+    pub(super) fn set_disabled(&mut self, command: usize, value: bool) {
+        for node in &mut self.nodes {
+            if let What::Command { id, disabled, .. } = &mut node.what {
+                if *id == command {
+                    *disabled = value;
+                }
+            }
+        }
+    }
+
     pub fn new(items: &[MenuItem], kind: MenuKind, pins: Vec<String>, at: (f32, f32), bounds: Rect, scale: f32) -> Self {
         let mut nodes = Vec::new();
         flatten(items, 0, "", &mut 0, &mut nodes);
@@ -688,6 +698,21 @@ impl ContextMenu {
 
     pub fn wheel(&mut self, dy: f32) {
         self.scroll_by(-dy * 3.0 * ROW_H * self.scale);
+    }
+
+    pub fn pans_at(&self, x: f32, y: f32) -> bool {
+        self.field_menu.is_none() && self.list.contains(x, y) && matches!(self.hit(x, y), Some(CtxHit::Row(_) | CtxHit::Star(_) | CtxHit::Box))
+    }
+
+    pub fn pan(&mut self, dy: f32) -> bool {
+        let was = self.scroll;
+        self.scroll_by(-dy);
+        self.scroll != was
+    }
+
+    pub fn let_go(&mut self) {
+        self.pressed = None;
+        self.grab = None;
     }
 
     fn scroll_by(&mut self, d: f32) {

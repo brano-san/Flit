@@ -110,8 +110,8 @@ pub(crate) fn list(dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsE
     Ok(())
 }
 
-fn change(path: &FsPath, f: impl FnOnce(&IShellLibrary) -> windows::core::Result<()>) -> Result<(), PlatformError> {
-    let lib = load(path, true).map_err(err)?;
+fn change(path: &FsPath, open: &impl Fn(&FsPath, bool) -> windows::core::Result<IShellLibrary>, f: impl FnOnce(&IShellLibrary) -> windows::core::Result<()>) -> Result<(), PlatformError> {
+    let lib = open(path, true).map_err(err)?;
     f(&lib).and_then(|_| unsafe { lib.Commit() }).map_err(err)
 }
 
@@ -122,10 +122,10 @@ fn restore(dir: &std::path::Path, defaults: &[Classic]) -> Result<usize, Platfor
         let file = match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(PlatformError::new(-1, flit_core::tr_en!(S::ErrorsLibrariesCreate, path = path.display(), error = e))),
+            Err(e) => return Err(PlatformError::new(-1, flit_core::tr_en!(S::ErrorsLibrariesCreate, path = path.display(), error = flit_core::fmt::io_reason(&e)))),
         };
         let mut file = file;
-        file.write_all(d.xml().as_bytes()).map_err(|e| PlatformError::new(-1, flit_core::tr_en!(S::ErrorsLibrariesWrite, path = path.display(), error = e)))?;
+        file.write_all(d.xml().as_bytes()).map_err(|e| PlatformError::new(-1, flit_core::tr_en!(S::ErrorsLibrariesWrite, path = path.display(), error = flit_core::fmt::io_reason(&e))))?;
         let w: Vec<u16> = path.as_os_str().to_string_lossy().encode_utf16().chain(Some(0)).collect();
         unsafe { SHChangeNotify(SHCNE_CREATE, SHCNF_PATHW, Some(w.as_ptr().cast()), None) };
         made += 1;
@@ -134,6 +134,10 @@ fn restore(dir: &std::path::Path, defaults: &[Classic]) -> Result<usize, Platfor
 }
 
 pub(crate) fn apply(op: &LibraryOp) -> Result<(), PlatformError> {
+    apply_with(op, load)
+}
+
+fn apply_with(op: &LibraryOp, open: impl Fn(&FsPath, bool) -> windows::core::Result<IShellLibrary>) -> Result<(), PlatformError> {
     match op {
         LibraryOp::Create(name) => unsafe {
             com_sta();
@@ -145,9 +149,9 @@ pub(crate) fn apply(op: &LibraryOp) -> Result<(), PlatformError> {
             let dir = libraries_dir().ok_or_else(|| PlatformError::new(-1, S::ErrorsLibrariesUnknownFolder.en()))?;
             restore(&dir, &DEFAULTS).map(drop)
         }
-        LibraryOp::Add { library, folder } => change(library, |l| unsafe { l.AddFolder(&item(folder)?) }),
-        LibraryOp::Remove { library, folder } => change(library, |l| unsafe { l.RemoveFolder(&item(folder)?) }),
-        LibraryOp::SetSave { library, folder } => change(library, |l| unsafe { l.SetDefaultSaveFolder(DSFT_DETECT, &item(folder)?) }),
+        LibraryOp::Add { library, folder } => change(library, &open, |l| unsafe { l.AddFolder(&item(folder)?) }),
+        LibraryOp::Remove { library, folder } => change(library, &open, |l| unsafe { l.RemoveFolder(&item(folder)?) }),
+        LibraryOp::SetSave { library, folder } => change(library, &open, |l| unsafe { l.SetDefaultSaveFolder(DSFT_DETECT, &item(folder)?) }),
     }
 }
 

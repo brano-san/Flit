@@ -126,6 +126,32 @@ pub fn commands(items: &[MenuItem]) -> usize {
 }
 
 impl App {
+    pub(super) fn set_menu_disabled(&mut self, command: usize, value: bool) {
+        fn set(items: &mut [MenuItem], next: &mut usize, command: usize, value: bool) {
+            for item in items {
+                match item {
+                    MenuItem::Command { disabled, .. } => {
+                        if *next == command {
+                            *disabled = value;
+                        }
+                        *next += 1;
+                    }
+                    MenuItem::Submenu { items, .. } => set(items, next, command, value),
+                    _ => {}
+                }
+            }
+        }
+        if let Some(menu) = &mut self.own_menu {
+            set(&mut menu.items, &mut 0, command, value);
+            match &mut menu.view {
+                Some(View::Plain(v)) => v.set_disabled(command, value),
+                Some(View::Context(c)) => c.set_disabled(command, value),
+                None => {}
+            }
+            self.dirty = true;
+        }
+    }
+
     pub(super) fn own_menu_event(&mut self, ev: &Event, now: Instant) -> bool {
         if matches!(ev, Event::Focus(false) | Event::Resized { .. } | Event::ScaleChanged(_)) {
             if self.own_menu.is_some() {
@@ -147,6 +173,7 @@ impl App {
                 m.shape = Some((key, Vec::new()));
             }
             self.own_menu = Some(m);
+            self.refresh_link_choices();
             self.tip_hide();
             self.dirty = true;
             return true;

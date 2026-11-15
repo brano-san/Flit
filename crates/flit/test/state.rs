@@ -335,7 +335,116 @@ fn wide_len(s: &Saved) -> usize {
 fn attributes_len(s: &Saved) -> usize {
     let p = &s.persisted;
     let folders = p.folders.entries();
-    postcard::to_stdvec(&AttributesRecord { view: attributed(&p.view), defaults: attributed(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| attributed(v)).collect() }).unwrap().len()
+    postcard::to_stdvec(&AttributesRecord { view: attributed(&p.view), defaults: attributed(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| attributed(v)).collect() }).unwrap().len() + shells_len(s)
+}
+
+fn shells_len(s: &Saved) -> usize {
+    let p = &s.persisted;
+    let folders = p.folders.entries();
+    postcard::to_stdvec(&ShellRecord { view: shelled(&p.view), defaults: shelled(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| shelled(v)).collect() }).unwrap().len()
+}
+
+fn classic() -> Saved {
+    let mut p = Persisted { path: loc(r"D:\media"), ..Default::default() };
+    p.view.sort = SortSpec { field: SortField::Size, descending: true, ..Default::default() };
+    p.view.group = GroupSpec { field: GroupField::Type, ..Default::default() };
+    p.view.columns.toggle(Column::Attributes);
+    p.view.columns.toggle(Column::ImageSize);
+    p.view.columns.set_width(Column::Version, 123.0);
+    p.view.columns.shift(Column::Size, &[Column::Name, Column::Type, Column::Modified, Column::Size], false);
+    p.prefs.defaults.sort.field = SortField::Modified;
+    p.prefs.defaults.columns.toggle(Column::Duration);
+    p.folders.put(folder_key(&loc(r"D:\media\x")), FolderView { group: GroupSpec { field: GroupField::Size, ..Default::default() }, ..Default::default() });
+    Saved::new(p, None)
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn unhex(s: &str) -> Vec<u8> {
+    (0..s.len()).step_by(2).map(|k| u8::from_str_radix(&s[k..k + 2], 16).unwrap()).collect()
+}
+
+const CLASSIC_FROM_0_7: &str = "0208443a5c6d656469610301000000164300000c430000b442000000005c43010003010002000140000000000000164300000c430000b44200005c430000164300001643000001000000000140000000000000164300000c430000b44200005c4300001643000016430001000100010001000187b7ff829ebdb8e3cf010000000003000140000000000000164300000c430000b44200005c4300001643000016430001010101050001010101050100010101010501f40300000000000000000000cdcc4c3f0000000000000006000000000000000400010203000000000000000000000000c8420000824300000c4300001643000000c8420000824300000c430000164301000000c8420000824300000c430000164301000000000000f10000b442000016430000dc420000dc420000dc420000b4420000dc42000405020308010a06090b070c0e0d0000f10000b442000016430000dc420000dc420000dc420000b4420000dc42000405020108030a06090b070c0e0d010000f10000b442000016430000dc420000dc420000dc420000b4420000dc42000405020108030a06090b070c0e0d00000000b442000016430000dc420000dc420000dc420000b4420000dc420000b4420004050203080f010a06090b070c0e0d0000b442000016430000dc420000dc420000dc420000b4420000dc420000b4420004050201080f030a06090b070c0e0d010000b442000016430000dc420000dc420000dc420000b4420000dc420000b4420004050201080f030a06090b070c0e0d010000000000f1070000b442000016430000dc420000dc420000dc420000b4420000dc420000b4420000b4420000dc420000c842000020430000f6420004050203080f010a06090b070c0e0d1011121314f1090000b442000016430000dc420000dc420000dc420000b4420000dc420000b4420000b4420000dc420000c842000020430000dc420004050201080f030a06090b070c0e0d101112131401f1010000b442000016430000dc420000dc420000dc420000b4420000dc420000b4420000b4420000dc420000c842000020430000dc420004050201080f030a06090b070c0e0d1011121314";
+
+#[test]
+fn a_state_without_the_new_columns_writes_every_older_record_byte_for_byte_as_before() {
+    let s = classic();
+    let bytes = s.encode().unwrap();
+    let old = unhex(CLASSIC_FROM_0_7);
+    assert_eq!(hex(&bytes[..bytes.len() - shells_len(&s)]), hex(&old), "the records older builds read are unchanged");
+    let back = Saved::decode(&old).unwrap().sanitized().persisted;
+    let want = s.persisted.clone();
+    assert_eq!((back.view.sort, back.view.group, back.view.columns), (want.view.sort, want.view.group, want.view.columns), "a file from the older build opens with its settings");
+    assert_eq!(back.prefs.defaults.columns, want.prefs.defaults.columns);
+    assert_eq!(back.folders.entries(), want.folders.entries());
+}
+
+#[test]
+fn shell_columns_sorting_and_grouping_survive_a_restart_and_older_builds_read_name_order_without_groups() {
+    let mut p = Persisted { path: loc(r"D:\media"), ..Default::default() };
+    let kinds = [Column::Name, Column::Type, Column::Size, Column::Company, Column::Duration];
+    p.view.columns.toggle(Column::Company);
+    p.view.columns.toggle(Column::Duration);
+    p.view.columns.set_width(Column::Company, 222.0);
+    p.view.columns.shift(Column::Company, &kinds, false);
+    p.view.columns.shift(Column::Company, &kinds, false);
+    p.view.sort = SortSpec { field: SortField::Duration, descending: true, ..Default::default() };
+    p.view.group = GroupSpec { field: GroupField::Artist, ..Default::default() };
+    p.prefs.defaults.sort.field = SortField::Version;
+    p.prefs.defaults.group.field = GroupField::Dimensions;
+    let key = folder_key(&loc(r"D:\media\clips"));
+    p.folders.put(key, FolderView { sort: SortSpec { field: SortField::Artist, ..Default::default() }, group: GroupSpec { field: GroupField::Duration, ..Default::default() }, ..Default::default() });
+    let moved = p.view.columns.ordered(&kinds);
+    assert_eq!(moved[2], Column::Company);
+    let s = Saved::new(p, None);
+    let bytes = s.encode().unwrap();
+    let back = Saved::decode(&bytes).unwrap().sanitized().persisted;
+    assert_eq!((back.view.sort.field, back.view.sort.descending, back.view.group.field), (SortField::Duration, true, GroupField::Artist));
+    assert!(back.view.columns.shown(Column::Company) && back.view.columns.shown(Column::Duration));
+    assert_eq!((back.view.columns.width(Column::Company), back.view.columns.ordered(&kinds)), (222.0, moved));
+    assert_eq!((back.prefs.defaults.sort.field, back.prefs.defaults.group.field), (SortField::Version, GroupField::Dimensions));
+    assert_eq!(back.folders.get(key).map(|f| (f.sort.field, f.group.field)), Some((SortField::Artist, GroupField::Duration)));
+    let older = Saved::decode(&bytes[..bytes.len() - shells_len(&s)]).unwrap().sanitized().persisted;
+    assert_eq!((older.view.sort.field, older.view.sort.descending, older.view.group.field), (SortField::Name, true, GroupField::None), "builds without these sorts fall back to names");
+    assert_eq!((older.prefs.defaults.sort.field, older.prefs.defaults.group.field), (SortField::Name, GroupField::None));
+    assert_eq!(older.folders.get(key).map(|f| (f.sort.field, f.group.field)), Some((SortField::Name, GroupField::None)));
+    assert!(older.view.columns.shown(Column::Duration), "the four older shell columns keep their switch");
+    assert!(!older.view.columns.shown(Column::Company));
+    let (_, wide_order) = wide(&s.persisted.view);
+    let (_, _, _, _, zoom_order) = zoomed(&s.persisted.view);
+    let (extra, _, order) = attributed(&s.persisted.view);
+    assert!(wide_order.iter().chain(&zoom_order).chain(&order).all(|&id| id < 21), "older builds never see an id they do not know");
+    let mut ids = order.to_vec();
+    ids.sort_unstable();
+    assert_eq!(ids, (0..21).collect::<Vec<u8>>(), "older builds get a whole column order and keep it");
+    assert!(extra < 1 << 13);
+    let legacy_views = postcard::to_stdvec(&legacy(s.persisted.view)).unwrap();
+    assert_eq!(postcard::from_bytes::<FolderView>(&legacy_views).ok().map(|v| (v.sort.field, v.group.field)), Some((SortField::Name, GroupField::None)));
+}
+
+#[test]
+fn a_cut_or_unknown_shell_record_keeps_every_older_setting() {
+    let mut s = classic();
+    s.persisted.view.sort.field = SortField::Duration;
+    s.persisted.view.columns.toggle(Column::Title);
+    let bytes = s.encode().unwrap();
+    let cut = Saved::decode(&bytes[..bytes.len() - 3]).unwrap().sanitized().persisted;
+    assert!(cut.view.columns.shown(Column::Attributes) && cut.view.columns.shown(Column::ImageSize));
+    assert_eq!(cut.view.columns.width(Column::Version), 123.0);
+    assert_eq!((cut.view.sort.field, cut.view.group.field), (SortField::Name, GroupField::Type));
+    let mut future = bytes[..bytes.len() - shells_len(&s)].to_vec();
+    let mut record = shelled(&s.persisted.view);
+    (record.3, record.4) = (200, 200);
+    record.0 |= 1 << 30;
+    record.1.push(77.0);
+    record.2.push(99);
+    future.extend(postcard::to_stdvec(&ShellRecord { view: record.clone(), defaults: record, folders: Vec::new() }).unwrap());
+    let read = Saved::decode(&future).unwrap().sanitized().persisted;
+    assert_eq!((read.view.sort.field, read.view.group.field), (SortField::Name, GroupField::Type), "sorts this build does not know fall back");
+    assert!(read.view.columns.shown(Column::Title) && read.view.columns.shown(Column::Attributes));
+    assert_eq!(read.view.columns.width(Column::Version), 123.0);
 }
 
 #[test]

@@ -19,6 +19,7 @@ pub mod attr {
     pub const STREAM: u32 = 1 << 8;
     pub const NESTED: u32 = 1 << 9;
     pub const EXEC: u32 = 1 << 10;
+    pub const UNREADABLE: u32 = 1 << 11;
     pub const ONLINE_ONLY: u32 = 1 << 12;
     pub const PINNED: u32 = 1 << 13;
     pub const OFFLINE: u32 = 1 << 14;
@@ -110,6 +111,63 @@ pub struct Listing {
     pub total: u64,
     pub nested: u32,
     pub labels: Vec<(u32, Box<str>)>,
+    pub props: crate::hash::FxHashMap<u32, PropKey>,
+}
+
+pub const SHELL_PROPS: [&str; 10] = [
+    "System.Image.Dimensions",
+    "System.Media.Duration",
+    "System.Music.Artist",
+    "System.FileVersion",
+    "System.Photo.DateTaken",
+    "System.Photo.CameraModel",
+    "System.Music.AlbumTitle",
+    "System.Title",
+    "System.Author",
+    "System.Company",
+];
+const ARTIST_AT: usize = 2;
+const VERSION_AT: usize = 3;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ColumnValues {
+    pub text: Vec<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub duration: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PropKey {
+    pub pixels: Option<(u64, u32)>,
+    pub duration: Option<u64>,
+    pub artist: Option<(Box<str>, Box<[u8]>)>,
+    pub version: Option<u64>,
+}
+
+impl PropKey {
+    pub fn new(v: &ColumnValues, case: CaseMode) -> Option<Self> {
+        let text = |k: usize| v.text.get(k).map(|s| s.trim()).filter(|s| !s.is_empty());
+        let pixels = v.width.zip(v.height).filter(|&(w, h)| w > 0 && h > 0).map(|(w, h)| (u64::from(w) * u64::from(h), w));
+        let artist = text(ARTIST_AT).map(|a| {
+            let mut key = Vec::new();
+            crate::sort::encode_key(a.as_bytes(), case, &mut key);
+            (Box::from(a), key.into_boxed_slice())
+        });
+        let key = Self { pixels, duration: v.duration, artist, version: text(VERSION_AT).and_then(version_number) };
+        (key != Self::default()).then_some(key)
+    }
+}
+
+pub fn version_number(s: &str) -> Option<u64> {
+    let mut packed = 0u64;
+    for (k, part) in s.trim().split('.').enumerate() {
+        if k == 4 || part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        packed |= u64::from(part.parse::<u16>().ok()?) << (48 - 16 * k);
+    }
+    Some(packed)
 }
 
 impl Listing {
@@ -123,6 +181,16 @@ impl Listing {
     #[inline]
     pub fn label(&self, i: u32) -> &[u8] {
         self.labeled(i).map_or_else(|| self.name(i), str::as_bytes)
+    }
+
+    pub fn clear_label(&mut self, i: u32) -> bool {
+        match self.labels.binary_search_by_key(&i, |l| l.0) {
+            Ok(k) => {
+                self.labels.remove(k);
+                true
+            }
+            Err(_) => false,
+        }
     }
 
     pub fn set_label(&mut self, i: u32, label: &str) {
@@ -391,11 +459,12 @@ pub struct ListingBuilder<'a> {
     tags: Option<Arc<Tags>>,
     volume: Option<u32>,
     streams: bool,
+    labels: bool,
 }
 
 impl<'a> ListingBuilder<'a> {
     pub fn new(case: CaseMode, on_batch: &'a mut dyn FnMut(&ListingBuilder<'_>) -> bool) -> Self {
-        Self { listing: Listing::default(), keys: SortKeys::new(case), on_batch: Some(on_batch), tags: None, volume: None, streams: false }
+        Self { listing: Listing::default(), keys: SortKeys::new(case), on_batch: Some(on_batch), tags: None, volume: None, streams: false, labels: false }
     }
 
     pub fn with_streams(mut self, on: bool) -> Self {
@@ -405,6 +474,15 @@ impl<'a> ListingBuilder<'a> {
 
     pub fn wants_streams(&self) -> bool {
         self.streams
+    }
+
+    pub fn with_labels(mut self, on: bool) -> Self {
+        self.labels = on;
+        self
+    }
+
+    pub fn wants_labels(&self) -> bool {
+        self.labels
     }
 
     pub fn with_tags(mut self, tags: Arc<Tags>) -> Self {
@@ -498,11 +576,20 @@ pub enum ChangeKind {
     Modified,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Label {
+    #[default]
+    Keep,
+    Set(String),
+    Clear,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirChange {
     pub kind: ChangeKind,
     pub name: Vec<u8>,
     pub meta: Option<Meta>,
+    pub label: Label,
 }
 
 #[cfg(test)]

@@ -41,6 +41,8 @@ const MOUSE: &str = "org.gnome.desktop.peripherals.mouse";
 const MOUSE_MATCH: &str = "type='signal',interface='org.freedesktop.portal.Settings',member='SettingChanged',arg0='org.gnome.desktop.peripherals.mouse'";
 const GNOME_INTERFACE: &str = "org.gnome.desktop.interface";
 const INTERFACE_MATCH: &str = "type='signal',interface='org.freedesktop.portal.Settings',member='SettingChanged',arg0='org.gnome.desktop.interface'";
+const GNOME_WM: &str = "org.gnome.desktop.wm.preferences";
+const WM_MATCH: &str = "type='signal',interface='org.freedesktop.portal.Settings',member='SettingChanged',arg0='org.gnome.desktop.wm.preferences'";
 const ROLE_APPLICATION: (u32, &str) = (75, "application");
 const LAYER_WIDGET: u32 = 3;
 const LAYER_WINDOW: u32 = 7;
@@ -162,6 +164,7 @@ pub(crate) enum V {
     Props(Vec<(String, V)>),
     Bytes(Vec<u8>),
     Array(&'static str, Vec<V>),
+    O(String),
 }
 
 impl V {
@@ -186,6 +189,7 @@ impl V {
             V::Props(_) => "a{sv}".into(),
             V::Bytes(_) => "ay".into(),
             V::Array(item, _) => format!("a{item}"),
+            V::O(_) => "o".into(),
         }
     }
 }
@@ -805,6 +809,7 @@ pub(crate) unsafe fn put(api: &Api, it: &mut Iter, me: &str, v: &V) {
         V::Empty(item) => open(api, it, b'a', Some(item), |_| {}),
         V::Bytes(b) => open(api, it, b'a', Some("y"), |s| b.iter().for_each(|&x| basic(api, s, b'y', x))),
         V::Array(item, vs) => open(api, it, b'a', Some(item), |s| vs.iter().for_each(|x| put(api, s, me, x))),
+        V::O(path) => string(api, it, b'o', path),
         V::Props(p) => open(api, it, b'a', Some("{sv}"), |s| {
             for (k, x) in p {
                 open(api, s, b'e', None, |e| {
@@ -1131,6 +1136,27 @@ pub(crate) enum LookChange {
     Accent(Option<flit_core::theme::Accent>),
     TextScale(f64),
     IconTheme(String),
+    WindowButtons(String),
+}
+
+fn setting_string(a: &Arg) -> Option<String> {
+    match a {
+        Arg::S(s) => Some(s.clone()),
+        Arg::L(v) => v.iter().find_map(setting_string),
+        _ => None,
+    }
+}
+
+pub(crate) fn read_button_layout() -> Option<String> {
+    let address = dbus::session_address()?;
+    read_button_layout_at(&address)
+}
+
+fn read_button_layout_at(address: &str) -> Option<String> {
+    let api = dbus::load()?;
+    let conn = Conn::open(&api, address)?;
+    let reply = conn.call(PORTAL, PORTAL_PATH, "org.freedesktop.portal.Settings", "Read", &[V::S(GNOME_WM.to_owned()), V::S("button-layout".to_owned())])?;
+    reply.iter().find_map(setting_string)
 }
 
 fn first_text(a: &Arg) -> Option<String> {
@@ -1151,6 +1177,7 @@ fn doubles(a: &Arg) -> Vec<f64> {
 
 pub(crate) fn look_change(args: &[Arg]) -> Option<LookChange> {
     match args {
+        [Arg::S(ns), Arg::S(key), value] if ns == GNOME_WM && key == "button-layout" => setting_string(value).map(LookChange::WindowButtons),
         [Arg::S(ns), Arg::S(key), value] if ns == APPEARANCE && key == "accent-color" => Some(LookChange::Accent(match doubles(value)[..] {
             [r, g, b] => flit_core::theme::Accent::from_unit_rgb(r, g, b),
             _ => None,
@@ -1167,6 +1194,7 @@ pub(crate) fn watch_settings(address: &str, changed: &dyn Fn(i64), clicks: &dyn 
     conn.add_match(SETTING_MATCH);
     conn.add_match(INTERFACE_MATCH);
     conn.add_match(MOUSE_MATCH);
+    conn.add_match(WM_MATCH);
     loop {
         let mut latest = None;
         let mut looks = Vec::new();

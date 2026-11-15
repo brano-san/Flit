@@ -3,6 +3,27 @@ use crate::listing::{attr, Listing};
 use crate::sort::{CaseMode, SortKeys};
 use std::time::Duration;
 
+#[test]
+fn legacy_link_operation_bytes_remain_compatible_and_typed_links_roundtrip() {
+    let dest = FsPath::parse(r"C:\out").unwrap();
+    let source = FsPath::parse(r"C:\a").unwrap();
+    for (op, bytes) in [
+        (FileOp::Link { items: vec![source.clone()], dest: dest.clone() }, vec![3, 1, 4, 67, 58, 92, 97, 6, 67, 58, 92, 111, 117, 116]),
+        (FileOp::PasteLink { dest: dest.clone() }, vec![19, 6, 67, 58, 92, 111, 117, 116]),
+        (FileOp::GrantAccess(dest.clone()), vec![24, 6, 67, 58, 92, 111, 117, 116]),
+    ] {
+        assert_eq!(postcard::to_stdvec(&op).unwrap(), bytes);
+        assert_eq!(postcard::from_bytes::<FileOp>(&bytes).unwrap(), op);
+    }
+    for kind in [LinkKind::Shortcut, LinkKind::Symbolic, LinkKind::Junction, LinkKind::Hard] {
+        for op in [FileOp::LinkAs { items: vec![source.clone()], dest: dest.clone(), kind }, FileOp::PasteLinkAs { dest: dest.clone(), kind }] {
+            let bytes = postcard::to_stdvec(&op).unwrap();
+            assert_eq!(postcard::from_bytes::<FileOp>(&bytes).unwrap(), op);
+            assert_eq!(op.map_paths(|p| Some(p.clone())), Some(op));
+        }
+    }
+}
+
 fn snap(gen: u64) -> Arc<DirSnapshot> {
     let path = FsPath::parse(r"C:\x").unwrap();
     Arc::new(DirSnapshot { gen, path, listing: Listing::default(), keys: SortKeys::new(CaseMode::Insensitive), order: Vec::new(), view: ViewSpec::default(), done: true, error: None, elapsed: Duration::ZERO })
@@ -122,4 +143,26 @@ fn a_paused_operation_waits_until_it_is_resumed_or_cancelled() {
     ctl.cancel();
     waiting.join().unwrap();
     assert!(ctl.is_paused() && ctl.is_cancelled(), "cancel ends the wait without resuming");
+}
+
+#[test]
+fn dropped_file_bytes_are_local_only_and_the_legacy_wire_format_is_unchanged() {
+    let dest = FsPath::parse("/tmp").unwrap();
+    let data = Arc::new(DroppedFile { name: b"private.txt".to_vec(), bytes: b"synthetic private body".to_vec() });
+    let legacy = [23, 4, b'/', b't', b'm', b'p', 0];
+    for payload in [None, Some(data)] {
+        let op = FileOp::PasteDropped { dest: dest.clone(), moving: false, data: payload };
+        assert_eq!(postcard::to_stdvec(&op).unwrap(), legacy);
+        assert_eq!(postcard::from_bytes::<FileOp>(&legacy).unwrap(), FileOp::PasteDropped { dest: dest.clone(), moving: false, data: None });
+        assert_eq!(op.map_paths(|p| Some(p.clone())), Some(op));
+    }
+}
+
+#[test]
+fn dropped_content_debug_never_reveals_its_body() {
+    let data = DroppedFile { name: b"private.txt".to_vec(), bytes: b"synthetic private body".to_vec() };
+    let shown = format!("{data:?}");
+    assert!(!shown.contains("synthetic private body"));
+    assert!(!shown.contains("115, 121, 110, 116"));
+    assert!(shown.contains("private.txt") && shown.contains("22"));
 }

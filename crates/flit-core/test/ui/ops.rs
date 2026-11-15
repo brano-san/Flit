@@ -96,7 +96,7 @@ fn done(app: &mut App, id: OpId, op: FileOp, items: &[(&str, &str)]) {
 fn change(app: &mut App, kind: ChangeKind, name: &str, dir: bool) {
     let (tab, gen) = (app.tab().id, app.tab().gen);
     let meta = Some(Meta { attrs: if dir { attr::DIR } else { 0 }, ..Default::default() });
-    app.on_provider_event(ProviderEvent::Changes { tab, gen, changes: vec![DirChange { kind, name: name.as_bytes().to_vec(), meta }] }, t0());
+    app.on_provider_event(ProviderEvent::Changes { tab, gen, changes: vec![DirChange { label: crate::listing::Label::Keep, kind, name: name.as_bytes().to_vec(), meta }] }, t0());
     let mut g = Gfx::new(Mono, 1024);
     app.frame(&mut g, t0());
 }
@@ -669,7 +669,7 @@ fn right_dragging_rows_asks_what_to_do_where_they_land() {
     assert_eq!(app.drop_spot(), Some(Spot::Row(0)));
     assert_eq!(app.drag(&DragEvent::Drop { x: sub.0, y: sub.1, mods: NO, allowed: all }, t0()), COPY);
     let menu = drop_menu(&mut app);
-    assert_eq!(drop_rows(&menu), ["Copy here", "Move here *", "Create shortcut here", "-", "Cancel"], "Flit offers every choice for its own drag");
+    assert_eq!(drop_rows(&menu), ["Copy here", "Move here *", "Create shortcut here", "Symbolic link (off)", "Junction (off)", "Hard link (off)", "-", "Cancel"], "Flit offers every choice for its own drag");
     assert!(op_list(&mut app).is_empty(), "nothing happens before a choice");
     run_menu(&mut app, &menu, "Move here");
     assert_eq!(op_list(&mut app), [FileOp::Move { items: dragged.clone(), dest: p(r"C:\x\sub") }]);
@@ -692,7 +692,7 @@ fn a_right_drop_from_another_program_offers_what_it_allows() {
     };
     assert_eq!(right_drop(&mut app, &[r"D:\in\f.txt"], sub, COPY | MOVE | LINK), (COPY, COPY));
     let menu = drop_menu(&mut app);
-    assert_eq!(drop_rows(&menu), ["Copy here *", "Move here", "Create shortcut here", "-", "Cancel"]);
+    assert_eq!(drop_rows(&menu), ["Copy here *", "Move here", "Create shortcut here", "Symbolic link (off)", "Junction (off)", "Hard link (off)", "-", "Cancel"]);
     run_menu(&mut app, &menu, "Create shortcut here");
     assert_eq!(op_list(&mut app), [FileOp::Link { items: vec![p(r"D:\in\f.txt")], dest: p(r"C:\x\sub") }]);
 
@@ -707,7 +707,7 @@ fn a_right_drop_from_another_program_offers_what_it_allows() {
     assert!(op_list(&mut app).is_empty());
 
     assert_eq!(right_drop(&mut app, &[r"C:\x\a.txt"], empty, COPY | MOVE), (COPY, COPY), "files already here can still be copied");
-    assert_eq!(drop_rows(&drop_menu(&mut app)), ["Copy here *", "Move here (off)", "Create shortcut here (off)", "-", "Cancel"]);
+    assert_eq!(drop_rows(&drop_menu(&mut app)), ["Copy here *", "Move here (off)", "Create shortcut here (off)", "Symbolic link (off)", "Junction (off)", "Hard link (off)", "-", "Cancel"]);
 
     app.caps = crate::caps::Caps { unix_paths: true };
     right_drop(&mut app, &[r"D:\in\f.txt"], sub, COPY | MOVE | LINK);
@@ -715,6 +715,73 @@ fn a_right_drop_from_another_program_offers_what_it_allows() {
 
     assert_eq!(right_drop(&mut app, &[r"D:\in\f.txt"], title, COPY), (COPY, COPY), "the title bar still reveals at once");
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::ShellMenu(_))));
+}
+
+#[test]
+fn right_drop_links_use_the_existing_job_queue_select_the_created_item_and_undo_only_the_link() {
+    use crate::provider::{LinkChoices, LinkKind};
+    use drop_effect::*;
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("keep.txt", false)]);
+    let at = (300.0, app.layout.list.y + 200.0);
+    let source = p(r"C:\from\a.txt");
+    let allowed = COPY | MOVE | LINK;
+    app.drag(&DragEvent::Enter { paths: vec![source.clone()], x: at.0, y: at.1, mods: NO, allowed, right: true }, t0());
+    app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: NO, allowed }, t0());
+    let effects: Vec<_> = app.drain_effects().collect();
+    let generation = effects.iter().find_map(|e| if let Effect::LinkChoices { generation, items, dest } = e {
+        assert_eq!(items.as_ref().unwrap(), std::slice::from_ref(&source));
+        assert_eq!(dest, &p(r"C:\x"));
+        Some(*generation)
+    } else { None }).unwrap();
+    let menu = effects.into_iter().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m.menu) } else { None }).unwrap();
+    app.on_event(&Event::LinkChoices { generation, choices: LinkChoices([true, true, false, true]) }, t0());
+    run_menu(&mut app, &menu, "Hard link");
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::LinkAs { items: vec![source], dest: p(r"C:\x"), kind: LinkKind::Hard });
+    assert_eq!(app.running_jobs(), 1);
+    done(&mut app, id, op, &[(r"C:\from\a.txt", r"C:\x\Link to a.txt")]);
+    deliver(&mut app, &[("keep.txt", false), ("Link to a.txt", false)]);
+    app.frame(&mut Gfx::new(Mono, 512), t0());
+    assert_eq!(selected(&app), ["Link to a.txt"]);
+    key(&mut app, Key::Char('Z'), CTRL);
+    assert_eq!(op_list(&mut app), [FileOp::Delete(vec![p(r"C:\x\Link to a.txt")])]);
+}
+
+#[test]
+fn cancelling_a_right_drop_or_denying_link_transfer_never_uses_old_link_choices() {
+    use crate::provider::{LinkChoices, LinkKind};
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[]);
+    let asked = || Asked { paths: vec![p(r"C:\a.txt")], dest: p(r"C:\x") };
+    app.ask_drop(asked(), drop_effect::COPY | drop_effect::LINK, drop_effect::COPY, (300.0, 200.0));
+    let generation = app.ops.link_probe.as_ref().unwrap().generation;
+    app.on_link_choices(generation, LinkChoices([true; 4]));
+    app.drop_chosen(drop_effect::NONE);
+    app.drop_as(LinkKind::Hard);
+    assert!(ops(&mut app).is_empty());
+    app.ask_drop(asked(), drop_effect::COPY, drop_effect::COPY, (300.0, 200.0));
+    app.on_link_choices(generation, LinkChoices([true; 4]));
+    app.drop_as(LinkKind::Hard);
+    assert!(ops(&mut app).is_empty());
+}
+
+#[test]
+fn the_shortcut_choice_keeps_legacy_undo_and_redo_through_the_recycle_bin() {
+    use crate::provider::LinkKind;
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[]);
+    app.paste_as(LinkKind::Shortcut);
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::PasteLink { dest: p(r"C:\x") });
+    let link = FileOp::Link { items: vec![p(r"C:\source")], dest: p(r"C:\x") };
+    done(&mut app, id, link, &[(r"C:\source", r"C:\x\Link to source.lnk")]);
+    key(&mut app, Key::Char('Z'), CTRL);
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(op, FileOp::Trash(vec![p(r"C:\x\Link to source.lnk")]));
+    done(&mut app, id, op, &[(r"C:\x\Link to source.lnk", r"C:\$Recycle.Bin\S\$Rlink")]);
+    key(&mut app, Key::Char('Y'), CTRL);
+    assert_eq!(op_list(&mut app), [FileOp::Restore(vec![(p(r"C:\$Recycle.Bin\S\$Rlink"), p(r"C:\x\Link to source.lnk"))])]);
 }
 
 #[test]
@@ -741,10 +808,10 @@ fn content_without_file_paths_lands_in_the_folder_under_the_cursor() {
     assert_eq!((app.drop_folder(), app.drop_caption()), (Some(p(r"C:\x\sub")), Some(("Copy to %1".to_owned(), "sub".to_owned()))), "the platform learns where to put it");
     assert_eq!(app.drag(&DragEvent::Over { x: sub.0, y: sub.1, mods: SHIFT, allowed: COPY | MOVE }, t0()), MOVE);
     assert_eq!(app.drag(&DragEvent::Drop { x: sub.0, y: sub.1, mods: NO, allowed: COPY | MOVE }, t0()), COPY);
-    assert_eq!(op_list(&mut app), [FileOp::PasteDropped { dest: p(r"C:\x\sub"), moving: false }], "the content is saved by a queued operation that selects what it made");
+    assert_eq!(op_list(&mut app), [FileOp::PasteDropped { dest: p(r"C:\x\sub"), moving: false, data: None }], "the content is saved by a queued operation that selects what it made");
     enter(&mut app, sub, COPY | MOVE);
     app.drag(&DragEvent::Drop { x: sub.0, y: sub.1, mods: SHIFT, allowed: COPY | MOVE }, t0());
-    assert_eq!(op_list(&mut app), [FileOp::PasteDropped { dest: p(r"C:\x\sub"), moving: true }]);
+    assert_eq!(op_list(&mut app), [FileOp::PasteDropped { dest: p(r"C:\x\sub"), moving: true, data: None }]);
     assert_eq!(enter(&mut app, title, COPY), NONE, "content cannot be revealed");
     app.drag(&DragEvent::Leave, t0());
     assert_eq!(enter(&mut app, sub, LINK), NONE);
@@ -1483,7 +1550,7 @@ fn links_get_an_icon_of_their_own_outside_windows_and_plain_files_share_their_ty
     let plain = |name: &[u8]| icon_key(name, b"txt", &entry(0), 16, b"/home/u", 0);
     assert_eq!(plain(b"a.txt"), plain(b"b.txt"));
     assert_eq!(plain(b"a.txt").1, IconKind::Type);
-    assert_eq!(icon_key(b"d", b"", &entry(attr::DIR), 16, b"/home/u", 0).1, IconKind::Folder);
+    assert_eq!(icon_key(b"d", b"", &entry(attr::DIR), 16, b"/home/u", 0).1, if cfg!(target_os = "linux") { IconKind::CustomFolder } else { IconKind::Folder });
     if cfg!(windows) {
         assert_eq!(link(b"a.txt", attr::LINK), plain(b"a.txt"));
     } else {
@@ -1859,7 +1926,7 @@ fn bulk(app: &mut App, n: usize) -> (Vec<String>, OpId, FileOp) {
 fn watcher_removes(app: &mut App, names: &[String]) {
     let (tab, gen) = (app.tab().id, app.tab().gen);
     for n in names {
-        let change = DirChange { kind: ChangeKind::Removed, name: n.as_bytes().to_vec(), meta: None };
+        let change = DirChange { label: crate::listing::Label::Keep, kind: ChangeKind::Removed, name: n.as_bytes().to_vec(), meta: None };
         app.on_provider_event(ProviderEvent::Changes { tab, gen, changes: vec![change] }, t0());
     }
     app.poll();
@@ -2528,4 +2595,180 @@ fn hovering_a_plain_file_hands_the_drop_to_its_shell_handler_with_flit_as_the_fa
     let at = row_xy(&app, 0);
     app.drag(&DragEvent::Enter { paths: vec![p("/tmp/f.txt")], x: at.0, y: at.1, mods: NO, allowed: all, right: false }, t0());
     assert_eq!(app.drop_onto(), None);
+}
+
+#[test]
+fn desktop_listing_labels_sort_and_select_by_title_but_f2_edits_the_actual_file() {
+    let mut app = app_at("/tmp/launchers");
+    app.caps.unix_paths = true;
+    let t = app.tab();
+    let mut listing = Listing::default();
+    let launcher = listing.push(b"z-browser.desktop", Meta::default());
+    listing.set_label(launcher, "Alpha Browser");
+    listing.push(b"middle.txt", Meta::default());
+    let mut keys = SortKeys::new(CaseMode::Sensitive);
+    keys.push(b"z-browser.desktop");
+    keys.push(b"middle.txt");
+    keys.relabel(&listing);
+    let view = ViewSpec::default();
+    let mut order = Vec::new();
+    sort::sort(&listing, &keys, view, &mut order);
+    t.slot.publish(Arc::new(DirSnapshot { gen: t.gen, path: t.location().path().clone(), listing, keys, order, view, done: true, error: None, elapsed: Duration::ZERO }));
+    app.poll();
+    app.drain_effects().for_each(drop);
+    let v = app.tab().view.as_ref().unwrap();
+    assert_eq!(v.rows(), &[launcher, 1]);
+    assert_eq!(app.shown_name(v.listing(), launcher), "Alpha Browser");
+    app.opts.char_key = crate::ui::options::CharKey::Select;
+    key(&mut app, Key::End, NO);
+    typed(&mut app, "a");
+    assert_eq!(selected(&app), ["z-browser.desktop"]);
+    for needle in ["Alpha", "z-browser"] {
+        let v = app.tabs[app.cur].view.as_mut().unwrap();
+        v.set_filter(needle);
+        assert_eq!(v.rows(), &[launcher]);
+    }
+    app.tabs[app.cur].view.as_mut().unwrap().set_filter("");
+    key(&mut app, Key::F(2), NO);
+    assert_eq!(app.rename_text(), Some("z-browser.desktop"));
+    typed(&mut app, "new");
+    assert_eq!(app.rename_text(), Some("new.desktop"));
+    key(&mut app, Key::Enter, NO);
+    assert_eq!(ops(&mut app).into_iter().map(|(_, op)| op).collect::<Vec<_>>(), [FileOp::Rename { item: p("/tmp/launchers/z-browser.desktop"), name: b"new.desktop".to_vec() }]);
+}
+
+#[test]
+fn linux_content_drops_are_queued_and_reveal_the_files_they_created() {
+    let mut app = app_at("/tmp/drop");
+    app.caps.unix_paths = true;
+    deliver(&mut app, &[]);
+    for (name, bytes) in [("example.desktop", b"[Desktop Entry]".as_slice()), ("Dropped text.txt", b"hello"), ("Dropped image.png", b"\x89PNG")] {
+        let (x, y) = (app.layout.list.x + 100.0, app.layout.list.bottom() - 20.0);
+        let data = Arc::new(crate::provider::DroppedFile { name: name.as_bytes().to_vec(), bytes: bytes.to_vec() });
+        assert_eq!(app.drag(&DragEvent::Enter { paths: Vec::new(), x, y, mods: NO, allowed: drop_effect::COPY, right: false }, t0()), drop_effect::COPY);
+        assert_eq!(app.drag(&DragEvent::DropData { x, y, data: data.clone() }, t0()), drop_effect::COPY);
+        let [(id, op)] = ops(&mut app).try_into().unwrap();
+        assert_eq!(op, FileOp::PasteDropped { dest: p("/tmp/drop"), moving: false, data: Some(data) });
+        assert_eq!(app.running_jobs(), 1);
+        done(&mut app, id, op, &[("/tmp/drop/made", &format!("/tmp/drop/{name}"))]);
+        change(&mut app, ChangeKind::Added, name, false);
+        assert_eq!(selected(&app), [name]);
+        assert_eq!(app.running_jobs(), 0);
+    }
+}
+
+#[test]
+fn linux_content_drop_failures_stay_visible_in_the_status_and_operation_panel() {
+    let mut app = app_at("/tmp/drop");
+    app.caps.unix_paths = true;
+    deliver(&mut app, &[]);
+    let (x, y) = row_xy(&app, 0);
+    app.drag(&DragEvent::Enter { paths: Vec::new(), x, y, mods: NO, allowed: drop_effect::COPY, right: false }, t0());
+    let data = Arc::new(crate::provider::DroppedFile { name: b"text.txt".to_vec(), bytes: b"hello".to_vec() });
+    app.drag(&DragEvent::DropData { x, y, data }, t0());
+    let [(id, op)] = ops(&mut app).try_into().unwrap();
+    let tab = app.tab().id;
+    let message = "Permission denied";
+    app.on_provider_event(ProviderEvent::OpDone { tab, id, error: Some(message.into()), report: Some(OpReport { op, items: Vec::new() }) }, t0());
+    assert_eq!(app.tab().error.as_deref(), Some(message));
+    assert!(matches!(&app.job_states()[0].1, crate::ui::JobState::Failed(error) if error == message));
+    assert!(selected(&app).is_empty());
+}
+
+#[test]
+fn rejected_linux_content_drops_do_not_queue_or_retain_the_payload() {
+    let mut app = app_at("/tmp/drop");
+    app.caps.unix_paths = true;
+    deliver(&mut app, &[]);
+    let data = Arc::new(crate::provider::DroppedFile { name: b"text.txt".to_vec(), bytes: b"hello".to_vec() });
+    let (x, y) = (app.layout.new_tab.right() + 40.0, 10.0);
+    app.drag(&DragEvent::Enter { paths: Vec::new(), x, y, mods: NO, allowed: drop_effect::COPY, right: false }, t0());
+    assert_eq!(app.drag(&DragEvent::DropData { x, y, data: data.clone() }, t0()), drop_effect::NONE);
+    assert!(ops(&mut app).is_empty());
+    assert_eq!(app.running_jobs(), 0);
+    assert_eq!(Arc::strong_count(&data), 1);
+}
+
+#[test]
+fn completed_and_cancelled_drop_jobs_do_not_retain_the_private_payload_in_history() {
+    for cancel in [false, true] {
+        let mut app = app_at("/tmp/drop");
+        app.caps.unix_paths = true;
+        deliver(&mut app, &[]);
+        let (x, y) = row_xy(&app, 0);
+        app.drag(&DragEvent::Enter { paths: Vec::new(), x, y, mods: NO, allowed: drop_effect::COPY, right: false }, t0());
+        let data = Arc::new(crate::provider::DroppedFile { name: b"text.txt".to_vec(), bytes: b"private body".to_vec() });
+        let weak = Arc::downgrade(&data);
+        app.drag(&DragEvent::DropData { x, y, data }, t0());
+        let [(id, op)] = ops(&mut app).try_into().unwrap();
+        assert!(weak.upgrade().is_some());
+        let tab = app.tab().id;
+        app.on_provider_event(ProviderEvent::OpDone { tab, id, error: cancel.then(|| crate::i18n::S::ErrorsEngineCancelled.en().to_owned()), report: Some(OpReport { op, items: Vec::new() }) }, t0());
+        assert!(weak.upgrade().is_none(), "the finished job only keeps a summary");
+        assert_eq!(app.running_jobs(), 0);
+        assert_eq!(app.job_states().len(), 1);
+    }
+}
+
+#[test]
+fn runtime_content_is_rejected_in_an_agent_tab_instead_of_losing_its_bytes_in_transit() {
+    let mut app = app_at("wsl://Ubuntu/home");
+    deliver(&mut app, &[]);
+    let (x, y) = row_xy(&app, 0);
+    let data = Arc::new(crate::provider::DroppedFile { name: b"text.txt".to_vec(), bytes: b"private body".to_vec() });
+    app.drag(&DragEvent::Enter { paths: Vec::new(), x, y, mods: NO, allowed: drop_effect::COPY, right: false }, t0());
+    assert_eq!(app.drag(&DragEvent::DropData { x, y, data }, t0()), drop_effect::NONE);
+    assert!(ops(&mut app).is_empty());
+    assert!(app.drain_effects().next().is_none());
+}
+
+#[test]
+fn two_windows_receive_their_own_drop_selection_when_operations_finish_in_reverse() {
+    let mut first = app_at("/tmp/drop");
+    let mut second = app_at("/tmp/drop");
+    for app in [&mut first, &mut second] {
+        app.caps.unix_paths = true;
+        deliver(app, &[]);
+    }
+    let mut queued = Vec::new();
+    for (app, name, body) in [(&mut first, "first.txt", "first"), (&mut second, "second.txt", "second")] {
+        let (x, y) = row_xy(app, 0);
+        app.drag(&DragEvent::Enter { paths: Vec::new(), x, y, mods: NO, allowed: drop_effect::COPY, right: false }, t0());
+        let data = Arc::new(crate::provider::DroppedFile { name: name.as_bytes().to_vec(), bytes: body.as_bytes().to_vec() });
+        app.drag(&DragEvent::DropData { x, y, data }, t0());
+        queued.push(ops(app).pop().unwrap());
+    }
+    let (second_id, second_op) = queued.pop().unwrap();
+    let (first_id, first_op) = queued.pop().unwrap();
+    assert!(matches!(&first_op, FileOp::PasteDropped { data: Some(data), .. } if data.bytes == b"first"));
+    assert!(matches!(&second_op, FileOp::PasteDropped { data: Some(data), .. } if data.bytes == b"second"));
+    done(&mut second, second_id, second_op, &[("/tmp/drop/second.txt", "/tmp/drop/second.txt")]);
+    done(&mut first, first_id, first_op, &[("/tmp/drop/first.txt", "/tmp/drop/first.txt")]);
+    for app in [&mut first, &mut second] {
+        change(app, ChangeKind::Added, "first.txt", false);
+        change(app, ChangeKind::Added, "second.txt", false);
+    }
+    assert_eq!(selected(&first), ["first.txt"]);
+    assert_eq!(selected(&second), ["second.txt"]);
+    assert_eq!(first.running_jobs() + second.running_jobs(), 0);
+}
+
+#[test]
+fn content_drop_checks_the_provider_of_the_panel_at_the_final_pointer_position() {
+    let mut app = app_at("wsl://Ubuntu/home");
+    app.caps.unix_paths = true;
+    app.animations = false;
+    deliver(&mut app, &[]);
+    app.open_in_panel(Location::Local(p("/tmp/target")), false, t0());
+    deliver(&mut app, &[]);
+    app.frame(&mut Gfx::new(Mono, 1024), t0());
+    let local = (app.layout.list.x + 100.0, app.layout.list.bottom() - 20.0);
+    app.activate_panel(0);
+    let remote = (app.layout.list.x + 100.0, app.layout.list.bottom() - 20.0);
+    app.drain_effects().for_each(drop);
+    app.drag(&DragEvent::Enter { paths: Vec::new(), x: remote.0, y: remote.1, mods: NO, allowed: drop_effect::COPY, right: false }, t0());
+    let data = Arc::new(crate::provider::DroppedFile { name: b"text.txt".to_vec(), bytes: b"hello".to_vec() });
+    assert_eq!(app.drag(&DragEvent::DropData { x: local.0, y: local.1, data }, t0()), drop_effect::COPY);
+    assert_eq!(app.panels.active, 1);
+    assert!(matches!(ops(&mut app).as_slice(), [(_, FileOp::PasteDropped { dest, data: Some(_), .. })] if dest == &p("/tmp/target")));
 }

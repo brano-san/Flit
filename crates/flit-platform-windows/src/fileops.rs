@@ -13,13 +13,13 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::os::windows::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
-use windows::core::{s, Interface, HRESULT, PCWSTR, PWSTR};
+use windows::core::{s, HRESULT, PCWSTR, PWSTR};
 use windows::Win32::Foundation::ERROR_CANCELLED;
 use windows::Win32::Storage::FileSystem::{
     CopyFile2, CreateDirectoryW, DeleteFileW, GetFileAttributesW, MoveFileExW, SetFileAttributesW, COPYFILE2_EXTENDED_PARAMETERS, COPY_FILE_FAIL_IF_EXISTS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL,
     FILE_ATTRIBUTE_READONLY, FILE_FLAGS_AND_ATTRIBUTES, INVALID_FILE_ATTRIBUTES, MOVE_FILE_FLAGS,
 };
-use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_ALL, CLSCTX_INPROC_SERVER};
+use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
 use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::{CreatePopupMenu, DestroyMenu, SW_SHOWNORMAL};
 use windows_core::{implement, ComObject, Ref};
@@ -39,7 +39,7 @@ fn shell_item(p: &FsPath) -> Result<IShellItem, PlatformError> {
         return crate::namespace::item(p).map_err(|e| PlatformError::new(e.code, format!("{}: {e}", p.display())));
     }
     let w = p.to_wide(false);
-    unsafe { SHCreateItemFromParsingName(PCWSTR(w.as_ptr()), None) }.map_err(|e| PlatformError::new(e.code().0 as i64, format!("{}: {}", p.display(), e.message())))
+    unsafe { SHCreateItemFromParsingName(PCWSTR(w.as_ptr()), None) }.map_err(|e| PlatformError::new(e.code().0 as i64, format!("{}: {}", p.display(), crate::error_reason(&e))))
 }
 
 fn wide_name(name: &[u8]) -> Vec<u16> {
@@ -147,13 +147,13 @@ fn check_names(op: &FileOp) -> Result<(), PlatformError> {
         FileOp::Trash(v) | FileOp::Delete(v) | FileOp::Flatten(v) => v.iter().collect(),
         FileOp::Purge(pairs) => pairs.iter().map(|(r, _)| r).collect(),
         FileOp::EmptyBin => Vec::new(),
-        FileOp::Copy { items, dest } | FileOp::Move { items, dest } | FileOp::Link { items, dest } => items.iter().chain([dest]).collect(),
+        FileOp::Copy { items, dest } | FileOp::Move { items, dest } | FileOp::Link { items, dest } | FileOp::LinkAs { items, dest, .. } => items.iter().chain([dest]).collect(),
         FileOp::Rename { item, .. } => vec![item],
         FileOp::NewFolder { dir, .. } | FileOp::NewFile { dir, .. } => vec![dir],
         FileOp::NewStream { item, .. } => vec![item],
         FileOp::FolderIcon { folder, icon, .. } => [folder].into_iter().chain(icon).collect(),
         FileOp::MoveTo(pairs) | FileOp::Restore(pairs) => pairs.iter().flat_map(|(a, b)| [a, b]).collect(),
-        FileOp::Paste { dest } | FileOp::PasteLink { dest } | FileOp::PasteDropped { dest, .. } => vec![dest],
+        FileOp::Paste { dest } | FileOp::PasteLink { dest } | FileOp::PasteLinkAs { dest, .. } | FileOp::PasteDropped { dest, .. } => vec![dest],
         FileOp::Archive(_) => Vec::new(),
         FileOp::InstallFonts(v) => v.iter().collect(),
         FileOp::LockScreen(p) | FileOp::GrantAccess(p) => vec![p],
@@ -284,7 +284,7 @@ unsafe fn queue(fo: &IFileOperation, op: &FileOp) -> Result<(), PlatformError> {
             };
             fo.NewItem(&shell_item(dir)?, FILE_ATTRIBUTE_NORMAL.0, PCWSTR(name.as_ptr()), source.as_ref().map_or(PCWSTR::null(), |s| PCWSTR(s.as_ptr())), None).map_err(err)?;
         }
-        FileOp::Link { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::PasteLink { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } | FileOp::Flatten(_) | FileOp::FolderIcon { .. } | FileOp::Archive(_) | FileOp::InstallFonts(_) | FileOp::LockScreen(_) | FileOp::SetAccess { .. } | FileOp::Access(_) | FileOp::SetAttributes { .. } | FileOp::PasteDropped { .. } | FileOp::GrantAccess(_) => return Err(PlatformError::new(-1, "not a file operation")),
+        FileOp::Link { .. } | FileOp::LinkAs { .. } | FileOp::PasteLinkAs { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::PasteLink { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } | FileOp::Flatten(_) | FileOp::FolderIcon { .. } | FileOp::Archive(_) | FileOp::InstallFonts(_) | FileOp::LockScreen(_) | FileOp::SetAccess { .. } | FileOp::Access(_) | FileOp::SetAttributes { .. } | FileOp::PasteDropped { .. } | FileOp::GrantAccess(_) => return Err(PlatformError::new(-1, "not a file operation")),
     }
     Ok(())
 }
@@ -431,7 +431,7 @@ fn new_stream(item: &FsPath, name: &[u8]) -> OpOutcome {
     flit_core::name::to_utf16(name, &mut w);
     match create_new(Path::new(&OsString::from_wide(&w)), &[]) {
         Ok(()) => OpOutcome { items: vec![(item.clone(), item.clone())], error: None },
-        Err(e) => OpOutcome { items: Vec::new(), error: Some(PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, tr_en!(S::ErrorsEngineStream, error = e))) },
+        Err(e) => OpOutcome { items: Vec::new(), error: Some(PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, tr_en!(S::ErrorsEngineStream, error = flit_core::fmt::io_reason(&e)))) },
     }
 }
 
@@ -480,49 +480,6 @@ fn direct(op: &FileOp) -> (Vec<(FsPath, FsPath)>, Option<FileOp>) {
     }
 }
 
-fn link_path(dest: &FsPath, target: &FsPath) -> FsPath {
-    let stem: Vec<u8> = target.file_name().iter().copied().filter(|&c| c != b':' && c != b'\\').collect();
-    (1..)
-        .map(|k| {
-            let mut name = stem.clone();
-            name.extend_from_slice(b" - Shortcut");
-            if k > 1 {
-                name.extend_from_slice(format!(" ({k})").as_bytes());
-            }
-            name.extend_from_slice(b".lnk");
-            dest.join(&name)
-        })
-        .find(|p| !exists(p))
-        .unwrap()
-}
-
-unsafe fn make_links(items: &[FsPath], dest: &FsPath) -> OpOutcome {
-    let mut out = OpOutcome::default();
-    for target in items {
-        let made = (|| {
-            if !exists(target) {
-                return Err(PlatformError::new(-1, tr_en!(S::ErrorsEngineMissing, path = target.display())));
-            }
-            let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).map_err(err)?;
-            link.SetPath(PCWSTR(target.to_wide(false).as_ptr())).map_err(err)?;
-            if let Some(dir) = target.parent() {
-                link.SetWorkingDirectory(PCWSTR(dir.to_wide(false).as_ptr())).map_err(err)?;
-            }
-            let path = link_path(dest, target);
-            link.cast::<IPersistFile>().map_err(err)?.Save(PCWSTR(path.to_wide(false).as_ptr()), true).map_err(err)?;
-            Ok::<_, PlatformError>(path)
-        })();
-        match made {
-            Ok(path) => out.items.push((target.clone(), path)),
-            Err(e) => {
-                out.error = Some(e);
-                break;
-            }
-        }
-    }
-    out
-}
-
 const SETTABLE: u32 = 0x1 | 0x2 | 0x4 | 0x20 | 0x100 | 0x1000 | 0x2000;
 
 pub(crate) fn win_attributes(now: u32, set: u32, clear: u32) -> u32 {
@@ -549,7 +506,7 @@ fn change_attributes(item: &FsPath, set: u32, clear: u32, unblock: bool) -> Resu
             apply(win_attributes(now, 0, attr::READONLY))?;
         }
         if let Err(e) = std::fs::remove_file(zone_stream(item)).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(e) }) {
-            return Err(PlatformError::new(e.raw_os_error().map_or(-1, i64::from), format!("{}: {e}", item.display())));
+            return Err(PlatformError::new(e.raw_os_error().map_or(-1, i64::from), format!("{}: {}", item.display(), flit_core::fmt::io_reason(&e))));
         }
     }
     let next = win_attributes(now, set, clear);
@@ -630,7 +587,6 @@ impl FileOps for ShellCom {
         }
         crate::prevhost::release(crate::prevhost::releasing(op));
         match op {
-            FileOp::Link { items, dest } => unsafe { make_links(items, dest) },
             FileOp::NewStream { item, name } => new_stream(item, name),
             FileOp::FolderIcon { folder, icon, index } => folder_icon(folder, icon.as_ref(), *index),
             FileOp::Purge(pairs) => purge(pairs),
@@ -638,7 +594,7 @@ impl FileOps for ShellCom {
             FileOp::InstallFonts(fonts) => crate::install::install_fonts(fonts, job),
             FileOp::LockScreen(image) => crate::install::lock_screen(image),
             FileOp::Paste { dest } => crate::transfer::paste(dest, job),
-            FileOp::PasteDropped { dest, moving } => crate::transfer::paste_dropped(dest, *moving, job),
+            FileOp::PasteDropped { dest, moving, .. } => crate::transfer::paste_dropped(dest, *moving, job),
             FileOp::GrantAccess(dir) => crate::volume::grant_access(dir),
             FileOp::SetAccess { .. } | FileOp::Access(_) => OpOutcome { items: Vec::new(), error: Some(PlatformError::unsupported("changing Unix permissions")) },
             FileOp::SetAttributes { items, set, clear, unblock } => set_attributes(items, *set, *clear, *unblock),
@@ -655,6 +611,13 @@ impl FileOps for ShellCom {
 
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
         clipboard::read_files()
+    }
+
+    fn link_choices(&mut self, items: Option<&[FsPath]>, dest: &FsPath) -> flit_core::provider::LinkChoices {
+        match items {
+            Some(items) => crate::links::choices(items, dest),
+            None => clipboard::read_files().map_or_else(|_| Default::default(), |(items, _)| crate::links::choices(&items, dest)),
+        }
     }
 
     fn clipboard_content(&mut self) -> bool {

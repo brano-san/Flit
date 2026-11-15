@@ -530,7 +530,7 @@ impl Pidls {
             }
             let mut pidl = std::ptr::null_mut();
             let name = parse_name(p);
-            unsafe { SHParseDisplayName(PCWSTR(name.as_ptr()), None, &mut pidl, 0, None) }.map_err(|e| PlatformError::new(e.code().0 as i64, format!("{}: {}", p.display(), e.message())))?;
+            unsafe { SHParseDisplayName(PCWSTR(name.as_ptr()), None, &mut pidl, 0, None) }.map_err(|e| PlatformError::new(e.code().0 as i64, format!("{}: {}", p.display(), crate::error_reason(&e))))?;
             out.abs.push(pidl);
         }
         if out.abs.is_empty() {

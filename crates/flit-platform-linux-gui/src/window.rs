@@ -1,6 +1,7 @@
 use crate::apps::OpenWith;
 use crate::input::{self, Clicks};
-use flit_core::input::{CursorIcon, Event, HitArea, Mods, MouseButton};
+use crate::touch::Touch;
+use flit_core::input::{CursorIcon, Event, HitArea, Mods, MouseButton, WindowButtons};
 use flit_core::preview::{HostCmd, Hosted, MediaCmd};
 use flit_core::render::Rect;
 use flit_core::ui::{drop_effect, Bitmap, DragEvent, ShellMenu};
@@ -12,12 +13,12 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::data_transfer::{DataTransferId, DataTransferSendBuilder, TransferType, TypeHint};
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, Ime, WindowEvent};
+use winit::event::{ButtonSource, ElementState, Ime, PointerKind, PointerSource, WindowEvent};
 use winit::event_loop::run_on_demand::EventLoopExtRunOnDemand;
 use winit::event_loop::{ActiveEventLoop, AsyncRequestSerial, ControlFlow, DndAction, EventLoop, EventLoopProxy, OwnedDisplayHandle};
 use winit::keyboard::ModifiersState;
@@ -36,6 +37,7 @@ const RESIZE_BORDER: f32 = 5.0;
 const X11_KEYBOARD_LIBRARY: &CStr = c"libxkbcommon-x11.so.0";
 const READ_WAIT: Duration = Duration::from_secs(1);
 const VERIFY_WAIT: Duration = Duration::from_millis(400);
+const TAB_WINDOWS_WAIT: Duration = Duration::from_millis(250);
 
 const DARK_UNKNOWN: u8 = 0;
 const DARK_NO: u8 = 1;
@@ -95,6 +97,10 @@ pub(crate) fn activation_token() -> Option<String> {
     crate::activation::take()
 }
 
+pub(crate) fn without_files(native: bool) -> Option<crate::clipboard::Payload> {
+    native.then(Vec::new)
+}
+
 pub(crate) fn clipboard_types() -> Option<crate::clipboard::Payload> {
     if !LOOP_RUNNING.load(Ordering::Acquire) {
         return None;
@@ -146,6 +152,30 @@ static ACCENT: Mutex<Option<flit_core::theme::Accent>> = Mutex::new(None);
 static TEXT_SCALE_MILLI: AtomicU32 = AtomicU32::new(1000);
 static LOOK_DIRTY: AtomicBool = AtomicBool::new(false);
 static ICONS_DIRTY: AtomicBool = AtomicBool::new(false);
+static WINDOW_BUTTONS: Mutex<Option<WindowButtons>> = Mutex::new(None);
+static BUTTONS_DIRTY: AtomicBool = AtomicBool::new(false);
+
+fn window_buttons() -> WindowButtons {
+    WINDOW_BUTTONS.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default()
+}
+
+fn set_window_buttons(buttons: WindowButtons) {
+    let mut current = WINDOW_BUTTONS.lock().unwrap_or_else(|e| e.into_inner());
+    if current.as_ref() != Some(&buttons) {
+        *current = Some(buttons);
+        BUTTONS_DIRTY.store(true, Ordering::Release);
+        wake_loop();
+    }
+}
+
+pub(crate) fn icons_changed() {
+    ICONS_DIRTY.store(true, Ordering::Release);
+    wake_loop();
+}
+
+pub(crate) fn kde_accent_change(globals: &str, current: Option<flit_core::theme::Accent>) -> Option<Option<flit_core::theme::Accent>> {
+    crate::shell::kde_accent(globals).filter(|accent| current != Some(*accent)).map(Some)
+}
 
 fn system_accent() -> Option<flit_core::theme::Accent> {
     *ACCENT.lock().unwrap_or_else(|e| e.into_inner())
@@ -163,6 +193,12 @@ fn apply_look(change: crate::atspi::LookChange) {
             if crate::icons::switch_theme(&name) {
                 ICONS_DIRTY.store(true, Ordering::Release);
             }
+        }
+        crate::atspi::LookChange::WindowButtons(layout) => {
+            if crate::preferences::Desktop::current() == crate::preferences::Desktop::Gnome {
+                set_window_buttons(crate::preferences::gnome_buttons(&layout));
+            }
+            return;
         }
     }
     LOOK_DIRTY.store(true, Ordering::Release);
@@ -185,6 +221,11 @@ fn watch_desktop() {
         apply_look,
     );
     let _ = std::thread::Builder::new().name("flit-prefs".into()).spawn(|| {
+        if crate::preferences::Desktop::current() == crate::preferences::Desktop::Gnome {
+            if let Some(layout) = crate::shell::probe_window_buttons() {
+                set_window_buttons(crate::preferences::gnome_buttons(&layout));
+            }
+        }
         if let Some(accent) = crate::shell::probe_accent() {
             apply_look(crate::atspi::LookChange::Accent(Some(accent)));
         }
@@ -247,10 +288,135 @@ enum Command {
 
 type Commands = Rc<RefCell<Vec<Command>>>;
 
+#[derive(Clone, Copy)]
+struct TabTarget {
+    id: WindowId,
+    origin: (f64, f64),
+    size: (u32, u32),
+    minimized: bool,
+}
+
+fn tab_target(windows: impl DoubleEndedIterator<Item = TabTarget>, source: WindowId, point: (f64, f64)) -> Option<(WindowId, f32, f32)> {
+    if !point.0.is_finite() || !point.1.is_finite() {
+        return None;
+    }
+    windows.rev().find_map(|w| {
+        let (x, y) = (point.0 - w.origin.0, point.1 - w.origin.1);
+        (w.id != source && !w.minimized && x >= 0.0 && y >= 0.0 && x < f64::from(w.size.0) && y < f64::from(w.size.1)).then_some((w.id, x as f32, y as f32))
+    })
+}
+
+struct MinimizedState(AtomicU64);
+
+impl MinimizedState {
+    fn new(hidden: bool) -> Self {
+        Self(AtomicU64::new(u64::from(hidden)))
+    }
+
+    fn get(&self) -> bool {
+        self.snapshot() & 1 != 0
+    }
+
+    fn snapshot(&self) -> u64 {
+        self.0.load(Ordering::Acquire)
+    }
+
+    fn set(&self, hidden: bool) {
+        let mut seen = self.snapshot();
+        loop {
+            let next = (seen.wrapping_add(2) & !1) | u64::from(hidden);
+            match self.0.compare_exchange_weak(seen, next, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => return,
+                Err(current) => seen = current,
+            }
+        }
+    }
+
+    fn complete(&self, seen: u64, hidden: bool) {
+        let _ = self.0.compare_exchange(seen, (seen & !1) | u64::from(hidden), Ordering::AcqRel, Ordering::Acquire);
+    }
+}
+struct TrackedWindow {
+    target: TabTarget,
+    inset: (f64, f64),
+    raw: Weak<dyn winit::window::Window>,
+    minimized: Arc<MinimizedState>,
+}
+
+type MinimizedCheck<W> = (Weak<W>, Arc<MinimizedState>, u64);
+
+struct TabWindows {
+    windows: Vec<TrackedWindow>,
+    checked: Option<Instant>,
+    check: mpsc::SyncSender<Vec<MinimizedCheck<dyn winit::window::Window>>>,
+    returned: mpsc::Receiver<Arc<dyn winit::window::Window>>,
+}
+
+fn tab_windows_due(checked: Option<Instant>, now: Instant) -> bool {
+    checked.is_none_or(|at| now.saturating_duration_since(at) >= TAB_WINDOWS_WAIT)
+}
+
+fn check_minimized<W: ?Sized>(windows: Vec<MinimizedCheck<W>>, is_minimized: impl Fn(&W) -> Option<bool>, back: &mpsc::Sender<Arc<W>>, returned: impl Fn()) {
+    for (raw, minimized, seen) in windows {
+        let Some(raw) = raw.upgrade() else { continue };
+        if let Some(hidden) = is_minimized(&raw) {
+            minimized.complete(seen, hidden);
+        }
+        if let Err(mpsc::SendError(raw)) = back.send(raw) {
+            std::mem::forget(raw);
+        }
+    }
+    returned();
+}
+
+fn next_target(previous: Option<(TabTarget, (f64, f64))>, id: WindowId, moved: Option<(f64, f64)>, size: (u32, u32), inset: impl FnOnce() -> (f64, f64), origin: impl FnOnce() -> Option<(f64, f64)>) -> Option<(TabTarget, (f64, f64))> {
+    let minimized = previous.is_some_and(|(t, _)| t.minimized);
+    match (moved, previous) {
+        (Some(at), previous) => {
+            let inset = previous.map_or_else(inset, |(_, inset)| inset);
+            Some((TabTarget { id, origin: (at.0 + inset.0, at.1 + inset.1), size, minimized }, inset))
+        }
+        (None, Some((target, inset))) => Some((TabTarget { size, ..target }, inset)),
+        (None, None) => {
+            let at = origin()?;
+            let inset = inset();
+            Some((TabTarget { id, origin: (at.0 + inset.0, at.1 + inset.1), size, minimized }, inset))
+        }
+    }
+}
+
+impl TabWindows {
+    fn new() -> Self {
+        let (check, pending) = mpsc::sync_channel::<Vec<MinimizedCheck<dyn winit::window::Window>>>(1);
+        let (back, returned) = mpsc::channel();
+        background("flit-tab-windows", move || {
+            while let Ok(windows) = pending.recv() {
+                check_minimized(windows, |raw| raw.is_minimized(), &back, wake_loop);
+            }
+        });
+        Self { windows: Vec::new(), checked: None, check, returned }
+    }
+
+    fn release(&self) {
+        self.returned.try_iter().for_each(drop);
+    }
+
+    fn refresh(&mut self, now: Instant) {
+        self.release();
+        if !tab_windows_due(self.checked, now) {
+            return;
+        }
+        self.checked = Some(now);
+        let windows = self.windows.iter().map(|w| (w.raw.clone(), w.minimized.clone(), w.minimized.snapshot())).collect();
+        let _ = self.check.try_send(windows);
+    }
+}
+
 pub struct LinuxWindow {
     id: WindowId,
     raw: Arc<dyn winit::window::Window>,
     commands: Commands,
+    targets: Rc<RefCell<TabWindows>>,
     size: Cell<(u32, u32)>,
     normal_size: Cell<(u32, u32)>,
     scale: Cell<f32>,
@@ -272,13 +438,14 @@ struct ShownMedia {
 }
 
 impl LinuxWindow {
-    fn new(id: WindowId, raw: Arc<dyn winit::window::Window>, commands: Commands) -> Self {
+    fn new(id: WindowId, raw: Arc<dyn winit::window::Window>, commands: Commands, targets: Rc<RefCell<TabWindows>>) -> Self {
         let size = raw.surface_size();
-        Self {
+        let window = Self {
             id,
             scale: Cell::new(raw.scale_factor() as f32),
             raw,
             commands,
+            targets,
             size: Cell::new((size.width, size.height)),
             normal_size: Cell::new((size.width, size.height)),
             cursor: Cell::new(CursorIcon::Default),
@@ -289,6 +456,45 @@ impl LinuxWindow {
             media: RefCell::new(None),
             player: RefCell::new(None),
             volume: Cell::new(None),
+        };
+        window.cache_target(None);
+        window
+    }
+
+    fn cache_target(&self, position: Option<PhysicalPosition<i32>>) {
+        if self.is_wayland() {
+            return;
+        }
+        let mut targets = self.targets.borrow_mut();
+        let tracked = targets.windows.iter().position(|w| w.target.id == self.id);
+        let previous = tracked.map(|k| (TabTarget { minimized: targets.windows[k].minimized.get(), ..targets.windows[k].target }, targets.windows[k].inset));
+        let moved = position.map(|at| (f64::from(at.x), f64::from(at.y)));
+        let inset = || {
+            let inset = self.raw.surface_position();
+            (f64::from(inset.x), f64::from(inset.y))
+        };
+        let origin = || self.raw.outer_position().ok().map(|at| (f64::from(at.x), f64::from(at.y)));
+        let Some((target, inset)) = next_target(previous, self.id, moved, self.size.get(), inset, origin) else { return };
+        match tracked {
+            Some(k) => {
+                targets.windows[k].target = target;
+                targets.windows[k].inset = inset;
+            }
+            None => targets.windows.push(TrackedWindow { target, inset, raw: Arc::downgrade(&self.raw), minimized: Arc::new(MinimizedState::new(false)) }),
+        }
+    }
+
+    fn occluded(&self, hidden: bool) {
+        if let Some(w) = self.targets.borrow().windows.iter().find(|w| w.target.id == self.id) {
+            w.minimized.set(hidden);
+        }
+    }
+
+    fn focused(&self) {
+        let mut targets = self.targets.borrow_mut();
+        if let Some(i) = targets.windows.iter().position(|w| w.target.id == self.id) {
+            let window = targets.windows.remove(i);
+            targets.windows.push(window);
         }
     }
 
@@ -313,7 +519,7 @@ impl LinuxWindow {
         let Some(file) = flit_platform_linux::host(&m.path) else { return };
         let socket = std::env::var_os("XDG_RUNTIME_DIR").map(|d| crate::player::socket_path(std::path::Path::new(&d), m.gen));
         match crate::shell::play_media(m.video, file, socket.as_deref(), self.volume.get()) {
-            Some((child, ipc)) => {
+            Ok((child, ipc)) => {
                 let id = self.id;
                 let report = move |e: flit_core::preview::HostEvent| {
                     QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((id, Event::Hosted(e)));
@@ -321,8 +527,8 @@ impl LinuxWindow {
                 };
                 self.player.replace(Some(crate::player::Player::start(child, socket.filter(|_| ipc), m.gen, report)));
             }
-            None => {
-                let failed = flit_core::preview::HostEvent::Failed { gen: m.gen, message: S::PreviewNoPlayer.t().to_owned() };
+            Err(error) => {
+                let failed = flit_core::preview::HostEvent::Failed { gen: m.gen, message: flit_core::i18n::localize(&error.message).into_owned() };
                 QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((self.id, Event::Hosted(failed)));
                 wake_loop();
             }
@@ -376,6 +582,7 @@ impl LinuxWindow {
 
 impl Drop for LinuxWindow {
     fn drop(&mut self) {
+        self.targets.borrow_mut().windows.retain(|w| w.target.id != self.id);
         self.stop_player();
     }
 }
@@ -408,6 +615,9 @@ impl Window for LinuxWindow {
     }
 
     fn minimize(&self) {
+        if let Some(w) = self.targets.borrow().windows.iter().find(|w| w.target.id == self.id) {
+            w.minimized.set(true);
+        }
         self.raw.set_minimized(true);
     }
 
@@ -583,6 +793,17 @@ impl Window for LinuxWindow {
         }
     }
 
+    fn window_at(&self, x: f32, y: f32) -> Option<(WindowId, f32, f32)> {
+        if self.is_wayland() {
+            return None;
+        }
+        let mut targets = self.targets.borrow_mut();
+        targets.refresh(Instant::now());
+        let source = targets.windows.iter().find(|w| w.target.id == self.id)?.target;
+        let point = (source.origin.0 + f64::from(x), source.origin.1 + f64::from(y));
+        tab_target(targets.windows.iter().map(|w| TabTarget { minimized: w.minimized.get(), ..w.target }), self.id, point)
+    }
+
     fn toggle_fullscreen(&self) {
         let full = self.raw.fullscreen().is_some();
         self.raw.set_fullscreen((!full).then_some(Fullscreen::Borderless(None)));
@@ -625,6 +846,7 @@ impl Waker for LinuxWaker {
 pub struct LinuxWindows {
     event_loop: EventLoop,
     pending: Arc<AtomicBool>,
+    _preferences: Option<crate::preferences::Watch>,
 }
 
 fn library_loads(name: &CStr) -> bool {
@@ -644,7 +866,22 @@ impl WindowSystem for LinuxWindows {
         let _ = DISPLAY.set(event_loop.owned_display_handle());
         let _ = PROXY.set(event_loop.create_proxy());
         watch_desktop();
-        Ok(Self { event_loop, pending: Arc::default() })
+        let preferences = if crate::preferences::Desktop::current() == crate::preferences::Desktop::Kde {
+            crate::xdg::config_home().and_then(|config| crate::preferences::Watch::start(config, Duration::from_millis(250), |change| match change {
+                crate::preferences::Change::Buttons(buttons) => set_window_buttons(buttons),
+                crate::preferences::Change::IconTheme(name) => apply_look(crate::atspi::LookChange::IconTheme(name)),
+                crate::preferences::Change::Globals(text) => {
+                    if let Some(dark) = crate::shell::kde_dark(&text) {
+                        PREFERRED_DARK.store(if dark { DARK_YES } else { DARK_NO }, Ordering::Release);
+                        THEME_CHANGED.store(true, Ordering::Release);
+                    }
+                    if let Some(accent) = kde_accent_change(&text, system_accent()) {
+                        apply_look(crate::atspi::LookChange::Accent(accent));
+                    }
+                }
+            }).ok())
+        } else { None };
+        Ok(Self { event_loop, pending: Arc::default(), _preferences: preferences })
     }
 
     fn waker(&self) -> LinuxWaker {
@@ -653,7 +890,7 @@ impl WindowSystem for LinuxWindows {
 
     fn run<H: WindowHandler<Self>>(mut self, first: WindowOptions, handler: H) -> Result<(), PlatformError> {
         let commands: Commands = Rc::new(RefCell::new(vec![Command::Open(first)]));
-        let mut app = Loop { handler, nodes: Vec::new(), commands, pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None, clip_text: None, watching: false, outgoing: None };
+        let mut app = Loop { handler, nodes: Vec::new(), commands, targets: Rc::new(RefCell::new(TabWindows::new())), pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None, clip_text: None, watching: false, outgoing: None };
         LOOP_RUNNING.store(true, Ordering::Release);
         let ran = self.event_loop.run_app_on_demand(&mut app);
         LOOP_RUNNING.store(false, Ordering::Release);
@@ -665,12 +902,14 @@ impl WindowSystem for LinuxWindows {
 struct Node {
     window: LinuxWindow,
     clicks: Clicks,
+    fingers: crate::touch::Fingers,
 }
 
 struct Loop<H> {
     handler: H,
     nodes: Vec<Node>,
     commands: Commands,
+    targets: Rc<RefCell<TabWindows>>,
     pending: Arc<AtomicBool>,
     next_id: WindowId,
     mods: ModifiersState,
@@ -854,17 +1093,6 @@ fn dragged_kinds(el: &dyn ActiveEventLoop, id: DataTransferId) -> Vec<TypeHint> 
     crate::dropped::wanted(&offered)
 }
 
-fn save_dropped(content: crate::dropped::Content, folder: FsPath) {
-    let (text, image) = (S::UiDroppedText.t().to_owned(), S::UiDroppedImage.t().to_owned());
-    background("flit-drop", move || {
-        let Some(dir) = flit_platform_linux::host(&folder) else { return };
-        match crate::dropped::save(dir, &content, &text, &image) {
-            Ok(path) => tracing::info!("saved a drop as {}", path.display()),
-            Err(e) => tracing::warn!("cannot save the drop into {}: {e}", dir.display()),
-        }
-    });
-}
-
 struct Incoming {
     id: DataTransferId,
     at: (f32, f32),
@@ -874,7 +1102,6 @@ struct Incoming {
     preferred: Option<DndAction>,
     ask: bool,
     content: Option<crate::dropped::Content>,
-    folder: Option<FsPath>,
     fetching: Vec<TypeHint>,
 }
 
@@ -1020,8 +1247,10 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             return r.waiters.extend(waiters);
         }
         let mut r = Reading { want: HashMap::new(), got: Vec::new(), waiters, started: Instant::now() };
+        let mut native = false;
         if let Ok(Some(id)) = el.clipboard() {
             if let Ok(transfer) = el.data_transfer(id) {
+                native = true;
                 for ty in transfer.available_types() {
                     let Some(name) = type_name(ty).filter(|n| crate::clipboard::FILE_TYPES.contains(&n.as_str()) && !r.want.values().any(|w| w == n)) else { continue };
                     match el.fetch_data_transfer(id, ty) {
@@ -1035,7 +1264,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         }
         if r.want.is_empty() {
             for w in r.waiters {
-                let _ = w.send(None);
+                let _ = w.send(without_files(native));
             }
             return;
         }
@@ -1077,9 +1306,10 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         enable_ime(&*raw);
         let id = self.next_id;
         self.next_id += 1;
-        self.nodes.push(Node { window: LinuxWindow::new(id, raw, self.commands.clone()), clicks: Clicks::new(input::double_click()) });
+        self.nodes.push(Node { window: LinuxWindow::new(id, raw, self.commands.clone(), self.targets.clone()), clicks: Clicks::new(input::double_click()), fingers: Default::default() });
         let node = self.nodes.last().unwrap();
         self.handler.created(&node.window);
+        self.handler.event(&node.window, Event::WindowButtons(window_buttons()));
         self.handler.event(&node.window, Event::Animations(animations()));
         self.handler.event(&node.window, Event::Accent(system_accent()));
         self.handler.event(&node.window, Event::TextScale(text_scale(node.window.is_wayland(), TEXT_SCALE_MILLI.load(Ordering::Acquire))));
@@ -1163,8 +1393,10 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         let (handler, w) = (&mut self.handler, &self.nodes[i].window);
         let Some(d) = self.incoming.as_mut() else { return };
         let Some(paths) = d.paths.clone() else { return };
-        let (mods, ask) = crate::xdnd::drop_choice(keys, proposed, d.preferred);
-        let (x, y, allowed) = (d.at.0, d.at.1, OFFERED_TO_FLIT);
+        let content = d.content.is_some();
+        let (mods, ask) = crate::xdnd::incoming_choice(content, keys, proposed, d.preferred);
+        let (x, y) = (d.at.0, d.at.1);
+        let allowed = if content { drop_effect::COPY } else { OFFERED_TO_FLIT };
         let reenter = !matches!(arrival, Arrival::Enter) && ask != d.ask;
         if reenter {
             handler.drag(w, DragEvent::Leave);
@@ -1178,7 +1410,10 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                     handler.drag(w, enter);
                 }
                 if matches!(arrival, Arrival::Drop) {
-                    DragEvent::Drop { x, y, mods, allowed }
+                    match d.content.take() {
+                        Some(content) => DragEvent::DropData { x, y, data: Arc::new(content.file(S::UiDroppedText.t(), S::UiDroppedImage.t())) },
+                        None => DragEvent::Drop { x, y, mods, allowed },
+                    }
                 } else {
                     DragEvent::Over { x, y, mods, allowed }
                 }
@@ -1191,13 +1426,9 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         }
         let id = d.id;
         if matches!(arrival, Arrival::Drop) {
-            if let (Some(content), Some(folder)) = (d.content.take().filter(|_| effect != drop_effect::NONE), d.folder.take()) {
-                save_dropped(content, folder);
-            }
             self.incoming = None;
         } else {
-            d.folder = reply.folder;
-            let _ = el.set_valid_dnd_actions(id, &crate::xdnd::offered_actions(effect, d.preferred));
+            let _ = el.set_valid_dnd_actions(id, &crate::xdnd::incoming_actions(content, effect, d.preferred));
         }
     }
 
@@ -1223,7 +1454,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                 let at = position.map_or((0.0, 0.0), |p| (p.x as f32, p.y as f32));
                 let offered = crate::xdnd::offered_actions(drop_effect::COPY, None);
                 let fetching = dragged_kinds(el, id);
-                self.incoming = Some(Incoming { id, at, paths: None, proposed: None, dropped: None, preferred: offered.first().copied(), ask: false, content: None, folder: None, fetching });
+                self.incoming = Some(Incoming { id, at, paths: None, proposed: None, dropped: None, preferred: offered.first().copied(), ask: false, content: None, fetching });
                 let _ = el.set_valid_dnd_actions(id, &offered);
                 self.fetch_next(el, id);
             }
@@ -1295,15 +1526,28 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             }
             WindowEvent::SurfaceResized(size) => {
                 w.resized(size);
+                w.cache_target(None);
                 handler.event(w, Event::Resized { width: size.width, height: size.height });
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 w.scale.set(scale_factor as f32);
                 handler.event(w, Event::ScaleChanged(scale_factor as f32));
             }
+            WindowEvent::Moved(position) => w.cache_target(Some(position)),
+            WindowEvent::Occluded(hidden) => {
+                w.cache_target(None);
+                w.occluded(hidden);
+            }
             WindowEvent::CloseRequested => handler.event(w, Event::CloseRequested),
             WindowEvent::Focused(focused) => {
+                w.cache_target(None);
+                if focused {
+                    w.focused();
+                }
                 node.clicks.reset();
+                if !focused {
+                    node.fingers.reset();
+                }
                 self.mods = ModifiersState::empty();
                 handler.event(w, Event::Focus(focused));
             }
@@ -1328,26 +1572,60 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                     handler.event(w, Event::Char(c));
                 }
             }
+            WindowEvent::PointerMoved { position, source: PointerSource::Touch { finger_id, .. }, .. } => {
+                let (x, y) = (position.x as f32, position.y as f32);
+                match node.fingers.moved(finger_id.into_raw(), (position.x, position.y)) {
+                    Touch::Pass => {
+                        w.track_edge(x, y);
+                        handler.event(w, Event::MouseMove { x, y });
+                    }
+                    Touch::Pinch(scale) => handler.event(w, Event::Pinch(scale)),
+                    Touch::Cancel => handler.event(w, Event::TouchCancel),
+                    Touch::Skip => {}
+                }
+            }
             WindowEvent::PointerMoved { position, primary, .. } if primary => {
                 let (x, y) = (position.x as f32, position.y as f32);
                 w.track_edge(x, y);
                 handler.event(w, Event::MouseMove { x, y });
             }
             WindowEvent::PointerEntered { .. } => w.restore_cursor(),
-            WindowEvent::PointerLeft { .. } => {
+            WindowEvent::PointerLeft { kind, .. } => {
+                if let PointerKind::Touch(finger_id) = kind {
+                    if node.fingers.lost(finger_id.into_raw()) == Touch::Cancel {
+                        handler.event(w, Event::TouchCancel);
+                    }
+                }
                 w.restore_cursor();
                 handler.event(w, Event::MouseLeave);
             }
             WindowEvent::ActivationTokenDone { token, .. } => crate::activation::answered(token.into_raw()),
-            WindowEvent::PointerButton { state, position, button, primary, .. } => {
+            WindowEvent::PointerButton { state, position, button: ButtonSource::Touch { finger_id, .. }, .. } => {
+                let pressed = state == ElementState::Pressed;
+                let id = finger_id.into_raw();
+                let out = if pressed { node.fingers.press(id, (position.x, position.y)) } else { node.fingers.release(id) };
+                match out {
+                    Touch::Pass => {
+                        if pressed {
+                            ask_token(w);
+                            let (x, y) = (position.x as f32, position.y as f32);
+                            w.track_edge(x, y);
+                            handler.event(w, Event::MouseMove { x, y });
+                            handler.event(w, Event::Pointer { touch: true });
+                        }
+                        self.button(i, pressed, position, MouseButton::Left);
+                    }
+                    Touch::Cancel => handler.event(w, Event::TouchCancel),
+                    Touch::Pinch(_) | Touch::Skip => {}
+                }
+            }
+            WindowEvent::PointerButton { state, position, button, .. } => {
                 if state == ElementState::Pressed {
                     ask_token(w);
                 }
-                let touch = matches!(button, winit::event::ButtonSource::Touch { .. });
-                let mapped = if touch { primary.then_some(MouseButton::Left) } else { button.mouse_button().and_then(input::mouse_button) };
-                if let Some(button) = mapped {
+                if let Some(button) = button.mouse_button().and_then(input::mouse_button) {
                     if state == ElementState::Pressed {
-                        handler.event(w, Event::Pointer { touch });
+                        handler.event(w, Event::Pointer { touch: false });
                     }
                     self.button(i, state == ElementState::Pressed, position, button);
                 }
@@ -1414,6 +1692,12 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
                 self.handler.event(&node.window, Event::MouseSettings { double_click, wheel_lines });
             }
         }
+        if BUTTONS_DIRTY.swap(false, Ordering::AcqRel) {
+            let buttons = window_buttons();
+            for node in &self.nodes {
+                self.handler.event(&node.window, Event::WindowButtons(buttons.clone()));
+            }
+        }
         let queued = std::mem::take(&mut *QUEUED.lock().unwrap_or_else(|e| e.into_inner()));
         for (id, ev) in queued {
             if let Some(node) = self.nodes.iter().find(|n| n.window.id == id) {
@@ -1458,6 +1742,7 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
 
     fn about_to_wait(&mut self, el: &dyn ActiveEventLoop) {
         TURNS.fetch_add(1, Ordering::AcqRel);
+        self.targets.borrow().release();
         let text = self.wl.as_mut().and_then(|wl| {
             wl.pump();
             wl.clipboard_text_changed()
@@ -1471,3 +1756,7 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
         el.set_control_flow(next.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
     }
 }
+
+#[cfg(test)]
+#[path = "../test/window.rs"]
+mod tests;

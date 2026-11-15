@@ -5,6 +5,16 @@ fn p(s: &str) -> FsPath {
 }
 
 #[test]
+fn addition_is_supported_only_for_formats_with_safe_rewriters() {
+    for format in [Format::Zip, Format::SevenZ, Format::Tar, Format::TarGz] {
+        assert!(format.can_add(), "{format:?}");
+    }
+    for format in [Format::Gz, Format::Rar, Format::Lzh] {
+        assert!(!format.can_add(), "{format:?}");
+    }
+}
+
+#[test]
 fn formats_come_from_extensions() {
     assert_eq!(browsable(b"a.ZIP"), Some(Format::Zip));
     assert_eq!(browsable(b"a.tar.gz"), Some(Format::TarGz));

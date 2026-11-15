@@ -16,6 +16,120 @@ const CTRL: Mods = Mods { ctrl: true, shift: false, alt: false };
 const SHIFT: Mods = Mods { ctrl: false, shift: true, alt: false };
 const CTRL_SHIFT: Mods = Mods { ctrl: true, shift: true, alt: false };
 
+#[test]
+fn system_window_buttons_leave_tabs_and_panel_controls_accessible_on_both_sides() {
+    use crate::input::{WindowButton as B, WindowButtons};
+    for scale in [0.9, 1.0, 1.25, 1.5] {
+        for width in [520, 1200] {
+            for sidebar in [true, false] {
+                let mut app = app_at("/tmp");
+                if !sidebar { key(&mut app, Key::Char('B'), CTRL); }
+                app.run_action("panel.open_right", t0());
+                ev(&mut app, Event::ScaleChanged(scale));
+                ev(&mut app, Event::Resized { width, height: 800 });
+                ev(&mut app, Event::WindowButtons(WindowButtons { left: vec![B::Close, B::Minimize], right: vec![B::Maximize] }));
+                frame(&mut app);
+                let caps = app.panels.caption;
+                assert_eq!(caps[2].x, 0.0);
+                assert_eq!(caps[0].x, caps[2].right());
+                assert_eq!(caps[1].right(), width as f32);
+                assert!(app.panels.menu.x >= caps[0].right());
+                assert!(app.panels.quick.x >= app.panels.menu.right());
+                for id in app.order() {
+                    let l = layout_of(&app, id);
+                    for r in l.tabs.iter().map(|t| t.0).chain([l.actions, l.new_tab]).filter(|r| r.w > 0.0) {
+                        assert!(r.w >= 0.0);
+                        assert!(caps.iter().all(|c| r.right() <= c.x || r.x >= c.right()), "{r:?} overlaps {caps:?}");
+                        assert!(r.right() <= l.title.right() + 0.5);
+                    }
+                }
+                for (i, area) in [HitArea::Minimize, HitArea::Maximize, HitArea::Close].into_iter().enumerate() {
+                    assert_eq!(app.hit_test(caps[i].x + caps[i].w / 2.0, caps[i].h / 2.0), area);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn system_window_buttons_are_runtime_only_and_hidden_controls_cannot_be_invoked() {
+    use crate::input::{WindowButton as B, WindowButtons};
+    let mut app = app_at("/tmp");
+    let mut other = app_at("/tmp");
+    let before = app.persisted();
+    ev(&mut app, Event::WindowButtons(WindowButtons { left: vec![B::Close], right: vec![] }));
+    frame(&mut app);
+    assert_eq!(app.panels.caption[0].w, 0.0);
+    assert_eq!(app.panels.caption[1].w, 0.0);
+    assert!(app.panels.caption[2].w > 0.0);
+    let tree = app.accessibility();
+    assert!(!tree.nodes.iter().any(|n| n.name == S::A11yButtonMaximize.t() || n.name == S::A11yButtonMinimize.t()));
+    assert_eq!(app.persisted(), before);
+    frame(&mut other);
+    assert_eq!(other.panels.caption[2].right(), 1200.0);
+    assert!(other.panels.caption.iter().all(|r| r.w > 0.0));
+    ev(&mut app, Event::WindowButtons(WindowButtons { left: vec![], right: vec![] }));
+    assert!(app.panels.caption.iter().all(|r| r.w == 0.0));
+    assert_eq!(app.panels.menu.x, app.s(4.0));
+}
+
+#[test]
+fn all_left_split_empty_and_default_captions_keep_rendered_tab_strips_in_their_panels() {
+    use crate::input::{WindowButton as B, WindowButtons};
+    for buttons in [WindowButtons::default(), WindowButtons { left: vec![B::Close, B::Minimize, B::Maximize], right: vec![] }, WindowButtons { left: vec![B::Close], right: vec![B::Minimize] }, WindowButtons { left: vec![], right: vec![] }] {
+        for scale in [0.9, 1.0, 1.25, 1.5] {
+            let mut app = three(r"C:\a");
+            ev(&mut app, Event::ScaleChanged(scale));
+            ev(&mut app, Event::Resized { width: 520, height: 800 });
+            ev(&mut app, Event::WindowButtons(buttons.clone()));
+            let mut g = Gfx::new(Mono, 1024);
+            app.frame(&mut g, t0());
+            assert!(g.dl.instances.iter().all(|i| i.rect.iter().all(|f| f.is_finite()) && i.rect[2] >= 0.0 && i.rect[3] >= 0.0));
+            assert!(!g.dl.instances.iter().any(|i| i.kind == crate::render::kind::GLYPH && i.rect[0] < 0.0 && i.rect[1] < 0.0), "hidden strip controls do not draw glyphs at the origin");
+            let caps = app.panels.caption;
+            for id in app.order() {
+                app.activate_panel(id);
+                app.frame(&mut g, t0());
+                let l = &app.layout;
+                let clip = app.strip_clip(false);
+                assert!(clip.w >= 0.0 && clip.x >= l.title.x && clip.right() <= l.title.right() + 0.5);
+                if l.title.y > 0.5 {
+                    assert_eq!(clip.x, l.title.x);
+                } else {
+                    assert!(caps.iter().filter(|c| c.w > 0.0).all(|c| clip.w == 0.0 || clip.right() <= c.x || clip.x >= c.right()));
+                }
+                assert_eq!(app.panels.caption, caps, "changing active panel keeps window controls in place");
+            }
+        }
+    }
+}
+
+#[test]
+fn disabling_animations_during_a_split_immediately_finishes_the_panels_and_insertion_marker() {
+    for system in [false, true] {
+        let mut app = app_at(r"C:\a");
+        app.set_animations_wanted(true);
+        app.run_action("panel.open_right", t0());
+        assert!(app.panels.growing.is_some());
+        if system {
+            ev(&mut app, Event::Animations(false));
+            assert!(app.animations_wanted);
+        } else {
+            app.set_animations_wanted(false);
+            assert!(app.system_animations);
+        }
+        app.layout();
+        assert!(!app.animations);
+        assert!(app.panels.growing.is_none() && app.panels.closing.is_none());
+        let rects: Vec<_> = app.panels.list.iter().map(|p| p.rect).collect();
+        assert!((rects[0].w - rects[1].w).abs() <= 1.0);
+        let tab = app.layout.tabs[0].0;
+        assert!(tab.w > 0.0);
+        assert!(app.tab_incoming(Some((tab.right() - 2.0, tab.y + 100.0))));
+        assert!(app.insert_mark().is_some());
+    }
+}
+
 fn t0() -> Instant {
     Instant::now()
 }

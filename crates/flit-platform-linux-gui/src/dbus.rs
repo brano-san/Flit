@@ -51,7 +51,7 @@ pub(crate) struct Api {
     pub(crate) error_free: unsafe extern "C" fn(*mut Error),
     pub(crate) open_private: unsafe extern "C" fn(*const c_char, *mut Error) -> *mut c_void,
     pub(crate) register: unsafe extern "C" fn(*mut c_void, *mut Error) -> u32,
-    request_name: unsafe extern "C" fn(*mut c_void, *const c_char, u32, *mut Error) -> c_int,
+    pub(crate) request_name: unsafe extern "C" fn(*mut c_void, *const c_char, u32, *mut Error) -> c_int,
     pub(crate) read_write: unsafe extern "C" fn(*mut c_void, c_int) -> u32,
     pub(crate) pop: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
     pub(crate) msg_type: unsafe extern "C" fn(*mut c_void) -> c_int,
@@ -81,6 +81,8 @@ pub(crate) struct Api {
     pub(crate) dispatch_status: unsafe extern "C" fn(*mut c_void) -> c_int,
     pub(crate) close: unsafe extern "C" fn(*mut c_void),
     pub(crate) release: unsafe extern "C" fn(*mut c_void),
+    pub(crate) reply_serial: unsafe extern "C" fn(*mut c_void) -> u32,
+    pub(crate) error_name: unsafe extern "C" fn(*mut c_void) -> *const c_char,
 }
 
 unsafe fn cast<T: Copy>(p: *mut c_void) -> T {
@@ -97,6 +99,10 @@ pub(crate) fn load() -> Option<Api> {
         (!p.is_null()).then_some(p)
     };
     unsafe {
+        let init: unsafe extern "C" fn() -> u32 = cast(sym(c"dbus_threads_init_default")?);
+        if init() == 0 {
+            return None;
+        }
         Some(Api {
             error_init: cast(sym(c"dbus_error_init")?),
             error_free: cast(sym(c"dbus_error_free")?),
@@ -132,6 +138,8 @@ pub(crate) fn load() -> Option<Api> {
             dispatch_status: cast(sym(c"dbus_connection_get_dispatch_status")?),
             close: cast(sym(c"dbus_connection_close")?),
             release: cast(sym(c"dbus_connection_unref")?),
+            reply_serial: cast(sym(c"dbus_message_get_reply_serial")?),
+            error_name: cast(sym(c"dbus_message_get_error_name")?),
         })
     }
 }
@@ -260,6 +268,82 @@ pub fn serve(address: &str, opens: OpenSink, wake: Wake, ready: impl FnOnce(bool
 pub fn start(opens: OpenSink, wake: Wake) {
     let Some(address) = session_address() else { return };
     let _ = std::thread::Builder::new().name("flit-dbus".into()).spawn(move || serve(&address, opens, wake, |_| {}));
+}
+
+fn launcher_values(percent: Option<u32>) -> (f64, bool) {
+    (percent.map_or(0.0, |v| f64::from(v.min(100)) / 100.0), percent.is_some())
+}
+
+fn launcher_updates(rx: crossbeam_channel::Receiver<Option<u32>>, mut send: impl FnMut((f64, bool)) -> bool) {
+    while let Ok(percent) = rx.recv() {
+        let percent = rx.try_iter().last().unwrap_or(percent);
+        if !send(launcher_values(percent)) {
+            return;
+        }
+    }
+}
+
+fn launcher_signal(api: &Api, percent: (f64, bool)) -> *mut c_void {
+    use crate::atspi::{put, V};
+    let Ok(path) = CString::new(format!("/com/canonical/unity/launcherentry/{}", std::process::id())) else { return std::ptr::null_mut() };
+    unsafe {
+        let msg = (api.new_signal)(path.as_ptr(), c"com.canonical.Unity.LauncherEntry".as_ptr(), c"Update".as_ptr());
+        if !msg.is_null() {
+            let mut it = Iter::new();
+            (api.iter_init_append)(msg, &mut it);
+            put(api, &mut it, "", &V::S("application://flit.desktop".into()));
+            put(api, &mut it, "", &V::Props(vec![("progress".into(), V::D(percent.0)), ("progress-visible".into(), V::B(percent.1))]));
+        }
+        msg
+    }
+}
+
+fn serve_launcher(rx: crossbeam_channel::Receiver<Option<u32>>) {
+    let Some(address) = session_address().and_then(|a| CString::new(a).ok()) else { return };
+    let Some(api) = load() else { return };
+    unsafe {
+        let mut err = Error::new();
+        (api.error_init)(&mut err);
+        let conn = (api.open_private)(address.as_ptr(), &mut err);
+        let registered = !conn.is_null() && (api.register)(conn, &mut err) != 0;
+        (api.error_free)(&mut err);
+        if !conn.is_null() {
+            if registered {
+                launcher_updates(rx, |value| {
+                    let msg = launcher_signal(&api, value);
+                    if msg.is_null() {
+                        return false;
+                    }
+                    let sent = (api.send)(conn, msg, std::ptr::null_mut()) != 0;
+                    (api.unref)(msg);
+                    if sent {
+                        (api.flush)(conn);
+                    }
+                    let alive = (api.read_write)(conn, 0) != 0;
+                    loop {
+                        let incoming = (api.pop)(conn);
+                        if incoming.is_null() {
+                            break;
+                        }
+                        (api.unref)(incoming);
+                    }
+                    sent && alive
+                });
+            }
+            (api.close)(conn);
+            (api.release)(conn);
+        }
+    }
+}
+
+pub(crate) fn launcher_progress(percent: Option<u32>) {
+    static WORKER: std::sync::OnceLock<Option<crossbeam_channel::Sender<Option<u32>>>> = std::sync::OnceLock::new();
+    if let Some(tx) = WORKER.get_or_init(|| {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        std::thread::Builder::new().name("flit-launcher".into()).spawn(move || serve_launcher(rx)).ok().map(|_| tx)
+    }) {
+        let _ = tx.send(percent);
+    }
 }
 
 #[cfg(test)]

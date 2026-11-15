@@ -327,3 +327,24 @@ fn shift_moves_and_esc_cancels_a_drag_out_of_flit() {
     assert_eq!(outcome, Outcome::Canceled);
     assert!(canceled.left, "the target hears the drag leave");
 }
+
+#[test]
+fn dropped_content_stays_copy_only_for_shift_alt_and_compositor_ask() {
+    use drop_effect::{COPY, NONE};
+    for (keys, proposed) in [(Some(SHIFT), Some(DndAction::Move)), (Some(ALT), Some(DndAction::Ask)), (None, Some(DndAction::Move)), (None, Some(DndAction::Ask))] {
+        let (mods, ask) = incoming_choice(true, keys, proposed, Some(DndAction::Copy));
+        assert_eq!(mods, Mods::default());
+        assert!(!ask);
+        assert_eq!(incoming_actions(true, COPY, Some(DndAction::Move)), [DndAction::Copy]);
+        assert!(incoming_actions(true, NONE, Some(DndAction::Copy)).is_empty());
+        assert!(incoming_actions(true, drop_effect::MOVE, Some(DndAction::Move)).is_empty());
+    }
+}
+
+#[test]
+fn incoming_file_paths_keep_their_move_and_right_drop_choices() {
+    use drop_effect::MOVE;
+    assert_eq!(incoming_choice(false, Some(SHIFT), Some(DndAction::Copy), Some(DndAction::Move)), (SHIFT, false));
+    assert_eq!(incoming_choice(false, Some(ALT), None, None), (Mods::default(), true));
+    assert_eq!(incoming_actions(false, MOVE, None), [DndAction::Move, DndAction::Copy, DndAction::Ask]);
+}

@@ -105,3 +105,9 @@ mixed = "Mélanger fichiers et dossiers"
 
 [group]
 none = "Aucun"
+[links]
+paste_as = "Coller comme"
+symbolic_link = "Lien symbolique"
+junction = "Jonction de répertoires"
+hard_link = "Lien physique"
+retry_admin = "Réessayer en tant qu’administrateur"

@@ -145,3 +145,81 @@ fn a_call_queued_by_bus_activation_is_answered() {
     assert_eq!(open.unwrap().paths, [b"/srv".to_vec()]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
 }
+
+#[test]
+fn launcher_values_bound_progress_and_hide_finished_operations() {
+    for (input, expected) in [(Some(0), (0.0, true)), (Some(37), (0.37, true)), (Some(100), (1.0, true)), (Some(250), (1.0, true)), (None, (0.0, false))] {
+        assert_eq!(launcher_values(input), expected);
+    }
+}
+
+#[test]
+fn launcher_worker_sends_only_the_latest_queued_progress() {
+    let (tx, rx) = crossbeam_channel::unbounded();
+    for percent in 0..50 {
+        tx.send(Some(percent)).unwrap();
+    }
+    drop(tx);
+    let mut sent = Vec::new();
+    std::thread::scope(|scope| {
+        scope.spawn(|| launcher_updates(rx, |value| { sent.push(value); true })).join().unwrap();
+    });
+    assert_eq!(sent, [(0.49, true)]);
+}
+
+#[test]
+fn launcher_worker_does_not_redisplay_progress_after_a_queued_hide() {
+    let (tx, rx) = crossbeam_channel::unbounded();
+    for percent in 0..50 {
+        tx.send(Some(percent)).unwrap();
+    }
+    tx.send(None).unwrap();
+    drop(tx);
+    let mut sent = Vec::new();
+    launcher_updates(rx, |value| { sent.push(value); true });
+    assert_eq!(sent, [(0.0, false)]);
+}
+
+#[test]
+fn launcher_worker_stops_after_a_failed_send_without_retrying() {
+    let (tx, rx) = crossbeam_channel::unbounded();
+    tx.send(Some(37)).unwrap();
+    let mut sent = Vec::new();
+    launcher_updates(rx, |value| {
+        sent.push(value);
+        if sent.len() == 1 {
+            tx.send(Some(100)).unwrap();
+        }
+        false
+    });
+    assert_eq!(sent, [(0.37, true)]);
+}
+
+#[test]
+fn launcher_signal_has_the_desktop_identity_and_typed_progress_properties() {
+    use crate::atspi::{args, Arg};
+    let api = load().expect("libdbus is needed for message serialization");
+    for (percent, visible, progress) in [(Some(37), 1, 0.37), (None, 0, 0.0)] {
+        let msg = launcher_signal(&api, launcher_values(percent));
+        assert!(!msg.is_null());
+        unsafe {
+            assert_eq!(text((api.path)(msg)), format!("/com/canonical/unity/launcherentry/{}", std::process::id()));
+            assert_eq!(text((api.interface)(msg)), "com.canonical.Unity.LauncherEntry");
+            assert_eq!(text((api.member)(msg)), "Update");
+            let values = args(&api, msg);
+            (api.unref)(msg);
+            assert_eq!(values, vec![Arg::S("application://flit.desktop".into()), Arg::L(vec![Arg::L(vec![Arg::S("progress".into()), Arg::L(vec![Arg::D(progress)])]), Arg::L(vec![Arg::S("progress-visible".into()), Arg::L(vec![Arg::I(visible)])])])]);
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn launcher_emits_progress_on_an_isolated_session_bus() {
+    assert_eq!(std::env::var("FLIT_LAUNCHER_LIVE_TEST").as_deref(), Ok("1"));
+    std::env::set_var("DBUS_SESSION_BUS_ADDRESS", std::env::var("FLIT_LAUNCHER_TEST_ADDRESS").expect("isolated test bus address"));
+    for percent in [Some(37), Some(100), None] {
+        crate::shell::launcher_progress(percent);
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}

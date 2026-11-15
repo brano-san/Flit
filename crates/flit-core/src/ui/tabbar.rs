@@ -411,10 +411,10 @@ impl App {
 
     pub(super) fn strip_clip(&self, tabs: bool) -> Rect {
         let l = &self.layout;
-        let caption = self.panels.caption.iter().filter(|c| c.w > 0.0 && c.y < l.title.bottom() && c.bottom() > l.title.y && c.x > l.title.x).map(|c| c.x);
-        let edge = caption.chain((l.actions.w > 0.0).then_some(l.actions.x)).fold(l.title.right(), f32::min);
+        let (limit, inset) = self.panel_edges(l.title);
+        let edge = if l.actions.w > 0.0 { limit.min(l.actions.x) } else { limit };
         let [left, right] = l.tab_arrows;
-        let (x, edge) = if tabs && left.w > 0.0 { (left.right(), edge.min(right.x)) } else { (l.title.x, edge) };
+        let (x, edge) = if tabs && left.w > 0.0 { (left.right(), edge.min(right.x)) } else { (l.title.x + inset, edge) };
         Rect::new(x, l.title.y, (edge - x).max(0.0), l.title.h)
     }
 
@@ -470,7 +470,7 @@ impl App {
             super::DragEvent::Enter { x, y, .. } | super::DragEvent::Over { x, y, .. } => {
                 self.hover_arrow(*x, *y, Held::Files, now);
             }
-            super::DragEvent::Leave | super::DragEvent::Drop { .. } => self.strip.hold = None,
+            super::DragEvent::Leave | super::DragEvent::Drop { .. } | super::DragEvent::DropData { .. } => self.strip.hold = None,
         }
     }
 

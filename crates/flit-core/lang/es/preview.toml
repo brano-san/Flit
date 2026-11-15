@@ -1,7 +1,7 @@
 selected = ["{n} elemento seleccionado", "{n} de elementos seleccionados", "{n} elementos seleccionados"]
 archived = "Dentro de un archivo comprimido: extráelo para verlo"
 cannot_play = "No se puede reproducir este archivo: {error}"
-no_player = "no se encontró ningún reproductor; instale mpv, GStreamer (gst-play-1.0) o FFmpeg (ffplay)"
+no_player = "no se encontró ningún reproductor. Instale el paquete {package}"
 properties = "Propiedades"
 reading = "Leyendo las propiedades…"
 loading = "Cargando la vista previa…"

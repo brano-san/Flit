@@ -1,7 +1,7 @@
 selected = ["已选择 {n} 个项目"]
 archived = "位于压缩文件中：请解压后预览"
 cannot_play = "无法播放此文件：{error}"
-no_player = "未找到媒体播放器；请安装 mpv、GStreamer（gst-play-1.0）或 FFmpeg（ffplay）"
+no_player = "未找到媒体播放器。请安装 {package} 软件包"
 properties = "属性"
 reading = "正在读取属性…"
 loading = "正在加载预览…"

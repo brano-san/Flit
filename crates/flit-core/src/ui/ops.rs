@@ -12,7 +12,7 @@ use crate::listing::{attr, ChangeKind, DirChange};
 use crate::location::{Location, ProviderId};
 use crate::i18n::{P, S};
 use crate::path::{FsPath, PathKind};
-use crate::provider::{FileOp, GenToken, Launch, OpCtl, OpId, OpReport, ProviderRequest, SnapshotSlot, TabId, Template};
+use crate::provider::{FileOp, GenToken, Launch, LinkChoices, LinkKind, OpCtl, OpId, OpReport, ProviderRequest, SnapshotSlot, TabId, Template};
 use crate::recycle;
 use crate::render::Rect;
 use crate::sort::ViewSpec;
@@ -57,6 +57,17 @@ pub(super) const TIMER_SLACK: Duration = Duration::from_millis(16);
 pub(super) const ERROR_FOR: Duration = Duration::from_secs(5);
 const UNDO_BAR_FOR: Duration = Duration::from_secs(5);
 const DRAG_SCROLL_RATE: f32 = 15.0;
+
+pub(super) const LINK_KINDS: [(LinkKind, S); 4] = [(LinkKind::Shortcut, S::MenuShortcut), (LinkKind::Symbolic, S::MenuLinksSymbolicLink), (LinkKind::Junction, S::MenuLinksJunction), (LinkKind::Hard, S::MenuLinksHardLink)];
+
+struct LinkProbe {
+    generation: u64,
+    tab: TabId,
+    location: Location,
+    dest: FsPath,
+    items: Option<Vec<FsPath>>,
+    choices: LinkChoices,
+}
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NewTemplate {
@@ -103,6 +114,7 @@ pub enum DragEvent {
     Over { x: f32, y: f32, mods: Mods, allowed: u32 },
     Leave,
     Drop { x: f32, y: f32, mods: Mods, allowed: u32 },
+    DropData { x: f32, y: f32, data: std::sync::Arc<crate::provider::DroppedFile> },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -225,6 +237,8 @@ struct Asked {
 
 #[derive(Default)]
 pub(super) struct Ops {
+    link_generation: u64,
+    link_probe: Option<LinkProbe>,
     next_id: OpId,
     pending: Vec<Pending>,
     journal: Journal,
@@ -818,6 +832,14 @@ impl App {
     }
 
     pub(super) fn clipboard_changed(&mut self, seq: u32) {
+        if self.ops.link_probe.as_ref().is_some_and(|p| p.items.is_none()) {
+            self.ops.link_probe = None;
+            for (id, cmd) in self.menu.clone().iter().enumerate() {
+                if matches!(cmd, Cmd::PasteAs(kind) if *kind != LinkKind::Shortcut) {
+                    self.set_menu_disabled(id, true);
+                }
+            }
+        }
         let Some(c) = &mut self.ops.cut else { return };
         match c.seq {
             None => c.seq = Some(seq),
@@ -856,6 +878,51 @@ impl App {
         match self.shell_dir() {
             Ok(dest) => self.start_op(FileOp::PasteLink { dest }, Origin::Fresh, Then::Select),
             Err(e) => self.status(e),
+        }
+    }
+
+    fn probe_links(&mut self, dest: FsPath, items: Option<Vec<FsPath>>) {
+        self.ops.link_generation = self.ops.link_generation.wrapping_add(1);
+        let generation = self.ops.link_generation;
+        self.effects.push(Effect::LinkChoices { generation, items: items.clone(), dest: dest.clone() });
+        self.ops.link_probe = Some(LinkProbe { generation, tab: self.tab().id, location: self.current_location().clone(), dest, items, choices: LinkChoices::default() });
+    }
+
+    pub(super) fn on_link_choices(&mut self, generation: u64, choices: LinkChoices) {
+        let tab = self.tab().id;
+        let location = self.current_location().clone();
+        let Some(probe) = self.ops.link_probe.as_mut().filter(|p| p.generation == generation && p.tab == tab && p.location == location) else { return };
+        probe.choices = choices;
+        self.refresh_link_choices();
+    }
+
+    pub(super) fn refresh_link_choices(&mut self) {
+        for (id, command) in self.menu.clone().iter().enumerate() {
+            let allowed = match command {
+                Cmd::PasteAs(kind) => Some(self.paste_link_allowed(*kind)),
+                Cmd::DropAs(kind) => Some(self.ops.asked.as_ref().is_some_and(|a| self.ops.link_probe.as_ref().is_some_and(|p| p.tab == self.tab().id && p.location == *self.current_location() && p.dest == a.dest && p.items.as_ref() == Some(&a.paths) && p.choices.allows(*kind)))),
+                _ => None,
+            };
+            if let Some(allowed) = allowed {
+                self.set_menu_disabled(id, !allowed);
+            }
+        }
+    }
+
+    pub(super) fn paste_link_allowed(&self, kind: LinkKind) -> bool {
+        if kind == LinkKind::Shortcut {
+            return self.shell_dir().is_ok();
+        }
+        self.ops.link_probe.as_ref().is_some_and(|p| p.tab == self.tab().id && p.items.is_none() && self.shell_dir().is_ok_and(|d| d == p.dest) && p.choices.allows(kind))
+    }
+
+    pub(super) fn paste_as(&mut self, kind: LinkKind) {
+        if !self.paste_link_allowed(kind) {
+            return;
+        }
+        if let Ok(dest) = self.shell_dir() {
+            let op = if kind == LinkKind::Shortcut { FileOp::PasteLink { dest } } else { FileOp::PasteLinkAs { dest, kind } };
+            self.start_op(op, Origin::Fresh, Then::Select);
         }
     }
 
@@ -1147,6 +1214,15 @@ impl App {
     }
 
     fn shell_menu(&mut self, x: f32, y: f32, on_items: bool, extended: bool) {
+        if !on_items && !self.caps.unix_paths && !self.in_bin() && self.archive_view().is_none() {
+            if let Ok(dest) = self.shell_dir() {
+                self.probe_links(dest, None);
+            }
+        }
+        self.show_shell_menu(x, y, on_items, extended);
+    }
+
+    fn show_shell_menu(&mut self, x: f32, y: f32, on_items: bool, extended: bool) {
         if self.in_bin() || self.archive_view().is_some() {
             let menu = self.build_menu(on_items);
             let kind = if on_items { self.selection_kind() } else { super::MenuKind::Background };
@@ -1303,7 +1379,7 @@ impl App {
             .iter()
             .map(|(from, _)| Location::on(provider, from.clone()))
             .filter(|from| from.parent().is_some_and(|p| same_location(&p, dir)))
-            .map(|from| DirChange { kind: ChangeKind::Removed, name: from.file_name().to_vec(), meta: None })
+            .map(|from| DirChange { label: crate::listing::Label::Keep, kind: ChangeKind::Removed, name: from.file_name().to_vec(), meta: None })
             .collect();
         t.pending_diffs.extend(gone);
         self.dirty |= t.apply_diffs() && k == self.cur;
@@ -1909,8 +1985,19 @@ impl App {
     }
 
     pub fn drag(&mut self, ev: &DragEvent, now: Instant) -> u32 {
+        let normalized;
+        let (ev, data) = match ev {
+            DragEvent::DropData { x, y, data } => {
+                normalized = DragEvent::Drop { x: *x, y: *y, mods: Mods::default(), allowed: drop_effect::COPY };
+                (&normalized, Some(data))
+            }
+            _ => (ev, None),
+        };
         self.dirty = true;
         self.drag_panel(ev);
+        if data.is_some() && (!self.caps.unix_paths || self.tab().location().provider() != ProviderId::Local) {
+            return self.drag(&DragEvent::Leave, now);
+        }
         self.strip_drag(ev, now);
         match ev {
             DragEvent::Enter { paths, x, y, mods, allowed, right } => {
@@ -1924,6 +2011,7 @@ impl App {
                 self.ops.drag_scroll = Some((*x, *y, *mods, *allowed));
                 self.drag_over(*x, *y, *mods, *allowed)
             }
+            DragEvent::DropData { .. } => drop_effect::NONE,
             DragEvent::Leave => {
                 self.nav.sidebar.dragging_out = false;
                 self.ops.dropping = None;
@@ -1952,8 +2040,11 @@ impl App {
                         self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch } });
                     }
                     Some(Target::Into { dest, .. }) if d.paths.is_empty() => {
-                        if !self.caps.unix_paths && matches!(effect, drop_effect::COPY | drop_effect::MOVE) {
-                            self.start_op(FileOp::PasteDropped { dest, moving: effect == drop_effect::MOVE }, Origin::Fresh, Then::Select);
+                        if data.is_some() && dest.kind() != PathKind::Unix {
+                            return drop_effect::NONE;
+                        }
+                        if (!self.caps.unix_paths || data.is_some()) && matches!(effect, drop_effect::COPY | drop_effect::MOVE) {
+                            self.start_op(FileOp::PasteDropped { dest, moving: effect == drop_effect::MOVE, data: data.cloned() }, Origin::Fresh, Then::Select);
                         }
                     }
                     Some(Target::Into { dest, .. }) if d.right && effect != drop_effect::NONE => {
@@ -2079,12 +2170,26 @@ impl App {
     }
 
     fn ask_drop(&mut self, asked: Asked, choices: u32, default: u32, (x, y): (f32, f32)) {
+        self.ops.link_probe = None;
+        if !self.caps.unix_paths && choices & drop_effect::LINK != 0 && archive::split(&asked.dest).is_none() {
+            self.probe_links(asked.dest.clone(), Some(asked.paths.clone()));
+        }
+        self.show_drop_menu(asked, choices, default, (x, y));
+    }
+
+    fn show_drop_menu(&mut self, asked: Asked, choices: u32, default: u32, (x, y): (f32, f32)) {
         use drop_effect::*;
         let link = self.caps.supports("file.shortcut").then_some(if self.caps.unix_paths { S::UiDropLinkHere } else { S::UiDropShortcutHere });
-        let menu = self.collect(|_, m| {
+        let menu = self.collect(|a, m| {
             for (effect, label) in [(COPY, Some(S::UiDropCopyHere)), (MOVE, Some(S::UiDropMoveHere)), (LINK, link)] {
                 if let Some(label) = label {
                     m.entry(Cmd::Drop(effect), label.t(), String::new(), Mark::None, effect == default, choices & effect == 0);
+                }
+            }
+            if !a.caps.unix_paths && archive::split(&asked.dest).is_none() {
+                for (kind, label) in LINK_KINDS.into_iter().skip(1) {
+                    let enabled = choices & LINK != 0 && a.ops.link_probe.as_ref().is_some_and(|p| p.dest == asked.dest && p.items.as_ref() == Some(&asked.paths) && p.choices.allows(kind));
+                    m.entry(Cmd::DropAs(kind), label.t(), String::new(), Mark::None, false, !enabled);
                 }
             }
             m.separator();
@@ -2103,6 +2208,13 @@ impl App {
             _ => return,
         };
         self.start_op(op, Origin::Fresh, Then::Select);
+    }
+
+    pub(super) fn drop_as(&mut self, kind: LinkKind) {
+        let Some(asked) = self.ops.asked.take() else { return };
+        if self.ops.link_probe.as_ref().is_some_and(|p| p.tab == self.tab().id && p.location == *self.current_location() && p.dest == asked.dest && p.items.as_ref() == Some(&asked.paths) && p.choices.allows(kind)) {
+            self.start_op(FileOp::LinkAs { items: asked.paths, dest: asked.dest, kind }, Origin::Fresh, Then::Select);
+        }
     }
 
     fn spring_spot(&self, x: f32, y: f32) -> Option<Spot> {

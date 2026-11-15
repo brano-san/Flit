@@ -2,8 +2,108 @@ use super::*;
 use crate::temp::Temp;
 use flit_core::provider::{Resolve, Template};
 
+#[test]
+fn gsettings_button_layout_keeps_an_explicit_empty_string() {
+    assert_eq!(gsettings_string("''\n"), Some(String::new()));
+    assert_eq!(gsettings_string("'close:minimize,maximize'\n"), Some("close:minimize,maximize".into()));
+    assert_eq!(gsettings_string("\"close:\"\n"), Some("close:".into()));
+    assert_eq!(gsettings_string("garbage"), None);
+    assert_eq!(gsettings_string("'unterminated"), None);
+}
+
 fn fs_path(p: &Path) -> FsPath {
     FsPath::parse_exact(p.as_os_str().as_bytes()).unwrap()
+}
+
+fn assert_missing(error: &PlatformError, tool: &str) {
+    let package = crate::tools::package_for(tool, &crate::tools::os_release()).unwrap();
+    assert_eq!(error.message, tool_missing(tool).message);
+    assert!(error.message.contains(package), "{}", error.message);
+    assert!(!error.message.contains("{package}"));
+    crate::temp::assert_missing(&error.message, tool);
+}
+
+#[test]
+fn missing_print_mount_and_terminal_helpers_name_their_packages() {
+    crate::temp::with_tools(&[], || {
+        assert_missing(&print_files(&[PathBuf::from("/not-a-file")]).unwrap_err(), "lp");
+        let message = mount_image(Path::new("/not-an-image")).unwrap_err().to_string();
+        assert_eq!(message, tool_missing("udisksctl").message);
+        crate::temp::assert_missing(&message, "udisksctl");
+        assert_eq!(open_terminal(Path::new("/")).unwrap_err().message, tool_missing("xterm").message);
+        assert_missing(&open_root_terminal(Path::new("/")).unwrap_err(), "pkexec");
+        assert!(xdg_open_command(OsStr::new("/tmp/a")).unwrap_err().message.contains("xdg-utils"));
+    });
+}
+
+#[test]
+fn installed_print_mount_and_terminal_helpers_do_not_report_missing_packages() {
+    crate::temp::with_tools(&["lp", "udisksctl", "xterm", "pkexec", "xdg-open"], || {
+        print_files(&[PathBuf::from("/not-a-file")]).unwrap();
+        assert!(!mount_image(Path::new("/not-an-image")).unwrap_err().to_string().contains("Install the package"));
+        open_terminal(Path::new("/")).unwrap();
+        open_root_terminal(Path::new("/")).unwrap();
+        assert!(xdg_open_command(OsStr::new("/tmp/a")).is_ok());
+    });
+    crate::temp::with_tools(&["xterm", "sudo"], || {
+        open_root_terminal(Path::new("/")).unwrap();
+    });
+}
+
+#[test]
+fn missing_clipboard_reader_names_its_package_only_after_native_and_internal_fallbacks() {
+    let paths = vec![FsPath::parse("/tmp/a").unwrap()];
+    crate::temp::with_tools(&[], || {
+        assert_missing(&clipboard_files_from(None, None).unwrap_err(), "xclip");
+        assert_missing(&empty_clipboard(false, true), "wl-paste");
+        assert_eq!(empty_clipboard(true, true).message, S::ErrorsEngineClipboardNoFiles.en());
+        assert_eq!(clipboard_files_from(Some((uri_list(&paths), true)), None).unwrap(), (paths.clone(), true));
+        assert_eq!(clipboard_files_from(None, Some(crate::clipboard::payload(&paths, false))).unwrap(), (paths, false));
+        assert_eq!(clipboard_files_from(None, Some(Vec::new())).unwrap_err().message, S::ErrorsEngineClipboardNoFiles.en());
+    });
+    crate::temp::with_tools(&["xclip"], || {
+        assert_eq!(clipboard_files_from(None, None).unwrap_err().message, S::ErrorsEngineClipboardNoFiles.en());
+    });
+    crate::temp::with_tools(&["wl-paste"], || {
+        assert_eq!(empty_clipboard(false, true).message, S::ErrorsEngineClipboardNoFiles.en());
+    });
+}
+
+#[test]
+fn missing_known_helpers_launched_from_commands_name_packages_without_masking_other_io_errors() {
+    let not_found = io::Error::from_raw_os_error(libc::ENOENT);
+    crate::temp::with_tools(&[], || {
+        assert_missing(&spawn_error("gio", &not_found), "gio");
+        assert!(!spawn_error("my-custom-program", &not_found).message.contains("Install the package"));
+        assert!(!spawn_error("baloosearch", &not_found).message.contains("recollcmd"));
+        assert!(!spawn_error("ffplay", &not_found).message.contains("mpv"));
+        assert!(!spawn_error("gio", &io::Error::from_raw_os_error(libc::EACCES)).message.contains("Install the package"));
+    });
+    crate::temp::with_tools(&["gio"], || {
+        assert!(!spawn_error("gio", &not_found).message.contains("Install the package"), "a missing working directory is not a missing helper");
+    });
+}
+
+#[test]
+fn missing_media_players_name_mpv_only_after_every_applicable_fallback() {
+    crate::temp::with_tools(&[], || {
+        for video in [false, true] {
+            assert_missing(&play_media(video, Path::new("/tmp/a"), None, None).unwrap_err(), "mpv");
+        }
+    });
+    for tool in ["mpv", "gst-play-1.0", "ffplay", "paplay"] {
+        crate::temp::with_tools(&[tool], || {
+            let (mut child, ipc) = play_media(false, Path::new("/tmp/a"), None, None).unwrap();
+            assert!(!ipc);
+            assert!(child.wait().unwrap().success());
+            if tool == "paplay" {
+                assert_missing(&play_media(true, Path::new("/tmp/a"), None, None).unwrap_err(), "mpv");
+            } else {
+                let (mut child, _) = play_media(true, Path::new("/tmp/a"), None, None).unwrap();
+                assert!(child.wait().unwrap().success());
+            }
+        });
+    }
 }
 
 #[test]
@@ -528,4 +628,22 @@ fn the_system_disk_plain_files_and_scripts_keep_their_usual_icons() {
     assert!(!type_icon_names(b"notes", false).contains(&"application-x-executable".to_owned()));
     assert!(!type_icon_names(b"build.sh", true).contains(&"application-x-executable".to_owned()), "a script keeps the icon of its type");
     assert!(!crate::icons::switch_theme("  ''  "), "an empty theme name changes nothing");
+}
+
+#[test]
+fn an_empty_or_text_clipboard_read_natively_never_blames_a_missing_helper() {
+    crate::temp::with_tools(&[], || {
+        assert_eq!(clipboard_files_from(None, crate::window::without_files(true)).unwrap_err().message, S::ErrorsEngineClipboardNoFiles.en());
+        assert_missing(&clipboard_files_from(None, crate::window::without_files(false)).unwrap_err(), "xclip");
+    });
+}
+
+#[test]
+fn a_missing_terminal_suggests_the_terminal_variable_xdg_terminal_exec_and_a_package() {
+    let message = tool_missing("xterm").message;
+    assert_eq!(message, S::ErrorsOpsExtraNoTerminal.en().replace("{package}", "xterm"));
+    assert!(message.contains("TERMINAL") && message.contains("xdg-terminal-exec"));
+    crate::temp::with_tools(&[], || {
+        assert_eq!(open_terminal(Path::new("/")).unwrap_err().message, message);
+    });
 }

@@ -2,7 +2,6 @@ use crate::places;
 use crossbeam_channel::Sender;
 use flit_core::listing::DirStats;
 use flit_core::path::PathKind;
-use flit_core::i18n::S;
 use flit_core::ui::WatchLimit;
 use flit_core::{FsError, FsPath, ListingBuilder, ProviderEvent, TabId};
 use flit_platform::{Fs, PlatformError, Wake, Watcher};
@@ -41,7 +40,10 @@ pub fn raise_outcome(limit: u64, code: Option<i32>, stderr: &str) -> WatchLimit 
 }
 
 pub fn raise_watch_limit() -> WatchLimit {
-    let Some(pkexec) = crate::shell::on_path(std::ffi::OsStr::new("pkexec")) else { return WatchLimit::Failed(S::ErrorsOpsExtraNoPkexec.en().to_owned()) };
+    let pkexec = match crate::tools::require("pkexec") {
+        Ok(program) => program,
+        Err(e) => return WatchLimit::Failed(e.message),
+    };
     let current = std::fs::read_to_string(WATCH_LIMIT_FILE).ok().and_then(|t| t.trim().parse().ok());
     let limit = raised_limit(current);
     match std::process::Command::new(pkexec).args(raise_args(limit)).stdin(std::process::Stdio::null()).output() {
@@ -152,6 +154,21 @@ enum Spot {
 
 type TrashTabs = Arc<Mutex<HashMap<TabId, u64>>>;
 
+type Folders = Arc<Mutex<HashMap<TabId, (u64, std::path::PathBuf)>>>;
+
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn folder_icon_changed(folders: &Folders, tab: TabId, gen: u64, changes: &[flit_core::listing::DirChange]) {
+    if !changes.iter().any(|c| c.name == b".directory") {
+        return;
+    }
+    let Some(dir) = lock(folders).get(&tab).filter(|(g, _)| *g == gen).map(|(_, p)| p.clone()) else { return };
+    crate::folder_icons::forget(&dir);
+    crate::window::icons_changed();
+}
+
 fn rescan_trash(tabs: &TrashTabs, events: &Sender<ProviderEvent>, wake: &Wake) {
     let shown: Vec<(TabId, u64)> = tabs.lock().unwrap_or_else(|e| e.into_inner()).iter().map(|(&t, &g)| (t, g)).collect();
     let sent = shown.into_iter().filter(|&(tab, gen)| events.send(ProviderEvent::Rescan { tab, gen }).is_ok()).count();
@@ -162,6 +179,7 @@ fn rescan_trash(tabs: &TrashTabs, events: &Sender<ProviderEvent>, wake: &Wake) {
 
 pub struct LinuxGuiWatcher {
     notify: Notify<(TabId, u64, Spot)>,
+    folders: Folders,
     poll: crate::poll::Poll,
     remote: fn(&FsPath) -> bool,
     current: HashMap<TabId, (u64, Vec<Spot>)>,
@@ -213,17 +231,21 @@ impl LinuxGuiWatcher {
 
 impl Watcher for LinuxGuiWatcher {
     fn new(events: Sender<ProviderEvent>, wake: Wake) -> Result<Self, PlatformError> {
-        let (sink, ping) = (events.clone(), wake.clone());
+        let (sink, ping, folders) = (events.clone(), wake.clone(), Folders::default());
+        let shown = folders.clone();
         let notify = Notify::with_window(COALESCE, move |(tab, gen, spot), notice| {
             let _ = sink.send(match (spot, notice) {
-                (Spot::Folder, Notice::Changes(changes)) => ProviderEvent::Changes { tab, gen, changes },
+                (Spot::Folder, Notice::Changes(changes)) => {
+                    folder_icon_changed(&shown, tab, gen, &changes);
+                    ProviderEvent::Changes { tab, gen, changes }
+                }
                 _ => ProviderEvent::Rescan { tab, gen },
             });
             ping();
         })
         .map_err(|e| PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("inotify: {e}")))?;
         let poll = crate::poll::Poll::new(events.clone(), wake.clone(), crate::poll::PERIOD);
-        Ok(Self { notify, poll, remote: |dir| LinuxFs.remote(dir), current: HashMap::new(), trash: places::trash().ok(), trash_tabs: TrashTabs::default(), mounts_watched: false, events, wake })
+        Ok(Self { notify, folders, poll, remote: |dir| LinuxFs.remote(dir), current: HashMap::new(), trash: places::trash().ok(), trash_tabs: TrashTabs::default(), mounts_watched: false, events, wake })
     }
 
     fn watch(&mut self, tab: TabId, gen: u64, dir: Option<&FsPath>) {
@@ -232,6 +254,7 @@ impl Watcher for LinuxGuiWatcher {
                 self.notify.unwatch(&(tab, old, spot));
             }
         }
+        lock(&self.folders).remove(&tab);
         blind_tabs().retain(|b| b.tab != tab);
         self.poll.forget(tab);
         self.trash_tabs.lock().unwrap_or_else(|e| e.into_inner()).remove(&tab);
@@ -245,6 +268,7 @@ impl Watcher for LinuxGuiWatcher {
         match self.notify.watch((tab, gen, Spot::Folder), path) {
             Ok(()) => {
                 self.current.insert(tab, (gen, vec![Spot::Folder]));
+                lock(&self.folders).insert(tab, (gen, path.to_path_buf()));
             }
             Err(e) => self.blind(tab, gen, &e),
         }

@@ -162,8 +162,16 @@ pub fn parse_user_dirs(text: &[u8], home: &[u8]) -> Vec<(String, Vec<u8>)> {
         .collect()
 }
 
-fn user_dirs_file() -> Option<PathBuf> {
+pub(crate) fn user_dirs_file() -> Option<PathBuf> {
     Some(config_home()?.join("user-dirs.dirs"))
+}
+
+pub fn user_dirs_from(text: &[u8], home: &Path) -> Vec<(&'static str, PathBuf)> {
+    let parsed = parse_user_dirs(text, home.as_os_str().as_bytes());
+    USER_DIRS
+        .iter()
+        .map(|(_, key, fallback, _)| (*key, parsed.iter().rev().find(|(k, _)| k == key).map_or_else(|| home.join(fallback), |(_, p)| PathBuf::from(OsStr::from_bytes(p)))))
+        .collect()
 }
 
 pub fn user_dir(shell_name: &str) -> Option<PathBuf> {

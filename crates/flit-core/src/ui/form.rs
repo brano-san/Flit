@@ -131,6 +131,16 @@ impl Form {
         }
     }
 
+    pub fn wipe_secrets(&mut self) {
+        for c in &mut self.controls {
+            if let Control::Text { field, .. } = c {
+                if field.secret {
+                    field.edit.wipe();
+                }
+            }
+        }
+    }
+
     pub fn set_text(&mut self, k: usize, value: &str) {
         if let Some(Control::Text { field, .. }) = self.controls.get_mut(k) {
             field.edit.set(value);

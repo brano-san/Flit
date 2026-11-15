@@ -168,9 +168,9 @@ pub fn needs_login(out: &std::process::Output) -> bool {
 }
 
 fn gio(args: &[&str], wait: std::time::Duration) -> std::io::Result<std::process::Output> {
-    let mut cmd = std::process::Command::new("gio");
+    let mut cmd = crate::tools::command("gio")?;
     cmd.args(args);
-    run_within(cmd, wait).map_err(|e| missing_tool("gio", "libglib2.0-bin", e))
+    run_within(cmd, wait)
 }
 
 pub fn connect(uri: &str) -> std::io::Result<PathBuf> {
@@ -182,20 +182,33 @@ pub fn connect(uri: &str) -> std::io::Result<PathBuf> {
     local_path(&String::from_utf8_lossy(&info.stdout)).ok_or_else(|| std::io::Error::other(String::from_utf8_lossy(&mounted.stderr).trim().to_owned()))
 }
 
+pub fn local_path_within(uri: &str, wait: std::time::Duration) -> std::io::Result<PathBuf> {
+    let info = gio(&["info", uri], wait)?;
+    local_path(&String::from_utf8_lossy(&info.stdout)).ok_or_else(|| std::io::Error::other(String::from_utf8_lossy(&info.stderr).trim().to_owned()))
+}
+
+fn fuse_unmounter() -> &'static str {
+    if crate::shell::on_path(std::ffi::OsStr::new("fusermount3")).is_none() && crate::shell::on_path(std::ffi::OsStr::new("fusermount")).is_some() { "fusermount" } else { "fusermount3" }
+}
+
 pub fn disconnect_command(point: &Path, table: &[Mount], gvfs_root: &Path) -> Vec<std::ffi::OsString> {
     let words = |w: &[&str]| w.iter().map(std::ffi::OsString::from).chain([point.as_os_str().to_owned()]).collect();
     if point.starts_with(gvfs_root) {
         return words(&["gio", "mount", "-u"]);
     }
     match table.iter().rev().find(|m| m.path() == point) {
-        Some(m) if m.fstype.starts_with("fuse.") || m.fstype == "sshfs" => words(&["fusermount", "-u"]),
+        Some(m) if m.fstype.starts_with("fuse.") || m.fstype == "sshfs" => words(&[fuse_unmounter(), "-u"]),
         _ => words(&["umount"]),
     }
 }
 
 pub fn disconnect(point: &Path) -> std::io::Result<()> {
-    let [program, args @ ..] = &disconnect_command(point, &mounts::read()?, &gvfs_root())[..] else { return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput)) };
-    let mut cmd = std::process::Command::new(program);
+    disconnect_from(point, &mounts::read()?, &gvfs_root())
+}
+
+fn disconnect_from(point: &Path, table: &[Mount], gvfs_root: &Path) -> std::io::Result<()> {
+    let [program, args @ ..] = &disconnect_command(point, table, gvfs_root)[..] else { return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput)) };
+    let mut cmd = crate::tools::command(&program.to_string_lossy())?;
     cmd.args(args);
     let out = run_within(cmd, CONNECT_WAIT)?;
     if out.status.success() {
@@ -258,13 +271,6 @@ pub fn unmounted_from(lsblk: &str) -> Vec<Drive> {
         out.push(Drive { path, label, total: 0, free: 0, file_system: get("FSTYPE").to_owned(), removable: get("HOTPLUG") == "1", unmounted: true, kind, remote: None });
     }
     out
-}
-
-fn missing_tool(tool: &str, package: &str, e: std::io::Error) -> std::io::Error {
-    match e.kind() {
-        std::io::ErrorKind::NotFound => std::io::Error::new(std::io::ErrorKind::NotFound, format!("{tool} is not installed: install the {package} package")),
-        _ => e,
-    }
 }
 
 pub fn drive_error(key: S, drive: &Path, e: &std::io::Error) -> PlatformError {

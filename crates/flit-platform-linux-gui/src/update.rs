@@ -1,6 +1,6 @@
 use flit_platform::PlatformError;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -13,16 +13,13 @@ fn failed(e: impl std::fmt::Display) -> PlatformError {
 
 pub(crate) fn download(url: &str, out: &mut dyn Write, progress: &mut dyn FnMut(u64, Option<u64>) -> bool) -> Result<(), PlatformError> {
     let agent = format!("Flit/{}", env!("CARGO_PKG_VERSION"));
-    let mut child = Command::new("curl")
+    let mut child = std::process::Command::new(crate::tools::require("curl")?)
         .args(["-fsSL", "--proto", "=https", "--connect-timeout", "30", "--max-time", "900", "-A", &agent, "-D", "/dev/stderr", "--", url])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| match e.kind() {
-            ErrorKind::NotFound => failed("curl is not installed: install curl to download Flit updates"),
-            _ => failed(format!("curl: {e}")),
-        })?;
+        .map_err(|e| failed(format!("curl: {e}")))?;
     let (Some(mut body), Some(headers)) = (child.stdout.take(), child.stderr.take()) else { return Err(failed("curl: no output")) };
     let length = Arc::new(AtomicU64::new(0));
     let seen = length.clone();
@@ -78,3 +75,7 @@ pub(crate) fn wait_exit(pid: u32, limit: Duration) {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+#[cfg(test)]
+#[path = "../test/update.rs"]
+mod tests;

@@ -91,12 +91,25 @@ fn a_broken_engine_hands_over_to_the_next_and_its_error_is_shown_when_none_works
 #[test]
 fn without_an_engine_or_words_nothing_is_run() {
     let e = collect(&[], None, "doc").unwrap_err();
-    assert_eq!(e.message, S::ErrorsEngineNoContentSearch.en());
+    assert_eq!(e.message, crate::shell::tool_missing("recollq").message);
     let t = Temp::new("content-empty");
     let marker = t.path().join("ran");
     let fake = script(&t, "recollq", &format!("touch {}\nexit 1", marker.display()));
     assert!(collect(&[engine(Kind::Recoll, fake)], None, "   ").unwrap().is_empty());
     assert!(!marker.exists());
+}
+
+#[test]
+fn missing_content_search_helpers_name_a_package_and_any_installed_engine_still_runs() {
+    crate::temp::with_tools(&[], || {
+        let error = search(None, "doc", &|| true, &mut |_, _| {}).unwrap_err();
+        crate::temp::assert_missing(&error.message, "recollq");
+    });
+    for tool in ["recollq", "recoll", "localsearch", "tracker3", "baloosearch6", "baloosearch"] {
+        crate::temp::with_tools(&[tool], || {
+            search(None, "doc", &|| true, &mut |_, _| {}).unwrap();
+        });
+    }
 }
 
 #[test]

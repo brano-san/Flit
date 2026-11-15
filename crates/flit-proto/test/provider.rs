@@ -3,6 +3,17 @@ use crate::transport::{decode, encode};
 use flit_core::listing::{ChangeKind, DirStats};
 use flit_core::FsErrorKind;
 
+#[test]
+fn typed_links_are_kept_local_and_are_never_dispatched_to_an_old_agent() {
+    let dest = FsPath::parse(r"C:\out").unwrap();
+    for kind in [flit_core::provider::LinkKind::Symbolic, flit_core::provider::LinkKind::Junction, flit_core::provider::LinkKind::Hard] {
+        for op in [FileOp::LinkAs { items: vec![dest.clone()], dest: dest.clone(), kind }, FileOp::PasteLinkAs { dest: dest.clone(), kind }] {
+            assert!(!agent_runs(&op));
+            assert!(check_report(&op, &[(dest.clone(), dest.clone())]).is_err());
+        }
+    }
+}
+
 fn unix(p: &[u8]) -> FsPath {
     FsPath::parse_bytes(p).unwrap()
 }
@@ -38,7 +49,7 @@ fn roundtrip_every_message() {
         Event::ListDone { id: 1, error: Some(err.clone()) },
         Event::Stat { id: 2, result: Ok(Meta { size: 9, modified: -5, created: 1, attrs: 0 }) },
         Event::Stat { id: 2, result: Err(err) },
-        Event::Changes { id: 3, changes: vec![DirChange { kind: ChangeKind::Removed, name: b"x".to_vec(), meta: None }] },
+        Event::Changes { id: 3, changes: vec![DirChange { label: flit_core::listing::Label::Keep, kind: ChangeKind::Removed, name: b"x".to_vec(), meta: None }] },
         Event::Rescan { id: 3 },
         Event::DirSize { id: 4, idx: 7, stats: DirStats { size: u64::MAX, folders: 3, files: 9, partial: true } },
         Event::OpDone { id: 5, error: None, items: vec![(unix(b"/tmp/a"), unix(b"/home/u/.local/share/Trash/files/a"))] },
@@ -63,7 +74,7 @@ fn forged_paths_rejected() {
 
 #[test]
 fn hostile_events_rejected() {
-    let change = |name: &[u8], meta: Option<Meta>| Event::Changes { id: 1, changes: vec![DirChange { kind: ChangeKind::Added, name: name.to_vec(), meta }] };
+    let change = |name: &[u8], meta: Option<Meta>| Event::Changes { id: 1, changes: vec![DirChange { label: flit_core::listing::Label::Keep, kind: ChangeKind::Added, name: name.to_vec(), meta }] };
     for evil in [&b".."[..], b".", b"", b"a/b", b"nul\0"] {
         assert!(change(evil, None).validate(false).is_err(), "{evil:?}");
     }
@@ -133,4 +144,13 @@ fn failures_must_name_the_operation_paths_and_stay_short() {
     let long = Event::OpFailure { id: 1, failure: Failure { error: "x".repeat(MAX_FAILURE_TEXT + 1), ..f("/s/a") } };
     assert!(long.validate(false).is_err());
     assert!(Event::OpFailure { id: 1, failure: f("/s/a") }.validate(true).is_ok());
+}
+
+#[test]
+fn dropped_file_payloads_never_go_to_the_agent() {
+    let dest = unix(b"/tmp");
+    let data = std::sync::Arc::new(flit_core::provider::DroppedFile { name: b"text.txt".to_vec(), bytes: b"hello".to_vec() });
+    for data in [None, Some(data)] {
+        assert!(!agent_runs(&FileOp::PasteDropped { dest: dest.clone(), moving: false, data }));
+    }
 }

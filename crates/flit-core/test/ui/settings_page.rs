@@ -267,7 +267,7 @@ fn controls_change_settings_with_the_mouse_and_the_keyboard() {
     assert!(a.tabs().iter().all(|t| t.view_spec.show_hidden));
     let k = line(&mut a, "files.confirm_delete");
     a.drain_effects().for_each(drop);
-    let at = center(control_rect(rect(&a, k), s));
+    let at = center(switch_rect(rect(&a, k), s));
     click_at(&mut a, at);
     let menu = a.drain_effects().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m.menu) } else { None }).expect("a choice menu");
     assert_eq!(menu.len(), 3);
@@ -1314,4 +1314,36 @@ fn about_page_lists_missing_helper_programs_with_their_packages() {
     let at = lines.iter().position(|l| l == "Missing helper programs").expect("the group is shown");
     assert_eq!(lines[at + 1..at + 3], ["xclip: Copying and pasting files with other applications: install the package xclip", "pdftoppm: PDF thumbnails: install the package poppler-utils"]);
     assert!(lines[at + 3..].iter().any(|l| l == "Updates"), "the rest of the page follows: {lines:?}");
+}
+
+#[test]
+fn a_finger_scrolls_the_settings_page_a_flick_glides_on_and_a_tap_still_toggles() {
+    let t0 = Instant::now();
+    let mut a = app();
+    a.open_settings(Some(Page::Interface));
+    a.frame(&mut Gfx::new(Mono, 1024), t0);
+    let list = ui(&a).list;
+    let (x, y) = (list.x + 30.0, list.bottom() - 30.0);
+    let end = a.touch_swipe((x, y), (x, y - 150.0), t0 + Duration::from_secs(1));
+    let moved = ui(&a).scroll.pos;
+    assert!((moved - 150.0).abs() <= 1.0, "the page follows the finger: {moved}");
+    assert!(a.drag == crate::ui::Drag::None && a.own_menu.is_none());
+    a.touch_flick(end, |a| a.settings.as_ref().unwrap().scroll.pos);
+    let toggle = |a: &App| {
+        let u = ui(a);
+        (0..u.lines.len()).find_map(|k| match u.lines[k] {
+            Line::Setting(i) if matches!(SETTINGS[i].kind, Kind::Toggle(..)) && u.rects[k].y >= u.list.y && u.rects[k].bottom() <= u.list.bottom() => Some((k, i)),
+            _ => None,
+        })
+    };
+    scroll_to(&mut a, 0.0);
+    let (k, i) = toggle(&a).expect("a switch is on screen");
+    let before = SETTINGS[i].get(&a);
+    a.touch_tap(center(switch_rect(rect(&a, k), s)), end + Duration::from_secs(10));
+    assert_ne!(SETTINGS[i].get(&a), before, "a tap flips the switch like a click");
+    let pos = ui(&a).scroll.pos;
+    let c = center(switch_rect(rect(&a, k), s));
+    a.touch_swipe(c, (c.0, c.1 - 60.0), end + Duration::from_secs(11));
+    assert_ne!(SETTINGS[i].get(&a), before, "a drag that starts on a switch scrolls and leaves it alone");
+    assert!(ui(&a).scroll.pos > pos);
 }

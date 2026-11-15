@@ -1,7 +1,7 @@
 selected = ["{n} Element ausgewählt", "{n} Elemente ausgewählt"]
 archived = "In einem Archiv: Zum Anzeigen der Vorschau extrahieren"
 cannot_play = "Diese Datei kann nicht wiedergegeben werden: {error}"
-no_player = "kein Mediaplayer gefunden; installieren Sie mpv, GStreamer (gst-play-1.0) oder FFmpeg (ffplay)"
+no_player = "kein Mediaplayer gefunden. Installieren Sie das Paket {package}"
 properties = "Eigenschaften"
 reading = "Eigenschaften werden gelesen…"
 loading = "Vorschau wird geladen…"

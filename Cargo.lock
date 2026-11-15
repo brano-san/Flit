@@ -764,9 +764,11 @@ dependencies = [
  "flate2",
  "flit-core",
  "flit-platform",
+ "libc",
  "sevenz-rust2",
  "tar",
  "unrar-ng",
+ "windows",
  "zip",
 ]
 

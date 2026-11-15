@@ -269,7 +269,7 @@ fn a_silent_agent_times_out_into_the_share() {
 fn watches_map_to_tabs_and_are_cancelled() {
     let fake = Fake::new(|req| {
         Some(match req {
-            Request::Watch { id, .. } => vec![Event::Changes { id: *id, changes: vec![DirChange { kind: ChangeKind::Added, name: b"x".to_vec(), meta: Some(Meta::default()) }] }],
+            Request::Watch { id, .. } => vec![Event::Changes { id: *id, changes: vec![DirChange { label: flit_core::listing::Label::Keep, kind: ChangeKind::Added, name: b"x".to_vec(), meta: Some(Meta::default()) }] }],
             other => lister(other)?,
         })
     });

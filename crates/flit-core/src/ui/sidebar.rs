@@ -1493,6 +1493,17 @@ impl App {
         self.dirty = true;
     }
 
+    pub(super) fn touch_pan_sidebar(&mut self, dy: f32) -> bool {
+        let sb = &mut self.nav.sidebar;
+        let was = sb.scroll.pos;
+        sb.scroll.snap((was - dy).clamp(0.0, (sb.content_h - sb.list.h).max(0.0)));
+        let moved = sb.scroll.pos != was;
+        if moved {
+            self.layout();
+        }
+        moved
+    }
+
     pub(super) fn begin_splitter_drag(&mut self, x: f32) {
         self.drag = Drag::Splitter { start_x: x, start_w: self.nav.sidebar.state.sidebar_w };
     }

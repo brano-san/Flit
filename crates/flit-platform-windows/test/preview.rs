@@ -182,10 +182,17 @@ fn column_properties_give_picture_dimensions_and_program_versions_and_stay_empty
     let pic = d.0.join("pic.bmp");
     std::fs::write(&pic, bmp(7, 5, [10, 20, 30])).unwrap();
     let got = column_props(&fs(&pic));
-    assert_eq!(got.len(), 4);
-    assert!(got[0].contains('7') && got[0].contains('5'), "{got:?}");
-    assert!(got[2].is_empty() && got[3].is_empty(), "{got:?}");
+    assert_eq!(got.text.len(), 10);
+    assert!(got.text[0].contains('7') && got.text[0].contains('5'), "{got:?}");
+    assert_eq!((got.width, got.height, got.duration), (Some(7), Some(5), None), "sorting gets the raw pixels, not the localized text");
+    assert!(got.text[2..].iter().all(String::is_empty), "{got:?}");
+    let key = flit_core::listing::PropKey::new(&got, flit_core::sort::CaseMode::Insensitive).unwrap();
+    assert_eq!((key.pixels, key.duration, key.version), (Some((35, 7)), None, None));
     let exe = column_props(&FsPath::parse(r"C:\Windows\notepad.exe").unwrap());
-    assert!(exe[3].chars().next().is_some_and(|c| c.is_ascii_digit()), "{exe:?}");
-    assert!(column_props(&fs(&d.0.join("missing.bmp"))).is_empty());
+    assert!(exe.text[3].chars().next().is_some_and(|c| c.is_ascii_digit()), "{exe:?}");
+    assert!(!exe.text[9].is_empty(), "programs name their company: {exe:?}");
+    assert_eq!((exe.width, exe.height), (None, None));
+    let version = flit_core::listing::PropKey::new(&exe, flit_core::sort::CaseMode::Insensitive).and_then(|k| k.version);
+    assert!(version.is_some_and(|v| v >> 48 >= 6), "{exe:?}");
+    assert_eq!(column_props(&fs(&d.0.join("missing.bmp"))), flit_core::listing::ColumnValues::default());
 }

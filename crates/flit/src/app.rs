@@ -75,17 +75,62 @@ impl Rows {
 struct Visible {
     pane: Rows,
     parked: Mutex<Vec<(u64, u32, u32)>>,
+    content: Mutex<Vec<u64>>,
+    overlays: crate::overlays::Shown,
 }
 
 impl Visible {
     fn wants(&self, req: &IconRequest) -> bool {
+        if req.kind == flit_core::ui::IconKind::Content {
+            return self.content.lock().is_ok_and(|keys| keys.contains(&req.key));
+        }
         req.gen == 0 || self.pane.wants(req) || self.parked.lock().is_ok_and(|p| p.iter().any(|&r| within(req, r)))
     }
 }
 
+const FOLDER_BATCH: usize = 100;
+
+fn batched<S: Shell>(req: &IconRequest) -> bool {
+    S::BATCHES_FOLDER_ICONS && req.kind == flit_core::ui::IconKind::CustomFolder
+}
+
+fn folder_batches(reqs: Vec<IconRequest>) -> Vec<Vec<IconRequest>> {
+    let mut out: Vec<Vec<IconRequest>> = Vec::new();
+    for req in reqs {
+        match out.last_mut() {
+            Some(last) if last.len() < FOLDER_BATCH => last.push(req),
+            _ => out.push(vec![req]),
+        }
+    }
+    out
+}
+
+fn icon_result<S: Shell>(shell: &mut S, req: &IconRequest) -> IconResult {
+    match shell.shared_icon(req) {
+        (Some(image), Some(share)) => IconResult::Shared(share, image),
+        (Some(image), None) => IconResult::Ready(image),
+        (None, _) => IconResult::Failed,
+    }
+}
+
+fn batch_icons<S: Shell>(shell: &mut S, window: WindowId, reqs: Vec<IconRequest>, visible: &Visible) -> Vec<Done> {
+    let (wanted, skipped): (Vec<IconRequest>, Vec<IconRequest>) = reqs.into_iter().partition(|r| visible.wants(r));
+    if !wanted.is_empty() {
+        shell.prepare_icons(&wanted);
+    }
+    let mut out: Vec<Done> = skipped.into_iter().map(|req| Done::Icon { window, req, result: IconResult::Skipped }).collect();
+    out.extend(wanted.into_iter().map(|req| {
+        let result = if visible.wants(&req) { icon_result(shell, &req) } else { IconResult::Skipped };
+        Done::Icon { window, req, result }
+    }));
+    out
+}
+
 enum ShellJob {
     Icon { window: WindowId, req: IconRequest, visible: Arc<Visible> },
+    Icons { window: WindowId, reqs: Vec<IconRequest>, visible: Arc<Visible> },
     TypeName(Vec<u8>),
+    LinkChoices { window: WindowId, generation: u64, items: Option<Vec<FsPath>>, dest: FsPath },
 }
 
 struct ThumbJob {
@@ -128,20 +173,22 @@ enum PreviewJob {
     QuickView { window: WindowId, path: FsPath },
     Backdrop { window: WindowId, gen: u64, path: FsPath },
     Browse { window: WindowId, exts: &'static [&'static str], folder: bool, start: Option<FsPath> },
-    ColumnProps { window: WindowId, tab: TabId, gen: u64, dir: FsPath, names: Vec<Vec<u8>> },
+    ColumnProps { window: WindowId, tab: TabId, gen: u64, ask: u64, dir: FsPath, names: Vec<Vec<u8>> },
 }
 
 enum Done {
     Icon { window: WindowId, req: IconRequest, result: IconResult },
     Refreshed { req: IconRequest, image: flit_core::ui::Bitmap },
     Thumb { window: WindowId, key: u64, result: IconResult },
+    Overlays { window: WindowId, reply: flit_core::ui::OverlayReply },
     TypeName(Vec<u8>, Option<String>),
+    LinkChoices { window: WindowId, generation: u64, choices: flit_core::provider::LinkChoices },
     Sorted { window: WindowId, tab: TabId, gen: u64, view: ViewSpec, base_len: usize, order: Vec<u32>, ms: f64 },
     Preview { window: WindowId, gen: u64, data: PreviewData },
     QuickView { window: WindowId, shown: bool },
     Backdrop { window: WindowId, gen: u64, image: Option<flit_core::ui::Bitmap> },
     Browsed { window: WindowId, path: Option<FsPath> },
-    ColumnProps { window: WindowId, tab: TabId, gen: u64, rows: Vec<(Vec<u8>, Vec<String>)> },
+    ColumnProps { window: WindowId, tab: TabId, gen: u64, ask: u64, rows: Vec<(Vec<u8>, flit_core::listing::ColumnValues)> },
 }
 
 fn tools(app: &App) -> Tools {
@@ -152,7 +199,7 @@ fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> Result<(), PlatformEr
     std::thread::Builder::new().name(name.into()).spawn(f).map(drop).map_err(|e| PlatformError::new(-1, format!("cannot start {name}: {e}")))
 }
 
-type Workers = (Sender<ShellJob>, Sender<ThumbJob>, Sender<SortJob>, Sender<PreviewJob>, Receiver<Done>);
+type Workers = (Sender<ShellJob>, Sender<ThumbJob>, Sender<SortJob>, Sender<PreviewJob>, crate::overlays::Overlays, Receiver<Done>);
 
 fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest>) -> Result<Workers, PlatformError> {
     let (done_tx, done) = unbounded();
@@ -177,7 +224,7 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest
                         None => continue,
                     },
                     PreviewJob::QuickView { window, path } => Done::QuickView { window, shown: shell.quick_view(&path) },
-                    PreviewJob::ColumnProps { window, tab, gen, dir, names } => Done::ColumnProps { window, tab, gen, rows: names.into_iter().map(|n| { let props = shell.column_props(&dir.join(&n)); (n, props) }).collect() },
+                    PreviewJob::ColumnProps { window, tab, gen, ask, dir, names } => Done::ColumnProps { window, tab, gen, ask, rows: names.into_iter().map(|n| { let props = shell.column_props(&dir.join(&n)); (n, props) }).collect() },
                     PreviewJob::Backdrop { window, gen, path } => Done::Backdrop { window, gen, image: shell.preview_image(&path, BACKDROP_PX) },
                     PreviewJob::Browse { window, exts, folder, start } => Done::Browsed { window, path: shell.browse(exts, folder, start.as_ref()) },
                 };
@@ -214,22 +261,30 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest
                         let result = if !visible.wants(&req) {
                             IconResult::Skipped
                         } else {
-                            shell.icon(&req).map_or(IconResult::Failed, IconResult::Ready)
+                            icon_result(&mut shell, &req)
                         };
-                        Done::Icon { window, req, result }
+                        vec![Done::Icon { window, req, result }]
                     }
+                    ShellJob::Icons { window, reqs, visible } => batch_icons(&mut shell, window, reqs, &visible),
                     ShellJob::TypeName(ext) => {
                         let name = shell.type_name(&ext);
-                        Done::TypeName(ext, name)
+                        vec![Done::TypeName(ext, name)]
                     }
+                    ShellJob::LinkChoices { window, generation, items, dest } => vec![Done::LinkChoices { window, generation, choices: shell.link_choices(items.as_deref(), &dest) }],
                 };
-                if tx.send(done).is_err() {
+                if done.into_iter().any(|d| tx.send(d).is_err()) {
                     return;
                 }
                 wake();
             }
         })?;
     }
+    let (overlay_tx, overlay_wake) = (done_tx.clone(), wake.clone());
+    let overlays = crate::overlays::Overlays::start::<P::Shell>(Arc::new(move |window, reply| {
+        if overlay_tx.send(Done::Overlays { window, reply }).is_ok() {
+            overlay_wake();
+        }
+    }));
     let (sort_tx, sort_rx) = unbounded::<SortJob>();
     spawn("flit-sort", move || {
         for job in sort_rx {
@@ -244,7 +299,7 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest
             wake();
         }
     })?;
-    Ok((shell_tx, thumb_tx, sort_tx, preview_tx, done))
+    Ok((shell_tx, thumb_tx, sort_tx, preview_tx, overlays, done))
 }
 
 struct WinState<P: Platform> {
@@ -278,6 +333,7 @@ struct Handler<P: Platform> {
     sink: OpenSink,
     queued_opens: Vec<Open>,
     shell: Sender<ShellJob>,
+    overlays: crate::overlays::Overlays,
     thumbs: Sender<ThumbJob>,
     thumb_cache: Cache,
     sorter: Sender<SortJob>,
@@ -341,6 +397,7 @@ impl<P: Platform> Handler<P> {
         app.double_click = P::double_click_time();
         app.wheel_lines = P::wheel_lines();
         app.set_caps(P::caps());
+        app.set_shell_overlays(P::Shell::ICON_OVERLAYS);
         flit_core::i18n::set_unix_terms(app.caps.unix_paths);
         if base == 0 && P::elevated() {
             app.warn_elevated();
@@ -536,8 +593,10 @@ impl<P: Platform> Handler<P> {
         let id = window.id();
         let Some(st) = self.windows.get_mut(&id) else { return };
         let fx: Vec<Effect> = st.app.drain_effects().collect();
+        let mut folders = Vec::new();
         for e in fx {
             match e {
+                Effect::Icon(req) if batched::<P::Shell>(&req) => folders.push(req),
                 Effect::Provider { provider, req } => self.submit(provider, req),
                 Effect::Resort { tab, gen, snap, view } => {
                     let _ = self.sorter.send(SortJob { window: id, tab, gen, snap, view });
@@ -550,6 +609,10 @@ impl<P: Platform> Handler<P> {
                     let visible = self.windows[&id].visible.clone();
                     let _ = self.thumbs.send(ThumbJob { window: id, req, visible });
                 }
+                Effect::Overlays(batch) => {
+                    let shown = self.windows[&id].visible.overlays.clone();
+                    self.overlays.send(crate::overlays::Job { window: id, batch, shown });
+                }
                 Effect::ClearThumbnails => {
                     if let Some(c) = &self.thumb_cache {
                         locked(c).clear();
@@ -557,6 +620,9 @@ impl<P: Platform> Handler<P> {
                 }
                 Effect::TypeName(ext) => {
                     let _ = self.shell.send(ShellJob::TypeName(ext));
+                }
+                Effect::LinkChoices { generation, items, dest } => {
+                    let _ = self.shell.send(ShellJob::LinkChoices { window: id, generation, items, dest });
                 }
                 Effect::SetClipboard(text) if !text.is_empty() => window.set_clipboard_text(&text),
                 Effect::SetClipboard(_) => {}
@@ -658,8 +724,8 @@ impl<P: Platform> Handler<P> {
                 Effect::Share(paths) => window.share(paths),
                 Effect::SetVolumeLabel { drive, label } => window.set_volume_label(drive, label),
                 Effect::StartDrag(paths) => window.start_drag(paths),
-                Effect::ShellProps { tab, gen, dir, names } => {
-                    let _ = self.previews.send(PreviewJob::ColumnProps { window: id, tab, gen, dir, names });
+                Effect::ShellProps { tab, gen, ask, dir, names } => {
+                    let _ = self.previews.send(PreviewJob::ColumnProps { window: id, tab, gen, ask, dir, names });
                 }
                 Effect::Pinned(pinned) => {
                     for (_, st) in self.windows.iter_mut().filter(|(w, _)| **w != id) {
@@ -697,6 +763,11 @@ impl<P: Platform> Handler<P> {
                     let _ = self.previews.send(PreviewJob::Browse { window: id, exts, folder, start });
                 }
                 Effect::Update(req) => self.update_request(id, req),
+            }
+        }
+        if let Some(st) = self.windows.get(&id).filter(|_| !folders.is_empty()) {
+            for reqs in folder_batches(folders) {
+                let _ = self.shell.send(ShellJob::Icons { window: id, reqs, visible: st.visible.clone() });
             }
         }
         self.sync_settings(id);
@@ -895,7 +966,7 @@ impl<P: Platform> Handler<P> {
             let target = match &ev {
                 ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } | ProviderEvent::SizesSkipped { tab, .. } => self.window_of_tab(*tab),
                 ProviderEvent::OpDone { tab, .. } | ProviderEvent::Untrashable { tab, .. } => self.window_of_tab(*tab).or(self.active),
-                ProviderEvent::Navigate { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } | ProviderEvent::OpFailure { tab, .. } | ProviderEvent::Hashed { tab, .. } | ProviderEvent::Measured { tab, .. } | ProviderEvent::Status { tab, .. } | ProviderEvent::Access { tab, .. } | ProviderEvent::NotExecutable { tab, .. } | ProviderEvent::OpenAsk { tab, .. } | ProviderEvent::Unwatched { tab, .. } => self.window_of_tab(*tab),
+                ProviderEvent::Navigate { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } | ProviderEvent::OpFailure { tab, .. } | ProviderEvent::Hashed { tab, .. } | ProviderEvent::Measured { tab, .. } | ProviderEvent::Status { tab, .. } | ProviderEvent::Access { tab, .. } | ProviderEvent::NotExecutable { tab, .. } | ProviderEvent::OpenAsk { tab, .. } | ProviderEvent::Unwatched { tab, .. } | ProviderEvent::MountAsk { tab, .. } | ProviderEvent::MountAskDone { tab, .. } => self.window_of_tab(*tab),
             };
             if let Some(st) = target.and_then(|id| self.windows.get_mut(&id)) {
                 st.app.on_provider_event(ev, now);
@@ -915,9 +986,19 @@ impl<P: Platform> Handler<P> {
                         st.app.on_thumb(&mut st.gfx, key, result);
                     }
                 }
+                Done::Overlays { window, reply } => {
+                    if let Some(st) = self.windows.get_mut(&window) {
+                        st.app.on_overlays(&mut st.gfx, reply);
+                    }
+                }
                 Done::TypeName(ext, name) => {
                     for st in self.windows.values_mut() {
                         st.app.on_type_name(ext.clone(), name.clone());
+                    }
+                }
+                Done::LinkChoices { window, generation, choices } => {
+                    if let Some(st) = self.windows.get_mut(&window) {
+                        st.app.on_event(&Event::LinkChoices { generation, choices }, Instant::now());
                     }
                 }
                 Done::Preview { window, gen, data } => {
@@ -925,9 +1006,9 @@ impl<P: Platform> Handler<P> {
                         st.app.on_preview(gen, data);
                     }
                 }
-                Done::ColumnProps { window, tab, gen, rows } => {
+                Done::ColumnProps { window, tab, gen, ask, rows } => {
                     if let Some(st) = self.windows.get_mut(&window) {
-                        st.app.on_shell_props(tab, gen, rows);
+                        st.app.on_shell_props(tab, gen, ask, rows);
                     }
                 }
                 Done::QuickView { window, shown } => {
@@ -1087,6 +1168,8 @@ impl<P: Platform> Handler<P> {
         st.app.set_clock(filetime_now());
         let t = Instant::now();
         let animating = st.app.frame(&mut st.gfx, t);
+        *st.visible.content.lock().unwrap_or_else(|e| e.into_inner()) = st.app.visible_content_icons();
+        *st.visible.overlays.lock().unwrap_or_else(|e| e.into_inner()) = st.app.visible_overlays();
         let renderer = st.renderer.as_mut().unwrap();
         for &(slot, off) in &st.gfx.uploads.rects {
             let len = (slot.w * slot.h * 4) as usize;
@@ -1367,7 +1450,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let thumb_cache: Cache = P::cache_dir().map(|d| Arc::new(Mutex::new(ThumbCache::new(d.join("thumbs"), saved.persisted.prefs.thumb_cache_mb))));
     let kept = KeptIcons::load(P::cache_dir().map(|d| d.join(ICONS_FILE)));
     let refresh = kept.kept.iter().map(KeptIcon::request).collect();
-    let (shell, thumbs, sorter, previews, done) = start_workers::<P>(wake.clone(), thumb_cache.clone(), refresh)?;
+    let (shell, thumbs, sorter, previews, overlays, done) = start_workers::<P>(wake.clone(), thumb_cache.clone(), refresh)?;
     let tags = TagWorker::start::<P>(local.tags().clone(), wake.clone())?;
     let fs_path = |p: PathBuf| FsPath::parse(&p.to_string_lossy());
     let about = About { os: String::new(), file: settings_file.clone().and_then(fs_path), cache_bytes: None, logs: P::state_dir().map(|d| d.join("logs")).and_then(fs_path), missing: Vec::new() };
@@ -1416,6 +1499,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         sink,
         queued_opens: queued,
         shell,
+        overlays,
         thumbs,
         thumb_cache,
         sorter,
@@ -1478,3 +1562,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     h.pending.push_back(first);
     ws.run(WindowOptions { title: "Flit".into(), placement, dark }, h)
 }
+
+#[cfg(test)]
+#[path = "../test/icon_visibility.rs"]
+mod icon_visibility_tests;

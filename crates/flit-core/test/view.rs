@@ -32,7 +32,7 @@ fn rows(v: &DirView) -> Vec<String> {
 }
 
 fn change(kind: ChangeKind, name: &str, size: u64) -> DirChange {
-    DirChange { kind, name: name.into(), meta: Some(Meta { size, ..Default::default() }) }
+    DirChange { label: crate::listing::Label::Keep, kind, name: name.into(), meta: Some(Meta { size, ..Default::default() }) }
 }
 
 #[test]
@@ -98,7 +98,7 @@ fn entries_that_turn_invisible_lose_selection_and_focus() {
     let mut v = DirView::new(snap(&["a", "b", "c"]));
     v.select_all();
     (v.focus, v.anchor) = (Some(1), Some(2));
-    v.apply(&DirChange { kind: ChangeKind::Modified, name: "b".into(), meta: Some(Meta { attrs: attr::HIDDEN, ..Default::default() }) });
+    v.apply(&DirChange { label: crate::listing::Label::Keep, kind: ChangeKind::Modified, name: "b".into(), meta: Some(Meta { attrs: attr::HIDDEN, ..Default::default() }) });
     assert_eq!(rows(&v), ["a", "c"]);
     assert_eq!((v.selected_count(), v.focus, v.anchor), (2, None, Some(2)));
     v.apply(&change(ChangeKind::Removed, "c", 0));
@@ -128,7 +128,7 @@ fn batched_diffs_match_a_full_sort() {
     changes.extend((1..300).step_by(5).map(|i| change(ChangeKind::Modified, &names[i], 1000 - i as u64)));
     changes.extend((0..60).map(|i| change(ChangeKind::Added, &format!("n{i}"), i * 7 % 13)));
     changes.push(change(ChangeKind::Added, "f000", 500));
-    changes.push(DirChange { kind: ChangeKind::Modified, name: "f002".into(), meta: Some(Meta { attrs: attr::HIDDEN, ..Default::default() }) });
+    changes.push(DirChange { label: crate::listing::Label::Keep, kind: ChangeKind::Modified, name: "f002".into(), meta: Some(Meta { attrs: attr::HIDDEN, ..Default::default() }) });
     v.apply_all(&changes);
     let mut expected = Vec::new();
     sort::sort(v.listing(), &v.snap.keys, by_size, &mut expected);
@@ -168,4 +168,29 @@ fn status_totals_follow_selection_filter_and_changes() {
     assert_eq!(v.live_size(), 13);
     v.clear_selection();
     assert_eq!(v.selected_size(), 0);
+}
+
+fn labeled(v: &DirView) -> Vec<String> {
+    v.rows().iter().map(|&i| String::from_utf8_lossy(v.listing().label(i)).into_owned()).collect()
+}
+
+#[test]
+fn live_changes_set_replace_and_remove_launcher_labels_and_resort_by_them() {
+    use crate::listing::Label;
+    let mut v = DirView::new(snap(&["b.desktop", "m.desktop", "y.txt"]));
+    let launcher = |kind, name: &str, label| DirChange { label, kind, name: name.into(), meta: Some(Meta { size: 1, ..Default::default() }) };
+    v.apply(&launcher(ChangeKind::Added, "web.desktop", Label::Set("Alpha".into())));
+    assert_eq!(labeled(&v), ["Alpha", "b.desktop", "m.desktop", "y.txt"]);
+    let first = v.rows()[0];
+    assert_eq!(v.listing().name(first), b"web.desktop");
+    v.apply(&launcher(ChangeKind::Modified, "m.desktop", Label::Set("Aardvark".into())));
+    assert_eq!(labeled(&v), ["Aardvark", "Alpha", "b.desktop", "y.txt"]);
+    v.apply(&launcher(ChangeKind::Modified, "m.desktop", Label::Set("Zulu".into())));
+    assert_eq!(labeled(&v), ["Alpha", "b.desktop", "y.txt", "Zulu"]);
+    v.apply(&launcher(ChangeKind::Modified, "web.desktop", Label::Clear));
+    assert_eq!(labeled(&v), ["b.desktop", "web.desktop", "y.txt", "Zulu"]);
+    let web = v.find(b"web.desktop").unwrap();
+    assert!(v.listing().labeled(web).is_none(), "a launcher that lost trust shows its file name");
+    v.apply(&launcher(ChangeKind::Modified, "m.desktop", Label::Keep));
+    assert_eq!(labeled(&v), ["b.desktop", "web.desktop", "y.txt", "Zulu"], "changes without label news keep the label");
 }
