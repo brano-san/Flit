@@ -1014,3 +1014,53 @@ fn an_unchanged_label_a_bookmark_or_linux_leave_the_drive_alone() {
     assert!(!app.sidebar_key(Key::F(2), Mods::default(), Instant::now()), "Linux mounts have no Windows labels to edit here");
     assert!(app.nav.palette.is_none());
 }
+
+fn tall_sidebar() -> (App, Instant) {
+    let t0 = Instant::now();
+    let mut app = App::new(Persisted::default(), Vec::new(), 0, false, 1.0, (900, 400), t0);
+    app.set_places(Arc::new(Places { drives: ('C'..='Z').map(drive).collect(), ..Default::default() }));
+    app.frame(&mut Gfx::new(Mono, 1024), t0);
+    app.drain_effects().for_each(drop);
+    (app, t0)
+}
+
+#[test]
+fn a_finger_drag_scrolls_the_sidebar_a_flick_glides_on_and_a_tap_still_opens_the_place() {
+    let (mut app, t0) = tall_sidebar();
+    let before = app.current_location().clone();
+    let list = app.nav.sidebar.list;
+    let x = list.x + list.w / 2.0;
+    let y = list.bottom() - 20.0;
+    let end = app.touch_swipe((x, y), (x, y - 120.0), t0 + Duration::from_secs(1));
+    let moved = app.nav.sidebar.scroll.pos;
+    assert!((moved - 120.0).abs() <= 1.0, "the sidebar follows the finger: {moved}");
+    assert_eq!(app.current_location(), &before, "a drag opens nothing");
+    assert!(app.drain_effects().all(|e| !matches!(e, Effect::Provider { .. })));
+    app.touch_flick(end, |a| a.nav.sidebar.scroll.pos);
+    let r = *app.nav.sidebar.rects.iter().find(|r| r.y >= list.y && r.bottom() <= list.bottom() && r.y > list.y + 40.0).unwrap();
+    let at = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    assert!(matches!(app.hit(at.0, at.1), Hit::Side(_)));
+    app.touch_tap(at, end + Duration::from_secs(10));
+    assert_ne!(app.current_location(), &before, "a tap opens the place like a click");
+}
+
+#[test]
+fn a_mouse_drag_in_the_sidebar_does_not_scroll_it_and_the_wheel_keeps_its_step() {
+    let (mut app, t0) = tall_sidebar();
+    let list = app.nav.sidebar.list;
+    let (x, y) = (list.x + list.w / 2.0, list.bottom() - 20.0);
+    let end = app.touch_swipe((x, y), (x, y - 120.0), t0 + Duration::from_secs(1));
+    assert!(app.nav.sidebar.scroll.pos > 100.0);
+    app.nav.sidebar.scroll.snap(0.0);
+    app.layout();
+    let t = end + Duration::from_secs(10);
+    app.on_event(&Event::Pointer { touch: false }, t);
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, t);
+    app.on_event(&Event::MouseMove { x, y: y - 120.0 }, t);
+    app.on_event(&Event::MouseUp { x, y: y - 120.0, button: MouseButton::Left }, t);
+    assert_eq!(app.nav.sidebar.scroll, crate::ui::Glide::default(), "a mouse drag does not pan");
+    app.on_event(&Event::MouseMove { x, y }, t);
+    app.on_event(&Event::Wheel { dx: 0.0, dy: -1.0 }, t);
+    let step = 3.0 * (ROW_H + ROW_GAP).round();
+    assert_eq!(app.nav.sidebar.scroll.target, step, "the wheel still moves three rows after a touch pan");
+}

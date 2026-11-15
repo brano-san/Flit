@@ -608,3 +608,47 @@ fn the_query_menu_closes_without_harm_and_works_from_the_keyboard() {
     assert_eq!(app.context_menu_open().unwrap().query.edit.selection(), 0..2, "Down skips the disabled rows: Paste, then Select All");
     assert!(picks(&mut app).is_empty(), "no menu command ran");
 }
+
+fn first_row_y(app: &App) -> f32 {
+    app.context_menu_open().unwrap().rects[0].y
+}
+
+#[test]
+fn a_finger_scrolls_a_long_context_menu_without_running_a_command_and_a_tap_runs_one() {
+    let mut app = app();
+    let mut g = Gfx::new(Mono, 1024);
+    let t0 = settled_start();
+    open_menu(&mut app, numbered(80), Vec::new(), (100.0, 100.0), crate::ui::MenuKind::Background, t0);
+    app.frame(&mut g, ms(t0, 500));
+    let c = app.context_menu_open().unwrap();
+    let (list, row) = (c.rect, c.rects[6]);
+    let top = first_row_y(&app);
+    let (x, y) = (row.x + 40.0, row.y + row.h / 2.0);
+    let end = app.touch_swipe((x, y), (x, y - 100.0), ms(t0, 1000));
+    assert!(app.own_menu_open(), "a drag runs no command");
+    let moved = top - first_row_y(&app);
+    assert!((moved - 100.0).abs() <= 1.0, "the menu follows the finger: {moved}");
+    app.touch_flick(end, |a| -first_row_y(a));
+    assert!(app.own_menu_open() && list.contains(x, y));
+    app.touch_tap((x, y), end + std::time::Duration::from_secs(10));
+    assert!(!app.own_menu_open(), "a tap runs the command under the finger");
+}
+
+#[test]
+fn a_mouse_drag_over_a_long_menu_does_not_scroll_it() {
+    let mut app = app();
+    let mut g = Gfx::new(Mono, 1024);
+    let t0 = settled_start();
+    open_menu(&mut app, numbered(80), Vec::new(), (100.0, 100.0), crate::ui::MenuKind::Background, t0);
+    app.frame(&mut g, ms(t0, 500));
+    let row = app.context_menu_open().unwrap().rects[6];
+    let top = first_row_y(&app);
+    let (x, y) = (row.x + 40.0, row.y + row.h / 2.0);
+    let t = ms(t0, 1000);
+    app.on_event(&Event::Pointer { touch: false }, t);
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, t);
+    app.on_event(&Event::MouseMove { x, y: y - 100.0 }, t);
+    assert_eq!(first_row_y(&app), top);
+    app.on_event(&Event::MouseUp { x, y: y - 100.0, button: MouseButton::Left }, t);
+    assert_eq!(first_row_y(&app), top);
+}

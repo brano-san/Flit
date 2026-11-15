@@ -65,6 +65,7 @@ mod user_menu;
 mod update;
 mod update_dialog;
 mod pointer;
+mod touch;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, TemplateNames, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource, MAX_HISTORY};
@@ -752,6 +753,7 @@ pub struct App {
     search: search::SearchView,
     jobs: jobs::Jobs,
     details: details::Details,
+    touch: touch::Touch,
     archive: archive::ArchiveUi,
     strip: tabbar::Strip,
     addr: address::Address,
@@ -884,6 +886,7 @@ impl App {
             search: Default::default(),
             jobs: Default::default(),
             details: Default::default(),
+            touch: Default::default(),
             archive: archive::ArchiveUi::new(state.archive),
             strip: Default::default(),
             addr: Default::default(),
@@ -1764,6 +1767,20 @@ impl App {
     }
 
     fn handle_event(&mut self, ev: &Event, now: Instant) {
+        if let Event::MouseDown { x, y, button: MouseButton::Left, .. } = *ev {
+            if self.touch_input {
+                self.touch_event(ev, now);
+                let snap = self.touch_snapshot();
+                self.route_event(ev, now);
+                return self.touch_pressed(x, y, snap, now);
+            }
+        }
+        if !self.touch_event(ev, now) {
+            self.route_event(ev, now);
+        }
+    }
+
+    fn route_event(&mut self, ev: &Event, now: Instant) {
         if matches!(ev, Event::MouseDown { .. } | Event::Key { pressed: true, .. } | Event::Wheel { .. } | Event::Pinch(_) | Event::MouseLeave | Event::Focus(false) | Event::ShowMenu { .. }) {
             self.tip_hide();
             self.quick_hide();
@@ -1827,6 +1844,7 @@ impl App {
             Event::MouseDown { x, y, button, clicks } => self.mouse_down(*x, *y, *button, *clicks, now),
             Event::MouseUp { x, y, button } => self.mouse_up(*x, *y, *button, now),
             Event::Wheel { .. } | Event::Pinch(_) => self.wheel(ev, now),
+            Event::TouchCancel => {}
             Event::Key { key, mods, pressed } => {
                 let copy_flipped = self.mods.ctrl != mods.ctrl;
                 self.mods = *mods;
@@ -1881,6 +1899,7 @@ impl App {
                 self.expire_error(now);
                 self.expire_undo_bar(now);
                 self.dirty |= self.shell_props_due(now);
+                self.touch_timer(now);
             }
             Event::ClipboardChanged(seq) => self.clipboard_changed(*seq),
             Event::ClipboardText(text) => self.clipboard_text_changed(*text),
@@ -1903,7 +1922,7 @@ impl App {
         }
         self.strip_pointer(x, y);
         self.settings_tip(x, y);
-        if self.touch_move(self.along_of(x, y), now) || self.autoscroll_move(self.along_of(x, y)) || self.ops_mouse_move(x, y) || self.nav_mouse_move(x) || self.marquee_move(x, y) {
+        if self.autoscroll_move(self.along_of(x, y)) || self.ops_mouse_move(x, y) || self.nav_mouse_move(x) || self.marquee_move(x, y) {
             return;
         }
         match self.drag {
@@ -1987,7 +2006,6 @@ impl App {
         }
         self.dirty = true;
         self.nav.sidebar.dragging_out = false;
-        self.touch_down(self.hit(x, y), self.along_of(x, y), button, now);
         if self.form_down(x, y, button, clicks, now) {
             return;
         }
@@ -2088,11 +2106,6 @@ impl App {
         }
         if let Some(f) = &mut self.jobs.form {
             f.document.grab = None;
-        }
-        if button == MouseButton::Left && self.touch_up(now) {
-            self.pressed = Hit::None;
-            self.release_header();
-            return;
         }
         if self.autoscroll_up(x, y, button) {
             return;
@@ -2405,7 +2418,7 @@ impl App {
         self.ops_frame(now);
         let mut animating = self.marquee_autoscroll(dt);
         animating |= self.autoscroll_step(dt);
-        animating |= self.fling_step(dt);
+        animating |= self.touch_fling(dt);
         animating |= self.drag_autoscroll(dt);
         animating |= self.scroll_step(dt);
         animating |= self.glide_overlays(dt);

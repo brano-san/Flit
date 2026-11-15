@@ -1,5 +1,6 @@
 use crate::apps::OpenWith;
 use crate::input::{self, Clicks};
+use crate::touch::Touch;
 use flit_core::input::{CursorIcon, Event, HitArea, Mods, MouseButton, WindowButtons};
 use flit_core::preview::{HostCmd, Hosted, MediaCmd};
 use flit_core::render::Rect;
@@ -17,7 +18,7 @@ use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::data_transfer::{DataTransferId, DataTransferSendBuilder, TransferType, TypeHint};
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, Ime, WindowEvent};
+use winit::event::{ButtonSource, ElementState, Ime, PointerKind, PointerSource, WindowEvent};
 use winit::event_loop::run_on_demand::EventLoopExtRunOnDemand;
 use winit::event_loop::{ActiveEventLoop, AsyncRequestSerial, ControlFlow, DndAction, EventLoop, EventLoopProxy, OwnedDisplayHandle};
 use winit::keyboard::ModifiersState;
@@ -901,6 +902,7 @@ impl WindowSystem for LinuxWindows {
 struct Node {
     window: LinuxWindow,
     clicks: Clicks,
+    fingers: crate::touch::Fingers,
 }
 
 struct Loop<H> {
@@ -1304,7 +1306,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         enable_ime(&*raw);
         let id = self.next_id;
         self.next_id += 1;
-        self.nodes.push(Node { window: LinuxWindow::new(id, raw, self.commands.clone(), self.targets.clone()), clicks: Clicks::new(input::double_click()) });
+        self.nodes.push(Node { window: LinuxWindow::new(id, raw, self.commands.clone(), self.targets.clone()), clicks: Clicks::new(input::double_click()), fingers: Default::default() });
         let node = self.nodes.last().unwrap();
         self.handler.created(&node.window);
         self.handler.event(&node.window, Event::WindowButtons(window_buttons()));
@@ -1543,6 +1545,9 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                     w.focused();
                 }
                 node.clicks.reset();
+                if !focused {
+                    node.fingers.reset();
+                }
                 self.mods = ModifiersState::empty();
                 handler.event(w, Event::Focus(focused));
             }
@@ -1567,26 +1572,60 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                     handler.event(w, Event::Char(c));
                 }
             }
+            WindowEvent::PointerMoved { position, source: PointerSource::Touch { finger_id, .. }, .. } => {
+                let (x, y) = (position.x as f32, position.y as f32);
+                match node.fingers.moved(finger_id.into_raw(), (position.x, position.y)) {
+                    Touch::Pass => {
+                        w.track_edge(x, y);
+                        handler.event(w, Event::MouseMove { x, y });
+                    }
+                    Touch::Pinch(scale) => handler.event(w, Event::Pinch(scale)),
+                    Touch::Cancel => handler.event(w, Event::TouchCancel),
+                    Touch::Skip => {}
+                }
+            }
             WindowEvent::PointerMoved { position, primary, .. } if primary => {
                 let (x, y) = (position.x as f32, position.y as f32);
                 w.track_edge(x, y);
                 handler.event(w, Event::MouseMove { x, y });
             }
             WindowEvent::PointerEntered { .. } => w.restore_cursor(),
-            WindowEvent::PointerLeft { .. } => {
+            WindowEvent::PointerLeft { kind, .. } => {
+                if let PointerKind::Touch(finger_id) = kind {
+                    if node.fingers.lost(finger_id.into_raw()) == Touch::Cancel {
+                        handler.event(w, Event::TouchCancel);
+                    }
+                }
                 w.restore_cursor();
                 handler.event(w, Event::MouseLeave);
             }
             WindowEvent::ActivationTokenDone { token, .. } => crate::activation::answered(token.into_raw()),
-            WindowEvent::PointerButton { state, position, button, primary, .. } => {
+            WindowEvent::PointerButton { state, position, button: ButtonSource::Touch { finger_id, .. }, .. } => {
+                let pressed = state == ElementState::Pressed;
+                let id = finger_id.into_raw();
+                let out = if pressed { node.fingers.press(id, (position.x, position.y)) } else { node.fingers.release(id) };
+                match out {
+                    Touch::Pass => {
+                        if pressed {
+                            ask_token(w);
+                            let (x, y) = (position.x as f32, position.y as f32);
+                            w.track_edge(x, y);
+                            handler.event(w, Event::MouseMove { x, y });
+                            handler.event(w, Event::Pointer { touch: true });
+                        }
+                        self.button(i, pressed, position, MouseButton::Left);
+                    }
+                    Touch::Cancel => handler.event(w, Event::TouchCancel),
+                    Touch::Pinch(_) | Touch::Skip => {}
+                }
+            }
+            WindowEvent::PointerButton { state, position, button, .. } => {
                 if state == ElementState::Pressed {
                     ask_token(w);
                 }
-                let touch = matches!(button, winit::event::ButtonSource::Touch { .. });
-                let mapped = if touch { primary.then_some(MouseButton::Left) } else { button.mouse_button().and_then(input::mouse_button) };
-                if let Some(button) = mapped {
+                if let Some(button) = button.mouse_button().and_then(input::mouse_button) {
                     if state == ElementState::Pressed {
-                        handler.event(w, Event::Pointer { touch });
+                        handler.event(w, Event::Pointer { touch: false });
                     }
                     self.button(i, state == ElementState::Pressed, position, button);
                 }

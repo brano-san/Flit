@@ -153,6 +153,30 @@ impl App {
         true
     }
 
+    pub(super) fn touch_pan_pane(&mut self, i: usize, dx: f32, dy: f32) -> (bool, bool) {
+        let (h, rh, over) = (self.layout.panes.get(i).map_or(0.0, |r| r.h), self.layout.row_h, self.layout.panes_over);
+        let t = self.tab_mut();
+        let back = (t.panes_back.clamp(0.0, over) + dx).clamp(0.0, over);
+        let across = back != t.panes_back.clamp(0.0, over);
+        t.panes_back = back;
+        let down = t.panes.get_mut(i).is_some_and(|p| {
+            let max = (p.view.as_ref().map_or(0, |v| v.rows().len()) as f32 * rh - h).max(0.0);
+            let was = p.scroll.unwrap_or(0.0);
+            let to = (was - dy).clamp(0.0, max);
+            p.scroll = Some(to);
+            to != was
+        });
+        if across {
+            self.layout();
+        }
+        (across, down)
+    }
+
+    #[cfg(test)]
+    pub(super) fn pane_scroll(&self, i: usize) -> f32 {
+        self.tab().panes.get(i).and_then(|p| p.scroll).unwrap_or(0.0)
+    }
+
     pub(super) fn draw_panes<B: TextBackend>(&mut self, g: &mut Gfx<B>, th: &Theme) {
         let l = &self.layout;
         if l.panes.is_empty() {

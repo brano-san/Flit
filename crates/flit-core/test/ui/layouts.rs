@@ -631,3 +631,54 @@ fn columns_that_fit_do_not_scroll_sideways() {
     frame(&mut app);
     assert_eq!((app.tab().panes_back, &app.layout.panes), (0.0, &panes));
 }
+
+#[test]
+fn a_finger_scrolls_a_columns_pane_slides_the_panes_sideways_and_a_tap_still_opens() {
+    let mut app = app_at(r"C:\x\sub");
+    deliver(&mut app, &["inner", "z.txt"]);
+    app.run_action("view.layout.columns", Instant::now());
+    let effects: Vec<Effect> = app.drain_effects().collect();
+    let mut names: Vec<String> = (0..200).map(|k| format!("zz{k:03}")).collect();
+    names.push("sub".into());
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    assert!(serve_pane(&mut app, &effects, r"C:\x", &names));
+    assert!(app.layout.panes_over > 0.0, "some panes wait to the left");
+    let k = app.layout.panes.len() - 1;
+    let pane = app.layout.panes[k];
+    let scroll = |a: &App| a.pane_scroll(k);
+    assert_eq!(scroll(&app), 0.0);
+    let (x, y) = (pane.x + 40.0, pane.bottom() - 40.0);
+    let t = Instant::now() + Duration::from_secs(1);
+    let end = app.touch_swipe((x, y), (x, y - 150.0), t);
+    assert!((scroll(&app) - 150.0).abs() <= 1.0, "the pane follows the finger: {}", scroll(&app));
+    assert_eq!(app.current_location(), &loc(r"C:\x\sub"), "a drag opens nothing");
+    app.touch_flick(end, scroll);
+    let back = app.tab().panes_back;
+    let t = end + Duration::from_secs(10);
+    let pane = app.layout.panes[k];
+    app.touch_swipe((pane.x + 40.0, pane.y + 60.0), (pane.x + 40.0 + app.layout.panes_over, pane.y + 60.0), t);
+    assert_eq!(app.tab().panes_back, (back + app.layout.panes_over).min(app.layout.panes_over), "a sideways drag reveals the panes on the left");
+    let p0 = app.layout.panes[0];
+    app.touch_swipe((p0.x + 40.0, p0.y + 60.0), (p0.x + 40.0 - app.layout.panes_over, p0.y + 60.0), t + Duration::from_secs(5));
+    assert_eq!(app.tab().panes_back, 0.0, "and back");
+    let pane = app.layout.panes[k];
+    let row_y = pane.y + app.layout.row_h * 0.5;
+    assert!(matches!(app.hit(pane.x + 40.0, row_y), Hit::Pane(_, Some(_))));
+    app.touch_tap((pane.x + 40.0, row_y), t + Duration::from_secs(10));
+    assert_ne!(app.current_location(), &loc(r"C:\x\sub"), "a tap opens the folder like a click");
+}
+
+#[test]
+fn a_finger_drag_scrolls_the_tree_like_the_list() {
+    let mut app = app_at(r"C:\x");
+    publish(&mut app, &(0..200).map(|k| format!("d{k:03}")).collect::<Vec<_>>(), true);
+    app.run_action("view.layout.tree", Instant::now());
+    frame(&mut app);
+    assert_eq!(app.layout.mode, LayoutMode::Tree);
+    let (x, y) = (app.layout.list.x + 60.0, app.layout.list.y + 300.0);
+    let end = app.touch_swipe((x, y), (x, y - 200.0), Instant::now() + Duration::from_secs(1));
+    assert!((app.tab().scroll - 200.0).abs() <= 1.0, "the tree follows the finger: {}", app.tab().scroll);
+    assert!(app.tab().view.as_ref().unwrap().selected().next().is_none(), "panning selects nothing");
+    assert!(app.marquee.is_none());
+    app.touch_flick(end, |a| a.tab().scroll);
+}

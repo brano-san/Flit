@@ -700,6 +700,21 @@ impl ContextMenu {
         self.scroll_by(-dy * 3.0 * ROW_H * self.scale);
     }
 
+    pub fn pans_at(&self, x: f32, y: f32) -> bool {
+        self.field_menu.is_none() && self.list.contains(x, y) && matches!(self.hit(x, y), Some(CtxHit::Row(_) | CtxHit::Star(_) | CtxHit::Box))
+    }
+
+    pub fn pan(&mut self, dy: f32) -> bool {
+        let was = self.scroll;
+        self.scroll_by(-dy);
+        self.scroll != was
+    }
+
+    pub fn let_go(&mut self) {
+        self.pressed = None;
+        self.grab = None;
+    }
+
     fn scroll_by(&mut self, d: f32) {
         self.scroll += d;
         self.layout();

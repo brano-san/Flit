@@ -592,6 +592,25 @@ impl App {
         SLayout { field, header: l.header, cols, list, track: l.track, thumb, htrack, hthumb, max_x, row_h: rh }
     }
 
+    pub(super) fn search_pans_at(&self, x: f32, y: f32) -> bool {
+        matches!(self.search_hit(x, y), SHit::Row(_) | SHit::Group(_) | SHit::Empty)
+    }
+
+    pub(super) fn touch_pan_search(&mut self, dx: f32, dy: f32) -> (bool, bool) {
+        let (max_x, max) = (self.search_layout().max_x, self.search_max_scroll());
+        let s = &mut self.search;
+        let x = (s.scroll_x - dx).clamp(0.0, max_x);
+        let y = (s.scroll - f64::from(dy)).clamp(0.0, max);
+        let moved = (x != s.scroll_x, y != s.scroll);
+        (s.scroll_x, s.scroll) = (x, y);
+        moved
+    }
+
+    pub(super) fn search_let_go(&mut self) {
+        self.search.pressed = SHit::None;
+        self.search.drag = SDrag::None;
+    }
+
     fn search_max_scroll(&self) -> f64 {
         let l = &self.layout;
         (self.search.lines() as f64 * l.row_h.max(1.0) as f64 - self.search_layout().list.h as f64).max(0.0)

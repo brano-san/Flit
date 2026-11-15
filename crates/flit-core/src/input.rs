@@ -118,6 +118,7 @@ pub enum Event {
     MouseUp { x: f32, y: f32, button: MouseButton },
     Wheel { dx: f32, dy: f32 },
     Pinch(f32),
+    TouchCancel,
     MouseLeave,
     Key { key: Key, mods: Mods, pressed: bool },
     Char(char),

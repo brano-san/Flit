@@ -1721,6 +1721,22 @@ impl App {
         true
     }
 
+    pub(super) fn settings_pans_at(&self, x: f32, y: f32) -> bool {
+        self.settings.as_ref().is_some_and(|ui| ui.list.contains(x, y) && !ui.bar.contains(x, y)) && !matches!(self.settings_hit(x, y), Some(Hit::Settings(SHit::Slide(_))))
+    }
+
+    pub(super) fn touch_pan_settings(&mut self, dy: f32) -> bool {
+        self.hide_settings_tip();
+        let Some(ui) = &mut self.settings else { return false };
+        let was = ui.scroll.pos;
+        ui.scroll.snap((was - dy).clamp(0.0, (ui.content_h - ui.list.h).max(0.0)));
+        let moved = ui.scroll.pos != was;
+        if moved {
+            self.layout();
+        }
+        moved
+    }
+
     pub(super) fn settings_wheel(&mut self, dy: f32) -> bool {
         if !matches!(self.hover, Hit::Settings(_)) {
             return false;
