@@ -274,6 +274,7 @@
 "view.column.git_message" = "显示或隐藏“提交消息”列"
 "view.column.git_author" = "显示或隐藏“提交作者”列"
 "view.column.git_date" = "显示或隐藏“提交日期”列"
+"view.column.git_hash" = "显示或隐藏“提交哈希”列"
 "git.fetch" = "Git：获取 (Fetch)"
 "git.pull" = "Git：拉取 (Pull)"
 "git.sync" = "Git：同步"

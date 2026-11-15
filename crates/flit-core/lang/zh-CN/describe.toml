@@ -274,6 +274,7 @@
 "view.column.git_message" = "显示最后一次提交消息的列"
 "view.column.git_author" = "显示最后一次提交作者的列"
 "view.column.git_date" = "显示最后一次提交时间的列"
+"view.column.git_hash" = "显示最后一次提交的七位哈希值的列"
 "git.fetch" = "从远程下载新提交，不更改文件"
 "git.pull" = "将远程更改合并到当前分支"
 "git.sync" = "拉取远程更改，成功后推送当前分支"

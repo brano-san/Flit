@@ -110,9 +110,14 @@ pub struct Listing {
     pub total: u64,
     pub nested: u32,
     pub labels: Vec<(u32, Box<str>)>,
+    pub git: Option<Arc<crate::git::GitInfo>>,
 }
 
 impl Listing {
+    pub fn git_hash(&self, i: u32) -> &str {
+        self.git.as_ref().and_then(|g| g.commits.get(self.name(i))).map_or("", |c| c.short_hash.as_str())
+    }
+
     pub fn labeled(&self, i: u32) -> Option<&str> {
         if self.labels.is_empty() {
             return None;

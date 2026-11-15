@@ -118,6 +118,10 @@ fn status_branch_and_last_commits_of_a_folder() {
     assert_eq!(info.commits[&b"a.txt"[..]].message, "second");
     assert_eq!(info.commits[&b"deep"[..]].message, "first");
     assert_eq!(info.commits[&b"a.txt"[..]].author, "Ann");
+    let commit = &info.commits[&b"a.txt"[..]];
+    assert_eq!(commit.short_hash.len(), 7);
+    assert_eq!(commit.short_hash, commit.hash[..7]);
+    assert_eq!(commit.hash.len(), 40);
     let again = status(&src, true, &mut cache).unwrap();
     assert!(Arc::ptr_eq(&again.commits[&b"a.txt"[..]], &info.commits[&b"a.txt"[..]]), "the log is cached while HEAD stays");
     let outside = temp("plain");

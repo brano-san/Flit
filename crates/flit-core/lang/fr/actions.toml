@@ -274,6 +274,7 @@
 "view.column.git_message" = "Afficher ou masquer la colonne Message du commit"
 "view.column.git_author" = "Afficher ou masquer la colonne Auteur du commit"
 "view.column.git_date" = "Afficher ou masquer la colonne Date du commit"
+"view.column.git_hash" = "Afficher ou masquer la colonne Hash du commit"
 "git.fetch" = "Git : récupérer (Fetch)"
 "git.pull" = "Git : Pull"
 "git.sync" = "Git : Synchroniser"

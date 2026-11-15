@@ -274,6 +274,7 @@
 "view.column.git_message" = "Spalte „Commit-Nachricht“ ein- oder ausblenden"
 "view.column.git_author" = "Spalte „Commit-Autor“ ein- oder ausblenden"
 "view.column.git_date" = "Spalte „Commit-Datum“ ein- oder ausblenden"
+"view.column.git_hash" = "Spalte „Commit-Hash“ ein- oder ausblenden"
 "git.fetch" = "Git: Abrufen (Fetch)"
 "git.pull" = "Git: Pull"
 "git.sync" = "Git: Synchronisieren"

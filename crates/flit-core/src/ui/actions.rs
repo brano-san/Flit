@@ -477,6 +477,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("view.column.git_message", G::Flit, S::ActionsViewColumnGitMessage, S::DescribeViewColumnGitMessage, &[], |a, _| a.toggle_column(Column::GitMessage)),
     Action::new("view.column.git_author", G::Flit, S::ActionsViewColumnGitAuthor, S::DescribeViewColumnGitAuthor, &[], |a, _| a.toggle_column(Column::GitAuthor)),
     Action::new("view.column.git_date", G::Flit, S::ActionsViewColumnGitDate, S::DescribeViewColumnGitDate, &[], |a, _| a.toggle_column(Column::GitDate)),
+    Action::new("view.column.git_hash", G::Flit, S::ActionsViewColumnGitHash, S::DescribeViewColumnGitHash, &[], |a, _| a.toggle_column(Column::GitHash)),
     Action::new("git.fetch", G::Flit, S::ActionsGitFetch, S::DescribeGitFetch, &[], |a, _| a.git_run(GitOp::Fetch)),
     Action::new("git.pull", G::Flit, S::ActionsGitPull, S::DescribeGitPull, &[], |a, _| a.git_run(GitOp::Pull)),
     Action::new("git.push", G::Flit, S::ActionsGitPush, S::DescribeGitPush, &[], |a, _| a.git_run(GitOp::Push)),

@@ -274,6 +274,7 @@
 "view.column.git_message" = "Spalte mit der Nachricht des letzten Commits"
 "view.column.git_author" = "Spalte mit dem Autor des letzten Commits"
 "view.column.git_date" = "Spalte mit der Zeit des letzten Commits"
+"view.column.git_hash" = "Spalte mit dem siebenstelligen Hash des letzten Commits"
 "git.fetch" = "Lädt neue Commits vom Remote, ohne Dateien zu ändern"
 "git.pull" = "Übernimmt die Remote-Änderungen in den aktuellen Branch"
 "git.sync" = "Holt entfernte Änderungen und überträgt bei Erfolg den aktuellen Branch"

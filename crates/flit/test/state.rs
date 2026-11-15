@@ -335,7 +335,40 @@ fn wide_len(s: &Saved) -> usize {
 fn attributes_len(s: &Saved) -> usize {
     let p = &s.persisted;
     let folders = p.folders.entries();
-    postcard::to_stdvec(&AttributesRecord { view: attributed(&p.view), defaults: attributed(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| attributed(v)).collect() }).unwrap().len()
+    postcard::to_stdvec(&AttributesRecord { view: attributed(&p.view), defaults: attributed(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| attributed(v)).collect() }).unwrap().len() + hash_record_len(s)
+}
+
+fn hash_record_len(s: &Saved) -> usize {
+    let p = &s.persisted;
+    postcard::to_stdvec(&GitHashRecord { view: hash_width(&p.view), defaults: hash_width(&p.prefs.defaults), folders: p.folders.entries().iter().map(|(k, v)| (*k, hash_width(v))).collect() }).unwrap().len()
+}
+
+#[test]
+fn commit_hash_columns_keep_their_visibility_width_and_sort_without_changing_old_records() {
+    let mut persisted = Persisted { path: loc(r"D:\x"), ..Default::default() };
+    persisted.view.columns.toggle(Column::GitHash);
+    persisted.view.columns.set_width(Column::GitHash, 190.0);
+    persisted.view.sort.field = SortField::GitHash;
+    persisted.prefs.defaults.columns.set_width(Column::GitHash, 180.0);
+    let key = folder_key(&loc(r"D:\other"));
+    let mut folder = FolderView::default();
+    folder.columns.toggle(Column::GitHash);
+    folder.columns.set_width(Column::GitHash, 170.0);
+    persisted.folders.put(key, folder);
+    let saved = Saved::new(persisted, None);
+    let bytes = saved.encode().unwrap();
+    let back = Saved::decode(&bytes).unwrap();
+    assert!(back.persisted.view.columns.shown(Column::GitHash));
+    assert_eq!(back.persisted.view.columns.width(Column::GitHash), 190.0);
+    assert_eq!(back.persisted.view.sort.field, SortField::GitHash);
+    assert_eq!(back.persisted.prefs.defaults.columns.width(Column::GitHash), 180.0);
+    assert!(!back.persisted.prefs.defaults.columns.shown(Column::GitHash));
+    assert_eq!(back.persisted.folders.get(key).unwrap().columns.width(Column::GitHash), 170.0);
+    let old = Saved::new(Persisted::default(), None);
+    let old_bytes = old.encode().unwrap();
+    let old_back = Saved::decode(&old_bytes[..old_bytes.len() - hash_record_len(&old)]).unwrap();
+    assert!(!old_back.persisted.view.columns.shown(Column::GitHash));
+    assert_eq!(old_back.persisted.view.columns.width(Column::GitHash), 130.0);
 }
 
 #[test]

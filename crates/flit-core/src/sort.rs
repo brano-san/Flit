@@ -25,6 +25,7 @@ pub enum SortField {
     Folders,
     Files,
     Attributes,
+    GitHash,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash, serde::Serialize, serde::Deserialize)]
@@ -530,6 +531,7 @@ fn item_cmp(l: &Listing, k: &SortKeys, spec: SortSpec, a: u32, b: u32) -> Orderi
         SortField::Items | SortField::Folders | SortField::Files | SortField::Free | SortField::Percent => primary(l, spec.field, a).cmp(&primary(l, spec.field, b)),
         SortField::FileSystem => ext_cmp(file_system(l, a), file_system(l, b)),
         SortField::Attributes => attribute_key(ea.attrs).cmp(&attribute_key(eb.attrs)),
+        SortField::GitHash => l.git_hash(a).cmp(l.git_hash(b)),
     }
     .then_with(|| k.cmp(a, b))
     .then_with(|| l.name(a).cmp(l.name(b)));
@@ -595,6 +597,7 @@ fn primary(l: &Listing, field: SortField, i: u32) -> u64 {
         SortField::FileSystem => ext_prefix(file_system(l, i)),
         SortField::Percent => used_permille(l, i).map_or(0, |p| p + 1),
         SortField::Attributes => attribute_key(e.attrs),
+        SortField::GitHash => ext_prefix(l.git_hash(i).as_bytes()),
     }
 }
 

@@ -65,12 +65,26 @@ struct GitRecord {
     folders: Vec<GitLook>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct GitHashRecord {
+    view: f32,
+    defaults: f32,
+    folders: Vec<(u64, f32)>,
+}
+
+fn hash_width(v: &FolderView) -> f32 {
+    v.columns.width(Column::GitHash)
+}
+
 fn git_look(v: &FolderView) -> GitLook {
-    (v.columns.git, v.columns.git_widths)
+    let mut widths = [0.0; 4];
+    widths.copy_from_slice(&v.columns.git_widths[..4]);
+    (v.columns.git, widths)
 }
 
 fn with_git(mut v: FolderView, (git, widths): GitLook) -> FolderView {
-    (v.columns.git, v.columns.git_widths) = (git & 0x0F, widths);
+    v.columns.git = git & 0x1F;
+    v.columns.git_widths[..4].copy_from_slice(&widths);
     v
 }
 
@@ -303,7 +317,7 @@ impl Saved {
                 }
             }
         }
-        let (mut deep, mut zoom, mut widened, mut files_chosen, mut attributes) = (Vec::new(), None, None, false, None);
+        let (mut deep, mut zoom, mut widened, mut files_chosen, mut attributes, mut hashes) = (Vec::new(), None, None, false, None, None);
         let p = &mut saved.persisted;
         (p.view, p.prefs, p.folders) = (r.view, r.prefs, FolderViews::from_entries(r.folders));
         p.prefs.count_folders = p.prefs.auto_sizes;
@@ -338,7 +352,10 @@ impl Saved {
                                                         if let Ok(((folders, files), tail)) = postcard::take_from_bytes::<(bool, bool)>(tail) {
                                                             p.prefs.count_folders = folders;
                                                             p.prefs.count_files = files;
-                                                            attributes = postcard::take_from_bytes::<AttributesRecord>(tail).ok().map(|(a, _)| a);
+                                                            if let Ok((a, tail)) = postcard::take_from_bytes::<AttributesRecord>(tail) {
+                                                                attributes = Some(a);
+                                                                hashes = postcard::take_from_bytes::<GitHashRecord>(tail).ok().map(|(h, _)| h);
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -382,6 +399,16 @@ impl Saved {
                                 let folders = p.folders.entries().into_iter().map(|(k, v)| (k, files_like_folders(v))).collect();
                                 p.folders = FolderViews::from_entries(folders);
                             }
+                            if let Some(h) = hashes.take() {
+                                p.view.columns.set_width(Column::GitHash, h.view);
+                                p.prefs.defaults.columns.set_width(Column::GitHash, h.defaults);
+                                for (key, width) in h.folders {
+                                    if let Some(mut v) = p.folders.get(key) {
+                                        v.columns.set_width(Column::GitHash, width);
+                                        p.folders.put(key, v);
+                                    }
+                                }
+                            }
                             p.folders.set_deep(std::mem::take(&mut deep));
                         }
                     }
@@ -406,6 +433,7 @@ impl Saved {
         let zooms = ZoomRecord { view: zoomed(&p.view), defaults: zoomed(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| zoomed(v)).collect(), retain_filter: p.prefs.retain_filter };
         let wides = WideRecord { view: wide(&p.view), defaults: wide(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| wide(v)).collect() };
         let attributes = AttributesRecord { view: attributed(&p.view), defaults: attributed(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| attributed(v)).collect() };
+        let hashes = GitHashRecord { view: hash_width(&p.view), defaults: hash_width(&p.prefs.defaults), folders: folders.iter().map(|(k, v)| (*k, hash_width(v))).collect() };
         let views = ViewRecord { view: legacy(p.view), prefs, folders: folders.into_iter().map(|(k, v)| (k, legacy(v))).collect() };
         let mut bytes = postcard::to_stdvec(&self.head()).ok()?;
         bytes.extend(postcard::to_stdvec(&self.nav).ok()?);
@@ -427,6 +455,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&IntegrationRecord { git: p.prefs.git_integration, places: self.side.quick.places.clone(), places_hidden: self.side.quick.places_hidden.clone() }).ok()?);
         bytes.extend(postcard::to_stdvec(&(p.prefs.count_folders, p.prefs.count_files)).ok()?);
         bytes.extend(postcard::to_stdvec(&attributes).ok()?);
+        bytes.extend(postcard::to_stdvec(&hashes).ok()?);
         Some(bytes)
     }
 

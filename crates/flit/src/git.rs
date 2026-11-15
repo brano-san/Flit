@@ -105,7 +105,7 @@ fn children(dir: &Path) -> usize {
 pub fn last_commits(dir: &Path) -> Commits {
     let mut commits = Commits::default();
     let want = children(dir);
-    let Ok(mut child) = command(dir).args(["-c", "core.quotePath=false", "log", LogParser::FORMAT, "--name-only", "-z", "--relative", "--", "."]).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else {
+    let Ok(mut child) = command(dir).args(["-c", "core.quotePath=false", "log", LogParser::FORMAT, "--abbrev=7", "--name-only", "-z", "--relative", "--", "."]).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else {
         return commits;
     };
     let started = Instant::now();

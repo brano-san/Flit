@@ -10,7 +10,7 @@ use crate::provider::{Launch, TabId};
 use crate::render::Color;
 use std::sync::Arc;
 
-const COMMIT_COLUMNS: u8 = 0b1110;
+const COMMIT_COLUMNS: u8 = 0b11110;
 
 pub(super) fn status_color(s: GitStatus) -> Color {
     match s {
@@ -59,6 +59,12 @@ impl App {
         self.prefs.git_integration = on;
         self.each_pane(|a, k| {
             a.tabs[k].git = None;
+            if let Some(v) = &mut a.tabs[k].view {
+                v.set_git(None);
+            }
+            if a.tabs[k].view_spec.sort.field == crate::sort::SortField::GitHash {
+                a.resort(k);
+            }
             if on { a.git_refresh(k, false); }
         });
         self.layout();
@@ -72,7 +78,7 @@ impl App {
             return;
         }
         let Some(dir) = git_dir(t.location()) else { return };
-        let commits = t.columns.git & COMMIT_COLUMNS != 0;
+        let commits = t.columns.git & COMMIT_COLUMNS != 0 || t.view_spec.sort.field == crate::sort::SortField::GitHash;
         self.effects.push(Effect::Git(GitRequest::Status { tab: t.id, gen: t.gen, dir, commits, changed }));
     }
 
@@ -88,6 +94,7 @@ impl App {
         let _ = match col {
             Column::GitMessage => s.write_str(&c.message),
             Column::GitAuthor => s.write_str(&c.author),
+            Column::GitHash => s.write_str(&c.short_hash),
             _ => {
                 let mut d = String::new();
                 format::datetime_in(&mut d, c.time, self.utc_offset_min, &self.style);
@@ -102,6 +109,17 @@ impl App {
 
     pub fn git_info(&self) -> Option<&GitInfo> {
         self.tab().git.as_deref()
+    }
+
+    pub(super) fn selected_commit_hash(&self) -> Option<&str> {
+        let t = self.tab();
+        if !t.columns.shown(Column::GitHash) || git_dir(t.location()).is_none() {
+            return None;
+        }
+        let g = t.git.as_ref().filter(|g| g.root.is_some())?;
+        let v = t.view.as_ref().filter(|v| v.selected_count() == 1)?;
+        let name = v.listing().name(v.selected().next()?);
+        g.commits.get(name).map(|c| c.hash.as_str()).filter(|s| !s.is_empty())
     }
 
     pub fn on_git(&mut self, ev: GitEvent) {
@@ -143,6 +161,9 @@ impl App {
         let info = info.filter(|g| g.root.is_some());
         if let Some(k) = self.tabs.iter().position(|t| t.id == tab && t.gen == gen) {
             self.tabs[k].git = info;
+            if self.tabs[k].view_spec.sort.field == crate::sort::SortField::GitHash {
+                self.resort(k);
+            }
             if k == self.cur {
                 self.layout();
                 self.dirty = true;

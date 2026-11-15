@@ -1,4 +1,7 @@
+copy_hash = "Copiar el hash completo del commit"
+
 [column]
+hash = "Hash del commit"
 status = "Estado de Git"
 message = "Mensaje del commit"
 author = "Autor del commit"

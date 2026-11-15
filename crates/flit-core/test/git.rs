@@ -24,7 +24,7 @@ fn folder_takes_the_strongest_status() {
 
 #[test]
 fn log_keeps_the_newest_commit_per_child() {
-    let out = b"\x1eaaa\x1fAnn\x1f1700000000\x1fsecond\0\nb/x.txt\0top.txt\0\x1ebbb\x1fBob\x1f1600000000\x1ffirst\0\nb/y.txt\0old.txt\0";
+    let out = b"\x1eaaaaaaa1111111111111111111111111111111111\x1faaaaaaa\x1fAnn\x1f1700000000\x1fsecond\0\nb/x.txt\0top.txt\0\x1ebbbbbbb2222222222222222222222222222222222\x1fbbbbbbb\x1fBob\x1f1600000000\x1ffirst\0\nb/y.txt\0old.txt\0";
     let mut commits = FxHashMap::default();
     let mut p = LogParser::new();
     for f in out.split(|&b| b == 0) {
@@ -32,8 +32,22 @@ fn log_keeps_the_newest_commit_per_child() {
     }
     assert_eq!(commits[&b"b"[..]].message, "second");
     assert_eq!(commits[&b"top.txt"[..]].author, "Ann");
-    assert_eq!(commits[&b"old.txt"[..]].hash, "bbb");
+    assert_eq!(commits[&b"old.txt"[..]].hash, "bbbbbbb2222222222222222222222222222222222");
+    assert_eq!(commits[&b"old.txt"[..]].short_hash, "bbbbbbb");
     assert_eq!(commits[&b"old.txt"[..]].time, filetime(1_600_000_000));
+}
+
+#[test]
+fn log_hashes_stay_seven_characters_and_incomplete_headers_do_not_reuse_a_commit() {
+    let mut commits = FxHashMap::default();
+    let mut parser = LogParser::new();
+    parser.feed(b"\x1e0123456789abcdef0123456789abcdef01234567\x1f0123456789\x1fAnn\x1f1700000000\x1fMessage", &mut commits);
+    parser.feed(b"file.txt", &mut commits);
+    assert_eq!(commits[&b"file.txt"[..]].short_hash, "0123456");
+    assert_eq!(commits[&b"file.txt"[..]].hash, "0123456789abcdef0123456789abcdef01234567");
+    parser.feed(b"\x1eincomplete", &mut commits);
+    parser.feed(b"broken.txt", &mut commits);
+    assert!(!commits.contains_key(&b"broken.txt"[..]));
 }
 
 #[test]

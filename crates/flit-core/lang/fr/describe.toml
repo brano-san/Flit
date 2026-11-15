@@ -274,6 +274,7 @@
 "view.column.git_message" = "Colonne avec le message du dernier commit"
 "view.column.git_author" = "Colonne avec l’auteur du dernier commit"
 "view.column.git_date" = "Colonne avec l’heure du dernier commit"
+"view.column.git_hash" = "Colonne avec le hash à sept caractères du dernier commit"
 "git.fetch" = "Télécharge les nouveaux commits du dépôt distant sans modifier les fichiers"
 "git.pull" = "Intègre les changements distants dans la branche courante"
 "git.sync" = "Intègre les changements distants puis, en cas de succès, envoie la branche courante"

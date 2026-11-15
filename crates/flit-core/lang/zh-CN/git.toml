@@ -1,4 +1,7 @@
+copy_hash = "复制完整提交哈希"
+
 [column]
+hash = "提交哈希"
 status = "Git 状态"
 message = "提交消息"
 author = "提交作者"

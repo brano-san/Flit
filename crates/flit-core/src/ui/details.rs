@@ -61,7 +61,7 @@ pub struct Columns {
     #[serde(skip)]
     pub git: u8,
     #[serde(skip, default = "git_widths")]
-    pub git_widths: [f32; 4],
+    pub git_widths: [f32; 5],
     #[serde(skip, default = "extra_shown")]
     pub extra: u16,
     #[serde(skip, default = "extra_widths")]
@@ -70,7 +70,7 @@ pub struct Columns {
     pub order: [u8; ORDERED],
 }
 
-pub const GIT_WIDTHS: [f32; 4] = [100.0, 260.0, 140.0, 150.0];
+pub const GIT_WIDTHS: [f32; 5] = [100.0, 260.0, 140.0, 150.0, 130.0];
 pub const EXTRA: usize = 13;
 pub const ORDERED: usize = 21;
 const FIRST_EXTRA: u8 = Column::Folders as u8;
@@ -125,7 +125,7 @@ const ALL_COLUMNS: [Column; ORDERED] = [
     Column::Version,
 ];
 
-fn git_widths() -> [f32; 4] {
+fn git_widths() -> [f32; 5] {
     GIT_WIDTHS
 }
 
@@ -641,7 +641,7 @@ const WINDOWS_COLUMNS: [Column; 16] = [
     Column::Artist,
     Column::Version,
 ];
-const WINDOWS_REPO_COLUMNS: [Column; 20] = [
+const WINDOWS_REPO_COLUMNS: [Column; 21] = [
     Column::Name,
     Column::Type,
     Column::Modified,
@@ -662,6 +662,7 @@ const WINDOWS_REPO_COLUMNS: [Column; 20] = [
     Column::GitMessage,
     Column::GitAuthor,
     Column::GitDate,
+    Column::GitHash,
 ];
 
 pub(super) fn attribute_letters(s: &mut impl std::fmt::Write, attrs: u32) {
@@ -1229,7 +1230,7 @@ impl App {
             Column::Created => format::datetime_in(&mut s, e.created, self.utc_offset_min, &self.style),
             Column::Origin => s.push_str(&name::display(recycle::origin(l, i))),
             Column::Tag => self.tag_text(&mut s, e.tags),
-            Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => self.git_text(&mut s, l.name(i), col),
+            Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate | Column::GitHash => self.git_text(&mut s, l.name(i), col),
             Column::ImageSize | Column::Duration | Column::Artist | Column::Version => self.shell_prop_text(&mut s, l.name(i), col),
             Column::Type => return self.type_text(arena, l, i),
             Column::Size => {

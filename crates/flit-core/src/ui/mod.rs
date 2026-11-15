@@ -231,11 +231,12 @@ pub enum Column {
     GitMessage,
     GitAuthor,
     GitDate,
+    GitHash,
 }
 
-pub const GIT_COLUMNS: [Column; 4] = [Column::GitStatus, Column::GitMessage, Column::GitAuthor, Column::GitDate];
+pub const GIT_COLUMNS: [Column; 5] = [Column::GitStatus, Column::GitMessage, Column::GitAuthor, Column::GitDate, Column::GitHash];
 pub const SHELL_COLUMNS: [Column; 4] = [Column::ImageSize, Column::Duration, Column::Artist, Column::Version];
-pub const REPO_COLUMNS: [Column; 15] = [
+pub const REPO_COLUMNS: [Column; 16] = [
     Column::Name,
     Column::Type,
     Column::Modified,
@@ -251,6 +252,7 @@ pub const REPO_COLUMNS: [Column; 15] = [
     Column::GitMessage,
     Column::GitAuthor,
     Column::GitDate,
+    Column::GitHash,
 ];
 pub const COLUMNS: [Column; 11] = [Column::Name, Column::Type, Column::Modified, Column::Folders, Column::Files, Column::Size, Column::Volume, Column::Created, Column::Accessed, Column::FolderUsage, Column::Tag];
 pub const BIN_COLUMNS: [Column; 4] = [Column::Name, Column::Origin, Column::Deleted, Column::Size];
@@ -285,6 +287,7 @@ impl Column {
             Column::GitMessage => S::GitColumnMessage,
             Column::GitAuthor => S::GitColumnAuthor,
             Column::GitDate => S::GitColumnDate,
+            Column::GitHash => S::GitColumnHash,
         }
         .t()
     }
@@ -306,6 +309,7 @@ impl Column {
             Column::FileSystem => SortField::FileSystem,
             Column::Percent => SortField::Percent,
             Column::Attributes => SortField::Attributes,
+            Column::GitHash => SortField::GitHash,
             Column::ImageSize | Column::Duration | Column::Artist | Column::Version | Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => return None,
         })
     }
@@ -1461,8 +1465,9 @@ impl App {
 
     fn resort(&mut self, k: usize) {
         self.sync_spec(k);
-        let t = &self.tabs[k];
-        if let Some(v) = &t.view {
+        let t = &mut self.tabs[k];
+        if let Some(v) = &mut t.view {
+            v.set_git(if t.view_spec.sort.field == SortField::GitHash { t.git.clone() } else { None });
             self.effects.push(Effect::Resort { tab: t.id, gen: t.gen, snap: v.snap().clone(), view: t.view_spec });
         }
     }

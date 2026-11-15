@@ -79,6 +79,7 @@ fn command_icon(cmd: &Cmd) -> &'static str {
     let Cmd::Action(id) = cmd else {
         return match cmd {
             Cmd::FolderProperties(_) => "\u{E946}",
+            Cmd::CopyGitHash(_) => "\u{E8C8}",
             Cmd::ToggleTag(_) | Cmd::ShowTag(_) | Cmd::OpenTagged(_) => "\u{E8EC}",
             Cmd::User(_) => "\u{E756}",
             Cmd::NewItem(_) => "\u{E8A5}",
@@ -117,6 +118,7 @@ pub(super) enum Cmd {
     OpenTagged(usize),
     Setting(usize, usize),
     GitBranch(usize),
+    CopyGitHash(String),
     Column(ColumnCmd),
     Types(TypeCmd),
     SortColumn(SortField),
@@ -558,6 +560,9 @@ impl App {
             }
         }
         m.action("item.copy_path", self.as_path_label());
+        if let Some(hash) = self.selected_commit_hash() {
+            m.command(Cmd::CopyGitHash(hash.to_owned()), S::GitCopyHash.t(), String::new(), false);
+        }
         if inside {
             m.separator();
             m.action("archive.extract", S::MenuExtractDialog.t());
@@ -716,6 +721,7 @@ impl App {
             Some(Cmd::OpenTagged(k)) => self.open_all_tagged(k, now),
             Some(Cmd::Setting(i, choice)) => self.choose_setting(i, choice),
             Some(Cmd::GitBranch(k)) => self.git_switch(k),
+            Some(Cmd::CopyGitHash(hash)) => self.effects.push(super::Effect::SetClipboard(hash)),
             Some(Cmd::Column(c)) => self.column_command(c),
             Some(Cmd::Types(c)) => self.types_command(c),
             Some(Cmd::SortColumn(f)) => self.sort_column(f),

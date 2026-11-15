@@ -683,6 +683,18 @@ impl DirView {
         }
     }
 
+    pub fn set_git(&mut self, git: Option<Arc<crate::git::GitInfo>>) {
+        let same = match (&self.snap.listing.git, &git) {
+            (None, None) => true,
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        };
+        if same {
+            return;
+        }
+        Arc::make_mut(&mut self.snap).listing.git = git;
+    }
+
     pub fn merge_order(&mut self, mut order: Vec<u32>, view: ViewSpec, base_len: usize) {
         if view.group != self.snap.view.group {
             self.collapsed.clear();

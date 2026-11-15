@@ -53,6 +53,7 @@ impl GitStatus {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Commit {
     pub hash: String,
+    pub short_hash: String,
     pub author: String,
     pub time: i64,
     pub message: String,
@@ -166,7 +167,7 @@ impl Default for LogParser {
 }
 
 impl LogParser {
-    pub const FORMAT: &'static str = "--format=%x1e%H%x1f%an%x1f%ct%x1f%s";
+    pub const FORMAT: &'static str = "--format=%x1e%H%x1f%h%x1f%an%x1f%ct%x1f%s";
 
     pub fn new() -> Self {
         Self { current: None }
@@ -176,8 +177,11 @@ impl LogParser {
         let field = field.strip_prefix(b"\n").unwrap_or(field);
         if let Some(header) = field.strip_prefix(b"\x1e") {
             let mut f = header.split(|&b| b == 0x1f).map(|s| String::from_utf8_lossy(s).into_owned());
-            let (hash, author, time, message) = (f.next().unwrap_or_default(), f.next().unwrap_or_default(), f.next().unwrap_or_default(), f.next().unwrap_or_default());
-            self.current = Some(Arc::new(Commit { hash, author, time: filetime(time.trim().parse().unwrap_or(0)), message }));
+            let (Some(hash), Some(short_hash), Some(author), Some(time), Some(message)) = (f.next(), f.next(), f.next(), f.next(), f.next()) else {
+                self.current = None;
+                return;
+            };
+            self.current = Some(Arc::new(Commit { hash, short_hash: short_hash.chars().take(7).collect(), author, time: filetime(time.trim().parse().unwrap_or(0)), message }));
             return;
         }
         let Some(c) = &self.current else { return };

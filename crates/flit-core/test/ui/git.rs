@@ -31,6 +31,140 @@ fn git_requests(fx: &[Effect]) -> Vec<GitRequest> {
 }
 
 #[test]
+fn commit_hash_is_opt_in_and_only_available_in_a_repository() {
+    let (mut app, _) = app_in(r"C:\x", &["a.txt"]);
+    assert!(!app.column_kinds().iter().any(|c| c.title() == "Commit hash"));
+    app.on_git(repo(&app));
+    assert!(app.column_kinds().iter().any(|c| c.title() == "Commit hash"));
+    assert!(!app.columns().iter().any(|c| c.title() == "Commit hash"));
+    assert!(app.run_action("view.column.git_hash", Instant::now()));
+    assert!(app.columns().iter().any(|c| c.title() == "Commit hash"));
+}
+
+#[test]
+fn full_commit_hash_copy_is_offered_only_for_a_committed_row_with_the_column_visible() {
+    let (mut app, _) = app_in(r"C:\x", &["a.txt", "untracked.txt"]);
+    app.on_git(repo(&app));
+    let v = app.tab_mut().view.as_mut().unwrap();
+    v.set_selected(0, true);
+    v.focus = Some(0);
+    assert!(!app.build_menu(true).iter().any(|m| matches!(m, MenuItem::Command { label, .. } if label == "Copy full commit hash")));
+    assert!(app.run_action("view.column.git_hash", Instant::now()));
+    assert!(app.build_menu(true).iter().any(|m| matches!(m, MenuItem::Command { label, .. } if label == "Copy full commit hash")));
+    let command = app.menu.iter().position(|c| matches!(c, crate::ui::menu::Cmd::CopyGitHash(_))).unwrap();
+    app.drain_effects().for_each(drop);
+    app.menu_command(command, Instant::now());
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::SetClipboard(s) if s == "abcdef0123456789abcdef0123456789abcdef01")));
+    let v = app.tab_mut().view.as_mut().unwrap();
+    v.clear_selection();
+    v.set_selected(1, true);
+    v.focus = Some(1);
+    assert!(!app.build_menu(true).iter().any(|m| matches!(m, MenuItem::Command { label, .. } if label == "Copy full commit hash")), "an untracked row has no commit hash");
+    app.run_action("view.column.git_hash", Instant::now());
+    assert!(!app.build_menu(true).iter().any(|m| matches!(m, MenuItem::Command { label, .. } if label == "Copy full commit hash")));
+}
+
+fn deliver_sort(app: &mut App) {
+    let effects: Vec<_> = app.drain_effects().collect();
+    for effect in effects {
+        if let Effect::Resort { tab, gen, snap, view } = effect {
+            let mut order = Vec::new();
+            sort::sort(&snap.listing, &snap.keys, view, &mut order);
+            app.on_resorted(tab, gen, view, snap.listing.len(), order);
+        }
+    }
+}
+
+#[test]
+fn commit_hash_visibility_and_copy_follow_the_active_tab_and_pane() {
+    let (mut app, _) = app_in(r"C:\x", &["a.txt"]);
+    app.on_git(repo(&app));
+    app.run_action("view.column.git_hash", Instant::now());
+    app.tab_mut().view.as_mut().unwrap().set_selected(0, true);
+    let first = app.tab().id;
+    assert!(app.selected_commit_hash().is_some());
+    app.run_action("tab.new", Instant::now());
+    assert!(app.selected_commit_hash().is_none());
+    app.run_action("tab.previous", Instant::now());
+    assert_eq!(app.tab().id, first);
+    assert!(app.selected_commit_hash().is_some());
+    app.run_action("panel.split_right", Instant::now());
+    if app.tab().id == first { app.run_action("panel.next", Instant::now()); }
+    assert_ne!(app.tab().id, first);
+    app.on_git(repo(&app));
+    if app.tab().columns.shown(Column::GitHash) { app.run_action("view.column.git_hash", Instant::now()); }
+    assert!(app.selected_commit_hash().is_none());
+    app.run_action("panel.previous", Instant::now());
+    assert_eq!(app.tab().id, first);
+    assert!(app.tab().columns.shown(Column::GitHash));
+    assert!(app.selected_commit_hash().is_some());
+}
+
+#[test]
+fn commit_hash_sorts_as_text_in_both_directions_and_refreshes_without_losing_selection() {
+    let (mut app, _) = app_in(r"C:\x", &["a.txt", "b.txt", "untracked.txt"]);
+    let mut ev = repo(&app);
+    if let GitEvent::Status { info: Some(i), .. } = &mut ev {
+        let g = Arc::make_mut(i);
+        let first = g.commits[&b"a.txt"[..]].as_ref().clone();
+        g.commits.insert(b"a.txt".to_vec(), Arc::new(Commit { short_hash: "fffffff".into(), ..first.clone() }));
+        g.commits.insert(b"b.txt".to_vec(), Arc::new(Commit { short_hash: "1111111".into(), ..first }));
+    }
+    app.on_git(ev.clone());
+    app.run_action("view.column.git_hash", Instant::now());
+    assert_eq!(Column::GitHash.field(), Some(crate::sort::SortField::GitHash));
+    let v = app.tab_mut().view.as_mut().unwrap();
+    v.set_selected(0, true);
+    v.focus = Some(0);
+    app.sort_column(crate::sort::SortField::GitHash);
+    deliver_sort(&mut app);
+    assert_eq!(app.tab().view.as_ref().unwrap().rows(), &[2, 1, 0]);
+    app.sort_column(crate::sort::SortField::GitHash);
+    deliver_sort(&mut app);
+    assert_eq!(app.tab().view.as_ref().unwrap().rows(), &[0, 1, 2]);
+    if let GitEvent::Status { info: Some(i), .. } = &mut ev {
+        Arc::make_mut(Arc::make_mut(i).commits.get_mut(&b"a.txt"[..]).unwrap()).short_hash = "0000000".into();
+    }
+    app.on_git(ev);
+    deliver_sort(&mut app);
+    let v = app.tab().view.as_ref().unwrap();
+    assert_eq!(v.rows(), &[1, 0, 2]);
+    assert_eq!(v.selected().collect::<Vec<_>>(), [0]);
+    assert_eq!(v.focus, Some(0));
+    let arena = bumpalo::Bump::new();
+    assert_eq!(app.cell_text(&arena, v.listing(), 0, Column::GitHash), "0000000");
+    assert_eq!(app.cell_text(&arena, v.listing(), 2, Column::GitHash), "");
+    app.set_git_integration(false);
+    deliver_sort(&mut app);
+    assert_eq!(app.tab().view.as_ref().unwrap().rows(), &[2, 1, 0], "without Git data the current descending text sort falls back to names");
+    assert!(!app.columns().contains(&Column::GitHash));
+}
+
+#[test]
+fn commit_hash_menus_fit_narrow_windows_in_every_language_and_do_not_change_other_windows() {
+    use crate::i18n::{self, Lang};
+    for lang in Lang::ALL {
+        i18n::set_lang(lang);
+        let (mut app, _) = app_in(r"C:\x", &["a.txt"]);
+        app.on_git(repo(&app));
+        app.run_action("view.column.git_hash", Instant::now());
+        app.tab_mut().view.as_mut().unwrap().set_selected(0, true);
+        let menu = app.build_menu(true);
+        assert!(menu.iter().any(|m| matches!(m, MenuItem::Command { label, .. } if label == S::GitCopyHash.t())));
+        let mut gfx = Gfx::new(crate::text::tests::Mono, 2048);
+        let bounds = crate::render::Rect::new(0.0, 0.0, 480.0, 360.0);
+        let hash_menu: Vec<_> = menu.iter().filter(|m| matches!(m, MenuItem::Command { label, .. } if label == S::GitCopyHash.t())).cloned().collect();
+        let view = crate::ui::popup::MenuView::new(&hash_menu, 460.0, 340.0, bounds, 1.0, &mut gfx);
+        assert!(view.panels().all(|r| r.x >= 0.0 && r.y >= 0.0 && r.right() <= 480.0 && r.bottom() <= 360.0), "{lang:?}");
+        app.on_event(&crate::input::Event::Resized { width: 480, height: 360 }, Instant::now());
+        app.frame(&mut gfx, Instant::now());
+        let (other, _) = app_in(r"C:\x", &["a.txt"]);
+        assert!(!other.tab().columns.shown(Column::GitHash));
+    }
+    i18n::set_lang(Lang::En);
+}
+
+#[test]
 fn sync_is_listed_but_disabled_without_an_upstream() {
     let (mut app, _) = app_in(r"C:\x", &[]);
     app.on_git(repo(&app));
@@ -112,7 +246,7 @@ fn integration_is_off_by_default_and_late_status_is_ignored_after_disabling() {
 fn repo(app: &App) -> GitEvent {
     let mut info = GitInfo { root: FsPath::parse(r"C:\x"), branch: "main".into(), ..GitInfo::default() };
     info.status.insert(b"a.txt".to_vec(), GitStatus::Modified);
-    info.commits.insert(b"a.txt".to_vec(), Arc::new(Commit { hash: "abc".into(), author: "Ann".into(), time: crate::git::filetime(0), message: "Fix it".into() }));
+    info.commits.insert(b"a.txt".to_vec(), Arc::new(Commit { hash: "abcdef0123456789abcdef0123456789abcdef01".into(), short_hash: "abcdef0".into(), author: "Ann".into(), time: crate::git::filetime(0), message: "Fix it".into() }));
     GitEvent::Status { tab: app.tab().id, gen: app.tab().gen, info: Some(Arc::new(info)) }
 }
 

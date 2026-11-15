@@ -274,6 +274,7 @@
 "view.column.git_message" = "Column with the message of the last commit"
 "view.column.git_author" = "Column with the author of the last commit"
 "view.column.git_date" = "Column with the time of the last commit"
+"view.column.git_hash" = "Column with the seven-character hash of the last commit"
 "git.fetch" = "Downloads new commits from the remote without changing files"
 "git.pull" = "Brings the remote changes into the current branch"
 "git.sync" = "Pulls remote changes, then pushes the current branch if the pull succeeds"
