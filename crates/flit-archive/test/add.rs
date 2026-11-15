@@ -510,7 +510,7 @@ fn adding_through_a_symbolic_link_updates_the_real_archive_and_keeps_the_link() 
         let real = t.fs(&format!("store/real.{ext}"));
         compress(vec![t.fs("old.txt")], real.clone(), format, None);
         let link = t.path(&format!("links/a.{ext}"));
-        if let Err(error) = symlink(Path::new(&format!("../store/real.{ext}")), &link) {
+        if let Err(error) = symlink(&Path::new("..").join("store").join(format!("real.{ext}")), &link) {
             assert_eq!(error.raw_os_error(), Some(1314), "{error}");
             return;
         }
@@ -626,7 +626,7 @@ fn rewritten_archives_keep_their_windows_access_list_and_hidden_and_system_attri
         let status = std::process::Command::new("attrib").args(["+h", "+s"]).arg(&path).status().unwrap();
         assert!(status.success());
         let before = acl(&path);
-        assert_eq!(before.len(), 1, "{before:?}");
+        assert!(before.iter().any(|l| l.starts_with(&user) && l.ends_with("(F)")) && !before.iter().any(|l| l.contains("(I)")), "{before:?}");
         let out = add(&t, &archive, &["new.txt"], Resolve::Replace);
         assert!(out.error.is_none(), "{ext}: {:?}", out.error);
         assert_eq!(acl(&path), before, "{ext}: the private access list must survive");
