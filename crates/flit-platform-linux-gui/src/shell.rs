@@ -657,12 +657,20 @@ impl Shell for LinuxShell {
             return crate::icons::icon(&[name.to_owned()], req.size);
         }
         if req.kind == IconKind::Content {
-            let names = host(&req.path).map(crate::mime::content_icon_names).unwrap_or_default();
-            return crate::icons::icon(&names, req.size).or_else(|| crate::icons::icon(&["text-x-generic".into(), "unknown".into()], req.size));
+            return self.shared_icon(req).0;
         }
         let picture = (req.kind == IconKind::Thumbnail).then(|| self.thumbnail(req)).flatten();
         let own = || (req.kind == IconKind::File).then(|| host(&req.path).and_then(launcher_text)).flatten().and_then(|t| crate::apps::launcher_icon(&t));
         picture.or_else(|| own().and_then(|name| crate::apps::icon_image(&name, req.size))).or_else(|| crate::icons::icon(&icon_names(req), req.size))
+    }
+
+    fn shared_icon(&mut self, req: &IconRequest) -> (Option<Bitmap>, Option<u64>) {
+        if req.kind != IconKind::Content {
+            return (self.icon(req), None);
+        }
+        let names = host(&req.path).map(crate::mime::content_icon_names).unwrap_or_default();
+        let image = crate::icons::icon(&names, req.size).or_else(|| crate::icons::icon(&["text-x-generic".into(), "unknown".into()], req.size));
+        (image, Some(flit_core::hash::hash(&(&names, req.size))))
     }
 
     fn thumbnail(&mut self, req: &IconRequest) -> Option<Bitmap> {

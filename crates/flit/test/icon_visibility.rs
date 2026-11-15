@@ -71,7 +71,7 @@ fn visible_folder_icons_are_prepared_together_and_scrolled_away_ones_are_skipped
     assert_eq!(shell.prepared, vec![vec![2, 3, 6]], "one preparation for the visible folders only");
     assert_eq!(shell.drawn, vec![2, 3, 6]);
     let results: Vec<(u64, &str)> = done.iter().map(|d| match d {
-        Done::Icon { window: 7, req, result } => (req.key, match result { IconResult::Ready(_) => "ready", IconResult::Failed => "failed", IconResult::Skipped => "skipped" }),
+        Done::Icon { window: 7, req, result } => (req.key, match result { IconResult::Ready(_) => "ready", IconResult::Failed => "failed", IconResult::Skipped => "skipped", IconResult::Shared(..) => "shared" }),
         _ => panic!("only icon results"),
     }).collect();
     assert_eq!(results.len(), 4, "every request gets an answer so none stays pending");
@@ -94,4 +94,32 @@ fn folder_icon_batches_hold_at_most_a_hundred_and_only_platforms_that_ask_batch(
     assert!(batched::<Folders>(&folder(1, 0)));
     assert!(!batched::<Folders>(&IconRequest { kind: IconKind::Folder, ..folder(1, 0) }));
     assert!(!batched::<Plain>(&folder(1, 0)), "other platforms keep one request per job");
+}
+
+struct Typed;
+
+impl Shell for Typed {
+    fn new() -> Result<Self, PlatformError> {
+        Ok(Typed)
+    }
+    fn icon(&mut self, _: &IconRequest) -> Option<flit_core::ui::Bitmap> {
+        Some(flit_core::ui::Bitmap { width: 1, height: 1, rgba: vec![1; 4] })
+    }
+    fn shared_icon(&mut self, req: &IconRequest) -> (Option<flit_core::ui::Bitmap>, Option<u64>) {
+        (self.icon(req), (req.kind == IconKind::Content).then_some(42))
+    }
+    fn type_name(&mut self, _: &[u8]) -> Option<String> {
+        None
+    }
+    fn open(&mut self, _: &FsPath) -> Result<(), PlatformError> {
+        Ok(())
+    }
+}
+
+#[test]
+fn content_icons_arrive_with_the_type_they_share_and_other_icons_stay_per_key() {
+    let content = IconRequest { key: 7, kind: IconKind::Content, path: flit_core::FsPath::parse("/tmp/image").unwrap(), size: 16, gen: 0, row: 0 };
+    assert!(matches!(icon_result(&mut Typed, &content), IconResult::Shared(42, _)));
+    assert!(matches!(icon_result(&mut Typed, &IconRequest { kind: IconKind::Type, ..content.clone() }), IconResult::Ready(_)));
+    assert!(matches!(icon_result(&mut Plain, &content), IconResult::Failed));
 }

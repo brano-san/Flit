@@ -104,6 +104,14 @@ fn folder_batches(reqs: Vec<IconRequest>) -> Vec<Vec<IconRequest>> {
     out
 }
 
+fn icon_result<S: Shell>(shell: &mut S, req: &IconRequest) -> IconResult {
+    match shell.shared_icon(req) {
+        (Some(image), Some(share)) => IconResult::Shared(share, image),
+        (Some(image), None) => IconResult::Ready(image),
+        (None, _) => IconResult::Failed,
+    }
+}
+
 fn batch_icons<S: Shell>(shell: &mut S, window: WindowId, reqs: Vec<IconRequest>, visible: &Visible) -> Vec<Done> {
     let (wanted, skipped): (Vec<IconRequest>, Vec<IconRequest>) = reqs.into_iter().partition(|r| visible.wants(r));
     if !wanted.is_empty() {
@@ -111,7 +119,7 @@ fn batch_icons<S: Shell>(shell: &mut S, window: WindowId, reqs: Vec<IconRequest>
     }
     let mut out: Vec<Done> = skipped.into_iter().map(|req| Done::Icon { window, req, result: IconResult::Skipped }).collect();
     out.extend(wanted.into_iter().map(|req| {
-        let result = if visible.wants(&req) { shell.icon(&req).map_or(IconResult::Failed, IconResult::Ready) } else { IconResult::Skipped };
+        let result = if visible.wants(&req) { icon_result(shell, &req) } else { IconResult::Skipped };
         Done::Icon { window, req, result }
     }));
     out
@@ -251,7 +259,7 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest
                         let result = if !visible.wants(&req) {
                             IconResult::Skipped
                         } else {
-                            shell.icon(&req).map_or(IconResult::Failed, IconResult::Ready)
+                            icon_result(&mut shell, &req)
                         };
                         vec![Done::Icon { window, req, result }]
                     }

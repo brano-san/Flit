@@ -223,7 +223,7 @@ pub fn setting(text: &str, key: &str) -> Option<String> {
 
 fn theme_name() -> String {
     let config = |file: &str, key: &str| crate::xdg::config_home().and_then(|c| std::fs::read_to_string(c.join(file)).ok()).and_then(|t| setting(&t, key));
-    let kde = || (crate::preferences::Desktop::current() == crate::preferences::Desktop::Kde).then(|| crate::xdg::config_home().and_then(|c| std::fs::read_to_string(c.join("kdeglobals")).ok()).and_then(|t| crate::preferences::kde_icon_theme(&t))).flatten();
+    let kde = || (crate::preferences::Desktop::current() == crate::preferences::Desktop::Kde).then(|| crate::preferences::kde_icons_or_default(&crate::xdg::config_home().and_then(|c| std::fs::read_to_string(c.join("kdeglobals")).ok()).unwrap_or_default()));
     let gnome = || crate::shell::gsettings(&["org.gnome.desktop.interface", "icon-theme"]).map(|v| v.trim().trim_matches('\'').to_owned()).filter(|v| !v.is_empty());
     kde().or_else(|| config("gtk-3.0/settings.ini", "gtk-icon-theme-name")).or_else(gnome).unwrap_or_else(|| "Adwaita".into())
 }
@@ -231,15 +231,32 @@ fn theme_name() -> String {
 type Rendered = HashMap<(Vec<String>, u32), (Option<Bitmap>, Instant)>;
 
 static THEMES: Mutex<Option<Arc<Vec<Theme>>>> = Mutex::new(None);
+static CURRENT: Mutex<Option<String>> = Mutex::new(None);
 static CACHE: Mutex<Option<Rendered>> = Mutex::new(None);
 
 fn themes() -> Arc<Vec<Theme>> {
-    THEMES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(|| Arc::new(chain(&base_dirs(), &theme_name()))).clone()
+    THEMES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(|| Arc::new(chain(&base_dirs(), &current_theme()))).clone()
+}
+
+fn current_theme() -> String {
+    CURRENT.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(theme_name).clone()
+}
+
+fn replaced(current: &mut Option<String>, name: &str, initial: impl FnOnce() -> String) -> bool {
+    let now = current.get_or_insert_with(initial);
+    if now == name {
+        return false;
+    }
+    name.clone_into(now);
+    true
 }
 
 pub fn switch_theme(name: &str) -> bool {
     let name = name.trim().trim_matches(['\'', '"']);
     if name.is_empty() {
+        return false;
+    }
+    if !replaced(&mut CURRENT.lock().unwrap_or_else(|e| e.into_inner()), name, theme_name) {
         return false;
     }
     let fresh = Arc::new(chain(&base_dirs(), name));

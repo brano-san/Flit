@@ -75,6 +75,7 @@ fn kde_icon_theme_notices_atomic_replacement_and_ignores_unrelated_changes() {
     assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Change::IconTheme("Second".into()));
     assert!(matches!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Change::Globals(_)));
     std::fs::remove_file(&globals).unwrap();
+    assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Change::IconTheme(KDE_ICONS.into()));
     assert!(matches!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Change::Globals(_)));
     std::fs::write(&globals, "[Icons]\nTheme=Second\n").unwrap();
     assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Change::IconTheme("Second".into()));
@@ -83,4 +84,28 @@ fn kde_icon_theme_notices_atomic_replacement_and_ignores_unrelated_changes() {
     drop(worker);
     assert!(at.elapsed() < Duration::from_secs(1));
     assert_eq!(rx.recv_timeout(Duration::from_secs(1)), Err(crossbeam_channel::RecvTimeoutError::Disconnected));
+}
+
+#[test]
+fn removing_the_kde_icon_theme_setting_goes_back_to_breeze() {
+    assert_eq!(kde_icons_or_default("[General]\nColorScheme=BreezeDark\n"), "breeze");
+    assert_eq!(kde_icons_or_default(""), "breeze");
+    assert_eq!(kde_icons_or_default("[Icons]\nTheme=Papirus\n"), "Papirus");
+    let temp = Temp::new("icon-theme-default");
+    let globals = temp.path().join("kdeglobals");
+    std::fs::write(&globals, "[Icons]\nTheme=Papirus\n").unwrap();
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let worker = Watch::start(temp.path().to_owned(), Duration::from_millis(15), move |change| { let _ = tx.send(change); }).unwrap();
+    let mut first = Vec::new();
+    while let Ok(change) = rx.recv_timeout(Duration::from_millis(300)) {
+        first.push(change);
+    }
+    assert!(first.contains(&Change::IconTheme("Papirus".into())), "{first:?}");
+    std::fs::write(&globals, "[General]\nColorScheme=BreezeLight\n").unwrap();
+    assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Change::IconTheme("breeze".into()));
+    assert!(matches!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Change::Globals(_)));
+    std::fs::write(&globals, "[General]\nColorScheme=BreezeDark\n").unwrap();
+    assert!(matches!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Change::Globals(_)));
+    assert!(rx.recv_timeout(Duration::from_millis(70)).is_err(), "an unchanged default is not announced again");
+    drop(worker);
 }

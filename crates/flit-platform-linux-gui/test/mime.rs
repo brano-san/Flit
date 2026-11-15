@@ -87,20 +87,74 @@ fn content_reader_limits_regular_files_and_never_opens_a_fifo_for_reading() {
 
 #[test]
 fn content_cache_reuses_reads_between_windows_sizes_and_theme_epochs() {
-    let mut cache = ContentCache::default();
-    let key = ContentKey { path: PathBuf::from("/tmp/image"), modified: (7, 1), size: 42 };
+    use crate::temp::Temp;
+    let temp = Temp::new("content-cache");
+    let file = temp.path().join("image");
+    std::fs::write(&file, b"image bytes").unwrap();
+    let cache = Mutex::new(None);
     let reads = std::cell::Cell::new(0);
     for _ in 0..4 {
-        assert_eq!(cache.resolve(key.clone(), || { reads.set(reads.get() + 1); "image/png".into() }), "image/png");
+        let names = content_names_in(&cache, &file, true, |_| { reads.set(reads.get() + 1); "image/png".into() });
+        assert_eq!(names, icon_names("image/png"));
     }
     assert_eq!(reads.get(), 1);
-    let fresh = ContentKey { modified: (8, 1), ..key.clone() };
-    assert_eq!(cache.resolve(fresh, || { reads.set(reads.get() + 1); "application/pdf".into() }), "application/pdf");
+    std::fs::write(&file, b"a longer document").unwrap();
+    let names = content_names_in(&cache, &file, true, |_| { reads.set(reads.get() + 1); "application/pdf".into() });
+    assert_eq!(names, icon_names("application/pdf"));
     assert_eq!(reads.get(), 2);
-    assert!(cache.get(&key).is_none());
+    assert_eq!(cache.lock().unwrap().as_ref().unwrap().entries.len(), 1);
     assert_eq!(content_mime_with(b"\x89PNG", None), None);
 }
 
+#[test]
+fn content_is_never_read_on_network_or_virtual_mounts() {
+    use flit_platform_linux::mounts::parse;
+    let mounts = parse(b"1 0 8:1 / / rw - ext4 /dev/sda1 rw\n2 1 0:20 / /proc rw - proc proc rw\n3 1 0:21 / /sys rw - sysfs sysfs rw\n4 1 0:30 / /mnt/share rw - cifs //server/share rw\n5 1 0:31 / /home/ann/remote rw - fuse.sshfs ann@host: rw\n6 1 0:32 / /run/user/1000/gvfs rw - fuse.gvfsd-fuse gvfsd-fuse rw\n7 1 0:33 / /tmp rw - tmpfs tmpfs rw\n8 1 0:34 / /mnt/nfs rw - nfs4 host:/x rw\n");
+    for path in ["/proc/self/status", "/sys/kernel/notes", "/mnt/share/report", "/home/ann/remote/notes", "/run/user/1000/gvfs/smb-share/file", "/mnt/nfs/data"] {
+        assert!(!content_readable(std::path::Path::new(path), &mounts), "{path}");
+    }
+    for path in ["/home/ann/notes", "/tmp/notes", "/mnt/sharex/file"] {
+        assert!(content_readable(std::path::Path::new(path), &mounts), "{path}");
+    }
+    assert!(content_readable(std::path::Path::new("/anything"), &[]));
+    let cache = Mutex::new(None);
+    let names = content_names_in(&cache, std::path::Path::new("/proc/self/status"), false, |_| panic!("a virtual file was read"));
+    assert!(names.is_empty());
+}
+
+#[test]
+fn a_hung_content_read_does_not_hold_up_icons_of_other_files() {
+    use crate::temp::Temp;
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+    let temp = Temp::new("content-hang");
+    let slow = temp.path().join("slow");
+    let fast = temp.path().join("fast");
+    std::fs::write(&slow, b"slow bytes").unwrap();
+    std::fs::write(&fast, b"fast bytes").unwrap();
+    let cache = std::sync::Arc::new(Mutex::new(None));
+    let (started, entered) = channel();
+    let (release, hold) = channel::<()>();
+    let hung = {
+        let cache = cache.clone();
+        std::thread::spawn(move || content_names_in(&cache, &slow, true, |_| {
+            started.send(()).unwrap();
+            let _ = hold.recv_timeout(Duration::from_secs(10));
+            "image/png".into()
+        }))
+    };
+    entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    let (done, finished) = channel();
+    let other = {
+        let cache = cache.clone();
+        std::thread::spawn(move || done.send(content_names_in(&cache, &fast, true, |_| "text/plain".into())).unwrap())
+    };
+    let names = finished.recv_timeout(Duration::from_secs(2));
+    release.send(()).unwrap();
+    other.join().unwrap();
+    assert_eq!(hung.join().unwrap(), icon_names("image/png"));
+    assert_eq!(names.expect("another file got its icon while the first read hung"), icon_names("text/plain"));
+}
 #[test]
 fn content_type_results_are_freed_even_if_conversion_is_unknown() {
     use std::ffi::{CStr, CString};

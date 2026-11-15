@@ -214,13 +214,6 @@ impl ContentCache {
         self.entries.iter().find(|(k, _)| k == key).map(|(_, m)| m)
     }
 
-    fn resolve(&mut self, key: ContentKey, read: impl FnOnce() -> String) -> String {
-        if let Some(mime) = self.get(&key) { return mime.clone(); }
-        let mime = read();
-        self.insert(key, mime.clone());
-        mime
-    }
-
     fn insert(&mut self, key: ContentKey, mime: String) {
         self.entries.retain(|(k, _)| k.path != key.path);
         if self.entries.len() >= CONTENT_CACHE_LIMIT { self.entries.pop_front(); }
@@ -238,13 +231,46 @@ fn content_head(path: &std::path::Path) -> Option<(ContentKey, Vec<u8>)> {
     Some((key, data))
 }
 
+const LOCAL_MEMORY: [&str; 2] = ["tmpfs", "ramfs"];
+const MOUNTS_FRESH: std::time::Duration = std::time::Duration::from_secs(2);
+
+fn content_readable(path: &std::path::Path, mounts: &[flit_platform_linux::mounts::Mount]) -> bool {
+    let Some(mount) = mounts.iter().filter(|m| path.starts_with(m.path())).max_by_key(|m| m.point.len()) else { return true };
+    !(mount.is_network() || (mount.is_pseudo() && !LOCAL_MEMORY.contains(&mount.fstype.as_str())))
+}
+
+fn current_mounts() -> std::sync::Arc<Vec<flit_platform_linux::mounts::Mount>> {
+    static MOUNTS: Mutex<Option<(std::time::Instant, std::sync::Arc<Vec<flit_platform_linux::mounts::Mount>>)>> = Mutex::new(None);
+    let mut slot = MOUNTS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, mounts)) = slot.as_ref().filter(|(at, _)| at.elapsed() < MOUNTS_FRESH) {
+        return mounts.clone();
+    }
+    let fresh = std::sync::Arc::new(flit_platform_linux::mounts::read().unwrap_or_default());
+    *slot = Some((std::time::Instant::now(), fresh.clone()));
+    fresh
+}
+
+fn content_names_in(cache: &Mutex<Option<ContentCache>>, path: &std::path::Path, readable: bool, read: impl FnOnce(&ContentKey) -> String) -> Vec<String> {
+    if !readable {
+        return Vec::new();
+    }
+    let Some(key) = std::fs::symlink_metadata(path).ok().and_then(|m| ContentKey::of(path, &m)) else { return Vec::new() };
+    let known = cache.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(ContentCache::default).get(&key).cloned();
+    let mime = match known {
+        Some(mime) => mime,
+        None => {
+            let mime = read(&key);
+            cache.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(ContentCache::default).insert(key, mime.clone());
+            mime
+        }
+    };
+    icon_names(&mime)
+}
+
 pub fn content_icon_names(path: &std::path::Path) -> Vec<String> {
     static CACHE: Mutex<Option<ContentCache>> = Mutex::new(None);
-    let Some(key) = std::fs::symlink_metadata(path).ok().and_then(|m| ContentKey::of(path, &m)) else { return Vec::new() };
-    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    let cache = cache.get_or_insert_with(ContentCache::default);
-    let mime = cache.resolve(key.clone(), || content_head(path).filter(|(actual, _)| actual == &key).map(|(_, data)| content_mime(&data).unwrap_or_else(|| sniff(&data).to_owned())).unwrap_or_else(|| OCTET_STREAM.into()));
-    icon_names(&mime)
+    let readable = content_readable(path, &current_mounts());
+    content_names_in(&CACHE, path, readable, |key| content_head(path).filter(|(actual, _)| actual == key).map(|(_, data)| content_mime(&data).unwrap_or_else(|| sniff(&data).to_owned())).unwrap_or_else(|| OCTET_STREAM.into()))
 }
 
 #[cfg(test)]

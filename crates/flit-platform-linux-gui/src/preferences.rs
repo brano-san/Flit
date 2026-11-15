@@ -66,6 +66,12 @@ pub(crate) fn kde_buttons(config: &str) -> WindowButtons {
     buttons(parse(left).into_iter(), parse(right).into_iter())
 }
 
+pub(crate) const KDE_ICONS: &str = "breeze";
+
+pub(crate) fn kde_icons_or_default(config: &str) -> String {
+    kde_icon_theme(config).unwrap_or_else(|| KDE_ICONS.into())
+}
+
 pub(crate) fn kde_icon_theme(config: &str) -> Option<String> {
     let mut icons = false;
     let mut theme = None;
@@ -117,7 +123,7 @@ impl Watch {
             let mut stamps = [None, None];
             let mut layout = None;
             let mut globals = String::new();
-            let mut icon_theme = None;
+            let mut icon_theme = Some(KDE_ICONS.to_owned());
             let mut first = true;
             loop {
                 for (k, path) in paths.iter().enumerate() {
@@ -132,7 +138,7 @@ impl Watch {
                             emit(Change::Buttons(next));
                         }
                     } else if globals != text {
-                        let next = kde_icon_theme(&text);
+                        let next = Some(kde_icons_or_default(&text));
                         if next != icon_theme {
                             icon_theme.clone_from(&next);
                             if let Some(name) = next { emit(Change::IconTheme(name)); }
