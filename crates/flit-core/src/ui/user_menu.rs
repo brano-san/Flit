@@ -233,8 +233,12 @@ pub fn from_json(j: &Json) -> Option<Vec<UserEntry>> {
 }
 
 pub fn image_request(image: &MenuImage, px: u32) -> Option<IconRequest> {
-    let MenuImage::File(path) = image else { return None };
-    let kind = if ICON_FILES.contains(&ext_of(path.file_name()).as_str()) { IconKind::File } else { IconKind::Thumbnail };
+    let (path, kind) = match image {
+        MenuImage::File(path) if ICON_FILES.contains(&ext_of(path.file_name()).as_str()) => (path, IconKind::File),
+        MenuImage::File(path) => (path, IconKind::Thumbnail),
+        MenuImage::Type(path) => (path, IconKind::Type),
+        MenuImage::Pixels { .. } => return None,
+    };
     Some(IconRequest { key: image.key(px), kind, path: path.clone(), size: px, gen: 0, row: 0 })
 }
 
@@ -562,7 +566,7 @@ fn push(m: &mut Menu, e: &UserEntry, places: &Places, dir: &FsPath) {
 pub(super) fn file_images(items: &[MenuItem], out: &mut Vec<MenuImage>) {
     for i in items {
         match i {
-            MenuItem::Command { image: Some(image @ MenuImage::File(_)), .. } => out.push(image.clone()),
+            MenuItem::Command { image: Some(image @ (MenuImage::File(_) | MenuImage::Type(_))), .. } => out.push(image.clone()),
             MenuItem::Submenu { items, .. } => file_images(items, out),
             _ => {}
         }

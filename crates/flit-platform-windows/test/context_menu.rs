@@ -188,6 +188,35 @@ fn the_worker_thread_answers_only_the_latest_menu() {
     assert_eq!(*seen.borrow(), [Event::Timer, Event::ShellVerb("copy".into())], "answers for a closed menu are dropped");
 }
 
+#[test]
+fn a_shell_extension_that_never_answers_leaves_an_empty_menu_and_later_menus_still_get_their_items() {
+    let _serial = serial();
+    let t = TempDir::new("hung");
+    std::fs::write(t.0.join("a.txt"), "x").unwrap();
+    HUNG_MS.store(300, Ordering::SeqCst);
+    let (quick, quick_until) = std::sync::mpsc::channel();
+    let before = worker().hwnd;
+    let gen = CURRENT.fetch_add(1, Ordering::SeqCst) + 1;
+    send_job(Job::Hang { owner: 0, gen, until: quick_until });
+    std::thread::sleep(Duration::from_millis(50));
+    let _ = quick.send(());
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(DONE.lock().unwrap().iter().all(|d| d.0 != 0), "a slow menu that finishes in time is not cut short");
+    assert_eq!(worker().hwnd, before, "and keeps its thread");
+    let (release, until) = std::sync::mpsc::channel();
+    let gen = CURRENT.fetch_add(1, Ordering::SeqCst) + 1;
+    send_job(Job::Hang { owner: 0, gen, until });
+    let done = wait_done(0);
+    assert!(matches!(&done[..], [(Some(g), Event::ShellItems { items, shell })] if *g == gen && items.is_empty() && shell.is_empty()), "the waiting menu gets an empty answer instead of placeholders forever: {done:?}");
+    assert_ne!(worker().hwnd, before, "menus move to a fresh thread");
+    HUNG_MS.store(8000, Ordering::SeqCst);
+    let latest = CURRENT.fetch_add(1, Ordering::SeqCst) + 1;
+    send_job(Job::Menu { owner: 0, gen: latest, menu: flit_menu(&t, false), pt: POINT::default() });
+    let done = wait_done(0);
+    assert!(matches!(&done[..], [(Some(g), Event::ShellItems { shell, .. })] if *g == latest && !shell.is_empty()), "the next menu is complete again: {done:?}");
+    let _ = release.send(());
+}
+
 fn fake(verb: &str) -> ShellItem<'_> {
     ShellItem { verb, usable: true, children: None }
 }

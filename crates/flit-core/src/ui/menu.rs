@@ -22,6 +22,7 @@ pub enum Mark {
 pub enum MenuImage {
     Pixels { key: u64, bitmap: std::sync::Arc<super::Bitmap> },
     File(crate::FsPath),
+    Type(crate::FsPath),
 }
 
 impl MenuImage {
@@ -33,6 +34,11 @@ impl MenuImage {
         match self {
             MenuImage::Pixels { key, .. } => *key,
             MenuImage::File(path) => crate::hash::hash(&("menu-file", path.as_bytes(), px)),
+            MenuImage::Type(path) => {
+                let name = path.file_name();
+                let ext = name.iter().rposition(|&c| c == b'.').map_or(&[][..], |k| &name[k..]);
+                crate::hash::hash(&("menu-type", ext.to_ascii_lowercase(), px))
+            }
         }
     }
 }
@@ -42,6 +48,7 @@ impl PartialEq for MenuImage {
         match (self, other) {
             (MenuImage::Pixels { key: a, .. }, MenuImage::Pixels { key: b, .. }) => a == b,
             (MenuImage::File(a), MenuImage::File(b)) => a == b,
+            (MenuImage::Type(_), MenuImage::Type(_)) => self.key(0) == other.key(0),
             _ => false,
         }
     }
@@ -503,8 +510,12 @@ impl App {
         let keys = m.keys.all_text("file.new_folder");
         m.command(Cmd::NewItem(0), S::MenuFolder.t(), keys, false);
         m.command(Cmd::NewItem(1), S::MenuShortcut.t(), String::new(), false);
+        let dir = self.shell_dir().ok();
         for (k, tpl) in self.nav.sidebar.places.templates.iter().enumerate() {
             m.command(Cmd::NewItem(k + 2), tpl.label(), String::new(), false);
+            if let (Some(dir), false, Some(MenuItem::Command { image, .. })) = (&dir, tpl.ext.is_empty(), m.items.last_mut()) {
+                *image = Some(MenuImage::Type(dir.join(format!("new{}", tpl.ext).as_bytes())));
+            }
         }
     }
 

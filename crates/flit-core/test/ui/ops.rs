@@ -1155,6 +1155,23 @@ fn with_templates(app: &mut App) {
 }
 
 #[test]
+fn new_menu_templates_show_the_icon_of_their_file_type() {
+    let mut app = app_at(r"C:\x");
+    let t = |label: &str, ext: &str| NewTemplate { label: label.into(), ext: ext.into(), stem: format!("New {label}"), template: Template::Empty, names: None };
+    app.set_places(Arc::new(crate::ui::Places { templates: vec![t("Text Document", ".txt"), t("Empty File", "")], ..Default::default() }));
+    deliver(&mut app, &[("a.txt", false)]);
+    let items = app.build_menu(false);
+    let Some(MenuItem::Submenu { items: new, .. }) = items.iter().find(|i| matches!(i, MenuItem::Submenu { label, .. } if label == S::MenuNew.t())) else { panic!("{items:?}") };
+    let images: Vec<(String, Option<crate::ui::MenuImage>)> = new.iter().filter_map(|i| if let MenuItem::Command { label, image, .. } = i { Some((label.clone(), image.clone())) } else { None }).collect();
+    let image = |name: &str| images.iter().find(|(l, _)| l == name).and_then(|(_, i)| i.clone());
+    let text = image("Text Document").expect("a template shows its file type's icon");
+    let request = crate::ui::user_menu::image_request(&text, 16).unwrap();
+    assert_eq!(request.kind, crate::ui::IconKind::Type, "the icon comes from the type, not from a file that does not exist yet");
+    assert_eq!(text.key(16), crate::ui::MenuImage::Type(p(r"D:\other\x.TXT")).key(16), "one icon per type wherever the menu opens");
+    assert!(image("Empty File").is_none() && image(S::MenuFolder.t()).is_none(), "a file without an extension and the folder keep their glyphs");
+}
+
+#[test]
 fn batch_names_keep_extensions_and_skip_taken_names() {
     let items: [(&[u8], bool); 3] = [(b"a.jpg", false), (b"b.PNG", false), (b"dir.v2", true)];
     let names = batch_names("Trip", &items, |n| n == b"trip (2).png");

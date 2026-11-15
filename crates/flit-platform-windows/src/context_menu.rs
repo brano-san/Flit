@@ -10,7 +10,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::ffi::CStr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use windows::core::{w, Interface, PCSTR, PCWSTR, PSTR};
 use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_CANCELLED, HWND, LPARAM, LRESULT, POINT, WPARAM};
@@ -85,6 +85,8 @@ enum Job {
     Adopt { owner: isize, prep: u64, menu: ShellMenu, pt: POINT },
     Pick { owner: isize, cmd: Option<u32>, shift: bool, ctrl: bool },
     Warm(Vec<ShellMenu>),
+    #[cfg(test)]
+    Hang { owner: isize, gen: u64, until: std::sync::mpsc::Receiver<()> },
 }
 
 struct Prepared {
@@ -154,13 +156,56 @@ thread_local! {
     static SHOWN: RefCell<Option<Shown>> = const { RefCell::new(None) };
     static PREPARED: RefCell<Option<Prepared>> = const { RefCell::new(None) };
     static BUSY: Cell<bool> = const { Cell::new(false) };
+    static SELF: Cell<isize> = const { Cell::new(0) };
+    static MINE: RefCell<Option<Queue>> = const { RefCell::new(None) };
     static IMAGES: RefCell<HashMap<(String, i32, i32), Option<MenuImage>>> = RefCell::new(HashMap::new());
 }
 
+type Queue = Arc<Mutex<VecDeque<Job>>>;
+
+#[derive(Clone)]
+struct Worker {
+    hwnd: isize,
+    jobs: Queue,
+}
+
+#[derive(Clone, Copy)]
+struct Stall {
+    id: u64,
+    worker: isize,
+    at: Instant,
+    owner: isize,
+    gen: Option<u64>,
+}
+
+struct Busy(u64);
+
+impl Busy {
+    fn start(owner: isize, gen: Option<u64>) -> Busy {
+        let id = STALL_ID.fetch_add(1, Ordering::SeqCst) + 1;
+        *locked(&STALL) = Some(Stall { id, worker: SELF.get(), at: Instant::now(), owner, gen });
+        STALL_SEEN.notify_all();
+        Busy(id)
+    }
+}
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        let mut stall = locked(&STALL);
+        if stall.as_ref().is_some_and(|s| s.id == self.0) {
+            *stall = None;
+        }
+    }
+}
+
 static CURRENT: AtomicU64 = AtomicU64::new(0);
-static JOBS: Mutex<VecDeque<Job>> = Mutex::new(VecDeque::new());
 static DONE: Mutex<Vec<(isize, Option<u64>, Event)>> = Mutex::new(Vec::new());
-static WORKER: OnceLock<isize> = OnceLock::new();
+static WORKER: Mutex<Option<Worker>> = Mutex::new(None);
+static WATCHDOG: OnceLock<()> = OnceLock::new();
+static STALL: Mutex<Option<Stall>> = Mutex::new(None);
+static STALL_SEEN: Condvar = Condvar::new();
+static STALL_ID: AtomicU64 = AtomicU64::new(0);
+static HUNG_MS: AtomicU64 = AtomicU64::new(8000);
 static PREP_GEN: AtomicU64 = AtomicU64::new(0);
 static WANT: Mutex<Option<(u64, isize, ShellMenu)>> = Mutex::new(None);
 static READY: Mutex<Option<Ready>> = Mutex::new(None);
@@ -193,39 +238,91 @@ fn deliver(owner: isize, gen: Option<u64>, ev: Event) {
     }
 }
 
-fn worker() -> isize {
-    *WORKER.get_or_init(|| {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let spawned = std::thread::Builder::new().name("flit-shell-menu".into()).spawn(move || unsafe {
-            crate::com_sta();
-            crate::prevhost::register(WORKER_CLASS, Some(worker_proc));
-            let hwnd = CreateWindowExW(WINDOW_EX_STYLE(0), WORKER_CLASS, PCWSTR::null(), WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, Some(crate::prevhost::hinst()), None);
-            let _ = tx.send(hwnd.as_ref().map_or(0, |h| h.0 as isize));
-            if hwnd.is_err() {
-                return;
-            }
-            let mut msg = MSG::default();
-            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                let _ = TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
-        });
-        if let Err(e) = &spawned {
-            tracing::warn!("shell menu thread: {e}");
+fn worker() -> Worker {
+    WATCHDOG.get_or_init(start_watchdog);
+    let mut current = locked(&WORKER);
+    if let Some(w) = current.as_ref() {
+        return w.clone();
+    }
+    let jobs: Queue = Arc::new(Mutex::new(VecDeque::new()));
+    let theirs = jobs.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new().name("flit-shell-menu".into()).spawn(move || unsafe {
+        crate::com_sta();
+        crate::prevhost::register(WORKER_CLASS, Some(worker_proc));
+        let hwnd = CreateWindowExW(WINDOW_EX_STYLE(0), WORKER_CLASS, PCWSTR::null(), WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, Some(crate::prevhost::hinst()), None);
+        let id = hwnd.as_ref().map_or(0, |h| h.0 as isize);
+        SELF.set(id);
+        MINE.set(Some(theirs));
+        let _ = tx.send(id);
+        if hwnd.is_err() {
+            return;
         }
-        spawned.ok().and_then(|_| rx.recv().ok()).unwrap_or(0)
-    })
+        let mut msg = MSG::default();
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    });
+    if let Err(e) = &spawned {
+        tracing::warn!("shell menu thread: {e}");
+    }
+    let w = Worker { hwnd: spawned.ok().and_then(|_| rx.recv().ok()).unwrap_or(0), jobs };
+    *current = Some(w.clone());
+    w
+}
+
+fn start_watchdog() {
+    let spawned = std::thread::Builder::new().name("flit-shell-watch".into()).spawn(|| loop {
+        let mut stall = locked(&STALL);
+        let Some(s) = *stall else {
+            drop(STALL_SEEN.wait(stall).unwrap_or_else(|e| e.into_inner()));
+            continue;
+        };
+        let left = Duration::from_millis(HUNG_MS.load(Ordering::SeqCst)).saturating_sub(s.at.elapsed());
+        if !left.is_zero() {
+            drop(STALL_SEEN.wait_timeout(stall, left).unwrap_or_else(|e| e.into_inner()));
+            continue;
+        }
+        *stall = None;
+        drop(stall);
+        abandon(s);
+    });
+    if let Err(e) = spawned {
+        tracing::warn!("shell menu watchdog: {e}");
+    }
+}
+
+fn abandon(s: Stall) {
+    {
+        let mut current = locked(&WORKER);
+        if current.as_ref().is_some_and(|w| w.hwnd == s.worker) {
+            *current = None;
+        }
+    }
+    tracing::warn!("a shell extension stopped answering for {} ms, so shell menus move to a new thread", s.at.elapsed().as_millis());
+    if let Some(gen) = s.gen.filter(|&g| g == CURRENT.load(Ordering::SeqCst)) {
+        deliver(s.owner, Some(gen), Event::ShellItems { items: Vec::new(), shell: Vec::new() });
+    }
 }
 
 fn send_job(job: Job) {
-    let hwnd = worker();
-    if hwnd == 0 {
+    let w = worker();
+    if w.hwnd == 0 {
         return;
     }
-    JOBS.lock().unwrap_or_else(|e| e.into_inner()).push_back(job);
+    locked(&w.jobs).push_back(job);
     unsafe {
-        let _ = PostMessageW(Some(HWND(hwnd as _)), WM_SHELL_UI, WPARAM(0), LPARAM(0));
+        let _ = PostMessageW(Some(HWND(w.hwnd as _)), WM_SHELL_UI, WPARAM(0), LPARAM(0));
     }
+}
+
+fn queued() -> bool {
+    MINE.with_borrow(|q| q.as_ref().is_some_and(|q| !locked(q).is_empty()))
+}
+
+fn next_job() -> Option<Job> {
+    MINE.with_borrow(|q| q.as_ref().and_then(|q| locked(q).pop_front()))
 }
 
 fn locked<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -241,10 +338,10 @@ pub(crate) fn prefetch(owner: HWND, menu: Option<ShellMenu>) {
         }
     }
     *locked(&WANT) = menu.map(|m| (gen, owner.0 as isize, m));
-    let hwnd = worker();
-    if hwnd != 0 {
+    let w = worker();
+    if w.hwnd != 0 {
         unsafe {
-            let _ = PostMessageW(Some(HWND(hwnd as _)), WM_SHELL_UI, WPARAM(PREFETCH), LPARAM(0));
+            let _ = PostMessageW(Some(HWND(w.hwnd as _)), WM_SHELL_UI, WPARAM(PREFETCH), LPARAM(0));
         }
     }
 }
@@ -305,6 +402,7 @@ unsafe fn prepare(worker: HWND) {
     drop_prepared();
     let Some((gen, owner, menu)) = want else { return };
     let started = Instant::now();
+    let _busy = Busy::start(owner, None);
     let Ok(hmenu) = CreatePopupMenu() else { return };
     let active = match fill(HWND(owner as _), &menu, hmenu) {
         Ok(a) => a,
@@ -334,6 +432,7 @@ unsafe fn adopt(owner: isize, prep: u64, m: &ShellMenu, pt: POINT) -> Result<(),
                 let _ = DestroyMenu(p.hmenu);
             }
             let hmenu = CreatePopupMenu().map_err(err)?;
+            let _busy = Busy::start(owner, None);
             match fill(HWND(owner as _), m, hmenu) {
                 Ok(a) => (hmenu, a),
                 Err(e) => {
@@ -352,8 +451,7 @@ fn serve() {
     if BUSY.replace(true) {
         return;
     }
-    loop {
-        let Some(job) = JOBS.lock().unwrap_or_else(|e| e.into_inner()).pop_front() else { break };
+    while let Some(job) = next_job() {
         match job {
             Job::Menu { owner, gen, menu, pt } => {
                 if let Err(e) = unsafe { show_menu(owner, gen, &menu, pt) } {
@@ -372,6 +470,11 @@ fn serve() {
                 }
             }
             Job::Warm(menus) => warm(&menus),
+            #[cfg(test)]
+            Job::Hang { owner, gen, until } => {
+                let _busy = Busy::start(owner, Some(gen));
+                let _ = until.recv();
+            }
         }
     }
     BUSY.set(false);
@@ -534,10 +637,11 @@ fn warm(menus: &[ShellMenu]) {
     let thread = unsafe { GetCurrentThread() };
     let _ = unsafe { SetThreadPriority(thread, THREAD_PRIORITY_BELOW_NORMAL) };
     for m in menus {
-        if !locked(&JOBS).is_empty() {
+        if queued() {
             break;
         }
         let started = Instant::now();
+        let _busy = Busy::start(0, None);
         let Ok(hmenu) = (unsafe { CreatePopupMenu() }) else { break };
         if let Ok(active) = unsafe { fill(HWND::default(), m, hmenu) } {
             let (_, ids) = unsafe { shell_items(active.menu.as_ref(), hmenu) };
@@ -787,6 +891,7 @@ unsafe fn show_menu(owner: isize, gen: u64, m: &ShellMenu, pt: POINT) -> Result<
     }
     let started = Instant::now();
     let hmenu = CreatePopupMenu().map_err(err)?;
+    let busy = Busy::start(owner, Some(gen));
     let active = match fill(HWND(owner as _), m, hmenu) {
         Ok(a) => a,
         Err(e) => {
@@ -795,6 +900,7 @@ unsafe fn show_menu(owner: isize, gen: u64, m: &ShellMenu, pt: POINT) -> Result<
         }
     };
     let (items, ids) = shell_items(active.menu.as_ref(), hmenu);
+    drop(busy);
     ACTIVE.set(Some(active));
     tracing::info!("context menu shell items ready in {:.1} ms, {} commands, {}", started.elapsed().as_secs_f64() * 1e3, ids.len(), if m.inline { "inline" } else { "in a submenu" });
     SHOWN.set(Some(Shown { hmenu, menu: m.clone(), pt }));

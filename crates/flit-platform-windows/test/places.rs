@@ -74,3 +74,16 @@ fn drives_end_with_the_network_place_and_mapped_drives_carry_their_share() {
     assert_eq!(all.last().map(|d| d.path.clone()), Some(FsPath::network()));
     assert!(all.iter().filter(|d| d.remote.is_some()).all(|d| d.path.kind() == flit_core::path::PathKind::Drive && d.label.contains('\\')));
 }
+
+#[test]
+fn a_text_document_is_offered_even_when_the_registry_has_no_template_for_it() {
+    let t = |label: &str, ext: &str| NewTemplate { label: label.into(), ext: ext.into(), stem: format!("New {label}"), template: Template::Empty, names: None };
+    let added = with_text_document(vec![t("Microsoft Word Document", ".docx"), t("Bitmap image", ".bmp")]);
+    let labels: Vec<&str> = added.iter().map(|t| t.label()).collect();
+    assert_eq!(labels, ["Bitmap image", "Microsoft Word Document", S::MenuTextDocument.t()]);
+    let text = added.iter().find(|t| t.ext == ".txt").unwrap();
+    assert!(text.names.is_some() && text.template == Template::Empty, "it follows the language and starts empty");
+    let kept = with_text_document(vec![t("Notepad text", ".TXT")]);
+    assert_eq!(kept.len(), 1, "a registered text template is not doubled");
+    assert_eq!(kept[0].label, "Notepad text");
+}

@@ -344,7 +344,15 @@ pub fn templates() -> Vec<NewTemplate> {
             out.extend(class_template(&String::from_utf16_lossy(&name[..len as usize]), &dirs));
         }
     }
-    out.sort_by_cached_key(|t: &NewTemplate| t.label.to_lowercase());
+    with_text_document(out)
+}
+
+pub(crate) fn with_text_document(mut out: Vec<NewTemplate>) -> Vec<NewTemplate> {
+    if !out.iter().any(|t| t.ext.eq_ignore_ascii_case(".txt")) {
+        let names = flit_core::ui::TemplateNames { label: S::MenuTextDocument, stem: S::MenuNewTextDocument };
+        out.push(NewTemplate { label: names.label.t().to_owned(), ext: ".txt".to_owned(), stem: names.stem.t().to_owned(), template: Template::Empty, names: Some(names) });
+    }
+    out.sort_by_cached_key(|t: &NewTemplate| t.label().to_lowercase());
     out
 }
 
