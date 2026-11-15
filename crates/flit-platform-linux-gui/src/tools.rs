@@ -12,6 +12,7 @@ enum When {
     Always,
     X11,
     Wayland,
+    Terminal,
 }
 
 struct Need {
@@ -21,7 +22,7 @@ struct Need {
     when: When,
 }
 
-const NEEDS: [Need; 17] = [
+const NEEDS: [Need; 18] = [
     Need { tools: &["xdg-open"], purpose: S::SettingsPageToolOpen, packages: ["xdg-utils", "xdg-utils", "xdg-utils", "xdg-utils"], when: When::Always },
     Need { tools: &["gdbus"], purpose: S::SettingsPageToolDesktop, packages: ["libglib2.0-bin", "glib2", "glib2", "glib2-tools"], when: When::Always },
     Need { tools: &["gio"], purpose: S::SettingsPageToolDrives, packages: ["libglib2.0-bin", "glib2", "glib2", "glib2-tools"], when: When::Always },
@@ -31,7 +32,7 @@ const NEEDS: [Need; 17] = [
     Need { tools: &["udisksctl"], purpose: S::SettingsPageToolDrives, packages: ["udisks2", "udisks2", "udisks2", "udisks2"], when: When::Always },
     Need { tools: &["pkexec"], purpose: S::SettingsPageToolAdmin, packages: ["pkexec", "polkit", "polkit", "polkit"], when: When::Always },
     Need { tools: &["setfacl"], purpose: S::SettingsPageToolAdmin, packages: ["acl", "acl", "acl", "acl"], when: When::Always },
-    Need { tools: &["fusermount"], purpose: S::SettingsPageToolDrives, packages: ["fuse", "fuse", "fuse2", "fuse"], when: When::Always },
+    Need { tools: &["fusermount3", "fusermount"], purpose: S::SettingsPageToolDrives, packages: ["fuse3", "fuse3", "fuse3", "fuse3"], when: When::Always },
     Need { tools: &["umount"], purpose: S::SettingsPageToolDrives, packages: ["mount", "util-linux-core", "util-linux", "util-linux"], when: When::Always },
     Need { tools: &["curl"], purpose: S::SettingsPageToolUpdate, packages: ["curl", "curl", "curl", "curl"], when: When::Always },
     Need { tools: &["recollq", "recoll", "localsearch", "tracker3", "baloosearch6", "baloosearch"], purpose: S::SettingsPageToolSearch, packages: ["recollcmd", "recoll", "recoll", "recoll"], when: When::Always },
@@ -39,6 +40,7 @@ const NEEDS: [Need; 17] = [
     Need { tools: &["ffmpegthumbnailer"], purpose: S::SettingsPageToolVideo, packages: ["ffmpegthumbnailer", "ffmpegthumbnailer", "ffmpegthumbnailer", "ffmpegthumbnailer"], when: When::Always },
     Need { tools: &["mpv", "gst-play-1.0", "ffplay", "paplay"], purpose: S::SettingsPageToolMedia, packages: ["mpv", "mpv", "mpv", "mpv"], when: When::Always },
     Need { tools: &["lp"], purpose: S::SettingsPageToolPrint, packages: ["cups-client", "cups-client", "cups", "cups-client"], when: When::Always },
+    Need { tools: &["xterm"], purpose: S::SettingsPageToolTerminal, packages: ["xterm", "xterm", "xterm", "xterm"], when: When::Terminal },
 ];
 
 pub fn family(os_release: &str) -> usize {
@@ -57,9 +59,6 @@ pub fn family(os_release: &str) -> usize {
 }
 
 pub fn package_for(tool: &str, os_release: &str) -> Option<&'static str> {
-    if tool == "xterm" {
-        return Some("xterm");
-    }
     NEEDS.iter().find(|n| n.tools.first() == Some(&tool)).map(|n| n.packages[family(os_release)])
 }
 
@@ -73,16 +72,17 @@ pub(crate) fn command(tool: &str) -> std::io::Result<std::process::Command> {
 
 pub fn missing_from(found: impl Fn(&str) -> bool, os_release: &str, wayland: bool, terminal: bool) -> Vec<MissingTool> {
     let f = family(os_release);
-    let applies = |w: When| w == When::Always || (w == When::Wayland) == wayland;
-    let mut out: Vec<MissingTool> = NEEDS
+    let applies = |w: When| match w {
+        When::Always => true,
+        When::X11 => !wayland,
+        When::Wayland => wayland,
+        When::Terminal => !terminal,
+    };
+    NEEDS
         .iter()
         .filter(|n| applies(n.when) && !n.tools.iter().any(|t| found(t)))
         .map(|n| MissingTool { tool: n.tools[0], purpose: n.purpose, package: n.packages[f] })
-        .collect();
-    if !terminal {
-        out.push(MissingTool { tool: "xterm", purpose: S::SettingsPageToolTerminal, package: "xterm" });
-    }
-    out
+        .collect()
 }
 
 pub fn os_release() -> String {

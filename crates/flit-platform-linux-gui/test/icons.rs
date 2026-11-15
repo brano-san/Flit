@@ -149,3 +149,14 @@ fn links_take_the_icon_of_what_they_point_at_and_broken_ones_say_so() {
     assert_eq!(link_icon_names(&req("broken.pdf"), LinkTarget::Missing)[0], "image-missing");
     assert_eq!(link_icon_names(&req("doc.pdf"), LinkTarget::File), crate::shell::icon_names(&req("a.pdf")));
 }
+
+#[test]
+fn switching_to_the_icon_theme_already_in_use_does_not_refresh_every_icon() {
+    assert!(!switch_theme(&current_theme()));
+    let mut current = None;
+    assert!(!replaced(&mut current, "breeze", || "breeze".into()));
+    assert_eq!(current.as_deref(), Some("breeze"));
+    assert!(replaced(&mut current, "Papirus", || unreachable!()));
+    assert!(!replaced(&mut current, "Papirus", || unreachable!()));
+    assert_eq!(current.as_deref(), Some("Papirus"));
+}

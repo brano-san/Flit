@@ -121,6 +121,7 @@ pub struct Gfx<B: TextBackend> {
     shapes: Shapes,
     glyphs: FxHashMap<GlyphKey, Option<GlyphSlot>>,
     images: FxHashMap<u64, Image>,
+    aliases: FxHashMap<u64, u64>,
     metrics: FxHashMap<FontStyle, FontMetrics>,
     scratch: GlyphBitmap,
     pub atlas_reset: bool,
@@ -140,6 +141,7 @@ impl<B: TextBackend> Gfx<B> {
             shapes: Default::default(),
             glyphs: Default::default(),
             images: Default::default(),
+            aliases: Default::default(),
             metrics: Default::default(),
             scratch: GlyphBitmap::default(),
             atlas_reset: false,
@@ -247,16 +249,26 @@ impl<B: TextBackend> Gfx<B> {
         end + ell_w
     }
 
+    fn resolved(&self, key: u64) -> u64 {
+        self.aliases.get(&key).copied().unwrap_or(key)
+    }
+
     pub fn has_image(&self, key: u64) -> bool {
-        self.images.contains_key(&key)
+        self.images.contains_key(&self.resolved(key))
+    }
+
+    pub fn alias_image(&mut self, key: u64, image: u64) {
+        self.images.remove(&key);
+        self.aliases.insert(key, image);
     }
 
     pub fn image_size(&self, key: u64) -> Option<(u32, u32)> {
-        self.images.get(&key).map(|i| (i.w, i.h))
+        self.images.get(&self.resolved(key)).map(|i| (i.w, i.h))
     }
 
     pub fn add_image(&mut self, key: u64, w: u32, h: u32, rgba: Vec<u8>) {
         debug_assert_eq!(rgba.len(), (w * h * 4) as usize);
+        self.aliases.remove(&key);
         self.images.insert(key, Image { w, h, rgba, slot: None });
     }
 
@@ -269,6 +281,7 @@ impl<B: TextBackend> Gfx<B> {
     }
 
     pub fn image_alpha(&mut self, key: u64, r: Rect, alpha: u8) -> bool {
+        let key = self.resolved(key);
         let Some(img) = self.images.get_mut(&key) else { return false };
         let slot = match img.slot {
             Some(s) => s,

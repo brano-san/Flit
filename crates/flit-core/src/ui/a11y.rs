@@ -78,7 +78,9 @@ impl App {
         }
         let max = if self.maximized { S::A11yButtonRestore } else { S::A11yButtonMaximize };
         for (i, name) in [S::A11yButtonMinimize, max, S::A11yButtonClose].into_iter().enumerate() {
-            if self.panels.caption[i].w <= 0.0 { continue; }
+            if self.panels.caption[i].w <= 0.0 {
+                continue;
+            }
             put(&mut t, &mut targets, tabs, Hit::Caption(i), Role::Button, name.t(), self.panels.caption[i]);
         }
         put(&mut t, &mut targets, tabs, Hit::Menu, Role::Button, S::A11yButtonMainMenu.t(), self.panels.menu);

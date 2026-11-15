@@ -815,3 +815,25 @@ fn localized_folder_names_label_sort_and_filter_while_real_names_stay() {
     assert_eq!(desktop_ini::label(&dir.join(b"Documents")).as_deref(), Some("Документы"));
     assert_eq!(Location::Local(dir.join(b"Documents")).crumbs().last().unwrap().0, "Документы");
 }
+
+static LABELS_WANTED: Mutex<Vec<bool>> = Mutex::new(Vec::new());
+
+struct DisplayLabelFs;
+impl Fs for DisplayLabelFs {
+    fn read_dir(&self, _: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+        LABELS_WANTED.lock().unwrap().push(out.wants_labels());
+        Ok(())
+    }
+    fn seek_penalty(&self, _: &FsPath) -> Option<bool> {
+        None
+    }
+}
+
+#[test]
+fn folder_listings_ask_the_file_system_for_display_labels() {
+    let slot = SnapshotSlot::default();
+    let cancel = GenToken::default();
+    cancel.set(1);
+    list(&DisplayLabelFs, 1, &p(r"C:\labels"), ViewSpec::default(), CaseMode::Insensitive, Arc::default(), &slot, &cancel, &(Arc::new(|| {}) as Wake));
+    assert_eq!(*LABELS_WANTED.lock().unwrap(), [true]);
+}

@@ -269,6 +269,9 @@ pub trait Shell: Sized {
     const BATCHES_FOLDER_ICONS: bool = false;
     fn new() -> Result<Self, PlatformError>;
     fn icon(&mut self, req: &IconRequest) -> Option<Bitmap>;
+    fn shared_icon(&mut self, req: &IconRequest) -> (Option<Bitmap>, Option<u64>) {
+        (self.icon(req), None)
+    }
     fn prepare_icons(&mut self, _reqs: &[IconRequest]) {}
     fn thumbnail(&mut self, _req: &IconRequest) -> Option<Bitmap> {
         None

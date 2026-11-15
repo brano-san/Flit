@@ -55,6 +55,7 @@ fn shared_launcher_trust_keeps_installed_real_paths_and_owner_execute_rules() {
     assert_eq!(label(&executable_link, &[], "en", ""), None);
     assert!(!trusted(Path::new("/data/applications-other/x.desktop"), Path::new("/tmp/x.desktop"), 0o600, &[PathBuf::from("/data")]));
 }
+
 #[test]
 fn desktop_label_reads_accept_the_limit_and_reject_larger_or_non_utf8_files() {
     let t = Temp::new("desktop-limit");

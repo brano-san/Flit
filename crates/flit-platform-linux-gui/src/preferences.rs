@@ -32,12 +32,16 @@ fn buttons(left: impl Iterator<Item = WindowButton>, right: impl Iterator<Item =
 
 pub(crate) fn gnome_buttons(layout: &str) -> WindowButtons {
     let (left, right) = layout.split_once(':').unwrap_or((layout, ""));
-    let parse = |part: &str| part.split(',').filter_map(|word| match word.trim() {
-        "minimize" => Some(WindowButton::Minimize),
-        "maximize" => Some(WindowButton::Maximize),
-        "close" => Some(WindowButton::Close),
-        _ => None,
-    }).collect::<Vec<_>>();
+    let parse = |part: &str| {
+        part.split(',')
+            .filter_map(|word| match word.trim() {
+                "minimize" => Some(WindowButton::Minimize),
+                "maximize" => Some(WindowButton::Maximize),
+                "close" => Some(WindowButton::Close),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
     buttons(parse(left).into_iter(), parse(right).into_iter())
 }
 
@@ -57,13 +61,23 @@ pub(crate) fn kde_buttons(config: &str) -> WindowButtons {
             }
         }
     }
-    let parse = |part: &str| part.chars().filter_map(|c| match c {
-        'I' => Some(WindowButton::Minimize),
-        'A' => Some(WindowButton::Maximize),
-        'X' => Some(WindowButton::Close),
-        _ => None,
-    }).collect::<Vec<_>>();
+    let parse = |part: &str| {
+        part.chars()
+            .filter_map(|c| match c {
+                'I' => Some(WindowButton::Minimize),
+                'A' => Some(WindowButton::Maximize),
+                'X' => Some(WindowButton::Close),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
     buttons(parse(left).into_iter(), parse(right).into_iter())
+}
+
+pub(crate) const KDE_ICONS: &str = "breeze";
+
+pub(crate) fn kde_icons_or_default(config: &str) -> String {
+    kde_icon_theme(config).unwrap_or_else(|| KDE_ICONS.into())
 }
 
 pub(crate) fn kde_icon_theme(config: &str) -> Option<String> {
@@ -117,12 +131,14 @@ impl Watch {
             let mut stamps = [None, None];
             let mut layout = None;
             let mut globals = String::new();
-            let mut icon_theme = None;
+            let mut icon_theme = Some(KDE_ICONS.to_owned());
             let mut first = true;
             loop {
                 for (k, path) in paths.iter().enumerate() {
                     let now = stamp(path);
-                    if !first && now == stamps[k] { continue; }
+                    if !first && now == stamps[k] {
+                        continue;
+                    }
                     stamps[k] = now;
                     let text = read_config(path);
                     if k == 0 {
@@ -132,7 +148,7 @@ impl Watch {
                             emit(Change::Buttons(next));
                         }
                     } else if globals != text {
-                        let next = kde_icon_theme(&text);
+                        let next = Some(kde_icons_or_default(&text));
                         if next != icon_theme {
                             icon_theme.clone_from(&next);
                             if let Some(name) = next { emit(Change::IconTheme(name)); }

@@ -456,6 +456,7 @@ pub enum SettingsCmd {
 
 pub enum IconResult {
     Ready(Bitmap),
+    Shared(u64, Bitmap),
     Failed,
     Skipped,
 }
@@ -1447,6 +1448,16 @@ impl App {
                 self.icons.remove(&key);
                 gfx.add_image(key, bm.width, bm.height, bm.rgba);
             }
+            IconResult::Shared(share, bm) => {
+                if self.icons.get(&key) == Some(&IconState::Pending) {
+                    self.icons.remove(&key);
+                    let shared = hash::hash(&("shared-icon", share, self.icon_epoch));
+                    if !gfx.has_image(shared) {
+                        gfx.add_image(shared, bm.width, bm.height, bm.rgba);
+                    }
+                    gfx.alias_image(key, shared);
+                }
+            }
             IconResult::Failed => {
                 self.icons.insert(key, IconState::Failed);
             }
@@ -1459,10 +1470,10 @@ impl App {
 
     pub fn on_thumb<B: TextBackend>(&mut self, gfx: &mut Gfx<B>, key: u64, result: IconResult) {
         match result {
-            IconResult::Ready(bm) if gfx.thumbs.insert(key, bm.width, bm.height, &bm.rgba) => {
+            IconResult::Ready(bm) | IconResult::Shared(_, bm) if gfx.thumbs.insert(key, bm.width, bm.height, &bm.rgba) => {
                 self.thumbs.remove(&key);
             }
-            IconResult::Ready(_) | IconResult::Failed => {
+            IconResult::Ready(_) | IconResult::Shared(..) | IconResult::Failed => {
                 if self.thumbs.len() >= MAX_THUMB_STATES {
                     self.thumbs.retain(|_, s| *s == IconState::Pending);
                 }

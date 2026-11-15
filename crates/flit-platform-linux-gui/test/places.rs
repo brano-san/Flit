@@ -23,7 +23,7 @@ fn missing_network_connector_names_the_distribution_package_and_present_gio_runs
 fn missing_disconnect_helpers_name_their_packages_for_each_mount_type() {
     let table = parse(b"21 1 0:31 / /tmp/fuse rw - fuse.sshfs host:/ rw\n22 1 0:32 / /tmp/local rw - ext4 /dev/fake rw\n");
     let root = Path::new("/tmp/gvfs");
-    for (point, tool) in [("/tmp/gvfs/share", "gio"), ("/tmp/fuse", "fusermount"), ("/tmp/local", "umount")] {
+    for (point, tool) in [("/tmp/gvfs/share", "gio"), ("/tmp/fuse", "fusermount3"), ("/tmp/local", "umount")] {
         crate::temp::with_tools(&[], || {
             let error = disconnect_from(Path::new(point), &table, root).unwrap_err();
             assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
@@ -389,7 +389,9 @@ fn disconnecting_picks_gio_for_gvfs_fusermount_for_fuse_and_umount_for_kernel_sh
     let gvfs = Path::new("/run/user/1000/gvfs");
     let words = |p: &str| disconnect_command(Path::new(p), &table, gvfs).iter().map(|w| w.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
     assert_eq!(words("/run/user/1000/gvfs/smb-share:server=nas,share=photos"), "gio mount -u /run/user/1000/gvfs/smb-share:server=nas,share=photos");
-    assert_eq!(words("/mnt/box"), "fusermount -u /mnt/box");
+    crate::temp::with_tools(&["fusermount3", "fusermount"], || assert_eq!(words("/mnt/box"), "fusermount3 -u /mnt/box"));
+    crate::temp::with_tools(&["fusermount"], || assert_eq!(words("/mnt/box"), "fusermount -u /mnt/box"));
+    crate::temp::with_tools(&[], || assert_eq!(words("/mnt/box"), "fusermount3 -u /mnt/box"));
     assert_eq!(words("/mnt/nas"), "umount /mnt/nas");
 }
 

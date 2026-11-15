@@ -49,7 +49,7 @@ fn roundtrip_every_message() {
         Event::ListDone { id: 1, error: Some(err.clone()) },
         Event::Stat { id: 2, result: Ok(Meta { size: 9, modified: -5, created: 1, attrs: 0 }) },
         Event::Stat { id: 2, result: Err(err) },
-        Event::Changes { id: 3, changes: vec![DirChange { kind: ChangeKind::Removed, name: b"x".to_vec(), meta: None }] },
+        Event::Changes { id: 3, changes: vec![DirChange { label: flit_core::listing::Label::Keep, kind: ChangeKind::Removed, name: b"x".to_vec(), meta: None }] },
         Event::Rescan { id: 3 },
         Event::DirSize { id: 4, idx: 7, stats: DirStats { size: u64::MAX, folders: 3, files: 9, partial: true } },
         Event::OpDone { id: 5, error: None, items: vec![(unix(b"/tmp/a"), unix(b"/home/u/.local/share/Trash/files/a"))] },
@@ -74,7 +74,7 @@ fn forged_paths_rejected() {
 
 #[test]
 fn hostile_events_rejected() {
-    let change = |name: &[u8], meta: Option<Meta>| Event::Changes { id: 1, changes: vec![DirChange { kind: ChangeKind::Added, name: name.to_vec(), meta }] };
+    let change = |name: &[u8], meta: Option<Meta>| Event::Changes { id: 1, changes: vec![DirChange { label: flit_core::listing::Label::Keep, kind: ChangeKind::Added, name: name.to_vec(), meta }] };
     for evil in [&b".."[..], b".", b"", b"a/b", b"nul\0"] {
         assert!(change(evil, None).validate(false).is_err(), "{evil:?}");
     }

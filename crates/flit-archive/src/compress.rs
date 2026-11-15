@@ -284,7 +284,6 @@ fn write_7z<W: Write + Seek>(w: W, sources: Vec<Source>, options: &Compression, 
     let entry = |s: &Source| {
         let mut e = ArchiveEntry::from_path(&s.path, s.name.clone());
         e.is_directory = s.dir;
-        e.is_anti_item = s.dir || s.size == 0;
         e
     };
     let (files, rest): (Vec<&Source>, Vec<&Source>) = kept.iter().partition(|s| !s.dir && s.size > 0);
@@ -442,9 +441,13 @@ pub fn add(items: &[FsPath], archive: &FsPath, inner: &str, job: &Job, env: &Env
     if index.sevenz.as_ref().is_some_and(|a| a.blocks.iter().flat_map(|b| &b.coders).any(|c| c.encoder_method_id() == sevenz_rust2::EncoderMethod::ID_AES256_SHA256)) {
         return Err(fail(encrypted_add()));
     }
-    let original = if format == Format::Zip { None } else { Some(File::open(&path).map_err(|e| fail(io_error(e)))?) };
-    if original.as_ref().map(File::metadata).transpose().map_err(|e| fail(io_error(e)))?.is_some_and(|m| m.permissions().readonly()) {
+    let real = if fs::symlink_metadata(&path).map_err(|e| fail(io_error(e)))?.file_type().is_symlink() { fs::canonicalize(&path).map_err(|e| fail(io_error(e)))? } else { path.clone() };
+    let original = File::open(&real).map_err(|e| fail(io_error(e)))?;
+    if format != Format::Zip && original.metadata().map_err(|e| fail(io_error(e)))?.permissions().readonly() {
         return Err(fail(io_error(io::Error::from_raw_os_error(if cfg!(windows) { 5 } else { 13 }))));
+    }
+    if crate::security::hard_links(&original).map_err(|e| fail(io_error(e)))? > 1 {
+        return Err(fail(PlatformError::new(-1, flit_core::i18n::S::ErrorsArchiveHardLinked.en())));
     }
     if items.iter().any(|i| crate::locate(i).is_some_and(|(a, n)| a == *archive || !n.is_empty())) {
         return Err(fail(PlatformError::new(-1, "Items inside archives cannot be added to an archive; extract them first")));
@@ -455,7 +458,7 @@ pub fn add(items: &[FsPath], archive: &FsPath, inner: &str, job: &Job, env: &Env
     let mut drop_roots: HashSet<String> = HashSet::new();
     let mut rename: HashMap<String, String> = HashMap::new();
     let mut skip: HashSet<String> = HashSet::new();
-    let taken = |k: &str| index.items.iter().any(|i| i.key == k || (i.key.starts_with(k) && i.key.as_bytes().get(k.len()) == Some(&b'/')));
+    let taken = |k: &str| index.items.iter().map(|i| &i.key).chain(&index.links).any(|key| key == k || (key.starts_with(k) && key.as_bytes().get(k.len()) == Some(&b'/')));
     for item in items {
         let name = flit_core::name::display(item.file_name()).into_owned();
         let key = format!("{key_prefix}{}", fold(&name));
@@ -488,24 +491,27 @@ pub fn add(items: &[FsPath], archive: &FsPath, inner: &str, job: &Job, env: &Env
     }
     let dropped = |key: &str| drop_roots.iter().any(|r| key == r || (key.starts_with(r.as_str()) && key.as_bytes().get(r.len()) == Some(&b'/')));
     add_progress(job, &sources, if format == Format::Zip { 0 } else { index.entries as u64 }, if format == Format::Zip { 0 } else { index.unpacked });
-    let part = path.with_file_name(format!("~{}-{}.flit-part", std::process::id(), crate::extract::next_part()));
+    let part = real.with_file_name(format!("~{}-{}.flit-part", std::process::id(), crate::extract::next_part()));
     let result = (|| -> Result<(), PlatformError> {
         if job.cancelled() {
             return Err(cancelled());
         }
+        let file = crate::security::create(&part).map_err(io_error)?;
+        crate::security::preserve(&original, &part).map_err(io_error)?;
+        let written = file.try_clone().map_err(io_error)?;
         if format != Format::Zip {
-            let file = BufWriter::new(crate::security::create(&part).map_err(io_error)?);
+            let file = BufWriter::new(file);
             match format {
-                Format::SevenZ => rewrite_7z(file, &path, &sources, &dropped, job)?,
-                Format::Tar | Format::TarGz => rewrite_tar(file, &path, format, &sources, &dropped, job)?,
+                Format::SevenZ => rewrite_7z(file, &real, &sources, &dropped, job)?,
+                Format::Tar | Format::TarGz => rewrite_tar(file, &real, format, index.legacy, &sources, &dropped, job)?,
                 _ => unreachable!(),
             }
-            return Ok(());
+            return written.sync_all().map_err(write_error);
         }
-        let mut src = zip::ZipArchive::new(io::BufReader::new(File::open(&path).map_err(io_error)?)).map_err(|e| corrupt(&e.to_string()))?;
+        let mut src = zip::ZipArchive::new(io::BufReader::new(File::open(&real).map_err(io_error)?)).map_err(|e| corrupt(&e.to_string()))?;
         let aligned = src.len() == index.entries;
         let by_ordinal: HashMap<usize, &index::Item> = index.items.iter().map(|i| (i.ordinal, i)).collect();
-        let mut z = zip::ZipWriter::new(BufWriter::new(File::create_new(&part).map_err(io_error)?));
+        let mut z = zip::ZipWriter::new(BufWriter::new(file));
         for k in 0..src.len() {
             let item = if aligned { by_ordinal.get(&k).copied() } else { None };
             if item.is_some_and(|i| dropped(&i.key)) {
@@ -520,21 +526,19 @@ pub fn add(items: &[FsPath], archive: &FsPath, inner: &str, job: &Job, env: &Env
         }
         zip_entries(&mut z, &sources, 6, None, job, env)?;
         z.finish().map_err(|e| corrupt(&e.to_string()))?.into_inner().map_err(|e| io_error(e.into_error()))?;
-        Ok(())
+        written.sync_all().map_err(write_error)
     })()
     .and_then(|()| {
         if job.cancelled() {
             return Err(cancelled());
         }
         if format != Format::Zip {
-            if let Some(zone) = crate::zone::read(&path) {
+            if let Some(zone) = crate::zone::read(&real) {
                 crate::zone::mark_checked(&part, &zone).map_err(io_error)?;
             }
         }
-        if let Some(original) = original.as_ref() {
-            crate::security::preserve(original, &part).map_err(io_error)?;
-        }
-        fs::rename(&part, &path).map_err(io_error)
+        crate::security::finish(&original, &part).map_err(io_error)?;
+        fs::rename(&part, &real).map_err(io_error)
     });
     crate::forget(archive);
     match result {
@@ -656,7 +660,7 @@ fn copy_exact(reader: &mut dyn Read, writer: &mut dyn Write, bytes: u64, job: &J
     Ok(())
 }
 
-fn rewrite_tar<W: Write>(w: W, path: &Path, format: Format, sources: &[Source], dropped: &impl Fn(&str) -> bool, job: &Job) -> Result<(), PlatformError> {
+fn rewrite_tar<W: Write>(w: W, path: &Path, format: Format, legacy: Option<flit_core::archive::Encoding>, sources: &[Source], dropped: &impl Fn(&str) -> bool, job: &Job) -> Result<(), PlatformError> {
     let write = |writer: &mut dyn Write| -> Result<(), PlatformError> {
         let parsed = std::cell::Cell::new(0);
         let mut archive = tar::Archive::new(Counted { inner: tar_reader(path, format)?, position: &parsed, job });
@@ -668,7 +672,7 @@ fn rewrite_tar<W: Write>(w: W, path: &Path, format: Format, sources: &[Source], 
                 return Err(cancelled());
             }
             let entry = entry.map_err(write_error)?;
-            let name = String::from_utf8_lossy(&entry.path_bytes()).into_owned();
+            let name = index::entry_text(&entry.path_bytes(), false, legacy);
             let keep = !crate::names::safe_path(&name).is_some_and(|name| dropped(&fold(&name)));
             let start = parsed.get();
             let size = if entry.header().entry_type().is_gnu_sparse() { entry.header().entry_size().map_err(write_error)? } else { entry.size() };

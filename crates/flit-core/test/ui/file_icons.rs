@@ -261,3 +261,39 @@ fn folders_waiting_for_their_own_icon_show_the_shared_folder_icon_in_every_layou
         assert!(app.drain_effects().all(|e| !matches!(e, Effect::Icon(ref r) if r.kind == IconKind::CustomFolder)), "{mode:?}: answered folders are not asked again");
     }
 }
+
+#[test]
+fn extensionless_files_of_one_type_share_one_atlas_image_and_late_results_after_a_theme_change_are_dropped() {
+    let mut app = file_app(&[("one", 0), ("two", 0), ("three", 0)]);
+    app.animations = false;
+    let mut gfx = Gfx::new(Mono, 1024);
+    app.frame(&mut gfx, Instant::now());
+    let reqs: Vec<_> = app.drain_effects().filter_map(|e| match e { Effect::Icon(r) if r.kind == IconKind::Content => Some(r), _ => None }).collect();
+    if !cfg!(target_os = "linux") {
+        assert!(reqs.is_empty());
+        return;
+    }
+    assert_eq!(reqs.len(), 3);
+    let image = || Bitmap { width: 5, height: 7, rgba: vec![9; 5 * 7 * 4] };
+    for req in &reqs {
+        app.on_icon(&mut gfx, req.key, IconResult::Shared(77, image()));
+    }
+    gfx.uploads.clear();
+    app.frame(&mut gfx, Instant::now());
+    let uploaded = gfx.uploads.rects.iter().filter(|(slot, _)| slot.w == 5 && slot.h == 7).count();
+    assert_eq!(uploaded, 1, "three files of one type use one atlas slot");
+    assert!(reqs.iter().all(|r| gfx.has_image(r.key)));
+    assert!(gfx.dl.instances.iter().filter(|i| i.kind == crate::render::kind::IMAGE).count() >= 3);
+    app.on_event(&crate::input::Event::IconTheme, Instant::now());
+    app.on_icon(&mut gfx, reqs[0].key, IconResult::Shared(77, image()));
+    app.frame(&mut gfx, Instant::now());
+    let next: Vec<_> = app.drain_effects().filter_map(|e| match e { Effect::Icon(r) if r.kind == IconKind::Content => Some(r), _ => None }).collect();
+    assert!(!next.is_empty());
+    for req in &next {
+        app.on_icon(&mut gfx, req.key, IconResult::Shared(77, Bitmap { width: 5, height: 7, rgba: vec![200; 5 * 7 * 4] }));
+    }
+    gfx.uploads.clear();
+    app.frame(&mut gfx, Instant::now());
+    let fresh: Vec<_> = gfx.uploads.rects.iter().filter(|(slot, _)| slot.w == 5 && slot.h == 7).map(|(_, at)| gfx.uploads.data[*at]).collect();
+    assert_eq!(fresh, [200], "a result from the old theme that arrives late is not reused");
+}

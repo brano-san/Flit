@@ -154,7 +154,7 @@ fn sort_click_resorts_and_diffs_apply() {
     let mut order = Vec::new();
     sort::sort(&snap.listing, &snap.keys, view, &mut order);
     app.on_resorted(tab, gen, view, snap.listing.len(), order);
-    let added = DirChange { kind: ChangeKind::Added, name: b"b".to_vec(), meta: Some(Meta { size: 1, ..Default::default() }) };
+    let added = DirChange { label: crate::listing::Label::Keep, kind: ChangeKind::Added, name: b"b".to_vec(), meta: Some(Meta { size: 1, ..Default::default() }) };
     app.on_provider_event(ProviderEvent::Changes { tab, gen, changes: vec![added] }, t0());
     let mut g = Gfx::new(Mono, 1024);
     app.frame(&mut g, t0());
@@ -316,7 +316,7 @@ fn background_tab_diff_overflow_rescans() {
     let (id, gen) = (app.tab().id, app.tab().gen);
     key(&mut app, Key::Char('T'), CTRL);
     app.drain_effects().for_each(drop);
-    let change = DirChange { kind: ChangeKind::Removed, name: b"x".to_vec(), meta: None };
+    let change = DirChange { label: crate::listing::Label::Keep, kind: ChangeKind::Removed, name: b"x".to_vec(), meta: None };
     app.on_provider_event(ProviderEvent::Changes { tab: id, gen, changes: vec![change; MAX_PENDING_DIFFS + 1] }, t0());
     assert!(app.tabs()[0].pending_diffs.is_empty());
     assert_eq!(listed(&mut app), [(id, loc(r"C:\a"))]);

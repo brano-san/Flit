@@ -22,4 +22,5 @@ ended_at_once = "{name} closed at once without a window. If it is a console prog
 ended_saying = "{name} closed at once without a window, saying: {words}. If it is a console program, use Run in terminal"
 no_xdg_open = "xdg-open is not installed, so Flit cannot open files with other programs. Install the package {package}"
 no_tool = "{tool} is not installed. Install the package {package}"
+no_terminal = "No terminal was found. Set the TERMINAL variable, install xdg-terminal-exec or install the package {package}"
 no_file_manager = "No other file manager is installed"

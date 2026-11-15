@@ -613,7 +613,7 @@ fn list<F: Fs + ?Sized>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: C
         }
         true
     };
-    let mut b = ListingBuilder::new(case, &mut on_batch).with_tags(tags).with_streams(view.show_streams);
+    let mut b = ListingBuilder::new(case, &mut on_batch).with_tags(tags).with_streams(view.show_streams).with_labels(true);
     b.listing.volume = fs.volume_size(path);
     let result = fs.read_dir(path, &mut b);
     if let Err(e) = &result {

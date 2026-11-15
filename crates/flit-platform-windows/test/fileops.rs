@@ -185,7 +185,8 @@ fn links_to_drive_roots_keep_valid_names_and_folder_shortcut_replace_preserves_i
     let t = TempDir::new("w10-root");
     std::fs::create_dir(t.0.join("out")).unwrap();
     let root = FsPath::parse_bytes(t.path("").root_bytes()).unwrap();
-    assert!(engine::stat(&root).is_some_and(|m| m.attrs & attr::DIR != 0));
+    assert!(engine::link_stat(&root).is_some_and(|m| m.attrs & attr::DIR != 0));
+    assert!(engine::stat(&root).is_none());
     let mut shell = ShellCom::new().unwrap();
     for kind in [flit_core::provider::LinkKind::Shortcut, flit_core::provider::LinkKind::Junction, flit_core::provider::LinkKind::Symbolic] {
         let op = if kind == flit_core::provider::LinkKind::Shortcut { FileOp::Link { items: vec![root.clone()], dest: t.path("out") } } else { FileOp::LinkAs { items: vec![root.clone()], dest: t.path("out"), kind } };

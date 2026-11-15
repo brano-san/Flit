@@ -232,7 +232,7 @@ fn a_changed_file_drops_its_value_reads_it_again_and_ignores_a_reply_from_before
     let [(tab, gen, ask, _, _)] = frame(&mut app).try_into().unwrap();
     app.on_shell_props(tab, gen, ask, vec![(b"a.mp3".to_vec(), texts(["", "3:00", "", ""])), (b"b.mp3".to_vec(), texts(["", "1:00", "", ""]))]);
     assert_eq!(cell(&app, "a.mp3", Column::Duration), "3:00");
-    let changed = DirChange { kind: ChangeKind::Modified, name: b"a.mp3".to_vec(), meta: Some(Meta { size: 9, ..Default::default() }) };
+    let changed = DirChange { label: crate::listing::Label::Keep, kind: ChangeKind::Modified, name: b"a.mp3".to_vec(), meta: Some(Meta { size: 9, ..Default::default() }) };
     app.on_provider_event(ProviderEvent::Changes { tab, gen, changes: vec![changed] }, Instant::now());
     assert!(frame(&mut app).is_empty());
     assert_eq!(cell(&app, "a.mp3", Column::Duration), "", "the old value is dropped");
@@ -262,7 +262,7 @@ fn a_changed_file_out_of_sight_is_read_again_only_while_the_list_sorts_by_its_pr
         step(&mut app, &mut now);
     }
     let far = b"song 299.mp3".to_vec();
-    let change = |name: &[u8]| ProviderEvent::Changes { tab, gen, changes: vec![DirChange { kind: ChangeKind::Modified, name: name.to_vec(), meta: Some(Meta::default()) }] };
+    let change = |name: &[u8]| ProviderEvent::Changes { tab, gen, changes: vec![DirChange { label: crate::listing::Label::Keep, kind: ChangeKind::Modified, name: name.to_vec(), meta: Some(Meta::default()) }] };
     app.on_provider_event(change(&far), now);
     for _ in 0..3 {
         assert!(!step(&mut app, &mut now).contains(&far), "an unseen file is not read while sorting by name");
