@@ -110,3 +110,17 @@ fn folder_summary_counts_types() {
     assert_eq!(s.types[0], ("txt".into(), 2));
     assert_eq!(s.types.len(), 3);
 }
+
+#[test]
+fn a_video_frame_waits_alone_and_a_newer_one_replaces_it() {
+    let frames = Frames::default();
+    let shared = frames.clone();
+    let px = |w: u32| Bitmap { width: w, height: 1, rgba: vec![0; w as usize * 4] };
+    assert!(frames.put(3, px(1)), "the first frame asks for a wake-up");
+    assert!(!shared.put(3, px(2)), "a second frame before the first is shown asks for none");
+    assert_eq!(frames.take().map(|(g, b)| (g, b.width)), Some((3, 2)));
+    assert!(frames.take().is_none());
+    assert!(frames.put(4, px(5)), "after the screen took a frame the next one wakes it again");
+    assert_eq!(frames, shared);
+    assert_ne!(frames, Frames::default());
+}

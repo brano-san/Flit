@@ -279,6 +279,7 @@ pub struct GlRenderer {
     atlas: glow::Texture,
     thumbs: Option<glow::Texture>,
     preview: Option<glow::Texture>,
+    preview_size: (u32, u32),
     backdrop: Option<glow::Texture>,
     size: (u32, u32),
 }
@@ -343,6 +344,7 @@ impl GlRenderer {
                 atlas,
                 thumbs: None,
                 preview: None,
+                preview_size: (0, 0),
                 backdrop: None,
                 size: (w.max(1), h.max(1)),
             })
@@ -412,8 +414,16 @@ impl GlRenderer {
     }
 
     pub fn upload_preview(&mut self, image: Option<&Bitmap>) {
-        if self.shared.has_context() {
-            unsafe { replace_image(&self.shared.gl, &mut self.preview, image) };
+        if !self.shared.has_context() {
+            return;
+        }
+        let size = image.map_or((0, 0), |b| (b.width, b.height));
+        match (self.preview, image) {
+            (Some(tex), Some(b)) if size == self.preview_size => unsafe { update(&self.shared.gl, tex, Slot { x: 0, y: 0, w: b.width, h: b.height }, &b.rgba) },
+            _ => {
+                unsafe { replace_image(&self.shared.gl, &mut self.preview, image) };
+                self.preview_size = size;
+            }
         }
     }
 

@@ -1485,6 +1485,13 @@ impl App {
                 p.content = if media { Content::Basic(Some(Note::CannotPlay(message))) } else { Content::Basic(Some(Note::Message(message))) };
             }
             HostEvent::Media { gen, position, duration, playing } if gen == p.host.gen => p.media = Media { position, duration, playing },
+            HostEvent::Frame(frames) => match frames.take() {
+                Some((gen, frame)) if gen == p.host.gen && p.host.video => {
+                    p.image = Some(frame);
+                    p.image_rev += 1;
+                }
+                _ => return,
+            },
             HostEvent::Released { gen } if gen == p.host.gen => {
                 p.host = Host::default();
                 p.content = Content::Basic(None);
