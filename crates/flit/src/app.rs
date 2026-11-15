@@ -76,6 +76,7 @@ struct Visible {
     pane: Rows,
     parked: Mutex<Vec<(u64, u32, u32)>>,
     content: Mutex<Vec<u64>>,
+    overlays: crate::overlays::Shown,
 }
 
 impl Visible {
@@ -179,6 +180,7 @@ enum Done {
     Icon { window: WindowId, req: IconRequest, result: IconResult },
     Refreshed { req: IconRequest, image: flit_core::ui::Bitmap },
     Thumb { window: WindowId, key: u64, result: IconResult },
+    Overlays { window: WindowId, reply: flit_core::ui::OverlayReply },
     TypeName(Vec<u8>, Option<String>),
     LinkChoices { window: WindowId, generation: u64, choices: flit_core::provider::LinkChoices },
     Sorted { window: WindowId, tab: TabId, gen: u64, view: ViewSpec, base_len: usize, order: Vec<u32>, ms: f64 },
@@ -197,7 +199,7 @@ fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> Result<(), PlatformEr
     std::thread::Builder::new().name(name.into()).spawn(f).map(drop).map_err(|e| PlatformError::new(-1, format!("cannot start {name}: {e}")))
 }
 
-type Workers = (Sender<ShellJob>, Sender<ThumbJob>, Sender<SortJob>, Sender<PreviewJob>, Receiver<Done>);
+type Workers = (Sender<ShellJob>, Sender<ThumbJob>, Sender<SortJob>, Sender<PreviewJob>, crate::overlays::Overlays, Receiver<Done>);
 
 fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest>) -> Result<Workers, PlatformError> {
     let (done_tx, done) = unbounded();
@@ -277,6 +279,12 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest
             }
         })?;
     }
+    let (overlay_tx, overlay_wake) = (done_tx.clone(), wake.clone());
+    let overlays = crate::overlays::Overlays::start::<P::Shell>(Arc::new(move |window, reply| {
+        if overlay_tx.send(Done::Overlays { window, reply }).is_ok() {
+            overlay_wake();
+        }
+    }));
     let (sort_tx, sort_rx) = unbounded::<SortJob>();
     spawn("flit-sort", move || {
         for job in sort_rx {
@@ -291,7 +299,7 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest
             wake();
         }
     })?;
-    Ok((shell_tx, thumb_tx, sort_tx, preview_tx, done))
+    Ok((shell_tx, thumb_tx, sort_tx, preview_tx, overlays, done))
 }
 
 struct WinState<P: Platform> {
@@ -325,6 +333,7 @@ struct Handler<P: Platform> {
     sink: OpenSink,
     queued_opens: Vec<Open>,
     shell: Sender<ShellJob>,
+    overlays: crate::overlays::Overlays,
     thumbs: Sender<ThumbJob>,
     thumb_cache: Cache,
     sorter: Sender<SortJob>,
@@ -388,6 +397,7 @@ impl<P: Platform> Handler<P> {
         app.double_click = P::double_click_time();
         app.wheel_lines = P::wheel_lines();
         app.set_caps(P::caps());
+        app.set_shell_overlays(P::Shell::ICON_OVERLAYS);
         flit_core::i18n::set_unix_terms(app.caps.unix_paths);
         if base == 0 && P::elevated() {
             app.warn_elevated();
@@ -598,6 +608,10 @@ impl<P: Platform> Handler<P> {
                 Effect::Thumbnail(req) => {
                     let visible = self.windows[&id].visible.clone();
                     let _ = self.thumbs.send(ThumbJob { window: id, req, visible });
+                }
+                Effect::Overlays(batch) => {
+                    let shown = self.windows[&id].visible.overlays.clone();
+                    self.overlays.send(crate::overlays::Job { window: id, batch, shown });
                 }
                 Effect::ClearThumbnails => {
                     if let Some(c) = &self.thumb_cache {
@@ -972,6 +986,11 @@ impl<P: Platform> Handler<P> {
                         st.app.on_thumb(&mut st.gfx, key, result);
                     }
                 }
+                Done::Overlays { window, reply } => {
+                    if let Some(st) = self.windows.get_mut(&window) {
+                        st.app.on_overlays(&mut st.gfx, reply);
+                    }
+                }
                 Done::TypeName(ext, name) => {
                     for st in self.windows.values_mut() {
                         st.app.on_type_name(ext.clone(), name.clone());
@@ -1150,6 +1169,7 @@ impl<P: Platform> Handler<P> {
         let t = Instant::now();
         let animating = st.app.frame(&mut st.gfx, t);
         *st.visible.content.lock().unwrap_or_else(|e| e.into_inner()) = st.app.visible_content_icons();
+        *st.visible.overlays.lock().unwrap_or_else(|e| e.into_inner()) = st.app.visible_overlays();
         let renderer = st.renderer.as_mut().unwrap();
         for &(slot, off) in &st.gfx.uploads.rects {
             let len = (slot.w * slot.h * 4) as usize;
@@ -1430,7 +1450,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let thumb_cache: Cache = P::cache_dir().map(|d| Arc::new(Mutex::new(ThumbCache::new(d.join("thumbs"), saved.persisted.prefs.thumb_cache_mb))));
     let kept = KeptIcons::load(P::cache_dir().map(|d| d.join(ICONS_FILE)));
     let refresh = kept.kept.iter().map(KeptIcon::request).collect();
-    let (shell, thumbs, sorter, previews, done) = start_workers::<P>(wake.clone(), thumb_cache.clone(), refresh)?;
+    let (shell, thumbs, sorter, previews, overlays, done) = start_workers::<P>(wake.clone(), thumb_cache.clone(), refresh)?;
     let tags = TagWorker::start::<P>(local.tags().clone(), wake.clone())?;
     let fs_path = |p: PathBuf| FsPath::parse(&p.to_string_lossy());
     let about = About { os: String::new(), file: settings_file.clone().and_then(fs_path), cache_bytes: None, logs: P::state_dir().map(|d| d.join("logs")).and_then(fs_path), missing: Vec::new() };
@@ -1479,6 +1499,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         sink,
         queued_opens: queued,
         shell,
+        overlays,
         thumbs,
         thumb_cache,
         sorter,

@@ -12,7 +12,7 @@ use windows::core::{w, Interface, PCWSTR};
 use windows::Win32::Foundation::{ERROR_CANCELLED, HWND, SIZE};
 use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_INPROC_SERVER, STGM_READ};
 use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::Storage::FileSystem::{GetFileAttributesW, FILE_FLAGS_AND_ATTRIBUTES, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM, INVALID_FILE_ATTRIBUTES};
+use windows::Win32::Storage::FileSystem::{GetDriveTypeW, GetFileAttributesW, FILE_FLAGS_AND_ATTRIBUTES, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_SYSTEM, INVALID_FILE_ATTRIBUTES};
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Controls::{IImageList, ILD_TRANSPARENT};
 use windows::Win32::UI::Shell::*;
@@ -20,6 +20,24 @@ use windows::Win32::UI::WindowsAndMessaging::{CreatePopupMenu, DestroyIcon, Dest
 
 pub struct ShellCom {
     lists: Vec<(u32, IImageList)>,
+    overlay_folder: Option<(FsPath, Option<OverlayFolder>)>,
+}
+
+struct OverlayFolder {
+    folder: IShellFolder,
+    overlay: IShellIconOverlay,
+}
+
+const DRIVE_FIXED: u32 = 3;
+
+pub(crate) fn overlay_allowed(dir: &FsPath) -> bool {
+    let Some(letter) = crate::network::letter(dir) else { return false };
+    let root: Vec<u16> = format!("{letter}\\").encode_utf16().chain(Some(0)).collect();
+    unsafe { GetDriveTypeW(PCWSTR(root.as_ptr())) == DRIVE_FIXED }
+}
+
+pub(crate) fn overlay_result(hr: windows::core::HRESULT, index: i32) -> Option<u8> {
+    (hr == windows::Win32::Foundation::S_OK).then_some(index).and_then(|i| u8::try_from(i).ok()).filter(|i| flit_core::ui::OVERLAY_SLOTS.contains(i))
 }
 
 fn launch_commands(runs: &[flit_core::provider::CommandRun], dir: Option<&FsPath>, mut notify: impl FnMut(&str)) -> Result<(), PlatformError> {
@@ -206,6 +224,13 @@ pub(crate) fn overlaid(kind: IconKind, path: &FsPath) -> bool {
     matches!(kind, IconKind::File | IconKind::CustomFolder) && matches!(path.kind(), PathKind::Drive | PathKind::Unc)
 }
 
+unsafe fn bind_overlay_folder(dir: &FsPath) -> Option<OverlayFolder> {
+    let item: IShellItem = SHCreateItemFromParsingName(PCWSTR(wide(dir).as_ptr()), None).ok()?;
+    let folder: IShellFolder = item.BindToHandler(None, &BHID_SFObject).ok()?;
+    let overlay = folder.cast::<IShellIconOverlay>().ok()?;
+    Some(OverlayFolder { folder, overlay })
+}
+
 unsafe fn icon_bitmap(icon: HICON) -> Option<Bitmap> {
     let mut ii = ICONINFO::default();
     let got = GetIconInfo(icon, &mut ii).is_ok();
@@ -257,6 +282,21 @@ impl ShellCom {
         unsafe { icon_bitmap(icon) }.map(|b| fit(unpad(b), size))
     }
 
+    fn slot_bitmap(&mut self, slot: u8, size: u32) -> Option<Bitmap> {
+        let list = self.list_for(size)?;
+        let image = unsafe { list.GetOverlayImage(i32::from(slot)) }.ok()?;
+        let icon = unsafe { list.GetIcon(image, ILD_TRANSPARENT.0) }.ok()?;
+        unsafe { icon_bitmap(icon) }
+    }
+
+    fn overlay_folder(&mut self, dir: &FsPath) -> Option<&OverlayFolder> {
+        if self.overlay_folder.as_ref().is_none_or(|(d, _)| d != dir) {
+            let bound = if overlay_allowed(dir) { unsafe { bind_overlay_folder(dir) } } else { None };
+            self.overlay_folder = Some((dir.clone(), bound));
+        }
+        self.overlay_folder.as_ref().and_then(|(_, f)| f.as_ref())
+    }
+
     pub(crate) fn overlay(&mut self, path: &FsPath, size: u32) -> Option<Bitmap> {
         let w = wide(path);
         let mut info = SHFILEINFOW::default();
@@ -265,14 +305,31 @@ impl ShellCom {
         if !info.hIcon.is_invalid() {
             let _ = unsafe { DestroyIcon(info.hIcon) };
         }
-        let index = (info.iIcon as u32 >> 24) & 0xFF;
+        let index = ((info.iIcon as u32 >> 24) & 0xFF) as u8;
         if ok == 0 || index == 0 {
             return None;
         }
-        let list = self.list_for(size)?;
-        let image = unsafe { list.GetOverlayImage(index as i32) }.ok()?;
-        let icon = unsafe { list.GetIcon(image, ILD_TRANSPARENT.0) }.ok()?;
-        unsafe { icon_bitmap(icon) }
+        self.slot_bitmap(index, size)
+    }
+
+    pub(crate) fn overlay_index(&mut self, path: &FsPath) -> Option<u8> {
+        let dir = path.parent()?;
+        let name = path.file_name().to_vec();
+        let f = self.overlay_folder(&dir)?;
+        let mut w = Vec::new();
+        flit_core::name::to_utf16(&name, &mut w);
+        w.push(0);
+        unsafe {
+            let mut pidl: *mut windows::Win32::UI::Shell::Common::ITEMIDLIST = std::ptr::null_mut();
+            f.folder.ParseDisplayName(HWND::default(), None, PCWSTR(w.as_ptr()), None, &mut pidl, std::ptr::null_mut()).ok()?;
+            if pidl.is_null() {
+                return None;
+            }
+            let mut index = 0i32;
+            let hr = (Interface::vtable(&f.overlay).GetOverlayIndex)(Interface::as_raw(&f.overlay), pidl, &mut index);
+            windows::Win32::System::Com::CoTaskMemFree(Some(pidl as _));
+            overlay_result(hr, index)
+        }
     }
 
     fn item_image(&self, path: &FsPath, size: u32, flags: SIIGBF) -> Option<Bitmap> {
@@ -299,11 +356,13 @@ impl ShellCom {
 }
 
 impl Shell for ShellCom {
+    const ICON_OVERLAYS: bool = true;
+
     fn new() -> Result<Self, PlatformError> {
         com_sta();
         static INIT: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _guard = INIT.lock().unwrap_or_else(|e| e.into_inner());
-        let mut shell = Self { lists: Vec::new() };
+        let mut shell = Self { lists: Vec::new(), overlay_folder: None };
         shell.list_for(0);
         let mut info = SHFILEINFOW::default();
         unsafe { SHGetFileInfoW(w!("x"), FILE_ATTRIBUTE_NORMAL, Some(&mut info), size_of::<SHFILEINFOW>() as u32, SHGFI_SYSICONINDEX | SHGFI_USEFILEATTRIBUTES) };
@@ -335,6 +394,14 @@ impl Shell for ShellCom {
             Some(b) => stamp(base, &b),
             None => base,
         })
+    }
+
+    fn overlay_slot(&mut self, path: &FsPath) -> Option<u8> {
+        self.overlay_index(path)
+    }
+
+    fn overlay_image(&mut self, slot: u8, size: u32) -> Option<Bitmap> {
+        self.slot_bitmap(slot, size).map(|b| fit(b, size))
     }
 
     fn thumbnail(&mut self, req: &IconRequest) -> Option<Bitmap> {

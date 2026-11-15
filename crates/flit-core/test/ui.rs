@@ -490,3 +490,6 @@ fn windows_links_get_their_own_icon_so_the_shell_can_draw_the_link_arrow_but_uni
 
 #[path = "ui/file_icons.rs"]
 mod file_icons;
+
+#[path = "ui/shell_overlays.rs"]
+mod shell_overlays;

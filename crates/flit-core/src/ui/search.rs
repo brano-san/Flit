@@ -1221,6 +1221,7 @@ impl App {
                     requests.push(IconRequest { key, kind, path, size: icon_px as u32, gen: 0, row: 0 });
                 }
             }
+            self.draw_shell_overlay(g, kind, &entry, &r.dir, &r.name, ir, 255);
             self.draw_file_emblems(g, entry.attrs, ir, 255, &mut requests);
             let ty = y + text_dy;
             let name_x = ir.right() + self.s(8.0);
