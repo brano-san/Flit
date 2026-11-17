@@ -731,7 +731,7 @@ dependencies = [
 
 [[package]]
 name = "flit"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "crossbeam-channel",
  "ed25519-compact",
@@ -756,7 +756,7 @@ dependencies = [
 
 [[package]]
 name = "flit-archive"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "crc32fast",
  "delharc",
@@ -774,7 +774,7 @@ dependencies = [
 
 [[package]]
 name = "flit-core"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "arc-swap",
  "bumpalo",
@@ -789,11 +789,11 @@ dependencies = [
 
 [[package]]
 name = "flit-gen"
-version = "0.8.1"
+version = "0.8.2"
 
 [[package]]
 name = "flit-indexd"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "crossbeam-channel",
  "flit-core",
@@ -806,7 +806,7 @@ dependencies = [
 
 [[package]]
 name = "flit-platform"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "crc32fast",
  "crossbeam-channel",
@@ -822,7 +822,7 @@ dependencies = [
 
 [[package]]
 name = "flit-platform-linux"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "crossbeam-channel",
  "flit-core",
@@ -834,7 +834,7 @@ dependencies = [
 
 [[package]]
 name = "flit-platform-linux-gui"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "crossbeam-channel",
  "flit-archive",
@@ -867,7 +867,7 @@ dependencies = [
 
 [[package]]
 name = "flit-platform-windows"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "crc32fast",
  "crossbeam-channel",
@@ -884,7 +884,7 @@ dependencies = [
 
 [[package]]
 name = "flit-proto"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "flit-core",
  "postcard",
@@ -894,7 +894,7 @@ dependencies = [
 
 [[package]]
 name = "flit-search"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "criterion",
  "flit-core",
@@ -910,7 +910,7 @@ dependencies = [
 
 [[package]]
 name = "flit-sign"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "ed25519-compact",
  "flit-core",

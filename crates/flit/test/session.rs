@@ -20,13 +20,22 @@ fn window(paths: &[&str], cur: usize) -> WindowSession {
 }
 
 #[test]
-fn linux_last_session_resumes_with_a_crash_marker_without_overriding_explicit_opens_or_windows_recovery() {
-    assert!(restore_crash(&Startup::Continue, true, false, true));
-    assert!(!restore_crash(&Startup::Continue, true, false, false), "a run that died early keeps the recovery prompt");
-    assert!(!restore_crash(&Startup::Continue, false, false, true), "Windows keeps its recovery prompt");
-    assert!(!restore_crash(&Startup::Continue, true, true, true), "explicit CLI folders take precedence");
-    assert!(!restore_crash(&Startup::NewTab, true, false, true));
-    assert!(!restore_crash(&Startup::Folders(vec![Location::home_page()]), true, false, true));
+fn linux_last_session_resumes_with_a_settled_crash_marker() {
+    assert!(restore_crash(&Startup::Continue, true, true));
+    assert!(!restore_crash(&Startup::Continue, true, false), "a run that died early keeps the recovery prompt");
+    assert!(!restore_crash(&Startup::Continue, false, true), "Windows keeps its recovery prompt");
+    assert!(!restore_crash(&Startup::NewTab, true, true));
+    assert!(!restore_crash(&Startup::Folders(vec![Location::home_page()]), true, true));
+}
+
+#[test]
+fn the_window_for_the_final_requested_location_is_mapped_last() {
+    use flit_core::open::Route;
+    let w = |path: &str| (window(&[path], 0), None);
+    let mut saved = std::collections::VecDeque::from([w("/etc"), w("/usr"), w("/tmp")]);
+    let routes: Vec<_> = ["/tmp", "/etc", "/var/log"].into_iter().map(|p| Route { folder: Location::parse(p).unwrap(), select: None }).collect();
+    open_requested_window_last(&mut saved, &routes);
+    assert_eq!(saved, [w("/usr"), w("/tmp"), w("/etc")]);
 }
 
 #[test]

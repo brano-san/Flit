@@ -182,7 +182,7 @@ impl Glide {
 }
 const MAX_OPEN: usize = 16;
 const MAX_THUMB_STATES: usize = 1 << 16;
-const MAX_ROUTES: usize = 32;
+pub const MAX_ROUTES: usize = 32;
 
 const PER_FILE_ICON_EXT: [&[u8]; 7] = [b"exe", b"ico", b"lnk", b"url", b"cur", b"ani", b"desktop"];
 
@@ -932,7 +932,7 @@ impl App {
         app
     }
 
-    fn report_dropped(&mut self, total: usize) {
+    pub fn report_dropped(&mut self, total: usize) {
         if total > MAX_ROUTES {
             self.tab_mut().error = Some(crate::trn!(P::UiDroppedRoutes, total, shown = MAX_ROUTES));
         }
@@ -1109,10 +1109,7 @@ impl App {
             return self.run_typed(text);
         }
         let watched = !routes.is_empty();
-        self.dispatch(routes, target, now);
-        if let Some(l) = self.tab_mut().loading.as_mut().filter(|l| cmd.properties && l.select.is_some()) {
-            l.properties = true;
-        }
+        self.dispatch_open(routes, target, cmd.properties, now);
         if let Some(text) = typed.filter(|_| watched) {
             self.watch_typed(text);
         }
@@ -1126,6 +1123,13 @@ impl App {
                 ResolveError::Invalid(s) => crate::tr!(S::UiInvalidPath, path = s),
             });
             self.dirty = true;
+        }
+    }
+
+    pub fn dispatch_open(&mut self, routes: Vec<Route>, target: OpenTarget, properties: bool, now: Instant) {
+        self.dispatch(routes, target, now);
+        if let Some(l) = self.tab_mut().loading.as_mut().filter(|l| properties && l.select.is_some()) {
+            l.properties = true;
         }
     }
 

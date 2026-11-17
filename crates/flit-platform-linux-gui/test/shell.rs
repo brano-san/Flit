@@ -505,24 +505,26 @@ fn an_executable_script_asks_before_running_and_a_file_without_an_app_offers_the
 #[test]
 fn empty_text_documents_use_the_configured_editor_before_desktop_mime_detection() {
     let t = Temp::new("empty-text");
-    let file = t.file("Blank.TXT", 0);
-    assert!(empty_text_document(&file));
-    assert!(!empty_text_document(&t.file("ordinary.txt", 3)));
-    assert!(!empty_text_document(&t.file("unknown", 0)));
+    assert!(!empty_file(&t.file("ordinary.sh", 3)));
     let dir = t.path().join("folder.txt");
     std::fs::create_dir(&dir).unwrap();
-    assert!(!empty_text_document(&dir));
+    assert!(!empty_file(&dir));
 
     let editor = text_editor();
-    let other = crate::apps::Entry { id: "other.desktop".into(), ..editor.clone() };
+    let script = t.file("script.sh", 0);
+    let script_mime = crate::mime::mime_of_file(&script);
+    let other = crate::apps::Entry { id: "script.desktop".into(), mimes: vec![script_mime.clone()], ..editor.clone() };
     let entries = [other, editor];
     let mut assoc = crate::apps::Assoc::default();
-    let mime = crate::mime::mime_of_file(&file);
-    assert_eq!(mime, "text/plain");
-    assert!(file_handler(&mime, &entries, &assoc, true).is_none());
-    assert_eq!(file_handler(&mime, &entries, &assoc, false), Some(&entries[0]));
     crate::apps::parse_mimeapps("[Default Applications]\ntext/plain=missing.desktop;editor.desktop;\n", &mut assoc);
-    assert_eq!(file_handler(&mime, &entries, &assoc, true), Some(&entries[1]));
+    for name in ["Blank.TXT", "script.sh", "README", ".profile", "notes.unknown-flit-test", "empty.pdf"] {
+        let file = t.file(name, 0);
+        assert!(empty_file(&file));
+        assert_eq!(file_handler(&crate::mime::mime_of_file(&file), &entries, &assoc, true), Some(&entries[1]), "{name}");
+        assert_eq!(open_question(&file, &entries, &assoc), None, "{name}");
+    }
+    crate::apps::parse_mimeapps(&format!("[Default Applications]\n{script_mime}=script.desktop;\n"), &mut assoc);
+    assert_eq!(file_handler(&script_mime, &entries, &assoc, true), Some(&entries[0]));
 }
 
 #[test]

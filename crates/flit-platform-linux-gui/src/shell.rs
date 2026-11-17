@@ -370,7 +370,8 @@ pub fn executable_script(path: &Path) -> bool {
 }
 
 pub fn open_question(path: &Path, entries: &[crate::apps::Entry], assoc: &crate::apps::Assoc) -> Option<OpenAsk> {
-    if is_launcher(path) || !std::fs::metadata(path).is_ok_and(|m| m.is_file()) || runs_directly(path) {
+    let metadata = std::fs::metadata(path).ok()?;
+    if is_launcher(path) || !metadata.is_file() || runs_directly(path) {
         return None;
     }
     if executable_script(path) {
@@ -380,23 +381,37 @@ pub fn open_question(path: &Path, entries: &[crate::apps::Entry], assoc: &crate:
         return None;
     }
     let mime = crate::mime::mime_of_file(path);
-    crate::apps::handlers_by_lineage(&mime, entries, assoc, crate::mime::parents).is_empty().then(|| OpenAsk::NoApp { mime, apps: crate::apps::choices(entries) })
+    file_handler(&mime, entries, assoc, metadata.len() == 0).is_none().then(|| OpenAsk::NoApp { mime, apps: crate::apps::choices(entries) })
 }
 
-fn empty_text_document(path: &Path) -> bool {
-    path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("txt"))
-        && std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.len() == 0)
+fn empty_file(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.len() == 0)
 }
 
-fn file_handler<'a>(mime: &str, entries: &'a [crate::apps::Entry], assoc: &crate::apps::Assoc, configured_only: bool) -> Option<&'a crate::apps::Entry> {
-    crate::apps::handlers_by_lineage(mime, entries, assoc, crate::mime::parents).into_iter()
-        .find(|app| !configured_only || assoc.defaults.get(mime).is_some_and(|ids| ids.contains(&app.id)))
+fn file_handler<'a>(mime: &str, entries: &'a [crate::apps::Entry], assoc: &crate::apps::Assoc, empty: bool) -> Option<&'a crate::apps::Entry> {
+    if empty {
+        // A zero-byte file has no content signature. Prefer the default for its
+        // name, then inherited defaults, then the user's plain-text editor.
+        let mut types = crate::mime::lineage(mime, crate::mime::parents);
+        if !types.iter().any(|ty| ty == "text/plain") {
+            types.push("text/plain".into());
+        }
+        for ty in &types {
+            if let Some(defaults) = assoc.defaults.get(ty) {
+                if let Some(app) = crate::apps::handlers(ty, entries, assoc).into_iter().find(|app| defaults.contains(&app.id)) {
+                    return Some(app);
+                }
+            }
+        }
+        return types.iter().find_map(|ty| crate::apps::handlers(ty, entries, assoc).into_iter().next());
+    }
+    crate::apps::handlers_by_lineage(mime, entries, assoc, crate::mime::parents).into_iter().next()
 }
 
-fn open_with_mime_handler(path: &Path, configured_only: bool) -> Option<Result<(), PlatformError>> {
+fn open_with_mime_handler(path: &Path, empty: bool) -> Option<Result<(), PlatformError>> {
     let c = crate::apps::catalog();
     let mime = crate::mime::mime_of_file(path);
-    let app = &file_handler(&mime, &c.entries, &c.assoc, configured_only)?.path;
+    let app = &file_handler(&mime, &c.entries, &c.assoc, empty)?.path;
     let token = crate::window::activation_token();
     Some(crate::apps::launch(app, &[path.to_path_buf()], token.as_deref()).map_err(|e| spawn_error(&app.display().to_string(), &e)))
 }
@@ -748,7 +763,8 @@ impl Shell for LinuxShell {
         }
         let missing = on_path(OsStr::new("xdg-open")).is_none();
         // Some xdg-open backends dispatch empty documents as inode/x-empty.
-        let done = (missing || empty_text_document(p)).then(|| open_with_mime_handler(p, !missing)).flatten().unwrap_or_else(|| xdg_open(os(path)));
+        let empty = empty_file(p);
+        let done = (missing || empty).then(|| open_with_mime_handler(p, empty)).flatten().unwrap_or_else(|| xdg_open(os(path)));
         if done.is_ok() {
             crate::places::remember_recent(vec![p.to_path_buf()]);
         }

@@ -356,6 +356,7 @@ struct Handler<P: Platform> {
     crashed: Option<Session>,
     typed: Typed,
     queued_windows: VecDeque<(WindowSession, Option<Placement>)>,
+    startup_open: Option<Open>,
     raise: Option<WindowId>,
     ending: bool,
     timing: bool,
@@ -504,6 +505,9 @@ impl<P: Platform> Handler<P> {
     }
 
     fn note_session(&mut self, window: &Win<P>) {
+        if !self.queued_windows.is_empty() || !self.pending.is_empty() {
+            return;
+        }
         let Some(st) = self.windows.get_mut(&window.id()).filter(|_| self.writer.is_some() && !self.ending && self.quit_session.is_none()) else { return };
         let rev = st.app.session_rev();
         if rev == st.session_rev {
@@ -1140,6 +1144,40 @@ impl<P: Platform> Handler<P> {
         self.flush(window);
     }
 
+    fn apply_startup_open(&mut self, window: &Win<P>) {
+        if !self.queued_windows.is_empty() {
+            return;
+        }
+        let Some(open) = self.startup_open.take() else { return };
+        if open.target != OpenTarget::Default {
+            self.queued_opens.push(open);
+            return;
+        }
+        let (routes, errors) = open::routes_for(&open, &P::known_folder, true);
+        let total = routes.len();
+        let mut target = window.id();
+        let mut ids: Vec<_> = self.windows.keys().copied().collect();
+        ids.sort_unstable();
+        let now = Instant::now();
+        for route in routes.into_iter().take(flit_core::ui::MAX_ROUTES) {
+            let found = std::iter::once(target).chain(ids.iter().copied().filter(|&id| id != target))
+                .find(|id| self.windows.get_mut(id).is_some_and(|w| w.app.focus_folder(&route.folder)));
+            if let Some(id) = found {
+                target = id;
+                if route.select.is_none() {
+                    continue;
+                }
+            }
+            let mode = if found.is_some() { OpenTarget::CurrentTab } else { OpenTarget::NewTab };
+            self.windows.get_mut(&target).unwrap().app.dispatch_open(vec![route], mode, open.properties, now);
+        }
+        let app = &mut self.windows.get_mut(&target).unwrap().app;
+        app.report_dropped(total);
+        app.show_open_errors(&errors);
+        self.raise = Some(target);
+        (self.wake)();
+    }
+
     fn render(&mut self, window: &Win<P>) {
         let id = window.id();
         let needs = self.windows.get(&id).is_some_and(|st| st.renderer.is_none());
@@ -1297,6 +1335,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         let st = WinState { app, gfx, renderer: None, software: false, device_gen: 0, visible: Arc::default(), session_rev: 0, placement: Some(window.placement()), born, preview_rev: u64::MAX, backdrop_rev: u64::MAX, dark: None, selection_key: None, progress: None };
         self.windows.insert(id, st);
         self.active = Some(id);
+        self.apply_startup_open(window);
         self.flush(window);
         self.apply_opens(window);
         self.open_next(window);
@@ -1478,7 +1517,6 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let (servers, plain): (Vec<_>, Vec<_>) = open.paths.iter().cloned().partition(|p| unix && std::str::from_utf8(p).ok().and_then(flit_core::ui::server_uri).is_some());
     let queued: Vec<Open> = (!servers.is_empty()).then(|| Open { paths: servers, ..Default::default() }).into_iter().collect();
     let open = Open { paths: plain, ..open };
-    let (routes, errors) = if open.is_empty() { Default::default() } else { open::routes_for(&open, &P::known_folder, unix) };
     let new_window = open.target == OpenTarget::NewWindow;
     let files = if metrics.is_none() && std::env::var_os("FLIT_HIDDEN_CAPTURE").is_none() { Files::of::<P>() } else { None };
     let crashed = files.as_ref().is_some_and(Files::crashed);
@@ -1489,14 +1527,20 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         f.mark();
     }
     let typed: Typed = Arc::new(Mutex::new(previous.as_ref().map(|s| s.typed.clone()).unwrap_or_default()));
-    let restore_crash = session::restore_crash(&saved.persisted.startup, unix, !open.is_empty(), settled);
+    let restore_crash = session::restore_crash(&saved.persisted.startup, unix, settled);
+    // Linux desktop launchers and FileManager1 may supply a folder even on a cold start.
+    let continue_with_open = unix && matches!(saved.persisted.startup, Startup::Continue);
     let mut restore: VecDeque<(WindowSession, Option<Placement>)> = match &saved.persisted.startup {
-        _ if !open.is_empty() || (crashed && !restore_crash) => VecDeque::new(),
+        _ if (!open.is_empty() && !continue_with_open) || (crashed && !restore_crash) => VecDeque::new(),
         _ if update::restarted() => previous.iter().flat_map(Session::windows).collect(),
         Startup::Continue => previous.iter().flat_map(Session::windows).collect(),
         Startup::NewTab => VecDeque::from([(WindowSession { tabs: vec![Location::home_page()], cur: 0, ..Default::default() }, None)]),
         Startup::Folders(tabs) => VecDeque::from([(WindowSession { tabs: tabs.clone(), cur: 0, ..Default::default() }, None)]),
     };
+    if restore.len() > 1 && !open.is_empty() && open.target == OpenTarget::Default {
+        let (routes, _) = open::routes_for(&open, &P::known_folder, unix);
+        session::open_requested_window_last(&mut restore, &routes);
+    }
     let first_window = restore.pop_front().filter(|(w, _)| !w.tabs.is_empty());
     let h_wake = wake.clone();
     let update_wake = wake.clone();
@@ -1538,6 +1582,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         crashed: previous.filter(|_| crashed && !restore_crash),
         typed,
         queued_windows: restore,
+        startup_open: (first_window.is_some() && !open.is_empty()).then(|| open.clone()),
         raise: None,
         ending: false,
         timing: std::env::var_os("FLIT_TIMING").is_some(),
@@ -1559,6 +1604,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let (mut first, placement) = match &first_window {
         Some((ws, placement)) => (h.restored_app(ws), *placement),
         None => {
+            let (routes, errors) = if open.is_empty() { Default::default() } else { open::routes_for(&open, &P::known_folder, unix) };
             let mut app = h.new_app(routes, saved.persisted.clone());
             app.show_open_errors(&errors);
             (app, if new_window { None } else { saved.placement() })

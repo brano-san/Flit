@@ -557,6 +557,22 @@ fn dragging_files_over_an_inactive_panel_activates_it_for_the_drop() {
 }
 
 #[test]
+fn startup_folder_reuses_the_tab_in_its_restored_panel() {
+    let paths: Vec<_> = ["/etc", "/var/log", "/usr/bin"].iter().map(|s| Location::parse(s).unwrap()).collect();
+    let mut app = app_at("/usr/bin");
+    app.restore_tabs(&paths, 2);
+    app.restore_panels(&PanelsSession {
+        root: Shape::Group { down: false, kids: vec![(Shape::Leaf { tabs: 2, cur: 1 }, 0.5), (Shape::Leaf { tabs: 1, cur: 0 }, 0.5)] },
+        active: 1,
+    });
+    assert!(app.focus_folder(&paths[0]));
+    assert_eq!(app.current_location(), &paths[0]);
+    assert!(!app.focus_folder(&Location::parse("/tmp").unwrap()));
+    let saved = app.session();
+    assert_eq!((saved.tabs, saved.cur, saved.panels.unwrap().active), (paths, 0, 0));
+}
+
+#[test]
 fn sessions_keep_the_panel_tree_and_old_sessions_load_into_one_panel() {
     let mut app = three(r"C:\a");
     key(&mut app, Key::Char('T'), CTRL);

@@ -10,8 +10,23 @@ use std::thread::JoinHandle;
 const VERSION: u32 = 1;
 const SETTLED: std::time::Duration = std::time::Duration::from_secs(60);
 
-pub fn restore_crash(startup: &Startup, unix: bool, explicit_open: bool, settled: bool) -> bool {
-    unix && !explicit_open && settled && matches!(startup, Startup::Continue)
+pub fn restore_crash(startup: &Startup, unix: bool, settled: bool) -> bool {
+    unix && settled && matches!(startup, Startup::Continue)
+}
+
+/// Map the requested window last so it gets focus even without a Wayland activation token.
+pub fn open_requested_window_last(windows: &mut std::collections::VecDeque<(WindowSession, Option<Placement>)>, routes: &[flit_core::open::Route]) {
+    let Some(mut target) = windows.len().checked_sub(1) else { return };
+    for route in routes.iter().take(flit_core::ui::MAX_ROUTES) {
+        if !windows[target].0.tabs.contains(&route.folder) {
+            if let Some(found) = windows.iter().position(|(w, _)| w.tabs.contains(&route.folder)) {
+                target = found;
+            }
+        }
+    }
+    if let Some(requested) = windows.remove(target) {
+        windows.push_back(requested);
+    }
 }
 
 type Bounds = (i32, i32, i32, i32, bool);

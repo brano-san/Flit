@@ -948,6 +948,22 @@ impl App {
         }
     }
 
+    /// Focus an already open directory, including tabs in inactive panes.
+    pub fn focus_folder(&mut self, folder: &Location) -> bool {
+        if self.current_location() == folder {
+            return true;
+        }
+        let pane = self.panels.here;
+        let found = std::iter::once(pane).chain(self.parked_ids()).find_map(|id| {
+            self.panel_tabs(id).0.iter().position(|t| t.location() == folder).map(|tab| (id, tab))
+        });
+        if let Some((id, tab)) = found {
+            self.activate_panel(id);
+            self.select_tab(tab);
+        }
+        found.is_some()
+    }
+
     fn shape(&self, n: &Node) -> Shape {
         match n {
             Node::Leaf(id) => {
