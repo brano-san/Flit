@@ -988,6 +988,16 @@ impl ContextMenu {
         }
     }
 
+    pub(super) fn icon_slot(&self, k: usize) -> Rect {
+        let (s, r) = (self.scale, self.rects[k]);
+        let depth = match &self.rows[k] {
+            Row::Node { node, path: false, .. } => self.nodes[*node].depth as f32,
+            _ => 0.0,
+        };
+        let tuck = if depth > 0.0 { (ICON_W - IMAGE_PX) / 2.0 * s } else { 0.0 };
+        Rect::new(r.x + depth * INDENT * s - tuck, r.y, ICON_W * s, r.h)
+    }
+
     fn draw_row<B: TextBackend>(&self, p: &mut Paint<B>, k: usize, (font, icons): (FontStyle, FontStyle)) {
         let (s, t, r) = (self.scale, p.t, self.rects[k]);
         let row = &self.rows[k];
@@ -1015,8 +1025,8 @@ impl ContextMenu {
             (false, true) => (t.text_dim.alpha(OFF), t.text_dim.alpha(OFF), t.accent.alpha(OFF)),
             (false, false) => (t.text, t.text_dim, t.accent),
         };
-        let depth = if *path { 0.0 } else { n.depth as f32 };
-        let x0 = r.x + depth * INDENT * s;
+        let slot = self.icon_slot(k);
+        let x0 = slot.x;
         let side = Rect::new(r.right() - SIDE_W * s, r.y, SIDE_W * s, r.h);
         let star = self.star_rect(k);
         let text_y = baseline(p.g, r, font);
@@ -1028,13 +1038,12 @@ impl ContextMenu {
         let text = if *path { &n.path } else { &n.label };
         p.marked((label_x, text_y), text, marks, font, (ink, mark), room);
         if let What::Command { icon, image, .. } = &n.what {
-            let slot = Rect::new(x0, r.y, ICON_W * s, r.h);
             let shown = image.as_ref().is_some_and(|i| draw_image(p.g, i, slot, s, if off && !hot { OFF } else { 0xFF }));
             if !shown {
                 p.centered(slot, if icon.is_empty() { "\u{E8A5}" } else { icon }, icons, if off && !hot { dim } else { ink });
             }
         } else if matches!(n.what, What::Submenu { .. }) {
-            p.centered(Rect::new(x0, r.y, ICON_W * s, r.h), "\u{E8B7}", icons, ink);
+            p.centered(slot, "\u{E8B7}", icons, ink);
         }
         if keys_w > 0.0 {
             p.g.text(keys_right - keys_w - PAD * s, text_y, &n.keys, font, dim, f32::INFINITY);
