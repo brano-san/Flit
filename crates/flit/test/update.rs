@@ -96,6 +96,18 @@ fn shipped_public_key_is_a_valid_key() {
 }
 
 #[test]
+fn skipped_updates_show_each_release_once_in_descending_version_order() {
+    let manifest = br#"{"version":"0.11.0","notes":"latest","history":[
+        {"version":"v0.9.0","notes":"nine"},{"version":"0.8.0","notes":"already installed"},
+        {"version":"0.11.0","notes":"duplicate"},{"version":"0.10.0","notes":"ten"},
+        {"version":"0.12.0","notes":"future"},{"version":"invalid","notes":"bad"}],
+        "platforms":{"linux-x86_64":{"url":"https://x/a","signature":"QUJD"}}}"#;
+    let notes = |installed| decide(manifest, LINUX, installed).unwrap().unwrap().notes;
+    assert_eq!(notes("0.8.0"), "## 0.11.0\n\nlatest\n\n## 0.10.0\n\nten\n\n## 0.9.0\n\nnine");
+    assert_eq!(notes("0.10.0"), "latest");
+}
+
+#[test]
 fn check_with_a_fake_manifest_offers_only_newer_versions() {
     let manifest = |v: &str| render_manifest(v, "notes", "2026-11-09T00:00:00Z", &[(WINDOWS, "https://x/a.zip".into(), "QUJD".into()), (LINUX, "https://x/a.tar.gz".into(), "QUJD".into())]);
     assert_eq!(decide(manifest("0.4.0").as_bytes(), PLATFORM, "0.3.2").unwrap().map(|r| r.version), Some("0.4.0".into()));

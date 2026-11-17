@@ -34,6 +34,10 @@ pub enum UpdateEvent {
 }
 
 pub fn parse_manifest(text: &str, platform: &str) -> Result<Release, String> {
+    parse_manifest_since(text, platform, CURRENT)
+}
+
+pub fn parse_manifest_since(text: &str, platform: &str, current: &str) -> Result<Release, String> {
     let bad = || S::UpdateErrorManifest.t().to_owned();
     let doc: Json = serde_json::from_str(text).map_err(|_| bad())?;
     let version = doc["version"].as_str().map(|v| v.trim().trim_start_matches('v')).filter(|v| parse_version(v).is_some()).ok_or_else(bad)?;
@@ -45,8 +49,28 @@ pub fn parse_manifest(text: &str, platform: &str) -> Result<Release, String> {
     if !url.starts_with("https://") || base64_decode(&signature).is_none() {
         return Err(bad());
     }
-    let notes = doc["notes"].as_str().unwrap_or("").trim().to_owned();
+    let notes = release_notes(&doc, version, current);
     Ok(Release { version: version.to_owned(), notes, url, signature })
+}
+
+fn release_notes(doc: &Json, version: &str, current: &str) -> String {
+    let latest = doc["notes"].as_str().unwrap_or("").trim();
+    let mut skipped = Vec::new();
+    for entry in doc["history"].as_array().into_iter().flatten() {
+        let (Some(tag), Some(notes)) = (entry["version"].as_str(), entry["notes"].as_str()) else { continue };
+        let tag = tag.trim().trim_start_matches('v');
+        let notes = notes.trim();
+        if !notes.is_empty() && newer(tag, current) && newer(version, tag) {
+            skipped.push((tag, notes));
+        }
+    }
+    if skipped.is_empty() {
+        return latest.to_owned();
+    }
+    skipped.sort_by(|a, b| compare_versions(b.0, a.0).unwrap_or(Ordering::Equal));
+    skipped.dedup_by(|a, b| compare_versions(a.0, b.0) == Some(Ordering::Equal));
+    std::iter::once((version, latest)).chain(skipped).filter(|(_, notes)| !notes.is_empty())
+        .map(|(tag, notes)| format!("## {tag}\n\n{notes}")).collect::<Vec<_>>().join("\n\n")
 }
 
 pub fn render_manifest(version: &str, notes: &str, pub_date: &str, platforms: &[(&str, String, String)]) -> String {
@@ -79,13 +103,15 @@ fn parse_version(v: &str) -> Option<(Vec<u64>, bool)> {
 }
 
 pub fn newer(candidate: &str, current: &str) -> bool {
-    let (Some((a, a_pre)), Some((b, b_pre))) = (parse_version(candidate), parse_version(current)) else { return false };
+    compare_versions(candidate, current) == Some(Ordering::Greater)
+}
+
+fn compare_versions(candidate: &str, current: &str) -> Option<Ordering> {
+    let (a, a_pre) = parse_version(candidate)?;
+    let (b, b_pre) = parse_version(current)?;
     let n = a.len().max(b.len());
     let at = |v: &[u64], i: usize| v.get(i).copied().unwrap_or(0);
-    match (0..n).map(|i| at(&a, i).cmp(&at(&b, i))).find(|o| *o != Ordering::Equal) {
-        Some(o) => o == Ordering::Greater,
-        None => b_pre && !a_pre,
-    }
+    Some((0..n).map(|i| at(&a, i).cmp(&at(&b, i))).find(|o| *o != Ordering::Equal).unwrap_or_else(|| b_pre.cmp(&a_pre)))
 }
 
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

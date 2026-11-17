@@ -1,7 +1,7 @@
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use ed25519_compact::{PublicKey, Signature};
 use flit_core::i18n::S;
-use flit_core::update::{base64_decode, newer, parse_manifest, percent, Release, UpdateEvent, UpdateRequest, CURRENT, MANIFEST_URL, PLATFORM};
+use flit_core::update::{base64_decode, newer, parse_manifest_since, percent, Release, UpdateEvent, UpdateRequest, CURRENT, MANIFEST_URL, PLATFORM};
 use flit_platform::{Platform, PlatformError, Wake};
 use std::fs;
 use std::io;
@@ -40,7 +40,7 @@ pub fn network_allowed(metrics: bool) -> bool {
 }
 
 pub fn decide(manifest: &[u8], platform: &str, current: &str) -> Result<Option<Release>, String> {
-    let release = parse_manifest(&String::from_utf8_lossy(manifest), platform)?;
+    let release = parse_manifest_since(&String::from_utf8_lossy(manifest), platform, current)?;
     Ok(newer(&release.version, current).then_some(release))
 }
 
