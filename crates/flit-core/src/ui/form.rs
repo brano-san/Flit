@@ -176,6 +176,19 @@ impl Form {
         self.error = error;
     }
 
+    fn properties_buttons(&mut self) -> bool {
+        if !matches!(self.kind, Kind::Properties(_)) {
+            return false;
+        }
+        let want = if App::properties_edited(self) { vec![crate::i18n::S::ArchiveOk.t(), crate::i18n::S::WidgetsCancel.t()] } else { vec![crate::i18n::S::ArchiveClose.t()] };
+        if self.buttons == want {
+            return false;
+        }
+        self.buttons = want;
+        self.focus = self.focus.min(self.slots().saturating_sub(1));
+        true
+    }
+
     fn slots(&self) -> usize {
         self.controls.len() + self.buttons.len() + usize::from(matches!(self.kind, Kind::Properties(_)) && self.buttons.len() > 1)
     }
@@ -267,7 +280,14 @@ impl App {
         self.form_changed(k);
     }
 
+    pub(super) fn sync_form_buttons(&mut self) {
+        if self.jobs.form.as_mut().is_some_and(Form::properties_buttons) {
+            self.layout_form();
+        }
+    }
+
     pub(super) fn form_key(&mut self, key: Key, m: Mods) -> bool {
+        self.sync_form_buttons();
         if self.update_scroll_key(key, m) {
             return true;
         }
@@ -354,6 +374,7 @@ impl App {
         if self.jobs.form.is_none() || !self.jobs.asks.is_empty() {
             return false;
         }
+        self.sync_form_buttons();
         if let Some(f) = &self.jobs.form {
             if matches!(f.kind, Kind::Properties(_)) && !f.rect.contains(x, y) && !self.in_title(y) {
                 if button == MouseButton::Left && !App::properties_edited(f) {
@@ -479,6 +500,7 @@ impl App {
     }
 
     pub(super) fn form_a11y_invoke(&mut self, k: usize) {
+        self.sync_form_buttons();
         self.form_a11y_focus(k);
         match self.jobs.form.as_ref().and_then(|f| f.controls.get(k)) {
             Some(Control::Choice { .. }) => self.turn(k, false),
@@ -510,6 +532,7 @@ impl App {
         let sc = form_scale(w, h, self.scale);
         let s = |v: f32| (v * sc).round();
         let Some(f) = &mut self.jobs.form else { return };
+        f.properties_buttons();
         if matches!(f.kind, Kind::Update(_)) {
             f.layout_update(w, h, sc);
             return;
@@ -578,6 +601,7 @@ impl App {
         let (hover, active, pressed) = (self.hover, self.active, self.pressed);
         let mut reflow = false;
         if let Some(f) = &mut self.jobs.form {
+            reflow = f.properties_buttons();
             let width = (f.rect.w - s(62.0)).max(1.0);
             for c in &mut f.controls {
                 if let Control::Paragraph { text, lines } = c {

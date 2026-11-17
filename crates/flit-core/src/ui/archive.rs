@@ -738,6 +738,7 @@ impl App {
         self.extract_changed(k);
         self.permissions_changed(k);
         self.batch_rename_changed(k);
+        self.sync_form_buttons();
     }
 
     pub(super) fn form_submit(&mut self, b: usize) {

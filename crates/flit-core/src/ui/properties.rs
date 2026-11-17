@@ -253,7 +253,7 @@ impl App {
             Probe::Off
         };
         let (files, folders) = if paths.len() > 1 { (files, folders) } else { (0, 0) };
-        let buttons = if attr_editing.is_some() { vec![S::ArchiveOk.t(), S::WidgetsCancel.t()] } else { vec![S::ArchiveClose.t()] };
+        let buttons = vec![S::ArchiveClose.t()];
         let mut f = Form::new(Kind::Properties(Measuring { id, ctl, packed, files, folders, rows, props, probe, attrs: attr_editing }), &title, controls, buttons);
         f.say(counting, false);
         self.open_form(f);
@@ -327,7 +327,8 @@ impl App {
     }
 
     pub(super) fn properties_edited(f: &Form) -> bool {
-        matches!(&f.kind, Kind::Properties(Measuring { attrs: Some(a), .. }) if a.op(&f.controls).is_some())
+        let Kind::Properties(m) = &f.kind else { return false };
+        m.attrs.as_ref().is_some_and(|a| a.op(&f.controls).is_some()) || matches!(&m.probe, Probe::Editing(e) if !matches!(e.edit(&f.controls), Ok(None)))
     }
 
     pub(super) fn submit_properties_form(&mut self, f: Form) -> Option<Form> {
