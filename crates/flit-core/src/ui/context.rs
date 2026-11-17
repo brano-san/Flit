@@ -78,6 +78,7 @@ enum What {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Role {
     Opening,
+    ListOpening,
     Properties,
 }
 
@@ -86,7 +87,8 @@ pub(super) fn roles(cmds: &[super::menu::Cmd]) -> Vec<Option<Role>> {
     use super::sidebar::PlaceCmd;
     cmds.iter()
         .map(|c| match c {
-            Cmd::Action("item.open" | "item.open_tab" | "item.open_window") | Cmd::Place(PlaceCmd::Open(..) | PlaceCmd::OpenFile(_)) => Some(Role::Opening),
+            Cmd::Action("item.open" | "item.open_tab" | "item.open_window" | "panel.open_right" | "panel.open_bottom") => Some(Role::ListOpening),
+            Cmd::Place(PlaceCmd::Open(..) | PlaceCmd::OpenFile(_)) => Some(Role::Opening),
             Cmd::Action("item.properties") | Cmd::FolderProperties(_) | Cmd::Place(PlaceCmd::Properties(_) | PlaceCmd::FileProperties(_)) => Some(Role::Properties),
             _ => None,
         })
@@ -251,6 +253,7 @@ impl ContextMenu {
             n.hidden = !n.path.is_empty() && hidden.contains(&n.path);
         }
         let shell = if order.is_empty() { self.shell } else { None };
+        let list_opening = self.roles.contains(&Some(Role::ListOpening));
         let mut items = Vec::new();
         let (mut group, mut anchor, mut i) = (0, -1, 0);
         while i < self.nodes.len() {
@@ -265,11 +268,12 @@ impl ContextMenu {
                     let (slot, group) = match shell {
                         Some((_, Some(tail))) if i == tail => (3, group),
                         Some((from, _)) if i >= from => (1, 0),
+                        Some(_) if group == 0 && list_opening => (2, 0),
                         _ if group == 0 => (0, 0),
                         _ => (2, group),
                     };
                     let (slot, group) = match self.role(i) {
-                        Some(Role::Opening) if order.is_empty() && self.kind != MenuKind::None => (0, 0),
+                        Some(Role::Opening | Role::ListOpening) if order.is_empty() && self.kind != MenuKind::None => (0, 0),
                         Some(Role::Properties) if order.is_empty() && self.kind != MenuKind::None => (4, usize::MAX),
                         _ => (slot, group),
                     };

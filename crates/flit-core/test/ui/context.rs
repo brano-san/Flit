@@ -51,6 +51,71 @@ fn menu_labels(items: &[MenuItem]) -> Vec<&str> {
     }).collect()
 }
 
+fn show_context(app: &mut App, menu: ShellMenu, shell: Vec<MenuItem>) -> Vec<String> {
+    let now = Instant::now();
+    let pending = !shell.is_empty();
+    app.on_event(&Event::ShowMenu { items: menu.menu, x: menu.x, y: menu.y, launches: Vec::new(), kind: menu.kind, shell: Vec::new(), pending }, now);
+    if pending {
+        app.on_event(&Event::ShellItems { items: shell, shell: vec![1, 2] }, now);
+    }
+    harness::frame(app);
+    app.context_menu_open().unwrap().labels()
+}
+
+#[test]
+fn opening_and_editing_share_the_first_block_for_files_and_folders() {
+    for unix_paths in [true, false] {
+        for name in [b"file.txt".as_slice(), b"folder".as_slice()] {
+            let mut app = file_list(unix_paths);
+            let at = row_for(&app, name);
+            let menu = right_click(&mut app, at);
+            let shell = if unix_paths {
+                Vec::new()
+            } else {
+                vec![MenuItem::Submenu { label: S::MenuOpenWith.t().to_owned(), items: vec![cmd("Editor")] }, cmd("Shell extension")]
+            };
+            let folder = menu.kind == MenuKind::Folder;
+            let labels = show_context(&mut app, menu, shell);
+            let mut expected = vec![S::MenuOpen.t().to_owned()];
+            if folder {
+                expected.push(format!("{} >", S::MenuOpenIn.t()));
+            }
+            if !unix_paths {
+                expected.extend([format!("{} >", S::MenuOpenWith.t()), "Shell extension".to_owned()]);
+            }
+            expected.extend([S::MenuCut, S::MenuCopy].map(|s| s.t().to_owned()));
+            if folder {
+                expected.push(S::MenuPaste.t().to_owned());
+            }
+            expected.push(if unix_paths { S::MenuCopyPath } else { S::MenuCopyAsPath }.t().to_owned());
+            expected.extend([S::MenuCreateShortcut, S::MenuRename, S::MenuDelete].map(|s| s.t().to_owned()));
+            expected.push("-".to_owned());
+            assert!(labels.starts_with(&expected), "{labels:?}");
+        }
+    }
+}
+
+#[test]
+fn saved_menu_order_hidden_items_and_custom_action_keep_their_editor_rows() {
+    let mut app = file_list(true);
+    let settings = serde_json::json!({
+        "menu.order_file": ["Inspect", S::MenuOpen.t(), S::MenuCopy.t(), S::MenuProperties.t()],
+        "menu.hidden_file": [S::MenuRename.t()],
+        "menu.custom": [{ "name": "Inspect", "command": "inspect {path}" }]
+    });
+    app.apply_doc(&crate::ui::settings::parse(&settings.to_string()));
+    let at = row_for(&app, b"file.txt");
+    let menu = right_click(&mut app, at);
+    let labels = show_context(&mut app, menu, Vec::new());
+    assert_eq!(labels[..3], ["Inspect", "-", S::MenuOpen.t()]);
+    assert!(!labels.iter().any(|label| label == S::MenuRename.t()));
+    let editor = app.menu_rows();
+    assert_eq!(editor[0].label(), "Inspect");
+    let position = |label| editor.iter().position(|row| row.label() == label).unwrap();
+    assert!(position(S::MenuOpen.t()) < position(S::MenuCopy.t()));
+    assert!(editor[position(S::MenuRename.t())].hidden);
+}
+
 #[test]
 fn right_clicks_on_a_file_folder_and_background_request_distinct_menus() {
     for unix_paths in [true, false] {
