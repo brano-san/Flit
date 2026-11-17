@@ -73,16 +73,21 @@ fn flags(app: &App) -> Option<Vec<(String, bool)>> {
 
 fn set_flags(app: &mut App, on: &[bool]) {
     let f = app.jobs.form.as_mut().unwrap();
-    let Some(Control::Flags { items, .. }) = f.controls.iter_mut().find(|c| matches!(c, Control::Flags { .. })) else { panic!("no attribute flags") };
+    let k = f.controls.iter().position(|c| matches!(c, Control::Flags { .. })).expect("no attribute flags");
+    let Control::Flags { items, .. } = &mut f.controls[k] else { unreachable!() };
     for ((_, now), &want) in items.iter_mut().zip(on) {
         *now = want;
     }
+    app.form_changed(k);
 }
 
 fn check_unblock(app: &mut App) {
     let f = app.jobs.form.as_mut().unwrap();
-    let Some(Control::Check { on, .. }) = f.controls.iter_mut().find(|c| matches!(c, Control::Check { label, .. } if label == S::PropertiesUnblock.t())) else { panic!("no unblock box") };
-    *on = true;
+    let k = f.controls.iter().position(|c| matches!(c, Control::Check { label, .. } if label == S::PropertiesUnblock.t())).expect("no unblock box");
+    if let Control::Check { on, .. } = &mut f.controls[k] {
+        *on = true;
+    }
+    app.form_changed(k);
 }
 
 fn file_ops(app: &mut App) -> Vec<FileOp> {
@@ -106,9 +111,10 @@ fn a_file_shows_read_only_and_hidden_boxes_and_ok_changes_only_what_was_ticked()
     app.properties_dialog();
     assert_eq!(flags(&app), Some(vec![(S::PropertiesReadOnly.t().to_owned(), true), (S::PropertiesHidden.t().to_owned(), false)]));
     assert!(app.jobs.form.as_ref().unwrap().controls.iter().any(|c| matches!(c, Control::Value { value, .. } if value == S::PropertiesCompressed.t())), "other attributes are still listed");
-    assert_eq!(app.jobs.form.as_ref().unwrap().buttons.len(), 2);
+    assert_eq!(app.jobs.form.as_ref().unwrap().buttons, [S::ArchiveClose.t()], "nothing changed yet, so only Close is offered");
     app.drain_effects().for_each(drop);
     set_flags(&mut app, &[false, true]);
+    assert_eq!(app.jobs.form.as_ref().unwrap().buttons, [S::ArchiveOk.t(), S::WidgetsCancel.t()]);
     app.form_submit(0);
     assert_eq!(file_ops(&mut app), [FileOp::SetAttributes { items: vec![FsPath::parse(r"C:\work\a.txt").unwrap()], set: attr::HIDDEN, clear: attr::READONLY, unblock: false }]);
     assert_eq!(app.asking(), None);
@@ -382,4 +388,26 @@ fn async_dates_update_existing_rows_without_duplicates_or_shifting_measurement_t
     assert_eq!(value(&app, S::PropertiesFileSystem).as_deref(), Some("ext4"));
     assert_eq!(value(&app, S::PropertiesCreated).as_deref(), Some("native creation date"));
     assert_eq!(value(&app, S::PropertiesChanged).as_deref(), Some("native metadata date"));
+}
+
+#[test]
+fn unchanged_properties_offer_one_close_and_ok_with_cancel_appear_only_while_something_is_changed() {
+    let mut app = app_at(r"C:\work");
+    deliver(&mut app, &[("a.txt", 0, 5)]);
+    select(&mut app, &["a.txt"]);
+    app.properties_dialog();
+    app.layout();
+    let f = app.jobs.form.as_ref().unwrap();
+    assert_eq!(f.buttons, [S::ArchiveClose.t()]);
+    assert_eq!(f.button_rects, [f.close_rect], "the only way out is the header close, not a second button below");
+    set_flags(&mut app, &[true, false]);
+    let f = app.jobs.form.as_ref().unwrap();
+    assert_eq!(f.buttons, [S::ArchiveOk.t(), S::WidgetsCancel.t()]);
+    assert!(f.button_rects.iter().all(|r| *r != f.close_rect && r.y > f.close_rect.y), "OK and Cancel sit at the bottom");
+    set_flags(&mut app, &[false, false]);
+    assert_eq!(app.jobs.form.as_ref().unwrap().buttons, [S::ArchiveClose.t()], "undoing the change brings back the single Close");
+    app.drain_effects().for_each(drop);
+    app.form_key(Key::Enter, Mods::default());
+    assert!(app.jobs.form.is_none());
+    assert!(file_ops(&mut app).is_empty(), "closing an unchanged dialog changes nothing");
 }

@@ -254,3 +254,31 @@ fn the_four_script_buttons_fit_a_narrow_window_without_overlapping() {
     assert!(f.button_rects.iter().all(|b| b.x >= f.rect.x && b.right() <= f.rect.right() && b.w > 0.0), "{:?} in {:?}", f.button_rects, f.rect);
     assert!(f.button_rects.windows(2).all(|w| w[0].right() <= w[1].x), "{:?}", f.button_rects);
 }
+
+#[test]
+fn permissions_show_ok_and_cancel_only_once_changed_and_a_stray_click_keeps_the_change() {
+    let mut app = app_with(&["notes"]);
+    app.tab_mut().view.as_mut().unwrap().set_selected(0, true);
+    app.properties_dialog();
+    let id = app.drain_effects().find_map(|e| if let Effect::Provider { req: ProviderRequest::Access { id, .. }, .. } = e { Some(id) } else { None }).unwrap();
+    let tab = app.tab().id;
+    let accounts = Accounts { users: vec![(1000, "u".into())], groups: vec![(1000, "u".into())] };
+    app.on_provider_event(ProviderEvent::Access { tab, id, items: vec![Some(Access { mode: Access::FILE | 0o644, uid: 1000, gid: 1000 })], accounts }, Instant::now());
+    app.layout();
+    assert_eq!(app.jobs.form.as_ref().unwrap().buttons, [S::ArchiveClose.t()], "reading the permissions alone changes nothing");
+    let f = app.jobs.form.as_mut().unwrap();
+    let Kind::Properties(Measuring { probe: Probe::Editing(e), .. }) = &f.kind else { panic!("no permissions section") };
+    let group = e.at + 2;
+    if let Control::Flags { items, .. } = &mut f.controls[group] {
+        items[1].1 = true;
+    }
+    app.form_changed(group);
+    assert_eq!(app.jobs.form.as_ref().unwrap().buttons, [S::ArchiveOk.t(), S::WidgetsCancel.t()]);
+    app.drain_effects().for_each(drop);
+    app.form_down(1.0, 100.0, crate::input::MouseButton::Left, 1, Instant::now());
+    assert!(app.jobs.form.is_some(), "a click beside the dialog does not throw away changed permissions");
+    assert!(ops(&mut app).is_empty());
+    key(&mut app, Key::Escape);
+    assert!(app.jobs.form.is_none());
+    assert!(ops(&mut app).is_empty(), "Escape cancels the change");
+}

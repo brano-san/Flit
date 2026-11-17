@@ -119,7 +119,7 @@ impl Editing {
         self.enclosed_files_at().map(|at| at + 4)
     }
 
-    fn edit(&self, controls: &[Control]) -> Result<Option<AccessEdit>, String> {
+    pub(super) fn edit(&self, controls: &[Control]) -> Result<Option<AccessEdit>, String> {
         let mode = ModeEdit::between(self.shown, bits(controls, self.at));
         let owner = account(text(controls, self.owner_at()), &self.owner, &self.accounts.users, S::PermissionsNoUser)?;
         let group = account(text(controls, self.group_at()), &self.group, &self.accounts.groups, S::PermissionsNoGroup)?;
@@ -187,7 +187,7 @@ pub(super) fn held_rows(probe: &mut Probe, controls: &mut Vec<Control>, focus: &
 impl App {
     pub(super) fn properties_access(&mut self, id: OpId, found: Vec<Option<Access>>, accounts: Accounts) {
         let Some(f) = &mut self.jobs.form else { return };
-        let Form { kind: Kind::Properties(m), controls, buttons, focus, .. } = f else { return };
+        let Form { kind: Kind::Properties(m), controls, focus, .. } = f else { return };
         if m.id != id {
             return;
         }
@@ -199,7 +199,6 @@ impl App {
                     *focus += added.len();
                 }
                 controls.extend(added);
-                *buttons = vec![S::ArchiveOk.t(), S::WidgetsCancel.t()];
                 m.probe = Probe::Editing(editing);
             }
             None => controls.extend(held.iter().map(|(k, v)| Control::value(k, v))),
