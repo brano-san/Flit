@@ -19,44 +19,9 @@ pub type Payload = Arc<crate::clipboard::Payload>;
 
 #[derive(Default)]
 pub struct State {
-    serial: Option<u32>,
+    input: Option<(WlSeat, u32)>,
     seats: Vec<(WlSeat, bool, bool)>,
     sources: Vec<WlDataSource>,
-    offers: Offers,
-}
-
-#[derive(Default, Debug)]
-pub struct Offers {
-    live: Vec<(u32, bool)>,
-    changed: Option<bool>,
-}
-
-impl Offers {
-    pub fn made(&mut self, id: u32) {
-        self.forget(id);
-        self.live.push((id, false));
-    }
-
-    pub fn offered(&mut self, id: u32, mime: &str) {
-        if let Some(o) = self.live.iter_mut().find(|o| o.0 == id).filter(|_| crate::clipboard::is_text(mime)) {
-            o.1 = true;
-        }
-    }
-
-    pub fn selected(&mut self, id: Option<u32>) {
-        self.changed = Some(id.and_then(|id| self.live.iter().find(|o| o.0 == id)).is_some_and(|o| o.1));
-        if let Some(id) = id {
-            self.forget(id);
-        }
-    }
-
-    pub fn forget(&mut self, id: u32) {
-        self.live.retain(|o| o.0 != id);
-    }
-
-    pub fn take(&mut self) -> Option<bool> {
-        self.changed.take()
-    }
 }
 
 pub struct Wl {
@@ -64,7 +29,6 @@ pub struct Wl {
     queue: EventQueue<State>,
     state: State,
     manager: Option<WlDataDeviceManager>,
-    devices: Vec<WlDataDevice>,
     activation: Option<XdgActivationV1>,
 }
 
@@ -76,14 +40,13 @@ impl Wl {
         let conn = Connection::from_backend(unsafe { Backend::from_foreign_display(display.cast()) });
         let (globals, mut queue) = registry_queue_init::<State>(&conn).ok()?;
         let qh = queue.handle();
-        let manager = globals.bind::<WlDataDeviceManager, _, _>(&qh, 1..=3, ()).ok();
+        let manager = globals.bind::<WlDataDeviceManager, _, _>(&qh, 2..=3, ()).ok();
         let activation = globals.bind::<XdgActivationV1, _, _>(&qh, 1..=1, ()).ok();
         let mut state = State::default();
         let seats = globals.contents().with_list(|list| list.iter().filter(|g| g.interface == WlSeat::interface().name).map(|g| (g.name, g.version.min(5))).collect::<Vec<_>>());
         state.seats = seats.into_iter().map(|(name, version)| (globals.registry().bind::<WlSeat, _, _>(name, version, &qh, ()), false, false)).collect();
-        let devices = manager.as_ref().map(|m| state.seats.iter().map(|(seat, ..)| m.get_data_device(seat, &qh, ())).collect()).unwrap_or_default();
         queue.roundtrip(&mut state).ok()?;
-        Some(Self { conn, queue, state, manager, devices, activation })
+        Some(Self { conn, queue, state, manager, activation })
     }
 
     pub fn pump(&mut self) {
@@ -92,26 +55,36 @@ impl Wl {
         }
     }
 
-    pub fn clipboard_text_changed(&mut self) -> Option<bool> {
-        self.state.offers.take()
-    }
-
     pub fn set_selection(&mut self, payload: Payload) -> bool {
         self.pump();
-        let (Some(manager), Some(serial)) = (&self.manager, self.state.serial) else { return false };
-        if self.devices.is_empty() {
-            return false;
-        }
+        let (Some(manager), Some((seat, serial))) = (&self.manager, &self.state.input) else { return false };
         let qh = self.queue.handle();
         let source = manager.create_data_source(&qh, payload.clone());
         for (mime, _) in payload.iter() {
             source.offer(mime.clone());
         }
-        for device in &self.devices {
-            device.set_selection(Some(&source), serial);
+        // Some compositors deliver drag offers only to the most recently bound device.
+        // Bind briefly to publish the custom clipboard formats, then leave DnD to winit.
+        let device = manager.get_data_device(seat, &qh, ());
+        device.set_selection(Some(&source), *serial);
+        // Send release without destroying the proxy until the server has delivered
+        // any pending data_offer events, which create child objects on this queue.
+        use wayland_sys::client::wayland_client_handle;
+        // SAFETY: device is a live libwayland proxy bound at version >= 2.
+        // The release request takes no arguments and is sent exactly once.
+        unsafe {
+            wayland_sys::ffi_dispatch!(
+                wayland_client_handle(),
+                wl_proxy_marshal_array,
+                device.id().as_ptr().cast(),
+                wl_data_device::REQ_RELEASE_OPCODE.into(),
+                std::ptr::null_mut(),
+            );
         }
         self.state.sources.push(source);
-        self.conn.flush().is_ok()
+        let delivered = self.queue.roundtrip(&mut self.state).is_ok();
+        let _ = self.conn.backend().destroy_object(&device.id());
+        delivered
     }
 
     pub fn activate(&self, surface: *mut c_void, token: &str) -> bool {
@@ -132,29 +105,29 @@ impl Dispatch<WlSeat, ()> for State {
         let wl_seat::Event::Capabilities { capabilities: WEnum::Value(caps) } = event else { return };
         let Some((_, keyboard, pointer)) = state.seats.iter_mut().find(|(s, ..)| s == seat) else { return };
         if caps.contains(wl_seat::Capability::Keyboard) && !*keyboard {
-            seat.get_keyboard(qh, ());
+            seat.get_keyboard(qh, seat.clone());
             *keyboard = true;
         }
         if caps.contains(wl_seat::Capability::Pointer) && !*pointer {
-            seat.get_pointer(qh, ());
+            seat.get_pointer(qh, seat.clone());
             *pointer = true;
         }
     }
 }
 
-impl Dispatch<WlKeyboard, ()> for State {
-    fn event(state: &mut Self, _: &WlKeyboard, event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+impl Dispatch<WlKeyboard, WlSeat> for State {
+    fn event(state: &mut Self, _: &WlKeyboard, event: wl_keyboard::Event, seat: &WlSeat, _: &Connection, _: &QueueHandle<Self>) {
         match event {
-            wl_keyboard::Event::Enter { serial, .. } | wl_keyboard::Event::Key { serial, .. } => state.serial = Some(serial),
+            wl_keyboard::Event::Enter { serial, .. } | wl_keyboard::Event::Key { serial, .. } => state.input = Some((seat.clone(), serial)),
             _ => {}
         }
     }
 }
 
-impl Dispatch<WlPointer, ()> for State {
-    fn event(state: &mut Self, _: &WlPointer, event: wl_pointer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+impl Dispatch<WlPointer, WlSeat> for State {
+    fn event(state: &mut Self, _: &WlPointer, event: wl_pointer::Event, seat: &WlSeat, _: &Connection, _: &QueueHandle<Self>) {
         if let wl_pointer::Event::Button { serial, .. } = event {
-            state.serial = Some(serial);
+            state.input = Some((seat.clone(), serial));
         }
     }
 }
@@ -164,19 +137,9 @@ impl Dispatch<WlDataDeviceManager, ()> for State {
 }
 
 impl Dispatch<WlDataDevice, ()> for State {
-    fn event(state: &mut Self, _: &WlDataDevice, event: wl_data_device::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
-        match event {
-            wl_data_device::Event::DataOffer { id } => state.offers.made(id.id().protocol_id()),
-            wl_data_device::Event::Selection { id: Some(offer) } => {
-                state.offers.selected(Some(offer.id().protocol_id()));
-                offer.destroy();
-            }
-            wl_data_device::Event::Selection { id: None } => state.offers.selected(None),
-            wl_data_device::Event::Enter { id: Some(offer), .. } => {
-                state.offers.forget(offer.id().protocol_id());
-                offer.destroy();
-            }
-            _ => {}
+    fn event(_: &mut Self, _: &WlDataDevice, event: wl_data_device::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        if let wl_data_device::Event::Selection { id: Some(offer) } | wl_data_device::Event::Enter { id: Some(offer), .. } = event {
+            offer.destroy();
         }
     }
 
@@ -184,11 +147,7 @@ impl Dispatch<WlDataDevice, ()> for State {
 }
 
 impl Dispatch<WlDataOffer, ()> for State {
-    fn event(state: &mut Self, offer: &WlDataOffer, event: <WlDataOffer as Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
-        if let wl_data_offer::Event::Offer { mime_type } = event {
-            state.offers.offered(offer.id().protocol_id(), &mime_type);
-        }
-    }
+    fn event(_: &mut Self, _: &WlDataOffer, _: wl_data_offer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
 }
 
 impl Dispatch<WlDataSource, Payload> for State {

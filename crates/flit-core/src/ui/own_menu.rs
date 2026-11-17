@@ -325,7 +325,7 @@ impl App {
     fn close_own_menu(&mut self) {
         self.release_shell_menu();
         self.own_menu = None;
-        self.confirm = None;
+        self.dismiss_confirm();
         self.dirty = true;
     }
 

@@ -383,12 +383,22 @@ pub fn open_question(path: &Path, entries: &[crate::apps::Entry], assoc: &crate:
     crate::apps::handlers_by_lineage(&mime, entries, assoc, crate::mime::parents).is_empty().then(|| OpenAsk::NoApp { mime, apps: crate::apps::choices(entries) })
 }
 
-fn open_without_xdg_open(path: &Path) -> Option<Result<(), PlatformError>> {
+fn empty_text_document(path: &Path) -> bool {
+    path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("txt"))
+        && std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.len() == 0)
+}
+
+fn file_handler<'a>(mime: &str, entries: &'a [crate::apps::Entry], assoc: &crate::apps::Assoc, configured_only: bool) -> Option<&'a crate::apps::Entry> {
+    crate::apps::handlers_by_lineage(mime, entries, assoc, crate::mime::parents).into_iter()
+        .find(|app| !configured_only || assoc.defaults.get(mime).is_some_and(|ids| ids.contains(&app.id)))
+}
+
+fn open_with_mime_handler(path: &Path, configured_only: bool) -> Option<Result<(), PlatformError>> {
     let c = crate::apps::catalog();
     let mime = crate::mime::mime_of_file(path);
-    let app = crate::apps::handlers_by_lineage(&mime, &c.entries, &c.assoc, crate::mime::parents).first().map(|e| e.path.clone())?;
+    let app = &file_handler(&mime, &c.entries, &c.assoc, configured_only)?.path;
     let token = crate::window::activation_token();
-    Some(crate::apps::launch(&app, &[path.to_path_buf()], token.as_deref()).map_err(|e| spawn_error(&app.display().to_string(), &e)))
+    Some(crate::apps::launch(app, &[path.to_path_buf()], token.as_deref()).map_err(|e| spawn_error(&app.display().to_string(), &e)))
 }
 
 fn run_command(argv: &[String], env: &[(String, String)], dir: Option<&Path>) -> Result<(), PlatformError> {
@@ -737,7 +747,8 @@ impl Shell for LinuxShell {
             return done;
         }
         let missing = on_path(OsStr::new("xdg-open")).is_none();
-        let done = missing.then(|| open_without_xdg_open(p)).flatten().unwrap_or_else(|| xdg_open(os(path)));
+        // Some xdg-open backends dispatch empty documents as inode/x-empty.
+        let done = (missing || empty_text_document(p)).then(|| open_with_mime_handler(p, !missing)).flatten().unwrap_or_else(|| xdg_open(os(path)));
         if done.is_ok() {
             crate::places::remember_recent(vec![p.to_path_buf()]);
         }

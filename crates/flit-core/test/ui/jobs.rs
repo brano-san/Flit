@@ -530,7 +530,9 @@ fn closing_a_window_with_running_operations_asks_and_cancels_them_only_when_told
     assert_eq!((c.question.as_str(), c.yes.as_str()), ("2 operations are still running", "Cancel and close"));
     assert!(!closes(&mut app) && !a.is_cancelled());
     click(&mut app, |a| a.confirm.as_ref().unwrap().buttons[1]);
-    assert!(app.confirm.is_none() && !closes(&mut app) && !a.is_cancelled() && !b.is_cancelled(), "Keep window open leaves everything running");
+    let commands: Vec<_> = app.drain_effects().filter_map(|e| if let Effect::Window(cmd) = e { Some(cmd) } else { None }).collect();
+    assert_eq!(commands, [WindowCmd::KeepOpen]);
+    assert!(app.confirm.is_none() && !a.is_cancelled() && !b.is_cancelled(), "Keep window open leaves everything running");
 
     finish(&mut app, first, None);
     app.run_action("window.close", t0());

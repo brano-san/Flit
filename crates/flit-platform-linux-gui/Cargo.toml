@@ -29,6 +29,7 @@ jpeg-decoder = "0.3"
 image-webp = "0.2"
 x11rb = { version = "0.14", default-features = false, features = ["allow-unsafe-code", "dl-libxcb", "xfixes"] }
 wayland-client = "0.31"
+wayland-sys = { version = "0.31", features = ["client", "dlopen"] }
 wayland-backend = { version = "0.3", default-features = false, features = ["client_system"] }
 wayland-protocols = { version = "0.32", default-features = false, features = ["client", "staging"] }
 [target.'cfg(target_os = "linux")'.dev-dependencies]

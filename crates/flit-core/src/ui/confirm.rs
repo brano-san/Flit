@@ -91,21 +91,30 @@ impl App {
     }
 
     fn finish_confirm(&mut self, yes: bool, now: Instant) {
+        if !yes {
+            return self.dismiss_confirm();
+        }
         let Some(c) = self.confirm.take() else { return };
         self.dirty = true;
-        if yes {
-            match c.then {
-                Confirmed::Unpin(loc) => self.unpin(loc, now),
-                Confirmed::Pin(kind, key, pin) => self.set_pin(kind, key, pin),
-                Confirmed::Close => {
-                    self.cancel_ops();
-                    self.effects.push(super::Effect::Window(super::WindowCmd::Close));
-                }
-                Confirmed::Quit => {
-                    self.cancel_ops();
-                    self.effects.push(super::Effect::Window(super::WindowCmd::Quit));
-                }
+        match c.then {
+            Confirmed::Unpin(loc) => self.unpin(loc, now),
+            Confirmed::Pin(kind, key, pin) => self.set_pin(kind, key, pin),
+            Confirmed::Close => {
+                self.cancel_ops();
+                self.effects.push(super::Effect::Window(super::WindowCmd::Close));
             }
+            Confirmed::Quit => {
+                self.cancel_ops();
+                self.effects.push(super::Effect::Window(super::WindowCmd::Quit));
+            }
+        }
+    }
+
+    pub(super) fn dismiss_confirm(&mut self) {
+        let Some(c) = self.confirm.take() else { return };
+        self.dirty = true;
+        if matches!(c.then, Confirmed::Close | Confirmed::Quit) {
+            self.effects.push(super::Effect::Window(super::WindowCmd::KeepOpen));
         }
     }
 

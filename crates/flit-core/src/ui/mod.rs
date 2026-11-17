@@ -357,6 +357,7 @@ pub enum WindowCmd {
     ToggleMaximize,
     Close,
     Quit,
+    KeepOpen,
     Fullscreen,
     Compact(Option<bool>),
     Attention,

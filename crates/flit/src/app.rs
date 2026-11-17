@@ -370,6 +370,7 @@ struct Handler<P: Platform> {
     restarting: bool,
     awake: KeepAwake,
     quitting: std::collections::HashSet<WindowId>,
+    quit_session: Option<Session>,
     jumps: JumpList,
 }
 
@@ -503,7 +504,7 @@ impl<P: Platform> Handler<P> {
     }
 
     fn note_session(&mut self, window: &Win<P>) {
-        let Some(st) = self.windows.get_mut(&window.id()).filter(|_| self.writer.is_some() && !self.ending) else { return };
+        let Some(st) = self.windows.get_mut(&window.id()).filter(|_| self.writer.is_some() && !self.ending && self.quit_session.is_none()) else { return };
         let rev = st.app.session_rev();
         if rev == st.session_rev {
             return;
@@ -653,9 +654,11 @@ impl<P: Platform> Handler<P> {
                     }
                 }
                 Effect::Window(WindowCmd::Quit) => {
+                    let snapshot = self.session();
                     if let Some(w) = self.writer.as_ref().filter(|_| cfg!(not(windows))) {
-                        w.flush(self.session());
+                        w.flush(snapshot.clone());
                     }
+                    self.quit_session = Some(snapshot);
                     self.quitting = self.windows.keys().filter(|&&w| w != id).copied().collect();
                     (self.wake)();
                     if let Some(st) = self.windows.get(&id) {
@@ -664,13 +667,20 @@ impl<P: Platform> Handler<P> {
                     window.close();
                 }
                 Effect::Window(WindowCmd::Close) => {
-                    if let Some(w) = self.writer.as_ref().filter(|_| cfg!(not(windows))) {
+                    if let Some(w) = self.writer.as_ref().filter(|_| cfg!(not(windows)) && self.quit_session.is_none()) {
                         if self.windows.len() <= 1 { w.flush(self.session()) } else { w.send(self.session()) }
                     }
                     if let Some(st) = self.windows.get(&id) {
                         self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state()).with_pane(st.app.pane_state()).with_side(st.app.nav_prefs()).with_tools(tools(&st.app));
                     }
                     window.close();
+                }
+                Effect::Window(WindowCmd::KeepOpen) => {
+                    if self.quit_session.take().is_some() {
+                        if let Some(w) = &self.writer {
+                            w.send(self.session());
+                        }
+                    }
                 }
                 Effect::Cursor(c) => window.set_cursor(c),
                 Effect::Title(t) => {
@@ -1118,6 +1128,10 @@ impl<P: Platform> Handler<P> {
         let now = Instant::now();
         for mut o in mine {
             if o.is_empty() {
+                // A bare Linux launcher activation raises the existing session.
+                if P::caps().unix_paths && o.target == OpenTarget::Default {
+                    continue;
+                }
                 o.paths.push(Location::from_local(P::home()).to_bytes());
             }
             st.app.open(&o, &P::known_folder, now);
@@ -1250,6 +1264,7 @@ impl<P: Platform> Handler<P> {
 
 impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
     fn created(&mut self, window: &Win<P>) {
+        self.quit_session = None;
         let mut app = match self.pending.pop_front() {
             Some(app) => app,
             None => {
@@ -1298,7 +1313,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
             if let Some(st) = self.windows.get_mut(&id) {
                 st.placement = Some(window.placement());
             }
-            let s = self.session();
+            let s = self.quit_session.take().unwrap_or_else(|| self.session());
             self.final_session(Some(s));
             self.ending = true;
         }
@@ -1386,13 +1401,14 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
             if self.queued_opens.is_empty() {
                 state::save::<P>(&self.saved);
                 self.settings.finish();
-                self.final_session(last.filter(|_| !self.ending));
+                let snapshot = self.quit_session.take().or(last);
+                self.final_session(snapshot.filter(|_| !self.ending));
                 self.local.wait_idle(OPS_GRACE);
             } else {
                 *self.sink.lock().unwrap_or_else(|e| e.into_inner()) = tx;
                 window.open_window(WindowOptions { title: "Flit".into(), placement: self.saved.placement(), dark: window.is_dark_mode() });
             }
-        } else if let Some(w) = self.writer.as_ref().filter(|_| !self.ending) {
+        } else if let Some(w) = self.writer.as_ref().filter(|_| !self.ending && self.quit_session.is_none()) {
             w.send(self.session());
         }
     }
@@ -1536,6 +1552,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         restarting: false,
         awake: KeepAwake::default(),
         quitting: Default::default(),
+        quit_session: None,
         jumps: JumpList::start::<P>(integrate),
     };
     h.jumps.show(jumps::lists(&saved.nav, &saved.side));

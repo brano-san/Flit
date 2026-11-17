@@ -892,7 +892,7 @@ impl WindowSystem for LinuxWindows {
 
     fn run<H: WindowHandler<Self>>(mut self, first: WindowOptions, handler: H) -> Result<(), PlatformError> {
         let commands: Commands = Rc::new(RefCell::new(vec![Command::Open(first)]));
-        let mut app = Loop { handler, nodes: Vec::new(), commands, targets: Rc::new(RefCell::new(TabWindows::new())), pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None, clip_text: None, watching: false, outgoing: None };
+        let mut app = Loop { handler, nodes: Vec::new(), commands, targets: Rc::new(RefCell::new(TabWindows::new())), pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None, clip_text: None, wayland_selection: None, watching: false, outgoing: None };
         LOOP_RUNNING.store(true, Ordering::Release);
         let ran = self.event_loop.run_app_on_demand(&mut app);
         LOOP_RUNNING.store(false, Ordering::Release);
@@ -925,6 +925,7 @@ struct Loop<H> {
     verify: Option<(Instant, Unverified)>,
     reading: Option<Reading>,
     clip_text: Option<bool>,
+    wayland_selection: Option<DataTransferId>,
     watching: bool,
     outgoing: Option<DataTransferId>,
 }
@@ -1748,11 +1749,17 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
     fn about_to_wait(&mut self, el: &dyn ActiveEventLoop) {
         TURNS.fetch_add(1, Ordering::AcqRel);
         self.targets.borrow().release();
-        let text = self.wl.as_mut().and_then(|wl| {
+        if let Some(wl) = self.wl.as_mut() {
             wl.pump();
-            wl.clipboard_text_changed()
-        });
-        self.clipboard_text(text);
+            if let Ok(id) = el.clipboard() {
+                if self.clip_text.is_none() || self.wayland_selection != id {
+                    self.wayland_selection = id;
+                    let text = id.and_then(|id| el.data_transfer(id).ok()).is_some_and(|data|
+                        data.available_types().into_iter().any(|ty| type_name(ty).is_some_and(|name| crate::clipboard::is_text(&name))));
+                    self.clipboard_text(Some(text));
+                }
+            }
+        }
         self.verify_copy(el);
         self.fire_timers();
         self.settle(el);

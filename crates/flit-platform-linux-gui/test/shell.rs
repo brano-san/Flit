@@ -503,6 +503,29 @@ fn an_executable_script_asks_before_running_and_a_file_without_an_app_offers_the
 }
 
 #[test]
+fn empty_text_documents_use_the_configured_editor_before_desktop_mime_detection() {
+    let t = Temp::new("empty-text");
+    let file = t.file("Blank.TXT", 0);
+    assert!(empty_text_document(&file));
+    assert!(!empty_text_document(&t.file("ordinary.txt", 3)));
+    assert!(!empty_text_document(&t.file("unknown", 0)));
+    let dir = t.path().join("folder.txt");
+    std::fs::create_dir(&dir).unwrap();
+    assert!(!empty_text_document(&dir));
+
+    let editor = text_editor();
+    let other = crate::apps::Entry { id: "other.desktop".into(), ..editor.clone() };
+    let entries = [other, editor];
+    let mut assoc = crate::apps::Assoc::default();
+    let mime = crate::mime::mime_of_file(&file);
+    assert_eq!(mime, "text/plain");
+    assert!(file_handler(&mime, &entries, &assoc, true).is_none());
+    assert_eq!(file_handler(&mime, &entries, &assoc, false), Some(&entries[0]));
+    crate::apps::parse_mimeapps("[Default Applications]\ntext/plain=missing.desktop;editor.desktop;\n", &mut assoc);
+    assert_eq!(file_handler(&mime, &entries, &assoc, true), Some(&entries[1]));
+}
+
+#[test]
 fn ordinary_files_open_without_questions() {
     let t = Temp::new("open-plain");
     let entries = [text_editor()];
