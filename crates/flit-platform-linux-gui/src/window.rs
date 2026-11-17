@@ -413,6 +413,19 @@ impl TabWindows {
     }
 }
 
+fn ends_menu_wait(event: &WindowEvent) -> bool {
+    use winit::keyboard::{Key as Logical, NamedKey};
+    match event {
+        WindowEvent::Focused(false) => true,
+        WindowEvent::PointerButton { state: ElementState::Pressed, .. } => true,
+        WindowEvent::KeyboardInput { event, .. } => {
+            let modifier = matches!(event.logical_key, Logical::Named(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::AltGraph | NamedKey::Meta | NamedKey::CapsLock | NamedKey::NumLock));
+            event.state == ElementState::Pressed && !event.repeat && !modifier
+        }
+        _ => false,
+    }
+}
+
 #[derive(Default)]
 struct MenuReplies(RefCell<Option<mpsc::Receiver<Event>>>);
 
@@ -421,6 +434,10 @@ impl MenuReplies {
         let (send, receive) = mpsc::channel();
         self.0.replace(Some(receive));
         send
+    }
+
+    fn cancel(&self) {
+        self.0.replace(None);
     }
 
     fn ready(&self) -> Option<Event> {
@@ -1549,6 +1566,9 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
     fn dispatch(&mut self, i: usize, event: WindowEvent) {
         let (handler, node) = (&mut self.handler, &mut self.nodes[i]);
         let w = &node.window;
+        if ends_menu_wait(&event) {
+            w.menu_replies.cancel();
+        }
         match event {
             WindowEvent::RedrawRequested => {
                 handler.redraw(w);

@@ -196,3 +196,39 @@ fn kde_globals_without_an_accent_keep_the_accent_from_the_portal() {
     assert_eq!(kde_accent_change("[General]\nAccentColor=218,68,83\n", Some(blue)), Some(Some(red)));
     assert_eq!(kde_accent_change("[General]\nAccentColor=218,68,83\n", None), Some(Some(red)));
 }
+
+fn pointer(state: ElementState, button: ButtonSource) -> WindowEvent {
+    WindowEvent::PointerButton { device_id: None, primary: true, state, position: (5.0, 5.0).into(), button, is_macos_activation_click: false }
+}
+
+fn after(replies: &MenuReplies, event: &WindowEvent) {
+    if ends_menu_wait(event) {
+        replies.cancel();
+    }
+}
+
+#[test]
+fn a_file_menu_that_finishes_after_another_click_or_leaving_the_window_never_opens() {
+    for interrupt in [pointer(ElementState::Pressed, ButtonSource::Mouse(winit::event::MouseButton::Left)), pointer(ElementState::Pressed, ButtonSource::Mouse(winit::event::MouseButton::Right)), WindowEvent::Focused(false)] {
+        let replies = MenuReplies::default();
+        let file = replies.begin();
+        after(&replies, &interrupt);
+        let _ = file.send(context_reply(MenuKind::File, S::MenuOpenWith));
+        assert!(replies.ready().is_none(), "{interrupt:?} ends the wait, so the old file menu cannot pop up over what came next");
+    }
+}
+
+#[test]
+fn releasing_the_button_moving_or_regaining_focus_keeps_the_menu_that_is_still_being_built() {
+    let replies = MenuReplies::default();
+    let file = replies.begin();
+    for event in [pointer(ElementState::Released, ButtonSource::Mouse(winit::event::MouseButton::Right)), WindowEvent::Focused(true), WindowEvent::PointerLeft { device_id: None, position: None, primary: true, kind: PointerKind::Mouse }] {
+        after(&replies, &event);
+    }
+    file.send(context_reply(MenuKind::File, S::MenuOpenWith)).unwrap();
+    assert!(matches!(replies.ready(), Some(Event::ShowMenu { kind: MenuKind::File, .. })));
+    replies.cancel();
+    let folder = replies.begin();
+    folder.send(context_reply(MenuKind::Folder, S::MenuOpenInNewTab)).unwrap();
+    assert!(matches!(replies.ready(), Some(Event::ShowMenu { kind: MenuKind::Folder, .. })), "a click after a cancelled wait gets its own menu");
+}
