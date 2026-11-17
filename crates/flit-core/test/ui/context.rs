@@ -301,3 +301,22 @@ fn the_query_selects_by_dragging_and_by_whole_words_after_a_double_click() {
     c.mouse_down(end, y, 3, false);
     assert_eq!(picked(&mut c), "alpha beta", "a triple click picks everything");
 }
+
+#[test]
+fn icons_of_an_expanded_submenu_start_where_the_top_level_text_starts() {
+    for scale in [1.0, 1.5] {
+        let mut c = ContextMenu::new(&items(), MenuKind::File, Vec::new(), (10.0, 10.0), Rect::new(0.0, 0.0, 900.0, 700.0), scale);
+        c.measure(&mut crate::text::Gfx::new(crate::text::tests::Mono, 256));
+        press(&mut c, Key::Down);
+        press(&mut c, Key::Down);
+        press(&mut c, Key::Right);
+        let labels = c.labels();
+        let (view, details) = (labels.iter().position(|l| l == "View v").unwrap(), labels.iter().position(|l| l == "  Details").unwrap());
+        let text_x = c.icon_slot(view).x + ICON_W * scale;
+        let child = c.icon_slot(details);
+        let image_x = child.x + (child.w - IMAGE_PX * scale) / 2.0;
+        assert!((image_x - text_x).abs() < 0.01, "at {scale}x the child icon starts at {image_x}, the parent text at {text_x}");
+        assert_eq!(c.icon_slot(view).x, c.rects[view].x, "top-level icons keep their place");
+        assert!(child.x + ICON_W * scale >= image_x + IMAGE_PX * scale, "the child label stays clear of its icon");
+    }
+}
