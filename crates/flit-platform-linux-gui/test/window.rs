@@ -1,4 +1,45 @@
 use super::*;
+use flit_core::ui::{MenuItem, MenuKind};
+
+fn context_reply(kind: MenuKind, label: S) -> Event {
+    Event::ShowMenu {
+        items: vec![MenuItem::command(label.t(), String::new())],
+        x: 0.0,
+        y: 0.0,
+        launches: Vec::new(),
+        kind,
+        shell: Vec::new(),
+        pending: false,
+    }
+}
+
+#[test]
+fn a_late_file_menu_cannot_replace_the_latest_folder_menu() {
+    let replies = MenuReplies::default();
+    let file = replies.begin();
+    let folder = replies.begin();
+    folder.send(context_reply(MenuKind::Folder, S::MenuOpenInNewTab)).unwrap();
+    let _ = file.send(context_reply(MenuKind::File, S::MenuOpenWith));
+    assert!(matches!(replies.ready(), Some(Event::ShowMenu { kind: MenuKind::Folder, items, .. })
+        if items == [MenuItem::command(S::MenuOpenInNewTab.t(), String::new())]));
+    assert!(replies.ready().is_none(), "the late file reply must not replace the folder menu");
+}
+
+#[test]
+fn a_new_background_click_discards_a_queued_item_menu_without_affecting_other_windows() {
+    let first_window = MenuReplies::default();
+    let second_window = MenuReplies::default();
+    let file = first_window.begin();
+    let other = second_window.begin();
+    file.send(context_reply(MenuKind::File, S::MenuOpenWith)).unwrap();
+    let background = first_window.begin();
+    other.send(context_reply(MenuKind::Folder, S::MenuOpenInNewTab)).unwrap();
+    assert!(first_window.ready().is_none(), "the old file reply must not open while the background is prepared");
+    background.send(context_reply(MenuKind::Background, S::MenuPaste)).unwrap();
+    assert!(matches!(first_window.ready(), Some(Event::ShowMenu { kind: MenuKind::Background, items, .. })
+        if items == [MenuItem::command(S::MenuPaste.t(), String::new())]));
+    assert!(matches!(second_window.ready(), Some(Event::ShowMenu { kind: MenuKind::Folder, .. })));
+}
 
 fn rect(id: WindowId, origin: (f64, f64), size: (u32, u32)) -> TabTarget {
     TabTarget { id, origin, size, minimized: false }
