@@ -1,4 +1,45 @@
 use super::*;
+use flit_core::ui::{MenuItem, MenuKind};
+
+fn context_reply(kind: MenuKind, label: S) -> Event {
+    Event::ShowMenu {
+        items: vec![MenuItem::command(label.t(), String::new())],
+        x: 0.0,
+        y: 0.0,
+        launches: Vec::new(),
+        kind,
+        shell: Vec::new(),
+        pending: false,
+    }
+}
+
+#[test]
+fn a_late_file_menu_cannot_replace_the_latest_folder_menu() {
+    let replies = MenuReplies::default();
+    let file = replies.begin();
+    let folder = replies.begin();
+    folder.send(context_reply(MenuKind::Folder, S::MenuOpenInNewTab)).unwrap();
+    let _ = file.send(context_reply(MenuKind::File, S::MenuOpenWith));
+    assert!(matches!(replies.ready(), Some(Event::ShowMenu { kind: MenuKind::Folder, items, .. })
+        if items == [MenuItem::command(S::MenuOpenInNewTab.t(), String::new())]));
+    assert!(replies.ready().is_none(), "the late file reply must not replace the folder menu");
+}
+
+#[test]
+fn a_new_background_click_discards_a_queued_item_menu_without_affecting_other_windows() {
+    let first_window = MenuReplies::default();
+    let second_window = MenuReplies::default();
+    let file = first_window.begin();
+    let other = second_window.begin();
+    file.send(context_reply(MenuKind::File, S::MenuOpenWith)).unwrap();
+    let background = first_window.begin();
+    other.send(context_reply(MenuKind::Folder, S::MenuOpenInNewTab)).unwrap();
+    assert!(first_window.ready().is_none(), "the old file reply must not open while the background is prepared");
+    background.send(context_reply(MenuKind::Background, S::MenuPaste)).unwrap();
+    assert!(matches!(first_window.ready(), Some(Event::ShowMenu { kind: MenuKind::Background, items, .. })
+        if items == [MenuItem::command(S::MenuPaste.t(), String::new())]));
+    assert!(matches!(second_window.ready(), Some(Event::ShowMenu { kind: MenuKind::Folder, .. })));
+}
 
 fn rect(id: WindowId, origin: (f64, f64), size: (u32, u32)) -> TabTarget {
     TabTarget { id, origin, size, minimized: false }
@@ -154,4 +195,40 @@ fn kde_globals_without_an_accent_keep_the_accent_from_the_portal() {
     assert_eq!(kde_accent_change("[General]\nAccentColor=61,174,233\n", Some(blue)), None, "an unchanged accent is not applied again");
     assert_eq!(kde_accent_change("[General]\nAccentColor=218,68,83\n", Some(blue)), Some(Some(red)));
     assert_eq!(kde_accent_change("[General]\nAccentColor=218,68,83\n", None), Some(Some(red)));
+}
+
+fn pointer(state: ElementState, button: ButtonSource) -> WindowEvent {
+    WindowEvent::PointerButton { device_id: None, primary: true, state, position: (5.0, 5.0).into(), button, is_macos_activation_click: false }
+}
+
+fn after(replies: &MenuReplies, event: &WindowEvent) {
+    if ends_menu_wait(event) {
+        replies.cancel();
+    }
+}
+
+#[test]
+fn a_file_menu_that_finishes_after_another_click_or_leaving_the_window_never_opens() {
+    for interrupt in [pointer(ElementState::Pressed, ButtonSource::Mouse(winit::event::MouseButton::Left)), pointer(ElementState::Pressed, ButtonSource::Mouse(winit::event::MouseButton::Right)), WindowEvent::Focused(false)] {
+        let replies = MenuReplies::default();
+        let file = replies.begin();
+        after(&replies, &interrupt);
+        let _ = file.send(context_reply(MenuKind::File, S::MenuOpenWith));
+        assert!(replies.ready().is_none(), "{interrupt:?} ends the wait, so the old file menu cannot pop up over what came next");
+    }
+}
+
+#[test]
+fn releasing_the_button_moving_or_regaining_focus_keeps_the_menu_that_is_still_being_built() {
+    let replies = MenuReplies::default();
+    let file = replies.begin();
+    for event in [pointer(ElementState::Released, ButtonSource::Mouse(winit::event::MouseButton::Right)), WindowEvent::Focused(true), WindowEvent::PointerLeft { device_id: None, position: None, primary: true, kind: PointerKind::Mouse }] {
+        after(&replies, &event);
+    }
+    file.send(context_reply(MenuKind::File, S::MenuOpenWith)).unwrap();
+    assert!(matches!(replies.ready(), Some(Event::ShowMenu { kind: MenuKind::File, .. })));
+    replies.cancel();
+    let folder = replies.begin();
+    folder.send(context_reply(MenuKind::Folder, S::MenuOpenInNewTab)).unwrap();
+    assert!(matches!(replies.ready(), Some(Event::ShowMenu { kind: MenuKind::Folder, .. })), "a click after a cancelled wait gets its own menu");
 }

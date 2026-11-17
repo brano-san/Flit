@@ -581,7 +581,9 @@ impl App {
                 }
             });
         }
-        m.separator();
+        if inside || !files {
+            m.separator();
+        }
         if files {
             if !inside {
                 m.action("file.cut", S::MenuCut.t());

@@ -413,6 +413,45 @@ impl TabWindows {
     }
 }
 
+fn ends_menu_wait(event: &WindowEvent) -> bool {
+    use winit::keyboard::{Key as Logical, NamedKey};
+    match event {
+        WindowEvent::Focused(false) => true,
+        WindowEvent::PointerButton { state: ElementState::Pressed, .. } => true,
+        WindowEvent::KeyboardInput { event, .. } => {
+            let modifier = matches!(event.logical_key, Logical::Named(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::AltGraph | NamedKey::Meta | NamedKey::CapsLock | NamedKey::NumLock));
+            event.state == ElementState::Pressed && !event.repeat && !modifier
+        }
+        _ => false,
+    }
+}
+
+#[derive(Default)]
+struct MenuReplies(RefCell<Option<mpsc::Receiver<Event>>>);
+
+impl MenuReplies {
+    fn begin(&self) -> mpsc::Sender<Event> {
+        let (send, receive) = mpsc::channel();
+        self.0.replace(Some(receive));
+        send
+    }
+
+    fn cancel(&self) {
+        self.0.replace(None);
+    }
+
+    fn ready(&self) -> Option<Event> {
+        let mut pending = self.0.borrow_mut();
+        match pending.as_ref()?.try_recv() {
+            Err(mpsc::TryRecvError::Empty) => None,
+            reply => {
+                *pending = None;
+                reply.ok()
+            }
+        }
+    }
+}
+
 pub struct LinuxWindow {
     id: WindowId,
     raw: Arc<dyn winit::window::Window>,
@@ -430,6 +469,7 @@ pub struct LinuxWindow {
     player: RefCell<Option<crate::player::Player>>,
     volume: Cell<Option<f32>>,
     placed: Cell<Option<(u32, u32)>>,
+    menu_replies: MenuReplies,
 }
 
 #[derive(Clone)]
@@ -459,6 +499,7 @@ impl LinuxWindow {
             player: RefCell::new(None),
             volume: Cell::new(None),
             placed: Cell::new(None),
+            menu_replies: MenuReplies::default(),
         };
         window.cache_target(None);
         window
@@ -743,11 +784,11 @@ impl Window for LinuxWindow {
     }
 
     fn shell_menu(&self, menu: ShellMenu) {
-        let (id, start, x, y, kind) = (self.id, Instant::now(), menu.x, menu.y, menu.kind);
+        let reply = self.menu_replies.begin();
+        let (start, x, y, kind) = (Instant::now(), menu.x, menu.y, menu.kind);
         let show = move |(items, launches): OpenWith| {
             tracing::debug!(elapsed = ?start.elapsed(), apps = launches.len(), "menu ready");
-            if !items.is_empty() {
-                QUEUED.lock().unwrap_or_else(|e| e.into_inner()).push((id, Event::ShowMenu { items, x, y, launches, kind, shell: Vec::new(), pending: false }));
+            if !items.is_empty() && reply.send(Event::ShowMenu { items, x, y, launches, kind, shell: Vec::new(), pending: false }).is_ok() {
                 wake_loop();
             }
         };
@@ -1525,6 +1566,9 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
     fn dispatch(&mut self, i: usize, event: WindowEvent) {
         let (handler, node) = (&mut self.handler, &mut self.nodes[i]);
         let w = &node.window;
+        if ends_menu_wait(&event) {
+            w.menu_replies.cancel();
+        }
         match event {
             WindowEvent::RedrawRequested => {
                 handler.redraw(w);
@@ -1708,6 +1752,11 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
         for (id, ev) in queued {
             if let Some(node) = self.nodes.iter().find(|n| n.window.id == id) {
                 self.handler.event(&node.window, ev);
+            }
+        }
+        for node in &self.nodes {
+            if let Some(menu) = node.window.menu_replies.ready() {
+                self.handler.event(&node.window, menu);
             }
         }
         if DEVICES_CHANGED.swap(false, Ordering::AcqRel) {
