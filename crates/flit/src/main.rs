@@ -124,6 +124,8 @@ fn main() {
             }
         },
     };
+    #[cfg(windows)]
+    let identity = flit_platform_windows::aumid::adopt();
     let logs_dir = <P as Platform>::state_dir().map(|d| d.join("logs"));
     logs::init(logs_dir.clone(), std::env::var_os("FLIT_LOG").is_some());
     #[cfg(windows)]
@@ -140,6 +142,10 @@ fn main() {
         }));
     }
     tracing::info!("Flit {} started, process {}", env!("CARGO_PKG_VERSION"), std::process::id());
+    #[cfg(windows)]
+    if let Err(e) = &identity {
+        tracing::warn!("cannot set the application identity of the process: {e}");
+    }
     let system = flit_core::i18n::Lang::from_code(&std::env::var("FLIT_LANG").unwrap_or_else(|_| <P as Platform>::ui_language())).unwrap_or_default();
     flit_core::i18n::set_system_lang(system);
     flit_core::i18n::set_lang(system);
@@ -157,6 +163,10 @@ fn main() {
     }
     #[cfg(target_os = "linux")]
     flit_platform_linux_gui::prefetch_fonts();
+    #[cfg(windows)]
+    if identity.is_ok() && !headless {
+        flit_platform_windows::aumid::fix_shortcuts_in_background();
+    }
     let _ = std::thread::Builder::new().name("flit-sweep".into()).spawn(|| {
         let gone = flit_core::archive::sweep_temp(&flit_core::archive::temp_root(), flit_core::archive::TEMP_KEEP, std::time::SystemTime::now());
         if gone > 0 {

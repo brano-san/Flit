@@ -2,7 +2,7 @@ use flit_core::i18n::S;
 use flit_core::path::PathKind;
 use flit_core::{FsPath, Location};
 use std::path::{Path, PathBuf};
-use windows::core::{Interface, GUID, PCWSTR};
+use windows::core::{Interface, GUID, HSTRING, PCWSTR};
 use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
@@ -108,6 +108,9 @@ pub fn update(pinned: &[Location], frequent: &[Location]) {
 
 unsafe fn build(exe: &Path, pinned: &[Location], frequent: &[Location]) -> windows::core::Result<()> {
     let list: ICustomDestinationList = CoCreateInstance(&DestinationList, None, CLSCTX_INPROC_SERVER)?;
+    if crate::aumid::adopted() {
+        list.SetAppID(&HSTRING::from(crate::toast::APP_ID))?;
+    }
     let mut slots = 0u32;
     let removed: IObjectArray = list.BeginList(&mut slots)?;
     let (pinned, frequent) = plan(pinned, frequent, &removed_args(&removed), slots as usize);

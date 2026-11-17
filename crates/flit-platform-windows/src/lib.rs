@@ -1,6 +1,7 @@
 #![cfg(windows)]
 
 mod access;
+pub mod aumid;
 mod busy;
 mod clipboard;
 mod context_menu;
