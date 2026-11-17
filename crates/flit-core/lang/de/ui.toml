@@ -4,6 +4,8 @@ in_recycle_bin = "„{name}“ befindet sich im Papierkorb. Stellen Sie es wiede
 dropped_routes = ["Der erste {shown} von {n} Orten wurde geöffnet", "Die ersten {shown} von {n} Orten wurden geöffnet"]
 dropped_text = "Abgelegter Text"
 dropped_image = "Abgelegtes Bild"
+dropped_save_failed = "Das Programm, aus dem die Datei gezogen wurde, konnte sie nicht speichern"
+dropped_save_silent = "Das Programm, aus dem die Datei gezogen wurde, hat sie nicht rechtzeitig gespeichert"
 
 [bin]
 restore = "Wiederherstellen"

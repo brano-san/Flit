@@ -4,6 +4,8 @@ in_recycle_bin = "«{name}» está en la Papelera de reciclaje. Restáuralo para
 dropped_routes = ["Se abrió la primera {shown} de {n} ubicación", "Se abrieron las primeras {shown} de {n} de ubicaciones", "Se abrieron las primeras {shown} de {n} ubicaciones"]
 dropped_text = "Texto soltado"
 dropped_image = "Imagen soltada"
+dropped_save_failed = "El programa del que se arrastró el archivo no pudo guardarlo"
+dropped_save_silent = "El programa del que se arrastró el archivo no lo guardó a tiempo"
 
 [bin]
 restore = "Restaurar"

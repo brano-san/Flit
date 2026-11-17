@@ -933,7 +933,7 @@ impl WindowSystem for LinuxWindows {
 
     fn run<H: WindowHandler<Self>>(mut self, first: WindowOptions, handler: H) -> Result<(), PlatformError> {
         let commands: Commands = Rc::new(RefCell::new(vec![Command::Open(first)]));
-        let mut app = Loop { handler, nodes: Vec::new(), commands, targets: Rc::new(RefCell::new(TabWindows::new())), pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None, clip_text: None, wayland_selection: None, watching: false, outgoing: None };
+        let mut app = Loop { handler, nodes: Vec::new(), commands, targets: Rc::new(RefCell::new(TabWindows::new())), pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None, clip_text: None, wayland_selection: None, watching: false, outgoing: None, xds_wait: None };
         LOOP_RUNNING.store(true, Ordering::Release);
         let ran = self.event_loop.run_app_on_demand(&mut app);
         LOOP_RUNNING.store(false, Ordering::Release);
@@ -969,6 +969,7 @@ struct Loop<H> {
     wayland_selection: Option<DataTransferId>,
     watching: bool,
     outgoing: Option<DataTransferId>,
+    xds_wait: Option<(DataTransferId, mpsc::Sender<crate::xds::Reply>)>,
 }
 
 struct Reading {
@@ -1135,9 +1136,25 @@ fn drag_out(el: &dyn ActiveEventLoop, source: winit::window::WindowId, paths: Ve
     el.start_drag(source, data, &[DndAction::Copy, DndAction::Move], icon).map_err(|e| tracing::info!("cannot drag files out of Flit here: {e}")).ok()
 }
 
-fn dragged_kinds(el: &dyn ActiveEventLoop, id: DataTransferId) -> Vec<TypeHint> {
+fn dragged_kinds(el: &dyn ActiveEventLoop, id: DataTransferId, direct_save: bool) -> Vec<TypeHint> {
     let offered: Vec<TypeHint> = el.data_transfer(id).map(|t| t.available_types().into_iter().filter_map(|ty| ty.hint()).collect()).unwrap_or_default();
-    crate::dropped::wanted(&offered)
+    crate::dropped::fetched(&offered, direct_save)
+}
+
+fn direct_save_offer(el: &dyn ActiveEventLoop, id: DataTransferId) -> Option<(crate::xds::Offer, winit::platform::x11::SelectionType)> {
+    use winit::platform::x11::SelectionType;
+    if el.is_wayland() {
+        return None;
+    }
+    let transfer = el.data_transfer(id).ok()?;
+    let unknown: Vec<SelectionType> = transfer.available_types().into_iter().filter(|ty| ty.hint().is_none()).filter_map(|ty| ty.cast_ref::<SelectionType>().cloned()).collect();
+    if unknown.is_empty() {
+        return None;
+    }
+    let atoms: Vec<u32> = unknown.iter().map(SelectionType::atom).collect();
+    let offer = crate::xds::probe(crate::xds::x11()?, &atoms)?;
+    let kind = unknown.into_iter().find(|ty| ty.atom() == offer.atom)?;
+    Some((offer, kind))
 }
 
 struct Incoming {
@@ -1150,12 +1167,14 @@ struct Incoming {
     ask: bool,
     content: Option<crate::dropped::Content>,
     fetching: Vec<TypeHint>,
+    xds: Option<(crate::xds::Offer, winit::platform::x11::SelectionType)>,
 }
 
 enum Arrival {
     Enter,
     Over,
     Drop,
+    LateDrop,
 }
 
 const OFFERED_TO_FLIT: u32 = drop_effect::COPY | drop_effect::MOVE | drop_effect::LINK;
@@ -1440,7 +1459,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         let (handler, w) = (&mut self.handler, &self.nodes[i].window);
         let Some(d) = self.incoming.as_mut() else { return };
         let Some(paths) = d.paths.clone() else { return };
-        let content = d.content.is_some();
+        let content = d.content.is_some() || d.xds.is_some();
         let (mods, ask) = crate::xdnd::incoming_choice(content, keys, proposed, d.preferred);
         let (x, y) = (d.at.0, d.at.1);
         let allowed = if content { drop_effect::COPY } else { OFFERED_TO_FLIT };
@@ -1450,16 +1469,28 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         }
         d.ask = ask;
         let enter = DragEvent::Enter { paths, x, y, mods, allowed, right: ask };
+        let dropping = matches!(arrival, Arrival::Drop | Arrival::LateDrop);
+        let mut saving = None;
         let event = match arrival {
             Arrival::Enter => enter,
-            Arrival::Over | Arrival::Drop => {
+            Arrival::Over | Arrival::Drop | Arrival::LateDrop => {
                 if reenter {
                     handler.drag(w, enter);
                 }
-                if matches!(arrival, Arrival::Drop) {
-                    match d.content.take() {
-                        Some(content) => DragEvent::DropData { x, y, data: Arc::new(content.file(S::UiDroppedText.t(), S::UiDroppedImage.t())) },
-                        None => DragEvent::Drop { x, y, mods, allowed },
+                if dropping {
+                    let fallback = d.content.take().map(|content| content.file(S::UiDroppedText.t(), S::UiDroppedImage.t()));
+                    let offer = d.xds.take().filter(|_| matches!(arrival, Arrival::Drop));
+                    saving = offer.and_then(|(offer, kind)| match crate::xds::prepare(&offer, fallback.clone(), &std::env::temp_dir()) {
+                        Ok(pending) => Some((pending, kind)),
+                        Err(e) => {
+                            tracing::info!("cannot prepare a folder for a file saved by the drag source: {e}");
+                            None
+                        }
+                    });
+                    match (&saving, fallback) {
+                        (Some((pending, _)), _) => DragEvent::DropData { x, y, data: pending.data.clone() },
+                        (None, Some(file)) => DragEvent::DropData { x, y, data: Arc::new(file) },
+                        (None, None) => DragEvent::Drop { x, y, mods, allowed },
                     }
                 } else {
                     DragEvent::Over { x, y, mods, allowed }
@@ -1472,14 +1503,30 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             d.preferred = crate::xdnd::wire_action(effect);
         }
         let id = d.id;
-        if matches!(arrival, Arrival::Drop) {
+        if dropping {
             self.incoming = None;
         } else {
             let _ = el.set_valid_dnd_actions(id, &crate::xdnd::incoming_actions(content, effect, d.preferred));
         }
+        if let Some((pending, kind)) = saving {
+            self.direct_save(el, id, pending, &kind);
+        }
     }
 
-    fn fetch_next(&mut self, el: &dyn ActiveEventLoop, id: DataTransferId) {
+    fn direct_save(&mut self, el: &dyn ActiveEventLoop, id: DataTransferId, pending: crate::xds::Pending, kind: &winit::platform::x11::SelectionType) {
+        use crate::xds::Link;
+        if Arc::strong_count(&pending.data) < 2 {
+            return crate::xds::forget(&pending.data);
+        }
+        let asked = crate::xds::x11().is_some_and(|link| link.write_uri(pending.window, &pending.uri)) && el.fetch_data_transfer(id, kind).map_err(|e| tracing::info!("cannot ask the drag source to save the file: {e}")).is_ok();
+        if asked {
+            self.xds_wait = Some((id, pending.sender));
+        } else {
+            let _ = pending.sender.send(crate::xds::Reply::Declined);
+        }
+    }
+
+    fn fetch_next(&mut self, el: &dyn ActiveEventLoop, i: usize, id: DataTransferId) {
         while let Some(kind) = self.incoming.as_ref().filter(|d| d.id == id).and_then(|d| d.fetching.first().copied()) {
             match el.fetch_data_transfer(id, &kind) {
                 Ok(_) => return,
@@ -1489,9 +1536,17 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                 d.fetching.remove(0);
             }
         }
-        if self.incoming.as_ref().is_some_and(|d| d.id == id && d.paths.is_none()) {
+        let Some(d) = self.incoming.as_mut().filter(|d| d.id == id && d.paths.is_none()) else { return };
+        if d.xds.is_none() {
             self.incoming = None;
             let _ = el.set_valid_dnd_actions(id, &[]);
+            return;
+        }
+        d.paths = Some(Vec::new());
+        let (proposed, dropped) = (d.proposed, d.dropped);
+        self.arrive(el, i, Arrival::Enter, proposed);
+        if let Some(action) = dropped {
+            self.arrive(el, i, Arrival::LateDrop, action);
         }
     }
 
@@ -1500,30 +1555,40 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             WindowEvent::DragEntered { id, position } => {
                 let at = position.map_or((0.0, 0.0), |p| (p.x as f32, p.y as f32));
                 let offered = crate::xdnd::offered_actions(drop_effect::COPY, None);
-                let fetching = dragged_kinds(el, id);
-                self.incoming = Some(Incoming { id, at, paths: None, proposed: None, dropped: None, preferred: offered.first().copied(), ask: false, content: None, fetching });
+                let xds = direct_save_offer(el, id);
+                let fetching = dragged_kinds(el, id, xds.is_some());
+                self.incoming = Some(Incoming { id, at, paths: None, proposed: None, dropped: None, preferred: offered.first().copied(), ask: false, content: None, fetching, xds });
                 let _ = el.set_valid_dnd_actions(id, &offered);
-                self.fetch_next(el, id);
+                self.fetch_next(el, i, id);
+            }
+            WindowEvent::DataTransferReceived { id, value, .. } if self.xds_wait.as_ref().is_some_and(|(waiting, _)| *waiting == id) => {
+                let answer = crate::xds::reply(&value.try_as_bytes().unwrap_or_default());
+                if let Some((_, sender)) = self.xds_wait.take() {
+                    let _ = sender.send(answer);
+                }
             }
             WindowEvent::DataTransferReceived { id, value, .. } if self.incoming.as_ref().is_some_and(|d| d.id == id && d.paths.is_none()) => {
                 let bytes = value.try_as_bytes().unwrap_or_default();
                 let d = self.incoming.as_mut()?;
                 let kind = (!d.fetching.is_empty()).then(|| d.fetching.remove(0));
                 match crate::dropped::interpret(kind, &bytes) {
-                    Some(crate::dropped::Dragged::Files(paths)) => d.paths = Some(paths),
+                    Some(crate::dropped::Dragged::Files(paths)) => {
+                        d.paths = Some(paths);
+                        d.xds = None;
+                    }
                     Some(crate::dropped::Dragged::Content(content)) => {
                         d.content = Some(content);
                         d.paths = Some(Vec::new());
                     }
                     None => {
-                        self.fetch_next(el, id);
+                        self.fetch_next(el, i, id);
                         return None;
                     }
                 }
                 let (proposed, dropped) = (d.proposed, d.dropped);
                 self.arrive(el, i, Arrival::Enter, proposed);
                 if let Some(action) = dropped {
-                    self.arrive(el, i, Arrival::Drop, action);
+                    self.arrive(el, i, Arrival::LateDrop, action);
                 }
             }
             WindowEvent::DragPosition { id, position, proposed_action } => {

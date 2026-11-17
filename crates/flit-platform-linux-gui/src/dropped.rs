@@ -89,18 +89,8 @@ impl Staged {
             return Err(std::io::Error::from_raw_os_error(libc::EINVAL));
         }
         use std::os::unix::ffi::OsStrExt;
-        let mut attempt = 0u64;
-        let staged = loop {
-            if job.cancelled() {
-                return Err(cancelled());
-            }
-            let dir = root.join(format!("flit-drop-{}-{id}-{attempt}", std::process::id()));
-            match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
-                Ok(()) => break Self { path: dir.join(std::ffi::OsStr::from_bytes(&data.name)), dir },
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => attempt = attempt.wrapping_add(1),
-                Err(e) => return Err(e),
-            }
-        };
+        let dir = private_dir(root, "flit-drop", id, || job.cancelled())?;
+        let staged = Self { path: dir.join(std::ffi::OsStr::from_bytes(&data.name)), dir };
         let mut file = std::fs::File::create_new(&staged.path)?;
         job.update(|p| {
             p.stage = Stage::Preparing;
@@ -127,13 +117,40 @@ impl Drop for Staged {
     }
 }
 
+pub fn private_dir(root: &Path, prefix: &str, id: u64, stop: impl Fn() -> bool) -> std::io::Result<PathBuf> {
+    let mut attempt = 0u64;
+    loop {
+        if stop() {
+            return Err(cancelled());
+        }
+        let dir = root.join(format!("{prefix}-{}-{id}-{attempt}", std::process::id()));
+        match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => attempt = attempt.wrapping_add(1),
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+pub fn failed(e: &std::io::Error) -> OpOutcome {
+    let message = if e.raw_os_error() == Some(libc::ECANCELED) { flit_platform::CANCELLED.to_owned() } else { flit_core::fmt::io_reason(e) };
+    OpOutcome { items: Vec::new(), error: Some(PlatformError::new(e.raw_os_error().map_or(-1, i64::from), message)) }
+}
+
 pub fn queued(dest: &FsPath, data: &DroppedFile, job: &Job) -> OpOutcome {
+    if let Some(promised) = crate::xds::queued(dest, data, job) {
+        return promised;
+    }
     let staged = match Staged::new(data, job) {
         Ok(staged) => staged,
-        Err(e) => return OpOutcome { items: Vec::new(), error: Some(PlatformError::new(e.raw_os_error().map_or(-1, i64::from), if e.raw_os_error() == Some(libc::ECANCELED) { flit_platform::CANCELLED.to_owned() } else { flit_core::fmt::io_reason(&e) })) },
+        Err(e) => return failed(&e),
     };
+    copy_staged(&staged.path, dest, job)
+}
+
+pub fn copy_staged(path: &Path, dest: &FsPath, job: &Job) -> OpOutcome {
     use std::os::unix::ffi::OsStrExt;
-    let Some(source) = FsPath::parse_exact(staged.path.as_os_str().as_bytes()) else {
+    let Some(source) = FsPath::parse_exact(path.as_os_str().as_bytes()) else {
         return OpOutcome { items: Vec::new(), error: Some(PlatformError::new(libc::EINVAL as i64, flit_core::fmt::io_reason(&std::io::Error::from_raw_os_error(libc::EINVAL)))) };
     };
     let out = flit_platform_linux::run_op(&FileOp::Copy { items: vec![source], dest: dest.clone() }, job, None);
@@ -153,6 +170,14 @@ pub fn wanted(offered: &[TypeHint]) -> Vec<TypeHint> {
         return vec![TypeHint::UriList];
     }
     [TypeHint::UriList, PNG, TypeHint::Plaintext].into_iter().filter(|w| offered.contains(w)).collect()
+}
+
+pub fn fetched(offered: &[TypeHint], direct_save: bool) -> Vec<TypeHint> {
+    let mut kinds = wanted(offered);
+    if direct_save {
+        kinds.retain(|k| offered.contains(k));
+    }
+    kinds
 }
 
 pub fn interpret(kind: Option<TypeHint>, bytes: &[u8]) -> Option<Dragged> {

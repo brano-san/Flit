@@ -41,6 +41,7 @@ mod window;
 mod wallpaper;
 mod wl;
 mod xdnd;
+mod xds;
 pub mod xdg;
 
 #[cfg(test)]
