@@ -4,6 +4,8 @@ in_recycle_bin = "« {name} » se trouve dans la Corbeille. Restaurez-le pour l�
 dropped_routes = ["Premier emplacement sur {n} ouvert ({shown})", "{shown} premiers emplacements sur {n} ouverts", "{shown} premiers emplacements sur {n} ouverts"]
 dropped_text = "Texte déposé"
 dropped_image = "Image déposée"
+dropped_save_failed = "Le programme d’où le fichier a été glissé n’a pas pu l’enregistrer"
+dropped_save_silent = "Le programme d’où le fichier a été glissé ne l’a pas enregistré à temps"
 
 [bin]
 restore = "Restaurer"

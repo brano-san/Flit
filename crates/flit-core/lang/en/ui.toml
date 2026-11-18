@@ -4,6 +4,8 @@ in_recycle_bin = "\"{name}\" is in the Recycle Bin. Restore it to open it."
 dropped_routes = ["Opened the first {shown} of {n} location", "Opened the first {shown} of {n} locations"]
 dropped_text = "Dropped text"
 dropped_image = "Dropped image"
+dropped_save_failed = "The program the file was dragged from could not save it"
+dropped_save_silent = "The program the file was dragged from did not save it in time"
 
 [bin]
 restore = "Restore"
