@@ -1916,6 +1916,7 @@ pub(super) fn location_icon(loc: &Location, places: &Places, px: u32) -> Option<
         _ if loc.is_home_page() => None,
         Location::Wsl { distro, path } if path.is_root() => Some((hash::hash(&("vol", distro.as_bytes(), px)), IconKind::Volume, loc.to_windows()?)),
         Location::Wsl { .. } => Some((hash::hash(&("dir", px)), IconKind::Folder, loc.to_windows()?)),
+        Location::Admin(_) => None,
         Location::Local(path) => match places.drives.iter().find(|d| d.path == *path) {
             Some(d) if d.offline() => None,
             Some(_) => place(path, IconKind::Volume),

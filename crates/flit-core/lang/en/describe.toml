@@ -338,6 +338,7 @@
 "file.print" = "Send the selected documents or pictures to the default printer, print, lp, CUPS"
 "file.mount_image" = "Attach the selected ISO or IMG image as a read-only drive and open it, mount, loop"
 "folder.file_manager" = "Open this folder in the desktop's own file manager, such as Files or Dolphin"
+"folder.open_admin" = "Open this folder in a new tab where root lists and changes files; the password is asked once while such tabs are open"
 "file.folder_icon" = "Pick another icon for the selected folder, desktop.ini"
 "file.folder_icon_reset" = "Remove the custom icon of the selected folder, default icon, desktop.ini"
 "file.shortcut" = "Make links to the selection, lnk"

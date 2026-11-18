@@ -338,6 +338,7 @@
 "file.print" = "将所选文档或图片发送到默认打印机，打印，lp，CUPS"
 "file.mount_image" = "将所选 ISO 或 IMG 映像以只读方式挂载并打开，挂载，loop"
 "folder.file_manager" = "在桌面自带的文件管理器（如“文件”或 Dolphin）中打开此文件夹"
+"folder.open_admin" = "在新标签页中打开此文件夹，由 root 显示和修改其中的文件；此类标签页打开期间只需输入一次密码"
 "file.folder_icon" = "为所选文件夹选择其他图标，desktop.ini"
 "file.folder_icon_reset" = "删除所选文件夹的自定义图标，默认图标，desktop.ini"
 "file.shortcut" = "为所选内容创建链接，lnk"

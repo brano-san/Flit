@@ -105,6 +105,7 @@ fn command_icon(cmd: &Cmd) -> &'static str {
         "item.open_tab" => "\u{E923}",
         "item.open_window" => "\u{E922}",
         "item.pin" | "folder.bookmark" => "\u{E718}",
+        "folder.open_admin" => super::admin::G_ADMIN,
         "file.new_folder" | "file.new_folder_with_selection" => "\u{E8F4}",
         id if id.starts_with("archive.") => "\u{E7B8}",
         id if id.starts_with("tags.") => "\u{E8EC}",
@@ -639,6 +640,7 @@ impl App {
             }
             if folders > 0 {
                 m.action("app.terminal", S::MenuOpenInTerminal.t());
+                m.action("folder.open_admin", S::ActionsFolderOpenAdmin.t());
             }
             if count == 1 && folders == 0 && self.rename_target().is_some_and(|i| self.runs_in_terminal(v.listing(), i)) {
                 m.action("file.run_in_terminal", S::MenuRunInTerminal.t());
@@ -727,6 +729,9 @@ impl App {
             m.action("file.paste", S::MenuPaste.t());
             m.action("app.terminal", S::MenuOpenInTerminal.t());
             m.action("folder.file_manager", S::ActionsFolderFileManager.t());
+            if !t.location().is_admin() {
+                m.action("folder.open_admin", S::ActionsFolderOpenAdmin.t());
+            }
             if !self.caps.unix_paths && self.shell_dir().is_ok() {
                 m.submenu(S::MenuLinksPasteAs.t(), |m| {
                     for (kind, label) in super::ops::LINK_KINDS {

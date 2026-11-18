@@ -338,6 +338,7 @@
 "file.print" = "Imprimer"
 "file.mount_image" = "Monter l’image disque"
 "folder.file_manager" = "Ouvrir dans le gestionnaire de fichiers du système"
+"folder.open_admin" = "Ouvrir en tant qu’administrateur"
 "file.folder_icon" = "Changer l’icône du dossier"
 "file.folder_icon_reset" = "Rétablir l’icône par défaut du dossier"
 "file.shortcut" = "Créer des raccourcis vers les éléments sélectionnés"

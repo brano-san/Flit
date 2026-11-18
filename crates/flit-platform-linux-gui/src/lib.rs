@@ -190,6 +190,10 @@ impl Platform for Linux {
         Vec::new()
     }
 
+    fn admin_launcher() -> Option<Box<dyn flit_platform::AgentLauncher>> {
+        Some(Box::new(elevated::RootLauncher::pkexec()))
+    }
+
     fn watch_wsl(changed: Box<dyn Fn() + Send>) {
         places::watch_mounts(Box::new(move || {
             changed();

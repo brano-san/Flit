@@ -1,5 +1,6 @@
 pub mod edit;
 mod a11y;
+mod admin;
 mod file_icons;
 mod shell_props;
 mod shell_overlays;
@@ -1162,8 +1163,9 @@ impl App {
         self.dirty = true;
     }
 
-    fn route_here(&mut self, r: Route, now: Instant) {
+    fn route_here(&mut self, mut r: Route, now: Instant) {
         let k = self.cur;
+        r.folder = admin::stays_admin(self.tabs[k].location(), r.folder);
         let keep = self.tabs[k].capture();
         let t = &mut self.tabs[k];
         if !t.history.go(r.folder, keep) {
@@ -1460,6 +1462,7 @@ impl App {
             ProviderEvent::OpenAsk { tab, path, ask } => self.open_ask(tab, path, ask),
             ProviderEvent::MountAsk { ask, answer, .. } => self.mount_ask(ask, answer),
             ProviderEvent::MountAskDone { id, .. } => self.mount_ask_done(id),
+            ProviderEvent::Denied { tab, error } => self.admin_denied(tab, &error, now),
         }
     }
 
@@ -2637,7 +2640,9 @@ impl App {
             let color = if accented { theme::ink_on(t.accent) } else if torn { t.text_dim.alpha(0x60) } else if active { t.text } else { t.text_dim };
             let icon = Rect::new(r.x + self.s(10.0), r.y + (r.h - self.s(16.0)) / 2.0, self.s(16.0), self.s(16.0));
             let loc = self.tabs[i].location();
-            if !self.system_icon(g, sidebar::folder_icon(loc, &self.nav.sidebar, icon.w as u32), icon, icon.w, if torn { 0x60 } else { 0xFF }, &mut requests) {
+            if loc.is_admin() {
+                admin::draw_tab_mark(g, t, r, icon, self.icon_font(12.0), self.s(2.0), if torn || accented { Some(color) } else { None });
+            } else if !self.system_icon(g, sidebar::folder_icon(loc, &self.nav.sidebar, icon.w as u32), icon, icon.w, if torn { 0x60 } else { 0xFF }, &mut requests) {
                 centered(g, icon, tabbar::tab_glyph(loc), self.icon_font(12.0), if torn || accented { color } else { t.accent.alpha(0xC0) });
             }
             g.text(icon.right() + self.s(6.0), baseline, &label, font, color, c.x - icon.right() - self.s(10.0));
@@ -2763,6 +2768,7 @@ impl App {
         let font = self.ui_font(13.0);
         let m = g.metrics(font);
         let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
+        let r = if self.current_location().is_admin() { admin::draw_address_badge(g, t, r, font, baseline, self.s(3.0)) } else { r };
         self.draw_crumbs(g, t, r, baseline, font);
     }
 

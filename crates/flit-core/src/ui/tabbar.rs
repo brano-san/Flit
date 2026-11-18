@@ -256,6 +256,7 @@ impl Strip {
 
 pub fn tab_glyph(loc: &Location) -> &'static str {
     match loc.path().kind() {
+        _ if loc.is_admin() => super::admin::G_ADMIN,
         PathKind::Computer => G_COMPUTER,
         PathKind::RecycleBin => G_BIN,
         PathKind::Home => super::sidebar::G_HOME,
@@ -274,7 +275,11 @@ pub(super) fn full_name(t: &Tab) -> String {
 
 impl App {
     pub fn window_title(&self) -> String {
-        format!("{} — Flit", full_name(self.tab()))
+        if self.tab().location().is_admin() {
+            format!("{} ({}) — Flit", full_name(self.tab()), S::AddressAdminBadge.t())
+        } else {
+            format!("{} — Flit", full_name(self.tab()))
+        }
     }
 
     pub fn session_rev(&self) -> u64 {

@@ -3,6 +3,8 @@ handed_to_explorer = "Flit no puede mostrar {location}, así que se abre en el E
 visited_deeper = "Visitado, más profundo"
 filter_files = ["Filtrar {n} archivo...", "Filtrar {n} de archivos...", "Filtrar {n} archivos..."]
 
+admin_badge = "Administrador"
+
 [goto]
 placeholder = "Abrir o expandir una carpeta..."
 empty = "No hay carpetas coincidentes"

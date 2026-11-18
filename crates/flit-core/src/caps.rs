@@ -20,7 +20,7 @@ pub const WINDOWS_ONLY_ACTIONS: &[&str] = &[
     "view.group.version",
 ];
 
-pub const UNIX_ONLY_ACTIONS: &[&str] = &["item.copy_quoted_path", "file.print", "file.mount_image", "folder.file_manager"];
+pub const UNIX_ONLY_ACTIONS: &[&str] = &["item.copy_quoted_path", "file.print", "file.mount_image", "folder.file_manager", "folder.open_admin"];
 
 pub fn is_builtin_archive_action(action: &str) -> bool {
     action.starts_with("archive.") || action == "menu.extract"

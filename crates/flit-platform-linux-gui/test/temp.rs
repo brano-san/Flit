@@ -85,3 +85,23 @@ impl Drop for Temp {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
+
+thread_local! {
+    static FAKES_TRUSTED: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+pub fn trusted_fake(found: &Path) -> bool {
+    FAKES_TRUSTED.with(|t| t.get()) && tool_path().is_some_and(|dirs| std::env::split_paths(&dirs).any(|d| found.starts_with(d)))
+}
+
+pub fn with_real_owners<T>(run: impl FnOnce() -> T) -> T {
+    struct Restore;
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            FAKES_TRUSTED.with(|t| t.set(true));
+        }
+    }
+    let _restore = Restore;
+    FAKES_TRUSTED.with(|t| t.set(false));
+    run()
+}

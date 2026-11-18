@@ -1,6 +1,6 @@
 use super::*;
 use flit_core::listing::{ChangeKind, DirChange, DirStats};
-use flit_core::provider::{Conflict, Failure, OpCtl, OpProgress, Recover, Resolve, Template};
+use flit_core::provider::{Conflict, Failure, LinkKind, OpCtl, OpProgress, Recover, Resolve, Template};
 use flit_core::sort::CaseMode;
 use flit_core::Meta;
 use flit_proto::listing::EntryBatch;
@@ -551,4 +551,217 @@ fn failures_are_asked_through_the_agent_and_paths_outside_the_operation_end_it()
     let lost = event(&s.events, |e| if let ProviderEvent::OpDone { tab: 1, id: 6, error, .. } = e { Some(error) } else { None });
     assert!(lost.is_some_and(|e| e.contains("was lost")), "a failure naming another path is refused like a forged conflict");
     assert!(s.fake.seen().iter().any(|r| matches!(r, Request::Recover { id: 1, choice: Some(Recover::Retry), all: false })));
+}
+
+fn admin_setup(fake: Fake, timing: Timing, clipboard: Clipboard) -> Setup {
+    let (tx, events) = unbounded();
+    let local = Arc::new(Recorder::default());
+    let wsl = WslProvider::admin(Some(Box::new(fake.clone())), local.clone(), tx, Arc::new(|| {}), timing, clipboard).unwrap();
+    Setup { wsl, fake, local, events }
+}
+
+struct Refused {
+    why: &'static str,
+    launches: Arc<AtomicUsize>,
+    missing: bool,
+}
+
+struct Complaint(&'static str);
+
+impl Read for Complaint {
+    fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+        Err(io::Error::other(self.0))
+    }
+}
+
+impl AgentLauncher for Refused {
+    fn build(&self) -> &str {
+        "test-1"
+    }
+
+    fn launch(&self) -> io::Result<AgentProcess> {
+        self.launches.fetch_add(1, Ordering::SeqCst);
+        if self.missing {
+            return Err(io::Error::new(io::ErrorKind::NotFound, self.why));
+        }
+        Ok(AgentProcess { input: Box::new(io::sink()), output: Box::new(Complaint(self.why)), stop: Box::new(|_| {}) })
+    }
+
+    fn deliver(&self) -> io::Result<()> {
+        panic!("the administrator agent is never delivered")
+    }
+}
+
+fn refused_setup(why: &'static str, missing: bool) -> (WslProvider, Arc<AtomicUsize>, Arc<Recorder>, Receiver<ProviderEvent>) {
+    let (tx, events) = unbounded();
+    let local = Arc::new(Recorder::default());
+    let launches = Arc::new(AtomicUsize::new(0));
+    let launcher = Refused { why, launches: launches.clone(), missing };
+    let wsl = WslProvider::admin(Some(Box::new(launcher)), local.clone(), tx, Arc::new(|| {}), Timing::default(), Clipboard::default()).unwrap();
+    (wsl, launches, local, events)
+}
+
+#[test]
+fn the_admin_provider_lists_through_its_agent_and_says_it_waits_for_the_password() {
+    let s = admin_setup(Fake::new(lister), Timing::default(), Clipboard::default());
+    let snap = finished(&list(&s.wsl, 1, 1, "/root"));
+    assert_eq!(names(&snap), [b"a:b".to_vec(), b"bad\xFF".to_vec()]);
+    assert!(matches!(s.events.try_recv(), Ok(ProviderEvent::Status { tab: 1, gen: 1, text }) if text == "Waiting for the administrator password…"));
+    finished(&list(&s.wsl, 2, 1, "/etc"));
+    assert_eq!(s.fake.launches.load(Ordering::SeqCst), 1, "one agent and one password serve every root tab");
+    assert!(s.local.0.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_dismissed_password_denies_the_tab_and_the_next_request_asks_again() {
+    let (wsl, launches, local, events) = refused_setup("the password prompt was dismissed", false);
+    let l = list(&wsl, 4, 1, "/root");
+    let error = event(&events, |e| if let ProviderEvent::Denied { tab: 4, error } = e { Some(error) } else { None });
+    assert_eq!(error, "Cannot open the folder as administrator: the password prompt was dismissed");
+    assert_eq!(finished(&l).error.as_ref().unwrap().kind, FsErrorKind::Unavailable, "the listing ends instead of hanging");
+    assert!(local.0.lock().unwrap().is_empty(), "the folder is never listed as the user instead");
+    list(&wsl, 5, 1, "/root");
+    event(&events, |e| if let ProviderEvent::Denied { tab: 5, .. } = e { Some(()) } else { None });
+    assert_eq!(launches.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn a_missing_pkexec_and_queued_operations_get_the_reason() {
+    let (wsl, _, local, events) = refused_setup("pkexec is not installed", true);
+    wsl.submit(ProviderRequest::Op { tab: 6, id: 3, op: FileOp::Delete(vec![unix("/root/a")]), ctl: OpCtl::default() });
+    let done = event(&events, |e| if let ProviderEvent::OpDone { tab: 6, id: 3, error, .. } = e { error } else { None });
+    assert_eq!(done, "Cannot open the folder as administrator: pkexec is not installed");
+    assert!(local.0.lock().unwrap().is_empty());
+}
+
+#[test]
+fn an_admin_agent_without_a_greeting_is_denied_not_simplified() {
+    let mut fake = Fake::new(lister);
+    fake.installed = Arc::new(Mutex::new(None));
+    let s = admin_setup(fake, Timing::default(), Clipboard::default());
+    list(&s.wsl, 1, 1, "/root");
+    let error = event(&s.events, |e| if let ProviderEvent::Denied { error, .. } = e { Some(error) } else { None });
+    assert_eq!(error, "Cannot open the folder as administrator: the administrator agent did not answer");
+    assert_eq!(s.fake.deliveries.load(Ordering::SeqCst), 0);
+    assert!(s.local.0.lock().unwrap().is_empty());
+}
+
+#[test]
+fn admin_operations_run_on_the_agent_and_the_rest_stay_local_without_share_paths() {
+    let fake = Fake::new(|req| {
+        Some(match req {
+            Request::Op { id, .. } => vec![Event::OpDone { id: *id, error: None, items: Vec::new() }],
+            _ => Vec::new(),
+        })
+    });
+    let s = admin_setup(fake, Timing::default(), Clipboard::default());
+    s.wsl.submit(ProviderRequest::Op { tab: 2, id: 11, op: FileOp::Rename { item: unix("/etc/a"), name: b"b".to_vec() }, ctl: OpCtl::default() });
+    event(&s.events, |e| if let ProviderEvent::OpDone { id: 11, error: None, .. } = e { Some(()) } else { None });
+    assert!(s.fake.seen().iter().any(|r| matches!(r, Request::Op { op: FileOp::Rename { .. }, .. })));
+    s.wsl.submit(ProviderRequest::Open { tab: 2, path: unix("/etc/x:y") });
+    until("local", || s.local.0.lock().unwrap().len() == 1);
+    assert!(matches!(&s.local.0.lock().unwrap()[0], ProviderRequest::Open { path, .. } if path.as_bytes() == b"/etc/x:y"));
+}
+
+fn copied_on_linux() -> Result<(Vec<FsPath>, bool), PlatformError> {
+    Ok((vec![FsPath::parse("/home/u/a").unwrap()], false))
+}
+
+#[test]
+fn admin_paste_copies_through_the_agent() {
+    let fake = Fake::new(|req| {
+        Some(match req {
+            Request::Op { id, .. } => vec![Event::OpDone { id: *id, error: None, items: vec![(unix("/home/u/a"), unix("/etc/a"))] }],
+            _ => Vec::new(),
+        })
+    });
+    let s = admin_setup(fake, Timing::default(), Clipboard { files: copied_on_linux, clear: || {} });
+    s.wsl.submit(ProviderRequest::Op { tab: 1, id: 7, op: FileOp::Paste { dest: unix("/etc") }, ctl: OpCtl::default() });
+    let report = event(&s.events, |e| if let ProviderEvent::OpDone { id: 7, report, .. } = e { report } else { None });
+    assert_eq!(report.op, FileOp::Copy { items: vec![unix("/home/u/a")], dest: unix("/etc") });
+}
+
+#[test]
+fn a_crashed_admin_agent_reports_it_and_starts_again_only_on_demand() {
+    let fake = Fake::new(|req| if matches!(req, Request::List { .. }) { None } else { Some(Vec::new()) });
+    let s = admin_setup(fake, Timing::default(), Clipboard::default());
+    for gen in 1..=4 {
+        let snap = finished(&list(&s.wsl, 1, gen, "/root"));
+        assert_eq!(snap.error.as_ref().unwrap().kind, FsErrorKind::Unavailable);
+        let stopped = event(&s.events, |e| if let ProviderEvent::OpDone { tab: 1, id: 0, error, .. } = e { error } else { None });
+        assert!(stopped.starts_with("The administrator agent stopped"), "{stopped}");
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(s.fake.launches.load(Ordering::SeqCst), gen as usize);
+    }
+    assert!(s.local.0.lock().unwrap().is_empty(), "crashes never fall back to listing as the user");
+}
+
+fn done_ops(req: &Request) -> Option<Vec<Event>> {
+    Some(match req {
+        Request::Op { id, .. } => vec![Event::OpDone { id: *id, error: None, items: Vec::new() }],
+        _ => Vec::new(),
+    })
+}
+
+#[test]
+fn no_operation_in_an_admin_tab_runs_as_the_user() {
+    let s = admin_setup(Fake::new(done_ops), Timing::default(), Clipboard { files: copied_from_windows, clear: || {} });
+    let on_agent = [
+        FileOp::NewFile { dir: unix("/etc"), name: b"n".to_vec(), template: Template::Empty },
+        FileOp::Link { items: vec![unix("/etc/a")], dest: unix("/etc/b") },
+        FileOp::Flatten(vec![unix("/etc/d")]),
+    ];
+    let refused = [
+        FileOp::LinkAs { items: vec![unix("/etc/a")], dest: unix("/etc/b"), kind: LinkKind::Symbolic },
+        FileOp::PasteDropped { dest: unix("/etc"), moving: false, data: None },
+        FileOp::PasteLink { dest: unix("/etc") },
+        FileOp::InstallFonts(vec![unix("/etc/f.ttf")]),
+        FileOp::Paste { dest: unix("/etc") },
+    ];
+    for (k, op) in on_agent.iter().chain(&refused).enumerate() {
+        s.wsl.submit(ProviderRequest::Op { tab: 1, id: 100 + k as u64, op: op.clone(), ctl: OpCtl::default() });
+        let id = 100 + k as u64;
+        let error = event(&s.events, |e| if let ProviderEvent::OpDone { id: got, error, .. } = e { (got == id).then_some(error) } else { None });
+        if k < on_agent.len() {
+            assert_eq!(error, None, "{op:?} runs on the agent");
+        } else {
+            assert_eq!(error.as_deref(), Some("This command is not available in an administrator tab"), "{op:?}");
+        }
+    }
+    let ran: Vec<FileOp> = s.fake.seen().into_iter().filter_map(|r| if let Request::Op { op, .. } = r { Some(op) } else { None }).collect();
+    assert_eq!(ran, on_agent);
+    assert!(s.local.0.lock().unwrap().is_empty(), "nothing ran as the user");
+}
+
+#[test]
+fn items_written_by_root_into_a_folder_of_the_user_stay_with_root() {
+    let dir = std::env::temp_dir().join(format!("flit-admin-owner-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dest = FsPath::parse(dir.to_str().unwrap()).unwrap();
+    let reported = dest.join(b"hosts");
+    let fake = Fake::new(move |req| {
+        Some(match req {
+            Request::Op { id, op: FileOp::Copy { .. }, .. } => vec![Event::OpDone { id: *id, error: None, items: vec![(unix("/etc/hosts"), reported.clone())] }],
+            Request::Op { id, .. } => vec![Event::OpDone { id: *id, error: None, items: Vec::new() }],
+            _ => Vec::new(),
+        })
+    });
+    let s = admin_setup(fake, Timing::default(), Clipboard::default());
+    let ops = [
+        FileOp::Copy { items: vec![unix("/etc/hosts")], dest: unix("/home/u") },
+        FileOp::Move { items: vec![unix("/etc/a")], dest: unix("/home/u") },
+        FileOp::NewFolder { dir: unix("/home/u"), name: b"n".to_vec() },
+    ];
+    for (k, op) in ops.into_iter().enumerate() {
+        s.wsl.submit(ProviderRequest::Op { tab: 1, id: 5 + k as u64, op, ctl: OpCtl::default() });
+        event(&s.events, |e| if let ProviderEvent::OpDone { id, .. } = e { (id == 5 + k as u64).then_some(()) } else { None });
+    }
+    if dest.kind() == PathKind::Unix {
+        s.wsl.submit(ProviderRequest::Op { tab: 1, id: 9, op: FileOp::Copy { items: vec![unix("/etc/hosts")], dest: dest.clone() }, ctl: OpCtl::default() });
+        event(&s.events, |e| if let ProviderEvent::OpDone { id: 9, .. } = e { Some(()) } else { None });
+    }
+    std::thread::sleep(Duration::from_millis(150));
+    let changed: Vec<Request> = s.fake.seen().into_iter().filter(|r| matches!(r, Request::Op { op: FileOp::SetAccess { .. } | FileOp::Access(_), .. })).collect();
+    assert!(changed.is_empty(), "the agent never changes owners after it writes: {changed:?}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -70,6 +70,7 @@ fn listed(app: &mut App) -> Vec<(TabId, Location)> {
                 match provider {
                     ProviderId::Local => Location::Local(path),
                     ProviderId::Wsl(distro) => Location::Wsl { distro, path },
+                    ProviderId::Admin => Location::Admin(path),
                 },
             )),
             _ => None,

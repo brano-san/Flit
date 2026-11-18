@@ -338,6 +338,7 @@
 "file.print" = "Drucken"
 "file.mount_image" = "Datenträgerabbild einhängen"
 "folder.file_manager" = "Im Dateimanager des Systems öffnen"
+"folder.open_admin" = "Als Administrator öffnen"
 "file.folder_icon" = "Ordnersymbol ändern"
 "file.folder_icon_reset" = "Standardordnersymbol wiederherstellen"
 "file.shortcut" = "Verknüpfungen zu den ausgewählten Elementen erstellen"

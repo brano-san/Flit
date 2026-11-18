@@ -1,6 +1,7 @@
 use crate::local::{snapshot, via_unc, PARTIAL_COST_FACTOR, PARTIAL_EVERY};
 use crate::{FileOps, PlatformError, Provider, Shell, Wake, CANCELLED};
 use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
+use flit_core::i18n::S;
 use flit_core::listing::Listing;
 use flit_core::path::PathKind;
 use flit_core::provider::{Failure, FileOp, GenToken, OpCtl, OpId, OpReport, Recover, Resolve, SnapshotSlot};
@@ -167,6 +168,7 @@ enum Pending {
 
 struct Ctl {
     distro: String,
+    admin: bool,
     launcher: Option<Box<dyn AgentLauncher>>,
     local: Arc<dyn Provider>,
     events: Sender<ProviderEvent>,
@@ -191,11 +193,21 @@ pub struct WslProvider {
 
 impl WslProvider {
     pub fn new(distro: String, launcher: Option<Box<dyn AgentLauncher>>, local: Arc<dyn Provider>, events: Sender<ProviderEvent>, wake: Wake, timing: Timing, clipboard: Clipboard) -> Result<Self, PlatformError> {
-        let (tx, rx) = unbounded();
         let name = format!("flit-wsl-{distro}");
-        let present = launcher.is_some();
+        Self::spawn(name, distro, false, launcher, local, events, wake, timing, clipboard)
+    }
+
+    pub fn admin(launcher: Option<Box<dyn AgentLauncher>>, local: Arc<dyn Provider>, events: Sender<ProviderEvent>, wake: Wake, timing: Timing, clipboard: Clipboard) -> Result<Self, PlatformError> {
+        Self::spawn("flit-admin".into(), "root".into(), true, launcher, local, events, wake, timing, clipboard)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn spawn(name: String, distro: String, admin: bool, launcher: Option<Box<dyn AgentLauncher>>, local: Arc<dyn Provider>, events: Sender<ProviderEvent>, wake: Wake, timing: Timing, clipboard: Clipboard) -> Result<Self, PlatformError> {
+        let (tx, rx) = unbounded();
+        let present = launcher.is_some() || admin;
         let ctl = Ctl {
             distro,
+            admin,
             launcher,
             local,
             events,
@@ -238,24 +250,36 @@ fn linux(op: &FileOp) -> bool {
     op.all_paths(|p| p.kind() == PathKind::Unix && flit_core::archive::split(p).is_none())
 }
 
-fn starts_agent(req: &ProviderRequest) -> bool {
+fn runs(op: &FileOp, admin: bool) -> bool {
+    agent_runs(op) || (admin && matches!(op, FileOp::NewFile { .. } | FileOp::Link { .. } | FileOp::Flatten(_)))
+}
+
+fn starts_agent(req: &ProviderRequest, admin: bool) -> bool {
     match req {
         ProviderRequest::List { .. } | ProviderRequest::DirSizes { .. } => true,
-        ProviderRequest::Op { op, .. } => agent_runs(op) && linux(op),
+        ProviderRequest::Op { op, .. } => runs(op, admin) && linux(op),
         _ => false,
     }
 }
 
-fn for_agent(req: &ProviderRequest) -> bool {
+fn for_agent(req: &ProviderRequest, admin: bool) -> bool {
     let archived = match req {
         ProviderRequest::List { path, .. } | ProviderRequest::DirSizes { dir: path, .. } | ProviderRequest::Watch { path: Some(path), .. } => flit_core::archive::split(path).is_some(),
         _ => false,
     };
-    !archived && (starts_agent(req) || matches!(req, ProviderRequest::Watch { .. }))
+    !archived && (starts_agent(req, admin) || matches!(req, ProviderRequest::Watch { .. }))
 }
 
 fn windows_form(req: &ProviderRequest) -> bool {
     matches!(req, ProviderRequest::Op { op, .. } if !op.all_paths(|p| p.kind() == PathKind::Unix))
+}
+
+fn refusal(e: ProtoError) -> String {
+    match e {
+        ProtoError::Io(e) if e.kind() == io::ErrorKind::UnexpectedEof => S::ErrorsEngineAdminSilent.en().to_owned(),
+        ProtoError::Io(e) => e.to_string(),
+        other => other.to_string(),
+    }
 }
 
 fn read_events(id: u64, mut output: Box<dyn Read + Send>, ours: Hello, tx: Sender<Msg>) {
@@ -371,9 +395,13 @@ impl Ctl {
         let now = Instant::now();
         match std::mem::replace(&mut self.state, State::Idle) {
             State::Starting { conn, deadline, .. } if now >= deadline => {
-                tracing::warn!("WSL agent for {} sent no greeting in {:?}", self.distro, self.timing.hello);
+                tracing::warn!("agent for {} sent no greeting in {:?}", self.distro, self.timing.hello);
                 conn.end(Duration::ZERO);
-                self.simplify();
+                if self.admin {
+                    self.refuse(S::ErrorsEngineAdminSilent.en());
+                } else {
+                    self.simplify();
+                }
             }
             State::Ready(mut conn) if self.idle() && now >= self.busy_at + self.timing.idle => {
                 tracing::info!("stopping the idle WSL agent for {}", self.distro);
@@ -390,6 +418,12 @@ impl Ctl {
     }
 
     fn fallback(&self, req: ProviderRequest) {
+        if self.admin {
+            return match req {
+                ProviderRequest::Op { tab, id, .. } => self.emit(ProviderEvent::OpDone { tab, id, error: Some(S::ErrorsEngineAdminUnavailable.en().into()), report: None }),
+                req => self.local.submit(req),
+            };
+        }
         let op = match &req {
             ProviderRequest::Op { tab, id, .. } => Some((*tab, *id)),
             _ => None,
@@ -403,7 +437,8 @@ impl Ctl {
 
     fn note(&self, req: &ProviderRequest) {
         if let ProviderRequest::List { tab, gen, .. } = req {
-            self.emit(ProviderEvent::Status { tab: *tab, gen: *gen, text: format!("Starting {}…", self.distro) });
+            let text = if self.admin { S::ErrorsEngineAdminWaiting.en().to_owned() } else { format!("Starting {}…", self.distro) };
+            self.emit(ProviderEvent::Status { tab: *tab, gen: *gen, text });
         }
     }
 
@@ -418,7 +453,8 @@ impl Ctl {
         let inside: Option<Vec<FsPath>> = items
             .into_iter()
             .map(|p| match Location::from_local(p) {
-                Location::Wsl { distro, path } if distro.eq_ignore_ascii_case(&self.distro) && flit_core::archive::split(&path).is_none() => Some(path),
+                Location::Wsl { distro, path } if !self.admin && distro.eq_ignore_ascii_case(&self.distro) && flit_core::archive::split(&path).is_none() => Some(path),
+                Location::Local(path) if self.admin && path.kind() == PathKind::Unix && flit_core::archive::split(&path).is_none() => Some(path),
                 _ => None,
             })
             .collect();
@@ -446,7 +482,7 @@ impl Ctl {
             },
             req => req,
         };
-        if matches!(self.state, State::Simplified) || !for_agent(&req) {
+        if matches!(self.state, State::Simplified) || !for_agent(&req, self.admin) {
             return self.fallback(req);
         }
         if matches!(self.state, State::Ready(_)) {
@@ -455,7 +491,7 @@ impl Ctl {
         if let ProviderRequest::Watch { tab, path: None, .. } = req {
             return self.queue.retain(|q| !matches!(q, ProviderRequest::Watch { tab: t, .. } if *t == tab));
         }
-        let start = matches!(self.state, State::Idle) && starts_agent(&req);
+        let start = matches!(self.state, State::Idle) && starts_agent(&req, self.admin);
         if !start && matches!(self.state, State::Starting { .. }) {
             self.note(&req);
         }
@@ -474,6 +510,7 @@ impl Ctl {
         let Some(launcher) = &self.launcher else { return self.simplify() };
         let process = match launcher.launch() {
             Ok(p) => p,
+            Err(e) if self.admin => return self.refuse(&e.to_string()),
             Err(e) => {
                 tracing::warn!("cannot start the WSL agent for {}: {e}", self.distro);
                 return self.simplify();
@@ -507,9 +544,17 @@ impl Ctl {
                 return std::mem::take(&mut self.queue).into_iter().for_each(|r| self.request(r));
             }
             Ok(build) => format!("it is build {build:?}"),
+            Err(e) if self.admin => {
+                conn.end(Duration::ZERO);
+                return self.refuse(&refusal(e));
+            }
             Err(e) => e.to_string(),
         };
         conn.end(Duration::ZERO);
+        if self.admin {
+            tracing::warn!("administrator agent answered with another build ({why})");
+            return self.refuse(S::ErrorsEngineAdminProgram.en());
+        }
         if delivered {
             tracing::warn!("WSL agent for {} still fails after delivery ({why})", self.distro);
             return self.simplify();
@@ -524,7 +569,32 @@ impl Ctl {
         }
     }
 
+    fn refuse(&mut self, why: &str) {
+        tracing::warn!("cannot start the administrator agent: {why}");
+        self.state = State::Idle;
+        let error = flit_core::tr_en!(S::ErrorsEngineAdminDenied, why = why);
+        let mut told = HashSet::new();
+        for req in std::mem::take(&mut self.queue) {
+            match req {
+                ProviderRequest::List { tab, gen, path, view, case, out, cancel } => {
+                    let now = Instant::now();
+                    let list = ListState { gen, path, view, out, cancel, listing: Listing::default(), keys: SortKeys::new(case), start: now, next_partial: now };
+                    list.finish(Some(FsError { kind: FsErrorKind::Unavailable, code: 0 }), &self.wake);
+                    if told.insert(tab) {
+                        self.emit(ProviderEvent::Denied { tab, error: error.clone() });
+                    }
+                }
+                ProviderRequest::Op { tab, id, .. } => self.emit(ProviderEvent::OpDone { tab, id, error: Some(error.clone()), report: None }),
+                ProviderRequest::DirSizes { tab, gen, items, .. } => self.emit(ProviderEvent::SizesSkipped { tab, gen, items: items.iter().map(|(i, _)| *i).collect() }),
+                _ => {}
+            }
+        }
+    }
+
     fn simplify(&mut self) {
+        if self.admin {
+            return self.refuse(S::ErrorsEngineAdminSilent.en());
+        }
         tracing::warn!("{} uses \\\\wsl.localhost until Flit restarts", self.distro);
         self.state = State::Simplified;
         std::mem::take(&mut self.queue).into_iter().for_each(|r| self.fallback(r));
@@ -579,7 +649,7 @@ impl Ctl {
                 self.pending.insert(id, Pending::Sizes { tab, gen, cancel, wanted: items.iter().map(|(i, _)| *i).collect() });
                 self.send(Request::DirSizes { id, dir, items });
             }
-            ProviderRequest::Op { tab, id: op, op: request, ctl } if agent_runs(&request) => {
+            ProviderRequest::Op { tab, id: op, op: request, ctl } if runs(&request, self.admin) => {
                 let clear = self.clears.remove(&op);
                 if ctl.is_cancelled() {
                     return self.emit(ProviderEvent::OpDone { tab, id: op, error: Some(CANCELLED.into()), report: Some(OpReport { op: request, items: Vec::new() }) });
@@ -642,7 +712,7 @@ impl Ctl {
     fn finished(&mut self, id: ReqId, error: Option<String>, items: Vec<(FsPath, FsPath)>) {
         let Some(Pending::Op(o)) = self.pending.remove(&id) else { return };
         if let Err(e) = check_report(&o.request, &items) {
-            self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error: Some(flit_core::tr_en!(flit_core::i18n::S::ErrorsEngineWslLost, distro = self.distro)), report: None });
+            self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error: Some(self.lost()), report: None });
             return self.crashed(&e.to_string());
         }
         if o.clear && error.is_none() {
@@ -713,12 +783,28 @@ impl Ctl {
         }
     }
 
+    fn lost(&self) -> String {
+        if self.admin {
+            S::ErrorsEngineAdminLost.en().to_owned()
+        } else {
+            flit_core::tr_en!(S::ErrorsEngineWslLost, distro = self.distro)
+        }
+    }
+
+    fn stopped(&self) -> String {
+        if self.admin {
+            S::ErrorsEngineAdminStopped.en().to_owned()
+        } else {
+            flit_core::tr_en!(S::ErrorsEngineWslStopped, distro = self.distro)
+        }
+    }
+
     fn crashed(&mut self, why: &str) {
         tracing::warn!("WSL agent for {} stopped: {why}", self.distro);
         if let State::Ready(conn) = std::mem::replace(&mut self.state, State::Idle) {
             conn.end(Duration::ZERO);
         }
-        let lost = flit_core::tr_en!(flit_core::i18n::S::ErrorsEngineWslLost, distro = self.distro);
+        let lost = self.lost();
         for (_, p) in std::mem::take(&mut self.pending) {
             match p {
                 Pending::List(l) => l.finish(Some(FsError { kind: FsErrorKind::Unavailable, code: 0 }), &self.wake),
@@ -732,14 +818,14 @@ impl Ctl {
         }
         self.clears.clear();
         for (tab, _) in std::mem::take(&mut self.watches) {
-            self.emit(ProviderEvent::OpDone { tab, id: 0, error: Some(flit_core::tr_en!(flit_core::i18n::S::ErrorsEngineWslStopped, distro = self.distro)), report: None });
+            self.emit(ProviderEvent::OpDone { tab, id: 0, error: Some(self.stopped()), report: None });
         }
         let now = Instant::now();
         self.crashes.push_back(now);
         while self.crashes.front().is_some_and(|&t| now.duration_since(t) > self.timing.crash_window) {
             self.crashes.pop_front();
         }
-        if self.crashes.len() >= self.timing.max_crashes {
+        if !self.admin && self.crashes.len() >= self.timing.max_crashes {
             self.simplify();
         }
     }

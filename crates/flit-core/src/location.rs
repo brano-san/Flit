@@ -8,12 +8,14 @@ use std::borrow::Cow;
 pub enum Location {
     Local(FsPath),
     Wsl { distro: String, path: FsPath },
+    Admin(FsPath),
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub enum ProviderId {
     Local,
     Wsl(String),
+    Admin,
 }
 
 pub const WSL_SCHEME: &str = "wsl://";
@@ -95,6 +97,7 @@ impl Location {
         match self {
             Location::Local(_) => ProviderId::Local,
             Location::Wsl { distro, .. } => ProviderId::Wsl(distro.clone()),
+            Location::Admin(_) => ProviderId::Admin,
         }
     }
 
@@ -108,7 +111,7 @@ impl Location {
 
     pub fn path(&self) -> &FsPath {
         match self {
-            Location::Local(p) | Location::Wsl { path: p, .. } => p,
+            Location::Local(p) | Location::Wsl { path: p, .. } | Location::Admin(p) => p,
         }
     }
 
@@ -143,8 +146,21 @@ impl Location {
     pub fn on(provider: &ProviderId, path: FsPath) -> Self {
         match provider {
             ProviderId::Wsl(distro) if path.kind() == PathKind::Unix => Location::Wsl { distro: distro.clone(), path },
+            ProviderId::Admin => Self::as_admin(path),
             _ => Self::from_local(path),
         }
+    }
+
+    pub fn as_admin(p: FsPath) -> Self {
+        if p.kind() == PathKind::Unix && crate::archive::split(&p).is_none() {
+            Location::Admin(p)
+        } else {
+            Self::from_local(p)
+        }
+    }
+
+    pub fn is_admin(&self) -> bool {
+        matches!(self, Location::Admin(_))
     }
 
     pub fn from_local(p: FsPath) -> Self {
@@ -169,7 +185,7 @@ impl Location {
 
     pub fn to_bytes(&self) -> Vec<u8> {
         match self {
-            Location::Local(p) => p.as_bytes().to_vec(),
+            Location::Local(p) | Location::Admin(p) => p.as_bytes().to_vec(),
             Location::Wsl { distro, path } => [WSL_SCHEME.as_bytes(), distro.as_bytes(), path.as_bytes()].concat(),
         }
     }
@@ -177,7 +193,7 @@ impl Location {
     pub fn to_windows(&self) -> Option<FsPath> {
         match self {
             Location::Local(p) if matches!(p.kind(), PathKind::RecycleBin | PathKind::Home) => None,
-            Location::Local(p) => Some(p.clone()),
+            Location::Local(p) | Location::Admin(p) => Some(p.clone()),
             Location::Wsl { distro, path } => {
                 let mut b = format!(r"\\wsl.localhost\{distro}").into_bytes();
                 for c in path.components() {
@@ -191,7 +207,7 @@ impl Location {
 
     pub fn display(&self) -> Cow<'_, str> {
         match self {
-            Location::Local(p) => p.display(),
+            Location::Local(p) | Location::Admin(p) => p.display(),
             Location::Wsl { .. } => Cow::Owned(name::display(&self.to_bytes()).into_owned()),
         }
     }
@@ -207,6 +223,7 @@ impl Location {
             }
             Location::Local(p) => Location::Local(p.join(child)),
             Location::Wsl { distro, path } => Location::Wsl { distro: distro.clone(), path: path.join(child) },
+            Location::Admin(p) => Self::as_admin(p.join(child)),
         }
     }
 
@@ -217,6 +234,7 @@ impl Location {
                 Some(up) => Some(Location::Wsl { distro: distro.clone(), path: up }),
                 None => Some(Self::computer()),
             },
+            Location::Admin(p) => p.parent().map(Self::as_admin),
         }
     }
 
