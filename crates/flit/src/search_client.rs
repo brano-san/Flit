@@ -7,6 +7,7 @@ use flit_core::ui::{IndexState, IndexVolume, SearchBackend, SearchEvent, SearchK
 use flit_core::FsPath;
 use flit_platform::{start_indexer, Duplex, IndexSource, Platform, PlatformError, Service, Wake, WindowId};
 use flit_proto::transport::{handshake, read_frame_limited, write_frame, Hello, Protocol, MAX_FRAME};
+use flit_proto::ProtoError;
 use flit_search::engine::MAX_ROWS;
 use flit_search::index::lowercase;
 use flit_search::proto::{Message, Sort, SortKey, VolumeInfo, VolumeState, VERSION};
@@ -14,6 +15,7 @@ use flit_search::query::{self, Clock, Query};
 use flit_search::session::{Session, SharedIndex, FIRST_PAGE};
 use std::collections::HashMap;
 use std::io::Read;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -23,8 +25,11 @@ const LIVE_TICK: Duration = Duration::from_millis(100);
 const HELLO_TIMEOUT: Duration = Duration::from_secs(2);
 const IDLE_POLL: Duration = Duration::from_millis(500);
 const FRAME_TIMEOUT: Duration = Duration::from_secs(10);
+const SERVICE_RETRY: Duration = Duration::from_secs(60);
 
 type Conn<P> = <<P as Platform>::Service as Service>::Conn;
+type Connect<P> = Box<dyn Fn() -> Result<Conn<P>, PlatformError> + Send>;
+type Fallback<P> = Box<dyn Fn() -> Result<(<P as Platform>::FallbackIndex, Option<PathBuf>), PlatformError> + Send>;
 type Out = Sender<(WindowId, SearchEvent)>;
 
 enum Cmd {
@@ -197,6 +202,8 @@ struct Worker<P: Platform> {
     wake: Wake,
     utc_offset_min: i32,
     remote_failed: Option<String>,
+    failed_at: Option<Instant>,
+    retry: Duration,
     indexing: bool,
     local: Option<Arc<SharedIndex>>,
     links: HashMap<WindowId, Link<Conn<P>>>,
@@ -204,13 +211,21 @@ struct Worker<P: Platform> {
     latests: HashMap<WindowId, Arc<AtomicU64>>,
     tags: TagCell,
     hits: HashMap<WindowId, Hits>,
+    connect: Connect<P>,
+    fallback: Fallback<P>,
 }
 
-fn connect<P: Platform>() -> Result<Conn<P>, String> {
-    let mut conn = P::Service::connect().map_err(|e| format!("flit-indexd is not reachable: {}", e.message.trim()))?;
+fn greet<C: Duplex>(conn: Result<C, PlatformError>) -> Result<C, String> {
+    let mut conn = conn.map_err(|e| format!("flit-indexd is not reachable: {}", e.message.trim()))?;
     conn.set_read_timeout(Some(HELLO_TIMEOUT));
-    handshake(&mut conn, &Hello::new(Protocol::Index, VERSION)).map_err(|e| format!("flit-indexd: {e}"))?;
-    Ok(conn)
+    match handshake(&mut conn, &Hello::new(Protocol::Index, VERSION)) {
+        Ok(_) => Ok(conn),
+        Err(e @ ProtoError::VersionMismatch { .. }) => {
+            tracing::warn!("flit-indexd is from another Flit version ({e}); restart it with systemctl --user restart flit-indexd.service or update Flit and the service together");
+            Err(format!("flit-indexd: {e}"))
+        }
+        Err(e) => Err(format!("flit-indexd: {e}")),
+    }
 }
 
 fn reader<C: Duplex>(mut conn: C, window: WindowId, alive: Arc<AtomicBool>, out: Out, wake: Wake, me: Sender<Cmd>) {
@@ -246,7 +261,7 @@ fn reader<C: Duplex>(mut conn: C, window: WindowId, alive: Arc<AtomicBool>, out:
 
 impl<P: Platform> Worker<P> {
     fn new(rx: Receiver<Cmd>, me: Sender<Cmd>, out: Out, wake: Wake, utc_offset_min: i32, tags: TagCell) -> Self {
-        Self { rx, me, out, wake, utc_offset_min, remote_failed: None, indexing: true, local: None, links: HashMap::new(), last_query: HashMap::new(), latests: HashMap::new(), tags, hits: HashMap::new() }
+        Self { rx, me, out, wake, utc_offset_min, remote_failed: None, failed_at: None, retry: SERVICE_RETRY, indexing: true, local: None, links: HashMap::new(), last_query: HashMap::new(), latests: HashMap::new(), tags, hits: HashMap::new(), connect: Box::new(P::Service::connect), fallback: Box::new(|| Ok((P::FallbackIndex::new()?, P::cache_dir().map(|d| d.join("search"))))) }
     }
 
     fn run(mut self) {
@@ -296,8 +311,8 @@ impl<P: Platform> Worker<P> {
             Some(s) => s.clone(),
             None => {
                 let shared = SharedIndex::new();
-                let source = P::FallbackIndex::new().map_err(|e| e.message)?;
-                start_indexer(source, shared.clone(), P::cache_dir().map(|d| d.join("search"))).map_err(|e| e.message)?;
+                let (source, snapshots) = (self.fallback)().map_err(|e| e.message)?;
+                start_indexer(source, shared.clone(), snapshots).map_err(|e| e.message)?;
                 self.local = Some(shared.clone());
                 shared
             }
@@ -325,26 +340,8 @@ impl<P: Platform> Worker<P> {
             self.send(window, SearchEvent::Status { backend: SearchBackend::Off, volumes: Vec::new(), note: None });
             return;
         }
-        if self.remote_failed.is_none() {
-            match connect::<P>() {
-                Ok(conn) => {
-                    let alive = Arc::new(AtomicBool::new(true));
-                    if let Ok(read_half) = conn.try_clone() {
-                        let (a, out, wake, me) = (alive.clone(), self.out.clone(), self.wake.clone(), self.me.clone());
-                        let spawned = std::thread::Builder::new().name("flit-search-read".into()).spawn(move || reader(read_half, window, a, out, wake, me));
-                        if spawned.is_ok() {
-                            self.links.insert(window, Link::Remote { conn, alive });
-                            self.send(window, SearchEvent::Status { backend: SearchBackend::Service, volumes: Vec::new(), note: None });
-                            return;
-                        }
-                    }
-                    self.remote_failed = Some("cannot read from flit-indexd".into());
-                }
-                Err(why) => {
-                    tracing::info!("search falls back to the in-process index: {why}");
-                    self.remote_failed = Some(why);
-                }
-            }
+        if self.service_due() && self.try_service(window) {
+            return;
         }
         let note = self.remote_failed.clone();
         match self.local_link(latest) {
@@ -354,6 +351,43 @@ impl<P: Platform> Worker<P> {
             }
             Err(e) => self.send(window, SearchEvent::Error { message: tr!(S::SearchErrorUnavailable, error = e) }),
         }
+    }
+
+    fn service_due(&self) -> bool {
+        self.remote_failed.is_none() || self.failed_at.is_some_and(|t| t.elapsed() >= self.retry)
+    }
+
+    fn fail_service(&mut self, why: String) {
+        self.remote_failed = Some(why);
+        self.failed_at = Some(Instant::now());
+    }
+
+    fn try_service(&mut self, window: WindowId) -> bool {
+        match greet((self.connect)()) {
+            Ok(conn) => {
+                let alive = Arc::new(AtomicBool::new(true));
+                if let Ok(read_half) = conn.try_clone() {
+                    let (a, out, wake, me) = (alive.clone(), self.out.clone(), self.wake.clone(), self.me.clone());
+                    let spawned = std::thread::Builder::new().name("flit-search-read".into()).spawn(move || reader(read_half, window, a, out, wake, me));
+                    if spawned.is_ok() {
+                        if self.remote_failed.take().is_some() {
+                            tracing::info!("flit-indexd is reachable again; search uses the service");
+                        }
+                        self.failed_at = None;
+                        self.drop_link(window);
+                        self.links.insert(window, Link::Remote { conn, alive });
+                        self.send(window, SearchEvent::Status { backend: SearchBackend::Service, volumes: Vec::new(), note: None });
+                        return true;
+                    }
+                }
+                self.fail_service("cannot read from flit-indexd".into());
+            }
+            Err(why) => {
+                tracing::info!("search falls back to the in-process index: {why}");
+                self.fail_service(why);
+            }
+        }
+        false
     }
 
     fn request(&mut self, window: WindowId, latest: Arc<AtomicU64>, req: SearchRequest) {
@@ -375,6 +409,8 @@ impl<P: Platform> Worker<P> {
         }
         if !self.links.contains_key(&window) {
             self.open(window, latest);
+        } else if self.indexing && matches!(req, SearchRequest::Query { .. }) && matches!(self.links.get(&window), Some(Link::Local { .. })) && self.remote_failed.is_some() && self.service_due() {
+            self.try_service(window);
         }
         if let (false, SearchRequest::Query { gen, .. }) = (self.indexing, &req) {
             return self.send(window, SearchEvent::Done { gen: *gen, total: 0 });
@@ -496,7 +532,7 @@ impl<P: Platform> Worker<P> {
         }
         tracing::warn!("{why}; switching to the in-process index");
         self.drop_link(window);
-        self.remote_failed = Some(why);
+        self.fail_service(why);
         let latest = self.latests.get(&window).cloned().unwrap_or_default();
         self.open(window, latest.clone());
         if let Some(q) = self.last_query.get(&window).cloned() {

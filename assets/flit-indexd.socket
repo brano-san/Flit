@@ -1,0 +1,11 @@
+[Unit]
+Description=Flit search index socket
+Documentation=https://github.com/brano-san/Flit
+
+[Socket]
+ListenStream=%t/flit/indexd.sock
+SocketMode=0600
+DirectoryMode=0700
+
+[Install]
+WantedBy=sockets.target

@@ -1,4 +1,6 @@
 mod serve;
+#[cfg(target_os = "linux")]
+mod upkeep;
 
 use flit_platform::{start_indexer, IndexSource, Platform, PlatformError, Service};
 use flit_search::proto::VolumeState;
@@ -15,13 +17,15 @@ type S = <P as Platform>::Service;
 
 const USAGE: &str = "usage: flit-indexd [--console] [--walk [ROOT...]] [--snapshots DIR] [--query TEXT] [--version]
 
-  (no options)  run as the Windows service (started by the service control manager)
+  (no options)  run as the index service: the Windows service started by the service control manager,
+                or on Linux the systemd --user service serving $XDG_RUNTIME_DIR/flit/indexd.sock
   --console     run in the foreground and print index progress
   --query TEXT  ask the running service and print the first results
   --walk        index by walking folders (no administrator rights needed) instead of the MFT;
                 without ROOTs every fixed drive is walked
   --snapshots DIR  keep index snapshots for fast restarts in DIR
-                (default: %LOCALAPPDATA%\\Flit\\indexd of the account the service runs as)";
+                (default: %LOCALAPPDATA%\\Flit\\indexd of the account the service runs as,
+                on Linux $XDG_STATE_HOME/flit/indexd)";
 
 #[derive(Default)]
 struct Config {
@@ -72,6 +76,13 @@ fn body() -> Result<(), PlatformError> {
     let cfg = CONFIG.get_or_init(Config::default);
     let shared = SharedIndex::new();
     let snapshots = cfg.snapshots.clone().or_else(|| P::state_dir().map(|d| d.join("indexd")));
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(old) = upkeep::old_snapshots().filter(|o| cfg.snapshots.as_ref() != Some(o) && snapshots.as_ref() != Some(o)) {
+            upkeep::remove_old_snapshots(&old);
+        }
+        upkeep::watch_binary();
+    }
     match &cfg.walk {
         Some(roots) => start_indexer(walk_source(roots)?, shared.clone(), snapshots)?,
         None => start_indexer(<P as Platform>::IndexSource::new()?, shared.clone(), snapshots)?,
@@ -115,7 +126,7 @@ fn query(text: &str) -> Result<(), String> {
             Message::Rows { entries, dirs, .. } => {
                 for ((name, meta), dir) in entries.entries(true).map_err(|e| e.to_string())?.zip(dirs) {
                     let dir = String::from_utf8_lossy(&dir);
-                    let sep = if dir.ends_with(['\\', '/']) { "" } else { "\\" };
+                    let sep = if dir.ends_with(['\\', '/']) { "" } else if cfg!(windows) { "\\" } else { "/" };
                     println!("{:>12}  {dir}{sep}{}", meta.size, String::from_utf8_lossy(name));
                 }
                 return Ok(());
@@ -168,3 +179,7 @@ fn main() {
         std::process::exit(1);
     }
 }
+
+#[cfg(test)]
+#[path = "../test/units.rs"]
+mod units;

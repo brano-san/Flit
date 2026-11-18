@@ -34,6 +34,9 @@ depends = "libc6 (>= 2.35), libegl1, libgles2, libxkbcommon0, libfontconfig1"
 recommends = "libxkbcommon-x11-0, libwayland-client0, libwayland-egl1, xdg-utils, shared-mime-info, libturbojpeg0 | libturbojpeg"
 assets = [
     ["target/release/flit", "usr/bin/", "755"],
+    ["target/release/flit-indexd", "usr/bin/", "755"],
+    ["../../assets/flit-indexd.service", "usr/lib/systemd/user/", "644"],
+    ["../../assets/flit-indexd.socket", "usr/lib/systemd/user/", "644"],
     ["../../assets/flit.desktop", "usr/share/applications/", "644"],
     ["../../assets/icon/hicolor/scalable/apps/flit.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
     ["../../assets/icon/hicolor/256x256/apps/flit.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
@@ -48,6 +51,9 @@ assets = [
 summary = "Fast GPU-drawn file manager"
 assets = [
     { source = "target/release/flit", dest = "/usr/bin/flit", mode = "755" },
+    { source = "target/release/flit-indexd", dest = "/usr/bin/flit-indexd", mode = "755" },
+    { source = "../../assets/flit-indexd.service", dest = "/usr/lib/systemd/user/flit-indexd.service", mode = "644" },
+    { source = "../../assets/flit-indexd.socket", dest = "/usr/lib/systemd/user/flit-indexd.socket", mode = "644" },
     { source = "../../assets/flit.desktop", dest = "/usr/share/applications/flit.desktop", mode = "644" },
     { source = "../../assets/icon/hicolor/scalable/apps/flit.svg", dest = "/usr/share/icons/hicolor/scalable/apps/flit.svg", mode = "644" },
     { source = "../../assets/icon/hicolor/256x256/apps/flit.png", dest = "/usr/share/icons/hicolor/256x256/apps/flit.png", mode = "644" },
@@ -68,3 +74,6 @@ zip = { version = "7.3", default-features = false, features = ["deflate-flate2-z
 flit-platform-linux-gui.workspace = true
 tar = { version = "0.4", default-features = false }
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
+
+[target.'cfg(not(windows))'.dev-dependencies]
+flit-platform-linux.workspace = true

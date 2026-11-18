@@ -1,0 +1,18 @@
+[Unit]
+Description=Flit search index
+Documentation=https://github.com/brano-san/Flit
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/flit-indexd
+Restart=on-failure
+RestartSec=10
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+StateDirectory=flit
+StateDirectoryMode=0700
+
+[Install]
+WantedBy=default.target
+Also=flit-indexd.socket
