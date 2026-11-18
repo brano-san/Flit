@@ -54,3 +54,39 @@ fn a_panel_refits_with_its_shadow_margin_and_slid_items_keep_their_clip() {
     dl.fade(0, 1.0);
     assert_eq!(dl.instances[0].color >> 24, 0x40, "a full fade leaves colours alone");
 }
+
+#[test]
+fn subpixel_text_turns_grayscale_when_scaled_faded_or_moved_by_part_of_a_pixel() {
+    let lcd = |dl: &DrawList| dl.instances.iter().map(|i| i.kind == kind::LCD_GLYPH).collect::<Vec<_>>();
+    let fresh = || {
+        let mut dl = DrawList::default();
+        dl.lcd_glyph(Rect::new(4.0, 4.0, 6.0, 8.0), [0.0; 4], Color::rgb(0));
+        dl.lcd_glyph(Rect::new(10.0, 4.0, 6.0, 8.0), [0.0; 4], Color::rgb(0));
+        dl
+    };
+    let mut dl = fresh();
+    assert!(dl.has_lcd());
+    dl.nudge(0, 2.0, -1.0);
+    dl.shift(0, 3.0, 0.0);
+    dl.fade(0, 1.0);
+    dl.grow(0, 1.0, (0.0, 0.0), 0.9);
+    dl.refit(0, Rect::new(0.0, 0.0, 10.0, 10.0), Rect::new(1.0, 2.0, 10.0, 10.0));
+    assert_eq!(lcd(&dl), [true, true], "whole-pixel moves keep the stripes on their subpixels");
+
+    let mut dl = fresh();
+    dl.nudge(1, 0.5, 0.0);
+    assert_eq!(lcd(&dl), [true, false]);
+    let mut dl = fresh();
+    dl.shift_range(0..1, 0.0, 0.25);
+    assert_eq!(lcd(&dl), [false, true]);
+    let mut dl = fresh();
+    dl.fade(0, 0.5);
+    assert_eq!(lcd(&dl), [false, false], "a fading surface is not opaque");
+    let mut dl = fresh();
+    dl.pop_in(0, 0.3, (8.0, 8.0));
+    assert_eq!(lcd(&dl), [false, false], "a growing surface scales its text");
+    let mut dl = fresh();
+    dl.refit(0, Rect::new(0.0, 0.0, 10.0, 10.0), Rect::new(0.0, 0.0, 12.0, 10.0));
+    assert_eq!(lcd(&dl), [false, false]);
+    assert!(!dl.has_lcd());
+}

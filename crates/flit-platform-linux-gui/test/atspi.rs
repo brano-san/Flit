@@ -459,3 +459,12 @@ fn an_icon_theme_change_is_heard_with_its_name() {
     assert_eq!(look_change(&[s(GNOME_INTERFACE), s("icon-theme"), Arg::L(vec![s("Papirus")])]), Some(LookChange::IconTheme("Papirus".into())));
     assert_eq!(look_change(&[s(GNOME_INTERFACE), s("icon-theme"), Arg::L(vec![s("")])]), None);
 }
+
+#[test]
+fn font_rendering_changes_of_gnome_are_heard() {
+    let s = |v: &str| Arg::S(v.into());
+    assert_eq!(look_change(&[s(GNOME_INTERFACE), s("font-antialiasing"), Arg::L(vec![s("rgba")])]), Some(LookChange::FontRendering("font-antialiasing".into(), "rgba".into())));
+    assert_eq!(look_change(&[s(GNOME_INTERFACE), s("font-rgba-order"), Arg::L(vec![s("bgr")])]), Some(LookChange::FontRendering("font-rgba-order".into(), "bgr".into())));
+    assert_eq!(look_change(&[s(GNOME_INTERFACE), s("font-hinting"), Arg::L(vec![s("slight")])]), Some(LookChange::FontRendering("font-hinting".into(), "slight".into())));
+    assert_eq!(look_change(&[s(GNOME_WM), s("font-hinting"), Arg::L(vec![s("slight")])]), None, "only the interface namespace holds font settings");
+}

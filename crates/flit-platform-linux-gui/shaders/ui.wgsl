@@ -1,3 +1,5 @@
+enable dual_source_blending;
+
 struct Globals {
     viewport: vec2<f32>,
     text_contrast: f32,
@@ -48,21 +50,54 @@ fn vs_main(i: VsIn) -> PsIn {
     return o;
 }
 
+struct LcdOut {
+    @location(0) @blend_src(0) color: vec4<f32>,
+    @location(0) @blend_src(1) mask: vec4<f32>,
+}
+
 fn rounded_box(p: vec2<f32>, half_size: vec2<f32>, r: f32) -> f32 {
     let q = abs(p) - half_size + r;
     return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
 }
 
+fn clipped(i: PsIn) -> bool {
+    let px = vec2<f32>(i.pos.x, globals.viewport.y - i.pos.y);
+    return px.x < i.clip.x || px.y < i.clip.y || px.x >= i.clip.z || px.y >= i.clip.w;
+}
+
+fn contrast(a: vec4<f32>) -> vec4<f32> {
+    let k = globals.text_contrast;
+    return a * (k + 1.0) / (a * k + 1.0);
+}
+
 @fragment
 fn fs_main(i: PsIn) -> @location(0) vec4<f32> {
-    let px = vec2<f32>(i.pos.x, globals.viewport.y - i.pos.y);
-    if (px.x < i.clip.x || px.y < i.clip.y || px.x >= i.clip.z || px.y >= i.clip.w) {
+    if (clipped(i)) {
         discard;
     }
-    if (i.kind == 1u) {
-        var a = textureSampleLevel(atlas, samp, i.uv, 0.0).a;
-        let k = globals.text_contrast;
-        a = a * (k + 1.0) / (a * k + 1.0);
+    return paint(i);
+}
+
+@fragment
+fn fs_lcd(i: PsIn) -> LcdOut {
+    if (clipped(i)) {
+        discard;
+    }
+    var o: LcdOut;
+    if (i.kind == 7u) {
+        let m = contrast(textureSampleLevel(atlas, samp, i.uv, 0.0));
+        o.color = vec4<f32>(i.color.rgb * m.rgb, i.color.a * m.a);
+        o.mask = i.color.a * m;
+        return o;
+    }
+    o.color = paint(i);
+    o.mask = vec4<f32>(o.color.a);
+    return o;
+}
+
+fn paint(i: PsIn) -> vec4<f32> {
+    if (i.kind == 1u || i.kind == 7u) {
+        let a = contrast(textureSampleLevel(atlas, samp, i.uv, 0.0)).a;
         return i.color * a;
     }
     if (i.kind == 2u) {

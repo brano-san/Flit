@@ -69,7 +69,7 @@ fn a_glyph_rasterises_the_same_after_another_glyph() {
     let mut t = Linux::text().unwrap();
     let mut shaped = ShapedText::default();
     t.shape("BW", FontStyle::new(FontFamily::Ui, 14.0, false), &mut shaped);
-    let key = |g: &flit_core::text::ShapedGlyph| GlyphKey { font: g.font, id: g.id, size_q: 56, subpx: 0 };
+    let key = |g: &flit_core::text::ShapedGlyph| GlyphKey { font: g.font, id: g.id, size_q: 56, subpx: 0, subpixel: Default::default() };
     let raster = |t: &mut text::LinuxText, k| {
         let mut out = GlyphBitmap::default();
         assert!(t.rasterize(k, &mut out));

@@ -27,7 +27,7 @@ fn shaped(t: &mut LinuxText, s: &str, style: FontStyle) -> ShapedText {
 
 fn raster(t: &mut LinuxText, g: ShapedGlyph, style: FontStyle, subpx: u8) -> GlyphBitmap {
     let mut bm = GlyphBitmap::default();
-    assert!(t.rasterize(GlyphKey { font: g.font, id: g.id, size_q: style.size_q, subpx }, &mut bm));
+    assert!(t.rasterize(GlyphKey { font: g.font, id: g.id, size_q: style.size_q, subpx, subpixel: Default::default() }, &mut bm));
     assert_eq!(bm.data.len(), (bm.width * bm.height) as usize * if bm.color { 4 } else { 1 });
     bm
 }
@@ -57,7 +57,7 @@ fn shapes_latin_and_cyrillic_and_rasterizes() {
     assert!(shaped(&mut t, " ", style).width > 2.0);
     let mut space = GlyphBitmap::default();
     let sp = shaped(&mut t, " ", style).glyphs[0];
-    assert!(!t.rasterize(GlyphKey { font: sp.font, id: sp.id, size_q: style.size_q, subpx: 0 }, &mut space) || space.width == 0);
+    assert!(!t.rasterize(GlyphKey { font: sp.font, id: sp.id, size_q: style.size_q, subpx: 0, subpixel: Default::default() }, &mut space) || space.width == 0);
 }
 
 #[test]
@@ -292,7 +292,7 @@ fn bench_text() {
     let (_, ascii) = time(|| (0..runs).for_each(|_| latin.iter().for_each(|n| t.shape(n, style, &mut out))));
     println!("shape 200 names: first pass {cold:?}, then {:?} per 200 (ASCII-only {:?})", warm / runs, ascii / runs);
     let glyphs: Vec<ShapedGlyph> = names.iter().flat_map(|n| shaped(&mut t, n, style).glyphs).collect();
-    let mut keys: Vec<GlyphKey> = glyphs.iter().map(|g| GlyphKey { font: g.font, id: g.id, size_q: style.size_q, subpx: (g.x.fract() * 4.0) as u8 & 3 }).collect();
+    let mut keys: Vec<GlyphKey> = glyphs.iter().map(|g| GlyphKey { font: g.font, id: g.id, size_q: style.size_q, subpx: (g.x.fract() * 4.0) as u8 & 3, subpixel: Default::default() }).collect();
     keys.sort_by_key(|k| (k.font, k.id, k.subpx));
     keys.dedup();
     let mut bm = GlyphBitmap::default();
@@ -308,4 +308,126 @@ fn bench_text() {
     println!("families(): {} in {list:?}", families.len());
     let (_, switch) = time(|| t.set_ui_family("DejaVu Sans Mono"));
     println!("set_ui_family {switch:?}");
+}
+
+fn square(x0: f32, y0: f32, x1: f32, y1: f32) -> Vec<Command> {
+    let v = Vector::new;
+    vec![Command::MoveTo(v(x0, y0)), Command::LineTo(v(x0, y1)), Command::LineTo(v(x1, y1)), Command::LineTo(v(x1, y0)), Command::Close]
+}
+
+fn texel(bm: &GlyphBitmap, x: i32, y: i32) -> [u8; 4] {
+    let (col, row) = ((x - bm.left) as u32, (bm.top - 1 - y) as u32);
+    let i = ((row * bm.width + col) * 4) as usize;
+    bm.data[i..i + 4].try_into().unwrap()
+}
+
+#[test]
+fn subpixel_masks_put_each_colour_where_its_stripe_sits() {
+    let path = square(2.5, 0.0, 8.5, 6.0);
+    let mut rgb = GlyphBitmap::default();
+    render_mask(&path, Subpixel::Rgb, Vector::ZERO, &mut rgb);
+    assert!(rgb.lcd && !rgb.color);
+    assert_eq!(rgb.data.len(), (rgb.width * rgb.height * 4) as usize);
+    let [r, g, b, a] = texel(&rgb, 2, 3);
+    assert!(r < g && g < b, "on a left edge the blue stripe on the right is covered most: {:?}", [r, g, b]);
+    assert_eq!(a, g, "the middle stripe doubles as the plain coverage");
+    let [r, g, b, _] = texel(&rgb, 8, 3);
+    assert!(r > g && g > b, "on a right edge the red stripe on the left is covered most: {:?}", [r, g, b]);
+    let [r, g, b, _] = texel(&rgb, 5, 3);
+    assert_eq!([r, g, b], [255, 255, 255], "inside the shape every stripe is lit");
+
+    let mut bgr = GlyphBitmap::default();
+    render_mask(&path, Subpixel::Bgr, Vector::ZERO, &mut bgr);
+    let ([r1, g1, b1, _], [r2, g2, b2, _]) = (texel(&rgb, 2, 3), texel(&bgr, 2, 3));
+    assert_eq!((r1, g1, b1), (b2, g2, r2), "bgr mirrors the red and blue channels");
+
+    let mut vrgb = GlyphBitmap::default();
+    render_mask(&square(1.0, 0.0, 7.0, 5.5), Subpixel::Vrgb, Vector::ZERO, &mut vrgb);
+    let [r, g, b, _] = texel(&vrgb, 3, 5);
+    assert!(r < g && g < b, "on a top edge the red stripe on top is covered least: {:?}", [r, g, b]);
+}
+
+#[test]
+fn plain_masks_are_one_byte_per_pixel_and_match_the_middle_subpixel_stripe() {
+    let path = square(2.5, 0.0, 8.5, 6.0);
+    let (mut plain, mut rgb) = (GlyphBitmap::default(), GlyphBitmap::default());
+    render_mask(&path, Subpixel::None, Vector::new(0.25, 0.0), &mut plain);
+    render_mask(&path, Subpixel::Rgb, Vector::new(0.25, 0.0), &mut rgb);
+    assert!(!plain.lcd);
+    assert_eq!(plain.data.len(), (plain.width * plain.height) as usize);
+    for y in plain.top - plain.height as i32..plain.top {
+        for x in plain.left..plain.left + plain.width as i32 {
+            let v = plain.data[((plain.top - 1 - y) as u32 * plain.width + (x - plain.left) as u32) as usize];
+            let [r, g, b, a] = texel(&rgb, x, y);
+            assert_eq!((g, a), (v, v), "at {x},{y}");
+            if v == 255 || v == 0 {
+                continue;
+            }
+            assert_ne!(r, b, "an edge pixel differs per channel at {x},{y}");
+        }
+    }
+}
+
+fn bundled_glyph(t: &mut LinuxText, c: char) -> GlyphKey {
+    let font = t.load(fonts::SANS, 0, false).unwrap();
+    let id = t.faces[font as usize].charmap.map(c as u32);
+    GlyphKey { font, id, size_q: 13 * 4, subpx: 0, subpixel: Subpixel::None }
+}
+
+fn rasterized(t: &mut LinuxText, key: GlyphKey) -> GlyphBitmap {
+    let mut bm = GlyphBitmap::default();
+    assert!(t.rasterize(key, &mut bm));
+    bm
+}
+
+#[test]
+fn a_letter_rasterizes_with_three_channels_in_subpixel_mode_and_one_otherwise() {
+    let mut t = ready();
+    t.set_hinting(Hinting::None);
+    let key = bundled_glyph(&mut t, 'l');
+    let plain = rasterized(&mut t, key);
+    assert!(!plain.lcd && plain.data.len() == (plain.width * plain.height) as usize, "none keeps the one-channel mask: {plain:?}");
+    let lcd = rasterized(&mut t, GlyphKey { subpixel: Subpixel::Rgb, ..key });
+    assert!(lcd.lcd && lcd.data.len() == (lcd.width * lcd.height * 4) as usize);
+    assert!(lcd.data.chunks_exact(4).any(|p| p[0] != p[2]), "the stem edges are coloured: {lcd:?}");
+    assert!(lcd.width >= plain.width);
+}
+
+#[test]
+fn the_subpixel_mode_needs_a_renderer_that_blends_per_channel() {
+    let lcd = fonts::Rendering { hinting: Hinting::Slight, subpixel: Subpixel::Bgr };
+    assert_eq!(glyph_mode_for(lcd, true).subpixel, Subpixel::Bgr);
+    assert_eq!(glyph_mode_for(lcd, false).subpixel, Subpixel::None, "without dual-source blending glyphs stay plain");
+    assert_ne!(glyph_mode_for(lcd, true), glyph_mode_for(fonts::Rendering { hinting: Hinting::Full, ..lcd }, true), "a hinting change rebuilds the glyph cache");
+}
+
+fn profiles(bm: &GlyphBitmap) -> (Vec<u32>, Vec<u32>) {
+    let (w, h) = (bm.width as usize, bm.height as usize);
+    let cols = (0..w).map(|x| (0..h).map(|y| u32::from(bm.data[y * w + x])).sum()).collect();
+    let rows = (0..h).map(|y| (0..w).map(|x| u32::from(bm.data[y * w + x])).sum()).collect();
+    (cols, rows)
+}
+
+#[test]
+fn slight_hinting_snaps_glyphs_vertically_and_leaves_their_horizontal_shape() {
+    let mut t = ready();
+    let mut differs = 0;
+    for c in ['H', 'x', 'e', 'o', 'n', 'E'] {
+        t.set_hinting(Hinting::None);
+        let key = bundled_glyph(&mut t, c);
+        let plain = rasterized(&mut t, key);
+        t.set_hinting(Hinting::Slight);
+        let light = rasterized(&mut t, key);
+        assert!(!light.lcd);
+        assert_eq!((light.left, light.width), (plain.left, plain.width), "{c}: no horizontal move");
+        let ((pc, pr), (lc, lr)) = (profiles(&plain), profiles(&light));
+        let (pt, lt) = (pc.iter().sum::<u32>() as f32, lc.iter().sum::<u32>() as f32);
+        for (x, (a, b)) in pc.iter().zip(&lc).enumerate() {
+            assert!((*a as f32 / pt - *b as f32 / lt).abs() < 0.04, "{c}: column {x} keeps its share of ink: {pc:?} {lc:?}");
+        }
+        if pr != lr || plain.top != light.top || plain.height != light.height {
+            differs += 1;
+        }
+    }
+    assert!(differs >= 3, "light hinting changes the vertical profile of most letters ({differs})");
 }

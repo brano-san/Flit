@@ -853,6 +853,7 @@ dependencies = [
  "png",
  "raw-window-handle",
  "serde_json",
+ "skrifa",
  "swash",
  "tracing",
  "unicode-bidi",

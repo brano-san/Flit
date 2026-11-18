@@ -5,7 +5,8 @@ use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use flit_core::text::Subpixel;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -198,6 +199,10 @@ const SLANT: &str = "slant\0";
 const OUTLINE: &str = "outline\0";
 const COLOR: &str = "color\0";
 const FONTFORMAT: &str = "fontformat\0";
+const ANTIALIAS: &str = "antialias\0";
+const RGBA: &str = "rgba\0";
+const HINTING_KEY: &str = "hinting\0";
+const HINTSTYLE: &str = "hintstyle\0";
 
 impl Drop for Fontconfig {
     fn drop(&mut self) {
@@ -348,6 +353,17 @@ impl Fontconfig {
         out
     }
 
+    pub fn prefs(&self, family: Option<&str>) -> Prefs {
+        let Some(q) = self.query(family.unwrap_or("sans-serif"), WEIGHT_REGULAR) else { return Prefs::default() };
+        let mut result = 0;
+        let raw = unsafe { (self.api.font_match)(self.config, q.1, &mut result) };
+        if raw.is_null() {
+            return Prefs::default();
+        }
+        let m = Pattern(&self.api, raw);
+        fontconfig_prefs(self.boolean(m.1, ANTIALIAS), self.integer(m.1, RGBA), self.boolean(m.1, HINTING_KEY), self.integer(m.1, HINTSTYLE))
+    }
+
     pub fn resolve(&self, family: Option<&str>, desktop_ui: Option<&str>) -> Resolved {
         Resolved {
             ui: desktop_ui.and_then(|d| self.family(d)).or_else(|| self.generic("sans-serif")),
@@ -358,14 +374,109 @@ impl Fontconfig {
     }
 }
 
-static HINTING: AtomicBool = AtomicBool::new(false);
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub enum Hinting {
+    #[default]
+    None,
+    Slight,
+    Full,
+}
 
-pub fn hinting() -> bool {
-    HINTING.load(Ordering::Relaxed)
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct Prefs {
+    pub antialias: Option<bool>,
+    pub subpixel: Option<Subpixel>,
+    pub hinting: Option<Hinting>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct Rendering {
+    pub hinting: Hinting,
+    pub subpixel: Subpixel,
+}
+
+const SUBPIXELS: [Subpixel; 5] = [Subpixel::None, Subpixel::Rgb, Subpixel::Bgr, Subpixel::Vrgb, Subpixel::Vbgr];
+const HINTINGS: [Hinting; 3] = [Hinting::None, Hinting::Slight, Hinting::Full];
+const NO_PREFS: Prefs = Prefs { antialias: None, subpixel: None, hinting: None };
+
+impl Rendering {
+    pub fn merge(desktop: Prefs, fontconfig: Prefs) -> Self {
+        let antialias = desktop.antialias.or(fontconfig.antialias).unwrap_or(true);
+        let subpixel = if antialias { desktop.subpixel.or(fontconfig.subpixel).unwrap_or_default() } else { Subpixel::None };
+        Self { hinting: desktop.hinting.or(fontconfig.hinting).unwrap_or_default(), subpixel }
+    }
+
+    pub fn pack(self) -> u8 {
+        let s = SUBPIXELS.iter().position(|&v| v == self.subpixel).unwrap_or(0) as u8;
+        let h = HINTINGS.iter().position(|&v| v == self.hinting).unwrap_or(0) as u8;
+        s | h << 4
+    }
+
+    pub fn unpack(v: u8) -> Self {
+        Self { subpixel: SUBPIXELS.get(usize::from(v & 0xF)).copied().unwrap_or_default(), hinting: HINTINGS.get(usize::from(v >> 4)).copied().unwrap_or_default() }
+    }
+}
+
+static RENDERING: AtomicU8 = AtomicU8::new(0);
+static LCD_BLEND: AtomicBool = AtomicBool::new(false);
+static PREFS: Mutex<(Prefs, Prefs)> = Mutex::new((NO_PREFS, NO_PREFS));
+
+pub fn rendering() -> Rendering {
+    Rendering::unpack(RENDERING.load(Ordering::Acquire))
+}
+
+pub fn lcd_blend() -> bool {
+    LCD_BLEND.load(Ordering::Acquire)
+}
+
+pub fn set_lcd_blend(on: bool) {
+    LCD_BLEND.store(on, Ordering::Release);
+}
+
+fn publish_prefs(update: impl FnOnce(&mut (Prefs, Prefs))) -> bool {
+    let mut prefs = PREFS.lock().unwrap_or_else(|e| e.into_inner());
+    update(&mut prefs);
+    let next = Rendering::merge(prefs.0, prefs.1).pack();
+    RENDERING.swap(next, Ordering::AcqRel) != next
+}
+
+pub fn set_desktop_prefs(desktop: Prefs) -> bool {
+    publish_prefs(|p| p.0 = desktop)
+}
+
+pub const GNOME_FONT_KEYS: [&str; 3] = ["font-antialiasing", "font-rgba-order", "font-hinting"];
+
+type GnomeRaw = [Option<String>; 3];
+
+static GNOME_RAW: Mutex<GnomeRaw> = Mutex::new([None, None, None]);
+
+pub fn gnome_raw_prefs(raw: &GnomeRaw) -> Prefs {
+    gnome_prefs(raw[0].as_deref(), raw[1].as_deref(), raw[2].as_deref())
+}
+
+pub fn gnome_raw_update(raw: &mut GnomeRaw, key: &str, value: &str) -> bool {
+    let Some(i) = GNOME_FONT_KEYS.iter().position(|k| *k == key) else { return false };
+    raw[i] = Some(value.to_owned());
+    true
+}
+
+pub fn gnome_font_setting(key: &str, value: &str) -> bool {
+    let prefs = {
+        let mut raw = GNOME_RAW.lock().unwrap_or_else(|e| e.into_inner());
+        if !gnome_raw_update(&mut raw, key, value) {
+            return false;
+        }
+        gnome_raw_prefs(&raw)
+    };
+    set_desktop_prefs(prefs)
+}
+
+fn unquote(s: &str) -> &str {
+    s.trim().trim_matches(['\'', '"']).trim()
 }
 
 pub fn gnome_font_family(font_name: &str) -> Option<String> {
-    let name = font_name.trim().trim_matches(['\'', '"']).trim();
+    let name = unquote(font_name);
     let family = match name.rsplit_once(' ') {
         Some((family, size)) if size.parse::<f32>().is_ok() => family.trim(),
         _ => name,
@@ -378,24 +489,93 @@ pub fn kde_font_family(kdeglobals: &str) -> Option<String> {
     (!family.is_empty()).then_some(family)
 }
 
-pub fn full_hinting(style: &str) -> bool {
-    matches!(style.trim().trim_matches(['\'', '"']), "full" | "medium" | "hintfull" | "hintmedium")
+pub fn hint_style(style: &str) -> Option<Hinting> {
+    match unquote(style) {
+        "none" | "hintnone" => Some(Hinting::None),
+        "slight" | "hintslight" => Some(Hinting::Slight),
+        "medium" | "full" | "hintmedium" | "hintfull" => Some(Hinting::Full),
+        _ => None,
+    }
+}
+
+pub fn rgba_order(order: &str) -> Option<Subpixel> {
+    match unquote(order) {
+        "rgb" => Some(Subpixel::Rgb),
+        "bgr" => Some(Subpixel::Bgr),
+        "vrgb" => Some(Subpixel::Vrgb),
+        "vbgr" => Some(Subpixel::Vbgr),
+        "none" => Some(Subpixel::None),
+        _ => None,
+    }
+}
+
+pub fn gnome_antialiasing(antialiasing: &str, order: Option<&str>) -> Prefs {
+    let (antialias, subpixel) = match unquote(antialiasing) {
+        "none" => (Some(false), Some(Subpixel::None)),
+        "grayscale" => (Some(true), Some(Subpixel::None)),
+        "rgba" => (Some(true), Some(order.and_then(rgba_order).unwrap_or(Subpixel::Rgb))),
+        _ => (None, None),
+    };
+    Prefs { antialias, subpixel, hinting: None }
+}
+
+pub fn gnome_prefs(antialiasing: Option<&str>, order: Option<&str>, hinting: Option<&str>) -> Prefs {
+    let aa = antialiasing.map_or(NO_PREFS, |a| gnome_antialiasing(a, order));
+    Prefs { hinting: hinting.and_then(hint_style), ..aa }
+}
+
+pub fn kde_prefs(kdeglobals: &str) -> Prefs {
+    let get = |key| crate::icons::setting(kdeglobals, key);
+    let antialias = get("XftAntialias").and_then(|v| match v.as_str() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    });
+    Prefs { antialias, subpixel: get("XftSubPixel").and_then(|v| rgba_order(&v)), hinting: get("XftHintStyle").and_then(|v| hint_style(&v)) }
+}
+
+pub fn fontconfig_prefs(antialias: Option<bool>, rgba: Option<c_int>, hinting: Option<bool>, hintstyle: Option<c_int>) -> Prefs {
+    let subpixel = rgba.and_then(|v| match v {
+        1 => Some(Subpixel::Rgb),
+        2 => Some(Subpixel::Bgr),
+        3 => Some(Subpixel::Vrgb),
+        4 => Some(Subpixel::Vbgr),
+        5 => Some(Subpixel::None),
+        _ => None,
+    });
+    let hinting = if hinting == Some(false) {
+        Some(Hinting::None)
+    } else {
+        hintstyle.and_then(|v| match v {
+            0 => Some(Hinting::None),
+            1 => Some(Hinting::Slight),
+            2 | 3 => Some(Hinting::Full),
+            _ => None,
+        })
+    };
+    Prefs { antialias, subpixel, hinting }
 }
 
 pub struct Desktop {
     pub family: Option<String>,
-    pub hinting: bool,
+    pub prefs: Prefs,
 }
 
 fn desktop() -> Desktop {
     if crate::input::kde_desktop() {
         let globals = crate::xdg::config_home().and_then(|c| std::fs::read_to_string(c.join("kdeglobals")).ok()).unwrap_or_default();
-        let hint = crate::icons::setting(&globals, "XftHintStyle").is_some_and(|s| full_hinting(&s));
-        return Desktop { family: kde_font_family(&globals), hinting: hint };
+        return Desktop { family: kde_font_family(&globals), prefs: kde_prefs(&globals) };
     }
-    let family = crate::shell::gsettings(&["org.gnome.desktop.interface", "font-name"]).and_then(|v| gnome_font_family(&v));
-    let hinting = crate::shell::gsettings(&["org.gnome.desktop.interface", "font-hinting"]).is_some_and(|v| full_hinting(&v));
-    Desktop { family, hinting }
+    let get = |key| crate::shell::gsettings(&["org.gnome.desktop.interface", key]);
+    let family = get("font-name").and_then(|v| gnome_font_family(&v));
+    let probed: Vec<Option<String>> = GNOME_FONT_KEYS.iter().map(|k| get(k)).collect();
+    let mut raw = GNOME_RAW.lock().unwrap_or_else(|e| e.into_inner());
+    for (slot, value) in raw.iter_mut().zip(probed) {
+        if slot.is_none() {
+            *slot = value;
+        }
+    }
+    Desktop { family, prefs: gnome_raw_prefs(&raw) }
 }
 
 pub struct Live {
@@ -435,8 +615,12 @@ fn resolve_live(family: Option<&str>) -> Live {
     let fc = Fontconfig::load();
     let init = start.elapsed();
     let desk = desktop();
-    HINTING.store(desk.hinting, Ordering::Relaxed);
     let resolved = fc.as_ref().map(|fc| fc.resolve(family, desk.family.as_deref())).unwrap_or_default();
+    let fc_prefs = fc.as_ref().map(|fc| fc.prefs(desk.family.as_deref())).unwrap_or_default();
+    publish_prefs(|p| {
+        p.0 = desk.prefs;
+        p.1 = fc_prefs;
+    });
     Live { fc, resolved, init, total: start.elapsed() }
 }
 

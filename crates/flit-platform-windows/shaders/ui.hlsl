@@ -54,7 +54,7 @@ float rounded_box(float2 p, float2 half_size, float r) {
 float4 ps_main(PSIn i) : SV_Target {
     float2 px = i.pos.xy;
     if (px.x < i.clip.x || px.y < i.clip.y || px.x >= i.clip.z || px.y >= i.clip.w) discard;
-    if (i.kind == 1) {
+    if (i.kind == 1 || i.kind == 7) {
         float a = atlas.Sample(samp, i.uv).a;
         float k = text_contrast;
         a = a * (k + 1) / (a * k + 1);

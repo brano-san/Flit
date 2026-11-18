@@ -15,7 +15,7 @@ mod glsl {
     pub fn generate() {
         let src = fs::read_to_string("shaders/ui.wgsl").unwrap();
         let module = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&src)));
-        let info = Validator::new(ValidationFlags::all(), Capabilities::empty())
+        let info = Validator::new(ValidationFlags::all(), Capabilities::DUAL_SOURCE_BLENDING)
             .validate(&module)
             .unwrap_or_else(|e| panic!("{}", e.emit_to_string(&src)));
         let options = Options {
@@ -27,7 +27,7 @@ mod glsl {
         let mut rust = String::new();
         let mut blocks = Vec::new();
         let mut samplers = Vec::new();
-        for (stage, entry, name) in [(ShaderStage::Vertex, "vs_main", "VERTEX"), (ShaderStage::Fragment, "fs_main", "FRAGMENT")] {
+        for (stage, entry, name) in [(ShaderStage::Vertex, "vs_main", "VERTEX"), (ShaderStage::Fragment, "fs_main", "FRAGMENT"), (ShaderStage::Fragment, "fs_lcd", "FRAGMENT_LCD")] {
             let pipeline = PipelineOptions { shader_stage: stage, entry_point: entry.into(), multiview: None };
             let mut glsl = String::new();
             let reflection = Writer::new(&mut glsl, &module, &info, &options, &pipeline, Default::default())
@@ -41,7 +41,9 @@ mod glsl {
             writeln!(rust, "pub const {name}: &str = {glsl:?};").unwrap();
         }
         blocks.sort();
+        blocks.dedup();
         samplers.sort();
+        samplers.dedup();
         writeln!(rust, "pub const UNIFORM_BLOCKS: &[&str] = &{blocks:?};").unwrap();
         writeln!(rust, "pub const SAMPLERS: &[(&str, u32)] = &{samplers:?};").unwrap();
         fs::write(PathBuf::from(env::var("OUT_DIR").unwrap()).join("ui_glsl.rs"), rust).unwrap();

@@ -1137,6 +1137,7 @@ pub(crate) enum LookChange {
     TextScale(f64),
     IconTheme(String),
     WindowButtons(String),
+    FontRendering(String, String),
 }
 
 fn setting_string(a: &Arg) -> Option<String> {
@@ -1184,6 +1185,7 @@ pub(crate) fn look_change(args: &[Arg]) -> Option<LookChange> {
         })),
         [Arg::S(ns), Arg::S(key), value] if ns == GNOME_INTERFACE && key == "text-scaling-factor" => doubles(value).first().copied().filter(|f| crate::shell::TEXT_SCALE_RANGE.contains(f)).map(LookChange::TextScale),
         [Arg::S(ns), Arg::S(key), value] if ns == GNOME_INTERFACE && key == "icon-theme" => first_text(value).map(LookChange::IconTheme),
+        [Arg::S(ns), Arg::S(key), value] if ns == GNOME_INTERFACE && crate::fonts::GNOME_FONT_KEYS.contains(&key.as_str()) => first_text(value).map(|v| LookChange::FontRendering(key.clone(), v)),
         _ => None,
     }
 }

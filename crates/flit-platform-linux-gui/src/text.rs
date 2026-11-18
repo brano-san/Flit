@@ -1,12 +1,16 @@
 #![allow(dead_code)]
 
-use crate::fonts::{self, FontFile, Pair};
+use crate::fonts::{self, FontFile, Hinting, Pair};
 use flit_core::hash::FxHashMap;
-use flit_core::text::{FontFamily, FontMetrics, FontStyle, GlyphBitmap, GlyphKey, ShapedGlyph, ShapedText, TextBackend};
+use flit_core::text::{FontFamily, FontMetrics, FontStyle, GlyphBitmap, GlyphKey, GlyphMode, ShapedGlyph, ShapedText, Subpixel, TextBackend};
 use harfrust::{Buffer, Direction, Script, ShapeOptions, ShapePlan, ShapePlanKey, ShaperFont, Tag};
+use skrifa::instance::{Location, Size};
+use skrifa::outline::{DrawSettings, Engine, GlyphStyles, HintingInstance, HintingOptions, OutlineGlyphCollection, OutlinePen, SmoothMode, Target};
+use skrifa::MetadataProvider;
 use swash::scale::image::{Content, Image};
+use swash::scale::outline::Outline;
 use swash::scale::{Render, ScaleContext, Source, StrikeWith};
-use swash::zeno::{Format, Vector};
+use swash::zeno::{Command, Format, Mask, Origin, PathData, Placement, Vector};
 use unicode_bidi::{bidi_class, BidiClass, BidiInfo, Level};
 
 const WGHT: [u8; 4] = *b"wght";
@@ -15,6 +19,9 @@ const EMBOLDEN_PER_PX: f32 = 1.0 / 32.0;
 const NONE: u16 = u16::MAX;
 const COLOR_TABLES: [&[u8; 4]; 4] = [b"COLR", b"CBDT", b"sbix", b"SVG "];
 const COLOR_SOURCES: [Source; 3] = [Source::ColorOutline(0), Source::ColorBitmap(StrikeWith::BestFit), Source::Outline];
+const THIRD: f32 = 1.0 / 3.0;
+const MAX_HINTERS: usize = 8;
+const LIGHT: Target = Target::Smooth { mode: SmoothMode::Light, symmetric_rendering: true, preserve_linear_metrics: true };
 
 fn premultiplied(p: &[u8]) -> [u8; 4] {
     let a = u32::from(p[3]);
@@ -22,7 +29,100 @@ fn premultiplied(p: &[u8]) -> [u8; 4] {
     [m(p[0]), m(p[1]), m(p[2]), p[3]]
 }
 
+struct Light {
+    outlines: OutlineGlyphCollection<'static>,
+    location: Location,
+    engine: Engine,
+}
+
+impl Light {
+    fn open(data: &'static [u8], index: u32, vars: &[(u32, f32)]) -> Option<Self> {
+        let font = skrifa::FontRef::from_index(data, index).ok()?;
+        let outlines = font.outline_glyphs();
+        let location = font.axes().location(vars.iter().map(|&(t, v)| (skrifa::Tag::from_u32(t), v)));
+        let engine = if outlines.prefer_interpreter() { Engine::Interpreter } else { Engine::Auto(Some(GlyphStyles::new(&outlines))) };
+        Some(Self { outlines, location, engine })
+    }
+}
+
+struct PathPen<'a>(&'a mut Vec<Command>);
+
+impl OutlinePen for PathPen<'_> {
+    fn move_to(&mut self, x: f32, y: f32) {
+        self.0.push(Command::MoveTo(Vector::new(x, y)));
+    }
+    fn line_to(&mut self, x: f32, y: f32) {
+        self.0.push(Command::LineTo(Vector::new(x, y)));
+    }
+    fn quad_to(&mut self, cx0: f32, cy0: f32, x: f32, y: f32) {
+        self.0.push(Command::QuadTo(Vector::new(cx0, cy0), Vector::new(x, y)));
+    }
+    fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
+        self.0.push(Command::CurveTo(Vector::new(cx0, cy0), Vector::new(cx1, cy1), Vector::new(x, y)));
+    }
+    fn close(&mut self) {
+        self.0.push(Command::Close);
+    }
+}
+
+pub fn glyph_mode_for(r: fonts::Rendering, lcd_blend: bool) -> GlyphMode {
+    GlyphMode { subpixel: if lcd_blend { r.subpixel } else { Subpixel::None }, hinting: r.hinting as u8 }
+}
+
+pub fn channel_offsets(subpixel: Subpixel) -> [Vector; 3] {
+    let x = |r: f32| [Vector::new(r, 0.0), Vector::ZERO, Vector::new(-r, 0.0)];
+    let y = |r: f32| [Vector::new(0.0, r), Vector::ZERO, Vector::new(0.0, -r)];
+    match subpixel {
+        Subpixel::None => [Vector::ZERO; 3],
+        Subpixel::Rgb => x(THIRD),
+        Subpixel::Bgr => x(-THIRD),
+        Subpixel::Vrgb => y(-THIRD),
+        Subpixel::Vbgr => y(THIRD),
+    }
+}
+
+fn alpha_mask(path: &[Command], offset: Vector) -> (Vec<u8>, Placement) {
+    let mut mask = Mask::new(path);
+    mask.origin(Origin::BottomLeft).offset(offset).render_offset(offset).inspect(|_, _, _| {});
+    mask.render()
+}
+
+pub fn render_mask(path: &[Command], subpixel: Subpixel, offset: Vector, out: &mut GlyphBitmap) {
+    out.data.clear();
+    out.color = false;
+    out.lcd = subpixel != Subpixel::None;
+    if !out.lcd {
+        let (data, p) = alpha_mask(path, offset);
+        (out.left, out.top, out.width, out.height, out.data) = (p.left, p.top, p.width, p.height, data);
+        return;
+    }
+    let masks = channel_offsets(subpixel).map(|ch| alpha_mask(path, offset + ch));
+    let left = masks.iter().map(|m| m.1.left).min().unwrap_or(0);
+    let top = masks.iter().map(|m| m.1.top).max().unwrap_or(0);
+    let right = masks.iter().map(|m| m.1.left + m.1.width as i32).max().unwrap_or(0);
+    let bottom = masks.iter().map(|m| m.1.top - m.1.height as i32).min().unwrap_or(0);
+    let (w, h) = ((right - left).max(0) as u32, (top - bottom).max(0) as u32);
+    (out.left, out.top, out.width, out.height) = (left, top, w, h);
+    out.data.resize((w * h * 4) as usize, 0);
+    for (c, (data, p)) in masks.iter().enumerate() {
+        let (dx, dy) = ((p.left - left) as usize, (top - p.top) as usize);
+        for row in 0..p.height as usize {
+            let src = &data[row * p.width as usize..][..p.width as usize];
+            let dst = ((dy + row) * w as usize + dx) * 4;
+            for (k, &v) in src.iter().enumerate() {
+                out.data[dst + k * 4 + c] = v;
+                if c == 1 {
+                    out.data[dst + k * 4 + 3] = v;
+                }
+            }
+        }
+    }
+}
+
 struct Face {
+    data: &'static [u8],
+    index: u32,
+    light: Option<Option<Light>>,
     sw: swash::FontRef<'static>,
     charmap: swash::Charmap<'static>,
     hr: harfrust::Font,
@@ -60,7 +160,7 @@ impl Face {
         let charmap = sw.charmap();
         let ascii = (0x20u32..0x7F).filter(|&c| charmap.map(c) != 0).fold(0u128, |a, c| a | 1 << c);
         let color = COLOR_TABLES.iter().any(|t| swash::TableProvider::table_by_tag(&sw, swash::tag_from_bytes(t)).is_some());
-        Some(Self { sw, charmap, hr, upem: m.units_per_em.max(1) as f32, ascent: m.ascent, descent: m.descent, vars, embolden, color, ascii, plans: Vec::new() })
+        Some(Self { data, index: face_index, light: None, sw, charmap, hr, upem: m.units_per_em.max(1) as f32, ascent: m.ascent, descent: m.descent, vars, embolden, color, ascii, plans: Vec::new() })
     }
 
     fn covers(&self, c: char) -> bool {
@@ -114,6 +214,10 @@ pub struct LinuxText {
     chars: FxHashMap<(char, bool), u16>,
     scale: ScaleContext,
     image: Image,
+    outline: Outline,
+    path: Vec<Command>,
+    hinters: Vec<(u16, u16, HintingInstance)>,
+    hinting: Hinting,
     buffer: Option<Buffer>,
     runs: Vec<Run>,
     placed: Vec<Placed>,
@@ -141,6 +245,10 @@ impl LinuxText {
             chars: FxHashMap::default(),
             scale: ScaleContext::new(),
             image: Image::new(),
+            outline: Outline::new(),
+            path: Vec::new(),
+            hinters: Vec::new(),
+            hinting: fonts::rendering().hinting,
             buffer: Some(Buffer::new()),
             runs: Vec::new(),
             placed: Vec::new(),
@@ -322,6 +430,46 @@ impl LinuxText {
         self.buffer = Some(buffer);
     }
 
+    pub fn set_hinting(&mut self, hinting: Hinting) {
+        self.hinting = hinting;
+    }
+
+    fn light_path(&mut self, key: GlyphKey, px: f32) -> bool {
+        let face = &mut self.faces[key.font as usize];
+        let Some(light) = face.light.get_or_insert_with(|| Light::open(face.data, face.index, &face.vars)) else { return false };
+        let size_q = key.size_q;
+        let at = match self.hinters.iter().position(|h| h.0 == key.font && h.1 == size_q) {
+            Some(i) => i,
+            None => {
+                let options = HintingOptions { engine: light.engine.clone(), target: LIGHT };
+                let Ok(hinter) = HintingInstance::new(&light.outlines, Size::new(px), &light.location, options) else { return false };
+                if self.hinters.len() >= MAX_HINTERS {
+                    self.hinters.remove(0);
+                }
+                self.hinters.push((key.font, size_q, hinter));
+                self.hinters.len() - 1
+            }
+        };
+        let Some(glyph) = light.outlines.get(skrifa::GlyphId::new(u32::from(key.id))) else { return false };
+        self.path.clear();
+        glyph.draw(DrawSettings::hinted(&self.hinters[at].2, false), &mut PathPen(&mut self.path)).is_ok()
+    }
+
+    fn swash_path(&mut self, key: GlyphKey, px: f32) -> bool {
+        let face = &self.faces[key.font as usize];
+        let mut scaler = self.scale.builder(face.sw).size(px).hint(self.hinting == Hinting::Full).variations(face.vars.iter().copied()).build();
+        self.outline.clear();
+        if !scaler.scale_outline_into(key.id, &mut self.outline) {
+            return false;
+        }
+        if face.embolden {
+            self.outline.embolden(px * EMBOLDEN_PER_PX, px * EMBOLDEN_PER_PX);
+        }
+        self.path.clear();
+        self.path.extend(self.outline.path().commands());
+        true
+    }
+
     fn place(&mut self, out: &mut ShapedText) {
         let mut x = 0.0;
         if self.runs.iter().any(|r| r.level.is_rtl()) {
@@ -370,7 +518,15 @@ impl TextBackend for LinuxText {
     fn rasterize(&mut self, key: GlyphKey, out: &mut GlyphBitmap) -> bool {
         let Some(face) = self.faces.get(key.font as usize) else { return false };
         let px = key.size_q as f32 / 4.0;
-        let mut scaler = self.scale.builder(face.sw).size(px).hint(fonts::hinting()).variations(face.vars.iter().copied()).build();
+        let light = self.hinting == Hinting::Slight && !face.embolden;
+        if !face.color && (key.subpixel != Subpixel::None || light) {
+            if !(light && self.light_path(key, px)) && !self.swash_path(key, px) {
+                return false;
+            }
+            render_mask(&self.path, key.subpixel, Vector::new(key.subpx as f32 / 4.0, 0.0), out);
+            return true;
+        }
+        let mut scaler = self.scale.builder(face.sw).size(px).hint(self.hinting == Hinting::Full).variations(face.vars.iter().copied()).build();
         let mut render = Render::new(if face.color { &COLOR_SOURCES } else { &COLOR_SOURCES[2..] });
         render.format(Format::Alpha).offset(Vector::new(key.subpx as f32 / 4.0, 0.0));
         if face.embolden {
@@ -386,6 +542,7 @@ impl TextBackend for LinuxText {
         out.width = p.width;
         out.height = p.height;
         out.color = self.image.content == Content::Color;
+        out.lcd = false;
         out.data.clear();
         let bytes = (p.width * p.height) as usize * if out.color { 4 } else { 1 };
         let Some(pixels) = self.image.data.get(..bytes) else { return false };
@@ -395,6 +552,12 @@ impl TextBackend for LinuxText {
             out.data.extend_from_slice(pixels);
         }
         true
+    }
+
+    fn glyph_mode(&mut self) -> GlyphMode {
+        let r = fonts::rendering();
+        self.hinting = r.hinting;
+        glyph_mode_for(r, fonts::lcd_blend())
     }
 
     fn metrics(&mut self, style: FontStyle) -> FontMetrics {

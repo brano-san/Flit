@@ -21,6 +21,7 @@ tracing.workspace = true
 winit = { version = "=0.31.0-beta.4", default-features = false, features = ["wayland", "wayland-dlopen", "x11"] }
 harfrust = "0.15"
 swash = { version = "0.2.10", default-features = false, features = ["std", "render"] }
+skrifa = { version = "0.44", default-features = false, features = ["std"] }
 unicode-bidi = { version = "0.3.18", default-features = false, features = ["hardcoded-data", "std"] }
 md-5.workspace = true
 serde_json.workspace = true
