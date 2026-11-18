@@ -655,6 +655,9 @@ pub trait Platform: 'static {
     }
     fn tidy_integration() {}
     fn watch_wsl(_changed: Box<dyn Fn() + Send>) {}
+    fn admin_launcher() -> Option<Box<dyn AgentLauncher>> {
+        None
+    }
     fn wsl_launcher(_distro: &str, _images: &AgentImages) -> Option<Box<dyn AgentLauncher>> {
         None
     }

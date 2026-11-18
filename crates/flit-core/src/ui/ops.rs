@@ -255,6 +255,7 @@ pub(super) struct Ops {
     bin: Option<BinProbe>,
     ids: u32,
     unpack_drag: bool,
+    pub(super) admin_drag: Option<Vec<FsPath>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -602,6 +603,7 @@ impl App {
         if let Some(t) = self.tabs.iter_mut().find(|t| t.id == tab) {
             t.undo = None;
         }
+        let provider = self.admin_route(provider, tab, &op);
         let Some((provider, op)) = route(provider, op, self.caps.unix_paths) else { return self.status(MIXED_PATHS.t()) };
         self.ops.next_id += 1;
         let id = self.ops.next_id;
@@ -686,9 +688,10 @@ impl App {
         }
         let t = self.tab();
         let paths = match &t.view_loc {
-            Location::Wsl { .. } => Ok((t.view_loc.provider(), items.iter().map(|&i| t.entry_location(i).path().clone()).collect())),
+            Location::Wsl { .. } | Location::Admin(_) => Ok((t.view_loc.provider(), items.iter().map(|&i| t.entry_location(i).path().clone()).collect())),
             _ => self.item_paths(&items).map(|p| (ProviderId::Local, p)),
         };
+        let permanent = permanent || t.view_loc.is_admin();
         match paths {
             Ok((provider, paths)) if permanent => self.delete_or_ask(provider, FileOp::Delete(paths)),
             Ok((provider, paths)) => self.delete_or_ask(provider, FileOp::Trash(paths)),
@@ -1854,6 +1857,7 @@ impl App {
         self.drag = Drag::None;
         self.hover = Hit::None;
         self.ops.right_drag = right.then(|| paths.clone());
+        self.note_drag_source(&paths);
         self.effects.push(Effect::StartDrag(paths));
         true
     }
@@ -2002,6 +2006,7 @@ impl App {
         match ev {
             DragEvent::Enter { paths, x, y, mods, allowed, right } => {
                 let ours = !paths.is_empty() && self.ops.right_drag.as_ref() == Some(paths);
+                self.ops.admin_drag.take_if(|own| own != paths);
                 self.ops.dropping = Some(Dropping { paths: paths.clone(), target: None, effect: drop_effect::NONE, spring: None, right: *right || ours, ours, onto: None });
                 self.ops.drag_scroll = Some((*x, *y, *mods, *allowed));
                 self.drag_over(*x, *y, *mods, *allowed)

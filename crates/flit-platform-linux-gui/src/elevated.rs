@@ -1,14 +1,14 @@
 use flit_core::i18n::{Lang, S};
 use flit_core::provider::{AccessChange, FileOp};
 use flit_core::FsPath;
-use flit_platform::{Job, OpOutcome, PlatformError};
+use flit_platform::{AgentLauncher, AgentProcess, Job, OpOutcome, PlatformError};
 use flit_proto::provider::{check_performed, Event, ReqId, Request, VERSION};
 use flit_proto::transport::{read_frame, read_hello, write_frame, Hello, ProtoError, Protocol};
 use std::ffi::{CString, OsStr, OsString};
-use std::io::{BufReader, Read, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -327,6 +327,134 @@ pub fn grant_access(dir: &FsPath) -> OpOutcome {
     match granted {
         Ok(()) => OpOutcome { items: vec![(dir.clone(), dir.clone())], error: None },
         Err(e) => OpOutcome { items: Vec::new(), error: Some(e) },
+    }
+}
+
+const COMPLAINT_MAX: usize = 4096;
+
+type Spawner = Box<dyn Fn() -> io::Result<Command> + Send>;
+
+pub struct RootLauncher {
+    command: Spawner,
+}
+
+impl RootLauncher {
+    pub fn pkexec() -> Self {
+        Self::with(root_agent_command)
+    }
+
+    pub fn with(command: impl Fn() -> io::Result<Command> + Send + 'static) -> Self {
+        Self { command: Box::new(command) }
+    }
+}
+
+pub fn agent_program(exe: &Path) -> io::Result<PathBuf> {
+    let refused = |key: S| io::Error::new(io::ErrorKind::PermissionDenied, key.en());
+    if !exe.is_absolute() || exe.as_os_str().as_bytes().ends_with(b" (deleted)") {
+        return Err(refused(S::ErrorsEngineAdminProgram));
+    }
+    let meta = std::fs::metadata(exe).map_err(|_| refused(S::ErrorsEngineAdminProgram))?;
+    if !meta.is_file() {
+        return Err(refused(S::ErrorsEngineAdminProgram));
+    }
+    if std::os::unix::fs::PermissionsExt::mode(&meta.permissions()) & 0o022 != 0 {
+        return Err(refused(S::ErrorsEngineAdminUnsafe));
+    }
+    Ok(exe.to_path_buf())
+}
+
+fn root_agent_command() -> io::Result<Command> {
+    let pkexec = crate::tools::require("pkexec").map_err(|e| io::Error::new(io::ErrorKind::NotFound, e.message))?;
+    let exe = agent_program(&std::env::current_exe().map_err(|_| io::Error::new(io::ErrorKind::NotFound, S::ErrorsEngineAdminProgram.en()))?)?;
+    let mut command = Command::new(pkexec);
+    command.args(helper_args(&exe));
+    Ok(command)
+}
+
+pub fn refusal(status: Option<i32>, complaint: &str) -> String {
+    let complaint = complaint.trim();
+    match status {
+        Some(PKEXEC_DISMISSED) => S::ErrorsOpsExtraAdminDismissed.en().to_owned(),
+        Some(PKEXEC_REFUSED) => flit_core::tr_en!(S::ErrorsOpsExtraAdminRefused, why = complaint),
+        _ if complaint.is_empty() => S::ErrorsEngineAdminSilent.en().to_owned(),
+        _ => flit_core::tr_en!(S::ErrorsOpsExtraAdminStopped, why = complaint),
+    }
+}
+
+type Shared = Arc<Mutex<Option<Child>>>;
+
+struct AgentOutput {
+    inner: ChildStdout,
+    child: Shared,
+    complaint: Option<std::thread::JoinHandle<String>>,
+}
+
+impl Read for AgentOutput {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        if n > 0 || buf.is_empty() {
+            return Ok(n);
+        }
+        let status = self.child.lock().unwrap_or_else(|e| e.into_inner()).take().and_then(|mut c| c.wait().ok()).and_then(|s| s.code());
+        let complaint = self.complaint.take().and_then(|h| h.join().ok()).unwrap_or_default();
+        Err(io::Error::other(refusal(status, &complaint)))
+    }
+}
+
+fn read_complaint(mut stderr: impl Read) -> String {
+    let mut all = Vec::new();
+    let mut buf = [0u8; 1024];
+    while let Ok(n) = stderr.read(&mut buf) {
+        if n == 0 {
+            break;
+        }
+        all.extend_from_slice(&buf[..n]);
+        if all.len() > COMPLAINT_MAX {
+            all.drain(..all.len() - COMPLAINT_MAX);
+        }
+    }
+    String::from_utf8_lossy(&all).into_owned()
+}
+
+fn reap(child: &Shared, grace: Duration) {
+    let Some(mut c) = child.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
+    let until = std::time::Instant::now() + grace;
+    while std::time::Instant::now() < until {
+        if !matches!(c.try_wait(), Ok(None)) {
+            return;
+        }
+        std::thread::sleep(CANCEL_POLL);
+    }
+    let _ = c.kill();
+    let _ = c.wait();
+}
+
+impl AgentLauncher for RootLauncher {
+    fn build(&self) -> &str {
+        env!("CARGO_PKG_VERSION")
+    }
+
+    fn launch(&self) -> io::Result<AgentProcess> {
+        let mut child = (self.command)()?.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| io::Error::new(e.kind(), format!("pkexec: {}", flit_core::fmt::io_reason(&e))))?;
+        let (Some(stdin), Some(stdout), Some(stderr)) = (child.stdin.take(), child.stdout.take(), child.stderr.take()) else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(io::Error::other("pkexec started without its pipes"));
+        };
+        let complaint = std::thread::Builder::new().name("flit-admin-stderr".into()).spawn(move || read_complaint(stderr)).ok();
+        let child: Shared = Arc::new(Mutex::new(Some(child)));
+        let stopper = child.clone();
+        Ok(AgentProcess {
+            input: Box::new(stdin),
+            output: Box::new(AgentOutput { inner: stdout, child, complaint }),
+            stop: Box::new(move |grace| {
+                let _ = std::thread::Builder::new().name("flit-admin-stop".into()).spawn(move || reap(&stopper, grace));
+            }),
+        })
+    }
+
+    fn deliver(&self) -> io::Result<()> {
+        Err(io::Error::from(io::ErrorKind::Unsupported))
     }
 }
 

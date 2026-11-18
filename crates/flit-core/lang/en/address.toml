@@ -3,6 +3,8 @@ handed_to_explorer = "Flit cannot show {location}, so it opens in File Explorer"
 visited_deeper = "Visited, deeper"
 filter_files = ["Filter {n} file...", "Filter {n} files..."]
 
+admin_badge = "Administrator"
+
 [goto]
 placeholder = "Open or expand a folder..."
 empty = "No matching folders"

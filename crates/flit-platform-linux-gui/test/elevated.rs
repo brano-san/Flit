@@ -2,6 +2,7 @@ use super::*;
 use crate::temp::Temp;
 use flit_core::provider::{OpCtl, Resolve, Template};
 use std::os::unix::fs::PermissionsExt;
+use flit_platform::Provider;
 
 fn fs_path(p: &Path) -> FsPath {
     FsPath::parse_exact(p.as_os_str().as_bytes()).unwrap()
@@ -187,4 +188,85 @@ fn continue_on_a_locked_folder_lets_the_user_list_and_enter_it_and_nothing_more(
     assert_eq!(grant_failure(Some(PKEXEC_DISMISSED), "").message, S::ErrorsOpsExtraAdminDismissed.en());
     let other = grant_failure(Some(1), "setfacl: /srv/x: Operation not supported\n");
     assert_eq!(other.message, "setfacl: setfacl: /srv/x: Operation not supported");
+}
+
+fn fake_pkexec(t: &Temp, body: &str) {
+    let script = t.path().join("pkexec");
+    std::fs::write(&script, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+fn launch_error(launcher: &RootLauncher) -> String {
+    let mut process = launcher.launch().unwrap();
+    let mut buf = [0u8; 4];
+    let error = process.output.read(&mut buf).unwrap_err().to_string();
+    (process.stop)(Duration::ZERO);
+    error
+}
+
+#[test]
+fn the_root_agent_runs_this_flit_by_absolute_path_in_agent_mode_only() {
+    let t = Temp::new("root-agent-args");
+    fake_pkexec(&t, "echo \"$@\" >&2\nexit 127");
+    let error = crate::temp::with_tool_dir(t.path(), || launch_error(&RootLauncher::pkexec()));
+    let exe = std::env::current_exe().unwrap();
+    let expected = format!("polkit refused: {} {FLAG} {}", exe.display(), flit_core::i18n::lang().code());
+    assert_eq!(error, expected);
+}
+
+#[test]
+fn a_dismissed_password_prompt_is_explained_and_the_tab_is_denied() {
+    let t = Temp::new("root-agent-dismissed");
+    fake_pkexec(&t, "exit 126");
+    let error = crate::temp::with_tool_dir(t.path(), || launch_error(&RootLauncher::pkexec()));
+    assert_eq!(error, "the password prompt was dismissed");
+    let (tx, events) = crossbeam_channel::unbounded();
+    let launcher = RootLauncher::with(|| {
+        let mut c = Command::new("/bin/sh");
+        c.args(["-c", "echo oops >&2; exit 3"]);
+        Ok(c)
+    });
+    let local: Arc<dyn flit_platform::Provider> = Arc::new(Nowhere);
+    let admin = flit_platform::WslProvider::admin(Some(Box::new(launcher)), local, tx, Arc::new(|| {}), flit_platform::Timing::default(), flit_platform::Clipboard::default()).unwrap();
+    admin.submit(flit_core::ProviderRequest::Watch { tab: 1, gen: 1, path: Some(FsPath::parse("/root").unwrap()) });
+    let (slot, token) = (Arc::new(flit_core::provider::SnapshotSlot::default()), flit_core::provider::GenToken::default());
+    token.set(1);
+    admin.submit(flit_core::ProviderRequest::List { tab: 1, gen: 1, path: FsPath::parse("/root").unwrap(), view: Default::default(), case: flit_core::sort::CaseMode::Sensitive, out: slot, cancel: token });
+    let end = std::time::Instant::now() + Duration::from_secs(10);
+    let denied = loop {
+        match events.recv_timeout(end.saturating_duration_since(std::time::Instant::now())).expect("a denial") {
+            flit_core::ProviderEvent::Denied { tab: 1, error } => break error,
+            _ => continue,
+        }
+    };
+    assert_eq!(denied, "Cannot open the folder as administrator: The elevated helper stopped: oops");
+}
+
+struct Nowhere;
+
+impl flit_platform::Provider for Nowhere {
+    fn submit(&self, _: flit_core::ProviderRequest) {
+        panic!("a root tab never falls back to the user");
+    }
+}
+
+#[test]
+fn without_pkexec_the_root_agent_names_the_package() {
+    let error = crate::temp::with_tools(&[], || RootLauncher::pkexec().launch().err().unwrap().to_string());
+    assert_eq!(error, crate::shell::tool_missing("pkexec").message);
+    crate::temp::assert_missing(&error, "pkexec");
+}
+
+#[test]
+fn the_root_agent_program_must_be_an_unchanged_file_others_cannot_write() {
+    let t = Temp::new("root-agent-program");
+    let exe = t.file("flit", 4);
+    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(agent_program(&exe).unwrap(), exe);
+    let program = S::ErrorsEngineAdminProgram.en();
+    assert_eq!(agent_program(Path::new("flit")).unwrap_err().to_string(), program, "a bare name would be looked up in $PATH");
+    assert_eq!(agent_program(&t.path().join("flit (deleted)")).unwrap_err().to_string(), program);
+    assert_eq!(agent_program(t.path()).unwrap_err().to_string(), program);
+    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o775)).unwrap();
+    assert_eq!(agent_program(&exe).unwrap_err().to_string(), S::ErrorsEngineAdminUnsafe.en());
 }

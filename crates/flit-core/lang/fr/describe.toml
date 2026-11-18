@@ -338,6 +338,7 @@
 "file.print" = "Envoyer les documents ou images sélectionnés à l’imprimante par défaut, imprimer, lp, CUPS"
 "file.mount_image" = "Monter l’image ISO ou IMG sélectionnée en lecture seule et l’ouvrir, monter, loop"
 "folder.file_manager" = "Ouvrir ce dossier dans le gestionnaire de fichiers du bureau, comme Fichiers ou Dolphin"
+"folder.open_admin" = "Ouvrir ce dossier dans un nouvel onglet où root affiche et modifie les fichiers ; le mot de passe est demandé une fois tant que de tels onglets sont ouverts"
 "file.folder_icon" = "Choisir une autre icône pour le dossier sélectionné, desktop.ini"
 "file.folder_icon_reset" = "Retirer l’icône personnalisée du dossier sélectionné, icône par défaut, desktop.ini"
 "file.shortcut" = "Créer des liens vers la sélection, lnk"

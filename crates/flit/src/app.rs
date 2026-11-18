@@ -37,6 +37,8 @@ const THUMB_THREADS: usize = 3;
 const PREVIEW_THREADS: usize = 2;
 const BACKDROP_PX: u32 = 2560;
 const ICON_MARGIN: u32 = 32;
+const ADMIN_PASSWORD_WAIT: Duration = Duration::from_secs(300);
+const ADMIN_IDLE: Duration = Duration::from_secs(10);
 const TAB_STRIDE: TabId = 1 << 32;
 const TORN_GRAB: (f32, f32) = (60.0, 18.0);
 
@@ -326,6 +328,7 @@ struct Handler<P: Platform> {
     active: Option<WindowId>,
     local: Arc<LocalProvider>,
     wsl: HashMap<String, WslProvider>,
+    admin: Option<WslProvider>,
     distros: Option<Vec<String>>,
     events_tx: Sender<ProviderEvent>,
     events: Receiver<ProviderEvent>,
@@ -541,8 +544,26 @@ impl<P: Platform> Handler<P> {
         }
     }
 
+    fn submit_admin(&mut self, req: ProviderRequest) {
+        if self.admin.is_none() {
+            let timing = Timing { hello: ADMIN_PASSWORD_WAIT, idle: ADMIN_IDLE, max_crashes: usize::MAX, ..Timing::default() };
+            match WslProvider::admin(P::admin_launcher(), self.local.clone(), self.events_tx.clone(), self.wake.clone(), timing, Clipboard::of::<P::Shell>()) {
+                Ok(p) => self.admin = Some(p),
+                Err(e) => tracing::warn!("{e}"),
+            }
+        }
+        match &self.admin {
+            Some(p) => p.submit(req),
+            None => tracing::warn!("the administrator provider is not running"),
+        }
+    }
+
     fn submit(&mut self, provider: ProviderId, req: ProviderRequest) {
-        let ProviderId::Wsl(distro) = provider else { return self.local.submit(req) };
+        let distro = match provider {
+            ProviderId::Wsl(distro) => distro,
+            ProviderId::Admin => return self.submit_admin(req),
+            ProviderId::Local => return self.local.submit(req),
+        };
         let known = self.distros.get_or_insert_with(P::wsl_distros);
         let distro = known.iter().find(|d| d.eq_ignore_ascii_case(&distro)).cloned().unwrap_or(distro);
         if !self.wsl.contains_key(&distro) {
@@ -975,11 +996,12 @@ impl<P: Platform> Handler<P> {
             match &ev {
                 ProviderEvent::OpDone { error: Some(e), .. } => tracing::warn!("operation failed: {e}"),
                 ProviderEvent::Hashed { result: Err(e), .. } => tracing::warn!("hashing failed: {e}"),
+                ProviderEvent::Denied { error, .. } => tracing::warn!("{error}"),
                 _ => {}
             }
             let target = match &ev {
                 ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } | ProviderEvent::SizesSkipped { tab, .. } => self.window_of_tab(*tab),
-                ProviderEvent::OpDone { tab, .. } | ProviderEvent::Untrashable { tab, .. } => self.window_of_tab(*tab).or(self.active),
+                ProviderEvent::OpDone { tab, .. } | ProviderEvent::Untrashable { tab, .. } | ProviderEvent::Denied { tab, .. } => self.window_of_tab(*tab).or(self.active),
                 ProviderEvent::Navigate { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } | ProviderEvent::OpFailure { tab, .. } | ProviderEvent::Hashed { tab, .. } | ProviderEvent::Measured { tab, .. } | ProviderEvent::Status { tab, .. } | ProviderEvent::Access { tab, .. } | ProviderEvent::NotExecutable { tab, .. } | ProviderEvent::OpenAsk { tab, .. } | ProviderEvent::Unwatched { tab, .. } | ProviderEvent::MountAsk { tab, .. } | ProviderEvent::MountAskDone { tab, .. } => self.window_of_tab(*tab),
             };
             if let Some(st) = target.and_then(|id| self.windows.get_mut(&id)) {
@@ -1552,6 +1574,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         active: None,
         local,
         wsl: HashMap::new(),
+        admin: None,
         distros: None,
         events_tx,
         events,

@@ -679,6 +679,7 @@ pub enum ProviderEvent {
     OpenAsk { tab: TabId, path: FsPath, ask: OpenAsk },
     MountAsk { tab: TabId, ask: MountAsk, answer: MountAnswer },
     MountAskDone { tab: TabId, id: u64 },
+    Denied { tab: TabId, error: String },
 }
 
 #[cfg(test)]

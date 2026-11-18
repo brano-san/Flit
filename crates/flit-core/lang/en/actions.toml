@@ -338,6 +338,7 @@
 "file.print" = "Print"
 "file.mount_image" = "Mount disk image"
 "folder.file_manager" = "Open in system file manager"
+"folder.open_admin" = "Open as administrator"
 "file.folder_icon" = "Change the folder icon"
 "file.folder_icon_reset" = "Restore the default folder icon"
 "file.shortcut" = "Create shortcuts to the selected items"

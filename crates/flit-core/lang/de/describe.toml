@@ -338,6 +338,7 @@
 "file.print" = "Die ausgewählten Dokumente oder Bilder an den Standarddrucker senden, drucken, lp, CUPS"
 "file.mount_image" = "Das ausgewählte ISO- oder IMG-Abbild schreibgeschützt einhängen und öffnen, mount, loop"
 "folder.file_manager" = "Diesen Ordner im Dateimanager des Desktops öffnen, etwa Dateien oder Dolphin"
+"folder.open_admin" = "Diesen Ordner in einem neuen Tab öffnen, in dem root Dateien anzeigt und ändert; das Passwort wird einmal abgefragt, solange solche Tabs offen sind"
 "file.folder_icon" = "Ein anderes Symbol für den ausgewählten Ordner wählen, desktop.ini"
 "file.folder_icon_reset" = "Das benutzerdefinierte Symbol des ausgewählten Ordners entfernen, Standardsymbol, desktop.ini"
 "file.shortcut" = "Verknüpfungen zur Auswahl erstellen, lnk"

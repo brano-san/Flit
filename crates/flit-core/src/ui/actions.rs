@@ -210,6 +210,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("options.open", G::Quick, S::ActionsOptionsOpen, S::DescribeOptionsOpen, &[ctrl(c(','))], |a, _| a.open_settings(None)),
     Action::new("folder.explorer", G::Quick, S::ActionsFolderExplorer, S::DescribeFolderExplorer, &[], |a, _| a.open_explorer()),
     Action::new("folder.file_manager", G::Flit, S::ActionsFolderFileManager, S::DescribeFolderFileManager, &[], |a, _| a.open_file_manager()),
+    Action::new("folder.open_admin", G::Flit, S::ActionsFolderOpenAdmin, S::DescribeFolderOpenAdmin, &[], |a, now| a.open_admin(now)),
     Action::new("app.terminal", G::Quick, S::ActionsAppTerminal, S::DescribeAppTerminal, &[], |a, _| a.open_terminal(false)),
     Action::new("view.extensions", G::Quick, S::ActionsViewExtensions, S::DescribeViewExtensions, &[], |a, _| a.toggle_pref(|p| &mut p.show_extensions)),
     Action::new("view.hidden", G::Quick, S::ActionsViewHidden, S::DescribeViewHidden, &[ctrl(c('H'))], |a, _| a.toggle_hidden()),

@@ -3,6 +3,8 @@ handed_to_explorer = "Flit не может показать {location}, поэт
 visited_deeper = "Посещено, глубже"
 filter_files = ["Фильтр: {n} файл...", "Фильтр: {n} файла...", "Фильтр: {n} файлов..."]
 
+admin_badge = "Администратор"
+
 [goto]
 placeholder = "Откройте или раскройте папку..."
 empty = "Нет подходящих папок"

@@ -3,6 +3,8 @@ handed_to_explorer = "Flit 无法显示 {location}，因此在文件资源管理
 visited_deeper = "已访问，更深层"
 filter_files = ["筛选 {n} 个文件..."]
 
+admin_badge = "管理员"
+
 [goto]
 placeholder = "打开或展开文件夹..."
 empty = "没有匹配的文件夹"

@@ -338,6 +338,7 @@
 "file.print" = "打印"
 "file.mount_image" = "挂载磁盘映像"
 "folder.file_manager" = "在系统文件管理器中打开"
+"folder.open_admin" = "以管理员身份打开"
 "file.folder_icon" = "更改文件夹图标"
 "file.folder_icon_reset" = "还原默认文件夹图标"
 "file.shortcut" = "为所选项目创建快捷方式"
