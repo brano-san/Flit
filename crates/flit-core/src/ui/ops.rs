@@ -233,6 +233,7 @@ pub(super) struct Dropping {
 struct Asked {
     paths: Vec<FsPath>,
     dest: FsPath,
+    admin: bool,
 }
 
 #[derive(Default)]
@@ -603,7 +604,7 @@ impl App {
         if let Some(t) = self.tabs.iter_mut().find(|t| t.id == tab) {
             t.undo = None;
         }
-        let provider = self.admin_route(provider, tab, &op);
+        let provider = self.admin_route(provider, tab);
         let Some((provider, op)) = route(provider, op, self.caps.unix_paths) else { return self.status(MIXED_PATHS.t()) };
         self.ops.next_id += 1;
         let id = self.ops.next_id;
@@ -651,7 +652,7 @@ impl App {
         let ask = match self.confirm_delete {
             ConfirmDelete::Always => true,
             ConfirmDelete::Permanent => !matches!(op, FileOp::Trash(_)),
-            ConfirmDelete::Never => false,
+            ConfirmDelete::Never => provider == ProviderId::Admin,
         };
         if ask {
             self.ask_confirm_on(provider, op);
@@ -2021,6 +2022,7 @@ impl App {
                 self.nav.sidebar.dragging_out = false;
                 self.ops.dropping = None;
                 self.ops.drag_scroll = None;
+                self.ops.admin_drag = None;
                 drop_effect::NONE
             }
             DragEvent::Drop { x, y, mods, allowed } => {
@@ -2028,6 +2030,7 @@ impl App {
                 let effect = self.drag_over(*x, *y, *mods, *allowed);
                 let Some(d) = self.ops.dropping.take() else { return drop_effect::NONE };
                 self.nav.sidebar.dragging_out = false;
+                let admin = self.ops.admin_drag.take().is_some_and(|own| own == d.paths);
                 if d.ours {
                     self.ops.right_drag = None;
                 }
@@ -2037,6 +2040,7 @@ impl App {
                         let routes = d.paths.into_iter().map(|p| Route { folder: Location::from_local(p), select: None }).collect();
                         self.dispatch(routes, OpenTarget::NewTab, now);
                     }
+                    Some(Target::Trash(_)) if effect != drop_effect::NONE && admin => self.delete_or_ask(ProviderId::Admin, FileOp::Delete(d.paths)),
                     Some(Target::Trash(_)) if effect != drop_effect::NONE => self.start_op(FileOp::Trash(d.paths), Origin::Fresh, Then::Nothing),
                     Some(Target::Pin) if effect != drop_effect::NONE => self.effects.push(Effect::PinFolders(d.paths)),
                     Some(Target::Run { program, .. }) if effect != drop_effect::NONE => {
@@ -2054,7 +2058,7 @@ impl App {
                     }
                     Some(Target::Into { dest, .. }) if d.right && effect != drop_effect::NONE => {
                         let choices = self.drop_choices(&d.paths, d.ours, &dest, *allowed);
-                        self.ask_drop(Asked { paths: d.paths, dest }, choices, effect, (*x, *y));
+                        self.ask_drop(Asked { paths: d.paths, dest, admin }, choices, effect, (*x, *y));
                         return allowed & drop_effect::COPY;
                     }
                     Some(Target::Into { dest, .. }) => {
@@ -2065,7 +2069,7 @@ impl App {
                             drop_effect::LINK => FileOp::Link { items, dest },
                             _ => return drop_effect::NONE,
                         };
-                        self.start_op(op, Origin::Fresh, Then::Select);
+                        self.start_dropped(op, admin);
                     }
                     _ => {}
                 }
@@ -2205,20 +2209,26 @@ impl App {
     }
 
     pub(super) fn drop_chosen(&mut self, effect: u32) {
-        let Some(Asked { paths: items, dest }) = self.ops.asked.take() else { return };
+        let Some(Asked { paths: items, dest, admin }) = self.ops.asked.take() else { return };
         let op = match effect {
             drop_effect::COPY => FileOp::Copy { items, dest },
             drop_effect::MOVE => FileOp::Move { items, dest },
             drop_effect::LINK => FileOp::Link { items, dest },
             _ => return,
         };
-        self.start_op(op, Origin::Fresh, Then::Select);
+        self.start_dropped(op, admin);
+    }
+
+    fn start_dropped(&mut self, op: FileOp, admin: bool) {
+        let provider = if admin { ProviderId::Admin } else { ProviderId::Local };
+        self.start_op_on(provider, self.tab().id, op, Origin::Fresh, Then::Select);
     }
 
     pub(super) fn drop_as(&mut self, kind: LinkKind) {
         let Some(asked) = self.ops.asked.take() else { return };
         if self.ops.link_probe.as_ref().is_some_and(|p| p.tab == self.tab().id && p.location == *self.current_location() && p.dest == asked.dest && p.items.as_ref() == Some(&asked.paths) && p.choices.allows(kind)) {
-            self.start_op(FileOp::LinkAs { items: asked.paths, dest: asked.dest, kind }, Origin::Fresh, Then::Select);
+            let admin = asked.admin;
+            self.start_dropped(FileOp::LinkAs { items: asked.paths, dest: asked.dest, kind }, admin);
         }
     }
 

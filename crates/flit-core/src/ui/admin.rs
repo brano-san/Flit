@@ -2,7 +2,7 @@ use super::{App, OpenTarget, Route};
 use crate::i18n::S;
 use crate::location::{Location, ProviderId};
 use crate::path::{FsPath, PathKind};
-use crate::provider::{FileOp, TabId};
+use crate::provider::TabId;
 use crate::render::{Color, Rect};
 use crate::text::{FontStyle, Gfx, TextBackend};
 use crate::theme::{self, Theme};
@@ -25,13 +25,6 @@ pub(super) fn stays_admin(from: &Location, to: Location) -> Location {
     }
 }
 
-fn dragged_items(op: &FileOp) -> Option<&Vec<FsPath>> {
-    match op {
-        FileOp::Copy { items, .. } | FileOp::Move { items, .. } | FileOp::Link { items, .. } | FileOp::Trash(items) => Some(items),
-        _ => None,
-    }
-}
-
 impl App {
     pub(super) fn open_admin(&mut self, now: Instant) {
         let t = self.tab();
@@ -47,13 +40,12 @@ impl App {
         self.dispatch(routes, OpenTarget::NewTab, now);
     }
 
-    pub(super) fn admin_route(&self, provider: ProviderId, tab: TabId, op: &FileOp) -> ProviderId {
+    pub(super) fn admin_route(&self, provider: ProviderId, tab: TabId) -> ProviderId {
         if provider != ProviderId::Local {
             return provider;
         }
         let in_admin_tab = self.tabs.iter().any(|t| t.id == tab && t.location().is_admin());
-        let from_admin_drag = dragged_items(op).is_some_and(|items| self.ops.admin_drag.as_ref() == Some(items));
-        if in_admin_tab || from_admin_drag {
+        if in_admin_tab {
             ProviderId::Admin
         } else {
             provider

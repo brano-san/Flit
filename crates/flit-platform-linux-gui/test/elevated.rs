@@ -204,21 +204,34 @@ fn launch_error(launcher: &RootLauncher) -> String {
     error
 }
 
+fn system_program() -> PathBuf {
+    std::fs::canonicalize("/bin/sh").unwrap()
+}
+
 #[test]
-fn the_root_agent_runs_this_flit_by_absolute_path_in_agent_mode_only() {
+fn the_root_agent_runs_a_root_owned_flit_by_its_real_path_in_agent_mode_only() {
     let t = Temp::new("root-agent-args");
     fake_pkexec(&t, "echo \"$@\" >&2\nexit 127");
-    let error = crate::temp::with_tool_dir(t.path(), || launch_error(&RootLauncher::pkexec()));
-    let exe = std::env::current_exe().unwrap();
-    let expected = format!("polkit refused: {} {FLAG} {}", exe.display(), flit_core::i18n::lang().code());
-    assert_eq!(error, expected);
+    let error = crate::temp::with_tool_dir(t.path(), || launch_error(&RootLauncher::with(|| root_agent_command(Path::new("/bin/sh")))));
+    let expected = format!("The administrator agent could not start: {} {FLAG} {}", system_program().display(), flit_core::i18n::lang().code());
+    assert_eq!(error, expected, "a 127 without a polkit refusal is a start failure, not a wrong password");
+}
+
+#[test]
+fn pkexec_codes_tell_a_dismissed_prompt_a_refusal_and_a_start_failure_apart() {
+    assert_eq!(refusal(Some(126), ""), "the password prompt was dismissed");
+    let denied = "Error executing command as another user: Not authorized\n\nThis incident has been reported.";
+    assert!(refusal(Some(127), denied).starts_with("polkit refused: Error executing command as another user: Not authorized"));
+    assert_eq!(refusal(Some(127), "Cannot run program /tmp/.mount_x/flit: No such file or directory"), "The administrator agent could not start: Cannot run program /tmp/.mount_x/flit: No such file or directory");
+    assert_eq!(refusal(Some(127), ""), "the administrator agent did not answer");
+    assert_eq!(refusal(Some(1), "boom"), "The elevated helper stopped: boom");
 }
 
 #[test]
 fn a_dismissed_password_prompt_is_explained_and_the_tab_is_denied() {
     let t = Temp::new("root-agent-dismissed");
     fake_pkexec(&t, "exit 126");
-    let error = crate::temp::with_tool_dir(t.path(), || launch_error(&RootLauncher::pkexec()));
+    let error = crate::temp::with_tool_dir(t.path(), || launch_error(&RootLauncher::with(|| root_agent_command(Path::new("/bin/sh")))));
     assert_eq!(error, "the password prompt was dismissed");
     let (tx, events) = crossbeam_channel::unbounded();
     let launcher = RootLauncher::with(|| {
@@ -258,15 +271,66 @@ fn without_pkexec_the_root_agent_names_the_package() {
 }
 
 #[test]
-fn the_root_agent_program_must_be_an_unchanged_file_others_cannot_write() {
-    let t = Temp::new("root-agent-program");
+fn a_flit_that_belongs_to_the_user_never_reaches_pkexec() {
+    let t = Temp::new("root-agent-user-flit");
+    fake_pkexec(&t, "touch \"$(dirname \"$0\")/ran\"; exit 0");
     let exe = t.file("flit", 4);
     std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
-    assert_eq!(agent_program(&exe).unwrap(), exe);
+    let unsafe_text = S::ErrorsEngineAdminUnsafe.en();
+    if unsafe { libc::geteuid() } != 0 {
+        let error = crate::temp::with_tool_dir(t.path(), || RootLauncher::with(move || root_agent_command(&exe)).launch().err().unwrap().to_string());
+        assert_eq!(error, unsafe_text, "a user-owned flit, like ~/.local/bin/flit from install.sh, is refused");
+        let own = crate::temp::with_tool_dir(t.path(), || RootLauncher::pkexec().launch().err().unwrap().to_string());
+        assert_eq!(own, unsafe_text, "the test binary belongs to the user too");
+        assert!(!t.path().join("ran").exists(), "pkexec was never started");
+    }
+    assert_eq!(agent_program(&system_program()).unwrap(), system_program());
+    assert_eq!(agent_program(Path::new("/bin/sh")).unwrap(), system_program(), "the real path is used, not the link");
     let program = S::ErrorsEngineAdminProgram.en();
     assert_eq!(agent_program(Path::new("flit")).unwrap_err().to_string(), program, "a bare name would be looked up in $PATH");
     assert_eq!(agent_program(&t.path().join("flit (deleted)")).unwrap_err().to_string(), program);
-    assert_eq!(agent_program(t.path()).unwrap_err().to_string(), program);
-    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o775)).unwrap();
-    assert_eq!(agent_program(&exe).unwrap_err().to_string(), S::ErrorsEngineAdminUnsafe.en());
+    assert_eq!(agent_program(Path::new("/usr/bin")).unwrap_err().to_string(), program);
+}
+
+type Node = (&'static str, u32, u32, bool);
+
+fn tree(nodes: &'static [Node]) -> impl Fn(&Path) -> io::Result<Owned> {
+    move |p: &Path| nodes.iter().find(|n| Path::new(n.0) == p).map(|n| Owned { uid: n.1, mode: n.2, dir: n.3 }).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
+}
+
+#[test]
+fn only_root_owned_files_in_root_owned_folders_nobody_else_can_write_are_trusted() {
+    let system = tree(&[("/", 0, 0o40755, true), ("/usr", 0, 0o40755, true), ("/usr/bin", 0, 0o40755, true), ("/usr/bin/flit", 0, 0o100755, false)]);
+    assert!(root_only(Path::new("/usr/bin/flit"), &system));
+    let user_file = tree(&[("/", 0, 0o40755, true), ("/usr", 0, 0o40755, true), ("/usr/bin", 0, 0o40755, true), ("/usr/bin/flit", 1000, 0o100755, false)]);
+    assert!(!root_only(Path::new("/usr/bin/flit"), &user_file), "a file of the user");
+    let user_dir = tree(&[("/", 0, 0o40755, true), ("/home", 0, 0o40755, true), ("/home/u", 1000, 0o40700, true), ("/home/u/bin", 0, 0o40755, true), ("/home/u/bin/flit", 0, 0o100755, false)]);
+    assert!(!root_only(Path::new("/home/u/bin/flit"), &user_dir), "a folder of the user on the path can swap the file");
+    let open_dir = tree(&[("/", 0, 0o40755, true), ("/opt", 0, 0o40777, true), ("/opt/flit", 0, 0o100755, false)]);
+    assert!(!root_only(Path::new("/opt/flit"), &open_dir), "a root file in a folder everybody can write");
+    let sticky = tree(&[("/", 0, 0o40755, true), ("/tmp", 0, 0o41777, true), ("/tmp/flit", 0, 0o100755, false)]);
+    assert!(!root_only(Path::new("/tmp/flit"), &sticky), "a sticky folder everybody can write is not trusted either");
+    let group = tree(&[("/", 0, 0o40755, true), ("/usr", 0, 0o40755, true), ("/usr/flit", 0, 0o100775, false)]);
+    assert!(!root_only(Path::new("/usr/flit"), &group), "a file the group can write");
+    let missing = tree(&[("/usr/bin/flit", 0, 0o100755, false)]);
+    assert!(!root_only(Path::new("/usr/bin/flit"), &missing));
+}
+
+#[test]
+fn the_one_off_elevation_refuses_a_flit_of_the_user_and_an_untrusted_setfacl() {
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    let t = Temp::new("one-off-user-flit");
+    fake_pkexec(&t, "touch \"$(dirname \"$0\")/ran\"; exit 0");
+    let dir = fs_path(t.path());
+    let op = FileOp::NewFolder { dir: dir.clone(), name: b"x".to_vec() };
+    let error = crate::temp::with_tool_dir(t.path(), || run(&op, &Job::detached(Resolve::Skip)).unwrap_err());
+    assert_eq!(error.message, S::ErrorsEngineAdminUnsafe.en());
+    let setfacl = t.path().join("setfacl");
+    std::fs::write(&setfacl, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&setfacl, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let error = crate::temp::with_tool_dir(t.path(), || grant_access(&dir).error.unwrap());
+    assert_eq!(error.message, "setfacl is not a system program that belongs to root, so Flit does not run it as administrator");
+    assert!(!t.path().join("ran").exists(), "pkexec was never started");
 }

@@ -1,6 +1,6 @@
 use super::*;
 use flit_core::listing::{ChangeKind, DirChange, DirStats};
-use flit_core::provider::{Conflict, Failure, OpCtl, OpProgress, Recover, Resolve, Template};
+use flit_core::provider::{Conflict, Failure, LinkKind, OpCtl, OpProgress, Recover, Resolve, Template};
 use flit_core::sort::CaseMode;
 use flit_core::Meta;
 use flit_proto::listing::EntryBatch;
@@ -694,4 +694,78 @@ fn a_crashed_admin_agent_reports_it_and_starts_again_only_on_demand() {
         assert_eq!(s.fake.launches.load(Ordering::SeqCst), gen as usize);
     }
     assert!(s.local.0.lock().unwrap().is_empty(), "crashes never fall back to listing as the user");
+}
+
+fn done_ops(req: &Request) -> Option<Vec<Event>> {
+    Some(match req {
+        Request::Op { id, .. } => vec![Event::OpDone { id: *id, error: None, items: Vec::new() }],
+        _ => Vec::new(),
+    })
+}
+
+#[test]
+fn no_operation_in_an_admin_tab_runs_as_the_user() {
+    let s = admin_setup(Fake::new(done_ops), Timing::default(), Clipboard { files: copied_from_windows, clear: || {} });
+    let on_agent = [
+        FileOp::NewFile { dir: unix("/etc"), name: b"n".to_vec(), template: Template::Empty },
+        FileOp::Link { items: vec![unix("/etc/a")], dest: unix("/etc/b") },
+        FileOp::Flatten(vec![unix("/etc/d")]),
+    ];
+    let refused = [
+        FileOp::LinkAs { items: vec![unix("/etc/a")], dest: unix("/etc/b"), kind: LinkKind::Symbolic },
+        FileOp::PasteDropped { dest: unix("/etc"), moving: false, data: None },
+        FileOp::PasteLink { dest: unix("/etc") },
+        FileOp::InstallFonts(vec![unix("/etc/f.ttf")]),
+        FileOp::Paste { dest: unix("/etc") },
+    ];
+    for (k, op) in on_agent.iter().chain(&refused).enumerate() {
+        s.wsl.submit(ProviderRequest::Op { tab: 1, id: 100 + k as u64, op: op.clone(), ctl: OpCtl::default() });
+        let id = 100 + k as u64;
+        let error = event(&s.events, |e| if let ProviderEvent::OpDone { id: got, error, .. } = e { (got == id).then_some(error) } else { None });
+        if k < on_agent.len() {
+            assert_eq!(error, None, "{op:?} runs on the agent");
+        } else {
+            assert_eq!(error.as_deref(), Some("This command is not available in an administrator tab"), "{op:?}");
+        }
+    }
+    let ran: Vec<FileOp> = s.fake.seen().into_iter().filter_map(|r| if let Request::Op { op, .. } = r { Some(op) } else { None }).collect();
+    assert_eq!(ran, on_agent);
+    assert!(s.local.0.lock().unwrap().is_empty(), "nothing ran as the user");
+}
+
+#[cfg(unix)]
+#[test]
+fn items_written_by_root_into_a_folder_of_the_user_are_handed_to_that_user() {
+    use std::os::unix::fs::MetadataExt;
+    let dir = std::env::temp_dir().join(format!("flit-admin-hand-over-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let meta = std::fs::metadata(&dir).unwrap();
+    let dest = unix(dir.to_str().unwrap());
+    let copied = dest.join(b"hosts");
+    let reported = copied.clone();
+    let fake = Fake::new(move |req| {
+        Some(match req {
+            Request::Op { id, op: FileOp::Copy { .. }, .. } => vec![Event::OpDone { id: *id, error: None, items: vec![(unix("/etc/hosts"), reported.clone())] }],
+            Request::Op { id, .. } => vec![Event::OpDone { id: *id, error: None, items: Vec::new() }],
+            _ => Vec::new(),
+        })
+    });
+    let s = admin_setup(fake, Timing::default(), Clipboard::default());
+    s.wsl.submit(ProviderRequest::Op { tab: 1, id: 5, op: FileOp::Copy { items: vec![unix("/etc/hosts")], dest: dest.clone() }, ctl: OpCtl::default() });
+    event(&s.events, |e| if let ProviderEvent::OpDone { id: 5, error: None, .. } = e { Some(()) } else { None });
+    let handed = |seen: &[Request]| seen.iter().find_map(|r| if let Request::Op { op: FileOp::SetAccess { items, edit }, .. } = r { Some((items.clone(), *edit)) } else { None });
+    if meta.uid() == 0 {
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(handed(&s.fake.seen()).is_none(), "a folder of root keeps root as the owner");
+    } else {
+        until("hand over", || handed(&s.fake.seen()).is_some());
+        let (items, edit) = handed(&s.fake.seen()).unwrap();
+        assert_eq!(items, [copied]);
+        assert_eq!((edit.owner, edit.group), (Some(meta.uid()), Some(meta.gid())));
+        assert!(edit.enclosed.is_some(), "everything inside a copied folder changes owner too");
+        assert!(edit.mode.is_empty());
+    }
+    s.wsl.submit(ProviderRequest::Op { tab: 1, id: 6, op: FileOp::Copy { items: vec![unix("/etc/hosts")], dest: unix("/etc") }, ctl: OpCtl::default() });
+    event(&s.events, |e| if let ProviderEvent::OpDone { id: 6, .. } = e { Some(()) } else { None });
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -176,6 +176,7 @@ fn unelevated(why: impl Into<String>) -> PlatformError {
 pub fn run(op: &FileOp, job: &Job) -> Result<OpOutcome, PlatformError> {
     let pkexec = crate::tools::require("pkexec").map_err(|e| unelevated(e.message))?;
     let exe = std::env::current_exe().map_err(|e| unelevated(format!("cannot find the Flit program: {}", flit_core::fmt::io_reason(&e))))?;
+    let exe = agent_program(&exe).map_err(|e| unelevated(e.to_string()))?;
     let mut child = Command::new(pkexec)
         .args(helper_args(&exe))
         .stdin(Stdio::piped())
@@ -196,8 +197,7 @@ pub fn run(op: &FileOp, job: &Job) -> Result<OpOutcome, PlatformError> {
     let status = child.wait().ok().and_then(|s| s.code());
     let complaint = complaint.join().unwrap_or_default();
     outcome.map_err(|e| match status {
-        Some(PKEXEC_DISMISSED) => unelevated(S::ErrorsOpsExtraAdminDismissed.en()),
-        Some(PKEXEC_REFUSED) => unelevated(flit_core::tr_en!(S::ErrorsOpsExtraAdminRefused, why = complaint.trim())),
+        Some(PKEXEC_DISMISSED | PKEXEC_REFUSED) => unelevated(refusal(status, &complaint)),
         _ if complaint.trim().is_empty() => PlatformError::new(-1, flit_core::tr_en!(S::ErrorsOpsExtraAdminStopped, why = e)),
         _ => PlatformError::new(-1, flit_core::tr_en!(S::ErrorsOpsExtraAdminStopped, why = complaint.trim())),
     })
@@ -306,8 +306,7 @@ pub fn grant_args(uid: u32, dir: &Path) -> Vec<OsString> {
 
 fn grant_failure(status: Option<i32>, complaint: &str) -> PlatformError {
     match status {
-        Some(PKEXEC_DISMISSED) => unelevated(S::ErrorsOpsExtraAdminDismissed.en()),
-        Some(PKEXEC_REFUSED) => unelevated(flit_core::tr_en!(S::ErrorsOpsExtraAdminRefused, why = complaint.trim())),
+        Some(PKEXEC_DISMISSED | PKEXEC_REFUSED) => unelevated(refusal(status, complaint)),
         code => PlatformError::new(code.map_or(-1, i64::from), format!("setfacl: {}", complaint.trim())),
     }
 }
@@ -316,7 +315,7 @@ pub fn grant_access(dir: &FsPath) -> OpOutcome {
     let granted = (|| {
         let path = flit_platform_linux::host(dir).ok_or_else(|| PlatformError::new(-1, "not a Linux path"))?;
         let pkexec = crate::tools::require("pkexec").map_err(|e| unelevated(e.message))?;
-        let setfacl = crate::tools::require("setfacl")?;
+        let setfacl = system_tool(&crate::tools::require("setfacl")?).map_err(|_| unelevated(flit_core::tr_en!(S::ErrorsEngineAdminTool, tool = "setfacl")))?;
         let out = Command::new(pkexec).arg(setfacl).args(grant_args(unsafe { libc::getuid() }, path)).stdin(Stdio::null()).output().map_err(|e| unelevated(format!("pkexec: {}", flit_core::fmt::io_reason(&e))))?;
         if out.status.success() {
             Ok(())
@@ -331,6 +330,7 @@ pub fn grant_access(dir: &FsPath) -> OpOutcome {
 }
 
 const COMPLAINT_MAX: usize = 4096;
+const NOT_AUTHORIZED: &str = "Not authorized";
 
 type Spawner = Box<dyn Fn() -> io::Result<Command> + Send>;
 
@@ -340,11 +340,38 @@ pub struct RootLauncher {
 
 impl RootLauncher {
     pub fn pkexec() -> Self {
-        Self::with(root_agent_command)
+        Self::with(|| root_agent_command(&std::env::current_exe().map_err(|_| io::Error::new(io::ErrorKind::NotFound, S::ErrorsEngineAdminProgram.en()))?))
     }
 
     pub fn with(command: impl Fn() -> io::Result<Command> + Send + 'static) -> Self {
         Self { command: Box::new(command) }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Owned {
+    pub uid: u32,
+    pub mode: u32,
+    pub dir: bool,
+}
+
+fn owned(p: &Path) -> io::Result<Owned> {
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::symlink_metadata(p)?;
+    Ok(Owned { uid: m.uid(), mode: m.mode(), dir: m.is_dir() })
+}
+
+pub fn root_only(path: &Path, stat: &dyn Fn(&Path) -> io::Result<Owned>) -> bool {
+    let safe = |o: &Owned| o.uid == 0 && o.mode & 0o022 == 0;
+    stat(path).is_ok_and(|f| !f.dir && safe(&f)) && path.ancestors().skip(1).all(|d| stat(d).is_ok_and(|o| o.dir && safe(&o)))
+}
+
+fn system_tool(tool: &Path) -> io::Result<PathBuf> {
+    let real = std::fs::canonicalize(tool)?;
+    if root_only(&real, &owned) {
+        Ok(real)
+    } else {
+        Err(io::Error::from(io::ErrorKind::PermissionDenied))
     }
 }
 
@@ -353,19 +380,19 @@ pub fn agent_program(exe: &Path) -> io::Result<PathBuf> {
     if !exe.is_absolute() || exe.as_os_str().as_bytes().ends_with(b" (deleted)") {
         return Err(refused(S::ErrorsEngineAdminProgram));
     }
-    let meta = std::fs::metadata(exe).map_err(|_| refused(S::ErrorsEngineAdminProgram))?;
-    if !meta.is_file() {
+    let real = std::fs::canonicalize(exe).map_err(|_| refused(S::ErrorsEngineAdminProgram))?;
+    if !std::fs::metadata(&real).is_ok_and(|m| m.is_file()) {
         return Err(refused(S::ErrorsEngineAdminProgram));
     }
-    if std::os::unix::fs::PermissionsExt::mode(&meta.permissions()) & 0o022 != 0 {
+    if !root_only(&real, &owned) {
         return Err(refused(S::ErrorsEngineAdminUnsafe));
     }
-    Ok(exe.to_path_buf())
+    Ok(real)
 }
 
-fn root_agent_command() -> io::Result<Command> {
+pub fn root_agent_command(exe: &Path) -> io::Result<Command> {
     let pkexec = crate::tools::require("pkexec").map_err(|e| io::Error::new(io::ErrorKind::NotFound, e.message))?;
-    let exe = agent_program(&std::env::current_exe().map_err(|_| io::Error::new(io::ErrorKind::NotFound, S::ErrorsEngineAdminProgram.en()))?)?;
+    let exe = agent_program(exe)?;
     let mut command = Command::new(pkexec);
     command.args(helper_args(&exe));
     Ok(command)
@@ -375,8 +402,9 @@ pub fn refusal(status: Option<i32>, complaint: &str) -> String {
     let complaint = complaint.trim();
     match status {
         Some(PKEXEC_DISMISSED) => S::ErrorsOpsExtraAdminDismissed.en().to_owned(),
-        Some(PKEXEC_REFUSED) => flit_core::tr_en!(S::ErrorsOpsExtraAdminRefused, why = complaint),
+        Some(PKEXEC_REFUSED) if complaint.contains(NOT_AUTHORIZED) => flit_core::tr_en!(S::ErrorsOpsExtraAdminRefused, why = complaint),
         _ if complaint.is_empty() => S::ErrorsEngineAdminSilent.en().to_owned(),
+        Some(PKEXEC_REFUSED) => flit_core::tr_en!(S::ErrorsEngineAdminNotStarted, why = complaint),
         _ => flit_core::tr_en!(S::ErrorsOpsExtraAdminStopped, why = complaint),
     }
 }

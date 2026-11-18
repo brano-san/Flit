@@ -777,7 +777,7 @@ fn cancelling_a_right_drop_or_denying_link_transfer_never_uses_old_link_choices(
     use crate::provider::{LinkChoices, LinkKind};
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &[]);
-    let asked = || Asked { paths: vec![p(r"C:\a.txt")], dest: p(r"C:\x") };
+    let asked = || Asked { paths: vec![p(r"C:\a.txt")], dest: p(r"C:\x"), admin: false };
     app.ask_drop(asked(), drop_effect::COPY | drop_effect::LINK, drop_effect::COPY, (300.0, 200.0));
     let generation = app.ops.link_probe.as_ref().unwrap().generation;
     app.on_link_choices(generation, LinkChoices([true; 4]));

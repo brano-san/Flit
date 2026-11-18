@@ -2,7 +2,7 @@ use super::super::{App, Effect, Persisted};
 use super::*;
 use crate::input::{Event, Key, Mods, MouseButton};
 use crate::listing::{attr, DirSnapshot, Listing, Meta};
-use crate::provider::{OpId, ProviderEvent, ProviderRequest};
+use crate::provider::{FileOp, OpId, ProviderEvent, ProviderRequest};
 use crate::sort::{self, CaseMode, SortKeys, ViewSpec};
 use crate::text::tests::Mono;
 use crate::ui::{drop_effect, DragEvent, MenuItem};
@@ -305,4 +305,83 @@ fn a_saved_root_tab_comes_back_as_an_ordinary_tab() {
     assert_eq!(Location::parse_exact(&root.to_bytes()), Some(Location::Local(p("/etc"))));
     assert_eq!(admin_location(&Location::Local(p("/a/b.zip"))), None, "archives are not opened as root");
     assert_eq!(admin_location(&Location::Wsl { distro: "Ubuntu".into(), path: p("/etc") }), None);
+}
+
+fn start_root_drag(app: &mut App) -> (Vec<FsPath>, (f32, f32)) {
+    open_root_tab(app, "etc");
+    requests(app);
+    deliver(app, &[("hosts", false)]);
+    select(app, &["hosts"]);
+    let mut g = crate::text::Gfx::new(Mono, 1024);
+    app.frame(&mut g, t0());
+    let (x, y) = (app.layout.cols[0].x + 100.0, app.layout.list.y + 0.5 * app.layout.row_h);
+    app.on_event(&Event::Key { key: Key::Other, mods: NO, pressed: false }, t0());
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, t0());
+    app.on_event(&Event::MouseMove { x: x + 12.0, y: y + 3.0 }, t0());
+    let dragged = app.drain_effects().find_map(|e| if let Effect::StartDrag(paths) = e { Some(paths) } else { None }).expect("a drag starts");
+    app.select_tab(0);
+    requests(app);
+    deliver(app, &[("note.txt", false)]);
+    app.frame(&mut g, t0());
+    (dragged, (300.0, app.layout.list.y + 200.0))
+}
+
+#[test]
+fn after_a_root_drop_the_same_items_in_an_ordinary_tab_stay_with_the_user() {
+    let all = drop_effect::COPY | drop_effect::MOVE | drop_effect::LINK;
+    let mut app = linux_at("/home/u");
+    let (dragged, at) = start_root_drag(&mut app);
+    app.drag(&DragEvent::Enter { paths: dragged.clone(), x: at.0, y: at.1, mods: NO, allowed: all, right: false }, t0());
+    app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: NO, allowed: all }, t0());
+    assert!(matches!(&sent(&mut app)[..], [(ProviderId::Admin, _, _)]));
+    app.navigate(Location::parse("/home/u/etc").unwrap(), t0());
+    requests(&mut app);
+    deliver(&mut app, &[("hosts", false)]);
+    select(&mut app, &["hosts"]);
+    key(&mut app, Key::Delete, NO);
+    let ops = sent(&mut app);
+    assert_eq!(ops.into_iter().map(|(pr, _, op)| (pr, op)).collect::<Vec<_>>(), [(ProviderId::Local, FileOp::Trash(dragged))], "a later Delete of the same item never reaches the root agent");
+}
+
+#[test]
+fn a_root_drag_that_left_the_window_drops_as_the_user() {
+    let all = drop_effect::COPY | drop_effect::MOVE | drop_effect::LINK;
+    let mut app = linux_at("/home/u");
+    let (dragged, at) = start_root_drag(&mut app);
+    app.drag(&DragEvent::Enter { paths: dragged.clone(), x: at.0, y: at.1, mods: NO, allowed: all, right: false }, t0());
+    app.drag(&DragEvent::Leave, t0());
+    app.drag(&DragEvent::Enter { paths: dragged.clone(), x: at.0, y: at.1, mods: NO, allowed: all, right: false }, t0());
+    app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: NO, allowed: all }, t0());
+    assert!(matches!(&sent(&mut app)[..], [(ProviderId::Local, _, _)]));
+}
+
+#[test]
+fn a_right_drop_from_a_root_tab_keeps_its_source_for_the_chosen_command() {
+    let all = drop_effect::COPY | drop_effect::MOVE | drop_effect::LINK;
+    let mut app = linux_at("/home/u");
+    let (dragged, at) = start_root_drag(&mut app);
+    app.drag(&DragEvent::Enter { paths: dragged.clone(), x: at.0, y: at.1, mods: NO, allowed: all, right: true }, t0());
+    app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: NO, allowed: all }, t0());
+    assert!(app.ops.admin_drag.is_none(), "the drop already consumed the root source");
+    app.drop_chosen(drop_effect::COPY);
+    assert_eq!(sent(&mut app).into_iter().map(|(pr, _, op)| (pr, op)).collect::<Vec<_>>(), [(ProviderId::Admin, FileOp::Copy { items: dragged, dest: p("/home/u") })]);
+}
+
+#[test]
+fn deleting_in_a_root_tab_asks_even_when_confirmation_is_off() {
+    let mut app = linux_at("/home/u");
+    app.confirm_delete = crate::ui::ConfirmDelete::Never;
+    open_root_tab(&mut app, "etc");
+    requests(&mut app);
+    deliver(&mut app, &[("hosts", false)]);
+    select(&mut app, &["hosts"]);
+    key(&mut app, Key::Delete, NO);
+    assert_eq!(app.asking(), Some("confirm"));
+    assert!(sent(&mut app).is_empty());
+    key(&mut app, Key::Escape, NO);
+    app.select_tab(0);
+    deliver(&mut app, &[("etc", true), ("note.txt", false)]);
+    select(&mut app, &["note.txt"]);
+    key(&mut app, Key::Delete, Mods { ctrl: false, shift: true, alt: false });
+    assert_eq!(sent(&mut app).len(), 1, "ordinary tabs keep the setting");
 }

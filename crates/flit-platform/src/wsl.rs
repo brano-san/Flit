@@ -4,7 +4,7 @@ use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
 use flit_core::i18n::S;
 use flit_core::listing::Listing;
 use flit_core::path::PathKind;
-use flit_core::provider::{Failure, FileOp, GenToken, OpCtl, OpId, OpReport, Recover, Resolve, SnapshotSlot};
+use flit_core::provider::{AccessEdit, Enclosed, Failure, FileOp, GenToken, OpCtl, OpId, OpReport, Recover, Resolve, SnapshotSlot};
 use flit_core::sort::{SortKeys, ViewSpec};
 use flit_core::{FsError, FsErrorKind, FsPath, Location, ProviderEvent, ProviderRequest, TabId};
 use flit_proto::provider::{agent_runs, check_conflict, check_failure, check_performed, check_report, Event, ReqId, Request, VERSION};
@@ -164,6 +164,7 @@ enum Pending {
     List(Box<ListState>),
     Sizes { tab: TabId, gen: u64, cancel: GenToken, wanted: HashSet<u32> },
     Op(OpState),
+    HandOver,
 }
 
 struct Ctl {
@@ -250,20 +251,45 @@ fn linux(op: &FileOp) -> bool {
     op.all_paths(|p| p.kind() == PathKind::Unix && flit_core::archive::split(p).is_none())
 }
 
-fn starts_agent(req: &ProviderRequest) -> bool {
+fn runs(op: &FileOp, admin: bool) -> bool {
+    agent_runs(op) || (admin && matches!(op, FileOp::NewFile { .. } | FileOp::Link { .. } | FileOp::Flatten(_)))
+}
+
+fn written_dir(op: &FileOp) -> Option<&FsPath> {
+    match op {
+        FileOp::Copy { dest, .. } | FileOp::Move { dest, .. } | FileOp::Link { dest, .. } => Some(dest),
+        FileOp::NewFolder { dir, .. } | FileOp::NewFile { dir, .. } => Some(dir),
+        _ => None,
+    }
+}
+
+#[cfg(unix)]
+fn owner_of(dir: &FsPath) -> Option<(u32, u32)> {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::metadata(std::ffi::OsStr::from_bytes(dir.as_bytes())).ok()?;
+    (m.uid() != 0).then(|| (m.uid(), m.gid()))
+}
+
+#[cfg(not(unix))]
+fn owner_of(_: &FsPath) -> Option<(u32, u32)> {
+    None
+}
+
+fn starts_agent(req: &ProviderRequest, admin: bool) -> bool {
     match req {
         ProviderRequest::List { .. } | ProviderRequest::DirSizes { .. } => true,
-        ProviderRequest::Op { op, .. } => agent_runs(op) && linux(op),
+        ProviderRequest::Op { op, .. } => runs(op, admin) && linux(op),
         _ => false,
     }
 }
 
-fn for_agent(req: &ProviderRequest) -> bool {
+fn for_agent(req: &ProviderRequest, admin: bool) -> bool {
     let archived = match req {
         ProviderRequest::List { path, .. } | ProviderRequest::DirSizes { dir: path, .. } | ProviderRequest::Watch { path: Some(path), .. } => flit_core::archive::split(path).is_some(),
         _ => false,
     };
-    !archived && (starts_agent(req) || matches!(req, ProviderRequest::Watch { .. }))
+    !archived && (starts_agent(req, admin) || matches!(req, ProviderRequest::Watch { .. }))
 }
 
 fn windows_form(req: &ProviderRequest) -> bool {
@@ -414,9 +440,7 @@ impl Ctl {
     }
 
     fn fallback(&self, req: ProviderRequest) {
-        if self.admin {
-            return self.local.submit(req);
-        }
+if self.admin {            return match req {                ProviderRequest::Op { tab, id, .. } => self.emit(ProviderEvent::OpDone { tab, id, error: Some(S::ErrorsEngineAdminUnavailable.en().into()), report: None }),                req => self.local.submit(req),            };        }
         let op = match &req {
             ProviderRequest::Op { tab, id, .. } => Some((*tab, *id)),
             _ => None,
@@ -475,7 +499,7 @@ impl Ctl {
             },
             req => req,
         };
-        if matches!(self.state, State::Simplified) || !for_agent(&req) {
+        if matches!(self.state, State::Simplified) || !for_agent(&req, self.admin) {
             return self.fallback(req);
         }
         if matches!(self.state, State::Ready(_)) {
@@ -484,7 +508,7 @@ impl Ctl {
         if let ProviderRequest::Watch { tab, path: None, .. } = req {
             return self.queue.retain(|q| !matches!(q, ProviderRequest::Watch { tab: t, .. } if *t == tab));
         }
-        let start = matches!(self.state, State::Idle) && starts_agent(&req);
+        let start = matches!(self.state, State::Idle) && starts_agent(&req, self.admin);
         if !start && matches!(self.state, State::Starting { .. }) {
             self.note(&req);
         }
@@ -642,7 +666,7 @@ impl Ctl {
                 self.pending.insert(id, Pending::Sizes { tab, gen, cancel, wanted: items.iter().map(|(i, _)| *i).collect() });
                 self.send(Request::DirSizes { id, dir, items });
             }
-            ProviderRequest::Op { tab, id: op, op: request, ctl } if agent_runs(&request) => {
+            ProviderRequest::Op { tab, id: op, op: request, ctl } if runs(&request, self.admin) => {
                 let clear = self.clears.remove(&op);
                 if ctl.is_cancelled() {
                     return self.emit(ProviderEvent::OpDone { tab, id: op, error: Some(CANCELLED.into()), report: Some(OpReport { op: request, items: Vec::new() }) });
@@ -685,6 +709,7 @@ impl Ctl {
     }
 
     fn recover(&mut self, id: ReqId, failure: Failure) {
+if matches!(self.pending.get(&id), Some(Pending::HandOver)) {            return self.send(Request::Recover { id, choice: Some(Recover::Skip), all: true });        }
         let Some(Pending::Op(o)) = self.pending.get(&id) else { return };
         if let Err(e) = check_failure(&o.request, &failure) {
             return self.crashed(&e.to_string());
@@ -711,7 +736,22 @@ impl Ctl {
         if o.clear && error.is_none() {
             (self.clipboard.clear)();
         }
+        let handed = self.admin.then(|| written_dir(&o.request).cloned()).flatten().map(|dir| (dir, items.iter().map(|(_, to)| to.clone()).collect::<Vec<_>>()));
         self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error, report: Some(OpReport { op: o.performed.unwrap_or(o.request), items }) });
+        if let Some((dir, targets)) = handed {
+            self.hand_over(&dir, targets);
+        }
+    }
+
+    fn hand_over(&mut self, dir: &FsPath, targets: Vec<FsPath>) {
+        let Some((uid, gid)) = owner_of(dir) else { return };
+        if targets.is_empty() {
+            return;
+        }
+        let id = self.id();
+        self.pending.insert(id, Pending::HandOver);
+        let edit = AccessEdit { owner: Some(uid), group: Some(gid), enclosed: Some(Enclosed::default()), ..AccessEdit::default() };
+        self.send(Request::Op { id, op: FileOp::SetAccess { items: targets, edit }, policy: None });
     }
 
     fn performed(&mut self, id: ReqId, op: FileOp) {
@@ -806,7 +846,7 @@ impl Ctl {
                     o.ctl.answer_failure(Recover::Skip, false);
                     self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error: Some(lost.clone()), report: None });
                 }
-                Pending::Sizes { .. } => {}
+                Pending::Sizes { .. } | Pending::HandOver => {}
             }
         }
         self.clears.clear();

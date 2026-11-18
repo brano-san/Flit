@@ -79,7 +79,9 @@ fn scope(op: &FileOp) -> Option<Scope> {
         FileOp::Copy { items, dest } | FileOp::Move { items, dest } => (items.clone(), vec![dest.clone()]),
         FileOp::MoveTo(pairs) | FileOp::Restore(pairs) => (pairs.iter().map(|(a, _)| a.clone()).collect(), pairs.iter().map(|(_, b)| parent(b)).collect()),
         FileOp::Rename { item, .. } => (vec![item.clone()], vec![parent(item)]),
-        FileOp::NewFolder { dir, .. } => (vec![dir.clone()], vec![dir.clone()]),
+        FileOp::NewFolder { dir, .. } | FileOp::NewFile { dir, .. } => (vec![dir.clone()], vec![dir.clone()]),
+        FileOp::Link { items, dest } => (items.clone(), vec![dest.clone()]),
+        FileOp::Flatten(dirs) => (dirs.clone(), dirs.clone()),
         FileOp::Delete(items) => (items.clone(), items.clone()),
         FileOp::Trash(items) => (items.clone(), Vec::new()),
         FileOp::SetAccess { items, .. } => (items.clone(), items.clone()),
@@ -115,14 +117,14 @@ pub fn check_performed(op: &FileOp, performed: &FileOp) -> Result<(), ProtoError
 }
 
 pub fn check_conflict(op: &FileOp, c: &Conflict) -> Result<(), ProtoError> {
-    let asks = matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Restore(_));
+    let asks = matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Restore(_) | FileOp::Link { .. } | FileOp::Flatten(_));
     let scope = scope(op).filter(|_| asks).ok_or(ProtoError::Invalid("a conflict for an operation that cannot have one"))?;
     let (sources, targets) = sets(&scope);
     if under(&sources, &c.source) && under(&targets, &c.target) { Ok(()) } else { Err(ProtoError::Invalid("a conflict path lies outside the operation")) }
 }
 
 pub fn check_failure(op: &FileOp, f: &Failure) -> Result<(), ProtoError> {
-    let asks = matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Restore(_) | FileOp::Delete(_));
+    let asks = matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Restore(_) | FileOp::Delete(_) | FileOp::Link { .. } | FileOp::Flatten(_) | FileOp::NewFile { .. });
     let scope = scope(op).filter(|_| asks).ok_or(ProtoError::Invalid("a failure for an operation that does not ask about one"))?;
     let (sources, targets) = sets(&scope);
     if under(&sources, &f.path) || under(&targets, &f.path) { Ok(()) } else { Err(ProtoError::Invalid("a failure path lies outside the operation")) }
