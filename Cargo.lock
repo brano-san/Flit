@@ -738,6 +738,7 @@ dependencies = [
  "flate2",
  "flit-core",
  "flit-platform",
+ "flit-platform-linux",
  "flit-platform-linux-gui",
  "flit-platform-windows",
  "flit-proto",

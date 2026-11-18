@@ -19,7 +19,7 @@ prepare() {
 
 build() {
     cd "$_srcdir"
-    cargo build --frozen --release -p flit
+    cargo build --frozen --release -p flit -p flit-indexd
 }
 
 check() {
@@ -30,6 +30,9 @@ check() {
 package() {
     cd "$_srcdir"
     install -Dm755 target/release/flit "$pkgdir/usr/bin/flit"
+    install -Dm755 target/release/flit-indexd "$pkgdir/usr/bin/flit-indexd"
+    install -Dm644 assets/flit-indexd.service "$pkgdir/usr/lib/systemd/user/flit-indexd.service"
+    install -Dm644 assets/flit-indexd.socket "$pkgdir/usr/lib/systemd/user/flit-indexd.socket"
     install -Dm644 assets/flit.desktop "$pkgdir/usr/share/applications/flit.desktop"
     install -d "$pkgdir/usr/share/flit/dbus"
     sed "s#@BINDIR@#/usr/bin#" assets/org.freedesktop.FileManager1.service > "$pkgdir/usr/share/flit/dbus/org.freedesktop.FileManager1.service"

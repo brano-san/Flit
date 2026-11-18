@@ -7,6 +7,7 @@ mod fs;
 mod inotify;
 pub mod mounts;
 mod ops;
+pub mod sock;
 mod tags;
 mod trash;
 mod walk;
@@ -52,7 +53,12 @@ impl Platform for Linux {
         LinuxFs
     }
     fn utc_offset_minutes() -> i32 {
-        0
+        let now = unsafe { libc::time(std::ptr::null_mut()) };
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        if unsafe { libc::localtime_r(&now, &mut tm) }.is_null() {
+            return 0;
+        }
+        (tm.tm_gmtoff / 60) as i32
     }
     fn dark_mode() -> bool {
         false
@@ -61,7 +67,8 @@ impl Platform for Linux {
         flit_core::caps::Caps { unix_paths: true }
     }
     fn state_dir() -> Option<std::path::PathBuf> {
-        std::env::var_os("XDG_STATE_HOME").map(Into::into)
+        let absolute = |v: &str| std::env::var_os(v).map(std::path::PathBuf::from).filter(|p| p.is_absolute());
+        Some(absolute("XDG_STATE_HOME").or_else(|| Some(absolute("HOME")?.join(".local/state")))?.join("flit"))
     }
     fn home() -> FsPath {
         std::env::var("HOME").ok().and_then(|h| FsPath::parse(&h)).unwrap_or_else(|| FsPath::parse("/").unwrap())
@@ -251,42 +258,23 @@ impl SingleInstance for DbusInstance {
 
 pub struct Systemd;
 
-pub struct NoConn;
-
-impl std::io::Read for NoConn {
-    fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
-        Err(std::io::ErrorKind::Unsupported.into())
-    }
-}
-
-impl std::io::Write for NoConn {
-    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-        Err(std::io::ErrorKind::Unsupported.into())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl Duplex for NoConn {
-    fn try_clone(&self) -> std::io::Result<Self> {
-        Ok(NoConn)
-    }
-    fn set_read_timeout(&mut self, _: Option<std::time::Duration>) {}
-}
-
 impl Service for Systemd {
-    type Conn = NoConn;
+    type Conn = sock::UnixConn;
     fn endpoint() -> String {
-        "/run/flit/indexd.sock".into()
+        sock::endpoint().map_or_else(|| format!("$XDG_RUNTIME_DIR/{}", sock::SOCKET), |p| p.display().to_string())
     }
     fn run(body: fn() -> Result<(), PlatformError>) -> Result<(), PlatformError> {
         body()
     }
-    fn connect() -> Result<NoConn, PlatformError> {
-        Err(PlatformError::unsupported("index service socket"))
+    fn connect() -> Result<sock::UnixConn, PlatformError> {
+        let path = sock::endpoint().ok_or_else(|| PlatformError::new(-1, "XDG_RUNTIME_DIR is not set"))?;
+        sock::connect_at(&path, sock::uid(), sock::CONNECT_TIMEOUT)
     }
-    fn listen(_: usize, _: OnClient<NoConn>) -> Result<(), PlatformError> {
-        Err(PlatformError::unsupported("index service socket"))
+    fn listen(max_clients: usize, on_client: OnClient<sock::UnixConn>) -> Result<(), PlatformError> {
+        let listener = match sock::activated() {
+            Some(l) => l,
+            None => sock::bind_at(&sock::endpoint().ok_or_else(|| PlatformError::new(-1, "XDG_RUNTIME_DIR is not set"))?, sock::uid())?,
+        };
+        sock::serve_on(listener, sock::uid(), max_clients, on_client)
     }
 }

@@ -10,12 +10,14 @@ name=flit-$version-$arch-linux
 out=$target/packages
 stage=$out/$name
 
-cargo build --profile dist -p flit --manifest-path "$root/Cargo.toml"
+cargo build --profile dist -p flit -p flit-indexd --manifest-path "$root/Cargo.toml"
 rm -rf "$stage"
-mkdir -p "$stage/bin" "$stage/share/applications" "$stage/share/icons" "$stage/share/doc/flit" "$stage/share/flit/dbus"
+mkdir -p "$stage/bin" "$stage/share/applications" "$stage/share/icons" "$stage/share/doc/flit" "$stage/share/flit/dbus" "$stage/share/flit/systemd"
 install -m 755 "$target/dist/flit" "$stage/bin/flit"
+install -m 755 "$target/dist/flit-indexd" "$stage/bin/flit-indexd"
 cp "$root/assets/flit.desktop" "$stage/share/applications/"
 cp "$root/assets/org.freedesktop.FileManager1.service" "$stage/share/flit/dbus/"
+cp "$root/assets/flit-indexd.service" "$root/assets/flit-indexd.socket" "$stage/share/flit/systemd/"
 cp -r "$root/assets/icon/hicolor" "$stage/share/icons/"
 cp "$root/LICENSE" "$root/crates/flit-platform-linux-gui/assets/LICENSE-FlitSans.txt" "$root/crates/flit-platform-linux-gui/assets/LICENSE-FlitIcons.txt" "$stage/share/doc/flit/"
 install -m 755 "$root/scripts/install-linux.sh" "$stage/install.sh"

@@ -14,6 +14,7 @@ use flit_search::query::{self, Clock, Query};
 use flit_search::session::{Session, SharedIndex, FIRST_PAGE};
 use std::collections::HashMap;
 use std::io::Read;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -25,6 +26,8 @@ const IDLE_POLL: Duration = Duration::from_millis(500);
 const FRAME_TIMEOUT: Duration = Duration::from_secs(10);
 
 type Conn<P> = <<P as Platform>::Service as Service>::Conn;
+type Connect<P> = Box<dyn Fn() -> Result<Conn<P>, PlatformError> + Send>;
+type Fallback<P> = Box<dyn Fn() -> Result<(<P as Platform>::FallbackIndex, Option<PathBuf>), PlatformError> + Send>;
 type Out = Sender<(WindowId, SearchEvent)>;
 
 enum Cmd {
@@ -204,10 +207,12 @@ struct Worker<P: Platform> {
     latests: HashMap<WindowId, Arc<AtomicU64>>,
     tags: TagCell,
     hits: HashMap<WindowId, Hits>,
+    connect: Connect<P>,
+    fallback: Fallback<P>,
 }
 
-fn connect<P: Platform>() -> Result<Conn<P>, String> {
-    let mut conn = P::Service::connect().map_err(|e| format!("flit-indexd is not reachable: {}", e.message.trim()))?;
+fn greet<C: Duplex>(conn: Result<C, PlatformError>) -> Result<C, String> {
+    let mut conn = conn.map_err(|e| format!("flit-indexd is not reachable: {}", e.message.trim()))?;
     conn.set_read_timeout(Some(HELLO_TIMEOUT));
     handshake(&mut conn, &Hello::new(Protocol::Index, VERSION)).map_err(|e| format!("flit-indexd: {e}"))?;
     Ok(conn)
@@ -246,7 +251,7 @@ fn reader<C: Duplex>(mut conn: C, window: WindowId, alive: Arc<AtomicBool>, out:
 
 impl<P: Platform> Worker<P> {
     fn new(rx: Receiver<Cmd>, me: Sender<Cmd>, out: Out, wake: Wake, utc_offset_min: i32, tags: TagCell) -> Self {
-        Self { rx, me, out, wake, utc_offset_min, remote_failed: None, indexing: true, local: None, links: HashMap::new(), last_query: HashMap::new(), latests: HashMap::new(), tags, hits: HashMap::new() }
+        Self { rx, me, out, wake, utc_offset_min, remote_failed: None, indexing: true, local: None, links: HashMap::new(), last_query: HashMap::new(), latests: HashMap::new(), tags, hits: HashMap::new(), connect: Box::new(P::Service::connect), fallback: Box::new(|| Ok((P::FallbackIndex::new()?, P::cache_dir().map(|d| d.join("search"))))) }
     }
 
     fn run(mut self) {
@@ -296,8 +301,8 @@ impl<P: Platform> Worker<P> {
             Some(s) => s.clone(),
             None => {
                 let shared = SharedIndex::new();
-                let source = P::FallbackIndex::new().map_err(|e| e.message)?;
-                start_indexer(source, shared.clone(), P::cache_dir().map(|d| d.join("search"))).map_err(|e| e.message)?;
+                let (source, snapshots) = (self.fallback)().map_err(|e| e.message)?;
+                start_indexer(source, shared.clone(), snapshots).map_err(|e| e.message)?;
                 self.local = Some(shared.clone());
                 shared
             }
@@ -326,7 +331,7 @@ impl<P: Platform> Worker<P> {
             return;
         }
         if self.remote_failed.is_none() {
-            match connect::<P>() {
+            match greet((self.connect)()) {
                 Ok(conn) => {
                     let alive = Arc::new(AtomicBool::new(true));
                     if let Ok(read_half) = conn.try_clone() {
