@@ -17,7 +17,7 @@ fn chmod(p: &Path, mode: u32) {
     std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap();
 }
 
-fn answering(listener: UnixListener, owner: u32, reached: Arc<AtomicBool>) {
+fn answering(listener: Bound, owner: u32, reached: Arc<AtomicBool>) {
     std::thread::spawn(move || {
         serve_on(
             listener,
@@ -124,7 +124,7 @@ fn a_silent_service_times_out_reads_instead_of_hanging() {
     let path = t.path().join(SOCKET);
     let listener = bind_at(&path, uid()).unwrap();
     let mut conn = connect_at(&path, uid(), CONNECT_TIMEOUT).unwrap();
-    let _accepted = listener.accept().unwrap();
+    let _accepted = listener.listener().accept().unwrap();
     conn.set_read_timeout(Some(Duration::from_millis(100)));
     let started = Instant::now();
     let e = conn.read(&mut [0u8; 1]).unwrap_err();
@@ -147,4 +147,75 @@ fn the_socket_unit_listens_where_the_service_and_flit_look() {
     let lines: Vec<&str> = unit.lines().map(str::trim).collect();
     assert!(lines.contains(&format!("ListenStream=%t/{SOCKET}").as_str()), "{unit}");
     assert!(lines.contains(&"SocketMode=0600") && lines.contains(&"DirectoryMode=0700"), "{unit}");
+}
+
+fn busy_listener(path: &Path) -> (OwnedFd, Vec<OwnedFd>) {
+    std::fs::DirBuilder::new().mode(0o700).create(path.parent().unwrap()).unwrap();
+    let (addr, len) = address(path).unwrap();
+    let raw = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
+    let server = unsafe { OwnedFd::from_raw_fd(raw) };
+    assert_eq!(unsafe { libc::bind(server.as_raw_fd(), (&addr as *const libc::sockaddr_un).cast(), len) }, 0);
+    assert_eq!(unsafe { libc::listen(server.as_raw_fd(), 0) }, 0);
+    let mut queued = Vec::new();
+    loop {
+        let raw = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_CLOEXEC | libc::SOCK_NONBLOCK, 0) };
+        let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+        if unsafe { libc::connect(fd.as_raw_fd(), (&addr as *const libc::sockaddr_un).cast(), len) } != 0 {
+            assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EAGAIN));
+            return (server, queued);
+        }
+        queued.push(fd);
+    }
+}
+
+#[test]
+fn only_a_refused_socket_counts_as_left_behind() {
+    assert!(stale(&Err(io::Error::from_raw_os_error(libc::ECONNREFUSED))));
+    assert!(!stale(&Err(io::ErrorKind::TimedOut.into())), "a busy service is alive");
+    assert!(!stale(&Err(io::Error::from_raw_os_error(libc::EACCES))));
+}
+
+#[test]
+fn a_busy_service_keeps_its_socket() {
+    let t = Temp::new("sock-busy");
+    let path = t.path().join(SOCKET);
+    let _busy = busy_listener(&path);
+    let started = Instant::now();
+    assert!(bind_at(&path, uid()).is_err(), "a second service does not take over a busy one");
+    assert!(started.elapsed() >= CONNECT_TIMEOUT, "the busy service was given time to answer");
+    assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_socket(), "the busy service's socket stays");
+}
+
+#[test]
+fn a_service_that_is_still_starting_holds_off_a_second_one() {
+    let t = Temp::new("sock-lock");
+    let path = t.path().join(SOCKET);
+    std::fs::DirBuilder::new().mode(0o700).create(path.parent().unwrap()).unwrap();
+    let other = std::fs::OpenOptions::new().write(true).create(true).truncate(false).open(lock_path(&path)).unwrap();
+    assert_eq!(unsafe { libc::flock(other.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+    assert!(bind_at(&path, uid()).is_err());
+    assert!(!path.exists(), "nothing is bound while another start holds the lock");
+    drop(other);
+    assert!(bind_at(&path, uid()).is_ok());
+}
+
+#[test]
+fn of_two_services_started_together_exactly_one_serves() {
+    let t = Temp::new("sock-race");
+    let path = t.path().join(SOCKET);
+    for _ in 0..20 {
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let runs: Vec<_> = (0..2)
+            .map(|_| {
+                let (path, barrier) = (path.clone(), barrier.clone());
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    bind_at(&path, uid())
+                })
+            })
+            .collect();
+        let bound: Vec<Bound> = runs.into_iter().filter_map(|r| r.join().unwrap().ok()).collect();
+        assert_eq!(bound.len(), 1);
+        assert!(connect_at(&path, uid(), CONNECT_TIMEOUT).is_ok(), "the socket on disk is the winner's");
+    }
 }

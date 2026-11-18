@@ -37,3 +37,16 @@ fn every_linux_package_ships_the_service_binary_and_both_units() {
     assert!(manifest.contains(&format!("[\"target/release/{BIN}\", \"usr/bin/\", \"755\"]")));
     assert!(manifest.contains(&format!("dest = \"/usr/bin/{BIN}\"")));
 }
+
+#[test]
+fn the_service_is_sandboxed_but_can_read_home_and_write_its_state_and_socket() {
+    let unit = repo("assets/flit-indexd.service");
+    let l = lines(&unit);
+    for line in ["NoNewPrivileges=yes", "ProtectSystem=strict", "StateDirectory=flit", "StateDirectoryMode=0700", "PrivateTmp=yes", "Restart=on-failure"] {
+        assert!(l.contains(&line), "{line} missing:\n{unit}");
+    }
+    let writable: Vec<&str> = l.iter().filter_map(|x| x.strip_prefix("ReadWritePaths=")).flat_map(str::split_whitespace).collect();
+    assert!(writable.contains(&"%t"), "the service binds its socket in the runtime folder");
+    assert!(writable.contains(&"-%S/indexd"), "old snapshots can be removed, and a missing folder is fine");
+    assert!(!unit.contains("ProtectHome"), "the index reads the whole home folder");
+}

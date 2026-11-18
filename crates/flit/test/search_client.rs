@@ -328,4 +328,59 @@ mod service {
         assert_eq!(status(&got).map(|s| s.0), Some(SearchBackend::Fallback));
         assert!(local_answer(&mut w, &events, &mut got), "{got:?}");
     }
+
+    fn query_gen(w: &mut Worker<crate::P>, latest: &Arc<AtomicU64>, gen: u64) {
+        latest.store(gen, Ordering::Release);
+        w.request(1, latest.clone(), SearchRequest::Query { gen, text: "report".into(), sort: SearchSort::default(), scope: SearchScope::All });
+    }
+
+    fn counted(w: &mut Worker<crate::P>, dir: &Dir) -> Arc<std::sync::atomic::AtomicUsize> {
+        let tries = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (socket, n) = (dir.socket(), tries.clone());
+        w.connect = Box::new(move || {
+            n.fetch_add(1, Ordering::AcqRel);
+            sock::connect_at(&socket, sock::uid(), sock::CONNECT_TIMEOUT)
+        });
+        tries
+    }
+
+    #[test]
+    fn a_service_started_later_takes_over_at_the_next_search_after_the_pause() {
+        let dir = Dir::new("later");
+        let (mut w, events) = worker(&dir);
+        w.retry = Duration::ZERO;
+        let latest = Arc::new(AtomicU64::new(1));
+        query_gen(&mut w, &latest, 1);
+        assert_eq!(status(&events.try_iter().map(|(_, e)| e).collect::<Vec<_>>()).map(|s| s.0), Some(SearchBackend::Fallback));
+        fake_service(&dir.socket(), Mode::Answer);
+        query_gen(&mut w, &latest, 2);
+        let mut got: Vec<SearchEvent> = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !got.contains(&SearchEvent::Done { gen: 2, total: 42 }) && Instant::now() < deadline {
+            if let Ok((_, e)) = events.recv_timeout(Duration::from_millis(100)) {
+                got.push(e);
+            }
+        }
+        assert_eq!(status(&got), Some((SearchBackend::Service, None)), "{got:?}");
+        assert!(got.contains(&SearchEvent::Done { gen: 2, total: 42 }), "{got:?}");
+        assert!(w.remote_failed.is_none());
+    }
+
+    #[test]
+    fn a_failed_service_is_not_asked_again_before_the_pause() {
+        let dir = Dir::new("pause");
+        let (mut w, events) = worker(&dir);
+        let tries = counted(&mut w, &dir);
+        let latest = Arc::new(AtomicU64::new(1));
+        for gen in 1..=3 {
+            query_gen(&mut w, &latest, gen);
+        }
+        assert_eq!(tries.load(Ordering::Acquire), 1, "one attempt per minute at most");
+        assert!(events.try_iter().all(|(_, e)| !matches!(e, SearchEvent::Status { backend: SearchBackend::Service, .. })));
+        w.retry = Duration::ZERO;
+        w.request(1, latest.clone(), SearchRequest::Rows { gen: 3, from: 0, to: 64 });
+        assert_eq!(tries.load(Ordering::Acquire), 1, "page requests never wait for the service");
+        query_gen(&mut w, &latest, 4);
+        assert_eq!(tries.load(Ordering::Acquire), 2, "a new search after the pause asks again");
+    }
 }

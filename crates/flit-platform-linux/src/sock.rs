@@ -181,7 +181,40 @@ pub fn connect_at(path: &Path, owner: u32, limit: Duration) -> Result<UnixConn, 
     }
 }
 
-pub fn bind_at(path: &Path, owner: u32) -> Result<UnixListener, PlatformError> {
+pub struct Bound {
+    listener: UnixListener,
+    _lock: Option<std::fs::File>,
+}
+
+impl Bound {
+    pub fn listener(&self) -> &UnixListener {
+        &self.listener
+    }
+}
+
+pub fn lock_path(socket: &Path) -> PathBuf {
+    socket.with_extension("lock")
+}
+
+fn lock(socket: &Path) -> Result<std::fs::File, PlatformError> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = lock_path(socket);
+    let file = std::fs::OpenOptions::new().read(true).write(true).create(true).mode(0o600).custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC).open(&path).map_err(|e| fail(format_args!("{}: {e}", path.display())))?;
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        let e = io::Error::last_os_error();
+        if e.kind() == io::ErrorKind::WouldBlock {
+            return Err(fail(format_args!("another flit-indexd is starting or already serves {}", socket.display())));
+        }
+        return Err(fail(format_args!("{}: {e}", path.display())));
+    }
+    Ok(file)
+}
+
+pub fn stale(probe: &io::Result<UnixStream>) -> bool {
+    matches!(probe, Err(e) if e.raw_os_error() == Some(libc::ECONNREFUSED))
+}
+
+pub fn bind_at(path: &Path, owner: u32) -> Result<Bound, PlatformError> {
     let dir = path.parent().ok_or_else(|| fail("the index socket has no folder"))?;
     match std::fs::DirBuilder::new().mode(0o700).create(dir) {
         Ok(()) => {}
@@ -189,9 +222,11 @@ pub fn bind_at(path: &Path, owner: u32) -> Result<UnixListener, PlatformError> {
         Err(e) => return Err(fail(format_args!("{}: {e}", dir.display()))),
     }
     private_dir(dir, owner)?;
+    let held = lock(path)?;
     match std::fs::symlink_metadata(path) {
         Ok(m) if m.file_type().is_socket() && m.uid() == owner => {
-            if connect_within(path, CONNECT_TIMEOUT).is_ok() {
+            let probe = connect_within(path, CONNECT_TIMEOUT);
+            if !stale(&probe) {
                 return Err(fail(format_args!("another flit-indexd already serves {}", path.display())));
             }
             std::fs::remove_file(path).map_err(|e| fail(format_args!("{}: {e}", path.display())))?;
@@ -202,7 +237,7 @@ pub fn bind_at(path: &Path, owner: u32) -> Result<UnixListener, PlatformError> {
     }
     let listener = UnixListener::bind(path).map_err(|e| fail(format_args!("{}: {e}", path.display())))?;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|e| fail(format_args!("{}: {e}", path.display())))?;
-    Ok(listener)
+    Ok(Bound { listener, _lock: Some(held) })
 }
 
 pub fn listen_fd(pid: Option<&str>, fds: Option<&str>, me: u32) -> Option<RawFd> {
@@ -211,7 +246,7 @@ pub fn listen_fd(pid: Option<&str>, fds: Option<&str>, me: u32) -> Option<RawFd>
     (pid == me && fds >= 1).then_some(FIRST_LISTEN_FD)
 }
 
-pub fn activated() -> Option<UnixListener> {
+pub fn activated() -> Option<Bound> {
     let (pid, fds) = (std::env::var("LISTEN_PID").ok(), std::env::var("LISTEN_FDS").ok());
     let fd = listen_fd(pid.as_deref(), fds.as_deref(), std::process::id())?;
     let mut kind: libc::c_int = 0;
@@ -225,7 +260,7 @@ pub fn activated() -> Option<UnixListener> {
     }
     let listener = unsafe { UnixListener::from_raw_fd(fd) };
     listener.local_addr().ok()?.as_pathname()?;
-    Some(listener)
+    Some(Bound { listener, _lock: None })
 }
 
 struct Slot(Receiver<()>);
@@ -236,14 +271,14 @@ impl Drop for Slot {
     }
 }
 
-pub fn serve_on(listener: UnixListener, owner: u32, max_clients: usize, on_client: OnClient<UnixConn>) -> Result<(), PlatformError> {
+pub fn serve_on(bound: Bound, owner: u32, max_clients: usize, on_client: OnClient<UnixConn>) -> Result<(), PlatformError> {
     let (taken, freed) = bounded::<()>(max_clients.max(1));
     loop {
         if taken.send(()).is_err() {
             return Ok(());
         }
         let slot = Slot(freed.clone());
-        let stream = match listener.accept() {
+        let stream = match bound.listener.accept() {
             Ok((s, _)) => s,
             Err(e) if matches!(e.kind(), io::ErrorKind::Interrupted | io::ErrorKind::ConnectionAborted) => continue,
             Err(e) if matches!(e.raw_os_error(), Some(libc::EMFILE | libc::ENFILE | libc::ENOBUFS | libc::ENOMEM)) => {

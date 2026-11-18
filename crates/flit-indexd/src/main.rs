@@ -1,4 +1,6 @@
 mod serve;
+#[cfg(target_os = "linux")]
+mod upkeep;
 
 use flit_platform::{start_indexer, IndexSource, Platform, PlatformError, Service};
 use flit_search::proto::VolumeState;
@@ -74,6 +76,13 @@ fn body() -> Result<(), PlatformError> {
     let cfg = CONFIG.get_or_init(Config::default);
     let shared = SharedIndex::new();
     let snapshots = cfg.snapshots.clone().or_else(|| P::state_dir().map(|d| d.join("indexd")));
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(old) = upkeep::old_snapshots().filter(|o| cfg.snapshots.as_ref() != Some(o) && snapshots.as_ref() != Some(o)) {
+            upkeep::remove_old_snapshots(&old);
+        }
+        upkeep::watch_binary();
+    }
     match &cfg.walk {
         Some(roots) => start_indexer(walk_source(roots)?, shared.clone(), snapshots)?,
         None => start_indexer(<P as Platform>::IndexSource::new()?, shared.clone(), snapshots)?,
