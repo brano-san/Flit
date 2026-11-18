@@ -39,14 +39,13 @@ fn every_linux_package_ships_the_service_binary_and_both_units() {
 }
 
 #[test]
-fn the_service_is_sandboxed_but_can_read_home_and_write_its_state_and_socket() {
+fn the_service_hardening_never_needs_user_namespaces() {
     let unit = repo("assets/flit-indexd.service");
     let l = lines(&unit);
-    for line in ["NoNewPrivileges=yes", "ProtectSystem=strict", "StateDirectory=flit", "StateDirectoryMode=0700", "PrivateTmp=yes", "Restart=on-failure"] {
+    for line in ["NoNewPrivileges=yes", "StateDirectory=flit", "StateDirectoryMode=0700", "Restart=on-failure"] {
         assert!(l.contains(&line), "{line} missing:\n{unit}");
     }
-    let writable: Vec<&str> = l.iter().filter_map(|x| x.strip_prefix("ReadWritePaths=")).flat_map(str::split_whitespace).collect();
-    assert!(writable.contains(&"%t"), "the service binds its socket in the runtime folder");
-    assert!(writable.contains(&"-%S/indexd"), "old snapshots can be removed, and a missing folder is fine");
-    assert!(!unit.contains("ProtectHome"), "the index reads the whole home folder");
+    for key in ["ProtectSystem=", "ProtectHome=", "PrivateTmp=", "PrivateUsers=", "ReadWritePaths=", "ReadOnlyPaths=", "InaccessiblePaths=", "ProtectKernel", "ProtectControlGroups="] {
+        assert!(!l.iter().any(|x| x.starts_with(key)), "{key} needs unprivileged user namespaces in a user service and fails with 226/NAMESPACE where they are off:\n{unit}");
+    }
 }

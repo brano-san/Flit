@@ -10,11 +10,8 @@ RestartSec=10
 Nice=10
 IOSchedulingClass=idle
 NoNewPrivileges=yes
-ProtectSystem=strict
 StateDirectory=flit
 StateDirectoryMode=0700
-ReadWritePaths=%t -%S/indexd
-PrivateTmp=yes
 
 [Install]
 WantedBy=default.target
