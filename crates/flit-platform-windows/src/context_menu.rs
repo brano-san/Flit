@@ -977,11 +977,22 @@ fn properties(hwnd: HWND, paths: &[FsPath]) -> Result<(), PlatformError> {
 }
 
 pub(crate) fn invoke_verb(hwnd: HWND, paths: &[FsPath], verb: &CStr) -> Result<(), PlatformError> {
+    invoke_verb_masked(hwnd, paths, verb, 0)
+}
+
+pub(crate) fn invoke_verb_quietly(paths: &[FsPath], verb: &CStr) -> Result<(), PlatformError> {
+    invoke_verb_masked(HWND::default(), paths, verb, CMIC_MASK_FLAG_NO_UI | CMIC_MASK_NOASYNC)
+}
+
+const CMIC_MASK_FLAG_NO_UI: u32 = windows::Win32::UI::Shell::SEE_MASK_FLAG_NO_UI;
+const CMIC_MASK_NOASYNC: u32 = windows::Win32::UI::Shell::SEE_MASK_NOASYNC;
+
+fn invoke_verb_masked(hwnd: HWND, paths: &[FsPath], verb: &CStr, mask: u32) -> Result<(), PlatformError> {
     let menu: IContextMenu = Pidls::parse(paths)?.ui_object(hwnd)?;
     unsafe {
         let hmenu = CreatePopupMenu().map_err(err)?;
         let _ = menu.QueryContextMenu(hmenu, 0, FIRST_ID, LAST_ID, CMF_NORMAL);
-        let info = CMINVOKECOMMANDINFO { cbSize: size_of::<CMINVOKECOMMANDINFO>() as u32, hwnd, lpVerb: PCSTR(verb.as_ptr() as *const u8), nShow: SW_SHOWNORMAL.0, ..Default::default() };
+        let info = CMINVOKECOMMANDINFO { cbSize: size_of::<CMINVOKECOMMANDINFO>() as u32, fMask: mask, hwnd, lpVerb: PCSTR(verb.as_ptr() as *const u8), nShow: SW_SHOWNORMAL.0, ..Default::default() };
         let invoked = menu.InvokeCommand(&info).map_err(err);
         let _ = DestroyMenu(hmenu);
         invoked

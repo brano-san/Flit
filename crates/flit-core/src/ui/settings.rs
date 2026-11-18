@@ -34,7 +34,8 @@ pub const CACHE: &str = "advanced.thumb_cache_mb";
 pub const LONG_PATHS: &str = "files.long_paths";
 pub const BUILTIN_ARCHIVES: &str = "files.builtin_archives";
 pub const NEEDS_BUILTIN_ARCHIVES: [&str; 3] = ["general.menu_compress", "files.archives_as_folders", "files.archive_format"];
-pub const WINDOWS_ONLY: [&str; 5] = [LONG_PATHS, "files.system", "files.streams", "general.menu_stream", "general.shell_submenu"];
+pub const QUICK_ACCESS_SYNC: &str = "advanced.quick_access_sync";
+pub const WINDOWS_ONLY: [&str; 6] = [LONG_PATHS, QUICK_ACCESS_SYNC, "files.system", "files.streams", "general.menu_stream", "general.shell_submenu"];
 
 fn browsed_archives_keep_builtin_handling(map: &mut Map<String, Json>) {
     if map.get("files.archives_as_folders") == Some(&Json::Bool(true)) {
@@ -437,6 +438,7 @@ pub static SETTINGS: &[Setting] = &[
     toggle("general.home_tags", Page::Windows, S::SettingsTitleGeneralHomeTags, S::SettingsHelpGeneralHomeTags, |a| a.widget_shown(Widget::Tags), |a, on| set_widget(a, Widget::Tags, on)),
     toggle("general.home_recent", Page::Windows, S::SettingsTitleGeneralHomeRecent, S::SettingsHelpGeneralHomeRecent, |a| a.widget_shown(Widget::Recent), |a, on| set_widget(a, Widget::Recent, on)),
     toggle(DEFAULT_MANAGER, Page::Advanced, S::SettingsTitleAdvancedDefaultManager, S::SettingsHelpAdvancedDefaultManager, |a| a.default_manager, |a, on| a.default_manager = on),
+    toggle(QUICK_ACCESS_SYNC, Page::Advanced, S::SettingsTitleAdvancedQuickAccessSync, S::SettingsHelpAdvancedQuickAccessSync, |a| a.quick_access_sync, |a, on| a.quick_access_sync = on),
     choice(LOG_LEVEL, Page::Advanced, S::SettingsTitleAdvancedLogLevel, S::SettingsHelpAdvancedLogLevel, LOG_CHOICES, |a| a.log_level, |a, i| a.log_level = i),
     toggle(CHECK_UPDATES, Page::About, S::SettingsTitleUpdatesCheckOnStart, S::SettingsHelpUpdatesCheckOnStart, |a| a.updates.on_start, |a, on| a.updates.on_start = on),
     Setting { id: "updates.skipped", page: Page::About, title: S::SettingsTitleUpdatesSkipped, help: S::SettingsHelpUpdatesSkipped, kind: Kind::Strings(|a| a.updates.skipped.clone(), |a, v| a.updates.skipped = v) },

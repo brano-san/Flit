@@ -373,6 +373,7 @@ struct Handler<P: Platform> {
     quitting: std::collections::HashSet<WindowId>,
     quit_session: Option<Session>,
     jumps: JumpList,
+    quick: crate::quick_sync::QuickSyncWorker,
 }
 
 impl<P: Platform> Handler<P> {
@@ -742,6 +743,7 @@ impl<P: Platform> Handler<P> {
                     let _ = self.previews.send(PreviewJob::ColumnProps { window: id, tab, gen, ask, dir, names });
                 }
                 Effect::Pinned(pinned) => {
+                    self.quick.pinned(&self.saved.nav.pinned, &pinned);
                     for (_, st) in self.windows.iter_mut().filter(|(w, _)| **w != id) {
                         st.app.set_pinned(pinned.clone());
                     }
@@ -873,6 +875,7 @@ impl<P: Platform> Handler<P> {
             app.apply_settings(&changed);
         }
         self.settings.set_values(values);
+        self.follow_quick_sync();
         self.settings.save();
         (self.wake)();
     }
@@ -955,6 +958,11 @@ impl<P: Platform> Handler<P> {
         }
     }
 
+    fn follow_quick_sync(&mut self) {
+        let wanted = settings::flag(&self.settings.values, flit_core::ui::settings::QUICK_ACCESS_SYNC) == Some(true);
+        self.quick.follow(wanted, &self.saved.nav.pinned);
+    }
+
     fn reload_settings(&mut self, id: WindowId, text: &str) {
         let doc = flit_core::ui::settings::parse(text);
         let Some(st) = self.windows.get_mut(&id) else { return };
@@ -966,6 +974,7 @@ impl<P: Platform> Handler<P> {
             app.apply_settings(&all);
         }
         self.settings.adopt(&doc, values);
+        self.follow_quick_sync();
         (self.wake)();
     }
 
@@ -1072,6 +1081,13 @@ impl<P: Platform> Handler<P> {
             if let Some(st) = self.windows.get_mut(&window) {
                 st.app.on_search_event(ev, now);
             }
+        }
+        for change in self.quick.poll() {
+            let Some(list) = flit_core::quick_sync::apply_incoming(&self.saved.nav.pinned, &change) else { continue };
+            for app in self.windows.values_mut().map(|st| &mut st.app).chain(self.pending.iter_mut()) {
+                app.set_pinned(list.clone());
+            }
+            self.saved.nav.pinned = list;
         }
         for reply in self.places.poll() {
             match reply {
@@ -1568,6 +1584,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         saved: saved.clone(),
         metrics: metrics.map(|m| Metrics::new(m, started, P::refresh_period())),
         places: PlacesWorker::new::<P>(wake.clone(), P::cache_dir().map(|d| d.join(PLACES_FILE))),
+        quick: crate::quick_sync::QuickSyncWorker::new::<P>(integrate, wake.clone()),
         kept,
         injection: None,
         wake,
@@ -1613,6 +1630,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     first.apply_doc(&doc);
     let values = first.setting_values();
     h.settings.adopt(&doc, values);
+    h.follow_quick_sync();
     if first.checks_updates_on_start() && !update::restarted() {
         h.updates.submit(UpdateRequest::Check { manual: false });
     }

@@ -1,6 +1,7 @@
 #![cfg(windows)]
 
 mod access;
+pub mod aumid;
 mod busy;
 mod clipboard;
 mod context_menu;
@@ -124,6 +125,12 @@ pub(crate) unsafe fn take_pwstr(p: PWSTR) -> Option<Vec<u16>> {
 
 pub struct Windows;
 
+impl Windows {
+    fn standard_places() -> Vec<FsPath> {
+        flit_core::ui::KnownFolder::ALL.iter().filter_map(|k| Self::known_folder(k.shell_name())).filter_map(|l| l.to_windows()).collect()
+    }
+}
+
 impl Platform for Windows {
     type WindowSystem = Win32;
     type Renderer = D3dRenderer;
@@ -220,8 +227,7 @@ impl Platform for Windows {
     }
 
     fn bookmarks() -> Vec<Location> {
-        let known: Vec<FsPath> = flit_core::ui::KnownFolder::ALL.iter().filter_map(|k| Self::known_folder(k.shell_name())).filter_map(|l| l.to_windows()).collect();
-        quick::pinned_folders(&known)
+        quick::pinned_folders(&Self::standard_places())
     }
 
     fn double_click_time() -> std::time::Duration {
@@ -290,6 +296,10 @@ impl Platform for Windows {
 
     fn jump_list(pinned: &[Location], frequent: &[Location]) {
         jumplist::update(pinned, frequent)
+    }
+
+    fn quick_access() -> Option<Box<dyn flit_core::quick_sync::QuickAccess>> {
+        Some(Box::new(quick::ShellQuickAccess::new(Self::standard_places())))
     }
 
     fn never_shown_extensions() -> Vec<String> {
