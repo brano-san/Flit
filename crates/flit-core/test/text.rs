@@ -192,3 +192,14 @@ fn a_backend_without_subpixel_support_keeps_plain_glyph_keys() {
     assert_eq!(g.dl.instances[0].kind, crate::render::kind::GLYPH);
     assert!(!g.atlas_reset);
 }
+
+#[test]
+fn icons_stay_grayscale_in_subpixel_mode() {
+    let mut g = Gfx::new(Lcd::new(Subpixel::Rgb), 256);
+    g.begin(Color::default());
+    g.text(0.0, 10.0, "a", FontStyle::new(FontFamily::Icons, 16.0, false), Color::rgb(0x101010), 1000.0);
+    g.text(0.0, 30.0, "a", style(), Color::rgb(0x101010), 1000.0);
+    assert_eq!(g.text.keys.iter().map(|k| k.subpixel).collect::<Vec<_>>(), [Subpixel::None, Subpixel::Rgb]);
+    let kinds: Vec<u32> = g.dl.instances.iter().map(|i| i.kind).collect();
+    assert_eq!(kinds, [crate::render::kind::GLYPH, crate::render::kind::LCD_GLYPH], "an icon gets no coloured fringe, the text next to it does");
+}

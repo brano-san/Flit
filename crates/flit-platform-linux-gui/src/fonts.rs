@@ -446,7 +446,7 @@ pub fn set_desktop_prefs(desktop: Prefs) -> bool {
 
 pub const GNOME_FONT_KEYS: [&str; 3] = ["font-antialiasing", "font-rgba-order", "font-hinting"];
 
-type GnomeRaw = [Option<String>; 3];
+pub type GnomeRaw = [Option<String>; 3];
 
 static GNOME_RAW: Mutex<GnomeRaw> = Mutex::new([None, None, None]);
 
@@ -461,6 +461,9 @@ pub fn gnome_raw_update(raw: &mut GnomeRaw, key: &str, value: &str) -> bool {
 }
 
 pub fn gnome_font_setting(key: &str, value: &str) -> bool {
+    if source(&std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default()) != Source::Gnome {
+        return false;
+    }
     let prefs = {
         let mut raw = GNOME_RAW.lock().unwrap_or_else(|e| e.into_inner());
         if !gnome_raw_update(&mut raw, key, value) {
@@ -561,21 +564,48 @@ pub struct Desktop {
     pub prefs: Prefs,
 }
 
-fn desktop() -> Desktop {
-    if crate::input::kde_desktop() {
-        let globals = crate::xdg::config_home().and_then(|c| std::fs::read_to_string(c.join("kdeglobals")).ok()).unwrap_or_default();
-        return Desktop { family: kde_font_family(&globals), prefs: kde_prefs(&globals) };
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Source {
+    Kde,
+    Gnome,
+    Fontconfig,
+}
+
+pub fn source(xdg_current_desktop: &str) -> Source {
+    if crate::preferences::Desktop::from_name(xdg_current_desktop) == crate::preferences::Desktop::Kde {
+        Source::Kde
+    } else if crate::preferences::uses_gnome_settings(xdg_current_desktop) {
+        Source::Gnome
+    } else {
+        Source::Fontconfig
     }
-    let get = |key| crate::shell::gsettings(&["org.gnome.desktop.interface", key]);
-    let family = get("font-name").and_then(|v| gnome_font_family(&v));
-    let probed: Vec<Option<String>> = GNOME_FONT_KEYS.iter().map(|k| get(k)).collect();
-    let mut raw = GNOME_RAW.lock().unwrap_or_else(|e| e.into_inner());
-    for (slot, value) in raw.iter_mut().zip(probed) {
-        if slot.is_none() {
-            *slot = value;
+}
+
+pub fn desktop_from(source: Source, kdeglobals: impl FnOnce() -> String, gsettings: impl Fn(&str) -> Option<String>, raw: &mut GnomeRaw) -> Desktop {
+    match source {
+        Source::Kde => {
+            let globals = kdeglobals();
+            Desktop { family: kde_font_family(&globals), prefs: kde_prefs(&globals) }
         }
+        Source::Gnome => {
+            let family = gsettings("font-name").and_then(|v| gnome_font_family(&v));
+            for (slot, key) in raw.iter_mut().zip(GNOME_FONT_KEYS) {
+                if slot.is_none() {
+                    *slot = gsettings(key);
+                }
+            }
+            Desktop { family, prefs: gnome_raw_prefs(raw) }
+        }
+        Source::Fontconfig => Desktop { family: None, prefs: NO_PREFS },
     }
-    Desktop { family, prefs: gnome_raw_prefs(&raw) }
+}
+
+fn desktop() -> Desktop {
+    let source = source(&std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default());
+    let kdeglobals = || crate::xdg::config_home().and_then(|c| std::fs::read_to_string(c.join("kdeglobals")).ok()).unwrap_or_default();
+    let gsettings = |key: &str| crate::shell::gsettings(&["org.gnome.desktop.interface", key]);
+    let mut raw = GNOME_RAW.lock().unwrap_or_else(|e| e.into_inner());
+    desktop_from(source, kdeglobals, gsettings, &mut raw)
 }
 
 pub struct Live {

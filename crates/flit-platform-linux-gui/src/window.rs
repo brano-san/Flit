@@ -202,7 +202,7 @@ fn apply_look(change: crate::atspi::LookChange) {
             return;
         }
         crate::atspi::LookChange::FontRendering(key, value) => {
-            if input::kde_desktop() || !crate::fonts::gnome_font_setting(&key, &value) {
+            if !crate::fonts::gnome_font_setting(&key, &value) {
                 return;
             }
         }

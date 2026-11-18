@@ -383,7 +383,8 @@ impl<B: TextBackend> GlyphCtx<'_, B> {
     fn draw(&mut self, px: f32, py: f32, g: &ShapedGlyph, style: FontStyle, color: Color) {
         let ix = px.floor();
         let subpx = ((px - ix) * 4.0) as u8 & 3;
-        let key = GlyphKey { font: g.font, id: g.id, size_q: style.size_q, subpx, subpixel: self.subpixel };
+        let subpixel = if style.family == FontFamily::Icons { Subpixel::None } else { self.subpixel };
+        let key = GlyphKey { font: g.font, id: g.id, size_q: style.size_q, subpx, subpixel };
         let gs = match self.glyphs.get(&key) {
             Some(s) => *s,
             None => {

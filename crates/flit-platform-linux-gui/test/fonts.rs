@@ -154,3 +154,38 @@ fn fontconfig_reports_its_rendering_preferences() {
     let p = fc.prefs(None);
     assert_ne!(p.antialias, Some(false), "fontconfig antialiases outline fonts by default: {p:?}");
 }
+
+fn gnome_defaults(key: &str) -> Option<String> {
+    match key {
+        "font-name" => Some("'Cantarell 11'".into()),
+        "font-antialiasing" => Some("'grayscale'".into()),
+        "font-rgba-order" => Some("'rgb'".into()),
+        "font-hinting" => Some("'slight'".into()),
+        _ => None,
+    }
+}
+
+#[test]
+fn desktops_without_gnome_settings_follow_fontconfig_even_when_gsettings_answers() {
+    let fc = fontconfig_prefs(Some(true), Some(1), Some(true), Some(3));
+    for name in ["XFCE", "MATE", "X-Cinnamon", "sway", "LXQt", ""] {
+        assert_eq!(source(name), Source::Fontconfig, "{name}");
+        let d = desktop_from(source(name), String::new, gnome_defaults, &mut Default::default());
+        assert_eq!(d.family, None, "{name}");
+        assert_eq!(merged(d.prefs, fc), (Subpixel::Rgb, Hinting::Full), "{name}: fontconfig's rgba and hintfull win");
+    }
+}
+
+#[test]
+fn gnome_like_desktops_still_read_gsettings_and_kde_reads_kdeglobals() {
+    let fc = fontconfig_prefs(Some(true), Some(1), Some(true), Some(3));
+    for name in ["GNOME", "ubuntu:GNOME", "Unity", "Budgie:GNOME", "Pantheon"] {
+        assert_eq!(source(name), Source::Gnome, "{name}");
+        let d = desktop_from(source(name), String::new, gnome_defaults, &mut Default::default());
+        assert_eq!(d.family.as_deref(), Some("Cantarell"));
+        assert_eq!(merged(d.prefs, fc), (Subpixel::None, Hinting::Slight), "{name}: the desktop's grayscale and slight win");
+    }
+    assert_eq!(source("KDE"), Source::Kde);
+    let d = desktop_from(Source::Kde, || "[General]\nXftSubPixel=bgr\n".into(), gnome_defaults, &mut Default::default());
+    assert_eq!(merged(d.prefs, fc).0, Subpixel::Bgr);
+}
