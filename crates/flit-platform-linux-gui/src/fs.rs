@@ -40,7 +40,7 @@ pub fn raise_outcome(limit: u64, code: Option<i32>, stderr: &str) -> WatchLimit 
 }
 
 pub fn raise_watch_limit() -> WatchLimit {
-    let pkexec = match crate::tools::require("pkexec") {
+    let pkexec = match crate::elevated::pkexec() {
         Ok(program) => program,
         Err(e) => return WatchLimit::Failed(e.message),
     };

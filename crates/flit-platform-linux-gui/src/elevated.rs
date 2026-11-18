@@ -174,7 +174,7 @@ fn unelevated(why: impl Into<String>) -> PlatformError {
 }
 
 pub fn run(op: &FileOp, job: &Job) -> Result<OpOutcome, PlatformError> {
-    let pkexec = crate::tools::require("pkexec").map_err(|e| unelevated(e.message))?;
+    let pkexec = pkexec()?;
     let exe = std::env::current_exe().map_err(|e| unelevated(format!("cannot find the Flit program: {}", flit_core::fmt::io_reason(&e))))?;
     let exe = agent_program(&exe).map_err(|e| unelevated(e.to_string()))?;
     let mut child = Command::new(pkexec)
@@ -314,7 +314,7 @@ fn grant_failure(status: Option<i32>, complaint: &str) -> PlatformError {
 pub fn grant_access(dir: &FsPath) -> OpOutcome {
     let granted = (|| {
         let path = flit_platform_linux::host(dir).ok_or_else(|| PlatformError::new(-1, "not a Linux path"))?;
-        let pkexec = crate::tools::require("pkexec").map_err(|e| unelevated(e.message))?;
+        let pkexec = pkexec()?;
         let setfacl = system_tool(&crate::tools::require("setfacl")?).map_err(|_| unelevated(flit_core::tr_en!(S::ErrorsEngineAdminTool, tool = "setfacl")))?;
         let out = Command::new(pkexec).arg(setfacl).args(grant_args(unsafe { libc::getuid() }, path)).stdin(Stdio::null()).output().map_err(|e| unelevated(format!("pkexec: {}", flit_core::fmt::io_reason(&e))))?;
         if out.status.success() {
@@ -366,6 +366,19 @@ pub fn root_only(path: &Path, stat: &dyn Fn(&Path) -> io::Result<Owned>) -> bool
     stat(path).is_ok_and(|f| !f.dir && safe(&f)) && path.ancestors().skip(1).all(|d| stat(d).is_ok_and(|o| o.dir && safe(&o)))
 }
 
+pub fn setuid_root(path: &Path, stat: &dyn Fn(&Path) -> io::Result<Owned>) -> bool {
+    root_only(path, stat) && stat(path).is_ok_and(|o| o.mode & 0o4000 != 0)
+}
+
+pub(crate) fn pkexec() -> Result<PathBuf, PlatformError> {
+    let found = crate::tools::require("pkexec").map_err(|e| unelevated(e.message))?;
+    #[cfg(test)]
+    if crate::temp::trusted_fake(&found) {
+        return Ok(found);
+    }
+    std::fs::canonicalize(&found).ok().filter(|real| setuid_root(real, &owned)).ok_or_else(|| unelevated(flit_core::tr_en!(S::ErrorsEngineAdminTool, tool = "pkexec")))
+}
+
 fn system_tool(tool: &Path) -> io::Result<PathBuf> {
     let real = std::fs::canonicalize(tool)?;
     if root_only(&real, &owned) {
@@ -391,7 +404,7 @@ pub fn agent_program(exe: &Path) -> io::Result<PathBuf> {
 }
 
 pub fn root_agent_command(exe: &Path) -> io::Result<Command> {
-    let pkexec = crate::tools::require("pkexec").map_err(|e| io::Error::new(io::ErrorKind::NotFound, e.message))?;
+    let pkexec = pkexec().map_err(|e| io::Error::new(io::ErrorKind::NotFound, e.message))?;
     let exe = agent_program(exe)?;
     let mut command = Command::new(pkexec);
     command.args(helper_args(&exe));

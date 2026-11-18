@@ -733,16 +733,12 @@ fn no_operation_in_an_admin_tab_runs_as_the_user() {
     assert!(s.local.0.lock().unwrap().is_empty(), "nothing ran as the user");
 }
 
-#[cfg(unix)]
 #[test]
-fn items_written_by_root_into_a_folder_of_the_user_are_handed_to_that_user() {
-    use std::os::unix::fs::MetadataExt;
-    let dir = std::env::temp_dir().join(format!("flit-admin-hand-over-{}", std::process::id()));
+fn items_written_by_root_into_a_folder_of_the_user_stay_with_root() {
+    let dir = std::env::temp_dir().join(format!("flit-admin-owner-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let meta = std::fs::metadata(&dir).unwrap();
-    let dest = unix(dir.to_str().unwrap());
-    let copied = dest.join(b"hosts");
-    let reported = copied.clone();
+    let dest = FsPath::parse(dir.to_str().unwrap()).unwrap();
+    let reported = dest.join(b"hosts");
     let fake = Fake::new(move |req| {
         Some(match req {
             Request::Op { id, op: FileOp::Copy { .. }, .. } => vec![Event::OpDone { id: *id, error: None, items: vec![(unix("/etc/hosts"), reported.clone())] }],
@@ -751,21 +747,21 @@ fn items_written_by_root_into_a_folder_of_the_user_are_handed_to_that_user() {
         })
     });
     let s = admin_setup(fake, Timing::default(), Clipboard::default());
-    s.wsl.submit(ProviderRequest::Op { tab: 1, id: 5, op: FileOp::Copy { items: vec![unix("/etc/hosts")], dest: dest.clone() }, ctl: OpCtl::default() });
-    event(&s.events, |e| if let ProviderEvent::OpDone { id: 5, error: None, .. } = e { Some(()) } else { None });
-    let handed = |seen: &[Request]| seen.iter().find_map(|r| if let Request::Op { op: FileOp::SetAccess { items, edit }, .. } = r { Some((items.clone(), *edit)) } else { None });
-    if meta.uid() == 0 {
-        std::thread::sleep(Duration::from_millis(100));
-        assert!(handed(&s.fake.seen()).is_none(), "a folder of root keeps root as the owner");
-    } else {
-        until("hand over", || handed(&s.fake.seen()).is_some());
-        let (items, edit) = handed(&s.fake.seen()).unwrap();
-        assert_eq!(items, [copied]);
-        assert_eq!((edit.owner, edit.group), (Some(meta.uid()), Some(meta.gid())));
-        assert!(edit.enclosed.is_some(), "everything inside a copied folder changes owner too");
-        assert!(edit.mode.is_empty());
+    let ops = [
+        FileOp::Copy { items: vec![unix("/etc/hosts")], dest: unix("/home/u") },
+        FileOp::Move { items: vec![unix("/etc/a")], dest: unix("/home/u") },
+        FileOp::NewFolder { dir: unix("/home/u"), name: b"n".to_vec() },
+    ];
+    for (k, op) in ops.into_iter().enumerate() {
+        s.wsl.submit(ProviderRequest::Op { tab: 1, id: 5 + k as u64, op, ctl: OpCtl::default() });
+        event(&s.events, |e| if let ProviderEvent::OpDone { id, .. } = e { (id == 5 + k as u64).then_some(()) } else { None });
     }
-    s.wsl.submit(ProviderRequest::Op { tab: 1, id: 6, op: FileOp::Copy { items: vec![unix("/etc/hosts")], dest: unix("/etc") }, ctl: OpCtl::default() });
-    event(&s.events, |e| if let ProviderEvent::OpDone { id: 6, .. } = e { Some(()) } else { None });
+    if dest.kind() == PathKind::Unix {
+        s.wsl.submit(ProviderRequest::Op { tab: 1, id: 9, op: FileOp::Copy { items: vec![unix("/etc/hosts")], dest: dest.clone() }, ctl: OpCtl::default() });
+        event(&s.events, |e| if let ProviderEvent::OpDone { id: 9, .. } = e { Some(()) } else { None });
+    }
+    std::thread::sleep(Duration::from_millis(150));
+    let changed: Vec<Request> = s.fake.seen().into_iter().filter(|r| matches!(r, Request::Op { op: FileOp::SetAccess { .. } | FileOp::Access(_), .. })).collect();
+    assert!(changed.is_empty(), "the agent never changes owners after it writes: {changed:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -334,3 +334,39 @@ fn the_one_off_elevation_refuses_a_flit_of_the_user_and_an_untrusted_setfacl() {
     assert_eq!(error.message, "setfacl is not a system program that belongs to root, so Flit does not run it as administrator");
     assert!(!t.path().join("ran").exists(), "pkexec was never started");
 }
+
+#[test]
+fn a_fake_pkexec_of_the_user_ahead_in_path_is_never_asked_for_the_password() {
+    let t = Temp::new("fake-pkexec-first");
+    fake_pkexec(&t, "touch \"$(dirname \"$0\")/ran\"; exit 0");
+    let dirs = std::env::join_paths([t.path(), Path::new("/usr/bin"), Path::new("/bin")]).unwrap();
+    let refused = "pkexec is not a system program that belongs to root, so Flit does not run it as administrator";
+    let (agent, one_off, grant) = crate::temp::with_tool_dir(Path::new(&dirs), || {
+        crate::temp::with_real_owners(|| {
+            let agent = RootLauncher::with(|| root_agent_command(Path::new("/bin/sh"))).launch().err().unwrap().to_string();
+            let op = FileOp::NewFolder { dir: fs_path(t.path()), name: b"x".to_vec() };
+            let one_off = run(&op, &Job::detached(Resolve::Skip)).unwrap_err().message;
+            let grant = grant_access(&fs_path(t.path())).error.unwrap().message;
+            (agent, one_off, grant)
+        })
+    });
+    assert_eq!(agent, refused);
+    assert_eq!(grant, refused);
+    if unsafe { libc::geteuid() } != 0 {
+        assert!(one_off == refused || one_off == S::ErrorsEngineAdminUnsafe.en(), "{one_off}");
+    }
+    assert!(!t.path().join("ran").exists(), "the fake pkexec never ran");
+}
+
+#[test]
+fn only_a_setuid_pkexec_of_root_is_trusted() {
+    let setuid = tree(&[("/", 0, 0o40755, true), ("/usr", 0, 0o40755, true), ("/usr/bin", 0, 0o40755, true), ("/usr/bin/pkexec", 0, 0o104755, false)]);
+    assert!(setuid_root(Path::new("/usr/bin/pkexec"), &setuid));
+    let plain = tree(&[("/", 0, 0o40755, true), ("/usr", 0, 0o40755, true), ("/usr/bin", 0, 0o40755, true), ("/usr/bin/pkexec", 0, 0o100755, false)]);
+    assert!(!setuid_root(Path::new("/usr/bin/pkexec"), &plain), "without the setuid bit it is not the real pkexec");
+    let user = tree(&[("/", 0, 0o40755, true), ("/home", 0, 0o40755, true), ("/home/u", 1000, 0o40755, true), ("/home/u/bin", 1000, 0o40755, true), ("/home/u/bin/pkexec", 1000, 0o104755, false)]);
+    assert!(!setuid_root(Path::new("/home/u/bin/pkexec"), &user));
+    if let Ok(real) = std::fs::canonicalize("/usr/bin/pkexec") {
+        assert!(setuid_root(&real, &owned), "the installed pkexec passes");
+    }
+}

@@ -262,10 +262,11 @@ pub fn root_shell(dir: &Path, sudo: bool) -> Vec<OsString> {
 
 pub fn open_root_terminal(dir: &Path) -> Result<(), PlatformError> {
     let sudo = on_path(OsStr::new("sudo")).is_some();
+    let mut argv = root_shell(dir, sudo);
     if !sudo {
-        crate::tools::require("pkexec")?;
+        argv[0] = crate::elevated::pkexec()?.into_os_string();
     }
-    spawn_terminal(Some(dir), Some(root_shell(dir, sudo)))
+    spawn_terminal(Some(dir), Some(argv))
 }
 
 pub fn run_in_terminal_argv(dir: Option<&Path>, argv: Vec<OsString>) -> Result<(), PlatformError> {
