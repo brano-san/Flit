@@ -13,6 +13,9 @@ struct Fake {
     pinned: Vec<FsPath>,
     stamp: u64,
     missing: Vec<FsPath>,
+    partial: bool,
+    broken: bool,
+    no_stamp: bool,
     calls: Vec<String>,
 }
 
@@ -32,14 +35,14 @@ impl Fake {
 }
 
 impl QuickAccess for Fake {
-    fn pinned(&mut self) -> Option<Vec<FsPath>> {
+    fn pinned(&mut self) -> Option<Snapshot> {
         self.calls.push("read".into());
-        Some(self.pinned.clone())
+        (!self.broken).then(|| Snapshot { pinned: self.pinned.clone(), complete: !self.partial })
     }
 
     fn stamp(&mut self) -> Option<(u64, u128)> {
         self.calls.push("stamp".into());
-        Some((self.stamp, 0))
+        (!self.no_stamp).then_some((self.stamp, 0))
     }
 
     fn set_pinned(&mut self, folder: &FsPath, pin: bool) -> bool {
@@ -154,5 +157,94 @@ fn files_and_other_places_are_not_pinned_to_quick_access() {
     quick.missing = vec![p(r"C:\Notes.txt")];
     let mut sync = running(quick);
     sync.flit_changed(&[], &[l(r"C:\Notes.txt"), l(r"\\wsl.localhost\Ubuntu\home"), Location::recycle_bin()]);
+    assert!(sync.quick().changes().is_empty());
+}
+
+fn four() -> QuickSync<Fake> {
+    running(Fake::with(&[r"C:\Work", r"D:\Photos", r"E:\Music", r"F:\Docs"]))
+}
+
+#[test]
+fn quick_access_reset_to_its_defaults_does_not_wipe_flit_bookmarks() {
+    let mut sync = four();
+    sync.quick.explorer(&[r"C:\Users\me\Desktop", r"C:\Users\me\Downloads"]);
+    assert_eq!(sync.poll(), None, "a reset is remembered, nothing is removed from Flit");
+    sync.quick.explorer(&[r"C:\Users\me\Desktop"]);
+    assert_eq!(sync.poll().unwrap().removed, [p(r"C:\Users\me\Downloads")], "after the reset single changes work again");
+}
+
+#[test]
+fn an_empty_list_or_several_folders_lost_at_once_remove_nothing() {
+    let mut sync = running(Fake::with(&[r"C:\Work", r"D:\Photos"]));
+    sync.quick.explorer(&[]);
+    assert_eq!(sync.poll(), None, "an empty Quick access removes nothing");
+    let mut sync = four();
+    sync.quick.explorer(&[r"C:\Work", r"D:\Photos"]);
+    assert_eq!(sync.poll(), None, "two folders gone at once remove nothing");
+    let mut sync = four();
+    sync.quick.explorer(&[r"C:\Work", r"D:\Photos", r"E:\Music"]);
+    assert_eq!(sync.poll().unwrap().removed, [p(r"F:\Docs")], "one folder unpinned in Explorer is still removed");
+}
+
+#[test]
+fn a_partial_read_adds_but_never_removes() {
+    let mut sync = four();
+    sync.quick.partial = true;
+    sync.quick.explorer(&[r"C:\Work", r"D:\Photos", r"E:\Music", r"G:\New"]);
+    sync.quick.pinned.retain(|x| !x.same(&p(r"F:\Docs")));
+    let change = sync.poll().unwrap();
+    assert_eq!(change.added, [p(r"G:\New")]);
+    assert!(change.removed.is_empty());
+    sync.quick.partial = false;
+    sync.quick.explorer(&[r"C:\Work", r"D:\Photos", r"E:\Music", r"F:\Docs", r"G:\New"]);
+    assert_eq!(sync.poll(), None, "a folder missing only from the partial read is not new later");
+}
+
+#[test]
+fn a_vanished_store_file_or_failed_read_removes_nothing() {
+    let mut sync = four();
+    sync.quick.no_stamp = true;
+    sync.quick.explorer(&[r"C:\Work", r"D:\Photos", r"E:\Music"]);
+    assert_eq!(sync.poll(), None, "without the store file the list is only remembered");
+    let mut sync = four();
+    sync.quick.broken = true;
+    sync.quick.explorer(&[]);
+    assert_eq!(sync.poll(), None);
+}
+
+#[test]
+fn a_failed_first_read_makes_the_next_read_the_baseline() {
+    let mut quick = Fake::with(&[r"C:\Work", r"D:\Photos"]);
+    quick.broken = true;
+    let mut sync = running(quick);
+    sync.quick.broken = false;
+    sync.quick.stamp += 1;
+    assert_eq!(sync.poll(), None, "Quick access folders are not all added as new");
+    sync.quick.explorer(&[r"C:\Work", r"D:\Photos", r"E:\Music"]);
+    assert_eq!(sync.poll().unwrap().added, [p(r"E:\Music")]);
+}
+
+#[test]
+fn a_stale_read_right_after_flit_pins_or_unpins_does_not_undo_it() {
+    let mut sync = four();
+    sync.flit_changed(&[l(r"C:\Work")], &[l(r"C:\Work"), l(r"G:\New")]);
+    sync.flit_changed(&[l(r"C:\Work"), l(r"F:\Docs")], &[l(r"C:\Work")]);
+    sync.quick.explorer(&[r"C:\Work", r"D:\Photos", r"E:\Music", r"F:\Docs"]);
+    assert_eq!(sync.poll(), None, "the old list seen right after Flit's own change is not an Explorer change");
+    sync.quick.explorer(&[r"C:\Work", r"D:\Photos", r"E:\Music", r"G:\New"]);
+    for _ in 0..=HOLD_POLLS {
+        sync.quick.stamp += 1;
+        assert_eq!(sync.poll(), None, "once settled, the list Flit made is not reported back");
+    }
+    sync.quick.explorer(&[r"C:\Work", r"D:\Photos", r"E:\Music"]);
+    assert_eq!(sync.poll().unwrap().removed, [p(r"G:\New")], "after the hold an Explorer unpin of the same folder comes through");
+}
+
+#[test]
+fn letter_case_beyond_ascii_does_not_make_duplicates() {
+    let mut sync = QuickSync::new(Fake::with(&[r"C:\Проекты"]));
+    let flit = [l(r"C:\проекты")];
+    let change = sync.enable(&flit);
+    assert!(change.added.is_empty(), "{change:?}");
     assert!(sync.quick().changes().is_empty());
 }

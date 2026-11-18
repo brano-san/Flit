@@ -1,13 +1,11 @@
 use flit_core::path::PathKind;
-use flit_core::quick_sync::QuickAccess;
+use flit_core::quick_sync::{QuickAccess, Snapshot};
 use flit_core::{FsPath, Location};
-use windows::Win32::Foundation::HWND;
 use windows::core::{w, Interface};
 use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::UI::Shell::PropertiesSystem::PSGetPropertyKeyFromName;
 use windows::Win32::UI::Shell::{BHID_EnumItems, IEnumShellItems, IShellItem, IShellItem2, SHCreateItemFromParsingName, SIGDN_FILESYSPATH};
 
-const MAX_READ: usize = 64;
 
 pub(crate) fn imported(items: Vec<(FsPath, bool)>, known: &[FsPath]) -> Vec<Location> {
     let same = |a: &FsPath, b: &FsPath| a.as_bytes().eq_ignore_ascii_case(b.as_bytes());
@@ -21,31 +19,51 @@ pub(crate) fn imported(items: Vec<(FsPath, bool)>, known: &[FsPath]) -> Vec<Loca
     out.into_iter().map(Location::from_local).collect()
 }
 
-unsafe fn read() -> windows::core::Result<Vec<(FsPath, bool)>> {
+const MAX_PINNED: usize = 64;
+const MAX_ITEMS: usize = 1024;
+
+pub(crate) struct Read {
+    pub items: Vec<(FsPath, bool)>,
+    pub complete: bool,
+}
+
+pub(crate) fn gather<E>(mut next: impl FnMut() -> Result<Option<(Option<FsPath>, bool)>, E>) -> Result<Read, E> {
+    let mut items = Vec::new();
+    let mut pinned = 0;
+    for _ in 0..MAX_ITEMS {
+        let Some((path, is_pinned)) = next()? else { return Ok(Read { items, complete: true }) };
+        if is_pinned {
+            if pinned == MAX_PINNED {
+                return Ok(Read { items, complete: false });
+            }
+            pinned += 1;
+        }
+        if let Some(path) = path {
+            items.push((path, is_pinned));
+        }
+    }
+    Ok(Read { items, complete: false })
+}
+
+unsafe fn read() -> windows::core::Result<Read> {
     let mut pinned_key = PROPERTYKEY::default();
     PSGetPropertyKeyFromName(w!("System.Home.IsPinned"), &mut pinned_key)?;
     let frequent: IShellItem = SHCreateItemFromParsingName(w!("shell:::{3936E9E4-D92C-4EEE-A85A-BC16D5EA0819}"), None)?;
     let items: IEnumShellItems = frequent.BindToHandler(None, &BHID_EnumItems)?;
-    let mut out = Vec::new();
-    while out.len() < MAX_READ {
+    gather(|| {
         let mut one = [None];
-        if items.Next(&mut one, None).is_err() {
-            break;
-        }
-        let Some(item) = one[0].take() else { break };
+        items.Next(&mut one, None)?;
+        let Some(item) = one[0].take() else { return Ok(None) };
         let pinned = item.cast::<IShellItem2>().and_then(|i| i.GetBool(&pinned_key)).is_ok_and(|b| b.as_bool());
         let path = item.GetDisplayName(SIGDN_FILESYSPATH).ok().and_then(|p| crate::take_pwstr(p)).and_then(|w| FsPath::from_utf16(&w));
-        if let Some(path) = path {
-            out.push((path, pinned));
-        }
-    }
-    Ok(out)
+        Ok(Some((path, pinned)))
+    })
 }
 
 pub fn pinned_folders(known: &[FsPath]) -> Vec<Location> {
     crate::com_sta();
     match unsafe { read() } {
-        Ok(items) => imported(items, known),
+        Ok(read) => imported(read.items, known),
         Err(e) => {
             tracing::info!("cannot read the folders pinned to Quick access: {}", e.message());
             Vec::new()
@@ -72,10 +90,10 @@ impl ShellQuickAccess {
 }
 
 impl QuickAccess for ShellQuickAccess {
-    fn pinned(&mut self) -> Option<Vec<FsPath>> {
+    fn pinned(&mut self) -> Option<Snapshot> {
         crate::com_sta();
         match unsafe { read() } {
-            Ok(items) => Some(items.into_iter().filter(|(_, pinned)| *pinned).map(|(p, _)| p).collect()),
+            Ok(read) => Some(Snapshot { pinned: read.items.into_iter().filter(|(_, pinned)| *pinned).map(|(p, _)| p).collect(), complete: read.complete }),
             Err(e) => {
                 tracing::info!("cannot read the folders pinned to Quick access: {}", e.message());
                 None
@@ -90,7 +108,7 @@ impl QuickAccess for ShellQuickAccess {
     fn set_pinned(&mut self, folder: &FsPath, pin: bool) -> bool {
         crate::com_sta();
         let verb = if pin { c"pintohome" } else { c"unpinfromhome" };
-        match crate::context_menu::invoke_verb(HWND::default(), std::slice::from_ref(folder), verb) {
+        match crate::context_menu::invoke_verb_quietly(std::slice::from_ref(folder), verb) {
             Ok(()) => true,
             Err(e) => {
                 tracing::info!("cannot {} {} in Quick access: {e}", verb.to_string_lossy(), folder.display());

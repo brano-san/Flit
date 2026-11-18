@@ -1,4 +1,5 @@
 use super::*;
+use flit_core::quick_sync::Snapshot;
 use flit_core::FsPath;
 use std::sync::{Arc, Mutex};
 
@@ -21,10 +22,10 @@ struct State {
 struct Shared(Arc<Mutex<State>>);
 
 impl QuickAccess for Shared {
-    fn pinned(&mut self) -> Option<Vec<FsPath>> {
+    fn pinned(&mut self) -> Option<Snapshot> {
         let mut s = self.0.lock().unwrap();
         s.calls += 1;
-        Some(s.pinned.clone())
+        Some(Snapshot { pinned: s.pinned.clone(), complete: true })
     }
     fn stamp(&mut self) -> Option<(u64, u128)> {
         let mut s = self.0.lock().unwrap();

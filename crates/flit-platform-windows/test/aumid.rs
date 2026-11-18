@@ -151,8 +151,65 @@ fn only_shortcut_files_are_collected_and_nested_folders_are_searched() {
     for f in [r"x.lnk", r"a\y.LNK", r"a\b\z.lnk", r"a\notes.txt", r"a\b\w.url"] {
         std::fs::write(d.0.join(f), b"").unwrap();
     }
-    let mut found: Vec<String> = shortcuts(std::slice::from_ref(&d.0)).iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+    let mut found: Vec<String> = walk(std::slice::from_ref(&d.0)).0.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
     found.sort();
     assert_eq!(found, ["x.lnk", "y.LNK", "z.lnk"]);
-    assert!(shortcuts(&[d.0.join("missing")]).is_empty());
+    assert!(walk(&[d.0.join("missing")]).0.is_empty());
+}
+
+const ARGS: &str = r#"--new-window "D:\Some Folder""#;
+
+fn text(read:impl FnOnce(&mut [u16]) -> windows::core::Result<()>) -> String {
+    let mut buf = vec![0u16; 1024];
+    read(&mut buf).unwrap();
+    let n = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    String::from_utf16_lossy(&buf[..n])
+}
+
+#[test]
+fn writing_the_identity_keeps_arguments_icon_folder_and_run_as_administrator() {
+    use windows::Win32::UI::Shell::{IShellLinkDataList, SLDF_RUNAS_USER};
+    let d = Dir::new("keep-props");
+    let exe = fake_exe(&d.0, "flit.exe");
+    let link = d.0.join("Flit.lnk");
+    let work = d.0.join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let icon = d.0.join("icon.ico");
+    crate::com_sta();
+    unsafe {
+        let shell: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).unwrap();
+        shell.SetPath(PCWSTR(wide(&exe).as_ptr())).unwrap();
+        shell.SetArguments(PCWSTR(wide(Path::new(ARGS)).as_ptr())).unwrap();
+        shell.SetWorkingDirectory(PCWSTR(wide(&work).as_ptr())).unwrap();
+        shell.SetIconLocation(PCWSTR(wide(&icon).as_ptr()), 3).unwrap();
+        let data: IShellLinkDataList = shell.cast().unwrap();
+        data.SetFlags(data.GetFlags().unwrap() | SLDF_RUNAS_USER.0 as u32).unwrap();
+        shell.cast::<IPersistFile>().unwrap().Save(PCWSTR(wide(&link).as_ptr()), true).unwrap();
+    }
+    let outcome = fix(std::slice::from_ref(&d.0), &exe, &mut ShellLinks);
+    assert_eq!(outcome.fixed, std::slice::from_ref(&link));
+    unsafe {
+        let shell = ShellLinks::load(&link, STGM_READ).unwrap();
+        assert_eq!(text(|b| shell.GetArguments(b)), ARGS);
+        assert_eq!(PathBuf::from(text(|b| shell.GetWorkingDirectory(b))), work);
+        let mut index = 0;
+        assert_eq!(PathBuf::from(text(|b| shell.GetIconLocation(b, &mut index))), icon);
+        assert_eq!(index, 3);
+        let data: IShellLinkDataList = shell.cast().unwrap();
+        assert_ne!(data.GetFlags().unwrap() & SLDF_RUNAS_USER.0 as u32, 0, "run as administrator stays on");
+    }
+    assert_eq!(ShellLinks.inspect(&link).unwrap().1.as_deref(), Some(APP_ID));
+}
+
+#[test]
+fn leftover_temporary_shortcut_copies_are_removed_and_other_files_stay() {
+    let d = Dir::new("leftover");
+    let exe = fake_exe(&d.0, "flit.exe");
+    std::fs::write(d.0.join("Flit.lnk.flit-1234.tmp"), b"x").unwrap();
+    std::fs::write(d.0.join("notes.flit-1234.tmp"), b"x").unwrap();
+    std::fs::write(d.0.join("Flit.lnk.flit-abc.tmp"), b"x").unwrap();
+    let _ = fix(std::slice::from_ref(&d.0), &exe, &mut ShellLinks);
+    assert!(!d.0.join("Flit.lnk.flit-1234.tmp").exists());
+    assert!(d.0.join("notes.flit-1234.tmp").exists());
+    assert!(d.0.join("Flit.lnk.flit-abc.tmp").exists());
 }

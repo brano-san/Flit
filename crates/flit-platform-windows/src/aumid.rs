@@ -63,7 +63,15 @@ pub(crate) fn needs_id(target: &Path, id: Option<&str>, exe: &Path) -> bool {
     same_exe(target, exe) && id != Some(APP_ID)
 }
 
-pub(crate) fn shortcuts(roots: &[PathBuf]) -> Vec<PathBuf> {
+pub(crate) fn leftover(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    let Some(rest) = name.strip_suffix(".tmp") else { return false };
+    let Some((head, pid)) = rest.rsplit_once(".flit-") else { return false };
+    head.ends_with(".lnk") && !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit())
+}
+
+pub(crate) fn walk(roots: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let mut stale = Vec::new();
     let mut out = Vec::new();
     let mut stack: Vec<(PathBuf, usize)> = roots.iter().map(|r| (r.clone(), 0)).collect();
     while let Some((dir, depth)) = stack.pop() {
@@ -75,15 +83,17 @@ pub(crate) fn shortcuts(roots: &[PathBuf]) -> Vec<PathBuf> {
                 if depth < MAX_DEPTH {
                     stack.push((path, depth + 1));
                 }
+            } else if kind.is_file() && leftover(&entry.file_name().to_string_lossy()) {
+                stale.push(path);
             } else if kind.is_file() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("lnk")) && !out.contains(&path) {
                 out.push(path);
                 if out.len() == MAX_LINKS {
-                    return out;
+                    return (out, stale);
                 }
             }
         }
     }
-    out
+    (out, stale)
 }
 
 pub(crate) trait Links {
@@ -100,7 +110,14 @@ pub(crate) struct Outcome {
 pub(crate) fn fix(roots: &[PathBuf], exe: &Path, links: &mut impl Links) -> Outcome {
     let mut outcome = Outcome::default();
     let name = exe.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    for link in shortcuts(roots) {
+    let (found, stale) = walk(roots);
+    for tmp in stale {
+        match std::fs::remove_file(&tmp) {
+            Ok(()) => tracing::info!("removed the leftover {}", tmp.display()),
+            Err(e) => tracing::info!("cannot remove the leftover {}: {e}", tmp.display()),
+        }
+    }
+    for link in found {
         let Ok(bytes) = std::fs::read(&link) else { continue };
         if !mentions(&bytes, &name) {
             continue;
