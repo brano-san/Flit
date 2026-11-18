@@ -676,6 +676,9 @@ pub trait Platform: 'static {
         None
     }
     fn jump_list(_pinned: &[Location], _frequent: &[Location]) {}
+    fn quick_access() -> Option<Box<dyn flit_core::quick_sync::QuickAccess>> {
+        None
+    }
     fn never_shown_extensions() -> Vec<String> {
         Vec::new()
     }

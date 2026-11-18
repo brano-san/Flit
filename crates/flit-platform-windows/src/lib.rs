@@ -293,6 +293,10 @@ impl Platform for Windows {
         jumplist::update(pinned, frequent)
     }
 
+    fn quick_access() -> Option<Box<dyn flit_core::quick_sync::QuickAccess>> {
+        Some(Box::new(quick::ShellQuickAccess::new()))
+    }
+
     fn never_shown_extensions() -> Vec<String> {
         extensions::never_shown()
     }

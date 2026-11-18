@@ -10,6 +10,7 @@ mod logs;
 mod metrics;
 mod overlays;
 mod places;
+mod quick_sync;
 mod preview;
 mod schema;
 mod session;

@@ -1,5 +1,7 @@
 use flit_core::path::PathKind;
+use flit_core::quick_sync::QuickAccess;
 use flit_core::{FsPath, Location};
+use windows::Win32::Foundation::HWND;
 use windows::core::{w, Interface};
 use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::UI::Shell::PropertiesSystem::PSGetPropertyKeyFromName;
@@ -48,6 +50,57 @@ pub fn pinned_folders(known: &[FsPath]) -> Vec<Location> {
             tracing::info!("cannot read the folders pinned to Quick access: {}", e.message());
             Vec::new()
         }
+    }
+}
+
+pub(crate) const PINNED_STORE: &str = r"Microsoft\Windows\Recent\AutomaticDestinations\f01b4d95cf55d32a.automaticDestinations-ms";
+
+pub(crate) fn stamp_of(file: &std::path::Path) -> Option<(u64, u128)> {
+    let meta = std::fs::metadata(file).ok()?;
+    let at = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    Some((meta.len(), at))
+}
+
+pub(crate) struct ShellQuickAccess {
+    store: Option<std::path::PathBuf>,
+}
+
+impl ShellQuickAccess {
+    pub(crate) fn new() -> Self {
+        Self { store: std::env::var_os("APPDATA").map(|d| std::path::PathBuf::from(d).join(PINNED_STORE)) }
+    }
+}
+
+impl QuickAccess for ShellQuickAccess {
+    fn pinned(&mut self) -> Option<Vec<FsPath>> {
+        crate::com_sta();
+        match unsafe { read() } {
+            Ok(items) => Some(items.into_iter().filter(|(_, pinned)| *pinned).map(|(p, _)| p).collect()),
+            Err(e) => {
+                tracing::info!("cannot read the folders pinned to Quick access: {}", e.message());
+                None
+            }
+        }
+    }
+
+    fn stamp(&mut self) -> Option<(u64, u128)> {
+        stamp_of(self.store.as_deref()?)
+    }
+
+    fn set_pinned(&mut self, folder: &FsPath, pin: bool) -> bool {
+        crate::com_sta();
+        let verb = if pin { c"pintohome" } else { c"unpinfromhome" };
+        match crate::context_menu::invoke_verb(HWND::default(), std::slice::from_ref(folder), verb) {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::info!("cannot {} {} in Quick access: {e}", verb.to_string_lossy(), folder.display());
+                false
+            }
+        }
+    }
+
+    fn is_dir(&mut self, path: &FsPath) -> bool {
+        std::fs::metadata(crate::fileops::std_path(path)).is_ok_and(|m| m.is_dir())
     }
 }
 
