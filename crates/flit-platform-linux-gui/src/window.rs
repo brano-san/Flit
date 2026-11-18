@@ -201,6 +201,11 @@ fn apply_look(change: crate::atspi::LookChange) {
             }
             return;
         }
+        crate::atspi::LookChange::FontRendering(key, value) => {
+            if !crate::fonts::gnome_font_setting(&key, &value) {
+                return;
+            }
+        }
     }
     LOOK_DIRTY.store(true, Ordering::Release);
     wake_loop();
@@ -920,6 +925,10 @@ impl WindowSystem for LinuxWindows {
                     }
                     if let Some(accent) = kde_accent_change(&text, system_accent()) {
                         apply_look(crate::atspi::LookChange::Accent(accent));
+                    }
+                    if crate::fonts::set_desktop_prefs(crate::fonts::kde_prefs(&text)) {
+                        LOOK_DIRTY.store(true, Ordering::Release);
+                        wake_loop();
                     }
                 }
             }).ok())

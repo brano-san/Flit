@@ -12,7 +12,7 @@ fn shapes_and_rasterizes() {
     assert_eq!(s.glyphs[8].cluster, "Hello, м".len() as u32);
     let g = s.glyphs[0];
     let mut bm = GlyphBitmap::default();
-    assert!(t.rasterize(GlyphKey { font: g.font, id: g.id, size_q: style.size_q, subpx: 0 }, &mut bm));
+    assert!(t.rasterize(GlyphKey { font: g.font, id: g.id, size_q: style.size_q, subpx: 0, subpixel: Default::default() }, &mut bm));
     assert!(bm.width > 2 && bm.height > 5, "{bm:?}");
     assert!(bm.data.iter().any(|&a| a > 200));
     let m = t.metrics(style);

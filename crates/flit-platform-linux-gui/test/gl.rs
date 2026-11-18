@@ -281,3 +281,36 @@ fn measures_draw_cpu_time_for_a_listing() {
         percentile(&mut total, 0.99)
     );
 }
+
+const LCD: Slot = Slot { x: 40, y: 0, w: 4, h: 4 };
+
+#[test]
+fn subpixel_glyphs_blend_each_colour_channel_on_its_own_and_plain_glyphs_do_not() {
+    let dev = GlDevice::headless().unwrap();
+    let supported = dev.shared.gl.supported_extensions().contains(LCD_EXTENSION);
+    assert_eq!(dev.shared.lcd_program.is_some(), supported, "the per-channel shader builds wherever the extension is offered");
+    let mut r = renderer(&dev, (SIDE, SIDE));
+    r.upload(LCD, &[255u8, 128, 0, 128].repeat(16));
+    let mut dl = DrawList::default();
+    dl.reset(Color::rgb(0xFFFFFF));
+    dl.lcd_glyph(Rect::new(2.0, 2.0, 4.0, 4.0), uv(LCD), Color::rgb(0x000000));
+    dl.glyph(Rect::new(10.0, 2.0, 4.0, 4.0), uv(LCD), Color::rgb(0x000000));
+    dl.round_rect(Rect::new(10.0, 20.0, 20.0, 20.0), Color::rgba(0x40C060B0), 8.0);
+    r.render(&dl).unwrap();
+    let px = read(&r);
+    let plain = pixel(&px, 11, 3);
+    assert!(plain[0] == plain[1] && plain[1] == plain[2], "a plain glyph covers all channels alike: {plain:?}");
+    let lcd = pixel(&px, 3, 3);
+    if supported {
+        assert!(lcd[0] < 10 && lcd[2] > 245 && lcd[1] > 60 && lcd[1] < 140, "each channel follows its own coverage: {lcd:?}");
+    } else {
+        assert_eq!(lcd, plain, "without dual-source blending the glyph falls back to plain coverage");
+    }
+    let mut shapes = scenes().into_iter().find(|s| s.0 == "shapes").unwrap().1;
+    shapes.lcd_glyph(Rect::new(40.0, 40.0, 4.0, 4.0), uv(LCD), Color::rgb(0x000000));
+    r.render(&shapes).unwrap();
+    let mixed = read(&r);
+    r.render(&scenes().into_iter().find(|s| s.0 == "shapes").unwrap().1).unwrap();
+    let alone = read(&r);
+    assert_eq!(pixel(&mixed, 25, 25), pixel(&alone, 25, 25), "translucent shapes blend the same with the per-channel shader");
+}

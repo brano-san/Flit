@@ -23,6 +23,10 @@ impl Desktop {
     }
 }
 
+pub(crate) fn uses_gnome_settings(name: &str) -> bool {
+    Desktop::from_name(name) == Desktop::Gnome || name.split(':').any(|s| ["Unity", "Budgie", "Pantheon"].iter().any(|d| s.eq_ignore_ascii_case(d)))
+}
+
 fn buttons(left: impl Iterator<Item = WindowButton>, right: impl Iterator<Item = WindowButton>) -> WindowButtons {
     let mut seen = [false; 3];
     let left = left.filter(|b| !std::mem::replace(&mut seen[b.index()], true)).collect();

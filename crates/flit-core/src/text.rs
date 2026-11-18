@@ -41,12 +41,29 @@ pub struct ShapedText {
     pub width: f32,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub enum Subpixel {
+    #[default]
+    None,
+    Rgb,
+    Bgr,
+    Vrgb,
+    Vbgr,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub struct GlyphMode {
+    pub subpixel: Subpixel,
+    pub hinting: u8,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub struct GlyphKey {
     pub font: u16,
     pub id: u16,
     pub size_q: u16,
     pub subpx: u8,
+    pub subpixel: Subpixel,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -57,6 +74,7 @@ pub struct GlyphBitmap {
     pub height: u32,
     pub data: Vec<u8>,
     pub color: bool,
+    pub lcd: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -77,6 +95,9 @@ pub trait TextBackend {
     }
     fn set_mono_family(&mut self, name: &str) -> bool {
         name.is_empty()
+    }
+    fn glyph_mode(&mut self) -> GlyphMode {
+        GlyphMode::default()
     }
 }
 
@@ -99,6 +120,7 @@ struct GlyphSlot {
     left: i32,
     top: i32,
     color: bool,
+    lcd: bool,
 }
 
 struct Image {
@@ -129,6 +151,7 @@ pub struct Gfx<B: TextBackend> {
     ui_family: String,
     ui_found: bool,
     mono_family: String,
+    mode: GlyphMode,
 }
 
 impl<B: TextBackend> Gfx<B> {
@@ -149,7 +172,12 @@ impl<B: TextBackend> Gfx<B> {
             ui_family: String::new(),
             ui_found: true,
             mono_family: String::new(),
+            mode: GlyphMode::default(),
         }
+    }
+
+    pub fn glyph_mode(&self) -> GlyphMode {
+        self.mode
     }
 
     pub fn set_mono_family(&mut self, name: &str) {
@@ -174,6 +202,11 @@ impl<B: TextBackend> Gfx<B> {
     pub fn begin(&mut self, clear: Color) {
         self.dl.reset(clear);
         self.atlas_reset = false;
+        let mode = self.text.glyph_mode();
+        if mode != self.mode {
+            self.mode = mode;
+            self.reset_atlas();
+        }
         self.thumbs.begin_frame();
         if self.shapes.len() > MAX_SHAPES {
             self.shapes.clear();
@@ -185,8 +218,8 @@ impl<B: TextBackend> Gfx<B> {
     }
 
     fn split(&mut self) -> (&mut Shapes, GlyphCtx<'_, B>) {
-        let Self { shapes, text, glyphs, images, atlas, uploads, dl, scratch, atlas_reset, .. } = self;
-        (shapes, GlyphCtx { text, glyphs, images, atlas, uploads, dl, scratch, atlas_reset })
+        let Self { shapes, text, glyphs, images, atlas, uploads, dl, scratch, atlas_reset, mode, .. } = self;
+        (shapes, GlyphCtx { text, glyphs, images, atlas, uploads, dl, scratch, atlas_reset, subpixel: mode.subpixel })
     }
 
     pub fn metrics(&mut self, style: FontStyle) -> FontMetrics {
@@ -325,6 +358,10 @@ fn shape<'a, B: TextBackend>(
     &e.1
 }
 
+pub fn lcd_allowed(color: Color) -> bool {
+    color.0 >> 24 == 0xFF
+}
+
 fn uv(s: Slot, size: u32) -> [f32; 4] {
     let n = size as f32;
     [s.x as f32 / n, s.y as f32 / n, (s.x + s.w) as f32 / n, (s.y + s.h) as f32 / n]
@@ -339,13 +376,15 @@ struct GlyphCtx<'a, B> {
     dl: &'a mut DrawList,
     scratch: &'a mut GlyphBitmap,
     atlas_reset: &'a mut bool,
+    subpixel: Subpixel,
 }
 
 impl<B: TextBackend> GlyphCtx<'_, B> {
     fn draw(&mut self, px: f32, py: f32, g: &ShapedGlyph, style: FontStyle, color: Color) {
         let ix = px.floor();
         let subpx = ((px - ix) * 4.0) as u8 & 3;
-        let key = GlyphKey { font: g.font, id: g.id, size_q: style.size_q, subpx };
+        let subpixel = if style.family == FontFamily::Icons { Subpixel::None } else { self.subpixel };
+        let key = GlyphKey { font: g.font, id: g.id, size_q: style.size_q, subpx, subpixel };
         let gs = match self.glyphs.get(&key) {
             Some(s) => *s,
             None => {
@@ -358,6 +397,8 @@ impl<B: TextBackend> GlyphCtx<'_, B> {
             let r = Rect::new(ix + gs.left as f32, py.round() - gs.top as f32, gs.slot.w as f32, gs.slot.h as f32);
             if gs.color {
                 self.dl.image(r, uv(gs.slot, self.atlas.size()), (color.0 >> 24) as u8);
+            } else if gs.lcd && lcd_allowed(color) {
+                self.dl.lcd_glyph(r, uv(gs.slot, self.atlas.size()), color);
             } else {
                 self.dl.glyph(r, uv(gs.slot, self.atlas.size()), color);
             }
@@ -377,11 +418,12 @@ impl<B: TextBackend> GlyphCtx<'_, B> {
     fn rasterize(&mut self, key: GlyphKey) -> Option<GlyphSlot> {
         self.scratch.data.clear();
         self.scratch.color = false;
+        self.scratch.lcd = false;
         if !self.text.rasterize(key, self.scratch) || self.scratch.width == 0 || self.scratch.height == 0 {
             return None;
         }
         let (w, h) = (self.scratch.width, self.scratch.height);
-        let per_pixel = if self.scratch.color { 4 } else { 1 };
+        let per_pixel = if self.scratch.color || self.scratch.lcd { 4 } else { 1 };
         if self.scratch.data.len() != (w * h) as usize * per_pixel {
             return None;
         }
@@ -394,12 +436,12 @@ impl<B: TextBackend> GlyphCtx<'_, B> {
         };
         let bm = &*self.scratch;
         self.uploads.rects.push((slot, self.uploads.data.len()));
-        if bm.color {
+        if bm.color || bm.lcd {
             self.uploads.data.extend_from_slice(&bm.data);
         } else {
             self.uploads.data.extend(bm.data.iter().flat_map(|&a| [a, a, a, a]));
         }
-        Some(GlyphSlot { slot, left: bm.left, top: bm.top, color: bm.color })
+        Some(GlyphSlot { slot, left: bm.left, top: bm.top, color: bm.color, lcd: bm.lcd && !bm.color })
     }
 }
 

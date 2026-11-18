@@ -40,6 +40,7 @@ struct Shared {
     display: Display,
     config: Config,
     program: glow::Program,
+    lcd_program: Option<glow::Program>,
     empty: glow::Texture,
     reset_status: Option<ResetStatus>,
     render_thread: Cell<Option<ThreadId>>,
@@ -68,10 +69,12 @@ fn size(v: u32) -> NonZeroU32 {
     NonZeroU32::new(v.max(1)).unwrap()
 }
 
-unsafe fn program(gl: &glow::Context) -> Result<glow::Program, String> {
+pub(crate) const LCD_EXTENSION: &str = "GL_EXT_blend_func_extended";
+
+unsafe fn program(gl: &glow::Context, fragment: &str) -> Result<glow::Program, String> {
     let program = gl.create_program()?;
     let mut shaders = Vec::new();
-    for (kind, src) in [(glow::VERTEX_SHADER, shader::VERTEX), (glow::FRAGMENT_SHADER, shader::FRAGMENT)] {
+    for (kind, src) in [(glow::VERTEX_SHADER, shader::VERTEX), (glow::FRAGMENT_SHADER, fragment)] {
         let s = gl.create_shader(kind)?;
         gl.shader_source(s, src);
         gl.compile_shader(s);
@@ -206,7 +209,13 @@ impl GlDevice {
                     .map(|p| std::mem::transmute::<*const std::ffi::c_void, ResetStatus>(p))
             })
             .flatten();
-            let program = program(&gl).map_err(|e| PlatformError::new(-1, format!("ui shader: {e}")))?;
+            let program = program(&gl, shader::FRAGMENT).map_err(|e| PlatformError::new(-1, format!("ui shader: {e}")))?;
+            let lcd_program = if gl.supported_extensions().contains(LCD_EXTENSION) {
+                self::program(&gl, shader::FRAGMENT_LCD).map_err(|e| tracing::warn!("subpixel text shader: {e}")).ok()
+            } else {
+                None
+            };
+            crate::fonts::set_lcd_blend(lcd_program.is_some());
             let sampler = gl.create_sampler().map_err(err)?;
             for (name, value) in [
                 (glow::TEXTURE_MIN_FILTER, glow::LINEAR),
@@ -224,13 +233,14 @@ impl GlDevice {
             gl.enable(glow::BLEND);
             gl.blend_func(glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
             context.make_not_current_in_place().map_err(err)?;
-            tracing::info!(renderer, robust, "gl device ready");
+            tracing::info!(renderer, robust, lcd = lcd_program.is_some(), "gl device ready");
             let shared = Shared {
                 gl,
                 context,
                 display,
                 config,
                 program,
+                lcd_program,
                 empty,
                 reset_status,
                 render_thread: Cell::new(None),
@@ -449,7 +459,10 @@ impl GlRenderer {
             let [r, g, b, a] = list.clear.to_f32();
             gl.clear_color(r, g, b, a);
             gl.clear(glow::COLOR_BUFFER_BIT);
-            gl.use_program(Some(s.program));
+            let lcd = s.lcd_program.filter(|_| list.has_lcd());
+            gl.use_program(Some(lcd.unwrap_or(s.program)));
+            let dst = if lcd.is_some() { glow::ONE_MINUS_SRC1_COLOR } else { glow::ONE_MINUS_SRC_ALPHA };
+            gl.blend_func_separate(glow::ONE, dst, glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
             let globals = Globals { viewport: [w as f32, h as f32], text_contrast: 0.5, pad: 0.0 };
             gl.bind_buffer(glow::UNIFORM_BUFFER, Some(self.globals));
             gl.buffer_data_u8_slice(glow::UNIFORM_BUFFER, bytes(std::slice::from_ref(&globals)), glow::STREAM_DRAW);

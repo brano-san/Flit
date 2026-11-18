@@ -56,6 +56,7 @@ pub mod kind {
     pub const PREVIEW: u32 = 4;
     pub const SHADOW: u32 = 5;
     pub const BACKDROP: u32 = 6;
+    pub const LCD_GLYPH: u32 = 7;
 }
 
 #[repr(C)]
@@ -71,6 +72,16 @@ pub struct Instance {
 }
 
 const NO_CLIP: [f32; 4] = [-1e9, -1e9, 1e9, 1e9];
+
+fn grayscale(i: &mut Instance) {
+    if i.kind == kind::LCD_GLYPH {
+        i.kind = kind::GLYPH;
+    }
+}
+
+fn whole(v: f32) -> bool {
+    v.fract() == 0.0
+}
 
 pub struct DrawList {
     pub clear: Color,
@@ -164,6 +175,7 @@ impl DrawList {
             i.rect = [scale(x, center.0), scale(y, center.1), w * k, h * k];
             i.radius *= k;
             i.color = times_alpha(i.color, t);
+            grayscale(i);
         }
     }
 
@@ -174,22 +186,31 @@ impl DrawList {
         }
         for i in self.instances.iter_mut().skip(from) {
             i.color = times_alpha(i.color, k);
+            grayscale(i);
         }
     }
 
     pub fn nudge(&mut self, from: usize, dx: f32, dy: f32) {
+        let snapped = whole(dx) && whole(dy);
         for i in self.instances.iter_mut().skip(from) {
             i.rect[0] += dx;
             i.rect[1] += dy;
+            if !snapped {
+                grayscale(i);
+            }
         }
     }
 
     pub fn refit(&mut self, from: usize, was: Rect, to: Rect) {
         let (left, top) = (to.x - was.x, to.y - was.y);
         let (right, bottom) = (to.right() - was.right(), to.bottom() - was.bottom());
+        let snapped = whole(left) && whole(top) && right == left && bottom == top;
         for i in self.instances.iter_mut().skip(from) {
             let [x, y, w, h] = i.rect;
             i.rect = [x + left, y + top, (w + right - left).max(0.0), (h + bottom - top).max(0.0)];
+            if !snapped {
+                grayscale(i);
+            }
         }
     }
 
@@ -198,9 +219,13 @@ impl DrawList {
     }
 
     pub fn shift_range(&mut self, range: std::ops::Range<usize>, dx: f32, dy: f32) {
+        let snapped = whole(dx) && whole(dy);
         for i in &mut self.instances[range] {
             i.rect[0] += dx;
             i.rect[1] += dy;
+            if !snapped {
+                grayscale(i);
+            }
             if i.clip != NO_CLIP {
                 i.clip = [i.clip[0] + dx, i.clip[1] + dy, i.clip[2] + dx, i.clip[3] + dy];
             }
@@ -216,6 +241,14 @@ impl DrawList {
 
     pub fn glyph(&mut self, r: Rect, uv: [f32; 4], color: Color) {
         self.push(r, uv, color, 0.0, 0.0, kind::GLYPH);
+    }
+
+    pub fn lcd_glyph(&mut self, r: Rect, uv: [f32; 4], color: Color) {
+        self.push(r, uv, color, 0.0, 0.0, kind::LCD_GLYPH);
+    }
+
+    pub fn has_lcd(&self) -> bool {
+        self.instances.iter().any(|i| i.kind == kind::LCD_GLYPH)
     }
 
     pub fn image(&mut self, r: Rect, uv: [f32; 4], alpha: u8) {
