@@ -50,3 +50,49 @@ fn the_read_limit_counts_pinned_folders_and_marks_the_list_partial() {
     let read = listing(pinned).unwrap();
     assert!(!read.complete, "a list cut at the limit is partial");
 }
+
+struct Explorer {
+    items: Vec<(FsPath, bool)>,
+    standard: Vec<FsPath>,
+    pinned_now: Vec<String>,
+}
+
+impl QuickAccess for Explorer {
+    fn pinned(&mut self) -> Option<Snapshot> {
+        Some(Snapshot { pinned: synced(self.items.clone(), &self.standard), complete: true })
+    }
+    fn stamp(&mut self) -> Option<(u64, u128)> {
+        Some((1, 0))
+    }
+    fn set_pinned(&mut self, folder: &FsPath, pin: bool) -> bool {
+        if pin {
+            self.pinned_now.push(folder.display().into_owned());
+        }
+        true
+    }
+    fn is_dir(&mut self, _: &FsPath) -> bool {
+        true
+    }
+}
+
+#[test]
+fn turning_sync_on_leaves_standard_folders_out_of_bookmarks() {
+    let standard = vec![p(r"C:\Users\me\Desktop"), p(r"C:\Users\me\Downloads"), p(r"C:\Users\me\Documents"), p(r"C:\Users\me\Pictures")];
+    let items = vec![(p(r"C:\Users\me\Desktop"), true), (p(r"c:\users\me\downloads"), true), (p(r"C:\Users\me\Documents"), true), (p(r"C:\Users\me\Pictures"), true), (p(r"D:\Projects"), true), (p(r"C:\Temp"), false)];
+    let mut sync = flit_core::quick_sync::QuickSync::new(Explorer { items, standard, pinned_now: Vec::new() });
+    let flit = [Location::from_local(p(r"C:\Users\me\Desktop")), Location::from_local(p(r"E:\Work"))];
+    let change = sync.enable(&flit);
+    assert_eq!(change.added, [p(r"D:\Projects")], "standard folders stay in Places, an ordinary pinned folder becomes a bookmark");
+    let pinned = &sync.quick().pinned_now;
+    assert!(pinned.iter().any(|x| x == r"E:\Work"));
+    assert!(pinned.iter().any(|x| x == r"C:\Users\me\Desktop"), "a standard folder the user bookmarked in Flit may be pinned in Quick access");
+}
+
+#[test]
+fn standard_folders_are_not_reported_as_quick_access_changes() {
+    let standard = vec![p(r"C:\Users\me\Desktop"), p(r"C:\Users\me\Music")];
+    let before = synced(vec![(p(r"C:\Users\me\Desktop"), true), (p(r"D:\Projects"), true)], &standard);
+    let after = synced(vec![(p(r"C:\Users\me\Desktop"), true), (p(r"C:\Users\me\Music"), true), (p(r"D:\Projects"), true)], &standard);
+    assert_eq!(before, after, "pinning Music in Explorer does not reach the bookmarks");
+    assert_eq!(after, [p(r"D:\Projects")]);
+}

@@ -71,6 +71,10 @@ pub fn pinned_folders(known: &[FsPath]) -> Vec<Location> {
     }
 }
 
+pub(crate) fn synced(items: Vec<(FsPath, bool)>, standard: &[FsPath]) -> Vec<FsPath> {
+    imported(items, standard).iter().filter_map(Location::to_windows).collect()
+}
+
 pub(crate) const PINNED_STORE: &str = r"Microsoft\Windows\Recent\AutomaticDestinations\f01b4d95cf55d32a.automaticDestinations-ms";
 
 pub(crate) fn stamp_of(file: &std::path::Path) -> Option<(u64, u128)> {
@@ -81,11 +85,12 @@ pub(crate) fn stamp_of(file: &std::path::Path) -> Option<(u64, u128)> {
 
 pub(crate) struct ShellQuickAccess {
     store: Option<std::path::PathBuf>,
+    standard: Vec<FsPath>,
 }
 
 impl ShellQuickAccess {
-    pub(crate) fn new() -> Self {
-        Self { store: std::env::var_os("APPDATA").map(|d| std::path::PathBuf::from(d).join(PINNED_STORE)) }
+    pub(crate) fn new(standard: Vec<FsPath>) -> Self {
+        Self { store: std::env::var_os("APPDATA").map(|d| std::path::PathBuf::from(d).join(PINNED_STORE)), standard }
     }
 }
 
@@ -93,7 +98,7 @@ impl QuickAccess for ShellQuickAccess {
     fn pinned(&mut self) -> Option<Snapshot> {
         crate::com_sta();
         match unsafe { read() } {
-            Ok(read) => Some(Snapshot { pinned: read.items.into_iter().filter(|(_, pinned)| *pinned).map(|(p, _)| p).collect(), complete: read.complete }),
+            Ok(read) => Some(Snapshot { pinned: synced(read.items, &self.standard), complete: read.complete }),
             Err(e) => {
                 tracing::info!("cannot read the folders pinned to Quick access: {}", e.message());
                 None
