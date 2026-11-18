@@ -11,6 +11,8 @@ use x11rb::protocol::xproto::{Atom, AtomEnum, ConnectionExt, PropMode, Window};
 use x11rb::xcb_ffi::XCBConnection;
 
 pub const WAIT: Duration = Duration::from_secs(120);
+pub const STALE: Duration = Duration::from_secs(24 * 60 * 60);
+const PREFIX: &str = "flit-save";
 const TICK: Duration = Duration::from_millis(100);
 const MAX_NAME: usize = 255;
 const NAME_WORDS: u32 = 1024;
@@ -20,6 +22,7 @@ pub enum Reply {
     Saved,
     Declined,
     Failed,
+    Abandoned,
 }
 
 pub fn reply(bytes: &[u8]) -> Reply {
@@ -82,8 +85,8 @@ pub struct X11 {
 }
 
 impl X11 {
-    pub fn connect() -> Option<Self> {
-        let (conn, _) = XCBConnection::connect(None).ok()?;
+    pub fn connect(display: Option<&std::ffi::CStr>) -> Option<Self> {
+        let (conn, _) = XCBConnection::connect(display).ok()?;
         let atom = |name: &[u8]| conn.intern_atom(false, name).ok()?.reply().ok().map(|r| r.atom);
         let (selection, direct_save, text) = (atom(b"XdndSelection")?, atom(b"XdndDirectSave0")?, atom(b"text/plain")?);
         Some(Self { conn, selection, direct_save, text })
@@ -111,9 +114,30 @@ impl Link for X11 {
     }
 }
 
+static LINK: OnceLock<Option<X11>> = OnceLock::new();
+
 pub fn x11() -> Option<&'static X11> {
-    static LINK: OnceLock<Option<X11>> = OnceLock::new();
-    LINK.get_or_init(X11::connect).as_ref()
+    LINK.get()?.as_ref()
+}
+
+pub fn warm_up(x11: bool) {
+    if x11 {
+        LINK.get_or_init(|| X11::connect(None));
+    }
+    sweep(&std::env::temp_dir(), STALE, unsafe { libc::geteuid() });
+}
+
+pub fn sweep(root: &Path, older: Duration, uid: u32) {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let Ok(entries) = std::fs::read_dir(root) else { return };
+    for entry in entries.flatten() {
+        let ours = entry.file_name().to_str().is_some_and(|n| n.starts_with(&format!("{PREFIX}-")));
+        let Ok(meta) = std::fs::symlink_metadata(entry.path()) else { continue };
+        let stale = meta.modified().ok().and_then(|m| m.elapsed().ok()).is_some_and(|age| age >= older);
+        if ours && meta.is_dir() && meta.uid() == uid && meta.permissions().mode() & 0o7777 == 0o700 && stale {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 pub struct Staging {
@@ -123,8 +147,7 @@ pub struct Staging {
 
 impl Drop for Staging {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.file);
-        let _ = std::fs::remove_dir(&self.dir);
+        let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 
@@ -151,7 +174,7 @@ pub struct Pending {
 
 pub fn prepare(offer: &Offer, fallback: Option<DroppedFile>, root: &Path) -> std::io::Result<Pending> {
     use std::os::unix::ffi::OsStrExt;
-    let dir = crate::dropped::private_dir(root, "flit-save", NEXT.fetch_add(1, Ordering::Relaxed), || false)?;
+    let dir = crate::dropped::private_dir(root, PREFIX, NEXT.fetch_add(1, Ordering::Relaxed), || false)?;
     let staging = Staging { file: dir.join(std::ffi::OsStr::from_bytes(&offer.name)), dir };
     let uri = file_uri(&staging.file);
     let data = Arc::new(DroppedFile { name: offer.name.clone(), bytes: Vec::new() });
@@ -219,6 +242,7 @@ fn settle(dest: &FsPath, promise: Promise, job: &Job, limit: Duration) -> OpOutc
             Some(content) => crate::dropped::queued(dest, &content, job),
             None => refused(S::UiDroppedSaveFailed.t()),
         },
+        Waited::Answered(Reply::Abandoned) => crate::dropped::failed(&std::io::Error::from_raw_os_error(libc::ECANCELED)),
         Waited::Answered(Reply::Failed) => refused(S::UiDroppedSaveFailed.t()),
         Waited::Silent => refused(S::UiDroppedSaveSilent.t()),
     }

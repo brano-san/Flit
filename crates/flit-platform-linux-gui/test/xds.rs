@@ -232,13 +232,14 @@ fn direct_save_without_other_types_fetches_nothing_and_ordinary_drops_fetch_as_b
 #[test]
 fn the_x11_link_reads_the_offered_name_and_writes_the_uri_on_the_source_window() {
     use x11rb::protocol::xproto::{CreateWindowAux, WindowClass};
-    if std::env::var_os("DISPLAY").is_none() {
-        eprintln!("no X server, skipped");
+    let Some(display) = std::env::var("FLIT_TEST_XVFB_DISPLAY").ok().filter(|d| !d.is_empty()) else {
+        eprintln!("no FLIT_TEST_XVFB_DISPLAY with a private Xvfb, skipped");
         return;
-    }
-    let (source, screen) = XCBConnection::connect(None).unwrap();
+    };
+    let display = std::ffi::CString::new(display).unwrap();
+    let (source, screen) = XCBConnection::connect(Some(&display)).unwrap();
     let root = source.setup().roots[screen].root;
-    let link = X11::connect().unwrap();
+    let link = X11::connect(Some(display.as_c_str())).unwrap();
     let window = source.generate_id().unwrap();
     source.create_window(0, window, root, -10, -10, 1, 1, 0, WindowClass::INPUT_ONLY, 0, &CreateWindowAux::new().override_redirect(1)).unwrap();
     source.change_property8(PropMode::REPLACE, window, link.direct_save, link.text, b"report 1.pdf").unwrap();
@@ -260,4 +261,72 @@ fn the_x11_link_reads_the_offered_name_and_writes_the_uri_on_the_source_window()
     assert_eq!((stored.type_, stored.format, stored.value.as_slice()), (link.text, 8, &b"file:///tmp/x/report%201.pdf"[..]));
     source.destroy_window(window).unwrap();
     source.flush().unwrap();
+}
+
+#[test]
+fn a_folder_saved_by_the_source_is_copied_whole_and_nothing_stays_in_the_private_folder() {
+    let t = Temp::new("xds-folder");
+    let dest = t.path().join("dest");
+    std::fs::create_dir(&dest).unwrap();
+    let pending = prepare(&offer("photos"), None, t.path()).unwrap();
+    let staged = staged_path(&pending.uri);
+    std::fs::create_dir_all(staged.join("2024")).unwrap();
+    std::fs::write(staged.join("2024").join("a.jpg"), b"jpeg").unwrap();
+    std::fs::write(staged.parent().unwrap().join("extra.tmp"), b"left by the source").unwrap();
+    pending.sender.send(Reply::Saved).unwrap();
+    let out = paste(&dest, &pending.data, &Job::detached(Resolve::Skip));
+    assert!(out.error.is_none(), "{:?}", out.error);
+    let target = fs(&dest.join("photos"));
+    assert_eq!(out.items, [(target.clone(), target)]);
+    assert_eq!(std::fs::read(dest.join("photos").join("2024").join("a.jpg")).unwrap(), b"jpeg");
+    assert!(!staged.parent().unwrap().exists(), "the whole private folder is removed, with whatever the source left in it");
+}
+
+#[test]
+fn a_wait_replaced_by_a_new_drag_is_cancelled_without_an_error() {
+    let t = Temp::new("xds-abandoned");
+    let pending = prepare(&offer("x.txt"), None, t.path()).unwrap();
+    let staged = staged_path(&pending.uri);
+    std::fs::write(&staged, b"half").unwrap();
+    pending.sender.send(Reply::Abandoned).unwrap();
+    let out = paste(t.path(), &pending.data, &Job::detached(Resolve::Skip));
+    assert_eq!(out.error.map(|e| e.message).as_deref(), Some(flit_platform::CANCELLED), "a cancelled operation is not reported as a failure");
+    assert!(!t.path().join("x.txt").exists());
+    assert!(!staged.parent().unwrap().exists());
+}
+
+#[test]
+fn only_old_private_save_folders_of_this_user_are_swept_at_start() {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    let t = Temp::new("xds-sweep");
+    let root = t.path();
+    let uid = unsafe { libc::geteuid() };
+    let make = |name: &str, mode: u32| {
+        let dir = root.join(name);
+        std::fs::DirBuilder::new().mode(mode).create(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode)).unwrap();
+        std::fs::write(dir.join("inner"), b"x").unwrap();
+        dir
+    };
+    let age = |dir: &Path| {
+        let old = std::time::SystemTime::now() - Duration::from_secs(2 * 24 * 60 * 60);
+        std::fs::File::open(dir).unwrap().set_modified(old).unwrap();
+    };
+    let stale = make("flit-save-1-0-0", 0o700);
+    age(&stale);
+    let fresh = make("flit-save-1-1-0", 0o700);
+    let open = make("flit-save-1-2-0", 0o755);
+    age(&open);
+    let other = make("flit-drop-1-0-0", 0o700);
+    age(&other);
+    let target = make("target", 0o700);
+    age(&target);
+    std::os::unix::fs::symlink(&target, root.join("flit-save-1-3-0")).unwrap();
+    sweep(root, STALE, uid.wrapping_add(1));
+    assert!(stale.exists(), "folders of another user are left alone");
+    sweep(root, STALE, uid);
+    assert!(!stale.exists(), "an old private folder is removed");
+    assert!(fresh.exists(), "a folder of a running save is kept");
+    assert!(open.exists() && other.exists(), "folders that are not private save folders are kept");
+    assert!(target.join("inner").exists(), "a link is never followed");
 }

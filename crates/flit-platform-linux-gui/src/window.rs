@@ -1513,6 +1513,12 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         }
     }
 
+    fn abandon_save(&mut self) {
+        if let Some((_, sender)) = self.xds_wait.take() {
+            let _ = sender.send(crate::xds::Reply::Abandoned);
+        }
+    }
+
     fn direct_save(&mut self, el: &dyn ActiveEventLoop, id: DataTransferId, pending: crate::xds::Pending, kind: &winit::platform::x11::SelectionType) {
         use crate::xds::Link;
         if Arc::strong_count(&pending.data) < 2 {
@@ -1520,6 +1526,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         }
         let asked = crate::xds::x11().is_some_and(|link| link.write_uri(pending.window, &pending.uri)) && el.fetch_data_transfer(id, kind).map_err(|e| tracing::info!("cannot ask the drag source to save the file: {e}")).is_ok();
         if asked {
+            self.abandon_save();
             self.xds_wait = Some((id, pending.sender));
         } else {
             let _ = pending.sender.send(crate::xds::Reply::Declined);
@@ -1555,6 +1562,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             WindowEvent::DragEntered { id, position } => {
                 let at = position.map_or((0.0, 0.0), |p| (p.x as f32, p.y as f32));
                 let offered = crate::xdnd::offered_actions(drop_effect::COPY, None);
+                self.abandon_save();
                 let xds = direct_save_offer(el, id);
                 let fetching = dragged_kinds(el, id, xds.is_some());
                 self.incoming = Some(Incoming { id, at, paths: None, proposed: None, dropped: None, preferred: offered.first().copied(), ask: false, content: None, fetching, xds });
@@ -1767,6 +1775,9 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
             self.wl = wayland_display(el).and_then(crate::wl::Wl::connect);
         }
         self.watch_clipboard(el);
+        static WARM: std::sync::Once = std::sync::Once::new();
+        let x11 = !el.is_wayland();
+        WARM.call_once(|| background("flit-xds", move || crate::xds::warm_up(x11)));
         self.started = true;
         self.settle(el);
     }
