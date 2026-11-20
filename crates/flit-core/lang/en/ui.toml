@@ -16,6 +16,7 @@ empty = "Empty Recycle Bin"
 filtered = "No items match the filter."
 bin = "The Recycle Bin is empty."
 folder = "This folder is empty."
+network = "No computers or shared folders were found on the network. Press F5 to search again."
 
 [status]
 selected = ["{n} selected", "{n} selected"]

@@ -831,11 +831,19 @@ impl Shell for LinuxShell {
     }
 
     fn connect(&mut self, uri: &str) -> Result<FsPath, PlatformError> {
+        if crate::network::smb_server(uri) {
+            crate::places::mount_only(uri).map_err(|e| crate::places::drive_error(S::ErrorsFsConnectFailed, Path::new(uri), &e))?;
+            return crate::network::server_place(uri);
+        }
         let point = crate::places::connect(uri).map_err(|e| crate::places::drive_error(S::ErrorsFsConnectFailed, Path::new(uri), &e))?;
         crate::xdg::fs_path(&point).ok_or_else(|| PlatformError::new(-1, "the mount point is not a valid path"))
     }
 
     fn connect_asking(&mut self, uri: &str, prompt: &flit_platform::MountPrompt) -> Result<Option<FsPath>, PlatformError> {
+        if crate::network::smb_server(uri) {
+            let mounted = crate::gvfs::browse(uri, prompt).map_err(|e| crate::places::drive_error(S::ErrorsFsConnectFailed, Path::new(uri), &e))?;
+            return if mounted { crate::network::server_place(uri).map(Some) } else { Ok(None) };
+        }
         let Some(point) = crate::gvfs::connect(uri, prompt).map_err(|e| crate::places::drive_error(S::ErrorsFsConnectFailed, Path::new(uri), &e))? else { return Ok(None) };
         crate::xdg::fs_path(&point).map(Some).ok_or_else(|| PlatformError::new(-1, "the mount point is not a valid path"))
     }

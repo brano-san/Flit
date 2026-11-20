@@ -16,6 +16,7 @@ empty = "Vaciar Papelera de reciclaje"
 filtered = "Ningún elemento coincide con el filtro."
 bin = "La Papelera de reciclaje está vacía."
 folder = "Esta carpeta está vacía."
+network = "No se encontraron equipos ni carpetas compartidas en la red. Presione F5 para volver a buscar."
 
 [status]
 selected = ["{n} seleccionado", "{n} de seleccionados", "{n} seleccionados"]

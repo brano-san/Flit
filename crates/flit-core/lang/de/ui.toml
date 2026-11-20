@@ -16,6 +16,7 @@ empty = "Papierkorb leeren"
 filtered = "Keine Elemente entsprechen dem Filter."
 bin = "Der Papierkorb ist leer."
 folder = "Dieser Ordner ist leer."
+network = "Im Netzwerk wurden keine Computer oder freigegebenen Ordner gefunden. Drücken Sie F5, um erneut zu suchen."
 
 [status]
 selected = ["{n} ausgewählt", "{n} ausgewählt"]

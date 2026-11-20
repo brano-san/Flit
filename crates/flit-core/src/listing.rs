@@ -347,6 +347,9 @@ impl Listing {
 }
 
 pub const NOT_RESPONDING_CODE: i64 = 0x544C_0002;
+pub const NO_NETWORK_BROWSER_CODE: i64 = 0x544C_0010;
+pub const NETWORK_BROWSER_PACKAGES: [&str; 4] = ["gvfs-backends", "gvfs-smb", "gvfs-smb", "gvfs-backend-samba"];
+const AVAHI_BROWSER_PACKAGES: [&str; 4] = ["avahi-utils", "avahi-tools", "avahi", "avahi-utils"];
 const LINUX_ERRNO: i64 = 0x4C58 << 32;
 
 const ERRNO_NAMES: [(i64, &str); 34] = [
@@ -391,6 +394,20 @@ impl FsError {
         Self { kind: FsErrorKind::Unavailable, code: NOT_RESPONDING_CODE }
     }
 
+    pub fn no_network_browser(family: usize) -> Self {
+        Self { kind: FsErrorKind::Unavailable, code: NO_NETWORK_BROWSER_CODE + family.min(NETWORK_BROWSER_PACKAGES.len() - 1) as i64 }
+    }
+
+    pub fn network_package(&self) -> Option<&'static str> {
+        let k = self.code.checked_sub(NO_NETWORK_BROWSER_CODE)?;
+        NETWORK_BROWSER_PACKAGES.get(usize::try_from(k).ok()?).copied()
+    }
+
+    fn avahi_package(&self) -> Option<&'static str> {
+        let k = self.code.checked_sub(NO_NETWORK_BROWSER_CODE)?;
+        AVAHI_BROWSER_PACKAGES.get(usize::try_from(k).ok()?).copied()
+    }
+
     pub fn from_linux(self) -> Self {
         match self.code {
             -1 => Self { code: LINUX_ERRNO, ..self },
@@ -429,6 +446,10 @@ impl fmt::Display for FsError {
         use crate::i18n::S;
         if self.code == crate::archive::PASSWORD_CODE {
             return f.write_str(S::ErrorsArchivePasswordNeeded.t());
+        }
+        if let (Some(package), Some(avahi)) = (self.network_package(), self.avahi_package()) {
+            crate::i18n::fill_into(f, S::ErrorsFsNoNetworkBrowser.t(), &[("package", &package), ("avahi", &avahi)]);
+            return Ok(());
         }
         let what = match self.kind {
             _ if self.code == NOT_RESPONDING_CODE => S::ErrorsFsNotResponding,

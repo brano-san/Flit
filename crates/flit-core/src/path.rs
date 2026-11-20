@@ -29,6 +29,7 @@ pub const HOME_LABEL: &str = "Home";
 pub const HOME_SHELL: &str = "shell:::{f874310e-b6b7-47dc-bc84-b9e6b38f5903}";
 pub const SHELL_COMPUTER: &str = "shell:::{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
 pub const SHELL_NETWORK: &str = "shell:::{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}";
+pub const NETWORK_URI: &str = "network:///";
 const UNIX_HOST: bool = cfg!(unix);
 
 pub fn is_label(input: &[u8], label: S) -> bool {
@@ -126,6 +127,15 @@ impl FsPath {
         }
         if input.eq_ignore_ascii_case(HOME_SHELL.as_bytes()) {
             return Some(Self::home_page());
+        }
+        if unix_host && input.eq_ignore_ascii_case(NETWORK_URI.as_bytes()) {
+            return Some(Self::network());
+        }
+        if unix_host && input.len() >= SHELL_NETWORK.len() && input[..SHELL_NETWORK.len()].eq_ignore_ascii_case(SHELL_NETWORK.as_bytes()) {
+            let rest = &input[SHELL_NETWORK.len()..];
+            if rest.is_empty() || rest[0] == b'\\' {
+                return Self::shell(SHELL_NETWORK.as_bytes(), rest.get(1..).unwrap_or_default());
+            }
         }
         if !unix_host {
             if input.len() > 9 && input[..9].eq_ignore_ascii_case(b"shell:::{") {

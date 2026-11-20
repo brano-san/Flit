@@ -139,6 +139,9 @@ pub fn resolve_for(raw: &[u8], cwd: Option<&[u8]>, shell_folder: &dyn Fn(&str) -
     if unix && strip_prefix_ci(raw, b"trash:").is_some() {
         return Ok(Location::recycle_bin());
     }
+    if unix && raw.eq_ignore_ascii_case(crate::path::NETWORK_URI.as_bytes()) {
+        return Ok(Location::Local(FsPath::network()));
+    }
     if THIS_PC.iter().any(|t| text.eq_ignore_ascii_case(t)) {
         return Ok(Location::computer());
     }

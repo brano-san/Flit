@@ -1286,6 +1286,9 @@ impl App {
             self.tab_mut().error = Some(crate::tr!(S::UiInRecycleBin, name = name));
             return;
         }
+        if self.caps.unix_paths && t.view_loc.path().is_network() {
+            return self.open_network(i);
+        }
         let e = t.view.as_ref().unwrap().listing().entries[i as usize];
         let loc = t.entry_location(i);
         if self.caps.unix_paths && t.view_loc.path().kind() == PathKind::Computer && self.mount_drive(loc.path()) {
@@ -1307,10 +1310,28 @@ impl App {
         }
     }
 
+    pub(super) fn empty_text(&self, loc: &Location, filtered: bool) -> S {
+        if filtered {
+            S::UiEmptyFiltered
+        } else if loc.is_recycle_bin() {
+            S::UiEmptyBin
+        } else if self.caps.unix_paths && loc.path().is_network() {
+            S::UiEmptyNetwork
+        } else {
+            S::UiEmptyFolder
+        }
+    }
+
     fn open_selection(&mut self, now: Instant) {
         let t = self.tab();
         let Some(v) = &t.view else { return };
         let is_dir = |i: u32| v.listing().entries[i as usize].is_dir();
+        if self.caps.unix_paths && t.view_loc.path().is_network() {
+            if let Some(i) = v.focus.or_else(|| v.selected().next()) {
+                self.open_network(i);
+            }
+            return;
+        }
         if v.selected_count() > 1 && !t.view_loc.is_recycle_bin() {
             return self.open_many(now);
         }
@@ -3013,16 +3034,14 @@ impl App {
             if let Some(e) = v.snap().error.as_ref().filter(|_| v.total_rows() == 0) {
                 self.draw_unavailable(g, t, list, e);
             } else if v.rows().is_empty() && v.groups().is_empty() && v.snap().done {
-                let msg = if v.is_filtered() {
-                    S::UiEmptyFiltered
-                } else if in_bin {
-                    S::UiEmptyBin
+                let msg = self.empty_text(&tab.view_loc, v.is_filtered());
+                let y = list.y + self.cs(40.0);
+                if msg == S::UiEmptyNetwork {
+                    self.draw_network_notice(g, Rect { y, ..list }, msg.t(), font, t.text_dim);
                 } else {
-                    S::UiEmptyFolder
+                    let w = g.measure(msg.t(), font);
+                    g.text(list.x + (list.w - w) / 2.0, y, msg.t(), font, t.text_dim, f32::INFINITY);
                 }
-                .t();
-                let w = g.measure(msg, font);
-                g.text(list.x + (list.w - w) / 2.0, list.y + self.cs(40.0), msg, font, t.text_dim, f32::INFINITY);
             }
             let loc = &tab.view_loc;
             let shell_dir = loc.to_windows();

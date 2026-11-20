@@ -20,6 +20,7 @@ mod input;
 mod locale;
 mod mime;
 mod mpv;
+mod network;
 mod poll;
 mod preferences;
 mod player;

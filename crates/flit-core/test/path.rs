@@ -147,6 +147,23 @@ fn computer_joins_mount_points_and_drives() {
     assert_eq!(c.join(b"C:").as_bytes(), br"C:\");
 }
 
+#[test]
+fn a_saved_linux_network_tab_comes_back_with_its_server_address() {
+    let net = FsPath::network();
+    let server = FsPath::network_server(b"smb://brano-2.local:445/").unwrap();
+    assert_eq!(server.components().collect::<Vec<_>>(), [&b"smb://brano-2.local:445/"[..]]);
+    assert_eq!(server.parent(), Some(net.clone()));
+    assert_eq!(server.file_name(), b"smb://brano-2.local:445/");
+    for host_is_unix in [true, false] {
+        assert_eq!(FsPath::parse_on(net.as_bytes(), host_is_unix), Some(net.clone()));
+        assert_eq!(FsPath::parse_on(server.as_bytes(), host_is_unix), Some(server.clone()));
+    }
+    let mut glued = SHELL_NETWORK.as_bytes().to_vec();
+    glued.extend_from_slice(b"x");
+    assert_eq!(FsPath::parse_on(&glued, true), None, "only the exact Network root is a shell place on Linux");
+    assert_eq!(FsPath::parse_on(b"Network", true), None, "on Linux a bare word is not the Network place");
+}
+
 #[cfg(windows)]
 #[test]
 fn shell_places() {

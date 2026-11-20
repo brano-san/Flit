@@ -16,6 +16,7 @@ empty = "Vider la Corbeille"
 filtered = "Aucun élément ne correspond au filtre."
 bin = "La Corbeille est vide."
 folder = "Ce dossier est vide."
+network = "Aucun ordinateur ni dossier partagé n’a été trouvé sur le réseau. Appuyez sur F5 pour relancer la recherche."
 
 [status]
 selected = ["{n} sélectionné", "{n} de sélectionnés", "{n} sélectionnés"]

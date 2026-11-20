@@ -25,6 +25,7 @@ grant_button = "Continuer"
 grant_hint = "Cliquez sur Continuer pour obtenir un accès permanent à ce dossier en tant qu’administrateur."
 granting = "Obtention de l’accès à {what}"
 no_setfacl = "setfacl n’est pas installé. Installez le paquet {package}"
+no_network_browser = "Pour parcourir le réseau, installez {package} ou {avahi}."
 
 [title]
 encrypted = "Cette archive est chiffrée"

@@ -61,6 +61,7 @@ pub struct Tab {
     pub(super) loading: Option<Loading>,
     pub(super) view: Option<DirView>,
     pub(super) view_loc: Location,
+    pub(super) network_login: bool,
     pub(super) error: Option<String>,
     pub(super) live_off: Option<LiveOff>,
     pub(super) undo: Option<UndoBar>,
@@ -115,6 +116,7 @@ impl Tab {
             sizing: (0, FxHashSet::default()),
             sizes_cancel: GenToken::default(),
             view: None,
+            network_login: false,
             error: None,
             live_off: None,
             undo: None,
@@ -163,6 +165,7 @@ impl Tab {
         self.stop_sizes();
         let loc = self.location().clone();
         if loc != self.view_loc {
+            self.network_login = false;
             if !self.retain_filter {
                 self.reset_filter();
             }

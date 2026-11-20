@@ -62,7 +62,12 @@ pub fn drives() -> Vec<Drive> {
         .chain(unmounted())
         .chain(gvfs(&gvfs_root()))
         .chain(phones(&gvfs_root()))
+        .chain([network_drive()])
         .collect()
+}
+
+pub fn network_drive() -> Drive {
+    Drive { path: flit_core::FsPath::network(), label: S::PathNetwork.en().to_owned(), total: 0, free: 0, file_system: String::new(), removable: false, unmounted: false, kind: Some(S::PathNetwork), remote: None }
 }
 
 pub fn gvfs_root() -> PathBuf {
@@ -147,18 +152,39 @@ pub const CONNECT_WAIT: std::time::Duration = std::time::Duration::from_secs(45)
 const PHONES_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 pub fn run_within(mut cmd: std::process::Command, wait: std::time::Duration) -> std::io::Result<std::process::Output> {
-    use std::process::Stdio;
+    use std::io::Read;
+    use std::process::{Output, Stdio};
+    fn drain(mut pipe: impl Read + Send + 'static) -> std::io::Result<std::thread::JoinHandle<std::io::Result<Vec<u8>>>> {
+        std::thread::Builder::new().spawn(move || {
+            let mut bytes = Vec::new();
+            pipe.read_to_end(&mut bytes)?;
+            Ok(bytes)
+        })
+    }
     let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
     let deadline = std::time::Instant::now() + wait;
-    while child.try_wait()?.is_none() {
-        if std::time::Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, S::ErrorsFsNotResponding.en()));
+    let result = (|| {
+        let stdout = drain(child.stdout.take().unwrap())?;
+        let stderr = drain(child.stderr.take().unwrap())?;
+        loop {
+            if stdout.is_finished() && stderr.is_finished() {
+                if let Some(status) = child.try_wait()? {
+                    let output = |h: std::thread::JoinHandle<_>| h.join().map_err(|_| std::io::Error::other(S::ErrorsFsNotResponding.en()));
+                    return Ok(Output { status, stdout: output(stdout)??, stderr: output(stderr)?? });
+                }
+            }
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, S::ErrorsFsNotResponding.en()));
+            }
+            std::thread::sleep(left.min(std::time::Duration::from_millis(50)));
         }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+    })();
+    if result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
     }
-    child.wait_with_output()
+    result
 }
 
 pub fn needs_login(out: &std::process::Output) -> bool {
@@ -180,6 +206,18 @@ pub fn connect(uri: &str) -> std::io::Result<PathBuf> {
     }
     let info = gio(&["info", uri], CONNECT_WAIT)?;
     local_path(&String::from_utf8_lossy(&info.stdout)).ok_or_else(|| std::io::Error::other(String::from_utf8_lossy(&mounted.stderr).trim().to_owned()))
+}
+
+pub fn mount_only(uri: &str) -> std::io::Result<()> {
+    let mounted = gio(&["mount", uri], CONNECT_WAIT)?;
+    if needs_login(&mounted) {
+        return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, S::ErrorsFsNeedsLogin.en()));
+    }
+    let said = String::from_utf8_lossy(&mounted.stderr);
+    if mounted.status.success() || said.contains("already mounted") {
+        return Ok(());
+    }
+    Err(std::io::Error::other(said.trim().to_owned()))
 }
 
 pub fn local_path_within(uri: &str, wait: std::time::Duration) -> std::io::Result<PathBuf> {

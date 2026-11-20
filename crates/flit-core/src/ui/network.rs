@@ -1,11 +1,14 @@
 use super::archive::Kind;
 use super::form::{Control, Form};
 use super::palette::{Palette, Pick};
-use super::App;
+use super::{App, Effect};
 use crate::i18n::S;
+use crate::location::ProviderId;
 use crate::open::Open;
 use crate::path::{FsPath, PathKind};
-use crate::provider::{Launch, LoginAsk, MountAnswer, MountAsk, MountReply, Password, ASK_ANONYMOUS, ASK_DOMAIN, ASK_PASSWORD, ASK_SAVING, ASK_USER};
+use crate::provider::{Launch, LoginAsk, MountAnswer, MountAsk, MountReply, Password, ProviderRequest, ASK_ANONYMOUS, ASK_DOMAIN, ASK_PASSWORD, ASK_SAVING, ASK_USER};
+use crate::render::{Color, Rect};
+use crate::text::{FontStyle, Gfx, TextBackend};
 
 const SCHEMES: [&str; 9] = ["smb", "sftp", "ssh", "ftp", "ftps", "dav", "davs", "afp", "nfs"];
 
@@ -19,7 +22,7 @@ pub fn server_uri(text: &str) -> Option<String> {
 
 pub(super) fn native_url(text: &str) -> bool {
     let scheme = text.split_once(':').map_or("", |(s, _)| s);
-    ["file", "trash", "recent"].iter().any(|s| scheme.eq_ignore_ascii_case(s)) || server_uri(text).is_some()
+    ["file", "trash", "recent"].iter().any(|s| scheme.eq_ignore_ascii_case(s)) || text.eq_ignore_ascii_case(crate::path::NETWORK_URI) || server_uri(text).is_some()
 }
 
 pub(super) fn split_remote(cmd: &Open) -> Option<(Vec<String>, Open)> {
@@ -35,6 +38,14 @@ pub(super) fn split_remote(cmd: &Open) -> Option<(Vec<String>, Open)> {
 }
 
 impl App {
+    pub(super) fn draw_network_notice<B: TextBackend>(&self, g: &mut Gfx<B>, area: Rect, text: &str, font: FontStyle, color: Color) {
+        let width = (area.w - self.cs(24.0)).max(1.0);
+        for (line, text) in super::update_dialog::wrapped(g, text, font, width).into_iter().enumerate() {
+            let w = g.measure(&text, font).min(width);
+            g.text(area.x + (area.w - w) / 2.0, area.y + self.cs(20.0) * line as f32, &text, font, color, width);
+        }
+    }
+
     pub(super) fn map_drive(&mut self) {
         let share = self.tab().view_loc.to_windows().filter(|p| p.kind() == PathKind::Unc);
         self.launch(Launch::MapDrive(share));
@@ -50,6 +61,33 @@ impl App {
             Some(uri) => self.launch(Launch::ConnectServer(uri)),
             None => self.status(S::SidebarDriveServerPrompt.t()),
         }
+    }
+
+    pub(super) fn open_network(&mut self, i: u32) {
+        let Some(address) = self.tab().view.as_ref().map(|v| String::from_utf8_lossy(v.listing().name(i)).into_owned()) else { return };
+        if address.contains("://") {
+            self.launch(Launch::ConnectServer(address));
+        }
+    }
+
+    fn network_server(&self, k: usize) -> Option<&FsPath> {
+        let here = self.tabs[k].location().path();
+        (self.caps.unix_paths && here.is_network() && here.components().count() == 1).then_some(here)
+    }
+
+    pub(super) fn network_listed(&mut self, k: usize) {
+        if self.network_server(k).is_some() {
+            self.tabs[k].network_login = false;
+        }
+    }
+
+    pub(super) fn ask_network_login(&mut self, k: usize) {
+        let Some(address) = self.network_server(k).and_then(|p| p.components().next()).and_then(|s| std::str::from_utf8(s).ok()).and_then(server_uri) else { return };
+        if std::mem::replace(&mut self.tabs[k].network_login, true) {
+            return;
+        }
+        let tab = self.tabs[k].id;
+        self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch: Launch::ConnectServer(address) } });
     }
 
     pub(super) fn mount_ask(&mut self, ask: MountAsk, answer: MountAnswer) {
