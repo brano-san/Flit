@@ -37,12 +37,31 @@ fn named_and_numpad_keys() {
 #[test]
 fn resize_edges_and_corners() {
     let size = (800.0, 600.0);
-    assert_eq!(resize_edge(400.0, 300.0, size, 5.0), None);
-    assert_eq!(resize_edge(400.0, 2.0, size, 5.0), Some(ResizeDirection::North));
-    assert_eq!(resize_edge(10.0, 2.0, size, 5.0), Some(ResizeDirection::NorthWest));
-    assert_eq!(resize_edge(798.0, 590.0, size, 5.0), Some(ResizeDirection::SouthEast));
-    assert_eq!(resize_edge(0.0, 300.0, size, 5.0), Some(ResizeDirection::West));
-    assert_eq!(resize_edge(400.0, 599.0, size, 5.0), Some(ResizeDirection::South));
+    assert_eq!(resize_edge(400.0, 300.0, size, 5.0, crate::tiling::Sides::ALL), None);
+    assert_eq!(resize_edge(400.0, 2.0, size, 5.0, crate::tiling::Sides::ALL), Some(ResizeDirection::North));
+    assert_eq!(resize_edge(10.0, 2.0, size, 5.0, crate::tiling::Sides::ALL), Some(ResizeDirection::NorthWest));
+    assert_eq!(resize_edge(798.0, 590.0, size, 5.0, crate::tiling::Sides::ALL), Some(ResizeDirection::SouthEast));
+    assert_eq!(resize_edge(0.0, 300.0, size, 5.0, crate::tiling::Sides::ALL), Some(ResizeDirection::West));
+    assert_eq!(resize_edge(400.0, 599.0, size, 5.0, crate::tiling::Sides::ALL), Some(ResizeDirection::South));
+}
+
+#[test]
+fn a_window_tiled_to_the_left_half_resizes_only_from_its_free_right_side() {
+    use crate::tiling::Sides;
+    let size = (800.0, 600.0);
+    let left_half = Sides { top: false, bottom: false, left: false, right: true };
+    assert_eq!(resize_edge(0.0, 300.0, size, 5.0, left_half), None);
+    assert_eq!(resize_edge(400.0, 2.0, size, 5.0, left_half), None);
+    assert_eq!(resize_edge(400.0, 599.0, size, 5.0, left_half), None);
+    assert_eq!(resize_edge(1.0, 1.0, size, 5.0, left_half), None);
+    assert_eq!(resize_edge(799.0, 300.0, size, 5.0, left_half), Some(ResizeDirection::East));
+    assert_eq!(resize_edge(799.0, 2.0, size, 5.0, left_half), Some(ResizeDirection::East), "a locked top turns the corner into the free side");
+    let top_locked = Sides { top: false, ..Sides::ALL };
+    assert_eq!(resize_edge(2.0, 10.0, size, 5.0, top_locked), Some(ResizeDirection::West));
+    assert_eq!(resize_edge(2.0, 595.0, size, 5.0, top_locked), Some(ResizeDirection::SouthWest));
+    for (x, y) in [(0.0, 0.0), (799.0, 0.0), (0.0, 599.0), (799.0, 599.0), (400.0, 0.0), (0.0, 300.0)] {
+        assert_eq!(resize_edge(x, y, size, 5.0, Sides::NONE), None);
+    }
 }
 
 #[test]

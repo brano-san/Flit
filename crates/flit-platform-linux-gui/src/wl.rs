@@ -30,6 +30,13 @@ pub struct Wl {
     state: State,
     manager: Option<WlDataDeviceManager>,
     activation: Option<XdgActivationV1>,
+    server_decorations: bool,
+}
+
+pub const DECORATION_MANAGER: &str = "zxdg_decoration_manager_v1";
+
+pub fn offers_server_decorations<'a>(interfaces: impl IntoIterator<Item = &'a str>) -> bool {
+    interfaces.into_iter().any(|name| name == DECORATION_MANAGER)
 }
 
 impl Wl {
@@ -42,11 +49,16 @@ impl Wl {
         let qh = queue.handle();
         let manager = globals.bind::<WlDataDeviceManager, _, _>(&qh, 2..=3, ()).ok();
         let activation = globals.bind::<XdgActivationV1, _, _>(&qh, 1..=1, ()).ok();
+        let server_decorations = globals.contents().with_list(|list| offers_server_decorations(list.iter().map(|g| g.interface.as_str())));
         let mut state = State::default();
         let seats = globals.contents().with_list(|list| list.iter().filter(|g| g.interface == WlSeat::interface().name).map(|g| (g.name, g.version.min(5))).collect::<Vec<_>>());
         state.seats = seats.into_iter().map(|(name, version)| (globals.registry().bind::<WlSeat, _, _>(name, version, &qh, ()), false, false)).collect();
         queue.roundtrip(&mut state).ok()?;
-        Some(Self { conn, queue, state, manager, activation })
+        Some(Self { conn, queue, state, manager, activation, server_decorations })
+    }
+
+    pub fn server_decorations(&self) -> bool {
+        self.server_decorations
     }
 
     pub fn pump(&mut self) {

@@ -900,3 +900,115 @@ fn with_one_panel_f6_still_toggles_the_sidebar() {
     assert_eq!(app.focus, Focus::List);
     assert_eq!(app.panels.list.len(), 1);
 }
+
+fn choose_title(app: &mut App, system: bool) {
+    let i = crate::ui::settings::index(crate::ui::settings::WINDOW_TITLE).unwrap();
+    assert!(crate::ui::settings::SETTINGS[i].set(app, crate::ui::settings::Value::Choice(usize::from(system))));
+}
+
+fn decorations_asked(app: &mut App) -> Vec<bool> {
+    app.drain_effects().filter_map(|e| if let Effect::Window(crate::ui::WindowCmd::ServerDecorations(on)) = e { Some(on) } else { None }).collect()
+}
+
+fn maximizing_double_click(app: &mut App) -> Option<(f32, f32)> {
+    let y = app.s(TAB_H) / 2.0;
+    let mut x = 0.0;
+    while x < 1200.0 {
+        if app.hit_test(x, y) == HitArea::Caption && app.hit(x, y) == Hit::None && !app.layout.title.contains(x, y) {
+            return Some((x, y));
+        }
+        x += 2.0;
+    }
+    None
+}
+
+fn linux_app() -> App {
+    let mut app = app_at("/tmp");
+    app.caps = crate::caps::Caps { unix_paths: true };
+    app
+}
+
+#[test]
+fn a_system_title_on_kde_hides_the_window_buttons_and_the_strip_stops_moving_the_window() {
+    let mut flit = linux_app();
+    ev(&mut flit, Event::ServerDecorations(true));
+    frame(&mut flit);
+    let (x, y) = maximizing_double_click(&mut flit).expect("the Flit title bar has empty strip space that moves the window");
+    let mut app = linux_app();
+    ev(&mut app, Event::ServerDecorations(true));
+    assert!(decorations_asked(&mut app).is_empty(), "Flit stays the default");
+    choose_title(&mut app, true);
+    assert_eq!(decorations_asked(&mut app), vec![true]);
+    assert!(app.system_title());
+    frame(&mut app);
+    assert!(app.panels.caption.iter().all(|r| r.w == 0.0), "the compositor draws the buttons");
+    assert_eq!(app.panels.right, 1200.0, "the tab strip reaches the window edge");
+    for px in (0..1200).step_by(3) {
+        let h = app.hit_test(px as f32, y);
+        assert!(matches!(h, HitArea::Client), "{px}: {h:?}");
+    }
+    assert!(!app.accessibility().nodes.iter().any(|n| n.name == S::A11yButtonClose.t()));
+    ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 2 });
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::Window(crate::ui::WindowCmd::ToggleMaximize))), "double clicks on the strip leave maximizing to the system title bar");
+    for l in app.order().into_iter().map(|id| layout_of(&app, id)) {
+        assert!(l.title.right() <= 1200.0 + 0.5);
+    }
+    choose_title(&mut app, false);
+    assert_eq!(decorations_asked(&mut app), vec![false], "switching back works without a restart");
+    frame(&mut app);
+    assert!(app.panels.caption.iter().all(|r| r.w > 0.0));
+    assert_eq!(app.hit_test(x, y), HitArea::Caption);
+}
+
+#[test]
+fn the_flit_title_bar_and_a_maximized_window_behave_as_before() {
+    let mut app = linux_app();
+    ev(&mut app, Event::ServerDecorations(true));
+    app.set_maximized(true);
+    frame(&mut app);
+    assert!(decorations_asked(&mut app).is_empty());
+    assert!(!app.system_title());
+    assert!(app.panels.caption.iter().all(|r| r.w > 0.0));
+    let caps = app.panels.caption;
+    assert_eq!(app.hit_test(caps[1].x + 1.0, 4.0), HitArea::Maximize);
+    let (x, y) = maximizing_double_click(&mut app).expect("empty strip space still moves the window");
+    ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 2 });
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Window(crate::ui::WindowCmd::ToggleMaximize))));
+}
+
+#[test]
+fn a_system_title_on_gnome_wayland_falls_back_to_flit_and_says_why() {
+    let mut app = linux_app();
+    let before = app.persisted();
+    choose_title(&mut app, true);
+    assert!(app.tab().error.is_none(), "settings read at startup, before the compositor answers, stay quiet");
+    ev(&mut app, Event::ServerDecorations(false));
+    assert!(decorations_asked(&mut app).is_empty());
+    assert!(!app.system_title());
+    frame(&mut app);
+    assert!(app.panels.caption.iter().all(|r| r.w > 0.0), "Flit keeps drawing its buttons");
+    let i = crate::ui::settings::index(crate::ui::settings::WINDOW_TITLE).unwrap();
+    let setting = &crate::ui::settings::SETTINGS[i];
+    assert!(!setting.enabled(&app), "the settings page shows the choice as unavailable");
+    assert_eq!(setting.get(&app), crate::ui::settings::Value::Choice(1), "the user's choice is kept for desktops that can draw frames");
+    assert_eq!(app.persisted(), before);
+    choose_title(&mut app, false);
+    choose_title(&mut app, true);
+    assert_eq!(app.tab().error.as_deref(), Some(S::SettingsStatusNoSystemTitle.t()));
+    assert!(decorations_asked(&mut app).is_empty());
+}
+
+#[test]
+fn windows_never_offers_the_title_setting_and_ignores_it_in_a_shared_settings_file() {
+    let mut app = app_at(r"C:\a");
+    assert!(!app.caps.unix_paths);
+    let i = crate::ui::settings::index(crate::ui::settings::WINDOW_TITLE).unwrap();
+    assert!(!crate::ui::settings::SETTINGS[i].offered(app.caps));
+    assert!(crate::ui::settings::SETTINGS[i].offered(crate::caps::Caps { unix_paths: true }));
+    let before = app.panels.caption;
+    choose_title(&mut app, true);
+    frame(&mut app);
+    assert!(decorations_asked(&mut app).is_empty());
+    assert_eq!(app.panels.caption, before);
+    assert!(app.tab().error.is_none());
+}

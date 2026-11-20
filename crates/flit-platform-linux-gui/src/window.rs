@@ -1,6 +1,7 @@
 use crate::apps::OpenWith;
 use crate::input::{self, Clicks};
 use crate::touch::Touch;
+use crate::tiling::Sides;
 use flit_core::input::{CursorIcon, Event, HitArea, Mods, MouseButton, WindowButtons};
 use flit_core::preview::{HostCmd, Hosted, MediaCmd};
 use flit_core::render::Rect;
@@ -154,6 +155,7 @@ static TEXT_SCALE_MILLI: AtomicU32 = AtomicU32::new(1000);
 static LOOK_DIRTY: AtomicBool = AtomicBool::new(false);
 static ICONS_DIRTY: AtomicBool = AtomicBool::new(false);
 static WINDOW_BUTTONS: Mutex<Option<WindowButtons>> = Mutex::new(None);
+static EDGES: Mutex<Vec<(WindowId, Sides)>> = Mutex::new(Vec::new());
 static BUTTONS_DIRTY: AtomicBool = AtomicBool::new(false);
 
 fn window_buttons() -> WindowButtons {
@@ -180,6 +182,18 @@ pub(crate) fn kde_accent_change(globals: &str, current: Option<flit_core::theme:
 
 fn system_accent() -> Option<flit_core::theme::Accent> {
     *ACCENT.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+pub(crate) fn server_frames(wayland: bool, offered: Option<bool>) -> bool {
+    !wayland || offered == Some(true)
+}
+
+fn x11_window(raw: &dyn winit::window::Window) -> Option<u32> {
+    match raw.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Xlib(h) => u32::try_from(h.window).ok(),
+        RawWindowHandle::Xcb(h) => Some(h.window.get()),
+        _ => None,
+    }
 }
 
 pub(crate) fn text_scale(wayland: bool, milli: u32) -> f32 {
@@ -475,6 +489,8 @@ pub struct LinuxWindow {
     volume: Cell<Option<f32>>,
     placed: Cell<Option<(u32, u32)>>,
     menu_replies: MenuReplies,
+    server: Cell<bool>,
+    free: Cell<Sides>,
 }
 
 #[derive(Clone)]
@@ -505,6 +521,8 @@ impl LinuxWindow {
             volume: Cell::new(None),
             placed: Cell::new(None),
             menu_replies: MenuReplies::default(),
+            server: Cell::new(false),
+            free: Cell::new(Sides::ALL),
         };
         window.cache_target(None);
         window
@@ -603,7 +621,7 @@ impl LinuxWindow {
 
     fn track_edge(&self, x: f32, y: f32) {
         let (w, h) = self.size.get();
-        let edge = if self.free_size() { input::resize_edge(x, y, (w as f32, h as f32), RESIZE_BORDER * self.scale.get()) } else { None };
+        let edge = if self.free_size() && !self.server.get() { input::resize_edge(x, y, (w as f32, h as f32), RESIZE_BORDER * self.scale.get(), self.free.get()) } else { None };
         if edge == self.edge.replace(edge) {
             return;
         }
@@ -861,6 +879,15 @@ impl Window for LinuxWindow {
         self.raw.set_theme(Some(if dark { Theme::Dark } else { Theme::Light }));
     }
 
+    fn set_server_decorations(&self, on: bool) {
+        if self.server.replace(on) == on {
+            return;
+        }
+        self.raw.set_decorations(on);
+        self.targets.borrow_mut().windows.retain(|w| w.target.id != self.id);
+        self.restore_cursor();
+    }
+
     fn set_compact(&self, on: Option<bool>) {
         let compact = self.compact_from.get().is_some();
         if on.unwrap_or(!compact) == compact {
@@ -942,7 +969,7 @@ impl WindowSystem for LinuxWindows {
 
     fn run<H: WindowHandler<Self>>(mut self, first: WindowOptions, handler: H) -> Result<(), PlatformError> {
         let commands: Commands = Rc::new(RefCell::new(vec![Command::Open(first)]));
-        let mut app = Loop { handler, nodes: Vec::new(), commands, targets: Rc::new(RefCell::new(TabWindows::new())), pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None, clip_text: None, wayland_selection: None, watching: false, outgoing: None, xds_wait: None };
+        let mut app = Loop { handler, nodes: Vec::new(), commands, targets: Rc::new(RefCell::new(TabWindows::new())), pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None, clip_text: None, wayland_selection: None, watching: false, outgoing: None, xds_wait: None, edges: None };
         LOOP_RUNNING.store(true, Ordering::Release);
         let ran = self.event_loop.run_app_on_demand(&mut app);
         LOOP_RUNNING.store(false, Ordering::Release);
@@ -979,6 +1006,7 @@ struct Loop<H> {
     watching: bool,
     outgoing: Option<DataTransferId>,
     xds_wait: Option<(DataTransferId, mpsc::Sender<crate::xds::Reply>)>,
+    edges: Option<mpsc::Sender<(WindowId, u32)>>,
 }
 
 struct Reading {
@@ -1385,11 +1413,22 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         let node = self.nodes.last().unwrap();
         self.handler.created(&node.window);
         self.handler.event(&node.window, Event::WindowButtons(window_buttons()));
+        let wayland = node.window.is_wayland();
+        self.handler.event(&node.window, Event::ServerDecorations(server_frames(wayland, self.wl.as_ref().map(crate::wl::Wl::server_decorations))));
+        self.ask_edges(self.nodes.len() - 1);
+        let node = self.nodes.last().unwrap();
         self.handler.event(&node.window, Event::Animations(animations()));
         self.handler.event(&node.window, Event::Accent(system_accent()));
         self.handler.event(&node.window, Event::TextScale(text_scale(node.window.is_wayland(), TEXT_SCALE_MILLI.load(Ordering::Acquire))));
         if let Some(text) = self.clip_text {
             self.handler.event(&node.window, Event::ClipboardText(text));
+        }
+    }
+
+    fn ask_edges(&self, i: usize) {
+        let (Some(edges), Some(node)) = (&self.edges, self.nodes.get(i)) else { return };
+        if let Some(xid) = x11_window(&*node.window.raw) {
+            let _ = edges.send((node.window.id, xid));
         }
     }
 
@@ -1784,6 +1823,12 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
             self.wl = wayland_display(el).and_then(crate::wl::Wl::connect);
         }
         self.watch_clipboard(el);
+        if self.edges.is_none() && !el.is_wayland() {
+            self.edges = crate::tiling::x11_watcher(|id, sides| {
+                EDGES.lock().unwrap_or_else(|e| e.into_inner()).push((id, sides));
+                wake_loop();
+            });
+        }
         static WARM: std::sync::Once = std::sync::Once::new();
         let x11 = !el.is_wayland();
         WARM.call_once(|| background("flit-xds", move || crate::xds::warm_up(x11)));
@@ -1833,6 +1878,11 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
                 self.handler.event(&node.window, Event::WindowButtons(buttons.clone()));
             }
         }
+        for (id, sides) in std::mem::take(&mut *EDGES.lock().unwrap_or_else(|e| e.into_inner())) {
+            if let Some(node) = self.nodes.iter().find(|n| n.window.id == id) {
+                node.window.free.set(sides);
+            }
+        }
         let queued = std::mem::take(&mut *QUEUED.lock().unwrap_or_else(|e| e.into_inner()));
         for (id, ev) in queued {
             if let Some(node) = self.nodes.iter().find(|n| n.window.id == id) {
@@ -1874,7 +1924,11 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
         }
         if let Some(i) = self.nodes.iter().position(|n| n.window.raw.id() == id) {
             if let Some(event) = self.drag_in(el, i, event) {
+                let placed = matches!(event, WindowEvent::Moved(_) | WindowEvent::SurfaceResized(_));
                 self.dispatch(i, event);
+                if placed {
+                    self.ask_edges(i);
+                }
             }
         }
         self.settle(el);

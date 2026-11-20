@@ -116,6 +116,36 @@ impl App {
         self.dirty = true;
     }
 
+    pub fn system_title(&self) -> bool {
+        self.system_title
+    }
+
+    pub(super) fn set_system_title_wanted(&mut self, on: bool) {
+        self.system_title_wanted = on;
+        if on && self.server_frames == Some(false) {
+            self.status(S::SettingsStatusNoSystemTitle.t());
+        }
+        self.sync_title();
+    }
+
+    pub(super) fn set_server_frames(&mut self, available: bool) {
+        self.server_frames = Some(available);
+        self.sync_title();
+    }
+
+    fn sync_title(&mut self) {
+        let on = self.system_title_wanted && self.server_frames == Some(true);
+        if on == self.system_title {
+            return;
+        }
+        self.system_title = on;
+        self.effects.push(Effect::Window(super::WindowCmd::ServerDecorations(on)));
+        self.hover = super::Hit::None;
+        self.pressed = super::Hit::None;
+        self.layout();
+        self.dirty = true;
+    }
+
     fn restyle(&mut self) {
         let l = &mut self.look;
         l.palette = match &l.contrast {

@@ -232,3 +232,11 @@ fn releasing_the_button_moving_or_regaining_focus_keeps_the_menu_that_is_still_b
     folder.send(context_reply(MenuKind::Folder, S::MenuOpenInNewTab)).unwrap();
     assert!(matches!(replies.ready(), Some(Event::ShowMenu { kind: MenuKind::Folder, .. })), "a click after a cancelled wait gets its own menu");
 }
+
+#[test]
+fn x11_window_managers_draw_frames_and_wayland_needs_the_decoration_manager() {
+    assert!(server_frames(false, None), "on X11 the window manager frames any window that asks for decorations");
+    assert!(server_frames(true, Some(true)), "KDE Plasma and wlroots advertise zxdg_decoration_manager_v1");
+    assert!(!server_frames(true, Some(false)), "GNOME on Wayland has no xdg-decoration, Flit keeps its own title bar");
+    assert!(!server_frames(true, None), "without a side Wayland connection nothing confirms server decorations");
+}

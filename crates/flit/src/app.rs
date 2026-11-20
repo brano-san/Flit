@@ -670,6 +670,7 @@ impl<P: Platform> Handler<P> {
                 Effect::Window(WindowCmd::Fullscreen) => window.toggle_fullscreen(),
                 Effect::Window(WindowCmd::Compact(on)) => window.set_compact(on),
                 Effect::Window(WindowCmd::Attention) => window.request_attention(),
+                Effect::Window(WindowCmd::ServerDecorations(on)) => window.set_server_decorations(on),
                 Effect::Notify(text) => window.notify(&text),
                 Effect::MoveTab { tab, at, last } => self.move_tab(window, tab, at, last),
                 Effect::TabOver(at) => self.tab_over(window, at),

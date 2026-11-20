@@ -126,9 +126,10 @@ fn options_list_every_group_in_order_with_every_setting_and_search_highlights_ma
     let groups: Vec<&str> = Page::ALL.iter().map(|p| p.title()).collect();
     let shown: Vec<&str> = lines.iter().map(String::as_str).filter(|l| groups.contains(l)).collect();
     assert_eq!(shown, groups);
-    for s in SETTINGS.iter().filter(|s| !matches!(s.kind, Kind::Keys(..) | Kind::Strings(..) | Kind::Menu(..))) {
+    for s in SETTINGS.iter().filter(|s| !matches!(s.kind, Kind::Keys(..) | Kind::Strings(..) | Kind::Menu(..)) && s.offered(a.caps)) {
         assert!(lines.iter().any(|l| l == s.id || *l == format!("off {}", s.id)), "{} is listed", s.id);
     }
+    assert!(!lines.iter().any(|l| l.ends_with(settings::WINDOW_TITLE)), "the Linux title bar choice is not offered on Windows");
     let at = |id: &str| lines.iter().position(|l| l == id || *l == format!("off {id}")).unwrap();
     assert!(at("appearance.font") < at("appearance.scale") && at("appearance.scale") < at(settings::SPACING) && at("appearance.system_scheme") < at("appearance.color_scheme"));
     assert!(at("files.show_hidden") < at("files.system") && at("files.auto_sizes") < at("files.sizes_ssd") && at("input.act_on_press") < at("input.char_key"));

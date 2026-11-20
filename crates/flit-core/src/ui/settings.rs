@@ -36,6 +36,8 @@ pub const BUILTIN_ARCHIVES: &str = "files.builtin_archives";
 pub const NEEDS_BUILTIN_ARCHIVES: [&str; 3] = ["general.menu_compress", "files.archives_as_folders", "files.archive_format"];
 pub const QUICK_ACCESS_SYNC: &str = "advanced.quick_access_sync";
 pub const WINDOWS_ONLY: [&str; 6] = [LONG_PATHS, QUICK_ACCESS_SYNC, "files.system", "files.streams", "general.menu_stream", "general.shell_submenu"];
+pub const WINDOW_TITLE: &str = "appearance.window_title";
+pub const LINUX_ONLY: [&str; 1] = [WINDOW_TITLE];
 
 fn browsed_archives_keep_builtin_handling(map: &mut Map<String, Json>) {
     if map.get("files.archives_as_folders") == Some(&Json::Bool(true)) {
@@ -252,6 +254,7 @@ const INSPECTOR_CHOICES: Choices = &[("auto", S::OptionsChoiceInspectorAuto), ("
 const NEW_TABS: [NewTabShow; 3] = [NewTabShow::Current, NewTabShow::Root, NewTabShow::Home];
 const NEW_TAB_CHOICES: Choices = &[("current", S::OptionsChoiceNewTabCurrent), ("root", S::OptionsChoiceNewTabRoot), ("home", S::OptionsChoiceNewTabHome)];
 const OPS_CHOICES: Choices = &[("during", S::SettingsChoiceOpsDuring), ("always", S::SettingsChoiceOpsAlways)];
+const TITLE_CHOICES: Choices = &[("flit", S::SettingsChoiceTitleFlit), ("system", S::SettingsChoiceTitleSystem)];
 const CLICKS: [ClickOpen; 4] = [ClickOpen::Never, ClickOpen::Touch, ClickOpen::Mouse, ClickOpen::Always];
 const CLICK_CHOICES: Choices = &[("never", S::SettingsChoiceClickNever), ("touch", S::SettingsChoiceClickTouch), ("mouse", S::SettingsChoiceClickMouse), ("always", S::SettingsChoiceClickAlways)];
 const AREA_HELP: S = S::SettingsHelpAreaColor;
@@ -312,6 +315,7 @@ pub static SETTINGS: &[Setting] = &[
     toggle("appearance.tab_actions", Page::Interface, S::SettingsTitleAppearanceTabActions, S::SettingsHelpAppearanceTabActions, |a| a.tab_actions_button, |a, on| a.tab_actions_button = on),
     choice("appearance.ops_button", Page::Interface, S::SettingsTitleAppearanceOpsButton, S::SettingsHelpAppearanceOpsButton, OPS_CHOICES, |a| usize::from(a.ops_button_always), |a, i| a.ops_button_always = i == 1),
     toggle("appearance.status_bar", Page::Interface, S::SettingsTitleAppearanceStatusBar, S::SettingsHelpAppearanceStatusBar, |a| a.prefs.status_bar, |a, on| a.set_pref(|p| &mut p.status_bar, on)),
+    choice(WINDOW_TITLE, Page::Interface, S::SettingsTitleAppearanceWindowTitle, S::SettingsHelpAppearanceWindowTitle, TITLE_CHOICES, |a| usize::from(a.system_title_wanted), |a, i| a.set_system_title_wanted(i == 1)),
     toggle("general.shell_submenu", Page::Menu, S::SettingsTitleGeneralShellSubmenu, S::SettingsHelpGeneralShellSubmenu, |a| !a.shell_items_inline, |a, on| a.shell_items_inline = !on),
     toggle("general.menu_open_tab", Page::Menu, S::SettingsTitleGeneralMenuOpenTab, S::SettingsHelpGeneralMenuOpenTab, |a| shown_in_menu(a, "item.open_tab"), |a, on| show_in_menu(a, "item.open_tab", on)),
     toggle("general.menu_open_window", Page::Menu, S::SettingsTitleGeneralMenuOpenWindow, S::SettingsHelpGeneralMenuOpenWindow, |a| shown_in_menu(a, "item.open_window"), |a, on| show_in_menu(a, "item.open_window", on)),
@@ -461,11 +465,11 @@ pub static SETTINGS: &[Setting] = &[
 
 impl Setting {
     pub fn offered(&self, caps: crate::caps::Caps) -> bool {
-        !caps.unix_paths || !WINDOWS_ONLY.contains(&self.id)
+        if caps.unix_paths { !WINDOWS_ONLY.contains(&self.id) } else { !LINUX_ONLY.contains(&self.id) }
     }
 
     pub fn enabled(&self, a: &App) -> bool {
-        self.id != LONG_PATHS && (a.builtin_archives || !NEEDS_BUILTIN_ARCHIVES.contains(&self.id))
+        self.id != LONG_PATHS && (a.builtin_archives || !NEEDS_BUILTIN_ARCHIVES.contains(&self.id)) && (self.id != WINDOW_TITLE || a.server_frames != Some(false))
     }
 
     pub fn get(&self, a: &App) -> Value {
