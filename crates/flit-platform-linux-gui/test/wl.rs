@@ -44,3 +44,12 @@ fn a_lost_display_connection_is_named_as_such_in_the_log() {
     assert!(text.contains("display server"), "{text}");
     assert!(!text.contains("Exit Failure"), "{text}");
 }
+
+#[test]
+fn only_the_xdg_decoration_global_means_the_compositor_can_draw_frames() {
+    let kwin = ["wl_compositor", "xdg_wm_base", "zxdg_decoration_manager_v1", "org_kde_kwin_server_decoration_manager"];
+    let mutter = ["wl_compositor", "xdg_wm_base", "gtk_shell1", "xdg_activation_v1"];
+    assert!(offers_server_decorations(kwin));
+    assert!(!offers_server_decorations(mutter));
+    assert!(!offers_server_decorations(["org_kde_kwin_server_decoration_manager"]), "winit asks only through xdg-decoration");
+}

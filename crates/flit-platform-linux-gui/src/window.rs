@@ -1,6 +1,7 @@
 use crate::apps::OpenWith;
 use crate::input::{self, Clicks};
 use crate::touch::Touch;
+use crate::tiling::{self, Sides};
 use flit_core::input::{CursorIcon, Event, HitArea, Mods, MouseButton, WindowButtons};
 use flit_core::preview::{HostCmd, Hosted, MediaCmd};
 use flit_core::render::Rect;
@@ -180,6 +181,22 @@ pub(crate) fn kde_accent_change(globals: &str, current: Option<flit_core::theme:
 
 fn system_accent() -> Option<flit_core::theme::Accent> {
     *ACCENT.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn server_frames(wayland: bool, offered: Option<bool>, x11: Option<bool>) -> Option<bool> {
+    if wayland { Some(offered.unwrap_or(false)) } else { x11 }
+}
+
+fn initial_decorations(wayland: bool, wanted: bool, x11: Option<bool>) -> bool {
+    !wayland && wanted && x11 == Some(true)
+}
+
+fn x11_window(raw: &dyn winit::window::Window) -> Option<u32> {
+    match raw.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Xlib(h) => u32::try_from(h.window).ok(),
+        RawWindowHandle::Xcb(h) => Some(h.window.get()),
+        _ => None,
+    }
 }
 
 pub(crate) fn text_scale(wayland: bool, milli: u32) -> f32 {
@@ -375,15 +392,21 @@ fn check_minimized<W: ?Sized>(windows: Vec<MinimizedCheck<W>>, is_minimized: imp
     returned();
 }
 
-fn next_target(previous: Option<(TabTarget, (f64, f64))>, id: WindowId, moved: Option<(f64, f64)>, size: (u32, u32), inset: impl FnOnce() -> (f64, f64), origin: impl FnOnce() -> Option<(f64, f64)>) -> Option<(TabTarget, (f64, f64))> {
+enum TargetGeometry {
+    Cached,
+    Moved(f64, f64),
+    Refresh,
+}
+
+fn next_target(previous: Option<(TabTarget, (f64, f64))>, id: WindowId, geometry: TargetGeometry, size: (u32, u32), inset: impl FnOnce() -> (f64, f64), origin: impl FnOnce() -> Option<(f64, f64)>) -> Option<(TabTarget, (f64, f64))> {
     let minimized = previous.is_some_and(|(t, _)| t.minimized);
-    match (moved, previous) {
-        (Some(at), previous) => {
-            let inset = previous.map_or_else(inset, |(_, inset)| inset);
-            Some((TabTarget { id, origin: (at.0 + inset.0, at.1 + inset.1), size, minimized }, inset))
+    match (geometry, previous) {
+        (TargetGeometry::Moved(x, y), _) => {
+            let inset = inset();
+            Some((TabTarget { id, origin: (x + inset.0, y + inset.1), size, minimized }, inset))
         }
-        (None, Some((target, inset))) => Some((TabTarget { size, ..target }, inset)),
-        (None, None) => {
+        (TargetGeometry::Cached, Some((target, inset))) => Some((TabTarget { size, ..target }, inset)),
+        (TargetGeometry::Refresh, _) | (TargetGeometry::Cached, None) => {
             let at = origin()?;
             let inset = inset();
             Some((TabTarget { id, origin: (at.0 + inset.0, at.1 + inset.1), size, minimized }, inset))
@@ -475,6 +498,9 @@ pub struct LinuxWindow {
     volume: Cell<Option<f32>>,
     placed: Cell<Option<(u32, u32)>>,
     menu_replies: MenuReplies,
+    server: Cell<bool>,
+    free: Cell<Sides>,
+    pointer: Cell<Option<(f32, f32)>>,
 }
 
 #[derive(Clone)]
@@ -485,7 +511,7 @@ struct ShownMedia {
 }
 
 impl LinuxWindow {
-    fn new(id: WindowId, raw: Arc<dyn winit::window::Window>, commands: Commands, targets: Rc<RefCell<TabWindows>>) -> Self {
+    fn new(id: WindowId, raw: Arc<dyn winit::window::Window>, commands: Commands, targets: Rc<RefCell<TabWindows>>, server: bool) -> Self {
         let size = raw.surface_size();
         let window = Self {
             id,
@@ -505,25 +531,27 @@ impl LinuxWindow {
             volume: Cell::new(None),
             placed: Cell::new(None),
             menu_replies: MenuReplies::default(),
+            server: Cell::new(server),
+            free: Cell::new(Sides::ALL),
+            pointer: Cell::new(None),
         };
-        window.cache_target(None);
+        window.cache_target(TargetGeometry::Cached);
         window
     }
 
-    fn cache_target(&self, position: Option<PhysicalPosition<i32>>) {
+    fn cache_target(&self, geometry: TargetGeometry) {
         if self.is_wayland() {
             return;
         }
         let mut targets = self.targets.borrow_mut();
         let tracked = targets.windows.iter().position(|w| w.target.id == self.id);
         let previous = tracked.map(|k| (TabTarget { minimized: targets.windows[k].minimized.get(), ..targets.windows[k].target }, targets.windows[k].inset));
-        let moved = position.map(|at| (f64::from(at.x), f64::from(at.y)));
         let inset = || {
             let inset = self.raw.surface_position();
             (f64::from(inset.x), f64::from(inset.y))
         };
         let origin = || self.raw.outer_position().ok().map(|at| (f64::from(at.x), f64::from(at.y)));
-        let Some((target, inset)) = next_target(previous, self.id, moved, self.size.get(), inset, origin) else { return };
+        let Some((target, inset)) = next_target(previous, self.id, geometry, self.size.get(), inset, origin) else { return };
         match tracked {
             Some(k) => {
                 targets.windows[k].target = target;
@@ -602,8 +630,9 @@ impl LinuxWindow {
     }
 
     fn track_edge(&self, x: f32, y: f32) {
+        self.pointer.set(Some((x, y)));
         let (w, h) = self.size.get();
-        let edge = if self.free_size() { input::resize_edge(x, y, (w as f32, h as f32), RESIZE_BORDER * self.scale.get()) } else { None };
+        let edge = if self.free_size() && !self.server.get() { input::resize_edge(x, y, (w as f32, h as f32), RESIZE_BORDER * self.scale.get(), self.free.get()) } else { None };
         if edge == self.edge.replace(edge) {
             return;
         }
@@ -614,6 +643,15 @@ impl LinuxWindow {
     fn restore_cursor(&self) {
         self.edge.set(None);
         self.raw.set_cursor(input::cursor(self.cursor.get()).into());
+    }
+
+    fn update_edges(&self, sides: Sides) {
+        if self.free.replace(sides) == sides {
+            return;
+        }
+        if let Some((x, y)) = self.pointer.get() {
+            self.track_edge(x, y);
+        }
     }
 
     fn leave_compact(&self) {
@@ -744,9 +782,13 @@ impl Window for LinuxWindow {
     }
 
     fn placement(&self) -> Placement {
-        let at = self.raw.outer_position().unwrap_or_default();
+        let (x, y) = if self.is_wayland() {
+            self.raw.outer_position().unwrap_or_default().into()
+        } else {
+            self.to_screen(0.0, 0.0)
+        };
         let (width, height) = self.compact_from.get().unwrap_or(self.normal_size.get());
-        Placement { x: at.x, y: at.y, width: width as i32, height: height as i32, maximized: self.raw.is_maximized() }
+        Placement { x, y, width: width as i32, height: height as i32, maximized: self.raw.is_maximized() }
     }
 
     fn clipboard_text(&self) -> Option<String> {
@@ -861,6 +903,15 @@ impl Window for LinuxWindow {
         self.raw.set_theme(Some(if dark { Theme::Dark } else { Theme::Light }));
     }
 
+    fn set_server_decorations(&self, on: bool) {
+        if self.server.replace(on) == on {
+            return;
+        }
+        self.raw.set_decorations(on);
+        self.cache_target(TargetGeometry::Refresh);
+        self.restore_cursor();
+    }
+
     fn set_compact(&self, on: Option<bool>) {
         let compact = self.compact_from.get().is_some();
         if on.unwrap_or(!compact) == compact {
@@ -942,7 +993,7 @@ impl WindowSystem for LinuxWindows {
 
     fn run<H: WindowHandler<Self>>(mut self, first: WindowOptions, handler: H) -> Result<(), PlatformError> {
         let commands: Commands = Rc::new(RefCell::new(vec![Command::Open(first)]));
-        let mut app = Loop { handler, nodes: Vec::new(), commands, targets: Rc::new(RefCell::new(TabWindows::new())), pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None, clip_text: None, wayland_selection: None, watching: false, outgoing: None, xds_wait: None };
+        let mut app = Loop { handler, nodes: Vec::new(), commands, targets: Rc::new(RefCell::new(TabWindows::new())), pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None, clip_text: None, wayland_selection: None, watching: false, outgoing: None, xds_wait: None, x11: None, x11_frames: None };
         LOOP_RUNNING.store(true, Ordering::Release);
         let ran = self.event_loop.run_app_on_demand(&mut app);
         LOOP_RUNNING.store(false, Ordering::Release);
@@ -958,6 +1009,15 @@ struct Node {
     window: LinuxWindow,
     clicks: Clicks,
     fingers: crate::touch::Fingers,
+    awaiting_placement: bool,
+}
+
+impl Node {
+    fn show_prepared_window(&mut self) {
+        if std::mem::take(&mut self.awaiting_placement) {
+            self.window.raw.set_visible(true);
+        }
+    }
 }
 
 struct Loop<H> {
@@ -979,6 +1039,8 @@ struct Loop<H> {
     watching: bool,
     outgoing: Option<DataTransferId>,
     xds_wait: Option<(DataTransferId, mpsc::Sender<crate::xds::Reply>)>,
+    x11: Option<tiling::Watcher>,
+    x11_frames: Option<bool>,
 }
 
 struct Reading {
@@ -1215,9 +1277,17 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             if commands.is_empty() {
                 break;
             }
-            for command in commands {
+            let mut commands = commands.into_iter();
+            while let Some(command) = commands.next() {
                 match command {
-                    Command::Open(opts) => self.open(el, opts),
+                    Command::Open(opts) => {
+                        self.x11_updates();
+                        if self.nodes.iter().any(|node| node.awaiting_placement) {
+                            self.commands.borrow_mut().splice(..0, std::iter::once(Command::Open(opts)).chain(commands));
+                            return;
+                        }
+                        self.open(el, opts);
+                    }
                     Command::Close(id) => self.close(id),
                     Command::Paste(id) => paste(el, id),
                     Command::Copy(text) => copy(el, text),
@@ -1360,13 +1430,17 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
     }
 
     fn open(&mut self, el: &dyn ActiveEventLoop, opts: WindowOptions) {
+        let server = initial_decorations(el.is_wayland(), opts.server_decorations, self.x11_frames);
+        let placement = opts.placement.filter(|p| p.width > 100 && p.height > 100);
+        let prepare_placement = self.x11.is_some() && self.x11_frames != Some(false) && opts.server_decorations && placement.is_some_and(|p| !p.maximized);
         let mut attrs = WindowAttributes::default()
             .with_title(opts.title)
-            .with_decorations(false)
+            .with_decorations(server)
+            .with_visible(!prepare_placement)
             .with_min_surface_size(LogicalSize::new(MIN_SIZE.0, MIN_SIZE.1))
             .with_theme(Some(if opts.dark { Theme::Dark } else { Theme::Light }))
             .with_platform_attributes(platform_attributes(el));
-        attrs = match opts.placement.filter(|p| p.width > 100 && p.height > 100) {
+        attrs = match placement {
             Some(p) => attrs.with_surface_size(PhysicalSize::new(p.width as u32, p.height as u32)).with_position(PhysicalPosition::new(p.x, p.y)).with_maximized(p.maximized),
             None => attrs.with_surface_size(LogicalSize::new(DEFAULT_SIZE.0, DEFAULT_SIZE.1)),
         };
@@ -1381,15 +1455,63 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
         enable_ime(&*raw);
         let id = self.next_id;
         self.next_id += 1;
-        self.nodes.push(Node { window: LinuxWindow::new(id, raw, self.commands.clone(), self.targets.clone()), clicks: Clicks::new(input::double_click()), fingers: Default::default() });
+        let awaiting_placement = prepare_placement && self.x11.as_ref().zip(x11_window(&*raw)).is_some_and(|(x11, xid)| x11.send(tiling::Command::PreparePlacement(id, xid)));
+        if prepare_placement && !awaiting_placement {
+            raw.set_visible(true);
+        }
+        self.nodes.push(Node { window: LinuxWindow::new(id, raw, self.commands.clone(), self.targets.clone(), server), clicks: Clicks::new(input::double_click()), fingers: Default::default(), awaiting_placement });
         let node = self.nodes.last().unwrap();
         self.handler.created(&node.window);
         self.handler.event(&node.window, Event::WindowButtons(window_buttons()));
+        let wayland = node.window.is_wayland();
+        if let Some(available) = server_frames(wayland, self.wl.as_ref().map(crate::wl::Wl::server_decorations), self.x11_frames) {
+            self.handler.event(&node.window, Event::ServerDecorations(available));
+        }
+        self.ask_edges(self.nodes.len() - 1);
         self.handler.event(&node.window, Event::Animations(animations()));
         self.handler.event(&node.window, Event::Accent(system_accent()));
         self.handler.event(&node.window, Event::TextScale(text_scale(node.window.is_wayland(), TEXT_SCALE_MILLI.load(Ordering::Acquire))));
         if let Some(text) = self.clip_text {
             self.handler.event(&node.window, Event::ClipboardText(text));
+        }
+    }
+
+    fn ask_edges(&self, i: usize) {
+        let (Some(x11), Some(node)) = (&self.x11, self.nodes.get(i)) else { return };
+        if let Some(xid) = x11_window(&*node.window.raw) {
+            x11.send(tiling::Command::Refresh(node.window.id, xid));
+        }
+    }
+
+    fn x11_updates(&mut self) {
+        let Some(x11) = &self.x11 else { return };
+        for update in x11.updates.try_iter() {
+            match update {
+                tiling::Update::ServerFrames(available) => {
+                    if self.x11_frames.replace(available) != Some(available) {
+                        for node in &self.nodes {
+                            self.handler.event(&node.window, Event::ServerDecorations(available));
+                        }
+                    }
+                }
+                tiling::Update::PlacementReady(id) => {
+                    if let Some(node) = self.nodes.iter_mut().find(|n| n.window.id == id) {
+                        node.show_prepared_window();
+                    }
+                }
+                tiling::Update::Edges(id, sides) => {
+                    if let Some(node) = self.nodes.iter().find(|n| n.window.id == id) {
+                        node.window.update_edges(sides);
+                    }
+                }
+                tiling::Update::Stopped => {
+                    self.x11_frames = Some(false);
+                    for node in &mut self.nodes {
+                        self.handler.event(&node.window, Event::ServerDecorations(false));
+                        node.show_prepared_window();
+                    }
+                }
+            }
         }
     }
 
@@ -1420,6 +1542,9 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
     fn close(&mut self, id: WindowId) {
         let Some(i) = self.nodes.iter().position(|n| n.window.id == id) else { return };
         let node = self.nodes.remove(i);
+        if let (Some(x11), Some(xid)) = (&self.x11, x11_window(&*node.window.raw)) {
+            x11.send(tiling::Command::Forget(xid));
+        }
         crate::atspi::closed(id);
         self.handler.destroyed(&node.window);
     }
@@ -1658,21 +1783,21 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             }
             WindowEvent::SurfaceResized(size) => {
                 w.resized(size);
-                w.cache_target(None);
+                w.cache_target(TargetGeometry::Cached);
                 handler.event(w, Event::Resized { width: size.width, height: size.height });
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 w.scale.set(scale_factor as f32);
                 handler.event(w, Event::ScaleChanged(scale_factor as f32));
             }
-            WindowEvent::Moved(position) => w.cache_target(Some(position)),
+            WindowEvent::Moved(position) => w.cache_target(TargetGeometry::Moved(f64::from(position.x), f64::from(position.y))),
             WindowEvent::Occluded(hidden) => {
-                w.cache_target(None);
+                w.cache_target(TargetGeometry::Cached);
                 w.occluded(hidden);
             }
             WindowEvent::CloseRequested => handler.event(w, Event::CloseRequested),
             WindowEvent::Focused(focused) => {
-                w.cache_target(None);
+                w.cache_target(TargetGeometry::Cached);
                 if focused {
                     w.focused();
                 }
@@ -1721,13 +1846,17 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                 w.track_edge(x, y);
                 handler.event(w, Event::MouseMove { x, y });
             }
-            WindowEvent::PointerEntered { .. } => w.restore_cursor(),
+            WindowEvent::PointerEntered { position, .. } => {
+                w.pointer.set(Some((position.x as f32, position.y as f32)));
+                w.restore_cursor();
+            }
             WindowEvent::PointerLeft { kind, .. } => {
                 if let PointerKind::Touch(finger_id) = kind {
                     if node.fingers.lost(finger_id.into_raw()) == Touch::Cancel {
                         handler.event(w, Event::TouchCancel);
                     }
                 }
+                w.pointer.set(None);
                 w.restore_cursor();
                 handler.event(w, Event::MouseLeave);
             }
@@ -1784,6 +1913,15 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
             self.wl = wayland_display(el).and_then(crate::wl::Wl::connect);
         }
         self.watch_clipboard(el);
+        if self.x11.is_none() && self.x11_frames.is_none() && !el.is_wayland() {
+            match tiling::Watcher::start(wake_loop) {
+                Ok(x11) => self.x11 = Some(x11),
+                Err(e) => {
+                    tracing::warn!("cannot start flit-x11-edges: {e}");
+                    self.x11_frames = Some(false);
+                }
+            }
+        }
         static WARM: std::sync::Once = std::sync::Once::new();
         let x11 = !el.is_wayland();
         WARM.call_once(|| background("flit-xds", move || crate::xds::warm_up(x11)));
@@ -1833,6 +1971,7 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
                 self.handler.event(&node.window, Event::WindowButtons(buttons.clone()));
             }
         }
+        self.x11_updates();
         let queued = std::mem::take(&mut *QUEUED.lock().unwrap_or_else(|e| e.into_inner()));
         for (id, ev) in queued {
             if let Some(node) = self.nodes.iter().find(|n| n.window.id == id) {
@@ -1874,7 +2013,11 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
         }
         if let Some(i) = self.nodes.iter().position(|n| n.window.raw.id() == id) {
             if let Some(event) = self.drag_in(el, i, event) {
+                let placed = matches!(event, WindowEvent::Moved(_) | WindowEvent::SurfaceResized(_));
                 self.dispatch(i, event);
+                if placed {
+                    self.ask_edges(i);
+                }
             }
         }
         self.settle(el);

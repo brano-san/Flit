@@ -34,6 +34,7 @@ mod text;
 mod touch;
 mod thumb;
 mod thumbnailers;
+mod tiling;
 mod turbo;
 mod udisks;
 mod update;

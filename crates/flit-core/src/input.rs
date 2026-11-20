@@ -133,6 +133,7 @@ pub enum Event {
     IconTheme,
     MouseSettings { double_click: std::time::Duration, wheel_lines: u32 },
     WindowButtons(WindowButtons),
+    ServerDecorations(bool),
     Invoke(u64),
     A11yFocus(u64),
     A11ySelect(u64),

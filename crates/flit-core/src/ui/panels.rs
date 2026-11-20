@@ -511,9 +511,10 @@ impl App {
         let top = self.s(TAB_H);
         let side = self.sidebar_width();
         let (cw, bw, pad) = (self.s(CAPTION_W), self.s(BUTTON_W), self.s(4.0));
+        let system_title = self.system_title;
         let p = &mut self.panels;
         p.caption.fill(Rect::default());
-        let mut seen = [false; 3];
+        let mut seen = [system_title; 3];
         let (mut left, mut right) = (0.0, 0.0);
         for (side, buttons) in [(false, &p.buttons.left), (true, &p.buttons.right)] {
             let buttons: Vec<_> = buttons.iter().copied().filter(|b| !std::mem::replace(&mut seen[b.index()], true)).collect();

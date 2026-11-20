@@ -362,6 +362,7 @@ pub enum WindowCmd {
     Fullscreen,
     Compact(Option<bool>),
     Attention,
+    ServerDecorations(bool),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
@@ -720,6 +721,9 @@ pub struct App {
     content_scale: u32,
     size: (f32, f32),
     maximized: bool,
+    pub(super) system_title_wanted: bool,
+    pub(super) server_frames: Option<bool>,
+    pub(super) system_title: bool,
     active: bool,
 
     tabs: Vec<Tab>,
@@ -859,6 +863,9 @@ impl App {
             content_scale: 100,
             size: (size.0 as f32, size.1 as f32),
             maximized: false,
+            system_title_wanted: false,
+            server_frames: None,
+            system_title: false,
             active: true,
             tabs: Vec::new(),
             cur: 0,
@@ -1780,7 +1787,7 @@ impl App {
             Hit::Caption(0) => HitArea::Minimize,
             Hit::Caption(1) => HitArea::Maximize,
             Hit::Caption(_) => HitArea::Close,
-            Hit::None if self.in_title(y) && self.parked_row_hit(x, y).is_none() => HitArea::Caption,
+            Hit::None if !self.system_title && self.in_title(y) && self.parked_row_hit(x, y).is_none() => HitArea::Caption,
             _ => HitArea::Client,
         }
     }
@@ -1852,6 +1859,7 @@ impl App {
             }
             Event::MouseSettings { double_click, wheel_lines } => (self.double_click, self.wheel_lines) = (*double_click, *wheel_lines),
             Event::WindowButtons(_) => {}
+            Event::ServerDecorations(on) => self.set_server_frames(*on),
             Event::Invoke(id) => self.a11y_invoke(*id, now),
             Event::A11yFocus(id) => self.a11y_focus(*id),
             Event::A11ySelect(id) => self.a11y_select(*id, now),

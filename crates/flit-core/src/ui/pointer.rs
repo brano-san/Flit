@@ -117,7 +117,7 @@ impl App {
             self.open_new_tab(now);
             return true;
         }
-        if self.in_title(y) {
+        if self.in_title(y) && !self.system_title {
             self.effects.push(Effect::Window(WindowCmd::ToggleMaximize));
             return true;
         }

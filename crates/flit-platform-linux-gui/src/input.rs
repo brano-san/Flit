@@ -201,10 +201,10 @@ pub(crate) fn cursor(icon: CursorIcon) -> WinitCursor {
     }
 }
 
-pub(crate) fn resize_edge(x: f32, y: f32, (w, h): (f32, f32), border: f32) -> Option<ResizeDirection> {
+pub(crate) fn resize_edge(x: f32, y: f32, (w, h): (f32, f32), border: f32, free: crate::tiling::Sides) -> Option<ResizeDirection> {
     let corner = border * RESIZE_CORNER_FACTOR;
-    let (left, right, top, bottom) = (x < border, x >= w - border, y < border, y >= h - border);
-    let (near_left, near_right, near_top, near_bottom) = (x < corner, x >= w - corner, y < corner, y >= h - corner);
+    let (left, right, top, bottom) = (free.left && x < border, free.right && x >= w - border, free.top && y < border, free.bottom && y >= h - border);
+    let (near_left, near_right, near_top, near_bottom) = (free.left && x < corner, free.right && x >= w - corner, free.top && y < corner, free.bottom && y >= h - corner);
     let direction = match () {
         _ if (top && near_left) || (left && near_top) => ResizeDirection::NorthWest,
         _ if (top && near_right) || (right && near_top) => ResizeDirection::NorthEast,

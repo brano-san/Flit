@@ -116,6 +116,7 @@ pub struct WindowOptions {
     pub title: String,
     pub placement: Option<Placement>,
     pub dark: bool,
+    pub server_decorations: bool,
 }
 
 pub type WindowId = u64;
@@ -170,6 +171,7 @@ pub trait Window {
     fn notify(&self, _text: &str) {}
     fn set_dark(&self, _dark: bool) {}
     fn set_compact(&self, _on: Option<bool>) {}
+    fn set_server_decorations(&self, _on: bool) {}
     fn host(&self, _cmd: HostCmd) {}
     fn share(&self, _paths: Vec<FsPath>) {}
     fn set_volume_label(&self, _drive: FsPath, _label: String) {}
