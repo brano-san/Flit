@@ -676,6 +676,7 @@ pub enum ProviderEvent {
     Unwatched { tab: TabId, gen: u64, limit: bool },
     Access { tab: TabId, id: OpId, items: Vec<Option<Access>>, accounts: Accounts },
     NotExecutable { tab: TabId, path: FsPath },
+    WrongPassphrase { tab: TabId, device: FsPath },
     OpenAsk { tab: TabId, path: FsPath, ask: OpenAsk },
     MountAsk { tab: TabId, ask: MountAsk, answer: MountAnswer },
     MountAskDone { tab: TabId, id: u64 },

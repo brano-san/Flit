@@ -71,11 +71,16 @@ pub struct PlatformError {
     pub code: i64,
     pub message: String,
     pub untrashable: Vec<FsPath>,
+    pub wrong_passphrase: bool,
 }
 
 impl PlatformError {
     pub fn new(code: i64, message: impl Into<String>) -> Self {
-        Self { code, message: message.into(), untrashable: Vec::new() }
+        Self { code, message: message.into(), untrashable: Vec::new(), wrong_passphrase: false }
+    }
+    pub fn wrong_passphrase(mut self) -> Self {
+        self.wrong_passphrase = true;
+        self
     }
     pub fn untrashable(mut self, items: Vec<FsPath>) -> Self {
         self.untrashable = items;

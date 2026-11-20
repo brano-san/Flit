@@ -103,6 +103,9 @@ impl Failure {
     }
 
     pub fn wrong_passphrase(&self) -> bool {
+        if !self.name.ends_with(".Error.Failed") {
+            return false;
+        }
         let m = self.message.to_ascii_lowercase();
         ["passphrase", "no key available", "not permitted"].iter().any(|w| m.contains(w))
     }
@@ -463,9 +466,24 @@ pub fn mount(device: &Path) -> io::Result<PathBuf> {
     Ok(mount_object(&target.object)?)
 }
 
+#[derive(Debug)]
+pub struct WrongPassphrase;
+
+impl std::fmt::Display for WrongPassphrase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(S::ErrorsFsWrongPassphrase.en())
+    }
+}
+
+impl std::error::Error for WrongPassphrase {}
+
+pub fn is_wrong_passphrase(e: &io::Error) -> bool {
+    e.get_ref().is_some_and(|inner| inner.is::<WrongPassphrase>())
+}
+
 pub fn unlock_error(f: Failure) -> io::Error {
     if f.wrong_passphrase() && !f.cancelled() {
-        io::Error::new(io::ErrorKind::PermissionDenied, S::ErrorsFsWrongPassphrase.en())
+        io::Error::new(io::ErrorKind::PermissionDenied, WrongPassphrase)
     } else {
         f.into()
     }

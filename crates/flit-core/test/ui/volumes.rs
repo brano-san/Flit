@@ -192,3 +192,36 @@ fn this_computer_mounts_an_unmounted_volume_and_offers_mount_unmount_and_eject()
     assert!(launches(&mut app).is_empty());
     assert_eq!(app.tab().location().path(), &p("/media/ann/STICK"));
 }
+
+#[test]
+fn a_wrong_passphrase_asks_again_and_other_unlock_failures_go_to_the_status_bar() {
+    use crate::provider::ProviderEvent;
+    let mut app = machine();
+    let i = side(&app, "/dev/sdd2");
+    app.open_side_item(i, false, Instant::now());
+    assert!(app.jobs.form.as_ref().is_some_and(|f| f.note.is_empty() && !f.error), "the first dialog carries no warning");
+    app.jobs.form.as_mut().unwrap().set_text(1, "wrong horse");
+    app.form_submit(0);
+    let tab = app.tab().id;
+    assert_eq!(launches(&mut app).len(), 1);
+    app.on_provider_event(ProviderEvent::WrongPassphrase { tab, device: p("/dev/sdd2") }, Instant::now());
+    let f = app.jobs.form.as_ref().expect("the passphrase is asked again");
+    assert!(matches!(&f.kind, Kind::Unlock { device } if *device == p("/dev/sdd2")));
+    assert!(matches!(&f.controls[0], Control::Value { value, .. } if value == "Encrypted volume (sdd2)"));
+    assert!(matches!(&f.controls[1], Control::Text { field, .. } if field.secret) && f.text(1).is_empty(), "the wrong passphrase is not kept");
+    assert_eq!((f.note.as_str(), f.error), (S::ErrorsFsWrongPassphrase.t(), true));
+    assert!(app.tab().error.is_none());
+    app.jobs.form.as_mut().unwrap().set_text(1, "correct horse");
+    app.form_submit(0);
+    assert_eq!(launches(&mut app), [Launch::Unlock { device: p("/dev/sdd2"), passphrase: Secret("correct horse".into()) }]);
+
+    app.on_provider_event(ProviderEvent::WrongPassphrase { tab, device: p("/dev/sdd2") }, Instant::now());
+    app.form_submit(1);
+    assert!(app.jobs.form.is_none() && launches(&mut app).is_empty(), "cancelling stops the attempts");
+
+    let busy = "Cannot unlock /dev/sdd2: The drive is in use".to_owned();
+    app.on_provider_event(ProviderEvent::OpDone { tab, id: 0, error: Some(busy.clone()), report: None }, Instant::now());
+    assert!(app.jobs.form.is_none(), "a busy, gone or forbidden volume does not ask for the passphrase again");
+    assert_eq!(app.tab().error.as_deref(), Some(busy.as_str()));
+    assert!(launches(&mut app).is_empty());
+}

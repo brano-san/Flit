@@ -826,7 +826,14 @@ impl Shell for LinuxShell {
     }
 
     fn unlock(&mut self, device: &FsPath, passphrase: &str) -> Result<FsPath, PlatformError> {
-        let point = crate::udisks::unlock(Path::new(os(device)), passphrase).map_err(|e| crate::places::drive_error(S::ErrorsFsUnlockFailed, Path::new(os(device)), &e))?;
+        let point = crate::udisks::unlock(Path::new(os(device)), passphrase).map_err(|e| {
+            let error = crate::places::drive_error(S::ErrorsFsUnlockFailed, Path::new(os(device)), &e);
+            if crate::udisks::is_wrong_passphrase(&e) {
+                error.wrong_passphrase()
+            } else {
+                error
+            }
+        })?;
         crate::xdg::fs_path(&point).ok_or_else(|| PlatformError::new(-1, "the mount point is not a valid path"))
     }
 

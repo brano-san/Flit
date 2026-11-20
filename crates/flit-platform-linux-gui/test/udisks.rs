@@ -167,12 +167,28 @@ fn failures_read_as_sentences_and_a_dismissed_password_prompt_is_silent() {
     let wrong = unlock_error(failure("org.freedesktop.UDisks2.Error.Failed", "Error unlocking /dev/sdb2: Failed to activate device: Incorrect passphrase."));
     assert_eq!((wrong.kind(), wrong.to_string()), (io::ErrorKind::PermissionDenied, S::ErrorsFsWrongPassphrase.en().to_owned()));
     assert_eq!(unlock_error(failure("org.freedesktop.UDisks2.Error.NotAuthorizedDismissed", "Not authorized")).kind(), io::ErrorKind::Interrupted);
+    assert!(is_wrong_passphrase(&wrong));
     assert_eq!(io::Error::from(failure("org.freedesktop.UDisks2.Error.Failed", "Operation not permitted")).kind(), io::ErrorKind::Other);
     let busy: io::Error = failure("org.freedesktop.UDisks2.Error.DeviceBusy", "target is busy").into();
     let shown = crate::places::eject_error(Path::new("/media/ann/STICK"), &busy).to_string();
     assert!(shown.starts_with("Cannot eject /media/ann/STICK: The drive is in use"), "{shown}");
     let quiet = crate::places::drive_error(S::ErrorsFsUnmountFailed, Path::new("/media/ann/STICK"), &io::Error::from(io::ErrorKind::Interrupted));
     assert_eq!(quiet.to_string(), flit_platform::CANCELLED);
+}
+
+#[test]
+fn only_a_rejected_passphrase_counts_as_wrong_and_other_unlock_failures_do_not() {
+    let wrong = |name: &str, message: &str| is_wrong_passphrase(&unlock_error(failure(name, message)));
+    assert!(wrong("org.freedesktop.UDisks2.Error.Failed", "Error unlocking /dev/sdb2: Failed to activate device: Incorrect passphrase."));
+    assert!(wrong("org.freedesktop.UDisks2.Error.Failed", "Error unlocking /dev/sdb2: Failed to activate device: Operation not permitted"));
+    assert!(wrong("org.freedesktop.UDisks2.Error.Failed", "Error unlocking /dev/sdb2: No key available with this passphrase."));
+    assert!(!wrong("org.freedesktop.UDisks2.Error.NotAuthorized", "Operation not permitted"), "no rights is not a wrong passphrase");
+    assert!(!wrong("org.freedesktop.UDisks2.Error.NotAuthorizedCanObtain", "Not authorized to perform operation"));
+    assert!(!wrong("org.freedesktop.UDisks2.Error.NotAuthorizedDismissed", "Not authorized"));
+    assert!(!wrong("org.freedesktop.UDisks2.Error.DeviceBusy", "Error unlocking /dev/sdb2: Device or resource busy"));
+    assert!(!wrong("org.freedesktop.UDisks2.Error.Failed", "Error unlocking /dev/sdb2: Device /dev/sdb2 is already unlocked as /dev/dm-0"));
+    assert!(!wrong("org.freedesktop.DBus.Error.UnknownObject", "No such object path '/org/freedesktop/UDisks2/block_devices/sdb2'"), "a removed stick is not a wrong passphrase");
+    assert!(!is_wrong_passphrase(&io::Error::new(io::ErrorKind::PermissionDenied, S::ErrorsFsWrongPassphrase.en())), "only the typed error counts, not its text");
 }
 
 #[test]

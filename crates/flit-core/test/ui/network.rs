@@ -132,7 +132,7 @@ fn cancel_and_escape_tell_gvfs_the_login_was_aborted() {
 #[test]
 fn a_request_while_another_dialog_is_open_is_dropped_instead_of_replacing_it() {
     let mut a = app();
-    a.ask_unlock(FsPath::parse("/dev/sdd2").unwrap(), "Encrypted volume");
+    a.ask_unlock(FsPath::parse("/dev/sdd2").unwrap(), "Encrypted volume", false);
     let (_, rx) = asked(&mut a, login_ask(ASK_PASSWORD));
     assert!(matches!(a.jobs.form.as_ref().map(|f| &f.kind), Some(Kind::Unlock { .. })), "the dialog the user is typing in stays");
     assert_eq!(rx.try_recv().err(), Some(TryRecvError::Disconnected), "the platform is not left waiting");
@@ -148,7 +148,7 @@ fn gvfs_withdrawing_a_request_closes_only_its_own_form() {
     a.on_provider_event(ProviderEvent::MountAskDone { tab, id }, Instant::now());
     assert!(a.jobs.form.is_none());
     assert_eq!(rx.try_recv().err(), Some(TryRecvError::Disconnected));
-    a.ask_unlock(FsPath::parse("/dev/sdd2").unwrap(), "Encrypted volume");
+    a.ask_unlock(FsPath::parse("/dev/sdd2").unwrap(), "Encrypted volume", false);
     a.on_provider_event(ProviderEvent::MountAskDone { tab, id }, Instant::now());
     assert!(a.jobs.form.is_some(), "an unrelated dialog is not closed");
 }

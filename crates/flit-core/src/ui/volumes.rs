@@ -7,7 +7,8 @@ use crate::archive::Secret;
 use crate::i18n::S;
 use crate::location::ProviderId;
 use crate::path::{FsPath, PathKind};
-use crate::provider::{Launch, ProviderRequest};
+use crate::provider::{Launch, ProviderRequest, TabId};
+use crate::name;
 
 const ENCRYPTED: [&str; 2] = ["crypto_LUKS", "BitLocker"];
 const SYSTEM_MOUNTS: [&[u8]; 2] = [b"/", b"/home"];
@@ -39,7 +40,7 @@ impl App {
         let Some(d) = self.drive_at(path).filter(|d| d.unmounted) else { return false };
         if d.locked() {
             let (device, title) = (d.path.clone(), d.title());
-            self.ask_unlock(device, &title);
+            self.ask_unlock(device, &title, false);
             return true;
         }
         let (tab, launch) = (self.tab().id, Launch::Mount(path.clone()));
@@ -71,12 +72,27 @@ impl App {
         self.drive_items(m, &path);
     }
 
-    pub(super) fn ask_unlock(&mut self, device: FsPath, title: &str) {
+    pub(super) fn ask_unlock(&mut self, device: FsPath, title: &str, wrong: bool) -> bool {
         if self.jobs.form.is_some() {
-            return;
+            return false;
         }
         let controls = vec![Control::value(S::SidebarDriveVolume.t(), title), Control::secret(S::SidebarDrivePassphrase.t(), "")];
-        self.open_form(Form::new(Kind::Unlock { device }, S::SidebarDriveUnlockTitle.t(), controls, vec![S::SidebarDriveUnlock.t(), S::SettingsPageDialogCancel.t()]));
+        let mut f = Form::new(Kind::Unlock { device }, S::SidebarDriveUnlockTitle.t(), controls, vec![S::SidebarDriveUnlock.t(), S::SettingsPageDialogCancel.t()]);
+        if wrong {
+            f.say(S::ErrorsFsWrongPassphrase.t(), true);
+        }
+        self.open_form(f);
+        true
+    }
+
+    pub(super) fn unlock_again(&mut self, tab: TabId, device: FsPath) {
+        let title = self.drive_at(&device).map_or_else(|| name::display(device.file_name()).into_owned(), Drive::title);
+        if self.ask_unlock(device, &title, true) {
+            return;
+        }
+        let k = self.tabs.iter().position(|t| t.id == tab).unwrap_or(self.cur);
+        self.tabs[k].error = Some(S::ErrorsFsWrongPassphrase.t().to_owned());
+        self.dirty |= k == self.cur;
     }
 
     pub(super) fn submit_unlock(&mut self, f: Form) -> Option<Form> {
