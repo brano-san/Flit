@@ -34,19 +34,25 @@ pub type OpenSink = Arc<std::sync::Mutex<Option<Sender<Open>>>>;
 
 pub struct MountPrompt {
     tab: TabId,
+    gen: Option<u64>,
     events: Sender<ProviderEvent>,
     wake: Wake,
 }
 
 impl MountPrompt {
     pub fn new(tab: TabId, events: Sender<ProviderEvent>, wake: Wake) -> Self {
-        Self { tab, events, wake }
+        Self { tab, gen: None, events, wake }
+    }
+
+    pub(crate) fn at_generation(mut self, gen: Option<u64>) -> Self {
+        self.gen = gen;
+        self
     }
 
     pub fn ask(&self, ask: MountAsk) -> (u64, std::sync::mpsc::Receiver<MountReply>) {
         let (answer, rx) = MountAnswer::new();
         let id = answer.id();
-        if self.events.send(ProviderEvent::MountAsk { tab: self.tab, ask, answer }).is_ok() {
+        if self.events.send(ProviderEvent::MountAsk { tab: self.tab, gen: self.gen, ask, answer }).is_ok() {
             (self.wake)();
         }
         (id, rx)

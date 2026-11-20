@@ -1,25 +1,45 @@
 use super::archive::Kind;
 use super::form::{Control, Form};
 use super::palette::{Palette, Pick};
-use super::App;
+use super::{App, Effect, Route};
 use crate::i18n::S;
+use crate::location::{Location, ProviderId};
+use crate::open::OpenTarget;
+use std::time::Instant;
 use crate::open::Open;
 use crate::path::{FsPath, PathKind};
-use crate::provider::{Launch, LoginAsk, MountAnswer, MountAsk, MountReply, Password, ASK_ANONYMOUS, ASK_DOMAIN, ASK_PASSWORD, ASK_SAVING, ASK_USER};
+use crate::provider::{Launch, LoginAsk, MountAnswer, MountAsk, MountReply, Password, ProviderRequest, ASK_ANONYMOUS, ASK_DOMAIN, ASK_PASSWORD, ASK_SAVING, ASK_USER};
+use crate::render::{Color, Rect};
+use crate::text::{FontStyle, Gfx, TextBackend};
 
-const SCHEMES: [&str; 9] = ["smb", "sftp", "ssh", "ftp", "ftps", "dav", "davs", "afp", "nfs"];
+const SCHEMES: [&str; 11] = ["smb", "sftp", "ssh", "ftp", "ftps", "dav", "davs", "dav+sd", "davs+sd", "afp", "nfs"];
 
 pub fn server_uri(text: &str) -> Option<String> {
     let text = text.trim();
     let (scheme, rest) = text.split_once("://")?;
     let host = rest.split('/').next()?.rsplit('@').next()?;
-    let clean = !text.chars().any(|c| c.is_whitespace() || c.is_control());
+    let clean = !text.contains('\\') && !text.chars().any(|c| c.is_whitespace() || c.is_control());
     (SCHEMES.contains(&scheme.to_ascii_lowercase().as_str()) && !host.is_empty() && clean).then(|| text.to_owned())
+}
+
+pub(super) fn network_entry(name: &[u8]) -> Option<Location> {
+    let uri = server_uri(std::str::from_utf8(name).ok()?)?;
+    FsPath::network_server(uri.as_bytes()).map(Location::from_local)
+}
+
+pub(super) fn network_address(path: &FsPath) -> Option<String> {
+    (path.is_network() && !path.is_root()).then_some(())?;
+    let mut parts = path.components();
+    let uri = std::str::from_utf8(parts.next()?).ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    server_uri(uri)
 }
 
 pub(super) fn native_url(text: &str) -> bool {
     let scheme = text.split_once(':').map_or("", |(s, _)| s);
-    ["file", "trash", "recent"].iter().any(|s| scheme.eq_ignore_ascii_case(s)) || server_uri(text).is_some()
+    ["file", "trash", "recent"].iter().any(|s| scheme.eq_ignore_ascii_case(s)) || text.eq_ignore_ascii_case(crate::path::NETWORK_URI) || server_uri(text).is_some()
 }
 
 pub(super) fn split_remote(cmd: &Open) -> Option<(Vec<String>, Open)> {
@@ -35,6 +55,14 @@ pub(super) fn split_remote(cmd: &Open) -> Option<(Vec<String>, Open)> {
 }
 
 impl App {
+    pub(super) fn draw_network_notice<B: TextBackend>(&self, g: &mut Gfx<B>, area: Rect, text: &str, font: FontStyle, color: Color) {
+        let width = (area.w - self.cs(24.0)).max(1.0);
+        for (line, text) in super::update_dialog::wrapped(g, text, font, width).into_iter().enumerate() {
+            let w = g.measure(&text, font).min(width);
+            g.text(area.x + (area.w - w) / 2.0, area.y + self.cs(20.0) * line as f32, &text, font, color, width);
+        }
+    }
+
     pub(super) fn map_drive(&mut self) {
         let share = self.tab().view_loc.to_windows().filter(|p| p.kind() == PathKind::Unc);
         self.launch(Launch::MapDrive(share));
@@ -49,6 +77,50 @@ impl App {
         match server_uri(text).or(share) {
             Some(uri) => self.launch(Launch::ConnectServer(uri)),
             None => self.status(S::SidebarDriveServerPrompt.t()),
+        }
+    }
+
+    pub(super) fn open_network(&mut self, i: u32, now: Instant) {
+        let folder = self.tab().entry_location(i);
+        if network_address(folder.path()).is_some() {
+            self.dispatch_entries(vec![Route { folder, select: None }], OpenTarget::CurrentTab, now);
+        }
+    }
+
+    pub fn activate_network_tabs(&mut self) {
+        for k in 0..self.tabs.len() {
+            self.begin_network(k);
+        }
+    }
+
+    pub(super) fn begin_network(&mut self, k: usize) {
+        let t = &mut self.tabs[k];
+        let Some(uri) = network_address(t.location().path()).filter(|_| self.caps.unix_paths) else { return };
+        t.slot.take();
+        self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab: t.id, launch: Launch::ConnectNetwork { uri, gen: t.gen } } });
+    }
+
+    pub(super) fn network_connected(&mut self, k: usize, result: Result<Option<FsPath>, String>, now: Instant) {
+        match result {
+            Ok(Some(path)) if self.tabs[k].location().path() == &path => {
+                self.tabs[k].list_network(self.case, &mut self.effects);
+            }
+            Ok(Some(path)) => {
+                self.tabs[k].history.replace(Location::from_local(path));
+                self.tabs[k].drop_trail();
+                self.load_tab(k, None, now);
+                if k == self.cur {
+                    self.after_tab_change();
+                } else {
+                    self.strip.rev += 1;
+                }
+            }
+            result => {
+                self.load_tab(k, None, now);
+                if let Err(error) = result {
+                    self.tabs[k].error = Some(crate::i18n::localize(&error).into_owned());
+                }
+            }
         }
     }
 

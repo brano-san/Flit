@@ -756,6 +756,63 @@ fn a_hanging_share_never_blocks_local_listings() {
 }
 
 #[test]
+fn slow_network_discovery_publishes_to_the_ui_while_local_folders_stay_available() {
+    struct SlowDiscovery(crossbeam_channel::Receiver<()>);
+
+    impl Fs for SlowDiscovery {
+        fn read_dir(&self, path: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+            if self.remote(path) {
+                let dir = Meta { attrs: attr::DIR, ..Default::default() };
+                out.push(b"smb://nas/", dir);
+                if out.batch_done() && self.0.recv().is_ok() {
+                    out.push(b"sftp://nas/", dir);
+                }
+            } else {
+                out.push(b"local", Meta::default());
+            }
+            Ok(())
+        }
+
+        fn remote(&self, path: &FsPath) -> bool {
+            path.is_network()
+        }
+
+        fn seek_penalty(&self, _: &FsPath) -> Option<bool> {
+            None
+        }
+    }
+
+    use flit_core::ui::{App, Effect, Persisted};
+    let (release, gate) = bounded(0);
+    let (events, _) = unbounded();
+    let (wake, woke) = unbounded();
+    let provider = LocalProvider::new::<_, NoWatch, NoShell>(SlowDiscovery(gate), 1, events, Arc::new(move || { let _ = wake.send(()); })).unwrap();
+    let mut app = App::new(Persisted::default(), Vec::new(), 0, false, 1.0, (1000, 700), Instant::now());
+    app.set_caps(flit_core::caps::Caps { unix_paths: true });
+    app.drain_effects().for_each(drop);
+    assert!(app.run_action("nav.network", Instant::now()));
+    for effect in app.drain_effects() {
+        if let Effect::Provider { req, .. } = effect {
+            provider.submit(req);
+        }
+    }
+    woke.recv_timeout(Duration::from_secs(5)).expect("the first network batch wakes the UI");
+    app.poll();
+    assert_eq!(app.tab().rows(), 1);
+    let (local, cancel) = (Arc::new(SnapshotSlot::default()), GenToken::default());
+    cancel.set(1);
+    provider.submit(request(2, r"C:\here", &local, &cancel));
+    assert_eq!(wait_for(&local).listing.name(0), b"local");
+    release.send_timeout((), Duration::from_secs(5)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app.tab().rows() < 2 {
+        woke.recv_deadline(deadline).expect("the finished network list wakes the UI");
+        app.poll();
+    }
+    assert_eq!(app.tab().rows(), 2);
+}
+
+#[test]
 fn a_silent_share_reports_not_responding_until_it_answers() {
     let (release, gate) = bounded::<()>(0);
     let fs: Arc<dyn Fs> = Arc::new(HangFs(Mutex::new(Some(gate))));

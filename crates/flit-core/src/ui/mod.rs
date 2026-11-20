@@ -415,6 +415,7 @@ pub enum Effect {
     Cursor(CursorIcon),
     Title(String),
     NewWindow(Vec<Route>),
+    NewNetworkWindow(Vec<Route>),
     Open(Open),
     SetClipboardFiles { paths: Vec<FsPath>, cut: bool },
     LinkChoices { generation: u64, items: Option<Vec<FsPath>>, dest: FsPath },
@@ -606,6 +607,7 @@ enum Drag {
     PlaceMove { from: usize, to: usize },
     Preview { hit: preview_pane::PaneHit, start: f32, size: f32 },
     Marquee,
+    Network,
     Tab { origin: usize, x: f32, y: f32, moved: bool, torn: bool },
     PanelSep { sep: usize, start: f32, first: f32 },
     Slide(usize),
@@ -1144,7 +1146,15 @@ impl App {
         }
     }
 
-    pub fn dispatch(&mut self, mut routes: Vec<Route>, target: OpenTarget, now: Instant) {
+    pub fn dispatch(&mut self, routes: Vec<Route>, target: OpenTarget, now: Instant) {
+        self.dispatch_routes(routes, target, false, now);
+    }
+
+    fn dispatch_entries(&mut self, routes: Vec<Route>, target: OpenTarget, now: Instant) {
+        self.dispatch_routes(routes, target, true, now);
+    }
+
+    fn dispatch_routes(&mut self, mut routes: Vec<Route>, target: OpenTarget, connect: bool, now: Instant) {
         if routes.is_empty() {
             return;
         }
@@ -1152,18 +1162,30 @@ impl App {
         routes.truncate(MAX_ROUTES);
         routes.iter_mut().for_each(|r| r.folder.canonicalize(&self.nav.sidebar.places.wsl));
         match target {
-            OpenTarget::NewWindow => self.effects.push(Effect::NewWindow(routes)),
+            OpenTarget::NewWindow => {
+                let network = connect && self.caps.unix_paths && routes.iter().any(|r| network::network_address(r.folder.path()).is_some());
+                self.effects.push(if network { Effect::NewNetworkWindow(routes) } else { Effect::NewWindow(routes) });
+            }
             OpenTarget::CurrentTab => {
                 let mut it = routes.into_iter();
                 let first = it.next().unwrap();
                 self.route_here(first, now);
+                if connect {
+                    self.begin_network(self.cur);
+                }
                 for r in it {
                     self.add_tab_like_current(r, now);
+                    if connect {
+                        self.begin_network(self.cur);
+                    }
                 }
             }
             OpenTarget::NewTab | OpenTarget::Default => {
                 for r in routes {
                     self.add_tab_like_current(r, now);
+                    if connect {
+                        self.begin_network(self.cur);
+                    }
                 }
             }
         }
@@ -1276,6 +1298,7 @@ impl App {
 
     pub fn refresh(&mut self, now: Instant) {
         self.reload(self.cur, now);
+        self.begin_network(self.cur);
     }
 
     fn reload(&mut self, k: usize, now: Instant) {
@@ -1293,6 +1316,9 @@ impl App {
             let name = name::display(t.view.as_ref().unwrap().listing().name(i)).into_owned();
             self.tab_mut().error = Some(crate::tr!(S::UiInRecycleBin, name = name));
             return;
+        }
+        if self.caps.unix_paths && t.view_loc.path().is_network() {
+            return self.open_network(i, now);
         }
         let e = t.view.as_ref().unwrap().listing().entries[i as usize];
         let loc = t.entry_location(i);
@@ -1315,10 +1341,28 @@ impl App {
         }
     }
 
+    pub(super) fn empty_text(&self, loc: &Location, filtered: bool) -> S {
+        if filtered {
+            S::UiEmptyFiltered
+        } else if loc.is_recycle_bin() {
+            S::UiEmptyBin
+        } else if self.caps.unix_paths && loc.path().is_network() {
+            if loc.path().is_root() { S::UiEmptyNetwork } else { S::UiEmptyNetworkConnect }
+        } else {
+            S::UiEmptyFolder
+        }
+    }
+
     fn open_selection(&mut self, now: Instant) {
         let t = self.tab();
         let Some(v) = &t.view else { return };
         let is_dir = |i: u32| v.listing().entries[i as usize].is_dir();
+        if self.caps.unix_paths && t.view_loc.path().is_network() {
+            if let Some(i) = v.focus.or_else(|| v.selected().next()) {
+                self.open_network(i, now);
+            }
+            return;
+        }
         if v.selected_count() > 1 && !t.view_loc.is_recycle_bin() {
             return self.open_many(now);
         }
@@ -1437,7 +1481,19 @@ impl App {
             ProviderEvent::Untrashable { id, items, .. } => self.offer_delete(id, items),
             ProviderEvent::Navigate { tab, path } => {
                 if self.tab().id == tab {
-                    self.navigate(Location::from_local(path), now);
+                    if network::network_address(&path).is_some() {
+                        self.route_here(Route { folder: Location::from_local(path), select: None }, now);
+                        let t = &mut self.tabs[self.cur];
+                        t.slot.take();
+                        t.list_network(self.case, &mut self.effects);
+                    } else {
+                        self.navigate(Location::from_local(path), now);
+                    }
+                }
+            }
+            ProviderEvent::NetworkConnected { tab, gen, result } => {
+                if let Some(k) = tab_of(&self.tabs, tab, gen) {
+                    self.network_connected(k, result, now);
                 }
             }
             ProviderEvent::Reveal { tab, path, new_tab } => {
@@ -1469,7 +1525,13 @@ impl App {
             ProviderEvent::NotExecutable { tab, path } => self.ask_allow_run(tab, path),
             ProviderEvent::WrongPassphrase { tab, device } => self.unlock_again(tab, device),
             ProviderEvent::OpenAsk { tab, path, ask } => self.open_ask(tab, path, ask),
-            ProviderEvent::MountAsk { ask, answer, .. } => self.mount_ask(ask, answer),
+            ProviderEvent::MountAsk { tab, gen, ask, answer } => {
+                if gen.is_none_or(|gen| tab_of(&self.tabs, tab, gen).is_some()) {
+                    self.mount_ask(ask, answer);
+                } else {
+                    answer.send(crate::provider::MountReply::Cancel);
+                }
+            }
             ProviderEvent::MountAskDone { id, .. } => self.mount_ask_done(id),
             ProviderEvent::Denied { tab, error } => self.admin_denied(tab, &error, now),
         }
@@ -2000,6 +2062,9 @@ impl App {
                 return self.drag_place(from, y);
             }
             Drag::Tab { .. } => return self.drag_tab(x, y),
+            Drag::Network => {
+                return self.set_cursor(if self.network_drop_target(x, y) { CursorIcon::Hand } else { CursorIcon::Default });
+            }
             Drag::Preview { hit, start, size } => return self.preview_drag(hit, x, y, start, size),
             Drag::PanelSep { sep, start, first } => return self.drag_sep(sep, x, y, start, first),
             Drag::Slide(k) => return self.slide_setting(k, x),
@@ -2048,7 +2113,7 @@ impl App {
     }
 
     fn mouse_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8, now: Instant) {
-        if matches!(self.drag, Drag::Tab { .. }) {
+        if matches!(self.drag, Drag::Tab { .. } | Drag::Network) {
             return;
         }
         self.dirty = true;
@@ -2148,7 +2213,7 @@ impl App {
     }
 
     fn mouse_up(&mut self, x: f32, y: f32, button: MouseButton, now: Instant) {
-        if button != MouseButton::Left && matches!(self.drag, Drag::Tab { .. }) {
+        if button != MouseButton::Left && matches!(self.drag, Drag::Tab { .. } | Drag::Network) {
             return;
         }
         if let Some(f) = &mut self.jobs.form {
@@ -2164,6 +2229,14 @@ impl App {
         let pressed = std::mem::replace(&mut self.pressed, Hit::None);
         self.dirty = true;
         self.release_header();
+        if was == Drag::Network {
+            let routes = std::mem::take(&mut self.ops.network_drag);
+            self.set_cursor(CursorIcon::Default);
+            if self.network_drop_target(x, y) {
+                self.open_entries_in_tabs(routes, now);
+            }
+            return;
+        }
         if let Drag::ColMove { col, x, .. } = was {
             return self.drop_column(col, x);
         }
@@ -2195,6 +2268,14 @@ impl App {
             return;
         }
         self.click(h, x, y, now);
+    }
+
+    fn network_drop_target(&self, x: f32, y: f32) -> bool {
+        match self.hit(x, y) {
+            Hit::Tab(_) | Hit::TabClose(_) | Hit::NewTab => true,
+            Hit::None => self.layout.title.contains(x, y),
+            _ => false,
+        }
     }
 
     fn click(&mut self, h: Hit, x: f32, y: f32, now: Instant) {
@@ -2325,8 +2406,16 @@ impl App {
     }
 
     fn open_in_tabs(&mut self, routes: Vec<Route>, now: Instant) {
+        self.open_routes_in_tabs(routes, false, now);
+    }
+
+    fn open_entries_in_tabs(&mut self, routes: Vec<Route>, now: Instant) {
+        self.open_routes_in_tabs(routes, true, now);
+    }
+
+    fn open_routes_in_tabs(&mut self, routes: Vec<Route>, connect: bool, now: Instant) {
         let back = self.cur;
-        self.dispatch(routes, OpenTarget::NewTab, now);
+        self.dispatch_routes(routes, OpenTarget::NewTab, connect, now);
         if !self.switch_to_new_tab && self.cur != back {
             self.select_tab(back);
         }
@@ -2334,6 +2423,11 @@ impl App {
 
     fn key(&mut self, key: Key, m: Mods, now: Instant) {
         self.dirty = true;
+        if key == Key::Escape && self.drag == Drag::Network {
+            self.drag = Drag::None;
+            self.ops.network_drag.clear();
+            return self.set_cursor(CursorIcon::Default);
+        }
         if self.field_menu_key(key, m) || self.jobs_key(key, m) || self.settings_key(key, m) || self.ops_key(key, m) || self.strip_key(key) || self.inspector_key(key, m) {
             return;
         }
@@ -3023,16 +3117,14 @@ impl App {
             if let Some(e) = v.snap().error.as_ref().filter(|_| v.total_rows() == 0) {
                 self.draw_unavailable(g, t, list, e);
             } else if v.rows().is_empty() && v.groups().is_empty() && v.snap().done {
-                let msg = if v.is_filtered() {
-                    S::UiEmptyFiltered
-                } else if in_bin {
-                    S::UiEmptyBin
+                let msg = self.empty_text(&tab.view_loc, v.is_filtered());
+                let y = list.y + self.cs(40.0);
+                if matches!(msg, S::UiEmptyNetwork | S::UiEmptyNetworkConnect) {
+                    self.draw_network_notice(g, Rect { y, ..list }, msg.t(), font, t.text_dim);
                 } else {
-                    S::UiEmptyFolder
+                    let w = g.measure(msg.t(), font);
+                    g.text(list.x + (list.w - w) / 2.0, y, msg.t(), font, t.text_dim, f32::INFINITY);
                 }
-                .t();
-                let w = g.measure(msg, font);
-                g.text(list.x + (list.w - w) / 2.0, list.y + self.cs(40.0), msg, font, t.text_dim, f32::INFINITY);
             }
             let loc = &tab.view_loc;
             let shell_dir = loc.to_windows();

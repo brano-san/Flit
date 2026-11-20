@@ -54,7 +54,12 @@ pub struct Session {
 
 impl Session {
     pub fn new(windows: Vec<(WindowSession, Option<Placement>)>, typed: Vec<String>) -> Self {
-        let windows = windows.into_iter().map(|(w, p)| (w, p.map(|p| (p.x, p.y, p.width, p.height, p.maximized)))).collect();
+        let windows = windows.into_iter().map(|(mut w, p)| {
+            for location in w.tabs.iter_mut().chain(&mut w.trails) {
+                *location = crate::state::compatible_location(location);
+            }
+            (w, p.map(|p| (p.x, p.y, p.width, p.height, p.maximized)))
+        }).collect();
         Self { version: VERSION, windows, typed }
     }
 

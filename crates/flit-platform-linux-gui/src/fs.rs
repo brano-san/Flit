@@ -69,6 +69,7 @@ impl Fs for LinuxGuiFs {
         match dir.kind() {
             PathKind::Computer => places::list_computer(out),
             PathKind::RecycleBin => places::list_trash(out),
+            PathKind::Shell if dir.is_network() => crate::network::read_dir(dir, out),
             _ => flit_archive::read_dir(dir, out, <crate::Linux as flit_platform::Platform>::utc_offset_minutes()).unwrap_or_else(|| LinuxFs.read_dir(dir, out)),
         }
     }
@@ -78,7 +79,7 @@ impl Fs for LinuxGuiFs {
     }
 
     fn remote(&self, path: &FsPath) -> bool {
-        LinuxFs.remote(path)
+        path.is_network() || LinuxFs.remote(path)
     }
 
     fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, DirStats) + Sync)) {

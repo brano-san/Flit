@@ -1,5 +1,5 @@
 use super::*;
-use crate::input::{Event, Mods};
+use crate::input::{Event, Key, Mods, MouseButton};
 use crate::location::Location;
 use crate::provider::{ProviderEvent, ProviderRequest};
 use crate::ui::{Drive, Effect, Persisted};
@@ -15,7 +15,7 @@ fn asked(a: &mut App, ask: MountAsk) -> (u64, Receiver<MountReply>) {
     let (answer, rx) = MountAnswer::new();
     let id = answer.id();
     let tab = a.tab().id;
-    a.on_provider_event(ProviderEvent::MountAsk { tab, ask, answer }, Instant::now());
+    a.on_provider_event(ProviderEvent::MountAsk { tab, gen: None, ask, answer }, Instant::now());
     (id, rx)
 }
 
@@ -258,4 +258,354 @@ fn a_disconnected_mapped_drive_says_so() {
     assert_eq!(d.title(), format!("share (\\\\nas) (Z:) \u{2014} {}", S::SidebarDriveOffline.t()));
     d.unmounted = false;
     assert_eq!(d.title(), r"share (\\nas) (Z:)");
+}
+
+const SAMPLE_SOURCE: &str = "gio list network:/// and smb://brano-2.local:445/ on WSL Ubuntu 22.04, gvfs 1.48.2, samba 4.15, avahi 0.8";
+
+fn linux() -> App {
+    let mut a = app();
+    a.set_caps(crate::caps::Caps { unix_paths: true });
+    a.drain_effects().for_each(drop);
+    a
+}
+
+fn listed(a: &mut App) -> Vec<FsPath> {
+    a.drain_effects().filter_map(|e| if let Effect::Provider { req: ProviderRequest::List { path, .. }, .. } = e { Some(path) } else { None }).collect()
+}
+
+fn publish(a: &mut App, done: bool, items: &[(&str, &str)], error: Option<crate::listing::FsError>) {
+    let mut listing = crate::listing::Listing::default();
+    let mut keys = crate::sort::SortKeys::new(crate::sort::CaseMode::Insensitive);
+    for &(uri, label) in items {
+        let i = listing.push(uri.as_bytes(), crate::listing::Meta { attrs: crate::listing::attr::DIR, ..Default::default() });
+        listing.set_label(i, label);
+        keys.push(listing.label(i));
+    }
+    let view = crate::sort::ViewSpec::default();
+    let mut order = Vec::new();
+    crate::sort::sort(&listing, &keys, view, &mut order);
+    let t = a.tab();
+    let snap = crate::listing::DirSnapshot { gen: t.gen, path: t.location().path().clone(), listing, keys, order, view, done, error, elapsed: std::time::Duration::from_millis(1) };
+    t.slot.publish(std::sync::Arc::new(snap));
+    a.poll();
+}
+
+fn rows(a: &App) -> Vec<String> {
+    let v = a.tab().view.as_ref().expect("a listing is shown");
+    v.rows().iter().map(|&i| String::from_utf8_lossy(v.listing().label(i)).into_owned()).collect()
+}
+
+fn entry(a: &App, label: &str) -> u32 {
+    let l = a.tab().view.as_ref().unwrap().listing();
+    (0..l.len() as u32).find(|&i| l.label(i) == label.as_bytes()).unwrap_or_else(|| panic!("{label} is not listed"))
+}
+
+fn in_network(a: &mut App) {
+    assert!(a.run_action("nav.network", Instant::now()), "Go to Network is offered");
+    assert_eq!(listed(a), [FsPath::network()], "opening Network asks the platform to look for computers");
+}
+
+const SERVERS: [(&str, &str); 4] = [
+    ("sftp://brano-2.local:22/", "Файлы на сервере"),
+    ("smb://brano-2.local:445/", "BRANO"),
+    ("dav+sd://Team%20DAV._webdav._tcp.local", "Team DAV"),
+    ("nfs://brano-2.local:2049/export", "nfs export"),
+];
+
+const SMB: &str = "smb://brano-2.local:445/";
+const SHARE: &str = "smb://brano-2.local/private";
+const WEB_DAV: &str = "dav+sd://Team%20DAV._webdav._tcp.local";
+
+fn denied() -> crate::listing::FsError {
+    crate::listing::FsError { kind: crate::listing::FsErrorKind::AccessDenied, code: 0 }
+}
+
+fn network_location(uri: &str) -> Location {
+    Location::from_local(FsPath::network_server(uri.as_bytes()).unwrap())
+}
+
+fn displayed_network() -> App {
+    let mut a = linux();
+    in_network(&mut a);
+    publish(&mut a, true, &SERVERS, None);
+    a.drain_effects().for_each(drop);
+    a
+}
+
+fn mount_started(a: &mut App, uri: &str) -> (u64, u64) {
+    let starts: Vec<_> = a.drain_effects().filter_map(|effect| match effect {
+        Effect::Provider { req: ProviderRequest::Launch { tab, launch: Launch::ConnectNetwork { uri, gen } }, .. } => Some((tab, gen, uri)),
+        Effect::Provider { req: ProviderRequest::List { path, .. }, .. } if path.is_network() => panic!("listed {} before mounting", path.display()),
+        _ => None,
+    }).collect();
+    assert_eq!(starts.len(), 1, "{starts:?}");
+    let (tab, gen, actual) = &starts[0];
+    assert_eq!(actual, uri);
+    let t = a.tabs().iter().find(|t| t.id == *tab).unwrap();
+    assert_eq!(t.location(), &network_location(uri));
+    (*tab, *gen)
+}
+
+fn mount_finished(a: &mut App, (tab, gen): (u64, u64), path: Option<FsPath>) {
+    a.on_provider_event(ProviderEvent::NetworkConnected { tab, gen, result: Ok(path) }, Instant::now());
+}
+
+fn coords(a: &mut App, name: &str) -> (f32, f32) {
+    a.layout();
+    let row = a.tab().view.as_ref().unwrap().row_of(entry(a, name)).unwrap();
+    let cell = a.row_rect(row).unwrap();
+    let (x, y) = (cell.x + 80.0, cell.y + cell.h / 2.0);
+    assert_eq!(a.hit(x, y), super::super::Hit::Row(row));
+    assert!(!a.on_checkbox(x, y));
+    (x, y)
+}
+
+fn down(a: &mut App, (x, y): (f32, f32), button: MouseButton, clicks: u8) {
+    a.on_event(&Event::MouseDown { x, y, button, clicks }, Instant::now());
+}
+
+fn select(a: &mut App, label: &str) {
+    let i = entry(a, label);
+    let v = a.tab_mut().view.as_mut().unwrap();
+    v.clear_selection();
+    v.focus = Some(i);
+    v.set_selected(i, true);
+}
+
+fn window_request(a: &mut App, uri: &str) -> App {
+    let routes = a.drain_effects().find_map(|e| if let Effect::NewNetworkWindow(routes) = e { Some(routes) } else { None }).expect("a new window connects the selected address");
+    assert_eq!(routes[0].folder, network_location(uri));
+    let mut win = App::new(Persisted::default(), routes, 100, false, 1.0, (1000, 700), Instant::now());
+    win.set_caps(a.caps);
+    win.activate_network_tabs();
+    win
+}
+
+fn password_for(a: &mut App, (tab, gen): (u64, u64)) -> Receiver<MountReply> {
+    let (answer, rx) = MountAnswer::new();
+    a.on_provider_event(ProviderEvent::MountAsk { tab, gen: Some(gen), ask: login_ask(ASK_PASSWORD), answer }, Instant::now());
+    rx
+}
+
+#[test]
+fn linux_network_lists_computers_as_they_are_found_and_f5_looks_again() {
+    let mut a = linux();
+    in_network(&mut a);
+    assert_eq!(a.tab().location(), &Location::Local(FsPath::network()));
+    publish(&mut a, false, &SERVERS[1..2], None);
+    assert_eq!(rows(&a), ["BRANO"], "{SAMPLE_SOURCE}: the first server shows while the search goes on");
+    publish(&mut a, true, &SERVERS, None);
+    assert_eq!(rows(&a), ["BRANO", "nfs export", "Team DAV", "Файлы на сервере"]);
+    a.on_event(&Event::Key { key: crate::input::Key::F(5), mods: Mods::default(), pressed: true }, Instant::now());
+    assert_eq!(listed(&mut a), [FsPath::network()], "F5 searches the network again");
+}
+
+#[test]
+fn typing_a_server_address_explicitly_connects_and_opens_its_list() {
+    let mut a = linux();
+    a.submit_address(SMB, Instant::now());
+    let cmd = a.drain_effects().find_map(|e| if let Effect::Open(cmd) = e { Some(cmd) } else { None }).unwrap();
+    a.open(&cmd, &|_| None, Instant::now());
+    assert_eq!(launches(&mut a), [Launch::ConnectServer(SMB.into())]);
+    let path = network_location(SMB).path().clone();
+    let tab = a.tab().id;
+    a.on_provider_event(ProviderEvent::Navigate { tab, path: path.clone() }, Instant::now());
+    assert_eq!(a.current_location().path(), &path);
+    assert_eq!(listed(&mut a), [path]);
+}
+
+#[test]
+fn double_clicking_a_computer_lists_shares_and_a_share_opens_its_mounted_folder() {
+    let mut a = displayed_network();
+    let at = coords(&mut a, "BRANO");
+    down(&mut a, at, MouseButton::Left, 2);
+    let started = mount_started(&mut a, SMB);
+    let server = network_location(SMB);
+    mount_finished(&mut a, started, Some(server.path().clone()));
+    assert_eq!(listed(&mut a), [server.path().clone()]);
+    publish(&mut a, true, &[(SHARE, "private")], None);
+    let at = coords(&mut a, "private");
+    down(&mut a, at, MouseButton::Left, 2);
+    let started = mount_started(&mut a, SHARE);
+    let mounted = FsPath::parse_exact(b"/run/user/1000/gvfs/smb-share:server=brano-2.local,share=private").unwrap();
+    mount_finished(&mut a, started, Some(mounted.clone()));
+    assert_eq!(a.current_location().path(), &mounted);
+    assert_eq!(listed(&mut a), [mounted]);
+}
+
+#[test]
+fn enter_on_several_selected_servers_connects_only_one() {
+    let mut a = displayed_network();
+    assert!(a.run_action("select.all", Instant::now()));
+    let v = a.tab().view.as_ref().unwrap();
+    let i = v.focus.or_else(|| v.selected().next()).unwrap();
+    let uri = std::str::from_utf8(v.listing().name(i)).unwrap().to_owned();
+    a.on_event(&Event::Key { key: Key::Enter, mods: Mods::default(), pressed: true }, Instant::now());
+    mount_started(&mut a, &uri);
+}
+
+#[test]
+fn open_in_new_tab_keeps_the_original_location_and_routes_to_the_right_mount() {
+    for (label, uri, destination) in [("BRANO", SMB, network_location(SMB).path().clone()), ("Team DAV", WEB_DAV, FsPath::parse("/run/user/1000/gvfs/dav:host=team").unwrap())] {
+        let mut a = displayed_network();
+        select(&mut a, label);
+        assert!(a.run_action("item.open_tab", Instant::now()));
+        let started = mount_started(&mut a, uri);
+        mount_finished(&mut a, started, Some(destination.clone()));
+        assert_eq!(a.tabs()[0].location().path(), &FsPath::network());
+        assert_eq!(a.tabs()[1].location().path(), &destination);
+    }
+}
+
+#[test]
+fn open_in_new_window_connects_the_address_in_the_new_window() {
+    let mut a = displayed_network();
+    select(&mut a, "Team DAV");
+    assert!(a.run_action("item.open_window", Instant::now()));
+    let mut win = window_request(&mut a, WEB_DAV);
+    let started = mount_started(&mut win, WEB_DAV);
+    let mounted = FsPath::parse("/run/user/1000/gvfs/dav:host=team").unwrap();
+    mount_finished(&mut win, started, Some(mounted.clone()));
+    assert_eq!(win.current_location().path(), &mounted);
+    assert_eq!(a.current_location().path(), &FsPath::network());
+}
+
+#[test]
+fn ctrl_double_click_connects_in_the_new_window() {
+    let mut a = displayed_network();
+    let at = coords(&mut a, "BRANO");
+    a.on_event(&Event::Key { key: Key::Other, mods: Mods { ctrl: true, ..Default::default() }, pressed: false }, Instant::now());
+    down(&mut a, at, MouseButton::Left, 2);
+    let mut win = window_request(&mut a, SMB);
+    let started = mount_started(&mut win, SMB);
+    let server = network_location(SMB);
+    mount_finished(&mut win, started, Some(server.path().clone()));
+    assert_eq!(win.current_location(), &server);
+    assert_eq!(listed(&mut win), [server.path().clone()]);
+}
+
+#[test]
+fn dragging_a_network_service_to_the_tab_strip_opens_the_mounted_path() {
+    let mut a = displayed_network();
+    let at = coords(&mut a, "nfs export");
+    let plus = a.layout.new_tab;
+    let (x, y) = (plus.x + plus.w / 2.0, plus.y + plus.h / 2.0);
+    down(&mut a, at, MouseButton::Left, 1);
+    a.on_event(&Event::MouseMove { x, y }, Instant::now());
+    a.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, Instant::now());
+    let started = mount_started(&mut a, "nfs://brano-2.local:2049/export");
+    let mounted = FsPath::parse("/run/user/1000/gvfs/nfs:host=brano-2.local").unwrap();
+    mount_finished(&mut a, started, Some(mounted.clone()));
+    assert_eq!(a.tabs()[1].location().path(), &mounted);
+}
+
+#[test]
+fn an_empty_network_says_nothing_was_found_and_how_to_search_again() {
+    let mut a = linux();
+    in_network(&mut a);
+    publish(&mut a, true, &[], None);
+    assert!(rows(&a).is_empty());
+    assert_eq!(a.empty_text(a.tab().location(), false), S::UiEmptyNetwork);
+    assert!(S::UiEmptyNetwork.en().contains("F5"));
+    assert_eq!(a.empty_text(&Location::Local(FsPath::home_page()), false), S::UiEmptyFolder, "ordinary empty folders keep their text");
+}
+
+#[test]
+fn network_without_browsers_points_to_missing_tools_in_settings() {
+    let mut a = linux();
+    in_network(&mut a);
+    publish(&mut a, true, &[], Some(crate::listing::FsError::no_network_browser()));
+    let shown = a.tab().view.as_ref().unwrap().snap().error.clone().expect("the error is shown");
+    assert_eq!(shown.to_string(), S::ErrorsFsNoNetworkBrowser.t());
+    assert!(S::ErrorsFsNoNetworkBrowser.en().contains("Settings"));
+    assert!(launches(&mut a).is_empty());
+}
+
+#[test]
+fn back_and_forward_reuse_cached_shares_and_reject_a_late_password_request() {
+    let mut a = displayed_network();
+    a.open_entry(entry(&a, "BRANO"), Instant::now());
+    let started = mount_started(&mut a, SMB);
+    let server = network_location(SMB);
+    mount_finished(&mut a, started, Some(server.path().clone()));
+    assert_eq!(listed(&mut a), [server.path().clone()]);
+    publish(&mut a, true, &[(SHARE, "private")], None);
+    a.go_history(false, Instant::now());
+    assert_eq!(listed(&mut a), [FsPath::network()]);
+    publish(&mut a, true, &SERVERS, None);
+    a.go_history(true, Instant::now());
+    a.poll();
+    assert_eq!(a.current_location(), &server);
+    assert_eq!(rows(&a), ["private"]);
+    let effects: Vec<_> = a.drain_effects().collect();
+    assert!(!effects.iter().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::List { .. } | ProviderRequest::Launch { .. }, .. })));
+    let late = password_for(&mut a, started);
+    assert!(matches!(late.try_recv(), Ok(MountReply::Cancel)));
+    assert!(a.jobs.form.is_none());
+}
+
+#[test]
+fn restoring_a_server_tab_shows_an_empty_page_that_offers_to_connect() {
+    let server = network_location(SMB);
+    let mut a = App::new(Persisted { path: server.clone(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 700), Instant::now());
+    a.set_caps(crate::caps::Caps { unix_paths: true });
+    a.restore_tabs(&[server.clone(), network_location("smb://other/")], 0);
+    for k in 0..2 {
+        a.select_tab(k);
+        a.poll();
+        assert!(rows(&a).is_empty());
+        assert_eq!(a.empty_text(a.current_location(), false), S::UiEmptyNetworkConnect);
+        assert!(!a.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::List { .. } | ProviderRequest::Launch { .. }, .. })));
+        assert!(a.jobs.form.is_none());
+    }
+}
+
+#[test]
+fn clicking_a_server_offers_login_and_f5_after_cancel_offers_it_again() {
+    let mut a = displayed_network();
+    let at = coords(&mut a, "BRANO");
+    down(&mut a, at, MouseButton::Left, 2);
+    let first = mount_started(&mut a, SMB);
+    let rx = password_for(&mut a, first);
+    assert!(a.jobs.form.is_some());
+    a.form_submit(1);
+    assert!(matches!(rx.try_recv(), Ok(MountReply::Cancel)));
+    mount_finished(&mut a, first, None);
+    a.poll();
+    assert!(a.jobs.form.is_none());
+    assert!(a.run_action("nav.refresh", Instant::now()));
+    let second = mount_started(&mut a, SMB);
+    assert_ne!(first, second);
+    let _reply = password_for(&mut a, second);
+    assert!(a.jobs.form.is_some());
+}
+
+#[test]
+fn windows_network_still_browses_servers_as_folders() {
+    let mut a = app();
+    a.drain_effects().for_each(drop);
+    in_network(&mut a);
+    publish(&mut a, true, &[("SRV", "SRV")], None);
+    a.open_entry(entry(&a, "SRV"), Instant::now());
+    let effects: Vec<Effect> = a.drain_effects().collect();
+    assert!(!effects.iter().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Launch { .. }, .. })), "Windows does not mount servers to open them");
+    let lists: Vec<&FsPath> = effects.iter().filter_map(|e| if let Effect::Provider { req: ProviderRequest::List { path, .. }, .. } = e { Some(path) } else { None }).collect();
+    assert_eq!(lists, [&FsPath::network_server(b"SRV").unwrap()]);
+    publish(&mut a, true, &[], None);
+    assert_eq!(a.empty_text(a.tab().location(), false), S::UiEmptyFolder, "Windows keeps its empty folder text");
+    publish(&mut a, true, &[], Some(denied()));
+    assert!(launches(&mut a).is_empty(), "Windows asks for passwords on its own");
+}
+
+#[test]
+fn the_linux_network_address_uses_a_native_location() {
+    let mut a = linux();
+    a.submit_address(crate::path::NETWORK_URI, Instant::now());
+    let effect = a.drain_effects().find_map(|e| if let Effect::Open(cmd) = e { Some(cmd) } else { None }).expect("the address is opened in Flit");
+    assert_eq!(effect.paths, [crate::path::NETWORK_URI.as_bytes()]);
+    assert_eq!(crate::open::resolve_for(&effect.paths[0], None, &|_| None, true), Ok(Location::Local(FsPath::network())));
+    in_network(&mut a);
+    assert_eq!(a.tab().crumbs.last().unwrap().0, S::PathNetwork.t());
+    a.open_address();
+    assert_eq!(a.nav.palette.as_ref().unwrap().field.text(), crate::path::NETWORK_URI);
 }

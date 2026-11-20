@@ -25,6 +25,7 @@ grant_button = "Continuar"
 grant_hint = "Haga clic en Continuar para obtener acceso permanente a esta carpeta como administrador."
 granting = "Obteniendo acceso a {what}"
 no_setfacl = "setfacl no está instalado. Instale el paquete {package}"
+no_network_browser = "La exploración de red no está disponible. Consulta las herramientas que faltan en Configuración."
 
 [title]
 encrypted = "Este archivo comprimido está cifrado"

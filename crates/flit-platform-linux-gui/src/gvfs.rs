@@ -32,6 +32,7 @@ const SMB_PORT: u16 = 445;
 const SSH_PORT: u16 = 22;
 const HTTP_PORT: u16 = 80;
 const HTTPS_PORT: u16 = 443;
+const FTP_PORT: u16 = 21;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Spec {
@@ -176,6 +177,16 @@ pub fn spec(uri: &str) -> Option<Spec> {
                 items.push(("user", user.clone()));
             }
             port(&mut items, if ssl { HTTPS_PORT } else { HTTP_PORT });
+            canonical(&p.path)
+        }
+        "dav+sd" | "davs+sd" | "ftp" | "nfs" => {
+            items.push(("type", p.scheme.as_bytes().to_vec()));
+            let ftp = p.scheme == "ftp";
+            items.push(("host", if ftp { unbracket(&p.host.to_ascii_lowercase()) } else { p.host.clone() }));
+            if let Some(user) = &p.user {
+                items.push(("user", user.clone()));
+            }
+            port(&mut items, if ftp { FTP_PORT } else { 0 });
             canonical(&p.path)
         }
         _ => return None,
@@ -538,15 +549,26 @@ pub fn mount(address: &str, server: &str, spec: &Spec, prompt: &MountPrompt, wai
     result
 }
 
+fn mount_uri(uri: &str, prompt: &MountPrompt) -> std::io::Result<Outcome> {
+    match (spec(uri), dbus::session_address()) {
+        (Some(spec), Some(address)) => mount(&address, &server(uri), &spec, prompt, crate::places::CONNECT_WAIT),
+        _ => Ok(Outcome::Unavailable),
+    }
+}
+
 pub fn connect(uri: &str, prompt: &MountPrompt) -> std::io::Result<Option<PathBuf>> {
-    let outcome = match (spec(uri), dbus::session_address()) {
-        (Some(spec), Some(address)) => mount(&address, &server(uri), &spec, prompt, crate::places::CONNECT_WAIT)?,
-        _ => Outcome::Unavailable,
-    };
-    match outcome {
+    match mount_uri(uri, prompt)? {
         Outcome::Unavailable => crate::places::connect(uri).map(Some),
         Outcome::Cancelled => Ok(None),
         Outcome::Mounted(left) => crate::places::local_path_within(uri, left.max(INFO_WAIT)).map(Some),
+    }
+}
+
+pub fn browse(uri: &str, prompt: &MountPrompt) -> std::io::Result<bool> {
+    match mount_uri(uri, prompt)? {
+        Outcome::Unavailable => crate::places::mount_only(uri).map(|()| true),
+        Outcome::Cancelled => Ok(false),
+        Outcome::Mounted(_) => Ok(true),
     }
 }
 

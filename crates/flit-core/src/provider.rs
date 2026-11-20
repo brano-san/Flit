@@ -222,6 +222,7 @@ pub enum Launch {
     MapDrive(Option<FsPath>),
     Disconnect(Option<FsPath>),
     ConnectServer(String),
+    ConnectNetwork { uri: String, gen: u64 },
     Reveal { item: FsPath, new_tab: bool },
     ChooseApp { files: Vec<FsPath>, mime: String, apps: Vec<AppChoice> },
     SetDefault { program: FsPath, mime: String },
@@ -259,7 +260,7 @@ impl Launch {
             Launch::Eject(drive) => Launch::Eject(f(drive)?),
             Launch::Unmount(drive) => Launch::Unmount(f(drive)?),
             Launch::Mount(_) | Launch::Unlock { .. } => self.clone(),
-            Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) => self.clone(),
+            Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) | Launch::ConnectNetwork { .. } => self.clone(),
             Launch::Reveal { item, new_tab } => Launch::Reveal { item: f(item)?, new_tab: *new_tab },
             Launch::ChooseApp { files, mime, apps } => {
                 let apps = apps.iter().map(|a| Some(AppChoice { name: a.name.clone(), program: f(&a.program)? })).collect::<Option<Vec<_>>>()?;
@@ -669,6 +670,7 @@ pub enum ProviderEvent {
     OpFailure { tab: TabId, id: OpId, failure: Failure },
     Untrashable { tab: TabId, id: OpId, items: Vec<FsPath> },
     Navigate { tab: TabId, path: FsPath },
+    NetworkConnected { tab: TabId, gen: u64, result: Result<Option<FsPath>, String> },
     Reveal { tab: TabId, path: FsPath, new_tab: bool },
     Hashed { tab: TabId, id: OpId, result: Result<Vec<String>, String> },
     Measured { tab: TabId, id: OpId, totals: Totals, file_system: Option<String>, done: bool },
@@ -678,7 +680,7 @@ pub enum ProviderEvent {
     NotExecutable { tab: TabId, path: FsPath },
     WrongPassphrase { tab: TabId, device: FsPath },
     OpenAsk { tab: TabId, path: FsPath, ask: OpenAsk },
-    MountAsk { tab: TabId, ask: MountAsk, answer: MountAnswer },
+    MountAsk { tab: TabId, gen: Option<u64>, ask: MountAsk, answer: MountAnswer },
     MountAskDone { tab: TabId, id: u64 },
     Denied { tab: TabId, error: String },
 }

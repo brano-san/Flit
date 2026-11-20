@@ -347,6 +347,7 @@ impl Listing {
 }
 
 pub const NOT_RESPONDING_CODE: i64 = 0x544C_0002;
+pub const NO_NETWORK_BROWSER_CODE: i64 = 0x544C_0010;
 const LINUX_ERRNO: i64 = 0x4C58 << 32;
 
 const ERRNO_NAMES: [(i64, &str); 34] = [
@@ -391,6 +392,10 @@ impl FsError {
         Self { kind: FsErrorKind::Unavailable, code: NOT_RESPONDING_CODE }
     }
 
+    pub fn no_network_browser() -> Self {
+        Self { kind: FsErrorKind::Unavailable, code: NO_NETWORK_BROWSER_CODE }
+    }
+
     pub fn from_linux(self) -> Self {
         match self.code {
             -1 => Self { code: LINUX_ERRNO, ..self },
@@ -429,6 +434,9 @@ impl fmt::Display for FsError {
         use crate::i18n::S;
         if self.code == crate::archive::PASSWORD_CODE {
             return f.write_str(S::ErrorsArchivePasswordNeeded.t());
+        }
+        if self.code == NO_NETWORK_BROWSER_CODE {
+            return f.write_str(S::ErrorsFsNoNetworkBrowser.t());
         }
         let what = match self.kind {
             _ if self.code == NOT_RESPONDING_CODE => S::ErrorsFsNotResponding,

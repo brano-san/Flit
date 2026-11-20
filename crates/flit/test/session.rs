@@ -144,3 +144,19 @@ fn panels_ride_after_the_session_and_files_with_per_tab_panes_still_load() {
     let loaded = Session::decode(&legacy).unwrap().windows().next().unwrap().0;
     assert_eq!(loaded, WindowSession { panels: None, ..w.clone() }, "a file with a second pane per tab loads its tabs and trails in one panel");
 }
+
+#[test]
+fn session_serializes_network_tabs_and_trails_compatibly_with_the_running_platform() {
+    let root = Location::from_local(flit_core::FsPath::network());
+    let server = Location::from_local(flit_core::FsPath::network_server(b"NAS").unwrap());
+    let local = Location::parse("/tmp").unwrap();
+    let home = Location::from_local(crate::P::home());
+    let network = |path: &Location| if cfg!(target_os = "linux") { home.clone() } else { path.clone() };
+    let w = WindowSession { tabs: vec![root.clone(), server.clone(), local.clone()], cur: 1, trails: vec![server.clone(), root.clone(), local.clone()], panels: None };
+    let s = Session::new(vec![(w, None)], Vec::new());
+    let restored = Session::decode(&s.encode().unwrap()).unwrap();
+    let (restored, _) = restored.windows().next().unwrap();
+    assert_eq!(restored.tabs, [network(&root), network(&server), local.clone()]);
+    assert_eq!(restored.trails, [network(&server), network(&root), local]);
+    assert_eq!(restored.cur, 1);
+}

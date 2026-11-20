@@ -25,6 +25,7 @@ grant_button = "Continue"
 grant_hint = "Click Continue to get permanent access to this folder as an administrator."
 granting = "Getting access to {what}"
 no_setfacl = "setfacl is not installed. Install the package {package}"
+no_network_browser = "Network browsing is unavailable. See Settings for missing tools."
 
 [title]
 encrypted = "This archive is encrypted"

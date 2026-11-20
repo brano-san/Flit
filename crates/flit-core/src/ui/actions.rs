@@ -769,9 +769,9 @@ impl App {
             return self.status(S::ActionsStatusSelectFolders.t());
         }
         if target == OpenTarget::NewTab {
-            return self.open_in_tabs(routes, now);
+            return self.open_entries_in_tabs(routes, now);
         }
-        self.dispatch(routes, target, now);
+        self.dispatch_entries(routes, target, now);
     }
 
     fn open_relative(&mut self, target: OpenTarget, now: Instant) {

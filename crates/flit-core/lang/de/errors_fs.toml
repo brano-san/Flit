@@ -25,6 +25,7 @@ grant_button = "Fortsetzen"
 grant_hint = "Klicken Sie auf „Fortsetzen“, um als Administrator dauerhaft Zugriff auf diesen Ordner zu erhalten."
 granting = "Zugriff auf {what} wird eingerichtet"
 no_setfacl = "setfacl ist nicht installiert. Installieren Sie das Paket {package}"
+no_network_browser = "Die Netzwerkumgebung ist nicht verfügbar. Fehlende Werkzeuge siehe Einstellungen."
 
 [title]
 encrypted = "Dieses Archiv ist verschlüsselt"

@@ -13,7 +13,6 @@ pub const WINDOWS_ONLY_ACTIONS: &[&str] = &[
     "folder.explorer",
     "drive.map",
     "drive.disconnect",
-    "nav.network",
     "view.group.dimensions",
     "view.group.duration",
     "view.group.artist",

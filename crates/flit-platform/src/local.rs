@@ -212,18 +212,31 @@ impl LocalProvider {
         spawn("flit-shell-open".into(), move || {
             let mut sh = S::new();
             for (tab, job) in shell_rx {
-                if let ShellJob::Launch(Launch::ConnectServer(uri)) = job {
+                let connect = match &job {
+                    ShellJob::Launch(Launch::ConnectServer(uri)) => Some((uri.clone(), None)),
+                    ShellJob::Launch(Launch::ConnectNetwork { uri, gen }) => Some((uri.clone(), Some(*gen))),
+                    _ => None,
+                };
+                if let Some((uri, gen)) = connect {
                     let (events, wake) = (open_events.clone(), open_wake.clone());
                     let started = spawn("flit-connect".into(), move || {
-                        let prompt = MountPrompt::new(tab, events.clone(), wake.clone());
-                        let done = S::new().and_then(|mut sh| sh.connect_asking(&uri, &prompt)).map(|p| p.map(|path| ProviderEvent::Navigate { tab, path }));
-                        if let Some(event) = shell_event(tab, done) {
+                        let prompt = MountPrompt::new(tab, events.clone(), wake.clone()).at_generation(gen);
+                        let done = S::new().and_then(|mut sh| sh.connect_asking(&uri, &prompt));
+                        let event = match gen {
+                            Some(gen) => Some(ProviderEvent::NetworkConnected { tab, gen, result: done.map_err(|e| e.to_string()) }),
+                            None => shell_event(tab, done.map(|p| p.map(|path| ProviderEvent::Navigate { tab, path }))),
+                        };
+                        if let Some(event) = event {
                             let _ = events.send(event);
                             wake();
                         }
                     });
                     if let Err(e) = started {
-                        let _ = open_events.send(ProviderEvent::OpDone { tab, id: 0, error: Some(e.to_string()), report: None });
+                        let event = match gen {
+                            Some(gen) => ProviderEvent::NetworkConnected { tab, gen, result: Err(e.to_string()) },
+                            None => ProviderEvent::OpDone { tab, id: 0, error: Some(e.to_string()), report: None },
+                        };
+                        let _ = open_events.send(event);
                         open_wake();
                     }
                     continue;

@@ -250,6 +250,7 @@ pub(super) struct Ops {
     pub(super) dropping: Option<Dropping>,
     pub(super) drag_scroll: Option<(f32, f32, Mods, u32)>,
     right_drag: Option<Vec<FsPath>>,
+    pub(super) network_drag: Vec<Route>,
     asked: Option<Asked>,
     slow: Option<Slow>,
     cut: Option<Cut>,
@@ -1842,6 +1843,19 @@ impl App {
         let right = p.right;
         self.ops.press = None;
         let items = self.selected_items();
+        let t = self.tab();
+        if self.caps.unix_paths && t.view_loc.path().is_network() {
+            if !right {
+                self.ops.network_drag = items.into_iter().map(|i| Route { folder: t.entry_location(i), select: None }).filter(|r| super::network::network_address(r.folder.path()).is_some()).collect();
+                if !self.ops.network_drag.is_empty() {
+                    self.drag = Drag::Network;
+                    self.pressed = Hit::None;
+                    self.hover = Hit::None;
+                    return true;
+                }
+            }
+            return false;
+        }
         let Ok(paths) = self.item_paths(&items) else { return false };
         if paths.is_empty() {
             return false;

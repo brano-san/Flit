@@ -689,7 +689,7 @@ fn launch(l: &Launch) -> Result<(), PlatformError> {
         Launch::Unmount(drive) => crate::udisks::unmount(Path::new(os(drive))).map_err(|e| crate::places::drive_error(S::ErrorsFsUnmountFailed, Path::new(os(drive)), &e)),
         Launch::Mount(_) | Launch::Unlock { .. } => Err(PlatformError::unsupported("mounting outside the shell thread")),
         Launch::Disconnect(Some(drive)) => crate::places::disconnect(Path::new(os(drive))).map_err(|e| crate::places::drive_error(S::ErrorsFsDisconnectFailed, Path::new(os(drive)), &e)),
-        Launch::MapDrive(_) | Launch::Disconnect(None) | Launch::ConnectServer(_) => Err(PlatformError::unsupported("mapping network drives")),
+        Launch::MapDrive(_) | Launch::Disconnect(None) | Launch::ConnectServer(_) | Launch::ConnectNetwork { .. } => Err(PlatformError::unsupported("mapping network drives")),
         Launch::Reveal { .. } => Err(PlatformError::unsupported("revealing outside the shell thread")),
         Launch::Wallpaper(image) => crate::wallpaper::set(Path::new(os(image))),
     }
@@ -838,11 +838,22 @@ impl Shell for LinuxShell {
     }
 
     fn connect(&mut self, uri: &str) -> Result<FsPath, PlatformError> {
+        if crate::network::smb_server(uri) {
+            crate::places::mount_only(uri).map_err(|e| crate::places::drive_error(S::ErrorsFsConnectFailed, Path::new(uri), &e))?;
+            return crate::network::server_place(uri);
+        }
         let point = crate::places::connect(uri).map_err(|e| crate::places::drive_error(S::ErrorsFsConnectFailed, Path::new(uri), &e))?;
         crate::xdg::fs_path(&point).ok_or_else(|| PlatformError::new(-1, "the mount point is not a valid path"))
     }
 
     fn connect_asking(&mut self, uri: &str, prompt: &flit_platform::MountPrompt) -> Result<Option<FsPath>, PlatformError> {
+        if crate::network::smb_server(uri) {
+            if crate::network::mount_anonymous(&crate::network::System, uri) {
+                return crate::network::server_place(uri).map(Some);
+            }
+            let mounted = crate::gvfs::browse(uri, prompt).map_err(|e| crate::places::drive_error(S::ErrorsFsConnectFailed, Path::new(uri), &e))?;
+            return if mounted { crate::network::server_place(uri).map(Some) } else { Ok(None) };
+        }
         let Some(point) = crate::gvfs::connect(uri, prompt).map_err(|e| crate::places::drive_error(S::ErrorsFsConnectFailed, Path::new(uri), &e))? else { return Ok(None) };
         crate::xdg::fs_path(&point).map(Some).ok_or_else(|| PlatformError::new(-1, "the mount point is not a valid path"))
     }

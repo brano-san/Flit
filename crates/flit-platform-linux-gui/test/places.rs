@@ -645,3 +645,15 @@ fn bookmark_sync_writes_through_links_keeps_permissions_and_ignores_reordering()
     let root = flit_core::Location::from_local(fs(Path::new("/")));
     assert_eq!(bookmark_paths(&[a, admin, home, root], &[b"/home/u/", b"/"]), [b"/home/u/A".to_vec()], "root tabs, home and / are not desktop bookmarks");
 }
+
+#[test]
+fn gio_mount_always_uses_the_locale_expected_by_error_matching() {
+    crate::temp::with_tools(&["gio"], || {
+        let cmd = gio_command(&["mount", "smb://nas/"]).unwrap();
+        assert_eq!(cmd.get_args().collect::<Vec<_>>(), ["mount", "smb://nas/"]);
+        assert_eq!(cmd.get_envs().collect::<Vec<_>>(), [
+            (std::ffi::OsStr::new("LANGUAGE"), Some(std::ffi::OsStr::new(""))),
+            (std::ffi::OsStr::new("LC_ALL"), Some(std::ffi::OsStr::new("C"))),
+        ]);
+    });
+}
