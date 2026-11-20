@@ -18,7 +18,7 @@ use flit_core::preview::{PreviewData, PreviewRequest};
 use flit_core::sort::{self, ViewSpec};
 use flit_core::tags::TagRequest;
 use flit_core::text::Gfx;
-use flit_core::ui::{About, App, DragEvent, Effect, IconRequest, IconResult, MovedTab, Persisted, SettingsCmd, Startup, Typed, Value, WindowCmd, WindowSession};
+use flit_core::ui::{About, App, DragEvent, Effect, IconRequest, IconResult, MovedTab, NavState, Persisted, SettingsCmd, Startup, Typed, Value, WindowCmd, WindowSession};
 use flit_core::{FsPath, Location, ProviderEvent, ProviderId, ProviderRequest, TabId};
 use flit_platform::*;
 use std::collections::{HashMap, VecDeque};
@@ -319,6 +319,40 @@ struct WinState<P: Platform> {
     dark: Option<bool>,
     selection_key: Option<(TabId, u64, u64, Option<u32>)>,
     progress: Option<(u32, bool)>,
+}
+
+fn apply_bookmark_effect<'a>(
+    effect: Effect,
+    nav: &mut NavState,
+    windows: impl Iterator<Item = &'a mut App>,
+    pending: &'a mut VecDeque<App>,
+    quick_pinned: impl FnOnce(&[Location], &[Location]),
+    bookmarks_changed: impl FnOnce(&[Location], &[Location]),
+) {
+    let apps = windows.chain(pending.iter_mut());
+    let pinned = match effect {
+        Effect::Pinned(pinned) => {
+            quick_pinned(&nav.pinned, &pinned);
+            let diff = flit_core::quick_sync::pins_diff(&nav.pinned, &pinned);
+            if !diff.is_empty() {
+                bookmarks_changed(&diff.added, &diff.removed);
+            }
+            pinned
+        }
+        Effect::PinnedCleared => Vec::new(),
+        Effect::PinnedFiles(files) => {
+            for app in apps {
+                app.set_pinned_files(files.clone());
+            }
+            nav.files = files;
+            return;
+        }
+        _ => return,
+    };
+    for app in apps {
+        app.set_pinned(pinned.clone());
+    }
+    nav.pinned = pinned;
 }
 
 struct Handler<P: Platform> {
@@ -763,23 +797,13 @@ impl<P: Platform> Handler<P> {
                 Effect::ShellProps { tab, gen, ask, dir, names } => {
                     let _ = self.previews.send(PreviewJob::ColumnProps { window: id, tab, gen, ask, dir, names });
                 }
-                Effect::Pinned(pinned) => {
-                    self.quick.pinned(&self.saved.nav.pinned, &pinned);
-                    let diff = flit_core::quick_sync::pins_diff(&self.saved.nav.pinned, &pinned);
-                    if !diff.is_empty() {
-                        P::bookmarks_changed(&diff.added, &diff.removed);
+                effect @ (Effect::Pinned(_) | Effect::PinnedCleared | Effect::PinnedFiles(_)) => {
+                    let wake = !matches!(&effect, Effect::PinnedFiles(_));
+                    let windows = self.windows.iter_mut().filter(|(w, _)| **w != id).map(|(_, st)| &mut st.app);
+                    apply_bookmark_effect(effect, &mut self.saved.nav, windows, &mut self.pending, |old, new| self.quick.pinned(old, new), P::bookmarks_changed);
+                    if wake {
+                        (self.wake)();
                     }
-                    for (_, st) in self.windows.iter_mut().filter(|(w, _)| **w != id) {
-                        st.app.set_pinned(pinned.clone());
-                    }
-                    self.saved.nav.pinned = pinned;
-                    (self.wake)();
-                }
-                Effect::PinnedFiles(files) => {
-                    for (_, st) in self.windows.iter_mut().filter(|(w, _)| **w != id) {
-                        st.app.set_pinned_files(files.clone());
-                    }
-                    self.saved.nav.files = files;
                 }
                 Effect::RefreshPlaces => self.places.refresh(),
                 Effect::PinFolders(paths) => self.places.pin(paths),
@@ -1674,3 +1698,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
 #[cfg(test)]
 #[path = "../test/icon_visibility.rs"]
 mod icon_visibility_tests;
+
+#[cfg(test)]
+#[path = "../test/bookmarks.rs"]
+mod bookmark_tests;

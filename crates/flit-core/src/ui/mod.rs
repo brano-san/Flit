@@ -424,6 +424,7 @@ pub enum Effect {
     StartDrag(Vec<FsPath>),
     ShellProps { tab: TabId, gen: u64, ask: u64, dir: FsPath, names: Vec<Vec<u8>> },
     Pinned(Vec<Location>),
+    PinnedCleared,
     PinnedFiles(Vec<Location>),
     PinFolders(Vec<FsPath>),
     CheckPlaces(Vec<FsPath>),

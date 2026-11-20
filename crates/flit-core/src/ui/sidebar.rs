@@ -854,7 +854,8 @@ impl App {
 
     pub(super) fn clear_bookmarks(&mut self) {
         self.nav.sidebar.state.pinned.clear();
-        self.pins_changed();
+        self.effects.push(Effect::PinnedCleared);
+        self.refresh_pins();
     }
 
     pub(super) fn focus_quick_filter(&mut self) {
@@ -1006,12 +1007,16 @@ impl App {
     }
 
     fn pins_changed(&mut self) {
+        self.effects.push(Effect::Pinned(self.nav.sidebar.state.pinned.clone()));
+        self.refresh_pins();
+    }
+
+    fn refresh_pins(&mut self) {
         let state = &mut self.nav.sidebar.state;
         let pinned = &state.pinned;
         state.files.retain(|f| pinned.contains(f));
-        let (list, files) = (state.pinned.clone(), state.files.clone());
+        let files = state.files.clone();
         self.nav.sidebar.rebuild();
-        self.effects.push(Effect::Pinned(list));
         self.effects.push(Effect::PinnedFiles(files));
         self.layout();
         self.dirty = true;

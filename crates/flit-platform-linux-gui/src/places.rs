@@ -385,11 +385,39 @@ pub fn empty(trash: &Trash, tops: &[PathBuf]) -> OpOutcome {
     OpOutcome { items, error: error.map(|e| PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, flit_core::tr_en!(S::ErrorsOpsTrashPartial, error = flit_core::fmt::io_reason(&e)))) }
 }
 
+fn attribute_range(tag: &[u8], name: &[u8]) -> Option<std::ops::Range<usize>> {
+    let mut rest = &tag[tag.iter().position(u8::is_ascii_whitespace)?..];
+    loop {
+        rest = rest.trim_ascii_start();
+        let key_end = rest.iter().position(|b| b.is_ascii_whitespace() || *b == b'=')?;
+        let value = rest[key_end..].trim_ascii_start().strip_prefix(b"=")?.trim_ascii_start();
+        let (&quote, value) = value.split_first()?;
+        if !matches!(quote, b'\'' | b'"') {
+            return None;
+        }
+        let end = value.iter().position(|&b| b == quote)?;
+        if &rest[..key_end] == name {
+            let start = tag.len() - value.len();
+            return Some(start..start + end);
+        }
+        rest = &value[end + 1..];
+    }
+}
+
 fn attribute<'a>(tag: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
-    let key = [b" ", name, b"=\""].concat();
-    let at = tag.windows(key.len()).position(|w| w == key.as_slice())? + key.len();
-    let len = tag[at..].iter().position(|&b| b == b'"')?;
-    Some(&tag[at..at + len])
+    Some(&tag[attribute_range(tag, name)?])
+}
+
+fn numeric_xml_reference(s: &[u8]) -> Option<(usize, char)> {
+    let number = s.strip_prefix(b"&#")?;
+    let (digits, radix) = number.strip_prefix(b"x").map_or((number, 10), |hex| (hex, 16));
+    let end = digits.iter().position(|b| !b.is_ascii_hexdigit())?;
+    if digits[end] != b';' {
+        return None;
+    }
+    let code = u32::from_str_radix(std::str::from_utf8(&digits[..end]).ok()?, radix).ok()?;
+    let c = char::from_u32(code)?;
+    Some((s.len() - digits.len() + end + 1, c))
 }
 
 fn unescape_xml(s: &[u8]) -> Vec<u8> {
@@ -397,15 +425,15 @@ fn unescape_xml(s: &[u8]) -> Vec<u8> {
     let mut i = 0;
     while i < s.len() {
         let entity = [(&b"&amp;"[..], b'&'), (b"&lt;", b'<'), (b"&gt;", b'>'), (b"&quot;", b'"'), (b"&apos;", b'\'')].into_iter().find(|(e, _)| s[i..].starts_with(e));
-        match entity {
-            Some((e, c)) => {
-                out.push(c);
-                i += e.len();
-            }
-            None => {
-                out.push(s[i]);
-                i += 1;
-            }
+        if let Some((e, c)) = entity {
+            out.push(c);
+            i += e.len();
+        } else if let Some((len, c)) = numeric_xml_reference(&s[i..]) {
+            out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
+            i += len;
+        } else {
+            out.push(s[i]);
+            i += 1;
         }
     }
     out
@@ -426,7 +454,7 @@ fn utc_ticks(s: &[u8]) -> Option<i64> {
 }
 
 pub fn bookmarks_from(gtk: &[u8], kde: &[u8], skip: &[&[u8]], is_dir: impl Fn(&Path) -> bool) -> Vec<flit_core::Location> {
-    let gtk = gtk.split(|&b| b == b'\n').filter_map(|l| l.split(|&b| b == b' ').next());
+    let gtk = gtk.split(|&b| b == b'\n').filter_map(|l| l.strip_suffix(b"\r").unwrap_or(l).split(|&b| b == b' ').next());
     let kde = kde.split(|&b| b == b'<').filter(|t| t.starts_with(b"bookmark ")).filter_map(|t| attribute(t, b"href")).map(unescape_xml);
     let mut out: Vec<flit_core::Location> = Vec::new();
     for uri in gtk.map(<[u8]>::to_vec).chain(kde) {
@@ -469,11 +497,9 @@ pub fn xbel_stamp(t: std::time::SystemTime) -> String {
 }
 
 fn set_attr(tag: &str, name: &str, value: &str) -> String {
-    let key = format!(" {name}=\"");
-    let found = tag.find(&key).and_then(|at| Some((at + key.len(), at + key.len() + tag[at + key.len()..].find('"')?)));
-    match found {
-        Some((start, end)) => format!("{}{value}{}", &tag[..start], &tag[end..]),
-        None => format!("{}{key}{value}\">", tag.trim_end_matches('>')),
+    match attribute_range(tag.as_bytes(), name.as_bytes()) {
+        Some(range) => format!("{}{value}{}", &tag[..range.start], &tag[range.end..]),
+        None => format!("{} {name}=\"{value}\">", tag.trim_end_matches('>')),
     }
 }
 
@@ -627,6 +653,14 @@ fn gtk_line_path(line: &str) -> Option<Vec<u8>> {
     crate::instance::decode_uri(line.split(' ').next()?.as_bytes()).filter(|p| p.starts_with(b"/"))
 }
 
+fn line_ending(text: &str) -> &'static str {
+    if text.split_once('\n').is_some_and(|(line, _)| line.ends_with('\r')) {
+        "\r\n"
+    } else {
+        "\n"
+    }
+}
+
 pub fn gtk_bookmarks_edit(text: &str, add: &[Vec<u8>], remove: &[Vec<u8>]) -> Option<String> {
     let all = text.lines().count();
     let kept: Vec<&str> = text.lines().filter(|l| !gtk_line_path(l).is_some_and(|p| names(remove, &p))).collect();
@@ -639,10 +673,15 @@ pub fn gtk_bookmarks_edit(text: &str, add: &[Vec<u8>], remove: &[Vec<u8>]) -> Op
     if kept.len() == all && fresh.is_empty() {
         return None;
     }
-    let mut out: String = kept.iter().map(|l| format!("{l}\n")).collect();
+    let newline = line_ending(text);
+    let mut out = String::with_capacity(text.len());
+    for line in kept {
+        out.push_str(line);
+        out.push_str(newline);
+    }
     for p in &fresh {
         out.push_str(&recent_href(p));
-        out.push('\n');
+        out.push_str(newline);
     }
     Some(out)
 }
@@ -709,7 +748,12 @@ pub fn kde_places_edit(xbel: &str, add: &[Vec<u8>], remove: &[Vec<u8>], now_secs
         if place.system || !place.path.as_ref().is_some_and(|p| names(remove, p)) {
             continue;
         }
-        let end = if out[place.end..].starts_with('\n') { place.end + 1 } else { place.end };
+        let tail = out[place.end..].trim_start_matches([' ', '\t']);
+        let end = match tail.as_bytes() {
+            [b'\r', b'\n', ..] => out.len() - tail.len() + 2,
+            [b'\n', ..] => out.len() - tail.len() + 1,
+            _ => place.end,
+        };
         out.replace_range(line_start(&out, place.start)..end, "");
         changed = true;
     }
@@ -730,9 +774,13 @@ pub fn kde_places_edit(xbel: &str, add: &[Vec<u8>], remove: &[Vec<u8>], now_secs
             blocks.push_str(&kde_block(p, &format!("{now_secs}/{n}")));
             n += 1;
         }
+        let newline = line_ending(xbel);
+        if newline == "\r\n" {
+            blocks = blocks.replace('\n', newline);
+        }
         let at = line_start(&out, out.rfind(XBEL_TAIL)?);
         if at > 0 && !out[..at].ends_with('\n') {
-            blocks.insert(0, '\n');
+            blocks.insert_str(0, newline);
         }
         out.insert_str(at, &blocks);
         changed = true;

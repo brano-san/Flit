@@ -529,6 +529,36 @@ fn bookmark_files(t: &Temp) -> (PathBuf, PathBuf) {
 }
 
 #[test]
+fn bookmark_sync_recognizes_quoted_kde_paths_with_xml_character_references() {
+    let path = b"/home/u/Work&Home".to_vec();
+    for href in ["'file:///home/u/Work&amp;Home'", "\"file:///home/u/Work&#38;Home\"", "'file:///home/u/Work&#x26;Home'"] {
+        let xbel = format!("<xbel>\n <bookmark href={href}><title>Work and Home</title></bookmark>\n</xbel>\n");
+        assert_eq!(kde_places_edit(&xbel, std::slice::from_ref(&path), &[], 1), None, "{href} should not be duplicated");
+        assert_eq!(kde_places_edit(&xbel, &[], std::slice::from_ref(&path), 1).as_deref(), Some("<xbel>\n</xbel>\n"), "{href} should be removed");
+    }
+}
+
+#[test]
+fn bookmark_sync_preserves_crlf_in_gtk_and_kde() {
+    let t = Temp::new("bookmarks-crlf");
+    let (gtk, kde) = bookmark_files(&t);
+    let gtk_before = "file:///home/u/Old\r\nfile:///home/u/Music Songs\r\n";
+    let kde_before = "<xbel>\r\n <bookmark href=\"file:///home/u/Old\">\r\n  <title>Old</title>\r\n </bookmark>\r\n <bookmark href=\"remote:/\"/>\r\n</xbel>\r\n";
+    std::fs::write(&gtk, gtk_before).unwrap();
+    std::fs::write(&kde, kde_before).unwrap();
+    let added = [b"/home/u/New".to_vec()];
+    let removed = [b"/home/u/Old".to_vec()];
+    assert_eq!(sync_bookmarks_in(&gtk, &kde, &added, &removed, 1).unwrap(), (true, true));
+    assert_eq!(std::fs::read_to_string(&gtk).unwrap(), "file:///home/u/Music Songs\r\nfile:///home/u/New\r\n");
+    let xbel = std::fs::read_to_string(&kde).unwrap();
+    assert!(xbel.starts_with("<xbel>\r\n <bookmark href=\"remote:/\"/>\r\n <bookmark href=\"file:///home/u/New\">\r\n"), "{xbel:?}");
+    assert!(xbel.ends_with(" </bookmark>\r\n</xbel>\r\n"), "{xbel:?}");
+    assert!(!xbel.replace("\r\n", "").contains('\n'), "{xbel:?}");
+    let imported = bookmarks_from(&std::fs::read(&gtk).unwrap(), b"", &[], |_| true);
+    assert_eq!(imported[1].path().as_bytes(), b"/home/u/New");
+}
+
+#[test]
 fn pinning_and_unpinning_in_flit_shows_in_the_gtk_and_kde_sidebars_and_keeps_their_own_entries() {
     let t = Temp::new("bookmarks");
     let (gtk, kde) = bookmark_files(&t);
