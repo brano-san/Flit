@@ -25,8 +25,23 @@ pub enum Count {
     Nothing,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Source {
+    Nautilus,
+    Kde,
+    Nemo,
+    Thunar,
+}
+
+impl Source {
+    const ORDER: [Source; 4] = [Source::Nautilus, Source::Kde, Source::Nemo, Source::Thunar];
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Action {
+    pub source: Source,
+    pub submenu: String,
+    pub separator: Option<String>,
     pub name: String,
     pub icon: String,
     pub run: Run,
@@ -38,8 +53,8 @@ pub struct Action {
 }
 
 impl Action {
-    fn new(name: String, icon: String, run: Run) -> Self {
-        Self { name, icon, run, mimes: Vec::new(), exts: Vec::new(), count: Count::NotEmpty, files: true, dirs: true }
+    fn new(source: Source, name: String, icon: String, run: Run) -> Self {
+        Self { source, submenu: String::new(), separator: None, name, icon, run, mimes: Vec::new(), exts: Vec::new(), count: Count::NotEmpty, files: true, dirs: true }
     }
 }
 
@@ -94,7 +109,7 @@ fn walk_scripts(dir: &Path, prefix: &str, depth: usize, out: &mut Vec<Action>) {
         if path.is_dir() && depth < DEPTH {
             walk_scripts(&path, &format!("{prefix}{name} / "), depth + 1, out);
         } else if executable(&path) {
-            let mut a = Action::new(format!("{prefix}{name}"), String::new(), Run::Script(path));
+            let mut a = Action::new(Source::Nautilus, format!("{prefix}{name}"), String::new(), Run::Script(path));
             a.count = Count::Any;
             out.push(a);
         }
@@ -117,11 +132,13 @@ pub fn service_menu(text: &str, lang: &str) -> Vec<Action> {
         Some("1") => Count::One,
         _ => Count::NotEmpty,
     };
+    let submenu = localized(main, "X-KDE-Submenu", lang).unwrap_or_default();
     list(main.get("Actions"))
         .iter()
         .filter_map(|id| {
             let a = g.get(&format!("Desktop Action {id}"))?;
-            let mut action = Action::new(localized(a, "Name", lang)?, a.get("Icon").cloned().unwrap_or_default(), Run::Exec { line: a.get("Exec")?.clone(), base: PathBuf::new() });
+            let mut action = Action::new(Source::Kde, localized(a, "Name", lang)?, a.get("Icon").cloned().unwrap_or_default(), Run::Exec { line: a.get("Exec")?.clone(), base: PathBuf::new() });
+            action.submenu = submenu.clone();
             action.mimes = if any_file { Vec::new() } else { kept.clone() };
             (action.files, action.dirs, action.count) = (files, dirs, count);
             Some(action)
@@ -137,7 +154,8 @@ pub fn nemo_action(text: &str, base: &Path, lang: &str) -> Option<Action> {
     }
     let exec = a.get("Exec")?.clone();
     let name = localized(a, "Name", lang)?.replace('_', "");
-    let mut action = Action::new(name, a.get("Icon-Name").cloned().unwrap_or_default(), Run::Exec { line: exec, base: base.to_path_buf() });
+    let mut action = Action::new(Source::Nemo, name, a.get("Icon-Name").cloned().unwrap_or_default(), Run::Exec { line: exec, base: base.to_path_buf() });
+    action.separator = a.get("Separator").cloned();
     action.count = match a.get("Selection").map(|s| s.to_ascii_lowercase()).as_deref() {
         Some("m") => Count::Many,
         Some("any") => Count::Any,
@@ -175,7 +193,7 @@ pub fn thunar_actions(xml: &str) -> Vec<Action> {
             let block = block.split("</action>").next()?;
             let name = unescape(tag(block, "name")?.trim());
             let command = unescape(tag(block, "command")?.trim());
-            let mut a = Action::new(name, unescape(tag(block, "icon").unwrap_or_default().trim()), Run::Shell(command));
+            let mut a = Action::new(Source::Thunar, name, unescape(tag(block, "icon").unwrap_or_default().trim()), Run::Shell(command));
             let has = |t: &str| block.contains(&format!("<{t}/>")) || block.contains(&format!("<{t}></{t}>"));
             let kinds = [("audio-files", "audio/*"), ("image-files", "image/*"), ("text-files", "text/*"), ("video-files", "video/*")];
             let other = has("other-files");
@@ -226,7 +244,7 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-fn expand(token: &str, files: &[PathBuf], current: &Path, quote: bool) -> Vec<String> {
+fn expand(token: &str, files: &[PathBuf], current: &Path, quote: bool, separator: Option<&str>) -> Vec<String> {
     let parent = |p: &PathBuf| p.parent().map(lossy).unwrap_or_default();
     let name = |p: &PathBuf| p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let values: Option<Vec<String>> = match token {
@@ -244,7 +262,10 @@ fn expand(token: &str, files: &[PathBuf], current: &Path, quote: bool) -> Vec<St
     };
     match values {
         Some(v) if quote => vec![v.iter().map(|s| shell_quote(s)).collect::<Vec<_>>().join(" ")],
-        Some(v) => v,
+        Some(v) => match separator {
+            Some(sep) if v.len() > 1 => vec![v.join(sep)],
+            _ => v,
+        },
         None => vec![token.replace("%%", "%")],
     }
 }
@@ -270,7 +291,7 @@ pub fn commands(a: &Action, files: &[PathBuf], current: &Path) -> Vec<CommandRun
                 (std::iter::once(lossy(script)).chain(names).collect(), env)
             }
             Run::Shell(line) => {
-                let text: Vec<String> = line.split(' ').map(|t| expand(t, files, current, true).join(" ")).collect();
+                let text: Vec<String> = line.split(' ').map(|t| expand(t, files, current, true, None).join(" ")).collect();
                 (vec!["sh".to_owned(), "-c".to_owned(), text.join(" ")], Vec::new())
             }
             Run::Exec { line, base } => {
@@ -280,11 +301,11 @@ pub fn commands(a: &Action, files: &[PathBuf], current: &Path) -> Vec<CommandRun
                         if let Some(first) = parts.first_mut().filter(|p| !p.starts_with('/')) {
                             *first = lossy(&base.join(&*first));
                         }
-                        return (parts.iter().flat_map(|t| expand(t, files, current, false)).collect(), Vec::new());
+                        return (parts.iter().flat_map(|t| expand(t, files, current, false, a.separator.as_deref())).collect(), Vec::new());
                     }
                     None => line,
                 };
-                (crate::shell::split_args(line).iter().flat_map(|t| expand(t, files, current, false)).collect(), Vec::new())
+                (crate::shell::split_args(line).iter().flat_map(|t| expand(t, files, current, false, a.separator.as_deref())).collect(), Vec::new())
             }
         })
         .filter(|(argv, _): &CommandRun| !argv.is_empty())
@@ -335,14 +356,38 @@ pub fn menu(actions: &[Action], items: &[Item], current: &Path) -> (Vec<MenuItem
     let dir = crate::xdg::fs_path(current);
     let mut entries = Vec::new();
     let mut launches = Vec::new();
-    for a in actions.iter().filter(|a| applies(a, items)) {
-        let runs = commands(a, &files, current);
-        if runs.is_empty() {
+    for source in Source::ORDER {
+        let mut groups: Vec<(&str, Vec<MenuItem>, Vec<Launch>)> = Vec::new();
+        for a in actions.iter().filter(|a| a.source == source && applies(a, items)) {
+            let runs = commands(a, &files, current);
+            if runs.is_empty() {
+                continue;
+            }
+            let image = crate::apps::icon_image(&a.icon, ICON_PX).map(flit_core::ui::MenuImage::pixels);
+            let entry = MenuItem::Command { label: a.name.clone(), keys: String::new(), checked: false, stay: false, mark: Mark::None, icon: "", image, disabled: false };
+            let launch = Launch::Command { runs, dir: dir.clone() };
+            match groups.iter_mut().find(|(name, ..)| !a.submenu.is_empty() && *name == a.submenu) {
+                Some((_, list, more)) => {
+                    list.push(entry);
+                    more.push(launch);
+                }
+                None => groups.push((&a.submenu, vec![entry], vec![launch])),
+            }
+        }
+        if groups.is_empty() {
             continue;
         }
-        let image = crate::apps::icon_image(&a.icon, ICON_PX).map(flit_core::ui::MenuImage::pixels);
-        entries.push(MenuItem::Command { label: a.name.clone(), keys: String::new(), checked: false, stay: false, mark: Mark::None, icon: "", image, disabled: false });
-        launches.push(Launch::Command { runs, dir: dir.clone() });
+        if !entries.is_empty() {
+            entries.push(MenuItem::Separator);
+        }
+        for (name, list, more) in groups {
+            if name.is_empty() {
+                entries.extend(list);
+            } else {
+                entries.push(MenuItem::Submenu { label: name.to_owned(), items: list });
+            }
+            launches.extend(more);
+        }
     }
     (entries, launches)
 }
