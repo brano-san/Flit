@@ -329,6 +329,7 @@
 "logs.folder" = "Open the folder with the log files in a new tab, diagnostics"
 "item.copy_quoted_path" = "Put the full path in double quotes on the clipboard"
 "app.terminal_admin" = "Start an elevated command prompt in this folder, console, PowerShell"
+"app.terminal_admin_linux" = "Start a root shell in this folder through sudo or pkexec, terminal, console, administrator"
 "file.paste_into" = "Copy or move the items from the clipboard into the selected folder"
 "file.share" = "Send the selected files with the Windows share window"
 "file.new_item" = "Make a folder, shortcut or file from a template here, create"

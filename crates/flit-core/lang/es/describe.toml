@@ -329,6 +329,7 @@
 "logs.folder" = "Abrir la carpeta con los archivos de registro en una nueva pestaña, diagnóstico"
 "item.copy_quoted_path" = "Copiar la ruta completa entre comillas dobles al portapapeles"
 "app.terminal_admin" = "Iniciar un símbolo del sistema con privilegios elevados en esta carpeta, consola, PowerShell"
+"app.terminal_admin_linux" = "Iniciar una shell de root en esta carpeta con sudo o pkexec, terminal, consola, administrador"
 "file.paste_into" = "Copiar o mover los elementos del portapapeles a la carpeta seleccionada"
 "file.share" = "Enviar los archivos seleccionados con la ventana de compartir de Windows"
 "file.new_item" = "Crear aquí una carpeta, un acceso directo o un archivo a partir de una plantilla"

@@ -329,6 +329,7 @@
 "logs.folder" = "Ouvrir le dossier des fichiers journaux dans un nouvel onglet, diagnostic"
 "item.copy_quoted_path" = "Copier le chemin complet entre guillemets dans le Presse-papiers"
 "app.terminal_admin" = "Lancer une invite de commandes avec élévation dans ce dossier, console, PowerShell"
+"app.terminal_admin_linux" = "Lancer un shell root dans ce dossier via sudo ou pkexec, terminal, console, administrateur"
 "file.paste_into" = "Copier ou déplacer les éléments du Presse-papiers dans le dossier sélectionné"
 "file.share" = "Envoyer les fichiers sélectionnés avec la fenêtre de partage de Windows"
 "file.new_item" = "Créer ici un dossier, un raccourci ou un fichier à partir d’un modèle"
