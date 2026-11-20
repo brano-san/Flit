@@ -140,6 +140,9 @@ impl Platform for Linux {
     fn bookmarks() -> Vec<flit_core::Location> {
         places::bookmarks()
     }
+    fn bookmarks_changed(added: &[flit_core::Location], removed: &[flit_core::Location]) {
+        places::sync_bookmarks(added, removed)
+    }
 
     fn state_dir() -> Option<PathBuf> {
         xdg::state_dir()

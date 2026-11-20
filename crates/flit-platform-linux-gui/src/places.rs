@@ -607,6 +607,223 @@ pub fn recent(limit: usize) -> (Vec<flit_core::ui::Recent>, bool) {
     (recent_from(&bytes, limit, |p| std::fs::metadata(p).ok().map(|m| m.is_dir())), false)
 }
 
+fn escape_xml(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;")
+}
+
+fn folder_key(p: &[u8]) -> &[u8] {
+    let mut p = p;
+    while p.len() > 1 && p.ends_with(b"/") {
+        p = &p[..p.len() - 1];
+    }
+    p
+}
+
+fn names(list: &[Vec<u8>], path: &[u8]) -> bool {
+    list.iter().any(|x| folder_key(x) == folder_key(path))
+}
+
+fn gtk_line_path(line: &str) -> Option<Vec<u8>> {
+    crate::instance::decode_uri(line.split(' ').next()?.as_bytes()).filter(|p| p.starts_with(b"/"))
+}
+
+pub fn gtk_bookmarks_edit(text: &str, add: &[Vec<u8>], remove: &[Vec<u8>]) -> Option<String> {
+    let all = text.lines().count();
+    let kept: Vec<&str> = text.lines().filter(|l| !gtk_line_path(l).is_some_and(|p| names(remove, &p))).collect();
+    let mut fresh: Vec<Vec<u8>> = Vec::new();
+    for p in add {
+        if !kept.iter().any(|l| gtk_line_path(l).is_some_and(|q| folder_key(&q) == folder_key(p))) && !names(&fresh, p) {
+            fresh.push(p.clone());
+        }
+    }
+    if kept.len() == all && fresh.is_empty() {
+        return None;
+    }
+    let mut out: String = kept.iter().map(|l| format!("{l}\n")).collect();
+    for p in &fresh {
+        out.push_str(&recent_href(p));
+        out.push('\n');
+    }
+    Some(out)
+}
+
+struct KdePlace {
+    start: usize,
+    end: usize,
+    path: Option<Vec<u8>>,
+    system: bool,
+}
+
+fn kde_places(xbel: &str) -> Option<Vec<KdePlace>> {
+    if !xbel.trim_end().ends_with(XBEL_TAIL) || !xbel.contains("<xbel") {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(at) = xbel[from..].find("<bookmark ") {
+        let start = from + at;
+        let open_end = start + xbel[start..].find('>')? + 1;
+        let tag = &xbel[start..open_end];
+        if tag[1..].contains('<') {
+            return None;
+        }
+        let (end, body) = if tag.ends_with("/>") {
+            (open_end, "")
+        } else {
+            let close = open_end + xbel[open_end..].find("</bookmark>")?;
+            let body = &xbel[open_end..close];
+            if body.contains("<bookmark ") {
+                return None;
+            }
+            (close + "</bookmark>".len(), body)
+        };
+        let path = attribute(tag.as_bytes(), b"href").and_then(|h| crate::instance::decode_uri(&unescape_xml(h))).filter(|p| p.starts_with(b"/"));
+        out.push(KdePlace { start, end, path, system: body.contains("<isSystemItem>true</isSystemItem>") });
+        from = end;
+    }
+    let closed = out.iter().filter(|p| xbel[..p.end].ends_with("</bookmark>")).count();
+    (xbel.matches("</bookmark>").count() == closed).then_some(out)
+}
+
+fn kde_block(path: &[u8], id: &str) -> String {
+    let href = recent_href(path);
+    let name = path.rsplit(|&b| b == b'/').find(|c| !c.is_empty()).map(String::from_utf8_lossy).unwrap_or_default();
+    let title = escape_xml(&name);
+    format!(" <bookmark href=\"{href}\">\n  <title>{title}</title>\n  <info>\n   <metadata owner=\"http://freedesktop.org\">\n    <bookmark:icon name=\"folder\"/>\n   </metadata>\n   <metadata owner=\"http://www.kde.org\">\n    <ID>{id}</ID>\n   </metadata>\n  </info>\n </bookmark>\n")
+}
+
+fn line_start(text: &str, at: usize) -> usize {
+    let line = text[..at].rfind('\n').map_or(0, |n| n + 1);
+    if text[line..at].trim().is_empty() {
+        line
+    } else {
+        at
+    }
+}
+
+pub fn kde_places_edit(xbel: &str, add: &[Vec<u8>], remove: &[Vec<u8>], now_secs: u64) -> Option<String> {
+    let places = kde_places(xbel)?;
+    let mut out = xbel.to_owned();
+    let mut changed = false;
+    for place in places.iter().rev() {
+        if place.system || !place.path.as_ref().is_some_and(|p| names(remove, p)) {
+            continue;
+        }
+        let end = if out[place.end..].starts_with('\n') { place.end + 1 } else { place.end };
+        out.replace_range(line_start(&out, place.start)..end, "");
+        changed = true;
+    }
+    let mut fresh: Vec<Vec<u8>> = Vec::new();
+    for p in add {
+        let known = places.iter().filter_map(|k| k.path.as_deref()).any(|k| folder_key(k) == folder_key(p));
+        if !known && !names(&fresh, p) {
+            fresh.push(p.clone());
+        }
+    }
+    if !fresh.is_empty() {
+        let mut n = 0u64;
+        let mut blocks = String::new();
+        for p in &fresh {
+            while out.contains(&format!("<ID>{now_secs}/{n}</ID>")) {
+                n += 1;
+            }
+            blocks.push_str(&kde_block(p, &format!("{now_secs}/{n}")));
+            n += 1;
+        }
+        let at = line_start(&out, out.rfind(XBEL_TAIL)?);
+        if at > 0 && !out[..at].ends_with('\n') {
+            blocks.insert(0, '\n');
+        }
+        out.insert_str(at, &blocks);
+        changed = true;
+    }
+    changed.then_some(out)
+}
+
+fn write_over(file: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let target = std::fs::canonicalize(file)?;
+    let perms = std::fs::metadata(&target)?.permissions();
+    let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let temp = target.with_file_name(format!(".{name}.flit-{}", std::process::id()));
+    let _ = std::fs::remove_file(&temp);
+    let mut out = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&temp)?;
+    let written = out.write_all(text.as_bytes()).and_then(|_| out.sync_all()).and_then(|_| std::fs::set_permissions(&temp, perms));
+    drop(out);
+    if let Err(e) = written.and_then(|_| std::fs::rename(&temp, &target)) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(e);
+    }
+    Ok(())
+}
+
+fn edit_existing(file: &Path, edit: impl FnOnce(&str) -> Option<String>) -> std::io::Result<bool> {
+    let old = match std::fs::read(file) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    let Ok(old) = String::from_utf8(old) else { return Ok(false) };
+    let Some(new) = edit(&old) else { return Ok(false) };
+    write_over(file, &new)?;
+    Ok(true)
+}
+
+pub fn sync_bookmarks_in(gtk: &Path, kde: &Path, add: &[Vec<u8>], remove: &[Vec<u8>], now_secs: u64) -> std::io::Result<(bool, bool)> {
+    static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one_at_a_time = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+    let gtk = edit_existing(gtk, |t| gtk_bookmarks_edit(t, add, remove));
+    let kde = edit_existing(kde, |t| kde_places_edit(t, add, remove, now_secs));
+    Ok((gtk?, kde?))
+}
+
+pub fn bookmark_paths(locs: &[flit_core::Location], skip: &[&[u8]]) -> Vec<Vec<u8>> {
+    locs.iter()
+        .filter_map(|l| match l {
+            flit_core::Location::Local(p) => Some(p.as_bytes()),
+            _ => None,
+        })
+        .filter(|p| p.starts_with(b"/") && !skip.iter().any(|s| folder_key(s) == folder_key(p)))
+        .map(<[u8]>::to_vec)
+        .collect()
+}
+
+type BookmarkJob = (Vec<Vec<u8>>, Vec<Vec<u8>>);
+
+fn bookmark_worker(jobs: crossbeam_channel::Receiver<BookmarkJob>) {
+    let is_dir = |p: &Vec<u8>| Path::new(std::ffi::OsStr::from_bytes(p)).is_dir();
+    for (add, remove) in jobs {
+        let add: Vec<Vec<u8>> = add.into_iter().filter(is_dir).collect();
+        let remove: Vec<Vec<u8>> = remove.into_iter().filter(is_dir).collect();
+        if add.is_empty() && remove.is_empty() {
+            continue;
+        }
+        let (Some(gtk), Some(kde)) = (crate::xdg::config_home().map(|c| c.join("gtk-3.0/bookmarks")), crate::xdg::data_home().map(|d| d.join("user-places.xbel"))) else { continue };
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        if let Err(e) = sync_bookmarks_in(&gtk, &kde, &add, &remove, now) {
+            tracing::debug!("GTK/KDE bookmarks not updated: {e}");
+        }
+    }
+}
+
+pub fn sync_bookmarks(added: &[flit_core::Location], removed: &[flit_core::Location]) {
+    static JOBS: std::sync::OnceLock<Option<crossbeam_channel::Sender<BookmarkJob>>> = std::sync::OnceLock::new();
+    let home = std::env::var_os("HOME").unwrap_or_default();
+    let skip: [&[u8]; 2] = [home.as_bytes(), b"/"];
+    let (add, remove) = (bookmark_paths(added, &skip), bookmark_paths(removed, &skip));
+    if add.is_empty() && remove.is_empty() {
+        return;
+    }
+    let jobs = JOBS.get_or_init(|| {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        std::thread::Builder::new().name("flit-bookmarks".into()).spawn(move || bookmark_worker(rx)).ok().map(|_| tx)
+    });
+    if let Some(jobs) = jobs {
+        let _ = jobs.send((add, remove));
+    }
+}
+
 #[cfg(test)]
 #[path = "../test/places.rs"]
 mod tests;

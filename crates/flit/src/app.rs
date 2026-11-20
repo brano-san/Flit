@@ -765,6 +765,10 @@ impl<P: Platform> Handler<P> {
                 }
                 Effect::Pinned(pinned) => {
                     self.quick.pinned(&self.saved.nav.pinned, &pinned);
+                    let diff = flit_core::quick_sync::pins_diff(&self.saved.nav.pinned, &pinned);
+                    if !diff.is_empty() {
+                        P::bookmarks_changed(&diff.added, &diff.removed);
+                    }
                     for (_, st) in self.windows.iter_mut().filter(|(w, _)| **w != id) {
                         st.app.set_pinned(pinned.clone());
                     }

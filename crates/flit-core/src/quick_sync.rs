@@ -35,6 +35,12 @@ pub struct PinsDiff {
     pub removed: Vec<Location>,
 }
 
+impl PinsDiff {
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty() && self.removed.is_empty()
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Change {
     pub added: Vec<FsPath>,

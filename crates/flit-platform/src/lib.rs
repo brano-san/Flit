@@ -629,6 +629,7 @@ pub trait Platform: 'static {
     fn bookmarks() -> Vec<Location> {
         Vec::new()
     }
+    fn bookmarks_changed(_added: &[Location], _removed: &[Location]) {}
     fn double_click_time() -> std::time::Duration {
         std::time::Duration::from_millis(500)
     }
